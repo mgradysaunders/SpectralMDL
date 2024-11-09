@@ -1,0 +1,340 @@
+= Language Extensions
+:stylesheet: stylesheet.css
+:source-highlighter: rouge
+:rouge-style: molokai
+:icons: font
+:icon-set: fa
+:toc: left
+
+The SMDL compiler provides a considerable set of language extensions on 
+top of MDL. I know what you're thinking.
+
+[quote]
+You: Ah yes! A bunch of non-standard crap stuffed into 
+yet-another-language. Yee haw.
+
+That's valid. I hear you. But after several attempts at implementing this
+damn compiler, I've decided that extending the language is easily the most 
+sensible overarching design for two big reasons.
+
+1. *Simplicity*: It keeps the {cpp} side of the compiler small by allowing more 
+   of SMDL to implemented in SMDL itself instead of {cpp}.footnote:[Yes, adding 
+   language features really does make the ({cpp} side of the) compiler smaller. 
+   There is a ton of math that has to be implemented eventually, and trying to 
+   handle this by inter-op with {cpp} is nasty and not viable.]
+2. *Speed*: It maximizes the performance of the JIT'ed code by leveraging LLVM
+   vectorization and inlining at JIT-compile-time, and further minimizes 
+   the amount of back-and-forth calling into {cpp} at runtime.
+
+And if the idea is to implement SMDL in SMDL, it is best to invest some time
+and effort into the ergonomics of language.
+
+[#intrinsics]
+== Intrinsics
+
+An _intrinsic_ is essentially a C-like function macro with dedicated syntax
+that the SMDL compiler magically understands. 
+
+[IMPORTANT]
+.Intrinsic Syntax
+====
+An intrinsic is a word that begins with a hash, such as `#assert`, which 
+is meant to suggest the macro-like nature of intrinsics.
+====
+
+[#function-attributes]
+== Function attributes
+
+TODO
+
+[#compile-time-evaluation]
+== Compile-time evaluation
+
+TODO
+
+[#pointers]
+== Pointers
+
+A _pointer_ is a memory address that _points to_ another value. The usage of 
+pointers in SMDL is functionally equivalent to the usage of pointers in C, 
+but the syntax is slightly different. 
+
+[, smdl]
+----
+int4 i = int4(1, 3, 5, 7);
+&int j = &i[1]; // Now j points to i[1]
+*j = 2;
+*(j + 1) = 4;
+#assert(#all(i == int4(1, 2, 4, 7)));
+----
+
+[TIP]
+.Pointer Types
+====
+In SMDL, a pointer type is understood as the address of another type. That 
+is, `&int` is the _address of_ or equivalently _points to_ an `int`.
+====
+
+There is no C-style arrow syntax. Just use dot!
+
+[, smdl]
+----
+struct Foo {
+  int i = 0;
+};
+export int get_bar(&Foo foo) = foo.i; // No arrow necessary
+----
+
+[#unions]
+== Unions
+
+The compiler provides first-class support for 
+https://en.wikipedia.org/wiki/Tagged_union[tagged unions]. This is
+a memory block that may be interpreted as several different types alongside
+a tag to indicate which type is currently active.
+
+[TIP]
+.Union Syntax
+====
+In SMDL, a union type is an _or_ of other types. For example, 
+`(int | string)` is a union that could be an `int` or a `string`.
+====
+
+[, smdl]
+----
+typedef (int | string) IntOrString;
+#assert((string | int) == IntOrString);      // Order doesn't matter
+#assert((IntOrString | int) == IntOrString); // No redundancy
+----
+
+[#unions-from-conditionals]
+=== Unions from conditionals
+
+If the alternatives of a conditional expression have different types for which
+there is no well-defined arithmetic promotion, the result type of the 
+expression is the union of the types of the alternatives. 
+
+[, smdl]
+----
+auto int_or_double(bool isInt) = isInt ? 7 : 7.5d; // Promotes to double
+auto int_or_string(bool isInt) = isInt ? 7 : "Hello, world"; // (int | string)
+----
+
+[CAUTION]
+.Really?
+====
+This might ruffle some feathers for being _too implicit_. Here's why this
+is a feature:
+
+In MDL, it is legal to define a material by a conditional expression on 
+other materials. In SMDL, a material is ultimately a concrete instantiation 
+of a generic struct, such that distinct materials may be represented by
+structurally distinct types. In order to support this usage in the 
+overall evaluation scheme, we must allow conditional expressions 
+to implicitly construct unions.
+====
+
+[#unions-as-optionals]
+=== Unions as optionals
+
+The SMDL compiler understands unions with the `void` type as representations 
+of optional values.
+
+[, smdl]
+----
+typedef ?int MaybeInt; // Syntax sugar to optionalize
+#assert(MaybeInt == (int | void));
+----
+
+[IMPORTANT]
+.Default Constructors
+====
+An optional union __can__ be default constructed. The default is the 
+`void` alternative with no value.
+
+A non-optional union __cannot__ be default constructed. Because the 
+types in a union are unordered, there is no obvious way to pick a sensible
+default in the absence of the `void` alternative.
+====
+
+[#keywords]
+== Keywords
+
+[#defer]
+=== defer
+
+The `defer` keyword tells the compiler to run a statement (or a compound 
+statement) just before leaving the current scope. This is a C-like 
+generalization of a C++ destructor borrowed from modern languages 
+like https://odin-lang.org[odin] and https://ziglang.org[zig].
+
+[, smdl]
+----
+int i = 4;
+{
+  defer ++i; // Increment later ...
+  #assert(i == 4);
+}
+#assert(i == 5);
+----
+
+If more than one defer statement is present, the compiler runs them in reverse 
+order (just like C++ destructors). 
+
+Deferred code may execute arbitrary logic, and it is even legal to nest defer
+statements inside of other defer statements. However, the destructor-like
+nature of defers places some implicit constraints on control flow. 
+
+[WARNING]
+.Control Flow Constraints
+====
+The compiler _cannot_ `break`, `continue`, or `return` out of a defer
+statement.footnote:[Think about it: `defer break;` and then `continue;` --
+What the hell is supposed to happen?]
+====
+
+[#inline]
+=== inline
+
+The `inline` keyword may be used to _inline_ a struct into another struct or 
+into the parameters of a function. This is useful to mimic inheritence via
+composition, or to conveniently represent function parameters as a struct.
+
+[, smdl]
+----
+struct Foo {
+  int a = 0;
+  int b = 1;
+};
+struct Bar {
+  inline Foo foo = Foo(); // Inline into struct
+  int c = 2;
+};
+void test_bar(inline &Bar bar) { // Inline into function parameters
+  #assert(&a == &foo.a);
+  #assert(&b == &foo.b);
+}
+unit_test "Inlining" {
+  auto bar = Bar(foo: Foo(a: 1, b: 2), c: 3); // Constructor doesn't inline!
+  test_bar(&bar); 
+}
+----
+
+[WARNING]
+.Name Collisions
+====
+The compiler does not allow name collisions when inlining structs. That is,
+if `bar` in the above example already had a field named `b`, inlining `foo.b`
+would cause a compile-time error.
+====
+
+[#null]
+=== null
+The `null` keyword is useful to explicitly zero-initialize or _nullify_ 
+anything. This can also be used to initialize or assign the `void` alternative
+of optional unions (see <<unions-as-optionals>>).
+
+[, smdl]
+----
+struct Foo {
+  int bar = 5;
+  int baz = 7;
+};
+Foo foo1;        // ... Foo(5, 7)
+Foo foo2 = null; // ... Foo(0, 0) 
+----
+
+[TIP]
+.Semantics
+====
+The SMDL compiler understands `null` as a symbolic constant of `void` type.
+====
+
+
+[#preserve]
+=== preserve
+
+[#return_from]
+=== return_from
+The `return_from` keyword tells the compiler to construct an rvalue from the 
+`return` expressions in the following compound statement. This is useful to
+initialize variables that require some non-trivial logic to set up.
+
+[, smdl]
+----
+int i = return_from {
+  int j = 3;
+  int k = 4;
+  return j + k;
+};
+----
+
+[#unreachable]
+=== unreachable
+The `unreachable` keyword is an alias for the 
+https://llvm.org/docs/LangRef.html#unreachable-instruction[unreachable 
+instruction in LLVM]. 
+
+[CAUTION]
+.Beware!
+====
+This informs the optimizer that a branch of code is unreachable as a 
+result of pre-conditions on the program. And this is taken entirely on trust!
+====
+
+[#visit]
+=== visit
+
+The `visit` keyword is the mechanism for dispatching code on <<unions>>. It is
+essentially a templated type-switch. 
+
+[, smdl]
+----
+typedef (int | float | double) Scalar;
+void print_scalar(Scalar scalar) {
+  visit scalar {
+    // Inside the block, scalar is downcast to whatever type it actually is
+    const auto T = #typeof(scalar);
+    #assert(T != Scalar);
+
+    // If you need to run type-specific logic, you can use compile-time
+    // if statements
+    if $(T == int) {
+      #print("int: ");
+    } else if $(T == float) {
+      #print("float: ");
+    } else if $(T == double) {
+      #print("double: ");
+    }
+
+    #print(scalar);
+  }
+}
+----
+
+[#late-ifs]
+== Late ifs
+For convenience and readability, the SMDL compiler allows _late ifs_ to
+conditionalize one-line statements.
+
+[, smdl]
+----
+// This prints "024"
+int m = 8;
+int n = 5;
+for (int i = 0; i < m; i++) {
+  #print(i) if (i % 2 == 0);
+  break if (i > n);
+}
+----
+
+[#Temporaries in expressions]
+== Temporaries in expressions
+
+TODO
+
+[#unit-tests]
+== Unit tests
+
+TODO
+

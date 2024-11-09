@@ -1,0 +1,107 @@
+= Intrinsics
+:stylesheet: stylesheet.css
+:source-highlighter: rouge
+:rouge-style: molokai
+:icons: font
+:icon-set: fa
+:toc: left
+
+[#compile-time-intrinsics]
+== Compile-time Intrinsics
+
+[cols="1,1"]
+|===
+| Intrinsic | Description
+
+| `#alignof`
+| Returns the alignment of the argument in bytes.
+
+| `#inline`
+| Inlines a specific call, or issues a warning if 
+  it is not possible.
+
+| `#is_comptime`
+| Returns true if the argument is a compile-time constant.
+
+| `#sizeof`
+| Returns the size of the argument in bytes.
+
+| `#typeof`
+| Returns the type of the argument.
+|===
+
+[#llvm-analogs]
+== LLVM Analogs
+
+[cols="1,1"]
+|===
+| Intrinsic | LLVM Analog
+
+| `#abs`
+| `llvm.[f]?abs`
+
+| `#all`
+| `llvm.vector_reduce_and`
+
+| `#any`
+| `llvm.vector_reduce_or`
+
+| `#breakpoint`
+| `llvm.debugtrap`
+
+| `#max`
+| `llvm.[fs]max`
+
+| `#min`
+| `llvm.[fs]min`
+
+| `#max_value`
+| `llvm.vector_reduce_[fs]max`
+
+| `#min_value`
+| `llvm.vector_reduce_[fs]min`
+
+| `#sum`
+| `llvm.vector_reduce_[f]?add`
+|===
+
+[#llvm-analogs-libm]
+== LLVM Analogs (libm)
+
+The intrinsics in the table below are direct analogs for LLVM intrinsics as
+per the previous section. However, these are best understood specifically as 
+analogs for floating point mathematical functions from the standard C math 
+library. 
+
+[IMPORTANT]
+.Promotion Rules
+====
+These intrinsics are overloaded for all arithmetic scalar and vector types, 
+but all implicitly promote integral arguments to floating point.
+====
+
+[cols="1,1"]
+|===
+| Intrinsic | LLVM Analog(s)
+
+| `#sqrt`
+| `llvm.sqrt`
+
+| `#ceil`, `#floor`, `#round`, `#trunc`
+| `llvm.ceil`, `llvm.floor`, `llvm.round`, `llvm.trunc`
+
+| `#sin`, `#sinh`, `#asin`, `#asinh`
+| `llvm.sin`, `llvm.sinh`, `llvm.asin`, `llvm.asinh`
+
+| `#cos`, `#cosh`, `#acos`, `#acosh`,
+| `llvm.cos`, `llvm.cosh`, `llvm.acos`, `llvm.acosh`
+
+| `#tan`, `#tanh`, `#atan`, `#atanh`
+| `llvm.tan`, `llvm.tanh`, `llvm.atan`, `llvm.atanh`
+
+| `#exp`, `#exp2`, `#exp10`
+| `llvm.exp`, `llvm.exp2`, `llvm.exp10`
+
+| `#log`, `#log2`, `#log10`
+| `llvm.log`, `llvm.log2`, `llvm.log10`
+|===
