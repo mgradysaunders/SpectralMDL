@@ -1,0 +1,397 @@
+// vim:foldmethod=marker:foldlevel=0:fmr=--{,--}
+#pragma once
+
+#include "Context.h"
+
+namespace smdl::Compiler {
+
+class Emitter final {
+public:
+  class Label final {
+  public:
+    Crumb *crumb{};
+
+    llvm::BasicBlock *block{};
+
+    [[nodiscard]] operator bool() const { return block; }
+
+    [[nodiscard]] operator llvm::BasicBlock *() const { return block; }
+  };
+
+  Emitter(
+      Context &context, Module *module, Crumb *crumb, //
+      llvm::SmallVector<Return> *returns = nullptr,   //
+      llvm::SmallVector<Inline> *inlines = nullptr,   //
+      llvm::Function *llvmFunc = nullptr)
+      : context(context), module(module), crumb(crumb), returns(returns), inlines(inlines), builder(context.llvmContext) {
+    builder.setFastMathFlags(llvm::FastMathFlags::getFast());
+    if (llvmFunc) {
+      auto blockEntry{llvm::BasicBlock::Create(context.llvmContext, "entry", llvmFunc)};
+      auto blockReturn{llvm::BasicBlock::Create(context.llvmContext, "return", llvmFunc)};
+      afterReturn = {crumb, blockReturn};
+      builder.SetInsertPoint(blockEntry);
+    }
+  }
+
+  Emitter(Emitter *parent)
+      : parent(parent), context(parent->context), module(parent->module), crumb(parent->crumb), state(parent->state),
+        returns(parent->returns), inlines(parent->inlines), afterBreak(parent->afterBreak),
+        afterContinue(parent->afterContinue), afterReturn(parent->afterReturn), afterEndScope(parent->afterEndScope),
+        builder(parent->context.llvmContext) {
+    builder.setFastMathFlags(llvm::FastMathFlags::getFast());
+  }
+
+public:
+  //--{ Helpers
+  llvm::BasicBlock *get_insert_block() { return builder.GetInsertBlock(); }
+
+  bool has_terminator() { return get_insert_block() && get_insert_block()->getTerminator() != nullptr; }
+
+  void move_to(llvm::BasicBlock *block) { builder.SetInsertPoint(block); }
+
+  void move_to_or_erase(llvm::BasicBlock *block) {
+    if (block->hasNPredecessors(0)) {
+      block->eraseFromParent();
+    } else {
+      move_to(block);
+    }
+  }
+
+  llvm::Function *get_llvm_function() { return get_insert_block() ? get_insert_block()->getParent() : nullptr; }
+
+  llvm::BasicBlock *get_llvm_function_entry_block() {
+    if (auto llvmFunc{get_llvm_function()})
+      return &llvmFunc->getEntryBlock();
+    return nullptr;
+  }
+
+  llvm::BasicBlock *create_block(const llvm::Twine &name) {
+    return llvm::BasicBlock::Create(context.llvmContext, name, sanity_check_nonnull(get_llvm_function()));
+  }
+
+  Value emit_alloca(const llvm::Twine &name, Type *type);
+
+  Value lvalue(Value value);
+
+  Value rvalue(Value value);
+
+  void emit_end_lifetime(Value value) {
+    if (value.is_lvalue() && llvm::isa<llvm::AllocaInst>(value.llvmValue))
+      builder.CreateLifetimeEnd(value, builder.getInt64(context.get_size_of(value.type)));
+  }
+
+  void emit_scope(llvm::BasicBlock *blockStart, llvm::BasicBlock *blockEnd, std::invocable<Emitter &> auto &&func) {
+    Emitter emitter{this};
+    emitter.move_to(blockStart);
+    emitter.afterEndScope = {crumb, blockEnd};
+    std::invoke(std::forward<decltype(func)>(func), emitter);
+    emitter.emit_unwind_and_br(emitter.afterEndScope);
+  }
+
+  void emit_scope(std::invocable<Emitter &> auto &&func) { // "Thin scope"
+    Crumb *topCrumb{crumb};
+    std::invoke(std::forward<decltype(func)>(func), *this);
+    emit_unwind(topCrumb);
+  }
+
+  void emit_unwind_and_br(Label label) {
+    if (!has_terminator())
+      emit_unwind(label.crumb), emit_br(label.block);
+  }
+
+  void emit_unwind(Crumb *crumb0);
+
+  [[nodiscard]] Value emit_cond(AST::Expr &expr) {
+    Value cond{};
+    emit_scope([&](Emitter &emitter) { cond = emitter.construct(context.get_bool_type(), emitter.emit(expr), expr.srcLoc); });
+    return cond;
+  }
+
+  void emit_br_and_move_to(llvm::BasicBlock *block) { emit_br(block), move_to(block); }
+
+  void emit_br(llvm::BasicBlock *block) {
+    sanity_check(!has_terminator());
+    builder.CreateBr(block);
+  }
+
+  void emit_br(Value cond, llvm::BasicBlock *blockPass, llvm::BasicBlock *blockFail) {
+    sanity_check(!has_terminator());
+    builder.CreateCondBr(construct(context.get_bool_type(), cond), blockPass, blockFail);
+  }
+
+  void emit_late_if(AST::Expr *expr, std::invocable<> auto &&func) {
+    if (!expr) {
+      std::invoke(func);
+    } else {
+      auto name{context.get_unique_name("late-if")};
+      auto blockPass{create_block(llvm_twine(name, ".pass"))};
+      auto blockFail{create_block(llvm_twine(name, ".fail"))};
+      emit_br(emit_cond(*expr), blockPass, blockFail);
+      move_to(blockPass);
+      std::invoke(func);
+      if (!has_terminator())
+        emit_br(blockFail);
+      llvm_move_block_to_end(blockFail);
+      move_to(blockFail);
+    }
+  }
+
+  [[nodiscard]] Value emit_phi(Type *type, llvm::ArrayRef<std::pair<llvm::Value *, llvm::BasicBlock *>> inputs) {
+    auto phiInst{builder.CreatePHI(type->llvmType, inputs.size())};
+    for (auto [value, block] : inputs)
+      phiInst->addIncoming(value, block);
+    return RValue(type, phiInst);
+  }
+
+  void emit_panic(Value message, const AST::SourceLocation &srcLoc);
+
+  void emit_panic(llvm::StringRef message, const AST::SourceLocation &srcLoc) {
+    emit_panic(context.get_compile_time_string(message), srcLoc);
+  }
+
+  void push_crumb(llvm::ArrayRef<llvm::StringRef> name, Value value, AST::Node *node, const AST::SourceLocation &srcLoc) {
+    Crumb *prev{crumb};
+    crumb = context.bump_allocate<Crumb>();
+    *crumb = Crumb{prev, name, value, node, srcLoc};
+  }
+  //--}
+
+public:
+  //--{ Fundamental operations
+  void declare_import(bool isAbs, llvm::ArrayRef<llvm::StringRef> path, AST::Decl &decl);
+
+  void declare(const AST::Name &name, Value value, AST::Decl *decl = {});
+
+  void declare(const Param &param, llvm::Value *llvmValue);
+
+  void declare_inline(Value value);
+
+  [[nodiscard]] Value insert(Value value, Value elem, unsigned i, const AST::SourceLocation &srcLoc = {}) {
+    return value.type->insert(*this, value, elem, i, srcLoc);
+  }
+
+  [[nodiscard]] Value access(Value value, llvm::StringRef fieldName, const AST::SourceLocation &srcLoc = {}) {
+    return value.type->access(*this, value, fieldName, srcLoc);
+  }
+
+  [[nodiscard]] Value access(Value value, Value i, const AST::SourceLocation &srcLoc = {}) {
+    return value.type->access(*this, value, i, srcLoc);
+  }
+
+  [[nodiscard]] Value access(Value value, unsigned i, const AST::SourceLocation &srcLoc = {}) {
+    return value.type->access(*this, value, context.get_compile_time_int(i), srcLoc);
+  }
+
+  [[nodiscard]] Value construct(Type *type, const ArgList &args, const AST::SourceLocation &srcLoc = {}) {
+    if (args.is_one_positional() && args[0].value.type == type)
+      return rvalue(args[0].value);
+    return type->construct(*this, args, srcLoc);
+  }
+  //--}
+
+public:
+  template <typename T, typename Deleter> auto emit(const std::unique_ptr<T, Deleter> &ptr) {
+    return emit(*sanity_check_nonnull(ptr.get()));
+  }
+
+  template <typename T> auto emit(const std::optional<T> &opt) {
+    sanity_check(opt.has_value());
+    return emit(*opt);
+  }
+
+  Value emit(AST::Node &node);
+
+  Value emit(AST::File &file) {
+    for (auto &decl : file.imports)
+      emit(decl);
+    for (auto &decl : file.globals)
+      emit(decl);
+    return {};
+  }
+
+  //--{ Emit: Decls
+  Value emit(AST::Decl &decl);
+
+  Value emit(AST::Enum &decl);
+
+  Value emit(AST::Function &decl);
+
+  Value emit(AST::Import &decl);
+
+  Value emit(AST::Struct &decl);
+
+  Value emit(AST::Tag &decl);
+
+  Value emit(AST::Typedef &decl);
+
+  Value emit(AST::UnitTest &decl);
+
+  Value emit(AST::UsingAlias &decl);
+
+  Value emit(AST::UsingImport &decl);
+
+  Value emit(AST::Variable &decl);
+  //--}
+
+  //--{ Emit: Exprs
+  Value emit(AST::Expr &expr);
+
+  Value emit(AST::Binary &expr);
+
+  Value emit(AST::Call &expr);
+
+  Value emit(AST::Cast &expr) { return construct(emit(expr.type).get_compile_time_type(), emit(expr.expr), expr.srcLoc); }
+
+  Value emit(AST::CompileTime &expr) {
+    auto result{Function::compile_time_evaluate(*this, *expr.expr)};
+    if (!result)
+      expr.srcLoc.report_error("compile-time evaluation failed");
+    return result;
+  }
+
+  Value emit(AST::Conditional &expr);
+
+  Value emit(AST::GetField &expr) { return access(emit(expr.what), expr.name->name, expr.name->srcLoc); }
+
+  Value emit(AST::GetIndex &expr);
+
+  Value emit(AST::Identifier &expr) { return context.resolve(*this, expr); }
+
+  Value emit(AST::Intrinsic &expr) { return context.get_compile_time_intrinsic(&expr); }
+
+  Value emit(AST::Let &expr);
+
+  Value emit(AST::LiteralBool &expr) { return context.get_compile_time_bool(expr.value); }
+
+  Value emit(AST::LiteralFloat &expr) { return context.get_compile_time_FP(expr.value, expr.precision); }
+
+  Value emit(AST::LiteralInt &expr) { return context.get_compile_time_int(expr.value); }
+
+  Value emit(AST::LiteralString &expr) { return context.get_compile_time_string(expr.value); }
+
+  Value emit(AST::ReturnFrom &expr);
+
+  Value emit(AST::SizeName &expr);
+
+  Value emit(AST::Type &expr);
+
+  Value emit(AST::Unary &expr) { return emit_op(expr.op, emit(expr.expr), expr.srcLoc); }
+  //--}
+
+  //--{ Emit: Stmts
+  Value emit(AST::Stmt &stmt);
+
+  Value emit(AST::Break &stmt) {
+    if (!afterBreak)
+      stmt.srcLoc.report_error("unexpected 'break'");
+    emit_late_if(stmt.cond.get(), [&] { emit_unwind_and_br(afterBreak); });
+    return {};
+  }
+
+  Value emit(AST::Compound &stmt);
+
+  Value emit(AST::Continue &stmt) {
+    if (!afterContinue)
+      stmt.srcLoc.report_error("unexpected 'continue'");
+    emit_late_if(stmt.cond.get(), [&] { emit_unwind_and_br(afterContinue); });
+    return {};
+  }
+
+  Value emit(AST::DeclStmt &stmt) { return emit(stmt.decl); }
+
+  Value emit(AST::Defer &stmt) {
+    push_crumb({}, {}, &stmt, stmt.srcLoc);
+    stmt.crumb = crumb;
+    return {};
+  }
+
+  Value emit(AST::DoWhile &stmt);
+
+  Value emit(AST::ExprStmt &stmt) {
+    if (stmt.expr)
+      emit_late_if(stmt.cond.get(), [&] { emit(stmt.expr); });
+    return {};
+  }
+
+  Value emit(AST::For &stmt);
+
+  Value emit(AST::If &stmt);
+
+  Value emit(AST::Preserve &stmt);
+
+  Value emit(AST::Return &stmt) {
+    if (!afterReturn)
+      stmt.srcLoc.report_error("unexpected 'return'");
+    emit_late_if(stmt.cond.get(), [&] {
+      auto value{stmt.expr.get() ? rvalue(emit(stmt.expr)) : Value()};
+      emit_unwind_and_br(afterReturn);
+      returns->push_back({value, get_insert_block(), stmt.srcLoc});
+    });
+    return {};
+  }
+
+  Value emit(AST::Switch &stmt);
+
+  Value emit(AST::Unreachable &stmt) {
+    sanity_check(get_llvm_function());
+    builder.CreateUnreachable();
+    return {};
+  }
+
+  Value emit(AST::Visit &stmt);
+
+  Value emit(AST::While &stmt);
+  //--}
+
+  ArgList emit(const AST::ArgList &astArgs);
+
+  Value emit_op(AST::UnaryOp op, Value val, const AST::SourceLocation &srcLoc = {});
+
+  Value emit_op(AST::BinaryOp op, Value lhs, Value rhs, const AST::SourceLocation &srcLoc = {});
+
+  Value emit_intrinsic(const AST::Intrinsic &intr, const ArgList &args);
+
+public:
+  Value emit_return_phi(Type *type, llvm::ArrayRef<Return> returns, const AST::SourceLocation &srcLoc = {});
+
+  Type *emit_return(Type *type, llvm::ArrayRef<Return> returns, const AST::SourceLocation &srcLoc = {});
+
+public:
+  /// The parent emitter, if applicable.
+  Emitter *const parent{};
+
+  /// The context.
+  Context &context;
+
+  /// The associated module.
+  Module *module{};
+
+  /// The current crumb.
+  Crumb *crumb{};
+
+  /// The current state.
+  Value state{};
+
+  /// The pending returns.
+  llvm::SmallVector<Return> *returns{};
+
+  /// The explicit inlines via '#inline(...)' requests.
+  llvm::SmallVector<Inline> *inlines{};
+
+  /// Where to go after 'break' statement.
+  Label afterBreak{};
+
+  /// Where to go after 'continue' statement.
+  Label afterContinue{};
+
+  /// Where to go after 'return' statement.
+  Label afterReturn{};
+
+  /// Where to go after end-of-scope.
+  Label afterEndScope{};
+
+  /// The Intermediate Representation (IR) builder.
+  llvm::IRBuilder<> builder;
+};
+
+} // namespace smdl::Compiler

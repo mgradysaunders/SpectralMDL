@@ -1,0 +1,63 @@
+#extended_syntax
+
+export enum gamma_mode { gamma_default = 0, gamma_linear = 1, gamma_srgb = 2 };
+
+@(pure) &image_t access_uv_tile(const texture_2d tex, const int2 uv_tile) {
+  return null if (#any((uv_tile < 0) | (uv_tile >= tex.tile_count)));
+  return &tex.tiles[tex.tile_count.x * uv_tile.y + uv_tile.x];
+}
+
+export @(pure macro) int width(const texture_2d tex, const int2 uv_tile = int2(0)) = (tile := access_uv_tile(tex, uv_tile)) ? tile.extent.x : 0;
+
+export @(pure macro) int width(const texture_3d tex) = tex.extent.x;
+
+export @(pure macro) int width(const texture_cube tex) = tex.extent.x;
+
+export @(pure macro) int height(const texture_2d tex, const int2 uv_tile = int2(0)) = (tile := access_uv_tile(tex, uv_tile)) ? tile.extent.y : 0;
+
+export @(pure macro) int height(const texture_3d tex) = tex.extent.y;
+
+export @(pure macro) int height(const texture_cube tex) = tex.extent.y;
+
+export @(pure macro) int depth(const texture_3d tex) = tex.extent.z;
+
+export @(pure macro) bool texture_isvalid(const texture_2d tex) = bool(tex.tiles);
+
+export @(pure macro) bool texture_isvalid(const texture_3d tex) = bool(tex.texels);
+
+export @(pure macro) bool texture_isvalid(const texture_cube tex) = bool(tex.texels);
+
+export @(pure macro) bool texture_isvalid(const texture_ptex tex) = bool(tex.ptr);
+
+@(pure) float4 access_texel(const texture_2d tex, const int2 coord, const int2 uv_tile = int2(0)) {
+  const auto tile(access_uv_tile(tex, uv_tile));
+  return null if (!tile || #any((coord < 0) | (coord >= tile.extent)));
+  return tile.texels[tile.extent.x * coord.y + coord.x];
+}
+
+export @(pure macro) auto texel_float4(const texture_2d tex, const int2 coord, const int2 uv_tile = int2(0)) = access_texel(tex, coord, uv_tile);
+
+export @(pure macro) auto texel_float3(const texture_2d tex, const int2 coord, const int2 uv_tile = int2(0)) = access_texel(tex, coord, uv_tile).xyz;
+
+export @(pure macro) auto texel_float2(const texture_2d tex, const int2 coord, const int2 uv_tile = int2(0)) = access_texel(tex, coord, uv_tile).xy;
+
+export @(pure macro) auto texel_float(const texture_2d tex, const int2 coord, const int2 uv_tile = int2(0)) = access_texel(tex, coord, uv_tile).x;
+
+export @(pure macro) auto texel_color(const texture_2d tex, const int2 coord, const int2 uv_tile = int2(0)) = color(access_texel(tex, coord, uv_tile).xyz);
+
+@(pure) float4 access_texel(const texture_3d tex, const int3 coord) {
+  return null if (#any((coord < 0) | (coord >= tex.extent)));
+  return tex.texels[#sum(tex.stride * coord)];
+}
+
+export @(pure macro) auto texel_float4(const texture_3d tex, const int3 coord) = access_texel(tex, coord);
+
+export @(pure macro) auto texel_float3(const texture_3d tex, const int3 coord) = access_texel(tex, coord).xyz;
+
+export @(pure macro) auto texel_float2(const texture_3d tex, const int3 coord) = access_texel(tex, coord).xy;
+
+export @(pure macro) auto texel_float(const texture_3d tex, const int3 coord) = access_texel(tex, coord).x;
+
+export @(pure macro) auto texel_color(const texture_3d tex, const int3 coord) = color(access_texel(tex, coord).xyz);
+
+export enum wrap_mode { wrap_clamp = 0, wrap_repeat = 1, wrap_mirrored_repeat = 2, wrap_clip = 3 };

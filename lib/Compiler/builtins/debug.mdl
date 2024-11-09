@@ -1,0 +1,10 @@
+#extended_syntax
+
+export @(pure macro) bool assert(const bool condition, const string reason) {
+  #assert(condition, reason) if ($DEBUG);
+  return true;
+}
+
+export @(pure macro) bool breakpoint() = #breakpoint();
+
+// TODO print
