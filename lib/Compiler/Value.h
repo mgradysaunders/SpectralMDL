@@ -164,17 +164,18 @@ public:
   /// The previous crumb.
   Crumb *prev{};
 
-  /// The name or qualified name. Here, a qualified name is just a name sequence with more than 1 name.
-  llvm::ArrayRef<llvm::StringRef> name{};
-
   /// The value.
   Value value{};
+
+  /// The name or qualified name. Here, a qualified name is just a name sequence with more than 1 name.
+  llvm::ArrayRef<llvm::StringRef> name{};
 
   /// The AST node, if applicable.
   AST::Node *node{};
 
   /// The AST source location, if applicable.
   AST::SourceLocation srcLoc{};
+
 
 public:
   /// Find the first crumb with the given name sequence that is usable in the given LLVM function.

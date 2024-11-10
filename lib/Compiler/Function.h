@@ -9,7 +9,7 @@ class FunctionInstance final {
 public:
   FunctionInstance() = default;
 
-  explicit FunctionInstance(Emitter &emitter0, AST::Function &decl, const ParamList &params);
+  explicit FunctionInstance(Emitter &emitter0, AST::Function &decl, const ParamList &params, llvm::ArrayRef<Type *> argTypes);
 
   explicit FunctionInstance(Emitter &emitter0, AST::UnitTest &decl);
 
@@ -25,28 +25,28 @@ public:
   void force_inline(llvm::ArrayRef<Inline> inlines);
 
   /// Force inline flatten as much as possible.
-  void force_inline_flatten() { llvm_force_inline_flatten(*sanity_check_nonnull(llvmFunction)); }
+  void force_inline_flatten() { llvm_force_inline_flatten(*sanity_check_nonnull(llvmFunc)); }
 
   /// Optimize.
   void optimize(llvm::OptimizationLevel level = llvm::OptimizationLevel::O2) {
     LLVMOptimizer llvmOptimizer{};
-    llvmOptimizer.run(*sanity_check_nonnull(llvmFunction), level);
+    llvmOptimizer.run(*sanity_check_nonnull(llvmFunc), level);
   }
 
   /// Eliminate unreachable blocks.
-  void eliminate_unreachable() { llvm::EliminateUnreachableBlocks(*sanity_check_nonnull(llvmFunction)); }
+  void eliminate_unreachable() { llvm::EliminateUnreachableBlocks(*sanity_check_nonnull(llvmFunc)); }
 
   /// Verify the LLVM IR.
   void verify() {
     std::string message{};
     llvm::raw_string_ostream OS{message};
-    if (llvm::verifyFunction(*sanity_check_nonnull(llvmFunction), &OS)) // Returns true on error
+    if (llvm::verifyFunction(*sanity_check_nonnull(llvmFunc), &OS)) // Returns true on error
       srcLoc.report_error(std::format("function '{}' LLVM-IR verification failed: {}", name, message));
   }
 
   [[nodiscard]] Value call(Emitter &emitter, llvm::ArrayRef<Value> argValues, const AST::SourceLocation &srcLoc = {});
 
-  [[nodiscard]] operator bool() const { return type && llvmFunction; }
+  [[nodiscard]] operator bool() const { return type && llvmFunc; }
 
 public:
   /// The function name (for error messages).
@@ -56,7 +56,7 @@ public:
   FunctionType *type{};
 
   /// The LLVM function.
-  llvm::Function *llvmFunction{};
+  llvm::Function *llvmFunc{};
 
   /// The source location if applicable.
   AST::SourceLocation srcLoc{};

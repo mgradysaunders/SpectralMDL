@@ -189,7 +189,6 @@ void ArgList::guarantee_valid_names(const AST::SourceLocation &srcLoc) const {
 ArgList::operator std::string() const {
   std::string str{};
   str.reserve(256);
-  str += '(';
   for (size_t i{}; const auto &arg : args) {
     if (arg.is_named()) {
       str += arg.name.str();
@@ -200,7 +199,6 @@ ArgList::operator std::string() const {
       str += ", ";
     i++;
   }
-  str += ')';
   return str;
 }
 

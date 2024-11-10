@@ -273,6 +273,12 @@ bool Context::is_subset_of(Type *typeA, Type *typeB) {
                              : static_cast<UnionType *>(typeB)->has_type(typeA);
   if (typeA->is_pointer() && typeB->is_pointer() && typeB->is_abstract())
     return is_subset_of(typeA->get_element_type(), typeB->get_element_type());
+  if (typeA->is_array() && typeB->is_array()) {
+    if (static_cast<ArrayType *>(typeB)->size != 0 &&
+        static_cast<ArrayType *>(typeB)->size != static_cast<ArrayType *>(typeA)->size)
+      return false;
+    return is_subset_of(typeA->get_element_type(), typeB->get_element_type());
+  }
   return false;
 }
 
@@ -444,7 +450,7 @@ llvm::SmallVector<Value> Context::resolve_arguments(
     // Attempt to resolve the argument for this parameter.
     auto arg{[&]() -> const Arg * {
       // 1. Look for an explicitly named argument.
-      for (unsigned i{}; i < args.size(); i++) {
+      for (size_t i{}; i < args.size(); i++) {
         if (args[i].name == param.name) {
           // If this has already been resolved by a positional argument, resolution fails.
           if (isUsed[i])
@@ -456,7 +462,7 @@ llvm::SmallVector<Value> Context::resolve_arguments(
         }
       }
       // 2. If there is no named argument, default to the next positional argument.
-      for (unsigned i{}; i < args.size(); i++) {
+      for (size_t i{}; i < args.size(); i++) {
         if (args[i].name.empty() && !isUsed[i]) {
           isUsed[i] = true;
           if (argParamTypes)
@@ -478,21 +484,18 @@ llvm::SmallVector<Value> Context::resolve_arguments(
     }
   }
   // At this point, we should have resolved everything.
-  for (unsigned i{}; i < args.size(); i++) {
+  for (size_t i{}; i < args.size(); i++) {
     sanity_check(isUsed[i]);
   }
   if (!dontEmit) {
     Emitter emitter1{&emitter0};
     emitter1.move_to(emitter0.get_insert_block());
     emitter1.crumb = params.crumb;
-    for (unsigned i{}; i < params.size(); i++) {
+    for (size_t i{}; i < params.size(); i++) {
       auto &param{params[i]};
       auto &value{values[i]};
-      if (!value)
-        value = emitter1.construct(param.type, emitter1.emit(*param.init));
-      else
-        value = emitter1.construct(param.type, value);
-      emitter1.push_crumb(emitter1.context.bump_duplicate(llvm::ArrayRef(param.name)), value, {}, param.srcLoc);
+      value = emitter1.construct(param.type, value ? value : emitter1.emit(*param.init), param.srcLoc);
+      emitter1.push(value, param.name, {}, param.srcLoc);
     }
     emitter1.emit_unwind(params.crumb);
     emitter0.move_to(emitter1.get_insert_block());

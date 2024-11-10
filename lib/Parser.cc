@@ -250,13 +250,13 @@ auto Parser::parse_using_alias() -> unique_bump_ptr_wrapper<AST::UsingAlias> {
     reject();
     return nullptr;
   }
-  auto importPath{parse_import_path(/*isUnicode=*/true)};
-  if (!importPath)
+  auto path{parse_import_path(/*isUnicode=*/true)};
+  if (!path)
     report_error("expected import path after 'using ... ='", cursor);
   if (!delimiter(';'))
     report_error("expected ';' after 'using ... = ...'", cursor);
   accept();
-  return attach(bump_allocate<AST::UsingAlias>(std::move(name), std::move(importPath)), cursor);
+  return attach(bump_allocate<AST::UsingAlias>(std::move(name), std::move(path)), cursor);
 }
 
 auto Parser::parse_using_import() -> unique_bump_ptr_wrapper<AST::UsingImport> {
@@ -268,25 +268,25 @@ auto Parser::parse_using_import() -> unique_bump_ptr_wrapper<AST::UsingImport> {
     reject();
     return nullptr;
   }
-  auto importPath{parse_import_path(/*isUnicode=*/false)};
-  if (!importPath) {
+  auto path{parse_import_path(/*isUnicode=*/false)};
+  if (!path) {
     reject();
     return nullptr;
   }
-  if (importPath->names.back()->name == "*")
+  if (path->names.back()->name == "*")
     report_error("import path after '[export] using' must not end with '::*'");
   skip();
   if (!next_word("import"))
     report_error("expected 'import' after '[export] using ...'", cursor);
   skip();
-  auto importNames{llvm::SmallVector<unique_bump_ptr<AST::Name>>{}};
+  auto names{llvm::SmallVector<unique_bump_ptr<AST::Name>>{}};
   if (!next('*')) {
     while (true) {
       skip();
-      auto importName{parse_simple_name()};
-      if (!importName)
+      auto name{parse_simple_name()};
+      if (!name)
         report_error("expected import name", cursor);
-      importNames.push_back(std::move(importName));
+      names.push_back(std::move(name));
       if (!delimiter(','))
         break;
     }
@@ -294,7 +294,7 @@ auto Parser::parse_using_import() -> unique_bump_ptr_wrapper<AST::UsingImport> {
   if (!delimiter(';'))
     report_error("expected ';' after '[export] using ... import ...'", cursor);
   accept();
-  auto decl{bump_allocate<AST::UsingImport>(std::move(importPath), std::move(importNames))};
+  auto decl{bump_allocate<AST::UsingImport>(std::move(path), std::move(names))};
   decl->isExport = isExport;
   return attach(decl, cursor);
 }
@@ -303,18 +303,18 @@ auto Parser::parse_import() -> unique_bump_ptr_wrapper<AST::Import> {
   auto cursor{save_cursor()};
   if (!next_word("import"))
     return nullptr;
-  auto importPaths{llvm::SmallVector<unique_bump_ptr<AST::Identifier>>{}};
+  auto paths{llvm::SmallVector<unique_bump_ptr<AST::Identifier>>{}};
   while (true) {
-    auto importPath{parse_import_path(/*isUnicode=*/false)};
-    if (!importPath)
+    auto path{parse_import_path(/*isUnicode=*/false)};
+    if (!path)
       report_error("expected import path", cursor);
-    importPaths.push_back(std::move(importPath));
+    paths.push_back(std::move(path));
     if (!delimiter(','))
       break;
   }
   if (!delimiter(';'))
     report_error("expected ';' after 'import ...'", cursor);
-  return attach(bump_allocate<AST::Import>(std::move(importPaths)), cursor);
+  return attach(bump_allocate<AST::Import>(std::move(paths)), cursor);
 }
 
 auto Parser::parse_global_declaration() -> unique_bump_ptr_wrapper<AST::Decl> {
@@ -335,6 +335,8 @@ auto Parser::parse_global_declaration() -> unique_bump_ptr_wrapper<AST::Decl> {
   }()};
   if (!decl) {
     reject();
+    if (next_word("using") || next_word("import"))
+      report_error("'using' and 'import' declarations must appear at the top of the file");
     return nullptr;
   }
   decl.get()->isGlobal = true;

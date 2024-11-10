@@ -501,40 +501,39 @@ public:
 
 class UsingAlias final : public DeclSubclass<DeclKind::UsingAlias> {
 public:
-  UsingAlias(unique_bump_ptr<Name> name, unique_bump_ptr<Identifier> importPath)
-      : name(std::move(name)), importPath(std::move(importPath)) {}
+  UsingAlias(unique_bump_ptr<Name> name, unique_bump_ptr<Identifier> path) : name(std::move(name)), path(std::move(path)) {}
 
-  unique_bump_ptr<Name> name;
+  unique_bump_ptr<Name> name{};
 
-  unique_bump_ptr<Identifier> importPath;
+  unique_bump_ptr<Identifier> path{};
 };
 
 class UsingImport final : public DeclSubclass<DeclKind::UsingImport> {
 public:
-  UsingImport(unique_bump_ptr<Identifier> importPath, llvm::SmallVector<unique_bump_ptr<Name>> importNames)
-      : importPath(std::move(importPath)), importNames(std::move(importNames)) {}
+  UsingImport(unique_bump_ptr<Identifier> path, llvm::SmallVector<unique_bump_ptr<Name>> names)
+      : path(std::move(path)), names(std::move(names)) {}
 
-  [[nodiscard]] bool is_import_all() const { return importNames.empty(); }
+  [[nodiscard]] bool is_import_all() const { return names.empty(); }
 
-  unique_bump_ptr<Identifier> importPath;
+  unique_bump_ptr<Identifier> path{};
 
-  llvm::SmallVector<unique_bump_ptr<Name>> importNames;
+  llvm::SmallVector<unique_bump_ptr<Name>> names{};
 };
 
 class Import final : public DeclSubclass<DeclKind::Import> {
 public:
-  Import(llvm::SmallVector<unique_bump_ptr<Identifier>> importPaths) : importPaths(std::move(importPaths)) {}
+  Import(llvm::SmallVector<unique_bump_ptr<Identifier>> paths) : paths(std::move(paths)) {}
 
-  llvm::SmallVector<unique_bump_ptr<Identifier>> importPaths;
+  llvm::SmallVector<unique_bump_ptr<Identifier>> paths{};
 };
 
 class Typedef final : public DeclSubclass<DeclKind::Typedef> {
 public:
   Typedef(unique_bump_ptr<Type> type, unique_bump_ptr<Name> name) : type(std::move(type)), name(std::move(name)) {}
 
-  unique_bump_ptr<Type> type;
+  unique_bump_ptr<Type> type{};
 
-  unique_bump_ptr<Name> name;
+  unique_bump_ptr<Name> name{};
 };
 
 class Struct final : public DeclSubclass<DeclKind::Struct> {
@@ -562,13 +561,13 @@ public:
       llvm::SmallVector<Tag> tags = {})
       : name(std::move(name)), annotations(std::move(annotations)), fields(std::move(fields)), tags(std::move(tags)) {}
 
-  unique_bump_ptr<Name> name;
+  unique_bump_ptr<Name> name{};
 
-  std::optional<AnnotationBlock> annotations;
+  std::optional<AnnotationBlock> annotations{};
 
-  llvm::SmallVector<Field> fields;
+  llvm::SmallVector<Field> fields{};
 
-  llvm::SmallVector<Tag> tags;
+  llvm::SmallVector<Tag> tags{};
 };
 
 class Enum final : public DeclSubclass<DeclKind::Enum> {
@@ -587,11 +586,11 @@ public:
   Enum(unique_bump_ptr<Name> name, std::optional<AnnotationBlock> annotations, llvm::SmallVector<Constant> constants)
       : name(std::move(name)), annotations(std::move(annotations)), constants(std::move(constants)) {}
 
-  unique_bump_ptr<Name> name;
+  unique_bump_ptr<Name> name{};
 
-  std::optional<AnnotationBlock> annotations;
+  std::optional<AnnotationBlock> annotations{};
 
-  llvm::SmallVector<Constant> constants;
+  llvm::SmallVector<Constant> constants{};
 };
 
 class Variable final : public DeclSubclass<DeclKind::Variable> {
@@ -665,9 +664,9 @@ public:
 
 class UnitTest final : public DeclSubclass<DeclKind::UnitTest> {
 public:
-  UnitTest(llvm::SmallString<64> desc, unique_bump_ptr<Node> body) : desc(std::move(desc)), body(std::move(body)) {}
+  UnitTest(llvm::SmallString<64> name, unique_bump_ptr<Node> body) : name(std::move(name)), body(std::move(body)) {}
 
-  llvm::SmallString<64> desc{};
+  llvm::SmallString<64> name{};
 
   unique_bump_ptr<Node> body{};
 };

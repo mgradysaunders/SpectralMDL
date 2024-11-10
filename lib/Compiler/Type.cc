@@ -80,8 +80,8 @@ Value Type::insert(Emitter &emitter, Value value, Value elem, unsigned i, const 
   return {};
 }
 
-Value Type::access(Emitter &emitter, Value value, llvm::StringRef fieldName, const AST::SourceLocation &srcLoc) {
-  srcLoc.report_error(std::format("invalid field '{}' in type '{}'", fieldName, name));
+Value Type::access(Emitter &emitter, Value value, llvm::StringRef key, const AST::SourceLocation &srcLoc) {
+  srcLoc.report_error(std::format("invalid field '{}' in type '{}'", key, name));
   return {};
 }
 
@@ -98,7 +98,7 @@ Value Type::construct(Emitter &emitter, const ArgList &args, const AST::SourceLo
 
 //--{ ArrayType
 ArrayType::ArrayType(Context &context, Type *elemType, uint32_t size) : TypeSubclass(context), elemType(elemType), size(size) {
-  assert(size != 0);
+  sanity_check(size != 0);
   if (elemType->llvmType)
     llvmType = llvm::ArrayType::get(elemType->llvmType, size);
   init_name(std::format("({})[{}]", elemType->name, size));
@@ -120,11 +120,11 @@ Value ArrayType::insert(Emitter &emitter, Value value, Value elem, unsigned i, c
   return RValue(value.type, emitter.builder.CreateInsertValue(emitter.rvalue(value), elem, {i}));
 }
 
-Value ArrayType::access(Emitter &emitter, Value value, llvm::StringRef fieldName, const AST::SourceLocation &srcLoc) {
+Value ArrayType::access(Emitter &emitter, Value value, llvm::StringRef key, const AST::SourceLocation &srcLoc) {
   sanity_check(!is_abstract());
-  if (fieldName == "size")
+  if (key == "size")
     return context.get_compile_time_int(size);
-  return Type::access(emitter, value, fieldName, srcLoc); // Error
+  return Type::access(emitter, value, key, srcLoc); // Error
 }
 
 Value ArrayType::access(Emitter &emitter, Value value, Value i, const AST::SourceLocation &srcLoc) {
@@ -147,7 +147,7 @@ Value ArrayType::construct(Emitter &emitter, const ArgList &args, const AST::Sou
   if (size > 0) {
     if (args.empty() || args.is_one_positional_null()) {
       if (is_abstract())
-        srcLoc.report_error(std::format("can't default construct type '{}'", name));
+        srcLoc.report_error(std::format("can't null or default construct type '{}'", name));
       auto result{Value::zero(this)};
       // If the element type may not be trivially constructible, explicitly default construct the element type and
       // insert it into each element in the array.
@@ -191,9 +191,30 @@ Value ArrayType::construct(Emitter &emitter, const ArgList &args, const AST::Sou
       return result;
     }
   } else {
-    // TODO Size-deferred arrays
+    if (args.empty() || args.is_one_positional_null())
+      srcLoc.report_error(std::format("can't null or default construct type '{}'", name));
+    if (args.is_one_positional() && args[0].value.type->is_array()) {
+      if (!recursive_match(emitter, args[0].value.type))
+        srcLoc.report_error(std::format("can't construct '{}' from '{}'", name, args[0].value.type->name));
+      return emitter.rvalue(args[0].value);
+    } else {
+      auto argElemType{context.get_common_type(args.get_types(), /*defaultToUnion=*/false, srcLoc)};
+      auto value{emitter.construct(context.get_array_type(argElemType, args.size()), args, srcLoc)};
+      if (!recursive_match(emitter, value.type))
+        srcLoc.report_error(std::format("can't construct '{}' from '{}'", name, value.type->name));
+      return value;
+    }
   }
   return Type::construct(emitter, args, srcLoc); // Error
+}
+
+bool ArrayType::recursive_match(Emitter &emitter, Type *type) {
+  auto arrayType{llvm::dyn_cast<ArrayType>(type)};
+  if (!arrayType || (size != 0 && size != arrayType->size))
+    return false;
+  if (!sizeName.empty() && arrayType->size != 0)
+    emitter.push(context.get_compile_time_int(arrayType->size), sizeName, {}, {});
+  return elemType->recursive_match(emitter, arrayType->elemType);
 }
 //--}
 
@@ -242,12 +263,12 @@ Value ArithmeticType::insert(Emitter &emitter, Value value, Value elem, unsigned
   return Type::insert(emitter, value, elem, i, srcLoc); // Error
 }
 
-Value ArithmeticType::access(Emitter &emitter, Value value, llvm::StringRef fieldName, const AST::SourceLocation &srcLoc) {
-  if (fieldName.size() == 1 && (is_vector() || is_matrix())) {
+Value ArithmeticType::access(Emitter &emitter, Value value, llvm::StringRef key, const AST::SourceLocation &srcLoc) {
+  if (key.size() == 1 && (is_vector() || is_matrix())) {
     auto toIndex{[&]() -> std::optional<uint32_t> {
       uint32_t n{is_vector() ? extent.numRows : extent.numCols};
       for (uint32_t i{}; i < n; i++)
-        if (fieldName[0] == "xyzw"[i])
+        if (key[0] == "xyzw"[i])
           return i;
       return std::nullopt;
     }};
@@ -257,7 +278,7 @@ Value ArithmeticType::access(Emitter &emitter, Value value, llvm::StringRef fiel
   if (is_vector()) {
     auto toIndexSwizzle{[&]() -> std::optional<llvm::SmallVector<int>> {
       llvm::SmallVector<int> swizzle{};
-      for (char c : fieldName) {
+      for (char c : key) {
         int i{(int(c - 'w') + 3) & 3};
         if (i < 0 || unsigned(i) >= get_vector_size())
           return std::nullopt;
@@ -269,16 +290,16 @@ Value ArithmeticType::access(Emitter &emitter, Value value, llvm::StringRef fiel
       return RValue(
           context.get_arithmetic_type(scalar, Extent(iMask->size())),
           emitter.builder.CreateShuffleVector(emitter.rvalue(value), *iMask));
-    if (fieldName == "size")
+    if (key == "size")
       return context.get_compile_time_int(extent.numRows);
   }
   if (is_matrix()) {
-    if (fieldName == "num_rows")
+    if (key == "num_rows")
       return context.get_compile_time_int(extent.numRows);
-    if (fieldName == "num_cols" || fieldName == "size")
+    if (key == "num_cols" || key == "size")
       return context.get_compile_time_int(extent.numCols);
   }
-  return Type::access(emitter, value, fieldName, srcLoc); // Error
+  return Type::access(emitter, value, key, srcLoc); // Error
 }
 
 Value ArithmeticType::access(Emitter &emitter, Value value, Value i, const AST::SourceLocation &srcLoc) {
@@ -486,10 +507,10 @@ ColorType::ColorType(Context &context) : TypeSubclass(context, Scalar::Float, Ex
   llvmType = extent.apply_to_llvm_type(llvmType);
 }
 
-Value ColorType::access(Emitter &emitter, Value value, llvm::StringRef fieldName, const AST::SourceLocation &srcLoc) {
-  if (fieldName == "size")
+Value ColorType::access(Emitter &emitter, Value value, llvm::StringRef key, const AST::SourceLocation &srcLoc) {
+  if (key == "size")
     return context.get_compile_time_int(extent.numRows);
-  return Type::access(emitter, value, fieldName, srcLoc); // Error
+  return Type::access(emitter, value, key, srcLoc); // Error
 }
 
 Value ColorType::access(Emitter &emitter, Value value, Value i, const AST::SourceLocation &srcLoc) {
@@ -605,9 +626,9 @@ PointerType::PointerType(Context &context, Type *elemType) : TypeSubclass(contex
     throw Error("multi-level pointer to abstract type is not supported");
 }
 
-Value PointerType::access(Emitter &emitter, Value value, llvm::StringRef fieldName, const AST::SourceLocation &srcLoc) {
+Value PointerType::access(Emitter &emitter, Value value, llvm::StringRef key, const AST::SourceLocation &srcLoc) {
   sanity_check(!is_abstract());
-  return elemType->access(emitter, LValue(elemType, emitter.rvalue(value)), fieldName, srcLoc);
+  return elemType->access(emitter, LValue(elemType, emitter.rvalue(value)), key, srcLoc);
 }
 
 Value PointerType::access(Emitter &emitter, Value value, Value i, const AST::SourceLocation &srcLoc) {
@@ -618,16 +639,25 @@ Value PointerType::access(Emitter &emitter, Value value, Value i, const AST::Sou
 Value PointerType::construct(Emitter &emitter, const ArgList &args, const AST::SourceLocation &srcLoc) {
   if (args.empty() || args.is_one_positional_null()) {
     if (is_abstract())
-      srcLoc.report_error(std::format("can't default construct abstract type '{}'", name));
+      srcLoc.report_error(std::format("can't null or default construct abstract type '{}'", name));
     return Value::zero(this);
   }
   if (args.is_one_positional()) {
     auto value{args[0].value};
     if (!value.type->is_pointer())
       srcLoc.report_error(std::format("can't construct pointer type '{}' from non-pointer type '{}'", name, value.type->name));
-    return is_abstract() ? emitter.rvalue(value) : RValue(this, value.llvmValue);
+    if (is_abstract()) {
+      if (elemType->recursive_match(emitter, static_cast<PointerType *>(value.type)->elemType))
+        return emitter.rvalue(value);
+    } else {
+      return RValue(this, value);
+    }
   }
   return Type::construct(emitter, args, srcLoc); // Error
+}
+
+bool PointerType::recursive_match(Emitter &emitter, Type *type) {
+  return this == type || (type->is_pointer() && elemType->recursive_match(emitter, static_cast<PointerType *>(type)->elemType));
 }
 //--}
 
@@ -753,19 +783,18 @@ Value StructType::insert(Emitter &emitter, Value value, Value elem, unsigned i, 
   return RValue(this, emitter.builder.CreateInsertValue(emitter.rvalue(value), elem, {i}));
 }
 
-Value StructType::access(Emitter &emitter, Value value, llvm::StringRef fieldName, const AST::SourceLocation &srcLoc) {
+Value StructType::access(Emitter &emitter, Value value, llvm::StringRef key, const AST::SourceLocation &srcLoc) {
   sanity_check(llvmType != nullptr, "'StructType::access()' called on struct with abstract fields");
-  if (auto path{llvm::SmallVector<std::pair<const Param *, unsigned>>{}}; fields.get_inline_path(fieldName, path)) {
+  if (auto path{llvm::SmallVector<std::pair<const Param *, unsigned>>{}}; fields.get_inline_path(key, path)) {
+    bool isConst{};
     for (auto [field, i] : path) {
+      isConst |= field->isConst;
       value = value.is_lvalue() ? LValue(field->type, emitter.builder.CreateStructGEP(value.type->llvmType, value, i))
                                 : RValue(field->type, emitter.builder.CreateExtractValue(value, {i}));
-      if (field->isConst) {
-        value = emitter.rvalue(value);
-      }
     }
-    return value;
+    return isConst ? emitter.rvalue(value) : value;
   }
-  return Type::access(emitter, value, fieldName, srcLoc); // Error
+  return Type::access(emitter, value, key, srcLoc); // Error
 }
 
 Value StructType::construct(Emitter &emitter, const ArgList &args, const AST::SourceLocation &srcLoc) {
@@ -775,8 +804,10 @@ Value StructType::construct(Emitter &emitter, const ArgList &args, const AST::So
     return Value::zero(this);
   }
   if (args.is_one_positional())
-    if (args[0].value.type->is_struct() && static_cast<StructType *>(args[0].value.type)->parentTemplate == this)
+    if (args[0].value.type->is_struct() && static_cast<StructType *>(args[0].value.type)->parentTemplate == this) {
+      sanity_check(recursive_match(emitter, args[0].value.type));
       return emitter.rvalue(args[0].value);
+    }
   if (is_string()) {
     if (args.is_one_positional()) {
       if (args[0].value.type->is_enum()) {
@@ -815,6 +846,15 @@ Value StructType::construct(Emitter &emitter, const ArgList &args, const AST::So
   return Type::construct(emitter, args, srcLoc); // Error
 }
 
+bool StructType::recursive_match(Emitter &emitter, Type *type) {
+  if (this == type || (type->is_struct() && static_cast<StructType *>(type)->parentTemplate == this)) {
+    for (size_t i = 0; i < fields.size(); i++)
+      sanity_check(fields[i].type->recursive_match(emitter, static_cast<StructType *>(type)->fields[i].type));
+    return true;
+  }
+  return false;
+}
+
 void StructType::init_llvm_type() {
   if (!fields.has_any_abstract()) {
     auto llvmFieldTypes{fields.get_llvm_types()};
@@ -838,6 +878,10 @@ Value TagType::construct(Emitter &emitter, const ArgList &args, const AST::Sourc
     return emitter.rvalue(value);
   }
   return Type::construct(emitter, args, srcLoc); // Error
+}
+
+bool TagType::recursive_match(Emitter &emitter, Type *type) {
+  return this == type || (type->is_struct() && static_cast<StructType *>(type)->has_tag(this));
 }
 
 void TagType::declare_default_type(Type *type, const AST::SourceLocation &srcLoc) {
@@ -874,24 +918,24 @@ UnionType::UnionType(Context &context, llvm::SmallVector<Type *> types) : TypeSu
   sanity_check(requiredAlign <= uint64_t(context.get_align_of(this)));
 }
 
-Value UnionType::access(Emitter &emitter, Value value, llvm::StringRef fieldName, const AST::SourceLocation &srcLoc) {
-  if (fieldName == "#ptr")
+Value UnionType::access(Emitter &emitter, Value value, llvm::StringRef key, const AST::SourceLocation &srcLoc) {
+  if (key == "#ptr")
     return RValue(context.get_type<void *>(), emitter.builder.CreateStructGEP(llvmType, emitter.lvalue(value), 0));
-  if (fieldName == "#idx")
+  if (key == "#idx")
     return value.is_lvalue() ? LValue(context.get_int_type(), emitter.builder.CreateStructGEP(llvmType, value, 1))
                              : RValue(context.get_int_type(), emitter.builder.CreateExtractValue(value, {1U}));
   // Transparent access through unique optionals. This mimics the semantics of the dot operator on pointers.
   if (is_optional_unique()) {
     if (value.is_rvalue()) {
       auto lvalue{emitter.lvalue(value)};
-      auto result{emitter.rvalue(access(emitter, lvalue, fieldName, srcLoc))};
+      auto result{emitter.rvalue(access(emitter, lvalue, key, srcLoc))};
       emitter.emit_end_lifetime(lvalue);
       return result;
     }
     // The void type is guaranteed to be at the end, so we know the non-void type is 'types[0]'.
-    return emitter.access(LValue(types[0], emitter.builder.CreateStructGEP(llvmType, value, 0)), fieldName, srcLoc);
+    return emitter.access(LValue(types[0], emitter.builder.CreateStructGEP(llvmType, value, 0)), key, srcLoc);
   }
-  return Type::access(emitter, value, fieldName, srcLoc); // Error
+  return Type::access(emitter, value, key, srcLoc); // Error
 }
 
 Value UnionType::construct(Emitter &emitter, const ArgList &args, const AST::SourceLocation &srcLoc) {
@@ -944,6 +988,11 @@ Value UnionType::construct(Emitter &emitter, const ArgList &args, const AST::Sou
     }
   }
   return Type::construct(emitter, args, srcLoc); // Error
+}
+
+bool UnionType::recursive_match(Emitter &emitter, Type *type) {
+  return this == type || (type->is_union() && has_all_types(static_cast<UnionType *>(type))) ||
+         (!type->is_union() && has_type(type));
 }
 
 llvm::SmallVector<Type *> UnionType::canonicalize_types(llvm::ArrayRef<Type *> types) {

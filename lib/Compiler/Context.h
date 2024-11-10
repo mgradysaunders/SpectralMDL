@@ -14,8 +14,12 @@ public:
   Context(Context &&) = delete;
 
 public:
+  [[nodiscard]] void *bump_allocate(size_t size, size_t align)  {
+    return bumpAllocator.Allocate(size, align);
+  }
+
   template <typename T> [[nodiscard]] T *bump_allocate(auto &&...args) {
-    return new (bumpAllocator.Allocate(sizeof(T), alignof(T))) T(std::forward<decltype(args)>(args)...);
+    return new (bump_allocate(sizeof(T), alignof(T))) T(std::forward<decltype(args)>(args)...);
   }
 
   [[nodiscard]] llvm::StringRef get_persistent_string(const llvm::Twine &twine);
@@ -46,7 +50,7 @@ public:
   [[nodiscard]] llvm::StringRef bump_duplicate(llvm::StringRef str) {
     if (str.empty())
       return {};
-    auto ptr{static_cast<char *>(bumpAllocator.Allocate(str.size(), 1))};
+    auto ptr{static_cast<char *>(bump_allocate(str.size(), 1))};
     std::copy(str.begin(), str.end(), ptr);
     return llvm::StringRef(ptr, str.size());
   }
@@ -54,7 +58,7 @@ public:
   template <typename T> [[nodiscard]] llvm::ArrayRef<T> bump_duplicate(llvm::ArrayRef<T> values) {
     if (values.empty())
       return {};
-    auto ptr{static_cast<T *>(bumpAllocator.Allocate(sizeof(T) * values.size(), alignof(T)))};
+    auto ptr{static_cast<T *>(bump_allocate(sizeof(T) * values.size(), alignof(T)))};
     std::copy(values.begin(), values.end(), ptr);
     return {ptr, values.size()};
   }
@@ -79,8 +83,8 @@ public:
     return get_or_initialize_type<ArrayType>(arrayTypes, elemType, size);
   }
 
-  [[nodiscard]] ArrayType *get_array_type(Type *elemType, llvm::SmallString<16> sizeName) {
-    return get_or_initialize_type<ArrayType>(sizeDeferredArrayTypes, elemType, sizeName);
+  [[nodiscard]] ArrayType *get_array_type(Type *elemType, llvm::StringRef sizeName) {
+    return get_or_initialize_type<ArrayType>(sizeDeferredArrayTypes, elemType, llvm::SmallString<16>(sizeName));
   }
 
   [[nodiscard]] ColorType *get_color_type() { return colorType.get(); }

@@ -22,26 +22,30 @@ Function::Function(Emitter &emitter0, AST::Function &decl) : prev(find_prev_func
     emitter0.emit(*param.type);
   params = ParamList(emitter0.context, decl);
   validate_attributes();
-  if (has_unique_concrete_instance())
-    instances[params.get_types()] = FunctionInstance(emitter0, decl, params);
+  if (has_unique_concrete_instance()) {
+    auto argTypes{params.get_types()};
+    instances[argTypes] = FunctionInstance(emitter0, decl, params, argTypes);
+  }
 }
 
 //--{ Construct 'FunctionInstance' from 'AST::Function' and 'ParamList'
-FunctionInstance::FunctionInstance(Emitter &emitter0, AST::Function &decl, const ParamList &params)
+FunctionInstance::FunctionInstance(
+    Emitter &emitter0, AST::Function &decl, const ParamList &params, llvm::ArrayRef<Type *> argTypes)
     : name(decl.name->name), srcLoc(decl.srcLoc) {
   sanity_check(decl.params.size() == params.size());
+  sanity_check(decl.params.size() == argTypes.size());
   auto &context{emitter0.context};
-  type = context.get_function_type(decl.attrs.isPure, decl.returnType->type, params.get_types());
-  llvmFunction = type->create_default_llvm_function("");
+  type = context.get_function_type(decl.attrs.isPure, decl.returnType->type, argTypes);
+  llvmFunc = type->create_default_llvm_function("");
   if (decl.definition) {
-    llvm::SmallVector<Return> returns{};
-    llvm::SmallVector<Inline> inlines{};
-    Emitter emitter{context, decl.module, emitter0.crumb, &returns, &inlines, llvmFunction};
+    auto returns{llvm::SmallVector<Return>{}};
+    auto inlines{llvm::SmallVector<Inline>{}};
+    auto emitter{Emitter{context, decl.module, emitter0.crumb, &returns, &inlines, llvmFunc}};
     {
-      auto llvmArgItr{llvmFunction->arg_begin()};
+      auto llvmArgItr{llvmFunc->arg_begin()};
       emitter.state = type->isPure ? Value() : RValue(context.get_type<state_t *>(), &*llvmArgItr++);
-      for (auto &param : params)
-        emitter.declare(param, &*llvmArgItr++);
+      for (size_t i{}; i < params.size(); i++)
+        emitter.declare_function_parameter(params[i], RValue(argTypes[i], &*llvmArgItr++));
     }
     emitter.emit(*decl.definition);
     if (!emitter.has_terminator()) {
@@ -54,27 +58,27 @@ FunctionInstance::FunctionInstance(Emitter &emitter0, AST::Function &decl, const
       patch_return_type(returnType);
     force_inline(inlines);
   }
-  llvmFunction->setName(name);
+  llvmFunc->setName(name);
   if (decl.attrs.isAlwaysInline)
-    llvmFunction->addFnAttr(llvm::Attribute::AlwaysInline);
+    llvmFunc->addFnAttr(llvm::Attribute::AlwaysInline);
   if (decl.attrs.isNoInline)
-    llvmFunction->addFnAttr(llvm::Attribute::NoInline);
+    llvmFunc->addFnAttr(llvm::Attribute::NoInline);
   if (decl.attrs.isHot)
-    llvmFunction->addFnAttr(llvm::Attribute::Hot);
+    llvmFunc->addFnAttr(llvm::Attribute::Hot);
   if (decl.attrs.isCold)
-    llvmFunction->addFnAttr(llvm::Attribute::Cold);
+    llvmFunc->addFnAttr(llvm::Attribute::Cold);
   if (decl.attrs.isOptSize)
-    llvmFunction->addFnAttr(llvm::Attribute::OptimizeForSize);
+    llvmFunc->addFnAttr(llvm::Attribute::OptimizeForSize);
   if (decl.attrs.isOptNone)
-    llvmFunction->addFnAttr(llvm::Attribute::OptimizeNone);
+    llvmFunc->addFnAttr(llvm::Attribute::OptimizeNone);
   if (decl.attrs.isVisible)
-    llvmFunction->setLinkage(llvm::Function::ExternalLinkage);
+    llvmFunc->setLinkage(llvm::Function::ExternalLinkage);
   if (decl.attrs.isForeign) {
-    llvmFunction->setLinkage(llvm::Function::ExternalLinkage);
-    llvmFunction->setDSOLocal(false);
+    llvmFunc->setLinkage(llvm::Function::ExternalLinkage);
+    llvmFunc->setDSOLocal(false);
   }
   {
-    auto llvmArgItr{llvmFunction->arg_begin()};
+    auto llvmArgItr{llvmFunc->arg_begin()};
     if (!type->isPure) {
       llvmArgItr->setName("state");
       llvmArgItr->addAttr(llvm::Attribute::ReadOnly);
@@ -94,17 +98,17 @@ FunctionInstance::FunctionInstance(Emitter &emitter0, AST::Function &decl, const
 //--}
 
 //--{ Construct 'FunctionInstance' from 'AST::UnitTest'
-FunctionInstance::FunctionInstance(Emitter &emitter0, AST::UnitTest &decl) : name(decl.desc), srcLoc(decl.srcLoc) {
+FunctionInstance::FunctionInstance(Emitter &emitter0, AST::UnitTest &decl) : name(decl.name), srcLoc(decl.srcLoc) {
   auto &context{emitter0.context};
   type = context.get_function_type(/*isPure=*/false, context.get_void_type(), {});
-  llvmFunction = type->create_default_llvm_function(context.get_unique_name("unit-test"));
-  llvmFunction->setLinkage(llvm::Function::ExternalLinkage);
+  llvmFunc = type->create_default_llvm_function(context.get_unique_name("unit-test"));
+  llvmFunc->setLinkage(llvm::Function::ExternalLinkage);
   auto returns{llvm::SmallVector<Return>{}};
   auto inlines{llvm::SmallVector<Inline>{}};
-  auto emitter{Emitter{context, decl.module, emitter0.crumb, &returns, &inlines, llvmFunction}};
+  auto emitter{Emitter{context, decl.module, emitter0.crumb, &returns, &inlines, llvmFunc}};
   {
     // Initialize arguments.
-    auto llvmArgItr{llvmFunction->arg_begin()};
+    auto llvmArgItr{llvmFunc->arg_begin()};
     llvmArgItr->setName("state");
     llvmArgItr->addAttr(llvm::Attribute::ReadOnly);
     llvmArgItr->addAttr(llvm::Attribute::NoAlias);
@@ -123,10 +127,10 @@ FunctionInstance::FunctionInstance(Emitter &emitter0, AST::UnitTest &decl) : nam
 FunctionInstance::FunctionInstance(Emitter &emitter0, AST::Expr &expr) : name("(expr)"), srcLoc(expr.srcLoc) {
   auto &context{emitter0.context};
   type = context.get_function_type(/*isPure=*/true, context.get_auto_type(), {});
-  llvmFunction = type->create_default_llvm_function("");
+  llvmFunc = type->create_default_llvm_function("");
   auto returns{llvm::SmallVector<Return>{}};
   auto inlines{llvm::SmallVector<Inline>{}};
-  auto emitter{Emitter{context, emitter0.module, emitter0.crumb, &returns, &inlines, llvmFunction}};
+  auto emitter{Emitter{context, emitter0.module, emitter0.crumb, &returns, &inlines, llvmFunc}};
   auto returnValue{emitter.rvalue(emitter.emit(expr))};
   returns.push_back({returnValue, emitter.get_insert_block(), expr.srcLoc});
   emitter.emit_unwind_and_br(emitter.afterReturn);
@@ -142,13 +146,13 @@ FunctionInstance::FunctionInstance(Emitter &emitter0, AST::Expr &expr) : name("(
 FunctionInstance::FunctionInstance(Emitter &emitter0, EnumType *enumType) {
   auto &context{emitter0.context};
   type = context.get_function_type(/*isPure=*/true, context.get_string_type(), {enumType});
-  llvmFunction = type->create_default_llvm_function("enum-to-string");
+  llvmFunc = type->create_default_llvm_function("enum-to-string");
   auto returns{llvm::SmallVector<Return>{}};
   auto inlines{llvm::SmallVector<Inline>{}};
-  auto emitter{Emitter{context, emitter0.module, emitter0.crumb, &returns, &inlines, llvmFunction}};
+  auto emitter{Emitter{context, emitter0.module, emitter0.crumb, &returns, &inlines, llvmFunc}};
   {
     auto blockDefault{emitter.create_block("switch.default")};
-    auto inst{emitter.builder.CreateSwitch(llvmFunction->getArg(0), blockDefault)};
+    auto inst{emitter.builder.CreateSwitch(llvmFunc->getArg(0), blockDefault)};
     for (size_t i{}; i < enumType->constants.size(); i++) {
       auto blockCase{emitter.create_block(std::format("switch.case.{}", i))};
       inst->addCase(llvm::dyn_cast<llvm::ConstantInt>(enumType->constants[i].llvmConst), blockCase);
@@ -172,18 +176,18 @@ void FunctionInstance::patch_return_type(Type *returnType) {
   auto &context{type->context};
   sanity_check(returnType);
   sanity_check(!returnType->is_abstract());
-  auto llvmFuncPrev{llvmFunction};
+  auto llvmFuncPrev{llvmFunc};
   type = context.get_function_type(type->isPure, returnType, type->paramTypes);
-  llvmFunction = type->create_default_llvm_function("");
-  llvmFunction->splice(llvmFunction->begin(), llvmFuncPrev);
+  llvmFunc = type->create_default_llvm_function("");
+  llvmFunc->splice(llvmFunc->begin(), llvmFuncPrev);
   auto llvmArgItr0{llvmFuncPrev->arg_begin()};
-  auto llvmArgItr1{llvmFunction->arg_begin()};
-  while (llvmArgItr1 != llvmFunction->arg_end()) {
+  auto llvmArgItr1{llvmFunc->arg_begin()};
+  while (llvmArgItr1 != llvmFunc->arg_end()) {
     llvmArgItr0->replaceAllUsesWith(&*llvmArgItr1);
     ++llvmArgItr0;
     ++llvmArgItr1;
   }
-  llvmFuncPrev->replaceAllUsesWith(llvmFunction);
+  llvmFuncPrev->replaceAllUsesWith(llvmFunc);
   llvmFuncPrev->eraseFromParent();
 }
 
@@ -200,7 +204,7 @@ void FunctionInstance::force_inline(llvm::ArrayRef<Inline> inlines) {
 }
 
 Value FunctionInstance::call(Emitter &emitter, llvm::ArrayRef<Value> argValues, const AST::SourceLocation &srcLoc) {
-  sanity_check(llvmFunction);
+  sanity_check(llvmFunc);
   auto llvmArgs{llvm::SmallVector<llvm::Value *>{}};
   if (!type->isPure) {
     if (!emitter.state)
@@ -209,7 +213,7 @@ Value FunctionInstance::call(Emitter &emitter, llvm::ArrayRef<Value> argValues, 
   }
   llvmArgs.insert(llvmArgs.end(), argValues.begin(), argValues.end());
   return RValue(
-      type->returnType, emitter.builder.CreateCall(static_cast<llvm::FunctionType *>(type->llvmType), llvmFunction, llvmArgs));
+      type->returnType, emitter.builder.CreateCall(static_cast<llvm::FunctionType *>(type->llvmType), llvmFunc, llvmArgs));
 }
 
 Value Function::call(Emitter &emitter0, const ArgList &args, const AST::SourceLocation &srcLoc) {
@@ -257,16 +261,6 @@ Value Function::call(Emitter &emitter0, const ArgList &args, const AST::SourceLo
   if (!overload.is_pure() && !emitter0.state)
     srcLoc.report_error(std::format("call to function '{}' from '@(pure)' context", get_name()));
   auto argValues{context.resolve_arguments(emitter0, overload.params, args, srcLoc)};
-  auto argParams{[&]() -> ParamList {
-    sanity_check(overload.params.size() == argValues.size());
-    auto params{overload.params};
-    for (size_t i = 0; i < params.size(); i++) {
-      sanity_check(params[i].type->is_abstract() || params[i].type == argValues[i].type);
-      params[i].type = argValues[i].type;
-      params[i].init = nullptr;
-    }
-    return params;
-  }()};
 
   if (overload.is_macro()) {
     auto name{context.get_unique_name("macro", emitter0.get_llvm_function())};
@@ -285,7 +279,7 @@ Value Function::call(Emitter &emitter0, const ArgList &args, const AST::SourceLo
       emitter1.afterReturn = {decl.crumb, blockEnd};
       emitter1.move_to(blockBegin);
       for (size_t i = 0; i < argValues.size(); i++)
-        emitter1.declare(argParams[i], argValues[i].llvmValue);
+        emitter1.declare_function_parameter(overload.params[i], argValues[i]);
       emitter1.emit(overload.decl.definition);
       if (!emitter1.has_terminator()) {
         if (overload.decl.returnType->type != context.get_void_type())
@@ -296,9 +290,12 @@ Value Function::call(Emitter &emitter0, const ArgList &args, const AST::SourceLo
     emitter0.move_to(blockEnd);
     return emitter0.emit_return_phi(overload.decl.returnType->type, returns, overload.decl.returnType->srcLoc);
   } else {
-    auto &instance{overload.instances[argParams.get_types()]};
+    llvm::SmallVector<Type *> argTypes{};
+    for (auto argValue : argValues)
+      argTypes.push_back(argValue.type);
+    auto &instance{overload.instances[argTypes]};
     if (!instance)
-      instance = FunctionInstance(emitter0, overload.decl, argParams);
+      instance = FunctionInstance(emitter0, overload.decl, overload.params, argTypes);
     return instance.call(emitter0, argValues, srcLoc);
   }
 }
@@ -323,9 +320,9 @@ Value Function::compile_time_evaluate(Emitter &emitter, AST::Expr &expr) {
   llvm::Constant *result{};
   llvm::SmallVector<llvm::Constant *> args{};
   if (llvm::Evaluator eval{context.llvmLayout, &context.llvmTargetLibraryInfo};
-      eval.EvaluateFunction(instance.llvmFunction, result, args))
+      eval.EvaluateFunction(instance.llvmFunc, result, args))
     resultValue = RValue(instance.type->returnType, result);
-  instance.llvmFunction->eraseFromParent(); // And finally erase the temporary function.
+  instance.llvmFunc->eraseFromParent(); // And finally erase the temporary function.
   return resultValue;
 }
 

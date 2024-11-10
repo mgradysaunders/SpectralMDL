@@ -1,0 +1,242 @@
+#extended_syntax
+
+unit_test "Simple types and sizes" {
+  #assert(#typeof(null) == void);
+  #assert(#typeof(true) == bool);
+  #assert(#sizeof(int) == 4);
+  #assert(#sizeof(float) == 4);
+  #assert(#sizeof(double) == 8);
+  #assert(#typeof(2) == int);
+  #assert(#typeof(2.1) == float);
+  #assert(#typeof(2.2f) == float);
+  #assert(#typeof(2.3d) == double);
+  #assert(#typeof("Hello, world!") == string);
+  #assert(0xFF == 255); // Hex
+  #assert(0b1001'1101 == 157); // Binary
+}
+
+unit_test "Structs" {
+  struct Foo {
+    int bar = 3;
+    int baz = bar + 1;
+    int2 qux = int2(baz * bar + 3, 7 * baz);
+    int2 quux;
+  };
+  struct Bar {
+    int baz2 = 10;
+    int qux2 = 12;
+    inline Foo foo = Foo(quux: int2(-1, -2), bar: baz2 - 5);
+  };
+  // Test default initializers
+  auto bar = Bar(baz2: 11);
+  #assert(bar.baz2 == 11);
+  #assert(bar.qux2 == 12);
+  #assert(bar.bar == 6);
+  #assert(bar.baz == 7);
+  #assert(#all(bar.qux == int2(6 * 7 + 3, 7 * 7)));
+  #assert(#all(bar.quux == int2(-1, -2)));
+  // Test inline fields
+  #assert(&bar.bar == &bar.foo.bar);
+  #assert(&bar.baz == &bar.foo.baz);
+  #assert(&bar.qux == &bar.foo.qux);
+  #assert(&bar.quux == &bar.foo.quux);
+  // Test null constructor. This should fill everything with zero, ignoring default initializers
+  Foo null_foo = null;
+  #assert(null_foo.bar == 0);
+  #assert(null_foo.baz == 0);
+  #assert(#all(null_foo.qux == int2(0, 0)));
+  #assert(#all(null_foo.quux == int2(0, 0)));
+}
+
+unit_test "Enums" {
+  enum Animal { Dog = 1, Cat, Zebra = 5, Rhino };
+  // Test constant initializers
+  #assert(int(Dog) == 1);
+  #assert(int(Cat) == 2); // Add 1
+  #assert(int(Zebra) == 5);
+  #assert(int(Rhino) == 6); // Add 1
+  // Test conversion to int and string
+  auto zebra = Zebra;
+  #assert(#typeof(zebra) == Animal);
+  #assert(int(zebra) == 5);
+  #assert(string(zebra) == "Zebra");
+  // Test default constructor versus null constructor
+  #assert(int(Animal()) == int(Dog)); // ... first constant
+  #assert(int(Animal(null)) == 0);    // ... zero
+}
+
+unit_test "Pointers" {
+  // Test pointer referencing and dereferencing
+  auto i = 7;
+  auto p = &i;
+  #assert(#typeof(p) == &int);
+  #assert(*p == 7);
+  *p = 4;
+  #assert(*p == 4 && i == 4);
+  // Test pointer arithmetic
+  auto iarr = int[4](1, 2, 3, 4);
+  p = &iarr[2];
+  #assert(*p++ == 3);
+  #assert(*p == 4);
+  #assert(&iarr[3] - &iarr[1] == 2);
+  // Test null assignment. This should nullify the pointer, and the logical not operator
+  // should indicate that it is null
+  p = null;
+  #assert(!p); 
+}
+
+unit_test "Late if" {
+  int i = 0;
+  int j = 0;
+  while (i < 10) {
+    break if (++i == 7);
+  }
+  j = 4 if (i == 7);
+  j = 5 if (i == 6);
+  #assert(i == 7);
+  #assert(j == 4);
+}
+
+@(pure macro) auto approx_eq(auto lhs, auto rhs, auto eps = 0.0001) = #abs(lhs - rhs) < eps;
+
+unit_test "Let and return-from" {
+  float2 v = let {
+    float x = #cos(3.4); // ~= -0.966
+    float y = #sin(3.4); // ~= -0.255
+  } in return_from {
+    return float2(+x, +y) if (x > y); // Not true
+    x *= 2;
+    y *= 2;
+    return float2(-y, +x);
+  };
+  #assert(approx_eq(v.x, +0.5110822));
+  #assert(approx_eq(v.y, -1.9335964));
+}
+
+unit_test "Temporary values in expressions" {
+  #assert((s := 4) * s == 16);
+  #assert((s := 5) * (t := 3) + s == 5 * 3 + 5);
+  // Shadowing
+  const auto s = 8;
+  const auto t = 17;
+  #assert(t + (t := s) * t == 17 + s * s); 
+  #assert(t + (t := s) * t != t + s * s); 
+  #assert(t == 17); // Lifetime limited to expression
+}
+
+@(pure) auto make_implicit_union(int i) = i == 0 ? 7.5d : (i == 1 ? "Hello, world!" : int2(1, 3));
+
+unit_test "Unions" {
+  #assert((int | int) == int);
+  #assert((int | string) == (string | int | string));
+  typedef (int | string) Union1;
+  visit v in Union1(7) { 
+    #assert(#typeof(v) == int && v == 7); // Compile-time short circuit!
+  }
+  visit v in Union1("Hello, world!") {
+    #assert(#typeof(v) == string);
+  }
+  struct Foo {
+    int bar = 8;
+    int baz = 6;
+  };
+  typedef (Union1 | Foo) Union2;
+  auto u1 = Union1("Hello, world!");
+  auto u2 = Union2(u1);
+  u1 = 7;
+  visit u in u1 { #assert(#typeof(u) == int); }
+  visit u in u2 { #assert(#typeof(u) == string); }
+  // Narrowing conversion, this could '#panic'! Uncomment the next line to see
+  // u2 = Foo(); 
+  u1 = Union1(u2); 
+  visit u in u1 { #assert(#typeof(u) == string); }
+  visit u in make_implicit_union(0) { #assert(#typeof(u) == double && u == 7.5d); }
+  visit u in make_implicit_union(1) { #assert(#typeof(u) == string && u == "Hello, world!"); }
+  visit u in make_implicit_union(2) { #assert(#typeof(u) == int2 && #all(u == int2(1, 3))); }
+}
+
+unit_test "Unions as optionals" {
+  #assert(?(int) == (int | void));
+  #assert(?(int | string) == (int | string | void));
+
+  ?int i = null;
+  #assert(bool(i) == false);
+  #assert(bool(i = 4) == true && *i == 4);
+
+  struct Foo {
+    string bar = "Hello, world!";
+  };
+  ?Foo foo = Foo();
+  #assert(bool(foo) && foo.bar == "Hello, world!");
+}
+
+unit_test "Tags" {
+  tag Shape;
+  // Ball is the default Shape (there can only be 1 default!)
+  struct Ball: default Shape { 
+    float radius = 1;
+  };
+  // Rect is also a Shape
+  struct Rect: Shape { 
+    float2 extent = float2(2, 1);
+  };
+  // Test relations
+  #assert(Shape <: auto);
+  #assert(Ball <: Shape);
+  #assert(Rect <: Shape);
+  // Test that the default Shape is a Ball
+  auto shape = Shape();
+  #assert(#typeof(shape) == Ball);
+}
+
+@(pure) int get_array_size(auto[<N>] arr) = N;
+
+@(pure) int get_array_size_through_pointer(&auto[<N>] arr) = N;
+
+struct DeferredSizeArray {
+  auto[<N>] arr;
+};
+
+@(pure) int get_array_size_through_inline(inline DeferredSizeArray _) = N;
+
+unit_test "Deferred Sizes" {
+  #assert(int[] <: auto[]);
+  #assert(int[4] <: int[]);
+  {
+    // Init args
+    auto[<N>] arr(3, 5, 7, 9);
+    #assert(arr.size == N && N == 4 && #is_comptime(N));
+  }
+  {
+    // Init expression
+    auto[<N>] arr = int[5](1, 3, 5, 7, 9);
+    #assert(arr.size == N && N == 5 && #is_comptime(N));
+  }
+  {
+    // Use deferred size in struct
+    struct Foo {
+      int[<N>] bar;
+      int baz = 2 * N;
+    };
+    Foo foo(int[](2, 3));
+    #assert(foo.bar.size == 2);
+    #assert(foo.baz == 4);
+  }
+  {
+    // Use deferred size in function parameters
+    int[7] arr1 = null;
+    #assert(get_array_size(arr1) == 7);
+    #assert(get_array_size_through_pointer(&arr1) == 7);
+    #assert(get_array_size_through_inline(DeferredSizeArray(arr1)) == 7);
+  }
+  {
+    // Multi-dimensional
+    int[<M>][<N>] arr(
+      int[](1, 2), 
+      int[](2, 3), 
+      int[](3, 4));
+    #assert(M == 3);
+    #assert(N == 2);
+  }
+
+}

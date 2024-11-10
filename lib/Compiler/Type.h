@@ -118,11 +118,13 @@ public:
       Emitter &emitter, Value value, Value elem, unsigned i, const AST::SourceLocation &srcLoc = {});
 
   [[nodiscard]] virtual Value access(
-      Emitter &emitter, Value value, llvm::StringRef fieldName, const AST::SourceLocation &srcLoc = {});
+      Emitter &emitter, Value value, llvm::StringRef key, const AST::SourceLocation &srcLoc = {});
 
   [[nodiscard]] virtual Value access(Emitter &emitter, Value value, Value i, const AST::SourceLocation &srcLoc = {});
 
   [[nodiscard]] virtual Value construct(Emitter &emitter, const ArgList &args, const AST::SourceLocation &srcLoc = {});
+
+  [[nodiscard]] virtual bool recursive_match(Emitter &emitter, Type *type) { return this == type; }
 
   [[nodiscard]] virtual bool is_zero_by_default() { return true; }
 
@@ -251,16 +253,19 @@ public:
 
   ArrayType(Context &context, Type *elemType, const llvm::Twine &sizeName);
 
-  Value insert(Emitter &emitter, Value value, Value elem, unsigned i, const AST::SourceLocation &srcLoc = {}) final;
+  [[nodiscard]] Value insert(Emitter &emitter, Value value, Value elem, unsigned i, const AST::SourceLocation &srcLoc) final;
 
-  Value access(Emitter &emitter, Value value, llvm::StringRef fieldName, const AST::SourceLocation &srcLoc = {}) final;
+  [[nodiscard]] Value access(Emitter &emitter, Value value, llvm::StringRef key, const AST::SourceLocation &srcLoc) final;
 
-  Value access(Emitter &emitter, Value value, Value i, const AST::SourceLocation &srcLoc = {}) final;
+  [[nodiscard]] Value access(Emitter &emitter, Value value, Value i, const AST::SourceLocation &srcLoc) final;
 
-  Value construct(Emitter &emitter, const ArgList &args, const AST::SourceLocation &srcLoc = {}) final;
+  [[nodiscard]] Value construct(Emitter &emitter, const ArgList &args, const AST::SourceLocation &srcLoc) final;
 
-  bool is_zero_by_default() final { return elemType->is_zero_by_default(); }
+  [[nodiscard]] bool recursive_match(Emitter &emitter, Type *type) final;
 
+  [[nodiscard]] bool is_zero_by_default() final { return elemType->is_zero_by_default(); }
+
+public:
   Type *elemType{};
 
   uint32_t size{};
@@ -274,13 +279,13 @@ class ArithmeticType final : public TypeSubclass<TypeKind::Arithmetic> {
 public:
   ArithmeticType(Context &context, Scalar scalar, Extent extent);
 
-  Value insert(Emitter &emitter, Value value, Value elem, unsigned i, const AST::SourceLocation &srcLoc = {}) final;
+  [[nodiscard]] Value insert(Emitter &emitter, Value value, Value elem, unsigned i, const AST::SourceLocation &srcLoc) final;
 
-  Value access(Emitter &emitter, Value value, llvm::StringRef fieldName, const AST::SourceLocation &srcLoc = {}) final;
+  [[nodiscard]] Value access(Emitter &emitter, Value value, llvm::StringRef key, const AST::SourceLocation &srcLoc) final;
 
-  Value access(Emitter &emitter, Value value, Value i, const AST::SourceLocation &srcLoc = {}) final;
+  [[nodiscard]] Value access(Emitter &emitter, Value value, Value i, const AST::SourceLocation &srcLoc) final;
 
-  Value construct(Emitter &emitter, const ArgList &args, const AST::SourceLocation &srcLoc = {}) final;
+  [[nodiscard]] Value construct(Emitter &emitter, const ArgList &args, const AST::SourceLocation &srcLoc) final;
 };
 //--}
 
@@ -289,7 +294,9 @@ class AutoType final : public TypeSubclass<TypeKind::Auto> {
 public:
   AutoType(Context &context) : TypeSubclass(context) { init_name("auto"); }
 
-  Value construct(Emitter &emitter, const ArgList &args, const AST::SourceLocation &srcLoc = {}) final;
+  [[nodiscard]] Value construct(Emitter &emitter, const ArgList &args, const AST::SourceLocation &srcLoc) final;
+
+  [[nodiscard]] bool recursive_match(Emitter &emitter, Type *type) final { return true; }
 };
 //--}
 
@@ -298,11 +305,11 @@ class ColorType final : public TypeSubclass<TypeKind::Color> {
 public:
   ColorType(Context &context);
 
-  Value access(Emitter &emitter, Value value, llvm::StringRef fieldName, const AST::SourceLocation &srcLoc = {}) final;
+  [[nodiscard]] Value access(Emitter &emitter, Value value, llvm::StringRef key, const AST::SourceLocation &srcLoc = {}) final;
 
-  Value access(Emitter &emitter, Value value, Value i, const AST::SourceLocation &srcLoc = {}) final;
+  [[nodiscard]] Value access(Emitter &emitter, Value value, Value i, const AST::SourceLocation &srcLoc = {}) final;
 
-  Value construct(Emitter &emitter, const ArgList &args, const AST::SourceLocation &srcLoc = {}) final;
+  [[nodiscard]] Value construct(Emitter &emitter, const ArgList &args, const AST::SourceLocation &srcLoc = {}) final;
 };
 //--}
 
@@ -330,10 +337,11 @@ public:
 
   EnumType(Context &context, builtin_enum_type_t<intensity_mode_t>);
 
-  EnumType(Context &context, AST::Enum *decl, llvm::Function *llvmFunc = nullptr);
+  EnumType(Context &context, AST::Enum *decl, llvm::Function *llvmFunc = {});
 
-  Value construct(Emitter &emitter, const ArgList &args, const AST::SourceLocation &srcLoc = {}) final;
+  [[nodiscard]] Value construct(Emitter &emitter, const ArgList &args, const AST::SourceLocation &srcLoc) final;
 
+public:
   AST::Enum *const decl{};
 
   llvm::Function *const llvmFunc{};
@@ -370,11 +378,13 @@ class PointerType final : public TypeSubclass<TypeKind::Pointer> {
 public:
   PointerType(Context &context, Type *elemTy);
 
-  Value access(Emitter &emitter, Value value, llvm::StringRef fieldName, const AST::SourceLocation &srcLoc = {}) final;
+  [[nodiscard]] Value access(Emitter &emitter, Value value, llvm::StringRef key, const AST::SourceLocation &srcLoc) final;
 
-  Value access(Emitter &emitter, Value value, Value i, const AST::SourceLocation &srcLoc = {}) final;
+  [[nodiscard]] Value access(Emitter &emitter, Value value, Value i, const AST::SourceLocation &srcLoc) final;
 
-  Value construct(Emitter &emitter, const ArgList &args, const AST::SourceLocation &srcLoc = {}) final;
+  [[nodiscard]] Value construct(Emitter &emitter, const ArgList &args, const AST::SourceLocation &srcLoc) final;
+
+  [[nodiscard]] bool recursive_match(Emitter &emitter, Type *type) final;
 
   Type *elemType{};
 };
@@ -389,7 +399,7 @@ template <typename T> constexpr auto builtin_struct_type = builtin_struct_type_t
 
 class StructType final : public TypeSubclass<TypeKind::Struct> {
 public:
-  StructType(Context &context, AST::Struct *decl, llvm::Function *llvmFunc = nullptr);
+  StructType(Context &context, AST::Struct *decl, llvm::Function *llvmFunc = {});
 
   StructType(Context &context, builtin_struct_type_t<image_t>);
 
@@ -409,16 +419,18 @@ public:
 
   StructType(Context &context, StructType *parentTemplate, llvm::ArrayRef<Type *> missingTypes);
 
+  [[nodiscard]] bool is_builtin_struct() const { return !decl; }
+
+  [[nodiscard]] bool has_tag(TagType *tag) const { return std::find(tags.begin(), tags.end(), tag) != tags.end(); }
+
 public:
-  Value insert(Emitter &emitter, Value value, Value elem, unsigned i, const AST::SourceLocation &srcLoc = {}) final;
+  [[nodiscard]] Value insert(Emitter &emitter, Value value, Value elem, unsigned i, const AST::SourceLocation &srcLoc) final;
 
-  Value access(Emitter &emitter, Value value, llvm::StringRef fieldName, const AST::SourceLocation &srcLoc = {}) final;
+  [[nodiscard]] Value access(Emitter &emitter, Value value, llvm::StringRef key, const AST::SourceLocation &srcLoc) final;
 
-  Value construct(Emitter &emitter, const ArgList &args, const AST::SourceLocation &srcLoc = {}) final;
+  [[nodiscard]] Value construct(Emitter &emitter, const ArgList &args, const AST::SourceLocation &srcLoc) final;
 
-  bool has_tag(TagType *tag) const { return std::find(tags.begin(), tags.end(), tag) != tags.end(); }
-
-  bool is_builtin_struct() const { return !decl; }
+  [[nodiscard]] bool recursive_match(Emitter &emitter, Type *type) final;
 
 public:
   /// The parent template, if applicable.
@@ -451,8 +463,11 @@ public:
     init_name(*decl->name);
   }
 
-  Value construct(Emitter &emitter, const ArgList &args, const AST::SourceLocation &srcLoc = {}) final;
+  [[nodiscard]] Value construct(Emitter &emitter, const ArgList &args, const AST::SourceLocation &srcLoc) final;
 
+  [[nodiscard]] bool recursive_match(Emitter &emitter, Type *type) final;
+
+public:
   /// The AST tag declaration, if applicable.
   AST::Tag *const decl{};
 
@@ -487,9 +502,11 @@ public:
     return -1;
   }
 
-  Value access(Emitter &emitter, Value value, llvm::StringRef fieldName, const AST::SourceLocation &srcLoc = {}) final;
+  [[nodiscard]] Value access(Emitter &emitter, Value value, llvm::StringRef key, const AST::SourceLocation &srcLoc) final;
 
-  Value construct(Emitter &emitter, const ArgList &args, const AST::SourceLocation &srcLoc = {}) final;
+  [[nodiscard]] Value construct(Emitter &emitter, const ArgList &args, const AST::SourceLocation &srcLoc) final;
+
+  [[nodiscard]] bool recursive_match(Emitter &emitter, Type *type);
 
 public:
   llvm::SmallVector<Type *> types{};

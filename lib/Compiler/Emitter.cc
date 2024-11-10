@@ -21,7 +21,7 @@ Value Emitter::lvalue(Value value) {
   if (value.is_rvalue()) {
     auto lv{emit_alloca({}, value.type)};
     builder.CreateStore(value, lv);
-    push_crumb({}, lv, {}, {});
+    push(lv, {}, {}, {});
     return lv;
   }
   return value;
@@ -71,46 +71,43 @@ void Emitter::emit_panic(Value message, const AST::SourceLocation &srcLoc) {
 //--}
 
 //--{ Fundamental operations
+void Emitter::declare_function_parameter(const Param &param, Value value) {
+  value = construct(param.type, value, param.srcLoc);
+  if (!param.isConst) {
+    value = lvalue(value);
+    value.llvmValue->setName(llvm_twine("lv.", param.name));
+  }
+  // We assume 'param' is a reference to a persistent 'Function' parameter, so we can directly
+  // construct an 'llvm::ArrayRef' without needing to 'context.bump_duplicate()'
+  push(value, param.name, {}, param.srcLoc);
+  if (param.isInline)
+    declare_function_parameter_inline(crumb->value);
+}
+
+void Emitter::declare_function_parameter_inline(Value value) {
+  if (auto structType{value.type->get_inline_struct_type()}) {
+    for (auto &field : structType->fields) {
+      push(access(value, field.name, field.srcLoc), field.name, {}, field.srcLoc);
+      crumb->value.llvmValue->setName(llvm_twine("inl.", field.name));
+      if (field.isInline)
+        declare_function_parameter_inline(crumb->value);
+    }
+  }
+}
+
 void Emitter::declare_import(bool isAbs, llvm::ArrayRef<llvm::StringRef> path, AST::Decl &decl) {
   if (path.size() < 2)
     decl.srcLoc.report_error("invalid import path (missing '::*'?)");
   auto importedModule{context.resolve_module(*this, isAbs, path.drop_back(1), decl.srcLoc)};
   if (path.back() == "*") { // Import all?
-    push_crumb(context.bump_duplicate(path.drop_back(1)), context.get_compile_time_module(importedModule), &decl, decl.srcLoc);
+    push(context.get_compile_time_module(importedModule), context.bump_duplicate(path.drop_back(1)), &decl, decl.srcLoc);
   } else {
     auto importedCrumb{Crumb::find(importedModule->lastCrumb, path.back(), get_llvm_function(), 1)};
     if (!importedCrumb)
       decl.srcLoc.report_error(std::format("can't resolve import path '{}'", format_join(path, "::")));
     path = path.drop_while([](llvm::StringRef part) { return part == "." || part == ".."; });
     sanity_check(!path.empty());
-    push_crumb(context.bump_duplicate(path), importedCrumb->value, &decl, decl.srcLoc);
-  }
-}
-
-void Emitter::declare(const AST::Name &name, Value value, AST::Decl *decl) {
-  push_crumb(llvm::ArrayRef(name.name), value, decl, name.srcLoc);
-}
-
-void Emitter::declare(const Param &param, llvm::Value *llvmValue) {
-  auto paramName{context.bump_duplicate(llvm::ArrayRef(param.name))};
-  if (param.isConst) {
-    push_crumb(paramName, RValue(param.type, llvmValue), nullptr, param.srcLoc);
-  } else {
-    push_crumb(paramName, emit_alloca(llvm_twine("lv.", param.name), param.type), {}, param.srcLoc);
-    builder.CreateStore(llvmValue, crumb->value);
-  }
-  if (param.isInline)
-    declare_inline(crumb->value);
-}
-
-void Emitter::declare_inline(Value value) {
-  if (auto structType{value.type->get_inline_struct_type()}) {
-    for (auto &field : structType->fields) {
-      push_crumb(llvm::ArrayRef(field.name), access(value, field.name, field.srcLoc), {}, field.srcLoc);
-      crumb->value.llvmValue->setName(llvm_twine("inl.", field.name));
-      if (field.isInline)
-        declare_inline(crumb->value);
-    }
+    push(importedCrumb->value, context.bump_duplicate(path), &decl, decl.srcLoc);
   }
 }
 //--}
@@ -137,24 +134,24 @@ Value Emitter::emit(AST::Decl &decl) {
 
 Value Emitter::emit(AST::Enum &decl) {
   context.validate_decl_name("enum", *decl.name);
-  for (auto lastValue{Value()}; auto &constant : decl.constants) {
-    context.validate_decl_name("enum constant", *constant.name);
+  for (auto lastValue{Value()}; auto &declVal : decl.constants) {
+    context.validate_decl_name("enum constant", *declVal.name);
     auto value{
-        constant.init ? emit(constant.init)
-        : lastValue   ? emit_op(AST::BinaryOp::Add, lastValue, context.get_compile_time_int(1))
-                      : Value::zero(context.get_int_type())};
+        declVal.init ? emit(declVal.init)
+        : lastValue  ? emit_op(AST::BinaryOp::Add, lastValue, context.get_compile_time_int(1))
+                     : Value::zero(context.get_int_type())};
     if (!value.is_compile_time_int())
-      constant.name->srcLoc.report_error(
-          std::format("expected '{}' initializer to resolve to compile-time int", constant.name->name));
-    constant.llvmConst = static_cast<llvm::ConstantInt *>(value);
+      declVal.name->srcLoc.report_error(
+          std::format("expected '{}' initializer to resolve to compile-time int", declVal.name->name));
+    declVal.llvmConst = static_cast<llvm::ConstantInt *>(value);
     lastValue = value;
   }
   auto type{context.get_enum_type(&decl, get_llvm_function())};
   decl.module = module;
   decl.crumb = crumb;
   declare(*decl.name, context.get_compile_time_type(type));
-  for (auto &constant : decl.constants)
-    declare(*constant.name, RValue(type, constant.llvmConst));
+  for (auto &declVal : decl.constants)
+    declare(*declVal.name, RValue(type, declVal.llvmConst), &decl);
   return {};
 }
 
@@ -170,7 +167,7 @@ Value Emitter::emit(AST::Import &decl) {
     decl.srcLoc.report_error("can't re-export qualified 'import'");
   decl.module = module;
   decl.crumb = crumb;
-  for (auto &path : decl.importPaths)
+  for (auto &path : decl.paths)
     declare_import(path->isAbsolute, path->get_string_refs(), decl);
   return {};
 }
@@ -207,7 +204,7 @@ Value Emitter::emit(AST::UnitTest &decl) {
   if (context.mdl.enableUnitTests) {
     auto func{FunctionInstance{*this, decl}};
     context.mdl.unitTests.push_back(
-        MDLInstance::UnitTest{.llvmName = func.llvmFunction->getName().str(), .name = decl.desc.str().str()});
+        MDLInstance::UnitTest{.llvmName = func.llvmFunc->getName().str(), .name = decl.name.str().str()});
   }
   return {};
 }
@@ -219,14 +216,14 @@ Value Emitter::emit(AST::UsingAlias &decl) {
 }
 
 Value Emitter::emit(AST::UsingImport &decl) {
-  auto path{decl.importPath->get_string_refs()};
+  auto path{decl.path->get_string_refs()};
   if (decl.is_import_all()) {
     path.push_back("*");
-    declare_import(decl.importPath->isAbsolute, path, decl);
+    declare_import(decl.path->isAbsolute, path, decl);
   } else {
-    for (auto &name : decl.importNames) {
+    for (auto &name : decl.names) {
       path.push_back(name->name);
-      declare_import(decl.importPath->isAbsolute, path, decl);
+      declare_import(decl.path->isAbsolute, path, decl);
       path.pop_back();
     }
   }
@@ -245,36 +242,38 @@ Value Emitter::emit(AST::Variable &decl) {
     decl.srcLoc.report_error("variable must not be declared 'inline'");
   decl.module = module;
   decl.crumb = crumb;
-  for (auto &declarator : decl.values) {
-    auto &declaratorName{*declarator.name};
-    context.validate_decl_name("variable", declaratorName);
+  for (auto &declVal : decl.values) {
+    auto &declValName{*declVal.name};
+    context.validate_decl_name("variable", declValName);
     Value value{};
-    if (declarator.init) {
-      value = construct(type, emit(declarator.init), declaratorName.srcLoc);
-    } else if (declarator.args) {
-      value = construct(type, emit(declarator.args), declaratorName.srcLoc);
+    if (declVal.init) {
+      emit_scope([&](auto &emitter) { value = emitter.emit(declVal.init); });
+      value = construct(type, value, declValName.srcLoc);
+    } else if (declVal.args) {
+      value = construct(type, emit(declVal.args), declValName.srcLoc);
     } else {
       if (type->is_abstract())
-        declaratorName.srcLoc.report_error(
-            std::format("variable '{}' declare with type '{}' requires initializer", declaratorName.name, type->name));
+        declValName.srcLoc.report_error(
+            std::format("variable '{}' declare with type '{}' requires initializer", declValName.name, type->name));
       value = Value::zero(type);
     }
     if (isStatic) {
       if (!value.is_compile_time())
-        declaratorName.srcLoc.report_error(
-            std::format("variable '{}' declared 'static' requires compile-time initializer", declaratorName.name));
+        declValName.srcLoc.report_error(
+            std::format("variable '{}' declared 'static' requires compile-time initializer", declValName.name));
       auto llvmGlobal{new llvm::GlobalVariable(
           context.llvmModule, value.type->llvmType, /*isConst=*/true,
           decl.isExport ? llvm::GlobalValue::ExternalLinkage : llvm::GlobalValue::PrivateLinkage,
           static_cast<llvm::Constant *>(value.llvmValue))};
       llvmGlobal->setUnnamedAddr(llvm::GlobalValue::UnnamedAddr::Global);
+      llvmGlobal->setName(llvm_twine("gv.", declValName.name));
       value = LValue(value.type, llvmGlobal);
     } else if (!isConst) {
-      auto valueAlloca{emit_alloca(declaratorName.name, value.type)};
+      auto valueAlloca{emit_alloca(declValName.name, value.type)};
       builder.CreateStore(value, valueAlloca);
       value = LValue(value.type, valueAlloca);
     }
-    declare(declaratorName, value, &decl);
+    declare(declValName, value, &decl);
   }
   return {};
 }
@@ -302,12 +301,12 @@ Value Emitter::emit(AST::Binary &expr) {
   // Short circuit logical and/or.
   if (expr.op == AST::BinaryOp::LogicalAnd || expr.op == AST::BinaryOp::LogicalOr) {
     auto boolType{context.get_bool_type()};
-    auto valueLhs{construct(boolType, emit(expr.lhs))};
+    auto valueLhs{construct(boolType, emit(expr.lhs), expr.srcLoc)};
     if (valueLhs.is_compile_time_int()) {
       auto valueLhsNow{valueLhs.get_compile_time_int()};
       if ((valueLhsNow != 0 && expr.op == AST::BinaryOp::LogicalAnd) || //
           (valueLhsNow == 0 && expr.op == AST::BinaryOp::LogicalOr))
-        return construct(boolType, emit(expr.rhs));
+        return construct(boolType, emit(expr.rhs), expr.srcLoc);
       return valueLhs;
     }
     auto name{context.get_unique_name(expr.op == AST::BinaryOp::LogicalAnd ? "and" : "or", get_llvm_function())};
@@ -319,7 +318,7 @@ Value Emitter::emit(AST::Binary &expr) {
         expr.op == AST::BinaryOp::LogicalOr ? blockEnd : blockRhs, //
         expr.op == AST::BinaryOp::LogicalOr ? blockRhs : blockEnd);
     move_to(blockRhs);
-    auto valueRhs{construct(boolType, emit(expr.rhs))};
+    auto valueRhs{construct(boolType, emit(expr.rhs), expr.srcLoc)};
     emit_br_and_move_to(blockEnd);
     return emit_phi(
         boolType, {{context.get_compile_time_bool(expr.op == AST::BinaryOp::LogicalOr), blockLhs}, {valueRhs, blockRhs}});
@@ -373,7 +372,7 @@ Value Emitter::emit(AST::GetIndex &expr) {
     for (auto itr{expr.indices.rbegin()}; itr != expr.indices.rend(); ++itr) {
       auto &index{*itr};
       if (!index) {
-        type = context.get_array_type(type, 0); // Empty
+        type = context.get_array_type(type, ""); // Empty
       } else if (auto sizeName{llvm::dyn_cast<AST::SizeName>(index.get())}) {
         type = context.get_array_type(type, sizeName->name->name);
       } else {
@@ -401,7 +400,7 @@ Value Emitter::emit(AST::Let &expr) {
   llvm::BasicBlock *block{};
   Value value{};
   emit_br(blockBegin);
-  emit_scope(blockBegin, blockEnd, [&](Emitter &emitter) {
+  emit_scope(blockBegin, blockEnd, [&](auto &emitter) {
     for (auto &var : expr.vars)
       emitter.emit(var);
     value = emitter.rvalue(emitter.emit(expr.expr));
@@ -420,7 +419,7 @@ Value Emitter::emit(AST::ReturnFrom &expr) {
   auto blockEnd{create_block(llvm_twine(name, ".end"))};
   auto localReturns{llvm::SmallVector<Return>{}};
   emit_br(blockBegin);
-  emit_scope(blockBegin, blockEnd, [&](Emitter &emitter) {
+  emit_scope(blockBegin, blockEnd, [&](auto &emitter) {
     emitter.afterBreak = {};
     emitter.afterContinue = {};
     emitter.afterEndScope = {};
@@ -460,7 +459,7 @@ Value Emitter::emit(AST::Compound &stmt) {
   auto blockBegin{create_block(llvm_twine(name, ".begin"))};
   auto blockEnd{create_block(llvm_twine(name, ".end"))};
   emit_br(blockBegin);
-  emit_scope(blockBegin, blockEnd, [&](Emitter &emitter) {
+  emit_scope(blockBegin, blockEnd, [&](auto &emitter) {
     for (auto &subStmt : stmt.stmts)
       if (emitter.emit(subStmt); emitter.has_terminator())
         break;
@@ -476,7 +475,7 @@ Value Emitter::emit(AST::DoWhile &stmt) {
   auto blockCond{create_block(llvm_twine(name, ".cond"))};
   auto blockEnd{create_block(llvm_twine(name, ".end"))};
   emit_br(blockBody);
-  emit_scope(blockBody, blockCond, [&](Emitter &emitter) {
+  emit_scope(blockBody, blockCond, [&](auto &emitter) {
     emitter.afterBreak = {crumb, blockEnd};
     emitter.afterContinue = {crumb, blockCond};
     emitter.emit(stmt.body);
@@ -497,13 +496,13 @@ Value Emitter::emit(AST::For &stmt) {
   auto blockIncr{create_block(llvm_twine(name, ".incr"))};
   auto blockEnd{create_block(llvm_twine(name, ".end"))};
   emit_br_and_move_to(blockBegin);
-  emit_scope([&](Emitter &emitter1) {
+  emit_scope([&](auto &emitter1) {
     emitter1.emit(stmt.init);
     auto crumb1{emitter1.crumb};
     llvm_move_block_to_end(blockCond);
     emitter1.emit_br_and_move_to(blockCond);
     emitter1.emit_br(emitter1.emit_cond(*stmt.cond), blockBody, blockEnd);
-    emitter1.emit_scope(blockCond, blockIncr, [&](Emitter &emitter2) {
+    emitter1.emit_scope(blockCond, blockIncr, [&](auto &emitter2) {
       emitter2.afterBreak = {crumb1, blockEnd};
       emitter2.afterContinue = {crumb1, blockIncr};
       llvm_move_block_to_end(blockBody);
@@ -531,7 +530,7 @@ Value Emitter::emit(AST::If &stmt) {
     auto blockThen{create_block(llvm_twine(name, pass ? ".pass" : ".fail"))};
     auto blockEnd{create_block(llvm_twine(name, ".end"))};
     emit_br(blockThen);
-    emit_scope(blockThen, blockEnd, [&](Emitter &emitter) { emitter.emit(pass ? *stmt.ifPass : *stmt.ifFail); });
+    emit_scope(blockThen, blockEnd, [&](auto &emitter) { emitter.emit(pass ? *stmt.ifPass : *stmt.ifFail); });
     llvm_move_block_to_end(blockEnd);
     move_to_or_erase(blockEnd);
   } else {
@@ -541,10 +540,10 @@ Value Emitter::emit(AST::If &stmt) {
     auto blockEnd{create_block(llvm_twine(name, ".end"))};
     emit_br(cond, blockPass ? blockPass : blockEnd, blockFail ? blockFail : blockEnd);
     if (blockPass)
-      emit_scope(blockPass, blockEnd, [&](Emitter &emitter) { emitter.emit(stmt.ifPass); });
+      emit_scope(blockPass, blockEnd, [&](auto &emitter) { emitter.emit(stmt.ifPass); });
     if (blockFail) {
       llvm_move_block_to_end(blockFail);
-      emit_scope(blockFail, blockEnd, [&](Emitter &emitter) { emitter.emit(stmt.ifFail); });
+      emit_scope(blockFail, blockEnd, [&](auto &emitter) { emitter.emit(stmt.ifFail); });
     }
     llvm_move_block_to_end(blockEnd);
     move_to_or_erase(blockEnd);
@@ -558,11 +557,11 @@ Value Emitter::emit(AST::Preserve &stmt) {
     auto value{emit(expr)};
     if (!value.is_lvalue())
       stmt.srcLoc.report_error("can't apply 'preserve' to constant or temporary");
-    push_crumb({}, emit_alloca("local.preserve", value.type), {}, stmt.srcLoc);
+    push(emit_alloca("local.preserve", value.type), {}, {}, stmt.srcLoc);
     stmt.backups.emplace_back(crumb, value);
     builder.CreateStore(rvalue(value), crumb->value);
   }
-  push_crumb({}, {}, &stmt, stmt.srcLoc);
+  push({}, {}, &stmt, stmt.srcLoc);
   return {};
 }
 
@@ -595,7 +594,7 @@ Value Emitter::emit(AST::Switch &stmt) {
   emit_br_and_move_to(blockBegin);
   auto what{construct(context.get_int_type(), emit(stmt.what), stmt.srcLoc)};
   auto inst{builder.CreateSwitch(what, blockDefault)};
-  emit_scope(blockBegin, blockEnd, [&](Emitter &emitter) {
+  emit_scope(blockBegin, blockEnd, [&](auto &emitter) {
     emitter.afterBreak = {crumb, blockEnd};
     for (size_t i{}; auto &[astCase, cond, block] : cases) {
       emitter.move_to(block);
@@ -623,18 +622,18 @@ Value Emitter::emit(AST::Visit &stmt) {
   emit_br_and_move_to(blockBegin);
   auto what{emit(*stmt.what)};
   if (!what.type->is_union()) {
-    emit_scope(blockBegin, blockEnd, [&](Emitter &emitter) {
+    emit_scope(blockBegin, blockEnd, [&](auto &emitter) {
       emitter.declare(*stmt.name, emitter.lvalue(what));
       emitter.emit(*stmt.body);
     });
   } else {
     auto unionType{static_cast<UnionType *>(what.type)};
-    auto idx{rvalue(unionType->access(*this, what, "#idx"))};
-    auto ptr{rvalue(unionType->access(*this, what, "#ptr"))};
+    auto idx{rvalue(unionType->access(*this, what, "#idx", stmt.srcLoc))};
+    auto ptr{rvalue(unionType->access(*this, what, "#ptr", stmt.srcLoc))};
     if (idx.is_compile_time_int()) {
       auto type{unionType->types[idx.get_compile_time_int()]};
       if (!type->is_void()) {
-        emit_scope(blockBegin, blockEnd, [&](Emitter &emitter) {
+        emit_scope(blockBegin, blockEnd, [&](auto &emitter) {
           emitter.declare(*stmt.name, LValue(type, ptr));
           emitter.emit(*stmt.body);
         });
@@ -645,7 +644,7 @@ Value Emitter::emit(AST::Visit &stmt) {
       for (unsigned i{}; auto type : unionType->types) {
         auto blockCase{create_block(std::format("{}.case.{}", name, i))};
         inst->addCase(static_cast<llvm::ConstantInt *>(context.get_compile_time_int(i)), blockCase);
-        emit_scope(blockCase, blockEnd, [&](Emitter &emitter) {
+        emit_scope(blockCase, blockEnd, [&](auto &emitter) {
           if (!type->is_void()) {
             emitter.declare(*stmt.name, LValue(type, ptr));
             emitter.emit(*stmt.body);
@@ -670,7 +669,7 @@ Value Emitter::emit(AST::While &stmt) {
   auto blockEnd{create_block(llvm_twine(name, ".end"))};
   emit_br_and_move_to(blockCond);
   emit_br(emit_cond(*stmt.cond), blockBody, blockEnd);
-  emit_scope(blockBody, blockCond, [&](Emitter &emitter) {
+  emit_scope(blockBody, blockCond, [&](auto &emitter) {
     emitter.afterBreak = {crumb, blockEnd};
     emitter.afterContinue = {crumb, blockCond};
     emitter.emit(*stmt.body);
@@ -683,9 +682,9 @@ Value Emitter::emit(AST::While &stmt) {
 
 ArgList Emitter::emit(const AST::ArgList &astArgs) {
   ArgList args{};
-  emit_scope([&](Emitter &emitter) { // Limit lifetimes of temporary declarations
-    for (const auto &astArg : astArgs.args) {
-      Arg &arg{args.emplace_back()};
+  emit_scope([&](auto &emitter) { // Limit lifetimes of temporary declarations
+    for (auto &astArg : astArgs.args) {
+      auto &arg{args.emplace_back()};
       if (astArg.name)
         arg.name = astArg.name->name;
       arg.value = emitter.emit(astArg.expr);
@@ -754,9 +753,9 @@ Value Emitter::emit_op(AST::UnaryOp op, Value val, const AST::SourceLocation &sr
     if (op == UnOp::Not && val.type->is_vectorized() && val.type->is_integral())
       return RValue(val.type, builder.CreateNot(rvalue(val)));
     if (op == UnOp::LogicalNot && (val.type->is_scalar() || val.type->is_pointer()))
-      return emit_op(UnOp::Not, construct(context.get_bool_type(), val), srcLoc);
+      return emit_op(UnOp::Not, construct(context.get_bool_type(), val, srcLoc), srcLoc);
     if (op == UnOp::LogicalNot && (val.type->is_vector()))
-      return emit_op(UnOp::Not, construct(val.type->get_with_different_scalar(Scalar::Bool), val), srcLoc);
+      return emit_op(UnOp::Not, construct(val.type->get_with_different_scalar(Scalar::Bool), val, srcLoc), srcLoc);
     if (op == UnOp::Address) {
       if (!val.is_lvalue())
         srcLoc.report_error("can't take address of rvalue");

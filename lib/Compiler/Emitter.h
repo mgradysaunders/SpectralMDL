@@ -148,23 +148,25 @@ public:
   void emit_panic(llvm::StringRef message, const AST::SourceLocation &srcLoc) {
     emit_panic(context.get_compile_time_string(message), srcLoc);
   }
-
-  void push_crumb(llvm::ArrayRef<llvm::StringRef> name, Value value, AST::Node *node, const AST::SourceLocation &srcLoc) {
-    Crumb *prev{crumb};
-    crumb = context.bump_allocate<Crumb>();
-    *crumb = Crumb{prev, name, value, node, srcLoc};
-  }
   //--}
 
 public:
   //--{ Fundamental operations
+  void push(Value value, llvm::ArrayRef<llvm::StringRef> name, AST::Node *node, const AST::SourceLocation &srcLoc) {
+    crumb = context.bump_allocate<Crumb>(Crumb{crumb, value, name, node, srcLoc});
+  }
+
+  void declare(const AST::Name &astName, Value value, AST::Decl *decl = {}) {
+    // We assume 'astName' is a reference to a persistent bump-allocated name, so we can directly
+    // construct an 'llvm::ArrayRef' without needing to 'context.bump_duplicate()'.
+    push(value, astName.name, decl, astName.srcLoc);
+  }
+
+  void declare_function_parameter(const Param &param, Value value);
+
+  void declare_function_parameter_inline(Value value);
+
   void declare_import(bool isAbs, llvm::ArrayRef<llvm::StringRef> path, AST::Decl &decl);
-
-  void declare(const AST::Name &name, Value value, AST::Decl *decl = {});
-
-  void declare(const Param &param, llvm::Value *llvmValue);
-
-  void declare_inline(Value value);
 
   [[nodiscard]] Value insert(Value value, Value elem, unsigned i, const AST::SourceLocation &srcLoc = {}) {
     return value.type->insert(*this, value, elem, i, srcLoc);
@@ -300,7 +302,7 @@ public:
   Value emit(AST::DeclStmt &stmt) { return emit(stmt.decl); }
 
   Value emit(AST::Defer &stmt) {
-    push_crumb({}, {}, &stmt, stmt.srcLoc);
+    push({}, {}, &stmt, stmt.srcLoc);
     stmt.crumb = crumb;
     return {};
   }
