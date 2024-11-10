@@ -137,10 +137,17 @@ std::optional<Error> MDLInstance::compile_jit() {
 std::optional<Error> MDLInstance::execute_jit_unit_tests(const state_t &state) {
   return catch_and_return_error([&] {
     for (auto &unitTest : unitTests) {
-      std::cerr << std::format("Running test '{}' ... ", unitTest.name);
-      sanity_check(unitTest.test);
-      unitTest.test(state);
-      std::cerr << "Passed\n";
+      llvm::errs() << "Running test ";
+      llvm::WithColor(llvm::errs(), llvm::HighlightColor::String) << "'" << unitTest.name << "'";
+      llvm::errs() << " ... ";
+      try {
+        sanity_check(unitTest.test);
+        unitTest.test(state);
+        llvm::WithColor(llvm::errs(), llvm::HighlightColor::Remark) << "passed\n";
+      } catch (const Error &error) {
+        llvm::WithColor(llvm::errs(), llvm::HighlightColor::Error) << "failed\n";
+        throw;
+      }
     }
   });
 }
