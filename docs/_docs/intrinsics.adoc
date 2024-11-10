@@ -6,8 +6,16 @@
 :icon-set: fa
 :toc: left
 
-[#compile-time-intrinsics]
-== Compile-time Intrinsics
+[TIP]
+.Explain!
+====
+This is the complete listing of SMDL intrinsics. See 
+xref:extensions.adoc#intrinsics[the documentation] for 
+more information.
+====
+
+[#basics]
+== Basics
 
 [cols="1,1"]
 |===
@@ -16,18 +24,60 @@
 | `#alignof`
 | Returns the alignment of the argument in bytes.
 
+| `#comptime`
+| Returns true if the argument is a compile-time constant.
+
+| `#flatten`
+| Inlines a specific call recursively, or issues a warning if 
+  it is not possible.
+
 | `#inline`
 | Inlines a specific call, or issues a warning if 
   it is not possible.
 
-| `#is_comptime`
-| Returns true if the argument is a compile-time constant.
+| `#panic`
+| Throws an exception in the C++ host program.
 
 | `#sizeof`
 | Returns the size of the argument in bytes.
 
 | `#typeof`
 | Returns the type of the argument.
+
+| `#typename`
+| Returns the typename of the argument (for debugging).
+|===
+
+[#type-traits]
+== Type traits 
+
+[cols="1,1"]
+|===
+| Intrinsic | Description
+
+| `#is_array`
+| Returns true if the argument type is a array.
+
+| `#is_enum`
+| Returns true if the argument type is an enum.
+
+| `#is_matrix`
+| Returns true if the argument type is a matrix.
+
+| `#is_pointer`
+| Returns true if the argument type is a pointer.
+
+| `#is_scalar`
+| Returns true if the argument type is a scalar.
+
+| `#is_struct`
+| Returns true if the argument type is a struct.
+
+| `#is_union`
+| Returns true if the argument type is a union.
+
+| `#is_vector`
+| Returns true if the argument type is a vector.
 |===
 
 [#llvm-analogs]
@@ -46,8 +96,20 @@
 | `#any`
 | `llvm.vector_reduce_or`
 
+| `#bitreverse`
+| `llvm.bitreverse`
+
 | `#breakpoint`
 | `llvm.debugtrap`
+
+| `#ctpop`
+| `llvm.ctpop`
+
+| `#ctlz`
+| `llvm.ctlz`
+
+| `#cttz`
+| `llvm.cttz`
 
 | `#max`
 | `llvm.[fs]max`
@@ -74,7 +136,7 @@ analogs for floating point mathematical functions from the standard C math
 library. 
 
 [IMPORTANT]
-.Promotion Rules
+.Promotion rules
 ====
 These intrinsics are overloaded for all arithmetic scalar and vector types, 
 but all implicitly promote integral arguments to floating point.
@@ -104,4 +166,7 @@ but all implicitly promote integral arguments to floating point.
 
 | `#log`, `#log2`, `#log10`
 | `llvm.log`, `llvm.log2`, `llvm.log10`
+
+| `#pow`
+| `llvm.pow`, `llvm.powi`
 |===

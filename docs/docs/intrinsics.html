@@ -2271,15 +2271,37 @@ p.tableblock {
 <div id="toc" class="toc2">
 <div id="toctitle">Table of Contents</div>
 <ul class="sectlevel1">
-<li><a href="#compile-time-intrinsics">Compile-time Intrinsics</a></li>
+<li><a href="#basics">Basics</a></li>
+<li><a href="#type-traits">Type traits</a></li>
 <li><a href="#llvm-analogs">LLVM Analogs</a></li>
 <li><a href="#llvm-analogs-libm">LLVM Analogs (libm)</a></li>
 </ul>
 </div>
 </div>
 <div id="content">
+<div id="preamble">
+<div class="sectionbody">
+<div class="admonitionblock tip">
+<table>
+<tr>
+<td class="icon">
+<i class="fa icon-tip" title="Tip"></i>
+</td>
+<td class="content">
+<div class="title">Explain!</div>
+<div class="paragraph">
+<p>This is the complete listing of SMDL intrinsics. See
+<a href="extensions.html#intrinsics">the documentation</a> for
+more information.</p>
+</div>
+</td>
+</tr>
+</table>
+</div>
+</div>
+</div>
 <div class="sect1">
-<h2 id="compile-time-intrinsics">Compile-time Intrinsics</h2>
+<h2 id="basics">Basics</h2>
 <div class="sectionbody">
 <table class="tableblock frame-all grid-all stretch">
 <colgroup>
@@ -2298,13 +2320,22 @@ p.tableblock {
 <td class="tableblock halign-left valign-top"><p class="tableblock">Returns the alignment of the argument in bytes.</p></td>
 </tr>
 <tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>#comptime</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Returns true if the argument is a compile-time constant.</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>#flatten</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Inlines a specific call recursively, or issues a warning if
+  it is not possible.</p></td>
+</tr>
+<tr>
 <td class="tableblock halign-left valign-top"><p class="tableblock"><code>#inline</code></p></td>
 <td class="tableblock halign-left valign-top"><p class="tableblock">Inlines a specific call, or issues a warning if
   it is not possible.</p></td>
 </tr>
 <tr>
-<td class="tableblock halign-left valign-top"><p class="tableblock"><code>#is_comptime</code></p></td>
-<td class="tableblock halign-left valign-top"><p class="tableblock">Returns true if the argument is a compile-time constant.</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>#panic</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Throws an exception in the C++ host program.</p></td>
 </tr>
 <tr>
 <td class="tableblock halign-left valign-top"><p class="tableblock"><code>#sizeof</code></p></td>
@@ -2313,6 +2344,61 @@ p.tableblock {
 <tr>
 <td class="tableblock halign-left valign-top"><p class="tableblock"><code>#typeof</code></p></td>
 <td class="tableblock halign-left valign-top"><p class="tableblock">Returns the type of the argument.</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>#typename</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Returns the typename of the argument (for debugging).</p></td>
+</tr>
+</tbody>
+</table>
+</div>
+</div>
+<div class="sect1">
+<h2 id="type-traits">Type traits</h2>
+<div class="sectionbody">
+<table class="tableblock frame-all grid-all stretch">
+<colgroup>
+<col style="width: 50%;">
+<col style="width: 50%;">
+</colgroup>
+<thead>
+<tr>
+<th class="tableblock halign-left valign-top">Intrinsic</th>
+<th class="tableblock halign-left valign-top">Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>#is_array</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Returns true if the argument type is a array.</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>#is_enum</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Returns true if the argument type is an enum.</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>#is_matrix</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Returns true if the argument type is a matrix.</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>#is_pointer</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Returns true if the argument type is a pointer.</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>#is_scalar</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Returns true if the argument type is a scalar.</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>#is_struct</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Returns true if the argument type is a struct.</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>#is_union</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Returns true if the argument type is a union.</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>#is_vector</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Returns true if the argument type is a vector.</p></td>
 </tr>
 </tbody>
 </table>
@@ -2346,8 +2432,24 @@ p.tableblock {
 <td class="tableblock halign-left valign-top"><p class="tableblock"><code>llvm.vector_reduce_or</code></p></td>
 </tr>
 <tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>#bitreverse</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>llvm.bitreverse</code></p></td>
+</tr>
+<tr>
 <td class="tableblock halign-left valign-top"><p class="tableblock"><code>#breakpoint</code></p></td>
 <td class="tableblock halign-left valign-top"><p class="tableblock"><code>llvm.debugtrap</code></p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>#ctpop</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>llvm.ctpop</code></p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>#ctlz</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>llvm.ctlz</code></p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>#cttz</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>llvm.cttz</code></p></td>
 </tr>
 <tr>
 <td class="tableblock halign-left valign-top"><p class="tableblock"><code>#max</code></p></td>
@@ -2389,7 +2491,7 @@ library.</p>
 <i class="fa icon-important" title="Important"></i>
 </td>
 <td class="content">
-<div class="title">Promotion Rules</div>
+<div class="title">Promotion rules</div>
 <div class="paragraph">
 <p>These intrinsics are overloaded for all arithmetic scalar and vector types,
 but all implicitly promote integral arguments to floating point.</p>
@@ -2438,6 +2540,10 @@ but all implicitly promote integral arguments to floating point.</p>
 <td class="tableblock halign-left valign-top"><p class="tableblock"><code>#log</code>, <code>#log2</code>, <code>#log10</code></p></td>
 <td class="tableblock halign-left valign-top"><p class="tableblock"><code>llvm.log</code>, <code>llvm.log2</code>, <code>llvm.log10</code></p></td>
 </tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>#pow</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>llvm.pow</code>, <code>llvm.powi</code></p></td>
+</tr>
 </tbody>
 </table>
 </div>
@@ -2445,7 +2551,7 @@ but all implicitly promote integral arguments to floating point.</p>
 </div>
 <div id="footer">
 <div id="footer-text">
-Last updated 2024-11-09 16:42:51 -0500
+Last updated 2024-11-10 12:06:21 -0500
 </div>
 </div>
 </body>

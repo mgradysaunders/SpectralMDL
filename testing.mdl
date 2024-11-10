@@ -205,12 +205,12 @@ unit_test "Deferred Sizes" {
   {
     // Init args
     auto[<N>] arr(3, 5, 7, 9);
-    #assert(arr.size == N && N == 4 && #is_comptime(N));
+    #assert(arr.size == N && N == 4 && #comptime(N));
   }
   {
     // Init expression
     auto[<N>] arr = int[5](1, 3, 5, 7, 9);
-    #assert(arr.size == N && N == 5 && #is_comptime(N));
+    #assert(arr.size == N && N == 5 && #comptime(N));
   }
   {
     // Use deferred size in struct

@@ -1,0 +1,15 @@
+= Function Attributes
+:stylesheet: stylesheet.css
+:source-highlighter: rouge
+:rouge-style: molokai
+:icons: font
+:icon-set: fa
+:toc: left
+
+[TIP]
+.Explain!
+====
+This is the complete listing of SMDL function attributes. See
+xref:extensions.adoc#function-attributes[the documentation] for
+more information.
+====

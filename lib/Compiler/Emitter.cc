@@ -1118,22 +1118,24 @@ Value Emitter::emit_intrinsic(const AST::Intrinsic &intr, const ArgList &args) {
     return context.get_compile_time_type(expectOne().type);
   if (name == "typename")
     return context.get_compile_time_string(expectOneType()->name);
-  if (name == "is_scalar")
-    return context.get_compile_time_bool(expectOneType()->is_scalar());
-  if (name == "is_vector")
-    return context.get_compile_time_bool(expectOneType()->is_vector());
+  if (name == "comptime")
+    return context.get_compile_time_bool(expectOne().is_compile_time());
+  if (name == "is_array")
+    return context.get_compile_time_bool(expectOneType()->is_array());
+  if (name == "is_enum")
+    return context.get_compile_time_bool(expectOneType()->is_enum());
   if (name == "is_matrix")
     return context.get_compile_time_bool(expectOneType()->is_matrix());
   if (name == "is_pointer")
     return context.get_compile_time_bool(expectOneType()->is_pointer());
-  if (name == "is_array")
-    return context.get_compile_time_bool(expectOneType()->is_array());
+  if (name == "is_scalar")
+    return context.get_compile_time_bool(expectOneType()->is_scalar());
+  if (name == "is_struct")
+    return context.get_compile_time_bool(expectOneType()->is_struct());
   if (name == "is_union")
     return context.get_compile_time_bool(expectOneType()->is_union());
-  if (name == "is_enum")
-    return context.get_compile_time_bool(expectOneType()->is_enum());
-  if (name == "is_comptime")
-    return context.get_compile_time_bool(expectOne().is_compile_time());
+  if (name == "is_vector")
+    return context.get_compile_time_bool(expectOneType()->is_vector());
   //--}
   //--{ Bit manipulation
   if (name == "bitreverse") {

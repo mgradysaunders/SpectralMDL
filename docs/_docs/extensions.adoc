@@ -36,16 +36,29 @@ An _intrinsic_ is essentially a C-like function macro with dedicated syntax
 that the SMDL compiler magically understands. 
 
 [IMPORTANT]
-.Intrinsic Syntax
+.Intrinsic syntax
 ====
 An intrinsic is a word that begins with a hash, such as `#assert`, which 
 is meant to suggest the macro-like nature of intrinsics.
 ====
 
+Refer to xref:intrinsics.adoc[the listing of all intrinsics].
+
 [#function-attributes]
 == Function attributes
 
-TODO
+A _function attribute_ is a special keyword inside `@(...)` immediately 
+before a function declaration that controls some aspect of how the 
+function is compiled.
+
+[, smdl]
+----
+// This is 'pure' meaning it doesn't need the render state and it
+// must be 'visible' to the C++ host program
+@(pure visible) int add_one(int i) = i + 1;
+----
+
+Refer to xref:function-attributes.adoc[the listing of all function attributes].
 
 [#compile-time-evaluation]
 == Compile-time evaluation
@@ -69,9 +82,9 @@ int4 i = int4(1, 3, 5, 7);
 ----
 
 [TIP]
-.Pointer Types
+.Pointer types
 ====
-In SMDL, a pointer type is understood as the address of another type. That 
+In SMDL, a pointer type is the address of another type. That 
 is, `&int` is the _address of_ or equivalently _points to_ an `int`.
 ====
 
@@ -94,7 +107,7 @@ a memory block that may be interpreted as several different types alongside
 a tag to indicate which type is currently active.
 
 [TIP]
-.Union Syntax
+.Union syntax
 ====
 In SMDL, a union type is an _or_ of other types. For example, 
 `(int | string)` is a union that could be an `int` or a `string`.
@@ -147,7 +160,7 @@ typedef ?int MaybeInt; // Syntax sugar to optionalize
 ----
 
 [IMPORTANT]
-.Default Constructors
+.Default constructors
 ====
 An optional union __can__ be default constructed. The default is the 
 `void` alternative with no value.
@@ -186,7 +199,7 @@ statements inside of other defer statements. However, the destructor-like
 nature of defers places some implicit constraints on control flow. 
 
 [WARNING]
-.Control Flow Constraints
+.Control flow constraints
 ====
 The compiler _cannot_ `break`, `continue`, or `return` out of a defer
 statement.footnote:[Think about it: `defer break;` and then `continue;` --
@@ -221,7 +234,7 @@ unit_test "Inlining" {
 ----
 
 [WARNING]
-.Name Collisions
+.Name collisions
 ====
 The compiler does not allow name collisions when inlining structs. That is,
 if `bar` in the above example already had a field named `b`, inlining `foo.b`
@@ -250,9 +263,10 @@ Foo foo2 = null; // ... Foo(0, 0)
 The SMDL compiler understands `null` as a symbolic constant of `void` type.
 ====
 
-
 [#preserve]
 === preserve
+
+TODO
 
 [#return_from]
 === return_from
@@ -331,10 +345,38 @@ for (int i = 0; i < m; i++) {
 [#Temporaries in expressions]
 == Temporaries in expressions
 
-TODO
+For convenience and readability, the SMDL compiler allows the `:=` 
+operator to declare temporary constants within an expression. The 
+lifetime of such constants is limited by the statement containing 
+the expression.
+
+[, smdl]
+----
+// Same as cos(s) * sin(cos(s))
+auto some_equation(auto s) = (t := #cos(s)) * #sin(t);
+----
+
+[WARNING]
+.Use wisely!
+====
+This has the capacity to make mathy code way more concise and legible _if
+it is used wisely_. Note that the temporary name is introduced implicitly 
+when the relevant point in the expression is reached. This is intuitive 
+for simple expressions, but becomes more and more confusing 
+in more complicated expressions.
+====
 
 [#unit-tests]
 == Unit tests
 
-TODO
+The `unit_test` keyword introduces a block of code to be JIT-executed 
+by `smdlc` as a unit test.
 
+[, smdl]
+----
+unit_test "Test something" {
+  const int four = 4;
+  const int five = 5;
+  #assert(four < five, "Four is less than five!");
+}
+----

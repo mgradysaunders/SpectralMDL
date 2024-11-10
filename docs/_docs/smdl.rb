@@ -91,6 +91,7 @@ module Rouge
         rule %r/\d+/i, Num::Integer
         #rule %r(\*/), Error
         rule %r([$~!%^&*+=\|?:<>/-]), Operator
+        rule %r/[@]\([\w\s]+\)/, Operator
         rule %r/[()\[\],.;]/, Punctuation
         rule %r/\bcase\b/, Keyword, :case
         rule %r/(?:null|true|false)/, Num::Integer
