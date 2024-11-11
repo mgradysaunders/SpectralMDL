@@ -350,6 +350,8 @@ public:
 
   Value emit_intrinsic(const AST::Intrinsic &intr, const ArgList &args);
 
+  void emit_print(Value value);
+
 public:
   Value emit_return_phi(Type *type, llvm::ArrayRef<Return> returns, const AST::SourceLocation &srcLoc = {});
 

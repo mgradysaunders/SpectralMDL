@@ -1333,10 +1333,59 @@ Value Emitter::emit_intrinsic(const AST::Intrinsic &intr, const ArgList &args) {
     inlines->push_back({value, intr.srcLoc, name == "flatten"});
     return value;
   }
+  if (name == "print") {
+    for (auto &arg : args)
+      emit_print(arg.value);
+    return context.get_compile_time_bool(true);
+  }
   intr.srcLoc.report_error(std::format("unimplemented intrinsic '#{}'", name));
   return {};
 }
 //--}
+
+void Emitter::emit_print(Value value) {
+  if (value.type->is_string()) {
+    auto callee{context.get_compile_time_callee(&Context::builtin_print_string)};
+    builder.CreateCall(callee, {lvalue(value).llvmValue}); // Passes by pointer
+  } else if (value.type->is_enum()) {
+    // TODO
+  } else if (value.type->is_scalar()) {
+    auto callee{llvm::FunctionCallee()};
+    switch (value.type->scalar) {
+    case Scalar::Bool: callee = context.get_compile_time_callee(&Context::builtin_print_bool); break;
+    case Scalar::Int: callee = context.get_compile_time_callee(&Context::builtin_print_int); break;
+    case Scalar::Float: callee = context.get_compile_time_callee(&Context::builtin_print_float); break;
+    case Scalar::Double: callee = context.get_compile_time_callee(&Context::builtin_print_double); break;
+    default: sanity_check(false); break;
+    }
+    if (value.type->scalar == Scalar::Bool)
+      value = construct(context.get_int_type(), value);
+    builder.CreateCall(callee, {rvalue(value).llvmValue});
+  } else if (value.type->is_vector()) {
+    emit_print(context.get_compile_time_string(std::format("{}(", value.type->name)));
+    emit_print(access(value, 0));
+    for (uint32_t i{1}; i < value.type->get_vector_size(); i++) {
+      emit_print(context.get_compile_time_string(", "));
+      emit_print(access(value, i));
+    }
+    emit_print(context.get_compile_time_string(")"));
+  } else if (value.type->is_matrix()) {
+    // TODO
+  } else if (value.type->is_struct()) {
+    emit_print(context.get_compile_time_string(std::format("{}(", value.type->name)));
+    auto structType{static_cast<StructType *>(value.type)};
+    for (uint32_t i{}; i < structType->fields.size(); i++) {
+      // TODO Quote strings
+      emit_print(context.get_compile_time_string(std::format("{}: ", structType->fields[i].name)));
+      emit_print(access(value, structType->fields[i].name));
+      if (i + 1 < structType->fields.size())
+        emit_print(context.get_compile_time_string(", "));
+    }
+    emit_print(context.get_compile_time_string(")"));
+  } else if (value.type->is_union()) {
+    // TODO
+  }
+}
 
 Value Emitter::emit_return_phi(Type *type, llvm::ArrayRef<Return> returns, const AST::SourceLocation &srcLoc) {
   sanity_check(type);
