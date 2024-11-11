@@ -28,6 +28,13 @@ void init_or_exit() {
   llvmNativeTarget.machine = target->createTargetMachine(triple, llvm::sys::getHostCPUName(), "", opts, llvm::Reloc::PIC_);
 }
 
+void Error::print() const {
+  llvm::WithColor(llvm::errs(), llvm::HighlightColor::Error) << "[error] ";
+  if (!file.empty() && line > 0)
+    llvm::WithColor(llvm::errs(), llvm::HighlightColor::Address) << '[' << file << ':' << line << "] ";
+  llvm::errs() << message << '\n';
+}
+
 llvm::StringRef llvm_get_native_target_triple() { return llvmNativeTarget.triple; }
 
 llvm::TargetMachine *llvm_get_native_target_machine() { return llvmNativeTarget.machine; }

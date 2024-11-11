@@ -30,12 +30,7 @@ public:
   Error(std::string message, std::string file = {}, uint32_t line = {})
       : message(std::move(message)), file(std::move(file)), line(line) {}
 
-  [[nodiscard]] operator std::string() const {
-    if (!file.empty() && line > 0)
-      return std::format("[{}:{}] {}", file, line, message);
-    else
-      return message;
-  }
+  void print() const;
 
 public:
   std::string message{};

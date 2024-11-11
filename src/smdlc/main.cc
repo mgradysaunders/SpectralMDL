@@ -31,22 +31,22 @@ int main(int argc, char **argv) {
     mdl.numWavelens = numWavelens;
     for (auto &inputFile : inputFiles) {
       if (auto error = mdl.load_module(std::string(inputFile))) {
-        std::cerr << "load_module: " << std::string(*error) << '\n';
+        error->print();
         std::exit(EXIT_FAILURE);
       }
     }
     if (auto error = mdl.compile(smdl::OptLevel(unsigned(optLevel)))) {
-      std::cerr << "compile: " << std::string(*error) << '\n';
+      error->print();
       std::exit(EXIT_FAILURE);
     }
     if (enableUnitTests) {
       if (auto error = mdl.compile_jit()) {
-        std::cerr << "compile_jit: " << std::string(*error) << '\n';
+        error->print();
         std::exit(EXIT_FAILURE);
       }
       smdl::state_t state{};
       if (auto error = mdl.execute_jit_unit_tests(state)) {
-        std::cerr << "execute_jit_unit_tests: " << std::string(*error) << '\n';
+        error->print();
         std::exit(EXIT_FAILURE);
       }
       std::cerr << "All tests passed!\n";
@@ -55,7 +55,7 @@ int main(int argc, char **argv) {
       std::cout.flush();
     }
   } catch (const smdl::Error &error) {
-    std::cerr << std::string(error) << '\n';
+    error.print();
     return EXIT_FAILURE;
   }
   return EXIT_SUCCESS;
