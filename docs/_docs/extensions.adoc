@@ -42,7 +42,7 @@ An intrinsic is a word that begins with a hash, such as `#assert`, which
 is meant to suggest the macro-like nature of intrinsics.
 ====
 
-Refer to xref:intrinsics.adoc[the listing of all intrinsics].
+Refer to xref:list-intrinsics.adoc[the listing of all intrinsics].
 
 [#function-attributes]
 == Function attributes
@@ -58,7 +58,8 @@ function is compiled.
 @(pure visible) int add_one(int i) = i + 1;
 ----
 
-Refer to xref:function-attributes.adoc[the listing of all function attributes].
+Refer to xref:list-function-attributes.adoc[the listing of all function 
+attributes].
 
 [#compile-time-evaluation]
 == Compile-time evaluation
