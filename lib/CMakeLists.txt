@@ -19,10 +19,10 @@ add_library(
     "Compiler/Module.cc"
     "Compiler/Type.cc"
     "Compiler/Value.cc"
+    "DataLookup.cc"
     "FileLocator.cc"
     "MDLInstance.cc"
     "Parser.cc"
-    "foreign.cc"
     "llvm.cc"
     "type.cc"
   )

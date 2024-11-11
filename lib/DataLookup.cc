@@ -1,5 +1,3 @@
-#include "smdl/MDLInstance.h"
-
 #include "DataLookup.h"
 
 extern "C" {
