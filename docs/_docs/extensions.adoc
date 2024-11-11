@@ -6,8 +6,8 @@
 :icon-set: fa
 :toc: left
 
-The SMDL compiler provides a considerable set of language extensions on 
-top of MDL. I know what you're thinking.
+The SMDL implementation provides a considerable set of language extensions on 
+top of MDL. And I know what you're thinking.
 
 [quote]
 You: Ah yes! A bunch of non-standard crap stuffed into 
@@ -371,7 +371,7 @@ in more complicated expressions.
 == Unit tests
 
 The `unit_test` keyword introduces a block of code to be JIT-executed 
-by `smdlc` as a unit test.
+xref:command-line.adoc[on the command line] as a unit test.
 
 [, smdl]
 ----

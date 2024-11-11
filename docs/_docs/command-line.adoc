@@ -1,0 +1,10 @@
+= Command Line Interface
+:stylesheet: stylesheet.css
+:source-highlighter: rouge
+:rouge-style: molokai
+:icons: font
+:icon-set: fa
+:toc: left
+
+The SMDL implementation includes a _Command Line Interface_ (CLI) for dumping
+and unit testing MDL modules without a host rendering program.
