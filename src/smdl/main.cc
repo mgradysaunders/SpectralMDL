@@ -7,29 +7,33 @@
 
 namespace cl = llvm::cl;
 
+static cl::OptionCategory cat{"Options"};
 static cl::SubCommand subDump{"dump", "Dump as LLVM-IR or native assembly"};
 static cl::SubCommand subTest{"test", "Execute unit tests"};
 static cl::SubCommandGroup allSubs{&subDump, &subTest};
 
-static cl::list<std::string> inputFiles{cl::Positional, cl::desc("<input>"), cl::OneOrMore, cl::sub(allSubs)};
-static cl::opt<unsigned> optLevel{"O", cl::desc("Optimization level (default 2)"), cl::Prefix, cl::init(2U), cl::sub(allSubs)};
-static cl::opt<bool> enableDebug{"g", cl::desc("Enable debugging"), cl::sub(allSubs)};
+static cl::list<std::string> inputFiles{cl::Positional, cl::desc("<input>"), cl::OneOrMore, cl::sub(allSubs), cl::cat(cat)};
+static cl::opt<unsigned> optLevel{"O", cl::desc("Optimization level (default 2)"), cl::Prefix, cl::init(2U), cl::sub(allSubs), cl::cat(cat)};
+static cl::opt<bool> enableDebug{"g", cl::desc("Enable debugging"), cl::sub(allSubs), cl::cat(cat)};
 static cl::opt<smdl::OutputFormat> outputFormat{
     "format", cl::desc("Output format:"),
     cl::values(
         cl::OptionEnumValue("llvm-ir", int(smdl::OutputFormat::IR), "LLVM-IR"),
         cl::OptionEnumValue("asm", int(smdl::OutputFormat::Assembly), "Native assembly"),
         cl::OptionEnumValue("obj", int(smdl::OutputFormat::Object), "Native object file")),
-    cl::sub(subDump)};
-static cl::opt<std::string> outputFilename{"output", cl::desc("Output filename (default stdout)"), cl::Optional, cl::sub(subDump)};
-static cl::alias outputFormatAlias{"f", cl::aliasopt(outputFormat)};
-static cl::alias outputFilenameAlias{"o", cl::aliasopt(outputFilename)};
+    cl::sub(subDump), cl::cat(cat)};
+static cl::opt<std::string> outputFilename{"output", cl::desc("Output filename (default stdout)"), cl::Optional, cl::sub(subDump), cl::cat(cat)};
+
+static cl::OptionCategory catState{"Options for state"};
 static cl::opt<unsigned> numWavelens{
-    "num-wavelens", cl::desc("Number of wavelengths (default 16)"), cl::init(16U), cl::sub(allSubs)};
+    "num-wavelens", cl::desc("Number of wavelengths (default 16)"), cl::init(16U), cl::sub(allSubs), cl::cat(catState)};
+// TODO min-wavelen
+// TODO max-wavelen
 
 int main(int argc, char **argv) {
   llvm::InitLLVM X(argc, argv);
   smdl::init_or_exit();
+  llvm::cl::HideUnrelatedOptions({&cat, &catState});
   llvm::cl::ParseCommandLineOptions(argc, argv, "SpectralMDL compiler");
   smdl::MDLInstance mdl{};
   try {
