@@ -19,15 +19,16 @@ public:
   [[nodiscard]] constexpr operator bool() const { return line != 0; }
 
   llvm::StringRef file{};
+
   uint32_t line{};
 
   void report_error(std::string message) const { throw Error(std::move(message), file.str(), line); }
 
-  void report_warning(llvm::raw_ostream &OS, std::string message) const {
-    llvm::WithColor(OS, llvm::HighlightColor::Warning) << "[warning] ";
+  void report_warning(std::string message) const {
+    llvm::WithColor(llvm::errs(), llvm::HighlightColor::Warning) << "[warning] ";
     if (!file.empty() && line > 0)
-      llvm::WithColor(OS, llvm::HighlightColor::Address) << '[' << file << ':' << line << "] ";
-    OS << message << '\n';
+      llvm::WithColor(llvm::errs(), llvm::HighlightColor::Address) << '[' << file << ':' << line << "] ";
+    llvm::errs() << message << '\n';
   }
 };
 

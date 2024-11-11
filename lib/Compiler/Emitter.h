@@ -119,18 +119,15 @@ public:
     builder.CreateCondBr(construct(context.get_bool_type(), cond), blockPass, blockFail);
   }
 
-  void emit_late_if(AST::Expr *expr, std::invocable<> auto &&func) {
+  void emit_late_if(AST::Expr *expr, std::invocable<Emitter &> auto &&func) {
     if (!expr) {
-      std::invoke(func);
+      std::invoke(func, *this);
     } else {
-      auto name{context.get_unique_name("late-if")};
+      auto name{context.get_unique_name("late-if", get_llvm_function())};
       auto blockPass{create_block(llvm_twine(name, ".pass"))};
       auto blockFail{create_block(llvm_twine(name, ".fail"))};
       emit_br(emit_cond(*expr), blockPass, blockFail);
-      move_to(blockPass);
-      std::invoke(func);
-      if (!has_terminator())
-        emit_br(blockFail);
+      emit_scope(blockPass, blockFail, std::forward<decltype(func)>(func));
       llvm_move_block_to_end(blockFail);
       move_to(blockFail);
     }
@@ -286,7 +283,7 @@ public:
   Value emit(AST::Break &stmt) {
     if (!afterBreak)
       stmt.srcLoc.report_error("unexpected 'break'");
-    emit_late_if(stmt.cond.get(), [&] { emit_unwind_and_br(afterBreak); });
+    emit_late_if(stmt.cond.get(), [&](auto &emitter) { emitter.emit_unwind_and_br(afterBreak); });
     return {};
   }
 
@@ -295,7 +292,7 @@ public:
   Value emit(AST::Continue &stmt) {
     if (!afterContinue)
       stmt.srcLoc.report_error("unexpected 'continue'");
-    emit_late_if(stmt.cond.get(), [&] { emit_unwind_and_br(afterContinue); });
+    emit_late_if(stmt.cond.get(), [&](auto &emitter) { emitter.emit_unwind_and_br(afterContinue); });
     return {};
   }
 
@@ -311,7 +308,7 @@ public:
 
   Value emit(AST::ExprStmt &stmt) {
     if (stmt.expr)
-      emit_late_if(stmt.cond.get(), [&] { emit(stmt.expr); });
+      emit_late_if(stmt.cond.get(), [&](auto &emitter) { emitter.emit(stmt.expr); });
     return {};
   }
 
@@ -324,10 +321,10 @@ public:
   Value emit(AST::Return &stmt) {
     if (!afterReturn)
       stmt.srcLoc.report_error("unexpected 'return'");
-    emit_late_if(stmt.cond.get(), [&] {
-      auto value{stmt.expr.get() ? rvalue(emit(stmt.expr)) : Value()};
-      emit_unwind_and_br(afterReturn);
-      returns->push_back({value, get_insert_block(), stmt.srcLoc});
+    emit_late_if(stmt.cond.get(), [&](auto &emitter) {
+      auto value{stmt.expr.get() ? emitter.rvalue(emitter.emit(stmt.expr)) : Value()};
+      emitter.emit_unwind_and_br(afterReturn);
+      returns->push_back({value, emitter.get_insert_block(), stmt.srcLoc});
     });
     return {};
   }

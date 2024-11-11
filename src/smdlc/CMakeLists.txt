@@ -12,6 +12,7 @@ target_link_libraries(
   smdlc
   PUBLIC
     "SpectralMDL"
+    "SpectralMDL_ImageLoader"
   )
 target_include_directories(
   smdlc

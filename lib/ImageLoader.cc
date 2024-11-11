@@ -4,7 +4,7 @@
 #endif
 #endif
 
-#include "smdl/DefaultImageLoader.h"
+#include "smdl/ImageLoader.h"
 
 #define STBI_ASSERT(X) ((void)0)
 #define STB_ONLY_JPEG 1
@@ -26,7 +26,7 @@
 
 namespace smdl {
 
-Image DefaultImageLoader(const std::filesystem::path &fname) {
+Image ImageLoader(const std::filesystem::path &fname) {
   auto fnameStr{fname.string()};
   auto fnameExtStr{fname.extension().string()};
   std::transform(fnameExtStr.begin(), fnameExtStr.end(), fnameExtStr.begin(), [](char c) {

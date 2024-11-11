@@ -26,6 +26,7 @@ namespace smdl::Compiler {
 class Context;
 class Emitter;
 class Module;
+class StructType;
 
 } // namespace smdl::Compiler
 
@@ -118,6 +119,8 @@ private:
   friend class Compiler::Context;
 
   friend class Compiler::Emitter;
+
+  friend class Compiler::StructType;
 };
 
 } // namespace smdl

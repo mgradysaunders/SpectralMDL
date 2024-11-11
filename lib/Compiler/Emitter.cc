@@ -201,6 +201,8 @@ Value Emitter::emit(AST::Typedef &decl) {
 }
 
 Value Emitter::emit(AST::UnitTest &decl) {
+  decl.module = module;
+  decl.crumb = crumb;
   if (context.mdl.enableUnitTests) {
     auto func{FunctionInstance{*this, decl}};
     context.mdl.unitTests.push_back(

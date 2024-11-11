@@ -196,9 +196,9 @@ void FunctionInstance::force_inline(llvm::ArrayRef<Inline> inlines) {
     if (auto call{llvm::dyn_cast<llvm::CallBase>(value.llvmValue)}) {
       auto result{llvm_force_inline(*call, isRecursive)};
       if (!result.isSuccess())
-        srcLoc.report_warning(llvm::errs(), std::format("can't force inline: {}", result.getFailureReason()));
+        srcLoc.report_warning(std::format("can't force inline: {}", result.getFailureReason()));
     } else {
-      srcLoc.report_warning(llvm::errs(), "can't force inline: expected 'llvm::CallBase'");
+      srcLoc.report_warning("can't force inline: expected 'llvm::CallBase'");
     }
   }
 }

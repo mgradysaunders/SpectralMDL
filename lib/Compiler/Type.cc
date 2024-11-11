@@ -817,14 +817,107 @@ Value StructType::construct(Emitter &emitter, const ArgList &args, const AST::So
         return enumType->enumToString->call(emitter, {emitter.rvalue(args[0].value)}, srcLoc);
       }
     }
-  } else if (is_texture_2d()) {
-    // TODO
-  } else if (is_texture_3d()) {
-    // TODO
-  } else if (is_texture_cube()) {
-    // TODO
-  } else if (is_texture_ptex()) {
-    // TODO
+  } else if (is_source_location()) {
+    if (args.empty())
+      return context.get_compile_time_source_location(srcLoc);
+  } else if (is_texture()) {
+    auto values{llvm::SmallVector<Value>{}};
+    if (args.empty()) {
+      return Value::zero(this);
+    } else if (args.size() == 1) {
+      try {
+        auto params{ParamList{}};
+        params.emplace_back(context.get_string_type(), "name");
+        values = context.resolve_arguments(emitter, params, args, srcLoc);
+        values.push_back(context.get_compile_time_int(0));
+      } catch (...) {
+        return Type::construct(emitter, args, srcLoc); // Error
+      }
+    } else if (args.size() == 2) {
+      try {
+        auto params{ParamList{}};
+        params.emplace_back(context.get_string_type(), "name");
+        params.emplace_back(context.get_auto_type(), "gamma");
+        values = context.resolve_arguments(emitter, params, args, srcLoc);
+      } catch (...) {
+        return Type::construct(emitter, args, srcLoc); // Error
+      }
+    } else {
+      return Type::construct(emitter, args, srcLoc); // Error
+    }
+    auto value0{emitter.rvalue(values[0])};
+    if (!value0.is_compile_time_string())
+      srcLoc.report_error(std::format("expected '{}' parameter 'name' to resolve to compile-time string", name));
+    auto fname{value0.get_compile_time_string()};
+    if (is_texture_2d()) {
+      auto imagePaths{context.mdl.fileLocator.locate_images(fname.str(), emitter.module->path)};
+      auto images{llvm::SmallVector<image_t>{}};
+      uint32_t numTilesU{};
+      uint32_t numTilesV{};
+      for (auto &imagePath : imagePaths) {
+        numTilesU = std::max(numTilesU, imagePath.iU + 1);
+        numTilesV = std::max(numTilesV, imagePath.iV + 1);
+        auto [itr, inserted] = context.mdl.images.try_emplace(imagePath.path.string(), Image());
+        if (inserted) {
+          try {
+            if (!context.mdl.imageLoader)
+              throw Error(std::format("can't load image '{}' (missing image loader!)", fname));
+            itr->second = context.mdl.imageLoader(imagePath.path);
+            itr->second.flip_vertical();
+          } catch (const Error &error) {
+            error.print();
+          }
+        }
+        auto &image{images.emplace_back()};
+        image.extent = itr->second.extent;
+        image.texels = itr->second.texels.data();
+      }
+      if (images.empty()) {
+        srcLoc.report_warning(std::format("can't find any image(s) for '{}'", fname));
+        return Value::zero(this);
+      }
+      auto constImages{Value::zero(context.get_array_type(context.get_type<image_t>(), numTilesU * numTilesV))};
+      for (uint32_t iV{}; iV < numTilesV; iV++) {
+        for (uint32_t iU{}; iU < numTilesU; iU++) {
+          auto image{[&]() {
+            for (uint32_t i{}; i < images.size(); i++)
+              if (imagePaths[i].iU == iU && imagePaths[i].iV == iV)
+                return images[i];
+            return image_t{};
+          }()};
+          auto constImage{Value::zero(context.get_type<image_t>())};
+          constImage = emitter.insert(constImage, context.get_compile_time_int2(image.extent), 0);
+          constImage = emitter.insert(constImage, context.get_compile_time_pointer(image.texels), 1);
+          constImages = emitter.insert(constImages, constImage, iV * numTilesU + iU);
+        }
+      }
+      sanity_check(constImages.is_compile_time());
+      auto globalImages{new llvm::GlobalVariable(
+          context.llvmModule, constImages.type->llvmType, true, llvm::GlobalValue::PrivateLinkage,
+          static_cast<llvm::Constant *>(constImages.llvmValue))};
+      globalImages->setUnnamedAddr(llvm::GlobalValue::UnnamedAddr::Global);
+      globalImages->setAlignment(llvm::Align(16));
+      auto globalImagesPtr{RValue(
+          context.get_type<image_t *>(),
+          emitter.builder.CreateConstInBoundsGEP2_32(constImages.type->llvmType, globalImages, 0, 0))};
+      auto constTex{Value::zero(this)};
+      constTex = emitter.insert(constTex, values[1], 0);
+      constTex = emitter.insert(constTex, context.get_compile_time_int2(int2_t{int_t(numTilesU), int_t(numTilesV)}), 1);
+      constTex = emitter.insert(constTex, globalImagesPtr, 2);
+      return constTex;
+    } else if (is_texture_3d()) {
+      // TODO
+      srcLoc.report_warning("'texture_3d' not supported yet");
+      return Value::zero(this);
+    } else if (is_texture_cube()) {
+      // TODO
+      srcLoc.report_warning("'texture_cube' not supported yet");
+      return Value::zero(this);
+    } else if (is_texture_ptex()) {
+      // TODO
+      srcLoc.report_warning("'texture_ptex' not supported yet");
+      return Value::zero(this);
+    }
   } else {
     if (context.can_resolve_arguments(emitter, fields, args, srcLoc)) {
       auto values{context.resolve_arguments(emitter, fields, args, srcLoc)};
