@@ -1,0 +1,4 @@
+#extended_syntax
+
+enum scatter_mode { scatter_reflect = 1, scatter_transmit = 2, scatter_reflect_transmit = 3 };
+

@@ -2,7 +2,6 @@
 #pragma once
 
 #include "llvm.h"
-#include "smdl/types.h"
 
 namespace smdl::Compiler {
 

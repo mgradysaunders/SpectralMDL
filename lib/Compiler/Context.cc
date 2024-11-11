@@ -283,11 +283,9 @@ bool Context::is_subset_of(Type *typeA, Type *typeB) {
 }
 
 Type *Context::get_common_type_of_pair(Type *typeA, Type *typeB, bool defaultToUnion, const AST::SourceLocation &srcLoc) {
-  sanity_check(typeA);
-  sanity_check(typeB);
-  if (typeA == get_auto_type())
+  if (typeA == get_auto_type() || !typeA)
     return typeB;
-  if (typeB == get_auto_type() || typeA == typeB)
+  if (typeB == get_auto_type() || !typeB || typeA == typeB)
     return typeA;
   auto scalar{std::max(typeA->scalar, typeB->scalar)};
   auto extent{typeA->extent};
@@ -407,9 +405,13 @@ Module *Context::get_builtin_module(llvm::StringRef name) {
 Value Context::resolve(Emitter &emitter, const AST::Identifier &identifier) {
   if (identifier.names.size() == 1) {
     auto name{identifier.names[0]->name};
-    if (name == "$state") {
+    if (name == "$data") {
+      return get_compile_time_pointer(mdl.dataLookup.get());
+    } else if (name == "$state") {
       if (!emitter.state)
-        identifier.srcLoc.report_error("can't use '$state' in '@(pure)' context");
+        identifier.srcLoc.report_error(
+            !emitter.get_llvm_function() ? "'$state' is unavailable at module scope"
+                                         : "'$state' is unavailable in '@(pure)' function");
       return emitter.state;
     }
     // Resolve types

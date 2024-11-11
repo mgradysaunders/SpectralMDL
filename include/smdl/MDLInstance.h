@@ -4,7 +4,7 @@
 #include <set>
 
 #include "smdl/FileLocator.h"
-#include "smdl/types.h"
+#include "smdl/type.h"
 
 namespace llvm {
 
@@ -26,25 +26,26 @@ namespace smdl::Compiler {
 class Context;
 class Emitter;
 class Module;
-class StructType;
 
 } // namespace smdl::Compiler
 
 namespace smdl {
 
-struct Ptex_t final {
+class DataLookup;
+
+struct PtexTexture final {
   void *texture{};
 
   void *filter{};
 };
 
-enum class OptLevel : unsigned { None, O1, O2, O3 };
+enum class OptLevel : uint32_t { None, O1, O2, O3 };
 
-enum class OutputFormat : unsigned { IR, Assembly, Object };
+enum class OutputFormat : uint32_t { IR, Assembly, Object };
 
 class SMDL_EXPORT MDLInstance final {
 public:
-  MDLInstance(unsigned numWavelens = 16);
+  MDLInstance(uint32_t numWavelens = 16);
 
   MDLInstance(const MDLInstance &) = delete;
 
@@ -69,9 +70,29 @@ public:
 
   [[nodiscard]] void *lookup_jit_symbol(std::string_view name);
 
-  template <typename T> [[nodiscard]] T *lookup_jit_symbol(std::string_view name) {
+  template <typename T> //
+  [[nodiscard]] auto *lookup_jit_symbol(std::string_view name) {
     return reinterpret_cast<T *>(lookup_jit_symbol(name));
   }
+
+public:
+  void set_data_int(std::string_view name, int_t value);
+
+  void set_data_int2(std::string_view name, int2_t value);
+
+  void set_data_int3(std::string_view name, int3_t value);
+
+  void set_data_int4(std::string_view name, int4_t value);
+
+  void set_data_float(std::string_view name, float_t value);
+
+  void set_data_float2(std::string_view name, float2_t value);
+
+  void set_data_float3(std::string_view name, float3_t value);
+
+  void set_data_float4(std::string_view name, float4_t value);
+
+  void set_data_color(std::string_view name, std::span<const float_t> value);
 
 public:
   FileLocator fileLocator{};
@@ -89,6 +110,8 @@ public:
 
   bool enableUnitTests{false};
 
+  uint32_t numWavelens{16};
+
   typedef void (*unit_test_t)(const state_t &);
 
   struct UnitTest final {
@@ -101,13 +124,11 @@ public:
 
   std::vector<UnitTest> unitTests{};
 
-  unsigned numWavelens{16};
-
-private:
   std::map<std::string, Image, std::less<>> images{};
 
-  std::map<std::string, Ptex_t, std::less<>> ptexs{};
+  std::map<std::string, PtexTexture, std::less<>> ptexTextures{};
 
+private:
   std::set<std::string> modulePaths{};
 
   std::vector<std::unique_ptr<Compiler::Module>> modules;
@@ -116,11 +137,11 @@ private:
 
   std::unique_ptr<llvm::orc::LLJIT> llvmJIT;
 
+  std::unique_ptr<DataLookup> dataLookup;
+
   friend class Compiler::Context;
 
   friend class Compiler::Emitter;
-
-  friend class Compiler::StructType;
 };
 
 } // namespace smdl

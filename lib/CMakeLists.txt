@@ -22,8 +22,9 @@ add_library(
     "FileLocator.cc"
     "MDLInstance.cc"
     "Parser.cc"
+    "foreign.cc"
     "llvm.cc"
-    "types.cc"
+    "type.cc"
   )
 set_target_properties(
   SpectralMDL

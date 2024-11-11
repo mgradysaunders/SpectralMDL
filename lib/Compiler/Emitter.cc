@@ -875,6 +875,11 @@ Value Emitter::emit_op(AST::BinaryOp op, Value lhs, Value rhs, const AST::Source
   lhs = rvalue(lhs);
   rhs = rvalue(rhs);
   if (AST::is_compare_op(op)) {
+    //--{ Comparison: Enum
+    if (lhsType->is_enum() && rhsType->is_enum()) {
+      return RValue(context.get_bool_type(), builder.CreateCmp(*llvm_compare_op(Scalar::Int, op), lhs, rhs));
+    }
+    //--}
     //--{ Comparison: String
     if (lhsType == context.get_string_type() && rhsType == context.get_string_type()) {
       // If both compile-time strings, do the comparison at compile time. Otherwise, build a
@@ -976,7 +981,7 @@ Value Emitter::emit_op(AST::BinaryOp op, Value lhs, Value rhs, const AST::Source
       auto type{context.get_common_type(lhsType, rhsType)};
       auto result{Value::zero(type)};
       for (unsigned j{}; j < type->extent.numCols; j++)
-        result = insert(result, emit_op(op, access(lhs, j), access(rhs, j), srcLoc), j);
+        result = insert(result, emit_op(op, access(lhs, j), access(rhs, j)), j);
       return result;
     }
     // Matrix-Scalar multiplication
@@ -985,7 +990,7 @@ Value Emitter::emit_op(AST::BinaryOp op, Value lhs, Value rhs, const AST::Source
       auto result{Value::zero(type)};
       auto scalar{construct(type->get_column_type(), rhs, srcLoc)};
       for (unsigned j{}; j < type->extent.numCols; j++)
-        result = insert(result, emit_op(op, access(lhs, j), scalar, srcLoc), j);
+        result = insert(result, emit_op(op, access(lhs, j), scalar), j);
       return result;
     }
     // Scalar-Matrix multiplication
@@ -1317,15 +1322,15 @@ Value Emitter::emit_intrinsic(const AST::Intrinsic &intr, const ArgList &args) {
   }
   //--}
   if (name == "select") {
-    if (args.size() != 3 || args[0].value.type->scalar != Scalar::Bool)
-      intr.srcLoc.report_error("intrinsic '#select' expects 1 boolean condition argument and 2 compatible selection arguments");
-    auto cond{rvalue(args[0].value)};
+    if (args.size() != 3 || !args.is_all_true([](auto arg) { return arg.value.type->is_vectorized(); }))
+      intr.srcLoc.report_error("intrinsic '#select' expects 3 vectorized arguments");
+    auto cond{construct(args[0].value.type->get_with_different_scalar(Scalar::Bool), args[0].value, intr.srcLoc)};
     auto ifPass{args[1].value};
     auto ifFail{args[2].value};
     auto type{context.get_common_type(
         {ifPass.type, ifFail.type, cond.type->is_vector() ? cond.type : nullptr}, /*defaultToUnion=*/false, intr.srcLoc)};
-    ifPass = construct(type, ifPass);
-    ifFail = construct(type, ifFail);
+    ifPass = construct(type, ifPass, intr.srcLoc);
+    ifFail = construct(type, ifFail, intr.srcLoc);
     return RValue(type, builder.CreateSelect(cond, ifPass, ifFail));
   }
   if (name == "inline" || name == "flatten") {

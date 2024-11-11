@@ -3,14 +3,13 @@
 #include "Compiler/Context.h"
 #include "Compiler/Emitter.h"
 #include "Compiler/Module.h"
+#include "DataLookup.h"
 
 #include "llvm.h"
 
 #if WITH_PTEX
 #include "Ptexture.h"
 #endif // #if WITH_PTEX
-
-#include <iostream>
 
 namespace smdl {
 
@@ -22,7 +21,7 @@ static std::filesystem::path canonicalize(const std::filesystem::path &path) {
   return canonicalPath;
 }
 
-MDLInstance::MDLInstance(unsigned numWavelens) : numWavelens(numWavelens) {
+MDLInstance::MDLInstance(uint32_t numWavelens) : numWavelens(numWavelens) {
   llvm::ExitOnError exitOnError;
   auto llvmContext{std::make_unique<llvm::LLVMContext>()};
   auto llvmModule{std::make_unique<llvm::Module>("MDL", *llvmContext)};
@@ -30,11 +29,12 @@ MDLInstance::MDLInstance(unsigned numWavelens) : numWavelens(numWavelens) {
   llvmModule->setDataLayout(llvm_get_native_target_machine()->createDataLayout());
   llvmJITModule = std::make_unique<llvm::orc::ThreadSafeModule>(std::move(llvmModule), std::move(llvmContext));
   llvmJIT = exitOnError(llvm::orc::LLJITBuilder().create());
+  dataLookup = std::make_unique<DataLookup>();
 }
 
 MDLInstance::~MDLInstance() {
 #if WITH_PTEX
-  for (auto &[pathStr, ptex] : ptexs) {
+  for (auto &[path, ptex] : ptexTextures) {
     if (ptex.filter) {
       static_cast<PtexFilter *>(ptex.filter)->release();
       ptex.filter = nullptr;
@@ -88,13 +88,13 @@ std::optional<Error> MDLInstance::compile(OptLevel optLevel) {
     for (auto &module : modules)
       module->emit(context);
     if (optLevel != OptLevel::None)
-      llvmJITModule->withModuleDo([&](llvm::Module &M) {
+      llvmJITModule->withModuleDo([&](llvm::Module &llvmModule) {
         LLVMOptimizer llvmOptimizer{};
         llvmOptimizer.run(
-            M, optLevel == OptLevel::None ? llvm::OptimizationLevel::O0
-               : optLevel == OptLevel::O1 ? llvm::OptimizationLevel::O1
-               : optLevel == OptLevel::O2 ? llvm::OptimizationLevel::O2
-                                          : llvm::OptimizationLevel::O3);
+            llvmModule, optLevel == OptLevel::None ? llvm::OptimizationLevel::O0
+                        : optLevel == OptLevel::O1 ? llvm::OptimizationLevel::O1
+                        : optLevel == OptLevel::O2 ? llvm::OptimizationLevel::O2
+                                                   : llvm::OptimizationLevel::O3);
       });
     modules.clear();
   });
@@ -157,6 +157,27 @@ void *MDLInstance::lookup_jit_symbol(std::string_view name) {
   if (!symbol)
     return nullptr;
   return symbol->toPtr<void *>();
+}
+
+void MDLInstance::set_data_int(std::string_view name, int_t value) { dataLookup->values[name] = value; }
+
+void MDLInstance::set_data_int2(std::string_view name, int2_t value) { dataLookup->values[name] = value; }
+
+void MDLInstance::set_data_int3(std::string_view name, int3_t value) { dataLookup->values[name] = value; }
+
+void MDLInstance::set_data_int4(std::string_view name, int4_t value) { dataLookup->values[name] = value; }
+
+void MDLInstance::set_data_float(std::string_view name, float_t value) { dataLookup->values[name] = value; }
+
+void MDLInstance::set_data_float2(std::string_view name, float2_t value) { dataLookup->values[name] = value; }
+
+void MDLInstance::set_data_float3(std::string_view name, float3_t value) { dataLookup->values[name] = value; }
+
+void MDLInstance::set_data_float4(std::string_view name, float4_t value) { dataLookup->values[name] = value; }
+
+void MDLInstance::set_data_color(std::string_view name, std::span<const float_t> value) {
+  sanity_check(numWavelens == value.size());
+  dataLookup->values[name] = DataLookup::color_t(value.begin(), value.end());
 }
 
 } // namespace smdl

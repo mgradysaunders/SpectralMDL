@@ -2,12 +2,17 @@
 
 namespace smdl::Compiler::builtins {
 
+static const char *df = R"*(#extended_syntax
+enum scatter_mode { scatter_reflect = 1, scatter_transmit = 2, scatter_reflect_transmit = 3 };
+)*";
+
 static const char *debug = R"*(#extended_syntax
 export @(pure macro) bool assert(const bool condition, const string reason) {
   #assert(condition, reason) if ($DEBUG);
   return true;
 }
 export @(pure macro) bool breakpoint() = #breakpoint();
+export @(pure macro) bool print(const auto a) = #print(a);
 )*";
 
 static const char *limits = R"*(#extended_syntax
@@ -87,6 +92,60 @@ export @(noinline) color blackbody(const float temperature) {
 }
 )*";
 
+static const char *scene = R"*(#extended_syntax
+@(pure foreign) int smdl_data_isvalid(&void data, &string name);
+@(pure foreign) int smdl_data_lookup_int(&void data, &string name, &int value);
+@(pure foreign) int smdl_data_lookup_int2(&void data, &string name, &int2 value);
+@(pure foreign) int smdl_data_lookup_int3(&void data, &string name, &int3 value);
+@(pure foreign) int smdl_data_lookup_int4(&void data, &string name, &int4 value);
+@(pure foreign) int smdl_data_lookup_float(&void data, &string name, &float value);
+@(pure foreign) int smdl_data_lookup_float2(&void data, &string name, &float2 value);
+@(pure foreign) int smdl_data_lookup_float3(&void data, &string name, &float3 value);
+@(pure foreign) int smdl_data_lookup_float4(&void data, &string name, &float4 value);
+@(pure foreign) int smdl_data_lookup_color(&void data, &string name, &color value);
+export @(pure macro) bool data_isvalid(string name) = smdl_data_isvalid($data, &name) != 0;
+export @(pure macro) int data_lookup_int(string name, int default_value = int()) {
+  auto value(default_value);
+  smdl_data_lookup_int($data, &name, &value);
+  return value;
+}
+export @(pure macro) int2 data_lookup_int2(string name, int2 default_value = int2()) {
+  auto value(default_value);
+  smdl_data_lookup_int2($data, &name, &value);
+  return value;
+}
+export @(pure macro) int3 data_lookup_int3(string name, int3 default_value = int3()) {
+  auto value(default_value);
+  smdl_data_lookup_int3($data, &name, &value);
+  return value;
+}
+export @(pure macro) int4 data_lookup_int4(string name, int4 default_value = int4()) {
+  auto value(default_value);
+  smdl_data_lookup_int4($data, &name, &value);
+  return value;
+}
+export @(pure macro) float data_lookup_float(string name, float default_value = float()) {
+  auto value(default_value);
+  smdl_data_lookup_float($data, &name, &value);
+  return value;
+}
+export @(pure macro) float2 data_lookup_float2(string name, float2 default_value = float2()) {
+  auto value(default_value);
+  smdl_data_lookup_float2($data, &name, &value);
+  return value;
+}
+export @(pure macro) float3 data_lookup_float3(string name, float3 default_value = float3()) {
+  auto value(default_value);
+  smdl_data_lookup_float3($data, &name, &value);
+  return value;
+}
+export @(pure macro) float4 data_lookup_float4(string name, float4 default_value = float4()) {
+  auto value(default_value);
+  smdl_data_lookup_float4($data, &name, &value);
+  return value;
+}
+)*";
+
 static const char *state = R"*(#extended_syntax
 import ::math::*;
 export enum coordinate_space { coordinate_internal = 0, coordinate_object = 1, coordinate_world = 2 };
@@ -115,13 +174,17 @@ export @(macro) float scene_units_per_meter() = 1.0 / $state.meters_per_scene_un
 
 static const char *std = R"*(#extended_syntax
 export using ::debug import *;
+export using ::df import *;
 export using ::limits import *;
 export using ::math import *;
+export using ::scene import *;
 export using ::state import *;
+export using ::tex import *;
 )*";
 
 static const char *tex = R"*(#extended_syntax
 export enum gamma_mode { gamma_default = 0, gamma_linear = 1, gamma_srgb = 2 };
+@(pure macro) float4 apply_gamma_mode(const gamma_mode gamma, const float4 texel) = gamma == gamma_srgb ? float4((texel * texel).xyz, texel.w) : texel;
 @(pure) &image_t access_uv_tile(const texture_2d tex, const int2 uv_tile) {
   return null if (#any((uv_tile < 0) | (uv_tile >= tex.tile_count)));
   return &tex.tiles[tex.tile_count.x * uv_tile.y + uv_tile.x];
@@ -142,30 +205,118 @@ export @(pure macro) bool texture_isvalid(const texture_ptex tex) = bool(tex.ptr
   return null if (!tile || #any((coord < 0) | (coord >= tile.extent)));
   return tile.texels[tile.extent.x * coord.y + coord.x];
 }
-export @(pure macro) auto texel_float4(const texture_2d tex, const int2 coord, const int2 uv_tile = int2(0)) = access_texel(tex, coord, uv_tile);
-export @(pure macro) auto texel_float3(const texture_2d tex, const int2 coord, const int2 uv_tile = int2(0)) = access_texel(tex, coord, uv_tile).xyz;
-export @(pure macro) auto texel_float2(const texture_2d tex, const int2 coord, const int2 uv_tile = int2(0)) = access_texel(tex, coord, uv_tile).xy;
-export @(pure macro) auto texel_float(const texture_2d tex, const int2 coord, const int2 uv_tile = int2(0)) = access_texel(tex, coord, uv_tile).x;
-export @(pure macro) auto texel_color(const texture_2d tex, const int2 coord, const int2 uv_tile = int2(0)) = color(access_texel(tex, coord, uv_tile).xyz);
+export @(pure macro) float4 texel_float4(const texture_2d tex, const int2 coord, const int2 uv_tile = int2(0)) = access_texel(tex, coord, uv_tile);
+export @(pure macro) float3 texel_float3(const texture_2d tex, const int2 coord, const int2 uv_tile = int2(0)) = access_texel(tex, coord, uv_tile).xyz;
+export @(pure macro) float2 texel_float2(const texture_2d tex, const int2 coord, const int2 uv_tile = int2(0)) = access_texel(tex, coord, uv_tile).xy;
+export @(pure macro) float texel_float(const texture_2d tex, const int2 coord, const int2 uv_tile = int2(0)) = access_texel(tex, coord, uv_tile).x;
+export @(pure macro) color texel_color(const texture_2d tex, const int2 coord, const int2 uv_tile = int2(0)) = color(access_texel(tex, coord, uv_tile).xyz);
 @(pure) float4 access_texel(const texture_3d tex, const int3 coord) {
   return null if (#any((coord < 0) | (coord >= tex.extent)));
   return tex.texels[#sum(tex.stride * coord)];
 }
-export @(pure macro) auto texel_float4(const texture_3d tex, const int3 coord) = access_texel(tex, coord);
-export @(pure macro) auto texel_float3(const texture_3d tex, const int3 coord) = access_texel(tex, coord).xyz;
-export @(pure macro) auto texel_float2(const texture_3d tex, const int3 coord) = access_texel(tex, coord).xy;
-export @(pure macro) auto texel_float(const texture_3d tex, const int3 coord) = access_texel(tex, coord).x;
-export @(pure macro) auto texel_color(const texture_3d tex, const int3 coord) = color(access_texel(tex, coord).xyz);
+export @(pure macro) float4 texel_float4(const texture_3d tex, const int3 coord) = access_texel(tex, coord);
+export @(pure macro) float3 texel_float3(const texture_3d tex, const int3 coord) = access_texel(tex, coord).xyz;
+export @(pure macro) float2 texel_float2(const texture_3d tex, const int3 coord) = access_texel(tex, coord).xy;
+export @(pure macro) float texel_float(const texture_3d tex, const int3 coord) = access_texel(tex, coord).x;
+export @(pure macro) color texel_color(const texture_3d tex, const int3 coord) = color(access_texel(tex, coord).xyz);
 export enum wrap_mode { wrap_clamp = 0, wrap_repeat = 1, wrap_mirrored_repeat = 2, wrap_clip = 3 };
+@(pure macro) auto apply_wrap_mode(const auto wrap, const auto n, auto i) {
+  auto rem(i % n);
+  const auto neg(#select(rem < 0, 1, 0)); 
+  rem += n * neg;
+  const auto quo(i / n + neg);
+  const auto repeat(rem);
+  const auto mirror(#select(quo & 1, n - 1 - rem, rem));
+  i = #select(wrap == 0, i, #select(wrap == 1, repeat, mirror));
+  i = #max(0, #min(i, n - 1));
+  return i;
+}
+export @(pure macro) float4 lookup_float4(
+    const texture_2d tex, 
+    float2 coord, 
+    const wrap_mode wrap_u = wrap_repeat, 
+    const wrap_mode wrap_v = wrap_repeat,
+    const float2 crop_u = float2(0.0, 1.0),
+    const float2 crop_v = float2(0.0, 1.0)) {
+  if (#any(tex.tile_count > 1)) {
+    const int2 tile_index(#floor(coord));
+    const auto tile(access_uv_tile(tex, tile_index));
+    return null if (!tile || !tile.texels);
+    const auto extent(tile.extent);
+    coord -= tile_index;
+    coord *= extent;
+    const int2 ic(coord);
+    const int2 ic0(#min(ic, extent - 1));
+    const int2 ic1(#min(ic + 1, extent - 1));
+    coord -= ic;
+    const auto s(coord.x);
+    const auto t(coord.y);
+    const auto texel0((1 - s) * tile.texels[extent.x * ic0.y + ic0.x] + s * tile.texels[extent.x * ic0.y + ic1.x]);
+    const auto texel1((1 - s) * tile.texels[extent.x * ic1.y + ic0.x] + s * tile.texels[extent.x * ic1.y + ic1.x]);
+    return apply_gamma_mode(gamma_mode(tex.gamma), (1 - t) * texel0 + t * texel1);
+  } else {
+    const int2 wrap(int(wrap_u), int(wrap_v));
+    const auto tile(access_uv_tile(tex, int2(0)));
+    return null if (!tile || !tile.texels);
+    const auto extent(tile.extent);
+    const auto icrop_u(int2(crop_u * extent));
+    const auto icrop_v(int2(crop_v * extent));
+    const auto icorner0(int2(icrop_u[0], icrop_v[0]));
+    const auto icorner1(int2(icrop_u[1], icrop_v[1]));
+    const auto subextent(icorner1 - icorner0); 
+    coord *= subextent;
+    const int2 ic(coord);
+    const auto ic0(icorner0 + apply_wrap_mode(wrap, subextent, ic));
+    const auto ic1(icorner0 + apply_wrap_mode(wrap, subextent, ic + 1));
+    coord -= ic;
+    const auto s(coord.x);
+    const auto t(coord.y);
+    const auto texel0((1 - s) * tile.texels[extent.x * ic0.y + ic0.x] + s * tile.texels[extent.x * ic0.y + ic1.x]);
+    const auto texel1((1 - s) * tile.texels[extent.x * ic1.y + ic0.x] + s * tile.texels[extent.x * ic1.y + ic1.x]);
+    return apply_gamma_mode(gamma_mode(tex.gamma), (1 - t) * texel0 + t * texel1);
+  }
+}
+export @(pure macro) float3 lookup_float3(
+    const texture_2d tex,
+    const float2 coord,
+    const wrap_mode wrap_u = wrap_repeat,
+    const wrap_mode wrap_v = wrap_repeat,
+    const float2 crop_u = float2(0.0, 1.0),
+    const float2 crop_v = float2(0.0, 1.0)) = lookup_float4(tex, coord, wrap_u, wrap_v, crop_u, crop_v).xyz;
+export @(pure macro) float2 lookup_float2(
+    const texture_2d tex,
+    const float2 coord,
+    const wrap_mode wrap_u = wrap_repeat,
+    const wrap_mode wrap_v = wrap_repeat,
+    const float2 crop_u = float2(0.0, 1.0),
+    const float2 crop_v = float2(0.0, 1.0)) = lookup_float4(tex, coord, wrap_u, wrap_v, crop_u, crop_v).xy;
+export @(pure macro) float lookup_float(
+    const texture_2d tex,
+    const float2 coord,
+    const wrap_mode wrap_u = wrap_repeat,
+    const wrap_mode wrap_v = wrap_repeat,
+    const float2 crop_u = float2(0.0, 1.0),
+    const float2 crop_v = float2(0.0, 1.0)) = lookup_float4(tex, coord, wrap_u, wrap_v, crop_u, crop_v).x;
+export @(pure macro) color lookup_color(
+    const texture_2d tex,
+    const float2 coord,
+    const wrap_mode wrap_u = wrap_repeat,
+    const wrap_mode wrap_v = wrap_repeat,
+    const float2 crop_u = float2(0.0, 1.0),
+    const float2 crop_v = float2(0.0, 1.0)) = color(lookup_float4(tex, coord, wrap_u, wrap_v, crop_u, crop_v).xyz);
 )*";
 
 [[nodiscard]] static const char *get_src(auto name) {
+  if (name == "df")
+    return df;
   if (name == "debug")
     return debug;
   if (name == "limits")
     return limits;
   if (name == "math")
     return math;
+  if (name == "scene")
+    return scene;
   if (name == "state")
     return state;
   if (name == "std")

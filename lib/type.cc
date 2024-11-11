@@ -1,4 +1,4 @@
-#include "smdl/types.h"
+#include "smdl/type.h"
 
 namespace smdl {
 
