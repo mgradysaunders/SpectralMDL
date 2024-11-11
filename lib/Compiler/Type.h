@@ -148,7 +148,7 @@ public:
 
   [[nodiscard]] bool is_scalar() const { return scalar != Scalar::None && extent.is_scalar(); }
 
-  [[nodiscard]] bool is_vector() const { return extent.is_vector(); }
+  [[nodiscard]] bool is_vector() const { return extent.is_vector() && !is_color(); }
 
   [[nodiscard]] bool is_matrix() const { return extent.is_matrix(); }
 
@@ -400,6 +400,24 @@ template <typename T> constexpr auto builtin_struct_type = builtin_struct_type_t
 class StructType final : public TypeSubclass<TypeKind::Struct> {
 public:
   StructType(Context &context, AST::Struct *decl, llvm::Function *llvmFunc = {});
+
+  StructType(Context &context, builtin_struct_type_t<default_bsdf_t>);
+
+  StructType(Context &context, builtin_struct_type_t<default_edf_t>);
+
+  StructType(Context &context, builtin_struct_type_t<default_vdf_t>);
+
+  StructType(Context &context, builtin_struct_type_t<default_hair_bsdf_t>);
+
+  StructType(Context &context, builtin_struct_type_t<material_emission_t>);
+
+  StructType(Context &context, builtin_struct_type_t<material_surface_t>);
+
+  StructType(Context &context, builtin_struct_type_t<material_volume_t>);
+
+  StructType(Context &context, builtin_struct_type_t<material_geometry_t>);
+
+  StructType(Context &context, builtin_struct_type_t<material_t>);
 
   StructType(Context &context, builtin_struct_type_t<image_t>);
 

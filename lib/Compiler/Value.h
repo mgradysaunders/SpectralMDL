@@ -176,7 +176,6 @@ public:
   /// The AST source location, if applicable.
   AST::SourceLocation srcLoc{};
 
-
 public:
   /// Find the first crumb with the given name sequence that is usable in the given LLVM function.
   [[nodiscard]] static Crumb *find(Crumb *crumb, llvm::ArrayRef<llvm::StringRef> name, llvm::Function *llvmFunc, int depth = 0);
@@ -199,7 +198,9 @@ public:
   Param() = default;
 
   /// Construct from name and type.
-  Param(Type *type, llvm::StringRef name) : type(sanity_check_nonnull(type)), name(name) { sanity_check(!name.empty()); }
+  Param(Type *type, llvm::StringRef name, AST::Expr *init = {}) : type(sanity_check_nonnull(type)), name(name), init(init) {
+    sanity_check(!name.empty());
+  }
 
   /// Construct from an AST parameter.
   explicit Param(Context &context, const AST::Param &astParam);

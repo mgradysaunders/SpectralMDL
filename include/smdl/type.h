@@ -219,12 +219,15 @@ public:
   // The geometry tangent V vector(s) in object space.
   float3_t geometry_tangent_v[TEXTURE_SPACE_MAX] = {float3_t{0, 1, 0}, float3_t{0, 1, 0}, float3_t{0, 1, 0}, float3_t{0, 1, 0}};
 
+  /// The object id.
   int_t object_id{};
 
   float3_t direction{};
 
+  /// The animation time.
   float_t animation_time{0.0f};
 
+  /// The wavelengths in nanometers.
   const float_t *wavelength_base{};
 
   /// The wavelength range minimum in nanometers.
@@ -257,5 +260,23 @@ public:
 public:
   void finalize_for_runtime_conventions();
 };
+
+struct default_bsdf_t final {};
+
+struct default_vdf_t final {};
+
+struct default_edf_t final {};
+
+struct default_hair_bsdf_t final {};
+
+struct material_emission_t final {};
+
+struct material_surface_t final {};
+
+struct material_volume_t final {};
+
+struct material_geometry_t final {};
+
+struct material_t final {};
 
 } // namespace smdl

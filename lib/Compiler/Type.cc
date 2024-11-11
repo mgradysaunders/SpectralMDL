@@ -674,6 +674,76 @@ StructType::StructType(Context &context, AST::Struct *decl, llvm::Function *llvm
   init_llvm_type();
 }
 
+StructType::StructType(Context &context, builtin_struct_type_t<default_bsdf_t>) : TypeSubclass(context) {
+  init_name("default_bsdf");
+  tags.push_back(sanity_check_nonnull(context.get_bsdf_type()));
+  tags.back()->declare_default_type(this, {});
+  init_llvm_type();
+}
+
+StructType::StructType(Context &context, builtin_struct_type_t<default_edf_t>) : TypeSubclass(context) {
+  init_name("default_edf");
+  tags.push_back(sanity_check_nonnull(context.get_edf_type()));
+  tags.back()->declare_default_type(this, {});
+  init_llvm_type();
+}
+
+StructType::StructType(Context &context, builtin_struct_type_t<default_vdf_t>) : TypeSubclass(context) {
+  init_name("default_vdf");
+  tags.push_back(sanity_check_nonnull(context.get_vdf_type()));
+  tags.back()->declare_default_type(this, {});
+  init_llvm_type();
+}
+
+StructType::StructType(Context &context, builtin_struct_type_t<default_hair_bsdf_t>) : TypeSubclass(context) {
+  init_name("default_hair_bsdf");
+  tags.push_back(sanity_check_nonnull(context.get_hair_bsdf_type()));
+  tags.back()->declare_default_type(this, {});
+  init_llvm_type();
+}
+
+static void init_builtin_field(auto &context, auto &fields, Type *type, const char *name, const char *init) {
+  fields.emplace_back(type, name, context.parse_expression(init));
+}
+
+StructType::StructType(Context &context, builtin_struct_type_t<material_emission_t>) : TypeSubclass(context) {
+  init_name("material_emission");
+  init_builtin_field(context, fields, context.get_edf_type(), "emission", "edf()");
+  init_builtin_field(context, fields, context.get_color_type(), "intensity", "color()");
+  init_builtin_field(context, fields, context.get_intensity_mode_type(), "mode", "intensity_radiant_exitance");
+}
+
+StructType::StructType(Context &context, builtin_struct_type_t<material_surface_t>) : TypeSubclass(context) {
+  init_name("material_surface");
+  init_builtin_field(context, fields, context.get_bsdf_type(), "scattering", "bsdf()");
+  init_builtin_field(context, fields, context.get_material_emission_type(), "emission", "material_emission()");
+}
+
+StructType::StructType(Context &context, builtin_struct_type_t<material_volume_t>) : TypeSubclass(context) {
+  init_name("material_volume");
+  init_builtin_field(context, fields, context.get_vdf_type(), "scattering", "vdf()");
+  init_builtin_field(context, fields, context.get_color_type(), "absorption_coefficient", "color()");
+  init_builtin_field(context, fields, context.get_color_type(), "scattering_coefficient", "color()");
+}
+
+StructType::StructType(Context &context, builtin_struct_type_t<material_geometry_t>) : TypeSubclass(context) {
+  init_name("material_geometry");
+  init_builtin_field(context, fields, context.get_float_type(Extent(3)), "displacement", "float3()");
+  init_builtin_field(context, fields, context.get_float_type(), "cutout_opacity", "1.0");
+  init_builtin_field(context, fields, context.get_float_type(Extent(3)), "normal", "$state.normal");
+  init_llvm_type(); // This is actually concrete!
+}
+
+StructType::StructType(Context &context, builtin_struct_type_t<material_t>) : TypeSubclass(context) {
+  init_name("material");
+  init_builtin_field(context, fields, context.get_bool_type(), "thin_walled", "false");
+  init_builtin_field(context, fields, context.get_material_surface_type(), "surface", "material_surface()");
+  init_builtin_field(context, fields, context.get_material_surface_type(), "backface", "material_surface()");
+  init_builtin_field(context, fields, context.get_color_type(), "ior", "color(1.0)");
+  init_builtin_field(context, fields, context.get_material_volume_type(), "volume", "material_volume()");
+  init_builtin_field(context, fields, context.get_material_geometry_type(), "geometry", "material_geometry()");
+}
+
 template <typename S, typename T> static void init_builtin_field(auto &context, auto &fields, const char *name, T S:: *) {
   fields.emplace_back(context.template get_type<T>(), name);
 }
@@ -753,7 +823,7 @@ StructType::StructType(Context &context, builtin_struct_type_t<string_t>) : Type
 }
 
 StructType::StructType(Context &context, builtin_struct_type_t<source_location_t>) : TypeSubclass(context) {
-  init_name("source_location_t");
+  init_name("source_location");
   init_builtin_field(context, fields, "file", &source_location_t::file);
   init_builtin_field(context, fields, "line", &source_location_t::line);
   init_llvm_type();

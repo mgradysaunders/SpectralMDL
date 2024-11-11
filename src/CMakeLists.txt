@@ -1,1 +1,1 @@
-add_subdirectory(smdlc)
+add_subdirectory(smdl)

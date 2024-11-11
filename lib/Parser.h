@@ -145,8 +145,8 @@ public:
     uint64_t i{};
   };
 
-  Parser(llvm::BumpPtrAllocator &bumpAllocator, llvm::StringRef file, llvm::StringRef text)
-      : bumpAllocator(bumpAllocator), file(file), text(text) {}
+  Parser(llvm::BumpPtrAllocator &bumpAllocator, llvm::StringRef file, llvm::StringRef text, bool isExtendedSyntax = false)
+      : bumpAllocator(bumpAllocator), file(file), text(text), isExtendedSyntax(isExtendedSyntax) {}
 
   Parser(const Parser &) = delete;
 
@@ -229,6 +229,7 @@ private:
   void report_error(std::string message, Cursor cursor) const { throw Error(std::move(message), file.str(), cursor.lineNo); }
   //--}
 
+public:
   //--{ Parse: Decls
   [[nodiscard]] auto parse_mdl() -> unique_bump_ptr_wrapper<AST::File>;
 

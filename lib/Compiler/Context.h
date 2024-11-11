@@ -14,9 +14,7 @@ public:
   Context(Context &&) = delete;
 
 public:
-  [[nodiscard]] void *bump_allocate(size_t size, size_t align)  {
-    return bumpAllocator.Allocate(size, align);
-  }
+  [[nodiscard]] void *bump_allocate(size_t size, size_t align) { return bumpAllocator.Allocate(size, align); }
 
   template <typename T> [[nodiscard]] T *bump_allocate(auto &&...args) {
     return new (bump_allocate(sizeof(T), alignof(T))) T(std::forward<decltype(args)>(args)...);
@@ -62,6 +60,8 @@ public:
     std::copy(values.begin(), values.end(), ptr);
     return {ptr, values.size()};
   }
+
+  [[nodiscard]] AST::Expr *parse_expression(llvm::StringRef src);
 
 public:
   //--{ Type getters
@@ -135,6 +135,34 @@ public:
   }
 
   [[nodiscard]] VoidType *get_void_type() { return voidType.get(); }
+
+  [[nodiscard]] EnumType *get_intensity_mode_type() { return intensityModeType.get(); }
+
+  [[nodiscard]] TagType *get_bsdf_type() { return bsdfType.get(); }
+
+  [[nodiscard]] TagType *get_edf_type() { return edfType.get(); }
+
+  [[nodiscard]] TagType *get_vdf_type() { return vdfType.get(); }
+
+  [[nodiscard]] TagType *get_hair_bsdf_type() { return hairBsdfType.get(); }
+
+  [[nodiscard]] StructType *get_default_bsdf_type() { return defaultBsdfType.get(); }
+
+  [[nodiscard]] StructType *get_default_edf_type() { return defaultEdfType.get(); }
+
+  [[nodiscard]] StructType *get_default_vdf_type() { return defaultVdfType.get(); }
+
+  [[nodiscard]] StructType *get_default_hair_bsdf_type() { return defaultHairBsdfType.get(); }
+
+  [[nodiscard]] StructType *get_material_emission_type() { return materialEmissionType.get(); }
+
+  [[nodiscard]] StructType *get_material_surface_type() { return materialSurfaceType.get(); }
+
+  [[nodiscard]] StructType *get_material_volume_type() { return materialVolumeType.get(); }
+
+  [[nodiscard]] StructType *get_material_geometry_type() { return materialGeometryType.get(); }
+
+  [[nodiscard]] StructType *get_material_type() { return materialType.get(); }
   //--}
 
 public:
@@ -160,6 +188,16 @@ public:
   [[nodiscard]] Type *get_type(std::in_place_type_t<source_location_t>) { return sourceLocationType.get(); }
 
   [[nodiscard]] Type *get_type(std::in_place_type_t<intensity_mode_t>) { return intensityModeType.get(); }
+
+  [[nodiscard]] Type *get_type(std::in_place_type_t<material_emission_t>) { return materialEmissionType.get(); }
+
+  [[nodiscard]] Type *get_type(std::in_place_type_t<material_surface_t>) { return materialSurfaceType.get(); }
+
+  [[nodiscard]] Type *get_type(std::in_place_type_t<material_volume_t>) { return materialVolumeType.get(); }
+
+  [[nodiscard]] Type *get_type(std::in_place_type_t<material_geometry_t>) { return materialGeometryType.get(); }
+
+  [[nodiscard]] Type *get_type(std::in_place_type_t<material_t>) { return materialType.get(); }
 
   [[nodiscard]] Type *get_type(std::in_place_type_t<image_t>) { return imageType.get(); }
 
@@ -215,7 +253,7 @@ public:
 
   [[nodiscard]] Value get_compile_time_int(int_t value) { return get_compile_time_int(llvm::APInt(sizeof(int_t) * 8, value)); }
 
-  [[nodiscard]] Value get_compile_time_int2(int2_t value) { 
+  [[nodiscard]] Value get_compile_time_int2(int2_t value) {
     auto result{Value::zero(get_type<int2_t>())};
     auto builder{llvm::IRBuilder<>(llvmContext)};
     result.llvmValue = builder.CreateInsertValue(result, get_compile_time_int(value.x), {0U});
@@ -306,6 +344,12 @@ public:
 private:
   llvm::StringMap<llvm::DenseMap<llvm::Function *, uint64_t>> uniqueNames{};
 
+  llvm::StringMap<unique_bump_ptr<Module>> builtinModules{};
+
+  llvm::StringMap<unique_bump_ptr<AST::Expr>> builtinExpressions{};
+
+  llvm::DenseMap<AST::Function *, unique_bump_ptr<Function>> functions{};
+
   llvm::DenseMap<uint64_t, unique_bump_ptr<ArithmeticType>> arithmeticTypes{};
 
   std::map<std::tuple<Type *, uint32_t>, unique_bump_ptr<ArrayType>> arrayTypes{};
@@ -326,45 +370,92 @@ private:
 
   std::map<llvm::SmallVector<Type *>, unique_bump_ptr<UnionType>> unionTypes{};
 
+  /// The builtin 'compiler_function' type.
   const unique_bump_ptr<CompilerType> compilerFunctionType;
 
+  /// The builtin 'compiler_intrinsic' type.
   const unique_bump_ptr<CompilerType> compilerIntrinsicType;
 
+  /// The builtin 'compiler_module' type.
   const unique_bump_ptr<CompilerType> compilerModuleType;
 
+  /// The builtin 'compiler_type' type.
   const unique_bump_ptr<CompilerType> compilerTypeType;
 
+  /// The builtin 'auto' type.
   const unique_bump_ptr<AutoType> autoType;
 
-  const unique_bump_ptr<TagType> bsdfType;
-
-  const unique_bump_ptr<TagType> edfType;
-
-  const unique_bump_ptr<TagType> vdfType;
-
-  const unique_bump_ptr<TagType> hairBsdfType;
-
+  /// The builtin 'void' type.
   const unique_bump_ptr<VoidType> voidType;
 
+  /// The builtin 'color' type.
   const unique_bump_ptr<ColorType> colorType;
 
+  /// The builtin 'intensity_mode' type.
   const unique_bump_ptr<EnumType> intensityModeType;
 
+  /// The builtin 'image_t' type.
   const unique_bump_ptr<StructType> imageType;
 
+  /// The builtin 'texture_2d' type.
   const unique_bump_ptr<StructType> texture2DType;
 
+  /// The builtin 'texture_3d' type.
   const unique_bump_ptr<StructType> texture3DType;
 
+  /// The builtin 'texture_cube' type.
   const unique_bump_ptr<StructType> textureCubeType;
 
+  /// The builtin 'texture_ptex' type.
   const unique_bump_ptr<StructType> texturePtexType;
 
+  /// The builtin 'state_t' type.
   const unique_bump_ptr<StructType> stateType;
 
+  /// The builtin 'string' type.
   const unique_bump_ptr<StructType> stringType;
 
+  /// The builtin 'source_location' type.
   const unique_bump_ptr<StructType> sourceLocationType;
+
+  /// The builtin 'bsdf' abstract tag type.
+  const unique_bump_ptr<TagType> bsdfType;
+
+  /// The builtin 'edf' abstract tag type.
+  const unique_bump_ptr<TagType> edfType;
+
+  /// The builtin 'vdf' abstract tag type.
+  const unique_bump_ptr<TagType> vdfType;
+
+  /// The builtin 'hair_bsdf' abstract tag type.
+  const unique_bump_ptr<TagType> hairBsdfType;
+
+  /// The builtin 'default_bsdf' type. (The result of 'bsdf()')
+  const unique_bump_ptr<StructType> defaultBsdfType{};
+
+  /// The builtin 'default_edf' type. (The result of 'edf()')
+  const unique_bump_ptr<StructType> defaultEdfType{};
+
+  /// The builtin 'default_vdf' type. (The result of 'vdf()')
+  const unique_bump_ptr<StructType> defaultVdfType{};
+
+  /// The builtin 'default_hair_bsdf' type. (The result of 'hair_bsdf()')
+  const unique_bump_ptr<StructType> defaultHairBsdfType{};
+
+  /// The builtin 'material_emission' abstract struct type.
+  const unique_bump_ptr<StructType> materialEmissionType;
+
+  /// The builtin 'material_surface' abstract struct type.
+  const unique_bump_ptr<StructType> materialSurfaceType;
+
+  /// The builtin 'material_volume' abstract struct type.
+  const unique_bump_ptr<StructType> materialVolumeType;
+
+  /// The builtin 'material_geometry' abstract struct type.
+  const unique_bump_ptr<StructType> materialGeometryType;
+
+  /// The builtin 'material' abstract struct type.
+  const unique_bump_ptr<StructType> materialType;
 
   llvm::StringMap<Type *> keywordToType{};
 
@@ -373,10 +464,6 @@ private:
   llvm::StringMap<Value> compileTimeStrings{};
 
   std::map<std::pair<UnionType *, UnionType *>, Value> compileTimeUnionIndexMaps{};
-
-  llvm::DenseMap<AST::Function *, unique_bump_ptr<Function>> functions{};
-
-  llvm::StringMap<unique_bump_ptr<Module>> builtinModules{};
 
 private:
   template <typename T> T *get_or_initialize_type(auto &types, auto key) {

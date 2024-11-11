@@ -4,36 +4,47 @@
 
 #include "builtins.h"
 
+#include "Parser.h"
+
 namespace smdl::Compiler {
 
 Context::Context(MDLInstance &mdl, llvm::BumpPtrAllocator &bumpAllocator)
-    : mdl(mdl),                                                                               //
-      llvmContext(mdl.get_llvm_context()),                                                    //
-      llvmModule(mdl.get_llvm_module()),                                                      //
-      llvmLayout(mdl.get_llvm_module().getDataLayout()),                                      //
-      llvmTargetLibraryInfoImpl(llvm::Triple(llvm_get_native_target_triple())),               //
-      llvmTargetLibraryInfo(llvmTargetLibraryInfoImpl),                                       //
-      bumpAllocator(bumpAllocator),                                                           //
-      compilerFunctionType(bump_allocate<CompilerType>(*this, "$function")),                  //
-      compilerIntrinsicType(bump_allocate<CompilerType>(*this, "$intrinsic")),                //
-      compilerModuleType(bump_allocate<CompilerType>(*this, "$module")),                      //
-      compilerTypeType(bump_allocate<CompilerType>(*this, "$type")),                          //
-      autoType(bump_allocate<AutoType>(*this)),                                               //
-      bsdfType(bump_allocate<TagType>(*this, "bsdf")),                                        //
-      edfType(bump_allocate<TagType>(*this, "edf")),                                          //
-      vdfType(bump_allocate<TagType>(*this, "vdf")),                                          //
-      hairBsdfType(bump_allocate<TagType>(*this, "hair_bsdf")),                               //
-      voidType(bump_allocate<VoidType>(*this)),                                               //
-      colorType(bump_allocate<ColorType>(*this)),                                             //
-      intensityModeType(bump_allocate<EnumType>(*this, builtin_enum_type<intensity_mode_t>)), //
-      imageType(bump_allocate<StructType>(*this, builtin_struct_type<image_t>)),              //
-      texture2DType(bump_allocate<StructType>(*this, builtin_struct_type<texture_2d_t>)),     //
-      texture3DType(bump_allocate<StructType>(*this, builtin_struct_type<texture_3d_t>)),     //
-      textureCubeType(bump_allocate<StructType>(*this, builtin_struct_type<texture_cube_t>)), //
-      texturePtexType(bump_allocate<StructType>(*this, builtin_struct_type<texture_ptex_t>)), //
-      stateType(bump_allocate<StructType>(*this, builtin_struct_type<state_t>)),              //
-      stringType(bump_allocate<StructType>(*this, builtin_struct_type<string_t>)),            //
-      sourceLocationType(bump_allocate<StructType>(*this, builtin_struct_type<source_location_t>)) {
+    : mdl(mdl),                                                                        //
+      llvmContext(mdl.get_llvm_context()),                                             //
+      llvmModule(mdl.get_llvm_module()),                                               //
+      llvmLayout(mdl.get_llvm_module().getDataLayout()),                               //
+      llvmTargetLibraryInfoImpl(llvm::Triple(llvm_get_native_target_triple())),        //
+      llvmTargetLibraryInfo(llvmTargetLibraryInfoImpl),                                //
+      bumpAllocator(bumpAllocator),                                                    //
+      compilerFunctionType(bump_allocate<CompilerType>(*this, "compiler_function")),   //
+      compilerIntrinsicType(bump_allocate<CompilerType>(*this, "compiler_intrinsic")), //
+      compilerModuleType(bump_allocate<CompilerType>(*this, "compiler_module")),       //
+      compilerTypeType(bump_allocate<CompilerType>(*this, "compiler_type")),           //
+      autoType(bump_allocate<AutoType>(*this)),                                        //
+      voidType(bump_allocate<VoidType>(*this)),                                        //
+      colorType(bump_allocate<ColorType>(*this)),                                      //
+      intensityModeType(bump_allocate<EnumType>(*this, builtin_enum_type<intensity_mode_t>)),
+      imageType(bump_allocate<StructType>(*this, builtin_struct_type<image_t>)),
+      texture2DType(bump_allocate<StructType>(*this, builtin_struct_type<texture_2d_t>)),
+      texture3DType(bump_allocate<StructType>(*this, builtin_struct_type<texture_3d_t>)),
+      textureCubeType(bump_allocate<StructType>(*this, builtin_struct_type<texture_cube_t>)),
+      texturePtexType(bump_allocate<StructType>(*this, builtin_struct_type<texture_ptex_t>)),
+      stateType(bump_allocate<StructType>(*this, builtin_struct_type<state_t>)),
+      stringType(bump_allocate<StructType>(*this, builtin_struct_type<string_t>)),
+      sourceLocationType(bump_allocate<StructType>(*this, builtin_struct_type<source_location_t>)),
+      bsdfType(bump_allocate<TagType>(*this, "bsdf")),          //
+      edfType(bump_allocate<TagType>(*this, "edf")),            //
+      vdfType(bump_allocate<TagType>(*this, "vdf")),            //
+      hairBsdfType(bump_allocate<TagType>(*this, "hair_bsdf")), //
+      defaultBsdfType(bump_allocate<StructType>(*this, builtin_struct_type<default_bsdf_t>)),
+      defaultEdfType(bump_allocate<StructType>(*this, builtin_struct_type<default_edf_t>)),
+      defaultVdfType(bump_allocate<StructType>(*this, builtin_struct_type<default_vdf_t>)),
+      defaultHairBsdfType(bump_allocate<StructType>(*this, builtin_struct_type<default_hair_bsdf_t>)),
+      materialEmissionType(bump_allocate<StructType>(*this, builtin_struct_type<material_emission_t>)),
+      materialSurfaceType(bump_allocate<StructType>(*this, builtin_struct_type<material_surface_t>)),
+      materialVolumeType(bump_allocate<StructType>(*this, builtin_struct_type<material_volume_t>)),
+      materialGeometryType(bump_allocate<StructType>(*this, builtin_struct_type<material_geometry_t>)),
+      materialType(bump_allocate<StructType>(*this, builtin_struct_type<material_t>)) {
   keywordToType = {
       {"auto", autoType.get()},
       {"bsdf", bsdfType.get()},
@@ -42,6 +53,14 @@ Context::Context(MDLInstance &mdl, llvm::BumpPtrAllocator &bumpAllocator)
       {"bool3", get_bool_type(Extent(3))},
       {"bool4", get_bool_type(Extent(4))},
       {"color", get_color_type()},
+      /* {"compiler_function", compilerFunctionType.get()},
+         {"compiler_intrinsic", compilerIntrinsicType.get()},
+         {"compiler_module", compilerModuleType.get()},
+         {"compiler_type", compilerTypeType.get()}, */
+      {"default_bsdf", defaultBsdfType.get()},
+      {"default_edf", defaultEdfType.get()},
+      {"default_vdf", defaultVdfType.get()},
+      {"default_hair_bsdf", defaultHairBsdfType.get()},
       {"double", get_double_type()},
       {"double2", get_double_type(Extent(2))},
       {"double3", get_double_type(Extent(3))},
@@ -76,8 +95,13 @@ Context::Context(MDLInstance &mdl, llvm::BumpPtrAllocator &bumpAllocator)
       {"int3", get_int_type(Extent(3))},
       {"int4", get_int_type(Extent(4))},
       {"intensity_mode", intensityModeType.get()},
-      {"source_location_t", sourceLocationType.get()},
-      {"state_t", stateType.get()},
+      {"material_emission", materialEmissionType.get()},
+      {"material_surface", materialSurfaceType.get()},
+      {"material_volume", materialVolumeType.get()},
+      {"material_geometry", materialGeometryType.get()},
+      {"material", materialType.get()},
+      {"source_location", sourceLocationType.get()},
+      /* {"state_t", stateType.get()}, */
       {"string", stringType.get()},
       {"texture_2d", texture2DType.get()},
       {"texture_3d", texture3DType.get()},
@@ -85,10 +109,6 @@ Context::Context(MDLInstance &mdl, llvm::BumpPtrAllocator &bumpAllocator)
       {"texture_ptex", texturePtexType.get()},
       {"vdf", vdfType.get()},
       {"void", voidType.get()},
-      {"$function", compilerFunctionType.get()},
-      {"$intrinsic", compilerIntrinsicType.get()},
-      {"$module", compilerModuleType.get()},
-      {"$type", compilerTypeType.get()},
   };
   keywordToConstant = {
       {"null", Value::zero(get_type<void>())},
@@ -120,6 +140,13 @@ llvm::StringRef Context::get_persistent_string(const llvm::Twine &twine) {
     return bump_duplicate(twine.getSingleStringRef());
   else
     return bump_duplicate(twine.str());
+}
+
+AST::Expr *Context::parse_expression(llvm::StringRef src) {
+  auto &expr{builtinExpressions[src]};
+  if (!expr)
+    expr = Parser(bumpAllocator, "(builtin)", src, /*isExtendedSyntax=*/true).parse_expression();
+  return expr.get();
 }
 
 ArithmeticType *Context::get_arithmetic_type(Scalar scalar, Extent extent) {
@@ -523,9 +550,9 @@ void Context::builtin_print_bool(int_t what) { llvm::errs() << (what != 0 ? "tru
 
 void Context::builtin_print_int(int_t what) { llvm::errs() << what; }
 
-void Context::builtin_print_float(float_t what) { llvm::errs() << what; }
+void Context::builtin_print_float(float_t what) { llvm::errs() << std::format("{:0.5g}", what); }
 
-void Context::builtin_print_double(double_t what) { llvm::errs() << what; }
+void Context::builtin_print_double(double_t what) { llvm::errs() << std::format("{:0.5g}", what); }
 
 void Context::builtin_panic(const string_t &message, const source_location_t &srcLoc) {
   throw Error(std::string(message), std::string(srcLoc.file), srcLoc.line);

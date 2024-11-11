@@ -1,6 +1,6 @@
-add_executable(smdlc "main.cc")
+add_executable(smdl "main.cc")
 set_target_properties(
-  smdlc
+  smdl
   PROPERTIES
     CXX_STANDARD 20
     CXX_STANDARD_REQUIRED YES
@@ -9,13 +9,13 @@ set_target_properties(
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
   )
 target_link_libraries(
-  smdlc
+  smdl
   PUBLIC
     "SpectralMDL"
     "SpectralMDL_ImageLoader"
   )
 target_include_directories(
-  smdlc
+  smdl
   PRIVATE 
     "${LLVM_INCLUDE_DIR}"
   )

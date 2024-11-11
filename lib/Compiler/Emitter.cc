@@ -1353,7 +1353,7 @@ void Emitter::emit_print(Value value) {
     auto callee{context.get_compile_time_callee(&Context::builtin_print_string)};
     builder.CreateCall(callee, {lvalue(value).llvmValue}); // Passes by pointer
   } else if (value.type->is_enum()) {
-    // TODO
+    emit_print(construct(context.get_string_type(), value));
   } else if (value.type->is_scalar()) {
     auto callee{llvm::FunctionCallee()};
     switch (value.type->scalar) {
@@ -1366,7 +1366,7 @@ void Emitter::emit_print(Value value) {
     if (value.type->scalar == Scalar::Bool)
       value = construct(context.get_int_type(), value);
     builder.CreateCall(callee, {rvalue(value).llvmValue});
-  } else if (value.type->is_vector()) {
+  } else if (value.type->is_vector() || value.type->is_color()) {
     emit_print(context.get_compile_time_string(std::format("{}(", value.type->name)));
     emit_print(access(value, 0));
     for (uint32_t i{1}; i < value.type->get_vector_size(); i++) {
