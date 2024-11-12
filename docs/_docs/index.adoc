@@ -1,4 +1,4 @@
-= SpectralMDL
+= Introduction
 :stylesheet: stylesheet.css
 :source-highlighter: rouge
 :rouge-style: molokai
@@ -8,8 +8,26 @@
 
 Welcome to the SpectralMDL documentation!
 
-[#documentation-pages]
-== Documentation pages
+SpectralMDL is a
+https://en.wikipedia.org/wiki/Electromagnetic_spectrum[spectral]
+https://llvm.org[LLVM-based] 
+https://en.wikipedia.org/wiki/Just-in-time_compilation[JIT compiler] for the
+https://www.nvidia.com/en-us/design-visualization/technologies/material-definition-language[Material Definition Language],
+which is intended to be useful as a middleware {cpp} library in offline 
+physically-based rendering programs.
+
+TODO What is MDL?
+
+[quote]
+Unlike a shading language that produces programs for a particular 
+renderer, MDL materials define the behavior of light at a high level. 
+Different renderers and tools interpret the light behavior and create 
+the best possible image, whether it's an OpenGL-based application or 
+physically based renderer like Iray.
+
+
+[#pages]
+== Pages
 
 [docs]
 * xref:command-line.adoc[Command Line Interface]

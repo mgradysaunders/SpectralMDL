@@ -74,7 +74,7 @@ pointers in SMDL is functionally equivalent to the usage of pointers in C,
 but the syntax is slightly different. 
 
 [TIP]
-.Pointer types
+.Pointer syntax
 ====
 In SMDL, a pointer type is the address of another type. That 
 is, `&int` is the _address of_ or equivalently _points to_ an `int`.
@@ -329,7 +329,7 @@ void print_scalar(Scalar scalar) {
 
 [#late-ifs]
 == Late ifs
-For convenience and readability, the SMDL compiler allows _late ifs_ to
+For convenience and readability, the compiler allows _late ifs_ to
 conditionalize one-line statements.
 
 [, smdl]
@@ -346,7 +346,7 @@ for (int i = 0; i < m; i++) {
 [#Temporaries in expressions]
 == Temporaries in expressions
 
-For convenience and readability, the SMDL compiler allows the `:=` 
+For convenience and readability, the compiler understands the `:=` 
 operator to declare temporary constants within an expression. The 
 lifetime of such constants is limited by the statement containing 
 the expression.
