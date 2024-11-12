@@ -73,6 +73,13 @@ A _pointer_ is a memory address that _points to_ another value. The usage of
 pointers in SMDL is functionally equivalent to the usage of pointers in C, 
 but the syntax is slightly different. 
 
+[TIP]
+.Pointer types
+====
+In SMDL, a pointer type is the address of another type. That 
+is, `&int` is the _address of_ or equivalently _points to_ an `int`.
+====
+
 [, smdl]
 ----
 int4 i = int4(1, 3, 5, 7);
@@ -81,13 +88,6 @@ int4 i = int4(1, 3, 5, 7);
 *(j + 1) = 4;
 #assert(#all(i == int4(1, 2, 4, 7)));
 ----
-
-[TIP]
-.Pointer types
-====
-In SMDL, a pointer type is the address of another type. That 
-is, `&int` is the _address of_ or equivalently _points to_ an `int`.
-====
 
 There is no C-style arrow syntax. Just use dot!
 

@@ -190,7 +190,7 @@ end
 class DocPostprocessor < Asciidoctor::Extensions::Postprocessor
   def process document, output
     if document.basebackend? 'html'
-      output.gsub! /<div id="toctitle">.*?<\/div>/m, '<div id="toctitle">SpectralMDL <a class="link" href="index.html"><i class="fa fa-home"></i></a></div><hr/>'
+      output.gsub! /<div id="toctitle">.*?<\/div>/m, '<div id="toctitle">SpectralMDL <a class="link" href="index.html"><i class="fa fa-home"></i></a></div>'
       output.gsub! /<h2 id="(.*?)">(.*?)<\/h2>/m, '<h2 id="\1">\2 <a class="link" href="#\1"><i class="fa fa-anchor"></i></a></h2>'
       output.gsub! /<h3 id="(.*?)">(.*?)<\/h3>/m, '<h3 id="\1">\2 <a class="link" href="#\1"><i class="fa fa-anchor"></i></a></h3>'
       output.gsub! /<h4 id="(.*?)">(.*?)<\/h4>/m, '<h4 id="\1">\2 <a class="link" href="#\1"><i class="fa fa-anchor"></i></a></h4>'
