@@ -16,7 +16,22 @@ https://www.nvidia.com/en-us/design-visualization/technologies/material-definiti
 which is intended to be useful as a middleware {cpp} library in offline 
 physically-based rendering programs.
 
-TODO What is MDL?
+
+[#introduction-to-mdl]
+== Introduction to MDL 
+Material Definition Language (MDL) is a high level programming 
+language developed by NVIDIA to describe physically-based materials
+independently of any particular application.
+
+[IMPORTANT]
+.So MDL is a shading language?
+====
+Yes and no. MDL is _kind of_ a shading language. It looks similar
+to GLSL or HLSL at a glance, but it is entirely divorced from the 
+idea of the GPU rasterization pipeline.
+====
+
+NVIDIA describes MDL like this:
 
 [quote]
 Unlike a shading language that produces programs for a particular 
@@ -25,9 +40,35 @@ Different renderers and tools interpret the light behavior and create
 the best possible image, whether it's an OpenGL-based application or 
 physically based renderer like Iray.
 
+[#the-case-for-mdl]
+=== The case for MDL
 
-[#pages]
-== Pages
+Ever heard of 
+https://en.wikipedia.org/wiki/Carcinisation[carcinization]?
+It refers to the "many attempts of nature to evolve a crab" from 
+a non-crab crustacean. This has happened at least five times.
+
+The material node graph is the crab of 3D rendering applications. 
+Everybody ended up there eventually. Blender, Maya, UnrealEngine, 
+Unity, Godot, Substance, etc. The problem is that converting input 
+files between node graph implementations is cumbersome if not 
+impossible, and devising an interchange file format that is 
+not mired in hellish XML is just impossible.
+
+The natural supremum of a node graph is a programming language, 
+and MDL is a sufficient choice for that language.
+
+[#the-mdl-sdk]
+=== The MDL SDK (not this codebase)
+
+NVIDIA provides the official
+https://github.com/NVIDIA/MDL-SDK[MDL SDK] for working with MDL
+materials more broadly. It is an _enormous_ {cpp} codebase that 
+does a bajillion things, though it notably is tied down to an 
+oddly modified fork of LLVM-12 and it is _not_ spectral.
+
+[#documentation-pages]
+== Documentation Pages
 
 [docs]
 * xref:command-line.adoc[Command Line Interface]
