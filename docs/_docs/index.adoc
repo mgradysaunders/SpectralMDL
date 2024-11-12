@@ -1,0 +1,18 @@
+= SpectralMDL
+:stylesheet: stylesheet.css
+:source-highlighter: rouge
+:rouge-style: molokai
+:icons: font
+:icon-set: fa
+:toc: left
+
+Welcome to the SpectralMDL documentation!
+
+[#documentation-pages]
+== Documentation pages
+
+[docs]
+* xref:command-line.adoc[Command Line Interface]
+* xref:extensions.adoc[Language Extensions]
+** Listing of all xref:list-function-attributes.adoc[Function Attributes]
+** Listing of all xref:list-intrinsics.adoc[Intrinsics]

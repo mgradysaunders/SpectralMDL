@@ -1,5 +1,6 @@
 #!/usr/bin/env ruby
 require 'rouge'
+require 'minify_html'
 
 module Rouge
   module Lexers
@@ -189,10 +190,12 @@ end
 class DocPostprocessor < Asciidoctor::Extensions::Postprocessor
   def process document, output
     if document.basebackend? 'html'
-      output.gsub! /<div id="toctitle">.*?<\/div>/m, '<div id="toctitle">SpectralMDL</div><hr/>'
-      output.gsub! /<h2 id="(.*?)">(.*?)<\/h2>/m, '<h2 id="\1">\2 <a class="link" href="#\1">#</a></h2>'
-      output.gsub! /<h3 id="(.*?)">(.*?)<\/h3>/m, '<h3 id="\1">\2 <a class="link" href="#\1">#</a></h3>'
+      output.gsub! /<div id="toctitle">.*?<\/div>/m, '<div id="toctitle">SpectralMDL <a class="link" href="index.html"><i class="fa fa-home"></i></a></div><hr/>'
+      output.gsub! /<h2 id="(.*?)">(.*?)<\/h2>/m, '<h2 id="\1">\2 <a class="link" href="#\1"><i class="fa fa-anchor"></i></a></h2>'
+      output.gsub! /<h3 id="(.*?)">(.*?)<\/h3>/m, '<h3 id="\1">\2 <a class="link" href="#\1"><i class="fa fa-anchor"></i></a></h3>'
+      output.gsub! /<h4 id="(.*?)">(.*?)<\/h4>/m, '<h4 id="\1">\2 <a class="link" href="#\1"><i class="fa fa-anchor"></i></a></h4>'
       output.gsub! /<div id="footer-text">(.*?)<\/div>/m, '<div id="footer-text">\1</div>'
+      output = minify_html(output, {:keep_spaces_between_attributes => true, :minify_js => true, :minify_css => true})
     end
     output
   end

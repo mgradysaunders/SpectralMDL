@@ -629,7 +629,7 @@ body > div[id]::after,
 }
 
 #header > h1:first-child {
-  color: rgb(175 176 177 / 0.85);
+  color: rgb(215 216 217);
   margin-top: 2.25rem;
   margin-bottom: 0;
 }
@@ -1974,13 +1974,13 @@ a span.icon > .fa {
 }
 
 .admonitionblock td.icon .icon-note::before {
-  content: "\f05a";
-  color: rgb(15, 164, 15, 0.81);
+  content: "\f128";
+  color: rgb(175, 176, 178, 0.8);
 }
 
 .admonitionblock td.icon .icon-tip::before {
-  content: "\f0eb";
-  color: rgb(15, 164, 15, 0.81);
+  content: "\f27b";
+  color: rgb(175, 176, 177, 0.8);
 }
 
 .admonitionblock td.icon .icon-warning::before {
@@ -1994,7 +1994,7 @@ a span.icon > .fa {
 }
 
 .admonitionblock td.icon .icon-important::before {
-  content: "\f06a";
+  content: "\f0e7";
   color: #0075d1;
 }
 
@@ -2264,4 +2264,18 @@ p.tableblock {
   body > div[id] {
     padding: 0;
   }
+}
+
+.docs li {
+  list-style-type: none;
+}
+.docs li p {
+  font-size: 1.2em;
+}
+.docs li a {
+  font-family: "Lato", sans-serif;
+  /*background: rgb(255, 255, 255, 0.05);
+  border: 1px solid rgb(45 45 45);
+  border-radius: 4px;
+  padding: 0.1em 0.5ex;*/
 }
