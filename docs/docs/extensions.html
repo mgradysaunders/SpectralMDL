@@ -62,8 +62,9 @@ td {
 
 a {
   background: none;
-  color: rgb(138, 180, 248);
-  text-decoration: underline;
+  color: rgb(138, 180, 248, 0.8);
+  transition: color 200ms;
+  text-decoration: none;
   line-height: inherit;
 }
 
@@ -79,7 +80,9 @@ a:focus {
 
 a:hover,
 a:focus {
-  color: #1d4b8f;
+  color: rgb(138, 180, 248);
+  transition: color 200ms;
+  text-decoration: underline;
 }
 
 abbr {
@@ -732,6 +735,14 @@ body > div[id]::after,
 
 #toc a {
   text-decoration: none;
+  color: #aaa;
+  transition: color 200ms;
+}
+
+#toc a:hover {
+  text-decoration: none;
+  color: #eee;
+  transition: color 200ms;
 }
 
 #toc a:active {
@@ -938,7 +949,8 @@ h3 > a.link,
 h4 > a.link,
 h5 > a.link,
 h6 > a.link {
-  color: #ba3925;
+  color: rgb(175, 176, 177, 0.25);
+  transition: color 200ms;
   text-decoration: none;
 }
 
@@ -950,7 +962,8 @@ h3 > a.link:hover,
 h4 > a.link:hover,
 h5 > a.link:hover,
 h6 > a.link:hover {
-  color: #a53221;
+  color: rgb(175, 176, 177, 0.8);
+  transition: color 200ms;
 }
 
 details,
@@ -2482,7 +2495,7 @@ pre.rouge {
 <div id="header">
 <h1>Language Extensions</h1>
 <div id="toc" class="toc2">
-<div id="toctitle">Table of Contents</div>
+<div id="toctitle">SpectralMDL</div><hr/>
 <ul class="sectlevel1">
 <li><a href="#intrinsics">Intrinsics</a></li>
 <li><a href="#function-attributes">Function attributes</a></li>
@@ -2515,8 +2528,8 @@ pre.rouge {
 <div id="preamble">
 <div class="sectionbody">
 <div class="paragraph">
-<p>The SMDL compiler provides a considerable set of language extensions on
-top of MDL. I know what you&#8217;re thinking.</p>
+<p>The SMDL implementation provides a considerable set of language extensions on
+top of MDL. And I know what you&#8217;re thinking.</p>
 </div>
 <div class="quoteblock">
 <blockquote>
@@ -2549,7 +2562,7 @@ and effort into the ergonomics of language.</p>
 </div>
 </div>
 <div class="sect1">
-<h2 id="intrinsics">Intrinsics</h2>
+<h2 id="intrinsics">Intrinsics <a class="link" href="#intrinsics">#</a></h2>
 <div class="sectionbody">
 <div class="paragraph">
 <p>An <em>intrinsic</em> is essentially a C-like function macro with dedicated syntax
@@ -2577,7 +2590,7 @@ is meant to suggest the macro-like nature of intrinsics.</p>
 </div>
 </div>
 <div class="sect1">
-<h2 id="function-attributes">Function attributes</h2>
+<h2 id="function-attributes">Function attributes <a class="link" href="#function-attributes">#</a></h2>
 <div class="sectionbody">
 <div class="paragraph">
 <p>A <em>function attribute</em> is a special keyword inside <code>@(&#8230;&#8203;)</code> immediately
@@ -2598,7 +2611,7 @@ attributes</a>.</p>
 </div>
 </div>
 <div class="sect1">
-<h2 id="compile-time-evaluation">Compile-time evaluation</h2>
+<h2 id="compile-time-evaluation">Compile-time evaluation <a class="link" href="#compile-time-evaluation">#</a></h2>
 <div class="sectionbody">
 <div class="paragraph">
 <p>TODO</p>
@@ -2606,7 +2619,7 @@ attributes</a>.</p>
 </div>
 </div>
 <div class="sect1">
-<h2 id="pointers">Pointers</h2>
+<h2 id="pointers">Pointers <a class="link" href="#pointers">#</a></h2>
 <div class="sectionbody">
 <div class="paragraph">
 <p>A <em>pointer</em> is a memory address that <em>points to</em> another value. The usage of
@@ -2652,7 +2665,7 @@ is, <code>&amp;int</code> is the <em>address of</em> or equivalently <em>points 
 </div>
 </div>
 <div class="sect1">
-<h2 id="unions">Unions</h2>
+<h2 id="unions">Unions <a class="link" href="#unions">#</a></h2>
 <div class="sectionbody">
 <div class="paragraph">
 <p>The compiler provides first-class support for
@@ -2684,7 +2697,7 @@ a tag to indicate which type is currently active.</p>
 </div>
 </div>
 <div class="sect2">
-<h3 id="unions-from-conditionals">Unions from conditionals</h3>
+<h3 id="unions-from-conditionals">Unions from conditionals <a class="link" href="#unions-from-conditionals">#</a></h3>
 <div class="paragraph">
 <p>If the alternatives of a conditional expression have different types for which
 there is no well-defined arithmetic promotion, the result type of the
@@ -2722,7 +2735,7 @@ to implicitly construct unions.</p>
 </div>
 </div>
 <div class="sect2">
-<h3 id="unions-as-optionals">Unions as optionals</h3>
+<h3 id="unions-as-optionals">Unions as optionals <a class="link" href="#unions-as-optionals">#</a></h3>
 <div class="paragraph">
 <p>The SMDL compiler understands unions with the <code>void</code> type as representations
 of optional values.</p>
@@ -2758,10 +2771,10 @@ default in the absence of the <code>void</code> alternative.</p>
 </div>
 </div>
 <div class="sect1">
-<h2 id="keywords">Keywords</h2>
+<h2 id="keywords">Keywords <a class="link" href="#keywords">#</a></h2>
 <div class="sectionbody">
 <div class="sect2">
-<h3 id="defer">defer</h3>
+<h3 id="defer">defer <a class="link" href="#defer">#</a></h3>
 <div class="paragraph">
 <p>The <code>defer</code> keyword tells the compiler to run a statement (or a compound
 statement) just before leaving the current scope. This is a C-like
@@ -2805,7 +2818,7 @@ statement.<sup class="footnote">[<a id="_footnoteref_2" class="footnote" href="#
 </div>
 </div>
 <div class="sect2">
-<h3 id="inline">inline</h3>
+<h3 id="inline">inline <a class="link" href="#inline">#</a></h3>
 <div class="paragraph">
 <p>The <code>inline</code> keyword may be used to <em>inline</em> a struct into another struct or
 into the parameters of a function. This is useful to mimic inheritence via
@@ -2850,7 +2863,7 @@ would cause a compile-time error.</p>
 </div>
 </div>
 <div class="sect2">
-<h3 id="null">null</h3>
+<h3 id="null">null <a class="link" href="#null">#</a></h3>
 <div class="paragraph">
 <p>The <code>null</code> keyword is useful to explicitly zero-initialize or <em>nullify</em>
 anything. This can also be used to initialize or assign the <code>void</code> alternative
@@ -2883,13 +2896,13 @@ of optional unions (see <a href="#unions-as-optionals">Unions as optionals</a>).
 </div>
 </div>
 <div class="sect2">
-<h3 id="preserve">preserve</h3>
+<h3 id="preserve">preserve <a class="link" href="#preserve">#</a></h3>
 <div class="paragraph">
 <p>TODO</p>
 </div>
 </div>
 <div class="sect2">
-<h3 id="return_from">return_from</h3>
+<h3 id="return_from">return_from <a class="link" href="#return_from">#</a></h3>
 <div class="paragraph">
 <p>The <code>return_from</code> keyword tells the compiler to construct an rvalue from the
 <code>return</code> expressions in the following compound statement. This is useful to
@@ -2906,7 +2919,7 @@ initialize variables that require some non-trivial logic to set up.</p>
 </div>
 </div>
 <div class="sect2">
-<h3 id="unreachable">unreachable</h3>
+<h3 id="unreachable">unreachable <a class="link" href="#unreachable">#</a></h3>
 <div class="paragraph">
 <p>The <code>unreachable</code> keyword is an alias for the
 <a href="https://llvm.org/docs/LangRef.html#unreachable-instruction">unreachable
@@ -2930,7 +2943,7 @@ result of pre-conditions on the program. And this is taken entirely on trust!</p
 </div>
 </div>
 <div class="sect2">
-<h3 id="visit">visit</h3>
+<h3 id="visit">visit <a class="link" href="#visit">#</a></h3>
 <div class="paragraph">
 <p>The <code>visit</code> keyword is the mechanism for dispatching code on <a href="#unions">Unions</a>. It is
 essentially a templated type-switch.</p>
@@ -2963,7 +2976,7 @@ essentially a templated type-switch.</p>
 </div>
 </div>
 <div class="sect1">
-<h2 id="late-ifs">Late ifs</h2>
+<h2 id="late-ifs">Late ifs <a class="link" href="#late-ifs">#</a></h2>
 <div class="sectionbody">
 <div class="paragraph">
 <p>For convenience and readability, the SMDL compiler allows <em>late ifs</em> to
@@ -2983,7 +2996,7 @@ conditionalize one-line statements.</p>
 </div>
 </div>
 <div class="sect1">
-<h2 id="_temporaries_in_expressions">Temporaries in expressions</h2>
+<h2 id="_temporaries_in_expressions">Temporaries in expressions <a class="link" href="#_temporaries_in_expressions">#</a></h2>
 <div class="sectionbody">
 <div class="paragraph">
 <p>For convenience and readability, the SMDL compiler allows the <code>:=</code>
@@ -3019,11 +3032,11 @@ in more complicated expressions.</p>
 </div>
 </div>
 <div class="sect1">
-<h2 id="unit-tests">Unit tests</h2>
+<h2 id="unit-tests">Unit tests <a class="link" href="#unit-tests">#</a></h2>
 <div class="sectionbody">
 <div class="paragraph">
 <p>The <code>unit_test</code> keyword introduces a block of code to be JIT-executed
-by <code>smdlc</code> as a unit test.</p>
+<a href="command-line.html">on the command line</a> as a unit test.</p>
 </div>
 <div class="listingblock">
 <div class="content">
@@ -3048,7 +3061,7 @@ by <code>smdlc</code> as a unit test.</p>
 </div>
 <div id="footer">
 <div id="footer-text">
-Last updated 2024-11-10 12:14:18 -0500
+Last updated 2024-11-11 16:48:32 -0500
 </div>
 </div>
 </body>

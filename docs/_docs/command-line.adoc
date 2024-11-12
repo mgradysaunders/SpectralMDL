@@ -6,5 +6,49 @@
 :icon-set: fa
 :toc: left
 
-The SMDL implementation includes a _Command Line Interface_ (CLI) for dumping
-and unit testing MDL modules without a host rendering program.
+The SMDL implementation includes a command line interface `smdl` for working
+with MDL modules outside of a host rendering program.
+
+[TIP]
+.Source code
+====
+The source code for the CLI is 
+link:https://github.com/mgradysaunders/SpectralMDL/tree/main/src/smdl[here].
+====
+
+The CLI is based on _subcommands_ to do specific things.
+
+[, bash]
+----
+> smdl -h
+----
+
+[, text]
+----
+OVERVIEW: SpectralMDL compiler
+USAGE: smdl [subcommand] [options]
+
+SUBCOMMANDS:
+
+  dump - Dump as LLVM-IR or native assembly
+  test - Execute unit tests
+
+  Type "smdl <subcommand> --help" to get more help on a specific subcommand
+
+OPTIONS:
+
+Generic Options:
+
+  --help      - Display available options (--help-hidden for more)
+  --help-list - Display list of available options (--help-list-hidden for more)
+  --version   - Display the version of this program
+----
+
+[#subcommands]
+== Subcommands
+
+[#dump]
+=== dump
+
+[#test]
+=== test

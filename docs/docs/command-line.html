@@ -5,7 +5,7 @@
 <meta http-equiv="X-UA-Compatible" content="IE=edge">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <meta name="generator" content="Asciidoctor 2.0.23">
-<title>Function Attributes</title>
+<title>Command Line Interface</title>
 <style>
 /*! Asciidoctor default stylesheet | MIT License | https://asciidoctor.org */
 /* Uncomment the following line when using as a custom stylesheet */
@@ -2277,12 +2277,242 @@ p.tableblock {
 
 </style>
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/4.7.0/css/font-awesome.min.css">
+<style>
+pre.rouge table td { padding: 5px; }
+pre.rouge table pre { margin: 0; }
+pre.rouge .c, pre.rouge .ch, pre.rouge .cd, pre.rouge .cpf {
+  color: #5e5d83;
+  font-style: italic;
+}
+pre.rouge .cm {
+  color: #5e5d83;
+  font-style: italic;
+}
+pre.rouge .c1 {
+  color: #5e5d83;
+  font-style: italic;
+}
+pre.rouge .cp {
+  color: #465457;
+  font-weight: bold;
+}
+pre.rouge .cs {
+  color: #465457;
+  font-weight: bold;
+  font-style: italic;
+}
+pre.rouge .err {
+  color: #f8f8f2;
+  background-color: #403d3d;
+}
+pre.rouge .gi {
+  color: #a6e22e;
+}
+pre.rouge .gd {
+  color: #f92672;
+}
+pre.rouge .ge {
+  font-style: italic;
+}
+pre.rouge .ges {
+  font-weight: bold;
+  font-style: italic;
+}
+pre.rouge .gr {
+  color: #f92672;
+}
+pre.rouge .gt {
+  color: #f92672;
+}
+pre.rouge .gh {
+  color: #403d3d;
+}
+pre.rouge .go {
+  color: #403d3d;
+}
+pre.rouge .gp {
+  color: #66d9ef;
+}
+pre.rouge .gs {
+  font-weight: bold;
+}
+pre.rouge .gu {
+  color: #465457;
+}
+pre.rouge .k, pre.rouge .kv {
+  color: #66d9ef;
+  font-weight: bold;
+}
+pre.rouge .kc {
+  color: #66d9ef;
+  font-weight: bold;
+}
+pre.rouge .kd {
+  color: #66d9ef;
+  font-weight: bold;
+}
+pre.rouge .kp {
+  color: #66d9ef;
+  font-weight: bold;
+}
+pre.rouge .kr {
+  color: #66d9ef;
+  font-weight: bold;
+}
+pre.rouge .kt {
+  color: #66d9ef;
+  font-weight: bold;
+}
+pre.rouge .kn {
+  color: #f92672;
+  font-weight: bold;
+}
+pre.rouge .ow {
+  color: #f92672;
+  font-weight: bold;
+}
+pre.rouge .o {
+  color: #f92672;
+  font-weight: bold;
+}
+pre.rouge .mf {
+  color: #af87ff;
+}
+pre.rouge .mh {
+  color: #af87ff;
+}
+pre.rouge .il {
+  color: #af87ff;
+}
+pre.rouge .mi {
+  color: #af87ff;
+}
+pre.rouge .mo {
+  color: #af87ff;
+}
+pre.rouge .m, pre.rouge .mb, pre.rouge .mx {
+  color: #af87ff;
+}
+pre.rouge .se {
+  color: #af87ff;
+}
+pre.rouge .sb {
+  color: #d7d787;
+}
+pre.rouge .sc {
+  color: #d7d787;
+}
+pre.rouge .sd {
+  color: #d7d787;
+}
+pre.rouge .s2 {
+  color: #d7d787;
+}
+pre.rouge .sh {
+  color: #d7d787;
+}
+pre.rouge .si {
+  color: #d7d787;
+}
+pre.rouge .sx {
+  color: #d7d787;
+}
+pre.rouge .sr {
+  color: #d7d787;
+}
+pre.rouge .s1 {
+  color: #d7d787;
+}
+pre.rouge .ss {
+  color: #d7d787;
+}
+pre.rouge .s, pre.rouge .sa, pre.rouge .dl {
+  color: #d7d787;
+}
+pre.rouge .na {
+  color: #a6e22e;
+}
+pre.rouge .nc {
+  color: #a6e22e;
+  font-weight: bold;
+}
+pre.rouge .nd {
+  color: #a6e22e;
+  font-weight: bold;
+}
+pre.rouge .ne {
+  color: #a6e22e;
+  font-weight: bold;
+}
+pre.rouge .nf, pre.rouge .fm {
+  color: #a6e22e;
+  font-weight: bold;
+}
+pre.rouge .no {
+  color: #66d9ef;
+}
+pre.rouge .bp {
+  color: #f8f8f2;
+}
+pre.rouge .nb {
+  color: #f8f8f2;
+}
+pre.rouge .ni {
+  color: #f8f8f2;
+}
+pre.rouge .nn {
+  color: #f8f8f2;
+}
+pre.rouge .vc {
+  color: #f8f8f2;
+}
+pre.rouge .vg {
+  color: #f8f8f2;
+}
+pre.rouge .vi {
+  color: #f8f8f2;
+}
+pre.rouge .nv, pre.rouge .vm {
+  color: #f8f8f2;
+}
+pre.rouge .w {
+  color: #f8f8f2;
+}
+pre.rouge .nl {
+  color: #f8f8f2;
+  font-weight: bold;
+}
+pre.rouge .nt {
+  color: #f92672;
+}
+pre.rouge {
+  color: #f8f8f2;
+  background-color: #1b1d1e;
+}
+</style>
 </head>
-<body class="article">
+<body class="article toc2 toc-left">
 <div id="header">
-<h1>Function Attributes</h1>
+<h1>Command Line Interface</h1>
+<div id="toc" class="toc2">
+<div id="toctitle">SpectralMDL</div><hr/>
+<ul class="sectlevel1">
+<li><a href="#subcommands">Subcommands</a>
+<ul class="sectlevel2">
+<li><a href="#dump">dump</a></li>
+<li><a href="#test">test</a></li>
+</ul>
+</li>
+</ul>
+</div>
 </div>
 <div id="content">
+<div id="preamble">
+<div class="sectionbody">
+<div class="paragraph">
+<p>The SMDL implementation includes a command line interface <code>smdl</code> for working
+with MDL modules outside of a host rendering program.</p>
+</div>
 <div class="admonitionblock tip">
 <table>
 <tr>
@@ -2290,20 +2520,63 @@ p.tableblock {
 <i class="fa icon-tip" title="Tip"></i>
 </td>
 <td class="content">
-<div class="title">Explain!</div>
+<div class="title">Source code</div>
 <div class="paragraph">
-<p>This is the complete listing of SMDL function attributes. See
-<a href="extensions.html#function-attributes">the documentation</a> for
-more information.</p>
+<p>The source code for the CLI is
+<a href="https://github.com/mgradysaunders/SpectralMDL/tree/main/src/smdl">here</a>.</p>
 </div>
 </td>
 </tr>
 </table>
 </div>
+<div class="paragraph">
+<p>The CLI is based on <em>subcommands</em> to do specific things.</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="rouge highlight"><code data-lang="bash"><span class="o">&gt;</span> smdl <span class="nt">-h</span></code></pre>
+</div>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="rouge highlight"><code data-lang="text">OVERVIEW: SpectralMDL compiler
+USAGE: smdl [subcommand] [options]
+
+SUBCOMMANDS:
+
+  dump - Dump as LLVM-IR or native assembly
+  test - Execute unit tests
+
+  Type "smdl &lt;subcommand&gt; --help" to get more help on a specific subcommand
+
+OPTIONS:
+
+Generic Options:
+
+  --help      - Display available options (--help-hidden for more)
+  --help-list - Display list of available options (--help-list-hidden for more)
+  --version   - Display the version of this program</code></pre>
+</div>
+</div>
+</div>
+</div>
+<div class="sect1">
+<h2 id="subcommands">Subcommands <a class="link" href="#subcommands">#</a></h2>
+<div class="sectionbody">
+<div class="sect2">
+<h3 id="dump">dump <a class="link" href="#dump">#</a></h3>
+
+</div>
+<div class="sect2">
+<h3 id="test">test <a class="link" href="#test">#</a></h3>
+
+</div>
+</div>
+</div>
 </div>
 <div id="footer">
 <div id="footer-text">
-Last updated 2024-11-10 12:13:51 -0500
+Last updated 2024-11-12 06:45:50 -0500
 </div>
 </div>
 </body>

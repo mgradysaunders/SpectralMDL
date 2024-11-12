@@ -185,3 +185,25 @@ module Rouge
     end
   end
 end
+
+class DocPostprocessor < Asciidoctor::Extensions::Postprocessor
+  def process document, output
+    if document.basebackend? 'html'
+      output.gsub! /<div id="toctitle">.*?<\/div>/m, '<div id="toctitle">SpectralMDL</div><hr/>'
+      output.gsub! /<h2 id="(.*?)">(.*?)<\/h2>/m, '<h2 id="\1">\2 <a class="link" href="#\1">#</a></h2>'
+      output.gsub! /<h3 id="(.*?)">(.*?)<\/h3>/m, '<h3 id="\1">\2 <a class="link" href="#\1">#</a></h3>'
+      output.gsub! /<div id="footer-text">(.*?)<\/div>/m, '<div id="footer-text">\1</div>'
+    end
+    output
+  end
+end
+
+
+class ExtGroup < Asciidoctor::Extensions::Group
+  def activate registry
+    registry.postprocessor DocPostprocessor
+  end
+end
+
+Asciidoctor::Extensions.register ExtGroup
+

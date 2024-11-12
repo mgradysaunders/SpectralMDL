@@ -53,8 +53,9 @@ td {
 
 a {
   background: none;
-  color: rgb(138, 180, 248);
-  text-decoration: underline;
+  color: rgb(138, 180, 248, 0.8);
+  transition: color 200ms;
+  text-decoration: none;
   line-height: inherit;
 }
 
@@ -70,7 +71,9 @@ a:focus {
 
 a:hover,
 a:focus {
-  color: #1d4b8f;
+  color: rgb(138, 180, 248);
+  transition: color 200ms;
+  text-decoration: underline;
 }
 
 abbr {
@@ -723,6 +726,14 @@ body > div[id]::after,
 
 #toc a {
   text-decoration: none;
+  color: #aaa;
+  transition: color 200ms;
+}
+
+#toc a:hover {
+  text-decoration: none;
+  color: #eee;
+  transition: color 200ms;
 }
 
 #toc a:active {
@@ -929,7 +940,8 @@ h3 > a.link,
 h4 > a.link,
 h5 > a.link,
 h6 > a.link {
-  color: #ba3925;
+  color: rgb(175, 176, 177, 0.25);
+  transition: color 200ms;
   text-decoration: none;
 }
 
@@ -941,7 +953,8 @@ h3 > a.link:hover,
 h4 > a.link:hover,
 h5 > a.link:hover,
 h6 > a.link:hover {
-  color: #a53221;
+  color: rgb(175, 176, 177, 0.8);
+  transition: color 200ms;
 }
 
 details,

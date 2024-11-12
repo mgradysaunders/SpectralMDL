@@ -62,8 +62,9 @@ td {
 
 a {
   background: none;
-  color: rgb(138, 180, 248);
-  text-decoration: underline;
+  color: rgb(138, 180, 248, 0.8);
+  transition: color 200ms;
+  text-decoration: none;
   line-height: inherit;
 }
 
@@ -79,7 +80,9 @@ a:focus {
 
 a:hover,
 a:focus {
-  color: #1d4b8f;
+  color: rgb(138, 180, 248);
+  transition: color 200ms;
+  text-decoration: underline;
 }
 
 abbr {
@@ -732,6 +735,14 @@ body > div[id]::after,
 
 #toc a {
   text-decoration: none;
+  color: #aaa;
+  transition: color 200ms;
+}
+
+#toc a:hover {
+  text-decoration: none;
+  color: #eee;
+  transition: color 200ms;
 }
 
 #toc a:active {
@@ -938,7 +949,8 @@ h3 > a.link,
 h4 > a.link,
 h5 > a.link,
 h6 > a.link {
-  color: #ba3925;
+  color: rgb(175, 176, 177, 0.25);
+  transition: color 200ms;
   text-decoration: none;
 }
 
@@ -950,7 +962,8 @@ h3 > a.link:hover,
 h4 > a.link:hover,
 h5 > a.link:hover,
 h6 > a.link:hover {
-  color: #a53221;
+  color: rgb(175, 176, 177, 0.8);
+  transition: color 200ms;
 }
 
 details,
@@ -2269,7 +2282,7 @@ p.tableblock {
 <div id="header">
 <h1>Intrinsics</h1>
 <div id="toc" class="toc2">
-<div id="toctitle">Table of Contents</div>
+<div id="toctitle">SpectralMDL</div><hr/>
 <ul class="sectlevel1">
 <li><a href="#basics">Basics</a></li>
 <li><a href="#type-traits">Type traits</a></li>
@@ -2301,7 +2314,7 @@ more information.</p>
 </div>
 </div>
 <div class="sect1">
-<h2 id="basics">Basics</h2>
+<h2 id="basics">Basics <a class="link" href="#basics">#</a></h2>
 <div class="sectionbody">
 <table class="tableblock frame-all grid-all stretch">
 <colgroup>
@@ -2354,7 +2367,7 @@ more information.</p>
 </div>
 </div>
 <div class="sect1">
-<h2 id="type-traits">Type traits</h2>
+<h2 id="type-traits">Type traits <a class="link" href="#type-traits">#</a></h2>
 <div class="sectionbody">
 <table class="tableblock frame-all grid-all stretch">
 <colgroup>
@@ -2405,7 +2418,7 @@ more information.</p>
 </div>
 </div>
 <div class="sect1">
-<h2 id="llvm-analogs">LLVM Analogs</h2>
+<h2 id="llvm-analogs">LLVM Analogs <a class="link" href="#llvm-analogs">#</a></h2>
 <div class="sectionbody">
 <table class="tableblock frame-all grid-all stretch">
 <colgroup>
@@ -2476,7 +2489,7 @@ more information.</p>
 </div>
 </div>
 <div class="sect1">
-<h2 id="llvm-analogs-libm">LLVM Analogs (libm)</h2>
+<h2 id="llvm-analogs-libm">LLVM Analogs (libm) <a class="link" href="#llvm-analogs-libm">#</a></h2>
 <div class="sectionbody">
 <div class="paragraph">
 <p>The intrinsics in the table below are direct analogs for LLVM intrinsics as
