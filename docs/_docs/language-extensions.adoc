@@ -40,24 +40,26 @@ placing `#extended_syntax` on the first line in the file.
 [#intrinsics]
 == Intrinsics
 
-An _intrinsic_ is essentially a C-like function macro with dedicated syntax
-that the SMDL compiler magically understands. 
+An _intrinsic_ is essentially a macro with dedicated syntax
+that the compiler magically understands, and subsequently expands into
+some fundamental operation. Refer to the listing of all
+xref:list-intrinsics.adoc[Intrinsics].
 
-[IMPORTANT]
+[TIP]
 .Intrinsic syntax
 ====
 An intrinsic is a word that begins with a hash, such as `#assert`, which 
 is meant to suggest the macro-like nature of intrinsics.
 ====
 
-Refer to xref:list-intrinsics.adoc[the listing of all intrinsics].
 
 [#function-attributes]
 == Function attributes
 
 A _function attribute_ is a special keyword inside `@(...)` immediately 
 before a function declaration that controls some aspect of how the 
-function is compiled.
+function is compiled. Refer to the listing of all
+xref:list-function-attributes.adoc[Function Attributes].
 
 [, smdl]
 ----
@@ -66,8 +68,6 @@ function is compiled.
 @(pure visible) int add_one(int i) = i + 1;
 ----
 
-Refer to xref:list-function-attributes.adoc[the listing of all function 
-attributes].
 
 [#compile-time-evaluation]
 == Compile-time evaluation
