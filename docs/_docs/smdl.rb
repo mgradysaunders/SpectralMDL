@@ -16,7 +16,7 @@ module Rouge
         @keywords ||= Set.new %w(
           break case const continue default defer do else enum export
           for if import in inline let return return_from static struct 
-          switch typedef unit_test using visit while
+          switch tag typedef unit_test using visit while
         )
       end
 

@@ -9,9 +9,9 @@
 [TIP]
 .Explain!
 ====
-This is the complete listing of SMDL intrinsics. See 
-xref:extensions.adoc#intrinsics[the documentation] for 
-more information.
+This is the complete listing of SMDL intrinsics. See the
+xref:language-extensions.adoc#intrinsics[Language Extensions] 
+documentation for more information.
 ====
 
 [#basics]

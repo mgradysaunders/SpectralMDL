@@ -9,7 +9,7 @@
 [TIP]
 .Explain!
 ====
-This is the complete listing of SMDL function attributes. See
-xref:extensions.adoc#function-attributes[the documentation] for
-more information.
+This is the complete listing of SMDL function attributes. See the
+xref:language-extensions.adoc#function-attributes[Language Extensions]
+documentation for more information.
 ====

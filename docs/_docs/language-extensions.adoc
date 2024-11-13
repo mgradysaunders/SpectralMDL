@@ -29,6 +29,14 @@ sensible overarching design for two big reasons.
 And if the idea is to implement SMDL in SMDL, it is best to invest some time
 and effort into the ergonomics of language.
 
+[IMPORTANT]
+.Enabling the extensions
+====
+The language extensions include keywords that could interfere with ordinary 
+MDL code. For that reason, the extensions must be enabled for a given module by 
+placing `#extended_syntax` on the first line in the file.
+====
+
 [#intrinsics]
 == Intrinsics
 
@@ -281,6 +289,23 @@ int i = return_from {
   int j = 3;
   int k = 4;
   return j + k;
+};
+----
+
+[#tag]
+=== tag
+The `tag` keyword is used to introduce a generic tag that can be applied to
+structure types. Refer to the xref:language-design.adoc#generics[Language 
+Design] documentation for more information.
+
+[, smdl]
+----
+tag Shape;
+struct Circle: Shape {
+  float radius = 1;
+};
+struct Rectangle: Shape {
+  float2 extent = float2(1, 2);
 };
 ----
 

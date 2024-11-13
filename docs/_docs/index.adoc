@@ -21,7 +21,8 @@ physically-based rendering programs.
 
 [docs]
 * xref:command-line.adoc[Command Line Interface]
-* xref:extensions.adoc[Language Extensions]
+* xref:language-design.adoc[Language Design]
+* xref:language-extensions.adoc[Language Extensions]
 ** Listing of all xref:list-function-attributes.adoc[Function Attributes]
 ** Listing of all xref:list-intrinsics.adoc[Intrinsics]
 
@@ -48,6 +49,7 @@ renderer, MDL materials define the behavior of light at a high level.
 Different renderers and tools interpret the light behavior and create 
 the best possible image, whether it's an OpenGL-based application or 
 physically based renderer like Iray.
+
 
 [#the-case-for-mdl]
 === The case for MDL
@@ -78,3 +80,7 @@ oddly modified fork of LLVM-12 and it is _not_ spectral.
 
 [#introduction-to-smdl]
 == Introduction to SMDL (this codebase)
+
+While MDL is meant to be generic and high level, SpectralMDL is a 
+specific implementation of an MDL compiler with definite assumptions and 
+constraints on the way the MDL is compiled and used.
