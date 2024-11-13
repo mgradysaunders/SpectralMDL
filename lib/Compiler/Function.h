@@ -81,12 +81,14 @@ public:
 
   [[nodiscard]] bool is_macro() const { return decl.attrs.isMacro; }
 
+  [[nodiscard]] bool is_variant() const { return decl.isVariant; }
+
   [[nodiscard]] bool has_definition() const { return decl.definition != nullptr; }
 
   [[nodiscard]] bool has_abstract_parameters() const { return params.has_any_abstract(); }
 
   [[nodiscard]] bool has_unique_concrete_instance() const {
-    return has_definition() && !has_abstract_parameters() && !is_macro();
+    return has_definition() && !has_abstract_parameters() && !is_macro() && !is_variant();
   }
 
   [[nodiscard]] Value call(Emitter &emitter0, const ArgList &args, const AST::SourceLocation &srcLoc = {});
@@ -97,6 +99,9 @@ public:
 
   /// The AST function.
   AST::Function &decl;
+
+  /// The AST let and call expressions if this is a function variant.
+  AST::Function::LetAndCall letAndCall{};
 
   /// The parameter list derived from the AST function.
   ParamList params{};

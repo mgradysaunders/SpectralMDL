@@ -6,6 +6,7 @@
 namespace smdl::Compiler {
 
 class Crumb;
+class Function;
 class Module;
 class Type;
 
@@ -636,6 +637,26 @@ public:
         name(std::move(name)), params(std::move(params)), frequency(frequency), lateAnnotations(std::move(lateAnnotations)),
         definition(std::move(definition)) {}
 
+  struct LetAndCall final {
+    /// The let expression. This may be null.
+    Let *let{};
+
+    /// The call expression. This must be non-null.
+    Call *call{};
+
+    /// The callee identifier expression. This must be non-null.
+    Identifier *calleeIdentifier{};
+
+    /// The callee in the compiler.
+    Compiler::Function *callee{};
+
+    [[nodiscard]] operator bool() const { return call; }
+  };
+
+  /// If this is a function variant, get the variant let and call expressions. Else throw an error.
+  [[nodiscard]] LetAndCall get_variant_let_and_call_expressions() const;
+
+public:
   const Attrs attrs{};
 
   const bool isVariant{};

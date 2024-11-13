@@ -301,7 +301,8 @@ class Arg final {
 public:
   Arg() = default;
 
-  Arg(llvm::StringRef name, Value value) : name(name), value(value) {}
+  Arg(llvm::StringRef name, Value value, const AST::SourceLocation &srcLoc = {}, llvm::StringRef src = {})
+      : name(name), value(value), srcLoc(srcLoc), src(src) {}
 
   Arg(Value value) : value(value) {}
 

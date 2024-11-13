@@ -80,4 +80,31 @@ ReturnFrom::ReturnFrom(unique_bump_ptr<Stmt> stmt) : stmt(std::move(stmt)) {}
 
 ReturnFrom::~ReturnFrom() {}
 
+Function::LetAndCall Function::get_variant_let_and_call_expressions() const {
+  if (!(isVariant && params.empty() && definition && llvm::isa<Return>(definition.get())))
+    srcLoc.report_error(std::format("function variant '{}' has invalid declaration", name->name));
+  auto letAndCall{LetAndCall{}};
+  auto expr{static_cast<Return *>(definition.get())->expr.get()};
+  if (llvm::isa<Call>(expr)) {
+    letAndCall.call = static_cast<Call *>(expr);
+  } else if (llvm::isa<Let>(expr)) {
+    letAndCall.let = static_cast<Let *>(expr);
+    letAndCall.call = llvm::dyn_cast<Call>(letAndCall.let->expr.get());
+    if (!letAndCall.call)
+      srcLoc.report_error(
+          std::format("function variant '{}' definition with 'let' must be followed by call expression", name->name));
+  }
+  if (!letAndCall.call)
+    srcLoc.report_error(std::format("function variant '{}' definition must be 'let' or call expression", name->name));
+  letAndCall.calleeIdentifier = llvm::dyn_cast<Identifier>(letAndCall.call->expr.get());
+  if (!letAndCall.calleeIdentifier)
+    srcLoc.report_error(std::format("function variant '{}' callee must be an identifier", name->name));
+  for (auto &arg : letAndCall.call->args.args)
+    if (!arg.name)
+      srcLoc.report_error(std::format(
+          "call to '{}' in definition of function variant '{}' must only use named arguments",
+          std::string(*letAndCall.calleeIdentifier), name->name));
+  return letAndCall;
+}
+
 } // namespace smdl::AST

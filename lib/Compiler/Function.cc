@@ -22,6 +22,17 @@ Function::Function(Emitter &emitter0, AST::Function &decl) : prev(find_prev_func
     emitter0.emit(*param.type);
   params = ParamList(emitter0.context, decl);
   validate_attributes();
+  if ((is_variant() && prev) || (prev && prev->is_variant()))
+    decl.srcLoc.report_error(std::format("function variant '{}' must not overloaded", get_name()));
+  if (is_variant()) {
+    letAndCall = decl.get_variant_let_and_call_expressions();
+    auto callee{emitter0.context.resolve(emitter0, *letAndCall.calleeIdentifier)};
+    if (!callee.is_compile_time_function())
+      decl.srcLoc.report_error(std::format(
+          "function variant '{}' callee '{}' must resolve to another function", get_name(),
+          std::string(*letAndCall.calleeIdentifier)));
+    letAndCall.callee = callee.get_compile_time_function();
+  }
   if (has_unique_concrete_instance()) {
     auto argTypes{params.get_types()};
     instances[argTypes] = FunctionInstance(emitter0, decl, params, argTypes);
@@ -218,85 +229,121 @@ Value FunctionInstance::call(Emitter &emitter, llvm::ArrayRef<Value> argValues, 
 
 Value Function::call(Emitter &emitter0, const ArgList &args, const AST::SourceLocation &srcLoc) {
   auto &context{emitter0.context};
-  // Get all overloads.
-  llvm::SmallVector<std::pair<Function *, llvm::SmallVector<Type *>>> overloads{};
-  for (auto func{this}; func; func = func->prev) {
-    llvm::SmallVector<Type *> argParamTypes{};
-    if (context.can_resolve_arguments(emitter0, func->params, args, srcLoc, &argParamTypes))
-      overloads.emplace_back(func, std::move(argParamTypes));
-  }
+  if (is_variant()) {
+    sanity_check_nonnull(letAndCall.call);
+    sanity_check_nonnull(letAndCall.callee);
 
-  // If no matching declarations, overload resolution fails.
-  if (overloads.empty())
-    srcLoc.report_error(std::format("call to function '{}' has no viable overloads", get_name()));
-
-  // The lambda to determine whether the LHS set of parameter types is strictly less specific than
-  // the RHS set of parameter types. This is true if each and every RHS parameter type is implicitly
-  // convertible to the corresponding LHS parameter type.
-  auto isLessSpecific{[&](llvm::ArrayRef<Type *> lhsParamTypes, //
-                          llvm::ArrayRef<Type *> rhsParamTypes) {
-    sanity_check(lhsParamTypes.size() == rhsParamTypes.size());
-    for (size_t i{}; i < lhsParamTypes.size(); i++)
-      if (!context.is_implicitly_convertible(rhsParamTypes[i], lhsParamTypes[i]))
-        return false;
-    return true;
-  }};
-
-  // If there is more than 1 matching declaration, remove the less-specific of the first 2 overloads repeatedly
-  // until 1 remains. If neither is less specific, the declarations are considered to match ambiguously and overload
-  // resolution fails.
-  while (overloads.size() > 1) {
-    auto &paramTypes0{overloads[0].second};
-    auto &paramTypes1{overloads[1].second};
-    if (isLessSpecific(paramTypes0, paramTypes1)) {
-      overloads.erase(overloads.begin());
-    } else if (isLessSpecific(paramTypes1, paramTypes0)) {
-      overloads.erase(overloads.begin() + 1);
-    } else {
-      srcLoc.report_error(std::format("call to function '{}' has ambiguous overloads", get_name()));
-    }
-  }
-
-  auto &overload{*overloads[0].first};
-  if (!overload.is_pure() && !emitter0.state)
-    srcLoc.report_error(std::format("call to function '{}' from '@(pure)' context", get_name()));
-  auto argValues{context.resolve_arguments(emitter0, overload.params, args, srcLoc)};
-
-  if (overload.is_macro()) {
-    auto name{context.get_unique_name("macro", emitter0.get_llvm_function())};
+    auto name{context.get_unique_name("function-variant", emitter0.get_llvm_function())};
     auto blockBegin{emitter0.create_block(llvm_twine(name, ".begin"))};
     auto blockEnd{emitter0.create_block(llvm_twine(name, ".end"))};
     emitter0.emit_br(blockBegin);
-    llvm::SmallVector<Return> returns{};
-    {
-      Emitter emitter1{&emitter0};
-      emitter1.crumb = decl.crumb;
-      emitter1.state = overload.is_pure() ? Value() : emitter0.state;
-      emitter1.returns = &returns;
-      emitter1.afterBreak = {};    // Reset 'break'
-      emitter1.afterContinue = {}; // Reset 'continue'
-      emitter1.afterEndScope = {}; // Reset end-scope
-      emitter1.afterReturn = {decl.crumb, blockEnd};
-      emitter1.move_to(blockBegin);
-      for (size_t i = 0; i < argValues.size(); i++)
-        emitter1.declare_function_parameter(overload.params[i], argValues[i]);
-      emitter1.emit(overload.decl.definition);
-      if (!emitter1.has_terminator()) {
-        if (overload.decl.returnType->type != context.get_void_type())
-          overload.decl.srcLoc.report_error(std::format("function '{}' is missing 'return' statement", get_name()));
-        emitter1.emit_unwind_and_br(emitter1.afterReturn);
+
+    Emitter emitter1{&emitter0};
+    emitter1.crumb = decl.crumb;
+    emitter1.state = is_pure() ? Value() : emitter0.state;
+    emitter1.afterEndScope = {decl.crumb, blockEnd};
+    emitter1.move_to(blockBegin);
+
+    // If the function variant has a 'let' expression, generate the variable declarations.
+    if (letAndCall.let)
+      for (auto &var : letAndCall.let->vars)
+        emitter1.emit(var);
+    // In the function variant call expression, we visit each argument in the AST argument list and add it
+    // to the patched argument list but only if the caller did not explicitly set it by name.
+    auto patchedArgs{args};
+    for (auto &astArg : letAndCall.call->args.args) {
+      if (!patchedArgs.has_name(astArg.name->name)) {
+        patchedArgs.emplace_back(astArg.name->name, emitter1.emit(astArg.expr), astArg.srcLoc, astArg.src);
       }
     }
+
+    auto result{letAndCall.callee->call(emitter1, patchedArgs, srcLoc)};
+    sanity_check(!emitter1.has_terminator());
+    emitter1.emit_unwind_and_br(emitter1.afterEndScope);
     emitter0.move_to(blockEnd);
-    return emitter0.emit_return_phi(overload.decl.returnType->type, returns, overload.decl.returnType->srcLoc);
+    return result;
   } else {
-    llvm::SmallVector<Type *> argTypes{};
-    for (auto argValue : argValues)
-      argTypes.push_back(argValue.type);
-    auto &instance{overload.instances[argTypes]};
-    if (!instance)
-      instance = FunctionInstance(emitter0, overload.decl, overload.params, argTypes);
-    return instance.call(emitter0, argValues, srcLoc);
+    // Get all overloads.
+    llvm::SmallVector<std::pair<Function *, llvm::SmallVector<Type *>>> overloads{};
+    for (auto func{this}; func; func = func->prev) {
+      sanity_check(!func->is_variant());
+      llvm::SmallVector<Type *> argParamTypes{};
+      if (context.can_resolve_arguments(emitter0, func->params, args, srcLoc, &argParamTypes))
+        overloads.emplace_back(func, std::move(argParamTypes));
+    }
+
+    // If no matching declarations, overload resolution fails.
+    if (overloads.empty())
+      srcLoc.report_error(std::format("call to function '{}' has no viable overloads", get_name()));
+
+    // The lambda to determine whether the LHS set of parameter types is strictly less specific than
+    // the RHS set of parameter types. This is true if each and every RHS parameter type is implicitly
+    // convertible to the corresponding LHS parameter type.
+    auto isLessSpecific{[&](llvm::ArrayRef<Type *> lhsParamTypes, //
+                            llvm::ArrayRef<Type *> rhsParamTypes) {
+      sanity_check(lhsParamTypes.size() == rhsParamTypes.size());
+      for (size_t i{}; i < lhsParamTypes.size(); i++)
+        if (!context.is_implicitly_convertible(rhsParamTypes[i], lhsParamTypes[i]))
+          return false;
+      return true;
+    }};
+
+    // If there is more than 1 matching declaration, remove the less-specific of the first 2 overloads repeatedly
+    // until 1 remains. If neither is less specific, the declarations are considered to match ambiguously and overload
+    // resolution fails.
+    while (overloads.size() > 1) {
+      auto &paramTypes0{overloads[0].second};
+      auto &paramTypes1{overloads[1].second};
+      if (isLessSpecific(paramTypes0, paramTypes1)) {
+        overloads.erase(overloads.begin());
+      } else if (isLessSpecific(paramTypes1, paramTypes0)) {
+        overloads.erase(overloads.begin() + 1);
+      } else {
+        srcLoc.report_error(std::format("call to function '{}' has ambiguous overloads", get_name()));
+      }
+    }
+
+    auto &overload{*overloads[0].first};
+    if (!overload.is_pure() && !emitter0.state)
+      srcLoc.report_error(std::format("call to function '{}' from '@(pure)' context", get_name()));
+    auto argValues{context.resolve_arguments(emitter0, overload.params, args, srcLoc)};
+
+    if (overload.is_macro()) {
+      auto name{context.get_unique_name("macro", emitter0.get_llvm_function())};
+      auto blockBegin{emitter0.create_block(llvm_twine(name, ".begin"))};
+      auto blockEnd{emitter0.create_block(llvm_twine(name, ".end"))};
+      emitter0.emit_br(blockBegin);
+      llvm::SmallVector<Return> returns{};
+      {
+        Emitter emitter1{&emitter0};
+        emitter1.crumb = overload.decl.crumb;
+        emitter1.state = overload.is_pure() ? Value() : emitter0.state;
+        emitter1.returns = &returns;
+        emitter1.afterBreak = {};    // Reset 'break'
+        emitter1.afterContinue = {}; // Reset 'continue'
+        emitter1.afterEndScope = {}; // Reset end-scope
+        emitter1.afterReturn = {overload.decl.crumb, blockEnd};
+        emitter1.move_to(blockBegin);
+        for (size_t i = 0; i < argValues.size(); i++)
+          emitter1.declare_function_parameter(overload.params[i], argValues[i]);
+        emitter1.emit(overload.decl.definition);
+        if (!emitter1.has_terminator()) {
+          if (overload.decl.returnType->type != context.get_void_type())
+            overload.decl.srcLoc.report_error(std::format("function '{}' is missing 'return' statement", get_name()));
+          emitter1.emit_unwind_and_br(emitter1.afterReturn);
+        }
+      }
+      emitter0.move_to(blockEnd);
+      return emitter0.emit_return_phi(overload.decl.returnType->type, returns, overload.decl.returnType->srcLoc);
+    } else {
+      llvm::SmallVector<Type *> argTypes{};
+      for (auto argValue : argValues)
+        argTypes.push_back(argValue.type);
+      auto &instance{overload.instances[argTypes]};
+      if (!instance)
+        instance = FunctionInstance(emitter0, overload.decl, overload.params, argTypes);
+      return instance.call(emitter0, argValues, srcLoc);
+    }
   }
 }
 
