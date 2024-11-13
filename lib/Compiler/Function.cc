@@ -9,7 +9,7 @@ namespace smdl::Compiler {
     if (crumb->matches_name(decl.name->name)) {
       if (crumb->value.is_compile_time_function())
         break;
-      decl.srcLoc.report_error(std::format("function '{}' shadows non-function", decl.name->name));
+      decl.srcLoc.report_error(std::format("function '{}' shadows non-function by the same name", decl.name->name));
     }
   }
   return crumb ? crumb->value.get_compile_time_function() : nullptr;
