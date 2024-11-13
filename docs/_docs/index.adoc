@@ -16,6 +16,15 @@ https://www.nvidia.com/en-us/design-visualization/technologies/material-definiti
 which is intended to be useful as a middleware {cpp} library in offline 
 physically-based rendering programs.
 
+[#pages]
+== Pages
+
+[docs]
+* xref:command-line.adoc[Command Line Interface]
+* xref:extensions.adoc[Language Extensions]
+** Listing of all xref:list-function-attributes.adoc[Function Attributes]
+** Listing of all xref:list-intrinsics.adoc[Intrinsics]
+
 
 [#introduction-to-mdl]
 == Introduction to MDL 
@@ -67,11 +76,5 @@ materials more broadly. It is an _enormous_ {cpp} codebase that
 does a bajillion things, though it notably is tied down to an 
 oddly modified fork of LLVM-12 and it is _not_ spectral.
 
-[#documentation-pages]
-== Documentation Pages
-
-[docs]
-* xref:command-line.adoc[Command Line Interface]
-* xref:extensions.adoc[Language Extensions]
-** Listing of all xref:list-function-attributes.adoc[Function Attributes]
-** Listing of all xref:list-intrinsics.adoc[Intrinsics]
+[#introduction-to-smdl]
+== Introduction to SMDL (this codebase)
