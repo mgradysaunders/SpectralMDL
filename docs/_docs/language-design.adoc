@@ -11,8 +11,8 @@ It is worth discussing the overall design of the SMDL implementation,
 because writing a compiler is hard, and understanding somebody else's 
 compiler is harder.
 
-[#the-repo]
-== The repo
+[#the-repository]
+== The repository
 
 Let's discuss the code in the GitHub repo. Fundamentally, it uses 
 https://cmake.org[CMake] to build two things: 
@@ -34,14 +34,14 @@ Everything interesting lives in the library. The `smdl` program is
 relatively minimal and is documented in the xref:command-line.adoc[Command Line
 Interface] page, so we're not going to discuss it further here.
 
-[#parsing]
-== Parsing
+[#how-the-parser-works]
+== How the parser works
 The library uses a recursive descent parser to form an abstract syntax 
 tree (AST). The parser is implemented in `lib/Parser.h` and `lib/Parser.cc`, 
 and the AST is implemented in `lib/AST.h` and `lib/AST.cc`. The philosophy 
 is to _just parse the damn string_. There is no lexer or tokenizer. 
 
-[NOTE]
+[TIP]
 .Memory management
 ====
 The parser bump-allocates AST nodes from an instance of `llvm::BumpPtrAllocator` that 
@@ -50,7 +50,10 @@ Furthermore, AST nodes keep string views into the original source whenever possi
 to minimize string duplications.
 ====
 
+[#how-the-compiler-works]
+== How the compiler works
+
 [#generics]
-== Generics
+=== Generics
 
 TODO
