@@ -1,6 +1,5 @@
 #include "llvm/Support/CommandLine.h"
 #include "llvm/Support/InitLLVM.h"
-#include "smdl/ImageLoader.h"
 #include "smdl/MDLInstance.h"
 #include <iostream>
 #include <fstream>
@@ -39,7 +38,6 @@ int main(int argc, char **argv) {
   try {
     mdl.enableDebug = enableDebug;
     mdl.enableUnitTests = true;
-    mdl.imageLoader = smdl::ImageLoader;
     mdl.numWavelens = numWavelens;
     for (auto &inputFile : inputFiles) {
       if (auto error = mdl.load_module(std::string(inputFile))) {

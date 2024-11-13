@@ -4,6 +4,7 @@
 #include <set>
 
 #include "smdl/FileLocator.h"
+#include "smdl/ImageLoader.h"
 #include "smdl/type.h"
 
 namespace llvm {
@@ -97,14 +98,7 @@ public:
 public:
   FileLocator fileLocator{};
 
-  /// This represents the primary API for loading image file formats. By default, SpectralMDL does not
-  /// want to enforce the usage of any specific library, i.e., we do not require OpenImageIO or OpenEXR.
-  ///
-  /// This repository does include another CMake library target `SpectralMDL::DefaultImageLoader` that
-  /// uses STB and TinyEXR to support all relevant image formats.
-  using ImageLoader = std::function<Image(const std::filesystem::path &fname)>;
-
-  ImageLoader imageLoader{};
+  ImageLoader imageLoader{default_image_loader};
 
   bool enableDebug{false};
 

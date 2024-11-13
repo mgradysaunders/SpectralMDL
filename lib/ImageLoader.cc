@@ -26,7 +26,7 @@
 
 namespace smdl {
 
-Image ImageLoader(const std::filesystem::path &fname) {
+Image default_image_loader(const std::filesystem::path &fname) {
   auto fnameStr{fname.string()};
   auto fnameExtStr{fname.extension().string()};
   std::transform(fnameExtStr.begin(), fnameExtStr.end(), fnameExtStr.begin(), [](char c) {

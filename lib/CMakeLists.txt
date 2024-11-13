@@ -21,6 +21,7 @@ add_library(
     "Compiler/Value.cc"
     "DataLookup.cc"
     "FileLocator.cc"
+    "ImageLoader.cc"
     "MDLInstance.cc"
     "Parser.cc"
     "llvm.cc"
@@ -95,30 +96,3 @@ install(
   RUNTIME DESTINATION "${CMAKE_INSTALL_BINDIR}"
   COMPONENT "SpectralMDL"
   ) 
-
-add_library(
-  SpectralMDL_ImageLoader
-  SHARED
-    "ImageLoader.cc"
-  )
-set_target_properties(
-  SpectralMDL_ImageLoader
-  PROPERTIES
-    CXX_STANDARD 20
-    CXX_STANDARD_REQUIRED YES
-    OUTPUT_NAME "SpectralMDL_ImageLoader"
-    VERSION "${PROJECT_VERSION}"
-    SOVERSION "${PROJECT_VERSION_MAJOR}.${PROJECT_VERSION_MINOR}"
-    LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/lib"
-    ARCHIVE_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/lib"
-  )
-target_link_libraries(SpectralMDL_ImageLoader PRIVATE SpectralMDL)
-install(
-  TARGETS "SpectralMDL_ImageLoader"
-  EXPORT "${PROJECT_NAME}_Targets"
-  ARCHIVE DESTINATION "${CMAKE_INSTALL_LIBDIR}"
-  LIBRARY DESTINATION "${CMAKE_INSTALL_LIBDIR}"
-  RUNTIME DESTINATION "${CMAKE_INSTALL_BINDIR}"
-  COMPONENT "SpectralMDL_ImageLoader"
-  )
-add_library(${PROJECT_NAME}::SpectralMDL_ImageLoader ALIAS SpectralMDL_ImageLoader)
