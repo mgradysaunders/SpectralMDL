@@ -644,12 +644,6 @@ public:
     /// The call expression. This must be non-null.
     Call *call{};
 
-    /// The callee identifier expression. This must be non-null.
-    Identifier *calleeIdentifier{};
-
-    /// The callee in the compiler.
-    Compiler::Function *callee{};
-
     [[nodiscard]] operator bool() const { return call; }
   };
 

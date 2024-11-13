@@ -507,18 +507,13 @@ public:
 
   [[nodiscard]] bool has_type(Type *type) const { return index_of(type) != -1; }
 
-  [[nodiscard]] bool has_all_types(UnionType *unionType) const {
-    for (auto type : unionType->types)
-      if (!has_type(type))
-        return false;
-    return true;
-  }
+  [[nodiscard]] bool has_all_types(UnionType *unionType) const;
 
-  [[nodiscard]] int_t index_of(Type *type) const {
-    if (auto itr{std::find(types.begin(), types.end(), type)}; itr != types.end())
-      return itr - types.begin();
-    return -1;
-  }
+  [[nodiscard]] bool always_has_tag(TagType *tag) const;
+
+  [[nodiscard]] bool always_has_parent_template(StructType *parentTemplate) const;
+
+  [[nodiscard]] int_t index_of(Type *type) const;
 
   [[nodiscard]] Value access(Emitter &emitter, Value value, llvm::StringRef key, const AST::SourceLocation &srcLoc) final;
 

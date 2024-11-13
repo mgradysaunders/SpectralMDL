@@ -24,6 +24,8 @@ public:
 
   void emit(Context &context);
 
+  [[nodiscard]] llvm::SmallVector<Function *> find_all_materials();
+
 public:
   /// The file path. This is empty if the module is builtin.
   std::string path{};

@@ -161,61 +161,54 @@ ArithmeticType *Context::get_arithmetic_type(Scalar scalar, Extent extent) {
 }
 
 //--{ Type relations
-ConversionRule Context::get_conversion_rule(Type *typeSrc, Type *typeDst) {
-  sanity_check(typeSrc);
-  sanity_check(typeDst);
+ConversionRule Context::get_conversion_rule(Type *srcType, Type *dstType) {
+  sanity_check(srcType);
+  sanity_check(dstType);
   // If the source type is equivalent to the destination type OR the destination type is pure 'auto', conversion is implicit.
-  if (typeSrc == typeDst || typeDst->is_auto())
+  if (srcType == dstType || dstType->is_auto())
     return ConversionRule::Perfect;
-  if (typeSrc->is_abstract())
+  if (srcType->is_abstract())
     return ConversionRule::Explicit; // ?
-
   // If the source and destination types are both arithmetic ...
-  if (typeSrc->is_arithmetic() && typeDst->is_arithmetic()) {
+  if (srcType->is_arithmetic() && dstType->is_arithmetic()) {
     // If the source and destination extents are equivalent, conversion is implicit.
-    if (typeSrc->extent == typeDst->extent)
-      return typeSrc->scalar < typeDst->scalar ? ConversionRule::Implicit : ConversionRule::Explicit;
-
+    if (srcType->extent == dstType->extent)
+      return srcType->scalar < dstType->scalar ? ConversionRule::Implicit : ConversionRule::Explicit;
     // If the source type is a scalar and the destination type is a vector or matrix, conversion is explicit.
     // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
     // auto vecOf1s = float4(1.0);
     // auto matOf1s = float4x4(1.0); // 1s on diagonal
     // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-    if (typeSrc->is_scalar() && (typeDst->is_vector() || typeDst->is_matrix()))
+    if (srcType->is_scalar() && (dstType->is_vector() || dstType->is_matrix()))
       return ConversionRule::Explicit;
   }
-
   // If the source and destination types are different enum types, conversion is explicit.
-  if (typeSrc->is_enum() && typeDst->is_enum())
+  if (srcType->is_enum() && dstType->is_enum())
     return ConversionRule::Explicit;
-
   // If the source and destination types are enum and int-like types, conversion is explicit.
-  if ((typeSrc->is_enum() && typeDst->is_scalar() && typeDst->is_integral()) || //
-      (typeDst->is_enum() && typeSrc->is_scalar() && typeSrc->is_integral()))
+  if ((srcType->is_enum() && dstType->is_scalar() && dstType->is_integral()) || //
+      (dstType->is_enum() && srcType->is_scalar() && srcType->is_integral()))
     return ConversionRule::Explicit;
-
   // If the source type is a pointer ...
-  if (typeSrc->is_pointer()) {
+  if (srcType->is_pointer()) {
     // If the destination type is also a pointer, conversion is explicit. NOTE: At this point, we know the source type
     // is not equivalent to the destination type, so the pointer types are distinct.
     // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
     // auto ptrToInt = cast<&int>(ptr);
     // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-    if (typeDst->is_pointer()) {
+    if (dstType->is_pointer()) {
       // ... unless the destination type is a pointer to 'auto', in which case conversion is perfect
       // as long as the underlying element type conversion is perfect.
-      if (typeDst->is_abstract())
-        return get_conversion_rule(typeSrc->get_element_type(), typeDst->get_element_type());
+      if (dstType->is_abstract())
+        return get_conversion_rule(srcType->get_element_type(), dstType->get_element_type());
       return ConversionRule::Explicit;
     }
-
     // If the destination type is a boolean, conversion is implicit. This is a non-NULL test.
     // ~~~~~~~~~~~~~~~~~~~~~
     // bool isNonNull = ptr;
     // ~~~~~~~~~~~~~~~~~~~~~
-    if (typeDst == get_bool_type())
+    if (dstType == get_bool_type())
       return ConversionRule::Implicit;
-
     // If the destination type is a vector, color, or array type with an equivalent element type, conversion
     // is explicit.
     // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -224,117 +217,118 @@ ConversionRule Context::get_conversion_rule(Type *typeSrc, Type *typeDst) {
     // auto loadColor = color(ptr);
     // auto loadArray = float[7](ptr);
     // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-    if ((typeDst->is_vector() || typeDst->is_color() || typeDst->is_array()) &&
-        typeSrc->get_element_type() == typeDst->get_element_type())
+    if ((dstType->is_vector() || dstType->is_color() || dstType->is_array()) &&
+        srcType->get_element_type() == dstType->get_element_type())
       return ConversionRule::Explicit;
   }
-
   // If the source type is an array ...
-  if (typeSrc->is_array()) {
+  if (srcType->is_array()) {
     // If the destination type is a pointer with the same element type, conversion is implicit.
     // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
     // auto someArray = float[4](/* ... */);
     // &float somePtr = someArray;
     // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-    if (typeDst->is_pointer() && typeSrc->get_element_type() == typeDst->get_element_type())
+    if (dstType->is_pointer() && srcType->get_element_type() == dstType->get_element_type())
       return ConversionRule::Implicit;
-
     // If the destination type is an array with the same size, conversion is explicit. NOTE: At this point, we know the
     // source type is not equivalent to the destination type, so we know the element types are different.
     // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
     // auto someArray = float[4](/* ... */);
     // auto someArray2 = cast<double[4]>(someArray);
     // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-    if (typeDst->is_array() && typeSrc->get_array_size() == typeDst->get_array_size() &&
-        get_conversion_rule(typeSrc->get_element_type(), typeDst->get_element_type()) != ConversionRule::NotAllowed)
+    if (dstType->is_array() && srcType->get_array_size() == dstType->get_array_size() &&
+        get_conversion_rule(srcType->get_element_type(), dstType->get_element_type()) != ConversionRule::NotAllowed)
       return ConversionRule::Explicit;
-
     // If the destination type is a size-deferred array, conversion is whatever the element conversion is.
-    if (typeDst->is_size_deferred_array())
-      return get_conversion_rule(typeSrc->get_element_type(), typeDst->get_element_type());
+    if (dstType->is_size_deferred_array())
+      return get_conversion_rule(srcType->get_element_type(), dstType->get_element_type());
   }
-
   // If the source type is a struct ...
-  if (typeSrc->is_struct()) {
+  if (srcType->is_struct()) {
     // If the source type is an instantiation of a template struct, conversion is perfect.
     // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
     // df::weighted_layer layer = df::weighted_layer(weight: 0.7, layer: someBsdf1, base: someBsdf0)
     // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-    if (typeDst->is_struct() && static_cast<StructType *>(typeSrc)->parentTemplate == static_cast<StructType *>(typeDst))
+    if (dstType->is_struct() && static_cast<StructType *>(srcType)->parentTemplate == static_cast<StructType *>(dstType))
       return ConversionRule::Perfect;
-
     // If the source type is tagged as implementing the tag, conversion is perfect.
     // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
     // bsdf someBsdf = df::diffuse_reflection_bsdf(tint: color(0.8));
     // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-    if (typeDst->is_tag() && static_cast<StructType *>(typeSrc)->has_tag(static_cast<TagType *>(typeDst)))
+    if (dstType->is_tag() && static_cast<StructType *>(srcType)->has_tag(static_cast<TagType *>(dstType)))
       return ConversionRule::Perfect;
   }
-
   // If the destination type is a union ...
-  if (typeDst->is_union()) {
-    if (typeSrc->is_union()) {
+  if (dstType->is_union()) {
+    if (srcType->is_union()) {
       // If the source type is a union and the destination type has all source case types, conversion is implicit.
-      if (static_cast<UnionType *>(typeDst)->has_all_types(static_cast<UnionType *>(typeSrc))) {
+      if (static_cast<UnionType *>(dstType)->has_all_types(static_cast<UnionType *>(srcType)))
         return ConversionRule::Implicit;
-      }
     } else {
       // If the source type is not a union and the destination type has the source as a case type, conversion in implicit.
-      if (static_cast<UnionType *>(typeDst)->has_type(typeSrc)) {
+      if (static_cast<UnionType *>(dstType)->has_type(srcType))
         return ConversionRule::Implicit;
-      }
     }
   }
-
+  // If the source type is a union...
+  if (srcType->is_union()) {
+    // If the destination type is a tag, conversion is perfect if every type in the union has the tag.
+    if (dstType->is_tag() && static_cast<UnionType *>(srcType)->always_has_tag(static_cast<TagType *>(dstType)))
+      return ConversionRule::Perfect;
+    // If the destination type is a struct, conversion is perfect if every type in the union is an instance of the struct.
+    if (dstType->is_struct() &&
+        static_cast<UnionType *>(srcType)->always_has_parent_template(static_cast<StructType *>(dstType)))
+      return ConversionRule::Perfect;
+  }
   // Not allowed!
   return ConversionRule::NotAllowed;
 }
 
-bool Context::is_subset_of(Type *typeA, Type *typeB) {
-  if (typeA == typeB || typeB->is_auto())
+bool Context::is_subset_of(Type *lhsType, Type *rhsType) {
+  if (lhsType == rhsType || rhsType->is_auto())
     return true;
-  if (typeB->is_tag())
-    return is_perfectly_convertible(typeA, typeB);
-  if (typeB->is_union())
-    return typeA->is_union() ? static_cast<UnionType *>(typeB)->has_all_types(static_cast<UnionType *>(typeA))
-                             : static_cast<UnionType *>(typeB)->has_type(typeA);
-  if (typeA->is_pointer() && typeB->is_pointer() && typeB->is_abstract())
-    return is_subset_of(typeA->get_element_type(), typeB->get_element_type());
-  if (typeA->is_array() && typeB->is_array()) {
-    if (static_cast<ArrayType *>(typeB)->size != 0 &&
-        static_cast<ArrayType *>(typeB)->size != static_cast<ArrayType *>(typeA)->size)
+  if (rhsType->is_tag())
+    return is_perfectly_convertible(lhsType, rhsType);
+  if (rhsType->is_union())
+    return lhsType->is_union() ? static_cast<UnionType *>(rhsType)->has_all_types(static_cast<UnionType *>(lhsType))
+                               : static_cast<UnionType *>(rhsType)->has_type(lhsType);
+  if (lhsType->is_pointer() && rhsType->is_pointer() && rhsType->is_abstract())
+    return is_subset_of(lhsType->get_element_type(), rhsType->get_element_type());
+  if (lhsType->is_array() && rhsType->is_array()) {
+    if (static_cast<ArrayType *>(rhsType)->size != 0 &&
+        static_cast<ArrayType *>(rhsType)->size != static_cast<ArrayType *>(lhsType)->size)
       return false;
-    return is_subset_of(typeA->get_element_type(), typeB->get_element_type());
+    return is_subset_of(lhsType->get_element_type(), rhsType->get_element_type());
   }
   return false;
 }
 
-Type *Context::get_common_type_of_pair(Type *typeA, Type *typeB, bool defaultToUnion, const AST::SourceLocation &srcLoc) {
-  if (typeA == get_auto_type() || !typeA)
-    return typeB;
-  if (typeB == get_auto_type() || !typeB || typeA == typeB)
-    return typeA;
-  auto scalar{std::max(typeA->scalar, typeB->scalar)};
-  auto extent{typeA->extent};
-  if (typeA->extent.is_scalar()) {
-    extent = typeB->extent;
-  } else if (typeB->extent.is_scalar()) {
-    extent = typeA->extent;
-  } else if (typeA->extent != typeB->extent) {
-    if (!defaultToUnion || typeA->is_abstract() || typeB->is_abstract())
-      srcLoc.report_error(std::format("no common type between '{}' and '{}'", typeA->name, typeB->name));
-    return get_union_type({typeA, typeB});
+Type *Context::get_common_type_of_pair(Type *lhsType, Type *rhsType, bool defaultToUnion, const AST::SourceLocation &srcLoc) {
+  if (lhsType == get_auto_type() || !lhsType)
+    return rhsType;
+  if (rhsType == get_auto_type() || !rhsType || lhsType == rhsType)
+    return lhsType;
+  auto scalar{std::max(lhsType->scalar, rhsType->scalar)};
+  auto extent{lhsType->extent};
+  if (lhsType->extent.is_scalar()) {
+    extent = rhsType->extent;
+  } else if (rhsType->extent.is_scalar()) {
+    extent = lhsType->extent;
+  } else if (lhsType->extent != rhsType->extent) {
+    if (!defaultToUnion || lhsType->is_abstract() || rhsType->is_abstract())
+      srcLoc.report_error(std::format("no common type between '{}' and '{}'", lhsType->name, rhsType->name));
+    return get_union_type({lhsType, rhsType});
   }
-  if (typeA->is_arithmetic() && typeB->is_arithmetic()) {
+  if (lhsType->is_arithmetic() && rhsType->is_arithmetic()) {
     return get_arithmetic_type(scalar, extent);
   } else if (
-      (typeA->is_arithmetic() && typeA->extent.is_scalar() && typeB->is_color()) ||
-      (typeB->is_arithmetic() && typeB->extent.is_scalar() && typeA->is_color())) {
+      (lhsType->is_arithmetic() && lhsType->extent.is_scalar() && rhsType->is_color()) ||
+      (rhsType->is_arithmetic() && rhsType->extent.is_scalar() && lhsType->is_color())) {
     return get_color_type();
   } else {
-    if (!defaultToUnion || typeA->is_abstract() || typeB->is_abstract())
-      srcLoc.report_error(std::format("no common type between '{}' and '{}'", typeA->name, typeB->name));
-    return get_union_type({typeA, typeB});
+    if (!defaultToUnion || lhsType->is_abstract() || rhsType->is_abstract())
+      srcLoc.report_error(std::format("no common type between '{}' and '{}'", lhsType->name, rhsType->name));
+    return get_union_type({lhsType, rhsType});
   }
 }
 

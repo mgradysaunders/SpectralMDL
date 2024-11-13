@@ -4,41 +4,6 @@
 
 namespace smdl::Compiler {
 
-[[nodiscard]] static Function *find_prev_function(Crumb *crumb, const AST::Function &decl) {
-  for (; crumb; crumb = crumb->prev) {
-    if (crumb->matches_name(decl.name->name)) {
-      if (crumb->value.is_compile_time_function())
-        break;
-      decl.srcLoc.report_error(std::format("function '{}' shadows non-function by the same name", decl.name->name));
-    }
-  }
-  return crumb ? crumb->value.get_compile_time_function() : nullptr;
-}
-
-Function::Function(Emitter &emitter0, AST::Function &decl) : prev(find_prev_function(emitter0.crumb, decl)), decl(decl) {
-  emitter0.context.validate_decl_name("function", *decl.name);
-  emitter0.emit(*decl.returnType);
-  for (auto &param : decl.params)
-    emitter0.emit(*param.type);
-  params = ParamList(emitter0.context, decl);
-  validate_attributes();
-  if ((is_variant() && prev) || (prev && prev->is_variant()))
-    decl.srcLoc.report_error(std::format("function variant '{}' must not overloaded", get_name()));
-  if (is_variant()) {
-    letAndCall = decl.get_variant_let_and_call_expressions();
-    auto callee{emitter0.context.resolve(emitter0, *letAndCall.calleeIdentifier)};
-    if (!callee.is_compile_time_function())
-      decl.srcLoc.report_error(std::format(
-          "function variant '{}' callee '{}' must resolve to another function", get_name(),
-          std::string(*letAndCall.calleeIdentifier)));
-    letAndCall.callee = callee.get_compile_time_function();
-  }
-  if (has_unique_concrete_instance()) {
-    auto argTypes{params.get_types()};
-    instances[argTypes] = FunctionInstance(emitter0, decl, params, argTypes);
-  }
-}
-
 //--{ Construct 'FunctionInstance' from 'AST::Function' and 'ParamList'
 FunctionInstance::FunctionInstance(
     Emitter &emitter0, AST::Function &decl, const ParamList &params, llvm::ArrayRef<Type *> argTypes)
@@ -227,17 +192,49 @@ Value FunctionInstance::call(Emitter &emitter, llvm::ArrayRef<Value> argValues, 
       type->returnType, emitter.builder.CreateCall(static_cast<llvm::FunctionType *>(type->llvmType), llvmFunc, llvmArgs));
 }
 
+[[nodiscard]] static Function *find_prev_function(Crumb *crumb, const AST::Function &decl) {
+  for (; crumb; crumb = crumb->prev) {
+    if (crumb->matches_name(decl.name->name)) {
+      if (crumb->value.is_compile_time_function())
+        break;
+      decl.srcLoc.report_error(std::format("function '{}' shadows non-function by the same name", decl.name->name));
+    }
+  }
+  return crumb ? crumb->value.get_compile_time_function() : nullptr;
+}
+
+Function::Function(Emitter &emitter0, AST::Function &decl) : prev(find_prev_function(emitter0.crumb, decl)), decl(decl) {
+  emitter0.context.validate_decl_name("function", *decl.name);
+  emitter0.emit(*decl.returnType);
+  for (auto &param : decl.params)
+    emitter0.emit(*param.type);
+  params = ParamList(emitter0.context, decl);
+  validate_attributes();
+  if ((is_variant() && prev) || (prev && prev->is_variant()))
+    decl.srcLoc.report_error(std::format("function variant '{}' must not be overloaded", get_name()));
+  if (is_variant()) {
+    letAndCall = decl.get_variant_let_and_call_expressions();
+    sanity_check(has_definition());
+  }
+  if (has_unique_concrete_instance()) {
+    auto argTypes{params.get_types()};
+    instances[argTypes] = FunctionInstance(emitter0, decl, params, argTypes);
+  }
+}
+
+bool Function::represents_material() const {
+  return has_unique_concrete_instance() && params.empty() &&
+         get_return_type() == get_return_type()->context.get_material_type();
+}
+
 Value Function::call(Emitter &emitter0, const ArgList &args, const AST::SourceLocation &srcLoc) {
   auto &context{emitter0.context};
   if (is_variant()) {
     sanity_check_nonnull(letAndCall.call);
-    sanity_check_nonnull(letAndCall.callee);
-
     auto name{context.get_unique_name("function-variant", emitter0.get_llvm_function())};
     auto blockBegin{emitter0.create_block(llvm_twine(name, ".begin"))};
     auto blockEnd{emitter0.create_block(llvm_twine(name, ".end"))};
     emitter0.emit_br(blockBegin);
-
     Emitter emitter1{&emitter0};
     emitter1.crumb = decl.crumb;
     emitter1.state = is_pure() ? Value() : emitter0.state;
@@ -251,17 +248,16 @@ Value Function::call(Emitter &emitter0, const ArgList &args, const AST::SourceLo
     // In the function variant call expression, we visit each argument in the AST argument list and add it
     // to the patched argument list but only if the caller did not explicitly set it by name.
     auto patchedArgs{args};
-    for (auto &astArg : letAndCall.call->args.args) {
-      if (!patchedArgs.has_name(astArg.name->name)) {
+    for (auto &astArg : letAndCall.call->args.args)
+      if (!patchedArgs.has_name(astArg.name->name))
         patchedArgs.emplace_back(astArg.name->name, emitter1.emit(astArg.expr), astArg.srcLoc, astArg.src);
-      }
-    }
 
-    auto result{letAndCall.callee->call(emitter1, patchedArgs, srcLoc)};
+    auto callee{emitter0.emit(letAndCall.call->expr)};
+    auto result{emitter1.call(callee, patchedArgs, srcLoc)};
     sanity_check(!emitter1.has_terminator());
     emitter1.emit_unwind_and_br(emitter1.afterEndScope);
     emitter0.move_to(blockEnd);
-    return result;
+    return emitter0.construct(decl.returnType->type, result);
   } else {
     // Get all overloads.
     llvm::SmallVector<std::pair<Function *, llvm::SmallVector<Type *>>> overloads{};

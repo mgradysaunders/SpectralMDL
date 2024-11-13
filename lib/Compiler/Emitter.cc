@@ -110,6 +110,17 @@ void Emitter::declare_import(bool isAbs, llvm::ArrayRef<llvm::StringRef> path, A
     push(importedCrumb->value, context.bump_duplicate(path), &decl, decl.srcLoc);
   }
 }
+
+Value Emitter::call(Value value, const ArgList &args, const AST::SourceLocation &srcLoc) {
+  if (value.is_compile_time_intrinsic())
+    return emit_intrinsic(*value.get_compile_time_intrinsic(), args);
+  if (value.is_compile_time_type())
+    return construct(value.get_compile_time_type(), args, srcLoc);
+  if (value.is_compile_time_function())
+    return value.get_compile_time_function()->call(*this, args, srcLoc);
+  srcLoc.report_error("invalid call");
+  return {};
+}
 //--}
 
 static void unimplemented_emit(AST::Node &node) { node.srcLoc.report_error("unimplemented"); }
@@ -326,18 +337,6 @@ Value Emitter::emit(AST::Binary &expr) {
         boolType, {{context.get_compile_time_bool(expr.op == AST::BinaryOp::LogicalOr), blockLhs}, {valueRhs, blockRhs}});
   }
   return emit_op(expr.op, emit(expr.lhs), emit(expr.rhs), expr.srcLoc);
-}
-
-Value Emitter::emit(AST::Call &expr) {
-  auto callee{emit(expr.expr)};
-  if (callee.is_compile_time_intrinsic())
-    return emit_intrinsic(*callee.get_compile_time_intrinsic(), emit(expr.args));
-  if (callee.is_compile_time_type())
-    return construct(callee.get_compile_time_type(), emit(expr.args), expr.srcLoc);
-  if (callee.is_compile_time_function())
-    return callee.get_compile_time_function()->call(*this, emit(expr.args), expr.srcLoc);
-  unimplemented_emit(expr);
-  return {};
 }
 
 Value Emitter::emit(AST::Conditional &expr) {

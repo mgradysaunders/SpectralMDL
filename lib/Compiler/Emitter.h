@@ -186,6 +186,8 @@ public:
       return rvalue(args[0].value);
     return type->construct(*this, args, srcLoc);
   }
+
+  [[nodiscard]] Value call(Value value, const ArgList &args, const AST::SourceLocation &srcLoc = {});
   //--}
 
 public:
@@ -237,7 +239,7 @@ public:
 
   Value emit(AST::Binary &expr);
 
-  Value emit(AST::Call &expr);
+  Value emit(AST::Call &expr) { return call(emit(expr.expr), emit(expr.args), expr.srcLoc); }
 
   Value emit(AST::Cast &expr) { return construct(emit(expr.type).get_compile_time_type(), emit(expr.expr), expr.srcLoc); }
 

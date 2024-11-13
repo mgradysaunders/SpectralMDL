@@ -218,30 +218,30 @@ public:
 
 public:
   //--{ Type relations
-  [[nodiscard]] ConversionRule get_conversion_rule(Type *typeSrc, Type *typeDst);
+  [[nodiscard]] ConversionRule get_conversion_rule(Type *srcType, Type *dstType);
 
-  [[nodiscard]] bool is_explicitly_convertible(Type *typeSrc, Type *typeDst) {
-    return get_conversion_rule(typeSrc, typeDst) >= ConversionRule::Explicit;
+  [[nodiscard]] bool is_explicitly_convertible(Type *srcType, Type *dstType) {
+    return get_conversion_rule(srcType, dstType) >= ConversionRule::Explicit;
   }
 
-  [[nodiscard]] bool is_implicitly_convertible(Type *typeSrc, Type *typeDst) {
-    return get_conversion_rule(typeSrc, typeDst) >= ConversionRule::Implicit;
+  [[nodiscard]] bool is_implicitly_convertible(Type *srcType, Type *dstType) {
+    return get_conversion_rule(srcType, dstType) >= ConversionRule::Implicit;
   }
 
-  [[nodiscard]] bool is_perfectly_convertible(Type *typeSrc, Type *typeDst) {
-    return get_conversion_rule(typeSrc, typeDst) == ConversionRule::Perfect;
+  [[nodiscard]] bool is_perfectly_convertible(Type *srcType, Type *dstType) {
+    return get_conversion_rule(srcType, dstType) == ConversionRule::Perfect;
   }
 
-  [[nodiscard]] bool is_subset_of(Type *typeA, Type *typeB);
+  [[nodiscard]] bool is_subset_of(Type *lhsType, Type *rhsType);
 
   [[nodiscard]] Type *get_common_type_of_pair(
-      Type *typeA, Type *typeB, bool defaultToUnion = true, const AST::SourceLocation &srcLoc = {});
+      Type *lhsType, Type *rhsType, bool defaultToUnion = true, const AST::SourceLocation &srcLoc = {});
 
   [[nodiscard]] Type *get_common_type(
       llvm::ArrayRef<Type *> types, bool defaultToUnion = true, const AST::SourceLocation &srcLoc = {});
 
-  [[nodiscard]] Type *get_common_type(Type *typeA, Type *typeB, auto... typeC) {
-    return get_common_type({typeA, typeB, typeC...});
+  [[nodiscard]] Type *get_common_type(Type *lhsType, Type *rhsType, auto... types) {
+    return get_common_type({lhsType, rhsType, types...});
   }
   //--}
 

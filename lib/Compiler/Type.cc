@@ -873,11 +873,16 @@ Value StructType::construct(Emitter &emitter, const ArgList &args, const AST::So
       srcLoc.report_error(std::format("can't null construct abstract type '{}'", name));
     return Value::zero(this);
   }
-  if (args.is_one_positional())
-    if (args[0].value.type->is_struct() && static_cast<StructType *>(args[0].value.type)->parentTemplate == this) {
-      sanity_check(recursive_match(emitter, args[0].value.type));
-      return emitter.rvalue(args[0].value);
+  if (args.is_one_positional()) {
+    auto value{args[0].value};
+    if (value.type->is_struct() && static_cast<StructType *>(value.type)->parentTemplate == this) {
+      sanity_check(recursive_match(emitter, value.type));
+      return emitter.rvalue(value);
     }
+    if (is_abstract() && value.type->is_union() && static_cast<UnionType *>(value.type)->always_has_parent_template(this)) {
+      return emitter.rvalue(value);
+    }
+  }
   if (is_string()) {
     if (args.is_one_positional()) {
       if (args[0].value.type->is_enum()) {
@@ -1015,6 +1020,8 @@ bool StructType::recursive_match(Emitter &emitter, Type *type) {
       sanity_check(fields[i].type->recursive_match(emitter, static_cast<StructType *>(type)->fields[i].type));
     return true;
   }
+  if (is_abstract() && type->is_union())
+    return static_cast<UnionType *>(type)->always_has_parent_template(this);
   return false;
 }
 
@@ -1033,12 +1040,18 @@ Value TagType::construct(Emitter &emitter, const ArgList &args, const AST::Sourc
       srcLoc.report_error(std::format("can't default construct tag type '{}'", name));
     return emitter.construct(defaultType, args, srcLoc);
   }
-  if (args.is_one_positional() && args[0].value.type->is_struct()) {
+  if (args.is_one_positional()) {
     auto value{args[0].value};
-    auto structType{static_cast<StructType *>(value.type)};
-    if (!structType->has_tag(this))
-      srcLoc.report_error(std::format("struct type '{}' incompatible with tag type '{}'", structType->name, name));
-    return emitter.rvalue(value);
+    if (auto structType{llvm::dyn_cast<StructType>(value.type)}) {
+      if (!structType->has_tag(this))
+        srcLoc.report_error(std::format("struct type '{}' incompatible with tag type '{}'", structType->name, name));
+      return emitter.rvalue(value);
+    }
+    if (auto unionType{llvm::dyn_cast<UnionType>(value.type)}) {
+      if (!unionType->always_has_tag(this))
+        srcLoc.report_error(std::format("union type '{}' incompatible with tag type '{}'", unionType->name, name));
+      return emitter.rvalue(value);
+    }
   }
   return Type::construct(emitter, args, srcLoc); // Error
 }
@@ -1079,6 +1092,33 @@ UnionType::UnionType(Context &context, llvm::SmallVector<Type *> types) : TypeSu
        context.get_int_type()->llvmType},
       context.get_unique_name("union"));
   sanity_check(requiredAlign <= uint64_t(context.get_align_of(this)));
+}
+
+bool UnionType::has_all_types(UnionType *unionType) const {
+  for (auto type : unionType->types)
+    if (!has_type(type))
+      return false;
+  return true;
+}
+
+bool UnionType::always_has_tag(TagType *tag) const {
+  for (auto type : types)
+    if (!(type->is_struct() && static_cast<StructType *>(type)->has_tag(tag)))
+      return false;
+  return true;
+}
+
+bool UnionType::always_has_parent_template(StructType *parentTemplate) const {
+  for (auto type : types)
+    if (!(type->is_struct() && static_cast<StructType *>(type)->parentTemplate == parentTemplate))
+      return false;
+  return true;
+}
+
+int_t UnionType::index_of(Type *type) const {
+  if (auto itr{std::find(types.begin(), types.end(), type)}; itr != types.end())
+    return itr - types.begin();
+  return -1;
 }
 
 Value UnionType::access(Emitter &emitter, Value value, llvm::StringRef key, const AST::SourceLocation &srcLoc) {

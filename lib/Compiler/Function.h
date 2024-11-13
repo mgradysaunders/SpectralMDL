@@ -73,23 +73,55 @@ public:
 
   [[nodiscard]] llvm::StringRef get_name() const { return decl.name->name; }
 
+  [[nodiscard]] Type *get_return_type() const { return decl.returnType->type; }
+
+  /// Is the function exported by the module?
+  [[nodiscard]] bool is_exported() const { return decl.isExport; }
+
+  /// Is the function meant to be visible to the C++ host program?
   [[nodiscard]] bool is_visible() const { return decl.attrs.isVisible; }
 
+  /// Is the function linked in from the C++ host program?
   [[nodiscard]] bool is_foreign() const { return decl.attrs.isForeign; }
 
+  /// Is the function pure? (meaning there is no '$state' pointer)
   [[nodiscard]] bool is_pure() const { return decl.attrs.isPure; }
 
+  /// Is the function always macro-inlined?
   [[nodiscard]] bool is_macro() const { return decl.attrs.isMacro; }
 
+  /// Is the function actually a function variant?
+  ///
+  /// ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+  /// int foo(*) = bar(baz: "Hello, world");
+  /// ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
   [[nodiscard]] bool is_variant() const { return decl.isVariant; }
 
+  /// Does the function have a definition?
   [[nodiscard]] bool has_definition() const { return decl.definition != nullptr; }
 
+  /// Does the function have any abstract parameters?
   [[nodiscard]] bool has_abstract_parameters() const { return params.has_any_abstract(); }
 
+  /// Does the function have a unique concrete 'FunctionInstance'?
   [[nodiscard]] bool has_unique_concrete_instance() const {
     return has_definition() && !has_abstract_parameters() && !is_macro() && !is_variant();
   }
+
+  /// If the function has a unique concrete 'FunctionInstance', return it. Else return null.
+  [[nodiscard]] const FunctionInstance *get_unique_concrete_instance() const {
+    if (has_unique_concrete_instance())
+      return &instances.begin()->second;
+    return nullptr;
+  }
+
+  /// Does this function represent a material?
+  ///
+  /// This is true if:
+  /// 1. The function has a unique concrete instance, AND
+  /// 2. The function takes no arguments, AND
+  /// 3. The function declaration has the abstract return type 'material'.
+  [[nodiscard]] bool represents_material() const;
 
   [[nodiscard]] Value call(Emitter &emitter0, const ArgList &args, const AST::SourceLocation &srcLoc = {});
 

@@ -96,14 +96,9 @@ Function::LetAndCall Function::get_variant_let_and_call_expressions() const {
   }
   if (!letAndCall.call)
     srcLoc.report_error(std::format("function variant '{}' definition must be 'let' or call expression", name->name));
-  letAndCall.calleeIdentifier = llvm::dyn_cast<Identifier>(letAndCall.call->expr.get());
-  if (!letAndCall.calleeIdentifier)
-    srcLoc.report_error(std::format("function variant '{}' callee must be an identifier", name->name));
   for (auto &arg : letAndCall.call->args.args)
     if (!arg.name)
-      srcLoc.report_error(std::format(
-          "call to '{}' in definition of function variant '{}' must only use named arguments",
-          std::string(*letAndCall.calleeIdentifier), name->name));
+      srcLoc.report_error(std::format("call in definition of function variant '{}' must only use named arguments", name->name));
   return letAndCall;
 }
 
