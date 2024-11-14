@@ -1,5 +1,7 @@
 #pragma once
 
+#include <cmath>
+
 #include "smdl/common.h"
 
 namespace smdl {
@@ -111,6 +113,24 @@ enum class intensity_mode_t : int_t {
 
   intensity_power = 1,
 };
+
+struct default_bsdf_t final {};
+
+struct default_vdf_t final {};
+
+struct default_edf_t final {};
+
+struct default_hair_bsdf_t final {};
+
+struct material_emission_t final {};
+
+struct material_surface_t final {};
+
+struct material_volume_t final {};
+
+struct material_geometry_t final {};
+
+struct material_t final {};
 
 struct bsdf_measurement_t final {
   void *ptr{};
@@ -261,22 +281,95 @@ public:
   void finalize_for_runtime_conventions();
 };
 
-struct default_bsdf_t final {};
+template <typename T, size_t N> [[nodiscard]] constexpr Vector<T, N> operator+(const Vector<T, N> &v0, const Vector<T, N> &v1) {
+  Vector<T, N> v{};
+  for (size_t i{}; i < N; i++)
+    v[i] = v0[i] + v1[i];
+  return v;
+}
 
-struct default_vdf_t final {};
+template <typename T, size_t N> [[nodiscard]] constexpr Vector<T, N> operator-(const Vector<T, N> &v0, const Vector<T, N> &v1) {
+  Vector<T, N> v{};
+  for (size_t i{}; i < N; i++)
+    v[i] = v0[i] - v1[i];
+  return v;
+}
 
-struct default_edf_t final {};
+template <typename T, size_t N> [[nodiscard]] constexpr Vector<T, N> operator*(const T &s0, const Vector<T, N> &v1) {
+  Vector<T, N> v{};
+  for (size_t i{}; i < N; i++)
+    v[i] = s0 * v1[i];
+  return v;
+}
 
-struct default_hair_bsdf_t final {};
+template <typename T, size_t N> [[nodiscard]] constexpr Vector<T, N> operator*(const Vector<T, N> &v0, const T &s1) {
+  Vector<T, N> v{};
+  for (size_t i{}; i < N; i++)
+    v[i] = v0[i] * s1;
+  return v;
+}
 
-struct material_emission_t final {};
+template <typename T, size_t N> [[nodiscard]] constexpr Vector<T, N> operator/(const Vector<T, N> &v0, const T &s1) {
+  Vector<T, N> v{};
+  for (size_t i{}; i < N; i++)
+    v[i] = v0[i] / s1;
+  return v;
+}
 
-struct material_surface_t final {};
+template <typename T, size_t P, size_t N, size_t M>
+[[nodiscard]] constexpr Matrix<T, P, M> operator*(const Matrix<T, N, M> &m0, const Matrix<T, P, N> &m1) {
+  Matrix<T, P, M> m{};
+  for (size_t i{}; i < M; i++)
+    for (size_t j{}; j < P; j++)
+      for (size_t k{}; k < N; k++)
+        m[j][i] += m0[k][i] * m1[j][k];
+  return m;
+}
 
-struct material_volume_t final {};
+template <typename T, size_t N, size_t M>
+[[nodiscard]] constexpr Vector<T, M> operator*(const Matrix<T, N, M> &m0, const Vector<T, N> &v1) {
+  Vector<T, M> v{};
+  for (size_t i{}; i < M; i++)
+    for (size_t k{}; k < N; k++)
+      v[i] += m0[k][i] * v1[k];
+  return v;
+}
 
-struct material_geometry_t final {};
+template <typename T> [[nodiscard]] inline T dot(Vector<T, 2> u, Vector<T, 2> v) { return u.x * v.x + u.y * v.y; }
 
-struct material_t final {};
+template <typename T> [[nodiscard]] inline T dot(Vector<T, 3> u, Vector<T, 3> v) { return u.x * v.x + u.y * v.y + u.z * v.z; }
+
+template <typename T> [[nodiscard]] inline T dot(Vector<T, 4> u, Vector<T, 4> v) {
+  return u.x * v.x + u.y * v.y + u.z * v.z + u.w * v.w;
+}
+
+template <typename T, size_t N> [[nodiscard]] inline auto length(Vector<T, N> v) { return std::sqrt(dot(v, v)); }
+
+template <typename T, size_t N> [[nodiscard]] inline auto normalize(Vector<T, N> v) { return v / length(v); }
+
+template <typename T> [[nodiscard]] inline Vector<T, 3> cross(Vector<T, 3> u, Vector<T, 3> v) {
+  return {u.y * v.z - u.z * v.y, u.z * v.x - u.x * v.z, u.x * v.y - u.y * v.x};
+}
+
+template <bool Inverse = false> [[nodiscard]] inline float4x4_t look_at(float3_t from, float3_t to, float3_t up = {0, 0, 1}) {
+  float3_t z{normalize(from - to)};
+  float3_t x{normalize(cross(up, z))};
+  float3_t y{cross(z, x)};
+  if constexpr (!Inverse) {
+    return float4x4_t{
+        float4_t{x.x, x.y, x.z, 0.0f}, float4_t{y.x, y.y, y.z, 0.0f}, float4_t{z.x, z.y, z.z, 0.0f},
+        float4_t{from.x, from.y, from.z, 1.0f}};
+  } else {
+    return float4x4_t{
+        float4_t{x.x, y.x, z.x, 0.0f}, float4_t{x.y, y.y, z.y, 0.0f}, float4_t{x.z, y.z, z.z, 0.0f},
+        float4_t{-dot(x, from), -dot(y, from), -dot(z, from), 1.0f}};
+  }
+}
+
+[[nodiscard]] inline float3_t transform_affine(const float4x4_t &m, const float3_t &v, float w) {
+  float4_t vw{v.x, v.y, v.z, w};
+  vw = m * vw;
+  return {vw.x, vw.y, vw.z};
+}
 
 } // namespace smdl

@@ -17,7 +17,7 @@ public:
 
   explicit FunctionInstance(Emitter &emitter0, EnumType *enumType);
 
-  [[nodiscard]] llvm::StringRef get_link_name() { return llvmFunc->getName(); }
+  [[nodiscard]] llvm::StringRef get_link_name() const { return llvmFunc->getName(); }
 
   /// If the return type is abstract and cannot be inferred until the function code is generated, this
   /// allows us to patch in the concrete return type at the end.

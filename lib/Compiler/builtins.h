@@ -6,7 +6,7 @@ static const char *df = R"*(
 #extended_syntax
 using ::math import *;
 import ::state::*;
-export enum scatter_mode { scatter_reflect = 1, scatter_transmit = 2, scatter_reflect_transmit = 3 };
+export enum scatter_mode { scatter_none = 0, scatter_reflect = 1, scatter_transmit = 2, scatter_reflect_transmit = 3 };
 @(pure) bool weighted_bool_sample(&float u, float weight) {
   return *u < weight ? (*u = (*u / weight), true) : (*u = (*u - weight) / (1 - weight), false);
 }
@@ -53,25 +53,37 @@ export enum scatter_mode { scatter_reflect = 1, scatter_transmit = 2, scatter_re
   return (w := q.w) * w * u + (v := q.xyz) * dot(v, u) + cross(v, 2.0 * w * u + cross(v, u));
 }
 struct eval_bsdf_parameters {
-  const float3 geometric_wo;
-  const float3 geometric_wi;
-  float3 wo = geometric_wo;
-  float3 wi = geometric_wi;
-  const float hit_side = #sign(geometric_wo.z);
+  const float3 geometry_wo;
+  const float3 geometry_wi;
+  float3 wo = geometry_wo;
+  float3 wi = geometry_wi;
+  const float hit_side = #sign(geometry_wo.z);
   const float ior = 1.0 / 1.4;
   const bool thin_walled = false;
-  const scatter_mode mode = (geometric_wo.z < 0) == (geometric_wi.z < 0) ? scatter_reflect : scatter_transmit;
+  const scatter_mode mode = (geometry_wo.z < 0) == (geometry_wi.z < 0) ? scatter_reflect : scatter_transmit;
 };
 struct eval_bsdf_result {
   float2 pdf = float2(0);
   color f = color(0);
   bool is_black = false;
 };
+@(pure) float4 perturb_normal(const &eval_bsdf_parameters this, const float3 normal) {
+  const float4 q(quat_rotate(normalize(normal) * #sign(normal.z), float3(0, 0, 1)));
+  this.wo = quat_transform_vector(q, this.wo);
+  this.wi = quat_transform_vector(q, this.wi);
+  return q;
+}
+@(pure) float4 perturb_tangent(const &eval_bsdf_parameters this, const float3 tangent) {
+  const float4 q(quat_rotate(normalize(float3(tangent.xy, 0)), float3(1, 0, 0)));
+  this.wo = quat_transform_vector(q, this.wo);
+  this.wi = quat_transform_vector(q, this.wi);
+  return q;
+}
 struct eval_bsdf_sample_parameters {
-  const float3 geometric_wo;
-  float3 wo = geometric_wo;
+  const float3 geometry_wo;
+  float3 wo = geometry_wo;
   float4 xi;
-  const float hit_side = #sign(geometric_wo.z);
+  const float hit_side = #sign(geometry_wo.z);
   const float ior = 1.0 / 1.4;
   const bool thin_walled = false;
 };
@@ -80,6 +92,16 @@ struct eval_bsdf_sample_result {
   scatter_mode mode = scatter_none;
   ?color delta_f = null;
 };
+@(pure) float4 perturb_normal(const &eval_bsdf_sample_parameters this, const float3 normal) {
+  const float4 q(quat_rotate(normalize(normal) * #sign(normal.z), float3(0, 0, 1)));
+  this.wo = quat_transform_vector(q, this.wo);
+  return q;
+}
+@(pure) float4 perturb_tangent(const &eval_bsdf_sample_parameters this, const float3 tangent) {
+  const float4 q(quat_rotate(normalize(float3(tangent.xy, 0.0)), float3(1, 0, 0)));
+  this.wo = quat_transform_vector(q, this.wo);
+  return q;
+}
 @(macro) auto eval_bsdf(const &default_bsdf this, inline const &eval_bsdf_parameters params) {
   return eval_bsdf_result(is_black: true);
 }
@@ -151,15 +173,45 @@ auto eval_bsdf(const &sheen_bsdf this, inline const &eval_bsdf_parameters params
 auto eval_bsdf_sample(const &sheen_bsdf this, const &eval_bsdf_sample_parameters params) {
   return eval_bsdf_sample_result(wi: cosine_hemisphere_sample(params.xi.xy) * params.hit_side, mode: scatter_reflect);
 }
+@(macro) auto eval_bsdf(const auto this, inline const &eval_bsdf_parameters params, const float3 normal) {
+  preserve wo, wi;
+  wo = geometry_wo;
+  wi = geometry_wi;
+  perturb_normal(params, normal);
+  return eval_bsdf(this, params);
+}
+@(macro) auto eval_bsdf_sample(const auto this, inline const &eval_bsdf_sample_parameters params, const float3 normal) {
+  auto q(perturb_normal(params, normal));
+  auto result(eval_bsdf_sample(this, params));
+  result.wi = quat_transform_vector(quat_transpose(q), result.wi) if (result.mode != scatter_none);
+  return result;
+}
+export struct weighted_layer: bsdf {
+  float weight;
+  bsdf layer = bsdf();
+  bsdf base = bsdf();
+  float3 normal = state::normal();
+};
+@(macro) auto eval_bsdf(const &weighted_layer this, const &eval_bsdf_parameters params) {
+  const auto result0(eval_bsdf(&this.base, params));
+  const auto result1(eval_bsdf(&this.layer, params, this.normal));
+  return eval_bsdf_result(pdf: lerp(result0.pdf, result1.pdf, this.weight), f: lerp(result0.f, result1.f, this.weight));
+}
+@(macro) auto eval_bsdf_sample(const &weighted_layer this, const &eval_bsdf_sample_parameters params) {
+  if (weighted_bool_sample(&params.xi.z, this.weight)) {
+    return eval_bsdf_sample(&this.layer, params, this.normal);
+  } else {
+    return eval_bsdf_sample(&this.base, params);
+  }
+}
 export @(macro) int material__eval_bsdf(
     const &material this, const &float3 wo, const &float3 wi,  
     const &float pdf_fwd, const &float pdf_rev, const &color f) {
   auto params(eval_bsdf_parameters(
-    geometric_wo: normalize(*wo),
-    geometric_wi: normalize(*wi)));
-  /*
+    geometry_wo: normalize(state::transform_vector(state::coordinate_object, state::coordinate_internal, *wo)),
+    geometry_wi: normalize(state::transform_vector(state::coordinate_object, state::coordinate_internal, *wi)),
+    thin_walled: this.thin_walled));
   perturb_normal(&params, this.geometry.normal);
-   */
   auto result(eval_bsdf_result(is_black: true));
   if (#typeof(this.backface) != #typeof(material_surface()) && (params.hit_side < 0)) { 
     result = eval_bsdf(&this.backface.scattering, &params);
@@ -177,12 +229,55 @@ export @(macro) int material__eval_bsdf(
   }
   return !result.is_black;
 }
-/*
-export @(macro) int material__bsdf_sample(
+export @(macro) int material__eval_bsdf_sample(
     const &material this, const &float4 xi, const &float3 wo, 
     const &float3 wi, const &float pdf_fwd, const &float pdf_rev, const &color f, const &int is_delta) {
+  auto sample_params(eval_bsdf_sample_parameters(
+    geometry_wo: normalize(state::transform_vector(state::coordinate_object, state::coordinate_internal, *wo)), xi: *xi,
+    thin_walled: this.thin_walled));
+  auto q(perturb_normal(&sample_params, this.geometry.normal));
+  auto sample_result(eval_bsdf_sample_result());
+  if (#typeof(this.backface) != #typeof(material_surface()) && (sample_params.hit_side < 0)) { 
+    sample_result = eval_bsdf_sample(&this.backface.scattering, &sample_params);
+  } else {
+    sample_result = eval_bsdf_sample(&this.surface.scattering, &sample_params);
+  }
+  if (sample_result.mode == scatter_none) {
+    *wi = float3(0.0);
+    *pdf_fwd = 0.0;
+    *pdf_rev = 0.0;
+    *f = color(0.0);
+    *is_delta = false;
+    return false;
+  } else {
+    sample_result.wi = quat_transform_vector(quat_transpose(q), sample_result.wi);
+    sample_result.wi = normalize(sample_result.wi);
+    if (sample_result.delta_f) {
+      *pdf_fwd = 1.0;
+      *pdf_rev = 1.0;
+      *f = *sample_result.delta_f;
+      *is_delta = true;
+    } else {
+      auto params(eval_bsdf_parameters(
+        geometry_wo: sample_params.geometry_wo, 
+        geometry_wi: sample_result.wi, 
+        thin_walled: this.thin_walled));
+      perturb_normal(&params, this.geometry.normal);
+      auto result(eval_bsdf_result());
+      if (#typeof(this.backface) != #typeof(material_surface()) && (params.hit_side < 0)) { 
+        result = eval_bsdf(&this.backface.scattering, &params);
+      } else {
+        result = eval_bsdf(&this.surface.scattering, &params);
+      }
+      *pdf_fwd = result.pdf.x;
+      *pdf_rev = result.pdf.y;
+      *f = result.f;
+      *is_delta = false;
+    }
+    *wi = normalize(state::transform_vector(state::coordinate_internal, state::coordinate_object, sample_result.wi));
+    return true;
+  }
 }
- */
 )*";
 
 static const char *debug = R"*(#extended_syntax
@@ -349,6 +444,37 @@ export @(macro) float wavelength_max() = $state.wavelength_max;
 export @(macro) float[WAVELENGTH_BASE_MAX] wavelength_base() = $state.wavelength_base;
 export @(macro) float meters_per_scene_unit() = $state.meters_per_scene_unit;
 export @(macro) float scene_units_per_meter() = 1.0 / $state.meters_per_scene_unit;
+export @(macro) float4x4 transform(const coordinate_space from, const coordinate_space to) {
+  if (from == to) {
+    return float4x4(1.0);
+  } else if ((from == coordinate_internal) & (to == coordinate_object)) {
+    return $state.internal_to_object_matrix_fwd;
+  } else if ((from == coordinate_internal) & (to == coordinate_world)) {
+    return $state.internal_to_world_matrix_fwd;
+  } else if ((from == coordinate_object) & (to == coordinate_world)) {
+    return $state.object_to_world_matrix_fwd;
+  } else if ((from == coordinate_object) & (to == coordinate_internal)) {
+    return $state.internal_to_object_matrix_inv;
+  } else if ((from == coordinate_world) & (to == coordinate_object)) {
+    return $state.object_to_world_matrix_inv;
+  } else if ((from == coordinate_world) & (to == coordinate_internal)) {
+    return $state.internal_to_world_matrix_inv;
+  } else {
+    return float4x4(1.0);
+  }
+}
+export @(macro) float3 transform_point(const coordinate_space from, const coordinate_space to, const float3 point) {
+  return from == to ? point : (transform(from, to) * float4(point, 1)).xyz;
+}
+export @(macro) float3 transform_vector(const coordinate_space from, const coordinate_space to, const float3 vector) {
+  return from == to ? vector : (transform(from, to) * float4(vector, 0)).xyz;
+}
+export @(macro) float3 transform_normal(const coordinate_space from, const coordinate_space to, const float3 normal) {
+  return from == to ? normal : (float4(normal, 0) * transform(to, from)).xyz;
+}
+export @(macro) float transform_scale(const coordinate_space from, const coordinate_space to, const float scale) {
+  return 1.0 * scale;
+}
 )*";
 
 static const char *std = R"*(#extended_syntax

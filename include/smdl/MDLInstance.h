@@ -44,6 +44,33 @@ enum class OptLevel : uint32_t { None, O1, O2, O3 };
 
 enum class OutputFormat : uint32_t { IR, Assembly, Object };
 
+using eval_opacity_t = float_t (*)(state_t &state);
+
+using eval_bsdf_t = int_t (*)( //
+    state_t &state, const float3_t &wo, const float3_t &wi, float_t &pdf_fwd, float_t &pdf_rev, float_t *f);
+
+using eval_bsdf_sample_t = int_t (*)(
+    state_t &state, const float4_t &xi, const float3_t &wo, float3_t &wi, float_t &pdf_fwd, float_t &pdf_rev, float_t *f,
+    int_t &is_delta);
+
+template <typename F> struct FunctionJIT final {
+  std::string linkName{};
+
+  F func{};
+};
+
+struct MaterialJIT final {
+  std::string moduleName{};
+
+  std::string name{};
+
+  FunctionJIT<eval_opacity_t> evalOpacity{};
+
+  FunctionJIT<eval_bsdf_t> evalBsdf{};
+
+  FunctionJIT<eval_bsdf_sample_t> evalBsdfSample{};
+};
+
 class SMDL_EXPORT MDLInstance final {
 public:
   MDLInstance(uint32_t numWavelens = 16);
@@ -132,6 +159,8 @@ private:
   std::unique_ptr<llvm::orc::LLJIT> llvmJIT;
 
   std::unique_ptr<DataLookup> dataLookup;
+
+  std::vector<MaterialJIT> materialJITs{};
 
   friend class Compiler::Context;
 

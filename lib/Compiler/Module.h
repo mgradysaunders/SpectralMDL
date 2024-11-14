@@ -13,9 +13,9 @@ public:
 
     Function *evalOpacity{};
 
-    Function *evalDf{};
+    Function *evalBsdf{};
 
-    Function *evalDfSample{};
+    Function *evalBsdfSample{};
   };
 
   explicit Module(std::filesystem::path path)

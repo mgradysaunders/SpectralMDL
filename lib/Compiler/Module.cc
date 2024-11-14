@@ -20,7 +20,7 @@ static constexpr auto src_evalOpacity = R"(
 }}
 )";
 
-static constexpr auto src_evalDf = R"(
+static constexpr auto src_evalBsdf = R"(
 @(visible) int {0}__eval_bsdf(
   const &float3 wo, const &float3 wi, 
   const &float pdf_fwd, const &float pdf_rev, const &color f) {{
@@ -29,7 +29,7 @@ static constexpr auto src_evalDf = R"(
 }}
 )";
 
-static constexpr auto src_evalDfSample = R"(
+static constexpr auto src_evalBsdfSample = R"(
 @(visible) int {0}__eval_bsdf_sample(
   const &float4 xi, 
   const &float3 wo, const &float3 wi, 
@@ -56,7 +56,8 @@ void Module::emit(Context &context) {
           auto material{Material{func}};
           auto materialName{material.material->get_name()};
           material.evalOpacity = context.get_function(emitter, std::format(src_evalOpacity, materialName));
-          material.evalDf = context.get_function(emitter, std::format(src_evalDf, materialName));
+          material.evalBsdf = context.get_function(emitter, std::format(src_evalBsdf, materialName));
+          material.evalBsdfSample = context.get_function(emitter, std::format(src_evalBsdfSample, materialName));
           materials.push_back(material);
         }
       }

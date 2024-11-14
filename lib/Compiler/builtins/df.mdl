@@ -4,7 +4,7 @@
 using ::math import *;
 import ::state::*;
 
-export enum scatter_mode { scatter_reflect = 1, scatter_transmit = 2, scatter_reflect_transmit = 3 };
+export enum scatter_mode { scatter_none = 0, scatter_reflect = 1, scatter_transmit = 2, scatter_reflect_transmit = 3 };
 
 //--{ Helpers: Monte carlo
 @(pure) bool weighted_bool_sample(&float u, float weight) {
@@ -75,19 +75,19 @@ export enum scatter_mode { scatter_reflect = 1, scatter_transmit = 2, scatter_re
 //--{ API Types: eval_bsdf_parameters, eval_bsdf_result
 struct eval_bsdf_parameters {
   // The outgoing direction in the proper geometric tangent space.
-  const float3 geometric_wo;
+  const float3 geometry_wo;
 
   // The incoming direction in the proper geometric tangent space.
-  const float3 geometric_wi;
+  const float3 geometry_wi;
 
   // The outgoing direction used for evaluation which may be in some perturbed tangent space.
-  float3 wo = geometric_wo;
+  float3 wo = geometry_wo;
 
   // The incoming direction used for evaluation which may be in some perturbed tangent space.
-  float3 wi = geometric_wi;
+  float3 wi = geometry_wi;
 
   // The hit side of the surface as the sign of the outgoing direction Z coordinate.
-  const float hit_side = #sign(geometric_wo.z);
+  const float hit_side = #sign(geometry_wo.z);
 
   // The index of refraction.
   const float ior = 1.0 / 1.4;
@@ -100,7 +100,7 @@ struct eval_bsdf_parameters {
   // NOTE: In perturbed tangent space, the sense of BRDF versus BTDF may flip, e.g., the proper directions 
   // may indicate reflection, but the perturbed directions may indicate transmission. Not sure exactly how 
   // to handle this, but I think in general we want things to be consistent with the proper directions.
-  const scatter_mode mode = (geometric_wo.z < 0) == (geometric_wi.z < 0) ? scatter_reflect : scatter_transmit;
+  const scatter_mode mode = (geometry_wo.z < 0) == (geometry_wi.z < 0) ? scatter_reflect : scatter_transmit;
 };
 
 struct eval_bsdf_result {
@@ -115,21 +115,35 @@ struct eval_bsdf_result {
   // Is black? 
   bool is_black = false;
 };
+
+@(pure) float4 perturb_normal(const &eval_bsdf_parameters this, const float3 normal) {
+  const float4 q(quat_rotate(normalize(normal) * #sign(normal.z), float3(0, 0, 1)));
+  this.wo = quat_transform_vector(q, this.wo);
+  this.wi = quat_transform_vector(q, this.wi);
+  return q;
+}
+
+@(pure) float4 perturb_tangent(const &eval_bsdf_parameters this, const float3 tangent) {
+  const float4 q(quat_rotate(normalize(float3(tangent.xy, 0)), float3(1, 0, 0)));
+  this.wo = quat_transform_vector(q, this.wo);
+  this.wi = quat_transform_vector(q, this.wi);
+  return q;
+}
 //--}
 
 //--{ API Types: eval_bsdf_sample_parameters, eval_bsdf_sample_result
 struct eval_bsdf_sample_parameters {
   // The outgoing direction in the proper geometry tangent space.
-  const float3 geometric_wo;
+  const float3 geometry_wo;
 
   // The outgoing direction used for evaluation which may be in some perturbed tangent space.
-  float3 wo = geometric_wo;
+  float3 wo = geometry_wo;
 
   // The canonical random sample in [0,1]^4. 
   float4 xi;
 
   // The hit side of the surface as the sign of the outgoing direction Z coordinate.
-  const float hit_side = #sign(geometric_wo.z);
+  const float hit_side = #sign(geometry_wo.z);
 
   // The index of refraction.
   const float ior = 1.0 / 1.4;
@@ -148,6 +162,18 @@ struct eval_bsdf_sample_result {
   // If sampled from a directional delta distribution, the BSDF evaluation (which is otherwise unevaluable).
   ?color delta_f = null;
 };
+
+@(pure) float4 perturb_normal(const &eval_bsdf_sample_parameters this, const float3 normal) {
+  const float4 q(quat_rotate(normalize(normal) * #sign(normal.z), float3(0, 0, 1)));
+  this.wo = quat_transform_vector(q, this.wo);
+  return q;
+}
+
+@(pure) float4 perturb_tangent(const &eval_bsdf_sample_parameters this, const float3 tangent) {
+  const float4 q(quat_rotate(normalize(float3(tangent.xy, 0.0)), float3(1, 0, 0)));
+  this.wo = quat_transform_vector(q, this.wo);
+  return q;
+}
 //--}
 
 //--{ BSDF: default_bsdf
@@ -233,25 +259,58 @@ auto eval_bsdf_sample(const &sheen_bsdf this, const &eval_bsdf_sample_parameters
 }
 //--}
 
+//--{ Helpers: Layers
+@(macro) auto eval_bsdf(const auto this, inline const &eval_bsdf_parameters params, const float3 normal) {
+  preserve wo, wi;
+  wo = geometry_wo;
+  wi = geometry_wi;
+  perturb_normal(params, normal);
+  return eval_bsdf(this, params);
+}
+@(macro) auto eval_bsdf_sample(const auto this, inline const &eval_bsdf_sample_parameters params, const float3 normal) {
+  auto q(perturb_normal(params, normal));
+  auto result(eval_bsdf_sample(this, params));
+  result.wi = quat_transform_vector(quat_transpose(q), result.wi) if (result.mode != scatter_none);
+  return result;
+}
+//--}
+
+//--{ BSDF: weighted_layer
+export struct weighted_layer: bsdf {
+  float weight;
+  bsdf layer = bsdf();
+  bsdf base = bsdf();
+  float3 normal = state::normal();
+};
+@(macro) auto eval_bsdf(const &weighted_layer this, const &eval_bsdf_parameters params) {
+  const auto result0(eval_bsdf(&this.base, params));
+  const auto result1(eval_bsdf(&this.layer, params, this.normal));
+  return eval_bsdf_result(pdf: lerp(result0.pdf, result1.pdf, this.weight), f: lerp(result0.f, result1.f, this.weight));
+}
+@(macro) auto eval_bsdf_sample(const &weighted_layer this, const &eval_bsdf_sample_parameters params) {
+  if (weighted_bool_sample(&params.xi.z, this.weight)) {
+    return eval_bsdf_sample(&this.layer, params, this.normal);
+  } else {
+    return eval_bsdf_sample(&this.base, params);
+  }
+}
+//--}
+
 //--{ C++ API
 export @(macro) int material__eval_bsdf(
     const &material this, const &float3 wo, const &float3 wi,  
     const &float pdf_fwd, const &float pdf_rev, const &color f) {
   auto params(eval_bsdf_parameters(
-    geometric_wo: normalize(*wo),
-    geometric_wi: normalize(*wi)));
-  /*
-  // Perturb the normal with the 'normal' field of the top-level 'material_geometry' structure.
+    geometry_wo: normalize(state::transform_vector(state::coordinate_object, state::coordinate_internal, *wo)),
+    geometry_wi: normalize(state::transform_vector(state::coordinate_object, state::coordinate_internal, *wi)),
+    thin_walled: this.thin_walled));
   perturb_normal(&params, this.geometry.normal);
-   */
-  // Generate the implementation with 'eval_bsdf' dispatch.
   auto result(eval_bsdf_result(is_black: true));
   if (#typeof(this.backface) != #typeof(material_surface()) && (params.hit_side < 0)) { 
     result = eval_bsdf(&this.backface.scattering, &params);
   } else {
     result = eval_bsdf(&this.surface.scattering, &params);
   }
-  // Copy out the forward and reverse PDF evaluations and the BSDF evaluation.
   if (result.is_black) {
     *pdf_fwd = 0.0;
     *pdf_rev = 0.0;
@@ -264,10 +323,54 @@ export @(macro) int material__eval_bsdf(
   // Return true if not black.
   return !result.is_black;
 }
-/*
-export @(macro) int material__bsdf_sample(
+
+export @(macro) int material__eval_bsdf_sample(
     const &material this, const &float4 xi, const &float3 wo, 
     const &float3 wi, const &float pdf_fwd, const &float pdf_rev, const &color f, const &int is_delta) {
+  auto sample_params(eval_bsdf_sample_parameters(
+    geometry_wo: normalize(state::transform_vector(state::coordinate_object, state::coordinate_internal, *wo)), xi: *xi,
+    thin_walled: this.thin_walled));
+  auto q(perturb_normal(&sample_params, this.geometry.normal));
+  auto sample_result(eval_bsdf_sample_result());
+  if (#typeof(this.backface) != #typeof(material_surface()) && (sample_params.hit_side < 0)) { 
+    sample_result = eval_bsdf_sample(&this.backface.scattering, &sample_params);
+  } else {
+    sample_result = eval_bsdf_sample(&this.surface.scattering, &sample_params);
+  }
+  if (sample_result.mode == scatter_none) {
+    *wi = float3(0.0);
+    *pdf_fwd = 0.0;
+    *pdf_rev = 0.0;
+    *f = color(0.0);
+    *is_delta = false;
+    return false;
+  } else {
+    sample_result.wi = quat_transform_vector(quat_transpose(q), sample_result.wi);
+    sample_result.wi = normalize(sample_result.wi);
+    if (sample_result.delta_f) {
+      *pdf_fwd = 1.0;
+      *pdf_rev = 1.0;
+      *f = *sample_result.delta_f;
+      *is_delta = true;
+    } else {
+      auto params(eval_bsdf_parameters(
+        geometry_wo: sample_params.geometry_wo, 
+        geometry_wi: sample_result.wi, 
+        thin_walled: this.thin_walled));
+      perturb_normal(&params, this.geometry.normal);
+      auto result(eval_bsdf_result());
+      if (#typeof(this.backface) != #typeof(material_surface()) && (params.hit_side < 0)) { 
+        result = eval_bsdf(&this.backface.scattering, &params);
+      } else {
+        result = eval_bsdf(&this.surface.scattering, &params);
+      }
+      *pdf_fwd = result.pdf.x;
+      *pdf_rev = result.pdf.y;
+      *f = result.f;
+      *is_delta = false;
+    }
+    *wi = normalize(state::transform_vector(state::coordinate_internal, state::coordinate_object, sample_result.wi));
+    return true;
+  }
 }
- */
 //--}

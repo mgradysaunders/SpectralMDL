@@ -87,6 +87,19 @@ std::optional<Error> MDLInstance::compile(OptLevel optLevel) {
       module->parse(context);
     for (auto &module : modules)
       module->emit(context);
+    for (auto &module : modules) {
+      for (auto &material : module->materials) {
+        auto &materialJIT{materialJITs.emplace_back()};
+        materialJIT.moduleName = module->name;
+        materialJIT.name = material.material->get_name().str();
+        materialJIT.evalOpacity.linkName =
+            sanity_check_nonnull(material.evalOpacity->get_unique_concrete_instance())->get_link_name().str();
+        materialJIT.evalBsdf.linkName =
+            sanity_check_nonnull(material.evalBsdf->get_unique_concrete_instance())->get_link_name().str();
+        materialJIT.evalBsdfSample.linkName =
+            sanity_check_nonnull(material.evalBsdfSample->get_unique_concrete_instance())->get_link_name().str();
+      }
+    }
     if (optLevel != OptLevel::None)
       llvmJITModule->withModuleDo([&](llvm::Module &llvmModule) {
         LLVMOptimizer llvmOptimizer{};
@@ -123,6 +136,16 @@ std::optional<Error> MDLInstance::compile_jit() {
   return catch_and_return_error([&] {
     llvm_throw_if_error(llvmJIT->addIRModule(std::move(*llvmJITModule)));
     llvmJITModule.reset();
+    for (auto &materialJIT : materialJITs) {
+      auto doLookup{[&]<typename F>(FunctionJIT<F> &func) {
+        func.func = reinterpret_cast<F>(lookup_jit_symbol(func.linkName));
+        if (!func.func)
+          throw Error(std::format("can't find JIT symbol for material '{}'", func.linkName));
+      }};
+      doLookup(materialJIT.evalOpacity);
+      doLookup(materialJIT.evalBsdf);
+      doLookup(materialJIT.evalBsdfSample);
+    }
     if (enableUnitTests) {
       for (auto &unitTest : unitTests) {
         auto unitTestFn{lookup_jit_symbol<void(const state_t &)>(unitTest.llvmName)};
