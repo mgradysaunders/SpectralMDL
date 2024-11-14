@@ -61,7 +61,9 @@ public:
     return {ptr, values.size()};
   }
 
-  [[nodiscard]] AST::Expr *parse_expression(llvm::StringRef src);
+  [[nodiscard]] AST::Expr *parse_expression(const llvm::Twine &srcTwine);
+
+  [[nodiscard]] AST::Decl *parse_declaration(const llvm::Twine &srcTwine);
 
 public:
   //--{ Type getters
@@ -305,6 +307,8 @@ public:
 public:
   [[nodiscard]] Function *get_function(Emitter &emitter, AST::Function *decl);
 
+  [[nodiscard]] Function *get_function(Emitter &emitter, const llvm::Twine &srcTwine);
+
   [[nodiscard]] Module *get_builtin_module(llvm::StringRef name);
 
 public:
@@ -346,28 +350,40 @@ private:
 
   llvm::StringMap<unique_bump_ptr<Module>> builtinModules{};
 
-  llvm::StringMap<unique_bump_ptr<AST::Expr>> builtinExpressions{};
+  llvm::StringMap<unique_bump_ptr<AST::Expr>> builtinExprs{};
+
+  llvm::SmallVector<unique_bump_ptr<AST::Decl>> builtinDecls{};
 
   llvm::DenseMap<AST::Function *, unique_bump_ptr<Function>> functions{};
 
+  /// The arithmetic types.
   llvm::DenseMap<uint64_t, unique_bump_ptr<ArithmeticType>> arithmeticTypes{};
 
+  /// The array types.
   std::map<std::tuple<Type *, uint32_t>, unique_bump_ptr<ArrayType>> arrayTypes{};
 
+  /// The size-deferred array types, keyed by the name of the size variable.
   std::map<std::tuple<Type *, llvm::SmallString<16>>, unique_bump_ptr<ArrayType>> sizeDeferredArrayTypes{};
 
+  /// The enum types.
   llvm::DenseMap<std::tuple<AST::Enum *, llvm::Function *>, unique_bump_ptr<EnumType>> enumTypes{};
 
+  /// The function types.
   std::map<std::tuple<bool, Type *, llvm::SmallVector<Type *>>, unique_bump_ptr<FunctionType>> functionTypes{};
 
+  /// The pointer types.
   llvm::DenseMap<Type *, unique_bump_ptr<PointerType>> pointerTypes{};
 
+  /// The struct types.
   llvm::DenseMap<std::tuple<AST::Struct *, llvm::Function *>, unique_bump_ptr<StructType>> structTypes{};
 
+  /// The struct type instantiations of template struct types.
   std::map<std::tuple<StructType *, llvm::SmallVector<Type *>>, unique_bump_ptr<StructType>> structTypeInstantiations{};
 
+  /// The tag types.
   llvm::DenseMap<std::tuple<AST::Tag *, llvm::Function *>, unique_bump_ptr<TagType>> tagTypes{};
 
+  /// The union types.
   std::map<llvm::SmallVector<Type *>, unique_bump_ptr<UnionType>> unionTypes{};
 
   /// The builtin 'compiler_function' type.

@@ -8,6 +8,16 @@ class Module final {
 public:
   enum class Status : uint32_t { NotStarted, InProgress, Finished };
 
+  struct Material final {
+    Function *material{};
+
+    Function *evalOpacity{};
+
+    Function *evalDf{};
+
+    Function *evalDfSample{};
+  };
+
   explicit Module(std::filesystem::path path)
       : path(path.string()),        //
         name(path.stem().string()), //
@@ -23,8 +33,6 @@ public:
   void parse(Context &context);
 
   void emit(Context &context);
-
-  [[nodiscard]] llvm::SmallVector<Function *> find_all_materials();
 
 public:
   /// The file path. This is empty if the module is builtin.
@@ -44,6 +52,8 @@ public:
 
   /// The last crumb in the module. (This is the starting point to search for exported declarations!)
   Crumb *lastCrumb{};
+
+  llvm::SmallVector<Material> materials{};
 };
 
 } // namespace smdl::Compiler

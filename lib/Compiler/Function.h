@@ -17,6 +17,8 @@ public:
 
   explicit FunctionInstance(Emitter &emitter0, EnumType *enumType);
 
+  [[nodiscard]] llvm::StringRef get_link_name() { return llvmFunc->getName(); }
+
   /// If the return type is abstract and cannot be inferred until the function code is generated, this
   /// allows us to patch in the concrete return type at the end.
   void patch_return_type(Type *returnType);
@@ -69,7 +71,7 @@ public:
 /// than 1 LLVM version of the function may end up being compiled.
 class Function final {
 public:
-  Function(Emitter &emitter0, AST::Function &decl);
+  explicit Function(Emitter &emitter0, AST::Function &decl);
 
   [[nodiscard]] llvm::StringRef get_name() const { return decl.name->name; }
 
@@ -128,6 +130,17 @@ public:
 public:
   /// The most recent overload somewhere above this function in the source code.
   Function *prev{};
+
+  /// The next overload somewhere below this function in the source code.
+  Function *next{};
+
+  /// Get the bottom overload.
+  [[nodiscard]] Function *get_bottom_overload() {
+    auto func{this};
+    while (func->next)
+      func = func->next;
+    return func;
+  }
 
   /// The AST function.
   AST::Function &decl;

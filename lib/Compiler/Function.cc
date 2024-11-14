@@ -210,6 +210,8 @@ Function::Function(Emitter &emitter0, AST::Function &decl) : prev(find_prev_func
     emitter0.emit(*param.type);
   params = ParamList(emitter0.context, decl);
   validate_attributes();
+  if (prev)
+    prev->next = this;
   if ((is_variant() && prev) || (prev && prev->is_variant()))
     decl.srcLoc.report_error(std::format("function variant '{}' must not be overloaded", get_name()));
   if (is_variant()) {
@@ -259,9 +261,10 @@ Value Function::call(Emitter &emitter0, const ArgList &args, const AST::SourceLo
     emitter0.move_to(blockEnd);
     return emitter0.construct(decl.returnType->type, result);
   } else {
+    // TODO This needs to be slightly smarter
     // Get all overloads.
     llvm::SmallVector<std::pair<Function *, llvm::SmallVector<Type *>>> overloads{};
-    for (auto func{this}; func; func = func->prev) {
+    for (auto func{get_bottom_overload()}; func; func = func->prev) {
       sanity_check(!func->is_variant());
       llvm::SmallVector<Type *> argParamTypes{};
       if (context.can_resolve_arguments(emitter0, func->params, args, srcLoc, &argParamTypes))

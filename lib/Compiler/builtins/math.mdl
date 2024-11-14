@@ -1,10 +1,10 @@
 #extended_syntax
 
-export const float PI = 3.14159265358979323846;
+export const float PI = $PI;
 
-export const float TWO_PI = 6.28318530717958647692;
+export const float TWO_PI = $TWO_PI;
 
-export const float HALF_PI = 1.57079632679489661923;
+export const float HALF_PI = $HALF_PI;
 
 export @(pure macro) auto abs(const auto a) = #abs(a);
 

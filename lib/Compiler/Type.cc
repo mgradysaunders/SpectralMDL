@@ -1084,11 +1084,11 @@ UnionType::UnionType(Context &context, llvm::SmallVector<Type *> types) : TypeSu
   }
   std::sort(typeNames.begin(), typeNames.end());
   init_name(std::format("{}({})", (hasVoid ? "?" : ""), format_join(typeNames, " | ")));
-  uint64_t wordCount{requiredSize / requiredAlign};
-  if (requiredSize % requiredAlign != 0)
+  uint64_t wordCount{requiredSize / sizeof(int_t)};
+  if (requiredSize % sizeof(int_t) != 0)
     wordCount++;
   llvmType = llvm::StructType::create(
-      {llvm::ArrayType::get(llvm::Type::getIntNTy(context.llvmContext, 8 * requiredAlign), wordCount),
+      {context.get_int_type(Extent(wordCount))->llvmType,
        context.get_int_type()->llvmType},
       context.get_unique_name("union"));
   sanity_check(requiredAlign <= uint64_t(context.get_align_of(this)));

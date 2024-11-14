@@ -125,8 +125,11 @@ Context::Context(MDLInstance &mdl, llvm::BumpPtrAllocator &bumpAllocator)
       {"$FLOAT_EPS", get_compile_time_float(std::numeric_limits<float_t>::epsilon())},
       {"$FLOAT_INF", get_compile_time_float(std::numeric_limits<float_t>::infinity())},
       {"$FLOAT_NAN", get_compile_time_float(std::numeric_limits<float_t>::quiet_NaN())},
+      {"$HALF_PI", get_compile_time_float(1.57079632679489661923f)},
       {"$INT_MIN", get_compile_time_int(std::numeric_limits<int_t>::min())},
       {"$INT_MAX", get_compile_time_int(std::numeric_limits<int_t>::max())},
+      {"$PI", get_compile_time_float(3.14159265358979323846f)},
+      {"$TWO_PI", get_compile_time_float(6.28318530717958647692f)},
       {"$WAVELENGTH_BASE_MAX", get_compile_time_int(mdl.numWavelens)},
   };
 }
@@ -142,11 +145,19 @@ llvm::StringRef Context::get_persistent_string(const llvm::Twine &twine) {
     return bump_duplicate(twine.str());
 }
 
-AST::Expr *Context::parse_expression(llvm::StringRef src) {
-  auto &expr{builtinExpressions[src]};
+AST::Expr *Context::parse_expression(const llvm::Twine &srcTwine) {
+  auto src{get_persistent_string(srcTwine)};
+  auto &expr{builtinExprs[src]};
   if (!expr)
     expr = Parser(bumpAllocator, "(builtin)", src, /*isExtendedSyntax=*/true).parse_expression();
   return expr.get();
+}
+
+AST::Decl *Context::parse_declaration(const llvm::Twine &srcTwine) {
+  auto src{get_persistent_string(srcTwine)};
+  auto &decl{
+      builtinDecls.emplace_back(Parser(bumpAllocator, "(builtin)", src, /*isExtendedSyntax=*/true).parse_global_declaration())};
+  return decl.get();
 }
 
 ArithmeticType *Context::get_arithmetic_type(Scalar scalar, Extent extent) {
@@ -407,6 +418,10 @@ Function *Context::get_function(Emitter &emitter, AST::Function *decl) {
   if (!func)
     func.reset(bump_allocate<Function>(emitter, *decl));
   return func.get();
+}
+
+Function *Context::get_function(Emitter &emitter, const llvm::Twine &srcTwine) {
+  return get_function(emitter, sanity_check_nonnull(llvm::dyn_cast<AST::Function>(parse_declaration(srcTwine))));
 }
 
 Module *Context::get_builtin_module(llvm::StringRef name) {

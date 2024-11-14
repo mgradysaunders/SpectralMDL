@@ -1,4 +1,273 @@
+// vim:foldmethod=marker:foldlevel=0:fmr=--{,--} 
 #extended_syntax
 
-enum scatter_mode { scatter_reflect = 1, scatter_transmit = 2, scatter_reflect_transmit = 3 };
+using ::math import *;
+import ::state::*;
 
+export enum scatter_mode { scatter_reflect = 1, scatter_transmit = 2, scatter_reflect_transmit = 3 };
+
+//--{ Helpers: Monte carlo
+@(pure) bool weighted_bool_sample(&float u, float weight) {
+  return *u < weight ? (*u = (*u / weight), true) : (*u = (*u - weight) / (1 - weight), false);
+}
+
+@(pure) int uniform_wavelength_index_sample(&float u) {
+  const int i(#min(int(*u *= $WAVELENGTH_BASE_MAX), $WAVELENGTH_BASE_MAX - 1));
+  *u -= i;
+  return i;
+}
+
+@(pure) float2 uniform_disk_sample(float2 u) {
+  u = 2 * u - 1;
+  return float2(0) if (#all(u == 0));
+  float rad(0);
+  float phi(0);
+  if ((absu := #abs(u), absu.x > absu.y))
+    rad = u.x, phi = $PI / 4 * (u.y / u.x);
+  else
+    rad = u.y, phi = $PI / 2 - $PI / 4 * (u.x / u.y);
+  return rad * float2(#cos(phi), #sin(phi));
+}
+
+@(pure) auto cosine_hemisphere_sample(float2 u) {
+  return float3((p := uniform_disk_sample(u)), #sqrt(#max(1 - #sum(p * p), 0)));
+}
+//--}
+
+//--{ Helpers: Reflection and refraction
+@(pure macro) auto reflect(const float3 wi, const float3 wm) = 2 * #sum(wi * wm) * wm - wi;
+
+@(pure macro) auto refract(const float3 wi, const float3 wm, const float ior, const float cos_thetat) = -ior * wi + (ior * #sum(wi * wm) + cos_thetat) * wm;
+
+@(pure macro) auto refract(const float3 wi, const float3 wm, const float ior) {
+  const auto cos_thetai(#sum(wi * wm));
+  const auto cos_thetat(#sqrt(1 - ior * ior * (1 - cos_thetai * cos_thetai)));
+  return refract(wi, wm, ior, cos_thetat * -#sign(cos_thetai));
+}
+
+@(pure macro) auto refraction_half_vector(const float3 wi, const float3 wt, const float ior) = -ior * wi + wt; 
+
+@(pure macro) auto refraction_half_vector_jacobian(const float3 wi, const float3 wt, const float ior) {
+  const auto vh(refraction_half_vector(wi, wt, ior));
+  const auto len2_vh(#sum(vh * vh));
+  const auto len1_vh(#sqrt(len2_vh));
+  const auto wh(vh / len1_vh);
+  return #abs(#sum(wt * wh)) / len2_vh;
+}
+//--}
+
+//--{ Helpers: Quaternion
+@(pure macro) float4 quat_rotate(const float theta, const float3 v) = float4(#sin(theta / 2) * normalize(v), #cos(theta / 2));
+
+@(pure macro) float4 quat_rotate(const float3 u, const float3 v) = normalize(float4(cross(u, v), 1 + dot(u, v)));
+
+@(pure macro) float4 quat_transpose(const float4 q) = float4(-1.0, -1.0, -1.0, 1.0) * q;
+
+@(pure macro) float4 quat_inverse(const float4 q) = quat_transpose(q) / dot(q, q);
+
+@(pure macro) float4 quat_product(const float4 q, const float4 r) = float4(1.0, 1.0, 1.0, -1.0) * (q.wwwx * r.xyzx + q.xyzy * r.wwwy + q.yzxz * r.zxyz - q.zxyw * r.yzxw);
+
+@(pure) float3 quat_transform_vector(const float4 q, const float3 u) {
+  return (w := q.w) * w * u + (v := q.xyz) * dot(v, u) + cross(v, 2.0 * w * u + cross(v, u));
+}
+//--}
+
+//--{ API Types: eval_bsdf_parameters, eval_bsdf_result
+struct eval_bsdf_parameters {
+  // The outgoing direction in the proper geometric tangent space.
+  const float3 geometric_wo;
+
+  // The incoming direction in the proper geometric tangent space.
+  const float3 geometric_wi;
+
+  // The outgoing direction used for evaluation which may be in some perturbed tangent space.
+  float3 wo = geometric_wo;
+
+  // The incoming direction used for evaluation which may be in some perturbed tangent space.
+  float3 wi = geometric_wi;
+
+  // The hit side of the surface as the sign of the outgoing direction Z coordinate.
+  const float hit_side = #sign(geometric_wo.z);
+
+  // The index of refraction.
+  const float ior = 1.0 / 1.4;
+
+  // Is thin walled?
+  const bool thin_walled = false;
+
+  // The scatter mode inferred from the proper directions. 
+  //
+  // NOTE: In perturbed tangent space, the sense of BRDF versus BTDF may flip, e.g., the proper directions 
+  // may indicate reflection, but the perturbed directions may indicate transmission. Not sure exactly how 
+  // to handle this, but I think in general we want things to be consistent with the proper directions.
+  const scatter_mode mode = (geometric_wo.z < 0) == (geometric_wi.z < 0) ? scatter_reflect : scatter_transmit;
+};
+
+struct eval_bsdf_result {
+  // The Probability Density Function (PDF) evaluations.
+  // - 'pdf[0]' is the _forward_ PDF evaluation, i.e., the probability of sampling wi given wo.
+  // - 'pdf[1]' is the _reverse_ PDF evaluation, i.e., the probability of sampling wo given wi.
+  float2 pdf = float2(0);
+
+  // The Bidirectional Scattering Distribution Function (BSDF) evaluation.
+  color f = color(0);
+
+  // Is black? 
+  bool is_black = false;
+};
+//--}
+
+//--{ API Types: eval_bsdf_sample_parameters, eval_bsdf_sample_result
+struct eval_bsdf_sample_parameters {
+  // The outgoing direction in the proper geometry tangent space.
+  const float3 geometric_wo;
+
+  // The outgoing direction used for evaluation which may be in some perturbed tangent space.
+  float3 wo = geometric_wo;
+
+  // The canonical random sample in [0,1]^4. 
+  float4 xi;
+
+  // The hit side of the surface as the sign of the outgoing direction Z coordinate.
+  const float hit_side = #sign(geometric_wo.z);
+
+  // The index of refraction.
+  const float ior = 1.0 / 1.4;
+
+  // Is thin walled?
+  const bool thin_walled = false;
+};
+
+struct eval_bsdf_sample_result {
+  // The sampled incoming direction.
+  float3 wi = float3(0);
+
+  // The sampled scatter mode.
+  scatter_mode mode = scatter_none;
+
+  // If sampled from a directional delta distribution, the BSDF evaluation (which is otherwise unevaluable).
+  ?color delta_f = null;
+};
+//--}
+
+//--{ BSDF: default_bsdf
+@(macro) auto eval_bsdf(const &default_bsdf this, inline const &eval_bsdf_parameters params) {
+  return eval_bsdf_result(is_black: true);
+}
+@(macro) auto eval_bsdf_sample(const &default_bsdf this, inline const &eval_bsdf_sample_parameters params) {
+  return eval_bsdf_sample_result(wi: float3(0.0), mode: scatter_none);
+}
+//--}
+
+//--{ BSDF: diffuse_reflection_bsdf
+export struct diffuse_reflection_bsdf: bsdf {
+  color tint = color(1.0);
+  float roughness = 0.0;
+  string handle = "";
+};
+auto eval_bsdf(const &diffuse_reflection_bsdf this, inline const &eval_bsdf_parameters params) {
+  if (mode == scatter_reflect) {
+    const auto sigma2(this.roughness * this.roughness);
+    const auto a(1.00 - sigma2 / (2.0 * sigma2 + 0.66));
+    const auto b(0.45 * sigma2 / (sigma2 + 0.09));
+    const auto z(#abs(auto(wi.z, wo.z)));
+    const auto t(#max(#sum(wo.xy * wi.xy), 0) / #max_value(z));
+    return eval_bsdf_result(pdf: (pdf := z / $PI), f: pdf[0] * (a + t * b) * this.tint);
+  } else {
+    return eval_bsdf_result(is_black: true);
+  }
+}
+auto eval_bsdf_sample(const &diffuse_reflection_bsdf this, inline const &eval_bsdf_sample_parameters params) {
+  return eval_bsdf_sample_result(wi: hit_side * cosine_hemisphere_sample(xi.xy), mode: scatter_reflect);
+}
+//--}
+
+//--{ BSDF: diffuse_transmission_bsdf
+export struct diffuse_transmission_bsdf: bsdf {
+  color tint = color(1.0);
+  string handle = "";
+};
+auto eval_bsdf(const &diffuse_transmission_bsdf this, inline const &eval_bsdf_parameters params) {
+  if (mode == scatter_transmit) {
+    return eval_bsdf_result(pdf: (pdf := #abs(auto(wi.z, wo.z)) / $PI), f: pdf[0] * this.tint);
+  } else {
+    return eval_bsdf_result(is_black: true);
+  }
+}
+auto eval_bsdf_sample(const &diffuse_transmission_bsdf this, inline const &eval_bsdf_sample_parameters params) {
+  return eval_bsdf_sample_result(wi: -hit_side * cosine_hemisphere_sample(xi.xy), mode: scatter_transmit);
+}
+//--}
+
+//--{ BSDF: sheen_bsdf
+export struct sheen_bsdf: bsdf {
+  float roughness;
+  color tint = color(1.0);
+  color multiscatter_tint = color(0.0);
+  string handle = "";
+};
+@(pure) auto sheen_l(const auto fit, const float cos_theta) {
+  return fit[0] / (1 + fit[1] * #pow(cos_theta, fit[2])) + fit[3] * cos_theta + fit[4];
+}
+@(pure) auto sheen_lambda(const auto fit, const float cos_theta) {
+  return #exp(#abs(cos_theta) < 0.5 ? sheen_l(fit, cos_theta) : 2 * sheen_l(fit, 0.5) - sheen_l(fit, #max(1 - cos_theta, 0)));
+}
+auto eval_bsdf(const &sheen_bsdf this, inline const &eval_bsdf_parameters params) {
+  if (mode == scatter_reflect) {
+    const auto alpha(saturate(lerp(0.1, 1.0, this.roughness * this.roughness)));
+    const auto fit(lerp(auto(21.5473, 3.82987, 0.19823, -1.97760, -4.32054),
+                        auto(25.3245, 3.32435, 0.16801, -1.27393, -4.85967), (1 - alpha) * (1 - alpha)));
+    const auto z(#abs(auto(wi.z, wo.z)));
+    const auto wh(normalize(wo + wi));
+    const auto cos_thetah(wh.z);
+    const auto sin_thetah(#sqrt(1.001 - cos_thetah * cos_thetah)); // 1 + eps
+    const auto d((2 + 1 / alpha) * #pow(sin_thetah, 1 / alpha) / $TWO_PI);
+    const auto g(1 / (1 + sheen_lambda(fit, z[0]) + sheen_lambda(fit, z[1])));
+    return eval_bsdf_result(pdf: z / $PI, f: d * g / (4 * z[1]) * this.tint);
+  } else {
+    return eval_bsdf_result(is_black: true);
+  }
+}
+auto eval_bsdf_sample(const &sheen_bsdf this, const &eval_bsdf_sample_parameters params) {
+  return eval_bsdf_sample_result(wi: cosine_hemisphere_sample(params.xi.xy) * params.hit_side, mode: scatter_reflect);
+}
+//--}
+
+//--{ C++ API
+export @(macro) int material__eval_bsdf(
+    const &material this, const &float3 wo, const &float3 wi,  
+    const &float pdf_fwd, const &float pdf_rev, const &color f) {
+  auto params(eval_bsdf_parameters(
+    geometric_wo: normalize(*wo),
+    geometric_wi: normalize(*wi)));
+  /*
+  // Perturb the normal with the 'normal' field of the top-level 'material_geometry' structure.
+  perturb_normal(&params, this.geometry.normal);
+   */
+  // Generate the implementation with 'eval_bsdf' dispatch.
+  auto result(eval_bsdf_result(is_black: true));
+  if (#typeof(this.backface) != #typeof(material_surface()) && (params.hit_side < 0)) { 
+    result = eval_bsdf(&this.backface.scattering, &params);
+  } else {
+    result = eval_bsdf(&this.surface.scattering, &params);
+  }
+  // Copy out the forward and reverse PDF evaluations and the BSDF evaluation.
+  if (result.is_black) {
+    *pdf_fwd = 0.0;
+    *pdf_rev = 0.0;
+    *f = color(0.0);
+  } else {
+    *pdf_fwd = result.pdf.x;
+    *pdf_rev = result.pdf.y;
+    *f = result.f;
+  }
+  // Return true if not black.
+  return !result.is_black;
+}
+/*
+export @(macro) int material__bsdf_sample(
+    const &material this, const &float4 xi, const &float3 wo, 
+    const &float3 wi, const &float pdf_fwd, const &float pdf_rev, const &color f, const &int is_delta) {
+}
+ */
+//--}

@@ -2,8 +2,187 @@
 
 namespace smdl::Compiler::builtins {
 
-static const char *df = R"*(#extended_syntax
-enum scatter_mode { scatter_reflect = 1, scatter_transmit = 2, scatter_reflect_transmit = 3 };
+static const char *df = R"*(
+#extended_syntax
+using ::math import *;
+import ::state::*;
+export enum scatter_mode { scatter_reflect = 1, scatter_transmit = 2, scatter_reflect_transmit = 3 };
+@(pure) bool weighted_bool_sample(&float u, float weight) {
+  return *u < weight ? (*u = (*u / weight), true) : (*u = (*u - weight) / (1 - weight), false);
+}
+@(pure) int uniform_wavelength_index_sample(&float u) {
+  const int i(#min(int(*u *= $WAVELENGTH_BASE_MAX), $WAVELENGTH_BASE_MAX - 1));
+  *u -= i;
+  return i;
+}
+@(pure) float2 uniform_disk_sample(float2 u) {
+  u = 2 * u - 1;
+  return float2(0) if (#all(u == 0));
+  float rad(0);
+  float phi(0);
+  if ((absu := #abs(u), absu.x > absu.y))
+    rad = u.x, phi = $PI / 4 * (u.y / u.x);
+  else
+    rad = u.y, phi = $PI / 2 - $PI / 4 * (u.x / u.y);
+  return rad * float2(#cos(phi), #sin(phi));
+}
+@(pure) auto cosine_hemisphere_sample(float2 u) {
+  return float3((p := uniform_disk_sample(u)), #sqrt(#max(1 - #sum(p * p), 0)));
+}
+@(pure macro) auto reflect(const float3 wi, const float3 wm) = 2 * #sum(wi * wm) * wm - wi;
+@(pure macro) auto refract(const float3 wi, const float3 wm, const float ior, const float cos_thetat) = -ior * wi + (ior * #sum(wi * wm) + cos_thetat) * wm;
+@(pure macro) auto refract(const float3 wi, const float3 wm, const float ior) {
+  const auto cos_thetai(#sum(wi * wm));
+  const auto cos_thetat(#sqrt(1 - ior * ior * (1 - cos_thetai * cos_thetai)));
+  return refract(wi, wm, ior, cos_thetat * -#sign(cos_thetai));
+}
+@(pure macro) auto refraction_half_vector(const float3 wi, const float3 wt, const float ior) = -ior * wi + wt; 
+@(pure macro) auto refraction_half_vector_jacobian(const float3 wi, const float3 wt, const float ior) {
+  const auto vh(refraction_half_vector(wi, wt, ior));
+  const auto len2_vh(#sum(vh * vh));
+  const auto len1_vh(#sqrt(len2_vh));
+  const auto wh(vh / len1_vh);
+  return #abs(#sum(wt * wh)) / len2_vh;
+}
+@(pure macro) float4 quat_rotate(const float theta, const float3 v) = float4(#sin(theta / 2) * normalize(v), #cos(theta / 2));
+@(pure macro) float4 quat_rotate(const float3 u, const float3 v) = normalize(float4(cross(u, v), 1 + dot(u, v)));
+@(pure macro) float4 quat_transpose(const float4 q) = float4(-1.0, -1.0, -1.0, 1.0) * q;
+@(pure macro) float4 quat_inverse(const float4 q) = quat_transpose(q) / dot(q, q);
+@(pure macro) float4 quat_product(const float4 q, const float4 r) = float4(1.0, 1.0, 1.0, -1.0) * (q.wwwx * r.xyzx + q.xyzy * r.wwwy + q.yzxz * r.zxyz - q.zxyw * r.yzxw);
+@(pure) float3 quat_transform_vector(const float4 q, const float3 u) {
+  return (w := q.w) * w * u + (v := q.xyz) * dot(v, u) + cross(v, 2.0 * w * u + cross(v, u));
+}
+struct eval_bsdf_parameters {
+  const float3 geometric_wo;
+  const float3 geometric_wi;
+  float3 wo = geometric_wo;
+  float3 wi = geometric_wi;
+  const float hit_side = #sign(geometric_wo.z);
+  const float ior = 1.0 / 1.4;
+  const bool thin_walled = false;
+  const scatter_mode mode = (geometric_wo.z < 0) == (geometric_wi.z < 0) ? scatter_reflect : scatter_transmit;
+};
+struct eval_bsdf_result {
+  float2 pdf = float2(0);
+  color f = color(0);
+  bool is_black = false;
+};
+struct eval_bsdf_sample_parameters {
+  const float3 geometric_wo;
+  float3 wo = geometric_wo;
+  float4 xi;
+  const float hit_side = #sign(geometric_wo.z);
+  const float ior = 1.0 / 1.4;
+  const bool thin_walled = false;
+};
+struct eval_bsdf_sample_result {
+  float3 wi = float3(0);
+  scatter_mode mode = scatter_none;
+  ?color delta_f = null;
+};
+@(macro) auto eval_bsdf(const &default_bsdf this, inline const &eval_bsdf_parameters params) {
+  return eval_bsdf_result(is_black: true);
+}
+@(macro) auto eval_bsdf_sample(const &default_bsdf this, inline const &eval_bsdf_sample_parameters params) {
+  return eval_bsdf_sample_result(wi: float3(0.0), mode: scatter_none);
+}
+export struct diffuse_reflection_bsdf: bsdf {
+  color tint = color(1.0);
+  float roughness = 0.0;
+  string handle = "";
+};
+auto eval_bsdf(const &diffuse_reflection_bsdf this, inline const &eval_bsdf_parameters params) {
+  if (mode == scatter_reflect) {
+    const auto sigma2(this.roughness * this.roughness);
+    const auto a(1.00 - sigma2 / (2.0 * sigma2 + 0.66));
+    const auto b(0.45 * sigma2 / (sigma2 + 0.09));
+    const auto z(#abs(auto(wi.z, wo.z)));
+    const auto t(#max(#sum(wo.xy * wi.xy), 0) / #max_value(z));
+    return eval_bsdf_result(pdf: (pdf := z / $PI), f: pdf[0] * (a + t * b) * this.tint);
+  } else {
+    return eval_bsdf_result(is_black: true);
+  }
+}
+auto eval_bsdf_sample(const &diffuse_reflection_bsdf this, inline const &eval_bsdf_sample_parameters params) {
+  return eval_bsdf_sample_result(wi: hit_side * cosine_hemisphere_sample(xi.xy), mode: scatter_reflect);
+}
+export struct diffuse_transmission_bsdf: bsdf {
+  color tint = color(1.0);
+  string handle = "";
+};
+auto eval_bsdf(const &diffuse_transmission_bsdf this, inline const &eval_bsdf_parameters params) {
+  if (mode == scatter_transmit) {
+    return eval_bsdf_result(pdf: (pdf := #abs(auto(wi.z, wo.z)) / $PI), f: pdf[0] * this.tint);
+  } else {
+    return eval_bsdf_result(is_black: true);
+  }
+}
+auto eval_bsdf_sample(const &diffuse_transmission_bsdf this, inline const &eval_bsdf_sample_parameters params) {
+  return eval_bsdf_sample_result(wi: -hit_side * cosine_hemisphere_sample(xi.xy), mode: scatter_transmit);
+}
+export struct sheen_bsdf: bsdf {
+  float roughness;
+  color tint = color(1.0);
+  color multiscatter_tint = color(0.0);
+  string handle = "";
+};
+@(pure) auto sheen_l(const auto fit, const float cos_theta) {
+  return fit[0] / (1 + fit[1] * #pow(cos_theta, fit[2])) + fit[3] * cos_theta + fit[4];
+}
+@(pure) auto sheen_lambda(const auto fit, const float cos_theta) {
+  return #exp(#abs(cos_theta) < 0.5 ? sheen_l(fit, cos_theta) : 2 * sheen_l(fit, 0.5) - sheen_l(fit, #max(1 - cos_theta, 0)));
+}
+auto eval_bsdf(const &sheen_bsdf this, inline const &eval_bsdf_parameters params) {
+  if (mode == scatter_reflect) {
+    const auto alpha(saturate(lerp(0.1, 1.0, this.roughness * this.roughness)));
+    const auto fit(lerp(auto(21.5473, 3.82987, 0.19823, -1.97760, -4.32054),
+                        auto(25.3245, 3.32435, 0.16801, -1.27393, -4.85967), (1 - alpha) * (1 - alpha)));
+    const auto z(#abs(auto(wi.z, wo.z)));
+    const auto wh(normalize(wo + wi));
+    const auto cos_thetah(wh.z);
+    const auto sin_thetah(#sqrt(1.001 - cos_thetah * cos_thetah)); 
+    const auto d((2 + 1 / alpha) * #pow(sin_thetah, 1 / alpha) / $TWO_PI);
+    const auto g(1 / (1 + sheen_lambda(fit, z[0]) + sheen_lambda(fit, z[1])));
+    return eval_bsdf_result(pdf: z / $PI, f: d * g / (4 * z[1]) * this.tint);
+  } else {
+    return eval_bsdf_result(is_black: true);
+  }
+}
+auto eval_bsdf_sample(const &sheen_bsdf this, const &eval_bsdf_sample_parameters params) {
+  return eval_bsdf_sample_result(wi: cosine_hemisphere_sample(params.xi.xy) * params.hit_side, mode: scatter_reflect);
+}
+export @(macro) int material__eval_bsdf(
+    const &material this, const &float3 wo, const &float3 wi,  
+    const &float pdf_fwd, const &float pdf_rev, const &color f) {
+  auto params(eval_bsdf_parameters(
+    geometric_wo: normalize(*wo),
+    geometric_wi: normalize(*wi)));
+  /*
+  perturb_normal(&params, this.geometry.normal);
+   */
+  auto result(eval_bsdf_result(is_black: true));
+  if (#typeof(this.backface) != #typeof(material_surface()) && (params.hit_side < 0)) { 
+    result = eval_bsdf(&this.backface.scattering, &params);
+  } else {
+    result = eval_bsdf(&this.surface.scattering, &params);
+  }
+  if (result.is_black) {
+    *pdf_fwd = 0.0;
+    *pdf_rev = 0.0;
+    *f = color(0.0);
+  } else {
+    *pdf_fwd = result.pdf.x;
+    *pdf_rev = result.pdf.y;
+    *f = result.f;
+  }
+  return !result.is_black;
+}
+/*
+export @(macro) int material__bsdf_sample(
+    const &material this, const &float4 xi, const &float3 wo, 
+    const &float3 wi, const &float pdf_fwd, const &float pdf_rev, const &color f, const &int is_delta) {
+}
+ */
 )*";
 
 static const char *debug = R"*(#extended_syntax
@@ -25,9 +204,9 @@ export const double DOUBLE_MAX = $DOUBLE_MAX;
 )*";
 
 static const char *math = R"*(#extended_syntax
-export const float PI = 3.14159265358979323846;
-export const float TWO_PI = 6.28318530717958647692;
-export const float HALF_PI = 1.57079632679489661923;
+export const float PI = $PI;
+export const float TWO_PI = $TWO_PI;
+export const float HALF_PI = $HALF_PI;
 export @(pure macro) auto abs(const auto a) = #abs(a);
 export @(pure macro) auto all(const auto a) = #all(a);
 export @(pure macro) auto any(const auto a) = #any(a);

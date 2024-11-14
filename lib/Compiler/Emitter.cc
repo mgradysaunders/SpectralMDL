@@ -1268,6 +1268,20 @@ Value Emitter::emit_intrinsic(const AST::Intrinsic &intr, const ArgList &args) {
       return RValue(value.type, builder.CreateUnaryIntrinsic(intrID, value));
     }
   }
+  if (name == "sign") {
+    auto value{rvalue(expectOneVectorized())};
+    if (!value.type->is_floating()) {
+      return RValue(
+          value.type, builder.CreateSelect(
+                          emit_op(AST::BinaryOp::CmpLt, value, context.get_compile_time_int(0)),
+                          construct(value.type, context.get_compile_time_int(-1)),
+                          construct(value.type, context.get_compile_time_int(+1))));
+    } else {
+      return RValue(
+          value.type,
+          builder.CreateBinaryIntrinsic(Intr::copysign, construct(value.type, context.get_compile_time_float(1)), value));
+    }
+  }
   if (name == "atan2") {
     // TODO
   }

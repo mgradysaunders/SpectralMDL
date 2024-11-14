@@ -11,6 +11,34 @@ void Module::parse(Context &context) {
   root = Parser(context.bumpAllocator, path, text->getBuffer()).parse();
 }
 
+static constexpr auto src_evalOpacity = R"(
+@(visible) float {0}__opacity() {{
+  auto opacity(#inline({0}()).geometry.cutout_opacity);
+  opacity = #max(opacity, 0.0);
+  opacity = #min(opacity, 1.0);
+  return opacity;
+}}
+)";
+
+static constexpr auto src_evalDf = R"(
+@(visible) int {0}__eval_bsdf(
+  const &float3 wo, const &float3 wi, 
+  const &float pdf_fwd, const &float pdf_rev, const &color f) {{
+  auto this({0}());
+  return ::df::material__eval_bsdf(&this, wo, wi, pdf_fwd, pdf_rev, f);
+}}
+)";
+
+static constexpr auto src_evalDfSample = R"(
+@(visible) int {0}__eval_bsdf_sample(
+  const &float4 xi, 
+  const &float3 wo, const &float3 wi, 
+  const &float pdf_fwd, const &float pdf_rev, const &color f, const &int is_delta) {{
+  auto this({0}());
+  return ::df::material__eval_bsdf_sample(&this, xi, wo, wi, pdf_fwd, pdf_rev, f, is_delta);
+}}
+)";
+
 void Module::emit(Context &context) {
   if (status != Status::Finished) {
     if (status == Status::InProgress)
@@ -20,6 +48,19 @@ void Module::emit(Context &context) {
     emitter.emit(*root);
     lastCrumb = emitter.crumb;
     status = Status::Finished;
+
+    // Find every function that represents a material and emit the relevant functions.
+    for (auto crumb{lastCrumb}; crumb; crumb = crumb->prev) {
+      if (crumb->value.is_compile_time_function()) {
+        if (auto func{crumb->value.get_compile_time_function()}; func->represents_material()) {
+          auto material{Material{func}};
+          auto materialName{material.material->get_name()};
+          material.evalOpacity = context.get_function(emitter, std::format(src_evalOpacity, materialName));
+          material.evalDf = context.get_function(emitter, std::format(src_evalDf, materialName));
+          materials.push_back(material);
+        }
+      }
+    }
   }
 }
 
