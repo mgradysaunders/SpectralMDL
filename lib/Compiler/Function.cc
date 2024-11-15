@@ -23,6 +23,7 @@ FunctionInstance::FunctionInstance(
       for (size_t i{}; i < params.size(); i++)
         emitter.declare_function_parameter(params[i], RValue(argTypes[i], &*llvmArgItr++));
     }
+    // TODO Visit each union type argument that matches an abstract parameter
     emitter.emit(*decl.definition);
     if (!emitter.has_terminator()) {
       if (type->returnType != context.get_void_type())
