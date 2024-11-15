@@ -148,7 +148,7 @@ Value ArrayType::access(Emitter &emitter, Value value, Value i, const AST::Sourc
     return RValue(elemType, emitter.builder.CreateExtractValue(value, {unsigned(i.get_compile_time_int())}));
   } else {
     if (!value.is_lvalue()) {
-      auto lvalue{emitter.lvalue(value)};
+      auto lvalue{emitter.lvalue(value, /*manageLifetime=*/false)};
       auto result{emitter.rvalue(access(emitter, lvalue, i, srcLoc))};
       emitter.emit_end_lifetime(lvalue);
       return result;
@@ -325,7 +325,7 @@ Value ArithmeticType::access(Emitter &emitter, Value value, Value i, const AST::
       return RValue(get_column_type(), emitter.builder.CreateExtractValue(value, {unsigned(i.get_compile_time_int())}));
   } else {
     if (value.is_rvalue()) {
-      auto lvalue{emitter.lvalue(value)};
+      auto lvalue{emitter.lvalue(value, /*manageLifetime=*/false)};
       auto result{emitter.rvalue(access(emitter, lvalue, i, srcLoc))};
       emitter.emit_end_lifetime(lvalue);
       return result;
@@ -533,7 +533,7 @@ Value ColorType::access(Emitter &emitter, Value value, Value i, const AST::Sourc
     return RValue(get_scalar_type(), emitter.builder.CreateExtractElement(value, unsigned(i.get_compile_time_int())));
   } else {
     if (!value.is_lvalue()) {
-      auto lvalue{emitter.lvalue(value)};
+      auto lvalue{emitter.lvalue(value, /*manageLifetime=*/false)};
       auto result{emitter.rvalue(access(emitter, lvalue, i, srcLoc))};
       emitter.emit_end_lifetime(lvalue);
       return result;
@@ -1072,7 +1072,7 @@ Value TagType::construct(Emitter &emitter, const ArgList &args, const AST::Sourc
 
 bool TagType::recursive_match(Emitter &emitter, Type *type) {
   return this == type || (type->is_struct() && static_cast<StructType *>(type)->has_tag(this)) ||
-    (type->is_union() && static_cast<UnionType *>(type)->always_has_tag(this));
+         (type->is_union() && static_cast<UnionType *>(type)->always_has_tag(this));
 }
 
 void TagType::declare_default_type(Type *type, const AST::SourceLocation &srcLoc) {
@@ -1099,11 +1099,12 @@ UnionType::UnionType(Context &context, llvm::SmallVector<Type *> types) : TypeSu
   }
   std::sort(typeNames.begin(), typeNames.end());
   init_name(std::format("{}({})", (hasVoid ? "?" : ""), format_join(typeNames, " | ")));
-  uint64_t wordCount{requiredSize / sizeof(int_t)};
-  if (requiredSize % sizeof(int_t) != 0)
+  uint64_t wordCount{requiredSize / 8};
+  if (requiredSize % 8 != 0)
     wordCount++;
   llvmType = llvm::StructType::create(
-      {context.get_int_type(Extent(wordCount))->llvmType, context.get_int_type()->llvmType}, context.get_unique_name("union"));
+      {llvm::FixedVectorType::get(llvm::Type::getInt64Ty(context.llvmContext), wordCount), context.get_int_type()->llvmType},
+      context.get_unique_name("union"));
   sanity_check(requiredAlign <= uint64_t(context.get_align_of(this)));
 }
 
@@ -1143,7 +1144,7 @@ Value UnionType::access(Emitter &emitter, Value value, llvm::StringRef key, cons
   // Transparent access through unique optionals. This mimics the semantics of the dot operator on pointers.
   if (is_optional_unique()) {
     if (value.is_rvalue()) {
-      auto lvalue{emitter.lvalue(value)};
+      auto lvalue{emitter.lvalue(value, /*manageLifetime=*/false)};
       auto result{emitter.rvalue(access(emitter, lvalue, key, srcLoc))};
       emitter.emit_end_lifetime(lvalue);
       return result;
@@ -1166,8 +1167,8 @@ Value UnionType::construct(Emitter &emitter, const ArgList &args, const AST::Sou
   if (args.is_one_positional()) {
     auto arg{args[0].value};
     if (auto argUnionType{llvm::dyn_cast<UnionType>(arg.type)}) {
-      auto lvalueArg{emitter.lvalue(arg)};
-      auto lvalue{emitter.emit_alloca("local.union", this)};
+      auto lvalueArg{emitter.lvalue(arg, /*manageLifetime=*/false)};
+      auto lvalue{emitter.emit_alloca("tmp.union", this)};
       emitter.builder.CreateStore(Value::zero(this), lvalue); // zeroinitializer
       emitter.builder.CreateMemCpy(
           lvalue.llvmValue, llvm::Align(context.get_align_of(this)),            //
@@ -1194,7 +1195,7 @@ Value UnionType::construct(Emitter &emitter, const ArgList &args, const AST::Sou
       if (!has_type(arg.type))
         srcLoc.report_error(std::format("can't construct union type '{}' from type '{}'", name, arg.type->name));
       auto i{index_of(arg.type)};
-      auto lvalue{emitter.emit_alloca("local.union", this)};
+      auto lvalue{emitter.emit_alloca("tmp.union", this)};
       emitter.builder.CreateStore(Value::zero(this), lvalue); // zeroinitializer
       emitter.builder.CreateStore(emitter.rvalue(arg), lvalue);
       emitter.builder.CreateStore(emitter.context.get_compile_time_int(i), emitter.access(lvalue, "#idx"));

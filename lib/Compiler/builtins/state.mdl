@@ -1,4 +1,4 @@
-#extended_syntax
+#smdl_syntax
 
 import ::math::*;
 

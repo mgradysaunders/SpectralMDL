@@ -1,4 +1,4 @@
-#extended_syntax
+#smdl_syntax
 
 export const int INT_MIN = $INT_MIN;
 export const int INT_MAX = $INT_MAX;

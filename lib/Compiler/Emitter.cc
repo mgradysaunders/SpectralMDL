@@ -17,11 +17,12 @@ Value Emitter::emit_alloca(const llvm::Twine &name, Type *type) {
   return value;
 }
 
-Value Emitter::lvalue(Value value) {
+Value Emitter::lvalue(Value value, bool manageLifetime) {
   if (value.is_rvalue()) {
     auto lv{emit_alloca({}, value.type)};
     builder.CreateStore(value, lv);
-    push(lv, {}, {}, {});
+    if (manageLifetime)
+      push(lv, {}, {}, {});
     return lv;
   }
   return value;
@@ -74,7 +75,7 @@ void Emitter::emit_panic(Value message, const AST::SourceLocation &srcLoc) {
 void Emitter::declare_function_parameter(const Param &param, Value value) {
   value = construct(param.type, value, param.srcLoc);
   if (!param.isConst) {
-    value = lvalue(value);
+    value = lvalue(value, /*manageLifetime=*/false); // We push below
     value.llvmValue->setName(llvm_twine("lv.", param.name));
   }
   // We assume 'param' is a reference to a persistent 'Function' parameter, so we can directly
@@ -111,7 +112,8 @@ void Emitter::declare_import(bool isAbs, llvm::ArrayRef<llvm::StringRef> path, A
   }
 }
 
-Value Emitter::call(Value value, const ArgList &args, const AST::SourceLocation &srcLoc) {
+Value Emitter::emit_call(Value value, const ArgList &args, const AST::SourceLocation &srcLoc) {
+  // Do we need to automatically visit any arguments?
   if (args.has_any_visited()) {
     auto name{context.get_unique_name("visit-call", get_llvm_function())};
     auto blockBegin{create_block(llvm_twine(name, ".begin"))};
@@ -119,40 +121,32 @@ Value Emitter::call(Value value, const ArgList &args, const AST::SourceLocation 
     auto localReturns{llvm::SmallVector<Return>{}};
     emit_br(blockBegin);
     emit_scope(blockBegin, blockEnd, [&](auto &emitter) {
-      emitter.afterBreak = {};
-      emitter.afterContinue = {};
-      emitter.afterEndScope = {};
       emitter.afterReturn = {crumb, blockEnd};
       emitter.returns = &localReturns;
-      uint32_t i{};
-      for (auto &arg : args) {
-        if (arg.isVisited)
-          break;
-        i++;
-      }
+      auto i{args.index_of_first_visited()};
       auto argsCopy{args};
-      emitter.visit(args[i].value, [&](Emitter &emitter, Value argValue) {
+      emitter.emit_visit(args[i].value, [&](Emitter &emitter, Value argValue) {
         argsCopy[i].value = argValue;
         argsCopy[i].isVisited = false;
-        localReturns.push_back({emitter.call(value, argsCopy, srcLoc), emitter.get_insert_block(), srcLoc});
-        emitter.emit_unwind_and_br(emitter.afterReturn);
+        emitter.emit_return(emitter.emit_call(value, argsCopy, srcLoc), srcLoc);
       });
     });
     llvm_move_block_to_end(blockEnd);
     move_to(blockEnd);
-    return emit_return_phi(context.get_auto_type(), localReturns);
+    return emit_final_return_phi(context.get_auto_type(), localReturns);
+  } else {
+    if (value.is_compile_time_intrinsic())
+      return emit_intrinsic(*value.get_compile_time_intrinsic(), args);
+    if (value.is_compile_time_type())
+      return construct(value.get_compile_time_type(), args, srcLoc);
+    if (value.is_compile_time_function())
+      return value.get_compile_time_function()->call(*this, args, srcLoc);
+    srcLoc.report_error("invalid call");
+    return {};
   }
-  if (value.is_compile_time_intrinsic())
-    return emit_intrinsic(*value.get_compile_time_intrinsic(), args);
-  if (value.is_compile_time_type())
-    return construct(value.get_compile_time_type(), args, srcLoc);
-  if (value.is_compile_time_function())
-    return value.get_compile_time_function()->call(*this, args, srcLoc);
-  srcLoc.report_error("invalid call");
-  return {};
 }
 
-void Emitter::visit(Value value, const std::function<void(Emitter &emitter, Value value)> &visitor) {
+void Emitter::emit_visit(Value value, const std::function<void(Emitter &emitter, Value value)> &visitor) {
   if (!value.type->is_union_or_pointer_to_union()) {
     emit_scope([&](auto &emitter) { visitor(emitter, value); });
   } else {
@@ -188,6 +182,51 @@ void Emitter::visit(Value value, const std::function<void(Emitter &emitter, Valu
     builder.CreateUnreachable();
     llvm_move_block_to_end(blockEnd);
     move_to_or_erase(blockEnd);
+  }
+}
+
+void Emitter::emit_return(Value value, const AST::SourceLocation &srcLoc) {
+  sanity_check(!has_terminator());
+  sanity_check(returns);
+  returns->push_back({rvalue(value), get_insert_block(), srcLoc});
+  emit_unwind_and_br(afterReturn);
+}
+
+Value Emitter::emit_final_return_phi(Type *type, llvm::ArrayRef<Return> returns, const AST::SourceLocation &srcLoc) {
+  sanity_check(type);
+  sanity_check(!returns.empty());
+  if (type->is_abstract()) {
+    auto returnTypes{llvm::SmallVector<Type *>{}};
+    for (auto &[value, block, srcLoc] : returns)
+      returnTypes.push_back(value.type);
+    auto returnType{context.get_common_type(returnTypes, /*defaultToUnion=*/true, srcLoc)};
+    if (context.get_conversion_rule(returnType, type) == ConversionRule::NotAllowed)
+      srcLoc.report_error(std::format("inferred return type '{}' is not convertible to '{}'", returnType->name, type->name));
+    type = returnType;
+  }
+  auto phi{builder.CreatePHI(type->llvmType, returns.size())};
+  for (auto [value, block, srcLoc] : returns) {
+    Emitter emitter{this};
+    emitter.builder.restoreIP(llvm_insert_point_before_terminator(block));
+    auto value2{emitter.construct(type, value, srcLoc)};
+    phi->addIncoming(value2, emitter.get_insert_block());
+  }
+  return RValue(type, phi);
+}
+
+Type *Emitter::emit_final_return(Type *type, llvm::ArrayRef<Return> returns, const AST::SourceLocation &srcLoc) {
+  llvm_move_block_to_end(afterReturn);
+  move_to(afterReturn);
+  if (type == context.get_void_type()) {
+    for (auto &returnInfo : returns)
+      if (!returnInfo.value.is_void())
+        srcLoc.report_error("non-'void' return statement in 'void' function");
+    builder.CreateRetVoid();
+    return type;
+  } else {
+    auto returnValue{emit_final_return_phi(type, returns, srcLoc)};
+    builder.CreateRet(returnValue);
+    return returnValue.type;
   }
 }
 //--}
@@ -499,7 +538,7 @@ Value Emitter::emit(AST::ReturnFrom &expr) {
   });
   llvm_move_block_to_end(blockEnd);
   move_to(blockEnd);
-  return emit_return_phi(context.get_auto_type(), localReturns);
+  return emit_final_return_phi(context.get_auto_type(), localReturns);
 }
 
 Value Emitter::emit(AST::SizeName &expr) {
@@ -685,14 +724,6 @@ Value Emitter::emit(AST::Switch &stmt) {
   return {};
 }
 
-Value Emitter::emit(AST::Visit &stmt) {
-  visit(emit(stmt.what), [&](Emitter &emitter, Value value) {
-    emitter.declare(*stmt.name, value);
-    emitter.emit(stmt.body);
-  });
-  return {};
-}
-
 Value Emitter::emit(AST::While &stmt) {
   auto name{context.get_unique_name("while", get_llvm_function())};
   auto blockCond{create_block(llvm_twine(name, ".cond"))};
@@ -799,7 +830,7 @@ Value Emitter::emit_op(AST::UnaryOp op, Value val, const AST::SourceLocation &sr
           return val;
         } else {
           if (val.is_rvalue()) {
-            auto lv{lvalue(val)};
+            auto lv{lvalue(val, /*manageLifetime=*/false)};
             auto rv{rvalue(LValue(unionType->types[0], access(lv, "#ptr", srcLoc)))};
             emit_end_lifetime(lv);
             return rv;
@@ -1250,6 +1281,18 @@ Value Emitter::emit_intrinsic(const AST::Intrinsic &intr, const ArgList &args) {
                                            ? builder.CreateFAddReduce(Value::zero(value.type->get_scalar_type()), value)
                                            : builder.CreateAddReduce(value));
   }
+  if (name == "product") {
+    auto value{rvalue(expectOneVectorized())};
+    if (value.type->scalar == Scalar::Bool)
+      value = construct(value.type->get_with_different_scalar(Scalar::Int), value);
+    if (value.type->is_scalar())
+      return value;
+    return RValue(
+        value.type->get_scalar_type(),
+        value.type->is_floating()
+            ? builder.CreateFMulReduce(construct(value.type->get_scalar_type(), context.get_compile_time_float(1)), value)
+            : builder.CreateMulReduce(value));
+  }
   //--}
   //--{ Math
   if (name == "isfpclass") {
@@ -1431,44 +1474,6 @@ void Emitter::emit_print(Value value) {
     emit_print(context.get_compile_time_string(")"));
   } else if (value.type->is_union()) {
     // TODO
-  }
-}
-
-Value Emitter::emit_return_phi(Type *type, llvm::ArrayRef<Return> returns, const AST::SourceLocation &srcLoc) {
-  sanity_check(type);
-  sanity_check(!returns.empty());
-  if (type->is_abstract()) {
-    auto returnTypes{llvm::SmallVector<Type *>{}};
-    for (auto &[value, block, srcLoc] : returns)
-      returnTypes.push_back(value.type);
-    auto returnType{context.get_common_type(returnTypes, /*defaultToUnion=*/true, srcLoc)};
-    if (context.get_conversion_rule(returnType, type) == ConversionRule::NotAllowed)
-      srcLoc.report_error(std::format("inferred return type '{}' is not convertible to '{}'", returnType->name, type->name));
-    type = returnType;
-  }
-  auto phi{builder.CreatePHI(type->llvmType, returns.size())};
-  for (auto [value, block, srcLoc] : returns) {
-    Emitter emitter{this};
-    emitter.builder.restoreIP(llvm_insert_point_before_terminator(block));
-    auto value2{emitter.construct(type, value, srcLoc)};
-    phi->addIncoming(value2, emitter.get_insert_block());
-  }
-  return RValue(type, phi);
-}
-
-Type *Emitter::emit_return(Type *type, llvm::ArrayRef<Return> returns, const AST::SourceLocation &srcLoc) {
-  llvm_move_block_to_end(afterReturn);
-  move_to(afterReturn);
-  if (type == context.get_void_type()) {
-    for (auto &returnInfo : returns)
-      if (!returnInfo.value.is_void())
-        srcLoc.report_error("non-'void' return statement in 'void' function");
-    builder.CreateRetVoid();
-    return type;
-  } else {
-    auto returnValue{emit_return_phi(type, returns, srcLoc)};
-    builder.CreateRet(returnValue);
-    return returnValue.type;
   }
 }
 

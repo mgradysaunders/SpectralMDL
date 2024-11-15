@@ -1,4 +1,4 @@
-#extended_syntax
+#smdl_syntax
 
 export using ::debug import *;
 export using ::df import *;

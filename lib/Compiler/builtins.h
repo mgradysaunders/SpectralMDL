@@ -3,7 +3,7 @@
 namespace smdl::Compiler::builtins {
 
 static const char *df = R"*(
-#extended_syntax
+#smdl_syntax
 using ::math import *;
 import ::state::*;
 export enum scatter_mode { scatter_none = 0, scatter_reflect = 1, scatter_transmit = 2, scatter_reflect_transmit = 3 };
@@ -278,7 +278,7 @@ export @(macro) int material__eval_bsdf_sample(
 }
 )*";
 
-static const char *debug = R"*(#extended_syntax
+static const char *debug = R"*(#smdl_syntax
 export @(pure macro) bool assert(const bool condition, const string reason) {
   #assert(condition, reason) if ($DEBUG);
   return true;
@@ -287,7 +287,7 @@ export @(pure macro) bool breakpoint() = #breakpoint();
 export @(pure macro) bool print(const auto a) = #print(a);
 )*";
 
-static const char *limits = R"*(#extended_syntax
+static const char *limits = R"*(#smdl_syntax
 export const int INT_MIN = $INT_MIN;
 export const int INT_MAX = $INT_MAX;
 export const float FLOAT_MIN = $FLOAT_MIN;
@@ -296,7 +296,7 @@ export const double DOUBLE_MIN = $DOUBLE_MIN;
 export const double DOUBLE_MAX = $DOUBLE_MAX;
 )*";
 
-static const char *math = R"*(#extended_syntax
+static const char *math = R"*(#smdl_syntax
 export const float PI = $PI;
 export const float TWO_PI = $TWO_PI;
 export const float HALF_PI = $HALF_PI;
@@ -364,7 +364,7 @@ export @(noinline) color blackbody(const float temperature) {
 }
 )*";
 
-static const char *scene = R"*(#extended_syntax
+static const char *scene = R"*(#smdl_syntax
 @(pure foreign) int smdl_data_isvalid(&void data, &string name);
 @(pure foreign) int smdl_data_lookup_int(&void data, &string name, &int value);
 @(pure foreign) int smdl_data_lookup_int2(&void data, &string name, &int2 value);
@@ -418,7 +418,7 @@ export @(pure macro) float4 data_lookup_float4(string name, float4 default_value
 }
 )*";
 
-static const char *state = R"*(#extended_syntax
+static const char *state = R"*(#smdl_syntax
 import ::math::*;
 export enum coordinate_space { coordinate_internal = 0, coordinate_object = 1, coordinate_world = 2 };
 export @(macro) float3 position() = $state.position;
@@ -475,7 +475,7 @@ export @(macro) float transform_scale(const coordinate_space from, const coordin
 }
 )*";
 
-static const char *std = R"*(#extended_syntax
+static const char *std = R"*(#smdl_syntax
 export using ::debug import *;
 export using ::df import *;
 export using ::limits import *;
@@ -485,7 +485,7 @@ export using ::state import *;
 export using ::tex import *;
 )*";
 
-static const char *tex = R"*(#extended_syntax
+static const char *tex = R"*(#smdl_syntax
 export enum gamma_mode { gamma_default = 0, gamma_linear = 1, gamma_srgb = 2 };
 @(pure macro) float4 apply_gamma_mode(const gamma_mode gamma, const float4 texel) = gamma == gamma_srgb ? float4((texel * texel).xyz, texel.w) : texel;
 @(pure) &image_t access_uv_tile(const texture_2d tex, const int2 uv_tile) {
@@ -610,7 +610,7 @@ export @(pure macro) color lookup_color(
 )*";
 
 static const char *microfacet = R"*(
-#extended_syntax
+#smdl_syntax
 using ::math import *;
 @(pure foreign) float erfcf(float x);
 @(pure foreign) float betaf(float x, float y);
@@ -624,7 +624,7 @@ export struct microfacet {
 @(pure macro) auto microfacet_smith_lambda(const ggx this, const float m) = 0.5 * (#sign(m) * #sqrt(1 + 1 / (m * m))) - 0.5;
 @(pure macro) auto microfacet_slope_pdf(const ggx this, const float2 m) = 1.0 / ($PI * (t := 1 + dot(m, m)) * t);
 @(pure noinline) auto microfacet_visible_slope_sample(const ggx this, const float xi0, float xi1, float cos_thetao) {
-  return #sqrt(xi0 / (1 - xi0)) * float2(#cos((phi := $TWO_PI * xi1)), #sin(phi)) if (cos_thetao > +0.9999);
+  return #sqrt(xi0 / (1 - xi0)) * float2(#cos(phi := $TWO_PI * xi1), #sin(phi)) if (cos_thetao > +0.9999);
   cos_thetao = #max(cos_thetao, -0.9999);
   const auto sin_thetao(#sqrt(1 - cos_thetao * cos_thetao));
   const auto tan_thetao(sin_thetao / cos_thetao);
@@ -647,10 +647,10 @@ export struct microfacet {
   return float2(0.0);
 }
 export @(pure) auto microfacet_smith_lambda(microfacet this, const float3 w) {
-  visit this { return microfacet_smith_lambda(visit this.slope, w.z / length(this.alpha * w.xy));  }
+  return microfacet_smith_lambda(visit this.slope, w.z / length(this.alpha * w.xy));
 }
 export @(pure) auto microfacet_slope_pdf(microfacet this, float2 m) {
-  visit this { return microfacet_slope_pdf(visit this.slope, m / this.alpha) / (this.alpha.x * this.alpha.y);  }
+  return microfacet_slope_pdf(visit this.slope, m / this.alpha) / (this.alpha.x * this.alpha.y);
 }
 export @(pure) auto microfacet_normal_pdf(microfacet this, const float3 wm) {
   return 0.0 if (!(wm.z > 1e-5));
@@ -663,17 +663,15 @@ export @(pure) auto microfacet_visible_normal_pdf(microfacet this, const float3 
   return cos_thetao / proj_areao * microfacet_normal_pdf(this, wm);
 }
 export @(pure) auto microfacet_visible_normal_sample(microfacet this, const float xi0, const float xi1, const float3 wo) {
-  visit this { 
-    const auto w11(normalize(float3(this.alpha * wo.xy, wo.z)));
-    const auto sin_theta(length(w11.xy));
-    const auto cos_phi(w11.x / sin_theta);
-    const auto sin_phi(w11.y / sin_theta);
-    const auto m11(microfacet_visible_slope_sample(visit this.slope, xi0, xi1, w11.z));
-    const auto m(float2(
-        this.alpha.x * dot(float2(cos_phi, -sin_phi), m11), 
-        this.alpha.y * dot(float2(sin_phi, +cos_phi), m11)));
-    return #all(isfinite(m)) ? normalize(float3(m, 1)) : wo.z == 0 ? normalize(wo) : float3(0, 0, 1);
-  }
+  const auto w11(normalize(float3(this.alpha * wo.xy, wo.z)));
+  const auto sin_theta(length(w11.xy));
+  const auto cos_phi(w11.x / sin_theta);
+  const auto sin_phi(w11.y / sin_theta);
+  const auto m11(microfacet_visible_slope_sample(visit this.slope, xi0, xi1, w11.z));
+  const auto m(float2(
+      this.alpha.x * dot(float2(cos_phi, -sin_phi), m11), 
+      this.alpha.y * dot(float2(sin_phi, +cos_phi), m11)));
+  return #all(isfinite(m)) ? normalize(float3(m, 1)) : wo.z == 0 ? normalize(wo) : float3(0, 0, 1);
 }
 export struct microfacet_specular_result {
   float3 wm = float3(0.0);

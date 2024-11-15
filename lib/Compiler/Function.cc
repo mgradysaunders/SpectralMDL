@@ -17,20 +17,34 @@ FunctionInstance::FunctionInstance(
     auto returns{llvm::SmallVector<Return>{}};
     auto inlines{llvm::SmallVector<Inline>{}};
     auto emitter{Emitter{context, decl.module, emitter0.crumb, &returns, &inlines, llvmFunc}};
+    auto impliedVisit{false};
+    auto impliedVisitArgs{ArgList{}};
     {
       auto llvmArgItr{llvmFunc->arg_begin()};
       emitter.state = type->isPure ? Value() : RValue(context.get_type<state_t *>(), &*llvmArgItr++);
-      for (size_t i{}; i < params.size(); i++)
-        emitter.declare_function_parameter(params[i], RValue(argTypes[i], &*llvmArgItr++));
+      for (size_t i{}; i < params.size(); i++) {
+        auto argValue{RValue(argTypes[i], &*llvmArgItr++)};
+        emitter.declare_function_parameter(params[i], argValue);
+        impliedVisitArgs.emplace_back(params[i].name, argValue, params[i].srcLoc);
+        if (params[i].type->is_abstract() && argTypes[i]->is_union_or_pointer_to_union()) {
+          impliedVisit = true;
+          impliedVisitArgs.args.back().isVisited = true;
+        }
+      }
     }
-    // TODO Visit each union type argument that matches an abstract parameter
-    emitter.emit(*decl.definition);
-    if (!emitter.has_terminator()) {
-      if (type->returnType != context.get_void_type())
-        decl.srcLoc.report_error(std::format("function '{}' is missing 'return' statement", name));
-      emitter.emit_unwind_and_br(emitter.afterReturn);
+    if (impliedVisit) {
+      emitter.emit_return(
+          emitter.emit_call(context.get_compile_time_function(context.get_function(emitter, &decl)), impliedVisitArgs, decl.srcLoc),
+          decl.srcLoc);
+    } else {
+      emitter.emit(*decl.definition);
+      if (!emitter.has_terminator()) {
+        if (type->returnType != context.get_void_type())
+          decl.srcLoc.report_error(std::format("function '{}' is missing 'return' statement", name));
+        emitter.emit_unwind_and_br(emitter.afterReturn);
+      }
     }
-    auto returnType{emitter.emit_return(type->returnType, returns, decl.srcLoc)};
+    auto returnType{emitter.emit_final_return(type->returnType, returns, decl.srcLoc)};
     if (type->has_abstract_return_type()) // If necessary, patch concrete return type
       patch_return_type(returnType);
     force_inline(inlines);
@@ -93,7 +107,7 @@ FunctionInstance::FunctionInstance(Emitter &emitter0, AST::UnitTest &decl) : nam
   }
   emitter.emit(*decl.body);
   emitter.emit_unwind_and_br(emitter.afterReturn);
-  emitter.emit_return(context.get_void_type(), returns, decl.srcLoc);
+  emitter.emit_final_return(context.get_void_type(), returns, decl.srcLoc);
   force_inline(inlines);
   eliminate_unreachable();
   verify();
@@ -111,7 +125,7 @@ FunctionInstance::FunctionInstance(Emitter &emitter0, AST::Expr &expr) : name("(
   auto returnValue{emitter.rvalue(emitter.emit(expr))};
   returns.push_back({returnValue, emitter.get_insert_block(), expr.srcLoc});
   emitter.emit_unwind_and_br(emitter.afterReturn);
-  emitter.emit_return(returnValue.type, returns, expr.srcLoc);
+  emitter.emit_final_return(returnValue.type, returns, expr.srcLoc);
   patch_return_type(returnValue.type);
   force_inline(inlines);
   eliminate_unreachable();
@@ -143,7 +157,7 @@ FunctionInstance::FunctionInstance(Emitter &emitter0, EnumType *enumType) {
     emitter.move_to(blockDefault);
     emitter.emit_unwind_and_br(emitter.afterReturn);
   }
-  emitter.emit_return(context.get_string_type(), returns);
+  emitter.emit_final_return(context.get_string_type(), returns);
   eliminate_unreachable();
   verify();
 }
@@ -256,7 +270,7 @@ Value Function::call(Emitter &emitter0, const ArgList &args, const AST::SourceLo
         patchedArgs.emplace_back(astArg.name->name, emitter1.emit(astArg.expr), astArg.srcLoc, astArg.src);
 
     auto callee{emitter0.emit(letAndCall.call->expr)};
-    auto result{emitter1.call(callee, patchedArgs, srcLoc)};
+    auto result{emitter1.emit_call(callee, patchedArgs, srcLoc)};
     sanity_check(!emitter1.has_terminator());
     emitter1.emit_unwind_and_br(emitter1.afterEndScope);
     emitter0.move_to(blockEnd);
@@ -324,18 +338,32 @@ Value Function::call(Emitter &emitter0, const ArgList &args, const AST::SourceLo
         emitter1.afterEndScope = {}; // Reset end-scope
         emitter1.afterReturn = {overload.decl.crumb, blockEnd};
         emitter1.move_to(blockBegin);
-        for (size_t i = 0; i < argValues.size(); i++)
+
+        // Declare function parameters
+        auto impliedVisit{false};
+        auto impliedVisitArgs{ArgList{}};
+        for (size_t i = 0; i < argValues.size(); i++) {
           emitter1.declare_function_parameter(overload.params[i], argValues[i]);
-        emitter1.emit(overload.decl.definition);
-        if (!emitter1.has_terminator()) {
-          if (overload.decl.returnType->type != context.get_void_type())
-            overload.decl.srcLoc.report_error(std::format("function '{}' is missing 'return' statement", get_name()));
-          emitter1.emit_unwind_and_br(emitter1.afterReturn);
+          impliedVisitArgs.emplace_back(overload.params[i].name, argValues[i], overload.params[i].srcLoc);
+          if (overload.params[i].type->is_abstract() && argValues[i].type->is_union_or_pointer_to_union()) {
+            impliedVisit = true;
+            impliedVisitArgs.args.back().isVisited = true;
+          }
+        }
+        if (impliedVisit) {
+          emitter1.emit_return(emitter1.emit_call(context.get_compile_time_function(&overload), impliedVisitArgs, srcLoc), srcLoc);
+        } else {
+          emitter1.emit(overload.decl.definition);
+          if (!emitter1.has_terminator()) {
+            if (overload.decl.returnType->type != context.get_void_type())
+              overload.decl.srcLoc.report_error(std::format("function '{}' is missing 'return' statement", get_name()));
+            emitter1.emit_unwind_and_br(emitter1.afterReturn);
+          }
         }
       }
       llvm_move_block_to_end(blockEnd);
       emitter0.move_to(blockEnd);
-      return emitter0.emit_return_phi(overload.decl.returnType->type, returns, overload.decl.returnType->srcLoc);
+      return emitter0.emit_final_return_phi(overload.decl.returnType->type, returns, overload.decl.returnType->srcLoc);
     } else {
       llvm::SmallVector<Type *> argTypes{};
       for (auto argValue : argValues)

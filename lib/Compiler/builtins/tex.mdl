@@ -1,4 +1,4 @@
-#extended_syntax
+#smdl_syntax
 
 export enum gamma_mode { gamma_default = 0, gamma_linear = 1, gamma_srgb = 2 };
 

@@ -43,9 +43,9 @@ public:
 
 public:
   //--{ Helpers
-  llvm::BasicBlock *get_insert_block() { return builder.GetInsertBlock(); }
+  [[nodiscard]] llvm::BasicBlock *get_insert_block() { return builder.GetInsertBlock(); }
 
-  bool has_terminator() { return get_insert_block() && get_insert_block()->getTerminator() != nullptr; }
+  [[nodiscard]] bool has_terminator() { return get_insert_block() && get_insert_block()->getTerminator() != nullptr; }
 
   void move_to(llvm::BasicBlock *block) { builder.SetInsertPoint(block); }
 
@@ -57,23 +57,23 @@ public:
     }
   }
 
-  llvm::Function *get_llvm_function() { return get_insert_block() ? get_insert_block()->getParent() : nullptr; }
+  [[nodiscard]] llvm::Function *get_llvm_function() { return get_insert_block() ? get_insert_block()->getParent() : nullptr; }
 
-  llvm::BasicBlock *get_llvm_function_entry_block() {
+  [[nodiscard]] llvm::BasicBlock *get_llvm_function_entry_block() {
     if (auto llvmFunc{get_llvm_function()})
       return &llvmFunc->getEntryBlock();
     return nullptr;
   }
 
-  llvm::BasicBlock *create_block(const llvm::Twine &name) {
+  [[nodiscard]] llvm::BasicBlock *create_block(const llvm::Twine &name) {
     return llvm::BasicBlock::Create(context.llvmContext, name, sanity_check_nonnull(get_llvm_function()));
   }
 
-  Value emit_alloca(const llvm::Twine &name, Type *type);
+  [[nodiscard]] Value emit_alloca(const llvm::Twine &name, Type *type);
 
-  Value lvalue(Value value);
+  [[nodiscard]] Value lvalue(Value value, bool manageLifetime = true);
 
-  Value rvalue(Value value);
+  [[nodiscard]] Value rvalue(Value value);
 
   void emit_end_lifetime(Value value) {
     if (value.is_lvalue() && llvm::isa<llvm::AllocaInst>(value.llvmValue))
@@ -187,9 +187,15 @@ public:
     return type->construct(*this, args, srcLoc);
   }
 
-  [[nodiscard]] Value call(Value value, const ArgList &args, const AST::SourceLocation &srcLoc = {});
+  [[nodiscard]] Value emit_call(Value value, const ArgList &args, const AST::SourceLocation &srcLoc = {});
 
-  void visit(Value value, const std::function<void(Emitter &emitter, Value value)> &visitor);
+  void emit_visit(Value value, const std::function<void(Emitter &emitter, Value value)> &visitor);
+
+  void emit_return(Value value, const AST::SourceLocation &srcLoc = {});
+
+  Value emit_final_return_phi(Type *type, llvm::ArrayRef<Return> returns, const AST::SourceLocation &srcLoc = {});
+
+  Type *emit_final_return(Type *type, llvm::ArrayRef<Return> returns, const AST::SourceLocation &srcLoc = {});
   //--}
 
 public:
@@ -241,7 +247,7 @@ public:
 
   Value emit(AST::Binary &expr);
 
-  Value emit(AST::Call &expr) { return call(emit(expr.expr), emit(expr.args), expr.srcLoc); }
+  Value emit(AST::Call &expr) { return emit_call(emit(expr.expr), emit(expr.args), expr.srcLoc); }
 
   Value emit(AST::Cast &expr) { return construct(emit(expr.type).get_compile_time_type(), emit(expr.expr), expr.srcLoc); }
 
@@ -327,9 +333,7 @@ public:
     if (!afterReturn)
       stmt.srcLoc.report_error("unexpected 'return'");
     emit_late_if(stmt.cond.get(), [&](auto &emitter) {
-      auto value{stmt.expr.get() ? emitter.rvalue(emitter.emit(stmt.expr)) : Value()};
-      returns->push_back({value, emitter.get_insert_block(), stmt.srcLoc});
-      emitter.emit_unwind_and_br(afterReturn);
+      emitter.emit_return(stmt.expr.get() ? emitter.emit(stmt.expr) : Value(), stmt.srcLoc);
     });
     return {};
   }
@@ -342,7 +346,13 @@ public:
     return {};
   }
 
-  Value emit(AST::Visit &stmt);
+  Value emit(AST::Visit &stmt) {
+    emit_visit(emit(stmt.what), [&](Emitter &emitter, Value value) {
+      emitter.declare(*stmt.name, value);
+      emitter.emit(stmt.body);
+    });
+    return {};
+  }
 
   Value emit(AST::While &stmt);
   //--}
@@ -356,11 +366,6 @@ public:
   Value emit_intrinsic(const AST::Intrinsic &intr, const ArgList &args);
 
   void emit_print(Value value);
-
-public:
-  Value emit_return_phi(Type *type, llvm::ArrayRef<Return> returns, const AST::SourceLocation &srcLoc = {});
-
-  Type *emit_return(Type *type, llvm::ArrayRef<Return> returns, const AST::SourceLocation &srcLoc = {});
 
 public:
   /// The parent emitter, if applicable.

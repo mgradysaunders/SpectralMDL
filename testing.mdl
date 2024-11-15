@@ -1,4 +1,4 @@
-#extended_syntax
+#smdl_syntax
 
 unit_test "Simple types and sizes" {
   #assert(#typeof(null) == void);

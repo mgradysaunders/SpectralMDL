@@ -1,5 +1,5 @@
 // vim:foldmethod=marker:foldlevel=0:fmr=--{,--} 
-#extended_syntax
+#smdl_syntax
 
 using ::math import *;
 import ::state::*;

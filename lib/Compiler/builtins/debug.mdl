@@ -1,4 +1,4 @@
-#extended_syntax
+#smdl_syntax
 
 export @(pure macro) bool assert(const bool condition, const string reason) {
   #assert(condition, reason) if ($DEBUG);

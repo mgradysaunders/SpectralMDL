@@ -1,5 +1,5 @@
 // vim:foldmethod=marker:foldlevel=0:fmr=--{,--} 
-#extended_syntax
+#smdl_syntax
 
 using ::math import *;
 
@@ -24,7 +24,7 @@ export struct microfacet {
 @(pure macro) auto microfacet_slope_pdf(const ggx this, const float2 m) = 1.0 / ($PI * (t := 1 + dot(m, m)) * t);
 
 @(pure noinline) auto microfacet_visible_slope_sample(const ggx this, const float xi0, float xi1, float cos_thetao) {
-  return #sqrt(xi0 / (1 - xi0)) * float2(#cos((phi := $TWO_PI * xi1)), #sin(phi)) if (cos_thetao > +0.9999);
+  return #sqrt(xi0 / (1 - xi0)) * float2(#cos(phi := $TWO_PI * xi1), #sin(phi)) if (cos_thetao > +0.9999);
   cos_thetao = #max(cos_thetao, -0.9999);
   const auto sin_thetao(#sqrt(1 - cos_thetao * cos_thetao));
   const auto tan_thetao(sin_thetao / cos_thetao);
@@ -55,11 +55,11 @@ export struct microfacet {
 //--}
 
 export @(pure) auto microfacet_smith_lambda(microfacet this, const float3 w) {
-  visit this { return microfacet_smith_lambda(visit this.slope, w.z / length(this.alpha * w.xy));  }
+  return microfacet_smith_lambda(visit this.slope, w.z / length(this.alpha * w.xy));
 }
 
 export @(pure) auto microfacet_slope_pdf(microfacet this, float2 m) {
-  visit this { return microfacet_slope_pdf(visit this.slope, m / this.alpha) / (this.alpha.x * this.alpha.y);  }
+  return microfacet_slope_pdf(visit this.slope, m / this.alpha) / (this.alpha.x * this.alpha.y);
 }
 
 export @(pure) auto microfacet_normal_pdf(microfacet this, const float3 wm) {
@@ -75,17 +75,15 @@ export @(pure) auto microfacet_visible_normal_pdf(microfacet this, const float3 
 }
 
 export @(pure) auto microfacet_visible_normal_sample(microfacet this, const float xi0, const float xi1, const float3 wo) {
-  visit this { // ... could be a union
-    const auto w11(normalize(float3(this.alpha * wo.xy, wo.z)));
-    const auto sin_theta(length(w11.xy));
-    const auto cos_phi(w11.x / sin_theta);
-    const auto sin_phi(w11.y / sin_theta);
-    const auto m11(microfacet_visible_slope_sample(visit this.slope, xi0, xi1, w11.z));
-    const auto m(float2(
-        this.alpha.x * dot(float2(cos_phi, -sin_phi), m11), 
-        this.alpha.y * dot(float2(sin_phi, +cos_phi), m11)));
-    return #all(isfinite(m)) ? normalize(float3(m, 1)) : wo.z == 0 ? normalize(wo) : float3(0, 0, 1);
-  }
+  const auto w11(normalize(float3(this.alpha * wo.xy, wo.z)));
+  const auto sin_theta(length(w11.xy));
+  const auto cos_phi(w11.x / sin_theta);
+  const auto sin_phi(w11.y / sin_theta);
+  const auto m11(microfacet_visible_slope_sample(visit this.slope, xi0, xi1, w11.z));
+  const auto m(float2(
+      this.alpha.x * dot(float2(cos_phi, -sin_phi), m11), 
+      this.alpha.y * dot(float2(sin_phi, +cos_phi), m11)));
+  return #all(isfinite(m)) ? normalize(float3(m, 1)) : wo.z == 0 ? normalize(wo) : float3(0, 0, 1);
 }
 
 export struct microfacet_specular_result {

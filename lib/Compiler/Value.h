@@ -400,6 +400,13 @@ public:
     return is_any_true([](auto &arg) { return arg.isVisited; });
   }
 
+  [[nodiscard]] uint32_t index_of_first_visited() const {
+    for (uint32_t i{}; i < args.size(); i++)
+      if (args[i].isVisited)
+        return i;
+    return uint32_t(-1);
+  }
+
   /// Get the argument types
   [[nodiscard]] llvm::SmallVector<Type *> get_types() const;
 

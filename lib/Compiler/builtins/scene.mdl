@@ -1,4 +1,4 @@
-#extended_syntax
+#smdl_syntax
 
 @(pure foreign) int smdl_data_isvalid(&void data, &string name);
 

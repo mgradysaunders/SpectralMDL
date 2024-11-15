@@ -123,6 +123,9 @@ documentation for more information.
 | `#min_value`
 | `llvm.vector_reduce_[fs]min`
 
+| `#product`
+| `llvm.vector_reduce_[f]?mul`
+
 | `#sum`
 | `llvm.vector_reduce_[f]?add`
 |===

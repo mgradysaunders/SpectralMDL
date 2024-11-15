@@ -113,7 +113,7 @@ llvm::StringRef Parser::next_int() {
 //--{ Parse: Decls
 auto Parser::parse_mdl() -> unique_bump_ptr_wrapper<AST::File> {
   skip();
-  isExtendedSyntax = next("#extended_syntax");
+  isExtendedSyntax = next("#smdl_syntax");
   skip();
   auto version{parse_mdl_version()};
   if (!version) {
@@ -829,7 +829,7 @@ auto Parser::parse_argument() -> std::optional<AST::Arg> {
   bool isVisited{isExtendedSyntax && next_word("visit")};
   auto parse_argument_name{[&]() -> unique_bump_ptr_wrapper<AST::Name> {
     checkpoint();
-    if (auto name{parse_simple_name()}; name && delimiter(':') && peek() != ':') {
+    if (auto name{parse_simple_name()}; name && delimiter(':') && peek() != ':' && peek() != '=') {
       accept();
       return std::move(name);
     } else {
