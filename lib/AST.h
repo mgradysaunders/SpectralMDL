@@ -162,6 +162,9 @@ public:
   /// The entire source-code range containing the argument name and expression. Useful
   /// for outputting in '#assert(...)'.
   llvm::StringRef src{};
+
+  /// Is marked with the 'visit' keyword?
+  bool isVisited{};
 };
 
 class ArgList final {

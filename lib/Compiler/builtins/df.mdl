@@ -63,13 +63,11 @@ export enum scatter_mode { scatter_none = 0, scatter_reflect = 1, scatter_transm
 
 @(pure macro) float4 quat_transpose(const float4 q) = float4(-1.0, -1.0, -1.0, 1.0) * q;
 
-@(pure macro) float4 quat_inverse(const float4 q) = quat_transpose(q) / dot(q, q);
-
-@(pure macro) float4 quat_product(const float4 q, const float4 r) = float4(1.0, 1.0, 1.0, -1.0) * (q.wwwx * r.xyzx + q.xyzy * r.wwwy + q.yzxz * r.zxyz - q.zxyw * r.yzxw);
-
-@(pure) float3 quat_transform_vector(const float4 q, const float3 u) {
+@(pure macro) float3 quat_transform_vector(const float4 q, const float3 u) {
   return (w := q.w) * w * u + (v := q.xyz) * dot(v, u) + cross(v, 2.0 * w * u + cross(v, u));
 }
+
+// @(pure macro) float4 quat_multiply(const float4 q, const float4 r) = float4(1.0, 1.0, 1.0, -1.0) * (q.wwwx * r.xyzx + q.xyzy * r.wwwy + q.yzxz * r.zxyz - q.zxyw * r.yzxw);
 //--}
 
 //--{ API Types: eval_bsdf_parameters, eval_bsdf_result
@@ -320,7 +318,6 @@ export @(macro) int material__eval_bsdf(
     *pdf_rev = result.pdf.y;
     *f = result.f;
   }
-  // Return true if not black.
   return !result.is_black;
 }
 

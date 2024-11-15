@@ -188,6 +188,8 @@ public:
   }
 
   [[nodiscard]] Value call(Value value, const ArgList &args, const AST::SourceLocation &srcLoc = {});
+
+  void visit(Value value, const std::function<void(Emitter &emitter, Value value)> &visitor);
   //--}
 
 public:
@@ -310,7 +312,8 @@ public:
 
   Value emit(AST::ExprStmt &stmt) {
     if (stmt.expr)
-      emit_late_if(stmt.cond.get(), [&](auto &emitter) { emitter.emit(stmt.expr); });
+      emit_late_if(
+          stmt.cond.get(), [&](auto &emitter) { emitter.emit_scope([&](auto &emitter) { emitter.emit(stmt.expr); }); });
     return {};
   }
 
@@ -325,8 +328,8 @@ public:
       stmt.srcLoc.report_error("unexpected 'return'");
     emit_late_if(stmt.cond.get(), [&](auto &emitter) {
       auto value{stmt.expr.get() ? emitter.rvalue(emitter.emit(stmt.expr)) : Value()};
-      emitter.emit_unwind_and_br(afterReturn);
       returns->push_back({value, emitter.get_insert_block(), stmt.srcLoc});
+      emitter.emit_unwind_and_br(afterReturn);
     });
     return {};
   }

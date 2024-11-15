@@ -34,17 +34,31 @@ Type *Type::get_element_type() {
   return nullptr;
 }
 
-StructType *Type::get_inline_struct_type() {
+Type *Type::get_most_pointed_to_type() {
   auto type{this};
   while (type->is_pointer())
     type = type->get_element_type();
-  return llvm::dyn_cast<StructType>(type);
+  return type;
 }
+
+StructType *Type::get_inline_struct_type() { return llvm::dyn_cast<StructType>(get_most_pointed_to_type()); }
+
+UnionType *Type::get_visit_union_type() { return llvm::dyn_cast<UnionType>(get_most_pointed_to_type()); }
 
 uint32_t Type::get_array_size() const {
   if (is_array())
     return static_cast<const ArrayType *>(this)->size;
   return 1;
+}
+
+uint32_t Type::get_pointer_depth() const {
+  uint32_t depth{};
+  auto type{const_cast<Type *>(this)};
+  while (type->is_pointer()) {
+    type = type->get_element_type();
+    depth++;
+  }
+  return depth;
 }
 
 bool Type::is_optional() const { return is_union() && static_cast<const UnionType *>(this)->has_type(context.get_void_type()); }
@@ -1057,7 +1071,8 @@ Value TagType::construct(Emitter &emitter, const ArgList &args, const AST::Sourc
 }
 
 bool TagType::recursive_match(Emitter &emitter, Type *type) {
-  return this == type || (type->is_struct() && static_cast<StructType *>(type)->has_tag(this));
+  return this == type || (type->is_struct() && static_cast<StructType *>(type)->has_tag(this)) ||
+    (type->is_union() && static_cast<UnionType *>(type)->always_has_tag(this));
 }
 
 void TagType::declare_default_type(Type *type, const AST::SourceLocation &srcLoc) {
@@ -1088,9 +1103,7 @@ UnionType::UnionType(Context &context, llvm::SmallVector<Type *> types) : TypeSu
   if (requiredSize % sizeof(int_t) != 0)
     wordCount++;
   llvmType = llvm::StructType::create(
-      {context.get_int_type(Extent(wordCount))->llvmType,
-       context.get_int_type()->llvmType},
-      context.get_unique_name("union"));
+      {context.get_int_type(Extent(wordCount))->llvmType, context.get_int_type()->llvmType}, context.get_unique_name("union"));
   sanity_check(requiredAlign <= uint64_t(context.get_align_of(this)));
 }
 

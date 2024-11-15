@@ -112,6 +112,36 @@ void Emitter::declare_import(bool isAbs, llvm::ArrayRef<llvm::StringRef> path, A
 }
 
 Value Emitter::call(Value value, const ArgList &args, const AST::SourceLocation &srcLoc) {
+  if (args.has_any_visited()) {
+    auto name{context.get_unique_name("visit-call", get_llvm_function())};
+    auto blockBegin{create_block(llvm_twine(name, ".begin"))};
+    auto blockEnd{create_block(llvm_twine(name, ".end"))};
+    auto localReturns{llvm::SmallVector<Return>{}};
+    emit_br(blockBegin);
+    emit_scope(blockBegin, blockEnd, [&](auto &emitter) {
+      emitter.afterBreak = {};
+      emitter.afterContinue = {};
+      emitter.afterEndScope = {};
+      emitter.afterReturn = {crumb, blockEnd};
+      emitter.returns = &localReturns;
+      uint32_t i{};
+      for (auto &arg : args) {
+        if (arg.isVisited)
+          break;
+        i++;
+      }
+      auto argsCopy{args};
+      emitter.visit(args[i].value, [&](Emitter &emitter, Value argValue) {
+        argsCopy[i].value = argValue;
+        argsCopy[i].isVisited = false;
+        localReturns.push_back({emitter.call(value, argsCopy, srcLoc), emitter.get_insert_block(), srcLoc});
+        emitter.emit_unwind_and_br(emitter.afterReturn);
+      });
+    });
+    llvm_move_block_to_end(blockEnd);
+    move_to(blockEnd);
+    return emit_return_phi(context.get_auto_type(), localReturns);
+  }
   if (value.is_compile_time_intrinsic())
     return emit_intrinsic(*value.get_compile_time_intrinsic(), args);
   if (value.is_compile_time_type())
@@ -120,6 +150,45 @@ Value Emitter::call(Value value, const ArgList &args, const AST::SourceLocation 
     return value.get_compile_time_function()->call(*this, args, srcLoc);
   srcLoc.report_error("invalid call");
   return {};
+}
+
+void Emitter::visit(Value value, const std::function<void(Emitter &emitter, Value value)> &visitor) {
+  if (!value.type->is_union_or_pointer_to_union()) {
+    emit_scope([&](auto &emitter) { visitor(emitter, value); });
+  } else {
+    auto name{context.get_unique_name("visit", get_llvm_function())};
+    auto blockBegin{create_block(llvm_twine(name, ".begin"))};
+    auto blockEnd{create_block(llvm_twine(name, ".end"))};
+    emit_br_and_move_to(blockBegin);
+    auto idx{rvalue(access(value, "#idx"))};
+    auto ptr{value.type->is_union() ? rvalue(access(value, "#ptr")) : Value()};
+    auto blockUnreachable{create_block(llvm_twine(name, ".unreachable"))};
+    auto inst{builder.CreateSwitch(idx, blockUnreachable)};
+    for (unsigned i{}; auto type : static_cast<UnionType *>(value.type->get_most_pointed_to_type())->types) {
+      auto blockCase{create_block(std::format("{}.case.{}", name, i))};
+      inst->addCase(static_cast<llvm::ConstantInt *>(context.get_compile_time_int(i)), blockCase);
+      emit_scope(blockCase, blockEnd, [&](auto &emitter) {
+        if (!type->is_void()) {
+          Value valueCast{};
+          if (value.type->is_union()) {
+            valueCast = LValue(type, ptr);
+            valueCast = value.is_rvalue() ? emitter.rvalue(valueCast) : valueCast;
+          } else {
+            sanity_check(value.type->is_pointer());
+            valueCast = value;
+            valueCast.type = context.get_pointer_type(type, value.type->get_pointer_depth());
+          }
+          visitor(emitter, valueCast);
+        }
+      });
+      i++;
+    }
+    llvm_move_block_to_end(blockUnreachable);
+    builder.SetInsertPoint(blockUnreachable);
+    builder.CreateUnreachable();
+    llvm_move_block_to_end(blockEnd);
+    move_to_or_erase(blockEnd);
+  }
 }
 //--}
 
@@ -617,49 +686,10 @@ Value Emitter::emit(AST::Switch &stmt) {
 }
 
 Value Emitter::emit(AST::Visit &stmt) {
-  auto name{context.get_unique_name("visit", get_llvm_function())};
-  auto blockBegin{create_block(llvm_twine(name, ".begin"))};
-  auto blockEnd{create_block(llvm_twine(name, ".end"))};
-  emit_br_and_move_to(blockBegin);
-  auto what{emit(*stmt.what)};
-  if (!what.type->is_union()) {
-    emit_scope(blockBegin, blockEnd, [&](auto &emitter) {
-      emitter.declare(*stmt.name, emitter.lvalue(what));
-      emitter.emit(*stmt.body);
-    });
-  } else {
-    auto unionType{static_cast<UnionType *>(what.type)};
-    auto idx{rvalue(unionType->access(*this, what, "#idx", stmt.srcLoc))};
-    auto ptr{rvalue(unionType->access(*this, what, "#ptr", stmt.srcLoc))};
-    if (idx.is_compile_time_int()) {
-      auto type{unionType->types[idx.get_compile_time_int()]};
-      if (!type->is_void()) {
-        emit_scope(blockBegin, blockEnd, [&](auto &emitter) {
-          emitter.declare(*stmt.name, LValue(type, ptr));
-          emitter.emit(*stmt.body);
-        });
-      }
-    } else {
-      auto blockUnreachable{create_block(llvm_twine(name, ".unreachable"))};
-      auto inst{builder.CreateSwitch(idx, blockUnreachable)};
-      for (unsigned i{}; auto type : unionType->types) {
-        auto blockCase{create_block(std::format("{}.case.{}", name, i))};
-        inst->addCase(static_cast<llvm::ConstantInt *>(context.get_compile_time_int(i)), blockCase);
-        emit_scope(blockCase, blockEnd, [&](auto &emitter) {
-          if (!type->is_void()) {
-            emitter.declare(*stmt.name, LValue(type, ptr));
-            emitter.emit(*stmt.body);
-          }
-        });
-        i++;
-      }
-      llvm_move_block_to_end(blockUnreachable);
-      builder.SetInsertPoint(blockUnreachable);
-      builder.CreateUnreachable();
-    }
-  }
-  llvm_move_block_to_end(blockEnd);
-  move_to_or_erase(blockEnd);
+  visit(emit(stmt.what), [&](Emitter &emitter, Value value) {
+    emitter.declare(*stmt.name, value);
+    emitter.emit(stmt.body);
+  });
   return {};
 }
 
@@ -683,16 +713,15 @@ Value Emitter::emit(AST::While &stmt) {
 
 ArgList Emitter::emit(const AST::ArgList &astArgs) {
   ArgList args{};
-  emit_scope([&](auto &emitter) { // Limit lifetimes of temporary declarations
-    for (auto &astArg : astArgs.args) {
-      auto &arg{args.emplace_back()};
-      if (astArg.name)
-        arg.name = astArg.name->name;
-      arg.value = emitter.emit(astArg.expr);
-      arg.srcLoc = astArg.srcLoc;
-      arg.src = astArg.src;
-    }
-  });
+  for (auto &astArg : astArgs.args) {
+    auto &arg{args.emplace_back()};
+    if (astArg.name)
+      arg.name = astArg.name->name;
+    arg.value = emit(astArg.expr);
+    arg.srcLoc = astArg.srcLoc;
+    arg.src = astArg.src;
+    arg.isVisited = astArg.isVisited && arg.value.type->is_union_or_pointer_to_union();
+  }
   args.guarantee_valid_names(astArgs.srcLoc);
   return args;
 }

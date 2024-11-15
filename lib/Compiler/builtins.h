@@ -47,9 +47,7 @@ export enum scatter_mode { scatter_none = 0, scatter_reflect = 1, scatter_transm
 @(pure macro) float4 quat_rotate(const float theta, const float3 v) = float4(#sin(theta / 2) * normalize(v), #cos(theta / 2));
 @(pure macro) float4 quat_rotate(const float3 u, const float3 v) = normalize(float4(cross(u, v), 1 + dot(u, v)));
 @(pure macro) float4 quat_transpose(const float4 q) = float4(-1.0, -1.0, -1.0, 1.0) * q;
-@(pure macro) float4 quat_inverse(const float4 q) = quat_transpose(q) / dot(q, q);
-@(pure macro) float4 quat_product(const float4 q, const float4 r) = float4(1.0, 1.0, 1.0, -1.0) * (q.wwwx * r.xyzx + q.xyzy * r.wwwy + q.yzxz * r.zxyz - q.zxyw * r.yzxw);
-@(pure) float3 quat_transform_vector(const float4 q, const float3 u) {
+@(pure macro) float3 quat_transform_vector(const float4 q, const float3 u) {
   return (w := q.w) * w * u + (v := q.xyz) * dot(v, u) + cross(v, 2.0 * w * u + cross(v, u));
 }
 struct eval_bsdf_parameters {
@@ -611,6 +609,113 @@ export @(pure macro) color lookup_color(
     const float2 crop_v = float2(0.0, 1.0)) = color(lookup_float4(tex, coord, wrap_u, wrap_v, crop_u, crop_v).xyz);
 )*";
 
+static const char *microfacet = R"*(
+#extended_syntax
+using ::math import *;
+@(pure foreign) float erfcf(float x);
+@(pure foreign) float betaf(float x, float y);
+export tag microfacet_slope;
+export struct ggx: default microfacet_slope {};
+export struct beckmann: microfacet_slope {};
+export struct microfacet {
+  float2 alpha;
+  microfacet_slope slope = microfacet_slope();
+};
+@(pure macro) auto microfacet_smith_lambda(const ggx this, const float m) = 0.5 * (#sign(m) * #sqrt(1 + 1 / (m * m))) - 0.5;
+@(pure macro) auto microfacet_slope_pdf(const ggx this, const float2 m) = 1.0 / ($PI * (t := 1 + dot(m, m)) * t);
+@(pure noinline) auto microfacet_visible_slope_sample(const ggx this, const float xi0, float xi1, float cos_thetao) {
+  return #sqrt(xi0 / (1 - xi0)) * float2(#cos((phi := $TWO_PI * xi1)), #sin(phi)) if (cos_thetao > +0.9999);
+  cos_thetao = #max(cos_thetao, -0.9999);
+  const auto sin_thetao(#sqrt(1 - cos_thetao * cos_thetao));
+  const auto tan_thetao(sin_thetao / cos_thetao);
+  const auto mu(xi0 * (1 + 1 / cos_thetao) - 1);
+  const auto nu(1 / (1 - mu * mu));
+  const auto d(#sqrt(#max(nu * (mu * mu - (1 - nu) * tan_thetao * tan_thetao), 0)));
+  const auto mx0(-nu * tan_thetao - d);
+  const auto mx1(-nu * tan_thetao + d);
+  const auto mx(#select((mu < 0) | (mx1 * sin_thetao > cos_thetao), mx0, mx1));
+  auto my(xi1 > 0.5 ? +1.0 : -1.0);
+  xi1 = saturate(my * (2 * xi1 - 1));
+  my *= #sqrt(1 + mx * mx) *
+        ((xi1 * (xi1 * (xi1 * 0.273850 - 0.733690) + 0.463410)) /
+         (xi1 * (xi1 * (xi1 * 0.093073 + 0.309420) - 1.000000) + 0.597999));
+  return float2(mx, my);
+}
+@(pure macro) auto microfacet_smith_lambda(const beckmann this, const float m) = 0.5 * (#exp(-m * m) / m / #sqrt($PI) - erfcf(m));
+@(pure macro) auto microfacet_slope_pdf(const beckmann this, const float2 m) =  1.0 / ($PI * #exp(-dot(m, m)));
+@(pure noinline) auto microfacet_visible_slope_sample(const beckmann this, const float xi0, const float xi1, float cos_thetao) {
+  return float2(0.0);
+}
+export @(pure) auto microfacet_smith_lambda(microfacet this, const float3 w) {
+  visit this { return microfacet_smith_lambda(visit this.slope, w.z / length(this.alpha * w.xy));  }
+}
+export @(pure) auto microfacet_slope_pdf(microfacet this, float2 m) {
+  visit this { return microfacet_slope_pdf(visit this.slope, m / this.alpha) / (this.alpha.x * this.alpha.y);  }
+}
+export @(pure) auto microfacet_normal_pdf(microfacet this, const float3 wm) {
+  return 0.0 if (!(wm.z > 1e-5));
+  return microfacet_slope_pdf(this, -wm.xy / wm.z) / #max(#pow(wm.z, 4), 0.001);
+}
+export @(pure) auto microfacet_visible_normal_pdf(microfacet this, const float3 wo, const float3 wm) {
+  return 0.0 if (!(wm.z > 1e-5));
+  float cos_thetao(#max(dot(wo, wm), 0));
+  float proj_areao((1 + microfacet_smith_lambda(this, wo)) * #max(wo.z, 0.001));
+  return cos_thetao / proj_areao * microfacet_normal_pdf(this, wm);
+}
+export @(pure) auto microfacet_visible_normal_sample(microfacet this, const float xi0, const float xi1, const float3 wo) {
+  visit this { 
+    const auto w11(normalize(float3(this.alpha * wo.xy, wo.z)));
+    const auto sin_theta(length(w11.xy));
+    const auto cos_phi(w11.x / sin_theta);
+    const auto sin_phi(w11.y / sin_theta);
+    const auto m11(microfacet_visible_slope_sample(visit this.slope, xi0, xi1, w11.z));
+    const auto m(float2(
+        this.alpha.x * dot(float2(cos_phi, -sin_phi), m11), 
+        this.alpha.y * dot(float2(sin_phi, +cos_phi), m11)));
+    return #all(isfinite(m)) ? normalize(float3(m, 1)) : wo.z == 0 ? normalize(wo) : float3(0, 0, 1);
+  }
+}
+export struct microfacet_specular_result {
+  float3 wm = float3(0.0);
+  float2 pdf = float2(0.0);
+  float f = 0.0;
+};
+export @(pure) auto microfacet_specular_reflection(microfacet this, float3 wo, float3 wi) {
+  if (wo.z < 0) wo = -wo, wi = -wi;
+  if (wi.z < 0) return microfacet_specular_result();
+  const auto wm(normalize(wo + wi));
+  const auto d(microfacet_normal_pdf(this, wm));
+  const auto lambdao(microfacet_smith_lambda(this, wo)), proj_areao((1 + lambdao) * #max(wo.z, 0.001));
+  const auto lambdai(microfacet_smith_lambda(this, wi)), proj_areai((1 + lambdai) * #max(wi.z, 0.001));
+  const auto g(1 / (1 + lambdao + lambdai));
+  return microfacet_specular_result(
+      wm, 
+      0.25 * d / float2(proj_areao, proj_areai),
+      0.25 * d * g / #max(wo.z, 0.001) * step(0.0, wi.z));
+}
+export @(pure) auto microfacet_specular_refraction(microfacet this, float3 wo, float3 wi, float ior) {
+  if (wo.z < 0) wo = -wo, wi = -wi, ior = 1 / ior;
+  if (wi.z > 0) return microfacet_specular_result();
+  auto wm(normalize(refraction_half_vector(wo, wi, ior)));
+  wm = wm * #sign(wm.z); 
+  const auto cos_thetao(dot(wo, wm));
+  const auto cos_thetai(dot(wi, wm));
+  if (!((cos_thetao > 0) & (cos_thetai < 0)))
+    return microfacet_specular_result();
+  const float d(microfacet_normal_pdf(this, wm));
+  const auto lambdao(microfacet_smith_lambda(this, +wo)), proj_areao((1 + lambdao) * #max(+wo.z, 0.001));
+  const auto lambdai(microfacet_smith_lambda(this, -wi)), proj_areai((1 + lambdai) * #max(-wi.z, 0.001));
+  const auto g(betaf(1 + lambdao, 1 + lambdai));
+  const auto j(float2(
+    +cos_thetao * refraction_half_vector_jacobian(wo, wi, ior),
+    -cos_thetai * refraction_half_vector_jacobian(wi, wo, 1 / ior)));
+  return microfacet_specular_result(
+      wm, 
+      d * j / float2(proj_areao, proj_areai),
+      d * g * j[0] / #max(wo.z, 0.001) * step(0.0, wi.z));
+}
+)*";
+
 [[nodiscard]] static const char *get_src(auto name) {
   if (name == "df")
     return df;
@@ -628,6 +733,8 @@ export @(pure macro) color lookup_color(
     return std;
   if (name == "tex")
     return tex;
+  if (name == "microfacet")
+    return microfacet;
   return nullptr;
 }
 

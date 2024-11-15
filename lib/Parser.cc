@@ -826,6 +826,7 @@ auto Parser::parse_parameter_list() -> std::optional<AST::ParamList> {
 auto Parser::parse_argument() -> std::optional<AST::Arg> {
   checkpoint();
   auto cursor{save_cursor()};
+  bool isVisited{isExtendedSyntax && next_word("visit")};
   auto parse_argument_name{[&]() -> unique_bump_ptr_wrapper<AST::Name> {
     checkpoint();
     if (auto name{parse_simple_name()}; name && delimiter(':') && peek() != ':') {
@@ -848,6 +849,7 @@ auto Parser::parse_argument() -> std::optional<AST::Arg> {
   arg.srcLoc.file = file;
   arg.srcLoc.line = cursor.lineNo;
   arg.src = text.substr(cursor.i, state.i - cursor.i);
+  arg.isVisited = isVisited;
   accept();
   return std::move(arg);
 }
@@ -1715,11 +1717,17 @@ auto Parser::parse_visit_statement() -> unique_bump_ptr_wrapper<AST::Visit> {
   auto name{parse_simple_name()};
   if (!name)
     report_error("expected simple name after 'visit'", cursor);
-  if (!next_word("in"))
-    report_error("expected 'in' after 'visit ...'", cursor);
-  auto what{parse_expression()};
-  if (!what)
-    report_error("expected expression after 'visit ... in'", cursor);
+  auto what{unique_bump_ptr<AST::Expr>{}};
+  if (!next_word("in")) {
+    // 'visit name' same as 'visit name in name'
+    auto names{llvm::SmallVector<unique_bump_ptr<AST::Name>>{}};
+    names.emplace_back(bump_allocate<AST::Name>(name->name));
+    what.reset(bump_allocate<AST::Identifier>(std::move(names), false)); 
+  } else {
+    what = parse_expression();
+    if (!what)
+      report_error("expected expression after 'visit ... in'", cursor);
+  }
   auto body{parse_compound_statement()};
   if (!body)
     report_error("expected compound statement after 'visit ... in ...'", cursor);
@@ -1728,7 +1736,7 @@ auto Parser::parse_visit_statement() -> unique_bump_ptr_wrapper<AST::Visit> {
 
 auto Parser::parse_late_if_condition() -> unique_bump_ptr_wrapper<AST::Expr> {
   if (!(isExtendedSyntax && next_word("if")))
-    return {};
+    return nullptr;
   auto cond{parse_expression_in_parentheses()};
   if (!cond)
     report_error("expected expression in parentheses after '... if'");

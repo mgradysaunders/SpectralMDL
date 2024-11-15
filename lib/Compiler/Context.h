@@ -112,6 +112,12 @@ public:
     return get_or_initialize_type<PointerType>(pointerTypes, elemType);
   }
 
+  [[nodiscard]] Type *get_pointer_type(Type *elemType, uint32_t depth) {
+    for (uint32_t i{}; i < depth; i++)
+      elemType = get_pointer_type(elemType);
+    return elemType;
+  }
+
   [[nodiscard]] StructType *get_string_type() { return stringType.get(); }
 
   [[nodiscard]] StructType *get_struct_type(AST::Struct *decl, llvm::Function *llvmFunc) {

@@ -332,6 +332,7 @@ Value Function::call(Emitter &emitter0, const ArgList &args, const AST::SourceLo
           emitter1.emit_unwind_and_br(emitter1.afterReturn);
         }
       }
+      llvm_move_block_to_end(blockEnd);
       emitter0.move_to(blockEnd);
       return emitter0.emit_return_phi(overload.decl.returnType->type, returns, overload.decl.returnType->srcLoc);
     } else {

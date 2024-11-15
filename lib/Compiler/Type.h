@@ -102,6 +102,7 @@ enum class TypeKind : unsigned {
 class Context;
 class Emitter;
 class StructType;
+class UnionType;
 
 class Type {
 public:
@@ -140,7 +141,11 @@ public:
 
   [[nodiscard]] Type *get_element_type();
 
+  [[nodiscard]] Type *get_most_pointed_to_type();
+
   [[nodiscard]] StructType *get_inline_struct_type();
+
+  [[nodiscard]] UnionType *get_visit_union_type();
   //--}
 
 public:
@@ -164,9 +169,13 @@ public:
 
   [[nodiscard]] uint32_t get_array_size() const;
 
+  [[nodiscard]] uint32_t get_pointer_depth() const;
+
   [[nodiscard]] bool is_optional() const;
 
   [[nodiscard]] bool is_optional_unique() const;
+
+  [[nodiscard]] bool is_union_or_pointer_to_union() const { return const_cast<Type *>(this)->get_visit_union_type() != nullptr; }
 
 public:
   //--{ Kind checks

@@ -321,6 +321,9 @@ public:
 
   /// The source-code range if applicable. This is useful for implementing the default '#assert(...)' failure message.
   llvm::StringRef src{};
+
+  /// Is marked with the 'visit' keyword? AND Is a union that can actually be visited?
+  bool isVisited{};
 };
 //--}
 
@@ -345,6 +348,8 @@ public:
   [[nodiscard]] auto end() const { return args.end(); }
 
   [[nodiscard]] auto size() const { return args.size(); }
+
+  [[nodiscard]] auto &operator[](unsigned i) { return args[i]; }
 
   [[nodiscard]] auto &operator[](unsigned i) const { return args[i]; }
 
@@ -389,6 +394,10 @@ public:
   [[nodiscard]] bool has_only_these_names(llvm::ArrayRef<llvm::StringRef> names) const {
     return is_all_true(
         [&](auto &arg) { return !arg.is_named() || detail::is_any_true(names, [&](auto name) { return arg.name == name; }); });
+  }
+
+  [[nodiscard]] bool has_any_visited() const {
+    return is_any_true([](auto &arg) { return arg.isVisited; });
   }
 
   /// Get the argument types
