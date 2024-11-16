@@ -333,7 +333,8 @@ public:
     }
   }
 
-  Value emit_phi(Type *type, llvm::ArrayRef<std::pair<llvm::Value *, llvm::BasicBlock *>> inputs);
+  Value emit_phi(
+      Type *type, llvm::ArrayRef<std::pair<llvm::Value *, llvm::BasicBlock *>> inputs, Value::Kind kind = Value::Kind::RValue);
 
   Value emit_op(AST::UnaryOp op, Value val, const AST::SourceLocation &srcLoc = {});
 

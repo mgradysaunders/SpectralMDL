@@ -294,20 +294,24 @@ Value Emitter::emit(AST::Conditional &expr) {
   auto blockEnd{create_block(llvm_twine(name, ".end"))};
   emit_br(cond, blockPass, blockFail);
   move_to(blockPass);
-  auto valuePass{rvalue(emit(expr.ifPass))};
+  auto valuePass{emit(expr.ifPass)};
   auto valuePassIP{builder.saveIP()};
   llvm_move_block_to_end(blockFail);
   move_to(blockFail);
-  auto valueFail{rvalue(emit(expr.ifFail))};
+  auto valueFail{emit(expr.ifFail)};
   auto valueFailIP{builder.saveIP()};
 
   // Back-track and cast results to common type.
+  auto kind{Value::Kind::LValue};
   auto type{context.get_common_type({valuePass.type, valueFail.type}, /*defaultToUnion=*/true, expr.srcLoc)};
-  builder.restoreIP(valuePassIP), valuePass = construct(type, valuePass), blockPass = get_insert_block(), emit_br(blockEnd);
-  builder.restoreIP(valueFailIP), valueFail = construct(type, valueFail), blockFail = get_insert_block(), emit_br(blockEnd);
+  if (!(valuePass.type == valueFail.type && valuePass.is_lvalue() && valueFail.is_lvalue())) {
+    builder.restoreIP(valuePassIP), valuePass = construct(type, valuePass), blockPass = get_insert_block(), emit_br(blockEnd);
+    builder.restoreIP(valueFailIP), valueFail = construct(type, valueFail), blockFail = get_insert_block(), emit_br(blockEnd);
+    kind = Value::Kind::RValue;
+  }
   llvm_move_block_to_end(blockEnd);
   move_to(blockEnd);
-  return emit_phi(type, {{valuePass, blockPass}, {valueFail, blockFail}});
+  return emit_phi(type, {{valuePass, blockPass}, {valueFail, blockFail}}, kind);
 }
 
 Value Emitter::emit(AST::GetIndex &expr) {
@@ -543,8 +547,8 @@ Value Emitter::emit(AST::Switch &stmt) {
     emitter.afterBreak = {crumb, blockEnd};
     for (size_t i{}; auto &[astCase, cond, block] : cases) {
       emitter.move_to(block);
-      for (auto &subStmt : astCase->stmts) 
-        if (emitter.emit(subStmt); emitter.has_terminator()) 
+      for (auto &subStmt : astCase->stmts)
+        if (emitter.emit(subStmt); emitter.has_terminator())
           break;
       if (cond)
         switchInst->addCase(cond, block);
@@ -656,11 +660,11 @@ void Emitter::emit_br(Value cond, llvm::BasicBlock *blockPass, llvm::BasicBlock 
   builder.CreateCondBr(construct(context.get_bool_type(), cond), blockPass, blockFail);
 }
 
-Value Emitter::emit_phi(Type *type, llvm::ArrayRef<std::pair<llvm::Value *, llvm::BasicBlock *>> inputs) {
-  auto phiInst{builder.CreatePHI(type->llvmType, inputs.size())};
+Value Emitter::emit_phi(Type *type, llvm::ArrayRef<std::pair<llvm::Value *, llvm::BasicBlock *>> inputs, Value::Kind kind) {
+  auto phiInst{builder.CreatePHI(kind == Value::Kind::LValue ? context.get_pointer_type(type)->llvmType : type->llvmType, inputs.size())};
   for (auto [value, block] : inputs)
     phiInst->addIncoming(value, block);
-  return RValue(type, phiInst);
+  return Value(kind, type, phiInst);
 }
 
 //--{ Emit: Unary op
@@ -1409,8 +1413,7 @@ Value Emitter::emit_visit(Value value, const std::function<Value(Emitter &, Valu
     move_to(blockEnd);
     if (anyNonVoid)
       return emit_final_return_phi(context.get_auto_type(), localReturns);
-    else
-      return {};
+    return {};
   }
 }
 
@@ -1433,14 +1436,25 @@ Value Emitter::emit_final_return_phi(Type *type, llvm::ArrayRef<Return> returns,
       srcLoc.report_error(std::format("inferred return type '{}' is not convertible to '{}'", returnType->name, type->name));
     type = returnType;
   }
-  auto phi{builder.CreatePHI(type->llvmType, returns.size())};
+  // If all identical type lvalues, preserve the lvalue-ness of the result.
+  bool allIdenticalLValues{[&]() {
+    for (auto &[value, block, srcLoc] : returns)
+      if (value.type != returns[0].value.type || !value.is_lvalue())
+        return false;
+    return true;
+  }()};
+  auto phi{builder.CreatePHI(allIdenticalLValues ? context.get_pointer_type(type)->llvmType : type->llvmType, returns.size())};
   for (auto [value, block, srcLoc] : returns) {
-    Emitter emitter{this};
-    emitter.builder.restoreIP(llvm_insert_point_before_terminator(block));
-    auto value2{emitter.construct(type, value, srcLoc)};
-    phi->addIncoming(value2, emitter.get_insert_block());
+    if (allIdenticalLValues) {
+      phi->addIncoming(value, block);
+    } else {
+      Emitter emitter{this};
+      emitter.builder.restoreIP(llvm_insert_point_before_terminator(block));
+      auto value2{emitter.construct(type, value, srcLoc)};
+      phi->addIncoming(value2, emitter.get_insert_block());
+    }
   }
-  return RValue(type, phi);
+  return allIdenticalLValues ? LValue(type, phi) : RValue(type, phi);
 }
 
 Type *Emitter::emit_final_return(Type *type, llvm::ArrayRef<Return> returns, const AST::SourceLocation &srcLoc) {
@@ -1453,7 +1467,7 @@ Type *Emitter::emit_final_return(Type *type, llvm::ArrayRef<Return> returns, con
     builder.CreateRetVoid();
     return type;
   } else {
-    auto returnValue{emit_final_return_phi(type, returns, srcLoc)};
+    auto returnValue{rvalue(emit_final_return_phi(type, returns, srcLoc))};
     builder.CreateRet(returnValue);
     return returnValue.type;
   }

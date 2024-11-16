@@ -296,7 +296,7 @@ ConversionRule Context::get_conversion_rule(Type *srcType, Type *dstType) {
 bool Context::is_subset_of(Type *lhsType, Type *rhsType) {
   if (lhsType == rhsType || rhsType->is_auto())
     return true;
-  if (rhsType->is_tag())
+  if (rhsType->is_tag() || (rhsType->is_struct() && rhsType->is_abstract()))
     return is_perfectly_convertible(lhsType, rhsType);
   if (rhsType->is_union())
     return lhsType->is_union() ? static_cast<UnionType *>(rhsType)->has_all_types(static_cast<UnionType *>(lhsType))

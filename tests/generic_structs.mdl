@@ -1,3 +1,45 @@
 #smdl_syntax
 
+tag Animal;
 
+struct Cat: default Animal {
+  string name = "Fe";
+  int age = 11;
+  int num_meows = 8;
+};
+
+struct Dog: Animal {
+  string name = "Doug";
+  int age = 5;
+  int num_barks = 9;
+};
+
+struct PetOwner {
+  string name = "Pete";
+  Animal pet;
+};
+
+unit_test "Generic structs" {
+  auto catOwner(PetOwner(name: "Pete", pet: Cat()));
+  auto dogOwner(PetOwner(name: "Fred", pet: Dog()));
+
+  typedef #typeof(catOwner) CatOwner;
+  typedef #typeof(dogOwner) DogOwner;
+  #assert(CatOwner != DogOwner);
+  #assert(CatOwner <: PetOwner);
+  #assert(DogOwner <: PetOwner);
+}
+
+@(pure noinline)
+auto get_cat_or_dog_owner(string name, bool owns_cat) = owns_cat ? PetOwner(name: name, pet: Cat()) : PetOwner(name: name, pet: Dog());
+
+unit_test "Generic struct unions" {
+  auto catOwner(get_cat_or_dog_owner(name: "Pete", owns_cat: true));
+  auto dogOwner(get_cat_or_dog_owner(name: "Fred", owns_cat: false));
+
+  typedef #typeof(catOwner) CatOrDogOwner;
+  #assert(#typeof(dogOwner) == CatOrDogOwner);
+  #assert(CatOrDogOwner <: PetOwner);
+  #assert(catOwner.name == "Pete");
+  #assert(dogOwner.name == "Fred");
+}

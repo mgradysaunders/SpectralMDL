@@ -283,8 +283,10 @@ public:
   /// Get the parameter LLVM types (without inlining!)
   [[nodiscard]] llvm::SmallVector<llvm::Type *> get_llvm_types() const;
 
+  using InlinePath = llvm::SmallVector<std::pair<const Param *, unsigned>>;
+
   /// Get the inline path or name sequence to access the given parameter name. Returns false on failure.
-  [[nodiscard]] bool get_inline_path(llvm::StringRef name, llvm::SmallVector<std::pair<const Param *, unsigned>> &path) const;
+  [[nodiscard]] bool get_inline_path(llvm::StringRef name, InlinePath &path) const;
 
   /// Guarantee no ambiguous names after considering inlining.
   void guarantee_no_ambiguous_inlining(const AST::SourceLocation &srcLoc) const;

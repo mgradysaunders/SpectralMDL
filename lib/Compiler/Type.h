@@ -125,9 +125,11 @@ public:
 
   [[nodiscard]] virtual Value construct(Emitter &emitter, const ArgList &args, const AST::SourceLocation &srcLoc = {});
 
-  [[nodiscard]] virtual bool recursive_match(Emitter &emitter, Type *type) { return this == type; }
+  [[nodiscard]] virtual bool pattern_match(Emitter &emitter, Type *type) { return this == type; }
 
-  [[nodiscard]] virtual bool is_zero_by_default() { return true; }
+  [[nodiscard]] virtual bool can_access(llvm::StringRef key) { return false; }
+
+  [[nodiscard]] virtual bool is_zero_by_default() { return llvmType != nullptr; }
 
 public:
   //--{ Transforms
@@ -175,7 +177,9 @@ public:
 
   [[nodiscard]] bool is_optional_unique() const;
 
-  [[nodiscard]] bool is_union_or_pointer_to_union() const { return const_cast<Type *>(this)->get_visit_union_type() != nullptr; }
+  [[nodiscard]] bool is_union_or_pointer_to_union() const {
+    return const_cast<Type *>(this)->get_visit_union_type() != nullptr;
+  }
 
 public:
   //--{ Kind checks
@@ -270,7 +274,7 @@ public:
 
   [[nodiscard]] Value construct(Emitter &emitter, const ArgList &args, const AST::SourceLocation &srcLoc) final;
 
-  [[nodiscard]] bool recursive_match(Emitter &emitter, Type *type) final;
+  [[nodiscard]] bool pattern_match(Emitter &emitter, Type *type) final;
 
   [[nodiscard]] bool is_zero_by_default() final { return elemType->is_zero_by_default(); }
 
@@ -288,6 +292,7 @@ class ArithmeticType final : public TypeSubclass<TypeKind::Arithmetic> {
 public:
   ArithmeticType(Context &context, Scalar scalar, Extent extent);
 
+public:
   [[nodiscard]] Value insert(Emitter &emitter, Value value, Value elem, unsigned i, const AST::SourceLocation &srcLoc) final;
 
   [[nodiscard]] Value access(Emitter &emitter, Value value, llvm::StringRef key, const AST::SourceLocation &srcLoc) final;
@@ -295,6 +300,33 @@ public:
   [[nodiscard]] Value access(Emitter &emitter, Value value, Value i, const AST::SourceLocation &srcLoc) final;
 
   [[nodiscard]] Value construct(Emitter &emitter, const ArgList &args, const AST::SourceLocation &srcLoc) final;
+
+  [[nodiscard]] bool can_access(llvm::StringRef key) final;
+
+private:
+  [[nodiscard]] std::optional<uint32_t> to_index(char key) const {
+    if (is_vector() || is_matrix()) {
+      uint32_t size{is_vector() ? extent.numRows : extent.numCols};
+      for (uint32_t i{}; i < size; i++)
+        if (key == "xyzw"[i])
+          return i;
+    }
+    return std::nullopt;
+  }
+
+  [[nodiscard]] std::optional<llvm::SmallVector<int>> to_index_swizzle(llvm::StringRef key) const {
+    if (is_vector()) {
+      llvm::SmallVector<int> swizzle{};
+      for (char c : key) {
+        int i{(int(c - 'w') + 3) & 3};
+        if (i < 0 || unsigned(i) >= get_vector_size())
+          return std::nullopt;
+        swizzle.push_back(i);
+      }
+      return swizzle;
+    }
+    return std::nullopt;
+  }
 };
 //--}
 
@@ -305,7 +337,7 @@ public:
 
   [[nodiscard]] Value construct(Emitter &emitter, const ArgList &args, const AST::SourceLocation &srcLoc) final;
 
-  [[nodiscard]] bool recursive_match(Emitter &emitter, Type *type) final { return true; }
+  [[nodiscard]] bool pattern_match(Emitter &emitter, Type *type) final { return true; }
 };
 //--}
 
@@ -393,7 +425,9 @@ public:
 
   [[nodiscard]] Value construct(Emitter &emitter, const ArgList &args, const AST::SourceLocation &srcLoc) final;
 
-  [[nodiscard]] bool recursive_match(Emitter &emitter, Type *type) final;
+  [[nodiscard]] bool pattern_match(Emitter &emitter, Type *type) final;
+
+  [[nodiscard]] bool can_access(llvm::StringRef key) final;
 
   Type *elemType{};
 };
@@ -457,7 +491,9 @@ public:
 
   [[nodiscard]] Value construct(Emitter &emitter, const ArgList &args, const AST::SourceLocation &srcLoc) final;
 
-  [[nodiscard]] bool recursive_match(Emitter &emitter, Type *type) final;
+  [[nodiscard]] bool pattern_match(Emitter &emitter, Type *type) final;
+
+  [[nodiscard]] bool can_access(llvm::StringRef key) final;
 
 public:
   /// The parent template, if applicable.
@@ -492,7 +528,7 @@ public:
 
   [[nodiscard]] Value construct(Emitter &emitter, const ArgList &args, const AST::SourceLocation &srcLoc) final;
 
-  [[nodiscard]] bool recursive_match(Emitter &emitter, Type *type) final;
+  [[nodiscard]] bool pattern_match(Emitter &emitter, Type *type) final;
 
 public:
   /// The AST tag declaration, if applicable.
@@ -514,21 +550,50 @@ class UnionType final : public TypeSubclass<TypeKind::Union> {
 public:
   UnionType(Context &context, llvm::SmallVector<Type *> types);
 
+  [[nodiscard]] int_t index_of(Type *type) const {
+    if (auto itr{std::find(types.begin(), types.end(), type)}; itr != types.end())
+      return itr - types.begin();
+    return -1;
+  }
+
   [[nodiscard]] bool has_type(Type *type) const { return index_of(type) != -1; }
 
-  [[nodiscard]] bool has_all_types(UnionType *unionType) const;
+  [[nodiscard]] bool has_all_types(UnionType *unionType) const {
+    return detail::is_all_true(unionType->types, [&](auto &type) { return has_type(type); });
+  }
 
-  [[nodiscard]] bool always_has_tag(TagType *tag) const;
+  [[nodiscard]] bool always_has_tag(TagType *tag) const {
+    return detail::is_all_true(types, [&](auto &type) {
+      if (auto structType{llvm::dyn_cast<StructType>(type)})
+        return structType->has_tag(tag);
+      return false;
+    });
+  }
 
-  [[nodiscard]] bool always_has_parent_template(StructType *parentTemplate) const;
-
-  [[nodiscard]] int_t index_of(Type *type) const;
+  [[nodiscard]] bool always_has_parent_template(StructType *parentTemplate) const {
+    return detail::is_all_true(types, [&](auto &type) {
+      if (auto structType{llvm::dyn_cast<StructType>(type)})
+        return structType->parentTemplate == parentTemplate;
+      return false;
+    });
+  }
 
   [[nodiscard]] Value access(Emitter &emitter, Value value, llvm::StringRef key, const AST::SourceLocation &srcLoc) final;
 
   [[nodiscard]] Value construct(Emitter &emitter, const ArgList &args, const AST::SourceLocation &srcLoc) final;
 
-  [[nodiscard]] bool recursive_match(Emitter &emitter, Type *type);
+  [[nodiscard]] bool pattern_match(Emitter &emitter, Type *type) final {
+    if (this == type)
+      return true;
+    if (auto unionType{llvm::dyn_cast<UnionType>(type)})
+      return has_all_types(unionType);
+    else
+      return has_type(type);
+  }
+
+  [[nodiscard]] bool can_access(llvm::StringRef key) final {
+    return detail::is_all_true(types, [&](auto &type) { return type->can_access(key); });
+  }
 
   [[nodiscard]] bool is_zero_by_default() final { return false; }
 
