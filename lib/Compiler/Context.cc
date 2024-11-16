@@ -1,10 +1,8 @@
 // vim:foldmethod=marker:foldlevel=0:fmr=--{,--}
 #include "Context.h"
 #include "Emitter.h"
-
-#include "builtins.h"
-
 #include "Parser.h"
+#include "builtins.h"
 
 namespace smdl::Compiler {
 
@@ -553,18 +551,5 @@ Module *Context::resolve_module(
   return nullptr;
 }
 
-void Context::builtin_print_string(const string_t &what) { llvm::errs() << std::string_view(what); }
-
-void Context::builtin_print_bool(int_t what) { llvm::errs() << (what != 0 ? "true" : "false"); }
-
-void Context::builtin_print_int(int_t what) { llvm::errs() << what; }
-
-void Context::builtin_print_float(float_t what) { llvm::errs() << std::format("{:0.5g}", what); }
-
-void Context::builtin_print_double(double_t what) { llvm::errs() << std::format("{:0.5g}", what); }
-
-void Context::builtin_panic(const string_t &message, const source_location_t &srcLoc) {
-  throw Error(std::string(message), std::string(srcLoc.file), srcLoc.line);
-}
-
 } // namespace smdl::Compiler
+

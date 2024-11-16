@@ -3,74 +3,6 @@
 
 namespace smdl::Compiler {
 
-//--{ Helpers
-Value Emitter::emit_alloca(const llvm::Twine &name, Type *type) {
-  sanity_check(type != nullptr);
-  sanity_check(type->llvmType != nullptr);
-  auto ip{builder.saveIP()};
-  auto entry{get_llvm_function_entry_block()};
-  sanity_check(entry, "can't alloca outside of LLVM function");
-  builder.SetInsertPoint(entry, entry->getFirstNonPHIOrDbgOrAlloca());
-  auto value{LValue(type, builder.CreateAlloca(type->llvmType, nullptr, name))};
-  builder.restoreIP(ip);
-  builder.CreateLifetimeStart(value, builder.getInt64(context.get_size_of(type)));
-  return value;
-}
-
-Value Emitter::lvalue(Value value, bool manageLifetime) {
-  if (value.is_rvalue()) {
-    auto lv{emit_alloca({}, value.type)};
-    builder.CreateStore(value, lv);
-    if (manageLifetime)
-      push(lv, {}, {}, {});
-    return lv;
-  }
-  return value;
-}
-
-Value Emitter::rvalue(Value value) {
-  if (value.is_lvalue())
-    return RValue(value.type, builder.CreateLoad(value.type->llvmType, value));
-  return value;
-}
-
-void Emitter::emit_unwind(Crumb *crumb0) {
-  sanity_check(!has_terminator());
-  for (; crumb && crumb != crumb0; crumb = crumb->prev) {
-    if (crumb->value) {
-      emit_end_lifetime(crumb->value);
-    } else if (crumb->is_ast_defer()) {
-      auto defer{static_cast<AST::Defer *>(crumb->node)};
-      auto block{create_block(context.get_unique_name("defer", get_llvm_function()))};
-      emit_br(block);
-      Emitter emitter{this};
-      emitter.crumb = defer->crumb;
-      emitter.afterBreak = {};    // Not allowed to break!
-      emitter.afterContinue = {}; // Not allowed to continue!
-      emitter.afterReturn = {};   // Not allowed to return!
-      emitter.move_to(block);
-      emitter.emit(*defer->stmt);
-      emitter.emit_unwind(defer->crumb);
-      move_to(emitter.get_insert_block());
-    } else if (crumb->is_ast_preserve()) {
-      for (auto &[crumb, llvmValue] : static_cast<AST::Preserve *>(crumb->node)->backups)
-        builder.CreateStore(rvalue(crumb->value), llvmValue);
-    }
-  }
-  sanity_check(crumb == crumb0);
-}
-
-void Emitter::emit_panic(Value message, const AST::SourceLocation &srcLoc) {
-  sanity_check(message);
-  sanity_check(message.type == context.get_string_type());
-  auto inst{builder.CreateCall(
-      context.get_compile_time_callee(&Context::builtin_panic),
-      {lvalue(message).llvmValue, lvalue(context.get_compile_time_source_location(srcLoc)).llvmValue})};
-  inst->setIsNoInline();
-  inst->setDoesNotReturn();
-}
-//--}
-
 //--{ Fundamental operations
 void Emitter::declare_function_parameter(const Param &param, Value value) {
   value = construct(param.type, value, param.srcLoc);
@@ -112,122 +44,21 @@ void Emitter::declare_import(bool isAbs, llvm::ArrayRef<llvm::StringRef> path, A
   }
 }
 
-Value Emitter::emit_call(Value value, const ArgList &args, const AST::SourceLocation &srcLoc) {
-  // Do we need to automatically visit any arguments?
-  if (args.has_any_visited()) {
-    auto name{context.get_unique_name("visit-call", get_llvm_function())};
-    auto blockBegin{create_block(llvm_twine(name, ".begin"))};
-    auto blockEnd{create_block(llvm_twine(name, ".end"))};
-    auto localReturns{llvm::SmallVector<Return>{}};
-    emit_br(blockBegin);
-    emit_scope(blockBegin, blockEnd, [&](auto &emitter) {
-      emitter.afterReturn = {crumb, blockEnd};
-      emitter.returns = &localReturns;
-      auto i{args.index_of_first_visited()};
-      auto argsCopy{args};
-      emitter.emit_visit(args[i].value, [&](Emitter &emitter, Value argValue) {
-        argsCopy[i].value = argValue;
-        argsCopy[i].isVisited = false;
-        emitter.emit_return(emitter.emit_call(value, argsCopy, srcLoc), srcLoc);
-      });
-    });
-    llvm_move_block_to_end(blockEnd);
-    move_to(blockEnd);
-    return emit_final_return_phi(context.get_auto_type(), localReturns);
-  } else {
-    if (value.is_compile_time_intrinsic())
-      return emit_intrinsic(*value.get_compile_time_intrinsic(), args);
-    if (value.is_compile_time_type())
-      return construct(value.get_compile_time_type(), args, srcLoc);
-    if (value.is_compile_time_function())
-      return value.get_compile_time_function()->call(*this, args, srcLoc);
-    srcLoc.report_error("invalid call");
-    return {};
+Value Emitter::lvalue(Value value, bool manageLifetime) {
+  if (value.is_rvalue()) {
+    auto lv{emit_alloca({}, value.type)};
+    builder.CreateStore(value, lv);
+    if (manageLifetime)
+      push(lv, {}, {}, {});
+    return lv;
   }
+  return value;
 }
 
-void Emitter::emit_visit(Value value, const std::function<void(Emitter &emitter, Value value)> &visitor) {
-  if (!value.type->is_union_or_pointer_to_union()) {
-    emit_scope([&](auto &emitter) { visitor(emitter, value); });
-  } else {
-    auto name{context.get_unique_name("visit", get_llvm_function())};
-    auto blockBegin{create_block(llvm_twine(name, ".begin"))};
-    auto blockEnd{create_block(llvm_twine(name, ".end"))};
-    emit_br_and_move_to(blockBegin);
-    auto idx{rvalue(access(value, "#idx"))};
-    auto ptr{value.type->is_union() ? rvalue(access(value, "#ptr")) : Value()};
-    auto blockUnreachable{create_block(llvm_twine(name, ".unreachable"))};
-    auto inst{builder.CreateSwitch(idx, blockUnreachable)};
-    for (unsigned i{}; auto type : static_cast<UnionType *>(value.type->get_most_pointed_to_type())->types) {
-      auto blockCase{create_block(std::format("{}.case.{}", name, i))};
-      inst->addCase(static_cast<llvm::ConstantInt *>(context.get_compile_time_int(i)), blockCase);
-      emit_scope(blockCase, blockEnd, [&](auto &emitter) {
-        if (!type->is_void()) {
-          Value valueCast{};
-          if (value.type->is_union()) {
-            valueCast = LValue(type, ptr);
-            valueCast = value.is_rvalue() ? emitter.rvalue(valueCast) : valueCast;
-          } else {
-            sanity_check(value.type->is_pointer());
-            valueCast = value;
-            valueCast.type = context.get_pointer_type(type, value.type->get_pointer_depth());
-          }
-          visitor(emitter, valueCast);
-        }
-      });
-      i++;
-    }
-    llvm_move_block_to_end(blockUnreachable);
-    builder.SetInsertPoint(blockUnreachable);
-    builder.CreateUnreachable();
-    llvm_move_block_to_end(blockEnd);
-    move_to_or_erase(blockEnd);
-  }
-}
-
-void Emitter::emit_return(Value value, const AST::SourceLocation &srcLoc) {
-  sanity_check(!has_terminator());
-  sanity_check(returns);
-  returns->push_back({rvalue(value), get_insert_block(), srcLoc});
-  emit_unwind_and_br(afterReturn);
-}
-
-Value Emitter::emit_final_return_phi(Type *type, llvm::ArrayRef<Return> returns, const AST::SourceLocation &srcLoc) {
-  sanity_check(type);
-  sanity_check(!returns.empty());
-  if (type->is_abstract()) {
-    auto returnTypes{llvm::SmallVector<Type *>{}};
-    for (auto &[value, block, srcLoc] : returns)
-      returnTypes.push_back(value.type);
-    auto returnType{context.get_common_type(returnTypes, /*defaultToUnion=*/true, srcLoc)};
-    if (context.get_conversion_rule(returnType, type) == ConversionRule::NotAllowed)
-      srcLoc.report_error(std::format("inferred return type '{}' is not convertible to '{}'", returnType->name, type->name));
-    type = returnType;
-  }
-  auto phi{builder.CreatePHI(type->llvmType, returns.size())};
-  for (auto [value, block, srcLoc] : returns) {
-    Emitter emitter{this};
-    emitter.builder.restoreIP(llvm_insert_point_before_terminator(block));
-    auto value2{emitter.construct(type, value, srcLoc)};
-    phi->addIncoming(value2, emitter.get_insert_block());
-  }
-  return RValue(type, phi);
-}
-
-Type *Emitter::emit_final_return(Type *type, llvm::ArrayRef<Return> returns, const AST::SourceLocation &srcLoc) {
-  llvm_move_block_to_end(afterReturn);
-  move_to(afterReturn);
-  if (type == context.get_void_type()) {
-    for (auto &returnInfo : returns)
-      if (!returnInfo.value.is_void())
-        srcLoc.report_error("non-'void' return statement in 'void' function");
-    builder.CreateRetVoid();
-    return type;
-  } else {
-    auto returnValue{emit_final_return_phi(type, returns, srcLoc)};
-    builder.CreateRet(returnValue);
-    return returnValue.type;
-  }
+Value Emitter::rvalue(Value value) {
+  if (value.is_lvalue())
+    return RValue(value.type, builder.CreateLoad(value.type->llvmType, value));
+  return value;
 }
 //--}
 
@@ -367,16 +198,21 @@ Value Emitter::emit(AST::Variable &decl) {
     auto &declValName{*declVal.name};
     context.validate_decl_name("variable", declValName);
     Value value{};
+    // NOTE: Initialization is inside an 'emit_scope' to limit lifetimes of temporary 
+    // declarations 't := something', but the following 'construct()' is outside of the 
+    // scope so that captured sizes '[<N>]' persist after this declaration.
     if (declVal.init) {
       emit_scope([&](auto &emitter) { value = emitter.emit(declVal.init); });
       value = construct(type, value, declValName.srcLoc);
     } else if (declVal.args) {
-      value = construct(type, emit(declVal.args), declValName.srcLoc);
+      ArgList args{};
+      emit_scope([&](auto &emitter) { args = emitter.emit(declVal.args); });
+      value = construct(type, args, declValName.srcLoc);
     } else {
       if (type->is_abstract())
         declValName.srcLoc.report_error(
             std::format("variable '{}' declare with type '{}' requires initializer", declValName.name, type->name));
-      value = Value::zero(type);
+      value = construct(type, {}, decl.srcLoc);
     }
     if (isStatic) {
       if (!value.is_compile_time())
@@ -757,8 +593,75 @@ ArgList Emitter::emit(const AST::ArgList &astArgs) {
   return args;
 }
 
-//--{ Emit: Ops
+Value Emitter::emit_alloca(const llvm::Twine &name, Type *type) {
+  sanity_check(type != nullptr);
+  sanity_check(type->llvmType != nullptr);
+  auto ip{builder.saveIP()};
+  auto entry{get_llvm_function_entry_block()};
+  sanity_check(entry, "can't alloca outside of LLVM function");
+  builder.SetInsertPoint(entry, entry->getFirstNonPHIOrDbgOrAlloca());
+  auto value{LValue(type, builder.CreateAlloca(type->llvmType, nullptr, name))};
+  builder.restoreIP(ip);
+  builder.CreateLifetimeStart(value, builder.getInt64(context.get_size_of(type)));
+  return value;
+}
 
+void Emitter::emit_end_lifetime(Value value) {
+  if (value.is_lvalue() && llvm::isa<llvm::AllocaInst>(value.llvmValue))
+    builder.CreateLifetimeEnd(value, builder.getInt64(context.get_size_of(value.type)));
+}
+
+void Emitter::emit_unwind_and_br(Label label) {
+  if (!has_terminator()) {
+    emit_unwind(label.crumb);
+    emit_br(label.block);
+  }
+}
+
+void Emitter::emit_unwind(Crumb *crumb0) {
+  sanity_check(!has_terminator());
+  for (; crumb && crumb != crumb0; crumb = crumb->prev) {
+    if (crumb->value) {
+      emit_end_lifetime(crumb->value);
+    } else if (crumb->is_ast_defer()) {
+      auto defer{static_cast<AST::Defer *>(crumb->node)};
+      auto block{create_block(context.get_unique_name("defer", get_llvm_function()))};
+      emit_br(block);
+      Emitter emitter{this};
+      emitter.crumb = defer->crumb;
+      emitter.afterBreak = {};    // Not allowed to break!
+      emitter.afterContinue = {}; // Not allowed to continue!
+      emitter.afterReturn = {};   // Not allowed to return!
+      emitter.move_to(block);
+      emitter.emit(*defer->stmt);
+      emitter.emit_unwind(defer->crumb);
+      move_to(emitter.get_insert_block());
+    } else if (crumb->is_ast_preserve()) {
+      for (auto &[crumb, llvmValue] : static_cast<AST::Preserve *>(crumb->node)->backups)
+        builder.CreateStore(rvalue(crumb->value), llvmValue);
+    }
+  }
+  sanity_check(crumb == crumb0);
+}
+
+void Emitter::emit_br(llvm::BasicBlock *block) {
+  sanity_check(!has_terminator());
+  builder.CreateBr(block);
+}
+
+void Emitter::emit_br(Value cond, llvm::BasicBlock *blockPass, llvm::BasicBlock *blockFail) {
+  sanity_check(!has_terminator());
+  builder.CreateCondBr(construct(context.get_bool_type(), cond), blockPass, blockFail);
+}
+
+Value Emitter::emit_phi(Type *type, llvm::ArrayRef<std::pair<llvm::Value *, llvm::BasicBlock *>> inputs) {
+  auto phiInst{builder.CreatePHI(type->llvmType, inputs.size())};
+  for (auto [value, block] : inputs)
+    phiInst->addIncoming(value, block);
+  return RValue(type, phiInst);
+}
+
+//--{ Emit: Unary op
 Value Emitter::emit_op(AST::UnaryOp op, Value val, const AST::SourceLocation &srcLoc) {
   using UnOp = AST::UnaryOp;
   using BinOp = AST::BinaryOp;
@@ -847,6 +750,7 @@ Value Emitter::emit_op(AST::UnaryOp op, Value val, const AST::SourceLocation &sr
   srcLoc.report_error(std::format("unimplemented unary operator '{}' for type '{}'", AST::to_string(op), val.type->name));
   return {};
 }
+//--}
 
 //--{ Helper: 'llvm_arithmetic_op'
 [[nodiscard]] static std::optional<llvm::Instruction::BinaryOps> llvm_arithmetic_op(Scalar scalar, AST::BinaryOp op) {
@@ -878,6 +782,7 @@ Value Emitter::emit_op(AST::UnaryOp op, Value val, const AST::SourceLocation &sr
   return std::nullopt;
 }
 //--}
+
 //--{ Helper: 'llvm_compare_op'
 [[nodiscard]] static std::optional<llvm::CmpInst::Predicate> llvm_compare_op(
     Scalar scalar, AST::BinaryOp op, bool isSigned = true) {
@@ -906,6 +811,7 @@ Value Emitter::emit_op(AST::UnaryOp op, Value val, const AST::SourceLocation &sr
 }
 //--}
 
+//--{ Emit: Binary op
 Value Emitter::emit_op(AST::BinaryOp op, Value lhs, Value rhs, const AST::SourceLocation &srcLoc) {
   using UnOp = AST::UnaryOp;
   using BinOp = AST::BinaryOp;
@@ -1144,308 +1050,480 @@ Value Emitter::emit_op(AST::BinaryOp op, Value lhs, Value rhs, const AST::Source
 }
 //--}
 
-//--{ Emit: Intrinsics
-Value Emitter::emit_intrinsic(const AST::Intrinsic &intr, const ArgList &args) {
+//--{ Emit: Intrinsic
+Value Emitter::emit_intrinsic(llvm::StringRef name, const ArgList &args, const AST::SourceLocation &srcLoc) {
+  sanity_check(!name.empty());
   namespace Intr = llvm::Intrinsic;
-  auto name{intr.name};
   if (!args.is_all_positional())
-    intr.srcLoc.report_error("intrinsics expect only unnamed arguments");
+    srcLoc.report_error("intrinsics expect only unnamed arguments");
   auto expectOne{[&]() {
     if (args.size() != 1)
-      intr.srcLoc.report_error(std::format("intrinsic '#{}' expects 1 argument", name));
+      srcLoc.report_error(std::format("intrinsic '#{}' expects 1 argument", name));
     return args[0].value;
   }};
   auto expectOneVectorized{[&]() {
     if (args.size() != 1 || !args[0].value.type->is_vectorized())
-      intr.srcLoc.report_error(std::format("intrinsic '#{}' expects 1 vectorized argument", name));
+      srcLoc.report_error(std::format("intrinsic '#{}' expects 1 vectorized argument", name));
     return args[0].value;
   }};
   auto expectOneIntOrIntVector{[&]() {
     if (args.size() != 1 || !args[0].value.type->is_vectorized() || args[0].value.type->scalar != Scalar::Int)
-      intr.srcLoc.report_error(std::format("intrinsic '#{}' expects 1 int or int vector argument", name));
+      srcLoc.report_error(std::format("intrinsic '#{}' expects 1 int or int vector argument", name));
     return args[0].value;
   }};
   auto expectOneType{[&]() {
     auto value{rvalue(expectOne())};
     return value.is_compile_time_type() ? value.get_compile_time_type() : value.type;
   }};
-  if (name == "panic") {
-    if (args.size() != 1 || args[0].value.type != context.get_string_type())
-      intr.srcLoc.report_error("intrinsic '#panic' expects 1 string argument");
-    emit_panic(args[0].value, intr.srcLoc);
-    return {};
+  if (name[0] == 'a') { // Avoid unnecessary if checks
+    if (name == "assert") {
+      if (!((args.size() == 1 && args[0].value.type == context.get_bool_type()) ||
+            (args.size() == 2 && args[0].value.type == context.get_bool_type() &&
+             args[1].value.type == context.get_string_type())))
+        srcLoc.report_error("intrinsic '#assert' expects 1 bool argument and 1 optional string argument");
+      auto name{context.get_unique_name("assert", get_llvm_function())};
+      auto blockPanic{create_block(llvm_twine(name, ".panic"))};
+      auto blockOk{create_block(llvm_twine(name, ".ok"))};
+      emit_br(rvalue(args[0].value), blockOk, blockPanic);
+      move_to(blockPanic);
+      emit_scope([&](Emitter &emitter) {
+        if (args.size() == 1) {
+          std::string message{"assertion failed"};
+          if (!args[0].src.empty()) {
+            message += ": ";
+            message += args[0].src.str();
+          }
+          emitter.emit_panic(message, srcLoc);
+        } else {
+          emitter.emit_panic(args[1].value, srcLoc);
+        }
+      });
+      builder.CreateUnreachable();
+      move_to(blockOk);
+      return context.get_compile_time_bool(true);
+    } else if (name == "abs") {
+      auto value{rvalue(expectOneVectorized())};
+      return RValue(
+          value.type, value.type->is_floating()
+                          ? builder.CreateUnaryIntrinsic(Intr::fabs, value)
+                          : builder.CreateBinaryIntrinsic(Intr::abs, value, context.get_compile_time_bool(false)));
+    } else if (name == "atan2") {
+      // TODO
+    } else if (name == "approx_equal") {
+      if (args.size() != 3 || !args.is_all_true([](auto &arg) { return arg.value.type->is_vectorized(); }))
+        srcLoc.report_error(std::format("intrinsic '#{}' expects 3 vectorized arguments", name));
+      return emit_op(
+          AST::BinaryOp::CmpLt,
+          emit_intrinsic("abs", emit_op(AST::BinaryOp::Sub, args[0].value, args[1].value, srcLoc), srcLoc), args[2].value,
+          srcLoc);
+    } else if (auto intrID{[&]() -> std::optional<Intr::ID> {
+                 if (name == "all")
+                   return Intr::vector_reduce_and;
+                 if (name == "any")
+                   return Intr::vector_reduce_or;
+                 return std::nullopt;
+               }()}) {
+      auto value{expectOneVectorized()};
+      value = construct(value.type->get_with_different_scalar(Scalar::Bool), value, srcLoc);
+      if (value.type->is_scalar())
+        return value;
+      return RValue(context.get_bool_type(), builder.CreateUnaryIntrinsic(*intrID, value));
+    }
+  } else if (name[0] == 'b') { // Avoid unnecessary if checks
+    if (name == "bitreverse") {
+      auto value{rvalue(expectOneIntOrIntVector())};
+      return RValue(value.type, builder.CreateUnaryIntrinsic(Intr::bitreverse, value));
+    } else if (name == "breakpoint") {
+      if (!args.empty())
+        srcLoc.report_error("intrinsic '#breakpoint' expects no arguments");
+      if (context.mdl.enableDebug)
+        builder.CreateIntrinsic(context.get_type<void>()->llvmType, Intr::debugtrap, {});
+      return context.get_compile_time_bool(true);
+    }
+  } else if (name[0] == 'c') { // Avoid unnecessary if checks
+    if (name == "comptime") {
+      return context.get_compile_time_bool(expectOne().is_compile_time());
+    } else if (name == "ctpop") {
+      auto value{rvalue(expectOneIntOrIntVector())};
+      return RValue(value.type, builder.CreateUnaryIntrinsic(Intr::ctpop, value));
+    } else if (name == "ctlz") {
+      auto value{rvalue(expectOneIntOrIntVector())};
+      return RValue(value.type, builder.CreateBinaryIntrinsic(Intr::ctlz, value, context.get_compile_time_bool(false)));
+    } else if (name == "cttz") {
+      auto value{rvalue(expectOneIntOrIntVector())};
+      return RValue(value.type, builder.CreateBinaryIntrinsic(Intr::cttz, value, context.get_compile_time_bool(false)));
+    }
+  } else if (name[0] == 'i') { // Avoid unnecessary if checks
+    if (name == "is_array") {
+      return context.get_compile_time_bool(expectOneType()->is_array());
+    } else if (name == "is_enum") {
+      return context.get_compile_time_bool(expectOneType()->is_enum());
+    } else if (name == "is_matrix") {
+      return context.get_compile_time_bool(expectOneType()->is_matrix());
+    } else if (name == "is_pointer") {
+      return context.get_compile_time_bool(expectOneType()->is_pointer());
+    } else if (name == "is_scalar") {
+      return context.get_compile_time_bool(expectOneType()->is_scalar());
+    } else if (name == "is_struct") {
+      return context.get_compile_time_bool(expectOneType()->is_struct());
+    } else if (name == "is_union") {
+      return context.get_compile_time_bool(expectOneType()->is_union());
+    } else if (name == "is_vector") {
+      return context.get_compile_time_bool(expectOneType()->is_vector());
+    } else if (name == "isfpclass") {
+      if (args.size() != 2 || !args[0].value.type->is_vectorized() || !args[1].value.is_compile_time_int())
+        srcLoc.report_error("intrinsic '#isfpclass' expects 1 vectorized argument and 1 compile-time integer argument");
+      auto value{rvalue(args[0].value)};
+      return RValue(
+          value.type->get_with_different_scalar(Scalar::Bool),
+          builder.createIsFPClass(value, args[1].value.get_compile_time_int()));
+    }
+  } else if (name[0] == 'm') { // Avoid unnecessary if checks
+    if (auto intrIDs{[&]() -> std::optional<std::tuple<Intr::ID, Intr::ID>> {
+          if (name == "min_value")
+            return std::tuple(Intr::vector_reduce_fmin, Intr::vector_reduce_smin);
+          if (name == "max_value")
+            return std::tuple(Intr::vector_reduce_fmax, Intr::vector_reduce_smax);
+          return std::nullopt;
+        }()}) {
+      auto value{rvalue(expectOneVectorized())};
+      if (value.type->scalar == Scalar::Bool)
+        value = construct(value.type->get_with_different_scalar(Scalar::Int), value);
+      if (value.type->is_scalar())
+        return value;
+      return RValue(
+          value.type->get_scalar_type(),
+          builder.CreateUnaryIntrinsic(value.type->is_floating() ? std::get<0>(*intrIDs) : std::get<1>(*intrIDs), value));
+    }
+    if (auto intrIDs{[&]() -> std::optional<std::tuple<Intr::ID, Intr::ID, Intr::ID>> {
+          if (name == "min")
+            return std::tuple(Intr::minnum, Intr::umin, Intr::smin);
+          if (name == "max")
+            return std::tuple(Intr::maxnum, Intr::umax, Intr::smax);
+          return std::nullopt;
+        }()}) {
+      if (args.size() != 2 || !args.is_all_true([](auto &arg) { return arg.value.type->is_vectorized(); }))
+        srcLoc.report_error(std::format("intrinsic '#{}' expects 2 vectorized arguments", name));
+      auto lhs{args[0].value};
+      auto rhs{args[1].value};
+      auto type{context.get_common_type({lhs.type, rhs.type}, /*defaultToUnion=*/false, srcLoc)};
+      lhs = construct(type, lhs);
+      rhs = construct(type, rhs);
+      auto intrID{
+          type->is_floating() ? std::get<0>(*intrIDs)
+                              : (type->scalar == Scalar::Bool ? std::get<1>(*intrIDs) : std::get<2>(*intrIDs))};
+      return RValue(type, builder.CreateBinaryIntrinsic(intrID, lhs, rhs));
+    }
+  } else if (name[0] == 'p') { // Avoid unnecessary if checks
+    if (name == "panic") {
+      if (args.size() != 1 || args[0].value.type != context.get_string_type())
+        srcLoc.report_error("intrinsic '#panic' expects 1 string argument");
+      emit_panic(args[0].value, srcLoc);
+      return {};
+    } else if (name == "print") {
+      for (auto &arg : args)
+        emit_print(arg.value);
+      return context.get_compile_time_bool(true);
+    } else if (name == "pow") {
+      if (args.size() != 2 || !args[0].value.type->is_vectorized() || !args[1].value.type->is_vectorized())
+        srcLoc.report_error(std::format("intrinsic '#{}' expects 2 vectorized arguments", name));
+      auto value0{rvalue(args[0].value)};
+      auto value1{rvalue(args[1].value)};
+      auto type{
+          context.get_common_type({value0.type, value1.type, context.get_float_type()}, /*defaultToUnion=*/false, srcLoc)};
+      value0 = construct(type, value0, srcLoc);
+      return RValue(
+          type, value1.type == context.get_int_type()
+                    ? llvm_emit_powi(builder, value0, value1) // CreateBinaryIntrinsic doesn't work for powi!
+                    : builder.CreateBinaryIntrinsic(Intr::pow, value0, construct(type, value1, srcLoc)));
+    } else if (name == "product") {
+      auto value{rvalue(expectOneVectorized())};
+      if (value.type->scalar == Scalar::Bool)
+        value = construct(value.type->get_with_different_scalar(Scalar::Int), value);
+      if (value.type->is_scalar())
+        return value;
+      return RValue(
+          value.type->get_scalar_type(),
+          value.type->is_floating()
+              ? builder.CreateFMulReduce(construct(value.type->get_scalar_type(), context.get_compile_time_float(1)), value)
+              : builder.CreateMulReduce(value));
+    }
+  } else if (name[0] == 's') { // Avoid unnecessary if checks
+    if (name == "sum") {
+      auto value{rvalue(expectOneVectorized())};
+      if (value.type->scalar == Scalar::Bool)
+        value = construct(value.type->get_with_different_scalar(Scalar::Int), value);
+      if (value.type->is_scalar())
+        return value;
+      return RValue(
+          value.type->get_scalar_type(), value.type->is_floating()
+                                             ? builder.CreateFAddReduce(Value::zero(value.type->get_scalar_type()), value)
+                                             : builder.CreateAddReduce(value));
+    } else if (name == "sign") {
+      auto value{rvalue(expectOneVectorized())};
+      if (!value.type->is_floating()) {
+        return RValue(
+            value.type, builder.CreateSelect(
+                            emit_op(AST::BinaryOp::CmpLt, value, context.get_compile_time_int(0)),
+                            construct(value.type, context.get_compile_time_int(-1)),
+                            construct(value.type, context.get_compile_time_int(+1))));
+      } else {
+        return RValue(
+            value.type,
+            builder.CreateBinaryIntrinsic(Intr::copysign, construct(value.type, context.get_compile_time_float(1)), value));
+      }
+    } else if (name == "select") {
+      if (args.size() != 3 || !args.is_all_true([](auto arg) { return arg.value.type->is_vectorized(); }))
+        srcLoc.report_error("intrinsic '#select' expects 3 vectorized arguments");
+      auto cond{construct(args[0].value.type->get_with_different_scalar(Scalar::Bool), args[0].value, srcLoc)};
+      auto ifPass{args[1].value};
+      auto ifFail{args[2].value};
+      auto type{context.get_common_type(
+          {ifPass.type, ifFail.type, cond.type->is_vector() ? cond.type : nullptr}, /*defaultToUnion=*/false, srcLoc)};
+      ifPass = construct(type, ifPass, srcLoc);
+      ifFail = construct(type, ifFail, srcLoc);
+      return RValue(type, builder.CreateSelect(cond, ifPass, ifFail));
+    }
   }
-  //--{ Compile-time
-  if (name == "alignof")
-    return context.get_compile_time_int(context.get_align_of(expectOneType()));
-  if (name == "sizeof")
-    return context.get_compile_time_int(context.get_size_of(expectOneType()));
-  if (name == "typeof")
-    return context.get_compile_time_type(expectOne().type);
   if (name == "typename")
     return context.get_compile_time_string(expectOneType()->name);
-  if (name == "comptime")
-    return context.get_compile_time_bool(expectOne().is_compile_time());
-  if (name == "is_array")
-    return context.get_compile_time_bool(expectOneType()->is_array());
-  if (name == "is_enum")
-    return context.get_compile_time_bool(expectOneType()->is_enum());
-  if (name == "is_matrix")
-    return context.get_compile_time_bool(expectOneType()->is_matrix());
-  if (name == "is_pointer")
-    return context.get_compile_time_bool(expectOneType()->is_pointer());
-  if (name == "is_scalar")
-    return context.get_compile_time_bool(expectOneType()->is_scalar());
-  if (name == "is_struct")
-    return context.get_compile_time_bool(expectOneType()->is_struct());
-  if (name == "is_union")
-    return context.get_compile_time_bool(expectOneType()->is_union());
-  if (name == "is_vector")
-    return context.get_compile_time_bool(expectOneType()->is_vector());
-  //--}
-  //--{ Bit manipulation
-  if (name == "bitreverse") {
-    auto value{rvalue(expectOneIntOrIntVector())};
-    return RValue(value.type, builder.CreateUnaryIntrinsic(Intr::bitreverse, value));
-  }
-  if (name == "ctpop") {
-    auto value{rvalue(expectOneIntOrIntVector())};
-    return RValue(value.type, builder.CreateUnaryIntrinsic(Intr::ctpop, value));
-  }
-  if (name == "ctlz") {
-    auto value{rvalue(expectOneIntOrIntVector())};
-    return RValue(value.type, builder.CreateBinaryIntrinsic(Intr::ctlz, value, context.get_compile_time_bool(false)));
-  }
-  if (name == "cttz") {
-    auto value{rvalue(expectOneIntOrIntVector())};
-    return RValue(value.type, builder.CreateBinaryIntrinsic(Intr::cttz, value, context.get_compile_time_bool(false)));
-  }
-  //--}
-  //--{ Vector reduction
-  if (auto intrID{[&]() -> std::optional<Intr::ID> {
-        if (name == "all")
-          return Intr::vector_reduce_and;
-        if (name == "any")
-          return Intr::vector_reduce_or;
-        return std::nullopt;
-      }()}) {
-    auto value{expectOneVectorized()};
-    value = construct(value.type->get_with_different_scalar(Scalar::Bool), value, intr.srcLoc);
-    if (value.type->is_scalar())
-      return value;
-    return RValue(context.get_bool_type(), builder.CreateUnaryIntrinsic(*intrID, value));
-  }
-  if (auto intrIDs{[&]() -> std::optional<std::tuple<Intr::ID, Intr::ID>> {
-        if (name == "min_value")
-          return std::tuple(Intr::vector_reduce_fmin, Intr::vector_reduce_smin);
-        if (name == "max_value")
-          return std::tuple(Intr::vector_reduce_fmax, Intr::vector_reduce_smax);
-        return std::nullopt;
-      }()}) {
-    auto value{rvalue(expectOneVectorized())};
-    if (value.type->scalar == Scalar::Bool)
-      value = construct(value.type->get_with_different_scalar(Scalar::Int), value);
-    if (value.type->is_scalar())
-      return value;
-    return RValue(
-        value.type->get_scalar_type(),
-        builder.CreateUnaryIntrinsic(value.type->is_floating() ? std::get<0>(*intrIDs) : std::get<1>(*intrIDs), value));
-  }
-  if (auto intrIDs{[&]() -> std::optional<std::tuple<Intr::ID, Intr::ID, Intr::ID>> {
-        if (name == "min")
-          return std::tuple(Intr::minnum, Intr::umin, Intr::smin);
-        if (name == "max")
-          return std::tuple(Intr::maxnum, Intr::umax, Intr::smax);
-        return std::nullopt;
-      }()}) {
-    if (args.size() != 2 || !args.is_all_true([](auto &arg) { return arg.value.type->is_vectorized(); }))
-      intr.srcLoc.report_error(std::format("intrinsic '#{}' expects 2 vectorized arguments", name));
-    auto lhs{args[0].value};
-    auto rhs{args[1].value};
-    auto type{context.get_common_type({lhs.type, rhs.type}, /*defaultToUnion=*/false, intr.srcLoc)};
-    lhs = construct(type, lhs);
-    rhs = construct(type, rhs);
-    auto intrID{
-        type->is_floating() ? std::get<0>(*intrIDs)
-                            : (type->scalar == Scalar::Bool ? std::get<1>(*intrIDs) : std::get<2>(*intrIDs))};
-    return RValue(type, builder.CreateBinaryIntrinsic(intrID, lhs, rhs));
-  }
-  if (name == "sum") {
-    auto value{rvalue(expectOneVectorized())};
-    if (value.type->scalar == Scalar::Bool)
-      value = construct(value.type->get_with_different_scalar(Scalar::Int), value);
-    if (value.type->is_scalar())
-      return value;
-    return RValue(
-        value.type->get_scalar_type(), value.type->is_floating()
-                                           ? builder.CreateFAddReduce(Value::zero(value.type->get_scalar_type()), value)
-                                           : builder.CreateAddReduce(value));
-  }
-  if (name == "product") {
-    auto value{rvalue(expectOneVectorized())};
-    if (value.type->scalar == Scalar::Bool)
-      value = construct(value.type->get_with_different_scalar(Scalar::Int), value);
-    if (value.type->is_scalar())
-      return value;
-    return RValue(
-        value.type->get_scalar_type(),
-        value.type->is_floating()
-            ? builder.CreateFMulReduce(construct(value.type->get_scalar_type(), context.get_compile_time_float(1)), value)
-            : builder.CreateMulReduce(value));
-  }
-  //--}
-  //--{ Math
-  if (name == "isfpclass") {
-    if (args.size() != 2 || !args[0].value.type->is_vectorized() || !args[1].value.is_compile_time_int())
-      intr.srcLoc.report_error("intrinsic '#isfpclass' expects 1 vectorized argument and 1 compile-time integer argument");
-    auto value{rvalue(args[0].value)};
-    return RValue(
-        value.type->get_with_different_scalar(Scalar::Bool),
-        builder.createIsFPClass(value, args[1].value.get_compile_time_int()));
-  }
-  if (name == "frexp") {
-    // TODO
-  }
-  if (name == "ldexp") {
-    if (!(args.size() == 2 &&
-          args.is_all_true([&](auto &arg) { return arg.value.type->is_scalar() || arg.value.type->is_vector(); }) &&
-          args[0].value.type->get_vector_size() == args[1].value.type->get_vector_size()))
-      intr.srcLoc.report_error(std::format("intrinsic '#{}' expects 2 same-size scalar or vector arguments", name));
-    auto value0{rvalue(args[0].value)};
-    auto value1{rvalue(args[1].value)};
-    if (!value0.type->is_floating())
-      value0 = construct(value0.type->get_with_different_scalar(Scalar::Float), value0, intr.srcLoc);
-    value1 = construct(value1.type->get_with_different_scalar(Scalar::Int), value1, intr.srcLoc);
-    return RValue(value0.type, llvm_emit_ldexp(builder, value0, value1)); // CreateBinaryIntrinsic doesn't work for ldexp!
-  }
-  if (name == "abs") {
-    auto value{rvalue(expectOneVectorized())};
-    return RValue(
-        value.type, value.type->is_floating()
-                        ? builder.CreateUnaryIntrinsic(Intr::fabs, value)
-                        : builder.CreateBinaryIntrinsic(Intr::abs, value, context.get_compile_time_bool(false)));
-  }
-  for (auto [intrName, intrID] :
-       std::array{std::pair("floor", Intr::floor), std::pair("ceil", Intr::ceil),                                    //
-                  std::pair("trunc", Intr::trunc), std::pair("round", Intr::round), std::pair("sqrt", Intr::sqrt),   //
-                  std::pair("sin", Intr::sin),     std::pair("cos", Intr::cos),     std::pair("tan", Intr::tan),     //
-                  std::pair("asin", Intr::asin),   std::pair("acos", Intr::acos),   std::pair("atan", Intr::atan),   //
-                  std::pair("sinh", Intr::sinh),   std::pair("cosh", Intr::cosh),   std::pair("tanh", Intr::tanh),   //
-                  std::pair("exp", Intr::exp),     std::pair("exp2", Intr::exp2),   std::pair("exp10", Intr::exp10), //
-                  std::pair("log", Intr::log),     std::pair("log2", Intr::log2),   std::pair("log10", Intr::log10)}) {
-    if (name == intrName) {
-      auto value{rvalue(expectOneVectorized())};
-      if (!value.type->is_color())
-        value = construct(value.type->get_with_different_scalar(Scalar::Float), value);
-      return RValue(value.type, builder.CreateUnaryIntrinsic(intrID, value));
-    }
-  }
-  if (name == "sign") {
-    auto value{rvalue(expectOneVectorized())};
-    if (!value.type->is_floating()) {
-      return RValue(
-          value.type, builder.CreateSelect(
-                          emit_op(AST::BinaryOp::CmpLt, value, context.get_compile_time_int(0)),
-                          construct(value.type, context.get_compile_time_int(-1)),
-                          construct(value.type, context.get_compile_time_int(+1))));
-    } else {
-      return RValue(
-          value.type,
-          builder.CreateBinaryIntrinsic(Intr::copysign, construct(value.type, context.get_compile_time_float(1)), value));
-    }
-  }
-  if (name == "atan2") {
-    // TODO
-  }
-  if (name == "pow") {
-    if (args.size() != 2 || !args[0].value.type->is_vectorized() || !args[1].value.type->is_vectorized())
-      intr.srcLoc.report_error(std::format("intrinsic '#{}' expects 2 vectorized arguments", name));
-    auto value0{rvalue(args[0].value)};
-    auto value1{rvalue(args[1].value)};
-    auto type{
-        context.get_common_type({value0.type, value1.type, context.get_float_type()}, /*defaultToUnion=*/false, intr.srcLoc)};
-    value0 = construct(type, value0, intr.srcLoc);
-    return RValue(
-        type, value1.type == context.get_int_type()
-                  ? llvm_emit_powi(builder, value0, value1) // CreateBinaryIntrinsic doesn't work for powi!
-                  : builder.CreateBinaryIntrinsic(Intr::pow, value0, construct(type, value1, intr.srcLoc)));
-  }
-  //--}
-  //--{ Debug
-  if (name == "assert") {
-    if (!((args.size() == 1 && args[0].value.type == context.get_bool_type()) ||
-          (args.size() == 2 && args[0].value.type == context.get_bool_type() &&
-           args[1].value.type == context.get_string_type())))
-      intr.srcLoc.report_error("intrinsic '#assert' expects 1 bool argument and 1 optional string argument");
-    auto name{context.get_unique_name("assert", get_llvm_function())};
-    auto blockFail{create_block(llvm_twine(name, ".fail"))};
-    auto blockPass{create_block(llvm_twine(name, ".pass"))};
-    emit_br(rvalue(args[0].value), blockPass, blockFail);
-    move_to(blockFail);
-    if (args.size() == 1) {
-      std::string message{"assertion failed"};
-      if (!args[0].src.empty()) {
-        message += ": ";
-        message += args[0].src.str();
-      }
-      emit_panic(message, intr.srcLoc);
-    } else
-      emit_panic(args[1].value, intr.srcLoc);
-    emit_br(blockPass); // Never actually happens
-    move_to(blockPass);
-    return {};
-  }
-  if (name == "breakpoint") {
-    if (!args.empty())
-      intr.srcLoc.report_error("intrinsic '#breakpoint' expects no arguments");
-    if (context.mdl.enableDebug)
-      builder.CreateIntrinsic(context.get_type<void>()->llvmType, Intr::debugtrap, {});
-    return context.get_compile_time_bool(true);
-  }
-  if (name == "print") {
-    // TODO
-  }
-  //--}
-  if (name == "select") {
-    if (args.size() != 3 || !args.is_all_true([](auto arg) { return arg.value.type->is_vectorized(); }))
-      intr.srcLoc.report_error("intrinsic '#select' expects 3 vectorized arguments");
-    auto cond{construct(args[0].value.type->get_with_different_scalar(Scalar::Bool), args[0].value, intr.srcLoc)};
-    auto ifPass{args[1].value};
-    auto ifFail{args[2].value};
-    auto type{context.get_common_type(
-        {ifPass.type, ifFail.type, cond.type->is_vector() ? cond.type : nullptr}, /*defaultToUnion=*/false, intr.srcLoc)};
-    ifPass = construct(type, ifPass, intr.srcLoc);
-    ifFail = construct(type, ifFail, intr.srcLoc);
-    return RValue(type, builder.CreateSelect(cond, ifPass, ifFail));
-  }
   if (name == "inline" || name == "flatten") {
     auto value{expectOne()};
-    inlines->push_back({value, intr.srcLoc, name == "flatten"});
+    sanity_check(inlines);
+    inlines->push_back({value, srcLoc, name == "flatten"});
     return value;
   }
-  if (name == "print") {
-    for (auto &arg : args)
-      emit_print(arg.value);
-    return context.get_compile_time_bool(true);
+  if (name.ends_with("of")) { // Avoid unnecessary if checks
+    if (name == "alignof") {
+      return context.get_compile_time_int(context.get_align_of(expectOneType()));
+    } else if (name == "sizeof") {
+      return context.get_compile_time_int(context.get_size_of(expectOneType()));
+    } else if (name == "typeof") {
+      return context.get_compile_time_type(expectOne().type);
+    }
   }
-  intr.srcLoc.report_error(std::format("unimplemented intrinsic '#{}'", name));
+  if (name.size() <= 5) { // Avoid unnecessary if checks
+    if (name == "frexp") {
+      // TODO
+    }
+    if (name == "ldexp") {
+      if (!(args.size() == 2 &&
+            args.is_all_true([&](auto &arg) { return arg.value.type->is_scalar() || arg.value.type->is_vector(); }) &&
+            args[0].value.type->get_vector_size() == args[1].value.type->get_vector_size()))
+        srcLoc.report_error(std::format("intrinsic '#{}' expects 2 same-size scalar or vector arguments", name));
+      auto value0{rvalue(args[0].value)};
+      auto value1{rvalue(args[1].value)};
+      if (!value0.type->is_floating())
+        value0 = construct(value0.type->get_with_different_scalar(Scalar::Float), value0, srcLoc);
+      value1 = construct(value1.type->get_with_different_scalar(Scalar::Int), value1, srcLoc);
+      return RValue(value0.type, llvm_emit_ldexp(builder, value0, value1)); // CreateBinaryIntrinsic doesn't work for ldexp!
+    }
+    for (auto [intrName, intrID] :
+         std::array{std::pair("floor", Intr::floor), std::pair("ceil", Intr::ceil),                                    //
+                    std::pair("trunc", Intr::trunc), std::pair("round", Intr::round), std::pair("sqrt", Intr::sqrt),   //
+                    std::pair("sin", Intr::sin),     std::pair("cos", Intr::cos),     std::pair("tan", Intr::tan),     //
+                    std::pair("asin", Intr::asin),   std::pair("acos", Intr::acos),   std::pair("atan", Intr::atan),   //
+                    std::pair("sinh", Intr::sinh),   std::pair("cosh", Intr::cosh),   std::pair("tanh", Intr::tanh),   //
+                    std::pair("exp", Intr::exp),     std::pair("exp2", Intr::exp2),   std::pair("exp10", Intr::exp10), //
+                    std::pair("log", Intr::log),     std::pair("log2", Intr::log2),   std::pair("log10", Intr::log10)}) {
+      if (name == intrName) {
+        auto value{rvalue(expectOneVectorized())};
+        if (!value.type->is_color())
+          value = construct(value.type->get_with_different_scalar(Scalar::Float), value);
+        return RValue(value.type, builder.CreateUnaryIntrinsic(intrID, value));
+      }
+    }
+  }
+  srcLoc.report_error(std::format("unimplemented intrinsic '#{}'", name));
   return {};
 }
 //--}
 
-void Emitter::emit_print(Value value) {
-  if (value.type->is_string()) {
-    auto callee{context.get_compile_time_callee(&Context::builtin_print_string)};
+Value Emitter::emit_call(Value value, const ArgList &args, const AST::SourceLocation &srcLoc) {
+  // Do we need to automatically visit any arguments?
+  if (args.has_any_visited()) {
+    auto i{args.index_of_first_visited()};
+    auto argsCopy{args};
+    return emit_visit(args[i].value, [&](Emitter &emitter, Value argValue) -> Value {
+      if (argValue.is_void()) {
+        // TODO Omit void arguments, but call anyway?
+        return {};
+      }
+      argsCopy[i].value = argValue;
+      argsCopy[i].isVisited = false;
+      return emitter.emit_call(value, argsCopy, srcLoc);
+    });
+  } else {
+    if (value.is_compile_time_intrinsic())
+      return emit_intrinsic(*value.get_compile_time_intrinsic(), args);
+    if (value.is_compile_time_type())
+      return construct(value.get_compile_time_type(), args, srcLoc);
+    if (value.is_compile_time_function())
+      return value.get_compile_time_function()->call(*this, args, srcLoc);
+    srcLoc.report_error("invalid call");
+    return {};
+  }
+}
+
+Value Emitter::emit_visit(Value value, const std::function<Value(Emitter &, Value)> &visitor) {
+  if (!value.type->is_union_or_pointer_to_union()) {
+    Value result{};
+    emit_scope([&](auto &emitter) { result = visitor(emitter, value); });
+    return result;
+  } else {
+    auto name{context.get_unique_name("visit", get_llvm_function())};
+    auto blockBegin{create_block(llvm_twine(name, ".begin"))};
+    auto blockEnd{create_block(llvm_twine(name, ".end"))};
+    auto blockUnreachable{create_block(llvm_twine(name, ".unreachable"))};
+    emit_br_and_move_to(blockBegin);
+
+    auto localReturns{llvm::SmallVector<Return>{}};
+    auto idx{rvalue(access(value, "#idx"))};
+    auto ptr{value.type->is_union() ? rvalue(access(value, "#ptr")) : Value()};
+    auto switchInst{builder.CreateSwitch(idx, blockUnreachable)};
+    bool anyNonVoid{};
+    for (unsigned i{}; auto type : static_cast<UnionType *>(value.type->get_most_pointed_to_type())->types) {
+      auto blockCase{create_block(std::format("{}.case.{}", name, i))};
+      switchInst->addCase(static_cast<llvm::ConstantInt *>(context.get_compile_time_int(i)), blockCase);
+      emit_scope(blockCase, blockEnd, [&](Emitter &emitter) {
+        Value valueCast{};
+        if (value.type->is_union()) {
+          valueCast = LValue(type, ptr);
+          valueCast = value.is_rvalue() ? emitter.rvalue(valueCast) : valueCast;
+        } else {
+          sanity_check(value.type->is_pointer());
+          valueCast = value;
+          valueCast.type = context.get_pointer_type(type, value.type->get_pointer_depth());
+        }
+        localReturns.push_back({visitor(emitter, valueCast), emitter.get_insert_block(), {}});
+        if (!localReturns.back().value.is_void())
+          anyNonVoid = true;
+      });
+      i++;
+    }
+    llvm_move_block_to_end(blockUnreachable);
+    builder.SetInsertPoint(blockUnreachable);
+    builder.CreateUnreachable();
+    llvm_move_block_to_end(blockEnd);
+    move_to(blockEnd);
+    if (anyNonVoid)
+      return emit_final_return_phi(context.get_auto_type(), localReturns);
+    else
+      return {};
+  }
+}
+
+void Emitter::emit_return(Value value, const AST::SourceLocation &srcLoc) {
+  sanity_check(!has_terminator());
+  sanity_check(returns);
+  returns->push_back({rvalue(value), get_insert_block(), srcLoc});
+  emit_unwind_and_br(afterReturn);
+}
+
+Value Emitter::emit_final_return_phi(Type *type, llvm::ArrayRef<Return> returns, const AST::SourceLocation &srcLoc) {
+  sanity_check(type);
+  sanity_check(!returns.empty());
+  if (type->is_abstract()) {
+    auto returnTypes{llvm::SmallVector<Type *>{}};
+    for (auto &[value, block, srcLoc] : returns)
+      returnTypes.push_back(value.type);
+    auto returnType{context.get_common_type(returnTypes, /*defaultToUnion=*/true, srcLoc)};
+    if (context.get_conversion_rule(returnType, type) == ConversionRule::NotAllowed)
+      srcLoc.report_error(std::format("inferred return type '{}' is not convertible to '{}'", returnType->name, type->name));
+    type = returnType;
+  }
+  auto phi{builder.CreatePHI(type->llvmType, returns.size())};
+  for (auto [value, block, srcLoc] : returns) {
+    Emitter emitter{this};
+    emitter.builder.restoreIP(llvm_insert_point_before_terminator(block));
+    auto value2{emitter.construct(type, value, srcLoc)};
+    phi->addIncoming(value2, emitter.get_insert_block());
+  }
+  return RValue(type, phi);
+}
+
+Type *Emitter::emit_final_return(Type *type, llvm::ArrayRef<Return> returns, const AST::SourceLocation &srcLoc) {
+  llvm_move_block_to_end(afterReturn);
+  move_to(afterReturn);
+  if (type == context.get_void_type()) {
+    for (auto &returnInfo : returns)
+      if (!returnInfo.value.is_void())
+        srcLoc.report_error("non-'void' return statement in 'void' function");
+    builder.CreateRetVoid();
+    return type;
+  } else {
+    auto returnValue{emit_final_return_phi(type, returns, srcLoc)};
+    builder.CreateRet(returnValue);
+    return returnValue.type;
+  }
+}
+
+//--{ Emit: Print
+extern "C" {
+
+SMDL_EXPORT void smdl_print_string(const string_t &what) { llvm::errs() << std::string_view(what); }
+
+SMDL_EXPORT void smdl_print_quoted_string(const string_t &what) {
+  auto &os{llvm::errs()};
+  os << '"';
+  for (char ch : std::string_view(what)) {
+    switch (ch) {
+    case '\\': os << "\\"; break;
+    case '\a': os << "\\a"; break;
+    case '\b': os << "\\b"; break;
+    case '\f': os << "\\f"; break;
+    case '\n': os << "\\n"; break;
+    case '\r': os << "\\r"; break;
+    case '\t': os << "\\t"; break;
+    case '\v': os << "\\v"; break;
+    case '"': os << "\\\""; break;
+    default: {
+      if (std::isgraph(static_cast<uint8_t>(ch))) {
+        os << ch;
+      } else {
+        os << "\\x";
+        os << "0123456789abcdef"[static_cast<uint8_t>(ch) / 16];
+        os << "0123456789abcdef"[static_cast<uint8_t>(ch) % 16];
+      }
+      break;
+    }
+    }
+  }
+  os << '"';
+}
+
+SMDL_EXPORT void smdl_print_bool(int_t what) { llvm::errs() << (what != 0 ? "true" : "false"); }
+
+SMDL_EXPORT void smdl_print_int(int_t what) { llvm::errs() << what; }
+
+SMDL_EXPORT void smdl_print_float(float_t what) { llvm::errs() << std::format("{:0.5g}", what); }
+
+SMDL_EXPORT void smdl_print_double(double_t what) { llvm::errs() << std::format("{:0.5g}", what); }
+
+SMDL_EXPORT void smdl_print_pointer(const void *what) { llvm::errs() << std::format("{}", what); }
+
+} // extern "C"
+
+void Emitter::emit_print(Value value, bool quoteStrings) {
+  if (value.is_void()) {
+    emit_print(context.get_compile_time_string("null"));
+  } else if (value.type->is_pointer()) {
+    auto callee{context.get_compile_time_foreign_callee("smdl_print_pointer", &smdl_print_pointer)};
+    builder.CreateCall(callee, {rvalue(value).llvmValue});
+  } else if (value.type->is_string()) {
+    auto callee{
+        quoteStrings ? context.get_compile_time_foreign_callee("smdl_print_quoted_string", &smdl_print_quoted_string)
+                     : context.get_compile_time_foreign_callee("smdl_print_string", &smdl_print_string)};
     builder.CreateCall(callee, {lvalue(value).llvmValue}); // Passes by pointer
   } else if (value.type->is_enum()) {
     emit_print(construct(context.get_string_type(), value));
   } else if (value.type->is_scalar()) {
     auto callee{llvm::FunctionCallee()};
     switch (value.type->scalar) {
-    case Scalar::Bool: callee = context.get_compile_time_callee(&Context::builtin_print_bool); break;
-    case Scalar::Int: callee = context.get_compile_time_callee(&Context::builtin_print_int); break;
-    case Scalar::Float: callee = context.get_compile_time_callee(&Context::builtin_print_float); break;
-    case Scalar::Double: callee = context.get_compile_time_callee(&Context::builtin_print_double); break;
+    case Scalar::Bool: callee = context.get_compile_time_foreign_callee("smdl_print_bool", &smdl_print_bool); break;
+    case Scalar::Int: callee = context.get_compile_time_foreign_callee("smdl_print_int", &smdl_print_int); break;
+    case Scalar::Float: callee = context.get_compile_time_foreign_callee("smdl_print_float", &smdl_print_float); break;
+    case Scalar::Double: callee = context.get_compile_time_foreign_callee("smdl_print_double", &smdl_print_double); break;
     default: sanity_check(false); break;
     }
     if (value.type->scalar == Scalar::Bool)
@@ -1461,20 +1539,51 @@ void Emitter::emit_print(Value value) {
     emit_print(context.get_compile_time_string(")"));
   } else if (value.type->is_matrix()) {
     // TODO
+  } else if (value.type->is_array()) {
+    emit_print(context.get_compile_time_string("["));
+    emit_print(access(value, 0));
+    for (uint32_t i{1}; i < value.type->get_array_size(); i++) {
+      emit_print(context.get_compile_time_string(", "));
+      emit_print(access(value, i), /*quoteStrings=*/true);
+    }
+    emit_print(context.get_compile_time_string("]"));
   } else if (value.type->is_struct()) {
     emit_print(context.get_compile_time_string(std::format("{}(", value.type->name)));
     auto structType{static_cast<StructType *>(value.type)};
     for (uint32_t i{}; i < structType->fields.size(); i++) {
-      // TODO Quote strings
       emit_print(context.get_compile_time_string(std::format("{}: ", structType->fields[i].name)));
-      emit_print(access(value, structType->fields[i].name));
+      emit_print(access(value, structType->fields[i].name), /*quoteStrings=*/true);
       if (i + 1 < structType->fields.size())
         emit_print(context.get_compile_time_string(", "));
     }
     emit_print(context.get_compile_time_string(")"));
   } else if (value.type->is_union()) {
-    // TODO
+    emit_visit(value, [&](Emitter &emitter, Value value) -> Value {
+      emitter.emit_print(value, quoteStrings);
+      return {};
+    });
   }
 }
+//--}
+
+//--{ Emit: Panic
+extern "C" {
+
+SMDL_EXPORT void smdl_panic(const string_t &message, const source_location_t &srcLoc) {
+  throw Error(std::string(message), std::string(srcLoc.file), srcLoc.line);
+}
+
+} // extern "C"
+
+void Emitter::emit_panic(Value message, const AST::SourceLocation &srcLoc) {
+  sanity_check(message);
+  sanity_check(message.type == context.get_string_type());
+  auto inst{builder.CreateCall(
+      context.get_compile_time_foreign_callee("smdl_panic", &smdl_panic),
+      {lvalue(message).llvmValue, lvalue(context.get_compile_time_source_location(srcLoc)).llvmValue})};
+  inst->setIsNoInline();
+  inst->setDoesNotReturn();
+}
+//--}
 
 } // namespace smdl::Compiler

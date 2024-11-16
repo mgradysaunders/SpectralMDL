@@ -530,6 +530,8 @@ public:
 
   [[nodiscard]] bool recursive_match(Emitter &emitter, Type *type);
 
+  [[nodiscard]] bool is_zero_by_default() final { return false; }
+
 public:
   llvm::SmallVector<Type *> types{};
 

@@ -301,13 +301,26 @@ public:
 
   [[nodiscard]] Value get_compile_time_pointer(const void *value);
 
-  template <typename T, typename... U> [[nodiscard]] llvm::FunctionCallee get_compile_time_callee(T (*value)(U...)) {
+  [[nodiscard]] Value get_compile_time_union_index_map(UnionType *srcType, UnionType *dstType);
+
+  template <typename T, typename... U> //
+  [[nodiscard]] llvm::FunctionCallee get_compile_time_callee(T (*value)(U...)) {
     return llvm::FunctionCallee(
         llvm::FunctionType::get(get_type<T>()->llvmType, {get_type<U>()->llvmType...}, /*isVarArg=*/false),
         get_compile_time_pointer(reinterpret_cast<const void *>(value)));
   }
 
-  [[nodiscard]] Value get_compile_time_union_index_map(UnionType *srcType, UnionType *dstType);
+  template <typename T, typename... U> //
+  [[nodiscard]] llvm::FunctionCallee get_compile_time_foreign_callee(llvm::StringRef name, T (*value)(U...)) {
+    auto &callee{builtinForeignCallees[name]};
+    if (!callee) {
+      auto llvmType{llvm::FunctionType::get(get_type<T>()->llvmType, {get_type<U>()->llvmType...}, /*isVarArg=*/false)};
+      auto llvmFunc{llvm::Function::Create(llvmType, llvm::Function::ExternalLinkage, name, llvmModule)};
+      llvmFunc->setDSOLocal(false);
+      callee = llvm::FunctionCallee(llvmType, llvmFunc);
+    }
+    return callee;
+  }
   //--}
 
 public:
@@ -359,6 +372,8 @@ private:
   llvm::StringMap<unique_bump_ptr<AST::Expr>> builtinExprs{};
 
   llvm::SmallVector<unique_bump_ptr<AST::Decl>> builtinDecls{};
+
+  llvm::StringMap<llvm::FunctionCallee> builtinForeignCallees{};
 
   llvm::DenseMap<AST::Function *, unique_bump_ptr<Function>> functions{};
 
@@ -501,19 +516,6 @@ private:
       type.reset(bump_allocate<T>(*this, keys...));
     return type.get();
   }
-
-public:
-  static void builtin_print_string(const string_t &what);
-
-  static void builtin_print_bool(int_t what);
-
-  static void builtin_print_int(int_t what);
-
-  static void builtin_print_float(float_t what);
-
-  static void builtin_print_double(double_t what);
-
-  static void builtin_panic(const string_t &what, const source_location_t &srcLoc);
 };
 
 } // namespace smdl::Compiler

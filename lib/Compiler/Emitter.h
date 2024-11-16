@@ -68,83 +68,6 @@ public:
   [[nodiscard]] llvm::BasicBlock *create_block(const llvm::Twine &name) {
     return llvm::BasicBlock::Create(context.llvmContext, name, sanity_check_nonnull(get_llvm_function()));
   }
-
-  [[nodiscard]] Value emit_alloca(const llvm::Twine &name, Type *type);
-
-  [[nodiscard]] Value lvalue(Value value, bool manageLifetime = true);
-
-  [[nodiscard]] Value rvalue(Value value);
-
-  void emit_end_lifetime(Value value) {
-    if (value.is_lvalue() && llvm::isa<llvm::AllocaInst>(value.llvmValue))
-      builder.CreateLifetimeEnd(value, builder.getInt64(context.get_size_of(value.type)));
-  }
-
-  void emit_scope(llvm::BasicBlock *blockStart, llvm::BasicBlock *blockEnd, std::invocable<Emitter &> auto &&func) {
-    Emitter emitter{this};
-    emitter.move_to(blockStart);
-    emitter.afterEndScope = {crumb, blockEnd};
-    std::invoke(std::forward<decltype(func)>(func), emitter);
-    emitter.emit_unwind_and_br(emitter.afterEndScope);
-  }
-
-  void emit_scope(std::invocable<Emitter &> auto &&func) { // "Thin scope"
-    Crumb *topCrumb{crumb};
-    std::invoke(std::forward<decltype(func)>(func), *this);
-    emit_unwind(topCrumb);
-  }
-
-  void emit_unwind_and_br(Label label) {
-    if (!has_terminator())
-      emit_unwind(label.crumb), emit_br(label.block);
-  }
-
-  void emit_unwind(Crumb *crumb0);
-
-  [[nodiscard]] Value emit_cond(AST::Expr &expr) {
-    Value cond{};
-    emit_scope([&](Emitter &emitter) { cond = emitter.construct(context.get_bool_type(), emitter.emit(expr), expr.srcLoc); });
-    return cond;
-  }
-
-  void emit_br_and_move_to(llvm::BasicBlock *block) { emit_br(block), move_to(block); }
-
-  void emit_br(llvm::BasicBlock *block) {
-    sanity_check(!has_terminator());
-    builder.CreateBr(block);
-  }
-
-  void emit_br(Value cond, llvm::BasicBlock *blockPass, llvm::BasicBlock *blockFail) {
-    sanity_check(!has_terminator());
-    builder.CreateCondBr(construct(context.get_bool_type(), cond), blockPass, blockFail);
-  }
-
-  void emit_late_if(AST::Expr *expr, std::invocable<Emitter &> auto &&func) {
-    if (!expr) {
-      std::invoke(func, *this);
-    } else {
-      auto name{context.get_unique_name("late-if", get_llvm_function())};
-      auto blockPass{create_block(llvm_twine(name, ".pass"))};
-      auto blockFail{create_block(llvm_twine(name, ".fail"))};
-      emit_br(emit_cond(*expr), blockPass, blockFail);
-      emit_scope(blockPass, blockFail, std::forward<decltype(func)>(func));
-      llvm_move_block_to_end(blockFail);
-      move_to(blockFail);
-    }
-  }
-
-  [[nodiscard]] Value emit_phi(Type *type, llvm::ArrayRef<std::pair<llvm::Value *, llvm::BasicBlock *>> inputs) {
-    auto phiInst{builder.CreatePHI(type->llvmType, inputs.size())};
-    for (auto [value, block] : inputs)
-      phiInst->addIncoming(value, block);
-    return RValue(type, phiInst);
-  }
-
-  void emit_panic(Value message, const AST::SourceLocation &srcLoc);
-
-  void emit_panic(llvm::StringRef message, const AST::SourceLocation &srcLoc) {
-    emit_panic(context.get_compile_time_string(message), srcLoc);
-  }
   //--}
 
 public:
@@ -187,15 +110,9 @@ public:
     return type->construct(*this, args, srcLoc);
   }
 
-  [[nodiscard]] Value emit_call(Value value, const ArgList &args, const AST::SourceLocation &srcLoc = {});
+  [[nodiscard]] Value lvalue(Value value, bool manageLifetime = true);
 
-  void emit_visit(Value value, const std::function<void(Emitter &emitter, Value value)> &visitor);
-
-  void emit_return(Value value, const AST::SourceLocation &srcLoc = {});
-
-  Value emit_final_return_phi(Type *type, llvm::ArrayRef<Return> returns, const AST::SourceLocation &srcLoc = {});
-
-  Type *emit_final_return(Type *type, llvm::ArrayRef<Return> returns, const AST::SourceLocation &srcLoc = {});
+  [[nodiscard]] Value rvalue(Value value);
   //--}
 
 public:
@@ -347,9 +264,11 @@ public:
   }
 
   Value emit(AST::Visit &stmt) {
-    emit_visit(emit(stmt.what), [&](Emitter &emitter, Value value) {
+    emit_visit(emit(stmt.what), [&](Emitter &emitter, Value value) -> Value {
       emitter.declare(*stmt.name, value);
-      emitter.emit(stmt.body);
+      if (!value.is_void())
+        emitter.emit(stmt.body);
+      return {};
     });
     return {};
   }
@@ -359,13 +278,86 @@ public:
 
   ArgList emit(const AST::ArgList &astArgs);
 
+public:
+  [[nodiscard]] Value emit_alloca(const llvm::Twine &name, Type *type);
+
+  void emit_end_lifetime(Value value);
+
+  void emit_scope(llvm::BasicBlock *blockStart, llvm::BasicBlock *blockEnd, std::invocable<Emitter &> auto &&func) {
+    Emitter emitter{this};
+    emitter.move_to(blockStart);
+    emitter.afterEndScope = {crumb, blockEnd};
+    std::invoke(std::forward<decltype(func)>(func), emitter);
+    emitter.emit_unwind_and_br(emitter.afterEndScope);
+  }
+
+  void emit_scope(std::invocable<Emitter &> auto &&func) { // "Thin scope"
+    Crumb *topCrumb{crumb};
+    std::invoke(std::forward<decltype(func)>(func), *this);
+    emit_unwind(topCrumb);
+  }
+
+  void emit_unwind_and_br(Label label);
+
+  void emit_unwind(Crumb *crumb0);
+
+  Value emit_cond(AST::Expr &expr) {
+    Value cond{};
+    emit_scope([&](Emitter &emitter) { cond = emitter.construct(context.get_bool_type(), emitter.emit(expr), expr.srcLoc); });
+    return cond;
+  }
+
+  void emit_br_and_move_to(llvm::BasicBlock *block) { emit_br(block), move_to(block); }
+
+  void emit_br(llvm::BasicBlock *block);
+
+  void emit_br(Value cond, llvm::BasicBlock *blockPass, llvm::BasicBlock *blockFail);
+
+  void emit_late_if(AST::Expr *expr, std::invocable<Emitter &> auto &&func) {
+    if (!expr) {
+      std::invoke(func, *this);
+    } else {
+      auto name{context.get_unique_name("late-if", get_llvm_function())};
+      auto blockPass{create_block(llvm_twine(name, ".pass"))};
+      auto blockFail{create_block(llvm_twine(name, ".fail"))};
+      emit_br(emit_cond(*expr), blockPass, blockFail);
+      emit_scope(blockPass, blockFail, std::forward<decltype(func)>(func));
+      llvm_move_block_to_end(blockFail);
+      move_to(blockFail);
+    }
+  }
+
+  Value emit_phi(Type *type, llvm::ArrayRef<std::pair<llvm::Value *, llvm::BasicBlock *>> inputs);
+
   Value emit_op(AST::UnaryOp op, Value val, const AST::SourceLocation &srcLoc = {});
 
   Value emit_op(AST::BinaryOp op, Value lhs, Value rhs, const AST::SourceLocation &srcLoc = {});
 
-  Value emit_intrinsic(const AST::Intrinsic &intr, const ArgList &args);
+  Value emit_logical_op(
+      AST::BinaryOp op, const std::function<Value(Emitter &)> &lhs, const std::function<Value(Emitter &)> &rhs,
+      const AST::SourceLocation &srcLoc = {});
 
-  void emit_print(Value value);
+  Value emit_intrinsic(llvm::StringRef name, const ArgList &args, const AST::SourceLocation &srcLoc = {});
+
+  Value emit_intrinsic(const AST::Intrinsic &intr, const ArgList &args) { return emit_intrinsic(intr.name, args, intr.srcLoc); }
+
+  Value emit_call(Value value, const ArgList &args, const AST::SourceLocation &srcLoc = {});
+
+  Value emit_visit(Value value, const std::function<Value(Emitter &, Value)> &visitor);
+
+  void emit_return(Value value, const AST::SourceLocation &srcLoc = {});
+
+  Value emit_final_return_phi(Type *type, llvm::ArrayRef<Return> returns, const AST::SourceLocation &srcLoc = {});
+
+  Type *emit_final_return(Type *type, llvm::ArrayRef<Return> returns, const AST::SourceLocation &srcLoc = {});
+
+  void emit_print(Value value, bool quoteStrings = false);
+
+  void emit_panic(Value message, const AST::SourceLocation &srcLoc);
+
+  void emit_panic(llvm::StringRef message, const AST::SourceLocation &srcLoc) {
+    emit_panic(context.get_compile_time_string(message), srcLoc);
+  }
 
 public:
   /// The parent emitter, if applicable.
