@@ -1,0 +1,36 @@
+#smdl_syntax
+
+struct Horse {
+  string name = "Cliff";
+  bool has_saddle = true;
+};
+
+struct Zebra {
+  string name = "Biff";
+  int stripes = 18;
+};
+
+struct Buffalo {
+  string name = "Buff";
+  double horn_size = 1.2;
+};
+
+@(pure noinline) 
+auto get_implicit_union_from_conditional(int i) = i == 0 ? Horse() : (i == 1 ? Zebra() : Buffalo());
+
+@(pure noinline)
+auto get_implicit_union_from_returns(int i) {
+  switch (i) {
+    case 0: return Horse();
+    case 1: return Zebra();
+    default: break;
+  }
+  return Buffalo();
+}
+
+unit_test "Implicit unions" {
+  auto biff(get_implicit_union_from_conditional(1));
+  auto buff(get_implicit_union_from_returns(2));
+  #assert(#typeof(visit biff) == Zebra);
+  #assert(#typeof(visit buff) == Buffalo);
+}

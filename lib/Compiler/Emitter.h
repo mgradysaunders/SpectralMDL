@@ -297,6 +297,12 @@ public:
     emit_unwind(topCrumb);
   }
 
+  Value emit_scope(AST::Expr &expr) {
+    Value value{};
+    emit_scope([&](Emitter &emitter) { value = emitter.emit(expr); });
+    return value;
+  }
+
   void emit_unwind_and_br(Label label);
 
   void emit_unwind(Crumb *crumb0);

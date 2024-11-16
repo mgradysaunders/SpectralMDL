@@ -198,8 +198,8 @@ Value Emitter::emit(AST::Variable &decl) {
     auto &declValName{*declVal.name};
     context.validate_decl_name("variable", declValName);
     Value value{};
-    // NOTE: Initialization is inside an 'emit_scope' to limit lifetimes of temporary 
-    // declarations 't := something', but the following 'construct()' is outside of the 
+    // NOTE: Initialization is inside an 'emit_scope' to limit lifetimes of temporary
+    // declarations 't := something', but the following 'construct()' is outside of the
     // scope so that captured sizes '[<N>]' persist after this declaration.
     if (declVal.init) {
       emit_scope([&](auto &emitter) { value = emitter.emit(declVal.init); });
@@ -537,17 +537,19 @@ Value Emitter::emit(AST::Switch &stmt) {
   if (!blockDefault)
     blockDefault = blockEnd;
   emit_br_and_move_to(blockBegin);
-  auto what{construct(context.get_int_type(), emit(stmt.what), stmt.srcLoc)};
-  auto inst{builder.CreateSwitch(what, blockDefault)};
+  auto what{construct(context.get_int_type(), emit_scope(*stmt.what), stmt.srcLoc)};
+  auto switchInst{builder.CreateSwitch(what, blockDefault)};
   emit_scope(blockBegin, blockEnd, [&](auto &emitter) {
     emitter.afterBreak = {crumb, blockEnd};
     for (size_t i{}; auto &[astCase, cond, block] : cases) {
       emitter.move_to(block);
-      for (auto &subStmt : astCase->stmts)
-        if (emitter.emit(subStmt); emitter.has_terminator())
+      for (auto &subStmt : astCase->stmts) 
+        if (emitter.emit(subStmt); emitter.has_terminator()) 
           break;
       if (cond)
-        inst->addCase(cond, block);
+        switchInst->addCase(cond, block);
+      if (emitter.has_terminator())
+        emitter.crumb = crumb; // Reset crumb after unconditional 'break', 'continue', or 'return'
       if (++i < cases.size()) {
         if (!emitter.has_terminator())
           emitter.emit_br(cases[i].block);
@@ -834,18 +836,17 @@ Value Emitter::emit_op(AST::BinaryOp op, Value lhs, Value rhs, const AST::Source
     rhs = construct(context.get_bool_type(), rhs, srcLoc);
   }
   //--}
-
   const auto lhsType{lhs.type};
   const auto rhsType{rhs.type};
   lhs = rvalue(lhs);
   rhs = rvalue(rhs);
   if (AST::is_compare_op(op)) {
-    //--{ Comparison: Enum
+    //--{ Compare operators: Enum
     if (lhsType->is_enum() && rhsType->is_enum()) {
       return RValue(context.get_bool_type(), builder.CreateCmp(*llvm_compare_op(Scalar::Int, op), lhs, rhs));
     }
     //--}
-    //--{ Comparison: String
+    //--{ Compare operators: String
     if (lhsType == context.get_string_type() && rhsType == context.get_string_type()) {
       // If both compile-time strings, do the comparison at compile time. Otherwise, build a
       // call to 'strncmp' with `llvm::emitStrNCmp'.
@@ -878,7 +879,7 @@ Value Emitter::emit_op(AST::BinaryOp op, Value lhs, Value rhs, const AST::Source
       }
     }
     //--}
-    //--{ Comparison: Struct
+    //--{ Compare operators: Struct
     if (lhsType->is_struct() && rhsType == lhsType) {
       const auto structType{static_cast<StructType *>(lhsType)};
       auto name{context.get_unique_name("compare", get_llvm_function())};
@@ -921,7 +922,7 @@ Value Emitter::emit_op(AST::BinaryOp op, Value lhs, Value rhs, const AST::Source
               *llvm_compare_op(Scalar::Int, op), emit_phi(context.get_int_type(), phiInputs), context.get_compile_time_int(0)));
     }
     //--}
-    //--{ Comparison: Union
+    //--{ Compare operators: Union
     if (lhsType->is_union() && rhsType->is_union()) {
       // TODO
     }

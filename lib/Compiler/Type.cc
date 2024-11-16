@@ -566,7 +566,7 @@ Value ColorType::construct(Emitter &emitter, const ArgList &args, const AST::Sou
 //--{ CompilerType
 CompilerType::CompilerType(Context &context, const llvm::Twine &name) : TypeSubclass(context) {
   init_name(name);
-  llvmType = llvm::PointerType::get(context.llvmContext, 0);
+  llvmType = llvm::Type::getIntNTy(context.llvmContext, sizeof(void *) * 8);
 }
 //--}
 
