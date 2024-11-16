@@ -16,6 +16,11 @@ https://www.nvidia.com/en-us/design-visualization/technologies/material-definiti
 which is intended to be useful as a middleware {cpp} library in offline 
 physically-based rendering programs.
 
+SpectralMDL is developed at the 
+https://www.rit.edu/dirs[Digital Imaging and Remote Sensing (DIRS)] laboratory
+at the Rochester Institute of Technology in support of the http://dirsig.cis.rit.edu[DIRSIG]
+simulation tool.
+
 [#pages]
 == Pages
 
@@ -25,7 +30,6 @@ physically-based rendering programs.
 * xref:language-extensions.adoc[Language Extensions]
 ** Listing of all xref:list-function-attributes.adoc[Function Attributes]
 ** Listing of all xref:list-intrinsics.adoc[Intrinsics]
-
 
 [#introduction-to-mdl]
 == Introduction to MDL 

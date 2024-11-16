@@ -53,13 +53,6 @@ struct Dog: Animal {
 // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 typedef (Cat | Dog) AnyAnimal;
 
-unit_test "Type checks" {
-  #assert(#typeof(Animal()) == Cat); // Default constructor returns 'Cat'
-  #assert(Cat <: Animal);
-  #assert(Dog <: Animal);
-  #assert(AnyAnimal <: Animal); // AnyAnimal is always an Animal!
-}
-
 // 'Animal' is an abstract type, so 'get_animal_name()' is 
 // essentially a template function.
 //
@@ -88,6 +81,10 @@ string get_animal_name(Animal animal) = animal.name;
 string get_animal_union_name(AnyAnimal animal) = get_animal_name(animal);
 
 unit_test "Implied type switching" {
+  #assert(#typeof(Animal()) == Cat); // Default constructor returns 'Cat'
+  #assert(Cat <: Animal);
+  #assert(Dog <: Animal);
+  #assert(AnyAnimal <: Animal); // AnyAnimal is always an Animal!
   #assert(get_animal_union_name(Cat()) == "Fe");
   #assert(get_animal_union_name(Dog()) == "Doug");
 }
