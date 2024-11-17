@@ -214,6 +214,9 @@ public:
   /// The type.
   Type *type{};
 
+  /// Is void? (Needed for API compatibility, but discarded by compiler?)
+  bool isVoid{};
+
   /// Is const?
   bool isConst{};
 

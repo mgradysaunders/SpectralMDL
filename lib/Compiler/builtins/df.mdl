@@ -2,35 +2,38 @@
 #smdl_syntax
 
 using ::math import *;
+
+import ::microfacet::*;
+
 import ::state::*;
 
 export enum scatter_mode { scatter_none = 0, scatter_reflect = 1, scatter_transmit = 2, scatter_reflect_transmit = 3 };
 
 //--{ Helpers: Monte carlo
-@(pure) bool weighted_bool_sample(&float u, float weight) {
-  return *u < weight ? (*u = (*u / weight), true) : (*u = (*u - weight) / (1 - weight), false);
+@(pure) bool weighted_bool_sample(const &float xi, float weight) {
+  return *xi < weight ? (*xi = (*xi / weight), true) : (*xi = (*xi - weight) / (1 - weight), false);
 }
 
-@(pure) int uniform_wavelength_index_sample(&float u) {
-  const int i(#min(int(*u *= $WAVELENGTH_BASE_MAX), $WAVELENGTH_BASE_MAX - 1));
-  *u -= i;
+@(pure) int uniform_wavelength_index_sample(const &float xi) {
+  const int i(#min(int(*xi *= $WAVELENGTH_BASE_MAX), $WAVELENGTH_BASE_MAX - 1));
+  *xi -= i;
   return i;
 }
 
-@(pure) float2 uniform_disk_sample(float2 u) {
-  u = 2 * u - 1;
-  return float2(0) if (#all(u == 0));
+@(pure) float2 uniform_disk_sample(float2 xi) {
+  xi = 2 * xi - 1;
+  return float2(0) if (#all(xi == 0));
   float rad(0);
   float phi(0);
-  if ((absu := #abs(u), absu.x > absu.y))
-    rad = u.x, phi = $PI / 4 * (u.y / u.x);
+  if ((absxi := #abs(xi), absxi.x > absxi.y))
+    rad = xi.x, phi = $PI / 4 * (xi.y / xi.x);
   else
-    rad = u.y, phi = $PI / 2 - $PI / 4 * (u.x / u.y);
+    rad = xi.y, phi = $PI / 2 - $PI / 4 * (xi.x / xi.y);
   return rad * float2(#cos(phi), #sin(phi));
 }
 
-@(pure) auto cosine_hemisphere_sample(float2 u) {
-  return float3((p := uniform_disk_sample(u)), #sqrt(#max(1 - #sum(p * p), 0)));
+@(pure) float3 cosine_hemisphere_sample(float2 xi) {
+  return float3((p := uniform_disk_sample(xi)), #sqrt(#max(1 - #sum(p * p), 0)));
 }
 //--}
 
@@ -187,7 +190,7 @@ struct eval_bsdf_sample_result {
 export struct diffuse_reflection_bsdf: bsdf {
   color tint = color(1.0);
   float roughness = 0.0;
-  string handle = "";
+  void string handle = "";
 };
 auto eval_bsdf(const &diffuse_reflection_bsdf this, inline const &eval_bsdf_parameters params) {
   if (mode == scatter_reflect) {
@@ -209,7 +212,7 @@ auto eval_bsdf_sample(const &diffuse_reflection_bsdf this, inline const &eval_bs
 //--{ BSDF: diffuse_transmission_bsdf
 export struct diffuse_transmission_bsdf: bsdf {
   color tint = color(1.0);
-  string handle = "";
+  void string handle = "";
 };
 auto eval_bsdf(const &diffuse_transmission_bsdf this, inline const &eval_bsdf_parameters params) {
   if (mode == scatter_transmit) {
@@ -223,12 +226,33 @@ auto eval_bsdf_sample(const &diffuse_transmission_bsdf this, inline const &eval_
 }
 //--}
 
+//--{ BSDF: specular_bsdf
+export struct specular_bsdf: bsdf {
+  color tint = color(1.0);
+  scatter_mode mode = scatter_reflect;
+  void string handle = "";
+};
+auto eval_bsdf(const &specular_bsdf this, const &eval_bsdf_parameters params) {
+  return eval_bsdf_result(is_black: true);
+}
+auto eval_bsdf_sample(const &specular_bsdf this, inline const &eval_bsdf_sample_parameters params) {
+  const auto brdf_weight(#select((int(this.mode) & int(scatter_reflect)), 1.0, 0.0));
+  const auto btdf_weight(#select((int(this.mode) & int(scatter_transmit)), 1.0, 0.0));
+  const auto brdf_prob(brdf_weight / (brdf_weight + btdf_weight));
+  if (xi.x < brdf_prob) {
+    return eval_bsdf_sample_result(wi: reflect(wo, float3(0, 0, 1)), mode: scatter_reflect, delta_f: this.tint);
+  } else {
+    return eval_bsdf_sample_result(wi: refract(wo, float3(0, 0, 1), #select(hit_side < 0, 1 / ior, ior)), mode: scatter_transmit, delta_f: this.tint);
+  }
+}
+//--}
+
 //--{ BSDF: sheen_bsdf
 export struct sheen_bsdf: bsdf {
   float roughness;
   color tint = color(1.0);
   color multiscatter_tint = color(0.0);
-  string handle = "";
+  void string handle = "";
 };
 @(pure) auto sheen_l(const auto fit, const float cos_theta) {
   return fit[0] / (1 + fit[1] * #pow(cos_theta, fit[2])) + fit[3] * cos_theta + fit[4];
@@ -286,11 +310,64 @@ export struct weighted_layer: bsdf {
   return eval_bsdf_result(pdf: lerp(result0.pdf, result1.pdf, this.weight), f: lerp(result0.f, result1.f, this.weight));
 }
 @(macro) auto eval_bsdf_sample(const &weighted_layer this, const &eval_bsdf_sample_parameters params) {
-  if (weighted_bool_sample(&params.xi.z, this.weight)) {
-    return eval_bsdf_sample(&this.layer, params, this.normal);
-  } else {
-    return eval_bsdf_sample(&this.base, params);
-  }
+  return weighted_bool_sample(&params.xi.z, this.weight) 
+    ? eval_bsdf_sample(&this.layer, params, this.normal) 
+    : eval_bsdf_sample(&this.base, params);
+}
+//--}
+
+//--{ BSDF: color_weighted_layer
+export struct color_weighted_layer: bsdf {
+  color weight;
+  bsdf layer = bsdf();
+  bsdf base = bsdf();
+  float3 normal = state::normal();
+};
+@(macro) auto eval_bsdf(const &color_weighted_layer this, const &eval_bsdf_parameters params) {
+  const auto result0(eval_bsdf(&this.base, params));
+  const auto result1(eval_bsdf(&this.layer, params, this.normal));
+  return eval_bsdf_result(pdf: lerp(result0.pdf, result1.pdf, average(this.weight)), f: lerp(result0.f, result1.f, this.weight));
+}
+@(macro) auto eval_bsdf_sample(const &color_weighted_layer this, const &eval_bsdf_sample_parameters params) {
+  const auto i(uniform_wavelength_index_sample(&params.xi.w));
+  return weighted_bool_sample(&params.xi.z, this.weight[i])
+    ? eval_bsdf_sample(&this.layer, params, this.normal)
+    : eval_bsdf_sample(&this.base, params);
+}
+//--}
+
+//--{ Helpers: Fresnel
+@(pure macro) auto schlick_F0(const auto ior) = #pow((ior - 1) / (ior + 1), 2);
+
+@(pure macro) auto schlick_factor(const auto cos_theta) = #pow(#max(1 - #abs(cos_theta), 0), 5);
+
+@(pure macro) auto schlick_factor(const auto cos_theta, const auto exponent) = #pow(#max(1 - #abs(cos_theta), 0), exponent);
+
+@(pure macro) auto schlick_F(const auto cos_theta, const auto F0, const auto F90 = 1.0) = F0 + (F90 - F0) * schlick_factor(cos_theta);
+
+@(pure macro) auto schlick_F(const auto cos_theta, const auto F0, const auto F90, const float exponent) = F0 + (F90 - F0) * schlick_factor(cos_theta, exponent);
+//--}
+
+//--{ BSDF: fresnel_layer
+export struct fresnel_layer: bsdf {
+  float ior;
+  float weight = 1.0;
+  bsdf layer = bsdf();
+  bsdf base = bsdf();
+  float3 normal = state::normal();
+};
+@(macro) auto eval_bsdf(const &fresnel_layer this, const &eval_bsdf_parameters params) {
+  const auto result0(eval_bsdf(&this.base, params));
+  const auto result1(eval_bsdf(&this.layer, params, this.normal));
+  const auto wh(normalize(params.wo + params.wi));
+  return eval_bsdf_result(
+    pdf: lerp(result0.pdf, result1.pdf, this.weight * schlick_factor(auto(params.wo.z, params.wi.z))),
+    f:   lerp(result0.f,   result1.f,   this.weight * schlick_F(dot(params.wi, wh), schlick_F0(this.ior))));
+}
+@(macro) auto eval_bsdf_sample(const &fresnel_layer this, const &eval_bsdf_sample_parameters params) {
+  return uniform_bool_sample(&params.xi.z, this.weight * schlick_factor(params.wo.z))
+    ? eval_bsdf_sample(&this.layer, params, this.normal)
+    : eval_bsdf_sample(&this.base, params);
 }
 //--}
 

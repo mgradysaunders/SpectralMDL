@@ -855,9 +855,15 @@ StructType::StructType(Context &context, StructType *parentTemplate, llvm::Array
 Value StructType::insert(Emitter &emitter, Value value, Value elem, unsigned i, const AST::SourceLocation &srcLoc) {
   sanity_check(llvmType != nullptr, "'StructType::insert()' called on struct with abstract fields");
   sanity_check(i < fields.size());
+  if (fields[i].isVoid)
+    return value;
   elem = emitter.rvalue(elem);
   elem = emitter.construct(fields[i].type, elem);
-  return RValue(this, emitter.builder.CreateInsertValue(emitter.rvalue(value), elem, {i}));
+  unsigned iActual{};
+  for (unsigned j{}; j < i; j++)
+    if (!fields[j].isVoid)
+      iActual++;
+  return RValue(this, emitter.builder.CreateInsertValue(emitter.rvalue(value), elem, {iActual}));
 }
 
 Value StructType::access(Emitter &emitter, Value value, llvm::StringRef key, const AST::SourceLocation &srcLoc) {
@@ -865,6 +871,8 @@ Value StructType::access(Emitter &emitter, Value value, llvm::StringRef key, con
   if (auto path{ParamList::InlinePath{}}; fields.get_inline_path(key, path)) {
     bool isConst{};
     for (auto [field, i] : path) {
+      if (field->isVoid)
+        return {};
       isConst |= field->isConst;
       value = value.is_lvalue() ? LValue(field->type, emitter.builder.CreateStructGEP(value.type->llvmType, value, i))
                                 : RValue(field->type, emitter.builder.CreateExtractValue(value, {i}));
@@ -1006,15 +1014,15 @@ Value StructType::construct(Emitter &emitter, const ArgList &args, const AST::So
       auto resultType{this};
       if (resultType->is_abstract()) {
         auto missingTypes{llvm::SmallVector<Type *>{}};
-        for (size_t i = 0; i < values.size(); i++)
+        for (unsigned i{}; i < values.size(); i++)
           if (fields[i].type->is_abstract())
             missingTypes.push_back(values[i].type);
         resultType = context.get_struct_type(this, missingTypes);
         sanity_check(!resultType->is_abstract());
       }
       auto result{Value::zero(resultType)};
-      for (size_t i = 0; i < values.size(); i++)
-        result = emitter.insert(result, values[i], i, srcLoc);
+      for (unsigned i{}; auto &value : values)
+        result = emitter.insert(result, value, i++, srcLoc);
       return result;
     }
   }
@@ -1039,8 +1047,7 @@ bool StructType::can_access(llvm::StringRef key) {
 
 void StructType::init_llvm_type() {
   if (!fields.has_any_abstract()) {
-    auto llvmFieldTypes{fields.get_llvm_types()};
-    llvmType = llvm::StructType::create(context.llvmContext, llvmFieldTypes, name);
+    llvmType = llvm::StructType::create(context.llvmContext, fields.get_llvm_types(), name);
   }
 }
 //--}

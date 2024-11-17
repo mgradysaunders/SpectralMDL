@@ -544,6 +544,8 @@ class Struct final : public DeclSubclass<DeclKind::Struct> {
 public:
   class Field final {
   public:
+    bool isVoid{};
+
     unique_bump_ptr<Type> type{};
 
     unique_bump_ptr<Name> name{};

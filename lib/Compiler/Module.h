@@ -53,7 +53,10 @@ public:
   /// The last crumb in the module. (This is the starting point to search for exported declarations!)
   Crumb *lastCrumb{};
 
+  Crumb *lastImportCrumb{};
+
   llvm::SmallVector<Material> materials{};
+
 };
 
 } // namespace smdl::Compiler

@@ -461,6 +461,16 @@ Value Context::resolve(Emitter &emitter, const AST::Identifier &identifier) {
   }
   if (auto crumb{Crumb::find(emitter.crumb, identifier.get_string_refs(), emitter.get_llvm_function())})
     return crumb->value;
+  // Let absolute identifiers in builtin modules like '::math::abs' resolve even if the module has
+  // not been imported yet. This may be necessary for generated material functions using '::df' if the
+  // user did not import '::df::*'.
+  if (identifier.names.size() == 2 && identifier.isAbsolute) {
+    if (auto builtin{get_builtin_module(identifier.names[0]->name)}) {
+      if (auto crumb{Crumb::find(builtin->lastCrumb, identifier.names[1]->name, emitter.get_llvm_function())}) {
+        return crumb->value;
+      }
+    }
+  }
   identifier.srcLoc.report_error(std::format("can't resolve identifier '{}'", std::string(identifier)));
   return {};
 }
@@ -552,4 +562,3 @@ Module *Context::resolve_module(
 }
 
 } // namespace smdl::Compiler
-

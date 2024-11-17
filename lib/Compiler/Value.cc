@@ -73,9 +73,8 @@ Crumb *Crumb::find(Crumb *crumb, llvm::ArrayRef<llvm::StringRef> name, llvm::Fun
 }
 
 Param::Param(Context &context, const AST::Param &astParam)
-    : name(astParam.name->name),                                                                                             //
-      type(astParam.type->type), isConst(bool(astParam.type->attrs.isConst)), isInline(bool(astParam.type->attrs.isInline)), //
-      init(astParam.init.get()), srcLoc(astParam.name->srcLoc) {
+    : name(astParam.name->name), type(astParam.type->type), isConst(bool(astParam.type->attrs.isConst)),
+      isInline(bool(astParam.type->attrs.isInline)), init(astParam.init.get()), srcLoc(astParam.name->srcLoc) {
   context.validate_decl_name("parameter", *astParam.name);
   if (astParam.type->attrs.isStatic)
     astParam.name->srcLoc.report_error(std::format("parameter '{}' must not be declared 'static'", astParam.name->name));
@@ -84,9 +83,9 @@ Param::Param(Context &context, const AST::Param &astParam)
 }
 
 Param::Param(Context &context, const AST::Struct::Field &astField)
-    : name(astField.name->name),                                                                                             //
-      type(astField.type->type), isConst(bool(astField.type->attrs.isConst)), isInline(bool(astField.type->attrs.isInline)), //
-      init(astField.init.get()), srcLoc(astField.name->srcLoc) {
+    : name(astField.name->name), type(astField.type->type), isVoid(astField.isVoid),
+      isConst(bool(astField.type->attrs.isConst)), isInline(bool(astField.type->attrs.isInline)), init(astField.init.get()),
+      srcLoc(astField.name->srcLoc) {
   context.validate_decl_name("field", *astField.name);
   if (astField.type->attrs.isStatic)
     astField.name->srcLoc.report_error(std::format("field '{}' must not be declared 'static'", astField.name->name));
@@ -136,7 +135,14 @@ llvm::SmallVector<Type *> ParamList::get_types() const {
 }
 
 llvm::SmallVector<llvm::Type *> ParamList::get_llvm_types() const {
-  return get_vector_of_member<llvm::Type *>(params, [](auto &param) { return param.type->llvmType; });
+  auto llvmTypes{get_vector_of_member<llvm::Type *>(params, [](auto &param) { return param.type->llvmType; })};
+  for (auto itr{llvmTypes.begin()}; auto &param : params) {
+    if (param.isVoid)
+      itr = llvmTypes.erase(itr);
+    else
+      itr++;
+  }
+  return llvmTypes;
 }
 
 bool ParamList::get_inline_path(llvm::StringRef name, llvm::SmallVector<std::pair<const Param *, unsigned>> &path) const {
@@ -145,7 +151,8 @@ bool ParamList::get_inline_path(llvm::StringRef name, llvm::SmallVector<std::pai
     if (param.name == name || (param.isInline && param.type->get_inline_struct_type()->fields.get_inline_path(name, path)))
       return true;
     path.pop_back();
-    i++;
+    if (!param.isVoid)
+      i++;
   }
   return false;
 }

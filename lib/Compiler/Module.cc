@@ -51,6 +51,8 @@ void Module::emit(Context &context) {
 
     // Find every function that represents a material and emit the relevant functions.
     for (auto crumb{lastCrumb}; crumb; crumb = crumb->prev) {
+      if (!lastImportCrumb && crumb->value.is_compile_time_module())
+        lastImportCrumb = crumb;
       if (crumb->value.is_compile_time_function()) {
         if (auto func{crumb->value.get_compile_time_function()}; func->represents_material()) {
           auto material{Material{func}};

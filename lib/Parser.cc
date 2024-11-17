@@ -424,6 +424,7 @@ auto Parser::parse_struct_type_declaration() -> unique_bump_ptr_wrapper<AST::Str
 auto Parser::parse_struct_field_declarator() -> std::optional<AST::Struct::Field> {
   checkpoint();
   auto cursor{save_cursor()};
+  bool isVoid{isExtendedSyntax && next_word("void")};
   auto type{parse_type()};
   if (!type) {
     reject();
@@ -435,6 +436,7 @@ auto Parser::parse_struct_field_declarator() -> std::optional<AST::Struct::Field
     return std::nullopt;
   }
   auto field{AST::Struct::Field{}};
+  field.isVoid = isVoid;
   field.type = std::move(type);
   field.name = std::move(name);
   if (delimiter('=')) {
