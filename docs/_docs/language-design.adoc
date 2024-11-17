@@ -6,10 +6,30 @@
 :icon-set: fa
 :toc: left
 
-
 It is worth discussing the overall design of the SMDL implementation, 
 because writing a compiler is hard, and understanding somebody else's 
 compiler is harder.
+
+[#guiding-principles]
+== Guiding principles
+
+* [x] The SMDL compiler *must be small, fast, and dependency free*. 
+      It needs to integrate into rendering software and JIT compile materials
+      at render time, and it cannot, e.g., spend 10 minutes on semantic 
+      analysis and safety checks.
+* [x] The SMDL compiler *must be compatible with MDL*. It needs to superimpose 
+      specific interpretations on top of the underlying MDL semantics in 
+      order to generate efficient material representations.
+
+[CAUTION]
+.Therefore
+====
+* [x] The language is *highly vectorized* with *no dynamic allocation*. 
+* [x] The language is *unsafe* regardless of no dynamic allocation. Go
+      ahead, dereference null!
+* [x] The language uses *implicit generics and unions* as the
+      foundation of behavior dispatch. 
+====
 
 [#the-repository]
 == The repository
