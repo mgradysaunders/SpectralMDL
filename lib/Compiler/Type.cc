@@ -369,6 +369,10 @@ Value ArithmeticType::construct(Emitter &emitter, const ArgList &args, const AST
         return RValue(
             this, emitter.builder.CreateAlignedLoad(
                       llvmType, emitter.rvalue(value), llvm::Align(emitter.context.get_align_of(get_scalar_type()))));
+      // If the argument is a color and this is a float3, delegate to '::rgb::color_to_rgb()' 
+      // to convert the spectrum to an RGB triple.
+      if (value.type->is_color() && this == context.get_float_type(Extent(3)))
+        return emitter.emit_call(context.resolve(emitter, /*isAbs=*/true, {"rgb", "color_to_rgb"}, srcLoc), args, srcLoc);
     }
     const bool canConstructFromScalars{[&] {
       if (!(get_vector_size() == args.size() && args.is_all_true([](auto &arg) { return arg.value.type->is_scalar(); })))
@@ -553,7 +557,11 @@ Value ColorType::construct(Emitter &emitter, const ArgList &args, const AST::Sou
     if (value.type->is_pointer() && value.type->get_element_type() == context.get_float_type())
       return RValue(this, emitter.builder.CreateAlignedLoad(llvmType, emitter.rvalue(value), llvm::Align(alignof(float_t))));
   }
-  // TODO
+  // If 1 'float3'-ish argument or 3 arguments, delegate to '::rgb::rgb_to_color' to construct the color
+  // spectrum from the RGB components.
+  if ((args.size() == 1 && args[0].value.type->is_vector() && args[0].value.type->extent == Extent(3)) ||
+      (args.size() == 3))
+    return emitter.emit_call(context.resolve(emitter, /*isAbs=*/true, {"rgb", "rgb_to_color"}, srcLoc), args, srcLoc);
   return Type::construct(emitter, args, srcLoc); // Error
 }
 //--}

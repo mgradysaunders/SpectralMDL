@@ -440,14 +440,15 @@ Module *Context::get_builtin_module(llvm::StringRef name) {
 }
 
 //--{ Resolve: Identifiers
-Value Context::resolve(Emitter &emitter, const AST::Identifier &identifier) {
-  if (identifier.names.size() == 1) {
-    auto name{identifier.names[0]->name};
+Value Context::resolve(
+      Emitter &emitter, bool isAbs, llvm::ArrayRef<llvm::StringRef> names, const AST::SourceLocation &srcLoc) {
+  if (names.size() == 1) {
+    auto name{names[0]};
     if (name == "$data") {
       return get_compile_time_pointer(mdl.dataLookup.get());
     } else if (name == "$state") {
       if (!emitter.state)
-        identifier.srcLoc.report_error(
+        srcLoc.report_error(
             !emitter.get_llvm_function() ? "'$state' is unavailable at module scope"
                                          : "'$state' is unavailable in '@(pure)' function");
       return emitter.state;
@@ -459,23 +460,23 @@ Value Context::resolve(Emitter &emitter, const AST::Identifier &identifier) {
     if (auto itr{keywordToConstant.find(name)}; itr != keywordToConstant.end())
       return itr->second;
     // Unqualified simple names may shadow other values
-    if (identifier.is_simple_name())
-      if (auto crumb{Crumb::find(emitter.crumb, identifier.names[0]->name, emitter.get_llvm_function())})
+    if (!isAbs)
+      if (auto crumb{Crumb::find(emitter.crumb, name, emitter.get_llvm_function())})
         return crumb->value;
   }
-  if (auto crumb{Crumb::find(emitter.crumb, identifier.get_string_refs(), emitter.get_llvm_function())})
+  if (auto crumb{Crumb::find(emitter.crumb, names, emitter.get_llvm_function())})
     return crumb->value;
   // Let absolute identifiers in builtin modules like '::math::abs' resolve even if the module has
   // not been imported yet. This may be necessary for generated material functions using '::df' if the
   // user did not import '::df::*'.
-  if (identifier.names.size() == 2 && identifier.isAbsolute) {
-    if (auto builtin{get_builtin_module(identifier.names[0]->name)}) {
-      if (auto crumb{Crumb::find(builtin->lastCrumb, identifier.names[1]->name, emitter.get_llvm_function())}) {
+  if (names.size() == 2 && isAbs) {
+    if (auto builtin{get_builtin_module(names[0])}) {
+      if (auto crumb{Crumb::find(builtin->lastCrumb, names[1], emitter.get_llvm_function())}) {
         return crumb->value;
       }
     }
   }
-  identifier.srcLoc.report_error(std::format("can't resolve identifier '{}'", std::string(identifier)));
+  srcLoc.report_error(std::format("can't resolve identifier '{}'", FormatJoin(names, "::")));
   return {};
 }
 //--}

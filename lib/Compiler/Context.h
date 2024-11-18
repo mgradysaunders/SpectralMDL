@@ -329,7 +329,12 @@ public:
   [[nodiscard]] Module *get_builtin_module(llvm::StringRef name);
 
 public:
-  [[nodiscard]] Value resolve(Emitter &emitter, const AST::Identifier &identifier);
+  [[nodiscard]] Value resolve(
+      Emitter &emitter, bool isAbs, llvm::ArrayRef<llvm::StringRef> names, const AST::SourceLocation &srcLoc);
+
+  [[nodiscard]] Value resolve(Emitter &emitter, const AST::Identifier &identifier) {
+    return resolve(emitter, identifier.isAbsolute, identifier.get_string_refs(), identifier.srcLoc);
+  }
 
   [[nodiscard]] llvm::SmallVector<Value> resolve_arguments(
       Emitter &emitter0, const ParamList &params, const ArgList &args, const AST::SourceLocation &srcLoc,

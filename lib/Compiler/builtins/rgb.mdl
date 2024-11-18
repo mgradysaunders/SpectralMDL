@@ -59,7 +59,7 @@ export @(hot noinline) color rgb_to_color(float3 rgb) {
     w *= RGB_TO_COLOR_NUM_WAVES / (RGB_TO_COLOR_MAX_WAVE - RGB_TO_COLOR_MIN_WAVE);
     for (int i = 0; i < $WAVELENGTH_BASE_MAX; i++) {
       float t(w[i]);
-      if ((0.0 <= t) & (t < RGB_TO_COLOR_NUM_WAVES)) {
+      if ((0.0 <= t) & (t <= RGB_TO_COLOR_NUM_WAVES)) {
         int t0(#min(int(t), RGB_TO_COLOR_NUM_WAVES - 2));
         t = #min(t - t0, 1.0);
         c[i] = #sum(float2(1 - t, t) * 
