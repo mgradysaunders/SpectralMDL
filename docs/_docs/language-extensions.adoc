@@ -34,7 +34,7 @@ and effort into the ergonomics of language.
 ====
 The language extensions include keywords that could interfere with ordinary 
 MDL code. For that reason, the extensions must be enabled for a given module by 
-placing `#extended_syntax` on the first line in the file.
+placing `#smdl_syntax` on the first line in the file.
 ====
 
 [#intrinsics]

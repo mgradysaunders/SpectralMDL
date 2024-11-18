@@ -801,7 +801,7 @@ static const char *rgb = R"*(#smdl_syntax
 const int RGB_TO_COLOR_NUM_WAVES = 32;
 const float RGB_TO_COLOR_MIN_WAVE = 380.0;
 const float RGB_TO_COLOR_MAX_WAVE = 720.0;
-const static float[7][RGB_TO_COLOR_NUM_WAVES] RGB_TO_COLOR_TABLES = auto[](
+const static auto RGB_TO_COLOR_TABLES = auto[](
   auto[]( 
     +1.0618958, +1.0615020, +1.0614336, +1.0622711, +1.0622036, +1.0625060, +1.0623939, +1.0624707,
     +1.0625048, +1.0624366, +1.0620694, +1.0613167, +1.0610334, +1.0613868, +1.0614215, +1.0620337,
@@ -873,7 +873,7 @@ export @(hot noinline) color rgb_to_color(float3 rgb) {
 export @(macro) color rgb_to_color(const float r, const float g, const float b) {
   return rgb_to_color(float3(r, g, b));
 }
-@(pure) float3 wyman_1931_xyz(const float w) {
+export @(pure) float3 wyman_1931_xyz(const float w) {
   auto x(w - auto(442.0, 599.8, 501.1, 568.8, 530.9, 437.0, 459.0));
   x *= #select(x < 0, auto(0.0624, 0.0264, 0.0490, 0.0213, 0.0613, 0.0845, 0.0385),
                       auto(0.0374, 0.0323, 0.0382, 0.0247, 0.0322, 0.0278, 0.0725));
@@ -887,7 +887,7 @@ export @(macro) color rgb_to_color(const float r, const float g, const float b) 
   y *= auto(0.362, 1.056, -0.065, 0.821, 0.286, 1.217, 0.681);
   return float3(y[0] + y[1] + y[2], y[3] + y[4], y[5] + y[6]);
 }
-@(pure) float wyman_1931_y(const float w) {
+export @(pure) float wyman_1931_y(const float w) {
   auto x(w - auto(568.8, 530.9));
   x *= #select(x < 0, auto(0.0213, 0.0613), auto(0.0247, 0.0322));
   x *= 0.5 * x;
