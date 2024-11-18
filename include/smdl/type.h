@@ -202,6 +202,12 @@ struct texture_cube_t final {
   float4_t **texels{};
 };
 
+struct Ptexture_t final {
+  void *texture{};
+
+  void *filter{};
+};
+
 struct texture_ptex_t final {
   int_t gamma{};
 
@@ -241,6 +247,10 @@ public:
 
   /// The object id.
   int_t object_id{};
+
+  int_t ptex_face_id{};
+
+  float2_t ptex_face_uv{};
 
   float3_t direction{};
 

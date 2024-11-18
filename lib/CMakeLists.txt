@@ -25,6 +25,7 @@ add_library(
     "MDLInstance.cc"
     "Parser.cc"
     "llvm.cc"
+    "ptex.cc"
     "type.cc"
   )
 set_target_properties(

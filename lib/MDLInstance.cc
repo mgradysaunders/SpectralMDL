@@ -34,7 +34,7 @@ MDLInstance::MDLInstance(uint32_t numWavelens) : numWavelens(numWavelens) {
 
 MDLInstance::~MDLInstance() {
 #if WITH_PTEX
-  for (auto &[path, ptex] : ptexTextures) {
+  for (auto &[path, ptex] : ptextures) {
     if (ptex.filter) {
       static_cast<PtexFilter *>(ptex.filter)->release();
       ptex.filter = nullptr;

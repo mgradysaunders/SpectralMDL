@@ -34,11 +34,6 @@ namespace smdl {
 
 class DataLookup;
 
-struct PtexTexture final {
-  void *texture{};
-
-  void *filter{};
-};
 
 enum class OptLevel : uint32_t { None, O1, O2, O3 };
 
@@ -147,7 +142,7 @@ public:
 
   std::map<std::string, Image, std::less<>> images{};
 
-  std::map<std::string, PtexTexture, std::less<>> ptexTextures{};
+  std::map<std::string, Ptexture_t, std::less<>> ptextures{};
 
 private:
   std::set<std::string> modulePaths{};

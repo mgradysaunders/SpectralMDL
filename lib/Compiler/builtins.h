@@ -547,6 +547,9 @@ export using ::tex import *;
 static const char *tex = R"*(#smdl_syntax
 export enum gamma_mode { gamma_default = 0, gamma_linear = 1, gamma_srgb = 2 };
 @(pure macro) float4 apply_gamma_mode(const gamma_mode gamma, const float4 texel) = gamma == gamma_srgb ? float4((texel * texel).xyz, texel.w) : texel;
+@(pure macro) float3 apply_gamma_mode(const gamma_mode gamma, const float3 texel) = gamma == gamma_srgb ? (texel * texel) : texel;
+@(pure macro) float2 apply_gamma_mode(const gamma_mode gamma, const float2 texel) = gamma == gamma_srgb ? (texel * texel) : texel;
+@(pure macro) float apply_gamma_mode(const gamma_mode gamma, const float texel) = gamma == gamma_srgb ? (texel * texel) : texel;
 @(pure) &image_t access_uv_tile(const texture_2d tex, const int2 uv_tile) {
   return null if (#any((uv_tile < 0) | (uv_tile >= tex.tile_count)));
   return &tex.tiles[tex.tile_count.x * uv_tile.y + uv_tile.x];
@@ -666,6 +669,27 @@ export @(pure macro) color lookup_color(
     const wrap_mode wrap_v = wrap_repeat,
     const float2 crop_u = float2(0.0, 1.0),
     const float2 crop_v = float2(0.0, 1.0)) = color(lookup_float4(tex, coord, wrap_u, wrap_v, crop_u, crop_v).xyz);
+@(foreign) void smdl_ptex_eval(&texture_ptex tex, int first, int num, &float result);
+export @(macro) float4 lookup_float4(texture_ptex tex, const int channel = 0) {
+  float4 result;
+  smdl_ptex_eval(&tex, channel, 4, &result[0]);
+  return apply_gamma_mode(gamma_mode(tex.gamma), result);
+}
+export @(macro) float3 lookup_float3(texture_ptex tex, const int channel = 0) {
+  float3 result;
+  smdl_ptex_eval(&tex, channel, 3, &result[0]);
+  return apply_gamma_mode(gamma_mode(tex.gamma), result);
+}
+export @(macro) float2 lookup_float2(texture_ptex tex, const int channel = 0) {
+  float2 result;
+  smdl_ptex_eval(&tex, channel, 2, &result[0]);
+  return apply_gamma_mode(gamma_mode(tex.gamma), result);
+}
+export @(macro) float lookup_float(texture_ptex tex, const int channel = 0) {
+  float result;
+  smdl_ptex_eval(&tex, channel, 1, &result);
+  return apply_gamma_mode(gamma_mode(tex.gamma), result);
+}
 )*";
 
 static const char *microfacet = R"*(

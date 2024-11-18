@@ -4,6 +4,10 @@
 #include "Context.h"
 #include "Emitter.h"
 
+#if WITH_PTEX
+#include "Ptexture.h"
+#endif // #if WITH_PTEX
+
 namespace smdl::Compiler {
 
 //--{ Type
@@ -807,6 +811,8 @@ StructType::StructType(Context &context, builtin_struct_type_t<state_t>) : TypeS
   init_builtin_field(context, fields, "geometry_tangent_u", &state_t::geometry_tangent_u);
   init_builtin_field(context, fields, "geometry_tangent_v", &state_t::geometry_tangent_v);
   init_builtin_field(context, fields, "object_id", &state_t::object_id);
+  init_builtin_field(context, fields, "ptex_face_id", &state_t::ptex_face_id);
+  init_builtin_field(context, fields, "ptex_face_uv", &state_t::ptex_face_uv);
   init_builtin_field(context, fields, "direction", &state_t::direction);
   init_builtin_field(context, fields, "animation_time", &state_t::animation_time);
   init_builtin_field(context, fields, "wavelength_base", &state_t::wavelength_base);
@@ -991,7 +997,7 @@ Value StructType::construct(Emitter &emitter, const ArgList &args, const AST::So
           context.get_type<image_t *>(),
           emitter.builder.CreateConstInBoundsGEP2_32(constImages.type->llvmType, globalImages, 0, 0))};
       auto constTex{Value::zero(this)};
-      constTex = emitter.insert(constTex, values[1], 0);
+      constTex = emitter.insert(constTex, values[1], 0); // gamma
       constTex = emitter.insert(constTex, context.get_compile_time_int2(int2_t{int_t(numTilesU), int_t(numTilesV)}), 1);
       constTex = emitter.insert(constTex, globalImagesPtr, 2);
       return constTex;
@@ -1004,8 +1010,33 @@ Value StructType::construct(Emitter &emitter, const ArgList &args, const AST::So
       srcLoc.report_warning("'texture_cube' not supported yet");
       return Value::zero(this);
     } else if (is_texture_ptex()) {
-      // TODO
-      srcLoc.report_warning("'texture_ptex' not supported yet");
+#if WITH_PTEX
+      auto path{context.mdl.fileLocator.locate(fname.str(), emitter.module->path)};
+      if (!path) {
+        srcLoc.report_warning(std::format("can't load 'texture_ptex' from '{}': file not found\n", fname));
+      } else {
+        auto pathStr{path->string()};
+        auto [itr, inserted] = context.mdl.ptextures.try_emplace(pathStr, nullptr);
+        auto &ptex{itr->second};
+        if (inserted) {
+          Ptex::String errorStr{};
+          ptex.texture = PtexTexture::open(pathStr.c_str(), errorStr, /*premultiply=*/false);
+          if (!ptex.texture) {
+            srcLoc.report_warning(std::format("can't load 'texture_ptex' from '{}': {}\n", fname, errorStr.c_str()));
+          } else {
+            ptex.filter = PtexFilter::getFilter(
+                static_cast<PtexTexture *>(ptex.texture), //
+                PtexFilter::Options(PtexFilter::f_bilinear));
+          }
+        }
+        auto constTex{Value::zero(this)};
+        constTex = emitter.insert(Value::zero(this), values[1], 0); // gamma
+        constTex = emitter.insert(Value::zero(this), context.get_compile_time_pointer(&ptex), 1);
+        return constTex;
+      }
+#else
+      srcLoc.report_warning(std::format("can't load 'texture_ptex' from '{}': built without Ptex support", fname));
+#endif // #if WITH_PTEX
       return Value::zero(this);
     }
   } else {
