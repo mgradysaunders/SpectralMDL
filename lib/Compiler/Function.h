@@ -128,6 +128,9 @@ public:
   [[nodiscard]] Value call(Emitter &emitter0, const ArgList &args, const AST::SourceLocation &srcLoc = {});
 
 public:
+  /// The AST function.
+  AST::Function &decl;
+
   /// The most recent overload somewhere above this function in the source code.
   Function *prev{};
 
@@ -141,9 +144,6 @@ public:
       func = func->next;
     return func;
   }
-
-  /// The AST function.
-  AST::Function &decl;
 
   /// The AST let and call expressions if this is a function variant.
   AST::Function::LetAndCall letAndCall{};

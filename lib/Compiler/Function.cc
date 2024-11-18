@@ -34,7 +34,8 @@ FunctionInstance::FunctionInstance(
     }
     if (impliedVisit) {
       emitter.emit_return(
-          emitter.emit_call(context.get_compile_time_function(context.get_function(emitter, &decl)), impliedVisitArgs, decl.srcLoc),
+          emitter.emit_call(
+              context.get_compile_time_function(context.get_function(emitter, &decl)), impliedVisitArgs, decl.srcLoc),
           decl.srcLoc);
     } else {
       emitter.emit(*decl.definition);
@@ -207,25 +208,23 @@ Value FunctionInstance::call(Emitter &emitter, llvm::ArrayRef<Value> argValues, 
       type->returnType, emitter.builder.CreateCall(static_cast<llvm::FunctionType *>(type->llvmType), llvmFunc, llvmArgs));
 }
 
-[[nodiscard]] static Function *find_prev_function(Crumb *crumb, const AST::Function &decl) {
-  for (; crumb; crumb = crumb->prev) {
-    if (crumb->matches_name(decl.name->name)) {
-      if (crumb->value.is_compile_time_function())
-        break;
-      decl.srcLoc.report_error(std::format("function '{}' shadows non-function by the same name", decl.name->name));
-    }
-  }
-  return crumb ? crumb->value.get_compile_time_function() : nullptr;
-}
-
-Function::Function(Emitter &emitter0, AST::Function &decl) : prev(find_prev_function(emitter0.crumb, decl)), decl(decl) {
+Function::Function(Emitter &emitter0, AST::Function &decl) : decl(decl) {
   emitter0.context.validate_decl_name("function", *decl.name);
   emitter0.emit(*decl.returnType);
-  for (auto &param : decl.params)
+  for (const auto &param : decl.params)
     emitter0.emit(*param.type);
   params = ParamList(emitter0.context, decl);
   validate_attributes();
-  if (prev)
+  if (auto prevCrumb{Crumb::find(emitter0.crumb, decl.name->name, nullptr)}) {
+    if (prevCrumb->value.is_compile_time_function())
+      prev = prevCrumb->value.get_compile_time_function();
+    else
+      decl.srcLoc.report_error(std::format("function '{}' shadows non-function by the same name", decl.name->name));
+  }
+  // Only forward-link prev to this if the declaration is in the same module. This prevents 
+  // overloads of functions in other modules from interfering with code outside of the 
+  // current module.
+  if (prev && prev->decl.module == decl.module)
     prev->next = this;
   if ((is_variant() && prev) || (prev && prev->is_variant()))
     decl.srcLoc.report_error(std::format("function variant '{}' must not be overloaded", get_name()));
@@ -276,9 +275,8 @@ Value Function::call(Emitter &emitter0, const ArgList &args, const AST::SourceLo
     emitter0.move_to(blockEnd);
     return emitter0.construct(decl.returnType->type, result);
   } else {
-    // TODO This needs to be slightly smarter
     // Get all overloads.
-    llvm::SmallVector<std::pair<Function *, llvm::SmallVector<Type *>>> overloads{};
+    auto overloads{llvm::SmallVector<std::pair<Function *, llvm::SmallVector<Type *>>>{}};
     for (auto func{get_bottom_overload()}; func; func = func->prev) {
       sanity_check(!func->is_variant());
       llvm::SmallVector<Type *> argParamTypes{};
@@ -351,7 +349,8 @@ Value Function::call(Emitter &emitter0, const ArgList &args, const AST::SourceLo
           }
         }
         if (impliedVisit) {
-          emitter1.emit_return(emitter1.emit_call(context.get_compile_time_function(&overload), impliedVisitArgs, srcLoc), srcLoc);
+          emitter1.emit_return(
+              emitter1.emit_call(context.get_compile_time_function(&overload), impliedVisitArgs, srcLoc), srcLoc);
         } else {
           emitter1.emit(overload.decl.definition);
           if (!emitter1.has_terminator()) {

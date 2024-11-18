@@ -143,18 +143,22 @@ llvm::StringRef Context::get_persistent_string(const llvm::Twine &twine) {
     return bump_duplicate(twine.str());
 }
 
+std::string Context::get_unique_name(llvm::StringRef name, llvm::Function *llvmFunc) {
+  return name.str() + std::to_string(uniqueNames[name][llvmFunc]++);
+}
+
 AST::Expr *Context::parse_expression(const llvm::Twine &srcTwine) {
   auto src{get_persistent_string(srcTwine)};
-  auto &expr{builtinExprs[src]};
+  auto &expr{builtinExpressions[src]};
   if (!expr)
-    expr = Parser(bumpAllocator, "(builtin)", src, /*isExtendedSyntax=*/true).parse_expression();
+    expr = Parser(bumpAllocator, "(builtin expression)", src, /*isExtendedSyntax=*/true).parse_expression();
   return expr.get();
 }
 
 AST::Decl *Context::parse_declaration(const llvm::Twine &srcTwine) {
   auto src{get_persistent_string(srcTwine)};
-  auto &decl{
-      builtinDecls.emplace_back(Parser(bumpAllocator, "(builtin)", src, /*isExtendedSyntax=*/true).parse_global_declaration())};
+  auto &decl{builtinDeclarations.emplace_back(
+      Parser(bumpAllocator, "(builtin declaration)", src, /*isExtendedSyntax=*/true).parse_global_declaration())};
   return decl.get();
 }
 

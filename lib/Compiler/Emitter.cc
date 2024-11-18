@@ -308,6 +308,9 @@ Value Emitter::emit(AST::Conditional &expr) {
     builder.restoreIP(valuePassIP), valuePass = construct(type, valuePass), blockPass = get_insert_block(), emit_br(blockEnd);
     builder.restoreIP(valueFailIP), valueFail = construct(type, valueFail), blockFail = get_insert_block(), emit_br(blockEnd);
     kind = Value::Kind::RValue;
+  } else {
+    builder.restoreIP(valuePassIP), emit_br(blockEnd);
+    builder.restoreIP(valueFailIP), emit_br(blockEnd);
   }
   llvm_move_block_to_end(blockEnd);
   move_to(blockEnd);

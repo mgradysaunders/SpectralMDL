@@ -20,13 +20,11 @@ public:
     return new (bump_allocate(sizeof(T), alignof(T))) T(std::forward<decltype(args)>(args)...);
   }
 
-  [[nodiscard]] llvm::StringRef get_persistent_string(const llvm::Twine &twine);
-
   [[nodiscard]] llvm::StringRef get_persistent_string(const AST::Name &astName) { return astName.name; }
 
-  [[nodiscard]] std::string get_unique_name(llvm::StringRef name, llvm::Function *llvmFunc = nullptr) {
-    return name.str() + std::to_string(uniqueNames[name][llvmFunc]++);
-  }
+  [[nodiscard]] llvm::StringRef get_persistent_string(const llvm::Twine &twine);
+
+  [[nodiscard]] std::string get_unique_name(llvm::StringRef name, llvm::Function *llvmFunc = nullptr);
 
   [[nodiscard]] uint64_t get_align_of(Type *type) {
     return type && type->llvmType && !type->is_void() ? uint64_t(llvmLayout.getABITypeAlign(type->llvmType).value()) : 0;
@@ -365,16 +363,22 @@ public:
   llvm::BumpPtrAllocator &bumpAllocator;
 
 private:
+  /// The unique name counters. See 'get_unique_name()'
   llvm::StringMap<llvm::DenseMap<llvm::Function *, uint64_t>> uniqueNames{};
 
+  /// The builtin modules. See 'get_builtin_module()'
   llvm::StringMap<unique_bump_ptr<Module>> builtinModules{};
 
-  llvm::StringMap<unique_bump_ptr<AST::Expr>> builtinExprs{};
+  /// The AST expressions parsed from builtin strings. See 'parse_expression()'
+  llvm::StringMap<unique_bump_ptr<AST::Expr>> builtinExpressions{};
 
-  llvm::SmallVector<unique_bump_ptr<AST::Decl>> builtinDecls{};
+  /// The AST declarations parsed from builtin strings. See 'parse_declaration()'
+  llvm::SmallVector<unique_bump_ptr<AST::Decl>> builtinDeclarations{};
 
+  /// The LLVM callees for builtin foreign functions. See 'get_compile_time_foreign_callee()'
   llvm::StringMap<llvm::FunctionCallee> builtinForeignCallees{};
 
+  /// The functions.
   llvm::DenseMap<AST::Function *, unique_bump_ptr<Function>> functions{};
 
   /// The arithmetic types.

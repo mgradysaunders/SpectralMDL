@@ -973,6 +973,11 @@ Value StructType::construct(Emitter &emitter, const ArgList &args, const AST::So
         return Value::zero(this);
       }
       auto constImages{Value::zero(context.get_array_type(context.get_type<image_t>(), numTilesU * numTilesV))};
+      auto globalImages{new llvm::GlobalVariable(
+          context.llvmModule, constImages.type->llvmType, true, llvm::GlobalValue::PrivateLinkage,
+          nullptr)};
+      globalImages->setUnnamedAddr(llvm::GlobalValue::UnnamedAddr::Global);
+      globalImages->setAlignment(llvm::Align(16));
       for (uint32_t iV{}; iV < numTilesV; iV++) {
         for (uint32_t iU{}; iU < numTilesU; iU++) {
           auto image{[&]() {
@@ -988,11 +993,7 @@ Value StructType::construct(Emitter &emitter, const ArgList &args, const AST::So
         }
       }
       sanity_check(constImages.is_compile_time());
-      auto globalImages{new llvm::GlobalVariable(
-          context.llvmModule, constImages.type->llvmType, true, llvm::GlobalValue::PrivateLinkage,
-          static_cast<llvm::Constant *>(constImages.llvmValue))};
-      globalImages->setUnnamedAddr(llvm::GlobalValue::UnnamedAddr::Global);
-      globalImages->setAlignment(llvm::Align(16));
+      globalImages->setInitializer(static_cast<llvm::Constant *>(constImages.llvmValue));
       auto globalImagesPtr{RValue(
           context.get_type<image_t *>(),
           emitter.builder.CreateConstInBoundsGEP2_32(constImages.type->llvmType, globalImages, 0, 0))};
