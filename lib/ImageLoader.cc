@@ -36,7 +36,7 @@ Image default_image_loader(const std::filesystem::path &fname) {
     int x{};
     int y{};
     int numChannels{};
-    if (auto *texels{stbi_loadf(fnameStr.c_str(), &x, &y, &numChannels, 4)}) {
+    if (float *texels{stbi_loadf(fnameStr.c_str(), &x, &y, &numChannels, 4)}) {
       Image image{};
       image.extent.x = x;
       image.extent.y = y;
@@ -48,7 +48,22 @@ Image default_image_loader(const std::filesystem::path &fname) {
       throw Error(std::format("stb image failure: '{}'", stbi_failure_reason()));
     }
   } else if (fnameExtStr == ".exr") {
-    // TODO
+    float *texels{};
+    int x{};
+    int y{};
+    const char *error{};
+    if (LoadEXR(&texels, &x, &y, fnameStr.c_str(), &error) < 0) {
+      std::string message{std::format("tinyexr failure: {}", error)};
+      FreeEXRErrorMessage(error);
+      free(texels);
+      throw Error(std::move(message));
+    }
+    Image image{};
+    image.extent.x = x;
+    image.extent.y = y;
+    image.texels.resize(x * y);
+    std::memcpy(image.texels.data(), texels, sizeof(float4_t) * x * y);
+    free(texels);
   }
   throw Error(std::format("unrecognized image file extension '{}'", fnameExtStr));
   return {};
