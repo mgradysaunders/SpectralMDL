@@ -99,6 +99,10 @@ export @(pure macro) auto distance(const auto a, const auto b) = length(b - a);
 
 export @(pure macro) auto cross(const auto a, const auto b) = a.yzx * b.zxy - a.zxy * b.yzx;
 
+// TODO min_value_wavelength
+
+// TODO max_value_wavelength
+
 // The blackbody implementation below is a series expansion of this:
 // ~~~
 // const auto t(color($state.wavelength_base) * temperature);
@@ -122,3 +126,14 @@ export @(noinline) color blackbody(const float temperature) {
   }
   return 5.659994086 / res;
 }
+
+export @(noinline) float luminance(const color a) {
+  float result(0.0);
+  for (int i = 0; i < $WAVELENGTH_BASE_MAX; ++i)
+    result += ::rgb::wyman_1931_y($state.wavelength_base[i]) * a[i];
+  return result / $WAVELENGTH_BASE_MAX;
+}
+
+// TODO
+// export float luminance(const float3 a) {
+// }

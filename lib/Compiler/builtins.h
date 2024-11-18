@@ -342,8 +342,14 @@ export @(pure macro) bool assert(const bool condition, const string reason) {
   #assert(condition, reason) if ($DEBUG);
   return true;
 }
-export @(pure macro) bool breakpoint() = #breakpoint();
-export @(pure macro) bool print(const auto a) = #print(a);
+export @(pure macro) bool breakpoint() {
+  #breakpoint() if ($DEBUG);
+  return true;
+}
+export @(pure macro) bool print(const auto a) {
+  #print(a) if ($DEBUG);
+  return true;
+}
 )*";
 
 static const char *limits = R"*(#smdl_syntax
@@ -420,6 +426,12 @@ export @(noinline) color blackbody(const float temperature) {
     rcp *= rcp1 / (6 + k);
   }
   return 5.659994086 / res;
+}
+export @(noinline) float luminance(const color a) {
+  float result(0.0);
+  for (int i = 0; i < $WAVELENGTH_BASE_MAX; ++i)
+    result += ::rgb::wyman_1931_y($state.wavelength_base[i]) * a[i];
+  return result / $WAVELENGTH_BASE_MAX;
 }
 )*";
 
