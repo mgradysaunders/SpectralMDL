@@ -1,6 +1,8 @@
 // vim:foldmethod=marker:foldlevel=0:fmr=--{,--}
 #pragma once
 
+#include <future>
+
 #include "Module.h"
 
 namespace smdl::Compiler {

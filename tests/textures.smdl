@@ -1,0 +1,13 @@
+#smdl_syntax
+
+import ::tex::*;
+
+unit_test "Texture 2D" {
+  auto t = texture_2d("4x4.png", tex::gamma_linear);
+  #assert(tex::texture_isvalid(t));
+  #assert(tex::width(t) == 4);
+  #assert(tex::height(t) == 4);
+  #assert(#all(tex::texel_float4(t, int2(0, 0)) == float4(0.0, 0.0, 0.0, 1.0)));
+  #assert(#all(tex::texel_float4(t, int2(3, 3)) == float4(1.0, 1.0, 0.0, 1.0)));
+  #assert(#all(tex::texel_float4(t, int2(1, 2)) == float4(64.0 / 255.0, 128.0 / 255.0, 0.0, 1.0)));
+}

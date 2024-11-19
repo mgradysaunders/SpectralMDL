@@ -11,7 +11,7 @@ STR
 fnames = ['df', 'debug', 'limits', 'math', 'scene', 'state', 'std', 'tex', 'microfacet', 'rgb']
 
 for fname in fnames 
-  text = File.read "builtins/#{fname}.mdl"
+  text = File.read "builtins/#{fname}.smdl"
   text = text.gsub /\/\/.*$/, ''
   text = text.gsub /\n(\s*\n)+/, "\n"
   f.write "static const char *#{fname} = R\"*(#{text})*\";\n\n"

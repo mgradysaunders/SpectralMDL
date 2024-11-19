@@ -73,6 +73,8 @@ target_link_libraries(
     "LLVMX86CodeGen"
     "LLVMOrcJIT"
   )
+find_package(Threads REQUIRED)
+target_link_libraries(SpectralMDL PRIVATE Threads::Threads)
 if(TARGET Ptex_static)
   target_link_libraries(SpectralMDL PRIVATE Ptex_static)
   target_include_directories(SpectralMDL PRIVATE "${ptex_SOURCE_DIR}/src/ptex")
