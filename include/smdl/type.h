@@ -8,7 +8,7 @@ namespace smdl {
 
 template <typename T, size_t M> struct Vector;
 
-template <typename T> struct alignas(2 * sizeof(T)) Vector<T, 2> final {
+template <typename T> struct alignas(2 * sizeof(T)) Vector<T, 2> {
 public:
   constexpr Vector() = default;
   constexpr Vector(T x) : Vector(x, x) {}
@@ -19,7 +19,7 @@ public:
   [[nodiscard]] constexpr auto operator[](size_t i) const -> const T & { return (&x)[i]; }
 };
 
-template <typename T> struct alignas(4 * sizeof(T)) Vector<T, 3> final {
+template <typename T> struct alignas(4 * sizeof(T)) Vector<T, 3> {
 public:
   constexpr Vector() = default;
   constexpr Vector(T x) : Vector(x, x, x) {}
@@ -31,7 +31,7 @@ public:
   [[nodiscard]] constexpr auto operator[](size_t i) const -> const T & { return (&x)[i]; }
 };
 
-template <typename T> struct alignas(4 * sizeof(T)) Vector<T, 4> final {
+template <typename T> struct alignas(4 * sizeof(T)) Vector<T, 4> {
 public:
   constexpr Vector() = default;
   constexpr Vector(T x) : Vector(x, x, x, x) {}
@@ -380,6 +380,12 @@ template <bool Inverse = false> [[nodiscard]] inline float4x4_t look_at(float3_t
   float4_t vw{v.x, v.y, v.z, w};
   vw = m * vw;
   return {vw.x, vw.y, vw.z};
+}
+
+[[nodiscard]] inline float3_t perpendicular_to(const float3_t &v) {
+  float3_t z{normalize(v)};
+  float3_t x{z.z < -0.9999f ? float3_t{0.0f, -1.0f, 0.0f} : float3_t{-z.x / (z.z + 1.0f) + 1.0f, -z.y / (z.z + 1.0f), -1.0f}};
+  return normalize(x - dot(x, z) * z);
 }
 
 } // namespace smdl

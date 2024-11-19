@@ -14,7 +14,7 @@ if(SMDL_ENABLE_PTEX)
   FetchContent_MakeAvailable("Ptex")
 endif()
 
-if(SMDL_BUILD_EXAMPLE)
+if(SMDL_BUILD_TOY)
   # Assimp
   FetchContent_Declare(
     "Assimp"
@@ -52,4 +52,3 @@ if(SMDL_BUILD_EXAMPLE)
   set(EMBREE_TASKING_SYSTEM OFF CACHE INTERNAL "")
   FetchContent_MakeAvailable("Embree")
 endif()
-

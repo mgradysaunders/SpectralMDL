@@ -38,8 +38,8 @@ static cl::opt<float> maxWavelen{
 int main(int argc, char **argv) {
   llvm::InitLLVM X(argc, argv);
   smdl::init_or_exit();
-  llvm::cl::HideUnrelatedOptions({&cat, &catState});
-  llvm::cl::ParseCommandLineOptions(argc, argv, "SpectralMDL compiler");
+  cl::HideUnrelatedOptions({&cat, &catState});
+  cl::ParseCommandLineOptions(argc, argv, "SpectralMDL compiler");
   smdl::MDLInstance mdl{};
   try {
     mdl.enableDebug = enableDebug;

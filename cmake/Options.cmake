@@ -11,4 +11,4 @@ option(SMDL_ENABLE_PTEX "Build with Ptex? (Using FetchContent if unavailable)" O
 
 option(SMDL_ENABLE_RTTI "Build with C++ Run-Time Type Information (RTTI)?" ON)
 
-option(SMDL_BUILD_EXAMPLE "Build example program?" OFF)
+option(SMDL_BUILD_TOY "Build toy renderer?" OFF)

@@ -1,14 +1,3 @@
-#add_custom_target(
-#  SpectralMDL_builtins
-#  DEPENDS "${CMAKE_CURRENT_LIST_DIR}/dummy_that_does_not_exist.h"
-#  )
-#add_custom_command(
-#  OUTPUT
-#    "${CMAKE_CURRENT_LIST_DIR}/dummy_that_does_not_exist.h"
-#    "${CMAKE_CURRENT_LIST_DIR}/builtins.h"
-#  COMMAND "./generate_builtins"
-#  WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR}
-#  )
 add_library(
   SpectralMDL 
   SHARED
