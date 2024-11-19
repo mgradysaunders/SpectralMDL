@@ -62,10 +62,10 @@ void run_4x4_tests(texture_2d t) {
   #assert(#all(#approx_equal(tex::lookup_float4(t, float2(2.0, 1.0) / 3.0, crop_u: float2(0.0, 0.75), crop_v: float2(0.25, 1.0)), float4(96.0, 96.0, 0.0, 255.0) / 255.0, 1e-5)));
 }
 
-unit_test "Texture 2D 4x4 tests (.png)" {
+unit_test "Texture 2D tests (4x4.png)" {
   run_4x4_tests(texture_2d("4x4.png", tex::gamma_linear));
 }
 
-unit_test "Texture 2D 4x4 tests (.exr)" {
+unit_test "Texture 2D tests (4x4.exr)" {
   run_4x4_tests(texture_2d("4x4.exr", tex::gamma_linear));
 }
