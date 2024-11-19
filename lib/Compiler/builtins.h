@@ -362,6 +362,7 @@ export const double DOUBLE_MAX = $DOUBLE_MAX;
 )*";
 
 static const char *math = R"*(#smdl_syntax
+import ::rgb::*;
 export const float PI = $PI;
 export const float TWO_PI = $TWO_PI;
 export const float HALF_PI = $HALF_PI;
@@ -430,7 +431,7 @@ export @(noinline) color blackbody(const float temperature) {
 export @(noinline) float luminance(const color a) {
   float result(0.0);
   for (int i = 0; i < $WAVELENGTH_BASE_MAX; ++i)
-    result += ::rgb::wyman_1931_y($state.wavelength_base[i]) * a[i];
+    result += rgb::wyman_1931_y($state.wavelength_base[i]) * a[i];
   return result / $WAVELENGTH_BASE_MAX;
 }
 )*";
@@ -622,7 +623,8 @@ export @(pure macro) float4 lookup_float4(
     const auto extent(tile.extent);
     coord -= tile_index;
     coord *= extent;
-    const int2 ic(coord);
+    coord -= 0.5;
+    const int2 ic(#floor(coord));
     const int2 ic0(#min(ic, extent - 1));
     const int2 ic1(#min(ic + 1, extent - 1));
     coord -= ic;

@@ -37,6 +37,8 @@ struct Hit final {
 
   uint32_t faceIndex{uint32_t(-1)};
 
+  uint32_t materialIndex{uint32_t(-1)};
+
   smdl::float3_t bary{};
 
   smdl::float3_t point{};
@@ -53,10 +55,10 @@ struct Hit final {
 
   void transform(const smdl::float4x4_t &m) {
     point = smdl::transform_affine(m, point, 1.0f);
-    normal = smdl::transform_affine(m, point, 0.0f);
-    tangent = smdl::transform_affine(m, point, 0.0f);
-    geometryNormal = smdl::transform_affine(m, point, 0.0f);
-    geometryTangent = smdl::transform_affine(m, point, 0.0f);
+    normal = smdl::transform_affine(m, normal, 0.0f);
+    tangent = smdl::transform_affine(m, tangent, 0.0f);
+    geometryNormal = smdl::transform_affine(m, geometryNormal, 0.0f);
+    geometryTangent = smdl::transform_affine(m, geometryTangent, 0.0f);
   }
 };
 

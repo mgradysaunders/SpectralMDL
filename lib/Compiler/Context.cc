@@ -440,8 +440,7 @@ Module *Context::get_builtin_module(llvm::StringRef name) {
 }
 
 //--{ Resolve: Identifiers
-Value Context::resolve(
-      Emitter &emitter, bool isAbs, llvm::ArrayRef<llvm::StringRef> names, const AST::SourceLocation &srcLoc) {
+Value Context::resolve(Emitter &emitter, bool isAbs, llvm::ArrayRef<llvm::StringRef> names, const AST::SourceLocation &srcLoc) {
   if (names.size() == 1) {
     auto name{names[0]};
     if (name == "$data") {

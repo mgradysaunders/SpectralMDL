@@ -12,13 +12,15 @@ static cl::opt<smdl::int2_t> cameraDims{
     "dims", cl::desc("The image dimensions in pixels (default: 1280,720)"), cl::init(smdl::int2_t{1280, 720}),
     cl::cat(catCamera)};
 static cl::opt<smdl::float3_t> cameraFrom{
-    "look-from", cl::desc("The position to look from (default: 3,4,5)"), cl::init(smdl::float3_t{3, 4, 5}), cl::cat(catCamera)};
+    "look-from", cl::desc("The position to look from (default: -6,0,2)"), cl::init(smdl::float3_t{-6, 0, 2}),
+    cl::cat(catCamera)};
 static cl::opt<smdl::float3_t> cameraTo{
-    "look-to", cl::desc("The position to look to (default: 0,0,0)"), cl::init(smdl::float3_t{0, 0, 0}), cl::cat(catCamera)};
+    "look-to", cl::desc("The position to look to (default: 0,0,0.5)"), cl::init(smdl::float3_t{0, 0, 0.5}), cl::cat(catCamera)};
 static cl::opt<smdl::float3_t> cameraUp{
     "up", cl::desc("The up vector (default: 0,0,1)"), cl::init(smdl::float3_t{0, 0, 1}), cl::cat(catCamera)};
 static cl::opt<float> cameraFov{"fov", cl::desc("The FOV in degrees (default: 60)"), cl::init(60.0f), cl::cat(catCamera)};
-static cl::opt<unsigned> samplesPerPixel{"spp", cl::desc("The number of samples per pixel (default: 8)"), cl::init(8U), cl::cat(catCamera)};
+static cl::opt<unsigned> samplesPerPixel{
+    "spp", cl::desc("The number of samples per pixel (default: 8)"), cl::init(8U), cl::cat(catCamera)};
 
 int main(int argc, char **argv) try {
   llvm::InitLLVM X(argc, argv);
@@ -38,8 +40,14 @@ int main(int argc, char **argv) try {
   if (auto error{mdl.compile_jit()})
     throw *error;
 
+
   Scene scene{};
   scene.load(inputSceneFile);
+
+  std::vector<const smdl::MaterialJIT *> materialJITs{};
+  for (auto &materialName : scene.materialNames) {
+    materialJITs.push_back(mdl.find_material_jit(materialName));
+  }
 
   smdl::Image image{};
   image.extent = smdl::int2_t(cameraDims);
@@ -49,8 +57,8 @@ int main(int argc, char **argv) try {
   const smdl::float4x4_t cameraTransform{smdl::look_at(cameraFrom, cameraTo, cameraUp)};
   oneapi::tbb::parallel_for(
       oneapi::tbb::blocked_range<size_t>(0, image.extent.x * image.extent.y, 8), [&](const auto &indexes) {
+        size_t N{size_t(samplesPerPixel)};
         for (size_t i = indexes.begin(); i != indexes.end(); ++i) {
-          size_t N{size_t(samplesPerPixel)};
           size_t y{i / image.extent.x};
           size_t x{i % image.extent.x};
           RNG rng{i};
@@ -68,9 +76,10 @@ int main(int argc, char **argv) try {
             ray.transform(cameraTransform);
             Hit hit{};
             if (scene.intersect(ray, hit)) {
-              Lsum = Lsum +smdl::float4_t{0.5f * hit.normal.x + 0.5f, 0.5f * hit.normal.y + 0.5f, 0.5f * hit.normal.z + 0.5f, 1};
+              Lsum =
+                  Lsum + smdl::float4_t{0.5f * hit.normal.x + 0.5f, 0.5f * hit.normal.y + 0.5f, 0.5f * hit.normal.z + 0.5f, 1};
             } else {
-              Lsum = Lsum +smdl::float4_t{0, 0, 0, 1};
+              Lsum = Lsum + smdl::float4_t{0, 0, 0, 1};
             }
           }
           image.texels[i] = Lsum / float(N);

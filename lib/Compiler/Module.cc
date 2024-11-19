@@ -47,7 +47,6 @@ void Module::emit(Context &context) {
     Emitter emitter{context, this, /*crumb=*/nullptr};
     emitter.emit(*root);
     lastCrumb = emitter.crumb;
-    status = Status::Finished;
 
     // Find every function that represents a material and emit the relevant functions.
     for (auto crumb{lastCrumb}; crumb; crumb = crumb->prev) {
@@ -64,6 +63,8 @@ void Module::emit(Context &context) {
         }
       }
     }
+
+    status = Status::Finished;
   }
 }
 

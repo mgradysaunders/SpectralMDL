@@ -24,6 +24,8 @@ public:
   std::vector<Vert> verts{};
 
   std::vector<Face> faces{};
+
+  uint32_t materialIndex{};
 };
 
 class MeshInstance final {
@@ -57,7 +59,7 @@ private:
 public:
   bool intersect(Ray ray, Hit &hit) const;
 
-private:
+public:
   RTCDevice device{};
 
   RTCScene scene{};
@@ -65,5 +67,7 @@ private:
   std::vector<std::unique_ptr<Mesh>> meshes{};
 
   std::vector<MeshInstance> meshInstances{};
+
+  std::vector<std::string> materialNames{};
 
 };

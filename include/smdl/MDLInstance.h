@@ -34,7 +34,6 @@ namespace smdl {
 
 class DataLookup;
 
-
 enum class OptLevel : uint32_t { None, O1, O2, O3 };
 
 enum class OutputFormat : uint32_t { IR, Assembly, Object };
@@ -116,6 +115,13 @@ public:
   void set_data_float4(std::string_view name, float4_t value);
 
   void set_data_color(std::string_view name, std::span<const float_t> value);
+
+public:
+  [[nodiscard]] std::span<const MaterialJIT> material_jits() const { return materialJITs; }
+
+  [[nodiscard]] const MaterialJIT *find_material_jit(std::string_view name) const;
+
+  [[nodiscard]] const MaterialJIT *find_material_jit(std::string_view moduleName, std::string_view name) const;
 
 public:
   FileLocator fileLocator{};

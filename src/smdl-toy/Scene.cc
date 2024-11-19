@@ -25,6 +25,10 @@ void Scene::load(const aiScene &assScene) {
     load(*assScene.mMeshes[i]);
   load(*assScene.mRootNode);
   rtcCommitScene(scene);
+  for (unsigned int i = 0; i < assScene.mNumMaterials; i++) {
+    auto name{assScene.mMaterials[i]->GetName()};
+    materialNames.push_back(name.C_Str());
+  }
 }
 
 void Scene::load(const aiMesh &assMesh) {
@@ -59,6 +63,7 @@ void Scene::load(const aiMesh &assMesh) {
     mesh->faces[i] = {
         uint32_t(assMesh.mFaces[i].mIndices[0]), uint32_t(assMesh.mFaces[i].mIndices[1]),
         uint32_t(assMesh.mFaces[i].mIndices[2])};
+  mesh->materialIndex = assMesh.mMaterialIndex;
   auto geometry{rtcNewGeometry(device, RTC_GEOMETRY_TYPE_TRIANGLE)};
   rtcSetGeometryBuildQuality(geometry, RTC_BUILD_QUALITY_HIGH);
   rtcSetGeometryTimeStepCount(geometry, 1);
@@ -124,6 +129,7 @@ bool Scene::intersect(Ray ray, Hit &hit) const {
     hit.meshInstanceIndex = rayhit.hit.instID[0];
     hit.meshIndex = meshInstance.meshIndex;
     hit.faceIndex = rayhit.hit.primID;
+    hit.materialIndex = mesh.materialIndex;
     hit.bary = {w, u, v};
     hit.point = w * vert0.point + u * vert1.point + v * vert2.point;
     hit.normal = smdl::normalize(w * vert0.normal + u * vert1.normal + v * vert2.normal);
@@ -131,6 +137,7 @@ bool Scene::intersect(Ray ray, Hit &hit) const {
     hit.geometryNormal = smdl::normalize(smdl::cross(vert1.point - vert0.point, vert2.point - vert0.point));
     hit.geometryTangent = smdl::perpendicular_to(hit.geometryNormal);
     hit.texcoord = w * vert0.texcoord + u * vert1.texcoord + v * vert2.texcoord;
+    hit.transform(meshInstance.transform);
     return true;
   }
 }

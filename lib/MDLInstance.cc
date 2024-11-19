@@ -82,23 +82,26 @@ std::optional<Error> MDLInstance::load_module(std::filesystem::path path) {
 std::optional<Error> MDLInstance::compile(OptLevel optLevel) {
   return catch_and_return_error([&] {
     llvm::BumpPtrAllocator bumpAllocator{};
-    Compiler::Context context{*this, bumpAllocator};
-    for (auto &module : modules)
-      module->parse(context);
-    for (auto &module : modules)
-      module->emit(context);
-    for (auto &module : modules) {
-      for (auto &material : module->materials) {
-        auto &materialJIT{materialJITs.emplace_back()};
-        materialJIT.moduleName = module->name;
-        materialJIT.name = material.material->get_name().str();
-        materialJIT.evalOpacity.linkName =
-            sanity_check_nonnull(material.evalOpacity->get_unique_concrete_instance())->get_link_name().str();
-        materialJIT.evalBsdf.linkName =
-            sanity_check_nonnull(material.evalBsdf->get_unique_concrete_instance())->get_link_name().str();
-        materialJIT.evalBsdfSample.linkName =
-            sanity_check_nonnull(material.evalBsdfSample->get_unique_concrete_instance())->get_link_name().str();
+    {
+      Compiler::Context context{*this, bumpAllocator};
+      for (auto &module : modules)
+        module->parse(context);
+      for (auto &module : modules)
+        module->emit(context);
+      for (auto &module : modules) {
+        for (auto &material : module->materials) {
+          auto &materialJIT{materialJITs.emplace_back()};
+          materialJIT.moduleName = module->name;
+          materialJIT.name = material.material->get_name().str();
+          materialJIT.evalOpacity.linkName =
+              sanity_check_nonnull(material.evalOpacity->get_unique_concrete_instance())->get_link_name().str();
+          materialJIT.evalBsdf.linkName =
+              sanity_check_nonnull(material.evalBsdf->get_unique_concrete_instance())->get_link_name().str();
+          materialJIT.evalBsdfSample.linkName =
+              sanity_check_nonnull(material.evalBsdfSample->get_unique_concrete_instance())->get_link_name().str();
+        }
       }
+      modules.clear();
     }
     if (optLevel != OptLevel::None)
       llvmJITModule->withModuleDo([&](llvm::Module &llvmModule) {
@@ -109,7 +112,6 @@ std::optional<Error> MDLInstance::compile(OptLevel optLevel) {
                         : optLevel == OptLevel::O2 ? llvm::OptimizationLevel::O2
                                                    : llvm::OptimizationLevel::O3);
       });
-    modules.clear();
   });
 }
 
@@ -201,6 +203,22 @@ void MDLInstance::set_data_float4(std::string_view name, float4_t value) { dataL
 void MDLInstance::set_data_color(std::string_view name, std::span<const float_t> value) {
   sanity_check(numWavelens == value.size());
   dataLookup->values[name] = DataLookup::color_t(value.begin(), value.end());
+}
+
+const MaterialJIT *MDLInstance::find_material_jit(std::string_view name) const {
+  if (auto itr{std::find_if(materialJITs.begin(), materialJITs.end(), [&](auto &material) { return material.name == name; })};
+      itr != materialJITs.end())
+    return &*itr;
+  return nullptr;
+}
+
+const MaterialJIT *MDLInstance::find_material_jit(std::string_view moduleName, std::string_view name) const {
+  if (auto itr{std::find_if(
+          materialJITs.begin(), materialJITs.end(),
+          [&](auto &material) { return material.moduleName == moduleName && material.name == name; })};
+      itr != materialJITs.end())
+    return &*itr;
+  return nullptr;
 }
 
 } // namespace smdl

@@ -166,6 +166,7 @@ auto Parser::parse_mdl_version() -> std::optional<AST::Version> {
   auto cursor{save_cursor()};
   if (!next_word("mdl"))
     return std::nullopt;
+  skip();
   auto major{next_int()};
   if (major.empty() || !next('.'))
     report_error("expected 'MAJOR.MINOR' version after 'mdl'", cursor);

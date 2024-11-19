@@ -1,5 +1,7 @@
 #smdl_syntax
 
+import ::rgb::*;
+
 export const float PI = $PI;
 
 export const float TWO_PI = $TWO_PI;
@@ -130,7 +132,7 @@ export @(noinline) color blackbody(const float temperature) {
 export @(noinline) float luminance(const color a) {
   float result(0.0);
   for (int i = 0; i < $WAVELENGTH_BASE_MAX; ++i)
-    result += ::rgb::wyman_1931_y($state.wavelength_base[i]) * a[i];
+    result += rgb::wyman_1931_y($state.wavelength_base[i]) * a[i];
   return result / $WAVELENGTH_BASE_MAX;
 }
 
