@@ -642,7 +642,8 @@ export @(pure macro) float4 lookup_float4(
     const auto icorner1(int2(icrop_u[1], icrop_v[1]));
     const auto subextent(icorner1 - icorner0); 
     coord *= subextent;
-    const int2 ic(coord);
+    coord -= 0.5;
+    const int2 ic(#floor(coord));
     const auto ic0(icorner0 + apply_wrap_mode(wrap, subextent, ic));
     const auto ic1(icorner0 + apply_wrap_mode(wrap, subextent, ic + 1));
     coord -= ic;

@@ -10,4 +10,6 @@ using ImageLoader = std::function<Image(const std::filesystem::path &fname)>;
 
 [[nodiscard]] SMDL_EXPORT Image default_image_loader(const std::filesystem::path &fname);
 
+SMDL_EXPORT void save_image(const std::filesystem::path &fname, const Image &image);
+
 } // namespace smdl

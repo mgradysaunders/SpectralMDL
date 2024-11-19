@@ -284,7 +284,7 @@ Value Emitter::emit(AST::Binary &expr) {
 }
 
 Value Emitter::emit(AST::Conditional &expr) {
-  auto cond{construct(context.get_bool_type(), emit(expr.cond))};
+  auto cond{construct(context.get_bool_type(), emit(expr.cond), expr.srcLoc)};
   if (cond.is_compile_time_int())
     return rvalue(emit(cond.get_compile_time_int() != 0 ? *expr.ifPass : *expr.ifFail));
 
@@ -1103,12 +1103,12 @@ Value Emitter::emit_intrinsic(llvm::StringRef name, const ArgList &args, const A
           }
           emitter.emit_panic(message, srcLoc);
         } else {
-          emitter.emit_panic(args[1].value, srcLoc);
+          emitter.emit_panic(rvalue(args[1].value), srcLoc);
         }
       });
-      builder.CreateUnreachable();
+      emit_br(blockOk);
       move_to(blockOk);
-      return context.get_compile_time_bool(true);
+      return {};
     } else if (name == "abs") {
       auto value{rvalue(expectOneVectorized())};
       return RValue(
@@ -1144,9 +1144,8 @@ Value Emitter::emit_intrinsic(llvm::StringRef name, const ArgList &args, const A
     } else if (name == "breakpoint") {
       if (!args.empty())
         srcLoc.report_error("intrinsic '#breakpoint' expects no arguments");
-      if (context.mdl.enableDebug)
-        builder.CreateIntrinsic(context.get_type<void>()->llvmType, Intr::debugtrap, {});
-      return context.get_compile_time_bool(true);
+      builder.CreateIntrinsic(context.get_type<void>()->llvmType, Intr::debugtrap, {});
+      return {};
     }
   } else if (name[0] == 'c') { // Avoid unnecessary if checks
     if (name == "comptime") {
@@ -1231,7 +1230,7 @@ Value Emitter::emit_intrinsic(llvm::StringRef name, const ArgList &args, const A
     } else if (name == "print") {
       for (auto &arg : args)
         emit_print(arg.value);
-      return context.get_compile_time_bool(true);
+      return {};
     } else if (name == "pow") {
       if (args.size() != 2 || !args[0].value.type->is_vectorized() || !args[1].value.type->is_vectorized())
         srcLoc.report_error(std::format("intrinsic '#{}' expects 2 vectorized arguments", name));

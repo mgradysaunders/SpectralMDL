@@ -262,10 +262,10 @@ public:
   [[nodiscard]] Value get_compile_time_int(int_t value) { return get_compile_time_int(llvm::APInt(sizeof(int_t) * 8, value)); }
 
   [[nodiscard]] Value get_compile_time_int2(int2_t value) {
-    auto result{Value::zero(get_type<int2_t>())};
+    auto result{Value::zero(get_int_type(Extent(2)))};
     auto builder{llvm::IRBuilder<>(llvmContext)};
-    result.llvmValue = builder.CreateInsertValue(result, get_compile_time_int(value.x), {0U});
-    result.llvmValue = builder.CreateInsertValue(result, get_compile_time_int(value.y), {1U});
+    result.llvmValue = builder.CreateInsertElement(result, get_compile_time_int(value.x), uint64_t(0));
+    result.llvmValue = builder.CreateInsertElement(result, get_compile_time_int(value.y), uint64_t(1));
     return result;
   }
 

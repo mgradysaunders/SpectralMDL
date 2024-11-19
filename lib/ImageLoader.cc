@@ -64,9 +64,47 @@ Image default_image_loader(const std::filesystem::path &fname) {
     image.texels.resize(x * y);
     std::memcpy(image.texels.data(), texels, sizeof(float4_t) * x * y);
     free(texels);
+    return image;
   }
   throw Error(std::format("unrecognized image file extension '{}'", fnameExtStr));
   return {};
+}
+
+void save_image(const std::filesystem::path &fname, const Image &image) {
+  auto fnameStr{fname.string()};
+  auto fnameExtStr{fname.extension().string()};
+  std::transform(fnameExtStr.begin(), fnameExtStr.end(), fnameExtStr.begin(), [](char c) {
+    return std::tolower(static_cast<unsigned char>(c));
+  });
+  if (fnameExtStr == ".jpeg" || fnameExtStr == ".jpg" || fnameExtStr == ".png") {
+    auto texels{std::vector<uint8_t>{}};
+    texels.reserve(4 * image.extent.x * image.extent.y);
+    for (auto &texel : image.texels) {
+      texels.push_back(static_cast<uint8_t>(std::fmax(0.0f, std::fmin(255.0f * texel.x, 255.0f))));
+      texels.push_back(static_cast<uint8_t>(std::fmax(0.0f, std::fmin(255.0f * texel.y, 255.0f))));
+      texels.push_back(static_cast<uint8_t>(std::fmax(0.0f, std::fmin(255.0f * texel.z, 255.0f))));
+      texels.push_back(static_cast<uint8_t>(std::fmax(0.0f, std::fmin(255.0f * texel.w, 255.0f))));
+    }
+    int result = 0;
+    if (fnameExtStr == ".jpeg" || fnameExtStr == ".jpg") {
+      result = stbi_write_jpg(fnameStr.c_str(), image.extent.x, image.extent.y, 4, texels.data(), 90);
+    } else {
+      result = stbi_write_png(fnameStr.c_str(), image.extent.x, image.extent.y, 4, texels.data(), 0);
+    }
+    if (!result)
+      throw Error("stb image write failure");
+  } else if (fnameExtStr == ".exr") {
+    const char *error{};
+    if (SaveEXR(
+            reinterpret_cast<const float *>(image.texels.data()), image.extent.x, image.extent.y, 4, /*save_as_fp16=*/true,
+            fnameStr.c_str(), &error) < 0) {
+      std::string message{std::format("tinyexr failure: {}", error)};
+      FreeEXRErrorMessage(error);
+      throw Error(std::move(message));
+    }
+  } else {
+    throw Error(std::format("unrecognized image file extension '{}'", fnameExtStr));
+  }
 }
 
 } // namespace smdl
