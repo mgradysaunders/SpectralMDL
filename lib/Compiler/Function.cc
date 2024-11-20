@@ -336,6 +336,8 @@ Value Function::call(Emitter &emitter0, const ArgList &args, const AST::SourceLo
         emitter1.afterEndScope = {}; // Reset end-scope
         emitter1.afterReturn = {overload.decl.crumb, blockEnd};
         emitter1.move_to(blockBegin);
+        if (!emitter1.state && !overload.is_pure())
+          srcLoc.report_error(std::format("call to function '{}' from '@(pure)' context", get_name()));
 
         // Declare function parameters
         auto impliedVisit{false};

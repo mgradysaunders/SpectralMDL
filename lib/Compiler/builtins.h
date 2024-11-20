@@ -587,7 +587,7 @@ export @(pure macro) float4 texel_float4(const texture_2d tex, const int2 coord,
 export @(pure macro) float3 texel_float3(const texture_2d tex, const int2 coord, const int2 uv_tile = int2(0)) = access_texel(tex, coord, uv_tile).xyz;
 export @(pure macro) float2 texel_float2(const texture_2d tex, const int2 coord, const int2 uv_tile = int2(0)) = access_texel(tex, coord, uv_tile).xy;
 export @(pure macro) float texel_float(const texture_2d tex, const int2 coord, const int2 uv_tile = int2(0)) = access_texel(tex, coord, uv_tile).x;
-export @(pure macro) color texel_color(const texture_2d tex, const int2 coord, const int2 uv_tile = int2(0)) = color(access_texel(tex, coord, uv_tile).xyz);
+export @(macro) color texel_color(const texture_2d tex, const int2 coord, const int2 uv_tile = int2(0)) = color(access_texel(tex, coord, uv_tile).xyz);
 @(pure) float4 access_texel(const texture_3d tex, const int3 coord) {
   return null if (#any((coord < 0) | (coord >= tex.extent)));
   return tex.texels[#sum(tex.stride * coord)];
@@ -596,7 +596,7 @@ export @(pure macro) float4 texel_float4(const texture_3d tex, const int3 coord)
 export @(pure macro) float3 texel_float3(const texture_3d tex, const int3 coord) = access_texel(tex, coord).xyz;
 export @(pure macro) float2 texel_float2(const texture_3d tex, const int3 coord) = access_texel(tex, coord).xy;
 export @(pure macro) float texel_float(const texture_3d tex, const int3 coord) = access_texel(tex, coord).x;
-export @(pure macro) color texel_color(const texture_3d tex, const int3 coord) = color(access_texel(tex, coord).xyz);
+export @(macro) color texel_color(const texture_3d tex, const int3 coord) = color(access_texel(tex, coord).xyz);
 export enum wrap_mode { wrap_clamp = 0, wrap_repeat = 1, wrap_mirrored_repeat = 2, wrap_clip = 3 };
 @(pure macro) auto apply_wrap_mode(const auto wrap, const auto n, auto i) {
   auto rem(i % n);
@@ -677,7 +677,7 @@ export @(pure macro) float lookup_float(
     const wrap_mode wrap_v = wrap_repeat,
     const float2 crop_u = float2(0.0, 1.0),
     const float2 crop_v = float2(0.0, 1.0)) = lookup_float4(tex, coord, wrap_u, wrap_v, crop_u, crop_v).x;
-export @(pure macro) color lookup_color(
+export @(macro) color lookup_color(
     const texture_2d tex,
     const float2 coord,
     const wrap_mode wrap_u = wrap_repeat,
