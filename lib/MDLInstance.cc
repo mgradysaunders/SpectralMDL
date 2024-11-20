@@ -21,14 +21,14 @@ static std::filesystem::path canonicalize(const std::filesystem::path &path) {
   return canonicalPath;
 }
 
-MDLInstance::MDLInstance(uint32_t numWavelens) : numWavelens(numWavelens) {
+MDLInstance::MDLInstance(uint32_t wavelengthBaseMax) : wavelengthBaseMax(wavelengthBaseMax) {
   llvm::ExitOnError exitOnError;
   auto llvmContext{std::make_unique<llvm::LLVMContext>()};
   auto llvmModule{std::make_unique<llvm::Module>("MDL", *llvmContext)};
   llvmModule->setTargetTriple(llvm_get_native_target_triple());
   llvmModule->setDataLayout(llvm_get_native_target_machine()->createDataLayout());
-  llvmJITModule = std::make_unique<llvm::orc::ThreadSafeModule>(std::move(llvmModule), std::move(llvmContext));
-  llvmJIT = exitOnError(llvm::orc::LLJITBuilder().create());
+  llvmJitModule = std::make_unique<llvm::orc::ThreadSafeModule>(std::move(llvmModule), std::move(llvmContext));
+  llvmJit = exitOnError(llvm::orc::LLJITBuilder().create());
   dataLookup = std::make_unique<DataLookup>();
 }
 
@@ -47,14 +47,14 @@ MDLInstance::~MDLInstance() {
 #endif // #if WITH_PTEX
 }
 
-llvm::LLVMContext &MDLInstance::get_llvm_context() {
-  sanity_check(llvmJITModule != nullptr);
-  return *llvmJITModule->getContext().getContext();
+llvm::LLVMContext &MDLInstance::get_llvm_context() noexcept {
+  sanity_check(llvmJitModule != nullptr);
+  return *llvmJitModule->getContext().getContext();
 }
 
-llvm::Module &MDLInstance::get_llvm_module() {
-  sanity_check(llvmJITModule != nullptr);
-  return *llvmJITModule->getModuleUnlocked();
+llvm::Module &MDLInstance::get_llvm_module() noexcept {
+  sanity_check(llvmJitModule != nullptr);
+  return *llvmJitModule->getModuleUnlocked();
 }
 
 std::optional<Error> MDLInstance::load_all_modules(std::filesystem::path path) {
@@ -79,32 +79,19 @@ std::optional<Error> MDLInstance::load_module(std::filesystem::path path) {
   });
 }
 
-std::optional<Error> MDLInstance::compile(OptLevel optLevel) {
+std::optional<Error> MDLInstance::compile(OptLevel optLevel) noexcept {
   return catch_and_return_error([&] {
-    llvm::BumpPtrAllocator bumpAllocator{};
     {
+      llvm::BumpPtrAllocator bumpAllocator{};
       Compiler::Context context{*this, bumpAllocator};
       for (auto &module : modules)
         module->parse(context);
       for (auto &module : modules)
         module->emit(context);
-      for (auto &module : modules) {
-        for (auto &material : module->materials) {
-          auto &materialJIT{materialJITs.emplace_back()};
-          materialJIT.moduleName = module->name;
-          materialJIT.name = material.material->get_name().str();
-          materialJIT.evalOpacity.linkName =
-              sanity_check_nonnull(material.evalOpacity->get_unique_concrete_instance())->get_link_name().str();
-          materialJIT.evalBsdf.linkName =
-              sanity_check_nonnull(material.evalBsdf->get_unique_concrete_instance())->get_link_name().str();
-          materialJIT.evalBsdfSample.linkName =
-              sanity_check_nonnull(material.evalBsdfSample->get_unique_concrete_instance())->get_link_name().str();
-        }
-      }
       modules.clear();
     }
     if (optLevel != OptLevel::None)
-      llvmJITModule->withModuleDo([&](llvm::Module &llvmModule) {
+      llvmJitModule->withModuleDo([&](llvm::Module &llvmModule) {
         LLVMOptimizer llvmOptimizer{};
         llvmOptimizer.run(
             llvmModule, optLevel == OptLevel::None ? llvm::OptimizationLevel::O0
@@ -134,40 +121,32 @@ std::string MDLInstance::dump(OutputFormat outputFormat) {
   }
 }
 
-std::optional<Error> MDLInstance::compile_jit() {
+std::optional<Error> MDLInstance::compile_jit() noexcept {
   return catch_and_return_error([&] {
-    llvm_throw_if_error(llvmJIT->addIRModule(std::move(*llvmJITModule)));
-    llvmJITModule.reset();
-    for (auto &materialJIT : materialJITs) {
-      auto doLookup{[&]<typename F>(FunctionJIT<F> &func) {
-        func.func = reinterpret_cast<F>(lookup_jit_symbol(func.linkName));
-        if (!func.func)
-          throw Error(std::format("can't find JIT symbol for material '{}'", func.linkName));
-      }};
-      doLookup(materialJIT.evalOpacity);
-      doLookup(materialJIT.evalBsdf);
-      doLookup(materialJIT.evalBsdfSample);
+    llvm_throw_if_error(llvmJit->addIRModule(std::move(*llvmJitModule)));
+    llvmJitModule.reset();
+    lookup_jit_or_throw(colorToRgb);
+    lookup_jit_or_throw(rgbToColor);
+    for (auto &material : materials) {
+      lookup_jit_or_throw(material.evalOpacity);
+      lookup_jit_or_throw(material.evalBsdf);
+      lookup_jit_or_throw(material.evalBsdfSample);
     }
-    if (enableUnitTests) {
-      for (auto &unitTest : unitTests) {
-        auto unitTestFn{lookup_jit_symbol<void(const state_t &)>(unitTest.llvmName)};
-        if (!unitTestFn)
-          throw Error(std::format("can't find JIT symbol for unit test '{}'", unitTest.name));
-        unitTest.test = unitTestFn;
-      }
+    for (auto &unitTest : unitTests) {
+      lookup_jit_or_throw(unitTest.exec);
     }
   });
 }
 
-std::optional<Error> MDLInstance::execute_jit_unit_tests(const state_t &state) {
+std::optional<Error> MDLInstance::execute_jit_unit_tests(const state_t &state) noexcept {
   return catch_and_return_error([&] {
     for (auto &unitTest : unitTests) {
       llvm::errs() << "Running test ";
       llvm::WithColor(llvm::errs(), llvm::HighlightColor::String) << "'" << unitTest.name << "'";
       llvm::errs() << " ... ";
       try {
-        sanity_check(unitTest.test);
-        unitTest.test(state);
+        sanity_check(unitTest.exec);
+        unitTest.exec(state);
         llvm::WithColor(llvm::errs(), llvm::HighlightColor::Remark) << "passed\n";
       } catch (const Error &error) {
         llvm::WithColor(llvm::errs(), llvm::HighlightColor::Error) << "failed\n";
@@ -177,8 +156,8 @@ std::optional<Error> MDLInstance::execute_jit_unit_tests(const state_t &state) {
   });
 }
 
-void *MDLInstance::lookup_jit_symbol(std::string_view name) {
-  llvm::Expected<llvm::orc::ExecutorAddr> symbol{llvmJIT->lookup(name)};
+void *MDLInstance::lookup_jit(std::string_view name) noexcept {
+  llvm::Expected<llvm::orc::ExecutorAddr> symbol{llvmJit->lookup(name)};
   if (!symbol)
     return nullptr;
   return symbol->toPtr<void *>();
@@ -201,24 +180,38 @@ void MDLInstance::set_data_float3(std::string_view name, float3_t value) { dataL
 void MDLInstance::set_data_float4(std::string_view name, float4_t value) { dataLookup->values[name] = value; }
 
 void MDLInstance::set_data_color(std::string_view name, std::span<const float_t> value) {
-  sanity_check(numWavelens == value.size());
+  sanity_check(wavelengthBaseMax == value.size());
   dataLookup->values[name] = DataLookup::color_t(value.begin(), value.end());
 }
 
-const MaterialJIT *MDLInstance::find_material_jit(std::string_view name) const {
-  if (auto itr{std::find_if(materialJITs.begin(), materialJITs.end(), [&](auto &material) { return material.name == name; })};
-      itr != materialJITs.end())
+const jit::Material *MDLInstance::find_material_jit(std::string_view name) const noexcept {
+  if (auto itr{std::find_if(materials.begin(), materials.end(), [&](auto &material) { return material.name == name; })};
+      itr != materials.end())
     return &*itr;
   return nullptr;
 }
 
-const MaterialJIT *MDLInstance::find_material_jit(std::string_view moduleName, std::string_view name) const {
+const jit::Material *MDLInstance::find_material_jit(std::string_view moduleName, std::string_view name) const noexcept {
   if (auto itr{std::find_if(
-          materialJITs.begin(), materialJITs.end(),
+          materials.begin(), materials.end(),
           [&](auto &material) { return material.moduleName == moduleName && material.name == name; })};
-      itr != materialJITs.end())
+      itr != materials.end())
     return &*itr;
   return nullptr;
+}
+
+float3_t MDLInstance::color_to_rgb(const state_t &state, std::span<const float_t> color) const noexcept {
+  float3_t rgb{};
+  sanity_check(color.data() != nullptr);
+  sanity_check(color.size() == wavelengthBaseMax);
+  colorToRgb(state, color.data(), rgb);
+  return rgb;
+}
+
+void MDLInstance::rgb_to_color(const state_t &state, const float3_t &rgb, std::span<float_t> color) const noexcept {
+  sanity_check(color.data() != nullptr);
+  sanity_check(color.size() == wavelengthBaseMax);
+  rgbToColor(state, rgb, color.data());
 }
 
 } // namespace smdl

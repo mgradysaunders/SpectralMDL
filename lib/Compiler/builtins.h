@@ -926,6 +926,13 @@ export @(hot noinline) float3 color_to_rgb(const color c) {
     float3(-0.498532, +0.041556, +1.0572300)) * result;
   return result;
 }
+@(visible noinline) void rgb_to_color_jit(const &float3 rgb, const &float cptr) {
+  color c(rgb_to_color(*rgb));
+  #memcpy(cptr, &c, #sizeof(color));
+}
+@(visible noinline) void color_to_rgb_jit(const &float cptr, const &float3 rgb) {
+  *rgb = color_to_rgb(color(cptr));
+}
 )*";
 
 [[nodiscard]] static const char *get_src(auto name) {

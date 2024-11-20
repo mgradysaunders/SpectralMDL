@@ -10,7 +10,7 @@ add_library(
     "Compiler/Value.cc"
     "DataLookup.cc"
     "FileLocator.cc"
-    "ImageLoader.cc"
+    "Image.cc"
     "MDLInstance.cc"
     "Parser.cc"
     "llvm.cc"

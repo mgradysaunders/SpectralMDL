@@ -13,6 +13,7 @@
 #include "embree4/rtcore_ray.h"
 #include "embree4/rtcore_scene.h"
 
+#include "smdl/MDLInstance.h"
 #include "smdl/type.h"
 
 struct Ray final {
@@ -62,13 +63,13 @@ struct Hit final {
   }
 };
 
-static constexpr size_t NUM_WAVELENS = 16;
+static constexpr size_t WAVELENGTH_BASE_MAX = 16;
 
-static constexpr float MIN_WAVELEN = 380.0f;
+static constexpr float WAVELENGTH_MIN = 380.0f;
 
-static constexpr float MAX_WAVELEN = 720.0f;
+static constexpr float WAVELENGTH_MAX = 720.0f;
 
-typedef std::array<float, NUM_WAVELENS> Color;
+typedef std::array<float, WAVELENGTH_BASE_MAX> Color;
 
 typedef std::default_random_engine RNG;
 

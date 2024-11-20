@@ -1,5 +1,4 @@
 #include "llvm/Support/InitLLVM.h"
-#include "smdl/MDLInstance.h"
 
 #include "Scene.h"
 #include "cli.h"
@@ -29,7 +28,7 @@ int main(int argc, char **argv) try {
   cl::ParseCommandLineOptions(argc, argv, "SpectralMDL toy renderer");
 
   smdl::MDLInstance mdl{};
-  mdl.numWavelens = NUM_WAVELENS;
+  mdl.wavelengthBaseMax = WAVELENGTH_BASE_MAX;
   mdl.enableDebug = false;
   mdl.enableUnitTests = false;
   for (auto &inputMDLFile : inputMDLFiles)
@@ -40,13 +39,17 @@ int main(int argc, char **argv) try {
   if (auto error{mdl.compile_jit()})
     throw *error;
 
-
   Scene scene{};
   scene.load(inputSceneFile);
 
-  std::vector<const smdl::MaterialJIT *> materialJITs{};
-  for (auto &materialName : scene.materialNames) {
-    materialJITs.push_back(mdl.find_material_jit(materialName));
+  std::vector<const smdl::jit::Material *> materials{};
+  for (auto &materialName : scene.materialNames)
+    materials.push_back(mdl.find_material_jit(materialName));
+
+  Color wavelengthBase{};
+  for (size_t i = 0; i < WAVELENGTH_BASE_MAX; i++) {
+    float t = i / float(WAVELENGTH_BASE_MAX - 1);
+    wavelengthBase[i] = (1 - t) * WAVELENGTH_MIN + t * WAVELENGTH_MAX;
   }
 
   smdl::Image image{};
@@ -62,11 +65,11 @@ int main(int argc, char **argv) try {
           size_t y{i / image.extent.x};
           size_t x{i % image.extent.x};
           RNG rng{i};
-          smdl::float4_t Lsum{};
+          alignas(64) Color Lsum{};
           for (size_t j = 0; j < N; j++) {
             Ray ray{};
             ray.tmin = 0;
-            ray.tmax = 1000;
+            ray.tmax = std::numeric_limits<float>::infinity();
             float s = (x + std::generate_canonical<float, 32>(rng)) / float(image.extent.x);
             float t = (y + std::generate_canonical<float, 32>(rng)) / float(image.extent.y);
             ray.dir.x = (s - 0.5f) * aspectRatio;
@@ -74,15 +77,19 @@ int main(int argc, char **argv) try {
             ray.dir.z = -focalLen;
             ray.dir = smdl::normalize(ray.dir);
             ray.transform(cameraTransform);
-            Hit hit{};
-            if (scene.intersect(ray, hit)) {
-              Lsum =
-                  Lsum + smdl::float4_t{0.5f * hit.normal.x + 0.5f, 0.5f * hit.normal.y + 0.5f, 0.5f * hit.normal.z + 0.5f, 1};
-            } else {
-              Lsum = Lsum + smdl::float4_t{0, 0, 0, 1};
-            }
+            auto L = scene.trace_path(wavelengthBase, materials, rng, ray);
+            for (size_t k = 0; k < WAVELENGTH_BASE_MAX; k++)
+              Lsum[k] += L[k] / float(N);
           }
-          image.texels[i] = Lsum / float(N);
+          smdl::state_t state{};
+          state.wavelength_base = wavelengthBase.data();
+          state.wavelength_min = WAVELENGTH_MIN;
+          state.wavelength_max = WAVELENGTH_MAX;
+          smdl::float3_t rgb{mdl.color_to_rgb(state, Lsum)};
+          image.texels[i] = {10 * rgb.x, 10 * rgb.y, 10 * rgb.z, 1.0f};
+          image.texels[i].x = std::pow(smdl::saturate(image.texels[i].x), 1.0f /2.2f);
+          image.texels[i].y = std::pow(smdl::saturate(image.texels[i].y), 1.0f /2.2f);
+          image.texels[i].z = std::pow(smdl::saturate(image.texels[i].z), 1.0f /2.2f);
         }
       });
   image.flip_vertical();

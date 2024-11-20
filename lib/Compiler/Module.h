@@ -8,16 +8,6 @@ class Module final {
 public:
   enum class Status : uint32_t { NotStarted, InProgress, Finished };
 
-  struct Material final {
-    Function *material{};
-
-    Function *evalOpacity{};
-
-    Function *evalBsdf{};
-
-    Function *evalBsdfSample{};
-  };
-
   explicit Module(std::filesystem::path path)
       : path(path.string()),        //
         name(path.stem().string()), //
@@ -54,9 +44,6 @@ public:
   Crumb *lastCrumb{};
 
   Crumb *lastImportCrumb{};
-
-  llvm::SmallVector<Material> materials{};
-
 };
 
 } // namespace smdl::Compiler

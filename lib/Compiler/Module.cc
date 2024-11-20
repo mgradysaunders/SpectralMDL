@@ -47,23 +47,26 @@ void Module::emit(Context &context) {
     Emitter emitter{context, this, /*crumb=*/nullptr};
     emitter.emit(*root);
     lastCrumb = emitter.crumb;
-
-    // Find every function that represents a material and emit the relevant functions.
     for (auto crumb{lastCrumb}; crumb; crumb = crumb->prev) {
       if (!lastImportCrumb && crumb->value.is_compile_time_module())
         lastImportCrumb = crumb;
       if (crumb->value.is_compile_time_function()) {
         if (auto func{crumb->value.get_compile_time_function()}; func->represents_material()) {
-          auto material{Material{func}};
-          auto materialName{material.material->get_name()};
-          material.evalOpacity = context.get_function(emitter, std::format(src_evalOpacity, materialName));
-          material.evalBsdf = context.get_function(emitter, std::format(src_evalBsdf, materialName));
-          material.evalBsdfSample = context.get_function(emitter, std::format(src_evalBsdfSample, materialName));
-          materials.push_back(material);
+          auto &material{context.mdl.materials.emplace_back()};
+          material.moduleName = name;
+          material.name = func->get_name().str();
+          auto emitMaterialFunction{[&](std::string src) -> std::string {
+            auto func{context.get_function(emitter, src)};
+            sanity_check_nonnull(func);
+            sanity_check(func->has_unique_concrete_instance());
+            return func->get_unique_concrete_instance()->get_link_name().str();
+          }};
+          material.evalOpacity.name = emitMaterialFunction(std::format(src_evalOpacity, material.name));
+          material.evalBsdf.name = emitMaterialFunction(std::format(src_evalBsdf, material.name));
+          material.evalBsdfSample.name = emitMaterialFunction(std::format(src_evalBsdfSample, material.name));
         }
       }
     }
-
     status = Status::Finished;
   }
 }

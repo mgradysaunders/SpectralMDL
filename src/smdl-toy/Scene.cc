@@ -2,6 +2,7 @@
 
 #include "assimp/Importer.hpp"
 #include "assimp/postprocess.h"
+#include <iostream>
 
 Scene::Scene() : device(rtcNewDevice("verbose=0")), scene(rtcNewScene(device)) {}
 
@@ -14,7 +15,8 @@ Scene::~Scene() {
 
 void Scene::load(const std::string &filename) {
   auto assImporter{Assimp::Importer{}};
-  auto assScene{assImporter.ReadFile(filename.c_str(), aiProcessPreset_TargetRealtime_MaxQuality)};
+  auto assScene{
+      assImporter.ReadFile(filename.c_str(), aiProcessPreset_TargetRealtime_MaxQuality & ~aiProcess_RemoveRedundantMaterials)};
   if (!assScene)
     throw smdl::Error(std::format("assimp failed to read '{}'", filename));
   load(*assScene);
@@ -28,6 +30,7 @@ void Scene::load(const aiScene &assScene) {
   for (unsigned int i = 0; i < assScene.mNumMaterials; i++) {
     auto name{assScene.mMaterials[i]->GetName()};
     materialNames.push_back(name.C_Str());
+    std::cerr << "Material: " << materialNames.back() << '\n';
   }
 }
 
@@ -140,4 +143,74 @@ bool Scene::intersect(Ray ray, Hit &hit) const {
     hit.transform(meshInstance.transform);
     return true;
   }
+}
+
+Color Scene::trace_path(
+    std::span<const float> wavelengthBase, std::span<const smdl::jit::Material *> materials, RNG &rng, Ray ray) const {
+  const smdl::float3_t lightDir = {1, -2, 2};
+  Color L{};
+  Color w{};
+  for (size_t i = 0; i < WAVELENGTH_BASE_MAX; i++)
+    w[i] = 1;
+  for (int bounce = 0; bounce < 5; bounce++) {
+    ray.dir = smdl::normalize(ray.dir);
+    Hit hit{};
+    if (!intersect(ray, hit))
+      break;
+
+    const auto &material{materials[hit.materialIndex]};
+    smdl::float3_t wo{-ray.dir.x, -ray.dir.y, -ray.dir.z};
+    smdl::state_t state{};
+    state.wavelength_base = wavelengthBase.data();
+    state.wavelength_min = WAVELENGTH_MIN;
+    state.wavelength_max = WAVELENGTH_MAX;
+    state.position = hit.point;
+    state.normal = hit.normal;
+    state.texture_coordinate[0] = {hit.texcoord.x, hit.texcoord.y, 0};
+    state.texture_tangent_u[0] = hit.tangent;
+    state.texture_tangent_v[0] = smdl::cross(state.normal, state.texture_tangent_u[0]);
+    state.geometry_normal = hit.geometryNormal;
+    state.geometry_tangent_u[0] = hit.geometryTangent;
+    state.geometry_tangent_v[0] = smdl::cross(hit.geometryNormal, state.geometry_tangent_u[0]);
+    state.object_id = hit.meshInstanceIndex;
+    state.ptex_face_id = hit.faceIndex;
+    state.ptex_face_uv = {hit.bary[1], hit.bary[2]};
+    state.finalize_for_runtime_conventions();
+    {
+      Ray shadowRay{};
+      Hit shadowHit{};
+      shadowRay.org = hit.point;
+      shadowRay.dir = smdl::normalize(lightDir);
+      shadowRay.tmin = 0.0001f;
+      shadowRay.tmax = std::numeric_limits<float>::infinity();
+      if (!intersect(shadowRay, shadowHit)) {
+        smdl::float_t pdf_fwd{};
+        smdl::float_t pdf_rev{};
+        alignas(64) Color f{};
+        if (material->evalBsdf(state, wo, lightDir, pdf_fwd, pdf_rev, &f[0]))
+          for (size_t i = 0; i < WAVELENGTH_BASE_MAX; i++)
+            L[i] += w[i] * f[i];
+      }
+    }
+    smdl::float3_t wi{};
+    smdl::float4_t xi{
+        std::generate_canonical<float, 32>(rng), std::generate_canonical<float, 32>(rng),
+        std::generate_canonical<float, 32>(rng), std::generate_canonical<float, 32>(rng)};
+    smdl::float_t pdf_fwd{};
+    smdl::float_t pdf_rev{};
+    alignas(64) Color f{};
+    smdl::int_t is_delta{0};
+    if (!material->evalBsdfSample(state, xi, wo, wi, pdf_fwd, pdf_rev, &f[0], is_delta) || pdf_fwd == 0)
+      break;
+    for (size_t i = 0; i < WAVELENGTH_BASE_MAX; i++) {
+      w[i] *= f[i] / pdf_fwd;
+      if (!std::isfinite(w[i]))
+        w[i] = 0;
+    }
+    ray.org = hit.point;
+    ray.dir = wi;
+    ray.tmin = 0.0001f;
+    ray.tmax = std::numeric_limits<float>::infinity();
+  }
+  return L;
 }

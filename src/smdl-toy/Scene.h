@@ -59,6 +59,9 @@ private:
 public:
   bool intersect(Ray ray, Hit &hit) const;
 
+  Color trace_path(
+      std::span<const float> wavelengthBase, std::span<const smdl::jit::Material *> materials, RNG &rng, Ray ray) const;
+
 public:
   RTCDevice device{};
 
@@ -69,5 +72,4 @@ public:
   std::vector<MeshInstance> meshInstances{};
 
   std::vector<std::string> materialNames{};
-
 };

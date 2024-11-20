@@ -155,8 +155,10 @@ Value Emitter::emit(AST::UnitTest &decl) {
   decl.crumb = crumb;
   if (context.mdl.enableUnitTests) {
     auto func{FunctionInstance{*this, decl}};
-    context.mdl.unitTests.push_back(
-        MDLInstance::UnitTest{.llvmName = func.llvmFunc->getName().str(), .name = decl.name.str().str()});
+    auto &unitTest{context.mdl.unitTests.emplace_back()};
+    unitTest.moduleName = module->name;
+    unitTest.name = decl.name.str().str();
+    unitTest.exec.name = func.llvmFunc->getName().str();
   }
   return {};
 }
@@ -664,7 +666,8 @@ void Emitter::emit_br(Value cond, llvm::BasicBlock *blockPass, llvm::BasicBlock 
 }
 
 Value Emitter::emit_phi(Type *type, llvm::ArrayRef<std::pair<llvm::Value *, llvm::BasicBlock *>> inputs, Value::Kind kind) {
-  auto phiInst{builder.CreatePHI(kind == Value::Kind::LValue ? context.get_pointer_type(type)->llvmType : type->llvmType, inputs.size())};
+  auto phiInst{builder.CreatePHI(
+      kind == Value::Kind::LValue ? context.get_pointer_type(type)->llvmType : type->llvmType, inputs.size())};
   for (auto [value, block] : inputs)
     phiInst->addIncoming(value, block);
   return Value(kind, type, phiInst);
@@ -1220,6 +1223,18 @@ Value Emitter::emit_intrinsic(llvm::StringRef name, const ArgList &args, const A
           type->is_floating() ? std::get<0>(*intrIDs)
                               : (type->scalar == Scalar::Bool ? std::get<1>(*intrIDs) : std::get<2>(*intrIDs))};
       return RValue(type, builder.CreateBinaryIntrinsic(intrID, lhs, rhs));
+    }
+    if (name == "memcpy") {
+      if (!(args.size() == 3 &&                 //
+            args[0].value.type->is_pointer() && //
+            args[1].value.type->is_pointer() && args[2].value.type == context.get_int_type()))
+        srcLoc.report_error("intrinsic '#memcpy' expects 2 pointer arguments and 1 int argument");
+      auto dst{rvalue(args[0].value)};
+      auto src{rvalue(args[1].value)};
+      builder.CreateMemCpy(
+          dst, std::nullopt, src, std::nullopt,
+          llvm_emit_cast(builder, rvalue(args[2].value), llvm::Type::getInt64Ty(context.llvmContext)));
+      return {};
     }
   } else if (name[0] == 'p') { // Avoid unnecessary if checks
     if (name == "panic") {

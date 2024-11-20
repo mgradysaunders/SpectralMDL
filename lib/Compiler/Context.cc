@@ -128,8 +128,10 @@ Context::Context(MDLInstance &mdl, llvm::BumpPtrAllocator &bumpAllocator)
       {"$INT_MAX", get_compile_time_int(std::numeric_limits<int_t>::max())},
       {"$PI", get_compile_time_float(3.14159265358979323846f)},
       {"$TWO_PI", get_compile_time_float(6.28318530717958647692f)},
-      {"$WAVELENGTH_BASE_MAX", get_compile_time_int(mdl.numWavelens)},
+      {"$WAVELENGTH_BASE_MAX", get_compile_time_int(mdl.wavelengthBaseMax)},
   };
+  // Always load "::rgb"
+  sanity_check_nonnull(get_builtin_module("rgb"));
 }
 
 llvm::StringRef Context::get_persistent_string(const llvm::Twine &twine) {

@@ -26,13 +26,13 @@ static cl::opt<std::string> outputFilename{
     "output", cl::desc("Output filename (default stdout)"), cl::Optional, cl::sub(subDump), cl::cat(cat)};
 
 static cl::OptionCategory catState{"Options for state"};
-static cl::opt<unsigned> numWavelens{
-    "num-wavelens", cl::desc("Number of wavelengths (default 16)"), cl::init(16U), cl::sub(allSubs), cl::cat(catState)};
+static cl::opt<unsigned> wavelengthBaseMax{
+    "wavelength_base_max", cl::desc("Number of wavelengths (default 16)"), cl::init(16U), cl::sub(allSubs), cl::cat(catState)};
 static cl::opt<float> minWavelen{
-    "min-wavelen", cl::desc("Wavelength minimum in nanometers (default 380)"), cl::init(380.0f), cl::sub(subTest),
+    "wavelength_min", cl::desc("Wavelength minimum in nanometers (default 380)"), cl::init(380.0f), cl::sub(subTest),
     cl::cat(catState)};
 static cl::opt<float> maxWavelen{
-    "max-wavelen", cl::desc("Wavelength maximum in nanometers (default 720)"), cl::init(720.0f), cl::sub(subTest),
+    "wavelength_max", cl::desc("Wavelength maximum in nanometers (default 720)"), cl::init(720.0f), cl::sub(subTest),
     cl::cat(catState)};
 
 int main(int argc, char **argv) {
@@ -44,7 +44,7 @@ int main(int argc, char **argv) {
   try {
     mdl.enableDebug = enableDebug;
     mdl.enableUnitTests = true;
-    mdl.numWavelens = numWavelens;
+    mdl.wavelengthBaseMax = wavelengthBaseMax;
     for (auto &inputFile : inputFiles) {
       if (auto error = mdl.load_module(std::string(inputFile))) {
         error->print();
@@ -74,9 +74,9 @@ int main(int argc, char **argv) {
       state.wavelength_min = minWavelen;
       state.wavelength_max = maxWavelen;
       std::vector<float> wavelength_base{};
-      wavelength_base.resize(mdl.numWavelens);
-      for (size_t i = 0; i < mdl.numWavelens; i++) {
-        float t = float(i) / float(mdl.numWavelens - 1);
+      wavelength_base.resize(mdl.wavelengthBaseMax);
+      for (size_t i = 0; i < mdl.wavelengthBaseMax; i++) {
+        float t = float(i) / float(mdl.wavelengthBaseMax - 1);
         wavelength_base[i] = (1 - t) * state.wavelength_min + t * state.wavelength_max;
       }
       state.wavelength_base = wavelength_base.data();

@@ -514,7 +514,7 @@ Value AutoType::construct(Emitter &emitter, const ArgList &args, const AST::Sour
 //--}
 
 //--{ ColorType
-ColorType::ColorType(Context &context) : TypeSubclass(context, Scalar::Float, Extent(context.mdl.numWavelens)) {
+ColorType::ColorType(Context &context) : TypeSubclass(context, Scalar::Float, Extent(context.mdl.wavelengthBaseMax)) {
   init_name("color");
   llvmType = llvm::Type::getFloatTy(context.llvmContext);
   llvmType = extent.apply_to_llvm_type(llvmType);
@@ -964,9 +964,7 @@ Value StructType::construct(Emitter &emitter, const ArgList &args, const AST::So
         auto [itr, inserted] = context.mdl.images.try_emplace(imagePath.path.string(), Image());
         if (inserted) {
           try {
-            if (!context.mdl.imageLoader)
-              throw Error(std::format("can't load image '{}' (missing image loader!)", fname));
-            itr->second = context.mdl.imageLoader(imagePath.path);
+            itr->second = load_image(imagePath.path);
             itr->second.flip_vertical();
           } catch (const Error &error) {
             error.print();
