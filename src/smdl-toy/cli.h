@@ -1,7 +1,7 @@
 #pragma once
 
 #include "llvm/Support/CommandLine.h"
-#include "smdl/type.h"
+#include "smdl/common.h"
 
 namespace cl = llvm::cl;
 

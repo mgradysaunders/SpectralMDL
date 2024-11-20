@@ -1,6 +1,6 @@
 #pragma once
 
-#include "smdl/type.h"
+#include "smdl/common.h"
 
 namespace smdl {
 

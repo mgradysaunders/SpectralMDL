@@ -14,7 +14,6 @@
 #include "embree4/rtcore_scene.h"
 
 #include "smdl/MDLInstance.h"
-#include "smdl/type.h"
 
 struct Ray final {
   smdl::float3_t org{};
