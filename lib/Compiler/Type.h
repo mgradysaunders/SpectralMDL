@@ -440,6 +440,24 @@ template <typename T> struct builtin_struct_type_t final {};
 
 template <typename T> constexpr auto builtin_struct_type = builtin_struct_type_t<T>{};
 
+struct default_bsdf_t final {};
+
+struct default_vdf_t final {};
+
+struct default_edf_t final {};
+
+struct default_hair_bsdf_t final {};
+
+struct material_emission_t final {};
+
+struct material_surface_t final {};
+
+struct material_volume_t final {};
+
+struct material_geometry_t final {};
+
+struct material_t final {};
+
 class StructType final : public TypeSubclass<TypeKind::Struct> {
 public:
   StructType(Context &context, AST::Struct *decl, llvm::Function *llvmFunc = {});

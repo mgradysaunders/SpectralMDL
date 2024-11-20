@@ -2,6 +2,7 @@ add_library(
   SpectralMDL 
   SHARED
     "AST.cc"
+    "common.cc"
     "Compiler/Context.cc"
     "Compiler/Emitter.cc"
     "Compiler/Function.cc"
@@ -11,11 +12,9 @@ add_library(
     "DataLookup.cc"
     "FileLocator.cc"
     "Image.cc"
+    "llvm.cc"
     "MDLInstance.cc"
     "Parser.cc"
-    "llvm.cc"
-    "ptex.cc"
-    "type.cc"
   )
 set_target_properties(
   SpectralMDL

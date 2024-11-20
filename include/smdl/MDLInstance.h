@@ -5,7 +5,6 @@
 
 #include "smdl/FileLocator.h"
 #include "smdl/Image.h"
-#include "smdl/type.h"
 
 namespace llvm {
 
