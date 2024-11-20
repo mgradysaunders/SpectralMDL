@@ -26,6 +26,7 @@ namespace smdl::Compiler {
 class Context;
 class Emitter;
 class Module;
+class StructType;
 
 } // namespace smdl::Compiler
 
@@ -62,11 +63,15 @@ public:
 
   Function<float_t(const state_t &state)> evalOpacity{};
 
-  Function<int_t(const state_t &state, const float3_t &wo, const float3_t &wi, float_t &pdf_fwd, float_t &pdf_rev, float_t *f)>
+  Function<int_t(
+      const state_t &state, const float3_t &wo, const float3_t &wi, //
+      float_t &pdf_fwd, float_t &pdf_rev,                           //
+      float_t *f)>
       evalBsdf{};
 
   Function<int_t(
-      const state_t &state, const float4_t &xi, const float3_t &wo, float3_t &wi, float_t &pdf_fwd, float_t &pdf_rev,
+      const state_t &state, const float4_t &xi, const float3_t &wo, //
+      float3_t &wi, float_t &pdf_fwd, float_t &pdf_rev,             //
       float_t *f, int_t &is_delta)>
       evalBsdfSample{};
 };
@@ -139,9 +144,9 @@ public:
 public:
   [[nodiscard]] std::span<const jit::Material> all_materials() const noexcept { return materials; }
 
-  [[nodiscard]] const jit::Material *find_material_jit(std::string_view name) const noexcept;
+  [[nodiscard]] const jit::Material *find_material(std::string_view name) const noexcept;
 
-  [[nodiscard]] const jit::Material *find_material_jit(std::string_view moduleName, std::string_view name) const noexcept;
+  [[nodiscard]] const jit::Material *find_material(std::string_view moduleName, std::string_view name) const noexcept;
 
   [[nodiscard]] float3_t color_to_rgb(const state_t &state, std::span<const float_t> color) const noexcept;
 
@@ -156,11 +161,11 @@ public:
 
   uint32_t wavelengthBaseMax{16};
 
+private:
   std::map<std::string, Image, std::less<>> images{};
 
   std::map<std::string, Ptexture_t, std::less<>> ptextures{};
 
-private:
   std::set<std::string> modulePaths{};
 
   std::vector<std::unique_ptr<Compiler::Module>> modules;
@@ -184,6 +189,8 @@ private:
   friend class Compiler::Emitter;
 
   friend class Compiler::Module;
+
+  friend class Compiler::StructType;
 };
 
 } // namespace smdl

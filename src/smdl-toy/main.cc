@@ -51,7 +51,7 @@ int main(int argc, char **argv) try {
 
   std::vector<const smdl::jit::Material *> materials{};
   for (auto &materialName : scene.materialNames)
-    materials.push_back(mdl.find_material_jit(materialName));
+    materials.push_back(mdl.find_material(materialName));
 
   Color wavelengthBase{};
   for (size_t i = 0; i < WAVELENGTH_BASE_MAX; i++) {

@@ -184,14 +184,14 @@ void MDLInstance::set_data_color(std::string_view name, std::span<const float_t>
   dataLookup->values[name] = DataLookup::color_t(value.begin(), value.end());
 }
 
-const jit::Material *MDLInstance::find_material_jit(std::string_view name) const noexcept {
+const jit::Material *MDLInstance::find_material(std::string_view name) const noexcept {
   if (auto itr{std::find_if(materials.begin(), materials.end(), [&](auto &material) { return material.name == name; })};
       itr != materials.end())
     return &*itr;
   return nullptr;
 }
 
-const jit::Material *MDLInstance::find_material_jit(std::string_view moduleName, std::string_view name) const noexcept {
+const jit::Material *MDLInstance::find_material(std::string_view moduleName, std::string_view name) const noexcept {
   if (auto itr{std::find_if(
           materials.begin(), materials.end(),
           [&](auto &material) { return material.moduleName == moduleName && material.name == name; })};
