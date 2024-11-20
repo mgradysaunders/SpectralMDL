@@ -130,6 +130,11 @@ struct eval_bsdf_result {
   this.wi = quat_transform_vector(q, this.wi);
   return q;
 }
+
+@(pure) bool is_mode_inconsistent(const &eval_bsdf_parameters this) {
+  const scatter_mode mode = (this.wo.z < 0) == (this.wi.z < 0) ? scatter_reflect : scatter_transmit;
+  return mode != this.mode;
+}
 //--}
 
 //--{ API Types: eval_bsdf_sample_parameters, eval_bsdf_sample_result
@@ -381,10 +386,12 @@ export @(macro) int material__eval_bsdf(
     thin_walled: this.thin_walled));
   perturb_normal(&params, this.geometry.normal);
   auto result(eval_bsdf_result(is_black: true));
-  if (#typeof(this.backface) != #typeof(material_surface()) && (params.hit_side < 0)) { 
-    result = eval_bsdf(&this.backface.scattering, &params);
-  } else {
-    result = eval_bsdf(&this.surface.scattering, &params);
+  if (!is_mode_inconsistent(&params)) {
+    if (#typeof(this.backface) != #typeof(material_surface()) && (params.hit_side < 0)) { 
+      result = eval_bsdf(&this.backface.scattering, &params);
+    } else {
+      result = eval_bsdf(&this.surface.scattering, &params);
+    }
   }
   if (result.is_black) {
     *pdf_fwd = 0.0;

@@ -78,6 +78,10 @@ struct eval_bsdf_result {
   this.wi = quat_transform_vector(q, this.wi);
   return q;
 }
+@(pure) bool is_mode_inconsistent(const &eval_bsdf_parameters this) {
+  const scatter_mode mode = (this.wo.z < 0) == (this.wi.z < 0) ? scatter_reflect : scatter_transmit;
+  return mode != this.mode;
+}
 struct eval_bsdf_sample_parameters {
   const float3 geometry_wo;
   float3 wo = geometry_wo;
@@ -270,10 +274,12 @@ export @(macro) int material__eval_bsdf(
     thin_walled: this.thin_walled));
   perturb_normal(&params, this.geometry.normal);
   auto result(eval_bsdf_result(is_black: true));
-  if (#typeof(this.backface) != #typeof(material_surface()) && (params.hit_side < 0)) { 
-    result = eval_bsdf(&this.backface.scattering, &params);
-  } else {
-    result = eval_bsdf(&this.surface.scattering, &params);
+  if (!is_mode_inconsistent(&params)) {
+    if (#typeof(this.backface) != #typeof(material_surface()) && (params.hit_side < 0)) { 
+      result = eval_bsdf(&this.backface.scattering, &params);
+    } else {
+      result = eval_bsdf(&this.surface.scattering, &params);
+    }
   }
   if (result.is_black) {
     *pdf_fwd = 0.0;
@@ -558,7 +564,7 @@ export using ::tex import *;
 )*";
 
 static const char *tex = R"*(#smdl_syntax
-export enum gamma_mode { gamma_default = 0, gamma_linear = 1, gamma_srgb = 2 };
+export enum gamma_mode { gamma_default = 0, gamma_linear = 0, gamma_srgb = 1 };
 @(pure macro) float4 apply_gamma_mode(const gamma_mode gamma, const float4 texel) = gamma == gamma_srgb ? float4((texel * texel).xyz, texel.w) : texel;
 @(pure macro) float3 apply_gamma_mode(const gamma_mode gamma, const float3 texel) = gamma == gamma_srgb ? (texel * texel) : texel;
 @(pure macro) float2 apply_gamma_mode(const gamma_mode gamma, const float2 texel) = gamma == gamma_srgb ? (texel * texel) : texel;
