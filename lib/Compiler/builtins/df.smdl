@@ -47,16 +47,6 @@ export enum scatter_mode { scatter_none = 0, scatter_reflect = 1, scatter_transm
   const auto cos_thetat(#sqrt(1 - ior * ior * (1 - cos_thetai * cos_thetai)));
   return refract(wi, wm, ior, cos_thetat * -#sign(cos_thetai));
 }
-
-@(pure macro) auto refraction_half_vector(const float3 wi, const float3 wt, const float ior) = -ior * wi + wt; 
-
-@(pure macro) auto refraction_half_vector_jacobian(const float3 wi, const float3 wt, const float ior) {
-  const auto vh(refraction_half_vector(wi, wt, ior));
-  const auto len2_vh(#sum(vh * vh));
-  const auto len1_vh(#sqrt(len2_vh));
-  const auto wh(vh / len1_vh);
-  return #abs(#sum(wt * wh)) / len2_vh;
-}
 //--}
 
 //--{ Helpers: Quaternion

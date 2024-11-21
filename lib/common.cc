@@ -82,13 +82,4 @@ void state_t::finalize_for_runtime_conventions() {
   internal_to_world_matrix_inv = internal_to_object_matrix_inv * object_to_world_matrix_inv;
 }
 
-#if 0
-extern "C" {
-
-SMDL_EXPORT void smdl_printf(const string_t &fmt, ...) {
-}
-
-}
-#endif
-
 } // namespace smdl

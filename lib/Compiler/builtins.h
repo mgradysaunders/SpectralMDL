@@ -37,14 +37,6 @@ export enum scatter_mode { scatter_none = 0, scatter_reflect = 1, scatter_transm
   const auto cos_thetat(#sqrt(1 - ior * ior * (1 - cos_thetai * cos_thetai)));
   return refract(wi, wm, ior, cos_thetat * -#sign(cos_thetai));
 }
-@(pure macro) auto refraction_half_vector(const float3 wi, const float3 wt, const float ior) = -ior * wi + wt; 
-@(pure macro) auto refraction_half_vector_jacobian(const float3 wi, const float3 wt, const float ior) {
-  const auto vh(refraction_half_vector(wi, wt, ior));
-  const auto len2_vh(#sum(vh * vh));
-  const auto len1_vh(#sqrt(len2_vh));
-  const auto wh(vh / len1_vh);
-  return #abs(#sum(wt * wh)) / len2_vh;
-}
 @(pure macro) float4 quat_rotate(const float theta, const float3 v) = float4(#sin(theta / 2) * normalize(v), #cos(theta / 2));
 @(pure macro) float4 quat_rotate(const float3 u, const float3 v) = normalize(float4(cross(u, v), 1 + dot(u, v)));
 @(pure macro) float4 quat_transpose(const float4 q) = float4(-1.0, -1.0, -1.0, 1.0) * q;
@@ -817,7 +809,8 @@ static const char *microfacet = R"*(
 #smdl_syntax
 using ::math import *;
 @(pure foreign) float erfcf(float x);
-@(pure foreign) float betaf(float x, float y);
+@(pure foreign) float lgammaf(float x);
+@(pure) float betaf(float x, float y) = #exp(lgammaf(x) + lgammaf(y) - lgammaf(x + y));
 export tag microfacet_slope;
 export struct ggx: default microfacet_slope {};
 export struct beckmann: microfacet_slope {};
@@ -894,6 +887,14 @@ export @(pure) auto microfacet_specular_reflection(microfacet this, float3 wo, f
       wm, 
       0.25 * d / float2(proj_areao, proj_areai),
       0.25 * d * g / #max(wo.z, 0.001) * step(0.0, wi.z));
+}
+@(pure macro) auto refraction_half_vector(const float3 wi, const float3 wt, const float ior) = -ior * wi + wt; 
+@(pure macro) auto refraction_half_vector_jacobian(const float3 wi, const float3 wt, const float ior) {
+  const auto vh(refraction_half_vector(wi, wt, ior));
+  const auto len2_vh(#sum(vh * vh));
+  const auto len1_vh(#sqrt(len2_vh));
+  const auto wh(vh / len1_vh);
+  return #abs(#sum(wt * wh)) / len2_vh;
 }
 export @(pure) auto microfacet_specular_refraction(microfacet this, float3 wo, float3 wi, float ior) {
   if (wo.z < 0) wo = -wo, wi = -wi, ior = 1 / ior;

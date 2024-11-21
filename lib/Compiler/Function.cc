@@ -16,7 +16,7 @@ FunctionInstance::FunctionInstance(
   if (decl.definition) {
     auto returns{llvm::SmallVector<Return>{}};
     auto inlines{llvm::SmallVector<Inline>{}};
-    auto emitter{Emitter{context, decl.module, emitter0.crumb, &returns, &inlines, llvmFunc}}; // TODO Crumb correct?
+    auto emitter{Emitter{context, decl.module, decl.crumb, &returns, &inlines, llvmFunc}};
     auto impliedVisit{false};
     auto impliedVisitArgs{ArgList{}};
     {
@@ -97,7 +97,7 @@ FunctionInstance::FunctionInstance(Emitter &emitter0, AST::UnitTest &decl) : nam
   llvmFunc->setLinkage(llvm::Function::ExternalLinkage);
   auto returns{llvm::SmallVector<Return>{}};
   auto inlines{llvm::SmallVector<Inline>{}};
-  auto emitter{Emitter{context, decl.module, emitter0.crumb, &returns, &inlines, llvmFunc}};
+  auto emitter{Emitter{context, decl.module, decl.crumb, &returns, &inlines, llvmFunc}};
   {
     // Initialize arguments.
     auto llvmArgItr{llvmFunc->arg_begin()};

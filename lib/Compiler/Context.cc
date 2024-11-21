@@ -431,7 +431,10 @@ Function *Context::get_function(Emitter &emitter, AST::Function *decl) {
 }
 
 Function *Context::get_function(Emitter &emitter, const llvm::Twine &srcTwine) {
-  return get_function(emitter, sanity_check_nonnull(llvm::dyn_cast<AST::Function>(parse_declaration(srcTwine))));
+  auto decl{sanity_check_nonnull(llvm::dyn_cast<AST::Function>(parse_declaration(srcTwine)))};
+  decl->module = emitter.module;
+  decl->crumb = emitter.crumb;
+  return get_function(emitter, decl);
 }
 
 Module *Context::get_builtin_module(llvm::StringRef name) {
@@ -565,6 +568,16 @@ llvm::SmallVector<Value> Context::resolve_arguments(
 Module *Context::resolve_module(
     Emitter &emitter, bool isAbs, llvm::ArrayRef<llvm::StringRef> path, const AST::SourceLocation &srcLoc) {
   // TODO Expand using import aliases
+  if (!isAbs) {
+    if (path.size() == 1) {
+      for (auto &module : mdl.modules) {
+        if (module.get() != emitter.module && module->name == path[0]) {
+          module->emit(*this);
+          return module.get();
+        }
+      }
+    }
+  }
   if (path.size() == 1) {
     if (auto builtinModule{get_builtin_module(path[0])})
       return builtinModule;

@@ -1,0 +1,7 @@
+#smdl_syntax
+
+import importee::*;
+
+unit_test "Basic imports" {
+  #assert(importee::message == "Hello, world!");
+}
