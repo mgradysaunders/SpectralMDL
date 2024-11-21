@@ -196,7 +196,7 @@ Value ArrayType::construct(Emitter &emitter, const ArgList &args, const AST::Sou
     }
     if (args.is_all_positional() && args.size() == size) {
       if (is_abstract()) {
-        auto argElemType{context.get_common_type(args.get_types(), /*defaultToUnion=*/false, srcLoc)};
+        auto argElemType{context.get_common_type(args.get_types(), /*defaultToUnion=*/true, srcLoc)};
         if (!context.is_subset_of(argElemType, elemType))
           srcLoc.report_error(
               std::format("can't construct array type '{}' from inferred element type '{}'", name, argElemType->name));

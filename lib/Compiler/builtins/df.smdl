@@ -476,6 +476,134 @@ export @(macro) auto tint(const color reflection_tint, const color transmission_
 }
 //--}
 
+//--{ normalized_mix, clamped_mix
+tag component;
+
+export struct bsdf_component: component {
+  float weight    = 0.0;
+  bsdf  component = bsdf();
+  float chance    = weight; // NOTE: Non-standard
+};
+export struct edf_component: component {
+  float weight    = 0.0;
+  edf   component = edf();
+  float chance    = weight; // NOTE: Non-standard
+};
+export struct vdf_component: component {
+  float weight    = 0.0;
+  vdf   component = vdf();
+  float chance    = weight; // NOTE: Non-standard
+};
+
+struct component_mix: bsdf, edf, vdf {
+  component[] components;
+};
+
+export auto normalized_mix(component[<N>] components) {
+  float total_weight(0);
+  float total_chance(0);
+  for (int i = 0; i < N; i++) {
+    auto component(&components[i]);
+    component.weight = #max(component.weight, 0.0);
+    component.chance = #max(component.chance, 0.0);
+    total_weight += component.weight;
+    total_chance += component.chance;
+  }
+  if (total_weight > 1.0)
+    total_weight = 1.0 / total_weight;
+  else
+    total_weight = 1.0;
+  total_chance = 1.0 / total_chance if (total_chance > 0.0);
+  for (int i = 0; i < N; i++) {
+    auto component(&components[i]);
+    component.weight *= total_weight;
+    component.chance *= total_chance;
+  }
+  return component_mix(components);
+}
+
+export auto clamped_mix(component[<N>] components) {
+  float total_weight(0);
+  float total_chance(0);
+  for (int i = 0; i < N; i++) {
+    auto component(&components[i]);
+    component.weight = #max(component.weight, 0.0);
+    component.chance = #max(component.chance, 0.0);
+    if (total_weight + component.weight < 1.0) {
+      total_weight += component.weight;
+      total_chance += component.chance;
+    } else {
+      // MDL specification:
+      // Once a component weight would cause the sum to exceed 1.0, 
+      // it is replaced with the result of subtracting the sum from 1.0.
+      // All subsequent weights are then set to 0.0.
+      component.weight = 1.0 - total_weight;
+      for (int j = i + 1; j < N; j++) {
+        components[j].weight = 0;
+        components[j].chance = 0;
+      }
+      break;
+    }
+  }
+  return component_mix(components);
+}
+
+@(macro) auto eval_bsdf(const &component_mix this, const &eval_bsdf_parameters params) {
+  const auto N(this.components.size);
+  auto result(eval_bsdf_result(is_black: true));
+  for (int i = 0; i < N; i++) {
+    visit component in this.components[i] { // In general this is a union!
+      auto component_result(eval_bsdf(&component.component, params));
+      if (!component_result.is_black) {
+        result.pdf += component.chance * component_result.pdf;
+        result.f   += component.weight * component_result.f;
+        result.is_black = false;
+      }
+    }
+  }
+  return result;
+}
+
+@(macro) auto eval_bsdf_sample(const &component_mix this, const &eval_bsdf_sample_parameters params) {
+  const auto N(this.components.size);
+  const auto xi(&params.xi.y);
+  for (int i = 0; i < N; i++) {
+    visit component in this.components[i] { // In general this is a union!
+      if (!(*xi < component.chance)) {
+        *xi -= component.chance;
+      } else {
+        *xi /= component.chance;
+        auto result(eval_bsdf_sample(&component.component, params));
+        if ((result.mode != scatter_none) & bool(result.delta_f))
+          *result.delta_f *= component.weight;
+        return result;
+      }
+    }
+  }
+  return eval_bsdf_sample_result();
+}
+//--}
+
+//--{ color_normalized_mix, color_clamped_mix
+tag color_component;
+
+export struct color_bsdf_component: color_component {
+  color weight    = color(0.0);
+  bsdf  component = bsdf();
+  float chance    = average(weight); // NOTE: Non-standard
+};
+export struct color_edf_component: color_component {
+  color weight    = color(0.0);
+  edf   component = edf();
+  float chance    = average(weight); // NOTE: Non-standard
+};
+
+// TODO color_normalized_mix
+
+// TODO color_clamped_mix
+
+//--}
+
 //--{ C++ API
 export @(macro) int material__eval_bsdf(
     const &material this, const &float3 wo, const &float3 wi,  
