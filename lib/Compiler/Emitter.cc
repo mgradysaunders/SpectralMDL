@@ -1061,6 +1061,20 @@ Value Emitter::emit_op(AST::BinaryOp op, Value lhs, Value rhs, const AST::Source
 }
 //--}
 
+extern "C" {
+
+SMDL_EXPORT void *smdl_ofile_open(const string_t &fname) {
+  std::error_code ec{};
+  return new llvm::raw_fd_ostream(std::string_view(fname), ec);
+}
+
+SMDL_EXPORT void smdl_ofile_close(void *ptr) {
+  if (ptr)
+    delete static_cast<llvm::raw_fd_ostream *>(ptr);
+}
+
+} // extern "C"
+
 //--{ Emit: Intrinsic
 Value Emitter::emit_intrinsic(llvm::StringRef name, const ArgList &args, const AST::SourceLocation &srcLoc) {
   sanity_check(!name.empty());
@@ -1236,6 +1250,25 @@ Value Emitter::emit_intrinsic(llvm::StringRef name, const ArgList &args, const A
           llvm_emit_cast(builder, rvalue(args[2].value), llvm::Type::getInt64Ty(context.llvmContext)));
       return {};
     }
+  } else if (name[0] == 'o') {
+    if (name == "ofile_open") {
+      auto value{expectOne()};
+      return RValue(
+          context.get_pointer_type(context.get_void_type()),
+          builder.CreateCall(
+              context.get_compile_time_foreign_callee("smdl_ofile_open", &smdl_ofile_open), {lvalue(value).llvmValue}));
+    } else if (name == "ofile_close") {
+      auto value{rvalue(expectOne())};
+      builder.CreateCall(context.get_compile_time_foreign_callee("smdl_ofile_close", &smdl_ofile_close), {value.llvmValue});
+      return {};
+    } else if (name == "ofile_print") {
+      if (args.size() < 2)
+        srcLoc.report_error("intrinsic '#ofile_print' expects 1 file pointer argument and 1 or more printable arguments");
+      auto os{rvalue(args[0].value)};
+      for (size_t i = 1; i < args.size(); i++)
+        emit_print(os, args[i].value);
+      return {};
+    }
   } else if (name[0] == 'p') { // Avoid unnecessary if checks
     if (name == "panic") {
       if (args.size() != 1 || args[0].value.type != context.get_string_type())
@@ -1243,8 +1276,9 @@ Value Emitter::emit_intrinsic(llvm::StringRef name, const ArgList &args, const A
       emit_panic(args[0].value, srcLoc);
       return {};
     } else if (name == "print") {
+      auto os{context.get_compile_time_pointer(&llvm::errs())};
       for (auto &arg : args)
-        emit_print(arg.value);
+        emit_print(os, arg.value);
       return {};
     } else if (name == "pow") {
       if (args.size() != 2 || !args[0].value.type->is_vectorized() || !args[1].value.type->is_vectorized())
@@ -1493,12 +1527,14 @@ Type *Emitter::emit_final_return(Type *type, llvm::ArrayRef<Return> returns, con
 //--{ Emit: Print
 extern "C" {
 
-SMDL_EXPORT void smdl_print_string(const string_t &what) { llvm::errs() << std::string_view(what); }
+SMDL_EXPORT void smdl_print_string(void *ptr, const string_t &value) {
+  *static_cast<llvm::raw_ostream *>(ptr) << std::string_view(value);
+}
 
-SMDL_EXPORT void smdl_print_quoted_string(const string_t &what) {
-  auto &os{llvm::errs()};
+SMDL_EXPORT void smdl_print_quoted_string(void *ptr, const string_t &value) {
+  auto &os{*static_cast<llvm::raw_ostream *>(ptr)};
   os << '"';
-  for (char ch : std::string_view(what)) {
+  for (char ch : std::string_view(value)) {
     switch (ch) {
     case '\\': os << "\\"; break;
     case '\a': os << "\\a"; break;
@@ -1524,35 +1560,48 @@ SMDL_EXPORT void smdl_print_quoted_string(const string_t &what) {
   os << '"';
 }
 
-SMDL_EXPORT void smdl_print_bool(int_t what) { llvm::errs() << (what != 0 ? "true" : "false"); }
+SMDL_EXPORT void smdl_print_bool(void *ptr, int_t value) {
+  *static_cast<llvm::raw_ostream *>(ptr) << (value != 0 ? "true" : "false");
+}
 
-SMDL_EXPORT void smdl_print_int(int_t what) { llvm::errs() << what; }
+SMDL_EXPORT void smdl_print_byte(void *ptr, byte_t value) { *static_cast<llvm::raw_ostream *>(ptr) << char(value); }
 
-SMDL_EXPORT void smdl_print_float(float_t what) { llvm::errs() << std::format("{:0.5g}", what); }
+SMDL_EXPORT void smdl_print_int(void *ptr, int_t value) { *static_cast<llvm::raw_ostream *>(ptr) << value; }
 
-SMDL_EXPORT void smdl_print_double(double_t what) { llvm::errs() << std::format("{:0.5g}", what); }
+SMDL_EXPORT void smdl_print_float(void *ptr, float_t value) {
+  *static_cast<llvm::raw_ostream *>(ptr) << std::format("{:0.5g}", value);
+}
 
-SMDL_EXPORT void smdl_print_pointer(const void *what) { llvm::errs() << std::format("{}", what); }
+SMDL_EXPORT void smdl_print_double(void *ptr, double_t value) {
+  *static_cast<llvm::raw_ostream *>(ptr) << std::format("{:0.5g}", value);
+}
+
+SMDL_EXPORT void smdl_print_pointer(void *ptr, const void *value) {
+  *static_cast<llvm::raw_ostream *>(ptr) << std::format("{}", value);
+}
 
 } // extern "C"
 
-void Emitter::emit_print(Value value, bool quoteStrings) {
+void Emitter::emit_print(Value os, Value value, bool quoteStrings) {
+  os = rvalue(os);
+  sanity_check(os.type->is_pointer());
   if (value.is_void()) {
-    emit_print(context.get_compile_time_string("null"));
+    emit_print(os, context.get_compile_time_string("null"));
   } else if (value.type->is_pointer()) {
     auto callee{context.get_compile_time_foreign_callee("smdl_print_pointer", &smdl_print_pointer)};
-    builder.CreateCall(callee, {rvalue(value).llvmValue});
+    builder.CreateCall(callee, {os.llvmValue, rvalue(value).llvmValue});
   } else if (value.type->is_string()) {
     auto callee{
         quoteStrings ? context.get_compile_time_foreign_callee("smdl_print_quoted_string", &smdl_print_quoted_string)
                      : context.get_compile_time_foreign_callee("smdl_print_string", &smdl_print_string)};
-    builder.CreateCall(callee, {lvalue(value).llvmValue}); // Passes by pointer
+    builder.CreateCall(callee, {os.llvmValue, lvalue(value).llvmValue}); // Passes by pointer
   } else if (value.type->is_enum()) {
-    emit_print(construct(context.get_string_type(), value));
+    emit_print(os, construct(context.get_string_type(), value));
   } else if (value.type->is_scalar()) {
     auto callee{llvm::FunctionCallee()};
     switch (value.type->scalar) {
     case Scalar::Bool: callee = context.get_compile_time_foreign_callee("smdl_print_bool", &smdl_print_bool); break;
+    case Scalar::Byte: callee = context.get_compile_time_foreign_callee("smdl_print_byte", &smdl_print_byte); break;
     case Scalar::Int: callee = context.get_compile_time_foreign_callee("smdl_print_int", &smdl_print_int); break;
     case Scalar::Float: callee = context.get_compile_time_foreign_callee("smdl_print_float", &smdl_print_float); break;
     case Scalar::Double: callee = context.get_compile_time_foreign_callee("smdl_print_double", &smdl_print_double); break;
@@ -1560,38 +1609,38 @@ void Emitter::emit_print(Value value, bool quoteStrings) {
     }
     if (value.type->scalar == Scalar::Bool)
       value = construct(context.get_int_type(), value);
-    builder.CreateCall(callee, {rvalue(value).llvmValue});
+    builder.CreateCall(callee, {os.llvmValue, rvalue(value).llvmValue});
   } else if (value.type->is_vector() || value.type->is_color()) {
-    emit_print(context.get_compile_time_string(std::format("{}(", value.type->name)));
-    emit_print(access(value, 0));
+    emit_print(os, context.get_compile_time_string(std::format("{}(", value.type->name)));
+    emit_print(os, access(value, 0));
     for (uint32_t i{1}; i < value.type->get_vector_size(); i++) {
-      emit_print(context.get_compile_time_string(", "));
-      emit_print(access(value, i));
+      emit_print(os, context.get_compile_time_string(", "));
+      emit_print(os, access(value, i));
     }
-    emit_print(context.get_compile_time_string(")"));
+    emit_print(os, context.get_compile_time_string(")"));
   } else if (value.type->is_matrix()) {
     // TODO
   } else if (value.type->is_array()) {
-    emit_print(context.get_compile_time_string("["));
-    emit_print(access(value, 0));
+    emit_print(os, context.get_compile_time_string("["));
+    emit_print(os, access(value, 0));
     for (uint32_t i{1}; i < value.type->get_array_size(); i++) {
-      emit_print(context.get_compile_time_string(", "));
-      emit_print(access(value, i), /*quoteStrings=*/true);
+      emit_print(os, context.get_compile_time_string(", "));
+      emit_print(os, access(value, i), /*quoteStrings=*/true);
     }
-    emit_print(context.get_compile_time_string("]"));
+    emit_print(os, context.get_compile_time_string("]"));
   } else if (value.type->is_struct()) {
-    emit_print(context.get_compile_time_string(std::format("{}(", value.type->name)));
+    emit_print(os, context.get_compile_time_string(std::format("{}(", value.type->name)));
     auto structType{static_cast<StructType *>(value.type)};
     for (uint32_t i{}; i < structType->fields.size(); i++) {
-      emit_print(context.get_compile_time_string(std::format("{}: ", structType->fields[i].name)));
-      emit_print(access(value, structType->fields[i].name), /*quoteStrings=*/true);
+      emit_print(os, context.get_compile_time_string(std::format("{}: ", structType->fields[i].name)));
+      emit_print(os, access(value, structType->fields[i].name), /*quoteStrings=*/true);
       if (i + 1 < structType->fields.size())
-        emit_print(context.get_compile_time_string(", "));
+        emit_print(os, context.get_compile_time_string(", "));
     }
-    emit_print(context.get_compile_time_string(")"));
+    emit_print(os, context.get_compile_time_string(")"));
   } else if (value.type->is_union()) {
     emit_visit(value, [&](Emitter &emitter, Value value) -> Value {
-      emitter.emit_print(value, quoteStrings);
+      emitter.emit_print(os, value, quoteStrings);
       return {};
     });
   }

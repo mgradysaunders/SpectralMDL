@@ -106,7 +106,7 @@ ParamList::ParamList(Context &context, const AST::Struct &decl) : crumb(decl.cru
 }
 
 ParamList::ParamList(Context &context, const AST::Function &decl) : crumb(decl.crumb) {
-  for (auto &param : decl.params)
+  for (auto &param : decl.params.params)
     params.push_back(Param(context, param));
   guarantee_no_ambiguous_inlining(decl.srcLoc);
 }

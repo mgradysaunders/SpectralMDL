@@ -73,6 +73,8 @@ public:
 
   [[nodiscard]] ArithmeticType *get_bool_type(Extent extent = Extent(1)) { return get_arithmetic_type(Scalar::Bool, extent); }
 
+  [[nodiscard]] ArithmeticType *get_byte_type(Extent extent = Extent(1)) { return get_arithmetic_type(Scalar::Byte, extent); }
+
   [[nodiscard]] ArithmeticType *get_int_type(Extent extent = Extent(1)) { return get_arithmetic_type(Scalar::Int, extent); }
 
   [[nodiscard]] ArithmeticType *get_float_type(Extent extent = Extent(1)) { return get_arithmetic_type(Scalar::Float, extent); }

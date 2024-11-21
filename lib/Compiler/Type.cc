@@ -243,6 +243,7 @@ ArithmeticType::ArithmeticType(Context &context, Scalar scalar, Extent extent) :
     const char *baseName{};
     switch (scalar) {
     case Scalar::Bool: baseName = "bool"; break;
+    case Scalar::Byte: baseName = "byte"; break;
     case Scalar::Int: baseName = "int"; break;
     case Scalar::Float: baseName = "float"; break;
     case Scalar::Double: baseName = "double"; break;
@@ -259,6 +260,7 @@ ArithmeticType::ArithmeticType(Context &context, Scalar scalar, Extent extent) :
   }
   switch (scalar) {
   case Scalar::Bool: llvmType = llvm::Type::getInt1Ty(context.llvmContext); break;
+  case Scalar::Byte: llvmType = llvm::Type::getInt8Ty(context.llvmContext); break;
   case Scalar::Int: llvmType = llvm::Type::getIntNTy(context.llvmContext, sizeof(int_t) * 8); break;
   case Scalar::Float: llvmType = llvm::Type::getFloatTy(context.llvmContext); break;
   case Scalar::Double: llvmType = llvm::Type::getDoubleTy(context.llvmContext); break;
@@ -661,8 +663,11 @@ Value PointerType::construct(Emitter &emitter, const ArgList &args, const AST::S
   }
   if (args.is_one_positional()) {
     auto value{args[0].value};
-    if (!value.type->is_pointer())
+    if (!value.type->is_pointer()) {
+      if (value.type->is_string() && elemType == context.get_byte_type()) 
+        return emitter.rvalue(emitter.access(value, "ptr", srcLoc));
       srcLoc.report_error(std::format("can't construct pointer type '{}' from non-pointer type '{}'", name, value.type->name));
+    }
     if (is_abstract()) {
       if (elemType->pattern_match(emitter, static_cast<PointerType *>(value.type)->elemType))
         return emitter.rvalue(value);

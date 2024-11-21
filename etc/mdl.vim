@@ -87,7 +87,7 @@ hi def link mdlQualifier   StorageClass
 syn keyword mdlStructure struct nextgroup=mdlIdent skipwhite skipempty
 syn keyword mdlStructure enum   nextgroup=mdlIdent skipwhite skipempty
 syn keyword mdlStructure tag    nextgroup=mdlIdent skipwhite skipempty
-syn keyword mdlType auto void
+syn keyword mdlType auto void byte
 syn keyword mdlType bool bool2 bool3 bool4
 syn keyword mdlType int int2 int3 int4
 syn keyword mdlType float float2 float3 float4 float2x2 float2x3 float2x4 float3x2 float3x3 float3x4 float4x2 float4x3 float4x4

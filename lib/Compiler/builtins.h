@@ -252,18 +252,76 @@ export struct fresnel_layer: bsdf {
   bsdf base = bsdf();
   float3 normal = state::normal();
 };
-@(macro) auto eval_bsdf(const &fresnel_layer this, const &eval_bsdf_parameters params) {
+@(macro) auto eval_bsdf(const &fresnel_layer this, inline const &eval_bsdf_parameters params) {
   const auto result0(eval_bsdf(&this.base, params));
   const auto result1(eval_bsdf(&this.layer, params, this.normal));
-  const auto wh(normalize(params.wo + params.wi));
+  const auto F(schlick_F(auto(wo.z, wi.z, dot(wi, normalize(wo + wi))), schlick_F0(this.ior)));
   return eval_bsdf_result(
-    pdf: lerp(result0.pdf, result1.pdf, this.weight * schlick_factor(auto(params.wo.z, params.wi.z))),
-    f:   lerp(result0.f,   result1.f,   this.weight * schlick_F(dot(params.wi, wh), schlick_F0(this.ior))));
+    pdf: lerp(result0.pdf, result1.pdf, this.weight * F.xy),
+    f:   lerp(result0.f,   result1.f,   this.weight * F.z));
 }
 @(macro) auto eval_bsdf_sample(const &fresnel_layer this, const &eval_bsdf_sample_parameters params) {
-  return uniform_bool_sample(&params.xi.z, this.weight * schlick_factor(params.wo.z))
+  return weighted_bool_sample(&params.xi.z, this.weight * schlick_F(params.wo.z, schlick_F0(this.ior)))
     ? eval_bsdf_sample(&this.layer, params, this.normal)
     : eval_bsdf_sample(&this.base, params);
+}
+export struct custom_curve_layer: bsdf {
+  float normal_reflectivity;
+  float grazing_reflectivity = 1.0;
+  float exponent = 5.0;
+  float weight = 1.0;
+  bsdf layer = bsdf();
+  bsdf base = bsdf();
+  float3 normal = state::normal();
+};
+@(macro) auto eval_bsdf(const &custom_curve_layer this, inline const &eval_bsdf_parameters params) {
+  const auto result0(eval_bsdf(&this.base, params));
+  const auto result1(eval_bsdf(&this.layer, params, this.normal));
+  const auto F(schlick_F(auto(wo.z, wi.z, dot(wi, normalize(wo + wi))), this.normal_reflectivity, this.grazing_reflectivity, this.exponent));
+  return eval_bsdf_result(
+    pdf: lerp(result0.pdf, result1.pdf, this.weight * F.xy),
+    f:   lerp(result0.f,   result1.f,   this.weight * F.z));
+}
+@(macro) auto eval_bsdf_sample(const &custom_curve_layer this, const &eval_bsdf_sample_parameters params) {
+  return weighted_bool_sample(&params.xi.z, this.weight * schlick_F(params.wo.z, this.normal_reflectivity, this.grazing_reflectivity, this.exponent))
+    ? eval_bsdf_sample(&this.layer, params, this.normal)
+    : eval_bsdf_sample(&this.base, params);
+}
+struct tint1: bsdf {
+  color tint;
+  bsdf base;
+};
+struct tint2: bsdf {
+  color reflection_tint;
+  color transmission_tint;
+  bsdf base;
+};
+export @(macro) auto tint(const color tint, const bsdf base) {
+  return tint1(tint, base);
+}
+export @(macro) auto tint(const color reflection_tint, const color transmission_tint, const bsdf base) {
+  return tint2(reflection_tint, transmission_tint, base);
+}
+@(macro) auto eval_bsdf(const &tint1 this, const &eval_bsdf_parameters params) {
+  auto result(eval_bsdf(&this.base, params));
+  if (!result.is_black) result.f *= this.tint;
+  return result;
+}
+@(macro) auto eval_bsdf(const &tint2 this, const &eval_bsdf_parameters params) {
+  auto result(eval_bsdf(&this.base, params));
+  if (!result.is_black) result.f *= params.mode == scatter_reflect ? this.reflection_tint : this.transmission_tint;
+  return result;
+}
+@(macro) auto eval_bsdf_sample(const &tint1 this, const &eval_bsdf_sample_parameters params) {
+  auto result(eval_bsdf_sample(&this.base, params));
+  if ((result.mode != scatter_none) & bool(result.delta_f)) *result.delta_f *= this.tint;
+  return result;
+}
+@(macro) auto eval_bsdf_sample(const &tint2 this, const &eval_bsdf_sample_parameters params) {
+  auto result(eval_bsdf_sample(&this.base, params));
+  if ((result.mode != scatter_none) & bool(result.delta_f))
+    *result.delta_f *= result.mode == scatter_reflect ? this.reflection_tint : this.transmission_tint;
+  return result;
 }
 export @(macro) int material__eval_bsdf(
     const &material this, const &float3 wo, const &float3 wi,  

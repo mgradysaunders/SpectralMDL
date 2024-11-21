@@ -50,6 +50,7 @@ Context::Context(MDLInstance &mdl, llvm::BumpPtrAllocator &bumpAllocator)
       {"bool2", get_bool_type(Extent(2))},
       {"bool3", get_bool_type(Extent(3))},
       {"bool4", get_bool_type(Extent(4))},
+      {"byte", get_arithmetic_type(Scalar::Byte)},
       {"color", get_color_type()},
       /* {"compiler_function", compilerFunctionType.get()},
          {"compiler_intrinsic", compilerIntrinsicType.get()},
@@ -129,6 +130,8 @@ Context::Context(MDLInstance &mdl, llvm::BumpPtrAllocator &bumpAllocator)
       {"$PI", get_compile_time_float(3.14159265358979323846f)},
       {"$TWO_PI", get_compile_time_float(6.28318530717958647692f)},
       {"$WAVELENGTH_BASE_MAX", get_compile_time_int(mdl.wavelengthBaseMax)},
+      {"$stdout", get_compile_time_pointer(&llvm::outs())},
+      {"$stderr", get_compile_time_pointer(&llvm::errs())},
   };
   // Always load "::rgb"
   sanity_check_nonnull(get_builtin_module("rgb"));
@@ -272,6 +275,9 @@ ConversionRule Context::get_conversion_rule(Type *srcType, Type *dstType) {
     // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
     if (dstType->is_tag() && static_cast<StructType *>(srcType)->has_tag(static_cast<TagType *>(dstType)))
       return ConversionRule::Perfect;
+    // If the source type is a string and the destination type is a byte pointer, conversion is implicit.
+    if (srcType == get_string_type() && dstType == get_pointer_type(get_byte_type()))
+      return ConversionRule::Implicit;
   }
   // If the destination type is a union ...
   if (dstType->is_union()) {

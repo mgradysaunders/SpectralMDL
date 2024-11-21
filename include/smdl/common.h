@@ -79,6 +79,8 @@ public:
   [[nodiscard]] constexpr auto operator[](size_t i) const -> const T & { return (&x)[i]; }
 };
 
+using byte_t = int8_t;
+
 using int_t = int32_t;
 using int2_t = Vector<int_t, 2>;
 using int3_t = Vector<int_t, 3>;

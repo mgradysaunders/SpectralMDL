@@ -358,7 +358,7 @@ public:
 
   Type *emit_final_return(Type *type, llvm::ArrayRef<Return> returns, const AST::SourceLocation &srcLoc = {});
 
-  void emit_print(Value value, bool quoteStrings = false);
+  void emit_print(Value os, Value value, bool quoteStrings = false);
 
   void emit_panic(Value message, const AST::SourceLocation &srcLoc);
 

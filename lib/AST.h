@@ -225,7 +225,20 @@ public:
   std::optional<AnnotationBlock> annotations{};
 };
 
-using ParamList = llvm::SmallVector<Param>;
+class ParamList final {
+public:
+  [[nodiscard]] bool empty() const { return params.empty(); }
+
+  [[nodiscard]] size_t size() const { return params.size(); }
+
+  [[nodiscard]] auto begin() const { return params.begin(); }
+
+  [[nodiscard]] auto end() const { return params.end(); }
+
+  llvm::SmallVector<Param> params{};
+
+  bool isVarArg{};
+};
 
 //--{ Unary
 enum class UnaryOp : uint32_t {

@@ -606,7 +606,7 @@ auto Parser::parse_function_declaration() -> unique_bump_ptr_wrapper<AST::Functi
   if (!params) {
     if (delimiter('(') && delimiter('*') && delimiter(')')) {
       is_variant = true;
-      params = llvm::SmallVector<AST::Param>(); // Empty
+      params = AST::ParamList();
     } else {
       reject();
       return nullptr;
@@ -814,9 +814,14 @@ auto Parser::parse_parameter_list() -> std::optional<AST::ParamList> {
     auto param{parse_parameter()};
     if (!param)
       break;
-    params.push_back(std::move(*param));
+    params.params.push_back(std::move(*param));
     if (!delimiter(','))
       break;
+    skip();
+    if (next("...")) {
+      params.isVarArg = true;
+      break;
+    }
   }
   if (!delimiter(')')) {
     reject();

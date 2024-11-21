@@ -5,7 +5,7 @@
 
 namespace smdl::Compiler {
 
-enum class Scalar : uint8_t { None = 0, Bool, Int, Float, Double };
+enum class Scalar : uint8_t { None = 0, Bool, Byte, Int, Float, Double };
 
 class Extent final {
 public:
@@ -48,6 +48,11 @@ public:
 template <typename T> struct arithmetic_type_traits {};
 
 template <typename T> struct arithmetic_type_traits<const T> : arithmetic_type_traits<T> {};
+
+template <> struct arithmetic_type_traits<byte_t> {
+  static constexpr Scalar scalar{Scalar::Byte};
+  static constexpr Extent extent{};
+};
 
 template <> struct arithmetic_type_traits<int_t> {
   static constexpr Scalar scalar{Scalar::Int};
@@ -163,7 +168,7 @@ public:
 
   [[nodiscard]] bool is_floating() const { return scalar == Scalar::Float || scalar == Scalar::Double; }
 
-  [[nodiscard]] bool is_integral() const { return scalar == Scalar::Bool || scalar == Scalar::Int; }
+  [[nodiscard]] bool is_integral() const { return scalar == Scalar::Bool || scalar == Scalar::Byte || scalar == Scalar::Int; }
 
   [[nodiscard]] bool is_vectorized() const { return is_scalar() || is_vector() || is_color(); }
 
