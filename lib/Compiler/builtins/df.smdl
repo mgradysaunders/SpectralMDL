@@ -286,7 +286,6 @@ auto eval_bsdf_sample(const &sheen_bsdf this, const &eval_bsdf_sample_parameters
 }
 //--}
 
-
 //--{ BSDF: microfacet_ggx_smith_bsdf
 export struct microfacet_ggx_smith_bsdf: bsdf {
   float roughness_u;
@@ -298,11 +297,11 @@ export struct microfacet_ggx_smith_bsdf: bsdf {
   void string handle = "";
 };
 auto eval_bsdf(const &microfacet_ggx_smith_bsdf this, inline const &eval_bsdf_parameters params) {
-  const auto model(microfacet(
+  const auto model(microfacet::microfacet(
     alpha: saturate(float2(
       this.roughness_u * this.roughness_u, 
       this.roughness_v * this.roughness_v)), 
-    slope: microfacet_slope_ggx()));
+    slope: microfacet::ggx()));
   if (mode == scatter_reflect) {
     if ((int(this.mode) & int(scatter_reflect)) != 0) {
       const auto result(microfacet::microfacet_specular_reflection(model, wo, wi));
@@ -315,6 +314,21 @@ auto eval_bsdf(const &microfacet_ggx_smith_bsdf this, inline const &eval_bsdf_pa
     }
   }
   return eval_bsdf_result(is_black: true);
+}
+auto eval_bsdf_sample(const &microfacet_ggx_smith_bsdf this, const &eval_bsdf_sample_parameters params) {
+  // TODO Handle transmission
+  float3 wo(params.wo);
+  const auto model(microfacet::microfacet(alpha: float2(this.roughness_u * this.roughness_u, this.roughness_v * this.roughness_v), slope: microfacet::ggx()));
+  const auto isneg(wo.z < 0);
+  wo.z = #abs(wo.z);
+  float3 wm(microfacet::microfacet_visible_normal_sample(model, params.xi.x, params.xi.y, wo));
+  float3 wi(normalize(reflect(wo, wm)));
+  if (wi.z < 0)
+    return eval_bsdf_sample_result();
+  else {
+    if (isneg) wi.z = -wi.z;
+    return eval_bsdf_sample_result(wi: wi, mode: scatter_reflect);
+  }
 }
 //--}
 

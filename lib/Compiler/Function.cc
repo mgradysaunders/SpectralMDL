@@ -16,7 +16,7 @@ FunctionInstance::FunctionInstance(
   if (decl.definition) {
     auto returns{llvm::SmallVector<Return>{}};
     auto inlines{llvm::SmallVector<Inline>{}};
-    auto emitter{Emitter{context, decl.module, emitter0.crumb, &returns, &inlines, llvmFunc}};
+    auto emitter{Emitter{context, decl.module, emitter0.crumb, &returns, &inlines, llvmFunc}}; // TODO Crumb correct?
     auto impliedVisit{false};
     auto impliedVisitArgs{ArgList{}};
     {

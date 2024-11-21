@@ -194,6 +194,48 @@ auto eval_bsdf(const &sheen_bsdf this, inline const &eval_bsdf_parameters params
 auto eval_bsdf_sample(const &sheen_bsdf this, const &eval_bsdf_sample_parameters params) {
   return eval_bsdf_sample_result(wi: cosine_hemisphere_sample(params.xi.xy) * params.hit_side, mode: scatter_reflect);
 }
+export struct microfacet_ggx_smith_bsdf: bsdf {
+  float roughness_u;
+  float roughness_v = roughness_u;
+  color tint = color(1.0);
+  color multiscatter_tint = color(0.0);
+  float3 tangent_u = state::texture_tangent_u(0);
+  scatter_mode mode = scatter_reflect;
+  void string handle = "";
+};
+auto eval_bsdf(const &microfacet_ggx_smith_bsdf this, inline const &eval_bsdf_parameters params) {
+  const auto model(microfacet::microfacet(
+    alpha: saturate(float2(
+      this.roughness_u * this.roughness_u, 
+      this.roughness_v * this.roughness_v)), 
+    slope: microfacet::ggx()));
+  if (mode == scatter_reflect) {
+    if ((int(this.mode) & int(scatter_reflect)) != 0) {
+      const auto result(microfacet::microfacet_specular_reflection(model, wo, wi));
+      return eval_bsdf_result(pdf: result.pdf, f: result.f * this.tint);
+    }
+  } else {
+    if ((int(this.mode) & int(scatter_transmit)) != 0) {
+      const auto result(microfacet::microfacet_specular_refraction(model, wo, wi, ior: ior));
+      return eval_bsdf_result(pdf: result.pdf, f: result.f * this.tint);
+    }
+  }
+  return eval_bsdf_result(is_black: true);
+}
+auto eval_bsdf_sample(const &microfacet_ggx_smith_bsdf this, const &eval_bsdf_sample_parameters params) {
+  float3 wo(params.wo);
+  const auto model(microfacet::microfacet(alpha: float2(this.roughness_u * this.roughness_u, this.roughness_v * this.roughness_v), slope: microfacet::ggx()));
+  const auto isneg(wo.z < 0);
+  wo.z = #abs(wo.z);
+  float3 wm(microfacet::microfacet_visible_normal_sample(model, params.xi.x, params.xi.y, wo));
+  float3 wi(normalize(reflect(wo, wm)));
+  if (wi.z < 0)
+    return eval_bsdf_sample_result();
+  else {
+    if (isneg) wi.z = -wi.z;
+    return eval_bsdf_sample_result(wi: wi, mode: scatter_reflect);
+  }
+}
 @(macro) auto eval_bsdf(const auto this, inline const &eval_bsdf_parameters params, const float3 normal) {
   preserve wo, wi;
   wo = geometry_wo;
