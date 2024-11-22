@@ -2,9 +2,8 @@
 #smdl_syntax
 
 using ::math import *;
-
-import ::microfacet::*;
-
+using ::fresnel import *;
+using ::microfacet import *;
 import ::state::*;
 
 export enum scatter_mode { scatter_none = 0, scatter_reflect = 1, scatter_transmit = 2, scatter_reflect_transmit = 3 };
@@ -77,7 +76,7 @@ struct eval_bsdf_parameters {
   // The incoming direction used for evaluation which may be in some perturbed tangent space.
   float3 wi = geometry_wi;
 
-  // The hit side of the surface as the sign of the outgoing direction Z coordinate.
+  // The hit side of the facets as the sign of the outgoing direction Z coordinate.
   const float hit_side = #sign(geometry_wo.z);
 
   // The index of refraction.
@@ -138,7 +137,7 @@ struct eval_bsdf_sample_parameters {
   // The canonical random sample in [0,1]^4. 
   float4 xi;
 
-  // The hit side of the surface as the sign of the outgoing direction Z coordinate.
+  // The hit side of the facets as the sign of the outgoing direction Z coordinate.
   const float hit_side = #sign(geometry_wo.z);
 
   // The index of refraction.
@@ -277,48 +276,69 @@ auto eval_bsdf_sample(const &sheen_bsdf this, const &eval_bsdf_sample_parameters
 //--}
 
 //--{ BSDF: microfacet_ggx_smith_bsdf
-export struct microfacet_ggx_smith_bsdf: bsdf {
-  float roughness_u;
-  float roughness_v = roughness_u;
-  color tint = color(1.0);
-  color multiscatter_tint = color(0.0);
-  float3 tangent_u = state::texture_tangent_u(0);
+struct microfacet_bsdf: bsdf {
+  microfacet facets;
+  auto tint;
+  auto multiscatter_tint;
+  ?float3 tangent_u = null;
   scatter_mode mode = scatter_reflect;
-  void string handle = "";
 };
-auto eval_bsdf(const &microfacet_ggx_smith_bsdf this, inline const &eval_bsdf_parameters params) {
-  const auto model(microfacet::microfacet(
-    alpha: saturate(float2(
-      this.roughness_u * this.roughness_u, 
-      this.roughness_v * this.roughness_v)), 
-    slope: microfacet::ggx()));
+
+auto eval_bsdf(const &microfacet_bsdf this, inline const &eval_bsdf_parameters params) {
+  preserve wo, wi;
+  perturb_tangent(params, *this.tangent_u) if (this.tangent_u);
   if (mode == scatter_reflect) {
     if ((int(this.mode) & int(scatter_reflect)) != 0) {
-      const auto result(microfacet::microfacet_specular_reflection(model, wo, wi));
+      auto ggxms(specular_ggxms(ggx: specular_ggx(roughness: #sqrt(this.facets.alpha)), F0: schlick_F0(1.0 / 1.4), chance_diff:0.5, chance_spec:0.5));
+      auto result(specular_ggxms_brdf(&ggxms, wo, wi));
+      result.f += specular_ggxms_brdf_residual_albedo(&ggxms, auto(wi.z, wo.z)) * #abs(wi.z) / $PI;
       return eval_bsdf_result(pdf: result.pdf, f: result.f * this.tint);
+      //auto result(microfacet_specular_brdf(this.facets, wo, wi));
+      //return eval_bsdf_result(pdf: result.pdf, f: schlick_F(dot(wi, result.wm), schlick_F0(1.0/1.4)) * result.f * this.tint);
     }
   } else {
     if ((int(this.mode) & int(scatter_transmit)) != 0) {
-      const auto result(microfacet::microfacet_specular_refraction(model, wo, wi, ior: ior));
+      auto result(microfacet_specular_btdf(this.facets, wo, wi, ior: ior));
       return eval_bsdf_result(pdf: result.pdf, f: result.f * this.tint);
     }
   }
   return eval_bsdf_result(is_black: true);
 }
-auto eval_bsdf_sample(const &microfacet_ggx_smith_bsdf this, const &eval_bsdf_sample_parameters params) {
+auto eval_bsdf_sample(const &microfacet_bsdf this, const &eval_bsdf_sample_parameters params) {
   // TODO Handle transmission
-  float3 wo(params.wo);
-  const auto model(microfacet::microfacet(alpha: float2(this.roughness_u * this.roughness_u, this.roughness_v * this.roughness_v), slope: microfacet::ggx()));
-  const auto isneg(wo.z < 0);
+  auto wo(params.wo);
+  auto isneg(wo.z < 0);
   wo.z = #abs(wo.z);
-  float3 wm(microfacet::microfacet_visible_normal_sample(model, params.xi.x, params.xi.y, wo));
-  float3 wi(normalize(reflect(wo, wm)));
-  if (wi.z < 0)
-    return eval_bsdf_sample_result();
-  else {
-    if (isneg) wi.z = -wi.z;
-    return eval_bsdf_sample_result(wi: wi, mode: scatter_reflect);
+  auto ggxms(specular_ggxms(ggx: specular_ggx(roughness: #sqrt(this.facets.alpha)), F0: schlick_F0(1.0 / 1.4), chance_diff:0.5, chance_spec:0.5));
+  if (weighted_bool_sample(&params.xi.z, ggxms.chance_diff)) {
+    return eval_bsdf_sample_result(wi: params.hit_side * cosine_hemisphere_sample(params.xi.xy), mode: scatter_reflect);
+  } else {
+    float3 wm(microfacet_visible_normal_sample(this.facets, params.xi.x, params.xi.y, wo));
+    float3 wi(normalize(reflect(wo, wm)));
+    if (wi.z < 0)
+      return eval_bsdf_sample_result();
+    else {
+      if (isneg) wi.z = -wi.z;
+      return eval_bsdf_sample_result(wi: wi, mode: scatter_reflect);
+    }
   }
+}
+
+export @(macro) auto microfacet_ggx_smith_bsdf(
+  const float roughness_u, 
+  const float roughness_v = roughness_u, 
+  const auto tint = 1.0, 
+  const auto multiscatter_tint = 1.0,
+  const ?float3 tangent_u = null,
+  const scatter_mode mode = scatter_reflect,
+  const string handle = "") {
+  const auto roughness(saturate(float2(roughness_u, roughness_v)));
+  return microfacet_bsdf(
+    facets: microfacet(alpha: roughness * roughness, slope: microfacet_slope_ggx()),
+    tint: tint,
+    multiscatter_tint: multiscatter_tint,
+    tangent_u: tangent_u,
+    mode: mode);
 }
 //--}
 
@@ -375,18 +395,6 @@ export struct color_weighted_layer: bsdf {
     ? eval_bsdf_sample(&this.layer, params, this.normal)
     : eval_bsdf_sample(&this.base, params);
 }
-//--}
-
-//--{ Helpers: Fresnel
-@(pure macro) auto schlick_F0(const auto ior) = #pow((ior - 1) / (ior + 1), 2);
-
-@(pure macro) auto schlick_factor(const auto cos_theta) = #pow(#max(1 - #abs(cos_theta), 0), 5);
-
-@(pure macro) auto schlick_factor(const auto cos_theta, const auto exponent) = #pow(#max(1 - #abs(cos_theta), 0), exponent);
-
-@(pure macro) auto schlick_F(const auto cos_theta, const auto F0, const auto F90 = 1.0) = F0 + (F90 - F0) * schlick_factor(cos_theta);
-
-@(pure macro) auto schlick_F(const auto cos_theta, const auto F0, const auto F90, const float exponent) = F0 + (F90 - F0) * schlick_factor(cos_theta, exponent);
 //--}
 
 //--{ BSDF: fresnel_layer

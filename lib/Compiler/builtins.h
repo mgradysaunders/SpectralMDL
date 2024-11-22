@@ -5,7 +5,8 @@ namespace smdl::Compiler::builtins {
 static const char *df = R"*(
 #smdl_syntax
 using ::math import *;
-import ::microfacet::*;
+using ::fresnel import *;
+using ::microfacet import *;
 import ::state::*;
 export enum scatter_mode { scatter_none = 0, scatter_reflect = 1, scatter_transmit = 2, scatter_reflect_transmit = 3 };
 @(pure) bool weighted_bool_sample(const &float xi, float weight) {
@@ -186,47 +187,64 @@ auto eval_bsdf(const &sheen_bsdf this, inline const &eval_bsdf_parameters params
 auto eval_bsdf_sample(const &sheen_bsdf this, const &eval_bsdf_sample_parameters params) {
   return eval_bsdf_sample_result(wi: cosine_hemisphere_sample(params.xi.xy) * params.hit_side, mode: scatter_reflect);
 }
-export struct microfacet_ggx_smith_bsdf: bsdf {
-  float roughness_u;
-  float roughness_v = roughness_u;
-  color tint = color(1.0);
-  color multiscatter_tint = color(0.0);
-  float3 tangent_u = state::texture_tangent_u(0);
+struct microfacet_bsdf: bsdf {
+  microfacet facets;
+  auto tint;
+  auto multiscatter_tint;
+  ?float3 tangent_u = null;
   scatter_mode mode = scatter_reflect;
-  void string handle = "";
 };
-auto eval_bsdf(const &microfacet_ggx_smith_bsdf this, inline const &eval_bsdf_parameters params) {
-  const auto model(microfacet::microfacet(
-    alpha: saturate(float2(
-      this.roughness_u * this.roughness_u, 
-      this.roughness_v * this.roughness_v)), 
-    slope: microfacet::ggx()));
+auto eval_bsdf(const &microfacet_bsdf this, inline const &eval_bsdf_parameters params) {
+  preserve wo, wi;
+  perturb_tangent(params, *this.tangent_u) if (this.tangent_u);
   if (mode == scatter_reflect) {
     if ((int(this.mode) & int(scatter_reflect)) != 0) {
-      const auto result(microfacet::microfacet_specular_reflection(model, wo, wi));
+      auto ggxms(specular_ggxms(ggx: specular_ggx(roughness: #sqrt(this.facets.alpha)), F0: schlick_F0(1.0 / 1.4), chance_diff:0.5, chance_spec:0.5));
+      auto result(specular_ggxms_brdf(&ggxms, wo, wi));
+      result.f += specular_ggxms_brdf_residual_albedo(&ggxms, auto(wi.z, wo.z)) * #abs(wi.z) / $PI;
       return eval_bsdf_result(pdf: result.pdf, f: result.f * this.tint);
     }
   } else {
     if ((int(this.mode) & int(scatter_transmit)) != 0) {
-      const auto result(microfacet::microfacet_specular_refraction(model, wo, wi, ior: ior));
+      auto result(microfacet_specular_btdf(this.facets, wo, wi, ior: ior));
       return eval_bsdf_result(pdf: result.pdf, f: result.f * this.tint);
     }
   }
   return eval_bsdf_result(is_black: true);
 }
-auto eval_bsdf_sample(const &microfacet_ggx_smith_bsdf this, const &eval_bsdf_sample_parameters params) {
-  float3 wo(params.wo);
-  const auto model(microfacet::microfacet(alpha: float2(this.roughness_u * this.roughness_u, this.roughness_v * this.roughness_v), slope: microfacet::ggx()));
-  const auto isneg(wo.z < 0);
+auto eval_bsdf_sample(const &microfacet_bsdf this, const &eval_bsdf_sample_parameters params) {
+  auto wo(params.wo);
+  auto isneg(wo.z < 0);
   wo.z = #abs(wo.z);
-  float3 wm(microfacet::microfacet_visible_normal_sample(model, params.xi.x, params.xi.y, wo));
-  float3 wi(normalize(reflect(wo, wm)));
-  if (wi.z < 0)
-    return eval_bsdf_sample_result();
-  else {
-    if (isneg) wi.z = -wi.z;
-    return eval_bsdf_sample_result(wi: wi, mode: scatter_reflect);
+  auto ggxms(specular_ggxms(ggx: specular_ggx(roughness: #sqrt(this.facets.alpha)), F0: schlick_F0(1.0 / 1.4), chance_diff:0.5, chance_spec:0.5));
+  if (weighted_bool_sample(&params.xi.z, ggxms.chance_diff)) {
+    return eval_bsdf_sample_result(wi: params.hit_side * cosine_hemisphere_sample(params.xi.xy), mode: scatter_reflect);
+  } else {
+    float3 wm(microfacet_visible_normal_sample(this.facets, params.xi.x, params.xi.y, wo));
+    float3 wi(normalize(reflect(wo, wm)));
+    if (wi.z < 0)
+      return eval_bsdf_sample_result();
+    else {
+      if (isneg) wi.z = -wi.z;
+      return eval_bsdf_sample_result(wi: wi, mode: scatter_reflect);
+    }
   }
+}
+export @(macro) auto microfacet_ggx_smith_bsdf(
+  const float roughness_u, 
+  const float roughness_v = roughness_u, 
+  const auto tint = 1.0, 
+  const auto multiscatter_tint = 1.0,
+  const ?float3 tangent_u = null,
+  const scatter_mode mode = scatter_reflect,
+  const string handle = "") {
+  const auto roughness(saturate(float2(roughness_u, roughness_v)));
+  return microfacet_bsdf(
+    facets: microfacet(alpha: roughness * roughness, slope: microfacet_slope_ggx()),
+    tint: tint,
+    multiscatter_tint: multiscatter_tint,
+    tangent_u: tangent_u,
+    mode: mode);
 }
 @(macro) auto eval_bsdf(const auto this, inline const &eval_bsdf_parameters params, const float3 normal) {
   preserve wo, wi;
@@ -274,11 +292,6 @@ export struct color_weighted_layer: bsdf {
     ? eval_bsdf_sample(&this.layer, params, this.normal)
     : eval_bsdf_sample(&this.base, params);
 }
-@(pure macro) auto schlick_F0(const auto ior) = #pow((ior - 1) / (ior + 1), 2);
-@(pure macro) auto schlick_factor(const auto cos_theta) = #pow(#max(1 - #abs(cos_theta), 0), 5);
-@(pure macro) auto schlick_factor(const auto cos_theta, const auto exponent) = #pow(#max(1 - #abs(cos_theta), 0), exponent);
-@(pure macro) auto schlick_F(const auto cos_theta, const auto F0, const auto F90 = 1.0) = F0 + (F90 - F0) * schlick_factor(cos_theta);
-@(pure macro) auto schlick_F(const auto cos_theta, const auto F0, const auto F90, const float exponent) = F0 + (F90 - F0) * schlick_factor(cos_theta, exponent);
 export struct fresnel_layer: bsdf {
   float ior;
   float weight = 1.0;
@@ -911,22 +924,31 @@ export @(macro) float lookup_float(texture_ptex tex, const int channel = 0) {
 }
 )*";
 
+static const char *fresnel = R"*(#smdl_syntax
+export @(pure macro) auto schlick_F0(const auto ior) = #pow((ior - 1) / (ior + 1), 2);
+export @(pure macro) auto schlick_factor(const auto cos_theta) = #pow(#max(1 - #abs(cos_theta), 0), 5);
+export @(pure macro) auto schlick_factor(const auto cos_theta, const auto exponent) = #pow(#max(1 - #abs(cos_theta), 0), exponent);
+export @(pure macro) auto schlick_F(const auto cos_theta, const auto F0, const auto F90 = 1.0) = F0 + (F90 - F0) * schlick_factor(cos_theta);
+export @(pure macro) auto schlick_F(const auto cos_theta, const auto F0, const auto F90, const float exponent) = F0 + (F90 - F0) * schlick_factor(cos_theta, exponent);
+)*";
+
 static const char *microfacet = R"*(
 #smdl_syntax
 using ::math import *;
+using ::fresnel import *;
 @(pure foreign) float erfcf(float x);
 @(pure foreign) float lgammaf(float x);
 @(pure) float betaf(float x, float y) = #exp(lgammaf(x) + lgammaf(y) - lgammaf(x + y));
 export tag microfacet_slope;
-export struct ggx: default microfacet_slope {};
-export struct beckmann: microfacet_slope {};
+export struct microfacet_slope_ggx: default microfacet_slope {};
+export struct microfacet_slope_ggx: microfacet_slope {};
 export struct microfacet {
-  float2 alpha;
-  microfacet_slope slope = microfacet_slope();
+  const float2 alpha;
+  const microfacet_slope slope = microfacet_slope();
 };
-@(pure macro) auto microfacet_smith_lambda(const ggx this, const float m) = 0.5 * (#sign(m) * #sqrt(1 + 1 / (m * m))) - 0.5;
-@(pure macro) auto microfacet_slope_pdf(const ggx this, const float2 m) = 1.0 / ($PI * (t := 1 + dot(m, m)) * t);
-@(pure noinline) auto microfacet_visible_slope_sample(const ggx this, const float xi0, float xi1, float cos_thetao) {
+@(pure macro) auto microfacet_smith_lambda(const microfacet_slope_ggx this, const float m) = 0.5 * (#sign(m) * #sqrt(1 + 1 / (m * m))) - 0.5;
+@(pure macro) auto microfacet_slope_pdf(const microfacet_slope_ggx this, const float2 m) = 1.0 / ($PI * (t := 1 + dot(m, m)) * t);
+@(pure noinline) auto microfacet_visible_slope_sample(const microfacet_slope_ggx this, const float xi0, float xi1, float cos_thetao) {
   return #sqrt(xi0 / (1 - xi0)) * float2(#cos(phi := $TWO_PI * xi1), #sin(phi)) if (cos_thetao > +0.9999);
   cos_thetao = #max(cos_thetao, -0.9999);
   const auto sin_thetao(#sqrt(1 - cos_thetao * cos_thetao));
@@ -944,9 +966,9 @@ export struct microfacet {
          (xi1 * (xi1 * (xi1 * 0.093073 + 0.309420) - 1.000000) + 0.597999));
   return float2(mx, my);
 }
-@(pure macro) auto microfacet_smith_lambda(const beckmann this, const float m) = 0.5 * (#exp(-m * m) / m / #sqrt($PI) - erfcf(m));
-@(pure macro) auto microfacet_slope_pdf(const beckmann this, const float2 m) =  1.0 / ($PI * #exp(-dot(m, m)));
-@(pure noinline) auto microfacet_visible_slope_sample(const beckmann this, const float xi0, const float xi1, float cos_thetao) {
+@(pure macro) auto microfacet_smith_lambda(const microfacet_slope_ggx this, const float m) = 0.5 * (#exp(-m * m) / m / #sqrt($PI) - erfcf(m));
+@(pure macro) auto microfacet_slope_pdf(const microfacet_slope_ggx this, const float2 m) =  1.0 / ($PI * #exp(-dot(m, m)));
+@(pure noinline) auto microfacet_visible_slope_sample(const microfacet_slope_ggx this, const float xi0, const float xi1, float cos_thetao) {
   return float2(0.0);
 }
 export @(pure) auto microfacet_smith_lambda(microfacet this, const float3 w) {
@@ -976,20 +998,20 @@ export @(pure) auto microfacet_visible_normal_sample(microfacet this, const floa
       this.alpha.y * dot(float2(sin_phi, +cos_phi), m11)));
   return #all(isfinite(m)) ? normalize(float3(m, 1)) : wo.z == 0 ? normalize(wo) : float3(0, 0, 1);
 }
-export struct microfacet_specular_result {
-  float3 wm = float3(0.0);
+export struct microfacet_bsdf_result {
+  float3 wm  = float3(0.0);
   float2 pdf = float2(0.0);
-  float f = 0.0;
+  auto   f   = float(0.0);
 };
-export @(pure) auto microfacet_specular_reflection(microfacet this, float3 wo, float3 wi) {
+export @(pure) auto microfacet_specular_brdf(microfacet this, float3 wo, float3 wi) {
   if (wo.z < 0) wo = -wo, wi = -wi;
-  if (wi.z < 0) return microfacet_specular_result();
+  if (wi.z < 0) return microfacet_bsdf_result();
   const auto wm(normalize(wo + wi));
   const auto d(microfacet_normal_pdf(this, wm));
   const auto lambdao(microfacet_smith_lambda(this, wo)), proj_areao((1 + lambdao) * #max(wo.z, 0.001));
   const auto lambdai(microfacet_smith_lambda(this, wi)), proj_areai((1 + lambdai) * #max(wi.z, 0.001));
   const auto g(1 / (1 + lambdao + lambdai));
-  return microfacet_specular_result(
+  return microfacet_bsdf_result(
       wm, 
       0.25 * d / float2(proj_areao, proj_areai),
       0.25 * d * g / #max(wo.z, 0.001) * step(0.0, wi.z));
@@ -1002,15 +1024,15 @@ export @(pure) auto microfacet_specular_reflection(microfacet this, float3 wo, f
   const auto wh(vh / len1_vh);
   return #abs(#sum(wt * wh)) / len2_vh;
 }
-export @(pure) auto microfacet_specular_refraction(microfacet this, float3 wo, float3 wi, float ior) {
+export @(pure) auto microfacet_specular_btdf(microfacet this, float3 wo, float3 wi, float ior) {
   if (wo.z < 0) wo = -wo, wi = -wi, ior = 1 / ior;
-  if (wi.z > 0) return microfacet_specular_result();
+  if (wi.z > 0) return microfacet_bsdf_result();
   auto wm(normalize(refraction_half_vector(wo, wi, ior)));
   wm = wm * #sign(wm.z); 
   const auto cos_thetao(dot(wo, wm));
   const auto cos_thetai(dot(wi, wm));
   if (!((cos_thetao > 0) & (cos_thetai < 0)))
-    return microfacet_specular_result();
+    return microfacet_bsdf_result();
   const float d(microfacet_normal_pdf(this, wm));
   const auto lambdao(microfacet_smith_lambda(this, +wo)), proj_areao((1 + lambdao) * #max(+wo.z, 0.001));
   const auto lambdai(microfacet_smith_lambda(this, -wi)), proj_areai((1 + lambdai) * #max(-wi.z, 0.001));
@@ -1018,10 +1040,135 @@ export @(pure) auto microfacet_specular_refraction(microfacet this, float3 wo, f
   const auto j(float2(
     +cos_thetao * refraction_half_vector_jacobian(wo, wi, ior),
     -cos_thetai * refraction_half_vector_jacobian(wi, wo, 1 / ior)));
-  return microfacet_specular_result(
+  return microfacet_bsdf_result(
       wm, 
       d * j / float2(proj_areao, proj_areai),
       d * g * j[0] / #max(wo.z, 0.001) * step(0.0, wi.z));
+}
+@(pure noinline) float3 specular_ggx_E0_fit(const float r0) {
+  if (r0 < 0.07874) {
+    return float3(0.8812495, 8.17536319, 1.3135667);
+  } else {
+    float3 fit = float3(-6.6693697e+00, -2.9657416e+02, 4.3375689e+00);
+    fit = fit * r0 + float3( 2.4328790e+01,  1.1504294e+03, -2.7680456e+00);
+    fit = fit * r0 + float3(-3.4466565e+01, -1.7863981e+03, -2.1208273e+01);
+    fit = fit * r0 + float3( 2.2426746e+01,  1.3985216e+03,  4.1070723e+01);
+    fit = fit * r0 + float3(-4.5686202e+00, -5.5748525e+02, -2.9502989e+01);
+    fit = fit * r0 + float3(-2.0535534e+00,  9.2822798e+01,  8.1241469e+00);
+    fit = fit * r0 + float3( 1.0473323e+00,  3.7080583e+00,  8.4445102e-01);
+    return fit;
+  }
+}
+@(pure noinline) float3 specular_ggx_E1_fit(const float r0) {
+  float3 fit = float3(0.0);
+  if (r0 < 0.06299) {
+    fit = float3(29.2553519, 0.3728114, 0.1845677);
+  } else if (r0 < 0.1259843) {
+    fit = float3(-6.2876897e+07, -4.9194766e+06, 3.3173219e+06);
+    fit = fit * r0 + float3( 3.4025124e+07,  2.4576227e+06, -1.6123845e+06);
+    fit = fit * r0 + float3(-7.2367180e+06, -4.8558372e+05,  3.0882525e+05);
+    fit = fit * r0 + float3( 7.5011789e+05,  4.7293248e+04, -2.9071452e+04);
+    fit = fit * r0 + float3(-3.7635419e+04, -2.2570320e+03,  1.3407965e+03);
+    fit = fit * r0 + float3( 7.5899155e+02,  4.2444028e+01, -2.4013229e+01);
+  } else if (r0 < 0.503970) {
+    fit = float3(-4.2253228e+03, 1.6913746e+02, -7.8179263e+00);
+    fit = fit * r0 + float3( 9.6952817e+03, -3.5406749e+02,  1.1760316e+01);
+    fit = fit * r0 + float3(-8.8256161e+03,  2.7638671e+02, -5.2975185e+00);
+    fit = fit * r0 + float3( 4.0337334e+03, -9.8577485e+01,  1.2001528e+00);
+    fit = fit * r0 + float3(-9.5198727e+02,  1.5754557e+01, -1.4087179e-01);
+    fit = fit * r0 + float3( 1.0006441e+02, -1.4926819e-01,  1.1518670e-01);
+  } else {
+    fit = float3(-5.9786880e+01, -5.8887035e+01, 4.1460911e+02);
+    fit = fit * r0 + float3( 2.2101716e+02,  2.1996966e+02, -1.3466323e+03);
+    fit = fit * r0 + float3(-3.3692861e+02, -3.1412912e+02,  1.7465495e+03);
+    fit = fit * r0 + float3( 2.8006161e+02,  2.1178043e+02, -1.1260412e+03);
+    fit = fit * r0 + float3(-1.3115488e+02, -6.7437900e+01,  3.6066098e+02);
+    fit = fit * r0 + float3( 2.8927807e+01,  8.9207463e+00, -4.5752769e+01);
+  }
+  fit.z *= #pow(2.71828182459 * fit.x * fit.y, 1.0 / fit.y);
+  return fit;
+}
+@(pure noinline) float specular_ggx_E0_average(float r0) {
+  r0 = #max(r0, 0.072);
+  float Eav = 0.38810168;
+  Eav = Eav * r0 - 1.0422742;
+  Eav = Eav * r0 + 0.74872475;
+  Eav = Eav * r0 + 0.22099231;
+  Eav = Eav * r0 - 0.41891968;
+  Eav = Eav * r0 + 0.06177244;
+  Eav = Eav * r0 + 0.04447912;
+  return Eav;
+}
+@(pure noinline) float specular_ggx_E1_average(float r0) {
+  float Eav = -0.40461439;
+  Eav = Eav * r0 + 2.33942628;
+  Eav = Eav * r0 - 3.15953698;
+  Eav = Eav * r0 + 0.69762445;
+  Eav = Eav * r0 - 0.06449884;
+  Eav = Eav * r0 + 1.00125673;
+  return Eav;
+}
+export struct specular_ggx {
+  const float2 roughness;
+  const float roughness0 = #sqrt(roughness.x * roughness.y);
+  const float3 E0_fit = specular_ggx_E0_fit(roughness0);
+  const float3 E1_fit = specular_ggx_E1_fit(roughness0);
+  const float E0_average = specular_ggx_E0_average(roughness0);
+  const float E1_average = specular_ggx_E1_average(roughness0);
+  const float2 alpha = roughness * roughness;
+};
+export @(pure) auto specular_ggx_brdf0_albedo(inline const &specular_ggx this, const auto cos_theta) {
+  const float A(E0_fit[0]);
+  const float B(E0_fit[1]);
+  const float C(E0_fit[2]);
+  return A * #exp(-B * #pow(cos_theta, C));
+}
+export @(pure) auto specular_ggx_brdf1_albedo(inline const &specular_ggx this, const auto cos_theta) {
+  const float A(E1_fit[0]);
+  const float B(E1_fit[1]);
+  const float C(E1_fit[2]);
+  return #exp(-C * cos_theta * #exp(-A * #pow(cos_theta, B))); 
+}
+export struct specular_ggxms {
+  inline specular_ggx ggx;
+  const float F0;
+  const float F_average = 20.0 / 21.0 * F0 + 1.0 / 21.0;
+  const float F_average_term = F_average * F_average * ggx.E1_average / (1 - F_average * (1 - ggx.E1_average));
+  const float E_average = F0 * ggx.E1_average + (1 - F0) * ggx.E0_average + F_average_term * (1 - ggx.E1_average);
+  const float chance_diff = saturate(ggx.roughness0);
+  const float chance_spec = 1 - chance_diff;
+};
+export @(pure) auto specular_ggxms_brdf_albedo(inline const &specular_ggxms this, const float cos_theta) {
+  const auto E0(specular_ggx_brdf0_albedo(&ggx, cos_theta));
+  const auto E1(specular_ggx_brdf1_albedo(&ggx, cos_theta));
+  return F0 * E1 + (1 - F0) * E0 + F_average_term * (1 - E1);
+}
+export @(pure) auto specular_ggxms_brdf_albedo(inline const &specular_ggxms this, const float2 cos_theta) {
+  const auto E0(specular_ggx_brdf0_albedo(&ggx, cos_theta));
+  const auto E1(specular_ggx_brdf1_albedo(&ggx, cos_theta));
+  return auto[2](
+    F0 * E1[0] + (1 - F0) * E0[0] + F_average_term * (1 - E1[0]),
+    F0 * E1[1] + (1 - F0) * E0[1] + F_average_term * (1 - E1[1]));
+}
+export @(pure) auto specular_ggxms_brdf_albedo_average(inline const &specular_ggxms this) {
+  return F0 * E1_average + (1 - F0) * E0_average + F_average_term * (1 - E1_average);
+}
+export @(pure) auto specular_ggxms_brdf(inline const &specular_ggxms this, float3 wo, float3 wi, const auto tint_diff = 1.0, const auto tint_spec = 1.0) {
+  if (wo.z < 0) wo = -wo, wi = -wi;
+  if (wi.z < 0) wi.z = 0;
+  auto specular(microfacet_specular_brdf(microfacet(alpha: alpha, slope: microfacet_slope_ggx()), wo, wi));
+  const auto cos_theta(float2(wi.z, wo.z));
+  const auto E1(specular_ggx_brdf1_albedo(&ggx, cos_theta));
+  const auto weight_diff(tint_diff * (1 - E1[0]) * (1 - E1[1]) / (1 - E1_average) * F_average_term);
+  const auto weight_spec(tint_spec * schlick_F(dot(wi, specular.wm), F0));
+  return microfacet_bsdf_result(
+    wm: specular.wm,
+    pdf: chance_spec * specular.pdf + chance_diff / $PI * cos_theta,
+    f:   weight_spec * specular.f   + weight_diff / $PI * wi.z);
+}
+export @(pure) auto specular_ggxms_brdf_residual_albedo(const &specular_ggxms this, const float2 cos_theta) {
+  const auto E(specular_ggxms_brdf_albedo(this, cos_theta));
+  return (1 - E[0]) * (1 - E[1]) / (1 - this.E_average); 
 }
 )*";
 
@@ -1165,6 +1312,8 @@ export @(hot noinline) float3 color_to_rgb(const color c) {
     return std;
   if (name == "tex")
     return tex;
+  if (name == "fresnel")
+    return fresnel;
   if (name == "microfacet")
     return microfacet;
   if (name == "rgb")

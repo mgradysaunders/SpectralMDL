@@ -291,7 +291,7 @@ ConversionRule Context::get_conversion_rule(Type *srcType, Type *dstType) {
         return ConversionRule::Implicit;
     }
   }
-  // If the source type is a union...
+  // If the source type is a union ...
   if (srcType->is_union()) {
     // If the destination type is a tag, conversion is perfect if every type in the union has the tag.
     if (dstType->is_tag() && static_cast<UnionType *>(srcType)->always_has_tag(static_cast<TagType *>(dstType)))
@@ -300,6 +300,15 @@ ConversionRule Context::get_conversion_rule(Type *srcType, Type *dstType) {
     if (dstType->is_struct() &&
         static_cast<UnionType *>(srcType)->always_has_parent_template(static_cast<StructType *>(dstType)))
       return ConversionRule::Perfect;
+  }
+  // If the destination type is a color ...
+  if (dstType->is_color()) {
+    // If the source type is float or float3, conversion is implicit.
+    if (srcType == get_float_type() || srcType == get_float_type(Extent(3)))
+      return ConversionRule::Implicit;
+    // If the source type is a pointer to a float, conversion is explicit. (Loads from the pointer)
+    if (srcType == get_pointer_type(get_float_type()))
+      return ConversionRule::Explicit;
   }
   // Not allowed!
   return ConversionRule::NotAllowed;

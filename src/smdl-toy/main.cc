@@ -93,7 +93,7 @@ int main(int argc, char **argv) try {
           state.wavelength_min = WAVELENGTH_MIN;
           state.wavelength_max = WAVELENGTH_MAX;
           smdl::float3_t rgb{mdl.color_to_rgb(state, Lsum)};
-          image.texels[i] = {10 * rgb.x, 10 * rgb.y, 10 * rgb.z, 1.0f};
+          image.texels[i] = {2 * rgb.x, 2 * rgb.y, 2 * rgb.z, 1.0f};
           image.texels[i].x = std::pow(smdl::saturate(image.texels[i].x), 1.0f / 2.2f);
           image.texels[i].y = std::pow(smdl::saturate(image.texels[i].y), 1.0f / 2.2f);
           image.texels[i].z = std::pow(smdl::saturate(image.texels[i].z), 1.0f / 2.2f);

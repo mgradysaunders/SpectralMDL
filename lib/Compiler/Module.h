@@ -14,7 +14,7 @@ public:
         text(llvm_throw_if_error(llvm::MemoryBuffer::getFile(this->path, /*isText=*/true))) {}
 
   explicit Module(llvm::StringRef name, llvm::StringRef text)
-      : path("(builtin)"), name(name.str()), text(llvm::MemoryBuffer::getMemBuffer(text)) {}
+      : path(std::format("(builtin {})", name)), name(name.str()), text(llvm::MemoryBuffer::getMemBuffer(text)) {}
 
   Module(const Module &) = delete;
 

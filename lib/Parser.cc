@@ -748,6 +748,7 @@ auto Parser::parse_identifier() -> unique_bump_ptr_wrapper<AST::Identifier> {
 
 auto Parser::parse_type() -> unique_bump_ptr_wrapper<AST::Type> {
   checkpoint();
+  auto cursor{save_cursor()};
   auto frequency{std::optional<AST::FrequencyQualifier>{}};
   if (next_word("uniform")) {
     frequency = AST::FrequencyQualifier::Uniform;
@@ -774,7 +775,7 @@ auto Parser::parse_type() -> unique_bump_ptr_wrapper<AST::Type> {
     return nullptr;
   }
   auto annotations{parse_annotation_block()}; // NOTE: Non-standard!
-  return bump_allocate<AST::Type>(frequency, attrs, std::move(expr), std::move(annotations));
+  return attach(bump_allocate<AST::Type>(frequency, attrs, std::move(expr), std::move(annotations)), cursor);
 }
 
 auto Parser::parse_parameter() -> std::optional<AST::Param> {

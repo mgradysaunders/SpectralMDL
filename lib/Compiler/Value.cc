@@ -55,9 +55,6 @@ Crumb *Crumb::find(Crumb *crumb, llvm::ArrayRef<llvm::StringRef> name, llvm::Fun
     // If this is not exported and we recursed into a module, don't consider it.
     if (!crumb->is_exported_ast_decl() && depth > 0)
       continue;
-    // If this matches the name sequence of the identifier, we're done!
-    if (crumb->matches_name(name))
-      return crumb;
     if (crumb->value.is_compile_time_module()) {
       // Look inside the module if it is either
       // 1. A universal import declaration in qualified form like 'import foo::bar::*' OR
@@ -67,7 +64,8 @@ Crumb *Crumb::find(Crumb *crumb, llvm::ArrayRef<llvm::StringRef> name, llvm::Fun
         if (auto subCrumb{Crumb::find(crumb->value.get_compile_time_module()->lastCrumb, name.back(), llvmFunc, depth + 1)})
           return subCrumb;
       }
-    }
+    } else if (crumb->matches_name(name)) // If this matches the name sequence of the identifier, we're done!
+      return crumb;
   }
   return nullptr;
 }
