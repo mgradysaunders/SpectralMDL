@@ -26,6 +26,13 @@ export struct microfacet {
   const microfacet_slope slope = microfacet_slope();
 };
 
+export @(pure) auto microfacet_shadowing_vcavities(
+    const float3 wo, 
+    const float3 wi, 
+    const float3 wh = normalize(wo + wi)) {
+  return #min(1.0, 2.0 * #abs(wh.z / #sum(wi * wh)) * #min(#abs(wo.z), #abs(wi.z)));
+}
+
 //--{ microfacet_slope_ggx
 @(pure macro) auto microfacet_smith_lambda(const microfacet_slope_ggx this, const float m) = 0.5 * (#sign(m) * #sqrt(1 + 1 / (m * m))) - 0.5;
 
@@ -146,11 +153,13 @@ export @(pure) auto microfacet_specular_btdf(microfacet this, float3 wo, float3 
   return microfacet_bsdf_result(
       wm, 
       d * j / float2(proj_areao, proj_areai),
-      d * g * j[0] / #max(wo.z, 0.001) * step(0.0, wi.z));
+      d * g * j[0] / #max(wo.z, 0.001));
 }
 //--}
 
-//--{ specular_ggx albedo fits
+//--{ specular_ggx
+
+//--{ albedo fits
 @(pure noinline) float3 specular_ggx_E0_fit(const float r0) {
   if (r0 < 0.07874) {
     return float3(0.8812495, 8.17536319, 1.3135667);
@@ -196,27 +205,26 @@ export @(pure) auto microfacet_specular_btdf(microfacet this, float3 wo, float3 
 }
 @(pure noinline) float specular_ggx_E0_average(float r0) {
   r0 = #max(r0, 0.072);
-  float Eav = 0.38810168;
-  Eav = Eav * r0 - 1.0422742;
-  Eav = Eav * r0 + 0.74872475;
-  Eav = Eav * r0 + 0.22099231;
-  Eav = Eav * r0 - 0.41891968;
-  Eav = Eav * r0 + 0.06177244;
-  Eav = Eav * r0 + 0.04447912;
-  return Eav;
+  float E_av = 0.38810168;
+  E_av = E_av * r0 - 1.0422742;
+  E_av = E_av * r0 + 0.74872475;
+  E_av = E_av * r0 + 0.22099231;
+  E_av = E_av * r0 - 0.41891968;
+  E_av = E_av * r0 + 0.06177244;
+  E_av = E_av * r0 + 0.04447912;
+  return E_av;
 }
-@(pure noinline) float specular_ggx_E1_average(float r0) {
-  float Eav = -0.40461439;
-  Eav = Eav * r0 + 2.33942628;
-  Eav = Eav * r0 - 3.15953698;
-  Eav = Eav * r0 + 0.69762445;
-  Eav = Eav * r0 - 0.06449884;
-  Eav = Eav * r0 + 1.00125673;
-  return Eav;
+@(pure noinline) float specular_ggx_E1_average(const float r0) {
+  float E_av = -0.40461439;
+  E_av = E_av * r0 + 2.33942628;
+  E_av = E_av * r0 - 3.15953698;
+  E_av = E_av * r0 + 0.69762445;
+  E_av = E_av * r0 - 0.06449884;
+  E_av = E_av * r0 + 1.00125673;
+  return E_av;
 }
 //--}
 
-//--{ specular_ggx
 export struct specular_ggx {
   // The anisotropic roughness.
   const float2 roughness;
@@ -231,10 +239,10 @@ export struct specular_ggx {
   const float3 E1_fit = specular_ggx_E1_fit(roughness0);
 
   // The F0=0 specular BRDF albedo average.
-  const float E0_average = specular_ggx_E0_average(roughness0);
+  const float E0_av = specular_ggx_E0_average(roughness0);
 
   // The F0=1 specular BRDF albedo average.
-  const float E1_average = specular_ggx_E1_average(roughness0);
+  const float E1_av = specular_ggx_E1_average(roughness0);
 
   // The anisotropic parameter, equal to roughness squared.
   const float2 alpha = roughness * roughness;
@@ -257,8 +265,8 @@ export @(pure) auto specular_ggx_brdf1_albedo(inline const &specular_ggx this, c
 }
 //--}
 
-//--{ specular_ggxms
-export struct specular_ggxms {
+//--{ specular_ggx_ms
+export struct specular_ggx_ms {
   // The underlying single-scattering specular GGX model.
   inline specular_ggx ggx;
 
@@ -266,13 +274,13 @@ export struct specular_ggxms {
   const float F0;
 
   // The fresnel average.
-  const float F_average = 20.0 / 21.0 * F0 + 1.0 / 21.0;
+  const float F_av = 20.0 / 21.0 * F0 + 1.0 / 21.0;
 
   // The fresnel average term that appears in most of the calculations below.
-  const float F_average_term = F_average * F_average * ggx.E1_average / (1 - F_average * (1 - ggx.E1_average));
+  const float F_av_term = F_av * F_av * ggx.E1_av / (1 - F_av * (1 - ggx.E1_av));
 
   // The average albedo.
-  const float E_average = F0 * ggx.E1_average + (1 - F0) * ggx.E0_average + F_average_term * (1 - ggx.E1_average);
+  const float E_av = F0 * ggx.E1_av + (1 - F0) * ggx.E0_av + F_av_term * (1 - ggx.E1_av);
 
   // The random chance of sampling diffuse reflection.
   const float chance_diff = saturate(ggx.roughness0);
@@ -281,40 +289,36 @@ export struct specular_ggxms {
   const float chance_spec = 1 - chance_diff;
 };
 
-export @(pure) auto specular_ggxms_brdf_albedo(inline const &specular_ggxms this, const float cos_theta) {
-  const auto E0(specular_ggx_brdf0_albedo(&ggx, cos_theta));
-  const auto E1(specular_ggx_brdf1_albedo(&ggx, cos_theta));
-  return F0 * E1 + (1 - F0) * E0 + F_average_term * (1 - E1);
-}
+export struct specular_ggx_ms_brdf_result {
+  float3 wm = float3(0.0);
 
-export @(pure) auto specular_ggxms_brdf_albedo(inline const &specular_ggxms this, const float2 cos_theta) {
-  const auto E0(specular_ggx_brdf0_albedo(&ggx, cos_theta));
-  const auto E1(specular_ggx_brdf1_albedo(&ggx, cos_theta));
-  return auto[2](
-    F0 * E1[0] + (1 - F0) * E0[0] + F_average_term * (1 - E1[0]),
-    F0 * E1[1] + (1 - F0) * E0[1] + F_average_term * (1 - E1[1]));
-}
+  float2 pdf = float2(0.0);
 
-export @(pure) auto specular_ggxms_brdf_albedo_average(inline const &specular_ggxms this) {
-  return F0 * E1_average + (1 - F0) * E0_average + F_average_term * (1 - E1_average);
-}
+  auto f = 0.0;
 
-export @(pure) auto specular_ggxms_brdf(inline const &specular_ggxms this, float3 wo, float3 wi, const auto tint_diff = 1.0, const auto tint_spec = 1.0) {
+  auto residual = 1.0;
+};
+
+export @(pure) auto specular_ggx_ms_brdf(
+    inline const &specular_ggx_ms this, 
+    float3 wo,
+    float3 wi, 
+    const auto tint_diff = 1.0, 
+    const auto tint_spec = 1.0) {
   if (wo.z < 0) wo = -wo, wi = -wi;
   if (wi.z < 0) wi.z = 0;
   auto specular(microfacet_specular_brdf(microfacet(alpha: alpha, slope: microfacet_slope_ggx()), wo, wi));
   const auto cos_theta(float2(wi.z, wo.z));
+  const auto E0(specular_ggx_brdf0_albedo(&ggx, cos_theta));
   const auto E1(specular_ggx_brdf1_albedo(&ggx, cos_theta));
-  const auto weight_diff(tint_diff * (1 - E1[0]) * (1 - E1[1]) / (1 - E1_average) * F_average_term);
+  const auto E_wi(F0 * E1[0] + (1 - F0) * E0[0] + F_av_term * (1 - E1[0]));
+  const auto E_wo(F0 * E1[1] + (1 - F0) * E0[1] + F_av_term * (1 - E1[1]));
+  const auto weight_diff(tint_diff * (1 - E1[0]) * (1 - E1[1]) / (1 - E1_av) * F_av_term);
   const auto weight_spec(tint_spec * schlick_F(dot(wi, specular.wm), F0));
-  return microfacet_bsdf_result(
-    wm: specular.wm,
+  return specular_ggx_ms_brdf_result(
+    wm:  specular.wm,
     pdf: chance_spec * specular.pdf + chance_diff / $PI * cos_theta,
-    f:   weight_spec * specular.f   + weight_diff / $PI * wi.z);
-}
-
-export @(pure) auto specular_ggxms_brdf_residual_albedo(const &specular_ggxms this, const float2 cos_theta) {
-  const auto E(specular_ggxms_brdf_albedo(this, cos_theta));
-  return (1 - E[0]) * (1 - E[1]) / (1 - this.E_average); // * #max(wi.z, 0.0) / $PI;
+    f:   weight_spec * specular.f   + weight_diff / $PI * wi.z,
+    residual: (1 - E_wo) * (1 - E_wi) / (1 - E_av));
 }
 //--}

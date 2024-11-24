@@ -49,8 +49,8 @@ struct eval_bsdf_parameters {
   const float3 geometry_wi;
   float3 wo = geometry_wo;
   float3 wi = geometry_wi;
+  float ior = 1.0 / 1.4;
   const float hit_side = #sign(geometry_wo.z);
-  const float ior = 1.0 / 1.4;
   const bool thin_walled = false;
   const scatter_mode mode = (geometry_wo.z < 0) == (geometry_wi.z < 0) ? scatter_reflect : scatter_transmit;
 };
@@ -71,7 +71,13 @@ struct eval_bsdf_result {
   this.wi = quat_transform_vector(q, this.wi);
   return q;
 }
-@(pure) bool is_mode_inconsistent(const &eval_bsdf_parameters this) {
+@(pure macro) float get_ior(const &eval_bsdf_parameters this) {
+  return this.hit_side < 0.0 ? 1.0 / this.ior : this.ior;
+}
+@(pure macro) float3 get_half_direction(const &eval_bsdf_parameters this) {
+  return normalize(this.mode == scatter_reflect ? this.wo + this.wi : -get_ior(this) * this.wo + this.wi);
+}
+@(pure macro) bool is_mode_inconsistent(const &eval_bsdf_parameters this) {
   const scatter_mode mode = (this.wo.z < 0) == (this.wi.z < 0) ? scatter_reflect : scatter_transmit;
   return mode != this.mode;
 }
@@ -79,8 +85,8 @@ struct eval_bsdf_sample_parameters {
   const float3 geometry_wo;
   float3 wo = geometry_wo;
   float4 xi;
+  float ior = 1.0 / 1.4;
   const float hit_side = #sign(geometry_wo.z);
-  const float ior = 1.0 / 1.4;
   const bool thin_walled = false;
 };
 struct eval_bsdf_sample_result {
@@ -97,6 +103,9 @@ struct eval_bsdf_sample_result {
   const float4 q(quat_rotate(normalize(float3(tangent.xy, 0.0)), float3(1, 0, 0)));
   this.wo = quat_transform_vector(q, this.wo);
   return q;
+}
+@(pure macro) float get_ior(const &eval_bsdf_sample_parameters this) {
+  return this.hit_side < 0.0 ? 1.0 / this.ior : this.ior;
 }
 @(macro) auto eval_bsdf(const &default_bsdf this, inline const &eval_bsdf_parameters params) {
   return eval_bsdf_result(is_black: true);
@@ -187,6 +196,53 @@ auto eval_bsdf(const &sheen_bsdf this, inline const &eval_bsdf_parameters params
 auto eval_bsdf_sample(const &sheen_bsdf this, const &eval_bsdf_sample_parameters params) {
   return eval_bsdf_sample_result(wi: cosine_hemisphere_sample(params.xi.xy) * params.hit_side, mode: scatter_reflect);
 }
+export struct simple_glossy_bsdf: bsdf {
+  float roughness_u;
+  float roughness_v = roughness_u;
+  color tint = color(1.0);
+  void color multiscatter_tint = color(0.0);
+  ?float3 tangent_u = null;
+  scatter_mode mode = scatter_reflect;
+  void string handle = "";
+};
+auto eval_bsdf(const &simple_glossy_bsdf this, inline const &eval_bsdf_parameters params) {
+  const float3 wh(get_half_direction(params));
+  const float2 alpha(saturate(float2(this.roughness_u, this.roughness_v)));
+  const float e(2 / (alpha.x * alpha.y));
+  const float e_term(#pow(#abs(wh.z), e));
+  const float d((e + 2) / $TWO_PI * e_term);
+  const float g(microfacet_shadowing_vcavities(wo, wi, wh));
+  if (mode == scatter_reflect) {
+    if ((int(this.mode) & int(scatter_reflect)) != 0) {
+      return eval_bsdf_result(pdf: float2((e + 1) * e_term / ($TWO_PI * 4 * dot(wi, wh))), f: d * g / (4 * #abs(wo.z) * this.tint));
+    }
+  } else {
+    if ((int(this.mode) & int(scatter_transmit)) != 0) {
+    }
+  }
+  return eval_bsdf_result(is_black: true);
+}
+auto eval_bsdf_sample(const &simple_glossy_bsdf this, const &eval_bsdf_sample_parameters params) {
+  auto wo(params.wo);
+  bool is_neg(wo.z < 0);
+  wo.z = #abs(wo.z);
+  const float2 alpha(saturate(float2(this.roughness_u, this.roughness_v)));
+  const float e(2 / (alpha.x * alpha.y));
+  const float cos_theta(#pow(params.xi.x, 1 / (e + 1)));
+  const float sin_theta(#sqrt(1 - cos_theta * cos_theta));
+  const float3 wh(
+    sin_theta * #cos(phi := $TWO_PI * params.xi.y),
+    sin_theta * #sin(phi),
+    cos_theta);
+  float3 wi = reflect(wo, wh);
+  if (wi.z < 0) {
+    return eval_bsdf_sample_result();
+  } else {
+    if (is_neg)
+      wi.z = -wi.z;
+    return eval_bsdf_sample_result(wi: wi, mode: scatter_reflect);
+  }
+}
 struct microfacet_bsdf: bsdf {
   microfacet facets;
   auto tint;
@@ -195,40 +251,35 @@ struct microfacet_bsdf: bsdf {
   scatter_mode mode = scatter_reflect;
 };
 auto eval_bsdf(const &microfacet_bsdf this, inline const &eval_bsdf_parameters params) {
-  preserve wo, wi;
-  perturb_tangent(params, *this.tangent_u) if (this.tangent_u);
+  const auto brdf_weight(#select((int(this.mode) & int(scatter_reflect)), 1.0, 0.0));
+  const auto btdf_weight(#select((int(this.mode) & int(scatter_transmit)), 1.0, 0.0));
+  const auto brdf_prob(brdf_weight / (brdf_weight + btdf_weight));
+  const auto btdf_prob(1 - brdf_prob);
   if (mode == scatter_reflect) {
     if ((int(this.mode) & int(scatter_reflect)) != 0) {
-      auto ggxms(specular_ggxms(ggx: specular_ggx(roughness: #sqrt(this.facets.alpha)), F0: schlick_F0(1.0 / 1.4), chance_diff:0.5, chance_spec:0.5));
-      auto result(specular_ggxms_brdf(&ggxms, wo, wi));
-      result.f += specular_ggxms_brdf_residual_albedo(&ggxms, auto(wi.z, wo.z)) * #abs(wi.z) / $PI;
-      return eval_bsdf_result(pdf: result.pdf, f: result.f * this.tint);
+      auto result(microfacet_specular_brdf(this.facets, wo, wi));
+      return eval_bsdf_result(pdf: brdf_prob * result.pdf, f: brdf_prob * result.f * this.tint);
     }
   } else {
     if ((int(this.mode) & int(scatter_transmit)) != 0) {
       auto result(microfacet_specular_btdf(this.facets, wo, wi, ior: ior));
-      return eval_bsdf_result(pdf: result.pdf, f: result.f * this.tint);
+      return eval_bsdf_result(pdf: btdf_prob * result.pdf, f: btdf_prob * result.f * this.tint);
     }
   }
   return eval_bsdf_result(is_black: true);
 }
 auto eval_bsdf_sample(const &microfacet_bsdf this, const &eval_bsdf_sample_parameters params) {
+  const auto brdf_weight(#select((int(this.mode) & int(scatter_reflect)), 1.0, 0.0));
+  const auto btdf_weight(#select((int(this.mode) & int(scatter_transmit)), 1.0, 0.0));
+  const auto brdf_prob(brdf_weight / (brdf_weight + btdf_weight));
   auto wo(params.wo);
-  auto isneg(wo.z < 0);
+  auto is_neg(wo.z < 0);
   wo.z = #abs(wo.z);
-  auto ggxms(specular_ggxms(ggx: specular_ggx(roughness: #sqrt(this.facets.alpha)), F0: schlick_F0(1.0 / 1.4), chance_diff:0.5, chance_spec:0.5));
-  if (weighted_bool_sample(&params.xi.z, ggxms.chance_diff)) {
-    return eval_bsdf_sample_result(wi: params.hit_side * cosine_hemisphere_sample(params.xi.xy), mode: scatter_reflect);
-  } else {
-    float3 wm(microfacet_visible_normal_sample(this.facets, params.xi.x, params.xi.y, wo));
-    float3 wi(normalize(reflect(wo, wm)));
-    if (wi.z < 0)
-      return eval_bsdf_sample_result();
-    else {
-      if (isneg) wi.z = -wi.z;
-      return eval_bsdf_sample_result(wi: wi, mode: scatter_reflect);
-    }
-  }
+  auto mode(params.xi.z < brdf_prob ? scatter_reflect : scatter_transmit);
+  float3 wm(microfacet_visible_normal_sample(this.facets, params.xi.x, params.xi.y, wo));
+  float3 wi(normalize(mode == scatter_reflect ? reflect(wo, wm) : refract(wo, wm, get_ior(params))));
+  if (is_neg) wi.z = -wi.z;
+  return eval_bsdf_sample_result(wi: wi, mode: mode);
 }
 export @(macro) auto microfacet_ggx_smith_bsdf(
   const float roughness_u, 
@@ -245,6 +296,42 @@ export @(macro) auto microfacet_ggx_smith_bsdf(
     multiscatter_tint: multiscatter_tint,
     tangent_u: tangent_u,
     mode: mode);
+}
+export struct ward_geisler_moroder_bsdf: bsdf {
+  float roughness_u;
+  float roughness_v = roughness_u;
+  color tint = color(1.0);
+  void color multiscatter_tint = color(0.0); 
+  ?float3 tangent_u = null;
+  void string handle = "";
+};
+auto eval_bsdf(const &ward_geisler_moroder_bsdf this, inline const &eval_bsdf_parameters params) {
+  if (mode == scatter_reflect) {
+    const auto alpha(#pow(saturate(float2(this.roughness_u, this.roughness_v)), 2));
+    const auto f(#sum((h := wo + wi) * h) / ($PI * alpha.x * alpha.y * #pow(h.z, 4)) * #exp(-#sum((g := h.xy / (h.z * alpha)) * g)));
+    return eval_bsdf_result(pdf: float2(f * #abs(wi.z + wo.z) / 2), f: this.tint * f * #abs(wi.z));
+  } else {
+    return eval_bsdf_result(is_black: true);
+  }
+}
+@(pure foreign) float atan2f(float y, float x); 
+auto eval_bsdf_sample(const &ward_geisler_moroder_bsdf this, const &eval_bsdf_sample_parameters params) {
+  auto wo(params.wo);
+  auto is_neg(wo.z < 0);
+  wo.z = #abs(wo.z);
+  const float2 alpha(#pow(saturate(float2(this.roughness_u, this.roughness_v)), 2));
+  const float phi = atan2f(alpha.y * #sin(t := $TWO_PI * params.xi.x), alpha.x * #cos(t));
+  const float cos_phi = #cos(phi); 
+  const float sin_phi = #sin(phi); 
+  const float theta = #atan(#sqrt(-#log(1 - params.xi.y) / (#pow(cos_phi / alpha.x, 2) + #pow(sin_phi / alpha.y, 2))));
+  const float3 wm = float3(#sin(theta) * float2(cos_phi, sin_phi), #cos(theta));
+  float3 wi(normalize(reflect(wo, wm)));
+  if (wi.z < 0)
+    return eval_bsdf_sample_result();
+  else {
+    if (is_neg) wi.z = -wi.z;
+    return eval_bsdf_sample_result(wi: wi, mode: scatter_reflect);
+  }
 }
 @(macro) auto eval_bsdf(const auto this, inline const &eval_bsdf_parameters params, const float3 normal) {
   preserve wo, wi;
@@ -300,15 +387,17 @@ export struct fresnel_layer: bsdf {
   float3 normal = state::normal();
 };
 @(macro) auto eval_bsdf(const &fresnel_layer this, inline const &eval_bsdf_parameters params) {
+  params.ior = this.ior;
   const auto result0(eval_bsdf(&this.base, params));
   const auto result1(eval_bsdf(&this.layer, params, this.normal));
-  const auto F(schlick_F(auto(wo.z, wi.z, dot(wi, normalize(wo + wi))), schlick_F0(this.ior)));
+  const auto F(schlick_F(auto(wo.z, wi.z, dot(wi, get_half_direction(params))), schlick_F0(get_ior(params))));
   return eval_bsdf_result(
     pdf: lerp(result0.pdf, result1.pdf, this.weight * F.xy),
     f:   lerp(result0.f,   result1.f,   this.weight * F.z));
 }
 @(macro) auto eval_bsdf_sample(const &fresnel_layer this, const &eval_bsdf_sample_parameters params) {
-  return weighted_bool_sample(&params.xi.z, this.weight * schlick_F(params.wo.z, schlick_F0(this.ior)))
+  params.ior = this.ior;
+  return weighted_bool_sample(&params.xi.z, this.weight * schlick_F(params.wo.z, schlick_F0(get_ior(params))))
     ? eval_bsdf_sample(&this.layer, params, this.normal)
     : eval_bsdf_sample(&this.base, params);
 }
@@ -946,6 +1035,12 @@ export struct microfacet {
   const float2 alpha;
   const microfacet_slope slope = microfacet_slope();
 };
+export @(pure) auto microfacet_shadowing_vcavities(
+    const float3 wo, 
+    const float3 wi, 
+    const float3 wh = normalize(wo + wi)) {
+  return #min(1.0, 2.0 * #abs(wh.z / #sum(wi * wh)) * #min(#abs(wo.z), #abs(wi.z)));
+}
 @(pure macro) auto microfacet_smith_lambda(const microfacet_slope_ggx this, const float m) = 0.5 * (#sign(m) * #sqrt(1 + 1 / (m * m))) - 0.5;
 @(pure macro) auto microfacet_slope_pdf(const microfacet_slope_ggx this, const float2 m) = 1.0 / ($PI * (t := 1 + dot(m, m)) * t);
 @(pure noinline) auto microfacet_visible_slope_sample(const microfacet_slope_ggx this, const float xi0, float xi1, float cos_thetao) {
@@ -1043,7 +1138,7 @@ export @(pure) auto microfacet_specular_btdf(microfacet this, float3 wo, float3 
   return microfacet_bsdf_result(
       wm, 
       d * j / float2(proj_areao, proj_areai),
-      d * g * j[0] / #max(wo.z, 0.001) * step(0.0, wi.z));
+      d * g * j[0] / #max(wo.z, 0.001));
 }
 @(pure noinline) float3 specular_ggx_E0_fit(const float r0) {
   if (r0 < 0.07874) {
@@ -1090,31 +1185,31 @@ export @(pure) auto microfacet_specular_btdf(microfacet this, float3 wo, float3 
 }
 @(pure noinline) float specular_ggx_E0_average(float r0) {
   r0 = #max(r0, 0.072);
-  float Eav = 0.38810168;
-  Eav = Eav * r0 - 1.0422742;
-  Eav = Eav * r0 + 0.74872475;
-  Eav = Eav * r0 + 0.22099231;
-  Eav = Eav * r0 - 0.41891968;
-  Eav = Eav * r0 + 0.06177244;
-  Eav = Eav * r0 + 0.04447912;
-  return Eav;
+  float E_av = 0.38810168;
+  E_av = E_av * r0 - 1.0422742;
+  E_av = E_av * r0 + 0.74872475;
+  E_av = E_av * r0 + 0.22099231;
+  E_av = E_av * r0 - 0.41891968;
+  E_av = E_av * r0 + 0.06177244;
+  E_av = E_av * r0 + 0.04447912;
+  return E_av;
 }
-@(pure noinline) float specular_ggx_E1_average(float r0) {
-  float Eav = -0.40461439;
-  Eav = Eav * r0 + 2.33942628;
-  Eav = Eav * r0 - 3.15953698;
-  Eav = Eav * r0 + 0.69762445;
-  Eav = Eav * r0 - 0.06449884;
-  Eav = Eav * r0 + 1.00125673;
-  return Eav;
+@(pure noinline) float specular_ggx_E1_average(const float r0) {
+  float E_av = -0.40461439;
+  E_av = E_av * r0 + 2.33942628;
+  E_av = E_av * r0 - 3.15953698;
+  E_av = E_av * r0 + 0.69762445;
+  E_av = E_av * r0 - 0.06449884;
+  E_av = E_av * r0 + 1.00125673;
+  return E_av;
 }
 export struct specular_ggx {
   const float2 roughness;
   const float roughness0 = #sqrt(roughness.x * roughness.y);
   const float3 E0_fit = specular_ggx_E0_fit(roughness0);
   const float3 E1_fit = specular_ggx_E1_fit(roughness0);
-  const float E0_average = specular_ggx_E0_average(roughness0);
-  const float E1_average = specular_ggx_E1_average(roughness0);
+  const float E0_av = specular_ggx_E0_average(roughness0);
+  const float E1_av = specular_ggx_E1_average(roughness0);
   const float2 alpha = roughness * roughness;
 };
 export @(pure) auto specular_ggx_brdf0_albedo(inline const &specular_ggx this, const auto cos_theta) {
@@ -1129,46 +1224,42 @@ export @(pure) auto specular_ggx_brdf1_albedo(inline const &specular_ggx this, c
   const float C(E1_fit[2]);
   return #exp(-C * cos_theta * #exp(-A * #pow(cos_theta, B))); 
 }
-export struct specular_ggxms {
+export struct specular_ggx_ms {
   inline specular_ggx ggx;
   const float F0;
-  const float F_average = 20.0 / 21.0 * F0 + 1.0 / 21.0;
-  const float F_average_term = F_average * F_average * ggx.E1_average / (1 - F_average * (1 - ggx.E1_average));
-  const float E_average = F0 * ggx.E1_average + (1 - F0) * ggx.E0_average + F_average_term * (1 - ggx.E1_average);
+  const float F_av = 20.0 / 21.0 * F0 + 1.0 / 21.0;
+  const float F_av_term = F_av * F_av * ggx.E1_av / (1 - F_av * (1 - ggx.E1_av));
+  const float E_av = F0 * ggx.E1_av + (1 - F0) * ggx.E0_av + F_av_term * (1 - ggx.E1_av);
   const float chance_diff = saturate(ggx.roughness0);
   const float chance_spec = 1 - chance_diff;
 };
-export @(pure) auto specular_ggxms_brdf_albedo(inline const &specular_ggxms this, const float cos_theta) {
-  const auto E0(specular_ggx_brdf0_albedo(&ggx, cos_theta));
-  const auto E1(specular_ggx_brdf1_albedo(&ggx, cos_theta));
-  return F0 * E1 + (1 - F0) * E0 + F_average_term * (1 - E1);
-}
-export @(pure) auto specular_ggxms_brdf_albedo(inline const &specular_ggxms this, const float2 cos_theta) {
-  const auto E0(specular_ggx_brdf0_albedo(&ggx, cos_theta));
-  const auto E1(specular_ggx_brdf1_albedo(&ggx, cos_theta));
-  return auto[2](
-    F0 * E1[0] + (1 - F0) * E0[0] + F_average_term * (1 - E1[0]),
-    F0 * E1[1] + (1 - F0) * E0[1] + F_average_term * (1 - E1[1]));
-}
-export @(pure) auto specular_ggxms_brdf_albedo_average(inline const &specular_ggxms this) {
-  return F0 * E1_average + (1 - F0) * E0_average + F_average_term * (1 - E1_average);
-}
-export @(pure) auto specular_ggxms_brdf(inline const &specular_ggxms this, float3 wo, float3 wi, const auto tint_diff = 1.0, const auto tint_spec = 1.0) {
+export struct specular_ggx_ms_brdf_result {
+  float3 wm = float3(0.0);
+  float2 pdf = float2(0.0);
+  auto f = 0.0;
+  auto residual = 1.0;
+};
+export @(pure) auto specular_ggx_ms_brdf(
+    inline const &specular_ggx_ms this, 
+    float3 wo,
+    float3 wi, 
+    const auto tint_diff = 1.0, 
+    const auto tint_spec = 1.0) {
   if (wo.z < 0) wo = -wo, wi = -wi;
   if (wi.z < 0) wi.z = 0;
   auto specular(microfacet_specular_brdf(microfacet(alpha: alpha, slope: microfacet_slope_ggx()), wo, wi));
   const auto cos_theta(float2(wi.z, wo.z));
+  const auto E0(specular_ggx_brdf0_albedo(&ggx, cos_theta));
   const auto E1(specular_ggx_brdf1_albedo(&ggx, cos_theta));
-  const auto weight_diff(tint_diff * (1 - E1[0]) * (1 - E1[1]) / (1 - E1_average) * F_average_term);
+  const auto E_wi(F0 * E1[0] + (1 - F0) * E0[0] + F_av_term * (1 - E1[0]));
+  const auto E_wo(F0 * E1[1] + (1 - F0) * E0[1] + F_av_term * (1 - E1[1]));
+  const auto weight_diff(tint_diff * (1 - E1[0]) * (1 - E1[1]) / (1 - E1_av) * F_av_term);
   const auto weight_spec(tint_spec * schlick_F(dot(wi, specular.wm), F0));
-  return microfacet_bsdf_result(
-    wm: specular.wm,
+  return specular_ggx_ms_brdf_result(
+    wm:  specular.wm,
     pdf: chance_spec * specular.pdf + chance_diff / $PI * cos_theta,
-    f:   weight_spec * specular.f   + weight_diff / $PI * wi.z);
-}
-export @(pure) auto specular_ggxms_brdf_residual_albedo(const &specular_ggxms this, const float2 cos_theta) {
-  const auto E(specular_ggxms_brdf_albedo(this, cos_theta));
-  return (1 - E[0]) * (1 - E[1]) / (1 - this.E_average); 
+    f:   weight_spec * specular.f   + weight_diff / $PI * wi.z,
+    residual: (1 - E_wo) * (1 - E_wi) / (1 - E_av));
 }
 )*";
 
