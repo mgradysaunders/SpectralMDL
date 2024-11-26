@@ -5,38 +5,15 @@ namespace smdl::Compiler::builtins {
 static const char *df = R"*(
 #smdl_syntax
 using ::math import *;
-using ::fresnel import *;
 using ::microfacet import *;
+using ::monte_carlo import *;
+using ::specular import *;
 import ::state::*;
 export enum scatter_mode { scatter_none = 0, scatter_reflect = 1, scatter_transmit = 2, scatter_reflect_transmit = 3 };
-@(pure) bool weighted_bool_sample(const &float xi, float weight) {
-  return *xi < weight ? (*xi = (*xi / weight), true) : (*xi = (*xi - weight) / (1 - weight), false);
-}
-@(pure) int uniform_wavelength_index_sample(const &float xi) {
-  const int i(#min(int(*xi *= $WAVELENGTH_BASE_MAX), $WAVELENGTH_BASE_MAX - 1));
-  *xi -= i;
-  return i;
-}
-@(pure) float2 uniform_disk_sample(float2 xi) {
-  xi = 2 * xi - 1;
-  return float2(0) if (#all(xi == 0));
-  float rad(0);
-  float phi(0);
-  if ((absxi := #abs(xi), absxi.x > absxi.y))
-    rad = xi.x, phi = $PI / 4 * (xi.y / xi.x);
-  else
-    rad = xi.y, phi = $PI / 2 - $PI / 4 * (xi.x / xi.y);
-  return rad * float2(#cos(phi), #sin(phi));
-}
-@(pure) float3 cosine_hemisphere_sample(float2 xi) {
-  return float3((p := uniform_disk_sample(xi)), #sqrt(#max(1 - #sum(p * p), 0)));
-}
-@(pure macro) auto reflect(const float3 wi, const float3 wm) = 2 * #sum(wi * wm) * wm - wi;
-@(pure macro) auto refract(const float3 wi, const float3 wm, const float ior, const float cos_thetat) = -ior * wi + (ior * #sum(wi * wm) + cos_thetat) * wm;
-@(pure macro) auto refract(const float3 wi, const float3 wm, const float ior) {
-  const auto cos_thetai(#sum(wi * wm));
-  const auto cos_thetat(#sqrt(1 - ior * ior * (1 - cos_thetai * cos_thetai)));
-  return refract(wi, wm, ior, cos_thetat * -#sign(cos_thetai));
+@(pure macro) float scatter_reflect_chance(const scatter_mode mode) {
+  const auto refl_weight(#select((int(mode) & int(scatter_reflect)), 1.0, 0.0));
+  const auto tran_weight(#select((int(mode) & int(scatter_transmit)), 1.0, 0.0));
+  return refl_weight / (refl_weight + tran_weight);
 }
 @(pure macro) float4 quat_rotate(const float theta, const float3 v) = float4(#sin(theta / 2) * normalize(v), #cos(theta / 2));
 @(pure macro) float4 quat_rotate(const float3 u, const float3 v) = normalize(float4(cross(u, v), 1 + dot(u, v)));
@@ -107,10 +84,10 @@ struct eval_bsdf_sample_result {
 @(pure macro) float get_ior(const &eval_bsdf_sample_parameters this) {
   return this.hit_side < 0.0 ? 1.0 / this.ior : this.ior;
 }
-@(macro) auto eval_bsdf(const &default_bsdf this, inline const &eval_bsdf_parameters params) {
+@(pure macro) auto eval_bsdf(const &default_bsdf this, inline const &eval_bsdf_parameters params) {
   return eval_bsdf_result(is_black: true);
 }
-@(macro) auto eval_bsdf_sample(const &default_bsdf this, inline const &eval_bsdf_sample_parameters params) {
+@(pure macro) auto eval_bsdf_sample(const &default_bsdf this, inline const &eval_bsdf_sample_parameters params) {
   return eval_bsdf_sample_result(wi: float3(0.0), mode: scatter_none);
 }
 export struct diffuse_reflection_bsdf: bsdf {
@@ -118,33 +95,51 @@ export struct diffuse_reflection_bsdf: bsdf {
   float roughness = 0.0;
   void string handle = "";
 };
-auto eval_bsdf(const &diffuse_reflection_bsdf this, inline const &eval_bsdf_parameters params) {
+@(pure noinline) auto eval_bsdf(const &diffuse_reflection_bsdf this, inline const &eval_bsdf_parameters params) {
   if (mode == scatter_reflect) {
-    const auto sigma2(this.roughness * this.roughness);
-    const auto a(1.00 - sigma2 / (2.0 * sigma2 + 0.66));
-    const auto b(0.45 * sigma2 / (sigma2 + 0.09));
-    const auto z(#abs(auto(wi.z, wo.z)));
-    const auto t(#max(#sum(wo.xy * wi.xy), 0) / #max_value(z));
-    return eval_bsdf_result(pdf: (pdf := z / $PI), f: pdf[0] * (a + t * b) * this.tint);
+    const auto roughness(saturate(this.roughness));
+    const auto cos_theta(#abs(auto(wi.z, wo.z)));
+    if (roughness == 0) {
+      return eval_bsdf_result(pdf: (pdf := cos_theta / $PI), f: pdf[0] * this.tint);
+    } else {
+      const auto sigma2(2.0 * roughness * roughness);
+      const auto A(1.00 - sigma2 / (2.0 * sigma2 + 0.66));
+      const auto B(0.45 * sigma2 / (sigma2 + 0.09));
+      const auto fac(#max(#sum(wo.xy * wi.xy), 0) / #max_value(cos_theta));
+      const auto fit(return_from {
+        float3 fit(2.2858097e+01, 3.0605976e+01, 1.7212993e+01);
+        fit = fit * roughness + float3(-1.0746762e+02, -1.4071259e+02, -7.9453520e+01);
+        fit = fit * roughness + float3( 2.1076268e+02,  2.7144544e+02,  1.5198188e+02);
+        fit = fit * roughness + float3(-2.2137146e+02, -2.8444799e+02, -1.5380799e+02);
+        fit = fit * roughness + float3( 1.3156994e+02,  1.7425125e+02,  8.5750507e+01);
+        fit = fit * roughness + float3(-4.1630793e+01, -6.1425120e+01, -2.3544818e+01);
+        fit = fit * roughness + float3( 5.1545962e+00,  1.0499041e+01,  1.6004720e+00);
+        fit = fit * roughness + float3(-9.1964624e-02,  3.7044917e-02,  4.3948036e-02);
+        fit = fit * roughness + float3( 1.0003311e+00,  1.4157300e-03,  1.0000467e+00);
+        return fit;
+      });
+      const auto Ewo(#min(fit[0] - #pow(#abs(wo.z) * fit[1], 1.2), 0.999));
+      const auto Ewi(#min(fit[0] - #pow(#abs(wi.z) * fit[1], 1.2), 0.999));
+      const auto Eav(#min(fit[2], 0.999));
+      return eval_bsdf_result(pdf: (pdf := cos_theta / $PI), f: pdf[0] * (A + fac * B + (1 - Ewo) * (1 - Ewi) / (1 - Eav)) * this.tint);
+    }
   } else {
     return eval_bsdf_result(is_black: true);
   }
 }
-auto eval_bsdf_sample(const &diffuse_reflection_bsdf this, inline const &eval_bsdf_sample_parameters params) {
+@(pure) auto eval_bsdf_sample(const &diffuse_reflection_bsdf this, inline const &eval_bsdf_sample_parameters params) {
   return eval_bsdf_sample_result(wi: hit_side * cosine_hemisphere_sample(xi.xy), mode: scatter_reflect);
 }
 export struct diffuse_transmission_bsdf: bsdf {
   color tint = color(1.0);
   void string handle = "";
 };
-auto eval_bsdf(const &diffuse_transmission_bsdf this, inline const &eval_bsdf_parameters params) {
-  if (mode == scatter_transmit) {
-    return eval_bsdf_result(pdf: (pdf := #abs(auto(wi.z, wo.z)) / $PI), f: pdf[0] * this.tint);
-  } else {
-    return eval_bsdf_result(is_black: true);
-  }
+@(pure) auto eval_bsdf(const &diffuse_transmission_bsdf this, inline const &eval_bsdf_parameters params) {
+  return mode == scatter_transmit 
+    ? eval_bsdf_result(pdf: (pdf := #abs(auto(wi.z, wo.z)) / $PI), f: pdf[0] * this.tint)
+    : eval_bsdf_result(is_black: true);
 }
-auto eval_bsdf_sample(const &diffuse_transmission_bsdf this, inline const &eval_bsdf_sample_parameters params) {
+@(pure) auto eval_bsdf_sample(const &diffuse_transmission_bsdf this, inline const &eval_bsdf_sample_parameters params) {
   return eval_bsdf_sample_result(wi: -hit_side * cosine_hemisphere_sample(xi.xy), mode: scatter_transmit);
 }
 export struct specular_bsdf: bsdf {
@@ -152,48 +147,68 @@ export struct specular_bsdf: bsdf {
   scatter_mode mode = scatter_reflect;
   void string handle = "";
 };
-auto eval_bsdf(const &specular_bsdf this, const &eval_bsdf_parameters params) {
+@(pure macro) auto eval_bsdf(const &specular_bsdf this, const &eval_bsdf_parameters params) {
   return eval_bsdf_result(is_black: true);
 }
-auto eval_bsdf_sample(const &specular_bsdf this, inline const &eval_bsdf_sample_parameters params) {
-  const auto brdf_weight(#select((int(this.mode) & int(scatter_reflect)), 1.0, 0.0));
-  const auto btdf_weight(#select((int(this.mode) & int(scatter_transmit)), 1.0, 0.0));
-  const auto brdf_prob(brdf_weight / (brdf_weight + btdf_weight));
-  if (xi.x < brdf_prob) {
-    return eval_bsdf_sample_result(wi: reflect(wo, float3(0, 0, 1)), mode: scatter_reflect, delta_f: this.tint);
-  } else {
-    return eval_bsdf_sample_result(wi: refract(wo, float3(0, 0, 1), #select(hit_side < 0, 1 / ior, ior)), mode: scatter_transmit, delta_f: this.tint);
-  }
+@(pure noinline) auto eval_bsdf_sample(const &specular_bsdf this, inline const &eval_bsdf_sample_parameters params) {
+  return xi.x < scatter_reflect_chance(this.mode)
+    ? eval_bsdf_sample_result(wi: reflect(wo, float3(0, 0, 1)), mode: scatter_reflect, delta_f: this.tint)
+    : eval_bsdf_sample_result(wi: refract(wo, float3(0, 0, 1), #select(hit_side < 0, 1 / ior, ior)), mode: scatter_transmit, delta_f: this.tint);
 }
 export struct sheen_bsdf: bsdf {
   float roughness;
   color tint = color(1.0);
-  color multiscatter_tint = color(0.0);
+  ?color multiscatter_tint = null;
   void string handle = "";
 };
-@(pure) auto sheen_l(const auto fit, const float cos_theta) {
-  return fit[0] / (1 + fit[1] * #pow(cos_theta, fit[2])) + fit[3] * cos_theta + fit[4];
+@(pure) auto sheen_lambda_l(const auto fit, const float cos_theta) {
+  return fit[0] / (1.0 + fit[1] * #pow(cos_theta, fit[2])) + fit[3] * cos_theta + fit[4];
 }
 @(pure) auto sheen_lambda(const auto fit, const float cos_theta) {
-  return #exp(#abs(cos_theta) < 0.5 ? sheen_l(fit, cos_theta) : 2 * sheen_l(fit, 0.5) - sheen_l(fit, #max(1 - cos_theta, 0)));
+  return #exp(cos_theta < 0.5 ? sheen_lambda_l(fit, cos_theta) : 2.0 * sheen_lambda_l(fit, 0.5) - sheen_lambda_l(fit, #max(1.0 - cos_theta, 0.0)));
 }
-auto eval_bsdf(const &sheen_bsdf this, inline const &eval_bsdf_parameters params) {
+@(pure noinline) auto eval_bsdf(const &sheen_bsdf this, inline const &eval_bsdf_parameters params) {
   if (mode == scatter_reflect) {
-    const auto alpha(saturate(lerp(0.1, 1.0, this.roughness * this.roughness)));
-    const auto fit(lerp(auto(21.5473, 3.82987, 0.19823, -1.97760, -4.32054),
-                        auto(25.3245, 3.32435, 0.16801, -1.27393, -4.85967), (1 - alpha) * (1 - alpha)));
-    const auto z(#abs(auto(wi.z, wo.z)));
-    const auto wh(normalize(wo + wi));
-    const auto cos_thetah(wh.z);
-    const auto sin_thetah(#sqrt(1.001 - cos_thetah * cos_thetah)); 
-    const auto d((2 + 1 / alpha) * #pow(sin_thetah, 1 / alpha) / $TWO_PI);
-    const auto g(1 / (1 + sheen_lambda(fit, z[0]) + sheen_lambda(fit, z[1])));
-    return eval_bsdf_result(pdf: z / $PI, f: d * g / (4 * z[1]) * this.tint);
+    const auto roughness(saturate(this.roughness));
+    const auto cos_thetao(#abs(wo.z));
+    const auto cos_thetai(#abs(wi.z));
+    const auto pdf(float2(cos_thetai, cos_thetao) / $PI);
+    const auto fss(let {
+      const auto alpha(lerp(0.1, 1.0, roughness * roughness));
+      const auto fit(lerp(auto(21.5473, 3.82987, 0.19823, -1.97760, -4.32054),
+                          auto(25.3245, 3.32435, 0.16801, -1.27393, -4.85967), (1 - alpha) * (1 - alpha))); 
+      const auto cos_thetah(normalize(wo + wi).z);
+      const auto sin_thetah(#sqrt(1.0001 - cos_thetah * cos_thetah));
+      const auto D((2 + 1 / alpha) * #pow(sin_thetah, 1 / alpha) / $TWO_PI);
+      const auto G2(1 / (1 + sheen_lambda(fit, cos_thetao) + sheen_lambda(fit, cos_thetai)));
+    } in D * G2 / (4 * cos_thetao + 0.001));
+    if (!this.multiscatter_tint) {
+      return eval_bsdf_result(pdf: pdf, f: fss * this.tint);
+    } else {
+      const auto fms(let {
+        const auto fit(return_from {
+          float4 fit(7.8849563e+00, 1.0884491e+01, -1.6968964e+00, -2.7087439e-01);
+          fit = fit * roughness + float4(-3.2346706e+01, -4.8377170e+01,  5.4675246e+00,  1.0047828e+00);
+          fit = fit * roughness + float4( 5.3026224e+01,  8.8888751e+01, -3.9836205e+00, -1.3797632e+00);
+          fit = fit * roughness + float4(-4.2615764e+01, -8.6238862e+01, -3.9847111e+00,  8.3431138e-01);
+          fit = fit * roughness + float4( 1.3553998e+01,  4.4328392e+01,  6.2216980e+00, -3.4164580e-01);
+          fit = fit * roughness + float4( 2.6918201e+00, -9.2638026e+00, -1.7865819e+00, -6.4843047e-02);
+          fit = fit * roughness + float4(-2.1587465e+00,  8.5394786e-01,  2.0808058e-01,  4.3847363e-01);
+          fit = fit * roughness + float4( 1.6297278e-02, -3.0556821e-02, -8.5395124e-03, -4.0936379e-04);
+          fit = fit * roughness + float4( 8.6410438e-01,  6.1500189e-03,  1.3796256e-03,  7.5187484e-02);
+          return fit;
+        });
+        const auto Ewo(fit[0] * #pow(1.0 / (1.0 + fit[1] * cos_thetao), 1.0 / fit[2]));
+        const auto Ewi(fit[0] * #pow(1.0 / (1.0 + fit[1] * cos_thetai), 1.0 / fit[2]));
+        const auto Eav(fit[3]);
+      } in (1 - Ewo) * (1 - Ewi) / (1 - Eav) * cos_thetai / $PI);
+      return eval_bsdf_result(pdf: pdf, f: this.tint * (fss + (*this.multiscatter_tint) * fms));
+    }
   } else {
     return eval_bsdf_result(is_black: true);
   }
 }
-auto eval_bsdf_sample(const &sheen_bsdf this, const &eval_bsdf_sample_parameters params) {
+@(pure) auto eval_bsdf_sample(const &sheen_bsdf this, const &eval_bsdf_sample_parameters params) {
   return eval_bsdf_sample_result(wi: cosine_hemisphere_sample(params.xi.xy) * params.hit_side, mode: scatter_reflect);
 }
 export struct simple_glossy_bsdf: bsdf {
@@ -297,40 +312,72 @@ export @(macro) auto microfacet_ggx_smith_bsdf(
     tangent_u: tangent_u,
     mode: mode);
 }
+@(pure foreign) float atan2f(float y, float x); 
 export struct ward_geisler_moroder_bsdf: bsdf {
   float roughness_u;
   float roughness_v = roughness_u;
   color tint = color(1.0);
-  void color multiscatter_tint = color(0.0); 
+  ?color multiscatter_tint = null; 
   ?float3 tangent_u = null;
   void string handle = "";
 };
-auto eval_bsdf(const &ward_geisler_moroder_bsdf this, inline const &eval_bsdf_parameters params) {
+@(pure noinline) auto eval_bsdf(const &ward_geisler_moroder_bsdf this, inline const &eval_bsdf_parameters params) {
   if (mode == scatter_reflect) {
-    const auto alpha(#pow(saturate(float2(this.roughness_u, this.roughness_v)), 2));
-    const auto f(#sum((h := wo + wi) * h) / ($PI * alpha.x * alpha.y * #pow(h.z, 4)) * #exp(-#sum((g := h.xy / (h.z * alpha)) * g)));
-    return eval_bsdf_result(pdf: float2(f * #abs(wi.z + wo.z) / 2), f: this.tint * f * #abs(wi.z));
+    const auto roughness(saturate(float2(this.roughness_u, this.roughness_v)));
+    const auto alpha(#max(0.001, #pow(roughness, 2)));
+    const auto cos_thetao(#abs(wo.z));
+    const auto cos_thetai(#abs(wi.z));
+    const auto f(#sum((vh := wo + wi) * vh) / ($PI * alpha.x * alpha.y * #pow(vh.z, 4)) * #exp(-#sum((g := vh.xy / (vh.z * alpha)) * g)));
+    const auto fss_pdf(float2(f * (cos_thetao + cos_thetai) / 2));
+    const auto fss(f * cos_thetai);
+    if (!this.multiscatter_tint) {
+      return eval_bsdf_result(pdf: fss_pdf, f: this.tint * fss);
+    } else {
+      const auto fms_pdf(float2(cos_thetai, cos_thetao) / $PI);
+      const auto fms(let {
+        const auto roughness0(#sqrt(roughness.x * roughness.y));
+        const auto fit(return_from {
+          float3 fit(-1.1992005e+02, -1.4040313e+01, 7.8306640e-01);
+          fit = fit * roughness0 + float3( 4.1985368e+02,  4.6807753e+01, -1.6213743e+00);
+          fit = fit * roughness0 + float3(-5.8448171e+02, -6.1370147e+01, -1.3797964e+00);
+          fit = fit * roughness0 + float3( 4.2351783e+02,  4.1399258e+01,  5.6539624e+00);
+          fit = fit * roughness0 + float3(-1.6959530e+02, -1.4979874e+01, -3.8064856e+00);
+          fit = fit * roughness0 + float3( 3.7025769e+01,  3.0665596e+00, -1.2666234e-01);
+          fit = fit * roughness0 + float3(-3.4191809e+00, -2.9108604e-01, -1.8175253e-02);
+          fit = fit * roughness0 + float3( 1.6044891e-01,  8.8001559e-03,  1.4868175e-03);
+          fit = fit * roughness0 + float3(-7.1467185e-04,  1.8095055e-01,  9.9998607e-01);
+          return fit;
+        });
+        const auto Ewo(#min(1 - fit[1] * (t := #pow(cos_thetao / fit[0], 2.0 / 3.0)) * #exp(1 - t), 0.999));
+        const auto Ewi(#min(1 - fit[1] * (t := #pow(cos_thetai / fit[0], 2.0 / 3.0)) * #exp(1 - t), 0.999));
+        const auto Eav(#min(fit[2], 0.999));
+      } in (1 - Ewo) * (1 - Ewi) / (1 - Eav) * cos_thetai / $PI);
+      return eval_bsdf_result(pdf: 0.8 * fss_pdf + 0.2 * fms_pdf, f: this.tint * (fss + (*this.multiscatter_tint) * fms));
+    }
   } else {
     return eval_bsdf_result(is_black: true);
   }
 }
-@(pure foreign) float atan2f(float y, float x); 
-auto eval_bsdf_sample(const &ward_geisler_moroder_bsdf this, const &eval_bsdf_sample_parameters params) {
-  auto wo(params.wo);
-  auto is_neg(wo.z < 0);
-  wo.z = #abs(wo.z);
-  const float2 alpha(#pow(saturate(float2(this.roughness_u, this.roughness_v)), 2));
-  const float phi = atan2f(alpha.y * #sin(t := $TWO_PI * params.xi.x), alpha.x * #cos(t));
-  const float cos_phi = #cos(phi); 
-  const float sin_phi = #sin(phi); 
-  const float theta = #atan(#sqrt(-#log(1 - params.xi.y) / (#pow(cos_phi / alpha.x, 2) + #pow(sin_phi / alpha.y, 2))));
-  const float3 wm = float3(#sin(theta) * float2(cos_phi, sin_phi), #cos(theta));
-  float3 wi(normalize(reflect(wo, wm)));
-  if (wi.z < 0)
-    return eval_bsdf_sample_result();
-  else {
-    if (is_neg) wi.z = -wi.z;
-    return eval_bsdf_sample_result(wi: wi, mode: scatter_reflect);
+@(pure noinline) auto eval_bsdf_sample(const &ward_geisler_moroder_bsdf this, const &eval_bsdf_sample_parameters params) {
+  if (!this.multiscatter_tint || weighted_bool_sample(&params.xi.w, 0.8)) { 
+    auto wo(params.wo);
+    auto is_neg(wo.z < 0);
+    wo.z = #abs(wo.z);
+    const auto alpha(#pow(saturate(float2(this.roughness_u, this.roughness_v)), 2));
+    const auto phi(atan2f(alpha.y * #sin(t := $TWO_PI * params.xi.x), alpha.x * #cos(t)));
+    const auto cos_phi(#cos(phi)); 
+    const auto sin_phi(#sin(phi));
+    const auto theta(#atan(#sqrt(-#log(1 - params.xi.y) / (#pow(cos_phi / alpha.x, 2) + #pow(sin_phi / alpha.y, 2)))));
+    const auto wm(float3(#sin(theta) * float2(cos_phi, sin_phi), #cos(theta)));
+    auto wi(normalize(reflect(wo, wm)));
+    if (wi.z < 0) {
+      return eval_bsdf_sample_result(); 
+    } else {
+      if (is_neg) wi.z = -wi.z;
+      return eval_bsdf_sample_result(wi: wi, mode: scatter_reflect);
+    }
+  } else {
+    return eval_bsdf_sample_result(wi: cosine_hemisphere_sample(params.xi.xy) * params.hit_side, mode: scatter_reflect);
   }
 }
 @(macro) auto eval_bsdf(const auto this, inline const &eval_bsdf_parameters params, const float3 normal) {
@@ -387,6 +434,7 @@ export struct fresnel_layer: bsdf {
   float3 normal = state::normal();
 };
 @(macro) auto eval_bsdf(const &fresnel_layer this, inline const &eval_bsdf_parameters params) {
+  preserve params.ior;
   params.ior = this.ior;
   const auto result0(eval_bsdf(&this.base, params));
   const auto result1(eval_bsdf(&this.layer, params, this.normal));
@@ -396,6 +444,7 @@ export struct fresnel_layer: bsdf {
     f:   lerp(result0.f,   result1.f,   this.weight * F.z));
 }
 @(macro) auto eval_bsdf_sample(const &fresnel_layer this, const &eval_bsdf_sample_parameters params) {
+  preserve params.ior;
   params.ior = this.ior;
   return weighted_bool_sample(&params.xi.z, this.weight * schlick_F(params.wo.z, schlick_F0(get_ior(params))))
     ? eval_bsdf_sample(&this.layer, params, this.normal)
@@ -683,6 +732,7 @@ export @(pure macro) auto floor(const auto a) = #floor(a);
 export @(pure macro) auto ceil(const auto a) = #ceil(a);
 export @(pure macro) auto round(const auto a) = #round(a);
 export @(pure macro) auto trunc(const auto a) = #trunc(a);
+export @(pure macro) auto frac(const auto a) = a - #floor(a);
 export @(pure macro) auto fmod(const auto a, const auto b) = a % b;
 export @(pure macro) auto isfinite(const auto a) = #isfpclass(a, 0b0111111000);
 export @(pure macro) auto isnormal(const auto a) = #isfpclass(a, 0b0100001000);
@@ -1013,18 +1063,10 @@ export @(macro) float lookup_float(texture_ptex tex, const int channel = 0) {
 }
 )*";
 
-static const char *fresnel = R"*(#smdl_syntax
-export @(pure macro) auto schlick_F0(const auto ior) = #pow((ior - 1) / (ior + 1), 2);
-export @(pure macro) auto schlick_factor(const auto cos_theta) = #pow(#max(1 - #abs(cos_theta), 0), 5);
-export @(pure macro) auto schlick_factor(const auto cos_theta, const auto exponent) = #pow(#max(1 - #abs(cos_theta), 0), exponent);
-export @(pure macro) auto schlick_F(const auto cos_theta, const auto F0, const auto F90 = 1.0) = F0 + (F90 - F0) * schlick_factor(cos_theta);
-export @(pure macro) auto schlick_F(const auto cos_theta, const auto F0, const auto F90, const float exponent) = F0 + (F90 - F0) * schlick_factor(cos_theta, exponent);
-)*";
-
 static const char *microfacet = R"*(
 #smdl_syntax
 using ::math import *;
-using ::fresnel import *;
+using ::specular import *;
 @(pure foreign) float erfcf(float x);
 @(pure foreign) float lgammaf(float x);
 @(pure) float betaf(float x, float y) = #exp(lgammaf(x) + lgammaf(y) - lgammaf(x + y));
@@ -1110,14 +1152,6 @@ export @(pure) auto microfacet_specular_brdf(microfacet this, float3 wo, float3 
       wm, 
       0.25 * d / float2(proj_areao, proj_areai),
       0.25 * d * g / #max(wo.z, 0.001) * step(0.0, wi.z));
-}
-@(pure macro) auto refraction_half_vector(const float3 wi, const float3 wt, const float ior) = -ior * wi + wt; 
-@(pure macro) auto refraction_half_vector_jacobian(const float3 wi, const float3 wt, const float ior) {
-  const auto vh(refraction_half_vector(wi, wt, ior));
-  const auto len2_vh(#sum(vh * vh));
-  const auto len1_vh(#sqrt(len2_vh));
-  const auto wh(vh / len1_vh);
-  return #abs(#sum(wt * wh)) / len2_vh;
 }
 export @(pure) auto microfacet_specular_btdf(microfacet this, float3 wo, float3 wi, float ior) {
   if (wo.z < 0) wo = -wo, wi = -wi, ior = 1 / ior;
@@ -1263,6 +1297,36 @@ export @(pure) auto specular_ggx_ms_brdf(
 }
 )*";
 
+static const char *monte_carlo = R"*(#smdl_syntax
+import ::math::*;
+export @(pure) float2 advance_low_discrepancy(const &float2 xi) = (*xi = math::frac(*xi + float2(0.75487766, 0.56984029)));
+export @(pure) float3 advance_low_discrepancy(const &float3 xi) = (*xi = math::frac(*xi + float3(0.81917251, 0.67104360, 0.54970047)));
+export @(pure) float4 advance_low_discrepancy(const &float4 xi) = (*xi = math::frac(*xi + float4(0.85667488, 0.73389185, 0.62870672, 0.53859725)));
+export @(pure) bool weighted_bool_sample(const &float xi, const float weight) {
+  if (*xi < weight) {
+    *xi = (*xi / weight);
+    return true;
+  } else {
+    *xi = (*xi - weight) / (1 - weight);
+    return false;
+  }
+}
+export @(pure) int uniform_wavelength_index_sample(const &float xi) {
+  const int i(#min(int(*xi *= $WAVELENGTH_BASE_MAX), $WAVELENGTH_BASE_MAX - 1));
+  *xi -= i;
+  return i;
+}
+export @(pure) float2 uniform_disk_sample(float2 xi) {
+  xi = 2 * xi - 1;
+  xi = #select(xi == 0, 1e-5, xi);
+  const bool cond((absxi := #abs(xi), absxi.x > absxi.y));
+  const float rad(#select(cond, xi.x, xi.y));
+  const float phi(#select(cond, ($PI / 4) * xi.y / xi.x, ($PI / 2) - ($PI / 4) * xi.x / xi.y));
+  return rad * float2(#cos(phi), #sin(phi));
+}
+export @(pure) float3 cosine_hemisphere_sample(float2 xi) = float3((p := uniform_disk_sample(xi)), #sqrt(#max(1 - #sum(p * p), 0)));
+)*";
+
 static const char *rgb = R"*(#smdl_syntax
 const int RGB_TO_COLOR_NUM_WAVES = 32;
 const float RGB_TO_COLOR_MIN_WAVE = 380.0;
@@ -1386,6 +1450,25 @@ export @(hot noinline) float3 color_to_rgb(const color c) {
 }
 )*";
 
+static const char *specular = R"*(#smdl_syntax
+export @(pure macro) auto reflect(const float3 wi, const float3 wm) = 2 * #sum(wi * wm) * wm - wi;
+export @(pure macro) auto refract(const float3 wi, const float3 wm, const float ior, const float cos_thetat) = -ior * wi + (ior * #sum(wi * wm) + cos_thetat) * wm;
+export @(pure macro) auto refract(const float3 wi, const float3 wm, const float ior) {
+  const auto cos_thetai(#sum(wi * wm));
+  const auto cos_thetat(#sqrt(1 - ior * ior * (1 - cos_thetai * cos_thetai)));
+  return refract(wi, wm, ior, cos_thetat * -#sign(cos_thetai));
+}
+export @(pure macro) auto refraction_half_vector(const float3 wi, const float3 wt, const float ior) = -ior * wi + wt; 
+export @(pure macro) auto refraction_half_vector_jacobian(const float3 wi, const float3 wt, const float ior) {
+  return #abs(#sum(wt * (vh := refraction_half_vector(wi, wt, ior)))) / ((vh2 := #sum(vh * vh)) * #sqrt(vh2));
+}
+export @(pure macro) auto schlick_F0(const auto ior) = #pow((ior - 1) / (ior + 1), 2);
+export @(pure macro) auto schlick_factor(const auto cos_theta) = #pow(#max(1 - #abs(cos_theta), 0), 5);
+export @(pure macro) auto schlick_factor(const auto cos_theta, const auto exponent) = #pow(#max(1 - #abs(cos_theta), 0), exponent);
+export @(pure macro) auto schlick_F(const auto cos_theta, const auto F0, const auto F90 = 1.0) = F0 + (F90 - F0) * schlick_factor(cos_theta);
+export @(pure macro) auto schlick_F(const auto cos_theta, const auto F0, const auto F90, const float exponent) = F0 + (F90 - F0) * schlick_factor(cos_theta, exponent);
+)*";
+
 [[nodiscard]] static const char *get_src(auto name) {
   if (name == "df")
     return df;
@@ -1403,12 +1486,14 @@ export @(hot noinline) float3 color_to_rgb(const color c) {
     return std;
   if (name == "tex")
     return tex;
-  if (name == "fresnel")
-    return fresnel;
   if (name == "microfacet")
     return microfacet;
+  if (name == "monte_carlo")
+    return monte_carlo;
   if (name == "rgb")
     return rgb;
+  if (name == "specular")
+    return specular;
   return nullptr;
 }
 

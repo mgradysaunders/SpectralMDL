@@ -30,6 +30,8 @@ export @(pure macro) auto round(const auto a) = #round(a);
 
 export @(pure macro) auto trunc(const auto a) = #trunc(a);
 
+export @(pure macro) auto frac(const auto a) = a - #floor(a);
+
 export @(pure macro) auto fmod(const auto a, const auto b) = a % b;
 
 export @(pure macro) auto isfinite(const auto a) = #isfpclass(a, 0b0111111000);

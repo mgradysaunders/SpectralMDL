@@ -832,8 +832,6 @@ public:
   Preserve(llvm::SmallVector<unique_bump_ptr<Expr>> exprs) : exprs(std::move(exprs)) {}
 
   llvm::SmallVector<unique_bump_ptr<Expr>> exprs{};
-
-  llvm::SmallVector<std::pair<Compiler::Crumb *, llvm::Value *>> backups{};
 };
 
 class Return final : public StmtSubclass<StmtKind::Return> {

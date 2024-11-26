@@ -176,6 +176,8 @@ public:
   /// The AST source location, if applicable.
   AST::SourceLocation srcLoc{};
 
+  Value valueToPreserve{};
+
 public:
   /// Find the first crumb with the given name sequence that is usable in the given LLVM function.
   [[nodiscard]] static Crumb *find(Crumb *crumb, llvm::ArrayRef<llvm::StringRef> name, llvm::Function *llvmFunc, int depth = 0);

@@ -24,7 +24,10 @@ public:
       llvm::SmallVector<Inline> *inlines = nullptr,   //
       llvm::Function *llvmFunc = nullptr)
       : context(context), module(module), crumb(crumb), returns(returns), inlines(inlines), builder(context.llvmContext) {
-    builder.setFastMathFlags(llvm::FastMathFlags::getFast());
+    auto fmf{llvm::FastMathFlags::getFast()};
+    fmf.setNoNaNs(false);
+    fmf.setNoInfs(false);
+    builder.setFastMathFlags(fmf);
     if (llvmFunc) {
       auto blockEntry{llvm::BasicBlock::Create(context.llvmContext, "entry", llvmFunc)};
       auto blockReturn{llvm::BasicBlock::Create(context.llvmContext, "return", llvmFunc)};
@@ -38,7 +41,10 @@ public:
         returns(parent->returns), inlines(parent->inlines), afterBreak(parent->afterBreak),
         afterContinue(parent->afterContinue), afterReturn(parent->afterReturn), afterEndScope(parent->afterEndScope),
         builder(parent->context.llvmContext) {
-    builder.setFastMathFlags(llvm::FastMathFlags::getFast());
+    auto fmf{llvm::FastMathFlags::getFast()};
+    fmf.setNoNaNs(false);
+    fmf.setNoInfs(false);
+    builder.setFastMathFlags(fmf);
   }
 
 public:
@@ -72,8 +78,8 @@ public:
 
 public:
   //--{ Fundamental operations
-  void push(Value value, llvm::ArrayRef<llvm::StringRef> name, AST::Node *node, const AST::SourceLocation &srcLoc) {
-    crumb = context.bump_allocate<Crumb>(Crumb{crumb, value, name, node, srcLoc});
+  void push(Value value, llvm::ArrayRef<llvm::StringRef> name, AST::Node *node, const AST::SourceLocation &srcLoc, Value valueToPreserve = {}) {
+    crumb = context.bump_allocate<Crumb>(Crumb{crumb, value, name, node, srcLoc, valueToPreserve});
   }
 
   void declare(const AST::Name &astName, Value value, AST::Decl *decl = {}) {

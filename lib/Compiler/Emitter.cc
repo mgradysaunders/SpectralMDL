@@ -278,6 +278,7 @@ Value Emitter::emit(AST::Binary &expr) {
         expr.op == AST::BinaryOp::LogicalOr ? blockRhs : blockEnd);
     move_to(blockRhs);
     auto valueRhs{construct(boolType, emit(expr.rhs), expr.srcLoc)};
+    blockRhs = get_insert_block();
     emit_br_and_move_to(blockEnd);
     return emit_phi(
         boolType, {{context.get_compile_time_bool(expr.op == AST::BinaryOp::LogicalOr), blockLhs}, {valueRhs, blockRhs}});
@@ -506,16 +507,13 @@ Value Emitter::emit(AST::If &stmt) {
 }
 
 Value Emitter::emit(AST::Preserve &stmt) {
-  stmt.backups.clear();
   for (auto &expr : stmt.exprs) {
     auto value{emit(expr)};
     if (!value.is_lvalue())
       stmt.srcLoc.report_error("can't apply 'preserve' to constant or temporary");
-    push(emit_alloca("local.preserve", value.type), {}, {}, stmt.srcLoc);
-    stmt.backups.emplace_back(crumb, value);
+    push(emit_alloca("tmp.preserve", value.type), {}, &stmt, stmt.srcLoc, value);
     builder.CreateStore(rvalue(value), crumb->value);
   }
-  push({}, {}, &stmt, stmt.srcLoc);
   return {};
 }
 
@@ -633,6 +631,8 @@ void Emitter::emit_unwind(Crumb *crumb0) {
   sanity_check(!has_terminator());
   for (; crumb && crumb != crumb0; crumb = crumb->prev) {
     if (crumb->value) {
+      if (crumb->is_ast_preserve())
+        builder.CreateStore(rvalue(crumb->value), crumb->valueToPreserve);
       emit_end_lifetime(crumb->value);
     } else if (crumb->is_ast_defer()) {
       auto defer{static_cast<AST::Defer *>(crumb->node)};
@@ -647,9 +647,6 @@ void Emitter::emit_unwind(Crumb *crumb0) {
       emitter.emit(*defer->stmt);
       emitter.emit_unwind(defer->crumb);
       move_to(emitter.get_insert_block());
-    } else if (crumb->is_ast_preserve()) {
-      for (auto &[crumb, llvmValue] : static_cast<AST::Preserve *>(crumb->node)->backups)
-        builder.CreateStore(rvalue(crumb->value), llvmValue);
     }
   }
   sanity_check(crumb == crumb0);
@@ -728,7 +725,7 @@ Value Emitter::emit_op(AST::UnaryOp op, Value val, const AST::SourceLocation &sr
     }
     if (op == UnOp::Not && val.type->is_vectorized() && val.type->is_integral())
       return RValue(val.type, builder.CreateNot(rvalue(val)));
-    if (op == UnOp::LogicalNot && (val.type->is_scalar() || val.type->is_pointer()))
+    if (op == UnOp::LogicalNot && (val.type->is_scalar() || val.type->is_pointer() || val.type->is_optional()))
       return emit_op(UnOp::Not, construct(context.get_bool_type(), val, srcLoc), srcLoc);
     if (op == UnOp::LogicalNot && (val.type->is_vector()))
       return emit_op(UnOp::Not, construct(val.type->get_with_different_scalar(Scalar::Bool), val, srcLoc), srcLoc);

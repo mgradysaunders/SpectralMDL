@@ -2,8 +2,7 @@
 #smdl_syntax
 
 using ::math import *;
-
-using ::fresnel import *;
+using ::specular import *;
 
 // The libm complementary error function.
 @(pure foreign) float erfcf(float x);
@@ -124,16 +123,6 @@ export @(pure) auto microfacet_specular_brdf(microfacet this, float3 wo, float3 
 //--}
 
 //--{ microfacet_specular_btdf
-@(pure macro) auto refraction_half_vector(const float3 wi, const float3 wt, const float ior) = -ior * wi + wt; 
-
-@(pure macro) auto refraction_half_vector_jacobian(const float3 wi, const float3 wt, const float ior) {
-  const auto vh(refraction_half_vector(wi, wt, ior));
-  const auto len2_vh(#sum(vh * vh));
-  const auto len1_vh(#sqrt(len2_vh));
-  const auto wh(vh / len1_vh);
-  return #abs(#sum(wt * wh)) / len2_vh;
-}
-
 export @(pure) auto microfacet_specular_btdf(microfacet this, float3 wo, float3 wi, float ior) {
   if (wo.z < 0) wo = -wo, wi = -wi, ior = 1 / ior;
   if (wi.z > 0) return microfacet_bsdf_result();
