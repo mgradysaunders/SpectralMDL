@@ -145,6 +145,9 @@ public:
   /// Is this an AST using import declaration?
   [[nodiscard]] bool is_ast_using_import() const { return node && llvm::isa<AST::UsingImport>(node); }
 
+  /// Is this an AST using alias declaration?
+  [[nodiscard]] bool is_ast_using_alias() const { return node && llvm::isa<AST::UsingAlias>(node); }
+
   /// Is this an AST defer statement?
   [[nodiscard]] bool is_ast_defer() const { return node && llvm::isa<AST::Defer>(node); }
 

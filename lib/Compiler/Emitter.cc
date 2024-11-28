@@ -97,8 +97,10 @@ Value Emitter::emit(AST::Enum &decl) {
     lastValue = value;
   }
   auto type{context.get_enum_type(&decl, get_llvm_function())};
-  decl.module = module;
-  decl.crumb = crumb;
+  if (!decl.module) {
+    decl.module = module;
+    decl.crumb = crumb;
+  }
   declare(*decl.name, context.get_compile_time_type(type));
   for (auto &declVal : decl.constants)
     declare(*declVal.name, RValue(type, declVal.llvmConst), &decl);
@@ -106,8 +108,10 @@ Value Emitter::emit(AST::Enum &decl) {
 }
 
 Value Emitter::emit(AST::Function &decl) {
-  decl.module = module;
-  decl.crumb = crumb;
+  if (!decl.module) {
+    decl.module = module;
+    decl.crumb = crumb;
+  }
   declare(*decl.name, context.get_compile_time_function(context.get_function(*this, &decl)), &decl);
   return {};
 }
@@ -115,8 +119,10 @@ Value Emitter::emit(AST::Function &decl) {
 Value Emitter::emit(AST::Import &decl) {
   if (decl.isExport)
     decl.srcLoc.report_error("can't re-export qualified 'import'");
-  decl.module = module;
-  decl.crumb = crumb;
+  if (!decl.module) {
+    decl.module = module;
+    decl.crumb = crumb;
+  }
   for (auto &path : decl.paths)
     declare_import(path->isAbsolute, path->get_string_refs(), decl);
   return {};
@@ -128,31 +134,39 @@ Value Emitter::emit(AST::Struct &decl) {
     emit(astField.type);
   for (auto &astTag : decl.tags)
     emit(astTag.type);
-  decl.module = module;
-  decl.crumb = crumb;
+  if (!decl.module) {
+    decl.module = module;
+    decl.crumb = crumb;
+  }
   declare(*decl.name, context.get_compile_time_type(context.get_struct_type(&decl, get_llvm_function())), &decl);
   return {};
 }
 
 Value Emitter::emit(AST::Tag &decl) {
   context.validate_decl_name("tag", *decl.name);
-  decl.module = module;
-  decl.crumb = crumb;
+  if (!decl.module) {
+    decl.module = module;
+    decl.crumb = crumb;
+  }
   declare(*decl.name, context.get_compile_time_type(context.get_tag_type(&decl, get_llvm_function())), &decl);
   return {};
 }
 
 Value Emitter::emit(AST::Typedef &decl) {
   context.validate_decl_name("typedef", *decl.name);
-  decl.module = module;
-  decl.crumb = crumb;
+  if (!decl.module) {
+    decl.module = module;
+    decl.crumb = crumb;
+  }
   declare(*decl.name, emit(decl.type), &decl);
   return {};
 }
 
 Value Emitter::emit(AST::UnitTest &decl) {
-  decl.module = module;
-  decl.crumb = crumb;
+  if (!decl.module) {
+    decl.module = module;
+    decl.crumb = crumb;
+  }
   if (context.mdl.enableUnitTests) {
     auto func{FunctionInstance{*this, decl}};
     auto &unitTest{context.mdl.unitTests.emplace_back()};
@@ -164,12 +178,19 @@ Value Emitter::emit(AST::UnitTest &decl) {
 }
 
 Value Emitter::emit(AST::UsingAlias &decl) {
-  // TODO
-  unimplemented_emit(decl);
+  if (!decl.module) {
+    decl.module = module;
+    decl.crumb = crumb;
+  }
+  push({}, {}, &decl, decl.srcLoc);
   return {};
 }
 
 Value Emitter::emit(AST::UsingImport &decl) {
+  if (!decl.module) {
+    decl.module = module;
+    decl.crumb = crumb;
+  }
   auto path{decl.path->get_string_refs()};
   if (decl.is_import_all()) {
     path.push_back("*");
@@ -194,8 +215,10 @@ Value Emitter::emit(AST::Variable &decl) {
     decl.srcLoc.report_error("variable declared 'static' must also be 'const' (at least for now)");
   if (decl.type->attrs.isInline)
     decl.srcLoc.report_error("variable must not be declared 'inline'");
-  decl.module = module;
-  decl.crumb = crumb;
+  if (!decl.module) {
+    decl.module = module;
+    decl.crumb = crumb;
+  }
   for (auto &declVal : decl.values) {
     auto &declValName{*declVal.name};
     context.validate_decl_name("variable", declValName);

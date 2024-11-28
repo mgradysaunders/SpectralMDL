@@ -1,7 +1,8 @@
 #smdl_syntax
 
-import importee::*;
+using imp = "importee";
+import imp::*;
 
 unit_test "Basic imports" {
-  #assert(importee::message == "Hello, world!");
+  #assert(imp::message == "Hello, world!");
 }

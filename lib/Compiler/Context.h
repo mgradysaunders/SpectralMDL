@@ -356,6 +356,9 @@ public:
   [[nodiscard]] Module *resolve_module(
       Emitter &emitter, bool isAbs, llvm::ArrayRef<llvm::StringRef> path, const AST::SourceLocation &srcLoc);
 
+  void resolve_using_aliases(
+      Crumb *crumb, llvm::ArrayRef<llvm::StringRef> path, llvm::SmallVector<llvm::StringRef> &fullPath);
+
 public:
   MDLInstance &mdl;
 

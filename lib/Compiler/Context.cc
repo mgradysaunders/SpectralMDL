@@ -576,23 +576,41 @@ llvm::SmallVector<Value> Context::resolve_arguments(
 
 Module *Context::resolve_module(
     Emitter &emitter, bool isAbs, llvm::ArrayRef<llvm::StringRef> path, const AST::SourceLocation &srcLoc) {
-  // TODO Expand using import aliases
+  auto fullPath{llvm::SmallVector<llvm::StringRef>{}};
+  resolve_using_aliases(emitter.crumb, path, fullPath);
   if (!isAbs) {
-    if (path.size() == 1) {
+    if (fullPath.size() == 1) {
       for (auto &module : mdl.modules) {
-        if (module.get() != emitter.module && module->name == path[0]) {
+        if (module.get() != emitter.module && module->name == fullPath[0]) {
           module->emit(*this);
           return module.get();
         }
       }
     }
   }
-  if (path.size() == 1) {
-    if (auto builtinModule{get_builtin_module(path[0])})
+  if (fullPath.size() == 1) {
+    if (auto builtinModule{get_builtin_module(fullPath[0])})
       return builtinModule;
   }
   srcLoc.report_error(std::format("can't resolve module '{}'", format_join(path, "::")));
   return nullptr;
+}
+
+void Context::resolve_using_aliases(
+    Crumb *crumb, llvm::ArrayRef<llvm::StringRef> path, llvm::SmallVector<llvm::StringRef> &fullPath) {
+  auto findAliasCrumb{[](Crumb *crumb, llvm::StringRef pathName) -> Crumb * {
+    for (; crumb; crumb = crumb->prev)
+      if (crumb->is_ast_using_alias() && static_cast<AST::UsingAlias *>(crumb->node)->name->name == pathName)
+        return crumb;
+    return nullptr;
+  }};
+  for (auto &pathName : path) {
+    if (auto aliasCrumb{findAliasCrumb(crumb, pathName)}) {
+      resolve_using_aliases(aliasCrumb, static_cast<AST::UsingAlias *>(aliasCrumb->node)->path->get_string_refs(), fullPath);
+    } else {
+      fullPath.push_back(pathName);
+    }
+  }
 }
 
 } // namespace smdl::Compiler
