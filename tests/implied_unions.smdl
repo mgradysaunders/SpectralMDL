@@ -71,3 +71,13 @@ unit_test "Implied promotion instead of union" {
   #assert(#typeof(get_implied_promotion_from_conditional(0)) == double);
   #assert(#typeof(get_implied_promotion_from_returns(2)) == double);
 }
+
+// If an abstract array constructor is passed a bunch of different types,
+// it automatically unionizes them to create an array of unions.
+unit_test "Implied unions in arrays" {
+  auto animals = auto[](Horse(), Zebra(), Bison());
+  #assert(#typeof(visit animals[0]) == Horse);
+  #assert(#typeof(visit animals[1]) == Zebra);
+  #assert(#typeof(visit animals[2]) == Bison);
+  #assert(#typeof(animals) == (Horse | Zebra | Bison)[3]);
+}
