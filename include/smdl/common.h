@@ -175,7 +175,7 @@ struct source_location_t final {
   int_t line{};
 };
 
-struct image_t final {
+struct tile_2d_t final {
   int2_t extent{};
 
   float4_t *texels{};
@@ -186,7 +186,7 @@ struct texture_2d_t final {
 
   int2_t tile_count{};
 
-  image_t *tiles{};
+  tile_2d_t *tiles{};
 };
 
 struct texture_3d_t final {

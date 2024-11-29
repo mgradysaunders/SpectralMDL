@@ -10,7 +10,7 @@ export enum gamma_mode { gamma_default = 0, gamma_linear = 0, gamma_srgb = 1 };
 
 @(pure macro) float apply_gamma_mode(const gamma_mode gamma, const float texel) = gamma == gamma_srgb ? (texel * texel) : texel;
 
-@(pure) &image_t access_uv_tile(const texture_2d tex, const int2 uv_tile) {
+@(pure) &tile_2d access_uv_tile(const texture_2d tex, const int2 uv_tile) {
   return null if (#any((uv_tile < 0) | (uv_tile >= tex.tile_count)));
   return &tex.tiles[tex.tile_count.x * uv_tile.y + uv_tile.x];
 }

@@ -73,7 +73,7 @@ Crumb *Crumb::find(Crumb *crumb, llvm::ArrayRef<llvm::StringRef> name, llvm::Fun
 Param::Param(Context &context, const AST::Param &astParam)
     : name(astParam.name->name), type(astParam.type->type), isConst(bool(astParam.type->attrs.isConst)),
       isInline(bool(astParam.type->attrs.isInline)), init(astParam.init.get()), srcLoc(astParam.name->srcLoc) {
-  context.validate_decl_name("parameter", *astParam.name);
+  // context.validate_decl_name("parameter", *astParam.name);
   if (astParam.type->attrs.isStatic)
     astParam.name->srcLoc.report_error(std::format("parameter '{}' must not be declared 'static'", astParam.name->name));
   if (astParam.type->attrs.isInline && !astParam.type->type->get_inline_struct_type())
@@ -84,7 +84,7 @@ Param::Param(Context &context, const AST::Struct::Field &astField)
     : name(astField.name->name), type(astField.type->type), isVoid(astField.isVoid),
       isConst(bool(astField.type->attrs.isConst)), isInline(bool(astField.type->attrs.isInline)), init(astField.init.get()),
       srcLoc(astField.name->srcLoc) {
-  context.validate_decl_name("field", *astField.name);
+  // context.validate_decl_name("field", *astField.name);
   if (astField.type->attrs.isStatic)
     astField.name->srcLoc.report_error(std::format("field '{}' must not be declared 'static'", astField.name->name));
   if (astField.type->attrs.isInline && !astField.type->type->get_inline_struct_type())

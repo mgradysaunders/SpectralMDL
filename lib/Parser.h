@@ -154,6 +154,8 @@ public:
 
   [[nodiscard]] unique_bump_ptr<AST::File> parse() { return parse_mdl(); }
 
+  [[nodiscard]] bool is_extended_syntax() const { return isExtendedSyntax; }
+
 private:
   //--{ Basics
   [[nodiscard]] bool is_eof() const { return state.i >= text.size(); }

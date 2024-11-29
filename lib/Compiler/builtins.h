@@ -363,7 +363,8 @@ export struct ward_geisler_moroder_bsdf: bsdf {
     auto wo(params.wo);
     auto is_neg(wo.z < 0);
     wo.z = #abs(wo.z);
-    const auto alpha(#pow(saturate(float2(this.roughness_u, this.roughness_v)), 2));
+    const auto roughness(saturate(float2(this.roughness_u, this.roughness_v)));
+    const auto alpha(#max(0.001, #pow(roughness, 2)));
     const auto phi(atan2f(alpha.y * #sin(t := $TWO_PI * params.xi.x), alpha.x * #cos(t)));
     const auto cos_phi(#cos(phi)); 
     const auto sin_phi(#sin(phi));
@@ -919,7 +920,7 @@ export enum gamma_mode { gamma_default = 0, gamma_linear = 0, gamma_srgb = 1 };
 @(pure macro) float3 apply_gamma_mode(const gamma_mode gamma, const float3 texel) = gamma == gamma_srgb ? (texel * texel) : texel;
 @(pure macro) float2 apply_gamma_mode(const gamma_mode gamma, const float2 texel) = gamma == gamma_srgb ? (texel * texel) : texel;
 @(pure macro) float apply_gamma_mode(const gamma_mode gamma, const float texel) = gamma == gamma_srgb ? (texel * texel) : texel;
-@(pure) &image_t access_uv_tile(const texture_2d tex, const int2 uv_tile) {
+@(pure) &tile_2d access_uv_tile(const texture_2d tex, const int2 uv_tile) {
   return null if (#any((uv_tile < 0) | (uv_tile >= tex.tile_count)));
   return &tex.tiles[tex.tile_count.x * uv_tile.y + uv_tile.x];
 }

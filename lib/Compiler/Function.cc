@@ -209,7 +209,6 @@ Value FunctionInstance::call(Emitter &emitter, llvm::ArrayRef<Value> argValues, 
 }
 
 Function::Function(Emitter &emitter0, AST::Function &decl) : decl(decl) {
-  emitter0.context.validate_decl_name("function", *decl.name);
   emitter0.emit(*decl.returnType);
   for (const auto &param : decl.params)
     emitter0.emit(*param.type);

@@ -22,7 +22,7 @@ Context::Context(MDLInstance &mdl, llvm::BumpPtrAllocator &bumpAllocator)
       voidType(bump_allocate<VoidType>(*this)),                                        //
       colorType(bump_allocate<ColorType>(*this)),                                      //
       intensityModeType(bump_allocate<EnumType>(*this, builtin_enum_type<intensity_mode_t>)),
-      imageType(bump_allocate<StructType>(*this, builtin_struct_type<image_t>)),
+      tile2DType(bump_allocate<StructType>(*this, builtin_struct_type<tile_2d_t>)),
       texture2DType(bump_allocate<StructType>(*this, builtin_struct_type<texture_2d_t>)),
       texture3DType(bump_allocate<StructType>(*this, builtin_struct_type<texture_3d_t>)),
       textureCubeType(bump_allocate<StructType>(*this, builtin_struct_type<texture_cube_t>)),
@@ -43,96 +43,109 @@ Context::Context(MDLInstance &mdl, llvm::BumpPtrAllocator &bumpAllocator)
       materialVolumeType(bump_allocate<StructType>(*this, builtin_struct_type<material_volume_t>)),
       materialGeometryType(bump_allocate<StructType>(*this, builtin_struct_type<material_geometry_t>)),
       materialType(bump_allocate<StructType>(*this, builtin_struct_type<material_t>)) {
-  keywordToType = {
-      {"auto", autoType.get()},
-      {"bsdf", bsdfType.get()},
-      {"bool", get_bool_type()},
-      {"bool2", get_bool_type(Extent(2))},
-      {"bool3", get_bool_type(Extent(3))},
-      {"bool4", get_bool_type(Extent(4))},
-      {"byte", get_arithmetic_type(Scalar::Byte)},
-      {"color", get_color_type()},
-      /* {"compiler_function", compilerFunctionType.get()},
-         {"compiler_intrinsic", compilerIntrinsicType.get()},
-         {"compiler_module", compilerModuleType.get()},
-         {"compiler_type", compilerTypeType.get()}, */
-      {"default_bsdf", defaultBsdfType.get()},
-      {"default_edf", defaultEdfType.get()},
-      {"default_vdf", defaultVdfType.get()},
-      {"default_hair_bsdf", defaultHairBsdfType.get()},
-      {"double", get_double_type()},
-      {"double2", get_double_type(Extent(2))},
-      {"double3", get_double_type(Extent(3))},
-      {"double4", get_double_type(Extent(4))},
-      {"double2x2", get_double_type(Extent(2, 2))},
-      {"double2x3", get_double_type(Extent(2, 3))},
-      {"double2x4", get_double_type(Extent(2, 4))},
-      {"double3x2", get_double_type(Extent(3, 2))},
-      {"double3x3", get_double_type(Extent(3, 3))},
-      {"double3x4", get_double_type(Extent(3, 4))},
-      {"double4x2", get_double_type(Extent(4, 2))},
-      {"double4x3", get_double_type(Extent(4, 3))},
-      {"double4x4", get_double_type(Extent(4, 4))},
-      {"edf", edfType.get()},
-      {"float", get_float_type()},
-      {"float2", get_float_type(Extent(2))},
-      {"float3", get_float_type(Extent(3))},
-      {"float4", get_float_type(Extent(4))},
-      {"float2x2", get_float_type(Extent(2, 2))},
-      {"float2x3", get_float_type(Extent(2, 3))},
-      {"float2x4", get_float_type(Extent(2, 4))},
-      {"float3x2", get_float_type(Extent(3, 2))},
-      {"float3x3", get_float_type(Extent(3, 3))},
-      {"float3x4", get_float_type(Extent(3, 4))},
-      {"float4x2", get_float_type(Extent(4, 2))},
-      {"float4x3", get_float_type(Extent(4, 3))},
-      {"float4x4", get_float_type(Extent(4, 4))},
-      {"hair_bsdf", hairBsdfType.get()},
-      {"image_t", imageType.get()},
-      {"int", get_int_type()},
-      {"int2", get_int_type(Extent(2))},
-      {"int3", get_int_type(Extent(3))},
-      {"int4", get_int_type(Extent(4))},
-      {"intensity_mode", intensityModeType.get()},
-      {"material_emission", materialEmissionType.get()},
-      {"material_surface", materialSurfaceType.get()},
-      {"material_volume", materialVolumeType.get()},
-      {"material_geometry", materialGeometryType.get()},
-      {"material", materialType.get()},
-      {"source_location", sourceLocationType.get()},
-      /* {"state_t", stateType.get()}, */
-      {"string", stringType.get()},
-      {"texture_2d", texture2DType.get()},
-      {"texture_3d", texture3DType.get()},
-      {"texture_cube", textureCubeType.get()},
-      {"texture_ptex", texturePtexType.get()},
-      {"vdf", vdfType.get()},
-      {"void", voidType.get()},
-  };
-  keywordToConstant = {
-      {"null", Value::zero(get_type<void>())},
-      {"intensity_radiant_exitance", RValue(intensityModeType.get(), get_compile_time_int(0))},
-      {"intensity_power", RValue(intensityModeType.get(), get_compile_time_int(1))},
-      {"$DEBUG", get_compile_time_bool(mdl.enableDebug)},
-      {"$DOUBLE_MIN", get_compile_time_double(std::numeric_limits<double_t>::min())},
-      {"$DOUBLE_MAX", get_compile_time_double(std::numeric_limits<double_t>::max())},
-      {"$DOUBLE_EPS", get_compile_time_double(std::numeric_limits<double_t>::epsilon())},
-      {"$DOUBLE_INF", get_compile_time_double(std::numeric_limits<double_t>::infinity())},
-      {"$DOUBLE_NAN", get_compile_time_double(std::numeric_limits<double_t>::quiet_NaN())},
-      {"$FLOAT_MIN", get_compile_time_float(std::numeric_limits<float_t>::min())},
-      {"$FLOAT_MAX", get_compile_time_float(std::numeric_limits<float_t>::max())},
-      {"$FLOAT_EPS", get_compile_time_float(std::numeric_limits<float_t>::epsilon())},
-      {"$FLOAT_INF", get_compile_time_float(std::numeric_limits<float_t>::infinity())},
-      {"$FLOAT_NAN", get_compile_time_float(std::numeric_limits<float_t>::quiet_NaN())},
-      {"$HALF_PI", get_compile_time_float(1.57079632679489661923f)},
-      {"$INT_MIN", get_compile_time_int(std::numeric_limits<int_t>::min())},
-      {"$INT_MAX", get_compile_time_int(std::numeric_limits<int_t>::max())},
-      {"$PI", get_compile_time_float(3.14159265358979323846f)},
-      {"$TWO_PI", get_compile_time_float(6.28318530717958647692f)},
-      {"$WAVELENGTH_BASE_MAX", get_compile_time_int(mdl.wavelengthBaseMax)},
-      {"$stdout", get_compile_time_pointer(&llvm::outs())},
-      {"$stderr", get_compile_time_pointer(&llvm::errs())},
-  };
+
+#define KEYWORD_CONSTANT(name, value) \
+  {                                   \
+    name, KeywordConstant { value }   \
+  }
+#define KEYWORD_TYPE(name, type)                          \
+  {                                                       \
+    name, KeywordConstant { get_compile_time_type(type) } \
+  }
+#define EXTENDED_KEYWORD_CONSTANT(name, value) \
+  {                                            \
+    name, KeywordConstant { value, true }      \
+  }
+#define EXTENDED_KEYWORD_TYPE(name, type)                       \
+  {                                                             \
+    name, KeywordConstant { get_compile_time_type(type), true } \
+  }
+  keywordConstants = {
+      KEYWORD_TYPE("auto", autoType.get()),
+      KEYWORD_TYPE("bsdf", bsdfType.get()),
+      KEYWORD_TYPE("bool", get_bool_type()),
+      KEYWORD_TYPE("bool2", get_bool_type(Extent(2))),
+      KEYWORD_TYPE("bool3", get_bool_type(Extent(3))),
+      KEYWORD_TYPE("bool4", get_bool_type(Extent(4))),
+      EXTENDED_KEYWORD_TYPE("byte", get_arithmetic_type(Scalar::Byte)),
+      KEYWORD_TYPE("color", get_color_type()),
+      EXTENDED_KEYWORD_TYPE("default_bsdf", defaultBsdfType.get()),
+      EXTENDED_KEYWORD_TYPE("default_edf", defaultEdfType.get()),
+      EXTENDED_KEYWORD_TYPE("default_vdf", defaultVdfType.get()),
+      EXTENDED_KEYWORD_TYPE("default_hair_bsdf", defaultHairBsdfType.get()),
+      KEYWORD_TYPE("double", get_double_type()),
+      KEYWORD_TYPE("double2", get_double_type(Extent(2))),
+      KEYWORD_TYPE("double3", get_double_type(Extent(3))),
+      KEYWORD_TYPE("double4", get_double_type(Extent(4))),
+      KEYWORD_TYPE("double2x2", get_double_type(Extent(2, 2))),
+      KEYWORD_TYPE("double2x3", get_double_type(Extent(2, 3))),
+      KEYWORD_TYPE("double2x4", get_double_type(Extent(2, 4))),
+      KEYWORD_TYPE("double3x2", get_double_type(Extent(3, 2))),
+      KEYWORD_TYPE("double3x3", get_double_type(Extent(3, 3))),
+      KEYWORD_TYPE("double3x4", get_double_type(Extent(3, 4))),
+      KEYWORD_TYPE("double4x2", get_double_type(Extent(4, 2))),
+      KEYWORD_TYPE("double4x3", get_double_type(Extent(4, 3))),
+      KEYWORD_TYPE("double4x4", get_double_type(Extent(4, 4))),
+      KEYWORD_TYPE("edf", edfType.get()),
+      KEYWORD_TYPE("float", get_float_type()),
+      KEYWORD_TYPE("float2", get_float_type(Extent(2))),
+      KEYWORD_TYPE("float3", get_float_type(Extent(3))),
+      KEYWORD_TYPE("float4", get_float_type(Extent(4))),
+      KEYWORD_TYPE("float2x2", get_float_type(Extent(2, 2))),
+      KEYWORD_TYPE("float2x3", get_float_type(Extent(2, 3))),
+      KEYWORD_TYPE("float2x4", get_float_type(Extent(2, 4))),
+      KEYWORD_TYPE("float3x2", get_float_type(Extent(3, 2))),
+      KEYWORD_TYPE("float3x3", get_float_type(Extent(3, 3))),
+      KEYWORD_TYPE("float3x4", get_float_type(Extent(3, 4))),
+      KEYWORD_TYPE("float4x2", get_float_type(Extent(4, 2))),
+      KEYWORD_TYPE("float4x3", get_float_type(Extent(4, 3))),
+      KEYWORD_TYPE("float4x4", get_float_type(Extent(4, 4))),
+      KEYWORD_TYPE("hair_bsdf", hairBsdfType.get()),
+      KEYWORD_TYPE("int", get_int_type()),
+      KEYWORD_TYPE("int2", get_int_type(Extent(2))),
+      KEYWORD_TYPE("int3", get_int_type(Extent(3))),
+      KEYWORD_TYPE("int4", get_int_type(Extent(4))),
+      KEYWORD_TYPE("intensity_mode", intensityModeType.get()),
+      KEYWORD_TYPE("material_emission", materialEmissionType.get()),
+      KEYWORD_TYPE("material_surface", materialSurfaceType.get()),
+      KEYWORD_TYPE("material_volume", materialVolumeType.get()),
+      KEYWORD_TYPE("material_geometry", materialGeometryType.get()),
+      KEYWORD_TYPE("material", materialType.get()),
+      EXTENDED_KEYWORD_TYPE("source_location", sourceLocationType.get()),
+      KEYWORD_TYPE("string", stringType.get()),
+      KEYWORD_TYPE("texture_2d", texture2DType.get()),
+      KEYWORD_TYPE("texture_3d", texture3DType.get()),
+      KEYWORD_TYPE("texture_cube", textureCubeType.get()),
+      KEYWORD_TYPE("texture_ptex", texturePtexType.get()),
+      EXTENDED_KEYWORD_TYPE("tile_2d", tile2DType.get()),
+      KEYWORD_TYPE("vdf", vdfType.get()),
+      EXTENDED_KEYWORD_TYPE("void", voidType.get()),
+      EXTENDED_KEYWORD_CONSTANT("null", Value::zero(get_type<void>())),
+      KEYWORD_CONSTANT("intensity_radiant_exitance", RValue(intensityModeType.get(), get_compile_time_int(0))),
+      KEYWORD_CONSTANT("intensity_power", RValue(intensityModeType.get(), get_compile_time_int(1))),
+      EXTENDED_KEYWORD_CONSTANT("$DEBUG", get_compile_time_bool(mdl.enableDebug)),
+      EXTENDED_KEYWORD_CONSTANT("$DOUBLE_MIN", get_compile_time_double(std::numeric_limits<double_t>::min())),
+      EXTENDED_KEYWORD_CONSTANT("$DOUBLE_MAX", get_compile_time_double(std::numeric_limits<double_t>::max())),
+      EXTENDED_KEYWORD_CONSTANT("$DOUBLE_EPS", get_compile_time_double(std::numeric_limits<double_t>::epsilon())),
+      EXTENDED_KEYWORD_CONSTANT("$DOUBLE_INF", get_compile_time_double(std::numeric_limits<double_t>::infinity())),
+      EXTENDED_KEYWORD_CONSTANT("$DOUBLE_NAN", get_compile_time_double(std::numeric_limits<double_t>::quiet_NaN())),
+      EXTENDED_KEYWORD_CONSTANT("$FLOAT_MIN", get_compile_time_float(std::numeric_limits<float_t>::min())),
+      EXTENDED_KEYWORD_CONSTANT("$FLOAT_MAX", get_compile_time_float(std::numeric_limits<float_t>::max())),
+      EXTENDED_KEYWORD_CONSTANT("$FLOAT_EPS", get_compile_time_float(std::numeric_limits<float_t>::epsilon())),
+      EXTENDED_KEYWORD_CONSTANT("$FLOAT_INF", get_compile_time_float(std::numeric_limits<float_t>::infinity())),
+      EXTENDED_KEYWORD_CONSTANT("$FLOAT_NAN", get_compile_time_float(std::numeric_limits<float_t>::quiet_NaN())),
+      EXTENDED_KEYWORD_CONSTANT("$HALF_PI", get_compile_time_float(1.57079632679489661923f)),
+      EXTENDED_KEYWORD_CONSTANT("$INT_MIN", get_compile_time_int(std::numeric_limits<int_t>::min())),
+      EXTENDED_KEYWORD_CONSTANT("$INT_MAX", get_compile_time_int(std::numeric_limits<int_t>::max())),
+      EXTENDED_KEYWORD_CONSTANT("$PI", get_compile_time_float(3.14159265358979323846f)),
+      EXTENDED_KEYWORD_CONSTANT("$TWO_PI", get_compile_time_float(6.28318530717958647692f)),
+      EXTENDED_KEYWORD_CONSTANT("$WAVELENGTH_BASE_MAX", get_compile_time_int(mdl.wavelengthBaseMax)),
+      EXTENDED_KEYWORD_CONSTANT("$stdout", get_compile_time_pointer(&llvm::outs())),
+      EXTENDED_KEYWORD_CONSTANT("$stderr", get_compile_time_pointer(&llvm::errs()))};
+#undef EXTENDED_KEYWORD_TYPE
+#undef EXTENDED_KEYWORD_CONSTANT
+#undef KEYWORD_TYPE
+#undef KEYWORD_CONSTANT
   // Always load "::rgb"
   sanity_check_nonnull(get_builtin_module("rgb"));
 }
@@ -150,6 +163,13 @@ llvm::StringRef Context::get_persistent_string(const llvm::Twine &twine) {
 
 std::string Context::get_unique_name(llvm::StringRef name, llvm::Function *llvmFunc) {
   return name.str() + std::to_string(uniqueNames[name][llvmFunc]++);
+}
+
+bool Context::is_keyword(Module *module, llvm::StringRef name) {
+  if (auto itr{keywordConstants.find(name)}; itr != keywordConstants.end())
+    if (module->isExtendedSyntax || !itr->second.isExtendedSyntax)
+      return true;
+  return false;
 }
 
 AST::Expr *Context::parse_expression(const llvm::Twine &srcTwine) {
@@ -463,21 +483,22 @@ Module *Context::get_builtin_module(llvm::StringRef name) {
 Value Context::resolve(Emitter &emitter, bool isAbs, llvm::ArrayRef<llvm::StringRef> names, const AST::SourceLocation &srcLoc) {
   if (names.size() == 1) {
     auto name{names[0]};
-    if (name == "$data") {
-      return get_compile_time_pointer(mdl.dataLookup.get());
-    } else if (name == "$state") {
-      if (!emitter.state)
-        srcLoc.report_error(
-            !emitter.get_llvm_function() ? "'$state' is unavailable at module scope"
-                                         : "'$state' is unavailable in '@(pure)' function");
-      return emitter.state;
+    if (emitter.module->isExtendedSyntax) {
+      if (name == "$data") {
+        return get_compile_time_pointer(mdl.dataLookup.get());
+      }
+      if (name == "$state") {
+        if (!emitter.state)
+          srcLoc.report_error(
+              !emitter.get_llvm_function() ? "'$state' is unavailable at module scope"
+                                           : "'$state' is unavailable in '@(pure)' function");
+        return emitter.state;
+      }
     }
     // Resolve types
-    if (auto itr{keywordToType.find(name)}; itr != keywordToType.end())
-      return get_compile_time_type(itr->second);
-    // Resolve constants
-    if (auto itr{keywordToConstant.find(name)}; itr != keywordToConstant.end())
-      return itr->second;
+    if (auto itr{keywordConstants.find(name)}; itr != keywordConstants.end())
+      if (emitter.module->isExtendedSyntax || !itr->second.isExtendedSyntax)
+        return itr->second.value;
     // Unqualified simple names may shadow other values
     if (!isAbs)
       if (auto crumb{Crumb::find(emitter.crumb, name, emitter.get_llvm_function())})

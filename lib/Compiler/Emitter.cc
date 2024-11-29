@@ -83,9 +83,13 @@ Value Emitter::emit(AST::Decl &decl) {
 }
 
 Value Emitter::emit(AST::Enum &decl) {
-  context.validate_decl_name("enum", *decl.name);
+  if (!decl.module) {
+    decl.module = module;
+    decl.crumb = crumb;
+  }
+  context.validate_decl_name(decl.module, "enum", *decl.name);
   for (auto lastValue{Value()}; auto &declVal : decl.constants) {
-    context.validate_decl_name("enum constant", *declVal.name);
+    context.validate_decl_name(decl.module, "enum constant", *declVal.name);
     auto value{
         declVal.init ? emit(declVal.init)
         : lastValue  ? emit_op(AST::BinaryOp::Add, lastValue, context.get_compile_time_int(1))
@@ -97,10 +101,7 @@ Value Emitter::emit(AST::Enum &decl) {
     lastValue = value;
   }
   auto type{context.get_enum_type(&decl, get_llvm_function())};
-  if (!decl.module) {
-    decl.module = module;
-    decl.crumb = crumb;
-  }
+
   declare(*decl.name, context.get_compile_time_type(type));
   for (auto &declVal : decl.constants)
     declare(*declVal.name, RValue(type, declVal.llvmConst), &decl);
@@ -112,6 +113,7 @@ Value Emitter::emit(AST::Function &decl) {
     decl.module = module;
     decl.crumb = crumb;
   }
+  context.validate_decl_name(decl.module, "function", *decl.name);
   declare(*decl.name, context.get_compile_time_function(context.get_function(*this, &decl)), &decl);
   return {};
 }
@@ -129,7 +131,6 @@ Value Emitter::emit(AST::Import &decl) {
 }
 
 Value Emitter::emit(AST::Struct &decl) {
-  context.validate_decl_name("struct", *decl.name);
   for (auto &astField : decl.fields)
     emit(astField.type);
   for (auto &astTag : decl.tags)
@@ -138,26 +139,27 @@ Value Emitter::emit(AST::Struct &decl) {
     decl.module = module;
     decl.crumb = crumb;
   }
+  context.validate_decl_name(decl.module, "struct", *decl.name);
   declare(*decl.name, context.get_compile_time_type(context.get_struct_type(&decl, get_llvm_function())), &decl);
   return {};
 }
 
 Value Emitter::emit(AST::Tag &decl) {
-  context.validate_decl_name("tag", *decl.name);
   if (!decl.module) {
     decl.module = module;
     decl.crumb = crumb;
   }
+  context.validate_decl_name(decl.module, "tag", *decl.name);
   declare(*decl.name, context.get_compile_time_type(context.get_tag_type(&decl, get_llvm_function())), &decl);
   return {};
 }
 
 Value Emitter::emit(AST::Typedef &decl) {
-  context.validate_decl_name("typedef", *decl.name);
   if (!decl.module) {
     decl.module = module;
     decl.crumb = crumb;
   }
+  context.validate_decl_name(decl.module, "typedef", *decl.name);
   declare(*decl.name, emit(decl.type), &decl);
   return {};
 }
@@ -221,7 +223,7 @@ Value Emitter::emit(AST::Variable &decl) {
   }
   for (auto &declVal : decl.values) {
     auto &declValName{*declVal.name};
-    context.validate_decl_name("variable", declValName);
+    context.validate_decl_name(decl.module, "variable", declValName);
     Value value{};
     // NOTE: Initialization is inside an 'emit_scope' to limit lifetimes of temporary
     // declarations 't := something', but the following 'construct()' is outside of the
@@ -275,7 +277,7 @@ Value Emitter::emit(AST::Binary &expr) {
     auto identifier{llvm::dyn_cast<AST::Identifier>(&*expr.lhs)};
     if (!identifier || !identifier->is_simple_name())
       expr.srcLoc.report_error("expected lhs of definition operator ':=' to be a simple name");
-    context.validate_decl_name("temporary", *identifier->names[0]);
+    context.validate_decl_name(module, "temporary", *identifier->names[0]);
     auto rv{rvalue(emit(expr.rhs))};
     declare(*identifier->names[0], rv);
     return rv;
@@ -1185,9 +1187,7 @@ Value Emitter::emit_intrinsic(llvm::StringRef name, const ArgList &args, const A
       return {};
     }
   } else if (name[0] == 'c') { // Avoid unnecessary if checks
-    if (name == "comptime") {
-      return context.get_compile_time_bool(expectOne().is_compile_time());
-    } else if (name == "ctpop") {
+    if (name == "ctpop") {
       auto value{rvalue(expectOneIntOrIntVector())};
       return RValue(value.type, builder.CreateUnaryIntrinsic(Intr::ctpop, value));
     } else if (name == "ctlz") {
@@ -1214,6 +1214,12 @@ Value Emitter::emit_intrinsic(llvm::StringRef name, const ArgList &args, const A
       return context.get_compile_time_bool(expectOneType()->is_union());
     } else if (name == "is_vector") {
       return context.get_compile_time_bool(expectOneType()->is_vector());
+    } else if (name == "is_comptime") {
+      return context.get_compile_time_bool(expectOne().is_compile_time());
+    } else if (name == "is_lvalue") {
+      return context.get_compile_time_bool(expectOne().is_lvalue());
+    } else if (name == "is_rvalue") {
+      return context.get_compile_time_bool(expectOne().is_rvalue());
     } else if (name == "isfpclass") {
       if (args.size() != 2 || !args[0].value.type->is_vectorized() || !args[1].value.is_compile_time_int())
         srcLoc.report_error("intrinsic '#isfpclass' expects 1 vectorized argument and 1 compile-time integer argument");

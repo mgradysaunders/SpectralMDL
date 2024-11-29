@@ -8,7 +8,9 @@ namespace smdl::Compiler {
 
 void Module::parse(Context &context) {
   sanity_check(text != nullptr);
-  root = Parser(context.bumpAllocator, path, text->getBuffer()).parse();
+  auto parser{Parser(context.bumpAllocator, path, text->getBuffer())};
+  root = parser.parse();
+  isExtendedSyntax = parser.is_extended_syntax();
 }
 
 static constexpr auto src_evalOpacity = R"(

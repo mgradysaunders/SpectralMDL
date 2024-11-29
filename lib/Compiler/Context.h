@@ -36,12 +36,10 @@ public:
     return type && type->llvmType && !type->is_void() ? uint64_t(llvmLayout.getTypeAllocSize(type->llvmType)) : 0;
   }
 
-  [[nodiscard]] bool is_keyword(llvm::StringRef name) {
-    return keywordToType.contains(name) || keywordToConstant.contains(name);
-  }
+  [[nodiscard]] bool is_keyword(Module *module, llvm::StringRef name);
 
-  void validate_decl_name(const char *kind, const AST::Name &name) {
-    if (is_keyword(name.name))
+  void validate_decl_name(Module *module, const char *kind, const AST::Name &name) {
+    if (is_keyword(module, name.name))
       name.srcLoc.report_error(std::format("{} name must not be reserved keyword '{}'", kind, name.name));
   }
 
@@ -209,7 +207,7 @@ public:
 
   [[nodiscard]] Type *get_type(std::in_place_type_t<material_t>) { return materialType.get(); }
 
-  [[nodiscard]] Type *get_type(std::in_place_type_t<image_t>) { return imageType.get(); }
+  [[nodiscard]] Type *get_type(std::in_place_type_t<tile_2d_t>) { return tile2DType.get(); }
 
   [[nodiscard]] Type *get_type(std::in_place_type_t<texture_2d_t>) { return texture2DType.get(); }
 
@@ -447,8 +445,8 @@ private:
   /// The builtin 'intensity_mode' type.
   const unique_bump_ptr<EnumType> intensityModeType;
 
-  /// The builtin 'image_t' type.
-  const unique_bump_ptr<StructType> imageType;
+  /// The builtin 'tile_2d' type.
+  const unique_bump_ptr<StructType> tile2DType;
 
   /// The builtin 'texture_2d' type.
   const unique_bump_ptr<StructType> texture2DType;
@@ -510,9 +508,13 @@ private:
   /// The builtin 'material' abstract struct type.
   const unique_bump_ptr<StructType> materialType;
 
-  llvm::StringMap<Type *> keywordToType{};
+  struct KeywordConstant final {
+    Value value{};
 
-  llvm::StringMap<Value> keywordToConstant{};
+    bool isExtendedSyntax{};
+  };
+
+  llvm::StringMap<KeywordConstant> keywordConstants{};
 
   llvm::StringMap<Value> compileTimeStrings{};
 

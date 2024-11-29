@@ -93,7 +93,7 @@ syn keyword mdlType int int2 int3 int4
 syn keyword mdlType float float2 float3 float4 float2x2 float2x3 float2x4 float3x2 float3x3 float3x4 float4x2 float4x3 float4x4
 syn keyword mdlType double double2 double3 double4 double2x2 double2x3 double2x4 double3x2 double3x3 double3x4 double4x2 double4x3 double4x4
 syn keyword mdlType string color
-syn keyword mdlType texture_2d texture_3d texture_cube texture_ptex light_profile image_t state_t
+syn keyword mdlType texture_2d texture_3d texture_cube texture_ptex light_profile tile_2d
 syn keyword mdlType material material_surface material_emission material_volume material_geometry bsdf edf vdf hair_bsdf intensity_mode
 hi def link mdlStructure Structure
 hi def link mdlType      Type

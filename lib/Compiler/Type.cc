@@ -772,10 +772,10 @@ template <typename S, typename T> static void init_builtin_field(auto &context, 
   fields.emplace_back(context.template get_type<T>(), name);
 }
 
-StructType::StructType(Context &context, builtin_struct_type_t<image_t>) : TypeSubclass(context) {
-  init_name("image_t");
-  init_builtin_field(context, fields, "extent", &image_t::extent);
-  init_builtin_field(context, fields, "texels", &image_t::texels);
+StructType::StructType(Context &context, builtin_struct_type_t<tile_2d_t>) : TypeSubclass(context) {
+  init_name("tile_2d_t");
+  init_builtin_field(context, fields, "extent", &tile_2d_t::extent);
+  init_builtin_field(context, fields, "texels", &tile_2d_t::texels);
   init_llvm_type();
 }
 
@@ -960,7 +960,7 @@ Value StructType::construct(Emitter &emitter, const ArgList &args, const AST::So
     auto fname{value0.get_compile_time_string()};
     if (is_texture_2d()) {
       auto imagePaths{context.mdl.fileLocator.locate_images(fname.str(), emitter.module->path)};
-      auto images{llvm::SmallVector<image_t>{}};
+      auto images{llvm::SmallVector<tile_2d_t>{}};
       uint32_t numTilesU{};
       uint32_t numTilesV{};
       for (auto &imagePath : imagePaths) {
@@ -983,7 +983,7 @@ Value StructType::construct(Emitter &emitter, const ArgList &args, const AST::So
         srcLoc.report_warning(std::format("can't find any image(s) for '{}'", fname));
         return Value::zero(this);
       }
-      auto constImages{Value::zero(context.get_array_type(context.get_type<image_t>(), numTilesU * numTilesV))};
+      auto constImages{Value::zero(context.get_array_type(context.get_type<tile_2d_t>(), numTilesU * numTilesV))};
       auto globalImages{new llvm::GlobalVariable(
           context.llvmModule, constImages.type->llvmType, true, llvm::GlobalValue::PrivateLinkage,
           nullptr)};
@@ -995,9 +995,9 @@ Value StructType::construct(Emitter &emitter, const ArgList &args, const AST::So
             for (uint32_t i{}; i < images.size(); i++)
               if (imagePaths[i].iU == iU && imagePaths[i].iV == iV)
                 return images[i];
-            return image_t{};
+            return tile_2d_t{};
           }()};
-          auto constImage{Value::zero(context.get_type<image_t>())};
+          auto constImage{Value::zero(context.get_type<tile_2d_t>())};
           constImage = emitter.insert(constImage, context.get_compile_time_int2(image.extent), 0);
           constImage = emitter.insert(constImage, context.get_compile_time_pointer(image.texels), 1);
           constImages = emitter.insert(constImages, constImage, iV * numTilesU + iU);
@@ -1006,7 +1006,7 @@ Value StructType::construct(Emitter &emitter, const ArgList &args, const AST::So
       sanity_check(constImages.is_compile_time());
       globalImages->setInitializer(static_cast<llvm::Constant *>(constImages.llvmValue));
       auto globalImagesPtr{RValue(
-          context.get_type<image_t *>(),
+          context.get_type<tile_2d_t *>(),
           emitter.builder.CreateConstInBoundsGEP2_32(constImages.type->llvmType, globalImages, 0, 0))};
       auto constTex{Value::zero(this)};
       constTex = emitter.insert(constTex, values[1], 0); // gamma

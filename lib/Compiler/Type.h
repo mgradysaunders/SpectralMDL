@@ -485,7 +485,7 @@ public:
 
   StructType(Context &context, builtin_struct_type_t<material_t>);
 
-  StructType(Context &context, builtin_struct_type_t<image_t>);
+  StructType(Context &context, builtin_struct_type_t<tile_2d_t>);
 
   StructType(Context &context, builtin_struct_type_t<texture_2d_t>);
 

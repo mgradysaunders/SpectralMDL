@@ -43,7 +43,11 @@ public:
   /// The last crumb in the module. (This is the starting point to search for exported declarations!)
   Crumb *lastCrumb{};
 
+  /// The last import crumb in the module. (All imports must be at the top of the file)
   Crumb *lastImportCrumb{};
+
+  /// Does this module use the SDML extended syntax?
+  bool isExtendedSyntax{};
 };
 
 } // namespace smdl::Compiler
