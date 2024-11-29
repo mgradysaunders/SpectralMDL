@@ -773,7 +773,7 @@ template <typename S, typename T> static void init_builtin_field(auto &context, 
 }
 
 StructType::StructType(Context &context, builtin_struct_type_t<tile_2d_t>) : TypeSubclass(context) {
-  init_name("tile_2d_t");
+  init_name("tile_2d");
   init_builtin_field(context, fields, "extent", &tile_2d_t::extent);
   init_builtin_field(context, fields, "texels", &tile_2d_t::texels);
   init_llvm_type();
@@ -864,6 +864,8 @@ StructType::StructType(Context &context, StructType *parentTemplate, llvm::Array
       sanity_check(missingTypeItr != missingTypes.end());
       sanity_check(!sanity_check_nonnull(*missingTypeItr)->is_abstract());
       field.type = *missingTypeItr++;
+      if (field.type->is_void())
+        field.isVoid = true;
     }
   }
   sanity_check(missingTypeItr == missingTypes.end());
@@ -891,7 +893,7 @@ Value StructType::access(Emitter &emitter, Value value, llvm::StringRef key, con
     bool isConst{};
     for (auto [field, i] : path) {
       if (field->isVoid)
-        return {};
+        return Value(Value::Kind::RValue, context.get_void_type(), nullptr);
       isConst |= field->isConst;
       value = value.is_lvalue() ? LValue(field->type, emitter.builder.CreateStructGEP(value.type->llvmType, value, i))
                                 : RValue(field->type, emitter.builder.CreateExtractValue(value, {i}));

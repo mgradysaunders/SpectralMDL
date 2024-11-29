@@ -81,7 +81,7 @@ Param::Param(Context &context, const AST::Param &astParam)
 }
 
 Param::Param(Context &context, const AST::Struct::Field &astField)
-    : name(astField.name->name), type(astField.type->type), isVoid(astField.isVoid),
+    : name(astField.name->name), type(astField.type->type), isVoid(astField.isVoid || type->is_void()),
       isConst(bool(astField.type->attrs.isConst)), isInline(bool(astField.type->attrs.isInline)), init(astField.init.get()),
       srcLoc(astField.name->srcLoc) {
   // context.validate_decl_name("field", *astField.name);
