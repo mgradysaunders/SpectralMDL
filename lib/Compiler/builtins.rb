@@ -8,7 +8,7 @@ namespace smdl::Compiler::builtins {
 
 STR
 
-fnames = ['df', 'debug', 'limits', 'math', 'scene', 'state', 'std', 'tex', 'microfacet', 'monte_carlo', 'rgb', 'specular']
+fnames = ['df', 'debug', 'limits', 'math', 'scene', 'state', 'std', 'tex', 'monte_carlo', 'rgb', 'specular']
 
 for fname in fnames 
   text = File.read "builtins/#{fname}.smdl"

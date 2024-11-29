@@ -4,15 +4,6 @@
 using ::math import *;
 using ::specular import *;
 
-// The libm complementary error function.
-@(pure foreign) float erfcf(float x);
-
-// The libm log-gamma function.
-@(pure foreign) float lgammaf(float x);
-
-// The beta function, expressed in terms of the log-gamma function.
-@(pure) float betaf(float x, float y) = #exp(lgammaf(x) + lgammaf(y) - lgammaf(x + y));
-
 export tag microfacet_slope;
 
 export struct microfacet_slope_ggx: default microfacet_slope {};

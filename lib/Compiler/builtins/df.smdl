@@ -311,7 +311,7 @@ export struct sheen_bsdf: bsdf {
 }
 //--}
 
-//--{ BSDF: simply_glossy_bsdf, microfacet_*_bsdf
+//--{ BSDF: simple_glossy_bsdf, microfacet_*_bsdf
 tag microfacet_distribution;
 struct microfacet_distribution_ggx: default microfacet_distribution {};
 struct microfacet_distribution_beckmann: microfacet_distribution {};
@@ -368,19 +368,75 @@ export @(pure) auto microfacet_beckmann_smith_bsdf(*) =
 export @(pure) auto microfacet_beckmann_vcavities_bsdf(*) =
     microfacet_bsdf_constructor(model: microfacet_distribution_beckmann(), shadowing: microfacet_shadowing_vcavities());
 
-@(pure) auto eval_bsdf(const &microfacet_bsdf this, inline const &eval_bsdf_parameters params) {
-  preserve wo, wi;
-  // perturb_tangent(params, *this.tangent_u) if (this.tangent_u);
-  auto reflect_chance(scatter_reflect_chance(this.mode));
-  if (mode == scatter_reflect) {
-    if ((int(this.mode) & int(scatter_reflect)) != 0) {
-      // auto result(microfacet_specular_brdf(this.facets, wo, wi));
-      // return eval_bsdf_result(pdf: brdf_prob * result.pdf, f: brdf_prob * result.f * this.tint);
-    }
+@(pure macro) auto microfacet_smith_lambda(const microfacet_distribution_ggx this, const float m) = 0.5 * (#sign(m) * #sqrt(1 + 1 / (m * m))) - 0.5;
+
+@(pure macro) auto microfacet_smith_lambda(const microfacet_distribution_beckmann this, const float m) = 0.5 * (#exp(-m * m) / m / #sqrt($PI) - erfcf(m));
+
+@(pure macro) auto microfacet_slope_pdf(const microfacet_distribution_ggx this, const float2 m) = (1.0 / $PI) / #pow(1 + #sum(m * m), 2);
+
+@(pure macro) auto microfacet_slope_pdf(const microfacet_distribution_beckmann this, const float2 m) =  (1.0 / $PI) * #exp(-#sum(m * m));
+
+@(pure macro) auto microfacet_normal_pdf(const microfacet_distribution this, const float2 alpha, const float3 wm) {
+  return 0.0 if (!(wm.z > 1e-5));
+  if $(#typeof(this) == microfacet_distribution_blinn) {
+    const float ex(2 / (alpha.x * alpha.x));
+    const float ey(2 / (alpha.y * alpha.y));
+    const float e((ex * wm.x * wm.x + ey * wm.y * wm.y) / (1.0001 - wm.z * wm.z));
+    return #sqrt((ex + 2) * (ey + 2)) / $TWO_PI * #pow(#abs(wm.z), e);
   } else {
-    if ((int(this.mode) & int(scatter_transmit)) != 0) {
-      // auto result(microfacet_specular_btdf(this.facets, wo, wi, ior: ior));
-      // return eval_bsdf_result(pdf: btdf_prob * result.pdf, f: btdf_prob * result.f * this.tint);
+    return microfacet_slope_pdf(visit this, -wm.xy / (wm.z * alpha)) / (alpha.x * alpha.y * #pow(wm.z, 4) + 0.001);
+  }
+}
+
+// The libm complementary error function.
+@(pure foreign) float erfcf(float x);
+
+// The libm log-gamma function.
+@(pure foreign) float lgammaf(float x);
+
+// The beta function, expressed in terms of the log-gamma function.
+@(pure) float betaf(float x, float y) = #exp(lgammaf(x) + lgammaf(y) - lgammaf(x + y));
+
+@(pure) auto eval_bsdf(const &microfacet_bsdf this, inline const &eval_bsdf_parameters params) {
+  preserve wo, wi, ior;
+  perturb_tangent(params, this.tangent_u) if (#typeof(this.tangent_u) != void);
+  if (wo.z < 0) {
+    wo = -wo;
+    wi = -wi;
+    ior = 1 / ior;
+  }
+  const auto reflect_chance(scatter_reflect_chance(this.mode));
+  const auto wm(normalize(mode == scatter_reflect ? wo + wi : refraction_half_vector(wo, wi, ior)));
+  const auto d(microfacet_normal_pdf(this.distribution, this.alpha, wm));
+  const auto dot_wo_wm(#sum(wo * wm));
+  const auto dot_wi_wm(#sum(wi * wm));
+  return eval_bsdf_result(is_black: true) if (!(d > 0));
+
+  if $(#typeof(this.distribution) == microfacet_distribution_blinn) {
+    // TODO
+  } else {
+    const auto lambdao(microfacet_smith_lambda(this.distribution, #abs(wo.z) / length(this.alpha * wo.xy)));
+    const auto lambdai(microfacet_smith_lambda(this.distribution, #abs(wi.z) / length(this.alpha * wi.xy)));
+    const auto proj_areao((1 + lambdao) * #abs(wo.z));
+    const auto proj_areai((1 + lambdai) * #abs(wi.z));
+    const auto g(return_from {
+      if $(#typeof(this.shadowing) == microfacet_shadowing_smith) 
+        return mode == scatter_reflect ? 1 / (1 + lambdao + lambdai) : betaf(1 + lambdao, 1 + lambdai);
+      else
+        return #min(1, 2 * wm.z * #min(#abs(wo.z / dot_wo_wm), #abs(wi.z / dot_wi_wm)));
+    });
+    if ((int(mode) & int(this.mode)) == int(scatter_reflect)) {
+      const auto pdfss(d / (4 * float2(proj_areao, proj_areai) + 0.001));
+      const auto fss(d * g / (4 * #abs(wo.z) + 0.001));
+      return eval_bsdf_result(pdf: reflect_chance * pdfss, f: this.tint * (reflect_chance * fss));
+    } else if ((int(mode) & int(this.mode)) == int(scatter_transmit)) {
+      return eval_bsdf_result(is_black: true) if (!((dot_wo_wm > 0) & (dot_wi_wm < 0)));
+      const auto j(float2(
+        +dot_wo_wm * refraction_half_vector_jacobian(wo, wi, ior),
+        -dot_wi_wm * refraction_half_vector_jacobian(wi, wo, 1 / ior)));
+      const auto pdfss(d * j / (float2(proj_areao, proj_areai) + 0.001));
+      const auto fss(d * g * j[0] / (#abs(wo.z) + 0.001));
+      return eval_bsdf_result(pdf: (1 - reflect_chance) * pdfss, f: this.tint * ((1 - reflect_chance) * fss));
     }
   }
   return eval_bsdf_result(is_black: true);
@@ -388,7 +444,9 @@ export @(pure) auto microfacet_beckmann_vcavities_bsdf(*) =
 
 @(pure) auto eval_bsdf_sample(const &microfacet_bsdf this, const &eval_bsdf_sample_parameters params) {
   if (weighted_bool_sample(&params.xi.z, scatter_reflect_chance(this.mode))) {
+    // TODO
   } else {
+    // TODO
   }
   // auto wo(params.wo);
   // auto is_neg(wo.z < 0);

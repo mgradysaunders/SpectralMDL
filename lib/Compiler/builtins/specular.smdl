@@ -10,10 +10,13 @@ export @(pure macro) auto refract(const float3 wi, const float3 wm, const float 
   return refract(wi, wm, ior, cos_thetat * -#sign(cos_thetai));
 }
 
-export @(pure macro) auto refraction_half_vector(const float3 wi, const float3 wt, const float ior) = -ior * wi + wt; 
+export @(pure macro) auto refraction_half_vector(const float3 wo, const float3 wi, const float ior) {
+  float3 wm = -ior * wo + wi; 
+  return wm * #sign(wm.z);
+}
 
-export @(pure macro) auto refraction_half_vector_jacobian(const float3 wi, const float3 wt, const float ior) {
-  return #abs(#sum(wt * (vh := refraction_half_vector(wi, wt, ior)))) / ((vh2 := #sum(vh * vh)) * #sqrt(vh2));
+export @(pure macro) auto refraction_half_vector_jacobian(const float3 wo, const float3 wi, const float ior) {
+  return #abs(#sum(wi * (vh := refraction_half_vector(wo, wi, ior)))) / ((vh2 := #sum(vh * vh)) * #sqrt(vh2));
 }
 
 export @(pure macro) auto schlick_F0(const auto ior) = #pow((ior - 1) / (ior + 1), 2);
