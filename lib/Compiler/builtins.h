@@ -252,6 +252,7 @@ struct microfacet_shadowing_vcavities: microfacet_shadowing {};
 struct microfacet_bsdf: bsdf {
   const float2 roughness;
   const float2 alpha = roughness * roughness;
+  const float roughness0 = #sqrt(#prod(roughness));
   const auto tint;
   const auto multiscatter_tint = null;
   const float3 tangent_u = state::texture_tangent_u(0);
@@ -286,13 +287,13 @@ export auto microfacet_beckmann_smith_bsdf(*) =
     microfacet_bsdf_constructor(distribution: microfacet_distribution_beckmann(), shadowing: microfacet_shadowing_smith());
 export auto microfacet_beckmann_vcavities_bsdf(*) =
     microfacet_bsdf_constructor(distribution: microfacet_distribution_beckmann(), shadowing: microfacet_shadowing_vcavities());
-@(pure macro) auto smith_lambda(const microfacet_distribution_ggx this, const float m) = 0.5 * (#sign(m) * #sqrt(1 + 1 / (m * m))) - 0.5;
+@(pure macro) auto smith_lambda(const microfacet_distribution_ggx this, const float m) = 0.5 * (#sign(m) * #sqrt(1 + 1 / (m * m + STABILITY_EPS))) - 0.5;
 @(pure macro) auto smith_lambda(const microfacet_distribution_beckmann this, const float m) = 0.5 * (#exp(-m * m) / m / #sqrt($PI) - erfcf(m));
 @(pure macro) auto smith_slope_pdf(const microfacet_distribution_ggx this, const float2 m) = (1.0 / $PI) / #pow(1 + #sum(m * m), 2);
-@(pure macro) auto smith_slope_pdf(const microfacet_distribution_beckmann this, const float2 m) =  (1.0 / $PI) * #exp(-#sum(m * m));
+@(pure macro) auto smith_slope_pdf(const microfacet_distribution_beckmann this, const float2 m) = (1.0 / $PI) * #exp(-#sum(m * m));
 @(pure macro) auto smith_normal_pdf(const microfacet_distribution this, const float2 alpha, const float3 wm) {
-  return 0.0 if (!(wm.z > 1e-5));
-  return smith_slope_pdf(this, -wm.xy / (wm.z * alpha)) / (alpha.x * alpha.y * #pow(wm.z, 4) + STABILITY_EPS);
+  return 0.0 if (!(wm.z > 0));
+  return smith_slope_pdf(this, -wm.xy / (wm.z * alpha + STABILITY_EPS)) / (alpha.x * alpha.y * #pow(wm.z, 4) + STABILITY_EPS);
 }
 @(pure noinline) auto smith_visible_slope_sample(const microfacet_distribution_ggx this, const float xi0, float xi1, float cos_thetao) {
   return #sqrt(xi0 / (1 - xi0 + STABILITY_EPS)) * float2(#cos(phi := $TWO_PI * xi1), #sin(phi)) if (cos_thetao > +0.9999);
@@ -400,7 +401,18 @@ export auto microfacet_beckmann_vcavities_bsdf(*) =
       case int(scatter_reflect): {
         const auto fss_pdf(norm1 * d / (4 * float2(dot_wo_wm, dot_wi_wm) + STABILITY_EPS));
         const auto fss(norm2 * d * g / (4 * #abs(wo.z) + STABILITY_EPS));
-        return eval_bsdf_result(pdf: reflect_chance * fss_pdf, f: this.tint * (reflect_chance * fss));
+        if (#is_void(this.multiscatter_tint)) {
+          return eval_bsdf_result(pdf: reflect_chance * fss_pdf, f: this.tint * (reflect_chance * fss));
+        } else {
+          const auto r0(this.roughness0);
+          const auto fms_pdf(#abs(wi.z) / $PI);
+          const auto fms(return_from { 
+            return 0.0;
+          });
+          return eval_bsdf_result(
+            pdf: reflect_chance * (0.8 * fss_pdf + 0.2 * fms_pdf), 
+            f: reflect_chance * this.tint * (fss + this.multiscatter_tint * fms));
+        }
       }
       case int(scatter_transmit): {
         return eval_bsdf_result(is_black: true) if (!((dot_wo_wm > 0) & (dot_wi_wm < 0)));
@@ -409,8 +421,8 @@ export auto microfacet_beckmann_vcavities_bsdf(*) =
     } 
   } else {
     const auto d(smith_normal_pdf(this.distribution, this.alpha, wm));
-    const auto lambdao(smith_lambda(this.distribution, #abs(wo.z) / length(this.alpha * wo.xy)));
-    const auto lambdai(smith_lambda(this.distribution, #abs(wi.z) / length(this.alpha * wi.xy)));
+    const auto lambdao(smith_lambda(this.distribution, #abs(wo.z) / (length(this.alpha * wo.xy) + STABILITY_EPS)));
+    const auto lambdai(smith_lambda(this.distribution, #abs(wi.z) / (length(this.alpha * wi.xy) + STABILITY_EPS)));
     const auto proj_areao((1 + lambdao) * #abs(wo.z));
     const auto proj_areai((1 + lambdai) * #abs(wi.z));
     const auto g(return_from {
@@ -425,7 +437,62 @@ export auto microfacet_beckmann_vcavities_bsdf(*) =
       case int(scatter_reflect): {
         const auto fss_pdf(d / (4 * float2(proj_areao, proj_areai) + STABILITY_EPS));
         const auto fss(d * g / (4 * #abs(wo.z) + STABILITY_EPS));
-        return eval_bsdf_result(pdf: reflect_chance * fss_pdf, f: this.tint * (reflect_chance * fss));
+        if (#is_void(this.multiscatter_tint)) {
+          return eval_bsdf_result(pdf: reflect_chance * fss_pdf, f: this.tint * (reflect_chance * fss));
+        } else {
+          const auto r0(this.roughness0);
+          const auto fms_pdf(#abs(wi.z) / $PI);
+          const auto fms(return_from { 
+            if (distribution == microfacet_distribution_ggx) {
+              const auto fit(return_from {
+                auto fit(float3(0.0));
+                if (r0 < 0.06299) {
+                  fit = float3(29.2553519, 0.3728114, 0.1845677);
+                } else if (r0 < 0.1259843) {
+                  fit = float3(-6.2876897e+07, -4.9194766e+06, 3.3173219e+06);
+                  fit = fit * r0 + float3( 3.4025124e+07,  2.4576227e+06, -1.6123845e+06);
+                  fit = fit * r0 + float3(-7.2367180e+06, -4.8558372e+05,  3.0882525e+05);
+                  fit = fit * r0 + float3( 7.5011789e+05,  4.7293248e+04, -2.9071452e+04);
+                  fit = fit * r0 + float3(-3.7635419e+04, -2.2570320e+03,  1.3407965e+03);
+                  fit = fit * r0 + float3( 7.5899155e+02,  4.2444028e+01, -2.4013229e+01);
+                } else if (r0 < 0.503970) {
+                  fit = float3(-4.2253228e+03, 1.6913746e+02, -7.8179263e+00);
+                  fit = fit * r0 + float3( 9.6952817e+03, -3.5406749e+02,  1.1760316e+01);
+                  fit = fit * r0 + float3(-8.8256161e+03,  2.7638671e+02, -5.2975185e+00);
+                  fit = fit * r0 + float3( 4.0337334e+03, -9.8577485e+01,  1.2001528e+00);
+                  fit = fit * r0 + float3(-9.5198727e+02,  1.5754557e+01, -1.4087179e-01);
+                  fit = fit * r0 + float3( 1.0006441e+02, -1.4926819e-01,  1.1518670e-01);
+                } else {
+                  fit = float3(-5.9786880e+01, -5.8887035e+01, 4.1460911e+02);
+                  fit = fit * r0 + float3( 2.2101716e+02,  2.1996966e+02, -1.3466323e+03);
+                  fit = fit * r0 + float3(-3.3692861e+02, -3.1412912e+02,  1.7465495e+03);
+                  fit = fit * r0 + float3( 2.8006161e+02,  2.1178043e+02, -1.1260412e+03);
+                  fit = fit * r0 + float3(-1.3115488e+02, -6.7437900e+01,  3.6066098e+02);
+                  fit = fit * r0 + float3( 2.8927807e+01,  8.9207463e+00, -4.5752769e+01);
+                }
+                fit.z *= #pow(2.71828182459 * fit.x * fit.y, 1.0 / fit.y);
+                return fit;
+              });
+              const auto Ewo(#exp(-fit[2] * #abs(wo.z) * #exp(-fit[0] * #pow(#abs(wo.z), fit[1]))));
+              const auto Ewi(#exp(-fit[2] * #abs(wi.z) * #exp(-fit[0] * #pow(#abs(wi.z), fit[1]))));
+              const auto Eav(return_from {
+                float fit = -0.40461439;
+                fit = fit * r0 + 2.33942628;
+                fit = fit * r0 - 3.15953698;
+                fit = fit * r0 + 0.69762445;
+                fit = fit * r0 - 0.06449884;
+                fit = fit * r0 + 1.00125673;
+                return fit;
+              });
+              return (1 - Ewo) * (1 - Ewi) / (1 - Eav + STABILITY_EPS) * #abs(wi.z) / $PI;
+            } else {
+              return 0;
+            }
+          });
+          return eval_bsdf_result(
+            pdf: reflect_chance * (0.8 * fss_pdf + 0.2 * fms_pdf), 
+            f: reflect_chance * this.tint * (fss + this.multiscatter_tint * fms));
+        } 
       }
       case int(scatter_transmit): {
         return eval_bsdf_result(is_black: true) if (!((dot_wo_wm > 0) & (dot_wi_wm < 0)));
@@ -443,11 +510,15 @@ export auto microfacet_beckmann_vcavities_bsdf(*) =
 }
 @(pure) auto eval_bsdf_sample(const &microfacet_bsdf this, inline const &eval_bsdf_sample_parameters params) {
   const auto distribution(#typeof(this.distribution));
+  const auto mode(weighted_bool_sample(&xi.z, scatter_reflect_chance(this.mode)) ? scatter_reflect : scatter_transmit);
+  if (!#is_void(this.multiscatter_tint) && mode == scatter_reflect) {
+    if (weighted_bool_sample(&xi.w, 0.2))
+      return eval_bsdf_sample_result(wi: hit_side * cosine_hemisphere_sample(xi.xy), mode: scatter_reflect);
+  }
   preserve wo, ior;
   const auto is_neg(wo.z < 0);
   if (is_neg) wo = -wo, ior = 1 / ior;
   const auto q(perturb_tangent(params, this.tangent_u));
-  const auto mode(weighted_bool_sample(&xi.z, scatter_reflect_chance(this.mode)) ? scatter_reflect : scatter_transmit);
   const auto wm(return_from {
     if $(distribution == microfacet_distribution_blinn)
       return blinn_normal_sample(xi.x, xi.y, 2 / (this.alpha * this.alpha + STABILITY_EPS));
@@ -456,8 +527,9 @@ export auto microfacet_beckmann_vcavities_bsdf(*) =
   });
   const auto wi(return_from {
     auto wi(mode == scatter_reflect ? reflect(wo, wm) : refract(wo, wm, ior));
-    wi = quat_transform_vector(quat_transpose(q), wi);
-    return normalize(is_neg ? -wi : wi);
+    wi = quat_transform_vector(quat_transpose(q), wi); 
+    wi = -wi if (is_neg); 
+    return normalize(wi);
   });
   return eval_bsdf_sample_result(wi: wi, mode: mode);
 }
@@ -720,6 +792,10 @@ export auto clamped_mix(component[<N>] components) {
       break;
     }
   }
+  total_chance = 1.0 / total_chance if (total_chance > 0.0);
+  for (int i = 0; i < N; i++) {
+    components[i].chance *= total_chance;
+  }
   return component_mix(components);
 }
 @(macro) auto eval_bsdf(const &component_mix this, const &eval_bsdf_parameters params) {
@@ -800,47 +876,39 @@ export @(macro) int material__eval_bsdf_sample(
     geometry_wo: normalize(state::transform_vector(state::coordinate_object, state::coordinate_internal, *wo)), xi: *xi,
     thin_walled: this.thin_walled));
   auto q(perturb_normal(&sample_params, this.geometry.normal));
-  auto sample_result(eval_bsdf_sample_result());
-  if (#typeof(this.backface) != #typeof(material_surface()) && (sample_params.hit_side < 0)) { 
-    sample_result = eval_bsdf_sample(&this.backface.scattering, &sample_params);
-  } else {
-    sample_result = eval_bsdf_sample(&this.surface.scattering, &sample_params);
-  }
-  if (sample_result.mode == scatter_none) {
-    *wi = float3(0.0);
-    *pdf_fwd = 0.0;
-    *pdf_rev = 0.0;
-    *f = color(0.0);
-    *is_delta = false;
-    return false;
-  } else {
-    sample_result.wi = quat_transform_vector(quat_transpose(q), sample_result.wi);
-    sample_result.wi = normalize(sample_result.wi);
-    if (sample_result.delta_f) {
-      *pdf_fwd = 1.0;
-      *pdf_rev = 1.0;
-      *f = *sample_result.delta_f;
-      *is_delta = true;
-    } else {
-      auto params(eval_bsdf_parameters(
-        geometry_wo: sample_params.geometry_wo, 
-        geometry_wi: sample_result.wi, 
-        thin_walled: this.thin_walled));
-      perturb_normal(&params, this.geometry.normal);
-      auto result(eval_bsdf_result());
-      if (#typeof(this.backface) != #typeof(material_surface()) && (params.hit_side < 0)) { 
-        result = eval_bsdf(&this.backface.scattering, &params);
-      } else {
-        result = eval_bsdf(&this.surface.scattering, &params);
-      }
-      *pdf_fwd = result.pdf.x;
-      *pdf_rev = result.pdf.y;
-      *f = result.f;
-      *is_delta = false;
-    }
-    *wi = normalize(state::transform_vector(state::coordinate_internal, state::coordinate_object, sample_result.wi));
+  auto sample_result(return_from {
+    if (#typeof(this.backface) != #typeof(material_surface()) && (sample_params.hit_side < 0))
+      return eval_bsdf_sample(&this.backface.scattering, &sample_params);
+    else
+      return eval_bsdf_sample(&this.surface.scattering, &sample_params);
+  });
+  return false if (sample_result.mode == scatter_none);
+  auto geometry_wi(sample_result.wi);
+  geometry_wi = quat_transform_vector(quat_transpose(q), geometry_wi);
+  geometry_wi = normalize(geometry_wi);
+  const auto mode((sample_params.geometry_wo.z < 0) == (geometry_wi.z < 0) ? scatter_reflect : scatter_transmit);
+  return false if (mode != sample_result.mode);
+  *wi = normalize(state::transform_vector(state::coordinate_internal, state::coordinate_object, geometry_wi));
+  if (sample_result.delta_f) {
+    *pdf_fwd = 1.0;
+    *pdf_rev = 1.0;
+    *f = *sample_result.delta_f;
+    *is_delta = true;
     return true;
-  }
+  } 
+  auto params(eval_bsdf_parameters(geometry_wo: sample_params.geometry_wo, geometry_wi: geometry_wi, thin_walled: this.thin_walled));
+  perturb_normal(&params, this.geometry.normal);
+  auto result(return_from {
+    if (#typeof(this.backface) != #typeof(material_surface()) && (params.hit_side < 0))
+      return eval_bsdf(&this.backface.scattering, &params);
+    else
+      return eval_bsdf(&this.surface.scattering, &params);
+  });
+  *pdf_fwd = result.pdf[0];
+  *pdf_rev = result.pdf[1];
+  *f = result.f;
+  *is_delta = false;
+  return true;
 }
 )*";
 
