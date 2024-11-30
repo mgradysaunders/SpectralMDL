@@ -329,10 +329,16 @@ public:
     if (!expr) {
       std::invoke(func, *this);
     } else {
+      auto cond{emit_cond(*expr)};
+      if (cond.is_compile_time_int()) {
+        auto pass{cond.get_compile_time_int() != 0};
+        if (!pass)
+          return;
+      }
       auto name{context.get_unique_name("late-if", get_llvm_function())};
       auto blockPass{create_block(llvm_twine(name, ".pass"))};
       auto blockFail{create_block(llvm_twine(name, ".fail"))};
-      emit_br(emit_cond(*expr), blockPass, blockFail);
+      emit_br(cond, blockPass, blockFail);
       emit_scope(blockPass, blockFail, std::forward<decltype(func)>(func));
       llvm_move_block_to_end(blockFail);
       move_to(blockFail);

@@ -189,7 +189,7 @@ float compute_area(inline Disk shape) = $PI * radius * radius;
 // }
 // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 @(pure noinline)
-float compute_area(inline Rect shape) = #product(extent);
+float compute_area(inline Rect shape) = #prod(extent);
 
 // This is a concrete overload of 'compute_area()' for the 'AnyShape' type
 // that uses the 'visit' keyword to generate a type switch that dispatches

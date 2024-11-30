@@ -1214,6 +1214,8 @@ Value Emitter::emit_intrinsic(llvm::StringRef name, const ArgList &args, const A
       return context.get_compile_time_bool(expectOneType()->is_union());
     } else if (name == "is_vector") {
       return context.get_compile_time_bool(expectOneType()->is_vector());
+    } else if (name == "is_void") {
+      return context.get_compile_time_bool(expectOneType()->is_void());
     } else if (name == "is_comptime") {
       return context.get_compile_time_bool(expectOne().is_compile_time());
     } else if (name == "is_lvalue") {
@@ -1318,7 +1320,7 @@ Value Emitter::emit_intrinsic(llvm::StringRef name, const ArgList &args, const A
           type, value1.type == context.get_int_type()
                     ? llvm_emit_powi(builder, value0, value1) // CreateBinaryIntrinsic doesn't work for powi!
                     : builder.CreateBinaryIntrinsic(Intr::pow, value0, construct(type, value1, srcLoc)));
-    } else if (name == "product") {
+    } else if (name == "prod") {
       auto value{rvalue(expectOneVectorized())};
       if (value.type->scalar == Scalar::Bool)
         value = construct(value.type->get_with_different_scalar(Scalar::Int), value);

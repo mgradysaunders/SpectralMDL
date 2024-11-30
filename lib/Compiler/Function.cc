@@ -251,6 +251,7 @@ Value Function::call(Emitter &emitter0, const ArgList &args, const AST::SourceLo
     auto blockEnd{emitter0.create_block(llvm_twine(name, ".end"))};
     emitter0.emit_br(blockBegin);
     Emitter emitter1{&emitter0};
+    emitter1.module = decl.module;
     emitter1.crumb = decl.crumb;
     emitter1.state = is_pure() ? Value() : emitter0.state;
     emitter1.afterEndScope = {decl.crumb, blockEnd};
@@ -267,7 +268,7 @@ Value Function::call(Emitter &emitter0, const ArgList &args, const AST::SourceLo
       if (!patchedArgs.has_name(astArg.name->name))
         patchedArgs.emplace_back(astArg.name->name, emitter1.emit(astArg.expr), astArg.srcLoc, astArg.src);
 
-    auto callee{emitter0.emit(letAndCall.call->expr)};
+    auto callee{emitter1.emit(letAndCall.call->expr)};
     auto result{emitter1.emit_call(callee, patchedArgs, srcLoc)};
     sanity_check(!emitter1.has_terminator());
     emitter1.emit_unwind_and_br(emitter1.afterEndScope);
