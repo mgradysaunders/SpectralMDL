@@ -3,12 +3,17 @@
 
 using ::math import *;
 using ::monte_carlo import *;
+using ::quaternion import *;
 using ::specular import *;
 import ::state::*;
 
 export enum scatter_mode { scatter_none = 0, scatter_reflect = 1, scatter_transmit = 2, scatter_reflect_transmit = 3 };
 
 const float STABILITY_EPS = 0.001;
+
+typedef $(color | float) color_or_float;
+
+typedef $(color | float | void) color_or_float_or_void;
 
 @(pure foreign) float atan2f(float y, float x); // TODO No #atan2 yet
 
@@ -56,20 +61,6 @@ const float STABILITY_EPS = 0.001;
   const auto tran_weight(#select((int(mode) & int(scatter_transmit)), 1.0, 0.0));
   return refl_weight / (refl_weight + tran_weight);
 }
-
-//--{ Helpers: Quaternion
-@(pure macro) float4 quat_rotate(const float theta, const float3 v) = float4(#sin(theta / 2) * normalize(v), #cos(theta / 2));
-
-@(pure macro) float4 quat_rotate(const float3 u, const float3 v) = normalize(float4(cross(u, v), 1 + dot(u, v)));
-
-@(pure macro) float4 quat_transpose(const float4 q) = float4(-1.0, -1.0, -1.0, 1.0) * q;
-
-@(pure macro) float3 quat_transform_vector(const float4 q, const float3 u) {
-  return (w := q.w) * w * u + (v := q.xyz) * dot(v, u) + cross(v, 2.0 * w * u + cross(v, u));
-}
-
-// @(pure macro) float4 quat_multiply(const float4 q, const float4 r) = float4(1.0, 1.0, 1.0, -1.0) * (q.wwwx * r.xyzx + q.xyzy * r.wwwy + q.yzxz * r.zxyz - q.zxyw * r.yzxw);
-//--}
 
 //--{ API Types: eval_bsdf_parameters, eval_bsdf_result
 struct eval_bsdf_parameters {
@@ -203,8 +194,8 @@ struct eval_bsdf_sample_result {
 
 //--{ BSDF: diffuse_reflection_bsdf (DONE)
 export struct diffuse_reflection_bsdf: bsdf {
-  color tint = color(1.0);
-  float roughness = 0.0;
+  const color_or_float tint = 1.0;
+  const float roughness = 0.0;
   void string handle = "";
 };
 @(pure noinline) auto eval_bsdf(const &diffuse_reflection_bsdf this, inline const &eval_bsdf_parameters params) {
@@ -255,7 +246,7 @@ export struct diffuse_reflection_bsdf: bsdf {
 
 //--{ BSDF: diffuse_transmission_bsdf (DONE)
 export struct diffuse_transmission_bsdf: bsdf {
-  color tint = color(1.0);
+  const color_or_float tint = 1.0;
   void string handle = "";
 };
 @(pure) auto eval_bsdf(const &diffuse_transmission_bsdf this, inline const &eval_bsdf_parameters params) {
@@ -270,8 +261,8 @@ export struct diffuse_transmission_bsdf: bsdf {
 
 //--{ BSDF: specular_bsdf (DONE)
 export struct specular_bsdf: bsdf {
-  color tint = color(1.0);
-  scatter_mode mode = scatter_reflect;
+  const color_or_float tint = 1.0;
+  const scatter_mode mode = scatter_reflect;
   void string handle = "";
 };
 @(pure macro) auto eval_bsdf(const &specular_bsdf this, const &eval_bsdf_parameters params) {
@@ -286,9 +277,9 @@ export struct specular_bsdf: bsdf {
 
 //--{ BSDF: sheen_bsdf (DONE)
 export struct sheen_bsdf: bsdf {
-  float roughness;
-  color tint = color(1.0);
-  ?color multiscatter_tint = null;
+  const float roughness;
+  const color_or_float tint = 1.0;
+  const color_or_float_or_void multiscatter_tint = null;
   void string handle = "";
 };
 @(pure) auto sheen_lambda_l(const auto fit, const float cos_theta) {
@@ -313,7 +304,7 @@ export struct sheen_bsdf: bsdf {
       const auto D((2 + 1 / alpha) * #pow(sin_thetah, 1 / alpha) / $TWO_PI);
       const auto G2(1 / (1 + sheen_lambda(fit, cos_thetao) + sheen_lambda(fit, cos_thetai)));
     } in D * G2 / (4 * cos_thetao + 0.001));
-    if (!this.multiscatter_tint) {
+    if (#is_void(this.multiscatter_tint)) {
       return eval_bsdf_result(pdf: pdf, f: fss * this.tint);
     } else {
       // Multiple-scattering.
@@ -343,7 +334,7 @@ export struct sheen_bsdf: bsdf {
       } in (1 - Ewo) * (1 - Ewi) / (1 - Eav) * cos_thetai / $PI);
       // TODO Not sure if it makes sense to multiply fss and fms independently, but for now I 
       // think it makes more sense to have tint multiply both?
-      return eval_bsdf_result(pdf: pdf, f: this.tint * (fss + (*this.multiscatter_tint) * fms));
+      return eval_bsdf_result(pdf: pdf, f: this.tint * (fss + this.multiscatter_tint * fms));
     }
   } else {
     return eval_bsdf_result(is_black: true);
@@ -368,8 +359,8 @@ struct microfacet_bsdf: bsdf {
   const float2 roughness;
   const float2 alpha = roughness * roughness;
   const float roughness0 = #sqrt(#prod(roughness));
-  const auto tint;
-  const auto multiscatter_tint = null;
+  const color_or_float tint;
+  const color_or_float_or_void multiscatter_tint = null;
   const float3 tangent_u = state::texture_tangent_u(0);
   scatter_mode mode = scatter_reflect;
   microfacet_distribution distribution = microfacet_distribution();
@@ -379,8 +370,8 @@ struct microfacet_bsdf: bsdf {
 @(macro) auto microfacet_bsdf_constructor(
     float roughness_u,
     float roughness_v = roughness_u,
-    const auto tint = 1.0,
-    const auto multiscatter_tint = null,
+    const color_or_float tint = 1.0,
+    const color_or_float_or_void multiscatter_tint = null,
     const float3 tangent_u = state::texture_tangent_u(0),
     const scatter_mode mode = scatter_reflect,
     const string handle = "",
@@ -701,10 +692,10 @@ export auto microfacet_beckmann_vcavities_bsdf(*) =
 
 //--{ BSDF: ward_geisler_moroder_bsdf (ALMOST DONE)
 export struct ward_geisler_moroder_bsdf: bsdf {
-  float roughness_u;
-  float roughness_v = roughness_u;
-  color tint = color(1.0);
-  ?color multiscatter_tint = null; 
+  const float roughness_u;
+  const float roughness_v = roughness_u;
+  const color_or_float tint = 1.0;
+  const color_or_float_or_void multiscatter_tint = null; 
   const float3 tangent_u = state::texture_tangent_u(0);
   void string handle = "";
 };
@@ -718,7 +709,7 @@ export struct ward_geisler_moroder_bsdf: bsdf {
     const auto f(#sum((vh := wo + wi) * vh) / ($PI * alpha.x * alpha.y * #pow(vh.z, 4)) * #exp(-#sum((g := vh.xy / (vh.z * alpha)) * g)));
     const auto fss_pdf(float2(f * (cos_thetao + cos_thetai) / 2));
     const auto fss(f * cos_thetai);
-    if (!this.multiscatter_tint) {
+    if (#is_void(this.multiscatter_tint)) {
       return eval_bsdf_result(pdf: fss_pdf, f: this.tint * fss);
     } else {
       // Multiple-scattering.
@@ -747,14 +738,14 @@ export struct ward_geisler_moroder_bsdf: bsdf {
       } in (1 - Ewo) * (1 - Ewi) / (1 - Eav) * cos_thetai / $PI);
       // TODO Not sure if it makes sense to multiply fss and fms independently, but for now I 
       // think it makes more sense to have tint multiply both?
-      return eval_bsdf_result(pdf: 0.8 * fss_pdf + 0.2 * fms_pdf, f: this.tint * (fss + (*this.multiscatter_tint) * fms));
+      return eval_bsdf_result(pdf: 0.8 * fss_pdf + 0.2 * fms_pdf, f: this.tint * (fss + this.multiscatter_tint * fms));
     }
   } else {
     return eval_bsdf_result(is_black: true);
   }
 }
 @(pure noinline) auto eval_bsdf_sample(const &ward_geisler_moroder_bsdf this, const &eval_bsdf_sample_parameters params) {
-  if (!this.multiscatter_tint || weighted_bool_sample(&params.xi.w, 0.8)) { 
+  if (#is_void(this.multiscatter_tint) || weighted_bool_sample(&params.xi.w, 0.8)) { 
     auto q(perturb_tangent(params, this.tangent_u));
     auto wo(params.wo);
     auto is_neg(wo.z < 0);

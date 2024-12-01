@@ -6,10 +6,13 @@ static const char *df = R"*(
 #smdl_syntax
 using ::math import *;
 using ::monte_carlo import *;
+using ::quaternion import *;
 using ::specular import *;
 import ::state::*;
 export enum scatter_mode { scatter_none = 0, scatter_reflect = 1, scatter_transmit = 2, scatter_reflect_transmit = 3 };
 const float STABILITY_EPS = 0.001;
+typedef $(color | float) color_or_float;
+typedef $(color | float | void) color_or_float_or_void;
 @(pure foreign) float atan2f(float y, float x); 
 @(pure foreign) float erff(float x);
 @(pure foreign) float erfcf(float x);
@@ -45,12 +48,6 @@ const float STABILITY_EPS = 0.001;
   const auto refl_weight(#select((int(mode) & int(scatter_reflect)), 1.0, 0.0));
   const auto tran_weight(#select((int(mode) & int(scatter_transmit)), 1.0, 0.0));
   return refl_weight / (refl_weight + tran_weight);
-}
-@(pure macro) float4 quat_rotate(const float theta, const float3 v) = float4(#sin(theta / 2) * normalize(v), #cos(theta / 2));
-@(pure macro) float4 quat_rotate(const float3 u, const float3 v) = normalize(float4(cross(u, v), 1 + dot(u, v)));
-@(pure macro) float4 quat_transpose(const float4 q) = float4(-1.0, -1.0, -1.0, 1.0) * q;
-@(pure macro) float3 quat_transform_vector(const float4 q, const float3 u) {
-  return (w := q.w) * w * u + (v := q.xyz) * dot(v, u) + cross(v, 2.0 * w * u + cross(v, u));
 }
 struct eval_bsdf_parameters {
   const float3 geometry_wo;
@@ -122,8 +119,8 @@ struct eval_bsdf_sample_result {
   return eval_bsdf_sample_result(wi: float3(0.0), mode: scatter_none);
 }
 export struct diffuse_reflection_bsdf: bsdf {
-  color tint = color(1.0);
-  float roughness = 0.0;
+  const color_or_float tint = 1.0;
+  const float roughness = 0.0;
   void string handle = "";
 };
 @(pure noinline) auto eval_bsdf(const &diffuse_reflection_bsdf this, inline const &eval_bsdf_parameters params) {
@@ -162,7 +159,7 @@ export struct diffuse_reflection_bsdf: bsdf {
   return eval_bsdf_sample_result(wi: hit_side * cosine_hemisphere_sample(xi.xy), mode: scatter_reflect);
 }
 export struct diffuse_transmission_bsdf: bsdf {
-  color tint = color(1.0);
+  const color_or_float tint = 1.0;
   void string handle = "";
 };
 @(pure) auto eval_bsdf(const &diffuse_transmission_bsdf this, inline const &eval_bsdf_parameters params) {
@@ -174,8 +171,8 @@ export struct diffuse_transmission_bsdf: bsdf {
   return eval_bsdf_sample_result(wi: -hit_side * cosine_hemisphere_sample(xi.xy), mode: scatter_transmit);
 }
 export struct specular_bsdf: bsdf {
-  color tint = color(1.0);
-  scatter_mode mode = scatter_reflect;
+  const color_or_float tint = 1.0;
+  const scatter_mode mode = scatter_reflect;
   void string handle = "";
 };
 @(pure macro) auto eval_bsdf(const &specular_bsdf this, const &eval_bsdf_parameters params) {
@@ -187,9 +184,9 @@ export struct specular_bsdf: bsdf {
     : eval_bsdf_sample_result(wi: refract(wo, float3(0, 0, 1), #select(hit_side < 0, 1 / ior, ior)), mode: scatter_transmit, delta_f: this.tint);
 }
 export struct sheen_bsdf: bsdf {
-  float roughness;
-  color tint = color(1.0);
-  ?color multiscatter_tint = null;
+  const float roughness;
+  const color_or_float tint = 1.0;
+  const color_or_float_or_void multiscatter_tint = null;
   void string handle = "";
 };
 @(pure) auto sheen_lambda_l(const auto fit, const float cos_theta) {
@@ -213,7 +210,7 @@ export struct sheen_bsdf: bsdf {
       const auto D((2 + 1 / alpha) * #pow(sin_thetah, 1 / alpha) / $TWO_PI);
       const auto G2(1 / (1 + sheen_lambda(fit, cos_thetao) + sheen_lambda(fit, cos_thetai)));
     } in D * G2 / (4 * cos_thetao + 0.001));
-    if (!this.multiscatter_tint) {
+    if (#is_void(this.multiscatter_tint)) {
       return eval_bsdf_result(pdf: pdf, f: fss * this.tint);
     } else {
       const auto fms(let {
@@ -233,7 +230,7 @@ export struct sheen_bsdf: bsdf {
         const auto Ewi(fit[0] * #pow(1.0 / (1.0 + fit[1] * cos_thetai), 1.0 / fit[2]));
         const auto Eav(fit[3]);
       } in (1 - Ewo) * (1 - Ewi) / (1 - Eav) * cos_thetai / $PI);
-      return eval_bsdf_result(pdf: pdf, f: this.tint * (fss + (*this.multiscatter_tint) * fms));
+      return eval_bsdf_result(pdf: pdf, f: this.tint * (fss + this.multiscatter_tint * fms));
     }
   } else {
     return eval_bsdf_result(is_black: true);
@@ -253,8 +250,8 @@ struct microfacet_bsdf: bsdf {
   const float2 roughness;
   const float2 alpha = roughness * roughness;
   const float roughness0 = #sqrt(#prod(roughness));
-  const auto tint;
-  const auto multiscatter_tint = null;
+  const color_or_float tint;
+  const color_or_float_or_void multiscatter_tint = null;
   const float3 tangent_u = state::texture_tangent_u(0);
   scatter_mode mode = scatter_reflect;
   microfacet_distribution distribution = microfacet_distribution();
@@ -263,8 +260,8 @@ struct microfacet_bsdf: bsdf {
 @(macro) auto microfacet_bsdf_constructor(
     float roughness_u,
     float roughness_v = roughness_u,
-    const auto tint = 1.0,
-    const auto multiscatter_tint = null,
+    const color_or_float tint = 1.0,
+    const color_or_float_or_void multiscatter_tint = null,
     const float3 tangent_u = state::texture_tangent_u(0),
     const scatter_mode mode = scatter_reflect,
     const string handle = "",
@@ -534,10 +531,10 @@ export auto microfacet_beckmann_vcavities_bsdf(*) =
   return eval_bsdf_sample_result(wi: wi, mode: mode);
 }
 export struct ward_geisler_moroder_bsdf: bsdf {
-  float roughness_u;
-  float roughness_v = roughness_u;
-  color tint = color(1.0);
-  ?color multiscatter_tint = null; 
+  const float roughness_u;
+  const float roughness_v = roughness_u;
+  const color_or_float tint = 1.0;
+  const color_or_float_or_void multiscatter_tint = null; 
   const float3 tangent_u = state::texture_tangent_u(0);
   void string handle = "";
 };
@@ -551,36 +548,36 @@ export struct ward_geisler_moroder_bsdf: bsdf {
     const auto f(#sum((vh := wo + wi) * vh) / ($PI * alpha.x * alpha.y * #pow(vh.z, 4)) * #exp(-#sum((g := vh.xy / (vh.z * alpha)) * g)));
     const auto fss_pdf(float2(f * (cos_thetao + cos_thetai) / 2));
     const auto fss(f * cos_thetai);
-    if (!this.multiscatter_tint) {
+    if (#is_void(this.multiscatter_tint)) {
       return eval_bsdf_result(pdf: fss_pdf, f: this.tint * fss);
     } else {
       const auto fms_pdf(float2(cos_thetai, cos_thetao) / $PI);
       const auto fms(let {
-        const auto roughness0(#sqrt(roughness.x * roughness.y));
+        const auto r0(#sqrt(roughness.x * roughness.y));
         const auto fit(return_from {
           float3 fit(-1.1992005e+02, -1.4040313e+01, 7.8306640e-01);
-          fit = fit * roughness0 + float3( 4.1985368e+02,  4.6807753e+01, -1.6213743e+00);
-          fit = fit * roughness0 + float3(-5.8448171e+02, -6.1370147e+01, -1.3797964e+00);
-          fit = fit * roughness0 + float3( 4.2351783e+02,  4.1399258e+01,  5.6539624e+00);
-          fit = fit * roughness0 + float3(-1.6959530e+02, -1.4979874e+01, -3.8064856e+00);
-          fit = fit * roughness0 + float3( 3.7025769e+01,  3.0665596e+00, -1.2666234e-01);
-          fit = fit * roughness0 + float3(-3.4191809e+00, -2.9108604e-01, -1.8175253e-02);
-          fit = fit * roughness0 + float3( 1.6044891e-01,  8.8001559e-03,  1.4868175e-03);
-          fit = fit * roughness0 + float3(-7.1467185e-04,  1.8095055e-01,  9.9998607e-01);
+          fit = fit * r0 + float3( 4.1985368e+02,  4.6807753e+01, -1.6213743e+00);
+          fit = fit * r0 + float3(-5.8448171e+02, -6.1370147e+01, -1.3797964e+00);
+          fit = fit * r0 + float3( 4.2351783e+02,  4.1399258e+01,  5.6539624e+00);
+          fit = fit * r0 + float3(-1.6959530e+02, -1.4979874e+01, -3.8064856e+00);
+          fit = fit * r0 + float3( 3.7025769e+01,  3.0665596e+00, -1.2666234e-01);
+          fit = fit * r0 + float3(-3.4191809e+00, -2.9108604e-01, -1.8175253e-02);
+          fit = fit * r0 + float3( 1.6044891e-01,  8.8001559e-03,  1.4868175e-03);
+          fit = fit * r0 + float3(-7.1467185e-04,  1.8095055e-01,  9.9998607e-01);
           return fit;
         });
         const auto Ewo(#min(1 - fit[1] * (t := #pow(cos_thetao / fit[0], 2.0 / 3.0)) * #exp(1 - t), 0.999));
         const auto Ewi(#min(1 - fit[1] * (t := #pow(cos_thetai / fit[0], 2.0 / 3.0)) * #exp(1 - t), 0.999));
         const auto Eav(#min(fit[2], 0.999));
       } in (1 - Ewo) * (1 - Ewi) / (1 - Eav) * cos_thetai / $PI);
-      return eval_bsdf_result(pdf: 0.8 * fss_pdf + 0.2 * fms_pdf, f: this.tint * (fss + (*this.multiscatter_tint) * fms));
+      return eval_bsdf_result(pdf: 0.8 * fss_pdf + 0.2 * fms_pdf, f: this.tint * (fss + this.multiscatter_tint * fms));
     }
   } else {
     return eval_bsdf_result(is_black: true);
   }
 }
 @(pure noinline) auto eval_bsdf_sample(const &ward_geisler_moroder_bsdf this, const &eval_bsdf_sample_parameters params) {
-  if (!this.multiscatter_tint || weighted_bool_sample(&params.xi.w, 0.8)) { 
+  if (#is_void(this.multiscatter_tint) || weighted_bool_sample(&params.xi.w, 0.8)) { 
     auto q(perturb_tangent(params, this.tangent_u));
     auto wo(params.wo);
     auto is_neg(wo.z < 0);
@@ -1313,6 +1310,31 @@ export @(pure) float2 uniform_disk_sample(float2 xi) {
 export @(pure) float3 cosine_hemisphere_sample(float2 xi) = float3((p := uniform_disk_sample(xi)), #sqrt(#max(1 - #sum(p * p), 0)));
 )*";
 
+static const char *quaternion = R"*(#smdl_syntax
+using ::math import *;
+export @(pure macro) float4 quat_rotate(const float theta, const float3 v) = float4(#sin(theta / 2) * normalize(v), #cos(theta / 2));
+export @(pure macro) float4 quat_rotate(const float3 u, const float3 v) = normalize(float4(cross(u, v), 1 + dot(u, v)));
+export @(pure macro) float4 quat_transpose(const float4 q) = float4(-1.0, -1.0, -1.0, 1.0) * q;
+export @(pure macro) float3 quat_transform_vector(const float4 q, const float3 u) = (w := q.w) * w * u + (v := q.xyz) * dot(v, u) + cross(v, 2 * w * u + cross(v, u));
+export @(pure macro) float4 quat_multiply(const float4 q, const float4 r) = float4(1.0, 1.0, 1.0, -1.0) * (q.wwwx * r.xyzx + q.xyzy * r.wwwy + q.yzxz * r.zxyz - q.zxyw * r.yzxw);
+export @(pure macro) float3 quat_unit_x(const float4 q) = quat_transform_vector(q, float3(1.0, 0.0, 0.0));
+export @(pure macro) float3 quat_unit_y(const float4 q) = quat_transform_vector(q, float3(0.0, 1.0, 0.0));
+export @(pure macro) float3 quat_unit_z(const float4 q) = quat_transform_vector(q, float3(0.0, 0.0, 1.0));
+export @(pure noinline) float3x3 quat_to_float3x3(const float4 q) {
+  const float4 q2(q * q);
+  const float xx(#sum(float4(1.0, -1.0, -1.0, 1.0) * q2));
+  const float yy(#sum(float4(-1.0, 1.0, -1.0, 1.0) * q2));
+  const float zz(#sum(float4(-1.0, -1.0, 1.0, 1.0) * q2));
+  const float2 x_yz(2.0 * (q.xx * q.yz + float2(1.0, -1.0) * q.ww * q.zy));
+  const float2 y_zx(2.0 * (q.yy * q.zx + float2(1.0, -1.0) * q.ww * q.xz));
+  const float2 z_xy(2.0 * (q.zz * q.xy + float2(1.0, -1.0) * q.ww * q.yx));
+  return float3x3(
+    float3(xx, x_yz[0], x_yz[1]),
+    float3(y_zx[1], yy, y_zx[0]),
+    float3(z_xy[0], z_xy[1], zz));
+}
+)*";
+
 static const char *rgb = R"*(#smdl_syntax
 const int RGB_TO_COLOR_NUM_WAVES = 32;
 const float RGB_TO_COLOR_MIN_WAVE = 380.0;
@@ -1477,6 +1499,8 @@ export @(pure macro) auto schlick_F(const auto cos_theta, const auto F0, const a
     return tex;
   if (name == "monte_carlo")
     return monte_carlo;
+  if (name == "quaternion")
+    return quaternion;
   if (name == "rgb")
     return rgb;
   if (name == "specular")

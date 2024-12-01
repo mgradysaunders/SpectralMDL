@@ -142,6 +142,10 @@ public:
     return get_or_initialize_type<UnionType>(unionTypes, canonicalTypes);
   }
 
+  [[nodiscard]] CompileTimeUnionType *get_compile_time_union_type(UnionType *unionType) {
+    return get_or_initialize_type<CompileTimeUnionType>(compileTimeUnionTypes, unionType);
+  }
+
   [[nodiscard]] VoidType *get_void_type() { return voidType.get(); }
 
   [[nodiscard]] EnumType *get_intensity_mode_type() { return intensityModeType.get(); }
@@ -354,8 +358,7 @@ public:
   [[nodiscard]] Module *resolve_module(
       Emitter &emitter, bool isAbs, llvm::ArrayRef<llvm::StringRef> path, const AST::SourceLocation &srcLoc);
 
-  void resolve_using_aliases(
-      Crumb *crumb, llvm::ArrayRef<llvm::StringRef> path, llvm::SmallVector<llvm::StringRef> &fullPath);
+  void resolve_using_aliases(Crumb *crumb, llvm::ArrayRef<llvm::StringRef> path, llvm::SmallVector<llvm::StringRef> &fullPath);
 
 public:
   MDLInstance &mdl;
@@ -418,8 +421,11 @@ private:
   /// The tag types.
   llvm::DenseMap<std::tuple<AST::Tag *, llvm::Function *>, unique_bump_ptr<TagType>> tagTypes{};
 
-  /// The union types.
+  /// The union types, e.g., '(int | string)'.
   std::map<llvm::SmallVector<Type *>, unique_bump_ptr<UnionType>> unionTypes{};
+
+  /// The compile-time union types, e.g., '$(color | float | void)'.
+  llvm::DenseMap<UnionType *, unique_bump_ptr<CompileTimeUnionType>> compileTimeUnionTypes{};
 
   /// The builtin 'compiler_function' type.
   const unique_bump_ptr<CompilerType> compilerFunctionType;

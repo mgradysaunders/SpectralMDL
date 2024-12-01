@@ -24,7 +24,7 @@ SMDL_EXPORT void smdl_ptex_eval(const state_t &state, texture_ptex_t &tex, int_t
           /*uw1=*/0.0f, /*vw1=*/0.0f,
           /*uw2=*/0.0f, /*vw2=*/0.0f,
           /*width=*/1.0f, /*blur=*/0.0f);
-#endif
+#endif // #if WITH_PTEX
 }
 
 } // extern "C"

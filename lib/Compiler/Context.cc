@@ -330,6 +330,12 @@ ConversionRule Context::get_conversion_rule(Type *srcType, Type *dstType) {
     if (srcType == get_pointer_type(get_float_type()))
       return ConversionRule::Explicit;
   }
+  // If the destination type is a compile-time union ...
+  if (dstType->is_compile_time_union()) {
+    // If the union type has the source type as an alternative, conversion is perfect.
+    if (static_cast<CompileTimeUnionType *>(dstType)->unionType->has_type(srcType))
+      return ConversionRule::Perfect;
+  }
   // Not allowed!
   return ConversionRule::NotAllowed;
 }

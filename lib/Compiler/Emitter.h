@@ -174,12 +174,7 @@ public:
 
   Value emit(AST::Cast &expr) { return construct(emit(expr.type).get_compile_time_type(), emit(expr.expr), expr.srcLoc); }
 
-  Value emit(AST::CompileTime &expr) {
-    auto result{Function::compile_time_evaluate(*this, *expr.expr)};
-    if (!result)
-      expr.srcLoc.report_error("compile-time evaluation failed");
-    return result;
-  }
+  Value emit(AST::CompileTime &expr);
 
   Value emit(AST::Conditional &expr);
 

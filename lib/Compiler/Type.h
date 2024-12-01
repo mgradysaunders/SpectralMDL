@@ -94,6 +94,7 @@ enum class TypeKind : unsigned {
   Arithmetic,
   Auto,
   Color,
+  CompileTimeUnion,
   Compiler,
   Enum,
   Function,
@@ -186,6 +187,7 @@ public:
     return const_cast<Type *>(this)->get_visit_union_type() != nullptr;
   }
 
+
 public:
   //--{ Kind checks
   [[nodiscard]] bool is_array() const { return kind == TypeKind::Array; }
@@ -197,6 +199,8 @@ public:
   [[nodiscard]] bool is_auto() const { return kind == TypeKind::Auto; }
 
   [[nodiscard]] bool is_color() const { return kind == TypeKind::Color; }
+
+  [[nodiscard]] bool is_compile_time_union() const { return kind == TypeKind::CompileTimeUnion; }
 
   [[nodiscard]] bool is_compiler() const { return kind == TypeKind::Compiler; }
 
@@ -356,6 +360,21 @@ public:
   [[nodiscard]] Value access(Emitter &emitter, Value value, Value i, const AST::SourceLocation &srcLoc = {}) final;
 
   [[nodiscard]] Value construct(Emitter &emitter, const ArgList &args, const AST::SourceLocation &srcLoc = {}) final;
+};
+//--}
+
+//--{ CompileTimeUnion
+class UnionType;
+
+class CompileTimeUnionType final : public TypeSubclass<TypeKind::CompileTimeUnion> {
+public:
+  CompileTimeUnionType(Context &context, UnionType *unionType);
+
+  [[nodiscard]] Value construct(Emitter &emitter, const ArgList &args, const AST::SourceLocation &srcLoc) final;
+
+  [[nodiscard]] bool pattern_match(Emitter &emitter, Type *type) final;
+
+  UnionType *unionType{};
 };
 //--}
 

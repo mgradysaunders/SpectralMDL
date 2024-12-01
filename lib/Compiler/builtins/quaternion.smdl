@@ -1,0 +1,33 @@
+#smdl_syntax
+
+using ::math import *;
+
+export @(pure macro) float4 quat_rotate(const float theta, const float3 v) = float4(#sin(theta / 2) * normalize(v), #cos(theta / 2));
+
+export @(pure macro) float4 quat_rotate(const float3 u, const float3 v) = normalize(float4(cross(u, v), 1 + dot(u, v)));
+
+export @(pure macro) float4 quat_transpose(const float4 q) = float4(-1.0, -1.0, -1.0, 1.0) * q;
+
+export @(pure macro) float3 quat_transform_vector(const float4 q, const float3 u) = (w := q.w) * w * u + (v := q.xyz) * dot(v, u) + cross(v, 2 * w * u + cross(v, u));
+
+export @(pure macro) float4 quat_multiply(const float4 q, const float4 r) = float4(1.0, 1.0, 1.0, -1.0) * (q.wwwx * r.xyzx + q.xyzy * r.wwwy + q.yzxz * r.zxyz - q.zxyw * r.yzxw);
+
+export @(pure macro) float3 quat_unit_x(const float4 q) = quat_transform_vector(q, float3(1.0, 0.0, 0.0));
+
+export @(pure macro) float3 quat_unit_y(const float4 q) = quat_transform_vector(q, float3(0.0, 1.0, 0.0));
+
+export @(pure macro) float3 quat_unit_z(const float4 q) = quat_transform_vector(q, float3(0.0, 0.0, 1.0));
+
+export @(pure noinline) float3x3 quat_to_float3x3(const float4 q) {
+  const float4 q2(q * q);
+  const float xx(#sum(float4(1.0, -1.0, -1.0, 1.0) * q2));
+  const float yy(#sum(float4(-1.0, 1.0, -1.0, 1.0) * q2));
+  const float zz(#sum(float4(-1.0, -1.0, 1.0, 1.0) * q2));
+  const float2 x_yz(2.0 * (q.xx * q.yz + float2(1.0, -1.0) * q.ww * q.zy));
+  const float2 y_zx(2.0 * (q.yy * q.zx + float2(1.0, -1.0) * q.ww * q.xz));
+  const float2 z_xy(2.0 * (q.zz * q.xy + float2(1.0, -1.0) * q.ww * q.yx));
+  return float3x3(
+    float3(xx, x_yz[0], x_yz[1]),
+    float3(y_zx[1], yy, y_zx[0]),
+    float3(z_xy[0], z_xy[1], zz));
+}

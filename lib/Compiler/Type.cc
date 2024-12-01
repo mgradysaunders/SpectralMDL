@@ -371,7 +371,7 @@ Value ArithmeticType::construct(Emitter &emitter, const ArgList &args, const AST
         return RValue(
             this, emitter.builder.CreateAlignedLoad(
                       llvmType, emitter.rvalue(value), llvm::Align(emitter.context.get_align_of(get_scalar_type()))));
-      // If the argument is a color and this is a float3, delegate to '::rgb::color_to_rgb()' 
+      // If the argument is a color and this is a float3, delegate to '::rgb::color_to_rgb()'
       // to convert the spectrum to an RGB triple.
       if (value.type->is_color() && this == context.get_float_type(Extent(3)))
         return emitter.emit_call(context.resolve(emitter, /*isAbs=*/true, {"rgb", "color_to_rgb"}, srcLoc), args, srcLoc);
@@ -561,11 +561,29 @@ Value ColorType::construct(Emitter &emitter, const ArgList &args, const AST::Sou
   }
   // If 1 'float3'-ish argument or 3 arguments, delegate to '::rgb::rgb_to_color' to construct the color
   // spectrum from the RGB components.
-  if ((args.size() == 1 && args[0].value.type->is_vector() && args[0].value.type->extent == Extent(3)) ||
-      (args.size() == 3))
+  if ((args.size() == 1 && args[0].value.type->is_vector() && args[0].value.type->extent == Extent(3)) || (args.size() == 3))
     return emitter.emit_call(context.resolve(emitter, /*isAbs=*/true, {"rgb", "rgb_to_color"}, srcLoc), args, srcLoc);
   return Type::construct(emitter, args, srcLoc); // Error
 }
+//--}
+
+//--{ CompileTimeUnionType
+CompileTimeUnionType::CompileTimeUnionType(Context &context, UnionType *unionType)
+    : TypeSubclass(context), unionType(unionType) {
+  sanity_check_nonnull(unionType);
+  sanity_check(!unionType->is_abstract());
+  init_name("$" + unionType->name);
+}
+
+Value CompileTimeUnionType::construct(Emitter &emitter, const ArgList &args, const AST::SourceLocation &srcLoc) {
+  if (args.empty())
+    srcLoc.report_error(std::format("can't default construct compile-time union type '{}'", name));
+  if (args.is_one_positional() && unionType->has_type(args[0].value.type))
+    return emitter.rvalue(args[0].value);
+  return Type::construct(emitter, args, srcLoc);
+}
+
+bool CompileTimeUnionType::pattern_match(Emitter &emitter, Type *type) { return this == type || unionType->has_type(type); }
 //--}
 
 //--{ CompilerType
@@ -664,7 +682,7 @@ Value PointerType::construct(Emitter &emitter, const ArgList &args, const AST::S
   if (args.is_one_positional()) {
     auto value{args[0].value};
     if (!value.type->is_pointer()) {
-      if (value.type->is_string() && elemType == context.get_byte_type()) 
+      if (value.type->is_string() && elemType == context.get_byte_type())
         return emitter.rvalue(emitter.access(value, "ptr", srcLoc));
       srcLoc.report_error(std::format("can't construct pointer type '{}' from non-pointer type '{}'", name, value.type->name));
     }
@@ -987,8 +1005,7 @@ Value StructType::construct(Emitter &emitter, const ArgList &args, const AST::So
       }
       auto constImages{Value::zero(context.get_array_type(context.get_type<tile_2d_t>(), numTilesU * numTilesV))};
       auto globalImages{new llvm::GlobalVariable(
-          context.llvmModule, constImages.type->llvmType, true, llvm::GlobalValue::PrivateLinkage,
-          nullptr)};
+          context.llvmModule, constImages.type->llvmType, true, llvm::GlobalValue::PrivateLinkage, nullptr)};
       globalImages->setUnnamedAddr(llvm::GlobalValue::UnnamedAddr::Global);
       globalImages->setAlignment(llvm::Align(16));
       for (uint32_t iV{}; iV < numTilesV; iV++) {

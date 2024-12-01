@@ -311,6 +311,19 @@ Value Emitter::emit(AST::Binary &expr) {
   return emit_op(expr.op, emit(expr.lhs), emit(expr.rhs), expr.srcLoc);
 }
 
+Value Emitter::emit(AST::CompileTime &expr) {
+  auto result{Function::compile_time_evaluate(*this, *expr.expr)};
+  if (!result)
+    expr.srcLoc.report_error("compile-time evaluation failed");
+
+  // If result is a union type, promote it to a compile-time union type.
+  if (result.is_compile_time_type())
+    if (auto type{result.get_compile_time_type()}; type->is_union())
+      result = context.get_compile_time_type(context.get_compile_time_union_type(static_cast<UnionType *>(type)));
+
+  return result;
+}
+
 Value Emitter::emit(AST::Conditional &expr) {
   auto cond{construct(context.get_bool_type(), emit(expr.cond), expr.srcLoc)};
   if (cond.is_compile_time_int())
