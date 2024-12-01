@@ -751,7 +751,7 @@ static void init_builtin_field(auto &context, auto &fields, Type *type, const ch
 StructType::StructType(Context &context, builtin_struct_type_t<material_emission_t>) : TypeSubclass(context) {
   init_name("material_emission");
   init_builtin_field(context, fields, context.get_edf_type(), "emission", "edf()");
-  init_builtin_field(context, fields, context.get_color_type(), "intensity", "color()");
+  init_builtin_field(context, fields, context.get_color_type(), "intensity", "color()"); // TODO $(color | float)
   init_builtin_field(context, fields, context.get_intensity_mode_type(), "mode", "intensity_radiant_exitance");
 }
 
@@ -764,8 +764,8 @@ StructType::StructType(Context &context, builtin_struct_type_t<material_surface_
 StructType::StructType(Context &context, builtin_struct_type_t<material_volume_t>) : TypeSubclass(context) {
   init_name("material_volume");
   init_builtin_field(context, fields, context.get_vdf_type(), "scattering", "vdf()");
-  init_builtin_field(context, fields, context.get_color_type(), "absorption_coefficient", "color()");
-  init_builtin_field(context, fields, context.get_color_type(), "scattering_coefficient", "color()");
+  init_builtin_field(context, fields, context.get_color_type(), "absorption_coefficient", "color()"); // TODO $(color | float)
+  init_builtin_field(context, fields, context.get_color_type(), "scattering_coefficient", "color()"); // TODO $(color | float)
 }
 
 StructType::StructType(Context &context, builtin_struct_type_t<material_geometry_t>) : TypeSubclass(context) {
@@ -781,7 +781,7 @@ StructType::StructType(Context &context, builtin_struct_type_t<material_t>) : Ty
   init_builtin_field(context, fields, context.get_bool_type(), "thin_walled", "false");
   init_builtin_field(context, fields, context.get_material_surface_type(), "surface", "material_surface()");
   init_builtin_field(context, fields, context.get_material_surface_type(), "backface", "material_surface()");
-  init_builtin_field(context, fields, context.get_color_type(), "ior", "color(1.0)");
+  init_builtin_field(context, fields, context.get_color_type(), "ior", "color(1.0)"); // TODO $(color | float)?
   init_builtin_field(context, fields, context.get_material_volume_type(), "volume", "material_volume()");
   init_builtin_field(context, fields, context.get_material_geometry_type(), "geometry", "material_geometry()");
 }
