@@ -1036,6 +1036,22 @@ Value Emitter::emit_op(AST::BinaryOp op, Value lhs, Value rhs, const AST::Source
       }
       return result;
     }
+    // Vector-Matrix multiplication
+    if ((op == BinOp::Mul) && lhsType->is_vector() && rhsType->is_matrix() &&
+        (lhsType->get_vector_size() == rhsType->extent.numRows)) {
+      auto scalar{std::max(lhsType->scalar, rhsType->scalar)};
+      auto extentN{rhsType->extent.numRows};
+      auto extentP{rhsType->extent.numCols};
+      lhs = construct(lhsType->get_with_different_scalar(scalar), lhs, srcLoc);
+      rhs = construct(rhsType->get_with_different_scalar(scalar), rhs, srcLoc);
+      auto result{Value::zero(context.get_arithmetic_type(scalar, Extent(extentP)))};
+      auto scalarType{result.type->get_scalar_type()};
+      for (unsigned j{0}; j < extentP; j++)
+        result = insert(
+            result,
+            RValue(scalarType, builder.CreateFAddReduce(Value::zero(scalarType), emit_op(BinOp::Mul, lhs, access(rhs, j)))), j);
+      return result;
+    }
   }
   //--}
   //--{ Operators: Color
@@ -1381,6 +1397,22 @@ Value Emitter::emit_intrinsic(llvm::StringRef name, const ArgList &args, const A
       ifFail = construct(type, ifFail, srcLoc);
       return RValue(type, builder.CreateSelect(cond, ifPass, ifFail));
     }
+  }
+  if (name == "transpose") {
+    if (!(args.size() == 1 && args[0].value.type->is_matrix()))
+      srcLoc.report_error("intrinsic '#transpose' expects 1 matrix argument");
+    auto value{args[0].value};
+    auto valueCols{llvm::SmallVector<Value>{}};
+    for (unsigned i{}; i < value.type->extent.numCols; i++)
+      valueCols.push_back(rvalue(access(value, i)));
+    auto result(Value::zero(context.get_arithmetic_type(value.type->scalar, value.type->extent.get_transpose())));
+    for (unsigned j{}; j < result.type->extent.numCols; j++) {
+      auto column{Value::zero(result.type->get_column_type())};
+      for (unsigned i{}; i < result.type->extent.numRows; i++)
+        column = insert(column, access(valueCols[i], j), i);
+      result = insert(result, column, j);
+    }
+    return result;
   }
   if (name == "typename")
     return context.get_compile_time_string(expectOneType()->name);
