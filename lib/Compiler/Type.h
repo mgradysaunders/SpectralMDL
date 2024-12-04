@@ -5,6 +5,7 @@
 
 namespace smdl::Compiler {
 
+// TODO Int8, Int16, Int32, Int64?
 enum class Scalar : uint8_t { None = 0, Bool, Byte, Int, Float, Double };
 
 class Extent final {

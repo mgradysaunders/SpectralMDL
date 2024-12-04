@@ -9,6 +9,11 @@ using ::monte_carlo import *;
 using ::specular import *;
 import ::state::*;
 export enum scatter_mode { scatter_none = 0, scatter_reflect = 1, scatter_transmit = 2, scatter_reflect_transmit = 3 };
+@(pure macro) float scatter_reflect_chance(const scatter_mode mode) {
+  const auto refl_weight(#select((int(mode) & int(scatter_reflect)), 1.0, 0.0));
+  const auto tran_weight(#select((int(mode) & int(scatter_transmit)), 1.0, 0.0));
+  return refl_weight / (refl_weight + tran_weight);
+}
 const float STABILITY_EPS = 0.0001;
 typedef $(color | float) color_or_float;
 typedef $(color | float | void) color_or_float_or_void;
@@ -43,11 +48,6 @@ typedef $(color | float | void) color_or_float_or_void;
   }
   return x * y;
 }
-@(pure macro) float scatter_reflect_chance(const scatter_mode mode) {
-  const auto refl_weight(#select((int(mode) & int(scatter_reflect)), 1.0, 0.0));
-  const auto tran_weight(#select((int(mode) & int(scatter_transmit)), 1.0, 0.0));
-  return refl_weight / (refl_weight + tran_weight);
-}
 @(pure noinline) float3x3 build_tbn(const float3 normal, const float3 tangent_u) {
   const float3 tw(normalize(normal) * #sign(normal.z));
   const float3 tu(normalize(tangent_u - dot(tangent_u, tw) * tw));
@@ -55,14 +55,14 @@ typedef $(color | float | void) color_or_float_or_void;
   return float3x3(tu, tv, tw);
 }
 struct eval_bsdf_parameters {
-  const float3 geometry_wo;
-  const float3 geometry_wi;
-  float3 wo = geometry_wo;
-  float3 wi = geometry_wi;
+  const float3 primary_wo;
+  const float3 primary_wi;
+  float3 wo = primary_wo;
+  float3 wi = primary_wi;
   float ior = 1.0 / 1.4;
   const bool thin_walled = false;
   const bool backface = false;
-  const scatter_mode mode = (geometry_wo.z < 0) == (geometry_wi.z < 0) ? scatter_reflect : scatter_transmit;
+  const scatter_mode mode = (primary_wo.z < 0) == (primary_wi.z < 0) ? scatter_reflect : scatter_transmit;
   float3 normal = state::normal();
   float3 tangent_u = state::texture_tangent_u(0);
 };
@@ -73,16 +73,16 @@ struct eval_bsdf_result {
 };
 @(pure noinline) bool perturb_tangent_space(inline const &eval_bsdf_parameters this) {
   const float3x3 tbn(build_tbn(normal, tangent_u));
-  wo = geometry_wo * tbn;
-  wi = geometry_wi * tbn;
-  return ((wo.z < 0) == (geometry_wo.z < 0)) & ((wi.z < 0) == (geometry_wi.z < 0));
+  wo = primary_wo * tbn;
+  wi = primary_wi * tbn;
+  return ((wo.z < 0) == (primary_wo.z < 0)) & ((wi.z < 0) == (primary_wi.z < 0));
 }
 @(pure macro) float3 get_half_direction(const &eval_bsdf_parameters this) {
   return (wh := normalize(this.mode == scatter_reflect ? this.wo + this.wi : -this.ior * this.wo + this.wi)) * #sign(wh.z);
 }
 struct eval_bsdf_sample_parameters {
-  const float3 geometry_wo;
-  float3 wo = geometry_wo;
+  const float3 primary_wo;
+  float3 wo = primary_wo;
   float4 xi;
   float ior = 1.0 / 1.4;
   const bool thin_walled = false;
@@ -97,8 +97,8 @@ struct eval_bsdf_sample_result {
 };
 @(pure noinline) ?float3x3 perturb_tangent_space(inline const &eval_bsdf_sample_parameters this) {
   const float3x3 tbn(build_tbn(normal, tangent_u));
-  wo = geometry_wo * tbn;
-  if ((wo.z < 0) == (geometry_wo.z < 0))
+  wo = primary_wo * tbn;
+  if ((wo.z < 0) == (primary_wo.z < 0))
     return tbn;
   return null;
 }
@@ -245,6 +245,14 @@ export struct sheen_bsdf: bsdf {
   if (!tbn)
     return eval_bsdf_sample_result();
   return eval_bsdf_sample_result(wi: (*tbn) * cosine_hemisphere_sample(params.xi.xy), mode: scatter_reflect);
+}
+export @(pure macro) auto backscattering_glossy_reflection_bsdf(
+    const float roughness_u,
+    const float roughness_v = roughness_u,
+    const color_or_float tint = 1.0,
+    const color_or_float_or_void multiscatter_tint = null,
+    const string handle = "") {
+  return sheen_bsdf(roughness: #sqrt(roughness_u * roughness_v), tint: tint, multiscatter_tint: multiscatter_tint);
 }
 tag microfacet_distribution;
 struct microfacet_distribution_ggx: default microfacet_distribution {};
@@ -607,8 +615,8 @@ export struct ward_geisler_moroder_bsdf: bsdf {
 @(pure macro) auto eval_bsdf(const auto this, const &eval_bsdf_parameters params, const float3 normal) {
   /*
   preserve wo, wi;
-  wo = geometry_wo;
-  wi = geometry_wi;
+  wo = primary_wo;
+  wi = primary_wi;
   perturb_normal(params, normal); */
   return eval_bsdf(this, params);
 }
@@ -665,7 +673,7 @@ export struct fresnel_layer: bsdf {
   ior = backface ? (1 / this.ior) : this.ior;
   const auto result0(eval_bsdf(&this.base, params));
   const auto result1(eval_bsdf(&this.layer, params, this.normal));
-  const auto F(schlick_F(auto(wo.z, wi.z, dot(wo, get_half_direction(params))), schlick_F0(ior)));
+  const auto F(schlick_fresnel(auto(wo.z, wi.z, dot(wo, get_half_direction(params))), schlick_F0(ior)));
   return eval_bsdf_result(
     pdf: lerp(result0.pdf, result1.pdf, this.weight * F.xy),
     f:   lerp(result0.f,   result1.f,   this.weight * F.z));
@@ -673,7 +681,7 @@ export struct fresnel_layer: bsdf {
 @(pure macro) auto eval_bsdf_sample(const &fresnel_layer this, inline const &eval_bsdf_sample_parameters params) {
   preserve ior;
   ior = backface ? (1 / this.ior) : this.ior;
-  return weighted_bool_sample(&xi.z, this.weight * schlick_F(wo.z, schlick_F0(ior)))
+  return weighted_bool_sample(&xi.z, this.weight * schlick_fresnel(wo.z, schlick_F0(ior)))
     ? eval_bsdf_sample(&this.layer, params, this.normal)
     : eval_bsdf_sample(&this.base, params);
 }
@@ -689,13 +697,13 @@ export struct custom_curve_layer: bsdf {
 @(pure macro) auto eval_bsdf(const &custom_curve_layer this, inline const &eval_bsdf_parameters params) {
   const auto result0(eval_bsdf(&this.base, params));
   const auto result1(eval_bsdf(&this.layer, params, this.normal));
-  const auto F(schlick_F(auto(wo.z, wi.z, dot(wo, get_half_direction(params))), this.normal_reflectivity, this.grazing_reflectivity, this.exponent));
+  const auto F(schlick_fresnel(auto(wo.z, wi.z, dot(wo, get_half_direction(params))), this.normal_reflectivity, this.grazing_reflectivity, this.exponent));
   return eval_bsdf_result(
     pdf: lerp(result0.pdf, result1.pdf, this.weight * F.xy),
     f:   lerp(result0.f,   result1.f,   this.weight * F.z));
 }
 @(pure macro) auto eval_bsdf_sample(const &custom_curve_layer this, const &eval_bsdf_sample_parameters params) {
-  return weighted_bool_sample(&params.xi.z, this.weight * schlick_F(params.wo.z, this.normal_reflectivity, this.grazing_reflectivity, this.exponent))
+  return weighted_bool_sample(&params.xi.z, this.weight * schlick_fresnel(params.wo.z, this.normal_reflectivity, this.grazing_reflectivity, this.exponent))
     ? eval_bsdf_sample(&this.layer, params, this.normal)
     : eval_bsdf_sample(&this.base, params);
 }
@@ -740,6 +748,11 @@ export struct fresnel_factor: bsdf {
   color extinction_coefficient;
   bsdf base = bsdf();
 };
+export struct thin_film: bsdf {
+  float thickness; 
+  color ior;
+  bsdf base = bsdf();
+};
 export struct directional_factor: bsdf {
   color_or_float normal_tint = 1.0;
   color_or_float grazing_tint = 1.0;
@@ -749,7 +762,7 @@ export struct directional_factor: bsdf {
 @(pure macro) auto eval_bsdf(const &directional_factor this, inline const &eval_bsdf_parameters params) {
   auto result = eval_bsdf(&this.base, params);
   if (!result.is_black && mode == scatter_reflect)
-    result.f *= schlick_F(dot(wo, get_half_direction(params)), this.normal_tint, this.grazing_tint, this.exponent);
+    result.f *= schlick_fresnel(dot(wo, get_half_direction(params)), this.normal_tint, this.grazing_tint, this.exponent);
   return result;
 }
 @(pure macro) auto eval_bsdf_sample(const &directional_factor this, inline const &eval_bsdf_parameters params) {
@@ -869,15 +882,15 @@ export @(macro) int material__eval_bsdf(
     const &material this, const &float3 wo, const &float3 wi,  
     const &float pdf_fwd, const &float pdf_rev, const &color f) {
   auto ior(1 / 1.4); 
-  auto geometry_wo(normalize(state::transform_vector(state::coordinate_object, state::coordinate_internal, *wo)));
-  auto geometry_wi(normalize(state::transform_vector(state::coordinate_object, state::coordinate_internal, *wi)));
-  auto backface(geometry_wo.z < 0);
+  auto primary_wo(normalize(state::transform_vector(state::coordinate_object, state::coordinate_internal, *wo)));
+  auto primary_wi(normalize(state::transform_vector(state::coordinate_object, state::coordinate_internal, *wi)));
+  auto backface(primary_wo.z < 0);
   if (backface) {
-    geometry_wo = -geometry_wo;
-    geometry_wi = -geometry_wi;
+    primary_wo = -primary_wo;
+    primary_wi = -primary_wi;
     ior = 1 / ior;
   }
-  auto params(eval_bsdf_parameters(geometry_wo: geometry_wo, geometry_wi: geometry_wi, ior: ior, thin_walled: this.thin_walled, backface: backface, normal: this.geometry.normal));
+  auto params(eval_bsdf_parameters(primary_wo: primary_wo, primary_wi: primary_wi, ior: ior, thin_walled: this.thin_walled, backface: backface, normal: this.geometry.normal));
   auto result(return_from {
     if (#typeof(this.backface) != #typeof(material_surface()) && backface) 
       return eval_bsdf(&this.backface.scattering, &params);
@@ -899,13 +912,13 @@ export @(macro) int material__eval_bsdf_sample(
     const &material this, const &float4 xi, const &float3 wo, 
     const &float3 wi, const &float pdf_fwd, const &float pdf_rev, const &color f, const &int is_delta) {
   auto ior(1 / 1.4); 
-  auto geometry_wo(normalize(state::transform_vector(state::coordinate_object, state::coordinate_internal, *wo)));
-  auto backface(geometry_wo.z < 0);
+  auto primary_wo(normalize(state::transform_vector(state::coordinate_object, state::coordinate_internal, *wo)));
+  auto backface(primary_wo.z < 0);
   if (backface) {
-    geometry_wo = -geometry_wo;
+    primary_wo = -primary_wo;
     ior = 1 / ior;
   }
-  auto sample_params(eval_bsdf_sample_parameters(geometry_wo: geometry_wo, xi: *xi, thin_walled: this.thin_walled, backface: backface));
+  auto sample_params(eval_bsdf_sample_parameters(primary_wo: primary_wo, xi: *xi, thin_walled: this.thin_walled, backface: backface));
   auto sample_result(return_from {
     if (#typeof(this.backface) != #typeof(material_surface()) && backface)
       return eval_bsdf_sample(&this.backface.scattering, &sample_params);
@@ -913,10 +926,10 @@ export @(macro) int material__eval_bsdf_sample(
       return eval_bsdf_sample(&this.surface.scattering, &sample_params);
   });
   return false if (sample_result.mode == scatter_none);
-  auto geometry_wi(normalize(sample_result.wi));
-  const auto mode((geometry_wo.z < 0) == (geometry_wi.z < 0) ? scatter_reflect : scatter_transmit);
+  auto primary_wi(normalize(sample_result.wi));
+  const auto mode((primary_wo.z < 0) == (primary_wi.z < 0) ? scatter_reflect : scatter_transmit);
   return false if (mode != sample_result.mode);
-  *wi = normalize(state::transform_vector(state::coordinate_internal, state::coordinate_object, geometry_wi));
+  *wi = normalize(state::transform_vector(state::coordinate_internal, state::coordinate_object, primary_wi));
   *wi = -*wi if (backface);
   if (sample_result.delta_f) {
     *pdf_fwd = 1.0;
@@ -924,7 +937,7 @@ export @(macro) int material__eval_bsdf_sample(
     *f = *sample_result.delta_f;
     *is_delta = true;
   } else {
-    auto params(eval_bsdf_parameters(geometry_wo: geometry_wo, geometry_wi: geometry_wi, ior: ior, thin_walled: this.thin_walled, backface: backface));
+    auto params(eval_bsdf_parameters(primary_wo: primary_wo, primary_wi: primary_wi, ior: ior, thin_walled: this.thin_walled, backface: backface));
     auto result(return_from {
       if (#typeof(this.backface) != #typeof(material_surface()) && backface)
         return eval_bsdf(&this.backface.scattering, &params);
@@ -1342,7 +1355,7 @@ export @(pure) float2 uniform_disk_sample(float2 xi) {
 export @(pure) float3 cosine_hemisphere_sample(float2 xi) = float3((p := uniform_disk_sample(xi)), #sqrt(#max(1 - #sum(p * p), 0)));
 )*";
 
-static const char *quaternion = R"*(#smdl_syntax
+static const char *quat = R"*(#smdl_syntax
 using ::math import *;
 export @(pure macro) float4 quat_rotate(const float theta, const float3 v) = float4(#sin(theta / 2) * normalize(v), #cos(theta / 2));
 export @(pure macro) float4 quat_rotate(const float3 u, const float3 v) = normalize(float4(cross(u, v), 1 + dot(u, v)));
@@ -1494,22 +1507,18 @@ static const char *specular = R"*(#smdl_syntax
 export @(pure macro) auto reflect(const float3 wi, const float3 wm) = 2 * #sum(wi * wm) * wm - wi;
 export @(pure macro) auto refract(const float3 wi, const float3 wm, const float ior, const float cos_thetat) = -ior * wi + (ior * #sum(wi * wm) + cos_thetat) * wm;
 export @(pure macro) auto refract(const float3 wi, const float3 wm, const float ior) {
-  const auto cos_thetai(#sum(wi * wm));
-  const auto cos_thetat(#sqrt(1 - ior * ior * (1 - cos_thetai * cos_thetai)));
-  return refract(wi, wm, ior, cos_thetat * -#sign(cos_thetai));
+  return refract(wi, wm, ior, #sqrt(1 - ior * ior * (1 - (cos_thetai := #sum(wi * wm)) * cos_thetai)) * -#sign(cos_thetai));
 }
-export @(pure macro) auto refraction_half_vector(const float3 wo, const float3 wi, const float ior) {
-  float3 wm = -ior * wo + wi; 
-  return wm * #sign(wm.z);
-}
+export @(pure macro) auto refraction_half_vector(const float3 wo, const float3 wi, const float ior) = (vh := -ior * wo + wi) * #sign(vh.z);
 export @(pure macro) auto refraction_half_vector_jacobian(const float3 wo, const float3 wi, const float ior) {
   return #abs(#sum(wi * (vh := refraction_half_vector(wo, wi, ior)))) / ((vh2 := #sum(vh * vh)) * #sqrt(vh2));
 }
 export @(pure macro) auto schlick_F0(const auto ior) = #pow((ior - 1) / (ior + 1), 2);
-export @(pure macro) auto schlick_factor(const auto cos_theta) = #pow(#max(1 - #abs(cos_theta), 0), 5);
-export @(pure macro) auto schlick_factor(const auto cos_theta, const auto exponent) = #pow(#max(1 - #abs(cos_theta), 0), exponent);
-export @(pure macro) auto schlick_F(const auto cos_theta, const auto F0, const auto F90 = 1.0) = F0 + (F90 - F0) * schlick_factor(cos_theta);
-export @(pure macro) auto schlick_F(const auto cos_theta, const auto F0, const auto F90, const float exponent) = F0 + (F90 - F0) * schlick_factor(cos_theta, exponent);
+export @(pure macro) auto schlick_fresnel(
+    const auto cos_theta,
+    const auto F0, 
+    const auto F90 = 1.0,
+    const float exponent = 5) = F0 + (F90 - F0) * #pow(#max(1 - #abs(cos_theta), 0), exponent);
 )*";
 
 [[nodiscard]] static const char *get_src(auto name) {
@@ -1531,8 +1540,8 @@ export @(pure macro) auto schlick_F(const auto cos_theta, const auto F0, const a
     return tex;
   if (name == "monte_carlo")
     return monte_carlo;
-  if (name == "quaternion")
-    return quaternion;
+  if (name == "quat")
+    return quat;
   if (name == "rgb")
     return rgb;
   if (name == "specular")

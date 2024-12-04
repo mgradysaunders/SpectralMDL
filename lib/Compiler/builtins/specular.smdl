@@ -5,15 +5,10 @@ export @(pure macro) auto reflect(const float3 wi, const float3 wm) = 2 * #sum(w
 export @(pure macro) auto refract(const float3 wi, const float3 wm, const float ior, const float cos_thetat) = -ior * wi + (ior * #sum(wi * wm) + cos_thetat) * wm;
 
 export @(pure macro) auto refract(const float3 wi, const float3 wm, const float ior) {
-  const auto cos_thetai(#sum(wi * wm));
-  const auto cos_thetat(#sqrt(1 - ior * ior * (1 - cos_thetai * cos_thetai)));
-  return refract(wi, wm, ior, cos_thetat * -#sign(cos_thetai));
+  return refract(wi, wm, ior, #sqrt(1 - ior * ior * (1 - (cos_thetai := #sum(wi * wm)) * cos_thetai)) * -#sign(cos_thetai));
 }
 
-export @(pure macro) auto refraction_half_vector(const float3 wo, const float3 wi, const float ior) {
-  float3 wm = -ior * wo + wi; 
-  return wm * #sign(wm.z);
-}
+export @(pure macro) auto refraction_half_vector(const float3 wo, const float3 wi, const float ior) = (vh := -ior * wo + wi) * #sign(vh.z);
 
 export @(pure macro) auto refraction_half_vector_jacobian(const float3 wo, const float3 wi, const float ior) {
   return #abs(#sum(wi * (vh := refraction_half_vector(wo, wi, ior)))) / ((vh2 := #sum(vh * vh)) * #sqrt(vh2));
@@ -21,10 +16,29 @@ export @(pure macro) auto refraction_half_vector_jacobian(const float3 wo, const
 
 export @(pure macro) auto schlick_F0(const auto ior) = #pow((ior - 1) / (ior + 1), 2);
 
-export @(pure macro) auto schlick_factor(const auto cos_theta) = #pow(#max(1 - #abs(cos_theta), 0), 5);
+export @(pure macro) auto schlick_fresnel(
+    const auto cos_theta,
+    const auto F0, 
+    const auto F90 = 1.0,
+    const float exponent = 5) = F0 + (F90 - F0) * #pow(#max(1 - #abs(cos_theta), 0), exponent);
 
-export @(pure macro) auto schlick_factor(const auto cos_theta, const auto exponent) = #pow(#max(1 - #abs(cos_theta), 0), exponent);
+// TODO Fresnel equations
+/*
+  Fresnel(auto cosThetaI, std::complex<float> eta)
+      : eta(eta), cosThetaI(cosThetaI),
+        cosThetaT(std::copysign(1.0f, cosThetaI) * std::sqrt(1.0f - eta * eta * (1.0f - cosThetaI * cosThetaI))),
+        Rs((eta * cosThetaI - cosThetaT) / (eta * cosThetaI + cosThetaT)),
+        Rp((cosThetaI - eta * cosThetaT) / (cosThetaI + eta * cosThetaT)), Ts((1.0f + Rs)), Tp((1.0f + Rp) * eta) {}
 
-export @(pure macro) auto schlick_F(const auto cos_theta, const auto F0, const auto F90 = 1.0) = F0 + (F90 - F0) * schlick_factor(cos_theta);
+  [[nodiscard]] float power_Rs() const { return std::norm(Rs); }
 
-export @(pure macro) auto schlick_F(const auto cos_theta, const auto F0, const auto F90, const float exponent) = F0 + (F90 - F0) * schlick_factor(cos_theta, exponent);
+  [[nodiscard]] float power_Rp() const { return std::norm(Rp); }
+
+  [[nodiscard]] float power_Ts() const { return std::norm(Ts) * std::abs(cosThetaT / (eta * cosThetaI)); }
+
+  [[nodiscard]] float power_Tp() const { return std::norm(Tp) * std::abs(cosThetaT / (eta * cosThetaI)); }
+
+  [[nodiscard]] float power_R() const { return (power_Rs() + power_Rp()) / 2; }
+
+  [[nodiscard]] float power_T() const { return (power_Ts() + power_Tp()) / 2; }
+ */
