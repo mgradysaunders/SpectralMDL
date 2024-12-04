@@ -18,7 +18,7 @@ float scatter_reflect_chance(const scatter_mode mode) {
   const auto tran_weight(#select((int(mode) & int(scatter_transmit)), 1.0, 0.0));
   return refl_weight / (refl_weight + tran_weight);
 }
-const float STABILITY_EPS = 0.0001;
+const float STABILITY_EPS = 0.001;
 const float DEFAULT_IOR = 1 / 1.4;
 typedef $(color | float) color_or_float;
 typedef $(color | float | void) color_or_float_or_void;
@@ -247,9 +247,9 @@ auto evaluate_bsdf(const &sheen_bsdf this, inline const &evaluate_bsdf_parameter
           fit = fit * roughness + float4( 8.6410438e-01,  6.1500189e-03,  1.3796256e-03,  7.5187484e-02);
           return fit;
         });
-        const auto Ewo(fit[0] * #pow(1.0 / (1.0 + fit[1] * cos_thetao), 1.0 / fit[2]));
-        const auto Ewi(fit[0] * #pow(1.0 / (1.0 + fit[1] * cos_thetai), 1.0 / fit[2]));
-        const auto Eav(fit[3]);
+        const auto Ewo(#min(fit[0] * #pow(1.0 / (1.0 + fit[1] * cos_thetao), 1.0 / fit[2]), 0.999));
+        const auto Ewi(#min(fit[0] * #pow(1.0 / (1.0 + fit[1] * cos_thetai), 1.0 / fit[2]), 0.999));
+        const auto Eav(#min(fit[3], 0.999));
       } in (1 - Ewo) * (1 - Ewi) / (1 - Eav) * cos_thetai / $PI);
       return evaluate_bsdf_result(pdf: pdf, f: this.tint * (fss + this.multiscatter_tint * fms));
     }
@@ -692,17 +692,28 @@ export struct fresnel_layer: bsdf {
 auto evaluate_bsdf(const &fresnel_layer this, inline const &evaluate_bsdf_parameters params) {
   preserve ior;
   ior = backface ? (1 / this.ior) : this.ior;
+  const float cos_thetao(dot(wo, this.normal) * #sign(this.normal.z));
+  const float cos_thetai(dot(wi, this.normal) * #sign(this.normal.z));
+  if (cos_thetao < STABILITY_EPS)
+    return evaluate_bsdf_result(is_black: true);
+  if (mode == scatter_reflect && cos_thetai < STABILITY_EPS)
+    return evaluate_bsdf_result(is_black: true);
+  if (mode == scatter_transmit && cos_thetai > -STABILITY_EPS)
+    return evaluate_bsdf_result(is_black: true);
   const auto result0(evaluate_bsdf(&this.base, params));
   const auto result1(evaluate_bsdf(&this.layer, params, this.normal));
   return evaluate_bsdf_result(
-    pdf: lerp(result0.pdf, result1.pdf, this.weight * schlick_fresnel(float2(wo.z, wi.z), schlick_F0(ior))),
+    pdf: lerp(result0.pdf, result1.pdf, this.weight * schlick_fresnel(float2(cos_thetao, cos_thetai), schlick_F0(ior))),
     f:   lerp(result0.f,   result1.f,   this.weight * dielectric_fresnel(dot(wo, half_direction(params)), ior)));
 }
 @(macro)
 auto evaluate_bsdf_sample(const &fresnel_layer this, inline const &evaluate_bsdf_sample_parameters params) {
   preserve ior;
   ior = backface ? (1 / this.ior) : this.ior;
-  float chance(this.weight * schlick_fresnel(wo.z, schlick_F0(ior)));
+  const float cos_theta(dot(wo, this.normal) * #sign(this.normal.z));
+  if (cos_theta < STABILITY_EPS)
+    return evaluate_bsdf_sample_result();
+  float chance(this.weight * schlick_fresnel(cos_theta, schlick_F0(ior)));
   if (weighted_bool_sample(&xi.z, chance)) {
     auto result(evaluate_bsdf_sample(&this.layer, params, this.normal));
     *result.delta_f *= (this.weight * dielectric_fresnel(dot(wo, normalize(wo + result.wi)), ior) / chance) if (result.delta_f);
