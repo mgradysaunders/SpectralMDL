@@ -784,6 +784,7 @@ StructType::StructType(Context &context, builtin_struct_type_t<material_t>) : Ty
   init_builtin_field(context, fields, context.get_color_type(), "ior", "color(1.0)"); // TODO $(color | float)?
   init_builtin_field(context, fields, context.get_material_volume_type(), "volume", "material_volume()");
   init_builtin_field(context, fields, context.get_material_geometry_type(), "geometry", "material_geometry()");
+  init_builtin_field(context, fields, context.get_hair_bsdf_type(), "hair", "hair_bsdf()");
 }
 
 template <typename S, typename T> static void init_builtin_field(auto &context, auto &fields, const char *name, T S:: *) {
@@ -938,6 +939,8 @@ Value StructType::construct(Emitter &emitter, const ArgList &args, const AST::So
     }
   }
   if (is_string()) {
+    if (args.empty())
+      return Value::zero(this);
     if (args.is_one_positional()) {
       if (args[0].value.type->is_enum()) {
         auto enumType{static_cast<EnumType *>(args[0].value.type)};

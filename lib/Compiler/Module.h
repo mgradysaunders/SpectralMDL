@@ -14,7 +14,7 @@ public:
         text(llvm_throw_if_error(llvm::MemoryBuffer::getFile(this->path, /*isText=*/true))) {}
 
   explicit Module(llvm::StringRef name, llvm::StringRef text)
-      : path(std::format("(builtin {})", name)), name(name.str()), text(llvm::MemoryBuffer::getMemBuffer(text)) {}
+      : name(name.str()), text(llvm::MemoryBuffer::getMemBuffer(text)) {}
 
   Module(const Module &) = delete;
 
@@ -23,6 +23,12 @@ public:
   void parse(Context &context);
 
   void emit(Context &context);
+
+  [[nodiscard]] std::filesystem::path directory_path() const {
+    if (path.empty())
+      return {};
+    return std::filesystem::path(path).parent_path();
+  }
 
 public:
   /// The file path. This is empty if the module is builtin.

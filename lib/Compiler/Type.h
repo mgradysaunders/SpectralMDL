@@ -188,7 +188,6 @@ public:
     return const_cast<Type *>(this)->get_visit_union_type() != nullptr;
   }
 
-
 public:
   //--{ Kind checks
   [[nodiscard]] bool is_array() const { return kind == TypeKind::Array; }

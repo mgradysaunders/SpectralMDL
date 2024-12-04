@@ -176,14 +176,14 @@ AST::Expr *Context::parse_expression(const llvm::Twine &srcTwine) {
   auto src{get_persistent_string(srcTwine)};
   auto &expr{builtinExpressions[src]};
   if (!expr)
-    expr = Parser(bumpAllocator, "(builtin expression)", src, /*isExtendedSyntax=*/true).parse_expression();
+    expr = Parser(bumpAllocator, "(expr)", src, /*isExtendedSyntax=*/true).parse_expression();
   return expr.get();
 }
 
 AST::Decl *Context::parse_declaration(const llvm::Twine &srcTwine) {
   auto src{get_persistent_string(srcTwine)};
   auto &decl{builtinDeclarations.emplace_back(
-      Parser(bumpAllocator, "(builtin declaration)", src, /*isExtendedSyntax=*/true).parse_global_declaration())};
+      Parser(bumpAllocator, "(decl)", src, /*isExtendedSyntax=*/true).parse_global_declaration())};
   return decl.get();
 }
 
@@ -489,17 +489,14 @@ Module *Context::get_builtin_module(llvm::StringRef name) {
 Value Context::resolve(Emitter &emitter, bool isAbs, llvm::ArrayRef<llvm::StringRef> names, const AST::SourceLocation &srcLoc) {
   if (names.size() == 1) {
     auto name{names[0]};
-    if (emitter.module->isExtendedSyntax) {
-      if (name == "$data") {
-        return get_compile_time_pointer(mdl.dataLookup.get());
-      }
-      if (name == "$state") {
-        if (!emitter.state)
-          srcLoc.report_error(
-              !emitter.get_llvm_function() ? "'$state' is unavailable at module scope"
-                                           : "'$state' is unavailable in '@(pure)' function");
-        return emitter.state;
-      }
+    if (name == "$data") {
+      return get_compile_time_pointer(mdl.dataLookup.get());
+    } else if (name == "$state") {
+      if (!emitter.state)
+        srcLoc.report_error(
+            !emitter.get_llvm_function() ? "'$state' is unavailable at module scope"
+                                         : "'$state' is unavailable in '@(pure)' function");
+      return emitter.state;
     }
     // Resolve types
     if (auto itr{keywordConstants.find(name)}; itr != keywordConstants.end())
@@ -587,6 +584,7 @@ llvm::SmallVector<Value> Context::resolve_arguments(
   if (!dontEmit) {
     Emitter emitter1{&emitter0};
     emitter1.move_to(emitter0.get_insert_block());
+    emitter1.module = params.module ? params.module : emitter0.module;
     emitter1.crumb = params.crumb;
     for (size_t i{}; i < params.size(); i++) {
       auto &param{params[i]};
@@ -606,18 +604,33 @@ Module *Context::resolve_module(
   auto fullPath{llvm::SmallVector<llvm::StringRef>{}};
   resolve_using_aliases(emitter.crumb, path, fullPath);
   if (!isAbs) {
+    if (fullPath.size() > 1 && (fullPath[0] == "." || fullPath[0] == "..")) {
+      auto dirPath{emitter.module->directory_path()};
+      for (unsigned int i = 0; i + 1 < fullPath.size(); i++)
+        dirPath.append(std::string_view(fullPath[i]));
+      dirPath = dirPath.lexically_normal();
+      for (auto &mod : mdl.modules) {
+        if (mod.get() != emitter.module && mod->name == fullPath.back() && !mod->path.empty()) {
+          std::error_code ec{};
+          if (std::filesystem::equivalent(mod->directory_path(), dirPath, ec)) {
+            mod->emit(*this);
+            return mod.get();
+          }
+        }
+      }
+    }
     if (fullPath.size() == 1) {
-      for (auto &module : mdl.modules) {
-        if (module.get() != emitter.module && module->name == fullPath[0]) {
-          module->emit(*this);
-          return module.get();
+      for (auto &mod : mdl.modules) {
+        if (mod.get() != emitter.module && mod->name == fullPath[0]) {
+          mod->emit(*this);
+          return mod.get();
         }
       }
     }
   }
   if (fullPath.size() == 1) {
-    if (auto builtinModule{get_builtin_module(fullPath[0])})
-      return builtinModule;
+    if (auto mod{get_builtin_module(fullPath[0])})
+      return mod;
   }
   srcLoc.report_error(std::format("can't resolve module '{}'", format_join(path, "::")));
   return nullptr;

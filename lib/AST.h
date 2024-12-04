@@ -186,9 +186,19 @@ public:
   unique_bump_ptr<Identifier> identifier{};
 
   ArgList args{};
+
+  /// MaterialX uses '[[ anno::noinline() ]]' to indicate functions that should not be inlined.
+  [[nodiscard]] bool is_noinline() const {
+    return identifier && identifier->names.size() == 2 && identifier->names[0]->name == "anno" &&
+           identifier->names[1]->name == "noinline";
+  }
 };
 
 using AnnotationBlock = llvm::SmallVector<Annotation>;
+
+[[nodiscard]] inline bool has_annotation(const AnnotationBlock &annotations, auto &&pred) {
+  return std::find_if(annotations.begin(), annotations.end(), std::forward<decltype(pred)>(pred)) != annotations.end();
+}
 
 class Type final : public ExprSubclass<ExprKind::Type> {
 public:
@@ -653,7 +663,15 @@ public:
       std::optional<AnnotationBlock> lateAnnotations, unique_bump_ptr<Node> definition)
       : attrs(attrs), isVariant(isVariant), returnType(std::move(returnType)), earlyAnnotations(std::move(earlyAnnotations)),
         name(std::move(name)), params(std::move(params)), frequency(frequency), lateAnnotations(std::move(lateAnnotations)),
-        definition(std::move(definition)) {}
+        definition(std::move(definition)) {
+    // MaterialX uses '[[ anno::noinline() ]]' to indicate functions that should not be inlined.
+    auto hasNoInlineAnnotation{[](const auto &annotations) {
+      return has_annotation(annotations, [](const auto &annotation) { return annotation.is_noinline(); });
+    }};
+    if ((this->earlyAnnotations && hasNoInlineAnnotation(*this->earlyAnnotations)) ||
+        (this->lateAnnotations && hasNoInlineAnnotation(*this->lateAnnotations)))
+      const_cast<Attrs &>(this->attrs).isNoInline = true;
+  }
 
   struct LetAndCall final {
     /// The let expression. This may be null.

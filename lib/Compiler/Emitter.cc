@@ -33,6 +33,7 @@ void Emitter::declare_import(bool isAbs, llvm::ArrayRef<llvm::StringRef> path, A
     decl.srcLoc.report_error("invalid import path (missing '::*'?)");
   auto importedModule{context.resolve_module(*this, isAbs, path.drop_back(1), decl.srcLoc)};
   if (path.back() == "*") { // Import all?
+    path = path.drop_while([](llvm::StringRef part) { return part == "." || part == ".."; });
     push(context.get_compile_time_module(importedModule), context.bump_duplicate(path.drop_back(1)), &decl, decl.srcLoc);
   } else {
     auto importedCrumb{Crumb::find(importedModule->lastCrumb, path.back(), get_llvm_function(), 1)};
@@ -345,13 +346,15 @@ Value Emitter::emit(AST::Conditional &expr) {
   // Back-track and cast results to common type.
   auto kind{Value::Kind::LValue};
   auto type{context.get_common_type({valuePass.type, valueFail.type}, /*defaultToUnion=*/true, expr.srcLoc)};
-  if (!(valuePass.type == valueFail.type && valuePass.is_lvalue() && valueFail.is_lvalue())) {
+  if (valuePass.type == valueFail.type && valuePass.is_lvalue() && valueFail.is_lvalue()) {
+    // If both lvalues of identical type, preserve the lvalue-ness.
+    builder.restoreIP(valuePassIP), blockPass = get_insert_block(), emit_br(blockEnd);
+    builder.restoreIP(valueFailIP), blockFail = get_insert_block(), emit_br(blockEnd);
+  } else {
+    // Otherwise, construct an rvalue of the common type.
     builder.restoreIP(valuePassIP), valuePass = construct(type, valuePass), blockPass = get_insert_block(), emit_br(blockEnd);
     builder.restoreIP(valueFailIP), valueFail = construct(type, valueFail), blockFail = get_insert_block(), emit_br(blockEnd);
     kind = Value::Kind::RValue;
-  } else {
-    builder.restoreIP(valuePassIP), emit_br(blockEnd);
-    builder.restoreIP(valueFailIP), emit_br(blockEnd);
   }
   llvm_move_block_to_end(blockEnd);
   move_to(blockEnd);

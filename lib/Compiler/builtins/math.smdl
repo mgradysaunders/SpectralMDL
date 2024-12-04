@@ -34,6 +34,8 @@ export @(pure macro) auto frac(const auto a) = a - #floor(a);
 
 export @(pure macro) auto fmod(const auto a, const auto b) = a % b;
 
+// TODO modf
+
 export @(pure macro) auto isfinite(const auto a) = #isfpclass(a, 0b0111111000);
 
 export @(pure macro) auto isnormal(const auto a) = #isfpclass(a, 0b0100001000);
@@ -41,6 +43,14 @@ export @(pure macro) auto isnormal(const auto a) = #isfpclass(a, 0b0100001000);
 export @(pure macro) auto isinf(const auto a) = #isfpclass(a, 0b1000000100);
 
 export @(pure macro) auto isnan(const auto a) = #isfpclass(a, 0b0000000011);
+
+export @(pure macro) auto sign(const auto a) = #sign(a);
+
+export @(pure macro) auto sqrt(const auto a) = #sqrt(a);
+
+export @(pure macro) auto rsqrt(const auto a) = 1.0 / #sqrt(a);
+
+export @(pure macro) auto pow(const auto a, const auto b) = #pow(a, b);
 
 export @(pure macro) auto cos(const auto a) = #cos(a);
 
@@ -59,8 +69,6 @@ export @(pure macro) auto cosh(const auto a) = #cosh(a);
 export @(pure macro) auto sinh(const auto a) = #sinh(a);
 
 export @(pure macro) auto tanh(const auto a) = #tanh(a);
-
-export @(pure macro) auto atan2(const auto y, const auto x) = #atan2(y, x);
 
 export @(pure macro) auto sincos(const auto a) = auto[2](#sin(a), #cos(a));
 
@@ -84,6 +92,10 @@ export @(pure macro) auto min_value(const auto a) = #min_value(a);
 
 export @(pure macro) auto max_value(const auto a) = #max_value(a);
 
+// TODO min_value_wavelength
+
+// TODO max_value_wavelength
+
 export @(pure macro) auto lerp(const auto a, const auto b, const auto l) = (1.0 - l) * a + l * b;
 
 export @(pure macro) auto step(const auto a, const auto b) = #select(b < a, 0.0, 1.0);
@@ -103,17 +115,15 @@ export @(pure macro) auto distance(const auto a, const auto b) = length(b - a);
 
 export @(pure macro) auto cross(const auto a, const auto b) = a.yzx * b.zxy - a.zxy * b.yzx;
 
-// TODO min_value_wavelength
+export @(pure macro) auto transpose(const auto a) = #transpose(a);
 
-// TODO max_value_wavelength
-
-// The blackbody implementation below is a series expansion of this:
-// ~~~
+// The implementation below is a series expansion of this:
+// ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 // const auto t(color($state.wavelength_base) * temperature);
 // const auto numer(#pow(2897.7719e3 / t, 5));
 // const auto denom(#exp(14.387773e6 / t) - 1.0);
 // return 142.3251316 * numer / denom;
-// ~~~
+// ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 // At 16 wavelengths, the series expansion is around 2x faster. For more wavelengths,
 // the performance difference only becomes more exaggerated.
 export @(noinline) color blackbody(const float temperature) {
@@ -141,3 +151,13 @@ export @(noinline) float luminance(const color a) {
 // TODO
 // export float luminance(const float3 a) {
 // }
+
+@(pure foreign) float atan2f(float y, float x); // TODO No #atan2 yet
+
+export @(pure macro) auto atan2(const float y, const float x) = atan2f(y, x);
+
+export @(pure macro) auto atan2(const float2 y, const float2 x) = float2(atan2(y[0], x[0]), atan2(y[1], x[1]));
+
+export @(pure macro) auto atan2(const float3 y, const float3 x) = float3(atan2(y[0], x[0]), atan2(y[1], x[1]), atan2(y[2], x[2]));
+
+export @(pure macro) auto atan2(const float4 y, const float4 x) = float4(atan2(y[0], x[0]), atan2(y[1], x[1]), atan2(y[2], x[2]), atan2(y[3], x[3]));

@@ -8,7 +8,7 @@ namespace smdl::Compiler {
 
 void Module::parse(Context &context) {
   sanity_check(text != nullptr);
-  auto parser{Parser(context.bumpAllocator, path, text->getBuffer())};
+  auto parser{Parser(context.bumpAllocator, !path.empty() ? path.c_str() : name.c_str(), text->getBuffer())};
   root = parser.parse();
   isExtendedSyntax = parser.is_extended_syntax();
 }

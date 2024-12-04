@@ -60,6 +60,14 @@ namespace smdl {
 
 [[noreturn]] void sanity_check_failure(const char *file, int line, const char *cond, std::string_view more = {});
 
+[[nodiscard]] inline std::filesystem::path canonicalize(const std::filesystem::path &path) {
+  std::error_code ec{};
+  auto canonicalPath{std::filesystem::canonical(path, ec)};
+  if (ec)
+    throw Error(std::format("can't canonicalize path: {} ({})", path.string(), ec.message()));
+  return canonicalPath;
+}
+
 llvm::StringRef llvm_get_native_target_triple();
 
 llvm::TargetMachine *llvm_get_native_target_machine();

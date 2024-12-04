@@ -1,0 +1,4 @@
+#smdl_syntax
+
+export using ..::package2::bar import message;
+

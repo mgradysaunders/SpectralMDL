@@ -328,6 +328,7 @@ Value Function::call(Emitter &emitter0, const ArgList &args, const AST::SourceLo
       llvm::SmallVector<Return> returns{};
       {
         Emitter emitter1{&emitter0};
+        emitter1.module = overload.decl.module;
         emitter1.crumb = overload.decl.crumb;
         emitter1.state = overload.is_pure() ? Value() : emitter0.state;
         emitter1.returns = &returns;

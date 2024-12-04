@@ -13,14 +13,6 @@
 
 namespace smdl {
 
-static std::filesystem::path canonicalize(const std::filesystem::path &path) {
-  std::error_code errorCode{};
-  auto canonicalPath{std::filesystem::canonical(path, errorCode)};
-  if (errorCode)
-    throw Error(std::format("can't canonicalize path: {} ({})", path.string(), errorCode.message()));
-  return canonicalPath;
-}
-
 MDLInstance::MDLInstance(uint32_t wavelengthBaseMax) : wavelengthBaseMax(wavelengthBaseMax) {
   llvm::ExitOnError exitOnError;
   auto llvmContext{std::make_unique<llvm::LLVMContext>()};

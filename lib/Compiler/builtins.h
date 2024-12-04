@@ -2,6 +2,9 @@
 
 namespace smdl::Compiler::builtins {
 
+static const char *anno = R"*(#smdl_syntax
+)*";
+
 static const char *df = R"*(
 #smdl_syntax
 using ::math import *;
@@ -76,7 +79,6 @@ bool perturb_tangent_space(inline const &evaluate_bsdf_parameters this) {
 float3 half_direction(inline const &evaluate_bsdf_parameters this) {
   return normalize(mode == scatter_reflect ? wo + wi : refraction_half_vector(wo, wi, ior));
 }
-@(pure foreign) float atan2f(float y, float x); 
 @(pure foreign) float erff(float x);
 @(pure foreign) float erfcf(float x);
 @(pure foreign) float lgammaf(float x);
@@ -615,7 +617,7 @@ export struct ward_geisler_moroder_bsdf: bsdf {
     auto wo(params.wo);
     const auto roughness(saturate(float2(this.roughness_u, this.roughness_v)));
     const auto alpha(#max(0.001, #pow(roughness, 2)));
-    const auto phi(atan2f(alpha.y * #sin(t := $TWO_PI * params.xi.x), alpha.x * #cos(t)));
+    const auto phi(atan2(alpha.y * #sin(t := $TWO_PI * params.xi.x), alpha.x * #cos(t)));
     const auto cos_phi(#cos(phi)); 
     const auto sin_phi(#sin(phi));
     const auto theta(#atan(#sqrt(-#log(1 - params.xi.y) / (#pow(cos_phi / alpha.x, 2) + #pow(sin_phi / alpha.y, 2)))));
@@ -792,7 +794,7 @@ export struct directional_factor: bsdf {
   return result;
 }
 @(pure macro) auto evaluate_bsdf_sample(const &directional_factor this, inline const &evaluate_bsdf_parameters params) {
-  return evaluate_bsdf_sample(&this.base, params);
+  return evaluate_bsdf_sample(&this.base, params); 
 }
 tag component;
 export struct bsdf_component: component {
@@ -903,6 +905,20 @@ export struct color_edf_component: color_component {
   color weight    = color(0.0);
   edf   component = edf();
   float chance    = average(weight); 
+};
+export struct diffuse_edf: edf {
+  void string handle = "";
+};
+export struct spot_edf: edf {
+  float exponent;
+  float spread = $PI;
+  bool global_distribution = true;
+  float3x3 global_frame = float3x3(1.0);
+  void string handle = "";
+};
+export struct anisotropic_vdf: vdf {
+  float directional_bias = 0.0;
+  void string handle = "";
 };
 export @(macro) int material__evaluate_bsdf(
     const &material this, const &float3 wo, const &float3 wi,  
@@ -1026,6 +1042,10 @@ export @(pure macro) auto isfinite(const auto a) = #isfpclass(a, 0b0111111000);
 export @(pure macro) auto isnormal(const auto a) = #isfpclass(a, 0b0100001000);
 export @(pure macro) auto isinf(const auto a) = #isfpclass(a, 0b1000000100);
 export @(pure macro) auto isnan(const auto a) = #isfpclass(a, 0b0000000011);
+export @(pure macro) auto sign(const auto a) = #sign(a);
+export @(pure macro) auto sqrt(const auto a) = #sqrt(a);
+export @(pure macro) auto rsqrt(const auto a) = 1.0 / #sqrt(a);
+export @(pure macro) auto pow(const auto a, const auto b) = #pow(a, b);
 export @(pure macro) auto cos(const auto a) = #cos(a);
 export @(pure macro) auto sin(const auto a) = #sin(a);
 export @(pure macro) auto tan(const auto a) = #tan(a);
@@ -1035,7 +1055,6 @@ export @(pure macro) auto atan(const auto a) = #atan(a);
 export @(pure macro) auto cosh(const auto a) = #cosh(a);
 export @(pure macro) auto sinh(const auto a) = #sinh(a);
 export @(pure macro) auto tanh(const auto a) = #tanh(a);
-export @(pure macro) auto atan2(const auto y, const auto x) = #atan2(y, x);
 export @(pure macro) auto sincos(const auto a) = auto[2](#sin(a), #cos(a));
 export @(pure macro) auto radians(const auto a) = a * (PI / 180.0);
 export @(pure macro) auto degrees(const auto a) = a * (180.0 / PI);
@@ -1058,6 +1077,7 @@ export @(pure macro) auto length(const auto a) = #sqrt(#sum(a * a));
 export @(pure macro) auto normalize(const auto a) = a * (1 / length(a));
 export @(pure macro) auto distance(const auto a, const auto b) = length(b - a);
 export @(pure macro) auto cross(const auto a, const auto b) = a.yzx * b.zxy - a.zxy * b.yzx;
+export @(pure macro) auto transpose(const auto a) = #transpose(a);
 export @(noinline) color blackbody(const float temperature) {
   const auto t(color($state.wavelength_base) * (temperature / 14.387e6));
   auto res(1 + 2 * t);
@@ -1078,6 +1098,11 @@ export @(noinline) float luminance(const color a) {
     result += rgb::wyman_1931_y($state.wavelength_base[i]) * a[i];
   return result / $WAVELENGTH_BASE_MAX;
 }
+@(pure foreign) float atan2f(float y, float x); 
+export @(pure macro) auto atan2(const float y, const float x) = atan2f(y, x);
+export @(pure macro) auto atan2(const float2 y, const float2 x) = float2(atan2(y[0], x[0]), atan2(y[1], x[1]));
+export @(pure macro) auto atan2(const float3 y, const float3 x) = float3(atan2(y[0], x[0]), atan2(y[1], x[1]), atan2(y[2], x[2]));
+export @(pure macro) auto atan2(const float4 y, const float4 x) = float4(atan2(y[0], x[0]), atan2(y[1], x[1]), atan2(y[2], x[2]), atan2(y[3], x[3]));
 )*";
 
 static const char *scene = R"*(#smdl_syntax
@@ -1446,37 +1471,40 @@ const static auto RGB_TO_COLOR_TABLES = auto[](
     +0.9850401, +0.7902985, +0.5608220, +0.3313346, +0.1369241, +0.0189149, -0.0000051, -0.0004240,
     -0.0004193, +0.0017473, +0.0037999, -0.0005510, -0.0000437, +0.0075875, +0.0257957, +0.0381684,
     +0.0494896, +0.0495960, +0.0498148, +0.0398409, +0.0305010, +0.0212431, +0.0069597, +0.0041734));
-export @(hot noinline) color rgb_to_color(float3 rgb) {
-  if ((rgb.x == rgb.y) & (rgb.x == rgb.z)) {
+export @(hot noinline) color rgb_to_color_implementation(float3 rgb) {
+  const int i0(#all(rgb.xx < rgb.yz) ? 0 : rgb.y < rgb.z ? 1 : 2);
+  int i1_tmp((i0 + 1) % 3);
+  int i2_tmp((i0 + 2) % 3);
+  const bool should_swap(rgb[i1_tmp] > rgb[i2_tmp]);
+  const int i1(should_swap ? i2_tmp : i1_tmp);
+  const int i2(should_swap ? i1_tmp : i2_tmp);
+  const float coeff_w(rgb[i0]);
+  const float coeff_cmy(rgb[i1] - rgb[i0]);
+  const float coeff_rgb(rgb[i2] - rgb[i1]);
+  color c(0.0);
+  color w(color($state.wavelength_base));
+  w -= RGB_TO_COLOR_MIN_WAVE;
+  w *= RGB_TO_COLOR_NUM_WAVES / (RGB_TO_COLOR_MAX_WAVE - RGB_TO_COLOR_MIN_WAVE);
+  for (int i = 0; i < $WAVELENGTH_BASE_MAX; i++) {
+    float t(w[i]);
+    if ((0.0 <= t) & (t <= RGB_TO_COLOR_NUM_WAVES)) {
+      int t0(#min(int(t), RGB_TO_COLOR_NUM_WAVES - 2));
+      t = #min(t - t0, 1.0);
+      c[i] = #sum(float2(1 - t, t) * 
+            (coeff_w * float2(&RGB_TO_COLOR_TABLES[0][t0]) +
+             coeff_cmy * float2(&RGB_TO_COLOR_TABLES[i0 + 1][t0]) +
+             coeff_rgb * float2(&RGB_TO_COLOR_TABLES[i2 + 4][t0])));
+    }
+  }
+  c = #max(c * 0.94, 0.0);
+  c = #min(c, 1.0);
+  return c; 
+}
+export @(macro) color rgb_to_color(const float3 rgb) {
+  if (#all(rgb.xx == rgb.yz)) {
     return color(rgb.x);
   } else {
-    const int i0(#all(rgb.xx < rgb.yz) ? 0 : rgb.y < rgb.z ? 1 : 2);
-    int i1_tmp((i0 + 1) % 3);
-    int i2_tmp((i0 + 2) % 3);
-    const bool should_swap(rgb[i1_tmp] > rgb[i2_tmp]);
-    const int i1(should_swap ? i2_tmp : i1_tmp);
-    const int i2(should_swap ? i1_tmp : i2_tmp);
-    const float coeff_w(rgb[i0]);
-    const float coeff_cmy(rgb[i1] - rgb[i0]);
-    const float coeff_rgb(rgb[i2] - rgb[i1]);
-    color c(0.0);
-    color w(color($state.wavelength_base));
-    w -= RGB_TO_COLOR_MIN_WAVE;
-    w *= RGB_TO_COLOR_NUM_WAVES / (RGB_TO_COLOR_MAX_WAVE - RGB_TO_COLOR_MIN_WAVE);
-    for (int i = 0; i < $WAVELENGTH_BASE_MAX; i++) {
-      float t(w[i]);
-      if ((0.0 <= t) & (t <= RGB_TO_COLOR_NUM_WAVES)) {
-        int t0(#min(int(t), RGB_TO_COLOR_NUM_WAVES - 2));
-        t = #min(t - t0, 1.0);
-        c[i] = #sum(float2(1 - t, t) * 
-              (coeff_w * float2(&RGB_TO_COLOR_TABLES[0][t0]) +
-               coeff_cmy * float2(&RGB_TO_COLOR_TABLES[i0 + 1][t0]) +
-               coeff_rgb * float2(&RGB_TO_COLOR_TABLES[i2 + 4][t0])));
-      }
-    }
-    c = #max(c * 0.94, 0.0);
-    c = #min(c, 1.0);
-    return c;
+    return rgb_to_color_implementation(rgb);
   }
 }
 export @(macro) color rgb_to_color(const float r, const float g, const float b) {
@@ -1556,6 +1584,8 @@ export @(pure) float dielectric_fresnel(const float cos_thetai, const float ior)
 )*";
 
 [[nodiscard]] static const char *get_src(auto name) {
+  if (name == "anno")
+    return anno;
   if (name == "df")
     return df;
   if (name == "debug")

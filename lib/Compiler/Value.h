@@ -302,6 +302,8 @@ public:
 public:
   llvm::SmallVector<Param> params{};
 
+  Module *module{};
+
   Crumb *crumb{};
 };
 //--}

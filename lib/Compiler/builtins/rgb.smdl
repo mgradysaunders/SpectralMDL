@@ -40,37 +40,45 @@ const static auto RGB_TO_COLOR_TABLES = auto[](
     -0.0004193, +0.0017473, +0.0037999, -0.0005510, -0.0000437, +0.0075875, +0.0257957, +0.0381684,
     +0.0494896, +0.0495960, +0.0498148, +0.0398409, +0.0305010, +0.0212431, +0.0069597, +0.0041734));
 
-export @(hot noinline) color rgb_to_color(float3 rgb) {
-  if ((rgb.x == rgb.y) & (rgb.x == rgb.z)) {
+export @(hot noinline) color rgb_to_color_implementation(float3 rgb) {
+  const int i0(#all(rgb.xx < rgb.yz) ? 0 : rgb.y < rgb.z ? 1 : 2);
+  int i1_tmp((i0 + 1) % 3);
+  int i2_tmp((i0 + 2) % 3);
+  const bool should_swap(rgb[i1_tmp] > rgb[i2_tmp]);
+  const int i1(should_swap ? i2_tmp : i1_tmp);
+  const int i2(should_swap ? i1_tmp : i2_tmp);
+  const float coeff_w(rgb[i0]);
+  const float coeff_cmy(rgb[i1] - rgb[i0]);
+  const float coeff_rgb(rgb[i2] - rgb[i1]);
+  color c(0.0);
+  color w(color($state.wavelength_base));
+  w -= RGB_TO_COLOR_MIN_WAVE;
+  w *= RGB_TO_COLOR_NUM_WAVES / (RGB_TO_COLOR_MAX_WAVE - RGB_TO_COLOR_MIN_WAVE);
+  for (int i = 0; i < $WAVELENGTH_BASE_MAX; i++) {
+    float t(w[i]);
+    if ((0.0 <= t) & (t <= RGB_TO_COLOR_NUM_WAVES)) {
+      int t0(#min(int(t), RGB_TO_COLOR_NUM_WAVES - 2));
+      t = #min(t - t0, 1.0);
+      c[i] = #sum(float2(1 - t, t) * 
+            (coeff_w * float2(&RGB_TO_COLOR_TABLES[0][t0]) +
+             coeff_cmy * float2(&RGB_TO_COLOR_TABLES[i0 + 1][t0]) +
+             coeff_rgb * float2(&RGB_TO_COLOR_TABLES[i2 + 4][t0])));
+    }
+  }
+  c = #max(c * 0.94, 0.0);
+  c = #min(c, 1.0);
+  return c; 
+}
+
+// The nontrivial implementation is factored into another function because, despite the fact that
+// the 'color' type is not necessarily RGB, every damn MDL codebase I've seen assumes the 'color'
+// type is RGB. E.g., the code uses 'color(1.0, 1.0, 1.0)' to mean white instead of 'color(1.0)'. 
+// We want to detect this at compile time to avoid a ton of unnecessary overhead.
+export @(macro) color rgb_to_color(const float3 rgb) {
+  if (#all(rgb.xx == rgb.yz)) {
     return color(rgb.x);
   } else {
-    const int i0(#all(rgb.xx < rgb.yz) ? 0 : rgb.y < rgb.z ? 1 : 2);
-    int i1_tmp((i0 + 1) % 3);
-    int i2_tmp((i0 + 2) % 3);
-    const bool should_swap(rgb[i1_tmp] > rgb[i2_tmp]);
-    const int i1(should_swap ? i2_tmp : i1_tmp);
-    const int i2(should_swap ? i1_tmp : i2_tmp);
-    const float coeff_w(rgb[i0]);
-    const float coeff_cmy(rgb[i1] - rgb[i0]);
-    const float coeff_rgb(rgb[i2] - rgb[i1]);
-    color c(0.0);
-    color w(color($state.wavelength_base));
-    w -= RGB_TO_COLOR_MIN_WAVE;
-    w *= RGB_TO_COLOR_NUM_WAVES / (RGB_TO_COLOR_MAX_WAVE - RGB_TO_COLOR_MIN_WAVE);
-    for (int i = 0; i < $WAVELENGTH_BASE_MAX; i++) {
-      float t(w[i]);
-      if ((0.0 <= t) & (t <= RGB_TO_COLOR_NUM_WAVES)) {
-        int t0(#min(int(t), RGB_TO_COLOR_NUM_WAVES - 2));
-        t = #min(t - t0, 1.0);
-        c[i] = #sum(float2(1 - t, t) * 
-              (coeff_w * float2(&RGB_TO_COLOR_TABLES[0][t0]) +
-               coeff_cmy * float2(&RGB_TO_COLOR_TABLES[i0 + 1][t0]) +
-               coeff_rgb * float2(&RGB_TO_COLOR_TABLES[i2 + 4][t0])));
-      }
-    }
-    c = #max(c * 0.94, 0.0);
-    c = #min(c, 1.0);
-    return c;
+    return rgb_to_color_implementation(rgb);
   }
 }
 

@@ -97,13 +97,13 @@ const ParamList *Param::get_inline_parameters() const {
   return &type->get_inline_struct_type()->fields;
 }
 
-ParamList::ParamList(Context &context, const AST::Struct &decl) : crumb(decl.crumb) {
+ParamList::ParamList(Context &context, const AST::Struct &decl) : module(decl.module), crumb(decl.crumb) {
   for (auto &field : decl.fields)
     params.push_back(Param(context, field));
   guarantee_no_ambiguous_inlining(decl.srcLoc);
 }
 
-ParamList::ParamList(Context &context, const AST::Function &decl) : crumb(decl.crumb) {
+ParamList::ParamList(Context &context, const AST::Function &decl) : module(decl.module), crumb(decl.crumb) {
   for (auto &param : decl.params.params)
     params.push_back(Param(context, param));
   guarantee_no_ambiguous_inlining(decl.srcLoc);
