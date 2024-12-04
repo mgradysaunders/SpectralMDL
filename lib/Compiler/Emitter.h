@@ -25,8 +25,8 @@ public:
       llvm::Function *llvmFunc = nullptr)
       : context(context), module(module), crumb(crumb), returns(returns), inlines(inlines), builder(context.llvmContext) {
     auto fmf{llvm::FastMathFlags::getFast()};
-    fmf.setNoNaNs(false);
-    fmf.setNoInfs(false);
+    fmf.setNoNaNs(false); // Don't assume no NaNs!
+    fmf.setNoInfs(false); // Don't assume no Infs!
     builder.setFastMathFlags(fmf);
     if (llvmFunc) {
       auto blockEntry{llvm::BasicBlock::Create(context.llvmContext, "entry", llvmFunc)};
@@ -42,8 +42,8 @@ public:
         afterContinue(parent->afterContinue), afterReturn(parent->afterReturn), afterEndScope(parent->afterEndScope),
         builder(parent->context.llvmContext) {
     auto fmf{llvm::FastMathFlags::getFast()};
-    fmf.setNoNaNs(false);
-    fmf.setNoInfs(false);
+    fmf.setNoNaNs(false); // Don't assume no NaNs!
+    fmf.setNoInfs(false); // Don't assume no Infs!
     builder.setFastMathFlags(fmf);
   }
 
@@ -78,7 +78,9 @@ public:
 
 public:
   //--{ Fundamental operations
-  void push(Value value, llvm::ArrayRef<llvm::StringRef> name, AST::Node *node, const AST::SourceLocation &srcLoc, Value valueToPreserve = {}) {
+  void push(
+      Value value, llvm::ArrayRef<llvm::StringRef> name, AST::Node *node, const AST::SourceLocation &srcLoc,
+      Value valueToPreserve = {}) {
     crumb = context.bump_allocate<Crumb>(Crumb{crumb, value, name, node, srcLoc, valueToPreserve});
   }
 
@@ -293,9 +295,9 @@ public:
   }
 
   void emit_scope(std::invocable<Emitter &> auto &&func) { // "Thin scope"
-    Crumb *topCrumb{crumb};
+    Crumb *crumb0{crumb};
     std::invoke(std::forward<decltype(func)>(func), *this);
-    emit_unwind(topCrumb);
+    emit_unwind(crumb0);
   }
 
   Value emit_scope(AST::Expr &expr) {
@@ -308,9 +310,12 @@ public:
 
   void emit_unwind(Crumb *crumb0);
 
-  Value emit_cond(AST::Expr &expr) {
+  Value emit_cond(AST::Expr &expr, bool insideScope = true) {
     Value cond{};
-    emit_scope([&](Emitter &emitter) { cond = emitter.construct(context.get_bool_type(), emitter.emit(expr), expr.srcLoc); });
+    if (insideScope)
+      emit_scope([&](Emitter &emitter) { cond = emitter.construct(context.get_bool_type(), emitter.emit(expr), expr.srcLoc); });
+    else
+      cond = construct(context.get_bool_type(), emit(expr), expr.srcLoc);
     return cond;
   }
 
@@ -324,7 +329,8 @@ public:
     if (!expr) {
       std::invoke(func, *this);
     } else {
-      auto cond{emit_cond(*expr)};
+      auto crumb0{crumb};
+      auto cond{emit_cond(*expr, /*insideScope=*/false)};
       if (cond.is_compile_time_int()) {
         auto pass{cond.get_compile_time_int() != 0};
         if (!pass)
@@ -337,6 +343,7 @@ public:
       emit_scope(blockPass, blockFail, std::forward<decltype(func)>(func));
       llvm_move_block_to_end(blockFail);
       move_to(blockFail);
+      emit_unwind(crumb0);
     }
   }
 

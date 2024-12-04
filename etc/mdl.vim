@@ -95,6 +95,7 @@ syn keyword mdlType double double2 double3 double4 double2x2 double2x3 double2x4
 syn keyword mdlType string color
 syn keyword mdlType texture_2d texture_3d texture_cube texture_ptex light_profile tile_2d
 syn keyword mdlType material material_surface material_emission material_volume material_geometry bsdf edf vdf hair_bsdf intensity_mode
+syn keyword mdlType default_bsdf default_edf default_vdf default_hair_bsdf
 hi def link mdlStructure Structure
 hi def link mdlType      Type
 

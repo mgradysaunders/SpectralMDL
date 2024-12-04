@@ -14,7 +14,7 @@ void Module::parse(Context &context) {
 }
 
 static constexpr auto src_evalOpacity = R"(
-@(visible) float {0}__opacity() {{
+@(visible) float {0}__evaluate_opacity() {{
   auto opacity(#inline({0}()).geometry.cutout_opacity);
   opacity = #max(opacity, 0.0);
   opacity = #min(opacity, 1.0);
@@ -22,22 +22,28 @@ static constexpr auto src_evalOpacity = R"(
 }}
 )";
 
+static constexpr auto src_evalDisplacement = R"(
+@(visible) void {0}__evaluate_displacement(const &float3 displacement) {{
+  *displacement = #inline({0}()).geometry.displacement;
+}}
+)";
+
 static constexpr auto src_evalBsdf = R"(
-@(visible) int {0}__eval_bsdf(
+@(visible) int {0}__evaluate_bsdf(
   const &float3 wo, const &float3 wi, 
   const &float pdf_fwd, const &float pdf_rev, const &color f) {{
   auto this({0}());
-  return ::df::material__eval_bsdf(&this, wo, wi, pdf_fwd, pdf_rev, f);
+  return ::df::material__evaluate_bsdf(&this, wo, wi, pdf_fwd, pdf_rev, f);
 }}
 )";
 
 static constexpr auto src_evalBsdfSample = R"(
-@(visible) int {0}__eval_bsdf_sample(
+@(visible) int {0}__evaluate_bsdf_sample(
   const &float4 xi, 
   const &float3 wo, const &float3 wi, 
   const &float pdf_fwd, const &float pdf_rev, const &color f, const &int is_delta) {{
   auto this({0}());
-  return ::df::material__eval_bsdf_sample(&this, xi, wo, wi, pdf_fwd, pdf_rev, f, is_delta);
+  return ::df::material__evaluate_bsdf_sample(&this, xi, wo, wi, pdf_fwd, pdf_rev, f, is_delta);
 }}
 )";
 

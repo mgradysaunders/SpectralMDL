@@ -102,7 +102,7 @@ Value Emitter::emit(AST::Enum &decl) {
   }
   auto type{context.get_enum_type(&decl, get_llvm_function())};
 
-  declare(*decl.name, context.get_compile_time_type(type));
+  declare(*decl.name, context.get_compile_time_type(type), &decl);
   for (auto &declVal : decl.constants)
     declare(*declVal.name, RValue(type, declVal.llvmConst), &decl);
   return {};
@@ -514,11 +514,15 @@ Value Emitter::emit(AST::For &stmt) {
 }
 
 Value Emitter::emit(AST::If &stmt) {
-  auto cond{emit_cond(*stmt.cond)};
+  auto crumb0{crumb};
+  auto cond{emit_cond(*stmt.cond, /*insideScope=*/false)};
   if (cond.is_compile_time_int()) {
     auto pass{cond.get_compile_time_int() != 0};
-    if ((pass && !stmt.ifPass) || (!pass && !stmt.ifFail))
+    if ((pass && !stmt.ifPass) || (!pass && !stmt.ifFail)) {
+      if (!has_terminator())
+        emit_unwind(crumb0);
       return {};
+    }
     auto name{context.get_unique_name("if", get_llvm_function())};
     auto blockThen{create_block(llvm_twine(name, pass ? ".pass" : ".fail"))};
     auto blockEnd{create_block(llvm_twine(name, ".end"))};
@@ -541,6 +545,8 @@ Value Emitter::emit(AST::If &stmt) {
     llvm_move_block_to_end(blockEnd);
     move_to_or_erase(blockEnd);
   }
+  if (!has_terminator())
+    emit_unwind(crumb0);
   return {};
 }
 

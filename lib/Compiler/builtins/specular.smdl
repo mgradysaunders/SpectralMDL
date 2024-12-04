@@ -22,23 +22,11 @@ export @(pure macro) auto schlick_fresnel(
     const auto F90 = 1.0,
     const float exponent = 5) = F0 + (F90 - F0) * #pow(#max(1 - #abs(cos_theta), 0), exponent);
 
-// TODO Fresnel equations
-/*
-  Fresnel(auto cosThetaI, std::complex<float> eta)
-      : eta(eta), cosThetaI(cosThetaI),
-        cosThetaT(std::copysign(1.0f, cosThetaI) * std::sqrt(1.0f - eta * eta * (1.0f - cosThetaI * cosThetaI))),
-        Rs((eta * cosThetaI - cosThetaT) / (eta * cosThetaI + cosThetaT)),
-        Rp((cosThetaI - eta * cosThetaT) / (cosThetaI + eta * cosThetaT)), Ts((1.0f + Rs)), Tp((1.0f + Rp) * eta) {}
-
-  [[nodiscard]] float power_Rs() const { return std::norm(Rs); }
-
-  [[nodiscard]] float power_Rp() const { return std::norm(Rp); }
-
-  [[nodiscard]] float power_Ts() const { return std::norm(Ts) * std::abs(cosThetaT / (eta * cosThetaI)); }
-
-  [[nodiscard]] float power_Tp() const { return std::norm(Tp) * std::abs(cosThetaT / (eta * cosThetaI)); }
-
-  [[nodiscard]] float power_R() const { return (power_Rs() + power_Rp()) / 2; }
-
-  [[nodiscard]] float power_T() const { return (power_Ts() + power_Tp()) / 2; }
- */
+export @(pure) float dielectric_fresnel(const float cos_thetai, const float ior) {
+  const auto cos2_thetat(1 - ior * ior * (1 - cos_thetai * cos_thetai));
+  return 1 if (cos2_thetat < 0);
+  const auto cos_thetat(#sqrt(cos2_thetat) * #sign(cos_thetai));
+  const auto rs((ior * cos_thetai - cos_thetat) / (ior * cos_thetai + cos_thetat));
+  const auto rp((cos_thetai - ior * cos_thetat) / (cos_thetai + ior * cos_thetat));
+  return #min(0.5 * (rs * rs + rp * rp), 1.0);
+}
