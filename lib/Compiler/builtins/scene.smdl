@@ -1,5 +1,7 @@
 #smdl_syntax
 
+// TODO Rethink this?
+
 @(pure foreign) int smdl_data_isvalid(&void data, &string name);
 
 @(pure foreign) int smdl_data_lookup_int(&void data, &string name, &int value);
@@ -67,6 +69,12 @@ export @(pure macro) float3 data_lookup_float3(string name, float3 default_value
 export @(pure macro) float4 data_lookup_float4(string name, float4 default_value = float4()) {
   auto value(default_value);
   smdl_data_lookup_float4($data, &name, &value);
+  return value;
+}
+
+export @(pure macro) color data_lookup_color(string name, color default_value = color()) {
+  auto value(default_value);
+  smdl_data_lookup_color($data, &name, &value);
   return value;
 }
 

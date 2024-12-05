@@ -33,11 +33,11 @@ hi def link mdlString   String
 hi def link mdlConstant Constant
 
 " Operator symbols
-syn match mdlOperator "[=+\-*/%!~&|^<>?:]" display
-syn match mdlOperatorNoise "[;.,(){}\[\]]" display
+" syn match mdlOperator "[=+\-*/%!~&|^<>?:]" display
+" syn match mdlOperatorNoise "[;.,(){}\[\]]" display
 syn match mdlOperatorConst "[$]" display
-hi def link mdlOperator Statement
-hi def link mdlOperatorNoise Comment
+" hi def link mdlOperator Statement
+" hi def link mdlOperatorNoise Comment
 hi def link mdlOperatorConst Constant
 
 " Comments and annotations

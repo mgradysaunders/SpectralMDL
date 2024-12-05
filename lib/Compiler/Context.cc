@@ -22,6 +22,7 @@ Context::Context(MDLInstance &mdl, llvm::BumpPtrAllocator &bumpAllocator)
       voidType(bump_allocate<VoidType>(*this)),                                        //
       colorType(bump_allocate<ColorType>(*this)),                                      //
       intensityModeType(bump_allocate<EnumType>(*this, builtin_enum_type<intensity_mode_t>)),
+      lightProfileType(bump_allocate<StructType>(*this, builtin_struct_type<light_profile_t>)),
       tile2DType(bump_allocate<StructType>(*this, builtin_struct_type<tile_2d_t>)),
       texture2DType(bump_allocate<StructType>(*this, builtin_struct_type<texture_2d_t>)),
       texture3DType(bump_allocate<StructType>(*this, builtin_struct_type<texture_3d_t>)),
@@ -106,6 +107,7 @@ Context::Context(MDLInstance &mdl, llvm::BumpPtrAllocator &bumpAllocator)
       KEYWORD_TYPE("int3", get_int_type(Extent(3))),
       KEYWORD_TYPE("int4", get_int_type(Extent(4))),
       KEYWORD_TYPE("intensity_mode", intensityModeType.get()),
+      KEYWORD_TYPE("light_profile", lightProfileType.get()),
       KEYWORD_TYPE("material_emission", materialEmissionType.get()),
       KEYWORD_TYPE("material_surface", materialSurfaceType.get()),
       KEYWORD_TYPE("material_volume", materialVolumeType.get()),

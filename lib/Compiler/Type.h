@@ -494,6 +494,8 @@ public:
 
   StructType(Context &context, builtin_struct_type_t<default_hair_bsdf_t>);
 
+  StructType(Context &context, builtin_struct_type_t<light_profile_t>);
+
   StructType(Context &context, builtin_struct_type_t<material_emission_t>);
 
   StructType(Context &context, builtin_struct_type_t<material_surface_t>);

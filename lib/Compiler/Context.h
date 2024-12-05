@@ -451,6 +451,9 @@ private:
   /// The builtin 'intensity_mode' type.
   const unique_bump_ptr<EnumType> intensityModeType;
 
+  /// The builtin 'light_profile' type.
+  const unique_bump_ptr<StructType> lightProfileType{};
+
   /// The builtin 'tile_2d' type.
   const unique_bump_ptr<StructType> tile2DType;
 

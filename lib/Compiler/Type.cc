@@ -791,6 +791,14 @@ template <typename S, typename T> static void init_builtin_field(auto &context, 
   fields.emplace_back(context.template get_type<T>(), name);
 }
 
+StructType::StructType(Context &context, builtin_struct_type_t<light_profile_t>) : TypeSubclass(context) {
+  init_name("light_profile");
+  init_builtin_field(context, fields, "ptr", &light_profile_t::ptr);
+  init_builtin_field(context, fields, "power", &light_profile_t::power);
+  init_builtin_field(context, fields, "maximum", &light_profile_t::maximum);
+  init_llvm_type();
+}
+
 StructType::StructType(Context &context, builtin_struct_type_t<tile_2d_t>) : TypeSubclass(context) {
   init_name("tile_2d");
   init_builtin_field(context, fields, "extent", &tile_2d_t::extent);

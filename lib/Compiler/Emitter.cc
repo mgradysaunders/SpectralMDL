@@ -1558,6 +1558,8 @@ void Emitter::emit_return(Value value, const AST::SourceLocation &srcLoc) {
 }
 
 Value Emitter::emit_final_return_phi(Type *type, llvm::ArrayRef<Return> returns, const AST::SourceLocation &srcLoc) {
+  if (type == context.get_void_type())
+    return RValue(type, nullptr);
   sanity_check(type);
   sanity_check(!returns.empty());
   if (type->is_abstract()) {

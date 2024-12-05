@@ -157,6 +157,8 @@ struct bsdf_measurement_t final {
 
 struct light_profile_t final {
   void *ptr{};
+  float_t power{};
+  float_t maximum{};
 };
 
 struct string_t final {
