@@ -7,7 +7,9 @@
 # machine without the optional feature.
 option(SMDL_NATIVE "Build for native hardware?" OFF)
 
-option(SMDL_ENABLE_PTEX "Build with Ptex? (Using FetchContent if unavailable)" ON)
+option(SMDL_ENABLE_PTEX "Build with Ptex?" ON)
+
+option(SMDL_ENABLE_MATERIALX "Build with MaterialX?" ON)
 
 option(SMDL_ENABLE_RTTI "Build with C++ Run-Time Type Information (RTTI)?" ON)
 

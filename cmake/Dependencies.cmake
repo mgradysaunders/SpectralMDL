@@ -14,6 +14,16 @@ if(SMDL_ENABLE_PTEX)
   FetchContent_MakeAvailable("Ptex")
 endif()
 
+if(SMDL_ENABLE_MATERIALX)
+  FetchContent_Declare(
+    "MaterialX"
+    GIT_REPOSITORY https://github.com/AcademySoftwareFoundation/MaterialX
+    GIT_TAG v1.39.1
+    GIT_PROGRESS TRUE
+  )
+  FetchContent_MakeAvailable("MaterialX")
+endif()
+
 if(SMDL_BUILD_TOY)
   # Assimp
   FetchContent_Declare(
