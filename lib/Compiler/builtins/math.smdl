@@ -96,6 +96,13 @@ export @(pure macro) auto max_value(const auto a) = #max_value(a);
 
 // TODO max_value_wavelength
 
+export @(pure macro) auto average(const auto a) {
+  if (#is_scalar(a))
+    return a;
+  else
+    return #sum(a) / a.size;
+}
+
 export @(pure macro) auto lerp(const auto a, const auto b, const auto l) = (1.0 - l) * a + l * b;
 
 export @(pure macro) auto step(const auto a, const auto b) = #select(b < a, 0.0, 1.0);

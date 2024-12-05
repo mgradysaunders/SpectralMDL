@@ -93,14 +93,14 @@ float3x3 build_orthogonal_tangent_space(const float3 normal, const float3 tangen
   return float3x3(tu, tv, tw);
 }
 @(pure noinline)
-bool perturb_tangent_space(inline const &evaluate_bsdf_parameters this) {
+bool apply_tangent_space(inline const &evaluate_bsdf_parameters this) {
   auto tbn(build_orthogonal_tangent_space(normal, tangent_u));
   wo = primary_wo * tbn;
   wi = primary_wi * tbn;
   return ((wo.z < 0) == (primary_wo.z < 0)) & ((wi.z < 0) == (primary_wi.z < 0));
 }
 @(pure noinline) 
-?float3x3 perturb_tangent_space(inline const &evaluate_bsdf_sample_parameters this) {
+?float3x3 apply_tangent_space(inline const &evaluate_bsdf_sample_parameters this) {
   auto tbn(build_orthogonal_tangent_space(normal, tangent_u));
   wo = primary_wo * tbn;
   return tbn if ((wo.z < 0) == (primary_wo.z < 0));
@@ -129,7 +129,7 @@ export struct diffuse_reflection_bsdf: bsdf {
 };
 @(pure noinline)
 auto evaluate_bsdf(const &diffuse_reflection_bsdf this, inline const &evaluate_bsdf_parameters params) {
-  if (mode == scatter_reflect && perturb_tangent_space(params)) {
+  if (mode == scatter_reflect && apply_tangent_space(params)) {
     const auto roughness(saturate(this.roughness));
     const auto cos_theta(#abs(float2(wi.z, wo.z)));
     if (roughness == 0) {
@@ -162,7 +162,7 @@ auto evaluate_bsdf(const &diffuse_reflection_bsdf this, inline const &evaluate_b
 }
 @(pure)
 auto evaluate_bsdf_sample(const &diffuse_reflection_bsdf this, inline const &evaluate_bsdf_sample_parameters params) {
-  if ((tbn := perturb_tangent_space(params))) {
+  if ((tbn := apply_tangent_space(params))) {
     return evaluate_bsdf_sample_result(wi: (*tbn) * cosine_hemisphere_sample(xi.xy), mode: scatter_reflect);
   } else {
     return evaluate_bsdf_sample_result(); 
@@ -174,7 +174,7 @@ export struct diffuse_transmission_bsdf: bsdf {
 };
 @(pure) 
 auto evaluate_bsdf(const &diffuse_transmission_bsdf this, inline const &evaluate_bsdf_parameters params) {
-  if (mode == scatter_transmit && perturb_tangent_space(params)) {
+  if (mode == scatter_transmit && apply_tangent_space(params)) {
     const auto cos_theta(#abs(float2(wi.z, wo.z)));
     const auto pdf(cos_theta / $PI);
     return evaluate_bsdf_result(pdf: pdf, f: this.tint * pdf[0]);
@@ -184,7 +184,7 @@ auto evaluate_bsdf(const &diffuse_transmission_bsdf this, inline const &evaluate
 }
 @(pure)
 auto evaluate_bsdf_sample(const &diffuse_transmission_bsdf this, inline const &evaluate_bsdf_sample_parameters params) {
-  if ((tbn := perturb_tangent_space(params))) {
+  if ((tbn := apply_tangent_space(params))) {
     return evaluate_bsdf_sample_result(wi: (*tbn) * -cosine_hemisphere_sample(xi.xy), mode: scatter_transmit);
   } else {
     return evaluate_bsdf_sample_result(); 
@@ -201,7 +201,7 @@ auto evaluate_bsdf(const &specular_bsdf this, const &evaluate_bsdf_parameters pa
 }
 @(pure)
 auto evaluate_bsdf_sample(const &specular_bsdf this, inline const &evaluate_bsdf_sample_parameters params) {
-  if ((tbn := perturb_tangent_space(params))) {
+  if ((tbn := apply_tangent_space(params))) {
     return xi.x < scatter_reflect_chance(this.mode)
       ? evaluate_bsdf_sample_result(wi: (*tbn) * reflect(wo, float3(0, 0, 1)),      mode: scatter_reflect,  delta_f: color(this.tint))
       : evaluate_bsdf_sample_result(wi: (*tbn) * refract(wo, float3(0, 0, 1), ior), mode: scatter_transmit, delta_f: color(this.tint));
@@ -221,7 +221,7 @@ float sheen_lambda_l(const auto fit, const float mu) = fit[0] / (1.0 + fit[1] * 
 float sheen_lambda(const auto fit, const float mu) = #exp(mu < 0.5 ? sheen_lambda_l(fit, mu) : 2.0 * sheen_lambda_l(fit, 0.5) - sheen_lambda_l(fit, #max(1.0 - mu, 0.0)));
 @(pure noinline) 
 auto evaluate_bsdf(const &sheen_bsdf this, inline const &evaluate_bsdf_parameters params) {
-  if (mode == scatter_reflect && perturb_tangent_space(params)) {
+  if (mode == scatter_reflect && apply_tangent_space(params)) {
     const auto roughness(saturate(this.roughness));
     const auto cos_thetao(#abs(wo.z));
     const auto cos_thetai(#abs(wi.z));
@@ -263,7 +263,7 @@ auto evaluate_bsdf(const &sheen_bsdf this, inline const &evaluate_bsdf_parameter
 }
 @(pure)
 auto evaluate_bsdf_sample(const &sheen_bsdf this, inline const &evaluate_bsdf_sample_parameters params) {
-  if ((tbn := perturb_tangent_space(params))) {
+  if ((tbn := apply_tangent_space(params))) {
     return evaluate_bsdf_sample_result(wi: (*tbn) * cosine_hemisphere_sample(xi.xy), mode: scatter_reflect);
   } else {
     return evaluate_bsdf_sample_result(); 
@@ -407,7 +407,7 @@ auto evaluate_bsdf(const &microfacet_bsdf this, inline const &evaluate_bsdf_para
   const auto shadowing(#typeof(this.shadowing));
   preserve tangent_u;
   tangent_u = this.tangent_u;
-  if (!perturb_tangent_space(params))
+  if (!apply_tangent_space(params))
     return evaluate_bsdf_result(is_black: true);
   const auto reflect_chance(scatter_reflect_chance(this.mode));
   const auto wm(normalize(mode == scatter_reflect ? wo + wi : refraction_half_vector(wo, wi, ior)));
@@ -537,7 +537,7 @@ auto evaluate_bsdf_sample(const &microfacet_bsdf this, inline const &evaluate_bs
   const auto distribution(#typeof(this.distribution));
   preserve tangent_u;
   tangent_u = this.tangent_u;
-  auto tbn(perturb_tangent_space(params));
+  auto tbn(apply_tangent_space(params));
   if (!tbn) return evaluate_bsdf_sample_result();
   const auto mode(weighted_bool_sample(&xi.z, scatter_reflect_chance(this.mode)) ? scatter_reflect : scatter_transmit);
   if (!#is_void(this.multiscatter_tint))
@@ -569,7 +569,7 @@ auto evaluate_bsdf(const &ward_geisler_moroder_bsdf this, inline const &evaluate
   if (mode == scatter_reflect) {
     preserve tangent_u;
     tangent_u = this.tangent_u;
-    if (!perturb_tangent_space(params)) return evaluate_bsdf_result(is_black: true);
+    if (!apply_tangent_space(params)) return evaluate_bsdf_result(is_black: true);
     const auto roughness(saturate(float2(this.roughness_u, this.roughness_v)));
     const auto alpha(#max(0.001, #pow(roughness, 2)));
     const auto cos_thetao(#abs(wo.z));
@@ -609,7 +609,7 @@ auto evaluate_bsdf(const &ward_geisler_moroder_bsdf this, inline const &evaluate
 auto evaluate_bsdf_sample(const &ward_geisler_moroder_bsdf this, const &evaluate_bsdf_sample_parameters params) {
   preserve tangent_u;
   tangent_u = this.tangent_u;
-  auto tbn(perturb_tangent_space(params));
+  auto tbn(apply_tangent_space(params));
   if (!tbn) return evaluate_bsdf_sample_result();
   if (#is_void(this.multiscatter_tint) || weighted_bool_sample(&params.xi.w, 0.8)) { 
     auto wo(params.wo);
@@ -767,16 +767,16 @@ auto evaluate_bsdf_sample(const &color_weighted_layer this, inline const &evalua
     : evaluate_bsdf_sample(&this.base, params);
 }
 export struct fresnel_layer: bsdf {
-  float ior;
-  float weight = 1.0;
+  color_or_float ior;
+  color_or_float weight = 1.0;
   bsdf layer = bsdf();
   bsdf base = bsdf();
   float3 normal = state::normal();
+  const float average_ior = average(ior);
+  const float average_weight = average(weight);
 };
 @(macro)
 auto evaluate_bsdf(const &fresnel_layer this, inline const &evaluate_bsdf_parameters params) {
-  preserve ior;
-  ior = backface ? (1 / this.ior) : this.ior;
   const auto cos_thetao(dot(wo, this.normal) * #sign(this.normal.z));
   const auto cos_thetai(dot(wi, this.normal) * #sign(this.normal.z));
   if ((cos_thetao < STABILITY_EPS) |
@@ -784,36 +784,32 @@ auto evaluate_bsdf(const &fresnel_layer this, inline const &evaluate_bsdf_parame
       ((mode == scatter_transmit) & (cos_thetai > -STABILITY_EPS)))
     return evaluate_bsdf_result(is_black: true);
   const auto result0(evaluate_bsdf(&this.base, params));
+  preserve ior;
+  ior = backface ? 1 / this.average_ior : this.average_ior;
   const auto result1(evaluate_bsdf(&this.layer, params, this.normal));
   return evaluate_bsdf_result(
-    pdf: lerp(result0.pdf, result1.pdf, this.weight * schlick_fresnel(float2(cos_thetao, cos_thetai), schlick_F0(ior))),
-    f:   lerp(result0.f,   result1.f,   this.weight * dielectric_fresnel(dot(wo, half_direction(params)), ior)));
+    pdf: lerp(result0.pdf, result1.pdf, this.average_weight * schlick_fresnel(float2(cos_thetao, cos_thetai), schlick_F0(this.average_ior))),
+    f:   lerp(result0.f,   result1.f,   this.weight * dielectric_fresnel(dot(wo, half_direction(params)), backface ? 1 / this.ior : this.ior)));
 }
 @(macro)
 auto evaluate_bsdf_sample(const &fresnel_layer this, inline const &evaluate_bsdf_sample_parameters params) {
-  preserve ior;
-  ior = backface ? (1 / this.ior) : this.ior;
   const auto cos_theta(dot(wo, this.normal) * #sign(this.normal.z));
   if (cos_theta < STABILITY_EPS)
     return evaluate_bsdf_sample_result();
-  const auto chance(this.weight * schlick_fresnel(cos_theta, schlick_F0(ior)));
+  const auto chance(this.average_weight * schlick_fresnel(cos_theta, schlick_F0(this.average_ior)));
   if (weighted_bool_sample(&xi.z, chance)) {
+    preserve ior;
+    ior = backface ? (1 / this.average_ior) : this.average_ior;
     auto result(evaluate_bsdf_sample(&this.layer, params, this.normal));
-    *result.delta_f *= (this.weight * dielectric_fresnel(dot(wo, half_direction(params, &result)), ior) / chance) if (result.delta_f);
+    *result.delta_f *= this.weight * dielectric_fresnel(dot(wo, half_direction(params, &result)), backface ? 1 / this.ior : this.ior) / chance if (result.delta_f);
     return result;
   } else {
     auto result(evaluate_bsdf_sample(&this.base, params));
-    *result.delta_f *= (1 - this.weight * dielectric_fresnel(dot(wo, half_direction(params, &result)), ior)) / (1 - chance) if (result.delta_f);
+    *result.delta_f *= (1 - this.weight * dielectric_fresnel(dot(wo, half_direction(params, &result)), backface ? 1 / this.ior : this.ior)) / (1 - chance) if (result.delta_f);
     return result;
   }
 }
-export struct color_fresnel_layer: bsdf {
-  color ior;
-  color_or_float weight = 1.0;
-  bsdf layer = bsdf();
-  bsdf base = bsdf();
-  float3 normal = state::normal();
-};
+export typedef fresnel_layer color_fresnel_layer;
 export struct custom_curve_layer: bsdf {
   color_or_float normal_reflectivity;
   color_or_float grazing_reflectivity = 1.0;
@@ -1143,6 +1139,12 @@ export @(pure macro) auto log2(const auto a) = #log2(a);
 export @(pure macro) auto log10(const auto a) = #log10(a);
 export @(pure macro) auto min_value(const auto a) = #min_value(a);
 export @(pure macro) auto max_value(const auto a) = #max_value(a);
+export @(pure macro) auto average(const auto a) {
+  if (#is_scalar(a))
+    return a;
+  else
+    return #sum(a) / a.size;
+}
 export @(pure macro) auto lerp(const auto a, const auto b, const auto l) = (1.0 - l) * a + l * b;
 export @(pure macro) auto step(const auto a, const auto b) = #select(b < a, 0.0, 1.0);
 export @(pure macro) auto smoothstep(const auto a, const auto b, const auto l) { 
@@ -1657,8 +1659,14 @@ export @(pure macro) auto schlick_fresnel(
     const float exponent = 5) = F0 + (F90 - F0) * #pow(#max(1 - #abs(cos_theta), 0), exponent);
 export @(pure) float dielectric_fresnel(const float cos_thetai, const float ior) {
   const auto cos2_thetat(1 - ior * ior * (1 - cos_thetai * cos_thetai));
-  return 1 if (cos2_thetat < 0);
-  const auto cos_thetat(#sqrt(cos2_thetat) * #sign(cos_thetai));
+  const auto cos_thetat(#sqrt(#max(cos2_thetat, 0)) * #sign(cos_thetai));
+  const auto rs((ior * cos_thetai - cos_thetat) / (ior * cos_thetai + cos_thetat));
+  const auto rp((cos_thetai - ior * cos_thetat) / (cos_thetai + ior * cos_thetat));
+  return #min(0.5 * (rs * rs + rp * rp), 1.0);
+}
+export @(pure) color dielectric_fresnel(const float cos_thetai, const color ior) {
+  const auto cos2_thetat(1 - ior * ior * (1 - cos_thetai * cos_thetai));
+  const auto cos_thetat(#sqrt(#max(cos2_thetat, 0)) * #sign(cos_thetai));
   const auto rs((ior * cos_thetai - cos_thetat) / (ior * cos_thetai + cos_thetat));
   const auto rp((cos_thetai - ior * cos_thetat) / (cos_thetai + ior * cos_thetat));
   return #min(0.5 * (rs * rs + rp * rp), 1.0);

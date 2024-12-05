@@ -24,8 +24,15 @@ export @(pure macro) auto schlick_fresnel(
 
 export @(pure) float dielectric_fresnel(const float cos_thetai, const float ior) {
   const auto cos2_thetat(1 - ior * ior * (1 - cos_thetai * cos_thetai));
-  return 1 if (cos2_thetat < 0);
-  const auto cos_thetat(#sqrt(cos2_thetat) * #sign(cos_thetai));
+  const auto cos_thetat(#sqrt(#max(cos2_thetat, 0)) * #sign(cos_thetai));
+  const auto rs((ior * cos_thetai - cos_thetat) / (ior * cos_thetai + cos_thetat));
+  const auto rp((cos_thetai - ior * cos_thetat) / (cos_thetai + ior * cos_thetat));
+  return #min(0.5 * (rs * rs + rp * rp), 1.0);
+}
+
+export @(pure) color dielectric_fresnel(const float cos_thetai, const color ior) {
+  const auto cos2_thetat(1 - ior * ior * (1 - cos_thetai * cos_thetai));
+  const auto cos_thetat(#sqrt(#max(cos2_thetat, 0)) * #sign(cos_thetai));
   const auto rs((ior * cos_thetai - cos_thetat) / (ior * cos_thetai + cos_thetat));
   const auto rp((cos_thetai - ior * cos_thetat) / (cos_thetai + ior * cos_thetat));
   return #min(0.5 * (rs * rs + rp * rp), 1.0);
