@@ -1,17 +1,17 @@
 #!/usr/bin/ruby 
 
-f = File.open 'builtins.h', 'w'
+f = File.open 'builtin.h', 'w'
 f.write <<STR
 #pragma once
 
-namespace smdl::Compiler::builtins {
+namespace smdl::Compiler::builtin {
 
 STR
 
 fnames = ['anno', 'df', 'debug', 'limits', 'math', 'scene', 'state', 'std', 'tex', 'monte_carlo', 'quat', 'rgb', 'specular']
 
 for fname in fnames 
-  text = File.read "builtins/#{fname}.smdl"
+  text = File.read "builtin/#{fname}.smdl"
   text = text.gsub /\/\/.*$/, ''
   text = text.gsub /\n(\s*\n)+/, "\n"
   f.write "static const char *#{fname} = R\"*(#{text})*\";\n\n"
@@ -30,7 +30,6 @@ f.write <<STR
   return nullptr;
 }
 
-} // namespace smdl::Compiler::builtins
+} // namespace smdl::Compiler::builtin
 STR
-
 

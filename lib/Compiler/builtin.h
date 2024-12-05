@@ -1,6 +1,6 @@
 #pragma once
 
-namespace smdl::Compiler::builtins {
+namespace smdl::Compiler::builtin {
 
 static const char *anno = R"*(#smdl_syntax
 )*";
@@ -1703,4 +1703,4 @@ export @(pure) color dielectric_fresnel(const float cos_thetai, const color ior)
   return nullptr;
 }
 
-} // namespace smdl::Compiler::builtins
+} // namespace smdl::Compiler::builtin

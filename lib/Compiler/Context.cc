@@ -2,7 +2,7 @@
 #include "Context.h"
 #include "Emitter.h"
 #include "Parser.h"
-#include "builtins.h"
+#include "builtin.h"
 
 namespace smdl::Compiler {
 
@@ -475,7 +475,7 @@ Function *Context::get_function(Emitter &emitter, const llvm::Twine &srcTwine) {
 }
 
 Module *Context::get_builtin_module(llvm::StringRef name) {
-  if (auto moduleSrc{builtins::get_src(name)}) {
+  if (auto moduleSrc{builtin::get_src(name)}) {
     auto &module{builtinModules[name]};
     if (!module) {
       module.reset(bump_allocate<Module>(name, moduleSrc));

@@ -146,6 +146,11 @@ public:
     return get_or_initialize_type<CompileTimeUnionType>(compileTimeUnionTypes, unionType);
   }
 
+  [[nodiscard]] CompileTimeUnionType *get_compile_time_union_type(llvm::ArrayRef<Type *> types) {
+    sanity_check(types.size() > 1);
+    return get_compile_time_union_type(static_cast<UnionType*>(get_union_type(types)));
+  }
+
   [[nodiscard]] VoidType *get_void_type() { return voidType.get(); }
 
   [[nodiscard]] EnumType *get_intensity_mode_type() { return intensityModeType.get(); }
