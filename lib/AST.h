@@ -82,7 +82,6 @@ enum class ExprKind : uint8_t {
   Binary,
   Call,
   Cast,
-  CompileTime,
   Conditional,
   GetField,
   GetIndex,
@@ -94,6 +93,7 @@ enum class ExprKind : uint8_t {
   LiteralInt,
   LiteralString,
   Name,
+  Parens,
   ReturnFrom,
   SizeName,
   Type,
@@ -125,8 +125,7 @@ public:
 
 class Identifier final : public ExprSubclass<ExprKind::Identifier> {
 public:
-  Identifier(llvm::SmallVector<unique_bump_ptr<Name>> names, bool isAbsolute)
-      : names(std::move(names)), isAbsolute(isAbsolute) {}
+  Identifier(llvm::SmallVector<unique_bump_ptr<Name>> names, bool isAbs) : names(std::move(names)), isAbs(isAbs) {}
 
   [[nodiscard]] llvm::SmallVector<llvm::StringRef> get_string_refs() const {
     auto nameRefs{llvm::SmallVector<llvm::StringRef>{}};
@@ -135,13 +134,13 @@ public:
     return nameRefs;
   }
 
-  [[nodiscard]] bool is_simple_name() const { return names.size() == 1 && !isAbsolute; }
+  [[nodiscard]] bool is_simple_name() const { return names.size() == 1 && !isAbs; }
 
   [[nodiscard]] operator std::string() const;
 
   llvm::SmallVector<unique_bump_ptr<Name>> names{};
 
-  bool isAbsolute{};
+  bool isAbs{};
 };
 
 class Arg final {
@@ -186,12 +185,6 @@ public:
   unique_bump_ptr<Identifier> identifier{};
 
   ArgList args{};
-
-  /// MaterialX uses '[[ anno::noinline() ]]' to indicate functions that should not be inlined.
-  [[nodiscard]] bool is_noinline() const {
-    return identifier && identifier->names.size() == 2 && identifier->names[0]->name == "anno" &&
-           identifier->names[1]->name == "noinline";
-  }
 };
 
 using AnnotationBlock = llvm::SmallVector<Annotation>;
@@ -203,9 +196,9 @@ using AnnotationBlock = llvm::SmallVector<Annotation>;
 class Type final : public ExprSubclass<ExprKind::Type> {
 public:
   struct Attrs final {
-    uint8_t isConst : 1 {};  ///< 'const'
-    uint8_t isStatic : 1 {}; ///< 'static'
-    uint8_t isInline : 1 {}; ///< 'transparent'
+    uint8_t isConst : 1 {};  ///< `const`
+    uint8_t isStatic : 1 {}; ///< `static`
+    uint8_t isInline : 1 {}; ///< `inline`
   };
 
   Type(
@@ -248,6 +241,8 @@ public:
   llvm::SmallVector<Param> params{};
 
   bool isVarArg{};
+
+  llvm::StringRef src{};
 };
 
 //--{ Unary
@@ -439,23 +434,30 @@ public:
 
 class LiteralInt final : public ExprSubclass<ExprKind::LiteralInt> {
 public:
-  explicit LiteralInt(uint64_t value) : value(value) {}
+  explicit LiteralInt(llvm::StringRef src, uint64_t value) : src(src), value(value) {}
+
+  llvm::StringRef src{};
 
   uint64_t value{};
 };
 
 class LiteralFloat final : public ExprSubclass<ExprKind::LiteralFloat> {
 public:
-  explicit LiteralFloat(double value, Precision precision) : value(value), precision(precision) {}
+  explicit LiteralFloat(llvm::StringRef src, double value, Precision precision) : src(src), value(value), precision(precision) {}
+
+  llvm::StringRef src{};
 
   double value{};
 
   Precision precision{};
+
 };
 
 class LiteralString final : public ExprSubclass<ExprKind::LiteralString> {
 public:
-  explicit LiteralString(llvm::SmallString<64> value) : value(std::move(value)) {}
+  explicit LiteralString(llvm::StringRef src, llvm::SmallString<64> value) : src(src), value(std::move(value)) {}
+
+  llvm::StringRef src{};
 
   llvm::SmallString<64> value{};
 };
@@ -468,13 +470,6 @@ public:
   llvm::StringRef name{};
 };
 
-class CompileTime final : public ExprSubclass<ExprKind::CompileTime> {
-public:
-  explicit CompileTime(unique_bump_ptr<Expr> expr) : expr(std::move(expr)) {}
-
-  unique_bump_ptr<Expr> expr{};
-};
-
 class ReturnFrom final : public ExprSubclass<ExprKind::ReturnFrom> {
 public:
   explicit ReturnFrom(unique_bump_ptr<Stmt> stmt);
@@ -483,21 +478,19 @@ public:
 
   unique_bump_ptr<Stmt> stmt;
 };
+
+class Parens final : public ExprSubclass<ExprKind::Parens> {
+public:
+  explicit Parens(unique_bump_ptr<Expr> expr, bool isCompileTime) : expr(std::move(expr)), isCompileTime(isCompileTime) {}
+
+  unique_bump_ptr<Expr> expr{};
+
+  bool isCompileTime{};
+};
 //--}
 
 //--{ Decl
-enum class DeclKind : uint8_t {
-  UsingAlias,
-  UsingImport,
-  Import,
-  Typedef,
-  Struct,
-  Enum,
-  Variable,
-  Function,
-  Tag,     ///< NOTE: This is non-standard
-  UnitTest ///< NOTE: This is non-standard
-};
+enum class DeclKind : uint8_t { Enum, Function, Import, Struct, Tag, Typedef, UnitTest, UsingAlias, UsingImport, Variable };
 
 /// The base type for declarations.
 class Decl : public NodeSubclass<NodeKind::Decl> {
@@ -506,15 +499,17 @@ public:
 
   const DeclKind declKind;
 
+  /// Is a global declaration?
   bool isGlobal{};
 
+  /// Is exported with the `export` keyword?
   bool isExport{};
 
+  /// The associated compiler module.
   Compiler::Module *module{};
 
+  /// The associated compiler crumb.
   Compiler::Crumb *crumb{};
-
-  [[nodiscard]] bool is_global_export() const { return isGlobal && isExport; }
 };
 
 template <DeclKind K> class DeclSubclass : public Decl {
@@ -526,83 +521,9 @@ public:
   static bool classof(const Node *node) { return node->nodeKind == NodeKind::Decl && classof(static_cast<const Decl *>(node)); }
 };
 
-class UsingAlias final : public DeclSubclass<DeclKind::UsingAlias> {
-public:
-  UsingAlias(unique_bump_ptr<Name> name, unique_bump_ptr<Identifier> path) : name(std::move(name)), path(std::move(path)) {}
-
-  unique_bump_ptr<Name> name{};
-
-  unique_bump_ptr<Identifier> path{};
-};
-
-class UsingImport final : public DeclSubclass<DeclKind::UsingImport> {
-public:
-  UsingImport(unique_bump_ptr<Identifier> path, llvm::SmallVector<unique_bump_ptr<Name>> names)
-      : path(std::move(path)), names(std::move(names)) {}
-
-  [[nodiscard]] bool is_import_all() const { return names.empty(); }
-
-  unique_bump_ptr<Identifier> path{};
-
-  llvm::SmallVector<unique_bump_ptr<Name>> names{};
-};
-
-class Import final : public DeclSubclass<DeclKind::Import> {
-public:
-  Import(llvm::SmallVector<unique_bump_ptr<Identifier>> paths) : paths(std::move(paths)) {}
-
-  llvm::SmallVector<unique_bump_ptr<Identifier>> paths{};
-};
-
-class Typedef final : public DeclSubclass<DeclKind::Typedef> {
-public:
-  Typedef(unique_bump_ptr<Type> type, unique_bump_ptr<Name> name) : type(std::move(type)), name(std::move(name)) {}
-
-  unique_bump_ptr<Type> type{};
-
-  unique_bump_ptr<Name> name{};
-};
-
-class Struct final : public DeclSubclass<DeclKind::Struct> {
-public:
-  class Field final {
-  public:
-    bool isVoid{};
-
-    unique_bump_ptr<Type> type{};
-
-    unique_bump_ptr<Name> name{};
-
-    unique_bump_ptr<Expr> init{};
-
-    std::optional<AnnotationBlock> annotations{};
-  };
-
-  class Tag final {
-  public:
-    bool isDefault{};
-
-    unique_bump_ptr<Type> type{};
-  };
-
-  Struct(
-      unique_bump_ptr<Name> name, std::optional<AnnotationBlock> annotations, llvm::SmallVector<Field> fields,
-      llvm::SmallVector<Tag> tags = {})
-      : name(std::move(name)), annotations(std::move(annotations)), fields(std::move(fields)), tags(std::move(tags)) {}
-
-  unique_bump_ptr<Name> name{};
-
-  std::optional<AnnotationBlock> annotations{};
-
-  llvm::SmallVector<Field> fields{};
-
-  llvm::SmallVector<Tag> tags{};
-};
-
 class Enum final : public DeclSubclass<DeclKind::Enum> {
 public:
-  class Constant final {
-  public:
+  struct Declarator final {
     unique_bump_ptr<Name> name{};
 
     unique_bump_ptr<Expr> init{};
@@ -612,66 +533,49 @@ public:
     llvm::ConstantInt *llvmConst{};
   };
 
-  Enum(unique_bump_ptr<Name> name, std::optional<AnnotationBlock> annotations, llvm::SmallVector<Constant> constants)
-      : name(std::move(name)), annotations(std::move(annotations)), constants(std::move(constants)) {}
+  Enum(unique_bump_ptr<Name> name, std::optional<AnnotationBlock> annotations, llvm::SmallVector<Declarator> declarators)
+      : name(std::move(name)), annotations(std::move(annotations)), declarators(std::move(declarators)) {}
 
   unique_bump_ptr<Name> name{};
 
   std::optional<AnnotationBlock> annotations{};
 
-  llvm::SmallVector<Constant> constants{};
-};
-
-class Variable final : public DeclSubclass<DeclKind::Variable> {
-public:
-  class Value final {
-  public:
-    unique_bump_ptr<Name> name{};
-
-    unique_bump_ptr<Expr> init{};
-
-    std::optional<ArgList> args{};
-
-    std::optional<AnnotationBlock> annotations{};
-  };
-
-  Variable(unique_bump_ptr<Type> type, llvm::SmallVector<Value, 1> values) : type(std::move(type)), values(std::move(values)) {}
-
-  unique_bump_ptr<Type> type{};
-
-  llvm::SmallVector<Value, 1> values{};
+  llvm::SmallVector<Declarator> declarators{};
 };
 
 class Function final : public DeclSubclass<DeclKind::Function> {
 public:
   struct Attrs final {
+    /// Is marked `@(alwaysinline)`?
     uint8_t isAlwaysInline : 1 {};
+
+    /// Is marked `@(cold)`?
     uint8_t isCold : 1 {};
+
+    /// Is marked `@(foreign)`?
     uint8_t isForeign : 1 {};
+
+    /// Is marked `@(hot)`?
     uint8_t isHot : 1 {};
+
+    /// Is marked `@(macro)`?
     uint8_t isMacro : 1 {};
+
+    /// Is marked `@(noinline)`?
     uint8_t isNoInline : 1 {};
+
+    /// Is marked `@(optnone)`?
     uint8_t isOptNone : 1 {};
+
+    /// Is marked `@(optsize)`?
     uint8_t isOptSize : 1 {};
+
+    /// Is marked `@(pure)`?
     uint8_t isPure : 1 {};
+
+    /// Is marked `@(visible)`?
     uint8_t isVisible : 1 {};
   };
-
-  Function(
-      Attrs attrs, bool isVariant, unique_bump_ptr<Type> returnType, std::optional<AnnotationBlock> earlyAnnotations,
-      unique_bump_ptr<Name> name, ParamList params, std::optional<FrequencyQualifier> frequency,
-      std::optional<AnnotationBlock> lateAnnotations, unique_bump_ptr<Node> definition)
-      : attrs(attrs), isVariant(isVariant), returnType(std::move(returnType)), earlyAnnotations(std::move(earlyAnnotations)),
-        name(std::move(name)), params(std::move(params)), frequency(frequency), lateAnnotations(std::move(lateAnnotations)),
-        definition(std::move(definition)) {
-    // MaterialX uses '[[ anno::noinline() ]]' to indicate functions that should not be inlined.
-    auto hasNoInlineAnnotation{[](const auto &annotations) {
-      return has_annotation(annotations, [](const auto &annotation) { return annotation.is_noinline(); });
-    }};
-    if ((this->earlyAnnotations && hasNoInlineAnnotation(*this->earlyAnnotations)) ||
-        (this->lateAnnotations && hasNoInlineAnnotation(*this->lateAnnotations)))
-      const_cast<Attrs &>(this->attrs).isNoInline = true;
-  }
 
   struct LetAndCall final {
     /// The let expression. This may be null.
@@ -682,6 +586,14 @@ public:
 
     [[nodiscard]] operator bool() const { return call; }
   };
+
+  Function(
+      Attrs attrs, bool isVariant, unique_bump_ptr<Type> returnType, std::optional<AnnotationBlock> earlyAnnotations,
+      unique_bump_ptr<Name> name, ParamList params, std::optional<FrequencyQualifier> frequency,
+      std::optional<AnnotationBlock> lateAnnotations, unique_bump_ptr<Node> definition)
+      : attrs(attrs), isVariant(isVariant), returnType(std::move(returnType)), earlyAnnotations(std::move(earlyAnnotations)),
+        name(std::move(name)), params(std::move(params)), frequency(frequency), lateAnnotations(std::move(lateAnnotations)),
+        definition(std::move(definition)) {}
 
   /// If this is a function variant, get the variant let and call expressions. Else throw an error.
   [[nodiscard]] LetAndCall get_variant_let_and_call_expressions() const;
@@ -706,9 +618,76 @@ public:
   unique_bump_ptr<Node> definition{};
 };
 
+class Import final : public DeclSubclass<DeclKind::Import> {
+public:
+  Import(llvm::SmallVector<unique_bump_ptr<Identifier>> paths) : paths(std::move(paths)) {}
+
+  llvm::SmallVector<unique_bump_ptr<Identifier>> paths{};
+};
+
+class Struct final : public DeclSubclass<DeclKind::Struct> {
+public:
+  struct Field final {
+    /// Is marked with the `void` keyword?
+    ///
+    /// This is used to ignore struct members that appear only for API compatibility with the MDL specification.
+    /// ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    /// export struct diffuse_transmission_bsdf: bsdf {
+    ///   color tint = color(1.0);
+    ///   void string handle = ""; // Don't care
+    /// };
+    /// ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    bool isVoid{};
+
+    /// The type.
+    unique_bump_ptr<Type> type{};
+
+    /// The name.
+    unique_bump_ptr<Name> name{};
+
+    /// Optional! The initializer expression.
+    unique_bump_ptr<Expr> init{};
+
+    /// Optional! The annotation block.
+    std::optional<AnnotationBlock> annotations{};
+  };
+
+  struct Tag final {
+    /// Is marked with the `default` keyword?
+    bool isDefault{};
+
+    /// The tag type. This should resolve to `Identifier`, but it is represented by a `Type` in order for
+    /// the compiler to easily resolve the tag type it represents and store it in the AST using existing
+    /// mechanisms.
+    unique_bump_ptr<Type> type{};
+  };
+
+  Struct(
+      unique_bump_ptr<Name> name, std::optional<AnnotationBlock> annotations, llvm::SmallVector<Field> fields,
+      llvm::SmallVector<Tag> tags = {})
+      : name(std::move(name)), annotations(std::move(annotations)), fields(std::move(fields)), tags(std::move(tags)) {}
+
+  unique_bump_ptr<Name> name{};
+
+  std::optional<AnnotationBlock> annotations{};
+
+  llvm::SmallVector<Field> fields{};
+
+  llvm::SmallVector<Tag> tags{};
+};
+
 class Tag final : public DeclSubclass<DeclKind::Tag> {
 public:
   Tag(unique_bump_ptr<Name> name) : name(std::move(name)) {}
+
+  unique_bump_ptr<Name> name{};
+};
+
+class Typedef final : public DeclSubclass<DeclKind::Typedef> {
+public:
+  Typedef(unique_bump_ptr<Type> type, unique_bump_ptr<Name> name) : type(std::move(type)), name(std::move(name)) {}
+
+  unique_bump_ptr<Type> type{};
 
   unique_bump_ptr<Name> name{};
 };
@@ -720,6 +699,48 @@ public:
   llvm::SmallString<64> name{};
 
   unique_bump_ptr<Node> body{};
+};
+
+class UsingAlias final : public DeclSubclass<DeclKind::UsingAlias> {
+public:
+  UsingAlias(unique_bump_ptr<Name> name, unique_bump_ptr<Identifier> path) : name(std::move(name)), path(std::move(path)) {}
+
+  unique_bump_ptr<Name> name{};
+
+  unique_bump_ptr<Identifier> path{};
+};
+
+class UsingImport final : public DeclSubclass<DeclKind::UsingImport> {
+public:
+  UsingImport(unique_bump_ptr<Identifier> path, llvm::SmallVector<unique_bump_ptr<Name>> names)
+      : path(std::move(path)), names(std::move(names)) {}
+
+  [[nodiscard]] bool is_import_all() const { return names.empty(); }
+
+  unique_bump_ptr<Identifier> path{};
+
+  llvm::SmallVector<unique_bump_ptr<Name>> names{};
+};
+
+class Variable final : public DeclSubclass<DeclKind::Variable> {
+public:
+  class Declarator final {
+  public:
+    unique_bump_ptr<Name> name{};
+
+    unique_bump_ptr<Expr> init{};
+
+    std::optional<ArgList> args{};
+
+    std::optional<AnnotationBlock> annotations{};
+  };
+
+  Variable(unique_bump_ptr<Type> type, llvm::SmallVector<Declarator, 1> declarators)
+      : type(std::move(type)), declarators(std::move(declarators)) {}
+
+  unique_bump_ptr<Type> type{};
+
+  llvm::SmallVector<Declarator, 1> declarators{};
 };
 //--}
 
@@ -866,7 +887,7 @@ class Switch final : public StmtSubclass<StmtKind::Switch> {
 public:
   class Case final {
   public:
-    [[nodiscard]] bool isDefault() const { return !cond.get(); }
+    [[nodiscard]] bool is_default() const { return !cond.get(); }
 
     unique_bump_ptr<Expr> cond{};
 

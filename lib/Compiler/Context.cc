@@ -602,55 +602,72 @@ llvm::SmallVector<Value> Context::resolve_arguments(
 //--}
 
 Module *Context::resolve_module(
-    Emitter &emitter, bool isAbs, llvm::ArrayRef<llvm::StringRef> path, const AST::SourceLocation &srcLoc) {
-  auto fullPath{llvm::SmallVector<llvm::StringRef>{}};
-  resolve_using_aliases(emitter.crumb, path, fullPath);
-  if (!isAbs) {
-    if (fullPath.size() > 1 && (fullPath[0] == "." || fullPath[0] == "..")) {
-      auto dirPath{emitter.module->directory_path()};
-      for (unsigned int i = 0; i + 1 < fullPath.size(); i++)
-        dirPath.append(std::string_view(fullPath[i]));
-      dirPath = dirPath.lexically_normal();
-      for (auto &mod : mdl.modules) {
-        if (mod.get() != emitter.module && mod->name == fullPath.back() && !mod->path.empty()) {
-          std::error_code ec{};
-          if (std::filesystem::equivalent(mod->directory_path(), dirPath, ec)) {
-            mod->emit(*this);
-            return mod.get();
-          }
-        }
-      }
-    }
-    if (fullPath.size() == 1) {
-      for (auto &mod : mdl.modules) {
-        if (mod.get() != emitter.module && mod->name == fullPath[0]) {
-          mod->emit(*this);
-          return mod.get();
+    Emitter &emitter, bool isAbs, llvm::ArrayRef<llvm::StringRef> importPath, const AST::SourceLocation &srcLoc) {
+  // First resolve using aliases in the import path to construct the full import path.
+  // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+  // using menu = "coffee shop"::drinks;
+  // import menu::latte::*;
+  // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+  // In this case the import path is 'menu::latte' and 'menu' is an alias for '"coffee shop"::drinks'
+  // so that the full import path is actually '"coffee shop"::drinks::latte'.
+  auto fullImportPath{llvm::SmallVector<llvm::StringRef>{}};
+  resolve_using_aliases(emitter.crumb, importPath, fullImportPath);
+  sanity_check(!fullImportPath.empty());
+
+  // If the import path is absolute and is a single name, we prioritize builtins.
+  if (isAbs && fullImportPath.size() == 1) {
+    if (auto module{get_builtin_module(fullImportPath[0])})
+      return module;
+  } 
+
+  if (!emitter.module->is_builtin()) {
+    // Add the elements of the full import path to the directory path of the current module and
+    // lexically normalize the result. Suppose the current module file is '/path/to/package/current.mdl' and
+    // we're resolving a slightly more interesting version of the above example.
+    // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    // import .::..::menu::latte::*;
+    // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    // The filesystem directory path we end up with is '/path/to/package/./../coffee shop/drinks', which lexically
+    // normalizes to '/path/to/coffee shop/drinks'.
+    //
+    auto dirPath{emitter.module->directory_path()};
+    for (unsigned i = 0; i + 1 < fullImportPath.size(); i++) // NOTE: Only up to the next-to-last element!
+      dirPath.append(std::string_view(fullImportPath[i]));
+    dirPath = dirPath.lexically_normal();
+
+    // Now look for a module with the expected name that lives in the expected directory.
+    for (auto &module : mdl.modules) {
+      if (module.get() != emitter.module && module->name == fullImportPath.back() && !module->is_builtin()) {
+        if (std::error_code ec{}; std::filesystem::equivalent(module->directory_path(), dirPath, ec)) {
+          module->emit(*this);
+          return module.get();
         }
       }
     }
   }
-  if (fullPath.size() == 1) {
-    if (auto mod{get_builtin_module(fullPath[0])})
-      return mod;
+
+  if (fullImportPath.size() == 1) {
+    if (auto module{get_builtin_module(fullImportPath[0])})
+      return module;
   }
-  srcLoc.report_error(std::format("can't resolve module '{}'", format_join(path, "::")));
+  srcLoc.report_error(std::format("can't resolve module '{}'", format_join(importPath, "::")));
   return nullptr;
 }
 
 void Context::resolve_using_aliases(
-    Crumb *crumb, llvm::ArrayRef<llvm::StringRef> path, llvm::SmallVector<llvm::StringRef> &fullPath) {
-  auto findAliasCrumb{[](Crumb *crumb, llvm::StringRef pathName) -> Crumb * {
+    Crumb *crumb, llvm::ArrayRef<llvm::StringRef> importPath, llvm::SmallVector<llvm::StringRef> &fullImportPath) {
+  auto findAliasCrumb{[](Crumb *crumb, llvm::StringRef importPathName) -> Crumb * {
     for (; crumb; crumb = crumb->prev)
-      if (crumb->is_ast_using_alias() && static_cast<AST::UsingAlias *>(crumb->node)->name->name == pathName)
+      if (crumb->is_ast_using_alias() && static_cast<AST::UsingAlias *>(crumb->node)->name->name == importPathName)
         return crumb;
     return nullptr;
   }};
-  for (auto &pathName : path) {
-    if (auto aliasCrumb{findAliasCrumb(crumb, pathName)}) {
-      resolve_using_aliases(aliasCrumb, static_cast<AST::UsingAlias *>(aliasCrumb->node)->path->get_string_refs(), fullPath);
+  for (auto importPathName : importPath) {
+    if (auto aliasCrumb{findAliasCrumb(crumb, importPathName)}) {
+      resolve_using_aliases(
+          aliasCrumb, static_cast<AST::UsingAlias *>(aliasCrumb->node)->path->get_string_refs(), fullImportPath);
     } else {
-      fullPath.push_back(pathName);
+      fullImportPath.push_back(importPathName);
     }
   }
 }

@@ -60,13 +60,9 @@ namespace smdl {
 
 [[noreturn]] void sanity_check_failure(const char *file, int line, const char *cond, std::string_view more = {});
 
-[[nodiscard]] inline std::filesystem::path canonicalize(const std::filesystem::path &path) {
-  std::error_code ec{};
-  auto canonicalPath{std::filesystem::canonical(path, ec)};
-  if (ec)
-    throw Error(std::format("can't canonicalize path: {} ({})", path.string(), ec.message()));
-  return canonicalPath;
-}
+[[nodiscard]] inline std::string to_lower(llvm::StringRef str) { return str.lower(); }
+
+[[nodiscard]] inline std::string to_upper(llvm::StringRef str) { return str.upper(); }
 
 llvm::StringRef llvm_get_native_target_triple();
 
@@ -77,6 +73,10 @@ template <typename Func> [[nodiscard]] std::optional<Error> catch_and_return_err
   return std::nullopt;
 } catch (const Error &error) {
   return error;
+} catch (const std::exception &error) {
+  return Error(error.what());
+} catch (...) {
+  return Error("unknown error converted from unknown exception type");
 }
 
 void llvm_throw_if_error(llvm::Error error);

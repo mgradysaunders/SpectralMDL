@@ -11,6 +11,7 @@ add_library(
     "Compiler/Value.cc"
     "DataLookup.cc"
     "FileLocator.cc"
+    "Formatter.cc"
     "Image.cc"
     "llvm.cc"
     "MDLInstance.cc"

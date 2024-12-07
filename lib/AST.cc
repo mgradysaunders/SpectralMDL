@@ -4,7 +4,7 @@ namespace smdl::AST {
 
 Identifier::operator std::string() const {
   std::string str{};
-  if (isAbsolute)
+  if (isAbs)
     str += "::";
   for (size_t i{}; i < names.size(); i++) {
     str += names[i]->name;

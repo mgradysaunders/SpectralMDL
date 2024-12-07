@@ -4,17 +4,31 @@
 #include <fstream>
 #include <iostream>
 
+#if WITH_MATERIALX
+#include "MaterialXCore/Document.h"
+#include "MaterialXFormat/Util.h"
+#include "MaterialXFormat/XmlIo.h"
+#include "MaterialXGenMdl/MdlShaderGenerator.h"
+#include "MaterialXGenGlsl/GlslShaderGenerator.h"
+#include "MaterialXGenShader/Shader.h"
+#include "MaterialXGenShader/Util.h"
+#endif // #if WITH_MATERIALX
+
 namespace cl = llvm::cl;
 
 static cl::OptionCategory cat{"Options"};
 static cl::SubCommand subDump{"dump", "Dump as LLVM-IR or native assembly"};
 static cl::SubCommand subTest{"test", "Execute unit tests"};
-static cl::SubCommandGroup allSubs{&subDump, &subTest};
+static cl::SubCommand subFormat{"format", "Format MDL source code"};
+static cl::SubCommandGroup subCompileOptions{&subDump, &subTest};
+//static cl::SubCommand subMtlx{"mtlx", "Convert MaterialX to MDL"};
+//static cl::SubCommandGroup allSubs{&subDump, &subTest, &subMtlx};
+static cl::SubCommandGroup allSubs{&subDump, &subTest, &subFormat};
 
 static cl::list<std::string> inputFiles{cl::Positional, cl::desc("<input>"), cl::OneOrMore, cl::sub(allSubs), cl::cat(cat)};
 static cl::opt<unsigned> optLevel{
-    "O", cl::desc("Optimization level (default 2)"), cl::Prefix, cl::init(2U), cl::sub(allSubs), cl::cat(cat)};
-static cl::opt<bool> enableDebug{"g", cl::desc("Enable debugging"), cl::sub(allSubs), cl::cat(cat)};
+    "O", cl::desc("Optimization level (default 2)"), cl::Prefix, cl::init(2U), cl::sub(subCompileOptions), cl::cat(cat)};
+static cl::opt<bool> enableDebug{"g", cl::desc("Enable debugging"), cl::sub(subCompileOptions), cl::cat(cat)};
 static cl::opt<smdl::OutputFormat> outputFormat{
     "format", cl::desc("Output format:"),
     cl::values(
@@ -27,7 +41,8 @@ static cl::opt<std::string> outputFilename{
 
 static cl::OptionCategory catState{"Options for state"};
 static cl::opt<unsigned> wavelengthBaseMax{
-    "wavelength_base_max", cl::desc("Number of wavelengths (default 16)"), cl::init(16U), cl::sub(allSubs), cl::cat(catState)};
+    "wavelength_base_max", cl::desc("Number of wavelengths (default 16)"), cl::init(16U), cl::sub(subCompileOptions),
+    cl::cat(catState)};
 static cl::opt<float> minWavelen{
     "wavelength_min", cl::desc("Wavelength minimum in nanometers (default 380)"), cl::init(380.0f), cl::sub(subTest),
     cl::cat(catState)};
@@ -40,20 +55,55 @@ int main(int argc, char **argv) {
   smdl::init_or_exit();
   cl::HideUnrelatedOptions({&cat, &catState});
   cl::ParseCommandLineOptions(argc, argv, "SpectralMDL compiler");
+#if 0
+  if (subMtlx) {
+#if WITH_MATERIALX
+    auto shaderGen = MaterialX::MdlShaderGenerator::create();
+    auto shaderGenContext = MaterialX::GenContext(shaderGen);
+    auto lib = MaterialX::createDocument();
+    MaterialX::loadLibraries({"libraries"}, std::string("./build/_deps/materialx-src/"), lib);
+    // shaderGenContext.registerSourceCodeSearchPath(MaterialX::FilePath("deps/install/"));
+    for (auto &inputFile : inputFiles) {
+      auto doc{MaterialX::createDocument()};
+      MaterialX::readFromXmlFile(doc, inputFile.c_str());
+      doc->importLibrary(lib);
+      auto elems{MaterialX::findRenderableElements(doc)};
+      for (auto elem : elems) {
+        if (auto node = elem->asA<MaterialX::Node>(); node && node->getType() == MaterialX::MATERIAL_TYPE_STRING) {
+          // This is a material!
+          auto shader{shaderGen->generate("Test", elem, shaderGenContext)};
+          auto shaderSource{shader->getStage(MaterialX::Stage::PIXEL).getSourceCode()};
+          std::cout << shaderSource << std::endl;
+        }
+      }
+    }
+    return EXIT_SUCCESS;
+#else
+    return EXIT_FAILURE;
+#endif // #if WITH_MATERIALX
+  }
+#endif
   smdl::MDLInstance mdl{};
   try {
     mdl.enableDebug = enableDebug;
     mdl.enableUnitTests = true;
     mdl.wavelengthBaseMax = wavelengthBaseMax;
     for (auto &inputFile : inputFiles) {
-      if (auto error = mdl.load_module(std::string(inputFile))) {
+      if (auto error = mdl.add(std::string(inputFile))) {
         error->print();
         std::exit(EXIT_FAILURE);
       }
     }
+    if (subFormat) {
+      if (auto error = mdl.format_source()) {
+        error->print();
+        return EXIT_FAILURE;
+      }
+      return EXIT_SUCCESS;
+    }
     if (auto error = mdl.compile(smdl::OptLevel(unsigned(optLevel)))) {
       error->print();
-      std::exit(EXIT_FAILURE);
+      return EXIT_FAILURE;
     }
     if (subDump) {
       if (outputFilename.getNumOccurrences()) {

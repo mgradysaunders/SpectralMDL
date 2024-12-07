@@ -10,9 +10,19 @@ set_target_properties(
   )
 target_link_libraries(
   smdl
-  PUBLIC
+  PRIVATE
     "SpectralMDL"
   )
+if(SMDL_ENABLE_MATERIALX)
+  target_compile_definitions(smdl PRIVATE "-DWITH_MATERIALX=1")
+  target_link_libraries(
+    smdl
+    PRIVATE
+      "MaterialXCore"
+      "MaterialXFormat"
+      "MaterialXGenMdl"
+    )
+endif()
 target_include_directories(
   smdl
   PRIVATE 

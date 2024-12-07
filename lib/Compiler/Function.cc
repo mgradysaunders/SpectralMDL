@@ -4,7 +4,6 @@
 
 namespace smdl::Compiler {
 
-//--{ Construct 'FunctionInstance' from 'AST::Function' and 'ParamList'
 FunctionInstance::FunctionInstance(
     Emitter &emitter0, AST::Function &decl, const ParamList &params, llvm::ArrayRef<Type *> argTypes)
     : name(decl.name->name), srcLoc(decl.srcLoc) {
@@ -87,9 +86,7 @@ FunctionInstance::FunctionInstance(
     verify();
   }
 }
-//--}
 
-//--{ Construct 'FunctionInstance' from 'AST::UnitTest'
 FunctionInstance::FunctionInstance(Emitter &emitter0, AST::UnitTest &decl) : name(decl.name), srcLoc(decl.srcLoc) {
   auto &context{emitter0.context};
   type = context.get_function_type(/*isPure=*/false, context.get_void_type(), {});
@@ -113,9 +110,7 @@ FunctionInstance::FunctionInstance(Emitter &emitter0, AST::UnitTest &decl) : nam
   eliminate_unreachable();
   verify();
 }
-//--}
 
-//--{ Construct 'FunctionInstance' from 'AST::Expr'
 FunctionInstance::FunctionInstance(Emitter &emitter0, AST::Expr &expr) : name("(expr)"), srcLoc(expr.srcLoc) {
   auto &context{emitter0.context};
   type = context.get_function_type(/*isPure=*/true, context.get_auto_type(), {});
@@ -132,9 +127,7 @@ FunctionInstance::FunctionInstance(Emitter &emitter0, AST::Expr &expr) : name("(
   eliminate_unreachable();
   verify();
 }
-//--}
 
-//--{ Construct 'FunctionInstance' from 'EnumType' constant strings
 FunctionInstance::FunctionInstance(Emitter &emitter0, EnumType *enumType) {
   auto &context{emitter0.context};
   type = context.get_function_type(/*isPure=*/true, context.get_string_type(), {enumType});
@@ -162,7 +155,6 @@ FunctionInstance::FunctionInstance(Emitter &emitter0, EnumType *enumType) {
   eliminate_unreachable();
   verify();
 }
-//--}
 
 void FunctionInstance::patch_return_type(Type *returnType) {
   auto &context{type->context};
@@ -196,7 +188,6 @@ void FunctionInstance::force_inline(llvm::ArrayRef<Inline> inlines) {
 }
 
 Value FunctionInstance::call(Emitter &emitter, llvm::ArrayRef<Value> argValues, const AST::SourceLocation &srcLoc) {
-  sanity_check(llvmFunc);
   auto llvmArgs{llvm::SmallVector<llvm::Value *>{}};
   if (!type->isPure) {
     if (!emitter.state)
@@ -204,6 +195,8 @@ Value FunctionInstance::call(Emitter &emitter, llvm::ArrayRef<Value> argValues, 
     llvmArgs.push_back(emitter.state);
   }
   llvmArgs.insert(llvmArgs.end(), argValues.begin(), argValues.end());
+  sanity_check_nonnull(llvmFunc);
+  sanity_check(llvmFunc->arg_size() == llvmArgs.size());
   return RValue(
       type->returnType, emitter.builder.CreateCall(static_cast<llvm::FunctionType *>(type->llvmType), llvmFunc, llvmArgs));
 }
@@ -220,8 +213,8 @@ Function::Function(Emitter &emitter0, AST::Function &decl) : decl(decl) {
     else
       decl.srcLoc.report_error(std::format("function '{}' shadows non-function by the same name", decl.name->name));
   }
-  // Only forward-link prev to this if the declaration is in the same module. This prevents 
-  // overloads of functions in other modules from interfering with code outside of the 
+  // Only forward-link prev to this if the declaration is in the same module. This prevents
+  // overloads of functions in other modules from interfering with code outside of the
   // current module.
   if (prev && prev->decl.module == decl.module)
     prev->next = this;
@@ -231,7 +224,9 @@ Function::Function(Emitter &emitter0, AST::Function &decl) : decl(decl) {
     letAndCall = decl.get_variant_let_and_call_expressions();
     sanity_check(has_definition());
   }
-  if (has_unique_concrete_instance()) {
+  // If this function has a unique concrete instance and is marked '@(visible)', then 
+  // compile it immediately.
+  if (has_unique_concrete_instance() && is_visible()) {
     auto argTypes{params.get_types()};
     instances[argTypes] = FunctionInstance(emitter0, decl, params, argTypes);
   }
@@ -286,7 +281,7 @@ Value Function::call(Emitter &emitter0, const ArgList &args, const AST::SourceLo
 
     // If no matching declarations, overload resolution fails.
     if (overloads.empty())
-      srcLoc.report_error(std::format("call to function '{}' has no viable overloads", get_name()));
+      srcLoc.report_error(std::format("call to function '{}' has no viable overloads for '{}'", get_name(), std::string(args)));
 
     // The lambda to determine whether the LHS set of parameter types is strictly less specific than
     // the RHS set of parameter types. This is true if each and every RHS parameter type is implicitly
@@ -336,6 +331,9 @@ Value Function::call(Emitter &emitter0, const ArgList &args, const AST::SourceLo
         emitter1.afterContinue = {}; // Reset 'continue'
         emitter1.afterEndScope = {}; // Reset end-scope
         emitter1.afterReturn = {overload.decl.crumb, blockEnd};
+        emitter1.macroRecursionDepth++;
+        if (emitter1.macroRecursionDepth > 4096)
+          srcLoc.report_error(std::format("call to function '{}' exceeds macro recursion limit of 4096", get_name()));
         emitter1.move_to(blockBegin);
         if (!emitter1.state && !overload.is_pure())
           srcLoc.report_error(std::format("call to function '{}' from '@(pure)' context", get_name()));

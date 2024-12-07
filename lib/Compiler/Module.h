@@ -20,9 +20,11 @@ public:
 
   Module(Module &&) = delete;
 
-  void parse(Context &context);
+  void parse(Context &context, bool formatSource = false);
 
   void emit(Context &context);
+
+  [[nodiscard]] bool is_builtin() const { return path.empty(); }
 
   [[nodiscard]] std::filesystem::path directory_path() const {
     if (path.empty())

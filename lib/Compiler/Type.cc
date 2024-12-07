@@ -608,8 +608,8 @@ EnumType::EnumType(Context &context, builtin_enum_type_t<intensity_mode_t>) : Ty
 EnumType::EnumType(Context &context, AST::Enum *decl, llvm::Function *llvmFunc)
     : TypeSubclass(context, Scalar::Int), decl(decl), llvmFunc(llvmFunc) {
   init_name(*decl->name);
-  for (auto &constant : decl->constants)
-    constants.push_back(Constant{constant.name->name, constant.llvmConst, constant.name->srcLoc});
+  for (auto &declarator : decl->declarators)
+    constants.push_back(Constant{declarator.name->name, sanity_check_nonnull(declarator.llvmConst), declarator.name->srcLoc});
   llvmType = context.get_int_type()->llvmType;
 }
 

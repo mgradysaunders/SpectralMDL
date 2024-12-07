@@ -61,7 +61,7 @@ public:
 
   std::string name{};
 
-  Function<float_t(const state_t &state)> evalOpacity{};
+  Function<void(const state_t &state, float3_t &displacement, float_t &opacity)> evalGeometry{};
 
   Function<int_t(
       const state_t &state, const float3_t &wo, const float3_t &wi, //
@@ -99,9 +99,9 @@ public:
 
   [[nodiscard]] llvm::Module &get_llvm_module() noexcept;
 
-  [[nodiscard]] std::optional<Error> load_all_modules(std::filesystem::path path);
+  [[nodiscard]] std::optional<Error> add(std::filesystem::path path) noexcept;
 
-  [[nodiscard]] std::optional<Error> load_module(std::filesystem::path path);
+  [[nodiscard]] std::optional<Error> format_source() noexcept;
 
   [[nodiscard]] std::optional<Error> compile(OptLevel optLevel = OptLevel::O2) noexcept;
 
@@ -166,7 +166,9 @@ private:
 
   std::map<std::string, Ptexture_t, std::less<>> ptextures{};
 
-  std::set<std::string> modulePaths{};
+  std::set<std::filesystem::path> moduleFilenames{};
+
+  std::set<std::filesystem::path> moduleDirnames{};
 
   std::vector<std::unique_ptr<Compiler::Module>> modules;
 

@@ -40,34 +40,41 @@ MDLInstance::~MDLInstance() {
 }
 
 llvm::LLVMContext &MDLInstance::get_llvm_context() noexcept {
-  sanity_check(llvmJitModule != nullptr);
-  return *llvmJitModule->getContext().getContext();
+  return *sanity_check_nonnull(llvmJitModule.get())->getContext().getContext();
 }
 
 llvm::Module &MDLInstance::get_llvm_module() noexcept {
-  sanity_check(llvmJitModule != nullptr);
-  return *llvmJitModule->getModuleUnlocked();
+  return *sanity_check_nonnull(llvmJitModule.get())->getModuleUnlocked();
 }
 
-std::optional<Error> MDLInstance::load_all_modules(std::filesystem::path path) {
-  for (const auto &dirEntry : std::filesystem::recursive_directory_iterator(path)) {
-    if (dirEntry.is_regular_file() && dirEntry.path().extension() == ".mdl") {
-      if (auto error{load_module(dirEntry.path())})
-        return error;
-    }
-  }
-  return std::nullopt;
-}
-
-std::optional<Error> MDLInstance::load_module(std::filesystem::path path) {
+std::optional<Error> MDLInstance::add(std::filesystem::path path) noexcept {
   return catch_and_return_error([&] {
-    // Canonicalize the file path and only load if not already loaded.
-    path = canonicalize(path);
-    std::string pathStr{path.string()};
-    if (!modulePaths.contains(pathStr)) {
-      modules.emplace_back(new Compiler::Module(std::move(path)));
-      modulePaths.insert(std::move(pathStr));
+    path = std::filesystem::canonical(path);
+    if (std::filesystem::is_regular_file(path)) {
+      moduleFilenames.insert(std::move(path));
+    } else if (std::filesystem::is_directory(path)) {
+      if (moduleDirnames.insert(path).second) {
+        for (const auto &entry : std::filesystem::recursive_directory_iterator(path)) {
+          if (entry.is_regular_file()) {
+            if (auto entryExt{to_lower(entry.path().extension().string())}; entryExt == ".mdl" || entryExt == ".smdl") {
+              moduleFilenames.insert(std::filesystem::canonical(entry.path()));
+            }
+          }
+        }
+      }
     }
+  });
+}
+
+std::optional<Error> MDLInstance::format_source() noexcept {
+  return catch_and_return_error([&] {
+    llvm::BumpPtrAllocator bumpAllocator{};
+    Compiler::Context context{*this, bumpAllocator};
+    for (auto &moduleFilename : moduleFilenames)
+      modules.emplace_back(new Compiler::Module(moduleFilename));
+    for (auto &mod : modules)
+      mod->parse(context, /*formatSource=*/true);
+    modules.clear();
   });
 }
 
@@ -76,10 +83,12 @@ std::optional<Error> MDLInstance::compile(OptLevel optLevel) noexcept {
     {
       llvm::BumpPtrAllocator bumpAllocator{};
       Compiler::Context context{*this, bumpAllocator};
-      for (auto &module : modules)
-        module->parse(context);
-      for (auto &module : modules)
-        module->emit(context);
+      for (auto &moduleFilename : moduleFilenames)
+        modules.emplace_back(new Compiler::Module(moduleFilename));
+      for (auto &mod : modules)
+        mod->parse(context);
+      for (auto &mod : modules)
+        mod->emit(context);
       modules.clear();
     }
     if (optLevel != OptLevel::None)
@@ -120,7 +129,7 @@ std::optional<Error> MDLInstance::compile_jit() noexcept {
     lookup_jit_or_throw(colorToRgb);
     lookup_jit_or_throw(rgbToColor);
     for (auto &material : materials) {
-      lookup_jit_or_throw(material.evalOpacity);
+      lookup_jit_or_throw(material.evalGeometry);
       lookup_jit_or_throw(material.evalBsdf);
       lookup_jit_or_throw(material.evalBsdfSample);
     }

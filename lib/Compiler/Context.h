@@ -148,7 +148,7 @@ public:
 
   [[nodiscard]] CompileTimeUnionType *get_compile_time_union_type(llvm::ArrayRef<Type *> types) {
     sanity_check(types.size() > 1);
-    return get_compile_time_union_type(static_cast<UnionType*>(get_union_type(types)));
+    return get_compile_time_union_type(static_cast<UnionType *>(get_union_type(types)));
   }
 
   [[nodiscard]] VoidType *get_void_type() { return voidType.get(); }
@@ -344,7 +344,7 @@ public:
       Emitter &emitter, bool isAbs, llvm::ArrayRef<llvm::StringRef> names, const AST::SourceLocation &srcLoc);
 
   [[nodiscard]] Value resolve(Emitter &emitter, const AST::Identifier &identifier) {
-    return resolve(emitter, identifier.isAbsolute, identifier.get_string_refs(), identifier.srcLoc);
+    return resolve(emitter, identifier.isAbs, identifier.get_string_refs(), identifier.srcLoc);
   }
 
   [[nodiscard]] llvm::SmallVector<Value> resolve_arguments(
@@ -361,9 +361,10 @@ public:
   }
 
   [[nodiscard]] Module *resolve_module(
-      Emitter &emitter, bool isAbs, llvm::ArrayRef<llvm::StringRef> path, const AST::SourceLocation &srcLoc);
+      Emitter &emitter, bool isAbs, llvm::ArrayRef<llvm::StringRef> importPath, const AST::SourceLocation &srcLoc);
 
-  void resolve_using_aliases(Crumb *crumb, llvm::ArrayRef<llvm::StringRef> path, llvm::SmallVector<llvm::StringRef> &fullPath);
+  void resolve_using_aliases(
+      Crumb *crumb, llvm::ArrayRef<llvm::StringRef> importPath, llvm::SmallVector<llvm::StringRef> &fullImportPath);
 
 public:
   MDLInstance &mdl;

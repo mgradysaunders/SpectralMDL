@@ -2,29 +2,36 @@
 
 #include "Context.h"
 #include "Emitter.h"
+#include "Formatter.h"
 #include "Parser.h"
+
+#include <fstream>
 
 namespace smdl::Compiler {
 
-void Module::parse(Context &context) {
+void Module::parse(Context &context, bool formatSource) {
   sanity_check(text != nullptr);
-  auto parser{Parser(context.bumpAllocator, !path.empty() ? path.c_str() : name.c_str(), text->getBuffer())};
+  auto parser{Parser(context.bumpAllocator, (!path.empty() ? path : name).c_str(), text->getBuffer())};
   root = parser.parse();
   isExtendedSyntax = parser.is_extended_syntax();
+  if (!is_builtin() && formatSource) {
+    std::ofstream ofs(path);
+    sanity_check(ofs.is_open());
+    if (isExtendedSyntax)
+      ofs << "#smdl_syntax\n\n";
+    auto formatter{Formatter()};
+    formatter.write(root);
+    ofs << formatter.str;
+  }
 }
 
-static constexpr auto src_evalOpacity = R"(
-@(visible) float {0}__evaluate_opacity() {{
-  auto opacity(#inline({0}()).geometry.cutout_opacity);
-  opacity = #max(opacity, 0.0);
-  opacity = #min(opacity, 1.0);
-  return opacity;
-}}
-)";
-
-static constexpr auto src_evalDisplacement = R"(
-@(visible) void {0}__evaluate_displacement(const &float3 displacement) {{
-  *displacement = #inline({0}()).geometry.displacement;
+static constexpr auto src_evalGeometry = R"(
+@(visible) void {0}__evaluate_geometry(const &float3 displacement, const &float opacity) {{
+  auto geometry(#inline({0}()).geometry);
+  *displacement = geometry.displacement;
+  *opacity = geometry.cutout_opacity;
+  *opacity = #max(*opacity, 0.0);
+  *opacity = #min(*opacity, 1.0);
 }}
 )";
 
@@ -69,7 +76,7 @@ void Module::emit(Context &context) {
             sanity_check(func->has_unique_concrete_instance());
             return func->get_unique_concrete_instance()->get_link_name().str();
           }};
-          material.evalOpacity.name = emitMaterialFunction(std::format(src_evalOpacity, material.name));
+          material.evalGeometry.name = emitMaterialFunction(std::format(src_evalGeometry, material.name));
           material.evalBsdf.name = emitMaterialFunction(std::format(src_evalBsdf, material.name));
           material.evalBsdfSample.name = emitMaterialFunction(std::format(src_evalBsdfSample, material.name));
         }

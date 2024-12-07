@@ -11,12 +11,16 @@ public:
 
   explicit FunctionInstance(Emitter &emitter0, AST::Function &decl, const ParamList &params, llvm::ArrayRef<Type *> argTypes);
 
+  /// Construct a concrete function instance from an 'AST::UnitTest' declaration.
   explicit FunctionInstance(Emitter &emitter0, AST::UnitTest &decl);
 
+  /// Construct a concrete function instance from an 'AST::Expr' that returns the result of the expression.
   explicit FunctionInstance(Emitter &emitter0, AST::Expr &expr);
 
+  /// Construct a concrete function instance from an 'EnumType' that returns the string name of an enum value.
   explicit FunctionInstance(Emitter &emitter0, EnumType *enumType);
 
+  /// Get the link name for the function (to look it up later in the JIT module).
   [[nodiscard]] llvm::StringRef get_link_name() const { return llvmFunc->getName(); }
 
   /// If the return type is abstract and cannot be inferred until the function code is generated, this
@@ -73,8 +77,10 @@ class Function final {
 public:
   explicit Function(Emitter &emitter0, AST::Function &decl);
 
+  /// Get the function name.
   [[nodiscard]] llvm::StringRef get_name() const { return decl.name->name; }
 
+  /// Get the function return type.
   [[nodiscard]] Type *get_return_type() const { return decl.returnType->type; }
 
   /// Is the function exported by the module?
@@ -111,9 +117,10 @@ public:
   }
 
   /// If the function has a unique concrete 'FunctionInstance', return it. Else return null.
-  [[nodiscard]] const FunctionInstance *get_unique_concrete_instance() const {
-    if (has_unique_concrete_instance())
+  [[nodiscard]] const FunctionInstance *get_unique_concrete_instance() {
+    if (has_unique_concrete_instance() && !instances.empty()) {
       return &instances.begin()->second;
+    }
     return nullptr;
   }
 

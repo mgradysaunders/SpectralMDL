@@ -226,6 +226,8 @@ private:
     return state;
   }
 
+  [[nodiscard]] auto source_since(Cursor cursor) { return text.substr(cursor.i, state.i - cursor.i); }
+
   void report_error(std::string message) const { report_error(std::move(message), state); }
 
   void report_error(std::string message, Cursor cursor) const { throw Error(std::move(message), file.str(), cursor.lineNo); }
@@ -259,11 +261,11 @@ public:
 
   [[nodiscard]] auto parse_enum_type_declaration() -> unique_bump_ptr_wrapper<AST::Enum>;
 
-  [[nodiscard]] auto parse_enum_value_declarator() -> std::optional<AST::Enum::Constant>;
+  [[nodiscard]] auto parse_enum_value_declarator() -> std::optional<AST::Enum::Declarator>;
 
   [[nodiscard]] auto parse_variable_declaration() -> unique_bump_ptr_wrapper<AST::Variable>;
 
-  [[nodiscard]] auto parse_variable_declarator() -> std::optional<AST::Variable::Value>;
+  [[nodiscard]] auto parse_variable_declarator() -> std::optional<AST::Variable::Declarator>;
 
   [[nodiscard]] auto parse_function_declaration() -> unique_bump_ptr_wrapper<AST::Function>;
 

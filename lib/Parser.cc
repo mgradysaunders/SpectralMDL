@@ -463,12 +463,12 @@ auto Parser::parse_enum_type_declaration() -> unique_bump_ptr_wrapper<AST::Enum>
   auto annotations{parse_annotation_block()};
   if (!delimiter('{'))
     report_error("expected '{' after 'enum NAME'", cursor);
-  auto constants{llvm::SmallVector<AST::Enum::Constant>{}};
+  auto declarators{llvm::SmallVector<AST::Enum::Declarator>{}};
   while (true) {
-    auto constant{parse_enum_value_declarator()};
-    if (!constant)
+    auto declarator{parse_enum_value_declarator()};
+    if (!declarator)
       break;
-    constants.push_back(std::move(*constant));
+    declarators.push_back(std::move(*declarator));
     if (!delimiter(','))
       break;
   }
@@ -476,10 +476,10 @@ auto Parser::parse_enum_type_declaration() -> unique_bump_ptr_wrapper<AST::Enum>
     report_error("expected '}' after 'enum NAME { ...'", cursor);
   if (!delimiter(';'))
     report_error("expected ';' after 'enum NAME { ... }'", cursor);
-  return attach(bump_allocate<AST::Enum>(std::move(name), std::move(annotations), std::move(constants)), cursor);
+  return attach(bump_allocate<AST::Enum>(std::move(name), std::move(annotations), std::move(declarators)), cursor);
 }
 
-auto Parser::parse_enum_value_declarator() -> std::optional<AST::Enum::Constant> {
+auto Parser::parse_enum_value_declarator() -> std::optional<AST::Enum::Declarator> {
   checkpoint();
   auto cursor{save_cursor()};
   auto name{parse_simple_name()};
@@ -487,17 +487,17 @@ auto Parser::parse_enum_value_declarator() -> std::optional<AST::Enum::Constant>
     reject();
     return std::nullopt;
   }
-  auto constant{AST::Enum::Constant{}};
-  constant.name = std::move(name);
+  auto declarator{AST::Enum::Declarator{}};
+  declarator.name = std::move(name);
   if (delimiter('=')) {
     auto init{parse_assignment_expression()};
     if (!init)
       report_error("expected initializer after '='", cursor);
-    constant.init = std::move(init);
+    declarator.init = std::move(init);
   }
-  constant.annotations = parse_annotation_block();
+  declarator.annotations = parse_annotation_block();
   accept();
-  return std::move(constant);
+  return std::move(declarator);
 }
 
 auto Parser::parse_variable_declaration() -> unique_bump_ptr_wrapper<AST::Variable> {
@@ -508,26 +508,26 @@ auto Parser::parse_variable_declaration() -> unique_bump_ptr_wrapper<AST::Variab
     reject();
     return nullptr;
   }
-  auto values{llvm::SmallVector<AST::Variable::Value, 1>{}};
+  auto declarators{llvm::SmallVector<AST::Variable::Declarator, 1>{}};
   while (true) {
-    auto value{parse_variable_declarator()};
-    if (!value)
+    auto declarator{parse_variable_declarator()};
+    if (!declarator)
       break;
-    values.push_back(std::move(*value));
+    declarators.push_back(std::move(*declarator));
     if (!delimiter(','))
       break;
   }
-  if (values.empty()) {
+  if (declarators.empty()) {
     reject();
     return nullptr;
   }
   if (!delimiter(';'))
     report_error("expected ';' after variable declaration", cursor);
   accept();
-  return attach(bump_allocate<AST::Variable>(std::move(type), std::move(values)), cursor);
+  return attach(bump_allocate<AST::Variable>(std::move(type), std::move(declarators)), cursor);
 }
 
-auto Parser::parse_variable_declarator() -> std::optional<AST::Variable::Value> {
+auto Parser::parse_variable_declarator() -> std::optional<AST::Variable::Declarator> {
   checkpoint();
   auto cursor{save_cursor()};
   auto name{parse_simple_name()};
@@ -535,19 +535,19 @@ auto Parser::parse_variable_declarator() -> std::optional<AST::Variable::Value> 
     reject();
     return std::nullopt;
   }
-  auto value{AST::Variable::Value{}};
-  value.name = std::move(name);
+  auto declarator{AST::Variable::Declarator{}};
+  declarator.name = std::move(name);
   if (delimiter('=')) {
     auto init{parse_assignment_expression()};
     if (!init)
       report_error("expected initializer after '='", cursor);
-    value.init = std::move(init);
+    declarator.init = std::move(init);
   } else if (auto args{parse_argument_list()}) {
-    value.args = std::move(args);
+    declarator.args = std::move(args);
   }
-  value.annotations = parse_annotation_block();
+  declarator.annotations = parse_annotation_block();
   accept();
-  return value;
+  return declarator;
 }
 
 auto Parser::parse_function_declaration() -> unique_bump_ptr_wrapper<AST::Function> {
@@ -810,6 +810,7 @@ auto Parser::parse_parameter_list() -> std::optional<AST::ParamList> {
     reject();
     return std::nullopt;
   }
+  auto cursor{save_cursor()};
   auto params{AST::ParamList{}};
   while (true) {
     auto param{parse_parameter()};
@@ -824,6 +825,7 @@ auto Parser::parse_parameter_list() -> std::optional<AST::ParamList> {
       break;
     }
   }
+  params.src = source_since(cursor);
   if (!delimiter(')')) {
     reject();
     return std::nullopt;
@@ -857,7 +859,7 @@ auto Parser::parse_argument() -> std::optional<AST::Arg> {
   arg.expr = std::move(expr);
   arg.srcLoc.file = file;
   arg.srcLoc.line = cursor.lineNo;
-  arg.src = text.substr(cursor.i, state.i - cursor.i);
+  arg.src = source_since(cursor);
   arg.isVisited = isVisited;
   accept();
   return std::move(arg);
@@ -865,11 +867,11 @@ auto Parser::parse_argument() -> std::optional<AST::Arg> {
 
 auto Parser::parse_argument_list() -> std::optional<AST::ArgList> {
   checkpoint();
-  auto cursor{save_cursor()};
   if (!delimiter('(')) {
     reject();
     return std::nullopt;
   }
+  auto cursor{save_cursor()};
   auto args{AST::ArgList{}};
   while (true) {
     auto arg{parse_argument()};
@@ -879,13 +881,13 @@ auto Parser::parse_argument_list() -> std::optional<AST::ArgList> {
     if (!delimiter(','))
       break;
   }
+  args.src = source_since(cursor);
   if (!delimiter(')')) {
     reject();
     return std::nullopt;
   }
   args.srcLoc.file = std::string_view(file);
   args.srcLoc.line = cursor.lineNo;
-  args.src = text.substr(cursor.i, state.i - cursor.i);
   accept();
   return std::move(args);
 }
@@ -950,10 +952,7 @@ auto Parser::parse_expression_in_parentheses() -> unique_bump_ptr_wrapper<AST::E
     return nullptr;
   }
   accept();
-  if (forceCompileTime)
-    return attach(bump_allocate<AST::CompileTime>(std::move(expr)), cursor);
-  else
-    return expr;
+  return attach(bump_allocate<AST::Parens>(std::move(expr), forceCompileTime), cursor);
 }
 
 auto Parser::parse_assignment_expression() -> unique_bump_ptr_wrapper<AST::Expr> {
@@ -1224,7 +1223,7 @@ auto Parser::parse_literal_expression() -> unique_bump_ptr_wrapper<AST::Expr> {
         digits = "0";
       }
       accept();
-      return attach(bump_allocate<AST::LiteralInt>(value.getLimitedValue()), cursor);
+      return attach(bump_allocate<AST::LiteralInt>(source_since(cursor), value.getLimitedValue()), cursor);
     } else {
       bool isInt = true;
       std::string digits = std::string(parseDigitString(utf8::is_digit));
@@ -1255,14 +1254,14 @@ auto Parser::parse_literal_expression() -> unique_bump_ptr_wrapper<AST::Expr> {
       accept();
       if (isInt) {
         return attach(
-            bump_allocate<AST::LiteralInt>(llvm::APInt(llvm::APInt::getBitsNeeded(digits, 10), digits, 10).getLimitedValue()),
+            bump_allocate<AST::LiteralInt>(source_since(cursor), llvm::APInt(llvm::APInt::getBitsNeeded(digits, 10), digits, 10).getLimitedValue()),
             cursor);
       } else {
         llvm::APFloat value(llvm::APFloat::IEEEdouble());
         auto opStatus{value.convertFromString(digits, llvm::APFloat::rmNearestTiesToEven)};
         if (!opStatus)
           report_error(std::format("failed to parse floating point literal '{}'", digits.c_str()));
-        return attach(bump_allocate<AST::LiteralFloat>(value.convertToDouble(), precision), cursor);
+        return attach(bump_allocate<AST::LiteralFloat>(source_since(cursor), value.convertToDouble(), precision), cursor);
       }
     }
   }
@@ -1349,7 +1348,7 @@ auto Parser::parse_literal_expression() -> unique_bump_ptr_wrapper<AST::Expr> {
     if (!llvm::convertUTF32ToUTF8String(str32, str))
       report_error("utf-8 encoding failed!");
     accept();
-    return attach(bump_allocate<AST::LiteralString>(llvm::SmallString<64>(str.c_str())), cursor);
+    return attach(bump_allocate<AST::LiteralString>(source_since(cursor), llvm::SmallString<64>(str.c_str())), cursor);
   }
   if (isExtendedSyntax) {
     if (next('#')) {
@@ -1674,7 +1673,7 @@ auto Parser::parse_return_statement() -> unique_bump_ptr_wrapper<AST::Return> {
   if (!next_word("return"))
     return nullptr;
   auto expr{parse_expression()};
-  if (!expr)
+  if (!expr && !isExtendedSyntax)
     report_error("expected expression after 'return'", cursor);
   auto cond{parse_late_if_condition()};
   if (!delimiter(';'))

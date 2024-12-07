@@ -40,7 +40,7 @@ public:
       : parent(parent), context(parent->context), module(parent->module), crumb(parent->crumb), state(parent->state),
         returns(parent->returns), inlines(parent->inlines), afterBreak(parent->afterBreak),
         afterContinue(parent->afterContinue), afterReturn(parent->afterReturn), afterEndScope(parent->afterEndScope),
-        builder(parent->context.llvmContext) {
+        builder(parent->context.llvmContext), macroRecursionDepth(parent->macroRecursionDepth) {
     auto fmf{llvm::FastMathFlags::getFast()};
     fmf.setNoNaNs(false); // Don't assume no NaNs!
     fmf.setNoInfs(false); // Don't assume no Infs!
@@ -176,8 +176,6 @@ public:
 
   Value emit(AST::Cast &expr) { return construct(emit(expr.type).get_compile_time_type(), emit(expr.expr), expr.srcLoc); }
 
-  Value emit(AST::CompileTime &expr);
-
   Value emit(AST::Conditional &expr);
 
   Value emit(AST::GetField &expr) { return access(emit(expr.what), expr.name->name, expr.name->srcLoc); }
@@ -198,9 +196,9 @@ public:
 
   Value emit(AST::LiteralString &expr) { return context.get_compile_time_string(expr.value); }
 
-  Value emit(AST::ReturnFrom &expr);
+  Value emit(AST::Parens &expr);
 
-  Value emit(AST::SizeName &expr);
+  Value emit(AST::ReturnFrom &expr);
 
   Value emit(AST::Type &expr);
 
@@ -416,6 +414,8 @@ public:
 
   /// The Intermediate Representation (IR) builder.
   llvm::IRBuilder<> builder;
+
+  uint32_t macroRecursionDepth{};
 };
 
 } // namespace smdl::Compiler
