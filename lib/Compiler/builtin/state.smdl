@@ -2,7 +2,11 @@
 
 import ::math::*;
 
-export enum coordinate_space { coordinate_internal = 0, coordinate_object = 1, coordinate_world = 2 };
+export enum coordinate_space {
+  coordinate_internal = 0,
+  coordinate_object = 1,
+  coordinate_world = 2
+};
 
 export @(macro) float3 position() = $state.position;
 
@@ -26,7 +30,11 @@ export @(macro) float3 geometry_tangent_v(const int i) = $state.geometry_tangent
 
 export @(macro) float3x3 tangent_space(const int i) = float3x3($state.texture_tangent_u[i], $state.texture_tangent_v[i], $state.normal);
 
-export @(macro) float3x3 geometry_tangent_space(const int i) = float3x3($state.geometry_tangent_u[i], $state.geometry_tangent_v[i], $state.geometry_normal);
+export @(macro) float3x3 geometry_tangent_space(const int i) = float3x3(
+  $state.geometry_tangent_u[i],
+  $state.geometry_tangent_v[i],
+  $state.geometry_normal
+);
 
 export @(macro) int object_id() = $state.object_id;
 

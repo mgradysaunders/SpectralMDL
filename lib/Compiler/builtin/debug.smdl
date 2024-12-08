@@ -1,16 +1,16 @@
 #smdl_syntax
 
-export @(pure macro) bool assert(const bool condition, const string reason) {
+export @(macro pure) bool assert(const bool condition, const string reason) {
   #assert(condition, reason) if ($DEBUG);
   return true;
 }
 
-export @(pure macro) bool breakpoint() {
+export @(macro pure) bool breakpoint() {
   #breakpoint() if ($DEBUG);
   return true;
 }
 
-export @(pure macro) bool print(const auto a) {
+export @(macro pure) bool print(const auto a) {
   #print(a) if ($DEBUG);
   return true;
 }

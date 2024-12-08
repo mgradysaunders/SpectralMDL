@@ -1106,15 +1106,15 @@ export @(macro) int material__evaluate_bsdf_sample(
 )*";
 
 static const char *debug = R"*(#smdl_syntax
-export @(pure macro) bool assert(const bool condition, const string reason) {
+export @(macro pure) bool assert(const bool condition, const string reason) {
   #assert(condition, reason) if ($DEBUG);
   return true;
 }
-export @(pure macro) bool breakpoint() {
+export @(macro pure) bool breakpoint() {
   #breakpoint() if ($DEBUG);
   return true;
 }
-export @(pure macro) bool print(const auto a) {
+export @(macro pure) bool print(const auto a) {
   #print(a) if ($DEBUG);
   return true;
 }
@@ -1134,65 +1134,66 @@ import ::rgb::*;
 export const float PI = $PI;
 export const float TWO_PI = $TWO_PI;
 export const float HALF_PI = $HALF_PI;
-export @(pure macro) auto abs(const auto a) = #abs(a);
-export @(pure macro) auto all(const auto a) = #all(a);
-export @(pure macro) auto any(const auto a) = #any(a);
-export @(pure macro) auto max(const auto a, const auto b) = #max(a, b);
-export @(pure macro) auto min(const auto a, const auto b) = #min(a, b);
-export @(pure macro) auto clamp(const auto a, const auto min, const auto max) = #max(min, #min(a, max));
-export @(pure macro) auto saturate(const auto a) = clamp(a, 0.0, 1.0);
-export @(pure macro) auto floor(const auto a) = #floor(a);
-export @(pure macro) auto ceil(const auto a) = #ceil(a);
-export @(pure macro) auto round(const auto a) = #round(a);
-export @(pure macro) auto trunc(const auto a) = #trunc(a);
-export @(pure macro) auto frac(const auto a) = a - #floor(a);
-export @(pure macro) auto fmod(const auto a, const auto b) = a % b;
-export @(pure macro) auto isfinite(const auto a) = #isfpclass(a, 0b0111111000);
-export @(pure macro) auto isnormal(const auto a) = #isfpclass(a, 0b0100001000);
-export @(pure macro) auto isinf(const auto a) = #isfpclass(a, 0b1000000100);
-export @(pure macro) auto isnan(const auto a) = #isfpclass(a, 0b0000000011);
-export @(pure macro) auto sign(const auto a) = #sign(a);
-export @(pure macro) auto sqrt(const auto a) = #sqrt(a);
-export @(pure macro) auto rsqrt(const auto a) = 1.0 / #sqrt(a);
-export @(pure macro) auto pow(const auto a, const auto b) = #pow(a, b);
-export @(pure macro) auto cos(const auto a) = #cos(a);
-export @(pure macro) auto sin(const auto a) = #sin(a);
-export @(pure macro) auto tan(const auto a) = #tan(a);
-export @(pure macro) auto acos(const auto a) = #acos(a);
-export @(pure macro) auto asin(const auto a) = #asin(a);
-export @(pure macro) auto atan(const auto a) = #atan(a);
-export @(pure macro) auto cosh(const auto a) = #cosh(a);
-export @(pure macro) auto sinh(const auto a) = #sinh(a);
-export @(pure macro) auto tanh(const auto a) = #tanh(a);
-export @(pure macro) auto sincos(const auto a) = auto[2](#sin(a), #cos(a));
-export @(pure macro) auto radians(const auto a) = a * (PI / 180.0);
-export @(pure macro) auto degrees(const auto a) = a * (180.0 / PI);
-export @(pure macro) auto exp(const auto a) = #exp(a);
-export @(pure macro) auto exp2(const auto a) = #exp2(a);
-export @(pure macro) auto exp10(const auto a) = #exp10(a);
-export @(pure macro) auto log(const auto a) = #log(a);
-export @(pure macro) auto log2(const auto a) = #log2(a);
-export @(pure macro) auto log10(const auto a) = #log10(a);
-export @(pure macro) auto min_value(const auto a) = #min_value(a);
-export @(pure macro) auto max_value(const auto a) = #max_value(a);
-export @(pure macro) auto average(const auto a) {
-  if (#is_scalar(a))
+export @(macro pure) auto abs(const auto a) = #abs(a);
+export @(macro pure) auto all(const auto a) = #all(a);
+export @(macro pure) auto any(const auto a) = #any(a);
+export @(macro pure) auto max(const auto a, const auto b) = #max(a, b);
+export @(macro pure) auto min(const auto a, const auto b) = #min(a, b);
+export @(macro pure) auto clamp(const auto a, const auto min, const auto max) = #max(min, #min(a, max));
+export @(macro pure) auto saturate(const auto a) = clamp(a, 0.0, 1.0);
+export @(macro pure) auto floor(const auto a) = #floor(a);
+export @(macro pure) auto ceil(const auto a) = #ceil(a);
+export @(macro pure) auto round(const auto a) = #round(a);
+export @(macro pure) auto trunc(const auto a) = #trunc(a);
+export @(macro pure) auto frac(const auto a) = a - #floor(a);
+export @(macro pure) auto fmod(const auto a, const auto b) = a % b;
+export @(macro pure) auto isfinite(const auto a) = #isfpclass(a, 0b0111111000);
+export @(macro pure) auto isnormal(const auto a) = #isfpclass(a, 0b0100001000);
+export @(macro pure) auto isinf(const auto a) = #isfpclass(a, 0b1000000100);
+export @(macro pure) auto isnan(const auto a) = #isfpclass(a, 0b0000000011);
+export @(macro pure) auto sign(const auto a) = #sign(a);
+export @(macro pure) auto sqrt(const auto a) = #sqrt(a);
+export @(macro pure) auto rsqrt(const auto a) = 1.0 / #sqrt(a);
+export @(macro pure) auto pow(const auto a, const auto b) = #pow(a, b);
+export @(macro pure) auto cos(const auto a) = #cos(a);
+export @(macro pure) auto sin(const auto a) = #sin(a);
+export @(macro pure) auto tan(const auto a) = #tan(a);
+export @(macro pure) auto acos(const auto a) = #acos(a);
+export @(macro pure) auto asin(const auto a) = #asin(a);
+export @(macro pure) auto atan(const auto a) = #atan(a);
+export @(macro pure) auto cosh(const auto a) = #cosh(a);
+export @(macro pure) auto sinh(const auto a) = #sinh(a);
+export @(macro pure) auto tanh(const auto a) = #tanh(a);
+export @(macro pure) auto sincos(const auto a) = auto[2](#sin(a), #cos(a));
+export @(macro pure) auto radians(const auto a) = a * (PI / 180.0);
+export @(macro pure) auto degrees(const auto a) = a * (180.0 / PI);
+export @(macro pure) auto exp(const auto a) = #exp(a);
+export @(macro pure) auto exp2(const auto a) = #exp2(a);
+export @(macro pure) auto exp10(const auto a) = #exp10(a);
+export @(macro pure) auto log(const auto a) = #log(a);
+export @(macro pure) auto log2(const auto a) = #log2(a);
+export @(macro pure) auto log10(const auto a) = #log10(a);
+export @(macro pure) auto min_value(const auto a) = #min_value(a);
+export @(macro pure) auto max_value(const auto a) = #max_value(a);
+export @(macro pure) auto average(const auto a) {
+  if (#is_scalar(a)) {
     return a;
-  else
+  } else {
     return #sum(a) / a.size;
+  }
 }
-export @(pure macro) auto lerp(const auto a, const auto b, const auto l) = (1.0 - l) * a + l * b;
-export @(pure macro) auto step(const auto a, const auto b) = #select(b < a, 0.0, 1.0);
-export @(pure macro) auto smoothstep(const auto a, const auto b, const auto l) { 
+export @(macro pure) auto lerp(const auto a, const auto b, const auto l) = (1.0 - l) * a + l * b;
+export @(macro pure) auto step(const auto a, const auto b) = #select(b < a, 0.0, 1.0);
+export @(macro pure) auto smoothstep(const auto a, const auto b, const auto l) {
   const auto t(saturate(l)), s(1 - t);
   return s * s * (1 + 2 * t) * a + t * t * (1 + 2 * s) * b;
 }
-export @(pure macro) auto dot(const auto a, const auto b) = #sum(a * b);
-export @(pure macro) auto length(const auto a) = #sqrt(#sum(a * a));
-export @(pure macro) auto normalize(const auto a) = a * (1 / length(a));
-export @(pure macro) auto distance(const auto a, const auto b) = length(b - a);
-export @(pure macro) auto cross(const auto a, const auto b) = a.yzx * b.zxy - a.zxy * b.yzx;
-export @(pure macro) auto transpose(const auto a) = #transpose(a);
+export @(macro pure) auto dot(const auto a, const auto b) = #sum(a * b);
+export @(macro pure) auto length(const auto a) = #sqrt(#sum(a * a));
+export @(macro pure) auto normalize(const auto a) = a * (1 / length(a));
+export @(macro pure) auto distance(const auto a, const auto b) = length(b - a);
+export @(macro pure) auto cross(const auto a, const auto b) = a.yzx * b.zxy - a.zxy * b.yzx;
+export @(macro pure) auto transpose(const auto a) = #transpose(a);
 export @(noinline) color blackbody(const float temperature) {
   const auto t(color($state.wavelength_base) * (temperature / 14.387e6));
   auto res(1 + 2 * t);
@@ -1209,15 +1210,16 @@ export @(noinline) color blackbody(const float temperature) {
 }
 export @(noinline) float luminance(const color a) {
   float result(0.0);
-  for (int i = 0; i < $WAVELENGTH_BASE_MAX; ++i)
+  for (int i = 0; i < $WAVELENGTH_BASE_MAX; ++i) {
     result += rgb::wyman_1931_y($state.wavelength_base[i]) * a[i];
+  }
   return result / $WAVELENGTH_BASE_MAX;
 }
-@(pure foreign) float atan2f(float y, float x); 
-export @(pure macro) auto atan2(const float y, const float x) = atan2f(y, x);
-export @(pure macro) auto atan2(const float2 y, const float2 x) = float2(atan2(y[0], x[0]), atan2(y[1], x[1]));
-export @(pure macro) auto atan2(const float3 y, const float3 x) = float3(atan2(y[0], x[0]), atan2(y[1], x[1]), atan2(y[2], x[2]));
-export @(pure macro) auto atan2(const float4 y, const float4 x) = float4(atan2(y[0], x[0]), atan2(y[1], x[1]), atan2(y[2], x[2]), atan2(y[3], x[3]));
+@(foreign pure) float atan2f(float y, float x);
+export @(macro pure) auto atan2(const float y, const float x) = atan2f(y, x);
+export @(macro pure) auto atan2(const float2 y, const float2 x) = float2(atan2(y[0], x[0]), atan2(y[1], x[1]));
+export @(macro pure) auto atan2(const float3 y, const float3 x) = float3(atan2(y[0], x[0]), atan2(y[1], x[1]), atan2(y[2], x[2]));
+export @(macro pure) auto atan2(const float4 y, const float4 x) = float4(atan2(y[0], x[0]), atan2(y[1], x[1]), atan2(y[2], x[2]), atan2(y[3], x[3]));
 )*";
 
 static const char *scene = R"*(#smdl_syntax
@@ -1281,7 +1283,11 @@ export @(pure macro) color data_lookup_color(string name, color default_value = 
 
 static const char *state = R"*(#smdl_syntax
 import ::math::*;
-export enum coordinate_space { coordinate_internal = 0, coordinate_object = 1, coordinate_world = 2 };
+export enum coordinate_space {
+  coordinate_internal = 0,
+  coordinate_object = 1,
+  coordinate_world = 2
+};
 export @(macro) float3 position() = $state.position;
 export @(macro) float3 normal() = $state.normal;
 export @(macro) float3 geometry_normal() = $state.geometry_normal;
@@ -1293,7 +1299,11 @@ export @(macro) float3 texture_tangent_v(const int i) = $state.texture_tangent_v
 export @(macro) float3 geometry_tangent_u(const int i) = $state.geometry_tangent_u[i];
 export @(macro) float3 geometry_tangent_v(const int i) = $state.geometry_tangent_v[i];
 export @(macro) float3x3 tangent_space(const int i) = float3x3($state.texture_tangent_u[i], $state.texture_tangent_v[i], $state.normal);
-export @(macro) float3x3 geometry_tangent_space(const int i) = float3x3($state.geometry_tangent_u[i], $state.geometry_tangent_v[i], $state.geometry_normal);
+export @(macro) float3x3 geometry_tangent_space(const int i) = float3x3(
+  $state.geometry_tangent_u[i],
+  $state.geometry_tangent_v[i],
+  $state.geometry_normal
+);
 export @(macro) int object_id() = $state.object_id;
 export @(macro) float3 direction() = $state.direction;
 export @(macro) float animation_time() = $state.animation_time;
@@ -1347,49 +1357,58 @@ export using ::tex import *;
 )*";
 
 static const char *tex = R"*(#smdl_syntax
-export enum gamma_mode { gamma_default = 0, gamma_linear = 0, gamma_srgb = 1 };
-@(pure macro) float4 apply_gamma_mode(const gamma_mode gamma, const float4 texel) = gamma == gamma_srgb ? float4((texel * texel).xyz, texel.w) : texel;
-@(pure macro) float3 apply_gamma_mode(const gamma_mode gamma, const float3 texel) = gamma == gamma_srgb ? (texel * texel) : texel;
-@(pure macro) float2 apply_gamma_mode(const gamma_mode gamma, const float2 texel) = gamma == gamma_srgb ? (texel * texel) : texel;
-@(pure macro) float apply_gamma_mode(const gamma_mode gamma, const float texel) = gamma == gamma_srgb ? (texel * texel) : texel;
+export enum gamma_mode {
+  gamma_default = 0,
+  gamma_linear = 0,
+  gamma_srgb = 1
+};
+@(macro pure) float4 apply_gamma_mode(const gamma_mode gamma, const float4 texel) = gamma == gamma_srgb ? float4((texel * texel).xyz, texel.w) : texel;
+@(macro pure) float3 apply_gamma_mode(const gamma_mode gamma, const float3 texel) = gamma == gamma_srgb ? (texel * texel) : texel;
+@(macro pure) float2 apply_gamma_mode(const gamma_mode gamma, const float2 texel) = gamma == gamma_srgb ? (texel * texel) : texel;
+@(macro pure) float apply_gamma_mode(const gamma_mode gamma, const float texel) = gamma == gamma_srgb ? (texel * texel) : texel;
 @(pure) &tile_2d access_uv_tile(const texture_2d tex, const int2 uv_tile) {
   return null if (#any((uv_tile < 0) | (uv_tile >= tex.tile_count)));
   return &tex.tiles[tex.tile_count.x * uv_tile.y + uv_tile.x];
 }
-export @(pure macro) int width(const texture_2d tex, const int2 uv_tile = int2(0)) = (tile := access_uv_tile(tex, uv_tile)) ? tile.extent.x : 0;
-export @(pure macro) int width(const texture_3d tex) = tex.extent.x;
-export @(pure macro) int width(const texture_cube tex) = tex.extent.x;
-export @(pure macro) int height(const texture_2d tex, const int2 uv_tile = int2(0)) = (tile := access_uv_tile(tex, uv_tile)) ? tile.extent.y : 0;
-export @(pure macro) int height(const texture_3d tex) = tex.extent.y;
-export @(pure macro) int height(const texture_cube tex) = tex.extent.y;
-export @(pure macro) int depth(const texture_3d tex) = tex.extent.z;
-export @(pure macro) bool texture_isvalid(const texture_2d tex) = bool(tex.tiles);
-export @(pure macro) bool texture_isvalid(const texture_3d tex) = bool(tex.texels);
-export @(pure macro) bool texture_isvalid(const texture_cube tex) = bool(tex.texels);
-export @(pure macro) bool texture_isvalid(const texture_ptex tex) = bool(tex.ptr);
+export @(macro pure) int width(const texture_2d tex, const int2 uv_tile = int2(0)) = (tile := access_uv_tile(tex, uv_tile)) ? tile.extent.x : 0;
+export @(macro pure) int width(const texture_3d tex) = tex.extent.x;
+export @(macro pure) int width(const texture_cube tex) = tex.extent.x;
+export @(macro pure) int height(const texture_2d tex, const int2 uv_tile = int2(0)) = (tile := access_uv_tile(tex, uv_tile)) ? tile.extent.y : 0;
+export @(macro pure) int height(const texture_3d tex) = tex.extent.y;
+export @(macro pure) int height(const texture_cube tex) = tex.extent.y;
+export @(macro pure) int depth(const texture_3d tex) = tex.extent.z;
+export @(macro pure) bool texture_isvalid(const texture_2d tex) = bool(tex.tiles);
+export @(macro pure) bool texture_isvalid(const texture_3d tex) = bool(tex.texels);
+export @(macro pure) bool texture_isvalid(const texture_cube tex) = bool(tex.texels);
+export @(macro pure) bool texture_isvalid(const texture_ptex tex) = bool(tex.ptr);
 @(pure) float4 access_texel(const texture_2d tex, const int2 coord, const int2 uv_tile = int2(0)) {
   const auto tile(access_uv_tile(tex, uv_tile));
   return null if (!tile || #any((coord < 0) | (coord >= tile.extent)));
   return tile.texels[tile.extent.x * coord.y + coord.x];
 }
-export @(pure macro) float4 texel_float4(const texture_2d tex, const int2 coord, const int2 uv_tile = int2(0)) = access_texel(tex, coord, uv_tile);
-export @(pure macro) float3 texel_float3(const texture_2d tex, const int2 coord, const int2 uv_tile = int2(0)) = access_texel(tex, coord, uv_tile).xyz;
-export @(pure macro) float2 texel_float2(const texture_2d tex, const int2 coord, const int2 uv_tile = int2(0)) = access_texel(tex, coord, uv_tile).xy;
-export @(pure macro) float texel_float(const texture_2d tex, const int2 coord, const int2 uv_tile = int2(0)) = access_texel(tex, coord, uv_tile).x;
+export @(macro pure) float4 texel_float4(const texture_2d tex, const int2 coord, const int2 uv_tile = int2(0)) = access_texel(tex, coord, uv_tile);
+export @(macro pure) float3 texel_float3(const texture_2d tex, const int2 coord, const int2 uv_tile = int2(0)) = access_texel(tex, coord, uv_tile).xyz;
+export @(macro pure) float2 texel_float2(const texture_2d tex, const int2 coord, const int2 uv_tile = int2(0)) = access_texel(tex, coord, uv_tile).xy;
+export @(macro pure) float texel_float(const texture_2d tex, const int2 coord, const int2 uv_tile = int2(0)) = access_texel(tex, coord, uv_tile).x;
 export @(macro) color texel_color(const texture_2d tex, const int2 coord, const int2 uv_tile = int2(0)) = color(access_texel(tex, coord, uv_tile).xyz);
 @(pure) float4 access_texel(const texture_3d tex, const int3 coord) {
   return null if (#any((coord < 0) | (coord >= tex.extent)));
   return tex.texels[#sum(tex.stride * coord)];
 }
-export @(pure macro) float4 texel_float4(const texture_3d tex, const int3 coord) = access_texel(tex, coord);
-export @(pure macro) float3 texel_float3(const texture_3d tex, const int3 coord) = access_texel(tex, coord).xyz;
-export @(pure macro) float2 texel_float2(const texture_3d tex, const int3 coord) = access_texel(tex, coord).xy;
-export @(pure macro) float texel_float(const texture_3d tex, const int3 coord) = access_texel(tex, coord).x;
+export @(macro pure) float4 texel_float4(const texture_3d tex, const int3 coord) = access_texel(tex, coord);
+export @(macro pure) float3 texel_float3(const texture_3d tex, const int3 coord) = access_texel(tex, coord).xyz;
+export @(macro pure) float2 texel_float2(const texture_3d tex, const int3 coord) = access_texel(tex, coord).xy;
+export @(macro pure) float texel_float(const texture_3d tex, const int3 coord) = access_texel(tex, coord).x;
 export @(macro) color texel_color(const texture_3d tex, const int3 coord) = color(access_texel(tex, coord).xyz);
-export enum wrap_mode { wrap_clamp = 0, wrap_repeat = 1, wrap_mirrored_repeat = 2, wrap_clip = 3 };
-@(pure macro) auto apply_wrap_mode(const auto wrap, const auto n, auto i) {
+export enum wrap_mode {
+  wrap_clamp = 0,
+  wrap_repeat = 1,
+  wrap_mirrored_repeat = 2,
+  wrap_clip = 3
+};
+@(macro pure) auto apply_wrap_mode(const auto wrap, const auto n, auto i) {
   auto rem(i % n);
-  const auto neg(#select(rem < 0, 1, 0)); 
+  const auto neg(#select(rem < 0, 1, 0));
   rem += n * neg;
   const auto quo(i / n + neg);
   const auto repeat(rem);
@@ -1398,10 +1417,10 @@ export enum wrap_mode { wrap_clamp = 0, wrap_repeat = 1, wrap_mirrored_repeat = 
   i = #max(0, #min(i, n - 1));
   return i;
 }
-export @(pure macro) float4 lookup_float4(
-    const texture_2d tex, 
-    float2 coord, 
-    const wrap_mode wrap_u = wrap_repeat, 
+export @(macro pure) float4 lookup_float4(
+    const texture_2d tex,
+    float2 coord,
+    const wrap_mode wrap_u = wrap_repeat,
     const wrap_mode wrap_v = wrap_repeat,
     const float2 crop_u = float2(0.0, 1.0),
     const float2 crop_v = float2(0.0, 1.0)) {
@@ -1431,7 +1450,7 @@ export @(pure macro) float4 lookup_float4(
     const auto icrop_v(int2(crop_v * extent));
     const auto icorner0(int2(icrop_u[0], icrop_v[0]));
     const auto icorner1(int2(icrop_u[1], icrop_v[1]));
-    const auto subextent(icorner1 - icorner0); 
+    const auto subextent(icorner1 - icorner0);
     coord *= subextent;
     coord -= 0.5;
     const int2 ic(#floor(coord));
@@ -1445,21 +1464,21 @@ export @(pure macro) float4 lookup_float4(
     return apply_gamma_mode(gamma_mode(tex.gamma), (1 - t) * texel0 + t * texel1);
   }
 }
-export @(pure macro) float3 lookup_float3(
+export @(macro pure) float3 lookup_float3(
     const texture_2d tex,
     const float2 coord,
     const wrap_mode wrap_u = wrap_repeat,
     const wrap_mode wrap_v = wrap_repeat,
     const float2 crop_u = float2(0.0, 1.0),
     const float2 crop_v = float2(0.0, 1.0)) = lookup_float4(tex, coord, wrap_u, wrap_v, crop_u, crop_v).xyz;
-export @(pure macro) float2 lookup_float2(
+export @(macro pure) float2 lookup_float2(
     const texture_2d tex,
     const float2 coord,
     const wrap_mode wrap_u = wrap_repeat,
     const wrap_mode wrap_v = wrap_repeat,
     const float2 crop_u = float2(0.0, 1.0),
     const float2 crop_v = float2(0.0, 1.0)) = lookup_float4(tex, coord, wrap_u, wrap_v, crop_u, crop_v).xy;
-export @(pure macro) float lookup_float(
+export @(macro pure) float lookup_float(
     const texture_2d tex,
     const float2 coord,
     const wrap_mode wrap_u = wrap_repeat,
@@ -1528,15 +1547,15 @@ export @(pure) float3 cosine_hemisphere_sample(float2 xi) = float3((p := uniform
 
 static const char *quat = R"*(#smdl_syntax
 using ::math import *;
-export @(pure macro) float4 quat_rotate(const float theta, const float3 v) = float4(#sin(theta / 2) * normalize(v), #cos(theta / 2));
-export @(pure macro) float4 quat_rotate(const float3 u, const float3 v) = normalize(float4(cross(u, v), 1 + dot(u, v)));
-export @(pure macro) float4 quat_transpose(const float4 q) = float4(-1.0, -1.0, -1.0, 1.0) * q;
-export @(pure macro) float3 quat_transform_vector(const float4 q, const float3 u) = (w := q.w) * w * u + (v := q.xyz) * dot(v, u) + cross(v, 2 * w * u + cross(v, u));
-export @(pure macro) float4 quat_multiply(const float4 q, const float4 r) = float4(1.0, 1.0, 1.0, -1.0) * (q.wwwx * r.xyzx + q.xyzy * r.wwwy + q.yzxz * r.zxyz - q.zxyw * r.yzxw);
-export @(pure macro) float3 quat_unit_x(const float4 q) = quat_transform_vector(q, float3(1.0, 0.0, 0.0));
-export @(pure macro) float3 quat_unit_y(const float4 q) = quat_transform_vector(q, float3(0.0, 1.0, 0.0));
-export @(pure macro) float3 quat_unit_z(const float4 q) = quat_transform_vector(q, float3(0.0, 0.0, 1.0));
-export @(pure noinline) float3x3 quat_to_float3x3(const float4 q) {
+export @(macro pure) float4 quat_rotate(const float theta, const float3 v) = float4(#sin(theta / 2) * normalize(v), #cos(theta / 2));
+export @(macro pure) float4 quat_rotate(const float3 u, const float3 v) = normalize(float4(cross(u, v), 1 + dot(u, v)));
+export @(macro pure) float4 quat_transpose(const float4 q) = float4(-1.0, -1.0, -1.0, 1.0) * q;
+export @(macro pure) float3 quat_transform_vector(const float4 q, const float3 u) = (w := q.w) * w * u + (v := q.xyz) * dot(v, u) + cross(v, 2 * w * u + cross(v, u));
+export @(macro pure) float4 quat_multiply(const float4 q, const float4 r) = float4(1.0, 1.0, 1.0, -1.0) * (q.wwwx * r.xyzx + q.xyzy * r.wwwy + q.yzxz * r.zxyz - q.zxyw * r.yzxw);
+export @(macro pure) float3 quat_unit_x(const float4 q) = quat_transform_vector(q, float3(1.0, 0.0, 0.0));
+export @(macro pure) float3 quat_unit_y(const float4 q) = quat_transform_vector(q, float3(0.0, 1.0, 0.0));
+export @(macro pure) float3 quat_unit_z(const float4 q) = quat_transform_vector(q, float3(0.0, 0.0, 1.0));
+export @(noinline pure) float3x3 quat_to_float3x3(const float4 q) {
   const float4 q2(q * q);
   const float xx(#sum(float4(1.0, -1.0, -1.0, 1.0) * q2));
   const float yy(#sum(float4(-1.0, 1.0, -1.0, 1.0) * q2));
@@ -1547,7 +1566,8 @@ export @(pure noinline) float3x3 quat_to_float3x3(const float4 q) {
   return float3x3(
     float3(xx, x_yz[0], x_yz[1]),
     float3(y_zx[1], yy, y_zx[0]),
-    float3(z_xy[0], z_xy[1], zz));
+    float3(z_xy[0], z_xy[1], zz)
+  );
 }
 )*";
 
@@ -1678,21 +1698,15 @@ export @(hot noinline) float3 color_to_rgb(const color c) {
 )*";
 
 static const char *specular = R"*(#smdl_syntax
-export @(pure macro) auto reflect(const float3 wi, const float3 wm) = 2 * #sum(wi * wm) * wm - wi;
-export @(pure macro) auto refract(const float3 wi, const float3 wm, const float ior, const float cos_thetat) = -ior * wi + (ior * #sum(wi * wm) + cos_thetat) * wm;
-export @(pure macro) auto refract(const float3 wi, const float3 wm, const float ior) {
-  return refract(wi, wm, ior, #sqrt(1 - ior * ior * (1 - (cos_thetai := #sum(wi * wm)) * cos_thetai)) * -#sign(cos_thetai));
-}
-export @(pure macro) auto refraction_half_vector(const float3 wo, const float3 wi, const float ior) = (vh := -ior * wo + wi) * #sign(vh.z);
-export @(pure macro) auto refraction_half_vector_jacobian(const float3 wo, const float3 wi, const float ior) {
+export @(macro pure) auto reflect(const float3 wi, const float3 wm) = 2 * #sum(wi * wm) * wm - wi;
+export @(macro pure) auto refract(const float3 wi, const float3 wm, const float ior, const float cos_thetat) = -ior * wi + (ior * #sum(wi * wm) + cos_thetat) * wm;
+export @(macro pure) auto refract(const float3 wi, const float3 wm, const float ior) = refract(wi, wm, ior, #sqrt(1 - ior * ior * (1 - (c := #sum(wi * wm)) * c)) * -#sign(c));
+export @(macro pure) auto refraction_half_vector(const float3 wo, const float3 wi, const float ior) = (vh := -ior * wo + wi) * #sign(vh.z);
+export @(macro pure) auto refraction_half_vector_jacobian(const float3 wo, const float3 wi, const float ior) {
   return #abs(#sum(wi * (vh := refraction_half_vector(wo, wi, ior)))) / ((vh2 := #sum(vh * vh)) * #sqrt(vh2));
 }
-export @(pure macro) auto schlick_F0(const auto ior) = #pow((ior - 1) / (ior + 1), 2);
-export @(pure macro) auto schlick_fresnel(
-    const auto cos_theta,
-    const auto F0, 
-    const auto F90 = 1.0,
-    const float exponent = 5) = F0 + (F90 - F0) * #pow(#max(1 - #abs(cos_theta), 0), exponent);
+export @(macro pure) auto schlick_F0(const auto ior) = #pow((ior - 1) / (ior + 1), 2);
+export @(macro pure) auto schlick_fresnel(const auto cos_theta, const auto F0, const auto F90 = 1.0, const float exponent = 5) = F0 + (F90 - F0) * #pow(#max(1 - #abs(cos_theta), 0), exponent);
 export @(pure) float dielectric_fresnel(const float cos_thetai, const float ior) {
   const auto cos2_thetat(1 - ior * ior * (1 - cos_thetai * cos_thetai));
   const auto cos_thetat(#sqrt(#max(cos2_thetat, 0)) * #sign(cos_thetai));
