@@ -1,4 +1,3 @@
-// vim:foldmethod=marker:foldlevel=0:fmr=--{,--}
 #pragma once
 
 #include "AST.h"
@@ -7,6 +6,8 @@ namespace smdl {
 
 class Formatter final {
 public:
+  Formatter(llvm::StringRef src) : src(src) {}
+
   void write(char ch);
 
   void write(llvm::StringRef str);
@@ -25,6 +26,17 @@ public:
 
   void guarantee_newlines(size_t n);
 
+  void try_to_preserve_comments(llvm::StringRef src0, llvm::StringRef src1);
+
+  void try_to_preserve_comments(llvm::StringRef s);
+
+  template <typename Func> void increment_indent(int level, Func &&func) {
+    int prevIndent = indent;
+    indent += level;
+    std::invoke(std::forward<Func>(func));
+    indent = prevIndent;
+  }
+
 public:
   template <typename T, typename Deleter> auto write(const std::unique_ptr<T, Deleter> &ptr) {
     write(*sanity_check_nonnull(ptr.get()));
@@ -33,6 +45,11 @@ public:
   template <typename T> void write(const std::optional<T> &value) {
     if (value)
       write(*value);
+  }
+
+  template <typename T, typename... Ts> void write(T &&arg, Ts &&...args) requires(sizeof...(Ts) > 0) {
+    write(std::forward<T>(arg));
+    write(std::forward<Ts>(args)...);
   }
 
   void write(AST::Node &node);
@@ -66,55 +83,87 @@ public:
   //--{ Write: Exprs
   void write(AST::Expr &expr);
 
-  void write(AST::Binary &expr);
+  void write(AST::Binary &expr) {
+    if (expr.op == AST::BinaryOp::Comma) {
+      write(expr.lhs, ", ", expr.rhs);
+    } else {
+      write(expr.lhs, ' ');
+      try_to_preserve_comments(expr.lhs->src, expr.src);
+      write(AST::to_string(expr.op), ' ');
+      try_to_preserve_comments(expr.src, expr.rhs->src);
+      write(expr.rhs);
+    }
+  }
 
-  void write(AST::Call &expr);
+  void write(AST::Call &expr) { 
+    write(expr.expr);
+    try_to_preserve_comments(expr.expr->src, expr.args.src);
+    write('(', expr.args, ')'); 
+  }
 
-  void write(AST::Cast &expr);
+  void write(AST::Cast &expr) { write("cast<", expr.type, ">(", expr.expr, ')'); }
 
-  void write(AST::Conditional &expr);
+  void write(AST::Conditional &expr) { write(expr.cond, " ? ", expr.ifPass, " : ", expr.ifFail); }
 
-  void write(AST::GetField &expr);
+  void write(AST::GetField &expr) { write(expr.what, '.', expr.name); }
 
   void write(AST::GetIndex &expr);
 
   void write(AST::Identifier &expr);
 
-  void write(AST::Intrinsic &expr);
+  void write(AST::Intrinsic &expr) { write('#', expr.name); }
 
-  void write(AST::Name &expr);
+  void write(AST::Name &expr) { write(expr.name); }
 
   void write(AST::Let &expr);
 
-  void write(AST::LiteralBool &expr);
+  void write(AST::LiteralBool &expr) { write(expr.src); }
 
-  void write(AST::LiteralFloat &expr);
+  void write(AST::LiteralFloat &expr) { write(expr.src); }
 
-  void write(AST::LiteralInt &expr);
+  void write(AST::LiteralInt &expr) { write(expr.src); }
 
-  void write(AST::LiteralString &expr);
+  void write(AST::LiteralString &expr) { write(expr.src); }
 
   void write(AST::Parens &expr);
 
-  void write(AST::ReturnFrom &expr);
+  void write(AST::ReturnFrom &expr) { write("return_from ", expr.stmt); }
 
-  void write(AST::SizeName &expr);
+  void write(AST::SizeName &expr) {
+    if (expr.name)
+      write('<', expr.name, '>');
+  }
 
   void write(AST::Type &expr);
 
-  void write(AST::Unary &expr);
+  void write(AST::Unary &expr) {
+    if ((expr.op & AST::UnaryOp::Postfix) == AST::UnaryOp::Postfix)
+      write(expr.expr, AST::to_string(expr.op));
+    else
+      write(AST::to_string(expr.op), expr.expr);
+  }
   //--}
 
   //--{ Write: Stmts
   void write(AST::Stmt &stmt);
 
-  void write(AST::Break &stmt);
+  void write(AST::Break &stmt) {
+    write("break");
+    if (stmt.cond != nullptr)
+      write(" if ", stmt.cond);
+    write(';');
+  }
 
   void write(AST::Compound &stmt);
 
-  void write(AST::Continue &stmt);
+  void write(AST::Continue &stmt) {
+    write("continue");
+    if (stmt.cond != nullptr)
+      write(" if ", stmt.cond);
+    write(';');
+  }
 
-  void write(AST::DeclStmt &stmt);
+  void write(AST::DeclStmt &stmt) { write(stmt.decl); }
 
   void write(AST::Defer &stmt);
 
@@ -128,18 +177,25 @@ public:
 
   void write(AST::Preserve &stmt);
 
-  void write(AST::Return &stmt);
+  void write(AST::Return &stmt) {
+    write("return");
+    if (stmt.expr != nullptr)
+      write(' ', stmt.expr);
+    if (stmt.cond != nullptr)
+      write(" if ", stmt.cond);
+    write(';');
+  }
 
   void write(AST::Switch &stmt);
 
-  void write(AST::Unreachable &stmt);
+  void write(AST::Unreachable &) { write("unreachable"); }
 
   void write(AST::Visit &stmt);
 
   void write(AST::While &stmt);
   //--}
 
-  void write(AST::FrequencyQualifier freq);
+  void write(AST::FrequencyQualifier freq) { write(freq == AST::FrequencyQualifier::Uniform ? "uniform" : "varying"); }
 
   void write(const AST::Annotation &annotation);
 
@@ -163,16 +219,13 @@ public:
 
   void write(const AST::Variable::Declarator &declarator);
 
-  template <typename Arg, typename... Args> void write(Arg &&arg, Args &&...args) requires(sizeof...(Args) > 0) {
-    write(std::forward<Arg>(arg));
-    write(std::forward<Args>(args)...);
-  }
-
   template <typename... Ts> void write_type_switch(auto &node) {
     llvm::TypeSwitch<decltype(&node), void>(&node).template Case<Ts...>([&]<typename T>(T *each) { write(*each); });
   }
 
-  int indentLevel{};
+  llvm::StringRef src{};
+
+  int indent{};
 
   std::string str{};
 };

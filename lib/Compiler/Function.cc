@@ -27,7 +27,7 @@ FunctionInstance::FunctionInstance(
         impliedVisitArgs.emplace_back(params[i].name, argValue, params[i].srcLoc);
         if (params[i].type->is_abstract() && argTypes[i]->is_union_or_pointer_to_union()) {
           impliedVisit = true;
-          impliedVisitArgs.args.back().isVisited = true;
+          impliedVisitArgs.args.back().isVisit = true;
         }
       }
     }
@@ -346,7 +346,7 @@ Value Function::call(Emitter &emitter0, const ArgList &args, const AST::SourceLo
           impliedVisitArgs.emplace_back(overload.params[i].name, argValues[i], overload.params[i].srcLoc);
           if (overload.params[i].type->is_abstract() && argValues[i].type->is_union_or_pointer_to_union()) {
             impliedVisit = true;
-            impliedVisitArgs.args.back().isVisited = true;
+            impliedVisitArgs.args.back().isVisit = true;
           }
         }
         if (impliedVisit) {

@@ -42,7 +42,7 @@ public:
   uint8_t major{};
   uint8_t minor{};
 
-  [[nodiscard]] static constexpr Version builtin_version() { return {1, 6}; }
+  [[nodiscard]] static constexpr Version builtin_version() { return {1, 9}; }
 };
 
 /// An enum to represent frequency qualifiers. We don't really need these for
@@ -68,6 +68,8 @@ public:
   const NodeKind nodeKind;
 
   SourceLocation srcLoc{};
+
+  llvm::StringRef src{};
 };
 
 template <NodeKind K> class NodeSubclass : public Node {
@@ -163,7 +165,7 @@ public:
   llvm::StringRef src{};
 
   /// Is marked with the 'visit' keyword?
-  bool isVisited{};
+  bool isVisit{};
 };
 
 class ArgList final {
@@ -434,30 +436,23 @@ public:
 
 class LiteralInt final : public ExprSubclass<ExprKind::LiteralInt> {
 public:
-  explicit LiteralInt(llvm::StringRef src, uint64_t value) : src(src), value(value) {}
-
-  llvm::StringRef src{};
+  explicit LiteralInt(uint64_t value) : value(value) {}
 
   uint64_t value{};
 };
 
 class LiteralFloat final : public ExprSubclass<ExprKind::LiteralFloat> {
 public:
-  explicit LiteralFloat(llvm::StringRef src, double value, Precision precision) : src(src), value(value), precision(precision) {}
-
-  llvm::StringRef src{};
+  explicit LiteralFloat(double value, Precision precision) : value(value), precision(precision) {}
 
   double value{};
 
   Precision precision{};
-
 };
 
 class LiteralString final : public ExprSubclass<ExprKind::LiteralString> {
 public:
-  explicit LiteralString(llvm::StringRef src, llvm::SmallString<64> value) : src(src), value(std::move(value)) {}
-
-  llvm::StringRef src{};
+  explicit LiteralString(llvm::SmallString<64> value) : value(std::move(value)) {}
 
   llvm::SmallString<64> value{};
 };
@@ -928,9 +923,12 @@ public:
 class File final : public NodeSubclass<NodeKind::File> {
 public:
   File(
-      Version version, llvm::SmallVector<unique_bump_ptr<Decl>> imports, std::optional<AnnotationBlock> annotations,
-      llvm::SmallVector<unique_bump_ptr<Decl>> globals)
-      : version(version), imports(std::move(imports)), annotations(std::move(annotations)), globals(std::move(globals)) {}
+      bool isSmdlSyntax, Version version, llvm::SmallVector<unique_bump_ptr<Decl>> imports,
+      std::optional<AnnotationBlock> annotations, llvm::SmallVector<unique_bump_ptr<Decl>> globals)
+      : isSmdlSyntax(isSmdlSyntax), version(version), imports(std::move(imports)), annotations(std::move(annotations)),
+        globals(std::move(globals)) {}
+
+  bool isSmdlSyntax{};
 
   Version version{};
 

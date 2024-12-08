@@ -526,7 +526,7 @@ private:
   struct KeywordConstant final {
     Value value{};
 
-    bool isExtendedSyntax{};
+    bool isSmdlSyntax{};
   };
 
   llvm::StringMap<KeywordConstant> keywordConstants{};

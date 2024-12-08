@@ -1,11 +1,28 @@
-// vim:foldmethod=marker:foldlevel=0:fmr=--{,--}
 #include "Formatter.h"
 
 namespace smdl {
 
+[[nodiscard]] static size_t count_newlines(llvm::StringRef str) {
+  size_t num{};
+  for (char c : str)
+    num += (c == '\n') ? 1 : 0;
+  return num;
+}
+
+[[nodiscard]] static size_t length_with_reduced_whitespace(llvm::StringRef str) {
+  size_t num{};
+  for (auto itr = str.begin(); itr < str.end();) {
+    ++num;
+    ++itr;
+    while (itr < str.end() && std::isspace(static_cast<unsigned char>(*itr)))
+      ++itr;
+  }
+  return num;
+}
+
 void Formatter::write(char ch) {
   if (!str.empty() && str.back() == '\n' && ch != '\n') {
-    for (int i = 0; i < indentLevel; i++)
+    for (int i = 0; i < indent; i++)
       str += "  ";
   }
   str += ch;
@@ -31,9 +48,8 @@ void Formatter::write_literal_string(llvm::StringRef str) {
 
 void Formatter::write_as_compound(AST::Node &node) {
   if (!llvm::isa<AST::Compound>(&node)) {
-    indentLevel++;
-    write("{\n", node);
-    indentLevel--;
+    write('{');
+    increment_indent(1, [&]() { write('\n', node); });
     write("\n}");
   } else {
     write(node);
@@ -52,17 +68,74 @@ void Formatter::guarantee_newlines(size_t n) {
       write('\n');
   }
 }
+void Formatter::try_to_preserve_comments(llvm::StringRef src0, llvm::StringRef src1) {
+  if (!src0.empty() && !src1.empty()) {
+    auto ptr0 = src0.data() + src0.size();
+    auto ptr1 = src1.data();
+    if (ptr0 < ptr1) {
+      try_to_preserve_comments(llvm::StringRef(ptr0, ptr1 - ptr0));
+    }
+  }
+}
+
+void Formatter::try_to_preserve_comments(llvm::StringRef s) {
+  int iter = 0;
+  while (!s.empty() && iter++ < 1000) {
+    size_t numNewLines = count_newlines(s.take_while([](char c) { return std::isspace(static_cast<unsigned char>(c)); }));
+    s = s.ltrim();
+    if (s.empty())
+      break;
+    if (s.starts_with("//")) {
+      s = s.drop_front(2);
+      write("//");
+      while (!s.empty()) {
+        if (s.front() == '\n') {
+          s = s.drop_front();
+          write('\n');
+          break;
+        }
+        str += s.front();
+        s = s.drop_front(1);
+      }
+    } else if (s.starts_with("/*")) {
+      s = s.drop_front(2);
+      write("/*");
+      while (!s.empty()) {
+        if (s.starts_with("*/")) {
+          s = s.drop_front(2);
+          str += "*/ ";
+          break;
+        }
+        str += s.front();
+        s = s.drop_front(1);
+      }
+    }
+  }
+}
 
 void Formatter::write(AST::Node &node) { write_type_switch<AST::Decl, AST::Expr, AST::File, AST::Stmt>(node); }
 
 void Formatter::write(AST::File &file) {
+  if (file.isSmdlSyntax)
+    write("#smdl_syntax\n\n");
+  else
+    write(std::format("mdl {}.{};\n\n", int(file.version.major), int(file.version.minor)));
+
+  // TODO sort imports
   for (auto &decl : file.imports)
     write(decl);
-  for (auto &decl : file.globals)
-    write(decl);
+  // TODO annotations
+  for (size_t i = 0; i < file.globals.size(); i++) {
+    guarantee_newlines(2);
+    if (i > 0)
+      try_to_preserve_comments(file.globals[i - 1]->src, file.globals[i]->src);
+    if (file.globals[i]->isExport)
+      write("export ");
+    write(file.globals[i]);
+  }
 }
 
-//--{ Dump: Decl
+//--{ Write: Decl
 void Formatter::write(AST::Decl &decl) {
   write_type_switch<
       AST::Enum, AST::Function, AST::Import, AST::Struct, AST::Tag, AST::Typedef, AST::UnitTest, AST::UsingAlias,
@@ -70,27 +143,19 @@ void Formatter::write(AST::Decl &decl) {
 }
 
 void Formatter::write(AST::Enum &decl) {
-  if (decl.isGlobal)
-    guarantee_newlines(2);
-  if (decl.isExport)
-    write("export ");
   write("enum ", decl.name, " {");
-  ++indentLevel;
-  for (size_t i = 0; i < decl.declarators.size(); i++) {
-    guarantee_newlines(1);
-    write(decl.declarators[i]);
-    if (i + 1 < decl.declarators.size())
-      write(',');
-  }
-  --indentLevel;
+  increment_indent(1, [&]() {
+    for (size_t i = 0; i < decl.declarators.size(); i++) {
+      guarantee_newlines(1);
+      write(decl.declarators[i]);
+      if (i + 1 < decl.declarators.size())
+        write(',');
+    }
+  });
   write("\n};");
 }
 
 void Formatter::write(AST::Function &decl) {
-  if (decl.isGlobal)
-    guarantee_newlines(2);
-  if (decl.isExport)
-    write("export ");
   if (write(decl.attrs))
     write(' ');
   write(decl.returnType);
@@ -125,47 +190,31 @@ void Formatter::write(AST::Import &decl) {
 }
 
 void Formatter::write(AST::Struct &decl) {
-  if (decl.isGlobal)
-    guarantee_newlines(2);
-  if (decl.isExport)
-    write("export ");
   write("struct ", decl.name);
   if (!decl.tags.empty()) {
     write(": ");
     write_separated(decl.tags, ", ");
   }
   if (decl.fields.empty()) {
-    write(" { /* Empty! */ };");
+    write(" {};");
   } else {
     write(" {");
-    ++indentLevel;
-    for (auto &field : decl.fields) {
-      guarantee_newlines(1);
-      write(field);
-    }
-    --indentLevel;
+    increment_indent(1, [&]() {
+      for (size_t i = 0; i < decl.fields.size(); i++) {
+        // TODO preserve comments
+        guarantee_newlines(1);
+        write(decl.fields[i]);
+      }
+    });
     write("\n};");
   }
 }
 
-void Formatter::write(AST::Tag &decl) {
-  if (decl.isGlobal)
-    guarantee_newlines(2);
-  if (decl.isExport)
-    write("export ");
-  write("tag ", decl.name, ';');
-}
+void Formatter::write(AST::Tag &decl) { write("tag ", decl.name, ';'); }
 
-void Formatter::write(AST::Typedef &decl) {
-  if (decl.isGlobal)
-    guarantee_newlines(2);
-  if (decl.isExport)
-    write("export ");
-  write("typedef ", decl.type, ' ', decl.name, ';');
-}
+void Formatter::write(AST::Typedef &decl) { write("typedef ", decl.type, ' ', decl.name, ';'); }
 
 void Formatter::write(AST::UnitTest &decl) {
-  guarantee_newlines(2);
   write("unit_test \"");
   write_literal_string(decl.name);
   write("\" ");
@@ -191,62 +240,19 @@ void Formatter::write(AST::UsingImport &decl) {
 }
 
 void Formatter::write(AST::Variable &decl) {
-  if (decl.isGlobal)
-    guarantee_newlines(2);
-  if (decl.isExport)
-    write("export ");
   write(decl.type, ' ');
   write_separated(decl.declarators, ", ");
   write(';');
 }
 //--}
 
-//--{ Dump: Exprs
+//--{ Write: Exprs
 void Formatter::write(AST::Expr &expr) {
   write_type_switch<
       AST::Binary, AST::Call, AST::Cast, AST::Conditional, AST::GetField, AST::GetIndex, AST::Identifier, AST::Intrinsic,
       AST::Name, AST::Let, AST::LiteralBool, AST::LiteralFloat, AST::LiteralInt, AST::LiteralString, AST::Parens,
       AST::ReturnFrom, AST::SizeName, AST::Type, AST::Unary>(expr);
 }
-
-void Formatter::write(AST::Binary &expr) {
-  if (expr.op == AST::BinaryOp::Comma)
-    write(expr.lhs, ", ", expr.rhs);
-  else
-    write(expr.lhs, ' ', AST::to_string(expr.op), ' ', expr.rhs);
-}
-
-void Formatter::write(AST::Call &expr) {
-  write(expr.expr, '(');
-  auto isAlwaysIndented{[&]() {
-    if (expr.args.args.empty())
-      return false;
-    if (auto ident{llvm::dyn_cast<AST::Identifier>(expr.expr.get())}) {
-      if (ident->is_simple_name()) {
-        auto &name{ident->names[0]->name};
-        if (name == "material" || name == "material_surface" || name == "material_geometry" || name == "material_emission" ||
-            name == "material_volume")
-          return true;
-      }
-    }
-    return false;
-  }()};
-  if (isAlwaysIndented) {
-    ++indentLevel;
-    write('\n');
-    write_separated(expr.args.args, ",\n");
-    --indentLevel;
-    write("\n)");
-  } else {
-    write(expr.args, ')');
-  }
-}
-
-void Formatter::write(AST::Cast &expr) { write("cast<", expr.type, ">(", expr.expr, ')'); }
-
-void Formatter::write(AST::Conditional &expr) { write(expr.cond, " ? ", expr.ifPass, " : ", expr.ifFail); }
-
-void Formatter::write(AST::GetField &expr) { write(expr.what, '.', expr.name); }
 
 void Formatter::write(AST::GetIndex &expr) {
   write(expr.expr);
@@ -267,32 +273,20 @@ void Formatter::write(AST::Identifier &expr) {
   }
 }
 
-void Formatter::write(AST::Intrinsic &expr) { write('#', expr.name); }
-
-void Formatter::write(AST::Name &expr) { write(expr.name); }
-
 void Formatter::write(AST::Let &expr) {
   if (expr.vars.empty()) {
     write(expr.expr);
   } else {
     write("let {");
-    ++indentLevel;
-    for (auto &var : expr.vars) {
-      guarantee_newlines(1);
-      write(var);
-    }
-    --indentLevel;
+    increment_indent(1, [&]() {
+      for (auto &var : expr.vars) {
+        guarantee_newlines(1);
+        write(var);
+      }
+    });
     write("\n} in ", expr.expr);
   }
 }
-
-void Formatter::write(AST::LiteralBool &expr) { write(expr.value ? "true" : "false"); }
-
-void Formatter::write(AST::LiteralFloat &expr) { write(expr.src); }
-
-void Formatter::write(AST::LiteralInt &expr) { write(expr.src); }
-
-void Formatter::write(AST::LiteralString &expr) { write(expr.src); }
 
 void Formatter::write(AST::Parens &expr) {
   if (expr.isCompileTime) {
@@ -304,16 +298,6 @@ void Formatter::write(AST::Parens &expr) {
     else
       write('(', expr.expr, ')');
   }
-}
-
-void Formatter::write(AST::ReturnFrom &expr) {
-  write("return_from ");
-  write_as_compound(*expr.stmt);
-}
-
-void Formatter::write(AST::SizeName &expr) {
-  if (expr.name)
-    write('<', expr.name, '>');
 }
 
 void Formatter::write(AST::Type &expr) {
@@ -329,41 +313,35 @@ void Formatter::write(AST::Type &expr) {
   if (expr.annotations)
     write(' ', *expr.annotations);
 }
-
-void Formatter::write(AST::Unary &expr) { write(AST::to_string(expr.op), expr.expr); }
 //--}
 
-//--{ Dump: Stmts
+//--{ Write: Stmts
 void Formatter::write(AST::Stmt &stmt) {
   write_type_switch<
       AST::Break, AST::Compound, AST::Continue, AST::DeclStmt, AST::Defer, AST::DoWhile, AST::ExprStmt, AST::For, AST::If,
       AST::Preserve, AST::Return, AST::Switch, AST::Unreachable, AST::Visit, AST::While>(stmt);
 }
 
-void Formatter::write(AST::Break &stmt) {
-  write("break");
-  if (stmt.cond != nullptr)
-    write(" if ", stmt.cond);
-  write(';');
-}
-
 void Formatter::write(AST::Compound &stmt) {
   write('{');
-  ++indentLevel;
-  for (auto &subStmt : stmt.stmts)
-    write('\n', subStmt);
-  --indentLevel;
+  increment_indent(1, [&]() {
+    for (size_t i = 0; i < stmt.stmts.size(); i++) {
+      write('\n');
+      if (i == 0) {
+        auto ptr0{stmt.src.data() + 1};
+        auto ptr1{stmt.stmts[0]->src.data()};
+        if (ptr0 < ptr1)
+          try_to_preserve_comments(llvm::StringRef(ptr0, ptr1 - ptr0));
+      }
+      if (i > 0)
+        try_to_preserve_comments(stmt.stmts[i - 1]->src, stmt.stmts[i]->src);
+      write(stmt.stmts[i]);
+    }
+    // for (auto &subStmt : stmt.stmts)
+    //   write('\n', subStmt);
+  });
   write("\n}");
 }
-
-void Formatter::write(AST::Continue &stmt) {
-  write("continue");
-  if (stmt.cond != nullptr)
-    write(" if ", stmt.cond);
-  write(';');
-}
-
-void Formatter::write(AST::DeclStmt &stmt) { write(*stmt.decl); }
 
 void Formatter::write(AST::Defer &stmt) {
   write("defer ");
@@ -412,15 +390,6 @@ void Formatter::write(AST::Preserve &stmt) {
   write(';');
 }
 
-void Formatter::write(AST::Return &stmt) {
-  write("return");
-  if (stmt.expr != nullptr)
-    write(' ', stmt.expr);
-  if (stmt.cond != nullptr)
-    write(" if ", stmt.cond);
-  write(';');
-}
-
 void Formatter::write(AST::Switch &stmt) {
   write("switch ", stmt.what, " {");
   for (size_t i = 0; i < stmt.cases.size(); i++) {
@@ -430,17 +399,15 @@ void Formatter::write(AST::Switch &stmt) {
     } else {
       write("case ", stmt.cases[i].cond, ':');
     }
-    ++indentLevel;
-    for (auto &subStmt : stmt.cases[i].stmts) {
-      guarantee_newlines(1);
-      write(subStmt);
-    }
-    --indentLevel;
+    increment_indent(1, [&]() {
+      for (auto &subStmt : stmt.cases[i].stmts) {
+        guarantee_newlines(1);
+        write(subStmt);
+      }
+    });
   }
   write("\n}");
 }
-
-void Formatter::write(AST::Unreachable &) { write("unreachable"); }
 
 void Formatter::write(AST::Visit &stmt) {
   write("visit ", stmt.name);
@@ -455,8 +422,6 @@ void Formatter::write(AST::While &stmt) {
 }
 //--}
 
-void Formatter::write(AST::FrequencyQualifier freq) { write(freq == AST::FrequencyQualifier::Uniform ? "uniform" : "varying"); }
-
 void Formatter::write(const AST::Annotation &annotation) { write(annotation.identifier, '(', annotation.args, ')'); }
 
 void Formatter::write(const AST::AnnotationBlock &annotations) {
@@ -466,7 +431,7 @@ void Formatter::write(const AST::AnnotationBlock &annotations) {
 }
 
 void Formatter::write(const AST::Arg &arg) {
-  if (arg.isVisited)
+  if (arg.isVisit)
     write("visit ");
   if (arg.name != nullptr)
     write(arg.name, ": ");
@@ -474,11 +439,11 @@ void Formatter::write(const AST::Arg &arg) {
 }
 
 void Formatter::write(const AST::ArgList &args) {
-  if (args.args.size() > 1 && args.src.size() > 80) {
-    ++indentLevel;
-    write('\n');
-    write_separated(args.args, ",\n");
-    --indentLevel;
+  if (args.args.size() > 1 && length_with_reduced_whitespace(args.src) > 80) {
+    increment_indent(1, [&]() {
+      write('\n');
+      write_separated(args.args, ",\n");
+    });
     write('\n');
   } else {
     write_separated(args.args, ", ");
@@ -494,11 +459,11 @@ void Formatter::write(const AST::Param &param) {
 }
 
 void Formatter::write(const AST::ParamList &params) {
-  if (params.params.size() > 1 && params.src.size() > 80) {
-    indentLevel += 2;
-    write('\n');
-    write_separated(params.params, ",\n");
-    indentLevel -= 2;
+  if (params.params.size() > 1 && length_with_reduced_whitespace(params.src) > 80) {
+    increment_indent(2, [&]() {
+      write('\n');
+      write_separated(params.params, ",\n");
+    });
   } else {
     write_separated(params.params, ", ");
   }

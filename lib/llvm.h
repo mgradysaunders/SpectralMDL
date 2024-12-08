@@ -292,6 +292,11 @@ template <typename T> [[nodiscard]] inline auto format_join(const llvm::SmallVec
   return FormatJoin<T>(values, delim);
 }
 
+[[nodiscard]] inline std::string load_file_to_string(llvm::StringRef fname) {
+  auto buffer{llvm_throw_if_error(llvm::MemoryBuffer::getFile(fname, /*isText=*/true))};
+  return buffer->getBuffer().str();
+}
+
 } // namespace smdl
 
 template <> struct std::formatter<llvm::StringRef, char> {

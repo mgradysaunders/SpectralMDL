@@ -86,7 +86,7 @@ llvm::StringRef Parser::next_word() {
   checkpoint();
   bool success{false};
   auto i{get_position()};
-  if (isExtendedSyntax && peek() == '$')
+  if (isSmdlSyntax && peek() == '$')
     next();
   if (utf8::is_alpha(peek()))
     success = true, next();
@@ -113,11 +113,11 @@ llvm::StringRef Parser::next_int() {
 //--{ Parse: Decls
 auto Parser::parse_mdl() -> unique_bump_ptr_wrapper<AST::File> {
   skip();
-  isExtendedSyntax = next("#smdl_syntax");
+  isSmdlSyntax = next("#smdl_syntax");
   skip();
   auto version{parse_mdl_version()};
   if (!version) {
-    if (!isExtendedSyntax)
+    if (!isSmdlSyntax)
       report_error("expected MDL version");
     else
       version = AST::Version::builtin_version();
@@ -159,7 +159,7 @@ auto Parser::parse_mdl() -> unique_bump_ptr_wrapper<AST::File> {
   }
   if (!is_eof())
     report_error("expected EOF (apparently failed to parse everything!)");
-  return bump_allocate<AST::File>(*version, std::move(imports), std::move(annotations), std::move(globals));
+  return bump_allocate<AST::File>(isSmdlSyntax, *version, std::move(imports), std::move(annotations), std::move(globals));
 }
 
 auto Parser::parse_mdl_version() -> std::optional<AST::Version> {
@@ -328,7 +328,7 @@ auto Parser::parse_global_declaration() -> unique_bump_ptr_wrapper<AST::Decl> {
       return decl;
     if (auto decl{parse_variable_declaration()})
       return decl;
-    if (isExtendedSyntax) {
+    if (isSmdlSyntax) {
       if (auto decl{parse_unit_test_declaration()})
         return decl;
     }
@@ -353,7 +353,7 @@ auto Parser::parse_type_declaration() -> unique_bump_ptr_wrapper<AST::Decl> {
     return decl;
   if (auto decl{parse_enum_type_declaration()})
     return decl;
-  if (isExtendedSyntax) {
+  if (isSmdlSyntax) {
     if (auto decl{parse_tag_declaration()})
       return decl;
   }
@@ -425,7 +425,7 @@ auto Parser::parse_struct_type_declaration() -> unique_bump_ptr_wrapper<AST::Str
 auto Parser::parse_struct_field_declarator() -> std::optional<AST::Struct::Field> {
   checkpoint();
   auto cursor{save_cursor()};
-  bool isVoid{isExtendedSyntax && next_word("void")};
+  bool isVoid{isSmdlSyntax && next_word("void")};
   auto type{parse_type()};
   if (!type) {
     reject();
@@ -554,7 +554,7 @@ auto Parser::parse_function_declaration() -> unique_bump_ptr_wrapper<AST::Functi
   checkpoint();
   auto cursor{save_cursor()};
   auto attrs{AST::Function::Attrs{}};
-  if (isExtendedSyntax && delimiter('@')) {
+  if (isSmdlSyntax && delimiter('@')) {
     if (!delimiter('('))
       report_error("expected '@(...)' syntax for function attributes", cursor);
     while (true) {
@@ -690,7 +690,7 @@ auto Parser::parse_simple_name() -> unique_bump_ptr_wrapper<AST::Name> {
         return nullptr;
       }
     }
-    if (isExtendedSyntax) {
+    if (isSmdlSyntax) {
       static const llvm::StringRef reservedKeywordsExtendedSyntax[]{
           "defer", "inline", "return_from", "static", "tag", "unreachable", "visit",
       };
@@ -760,9 +760,9 @@ auto Parser::parse_type() -> unique_bump_ptr_wrapper<AST::Type> {
     checkpoint();
     if (next_word("const")) {
       accept(), attrs.isConst = true;
-    } else if (isExtendedSyntax && next_word("static")) {
+    } else if (isSmdlSyntax && next_word("static")) {
       accept(), attrs.isStatic = true;
-    } else if (isExtendedSyntax && next_word("inline")) {
+    } else if (isSmdlSyntax && next_word("inline")) {
       accept(), attrs.isInline = true;
     } else {
       reject();
@@ -806,11 +806,11 @@ auto Parser::parse_parameter() -> std::optional<AST::Param> {
 
 auto Parser::parse_parameter_list() -> std::optional<AST::ParamList> {
   checkpoint();
+  auto cursor{save_cursor()};
   if (!delimiter('(')) {
     reject();
     return std::nullopt;
   }
-  auto cursor{save_cursor()};
   auto params{AST::ParamList{}};
   while (true) {
     auto param{parse_parameter()};
@@ -825,19 +825,19 @@ auto Parser::parse_parameter_list() -> std::optional<AST::ParamList> {
       break;
     }
   }
-  params.src = source_since(cursor);
   if (!delimiter(')')) {
     reject();
     return std::nullopt;
   }
   accept();
+  params.src = source_since(cursor);
   return std::move(params);
 }
 
 auto Parser::parse_argument() -> std::optional<AST::Arg> {
   checkpoint();
   auto cursor{save_cursor()};
-  bool isVisited{isExtendedSyntax && next_word("visit")};
+  bool isVisit{isSmdlSyntax && next_word("visit")};
   auto parse_argument_name{[&]() -> unique_bump_ptr_wrapper<AST::Name> {
     checkpoint();
     if (auto name{parse_simple_name()}; name && delimiter(':') && peek() != ':' && peek() != '=') {
@@ -860,18 +860,18 @@ auto Parser::parse_argument() -> std::optional<AST::Arg> {
   arg.srcLoc.file = file;
   arg.srcLoc.line = cursor.lineNo;
   arg.src = source_since(cursor);
-  arg.isVisited = isVisited;
+  arg.isVisit = isVisit;
   accept();
   return std::move(arg);
 }
 
 auto Parser::parse_argument_list() -> std::optional<AST::ArgList> {
   checkpoint();
+  auto cursor{save_cursor()};
   if (!delimiter('(')) {
     reject();
     return std::nullopt;
   }
-  auto cursor{save_cursor()};
   auto args{AST::ArgList{}};
   while (true) {
     auto arg{parse_argument()};
@@ -881,14 +881,14 @@ auto Parser::parse_argument_list() -> std::optional<AST::ArgList> {
     if (!delimiter(','))
       break;
   }
-  args.src = source_since(cursor);
   if (!delimiter(')')) {
     reject();
     return std::nullopt;
   }
-  args.srcLoc.file = std::string_view(file);
-  args.srcLoc.line = cursor.lineNo;
   accept();
+  args.srcLoc.file = file;
+  args.srcLoc.line = cursor.lineNo;
+  args.src = source_since(cursor);
   return std::move(args);
 }
 
@@ -937,7 +937,7 @@ auto Parser::parse_expression() -> unique_bump_ptr_wrapper<AST::Expr> {
 auto Parser::parse_expression_in_parentheses() -> unique_bump_ptr_wrapper<AST::Expr> {
   checkpoint();
   auto cursor{save_cursor()};
-  auto forceCompileTime{isExtendedSyntax && next('$')};
+  auto forceCompileTime{isSmdlSyntax && next('$')};
   if (!delimiter('(')) {
     reject();
     return nullptr;
@@ -1053,7 +1053,7 @@ auto Parser::parse_unary_expression() -> unique_bump_ptr_wrapper<AST::Expr> {
     return expr;
   if (auto expr{parse_let_expression()})
     return expr;
-  if (isExtendedSyntax) {
+  if (isSmdlSyntax) {
     if (auto expr{parse_return_from_expression()})
       return expr;
   }
@@ -1088,7 +1088,7 @@ auto Parser::parse_postfix_expression() -> unique_bump_ptr_wrapper<AST::Expr> {
           report_error("expected '>]'");
         indices.emplace_back(attach(bump_allocate<AST::SizeName>(std::move(name)), cursor));
       } else {
-        indices.emplace_back(parse_expression());
+        indices.emplace_back(parse_expression()); // This may be null for '[]'
       }
       if (!delimiter(']'))
         report_error("expected ']'");
@@ -1223,7 +1223,7 @@ auto Parser::parse_literal_expression() -> unique_bump_ptr_wrapper<AST::Expr> {
         digits = "0";
       }
       accept();
-      return attach(bump_allocate<AST::LiteralInt>(source_since(cursor), value.getLimitedValue()), cursor);
+      return attach(bump_allocate<AST::LiteralInt>(value.getLimitedValue()), cursor);
     } else {
       bool isInt = true;
       std::string digits = std::string(parseDigitString(utf8::is_digit));
@@ -1254,14 +1254,14 @@ auto Parser::parse_literal_expression() -> unique_bump_ptr_wrapper<AST::Expr> {
       accept();
       if (isInt) {
         return attach(
-            bump_allocate<AST::LiteralInt>(source_since(cursor), llvm::APInt(llvm::APInt::getBitsNeeded(digits, 10), digits, 10).getLimitedValue()),
+            bump_allocate<AST::LiteralInt>(llvm::APInt(llvm::APInt::getBitsNeeded(digits, 10), digits, 10).getLimitedValue()),
             cursor);
       } else {
         llvm::APFloat value(llvm::APFloat::IEEEdouble());
         auto opStatus{value.convertFromString(digits, llvm::APFloat::rmNearestTiesToEven)};
         if (!opStatus)
           report_error(std::format("failed to parse floating point literal '{}'", digits.c_str()));
-        return attach(bump_allocate<AST::LiteralFloat>(source_since(cursor), value.convertToDouble(), precision), cursor);
+        return attach(bump_allocate<AST::LiteralFloat>(value.convertToDouble(), precision), cursor);
       }
     }
   }
@@ -1348,9 +1348,9 @@ auto Parser::parse_literal_expression() -> unique_bump_ptr_wrapper<AST::Expr> {
     if (!llvm::convertUTF32ToUTF8String(str32, str))
       report_error("utf-8 encoding failed!");
     accept();
-    return attach(bump_allocate<AST::LiteralString>(source_since(cursor), llvm::SmallString<64>(str.c_str())), cursor);
+    return attach(bump_allocate<AST::LiteralString>(llvm::SmallString<64>(str.c_str())), cursor);
   }
-  if (isExtendedSyntax) {
+  if (isSmdlSyntax) {
     if (next('#')) {
       auto name{next_word()};
       if (name.empty()) {
@@ -1382,6 +1382,7 @@ auto Parser::parse_binary_left_associative(
       reject();
       break;
     }
+    auto opSrc{source_since(cursor)}; // Source region of binary operator is the operator itself
     skip();
     auto rhs{parseTerm()};
     if (!rhs) {
@@ -1389,7 +1390,7 @@ auto Parser::parse_binary_left_associative(
       break;
     } else {
       accept();
-      lhs = attach(bump_allocate<AST::Binary>(*op, std::move(lhs), std::move(rhs)), cursor);
+      lhs = attach(bump_allocate<AST::Binary>(*op, std::move(lhs), std::move(rhs)), cursor, opSrc);
     }
   }
   accept();
@@ -1409,6 +1410,7 @@ auto Parser::parse_binary_right_associative(
     reject();
     return lhs;
   }
+  auto opSrc{source_since(cursor)}; // Source region of binary operator is the operator itself
   skip();
   auto rhs{parse_binary_right_associative(ops, parseTerm)};
   if (!rhs) {
@@ -1416,7 +1418,7 @@ auto Parser::parse_binary_right_associative(
     return lhs;
   } else {
     accept();
-    return attach(bump_allocate<AST::Binary>(*op, std::move(lhs), std::move(rhs)), cursor);
+    return attach(bump_allocate<AST::Binary>(*op, std::move(lhs), std::move(rhs)), cursor, opSrc);
   }
 }
 
@@ -1425,7 +1427,7 @@ auto Parser::parse_unary_op() -> std::optional<AST::UnaryOp> {
   for (auto &op : std::array{UnOp::Incr, UnOp::Decr, UnOp::Pos, UnOp::Neg, UnOp::Not, UnOp::LogicalNot})
     if (next(AST::to_string(op)))
       return op;
-  if (isExtendedSyntax) {
+  if (isSmdlSyntax) {
     if (next(AST::to_string(UnOp::Address)))
       return UnOp::Address;
     if (next(AST::to_string(UnOp::Deref)))
@@ -1439,7 +1441,7 @@ auto Parser::parse_unary_op() -> std::optional<AST::UnaryOp> {
 auto Parser::parse_binary_op(llvm::ArrayRef<AST::BinaryOp> ops) -> std::optional<AST::BinaryOp> {
   for (auto &op : ops) {
     // Don't process ":=" or "<:" unless in extended syntax mode.
-    if ((op == AST::BinaryOp::Def || op == AST::BinaryOp::Subset) && !isExtendedSyntax)
+    if ((op == AST::BinaryOp::Def || op == AST::BinaryOp::Subset) && !isSmdlSyntax)
       continue;
     // Don't mistake bit and for logical and.
     if (op == AST::BinaryOp::And && get_remaining_text().starts_with("&&"))
@@ -1472,7 +1474,7 @@ auto Parser::parse_statement() -> unique_bump_ptr_wrapper<AST::Stmt> {
     return stmt;
   if (auto stmt{parse_return_statement()})
     return stmt;
-  if (isExtendedSyntax) {
+  if (isSmdlSyntax) {
     if (auto stmt{parse_unreachable_statement()})
       return stmt;
     if (auto stmt{parse_preserve_statement()})
@@ -1673,7 +1675,7 @@ auto Parser::parse_return_statement() -> unique_bump_ptr_wrapper<AST::Return> {
   if (!next_word("return"))
     return nullptr;
   auto expr{parse_expression()};
-  if (!expr && !isExtendedSyntax)
+  if (!expr && !isSmdlSyntax)
     report_error("expected expression after 'return'", cursor);
   auto cond{parse_late_if_condition()};
   if (!delimiter(';'))
@@ -1730,7 +1732,7 @@ auto Parser::parse_visit_statement() -> unique_bump_ptr_wrapper<AST::Visit> {
     // 'visit name' same as 'visit name in name'
     auto names{llvm::SmallVector<unique_bump_ptr<AST::Name>>{}};
     names.emplace_back(bump_allocate<AST::Name>(name->name));
-    what.reset(bump_allocate<AST::Identifier>(std::move(names), false)); 
+    what.reset(bump_allocate<AST::Identifier>(std::move(names), false));
   } else {
     what = parse_expression();
     if (!what)
@@ -1743,7 +1745,7 @@ auto Parser::parse_visit_statement() -> unique_bump_ptr_wrapper<AST::Visit> {
 }
 
 auto Parser::parse_late_if_condition() -> unique_bump_ptr_wrapper<AST::Expr> {
-  if (!(isExtendedSyntax && next_word("if")))
+  if (!(isSmdlSyntax && next_word("if")))
     return nullptr;
   auto cond{parse_expression_in_parentheses()};
   if (!cond)

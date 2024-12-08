@@ -145,8 +145,8 @@ public:
     uint64_t i{};
   };
 
-  Parser(llvm::BumpPtrAllocator &bumpAllocator, llvm::StringRef file, llvm::StringRef text, bool isExtendedSyntax = false)
-      : bumpAllocator(bumpAllocator), file(file), text(text), isExtendedSyntax(isExtendedSyntax) {}
+  Parser(llvm::BumpPtrAllocator &bumpAllocator, llvm::StringRef file, llvm::StringRef text, bool isSmdlSyntax = false)
+      : bumpAllocator(bumpAllocator), file(file), text(text), isSmdlSyntax(isSmdlSyntax) {}
 
   Parser(const Parser &) = delete;
 
@@ -154,7 +154,7 @@ public:
 
   [[nodiscard]] unique_bump_ptr<AST::File> parse() { return parse_mdl(); }
 
-  [[nodiscard]] bool is_extended_syntax() const { return isExtendedSyntax; }
+  [[nodiscard]] bool is_smdl_syntax() const { return isSmdlSyntax; }
 
 private:
   //--{ Basics
@@ -215,18 +215,21 @@ private:
 
   [[nodiscard]] llvm::StringRef next_int();
 
-  [[nodiscard]] auto attach(auto node, Cursor cursor) {
-    node->srcLoc.file = std::string_view(file);
-    node->srcLoc.line = cursor.lineNo;
-    return node;
-  }
-
   [[nodiscard]] auto save_cursor() {
     skip();
     return state;
   }
 
   [[nodiscard]] auto source_since(Cursor cursor) { return text.substr(cursor.i, state.i - cursor.i); }
+
+  [[nodiscard]] auto attach(auto node, Cursor cursor, llvm::StringRef src) {
+    node->srcLoc.file = std::string_view(file);
+    node->srcLoc.line = cursor.lineNo;
+    node->src = src;
+    return node;
+  }
+
+  [[nodiscard]] auto attach(auto node, Cursor cursor) { return attach(node, cursor, source_since(cursor)); }
 
   void report_error(std::string message) const { report_error(std::move(message), state); }
 
@@ -391,7 +394,7 @@ private:
 
   llvm::SmallVector<Cursor> states{};
 
-  bool isExtendedSyntax{false};
+  bool isSmdlSyntax{false};
 
   template <typename T> [[nodiscard]] inline T *bump_allocate(auto &&...args) {
     return new (bumpAllocator.Allocate(sizeof(T), alignof(T))) T(std::forward<decltype(args)>(args)...);

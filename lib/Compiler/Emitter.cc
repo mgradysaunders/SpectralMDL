@@ -639,7 +639,7 @@ ArgList Emitter::emit(const AST::ArgList &astArgs) {
     arg.value = emit(astArg.expr);
     arg.srcLoc = astArg.srcLoc;
     arg.src = astArg.src;
-    arg.isVisited = astArg.isVisited && arg.value.type->is_union_or_pointer_to_union();
+    arg.isVisit = astArg.isVisit && arg.value.type->is_union_or_pointer_to_union();
   }
   args.guarantee_valid_names(astArgs.srcLoc);
   return args;
@@ -1484,7 +1484,7 @@ Value Emitter::emit_call(Value value, const ArgList &args, const AST::SourceLoca
         return {};
       }
       argsCopy[i].value = argValue;
-      argsCopy[i].isVisited = false;
+      argsCopy[i].isVisit = false;
       return emitter.emit_call(value, argsCopy, srcLoc);
     });
   } else {

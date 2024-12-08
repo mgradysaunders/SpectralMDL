@@ -335,7 +335,7 @@ public:
   llvm::StringRef src{};
 
   /// Is marked with the 'visit' keyword? AND Is a union that can actually be visited?
-  bool isVisited{};
+  bool isVisit{};
 };
 //--}
 
@@ -409,12 +409,12 @@ public:
   }
 
   [[nodiscard]] bool has_any_visited() const {
-    return is_any_true([](auto &arg) { return arg.isVisited; });
+    return is_any_true([](auto &arg) { return arg.isVisit; });
   }
 
   [[nodiscard]] uint32_t index_of_first_visited() const {
     for (uint32_t i{}; i < args.size(); i++)
-      if (args[i].isVisited)
+      if (args[i].isVisit)
         return i;
     return uint32_t(-1);
   }

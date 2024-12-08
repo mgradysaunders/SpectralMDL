@@ -72,8 +72,12 @@ std::optional<Error> MDLInstance::format_source() noexcept {
     Compiler::Context context{*this, bumpAllocator};
     for (auto &moduleFilename : moduleFilenames)
       modules.emplace_back(new Compiler::Module(moduleFilename));
+    // Parse everything before formatting anything so that, if an 
+    // error occurs, we do not write anything to disk.
+    for (auto &mod : modules) 
+      mod->parse(context);
     for (auto &mod : modules)
-      mod->parse(context, /*formatSource=*/true);
+      mod->format_source();
     modules.clear();
   });
 }

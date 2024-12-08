@@ -9,17 +9,20 @@
 
 namespace smdl::Compiler {
 
-void Module::parse(Context &context, bool formatSource) {
-  sanity_check(text != nullptr);
-  auto parser{Parser(context.bumpAllocator, (!path.empty() ? path : name).c_str(), text->getBuffer())};
+void Module::parse(Context &context) {
+  auto parser{Parser(context.bumpAllocator, (!filenameStr.empty() ? filenameStr : name), text)};
   root = parser.parse();
-  isExtendedSyntax = parser.is_extended_syntax();
-  if (!is_builtin() && formatSource) {
-    std::ofstream ofs(path);
-    sanity_check(ofs.is_open());
-    if (isExtendedSyntax)
-      ofs << "#smdl_syntax\n\n";
-    auto formatter{Formatter()};
+  isSmdlSyntax = parser.is_smdl_syntax();
+}
+
+void Module::format_source() {
+  if (!is_builtin()) {
+    sanity_check(is_parse_finished());
+    auto ofs{std::ofstream(filename)};
+    if (!ofs.is_open())
+      throw Error(std::format("can't open '{}'", filenameStr));
+
+    auto formatter{Formatter(text)};
     formatter.write(root);
     ofs << formatter.str;
   }

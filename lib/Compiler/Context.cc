@@ -169,7 +169,7 @@ std::string Context::get_unique_name(llvm::StringRef name, llvm::Function *llvmF
 
 bool Context::is_keyword(Module *module, llvm::StringRef name) {
   if (auto itr{keywordConstants.find(name)}; itr != keywordConstants.end())
-    if (module->isExtendedSyntax || !itr->second.isExtendedSyntax)
+    if (module->isSmdlSyntax || !itr->second.isSmdlSyntax)
       return true;
   return false;
 }
@@ -178,14 +178,14 @@ AST::Expr *Context::parse_expression(const llvm::Twine &srcTwine) {
   auto src{get_persistent_string(srcTwine)};
   auto &expr{builtinExpressions[src]};
   if (!expr)
-    expr = Parser(bumpAllocator, "(expr)", src, /*isExtendedSyntax=*/true).parse_expression();
+    expr = Parser(bumpAllocator, "(expr)", src, /*isSmdlSyntax=*/true).parse_expression();
   return expr.get();
 }
 
 AST::Decl *Context::parse_declaration(const llvm::Twine &srcTwine) {
   auto src{get_persistent_string(srcTwine)};
   auto &decl{builtinDeclarations.emplace_back(
-      Parser(bumpAllocator, "(decl)", src, /*isExtendedSyntax=*/true).parse_global_declaration())};
+      Parser(bumpAllocator, "(decl)", src, /*isSmdlSyntax=*/true).parse_global_declaration())};
   return decl.get();
 }
 
@@ -502,7 +502,7 @@ Value Context::resolve(Emitter &emitter, bool isAbs, llvm::ArrayRef<llvm::String
     }
     // Resolve types
     if (auto itr{keywordConstants.find(name)}; itr != keywordConstants.end())
-      if (emitter.module->isExtendedSyntax || !itr->second.isExtendedSyntax)
+      if (emitter.module->isSmdlSyntax || !itr->second.isSmdlSyntax)
         return itr->second.value;
     // Unqualified simple names may shadow other values
     if (!isAbs)
