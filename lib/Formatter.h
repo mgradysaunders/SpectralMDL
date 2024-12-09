@@ -16,16 +16,14 @@ public:
 
   struct guarantee_newline final {};
 
-  void write(guarantee_space);
+  void write(guarantee_space) {
+    if (!str.empty() && str.back() != ' ' && str.back() != '\n')
+      str += ' ';
+  }
 
-  void write(guarantee_newline);
-
-  void write_separated(const auto &values, const char *delim) {
-    for (size_t i = 0; i < values.size(); i++) {
-      write(values[i]);
-      if (i + 1 < values.size())
-        write(delim);
-    }
+  void write(guarantee_newline) {
+    if (!str.empty() && str.back() != '\n')
+      str += '\n';
   }
 
   template <typename Func> void increment_indent(int level, Func &&func) {
@@ -37,7 +35,8 @@ public:
 
 public:
   template <typename T, typename Deleter> auto write(const std::unique_ptr<T, Deleter> &ptr) {
-    write(*sanity_check_nonnull(ptr.get()));
+    if (ptr)
+      write(*ptr);
   }
 
   template <typename T> void write(const std::optional<T> &value) {
@@ -302,7 +301,15 @@ public:
 
   void write(AST::FrequencyQualifier freq) { write(freq == AST::FrequencyQualifier::Uniform ? "uniform" : "varying"); }
 
-  void write(const AST::AnnotationBlock &annotations);
+  void write(const AST::AnnotationBlock &annotations) {
+    write(guarantee_space(), annotations.srcDoubleBrackL);
+    for (auto &annotation : annotations.annotations) {
+      write(annotation.identifier, annotation.args);
+      if (!annotation.srcComma.empty())
+        write(annotation.srcComma, guarantee_space());
+    }
+    write(annotations.srcDoubleBrackR);
+  }
 
   void write(const AST::Arg &arg);
 

@@ -331,7 +331,7 @@ public:
 
   [[nodiscard]] auto parse_annotation() -> std::optional<AST::Annotation>;
 
-  [[nodiscard]] auto parse_annotation_block() -> std::optional<AST::AnnotationBlock>;
+  [[nodiscard]] auto parse_annotation_block() -> unique_bump_ptr_wrapper<AST::AnnotationBlock>;
 
   [[nodiscard]] auto parse_expression() -> unique_bump_ptr_wrapper<AST::Expr>;
 

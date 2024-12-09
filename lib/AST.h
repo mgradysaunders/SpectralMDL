@@ -211,7 +211,17 @@ public:
   SourceRef srcComma{};
 };
 
-using AnnotationBlock = vector_or_SmallVector<Annotation>;
+class AnnotationBlock final {
+public:
+  explicit AnnotationBlock(SourceRef srcDoubleBrackL, vector_or_SmallVector<Annotation> annotations, SourceRef srcDoubleBrackR)
+      : srcDoubleBrackL(srcDoubleBrackL), annotations(std::move(annotations)), srcDoubleBrackR(srcDoubleBrackR) {}
+
+  SourceRef srcDoubleBrackL{};
+
+  vector_or_SmallVector<Annotation> annotations{};
+
+  SourceRef srcDoubleBrackR{};
+};
 
 class Type final : public ExprSubclass<ExprKind::Type> {
 public:
@@ -223,7 +233,7 @@ public:
 
   Type(
       std::optional<FrequencyQualifier> frequency, Attrs attrs, unique_bump_ptr<Expr> expr,
-      std::optional<AnnotationBlock> annotations = {})
+      unique_bump_ptr<AnnotationBlock> annotations = {})
       : frequency(frequency), attrs(attrs), expr(std::move(expr)), annotations(std::move(annotations)) {}
 
   std::optional<FrequencyQualifier> frequency{};
@@ -232,7 +242,7 @@ public:
 
   unique_bump_ptr<Expr> expr{};
 
-  std::optional<AnnotationBlock> annotations{};
+  unique_bump_ptr<AnnotationBlock> annotations{};
 
   Compiler::Type *type{};
 };
@@ -252,7 +262,7 @@ public:
   unique_bump_ptr<Expr> init{};
 
   /// The annotations.
-  std::optional<AnnotationBlock> annotations{};
+  unique_bump_ptr<AnnotationBlock> annotations{};
 
   /// The next comma `,`. This may be empty!
   SourceRef srcComma{};
@@ -503,8 +513,10 @@ class Call final : public ExprSubclass<ExprKind::Call> {
 public:
   explicit Call(unique_bump_ptr<Expr> expr, ArgList args) : expr(std::move(expr)), args(std::move(args)) {}
 
+  /// The expression.
   unique_bump_ptr<Expr> expr{};
 
+  /// The arguments.
   ArgList args{};
 };
 
@@ -643,7 +655,7 @@ public:
     unique_bump_ptr<Expr> init{};
 
     /// The annotations.
-    std::optional<AnnotationBlock> annotations{};
+    unique_bump_ptr<AnnotationBlock> annotations{};
 
     /// The next comma `,`. This may be empty!
     SourceRef srcComma{};
@@ -653,7 +665,7 @@ public:
   };
 
   explicit Enum(
-      SourceRef srcKwEnum, unique_bump_ptr<Name> name, std::optional<AnnotationBlock> annotations, SourceRef srcBraceL,
+      SourceRef srcKwEnum, unique_bump_ptr<Name> name, unique_bump_ptr<AnnotationBlock> annotations, SourceRef srcBraceL,
       vector_or_SmallVector<Declarator> declarators, SourceRef srcBraceR, SourceRef srcSemicolon)
       : srcKwEnum(srcKwEnum), name(std::move(name)), annotations(std::move(annotations)), srcBraceL(srcBraceL),
         declarators(std::move(declarators)), srcBraceR(srcBraceR), srcSemicolon(srcSemicolon) {}
@@ -665,7 +677,7 @@ public:
   unique_bump_ptr<Name> name{};
 
   /// The annotations.
-  std::optional<AnnotationBlock> annotations{};
+  unique_bump_ptr<AnnotationBlock> annotations{};
 
   /// The brace `{`.
   SourceRef srcBraceL{};
@@ -725,9 +737,9 @@ public:
   };
 
   Function(
-      Attrs attrs, bool isVariant, unique_bump_ptr<Type> returnType, std::optional<AnnotationBlock> earlyAnnotations,
+      Attrs attrs, bool isVariant, unique_bump_ptr<Type> returnType, unique_bump_ptr<AnnotationBlock> earlyAnnotations,
       unique_bump_ptr<Name> name, ParamList params, std::optional<FrequencyQualifier> frequency,
-      std::optional<AnnotationBlock> lateAnnotations, unique_bump_ptr<Node> definition)
+      unique_bump_ptr<AnnotationBlock> lateAnnotations, unique_bump_ptr<Node> definition)
       : attrs(attrs), isVariant(isVariant), returnType(std::move(returnType)), earlyAnnotations(std::move(earlyAnnotations)),
         name(std::move(name)), params(std::move(params)), frequency(frequency), lateAnnotations(std::move(lateAnnotations)),
         definition(std::move(definition)) {}
@@ -742,7 +754,7 @@ public:
 
   unique_bump_ptr<Type> returnType{};
 
-  std::optional<AnnotationBlock> earlyAnnotations{};
+  unique_bump_ptr<AnnotationBlock> earlyAnnotations{};
 
   unique_bump_ptr<Name> name{};
 
@@ -750,7 +762,7 @@ public:
 
   std::optional<FrequencyQualifier> frequency{};
 
-  std::optional<AnnotationBlock> lateAnnotations{};
+  unique_bump_ptr<AnnotationBlock> lateAnnotations{};
 
   unique_bump_ptr<Node> definition{};
 };
@@ -808,7 +820,7 @@ public:
     unique_bump_ptr<Expr> init{};
 
     /// The annotation block. This may be null!
-    std::optional<AnnotationBlock> annotations{};
+    unique_bump_ptr<AnnotationBlock> annotations{};
 
     /// The semicolon `;`.
     SourceRef srcSemicolon{};
@@ -832,8 +844,8 @@ public:
 
   explicit Struct(
       SourceRef srcKwStruct, unique_bump_ptr<Name> name, SourceRef srcColonBeforeTags, vector_or_SmallVector<Tag> tags,
-      std::optional<AnnotationBlock> annotations, SourceRef srcBraceL, vector_or_SmallVector<Field> fields, SourceRef srcBraceR,
-      SourceRef srcSemicolon)
+      unique_bump_ptr<AnnotationBlock> annotations, SourceRef srcBraceL, vector_or_SmallVector<Field> fields,
+      SourceRef srcBraceR, SourceRef srcSemicolon)
       : srcKwStruct(srcKwStruct), name(std::move(name)), srcColonBeforeTags(srcColonBeforeTags), tags(std::move(tags)),
         annotations(std::move(annotations)), srcBraceL(srcBraceL), fields(std::move(fields)), srcBraceR(srcBraceR),
         srcSemicolon(srcSemicolon) {}
@@ -851,7 +863,7 @@ public:
   vector_or_SmallVector<Tag> tags{};
 
   /// The annotations. This may be null!
-  std::optional<AnnotationBlock> annotations{};
+  unique_bump_ptr<AnnotationBlock> annotations{};
 
   /// The brace `{`.
   SourceRef srcBraceL{};
@@ -985,7 +997,7 @@ public:
     std::optional<ArgList> args{};
 
     /// The annotations.
-    std::optional<AnnotationBlock> annotations{};
+    unique_bump_ptr<AnnotationBlock> annotations{};
 
     /// The next comma `,`. This may be empty!
     SourceRef srcComma{};
@@ -1354,7 +1366,7 @@ class File final : public NodeSubclass<NodeKind::File> {
 public:
   File(
       bool isSmdlSyntax, Version version, vector_or_SmallVector<unique_bump_ptr<Decl>> imports,
-      std::optional<AnnotationBlock> annotations, vector_or_SmallVector<unique_bump_ptr<Decl>> globals)
+      unique_bump_ptr<AnnotationBlock> annotations, vector_or_SmallVector<unique_bump_ptr<Decl>> globals)
       : isSmdlSyntax(isSmdlSyntax), version(version), imports(std::move(imports)), annotations(std::move(annotations)),
         globals(std::move(globals)) {}
 
@@ -1364,7 +1376,7 @@ public:
 
   vector_or_SmallVector<unique_bump_ptr<Decl>> imports{};
 
-  std::optional<AnnotationBlock> annotations{};
+  unique_bump_ptr<AnnotationBlock> annotations{};
 
   vector_or_SmallVector<unique_bump_ptr<Decl>> globals{};
 };

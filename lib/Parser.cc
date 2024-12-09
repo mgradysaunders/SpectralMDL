@@ -145,7 +145,7 @@ auto Parser::parse_mdl() -> unique_bump_ptr_wrapper<AST::File> {
       break;
     imports.push_back(std::move(decl));
   }
-  auto annotations{std::optional<AST::AnnotationBlock>{}};
+  auto annotations{unique_bump_ptr<AST::AnnotationBlock>{}};
   skip();
   if (next_word("module")) {
     annotations = parse_annotation_block();
@@ -911,12 +911,11 @@ auto Parser::parse_argument() -> std::optional<AST::Arg> {
 auto Parser::parse_argument_list() -> std::optional<AST::ArgList> {
   checkpoint();
   auto cursor{save_cursor()};
-  auto srcParenL{AST::SourceRef()};
-  if (!delimiter('(', &srcParenL)) {
+  auto args{AST::ArgList{}};
+  if (!delimiter('(', &args.srcParenL)) {
     reject();
     return std::nullopt;
   }
-  auto args{AST::ArgList{}};
   while (true) {
     auto arg{parse_argument()};
     if (!arg)
@@ -925,8 +924,7 @@ auto Parser::parse_argument_list() -> std::optional<AST::ArgList> {
     if (!delimiter(',', &args.args.back().srcComma))
       break;
   }
-  auto srcParenR{AST::SourceRef()};
-  if (!delimiter(')', &srcParenR)) {
+  if (!delimiter(')', &args.srcParenR)) {
     reject();
     return std::nullopt;
   }
@@ -953,11 +951,12 @@ auto Parser::parse_annotation() -> std::optional<AST::Annotation> {
   return AST::Annotation{std::move(identifier), std::move(*args)};
 }
 
-auto Parser::parse_annotation_block() -> std::optional<AST::AnnotationBlock> {
+auto Parser::parse_annotation_block() -> unique_bump_ptr_wrapper<AST::AnnotationBlock> {
   skip();
-  if (!next("[["))
-    return std::nullopt;
-  AST::AnnotationBlock annotations{};
+  auto srcDoubleBrackL{AST::SourceRef()};
+  if (!next("[[", &srcDoubleBrackL))
+    return nullptr;
+  auto annotations{vector_or_SmallVector<AST::Annotation>{}};
   while (true) {
     auto annotation{parse_annotation()};
     if (!annotation)
@@ -969,10 +968,11 @@ auto Parser::parse_annotation_block() -> std::optional<AST::AnnotationBlock> {
     if (get_remaining_text().starts_with("]]"))
       break;
   }
+  auto srcDoubleBrackR{AST::SourceRef()};
   skip();
-  if (!next("]]"))
+  if (!next("]]", &srcDoubleBrackR))
     report_error("expected ']]' to close annotation block");
-  return std::move(annotations);
+  return bump_allocate<AST::AnnotationBlock>(srcDoubleBrackL, std::move(annotations), srcDoubleBrackR);
 }
 
 auto Parser::parse_expression() -> unique_bump_ptr_wrapper<AST::Expr> {

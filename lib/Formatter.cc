@@ -20,16 +20,6 @@ namespace smdl {
   return num;
 }
 
-void Formatter::write(guarantee_newline) {
-  if (!str.empty() && str.back() != '\n')
-    str += '\n';
-}
-
-void Formatter::write(guarantee_space) {
-  if (!str.empty() && str.back() != ' ' && str.back() != '\n')
-    str += ' ';
-}
-
 void Formatter::write(char ch) {
   if (!str.empty() && str.back() == '\n' && ch != '\n') {
     for (int i = 0; i < indent; i++)
@@ -102,9 +92,8 @@ void Formatter::write(AST::File &file) {
   for (auto &decl : file.imports)
     write(guarantee_newline(), decl);
   // TODO annotations
-  for (size_t i = 0; i < file.globals.size(); i++) {
-    write(guarantee_newline(), file.globals[i]->srcKwExport, guarantee_space(), file.globals[i]);
-  }
+  for (auto &decl : file.globals)
+    write(guarantee_newline(), decl->srcKwExport, guarantee_space(), decl);
 }
 
 //--{ Write: Decl
@@ -116,7 +105,7 @@ void Formatter::write(AST::Decl &decl) {
 
 void Formatter::write(AST::Function &decl) {
   if (write(decl.attrs))
-    write(' ');
+    write(guarantee_space());
   write(decl.returnType, decl.earlyAnnotations, guarantee_space(), decl.name);
   if (decl.isVariant) {
     write("(*)");
@@ -156,16 +145,14 @@ void Formatter::write(AST::Identifier &expr) {
 
 void Formatter::write(AST::Type &expr) {
   if (expr.frequency)
-    write(*expr.frequency, ' ');
+    write(*expr.frequency, guarantee_space());
   if (expr.attrs.isConst)
     write("const ");
   if (expr.attrs.isStatic)
     write("static ");
   if (expr.attrs.isInline)
     write("inline ");
-  write(expr.expr);
-  if (expr.annotations)
-    write(guarantee_space(), *expr.annotations);
+  write(expr.expr, expr.annotations);
 }
 
 void Formatter::write(AST::Stmt &stmt) {
@@ -182,16 +169,6 @@ void Formatter::write(AST::Preserve &stmt) {
       write(", ");
   }
   write(stmt.srcSemicolon);
-}
-
-void Formatter::write(const AST::AnnotationBlock &annotations) {
-  write(guarantee_space(), "[[");
-  for (auto &annotation : annotations) {
-    write(annotation.identifier, annotation.args);
-    if (!annotation.srcComma.empty())
-      write(annotation.srcComma, guarantee_space());
-  }
-  write("]]");
 }
 
 void Formatter::write(const AST::Arg &arg) {
@@ -229,12 +206,14 @@ void Formatter::write(const AST::Param &param) {
 }
 
 void Formatter::write(const AST::ParamList &params) {
+  write(params.srcParenL);
   if (params.params.size() > 1 && length_with_reduced_whitespace(params.src) > 80) {
     increment_indent(2, [&]() {
       for (auto &param : params.params) {
         write(guarantee_newline(), param, param.srcComma);
       }
     });
+    write(guarantee_newline());
   } else {
     for (auto &param : params.params) {
       write(param);
@@ -242,9 +221,11 @@ void Formatter::write(const AST::ParamList &params) {
         write(param.srcComma, guarantee_space());
     }
   }
+  write(params.srcParenR);
 }
 
 bool Formatter::write(const AST::Function::Attrs &attrs) {
+#if 0
   llvm::SmallVector<llvm::StringRef> names{};
   if (attrs.isAlwaysInline)
     names.push_back("alwaysinline");
@@ -272,6 +253,7 @@ bool Formatter::write(const AST::Function::Attrs &attrs) {
     write(')');
     return true;
   }
+#endif
   return false;
 }
 
