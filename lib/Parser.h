@@ -93,10 +93,10 @@ namespace utf8 {
   return n;
 }
 
-[[nodiscard]] inline std::optional<llvm::UTF32> decode_next(llvm::StringRef str, size_t *numBytes = nullptr) {
+[[nodiscard]] inline std::optional<llvm::UTF32> decode_next(llvm::StringRef str, size_t *sz = nullptr) {
   if (str.empty()) {
-    if (numBytes)
-      *numBytes = 0;
+    if (sz)
+      *sz = 0;
     return llvm::UTF32(0);
   }
   auto inputBegin{reinterpret_cast<const llvm::UTF8 *>(str.bytes_begin())};
@@ -107,8 +107,8 @@ namespace utf8 {
   if (auto result{llvm::ConvertUTF8toUTF32(&inputItr, inputEnd, &outputBegin, &output + 1, llvm::strictConversion)};
       !(result == llvm::conversionOK || result == llvm::targetExhausted))
     return std::nullopt;
-  if (numBytes)
-    *numBytes = inputItr - inputBegin;
+  if (sz)
+    *sz = inputItr - inputBegin;
   return output;
 }
 
@@ -166,7 +166,7 @@ private:
 
   [[nodiscard]] auto get_remaining_text() const { return text.substr(state.i); }
 
-  [[nodiscard]] Char peek(size_t *numBytes = nullptr) const;
+  [[nodiscard]] Char peek(size_t *sz = nullptr) const;
 
   void skip();
 
@@ -187,10 +187,10 @@ private:
   Char next();
 
   bool next(Char c, AST::SourceRef *src = nullptr) {
-    size_t numBytes{};
-    if (peek(&numBytes) == c) {
+    size_t sz{};
+    if (peek(&sz) == c) {
       if (src)
-        *src = text.substr(state.i, numBytes);
+        *src = text.substr(state.i, sz);
       next();
       return true;
     } else {
@@ -373,9 +373,9 @@ public:
 
   [[nodiscard]] auto parse_literal_expression() -> unique_bump_ptr_wrapper<AST::Expr>;
 
-  [[nodiscard]] auto parse_unary_op() -> std::optional<AST::UnaryOp>;
+  [[nodiscard]] auto parse_unary_op(AST::SourceRef *src = nullptr) -> std::optional<AST::UnaryOp>;
 
-  [[nodiscard]] auto parse_binary_op(llvm::ArrayRef<AST::BinaryOp> ops) -> std::optional<AST::BinaryOp>;
+  [[nodiscard]] auto parse_binary_op(llvm::ArrayRef<AST::BinaryOp> ops, AST::SourceRef *src = nullptr) -> std::optional<AST::BinaryOp>;
 
   [[nodiscard]] auto parse_binary_left_associative(
       llvm::ArrayRef<AST::BinaryOp> ops,
@@ -395,7 +395,7 @@ private:
 
   Cursor state{};
 
-  llvm::SmallVector<Cursor> states{};
+  vector_or_SmallVector<Cursor> states{};
 
   bool isSmdlSyntax{false};
 

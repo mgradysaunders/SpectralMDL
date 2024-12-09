@@ -135,10 +135,10 @@ public:
 
 class Identifier final : public ExprSubclass<ExprKind::Identifier> {
 public:
-  Identifier(llvm::SmallVector<unique_bump_ptr<Name>> names, bool isAbs) : names(std::move(names)), isAbs(isAbs) {}
+  Identifier(vector_or_SmallVector<unique_bump_ptr<Name>> names, bool isAbs) : names(std::move(names)), isAbs(isAbs) {}
 
-  [[nodiscard]] llvm::SmallVector<llvm::StringRef> get_string_refs() const {
-    auto nameRefs{llvm::SmallVector<llvm::StringRef>{}};
+  [[nodiscard]] vector_or_SmallVector<llvm::StringRef> get_string_refs() const {
+    auto nameRefs{vector_or_SmallVector<llvm::StringRef>{}};
     for (auto &name : names)
       nameRefs.push_back(name->srcName);
     return nameRefs;
@@ -148,22 +148,30 @@ public:
 
   [[nodiscard]] operator std::string() const;
 
-  llvm::SmallVector<unique_bump_ptr<Name>> names{};
+  vector_or_SmallVector<unique_bump_ptr<Name>> names{};
 
   bool isAbs{};
 };
 
 class Arg final {
 public:
-  Arg() = default;
+  /// Is marked with the 'visit' keyword?
+  bool isVisit{};
 
-  Arg(unique_bump_ptr<Name> name, unique_bump_ptr<Expr> expr) : name(std::move(name)), expr(std::move(expr)) {}
+  /// The keyword `visit`. This may be empty!
+  SourceRef srcKwVisit{};
 
-  /// The name. This may be null.
+  /// The name. This may be null!
   unique_bump_ptr<Name> name{};
 
-  /// The expression. This may NOT be null.
+  /// The colon `:` after the name. This may be empty!
+  SourceRef srcColonAfterName{};
+
+  /// The expression.
   unique_bump_ptr<Expr> expr{};
+
+  /// The next comma `,`. This may be empty!
+  SourceRef srcComma{};
 
   /// The source location.
   SourceLocation srcLoc{};
@@ -171,47 +179,39 @@ public:
   /// The entire source-code range containing the argument name and expression. Useful
   /// for outputting in '#assert(...)'.
   llvm::StringRef src{};
-
-  /// Is marked with the 'visit' keyword?
-  bool isVisit{};
 };
 
 class ArgList final {
 public:
-#if 0
   /// The parenthesis `(`.
   SourceRef srcParenL{};
-#endif
 
   /// The arguments.
-  llvm::SmallVector<Arg> args{};
+  vector_or_SmallVector<Arg> args{};
 
-#if 0
   /// The parenthesis `)`.
-  SourceRef srcParenL{};
-#endif
+  SourceRef srcParenR{};
 
-  /// The source location of the opening '('.
+  /// The source location of the opening `(`.
   SourceLocation srcLoc{};
 
-  /// The entire source-code range between the opening '(' and closing ')'.
+  /// The source region between the opening `(` and closing `)`.
   llvm::StringRef src{};
 };
 
 class Annotation final {
 public:
-  Annotation(unique_bump_ptr<Identifier> identifier, ArgList args) : identifier(std::move(identifier)), args(std::move(args)) {}
-
+  /// The identifier.
   unique_bump_ptr<Identifier> identifier{};
 
+  // The arguments.
   ArgList args{};
+
+  /// The next comma `,`. This may be empty!
+  SourceRef srcComma{};
 };
 
-using AnnotationBlock = llvm::SmallVector<Annotation>;
-
-[[nodiscard]] inline bool has_annotation(const AnnotationBlock &annotations, auto &&pred) {
-  return std::find_if(annotations.begin(), annotations.end(), std::forward<decltype(pred)>(pred)) != annotations.end();
-}
+using AnnotationBlock = vector_or_SmallVector<Annotation>;
 
 class Type final : public ExprSubclass<ExprKind::Type> {
 public:
@@ -239,15 +239,23 @@ public:
 
 class Param final {
 public:
+  /// The type.
   unique_bump_ptr<Type> type{};
 
+  /// The name.
   unique_bump_ptr<Name> name{};
 
+  /// The equal `=`. This may be empty!
+  SourceRef srcEq{};
+
+  /// The initializer expression. This may be null!
   unique_bump_ptr<Expr> init{};
 
+  /// The annotations.
   std::optional<AnnotationBlock> annotations{};
 
-  llvm::StringRef src{};
+  /// The next comma `,`. This may be empty!
+  SourceRef srcComma{};
 };
 
 class ParamList final {
@@ -260,12 +268,19 @@ public:
 
   [[nodiscard]] auto end() const { return params.end(); }
 
-  llvm::SmallVector<Param> params{};
+  /// The parenthesis `(`.
+  SourceRef srcParenL{};
 
+  /// The parameters.
+  vector_or_SmallVector<Param> params{};
+
+  /// The parenthesis `)`.
+  SourceRef srcParenR{};
+
+  /// The source region between the opening `(` and closing `)`.
   llvm::StringRef src{};
 };
 
-//--{ Unary
 enum class UnaryOp : uint32_t {
   Incr = 1,   ///< "++"
   Decr,       ///< "--"
@@ -291,15 +306,22 @@ enum class UnaryOp : uint32_t {
 
 class Unary final : public ExprSubclass<ExprKind::Unary> {
 public:
-  Unary(UnaryOp op, unique_bump_ptr<Expr> expr) : op(op), expr(std::move(expr)) {}
+  explicit Unary(SourceRef srcOp, UnaryOp op, unique_bump_ptr<Expr> expr) : srcOp(srcOp), op(op), expr(std::move(expr)) {}
 
+  [[nodiscard]] bool is_postfix() const { return (op & UnaryOp::Postfix) == UnaryOp::Postfix; }
+
+  [[nodiscard]] bool is_prefix() const { return !is_postfix(); }
+
+  /// The source of the operator.
+  SourceRef srcOp{};
+
+  /// The operator.
   UnaryOp op{};
 
+  /// The expression.
   unique_bump_ptr<Expr> expr{};
 };
-//--}
 
-//--{ Binary
 enum class BinaryOp : uint32_t {
   Add = 1,                    ///< "+"
   Sub = 2,                    ///< "-"
@@ -350,16 +372,21 @@ enum class BinaryOp : uint32_t {
 
 class Binary final : public ExprSubclass<ExprKind::Binary> {
 public:
-  Binary(BinaryOp op, unique_bump_ptr<Expr> lhs, unique_bump_ptr<Expr> rhs)
-      : op(op), lhs(std::move(lhs)), rhs(std::move(rhs)) {}
+  explicit Binary(unique_bump_ptr<Expr> lhs, SourceRef srcOp, BinaryOp op, unique_bump_ptr<Expr> rhs)
+      : lhs(std::move(lhs)), srcOp(srcOp), op(op), rhs(std::move(rhs)) {}
 
-  BinaryOp op{};
-
+  /// The left-hand side expression.
   unique_bump_ptr<Expr> lhs{};
 
+  /// The source of the operator.
+  SourceRef srcOp{};
+
+  /// The operator.
+  BinaryOp op{};
+
+  /// The right-hand side expression.
   unique_bump_ptr<Expr> rhs{};
 };
-//--}
 
 class Conditional final : public ExprSubclass<ExprKind::Conditional> {
 public:
@@ -390,7 +417,7 @@ class Variable;
 class Let final : public ExprSubclass<ExprKind::Let> {
 public:
   explicit Let(
-      SourceRef srcKwLet, SourceRef srcBraceL, llvm::SmallVector<unique_bump_ptr<Variable>> vars, SourceRef srcBraceR,
+      SourceRef srcKwLet, SourceRef srcBraceL, vector_or_SmallVector<unique_bump_ptr<Variable>> vars, SourceRef srcBraceR,
       SourceRef srcKwIn, unique_bump_ptr<Expr> expr);
 
   ~Let();
@@ -402,7 +429,7 @@ public:
   SourceRef srcBraceL{};
 
   /// The variables.
-  llvm::SmallVector<unique_bump_ptr<Variable>> vars{};
+  vector_or_SmallVector<unique_bump_ptr<Variable>> vars{};
 
   /// The brace `}`. This may be empty!
   SourceRef srcBraceR{};
@@ -431,26 +458,44 @@ public:
 
 class GetIndex final : public ExprSubclass<ExprKind::GetIndex> {
 public:
-  explicit GetIndex(unique_bump_ptr<Expr> expr, llvm::SmallVector<unique_bump_ptr<Expr>> indices)
-      : expr(std::move(expr)), indices(std::move(indices)) {}
+  struct Index final {
+    /// The square bracket `[`.
+    SourceRef srcBrackL{};
+
+    /// The expression. This may be null! (`[]`)
+    unique_bump_ptr<Expr> expr{};
+
+    /// The square bracket `]`.
+    SourceRef srcBrackR{};
+  };
+
+  explicit GetIndex(unique_bump_ptr<Expr> expr, vector_or_SmallVector<Index> indexes)
+      : expr(std::move(expr)), indexes(std::move(indexes)) {}
 
   unique_bump_ptr<Expr> expr{};
 
-  llvm::SmallVector<unique_bump_ptr<Expr>> indices{};
+  vector_or_SmallVector<Index> indexes{};
 };
 
 class Cast final : public ExprSubclass<ExprKind::Cast> {
 public:
-  explicit Cast(unique_bump_ptr<Type> type, unique_bump_ptr<Expr> expr) : type(std::move(type)), expr(std::move(expr)) {}
+  explicit Cast(
+      SourceRef srcKwCast, SourceRef srcAngleL, unique_bump_ptr<Type> type, SourceRef srcAngleR, unique_bump_ptr<Expr> expr)
+      : srcKwCast(srcKwCast), srcAngleL(srcAngleL), type(std::move(type)), srcAngleR(srcAngleR), expr(std::move(expr)) {}
 
-  // TODO srcKwCast
+  /// The keyword `cast`.
+  SourceRef srcKwCast{};
 
-  // TODO srcAngleL
+  /// The angle bracket `<`.
+  SourceRef srcAngleL{};
 
+  /// The type.
   unique_bump_ptr<Type> type{};
 
-  // TODO srcAngleR
+  /// The angle bracket `>`.
+  SourceRef srcAngleR{};
 
+  /// The expression.
   unique_bump_ptr<Expr> expr{};
 };
 
@@ -465,13 +510,17 @@ public:
 
 class SizeName final : public ExprSubclass<ExprKind::SizeName> {
 public:
-  explicit SizeName(unique_bump_ptr<Name> name) : name(std::move(name)) {}
+  explicit SizeName(SourceRef srcAngleL, unique_bump_ptr<Name> name, SourceRef srcAngleR)
+      : srcAngleL(srcAngleL), name(std::move(name)), srcAngleR(srcAngleR) {}
 
-  // TODO srcAngleL
+  /// The angle bracket `<`.
+  SourceRef srcAngleL{};
 
+  /// The name.
   unique_bump_ptr<Name> name{};
 
-  // TODO srcAngleR
+  /// The angle bracket `>`.
+  SourceRef srcAngleR{};
 };
 
 class LiteralBool final : public ExprSubclass<ExprKind::LiteralBool> {
@@ -584,35 +633,51 @@ public:
 class Enum final : public DeclSubclass<DeclKind::Enum> {
 public:
   struct Declarator final {
+    /// The name.
     unique_bump_ptr<Name> name{};
 
-    // TODO srcEq
+    /// The equal `=`. This may be empty!
+    SourceRef srcEq{};
 
+    /// The initializer expression. This may be null!
     unique_bump_ptr<Expr> init{};
 
+    /// The annotations.
     std::optional<AnnotationBlock> annotations{};
 
-    // TODO srcComma
+    /// The next comma `,`. This may be empty!
+    SourceRef srcComma{};
 
+    /// The LLVM constant value (This is computed later during compilation)
     llvm::ConstantInt *llvmConst{};
   };
 
-  Enum(unique_bump_ptr<Name> name, std::optional<AnnotationBlock> annotations, llvm::SmallVector<Declarator> declarators)
-      : name(std::move(name)), annotations(std::move(annotations)), declarators(std::move(declarators)) {}
+  explicit Enum(
+      SourceRef srcKwEnum, unique_bump_ptr<Name> name, std::optional<AnnotationBlock> annotations, SourceRef srcBraceL,
+      vector_or_SmallVector<Declarator> declarators, SourceRef srcBraceR, SourceRef srcSemicolon)
+      : srcKwEnum(srcKwEnum), name(std::move(name)), annotations(std::move(annotations)), srcBraceL(srcBraceL),
+        declarators(std::move(declarators)), srcBraceR(srcBraceR), srcSemicolon(srcSemicolon) {}
 
-  // TODO srcKwEnum
+  /// The keyword `enum`.
+  SourceRef srcKwEnum{};
 
+  /// The name.
   unique_bump_ptr<Name> name{};
 
+  /// The annotations.
   std::optional<AnnotationBlock> annotations{};
 
-  // TODO srcBraceL
+  /// The brace `{`.
+  SourceRef srcBraceL{};
 
-  llvm::SmallVector<Declarator> declarators{};
+  /// The declarators.
+  vector_or_SmallVector<Declarator> declarators{};
 
-  // TODO srcBraceR
+  /// The brace `}`.
+  SourceRef srcBraceR{};
 
-  // TODO srcSemicolon
+  /// The semicolon `;`.
+  SourceRef srcSemicolon{};
 };
 
 class Function final : public DeclSubclass<DeclKind::Function> {
@@ -692,14 +757,22 @@ public:
 
 class Import final : public DeclSubclass<DeclKind::Import> {
 public:
-  explicit Import(SourceRef srcKwImport, llvm::SmallVector<unique_bump_ptr<Identifier>> paths, SourceRef srcSemicolon)
+  struct ImportPath final {
+    /// The identifier.
+    unique_bump_ptr<Identifier> identifier{};
+
+    /// The next comma `,`. This may be empty!
+    SourceRef srcComma{};
+  };
+
+  explicit Import(SourceRef srcKwImport, vector_or_SmallVector<ImportPath> paths, SourceRef srcSemicolon)
       : srcKwImport(srcKwImport), paths(std::move(paths)), srcSemicolon(srcSemicolon) {}
 
   /// The keyword `import`.
   SourceRef srcKwImport{};
 
   /// The paths.
-  llvm::SmallVector<unique_bump_ptr<Identifier>> paths{};
+  vector_or_SmallVector<ImportPath> paths{};
 
   /// The semicolon `;`.
   SourceRef srcSemicolon{};
@@ -728,7 +801,7 @@ public:
     /// The name.
     unique_bump_ptr<Name> name{};
 
-    /// The initializer equal `=`. This may be empty!
+    /// The equal `=`. This may be empty!
     SourceRef srcEq{};
 
     /// The initializer expression. This may be null!
@@ -758,8 +831,8 @@ public:
   };
 
   explicit Struct(
-      SourceRef srcKwStruct, unique_bump_ptr<Name> name, SourceRef srcColonBeforeTags, llvm::SmallVector<Tag> tags,
-      std::optional<AnnotationBlock> annotations, SourceRef srcBraceL, std::vector<Field> fields, SourceRef srcBraceR,
+      SourceRef srcKwStruct, unique_bump_ptr<Name> name, SourceRef srcColonBeforeTags, vector_or_SmallVector<Tag> tags,
+      std::optional<AnnotationBlock> annotations, SourceRef srcBraceL, vector_or_SmallVector<Field> fields, SourceRef srcBraceR,
       SourceRef srcSemicolon)
       : srcKwStruct(srcKwStruct), name(std::move(name)), srcColonBeforeTags(srcColonBeforeTags), tags(std::move(tags)),
         annotations(std::move(annotations)), srcBraceL(srcBraceL), fields(std::move(fields)), srcBraceR(srcBraceR),
@@ -775,7 +848,7 @@ public:
   SourceRef srcColonBeforeTags{};
 
   /// The tags. This may be empty!
-  llvm::SmallVector<Tag> tags{};
+  vector_or_SmallVector<Tag> tags{};
 
   /// The annotations. This may be null!
   std::optional<AnnotationBlock> annotations{};
@@ -784,7 +857,7 @@ public:
   SourceRef srcBraceL{};
 
   /// The fields.
-  std::vector<Field> fields{};
+  vector_or_SmallVector<Field> fields{};
 
   /// The brace `}`.
   SourceRef srcBraceR{};
@@ -828,7 +901,8 @@ public:
 
 class UnitTest final : public DeclSubclass<DeclKind::UnitTest> {
 public:
-  explicit UnitTest(SourceRef srcKwUnitTest, unique_bump_ptr<LiteralString> name, unique_bump_ptr<Node> body) : srcKwUnitTest(srcKwUnitTest), name(std::move(name)), body(std::move(body)) {}
+  explicit UnitTest(SourceRef srcKwUnitTest, unique_bump_ptr<LiteralString> name, unique_bump_ptr<Node> body)
+      : srcKwUnitTest(srcKwUnitTest), name(std::move(name)), body(std::move(body)) {}
 
   /// The keyword `unit_test`.
   SourceRef srcKwUnitTest{};
@@ -863,13 +937,21 @@ public:
 
 class UsingImport final : public DeclSubclass<DeclKind::UsingImport> {
 public:
+  struct ImportName final {
+    /// The name.
+    SourceRef srcName{};
+
+    /// The next comma `,`. This may be empty!
+    SourceRef srcComma{};
+  };
+
   explicit UsingImport(
-      SourceRef srcKwUsing, unique_bump_ptr<Identifier> path, SourceRef srcKwImport,
-      llvm::SmallVector<unique_bump_ptr<Name>> names, SourceRef srcStar, SourceRef srcSemicolon)
-      : srcKwUsing(srcKwUsing), path(std::move(path)), srcKwImport(srcKwImport), names(std::move(names)), srcStar(srcStar),
+      SourceRef srcKwUsing, unique_bump_ptr<Identifier> path, SourceRef srcKwImport, vector_or_SmallVector<ImportName> names,
+      SourceRef srcSemicolon)
+      : srcKwUsing(srcKwUsing), path(std::move(path)), srcKwImport(srcKwImport), names(std::move(names)),
         srcSemicolon(srcSemicolon) {}
 
-  [[nodiscard]] bool is_import_all() const { return names.empty(); }
+  [[nodiscard]] bool is_import_all() const { return names.size() == 1 && names[0].srcName == "*"; }
 
   /// The keyword `using`.
   SourceRef srcKwUsing{};
@@ -881,10 +963,7 @@ public:
   SourceRef srcKwImport{};
 
   /// The names, or empty if import all.
-  llvm::SmallVector<unique_bump_ptr<Name>> names{}; // TODO Track commas
-
-  /// The star `*` if import all.
-  SourceRef srcStar{};
+  vector_or_SmallVector<ImportName> names{};
 
   /// The semicolon `;`.
   SourceRef srcSemicolon{};
@@ -896,7 +975,7 @@ public:
     /// The name.
     unique_bump_ptr<Name> name{};
 
-    /// The initializer equal `=`. This may be empty!
+    /// The equal `=`. This may be empty!
     SourceRef srcEq{};
 
     /// The initializer. This may be null!
@@ -912,14 +991,14 @@ public:
     SourceRef srcComma{};
   };
 
-  explicit Variable(unique_bump_ptr<Type> type, llvm::SmallVector<Declarator, 1> declarators, SourceRef srcSemicolon)
+  explicit Variable(unique_bump_ptr<Type> type, vector_or_SmallVector<Declarator> declarators, SourceRef srcSemicolon)
       : type(std::move(type)), declarators(std::move(declarators)), srcSemicolon(srcSemicolon) {}
 
   /// The type.
   unique_bump_ptr<Type> type{};
 
   /// The declarators.
-  llvm::SmallVector<Declarator, 1> declarators{};
+  vector_or_SmallVector<Declarator> declarators{};
 
   /// The semicolon `;`.
   SourceRef srcSemicolon{};
@@ -991,14 +1070,14 @@ public:
 
 class Compound final : public StmtSubclass<StmtKind::Compound> {
 public:
-  explicit Compound(SourceRef srcBraceL, llvm::SmallVector<unique_bump_ptr<Stmt>> stmts, SourceRef srcBraceR)
+  explicit Compound(SourceRef srcBraceL, vector_or_SmallVector<unique_bump_ptr<Stmt>> stmts, SourceRef srcBraceR)
       : srcBraceL(srcBraceL), stmts(std::move(stmts)), srcBraceR(srcBraceR) {}
 
   /// The brace `{`.
   SourceRef srcBraceL{};
 
   /// The statements.
-  llvm::SmallVector<unique_bump_ptr<Stmt>> stmts{};
+  vector_or_SmallVector<unique_bump_ptr<Stmt>> stmts{};
 
   /// The brace `}`.
   SourceRef srcBraceR{};
@@ -1136,14 +1215,14 @@ public:
 
 class Preserve final : public StmtSubclass<StmtKind::Preserve> {
 public:
-  explicit Preserve(SourceRef srcKwPreserve, llvm::SmallVector<unique_bump_ptr<Expr>> exprs, SourceRef srcSemicolon)
+  explicit Preserve(SourceRef srcKwPreserve, vector_or_SmallVector<unique_bump_ptr<Expr>> exprs, SourceRef srcSemicolon)
       : srcKwPreserve(srcKwPreserve), exprs(std::move(exprs)), srcSemicolon(srcSemicolon) {}
 
   /// The keyword `preserve`.
   SourceRef srcKwPreserve{};
 
   /// The comma-separated expressions to preserve.
-  llvm::SmallVector<unique_bump_ptr<Expr>> exprs{};
+  vector_or_SmallVector<unique_bump_ptr<Expr>> exprs{};
 
   /// The semicolon `;`.
   SourceRef srcSemicolon{};
@@ -1169,30 +1248,42 @@ public:
 
 class Switch final : public StmtSubclass<StmtKind::Switch> {
 public:
-  class Case final {
-  public:
+  struct Case final {
+    /// Is default?
     [[nodiscard]] bool is_default() const { return !cond.get(); }
 
-    // TODO srcKwCaseOrDefault
+    /// The keyword `case` or `default`.
+    SourceRef srcKwCaseOrDefault{};
 
+    /// The condition. This may be null! (if `default`)
     unique_bump_ptr<Expr> cond{};
 
-    // TODO srcColon
+    /// The colon `:`.
+    SourceRef srcColon{};
 
-    llvm::SmallVector<unique_bump_ptr<Stmt>> stmts{};
+    /// The statements.
+    vector_or_SmallVector<unique_bump_ptr<Stmt>> stmts{};
   };
 
-  Switch(unique_bump_ptr<Expr> what, llvm::SmallVector<Case> cases) : what(std::move(what)), cases(std::move(cases)) {}
+  explicit Switch(
+      SourceRef srcKwSwitch, unique_bump_ptr<Expr> expr, SourceRef srcBraceL, vector_or_SmallVector<Case> cases,
+      SourceRef srcBraceR)
+      : srcKwSwitch(srcKwSwitch), expr(std::move(expr)), srcBraceL(srcBraceL), cases(std::move(cases)), srcBraceR(srcBraceR) {}
 
-  // TODO srcKwSwitch
+  /// The keyword `switch`.
+  SourceRef srcKwSwitch{};
 
-  unique_bump_ptr<Expr> what{};
+  /// The expression.
+  unique_bump_ptr<Expr> expr{};
 
-  // TODO srcBraceL
+  /// The brace `{`.
+  SourceRef srcBraceL{};
 
-  llvm::SmallVector<Case> cases{};
+  /// The cases.
+  vector_or_SmallVector<Case> cases{};
 
-  // TODO srcBraceR
+  /// The brace `}`.
+  SourceRef srcBraceR{};
 };
 
 class Unreachable final : public StmtSubclass<StmtKind::Unreachable> {
@@ -1247,7 +1338,7 @@ public:
 //--}
 
 inline Let::Let(
-    SourceRef srcKwLet, SourceRef srcBraceL, llvm::SmallVector<unique_bump_ptr<Variable>> vars, SourceRef srcBraceR,
+    SourceRef srcKwLet, SourceRef srcBraceL, vector_or_SmallVector<unique_bump_ptr<Variable>> vars, SourceRef srcBraceR,
     SourceRef srcKwIn, unique_bump_ptr<Expr> expr)
     : srcKwLet(srcKwLet), srcBraceL(srcBraceL), vars(std::move(vars)), srcBraceR(srcBraceR), srcKwIn(srcKwIn),
       expr(std::move(expr)) {}
@@ -1262,8 +1353,8 @@ inline ReturnFrom::~ReturnFrom() {}
 class File final : public NodeSubclass<NodeKind::File> {
 public:
   File(
-      bool isSmdlSyntax, Version version, llvm::SmallVector<unique_bump_ptr<Decl>> imports,
-      std::optional<AnnotationBlock> annotations, llvm::SmallVector<unique_bump_ptr<Decl>> globals)
+      bool isSmdlSyntax, Version version, vector_or_SmallVector<unique_bump_ptr<Decl>> imports,
+      std::optional<AnnotationBlock> annotations, vector_or_SmallVector<unique_bump_ptr<Decl>> globals)
       : isSmdlSyntax(isSmdlSyntax), version(version), imports(std::move(imports)), annotations(std::move(annotations)),
         globals(std::move(globals)) {}
 
@@ -1271,11 +1362,11 @@ public:
 
   Version version{};
 
-  llvm::SmallVector<unique_bump_ptr<Decl>> imports{};
+  vector_or_SmallVector<unique_bump_ptr<Decl>> imports{};
 
   std::optional<AnnotationBlock> annotations{};
 
-  llvm::SmallVector<unique_bump_ptr<Decl>> globals{};
+  vector_or_SmallVector<unique_bump_ptr<Decl>> globals{};
 };
 
 } // namespace smdl::AST

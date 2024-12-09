@@ -125,7 +125,7 @@ Value Emitter::emit(AST::Import &decl) {
     decl.crumb = crumb;
   }
   for (auto &path : decl.paths)
-    declare_import(path->isAbs, path->get_string_refs(), decl);
+    declare_import(path.identifier->isAbs, path.identifier->get_string_refs(), decl);
   return {};
 }
 
@@ -198,7 +198,7 @@ Value Emitter::emit(AST::UsingImport &decl) {
     declare_import(decl.path->isAbs, path, decl);
   } else {
     for (auto &name : decl.names) {
-      path.push_back(name->srcName);
+      path.push_back(name.srcName);
       declare_import(decl.path->isAbs, path, decl);
       path.pop_back();
     }
@@ -350,14 +350,14 @@ Value Emitter::emit(AST::GetIndex &expr) {
   if (auto value{emit(expr.expr)}; value.is_compile_time_type()) {
     // Array type construction
     auto type{value.get_compile_time_type()};
-    for (auto itr{expr.indices.rbegin()}; itr != expr.indices.rend(); ++itr) {
+    for (auto itr{expr.indexes.rbegin()}; itr != expr.indexes.rend(); ++itr) {
       auto &index{*itr};
-      if (!index) {
+      if (!index.expr) {
         type = context.get_array_type(type, ""); // Empty
-      } else if (auto sizeName{llvm::dyn_cast<AST::SizeName>(index.get())}) {
+      } else if (auto sizeName{llvm::dyn_cast<AST::SizeName>(index.expr.get())}) {
         type = context.get_array_type(type, sizeName->name->srcName);
       } else {
-        auto size{construct(context.get_int_type(), emit(index), expr.srcLoc)};
+        auto size{construct(context.get_int_type(), emit(index.expr), expr.srcLoc)};
         if (!size.is_compile_time_int())
           expr.srcLoc.report_error("expected array size expression to resolve to compile-time int");
         type = context.get_array_type(type, size.get_compile_time_int());
@@ -365,10 +365,10 @@ Value Emitter::emit(AST::GetIndex &expr) {
     }
     return context.get_compile_time_type(type);
   } else {
-    for (auto &index : expr.indices) {
-      if (!index)
+    for (auto &index : expr.indexes) {
+      if (!index.expr)
         expr.srcLoc.report_error("expected non-empty '[]'");
-      value = access(value, construct(context.get_int_type(), emit(index), expr.srcLoc), expr.srcLoc);
+      value = access(value, construct(context.get_int_type(), emit(index.expr), expr.srcLoc), expr.srcLoc);
     }
     return value;
   }
@@ -587,7 +587,7 @@ Value Emitter::emit(AST::Switch &stmt) {
   if (!blockDefault)
     blockDefault = blockEnd;
   emit_br_and_move_to(blockBegin);
-  auto what{construct(context.get_int_type(), emit_scope(*stmt.what), stmt.srcLoc)};
+  auto what{construct(context.get_int_type(), emit_scope(*stmt.expr), stmt.srcLoc)};
   auto switchInst{builder.CreateSwitch(what, blockDefault)};
   emit_scope(blockBegin, blockEnd, [&](auto &emitter) {
     emitter.afterBreak = {crumb, blockEnd};

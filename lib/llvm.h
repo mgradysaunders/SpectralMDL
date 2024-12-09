@@ -257,6 +257,22 @@ template <typename T> using unique_bump_ptr = std::unique_ptr<T, unique_bump_ptr
 
 namespace detail {
 
+template <typename T, bool> struct vector_or_SmallVector {};
+
+template <typename T> struct vector_or_SmallVector<T, false> {
+  using type = std::vector<T>;
+};
+
+template <typename T> struct vector_or_SmallVector<T, true> {
+  using type = llvm::SmallVector<T>;
+};
+
+} // namespace detail
+
+template <typename T> using vector_or_SmallVector = typename detail::vector_or_SmallVector<T, (sizeof(T) < 256)>::type;
+
+namespace detail {
+
 [[nodiscard]] inline bool is_all_true(auto &&range, auto &&pred) {
   for (auto &&each : std::forward<decltype(range)>(range))
     if (!std::invoke(pred, each))
