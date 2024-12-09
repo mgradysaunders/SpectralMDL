@@ -609,7 +609,7 @@ EnumType::EnumType(Context &context, AST::Enum *decl, llvm::Function *llvmFunc)
     : TypeSubclass(context, Scalar::Int), decl(decl), llvmFunc(llvmFunc) {
   init_name(*decl->name);
   for (auto &declarator : decl->declarators)
-    constants.push_back(Constant{declarator.name->name, sanity_check_nonnull(declarator.llvmConst), declarator.name->srcLoc});
+    constants.push_back(Constant{declarator.name->srcName, sanity_check_nonnull(declarator.llvmConst), declarator.name->srcLoc});
   llvmType = context.get_int_type()->llvmType;
 }
 

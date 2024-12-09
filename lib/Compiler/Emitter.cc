@@ -95,7 +95,7 @@ Value Emitter::emit(AST::Enum &decl) {
                         : Value::zero(context.get_int_type())};
     if (!value.is_compile_time_int())
       declarator.name->srcLoc.report_error(
-          std::format("expected '{}' initializer to resolve to compile-time int", declarator.name->name));
+          std::format("expected '{}' initializer to resolve to compile-time int", declarator.name->srcName));
     declarator.llvmConst = static_cast<llvm::ConstantInt *>(value);
     lastValue = value;
   }
@@ -172,7 +172,7 @@ Value Emitter::emit(AST::UnitTest &decl) {
     auto func{FunctionInstance{*this, decl}};
     auto &unitTest{context.mdl.unitTests.emplace_back()};
     unitTest.moduleName = module->name;
-    unitTest.name = decl.name.str().str();
+    unitTest.name = decl.name->value.str();
     unitTest.exec.name = func.llvmFunc->getName().str();
   }
   return {};
@@ -198,7 +198,7 @@ Value Emitter::emit(AST::UsingImport &decl) {
     declare_import(decl.path->isAbs, path, decl);
   } else {
     for (auto &name : decl.names) {
-      path.push_back(name->name);
+      path.push_back(name->srcName);
       declare_import(decl.path->isAbs, path, decl);
       path.pop_back();
     }
@@ -237,22 +237,22 @@ Value Emitter::emit(AST::Variable &decl) {
     } else {
       if (type->is_abstract())
         declaratorName.srcLoc.report_error(
-            std::format("variable '{}' declare with type '{}' requires initializer", declaratorName.name, type->name));
+            std::format("variable '{}' declare with type '{}' requires initializer", declaratorName.srcName, type->name));
       value = construct(type, {}, decl.srcLoc);
     }
     if (isStatic) {
       if (!value.is_compile_time())
         declaratorName.srcLoc.report_error(
-            std::format("variable '{}' declared 'static' requires compile-time initializer", declaratorName.name));
+            std::format("variable '{}' declared 'static' requires compile-time initializer", declaratorName.srcName));
       auto llvmGlobal{new llvm::GlobalVariable(
           context.llvmModule, value.type->llvmType, /*isConst=*/true,
           decl.isExport ? llvm::GlobalValue::ExternalLinkage : llvm::GlobalValue::PrivateLinkage,
           static_cast<llvm::Constant *>(value.llvmValue))};
       llvmGlobal->setUnnamedAddr(llvm::GlobalValue::UnnamedAddr::Global);
-      llvmGlobal->setName(llvm_twine("gv.", declaratorName.name));
+      llvmGlobal->setName(llvm_twine("gv.", declaratorName.srcName));
       value = LValue(value.type, llvmGlobal);
     } else if (!isConst) {
-      auto valueAlloca{emit_alloca(declaratorName.name, value.type)};
+      auto valueAlloca{emit_alloca(declaratorName.srcName, value.type)};
       builder.CreateStore(value, valueAlloca);
       value = LValue(value.type, valueAlloca);
     }
@@ -355,7 +355,7 @@ Value Emitter::emit(AST::GetIndex &expr) {
       if (!index) {
         type = context.get_array_type(type, ""); // Empty
       } else if (auto sizeName{llvm::dyn_cast<AST::SizeName>(index.get())}) {
-        type = context.get_array_type(type, sizeName->name->name);
+        type = context.get_array_type(type, sizeName->name->srcName);
       } else {
         auto size{construct(context.get_int_type(), emit(index), expr.srcLoc)};
         if (!size.is_compile_time_int())
@@ -635,7 +635,7 @@ ArgList Emitter::emit(const AST::ArgList &astArgs) {
   for (auto &astArg : astArgs.args) {
     auto &arg{args.emplace_back()};
     if (astArg.name)
-      arg.name = astArg.name->name;
+      arg.name = astArg.name->srcName;
     arg.value = emit(astArg.expr);
     arg.srcLoc = astArg.srcLoc;
     arg.src = astArg.src;

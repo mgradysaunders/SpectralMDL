@@ -8,6 +8,12 @@ class Formatter final {
 public:
   Formatter(llvm::StringRef src) : src(src) {}
 
+  struct SepSpace {};
+
+  static constexpr auto SEP_SPACE = SepSpace{};
+
+  void write(SepSpace);
+
   void write(char ch);
 
   void write(llvm::StringRef str);
@@ -67,13 +73,15 @@ public:
 
   void write(AST::Struct &decl);
 
-  void write(AST::Tag &decl);
+  void write(AST::Tag &decl) { write(decl.srcKwTag, SEP_SPACE, decl.name, decl.srcSemicolon); }
 
-  void write(AST::Typedef &decl);
+  void write(AST::Typedef &decl) { write(decl.srcKwTypedef, SEP_SPACE, decl.type, SEP_SPACE, decl.name, decl.srcSemicolon); }
 
-  void write(AST::UnitTest &decl);
+  void write(AST::UnitTest &decl) { write(decl.srcKwUnitTest, SEP_SPACE, decl.name, SEP_SPACE, decl.body); }
 
-  void write(AST::UsingAlias &decl);
+  void write(AST::UsingAlias &decl) {
+    write(decl.srcKwUsing, SEP_SPACE, decl.name, SEP_SPACE, decl.srcEq, SEP_SPACE, decl.path, decl.srcSemicolon);
+  }
 
   void write(AST::UsingImport &decl);
 
@@ -85,29 +93,21 @@ public:
 
   void write(AST::Binary &expr) {
     if (expr.op == AST::BinaryOp::Comma) {
-      write(expr.lhs, ", ", expr.rhs);
+      write(expr.lhs, AST::to_string(expr.op), SEP_SPACE, expr.rhs);
     } else {
-      write(expr.lhs, ' ');
-      try_to_preserve_comments(expr.lhs->src, expr.src);
-      write(AST::to_string(expr.op), ' ');
-      try_to_preserve_comments(expr.src, expr.rhs->src);
-      write(expr.rhs);
+      write(expr.lhs, SEP_SPACE, AST::to_string(expr.op), SEP_SPACE, expr.rhs);
     }
   }
 
-  void write(AST::Call &expr) {
-    write(expr.expr);
-    try_to_preserve_comments(expr.expr->src, expr.args.src);
-    write('(', expr.args, ')');
-  }
+  void write(AST::Call &expr) { write(expr.expr, expr.args); }
 
   void write(AST::Cast &expr) { write("cast<", expr.type, ">(", expr.expr, ')'); }
 
   void write(AST::Conditional &expr) {
-    write(expr.cond, ' ', expr.srcQuestion, ' ', expr.ifPass, ' ', expr.srcColon, ' ', expr.ifFail);
+    write(expr.cond, SEP_SPACE, expr.srcQuestion, SEP_SPACE, expr.ifPass, SEP_SPACE, expr.srcColon, SEP_SPACE, expr.ifFail);
   }
 
-  void write(AST::GetField &expr) { write(expr.what, expr.srcDot, expr.name); }
+  void write(AST::GetField &expr) { write(expr.expr, expr.srcDot, expr.name); }
 
   void write(AST::GetIndex &expr);
 
@@ -115,7 +115,7 @@ public:
 
   void write(AST::Intrinsic &expr) { write('#', expr.name); }
 
-  void write(AST::Name &expr) { write(expr.name); }
+  void write(AST::Name &expr) { write(expr.srcName); }
 
   void write(AST::Let &expr);
 
@@ -127,9 +127,9 @@ public:
 
   void write(AST::LiteralString &expr) { write(expr.src); }
 
-  void write(AST::Parens &expr);
+  void write(AST::Parens &expr) { write(expr.srcDollar, expr.srcParenL, expr.expr, expr.srcParenR); }
 
-  void write(AST::ReturnFrom &expr) { write(expr.srcKwReturnFrom, ' ', expr.stmt); }
+  void write(AST::ReturnFrom &expr) { write(expr.srcKwReturnFrom, SEP_SPACE, expr.stmt); }
 
   void write(AST::SizeName &expr) {
     if (expr.name)
@@ -157,22 +157,36 @@ public:
 
   void write(AST::DeclStmt &stmt) { write(stmt.decl); }
 
-  void write(AST::Defer &stmt);
+  void write(AST::Defer &stmt) { write(stmt.srcKwDefer, SEP_SPACE, stmt.stmt); }
 
-  void write(AST::DoWhile &stmt);
+  void write(AST::DoWhile &stmt) {
+    write(stmt.srcKwDo, SEP_SPACE, stmt.body, SEP_SPACE, stmt.srcKwWhile, SEP_SPACE, stmt.cond, stmt.srcSemicolon);
+  }
 
-  void write(AST::ExprStmt &stmt);
+  void write(AST::ExprStmt &stmt) {
+    if (stmt.expr)
+      write(stmt.expr, stmt.lateIf);
+    write(stmt.srcSemicolon);
+  }
 
-  void write(AST::For &stmt);
+  void write(AST::For &stmt) {
+    write(
+        stmt.srcKwFor, SEP_SPACE, stmt.srcParenL, stmt.init, SEP_SPACE, stmt.cond, stmt.srcSemicolonAfterCond, SEP_SPACE,
+        stmt.incr, stmt.srcParenR, SEP_SPACE, stmt.body);
+  }
 
-  void write(AST::If &stmt);
+  void write(AST::If &stmt) {
+    write(stmt.srcKwIf, SEP_SPACE, stmt.cond, SEP_SPACE, stmt.ifPass);
+    if (stmt.ifFail)
+      write(SEP_SPACE, stmt.srcKwElse, SEP_SPACE, stmt.ifFail);
+  }
 
   void write(AST::Preserve &stmt);
 
   void write(AST::Return &stmt) {
     write(stmt.srcKwReturn);
     if (stmt.expr != nullptr)
-      write(' ', stmt.expr);
+      write(SEP_SPACE, stmt.expr);
     write(stmt.lateIf, stmt.srcSemicolon);
   }
 
@@ -180,9 +194,11 @@ public:
 
   void write(AST::Unreachable &stmt) { write(stmt.srcKwUnreachable, stmt.srcSemicolon); }
 
-  void write(AST::Visit &stmt) { write(stmt.srcKwVisit, ' ', stmt.name, ' ', stmt.srcKwIn, ' ', stmt.body); }
+  void write(AST::Visit &stmt) {
+    write(stmt.srcKwVisit, SEP_SPACE, stmt.name, SEP_SPACE, stmt.srcKwIn, SEP_SPACE, stmt.expr, SEP_SPACE, stmt.body);
+  }
 
-  void write(AST::While &stmt);
+  void write(AST::While &stmt) { write(stmt.srcKwWhile, SEP_SPACE, stmt.cond, SEP_SPACE, stmt.body); }
   //--}
 
   void write(AST::FrequencyQualifier freq) { write(freq == AST::FrequencyQualifier::Uniform ? "uniform" : "varying"); }
@@ -203,13 +219,7 @@ public:
 
   bool write(const AST::Function::Attrs &attrs);
 
-  void write(const AST::Struct::Field &field);
-
-  void write(const AST::Struct::Tag &tag);
-
-  void write(const AST::Variable::Declarator &declarator);
-
-  void write(const AST::LateIf &lateIf);
+  void write(const AST::LateIf &lateIf) { write(SEP_SPACE, lateIf.srcKwIf, SEP_SPACE, lateIf.cond); }
 
   template <typename... Ts> void write_type_switch(auto &node) {
     llvm::TypeSwitch<decltype(&node), void>(&node).template Case<Ts...>([&]<typename T>(T *each) { write(*each); });

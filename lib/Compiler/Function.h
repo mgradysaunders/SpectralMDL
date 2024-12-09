@@ -78,7 +78,7 @@ public:
   explicit Function(Emitter &emitter0, AST::Function &decl);
 
   /// Get the function name.
-  [[nodiscard]] llvm::StringRef get_name() const { return decl.name->name; }
+  [[nodiscard]] llvm::StringRef get_name() const { return decl.name->srcName; }
 
   /// Get the function return type.
   [[nodiscard]] Type *get_return_type() const { return decl.returnType->type; }

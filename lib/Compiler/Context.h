@@ -22,7 +22,7 @@ public:
     return new (bump_allocate(sizeof(T), alignof(T))) T(std::forward<decltype(args)>(args)...);
   }
 
-  [[nodiscard]] llvm::StringRef get_persistent_string(const AST::Name &astName) { return astName.name; }
+  [[nodiscard]] llvm::StringRef get_persistent_string(const AST::Name &name) { return name.srcName; }
 
   [[nodiscard]] llvm::StringRef get_persistent_string(const llvm::Twine &twine);
 
@@ -39,8 +39,8 @@ public:
   [[nodiscard]] bool is_keyword(Module *module, llvm::StringRef name);
 
   void validate_decl_name(Module *module, const char *kind, const AST::Name &name) {
-    if (is_keyword(module, name.name))
-      name.srcLoc.report_error(std::format("{} name must not be reserved keyword '{}'", kind, name.name));
+    if (is_keyword(module, name.srcName))
+      name.srcLoc.report_error(std::format("{} name must not be reserved keyword '{}'", kind, name.srcName));
   }
 
   [[nodiscard]] llvm::StringRef bump_duplicate(llvm::StringRef str) {

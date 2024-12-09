@@ -87,7 +87,7 @@ public:
   void declare(const AST::Name &astName, Value value, AST::Decl *decl = {}) {
     // We assume 'astName' is a reference to a persistent bump-allocated name, so we can directly
     // construct an 'llvm::ArrayRef' without needing to 'context.bump_duplicate()'.
-    push(value, astName.name, decl, astName.srcLoc);
+    push(value, astName.srcName, decl, astName.srcLoc);
   }
 
   void declare_function_parameter(const Param &param, Value value);
@@ -178,7 +178,7 @@ public:
 
   Value emit(AST::Conditional &expr);
 
-  Value emit(AST::GetField &expr) { return access(emit(expr.what), expr.name->name, expr.name->srcLoc); }
+  Value emit(AST::GetField &expr) { return access(emit(expr.expr), expr.name->srcName, expr.name->srcLoc); }
 
   Value emit(AST::GetIndex &expr);
 
@@ -264,7 +264,7 @@ public:
   }
 
   Value emit(AST::Visit &stmt) {
-    emit_visit(emit(stmt.what), [&](Emitter &emitter, Value value) -> Value {
+    emit_visit(emit(stmt.expr), [&](Emitter &emitter, Value value) -> Value {
       emitter.declare(*stmt.name, value);
       if (!value.is_void())
         emitter.emit(stmt.body);

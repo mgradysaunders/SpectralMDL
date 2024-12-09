@@ -1,81 +1,77 @@
 #smdl_syntax
 
-// TODO Rethink this?
+@(foreign pure) int smdl_data_isvalid(&void data, &string name);
 
-@(pure foreign) int smdl_data_isvalid(&void data, &string name);
+@(foreign pure) int smdl_data_lookup_int(&void data, &string name, &int value);
 
-@(pure foreign) int smdl_data_lookup_int(&void data, &string name, &int value);
+@(foreign pure) int smdl_data_lookup_int2(&void data, &string name, &int2 value);
 
-@(pure foreign) int smdl_data_lookup_int2(&void data, &string name, &int2 value);
+@(foreign pure) int smdl_data_lookup_int3(&void data, &string name, &int3 value);
 
-@(pure foreign) int smdl_data_lookup_int3(&void data, &string name, &int3 value);
+@(foreign pure) int smdl_data_lookup_int4(&void data, &string name, &int4 value);
 
-@(pure foreign) int smdl_data_lookup_int4(&void data, &string name, &int4 value);
+@(foreign pure) int smdl_data_lookup_float(&void data, &string name, &float value);
 
-@(pure foreign) int smdl_data_lookup_float(&void data, &string name, &float value);
+@(foreign pure) int smdl_data_lookup_float2(&void data, &string name, &float2 value);
 
-@(pure foreign) int smdl_data_lookup_float2(&void data, &string name, &float2 value);
+@(foreign pure) int smdl_data_lookup_float3(&void data, &string name, &float3 value);
 
-@(pure foreign) int smdl_data_lookup_float3(&void data, &string name, &float3 value);
+@(foreign pure) int smdl_data_lookup_float4(&void data, &string name, &float4 value);
 
-@(pure foreign) int smdl_data_lookup_float4(&void data, &string name, &float4 value);
+@(foreign pure) int smdl_data_lookup_color(&void data, &string name, &color value);
 
-@(pure foreign) int smdl_data_lookup_color(&void data, &string name, &color value);
+export @(macro pure) bool data_isvalid(string name) = smdl_data_isvalid($data, &name) != 0;
 
-export @(pure macro) bool data_isvalid(string name) = smdl_data_isvalid($data, &name) != 0;
-
-export @(pure macro) int data_lookup_int(string name, int default_value = int()) {
+export @(macro pure) int data_lookup_int(string name, int default_value = int()) {
   auto value(default_value);
   smdl_data_lookup_int($data, &name, &value);
   return value;
 }
 
-export @(pure macro) int2 data_lookup_int2(string name, int2 default_value = int2()) {
+export @(macro pure) int2 data_lookup_int2(string name, int2 default_value = int2()) {
   auto value(default_value);
   smdl_data_lookup_int2($data, &name, &value);
   return value;
 }
 
-export @(pure macro) int3 data_lookup_int3(string name, int3 default_value = int3()) {
+export @(macro pure) int3 data_lookup_int3(string name, int3 default_value = int3()) {
   auto value(default_value);
   smdl_data_lookup_int3($data, &name, &value);
   return value;
 }
 
-export @(pure macro) int4 data_lookup_int4(string name, int4 default_value = int4()) {
+export @(macro pure) int4 data_lookup_int4(string name, int4 default_value = int4()) {
   auto value(default_value);
   smdl_data_lookup_int4($data, &name, &value);
   return value;
 }
 
-export @(pure macro) float data_lookup_float(string name, float default_value = float()) {
+export @(macro pure) float data_lookup_float(string name, float default_value = float()) {
   auto value(default_value);
   smdl_data_lookup_float($data, &name, &value);
   return value;
 }
 
-export @(pure macro) float2 data_lookup_float2(string name, float2 default_value = float2()) {
+export @(macro pure) float2 data_lookup_float2(string name, float2 default_value = float2()) {
   auto value(default_value);
   smdl_data_lookup_float2($data, &name, &value);
   return value;
 }
 
-export @(pure macro) float3 data_lookup_float3(string name, float3 default_value = float3()) {
+export @(macro pure) float3 data_lookup_float3(string name, float3 default_value = float3()) {
   auto value(default_value);
   smdl_data_lookup_float3($data, &name, &value);
   return value;
 }
 
-export @(pure macro) float4 data_lookup_float4(string name, float4 default_value = float4()) {
+export @(macro pure) float4 data_lookup_float4(string name, float4 default_value = float4()) {
   auto value(default_value);
   smdl_data_lookup_float4($data, &name, &value);
   return value;
 }
 
-export @(pure macro) color data_lookup_color(string name, color default_value = color()) {
+export @(macro pure) color data_lookup_color(string name, color default_value = color()) {
   auto value(default_value);
   smdl_data_lookup_color($data, &name, &value);
   return value;
 }
-
-// TODO Uniform variants

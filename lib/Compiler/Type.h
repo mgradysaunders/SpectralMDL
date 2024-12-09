@@ -258,7 +258,7 @@ public:
 protected:
   void init_name(const llvm::Twine &name);
 
-  void init_name(const AST::Name &name) { this->name = name.name; }
+  void init_name(const AST::Name &name) { this->name = name.srcName; }
 };
 
 template <TypeKind K> class TypeSubclass : public Type {

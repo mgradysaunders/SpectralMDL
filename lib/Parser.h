@@ -186,8 +186,11 @@ private:
 
   Char next();
 
-  bool next(Char c) {
-    if (peek() == c) {
+  bool next(Char c, AST::SourceRef *src = nullptr) {
+    size_t numBytes{};
+    if (peek(&numBytes) == c) {
+      if (src)
+        *src = text.substr(state.i, numBytes);
       next();
       return true;
     } else {
@@ -195,13 +198,10 @@ private:
     }
   }
 
-  bool delimiter(Char c, llvm::StringRef *src = nullptr) {
+  bool delimiter(Char c, AST::SourceRef *src = nullptr) {
     checkpoint();
     skip();
-    if (peek() == c) {
-      if (src)
-        *src = text.substr(state.i, 1);
-      next();
+    if (next(c, src)) {
       accept();
       return true;
     } else {
@@ -210,13 +210,13 @@ private:
     }
   }
 
-  bool next(llvm::StringRef, llvm::StringRef *src = nullptr);
+  bool next(llvm::StringRef, AST::SourceRef *src = nullptr);
 
-  [[nodiscard]] bool next_word(llvm::StringRef, llvm::StringRef *src = nullptr);
+  [[nodiscard]] bool next_word(llvm::StringRef, AST::SourceRef *src = nullptr);
 
-  [[nodiscard]] llvm::StringRef next_word();
+  [[nodiscard]] AST::SourceRef next_word();
 
-  [[nodiscard]] llvm::StringRef next_int();
+  [[nodiscard]] AST::SourceRef next_int();
 
   [[nodiscard]] auto save_cursor() {
     skip();
