@@ -228,6 +228,8 @@ public:
   unique_bump_ptr<Expr> init{};
 
   std::optional<AnnotationBlock> annotations{};
+
+  llvm::StringRef src{};
 };
 
 class ParamList final {
@@ -241,8 +243,6 @@ public:
   [[nodiscard]] auto end() const { return params.end(); }
 
   llvm::SmallVector<Param> params{};
-
-  bool isVarArg{};
 
   llvm::StringRef src{};
 };
@@ -343,70 +343,85 @@ public:
 };
 //--}
 
-//--{ Conditional
 class Conditional final : public ExprSubclass<ExprKind::Conditional> {
 public:
-  Conditional(unique_bump_ptr<Expr> cond, unique_bump_ptr<Expr> ifPass, unique_bump_ptr<Expr> ifFail)
-      : cond(std::move(cond)), ifPass(std::move(ifPass)), ifFail(std::move(ifFail)) {}
+  explicit Conditional(
+      unique_bump_ptr<Expr> cond, llvm::StringRef srcQuestion, unique_bump_ptr<Expr> ifPass, llvm::StringRef srcColon,
+      unique_bump_ptr<Expr> ifFail)
+      : cond(std::move(cond)), srcQuestion(srcQuestion), ifPass(std::move(ifPass)), srcColon(srcColon),
+        ifFail(std::move(ifFail)) {}
 
+  /// The condition.
   unique_bump_ptr<Expr> cond{};
 
+  /// The conditional question mark '?'.
+  llvm::StringRef srcQuestion{};
+
+  /// The if-pass expression.
   unique_bump_ptr<Expr> ifPass{};
 
+  /// The conditional colon ':'.
+  llvm::StringRef srcColon{};
+
+  /// The if-fail expression.
   unique_bump_ptr<Expr> ifFail{};
 };
-//--}
 
 class Variable;
 
-//--{ Let
 class Let final : public ExprSubclass<ExprKind::Let> {
 public:
-  Let(llvm::SmallVector<unique_bump_ptr<Variable>> vars, unique_bump_ptr<Expr> expr);
+  explicit Let(
+      llvm::StringRef srcKwLet, llvm::SmallVector<unique_bump_ptr<Variable>> vars, llvm::StringRef srcKwIn,
+      unique_bump_ptr<Expr> expr);
 
   ~Let();
 
+  /// The keyword 'let'.
+  llvm::StringRef srcKwLet{};
+
+  /// The variables.
   llvm::SmallVector<unique_bump_ptr<Variable>> vars{};
 
+  /// The keyword 'in'.
+  llvm::StringRef srcKwIn{};
+
+  /// The expression.
   unique_bump_ptr<Expr> expr{};
 };
-//--}
 
-//--{ GetField
 class GetField final : public ExprSubclass<ExprKind::GetField> {
 public:
-  GetField(unique_bump_ptr<Expr> what, unique_bump_ptr<Name> name) : what(std::move(what)), name(std::move(name)) {}
+  explicit GetField(unique_bump_ptr<Expr> what, llvm::StringRef srcDot, unique_bump_ptr<Name> name)
+      : what(std::move(what)), srcDot(srcDot), name(std::move(name)) {}
 
-  unique_bump_ptr<Expr> what{};
+  unique_bump_ptr<Expr> what{}; // TODO Rename expr
+
+  /// The dot '.'
+  llvm::StringRef srcDot{};
 
   unique_bump_ptr<Name> name{};
 };
-//--}
 
-//--{ GetIndex
 class GetIndex final : public ExprSubclass<ExprKind::GetIndex> {
 public:
-  GetIndex(unique_bump_ptr<Expr> expr, llvm::SmallVector<unique_bump_ptr<Expr>> indices)
+  explicit GetIndex(unique_bump_ptr<Expr> expr, llvm::SmallVector<unique_bump_ptr<Expr>> indices)
       : expr(std::move(expr)), indices(std::move(indices)) {}
 
   unique_bump_ptr<Expr> expr{};
 
   llvm::SmallVector<unique_bump_ptr<Expr>> indices{};
 };
-//--}
 
-//--{ Cast
 class Cast final : public ExprSubclass<ExprKind::Cast> {
 public:
-  Cast(unique_bump_ptr<Type> type, unique_bump_ptr<Expr> expr) : type(std::move(type)), expr(std::move(expr)) {}
+  explicit Cast(unique_bump_ptr<Type> type, unique_bump_ptr<Expr> expr) : type(std::move(type)), expr(std::move(expr)) {}
 
   unique_bump_ptr<Type> type{};
 
   unique_bump_ptr<Expr> expr{};
 };
-//--}
 
-//--{ Call
 class Call final : public ExprSubclass<ExprKind::Call> {
 public:
   explicit Call(unique_bump_ptr<Expr> expr, ArgList args) : expr(std::move(expr)), args(std::move(args)) {}
@@ -415,18 +430,14 @@ public:
 
   ArgList args{};
 };
-//--}
 
-//--{ SizeName
 class SizeName final : public ExprSubclass<ExprKind::SizeName> {
 public:
   explicit SizeName(unique_bump_ptr<Name> name) : name(std::move(name)) {}
 
   unique_bump_ptr<Name> name{};
 };
-//--}
 
-//--{ Literal[...]
 class LiteralBool final : public ExprSubclass<ExprKind::LiteralBool> {
 public:
   explicit LiteralBool(bool value) : value(value) {}
@@ -456,7 +467,6 @@ public:
 
   llvm::SmallString<64> value{};
 };
-//--}
 
 class Intrinsic final : public ExprSubclass<ExprKind::Intrinsic> {
 public:
@@ -467,10 +477,14 @@ public:
 
 class ReturnFrom final : public ExprSubclass<ExprKind::ReturnFrom> {
 public:
-  explicit ReturnFrom(unique_bump_ptr<Stmt> stmt);
+  explicit ReturnFrom(llvm::StringRef srcKwReturnFrom, unique_bump_ptr<Stmt> stmt);
 
   ~ReturnFrom();
 
+  /// The keyword 'return_from'.
+  llvm::StringRef srcKwReturnFrom{};
+
+  /// The statement.
   unique_bump_ptr<Stmt> stmt;
 };
 
@@ -776,40 +790,67 @@ public:
   static bool classof(const Node *node) { return node->nodeKind == NodeKind::Stmt && classof(static_cast<const Stmt *>(node)); }
 };
 
+class LateIf final {
+public:
+  explicit LateIf(llvm::StringRef srcKwIf, unique_bump_ptr<Expr> cond) : srcKwIf(srcKwIf), cond(std::move(cond)) {}
+
+  llvm::StringRef srcKwIf{};
+
+  unique_bump_ptr<Expr> cond{};
+};
+
 class Break final : public StmtSubclass<StmtKind::Break> {
 public:
-  Break(unique_bump_ptr<Expr> cond) : cond(std::move(cond)) {};
+  explicit Break(llvm::StringRef srcKwBreak, std::optional<LateIf> lateIf, llvm::StringRef srcSemicolon)
+      : srcKwBreak(srcKwBreak), lateIf(std::move(lateIf)), srcSemicolon(srcSemicolon) {}
 
-  // The late 'if' condition. NOTE: This is non-standard.
-  unique_bump_ptr<Expr> cond{};
+  /// The keyword 'break'.
+  llvm::StringRef srcKwBreak{};
+
+  /// The late if condition.
+  std::optional<LateIf> lateIf{};
+
+  /// The end-of-statement semicolon ';'.
+  llvm::StringRef srcSemicolon{};
 };
 
 class Compound final : public StmtSubclass<StmtKind::Compound> {
 public:
-  Compound(llvm::SmallVector<unique_bump_ptr<Stmt>> stmts) : stmts(std::move(stmts)) {}
+  explicit Compound(llvm::SmallVector<unique_bump_ptr<Stmt>> stmts) : stmts(std::move(stmts)) {}
 
   llvm::SmallVector<unique_bump_ptr<Stmt>> stmts{};
 };
 
 class Continue final : public StmtSubclass<StmtKind::Continue> {
 public:
-  Continue(unique_bump_ptr<Expr> cond) : cond(std::move(cond)) {}
+  explicit Continue(llvm::StringRef srcKwContinue, std::optional<LateIf> lateIf, llvm::StringRef srcSemicolon)
+      : srcKwContinue(srcKwContinue), lateIf(std::move(lateIf)), srcSemicolon(srcSemicolon) {}
 
-  // The late 'if' condition. NOTE: This is non-standard.
-  unique_bump_ptr<Expr> cond{};
+  /// The keyword 'continue'.
+  llvm::StringRef srcKwContinue{};
+
+  /// The late if condition.
+  std::optional<LateIf> lateIf{};
+
+  /// The end-of-statement semicolon ';'.
+  llvm::StringRef srcSemicolon{};
 };
 
 class DeclStmt final : public StmtSubclass<StmtKind::DeclStmt> {
 public:
-  DeclStmt(unique_bump_ptr<Decl> decl) : decl(std::move(decl)) {}
+  explicit DeclStmt(unique_bump_ptr<Decl> decl) : decl(std::move(decl)) {}
 
   unique_bump_ptr<Decl> decl{};
 };
 
 class Defer final : public StmtSubclass<StmtKind::Defer> {
 public:
-  Defer(unique_bump_ptr<Stmt> stmt) : stmt(std::move(stmt)) {}
+  explicit Defer(llvm::StringRef srcKwDefer, unique_bump_ptr<Stmt> stmt) : srcKwDefer(srcKwDefer), stmt(std::move(stmt)) {}
 
+  /// The keyword 'defer'.
+  llvm::StringRef srcKwDefer{};
+
+  /// The statement.
   unique_bump_ptr<Stmt> stmt{};
 
   Compiler::Crumb *crumb{};
@@ -817,28 +858,50 @@ public:
 
 class DoWhile final : public StmtSubclass<StmtKind::DoWhile> {
 public:
-  DoWhile(unique_bump_ptr<Stmt> body, unique_bump_ptr<Expr> cond) : body(std::move(body)), cond(std::move(cond)) {}
+  explicit DoWhile(
+      llvm::StringRef srcKwDo, unique_bump_ptr<Stmt> body, llvm::StringRef srcKwWhile, unique_bump_ptr<Expr> cond,
+      llvm::StringRef srcSemicolon)
+      : srcKwDo(srcKwDo), body(std::move(body)), srcKwWhile(srcKwWhile), cond(std::move(cond)), srcSemicolon(srcSemicolon) {}
 
+  /// The keyword 'do'.
+  llvm::StringRef srcKwDo{};
+
+  /// The loop body.
   unique_bump_ptr<Stmt> body{};
 
+  /// The keyword 'while'.
+  llvm::StringRef srcKwWhile{};
+
+  /// The loop condition.
   unique_bump_ptr<Expr> cond{};
+
+  /// The end-of-statement semicolon ';'.
+  llvm::StringRef srcSemicolon{};
 };
 
 class ExprStmt final : public StmtSubclass<StmtKind::ExprStmt> {
 public:
   ExprStmt() = default; // Empty statement
 
-  ExprStmt(unique_bump_ptr<Expr> expr, unique_bump_ptr<Expr> cond = {}) : expr(std::move(expr)), cond(std::move(cond)) {}
+  explicit ExprStmt(unique_bump_ptr<Expr> expr, std::optional<LateIf> lateIf, llvm::StringRef srcSemicolon)
+      : expr(std::move(expr)), lateIf(std::move(lateIf)), srcSemicolon(srcSemicolon) {}
 
   unique_bump_ptr<Expr> expr{};
 
-  unique_bump_ptr<Expr> cond{};
+  std::optional<LateIf> lateIf{};
+
+  llvm::StringRef srcSemicolon{};
 };
 
 class For final : public StmtSubclass<StmtKind::For> {
 public:
-  For(unique_bump_ptr<Stmt> init, unique_bump_ptr<Expr> cond, unique_bump_ptr<Expr> incr, unique_bump_ptr<Stmt> body)
-      : init(std::move(init)), cond(std::move(cond)), incr(std::move(incr)), body(std::move(body)) {}
+  explicit For(
+      llvm::StringRef srcKwFor, unique_bump_ptr<Stmt> init, unique_bump_ptr<Expr> cond, unique_bump_ptr<Expr> incr,
+      unique_bump_ptr<Stmt> body)
+      : srcKwFor(srcKwFor), init(std::move(init)), cond(std::move(cond)), incr(std::move(incr)), body(std::move(body)) {}
+
+  /// The keyword 'for'.
+  llvm::StringRef srcKwFor{};
 
   unique_bump_ptr<Stmt> init{};
 
@@ -851,31 +914,58 @@ public:
 
 class If final : public StmtSubclass<StmtKind::If> {
 public:
-  If(unique_bump_ptr<Expr> cond, unique_bump_ptr<Stmt> ifPass, unique_bump_ptr<Stmt> ifFail)
-      : cond(std::move(cond)), ifPass(std::move(ifPass)), ifFail(std::move(ifFail)) {}
+  explicit If(
+      llvm::StringRef srcKwIf, unique_bump_ptr<Expr> cond, unique_bump_ptr<Stmt> ifPass, llvm::StringRef srcKwElse,
+      unique_bump_ptr<Stmt> ifFail)
+      : srcKwIf(srcKwIf), cond(std::move(cond)), ifPass(std::move(ifPass)), srcKwElse(srcKwElse), ifFail(std::move(ifFail)) {}
 
+  /// The keyword 'if'.
+  llvm::StringRef srcKwIf{};
+
+  /// The condition.
   unique_bump_ptr<Expr> cond{};
 
+  /// The if-pass statement.
   unique_bump_ptr<Stmt> ifPass{};
 
+  /// The keyword 'else' (may be empty).
+  llvm::StringRef srcKwElse{};
+
+  /// The if-fail statement (may be null).
   unique_bump_ptr<Stmt> ifFail{};
 };
 
 class Preserve final : public StmtSubclass<StmtKind::Preserve> {
 public:
-  Preserve(llvm::SmallVector<unique_bump_ptr<Expr>> exprs) : exprs(std::move(exprs)) {}
+  explicit Preserve(llvm::StringRef srcKwPreserve, llvm::SmallVector<unique_bump_ptr<Expr>> exprs, llvm::StringRef srcSemicolon)
+      : srcKwPreserve(srcKwPreserve), exprs(std::move(exprs)), srcSemicolon(srcSemicolon) {}
 
+  /// The keyword 'preserve'.
+  llvm::StringRef srcKwPreserve{};
+
+  /// The comma-separated expressions to preserve.
   llvm::SmallVector<unique_bump_ptr<Expr>> exprs{};
+
+  llvm::StringRef srcSemicolon{};
 };
 
 class Return final : public StmtSubclass<StmtKind::Return> {
 public:
-  Return(unique_bump_ptr<Expr> expr, unique_bump_ptr<Expr> cond = {}) : expr(std::move(expr)), cond(std::move(cond)) {}
+  explicit Return(
+      llvm::StringRef srcKwReturn, unique_bump_ptr<Expr> expr, std::optional<LateIf> lateIf, llvm::StringRef srcSemicolon)
+      : srcKwReturn(srcKwReturn), expr(std::move(expr)), lateIf(std::move(lateIf)), srcSemicolon(srcSemicolon) {}
 
+  /// The keyword 'return'.
+  llvm::StringRef srcKwReturn{};
+
+  /// The expression.
   unique_bump_ptr<Expr> expr{};
 
-  // The late 'if' condition. NOTE: This is non-standard.
-  unique_bump_ptr<Expr> cond{};
+  /// The late if condition.
+  std::optional<LateIf> lateIf{};
+
+  /// The end-of-statement semicolon ';'.
+  llvm::StringRef srcSemicolon{};
 };
 
 class Switch final : public StmtSubclass<StmtKind::Switch> {
@@ -896,26 +986,53 @@ public:
   llvm::SmallVector<Case> cases{};
 };
 
-class Unreachable final : public StmtSubclass<StmtKind::Unreachable> {};
+class Unreachable final : public StmtSubclass<StmtKind::Unreachable> {
+public:
+  explicit Unreachable(llvm::StringRef srcKwUnreachable, llvm::StringRef srcSemicolon)
+      : srcKwUnreachable(srcKwUnreachable), srcSemicolon(srcSemicolon) {}
+
+  /// The keyword 'unreachable'.
+  llvm::StringRef srcKwUnreachable{};
+
+  /// The end-of-statement semicolon ';'.
+  llvm::StringRef srcSemicolon{};
+};
 
 class Visit final : public StmtSubclass<StmtKind::Visit> {
 public:
-  Visit(unique_bump_ptr<Name> name, unique_bump_ptr<Expr> what, unique_bump_ptr<Stmt> body)
-      : name(std::move(name)), what(std::move(what)), body(std::move(body)) {}
+  explicit Visit(
+      llvm::StringRef srcKwVisit, unique_bump_ptr<Name> name, llvm::StringRef srcKwIn, unique_bump_ptr<Expr> what,
+      unique_bump_ptr<Stmt> body)
+      : srcKwVisit(srcKwVisit), name(std::move(name)), srcKwIn(srcKwIn), what(std::move(what)), body(std::move(body)) {}
 
+  /// The keyword 'visit'.
+  llvm::StringRef srcKwVisit{};
+
+  /// The name.
   unique_bump_ptr<Name> name{};
 
+  /// The keyword 'in'.
+  llvm::StringRef srcKwIn{};
+
+  /// The what expression.
   unique_bump_ptr<Expr> what{};
 
+  /// The body statement.
   unique_bump_ptr<Stmt> body{};
 };
 
 class While final : public StmtSubclass<StmtKind::While> {
 public:
-  While(unique_bump_ptr<Expr> cond, unique_bump_ptr<Stmt> body) : cond(std::move(cond)), body(std::move(body)) {}
+  explicit While(llvm::StringRef srcKwWhile, unique_bump_ptr<Expr> cond, unique_bump_ptr<Stmt> body)
+      : srcKwWhile(srcKwWhile), cond(std::move(cond)), body(std::move(body)) {}
 
+  /// The keyword 'while'.
+  llvm::StringRef srcKwWhile{};
+
+  /// The loop condition.
   unique_bump_ptr<Expr> cond{};
 
+  /// The loop body.
   unique_bump_ptr<Stmt> body{};
 };
 //--}

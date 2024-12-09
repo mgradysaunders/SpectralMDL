@@ -95,17 +95,19 @@ public:
     }
   }
 
-  void write(AST::Call &expr) { 
+  void write(AST::Call &expr) {
     write(expr.expr);
     try_to_preserve_comments(expr.expr->src, expr.args.src);
-    write('(', expr.args, ')'); 
+    write('(', expr.args, ')');
   }
 
   void write(AST::Cast &expr) { write("cast<", expr.type, ">(", expr.expr, ')'); }
 
-  void write(AST::Conditional &expr) { write(expr.cond, " ? ", expr.ifPass, " : ", expr.ifFail); }
+  void write(AST::Conditional &expr) {
+    write(expr.cond, ' ', expr.srcQuestion, ' ', expr.ifPass, ' ', expr.srcColon, ' ', expr.ifFail);
+  }
 
-  void write(AST::GetField &expr) { write(expr.what, '.', expr.name); }
+  void write(AST::GetField &expr) { write(expr.what, expr.srcDot, expr.name); }
 
   void write(AST::GetIndex &expr);
 
@@ -127,7 +129,7 @@ public:
 
   void write(AST::Parens &expr);
 
-  void write(AST::ReturnFrom &expr) { write("return_from ", expr.stmt); }
+  void write(AST::ReturnFrom &expr) { write(expr.srcKwReturnFrom, ' ', expr.stmt); }
 
   void write(AST::SizeName &expr) {
     if (expr.name)
@@ -147,21 +149,11 @@ public:
   //--{ Write: Stmts
   void write(AST::Stmt &stmt);
 
-  void write(AST::Break &stmt) {
-    write("break");
-    if (stmt.cond != nullptr)
-      write(" if ", stmt.cond);
-    write(';');
-  }
+  void write(AST::Break &stmt) { write(stmt.srcKwBreak, stmt.lateIf, stmt.srcSemicolon); }
 
   void write(AST::Compound &stmt);
 
-  void write(AST::Continue &stmt) {
-    write("continue");
-    if (stmt.cond != nullptr)
-      write(" if ", stmt.cond);
-    write(';');
-  }
+  void write(AST::Continue &stmt) { write(stmt.srcKwContinue, stmt.lateIf, stmt.srcSemicolon); }
 
   void write(AST::DeclStmt &stmt) { write(stmt.decl); }
 
@@ -178,19 +170,17 @@ public:
   void write(AST::Preserve &stmt);
 
   void write(AST::Return &stmt) {
-    write("return");
+    write(stmt.srcKwReturn);
     if (stmt.expr != nullptr)
       write(' ', stmt.expr);
-    if (stmt.cond != nullptr)
-      write(" if ", stmt.cond);
-    write(';');
+    write(stmt.lateIf, stmt.srcSemicolon);
   }
 
   void write(AST::Switch &stmt);
 
-  void write(AST::Unreachable &) { write("unreachable"); }
+  void write(AST::Unreachable &stmt) { write(stmt.srcKwUnreachable, stmt.srcSemicolon); }
 
-  void write(AST::Visit &stmt);
+  void write(AST::Visit &stmt) { write(stmt.srcKwVisit, ' ', stmt.name, ' ', stmt.srcKwIn, ' ', stmt.body); }
 
   void write(AST::While &stmt);
   //--}
@@ -218,6 +208,8 @@ public:
   void write(const AST::Struct::Tag &tag);
 
   void write(const AST::Variable::Declarator &declarator);
+
+  void write(const AST::LateIf &lateIf);
 
   template <typename... Ts> void write_type_switch(auto &node) {
     llvm::TypeSwitch<decltype(&node), void>(&node).template Case<Ts...>([&]<typename T>(T *each) { write(*each); });

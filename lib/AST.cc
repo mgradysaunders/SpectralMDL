@@ -71,12 +71,15 @@ const char *to_string(BinaryOp op) {
   return {};
 }
 
-Let::Let(llvm::SmallVector<unique_bump_ptr<Variable>> vars, unique_bump_ptr<Expr> expr)
-    : vars(std::move(vars)), expr(std::move(expr)) {}
+Let::Let(
+    llvm::StringRef srcKwLet, llvm::SmallVector<unique_bump_ptr<Variable>> vars, llvm::StringRef srcKwIn,
+    unique_bump_ptr<Expr> expr)
+    : srcKwLet(srcKwLet), vars(std::move(vars)), srcKwIn(srcKwIn), expr(std::move(expr)) {}
 
 Let::~Let() {}
 
-ReturnFrom::ReturnFrom(unique_bump_ptr<Stmt> stmt) : stmt(std::move(stmt)) {}
+ReturnFrom::ReturnFrom(llvm::StringRef srcKwReturnFrom, unique_bump_ptr<Stmt> stmt)
+    : srcKwReturnFrom(srcKwReturnFrom), stmt(std::move(stmt)) {}
 
 ReturnFrom::~ReturnFrom() {}
 

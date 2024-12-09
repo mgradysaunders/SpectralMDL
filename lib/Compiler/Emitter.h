@@ -211,7 +211,7 @@ public:
   Value emit(AST::Break &stmt) {
     if (!afterBreak)
       stmt.srcLoc.report_error("unexpected 'break'");
-    emit_late_if(stmt.cond.get(), [&](auto &emitter) { emitter.emit_unwind_and_br(afterBreak); });
+    emit_late_if(stmt.lateIf, [&](auto &emitter) { emitter.emit_unwind_and_br(afterBreak); });
     return {};
   }
 
@@ -220,7 +220,7 @@ public:
   Value emit(AST::Continue &stmt) {
     if (!afterContinue)
       stmt.srcLoc.report_error("unexpected 'continue'");
-    emit_late_if(stmt.cond.get(), [&](auto &emitter) { emitter.emit_unwind_and_br(afterContinue); });
+    emit_late_if(stmt.lateIf, [&](auto &emitter) { emitter.emit_unwind_and_br(afterContinue); });
     return {};
   }
 
@@ -236,8 +236,7 @@ public:
 
   Value emit(AST::ExprStmt &stmt) {
     if (stmt.expr)
-      emit_late_if(
-          stmt.cond.get(), [&](auto &emitter) { emitter.emit_scope([&](auto &emitter) { emitter.emit(stmt.expr); }); });
+      emit_late_if(stmt.lateIf, [&](auto &emitter) { emitter.emit_scope([&](auto &emitter) { emitter.emit(stmt.expr); }); });
     return {};
   }
 
@@ -250,7 +249,7 @@ public:
   Value emit(AST::Return &stmt) {
     if (!afterReturn)
       stmt.srcLoc.report_error("unexpected 'return'");
-    emit_late_if(stmt.cond.get(), [&](auto &emitter) {
+    emit_late_if(stmt.lateIf, [&](auto &emitter) {
       emitter.emit_return(stmt.expr.get() ? emitter.emit(stmt.expr) : Value(), stmt.srcLoc);
     });
     return {};
@@ -323,12 +322,12 @@ public:
 
   void emit_br(Value cond, llvm::BasicBlock *blockPass, llvm::BasicBlock *blockFail);
 
-  void emit_late_if(AST::Expr *expr, std::invocable<Emitter &> auto &&func) {
-    if (!expr) {
+  void emit_late_if(std::optional<AST::LateIf> &lateIf, std::invocable<Emitter &> auto &&func) {
+    if (!lateIf) {
       std::invoke(func, *this);
     } else {
       auto crumb0{crumb};
-      auto cond{emit_cond(*expr, /*insideScope=*/false)};
+      auto cond{emit_cond(*lateIf->cond, /*insideScope=*/false)};
       if (cond.is_compile_time_int()) {
         auto pass{cond.get_compile_time_int() != 0};
         if (!pass)

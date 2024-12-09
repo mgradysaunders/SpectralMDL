@@ -344,22 +344,16 @@ void Formatter::write(AST::Compound &stmt) {
 }
 
 void Formatter::write(AST::Defer &stmt) {
-  write("defer ");
-  write_as_compound(*stmt.stmt);
+  write(stmt.srcKwDefer, ' ', stmt.stmt);
 }
 
 void Formatter::write(AST::DoWhile &stmt) {
-  write("do ");
-  write_as_compound(*stmt.body);
-  write(" while ", stmt.cond, ';');
+  write(stmt.srcKwDo, ' ', stmt.body, ' ', stmt.srcKwWhile, ' ', stmt.cond, stmt.srcSemicolon);
 }
 
 void Formatter::write(AST::ExprStmt &stmt) {
   if (stmt.expr) {
-    write(*stmt.expr);
-    if (stmt.cond != nullptr)
-      write(" if ", stmt.cond);
-    write(';');
+    write(stmt.expr, stmt.lateIf, stmt.srcSemicolon);
   }
 }
 
@@ -369,10 +363,10 @@ void Formatter::write(AST::For &stmt) {
 }
 
 void Formatter::write(AST::If &stmt) {
-  write("if ", stmt.cond, ' ');
+  write(stmt.srcKwIf, ' ', stmt.cond, ' ');
   write_as_compound(*stmt.ifPass);
   if (stmt.ifFail) {
-    write(" else ");
+    write(' ', stmt.srcKwElse, ' ');
     if (llvm::isa<AST::If>(stmt.ifFail.get()))
       write(stmt.ifFail);
     else
@@ -381,7 +375,7 @@ void Formatter::write(AST::If &stmt) {
 }
 
 void Formatter::write(AST::Preserve &stmt) {
-  write("preserve ");
+  write(stmt.srcKwPreserve, ' ');
   for (size_t i = 0; i < stmt.exprs.size(); i++) {
     write(stmt.exprs[i]);
     if (i + 1 < stmt.exprs.size())
@@ -409,15 +403,8 @@ void Formatter::write(AST::Switch &stmt) {
   write("\n}");
 }
 
-void Formatter::write(AST::Visit &stmt) {
-  write("visit ", stmt.name);
-  if (stmt.what != nullptr)
-    write(" in ", stmt.what);
-  write(' ', stmt.body);
-}
-
 void Formatter::write(AST::While &stmt) {
-  write("while ", stmt.cond, ' ');
+  write(stmt.srcKwWhile, ' ', stmt.cond, ' ');
   write_as_compound(*stmt.body);
 }
 //--}
@@ -536,5 +523,7 @@ void Formatter::write(const AST::Variable::Declarator &declarator) {
     write(' ', *declarator.annotations);
   }
 }
+
+void Formatter::write(const AST::LateIf &lateIf) { write(' ', lateIf.srcKwIf, ' ', lateIf.cond); }
 
 } // namespace smdl

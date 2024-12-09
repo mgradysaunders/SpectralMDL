@@ -195,10 +195,13 @@ private:
     }
   }
 
-  bool delimiter(Char c) {
+  bool delimiter(Char c, llvm::StringRef *src = nullptr) {
     checkpoint();
     skip();
-    if (next(c)) {
+    if (peek() == c) {
+      if (src)
+        *src = text.substr(state.i, 1);
+      next();
       accept();
       return true;
     } else {
@@ -207,9 +210,9 @@ private:
     }
   }
 
-  bool next(llvm::StringRef);
+  bool next(llvm::StringRef, llvm::StringRef *src = nullptr);
 
-  [[nodiscard]] bool next_word(llvm::StringRef);
+  [[nodiscard]] bool next_word(llvm::StringRef, llvm::StringRef *src = nullptr);
 
   [[nodiscard]] llvm::StringRef next_word();
 
@@ -308,7 +311,7 @@ public:
 
   [[nodiscard]] auto parse_visit_statement() -> unique_bump_ptr_wrapper<AST::Visit>;
 
-  [[nodiscard]] auto parse_late_if_condition() -> unique_bump_ptr_wrapper<AST::Expr>;
+  [[nodiscard]] auto parse_late_if() -> std::optional<AST::LateIf>;
   //--}
 
   //--{ Parse: Exprs
