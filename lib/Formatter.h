@@ -10,7 +10,7 @@ public:
 
   void write(char ch);
 
-  void write(llvm::StringRef str);
+  void write(AST::SourceRef srcRef);
 
   struct guarantee_space final {};
 
@@ -176,9 +176,7 @@ public:
 
   void write(AST::Identifier &expr);
 
-  void write(AST::Intrinsic &expr) { write('#', expr.name); }
-
-  void write(AST::Name &expr) { write(expr.srcName); }
+  void write(AST::Intrinsic &expr) { write(expr.srcName); }
 
   void write(AST::Let &expr) {
     write(expr.srcKwLet, guarantee_space());
@@ -195,13 +193,13 @@ public:
     }
   }
 
-  void write(AST::LiteralBool &expr) { write(expr.src); } // TODO
+  void write(AST::LiteralBool &expr) { write(expr.srcValue); }
 
-  void write(AST::LiteralFloat &expr) { write(expr.src); } // TODO
+  void write(AST::LiteralFloat &expr) { write(expr.srcValue); }
 
-  void write(AST::LiteralInt &expr) { write(expr.src); } // TODO
+  void write(AST::LiteralInt &expr) { write(expr.srcValue); }
 
-  void write(AST::LiteralString &expr) { write(expr.src); } // TODO
+  void write(AST::LiteralString &expr) { write(expr.srcValue); }
 
   void write(AST::Parens &expr) { write(expr.srcDollar, expr.srcParenL, expr.expr, expr.srcParenR); }
 
@@ -319,11 +317,15 @@ public:
 
   void write(const AST::LateIf &lateIf) { write(guarantee_space(), lateIf.srcKwIf, guarantee_space(), lateIf.cond); }
 
+  void write(const AST::Name &name) { write(name.srcName); }
+
   template <typename... Ts> void write_type_switch(auto &node) {
     llvm::TypeSwitch<decltype(&node), void>(&node).template Case<Ts...>([&]<typename T>(T *each) { write(*each); });
   }
 
   llvm::StringRef src{};
+
+  const char *last{};
 
   int indent{};
 

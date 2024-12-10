@@ -28,22 +28,42 @@ void Formatter::write(char ch) {
   str += ch;
 }
 
-void Formatter::write(llvm::StringRef str) {
-  for (auto ch : str)
-    write(ch);
-}
-
-#if 0
-void Formatter::try_to_preserve_comments(llvm::StringRef src0, llvm::StringRef src1) {
-  if (!src0.empty() && !src1.empty()) {
-    auto ptr0 = src0.data() + src0.size();
-    auto ptr1 = src1.data();
-    if (ptr0 < ptr1) {
-      try_to_preserve_comments(llvm::StringRef(ptr0, ptr1 - ptr0));
+void Formatter::write(AST::SourceRef srcRef) {
+  if (!srcRef.empty()) {
+    if (last == nullptr)
+      last = src.data();
+    const char *itr0 = srcRef.data();
+    const char *itr1 = itr0 + srcRef.size();
+    if (last < itr0) {
+      auto inBetween = llvm::StringRef(last, itr0 - last);
+      auto s = inBetween;
+      int iter = 0;
+      while (!s.empty() && iter++ < 1000) {
+        s = s.ltrim();
+        if (s.empty())
+          break;
+        if (s.starts_with("//")) {
+          s = s.drop_front(2);
+          str += "//";
+          while (!s.empty()) {
+            if (s.front() == '\n') {
+              s = s.drop_front();
+              write('\n');
+              break;
+            }
+            str += s.front();
+            s = s.drop_front();
+          }
+        }
+      }
     }
+    for (const char *itr = itr0; itr < itr1; itr++)
+      write(*itr);
+    last = itr1;
   }
 }
 
+#if 0
 void Formatter::try_to_preserve_comments(llvm::StringRef s) {
   int iter = 0;
   while (!s.empty() && iter++ < 1000) {
@@ -84,9 +104,9 @@ void Formatter::write(AST::Node &node) { write_type_switch<AST::Decl, AST::Expr,
 
 void Formatter::write(AST::File &file) {
   if (file.isSmdlSyntax)
-    write("#smdl_syntax\n\n");
-  else
-    write(std::format("mdl {}.{};\n\n", int(file.version.major), int(file.version.minor)));
+    write(file.srcKwSmdlSyntax, guarantee_newline());
+  if (file.version)
+    write(file.version->srcKwMdl, guarantee_space(), file.version->srcVersion, file.version->srcSemicolon, guarantee_newline());
 
   // TODO sort imports?
   for (auto &decl : file.imports)
@@ -136,26 +156,23 @@ void Formatter::write(AST::Function &decl) {
 void Formatter::write(AST::Expr &expr) {
   write_type_switch<
       AST::Binary, AST::Call, AST::Cast, AST::Conditional, AST::GetField, AST::GetIndex, AST::Identifier, AST::Intrinsic,
-      AST::Name, AST::Let, AST::LiteralBool, AST::LiteralFloat, AST::LiteralInt, AST::LiteralString, AST::Parens,
-      AST::ReturnFrom, AST::SizeName, AST::Type, AST::Unary>(expr);
+      AST::Let, AST::LiteralBool, AST::LiteralFloat, AST::LiteralInt, AST::LiteralString, AST::Parens, AST::ReturnFrom,
+      AST::SizeName, AST::Type, AST::Unary>(expr);
 }
 
 void Formatter::write(AST::Identifier &expr) {
   if (expr.isAbs)
-    write("::");
+    write(':', ':'); // TODO
   write(expr.names[0]);
   for (size_t i = 1; i < expr.names.size(); i++) {
-    write("::");
+    write(':', ':'); // TODO
     write(expr.names[i]);
   }
 }
 
 void Formatter::write(AST::Type &expr) {
-  for (size_t i = 0; i < expr.srcAttrs.size(); i++) {
-    write(expr.srcAttrs[i]);
-    if (i + 1 < expr.srcAttrs.size())
-      write(guarantee_space());
-  }
+  for (auto &srcAttr : expr.srcAttrs)
+    write(srcAttr, guarantee_space());
   write(expr.expr);
 }
 
@@ -170,7 +187,7 @@ void Formatter::write(AST::Preserve &stmt) {
   for (size_t i = 0; i < stmt.exprs.size(); i++) {
     write(stmt.exprs[i]);
     if (i + 1 < stmt.exprs.size())
-      write(", ");
+      write(',', ' '); // TODO
   }
   write(stmt.srcSemicolon);
 }
@@ -178,7 +195,7 @@ void Formatter::write(AST::Preserve &stmt) {
 void Formatter::write(const AST::Arg &arg) {
   if (arg.isVisit)
     write(arg.srcKwVisit, guarantee_space());
-  if (arg.name != nullptr)
+  if (arg.name)
     write(arg.name, arg.srcColonAfterName, guarantee_space());
   write(arg.expr);
 }
@@ -217,7 +234,6 @@ void Formatter::write(const AST::ParamList &params) {
         write(guarantee_newline(), param, param.srcComma);
       }
     });
-    write(guarantee_newline());
   } else {
     for (auto &param : params.params) {
       write(param);

@@ -29,12 +29,13 @@ void Module::format_source() {
 }
 
 static constexpr auto src_evalGeometry = R"(
-@(visible) void {0}__evaluate_geometry(const &float3 displacement, const &float opacity) {{
+@(visible) float {0}__evaluate_geometry(const &float3 displacement) {{
   auto geometry(#inline({0}()).geometry);
   *displacement = geometry.displacement;
-  *opacity = geometry.cutout_opacity;
-  *opacity = #max(*opacity, 0.0);
-  *opacity = #min(*opacity, 1.0);
+  auto opacity(geometry.cutout_opacity);
+  opacity = #max(opacity, 0.0);
+  opacity = #min(opacity, 1.0);
+  return opacity;
 }}
 )";
 

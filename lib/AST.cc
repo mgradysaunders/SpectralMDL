@@ -7,7 +7,7 @@ Identifier::operator std::string() const {
   if (isAbs)
     str += "::";
   for (size_t i{}; i < names.size(); i++) {
-    str += names[i]->srcName;
+    str += names[i].srcName;
     if (i + 1 < names.size())
       str += "::";
   }
@@ -73,7 +73,7 @@ const char *to_string(BinaryOp op) {
 
 Function::LetAndCall Function::get_variant_let_and_call_expressions() const {
   if (!(isVariant && params.empty() && definition && llvm::isa<Return>(definition.get())))
-    srcLoc.report_error(std::format("function variant '{}' has invalid declaration", name->srcName));
+    srcLoc.report_error(std::format("function variant '{}' has invalid declaration", name.srcName));
   auto letAndCall{LetAndCall{}};
   auto expr{static_cast<Return *>(definition.get())->expr.get()};
   if (llvm::isa<Call>(expr)) {
@@ -83,13 +83,13 @@ Function::LetAndCall Function::get_variant_let_and_call_expressions() const {
     letAndCall.call = llvm::dyn_cast<Call>(letAndCall.let->expr.get());
     if (!letAndCall.call)
       srcLoc.report_error(
-          std::format("function variant '{}' definition with 'let' must be followed by call expression", name->srcName));
+          std::format("function variant '{}' definition with 'let' must be followed by call expression", name.srcName));
   }
   if (!letAndCall.call)
-    srcLoc.report_error(std::format("function variant '{}' definition must be 'let' or call expression", name->srcName));
+    srcLoc.report_error(std::format("function variant '{}' definition must be 'let' or call expression", name.srcName));
   for (auto &arg : letAndCall.call->args.args)
     if (!arg.name)
-      srcLoc.report_error(std::format("call in definition of function variant '{}' must only use named arguments", name->srcName));
+      srcLoc.report_error(std::format("call in definition of function variant '{}' must only use named arguments", name.srcName));
   return letAndCall;
 }
 

@@ -567,7 +567,7 @@ public:
 
   TagType(Context &context, AST::Tag *decl, llvm::Function *llvmFunc = nullptr)
       : TypeSubclass(context), decl(decl), llvmFunc(llvmFunc) {
-    init_name(*decl->name);
+    init_name(decl->name);
   }
 
   [[nodiscard]] Value construct(Emitter &emitter, const ArgList &args, const AST::SourceLocation &srcLoc) final;

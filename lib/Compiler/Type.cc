@@ -607,9 +607,9 @@ EnumType::EnumType(Context &context, builtin_enum_type_t<intensity_mode_t>) : Ty
 
 EnumType::EnumType(Context &context, AST::Enum *decl, llvm::Function *llvmFunc)
     : TypeSubclass(context, Scalar::Int), decl(decl), llvmFunc(llvmFunc) {
-  init_name(*decl->name);
+  init_name(decl->name);
   for (auto &declarator : decl->declarators)
-    constants.push_back(Constant{declarator.name->srcName, sanity_check_nonnull(declarator.llvmConst), declarator.name->srcLoc});
+    constants.push_back(Constant{declarator.name.srcName, sanity_check_nonnull(declarator.llvmConst), declarator.name.srcLoc});
   llvmType = context.get_int_type()->llvmType;
 }
 
@@ -706,7 +706,7 @@ bool PointerType::can_access(llvm::StringRef key) { return elemType->can_access(
 //--{ StructType
 StructType::StructType(Context &context, AST::Struct *decl, llvm::Function *llvmFunc)
     : TypeSubclass(context), decl(decl), llvmFunc(llvmFunc) {
-  init_name(*decl->name);
+  init_name(decl->name);
   fields = ParamList(context, *decl);
   for (const auto &tag : decl->tags) {
     tags.push_back(sanity_check_nonnull(llvm::dyn_cast<TagType>(sanity_check_nonnull(tag.type->type))));

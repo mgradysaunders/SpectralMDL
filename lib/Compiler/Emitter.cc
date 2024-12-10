@@ -86,24 +86,24 @@ Value Emitter::emit(AST::Enum &decl) {
     decl.module = module;
     decl.crumb = crumb;
   }
-  context.validate_decl_name(decl.module, "enum", *decl.name);
+  context.validate_decl_name(decl.module, "enum", decl.name);
   for (auto lastValue{Value()}; auto &declarator : decl.declarators) {
-    context.validate_decl_name(decl.module, "enum constant", *declarator.name);
+    context.validate_decl_name(decl.module, "enum constant", declarator.name);
     auto value{
         declarator.init ? emit(declarator.init)
         : lastValue     ? emit_op(AST::BinaryOp::Add, lastValue, context.get_compile_time_int(1))
                         : Value::zero(context.get_int_type())};
     if (!value.is_compile_time_int())
-      declarator.name->srcLoc.report_error(
-          std::format("expected '{}' initializer to resolve to compile-time int", declarator.name->srcName));
+      declarator.name.srcLoc.report_error(
+          std::format("expected '{}' initializer to resolve to compile-time int", declarator.name.srcName));
     declarator.llvmConst = static_cast<llvm::ConstantInt *>(value);
     lastValue = value;
   }
   auto type{context.get_enum_type(&decl, get_llvm_function())};
 
-  declare(*decl.name, context.get_compile_time_type(type), &decl);
+  declare(decl.name, context.get_compile_time_type(type), &decl);
   for (auto &declarator : decl.declarators)
-    declare(*declarator.name, RValue(type, declarator.llvmConst), &decl);
+    declare(declarator.name, RValue(type, declarator.llvmConst), &decl);
   return {};
 }
 
@@ -112,8 +112,8 @@ Value Emitter::emit(AST::Function &decl) {
     decl.module = module;
     decl.crumb = crumb;
   }
-  context.validate_decl_name(decl.module, "function", *decl.name);
-  declare(*decl.name, context.get_compile_time_function(context.get_function(*this, &decl)), &decl);
+  context.validate_decl_name(decl.module, "function", decl.name);
+  declare(decl.name, context.get_compile_time_function(context.get_function(*this, &decl)), &decl);
   return {};
 }
 
@@ -138,8 +138,8 @@ Value Emitter::emit(AST::Struct &decl) {
     decl.module = module;
     decl.crumb = crumb;
   }
-  context.validate_decl_name(decl.module, "struct", *decl.name);
-  declare(*decl.name, context.get_compile_time_type(context.get_struct_type(&decl, get_llvm_function())), &decl);
+  context.validate_decl_name(decl.module, "struct", decl.name);
+  declare(decl.name, context.get_compile_time_type(context.get_struct_type(&decl, get_llvm_function())), &decl);
   return {};
 }
 
@@ -148,8 +148,8 @@ Value Emitter::emit(AST::Tag &decl) {
     decl.module = module;
     decl.crumb = crumb;
   }
-  context.validate_decl_name(decl.module, "tag", *decl.name);
-  declare(*decl.name, context.get_compile_time_type(context.get_tag_type(&decl, get_llvm_function())), &decl);
+  context.validate_decl_name(decl.module, "tag", decl.name);
+  declare(decl.name, context.get_compile_time_type(context.get_tag_type(&decl, get_llvm_function())), &decl);
   return {};
 }
 
@@ -158,8 +158,8 @@ Value Emitter::emit(AST::Typedef &decl) {
     decl.module = module;
     decl.crumb = crumb;
   }
-  context.validate_decl_name(decl.module, "typedef", *decl.name);
-  declare(*decl.name, emit(decl.type), &decl);
+  context.validate_decl_name(decl.module, "typedef", decl.name);
+  declare(decl.name, emit(decl.type), &decl);
   return {};
 }
 
@@ -222,42 +222,41 @@ Value Emitter::emit(AST::Variable &decl) {
     decl.crumb = crumb;
   }
   for (auto &declarator : decl.declarators) {
-    auto &declaratorName{*declarator.name};
-    context.validate_decl_name(decl.module, "variable", declaratorName);
+    context.validate_decl_name(decl.module, "variable", declarator.name);
     Value value{};
     // NOTE: Initialization is inside an 'emit_scope' to limit lifetimes of temporary
     // declarations 't := something', but the following 'construct()' is outside of the
     // scope so that captured sizes '[<N>]' persist after this declaration.
     if (declarator.init) {
       emit_scope([&](auto &emitter) { value = emitter.emit(declarator.init); });
-      value = construct(type, value, declaratorName.srcLoc);
+      value = construct(type, value, declarator.name.srcLoc);
     } else if (declarator.args) {
       ArgList args{};
       emit_scope([&](auto &emitter) { args = emitter.emit(declarator.args); });
-      value = construct(type, args, declaratorName.srcLoc);
+      value = construct(type, args, declarator.name.srcLoc);
     } else {
       if (type->is_abstract())
-        declaratorName.srcLoc.report_error(
-            std::format("variable '{}' declare with type '{}' requires initializer", declaratorName.srcName, type->name));
+        declarator.name.srcLoc.report_error(
+            std::format("variable '{}' declare with type '{}' requires initializer", declarator.name.srcName, type->name));
       value = construct(type, {}, decl.srcLoc);
     }
     if (isStatic) {
       if (!value.is_compile_time())
-        declaratorName.srcLoc.report_error(
-            std::format("variable '{}' declared 'static' requires compile-time initializer", declaratorName.srcName));
+        declarator.name.srcLoc.report_error(
+            std::format("variable '{}' declared 'static' requires compile-time initializer", declarator.name.srcName));
       auto llvmGlobal{new llvm::GlobalVariable(
           context.llvmModule, value.type->llvmType, /*isConst=*/true,
           decl.isExport ? llvm::GlobalValue::ExternalLinkage : llvm::GlobalValue::PrivateLinkage,
           static_cast<llvm::Constant *>(value.llvmValue))};
       llvmGlobal->setUnnamedAddr(llvm::GlobalValue::UnnamedAddr::Global);
-      llvmGlobal->setName(llvm_twine("gv.", declaratorName.srcName));
+      llvmGlobal->setName(llvm_twine("gv.", declarator.name.srcName));
       value = LValue(value.type, llvmGlobal);
     } else if (!isConst) {
-      auto valueAlloca{emit_alloca(declaratorName.srcName, value.type)};
+      auto valueAlloca{emit_alloca(declarator.name.srcName, value.type)};
       builder.CreateStore(value, valueAlloca);
       value = LValue(value.type, valueAlloca);
     }
-    declare(declaratorName, value, &decl);
+    declare(declarator.name, value, &decl);
   }
   return {};
 }
@@ -277,9 +276,9 @@ Value Emitter::emit(AST::Binary &expr) {
     auto identifier{llvm::dyn_cast<AST::Identifier>(&*expr.lhs)};
     if (!identifier || !identifier->is_simple_name())
       expr.srcLoc.report_error("expected lhs of definition operator ':=' to be a simple name");
-    context.validate_decl_name(module, "temporary", *identifier->names[0]);
+    context.validate_decl_name(module, "temporary", identifier->names[0]);
     auto rv{rvalue(emit(expr.rhs))};
-    declare(*identifier->names[0], rv);
+    declare(identifier->names[0], rv);
     return rv;
   }
   // Short circuit logical and/or.
@@ -356,7 +355,7 @@ Value Emitter::emit(AST::GetIndex &expr) {
       if (!index.expr) {
         type = context.get_array_type(type, ""); // Empty
       } else if (auto sizeName{llvm::dyn_cast<AST::SizeName>(index.expr.get())}) {
-        type = context.get_array_type(type, sizeName->name->srcName);
+        type = context.get_array_type(type, sizeName->name.srcName);
       } else {
         auto size{construct(context.get_int_type(), emit(index.expr), expr.srcLoc)};
         if (!size.is_compile_time_int())
@@ -636,7 +635,7 @@ ArgList Emitter::emit(const AST::ArgList &astArgs) {
   for (auto &astArg : astArgs.args) {
     auto &arg{args.emplace_back()};
     if (astArg.name)
-      arg.name = astArg.name->srcName;
+      arg.name = astArg.name.srcName;
     arg.value = emit(astArg.expr);
     arg.srcLoc = astArg.srcLoc;
     arg.src = astArg.src;

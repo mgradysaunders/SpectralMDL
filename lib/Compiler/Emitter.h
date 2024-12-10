@@ -178,7 +178,7 @@ public:
 
   Value emit(AST::Conditional &expr);
 
-  Value emit(AST::GetField &expr) { return access(emit(expr.expr), expr.name->srcName, expr.name->srcLoc); }
+  Value emit(AST::GetField &expr) { return access(emit(expr.expr), expr.name.srcName, expr.name.srcLoc); }
 
   Value emit(AST::GetIndex &expr);
 
@@ -265,7 +265,7 @@ public:
 
   Value emit(AST::Visit &stmt) {
     emit_visit(emit(stmt.expr), [&](Emitter &emitter, Value value) -> Value {
-      emitter.declare(*stmt.name, value);
+      emitter.declare(stmt.name, value);
       if (!value.is_void())
         emitter.emit(stmt.body);
       return {};
@@ -357,7 +357,7 @@ public:
 
   Value emit_intrinsic(llvm::StringRef name, const ArgList &args, const AST::SourceLocation &srcLoc = {});
 
-  Value emit_intrinsic(const AST::Intrinsic &intr, const ArgList &args) { return emit_intrinsic(intr.name, args, intr.srcLoc); }
+  Value emit_intrinsic(const AST::Intrinsic &intr, const ArgList &args) { return emit_intrinsic(intr.srcName.drop_front(1), args, intr.srcLoc); }
 
   Value emit_call(Value value, const ArgList &args, const AST::SourceLocation &srcLoc = {});
 

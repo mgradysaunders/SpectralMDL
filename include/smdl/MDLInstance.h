@@ -61,7 +61,7 @@ public:
 
   std::string name{};
 
-  Function<void(const state_t &state, float3_t &displacement, float_t &opacity)> evalGeometry{};
+  Function<float_t(const state_t &state, float3_t &displacement)> evalGeometry{};
 
   Function<int_t(
       const state_t &state, const float3_t &wo, const float3_t &wi, //

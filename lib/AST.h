@@ -34,21 +34,19 @@ public:
 
 using SourceRef = llvm::StringRef;
 
-/// This is the data structure to hold the MDL version which must appear at the
-/// top of each MDL file. E.g., `mdl 1.7;`
-class Version final {
+class Name final {
 public:
-  [[nodiscard]] constexpr bool operator==(const Version &) const = default;
+  Name() = default;
 
-  [[nodiscard]] constexpr bool operator!=(const Version &) const = default;
+  explicit Name(SourceLocation srcLoc, SourceRef srcName) : srcLoc(srcLoc), srcName(srcName) {}
 
-  [[nodiscard]] constexpr auto operator<=>(const Version &) const = default;
+  [[nodiscard]] operator bool() const { return !srcName.empty(); }
 
-  uint8_t major{};
+  [[nodiscard]] operator llvm::StringRef() const { return srcName; }
 
-  uint8_t minor{};
+  SourceLocation srcLoc{};
 
-  [[nodiscard]] static constexpr Version builtin_version() { return {1, 9}; }
+  SourceRef srcName{};
 };
 
 enum class Precision : uint8_t { Default, Single, Double };
@@ -68,11 +66,7 @@ public:
 
   const NodeKind nodeKind;
 
-  // TODO Probably get rid of this in the future? (in favor of SourceLocation on held SourceRefs)
   SourceLocation srcLoc{};
-
-  // TODO Probably get rid of this in the future?
-  llvm::StringRef src{};
 };
 
 template <NodeKind K> class NodeSubclass : public Node {
@@ -97,7 +91,6 @@ enum class ExprKind : uint8_t {
   LiteralFloat,
   LiteralInt,
   LiteralString,
-  Name,
   Parens,
   ReturnFrom,
   SizeName,
@@ -121,29 +114,22 @@ public:
   static bool classof(const Node *node) { return node->nodeKind == NodeKind::Expr && classof(static_cast<const Expr *>(node)); }
 };
 
-class Name final : public ExprSubclass<ExprKind::Name> {
-public:
-  explicit Name(SourceRef srcName) : srcName(srcName) {}
-
-  SourceRef srcName{};
-};
-
 class Identifier final : public ExprSubclass<ExprKind::Identifier> {
 public:
-  Identifier(vector_or_SmallVector<unique_bump_ptr<Name>> names, bool isAbs) : names(std::move(names)), isAbs(isAbs) {}
+  explicit Identifier(vector_or_SmallVector<Name> names, bool isAbs) : names(std::move(names)), isAbs(isAbs) {}
 
   [[nodiscard]] vector_or_SmallVector<llvm::StringRef> get_string_refs() const {
-    auto nameRefs{vector_or_SmallVector<llvm::StringRef>{}};
+    auto refs{vector_or_SmallVector<llvm::StringRef>{}};
     for (auto &name : names)
-      nameRefs.push_back(name->srcName);
-    return nameRefs;
+      refs.push_back(name.srcName);
+    return refs;
   }
 
   [[nodiscard]] bool is_simple_name() const { return names.size() == 1 && !isAbs; }
 
   [[nodiscard]] operator std::string() const;
 
-  vector_or_SmallVector<unique_bump_ptr<Name>> names{};
+  vector_or_SmallVector<Name> names{};
 
   bool isAbs{};
 };
@@ -157,7 +143,7 @@ public:
   SourceRef srcKwVisit{};
 
   /// The name. This may be null!
-  unique_bump_ptr<Name> name{};
+  Name name{};
 
   /// The colon `:` after the name. This may be empty!
   SourceRef srcColonAfterName{};
@@ -240,7 +226,7 @@ public:
   unique_bump_ptr<Type> type{};
 
   /// The name.
-  unique_bump_ptr<Name> name{};
+  Name name{};
 
   /// The equal `=`. This may be empty!
   SourceRef srcEq{};
@@ -440,7 +426,7 @@ public:
 
 class GetField final : public ExprSubclass<ExprKind::GetField> {
 public:
-  explicit GetField(unique_bump_ptr<Expr> expr, SourceRef srcDot, unique_bump_ptr<Name> name)
+  explicit GetField(unique_bump_ptr<Expr> expr, SourceRef srcDot, Name name)
       : expr(std::move(expr)), srcDot(srcDot), name(std::move(name)) {}
 
   /// The expression.
@@ -450,7 +436,7 @@ public:
   SourceRef srcDot{};
 
   /// The field name.
-  unique_bump_ptr<Name> name{};
+  Name name{};
 };
 
 class GetIndex final : public ExprSubclass<ExprKind::GetIndex> {
@@ -509,14 +495,14 @@ public:
 
 class SizeName final : public ExprSubclass<ExprKind::SizeName> {
 public:
-  explicit SizeName(SourceRef srcAngleL, unique_bump_ptr<Name> name, SourceRef srcAngleR)
+  explicit SizeName(SourceRef srcAngleL, Name name, SourceRef srcAngleR)
       : srcAngleL(srcAngleL), name(std::move(name)), srcAngleR(srcAngleR) {}
 
   /// The angle bracket `<`.
   SourceRef srcAngleL{};
 
   /// The name.
-  unique_bump_ptr<Name> name{};
+  Name name{};
 
   /// The angle bracket `>`.
   SourceRef srcAngleR{};
@@ -524,21 +510,28 @@ public:
 
 class LiteralBool final : public ExprSubclass<ExprKind::LiteralBool> {
 public:
-  explicit LiteralBool(bool value) : value(value) {}
+  explicit LiteralBool(SourceRef srcValue, bool value) : srcValue(srcValue), value(value) {}
+
+  SourceRef srcValue{};
 
   bool value{};
 };
 
 class LiteralInt final : public ExprSubclass<ExprKind::LiteralInt> {
 public:
-  explicit LiteralInt(uint64_t value) : value(value) {}
+  explicit LiteralInt(SourceRef srcValue, uint64_t value) : srcValue(srcValue), value(value) {}
+
+  SourceRef srcValue{};
 
   uint64_t value{};
 };
 
 class LiteralFloat final : public ExprSubclass<ExprKind::LiteralFloat> {
 public:
-  explicit LiteralFloat(double value, Precision precision) : value(value), precision(precision) {}
+  explicit LiteralFloat(SourceRef srcValue, double value, Precision precision)
+      : srcValue(srcValue), value(value), precision(precision) {}
+
+  SourceRef srcValue{};
 
   double value{};
 
@@ -547,16 +540,19 @@ public:
 
 class LiteralString final : public ExprSubclass<ExprKind::LiteralString> {
 public:
-  explicit LiteralString(llvm::SmallString<64> value) : value(std::move(value)) {}
+  explicit LiteralString(SourceRef srcValue, llvm::SmallString<64> value) : srcValue(srcValue), value(std::move(value)) {}
+
+  SourceRef srcValue{};
 
   llvm::SmallString<64> value{};
 };
 
 class Intrinsic final : public ExprSubclass<ExprKind::Intrinsic> {
 public:
-  explicit Intrinsic(llvm::StringRef name) : name(name) {}
+  explicit Intrinsic(SourceRef srcName) : srcName(srcName) {}
 
-  llvm::StringRef name{};
+  /// The intrinsic name (including the leading `#`).
+  SourceRef srcName{};
 };
 
 class ReturnFrom final : public ExprSubclass<ExprKind::ReturnFrom> {
@@ -633,7 +629,7 @@ class Enum final : public DeclSubclass<DeclKind::Enum> {
 public:
   struct Declarator final {
     /// The name.
-    unique_bump_ptr<Name> name{};
+    Name name{};
 
     /// The equal `=`. This may be empty!
     SourceRef srcEq{};
@@ -652,7 +648,7 @@ public:
   };
 
   explicit Enum(
-      SourceRef srcKwEnum, unique_bump_ptr<Name> name, unique_bump_ptr<AnnotationBlock> annotations, SourceRef srcBraceL,
+      SourceRef srcKwEnum, Name name, unique_bump_ptr<AnnotationBlock> annotations, SourceRef srcBraceL,
       vector_or_SmallVector<Declarator> declarators, SourceRef srcBraceR, SourceRef srcSemicolon)
       : srcKwEnum(srcKwEnum), name(std::move(name)), annotations(std::move(annotations)), srcBraceL(srcBraceL),
         declarators(std::move(declarators)), srcBraceR(srcBraceR), srcSemicolon(srcSemicolon) {}
@@ -661,7 +657,7 @@ public:
   SourceRef srcKwEnum{};
 
   /// The name.
-  unique_bump_ptr<Name> name{};
+  Name name{};
 
   /// The annotations.
   unique_bump_ptr<AnnotationBlock> annotations{};
@@ -693,10 +689,10 @@ public:
 
   explicit Function(
       SourceRef srcAttrsAt, SourceRef srcAttrsParenL, vector_or_SmallVector<SourceRef> srcAttrs, SourceRef srcAttrsParenR,
-      unique_bump_ptr<Type> returnType, unique_bump_ptr<AnnotationBlock> earlyAnnotations, unique_bump_ptr<Name> name,
-      ParamList params, bool isVariant, SourceRef srcVariantParenL, SourceRef srcVariantStar, SourceRef srcVariantParenR,
-      SourceRef srcFrequency, unique_bump_ptr<AnnotationBlock> lateAnnotations, SourceRef srcEq,
-      unique_bump_ptr<Node> definition, SourceRef srcSemicolon)
+      unique_bump_ptr<Type> returnType, unique_bump_ptr<AnnotationBlock> earlyAnnotations, Name name, ParamList params,
+      bool isVariant, SourceRef srcVariantParenL, SourceRef srcVariantStar, SourceRef srcVariantParenR, SourceRef srcFrequency,
+      unique_bump_ptr<AnnotationBlock> lateAnnotations, SourceRef srcEq, unique_bump_ptr<Node> definition,
+      SourceRef srcSemicolon)
       : srcAttrsAt(srcAttrsAt), srcAttrsParenL(srcAttrsParenL), srcAttrs(std::move(srcAttrs)), srcAttrsParenR(srcAttrsParenR),
         returnType(std::move(returnType)), earlyAnnotations(std::move(earlyAnnotations)), name(std::move(name)),
         params(std::move(params)), isVariant(isVariant), srcVariantParenL(srcVariantParenL), srcVariantStar(srcVariantStar),
@@ -730,7 +726,7 @@ public:
   unique_bump_ptr<AnnotationBlock> earlyAnnotations{};
 
   /// The name.
-  unique_bump_ptr<Name> name{};
+  Name name{};
 
   /// The parameters.
   ParamList params{};
@@ -807,7 +803,7 @@ public:
     unique_bump_ptr<Type> type{};
 
     /// The name.
-    unique_bump_ptr<Name> name{};
+    Name name{};
 
     /// The equal `=`. This may be empty!
     SourceRef srcEq{};
@@ -839,7 +835,7 @@ public:
   };
 
   explicit Struct(
-      SourceRef srcKwStruct, unique_bump_ptr<Name> name, SourceRef srcColonBeforeTags, vector_or_SmallVector<Tag> tags,
+      SourceRef srcKwStruct, Name name, SourceRef srcColonBeforeTags, vector_or_SmallVector<Tag> tags,
       unique_bump_ptr<AnnotationBlock> annotations, SourceRef srcBraceL, vector_or_SmallVector<Field> fields,
       SourceRef srcBraceR, SourceRef srcSemicolon)
       : srcKwStruct(srcKwStruct), name(std::move(name)), srcColonBeforeTags(srcColonBeforeTags), tags(std::move(tags)),
@@ -850,7 +846,7 @@ public:
   SourceRef srcKwStruct{};
 
   /// The name.
-  unique_bump_ptr<Name> name{};
+  Name name{};
 
   /// The colon `:` before the tags. This may be empty!
   SourceRef srcColonBeforeTags{};
@@ -876,14 +872,14 @@ public:
 
 class Tag final : public DeclSubclass<DeclKind::Tag> {
 public:
-  explicit Tag(SourceRef srcKwTag, unique_bump_ptr<Name> name, SourceRef srcSemicolon)
+  explicit Tag(SourceRef srcKwTag, Name name, SourceRef srcSemicolon)
       : srcKwTag(srcKwTag), name(std::move(name)), srcSemicolon(srcSemicolon) {}
 
   /// The keyword `tag`.
   SourceRef srcKwTag{};
 
   /// The name.
-  unique_bump_ptr<Name> name{};
+  Name name{};
 
   /// The semicolon `;`.
   SourceRef srcSemicolon{};
@@ -891,7 +887,7 @@ public:
 
 class Typedef final : public DeclSubclass<DeclKind::Typedef> {
 public:
-  explicit Typedef(SourceRef srcKwTypedef, unique_bump_ptr<Type> type, unique_bump_ptr<Name> name, SourceRef srcSemicolon)
+  explicit Typedef(SourceRef srcKwTypedef, unique_bump_ptr<Type> type, Name name, SourceRef srcSemicolon)
       : srcKwTypedef(srcKwTypedef), type(std::move(type)), name(std::move(name)), srcSemicolon(srcSemicolon) {}
 
   /// The keyword `typedef`.
@@ -901,7 +897,7 @@ public:
   unique_bump_ptr<Type> type{};
 
   /// The name.
-  unique_bump_ptr<Name> name{};
+  Name name{};
 
   /// The semicolon `;`.
   SourceRef srcSemicolon{};
@@ -923,15 +919,14 @@ public:
 class UsingAlias final : public DeclSubclass<DeclKind::UsingAlias> {
 public:
   explicit UsingAlias(
-      SourceRef srcKwUsing, unique_bump_ptr<Name> name, SourceRef srcEq, unique_bump_ptr<Identifier> path,
-      SourceRef srcSemicolon)
+      SourceRef srcKwUsing, Name name, SourceRef srcEq, unique_bump_ptr<Identifier> path, SourceRef srcSemicolon)
       : srcKwUsing(srcKwUsing), name(std::move(name)), srcEq(srcEq), path(std::move(path)), srcSemicolon(srcSemicolon) {}
 
   /// The keyword `using`.
   SourceRef srcKwUsing{};
 
   /// The name.
-  unique_bump_ptr<Name> name{};
+  Name name{};
 
   /// The equal `=`.
   SourceRef srcEq{};
@@ -981,7 +976,7 @@ class Variable final : public DeclSubclass<DeclKind::Variable> {
 public:
   struct Declarator final {
     /// The name.
-    unique_bump_ptr<Name> name{};
+    Name name{};
 
     /// The equal `=`. This may be empty!
     SourceRef srcEq{};
@@ -1308,16 +1303,14 @@ public:
 
 class Visit final : public StmtSubclass<StmtKind::Visit> {
 public:
-  explicit Visit(
-      SourceRef srcKwVisit, unique_bump_ptr<Name> name, SourceRef srcKwIn, unique_bump_ptr<Expr> expr,
-      unique_bump_ptr<Stmt> body)
+  explicit Visit(SourceRef srcKwVisit, Name name, SourceRef srcKwIn, unique_bump_ptr<Expr> expr, unique_bump_ptr<Stmt> body)
       : srcKwVisit(srcKwVisit), name(std::move(name)), srcKwIn(srcKwIn), expr(std::move(expr)), body(std::move(body)) {}
 
   /// The keyword `visit`.
   SourceRef srcKwVisit{};
 
   /// The name.
-  unique_bump_ptr<Name> name{};
+  Name name{};
 
   /// The keyword `in`.
   SourceRef srcKwIn{};
@@ -1358,31 +1351,47 @@ inline ReturnFrom::ReturnFrom(llvm::StringRef srcKwReturnFrom, unique_bump_ptr<S
 
 inline ReturnFrom::~ReturnFrom() {}
 
+/// This is the data structure to hold the MDL version which must appear at the
+/// top of each MDL file. E.g., `mdl 1.7;`
+class Version final {
+public:
+  /// The keyword `mdl`.
+  SourceRef srcKwMdl{};
+
+  /// The version string, e.g., `1.7`.
+  SourceRef srcVersion{};
+
+  /// The semicolon `;`.
+  SourceRef srcSemicolon{};
+
+  uint8_t major{};
+
+  uint8_t minor{};
+};
+
 class File final : public NodeSubclass<NodeKind::File> {
 public:
-  File(
-      bool isSmdlSyntax, Version version, vector_or_SmallVector<unique_bump_ptr<Decl>> imports,
-      unique_bump_ptr<AnnotationBlock> annotations, vector_or_SmallVector<unique_bump_ptr<Decl>> globals)
-      : isSmdlSyntax(isSmdlSyntax), version(version), imports(std::move(imports)), annotations(std::move(annotations)),
+  explicit File(
+      bool isSmdlSyntax, SourceRef srcKwSmdlSyntax, std::optional<Version> version,
+      vector_or_SmallVector<unique_bump_ptr<Decl>> imports, SourceRef srcKwModule, unique_bump_ptr<AnnotationBlock> annotations,
+      SourceRef srcSemicolonAfterModule, vector_or_SmallVector<unique_bump_ptr<Decl>> globals)
+      : isSmdlSyntax(isSmdlSyntax), srcKwSmdlSyntax(srcKwSmdlSyntax), version(version), imports(std::move(imports)),
+        srcKwModule(srcKwModule), annotations(std::move(annotations)), srcSemicolonAfterModule(srcSemicolonAfterModule),
         globals(std::move(globals)) {}
 
   bool isSmdlSyntax{};
 
-  // TODO srcKwSmdlSyntax;
+  SourceRef srcKwSmdlSyntax{};
 
-  // TODO srcKwMdl;
-
-  // TODO srcVersionMajor
-
-  // TODO srcVersionDot
-
-  // TODO srcVersionMinor
-
-  Version version{};
+  std::optional<Version> version{};
 
   vector_or_SmallVector<unique_bump_ptr<Decl>> imports{};
 
+  SourceRef srcKwModule{};
+
   unique_bump_ptr<AnnotationBlock> annotations{};
+
+  SourceRef srcSemicolonAfterModule{};
 
   vector_or_SmallVector<unique_bump_ptr<Decl>> globals{};
 };

@@ -658,7 +658,7 @@ void Context::resolve_using_aliases(
     Crumb *crumb, llvm::ArrayRef<llvm::StringRef> importPath, llvm::SmallVector<llvm::StringRef> &fullImportPath) {
   auto findAliasCrumb{[](Crumb *crumb, llvm::StringRef importPathName) -> Crumb * {
     for (; crumb; crumb = crumb->prev)
-      if (crumb->is_ast_using_alias() && static_cast<AST::UsingAlias *>(crumb->node)->name->srcName == importPathName)
+      if (crumb->is_ast_using_alias() && static_cast<AST::UsingAlias *>(crumb->node)->name.srcName == importPathName)
         return crumb;
     return nullptr;
   }};

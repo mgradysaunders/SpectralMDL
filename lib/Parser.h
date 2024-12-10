@@ -232,14 +232,12 @@ private:
 
   [[nodiscard]] auto source_since(Cursor cursor) { return text.substr(cursor.i, state.i - cursor.i); }
 
-  [[nodiscard]] auto attach(auto node, Cursor cursor, llvm::StringRef src) {
-    node->srcLoc.file = std::string_view(file);
-    node->srcLoc.line = cursor.lineNo;
-    node->src = src;
+  [[nodiscard]] auto source_location(Cursor cursor) { return AST::SourceLocation{file, static_cast<uint32_t>(cursor.lineNo)}; }
+
+  [[nodiscard]] auto attach(auto node, Cursor cursor) {
+    node->srcLoc = source_location(cursor);
     return node;
   }
-
-  [[nodiscard]] auto attach(auto node, Cursor cursor) { return attach(node, cursor, source_since(cursor)); }
 
   void report_error(std::string message) const { report_error(std::move(message), state); }
 
@@ -254,7 +252,7 @@ public:
 
   [[nodiscard]] auto parse_import_path(bool isUnicode) -> unique_bump_ptr_wrapper<AST::Identifier>;
 
-  [[nodiscard]] auto parse_unicode_name() -> unique_bump_ptr_wrapper<AST::Name>;
+  [[nodiscard]] auto parse_unicode_name() -> std::optional<AST::Name>;
 
   [[nodiscard]] auto parse_using_alias() -> unique_bump_ptr_wrapper<AST::UsingAlias>;
 
@@ -322,7 +320,7 @@ public:
   //--}
 
   //--{ Parse: Exprs
-  [[nodiscard]] auto parse_simple_name() -> unique_bump_ptr_wrapper<AST::Name>;
+  [[nodiscard]] auto parse_simple_name() -> std::optional<AST::Name>;
 
   [[nodiscard]] auto parse_identifier() -> unique_bump_ptr_wrapper<AST::Identifier>;
 
@@ -382,7 +380,8 @@ public:
 
   [[nodiscard]] auto parse_unary_op(AST::SourceRef *src = nullptr) -> std::optional<AST::UnaryOp>;
 
-  [[nodiscard]] auto parse_binary_op(llvm::ArrayRef<AST::BinaryOp> ops, AST::SourceRef *src = nullptr) -> std::optional<AST::BinaryOp>;
+  [[nodiscard]] auto parse_binary_op(llvm::ArrayRef<AST::BinaryOp> ops, AST::SourceRef *src = nullptr)
+      -> std::optional<AST::BinaryOp>;
 
   [[nodiscard]] auto parse_binary_left_associative(
       llvm::ArrayRef<AST::BinaryOp> ops,

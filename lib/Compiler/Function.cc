@@ -6,7 +6,7 @@ namespace smdl::Compiler {
 
 FunctionInstance::FunctionInstance(
     Emitter &emitter0, AST::Function &decl, const ParamList &params, llvm::ArrayRef<Type *> argTypes)
-    : name(decl.name->srcName), srcLoc(decl.srcLoc) {
+    : name(decl.name.srcName), srcLoc(decl.srcLoc) {
   sanity_check(decl.params.size() == params.size());
   sanity_check(decl.params.size() == argTypes.size());
   auto &context{emitter0.context};
@@ -77,7 +77,7 @@ FunctionInstance::FunctionInstance(
       llvmArgItr++;
     }
     for (auto &param : decl.params) {
-      llvmArgItr->setName(param.name->srcName);
+      llvmArgItr->setName(param.name.srcName);
       llvmArgItr++;
     }
   }
@@ -207,11 +207,11 @@ Function::Function(Emitter &emitter0, AST::Function &decl) : decl(decl) {
     emitter0.emit(*param.type);
   params = ParamList(emitter0.context, decl);
   validate_attributes();
-  if (auto prevCrumb{Crumb::find(emitter0.crumb, decl.name->srcName, nullptr)}) {
+  if (auto prevCrumb{Crumb::find(emitter0.crumb, decl.name.srcName, nullptr)}) {
     if (prevCrumb->value.is_compile_time_function())
       prev = prevCrumb->value.get_compile_time_function();
     else
-      decl.srcLoc.report_error(std::format("function '{}' shadows non-function by the same name", decl.name->srcName));
+      decl.srcLoc.report_error(std::format("function '{}' shadows non-function by the same name", decl.name.srcName));
   }
   // Only forward-link prev to this if the declaration is in the same module. This prevents
   // overloads of functions in other modules from interfering with code outside of the
@@ -260,8 +260,8 @@ Value Function::call(Emitter &emitter0, const ArgList &args, const AST::SourceLo
     // to the patched argument list but only if the caller did not explicitly set it by name.
     auto patchedArgs{args};
     for (auto &astArg : letAndCall.call->args.args)
-      if (!patchedArgs.has_name(astArg.name->srcName))
-        patchedArgs.emplace_back(astArg.name->srcName, emitter1.emit(astArg.expr), astArg.srcLoc, astArg.src);
+      if (!patchedArgs.has_name(astArg.name.srcName))
+        patchedArgs.emplace_back(astArg.name.srcName, emitter1.emit(astArg.expr), astArg.srcLoc, astArg.src);
 
     auto callee{emitter1.emit(letAndCall.call->expr)};
     auto result{emitter1.emit_call(callee, patchedArgs, srcLoc)};

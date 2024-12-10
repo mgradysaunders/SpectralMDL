@@ -313,7 +313,7 @@ class Arg final {
 public:
   Arg() = default;
 
-  Arg(llvm::StringRef name, Value value, const AST::SourceLocation &srcLoc = {}, llvm::StringRef src = {})
+  Arg(llvm::StringRef name, Value value, AST::SourceLocation srcLoc = {}, llvm::StringRef src = {})
       : name(name), value(value), srcLoc(srcLoc), src(src) {}
 
   Arg(Value value) : value(value) {}
@@ -322,6 +322,7 @@ public:
 
   [[nodiscard]] bool is_positional() const { return name.empty(); }
 
+public:
   /// The name. This may be empty.
   llvm::StringRef name{};
 
