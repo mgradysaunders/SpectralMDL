@@ -71,23 +71,23 @@ Crumb *Crumb::find(Crumb *crumb, llvm::ArrayRef<llvm::StringRef> name, llvm::Fun
 }
 
 Param::Param(Context &context, const AST::Param &astParam)
-    : name(astParam.name->srcName), type(astParam.type->type), isConst(bool(astParam.type->attrs.isConst)),
-      isInline(bool(astParam.type->attrs.isInline)), init(astParam.init.get()), srcLoc(astParam.name->srcLoc) {
+    : name(astParam.name->srcName), type(astParam.type->type), isConst(bool(astParam.type->has_attr("const"))),
+      isInline(bool(astParam.type->has_attr("inline"))), init(astParam.init.get()), srcLoc(astParam.name->srcLoc) {
   // context.validate_decl_name("parameter", *astParam.name);
-  if (astParam.type->attrs.isStatic)
+  if (astParam.type->has_attr("static"))
     astParam.name->srcLoc.report_error(std::format("parameter '{}' must not be declared 'static'", astParam.name->srcName));
-  if (astParam.type->attrs.isInline && !astParam.type->type->get_inline_struct_type())
+  if (astParam.type->has_attr("inline") && !astParam.type->type->get_inline_struct_type())
     astParam.name->srcLoc.report_error(std::format("parameter '{}' must not be declared 'inline'", astParam.name->srcName));
 }
 
 Param::Param(Context &context, const AST::Struct::Field &astField)
     : name(astField.name->srcName), type(astField.type->type), isVoid(astField.isVoid || type->is_void()),
-      isConst(bool(astField.type->attrs.isConst)), isInline(bool(astField.type->attrs.isInline)), init(astField.init.get()),
+      isConst(bool(astField.type->has_attr("const"))), isInline(bool(astField.type->has_attr("inline"))), init(astField.init.get()),
       srcLoc(astField.name->srcLoc) {
   // context.validate_decl_name("field", *astField.name);
-  if (astField.type->attrs.isStatic)
+  if (astField.type->has_attr("static"))
     astField.name->srcLoc.report_error(std::format("field '{}' must not be declared 'static'", astField.name->srcName));
-  if (astField.type->attrs.isInline && !astField.type->type->get_inline_struct_type())
+  if (astField.type->has_attr("inline") && !astField.type->type->get_inline_struct_type())
     astField.name->srcLoc.report_error(std::format("field '{}' must not be declared 'inline'", astField.name->srcName));
 }
 

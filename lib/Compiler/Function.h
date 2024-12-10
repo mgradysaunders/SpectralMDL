@@ -87,16 +87,16 @@ public:
   [[nodiscard]] bool is_exported() const { return decl.isExport; }
 
   /// Is the function meant to be visible to the C++ host program?
-  [[nodiscard]] bool is_visible() const { return decl.attrs.isVisible; }
+  [[nodiscard]] bool is_visible() const { return decl.has_attr("visible"); }
 
   /// Is the function linked in from the C++ host program?
-  [[nodiscard]] bool is_foreign() const { return decl.attrs.isForeign; }
+  [[nodiscard]] bool is_foreign() const { return decl.has_attr("foreign"); }
 
   /// Is the function pure? (meaning there is no '$state' pointer)
-  [[nodiscard]] bool is_pure() const { return decl.attrs.isPure; }
+  [[nodiscard]] bool is_pure() const { return decl.has_attr("pure"); }
 
   /// Is the function always macro-inlined?
-  [[nodiscard]] bool is_macro() const { return decl.attrs.isMacro; }
+  [[nodiscard]] bool is_macro() const { return decl.has_attr("macro"); }
 
   /// Is the function actually a function variant?
   ///

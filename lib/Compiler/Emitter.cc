@@ -208,13 +208,14 @@ Value Emitter::emit(AST::UsingImport &decl) {
 
 Value Emitter::emit(AST::Variable &decl) {
   auto type{emit(decl.type).get_compile_time_type()};
-  auto isConst{bool(decl.type->attrs.isConst)};
-  auto isStatic{bool(decl.type->attrs.isStatic)};
+  auto isConst{bool(decl.type->has_attr("const"))};
+  auto isStatic{bool(decl.type->has_attr("static"))};
+  auto isInline{bool(decl.type->has_attr("inline"))};
   if (!get_llvm_function() && !isConst)
     decl.srcLoc.report_error("global variables must be 'const'");
   if (isStatic && !isConst)
     decl.srcLoc.report_error("variable declared 'static' must also be 'const' (at least for now)");
-  if (decl.type->attrs.isInline)
+  if (isInline)
     decl.srcLoc.report_error("variable must not be declared 'inline'");
   if (!decl.module) {
     decl.module = module;

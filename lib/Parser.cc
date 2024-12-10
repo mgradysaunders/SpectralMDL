@@ -422,7 +422,7 @@ auto Parser::parse_struct_type_declaration() -> unique_bump_ptr_wrapper<AST::Str
       auto &tag{tags.emplace_back()};
       tag.isDefault = isDefault;
       tag.srcKwDefault = srcKwDefault;
-      tag.type.reset(bump_allocate<AST::Type>(std::nullopt, AST::Type::Attrs{}, std::move(tagName)));
+      tag.type.reset(bump_allocate<AST::Type>(vector_or_SmallVector<AST::SourceRef>(), std::move(tagName)));
       if (!delimiter(',', &tag.srcComma))
         break;
     }
@@ -596,32 +596,21 @@ auto Parser::parse_variable_declarator() -> std::optional<AST::Variable::Declara
 auto Parser::parse_function_declaration() -> unique_bump_ptr_wrapper<AST::Function> {
   checkpoint();
   auto cursor{save_cursor()};
-  auto attrs{AST::Function::Attrs{}};
-  if (isSmdlSyntax && delimiter('@')) {
-    if (!delimiter('('))
+  auto srcAttrsAt{AST::SourceRef()};
+  auto srcAttrsParenL{AST::SourceRef()};
+  auto srcAttrs{vector_or_SmallVector<AST::SourceRef>()};
+  auto srcAttrsParenR{AST::SourceRef()};
+  if (isSmdlSyntax && delimiter('@', &srcAttrsAt)) {
+    if (!delimiter('(', &srcAttrsParenL))
       report_error("expected '@(...)' syntax for function attributes", cursor);
     while (true) {
       checkpoint();
-      if (next_word("visible")) {
-        accept(), attrs.isVisible = true;
-      } else if (next_word("foreign")) {
-        accept(), attrs.isForeign = true;
-      } else if (next_word("pure")) {
-        accept(), attrs.isPure = true;
-      } else if (next_word("macro")) {
-        accept(), attrs.isMacro = true;
-      } else if (next_word("noinline")) {
-        accept(), attrs.isNoInline = true;
-      } else if (next_word("alwaysinline")) {
-        accept(), attrs.isAlwaysInline = true;
-      } else if (next_word("hot")) {
-        accept(), attrs.isHot = true;
-      } else if (next_word("cold")) {
-        accept(), attrs.isCold = true;
-      } else if (next_word("optsize")) {
-        accept(), attrs.isOptSize = true;
-      } else if (next_word("optnone")) {
-        accept(), attrs.isOptNone = true;
+      auto srcAttr{AST::SourceRef()};
+      if (next_word(
+              {"alwaysinline", "cold", "foreign", "hot", "macro", "noinline", "optnone", "optsize", "pure", "visible"},
+              &srcAttr)) {
+        accept();
+        srcAttrs.push_back(srcAttr);
       } else {
         skip();
         if (peek() != ')')
@@ -630,7 +619,7 @@ auto Parser::parse_function_declaration() -> unique_bump_ptr_wrapper<AST::Functi
         break;
       }
     }
-    if (!delimiter(')'))
+    if (!delimiter(')', &srcAttrsParenR))
       report_error("expected '@(...)' syntax for function attributes", cursor);
   }
   auto type{parse_type()};
@@ -644,36 +633,39 @@ auto Parser::parse_function_declaration() -> unique_bump_ptr_wrapper<AST::Functi
     reject();
     return nullptr;
   }
-  bool is_variant{};
+  bool isVariant{};
+  auto srcVariantParenL{AST::SourceRef()};
+  auto srcVariantStar{AST::SourceRef()};
+  auto srcVariantParenR{AST::SourceRef()};
   auto params{parse_parameter_list()};
   if (!params) {
-    if (delimiter('(') && delimiter('*') && delimiter(')')) {
-      is_variant = true;
+    if (delimiter('(', &srcVariantParenL) && delimiter('*', &srcVariantStar) && delimiter(')', &srcVariantParenR)) {
+      isVariant = true;
       params = AST::ParamList();
     } else {
       reject();
       return nullptr;
     }
   }
-  auto frequency{std::optional<AST::FrequencyQualifier>{}};
-  if (next_word("uniform"))
-    frequency = AST::FrequencyQualifier::Uniform;
-  else if (next_word("varying"))
-    frequency = AST::FrequencyQualifier::Varying;
+  auto srcFrequency{AST::SourceRef()};
+  if (!next_word({"uniform", "varying"}, &srcFrequency))
+    srcFrequency = {};
   auto lateAnnotations{parse_annotation_block()};
+  auto srcEq{AST::SourceRef()};
   auto definition{unique_bump_ptr<AST::Node>{}};
+  auto srcSemicolon{AST::SourceRef()};
   skip();
-  if (is_variant && peek() != '=')
+  if (isVariant && peek() != '=')
     report_error("function variant must be defined by 'let' or call expression", cursor);
-  if (delimiter(';')) {
+  if (delimiter(';', &srcSemicolon)) {
     // Nothing
-  } else if (delimiter('=')) {
+  } else if (delimiter('=', &srcEq)) {
     auto def{parse_expression()};
     if (!def)
       report_error("expected function expression after '='", cursor);
-    if (!delimiter(';'))
+    if (!delimiter(';', &srcSemicolon))
       report_error("expected ';' after function expression", cursor);
-    if (is_variant && !llvm::isa<AST::Let>(def.get()) && !llvm::isa<AST::Call>(def.get()))
+    if (isVariant && !llvm::isa<AST::Let>(def.get()) && !llvm::isa<AST::Call>(def.get()))
       report_error("function variant must be defined by 'let' or call expression", cursor);
     definition.reset(bump_allocate<AST::Return>(llvm::StringRef(), std::move(def), std::nullopt, llvm::StringRef()));
   } else {
@@ -685,8 +677,9 @@ auto Parser::parse_function_declaration() -> unique_bump_ptr_wrapper<AST::Functi
   accept();
   return attach(
       bump_allocate<AST::Function>(
-          attrs, is_variant, std::move(type), std::move(earlyAnnotations), std::move(name), std::move(*params), frequency,
-          std::move(lateAnnotations), std::move(definition)),
+          srcAttrsAt, srcAttrsParenL, std::move(srcAttrs), srcAttrsParenR, std::move(type), std::move(earlyAnnotations),
+          std::move(name), std::move(*params), isVariant, srcVariantParenL, srcVariantStar, srcVariantParenR, srcFrequency,
+          std::move(lateAnnotations), srcEq, std::move(definition), srcSemicolon),
       cursor);
 }
 
@@ -798,21 +791,13 @@ auto Parser::parse_identifier() -> unique_bump_ptr_wrapper<AST::Identifier> {
 auto Parser::parse_type() -> unique_bump_ptr_wrapper<AST::Type> {
   checkpoint();
   auto cursor{save_cursor()};
-  auto frequency{std::optional<AST::FrequencyQualifier>{}};
-  if (next_word("uniform")) {
-    frequency = AST::FrequencyQualifier::Uniform;
-  } else if (next_word("varying")) {
-    frequency = AST::FrequencyQualifier::Varying;
-  }
-  auto attrs{AST::Type::Attrs{}};
+  auto srcAttrs{vector_or_SmallVector<AST::SourceRef>()};
   while (true) {
     checkpoint();
-    if (next_word("const")) {
-      accept(), attrs.isConst = true;
-    } else if (isSmdlSyntax && next_word("static")) {
-      accept(), attrs.isStatic = true;
-    } else if (isSmdlSyntax && next_word("inline")) {
-      accept(), attrs.isInline = true;
+    auto srcAttr{AST::SourceRef()};
+    if (next_word({"const", "inline", "static", "uniform", "varying"}, &srcAttr)) {
+      accept();
+      srcAttrs.push_back(srcAttr);
     } else {
       reject();
       break;
@@ -823,8 +808,7 @@ auto Parser::parse_type() -> unique_bump_ptr_wrapper<AST::Type> {
     reject();
     return nullptr;
   }
-  auto annotations{parse_annotation_block()}; // NOTE: Non-standard!
-  return attach(bump_allocate<AST::Type>(frequency, attrs, std::move(expr), std::move(annotations)), cursor);
+  return attach(bump_allocate<AST::Type>(std::move(srcAttrs), std::move(expr)), cursor);
 }
 
 auto Parser::parse_parameter() -> std::optional<AST::Param> {

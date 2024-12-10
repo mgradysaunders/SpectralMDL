@@ -299,8 +299,6 @@ public:
   void write(AST::While &stmt) { write(stmt.srcKwWhile, guarantee_space(), stmt.cond, guarantee_space(), stmt.body); }
   //--}
 
-  void write(AST::FrequencyQualifier freq) { write(freq == AST::FrequencyQualifier::Uniform ? "uniform" : "varying"); }
-
   void write(const AST::AnnotationBlock &annotations) {
     write(guarantee_space(), annotations.srcDoubleBrackL);
     for (auto &annotation : annotations.annotations) {
@@ -318,8 +316,6 @@ public:
   void write(const AST::Param &param);
 
   void write(const AST::ParamList &params);
-
-  bool write(const AST::Function::Attrs &attrs);
 
   void write(const AST::LateIf &lateIf) { write(guarantee_space(), lateIf.srcKwIf, guarantee_space(), lateIf.cond); }
 

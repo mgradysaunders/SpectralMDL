@@ -10,7 +10,7 @@ FunctionInstance::FunctionInstance(
   sanity_check(decl.params.size() == params.size());
   sanity_check(decl.params.size() == argTypes.size());
   auto &context{emitter0.context};
-  type = context.get_function_type(decl.attrs.isPure, decl.returnType->type, argTypes);
+  type = context.get_function_type(decl.has_attr("pure"), decl.returnType->type, argTypes);
   llvmFunc = type->create_default_llvm_function("");
   if (decl.definition) {
     auto returns{llvm::SmallVector<Return>{}};
@@ -50,21 +50,21 @@ FunctionInstance::FunctionInstance(
     force_inline(inlines);
   }
   llvmFunc->setName(name);
-  if (decl.attrs.isAlwaysInline)
+  if (decl.has_attr("alwaysinline"))
     llvmFunc->addFnAttr(llvm::Attribute::AlwaysInline);
-  if (decl.attrs.isNoInline)
+  if (decl.has_attr("noinline"))
     llvmFunc->addFnAttr(llvm::Attribute::NoInline);
-  if (decl.attrs.isHot)
+  if (decl.has_attr("hot"))
     llvmFunc->addFnAttr(llvm::Attribute::Hot);
-  if (decl.attrs.isCold)
+  if (decl.has_attr("cold"))
     llvmFunc->addFnAttr(llvm::Attribute::Cold);
-  if (decl.attrs.isOptSize)
+  if (decl.has_attr("optsize"))
     llvmFunc->addFnAttr(llvm::Attribute::OptimizeForSize);
-  if (decl.attrs.isOptNone)
+  if (decl.has_attr("optnone"))
     llvmFunc->addFnAttr(llvm::Attribute::OptimizeNone);
-  if (decl.attrs.isVisible)
+  if (decl.has_attr("visible"))
     llvmFunc->setLinkage(llvm::Function::ExternalLinkage);
-  if (decl.attrs.isForeign) {
+  if (decl.has_attr("foreign")) {
     llvmFunc->setLinkage(llvm::Function::ExternalLinkage);
     llvmFunc->setDSOLocal(false);
   }
@@ -224,7 +224,7 @@ Function::Function(Emitter &emitter0, AST::Function &decl) : decl(decl) {
     letAndCall = decl.get_variant_let_and_call_expressions();
     sanity_check(has_definition());
   }
-  // If this function has a unique concrete instance and is marked '@(visible)', then 
+  // If this function has a unique concrete instance and is marked '@(visible)', then
   // compile it immediately.
   if (has_unique_concrete_instance() && is_visible()) {
     auto argTypes{params.get_types()};
@@ -404,49 +404,49 @@ Value Function::compile_time_evaluate(Emitter &emitter, AST::Expr &expr) {
 
 void Function::validate_attributes() {
   // '@(foreign)' ...
-  if (decl.attrs.isForeign) {
+  if (decl.has_attr("foreign")) {
     // ... must not have definition
     if (decl.definition)
       decl.srcLoc.report_error(std::format("function '{}' declared '@(foreign)' must not have definition", get_name()));
     // ... must not use abstract (inferred) types
     if (params.has_any_abstract() || decl.returnType->type->is_abstract())
       decl.srcLoc.report_error(std::format("function '{}' declared '@(foreign)' must not use abstract types", get_name()));
-    auto checkNoCollision{[&](bool attr, const char *name) {
-      if (attr)
+    auto checkNoCollision{[&](const char *name) {
+      if (decl.has_attr(name))
         decl.srcLoc.report_error(
             std::format("function '{}' declared '@(foreign)' must not be declared '@({})'", get_name(), name));
     }};
-    checkNoCollision(decl.attrs.isMacro, "macro");               // ... must not be '@(macro)'
-    checkNoCollision(decl.attrs.isNoInline, "noinline");         // ... must not be '@(noinline)' (it always is?)
-    checkNoCollision(decl.attrs.isAlwaysInline, "alwaysinline"); // ... must not be '@(alwaysinline)'
-    checkNoCollision(decl.attrs.isHot, "hot");                   // ... must not be '@(hot)
-    checkNoCollision(decl.attrs.isCold, "cold");                 // ... must not be '@(cold)'
-    checkNoCollision(decl.attrs.isOptNone, "optnone");           // ... must not be '@(optnone)'
-    checkNoCollision(decl.attrs.isOptSize, "optsize");           // ... must not be '@(optsize)'
-    checkNoCollision(decl.attrs.isVisible, "visible");           // ... must not be '@(visible)'
+    checkNoCollision("macro");        // ... must not be '@(macro)'
+    checkNoCollision("noinline");     // ... must not be '@(noinline)' (it always is?)
+    checkNoCollision("alwaysinline"); // ... must not be '@(alwaysinline)'
+    checkNoCollision("hot");          // ... must not be '@(hot)
+    checkNoCollision("cold");         // ... must not be '@(cold)'
+    checkNoCollision("optnone");      // ... must not be '@(optnone)'
+    checkNoCollision("optsize");      // ... must not be '@(optsize)'
+    checkNoCollision("visible");      // ... must not be '@(visible)'
   }
   // '@(macro)' ...
-  if (decl.attrs.isMacro) {
+  if (decl.has_attr("macro")) {
     // ... must have definition
     if (!decl.definition)
       decl.srcLoc.report_error(std::format("function '{}' declared '@(macro)' must have definition", get_name()));
-    auto checkNoCollision{[&](bool attr, const char *name) {
-      if (attr)
+    auto checkNoCollision{[&](const char *name) {
+      if (decl.has_attr(name))
         decl.srcLoc.report_error(
             std::format("function '{}' declared '@(macro)' must not be declared '@({})'", get_name(), name));
     }};
-    checkNoCollision(decl.attrs.isNoInline, "noinline");         // ... must not be '@(noinline)'
-    checkNoCollision(decl.attrs.isAlwaysInline, "alwaysinline"); // ... must not be '@(alwaysinline)' (it always is?)
-    checkNoCollision(decl.attrs.isHot, "hot");                   // ... must not be '@(hot)
-    checkNoCollision(decl.attrs.isCold, "cold");                 // ... must not be '@(cold)'
-    checkNoCollision(decl.attrs.isOptNone, "optnone");           // ... must not be '@(optnone)'
-    checkNoCollision(decl.attrs.isOptSize, "optsize");           // ... must not be '@(optsize)'
-    checkNoCollision(decl.attrs.isVisible, "visible");           // ... must not be '@(visible)'
+    checkNoCollision("noinline");     // ... must not be '@(noinline)'
+    checkNoCollision("alwaysinline"); // ... must not be '@(alwaysinline)' (it always is?)
+    checkNoCollision("hot");          // ... must not be '@(hot)
+    checkNoCollision("cold");         // ... must not be '@(cold)'
+    checkNoCollision("optnone");      // ... must not be '@(optnone)'
+    checkNoCollision("optsize");      // ... must not be '@(optsize)'
+    checkNoCollision("visible");      // ... must not be '@(visible)'
   }
 
   {
-    auto checkNoCollision{[&](bool attr0, bool attr1, const char *name0, const char *name1) {
-      if (attr0 && attr1)
+    auto checkNoCollision{[&](const char *name0, const char *name1) {
+      if (decl.has_attr(name0) && decl.has_attr(name1))
         decl.srcLoc.report_error(
             std::format("function '{}' must not be declared both '@({})' and '@({})'", get_name(), name0, name1));
     }};
@@ -454,10 +454,10 @@ void Function::validate_attributes() {
     // Verify no '@(alwaysinline noinline)'
     // Verify no '@(alwaysinline visible)'
     // Verify no '@(optnone optsize)'
-    checkNoCollision(decl.attrs.isHot, decl.attrs.isCold, "hot", "cold");
-    checkNoCollision(decl.attrs.isAlwaysInline, decl.attrs.isNoInline, "alwaysinline", "noinline");
-    checkNoCollision(decl.attrs.isAlwaysInline, decl.attrs.isVisible, "alwaysinline", "visible");
-    checkNoCollision(decl.attrs.isOptNone, decl.attrs.isOptSize, "optnone", "optsize");
+    checkNoCollision("hot", "cold");
+    checkNoCollision("alwaysinline", "noinline");
+    checkNoCollision("alwaysinline", "visible");
+    checkNoCollision("optnone", "optsize");
   }
 }
 

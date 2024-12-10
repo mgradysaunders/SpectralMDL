@@ -51,11 +51,6 @@ public:
   [[nodiscard]] static constexpr Version builtin_version() { return {1, 9}; }
 };
 
-/// An enum to represent frequency qualifiers. We don't really need these for
-/// anything in CPU-only compilation, but we still have to parse them so we may
-/// as well keep them around.
-enum class FrequencyQualifier : uint8_t { Uniform, Varying };
-
 enum class Precision : uint8_t { Default, Single, Double };
 
 class Node;
@@ -225,24 +220,16 @@ public:
 
 class Type final : public ExprSubclass<ExprKind::Type> {
 public:
-  struct Attrs final {
-    uint8_t isConst : 1 {};  ///< `const`
-    uint8_t isStatic : 1 {}; ///< `static`
-    uint8_t isInline : 1 {}; ///< `inline`
-  };
+  explicit Type(vector_or_SmallVector<SourceRef> srcAttrs, unique_bump_ptr<Expr> expr)
+      : srcAttrs(std::move(srcAttrs)), expr(std::move(expr)) {}
 
-  Type(
-      std::optional<FrequencyQualifier> frequency, Attrs attrs, unique_bump_ptr<Expr> expr,
-      unique_bump_ptr<AnnotationBlock> annotations = {})
-      : frequency(frequency), attrs(attrs), expr(std::move(expr)), annotations(std::move(annotations)) {}
+  [[nodiscard]] bool has_attr(llvm::StringRef attr) const {
+    return std::find(srcAttrs.begin(), srcAttrs.end(), attr) != srcAttrs.end();
+  }
 
-  std::optional<FrequencyQualifier> frequency{};
-
-  Attrs attrs{};
+  vector_or_SmallVector<SourceRef> srcAttrs{};
 
   unique_bump_ptr<Expr> expr{};
-
-  unique_bump_ptr<AnnotationBlock> annotations{};
 
   Compiler::Type *type{};
 };
@@ -292,15 +279,15 @@ public:
 };
 
 enum class UnaryOp : uint32_t {
-  Incr = 1,   ///< "++"
-  Decr,       ///< "--"
-  Pos,        ///< "+"
-  Neg,        ///< "-"
-  Not,        ///< "~"
-  LogicalNot, ///< "!"
-  Address,    ///< "&" NOTE: This is non-standard.
-  Deref,      ///< "*" NOTE: This is non-standard.
-  Maybe,      ///< "?" NOTE: This is non-standard.
+  Incr = 1,   ///< `++`
+  Decr,       ///< `--`
+  Pos,        ///< `+`
+  Neg,        ///< `-`
+  Not,        ///< `~`
+  LogicalNot, ///< `!`
+  Address,    ///< `&`
+  Deref,      ///< `*`
+  Maybe,      ///< `?`
   Postfix = 1UL << 31,
   PostfixIncr = Postfix | Incr,
   PostfixDecr = Postfix | Decr,
@@ -333,41 +320,41 @@ public:
 };
 
 enum class BinaryOp : uint32_t {
-  Add = 1,                    ///< "+"
-  Sub = 2,                    ///< "-"
-  Mul = 3,                    ///< "*"
-  Div = 4,                    ///< "/"
-  Rem = 5,                    ///< "%"
-  And = 6,                    ///< "&"
-  Or = 7,                     ///< "|"
-  Xor = 8,                    ///< "^"
-  Shl = 9,                    ///< "<<"
-  AShr = 10,                  ///< ">>"
-  LShr = 11,                  ///< ">>>"
-  Eq = 1UL << 31,             ///< "="
-  EqAdd = Eq | Add,           ///< "+="
-  EqSub = Eq | Sub,           ///< "-="
-  EqMul = Eq | Mul,           ///< "*="
-  EqDiv = Eq | Div,           ///< "/="
-  EqRem = Eq | Rem,           ///< "%="
-  EqAnd = Eq | And,           ///< "&="
-  EqOr = Eq | Or,             ///< "|="
-  EqXor = Eq | Xor,           ///< "^="
-  EqShl = Eq | Shl,           ///< "<<="
-  EqAShr = Eq | AShr,         ///< ">>="
-  EqLShr = Eq | LShr,         ///< ">>>="
-  CmpEq = 12,                 ///< "=="
-  CmpNe = 13,                 ///< "!="
-  CmpLt = 14,                 ///< "<"
-  CmpGt = 15,                 ///< ">"
-  CmpLe = 16,                 ///< "<="
-  CmpGe = 17,                 ///< ">="
+  Add = 1,                    ///< `+`
+  Sub = 2,                    ///< `-`
+  Mul = 3,                    ///< `*`
+  Div = 4,                    ///< `/`
+  Rem = 5,                    ///< `%`
+  And = 6,                    ///< `&`
+  Or = 7,                     ///< `|`
+  Xor = 8,                    ///< `^`
+  Shl = 9,                    ///< `<<`
+  AShr = 10,                  ///< `>>`
+  LShr = 11,                  ///< `>>>`
+  Eq = 1UL << 31,             ///< `=`
+  EqAdd = Eq | Add,           ///< `+=`
+  EqSub = Eq | Sub,           ///< `-=`
+  EqMul = Eq | Mul,           ///< `*=`
+  EqDiv = Eq | Div,           ///< `/=`
+  EqRem = Eq | Rem,           ///< `%=`
+  EqAnd = Eq | And,           ///< `&=`
+  EqOr = Eq | Or,             ///< `|=`
+  EqXor = Eq | Xor,           ///< `^=`
+  EqShl = Eq | Shl,           ///< `<<=`
+  EqAShr = Eq | AShr,         ///< `>>=`
+  EqLShr = Eq | LShr,         ///< `>>>=`
+  CmpEq = 12,                 ///< `==`
+  CmpNe = 13,                 ///< `!=`
+  CmpLt = 14,                 ///< `<`
+  CmpGt = 15,                 ///< `>`
+  CmpLe = 16,                 ///< `<=`
+  CmpGe = 17,                 ///< `>=`
   Logical = 1UL << 30,        ///< Is logical?
-  LogicalAnd = Logical | And, ///< "&&"
-  LogicalOr = Logical | Or,   ///< "||"
-  Comma = 18,                 ///< ","
-  Def = 19,                   ///< ":=" NOTE: This is non-standard.
-  Subset = 20,                ///< "<:" NOTE: This is non-standard.
+  LogicalAnd = Logical | And, ///< `&&`
+  LogicalOr = Logical | Or,   ///< `||`
+  Comma = 18,                 ///< `,`
+  Def = 19,                   ///< `:=`
+  Subset = 20,                ///< `<:`
 };
 
 [[nodiscard]] constexpr bool is_compare_op(BinaryOp op) { return BinaryOp::CmpEq <= op && op <= BinaryOp::CmpGe; }
@@ -654,7 +641,7 @@ public:
     /// The initializer expression. This may be null!
     unique_bump_ptr<Expr> init{};
 
-    /// The annotations.
+    /// The annotations. This may be null!
     unique_bump_ptr<AnnotationBlock> annotations{};
 
     /// The next comma `,`. This may be empty!
@@ -694,38 +681,6 @@ public:
 
 class Function final : public DeclSubclass<DeclKind::Function> {
 public:
-  struct Attrs final {
-    /// Is marked `@(alwaysinline)`?
-    uint8_t isAlwaysInline : 1 {};
-
-    /// Is marked `@(cold)`?
-    uint8_t isCold : 1 {};
-
-    /// Is marked `@(foreign)`?
-    uint8_t isForeign : 1 {};
-
-    /// Is marked `@(hot)`?
-    uint8_t isHot : 1 {};
-
-    /// Is marked `@(macro)`?
-    uint8_t isMacro : 1 {};
-
-    /// Is marked `@(noinline)`?
-    uint8_t isNoInline : 1 {};
-
-    /// Is marked `@(optnone)`?
-    uint8_t isOptNone : 1 {};
-
-    /// Is marked `@(optsize)`?
-    uint8_t isOptSize : 1 {};
-
-    /// Is marked `@(pure)`?
-    uint8_t isPure : 1 {};
-
-    /// Is marked `@(visible)`?
-    uint8_t isVisible : 1 {};
-  };
-
   struct LetAndCall final {
     /// The let expression. This may be null.
     Let *let{};
@@ -736,35 +691,76 @@ public:
     [[nodiscard]] operator bool() const { return call; }
   };
 
-  Function(
-      Attrs attrs, bool isVariant, unique_bump_ptr<Type> returnType, unique_bump_ptr<AnnotationBlock> earlyAnnotations,
-      unique_bump_ptr<Name> name, ParamList params, std::optional<FrequencyQualifier> frequency,
-      unique_bump_ptr<AnnotationBlock> lateAnnotations, unique_bump_ptr<Node> definition)
-      : attrs(attrs), isVariant(isVariant), returnType(std::move(returnType)), earlyAnnotations(std::move(earlyAnnotations)),
-        name(std::move(name)), params(std::move(params)), frequency(frequency), lateAnnotations(std::move(lateAnnotations)),
-        definition(std::move(definition)) {}
+  explicit Function(
+      SourceRef srcAttrsAt, SourceRef srcAttrsParenL, vector_or_SmallVector<SourceRef> srcAttrs, SourceRef srcAttrsParenR,
+      unique_bump_ptr<Type> returnType, unique_bump_ptr<AnnotationBlock> earlyAnnotations, unique_bump_ptr<Name> name,
+      ParamList params, bool isVariant, SourceRef srcVariantParenL, SourceRef srcVariantStar, SourceRef srcVariantParenR,
+      SourceRef srcFrequency, unique_bump_ptr<AnnotationBlock> lateAnnotations, SourceRef srcEq,
+      unique_bump_ptr<Node> definition, SourceRef srcSemicolon)
+      : srcAttrsAt(srcAttrsAt), srcAttrsParenL(srcAttrsParenL), srcAttrs(std::move(srcAttrs)), srcAttrsParenR(srcAttrsParenR),
+        returnType(std::move(returnType)), earlyAnnotations(std::move(earlyAnnotations)), name(std::move(name)),
+        params(std::move(params)), isVariant(isVariant), srcVariantParenL(srcVariantParenL), srcVariantStar(srcVariantStar),
+        srcVariantParenR(srcVariantParenR), srcFrequency(srcFrequency), lateAnnotations(std::move(lateAnnotations)),
+        srcEq(srcEq), definition(std::move(definition)), srcSemicolon(srcSemicolon) {}
+
+  [[nodiscard]] bool has_attr(llvm::StringRef attr) const {
+    return std::find(srcAttrs.begin(), srcAttrs.end(), attr) != srcAttrs.end();
+  }
 
   /// If this is a function variant, get the variant let and call expressions. Else throw an error.
   [[nodiscard]] LetAndCall get_variant_let_and_call_expressions() const;
 
 public:
-  const Attrs attrs{};
+  /// The attribute `@`. This may be empty!
+  SourceRef srcAttrsAt{};
 
-  const bool isVariant{};
+  /// The attribute parenthesis `(`. This may be empty!
+  SourceRef srcAttrsParenL{};
 
+  /// The attributes. This may be empty!
+  vector_or_SmallVector<SourceRef> srcAttrs{};
+
+  /// The attribute parenthesis `)`. This may be empty!
+  SourceRef srcAttrsParenR{};
+
+  /// The return type.
   unique_bump_ptr<Type> returnType{};
 
+  /// The early annotations between return type and name. This may be null!
   unique_bump_ptr<AnnotationBlock> earlyAnnotations{};
 
+  /// The name.
   unique_bump_ptr<Name> name{};
 
+  /// The parameters.
   ParamList params{};
 
-  std::optional<FrequencyQualifier> frequency{};
+  /// Is variant?
+  bool isVariant{};
 
+  /// If variant, the parameter parenthesis `(`.
+  SourceRef srcVariantParenL{};
+
+  /// If variant, the parameter star `*`.
+  SourceRef srcVariantStar{};
+
+  /// If variant, the parameter parenthesis `)`.
+  SourceRef srcVariantParenR{};
+
+  /// The frequency qualifier `uniform` or `varying`. This may be empty!
+  SourceRef srcFrequency{};
+
+  /// The late annotations between signature and definition. This may be null!
   unique_bump_ptr<AnnotationBlock> lateAnnotations{};
 
+  /// The equal `=`. This may be empty!
+  SourceRef srcEq{};
+
+  /// The definition. This may be null!
   unique_bump_ptr<Node> definition{};
+
+  /// The semicolon `;`. This may be empty!
+  SourceRef srcSemicolon{};
 };
 
 class Import final : public DeclSubclass<DeclKind::Import> {
@@ -1371,6 +1367,16 @@ public:
         globals(std::move(globals)) {}
 
   bool isSmdlSyntax{};
+
+  // TODO srcKwSmdlSyntax;
+
+  // TODO srcKwMdl;
+
+  // TODO srcVersionMajor
+
+  // TODO srcVersionDot
+
+  // TODO srcVersionMinor
 
   Version version{};
 

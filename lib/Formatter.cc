@@ -104,22 +104,29 @@ void Formatter::write(AST::Decl &decl) {
 }
 
 void Formatter::write(AST::Function &decl) {
-  if (write(decl.attrs))
-    write(guarantee_space());
+  if (!decl.srcAttrsAt.empty()) {
+    write(decl.srcAttrsAt, decl.srcAttrsParenL);
+    for (size_t i = 0; i < decl.srcAttrs.size(); i++) {
+      write(decl.srcAttrs[i]);
+      if (i + 1 < decl.srcAttrs.size())
+        write(guarantee_space());
+    }
+    write(decl.srcAttrsParenR, guarantee_space());
+  }
   write(decl.returnType, decl.earlyAnnotations, guarantee_space(), decl.name);
   if (decl.isVariant) {
-    write("(*)");
+    write(decl.srcVariantParenL, decl.srcVariantStar, decl.srcVariantParenR);
   } else {
     write(decl.params);
   }
-  if (decl.frequency)
-    write(guarantee_space(), *decl.frequency);
+  if (!decl.srcFrequency.empty())
+    write(guarantee_space(), decl.srcFrequency);
   write(decl.lateAnnotations);
   if (decl.definition == nullptr) {
-    write(';');
+    write(decl.srcSemicolon);
   } else {
     if (auto stmt{llvm::dyn_cast<AST::Return>(decl.definition.get())}) {
-      write(" = ", stmt->expr, ';');
+      write(guarantee_space(), decl.srcEq, guarantee_space(), stmt->expr, decl.srcSemicolon);
     } else {
       write(guarantee_space(), decl.definition);
     }
@@ -144,15 +151,12 @@ void Formatter::write(AST::Identifier &expr) {
 }
 
 void Formatter::write(AST::Type &expr) {
-  if (expr.frequency)
-    write(*expr.frequency, guarantee_space());
-  if (expr.attrs.isConst)
-    write("const ");
-  if (expr.attrs.isStatic)
-    write("static ");
-  if (expr.attrs.isInline)
-    write("inline ");
-  write(expr.expr, expr.annotations);
+  for (size_t i = 0; i < expr.srcAttrs.size(); i++) {
+    write(expr.srcAttrs[i]);
+    if (i + 1 < expr.srcAttrs.size())
+      write(guarantee_space());
+  }
+  write(expr.expr);
 }
 
 void Formatter::write(AST::Stmt &stmt) {
@@ -222,39 +226,6 @@ void Formatter::write(const AST::ParamList &params) {
     }
   }
   write(params.srcParenR);
-}
-
-bool Formatter::write(const AST::Function::Attrs &attrs) {
-#if 0
-  llvm::SmallVector<llvm::StringRef> names{};
-  if (attrs.isAlwaysInline)
-    names.push_back("alwaysinline");
-  if (attrs.isCold)
-    names.push_back("cold");
-  if (attrs.isForeign)
-    names.push_back("foreign");
-  if (attrs.isHot)
-    names.push_back("hot");
-  if (attrs.isMacro)
-    names.push_back("macro");
-  if (attrs.isNoInline)
-    names.push_back("noinline");
-  if (attrs.isOptNone)
-    names.push_back("optnone");
-  if (attrs.isOptSize)
-    names.push_back("optsize");
-  if (attrs.isPure)
-    names.push_back("pure");
-  if (attrs.isVisible)
-    names.push_back("visible");
-  if (!names.empty()) {
-    write("@(");
-    write_separated(names, " ");
-    write(')');
-    return true;
-  }
-#endif
-  return false;
 }
 
 } // namespace smdl

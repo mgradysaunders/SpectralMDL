@@ -210,9 +210,16 @@ private:
     }
   }
 
-  bool next(llvm::StringRef, AST::SourceRef *src = nullptr);
+  bool next(llvm::StringRef str, AST::SourceRef *src = nullptr);
 
-  [[nodiscard]] bool next_word(llvm::StringRef, AST::SourceRef *src = nullptr);
+  [[nodiscard]] bool next_word(llvm::StringRef word, AST::SourceRef *src = nullptr);
+
+  [[nodiscard]] bool next_word(llvm::ArrayRef<llvm::StringRef> words, AST::SourceRef *src = nullptr) {
+    for (auto word : words)
+      if (next_word(word, src))
+        return true;
+    return false;
+  }
 
   [[nodiscard]] AST::SourceRef next_word();
 
