@@ -14,8 +14,6 @@ public:
 
   void write_in_between(const char *newSrcPos);
 
-  void write(char ch);
-
   void write(AST::SourceRef srcRef);
 
   void write(want_space) { wantSpace = true; }

@@ -2,13 +2,6 @@
 
 namespace smdl {
 
-[[nodiscard]] static size_t count_newlines(llvm::StringRef str) {
-  size_t num{};
-  for (char c : str)
-    num += (c == '\n') ? 1 : 0;
-  return num;
-}
-
 [[nodiscard]] static size_t length_with_reduced_whitespace(llvm::StringRef str) {
   size_t num{};
   for (auto itr = str.begin(); itr < str.end();) {
@@ -20,66 +13,153 @@ namespace smdl {
   return num;
 }
 
-void Formatter::write(char ch) {
-  if (!str.empty() && str.back() == '\n' && ch == ' ')
-    return;
-  if (!str.empty() && str.back() == '\n' && ch != '\n') {
-    for (int i = 0; i < indent; i++)
-      str += ' ';
+// The idea here is to parse whitespace or comments into adjacent string references. Keep
+// in mind that there may be more than one comment between any two grammatically relevant
+// tokens in the source code.
+//
+// So this:
+// ~~~~~~~~~~~~~~~~~~~
+//  // A comment
+//  /* Another comment
+//   */
+//
+// ~~~~~~~~~~~~~~~~~~~
+//
+// Should be parsed into 5 source regions like this:
+// - srcRegions[0] = "\n  "
+// - srcRegions[1] = "// A comment"
+// - srcRegions[2] = "\n  "
+// - srcregions[3] = "/* Another comment\n   */"
+// - srcRegions[4] = "\n\n"
+struct WhitespaceOrComments final {
+public:
+  explicit WhitespaceOrComments(llvm::StringRef src) : src0(src) {
+    while (!src.empty()) {
+      if (src.starts_with("//")) {
+        auto pos{src.find('\n')};
+        auto src0{src.take_front(pos)};
+        auto src1{src.drop_front(pos)};
+        src = src1;
+        srcRegions.push_back({src0});
+        numLineComments++;
+      } else if (src.starts_with("/*")) {
+        if (auto pos{src.find("*/")}; pos != src.npos) {
+          auto src0{src.take_front(pos + 2)};
+          auto src1{src.drop_front(pos + 2)};
+          src = src1;
+          srcRegions.push_back({src0});
+          numMultilineComments++;
+        } else {
+          // Shouldn't ever get here?
+          srcRegions.push_back({src});
+          numMultilineComments++;
+          break;
+        }
+      } else {
+        auto pos{src.find_first_of('/')};
+        auto src0{src.take_front(pos)};
+        auto src1{src.drop_front(pos)};
+        src = src1;
+        srcRegions.push_back({src0});
+      }
+    }
   }
-  str += ch;
-}
+
+  /// The number or regions.
+  [[nodiscard]] size_t size() const { return srcRegions.size(); }
+
+  /// Is only whitespace with no comments?
+  [[nodiscard]] bool is_only_whitespace() const { return num_comments() == 0; }
+
+  /// The number of comments.
+  [[nodiscard]] size_t num_comments() const { return numLineComments + numMultilineComments; }
+
+  /// The number of specifically line comments.
+  [[nodiscard]] size_t num_line_comments() const { return numLineComments; }
+
+  /// The number of specifically multiline comments.
+  [[nodiscard]] size_t num_multiline_comments() const { return numMultilineComments; }
+
+  /// The number of new lines total.
+  [[nodiscard]] size_t num_newlines() const { return src0.count('\n'); }
+
+  /// The number of new lines in the given source region.
+  [[nodiscard]] size_t num_newlines(size_t i) const { return srcRegions[i].count('\n'); }
+
+  /// The number of trailing newlines.
+  [[nodiscard]] size_t num_trailing_newlines() const {
+    return size() > 0 && is_whitespace(size() - 1) ? num_newlines(size() - 1) : 0;
+  }
+
+  /// Is the given region whitespace?
+  [[nodiscard]] bool is_whitespace(size_t i) const { return !srcRegions[i].starts_with('/'); }
+
+  /// Is the given region a comment?
+  [[nodiscard]] bool is_comment(size_t i) const { return srcRegions[i].starts_with('/'); }
+
+  /// Is the given region specifically a line comment?
+  [[nodiscard]] bool is_line_comment(size_t i) const { return srcRegions[i].starts_with("//"); }
+
+  /// Is the given region specifically a multiline comment?
+  [[nodiscard]] bool is_multiline_comment(size_t i) const { return srcRegions[i].starts_with("/*"); }
+
+  /// Is the given region a comment that starts on its own line?
+  [[nodiscard]] size_t num_newlines_before_comment(size_t i) const {
+    return is_comment(i) && i > 0 && is_whitespace(i - 1) ? num_newlines(i - 1) : 0;
+  }
+
+  llvm::StringRef src0{};
+
+  llvm::SmallVector<llvm::StringRef> srcRegions{};
+
+  size_t numLineComments{};
+
+  size_t numMultilineComments{};
+};
 
 void Formatter::write_in_between(const char *newSrcPos) {
   if (srcPos < newSrcPos) {
-    auto inBetween{llvm::StringRef(srcPos, newSrcPos - srcPos)};
-    int itr = 0;
-    while (!inBetween.empty()) {
-      auto leadingWhitespace{inBetween.take_while([](char c) { return std::isspace(static_cast<unsigned char>(c)); })};
-      if (inBetween == leadingWhitespace && itr == 0) {
-        if (wantNewLine) {
-          // Add 1 newline.
-          str += '\n';
-          // If there is more than 1 newline, limit to 2 newlines.
-          if (inBetween.count('\n') > 1)
-            str += '\n';
-        } else if (wantSpace) {
-          str += ' ';
-        }
-        break;
-      } else {
-        inBetween = inBetween.drop_while([](char c) { return std::isspace(static_cast<unsigned char>(c)); });
-        if (inBetween.consume_front("//")) {
-          auto numNewLines{leadingWhitespace.count('\n')};
-          if (numNewLines == 0) {
-            if (!str.empty())
-            write(' ');
-          } else {
-            write('\n');
-            if (numNewLines > 1 && wantNewLine && itr == 0)
-              write('\n');
-          }
-          if (!wantNewLine)
-            indent += 2;
-          write('/');
-          write('/');
-          for (auto c : inBetween.take_while([](char c) { return c != '\n'; })) {
-            str += c;
-          }
-          str += '\n';
-          inBetween = inBetween.drop_while([](char c) { return c != '\n'; });
-          inBetween = inBetween.drop_front(1);
+    auto whitespaceOrComments{WhitespaceOrComments(llvm::StringRef(srcPos, newSrcPos - srcPos))};
+    bool forcesNewLine = false;
+    for (size_t i = 0; i < whitespaceOrComments.size(); i++) {
+      if (whitespaceOrComments.is_comment(i)) {
+        size_t numNewLines{whitespaceOrComments.num_newlines_before_comment(i)};
+        if (numNewLines == 0) {
+          if (!str.empty() && str.back() != '\n')
+            str += ' ';
         } else {
-          break;
+          str += '\n';
+          if (numNewLines > 1 && wantNewLine)
+            str += '\n';
+          for (int i = 0; i < indent; i++)
+            str += ' ';
+          if (!wantNewLine)
+            str += "  ";
         }
+        for (const char c : whitespaceOrComments.srcRegions[i])
+          str += c;
+        forcesNewLine = whitespaceOrComments.is_line_comment(i);
       }
-      itr++;
+    }
+    if (!str.empty()) {
+      if (wantNewLine) {
+        str += '\n';
+        if (whitespaceOrComments.num_trailing_newlines() > 1)
+          str += '\n';
+      } else if (forcesNewLine) {
+        str += '\n';
+        indent += 2;
+      } else if (wantSpace) {
+        str += ' ';
+      }
     }
   } else {
-    if (wantNewLine)
-      str += '\n';
-    else if (wantSpace)
-      str += ' ';
+    if (!str.empty()) {
+      if (wantNewLine)
+        str += '\n';
+      else if (wantSpace)
+        str += ' ';
+    }
   }
   wantNewLine = false;
   wantSpace = false;
@@ -91,8 +171,12 @@ void Formatter::write(AST::SourceRef srcRef) {
     write_in_between(srcRef.data());
     const char *itr0 = srcRef.data();
     const char *itr1 = itr0 + srcRef.size();
+    if (!str.empty() && str.back() == '\n') {
+      for (int i = 0; i < indent; i++)
+        str += ' ';
+    }
     for (const char *itr = itr0; itr < itr1; itr++)
-      write(*itr);
+      str += *itr;
     srcPos = itr1;
   }
 }
@@ -223,13 +307,8 @@ void Formatter::write(AST::Expr &expr) {
 }
 
 void Formatter::write(AST::Identifier &expr) {
-  if (expr.isAbs)
-    write(':', ':'); // TODO
-  write(expr.names[0]);
-  for (size_t i = 1; i < expr.names.size(); i++) {
-    write(':', ':'); // TODO
-    write(expr.names[i]);
-  }
+  for (auto &name : expr.names)
+    write(name.srcDoubleColon, name.name);
 }
 
 void Formatter::write(AST::Let &expr) {
@@ -263,8 +342,9 @@ void Formatter::write(AST::Preserve &stmt) {
   write(stmt.srcKwPreserve, want_space());
   for (size_t i = 0; i < stmt.exprs.size(); i++) {
     write(stmt.exprs[i]);
-    if (i + 1 < stmt.exprs.size())
-      write(',', ' '); // TODO
+    if (i + 1 < stmt.exprs.size()) {
+      str += ", "; // TODO srcComma
+    }
   }
   write(stmt.srcSemicolon);
 }

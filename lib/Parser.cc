@@ -217,8 +217,9 @@ auto Parser::parse_unicode_name() -> std::optional<AST::Name> {
 auto Parser::parse_import_path(bool isUnicode) -> unique_bump_ptr_wrapper<AST::Identifier> {
   checkpoint();
   auto cursor{save_cursor()};
-  auto names{vector_or_SmallVector<AST::Name>{}};
-  bool isAbs{next("::")};
+  auto names{vector_or_SmallVector<AST::Identifier::IdentifierName>{}};
+  auto srcDoubleColon{AST::SourceRef()};
+  bool isAbs{next("::", &srcDoubleColon)};
   while (true) {
     auto parse_any_name{[&]() -> std::optional<AST::Name> {
       auto cursor{save_cursor()};
@@ -242,9 +243,10 @@ auto Parser::parse_import_path(bool isUnicode) -> unique_bump_ptr_wrapper<AST::I
     auto name{parse_any_name()};
     if (!name)
       break;
-    names.push_back(*name);
+    names.push_back(AST::Identifier::IdentifierName{srcDoubleColon, *name});
     skip();
-    if (names.back().srcName == "*" || !next("::"))
+    srcDoubleColon = {};
+    if (names.back().name.srcName == "*" || !next("::", &srcDoubleColon))
       break;
   }
   if (!isAbs && names.empty()) {
@@ -296,7 +298,7 @@ auto Parser::parse_using_import() -> unique_bump_ptr_wrapper<AST::UsingImport> {
     reject();
     return nullptr;
   }
-  if (path->names.back().srcName == "*")
+  if (path->names.back().name.srcName == "*")
     report_error("import path after '[export] using' must not end with '::*'");
   skip();
   auto srcKwImport{AST::SourceRef()};
@@ -765,10 +767,11 @@ auto Parser::parse_identifier() -> unique_bump_ptr_wrapper<AST::Identifier> {
   checkpoint();
   auto cursor{state};
   auto pos{get_position()};
-  auto names{vector_or_SmallVector<AST::Name>{}};
-  auto isAbs{next("::")};
+  auto names{vector_or_SmallVector<AST::Identifier::IdentifierName>{}};
+  auto srcDoubleColon{AST::SourceRef()};
+  auto isAbs{next("::", &srcDoubleColon)};
   if (auto name{parse_simple_name()}) {
-    names.push_back(*name);
+    names.push_back(AST::Identifier::IdentifierName{srcDoubleColon, *name});
   } else {
     if (isAbs)
       report_error("expected name after '::'", cursor);
@@ -779,9 +782,10 @@ auto Parser::parse_identifier() -> unique_bump_ptr_wrapper<AST::Identifier> {
   }
   while (true) {
     checkpoint();
-    if (next("::")) {
+    srcDoubleColon = {};
+    if (next("::", &srcDoubleColon)) {
       if (auto name{parse_simple_name()}) {
-        names.push_back(*name);
+        names.push_back(AST::Identifier::IdentifierName{srcDoubleColon, *name});
         accept();
         continue;
       }
@@ -1319,7 +1323,8 @@ auto Parser::parse_literal_expression() -> unique_bump_ptr_wrapper<AST::Expr> {
       accept();
       if (isInt) {
         return attach(
-            bump_allocate<AST::LiteralInt>(source_since(cursor), llvm::APInt(llvm::APInt::getBitsNeeded(digits, 10), digits, 10).getLimitedValue()),
+            bump_allocate<AST::LiteralInt>(
+                source_since(cursor), llvm::APInt(llvm::APInt::getBitsNeeded(digits, 10), digits, 10).getLimitedValue()),
             cursor);
       } else {
         llvm::APFloat value(llvm::APFloat::IEEEdouble());

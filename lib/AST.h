@@ -116,12 +116,18 @@ public:
 
 class Identifier final : public ExprSubclass<ExprKind::Identifier> {
 public:
-  explicit Identifier(vector_or_SmallVector<Name> names, bool isAbs) : names(std::move(names)), isAbs(isAbs) {}
+  struct IdentifierName final {
+    SourceRef srcDoubleColon{};
+
+    Name name{};
+  };
+
+  explicit Identifier(vector_or_SmallVector<IdentifierName> names, bool isAbs) : names(std::move(names)), isAbs(isAbs) {}
 
   [[nodiscard]] vector_or_SmallVector<llvm::StringRef> get_string_refs() const {
     auto refs{vector_or_SmallVector<llvm::StringRef>{}};
     for (auto &name : names)
-      refs.push_back(name.srcName);
+      refs.push_back(name.name.srcName);
     return refs;
   }
 
@@ -129,7 +135,7 @@ public:
 
   [[nodiscard]] operator std::string() const;
 
-  vector_or_SmallVector<Name> names{};
+  vector_or_SmallVector<IdentifierName> names{};
 
   bool isAbs{};
 };

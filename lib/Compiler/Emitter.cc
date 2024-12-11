@@ -276,9 +276,9 @@ Value Emitter::emit(AST::Binary &expr) {
     auto identifier{llvm::dyn_cast<AST::Identifier>(&*expr.lhs)};
     if (!identifier || !identifier->is_simple_name())
       expr.srcLoc.report_error("expected lhs of definition operator ':=' to be a simple name");
-    context.validate_decl_name(module, "temporary", identifier->names[0]);
+    context.validate_decl_name(module, "temporary", identifier->names[0].name);
     auto rv{rvalue(emit(expr.rhs))};
-    declare(identifier->names[0], rv);
+    declare(identifier->names[0].name, rv);
     return rv;
   }
   // Short circuit logical and/or.

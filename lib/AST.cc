@@ -7,7 +7,7 @@ Identifier::operator std::string() const {
   if (isAbs)
     str += "::";
   for (size_t i{}; i < names.size(); i++) {
-    str += names[i].srcName;
+    str += names[i].name.srcName;
     if (i + 1 < names.size())
       str += "::";
   }
