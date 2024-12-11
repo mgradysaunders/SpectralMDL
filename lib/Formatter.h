@@ -6,24 +6,26 @@ namespace smdl {
 
 class Formatter final {
 public:
-  Formatter(llvm::StringRef src) : src(src) {}
+  struct want_space final {};
+
+  struct want_newline final {};
+
+  explicit Formatter(llvm::StringRef src) : src(src), srcPos(src.data()) {}
+
+  void write_in_between(const char *newSrcPos);
 
   void write(char ch);
 
   void write(AST::SourceRef srcRef);
 
-  struct guarantee_space final {};
+  void write(want_space) { wantSpace = true; }
 
-  struct guarantee_newline final {};
+  void write(want_newline) { wantNewLine = true; }
 
-  void write(guarantee_space) {
-    if (!str.empty() && str.back() != ' ' && str.back() != '\n')
-      str += ' ';
-  }
-
-  void write(guarantee_newline) {
-    if (!str.empty() && str.back() != '\n')
-      str += '\n';
+  template <typename Func> void preserve_indent(Func &&func) {
+    int prevIndent = indent;
+    std::invoke(std::forward<Func>(func));
+    indent = prevIndent;
   }
 
   template <typename Func> void increment_indent(int level, Func &&func) {
@@ -45,8 +47,10 @@ public:
   }
 
   template <typename T, typename... Ts> void write(T &&arg, Ts &&...args) requires(sizeof...(Ts) > 0) {
+    int prevIndent = indent;
     write(std::forward<T>(arg));
-    write(std::forward<Ts>(args)...);
+    (write(std::forward<Ts>(args)), ...);
+    indent = prevIndent;
   }
 
   void write(AST::Node &node);
@@ -56,89 +60,31 @@ public:
   //--{ Write: Decls
   void write(AST::Decl &decl);
 
-  void write(AST::Enum &decl) {
-    write(decl.srcKwEnum, guarantee_space(), decl.name, decl.annotations, guarantee_space(), decl.srcBraceL);
-    increment_indent(1, [&]() {
-      for (auto &declarator : decl.declarators) {
-        write(guarantee_newline(), declarator.name);
-        if (declarator.init)
-          write(guarantee_space(), declarator.srcEq, guarantee_space(), declarator.init);
-        write(declarator.annotations, declarator.srcComma);
-      }
-    });
-    write(guarantee_newline(), decl.srcBraceR, decl.srcSemicolon);
-  }
+  void write(AST::Enum &decl);
 
   void write(AST::Function &decl);
 
-  void write(AST::Import &decl) {
-    write(decl.srcKwImport);
-    for (auto &path : decl.paths)
-      write(guarantee_space(), path.identifier, path.srcComma);
-    write(decl.srcSemicolon);
-  }
+  void write(AST::Import &decl);
 
-  void write(AST::Struct &decl) {
-    write(decl.srcKwStruct, guarantee_space(), decl.name);
-    if (!decl.tags.empty()) {
-      write(decl.srcColonBeforeTags);
-      for (auto &tag : decl.tags)
-        write(guarantee_space(), tag.srcKwDefault, guarantee_space(), tag.type, tag.srcComma);
-    }
-    if (decl.fields.empty()) {
-      write(guarantee_space(), decl.srcBraceL, decl.srcBraceR, decl.srcSemicolon);
-    } else {
-      write(guarantee_space(), decl.srcBraceL);
-      increment_indent(1, [&]() {
-        for (auto &field : decl.fields) {
-          write(guarantee_newline(), field.srcKwVoid, guarantee_space(), field.type, guarantee_space(), field.name);
-          if (field.init)
-            write(guarantee_space(), field.srcEq, guarantee_space(), field.init);
-          write(field.annotations, field.srcSemicolon);
-        }
-      });
-      write(guarantee_newline(), decl.srcBraceR, decl.srcSemicolon);
-    }
-  }
+  void write(AST::Struct &decl);
 
-  void write(AST::Tag &decl) { write(decl.srcKwTag, guarantee_space(), decl.name, decl.srcSemicolon); }
+  void write(AST::Tag &decl) { write(decl.srcKwTag, want_space(), decl.name, decl.srcSemicolon); }
 
   void write(AST::Typedef &decl) {
-    write(decl.srcKwTypedef, guarantee_space(), decl.type, guarantee_space(), decl.name, decl.srcSemicolon);
+    write(decl.srcKwTypedef, want_space(), decl.type, want_space(), decl.name, decl.srcSemicolon);
   }
 
-  void write(AST::UnitTest &decl) { write(decl.srcKwUnitTest, guarantee_space(), decl.name, guarantee_space(), decl.body); }
+  void write(AST::UnitTest &decl) { write(decl.srcKwUnitTest, want_space(), decl.name, want_space(), decl.body); }
 
   void write(AST::UsingAlias &decl) {
     write(
-        decl.srcKwUsing, guarantee_space(), decl.name, guarantee_space(), decl.srcEq, guarantee_space(), decl.path,
+        decl.srcKwUsing, want_space(), decl.name, want_space(), decl.srcEq, want_space(), decl.path,
         decl.srcSemicolon);
   }
 
-  void write(AST::UsingImport &decl) {
-    write(
-        decl.srcKwExport, guarantee_space(), decl.srcKwUsing, guarantee_space(), decl.path, guarantee_space(), decl.srcKwImport,
-        guarantee_space());
-    for (auto &name : decl.names) {
-      write(name.srcName);
-      if (!name.srcComma.empty())
-        write(name.srcComma, guarantee_space());
-    }
-    write(decl.srcSemicolon);
-  }
+  void write(AST::UsingImport &decl);
 
-  void write(AST::Variable &decl) {
-    write(decl.type);
-    for (auto &declarator : decl.declarators) {
-      write(guarantee_space(), declarator.name);
-      if (declarator.init != nullptr)
-        write(guarantee_space(), declarator.srcEq, guarantee_space(), declarator.init);
-      else if (declarator.args)
-        write(declarator.args);
-      write(declarator.annotations, declarator.srcComma);
-    }
-    write(decl.srcSemicolon);
-  }
+  void write(AST::Variable &decl);
   //--}
 
   //--{ Write: Exprs
@@ -146,9 +92,9 @@ public:
 
   void write(AST::Binary &expr) {
     if (expr.op == AST::BinaryOp::Comma) {
-      write(expr.lhs, expr.srcOp, guarantee_space(), expr.rhs);
+      write(expr.lhs, expr.srcOp, want_space(), expr.rhs);
     } else {
-      write(expr.lhs, guarantee_space(), expr.srcOp, guarantee_space(), expr.rhs);
+      write(expr.lhs, want_space(), expr.srcOp, want_space(), expr.rhs);
     }
   }
 
@@ -158,8 +104,8 @@ public:
 
   void write(AST::Conditional &expr) {
     write(
-        expr.cond, guarantee_space(), expr.srcQuestion, guarantee_space(), expr.ifPass, guarantee_space(), expr.srcColon,
-        guarantee_space(), expr.ifFail);
+        expr.cond, want_space(), expr.srcQuestion, want_space(), expr.ifPass, want_space(), expr.srcColon,
+        want_space(), expr.ifFail);
   }
 
   void write(AST::GetField &expr) { write(expr.expr, expr.srcDot, expr.name); }
@@ -178,20 +124,7 @@ public:
 
   void write(AST::Intrinsic &expr) { write(expr.srcName); }
 
-  void write(AST::Let &expr) {
-    write(expr.srcKwLet, guarantee_space());
-    if (!expr.srcBraceL.empty()) {
-      write(expr.srcBraceL);
-      increment_indent(1, [&]() {
-        for (auto &var : expr.vars)
-          write(guarantee_newline(), var);
-      });
-      write(guarantee_newline(), expr.srcBraceR, guarantee_space(), expr.srcKwIn, guarantee_space(), expr.expr);
-    } else {
-      sanity_check(expr.vars.size() == 1);
-      write(expr.vars[0], guarantee_space(), expr.srcKwIn, guarantee_space(), expr.expr);
-    }
-  }
+  void write(AST::Let &expr);
 
   void write(AST::LiteralBool &expr) { write(expr.srcValue); }
 
@@ -203,7 +136,7 @@ public:
 
   void write(AST::Parens &expr) { write(expr.srcDollar, expr.srcParenL, expr.expr, expr.srcParenR); }
 
-  void write(AST::ReturnFrom &expr) { write(expr.srcKwReturnFrom, guarantee_space(), expr.stmt); }
+  void write(AST::ReturnFrom &expr) { write(expr.srcKwReturnFrom, want_space(), expr.stmt); }
 
   void write(AST::SizeName &expr) { write(expr.srcAngleL, expr.name, expr.srcAngleR); }
 
@@ -224,22 +157,22 @@ public:
 
   void write(AST::Compound &stmt) {
     write(stmt.srcBraceL);
-    increment_indent(1, [&]() {
+    increment_indent(2, [&]() {
       for (auto &subStmt : stmt.stmts)
-        write(guarantee_newline(), subStmt);
+        write(want_newline(), subStmt);
     });
-    write(guarantee_newline(), stmt.srcBraceR);
+    write(want_newline(), stmt.srcBraceR);
   }
 
   void write(AST::Continue &stmt) { write(stmt.srcKwContinue, stmt.lateIf, stmt.srcSemicolon); }
 
   void write(AST::DeclStmt &stmt) { write(stmt.decl); }
 
-  void write(AST::Defer &stmt) { write(stmt.srcKwDefer, guarantee_space(), stmt.stmt); }
+  void write(AST::Defer &stmt) { write(stmt.srcKwDefer, want_space(), stmt.stmt); }
 
   void write(AST::DoWhile &stmt) {
     write(
-        stmt.srcKwDo, guarantee_space(), stmt.body, guarantee_space(), stmt.srcKwWhile, guarantee_space(), stmt.cond,
+        stmt.srcKwDo, want_space(), stmt.body, want_space(), stmt.srcKwWhile, want_space(), stmt.cond,
         stmt.srcSemicolon);
   }
 
@@ -251,14 +184,14 @@ public:
 
   void write(AST::For &stmt) {
     write(
-        stmt.srcKwFor, guarantee_space(), stmt.srcParenL, stmt.init, guarantee_space(), stmt.cond, stmt.srcSemicolonAfterCond,
-        guarantee_space(), stmt.incr, stmt.srcParenR, guarantee_space(), stmt.body);
+        stmt.srcKwFor, want_space(), stmt.srcParenL, stmt.init, want_space(), stmt.cond, stmt.srcSemicolonAfterCond,
+        want_space(), stmt.incr, stmt.srcParenR, want_space(), stmt.body);
   }
 
   void write(AST::If &stmt) {
-    write(stmt.srcKwIf, guarantee_space(), stmt.cond, guarantee_space(), stmt.ifPass);
+    write(stmt.srcKwIf, want_space(), stmt.cond, want_space(), stmt.ifPass);
     if (stmt.ifFail)
-      write(guarantee_space(), stmt.srcKwElse, guarantee_space(), stmt.ifFail);
+      write(want_space(), stmt.srcKwElse, want_space(), stmt.ifFail);
   }
 
   void write(AST::Preserve &stmt);
@@ -266,43 +199,29 @@ public:
   void write(AST::Return &stmt) {
     write(stmt.srcKwReturn);
     if (stmt.expr != nullptr)
-      write(guarantee_space(), stmt.expr);
+      write(want_space(), stmt.expr);
     write(stmt.lateIf, stmt.srcSemicolon);
   }
 
-  void write(AST::Switch &stmt) {
-    write(stmt.srcKwSwitch, guarantee_space(), stmt.expr, guarantee_space(), stmt.srcBraceL);
-    for (auto &switchCase : stmt.cases) {
-      write(guarantee_newline(), switchCase.srcKwCaseOrDefault);
-      if (!switchCase.is_default())
-        write(guarantee_space(), switchCase.cond);
-      write(switchCase.srcColon);
-      increment_indent(1, [&]() {
-        for (auto &subStmt : switchCase.stmts) {
-          write(guarantee_newline(), subStmt);
-        }
-      });
-    }
-    write(guarantee_newline(), stmt.srcBraceR);
-  }
+  void write(AST::Switch &stmt);
 
   void write(AST::Unreachable &stmt) { write(stmt.srcKwUnreachable, stmt.srcSemicolon); }
 
   void write(AST::Visit &stmt) {
     write(
-        stmt.srcKwVisit, guarantee_space(), stmt.name, guarantee_space(), stmt.srcKwIn, guarantee_space(), stmt.expr,
-        guarantee_space(), stmt.body);
+        stmt.srcKwVisit, want_space(), stmt.name, want_space(), stmt.srcKwIn, want_space(), stmt.expr,
+        want_space(), stmt.body);
   }
 
-  void write(AST::While &stmt) { write(stmt.srcKwWhile, guarantee_space(), stmt.cond, guarantee_space(), stmt.body); }
+  void write(AST::While &stmt) { write(stmt.srcKwWhile, want_space(), stmt.cond, want_space(), stmt.body); }
   //--}
 
   void write(const AST::AnnotationBlock &annotations) {
-    write(guarantee_space(), annotations.srcDoubleBrackL);
+    write(want_space(), annotations.srcDoubleBrackL);
     for (auto &annotation : annotations.annotations) {
       write(annotation.identifier, annotation.args);
       if (!annotation.srcComma.empty())
-        write(annotation.srcComma, guarantee_space());
+        write(annotation.srcComma, want_space());
     }
     write(annotations.srcDoubleBrackR);
   }
@@ -315,7 +234,7 @@ public:
 
   void write(const AST::ParamList &params);
 
-  void write(const AST::LateIf &lateIf) { write(guarantee_space(), lateIf.srcKwIf, guarantee_space(), lateIf.cond); }
+  void write(const AST::LateIf &lateIf) { write(want_space(), lateIf.srcKwIf, want_space(), lateIf.cond); }
 
   void write(const AST::Name &name) { write(name.srcName); }
 
@@ -323,13 +242,18 @@ public:
     llvm::TypeSwitch<decltype(&node), void>(&node).template Case<Ts...>([&]<typename T>(T *each) { write(*each); });
   }
 
+  std::string str{};
+
+private:
   llvm::StringRef src{};
 
-  const char *last{};
+  const char *srcPos{};
+
+  bool wantSpace{};
+
+  bool wantNewLine{true};
 
   int indent{};
-
-  std::string str{};
 };
 
 } // namespace smdl

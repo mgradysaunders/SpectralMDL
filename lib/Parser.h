@@ -230,7 +230,7 @@ private:
     return state;
   }
 
-  [[nodiscard]] auto source_since(Cursor cursor) { return text.substr(cursor.i, state.i - cursor.i); }
+  [[nodiscard]] auto source_since(Cursor cursor) { return text.substr(cursor.i, state.i - cursor.i).trim(); }
 
   [[nodiscard]] auto source_location(Cursor cursor) { return AST::SourceLocation{file, static_cast<uint32_t>(cursor.lineNo)}; }
 
