@@ -125,7 +125,7 @@ Value Emitter::emit(AST::Import &decl) {
     decl.crumb = crumb;
   }
   for (auto &path : decl.paths)
-    declare_import(path.identifier->isAbs, path.identifier->get_string_refs(), decl);
+    declare_import(path.identifier->is_absolute(), path.identifier->get_string_refs(), decl);
   return {};
 }
 
@@ -195,11 +195,11 @@ Value Emitter::emit(AST::UsingImport &decl) {
   auto path{decl.path->get_string_refs()};
   if (decl.is_import_all()) {
     path.push_back("*");
-    declare_import(decl.path->isAbs, path, decl);
+    declare_import(decl.path->is_absolute(), path, decl);
   } else {
     for (auto &name : decl.names) {
       path.push_back(name.srcName);
-      declare_import(decl.path->isAbs, path, decl);
+      declare_import(decl.path->is_absolute(), path, decl);
       path.pop_back();
     }
   }
@@ -550,8 +550,8 @@ Value Emitter::emit(AST::If &stmt) {
 }
 
 Value Emitter::emit(AST::Preserve &stmt) {
-  for (auto &expr : stmt.exprs) {
-    auto value{emit(expr)};
+  for (auto &preservee : stmt.preservees) {
+    auto value{emit(preservee.expr)};
     if (!value.is_lvalue())
       stmt.srcLoc.report_error("can't apply 'preserve' to constant or temporary");
     push(emit_alloca("tmp.preserve", value.type), {}, &stmt, stmt.srcLoc, value);

@@ -191,29 +191,6 @@ auto Parser::parse_mdl_version() -> std::optional<AST::Version> {
   return version;
 }
 
-auto Parser::parse_unicode_name() -> std::optional<AST::Name> {
-  checkpoint();
-  auto cursor{save_cursor()};
-  if (auto name{parse_simple_name()}) {
-    accept();
-    return name;
-  }
-#if 0
-  else if (auto expr{parse_literal_expression()}; expr && llvm::isa<AST::LiteralString>(expr.get())) {
-    // TODO This is a problem
-    accept();
-    auto &value{static_cast<AST::LiteralString *>(expr.get())->value};
-    auto valuePtr{static_cast<char *>(bumpAllocator.Allocate(value.size(), 1))};
-    std::copy(value.begin(), value.end(), valuePtr);
-    return attach(bump_allocate<AST::Name>(llvm::StringRef(valuePtr, value.size())), cursor);
-  }
-#endif
-  else {
-    reject();
-    return std::nullopt;
-  }
-}
-
 auto Parser::parse_import_path(bool isUnicode) -> unique_bump_ptr_wrapper<AST::Identifier> {
   checkpoint();
   auto cursor{save_cursor()};
@@ -221,29 +198,28 @@ auto Parser::parse_import_path(bool isUnicode) -> unique_bump_ptr_wrapper<AST::I
   auto srcDoubleColon{AST::SourceRef()};
   bool isAbs{next("::", &srcDoubleColon)};
   while (true) {
-    auto parse_any_name{[&]() -> std::optional<AST::Name> {
+    auto identifierName{AST::Identifier::IdentifierName{srcDoubleColon, {}, {}}};
+    auto parse_any_name{[&]() -> bool {
       auto cursor{save_cursor()};
-      if (isUnicode) {
-        if (auto name{parse_unicode_name()})
-          return name;
-      } else {
-        if (auto name{parse_simple_name()})
-          return name;
-        auto srcName{AST::SourceRef()};
-        if (next("*", &srcName))
-          return AST::Name{source_location(cursor), srcName};
+      if (auto name{parse_simple_name()}) {
+        identifierName.name = *name;
+        return true;
       }
-      auto srcName{AST::SourceRef()};
-      if (next("..", &srcName))
-        return AST::Name{source_location(cursor), srcName};
-      if (next(".", &srcName))
-        return AST::Name{source_location(cursor), srcName};
-      return std::nullopt;
+      if (auto srcName{AST::SourceRef()}; next("..", &srcName) || next(".", &srcName) || next("*", &srcName)) {
+        identifierName.name = AST::Name{source_location(cursor), srcName};
+        return true;
+      }
+      if (isUnicode) {
+        if (auto expr{parse_literal_expression()}; expr && llvm::isa<AST::LiteralString>(expr.get())) {
+          identifierName.literalString = std::move(expr);
+          return true;
+        }
+      }
+      return false;
     }};
-    auto name{parse_any_name()};
-    if (!name)
+    if (!parse_any_name())
       break;
-    names.push_back(AST::Identifier::IdentifierName{srcDoubleColon, *name});
+    names.push_back(std::move(identifierName));
     skip();
     srcDoubleColon = {};
     if (names.back().name.srcName == "*" || !next("::", &srcDoubleColon))
@@ -254,7 +230,7 @@ auto Parser::parse_import_path(bool isUnicode) -> unique_bump_ptr_wrapper<AST::I
     return nullptr;
   }
   accept();
-  return attach(bump_allocate<AST::Identifier>(std::move(names), isAbs), cursor);
+  return attach(bump_allocate<AST::Identifier>(std::move(names)), cursor);
 }
 
 auto Parser::parse_using_alias() -> unique_bump_ptr_wrapper<AST::UsingAlias> {
@@ -771,7 +747,7 @@ auto Parser::parse_identifier() -> unique_bump_ptr_wrapper<AST::Identifier> {
   auto srcDoubleColon{AST::SourceRef()};
   auto isAbs{next("::", &srcDoubleColon)};
   if (auto name{parse_simple_name()}) {
-    names.push_back(AST::Identifier::IdentifierName{srcDoubleColon, *name});
+    names.push_back(AST::Identifier::IdentifierName{srcDoubleColon, *name, {}});
   } else {
     if (isAbs)
       report_error("expected name after '::'", cursor);
@@ -785,7 +761,7 @@ auto Parser::parse_identifier() -> unique_bump_ptr_wrapper<AST::Identifier> {
     srcDoubleColon = {};
     if (next("::", &srcDoubleColon)) {
       if (auto name{parse_simple_name()}) {
-        names.push_back(AST::Identifier::IdentifierName{srcDoubleColon, *name});
+        names.push_back(AST::Identifier::IdentifierName{srcDoubleColon, *name, {}});
         accept();
         continue;
       }
@@ -795,7 +771,7 @@ auto Parser::parse_identifier() -> unique_bump_ptr_wrapper<AST::Identifier> {
   }
   if (pos != get_position()) {
     accept();
-    return attach(bump_allocate<AST::Identifier>(std::move(names), isAbs), cursor);
+    return attach(bump_allocate<AST::Identifier>(std::move(names)), cursor);
   } else {
     reject();
     return nullptr;
@@ -1796,19 +1772,19 @@ auto Parser::parse_preserve_statement() -> unique_bump_ptr_wrapper<AST::Preserve
   auto srcKwPreserve{AST::SourceRef()};
   if (!next_word("preserve", &srcKwPreserve))
     return nullptr;
-  auto exprs{vector_or_SmallVector<unique_bump_ptr<AST::Expr>>{}};
+  auto preservees{vector_or_SmallVector<AST::Preserve::Preservee>{}};
   while (true) {
     auto expr{parse_unary_expression()};
     if (!expr)
       break;
-    exprs.push_back(std::move(expr));
-    if (!delimiter(','))
+    preservees.push_back(AST::Preserve::Preservee{std::move(expr), {}});
+    if (!delimiter(',', &preservees.back().srcComma))
       break;
   }
   auto srcSemicolon{AST::SourceRef()};
   if (!delimiter(';', &srcSemicolon))
     report_error("expected ';' after 'preserve ...'", cursor);
-  return attach(bump_allocate<AST::Preserve>(srcKwPreserve, std::move(exprs), srcSemicolon), cursor);
+  return attach(bump_allocate<AST::Preserve>(srcKwPreserve, std::move(preservees), srcSemicolon), cursor);
 }
 
 auto Parser::parse_defer_statement() -> unique_bump_ptr_wrapper<AST::Defer> {

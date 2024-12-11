@@ -1223,58 +1223,58 @@ export @(macro pure) auto atan2(const float4 y, const float4 x) = float4(atan2(y
 )*";
 
 static const char *scene = R"*(#smdl_syntax
-@(pure foreign) int smdl_data_isvalid(&void data, &string name);
-@(pure foreign) int smdl_data_lookup_int(&void data, &string name, &int value);
-@(pure foreign) int smdl_data_lookup_int2(&void data, &string name, &int2 value);
-@(pure foreign) int smdl_data_lookup_int3(&void data, &string name, &int3 value);
-@(pure foreign) int smdl_data_lookup_int4(&void data, &string name, &int4 value);
-@(pure foreign) int smdl_data_lookup_float(&void data, &string name, &float value);
-@(pure foreign) int smdl_data_lookup_float2(&void data, &string name, &float2 value);
-@(pure foreign) int smdl_data_lookup_float3(&void data, &string name, &float3 value);
-@(pure foreign) int smdl_data_lookup_float4(&void data, &string name, &float4 value);
-@(pure foreign) int smdl_data_lookup_color(&void data, &string name, &color value);
-export @(pure macro) bool data_isvalid(string name) = smdl_data_isvalid($data, &name) != 0;
-export @(pure macro) int data_lookup_int(string name, int default_value = int()) {
+@(foreign pure) int smdl_data_isvalid(&void data, &string name);
+@(foreign pure) int smdl_data_lookup_int(&void data, &string name, &int value);
+@(foreign pure) int smdl_data_lookup_int2(&void data, &string name, &int2 value);
+@(foreign pure) int smdl_data_lookup_int3(&void data, &string name, &int3 value);
+@(foreign pure) int smdl_data_lookup_int4(&void data, &string name, &int4 value);
+@(foreign pure) int smdl_data_lookup_float(&void data, &string name, &float value);
+@(foreign pure) int smdl_data_lookup_float2(&void data, &string name, &float2 value);
+@(foreign pure) int smdl_data_lookup_float3(&void data, &string name, &float3 value);
+@(foreign pure) int smdl_data_lookup_float4(&void data, &string name, &float4 value);
+@(foreign pure) int smdl_data_lookup_color(&void data, &string name, &color value);
+export @(macro pure) bool data_isvalid(string name) = smdl_data_isvalid($data, &name) != 0;
+export @(macro pure) int data_lookup_int(string name, int default_value = int()) {
   auto value(default_value);
   smdl_data_lookup_int($data, &name, &value);
   return value;
 }
-export @(pure macro) int2 data_lookup_int2(string name, int2 default_value = int2()) {
+export @(macro pure) int2 data_lookup_int2(string name, int2 default_value = int2()) {
   auto value(default_value);
   smdl_data_lookup_int2($data, &name, &value);
   return value;
 }
-export @(pure macro) int3 data_lookup_int3(string name, int3 default_value = int3()) {
+export @(macro pure) int3 data_lookup_int3(string name, int3 default_value = int3()) {
   auto value(default_value);
   smdl_data_lookup_int3($data, &name, &value);
   return value;
 }
-export @(pure macro) int4 data_lookup_int4(string name, int4 default_value = int4()) {
+export @(macro pure) int4 data_lookup_int4(string name, int4 default_value = int4()) {
   auto value(default_value);
   smdl_data_lookup_int4($data, &name, &value);
   return value;
 }
-export @(pure macro) float data_lookup_float(string name, float default_value = float()) {
+export @(macro pure) float data_lookup_float(string name, float default_value = float()) {
   auto value(default_value);
   smdl_data_lookup_float($data, &name, &value);
   return value;
 }
-export @(pure macro) float2 data_lookup_float2(string name, float2 default_value = float2()) {
+export @(macro pure) float2 data_lookup_float2(string name, float2 default_value = float2()) {
   auto value(default_value);
   smdl_data_lookup_float2($data, &name, &value);
   return value;
 }
-export @(pure macro) float3 data_lookup_float3(string name, float3 default_value = float3()) {
+export @(macro pure) float3 data_lookup_float3(string name, float3 default_value = float3()) {
   auto value(default_value);
   smdl_data_lookup_float3($data, &name, &value);
   return value;
 }
-export @(pure macro) float4 data_lookup_float4(string name, float4 default_value = float4()) {
+export @(macro pure) float4 data_lookup_float4(string name, float4 default_value = float4()) {
   auto value(default_value);
   smdl_data_lookup_float4($data, &name, &value);
   return value;
 }
-export @(pure macro) color data_lookup_color(string name, color default_value = color()) {
+export @(macro pure) color data_lookup_color(string name, color default_value = color()) {
   auto value(default_value);
   smdl_data_lookup_color($data, &name, &value);
   return value;
@@ -1299,18 +1299,20 @@ export @(macro) float3 texture_tangent_v(const int i) = $state.texture_tangent_v
 export @(macro) float3 geometry_tangent_u(const int i) = $state.geometry_tangent_u[i];
 export @(macro) float3 geometry_tangent_v(const int i) = $state.geometry_tangent_v[i];
 export @(macro) float3x3 tangent_space(const int i) = float3x3($state.texture_tangent_u[i], $state.texture_tangent_v[i], $state.normal);
-export @(macro) float3x3 geometry_tangent_space(const int i) = float3x3(
-  $state.geometry_tangent_u[i],
-  $state.geometry_tangent_v[i],
-  $state.geometry_normal
-);
+export @(macro) float3x3 geometry_tangent_space(const int i) =
+  float3x3(
+    $state.geometry_tangent_u[i],
+    $state.geometry_tangent_v[i],
+    $state.geometry_normal
+  );
 export @(macro) int object_id() = $state.object_id;
 export @(macro) float3 direction() = $state.direction;
 export @(macro) float animation_time() = $state.animation_time;
 export const int WAVELENGTH_BASE_MAX = $WAVELENGTH_BASE_MAX;
 export @(macro) float wavelength_min() = $state.wavelength_min;
 export @(macro) float wavelength_max() = $state.wavelength_max;
-export @(macro) float[WAVELENGTH_BASE_MAX] wavelength_base() = $state.wavelength_base;
+export @(macro) float[WAVELENGTH_BASE_MAX] wavelength_base() =
+  $state.wavelength_base;
 export @(macro) float meters_per_scene_unit() = $state.meters_per_scene_unit;
 export @(macro) float scene_units_per_meter() = 1.0 / $state.meters_per_scene_unit;
 export @(macro) float4x4 transform(const coordinate_space from, const coordinate_space to) {
@@ -1362,44 +1364,64 @@ export enum gamma_mode {
   gamma_linear = 0,
   gamma_srgb = 1
 };
-@(macro pure) float4 apply_gamma_mode(const gamma_mode gamma, const float4 texel) = gamma == gamma_srgb ? float4((texel * texel).xyz, texel.w) : texel;
-@(macro pure) float3 apply_gamma_mode(const gamma_mode gamma, const float3 texel) = gamma == gamma_srgb ? (texel * texel) : texel;
-@(macro pure) float2 apply_gamma_mode(const gamma_mode gamma, const float2 texel) = gamma == gamma_srgb ? (texel * texel) : texel;
-@(macro pure) float apply_gamma_mode(const gamma_mode gamma, const float texel) = gamma == gamma_srgb ? (texel * texel) : texel;
+@(macro pure) float4 apply_gamma_mode(const gamma_mode gamma, const float4 texel) =
+  gamma == gamma_srgb ? float4((texel * texel).xyz, texel.w) : texel;
+@(macro pure) float3 apply_gamma_mode(const gamma_mode gamma, const float3 texel) =
+  gamma == gamma_srgb ? (texel * texel) : texel;
+@(macro pure) float2 apply_gamma_mode(const gamma_mode gamma, const float2 texel) =
+  gamma == gamma_srgb ? (texel * texel) : texel;
+@(macro pure) float apply_gamma_mode(const gamma_mode gamma, const float texel) =
+  gamma == gamma_srgb ? (texel * texel) : texel;
 @(pure) &tile_2d access_uv_tile(const texture_2d tex, const int2 uv_tile) {
   return null if (#any((uv_tile < 0) | (uv_tile >= tex.tile_count)));
   return &tex.tiles[tex.tile_count.x * uv_tile.y + uv_tile.x];
 }
-export @(macro pure) int width(const texture_2d tex, const int2 uv_tile = int2(0)) = (tile := access_uv_tile(tex, uv_tile)) ? tile.extent.x : 0;
+export @(macro pure) int width(const texture_2d tex, const int2 uv_tile = int2(0)) =
+  (tile := access_uv_tile(tex, uv_tile)) ? tile.extent.x : 0;
 export @(macro pure) int width(const texture_3d tex) = tex.extent.x;
 export @(macro pure) int width(const texture_cube tex) = tex.extent.x;
-export @(macro pure) int height(const texture_2d tex, const int2 uv_tile = int2(0)) = (tile := access_uv_tile(tex, uv_tile)) ? tile.extent.y : 0;
+export @(macro pure) int height(const texture_2d tex, const int2 uv_tile = int2(0)) =
+  (tile := access_uv_tile(tex, uv_tile)) ? tile.extent.y : 0;
 export @(macro pure) int height(const texture_3d tex) = tex.extent.y;
 export @(macro pure) int height(const texture_cube tex) = tex.extent.y;
 export @(macro pure) int depth(const texture_3d tex) = tex.extent.z;
-export @(macro pure) bool texture_isvalid(const texture_2d tex) = bool(tex.tiles);
-export @(macro pure) bool texture_isvalid(const texture_3d tex) = bool(tex.texels);
-export @(macro pure) bool texture_isvalid(const texture_cube tex) = bool(tex.texels);
-export @(macro pure) bool texture_isvalid(const texture_ptex tex) = bool(tex.ptr);
+export @(macro pure) bool texture_isvalid(const texture_2d tex) =
+  bool(tex.tiles);
+export @(macro pure) bool texture_isvalid(const texture_3d tex) =
+  bool(tex.texels);
+export @(macro pure) bool texture_isvalid(const texture_cube tex) =
+  bool(tex.texels);
+export @(macro pure) bool texture_isvalid(const texture_ptex tex) =
+  bool(tex.ptr);
 @(pure) float4 access_texel(const texture_2d tex, const int2 coord, const int2 uv_tile = int2(0)) {
   const auto tile(access_uv_tile(tex, uv_tile));
   return null if (!tile || #any((coord < 0) | (coord >= tile.extent)));
   return tile.texels[tile.extent.x * coord.y + coord.x];
 }
-export @(macro pure) float4 texel_float4(const texture_2d tex, const int2 coord, const int2 uv_tile = int2(0)) = access_texel(tex, coord, uv_tile);
-export @(macro pure) float3 texel_float3(const texture_2d tex, const int2 coord, const int2 uv_tile = int2(0)) = access_texel(tex, coord, uv_tile).xyz;
-export @(macro pure) float2 texel_float2(const texture_2d tex, const int2 coord, const int2 uv_tile = int2(0)) = access_texel(tex, coord, uv_tile).xy;
-export @(macro pure) float texel_float(const texture_2d tex, const int2 coord, const int2 uv_tile = int2(0)) = access_texel(tex, coord, uv_tile).x;
-export @(macro) color texel_color(const texture_2d tex, const int2 coord, const int2 uv_tile = int2(0)) = color(access_texel(tex, coord, uv_tile).xyz);
+export @(macro pure) float4 texel_float4(const texture_2d tex, const int2 coord, const int2 uv_tile = int2(0)) =
+  access_texel(tex, coord, uv_tile);
+export @(macro pure) float3 texel_float3(const texture_2d tex, const int2 coord, const int2 uv_tile = int2(0)) =
+  access_texel(tex, coord, uv_tile).xyz;
+export @(macro pure) float2 texel_float2(const texture_2d tex, const int2 coord, const int2 uv_tile = int2(0)) =
+  access_texel(tex, coord, uv_tile).xy;
+export @(macro pure) float texel_float(const texture_2d tex, const int2 coord, const int2 uv_tile = int2(0)) =
+  access_texel(tex, coord, uv_tile).x;
+export @(macro) color texel_color(const texture_2d tex, const int2 coord, const int2 uv_tile = int2(0)) =
+  color(access_texel(tex, coord, uv_tile).xyz);
 @(pure) float4 access_texel(const texture_3d tex, const int3 coord) {
   return null if (#any((coord < 0) | (coord >= tex.extent)));
   return tex.texels[#sum(tex.stride * coord)];
 }
-export @(macro pure) float4 texel_float4(const texture_3d tex, const int3 coord) = access_texel(tex, coord);
-export @(macro pure) float3 texel_float3(const texture_3d tex, const int3 coord) = access_texel(tex, coord).xyz;
-export @(macro pure) float2 texel_float2(const texture_3d tex, const int3 coord) = access_texel(tex, coord).xy;
-export @(macro pure) float texel_float(const texture_3d tex, const int3 coord) = access_texel(tex, coord).x;
-export @(macro) color texel_color(const texture_3d tex, const int3 coord) = color(access_texel(tex, coord).xyz);
+export @(macro pure) float4 texel_float4(const texture_3d tex, const int3 coord) =
+  access_texel(tex, coord);
+export @(macro pure) float3 texel_float3(const texture_3d tex, const int3 coord) =
+  access_texel(tex, coord).xyz;
+export @(macro pure) float2 texel_float2(const texture_3d tex, const int3 coord) =
+  access_texel(tex, coord).xy;
+export @(macro pure) float texel_float(const texture_3d tex, const int3 coord) =
+  access_texel(tex, coord).x;
+export @(macro) color texel_color(const texture_3d tex, const int3 coord) =
+  color(access_texel(tex, coord).xyz);
 export enum wrap_mode {
   wrap_clamp = 0,
   wrap_repeat = 1,
@@ -1517,9 +1539,12 @@ export @(macro) float lookup_float(texture_ptex tex, const int channel = 0) {
 
 static const char *monte_carlo = R"*(#smdl_syntax
 import ::math::*;
-export @(pure) float2 advance_low_discrepancy(const &float2 xi) = (*xi = math::frac(*xi + float2(0.75487766, 0.56984029)));
-export @(pure) float3 advance_low_discrepancy(const &float3 xi) = (*xi = math::frac(*xi + float3(0.81917251, 0.67104360, 0.54970047)));
-export @(pure) float4 advance_low_discrepancy(const &float4 xi) = (*xi = math::frac(*xi + float4(0.85667488, 0.73389185, 0.62870672, 0.53859725)));
+export @(pure) float2 advance_low_discrepancy(const &float2 xi) =
+  (*xi = math::frac(*xi + float2(0.75487766, 0.56984029)));
+export @(pure) float3 advance_low_discrepancy(const &float3 xi) =
+  (*xi = math::frac(*xi + float3(0.81917251, 0.67104360, 0.54970047)));
+export @(pure) float4 advance_low_discrepancy(const &float4 xi) =
+  (*xi = math::frac(*xi + float4(0.85667488, 0.73389185, 0.62870672, 0.53859725)));
 export @(pure) bool weighted_bool_sample(const &float xi, const float weight) {
   if (*xi < weight) {
     *xi = (*xi / weight);
@@ -1547,11 +1572,16 @@ export @(pure) float3 cosine_hemisphere_sample(float2 xi) = float3((p := uniform
 
 static const char *quat = R"*(#smdl_syntax
 using ::math import *;
-export @(macro pure) float4 quat_rotate(const float theta, const float3 v) = float4(#sin(theta / 2) * normalize(v), #cos(theta / 2));
-export @(macro pure) float4 quat_rotate(const float3 u, const float3 v) = normalize(float4(cross(u, v), 1 + dot(u, v)));
-export @(macro pure) float4 quat_transpose(const float4 q) = float4(-1.0, -1.0, -1.0, 1.0) * q;
-export @(macro pure) float3 quat_transform_vector(const float4 q, const float3 u) = (w := q.w) * w * u + (v := q.xyz) * dot(v, u) + cross(v, 2 * w * u + cross(v, u));
-export @(macro pure) float4 quat_multiply(const float4 q, const float4 r) = float4(1.0, 1.0, 1.0, -1.0) * (q.wwwx * r.xyzx + q.xyzy * r.wwwy + q.yzxz * r.zxyz - q.zxyw * r.yzxw);
+export @(macro pure) float4 quat_rotate(const float theta, const float3 v) =
+  float4(#sin(theta / 2) * normalize(v), #cos(theta / 2));
+export @(macro pure) float4 quat_rotate(const float3 u, const float3 v) =
+  normalize(float4(cross(u, v), 1 + dot(u, v)));
+export @(macro pure) float4 quat_transpose(const float4 q) =
+  float4(-1.0, -1.0, -1.0, 1.0) * q;
+export @(macro pure) float3 quat_transform_vector(const float4 q, const float3 u) =
+  (w := q.w) * w * u + (v := q.xyz) * dot(v, u) + cross(v, 2 * w * u + cross(v, u));
+export @(macro pure) float4 quat_multiply(const float4 q, const float4 r) =
+  float4(1.0, 1.0, 1.0, -1.0) * (q.wwwx * r.xyzx + q.xyzy * r.wwwy + q.yzxz * r.zxyz - q.zxyw * r.yzxw);
 export @(macro pure) float3 quat_unit_x(const float4 q) = quat_transform_vector(q, float3(1.0, 0.0, 0.0));
 export @(macro pure) float3 quat_unit_y(const float4 q) = quat_transform_vector(q, float3(0.0, 1.0, 0.0));
 export @(macro pure) float3 quat_unit_z(const float4 q) = quat_transform_vector(q, float3(0.0, 0.0, 1.0));

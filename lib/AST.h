@@ -24,12 +24,7 @@ public:
 
   void report_error(std::string message) const { throw Error(std::move(message), file.str(), line); }
 
-  void report_warning(std::string message) const {
-    llvm::WithColor(llvm::errs(), llvm::HighlightColor::Warning) << "[warning] ";
-    if (!file.empty() && line > 0)
-      llvm::WithColor(llvm::errs(), llvm::HighlightColor::Address) << '[' << file << ':' << line << "] ";
-    llvm::errs() << message << '\n';
-  }
+  void report_warning(std::string message) const;
 };
 
 using SourceRef = llvm::StringRef;
@@ -117,27 +112,38 @@ public:
 class Identifier final : public ExprSubclass<ExprKind::Identifier> {
 public:
   struct IdentifierName final {
+    /// The double colon `::` before the name. This may be empty on the first name!
     SourceRef srcDoubleColon{};
 
+    /// The name.
     Name name{};
+
+    /// If the name is empty, the literal string expression. This is only used for unicode import
+    /// path identifiers, and it may warrant a separate type specifically for this purpose. But
+    /// this works for now.
+    unique_bump_ptr<Expr> literalString{};
+
+    [[nodiscard]] operator llvm::StringRef() const;
   };
 
-  explicit Identifier(vector_or_SmallVector<IdentifierName> names, bool isAbs) : names(std::move(names)), isAbs(isAbs) {}
+  explicit Identifier(vector_or_SmallVector<IdentifierName> names) : names(std::move(names)) {}
 
-  [[nodiscard]] vector_or_SmallVector<llvm::StringRef> get_string_refs() const {
-    auto refs{vector_or_SmallVector<llvm::StringRef>{}};
-    for (auto &name : names)
-      refs.push_back(name.name.srcName);
-    return refs;
-  }
+  /// Is absolute identifier? e.g., `::absolute::id`.
+  [[nodiscard]] bool is_absolute() const { return !names.empty() && !names[0].srcDoubleColon.empty(); }
 
-  [[nodiscard]] bool is_simple_name() const { return names.size() == 1 && !isAbs; }
+  /// Is relative identifier? e.g., `relative::id`.
+  [[nodiscard]] bool is_relative() const { return !is_absolute(); }
 
+  /// Is simple name?
+  [[nodiscard]] bool is_simple_name() const { return names.size() == 1 && is_relative(); }
+
+  /// Get string references to each name.
+  [[nodiscard]] vector_or_SmallVector<llvm::StringRef> get_string_refs() const;
+
+  /// Dump to string for debugging.
   [[nodiscard]] operator std::string() const;
 
   vector_or_SmallVector<IdentifierName> names{};
-
-  bool isAbs{};
 };
 
 class Arg final {
@@ -203,10 +209,13 @@ public:
   explicit AnnotationBlock(SourceRef srcDoubleBrackL, vector_or_SmallVector<Annotation> annotations, SourceRef srcDoubleBrackR)
       : srcDoubleBrackL(srcDoubleBrackL), annotations(std::move(annotations)), srcDoubleBrackR(srcDoubleBrackR) {}
 
+  /// The double bracket `[[`.
   SourceRef srcDoubleBrackL{};
 
+  /// The annotations.
   vector_or_SmallVector<Annotation> annotations{};
 
+  /// The double bracket `]]`.
   SourceRef srcDoubleBrackR{};
 };
 
@@ -1224,14 +1233,22 @@ public:
 
 class Preserve final : public StmtSubclass<StmtKind::Preserve> {
 public:
-  explicit Preserve(SourceRef srcKwPreserve, vector_or_SmallVector<unique_bump_ptr<Expr>> exprs, SourceRef srcSemicolon)
-      : srcKwPreserve(srcKwPreserve), exprs(std::move(exprs)), srcSemicolon(srcSemicolon) {}
+  struct Preservee final {
+    /// The expression.
+    unique_bump_ptr<Expr> expr{};
+
+    /// The next comma `,`. This may be empty!
+    SourceRef srcComma{};
+  };
+
+  explicit Preserve(SourceRef srcKwPreserve, vector_or_SmallVector<Preservee> preservees, SourceRef srcSemicolon)
+      : srcKwPreserve(srcKwPreserve), preservees(std::move(preservees)), srcSemicolon(srcSemicolon) {}
 
   /// The keyword `preserve`.
   SourceRef srcKwPreserve{};
 
-  /// The comma-separated expressions to preserve.
-  vector_or_SmallVector<unique_bump_ptr<Expr>> exprs{};
+  /// The expressions to preserve.
+  vector_or_SmallVector<Preservee> preservees{};
 
   /// The semicolon `;`.
   SourceRef srcSemicolon{};
@@ -1344,19 +1361,6 @@ public:
 };
 //--}
 
-inline Let::Let(
-    SourceRef srcKwLet, SourceRef srcBraceL, vector_or_SmallVector<unique_bump_ptr<Variable>> vars, SourceRef srcBraceR,
-    SourceRef srcKwIn, unique_bump_ptr<Expr> expr)
-    : srcKwLet(srcKwLet), srcBraceL(srcBraceL), vars(std::move(vars)), srcBraceR(srcBraceR), srcKwIn(srcKwIn),
-      expr(std::move(expr)) {}
-
-inline Let::~Let() {}
-
-inline ReturnFrom::ReturnFrom(llvm::StringRef srcKwReturnFrom, unique_bump_ptr<Stmt> stmt)
-    : srcKwReturnFrom(srcKwReturnFrom), stmt(std::move(stmt)) {}
-
-inline ReturnFrom::~ReturnFrom() {}
-
 /// This is the data structure to hold the MDL version which must appear at the
 /// top of each MDL file. E.g., `mdl 1.7;`
 class Version final {
@@ -1370,9 +1374,11 @@ public:
   /// The semicolon `;`.
   SourceRef srcSemicolon{};
 
-  uint8_t major{};
+  /// The major version number.
+  uint32_t major{};
 
-  uint8_t minor{};
+  /// The minor version number.
+  uint32_t minor{};
 };
 
 class File final : public NodeSubclass<NodeKind::File> {

@@ -10,7 +10,11 @@ public:
 
   struct want_newline final {};
 
-  explicit Formatter(llvm::StringRef src) : src(src), srcPos(src.data()) {}
+  explicit Formatter(llvm::StringRef src) : src(src) { srcPos = src.data(); }
+
+  void write_char(char ch);
+
+  void write_indent();
 
   void write_in_between(const char *newSrcPos);
 
@@ -75,9 +79,7 @@ public:
   void write(AST::UnitTest &decl) { write(decl.srcKwUnitTest, want_space(), decl.name, want_space(), decl.body); }
 
   void write(AST::UsingAlias &decl) {
-    write(
-        decl.srcKwUsing, want_space(), decl.name, want_space(), decl.srcEq, want_space(), decl.path,
-        decl.srcSemicolon);
+    write(decl.srcKwUsing, want_space(), decl.name, want_space(), decl.srcEq, want_space(), decl.path, decl.srcSemicolon);
   }
 
   void write(AST::UsingImport &decl);
@@ -102,8 +104,8 @@ public:
 
   void write(AST::Conditional &expr) {
     write(
-        expr.cond, want_space(), expr.srcQuestion, want_space(), expr.ifPass, want_space(), expr.srcColon,
-        want_space(), expr.ifFail);
+        expr.cond, want_space(), expr.srcQuestion, want_space(), expr.ifPass, want_space(), expr.srcColon, want_space(),
+        expr.ifFail);
   }
 
   void write(AST::GetField &expr) { write(expr.expr, expr.srcDot, expr.name); }
@@ -169,9 +171,7 @@ public:
   void write(AST::Defer &stmt) { write(stmt.srcKwDefer, want_space(), stmt.stmt); }
 
   void write(AST::DoWhile &stmt) {
-    write(
-        stmt.srcKwDo, want_space(), stmt.body, want_space(), stmt.srcKwWhile, want_space(), stmt.cond,
-        stmt.srcSemicolon);
+    write(stmt.srcKwDo, want_space(), stmt.body, want_space(), stmt.srcKwWhile, want_space(), stmt.cond, stmt.srcSemicolon);
   }
 
   void write(AST::ExprStmt &stmt) {
@@ -187,9 +187,11 @@ public:
   }
 
   void write(AST::If &stmt) {
-    write(stmt.srcKwIf, want_space(), stmt.cond, want_space(), stmt.ifPass);
-    if (stmt.ifFail)
-      write(want_space(), stmt.srcKwElse, want_space(), stmt.ifFail);
+    if (stmt.ifFail) {
+      write(stmt.srcKwIf, want_space(), stmt.cond, want_space(), stmt.ifPass, want_space(), stmt.srcKwElse, want_space(), stmt.ifFail);
+    } else {
+      write(stmt.srcKwIf, want_space(), stmt.cond, want_space(), stmt.ifPass);
+    }
   }
 
   void write(AST::Preserve &stmt);
@@ -207,8 +209,7 @@ public:
 
   void write(AST::Visit &stmt) {
     write(
-        stmt.srcKwVisit, want_space(), stmt.name, want_space(), stmt.srcKwIn, want_space(), stmt.expr,
-        want_space(), stmt.body);
+        stmt.srcKwVisit, want_space(), stmt.name, want_space(), stmt.srcKwIn, want_space(), stmt.expr, want_space(), stmt.body);
   }
 
   void write(AST::While &stmt) { write(stmt.srcKwWhile, want_space(), stmt.cond, want_space(), stmt.body); }
@@ -250,6 +251,12 @@ private:
   bool wantSpace{};
 
   bool wantNewLine{true};
+
+  int lineNo{1};
+
+  int charNo{1};
+
+  int maxCharNo{1};
 
   int indent{};
 };

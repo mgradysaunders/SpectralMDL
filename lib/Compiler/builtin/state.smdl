@@ -30,11 +30,12 @@ export @(macro) float3 geometry_tangent_v(const int i) = $state.geometry_tangent
 
 export @(macro) float3x3 tangent_space(const int i) = float3x3($state.texture_tangent_u[i], $state.texture_tangent_v[i], $state.normal);
 
-export @(macro) float3x3 geometry_tangent_space(const int i) = float3x3(
-  $state.geometry_tangent_u[i],
-  $state.geometry_tangent_v[i],
-  $state.geometry_normal
-);
+export @(macro) float3x3 geometry_tangent_space(const int i) =
+  float3x3(
+    $state.geometry_tangent_u[i],
+    $state.geometry_tangent_v[i],
+    $state.geometry_normal
+  );
 
 export @(macro) int object_id() = $state.object_id;
 
@@ -48,7 +49,8 @@ export @(macro) float wavelength_min() = $state.wavelength_min;
 
 export @(macro) float wavelength_max() = $state.wavelength_max;
 
-export @(macro) float[WAVELENGTH_BASE_MAX] wavelength_base() = $state.wavelength_base;
+export @(macro) float[WAVELENGTH_BASE_MAX] wavelength_base() =
+  $state.wavelength_base;
 
 export @(macro) float meters_per_scene_unit() = $state.meters_per_scene_unit;
 

@@ -2,14 +2,42 @@
 
 namespace smdl::AST {
 
+void SourceLocation::report_warning(std::string message) const {
+  llvm::WithColor(llvm::errs(), llvm::HighlightColor::Warning) << "[warning] ";
+  if (!file.empty() && line > 0)
+    llvm::WithColor(llvm::errs(), llvm::HighlightColor::Address) << '[' << file << ':' << line << "] ";
+  llvm::errs() << message << '\n';
+}
+
+Identifier::IdentifierName::operator llvm::StringRef() const {
+  if (name) {
+    return name;
+  } else {
+    sanity_check(literalString);
+    sanity_check(literalString->exprKind == AST::ExprKind::LiteralString);
+    return static_cast<AST::LiteralString *>(literalString.get())->value.str();
+  }
+}
+
+vector_or_SmallVector<llvm::StringRef> Identifier::get_string_refs() const {
+  auto refs{vector_or_SmallVector<llvm::StringRef>{}};
+  for (auto &name : names)
+    refs.push_back(llvm::StringRef(name));
+  return refs;
+}
+
 Identifier::operator std::string() const {
   std::string str{};
-  if (isAbs)
-    str += "::";
-  for (size_t i{}; i < names.size(); i++) {
-    str += names[i].name.srcName;
-    if (i + 1 < names.size())
-      str += "::";
+  for (auto &[srcDoubleColon, name, literalString] : names) {
+    for (auto ch : srcDoubleColon)
+      str += ch;
+    if (name) {
+      for (auto ch : name.srcName)
+        str += ch;
+    } else {
+      for (auto ch : static_cast<AST::LiteralString *>(literalString.get())->srcValue)
+        str += ch;
+    }
   }
   return str;
 }
@@ -71,6 +99,19 @@ const char *to_string(BinaryOp op) {
   return {};
 }
 
+Let::Let(
+    SourceRef srcKwLet, SourceRef srcBraceL, vector_or_SmallVector<unique_bump_ptr<Variable>> vars, SourceRef srcBraceR,
+    SourceRef srcKwIn, unique_bump_ptr<Expr> expr)
+    : srcKwLet(srcKwLet), srcBraceL(srcBraceL), vars(std::move(vars)), srcBraceR(srcBraceR), srcKwIn(srcKwIn),
+      expr(std::move(expr)) {}
+
+Let::~Let() {}
+
+ReturnFrom::ReturnFrom(llvm::StringRef srcKwReturnFrom, unique_bump_ptr<Stmt> stmt)
+    : srcKwReturnFrom(srcKwReturnFrom), stmt(std::move(stmt)) {}
+
+ReturnFrom::~ReturnFrom() {}
+
 Function::LetAndCall Function::get_variant_let_and_call_expressions() const {
   if (!(isVariant && params.empty() && definition && llvm::isa<Return>(definition.get())))
     srcLoc.report_error(std::format("function variant '{}' has invalid declaration", name.srcName));
@@ -89,7 +130,8 @@ Function::LetAndCall Function::get_variant_let_and_call_expressions() const {
     srcLoc.report_error(std::format("function variant '{}' definition must be 'let' or call expression", name.srcName));
   for (auto &arg : letAndCall.call->args.args)
     if (!arg.name)
-      srcLoc.report_error(std::format("call in definition of function variant '{}' must only use named arguments", name.srcName));
+      srcLoc.report_error(
+          std::format("call in definition of function variant '{}' must only use named arguments", name.srcName));
   return letAndCall;
 }
 

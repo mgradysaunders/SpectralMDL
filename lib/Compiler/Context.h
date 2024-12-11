@@ -344,7 +344,7 @@ public:
       Emitter &emitter, bool isAbs, llvm::ArrayRef<llvm::StringRef> names, const AST::SourceLocation &srcLoc);
 
   [[nodiscard]] Value resolve(Emitter &emitter, const AST::Identifier &identifier) {
-    return resolve(emitter, identifier.isAbs, identifier.get_string_refs(), identifier.srcLoc);
+    return resolve(emitter, identifier.is_absolute(), identifier.get_string_refs(), identifier.srcLoc);
   }
 
   [[nodiscard]] llvm::SmallVector<Value> resolve_arguments(

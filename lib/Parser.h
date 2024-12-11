@@ -252,8 +252,6 @@ public:
 
   [[nodiscard]] auto parse_import_path(bool isUnicode) -> unique_bump_ptr_wrapper<AST::Identifier>;
 
-  [[nodiscard]] auto parse_unicode_name() -> std::optional<AST::Name>;
-
   [[nodiscard]] auto parse_using_alias() -> unique_bump_ptr_wrapper<AST::UsingAlias>;
 
   [[nodiscard]] auto parse_using_import() -> unique_bump_ptr_wrapper<AST::UsingImport>;

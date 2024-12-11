@@ -2,15 +2,20 @@
 
 using ::math import *;
 
-export @(macro pure) float4 quat_rotate(const float theta, const float3 v) = float4(#sin(theta / 2) * normalize(v), #cos(theta / 2));
+export @(macro pure) float4 quat_rotate(const float theta, const float3 v) =
+  float4(#sin(theta / 2) * normalize(v), #cos(theta / 2));
 
-export @(macro pure) float4 quat_rotate(const float3 u, const float3 v) = normalize(float4(cross(u, v), 1 + dot(u, v)));
+export @(macro pure) float4 quat_rotate(const float3 u, const float3 v) =
+  normalize(float4(cross(u, v), 1 + dot(u, v)));
 
-export @(macro pure) float4 quat_transpose(const float4 q) = float4(-1.0, -1.0, -1.0, 1.0) * q;
+export @(macro pure) float4 quat_transpose(const float4 q) =
+  float4(-1.0, -1.0, -1.0, 1.0) * q;
 
-export @(macro pure) float3 quat_transform_vector(const float4 q, const float3 u) = (w := q.w) * w * u + (v := q.xyz) * dot(v, u) + cross(v, 2 * w * u + cross(v, u));
+export @(macro pure) float3 quat_transform_vector(const float4 q, const float3 u) =
+  (w := q.w) * w * u + (v := q.xyz) * dot(v, u) + cross(v, 2 * w * u + cross(v, u));
 
-export @(macro pure) float4 quat_multiply(const float4 q, const float4 r) = float4(1.0, 1.0, 1.0, -1.0) * (q.wwwx * r.xyzx + q.xyzy * r.wwwy + q.yzxz * r.zxyz - q.zxyw * r.yzxw);
+export @(macro pure) float4 quat_multiply(const float4 q, const float4 r) =
+  float4(1.0, 1.0, 1.0, -1.0) * (q.wwwx * r.xyzx + q.xyzy * r.wwwy + q.yzxz * r.zxyz - q.zxyw * r.yzxw);
 
 export @(macro pure) float3 quat_unit_x(const float4 q) = quat_transform_vector(q, float3(1.0, 0.0, 0.0));
 
