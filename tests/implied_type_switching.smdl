@@ -61,8 +61,7 @@ typedef (Cat | Dog) AnyAnimal;
 // template <typename T> requires Animal<T> 
 // string get_animal_name(T animal) { return animal.name; }
 // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-@(pure)
-string get_animal_name(Animal animal) = animal.name;
+@(pure) string get_animal_name(Animal animal) = animal.name;
 
 // 'AnyAnimal' is a concrete union (union types MUST be concrete!) 
 // that is analogous to a variant in C++. When the template function
@@ -77,8 +76,8 @@ string get_animal_name(Animal animal) = animal.name;
 //   return std::visit(vis, animal);
 // }
 // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-@(pure visible noinline)
-string get_animal_union_name(AnyAnimal animal) = get_animal_name(animal);
+@(pure visible noinline) string get_animal_union_name(AnyAnimal animal) =
+  get_animal_name(animal);
 
 unit_test "Implied type switching" {
   #assert(#typeof(Animal()) == Cat); // Default constructor returns 'Cat'
@@ -98,8 +97,8 @@ unit_test "Implied type switching" {
 // template <typename T> requires Animal<T>
 // string get_animal_name_with_pointer(T *animal) { return animal->name; }
 // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-@(pure)
-string get_animal_name_with_pointer(&Animal animal) = animal.name;
+@(pure) string get_animal_name_with_pointer(&Animal animal) =
+  animal.name;
 
 // '&AnyAnimal' is a concrete pointer to union type. The same logic of it 
 // always being a pointer to some 'Animal' still applies, and the compiler
@@ -112,8 +111,8 @@ string get_animal_name_with_pointer(&Animal animal) = animal.name;
 //   return std::visit(vis, *animal);
 // }
 // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-@(pure visible noinline)
-string get_animal_union_name_with_pointer(&AnyAnimal animal) = get_animal_name_with_pointer(animal);
+@(pure visible noinline) string get_animal_union_name_with_pointer(&AnyAnimal animal) =
+  get_animal_name_with_pointer(animal);
 
 unit_test "Implied type switching with pointers" {
   auto cat(AnyAnimal(Cat()));
@@ -177,8 +176,7 @@ typedef (Disk | Rect) AnyShape;
 //   return M_PI * shape.radius * shape.radius;
 // }
 // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-@(pure noinline)
-float compute_area(inline Disk shape) = $PI * radius * radius;
+@(pure noinline) float compute_area(inline Disk shape) = $PI * radius * radius;
 
 // This is a concrete overload of 'compute_area()' for the 'Rect' type.
 //
@@ -188,8 +186,7 @@ float compute_area(inline Disk shape) = $PI * radius * radius;
 //   return shape.extent.x * shape.extent.y;
 // }
 // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-@(pure noinline)
-float compute_area(inline Rect shape) = #prod(extent);
+@(pure noinline) float compute_area(inline Rect shape) = #prod(extent);
 
 // This is a concrete overload of 'compute_area()' for the 'AnyShape' type
 // that uses the 'visit' keyword to generate a type switch that dispatches
@@ -202,8 +199,7 @@ float compute_area(inline Rect shape) = #prod(extent);
 //   return std::visit(vis, shape);
 // }
 // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-@(pure noinline)
-float compute_area(AnyShape shape) = compute_area(visit shape);
+@(pure noinline) float compute_area(AnyShape shape) = compute_area(visit shape);
 
 unit_test "Implied type switching with 'visit' keyword" {
   auto disk(AnyShape(Disk()));
