@@ -113,7 +113,9 @@ Value Emitter::emit(AST::Function &decl) {
     decl.crumb = crumb;
   }
   context.validate_decl_name(decl.module, "function", decl.name);
-  declare(decl.name, context.get_compile_time_function(context.get_function(*this, &decl)), &decl);
+  context.get_function(*this, &decl);
+  // NOTE: Moved to `Function()` to get ordinary recursion to work. Needs design revision.
+  // declare(decl.name, context.get_compile_time_function(context.get_function(*this, &decl)), &decl);
   return {};
 }
 
@@ -169,7 +171,8 @@ Value Emitter::emit(AST::UnitTest &decl) {
     decl.crumb = crumb;
   }
   if (context.mdl.enableUnitTests) {
-    auto func{FunctionInstance{*this, decl}};
+    auto func{FunctionInstance{}};
+    func.initialize(*this, decl);
     auto &unitTest{context.mdl.unitTests.emplace_back()};
     unitTest.moduleName = module->name;
     unitTest.name = decl.name->value.str();

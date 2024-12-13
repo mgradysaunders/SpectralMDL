@@ -97,13 +97,13 @@ int main(int argc, char **argv) {
     if (subFormat) {
       if (auto error = mdl.format_source()) {
         error->print();
-        return EXIT_FAILURE;
+        std::exit(EXIT_FAILURE);
       }
-      return EXIT_SUCCESS;
+      std::exit(EXIT_SUCCESS);
     }
     if (auto error = mdl.compile(smdl::OptLevel(unsigned(optLevel)))) {
       error->print();
-      return EXIT_FAILURE;
+      std::exit(EXIT_FAILURE);
     }
     if (subDump) {
       if (outputFilename.getNumOccurrences()) {

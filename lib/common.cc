@@ -6,29 +6,6 @@
 
 namespace smdl {
 
-extern "C" {
-
-SMDL_EXPORT void smdl_ptex_eval(const state_t &state, texture_ptex_t &tex, int_t first, int_t num, float_t *result) {
-  std::fill(result, result + num, 0.0f);
-#if WITH_PTEX
-  auto ptexture{static_cast<Ptexture_t *>(tex.ptr)};
-  if (!ptexture || !ptexture->filter)
-    return;
-  int_t num_channels = static_cast<PtexTexture *>(ptexture->texture)->numChannels() - num;
-  num = std::min(num, num_channels);
-  if (num <= 0)
-    return;
-  static_cast<PtexFilter *>(ptexture->filter)
-      ->eval(
-          result, first, num, state.ptex_face_id, state.ptex_face_uv.x, state.ptex_face_uv.y,
-          /*uw1=*/0.0f, /*vw1=*/0.0f,
-          /*uw2=*/0.0f, /*vw2=*/0.0f,
-          /*width=*/1.0f, /*blur=*/0.0f);
-#endif // #if WITH_PTEX
-}
-
-} // extern "C"
-
 void state_t::finalize_for_runtime_conventions() {
   // 1. Orthonormalize the shading normal and tangent vectors. Still in object space!
   normal = normalize(normal);
@@ -81,5 +58,28 @@ void state_t::finalize_for_runtime_conventions() {
   internal_to_world_matrix_fwd = object_to_world_matrix_fwd * internal_to_object_matrix_fwd;
   internal_to_world_matrix_inv = internal_to_object_matrix_inv * object_to_world_matrix_inv;
 }
+
+extern "C" {
+
+SMDL_EXPORT void smdl_ptex_evaluate(const state_t &state, texture_ptex_t &tex, int_t first, int_t num, float_t *result) {
+  std::fill(result, result + num, 0.0f);
+#if WITH_PTEX
+  auto ptexture{static_cast<Ptexture_t *>(tex.ptr)};
+  if (!ptexture || !ptexture->filter)
+    return;
+  int_t num_channels = static_cast<PtexTexture *>(ptexture->texture)->numChannels() - num;
+  num = std::min(num, num_channels);
+  if (num <= 0)
+    return;
+  static_cast<PtexFilter *>(ptexture->filter)
+      ->eval(
+          result, first, num, state.ptex_face_id, state.ptex_face_uv.x, state.ptex_face_uv.y,
+          /*uw1=*/0.0f, /*vw1=*/0.0f,
+          /*uw2=*/0.0f, /*vw2=*/0.0f,
+          /*width=*/1.0f, /*blur=*/0.0f);
+#endif // #if WITH_PTEX
+}
+
+} // extern "C"
 
 } // namespace smdl

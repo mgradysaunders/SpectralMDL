@@ -9,16 +9,17 @@ class FunctionInstance final {
 public:
   FunctionInstance() = default;
 
-  explicit FunctionInstance(Emitter &emitter0, AST::Function &decl, const ParamList &params, llvm::ArrayRef<Type *> argTypes);
+  /// Initialize from an `AST::Function` declaration with the given parameters and resolved argument types.
+  void initialize(Emitter &emitter0, AST::Function &decl, const ParamList &params, llvm::ArrayRef<Type *> argTypes);
 
-  /// Construct a concrete function instance from an 'AST::UnitTest' declaration.
-  explicit FunctionInstance(Emitter &emitter0, AST::UnitTest &decl);
+  /// Initialize from an `AST::UnitTest` declaration.
+  void initialize(Emitter &emitter0, AST::UnitTest &decl);
 
-  /// Construct a concrete function instance from an 'AST::Expr' that returns the result of the expression.
-  explicit FunctionInstance(Emitter &emitter0, AST::Expr &expr);
+  /// Initialize from an `AST::Expr` that returns the result of the expression.
+  void initialize(Emitter &emitter0, AST::Expr &expr);
 
-  /// Construct a concrete function instance from an 'EnumType' that returns the string name of an enum value.
-  explicit FunctionInstance(Emitter &emitter0, EnumType *enumType);
+  /// Initialize from an `EnumType` that returns the string name of an enum value.
+  void initialize(Emitter &emitter0, EnumType *enumType);
 
   /// Get the link name for the function (to look it up later in the JIT module).
   [[nodiscard]] llvm::StringRef get_link_name() const { return llvmFunc->getName(); }
@@ -69,9 +70,9 @@ public:
 };
 
 /// This is the representation of a function, which necessarily corresponds to 1 specific
-/// 'AST::Function' in the source code. Note however that a function in the source code may
-/// not necessarily correspond to 1 concrete LLVM function. It may be a '@(macro)', in which
-/// case it is always expanded inline, or it may have 'auto' parameters in which case more
+/// `AST::Function` in the source code. Note however that a function in the source code may
+/// not necessarily correspond to 1 concrete LLVM function. It may be a `@(macro)`, in which
+/// case it is always expanded inline, or it may have `auto` parameters in which case more
 /// than 1 LLVM version of the function may end up being compiled.
 class Function final {
 public:
@@ -92,7 +93,7 @@ public:
   /// Is the function linked in from the C++ host program?
   [[nodiscard]] bool is_foreign() const { return decl.has_attr("foreign"); }
 
-  /// Is the function pure? (meaning there is no '$state' pointer)
+  /// Is the function pure? (meaning there is no `$state` pointer)
   [[nodiscard]] bool is_pure() const { return decl.has_attr("pure"); }
 
   /// Is the function always macro-inlined?
@@ -111,12 +112,12 @@ public:
   /// Does the function have any abstract parameters?
   [[nodiscard]] bool has_abstract_parameters() const { return params.has_any_abstract(); }
 
-  /// Does the function have a unique concrete 'FunctionInstance'?
+  /// Does the function have a unique concrete `FunctionInstance`?
   [[nodiscard]] bool has_unique_concrete_instance() const {
     return has_definition() && !has_abstract_parameters() && !is_macro() && !is_variant();
   }
 
-  /// If the function has a unique concrete 'FunctionInstance', return it. Else return null.
+  /// If the function has a unique concrete `FunctionInstance`, return it. Else return null.
   [[nodiscard]] const FunctionInstance *get_unique_concrete_instance() {
     if (has_unique_concrete_instance() && !instances.empty()) {
       return &instances.begin()->second;
@@ -129,7 +130,7 @@ public:
   /// This is true if:
   /// 1. The function has a unique concrete instance, AND
   /// 2. The function takes no arguments, AND
-  /// 3. The function declaration has the abstract return type 'material'.
+  /// 3. The function declaration has the abstract return type `material`.
   [[nodiscard]] bool represents_material() const;
 
   [[nodiscard]] Value call(Emitter &emitter0, const ArgList &args, const AST::SourceLocation &srcLoc = {});

@@ -952,8 +952,10 @@ Value StructType::construct(Emitter &emitter, const ArgList &args, const AST::So
     if (args.is_one_positional()) {
       if (args[0].value.type->is_enum()) {
         auto enumType{static_cast<EnumType *>(args[0].value.type)};
-        if (!enumType->enumToString)
-          enumType->enumToString = context.bump_allocate<FunctionInstance>(emitter, enumType);
+        if (!enumType->enumToString) {
+          enumType->enumToString = context.bump_allocate<FunctionInstance>();
+          enumType->enumToString->initialize(emitter, enumType);
+        }
         return enumType->enumToString->call(emitter, {emitter.rvalue(args[0].value)}, srcLoc);
       }
     }

@@ -2,6 +2,7 @@ add_library(
   SpectralMDL 
   SHARED
     "AST.cc"
+    "BumpPtrAllocator.cc"
     "common.cc"
     "Compiler/Context.cc"
     "Compiler/Emitter.cc"
