@@ -1139,14 +1139,16 @@ export @(macro pure) auto all(const auto a) = #all(a);
 export @(macro pure) auto any(const auto a) = #any(a);
 export @(macro pure) auto max(const auto a, const auto b) = #max(a, b);
 export @(macro pure) auto min(const auto a, const auto b) = #min(a, b);
-export @(macro pure) auto clamp(const auto a, const auto min, const auto max) = #max(min, #min(a, max));
+export @(macro pure) auto clamp(const auto a, const auto min, const auto max) =
+  #max(min, #min(a, max));
 export @(macro pure) auto saturate(const auto a) = clamp(a, 0.0, 1.0);
 export @(macro pure) auto floor(const auto a) = #floor(a);
 export @(macro pure) auto ceil(const auto a) = #ceil(a);
 export @(macro pure) auto round(const auto a) = #round(a);
 export @(macro pure) auto trunc(const auto a) = #trunc(a);
 export @(macro pure) auto frac(const auto a) = a - #floor(a);
-export @(macro pure) auto fmod(const auto a, const auto b) = a % b;
+export @(macro pure) auto fmod(const auto a, const auto b) =
+  a % b;
 export @(macro pure) auto isfinite(const auto a) = #isfpclass(a, 0b0111111000);
 export @(macro pure) auto isnormal(const auto a) = #isfpclass(a, 0b0100001000);
 export @(macro pure) auto isinf(const auto a) = #isfpclass(a, 0b1000000100);
@@ -1182,8 +1184,10 @@ export @(macro pure) auto average(const auto a) {
     return #sum(a) / a.size;
   }
 }
-export @(macro pure) auto lerp(const auto a, const auto b, const auto l) = (1.0 - l) * a + l * b;
-export @(macro pure) auto step(const auto a, const auto b) = #select(b < a, 0.0, 1.0);
+export @(macro pure) auto lerp(const auto a, const auto b, const auto l) =
+  (1.0 - l) * a + l * b;
+export @(macro pure) auto step(const auto a, const auto b) =
+  #select(b < a, 0.0, 1.0);
 export @(macro pure) auto smoothstep(const auto a, const auto b, const auto l) {
   const auto t(saturate(l)), s(1 - t);
   return s * s * (1 + 2 * t) * a + t * t * (1 + 2 * s) * b;
@@ -1191,8 +1195,10 @@ export @(macro pure) auto smoothstep(const auto a, const auto b, const auto l) {
 export @(macro pure) auto dot(const auto a, const auto b) = #sum(a * b);
 export @(macro pure) auto length(const auto a) = #sqrt(#sum(a * a));
 export @(macro pure) auto normalize(const auto a) = a * (1 / length(a));
-export @(macro pure) auto distance(const auto a, const auto b) = length(b - a);
-export @(macro pure) auto cross(const auto a, const auto b) = a.yzx * b.zxy - a.zxy * b.yzx;
+export @(macro pure) auto distance(const auto a, const auto b) =
+  length(b - a);
+export @(macro pure) auto cross(const auto a, const auto b) =
+  a.yzx * b.zxy - a.zxy * b.yzx;
 export @(macro pure) auto transpose(const auto a) = #transpose(a);
 export @(noinline) color blackbody(const float temperature) {
   const auto t(color($state.wavelength_base) * (temperature / 14.387e6));
@@ -1216,10 +1222,14 @@ export @(noinline) float luminance(const color a) {
   return result / $WAVELENGTH_BASE_MAX;
 }
 @(foreign pure) float atan2f(float y, float x);
-export @(macro pure) auto atan2(const float y, const float x) = atan2f(y, x);
-export @(macro pure) auto atan2(const float2 y, const float2 x) = float2(atan2(y[0], x[0]), atan2(y[1], x[1]));
-export @(macro pure) auto atan2(const float3 y, const float3 x) = float3(atan2(y[0], x[0]), atan2(y[1], x[1]), atan2(y[2], x[2]));
-export @(macro pure) auto atan2(const float4 y, const float4 x) = float4(atan2(y[0], x[0]), atan2(y[1], x[1]), atan2(y[2], x[2]), atan2(y[3], x[3]));
+export @(macro pure) auto atan2(const float y, const float x) =
+  atan2f(y, x);
+export @(macro pure) auto atan2(const float2 y, const float2 x) =
+  float2(atan2(y[0], x[0]), atan2(y[1], x[1]));
+export @(macro pure) auto atan2(const float3 y, const float3 x) =
+  float3(atan2(y[0], x[0]), atan2(y[1], x[1]), atan2(y[2], x[2]));
+export @(macro pure) auto atan2(const float4 y, const float4 x) =
+  float4(atan2(y[0], x[0]), atan2(y[1], x[1]), atan2(y[2], x[2]), atan2(y[3], x[3]));
 )*";
 
 static const char *scene = R"*(#smdl_syntax
@@ -1660,15 +1670,12 @@ export @(hot noinline) color rgb_to_color_implementation(float3 rgb) {
     if ((0.0 <= t) & (t <= RGB_TO_COLOR_NUM_WAVES)) {
       int t0(#min(int(t), RGB_TO_COLOR_NUM_WAVES - 2));
       t = #min(t - t0, 1.0);
-      c[i] = #sum(float2(1 - t, t) * 
-            (coeff_w * float2(&RGB_TO_COLOR_TABLES[0][t0]) +
-             coeff_cmy * float2(&RGB_TO_COLOR_TABLES[i0 + 1][t0]) +
-             coeff_rgb * float2(&RGB_TO_COLOR_TABLES[i2 + 4][t0])));
+      c[i] = #sum(float2(1 - t, t) * (coeff_w * float2(&RGB_TO_COLOR_TABLES[0][t0]) + coeff_cmy * float2(&RGB_TO_COLOR_TABLES[i0 + 1][t0]) + coeff_rgb * float2(&RGB_TO_COLOR_TABLES[i2 + 4][t0])));
     }
   }
   c = #max(c * 0.94, 0.0);
   c = #min(c, 1.0);
-  return c; 
+  return c;
 }
 export @(macro) color rgb_to_color(const float3 rgb) {
   if (#all(rgb.xx == rgb.yz)) {
@@ -1682,8 +1689,11 @@ export @(macro) color rgb_to_color(const float r, const float g, const float b) 
 }
 export @(pure) float3 wyman_1931_xyz(const float w) {
   auto x(w - auto(442.0, 599.8, 501.1, 568.8, 530.9, 437.0, 459.0));
-  x *= #select(x < 0, auto(0.0624, 0.0264, 0.0490, 0.0213, 0.0613, 0.0845, 0.0385),
-                      auto(0.0374, 0.0323, 0.0382, 0.0247, 0.0322, 0.0278, 0.0725));
+  x *= #select(
+    x < 0,
+    auto(0.0624, 0.0264, 0.0490, 0.0213, 0.0613, 0.0845, 0.0385),
+    auto(0.0374, 0.0323, 0.0382, 0.0247, 0.0322, 0.0278, 0.0725)
+  );
   x *= 0.5 * x;
   const auto x1(x);
   auto y(1.0 + x);
@@ -1707,15 +1717,15 @@ export @(pure) float wyman_1931_y(const float w) {
 }
 export @(hot noinline) float3 color_to_rgb(const color c) {
   float3 result(0.0);
-  for (int i = 0; i < $WAVELENGTH_BASE_MAX; ++i)
-    result += wyman_1931_xyz($state.wavelength_base[i]) * c[i];
+  for (int i = 0; i < $WAVELENGTH_BASE_MAX; ++i) result += wyman_1931_xyz($state.wavelength_base[i]) * c[i];
   result *= 0.01;
   result /= $WAVELENGTH_BASE_MAX;
   result *= $state.wavelength_max - $state.wavelength_min; 
   result = float3x3(
     float3(+3.240450, -0.969266, +0.0556434),
     float3(-1.537140, +1.876010, -0.2040260),
-    float3(-0.498532, +0.041556, +1.0572300)) * result;
+    float3(-0.498532, +0.041556, +1.0572300)
+  ) * result;
   return result;
 }
 @(visible noinline) void rgb_to_color_jit(const &float3 rgb, const &float cptr) {
@@ -1728,15 +1738,19 @@ export @(hot noinline) float3 color_to_rgb(const color c) {
 )*";
 
 static const char *specular = R"*(#smdl_syntax
-export @(macro pure) auto reflect(const float3 wi, const float3 wm) = 2 * #sum(wi * wm) * wm - wi;
-export @(macro pure) auto refract(const float3 wi, const float3 wm, const float ior, const float cos_thetat) = -ior * wi + (ior * #sum(wi * wm) + cos_thetat) * wm;
-export @(macro pure) auto refract(const float3 wi, const float3 wm, const float ior) = refract(wi, wm, ior, #sqrt(1 - ior * ior * (1 - (c := #sum(wi * wm)) * c)) * -#sign(c));
-export @(macro pure) auto refraction_half_vector(const float3 wo, const float3 wi, const float ior) = (vh := -ior * wo + wi) * #sign(vh.z);
-export @(macro pure) auto refraction_half_vector_jacobian(const float3 wo, const float3 wi, const float ior) {
-  return #abs(#sum(wi * (vh := refraction_half_vector(wo, wi, ior)))) / ((vh2 := #sum(vh * vh)) * #sqrt(vh2));
-}
+export @(macro pure) auto reflect(const float3 wi, const float3 wm) =
+  2 * #sum(wi * wm) * wm - wi;
+export @(macro pure) auto refract(const float3 wi, const float3 wm, const float ior, const float cos_thetat) =
+  -ior * wi + (ior * #sum(wi * wm) + cos_thetat) * wm;
+export @(macro pure) auto refract(const float3 wi, const float3 wm, const float ior) =
+  refract(wi, wm, ior, #sqrt(1 - ior * ior * (1 - (c := #sum(wi * wm)) * c)) * -#sign(c));
+export @(macro pure) auto refraction_half_vector(const float3 wo, const float3 wi, const float ior) =
+  (vh := -ior * wo + wi) * #sign(vh.z);
+export @(macro pure) auto refraction_half_vector_jacobian(const float3 wo, const float3 wi, const float ior) =
+  #abs(#sum(wi * (vh := refraction_half_vector(wo, wi, ior)))) / ((vh2 := #sum(vh * vh)) * #sqrt(vh2));
 export @(macro pure) auto schlick_F0(const auto ior) = #pow((ior - 1) / (ior + 1), 2);
-export @(macro pure) auto schlick_fresnel(const auto cos_theta, const auto F0, const auto F90 = 1.0, const float exponent = 5) = F0 + (F90 - F0) * #pow(#max(1 - #abs(cos_theta), 0), exponent);
+export @(macro pure) auto schlick_fresnel(const auto cos_theta, const auto F0, const auto F90 = 1.0, const float exponent = 5) =
+  F0 + (F90 - F0) * #pow(#max(1 - #abs(cos_theta), 0), exponent);
 export @(pure) float dielectric_fresnel(const float cos_thetai, const float ior) {
   const auto cos2_thetat(1 - ior * ior * (1 - cos_thetai * cos_thetai));
   const auto cos_thetat(#sqrt(#max(cos2_thetat, 0)) * #sign(cos_thetai));

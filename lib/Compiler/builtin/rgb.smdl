@@ -1,5 +1,6 @@
 #smdl_syntax
 
+// smdl format off
 const int RGB_TO_COLOR_NUM_WAVES = 32;
 const float RGB_TO_COLOR_MIN_WAVE = 380.0;
 const float RGB_TO_COLOR_MAX_WAVE = 720.0;
@@ -39,6 +40,7 @@ const static auto RGB_TO_COLOR_TABLES = auto[](
     +0.9850401, +0.7902985, +0.5608220, +0.3313346, +0.1369241, +0.0189149, -0.0000051, -0.0004240,
     -0.0004193, +0.0017473, +0.0037999, -0.0005510, -0.0000437, +0.0075875, +0.0257957, +0.0381684,
     +0.0494896, +0.0495960, +0.0498148, +0.0398409, +0.0305010, +0.0212431, +0.0069597, +0.0041734));
+// smdl format on
 
 export @(hot noinline) color rgb_to_color_implementation(float3 rgb) {
   const int i0(#all(rgb.xx < rgb.yz) ? 0 : rgb.y < rgb.z ? 1 : 2);
@@ -59,15 +61,12 @@ export @(hot noinline) color rgb_to_color_implementation(float3 rgb) {
     if ((0.0 <= t) & (t <= RGB_TO_COLOR_NUM_WAVES)) {
       int t0(#min(int(t), RGB_TO_COLOR_NUM_WAVES - 2));
       t = #min(t - t0, 1.0);
-      c[i] = #sum(float2(1 - t, t) * 
-            (coeff_w * float2(&RGB_TO_COLOR_TABLES[0][t0]) +
-             coeff_cmy * float2(&RGB_TO_COLOR_TABLES[i0 + 1][t0]) +
-             coeff_rgb * float2(&RGB_TO_COLOR_TABLES[i2 + 4][t0])));
+      c[i] = #sum(float2(1 - t, t) * (coeff_w * float2(&RGB_TO_COLOR_TABLES[0][t0]) + coeff_cmy * float2(&RGB_TO_COLOR_TABLES[i0 + 1][t0]) + coeff_rgb * float2(&RGB_TO_COLOR_TABLES[i2 + 4][t0])));
     }
   }
   c = #max(c * 0.94, 0.0);
   c = #min(c, 1.0);
-  return c; 
+  return c;
 }
 
 // The nontrivial implementation is factored into another function because, despite the fact that
@@ -92,8 +91,11 @@ export @(macro) color rgb_to_color(const float r, const float g, const float b) 
 // exponential series.
 export @(pure) float3 wyman_1931_xyz(const float w) {
   auto x(w - auto(442.0, 599.8, 501.1, 568.8, 530.9, 437.0, 459.0));
-  x *= #select(x < 0, auto(0.0624, 0.0264, 0.0490, 0.0213, 0.0613, 0.0845, 0.0385),
-                      auto(0.0374, 0.0323, 0.0382, 0.0247, 0.0322, 0.0278, 0.0725));
+  x *= #select(
+    x < 0,
+    auto(0.0624, 0.0264, 0.0490, 0.0213, 0.0613, 0.0845, 0.0385),
+    auto(0.0374, 0.0323, 0.0382, 0.0247, 0.0322, 0.0278, 0.0725)
+  );
   x *= 0.5 * x;
   const auto x1(x);
   auto y(1.0 + x);
@@ -120,15 +122,15 @@ export @(pure) float wyman_1931_y(const float w) {
 
 export @(hot noinline) float3 color_to_rgb(const color c) {
   float3 result(0.0);
-  for (int i = 0; i < $WAVELENGTH_BASE_MAX; ++i)
-    result += wyman_1931_xyz($state.wavelength_base[i]) * c[i];
+  for (int i = 0; i < $WAVELENGTH_BASE_MAX; ++i) result += wyman_1931_xyz($state.wavelength_base[i]) * c[i];
   result *= 0.01;
   result /= $WAVELENGTH_BASE_MAX;
   result *= $state.wavelength_max - $state.wavelength_min; // TODO $state.wavelength_pdf?
   result = float3x3(
     float3(+3.240450, -0.969266, +0.0556434),
     float3(-1.537140, +1.876010, -0.2040260),
-    float3(-0.498532, +0.041556, +1.0572300)) * result;
+    float3(-0.498532, +0.041556, +1.0572300)
+  ) * result;
   return result;
 }
 

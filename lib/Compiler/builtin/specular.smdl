@@ -1,20 +1,24 @@
 #smdl_syntax
 
-export @(macro pure) auto reflect(const float3 wi, const float3 wm) = 2 * #sum(wi * wm) * wm - wi;
+export @(macro pure) auto reflect(const float3 wi, const float3 wm) =
+  2 * #sum(wi * wm) * wm - wi;
 
-export @(macro pure) auto refract(const float3 wi, const float3 wm, const float ior, const float cos_thetat) = -ior * wi + (ior * #sum(wi * wm) + cos_thetat) * wm;
+export @(macro pure) auto refract(const float3 wi, const float3 wm, const float ior, const float cos_thetat) =
+  -ior * wi + (ior * #sum(wi * wm) + cos_thetat) * wm;
 
-export @(macro pure) auto refract(const float3 wi, const float3 wm, const float ior) = refract(wi, wm, ior, #sqrt(1 - ior * ior * (1 - (c := #sum(wi * wm)) * c)) * -#sign(c));
+export @(macro pure) auto refract(const float3 wi, const float3 wm, const float ior) =
+  refract(wi, wm, ior, #sqrt(1 - ior * ior * (1 - (c := #sum(wi * wm)) * c)) * -#sign(c));
 
-export @(macro pure) auto refraction_half_vector(const float3 wo, const float3 wi, const float ior) = (vh := -ior * wo + wi) * #sign(vh.z);
+export @(macro pure) auto refraction_half_vector(const float3 wo, const float3 wi, const float ior) =
+  (vh := -ior * wo + wi) * #sign(vh.z);
 
-export @(macro pure) auto refraction_half_vector_jacobian(const float3 wo, const float3 wi, const float ior) {
-  return #abs(#sum(wi * (vh := refraction_half_vector(wo, wi, ior)))) / ((vh2 := #sum(vh * vh)) * #sqrt(vh2));
-}
+export @(macro pure) auto refraction_half_vector_jacobian(const float3 wo, const float3 wi, const float ior) =
+  #abs(#sum(wi * (vh := refraction_half_vector(wo, wi, ior)))) / ((vh2 := #sum(vh * vh)) * #sqrt(vh2));
 
 export @(macro pure) auto schlick_F0(const auto ior) = #pow((ior - 1) / (ior + 1), 2);
 
-export @(macro pure) auto schlick_fresnel(const auto cos_theta, const auto F0, const auto F90 = 1.0, const float exponent = 5) = F0 + (F90 - F0) * #pow(#max(1 - #abs(cos_theta), 0), exponent);
+export @(macro pure) auto schlick_fresnel(const auto cos_theta, const auto F0, const auto F90 = 1.0, const float exponent = 5) =
+  F0 + (F90 - F0) * #pow(#max(1 - #abs(cos_theta), 0), exponent);
 
 export @(pure) float dielectric_fresnel(const float cos_thetai, const float ior) {
   const auto cos2_thetat(1 - ior * ior * (1 - cos_thetai * cos_thetai));

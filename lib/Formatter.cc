@@ -1,24 +1,24 @@
+// vim:foldmethod=marker:foldlevel=0:fmr=--{,--}
 #include "Formatter.h"
 
 namespace smdl {
 
+void Formatter::write_indent_if_necessary() {
+  if (!outSrc.empty() && outSrc.back() == '\n')
+    for (size_t i = 0; i < indent; i++)
+      write_char(' ');
+}
+
 void Formatter::write_char(char ch) {
-  if (str.empty() && (ch == '\n' || ch == ' '))
+  if (outSrc.empty() && (ch == '\n' || ch == ' '))
     return;
   if (ch == '\n') {
     lineNo++;
     charNo = 1;
   } else {
     charNo++;
-    maxCharNo = std::max(maxCharNo, charNo);
   }
-  str.push_back(ch);
-}
-
-void Formatter::write_indent() {
-  if (!str.empty() && str.back() == '\n')
-    for (int i = 0; i < indent; i++)
-      write_char(' ');
+  outSrc.push_back(ch);
 }
 
 [[nodiscard]] static size_t length_with_reduced_whitespace(llvm::StringRef str) {
@@ -31,8 +31,6 @@ void Formatter::write_indent() {
   }
   return num;
 }
-
-// TODO Handle smdl format off somehow
 
 // The idea here is to parse whitespace or comments into adjacent string references. Keep
 // in mind that there may be more than one comment between any two grammatically relevant
@@ -54,21 +52,21 @@ void Formatter::write_indent() {
 // - srcRegions[4] = "\n\n"
 struct WhitespaceOrComments final {
 public:
-  explicit WhitespaceOrComments(llvm::StringRef src) : src0(src) {
+  explicit WhitespaceOrComments(llvm::StringRef src) {
     while (!src.empty()) {
       if (src.starts_with("//")) {
         auto pos{src.find('\n')};
         auto src0{src.take_front(pos)};
         auto src1{src.drop_front(pos)};
         src = src1;
-        srcRegions.push_back({src0});
+        srcRegions.push_back(src0);
         numLineComments++;
       } else if (src.starts_with("/*")) {
         if (auto pos{src.find("*/")}; pos != src.npos) {
           auto src0{src.take_front(pos + 2)};
           auto src1{src.drop_front(pos + 2)};
           src = src1;
-          srcRegions.push_back({src0});
+          srcRegions.push_back(src0);
           numMultilineComments++;
         } else {
           // Shouldn't ever get here?
@@ -81,7 +79,7 @@ public:
         auto src0{src.take_front(pos)};
         auto src1{src.drop_front(pos)};
         src = src1;
-        srcRegions.push_back({src0});
+        srcRegions.push_back(src0);
       }
     }
   }
@@ -110,11 +108,27 @@ public:
   /// Is the given region specifically a line comment?
   [[nodiscard]] bool is_line_comment(size_t i) const { return srcRegions[i].starts_with("//"); }
 
-  /// Is the given region specifically a multiline comment?
-  [[nodiscard]] bool is_multiline_comment(size_t i) const { return srcRegions[i].starts_with("/*"); }
+  /// Is the given region specifically a line comment with the given tokens?
+  [[nodiscard]] bool is_line_comment_with_tokens(size_t i, llvm::ArrayRef<llvm::StringRef> tokens) const {
+    if (is_line_comment(i)) {
+      auto text{srcRegions[i].drop_front(2).trim()};
+      auto textTokens{llvm::SmallVector<llvm::StringRef>{}};
+      text.split(textTokens, " ", /*MaxSplit=*/-1, /*KeepEmpty=*/false);
+      if (textTokens.size() == tokens.size()) {
+        for (size_t i = 0; i < tokens.size(); i++)
+          if (textTokens[i] != tokens[i])
+            return false;
+        return true;
+      }
+    }
+    return false;
+  }
 
-  /// The number of new lines total.
-  [[nodiscard]] size_t num_newlines() const { return src0.count('\n'); }
+  /// Is the given region an `// smdl format off` directive?
+  [[nodiscard]] bool is_smdl_format_off(size_t i) const { return is_line_comment_with_tokens(i, {"smdl", "format", "off"}); }
+
+  /// Is the given region an `// smdl format on` directive?
+  [[nodiscard]] bool is_smdl_format_on(size_t i) const { return is_line_comment_with_tokens(i, {"smdl", "format", "on"}); }
 
   /// The number of new lines in the given source region.
   [[nodiscard]] size_t num_newlines(size_t i) const { return srcRegions[i].count('\n'); }
@@ -129,8 +143,9 @@ public:
     return is_comment(i) && i > 0 && is_whitespace(i - 1) ? num_newlines(i - 1) : 0;
   }
 
-  llvm::StringRef src0{};
+  [[nodiscard]] llvm::StringRef operator[](size_t i) const { return srcRegions[i]; }
 
+public:
   llvm::SmallVector<llvm::StringRef> srcRegions{};
 
   size_t numLineComments{};
@@ -138,63 +153,63 @@ public:
   size_t numMultilineComments{};
 };
 
-void Formatter::write_in_between(const char *newSrcPos) {
-  if (srcPos < newSrcPos) {
-    auto whitespaceOrComments{WhitespaceOrComments(llvm::StringRef(srcPos, newSrcPos - srcPos))};
-    bool forcesNewLine = false;
-    for (size_t i = 0; i < whitespaceOrComments.size(); i++) {
-      if (whitespaceOrComments.is_comment(i)) {
-        size_t numNewLines{whitespaceOrComments.num_newlines_before_comment(i)};
-        if (numNewLines == 0) {
-          write_char(' ');
-        } else {
-          write_char('\n');
-          if (numNewLines > 1 && wantNewLine)
+void Formatter::write(AST::SourceRef src) {
+  if (!src.empty()) {
+    const char *inSrcPos0{src.data()};
+    const char *inSrcPos1{src.data() + src.size()};
+    sanity_check(inSrc.data() <= inSrcPos0 && inSrcPos1 <= inSrc.data() + inSrc.size());
+    sanity_check(inSrcPos <= inSrcPos0);
+    {
+      auto whitespaceOrComments{WhitespaceOrComments(llvm::StringRef(inSrcPos, inSrcPos0 - inSrcPos))};
+      bool forcesNewLine = false;
+      for (size_t i = 0; i < whitespaceOrComments.size(); i++) {
+        if (whitespaceOrComments.is_comment(i)) {
+          size_t numNewLines{whitespaceOrComments.num_newlines_before_comment(i)};
+          if (numNewLines == 0) {
+            write_char(' ');
+          } else {
             write_char('\n');
-          write_indent();
-          if (!wantNewLine) {
-            write_char(' ');
-            write_char(' ');
+            if (numNewLines > 1 && wantNewLine)
+              write_char('\n');
+            write_indent_if_necessary();
+            if (!wantNewLine) {
+              write_char(' ');
+              write_char(' ');
+            }
           }
+          if (whitespaceOrComments.is_smdl_format_off(i)) {
+            if (!formatOff)
+              formatOff = FormatOffLocation{whitespaceOrComments[i].data(), outSrc.size()};
+          } else if (whitespaceOrComments.is_smdl_format_on(i)) {
+            if (formatOff) {
+              outSrc.resize(formatOff->outSrcPos);
+              outSrc.insert(outSrc.end(), formatOff->inSrcPos, whitespaceOrComments[i].data());
+              formatOff = std::nullopt;
+            }
+          }
+          for (char ch : whitespaceOrComments[i])
+            write_char(ch);
+          forcesNewLine = whitespaceOrComments.is_line_comment(i);
         }
-        for (char ch : whitespaceOrComments.srcRegions[i])
-          write_char(ch);
-        forcesNewLine = whitespaceOrComments.is_line_comment(i);
       }
-    }
-    if (!str.empty()) {
-      if (wantNewLine) {
-        write_char('\n');
-        if (whitespaceOrComments.num_trailing_newlines() > 1)
+      if (!outSrc.empty()) {
+        if (wantNewLine) {
           write_char('\n');
-      } else if (forcesNewLine) {
-        write_char('\n');
-        indent += 2;
-      } else if (wantSpace) {
-        write_char(' ');
+          if (whitespaceOrComments.num_trailing_newlines() > 1)
+            write_char('\n');
+        } else if (forcesNewLine) {
+          write_char('\n');
+          indent += 2;
+        } else if (wantSpace) {
+          write_char(' ');
+        }
       }
     }
-  } else {
-    if (!str.empty()) {
-      if (wantNewLine)
-        write_char('\n');
-      else if (wantSpace)
-        write_char(' ');
-    }
-  }
-  wantNewLine = false;
-  wantSpace = false;
-  srcPos = newSrcPos;
-}
-
-void Formatter::write(AST::SourceRef srcRef) {
-  if (!srcRef.empty()) {
-    write_in_between(srcRef.data());
-    if (!str.empty() && str.back() == '\n')
-      write_indent();
-    for (char ch : srcRef)
+    write_indent_if_necessary();
+    for (char ch : src)
       write_char(ch);
-    srcPos = srcRef.data() + srcRef.size();
+    wantNewLine = wantSpace = false; // Reset
+    inSrcPos = inSrcPos1;
   }
 }
 
@@ -213,7 +228,7 @@ void Formatter::write(AST::File &file) {
     write(want_newline(), decl->srcKwExport, want_space(), decl);
 }
 
-//--{ Write: Decl
+//--{ Write: Decls
 void Formatter::write(AST::Decl &decl) {
   write_type_switch<
       AST::Enum, AST::Function, AST::Import, AST::Struct, AST::Tag, AST::Typedef, AST::UnitTest, AST::UsingAlias,
@@ -222,7 +237,7 @@ void Formatter::write(AST::Decl &decl) {
 
 void Formatter::write(AST::Enum &decl) {
   write(decl.srcKwEnum, want_space(), decl.name, decl.annotations, want_space(), decl.srcBraceL);
-  increment_indent(2, [&]() {
+  adjust_indent(2, [&]() {
     for (auto &declarator : decl.declarators) {
       write(want_newline(), declarator.name);
       if (declarator.init)
@@ -256,7 +271,7 @@ void Formatter::write(AST::Function &decl) {
     write(decl.srcSemicolon);
   } else {
     if (auto stmt{llvm::dyn_cast<AST::Return>(decl.definition.get())}) {
-      preserve_indent([&]() {
+      adjust_indent(0, [&]() {
         write(want_space(), decl.srcEq);
         if (charNo > 60) {
           write(want_newline());
@@ -290,7 +305,7 @@ void Formatter::write(AST::Struct &decl) {
     write(want_space(), decl.srcBraceL, decl.srcBraceR, decl.srcSemicolon);
   } else {
     write(want_space(), decl.srcBraceL);
-    increment_indent(2, [&]() {
+    adjust_indent(2, [&]() {
       for (auto &field : decl.fields) {
         write(want_newline(), field.srcKwVoid, want_space(), field.type, want_space(), field.name);
         if (field.init)
@@ -314,7 +329,7 @@ void Formatter::write(AST::Variable &decl) {
   for (auto &declarator : decl.declarators) {
     write(want_space(), declarator.name);
     if (declarator.init != nullptr) {
-      int prevIndent = indent;
+      size_t prevIndent = indent;
       write(want_space(), declarator.srcEq, want_space(), declarator.init);
       indent = prevIndent;
     } else if (declarator.args)
@@ -323,7 +338,9 @@ void Formatter::write(AST::Variable &decl) {
   }
   write(decl.srcSemicolon);
 }
+//--}
 
+//--{ Write: Exprs
 void Formatter::write(AST::Expr &expr) {
   write_type_switch<
       AST::Binary, AST::Call, AST::Cast, AST::Conditional, AST::GetField, AST::GetIndex, AST::Identifier, AST::Intrinsic,
@@ -331,9 +348,19 @@ void Formatter::write(AST::Expr &expr) {
       AST::SizeName, AST::Type, AST::Unary>(expr);
 }
 
-void Formatter::write(AST::Identifier &expr) {
-  for (auto &name : expr.names) {
-    write(name.srcDoubleColon, name.name, name.literalString);
+void Formatter::write(AST::Conditional &expr) {
+  write(
+      expr.cond, want_space(), expr.srcQuestion, want_space(), expr.ifPass, want_space(), expr.srcColon, want_space(),
+      expr.ifFail);
+}
+
+void Formatter::write(AST::GetIndex &expr) {
+  write(expr.expr);
+  for (auto &index : expr.indexes) {
+    write(index.srcBrackL);
+    if (index.expr != nullptr)
+      write(index.expr);
+    write(index.srcBrackR);
   }
 }
 
@@ -341,7 +368,7 @@ void Formatter::write(AST::Let &expr) {
   write(expr.srcKwLet, want_space());
   if (!expr.srcBraceL.empty()) {
     write(expr.srcBraceL);
-    increment_indent(2, [&]() {
+    adjust_indent(2, [&]() {
       for (auto &var : expr.vars)
         write(want_newline(), var);
     });
@@ -357,11 +384,40 @@ void Formatter::write(AST::Type &expr) {
     write(srcAttr, want_space());
   write(expr.expr);
 }
+//--}
 
+//--{ Write: Stmts
 void Formatter::write(AST::Stmt &stmt) {
   write_type_switch<
       AST::Break, AST::Compound, AST::Continue, AST::DeclStmt, AST::Defer, AST::DoWhile, AST::ExprStmt, AST::For, AST::If,
       AST::Preserve, AST::Return, AST::Switch, AST::Unreachable, AST::Visit, AST::While>(stmt);
+}
+
+void Formatter::write(AST::Compound &stmt) {
+  wantNewLine = false;
+  wantSpace = true;
+  write(stmt.srcBraceL);
+  adjust_indent(2, [&]() {
+    for (auto &subStmt : stmt.stmts)
+      write(want_newline(), subStmt);
+  });
+  write(want_newline(), stmt.srcBraceR);
+}
+
+void Formatter::write(AST::For &stmt) {
+  write(
+      stmt.srcKwFor, want_space(), stmt.srcParenL, stmt.init, want_space(), stmt.cond, stmt.srcSemicolonAfterCond, want_space(),
+      stmt.incr, stmt.srcParenR, want_space(), stmt.body);
+}
+
+void Formatter::write(AST::If &stmt) {
+  if (stmt.ifFail) {
+    write(
+        stmt.srcKwIf, want_space(), stmt.cond, want_space(), stmt.ifPass, want_space(), stmt.srcKwElse, want_space(),
+        stmt.ifFail);
+  } else {
+    write(stmt.srcKwIf, want_space(), stmt.cond, want_space(), stmt.ifPass);
+  }
 }
 
 void Formatter::write(AST::Preserve &stmt) {
@@ -378,7 +434,7 @@ void Formatter::write(AST::Switch &stmt) {
     if (!switchCase.is_default())
       write(want_space(), switchCase.cond);
     write(switchCase.srcColon);
-    increment_indent(2, [&]() {
+    adjust_indent(2, [&]() {
       for (auto &subStmt : switchCase.stmts) {
         write(want_newline(), subStmt);
       }
@@ -386,9 +442,20 @@ void Formatter::write(AST::Switch &stmt) {
   }
   write(want_newline(), stmt.srcBraceR);
 }
+//--}
+
+void Formatter::write(const AST::AnnotationBlock &annotations) {
+  write(want_space(), annotations.srcDoubleBrackL);
+  for (auto &annotation : annotations.annotations) {
+    write(annotation.identifier, annotation.args);
+    if (!annotation.srcComma.empty())
+      write(annotation.srcComma, want_space());
+  }
+  write(annotations.srcDoubleBrackR);
+}
 
 void Formatter::write(const AST::Arg &arg) {
-  preserve_indent([&]() {
+  adjust_indent(0, [&]() {
     if (arg.isVisit)
       write(arg.srcKwVisit, want_space());
     if (arg.name)
@@ -399,9 +466,8 @@ void Formatter::write(const AST::Arg &arg) {
 
 void Formatter::write(const AST::ArgList &args) {
   write(args.srcParenL);
-#if 1
   if (args.args.size() > 1 && length_with_reduced_whitespace(args.src) > 80) {
-    increment_indent(2, [&]() {
+    adjust_indent(2, [&]() {
       write(want_newline());
       for (auto &arg : args.args)
         write(want_newline(), arg, arg.srcComma);
@@ -414,29 +480,11 @@ void Formatter::write(const AST::ArgList &args) {
         write(want_space());
     }
   }
-#else
-  auto prevState = maxCharNo = 1;
-  for (auto &arg : args.args) {
-    write(arg, arg.srcComma);
-    if (!arg.srcComma.empty())
-      write(want_space());
-  }
-  if (maxCharNo > 128) {
-    = prevState;
-    str.resize(prevState.strLen);
-    increment_indent(2, [&]() {
-      write(want_newline());
-      for (auto &arg : args.args)
-        write(want_newline(), arg, arg.srcComma);
-    });
-    write(want_newline());
-  }
-#endif
   write(args.srcParenR);
 }
 
 void Formatter::write(const AST::Param &param) {
-  preserve_indent([&]() {
+  adjust_indent(0, [&]() {
     write(param.type, want_space(), param.name);
     if (param.init)
       write(want_space(), param.srcEq, want_space(), param.init);
@@ -447,7 +495,7 @@ void Formatter::write(const AST::Param &param) {
 void Formatter::write(const AST::ParamList &params) {
   write(params.srcParenL);
   if (params.params.size() > 1 && length_with_reduced_whitespace(params.src) > 80) {
-    increment_indent(4, [&]() {
+    adjust_indent(4, [&]() {
       for (auto &param : params.params) {
         write(want_newline(), param, param.srcComma);
       }

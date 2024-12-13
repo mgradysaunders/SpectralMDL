@@ -1,3 +1,4 @@
+// vim:foldmethod=marker:foldlevel=0:fmr=--{,--}
 #pragma once
 
 #include "AST.h"
@@ -10,28 +11,20 @@ public:
 
   struct want_newline final {};
 
-  explicit Formatter(llvm::StringRef src) : src(src) { srcPos = src.data(); }
+  explicit Formatter(llvm::StringRef inSrc) : inSrc(inSrc), inSrcPos(inSrc.data()) {}
+
+  void write_indent_if_necessary();
 
   void write_char(char ch);
 
-  void write_indent();
-
-  void write_in_between(const char *newSrcPos);
-
-  void write(AST::SourceRef srcRef);
+  void write(AST::SourceRef src);
 
   void write(want_space) { wantSpace = true; }
 
   void write(want_newline) { wantNewLine = true; }
 
-  template <typename Func> void preserve_indent(Func &&func) {
-    int prevIndent = indent;
-    std::invoke(std::forward<Func>(func));
-    indent = prevIndent;
-  }
-
-  template <typename Func> void increment_indent(int level, Func &&func) {
-    int prevIndent = indent;
+  template <typename Func> void adjust_indent(size_t level, Func &&func) {
+    size_t prevIndent = indent;
     indent += level;
     std::invoke(std::forward<Func>(func));
     indent = prevIndent;
@@ -49,7 +42,7 @@ public:
   }
 
   template <typename T, typename... Ts> void write(T &&arg, Ts &&...args) requires(sizeof...(Ts) > 0) {
-    int prevIndent = indent;
+    size_t prevIndent = indent;
     write(std::forward<T>(arg));
     (write(std::forward<Ts>(args)), ...);
     indent = prevIndent;
@@ -102,25 +95,16 @@ public:
 
   void write(AST::Cast &expr) { write(expr.srcKwCast, expr.srcAngleL, expr.type, expr.srcAngleR, expr.expr); }
 
-  void write(AST::Conditional &expr) {
-    write(
-        expr.cond, want_space(), expr.srcQuestion, want_space(), expr.ifPass, want_space(), expr.srcColon, want_space(),
-        expr.ifFail);
-  }
+  void write(AST::Conditional &expr);
 
   void write(AST::GetField &expr) { write(expr.expr, expr.srcDot, expr.name); }
 
-  void write(AST::GetIndex &expr) {
-    write(expr.expr);
-    for (auto &index : expr.indexes) {
-      write(index.srcBrackL);
-      if (index.expr != nullptr)
-        write(index.expr);
-      write(index.srcBrackR);
-    }
-  }
+  void write(AST::GetIndex &expr);
 
-  void write(AST::Identifier &expr);
+  void write(AST::Identifier &expr) {
+    for (auto &name : expr.names)
+      write(name.srcDoubleColon, name.name, name.literalString);
+  }
 
   void write(AST::Intrinsic &expr) { write(expr.srcName); }
 
@@ -155,14 +139,7 @@ public:
 
   void write(AST::Break &stmt) { write(stmt.srcKwBreak, stmt.lateIf, stmt.srcSemicolon); }
 
-  void write(AST::Compound &stmt) {
-    write(stmt.srcBraceL);
-    increment_indent(2, [&]() {
-      for (auto &subStmt : stmt.stmts)
-        write(want_newline(), subStmt);
-    });
-    write(want_newline(), stmt.srcBraceR);
-  }
+  void write(AST::Compound &stmt);
 
   void write(AST::Continue &stmt) { write(stmt.srcKwContinue, stmt.lateIf, stmt.srcSemicolon); }
 
@@ -180,19 +157,9 @@ public:
     write(stmt.srcSemicolon);
   }
 
-  void write(AST::For &stmt) {
-    write(
-        stmt.srcKwFor, want_space(), stmt.srcParenL, stmt.init, want_space(), stmt.cond, stmt.srcSemicolonAfterCond,
-        want_space(), stmt.incr, stmt.srcParenR, want_space(), stmt.body);
-  }
+  void write(AST::For &stmt);
 
-  void write(AST::If &stmt) {
-    if (stmt.ifFail) {
-      write(stmt.srcKwIf, want_space(), stmt.cond, want_space(), stmt.ifPass, want_space(), stmt.srcKwElse, want_space(), stmt.ifFail);
-    } else {
-      write(stmt.srcKwIf, want_space(), stmt.cond, want_space(), stmt.ifPass);
-    }
-  }
+  void write(AST::If &stmt);
 
   void write(AST::Preserve &stmt);
 
@@ -215,15 +182,7 @@ public:
   void write(AST::While &stmt) { write(stmt.srcKwWhile, want_space(), stmt.cond, want_space(), stmt.body); }
   //--}
 
-  void write(const AST::AnnotationBlock &annotations) {
-    write(want_space(), annotations.srcDoubleBrackL);
-    for (auto &annotation : annotations.annotations) {
-      write(annotation.identifier, annotation.args);
-      if (!annotation.srcComma.empty())
-        write(annotation.srcComma, want_space());
-    }
-    write(annotations.srcDoubleBrackR);
-  }
+  void write(const AST::AnnotationBlock &annotations);
 
   void write(const AST::Arg &arg);
 
@@ -241,24 +200,30 @@ public:
     llvm::TypeSwitch<decltype(&node), void>(&node).template Case<Ts...>([&]<typename T>(T *each) { write(*each); });
   }
 
-  std::string str{};
+  std::string outSrc{};
 
 private:
-  llvm::StringRef src{};
+  llvm::StringRef inSrc{};
 
-  const char *srcPos{};
+  const char *inSrcPos{};
 
   bool wantSpace{};
 
   bool wantNewLine{true};
 
-  int lineNo{1};
+  size_t lineNo{1};
 
-  int charNo{1};
+  size_t charNo{1};
 
-  int maxCharNo{1};
+  size_t indent{};
 
-  int indent{};
+  struct FormatOffLocation final {
+    const char *inSrcPos{};
+
+    size_t outSrcPos{};
+  };
+  
+  std::optional<FormatOffLocation> formatOff{};
 };
 
 } // namespace smdl

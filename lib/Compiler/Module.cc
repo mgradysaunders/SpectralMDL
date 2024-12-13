@@ -18,13 +18,15 @@ void Module::parse(Context &context) {
 void Module::format_source() {
   if (!is_builtin()) {
     sanity_check(is_parse_finished());
+    // Format before opening the file for writing, so that if anything 
+    // goes wrong we don't wipe out the original source.
+    auto formatter{Formatter(text)};
+    formatter.write(root); 
+    // No errors or sanity check crashes, so open the file and write the string.
     auto ofs{std::ofstream(filename)};
     if (!ofs.is_open())
       throw Error(std::format("can't open '{}'", filenameStr));
-
-    auto formatter{Formatter(text)};
-    formatter.write(root);
-    ofs << formatter.str;
+    ofs << formatter.outSrc;
   }
 }
 

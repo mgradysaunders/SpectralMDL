@@ -1347,6 +1347,13 @@ Value Emitter::emit_intrinsic(llvm::StringRef name, const ArgList &args, const A
         srcLoc.report_error(std::format("intrinsic '#{}' expects 2 vectorized arguments", name));
       auto value0{rvalue(args[0].value)};
       auto value1{rvalue(args[1].value)};
+      if (value1.is_compile_time_int()) {
+        auto power{value1.get_compile_time_int()};
+        if (power == 1)
+          return value0;
+        if (power == 2)
+          return emit_op(AST::BinaryOp::Mul, value0, value0, srcLoc);
+      }
       auto type{
           context.get_common_type({value0.type, value1.type, context.get_float_type()}, /*defaultToUnion=*/false, srcLoc)};
       value0 = construct(type, value0, srcLoc);
