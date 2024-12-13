@@ -1,0 +1,12 @@
+#smdl_syntax
+
+@(pure noinline) int factorial(int n) {
+  return n <= 1 ? 1 : n * factorial(n - 1);
+}
+
+unit_test "Recursion" {
+  #assert(factorial(0) == 1);
+  #assert(factorial(2) == 2);
+  #assert(factorial(5) == 5 * 4 * 3 * 2 * 1);
+  #assert(factorial(7) == 7 * 6 * 5 * 4 * 3 * 2 * 1);
+}

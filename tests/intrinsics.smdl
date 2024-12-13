@@ -1,0 +1,28 @@
+#smdl_syntax
+
+unit_test "Intrinsics" {
+  #assert(#typeof(null) == void);
+  #assert(#typeof(true) == bool);
+  #assert(#typeof(2) == int);
+  #assert(#typeof(2.1) == float);
+  #assert(#typeof(2.2f) == float);
+  #assert(#typeof(2.3d) == double);
+  #assert(#typeof("Hello, world!") == string);
+  #assert(#sizeof(int) == 4);
+  #assert(#sizeof(float) == 4);
+  #assert(#sizeof(double) == 8);
+
+  #assert(#abs(-2) == 2);
+  #assert(#abs(-2.3) == 2.3);
+  #assert(#all(#abs(float2(-1.2, 0.5)) == float2(1.2, 0.5)));
+  #assert(#approx_equal(#cos(#acos(0.789)), 0.789, 0.0001));
+  #assert(#approx_equal(#sin(#asin(0.789)), 0.789, 0.0001));
+  #assert(#approx_equal(#tan(#atan(0.789)), 0.789, 0.0001));
+  #assert(#ctpop(0b00101011'01011000) == 7);
+  #assert(#cttz(0b00101011'01011000) == 3);
+  #assert(#ctlz(0b00101011'01011000) == 18);
+
+  int var = 7;
+  #assert(#is_lvalue(var));
+  #assert(#is_rvalue(int(var)));
+}

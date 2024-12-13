@@ -1,0 +1,35 @@
+#smdl_syntax
+
+struct DeferredSizeArray {
+  auto[<N>] arr;
+};
+
+@(pure) int get_array_size(auto[<N>] arr) = N;
+
+@(pure) int get_array_size_through_pointer(&auto[<N>] arr) = N;
+
+@(pure) int get_array_size_through_inline(inline DeferredSizeArray _) = N;
+
+unit_test "Deferred-size arrays" {
+  #assert(int[] <: auto[]);
+  #assert(int[4] <: int[]);
+
+  // Initialize with arguments.
+  auto[<Size0>] arr0(3, 5, 7, 9);
+  #assert(arr0.size == Size0 && Size0 == 4 && #is_comptime(Size0));
+
+  // Initialize with an expression.
+  auto[<Size1>] arr1 = int[5](1, 3, 5, 7, 9);
+  #assert(arr1.size == Size1 && Size1 == 5 && #is_comptime(Size1));
+
+  // Initialize multi-dimensional.
+  auto[<Rows>][<Cols>] arr2(int[](1, 2), int[](2, 3), int[](3, 4));
+  #assert(Rows == 3);
+  #assert(Cols == 2);
+
+  // Capture deferred size in function parameters.
+  int[7] arr3 = null;
+  #assert(get_array_size(arr3) == 7);
+  #assert(get_array_size_through_pointer(&arr3) == 7);
+  #assert(get_array_size_through_inline(DeferredSizeArray(arr3)) == 7);
+}
