@@ -153,58 +153,61 @@ public:
   size_t numMultilineComments{};
 };
 
+void Formatter::write_in_between(const char *inSrcPos0) {
+  sanity_check(inSrcPos <= inSrcPos0);
+  auto whitespaceOrComments{WhitespaceOrComments(llvm::StringRef(inSrcPos, inSrcPos0 - inSrcPos))};
+  bool forcesNewLine = false;
+  for (size_t i = 0; i < whitespaceOrComments.size(); i++) {
+    if (whitespaceOrComments.is_comment(i)) {
+      size_t numNewLines{whitespaceOrComments.num_newlines_before_comment(i)};
+      if (numNewLines == 0) {
+        write_char(' ');
+      } else {
+        write_char('\n');
+        if (numNewLines > 1 && wantNewLine)
+          write_char('\n');
+        write_indent_if_necessary();
+        if (!wantNewLine) {
+          write_char(' ');
+          write_char(' ');
+        }
+      }
+      if (whitespaceOrComments.is_smdl_format_off(i)) {
+        if (!formatOff)
+          formatOff = FormatOffLocation{whitespaceOrComments[i].data(), outSrc.size()};
+      } else if (whitespaceOrComments.is_smdl_format_on(i)) {
+        if (formatOff) {
+          outSrc.resize(formatOff->outSrcPos);
+          outSrc.insert(outSrc.end(), formatOff->inSrcPos, whitespaceOrComments[i].data());
+          formatOff = std::nullopt;
+        }
+      }
+      for (char ch : whitespaceOrComments[i])
+        write_char(ch);
+      forcesNewLine = whitespaceOrComments.is_line_comment(i);
+    }
+  }
+  if (!outSrc.empty()) {
+    if (wantNewLine) {
+      write_char('\n');
+      if (whitespaceOrComments.num_trailing_newlines() > 1)
+        write_char('\n');
+    } else if (forcesNewLine) {
+      write_char('\n');
+      indent += 2;
+    } else if (wantSpace) {
+      write_char(' ');
+    }
+  }
+  inSrcPos = inSrcPos0;
+}
+
 void Formatter::write(AST::SourceRef src) {
   if (!src.empty()) {
     const char *inSrcPos0{src.data()};
     const char *inSrcPos1{src.data() + src.size()};
     sanity_check(inSrc.data() <= inSrcPos0 && inSrcPos1 <= inSrc.data() + inSrc.size());
-    sanity_check(inSrcPos <= inSrcPos0);
-    {
-      auto whitespaceOrComments{WhitespaceOrComments(llvm::StringRef(inSrcPos, inSrcPos0 - inSrcPos))};
-      bool forcesNewLine = false;
-      for (size_t i = 0; i < whitespaceOrComments.size(); i++) {
-        if (whitespaceOrComments.is_comment(i)) {
-          size_t numNewLines{whitespaceOrComments.num_newlines_before_comment(i)};
-          if (numNewLines == 0) {
-            write_char(' ');
-          } else {
-            write_char('\n');
-            if (numNewLines > 1 && wantNewLine)
-              write_char('\n');
-            write_indent_if_necessary();
-            if (!wantNewLine) {
-              write_char(' ');
-              write_char(' ');
-            }
-          }
-          if (whitespaceOrComments.is_smdl_format_off(i)) {
-            if (!formatOff)
-              formatOff = FormatOffLocation{whitespaceOrComments[i].data(), outSrc.size()};
-          } else if (whitespaceOrComments.is_smdl_format_on(i)) {
-            if (formatOff) {
-              outSrc.resize(formatOff->outSrcPos);
-              outSrc.insert(outSrc.end(), formatOff->inSrcPos, whitespaceOrComments[i].data());
-              formatOff = std::nullopt;
-            }
-          }
-          for (char ch : whitespaceOrComments[i])
-            write_char(ch);
-          forcesNewLine = whitespaceOrComments.is_line_comment(i);
-        }
-      }
-      if (!outSrc.empty()) {
-        if (wantNewLine) {
-          write_char('\n');
-          if (whitespaceOrComments.num_trailing_newlines() > 1)
-            write_char('\n');
-        } else if (forcesNewLine) {
-          write_char('\n');
-          indent += 2;
-        } else if (wantSpace) {
-          write_char(' ');
-        }
-      }
-    }
+    write_in_between(inSrcPos0);
     write_indent_if_necessary();
     for (char ch : src)
       write_char(ch);
@@ -226,6 +229,16 @@ void Formatter::write(AST::File &file) {
     write(want_newline(), file.srcKwModule, file.annotations, file.srcSemicolonAfterModule);
   for (auto &decl : file.globals)
     write(want_newline(), decl->srcKwExport, want_space(), decl);
+
+  wantNewLine = true;
+  // Catch up to the end of the file (there could be comments we haven't printed yet). If there was an 
+  // unmatched `// smdl format off`, then overwrite the remainder of the file with the unformatted source.
+  write_in_between(inSrc.data() + inSrc.size());
+  if (formatOff) {
+    outSrc.resize(formatOff->outSrcPos);
+    outSrc.insert(outSrc.end(), formatOff->inSrcPos, inSrc.data() + inSrc.size());
+    formatOff = std::nullopt;
+  }
 }
 
 //--{ Write: Decls

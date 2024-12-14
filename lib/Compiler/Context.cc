@@ -44,7 +44,6 @@ Context::Context(MDLInstance &mdl, llvm::BumpPtrAllocator &bumpAllocator)
       materialVolumeType(bump_allocate<StructType>(*this, builtin_struct_type<material_volume_t>)),
       materialGeometryType(bump_allocate<StructType>(*this, builtin_struct_type<material_geometry_t>)),
       materialType(bump_allocate<StructType>(*this, builtin_struct_type<material_t>)) {
-
 #define KEYWORD_CONSTANT(name, value) \
   {                                   \
     name, KeywordConstant { value }   \
@@ -121,7 +120,7 @@ Context::Context(MDLInstance &mdl, llvm::BumpPtrAllocator &bumpAllocator)
       KEYWORD_TYPE("texture_ptex", texturePtexType.get()),
       EXTENDED_KEYWORD_TYPE("tile_2d", tile2DType.get()),
       KEYWORD_TYPE("vdf", vdfType.get()),
-      EXTENDED_KEYWORD_TYPE("void", voidType.get()),
+      KEYWORD_TYPE("void", voidType.get()),
       EXTENDED_KEYWORD_CONSTANT("null", Value::zero(get_type<void>())),
       KEYWORD_CONSTANT("intensity_radiant_exitance", RValue(intensityModeType.get(), get_compile_time_int(0))),
       KEYWORD_CONSTANT("intensity_power", RValue(intensityModeType.get(), get_compile_time_int(1))),
@@ -184,8 +183,8 @@ AST::Expr *Context::parse_expression(const llvm::Twine &srcTwine) {
 
 AST::Decl *Context::parse_declaration(const llvm::Twine &srcTwine) {
   auto src{get_persistent_string(srcTwine)};
-  auto &decl{builtinDeclarations.emplace_back(
-      Parser(bumpAllocator, "(decl)", src, /*isSmdlSyntax=*/true).parse_global_declaration())};
+  auto &decl{
+      builtinDeclarations.emplace_back(Parser(bumpAllocator, "(decl)", src, /*isSmdlSyntax=*/true).parse_global_declaration())};
   return decl.get();
 }
 
@@ -618,7 +617,7 @@ Module *Context::resolve_module(
   if (isAbs && fullImportPath.size() == 1) {
     if (auto module{get_builtin_module(fullImportPath[0])})
       return module;
-  } 
+  }
 
   if (!emitter.module->is_builtin()) {
     // Add the elements of the full import path to the directory path of the current module and

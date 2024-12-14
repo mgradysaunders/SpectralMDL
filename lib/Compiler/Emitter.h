@@ -318,9 +318,15 @@ public:
 
   void emit_br_and_move_to(llvm::BasicBlock *block) { emit_br(block), move_to(block); }
 
-  void emit_br(llvm::BasicBlock *block);
+  void emit_br(llvm::BasicBlock *block) {
+    sanity_check(!has_terminator());
+    builder.CreateBr(block);
+  }
 
-  void emit_br(Value cond, llvm::BasicBlock *blockPass, llvm::BasicBlock *blockFail);
+  void emit_br(Value cond, llvm::BasicBlock *blockPass, llvm::BasicBlock *blockFail) {
+    sanity_check(!has_terminator());
+    builder.CreateCondBr(construct(context.get_bool_type(), cond), blockPass, blockFail);
+  }
 
   void emit_late_if(std::optional<AST::LateIf> &lateIf, std::invocable<Emitter &> auto &&func) {
     if (!lateIf) {
@@ -357,7 +363,9 @@ public:
 
   Value emit_intrinsic(llvm::StringRef name, const ArgList &args, const AST::SourceLocation &srcLoc = {});
 
-  Value emit_intrinsic(const AST::Intrinsic &intr, const ArgList &args) { return emit_intrinsic(intr.srcName.drop_front(1), args, intr.srcLoc); }
+  Value emit_intrinsic(const AST::Intrinsic &intr, const ArgList &args) {
+    return emit_intrinsic(intr.srcName.drop_front(1), args, intr.srcLoc);
+  }
 
   Value emit_call(Value value, const ArgList &args, const AST::SourceLocation &srcLoc = {});
 

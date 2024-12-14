@@ -17,6 +17,8 @@ public:
 
   void write_char(char ch);
 
+  void write_in_between(const char *inSrcPos0);
+
   void write(AST::SourceRef src);
 
   void write(want_space) { wantSpace = true; }

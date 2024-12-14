@@ -1,6 +1,8 @@
 // vim:foldmethod=marker:foldlevel=0:fmr=--{,--}
 #include "Emitter.h"
 
+#include "smdl/BumpPtrAllocator.h"
+
 namespace smdl::Compiler {
 
 //--{ Fundamental operations
@@ -698,16 +700,6 @@ void Emitter::emit_unwind(Crumb *crumb0) {
   sanity_check(crumb == crumb0);
 }
 
-void Emitter::emit_br(llvm::BasicBlock *block) {
-  sanity_check(!has_terminator());
-  builder.CreateBr(block);
-}
-
-void Emitter::emit_br(Value cond, llvm::BasicBlock *blockPass, llvm::BasicBlock *blockFail) {
-  sanity_check(!has_terminator());
-  builder.CreateCondBr(construct(context.get_bool_type(), cond), blockPass, blockFail);
-}
-
 Value Emitter::emit_phi(Type *type, llvm::ArrayRef<std::pair<llvm::Value *, llvm::BasicBlock *>> inputs, Value::Kind kind) {
   auto phiInst{builder.CreatePHI(
       kind == Value::Kind::LValue ? context.get_pointer_type(type)->llvmType : type->llvmType, inputs.size())};
@@ -1122,6 +1114,13 @@ Value Emitter::emit_op(AST::BinaryOp op, Value lhs, Value rhs, const AST::Source
 
 extern "C" {
 
+SMDL_EXPORT void *smdl_bump_allocate(void *ptr, int_t size, int_t align) {
+  sanity_check(ptr != nullptr);
+  sanity_check(size >= 0);
+  sanity_check(align >= 1);
+  return static_cast<BumpPtrAllocator *>(ptr)->allocate(size, align);
+}
+
 SMDL_EXPORT void *smdl_ofile_open(const string_t &fname) {
   std::error_code ec{};
   return new llvm::raw_fd_ostream(std::string_view(fname), ec);
@@ -1222,6 +1221,15 @@ Value Emitter::emit_intrinsic(llvm::StringRef name, const ArgList &args, const A
         srcLoc.report_error("intrinsic '#breakpoint' expects no arguments");
       builder.CreateIntrinsic(context.get_type<void>()->llvmType, Intr::debugtrap, {});
       return {};
+    } else if (name == "bump_allocate") {
+      if (!(args.size() == 3 && args[0].value.type == context.get_type<void *>() &&
+            args[1].value.type == context.get_int_type() && args[2].value.type == context.get_int_type()))
+        srcLoc.report_error("intrinsic '#bump_allocate' expects 1 pointer argument and 2 int arguments");
+      return RValue(
+          context.get_pointer_type(context.get_void_type()),
+          builder.CreateCall(
+              context.get_compile_time_foreign_callee("smdl_bump_allocate", &smdl_bump_allocate),
+              {rvalue(args[0].value).llvmValue, rvalue(args[1].value).llvmValue, rvalue(args[2].value).llvmValue}));
     }
   } else if (name[0] == 'c') { // Avoid unnecessary if checks
     if (name == "ctpop") {
@@ -1443,7 +1451,19 @@ Value Emitter::emit_intrinsic(llvm::StringRef name, const ArgList &args, const A
     } else if (name == "sizeof") {
       return context.get_compile_time_int(context.get_size_of(expectOneType()));
     } else if (name == "typeof") {
-      return context.get_compile_time_type(expectOne().type);
+      auto value{expectOne()};
+      // If given a function that represents a concrete material, like this
+      // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+      // material my_material() = /* ... */;
+      // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+      // then `#typeof(my_material)` returns the concrete `material` structure type
+      // that is returned by the function.
+      if (value.is_compile_time_function()) {
+        if (auto func{value.get_compile_time_function()}; func->represents_material()) {
+          return context.get_compile_time_type(sanity_check_nonnull(func->get_unique_concrete_instance())->type->returnType);
+        }
+      }
+      return context.get_compile_time_type(value.type);
     }
   }
   if (name.size() <= 5) { // Avoid unnecessary if checks

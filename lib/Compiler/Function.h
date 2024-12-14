@@ -51,6 +51,7 @@ public:
       srcLoc.report_error(std::format("function '{}' LLVM-IR verification failed: {}", name, message));
   }
 
+  /// Call the function.
   [[nodiscard]] Value call(Emitter &emitter, llvm::ArrayRef<Value> argValues, const AST::SourceLocation &srcLoc = {});
 
   [[nodiscard]] operator bool() const { return type && llvmFunc; }
@@ -132,6 +133,8 @@ public:
   /// 2. The function takes no arguments, AND
   /// 3. The function declaration has the abstract return type `material`.
   [[nodiscard]] bool represents_material() const;
+
+  [[nodiscard]] Function *resolve_overload(Emitter &emitter0, const ArgList &args, const AST::SourceLocation &srcLoc = {});
 
   [[nodiscard]] Value call(Emitter &emitter0, const ArgList &args, const AST::SourceLocation &srcLoc = {});
 

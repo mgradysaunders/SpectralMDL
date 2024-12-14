@@ -72,9 +72,9 @@ std::optional<Error> MDLInstance::format_source() noexcept {
     Compiler::Context context{*this, bumpAllocator};
     for (auto &moduleFilename : moduleFilenames)
       modules.emplace_back(new Compiler::Module(moduleFilename));
-    // Parse everything before formatting anything so that, if an 
+    // Parse everything before formatting anything so that, if an
     // error occurs, we do not write anything to disk.
-    for (auto &mod : modules) 
+    for (auto &mod : modules)
       mod->parse(context);
     for (auto &mod : modules)
       mod->format_source();
@@ -95,7 +95,7 @@ std::optional<Error> MDLInstance::compile(OptLevel optLevel) noexcept {
         mod->emit(context);
       modules.clear();
     }
-    if (optLevel != OptLevel::None)
+    if (optLevel != OptLevel::None) {
       llvmJitModule->withModuleDo([&](llvm::Module &llvmModule) {
         LLVMOptimizer llvmOptimizer{};
         llvmOptimizer.run(
@@ -104,6 +104,7 @@ std::optional<Error> MDLInstance::compile(OptLevel optLevel) noexcept {
                         : optLevel == OptLevel::O2 ? llvm::OptimizationLevel::O2
                                                    : llvm::OptimizationLevel::O3);
       });
+    }
   });
 }
 
