@@ -153,11 +153,11 @@ Value Emitter::emit(AST::Variable &decl) {
     // declarations 't := something', but the following 'construct()' is outside of the
     // scope so that captured sizes '[<N>]' persist after this declaration.
     if (declarator.init) {
-      emit_scope([&](auto &emitter) { value = emitter.emit(declarator.init); });
+      emit_scope([&]() { value = emit(declarator.init); });
       value = construct(type, value, declarator.name.srcLoc);
     } else if (declarator.args) {
       ArgList args{};
-      emit_scope([&](auto &emitter) { args = emitter.emit(declarator.args); });
+      emit_scope([&]() { args = emit(declarator.args); });
       value = construct(type, args, declarator.name.srcLoc);
     } else {
       if (type->is_abstract())
@@ -306,11 +306,11 @@ Value Emitter::emit(AST::Let &expr) {
   llvm::BasicBlock *block{};
   Value value{};
   emit_br(blockBegin);
-  emit_scope(blockBegin, blockEnd, [&](auto &emitter) {
+  emit_scope(blockBegin, blockEnd, [&] {
     for (auto &var : expr.vars)
-      emitter.emit(var);
-    value = emitter.rvalue(emitter.emit(expr.expr));
-    block = emitter.get_insert_block();
+      emit(var);
+    value = rvalue(emit(expr.expr));
+    block = get_insert_block();
   });
   llvm_move_block_to_end(blockEnd);
   move_to(blockEnd);
@@ -342,13 +342,13 @@ Value Emitter::emit(AST::ReturnFrom &expr) {
   auto blockEnd{create_block(llvm_twine(name, ".end"))};
   auto localReturns{llvm::SmallVector<Return>{}};
   emit_br(blockBegin);
-  emit_scope(blockBegin, blockEnd, [&](auto &emitter) {
-    emitter.afterBreak = {};
-    emitter.afterContinue = {};
-    emitter.afterEndScope = {};
-    emitter.afterReturn = {crumb, blockEnd};
-    emitter.returns = &localReturns;
-    emitter.emit(expr.stmt);
+  emit_scope(blockBegin, blockEnd, [&] {
+    afterBreak = {};
+    afterContinue = {};
+    afterEndScope = {};
+    afterReturn = {crumb, blockEnd};
+    returns = &localReturns;
+    emit(expr.stmt);
   });
   llvm_move_block_to_end(blockEnd);
   move_to(blockEnd);
@@ -376,9 +376,9 @@ Value Emitter::emit(AST::Compound &stmt) {
   auto blockBegin{create_block(llvm_twine(name, ".begin"))};
   auto blockEnd{create_block(llvm_twine(name, ".end"))};
   emit_br(blockBegin);
-  emit_scope(blockBegin, blockEnd, [&](auto &emitter) {
+  emit_scope(blockBegin, blockEnd, [&] {
     for (auto &subStmt : stmt.stmts)
-      if (emitter.emit(subStmt); emitter.has_terminator())
+      if (emit(subStmt); has_terminator())
         break;
   });
   llvm_move_block_to_end(blockEnd);
@@ -392,10 +392,10 @@ Value Emitter::emit(AST::DoWhile &stmt) {
   auto blockCond{create_block(llvm_twine(name, ".cond"))};
   auto blockEnd{create_block(llvm_twine(name, ".end"))};
   emit_br(blockBody);
-  emit_scope(blockBody, blockCond, [&](auto &emitter) {
-    emitter.afterBreak = {crumb, blockEnd};
-    emitter.afterContinue = {crumb, blockCond};
-    emitter.emit(stmt.body);
+  emit_scope(blockBody, blockCond, [&] {
+    afterBreak = {crumb, blockEnd};
+    afterContinue = {crumb, blockCond};
+    emit(stmt.body);
   });
   llvm_move_block_to_end(blockCond);
   move_to(blockCond);
@@ -413,24 +413,24 @@ Value Emitter::emit(AST::For &stmt) {
   auto blockIncr{create_block(llvm_twine(name, ".incr"))};
   auto blockEnd{create_block(llvm_twine(name, ".end"))};
   emit_br_and_move_to(blockBegin);
-  emit_scope([&](auto &emitter1) {
-    emitter1.emit(stmt.init);
-    auto crumb1{emitter1.crumb};
+  emit_scope([&]() {
+    emit(stmt.init);
+    auto crumb1{crumb};
     llvm_move_block_to_end(blockCond);
-    emitter1.emit_br_and_move_to(blockCond);
-    emitter1.emit_br(emitter1.emit_cond(*stmt.cond), blockBody, blockEnd);
-    emitter1.emit_scope(blockCond, blockIncr, [&](auto &emitter2) {
-      emitter2.afterBreak = {crumb1, blockEnd};
-      emitter2.afterContinue = {crumb1, blockIncr};
+    emit_br_and_move_to(blockCond);
+    emit_br(emit_cond(*stmt.cond), blockBody, blockEnd);
+    emit_scope(blockCond, blockIncr, [&] {
+      afterBreak = {crumb1, blockEnd};
+      afterContinue = {crumb1, blockIncr};
       llvm_move_block_to_end(blockBody);
-      emitter2.move_to(blockBody);
-      emitter2.emit(stmt.body);
+      move_to(blockBody);
+      emit(stmt.body);
     });
     llvm_move_block_to_end(blockIncr);
-    emitter1.move_to(blockIncr);
-    emitter1.emit(stmt.incr);
-    emitter1.emit_br(blockCond);
-    emitter1.move_to(blockEnd);
+    move_to(blockIncr);
+    emit(stmt.incr);
+    emit_br(blockCond);
+    move_to(blockEnd);
   });
   llvm_move_block_to_end(blockEnd);
   move_to_or_erase(blockEnd);
@@ -451,7 +451,7 @@ Value Emitter::emit(AST::If &stmt) {
     auto blockThen{create_block(llvm_twine(name, pass ? ".pass" : ".fail"))};
     auto blockEnd{create_block(llvm_twine(name, ".end"))};
     emit_br(blockThen);
-    emit_scope(blockThen, blockEnd, [&](auto &emitter) { emitter.emit(pass ? *stmt.ifPass : *stmt.ifFail); });
+    emit_scope(blockThen, blockEnd, [&] { emit(pass ? *stmt.ifPass : *stmt.ifFail); });
     llvm_move_block_to_end(blockEnd);
     move_to_or_erase(blockEnd);
   } else {
@@ -461,10 +461,10 @@ Value Emitter::emit(AST::If &stmt) {
     auto blockEnd{create_block(llvm_twine(name, ".end"))};
     emit_br(cond, blockPass ? blockPass : blockEnd, blockFail ? blockFail : blockEnd);
     if (blockPass)
-      emit_scope(blockPass, blockEnd, [&](auto &emitter) { emitter.emit(stmt.ifPass); });
+      emit_scope(blockPass, blockEnd, [&] { emit(stmt.ifPass); });
     if (blockFail) {
       llvm_move_block_to_end(blockFail);
-      emit_scope(blockFail, blockEnd, [&](auto &emitter) { emitter.emit(stmt.ifFail); });
+      emit_scope(blockFail, blockEnd, [&] { emit(stmt.ifFail); });
     }
     llvm_move_block_to_end(blockEnd);
     move_to_or_erase(blockEnd);
@@ -514,20 +514,21 @@ Value Emitter::emit(AST::Switch &stmt) {
   emit_br_and_move_to(blockBegin);
   auto what{construct(context.get_int_type(), emit_scope(*stmt.expr), stmt.srcLoc)};
   auto switchInst{builder.CreateSwitch(what, blockDefault)};
-  emit_scope(blockBegin, blockEnd, [&](auto &emitter) {
-    emitter.afterBreak = {crumb, blockEnd};
+  auto crumb0{crumb};
+  emit_scope(blockBegin, blockEnd, [&] {
+    afterBreak = {crumb, blockEnd};
     for (size_t i{}; auto &[astCase, cond, block] : cases) {
-      emitter.move_to(block);
+      move_to(block);
       for (auto &subStmt : astCase->stmts)
-        if (emitter.emit(subStmt); emitter.has_terminator())
+        if (emit(subStmt); has_terminator())
           break;
       if (cond)
         switchInst->addCase(cond, block);
-      if (emitter.has_terminator())
-        emitter.crumb = crumb; // Reset crumb after unconditional 'break', 'continue', or 'return'
+      if (has_terminator())
+        crumb = crumb0; // Reset crumb after unconditional 'break', 'continue', or 'return'
       if (++i < cases.size()) {
-        if (!emitter.has_terminator())
-          emitter.emit_br(cases[i].block);
+        if (!has_terminator())
+          emit_br(cases[i].block);
         llvm_move_block_to_end(cases[i].block);
       }
     }
@@ -544,10 +545,10 @@ Value Emitter::emit(AST::While &stmt) {
   auto blockEnd{create_block(llvm_twine(name, ".end"))};
   emit_br_and_move_to(blockCond);
   emit_br(emit_cond(*stmt.cond), blockBody, blockEnd);
-  emit_scope(blockBody, blockCond, [&](auto &emitter) {
-    emitter.afterBreak = {crumb, blockEnd};
-    emitter.afterContinue = {crumb, blockCond};
-    emitter.emit(*stmt.body);
+  emit_scope(blockBody, blockCond, [&] {
+    afterBreak = {crumb, blockEnd};
+    afterContinue = {crumb, blockCond};
+    emit(*stmt.body);
   });
   llvm_move_block_to_end(blockEnd);
   move_to_or_erase(blockEnd);
@@ -599,6 +600,7 @@ void Emitter::emit_unwind(Crumb *crumb0) {
       auto defer{static_cast<AST::Defer *>(crumb->node)};
       auto block{create_block(context.get_unique_name("defer", get_llvm_function()))};
       emit_br(block);
+      // TODO Flatten this
       Emitter emitter{this};
       emitter.crumb = crumb;
       emitter.afterBreak = {};    // Not allowed to break!
@@ -1082,16 +1084,16 @@ Value Emitter::emit_intrinsic(llvm::StringRef name, const ArgList &args, const A
       auto blockOk{create_block(llvm_twine(name, ".ok"))};
       emit_br(rvalue(args[0].value), blockOk, blockPanic);
       move_to(blockPanic);
-      emit_scope([&](Emitter &emitter) {
+      emit_scope([&]() {
         if (args.size() == 1) {
           std::string message{"assertion failed"};
           if (!args[0].src.empty()) {
             message += ": ";
             message += args[0].src.str();
           }
-          emitter.emit_panic(message, srcLoc);
+          emit_panic(message, srcLoc);
         } else {
-          emitter.emit_panic(rvalue(args[1].value), srcLoc);
+          emit_panic(rvalue(args[1].value), srcLoc);
         }
       });
       emit_br(blockOk);
@@ -1445,7 +1447,7 @@ Value Emitter::emit_call(Value value, const ArgList &args, const AST::SourceLoca
 Value Emitter::emit_visit(Value value, const std::function<Value(Emitter &, Value)> &visitor) {
   if (!value.type->is_union_or_pointer_to_union()) {
     Value result{};
-    emit_scope([&](auto &emitter) { result = visitor(emitter, value); });
+    emit_scope([&]() { result = visitor(*this, value); });
     return result;
   } else {
     auto name{context.get_unique_name("visit", get_llvm_function())};
@@ -1462,17 +1464,17 @@ Value Emitter::emit_visit(Value value, const std::function<Value(Emitter &, Valu
     for (unsigned i{}; auto type : static_cast<UnionType *>(value.type->get_most_pointed_to_type())->types) {
       auto blockCase{create_block(std::format("{}.case.{}", name, i))};
       switchInst->addCase(static_cast<llvm::ConstantInt *>(context.get_compile_time_int(i)), blockCase);
-      emit_scope(blockCase, blockEnd, [&](Emitter &emitter) {
+      emit_scope(blockCase, blockEnd, [&] {
         Value valueCast{};
         if (value.type->is_union()) {
           valueCast = LValue(type, ptr);
-          valueCast = value.is_rvalue() ? emitter.rvalue(valueCast) : valueCast;
+          valueCast = value.is_rvalue() ? rvalue(valueCast) : valueCast;
         } else {
           sanity_check(value.type->is_pointer());
           valueCast = value;
           valueCast.type = context.get_pointer_type(type, value.type->get_pointer_depth());
         }
-        localReturns.push_back({visitor(emitter, valueCast), emitter.get_insert_block(), {}});
+        localReturns.push_back({visitor(*this, valueCast), get_insert_block(), {}});
         if (!localReturns.back().value.is_void())
           anyNonVoid = true;
       });
@@ -1522,6 +1524,7 @@ Value Emitter::emit_final_return_phi(Type *type, llvm::ArrayRef<Return> returns,
     if (allIdenticalLValues) {
       phi->addIncoming(value, block);
     } else {
+      // TODO Flatten this
       Emitter emitter{this};
       emitter.builder.restoreIP(llvm_insert_point_before_terminator(block));
       auto value2{emitter.construct(type, value, srcLoc)};

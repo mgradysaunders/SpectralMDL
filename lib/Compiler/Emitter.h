@@ -78,17 +78,17 @@ public:
 
 public:
   //--{ Fundamental operations
-  Crumb *push(
+  void push(
       Value value, llvm::ArrayRef<llvm::StringRef> name, AST::Node *node, const AST::SourceLocation &srcLoc,
       Value valueToPreserve = {}) {
-    return crumb = context.bump_allocate<Crumb>(Crumb{crumb, value, name, node, srcLoc, valueToPreserve});
+    crumb = context.bump_allocate<Crumb>(Crumb{crumb, value, name, node, srcLoc, valueToPreserve});
   }
 
-  Crumb *declare(const AST::Name &name, Value value, AST::Decl *decl = {}) {
+  void declare(const AST::Name &name, Value value, AST::Decl *decl = {}) {
     // We assume `name` is a reference to a persistent name in the AST, so we can directly
     // construct an `llvm::ArrayRef` wrapping a pointer to `name.srcName` without needing
     // to `context.bump_duplicate()` it.
-    return push(value, llvm::ArrayRef(name.srcName), decl, name.srcLoc);
+    push(value, llvm::ArrayRef(name.srcName), decl, name.srcLoc);
   }
 
   void declare_function_parameter(const Param &param, Value value);
@@ -237,7 +237,7 @@ public:
   Value emit(AST::Break &stmt) {
     if (!afterBreak)
       stmt.srcLoc.report_error("unexpected 'break'");
-    emit_late_if(stmt.lateIf, [&](auto &emitter) { emitter.emit_unwind_and_br(afterBreak); });
+    emit_late_if(stmt.lateIf, [&] { emit_unwind_and_br(afterBreak); });
     return {};
   }
 
@@ -246,7 +246,7 @@ public:
   Value emit(AST::Continue &stmt) {
     if (!afterContinue)
       stmt.srcLoc.report_error("unexpected 'continue'");
-    emit_late_if(stmt.lateIf, [&](auto &emitter) { emitter.emit_unwind_and_br(afterContinue); });
+    emit_late_if(stmt.lateIf, [&] { emit_unwind_and_br(afterContinue); });
     return {};
   }
 
@@ -261,7 +261,7 @@ public:
 
   Value emit(AST::ExprStmt &stmt) {
     if (stmt.expr)
-      emit_late_if(stmt.lateIf, [&](auto &emitter) { emitter.emit_scope([&](auto &emitter) { emitter.emit(stmt.expr); }); });
+      emit_late_if(stmt.lateIf, [&] { emit(stmt.expr); });
     return {};
   }
 
@@ -274,8 +274,8 @@ public:
   Value emit(AST::Return &stmt) {
     if (!afterReturn)
       stmt.srcLoc.report_error("unexpected 'return'");
-    emit_late_if(stmt.lateIf, [&](auto &emitter) {
-      emitter.emit_return(stmt.expr.get() ? emitter.emit(stmt.expr) : Value(), stmt.srcLoc);
+    emit_late_if(stmt.lateIf, [&] {
+      emit_return(stmt.expr.get() ? emit(stmt.expr) : Value(), stmt.srcLoc);
     });
     return {};
   }
@@ -308,23 +308,41 @@ public:
 
   void emit_end_lifetime(Value value);
 
-  void emit_scope(llvm::BasicBlock *blockStart, llvm::BasicBlock *blockEnd, std::invocable<Emitter &> auto &&func) {
-    Emitter emitter{this};
-    emitter.move_to(blockStart);
-    emitter.afterEndScope = {crumb, blockEnd};
-    std::invoke(std::forward<decltype(func)>(func), emitter);
-    emitter.emit_unwind_and_br(emitter.afterEndScope);
+  void emit_scope(llvm::BasicBlock *blockStart, llvm::BasicBlock *blockEnd, std::invocable<> auto &&func) {
+    // TODO This is gross
+    auto backupCrumb{crumb};
+    auto backupState{state};
+    auto backupReturns{returns};
+    auto backupInlines{inlines};
+    auto backupAfterBreak{afterBreak};
+    auto backupAfterContinue{afterContinue};
+    auto backupAfterReturn{afterReturn};
+    auto backupAfterEndScope{afterEndScope};
+
+    move_to(blockStart);
+    afterEndScope = {crumb, blockEnd};
+    std::invoke(std::forward<decltype(func)>(func));
+    emit_unwind_and_br(afterEndScope);
+
+    crumb = backupCrumb;
+    state = backupState;
+    returns = backupReturns;
+    inlines = backupInlines;
+    afterBreak = backupAfterBreak;
+    afterContinue = backupAfterContinue;
+    afterReturn = backupAfterReturn;
+    afterEndScope = backupAfterEndScope;
   }
 
-  void emit_scope(std::invocable<Emitter &> auto &&func) { // "Thin scope"
+  void emit_scope(std::invocable<> auto &&func) { // "Thin scope"
     Crumb *crumb0{crumb};
-    std::invoke(std::forward<decltype(func)>(func), *this);
+    std::invoke(std::forward<decltype(func)>(func));
     emit_unwind(crumb0);
   }
 
   Value emit_scope(AST::Expr &expr) {
     Value value{};
-    emit_scope([&](Emitter &emitter) { value = emitter.emit(expr); });
+    emit_scope([&] { value = emit(expr); });
     return value;
   }
 
@@ -340,7 +358,7 @@ public:
   Value emit_cond(AST::Expr &expr, bool insideScope = true) {
     Value cond{};
     if (insideScope)
-      emit_scope([&](Emitter &emitter) { cond = emitter.construct(context.get_bool_type(), emitter.emit(expr), expr.srcLoc); });
+      emit_scope([&] { cond = construct(context.get_bool_type(), emit(expr), expr.srcLoc); });
     else
       cond = construct(context.get_bool_type(), emit(expr), expr.srcLoc);
     return cond;
@@ -361,9 +379,9 @@ public:
     builder.CreateCondBr(construct(context.get_bool_type(), cond), blockPass, blockFail);
   }
 
-  void emit_late_if(std::optional<AST::LateIf> &lateIf, std::invocable<Emitter &> auto &&func) {
+  void emit_late_if(std::optional<AST::LateIf> &lateIf, std::invocable<> auto &&func) {
     if (!lateIf) {
-      std::invoke(func, *this);
+      std::invoke(func);
     } else {
       auto crumb0{crumb};
       auto cond{emit_cond(*lateIf->cond, /*insideScope=*/false)};
@@ -389,10 +407,6 @@ public:
   Value emit_op(AST::UnaryOp op, Value val, const AST::SourceLocation &srcLoc = {});
 
   Value emit_op(AST::BinaryOp op, Value lhs, Value rhs, const AST::SourceLocation &srcLoc = {});
-
-  Value emit_logical_op(
-      AST::BinaryOp op, const std::function<Value(Emitter &)> &lhs, const std::function<Value(Emitter &)> &rhs,
-      const AST::SourceLocation &srcLoc = {});
 
   Value emit_intrinsic(llvm::StringRef name, const ArgList &args, const AST::SourceLocation &srcLoc = {});
 
@@ -446,10 +460,11 @@ public:
   /// Where to go after end-of-scope.
   Label afterEndScope{};
 
+  uint32_t macroRecursionDepth{};
+
   /// The Intermediate Representation (IR) builder.
   llvm::IRBuilder<> builder;
 
-  uint32_t macroRecursionDepth{};
 };
 
 } // namespace smdl::Compiler
