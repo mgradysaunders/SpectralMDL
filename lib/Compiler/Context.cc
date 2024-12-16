@@ -1,7 +1,7 @@
-// vim:foldmethod=marker:foldlevel=0:fmr=--{,--}
 #include "Context.h"
 #include "Emitter.h"
 #include "Parser.h"
+
 #include "builtin.h"
 
 namespace smdl::Compiler {
@@ -151,40 +151,17 @@ Context::Context(MDLInstance &mdl, llvm::BumpPtrAllocator &bumpAllocator)
   sanity_check_nonnull(get_builtin_module("rgb"));
 }
 
-llvm::StringRef Context::get_persistent_string(const llvm::Twine &twine) {
-  if (twine.isTriviallyEmpty())
-    return {};
-  if (twine.isSingleStringLiteral())
-    return twine.getSingleStringRef();
-  if (twine.isSingleStringRef())
-    return bump_duplicate(twine.getSingleStringRef());
-  else
-    return bump_duplicate(twine.str());
-}
-
-std::string Context::get_unique_name(llvm::StringRef name, llvm::Function *llvmFunc) {
-  return name.str() + std::to_string(uniqueNames[name][llvmFunc]++);
-}
-
-bool Context::is_keyword(Module *module, llvm::StringRef name) {
-  if (auto itr{keywordConstants.find(name)}; itr != keywordConstants.end())
-    if (module->isSmdlSyntax || !itr->second.isSmdlSyntax)
-      return true;
-  return false;
-}
-
-AST::Expr *Context::parse_expression(const llvm::Twine &srcTwine) {
+AST::Expr *Context::parse_expr(const llvm::Twine &srcTwine, Module *inModule) {
   auto src{get_persistent_string(srcTwine)};
-  auto &expr{builtinExpressions[src]};
+  auto &expr{builtinExprs[src]};
   if (!expr)
-    expr = Parser(bumpAllocator, "(expr)", src, /*isSmdlSyntax=*/true).parse_expression();
+    expr = Parser(inModule, bumpAllocator, "(expr)", src, /*isSmdlSyntax=*/true).parse_expression();
   return expr.get();
 }
 
-AST::Decl *Context::parse_declaration(const llvm::Twine &srcTwine) {
+AST::Decl *Context::parse_decl(const llvm::Twine &srcTwine, Module *inModule) {
   auto src{get_persistent_string(srcTwine)};
-  auto &decl{
-      builtinDeclarations.emplace_back(Parser(bumpAllocator, "(decl)", src, /*isSmdlSyntax=*/true).parse_global_declaration())};
+  auto &decl{builtinDecls.emplace_back(Parser(inModule, bumpAllocator, "(decl)", src, /*isSmdlSyntax=*/true).parse_global_declaration())};
   return decl.get();
 }
 
@@ -199,7 +176,6 @@ ArithmeticType *Context::get_arithmetic_type(Scalar scalar, Extent extent) {
   return type.get();
 }
 
-//--{ Type relations
 ConversionRule Context::get_conversion_rule(Type *srcType, Type *dstType) {
   sanity_check(srcType);
   sanity_check(dstType);
@@ -399,23 +375,6 @@ Type *Context::get_common_type(llvm::ArrayRef<Type *> types, bool defaultToUnion
     commonType = get_common_type_of_pair(commonType, types[i]);
   return commonType;
 }
-//--}
-
-//--{ Compile-time constants
-Value Context::get_compile_time_bool(bool value) {
-  return RValue(get_bool_type(), llvm::ConstantInt::getBool(get_bool_type()->llvmType, value));
-}
-
-Value Context::get_compile_time_int(const llvm::APInt &value) {
-  return RValue(get_int_type(), llvm::ConstantInt::get(get_int_type()->llvmType, value.sextOrTrunc(sizeof(int_t) * 8)));
-}
-
-Value Context::get_compile_time_FP(llvm::APFloat value, AST::Precision precision) {
-  auto type{precision == AST::Precision::Double ? get_double_type() : get_float_type()};
-  bool losesInfo{};
-  value.convert(type->llvmType->getFltSemantics(), llvm::RoundingMode::NearestTiesToEven, &losesInfo);
-  return RValue(type, llvm::ConstantFP::get(type->llvmType, value));
-}
 
 Value Context::get_compile_time_string(llvm::StringRef value) {
   auto &result{compileTimeStrings[value]};
@@ -437,12 +396,6 @@ Value Context::get_compile_time_source_location(const AST::SourceLocation &value
   return result;
 }
 
-Value Context::get_compile_time_pointer(const void *value) {
-  auto type{get_pointer_type(voidType.get())};
-  return RValue(
-      type, llvm::IRBuilder<>(llvmContext).CreateIntToPtr(llvm_ptr_as_constant_int(llvmContext, value), type->llvmType));
-}
-
 Value Context::get_compile_time_union_index_map(UnionType *srcType, UnionType *dstType) {
   auto &indexMap{compileTimeUnionIndexMaps[std::pair(srcType, dstType)]};
   if (!indexMap) {
@@ -457,7 +410,6 @@ Value Context::get_compile_time_union_index_map(UnionType *srcType, UnionType *d
   }
   return indexMap;
 }
-//--}
 
 Function *Context::get_function(Emitter &emitter, AST::Function *decl) {
   auto &func{functions[decl]};
@@ -466,27 +418,25 @@ Function *Context::get_function(Emitter &emitter, AST::Function *decl) {
   return func.get();
 }
 
-Function *Context::get_function(Emitter &emitter, const llvm::Twine &srcTwine) {
-  auto decl{sanity_check_nonnull(llvm::dyn_cast<AST::Function>(parse_declaration(srcTwine)))};
-  decl->module = emitter.module;
+Function *Context::get_function(Emitter &emitter, const llvm::Twine &srcTwine, Module *inModule) {
+  auto decl{sanity_check_nonnull(llvm::dyn_cast<AST::Function>(parse_decl(srcTwine, inModule)))};
   decl->crumb = emitter.crumb;
   return get_function(emitter, decl);
 }
 
 Module *Context::get_builtin_module(llvm::StringRef name) {
   if (auto moduleSrc{builtin::get_src(name)}) {
-    auto &module{builtinModules[name]};
-    if (!module) {
-      module.reset(bump_allocate<Module>(name, moduleSrc));
-      module->parse(*this);
+    auto &mod{builtinModules[name]};
+    if (!mod) {
+      mod.reset(bump_allocate<Module>(name, moduleSrc));
+      mod->parse(*this);
     }
-    module->emit(*this);
-    return module.get();
+    mod->emit(*this);
+    return mod.get();
   }
   return nullptr;
 }
 
-//--{ Resolve: Identifiers
 Value Context::resolve(Emitter &emitter, bool isAbs, llvm::ArrayRef<llvm::StringRef> names, const AST::SourceLocation &srcLoc) {
   if (names.size() == 1) {
     auto name{names[0]};
@@ -501,7 +451,7 @@ Value Context::resolve(Emitter &emitter, bool isAbs, llvm::ArrayRef<llvm::String
     }
     // Resolve types
     if (auto itr{keywordConstants.find(name)}; itr != keywordConstants.end())
-      if (emitter.module->isSmdlSyntax || !itr->second.isSmdlSyntax)
+      if (!srcLoc.module || srcLoc.module->isSmdlSyntax || !itr->second.isSmdlSyntax)
         return itr->second.value;
     // Unqualified simple names may shadow other values
     if (!isAbs)
@@ -523,9 +473,7 @@ Value Context::resolve(Emitter &emitter, bool isAbs, llvm::ArrayRef<llvm::String
   srcLoc.report_error(std::format("can't resolve identifier '{}'", FormatJoin(names, "::")));
   return {};
 }
-//--}
 
-//--{ Resolve: Arguments
 llvm::SmallVector<Value> Context::resolve_arguments(
     Emitter &emitter0, const ParamList &params, const ArgList &args, const AST::SourceLocation &srcLoc,
     llvm::SmallVector<Type *> *argParamTypes, bool dontEmit) {
@@ -585,7 +533,7 @@ llvm::SmallVector<Value> Context::resolve_arguments(
   if (!dontEmit) {
     Emitter emitter1{&emitter0};
     emitter1.move_to(emitter0.get_insert_block());
-    emitter1.module = params.module ? params.module : emitter0.module;
+    // emitter1.module = params.module ? params.module : emitter0.module;
     emitter1.crumb = params.crumb;
     for (size_t i{}; i < params.size(); i++) {
       auto &param{params[i]};
@@ -598,8 +546,8 @@ llvm::SmallVector<Value> Context::resolve_arguments(
   }
   return values;
 }
-//--}
 
+// TODO This only ever called once from `Emitter`, so should probably just be moved over there.
 Module *Context::resolve_module(
     Emitter &emitter, bool isAbs, llvm::ArrayRef<llvm::StringRef> importPath, const AST::SourceLocation &srcLoc) {
   // First resolve using aliases in the import path to construct the full import path.
@@ -615,11 +563,14 @@ Module *Context::resolve_module(
 
   // If the import path is absolute and is a single name, we prioritize builtins.
   if (isAbs && fullImportPath.size() == 1) {
-    if (auto module{get_builtin_module(fullImportPath[0])})
-      return module;
+    if (auto mod{get_builtin_module(fullImportPath[0])}) {
+      return mod;
+    }
   }
 
-  if (!emitter.module->is_builtin()) {
+  // TODO
+  auto module{srcLoc.module};
+  if (!module->is_builtin()) {
     // Add the elements of the full import path to the directory path of the current module and
     // lexically normalize the result. Suppose the current module file is '/path/to/package/current.mdl' and
     // we're resolving a slightly more interesting version of the above example.
@@ -629,25 +580,26 @@ Module *Context::resolve_module(
     // The filesystem directory path we end up with is '/path/to/package/./../coffee shop/drinks', which lexically
     // normalizes to '/path/to/coffee shop/drinks'.
     //
-    auto dirPath{emitter.module->directory_path()};
+    auto dirPath{module->directory_path()};
     for (unsigned i = 0; i + 1 < fullImportPath.size(); i++) // NOTE: Only up to the next-to-last element!
       dirPath.append(std::string_view(fullImportPath[i]));
     dirPath = dirPath.lexically_normal();
 
     // Now look for a module with the expected name that lives in the expected directory.
-    for (auto &module : mdl.modules) {
-      if (module.get() != emitter.module && module->name == fullImportPath.back() && !module->is_builtin()) {
-        if (std::error_code ec{}; std::filesystem::equivalent(module->directory_path(), dirPath, ec)) {
-          module->emit(*this);
-          return module.get();
+    for (auto &mod : mdl.modules) {
+      if (mod.get() != module && mod->name == fullImportPath.back() && !mod->is_builtin()) {
+        if (std::error_code ec{}; std::filesystem::equivalent(mod->directory_path(), dirPath, ec)) {
+          mod->emit(*this);
+          return mod.get();
         }
       }
     }
   }
 
   if (fullImportPath.size() == 1) {
-    if (auto module{get_builtin_module(fullImportPath[0])})
-      return module;
+    if (auto mod{get_builtin_module(fullImportPath[0])}) {
+      return mod;
+    }
   }
   srcLoc.report_error(std::format("can't resolve module '{}'", format_join(importPath, "::")));
   return nullptr;

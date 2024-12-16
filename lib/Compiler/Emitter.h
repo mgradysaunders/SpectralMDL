@@ -19,11 +19,11 @@ public:
   };
 
   Emitter(
-      Context &context, Module *module, Crumb *crumb, //
-      llvm::SmallVector<Return> *returns = nullptr,   //
-      llvm::SmallVector<Inline> *inlines = nullptr,   //
+      Context &context, Crumb *crumb,               //
+      llvm::SmallVector<Return> *returns = nullptr, //
+      llvm::SmallVector<Inline> *inlines = nullptr, //
       llvm::Function *llvmFunc = nullptr)
-      : context(context), module(module), crumb(crumb), returns(returns), inlines(inlines), builder(context.llvmContext) {
+      : context(context), crumb(crumb), returns(returns), inlines(inlines), builder(context.llvmContext) {
     auto fmf{llvm::FastMathFlags::getFast()};
     fmf.setNoNaNs(false); // Don't assume no NaNs!
     fmf.setNoInfs(false); // Don't assume no Infs!
@@ -37,10 +37,10 @@ public:
   }
 
   Emitter(Emitter *parent)
-      : parent(parent), context(parent->context), module(parent->module), crumb(parent->crumb), state(parent->state),
-        returns(parent->returns), inlines(parent->inlines), afterBreak(parent->afterBreak),
-        afterContinue(parent->afterContinue), afterReturn(parent->afterReturn), afterEndScope(parent->afterEndScope),
-        builder(parent->context.llvmContext), macroRecursionDepth(parent->macroRecursionDepth) {
+      : parent(parent), context(parent->context), crumb(parent->crumb), state(parent->state), returns(parent->returns),
+        inlines(parent->inlines), afterBreak(parent->afterBreak), afterContinue(parent->afterContinue),
+        afterReturn(parent->afterReturn), afterEndScope(parent->afterEndScope), builder(parent->context.llvmContext),
+        macroRecursionDepth(parent->macroRecursionDepth) {
     auto fmf{llvm::FastMathFlags::getFast()};
     fmf.setNoNaNs(false); // Don't assume no NaNs!
     fmf.setNoInfs(false); // Don't assume no Infs!
@@ -78,16 +78,17 @@ public:
 
 public:
   //--{ Fundamental operations
-  void push(
+  Crumb *push(
       Value value, llvm::ArrayRef<llvm::StringRef> name, AST::Node *node, const AST::SourceLocation &srcLoc,
       Value valueToPreserve = {}) {
-    crumb = context.bump_allocate<Crumb>(Crumb{crumb, value, name, node, srcLoc, valueToPreserve});
+    return crumb = context.bump_allocate<Crumb>(Crumb{crumb, value, name, node, srcLoc, valueToPreserve});
   }
 
-  void declare(const AST::Name &astName, Value value, AST::Decl *decl = {}) {
-    // We assume 'astName' is a reference to a persistent bump-allocated name, so we can directly
-    // construct an 'llvm::ArrayRef' without needing to 'context.bump_duplicate()'.
-    push(value, astName.srcName, decl, astName.srcLoc);
+  Crumb *declare(const AST::Name &name, Value value, AST::Decl *decl = {}) {
+    // We assume `name` is a reference to a persistent name in the AST, so we can directly
+    // construct an `llvm::ArrayRef` wrapping a pointer to `name.srcName` without needing
+    // to `context.bump_duplicate()` it.
+    return push(value, llvm::ArrayRef(name.srcName), decl, name.srcLoc);
   }
 
   void declare_function_parameter(const Param &param, Value value);
@@ -150,19 +151,44 @@ public:
 
   Value emit(AST::Function &decl);
 
-  Value emit(AST::Import &decl);
+  Value emit(AST::Import &decl) {
+    if (decl.isExport)
+      decl.srcLoc.report_error("can't re-export qualified 'import'");
+    for (auto &path : decl.paths)
+      declare_import(path.identifier->is_absolute(), path.identifier->get_string_refs(), decl);
+    return {};
+  }
 
   Value emit(AST::Struct &decl);
 
-  Value emit(AST::Tag &decl);
+  Value emit(AST::Tag &decl) {
+    context.validate_decl_name(decl.srcLoc.module, "tag", decl.name);
+    declare(decl.name, context.get_compile_time_type(context.get_tag_type(&decl, get_llvm_function())), &decl);
+    return {};
+  }
 
-  Value emit(AST::Typedef &decl);
+  Value emit(AST::Typedef &decl) {
+    context.validate_decl_name(decl.srcLoc.module, "typedef", decl.name);
+    declare(decl.name, emit(decl.type), &decl);
+    return {};
+  }
 
   Value emit(AST::UnitTest &decl);
 
-  Value emit(AST::UsingAlias &decl);
+  Value emit(AST::UsingAlias &decl) {
+    push({}, {}, &decl, decl.srcLoc);
+    return {};
+  }
 
-  Value emit(AST::UsingImport &decl);
+  Value emit(AST::UsingImport &decl) {
+    auto path{decl.path->get_string_refs()};
+    for (auto &name : decl.names) {
+      path.push_back(name.srcName);
+      declare_import(decl.path->is_absolute(), path, decl);
+      path.pop_back();
+    }
+    return {};
+  }
 
   Value emit(AST::Variable &decl);
   //--}
@@ -228,7 +254,6 @@ public:
 
   Value emit(AST::Defer &stmt) {
     push({}, {}, &stmt, stmt.srcLoc);
-    stmt.crumb = crumb;
     return {};
   }
 
@@ -303,7 +328,12 @@ public:
     return value;
   }
 
-  void emit_unwind_and_br(Label label);
+  void emit_unwind_and_br(Label label) {
+    if (!has_terminator()) {
+      emit_unwind(label.crumb);
+      emit_br(label.block);
+    }
+  }
 
   void emit_unwind(Crumb *crumb0);
 
@@ -316,7 +346,10 @@ public:
     return cond;
   }
 
-  void emit_br_and_move_to(llvm::BasicBlock *block) { emit_br(block), move_to(block); }
+  void emit_br_and_move_to(llvm::BasicBlock *block) {
+    emit_br(block);
+    move_to(block);
+  }
 
   void emit_br(llvm::BasicBlock *block) {
     sanity_check(!has_terminator());
@@ -391,9 +424,6 @@ public:
 
   /// The context.
   Context &context;
-
-  /// The associated module.
-  Module *module{};
 
   /// The current crumb.
   Crumb *crumb{};

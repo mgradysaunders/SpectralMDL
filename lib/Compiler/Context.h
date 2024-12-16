@@ -16,41 +16,15 @@ public:
   Context(Context &&) = delete;
 
 public:
+  /// Bump allocate with the given size and alignment.
   [[nodiscard]] void *bump_allocate(size_t size, size_t align) { return bumpAllocator.Allocate(size, align); }
 
+  /// Bump allocate and construct an instance of the given type.
   template <typename T> [[nodiscard]] T *bump_allocate(auto &&...args) {
     return new (bump_allocate(sizeof(T), alignof(T))) T(std::forward<decltype(args)>(args)...);
   }
 
-  [[nodiscard]] llvm::StringRef get_persistent_string(const AST::Name &name) { return name.srcName; }
-
-  [[nodiscard]] llvm::StringRef get_persistent_string(const llvm::Twine &twine);
-
-  [[nodiscard]] std::string get_unique_name(llvm::StringRef name, llvm::Function *llvmFunc = nullptr);
-
-  [[nodiscard]] uint64_t get_align_of(Type *type) {
-    return type && type->llvmType && !type->is_void() ? uint64_t(llvmLayout.getABITypeAlign(type->llvmType).value()) : 0;
-  }
-
-  [[nodiscard]] uint64_t get_size_of(Type *type) {
-    return type && type->llvmType && !type->is_void() ? uint64_t(llvmLayout.getTypeAllocSize(type->llvmType)) : 0;
-  }
-
-  [[nodiscard]] bool is_keyword(Module *module, llvm::StringRef name);
-
-  void validate_decl_name(Module *module, const char *kind, const AST::Name &name) {
-    if (is_keyword(module, name.srcName))
-      name.srcLoc.report_error(std::format("{} name must not be reserved keyword '{}'", kind, name.srcName));
-  }
-
-  [[nodiscard]] llvm::StringRef bump_duplicate(llvm::StringRef str) {
-    if (str.empty())
-      return {};
-    auto ptr{static_cast<char *>(bump_allocate(str.size(), 1))};
-    std::copy(str.begin(), str.end(), ptr);
-    return llvm::StringRef(ptr, str.size());
-  }
-
+  /// Bump duplicate the given array reference.
   template <typename T> [[nodiscard]] llvm::ArrayRef<T> bump_duplicate(llvm::ArrayRef<T> values) {
     if (values.empty())
       return {};
@@ -59,9 +33,63 @@ public:
     return {ptr, values.size()};
   }
 
-  [[nodiscard]] AST::Expr *parse_expression(const llvm::Twine &srcTwine);
+  /// Bump duplicate the given string.
+  [[nodiscard]] llvm::StringRef bump_duplicate(llvm::StringRef str) {
+    if (str.empty())
+      return {};
+    auto ptr{static_cast<char *>(bump_allocate(str.size(), 1))};
+    std::copy(str.begin(), str.end(), ptr);
+    return llvm::StringRef(ptr, str.size());
+  }
 
-  [[nodiscard]] AST::Decl *parse_declaration(const llvm::Twine &srcTwine);
+  /// Get a persistent string reference from the given `llvm::Twine`.
+  [[nodiscard]] llvm::StringRef get_persistent_string(const llvm::Twine &twine) {
+    if (twine.isTriviallyEmpty())
+      return {};
+    if (twine.isSingleStringLiteral())
+      return twine.getSingleStringRef();
+    if (twine.isSingleStringRef())
+      return bump_duplicate(twine.getSingleStringRef());
+    else
+      return bump_duplicate(twine.str());
+  }
+
+  /// Get a unique name by appending a number to it. This is useful for generating more readable names
+  /// for LLVM basic blocks.
+  [[nodiscard]] std::string get_unique_name(llvm::StringRef name, llvm::Function *llvmFunc = {}) {
+    return name.str() + std::to_string(uniqueNames[name][llvmFunc]++);
+  }
+
+  /// Get the alignment of the given type in bytes. If undefined, return 0.
+  [[nodiscard]] uint64_t get_align_of(Type *type) {
+    return type && type->llvmType && !type->is_void() ? uint64_t(llvmLayout.getABITypeAlign(type->llvmType).value()) : 0;
+  }
+
+  /// Get the size of the given type in bytes. If undefined, return 0.
+  [[nodiscard]] uint64_t get_size_of(Type *type) {
+    return type && type->llvmType && !type->is_void() ? uint64_t(llvmLayout.getTypeAllocSize(type->llvmType)) : 0;
+  }
+
+  /// Is the given name a keyword? The module is required because `#smdl_syntax` introduces new keywords.
+  [[nodiscard]] bool is_keyword(Module *mod, llvm::StringRef name) {
+    if (auto itr{keywordConstants.find(name)}; itr != keywordConstants.end()) {
+      if (!mod || mod->isSmdlSyntax || !itr->second.isSmdlSyntax) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  /// Validate declaration name by checking that it is NOT a reserved keyword. See `is_keyword()`.
+  void validate_decl_name(Module *mod, const char *kind, const AST::Name &name) {
+    if (is_keyword(mod, name.srcName)) {
+      name.srcLoc.report_error(std::format("{} name must not be reserved keyword '{}'", kind, name.srcName));
+    }
+  }
+
+  [[nodiscard]] AST::Expr *parse_expr(const llvm::Twine &srcTwine, Module *inModule = {});
+
+  [[nodiscard]] AST::Decl *parse_decl(const llvm::Twine &srcTwine, Module *inModule);
 
 public:
   //--{ Type getters
@@ -264,9 +292,13 @@ public:
 
 public:
   //--{ Compile-time constants
-  [[nodiscard]] Value get_compile_time_bool(bool value);
+  [[nodiscard]] Value get_compile_time_bool(bool value) {
+    return RValue(get_bool_type(), llvm::ConstantInt::getBool(get_bool_type()->llvmType, value));
+  }
 
-  [[nodiscard]] Value get_compile_time_int(const llvm::APInt &value);
+  [[nodiscard]] Value get_compile_time_int(const llvm::APInt &value) {
+    return RValue(get_int_type(), llvm::ConstantInt::get(get_int_type()->llvmType, value.sextOrTrunc(sizeof(int_t) * 8)));
+  }
 
   [[nodiscard]] Value get_compile_time_int(int_t value) { return get_compile_time_int(llvm::APInt(sizeof(int_t) * 8, value)); }
 
@@ -278,7 +310,12 @@ public:
     return result;
   }
 
-  [[nodiscard]] Value get_compile_time_FP(llvm::APFloat value, AST::Precision precision);
+  [[nodiscard]] Value get_compile_time_FP(llvm::APFloat value, AST::Precision precision) {
+    auto type{precision == AST::Precision::Double ? get_double_type() : get_float_type()};
+    bool losesInfo{};
+    value.convert(type->llvmType->getFltSemantics(), llvm::RoundingMode::NearestTiesToEven, &losesInfo);
+    return RValue(type, llvm::ConstantFP::get(type->llvmType, value));
+  }
 
   [[nodiscard]] Value get_compile_time_FP(double value, AST::Precision precision) {
     return get_compile_time_FP(llvm::APFloat(value), precision);
@@ -308,7 +345,11 @@ public:
     return RValue(get_compiler_type_type(), llvm_ptr_as_constant_int(llvmContext, value));
   }
 
-  [[nodiscard]] Value get_compile_time_pointer(const void *value);
+  [[nodiscard]] Value get_compile_time_pointer(const void *value) {
+    auto type{get_pointer_type(voidType.get())};
+    return RValue(
+        type, llvm::IRBuilder<>(llvmContext).CreateIntToPtr(llvm_ptr_as_constant_int(llvmContext, value), type->llvmType));
+  }
 
   [[nodiscard]] Value get_compile_time_union_index_map(UnionType *srcType, UnionType *dstType);
 
@@ -335,7 +376,7 @@ public:
 public:
   [[nodiscard]] Function *get_function(Emitter &emitter, AST::Function *decl);
 
-  [[nodiscard]] Function *get_function(Emitter &emitter, const llvm::Twine &srcTwine);
+  [[nodiscard]] Function *get_function(Emitter &emitter, const llvm::Twine &srcTwine, Module *inModule);
 
   [[nodiscard]] Module *get_builtin_module(llvm::StringRef name);
 
@@ -388,11 +429,11 @@ private:
   /// The builtin modules. See 'get_builtin_module()'
   llvm::StringMap<unique_bump_ptr<Module>> builtinModules{};
 
-  /// The AST expressions parsed from builtin strings. See 'parse_expression()'
-  llvm::StringMap<unique_bump_ptr<AST::Expr>> builtinExpressions{};
+  /// The AST expressions parsed from builtin strings. See 'parse_expr()'
+  llvm::StringMap<unique_bump_ptr<AST::Expr>> builtinExprs{};
 
-  /// The AST declarations parsed from builtin strings. See 'parse_declaration()'
-  llvm::SmallVector<unique_bump_ptr<AST::Decl>> builtinDeclarations{};
+  /// The AST declarations parsed from builtin strings. See 'parse_decl()'
+  llvm::SmallVector<unique_bump_ptr<AST::Decl>> builtinDecls{};
 
   /// The LLVM callees for builtin foreign functions. See 'get_compile_time_foreign_callee()'
   llvm::StringMap<llvm::FunctionCallee> builtinForeignCallees{};

@@ -21,9 +21,6 @@ public:
   /// Initialize from an `EnumType` that returns the string name of an enum value.
   void initialize(Emitter &emitter0, EnumType *enumType);
 
-  /// Get the link name for the function (to look it up later in the JIT module).
-  [[nodiscard]] llvm::StringRef get_link_name() const { return llvmFunc->getName(); }
-
   /// If the return type is abstract and cannot be inferred until the function code is generated, this
   /// allows us to patch in the concrete return type at the end.
   void patch_return_type(Type *returnType);
@@ -50,6 +47,9 @@ public:
     if (llvm::verifyFunction(*sanity_check_nonnull(llvmFunc), &OS)) // Returns true on error
       srcLoc.report_error(std::format("function '{}' LLVM-IR verification failed: {}", name, message));
   }
+
+  /// Get the link name for the function (to look it up later in the JIT module).
+  [[nodiscard]] llvm::StringRef get_link_name() const { return llvmFunc->getName(); }
 
   /// Call the function.
   [[nodiscard]] Value call(Emitter &emitter, llvm::ArrayRef<Value> argValues, const AST::SourceLocation &srcLoc = {});
@@ -89,16 +89,16 @@ public:
   [[nodiscard]] bool is_exported() const { return decl.isExport; }
 
   /// Is the function meant to be visible to the C++ host program?
-  [[nodiscard]] bool is_visible() const { return decl.has_attr("visible"); }
+  [[nodiscard]] bool is_visible() const { return decl.has_attribute("visible"); }
 
   /// Is the function linked in from the C++ host program?
-  [[nodiscard]] bool is_foreign() const { return decl.has_attr("foreign"); }
+  [[nodiscard]] bool is_foreign() const { return decl.has_attribute("foreign"); }
 
   /// Is the function pure? (meaning there is no `$state` pointer)
-  [[nodiscard]] bool is_pure() const { return decl.has_attr("pure"); }
+  [[nodiscard]] bool is_pure() const { return decl.has_attribute("pure"); }
 
   /// Is the function always macro-inlined?
-  [[nodiscard]] bool is_macro() const { return decl.has_attr("macro"); }
+  [[nodiscard]] bool is_macro() const { return decl.has_attribute("macro"); }
 
   /// Is the function actually a function variant?
   ///
@@ -124,6 +124,12 @@ public:
       return &instances.begin()->second;
     }
     return nullptr;
+  }
+
+  void guarantee_compiled(Emitter &emitter0, const llvm::SmallVector<Type *> &argTypes) {
+    auto &instance{instances[argTypes]};
+    if (!instance)
+      instance.initialize(emitter0, decl, params, argTypes);
   }
 
   /// Does this function represent a material?

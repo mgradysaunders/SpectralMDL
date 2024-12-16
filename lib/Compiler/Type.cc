@@ -745,7 +745,7 @@ StructType::StructType(Context &context, builtin_struct_type_t<default_hair_bsdf
 }
 
 static void init_builtin_field(auto &context, auto &fields, Type *type, const char *name, const char *init) {
-  fields.emplace_back(type, name, context.parse_expression(init));
+  fields.emplace_back(type, name, context.parse_expr(init));
 }
 
 StructType::StructType(Context &context, builtin_struct_type_t<material_emission_t>) : TypeSubclass(context) {
@@ -992,7 +992,7 @@ Value StructType::construct(Emitter &emitter, const ArgList &args, const AST::So
       srcLoc.report_error(std::format("expected '{}' parameter 'name' to resolve to compile-time string", name));
     auto fname{value0.get_compile_time_string()};
     if (is_texture_2d()) {
-      auto imagePaths{context.mdl.fileLocator.locate_images(fname.str(), emitter.module->filename)};
+      auto imagePaths{context.mdl.fileLocator.locate_images(fname.str(), srcLoc.file.str())}; // TODO?
       auto images{llvm::SmallVector<tile_2d_t>{}};
       uint32_t numTilesU{};
       uint32_t numTilesV{};
@@ -1055,7 +1055,7 @@ Value StructType::construct(Emitter &emitter, const ArgList &args, const AST::So
       return Value::zero(this);
     } else if (is_texture_ptex()) {
 #if WITH_PTEX
-      auto path{context.mdl.fileLocator.locate(fname.str(), emitter.module->filename)};
+      auto path{context.mdl.fileLocator.locate(fname.str(), srcLoc.file.str())}; // TODO
       if (!path) {
         srcLoc.report_warning(std::format("can't load 'texture_ptex' from '{}': file not found\n", fname));
       } else {

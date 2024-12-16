@@ -10,27 +10,53 @@
 namespace smdl::Compiler {
 
 void Module::parse(Context &context) {
-  auto parser{Parser(context.bumpAllocator, (!filenameStr.empty() ? filenameStr : name), text)};
+  auto parser{Parser(this, context.bumpAllocator, (!filenameStr.empty() ? filenameStr : name), text)};
   root = parser.parse();
   isSmdlSyntax = parser.is_smdl_syntax();
 }
 
-void Module::format_source() {
-  if (!is_builtin()) {
-    sanity_check(is_parse_finished());
-    // Format before opening the file for writing, so that if anything 
-    // goes wrong we don't wipe out the original source.
-    auto formatter{Formatter(text)};
-    formatter.write(root); 
-    // No errors or sanity check crashes, so open the file and write the string.
-    auto ofs{std::ofstream(filename)};
-    if (!ofs.is_open())
-      throw Error(std::format("can't open '{}'", filenameStr));
-    ofs << formatter.outSrc;
-  }
-}
+#if 0
+namespace material_src {
 
-static constexpr auto src_evalGeometry = R"(
+static constexpr auto construct{R"(
+@(visible) &void {0}__construct(const &void allocator) {{
+  auto this(#inline({0}()));
+  auto ptr(#bump_allocate(allocator, #sizeof(this), #alignof(this)));
+  #memcpy(ptr, &this, #sizeof(this));
+  return ptr;
+}}
+)"};
+
+static constexpr auto evaluate_bsdf{R"(
+@(visible pure) int {0}__evaluate_bsdf(
+    const &void this, 
+    const &float3 wo,
+    const &float3 wi,
+    const &float pdf_fwd,
+    const &float pdf_rev,
+    const &color f) {{
+  return ::df::material__evaluate_bsdf(cast<&#typeof({0})>(this), wo, wi, pdf_fwd, pdf_rev, f);
+}}
+)"};
+
+static constexpr auto evaluate_bsdf_sample{R"(
+@(visible pure) int {0}__evaluate_bsdf_sample(
+    const &void this,
+    const &float4 xi,
+    const &float3 wo,
+    const &float3 wi,
+    const &float pdf_fwd,
+    const &float pdf_rev,
+    const &color f,
+    const &int is_delta) {{
+  return ::df::material__evaluate_bsdf_sample(cast<&#typeof({0})>(this), xi, wo, wi, pdf_fwd, pdf_rev, f, is_delta);
+}}
+)"};
+
+} // namespace material_src
+#endif
+
+static constexpr auto srcEvalGeometry = R"(
 @(visible) float {0}__evaluate_geometry(const &float3 displacement) {{
   auto geometry(#inline({0}()).geometry);
   *displacement = geometry.displacement;
@@ -41,7 +67,7 @@ static constexpr auto src_evalGeometry = R"(
 }}
 )";
 
-static constexpr auto src_evalBsdf = R"(
+static constexpr auto srcEvalBsdf = R"(
 @(visible) int {0}__evaluate_bsdf(
   const &float3 wo, const &float3 wi, 
   const &float pdf_fwd, const &float pdf_rev, const &color f) {{
@@ -50,7 +76,7 @@ static constexpr auto src_evalBsdf = R"(
 }}
 )";
 
-static constexpr auto src_evalBsdfSample = R"(
+static constexpr auto srcEvalBsdfSample = R"(
 @(visible) int {0}__evaluate_bsdf_sample(
   const &float4 xi, 
   const &float3 wo, const &float3 wi, 
@@ -65,7 +91,7 @@ void Module::emit(Context &context) {
     if (status == Status::InProgress)
       throw Error(std::format("module '{}' reached through cyclic 'import' sequence", name));
     status = Status::InProgress;
-    Emitter emitter{context, this, /*crumb=*/nullptr};
+    Emitter emitter{context, /*crumb=*/nullptr};
     emitter.emit(*root);
     lastCrumb = emitter.crumb;
     for (auto crumb{lastCrumb}; crumb; crumb = crumb->prev) {
@@ -77,14 +103,14 @@ void Module::emit(Context &context) {
           material.moduleName = name;
           material.name = func->get_name().str();
           auto emitMaterialFunction{[&](std::string src) -> std::string {
-            auto func{context.get_function(emitter, src)};
+            auto func{context.get_function(emitter, src, this)};
             sanity_check_nonnull(func);
             sanity_check(func->has_unique_concrete_instance());
             return func->get_unique_concrete_instance()->get_link_name().str();
           }};
-          material.evalGeometry.name = emitMaterialFunction(std::format(src_evalGeometry, material.name));
-          material.evalBsdf.name = emitMaterialFunction(std::format(src_evalBsdf, material.name));
-          material.evalBsdfSample.name = emitMaterialFunction(std::format(src_evalBsdfSample, material.name));
+          material.evalGeometry.name = emitMaterialFunction(std::format(srcEvalGeometry, material.name));
+          material.evalBsdf.name = emitMaterialFunction(std::format(srcEvalBsdf, material.name));
+          material.evalBsdfSample.name = emitMaterialFunction(std::format(srcEvalBsdfSample, material.name));
         }
       }
     }
@@ -92,4 +118,19 @@ void Module::emit(Context &context) {
   }
 }
 
-} // namespace smdl::Compiler
+void Module::format_source() {
+  if (!is_builtin()) {
+    sanity_check(is_parse_finished());
+    // Format before opening the file for writing, so that if anything
+    // goes wrong we don't wipe out the original source.
+    auto formatter{Formatter(text)};
+    formatter.write(root);
+    // No errors or sanity check crashes, so open the file and write the string.
+    auto ofs{std::ofstream(filename)};
+    if (!ofs.is_open())
+      throw Error(std::format("can't open '{}'", filenameStr));
+    ofs << formatter.outSrc;
+  }
+}
+
+} // namespace smdl

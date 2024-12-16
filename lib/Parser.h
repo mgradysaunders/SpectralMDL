@@ -145,8 +145,10 @@ public:
     uint64_t i{};
   };
 
-  Parser(llvm::BumpPtrAllocator &bumpAllocator, llvm::StringRef file, llvm::StringRef text, bool isSmdlSyntax = false)
-      : bumpAllocator(bumpAllocator), file(file), text(text), isSmdlSyntax(isSmdlSyntax) {}
+  explicit Parser(
+      Compiler::Module *module, llvm::BumpPtrAllocator &bumpAllocator, llvm::StringRef file, llvm::StringRef text,
+      bool isSmdlSyntax = false)
+      : module(module), bumpAllocator(bumpAllocator), file(file), text(text), isSmdlSyntax(isSmdlSyntax) {}
 
   Parser(const Parser &) = delete;
 
@@ -232,12 +234,7 @@ private:
 
   [[nodiscard]] auto source_since(Cursor cursor) { return text.substr(cursor.i, state.i - cursor.i).trim(); }
 
-  [[nodiscard]] auto source_location(Cursor cursor) { return AST::SourceLocation{file, static_cast<uint32_t>(cursor.lineNo)}; }
-
-  [[nodiscard]] auto attach(auto node, Cursor cursor) {
-    node->srcLoc = source_location(cursor);
-    return node;
-  }
+  [[nodiscard]] auto source_location(Cursor cursor) { return AST::SourceLocation{module, file, static_cast<uint32_t>(cursor.lineNo)}; }
 
   void report_error(std::string message) const { report_error(std::move(message), state); }
 
@@ -391,6 +388,8 @@ public:
   //--}
 
 private:
+  Compiler::Module *module{};
+
   llvm::BumpPtrAllocator &bumpAllocator;
 
   llvm::StringRef file{"(unnamed)"};
@@ -403,8 +402,10 @@ private:
 
   bool isSmdlSyntax{false};
 
-  template <typename T> [[nodiscard]] inline T *bump_allocate(auto &&...args) {
-    return new (bumpAllocator.Allocate(sizeof(T), alignof(T))) T(std::forward<decltype(args)>(args)...);
+  template <typename T> [[nodiscard]] inline T *bump_allocate(Cursor cursor, std::in_place_t, auto &&...args) {
+    auto node = new (bumpAllocator.Allocate(sizeof(T), alignof(T))) T(std::forward<decltype(args)>(args)...);
+    node->srcLoc = source_location(cursor);
+    return node;
   }
 };
 

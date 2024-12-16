@@ -7,7 +7,6 @@ namespace smdl::Compiler {
 
 class Crumb;
 class Function;
-class Module;
 class Type;
 
 } // namespace smdl::Compiler
@@ -17,6 +16,8 @@ namespace smdl::AST {
 class SourceLocation final {
 public:
   [[nodiscard]] constexpr operator bool() const { return line != 0; }
+
+  Compiler::Module *module{}; // TODO Not convinced this is the best option
 
   llvm::StringRef file{};
 
@@ -209,6 +210,10 @@ public:
   explicit AnnotationBlock(SourceRef srcDoubleBrackL, vector_or_SmallVector<Annotation> annotations, SourceRef srcDoubleBrackR)
       : srcDoubleBrackL(srcDoubleBrackL), annotations(std::move(annotations)), srcDoubleBrackR(srcDoubleBrackR) {}
 
+  Compiler::Module *module{};
+
+  SourceLocation srcLoc{};
+
   /// The double bracket `[[`.
   SourceRef srcDoubleBrackL{};
 
@@ -224,7 +229,7 @@ public:
   explicit Type(vector_or_SmallVector<SourceRef> srcAttrs, unique_bump_ptr<Expr> expr)
       : srcAttrs(std::move(srcAttrs)), expr(std::move(expr)) {}
 
-  [[nodiscard]] bool has_attr(llvm::StringRef attr) const {
+  [[nodiscard]] bool has_attribute(llvm::StringRef attr) const {
     return std::find(srcAttrs.begin(), srcAttrs.end(), attr) != srcAttrs.end();
   }
 
@@ -623,12 +628,6 @@ public:
 
   /// The keyword `export`. This may be empty!
   SourceRef srcKwExport{};
-
-  /// The associated compiler module.
-  Compiler::Module *module{};
-
-  /// The associated compiler crumb.
-  Compiler::Crumb *crumb{};
 };
 
 template <DeclKind K> class DeclSubclass : public Decl {
@@ -692,16 +691,6 @@ public:
 
 class Function final : public DeclSubclass<DeclKind::Function> {
 public:
-  struct LetAndCall final {
-    /// The let expression. This may be null.
-    Let *let{};
-
-    /// The call expression. This must be non-null.
-    Call *call{};
-
-    [[nodiscard]] operator bool() const { return call; }
-  };
-
   explicit Function(
       SourceRef srcAttrsAt, SourceRef srcAttrsParenL, vector_or_SmallVector<SourceRef> srcAttrs, SourceRef srcAttrsParenR,
       unique_bump_ptr<Type> returnType, unique_bump_ptr<AnnotationBlock> earlyAnnotations, Name name, ParamList params,
@@ -714,9 +703,19 @@ public:
         srcVariantParenR(srcVariantParenR), srcFrequency(srcFrequency), lateAnnotations(std::move(lateAnnotations)),
         srcEq(srcEq), definition(std::move(definition)), srcSemicolon(srcSemicolon) {}
 
-  [[nodiscard]] bool has_attr(llvm::StringRef attr) const {
+  [[nodiscard]] bool has_attribute(llvm::StringRef attr) const {
     return std::find(srcAttrs.begin(), srcAttrs.end(), attr) != srcAttrs.end();
   }
+
+  struct LetAndCall final {
+    /// The let expression. This may be null.
+    Let *let{};
+
+    /// The call expression. This must be non-null.
+    Call *call{};
+
+    [[nodiscard]] operator bool() const { return call; }
+  };
 
   /// If this is a function variant, get the variant let and call expressions. Else throw an error.
   [[nodiscard]] LetAndCall get_variant_let_and_call_expressions() const;
@@ -772,6 +771,9 @@ public:
 
   /// The semicolon `;`. This may be empty!
   SourceRef srcSemicolon{};
+
+  /// The associated compiler crumb.
+  Compiler::Crumb *crumb{};
 };
 
 class Import final : public DeclSubclass<DeclKind::Import> {
@@ -883,6 +885,9 @@ public:
 
   /// The semicolon `;`.
   SourceRef srcSemicolon{};
+
+  /// The associated compiler crumb.
+  Compiler::Crumb *crumb{};
 };
 
 class Tag final : public DeclSubclass<DeclKind::Tag> {
@@ -1132,8 +1137,6 @@ public:
 
   /// The statement.
   unique_bump_ptr<Stmt> stmt{};
-
-  Compiler::Crumb *crumb{};
 };
 
 class DoWhile final : public StmtSubclass<StmtKind::DoWhile> {

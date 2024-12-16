@@ -21,20 +21,20 @@ class LLJIT;
 
 } // namespace llvm
 
-namespace smdl::Compiler {
+namespace smdl {
+
+class DataLookup;
+
+namespace Compiler {
 
 class Context;
 class Emitter;
 class Module;
 class StructType;
 
-} // namespace smdl::Compiler
+} // namespace Compiler
 
-namespace smdl {
-
-class DataLookup;
-
-enum class OptLevel : uint32_t { None, O1, O2, O3 };
+enum class OptLevel : uint32_t { None = 0, O1 = 1, O2 = 2, O3 = 3 };
 
 enum class OutputFormat : uint32_t { IR, Assembly, Object };
 
@@ -60,6 +60,22 @@ public:
   std::string moduleName{};
 
   std::string name{};
+
+#if 0
+  Function<const void *(const state_t &state, void *allocator)> construct{};
+
+  Function<int_t(
+      const void *self, const float3_t &wo, const float3_t &wi, //
+      float_t &pdf_fwd, float_t &pdf_rev,                       //
+      float_t *f)>
+      evaluate_bsdf{};
+
+  Function<int_t(
+      const void *self, const float4_t &xi, const float3_t &wo, //
+      float3_t &wi, float_t &pdf_fwd, float_t &pdf_rev,         //
+      float_t *f, int_t &is_delta)>
+      evaluate_bsdf_sample{};
+#endif
 
   Function<float_t(const state_t &state, float3_t &displacement)> evalGeometry{};
 

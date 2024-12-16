@@ -120,6 +120,7 @@ AST::SourceRef Parser::next_int() {
 //--{ Parse: Decls
 auto Parser::parse_mdl() -> unique_bump_ptr_wrapper<AST::File> {
   skip();
+  auto cursor{save_cursor()};
   auto srcKwSmdlSyntax{AST::SourceRef()};
   isSmdlSyntax = next("#smdl_syntax", &srcKwSmdlSyntax);
   skip();
@@ -165,7 +166,7 @@ auto Parser::parse_mdl() -> unique_bump_ptr_wrapper<AST::File> {
   }
   if (!is_eof())
     report_error("expected EOF (apparently failed to parse everything!)");
-  return bump_allocate<AST::File>(
+  return bump_allocate<AST::File>(cursor, std::in_place,
       isSmdlSyntax, srcKwSmdlSyntax, version, std::move(imports), srcKwModule, std::move(annotations), srcSemicolonAfterModule,
       std::move(globals));
 }
@@ -230,7 +231,7 @@ auto Parser::parse_import_path(bool isUnicode) -> unique_bump_ptr_wrapper<AST::I
     return nullptr;
   }
   accept();
-  return attach(bump_allocate<AST::Identifier>(std::move(names)), cursor);
+  return bump_allocate<AST::Identifier>(cursor, std::in_place, std::move(names));
 }
 
 auto Parser::parse_using_alias() -> unique_bump_ptr_wrapper<AST::UsingAlias> {
@@ -255,7 +256,7 @@ auto Parser::parse_using_alias() -> unique_bump_ptr_wrapper<AST::UsingAlias> {
   if (!delimiter(';', &srcSemicolon))
     report_error("expected ';' after 'using ... = ...'", cursor);
   accept();
-  return attach(bump_allocate<AST::UsingAlias>(srcKwUsing, *name, srcEq, std::move(path), srcSemicolon), cursor);
+  return bump_allocate<AST::UsingAlias>(cursor, std::in_place, srcKwUsing, *name, srcEq, std::move(path), srcSemicolon);
 }
 
 auto Parser::parse_using_import() -> unique_bump_ptr_wrapper<AST::UsingImport> {
@@ -300,10 +301,11 @@ auto Parser::parse_using_import() -> unique_bump_ptr_wrapper<AST::UsingImport> {
   if (!delimiter(';', &srcSemicolon))
     report_error("expected ';' after '[export] using ... import ...'", cursor);
   accept();
-  auto decl{bump_allocate<AST::UsingImport>(srcKwUsing, std::move(path), srcKwImport, std::move(names), srcSemicolon)};
+  auto decl{bump_allocate<AST::UsingImport>(
+      cursor, std::in_place, srcKwUsing, std::move(path), srcKwImport, std::move(names), srcSemicolon)};
   decl->isExport = isExport;
   decl->srcKwExport = srcKwExport;
-  return attach(decl, cursor);
+  return decl;
 }
 
 auto Parser::parse_import() -> unique_bump_ptr_wrapper<AST::Import> {
@@ -323,7 +325,7 @@ auto Parser::parse_import() -> unique_bump_ptr_wrapper<AST::Import> {
   auto srcSemicolon{AST::SourceRef()};
   if (!delimiter(';', &srcSemicolon))
     report_error("expected ';' after 'import ...'", cursor);
-  return attach(bump_allocate<AST::Import>(srcKwImport, std::move(paths), srcSemicolon), cursor);
+  return bump_allocate<AST::Import>(cursor, std::in_place, srcKwImport, std::move(paths), srcSemicolon);
 }
 
 auto Parser::parse_global_declaration() -> unique_bump_ptr_wrapper<AST::Decl> {
@@ -349,9 +351,9 @@ auto Parser::parse_global_declaration() -> unique_bump_ptr_wrapper<AST::Decl> {
       report_error("'using' and 'import' declarations must appear at the top of the file");
     return nullptr;
   }
-  decl.get()->isGlobal = true;
-  decl.get()->isExport = isExport;
-  decl.get()->srcKwExport = srcKwExport;
+  decl->isGlobal = true;
+  decl->isExport = isExport;
+  decl->srcKwExport = srcKwExport;
   accept();
   return decl;
 }
@@ -384,7 +386,7 @@ auto Parser::parse_alias_type_declaration() -> unique_bump_ptr_wrapper<AST::Type
   auto srcSemicolon{AST::SourceRef()};
   if (!delimiter(';', &srcSemicolon))
     report_error("expected ';' after 'typedef ... NAME'", cursor);
-  return attach(bump_allocate<AST::Typedef>(srcKwTypedef, std::move(type), *name, srcSemicolon), cursor);
+  return bump_allocate<AST::Typedef>(cursor, std::in_place, srcKwTypedef, std::move(type), *name, srcSemicolon);
 }
 
 auto Parser::parse_struct_type_declaration() -> unique_bump_ptr_wrapper<AST::Struct> {
@@ -402,6 +404,7 @@ auto Parser::parse_struct_type_declaration() -> unique_bump_ptr_wrapper<AST::Str
   auto tags{vector_or_SmallVector<AST::Struct::Tag>{}};
   if (delimiter(':', &srcColonBeforeTags)) {
     while (true) {
+      auto cursor0{save_cursor()};
       auto srcKwDefault{AST::SourceRef()};
       bool isDefault{next_word("default", &srcKwDefault)};
       auto tagName{parse_identifier()};
@@ -410,7 +413,7 @@ auto Parser::parse_struct_type_declaration() -> unique_bump_ptr_wrapper<AST::Str
       auto &tag{tags.emplace_back()};
       tag.isDefault = isDefault;
       tag.srcKwDefault = srcKwDefault;
-      tag.type.reset(bump_allocate<AST::Type>(vector_or_SmallVector<AST::SourceRef>(), std::move(tagName)));
+      tag.type.reset(bump_allocate<AST::Type>(cursor0, std::in_place, vector_or_SmallVector<AST::SourceRef>(), std::move(tagName)));
       if (!delimiter(',', &tag.srcComma))
         break;
     }
@@ -436,11 +439,9 @@ auto Parser::parse_struct_type_declaration() -> unique_bump_ptr_wrapper<AST::Str
   if (!delimiter(';', &srcSemicolon))
     report_error("expected ';' after 'struct NAME { ... }'", cursor);
   accept();
-  return attach(
-      bump_allocate<AST::Struct>(
-          srcKwStruct, *name, srcColonBeforeTags, std::move(tags), std::move(annotations), srcBraceL, std::move(fields),
-          srcBraceR, srcSemicolon),
-      cursor);
+  return bump_allocate<AST::Struct>(
+      cursor, std::in_place, srcKwStruct, *name, srcColonBeforeTags, std::move(tags), std::move(annotations), srcBraceL,
+      std::move(fields), srcBraceR, srcSemicolon);
 }
 
 auto Parser::parse_struct_field_declarator() -> std::optional<AST::Struct::Field> {
@@ -503,10 +504,9 @@ auto Parser::parse_enum_type_declaration() -> unique_bump_ptr_wrapper<AST::Enum>
   auto srcSemicolon{AST::SourceRef()};
   if (!delimiter(';', &srcSemicolon))
     report_error("expected ';' after 'enum NAME { ... }'", cursor);
-  return attach(
-      bump_allocate<AST::Enum>(
-          srcKwEnum, *name, std::move(annotations), srcBraceL, std::move(declarators), srcBraceR, srcSemicolon),
-      cursor);
+  return bump_allocate<AST::Enum>(
+      cursor, std::in_place, srcKwEnum, *name, std::move(annotations), srcBraceL, std::move(declarators), srcBraceR,
+      srcSemicolon);
 }
 
 auto Parser::parse_enum_value_declarator() -> std::optional<AST::Enum::Declarator> {
@@ -555,7 +555,7 @@ auto Parser::parse_variable_declaration() -> unique_bump_ptr_wrapper<AST::Variab
   if (!delimiter(';', &srcSemicolon))
     report_error("expected ';' after variable declaration", cursor);
   accept();
-  return attach(bump_allocate<AST::Variable>(std::move(type), std::move(declarators), srcSemicolon), cursor);
+  return bump_allocate<AST::Variable>(cursor, std::in_place, std::move(type), std::move(declarators), srcSemicolon);
 }
 
 auto Parser::parse_variable_declarator() -> std::optional<AST::Variable::Declarator> {
@@ -648,6 +648,7 @@ auto Parser::parse_function_declaration() -> unique_bump_ptr_wrapper<AST::Functi
   if (delimiter(';', &srcSemicolon)) {
     // Nothing
   } else if (delimiter('=', &srcEq)) {
+    auto cursor0{save_cursor()};
     auto def{parse_expression()};
     if (!def)
       report_error("expected function expression after '='", cursor);
@@ -655,7 +656,7 @@ auto Parser::parse_function_declaration() -> unique_bump_ptr_wrapper<AST::Functi
       report_error("expected ';' after function expression", cursor);
     if (isVariant && !llvm::isa<AST::Let>(def.get()) && !llvm::isa<AST::Call>(def.get()))
       report_error("function variant must be defined by 'let' or call expression", cursor);
-    definition.reset(bump_allocate<AST::Return>(llvm::StringRef(), std::move(def), std::nullopt, llvm::StringRef()));
+    definition.reset(bump_allocate<AST::Return>(cursor0, std::in_place, llvm::StringRef(), std::move(def), std::nullopt, llvm::StringRef()));
   } else {
     auto def{parse_compound_statement()};
     if (!def)
@@ -663,12 +664,10 @@ auto Parser::parse_function_declaration() -> unique_bump_ptr_wrapper<AST::Functi
     definition = std::move(def);
   }
   accept();
-  return attach(
-      bump_allocate<AST::Function>(
-          srcAttrsAt, srcAttrsParenL, std::move(srcAttrs), srcAttrsParenR, std::move(type), std::move(earlyAnnotations), *name,
-          std::move(*params), isVariant, srcVariantParenL, srcVariantStar, srcVariantParenR, srcFrequency,
-          std::move(lateAnnotations), srcEq, std::move(definition), srcSemicolon),
-      cursor);
+  return bump_allocate<AST::Function>(
+      cursor, std::in_place, srcAttrsAt, srcAttrsParenL, std::move(srcAttrs), srcAttrsParenR, std::move(type),
+      std::move(earlyAnnotations), *name, std::move(*params), isVariant, srcVariantParenL, srcVariantStar, srcVariantParenR,
+      srcFrequency, std::move(lateAnnotations), srcEq, std::move(definition), srcSemicolon);
 }
 
 auto Parser::parse_tag_declaration() -> unique_bump_ptr_wrapper<AST::Tag> {
@@ -682,7 +681,7 @@ auto Parser::parse_tag_declaration() -> unique_bump_ptr_wrapper<AST::Tag> {
   auto srcSemicolon{AST::SourceRef()};
   if (!delimiter(';', &srcSemicolon))
     report_error("expected ';' after 'tag ...'", cursor);
-  return attach(bump_allocate<AST::Tag>(srcKwTag, *name, srcSemicolon), cursor);
+  return bump_allocate<AST::Tag>(cursor, std::in_place, srcKwTag, *name, srcSemicolon);
 }
 
 auto Parser::parse_unit_test_declaration() -> unique_bump_ptr_wrapper<AST::UnitTest> {
@@ -696,11 +695,9 @@ auto Parser::parse_unit_test_declaration() -> unique_bump_ptr_wrapper<AST::UnitT
   auto body{parse_compound_statement()};
   if (!body)
     report_error("expected compound statement after 'unit_test ...'", cursor);
-  return attach(
-      bump_allocate<AST::UnitTest>(
-          srcKwUnitTest, unique_bump_ptr<AST::LiteralString>(static_cast<AST::LiteralString *>(desc.release())),
-          std::move(body)),
-      cursor);
+  return bump_allocate<AST::UnitTest>(
+      cursor, std::in_place, srcKwUnitTest,
+      unique_bump_ptr<AST::LiteralString>(static_cast<AST::LiteralString *>(desc.release())), std::move(body));
 }
 //--}
 
@@ -771,7 +768,7 @@ auto Parser::parse_identifier() -> unique_bump_ptr_wrapper<AST::Identifier> {
   }
   if (pos != get_position()) {
     accept();
-    return attach(bump_allocate<AST::Identifier>(std::move(names)), cursor);
+    return bump_allocate<AST::Identifier>(cursor, std::in_place, std::move(names));
   } else {
     reject();
     return nullptr;
@@ -798,7 +795,7 @@ auto Parser::parse_type() -> unique_bump_ptr_wrapper<AST::Type> {
     reject();
     return nullptr;
   }
-  return attach(bump_allocate<AST::Type>(std::move(srcAttrs), std::move(expr)), cursor);
+  return bump_allocate<AST::Type>(cursor, std::in_place, std::move(srcAttrs), std::move(expr));
 }
 
 auto Parser::parse_parameter() -> std::optional<AST::Param> {
@@ -927,6 +924,7 @@ auto Parser::parse_annotation() -> std::optional<AST::Annotation> {
 
 auto Parser::parse_annotation_block() -> unique_bump_ptr_wrapper<AST::AnnotationBlock> {
   skip();
+  auto cursor{save_cursor()};
   auto srcDoubleBrackL{AST::SourceRef()};
   if (!next("[[", &srcDoubleBrackL))
     return nullptr;
@@ -946,7 +944,7 @@ auto Parser::parse_annotation_block() -> unique_bump_ptr_wrapper<AST::Annotation
   skip();
   if (!next("]]", &srcDoubleBrackR))
     report_error("expected ']]' to close annotation block");
-  return bump_allocate<AST::AnnotationBlock>(srcDoubleBrackL, std::move(annotations), srcDoubleBrackR);
+  return bump_allocate<AST::AnnotationBlock>(cursor, std::in_place, srcDoubleBrackL, std::move(annotations), srcDoubleBrackR);
 }
 
 auto Parser::parse_expression() -> unique_bump_ptr_wrapper<AST::Expr> {
@@ -974,7 +972,7 @@ auto Parser::parse_expression_in_parentheses() -> unique_bump_ptr_wrapper<AST::E
     return nullptr;
   }
   accept();
-  return attach(bump_allocate<AST::Parens>(isCompileTime, srcDollar, srcParenL, std::move(expr), srcParenR), cursor);
+  return bump_allocate<AST::Parens>(cursor, std::in_place, isCompileTime, srcDollar, srcParenL, std::move(expr), srcParenR);
 }
 
 auto Parser::parse_assignment_expression() -> unique_bump_ptr_wrapper<AST::Expr> {
@@ -1001,9 +999,8 @@ auto Parser::parse_conditional_expression() -> unique_bump_ptr_wrapper<AST::Expr
     auto exprElse{delimiter(':', &srcColon) ? parse_assignment_expression() : nullptr};
     if (!exprElse)
       report_error("expected else clause in conditional expression");
-    expr = attach(
-        bump_allocate<AST::Conditional>(std::move(expr), srcQuestion, std::move(exprThen), srcColon, std::move(exprElse)),
-        cursor);
+    expr = bump_allocate<AST::Conditional>(
+        cursor, std::in_place, std::move(expr), srcQuestion, std::move(exprThen), srcColon, std::move(exprElse));
   }
   return expr;
 }
@@ -1073,7 +1070,7 @@ auto Parser::parse_unary_expression() -> unique_bump_ptr_wrapper<AST::Expr> {
       return nullptr;
     }
     accept();
-    expr = attach(bump_allocate<AST::Unary>(srcOp, *op, std::move(expr)), cursor);
+    expr = bump_allocate<AST::Unary>(cursor, std::in_place, srcOp, *op, std::move(expr));
     return expr;
   }};
   if (auto expr{parse_prefix_expression()})
@@ -1098,15 +1095,15 @@ auto Parser::parse_postfix_expression() -> unique_bump_ptr_wrapper<AST::Expr> {
       auto name{parse_simple_name()};
       if (!name)
         report_error("expected name after '.'", cursor);
-      return attach(bump_allocate<AST::GetField>(std::move(expr), srcDot, *name), cursor);
+      return bump_allocate<AST::GetField>(cursor, std::in_place, std::move(expr), srcDot, *name);
     }
     auto srcOp{AST::SourceRef()};
     if (next("++", &srcOp))
-      return attach(bump_allocate<AST::Unary>(srcOp, AST::UnaryOp::PostfixIncr, std::move(expr)), cursor);
+      return bump_allocate<AST::Unary>(cursor, std::in_place, srcOp, AST::UnaryOp::PostfixIncr, std::move(expr));
     if (next("--", &srcOp))
-      return attach(bump_allocate<AST::Unary>(srcOp, AST::UnaryOp::PostfixDecr, std::move(expr)), cursor);
+      return bump_allocate<AST::Unary>(cursor, std::in_place, srcOp, AST::UnaryOp::PostfixDecr, std::move(expr));
     if (auto args{parse_argument_list()})
-      return attach(bump_allocate<AST::Call>(std::move(expr), std::move(*args)), cursor);
+      return bump_allocate<AST::Call>(cursor, std::in_place, std::move(expr), std::move(*args));
     auto indexes{vector_or_SmallVector<AST::GetIndex::Index>{}};
     auto srcBrackL{AST::SourceRef()};
     auto srcBrackR{AST::SourceRef()};
@@ -1120,7 +1117,7 @@ auto Parser::parse_postfix_expression() -> unique_bump_ptr_wrapper<AST::Expr> {
         auto srcAngleR{AST::SourceRef()};
         if (!delimiter('>', &srcAngleR))
           report_error("expected '>]'", cursor);
-        index.expr.reset(attach(bump_allocate<AST::SizeName>(srcAngleL, *name, srcAngleR), cursor));
+        index.expr.reset(bump_allocate<AST::SizeName>(cursor, std::in_place, srcAngleL, *name, srcAngleR));
       } else {
         index.expr = parse_expression(); // This may be null for `[]`
       }
@@ -1132,7 +1129,7 @@ auto Parser::parse_postfix_expression() -> unique_bump_ptr_wrapper<AST::Expr> {
       indexes.push_back(std::move(index));
     }
     if (!indexes.empty())
-      return bump_allocate<AST::GetIndex>(std::move(expr), std::move(indexes));
+      return bump_allocate<AST::GetIndex>(cursor, std::in_place, std::move(expr), std::move(indexes));
     return nullptr;
   }};
   while (true) {
@@ -1176,7 +1173,8 @@ auto Parser::parse_let_expression() -> unique_bump_ptr_wrapper<AST::Expr> {
   auto expr{parse_conditional_expression()};
   if (!expr)
     report_error("expected expression after 'let ... in'");
-  return attach(bump_allocate<AST::Let>(srcKwLet, srcBraceL, std::move(vars), srcBraceR, srcKwIn, std::move(expr)), cursor);
+  return bump_allocate<AST::Let>(
+      cursor, std::in_place, srcKwLet, srcBraceL, std::move(vars), srcBraceR, srcKwIn, std::move(expr));
 }
 
 auto Parser::parse_return_from_expression() -> unique_bump_ptr_wrapper<AST::ReturnFrom> {
@@ -1187,7 +1185,7 @@ auto Parser::parse_return_from_expression() -> unique_bump_ptr_wrapper<AST::Retu
   auto stmt{parse_compound_statement()};
   if (!stmt)
     report_error("expected compound statement after 'return_from'", cursor);
-  return attach(bump_allocate<AST::ReturnFrom>(srcKwReturnFrom, std::move(stmt)), cursor);
+  return bump_allocate<AST::ReturnFrom>(cursor, std::in_place, srcKwReturnFrom, std::move(stmt));
 }
 
 auto Parser::parse_primary_expression() -> unique_bump_ptr_wrapper<AST::Expr> {
@@ -1212,7 +1210,7 @@ auto Parser::parse_primary_expression() -> unique_bump_ptr_wrapper<AST::Expr> {
     auto expr{parse_expression_in_parentheses()};
     if (!expr)
       report_error("expected parenthesized expression after 'cast<...>'");
-    return attach(bump_allocate<AST::Cast>(srcKwCast, srcAngleL, std::move(type), srcAngleR, std::move(expr)), cursor);
+    return bump_allocate<AST::Cast>(cursor, std::in_place, srcKwCast, srcAngleL, std::move(type), srcAngleR, std::move(expr));
   }
   return nullptr;
 }
@@ -1222,11 +1220,11 @@ auto Parser::parse_literal_expression() -> unique_bump_ptr_wrapper<AST::Expr> {
   auto cursor{state};
   if (next_word("true")) {
     accept();
-    return attach(bump_allocate<AST::LiteralBool>(source_since(cursor), true), cursor);
+    return bump_allocate<AST::LiteralBool>(cursor, std::in_place, source_since(cursor), true);
   }
   if (next_word("false")) {
     accept();
-    return attach(bump_allocate<AST::LiteralBool>(source_since(cursor), false), cursor);
+    return bump_allocate<AST::LiteralBool>(cursor, std::in_place, source_since(cursor), false);
   }
   if (utf8::is_digit(peek())) { // LiteralInt or LiteralFloat
     auto parseDigitString{[&](auto &&is_digit) {
@@ -1268,7 +1266,7 @@ auto Parser::parse_literal_expression() -> unique_bump_ptr_wrapper<AST::Expr> {
         digits = "0";
       }
       accept();
-      return attach(bump_allocate<AST::LiteralInt>(source_since(cursor), value.getLimitedValue()), cursor);
+      return bump_allocate<AST::LiteralInt>(cursor, std::in_place, source_since(cursor), value.getLimitedValue());
     } else {
       bool isInt = true;
       std::string digits = std::string(parseDigitString(utf8::is_digit));
@@ -1298,16 +1296,16 @@ auto Parser::parse_literal_expression() -> unique_bump_ptr_wrapper<AST::Expr> {
       }
       accept();
       if (isInt) {
-        return attach(
-            bump_allocate<AST::LiteralInt>(
-                source_since(cursor), llvm::APInt(llvm::APInt::getBitsNeeded(digits, 10), digits, 10).getLimitedValue()),
-            cursor);
+        return bump_allocate<AST::LiteralInt>(
+            cursor, std::in_place, source_since(cursor),
+            llvm::APInt(llvm::APInt::getBitsNeeded(digits, 10), digits, 10).getLimitedValue());
       } else {
         llvm::APFloat value(llvm::APFloat::IEEEdouble());
         auto opStatus{value.convertFromString(digits, llvm::APFloat::rmNearestTiesToEven)};
         if (!opStatus)
           report_error(std::format("failed to parse floating point literal '{}'", digits.c_str()));
-        return attach(bump_allocate<AST::LiteralFloat>(source_since(cursor), value.convertToDouble(), precision), cursor);
+        return bump_allocate<AST::LiteralFloat>(
+            cursor, std::in_place, source_since(cursor), value.convertToDouble(), precision);
       }
     }
   }
@@ -1394,7 +1392,7 @@ auto Parser::parse_literal_expression() -> unique_bump_ptr_wrapper<AST::Expr> {
     if (!llvm::convertUTF32ToUTF8String(str32, str))
       report_error("utf-8 encoding failed!");
     accept();
-    return attach(bump_allocate<AST::LiteralString>(source_since(cursor), llvm::SmallString<64>(str.c_str())), cursor);
+    return bump_allocate<AST::LiteralString>(cursor, std::in_place, source_since(cursor), llvm::SmallString<64>(str.c_str()));
   }
   if (isSmdlSyntax) {
     if (next('#')) {
@@ -1403,7 +1401,7 @@ auto Parser::parse_literal_expression() -> unique_bump_ptr_wrapper<AST::Expr> {
         return nullptr;
       } else {
         accept();
-        return attach(bump_allocate<AST::Intrinsic>(source_since(cursor)), cursor);
+        return bump_allocate<AST::Intrinsic>(cursor, std::in_place, source_since(cursor));
       }
     }
   }
@@ -1436,7 +1434,7 @@ auto Parser::parse_binary_left_associative(
       break;
     } else {
       accept();
-      lhs = attach(bump_allocate<AST::Binary>(std::move(lhs), srcOp, *op, std::move(rhs)), cursor);
+      lhs = bump_allocate<AST::Binary>(cursor, std::in_place, std::move(lhs), srcOp, *op, std::move(rhs));
     }
   }
   accept();
@@ -1464,7 +1462,7 @@ auto Parser::parse_binary_right_associative(
     return lhs;
   } else {
     accept();
-    return attach(bump_allocate<AST::Binary>(std::move(lhs), srcOp, *op, std::move(rhs)), cursor);
+    return bump_allocate<AST::Binary>(cursor, std::in_place, std::move(lhs), srcOp, *op, std::move(rhs));
   }
 }
 
@@ -1531,17 +1529,17 @@ auto Parser::parse_statement() -> unique_bump_ptr_wrapper<AST::Stmt> {
       return stmt;
   }
   if (auto decl{parse_type_declaration()})
-    return bump_allocate<AST::DeclStmt>(std::move(decl));
+    return bump_allocate<AST::DeclStmt>(cursor, std::in_place, std::move(decl));
   if (auto decl{parse_variable_declaration()})
-    return attach(bump_allocate<AST::DeclStmt>(std::move(decl)), cursor);
+    return bump_allocate<AST::DeclStmt>(cursor, std::in_place, std::move(decl));
   if (delimiter(';'))
-    return attach(bump_allocate<AST::ExprStmt>(), cursor);
+    return bump_allocate<AST::ExprStmt>(cursor, std::in_place);
   if (auto expr{parse_expression()}) {
     auto lateIf{parse_late_if()};
     auto srcSemicolon{AST::SourceRef()};
     if (!delimiter(';', &srcSemicolon))
       report_error("expected ';' after expression", cursor);
-    return attach(bump_allocate<AST::ExprStmt>(std::move(expr), std::move(lateIf), srcSemicolon), cursor);
+    return bump_allocate<AST::ExprStmt>(cursor, std::in_place, std::move(expr), std::move(lateIf), srcSemicolon);
   }
   return nullptr;
 }
@@ -1564,7 +1562,7 @@ auto Parser::parse_compound_statement() -> unique_bump_ptr_wrapper<AST::Compound
   auto srcBraceR{AST::SourceRef()};
   if (!delimiter('}', &srcBraceR))
     report_error("expected '}' to close compound statement");
-  return attach(bump_allocate<AST::Compound>(srcBraceL, std::move(stmts), srcBraceR), cursor);
+  return bump_allocate<AST::Compound>(cursor, std::in_place, srcBraceL, std::move(stmts), srcBraceR);
 }
 
 auto Parser::parse_if_statement() -> unique_bump_ptr_wrapper<AST::If> {
@@ -1583,9 +1581,10 @@ auto Parser::parse_if_statement() -> unique_bump_ptr_wrapper<AST::If> {
     auto ifFail{parse_statement()};
     if (!ifFail)
       report_error("expected statement after 'else'", cursorElse);
-    return attach(bump_allocate<AST::If>(srcKwIf, std::move(cond), std::move(ifPass), srcKwElse, std::move(ifFail)), cursor);
+    return bump_allocate<AST::If>(
+        cursor, std::in_place, srcKwIf, std::move(cond), std::move(ifPass), srcKwElse, std::move(ifFail));
   } else {
-    return attach(bump_allocate<AST::If>(srcKwIf, std::move(cond), std::move(ifPass), srcKwElse, nullptr), cursor);
+    return bump_allocate<AST::If>(cursor, std::in_place, srcKwIf, std::move(cond), std::move(ifPass), srcKwElse, nullptr);
   }
 }
 
@@ -1613,7 +1612,8 @@ auto Parser::parse_switch_statement() -> unique_bump_ptr_wrapper<AST::Switch> {
   auto srcBraceR{AST::SourceRef()};
   if (!delimiter('}', &srcBraceR))
     report_error("expected closing '}' after 'switch'", cursor);
-  return attach(bump_allocate<AST::Switch>(srcKwSwitch, std::move(expr), srcBraceL, std::move(switchCases), srcBraceR), cursor);
+  return bump_allocate<AST::Switch>(
+      cursor, std::in_place, srcKwSwitch, std::move(expr), srcBraceL, std::move(switchCases), srcBraceR);
 }
 
 auto Parser::parse_switch_case() -> std::optional<AST::Switch::Case> {
@@ -1653,7 +1653,7 @@ auto Parser::parse_while_statement() -> unique_bump_ptr_wrapper<AST::While> {
   auto stmt{parse_statement()};
   if (!stmt)
     report_error("expected statement after 'while (...)'");
-  return attach(bump_allocate<AST::While>(srcKwWhile, std::move(expr), std::move(stmt)), cursor);
+  return bump_allocate<AST::While>(cursor, std::in_place, srcKwWhile, std::move(expr), std::move(stmt));
 }
 
 auto Parser::parse_do_statement() -> unique_bump_ptr_wrapper<AST::DoWhile> {
@@ -1673,7 +1673,8 @@ auto Parser::parse_do_statement() -> unique_bump_ptr_wrapper<AST::DoWhile> {
   auto srcSemicolon{AST::SourceRef()};
   if (!delimiter(';', &srcSemicolon))
     report_error("expected ';' after 'do ... while (...)'", cursor);
-  return attach(bump_allocate<AST::DoWhile>(srcKwDo, std::move(stmt), srcKwWhile, std::move(expr), srcSemicolon), cursor);
+  return bump_allocate<AST::DoWhile>(
+      cursor, std::in_place, srcKwDo, std::move(stmt), srcKwWhile, std::move(expr), srcSemicolon);
 }
 
 auto Parser::parse_for_statement() -> unique_bump_ptr_wrapper<AST::For> {
@@ -1687,14 +1688,14 @@ auto Parser::parse_for_statement() -> unique_bump_ptr_wrapper<AST::For> {
   auto init{unique_bump_ptr_wrapper<AST::Stmt>{}};
   if (auto decl{parse_variable_declaration()}) {
     auto srcLoc{decl->srcLoc};
-    init = bump_allocate<AST::DeclStmt>(std::move(decl));
+    init = bump_allocate<AST::DeclStmt>(cursor, std::in_place, std::move(decl));
     init->srcLoc = srcLoc;
   } else if (auto expr{parse_expression()}) {
     auto srcSemicolon{AST::SourceRef()};
     if (!delimiter(';', &srcSemicolon))
       report_error("expected ';' after expression", cursor);
     auto srcLoc{expr->srcLoc};
-    init = bump_allocate<AST::ExprStmt>(std::move(expr), std::nullopt, srcSemicolon);
+    init = bump_allocate<AST::ExprStmt>(cursor, std::in_place, std::move(expr), std::nullopt, srcSemicolon);
     init->srcLoc = srcLoc;
   } else {
     report_error("expected variable declaration or expression after 'for'", cursor);
@@ -1710,11 +1711,9 @@ auto Parser::parse_for_statement() -> unique_bump_ptr_wrapper<AST::For> {
   auto body{parse_statement()};
   if (!body)
     report_error("expected statement after 'for (...)'", cursor);
-  return attach(
-      bump_allocate<AST::For>(
-          srcKwFor, srcParenL, std::move(init), std::move(cond), srcSemicolonAfterCond, std::move(incr), srcParenR,
-          std::move(body)),
-      cursor);
+  return bump_allocate<AST::For>(
+      cursor, std::in_place, srcKwFor, srcParenL, std::move(init), std::move(cond), srcSemicolonAfterCond, std::move(incr),
+      srcParenR, std::move(body));
 }
 
 auto Parser::parse_break_statement() -> unique_bump_ptr_wrapper<AST::Break> {
@@ -1726,7 +1725,7 @@ auto Parser::parse_break_statement() -> unique_bump_ptr_wrapper<AST::Break> {
   auto srcSemicolon{AST::SourceRef()};
   if (!delimiter(';', &srcSemicolon))
     report_error("expected ';' after 'break'", cursor);
-  return attach(bump_allocate<AST::Break>(srcKwBreak, std::move(lateIf), srcSemicolon), cursor);
+  return bump_allocate<AST::Break>(cursor, std::in_place, srcKwBreak, std::move(lateIf), srcSemicolon);
 }
 
 auto Parser::parse_continue_statement() -> unique_bump_ptr_wrapper<AST::Continue> {
@@ -1738,7 +1737,7 @@ auto Parser::parse_continue_statement() -> unique_bump_ptr_wrapper<AST::Continue
   auto srcSemicolon{AST::SourceRef()};
   if (!delimiter(';', &srcSemicolon))
     report_error("expected ';' after 'continue'", cursor);
-  return attach(bump_allocate<AST::Continue>(srcKwContinue, std::move(lateIf), srcSemicolon), cursor);
+  return bump_allocate<AST::Continue>(cursor, std::in_place, srcKwContinue, std::move(lateIf), srcSemicolon);
 }
 
 auto Parser::parse_return_statement() -> unique_bump_ptr_wrapper<AST::Return> {
@@ -1753,7 +1752,7 @@ auto Parser::parse_return_statement() -> unique_bump_ptr_wrapper<AST::Return> {
   auto srcSemicolon{AST::SourceRef()};
   if (!delimiter(';', &srcSemicolon))
     report_error("expected ';' after 'return ...'", cursor);
-  return attach(bump_allocate<AST::Return>(srcKwReturn, std::move(expr), std::move(lateIf), srcSemicolon), cursor);
+  return bump_allocate<AST::Return>(cursor, std::in_place, srcKwReturn, std::move(expr), std::move(lateIf), srcSemicolon);
 }
 
 auto Parser::parse_unreachable_statement() -> unique_bump_ptr_wrapper<AST::Unreachable> {
@@ -1764,7 +1763,7 @@ auto Parser::parse_unreachable_statement() -> unique_bump_ptr_wrapper<AST::Unrea
   auto srcSemicolon{AST::SourceRef()};
   if (!delimiter(';', &srcSemicolon))
     report_error("expected ';' after 'unreachable'", cursor);
-  return attach(bump_allocate<AST::Unreachable>(srcKwUnreachable, srcSemicolon), cursor);
+  return bump_allocate<AST::Unreachable>(cursor, std::in_place, srcKwUnreachable, srcSemicolon);
 }
 
 auto Parser::parse_preserve_statement() -> unique_bump_ptr_wrapper<AST::Preserve> {
@@ -1784,7 +1783,7 @@ auto Parser::parse_preserve_statement() -> unique_bump_ptr_wrapper<AST::Preserve
   auto srcSemicolon{AST::SourceRef()};
   if (!delimiter(';', &srcSemicolon))
     report_error("expected ';' after 'preserve ...'", cursor);
-  return attach(bump_allocate<AST::Preserve>(srcKwPreserve, std::move(preservees), srcSemicolon), cursor);
+  return bump_allocate<AST::Preserve>(cursor, std::in_place, srcKwPreserve, std::move(preservees), srcSemicolon);
 }
 
 auto Parser::parse_defer_statement() -> unique_bump_ptr_wrapper<AST::Defer> {
@@ -1795,7 +1794,7 @@ auto Parser::parse_defer_statement() -> unique_bump_ptr_wrapper<AST::Defer> {
   auto stmt{parse_statement()};
   if (!stmt)
     report_error("expected statement after 'defer'", cursor);
-  return attach(bump_allocate<AST::Defer>(srcKwDefer, std::move(stmt)), cursor);
+  return bump_allocate<AST::Defer>(cursor, std::in_place, srcKwDefer, std::move(stmt));
 }
 
 auto Parser::parse_visit_statement() -> unique_bump_ptr_wrapper<AST::Visit> {
@@ -1815,7 +1814,7 @@ auto Parser::parse_visit_statement() -> unique_bump_ptr_wrapper<AST::Visit> {
   auto body{parse_compound_statement()};
   if (!body)
     report_error("expected compound statement after 'visit ... in ...'", cursor);
-  return attach(bump_allocate<AST::Visit>(srcKwVisit, *name, srcKwIn, std::move(expr), std::move(body)), cursor);
+  return bump_allocate<AST::Visit>(cursor, std::in_place, srcKwVisit, *name, srcKwIn, std::move(expr), std::move(body));
 }
 
 auto Parser::parse_late_if() -> std::optional<AST::LateIf> {

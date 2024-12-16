@@ -11,11 +11,11 @@ void FunctionInstance::initialize(
   sanity_check(decl.params.size() == params.size());
   sanity_check(decl.params.size() == argTypes.size());
   auto &context{emitter0.context};
-  type = context.get_function_type(decl.has_attr("pure"), decl.returnType->type, argTypes);
+  type = context.get_function_type(decl.has_attribute("pure"), decl.returnType->type, argTypes);
   // If the function is declared `@(foreign)`, first try to look it up in the LLVM module to see
   // if it was already declared earlier. Redundant declarations like this should be OK and should
   // resolve to the same function.
-  if (decl.has_attr("foreign")) {
+  if (decl.has_attribute("foreign")) {
     if (llvmFunc = context.mdl.get_llvm_module().getFunction(name); llvmFunc) {
       // However, if the declaration clashes with the earlier declaration, that is a problem! Foreign
       // C functions must be uniqued by type signature without overloads.
@@ -35,7 +35,7 @@ void FunctionInstance::initialize(
     // If we have a definition, it is time to compile the LLVM function.
     auto returns{llvm::SmallVector<Return>{}};
     auto inlines{llvm::SmallVector<Inline>{}};
-    auto emitter{Emitter{context, decl.module, decl.crumb, &returns, &inlines, llvmFunc}};
+    auto emitter{Emitter{context, decl.crumb, &returns, &inlines, llvmFunc}};
 
     // Now initialize the function arguments, and keep track of whether there is any implied `visit`
     // type switching.
@@ -97,21 +97,21 @@ void FunctionInstance::initialize(
   }
 
   llvmFunc->setName(name);
-  if (decl.has_attr("alwaysinline"))
+  if (decl.has_attribute("alwaysinline"))
     llvmFunc->addFnAttr(llvm::Attribute::AlwaysInline);
-  if (decl.has_attr("noinline"))
+  if (decl.has_attribute("noinline"))
     llvmFunc->addFnAttr(llvm::Attribute::NoInline);
-  if (decl.has_attr("hot"))
+  if (decl.has_attribute("hot"))
     llvmFunc->addFnAttr(llvm::Attribute::Hot);
-  if (decl.has_attr("cold"))
+  if (decl.has_attribute("cold"))
     llvmFunc->addFnAttr(llvm::Attribute::Cold);
-  if (decl.has_attr("optsize"))
+  if (decl.has_attribute("optsize"))
     llvmFunc->addFnAttr(llvm::Attribute::OptimizeForSize);
-  if (decl.has_attr("optnone"))
+  if (decl.has_attribute("optnone"))
     llvmFunc->addFnAttr(llvm::Attribute::OptimizeNone);
-  if (decl.has_attr("visible"))
+  if (decl.has_attribute("visible"))
     llvmFunc->setLinkage(llvm::Function::ExternalLinkage);
-  if (decl.has_attr("foreign")) {
+  if (decl.has_attribute("foreign")) {
     llvmFunc->setLinkage(llvm::Function::ExternalLinkage);
     llvmFunc->setDSOLocal(false);
   }
@@ -143,7 +143,7 @@ void FunctionInstance::initialize(Emitter &emitter0, AST::UnitTest &decl) {
   llvmFunc->setLinkage(llvm::Function::ExternalLinkage);
   auto returns{llvm::SmallVector<Return>{}};
   auto inlines{llvm::SmallVector<Inline>{}};
-  auto emitter{Emitter{context, decl.module, decl.crumb, &returns, &inlines, llvmFunc}};
+  auto emitter{Emitter{context, emitter0.crumb, &returns, &inlines, llvmFunc}};
   {
     // Initialize arguments.
     auto llvmArgItr{llvmFunc->arg_begin()};
@@ -168,7 +168,7 @@ void FunctionInstance::initialize(Emitter &emitter0, AST::Expr &expr) {
   llvmFunc = type->create_default_llvm_function("");
   auto returns{llvm::SmallVector<Return>{}};
   auto inlines{llvm::SmallVector<Inline>{}};
-  auto emitter{Emitter{context, emitter0.module, emitter0.crumb, &returns, &inlines, llvmFunc}};
+  auto emitter{Emitter{context, emitter0.crumb, &returns, &inlines, llvmFunc}};
   auto returnValue{emitter.rvalue(emitter.emit(expr))};
   returns.push_back({returnValue, emitter.get_insert_block(), expr.srcLoc});
   emitter.emit_unwind_and_br(emitter.afterReturn);
@@ -186,7 +186,7 @@ void FunctionInstance::initialize(Emitter &emitter0, EnumType *enumType) {
   llvmFunc = type->create_default_llvm_function("enum-to-string");
   auto returns{llvm::SmallVector<Return>{}};
   auto inlines{llvm::SmallVector<Inline>{}};
-  auto emitter{Emitter{context, emitter0.module, emitter0.crumb, &returns, &inlines, llvmFunc}};
+  auto emitter{Emitter{context, emitter0.crumb, &returns, &inlines, llvmFunc}};
   {
     auto blockDefault{emitter.create_block("switch.default")};
     auto inst{emitter.builder.CreateSwitch(llvmFunc->getArg(0), blockDefault)};
@@ -257,9 +257,15 @@ Function::Function(Emitter &emitter0, AST::Function &decl) : decl(decl) {
   emitter0.emit(*decl.returnType);
   for (const auto &param : decl.params)
     emitter0.emit(*param.type);
+  // NOTE: This is kind of ugly, but for now we have to do function declaration here so that
+  // recursion works, i.e., the function knows about itself. Probably a way to clean this up.
+  emitter0.declare(decl.name, emitter0.context.get_compile_time_function(this), &decl);
+  decl.crumb = emitter0.crumb;
+
   params = ParamList(emitter0.context, decl);
   validate_attributes();
-  if (auto prevCrumb{Crumb::find(emitter0.crumb, decl.name.srcName, nullptr)}) {
+
+  if (auto prevCrumb{Crumb::find(decl.crumb->prev, decl.name.srcName, nullptr)}) {
     if (prevCrumb->value.is_compile_time_function())
       prev = prevCrumb->value.get_compile_time_function();
     else
@@ -268,7 +274,7 @@ Function::Function(Emitter &emitter0, AST::Function &decl) : decl(decl) {
   // Only forward-link prev to this if the declaration is in the same module. This prevents
   // overloads of functions in other modules from interfering with code outside of the
   // current module.
-  if (prev && prev->decl.module == decl.module)
+  if (prev && prev->decl.srcLoc.module == decl.srcLoc.module)
     prev->next = this;
   if ((is_variant() && prev) || (prev && prev->is_variant()))
     decl.srcLoc.report_error(std::format("function variant '{}' must not be overloaded", get_name()));
@@ -276,10 +282,6 @@ Function::Function(Emitter &emitter0, AST::Function &decl) : decl(decl) {
     letAndCall = decl.get_variant_let_and_call_expressions();
     sanity_check(has_definition());
   }
-  // NOTE: This is kind of ugly, but for now we have to do function declaration here so that
-  // recursion works, i.e., the function knows about itself. Probably a way to clean this up.
-  emitter0.declare(decl.name, emitter0.context.get_compile_time_function(this), &decl);
-  decl.crumb = emitter0.crumb;
 
   // If this function has a unique concrete instance and is marked `@(visible)` or
   // is marked `@(foreign)` or represents a concrete material, then compile it immediately.
@@ -349,7 +351,6 @@ Value Function::call(Emitter &emitter0, const ArgList &args, const AST::SourceLo
     auto blockEnd{emitter0.create_block(llvm_twine(name, ".end"))};
     emitter0.emit_br(blockBegin);
     Emitter emitter1{&emitter0};
-    emitter1.module = decl.module;
     emitter1.crumb = decl.crumb;
     emitter1.state = is_pure() ? Value() : emitter0.state;
     emitter1.afterEndScope = {decl.crumb, blockEnd};
@@ -386,7 +387,6 @@ Value Function::call(Emitter &emitter0, const ArgList &args, const AST::SourceLo
       llvm::SmallVector<Return> returns{};
       {
         Emitter emitter1{&emitter0};
-        emitter1.module = overload.decl.module;
         emitter1.crumb = overload.decl.crumb;
         emitter1.state = overload.is_pure() ? Value() : emitter0.state;
         emitter1.returns = &returns;
@@ -470,7 +470,7 @@ Value Function::compile_time_evaluate(Emitter &emitter, AST::Expr &expr) {
 
 void Function::validate_attributes() {
   // `@(foreign)` ...
-  if (decl.has_attr("foreign")) {
+  if (decl.has_attribute("foreign")) {
     // ... must not have definition
     if (decl.definition)
       decl.srcLoc.report_error(std::format("function '{}' declared '@(foreign)' must not have definition", get_name()));
@@ -478,7 +478,7 @@ void Function::validate_attributes() {
     if (params.has_any_abstract() || decl.returnType->type->is_abstract())
       decl.srcLoc.report_error(std::format("function '{}' declared '@(foreign)' must not use abstract types", get_name()));
     auto checkNoCollision{[&](const char *name) {
-      if (decl.has_attr(name))
+      if (decl.has_attribute(name))
         decl.srcLoc.report_error(
             std::format("function '{}' declared '@(foreign)' must not be declared '@({})'", get_name(), name));
     }};
@@ -492,12 +492,12 @@ void Function::validate_attributes() {
     checkNoCollision("visible");      // ... must not be `@(visible)`
   }
   // `@(macro)` ...
-  if (decl.has_attr("macro")) {
+  if (decl.has_attribute("macro")) {
     // ... must have definition
     if (!decl.definition)
       decl.srcLoc.report_error(std::format("function '{}' declared '@(macro)' must have definition", get_name()));
     auto checkNoCollision{[&](const char *name) {
-      if (decl.has_attr(name))
+      if (decl.has_attribute(name))
         decl.srcLoc.report_error(
             std::format("function '{}' declared '@(macro)' must not be declared '@({})'", get_name(), name));
     }};
@@ -512,7 +512,7 @@ void Function::validate_attributes() {
 
   {
     auto checkNoCollision{[&](const char *name0, const char *name1) {
-      if (decl.has_attr(name0) && decl.has_attr(name1))
+      if (decl.has_attribute(name0) && decl.has_attribute(name1))
         decl.srcLoc.report_error(
             std::format("function '{}' must not be declared both '@({})' and '@({})'", get_name(), name0, name1));
     }};

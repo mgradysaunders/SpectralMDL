@@ -12,17 +12,17 @@
 #define STB_ONLY_HDR 1
 #define STB_IMAGE_STATIC 1
 #define STB_IMAGE_IMPLEMENTATION 1
-#include "stb_image.h"
+#include "thirdparty/stb_image.h"
 
 #define STBIW_ASSERT(X) ((void)0)
 #define STB_IMAGE_WRITE_STATIC 1
 #define STB_IMAGE_WRITE_IMPLEMENTATION 1
-#include "stb_image_write.h"
+#include "thirdparty/stb_image_write.h"
 
 #define TINYEXR_USE_MINIZ 0
 #define TINYEXR_USE_STB_ZLIB 1
 #define TINYEXR_IMPLEMENTATION 1
-#include "tinyexr.h"
+#include "thirdparty/tinyexr.h"
 
 namespace smdl {
 

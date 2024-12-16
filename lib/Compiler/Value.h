@@ -7,7 +7,6 @@ namespace smdl::Compiler {
 
 class Function;
 class FunctionInstance;
-class Module;
 class Type;
 
 //--{ Value
@@ -179,6 +178,7 @@ public:
   /// The AST source location, if applicable.
   AST::SourceLocation srcLoc{};
 
+  /// The value to preserve. This is specific for `AST::Preserve`. 
   Value valueToPreserve{};
 
 public:

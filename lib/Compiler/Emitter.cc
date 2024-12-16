@@ -12,9 +12,9 @@ void Emitter::declare_function_parameter(const Param &param, Value value) {
     value = lvalue(value, /*manageLifetime=*/false); // We push below
     value.llvmValue->setName(llvm_twine("lv.", param.name));
   }
-  // We assume 'param' is a reference to a persistent 'Function' parameter, so we can directly
-  // construct an 'llvm::ArrayRef' without needing to 'context.bump_duplicate()'
-  push(value, param.name, {}, param.srcLoc);
+  // We assume `param` is a reference to a persistent `Function` parameter, so we can directly
+  // construct an `llvm::ArrayRef` without needing to `context.bump_duplicate()`
+  push(value, llvm::ArrayRef(param.name), {}, param.srcLoc);
   if (param.isInline)
     declare_function_parameter_inline(crumb->value);
 }
@@ -84,13 +84,9 @@ Value Emitter::emit(AST::Decl &decl) {
 }
 
 Value Emitter::emit(AST::Enum &decl) {
-  if (!decl.module) {
-    decl.module = module;
-    decl.crumb = crumb;
-  }
-  context.validate_decl_name(decl.module, "enum", decl.name);
+  context.validate_decl_name(decl.srcLoc.module, "enum", decl.name);
   for (auto lastValue{Value()}; auto &declarator : decl.declarators) {
-    context.validate_decl_name(decl.module, "enum constant", declarator.name);
+    context.validate_decl_name(decl.srcLoc.module, "enum constant", declarator.name);
     auto value{
         declarator.init ? emit(declarator.init)
         : lastValue     ? emit_op(AST::BinaryOp::Add, lastValue, context.get_compile_time_int(1))
@@ -102,7 +98,6 @@ Value Emitter::emit(AST::Enum &decl) {
     lastValue = value;
   }
   auto type{context.get_enum_type(&decl, get_llvm_function())};
-
   declare(decl.name, context.get_compile_time_type(type), &decl);
   for (auto &declarator : decl.declarators)
     declare(declarator.name, RValue(type, declarator.llvmConst), &decl);
@@ -110,26 +105,10 @@ Value Emitter::emit(AST::Enum &decl) {
 }
 
 Value Emitter::emit(AST::Function &decl) {
-  if (!decl.module) {
-    decl.module = module;
-    decl.crumb = crumb;
-  }
-  context.validate_decl_name(decl.module, "function", decl.name);
+  context.validate_decl_name(decl.srcLoc.module, "function", decl.name);
   context.get_function(*this, &decl);
   // NOTE: Moved to `Function()` to get ordinary recursion to work. Needs design revision.
   // declare(decl.name, context.get_compile_time_function(context.get_function(*this, &decl)), &decl);
-  return {};
-}
-
-Value Emitter::emit(AST::Import &decl) {
-  if (decl.isExport)
-    decl.srcLoc.report_error("can't re-export qualified 'import'");
-  if (!decl.module) {
-    decl.module = module;
-    decl.crumb = crumb;
-  }
-  for (auto &path : decl.paths)
-    declare_import(path.identifier->is_absolute(), path.identifier->get_string_refs(), decl);
   return {};
 }
 
@@ -138,96 +117,38 @@ Value Emitter::emit(AST::Struct &decl) {
     emit(astField.type);
   for (auto &astTag : decl.tags)
     emit(astTag.type);
-  if (!decl.module) {
-    decl.module = module;
-    decl.crumb = crumb;
-  }
-  context.validate_decl_name(decl.module, "struct", decl.name);
+  decl.crumb = crumb;
+  context.validate_decl_name(decl.srcLoc.module, "struct", decl.name);
   declare(decl.name, context.get_compile_time_type(context.get_struct_type(&decl, get_llvm_function())), &decl);
   return {};
 }
 
-Value Emitter::emit(AST::Tag &decl) {
-  if (!decl.module) {
-    decl.module = module;
-    decl.crumb = crumb;
-  }
-  context.validate_decl_name(decl.module, "tag", decl.name);
-  declare(decl.name, context.get_compile_time_type(context.get_tag_type(&decl, get_llvm_function())), &decl);
-  return {};
-}
-
-Value Emitter::emit(AST::Typedef &decl) {
-  if (!decl.module) {
-    decl.module = module;
-    decl.crumb = crumb;
-  }
-  context.validate_decl_name(decl.module, "typedef", decl.name);
-  declare(decl.name, emit(decl.type), &decl);
-  return {};
-}
-
 Value Emitter::emit(AST::UnitTest &decl) {
-  if (!decl.module) {
-    decl.module = module;
-    decl.crumb = crumb;
-  }
   if (context.mdl.enableUnitTests) {
     auto func{FunctionInstance{}};
     func.initialize(*this, decl);
     auto &unitTest{context.mdl.unitTests.emplace_back()};
-    unitTest.moduleName = module->name;
+    unitTest.moduleName = decl.srcLoc.module->name;
     unitTest.name = decl.name->value.str();
     unitTest.exec.name = func.llvmFunc->getName().str();
   }
   return {};
 }
 
-Value Emitter::emit(AST::UsingAlias &decl) {
-  if (!decl.module) {
-    decl.module = module;
-    decl.crumb = crumb;
-  }
-  push({}, {}, &decl, decl.srcLoc);
-  return {};
-}
-
-Value Emitter::emit(AST::UsingImport &decl) {
-  if (!decl.module) {
-    decl.module = module;
-    decl.crumb = crumb;
-  }
-  auto path{decl.path->get_string_refs()};
-  if (decl.is_import_all()) {
-    path.push_back("*");
-    declare_import(decl.path->is_absolute(), path, decl);
-  } else {
-    for (auto &name : decl.names) {
-      path.push_back(name.srcName);
-      declare_import(decl.path->is_absolute(), path, decl);
-      path.pop_back();
-    }
-  }
-  return {};
-}
-
 Value Emitter::emit(AST::Variable &decl) {
   auto type{emit(decl.type).get_compile_time_type()};
-  auto isConst{bool(decl.type->has_attr("const"))};
-  auto isStatic{bool(decl.type->has_attr("static"))};
-  auto isInline{bool(decl.type->has_attr("inline"))};
+  auto isConst{bool(decl.type->has_attribute("const"))};
+  auto isStatic{bool(decl.type->has_attribute("static"))};
+  auto isInline{bool(decl.type->has_attribute("inline"))};
   if (!get_llvm_function() && !isConst)
     decl.srcLoc.report_error("global variables must be 'const'");
   if (isStatic && !isConst)
     decl.srcLoc.report_error("variable declared 'static' must also be 'const' (at least for now)");
   if (isInline)
     decl.srcLoc.report_error("variable must not be declared 'inline'");
-  if (!decl.module) {
-    decl.module = module;
-    decl.crumb = crumb;
-  }
+  // decl.crumb = crumb;
   for (auto &declarator : decl.declarators) {
-    context.validate_decl_name(decl.module, "variable", declarator.name);
+    context.validate_decl_name(decl.srcLoc.module, "variable", declarator.name);
     Value value{};
     // NOTE: Initialization is inside an 'emit_scope' to limit lifetimes of temporary
     // declarations 't := something', but the following 'construct()' is outside of the
@@ -242,7 +163,7 @@ Value Emitter::emit(AST::Variable &decl) {
     } else {
       if (type->is_abstract())
         declarator.name.srcLoc.report_error(
-            std::format("variable '{}' declare with type '{}' requires initializer", declarator.name.srcName, type->name));
+            std::format("variable '{}' declared with type '{}' requires initializer", declarator.name.srcName, type->name));
       value = construct(type, {}, decl.srcLoc);
     }
     if (isStatic) {
@@ -281,7 +202,7 @@ Value Emitter::emit(AST::Binary &expr) {
     auto identifier{llvm::dyn_cast<AST::Identifier>(&*expr.lhs)};
     if (!identifier || !identifier->is_simple_name())
       expr.srcLoc.report_error("expected lhs of definition operator ':=' to be a simple name");
-    context.validate_decl_name(module, "temporary", identifier->names[0].name);
+    context.validate_decl_name(nullptr, "temporary", identifier->names[0].name);
     auto rv{rvalue(emit(expr.rhs))};
     declare(identifier->names[0].name, rv);
     return rv;
@@ -668,13 +589,6 @@ void Emitter::emit_end_lifetime(Value value) {
     builder.CreateLifetimeEnd(value, builder.getInt64(context.get_size_of(value.type)));
 }
 
-void Emitter::emit_unwind_and_br(Label label) {
-  if (!has_terminator()) {
-    emit_unwind(label.crumb);
-    emit_br(label.block);
-  }
-}
-
 void Emitter::emit_unwind(Crumb *crumb0) {
   sanity_check(!has_terminator());
   for (; crumb && crumb != crumb0; crumb = crumb->prev) {
@@ -687,13 +601,13 @@ void Emitter::emit_unwind(Crumb *crumb0) {
       auto block{create_block(context.get_unique_name("defer", get_llvm_function()))};
       emit_br(block);
       Emitter emitter{this};
-      emitter.crumb = defer->crumb;
+      emitter.crumb = crumb;
       emitter.afterBreak = {};    // Not allowed to break!
       emitter.afterContinue = {}; // Not allowed to continue!
       emitter.afterReturn = {};   // Not allowed to return!
       emitter.move_to(block);
       emitter.emit(*defer->stmt);
-      emitter.emit_unwind(defer->crumb);
+      emitter.emit_unwind(crumb);
       move_to(emitter.get_insert_block());
     }
   }
