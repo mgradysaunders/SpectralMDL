@@ -136,7 +136,12 @@ public:
 class Crumb final {
 public:
   /// Is this an exported AST declaration?
-  [[nodiscard]] bool is_exported_ast_decl() const;
+  [[nodiscard]] bool is_exported_ast_decl() const {
+    if (node)
+      if (auto decl{llvm::dyn_cast<AST::Decl>(node)})
+        return decl->isExport;
+    return false;
+  }
 
   /// Is this an AST import declaration?
   [[nodiscard]] bool is_ast_import() const { return node && llvm::isa<AST::Import>(node); }
@@ -160,7 +165,9 @@ public:
   [[nodiscard]] bool matches_name(llvm::StringRef name0) const;
 
   /// Matches the given name?
-  [[nodiscard]] bool matches_name(llvm::ArrayRef<llvm::StringRef> path) const;
+  [[nodiscard]] bool matches_name(llvm::ArrayRef<llvm::StringRef> path) const {
+    return path.size() == 1 ? matches_name(path[0]) : !path.empty() && name == path;
+  }
 
 public:
   /// The previous crumb.
@@ -178,7 +185,7 @@ public:
   /// The AST source location, if applicable.
   AST::SourceLocation srcLoc{};
 
-  /// The value to preserve. This is specific for `AST::Preserve`. 
+  /// The value to preserve. This is specific for `AST::Preserve`.
   Value valueToPreserve{};
 
 public:

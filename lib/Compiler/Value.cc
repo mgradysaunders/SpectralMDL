@@ -11,7 +11,7 @@ Value Value::zero(Type *type) {
 
 bool Value::is_void() const { return !type || !llvmValue || type->is_void(); }
 
-bool Value::is_compile_time_string() const { return is_compile_time() || type != type->context.get_string_type(); }
+bool Value::is_compile_time_string() const { return is_compile_time() && type == type->context.get_string_type(); }
 
 bool Value::is_compile_time_function() const { return is_compile_time() && type->is_compiler_function(); }
 
@@ -29,20 +29,9 @@ llvm::StringRef Value::get_compile_time_string() const {
   return sanity_check_nonnull(dataArray)->getAsCString();
 }
 
-bool Crumb::is_exported_ast_decl() const {
-  if (node)
-    if (auto decl{llvm::dyn_cast<AST::Decl>(node)})
-      return decl->isExport;
-  return false;
-}
-
 bool Crumb::matches_name(llvm::StringRef name0) const {
   return (name.size() == 1 && name[0] == name0) || //
          (name.size() >= 2 && name.back() == name0 && is_ast_using_import() && value);
-}
-
-bool Crumb::matches_name(llvm::ArrayRef<llvm::StringRef> path) const {
-  return path.size() == 1 ? matches_name(path[0]) : !path.empty() && name == path;
 }
 
 Crumb *Crumb::find(Crumb *crumb, llvm::ArrayRef<llvm::StringRef> name, llvm::Function *llvmFunc, int depth) {
@@ -73,7 +62,7 @@ Crumb *Crumb::find(Crumb *crumb, llvm::ArrayRef<llvm::StringRef> name, llvm::Fun
 Param::Param(Context &context, const AST::Param &astParam)
     : name(astParam.name.srcName), type(astParam.type->type), isConst(bool(astParam.type->has_attribute("const"))),
       isInline(bool(astParam.type->has_attribute("inline"))), init(astParam.init.get()), srcLoc(astParam.name.srcLoc) {
-  // context.validate_decl_name("parameter", *astParam.name);
+  context.validate_decl_name("parameter", astParam.name);
   if (astParam.type->has_attribute("static"))
     astParam.name.srcLoc.report_error(std::format("parameter '{}' must not be declared 'static'", astParam.name.srcName));
   if (astParam.type->has_attribute("inline") && !astParam.type->type->get_inline_struct_type())
@@ -84,7 +73,7 @@ Param::Param(Context &context, const AST::Struct::Field &astField)
     : name(astField.name.srcName), type(astField.type->type), isVoid(astField.isVoid || type->is_void()),
       isConst(bool(astField.type->has_attribute("const"))), isInline(bool(astField.type->has_attribute("inline"))),
       init(astField.init.get()), srcLoc(astField.name.srcLoc) {
-  // context.validate_decl_name("field", *astField.name);
+  context.validate_decl_name("field", astField.name);
   if (astField.type->has_attribute("static"))
     astField.name.srcLoc.report_error(std::format("field '{}' must not be declared 'static'", astField.name.srcName));
   if (astField.type->has_attribute("inline") && !astField.type->type->get_inline_struct_type())

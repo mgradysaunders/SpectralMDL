@@ -210,8 +210,6 @@ public:
   explicit AnnotationBlock(SourceRef srcDoubleBrackL, vector_or_SmallVector<Annotation> annotations, SourceRef srcDoubleBrackR)
       : srcDoubleBrackL(srcDoubleBrackL), annotations(std::move(annotations)), srcDoubleBrackR(srcDoubleBrackR) {}
 
-  Compiler::Module *module{};
-
   SourceLocation srcLoc{};
 
   /// The double bracket `[[`.

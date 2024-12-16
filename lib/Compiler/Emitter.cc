@@ -84,9 +84,9 @@ Value Emitter::emit(AST::Decl &decl) {
 }
 
 Value Emitter::emit(AST::Enum &decl) {
-  context.validate_decl_name(decl.srcLoc.module, "enum", decl.name);
+  context.validate_decl_name("enum", decl.name);
   for (auto lastValue{Value()}; auto &declarator : decl.declarators) {
-    context.validate_decl_name(decl.srcLoc.module, "enum constant", declarator.name);
+    context.validate_decl_name("enum constant", declarator.name);
     auto value{
         declarator.init ? emit(declarator.init)
         : lastValue     ? emit_op(AST::BinaryOp::Add, lastValue, context.get_compile_time_int(1))
@@ -105,7 +105,7 @@ Value Emitter::emit(AST::Enum &decl) {
 }
 
 Value Emitter::emit(AST::Function &decl) {
-  context.validate_decl_name(decl.srcLoc.module, "function", decl.name);
+  context.validate_decl_name("function", decl.name);
   context.get_function(*this, &decl);
   // NOTE: Moved to `Function()` to get ordinary recursion to work. Needs design revision.
   // declare(decl.name, context.get_compile_time_function(context.get_function(*this, &decl)), &decl);
@@ -118,7 +118,7 @@ Value Emitter::emit(AST::Struct &decl) {
   for (auto &astTag : decl.tags)
     emit(astTag.type);
   decl.crumb = crumb;
-  context.validate_decl_name(decl.srcLoc.module, "struct", decl.name);
+  context.validate_decl_name("struct", decl.name);
   declare(decl.name, context.get_compile_time_type(context.get_struct_type(&decl, get_llvm_function())), &decl);
   return {};
 }
@@ -146,9 +146,8 @@ Value Emitter::emit(AST::Variable &decl) {
     decl.srcLoc.report_error("variable declared 'static' must also be 'const' (at least for now)");
   if (isInline)
     decl.srcLoc.report_error("variable must not be declared 'inline'");
-  // decl.crumb = crumb;
   for (auto &declarator : decl.declarators) {
-    context.validate_decl_name(decl.srcLoc.module, "variable", declarator.name);
+    context.validate_decl_name("variable", declarator.name);
     Value value{};
     // NOTE: Initialization is inside an 'emit_scope' to limit lifetimes of temporary
     // declarations 't := something', but the following 'construct()' is outside of the
@@ -202,7 +201,7 @@ Value Emitter::emit(AST::Binary &expr) {
     auto identifier{llvm::dyn_cast<AST::Identifier>(&*expr.lhs)};
     if (!identifier || !identifier->is_simple_name())
       expr.srcLoc.report_error("expected lhs of definition operator ':=' to be a simple name");
-    context.validate_decl_name(nullptr, "temporary", identifier->names[0].name);
+    context.validate_decl_name("temporary", identifier->names[0].name);
     auto rv{rvalue(emit(expr.rhs))};
     declare(identifier->names[0].name, rv);
     return rv;

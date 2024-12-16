@@ -37,7 +37,7 @@ public:
   }
 
   Emitter(Emitter *parent)
-      : parent(parent), context(parent->context), crumb(parent->crumb), state(parent->state), returns(parent->returns),
+      : context(parent->context), crumb(parent->crumb), state(parent->state), returns(parent->returns),
         inlines(parent->inlines), afterBreak(parent->afterBreak), afterContinue(parent->afterContinue),
         afterReturn(parent->afterReturn), afterEndScope(parent->afterEndScope), builder(parent->context.llvmContext),
         macroRecursionDepth(parent->macroRecursionDepth) {
@@ -162,13 +162,13 @@ public:
   Value emit(AST::Struct &decl);
 
   Value emit(AST::Tag &decl) {
-    context.validate_decl_name(decl.srcLoc.module, "tag", decl.name);
+    context.validate_decl_name("tag", decl.name);
     declare(decl.name, context.get_compile_time_type(context.get_tag_type(&decl, get_llvm_function())), &decl);
     return {};
   }
 
   Value emit(AST::Typedef &decl) {
-    context.validate_decl_name(decl.srcLoc.module, "typedef", decl.name);
+    context.validate_decl_name("typedef", decl.name);
     declare(decl.name, emit(decl.type), &decl);
     return {};
   }
@@ -419,9 +419,6 @@ public:
   }
 
 public:
-  /// The parent emitter, if applicable.
-  Emitter *const parent{};
-
   /// The context.
   Context &context;
 

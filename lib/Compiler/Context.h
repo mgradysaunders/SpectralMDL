@@ -81,8 +81,8 @@ public:
   }
 
   /// Validate declaration name by checking that it is NOT a reserved keyword. See `is_keyword()`.
-  void validate_decl_name(Module *mod, const char *kind, const AST::Name &name) {
-    if (is_keyword(mod, name.srcName)) {
+  void validate_decl_name(const char *kind, const AST::Name &name) {
+    if (is_keyword(name.srcLoc.module, name.srcName)) {
       name.srcLoc.report_error(std::format("{} name must not be reserved keyword '{}'", kind, name.srcName));
     }
   }
