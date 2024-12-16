@@ -18,7 +18,7 @@ public:
     [[nodiscard]] operator llvm::BasicBlock *() const { return block; }
   };
 
-  Emitter(
+  explicit Emitter(
       Context &context, Crumb *crumb,               //
       llvm::SmallVector<Return> *returns = nullptr, //
       llvm::SmallVector<Inline> *inlines = nullptr, //
@@ -36,6 +36,7 @@ public:
     }
   }
 
+  // TODO Do away with this
   Emitter(Emitter *parent)
       : context(parent->context), crumb(parent->crumb), state(parent->state), returns(parent->returns),
         inlines(parent->inlines), afterBreak(parent->afterBreak), afterContinue(parent->afterContinue),
