@@ -65,13 +65,13 @@ Value Emitter::rvalue(Value value) {
 }
 //--}
 
-Value Emitter::emit(AST::Node &node) { return emit_type_switch<AST::Decl, AST::Expr, AST::File, AST::Stmt>(node); }
+Value Emitter::emit(AST::Node &astNode) { return emit_type_switch<AST::Decl, AST::Expr, AST::File, AST::Stmt>(astNode); }
 
 //--{ Emit: Decls
-Value Emitter::emit(AST::Decl &decl) {
+Value Emitter::emit(AST::Decl &astDecl) {
   return emit_type_switch<
       AST::Enum, AST::Function, AST::Import, AST::Struct, AST::Tag, AST::Typedef, AST::UnitTest, AST::UsingAlias,
-      AST::UsingImport, AST::Variable>(decl);
+      AST::UsingImport, AST::Variable>(astDecl);
 }
 
 Value Emitter::emit(AST::Enum &decl) {
@@ -104,12 +104,14 @@ Value Emitter::emit(AST::Function &decl) {
 }
 
 Value Emitter::emit(AST::Struct &decl) {
+  context.validate_decl_name("struct", decl.name);
+  // TODO This needs to move in-between the `AST::Struct` constructor/initialization so that
+  // recursive data structures work, e.g., `struct Foo { &Foo next = null; }`
   for (auto &astField : decl.fields)
     emit(astField.type);
   for (auto &astTag : decl.tags)
     emit(astTag.type);
   decl.crumb = semantics->lastBreadcrumb;
-  context.validate_decl_name("struct", decl.name);
   declare(decl.name, context.get_compile_time_type(context.get_struct_type(&decl, get_llvm_function())), &decl);
   return {};
 }

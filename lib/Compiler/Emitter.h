@@ -50,8 +50,8 @@ public:
 
   explicit Emitter(
       Context &context, Breadcrumb *lastBreadcrumb = nullptr, //
-      llvm::SmallVector<Return> *returns = nullptr,             //
-      llvm::SmallVector<Inline> *inlines = nullptr,             //
+      llvm::SmallVector<Return> *returns = nullptr,           //
+      llvm::SmallVector<Inline> *inlines = nullptr,           //
       llvm::Function *llvmFunc = nullptr)
       : context(context), builder(context.llvmContext) {
     semantics->lastBreadcrumb = lastBreadcrumb;
@@ -157,169 +157,171 @@ public:
     return emit(*opt);
   }
 
-  Value emit(AST::Node &node);
+  Value emit(AST::Node &astNode);
 
-  Value emit(AST::File &file) {
-    for (auto &decl : file.imports)
-      emit(decl);
-    for (auto &decl : file.globals)
-      emit(decl);
+  Value emit(AST::File &astFile) {
+    for (auto &astDecl : astFile.imports)
+      emit(astDecl);
+    for (auto &astDecl : astFile.globals)
+      emit(astDecl);
     return {};
   }
 
   //--{ Emit: Decls
-  Value emit(AST::Decl &decl);
+  Value emit(AST::Decl &astDecl);
 
-  Value emit(AST::Enum &decl);
+  Value emit(AST::Enum &astEnum);
 
-  Value emit(AST::Function &decl);
+  Value emit(AST::Function &astFunction);
 
-  Value emit(AST::Import &decl) {
-    if (decl.isExport)
-      decl.srcLoc.report_error("can't re-export qualified 'import'");
-    for (auto &path : decl.paths)
-      declare_import(path.identifier->is_absolute(), path.identifier->get_string_refs(), decl);
+  Value emit(AST::Import &astImport) {
+    if (astImport.isExport)
+      astImport.srcLoc.report_error("can't re-export qualified 'import'");
+    for (auto &path : astImport.paths)
+      declare_import(path.identifier->is_absolute(), path.identifier->get_string_refs(), astImport);
     return {};
   }
 
-  Value emit(AST::Struct &decl);
+  Value emit(AST::Struct &astStruct);
 
-  Value emit(AST::Tag &decl) {
-    context.validate_decl_name("tag", decl.name);
-    declare(decl.name, context.get_compile_time_type(context.get_tag_type(&decl, get_llvm_function())), &decl);
+  Value emit(AST::Tag &astTag) {
+    context.validate_decl_name("tag", astTag.name);
+    declare(astTag.name, context.get_compile_time_type(context.get_tag_type(&astTag, get_llvm_function())), &astTag);
     return {};
   }
 
-  Value emit(AST::Typedef &decl) {
-    context.validate_decl_name("typedef", decl.name);
-    declare(decl.name, emit(decl.type), &decl);
+  Value emit(AST::Typedef &astTypedef) {
+    context.validate_decl_name("typedef", astTypedef.name);
+    declare(astTypedef.name, emit(astTypedef.type), &astTypedef);
     return {};
   }
 
-  Value emit(AST::UnitTest &decl);
+  Value emit(AST::UnitTest &astUnitTest);
 
-  Value emit(AST::UsingAlias &decl) {
-    push({}, {}, &decl, decl.srcLoc);
+  Value emit(AST::UsingAlias &astUsingAlias) {
+    push({}, {}, &astUsingAlias, astUsingAlias.srcLoc);
     return {};
   }
 
-  Value emit(AST::UsingImport &decl) {
-    auto path{decl.path->get_string_refs()};
-    for (auto &name : decl.names) {
+  Value emit(AST::UsingImport &astUsingImport) {
+    auto path{astUsingImport.path->get_string_refs()};
+    for (auto &name : astUsingImport.names) {
       path.push_back(name.srcName);
-      declare_import(decl.path->is_absolute(), path, decl);
+      declare_import(astUsingImport.path->is_absolute(), path, astUsingImport);
       path.pop_back();
     }
     return {};
   }
 
-  Value emit(AST::Variable &decl);
+  Value emit(AST::Variable &astVariable);
   //--}
 
   //--{ Emit: Exprs
-  Value emit(AST::Expr &expr);
+  Value emit(AST::Expr &astExpr);
 
-  Value emit(AST::Binary &expr);
+  Value emit(AST::Binary &astBinary);
 
-  Value emit(AST::Call &expr) { return emit_call(emit(expr.expr), emit(expr.args), expr.srcLoc); }
+  Value emit(AST::Call &astCall) { return emit_call(emit(astCall.expr), emit(astCall.args), astCall.srcLoc); }
 
-  Value emit(AST::Cast &expr) { return construct(emit(expr.type).get_compile_time_type(), emit(expr.expr), expr.srcLoc); }
+  Value emit(AST::Cast &astCast) {
+    return construct(emit(astCast.type).get_compile_time_type(), emit(astCast.expr), astCast.srcLoc);
+  }
 
-  Value emit(AST::Conditional &expr);
+  Value emit(AST::Conditional &astConditional);
 
-  Value emit(AST::GetField &expr) { return access(emit(expr.expr), expr.name.srcName, expr.name.srcLoc); }
+  Value emit(AST::GetField &astGet) { return access(emit(astGet.expr), astGet.name.srcName, astGet.name.srcLoc); }
 
-  Value emit(AST::GetIndex &expr);
+  Value emit(AST::GetIndex &astGet);
 
-  Value emit(AST::Identifier &expr) { return context.resolve(*this, expr); }
+  Value emit(AST::Identifier &astIdentifier) { return context.resolve(*this, astIdentifier); }
 
-  Value emit(AST::Intrinsic &expr) { return context.get_compile_time_intrinsic(&expr); }
+  Value emit(AST::Intrinsic &astIntrinsic) { return context.get_compile_time_intrinsic(&astIntrinsic); }
 
-  Value emit(AST::Let &expr);
+  Value emit(AST::Let &astLet);
 
-  Value emit(AST::LiteralBool &expr) { return context.get_compile_time_bool(expr.value); }
+  Value emit(AST::LiteralBool &astLiteral) { return context.get_compile_time_bool(astLiteral.value); }
 
-  Value emit(AST::LiteralFloat &expr) { return context.get_compile_time_FP(expr.value, expr.precision); }
+  Value emit(AST::LiteralFloat &astLiteral) { return context.get_compile_time_FP(astLiteral.value, astLiteral.precision); }
 
-  Value emit(AST::LiteralInt &expr) { return context.get_compile_time_int(expr.value); }
+  Value emit(AST::LiteralInt &astLiteral) { return context.get_compile_time_int(astLiteral.value); }
 
-  Value emit(AST::LiteralString &expr) { return context.get_compile_time_string(expr.value); }
+  Value emit(AST::LiteralString &astLiteral) { return context.get_compile_time_string(astLiteral.value); }
 
-  Value emit(AST::Parens &expr);
+  Value emit(AST::Parens &astParens);
 
-  Value emit(AST::ReturnFrom &expr);
+  Value emit(AST::ReturnFrom &astReturnFrom);
 
-  Value emit(AST::Type &expr);
+  Value emit(AST::Type &astType);
 
-  Value emit(AST::Unary &expr) { return emit_op(expr.op, emit(expr.expr), expr.srcLoc); }
+  Value emit(AST::Unary &astUnary) { return emit_op(astUnary.op, emit(astUnary.expr), astUnary.srcLoc); }
   //--}
 
   //--{ Emit: Stmts
-  Value emit(AST::Stmt &stmt);
+  Value emit(AST::Stmt &astStmt);
 
-  Value emit(AST::Break &stmt) {
+  Value emit(AST::Break &astBreak) {
     if (!semantics->breakTo)
-      stmt.srcLoc.report_error("unexpected 'break'");
-    emit_late_if(stmt.lateIf, [&] { emit_unwind_and_br(semantics->breakTo); });
+      astBreak.srcLoc.report_error("unexpected 'break'");
+    emit_late_if(astBreak.lateIf, [&] { emit_unwind_and_br(semantics->breakTo); });
     return {};
   }
 
-  Value emit(AST::Compound &stmt);
+  Value emit(AST::Compound &astCompound);
 
-  Value emit(AST::Continue &stmt) {
+  Value emit(AST::Continue &astContinue) {
     if (!semantics->continueTo)
-      stmt.srcLoc.report_error("unexpected 'continue'");
-    emit_late_if(stmt.lateIf, [&] { emit_unwind_and_br(semantics->continueTo); });
+      astContinue.srcLoc.report_error("unexpected 'continue'");
+    emit_late_if(astContinue.lateIf, [&] { emit_unwind_and_br(semantics->continueTo); });
     return {};
   }
 
-  Value emit(AST::DeclStmt &stmt) { return emit(stmt.decl); }
+  Value emit(AST::DeclStmt &astDeclStmt) { return emit(astDeclStmt.decl); }
 
-  Value emit(AST::Defer &stmt) {
-    push({}, {}, &stmt, stmt.srcLoc);
+  Value emit(AST::Defer &astDefer) {
+    push({}, {}, &astDefer, astDefer.srcLoc);
     return {};
   }
 
-  Value emit(AST::DoWhile &stmt);
+  Value emit(AST::DoWhile &astDoWhile);
 
-  Value emit(AST::ExprStmt &stmt) {
-    if (stmt.expr)
-      emit_late_if(stmt.lateIf, [&] { emit(stmt.expr); });
+  Value emit(AST::ExprStmt &astExprStmt) {
+    if (astExprStmt.expr)
+      emit_late_if(astExprStmt.lateIf, [&] { emit(astExprStmt.expr); });
     return {};
   }
 
-  Value emit(AST::For &stmt);
+  Value emit(AST::For &astFor);
 
-  Value emit(AST::If &stmt);
+  Value emit(AST::If &astIf);
 
-  Value emit(AST::Preserve &stmt);
+  Value emit(AST::Preserve &astPreserve);
 
-  Value emit(AST::Return &stmt) {
+  Value emit(AST::Return &astReturn) {
     if (!semantics->returnTo)
-      stmt.srcLoc.report_error("unexpected 'return'");
-    emit_late_if(stmt.lateIf, [&] { emit_return(stmt.expr.get() ? emit(stmt.expr) : Value(), stmt.srcLoc); });
+      astReturn.srcLoc.report_error("unexpected 'return'");
+    emit_late_if(astReturn.lateIf, [&] { emit_return(astReturn.expr.get() ? emit(astReturn.expr) : Value(), astReturn.srcLoc); });
     return {};
   }
 
-  Value emit(AST::Switch &stmt);
+  Value emit(AST::Switch &astSwitch);
 
-  Value emit(AST::Unreachable &stmt) {
+  Value emit(AST::Unreachable &astUnreachable) {
     sanity_check(get_llvm_function());
     builder.CreateUnreachable();
     return {};
   }
 
-  Value emit(AST::Visit &stmt) {
-    emit_visit(emit(stmt.expr), [&](Emitter &emitter, Value value) -> Value {
-      emitter.declare(stmt.name, value);
+  Value emit(AST::Visit &astVisit) {
+    emit_visit(emit(astVisit.expr), [&](Emitter &emitter, Value value) -> Value {
+      emitter.declare(astVisit.name, value);
       if (!value.is_void())
-        emitter.emit(stmt.body);
+        emitter.emit(astVisit.body);
       return {};
     });
     return {};
   }
 
-  Value emit(AST::While &stmt);
+  Value emit(AST::While &astWhile);
   //--}
 
   ArgList emit(const AST::ArgList &astArgs);
@@ -346,9 +348,9 @@ public:
     emit_unwind(lastBreadcrumb);
   }
 
-  Value emit_scope(AST::Expr &expr) {
+  Value emit_scope(AST::Expr &astExpr) {
     Value value{};
-    emit_scope([&] { value = emit(expr); });
+    emit_scope([&] { value = emit(astExpr); });
     return value;
   }
 
@@ -385,12 +387,12 @@ public:
     builder.CreateCondBr(construct(context.get_bool_type(), cond), blockPass, blockFail);
   }
 
-  void emit_late_if(std::optional<AST::LateIf> &lateIf, std::invocable<> auto &&func) {
-    if (!lateIf) {
+  void emit_late_if(std::optional<AST::LateIf> &astLateIf, std::invocable<> auto &&func) {
+    if (!astLateIf) {
       std::invoke(func);
     } else {
       auto lastBreadcrumb{semantics->lastBreadcrumb};
-      auto cond{emit_cond(*lateIf->cond, /*insideScope=*/false)};
+      auto cond{emit_cond(*astLateIf->cond, /*insideScope=*/false)};
       if (cond.is_compile_time_int()) {
         auto pass{cond.get_compile_time_int() != 0};
         if (!pass)
