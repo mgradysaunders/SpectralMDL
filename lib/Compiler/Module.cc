@@ -91,12 +91,12 @@ void Module::emit(Context &context) {
     if (status == Status::InProgress)
       throw Error(std::format("module '{}' reached through cyclic 'import' sequence", name));
     status = Status::InProgress;
-    Emitter emitter{context, /*crumb=*/nullptr};
+    Emitter emitter{context};
     emitter.emit(*root);
-    lastCrumb = emitter.crumb;
-    for (auto crumb{lastCrumb}; crumb; crumb = crumb->prev) {
-      if (!lastImportCrumb && crumb->value.is_compile_time_module())
-        lastImportCrumb = crumb;
+    lastBreadcrumb = emitter.semantics->lastBreadcrumb;
+    for (auto crumb{lastBreadcrumb}; crumb; crumb = crumb->prev) {
+      if (!lastImportDeclaration && crumb->value.is_compile_time_module())
+        lastImportDeclaration = crumb;
       if (crumb->value.is_compile_time_function()) {
         if (auto func{crumb->value.get_compile_time_function()}; func->represents_material()) {
           auto &material{context.mdl.materials.emplace_back()};

@@ -44,9 +44,9 @@ void FunctionInstance::initialize(
     {
       auto llvmArgItr{llvmFunc->arg_begin()};
       // If the function is `@(pure)` then it does NOT have an implicit state argument. In which case,
-      // we set the `emitter.state` to the null `Value()`. Otherwise, the implicit state argument is
+      // we set the `emitter.semantics->state` to the null `Value()`. Otherwise, the implicit state argument is
       // always the first argument of the function.
-      emitter.state = type->isPure ? Value() : RValue(context.get_type<state_t *>(), &*llvmArgItr++);
+      emitter.semantics->state = type->isPure ? Value() : RValue(context.get_type<state_t *>(), &*llvmArgItr++);
       for (size_t i{}; i < params.size(); i++) {
         auto argValue{RValue(argTypes[i], &*llvmArgItr++)};
         emitter.declare_function_parameter(params[i], argValue);
@@ -87,7 +87,7 @@ void FunctionInstance::initialize(
       if (!emitter.has_terminator()) {
         if (type->returnType != context.get_void_type())
           srcLoc.report_error(std::format("function '{}' is missing 'return' statement", name));
-        emitter.emit_unwind_and_br(emitter.afterReturn);
+        emitter.emit_unwind_and_br(emitter.semantics->returnTo);
       }
     }
     auto returnType{emitter.emit_final_return(type->returnType, returns, srcLoc)};
@@ -143,17 +143,17 @@ void FunctionInstance::initialize(Emitter &emitter0, AST::UnitTest &decl) {
   llvmFunc->setLinkage(llvm::Function::ExternalLinkage);
   auto returns{llvm::SmallVector<Return>{}};
   auto inlines{llvm::SmallVector<Inline>{}};
-  auto emitter{Emitter{context, emitter0.crumb, &returns, &inlines, llvmFunc}};
+  auto emitter{Emitter{context, emitter0.semantics->lastBreadcrumb, &returns, &inlines, llvmFunc}};
   {
     // Initialize arguments.
     auto llvmArgItr{llvmFunc->arg_begin()};
     llvmArgItr->setName("state");
     llvmArgItr->addAttr(llvm::Attribute::ReadOnly);
     llvmArgItr->addAttr(llvm::Attribute::NoAlias);
-    emitter.state = RValue(context.get_type<state_t *>(), &*llvmArgItr++);
+    emitter.semantics->state = RValue(context.get_type<state_t *>(), &*llvmArgItr++);
   }
   emitter.emit(*decl.body);
-  emitter.emit_unwind_and_br(emitter.afterReturn);
+  emitter.emit_unwind_and_br(emitter.semantics->returnTo);
   emitter.emit_final_return(context.get_void_type(), returns, decl.srcLoc);
   force_inline(inlines);
   eliminate_unreachable();
@@ -168,10 +168,10 @@ void FunctionInstance::initialize(Emitter &emitter0, AST::Expr &expr) {
   llvmFunc = type->create_default_llvm_function("");
   auto returns{llvm::SmallVector<Return>{}};
   auto inlines{llvm::SmallVector<Inline>{}};
-  auto emitter{Emitter{context, emitter0.crumb, &returns, &inlines, llvmFunc}};
+  auto emitter{Emitter{context, emitter0.semantics->lastBreadcrumb, &returns, &inlines, llvmFunc}};
   auto returnValue{emitter.rvalue(emitter.emit(expr))};
   returns.push_back({returnValue, emitter.get_insert_block(), expr.srcLoc});
-  emitter.emit_unwind_and_br(emitter.afterReturn);
+  emitter.emit_unwind_and_br(emitter.semantics->returnTo);
   emitter.emit_final_return(returnValue.type, returns, expr.srcLoc);
   patch_return_type(returnValue.type);
   force_inline(inlines);
@@ -186,7 +186,7 @@ void FunctionInstance::initialize(Emitter &emitter0, EnumType *enumType) {
   llvmFunc = type->create_default_llvm_function("enum-to-string");
   auto returns{llvm::SmallVector<Return>{}};
   auto inlines{llvm::SmallVector<Inline>{}};
-  auto emitter{Emitter{context, emitter0.crumb, &returns, &inlines, llvmFunc}};
+  auto emitter{Emitter{context, emitter0.semantics->lastBreadcrumb, &returns, &inlines, llvmFunc}};
   {
     auto blockDefault{emitter.create_block("switch.default")};
     auto inst{emitter.builder.CreateSwitch(llvmFunc->getArg(0), blockDefault)};
@@ -196,12 +196,12 @@ void FunctionInstance::initialize(Emitter &emitter0, EnumType *enumType) {
       returns.push_back(
           {context.get_compile_time_string(enumType->constants[i].name), blockCase, enumType->constants[i].srcLoc});
       emitter.move_to(blockCase);
-      emitter.emit_unwind_and_br(emitter.afterReturn);
+      emitter.emit_unwind_and_br(emitter.semantics->returnTo);
     }
     llvm_move_block_to_end(blockDefault);
     returns.push_back({context.get_compile_time_string(""), blockDefault, {}});
     emitter.move_to(blockDefault);
-    emitter.emit_unwind_and_br(emitter.afterReturn);
+    emitter.emit_unwind_and_br(emitter.semantics->returnTo);
   }
   emitter.emit_final_return(context.get_string_type(), returns);
   eliminate_unreachable();
@@ -242,9 +242,9 @@ void FunctionInstance::force_inline(llvm::ArrayRef<Inline> inlines) {
 Value FunctionInstance::call(Emitter &emitter, llvm::ArrayRef<Value> argValues, const AST::SourceLocation &srcLoc) {
   auto llvmArgs{llvm::SmallVector<llvm::Value *>{}};
   if (!type->isPure) {
-    if (!emitter.state)
+    if (!emitter.semantics->state)
       srcLoc.report_error(std::format("call to function '{}' from '@(pure)' context", name));
-    llvmArgs.push_back(emitter.state);
+    llvmArgs.push_back(emitter.semantics->state);
   }
   llvmArgs.insert(llvmArgs.end(), argValues.begin(), argValues.end());
   sanity_check_nonnull(llvmFunc);
@@ -253,19 +253,19 @@ Value FunctionInstance::call(Emitter &emitter, llvm::ArrayRef<Value> argValues, 
       type->returnType, emitter.builder.CreateCall(static_cast<llvm::FunctionType *>(type->llvmType), llvmFunc, llvmArgs));
 }
 
-Function::Function(Emitter &emitter0, AST::Function &decl) : decl(decl) {
-  emitter0.emit(*decl.returnType);
+Function::Function(Emitter &emitter, AST::Function &decl) : decl(decl) {
+  emitter.emit(*decl.returnType);
   for (const auto &param : decl.params)
-    emitter0.emit(*param.type);
+    emitter.emit(*param.type);
   // NOTE: This is kind of ugly, but for now we have to do function declaration here so that
   // recursion works, i.e., the function knows about itself. Probably a way to clean this up.
-  emitter0.declare(decl.name, emitter0.context.get_compile_time_function(this), &decl);
-  decl.crumb = emitter0.crumb;
+  emitter.declare(decl.name, emitter.context.get_compile_time_function(this), &decl);
+  decl.crumb = emitter.semantics->lastBreadcrumb;
 
-  params = ParamList(emitter0.context, decl);
+  params = ParamList(emitter.context, decl);
   validate_attributes();
 
-  if (auto prevCrumb{Crumb::find(decl.crumb->prev, decl.name.srcName, nullptr)}) {
+  if (auto prevCrumb{Breadcrumb::find(decl.crumb->prev, decl.name.srcName, nullptr)}) {
     if (prevCrumb->value.is_compile_time_function())
       prev = prevCrumb->value.get_compile_time_function();
     else
@@ -287,7 +287,7 @@ Function::Function(Emitter &emitter0, AST::Function &decl) : decl(decl) {
   // is marked `@(foreign)` or represents a concrete material, then compile it immediately.
   if ((has_unique_concrete_instance() && is_visible()) || is_foreign() || represents_material()) {
     auto argTypes{params.get_types()};
-    instances[argTypes].initialize(emitter0, decl, params, argTypes);
+    instances[argTypes].initialize(emitter, decl, params, argTypes);
   }
 }
 
@@ -296,8 +296,8 @@ bool Function::represents_material() const {
          get_return_type() == get_return_type()->context.get_material_type();
 }
 
-Function *Function::resolve_overload(Emitter &emitter0, const ArgList &args, const AST::SourceLocation &srcLoc) {
-  auto &context{emitter0.context};
+Function *Function::resolve_overload(Emitter &emitter, const ArgList &args, const AST::SourceLocation &srcLoc) {
+  auto &context{emitter.context};
   if (is_variant())
     return this;
   // Get all overloads.
@@ -305,7 +305,7 @@ Function *Function::resolve_overload(Emitter &emitter0, const ArgList &args, con
   for (auto func{get_bottom_overload()}; func; func = func->prev) {
     sanity_check(!func->is_variant());
     llvm::SmallVector<Type *> argParamTypes{};
-    if (context.can_resolve_arguments(emitter0, func->params, args, srcLoc, &argParamTypes))
+    if (context.can_resolve_arguments(emitter, func->params, args, srcLoc, &argParamTypes))
       overloads.emplace_back(func, std::move(argParamTypes));
   }
 
@@ -342,70 +342,71 @@ Function *Function::resolve_overload(Emitter &emitter0, const ArgList &args, con
   return overloads[0].first;
 }
 
-Value Function::call(Emitter &emitter0, const ArgList &args, const AST::SourceLocation &srcLoc) {
-  auto &context{emitter0.context};
+Value Function::call(Emitter &emitter, const ArgList &args, const AST::SourceLocation &srcLoc) {
+  auto &context{emitter.context};
   if (is_variant()) {
     sanity_check_nonnull(letAndCall.call);
-    auto name{context.get_unique_name("function-variant", emitter0.get_llvm_function())};
-    auto blockBegin{emitter0.create_block(llvm_twine(name, ".begin"))};
-    auto blockEnd{emitter0.create_block(llvm_twine(name, ".end"))};
-    emitter0.emit_br(blockBegin);
-    Emitter emitter1{&emitter0};
-    emitter1.crumb = decl.crumb;
-    emitter1.state = is_pure() ? Value() : emitter0.state;
-    emitter1.afterEndScope = {decl.crumb, blockEnd};
-    emitter1.move_to(blockBegin);
+    auto name{context.get_unique_name("function-variant", emitter.get_llvm_function())};
+    auto blockBegin{emitter.create_block(llvm_twine(name, ".begin"))};
+    auto blockEnd{emitter.create_block(llvm_twine(name, ".end"))};
+
+    emitter.semantics.push();
+    emitter.semantics->lastBreadcrumb = decl.crumb;
+    emitter.semantics->state = is_pure() ? Value() : emitter.semantics->state;
+    emitter.semantics->expireTo = {decl.crumb, blockEnd};
+    emitter.emit_br_and_move_to(blockBegin);
 
     // If the function variant has a `let` expression, generate the variable declarations.
     if (letAndCall.let)
       for (auto &var : letAndCall.let->vars)
-        emitter1.emit(var);
+        emitter.emit(var);
     // In the function variant call expression, we visit each argument in the AST argument list and add it
     // to the patched argument list but only if the caller did not explicitly set it by name.
     auto patchedArgs{args};
     for (auto &astArg : letAndCall.call->args.args)
       if (!patchedArgs.has_name(astArg.name.srcName))
-        patchedArgs.emplace_back(astArg.name.srcName, emitter1.emit(astArg.expr), astArg.srcLoc, astArg.src);
+        patchedArgs.emplace_back(astArg.name.srcName, emitter.emit(astArg.expr), astArg.srcLoc, astArg.src);
 
-    auto callee{emitter1.emit(letAndCall.call->expr)};
-    auto result{emitter1.emit_call(callee, patchedArgs, srcLoc)};
-    sanity_check(!emitter1.has_terminator());
-    emitter1.emit_unwind_and_br(emitter1.afterEndScope);
-    emitter0.move_to(blockEnd);
-    return emitter0.construct(decl.returnType->type, result);
+    auto callee{emitter.emit(letAndCall.call->expr)};
+    auto result{emitter.emit_call(callee, patchedArgs, srcLoc)};
+    sanity_check(!emitter.has_terminator());
+    emitter.emit_unwind_and_br(emitter.semantics->expireTo);
+    emitter.move_to(blockEnd);
+    result = emitter.construct(decl.returnType->type, result);
+
+    emitter.semantics.pop();
+    return result;
   } else {
-    auto &overload{*resolve_overload(emitter0, args, srcLoc)};
-    if (!overload.is_pure() && !emitter0.state)
+    auto &overload{*resolve_overload(emitter, args, srcLoc)};
+    if (!overload.is_pure() && !emitter.semantics->state)
       srcLoc.report_error(std::format("call to function '{}' from '@(pure)' context", get_name()));
-    auto argValues{context.resolve_arguments(emitter0, overload.params, args, srcLoc)};
+    auto argValues{context.resolve_arguments(emitter, overload.params, args, srcLoc)};
 
     if (overload.is_macro()) {
-      auto name{context.get_unique_name("macro", emitter0.get_llvm_function())};
-      auto blockBegin{emitter0.create_block(llvm_twine(name, ".begin"))};
-      auto blockEnd{emitter0.create_block(llvm_twine(name, ".end"))};
-      emitter0.emit_br(blockBegin);
+      auto name{context.get_unique_name("macro", emitter.get_llvm_function())};
+      auto blockBegin{emitter.create_block(llvm_twine(name, ".begin"))};
+      auto blockEnd{emitter.create_block(llvm_twine(name, ".end"))};
       llvm::SmallVector<Return> returns{};
       {
-        Emitter emitter1{&emitter0};
-        emitter1.crumb = overload.decl.crumb;
-        emitter1.state = overload.is_pure() ? Value() : emitter0.state;
-        emitter1.returns = &returns;
-        emitter1.afterBreak = {};    // Reset break
-        emitter1.afterContinue = {}; // Reset continue
-        emitter1.afterEndScope = {}; // Reset end-scope
-        emitter1.afterReturn = {overload.decl.crumb, blockEnd};
-        emitter1.macroRecursionDepth++;
-        if (emitter1.macroRecursionDepth > 4096)
+        emitter.semantics.push();
+
+        emitter.semantics->lastBreadcrumb = overload.decl.crumb;
+        emitter.semantics->state = overload.is_pure() ? Value() : emitter.semantics->state;
+        emitter.semantics->returns = &returns;
+        emitter.semantics->breakTo = {};    // Reset break
+        emitter.semantics->continueTo = {}; // Reset continue
+        emitter.semantics->expireTo = {}; // Reset end-scope
+        emitter.semantics->returnTo = {overload.decl.crumb, blockEnd};
+        emitter.semantics->macroRecursionDepth++;
+        if (emitter.semantics->macroRecursionDepth > 4096)
           srcLoc.report_error(std::format("call to function '{}' exceeds macro recursion limit of 4096", get_name()));
-        emitter1.move_to(blockBegin);
-        if (!emitter1.state && !overload.is_pure())
-          srcLoc.report_error(std::format("call to function '{}' from '@(pure)' context", get_name()));
+        emitter.emit_br_and_move_to(blockBegin);
 
         // Declare function parameters
         auto impliedVisit{false};
         auto impliedVisitArgs{ArgList{}};
         for (size_t i = 0; i < argValues.size(); i++) {
-          emitter1.declare_function_parameter(overload.params[i], argValues[i]);
+          emitter.declare_function_parameter(overload.params[i], argValues[i]);
           impliedVisitArgs.emplace_back(overload.params[i].name, argValues[i], overload.params[i].srcLoc);
           if (overload.params[i].type->is_abstract() && argValues[i].type->is_union_or_pointer_to_union()) {
             impliedVisit = true;
@@ -413,28 +414,30 @@ Value Function::call(Emitter &emitter0, const ArgList &args, const AST::SourceLo
           }
         }
         if (impliedVisit) {
-          emitter1.emit_return(
-              emitter1.emit_call(context.get_compile_time_function(&overload), impliedVisitArgs, srcLoc), srcLoc);
+          emitter.emit_return(
+              emitter.emit_call(context.get_compile_time_function(&overload), impliedVisitArgs, srcLoc), srcLoc);
         } else {
-          emitter1.emit(overload.decl.definition);
-          if (!emitter1.has_terminator()) {
+          emitter.emit(overload.decl.definition);
+          if (!emitter.has_terminator()) {
             if (overload.decl.returnType->type != context.get_void_type())
               overload.decl.srcLoc.report_error(std::format("function '{}' is missing 'return' statement", get_name()));
-            emitter1.emit_unwind_and_br(emitter1.afterReturn);
+            emitter.emit_unwind_and_br(emitter.semantics->returnTo);
           }
         }
+
+        emitter.semantics.pop();
       }
       llvm_move_block_to_end(blockEnd);
-      emitter0.move_to(blockEnd);
-      return emitter0.emit_final_return_phi(overload.decl.returnType->type, returns, overload.decl.returnType->srcLoc);
+      emitter.move_to(blockEnd);
+      return emitter.emit_final_return_phi(overload.decl.returnType->type, returns, overload.decl.returnType->srcLoc);
     } else {
       llvm::SmallVector<Type *> argTypes{};
       for (auto argValue : argValues)
         argTypes.push_back(argValue.type);
       auto &instance{overload.instances[argTypes]};
       if (!instance)
-        instance.initialize(emitter0, overload.decl, overload.params, argTypes);
-      return instance.call(emitter0, argValues, srcLoc);
+        instance.initialize(emitter, overload.decl, overload.params, argTypes);
+      return instance.call(emitter, argValues, srcLoc);
     }
   }
 }

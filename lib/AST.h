@@ -5,7 +5,7 @@
 
 namespace smdl::Compiler {
 
-class Crumb;
+class Breadcrumb;
 class Function;
 class Type;
 
@@ -771,7 +771,7 @@ public:
   SourceRef srcSemicolon{};
 
   /// The associated compiler crumb.
-  Compiler::Crumb *crumb{};
+  Compiler::Breadcrumb *crumb{};
 };
 
 class Import final : public DeclSubclass<DeclKind::Import> {
@@ -885,7 +885,7 @@ public:
   SourceRef srcSemicolon{};
 
   /// The associated compiler crumb.
-  Compiler::Crumb *crumb{};
+  Compiler::Breadcrumb *crumb{};
 };
 
 class Tag final : public DeclSubclass<DeclKind::Tag> {

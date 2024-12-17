@@ -131,9 +131,9 @@ public:
 /// Construct an rvalue.
 [[nodiscard]] inline Value RValue(Type *type, llvm::Value *llvmValue) { return Value(Value::Kind::RValue, type, llvmValue); }
 
-//--{ Crumb
-/// This is a compiler crumb, which is the fundamental unit of name and scope resolution.
-class Crumb final {
+//--{ Breadcrumb
+/// This is a compiler declaration, which is the fundamental unit of name and scope resolution.
+class Breadcrumb final {
 public:
   /// Is this an exported AST declaration?
   [[nodiscard]] bool is_exported_ast_decl() const {
@@ -170,8 +170,8 @@ public:
   }
 
 public:
-  /// The previous crumb.
-  Crumb *prev{};
+  /// The previous declaration.
+  Breadcrumb *prev{};
 
   /// The value.
   Value value{};
@@ -190,10 +190,10 @@ public:
 
 public:
   /// Find the first crumb with the given name sequence that is usable in the given LLVM function.
-  [[nodiscard]] static Crumb *find(Crumb *crumb, llvm::ArrayRef<llvm::StringRef> name, llvm::Function *llvmFunc, int depth = 0);
+  [[nodiscard]] static Breadcrumb *find(Breadcrumb *crumb, llvm::ArrayRef<llvm::StringRef> name, llvm::Function *llvmFunc, int depth = 0);
 
   /// Find the first crumb with the given name that is usable in the given LLVM function.
-  [[nodiscard]] static Crumb *find(Crumb *crumb, llvm::StringRef name, llvm::Function *llvmFunc, int depth = 0) {
+  [[nodiscard]] static Breadcrumb *find(Breadcrumb *crumb, llvm::StringRef name, llvm::Function *llvmFunc, int depth = 0) {
     return find(crumb, llvm::ArrayRef(name), llvmFunc, depth);
   }
 };
@@ -309,9 +309,7 @@ public:
 public:
   llvm::SmallVector<Param> params{};
 
-  Module *module{};
-
-  Crumb *crumb{};
+  Breadcrumb *crumb{};
 };
 //--}
 

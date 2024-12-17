@@ -9,7 +9,7 @@ class Emitter final {
 public:
   class Label final {
   public:
-    Crumb *crumb{};
+    Breadcrumb *lastBreadcrumb{};
 
     llvm::BasicBlock *block{};
 
@@ -18,12 +18,45 @@ public:
     [[nodiscard]] operator llvm::BasicBlock *() const { return block; }
   };
 
+  class Semantics final {
+  public:
+    /// The last breadcrumb.
+    Breadcrumb *lastBreadcrumb{};
+
+    /// The `$state` value.
+    Value state{};
+
+    /// The pending returns.
+    llvm::SmallVector<Return> *returns{};
+
+    /// The explicit inlines via `#inline(...)` requests.
+    llvm::SmallVector<Inline> *inlines{};
+
+    /// Where to go after `break` statement.
+    Label breakTo{};
+
+    /// Where to go after `continue` statement.
+    Label continueTo{};
+
+    /// Where to go after `return` statement.
+    Label returnTo{};
+
+    /// Where to go after expiring at the natural end-of-scope.
+    Label expireTo{};
+
+    /// The current macro recursion depth.
+    uint32_t macroRecursionDepth{};
+  };
+
   explicit Emitter(
-      Context &context, Crumb *crumb,               //
-      llvm::SmallVector<Return> *returns = nullptr, //
-      llvm::SmallVector<Inline> *inlines = nullptr, //
+      Context &context, Breadcrumb *lastBreadcrumb = nullptr, //
+      llvm::SmallVector<Return> *returns = nullptr,             //
+      llvm::SmallVector<Inline> *inlines = nullptr,             //
       llvm::Function *llvmFunc = nullptr)
-      : context(context), crumb(crumb), returns(returns), inlines(inlines), builder(context.llvmContext) {
+      : context(context), builder(context.llvmContext) {
+    semantics->lastBreadcrumb = lastBreadcrumb;
+    semantics->returns = returns;
+    semantics->inlines = inlines;
     auto fmf{llvm::FastMathFlags::getFast()};
     fmf.setNoNaNs(false); // Don't assume no NaNs!
     fmf.setNoInfs(false); // Don't assume no Infs!
@@ -31,21 +64,9 @@ public:
     if (llvmFunc) {
       auto blockEntry{llvm::BasicBlock::Create(context.llvmContext, "entry", llvmFunc)};
       auto blockReturn{llvm::BasicBlock::Create(context.llvmContext, "return", llvmFunc)};
-      afterReturn = {crumb, blockReturn};
+      semantics->returnTo = {lastBreadcrumb, blockReturn};
       builder.SetInsertPoint(blockEntry);
     }
-  }
-
-  // TODO Do away with this
-  Emitter(Emitter *parent)
-      : context(parent->context), crumb(parent->crumb), state(parent->state), returns(parent->returns),
-        inlines(parent->inlines), afterBreak(parent->afterBreak), afterContinue(parent->afterContinue),
-        afterReturn(parent->afterReturn), afterEndScope(parent->afterEndScope), builder(parent->context.llvmContext),
-        macroRecursionDepth(parent->macroRecursionDepth) {
-    auto fmf{llvm::FastMathFlags::getFast()};
-    fmf.setNoNaNs(false); // Don't assume no NaNs!
-    fmf.setNoInfs(false); // Don't assume no Infs!
-    builder.setFastMathFlags(fmf);
   }
 
 public:
@@ -82,7 +103,8 @@ public:
   void push(
       Value value, llvm::ArrayRef<llvm::StringRef> name, AST::Node *node, const AST::SourceLocation &srcLoc,
       Value valueToPreserve = {}) {
-    crumb = context.bump_allocate<Crumb>(Crumb{crumb, value, name, node, srcLoc, valueToPreserve});
+    semantics->lastBreadcrumb =
+        context.bump_allocate<Breadcrumb>(Breadcrumb{semantics->lastBreadcrumb, value, name, node, srcLoc, valueToPreserve});
   }
 
   void declare(const AST::Name &name, Value value, AST::Decl *decl = {}) {
@@ -236,18 +258,18 @@ public:
   Value emit(AST::Stmt &stmt);
 
   Value emit(AST::Break &stmt) {
-    if (!afterBreak)
+    if (!semantics->breakTo)
       stmt.srcLoc.report_error("unexpected 'break'");
-    emit_late_if(stmt.lateIf, [&] { emit_unwind_and_br(afterBreak); });
+    emit_late_if(stmt.lateIf, [&] { emit_unwind_and_br(semantics->breakTo); });
     return {};
   }
 
   Value emit(AST::Compound &stmt);
 
   Value emit(AST::Continue &stmt) {
-    if (!afterContinue)
+    if (!semantics->continueTo)
       stmt.srcLoc.report_error("unexpected 'continue'");
-    emit_late_if(stmt.lateIf, [&] { emit_unwind_and_br(afterContinue); });
+    emit_late_if(stmt.lateIf, [&] { emit_unwind_and_br(semantics->continueTo); });
     return {};
   }
 
@@ -273,11 +295,9 @@ public:
   Value emit(AST::Preserve &stmt);
 
   Value emit(AST::Return &stmt) {
-    if (!afterReturn)
+    if (!semantics->returnTo)
       stmt.srcLoc.report_error("unexpected 'return'");
-    emit_late_if(stmt.lateIf, [&] {
-      emit_return(stmt.expr.get() ? emit(stmt.expr) : Value(), stmt.srcLoc);
-    });
+    emit_late_if(stmt.lateIf, [&] { emit_return(stmt.expr.get() ? emit(stmt.expr) : Value(), stmt.srcLoc); });
     return {};
   }
 
@@ -310,35 +330,20 @@ public:
   void emit_end_lifetime(Value value);
 
   void emit_scope(llvm::BasicBlock *blockStart, llvm::BasicBlock *blockEnd, std::invocable<> auto &&func) {
-    // TODO This is gross
-    auto backupCrumb{crumb};
-    auto backupState{state};
-    auto backupReturns{returns};
-    auto backupInlines{inlines};
-    auto backupAfterBreak{afterBreak};
-    auto backupAfterContinue{afterContinue};
-    auto backupAfterReturn{afterReturn};
-    auto backupAfterEndScope{afterEndScope};
+    semantics.push();
+    semantics->expireTo = {semantics->lastBreadcrumb, blockEnd};
 
     move_to(blockStart);
-    afterEndScope = {crumb, blockEnd};
     std::invoke(std::forward<decltype(func)>(func));
-    emit_unwind_and_br(afterEndScope);
+    emit_unwind_and_br(semantics->expireTo);
 
-    crumb = backupCrumb;
-    state = backupState;
-    returns = backupReturns;
-    inlines = backupInlines;
-    afterBreak = backupAfterBreak;
-    afterContinue = backupAfterContinue;
-    afterReturn = backupAfterReturn;
-    afterEndScope = backupAfterEndScope;
+    semantics.pop();
   }
 
   void emit_scope(std::invocable<> auto &&func) { // "Thin scope"
-    Crumb *crumb0{crumb};
+    auto lastBreadcrumb{semantics->lastBreadcrumb};
     std::invoke(std::forward<decltype(func)>(func));
-    emit_unwind(crumb0);
+    emit_unwind(lastBreadcrumb);
   }
 
   Value emit_scope(AST::Expr &expr) {
@@ -349,12 +354,12 @@ public:
 
   void emit_unwind_and_br(Label label) {
     if (!has_terminator()) {
-      emit_unwind(label.crumb);
+      emit_unwind(label.lastBreadcrumb);
       emit_br(label.block);
     }
   }
 
-  void emit_unwind(Crumb *crumb0);
+  void emit_unwind(Breadcrumb *lastBreadcrumb);
 
   Value emit_cond(AST::Expr &expr, bool insideScope = true) {
     Value cond{};
@@ -384,7 +389,7 @@ public:
     if (!lateIf) {
       std::invoke(func);
     } else {
-      auto crumb0{crumb};
+      auto lastBreadcrumb{semantics->lastBreadcrumb};
       auto cond{emit_cond(*lateIf->cond, /*insideScope=*/false)};
       if (cond.is_compile_time_int()) {
         auto pass{cond.get_compile_time_int() != 0};
@@ -398,7 +403,7 @@ public:
       emit_scope(blockPass, blockFail, std::forward<decltype(func)>(func));
       llvm_move_block_to_end(blockFail);
       move_to(blockFail);
-      emit_unwind(crumb0);
+      emit_unwind(lastBreadcrumb);
     }
   }
 
@@ -433,39 +438,23 @@ public:
     emit_panic(context.get_compile_time_string(message), srcLoc);
   }
 
+  template <typename... Ts> Value emit_type_switch(auto &node) {
+    return llvm::TypeSwitch<decltype(&node), Value>(&node)
+        .template Case<Ts...>([&](auto *each) { return emit(*each); })
+        .Default([&](auto *each) {
+          each->srcLoc.report_error("unimplemented");
+          return Value();
+        });
+  }
+
 public:
   /// The context.
   Context &context;
 
-  /// The current crumb.
-  Crumb *crumb{};
-
-  /// The current state.
-  Value state{};
-
-  /// The pending returns.
-  llvm::SmallVector<Return> *returns{};
-
-  /// The explicit inlines via '#inline(...)' requests.
-  llvm::SmallVector<Inline> *inlines{};
-
-  /// Where to go after 'break' statement.
-  Label afterBreak{};
-
-  /// Where to go after 'continue' statement.
-  Label afterContinue{};
-
-  /// Where to go after 'return' statement.
-  Label afterReturn{};
-
-  /// Where to go after end-of-scope.
-  Label afterEndScope{};
-
-  uint32_t macroRecursionDepth{};
-
   /// The Intermediate Representation (IR) builder.
   llvm::IRBuilder<> builder;
 
+  Stacked<Semantics> semantics{};
 };
 
 } // namespace smdl::Compiler

@@ -29,12 +29,12 @@ llvm::StringRef Value::get_compile_time_string() const {
   return sanity_check_nonnull(dataArray)->getAsCString();
 }
 
-bool Crumb::matches_name(llvm::StringRef name0) const {
+bool Breadcrumb::matches_name(llvm::StringRef name0) const {
   return (name.size() == 1 && name[0] == name0) || //
          (name.size() >= 2 && name.back() == name0 && is_ast_using_import() && value);
 }
 
-Crumb *Crumb::find(Crumb *crumb, llvm::ArrayRef<llvm::StringRef> name, llvm::Function *llvmFunc, int depth) {
+Breadcrumb *Breadcrumb::find(Breadcrumb *crumb, llvm::ArrayRef<llvm::StringRef> name, llvm::Function *llvmFunc, int depth) {
   if (name.empty())
     return nullptr;
   for (; crumb; crumb = crumb->prev) {
@@ -50,7 +50,7 @@ Crumb *Crumb::find(Crumb *crumb, llvm::ArrayRef<llvm::StringRef> name, llvm::Fun
       // 2. A universal import declaration in unqualified form like 'using foo::bar import *'
       if ((name.size() >= 2 && crumb->matches_name(name.drop_back(1))) || // Case 1
           (name.size() == 1 && crumb->is_ast_using_import())) {           // Case 2
-        if (auto subCrumb{Crumb::find(crumb->value.get_compile_time_module()->lastCrumb, name.back(), llvmFunc, depth + 1)})
+        if (auto subCrumb{Breadcrumb::find(crumb->value.get_compile_time_module()->lastBreadcrumb, name.back(), llvmFunc, depth + 1)})
           return subCrumb;
       }
     } else if (crumb->matches_name(name)) // If this matches the name sequence of the identifier, we're done!
@@ -86,13 +86,13 @@ const ParamList *Param::get_inline_parameters() const {
   return &type->get_inline_struct_type()->fields;
 }
 
-ParamList::ParamList(Context &context, const AST::Struct &decl) : module(decl.srcLoc.module), crumb(decl.crumb) {
+ParamList::ParamList(Context &context, const AST::Struct &decl) : crumb(decl.crumb) {
   for (auto &field : decl.fields)
     params.push_back(Param(context, field));
   guarantee_no_ambiguous_inlining(decl.srcLoc);
 }
 
-ParamList::ParamList(Context &context, const AST::Function &decl) : module(decl.srcLoc.module), crumb(decl.crumb) {
+ParamList::ParamList(Context &context, const AST::Function &decl) : crumb(decl.crumb) {
   for (auto &param : decl.params.params)
     params.push_back(Param(context, param));
   guarantee_no_ambiguous_inlining(decl.srcLoc);

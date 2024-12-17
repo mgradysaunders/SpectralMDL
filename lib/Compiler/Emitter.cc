@@ -16,16 +16,16 @@ void Emitter::declare_function_parameter(const Param &param, Value value) {
   // construct an `llvm::ArrayRef` without needing to `context.bump_duplicate()`
   push(value, llvm::ArrayRef(param.name), {}, param.srcLoc);
   if (param.isInline)
-    declare_function_parameter_inline(crumb->value);
+    declare_function_parameter_inline(semantics->lastBreadcrumb->value);
 }
 
 void Emitter::declare_function_parameter_inline(Value value) {
   if (auto structType{value.type->get_inline_struct_type()}) {
     for (auto &field : structType->fields) {
       push(access(value, field.name, field.srcLoc), field.name, {}, field.srcLoc);
-      crumb->value.llvmValue->setName(llvm_twine("inl.", field.name));
+      semantics->lastBreadcrumb->value.llvmValue->setName(llvm_twine("inl.", field.name));
       if (field.isInline)
-        declare_function_parameter_inline(crumb->value);
+        declare_function_parameter_inline(semantics->lastBreadcrumb->value);
     }
   }
 }
@@ -38,7 +38,7 @@ void Emitter::declare_import(bool isAbs, llvm::ArrayRef<llvm::StringRef> path, A
     path = path.drop_while([](llvm::StringRef part) { return part == "." || part == ".."; });
     push(context.get_compile_time_module(importedModule), context.bump_duplicate(path.drop_back(1)), &decl, decl.srcLoc);
   } else {
-    auto importedCrumb{Crumb::find(importedModule->lastCrumb, path.back(), get_llvm_function(), 1)};
+    auto importedCrumb{Breadcrumb::find(importedModule->lastBreadcrumb, path.back(), get_llvm_function(), 1)};
     if (!importedCrumb)
       decl.srcLoc.report_error(std::format("can't resolve import path '{}'", format_join(path, "::")));
     path = path.drop_while([](llvm::StringRef part) { return part == "." || part == ".."; });
@@ -65,22 +65,13 @@ Value Emitter::rvalue(Value value) {
 }
 //--}
 
-template <typename... Ts> static Value emit_type_switch(Emitter &emitter, auto &node) {
-  return llvm::TypeSwitch<decltype(&node), Value>(&node)
-      .template Case<Ts...>([&]<typename T>(T *each) { return emitter.emit(*each); })
-      .Default([&]<typename T>(T *each) {
-        each->srcLoc.report_error("unimplemented");
-        return Value();
-      });
-}
-
-Value Emitter::emit(AST::Node &node) { return emit_type_switch<AST::Decl, AST::Expr, AST::File, AST::Stmt>(*this, node); }
+Value Emitter::emit(AST::Node &node) { return emit_type_switch<AST::Decl, AST::Expr, AST::File, AST::Stmt>(node); }
 
 //--{ Emit: Decls
 Value Emitter::emit(AST::Decl &decl) {
   return emit_type_switch<
       AST::Enum, AST::Function, AST::Import, AST::Struct, AST::Tag, AST::Typedef, AST::UnitTest, AST::UsingAlias,
-      AST::UsingImport, AST::Variable>(*this, decl);
+      AST::UsingImport, AST::Variable>(decl);
 }
 
 Value Emitter::emit(AST::Enum &decl) {
@@ -117,7 +108,7 @@ Value Emitter::emit(AST::Struct &decl) {
     emit(astField.type);
   for (auto &astTag : decl.tags)
     emit(astTag.type);
-  decl.crumb = crumb;
+  decl.crumb = semantics->lastBreadcrumb;
   context.validate_decl_name("struct", decl.name);
   declare(decl.name, context.get_compile_time_type(context.get_struct_type(&decl, get_llvm_function())), &decl);
   return {};
@@ -192,7 +183,7 @@ Value Emitter::emit(AST::Expr &expr) {
   return emit_type_switch<
       AST::Binary, AST::Call, AST::Cast, AST::Conditional, AST::GetField, AST::GetIndex, AST::Identifier, AST::Intrinsic,
       AST::Let, AST::LiteralBool, AST::LiteralFloat, AST::LiteralInt, AST::LiteralString, AST::Parens, AST::ReturnFrom,
-      AST::Type, AST::Unary>(*this, expr);
+      AST::Type, AST::Unary>(expr);
 }
 
 Value Emitter::emit(AST::Binary &expr) {
@@ -343,11 +334,11 @@ Value Emitter::emit(AST::ReturnFrom &expr) {
   auto localReturns{llvm::SmallVector<Return>{}};
   emit_br(blockBegin);
   emit_scope(blockBegin, blockEnd, [&] {
-    afterBreak = {};
-    afterContinue = {};
-    afterEndScope = {};
-    afterReturn = {crumb, blockEnd};
-    returns = &localReturns;
+    semantics->breakTo = {};
+    semantics->continueTo = {};
+    semantics->expireTo = {};
+    semantics->returnTo = {semantics->lastBreadcrumb, blockEnd};
+    semantics->returns = &localReturns;
     emit(expr.stmt);
   });
   llvm_move_block_to_end(blockEnd);
@@ -368,7 +359,7 @@ Value Emitter::emit(AST::Type &expr) {
 Value Emitter::emit(AST::Stmt &stmt) {
   return emit_type_switch<
       AST::Break, AST::Compound, AST::Continue, AST::DeclStmt, AST::Defer, AST::DoWhile, AST::ExprStmt, AST::For, AST::If,
-      AST::Preserve, AST::Return, AST::Switch, AST::Unreachable, AST::Visit, AST::While>(*this, stmt);
+      AST::Preserve, AST::Return, AST::Switch, AST::Unreachable, AST::Visit, AST::While>(stmt);
 }
 
 Value Emitter::emit(AST::Compound &stmt) {
@@ -393,8 +384,8 @@ Value Emitter::emit(AST::DoWhile &stmt) {
   auto blockEnd{create_block(llvm_twine(name, ".end"))};
   emit_br(blockBody);
   emit_scope(blockBody, blockCond, [&] {
-    afterBreak = {crumb, blockEnd};
-    afterContinue = {crumb, blockCond};
+    semantics->breakTo = {semantics->lastBreadcrumb, blockEnd};
+    semantics->continueTo = {semantics->lastBreadcrumb, blockCond};
     emit(stmt.body);
   });
   llvm_move_block_to_end(blockCond);
@@ -415,13 +406,13 @@ Value Emitter::emit(AST::For &stmt) {
   emit_br_and_move_to(blockBegin);
   emit_scope([&]() {
     emit(stmt.init);
-    auto crumb1{crumb};
+    auto lastBreadcrumb{semantics->lastBreadcrumb};
     llvm_move_block_to_end(blockCond);
     emit_br_and_move_to(blockCond);
     emit_br(emit_cond(*stmt.cond), blockBody, blockEnd);
     emit_scope(blockCond, blockIncr, [&] {
-      afterBreak = {crumb1, blockEnd};
-      afterContinue = {crumb1, blockIncr};
+      semantics->breakTo = {lastBreadcrumb, blockEnd};
+      semantics->continueTo = {lastBreadcrumb, blockIncr};
       llvm_move_block_to_end(blockBody);
       move_to(blockBody);
       emit(stmt.body);
@@ -438,13 +429,13 @@ Value Emitter::emit(AST::For &stmt) {
 }
 
 Value Emitter::emit(AST::If &stmt) {
-  auto crumb0{crumb};
+  auto lastBreadcrumb{semantics->lastBreadcrumb};
   auto cond{emit_cond(*stmt.cond, /*insideScope=*/false)};
   if (cond.is_compile_time_int()) {
     auto pass{cond.get_compile_time_int() != 0};
     if ((pass && !stmt.ifPass) || (!pass && !stmt.ifFail)) {
       if (!has_terminator())
-        emit_unwind(crumb0);
+        emit_unwind(lastBreadcrumb);
       return {};
     }
     auto name{context.get_unique_name("if", get_llvm_function())};
@@ -470,7 +461,7 @@ Value Emitter::emit(AST::If &stmt) {
     move_to_or_erase(blockEnd);
   }
   if (!has_terminator())
-    emit_unwind(crumb0);
+    emit_unwind(lastBreadcrumb);
   return {};
 }
 
@@ -480,7 +471,7 @@ Value Emitter::emit(AST::Preserve &stmt) {
     if (!value.is_lvalue())
       stmt.srcLoc.report_error("can't apply 'preserve' to constant or temporary");
     push(emit_alloca("tmp.preserve", value.type), {}, &stmt, stmt.srcLoc, value);
-    builder.CreateStore(rvalue(value), crumb->value);
+    builder.CreateStore(rvalue(value), semantics->lastBreadcrumb->value);
   }
   return {};
 }
@@ -514,9 +505,9 @@ Value Emitter::emit(AST::Switch &stmt) {
   emit_br_and_move_to(blockBegin);
   auto what{construct(context.get_int_type(), emit_scope(*stmt.expr), stmt.srcLoc)};
   auto switchInst{builder.CreateSwitch(what, blockDefault)};
-  auto crumb0{crumb};
+  auto lastBreadcrumb{semantics->lastBreadcrumb};
   emit_scope(blockBegin, blockEnd, [&] {
-    afterBreak = {crumb, blockEnd};
+    semantics->breakTo = {semantics->lastBreadcrumb, blockEnd};
     for (size_t i{}; auto &[astCase, cond, block] : cases) {
       move_to(block);
       for (auto &subStmt : astCase->stmts)
@@ -525,7 +516,7 @@ Value Emitter::emit(AST::Switch &stmt) {
       if (cond)
         switchInst->addCase(cond, block);
       if (has_terminator())
-        crumb = crumb0; // Reset crumb after unconditional 'break', 'continue', or 'return'
+        semantics->lastBreadcrumb = lastBreadcrumb; // Reset after unconditional `break`, `continue`, or `return`
       if (++i < cases.size()) {
         if (!has_terminator())
           emit_br(cases[i].block);
@@ -546,8 +537,8 @@ Value Emitter::emit(AST::While &stmt) {
   emit_br_and_move_to(blockCond);
   emit_br(emit_cond(*stmt.cond), blockBody, blockEnd);
   emit_scope(blockBody, blockCond, [&] {
-    afterBreak = {crumb, blockEnd};
-    afterContinue = {crumb, blockCond};
+    semantics->breakTo = {semantics->lastBreadcrumb, blockEnd};
+    semantics->continueTo = {semantics->lastBreadcrumb, blockCond};
     emit(*stmt.body);
   });
   llvm_move_block_to_end(blockEnd);
@@ -589,30 +580,26 @@ void Emitter::emit_end_lifetime(Value value) {
     builder.CreateLifetimeEnd(value, builder.getInt64(context.get_size_of(value.type)));
 }
 
-void Emitter::emit_unwind(Crumb *crumb0) {
+void Emitter::emit_unwind(Breadcrumb *lastBreadcrumb) {
   sanity_check(!has_terminator());
-  for (; crumb && crumb != crumb0; crumb = crumb->prev) {
-    if (crumb->value) {
-      if (crumb->is_ast_preserve())
-        builder.CreateStore(rvalue(crumb->value), crumb->valueToPreserve);
-      emit_end_lifetime(crumb->value);
-    } else if (crumb->is_ast_defer()) {
-      auto defer{static_cast<AST::Defer *>(crumb->node)};
+  for (; semantics->lastBreadcrumb && semantics->lastBreadcrumb != lastBreadcrumb;
+       semantics->lastBreadcrumb = semantics->lastBreadcrumb->prev) {
+    if (semantics->lastBreadcrumb->value) {
+      if (semantics->lastBreadcrumb->is_ast_preserve())
+        builder.CreateStore(rvalue(semantics->lastBreadcrumb->value), semantics->lastBreadcrumb->valueToPreserve);
+      emit_end_lifetime(semantics->lastBreadcrumb->value);
+    } else if (semantics->lastBreadcrumb->is_ast_defer()) {
+      auto lastBreadcrumb0{semantics->lastBreadcrumb};
+      semantics.push();
+      auto defer{static_cast<AST::Defer *>(semantics->lastBreadcrumb->node)};
       auto block{create_block(context.get_unique_name("defer", get_llvm_function()))};
-      emit_br(block);
-      // TODO Flatten this
-      Emitter emitter{this};
-      emitter.crumb = crumb;
-      emitter.afterBreak = {};    // Not allowed to break!
-      emitter.afterContinue = {}; // Not allowed to continue!
-      emitter.afterReturn = {};   // Not allowed to return!
-      emitter.move_to(block);
-      emitter.emit(*defer->stmt);
-      emitter.emit_unwind(crumb);
-      move_to(emitter.get_insert_block());
+      emit_br_and_move_to(block);
+      emit(defer->stmt);
+      emit_unwind(lastBreadcrumb0);
+      semantics.pop();
     }
   }
-  sanity_check(crumb == crumb0);
+  sanity_check(semantics->lastBreadcrumb == lastBreadcrumb);
 }
 
 Value Emitter::emit_phi(Type *type, llvm::ArrayRef<std::pair<llvm::Value *, llvm::BasicBlock *>> inputs, Value::Kind kind) {
@@ -1356,8 +1343,8 @@ Value Emitter::emit_intrinsic(llvm::StringRef name, const ArgList &args, const A
     return context.get_compile_time_string(expectOneType()->name);
   if (name == "inline" || name == "flatten") {
     auto value{expectOne()};
-    sanity_check(inlines);
-    inlines->push_back({value, srcLoc, name == "flatten"});
+    sanity_check(semantics->inlines);
+    semantics->inlines->push_back({value, srcLoc, name == "flatten"});
     return value;
   }
   if (name.ends_with("of")) { // Avoid unnecessary if checks
@@ -1382,9 +1369,6 @@ Value Emitter::emit_intrinsic(llvm::StringRef name, const ArgList &args, const A
     }
   }
   if (name.size() <= 5) { // Avoid unnecessary if checks
-    if (name == "frexp") {
-      // TODO
-    }
     if (name == "ldexp") {
       if (!(args.size() == 2 &&
             args.is_all_true([&](auto &arg) { return arg.value.type->is_scalar() || arg.value.type->is_vector(); }) &&
@@ -1493,9 +1477,9 @@ Value Emitter::emit_visit(Value value, const std::function<Value(Emitter &, Valu
 
 void Emitter::emit_return(Value value, const AST::SourceLocation &srcLoc) {
   sanity_check(!has_terminator());
-  sanity_check(returns);
-  returns->push_back({rvalue(value), get_insert_block(), srcLoc});
-  emit_unwind_and_br(afterReturn);
+  sanity_check(semantics->returns);
+  semantics->returns->push_back({rvalue(value), get_insert_block(), srcLoc});
+  emit_unwind_and_br(semantics->returnTo);
 }
 
 Value Emitter::emit_final_return_phi(Type *type, llvm::ArrayRef<Return> returns, const AST::SourceLocation &srcLoc) {
@@ -1520,23 +1504,25 @@ Value Emitter::emit_final_return_phi(Type *type, llvm::ArrayRef<Return> returns,
     return true;
   }()};
   auto phi{builder.CreatePHI(allIdenticalLValues ? context.get_pointer_type(type)->llvmType : type->llvmType, returns.size())};
+  auto ip{builder.saveIP()};
+  auto lastBreadcrumb{semantics->lastBreadcrumb};
   for (auto [value, block, srcLoc] : returns) {
     if (allIdenticalLValues) {
       phi->addIncoming(value, block);
     } else {
-      // TODO Flatten this
-      Emitter emitter{this};
-      emitter.builder.restoreIP(llvm_insert_point_before_terminator(block));
-      auto value2{emitter.construct(type, value, srcLoc)};
-      phi->addIncoming(value2, emitter.get_insert_block());
+      builder.restoreIP(llvm_insert_point_before_terminator(block));
+      auto value2{construct(type, value, srcLoc)};
+      phi->addIncoming(value2, get_insert_block());
     }
   }
+  builder.restoreIP(ip);
+  semantics->lastBreadcrumb = lastBreadcrumb;
   return allIdenticalLValues ? LValue(type, phi) : RValue(type, phi);
 }
 
 Type *Emitter::emit_final_return(Type *type, llvm::ArrayRef<Return> returns, const AST::SourceLocation &srcLoc) {
-  llvm_move_block_to_end(afterReturn);
-  move_to(afterReturn);
+  llvm_move_block_to_end(semantics->returnTo);
+  move_to(semantics->returnTo);
   if (type == context.get_void_type()) {
     for (auto &returnInfo : returns)
       if (!returnInfo.value.is_void())

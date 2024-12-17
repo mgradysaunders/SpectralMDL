@@ -405,7 +405,7 @@ public:
       Emitter &emitter, bool isAbs, llvm::ArrayRef<llvm::StringRef> importPath, const AST::SourceLocation &srcLoc);
 
   void resolve_using_aliases(
-      Crumb *crumb, llvm::ArrayRef<llvm::StringRef> importPath, llvm::SmallVector<llvm::StringRef> &fullImportPath);
+      Breadcrumb *crumb, llvm::ArrayRef<llvm::StringRef> importPath, llvm::SmallVector<llvm::StringRef> &fullImportPath);
 
 public:
   MDLInstance &mdl;

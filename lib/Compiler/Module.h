@@ -53,11 +53,11 @@ public:
   /// The compile status. (This is necessary to detect cyclic imports, which would cause infinite loops)
   Status status{Status::NotStarted};
 
-  /// The last crumb in the module. (This is the starting point to search for exported declarations!)
-  Crumb *lastCrumb{};
+  /// The last declaration in the module. (This is the starting point to search for exported declarations!)
+  Breadcrumb *lastBreadcrumb{};
 
-  /// The last import crumb in the module. (All imports must be at the top of the file)
-  Crumb *lastImportCrumb{};
+  /// The last import declaration in the module. (All imports must be at the top of the file)
+  Breadcrumb *lastImportDeclaration{};
 
   /// Does this module use the SDML extended syntax?
   bool isSmdlSyntax{};

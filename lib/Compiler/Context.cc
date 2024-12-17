@@ -420,7 +420,7 @@ Function *Context::get_function(Emitter &emitter, AST::Function *decl) {
 
 Function *Context::get_function(Emitter &emitter, const llvm::Twine &srcTwine, Module *inModule) {
   auto decl{sanity_check_nonnull(llvm::dyn_cast<AST::Function>(parse_decl(srcTwine, inModule)))};
-  decl->crumb = emitter.crumb;
+  decl->crumb = emitter.semantics->lastBreadcrumb;
   return get_function(emitter, decl);
 }
 
@@ -443,11 +443,11 @@ Value Context::resolve(Emitter &emitter, bool isAbs, llvm::ArrayRef<llvm::String
     if (name == "$data") {
       return get_compile_time_pointer(mdl.dataLookup.get());
     } else if (name == "$state") {
-      if (!emitter.state)
+      if (!emitter.semantics->state)
         srcLoc.report_error(
             !emitter.get_llvm_function() ? "'$state' is unavailable at module scope"
                                          : "'$state' is unavailable in '@(pure)' function");
-      return emitter.state;
+      return emitter.semantics->state;
     }
     // Resolve types
     if (auto itr{keywordConstants.find(name)}; itr != keywordConstants.end())
@@ -455,17 +455,17 @@ Value Context::resolve(Emitter &emitter, bool isAbs, llvm::ArrayRef<llvm::String
         return itr->second.value;
     // Unqualified simple names may shadow other values
     if (!isAbs)
-      if (auto crumb{Crumb::find(emitter.crumb, name, emitter.get_llvm_function())})
+      if (auto crumb{Breadcrumb::find(emitter.semantics->lastBreadcrumb, name, emitter.get_llvm_function())})
         return crumb->value;
   }
-  if (auto crumb{Crumb::find(emitter.crumb, names, emitter.get_llvm_function())})
+  if (auto crumb{Breadcrumb::find(emitter.semantics->lastBreadcrumb, names, emitter.get_llvm_function())})
     return crumb->value;
   // Let absolute identifiers in builtin modules like '::math::abs' resolve even if the module has
   // not been imported yet. This may be necessary for generated material functions using '::df' if the
   // user did not import '::df::*'.
   if (names.size() == 2 && isAbs) {
     if (auto builtin{get_builtin_module(names[0])}) {
-      if (auto crumb{Crumb::find(builtin->lastCrumb, names[1], emitter.get_llvm_function())}) {
+      if (auto crumb{Breadcrumb::find(builtin->lastBreadcrumb, names[1], emitter.get_llvm_function())}) {
         return crumb->value;
       }
     }
@@ -475,7 +475,7 @@ Value Context::resolve(Emitter &emitter, bool isAbs, llvm::ArrayRef<llvm::String
 }
 
 llvm::SmallVector<Value> Context::resolve_arguments(
-    Emitter &emitter0, const ParamList &params, const ArgList &args, const AST::SourceLocation &srcLoc,
+    Emitter &emitter, const ParamList &params, const ArgList &args, const AST::SourceLocation &srcLoc,
     llvm::SmallVector<Type *> *argParamTypes, bool dontEmit) {
   if (argParamTypes)
     argParamTypes->resize(args.size());
@@ -531,18 +531,16 @@ llvm::SmallVector<Value> Context::resolve_arguments(
     sanity_check(isUsed[i]);
   }
   if (!dontEmit) {
-    Emitter emitter1{&emitter0};
-    emitter1.move_to(emitter0.get_insert_block());
-    // emitter1.module = params.module ? params.module : emitter0.module;
-    emitter1.crumb = params.crumb;
+    auto crumb0{emitter.semantics->lastBreadcrumb};
+    emitter.semantics->lastBreadcrumb = params.crumb;
     for (size_t i{}; i < params.size(); i++) {
       auto &param{params[i]};
       auto &value{values[i]};
-      value = emitter1.construct(param.type, value ? value : emitter1.emit(*param.init), param.srcLoc);
-      emitter1.push(value, param.name, {}, param.srcLoc);
+      value = emitter.construct(param.type, value ? value : emitter.emit(*param.init), param.srcLoc);
+      emitter.push(value, param.name, {}, param.srcLoc);
     }
-    emitter1.emit_unwind(params.crumb);
-    emitter0.move_to(emitter1.get_insert_block());
+    emitter.emit_unwind(params.crumb);
+    emitter.semantics->lastBreadcrumb = crumb0;
   }
   return values;
 }
@@ -558,7 +556,7 @@ Module *Context::resolve_module(
   // In this case the import path is 'menu::latte' and 'menu' is an alias for '"coffee shop"::drinks'
   // so that the full import path is actually '"coffee shop"::drinks::latte'.
   auto fullImportPath{llvm::SmallVector<llvm::StringRef>{}};
-  resolve_using_aliases(emitter.crumb, importPath, fullImportPath);
+  resolve_using_aliases(emitter.semantics->lastBreadcrumb, importPath, fullImportPath);
   sanity_check(!fullImportPath.empty());
 
   // If the import path is absolute and is a single name, we prioritize builtins.
@@ -606,8 +604,8 @@ Module *Context::resolve_module(
 }
 
 void Context::resolve_using_aliases(
-    Crumb *crumb, llvm::ArrayRef<llvm::StringRef> importPath, llvm::SmallVector<llvm::StringRef> &fullImportPath) {
-  auto findAliasCrumb{[](Crumb *crumb, llvm::StringRef importPathName) -> Crumb * {
+    Breadcrumb *crumb, llvm::ArrayRef<llvm::StringRef> importPath, llvm::SmallVector<llvm::StringRef> &fullImportPath) {
+  auto findAliasCrumb{[](Breadcrumb *crumb, llvm::StringRef importPathName) -> Breadcrumb * {
     for (; crumb; crumb = crumb->prev)
       if (crumb->is_ast_using_alias() && static_cast<AST::UsingAlias *>(crumb->node)->name.srcName == importPathName)
         return crumb;

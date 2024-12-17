@@ -26,6 +26,13 @@ namespace smdl {
 
 SMDL_EXPORT void init_or_exit();
 
+struct unique_bump_ptr_deleter final {
+public:
+  template <typename T> void operator()(T *ptr) const { std::destroy_at(ptr); }
+};
+
+template <typename T> using unique_bump_ptr = std::unique_ptr<T, unique_bump_ptr_deleter>;
+
 class SMDL_EXPORT Error final {
 public:
   Error(std::string message, std::string file = {}, uint32_t line = {})

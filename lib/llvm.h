@@ -249,13 +249,6 @@ public:
   llvm::ModuleAnalysisManager moduleAnalysis;
 };
 
-struct unique_bump_ptr_deleter final {
-public:
-  template <typename T> void operator()(T *ptr) const { std::destroy_at(ptr); }
-};
-
-template <typename T> using unique_bump_ptr = std::unique_ptr<T, unique_bump_ptr_deleter>;
-
 namespace detail {
 
 template <typename T, bool> struct vector_or_SmallVector {};
@@ -271,6 +264,35 @@ template <typename T> struct vector_or_SmallVector<T, true> {
 } // namespace detail
 
 template <typename T> using vector_or_SmallVector = typename detail::vector_or_SmallVector<T, (sizeof(T) < 256)>::type;
+
+template <typename T> struct Stacked final {
+public:
+  Stacked() = default;
+
+  Stacked(T value) : value(std::move(value)) {}
+
+  [[nodiscard]] auto *operator->() const { return &value; }
+
+  [[nodiscard]] auto *operator->() { return &value; }
+
+  [[nodiscard]] auto &operator*() const { return value; }
+
+  [[nodiscard]] auto &operator*() { return value; }
+
+  void push() { stack.push_back(value); }
+
+  void pop(bool restore = true) {
+    sanity_check(!stack.empty());
+    if (restore)
+      value = stack.back();
+    stack.pop_back();
+  }
+
+private:
+  T value{};
+
+  vector_or_SmallVector<T> stack{};
+};
 
 namespace detail {
 
