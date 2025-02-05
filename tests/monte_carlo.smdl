@@ -1,0 +1,37 @@
+#smdl
+
+import ::math::*;
+import ::monte_carlo::*;
+
+@(pure) auto run_low_discrepancy_tests(auto xi) {
+  auto xi_av(xi);
+  for (int i = 0; i < 5000; i++) {
+    monte_carlo::advance_low_discrepancy(&xi);
+    xi_av += xi;
+  }
+  xi_av /= 5000;
+  #assert(#all(#approx_equal(xi_av, #typeof(xi)(0.5), 0.001)));
+}
+
+unit_test "Low discrepancy 2D" {
+  run_low_discrepancy_tests(float2(0.1, 0.2));
+}
+
+unit_test "Low discrepancy 3D" {
+  run_low_discrepancy_tests(float3(0.1, 0.2, 0.3));
+}
+
+unit_test "Low discrepancy 4D" {
+  run_low_discrepancy_tests(float4(0.1, 0.2, 0.3, 0.4));
+}
+
+unit_test "Cosine-weighted hemisphere sample" {
+  auto xi(float2(0.5, 0.7));
+  auto wi_av(float3(0.0));
+  for (int i = 0; i < 5000; i++) {
+    monte_carlo::advance_low_discrepancy(&xi);
+    wi_av += monte_carlo::cosine_hemisphere_sample(xi);
+  }
+  wi_av /= 5000;
+  #assert(#all(#approx_equal(wi_av, float3(0.0, 0.0, 0.666), 0.001)));
+}

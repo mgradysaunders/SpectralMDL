@@ -1,0 +1,151 @@
+#smdl
+
+export const float PI = $PI;
+
+export const float TWO_PI = $TWO_PI;
+
+export const float HALF_PI = $HALF_PI;
+
+export @(pure macro) auto abs(const auto a) = #abs(a);
+
+export @(pure macro) auto all(const auto a) = #all(a);
+
+export @(pure macro) auto any(const auto a) = #any(a);
+
+export @(pure macro) auto max(const auto a, const auto b) = #max(a, b);
+
+export @(pure macro) auto min(const auto a, const auto b) = #min(a, b);
+
+export @(pure macro) auto clamp(const auto a, const auto min, const auto max) =
+  #max(min, #min(a, max));
+
+export @(pure macro) auto saturate(const auto a) = clamp(a, 0.0, 1.0);
+
+export @(pure macro) auto floor(const auto a) = #floor(a);
+
+export @(pure macro) auto ceil(const auto a) = #ceil(a);
+
+export @(pure macro) auto round(const auto a) = #round(a);
+
+export @(pure macro) auto trunc(const auto a) = #trunc(a);
+
+export @(pure macro) auto frac(const auto a) = a - #floor(a);
+
+export @(pure macro) auto fmod(const auto a, const auto b) =
+  a % b;
+
+// TODO modf
+
+export @(pure macro) auto isfinite(const auto a) = #isfpclass(a, 0b0111111000);
+
+export @(pure macro) auto isnormal(const auto a) = #isfpclass(a, 0b0100001000);
+
+export @(pure macro) auto isinf(const auto a) = #isfpclass(a, 0b1000000100);
+
+export @(pure macro) auto isnan(const auto a) = #isfpclass(a, 0b0000000011);
+
+export @(pure macro) auto sign(const auto a) = #sign(a);
+
+export @(pure macro) auto sqrt(const auto a) = #sqrt(a);
+
+export @(pure macro) auto rsqrt(const auto a) = 1.0 / #sqrt(a);
+
+export @(pure macro) auto pow(const auto a, const auto b) = #pow(a, b);
+
+export @(pure macro) auto cos(const auto a) = #cos(a);
+
+export @(pure macro) auto sin(const auto a) = #sin(a);
+
+export @(pure macro) auto tan(const auto a) = #tan(a);
+
+export @(pure macro) auto acos(const auto a) = #acos(a);
+
+export @(pure macro) auto asin(const auto a) = #asin(a);
+
+export @(pure macro) auto atan(const auto a) = #atan(a);
+
+export @(pure macro) auto cosh(const auto a) = #cosh(a);
+
+export @(pure macro) auto sinh(const auto a) = #sinh(a);
+
+export @(pure macro) auto tanh(const auto a) = #tanh(a);
+
+export @(pure macro) auto sincos(const auto a) = auto[2](#sin(a), #cos(a));
+
+export @(pure macro) auto radians(const auto a) = a * (PI / 180.0);
+
+export @(pure macro) auto degrees(const auto a) = a * (180.0 / PI);
+
+export @(pure macro) auto exp(const auto a) = #exp(a);
+
+export @(pure macro) auto exp2(const auto a) = #exp2(a);
+
+export @(pure macro) auto exp10(const auto a) = #exp10(a);
+
+export @(pure macro) auto log(const auto a) = #log(a);
+
+export @(pure macro) auto log2(const auto a) = #log2(a);
+
+export @(pure macro) auto log10(const auto a) = #log10(a);
+
+export @(pure macro) auto min_value(const auto a) = #min_value(a);
+
+export @(pure macro) auto max_value(const auto a) = #max_value(a);
+
+export @(pure macro) auto lerp(const auto a, const auto b, const auto l) =
+  (1.0 - l) * a + l * b;
+
+export @(pure macro) auto step(const auto a, const auto b) =
+  #select(b < a, 0.0, 1.0);
+
+export @(pure macro) auto smoothstep(const auto a, const auto b, const auto l) {
+  const auto t(saturate(l));
+  const auto s(1 - t);
+  return s * s * (1 + 2 * t) * a + t * t * (1 + 2 * s) * b;
+}
+
+export @(pure macro) auto dot(const auto a, const auto b) = #sum(a * b);
+
+export @(pure macro) auto length(const auto a) = #sqrt(#sum(a * a));
+
+export @(pure macro) auto normalize(const auto a) = a * (1 / length(a));
+
+export @(pure macro) auto distance(const auto a, const auto b) =
+  length(b - a);
+
+export @(pure macro) auto cross(const auto a, const auto b) =
+  a.yzx * b.zxy - a.zxy * b.yzx;
+
+export @(pure macro) auto transpose(const auto a) = #transpose(a);
+
+// The implementation below is a series expansion of this calculation:
+// ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+// const auto t(color($state.wavelength_base) * temperature);
+// const auto numer(#pow(2897.7719e3 / t, 5));
+// const auto denom(#exp(14.387773e6 / t) - 1.0);
+// return 142.3251316 * numer / denom;
+// ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+// At 16 wavelengths, the series expansion is around 2x faster. For more
+// wavelengths, the performance difference only becomes more exaggerated.
+export @(noinline) color blackbody(const float temperature) {
+  const auto t(color($state.wavelength_base) * (temperature / 14.387e6));
+  auto res(1 + 2 * t);
+  res = 1 + 3 * t * res;
+  res = 1 + 4 * t * res;
+  res = 1 + 5 * t * res;
+  const auto rcp1(1 / t);
+  auto rcp(rcp1 / 6);
+  for (int k = 1; k < 10; ++k) {
+    res += rcp;
+    rcp *= rcp1 / (6 + k);
+  }
+  return 5.659994086 / res;
+}
+
+export @(noinline) float luminance(const color a) {
+  float result(0.0);
+  for (int i = 0; i < $WAVELENGTH_BASE_MAX; ++i) {
+    result += $wyman_y($state.wavelength_base[i]) * a[i];
+  }
+  return result / $WAVELENGTH_BASE_MAX;
+}

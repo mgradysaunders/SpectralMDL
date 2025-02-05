@@ -1,0 +1,87 @@
+#smdl
+
+struct Horse {
+  string name = "Cliff";
+  bool has_saddle = true;
+};
+
+struct Zebra {
+  string name = "Biff";
+  int stripes = 18;
+};
+
+struct Bison {
+  string name = "Buff";
+  double horn_size = 1.2;
+};
+
+// This implicitly constructs a '(Horse | Zebra | Bison)' by a chain of
+// conditional expressions. The result of the inner 'i == 1' conditional 
+// expression is a '(Zebra | Bison)' which then unites with 'Horse' to
+// form '(Horse | Zebra | Bison)'.
+@(pure noinline) auto get_implied_union_from_conditional(int i) =
+  i == 0 ? Horse() : (i == 1 ? Zebra() : Bison());
+
+// This implicitly constructs a '(Horse | Zebra | Bison)' by looking at
+// the 'return' statements of a function with 'auto' return type.
+@(pure noinline) auto get_implied_union_from_returns(int i) {
+  switch (i) {
+  case 0:
+    return Horse();
+  case 1:
+    return Zebra();
+  default:
+    break;
+  }
+  return Bison();
+}
+
+unit_test "Implied union" {
+  auto biff(get_implied_union_from_conditional(1)); // Should be a 'Zebra'
+  auto buff(get_implied_union_from_returns(2)); // Should be a 'Bison'
+  #assert(#typeof(biff) == (Horse | Zebra | Bison));
+  #assert(#typeof(buff) == (Horse | Zebra | Bison));
+
+  // The 'visit' keyword before an argument wraps the function call
+  // with a type switch and unites the results in the most sensible way. In
+  // this case, '#typeof(...)' returns a type always, so '#typeof(visit ...)' 
+  // also returns a type.
+  #assert(#typeof(visit biff) == Zebra);
+  #assert(#typeof(visit buff) == Bison);
+}
+
+// This implicitly constructs a 'double' by a chain of conditional 
+// expressions. The result of the inner expression promotes 'float' and
+// 'double' to 'double', then the outer expression promotes 'int' and
+// 'double' to 'double. This demonstrates that arithmetic promotion 
+// is preferred to union when possible!
+@(pure noinline) auto get_implied_promotion_from_conditional(int i) =
+  i == 0 ? 7 : (i == 1 ? 7.1f : 7.2d);
+
+// Same as above.
+@(pure noinline) auto get_implied_promotion_from_returns(int i) {
+  switch (i) {
+  case 0:
+    return 7;
+  case 1:
+    return 7.1f;
+  default:
+    break;
+  }
+  return 7.2d;
+}
+
+unit_test "Implied promotion instead of union" {
+  #assert(#typeof(get_implied_promotion_from_conditional(0)) == double);
+  #assert(#typeof(get_implied_promotion_from_returns(2)) == double);
+}
+
+// If an abstract array constructor is passed a bunch of different types,
+// it automatically unionizes them to create an array of unions.
+unit_test "Implied unions in arrays" {
+  auto animals = auto[](Horse(), Zebra(), Bison());
+  #assert(#typeof(visit animals[0]) == Horse);
+  #assert(#typeof(visit animals[1]) == Zebra);
+  #assert(#typeof(visit animals[2]) == Bison);
+  #assert(#typeof(animals) == (Horse | Zebra | Bison)[3]);
+}

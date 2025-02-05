@@ -1,0 +1,30 @@
+#smdl
+
+export @(macro) bool data_isvalid(const string name) = #data_exists(name);
+
+export @(macro) int data_lookup_int(const string name, int default_value = int()) =
+  #data_lookup(name, default_value);
+
+export @(macro) int2 data_lookup_int2(const string name, int2 default_value = int2()) =
+  #data_lookup(name, default_value);
+
+export @(macro) int3 data_lookup_int3(const string name, int3 default_value = int3()) =
+  #data_lookup(name, default_value);
+
+export @(macro) int4 data_lookup_int4(const string name, int4 default_value = int4()) =
+  #data_lookup(name, default_value);
+
+export @(macro) float data_lookup_float(const string name, float default_value = float()) =
+  #data_lookup(name, default_value);
+
+export @(macro) float2 data_lookup_float2(const string name, float2 default_value = float2()) =
+  #data_lookup(name, default_value);
+
+export @(macro) float3 data_lookup_float3(const string name, float3 default_value = float3()) =
+  #data_lookup(name, default_value);
+
+export @(macro) float4 data_lookup_float4(const string name, float4 default_value = float4()) =
+  #data_lookup(name, default_value);
+
+export @(macro) color data_lookup_color(const string name, color default_value = color()) =
+  #data_lookup(name, default_value);

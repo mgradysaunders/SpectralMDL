@@ -1,0 +1,331 @@
+#smdl
+
+/// The number of wavelengths in the RGB-to-color curves.
+const int RGB_TO_COLOR_NUM_WAVELENGTHS = 32;
+
+/// The minimum wavelength of the RGB-to-color curves in nanometers.
+const float RGB_TO_COLOR_MIN_WAVELENGTH = 380.0;
+
+/// The maximum wavelength of the RGB-to-color curves in nanometers.
+const float RGB_TO_COLOR_MAX_WAVELENGTH = 720.0;
+
+/// The RGB-to-color curves.
+const static auto RGB_TO_COLOR_CURVES = auto[](
+  auto[]( // White
+     1.0618958,  1.0615020,  1.0614336,  1.0622711,  1.0622036,  1.0625060, 
+     1.0623939,  1.0624707,  1.0625048,  1.0624366,  1.0620694,  1.0613167, 
+     1.0610334,  1.0613868,  1.0614215,  1.0620337,  1.0625497,  1.0624317, 
+     1.0625249,  1.0624278,  1.0624750,  1.0625539,  1.0625327,  1.0623922,
+     1.0623651,  1.0625256,  1.0612278,  1.0594263,  1.0599811,  1.0602547, 
+     1.0601263,  1.0606565),
+  auto[]( // Cyan
+     1.0414628,  1.0328661,  1.0126146,  1.0350461,  1.0078661,  1.0422280,
+     1.0442597,  1.0535238,  1.0180776,  1.0442730,  1.0529362,  1.0537034, 
+     1.0533901,  1.0537783,  1.0527093,  1.0530449,  1.0550555,  1.0553674, 
+     1.0454307,  0.6234895,  0.1803807, -0.0076304, -0.0001522, -0.0075102,
+    -0.0021709,  0.0006592,  0.0122788, -0.0044670,  0.0171198,  0.0049211, 
+     0.0058763,  0.0252594),
+  auto[]( // Magenta
+     0.9942214,  0.9898694,  0.9829366,  0.9962787,  1.0198956,  1.0166396,
+     1.0220913,  0.9965166,  1.0097766,  1.0215422,  0.6403195,  0.0025012, 
+     0.0065340,  0.0028334, -0.0000000, -0.0090592,  0.0033937, -0.0030639, 
+     0.2220394,  0.6314114,  0.9748099,  0.9720956,  1.0173770,  0.9987519,
+     0.9470173,  0.8525862,  0.9489780,  0.9475188,  0.9959894,  0.8630135,
+     0.8915099,  0.8486649),
+  auto[]( // Yellow
+     0.0055741, -0.0047983, -0.0052537, -0.0064571, -0.0059694, -0.0021837,
+     0.0167811,  0.0960964,  0.2121736,  0.3616913,  0.5396101,  0.7440881,
+     0.9220957,  1.0460304,  1.0513825,  1.0511992,  1.0510530,  1.0517397,
+     1.0516043,  1.0511944,  1.0511590,  1.0516613,  1.0514039,  1.0515941,
+     1.0511460,  1.0515124,  1.0508871,  1.0508924,  1.0477493,  1.0493273,
+     1.0435964,  1.0392281),
+  auto[]( // Red
+     0.1657560,  0.1184644,  0.1240829,  0.1137127,  0.0789924,  0.0322056,
+    -0.0107984,  0.0180520,  0.0053407,  0.0136549, -0.0059564, -0.0018444,
+    -0.0105719, -0.0029376, -0.0107905, -0.0080224, -0.0022669,  0.0070200, 
+    -0.0081528,  0.6077287,  0.9883156,  0.9939169,  1.0039339,  0.9923450,
+     0.9992653,  1.0084622,  0.9835830,  1.0085024,  0.9745114,  0.9854327,
+     0.9349576,  0.9871391),
+  auto[]( // Green
+     0.0026494, -0.0050175, -0.0125472, -0.0094555, -0.0125261, -0.0079171,
+    -0.0079956, -0.0093559,  0.0654686,  0.3957288,  0.7524402,  0.9637648,
+     0.9985443,  0.9999298,  0.9993908,  0.9999437,  0.9993912,  0.9991124, 
+     0.9601958,  0.6318628,  0.2579740,  0.0094015, -0.0030798, -0.0045230,
+    -0.0068933, -0.0090352, -0.0085914, -0.0083691, -0.0078686, -0.0000084,
+     0.0054301, -0.0027746),
+  auto[]( // Blue
+     0.9920977,  0.9887643,  0.9953904,  0.9952932,  0.9918145,  1.0002584, 
+     0.9996848,  0.9998812,  0.9850401,  0.7902985,  0.5608220,  0.3313346, 
+     0.1369241,  0.0189149, -0.0000051, -0.0004240, -0.0004193,  0.0017473, 
+     0.0037999, -0.0005510, -0.0000437,  0.0075875,  0.0257957,  0.0381684,
+     0.0494896,  0.0495960,  0.0498148,  0.0398409,  0.0305010,  0.0212431,
+     0.0069597,  0.0041734));
+
+/// The nontrivial RGB-to-color implementation.
+///
+/// This is factored into an internal function because, despite the fact 
+/// that the `color` type is not necessarily RGB, every MDL codebase on
+/// planet Earth assumes that it is, e.g., uses `color(1.0, 1.0, 1.0)` 
+/// to mean white instead of `color(1.0)`. 
+///
+@(hot noinline) color rgb_to_color_nontrivial(float3 rgb) {
+  #assert(bool($state.wavelength_base));
+  const int k0(#all(rgb.xx < rgb.yz) ? 0 : rgb.y < rgb.z ? 1 : 2);
+  const int k0_plus_1((k0 + 1) % 3);
+  const int k0_plus_2((k0 + 2) % 3);
+  const bool should_swap(rgb[k0_plus_1] > rgb[k0_plus_2]);
+  const int k1(should_swap ? k0_plus_2 : k0_plus_1);
+  const int k2(should_swap ? k0_plus_1 : k0_plus_2);
+  const float coeff_w(rgb[k0]);
+  const float coeff_cmy(rgb[k1] - rgb[k0]);
+  const float coeff_rgb(rgb[k2] - rgb[k1]);
+  color c(0.0);
+  color w(color($state.wavelength_base));
+  w -= RGB_TO_COLOR_MIN_WAVELENGTH;
+  w *= RGB_TO_COLOR_NUM_WAVELENGTHS / 
+      (RGB_TO_COLOR_MAX_WAVELENGTH - RGB_TO_COLOR_MIN_WAVELENGTH);
+  for (int i = 0; i < $WAVELENGTH_BASE_MAX; i++) {
+    auto t(w[i]);
+    if ((0.0 <= t) & (t <= RGB_TO_COLOR_NUM_WAVELENGTHS)) {
+      int t0(#min(int(t), RGB_TO_COLOR_NUM_WAVELENGTHS - 2));
+      t = #min(t - t0, 1.0);
+      c[i] = #sum(float2(1 - t, t) * 
+            (coeff_w * float2(&RGB_TO_COLOR_CURVES[0][t0]) + 
+             coeff_cmy * float2(&RGB_TO_COLOR_CURVES[k0 + 1][t0]) + 
+             coeff_rgb * float2(&RGB_TO_COLOR_CURVES[k2 + 4][t0])));
+    }
+  }
+  return #max(c * 0.94, 0.0);
+}
+
+/// Convert RGB to color, used by `color` constructor!
+export @(macro) color $rgb_to_color(const float3 rgb) {
+  if (#all(rgb.xx == rgb.yz)) {
+    return color(rgb.x);
+  } else {
+    return rgb_to_color_nontrivial(rgb);
+  }
+}
+
+/// The fits of CIE 1931 XYZ by Wyman et al for wavelength in nanometers.
+///
+/// \note
+/// The implementation here does not exactly look like the published piecewise 
+/// gaussian equations because is calculating the X, Y, and Z fits in parallel 
+/// by explicitly evaluating the first few terms of the exponential series.
+///
+export @(pure) float3 $wyman_xyz(const float w) {
+  auto x(w - auto(442.0, 599.8, 501.1, 568.8, 530.9, 437.0, 459.0));
+  x *= #select(
+    x < 0,
+    auto(0.0624, 0.0264, 0.0490, 0.0213, 0.0613, 0.0845, 0.0385),
+    auto(0.0374, 0.0323, 0.0382, 0.0247, 0.0322, 0.0278, 0.0725));
+  x *= 0.5 * x;
+  const auto x1(x);
+  auto y(1 + x);
+  y += (x *= x1 * 0.5);
+  y += (x *= x1 * 0.333333);
+  y += (x *= x1 * 0.25);
+  y = auto(0.362, 1.056, -0.065, 0.821, 0.286, 1.217, 0.681) * 0.01 / y;
+  return float3(y[0] + y[1] + y[2], y[3] + y[4], y[5] + y[6]);
+}
+
+/// The fit of CIE 1931 Y, without X or Z, by Wyman et al fit 
+/// for wavelength in nanometers.
+export @(pure) float $wyman_y(const float w) {
+  auto x(w - auto(568.8, 530.9));
+  x *= #select(x < 0, auto(0.0213, 0.0613), auto(0.0247, 0.0322));
+  x *= 0.5 * x;
+  const auto x1(x);
+  auto y(1 + x);
+  y += (x *= x1 * 0.5);
+  y += (x *= x1 * 0.333333);
+  y += (x *= x1 * 0.25);
+  return #sum(auto(0.821, 0.286) * 0.01 / y);
+}
+
+/// Convert color to RGB, used by `float3` constructor!
+export @(hot noinline) float3 $color_to_rgb(const color c) {
+  float3 result(0.0);
+  for (int i = 0; i < $WAVELENGTH_BASE_MAX; ++i) {
+    result += $wyman_xyz($state.wavelength_base[i]) * c[i];
+  }
+  result /= $WAVELENGTH_BASE_MAX;
+  result *= $state.wavelength_max - $state.wavelength_min; // TODO $state.wavelength_pdf?
+  result = float3x3(
+    float3(+3.240450, -0.969266,  0.0556434),
+    float3(-1.537140,  1.876010, -0.2040260),
+    float3(-0.498532,  0.041556,  1.0572300)) * result;
+  return result;
+}
+
+/// The JIT-visible RGB-to-color function advertised by the `Compiler` 
+/// for convenience.
+@(visible noinline) void jit_rgb_to_color(const &float3 rgb, const &float cptr) {
+  color c($rgb_to_color(*rgb));
+  #memcpy(cptr, &c, #sizeof(color));
+}
+
+/// The JIT-visible color-to-RGB function advertised by the `Compiler` 
+/// for convenience.
+@(visible noinline) void jit_color_to_rgb(const &float cptr, const &float3 rgb) {
+  *rgb = $color_to_rgb(color(cptr));
+}
+
+/// The intensity mode enum.
+export enum intensity_mode {
+  /// Power (watts) per unit area (meters squared).
+  intensity_radiant_exitance,
+  /// Power (watts).
+  intensity_power
+};
+
+/// The Bidirectional Scattering Distribution Function (BSDF) tag.
+export tag bsdf;
+
+/// The Volume Distribution Function (VDF) tag.
+export tag vdf;
+
+/// The Emission Distribution Function (EDF) tag.
+export tag edf;
+
+/// The hair Bidirectional Scattering Distribution Function (BSDF) tag.
+export tag hair_bsdf;
+
+/// The default BSDF is just an empty struct!
+export struct $default_bsdf: default bsdf {};
+
+/// The default VDF is just an empty struct!
+export struct $default_vdf: default vdf {};
+
+/// The default EDF is just an empty struct!
+export struct $default_edf: default edf {};
+
+/// The default hair BSDF is just an empty struct!
+export struct $default_hair_bsdf: default hair_bsdf {};
+
+/// The material emission description.
+export struct material_emission {
+  /// The Emission Distribution Function (EDF).
+  edf emission = edf();
+
+  /// The intensity multiplier.
+  color intensity = color();
+
+  /// The intensity mode.
+  intensity_mode mode = intensity_radiant_exitance;
+};
+
+/// The material surface description.
+export struct material_surface {
+  /// The Bidirectional Scattering Distribution Function (BSDF).
+  bsdf scattering = bsdf();
+
+  /// The material emission description.
+  material_emission emission = material_emission();
+};
+
+/// The material volume description.
+export struct material_volume {
+  /// The Volume Distribution Function (VDF).
+  vdf scattering = vdf();
+
+  /// The absorption coefficient in units of inverse distance.
+  color absorption_coefficient = color();
+
+  /// The scattering coefficient in units of inverse distance.
+  color scattering_coefficient = color();
+};
+
+/// The material geometry description.
+export struct material_geometry {
+  /// The displacement.
+  float3 displacement = float3();
+
+  /// The cutout opacity between 0 (transparent) and 1 (opaque).
+  float cutout_opacity = 1.0;
+
+  /// The normal.
+  float3 normal = $state.normal;
+};
+
+/// The material description.
+export struct material {
+  /// Thin walled?
+  bool thin_walled = false;
+
+  /// The material surface description.
+  material_surface surface = material_surface();
+
+  /// If non-default, the backface surface description.
+  material_surface backface = material_surface();
+
+  /// The index of refraction.
+  color ior = color(1.0);
+
+  /// The material volume description.
+  material_volume volume = material_volume();
+
+  /// The material geometry description.
+  material_geometry geometry = material_geometry();
+
+  /// The hair Bidirectional Scattering Distribution Function (BSDF).
+  hair_bsdf hair = hair_bsdf();
+};
+
+/// Is thin walled?
+const int THIN_WALLED = (1 << 0);
+
+/// Has a non-default surface component?
+const int HAS_SURFACE = (1 << 1);
+
+/// Has a non-default backface surface component?
+const int HAS_BACKFACE = (1 << 2);
+
+/// Has a non-default volume component?
+const int HAS_VOLUME = (1 << 3);
+
+/// Has a non-default hair component?
+const int HAS_HAIR = (1 << 4);
+
+/// An mat of a material corresponding to `smdl::JIT::Material::Instance` 
+/// in the C++ API.
+export struct $material_instance {
+  /// The material deep copied with `#bump()`.
+  const &material mat;
+
+  /// The geometry displacement.
+  const &float3 displacement = &mat.geometry.displacement;
+
+  /// The geometry cutout opacity.
+  const &float cutout_opacity = &mat.geometry.cutout_opacity;
+
+  /// The geometry normal.
+  const &float3 normal = &mat.geometry.normal;
+
+  /// The index of refraction.
+  const &color ior = &mat.ior;
+
+  /// The volume absorption coefficient.
+  const &color absorption_coefficient = &mat.volume.absorption_coefficient;
+
+  /// The volume scattering coefficient.
+  const &color scattering_coefficient = &mat.volume.scattering_coefficient;
+
+  /// The wavelength count.
+  const int wavelength_base_max = $WAVELENGTH_BASE_MAX;
+
+  /// The flags.
+  const int flags = 
+    (mat.thin_walled                                      ? THIN_WALLED  : 0) |
+    (#typeof(mat.surface)  != #typeof(material_surface()) ? HAS_SURFACE  : 0) |
+    (#typeof(mat.backface) != #typeof(material_surface()) ? HAS_BACKFACE : 0) |
+    (#typeof(mat.volume)   != #typeof(material_volume())  ? HAS_VOLUME   : 0) |
+    (#typeof(mat.hair)     != #typeof(hair_bsdf())        ? HAS_HAIR     : 0);
+
+  /// The tangent space matrix held by the `State` during construction.
+  const float3x3 tangent_space = float3x3(
+    $state.tangent_to_object_matrix[0].xyz,
+    $state.tangent_to_object_matrix[1].xyz,
+    $state.tangent_to_object_matrix[2].xyz);
+};

@@ -1,0 +1,95 @@
+#smdl
+
+tag Animal;
+
+struct Cat: default Animal {
+  string name = "Fe";
+  int age = 11;
+  int num_meows = 8;
+};
+
+struct Dog: Animal {
+  string name = "Doug";
+  int age = 5;
+  int num_barks = 9;
+};
+
+// This defines a generic structure with the field 'pet'
+// that is essentially a template parameter whose type must
+// have the 'Animal' tag.
+struct PetOwner {
+  string name = "Pete";
+  Animal pet;
+};
+
+unit_test "Generic structs" {
+  // The 'PetOwner' constructor can take any 'Animal' for
+  // the 'pet' argument, and it instantiates a concrete instance
+  // of the 'PetOwner' type with the type of 'pet' fixed to the type
+  // in the constructor.
+  auto catOwner(PetOwner(name: "Pete", pet: Cat()));
+  auto dogOwner(PetOwner(name: "Fred", pet: Dog()));
+
+  // The type of 'catOwner' is NOT the same as the type of 'dogOwner'. In C++
+  // speak, both are template instantiations of the template class
+  // 'PetOwner'.
+  typedef #typeof(catOwner) CatOwner; // By analogy to C++, this is 'PetOwner<Cat>'
+  typedef #typeof(dogOwner) DogOwner; // By analogy to C++, this is 'PetOwner<Dog>'
+  #assert(CatOwner != DogOwner);
+
+  // By the subtype relation '<:', both satisify the constraint of being
+  // a 'PetOwner'. (As if 'PetOwner' were a tag.)
+  #assert(CatOwner <: PetOwner);
+  #assert(DogOwner <: PetOwner);
+
+  // ... and so the concrete instances of 'PetOwner' can be implicitly
+  // unionized into an array like this:
+  auto petOwners = PetOwner[2](catOwner, dogOwner);
+
+  // The compiler interprets the abstract type signature 'PetOwner[2]' as an
+  // array of two concrete instances of the 'PetOwner' type, but not necessarily
+  // identical instances. Therefore, it is legal to pass in 'CatOwner' and 'DogOwner', 
+  // and the compiler infers the array element type must be '(CatOwner | DogOwner)'.
+  #assert(#typeof(petOwners) == (CatOwner | DogOwner)[2]);
+  #assert(#typeof(visit petOwners[0]) == CatOwner);
+  #assert(#typeof(visit petOwners[1]) == DogOwner);
+}
+
+// This implicitly constructs a '(CatOwner | DogOwner)' by a conditional expressions. See 
+// the 'implicit_unions.smdl' file for more information.
+@(pure noinline) auto get_cat_or_dog_owner(string name, bool owns_cat) =
+  owns_cat ? PetOwner(name: name, pet: Cat()) : PetOwner(name: name, pet: Dog());
+
+unit_test "Generic struct unions" {
+  // Now construct a cat owner and a dog owner using the implicit union returned by 
+  // 'get_cat_or_dog_owner()'.
+  auto petOwner0(get_cat_or_dog_owner(name: "Pete", owns_cat: true));
+  auto petOwner1(get_cat_or_dog_owner(name: "Fred", owns_cat: false));
+
+  // Unlike the first test case, these variables both have the same type '(CatOwner | DogOwner)'.
+  typedef #typeof(petOwner0) CatOrDogOwner;
+  #assert(#typeof(petOwner1) == CatOrDogOwner);
+
+  // By the subtype relation '<:', the compiler considers 'CatOrDogOwner' to satisfy
+  // the constraint of being a 'PetOwner'. Even though it is a union, every alternative 
+  // of the union satifies 'PetOwner', so it is ALWAYS a 'PetOwner' even if we do not
+  // specifically know which one it is at compile-time.
+  #assert(CatOrDogOwner <: PetOwner);
+
+  // OK now for some crazy stuff. The compiler also knows when a field name is present 
+  // in every alternative of a union. In which case, you can use dot syntax to access it
+  // directly on the union, and the compiler will implicitly type switch to access the
+  // field.
+  #assert(petOwner0.name == "Pete"); // PetOwner<Cat>::name
+  #assert(petOwner1.name == "Fred"); // PetOwner<Dog>::name
+  #assert(petOwner0.pet.name == "Fe"); // PetOwner<Cat>::Cat::name
+  #assert(petOwner1.pet.name == "Doug"); // PetOwner<Dog>::Dog::name
+
+  // Following intuitive 'visit' semantics, the result type of the field access is
+  // a union only if the type could differ depending on the alterative of the union being
+  // accessed. In other words, it is a union of every type the result of the expression
+  // could possibly be.
+  #assert(#typeof(petOwner0.name) == string); // Always 'string'
+  #assert(#typeof(petOwner0.pet.name) == string); // Always 'string'
+  #assert(#typeof(petOwner0.pet) == (Cat | Dog)); // Could be 'Cat' or 'Dog'
+}

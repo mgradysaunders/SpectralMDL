@@ -1,0 +1,26 @@
+#smdl
+
+struct Foo {
+  int bar = 4;
+  int baz = 2 * bar - 3;
+
+  // The finalize block has the opportunity to check or modify 
+  // the fields immediately after the constructor. NOTE: Does not 
+  // run after the copy constructor!
+  finalize {
+    bar = #min(bar, 11);
+    baz = #min(baz, 17);
+  }
+};
+
+unit_test "Finalize" {
+  auto foo = Foo(bar: 13);
+  #assert(foo.bar == 11); // Clamped at 11!
+  #assert(foo.baz == 17); // Clamped at 17!
+
+  foo.bar = 13;
+  foo.baz = 2 * 13 - 3;
+  foo = Foo(foo); // Copying does NOT run finalize!
+  #assert(foo.bar == 13);
+  #assert(foo.baz == 23);
+}

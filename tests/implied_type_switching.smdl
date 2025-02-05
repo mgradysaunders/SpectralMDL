@@ -1,0 +1,209 @@
+#smdl
+
+// Introduce the 'Animal' tag. 
+//
+// This is analogous to a C++ concept that identifies types
+// that declare themselves to be animals by an 'is_animal' member 
+// type as shown below.
+//
+// C++ equivalent:
+// ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+// template <typename T>
+// concept Animal = std::same_as<typename T::is_animal, std::true_type>;
+// ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+tag Animal;
+
+// The 'Cat' struct is an 'Animal'. It further specifies that it is
+// the default 'Animal', such that the default constructor 'Animal()'
+// returns a 'Cat'.
+//
+// C++ equivalent:
+// ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+// struct Cat final {
+//   using is_animal = std::true_type;
+//   string name = "Fe";
+//   int num_meows = 8;
+// };
+// Cat default_animal() { return Cat(); }
+// ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+struct Cat: default Animal {
+  string name = "Fe";
+  int num_meows = 8;
+};
+
+// The 'Dog' struct is also an 'Animal', but not the default (there can
+// only be one default!).
+//
+// C++ equivalent:
+// ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+// struct Dog final {
+//   using is_animal = std::true_type;
+//   int num_barks = 2;
+//   string name = "Doug";
+// };
+// ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+struct Dog: Animal {
+  int num_barks = 2;
+  string name = "Doug";
+};
+
+// C++ equivalent:
+// ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+// using AnyAnimal = std::variant<Cat, Dog>;
+// ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+typedef (Cat | Dog) AnyAnimal;
+
+// 'Animal' is an abstract type, so 'get_animal_name()' is 
+// essentially a template function.
+//
+// C++ equivalent:
+// ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+// template <typename T> requires Animal<T> 
+// string get_animal_name(T animal) { return animal.name; }
+// ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+@(pure) string get_animal_name(Animal animal) = animal.name;
+
+// 'AnyAnimal' is a concrete union (union types MUST be concrete!) 
+// that is analogous to a variant in C++. When the template function
+// 'get_animal_name()' is invoked in this function with the 'AnyAnimal' 
+// union (that the compiler knows necessarily satisfies 'Animal'), the 
+// call implicitly type switches.
+//
+// C++ equivalent:
+// ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+// string get_animal_union_name(AnyAnimal animal) {
+//   auto vis{[](auto &a) { return get_animal_name(a); }};
+//   return std::visit(vis, animal);
+// }
+// ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+@(pure visible noinline) string get_animal_union_name(AnyAnimal animal) =
+  get_animal_name(animal);
+
+unit_test "Implied type switching" {
+  #assert(#typeof(Animal()) == Cat); // Default constructor returns 'Cat'
+  #assert(Cat <: Animal);
+  #assert(Dog <: Animal);
+  #assert(AnyAnimal <: Animal); // AnyAnimal is always an Animal!
+  #assert(get_animal_union_name(Cat()) == "Fe");
+  #assert(get_animal_union_name(Dog()) == "Doug");
+}
+
+// '&Animal' is also an abstract type (a pointer to an abstract type is 
+// still abstract), so 'get_animal_name_with_pointer()' is also essentially 
+// a template function. 
+//
+// C++ equivalent:
+// ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+// template <typename T> requires Animal<T>
+// string get_animal_name_with_pointer(T *animal) { return animal->name; }
+// ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+@(pure) string get_animal_name_with_pointer(&Animal animal) =
+  animal.name;
+
+// '&AnyAnimal' is a concrete pointer to union type. The same logic of it 
+// always being a pointer to some 'Animal' still applies, and the compiler
+// implicitly type switches through the pointer.
+//
+// C++ equivalent:
+// ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+// string get_animal_union_name_with_pointer(AnyAnimal *animal) {
+//   auto vis{[](auto &a) { return get_animal_name_with_pointer(&a); }};
+//   return std::visit(vis, *animal);
+// }
+// ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+@(pure visible noinline) string get_animal_union_name_with_pointer(&AnyAnimal animal) =
+  get_animal_name_with_pointer(animal);
+
+unit_test "Implied type switching with pointers" {
+  auto cat(AnyAnimal(Cat()));
+  auto dog(AnyAnimal(Dog()));
+  #assert(get_animal_union_name_with_pointer(&cat) == "Fe");
+  #assert(get_animal_union_name_with_pointer(&dog) == "Doug");
+}
+
+// Introduce the 'Shape' tag.
+//
+// This is analogous to a C++ concept that identifies types
+// that declare themselves to be shapes by an 'is_shape' member 
+// type as shown below.
+//
+// C++ equivalent:
+// ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+// template <typename T>
+// concept Shape = std::same_as<typename T::is_shape, std::true_type>;
+// ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+tag Shape;
+
+// The 'Disk' struct is a 'Shape'.
+//
+// C++ equivalent:
+// ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+// struct Disk final {
+//   using is_shape = std::true_type;
+//   float radius = 1;
+// };
+// ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+struct Disk: Shape {
+  float radius = 1;
+};
+
+// The 'Rect' struct is also a 'Shape'. Notice that unlike 'Animal' there
+// is no default 'Shape', so the compiler will yell at you if you attempt
+// to call the default constructor 'Shape()'.
+//
+// C++ equivalent:
+// ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+// struct Rect final {
+//   using is_shape = std::true_type;
+//   float2 extent = float2(2, 1);
+// };
+// ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+struct Rect: Shape {
+  float2 extent = float2(2, 1);
+};
+
+// C++ equivalent:
+// ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+// using AnyShape = std::variant<Disk, Rect>;
+// ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+typedef (Disk | Rect) AnyShape;
+
+// This is a concrete overload of 'compute_area()' for the 'Disk' type.
+//
+// C++ equivalent:
+// ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+// float compute_area(Disk shape) {
+//   return M_PI * shape.radius * shape.radius;
+// }
+// ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+@(pure noinline) float compute_area(inline Disk shape) = $PI * radius * radius;
+
+// This is a concrete overload of 'compute_area()' for the 'Rect' type.
+//
+// C++ equivalent:
+// ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+// float compute_area(Rect shape) {
+//   return shape.extent.x * shape.extent.y;
+// }
+// ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+@(pure noinline) float compute_area(inline Rect shape) = #prod(extent);
+
+// This is a concrete overload of 'compute_area()' for the 'AnyShape' type
+// that uses the 'visit' keyword to generate a type switch that dispatches
+// the function call to another 'compute_area()' overload.
+//
+// C++ equivalent:
+// ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+// float compute_area(AnyShape shape) {
+//   auto vis{[](auto &s) { return compute_area(s); }};
+//   return std::visit(vis, shape);
+// }
+// ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+@(pure noinline) float compute_area(AnyShape shape) = compute_area(visit shape);
+
+unit_test "Implied type switching with 'visit' keyword" {
+  auto disk(AnyShape(Disk()));
+  auto rect(AnyShape(Rect()));
+  #assert(compute_area(disk) == $PI);
+  #assert(compute_area(rect) == 2);
+}

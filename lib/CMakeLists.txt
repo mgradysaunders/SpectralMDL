@@ -1,0 +1,100 @@
+add_library(
+  SpectralMDL 
+  SHARED
+    "common.cc"
+    "Compiler.cc"
+    "Compiler/Context.cc"
+    "Compiler/Emitter.cc"
+    "Compiler/llvm.cc"
+    "Compiler/Type.cc"
+    "Compiler/Value.cc"
+    "FileLocator.cc"
+    "Formatter.cc"
+    "Image.cc"
+    "Logger.cc"
+    "Module.cc"
+    "Parser.cc"
+    "SceneData.cc"
+  )
+add_library(
+  ${PROJECT_NAME}::SpectralMDL ALIAS SpectralMDL
+  )
+set_target_properties(
+  SpectralMDL
+  PROPERTIES
+    CXX_VISIBILITY_PRESET hidden
+    VISIBILITY_INLINES_HIDDEN ON
+    POSITION_INDEPENDENT_CODE ON
+  )
+set_target_properties(
+  SpectralMDL
+  PROPERTIES
+    CXX_STANDARD 17
+    CXX_STANDARD_REQUIRED YES
+    OUTPUT_NAME "SpectralMDL"
+    VERSION "${PROJECT_VERSION}"
+    SOVERSION "${PROJECT_VERSION_MAJOR}.${PROJECT_VERSION_MINOR}"
+    LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/lib"
+    ARCHIVE_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/lib"
+  )
+target_compile_options(
+  SpectralMDL
+  PRIVATE 
+    "$<$<CONFIG:RELEASE>:-O3;-DNDEBUG>"
+  )
+target_include_directories(
+  SpectralMDL
+  PUBLIC
+    $<BUILD_INTERFACE:${${PROJECT_NAME}_SOURCE_DIR}/include>
+    $<BUILD_INTERFACE:${${PROJECT_NAME}_BINARY_DIR}/include>
+    $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>
+  )
+target_include_directories(
+  SpectralMDL
+  PRIVATE 
+    "${LLVM_INCLUDE_DIR}"
+    "${CMAKE_CURRENT_LIST_DIR}"
+    "${CMAKE_CURRENT_LIST_DIR}/Compiler"
+  )
+target_link_libraries(
+  SpectralMDL
+  PUBLIC
+    "LLVMTarget"
+    "LLVMXCoreCodeGen" 
+    "LLVMX86CodeGen"
+    "LLVMOrcJIT"
+  )
+
+find_package(Threads REQUIRED)
+target_link_libraries(SpectralMDL PRIVATE Threads::Threads)
+
+if(SMDL_USE_BOOST_FILESYSTEM)
+  find_package(Boost CONFIG COMPONENTS filesystem REQUIRED)
+  target_link_libraries(SpectralMDL PRIVATE Boost::filesystem)
+  target_compile_definitions(SpectralMDL PRIVATE "-DSMDL_USE_BOOST_FILESYSTEM=1")
+endif()
+
+if(TARGET Ptex_static)
+  target_link_libraries(SpectralMDL PRIVATE Ptex_static)
+  target_include_directories(SpectralMDL PRIVATE "${ptex_SOURCE_DIR}/src/ptex")
+  target_compile_definitions(SpectralMDL PRIVATE "-DSMDL_HAS_PTEX=1")
+endif()
+
+include(GenerateExportHeader)
+generate_export_header(
+  SpectralMDL
+  EXPORT_MACRO_NAME "SMDL_EXPORT"
+  EXPORT_FILE_NAME "${PROJECT_BINARY_DIR}/include/smdl/Export.h"
+  )
+install(
+  FILES "${PROJECT_BINARY_DIR}/include/smdl/Export.h"
+  DESTINATION "include/smdl"
+  )
+install(
+  TARGETS "SpectralMDL"
+  EXPORT "${PROJECT_NAME}_Targets"
+  ARCHIVE DESTINATION "${CMAKE_INSTALL_LIBDIR}"
+  LIBRARY DESTINATION "${CMAKE_INSTALL_LIBDIR}"
+  RUNTIME DESTINATION "${CMAKE_INSTALL_BINDIR}"
+  COMPONENT "SpectralMDL"
+  ) 

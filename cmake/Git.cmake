@@ -1,0 +1,16 @@
+include_guard(GLOBAL)
+execute_process(
+  COMMAND git rev-parse --abbrev-ref HEAD
+  ERROR_QUIET
+  OUTPUT_VARIABLE SMDL_GIT_BRANCH
+  )
+execute_process(
+  COMMAND git log --pretty=format:'%h' -n 1
+  ERROR_QUIET
+  OUTPUT_VARIABLE SMDL_GIT_COMMIT
+  )
+string(STRIP "${SMDL_GIT_BRANCH}" SMDL_GIT_BRANCH)
+string(STRIP "${SMDL_GIT_COMMIT}" SMDL_GIT_COMMIT)
+string(SUBSTRING "${SMDL_GIT_COMMIT}" 1 7 SMDL_GIT_COMMIT)
+message(STATUS "SMDL_GIT_BRANCH=${SMDL_GIT_BRANCH}")
+message(STATUS "SMDL_GIT_COMMIT=${SMDL_GIT_COMMIT}")

@@ -1,0 +1,13 @@
+#smdl
+
+export const int INT_MIN = $INT_MIN;
+
+export const int INT_MAX = $INT_MAX;
+
+export const float FLOAT_MIN = $FLOAT_MIN;
+
+export const float FLOAT_MAX = $FLOAT_MAX;
+
+export const double DOUBLE_MIN = $DOUBLE_MIN;
+
+export const double DOUBLE_MAX = $DOUBLE_MAX;

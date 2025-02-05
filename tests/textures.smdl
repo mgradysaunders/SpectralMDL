@@ -1,0 +1,81 @@
+#smdl
+
+import ::tex::*;
+
+void run_4x4_tests(texture_2d t) {
+  #assert(tex::texture_isvalid(t));
+  #assert(tex::width(t) == 4);
+  #assert(tex::height(t) == 4);
+
+  // 4x4.png:
+  // R channel is 0, 64, 128, 255 along X
+  // G channel is 0, 64, 128, 255 along Y
+  // B channel is 0
+  // A channel is 255
+  //
+  //            [64, 255, 0, 255]      [255, 255, 0, 255]
+  //                  |                   |
+  // 4 +---------+----|----+---------+----|----+ 
+  //   |         |    |    |         |    |    |
+  //   |    *    |    *    |    *    |    *    |
+  //   |         |         |         |         |
+  // 3 +---------+---------+---------+---------+
+  //   |         |         |         |         |
+  //   |    *    |    *    |    *    |    *    |
+  //   |         |         |         |         |
+  // 2 +---------+---------+---------+---------+
+  //   |         |         |         |         |
+  //   |    *    |    *    |    *    |    *----|----[255, 64, 0, 255]
+  //   |         |         |         |         |
+  // 1 +---------+---------+---------+---------+
+  //   |         |         |         |         |
+  //   |    *    |    *    |    *    |    *    |
+  //   |    |    |         |         |         |
+  // 0 +----|----+---------+---------+---------+
+  //   0    |    1         2         3         4
+  //        |
+  //    [0, 0, 0, 255]
+  //
+  // (X=0, Y=0) => (U=0, V=0) is the LOWER LEFT
+  // (X=4, Y=4) => (U=1, V=1) is the TOP RIGHT
+  const auto incr = int[4](0, 64, 128, 255);
+  for (int x = 0; x < 4; x++) for (int y = 0; y < 4; y++) {
+    #assert(#all(#approx_equal(tex::texel_float4(t, int2(x, y)), float4(incr[x], incr[y], 0.0, 255.0) / 255.0, 1e-5)));
+  }
+
+  // Test linear interpolation.
+  #assert(#all(#approx_equal(tex::lookup_float4(t, float2(0.25, 0.5)), float4(32.0, 96.0, 0.0, 255.0) / 255.0, 1e-5)));
+  #assert(#all(#approx_equal(tex::lookup_float4(t, float2(0.5, 0.75)), float4(96.0, 191.5, 0.0, 255.0) / 255.0, 1e-5)));
+
+  // The lookup wrap mode is 'wrap_repeat' by default. So evaluating at 0 or 1 will interpolate between
+  // the opposite borders of the image.
+  #assert(#all(#approx_equal(tex::lookup_float4(t, float2(0.0, 0.0)), float4(127.5, 127.5, 0.0, 255.0) / 255.0, 1e-5)));
+  #assert(#all(#approx_equal(tex::lookup_float4(t, float2(1.0, 1.0)), float4(127.5, 127.5, 0.0, 255.0) / 255.0, 1e-5)));
+  #assert(#all(#approx_equal(
+    tex::lookup_float4(t, float2(1.0, 1.0), wrap_u: tex::wrap_clamp),
+    float4(255.0, 127.5, 0.0, 255.0) / 255.0,
+    1e-5
+  )));
+  #assert(#all(#approx_equal(
+    tex::lookup_float4(t, float2(1.0, 0.0), wrap_v: tex::wrap_clamp),
+    float4(127.5, 0.0, 0.0, 255.0) / 255.0,
+    1e-5
+  )));
+
+  // Test cropping. Setting 'crop_u: float2(0.0, 0.75)' and 'crop_v: float2(0.25, 1.0)' should restrict to the 3x3 region
+  // between (X=0, Y=1) and (X=3, Y=4). Then interpolating at (2/3, 1/3) should line up with the center of the uncropped
+  // image.
+  #assert(#all(#approx_equal(
+    tex::lookup_float4(t, float2(2.0, 1.0) / 3.0, crop_u: float2(0.0, 0.75), crop_v: float2(0.25, 1.0)),
+    float4(96.0, 96.0, 0.0, 255.0) / 255.0,
+    1e-5
+  )));
+}
+
+unit_test "Texture 2D tests (4x4.png)" {
+  run_4x4_tests(texture_2d("4x4.png", tex::gamma_linear));
+}
+
+unit_test "Texture 2D tests (4x4.exr)" {
+  run_4x4_tests(texture_2d("4x4.exr", tex::gamma_linear));
+}

@@ -1,0 +1,22 @@
+#smdl 
+
+struct Foo {
+  int x = 2;
+  int y = 3 + x;
+  int z = 4 - 2 * y + x;
+};
+
+unit_test "Defaults" {
+  int x = 102;
+  int y = 103;
+  int z = 104;
+  auto foo0 = Foo();
+  #assert(foo0.x == 2);
+  #assert(foo0.y == 3 + 2);
+  #assert(foo0.z == 4 - 2 * (3 + 2) + 2);
+
+  auto foo1 = Foo(x: 5);
+  #assert(foo1.x == 5);
+  #assert(foo1.y == 3 + 5);
+  #assert(foo1.z == 4 - 2 * (3 + 5) + 5);
+}
