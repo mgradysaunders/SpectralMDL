@@ -347,9 +347,14 @@ bool ArithmeticType::has_field(std::string_view name) {
 Value ArithmeticType::access_field(Emitter &emitter, Value value,
                                    std::string_view name,
                                    const SourceLocation &srcLoc) {
-  if (extent.is_scalar())
+  if (extent.is_scalar()) {
+    // Allow `.size` for easy implementation of `math::average()`.
+    if (name == "size") {
+      return emitter.context.get_comptime_int(1); 
+    }
     srcLoc.throw_error(concat("scalar ", quoted(displayName),
                               " has no field access operator"));
+  }
   if (name.size() == 1) {
     if (auto i{to_index(name[0])}) {
       auto result{access_index(emitter, value,

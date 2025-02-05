@@ -11,12 +11,12 @@ export @(pure macro) float3 advance_low_discrepancy(const &float3 xi) =
 export @(pure macro) float4 advance_low_discrepancy(const &float4 xi) =
   (*xi = math::frac(*xi + float4(0.85667488, 0.73389185, 0.62870672, 0.53859725)));
 
-export @(pure) bool bool_sample(const &float xi, const float prob) {
-  if (*xi < prob) {
-    *xi = (*xi / prob);
+export @(pure) bool bool_sample(const &float xi, const float chance) {
+  if (*xi < chance) {
+    *xi = (*xi / chance);
     return true;
   } else {
-    *xi = (*xi - prob) / (1 - prob);
+    *xi = (*xi - chance) / (1 - chance);
     return false;
   }
 }

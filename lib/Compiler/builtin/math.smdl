@@ -92,6 +92,12 @@ export @(pure macro) auto min_value(const auto a) = #min_value(a);
 
 export @(pure macro) auto max_value(const auto a) = #max_value(a);
 
+// TODO min_value_wavelength
+
+// TODO max_value_wavelength
+
+export @(pure macro) auto average(const auto a) = #sum(a) / a.size;
+
 export @(pure macro) auto lerp(const auto a, const auto b, const auto l) =
   (1.0 - l) * a + l * b;
 

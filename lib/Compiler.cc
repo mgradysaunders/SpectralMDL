@@ -85,6 +85,8 @@ std::optional<Error> Compiler::compile(OptLevel optLevel) {
   }
   Context context{*this};
   for (auto &mod : modules)
+    mod->reset();
+  for (auto &mod : modules)
     if (auto error{mod->parse(allocator)})
       return error;
   for (auto &mod : modules)
@@ -218,8 +220,7 @@ std::optional<Error> Compiler::jit_compile() {
     }
     // Deallocate everything we no longer need!
     for (auto &mod : modules) {
-      mod->root.reset();
-      mod->lastCrumb = nullptr;
+      mod->reset();
     }
     allocator.reset();
   });

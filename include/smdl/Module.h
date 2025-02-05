@@ -68,6 +68,12 @@ public:
   /// Is parsed yet?
   [[nodiscard]] bool is_parsed() const { return root; }
 
+  void reset() {
+    root.reset();
+    compileStatus = CompileStatus::NotStarted;
+    lastCrumb = nullptr;
+  }
+
 private:
   /// The file name if applicable. This is empty if the module is builtin.
   std::string fileName{};

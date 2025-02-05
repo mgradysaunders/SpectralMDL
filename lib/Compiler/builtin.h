@@ -616,6 +616,69 @@ export struct diffuse_transmission_bsdf: bsdf {
 }
 //--}
 
+//--{ sheen_bsdf
+export struct sheen_bsdf: bsdf {
+  /// The roughness.
+  float roughness;
+
+  /// The tint.
+  auto tint = 1.0;
+
+  /// The handle.
+  string handle = "";
+
+  finalize {
+    #assert((#typeof(tint) == float) |
+            (#typeof(tint) == color));
+    roughness = saturate(roughness);
+  }
+};
+
+@(pure) float sheen_lambda_l(const auto fit, const float mu) = 
+  fit[0] / (1.0 + fit[1] * #pow(mu, fit[2])) + fit[3] * mu + fit[4];
+
+@(pure) float sheen_lambda(const auto fit, const float mu) = 
+  #exp(mu < 0.5 ? sheen_lambda_l(fit, mu) : 
+                  2 * sheen_lambda_l(fit, 0.5) - 
+                      sheen_lambda_l(fit, #max(1 - mu, 0)));
+
+@(pure) auto scatter_evaluate(
+    inline const &sheen_bsdf this, 
+    inline const &scatter_evaluate_parameters params) {
+  if (mode == scatter_reflect && recalculate_tangent_space(params)) {
+    const auto cos_thetao(#abs(wo.z));
+    const auto cos_thetai(#abs(wi.z));
+    const auto pdf(float2(cos_thetai, cos_thetao) / $PI);
+    const auto fss(let {
+      const auto alpha(lerp(0.1, 1.0, roughness * roughness));
+      const auto fit(lerp(
+        auto(21.5473, 3.82987, 0.19823, -1.97760, -4.32054),
+        auto(25.3245, 3.32435, 0.16801, -1.27393, -4.85967), 
+        (1 - alpha) * (1 - alpha))); 
+      const auto cos_thetah(normalize(wo + wi).z);
+      const auto sin_thetah(#sqrt(1 - cos_thetah * cos_thetah + SCATTER_EPS));
+      const auto D(1 / $TWO_PI * (2 + 1 / alpha) * #pow(sin_thetah, 1 / alpha));
+      const auto G(1 / (1 + 
+        sheen_lambda(fit, cos_thetao) + 
+        sheen_lambda(fit, cos_thetai)));
+    } in D * G / (4 * cos_thetao + SCATTER_EPS));
+    return scatter_evaluate_result(f: tint * fss, pdf: pdf);
+  } else {
+    return scatter_evaluate_result(is_black: true);
+  }
+}
+
+@(pure) auto scatter_sample(
+    inline const &sheen_bsdf this, 
+    inline const &scatter_sample_parameters params) {
+  if ((tbn := recalculate_tangent_space(params))) {
+    return scatter_sample_result(wi: (*tbn) * cosine_hemisphere_sample(xi.xy), mode: scatter_reflect);
+  } else {
+    return scatter_sample_result(); // Reject
+  }
+}
+//--}
+
 //--{ tint
 /// A 1-value tint.
 struct tint1: bsdf, edf, hair_bsdf {
@@ -699,6 +762,65 @@ export @(pure macro) auto tint(const auto reflection_tint, const auto transmissi
   }
   return result;
 }
+//--}
+
+//--{ weighted_layer, color_weighted_layer
+export struct weighted_layer: bsdf {
+  /// The weight. Must be `float` or `color`.
+  auto weight;
+
+  /// The layer BSDF.
+  bsdf layer = bsdf();
+
+  /// The base BSDF.
+  bsdf base = bsdf();
+
+  /// The normal to use for the layer.
+  float3 normal = $state.normal;
+
+  /// The chance of sampling the layer BSDF.
+  ///
+  /// \note
+  /// If the weight is a `float`, then the chance is the same
+  /// as the weight. However, if the weight is a `color`, we
+  /// have to average it down to a single probability.
+  ///
+  float chance = average(weight);
+
+  finalize {
+    #assert((#typeof(weight) == float) |
+            (#typeof(weight) == color));
+    weight = saturate(weight);
+    chance = saturate(chance);
+  }
+};
+
+@(pure macro) auto scatter_evaluate(
+    const &weighted_layer this, inline const &scatter_evaluate_parameters params) {
+  auto result0(scatter_evaluate(visit &this.base, params));
+  preserve normal;
+  normal = this.normal;
+  auto result1(scatter_evaluate(visit &this.layer, params));
+  return scatter_evaluate_result(
+    f:   lerp(result0.f,   result1.f,   this.weight), 
+    pdf: lerp(result0.pdf, result1.pdf, this.chance),
+    is_black: result0.is_black & result1.is_black
+  );
+}
+
+@(pure macro) auto scatter_sample(
+    const &weighted_layer this, inline const &scatter_sample_parameters params) {
+  if (bool_sample(&xi.w, this.chance)) {
+    preserve normal;
+    normal = this.normal;
+    return scatter_sample(visit &this.layer, params);
+  } else {
+    return scatter_sample(visit &this.base, params);
+  }
+}
+
+/// The `color_weighted_layer` is also implemented by the `weighted_layer`.
+export typedef weighted_layer color_weighted_layer;
 //--}
 
 export @(pure macro) int $scatter_evaluate(
@@ -886,6 +1008,12 @@ export @(pure macro) auto min_value(const auto a) = #min_value(a);
 
 export @(pure macro) auto max_value(const auto a) = #max_value(a);
 
+// TODO min_value_wavelength
+
+// TODO max_value_wavelength
+
+export @(pure macro) auto average(const auto a) = #sum(a) / a.size;
+
 export @(pure macro) auto lerp(const auto a, const auto b, const auto l) =
   (1.0 - l) * a + l * b;
 
@@ -958,12 +1086,12 @@ export @(pure macro) float3 advance_low_discrepancy(const &float3 xi) =
 export @(pure macro) float4 advance_low_discrepancy(const &float4 xi) =
   (*xi = math::frac(*xi + float4(0.85667488, 0.73389185, 0.62870672, 0.53859725)));
 
-export @(pure) bool bool_sample(const &float xi, const float prob) {
-  if (*xi < prob) {
-    *xi = (*xi / prob);
+export @(pure) bool bool_sample(const &float xi, const float chance) {
+  if (*xi < chance) {
+    *xi = (*xi / chance);
     return true;
   } else {
-    *xi = (*xi - prob) / (1 - prob);
+    *xi = (*xi - chance) / (1 - chance);
     return false;
   }
 }
