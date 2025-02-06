@@ -4,7 +4,7 @@
 
 namespace smdl {
 
-/// \addtogroup Main
+/// \addtogroup Support
 /// \{
 
 /// An image.

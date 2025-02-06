@@ -11,25 +11,10 @@
 
 namespace smdl {
 
-/// \addtogroup Main
+/// \addtogroup Support
 /// \{
 
-/// The optimization level.
-enum class OptLevel : uint32_t {
-  None = 0, ///< No optimization at all.
-  O1 = 1,   ///< Level 1 - basic optimizations.
-  O2 = 2,   ///< Level 2 - sensible optimizations.
-  O3 = 3    ///< Level 3 - aggressive optimizations.
-};
-
-/// The dump format for `Compiler::dump()`.
-enum class DumpFormat : uint32_t {
-  IR,       ///< LLVM-IR.
-  Assembly, ///< Native assembly code.
-  Object    ///< Native object code.
-};
-
-/// The opaque description of a Ptex texture.
+/// An opaque Ptex texture.
 ///
 /// If built without Ptex (`-DSMDL_ENABLE_PTEX=OFF`), this
 /// is never populated by the compiler and is passed around as
@@ -47,6 +32,26 @@ public:
 
   /// The alpha channel index if present, else `-1`.
   int alphaIndex{-1};
+};
+
+/// \}
+
+/// \addtogroup Main
+/// \{
+
+/// The optimization level.
+enum class OptLevel : uint32_t {
+  None = 0, ///< No optimization at all.
+  O1 = 1,   ///< Level 1 - basic optimizations.
+  O2 = 2,   ///< Level 2 - sensible optimizations.
+  O3 = 3    ///< Level 3 - aggressive optimizations.
+};
+
+/// The dump format for `Compiler::dump()`.
+enum class DumpFormat : uint32_t {
+  IR,       ///< LLVM-IR.
+  Assembly, ///< Native assembly code.
+  Object    ///< Native object code.
 };
 
 /// The compiler.
@@ -151,7 +156,6 @@ public:
   /// Run JIT-compiled unit tests and print results to standard error.
   [[nodiscard]] std::optional<Error> run_jit_unit_tests(const State &state);
 
-
 public:
   /// The file locator.
   FileLocator fileLocator{};
@@ -173,8 +177,8 @@ private:
   ///
   /// \note
   /// This is used during the active compiling phase to allocate
-  /// AST nodes, type representations, crumbs, etc. Once `jit_compile()` 
-  /// is called and everything is finalized as JIT-linked native code, 
+  /// AST nodes, type representations, crumbs, etc. Once `jit_compile()`
+  /// is called and everything is finalized as JIT-linked native code,
   /// intermediate representations are dropped and the allocator is
   /// reset.
   ///

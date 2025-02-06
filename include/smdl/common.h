@@ -38,7 +38,7 @@ class LLJIT;
 /// The top-level SMDL namespace.
 namespace smdl {
 
-/// \defgroup Main Main API
+/// \defgroup Support Support
 /// \{
 
 /// A span.
@@ -152,11 +152,9 @@ public:
 
   /// The element count.
   size_t count{};
-};
+}; 
 
-/// \}
-
-/// \defgroup Strings String helpers
+/// \name Functions (strings)
 /// \{
 
 /// Is ASCII alphabetic character?
@@ -224,6 +222,8 @@ public:
   return str0.size() >= str1.size() && str0.substr(0, str1.size()) == str1;
 }
 
+/// \}
+
 /// A quoted string for use with `concat`.
 struct quoted final {
   constexpr quoted(std::string_view str) : str(str) {}
@@ -251,6 +251,9 @@ inline void do_concat(std::string &str, T &&value, Ts &&...values) {
 
 } // namespace detail
 
+/// \name Functions (strings)
+/// \{
+
 /// Concatenate the given values into a string.
 template <typename... Ts>
 [[nodiscard]] inline std::string concat(Ts &&...values) {
@@ -275,10 +278,10 @@ template <typename... Ts>
 
 /// \}
 
-/// \addtogroup Main
-/// \{
+/// \}
 
-class State;
+/// \defgroup Main Main
+/// \{
 
 /// Either initialize successfully or dump an error message and
 /// exit with code `EXIT_FAILURE`.
@@ -305,6 +308,11 @@ public:
 
 /// Get the LLVM native target, only available after `init_or_exit()`
 [[nodiscard]] SMDL_EXPORT const NativeTarget &get_native_target();
+
+/// \}
+
+/// \addtogroup Support
+/// \{
 
 /// A bump pointer allocated by `BumpPtrAllocator` that does not need to be
 /// freed, but does need to be destructed.
@@ -382,6 +390,11 @@ public:
 public:
   T *ptr{};
 };
+
+/// \}
+
+/// \addtogroup Main
+/// \{
 
 /// A bump pointer allocator, opaque wrapper around
 /// `llvm::BumpPtrAllocator`.
@@ -495,6 +508,11 @@ public:
   SourceLocation srcLoc{};
 };
 
+/// \}
+
+/// \addtogroup Support
+/// \{
+
 /// Run the given function, catch whatever it might throw, and return it as
 /// an `Error` value.
 template <typename Func>
@@ -509,6 +527,11 @@ catch_and_return_error(Func &&func) try {
 } catch (...) {
   return Error("unknown error converted from unknown exception type");
 }
+
+/// \}
+
+/// \addtogroup Main
+/// \{
 
 /// The vector template.
 template <typename T, size_t M> class Vector;
@@ -648,6 +671,68 @@ public:
   std::array<Vector<T, M>, N> v{};
 };
 
+/// The equivalent of the MDL `float2x2` matrix type.
+using float2x2 = Matrix<float, 2, 2>;
+
+/// The equivalent of the MDL `float3x2` matrix type.
+using float3x2 = Matrix<float, 3, 2>;
+
+/// The equivalent of the MDL `float4x2` matrix type.
+using float4x2 = Matrix<float, 4, 2>;
+
+/// The equivalent of the MDL `float2x3` matrix type.
+using float2x3 = Matrix<float, 2, 3>;
+
+/// The equivalent of the MDL `float3x3` matrix type.
+using float3x3 = Matrix<float, 3, 3>;
+
+/// The equivalent of the MDL `float4x3` matrix type.
+using float4x3 = Matrix<float, 4, 3>;
+
+/// The equivalent of the MDL `float2x4` matrix type.
+using float2x4 = Matrix<float, 2, 4>;
+
+/// The equivalent of the MDL `float3x4` matrix type.
+using float3x4 = Matrix<float, 3, 4>;
+
+/// The equivalent of the MDL `float4x4` matrix type.
+using float4x4 = Matrix<float, 4, 4>;
+
+/// The equivalent of the MDL `double2x2` matrix type.
+using double2x2 = Matrix<double, 2, 2>;
+
+/// The equivalent of the MDL `double3x2` matrix type.
+using double3x2 = Matrix<double, 3, 2>;
+
+/// The equivalent of the MDL `double4x2` matrix type.
+using double4x2 = Matrix<double, 4, 2>;
+
+/// The equivalent of the MDL `double2x3` matrix type.
+using double2x3 = Matrix<double, 2, 3>;
+
+/// The equivalent of the MDL `double3x3` matrix type.
+using double3x3 = Matrix<double, 3, 3>;
+
+/// The equivalent of the MDL `double4x3` matrix type.
+using double4x3 = Matrix<double, 4, 3>;
+
+/// The equivalent of the MDL `double2x4` matrix type.
+using double2x4 = Matrix<double, 2, 4>;
+
+/// The equivalent of the MDL `double3x4` matrix type.
+using double3x4 = Matrix<double, 3, 4>;
+
+/// The equivalent of the MDL `double4x4` matrix type.
+using double4x4 = Matrix<double, 4, 4>;
+
+/// \}
+
+/// \addtogroup Support
+/// \{
+
+/// \name Functions (math) 
+/// \{
+
 /// Vector-Vector `operator+`.
 template <typename T, size_t N>
 [[nodiscard]] constexpr Vector<T, N> operator+(const Vector<T, N> &v0,
@@ -782,60 +867,6 @@ affine_inverse(const Matrix<T, 4, 4> &m) {
   return mI;
 }
 
-/// The equivalent of the MDL `float2x2` matrix type.
-using float2x2 = Matrix<float, 2, 2>;
-
-/// The equivalent of the MDL `float3x2` matrix type.
-using float3x2 = Matrix<float, 3, 2>;
-
-/// The equivalent of the MDL `float4x2` matrix type.
-using float4x2 = Matrix<float, 4, 2>;
-
-/// The equivalent of the MDL `float2x3` matrix type.
-using float2x3 = Matrix<float, 2, 3>;
-
-/// The equivalent of the MDL `float3x3` matrix type.
-using float3x3 = Matrix<float, 3, 3>;
-
-/// The equivalent of the MDL `float4x3` matrix type.
-using float4x3 = Matrix<float, 4, 3>;
-
-/// The equivalent of the MDL `float2x4` matrix type.
-using float2x4 = Matrix<float, 2, 4>;
-
-/// The equivalent of the MDL `float3x4` matrix type.
-using float3x4 = Matrix<float, 3, 4>;
-
-/// The equivalent of the MDL `float4x4` matrix type.
-using float4x4 = Matrix<float, 4, 4>;
-
-/// The equivalent of the MDL `double2x2` matrix type.
-using double2x2 = Matrix<double, 2, 2>;
-
-/// The equivalent of the MDL `double3x2` matrix type.
-using double3x2 = Matrix<double, 3, 2>;
-
-/// The equivalent of the MDL `double4x2` matrix type.
-using double4x2 = Matrix<double, 4, 2>;
-
-/// The equivalent of the MDL `double2x3` matrix type.
-using double2x3 = Matrix<double, 2, 3>;
-
-/// The equivalent of the MDL `double3x3` matrix type.
-using double3x3 = Matrix<double, 3, 3>;
-
-/// The equivalent of the MDL `double4x3` matrix type.
-using double4x3 = Matrix<double, 4, 3>;
-
-/// The equivalent of the MDL `double2x4` matrix type.
-using double2x4 = Matrix<double, 2, 4>;
-
-/// The equivalent of the MDL `double3x4` matrix type.
-using double3x4 = Matrix<double, 3, 4>;
-
-/// The equivalent of the MDL `double4x4` matrix type.
-using double4x4 = Matrix<double, 4, 4>;
-
 /// Calculate vector perpendicular to the given vector.
 [[nodiscard]] inline float3 perpendicular_to(float3 v) {
   float3 z{normalize(v)};
@@ -856,6 +887,13 @@ using double4x4 = Matrix<double, 4, 4>;
           float4{z.x, z.y, z.z, 0.0f}, //
           float4{from.x, from.y, from.z, 1.0f}};
 }
+
+/// \}
+
+/// \}
+
+/// \addtogroup Main
+/// \{
 
 /// The MDL state passed in at runtime.
 class SMDL_EXPORT State final {
@@ -947,6 +985,11 @@ public:
   void finalize_for_runtime_conventions();
 };
 
+/// \}
+
+/// \addtogroup Support
+/// \{
+
 /// Defer until end-of-scope.
 template <typename F> struct Defer final {
 public:
@@ -983,6 +1026,11 @@ private:
 
   std::tuple<Ts...> backupValues;
 };
+
+/// \}
+
+/// \addtogroup Main
+/// \{
 
 /// Sanity check a condition, like an assertion except it
 /// always runs even in release mode.
