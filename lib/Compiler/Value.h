@@ -4,7 +4,8 @@
 
 namespace smdl {
 
-/// \cond DEV
+/// \addtogroup Compiler
+/// \{
 
 class Emitter;
 class Type;
@@ -466,6 +467,6 @@ public:
   AST::ArgumentList *astArgs{};
 };
 
-/// \endcond
+/// \}
 
 } // namespace smdl

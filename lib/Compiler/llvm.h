@@ -34,7 +34,8 @@ template <typename T> struct llvm::simplify_type<smdl::BumpPtr<T>> {
 
 namespace smdl {
 
-/// \cond DEV
+/// \defgroup Compiler Compiler Implementation
+/// \{
 
 void llvm_throw_if_error(llvm::Error error);
 
@@ -249,6 +250,6 @@ public:
   std::vector<T> elems{};
 };
 
-/// \endcond
+/// \}
 
 } // namespace smdl

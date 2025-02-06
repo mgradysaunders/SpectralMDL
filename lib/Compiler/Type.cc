@@ -327,8 +327,8 @@ Value ArithmeticType::invoke(Emitter &emitter, const ArgumentList &args,
         });
     }
   }
-  srcLoc.throw_error(concat("cannot construct ", quoted(displayName),
-                            " from arguments ", quoted(std::string(args))));
+  srcLoc.throw_error(concat("cannot construct ", quoted(displayName), " from ",
+                            quoted(std::string(args))));
   return Value();
 }
 
@@ -350,7 +350,7 @@ Value ArithmeticType::access_field(Emitter &emitter, Value value,
   if (extent.is_scalar()) {
     // Allow `.size` for easy implementation of `math::average()`.
     if (name == "size") {
-      return emitter.context.get_comptime_int(1); 
+      return emitter.context.get_comptime_int(1);
     }
     srcLoc.throw_error(concat("scalar ", quoted(displayName),
                               " has no field access operator"));
@@ -499,8 +499,8 @@ Value ArrayType::invoke(Emitter &emitter, const ArgumentList &args,
   }
   if (args.is_null()) {
     if (is_abstract())
-      srcLoc.throw_error(concat("cannot zero construct abstract array type ",
-                                quoted(displayName)));
+      srcLoc.throw_error(
+          concat("cannot zero construct abstract array ", quoted(displayName)));
     return Value::zero(this);
   }
   if (args.is_one_positional(this)) {
@@ -511,8 +511,8 @@ Value ArrayType::invoke(Emitter &emitter, const ArgumentList &args,
       auto argElemType{emitter.context.get_common_type(
           args.get_types(), /*defaultToUnion=*/true, srcLoc)};
       if (!emitter.context.is_perfectly_convertible(argElemType, elemType))
-        srcLoc.throw_error(concat("cannot construct abstract array type ",
-                                  quoted(displayName), " from element type ",
+        srcLoc.throw_error(concat("cannot construct abstract array ",
+                                  quoted(displayName), " from element ",
                                   quoted(argElemType->displayName)));
       return emitter.invoke(emitter.context.get_array_type(argElemType, size),
                             args, srcLoc);
@@ -547,8 +547,8 @@ Value ArrayType::invoke(Emitter &emitter, const ArgumentList &args,
                         llvm::Align(emitter.context.get_align_of(elemType))));
     }
   }
-  srcLoc.throw_error(concat("cannot construct array type ", quoted(displayName),
-                            " from arguments ", quoted(std::string(args))));
+  srcLoc.throw_error(concat("cannot construct ", quoted(displayName), " from ",
+                            quoted(std::string(args))));
   return Value();
 }
 
@@ -653,8 +653,8 @@ Value AutoType::invoke(Emitter &emitter, const ArgumentList &args,
                           args, srcLoc);
   }
   // TODO Infer struct type?
-  srcLoc.throw_error(concat("cannot construct 'auto' from arguments ",
-                            quoted(std::string(args))));
+  srcLoc.throw_error(
+      concat("cannot construct 'auto' from ", quoted(std::string(args))));
   return Value();
 }
 //--}
@@ -709,8 +709,8 @@ Value ColorType::invoke(Emitter &emitter, const ArgumentList &args,
                        llvm::ArrayRef<Value>(resolved.values), srcLoc),
         srcLoc);
   }
-  srcLoc.throw_error(concat("cannot construct 'color' from arguments ",
-                            quoted(std::string(args))));
+  srcLoc.throw_error(
+      concat("cannot construct 'color' from ", quoted(std::string(args))));
   return Value();
 }
 
@@ -756,6 +756,28 @@ ArithmeticType *ColorType::get_arithmetic_scalar_type(Context &context) {
 ArithmeticType *ColorType::get_arithmetic_vector_type(Context &context) {
   return static_cast<ArithmeticType *>(context.get_arithmetic_type(
       Scalar::get_float(), Extent(wavelengthBaseMax)));
+}
+//--}
+
+//--{ ComptimeUnionType
+ComptimeUnionType::ComptimeUnionType(UnionType *unionType)
+    : unionType(unionType) {
+  displayName = "$" + unionType->displayName;
+}
+
+Value ComptimeUnionType::invoke(Emitter &emitter, const ArgumentList &args,
+                                const SourceLocation &srcLoc) {
+  if (args.empty()) {
+    srcLoc.throw_error(
+        concat("cannot default construct ", quoted(displayName)));
+  }
+  if (args.is_one_positional() &&
+      unionType->has_case_type(args[0].value.type)) {
+    return emitter.to_rvalue(args[0].value);
+  }
+  srcLoc.throw_error(concat("cannot construct ", quoted(displayName), " from ",
+                            quoted(std::string(args))));
+  return Value();
 }
 //--}
 
@@ -833,8 +855,8 @@ Value EnumType::invoke(Emitter &emitter, const ArgumentList &args,
       return RValue(this, llvm_emit_cast(emitter.builder,
                                          emitter.to_rvalue(value), llvmType));
   }
-  srcLoc.throw_error(concat("cannot construct enum ", quoted(displayName),
-                            " from arguments ", quoted(std::string(args))));
+  srcLoc.throw_error(concat("cannot construct ", quoted(displayName), " from ",
+                            quoted(std::string(args))));
   return Value();
 }
 //--}
@@ -1252,8 +1274,8 @@ Value PointerType::invoke(Emitter &emitter, const ArgumentList &args,
       }
     }
   }
-  srcLoc.throw_error(concat("cannot construct pointer ", quoted(displayName),
-                            " from arguments ", quoted(std::string(args))));
+  srcLoc.throw_error(concat("cannot construct ", quoted(displayName), " from ",
+                            quoted(std::string(args))));
   return Value();
 }
 
@@ -1361,8 +1383,8 @@ Value StringType::invoke(Emitter &emitter, const ArgumentList &args,
                               enumType->llvmFuncToString,
                               {emitter.to_rvalue(value).llvmValue}));
   }
-  srcLoc.throw_error(concat("cannot construct 'string' from arguments ",
-                            quoted(std::string(args))));
+  srcLoc.throw_error(
+      concat("cannot construct 'string' from ", quoted(std::string(args))));
   return Value();
 }
 
@@ -1527,8 +1549,8 @@ Value StructType::invoke(Emitter &emitter, const ArgumentList &args,
     }
     return result;
   }
-  srcLoc.throw_error(concat("cannot construct struct ", quoted(displayName),
-                            " from arguments ", quoted(std::string(args))));
+  srcLoc.throw_error(concat("cannot construct ", quoted(displayName), " from ",
+                            quoted(std::string(args))));
   return Value();
 }
 
@@ -1563,9 +1585,12 @@ Value StructType::access_field(Emitter &emitter, Value value,
 Value StructType::insert(Emitter &emitter, Value value, Value elem, unsigned i,
                          const SourceLocation &srcLoc) {
   SMDL_SANITY_CHECK(i < params.size());
-  return RValue(this, emitter.builder.CreateInsertValue(
-                          emitter.to_rvalue(value),
-                          emitter.invoke(params[i].type, elem, srcLoc), {i}));
+  if (params[i].type->is_void())
+    return emitter.to_rvalue(value);
+  else
+    return RValue(this, emitter.builder.CreateInsertValue(
+                            emitter.to_rvalue(value),
+                            emitter.invoke(params[i].type, elem, srcLoc), {i}));
 }
 //--}
 
@@ -1585,7 +1610,7 @@ Value TagType::invoke(Emitter &emitter, const ArgumentList &args,
     return emitter.to_rvalue(value);
   } else {
     srcLoc.throw_error(concat("cannot construct tag ", quoted(displayName),
-                              " from arguments ", quoted(std::string(args))));
+                              " from ", quoted(std::string(args))));
     return Value();
   }
 }
@@ -1941,7 +1966,7 @@ Value UnionType::invoke(Emitter &emitter, const ArgumentList &args,
     }
   }
   srcLoc.throw_error(concat("cannot construct union ", quoted(displayName),
-                            " from arguments ", quoted(std::string(args))));
+                            " from ", quoted(std::string(args))));
   return Value();
 }
 

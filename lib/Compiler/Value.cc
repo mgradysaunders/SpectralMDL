@@ -93,8 +93,13 @@ std::vector<Type *> ParameterList::get_types() const {
 }
 
 std::vector<llvm::Type *> ParameterList::get_llvm_types() const {
-  return transform<llvm::Type *>(
-      [](auto &param) { return param.type->llvmType; });
+  return transform<llvm::Type *>([](auto &param) {
+    auto llvmType = param.type->llvmType;
+    // Account for `void` fields!
+    if (llvmType && llvmType->isVoidTy())
+      llvmType = llvm::Type::getInt8Ty(llvmType->getContext());
+    return llvmType;
+  });
 }
 
 bool ParameterList::get_lookup_sequence(std::string_view name,

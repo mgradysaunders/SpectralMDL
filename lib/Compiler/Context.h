@@ -4,8 +4,10 @@
 
 namespace smdl {
 
-/// \cond DEV
+/// \addtogroup Compiler
+/// \{
 
+/// The conversion rule for converting one type into another type.
 enum class ConversionRule : uint32_t {
   NotAllowed, ///< Conversion is not allowed.
   Explicit,   ///< Conversion is allowed but should be explicit.
@@ -13,12 +15,14 @@ enum class ConversionRule : uint32_t {
   Perfect,    ///< Conversion is perfect!
 };
 
+/// The compiler context.
 class Context final {
 public:
-  Context(Compiler &compiler);
+  explicit Context(Compiler &compiler);
 
   Context(const Context &) = delete;
 
+  /// Implicit conversion to the held `LLVMContext` for convenience.
   [[nodiscard]] operator llvm::LLVMContext &() { return llvmContext; }
 
 public:
@@ -168,6 +172,9 @@ public:
 
   /// Get union type.
   [[nodiscard]] Type *get_union_type(llvm::ArrayRef<Type *> types);
+
+  /// Get compile-time union type.
+  [[nodiscard]] ComptimeUnionType *get_comptime_union_type(UnionType *unionType);
 
 public:
   template <typename T> [[nodiscard]] Type *get_type();
@@ -384,6 +391,9 @@ private:
   /// The AST associated types.
   llvm::DenseMap<AST::Decl *, BumpPtr<Type>> astTypes{};
 
+  /// The compile-time union types.
+  llvm::DenseMap<UnionType *, BumpPtr<ComptimeUnionType>> comptimeUnionTypes{};
+
   /// The keyword values.
   llvm::StringMap<Value> keywords{};
 
@@ -455,6 +465,6 @@ template <typename T> inline Type *Context::get_type() {
   return smdl::get_type<T>::get(*this);
 }
 
-/// \endcond
+/// \}
 
 } // namespace smdl

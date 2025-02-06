@@ -110,14 +110,14 @@ Emitter::create_function(std::string_view name, bool isPure, Type *&returnType,
     if (llvm::raw_string_ostream os{message};
         llvm::verifyFunction(*llvmFunc, &os))
       srcLoc.throw_error(concat("function ", quoted(name),
-                                 " LLVM-IR verification failed: ", message));
+                                " LLVM-IR verification failed: ", message));
     // Inline.
     for (auto &inlineRequest : inlines) {
       auto result{llvm_force_inline(inlineRequest.value, //
                                     inlineRequest.isRecursive)};
       if (!result.isSuccess())
-        inlineRequest.srcLoc.log_warn(
-            std::string("cannot force inline: ") + result.getFailureReason());
+        inlineRequest.srcLoc.log_warn(std::string("cannot force inline: ") +
+                                      result.getFailureReason());
     }
   }
   builder.restoreIP(lastIP);
@@ -167,7 +167,7 @@ void Emitter::declare_import(Span<std::string_view> importPath, bool isAbs,
       resolve_module(importPath.drop_back(), isAbs, decl.srcLoc.module_)};
   if (!importedModule)
     decl.srcLoc.throw_error(concat("cannot resolve import identifier ",
-                                    quoted(join(importPath, "::"))));
+                                   quoted(join(importPath, "::"))));
   if (importPath.back() == "*") {
     importPath = importPath.drop_back();
     importPath = importPath.drop_front_while(isDots);
@@ -179,7 +179,7 @@ void Emitter::declare_import(Span<std::string_view> importPath, bool isAbs,
                     importedModule->lastCrumb, /*ignoreIfNotExported=*/true)};
     if (!importedCrumb)
       decl.srcLoc.throw_error(concat("cannot resolve import identifier ",
-                                      quoted(join(importPath, "::"))));
+                                     quoted(join(importPath, "::"))));
     declare_crumb(importPath.drop_front_while(isDots), &decl,
                   importedCrumb->value);
   }
@@ -305,7 +305,7 @@ Value Emitter::emit(AST::Variable &decl) {
   auto type{emit(decl.type).get_comptime_meta_type(context, decl.srcLoc)};
   if (type->is_function())
     decl.srcLoc.throw_error(concat("variable must not have function type ",
-                                    quoted(type->displayName)));
+                                   quoted(type->displayName)));
   const bool isConst{decl.type->has_qualifier("const")};
   const bool isStatic{decl.type->has_qualifier("static")};
   const bool isInline{decl.type->has_qualifier("inline")};
@@ -441,6 +441,25 @@ Value Emitter::emit(AST::Binary &expr) {
   }
   // Default.
   return emit_op(expr.op, emit(expr.exprLhs), emit(expr.exprRhs), expr.srcLoc);
+}
+
+Value Emitter::emit(AST::Parens &expr) {
+  if (expr.is_comptime()) {
+    auto value{emit(expr.expr)};
+    if (!value.is_comptime()) {
+      expr.srcLoc.throw_error("expected compile-time constant");
+    }
+    if (value.is_comptime_meta_type(context)) {
+      auto type{value.get_comptime_meta_type(context, expr.srcLoc)};
+      if (auto unionType{llvm::dyn_cast<UnionType>(type)}) {
+        return context.get_comptime_meta_type(
+            context.get_comptime_union_type(unionType));
+      }
+    }
+    return value;
+  } else {
+    return emit(expr.expr);
+  }
 }
 
 Value Emitter::emit(AST::ReturnFrom &expr) {
@@ -687,7 +706,7 @@ Value Emitter::emit_op(AST::UnaryOp op, Value value,
         srcLoc.throw_error("cannot optionalize 'void'");
       if (type->is_abstract())
         srcLoc.throw_error(concat("cannot optionalize abstract type ",
-                                   quoted(type->displayName)));
+                                  quoted(type->displayName)));
       return context.get_comptime_meta_type(
           context.get_union_type({context.get_void_type(), type}));
     default:
@@ -712,7 +731,7 @@ Value Emitter::emit_op(AST::UnaryOp op, Value value,
         return emit_op(op == UNOP_INC ? BINOP_EQ_ADD : BINOP_EQ_SUB, value,
                        context.get_comptime_int(1), srcLoc);
       srcLoc.throw_error(concat("cannot increment or decrement ",
-                                 quoted(value.type->displayName)));
+                                quoted(value.type->displayName)));
     }
     // Unary positive, e.g., `+value`
     if (op == UNOP_POS) {
@@ -769,8 +788,8 @@ Value Emitter::emit_op(AST::UnaryOp op, Value value,
     }
   }
   srcLoc.throw_error(concat("unimplemented unary operator ",
-                             quoted(to_string(op)), "' for type ",
-                             quoted(value.type->displayName)));
+                            quoted(to_string(op)), "' for type ",
+                            quoted(value.type->displayName)));
   return Value();
 }
 //--}
@@ -1065,14 +1084,18 @@ Value Emitter::emit_op(AST::BinaryOp op, Value lhs, Value rhs,
     }
   }
   srcLoc.throw_error(concat("unimplemented binary operator ",
-                             quoted(to_string(op)), " for argument types ",
-                             quoted(lhs.type->displayName), " and ",
-                             quoted(rhs.type->displayName)));
+                            quoted(to_string(op)), " for argument types ",
+                            quoted(lhs.type->displayName), " and ",
+                            quoted(rhs.type->displayName)));
   return Value();
 }
 //--}
 
 extern "C" {
+
+SMDL_EXPORT float smdl_atan2f(float y, float x) { return std::atan2(y, x); }
+
+SMDL_EXPORT double smdl_atan2d(double y, double x) { return std::atan2(y, x); }
 
 SMDL_EXPORT void *smdl_bump(void *state, int size, int align) {
   SMDL_SANITY_CHECK(state != nullptr && align > 0);
@@ -1168,7 +1191,7 @@ Value Emitter::emit_intrinsic(std::string_view name, const ArgumentList &args,
         !args[0].value.type->is_vectorized() || //
         !args[0].value.type->is_arithmetic_integral())
       srcLoc.throw_error(concat("intrinsic ", quoted(name),
-                                 " expects 1 int or int vector argument"));
+                                " expects 1 int or int vector argument"));
     return args[0].value;
   }};
   auto expectOneType{[&]() {
@@ -1205,7 +1228,7 @@ Value Emitter::emit_intrinsic(std::string_view name, const ArgumentList &args,
       if (!value.type->is_arithmetic_scalar() &&
           !value.type->is_arithmetic_vector())
         srcLoc.throw_error(concat("intrinsic ", quoted(name),
-                                   " expects 1 scalar or vector argument"));
+                                  " expects 1 scalar or vector argument"));
       value =
           invoke(static_cast<ArithmeticType *>(value.type)
                      ->get_with_different_scalar(context, Scalar::get_bool()),
@@ -1225,7 +1248,7 @@ Value Emitter::emit_intrinsic(std::string_view name, const ArgumentList &args,
              args[0].value.type == context.get_bool_type() &&
              args[1].value.type == context.get_string_type())))
         srcLoc.throw_error("intrinsic 'assert' expects 1 bool argument and 1 "
-                            "optional string argument");
+                           "optional string argument");
       auto [blockPanic, blockOk] =
           create_blocks<2>("assert", {".panic", ".ok"});
       builder.CreateCondBr(to_rvalue(args[0].value), blockOk, blockPanic);
@@ -1246,13 +1269,40 @@ Value Emitter::emit_intrinsic(std::string_view name, const ArgumentList &args,
       builder.SetInsertPoint(blockOk);
       return Value();
     }
+    if (name == "atan2") {
+      if (!(args.size() == 2 &&                    //
+            args[0].value.type->is_vectorized() && //
+            args[1].value.type->is_vectorized()))
+        srcLoc.throw_error("intrinsic 'atan2' expects 2 vectorized arguments");
+      auto commonType{context.get_common_type(
+          {args[0].value.type, args[1].value.type, context.get_float_type()},
+          /*defaultToUnion=*/false, srcLoc)};
+      SMDL_SANITY_CHECK(commonType->is_arithmetic_floating_point());
+      auto value0{invoke(commonType, args[0].value, srcLoc)};
+      auto value1{invoke(commonType, args[1].value, srcLoc)};
+      auto scalarType{
+          static_cast<ArithmeticType *>(commonType)->get_scalar_type(context)};
+      SMDL_SANITY_CHECK(scalarType == context.get_float_type() ||
+                        scalarType == context.get_double_type());
+      auto callee{scalarType == context.get_float_type()
+                      ? context.get_builtin_callee("smdl_atan2f", &smdl_atan2f)
+                      : context.get_builtin_callee("smdl_atan2d", &smdl_atan2d)};
+      if (commonType == scalarType) {
+        return RValue(
+            commonType,
+            builder.CreateCall(callee, {value0.llvmValue, value1.llvmValue}));
+      } else {
+        SMDL_SANITY_CHECK(false);
+        // TODO
+      }
+    }
     if (name == "approx_equal") {
       if (!(args.size() == 3 && //
             args[0].value.type->is_vectorized() &&
             args[1].value.type->is_vectorized() &&
             args[2].value.type->is_vectorized()))
         srcLoc.throw_error(
-            concat("intrinsic '", name, "' expects 3 vectorized arguments"));
+            "intrinsic 'approx_equal' expects 3 vectorized arguments");
       return emit_op(
           BINOP_CMP_LT,
           emit_intrinsic("abs",
@@ -1315,8 +1365,7 @@ Value Emitter::emit_intrinsic(std::string_view name, const ArgumentList &args,
   case 'd': {
     if (name == "data_exists") {
       if (args.size() != 1 || !args[0].value.type->is_string())
-        srcLoc.throw_error(
-            "intrinsic 'data_exists' expects 1 string argument");
+        srcLoc.throw_error("intrinsic 'data_exists' expects 1 string argument");
       auto scene{context.get_comptime_ptr(context.get_void_pointer_type(),
                                           &context.compiler.sceneData)};
       return RValue(
@@ -1330,7 +1379,7 @@ Value Emitter::emit_intrinsic(std::string_view name, const ArgumentList &args,
           !args[0].value.type->is_string() || //
           !args[1].value.type->is_vectorized()) {
         srcLoc.throw_error("intrinsic 'data_lookup' expects 1 string "
-                            "argument and 1 vectorized argument");
+                           "argument and 1 vectorized argument");
       }
       auto scene{context.get_comptime_ptr(context.get_void_pointer_type(),
                                           &context.compiler.sceneData)};
@@ -1360,19 +1409,7 @@ Value Emitter::emit_intrinsic(std::string_view name, const ArgumentList &args,
     }
     break;
   }
-  case 'f': {
-    if (name == "free") {
-      if (!(args.size() == 1 && args[0].value.type->is_pointer()))
-        srcLoc.throw_error("intrinsic 'free' expects 1 pointer argument");
-      builder.CreateFree(to_rvalue(args[0].value));
-      return RValue(context.get_void_type(), nullptr);
-    }
-    break;
-  }
   case 'm': {
-    if (name == "malloc") {
-      // TODO
-    }
     if (name == "memcpy") {
       if (!(args.size() == 3 &&                             //
             args[0].value.type->is_pointer() &&             //
@@ -1380,7 +1417,7 @@ Value Emitter::emit_intrinsic(std::string_view name, const ArgumentList &args,
             args[2].value.type->is_arithmetic_integral() && //
             args[2].value.type->is_arithmetic_scalar()))
         srcLoc.throw_error("intrinsic 'memcpy' expects 2 pointer arguments "
-                            "and 1 int argument");
+                           "and 1 int argument");
       auto dst{to_rvalue(args[0].value)};
       auto src{to_rvalue(args[1].value)};
       builder.CreateMemCpy(dst, std::nullopt, src, std::nullopt,
@@ -1393,7 +1430,7 @@ Value Emitter::emit_intrinsic(std::string_view name, const ArgumentList &args,
             return arg.value.type->is_vectorized();
           }))
         srcLoc.throw_error(concat("intrinsic ", quoted(name),
-                                   " expects 2 vectorized arguments"));
+                                  " expects 2 vectorized arguments"));
       auto value0{args[0].value};
       auto value1{args[1].value};
       auto type{context.get_common_type({value0.type, value1.type},
@@ -1449,7 +1486,7 @@ Value Emitter::emit_intrinsic(std::string_view name, const ArgumentList &args,
     if (name == "ofile_print") {
       if (args.size() < 2)
         srcLoc.throw_error("intrinsic 'ofile_print' expects 1 file pointer "
-                            "argument and 1 or more printable arguments");
+                           "argument and 1 or more printable arguments");
       auto os{to_rvalue(args[0].value)};
       for (size_t i = 1; i < args.size(); i++)
         emit_print(os, args[i].value, srcLoc);
@@ -1516,7 +1553,7 @@ Value Emitter::emit_intrinsic(std::string_view name, const ArgumentList &args,
             args[3].value.type ==
                 context.get_pointer_type(context.get_float_type())))
         srcLoc.throw_error("intrinsic 'ptex_evaluate' expects arguments "
-                            "'(texture_ptex, int, int, &float)'");
+                           "'(texture_ptex, int, int, &float)'");
       if (!state)
         srcLoc.throw_error(
             "intrinsic 'ptex_evaluate' cannot be used in '@(pure)' context");
@@ -1572,7 +1609,7 @@ Value Emitter::emit_intrinsic(std::string_view name, const ArgumentList &args,
           !args.is_all_true(
               [](auto arg) { return arg.value.type->is_vectorized(); }))
         srcLoc.throw_error("intrinsic 'select' expects 1 vectorized boolean "
-                            "argument and 2 vectorized selection arguments");
+                           "argument and 2 vectorized selection arguments");
       auto valueCond{to_rvalue(args[0].value)};
       auto valueThen{args[1].value};
       auto valueElse{args[2].value};
@@ -1604,15 +1641,14 @@ Value Emitter::emit_intrinsic(std::string_view name, const ArgumentList &args,
     if (name == "type_float") {
       auto value{to_rvalue(expectOne())};
       if (!value.is_comptime_int())
-        srcLoc.throw_error(
-            "intrinsic 'type_float' expects 1 compile-time int");
+        srcLoc.throw_error("intrinsic 'type_float' expects 1 compile-time int");
       return context.get_comptime_meta_type(context.get_arithmetic_type(
           Scalar::get_FP(value.get_comptime_int()), Extent(1)));
     }
     if (name == "type_vector") {
       auto reportError{[&] {
         srcLoc.throw_error("intrinsic 'type_vector' expects 1 compile-time "
-                            "scalar type and 1 compile-time positive int");
+                           "scalar type and 1 compile-time positive int");
       }};
       if (!(args.size() == 2 &&                             //
             args[0].value.is_comptime_meta_type(context) && //
@@ -1628,7 +1664,7 @@ Value Emitter::emit_intrinsic(std::string_view name, const ArgumentList &args,
     if (name == "type_matrix") {
       auto reportError{[&] {
         srcLoc.throw_error("intrinsic 'type_matrix' expects 1 compile-time "
-                            "scalar type and 2 compile-time positive ints");
+                           "scalar type and 2 compile-time positive ints");
       }};
       if (!(args.size() == 3 &&                             //
             args[0].value.is_comptime_meta_type(context) && //

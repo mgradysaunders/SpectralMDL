@@ -5,7 +5,8 @@
 
 namespace smdl {
 
-/// \cond DEV
+/// \addtogroup Compiler
+/// \{
 
 class ArithmeticType;
 
@@ -16,6 +17,7 @@ enum class TypeKind : uint32_t {
   Arithmetic,
   Array,
   Color,
+  ComptimeUnion,
   Enum,
   Function,
   InferredSizeArray,
@@ -168,6 +170,11 @@ public:
   /// to instance of `UnionType`?
   [[nodiscard]] bool is_union_or_pointer_to_union() const {
     return get_first_non_pointer_type()->is_union();
+  }
+
+  /// Is instance of `ComptimeUnionType`?
+  [[nodiscard]] bool is_comptime_union() const {
+    return typeKind == TypeKind::ComptimeUnion;
   }
 
   /// Is instance of `ArithmeticType` with scalar or vector extent OR
@@ -644,6 +651,36 @@ public:
 public:
   /// The number of wavelengths.
   uint32_t wavelengthBaseMax{};
+};
+
+class UnionType;
+
+/// A compile-time union type for convenient type-checking.
+///
+/// The syntax is, for example,
+/// ~~~~~~~~~~~~~~~~~~~~~~
+/// $(color | float) tint;
+/// ~~~~~~~~~~~~~~~~~~~~~~
+/// which indicates that `tint` may be either `color` or `float`, but
+/// it is determined at compile-time.
+///
+class ComptimeUnionType final : public TypeSubclass<TypeKind::ComptimeUnion> {
+public:
+  explicit ComptimeUnionType(UnionType *unionType);
+
+  /// \name Virtual interface
+  /// \{
+
+  [[nodiscard]] bool is_abstract() final { return true; }
+
+  [[nodiscard]]
+  Value invoke(Emitter &emitter, const ArgumentList &args,
+               const SourceLocation &srcLoc) final;
+
+  /// \}
+
+  /// The union type.
+  UnionType *unionType{};
 };
 
 /// An enum type.
@@ -1277,6 +1314,6 @@ public:
                              const SourceLocation &srcLoc) final;
 };
 
-/// \endcond
+/// \}
 
 } // namespace smdl

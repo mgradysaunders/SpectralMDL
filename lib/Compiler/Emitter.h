@@ -5,7 +5,8 @@
 
 namespace smdl {
 
-/// \cond DEV
+/// \addtogroup Compiler
+/// \{
 
 /// An emitter, responsible for the most important code generation!
 class Emitter final {
@@ -494,10 +495,7 @@ public:
   }
 
   /// Emit parenthesized expression.
-  Value emit(AST::Parens &expr) {
-    // TODO Comptime
-    return emit(expr.expr);
-  }
+  Value emit(AST::Parens &expr);
 
   /// Emit return-from expression.
   Value emit(AST::ReturnFrom &expr);
@@ -869,6 +867,6 @@ public:
   llvm::IRBuilder<> builder;
 };
 
-/// \endcond
+/// \}
 
 } // namespace smdl

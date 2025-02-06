@@ -107,7 +107,8 @@ Context::Context(Compiler &compiler)
     }
   }
 
-  materialType = get_keyword_value("material").get_comptime_meta_type(*this, {});
+  materialType =
+      get_keyword_value("material").get_comptime_meta_type(*this, {});
 }
 
 Module *Context::get_builtin_module(llvm::StringRef name) {
@@ -201,6 +202,13 @@ Type *Context::get_union_type(llvm::ArrayRef<Type *> types) {
   return type.get();
 }
 
+ComptimeUnionType *Context::get_comptime_union_type(UnionType *unionType) {
+  auto &type{comptimeUnionTypes[unionType]};
+  if (!type)
+    type = allocator.allocate<ComptimeUnionType>(unionType);
+  return type.get();
+}
+
 Type *Context::get_common_type(llvm::ArrayRef<Type *> types,
                                bool defaultToUnion,
                                const SourceLocation &srcLoc) {
@@ -225,7 +233,7 @@ Type *Context::get_common_type(llvm::ArrayRef<Type *> types,
       return get_color_type();
     if (!defaultToUnion || typeA->is_abstract() || typeB->is_abstract())
       srcLoc.throw_error(concat("no common type between '", typeA->displayName,
-                                 "' and '", typeB->displayName, "'"));
+                                "' and '", typeB->displayName, "'"));
     return get_union_type({typeA, typeB});
   }};
   Type *commonType{types[0]};
@@ -293,6 +301,13 @@ ConversionRule Context::get_conversion_rule(Type *typeA, Type *typeB) {
     if (typeB == get_bool_type()) {
       return ConversionRule::Implicit;
     }
+    // If the destination type is a vector with equivalent scalar type, 
+    // conversion is explicit (Load from the pointer!).
+    if (auto arithTypeB{llvm::dyn_cast<ArithmeticType>(typeB)};
+        arithTypeB->extent.is_vector() &&
+        arithTypeB->get_scalar_type(*this) == typeA->get_pointee_type()) {
+      return ConversionRule::Explicit;
+    }
   }
   // If the source type is a struct that is an instance of the
   // destination type, conversion is perfect.
@@ -321,6 +336,12 @@ ConversionRule Context::get_conversion_rule(Type *typeA, Type *typeB) {
         return ConversionRule::Implicit;
     }
   }
+  // If the destination type is a compile-time union and the source type
+  // is one of the case types, conversion is perfect.
+  if (auto unionTypeB{llvm::dyn_cast<ComptimeUnionType>(typeB)};
+      unionTypeB && unionTypeB->unionType->has_case_type(typeA)) {
+    return ConversionRule::Perfect;
+  }
   // If the source type is an instance of texture 2D (with concrete
   // texel type and tile dimensions) and the destination type is the abstract
   // texture 2D type, conversion is perfect.
@@ -328,21 +349,17 @@ ConversionRule Context::get_conversion_rule(Type *typeA, Type *typeB) {
       llvm::isa<Texture2DType>(typeB)) {
     return ConversionRule::Perfect;
   }
-  return ConversionRule::NotAllowed;
-#if 0
-#if 0
-    // If the destination type is a vector, color, or array type with an equivalent element type, conversion
-    // is explicit.
-    // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-    // &float ptr = /* ... */;
-    // auto loadVec = float4(ptr);
-    // auto loadColor = color(ptr);
-    // auto loadArray = float[7](ptr);
-    // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-    if ((typeB->is_vector() || typeB->is_color() || typeB->is_array()) &&
-        typeA->get_element_type() == typeB->get_element_type())
+  // If the destination type is a color ...
+  if (typeB->is_color()) {
+    // If the source type is float or float3, conversion is implicit.
+    if (typeA == get_float_type() || typeA == get_float_type(Extent(3)))
+      return ConversionRule::Implicit;
+    // If the source type is a pointer to a float, conversion is explicit.
+    // (Loads from the pointer)
+    if (typeA == get_pointer_type(get_float_type()))
       return ConversionRule::Explicit;
-#endif
+  }
+  return ConversionRule::NotAllowed;
 #if 0
   // If the source type is an array ...
   if (typeA->is_array()) {
@@ -366,19 +383,6 @@ ConversionRule Context::get_conversion_rule(Type *typeA, Type *typeB) {
     if (typeB->is_size_deferred_array())
       return get_conversion_rule(typeA->get_element_type(), typeB->get_element_type());
   }
-#endif
-  // If the destination type is a color ...
-  if (typeB->is_color()) {
-    // If the source type is float or float3, conversion is implicit.
-    if (typeA == get_float_type() || typeA == get_float_type(Extent(3)))
-      return ConversionRule::Implicit;
-    // If the source type is a pointer to a float, conversion is explicit.
-    // (Loads from the pointer)
-    if (typeA == get_pointer_type(get_float_type()))
-      return ConversionRule::Explicit;
-  }
-  // Not allowed!
-  return ConversionRule::NotAllowed;
 #endif
 }
 

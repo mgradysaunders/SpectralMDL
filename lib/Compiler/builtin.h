@@ -449,7 +449,7 @@ struct scatter_evaluate_parameters {
 
 struct scatter_evaluate_result {
   /// The Bidirectional Scattering Distribution Function (BSDF) evaluation.
-  auto f = 0.0;
+  $(color | float) f = 0.0;
 
   /// The Probability Density Function (PDF) evaluations.
   /// - `pdf[0]` is the forward density of sampling ωi given ωo.
@@ -459,11 +459,6 @@ struct scatter_evaluate_result {
   /// Is known to be black by construction? Faster than checking every 
   /// element of `f`!
   bool is_black = false;
-
-  finalize {
-    #assert((#typeof(f) == float) |
-            (#typeof(f) == color));
-  }
 };
 
 struct scatter_sample_parameters {
@@ -532,19 +527,13 @@ struct scatter_sample_result {
 //--{ diffuse_reflection_bsdf
 export struct diffuse_reflection_bsdf: bsdf {
   /// The tint.
-  auto tint = 1.0;
+  $(color | float) tint = 1.0;
 
   /// The roughness.
   float roughness = 0.0;
 
   /// The handle.
   string handle = "";
-
-  finalize {
-    #assert((#typeof(tint) == float) |
-            (#typeof(tint) == color));
-    roughness = saturate(roughness);
-  }
 };
 
 @(pure) auto scatter_evaluate(
@@ -582,15 +571,10 @@ export struct diffuse_reflection_bsdf: bsdf {
 //--{ diffuse_transmission_bsdf
 export struct diffuse_transmission_bsdf: bsdf {
   /// The tint.
-  auto tint = 1.0;
+  $(color | float) tint = 1.0;
 
   /// The handle.
   string handle = "";
-
-  finalize {
-    #assert((#typeof(tint) == float) |
-            (#typeof(tint) == color));
-  }
 };
 
 @(pure) auto scatter_evaluate(
@@ -622,14 +606,18 @@ export struct sheen_bsdf: bsdf {
   float roughness;
 
   /// The tint.
-  auto tint = 1.0;
+  $(color | float) tint = 1.0;
+
+  /// The multiscatter tint.
+  $(color | float | void) multiscatter_tint = void();
+
+  /// The multiscatter lobe. Unused, but I think this part of the later MDL spec?
+  void multiscatter = void();
 
   /// The handle.
   string handle = "";
 
   finalize {
-    #assert((#typeof(tint) == float) |
-            (#typeof(tint) == color));
     roughness = saturate(roughness);
   }
 };
@@ -679,38 +667,128 @@ export struct sheen_bsdf: bsdf {
 }
 //--}
 
+//--{ ward_geisler_moroder_bsdf 
+export struct ward_geisler_moroder_bsdf: bsdf {
+  /// The roughness in U.
+  float roughness_u;
+
+  /// The roughness in V.
+  float roughness_v = roughness_u;
+
+  /// The tint.
+  $(color | float) tint = 1.0;
+
+  /// The multiscatter tint, or `void` for no multiscatter.
+  $(color | float | void) multiscatter_tint = void();
+
+  /// The tangent in U.
+  float3 tangent_u = $state.texture_tangent_u[0];
+
+  /// The handle.
+  string handle = "";
+
+  finalize {
+    roughness_u = saturate(roughness_u);
+    roughness_v = saturate(roughness_v);
+  }
+};
+
+@(pure noinline) auto scatter_evaluate(
+    const &ward_geisler_moroder_bsdf this, inline const &scatter_evaluate_parameters params) {
+  preserve tangent_u;
+  tangent_u = this.tangent_u;
+  if (mode == scatter_reflect && recalculate_tangent_space(params)) {
+    const auto cos_thetao(#abs(wo.z));
+    const auto cos_thetai(#abs(wi.z));
+    const auto roughness(this.roughness_u, this.roughness_v);
+    const auto alpha(#max(0.001, roughness * roughness));
+    const auto f(#sum((h := wo + wi) * h) / ($PI * alpha.x * alpha.y * #pow(h.z, 4)) * 
+                 #exp(-#sum((g := h.xy / (h.z * alpha)) * g)));
+    // Single-scattering.
+    const auto fss_pdf(float2(f * (cos_thetao + cos_thetai) / 2));
+    const auto fss(f * cos_thetai);
+    if $(#typeof(this.multiscatter_tint) == void) {
+      return scatter_evaluate_result(f: this.tint * fss, pdf: fss_pdf);
+    } else {
+      // Multiple-scattering.
+      const auto fms_pdf(float2(cos_thetai, cos_thetao) / $PI);
+      const auto fms(let {
+        const auto r0(#sqrt(roughness.x * roughness.y));
+        const auto fit(return_from {
+          // Parallel evaluation of 3 different 8th-order polynomials
+          // fit[0] = 1st coefficient in directional albedo fit
+          // fit[1] = 2nd coefficient in directional albedo fit
+          // fit[2] = Average albedo
+          float3 fit(-1.1992005e+02, -1.4040313e+01, 7.8306640e-01);
+          fit = fit * r0 + float3( 4.1985368e+02,  4.6807753e+01, -1.6213743e+00);
+          fit = fit * r0 + float3(-5.8448171e+02, -6.1370147e+01, -1.3797964e+00);
+          fit = fit * r0 + float3( 4.2351783e+02,  4.1399258e+01,  5.6539624e+00);
+          fit = fit * r0 + float3(-1.6959530e+02, -1.4979874e+01, -3.8064856e+00);
+          fit = fit * r0 + float3( 3.7025769e+01,  3.0665596e+00, -1.2666234e-01);
+          fit = fit * r0 + float3(-3.4191809e+00, -2.9108604e-01, -1.8175253e-02);
+          fit = fit * r0 + float3( 1.6044891e-01,  8.8001559e-03,  1.4868175e-03);
+          fit = fit * r0 + float3(-7.1467185e-04,  1.8095055e-01,  9.9998607e-01);
+          return fit;
+        });
+        const auto Ewo(#min(1 - fit[1] * (t := #pow(cos_thetao / fit[0], 2.0 / 3.0)) * #exp(1 - t), 0.999));
+        const auto Ewi(#min(1 - fit[1] * (t := #pow(cos_thetai / fit[0], 2.0 / 3.0)) * #exp(1 - t), 0.999));
+        const auto Eav(#min(fit[2], 0.999));
+      } in (1 - Ewo) * (1 - Ewi) / (1 - Eav) * cos_thetai / $PI);
+      return scatter_evaluate_result(f: this.tint * (fss + this.multiscatter_tint * fms), pdf: 0.8 * fss_pdf + 0.2 * fms_pdf);
+    }
+  } else {
+    return scatter_evaluate_result(is_black: true);
+  }
+}
+
+@(pure noinline) auto scatter_sample(
+    const &ward_geisler_moroder_bsdf this, inline const &scatter_sample_parameters params) {
+  preserve tangent_u;
+  tangent_u = this.tangent_u;
+  if ((tbn := recalculate_tangent_space(params))) {
+    // Sample diffuse (20% chance if multiscattering)
+    if (#typeof(this.multiscatter_tint) != void && bool_sample(&xi.w, 0.2)) {
+      return scatter_sample_result(wi: (*tbn) * cosine_hemisphere_sample(xi.xy), mode: scatter_reflect);
+    }
+    // Sample specular.
+    const auto roughness(this.roughness_u, this.roughness_v);
+    const auto alpha(#max(0.001, roughness * roughness));
+    const auto phi(#atan2(alpha.y * #sin(t := $TWO_PI * xi.x), alpha.x * #cos(t)));
+    const auto cos_phi(#cos(phi)); 
+    const auto sin_phi(#sin(phi));
+    const auto theta(#atan(#sqrt(-#log(1 - xi.y) / 
+      (#pow(cos_phi / alpha.x, 2) + 
+       #pow(sin_phi / alpha.y, 2)))));
+    const auto wm(float3(#sin(theta) * float2(cos_phi, sin_phi), #cos(theta)));
+    const auto wi(normalize(reflect(wo, wm)));
+    if (wi.z > 0) {
+      return scatter_sample_result(wi: (*tbn) * wi, mode: scatter_reflect);
+    }
+  }
+  return scatter_sample_result();
+}
+//--}
+
 //--{ tint
 /// A 1-value tint.
 struct tint1: bsdf, edf, hair_bsdf {
   /// The tint multiplier.
-  auto tint;
+  $(color | float) tint;
 
   /// The base `bsdf`, `edf`, or `hair_bsdf`.
   auto base;
-
-  finalize {
-    #assert((#typeof(tint) == float) |
-            (#typeof(tint) == color));
-  }
 };
 
 /// A 2-value tint.
 struct tint2: bsdf {
   /// The tint multiplier on reflection.
-  auto reflection_tint;
+  $(color | float) reflection_tint;
 
   /// The tint multiplier on transmission.
-  auto transmission_tint;
+  $(color | float) transmission_tint;
 
   /// The base `bsdf`.
   bsdf base;
-
-  finalize {
-    #assert((#typeof(reflection_tint) == float) |
-            (#typeof(reflection_tint) == color));
-    #assert((#typeof(transmission_tint) == float) |
-            (#typeof(transmission_tint) == color));
-  }
 };
 
 /// Construct 1-value tint of the given `bsdf`.
@@ -766,8 +844,8 @@ export @(pure macro) auto tint(const auto reflection_tint, const auto transmissi
 
 //--{ weighted_layer, color_weighted_layer
 export struct weighted_layer: bsdf {
-  /// The weight. Must be `float` or `color`.
-  auto weight;
+  /// The weight. 
+  $(color | float) weight;
 
   /// The layer BSDF.
   bsdf layer = bsdf();
@@ -788,8 +866,6 @@ export struct weighted_layer: bsdf {
   float chance = average(weight);
 
   finalize {
-    #assert((#typeof(weight) == float) |
-            (#typeof(weight) == color));
     weight = saturate(weight);
     chance = saturate(chance);
   }
