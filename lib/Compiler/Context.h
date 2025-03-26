@@ -165,21 +165,26 @@ public:
   [[nodiscard]] TagType *get_tag_type(AST::Tag *decl);
 
   /// Get the `texture_2d` type.
-  [[nodiscard]] Texture2DType *get_texture_2d_type() { return texture2DType.get(); }
+  [[nodiscard]] Texture2DType *get_texture_2d_type() {
+    return texture2DType.get();
+  }
 
   /// Get the `texture_ptex` type.
-  [[nodiscard]] TexturePtexType *get_texture_ptex_type() { return texturePtexType.get(); }
+  [[nodiscard]] TexturePtexType *get_texture_ptex_type() {
+    return texturePtexType.get();
+  }
 
   /// Get union type.
   [[nodiscard]] Type *get_union_type(llvm::ArrayRef<Type *> types);
 
   /// Get compile-time union type.
-  [[nodiscard]] ComptimeUnionType *get_comptime_union_type(UnionType *unionType);
+  [[nodiscard]] ComptimeUnionType *
+  get_comptime_union_type(UnionType *unionType);
 
 public:
   template <typename T> [[nodiscard]] Type *get_type();
 
-  template <typename S, typename T> [[nodiscard]] Type *get_type(T S:: *) {
+  template <typename S, typename T> [[nodiscard]] Type *get_type(T S::*) {
     return get_type<T>();
   }
 
@@ -266,7 +271,9 @@ public:
     auto &result{strings[value]};
     if (!result) {
       auto builder{llvm::IRBuilder<>(llvmContext)};
-      auto ptr{builder.CreateGlobalStringPtr(value, "str", 0, &llvmModule)};
+      auto str{builder.CreateGlobalString(value, "str", 0, &llvmModule)};
+      auto ptr{
+          builder.CreateConstInBoundsGEP2_32(str->getValueType(), str, 0, 0)};
       return RValue(stringType.get(), ptr);
     }
     return result;

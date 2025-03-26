@@ -9,7 +9,14 @@ Logger &Logger::get() {
   return logger;
 }
 
-Logger::~Logger() { remove_all_sinks(); }
+void Logger::reset() {
+  std::lock_guard guard{mtx};
+  for (auto &sink : sinks) {
+    sink->flush();
+    sink->close();
+  }
+  sinks.clear();
+}
 
 void Logger::flush() {
   std::lock_guard guard{mtx};
@@ -27,15 +34,6 @@ void Logger::log_message(LogLevel level, std::string_view message) {
   std::lock_guard guard{mtx};
   for (auto &sink : sinks)
     sink->log_message(level, message);
-}
-
-void Logger::remove_all_sinks() {
-  std::lock_guard guard{mtx};
-  for (auto &sink : sinks) {
-    sink->flush();
-    sink->close();
-  }
-  sinks.clear();
 }
 
 namespace LogSinks {

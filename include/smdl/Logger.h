@@ -41,7 +41,7 @@ private:
 
   Logger(const Logger &) = delete;
 
-  ~Logger();
+  ~Logger() { reset(); }
 
 public:
   /// Get the logger singleton.
@@ -63,7 +63,7 @@ public:
   void log_message(LogLevel level, std::string_view message);
 
   /// Remove all sinks!
-  void remove_all_sinks();
+  void reset();
 
 private:
   /// The mutex just to be safe.

@@ -922,6 +922,9 @@ void FunctionType::initialize(Emitter &emitter) {
 Value FunctionType::invoke(Emitter &emitter, const ArgumentList &args,
                            const SourceLocation &srcLoc) {
   auto func{resolve_overload(emitter, args, srcLoc)};
+  if (!func->is_pure() && !emitter.state)
+    srcLoc.throw_error(concat("cannot call ", quoted(func->declName),
+                              " from @(pure) context"));
   auto resolved{emitter.resolve_arguments(func->params, args, srcLoc)};
   if (auto impliedVisitArgs{resolved.get_implied_visit_arguments()})
     return emitter.emit_call(emitter.context.get_comptime_meta_type(this),

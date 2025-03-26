@@ -210,7 +210,7 @@ export struct material_emission {
   edf emission = edf();
 
   /// The intensity multiplier.
-  color intensity = color();
+  $(color | float) intensity = 1.0;
 
   /// The intensity mode.
   intensity_mode mode = intensity_radiant_exitance;
@@ -222,7 +222,7 @@ export struct material_surface {
   bsdf scattering = bsdf();
 
   /// The material emission description.
-  material_emission emission = material_emission();
+  material_emission emission = material_emission(); 
 };
 
 /// The material volume description.
@@ -231,10 +231,10 @@ export struct material_volume {
   vdf scattering = vdf();
 
   /// The absorption coefficient in units of inverse distance.
-  color absorption_coefficient = color();
+  $(color | void) absorption_coefficient = void();
 
   /// The scattering coefficient in units of inverse distance.
-  color scattering_coefficient = color();
+  $(color | void) scattering_coefficient = void();
 };
 
 /// The material geometry description.
@@ -264,7 +264,7 @@ export struct material {
   color ior = color(1.0);
 
   /// The material volume description.
-  material_volume volume = material_volume();
+  material_volume volume = material_volume(); 
 
   /// The material geometry description.
   material_geometry geometry = material_geometry();
@@ -307,10 +307,10 @@ export struct $material_instance {
   const &color ior = &mat.ior;
 
   /// The volume absorption coefficient.
-  const &color absorption_coefficient = &mat.volume.absorption_coefficient;
+  const &color absorption_coefficient = ($(#typeof(mat.volume.absorption_coefficient) == void) ? void() : &mat.volume.absorption_coefficient);
 
   /// The volume scattering coefficient.
-  const &color scattering_coefficient = &mat.volume.scattering_coefficient;
+  const &color scattering_coefficient = ($(#typeof(mat.volume.scattering_coefficient) == void) ? void() : &mat.volume.scattering_coefficient);
 
   /// The wavelength count.
   const int wavelength_base_max = $WAVELENGTH_BASE_MAX;
