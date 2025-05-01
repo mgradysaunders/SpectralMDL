@@ -1099,10 +1099,6 @@ Value Emitter::emit_op(AST::BinaryOp op, Value lhs, Value rhs,
 
 extern "C" {
 
-SMDL_EXPORT float smdl_atan2f(float y, float x) { return std::atan2(y, x); }
-
-SMDL_EXPORT double smdl_atan2d(double y, double x) { return std::atan2(y, x); }
-
 SMDL_EXPORT void *smdl_bump(void *state, int size, int align) {
   SMDL_SANITY_CHECK(state != nullptr && align > 0);
   if (size <= 0)
@@ -1286,22 +1282,8 @@ Value Emitter::emit_intrinsic(std::string_view name, const ArgumentList &args,
       SMDL_SANITY_CHECK(commonType->is_arithmetic_floating_point());
       auto value0{invoke(commonType, args[0].value, srcLoc)};
       auto value1{invoke(commonType, args[1].value, srcLoc)};
-      auto scalarType{
-          static_cast<ArithmeticType *>(commonType)->get_scalar_type(context)};
-      SMDL_SANITY_CHECK(scalarType == context.get_float_type() ||
-                        scalarType == context.get_double_type());
-      auto callee{
-          scalarType == context.get_float_type()
-              ? context.get_builtin_callee("smdl_atan2f", &smdl_atan2f)
-              : context.get_builtin_callee("smdl_atan2d", &smdl_atan2d)};
-      if (commonType == scalarType) {
-        return RValue(
-            commonType,
-            builder.CreateCall(callee, {value0.llvmValue, value1.llvmValue}));
-      } else {
-        SMDL_SANITY_CHECK(false);
-        // TODO
-      }
+      return RValue(commonType,
+                    builder.CreateBinaryIntrinsic(llvm::Intrinsic::atan2, value0, value1));
     }
     if (name == "approx_equal") {
       if (!(args.size() == 3 && //

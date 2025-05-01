@@ -1056,6 +1056,8 @@ export @(pure macro) auto asin(const auto a) = #asin(a);
 
 export @(pure macro) auto atan(const auto a) = #atan(a);
 
+export @(pure macro) auto atan2(const auto y, const auto x) = #atan2(y, x);
+
 export @(pure macro) auto cosh(const auto a) = #cosh(a);
 
 export @(pure macro) auto sinh(const auto a) = #sinh(a);

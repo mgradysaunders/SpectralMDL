@@ -1,0 +1,14 @@
+#smdl
+
+import ::math::*;
+
+unit_test "Math" {
+  #assert(math::abs(-7) == 7);
+  #assert(math::abs(-7.1) == 7.1);
+  #assert(#approx_equal(math::cos(math::acos(0.349)), 0.349, 0.00001));
+  #assert(#approx_equal(math::sin(math::asin(0.715)), 0.715, 0.00001));
+  #assert(#approx_equal(math::tan(math::atan(0.631)), 0.631, 0.00001));
+  #assert(#approx_equal(math::atan2(
+          math::sin(theta := 1.491),
+          math::cos(theta)), theta, 0.00001));
+}
