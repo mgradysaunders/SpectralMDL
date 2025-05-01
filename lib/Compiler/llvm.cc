@@ -57,7 +57,7 @@ llvm::Value *llvm_emit_cast(llvm::IRBuilderBase &builder, llvm::Value *value,
 
 llvm::Value *llvm_emit_powi(llvm::IRBuilderBase &builder, llvm::Value *lhs,
                             llvm::Value *rhs) {
-  auto func{llvm::Intrinsic::getDeclaration(
+  auto func{llvm::Intrinsic::getOrInsertDeclaration(
       builder.GetInsertBlock()->getModule(), llvm::Intrinsic::powi,
       {lhs->getType(), rhs->getType()})};
   return builder.CreateCall(func, {lhs, rhs});
@@ -65,7 +65,7 @@ llvm::Value *llvm_emit_powi(llvm::IRBuilderBase &builder, llvm::Value *lhs,
 
 llvm::Value *llvm_emit_ldexp(llvm::IRBuilderBase &builder, llvm::Value *lhs,
                              llvm::Value *rhs) {
-  auto func{llvm::Intrinsic::getDeclaration(
+  auto func{llvm::Intrinsic::getOrInsertDeclaration(
       builder.GetInsertBlock()->getModule(), llvm::Intrinsic::ldexp,
       {lhs->getType(), rhs->getType()})};
   return builder.CreateCall(func, {lhs, rhs});
