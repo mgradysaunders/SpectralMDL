@@ -155,7 +155,6 @@ enum class StmtKind : uint8_t {
   ExprStmt,
   For,
   If,
-  LateIf,
   Preserve,
   Return,
   Switch,
