@@ -29,7 +29,7 @@ if(SMDL_BUILD_TOY)
   FetchContent_Declare(
     "Assimp"
     GIT_REPOSITORY https://github.com/assimp/assimp
-    GIT_TAG v5.4.2
+    GIT_TAG v5.4.3
     GIT_PROGRESS TRUE
   )
   set(ASSIMP_NO_EXPORT ON CACHE INTERNAL "")
@@ -37,13 +37,14 @@ if(SMDL_BUILD_TOY)
   set(ASSIMP_BUILD_TESTS OFF CACHE INTERNAL "")
   set(ASSIMP_BUILD_ZLIB ON CACHE INTERNAL "")
   set(ASSIMP_INSTALL OFF CACHE INTERNAL "")
+  set(ASSIMP_WARNINGS_AS_ERRORS OFF CACHE INTERNAL "")
   FetchContent_MakeAvailable("Assimp")
 
   # TBB
   FetchContent_Declare(
     "TBB"
-    GIT_REPOSITORY https://github.com/oneapi-src/oneTBB
-    GIT_TAG v2021.12.0
+    GIT_REPOSITORY https://github.com/uxlfoundation/oneTBB
+    GIT_TAG v2022.1.0
     GIT_PROGRESS TRUE
   )
   set(TBB_STRICT OFF CACHE INTERNAL "")
@@ -54,7 +55,7 @@ if(SMDL_BUILD_TOY)
   FetchContent_Declare(
     "Embree"
     GIT_REPOSITORY https://github.com/RenderKit/embree
-    GIT_TAG v4.3.2
+    GIT_TAG v4.4.0
     GIT_PROGRESS TRUE
   )
   set(EMBREE_TUTORIALS OFF CACHE INTERNAL "")
