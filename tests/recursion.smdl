@@ -1,5 +1,6 @@
 #smdl
 
+// This is a concrete run-time function. This must not return auto!
 @(pure) int factorial(int n) {
   return 1 if (n <= 1);
   switch (n) {
@@ -10,8 +11,19 @@
   return n * factorial(n - 1);
 }
 
+// This is a macro that expands inline at compile-time. If you
+// pass in a compile-time constant it evaluates at compile-time,
+// otherwise there is a recursion-depth-exceeded error!
+@(pure macro) auto factorial_macro(const auto n) {
+  if (n <= 1)
+    return 1;
+  else
+    return n * factorial_macro(n - 1);
+}
+
 unit_test "Recursion" {
   #assert(factorial(0) == 1);
   #assert(factorial(4) == 4 * 3 * 2 * 1);
   #assert(factorial(7) == 7 * 6 * 5 * 4 * 3 * 2 * 1);
+  #assert(factorial_macro(5) == 5 * 4 * 3 * 2 * 1);
 }

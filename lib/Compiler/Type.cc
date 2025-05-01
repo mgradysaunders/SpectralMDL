@@ -924,18 +924,24 @@ Value FunctionType::invoke(Emitter &emitter, const ArgumentList &args,
   auto func{resolve_overload(emitter, args, srcLoc)};
   if (!func->is_pure() && !emitter.state)
     srcLoc.throw_error(concat("cannot call ", quoted(func->declName),
-                              " from @(pure) context"));
+                              " from '@(pure)' context"));
   auto resolved{emitter.resolve_arguments(func->params, args, srcLoc)};
   if (auto impliedVisitArgs{resolved.get_implied_visit_arguments()})
     return emitter.emit_call(emitter.context.get_comptime_meta_type(this),
                              *impliedVisitArgs, srcLoc);
   if (func->is_macro()) {
+    ++macroRecursionDepth;
+    if (macroRecursionDepth >= 1024)
+      srcLoc.throw_error(concat("call to ", quoted(func->declName),
+                                " exceeds compile-time recursion limit 1024"));
     auto preserve{Preserve(emitter.crumb)};
     emitter.crumb = func->params.lastCrumb;
-    return emitter.create_function_implementation(
+    auto result{emitter.create_function_implementation(
         func->decl.name, func->is_pure(), func->returnType, func->params,
         resolved.values, srcLoc,
-        [&]() { emitter.emit(func->decl.definition); });
+        [&]() { emitter.emit(func->decl.definition); })};
+    --macroRecursionDepth;
+    return result;
   } else {
     auto &instance{func->instantiate(emitter, resolved.get_value_types())};
     auto llvmArgs{llvm::SmallVector<llvm::Value *>{}};

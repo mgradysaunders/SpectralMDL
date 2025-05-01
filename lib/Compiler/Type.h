@@ -822,6 +822,8 @@ public:
   /// The function instances.
   std::map<llvm::SmallVector<Type *>, Instance> instances{};
 
+  size_t macroRecursionDepth{};
+
 private:
   void initialize_jit_material_functions(Emitter &emitter);
 };
