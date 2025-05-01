@@ -111,6 +111,11 @@ public:
 
   /// Create function.
   ///
+  /// \param[out] llvmFunc
+  /// The LLVM function. This is a reference in order to support concrete 
+  /// recursion, such that the pointer is initialized with a placeholder LLVM
+  /// function before invoking the callback.
+  ///
   /// \param[in] name
   /// The function name. This is the name ultimately given to the returned
   /// LLVM function with `llvm::Function::setName()`.
@@ -132,11 +137,21 @@ public:
   /// \param[in] callback
   /// The callback to populate the LLVM function body.
   ///
-  llvm::Function *create_function(std::string_view name, bool isPure,
-                                  Type *&returnType,
-                                  const ParameterList &params,
-                                  const SourceLocation &srcLoc,
-                                  const std::function<void()> &callback);
+  void create_function(llvm::Function *&llvmFunc, //
+                       std::string_view name, bool isPure, Type *&returnType,
+                       const ParameterList &params,
+                       const SourceLocation &srcLoc,
+                       const std::function<void()> &callback);
+
+  [[nodiscard]] llvm::Function *
+  create_function(std::string_view name, bool isPure, Type *&returnType,
+                  const ParameterList &params, const SourceLocation &srcLoc,
+                  const std::function<void()> &callback) {
+    llvm::Function *llvmFunc{};
+    create_function(llvmFunc, name, isPure, returnType, params, srcLoc,
+                    callback);
+    return llvmFunc;
+  }
 
   /// Create block with the given name.
   [[nodiscard]] llvm::BasicBlock *create_block(const llvm::Twine &name = {}) {
@@ -549,7 +564,7 @@ public:
     SMDL_SANITY_CHECK(!has_terminator());
     if (!labelBreak)
       stmt.srcLoc.throw_error(inDefer ? "cannot 'break' from 'defer'"
-                                       : "nowhere to 'break'");
+                                      : "nowhere to 'break'");
     emit_late_if(stmt.lateIf, [&] {
       unwind(labelBreak.crumb);
       builder.CreateBr(labelBreak.block);
@@ -565,7 +580,7 @@ public:
     SMDL_SANITY_CHECK(!has_terminator());
     if (!labelContinue)
       stmt.srcLoc.throw_error(inDefer ? "cannot 'continue' from 'defer'"
-                                       : "nowhere to 'continue'");
+                                      : "nowhere to 'continue'");
     emit_late_if(stmt.lateIf, [&] {
       unwind(labelContinue.crumb);
       builder.CreateBr(labelContinue.block);
@@ -614,7 +629,7 @@ public:
     SMDL_SANITY_CHECK(!has_terminator());
     if (!labelReturn)
       stmt.srcLoc.throw_error(inDefer ? "cannot 'return' from 'defer'"
-                                       : "nowhere to 'return'");
+                                      : "nowhere to 'return'");
     emit_late_if(stmt.lateIf, [&] {
       Value value{};
       if (stmt.expr)

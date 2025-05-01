@@ -314,23 +314,33 @@ public:
   /// The compiler.
   Compiler &compiler;
 
+  /// The bump allocator.
+  BumpPtrAllocator &allocator{compiler.allocator};
+
   /// The LLVM context.
-  llvm::LLVMContext &llvmContext;
+  llvm::LLVMContext &llvmContext{compiler.get_llvm_context()};
 
   /// The LLVM module.
-  llvm::Module &llvmModule;
+  llvm::Module &llvmModule{compiler.get_llvm_module()};
 
   /// The LLVM data layout.
-  const llvm::DataLayout &llvmLayout;
+  const llvm::DataLayout &llvmLayout{llvmModule.getDataLayout()};
 
   /// The LLVM target library info implementation.
-  llvm::TargetLibraryInfoImpl llvmTargetLibraryInfoImpl;
+  llvm::TargetLibraryInfoImpl llvmTargetLibraryInfoImpl{
+      llvm::Triple(get_native_target().triple)};
 
   /// The LLVM target library info.
-  llvm::TargetLibraryInfo llvmTargetLibraryInfo;
+  llvm::TargetLibraryInfo llvmTargetLibraryInfo{llvmTargetLibraryInfoImpl};
 
-  /// The bump allocator.
-  BumpPtrAllocator &allocator;
+  /// The LLVM type used to represent an incomplete return type during
+  /// function compilation.
+  ///
+  /// \note
+  /// This makes it easy to detect invalid recursion.
+  ///
+  llvm::Type *const llvmIncompleteReturnTy{
+      llvm::StructType::create(llvmContext, {}, "$incomplete")};
 
 private:
   /// The builtin modules. See `get_builtin_module()`
@@ -366,34 +376,39 @@ private:
   std::map<std::pair<UnionType *, UnionType *>, Value> unionIndexMaps{};
 
   /// The `auto` type.
-  const BumpPtr<AutoType> autoType{};
+  const BumpPtr<AutoType> autoType{allocator.allocate<AutoType>()};
 
   /// The meta `Module` type.
-  const BumpPtr<MetaType> metaModuleType{};
+  const BumpPtr<MetaType> metaModuleType{
+      allocator.allocate<MetaType>(*this, "module")};
 
   /// The meta `Type` type.
-  const BumpPtr<MetaType> metaTypeType{};
+  const BumpPtr<MetaType> metaTypeType{
+      allocator.allocate<MetaType>(*this, "type")};
 
   /// The meta `AST::Intrinsic` type.
-  const BumpPtr<MetaType> metaIntrinsicType{};
+  const BumpPtr<MetaType> metaIntrinsicType{
+      allocator.allocate<MetaType>(*this, "intrinsic")};
 
   /// The `void` type.
-  const BumpPtr<VoidType> voidType{};
+  const BumpPtr<VoidType> voidType{allocator.allocate<VoidType>(*this)};
 
   /// The `State` type.
-  const BumpPtr<StateType> stateType{};
+  const BumpPtr<StateType> stateType{allocator.allocate<StateType>(*this)};
 
   /// The `string` type.
-  const BumpPtr<StringType> stringType{};
+  const BumpPtr<StringType> stringType{allocator.allocate<StringType>(*this)};
 
   /// The `color` type.
-  const BumpPtr<ColorType> colorType{};
+  const BumpPtr<ColorType> colorType{allocator.allocate<ColorType>(*this)};
 
   /// The `texture_2d` type.
-  const BumpPtr<Texture2DType> texture2DType{};
+  const BumpPtr<Texture2DType> texture2DType{
+      allocator.allocate<Texture2DType>()};
 
   /// The `texture_ptex` type.
-  const BumpPtr<TexturePtexType> texturePtexType{};
+  const BumpPtr<TexturePtexType> texturePtexType{
+      allocator.allocate<TexturePtexType>(*this)};
 
   /// The AST associated types.
   llvm::DenseMap<AST::Decl *, BumpPtr<Type>> astTypes{};

@@ -790,6 +790,10 @@ public:
 
     /// The LLVM function.
     llvm::Function *llvmFunc{};
+
+    /// Is currently compiling? This is used to sanity check that we
+    /// do not accidentally enter an infinite loop.
+    bool isCompiling{};
   };
 
   /// Instantiate a concrete LLVM function.

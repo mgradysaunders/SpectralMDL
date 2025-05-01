@@ -1017,15 +1017,17 @@ FunctionType::instantiate(Emitter &emitter,
                           const llvm::SmallVector<Type *> paramTypes) {
   SMDL_SANITY_CHECK(decl.definition);
   SMDL_SANITY_CHECK(paramTypes.size() == params.size());
-  auto &instance{instances[paramTypes]};
-  if (!instance.llvmFunc) {
-    instance.returnType = returnType;
-    instance.params = params;
+  auto &inst{instances[paramTypes]};
+  if (!inst.llvmFunc) {
+    SMDL_SANITY_CHECK(!inst.isCompiling);
+    inst.isCompiling = true;
+    inst.returnType = returnType;
+    inst.params = params;
     for (size_t i{}; i < params.size(); i++)
-      instance.params[i].type = paramTypes[i];
-    instance.llvmFunc = emitter.create_function(
-        decl.name, is_pure(), instance.returnType, instance.params, decl.srcLoc,
-        [&] { emitter.emit(decl.definition); });
+      inst.params[i].type = paramTypes[i];
+    emitter.create_function(inst.llvmFunc, decl.name, is_pure(),
+                            inst.returnType, inst.params, decl.srcLoc,
+                            [&] { emitter.emit(decl.definition); });
     static const std::pair<const char *, llvm::Attribute::AttrKind> attrs[] = {
         {"alwaysinline", llvm::Attribute::AlwaysInline},
         {"noinline", llvm::Attribute::NoInline},
@@ -1033,15 +1035,21 @@ FunctionType::instantiate(Emitter &emitter,
         {"cold", llvm::Attribute::Cold},
         {"optsize", llvm::Attribute::OptimizeForSize},
         {"optnone", llvm::Attribute::OptimizeNone}};
-    for (auto [attrName, attrID] : attrs) {
+    for (auto [attrName, attrID] : attrs)
       if (decl.has_attribute(attrName))
-        instance.llvmFunc->addFnAttr(attrID);
-    }
-    if (decl.has_attribute("visible")) {
-      instance.llvmFunc->setLinkage(llvm::Function::ExternalLinkage);
-    }
+        inst.llvmFunc->addFnAttr(attrID);
+    if (decl.has_attribute("visible"))
+      inst.llvmFunc->setLinkage(llvm::Function::ExternalLinkage);
+    inst.isCompiling = false;
+  } else if (inst.llvmFunc->getReturnType() ==
+             emitter.context.llvmIncompleteReturnTy) {
+    // If the instance LLVM function has `Context::llvmIncompleteReturnTy`
+    // as its return type, then the function is currently being compiled and
+    // this is an attempt to invoke it recursively, which is not allowed!
+    decl.srcLoc.throw_error(
+        "function with inferred return type must not recurse");
   }
-  return instance;
+  return inst;
 }
 
 void FunctionType::initialize_jit_material_functions(Emitter &emitter) {
@@ -1052,10 +1060,10 @@ void FunctionType::initialize_jit_material_functions(Emitter &emitter) {
   jitMaterial.moduleFileName = std::string(decl.srcLoc.get_module_file_name());
   jitMaterial.lineNo = decl.srcLoc.lineNo;
   jitMaterial.materialName = std::string(decl.name.srcName);
-  auto &instance{instantiate(emitter, {})};
-  SMDL_SANITY_CHECK(!instance.returnType->is_abstract() &&
-                    instance.returnType->is_struct() &&
-                    static_cast<StructType *>(instance.returnType)
+  auto &inst{instantiate(emitter, {})};
+  SMDL_SANITY_CHECK(!inst.returnType->is_abstract() &&
+                    inst.returnType->is_struct() &&
+                    static_cast<StructType *>(inst.returnType)
                         ->is_instance_of(context.materialType));
   auto dfModule{context.get_builtin_module("df")};
   SMDL_SANITY_CHECK(dfModule);
@@ -1085,11 +1093,10 @@ void FunctionType::initialize_jit_material_functions(Emitter &emitter) {
         concat(declName, ".allocate"), /*isPure=*/false, funcReturnType,
         {constParameter(context.get_void_pointer_type(), "out")}, decl.srcLoc,
         [&] {
-          auto material{RValue(
-              instance.returnType,
-              emitter.builder.CreateCall(instance.llvmFunc->getFunctionType(),
-                                         instance.llvmFunc,
-                                         {emitter.state.llvmValue}))};
+          auto material{RValue(inst.returnType,
+                               emitter.builder.CreateCall(
+                                   inst.llvmFunc->getFunctionType(),
+                                   inst.llvmFunc, {emitter.state.llvmValue}))};
           auto materialInstance{emitter.emit_call(
               context.get_keyword_value("$material_instance"),
               emitter.emit_intrinsic("bump", material, decl.srcLoc),
@@ -1684,11 +1691,11 @@ Texture2DInstanceType *Texture2DType::instantiate(Context &context,
                                                   Type *texelType,
                                                   int tileCountU,
                                                   int tileCountV) {
-  auto &instance{instances[std::tuple(texelType, tileCountU, tileCountV)]};
-  if (!instance)
-    instance = context.allocator.allocate<Texture2DInstanceType>(
+  auto &inst{instances[std::tuple(texelType, tileCountU, tileCountV)]};
+  if (!inst)
+    inst = context.allocator.allocate<Texture2DInstanceType>(
         context, texelType, tileCountU, tileCountV);
-  return instance.get();
+  return inst.get();
 }
 
 Value Texture2DType::invoke(Emitter &emitter, const ArgumentList &args,

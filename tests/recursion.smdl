@@ -1,0 +1,17 @@
+#smdl
+
+@(pure) int factorial(int n) {
+  return 1 if (n <= 1);
+  switch (n) {
+  case 2: return 2;
+  case 3: return 3 * 2;
+  default: break;
+  }
+  return n * factorial(n - 1);
+}
+
+unit_test "Recursion" {
+  #assert(factorial(0) == 1);
+  #assert(factorial(4) == 4 * 3 * 2 * 1);
+  #assert(factorial(7) == 7 * 6 * 5 * 4 * 3 * 2 * 1);
+}

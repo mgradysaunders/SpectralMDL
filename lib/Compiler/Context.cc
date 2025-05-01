@@ -4,24 +4,8 @@
 
 namespace smdl {
 
-Context::Context(Compiler &compiler)
-    : compiler(compiler),                                                  //
-      llvmContext(compiler.get_llvm_context()),                            //
-      llvmModule(compiler.get_llvm_module()),                              //
-      llvmLayout(compiler.get_llvm_module().getDataLayout()),              //
-      llvmTargetLibraryInfoImpl(llvm::Triple(get_native_target().triple)), //
-      llvmTargetLibraryInfo(llvmTargetLibraryInfoImpl),                    //
-      allocator(compiler.allocator),                                       //
-      autoType(allocator.allocate<AutoType>()),                            //
-      metaModuleType(allocator.allocate<MetaType>(*this, "module")),       //
-      metaTypeType(allocator.allocate<MetaType>(*this, "type")),           //
-      metaIntrinsicType(allocator.allocate<MetaType>(*this, "intrinsic")), //
-      voidType(allocator.allocate<VoidType>(*this)),                       //
-      stateType(allocator.allocate<StateType>(*this)),                     //
-      stringType(allocator.allocate<StringType>(*this)),                   //
-      colorType(allocator.allocate<ColorType>(*this)),                     //
-      texture2DType(allocator.allocate<Texture2DType>()),
-      texturePtexType(allocator.allocate<TexturePtexType>(*this)) {
+Context::Context(Compiler &compiler) : compiler(compiler) {
+  // Initialize keywords.
   keywords = {
       {"auto", get_comptime_meta_type(get_auto_type())},
       {"bool", get_comptime_meta_type(get_bool_type())},
@@ -106,7 +90,6 @@ Context::Context(Compiler &compiler)
       keywords[simpleName] = crumb->value;
     }
   }
-
   materialType =
       get_keyword_value("material").get_comptime_meta_type(*this, {});
 }
@@ -301,7 +284,7 @@ ConversionRule Context::get_conversion_rule(Type *typeA, Type *typeB) {
     if (typeB == get_bool_type()) {
       return ConversionRule::Implicit;
     }
-    // If the destination type is a vector with equivalent scalar type, 
+    // If the destination type is a vector with equivalent scalar type,
     // conversion is explicit (Load from the pointer!).
     if (auto arithTypeB{llvm::dyn_cast<ArithmeticType>(typeB)};
         arithTypeB->extent.is_vector() &&

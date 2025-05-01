@@ -41,20 +41,27 @@ Value Emitter::create_function_implementation(
   return create_result(returnType, returns, srcLoc);
 }
 
-llvm::Function *
-Emitter::create_function(std::string_view name, bool isPure, Type *&returnType,
-                         const ParameterList &params,
-                         const SourceLocation &srcLoc,
-                         const std::function<void()> &callback) {
+void Emitter::create_function(llvm::Function *&llvmFunc, std::string_view name,
+                              bool isPure, Type *&returnType,
+                              const ParameterList &params,
+                              const SourceLocation &srcLoc,
+                              const std::function<void()> &callback) {
   SMDL_SANITY_CHECK(returnType && params.is_concrete());
   auto llvmParamTys{params.get_llvm_types()};
   if (!isPure)
     llvmParamTys.insert(llvmParamTys.begin(),
                         llvm::PointerType::get(context, 0));
-  auto llvmFunc{llvm::Function::Create(
-      llvm::FunctionType::get(llvm::Type::getVoidTy(context), llvmParamTys,
+  // Initialize LLVM function with a placeholder. If we have a return type
+  // with a well-defined LLVM type, then use that as the placeholder return 
+  // type in order to permit recursion. Otherwise use 
+  // `Context::llvmIncompleteReturnTy`.
+  llvmFunc = llvm::Function::Create(
+      llvm::FunctionType::get(returnType->llvmType
+                                  ? returnType->llvmType
+                                  : context.llvmIncompleteReturnTy,
+                              llvmParamTys,
                               /*isVarArg=*/false),
-      llvm::Function::InternalLinkage, "", context.llvmModule)};
+      llvm::Function::InternalLinkage, "", context.llvmModule);
   // TODO Interpret null callback as function without definition
   auto lastIP{builder.saveIP()};
   {
@@ -112,16 +119,15 @@ Emitter::create_function(std::string_view name, bool isPure, Type *&returnType,
       srcLoc.throw_error(concat("function ", quoted(name),
                                 " LLVM-IR verification failed: ", message));
     // Inline.
-    for (auto &inlineRequest : inlines) {
-      auto result{llvm_force_inline(inlineRequest.value, //
-                                    inlineRequest.isRecursive)};
+    for (auto &inlineReq : inlines) {
+      auto result{llvm_force_inline(inlineReq.value, //
+                                    inlineReq.isRecursive)};
       if (!result.isSuccess())
-        inlineRequest.srcLoc.log_warn(std::string("cannot force inline: ") +
-                                      result.getFailureReason());
+        inlineReq.srcLoc.log_warn(std::string("cannot force inline: ") +
+                                  result.getFailureReason());
     }
   }
   builder.restoreIP(lastIP);
-  return llvmFunc;
 }
 
 Value Emitter::create_alloca(Type *type, const llvm::Twine &name) {
@@ -1284,9 +1290,10 @@ Value Emitter::emit_intrinsic(std::string_view name, const ArgumentList &args,
           static_cast<ArithmeticType *>(commonType)->get_scalar_type(context)};
       SMDL_SANITY_CHECK(scalarType == context.get_float_type() ||
                         scalarType == context.get_double_type());
-      auto callee{scalarType == context.get_float_type()
-                      ? context.get_builtin_callee("smdl_atan2f", &smdl_atan2f)
-                      : context.get_builtin_callee("smdl_atan2d", &smdl_atan2d)};
+      auto callee{
+          scalarType == context.get_float_type()
+              ? context.get_builtin_callee("smdl_atan2f", &smdl_atan2f)
+              : context.get_builtin_callee("smdl_atan2d", &smdl_atan2d)};
       if (commonType == scalarType) {
         return RValue(
             commonType,
