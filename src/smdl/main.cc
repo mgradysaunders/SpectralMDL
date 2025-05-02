@@ -10,8 +10,9 @@ namespace cl = llvm::cl;
 static cl::OptionCategory optionsCat{"Options"};
 static cl::SubCommand subDump{"dump", "Dump as LLVM-IR or native assembly"};
 static cl::SubCommand subTest{"test", "Execute unit tests"};
+static cl::SubCommand subFormat{"format", "Format source code"};
 static cl::SubCommandGroup subsWithCompileOptions{&subDump, &subTest};
-static cl::SubCommandGroup allSubs{&subDump, &subTest};
+static cl::SubCommandGroup allSubs{&subDump, &subTest, &subFormat};
 
 static cl::list<std::string> inputFiles{cl::Positional, cl::desc("<input>"),
                                         cl::OneOrMore, cl::sub(allSubs),
@@ -51,11 +52,11 @@ int main(int argc, char **argv) {
   compiler.wavelengthBaseMax = 16;
 
   for (auto &inputFile : inputFiles) {
-    if (auto error = compiler.add(std::string(inputFile))) {
+    if (auto error{compiler.add(std::string(inputFile))}) {
       error->print_and_exit();
     }
   }
-  if (auto error = compiler.compile(smdl::OptLevel(unsigned(optLevel)))) {
+  if (auto error{compiler.compile(smdl::OptLevel(unsigned(optLevel)))}) {
     error->print_and_exit();
   }
   if (subDump) {
@@ -83,6 +84,10 @@ int main(int argc, char **argv) {
     }
     if (auto error{compiler.run_jit_unit_tests(state)}) {
       std::cerr << '\n';
+      error->print_and_exit();
+    }
+  } else if (subFormat) {
+    if (auto error{compiler.format_source_code()}) {
       error->print_and_exit();
     }
   }

@@ -65,6 +65,13 @@ public:
   /// Compile the source code to LLVM IR.
   [[nodiscard]] std::optional<Error> compile(Context &context);
 
+  /// Format the source code and overwrite the file on disk.
+  [[nodiscard]] std::optional<Error> format_source_code() const;
+
+  /// Format the source code.
+  [[nodiscard]] std::optional<Error>
+  format_source_code(std::ostream &outStream) const;
+
   /// Is parsed yet?
   [[nodiscard]] bool is_parsed() const { return root; }
 

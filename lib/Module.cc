@@ -2,7 +2,7 @@
 #include "smdl/Parser.h"
 
 #include "Compiler/Emitter.h"
-
+#include "Formatter.h"
 #include "filesystem.h"
 
 namespace smdl {
@@ -27,7 +27,8 @@ std::optional<Error> Module::parse(BumpPtrAllocator &allocator) {
 }
 
 std::optional<Error> Module::compile(Context &context) {
-  SMDL_SANITY_CHECK(is_parsed(), "tried to compile before parse");
+  if (!is_parsed())
+    return Error("module not yet parsed");
   return catch_and_return_error([&] {
     if (compileStatus == CompileStatus::InProgress)
       throw Error(concat("detected cyclic import of module ", quoted(name)));
@@ -39,6 +40,25 @@ std::optional<Error> Module::compile(Context &context) {
       compileStatus = CompileStatus::Finished;
     }
   });
+}
+
+std::optional<Error> Module::format_source_code() const {
+  if (is_builtin())
+    return Error(concat("cannot format builtin module ", quoted(name)));
+  if (!is_parsed())
+    return Error("cannot format before parsing");
+  auto outStream{std::ofstream(fileName, std::ios::out)};
+  if (!outStream.is_open())
+    return Error(concat("cannot open ", quoted(fileName)));
+  return format_source_code(outStream);
+}
+
+std::optional<Error> Module::format_source_code(std::ostream &outStream) const {
+  if (!is_parsed())
+    return Error("cannot format before parsing");
+  Formatter formatter{};
+  outStream << formatter.format(sourceCode, *root);
+  return std::nullopt;
 }
 
 } // namespace smdl

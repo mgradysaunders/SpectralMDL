@@ -69,6 +69,9 @@ public:
   /// Compile to LLVM-IR.
   [[nodiscard]] std::optional<Error> compile(OptLevel optLevel = OptLevel::O2);
 
+  /// Format source code.
+  [[nodiscard]] std::optional<Error> format_source_code();
+
 private:
   /// Get the LLVM context.
   [[nodiscard]] llvm::LLVMContext &get_llvm_context();

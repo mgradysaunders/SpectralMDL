@@ -123,6 +123,17 @@ std::optional<Error> Compiler::compile(OptLevel optLevel) {
   return std::nullopt;
 }
 
+std::optional<Error> Compiler::format_source_code() {
+  // TODO
+  for (auto &mod : modules) {
+    if (!mod->is_builtin()) {
+      if (auto error{mod->format_source_code(std::cout)})
+        return error;
+    }
+  }
+  return std::nullopt;
+}
+
 llvm::LLVMContext &Compiler::get_llvm_context() {
   SMDL_SANITY_CHECK(llvmJitModule.get() != nullptr);
   return *llvmJitModule.get()->getContext().getContext();

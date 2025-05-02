@@ -152,7 +152,8 @@ auto Parser::parse_identifier() -> BumpPtr<AST::Identifier> {
   auto elements{std::vector<AST::Identifier::Element>{}};
   auto srcDoubleColon{next("::")};
   if (auto name{parse_simple_name()}) {
-    elements.push_back(AST::Identifier::Element{*srcDoubleColon, *name});
+    elements.push_back(AST::Identifier::Element{
+        srcDoubleColon ? *srcDoubleColon : std::string_view(), *name});
   } else {
     if (srcDoubleColon) {
       srcLoc0.throw_error("expected name after '::'");
@@ -644,13 +645,13 @@ auto Parser::parse_primary_expression() -> BumpPtr<AST::Expr> {
     return expr;
   auto srcLoc0{srcLoc};
   if (auto srcKwCast{next_keyword("cast")}) {
-    auto srcAngleL{next_delimiter("{")};
+    auto srcAngleL{next_delimiter("<")};
     if (!srcAngleL)
       srcLoc0.throw_error("expected opening '<' after 'cast'");
     auto type{parse_type()};
     if (!type)
       srcLoc0.throw_error("expected type after 'cast'");
-    auto srcAngleR{next_delimiter("}")};
+    auto srcAngleR{next_delimiter(">")};
     if (!srcAngleR)
       srcLoc0.throw_error("expected closing '>' after 'cast'");
     auto expr{parse_expression_in_parentheses()};
@@ -1261,7 +1262,8 @@ auto Parser::parse_struct_type_declaration() -> BumpPtr<AST::Struct> {
     srcLoc0.throw_error("expected ';' after 'struct ... { ... }'");
   accept();
   return allocate<AST::Struct>(
-      srcLoc0, std::in_place, *srcKwStruct, *name, *srcColonBeforeTags,
+      srcLoc0, std::in_place, *srcKwStruct, *name,
+      srcColonBeforeTags ? *srcColonBeforeTags : std::string_view(),
       std::move(tags), std::move(annotations), *srcBraceL, std::move(fields),
       srcKwFinalize ? *srcKwFinalize : std::string_view(),
       std::move(stmtFinalize), *srcBraceR, *srcSemicolon);
