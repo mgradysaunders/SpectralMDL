@@ -1092,7 +1092,8 @@ auto Parser::parse_using_import() -> BumpPtr<AST::UsingImport> {
     while (true) {
       auto name{parse_simple_name()};
       if (!name)
-        srcLoc0.throw_error("expected import name");
+        break;
+        // srcLoc0.throw_error("expected import name");
       names.push_back(AST::UsingImport::Name{name->srcName, {}});
       auto srcComma{next_delimiter(",")};
       if (!srcComma)
@@ -1122,7 +1123,8 @@ auto Parser::parse_import() -> BumpPtr<AST::Import> {
   while (true) {
     auto importPath{parse_import_path()};
     if (!importPath)
-      srcLoc0.throw_error("expected import path");
+      break;
+      // srcLoc0.throw_error("expected import path");
     importPathWrappers.push_back(
         AST::Import::ImportPathWrapper{std::move(*importPath), {}});
     auto srcComma{next_delimiter(",")};

@@ -63,6 +63,11 @@ public:
   /// The access operator, const variant.
   [[nodiscard]] auto &operator[](size_t i) const { return args[i]; }
 
+  /// Has comma `,` after the last argument?
+  [[nodiscard]] bool has_trailing_comma() const {
+    return !args.empty() && !args.back().srcComma.empty();
+  }
+
 public:
   /// The source location.
   SourceLocation srcLoc{};

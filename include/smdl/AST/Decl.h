@@ -37,6 +37,11 @@ public:
 
   /// The double bracket `]]`.
   std::string_view srcDoubleBrackR{};
+
+  /// Has comma `,` after the last annotation?
+  [[nodiscard]] bool has_trailing_comma() const {
+    return !annotations.empty() && !annotations.back().srcComma.empty();
+  }
 };
 
 /// A parameter.
@@ -87,6 +92,11 @@ public:
 
   /// Is parameter list for function variant?
   [[nodiscard]] bool is_variant() const { return !srcStar.empty(); }
+
+  /// Has comma `,` after the last parameter?
+  [[nodiscard]] bool has_trailing_comma() const {
+    return !params.empty() && !params.back().srcComma.empty();
+  }
 
   /// The parenthesis `(`.
   std::string_view srcParenL{};
@@ -210,6 +220,11 @@ public:
 
   /// The semicolon `;`.
   std::string_view srcSemicolon{};
+
+  /// Has comma `,` after the last declarator?
+  [[nodiscard]] bool has_trailing_comma() const {
+    return !declarators.empty() && !declarators.back().srcComma.empty();
+  }
 };
 
 /// A function declaration.
@@ -334,6 +349,12 @@ public:
 
   /// The semicolon `;`.
   std::string_view srcSemicolon{};
+
+  /// Has comma `,` after the last import path?
+  [[nodiscard]] bool has_trailing_comma() const {
+    return !importPathWrappers.empty() &&
+           !importPathWrappers.back().srcComma.empty();
+  }
 };
 
 /// A `struct` declaration.
@@ -424,6 +445,11 @@ public:
 
   /// The semicolon `;`.
   std::string_view srcSemicolon{};
+
+  /// Has comma `,` after the last tag?
+  [[nodiscard]] bool has_trailing_comma_on_tags() const {
+    return !tags.empty() && !tags.back().srcComma.empty();
+  }
 };
 
 /// A `tag` declaration.
@@ -545,6 +571,11 @@ public:
 
   /// The semicolon `;`.
   std::string_view srcSemicolon{};
+
+  /// Has comma `,` after last import name?
+  [[nodiscard]] bool has_trailing_comma() const {
+    return !names.empty() && !names.back().srcComma.empty();
+  }
 };
 
 /// A variable declaration.
@@ -584,6 +615,11 @@ public:
 
   /// The semicolon `;`.
   std::string_view srcSemicolon{};
+
+  /// Has comma `,` after the last declarator?
+  [[nodiscard]] bool has_trailing_comma() const {
+    return !declarators.empty() && !declarators.back().srcComma.empty();
+  }
 };
 
 } // namespace smdl::AST
