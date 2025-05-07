@@ -83,8 +83,10 @@ private:
     }
   }
 
+  void realign_end_of_line_comments();
+
   /// Process comments.
-  void process_comments();
+  void write_comments();
 
   /// Request separation with space.
   void delim_space() {
@@ -110,7 +112,7 @@ private:
 
   [[nodiscard]] Delim start_list(bool separateLines) {
     // If processing comments implicitly inserts a newline, increment indent
-    process_comments();
+    write_comments();
     if (current_output_delim() == DELIM_NEWLINE)
       write(INCREMENT_INDENT);
     else if (separateLines)
@@ -124,7 +126,7 @@ private:
   void write(std::string_view inSrc) { write_token(inSrc); }
 
   void write(Delim delim) {
-    process_comments();
+    write_comments();
     switch (delim) {
     case DELIM_SPACE:
       delim_space();
@@ -395,8 +397,6 @@ private:
     llvm::TypeSwitch<T *, void>(&node).template Case<Ts...>(
         [&](auto each) { write(*each); });
   }
-
-  void realign_end_of_line_comments();
 
 private:
   llvm::StringRef inputSrc0{};

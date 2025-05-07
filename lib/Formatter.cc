@@ -3,7 +3,39 @@
 
 namespace smdl {
 
-void Formatter::process_comments() {
+void Formatter::realign_end_of_line_comments() {
+  auto insertSpacesBeforeComment{[&](auto &comment, size_t n) {
+    for (size_t i = 0; i < n; i++)
+      outputSrc.insert(outputSrc.begin() + comment.first, ' ');
+    for (auto itr = &comment;
+         itr < outputLineComments.data() + outputLineComments.size(); ++itr) {
+      itr->first += n;
+      itr->second += n;
+    }
+  }};
+  for (auto itr1{outputLineComments.rbegin()};
+       itr1 != outputLineComments.rend();) {
+    auto column{itr1->second};
+    auto itrPrev{itr1};
+    auto itr2{itr1};
+    itr2++;
+    while (itr2 != outputLineComments.rend()) {
+      auto src{llvm::StringRef(outputSrc.data() + itr2->first,
+                               itrPrev->first - itr2->first)};
+      if (src.count('\n') > 1)
+        break;
+      column = std::max(column, itr2->second);
+      itrPrev = itr2;
+      ++itr2;
+    }
+    while (itr1 != itr2) {
+      insertSpacesBeforeComment(*itr1, column - itr1->second);
+      ++itr1;
+    }
+  }
+}
+
+void Formatter::write_comments() {
   auto firstWhitespace{consume_input_whitespace()};
   auto firstComment{consume_input_comment()};
   if (!firstComment.empty()) {
@@ -37,7 +69,7 @@ void Formatter::process_comments() {
 
 void Formatter::write_token(llvm::StringRef inSrc) {
   if (!inSrc.empty()) {
-    process_comments();
+    write_comments();
     SMDL_SANITY_CHECK(inputSrc.begin() <= inSrc.begin() &&
                       inSrc.end() <= inputSrc.end());
     SMDL_SANITY_CHECK(inSrc.count('\n') == 0);
@@ -131,8 +163,8 @@ void Formatter::write(const AST::Struct &decl) {
   for (const auto &field : decl.fields) {
     write(field.type, DELIM_SPACE, field.name);
     if (field.exprInit)
-      write(DELIM_SPACE, field.srcEqual, DELIM_SPACE, PUSH_INDENT, ALIGN_INDENT,
-            field.exprInit, POP_INDENT);
+      write(DELIM_SPACE, field.srcEqual, //
+            DELIM_SPACE, PUSH_INDENT, ALIGN_INDENT, field.exprInit, POP_INDENT);
     write(field.annotations, field.srcSemicolon, DELIM_NEWLINE);
   }
   if (decl.stmtFinalize)
@@ -287,38 +319,6 @@ void Formatter::write(const AST::ParameterList &params) {
       write(DELIM_NEWLINE);
   }
   write(POP_INDENT, params.srcParenR);
-}
-
-void Formatter::realign_end_of_line_comments() {
-  auto insertSpacesBeforeComment{[&](auto &comment, size_t n) {
-    for (size_t i = 0; i < n; i++)
-      outputSrc.insert(outputSrc.begin() + comment.first, ' ');
-    for (auto itr = &comment;
-         itr < outputLineComments.data() + outputLineComments.size(); ++itr) {
-      itr->first += n;
-      itr->second += n;
-    }
-  }};
-  for (auto itr1{outputLineComments.rbegin()};
-       itr1 != outputLineComments.rend();) {
-    auto column{itr1->second};
-    auto itrPrev{itr1};
-    auto itr2{itr1};
-    itr2++;
-    while (itr2 != outputLineComments.rend()) {
-      auto src{llvm::StringRef(outputSrc.data() + itr2->first,
-                               itrPrev->first - itr2->first)};
-      if (src.count('\n') > 1)
-        break;
-      column = std::max(column, itr2->second);
-      itrPrev = itr2;
-      ++itr2;
-    }
-    while (itr1 != itr2) {
-      insertSpacesBeforeComment(*itr1, column - itr1->second);
-      ++itr1;
-    }
-  }
 }
 
 } // namespace smdl
