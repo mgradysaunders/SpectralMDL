@@ -227,6 +227,11 @@ public:
 
   /// The semicolon `;`.
   std::string_view srcSemicolon{};
+
+  /// Has comma `,` after the last expression?
+  [[nodiscard]] bool has_trailing_comma() const {
+    return !exprWrappers.empty() && !exprWrappers.back().srcComma.empty();
+  }
 };
 
 /// A `return` statement.

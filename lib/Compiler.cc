@@ -124,10 +124,9 @@ std::optional<Error> Compiler::compile(OptLevel optLevel) {
 }
 
 std::optional<Error> Compiler::format_source_code() {
-  // TODO
   for (auto &mod : modules) {
     if (!mod->is_builtin()) {
-      if (auto error{mod->format_source_code(std::cout)})
+      if (auto error{mod->format_source_code()})
         return error;
     }
   }

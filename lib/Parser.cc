@@ -1819,9 +1819,7 @@ auto Parser::parse_return_statement() -> BumpPtr<AST::Return> {
   auto srcKwReturn{next_keyword("return")};
   if (!srcKwReturn)
     return nullptr;
-  auto expr{parse_expression()};
-  // if (!expr)
-  //   srcLoc0.throw_error("expected expression after 'return'");
+  auto expr{parse_expression()}; // Allow this to be null!
   auto lateIf{parse_late_if()};
   auto srcSemicolon{next_delimiter(";")};
   if (!srcSemicolon)
