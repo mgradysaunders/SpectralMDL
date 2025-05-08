@@ -329,7 +329,9 @@ private:
           stmt.srcKwWhile, DELIM_SPACE, stmt.expr, stmt.srcSemicolon);
   }
 
-  void write(const AST::ExprStmt &stmt) { write(stmt.expr, stmt.srcSemicolon); }
+  void write(const AST::ExprStmt &stmt) {
+    write(stmt.expr, stmt.lateIf, stmt.srcSemicolon);
+  }
 
   void write(const AST::For &stmt);
 
