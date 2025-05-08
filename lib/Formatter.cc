@@ -124,7 +124,7 @@ void Formatter::write(const AST::File &file) {
           version.srcSemicolon, DELIM_NEWLINE);
   }
   for (const auto &decl : file.importDecls)
-    write(decl, DELIM_NEWLINE);
+    write(decl->srcKwExport, DELIM_SPACE, decl, DELIM_NEWLINE);
   if (!file.srcKwModule.empty())
     write(file.srcKwModule, file.moduleAnnotations,
           file.srcSemicolonAfterModule, DELIM_NEWLINE);
