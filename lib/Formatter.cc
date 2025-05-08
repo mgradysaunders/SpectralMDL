@@ -76,6 +76,7 @@ void Formatter::write_token(llvm::StringRef inSrc) {
   SMDL_SANITY_CHECK(
       (inputSrc.begin() <= inSrc.begin() && inSrc.end() <= inputSrc.end()) &&
       inSrc.count('\n') == 0);
+  delim_none();
   write_indent_if_newline();
   consume_input(inSrc.begin() + inSrc.size() - inputSrc.begin());
   outputSrc += std::string_view(inSrc);
