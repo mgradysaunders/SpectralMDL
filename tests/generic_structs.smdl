@@ -57,8 +57,7 @@ unit_test "Generic structs" {
 
 // This implicitly constructs a '(CatOwner | DogOwner)' by a conditional expressions. See 
 // the 'implicit_unions.smdl' file for more information.
-@(pure noinline) auto get_cat_or_dog_owner(string name, bool owns_cat) =
-  owns_cat ? PetOwner(name: name, pet: Cat()) : PetOwner(name: name, pet: Dog());
+@(pure noinline) auto get_cat_or_dog_owner(string name, bool owns_cat) = owns_cat ? PetOwner(name: name, pet: Cat()) : PetOwner(name: name, pet: Dog());
 
 unit_test "Generic struct unions" {
   // Now construct a cat owner and a dog owner using the implicit union returned by 
@@ -80,16 +79,16 @@ unit_test "Generic struct unions" {
   // in every alternative of a union. In which case, you can use dot syntax to access it
   // directly on the union, and the compiler will implicitly type switch to access the
   // field.
-  #assert(petOwner0.name == "Pete"); // PetOwner<Cat>::name
-  #assert(petOwner1.name == "Fred"); // PetOwner<Dog>::name
-  #assert(petOwner0.pet.name == "Fe"); // PetOwner<Cat>::Cat::name
+  #assert(petOwner0.name == "Pete");     // PetOwner<Cat>::name
+  #assert(petOwner1.name == "Fred");     // PetOwner<Dog>::name
+  #assert(petOwner0.pet.name == "Fe");   // PetOwner<Cat>::Cat::name
   #assert(petOwner1.pet.name == "Doug"); // PetOwner<Dog>::Dog::name
 
   // Following intuitive 'visit' semantics, the result type of the field access is
   // a union only if the type could differ depending on the alterative of the union being
   // accessed. In other words, it is a union of every type the result of the expression
   // could possibly be.
-  #assert(#typeof(petOwner0.name) == string); // Always 'string'
+  #assert(#typeof(petOwner0.name) == string);     // Always 'string'
   #assert(#typeof(petOwner0.pet.name) == string); // Always 'string'
   #assert(#typeof(petOwner0.pet) == (Cat | Dog)); // Could be 'Cat' or 'Dog'
 }

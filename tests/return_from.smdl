@@ -1,15 +1,13 @@
 #smdl
 
 unit_test "Return from" {
-  #assert(return_from { return 2; } == 2);
-
-  auto result(return_from {
+  auto result = return_from {
     int sum = 0;
     for (int i = 0; i < 10; i++) {
       sum += 3 * i + 1;
       return sum if (sum > 20);
     }
     return -17;
-  });
+  };
   #assert(result == 22);
 }

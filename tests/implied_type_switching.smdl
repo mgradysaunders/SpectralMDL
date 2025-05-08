@@ -76,8 +76,7 @@ typedef (Cat | Dog) AnyAnimal;
 //   return std::visit(vis, animal);
 // }
 // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-@(pure visible noinline) string get_animal_union_name(AnyAnimal animal) =
-  get_animal_name(animal);
+@(pure visible noinline) string get_animal_union_name(AnyAnimal animal) = get_animal_name(animal);
 
 unit_test "Implied type switching" {
   #assert(#typeof(Animal()) == Cat); // Default constructor returns 'Cat'
@@ -97,8 +96,7 @@ unit_test "Implied type switching" {
 // template <typename T> requires Animal<T>
 // string get_animal_name_with_pointer(T *animal) { return animal->name; }
 // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-@(pure) string get_animal_name_with_pointer(&Animal animal) =
-  animal.name;
+@(pure) string get_animal_name_with_pointer(&Animal animal) = animal.name;
 
 // '&AnyAnimal' is a concrete pointer to union type. The same logic of it 
 // always being a pointer to some 'Animal' still applies, and the compiler
@@ -111,8 +109,7 @@ unit_test "Implied type switching" {
 //   return std::visit(vis, *animal);
 // }
 // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-@(pure visible noinline) string get_animal_union_name_with_pointer(&AnyAnimal animal) =
-  get_animal_name_with_pointer(animal);
+@(pure visible noinline) string get_animal_union_name_with_pointer(&AnyAnimal animal) = get_animal_name_with_pointer(animal);
 
 unit_test "Implied type switching with pointers" {
   auto cat(AnyAnimal(Cat()));

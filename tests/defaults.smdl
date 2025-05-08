@@ -1,4 +1,4 @@
-#smdl 
+#smdl
 
 struct Foo {
   int x = 2;
