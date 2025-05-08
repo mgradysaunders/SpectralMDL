@@ -5,6 +5,8 @@
 #include "Formatter.h"
 #include "filesystem.h"
 
+#include <iostream>
+
 namespace smdl {
 
 std::unique_ptr<Module> Module::load_from_file(const std::string &fileName) {
@@ -42,23 +44,30 @@ std::optional<Error> Module::compile(Context &context) {
   });
 }
 
-std::optional<Error> Module::format_source_code() const {
+std::optional<Error> Module::format_source_code(const FormatOptions &options) {
   if (is_builtin())
     return Error(concat("cannot format builtin module ", quoted(name)));
-  if (!is_parsed())
-    return Error("cannot format before parsing");
-  auto outStream{std::ofstream(fileName, std::ios::out)};
-  if (!outStream.is_open())
-    return Error(concat("cannot open ", quoted(fileName)));
-  return format_source_code(outStream);
-}
-
-std::optional<Error> Module::format_source_code(std::ostream &outStream) const {
-  if (!is_parsed())
-    return Error("cannot format before parsing");
-  Formatter formatter{};
-  outStream << formatter.format(sourceCode, *root);
-  return std::nullopt;
+  if (!is_parsed()) {
+    auto allocator{BumpPtrAllocator{}};
+    if (auto error{parse(allocator)})
+      return error;
+    auto error{format_source_code(options)};
+    root = {};
+    return error;
+  } else {
+    auto formatter{Formatter{options}};
+    auto formatted{formatter.format(sourceCode, *root)};
+    if (options.inPlace) {
+      auto outStream{std::ofstream(fileName, std::ios::out)};
+      if (!outStream.is_open())
+        return Error(concat("cannot open ", quoted(fileName)));
+      outStream << formatted;
+    } else {
+      std::cout << formatted;
+      std::cout.flush();
+    }
+    return std::nullopt;
+  }
 }
 
 } // namespace smdl

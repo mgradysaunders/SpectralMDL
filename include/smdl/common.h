@@ -152,7 +152,7 @@ public:
 
   /// The element count.
   size_t count{};
-}; 
+};
 
 /// \name Functions (strings)
 /// \{
@@ -730,7 +730,7 @@ using double4x4 = Matrix<double, 4, 4>;
 /// \addtogroup Support
 /// \{
 
-/// \name Functions (math) 
+/// \name Functions (math)
 /// \{
 
 /// Vector-Vector `operator+`.
@@ -1025,6 +1025,17 @@ private:
   std::tuple<Ts &...> values;
 
   std::tuple<Ts...> backupValues;
+};
+
+class SMDL_EXPORT FormatOptions final {
+public:
+  bool inPlace{};
+
+  bool noComments{};
+
+  bool noAnnotations{};
+
+  bool compact{};
 };
 
 /// \}

@@ -40,6 +40,18 @@ static cl::opt<std::string> outputFilename{
     "output", cl::desc("Output filename (default stdout)"), cl::Optional,
     cl::sub(subDump), cl::cat(optionsCat)};
 
+static cl::opt<bool> formatInPlace{"i", cl::desc("Format in place"),
+                                   cl::sub(subFormat), cl::cat(optionsCat)};
+static cl::opt<bool> formatNoComments{"no-comments",
+                                      cl::desc("Remove comments"),
+                                      cl::sub(subFormat), cl::cat(optionsCat)};
+static cl::opt<bool> formatNoAnnotations{
+    "no-annotations", cl::desc("Remove annotations"), cl::sub(subFormat),
+    cl::cat(optionsCat)};
+static cl::opt<bool> formatCompact{"c",
+                                   cl::desc("Format output more compactly"),
+                                   cl::sub(subFormat), cl::cat(optionsCat)};
+
 int main(int argc, char **argv) {
   llvm::InitLLVM X(argc, argv);
   smdl::Logger::get().add_sink<smdl::LogSinks::print_to_cerr>();
@@ -56,39 +68,46 @@ int main(int argc, char **argv) {
       error->print_and_exit();
     }
   }
-  if (auto error{compiler.compile(smdl::OptLevel(unsigned(optLevel)))}) {
-    error->print_and_exit();
-  }
-  if (subDump) {
-    if (outputFilename.getNumOccurrences()) {
-      auto ofs{std::ofstream(outputFilename.getValue())};
-      if (!ofs.is_open())
-        std::exit(EXIT_FAILURE);
-      ofs << compiler.dump(dumpFormat);
-    } else {
-      std::cout << compiler.dump(dumpFormat);
-      std::cout.flush();
-    }
-  } else if (subTest) {
-    if (auto error{compiler.jit_compile()})
-      error->print_and_exit();
-    float wavelengths[16]{};
-    smdl::BumpPtrAllocator allocator{};
-    smdl::State state{};
-    state.allocator = &allocator;
-    state.wavelength_base = &wavelengths[0];
-    for (unsigned i = 0; i < 16; i++) {
-      float fac = i / 15.0f;
-      wavelengths[i] =
-          (1 - fac) * state.wavelength_min + fac * state.wavelength_max;
-    }
-    if (auto error{compiler.run_jit_unit_tests(state)}) {
-      std::cerr << '\n';
+  if (subFormat) {
+    smdl::FormatOptions options{};
+    options.inPlace = formatInPlace;
+    options.noComments = formatNoComments;
+    options.noAnnotations = formatNoAnnotations;
+    options.compact = formatCompact;
+    if (auto error{compiler.format_source_code(options)}) {
       error->print_and_exit();
     }
-  } else if (subFormat) {
-    if (auto error{compiler.format_source_code()}) {
+  } else {
+    if (auto error{compiler.compile(smdl::OptLevel(unsigned(optLevel)))}) {
       error->print_and_exit();
+    }
+    if (subDump) {
+      if (outputFilename.getNumOccurrences()) {
+        auto ofs{std::ofstream(outputFilename.getValue())};
+        if (!ofs.is_open())
+          std::exit(EXIT_FAILURE);
+        ofs << compiler.dump(dumpFormat);
+      } else {
+        std::cout << compiler.dump(dumpFormat);
+        std::cout.flush();
+      }
+    } else if (subTest) {
+      if (auto error{compiler.jit_compile()})
+        error->print_and_exit();
+      float wavelengths[16]{};
+      smdl::BumpPtrAllocator allocator{};
+      smdl::State state{};
+      state.allocator = &allocator;
+      state.wavelength_base = &wavelengths[0];
+      for (unsigned i = 0; i < 16; i++) {
+        float fac = i / 15.0f;
+        wavelengths[i] =
+            (1 - fac) * state.wavelength_min + fac * state.wavelength_max;
+      }
+      if (auto error{compiler.run_jit_unit_tests(state)}) {
+        std::cerr << '\n';
+        error->print_and_exit();
+      }
     }
   }
   return 0;

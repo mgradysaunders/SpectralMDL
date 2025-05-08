@@ -3,136 +3,170 @@
 
 namespace smdl {
 
-void Formatter::delim_none() {
-  auto numNewLines{consume_input_space().count('\n')};
-  if (auto firstComment{consume_input_comment()}; !firstComment.empty()) {
-    // If the user put a newline before the comment, preserve the line break.
-    if (numNewLines == 1 && last_output() != '\n')
-      outputSrc += '\n';
-    write_comment(firstComment);
-    write_more_comments();
+void Formatter::align_line_comments() {
+  auto insertSpacesBeforeComment{[&](auto &comment, size_t numSpaces) {
+    for (size_t i = 0; i < numSpaces; i++) {
+      outputSrc.insert(outputSrc.begin() + comment.i, ' ');
+    }
+    for (auto itr{&comment};
+         itr < lineCommentsToAlign.data() + lineCommentsToAlign.size(); ++itr) {
+      itr->i += numSpaces;
+      itr->column += numSpaces;
+    }
+  }};
+  for (auto itr{lineCommentsToAlign.rbegin()};
+       itr != lineCommentsToAlign.rend();) {
+    auto maxColumn{itr->column};
+    auto itrPrev{itr};
+    auto itrNext{itr};
+    itrNext++;
+    while (itrNext != lineCommentsToAlign.rend()) {
+      const auto &iPrev{itrPrev->i};
+      const auto &iNext{itrNext->i};
+      if (auto src{llvm::StringRef(outputSrc.data() + iNext, iPrev - iNext)};
+          src.count('\n') > 1) {
+        break;
+      }
+      maxColumn = std::max(maxColumn, itrNext->column);
+      itrPrev = itrNext++;
+    }
+    while (itr != itrNext) {
+      insertSpacesBeforeComment(*itr, maxColumn - itr->column);
+      ++itr;
+    }
   }
 }
 
-void Formatter::delim_space() {
-  delim_none();
-  if (!outputSrc.empty() && last_output() != ' ' && last_output() != '\n')
-    outputSrc += ' ';
+bool Formatter::next_comment_forces_newline() const {
+  auto inSrc{inputSrc};
+  while (!inSrc.empty()) {
+    auto ws{inSrc.take_while(is_space)};
+    inSrc = inSrc.drop_front(ws.size());
+    if (inSrc.starts_with("//")) {
+      return true;
+    } else if (inSrc.starts_with("/*")) {
+      if (ws.count('\n') > 0) {
+        return true;
+      }
+      auto pos{inSrc.find("*/", 2)};
+      if (pos == inSrc.npos)
+        break; // Shouldn't happen?
+      inSrc = inSrc.drop_front(pos + 2);
+      if (inSrc.take_while(is_space).count('\n') > 0) {
+        return true;
+      }
+    } else {
+      break; // Shouldn't happen?
+    }
+  }
+  return false;
 }
 
-void Formatter::delim_newline() {
+void Formatter::write_delim_none() {
+  auto numNewLines{consume_input_space().count('\n')};
+  if (auto comment{consume_input_comment()}; !comment.empty()) {
+    // Preserve up to 1 extra newline
+    if (!options.noComments && numNewLines == 1 && last_output() != '\n') {
+      outputSrc += '\n';
+    }
+    write_comment(comment), write_more_comments();
+  }
+}
+
+void Formatter::write_delim_space() {
+  write_delim_none();
+  if (!outputSrc.empty() && last_output() != ' ' && last_output() != '\n') {
+    outputSrc += ' ';
+  }
+}
+
+void Formatter::write_delim_newline() {
   while (last_output() == ' ') // Remove spaces
     outputSrc.pop_back();
-  // We call this function to request at least 1 syntactic newline
-  // in the output source. We consume the corresponding whitespace
-  // in the input source to determine whether we want 1 or 2 newlines,
-  // the idea being to preserve blank lines the user inserts explicitly
-  // between newline-separated elements.
   if (auto numNewLines{consume_input_space().count('\n')}; numNewLines <= 1) {
-    if (auto firstComment{consume_input_comment()}; !firstComment.empty()) {
-      // If the user put a newline before the comment, preserve the line break.
-      if (numNewLines == 1 && last_output() != '\n')
+    if (auto comment{consume_input_comment()}; !comment.empty()) {
+      // Preserve up to 1 extra newline
+      if (!options.noComments && numNewLines == 1 && last_output() != '\n') {
         outputSrc += '\n';
-      write_comment(firstComment);
-      write_more_comments();
+      }
+      write_comment(comment), write_more_comments();
     }
-    if (!outputSrc.empty() && last_output() != '\n')
+    if (!outputSrc.empty() && last_output() != '\n') {
       outputSrc += '\n';
+    }
   } else {
-    // Add up to 2 newlines, to preserve 1 visibly blank line in the
-    // output source.
-    while (last_output(-1) != '\n' || last_output(-2) != '\n')
+    // Preserve 1 extra newline
+    while (last_output(-1) != '\n' || last_output(-2) != '\n') {
       outputSrc += '\n';
-    if (auto firstComment{consume_input_comment()}; !firstComment.empty()) {
-      write_comment(firstComment);
-      write_more_comments();
     }
+    if (auto comment{consume_input_comment()}; !comment.empty()) {
+      write_comment(comment), write_more_comments();
+    }
+  }
+  if (options.compact && last_output(-1) == '\n' && last_output(-2) == '\n') {
+    outputSrc.pop_back();
   }
 }
 
 void Formatter::write_comment(llvm::StringRef inSrc) {
-  if (inSrc.empty())
-    return;
-  SMDL_SANITY_CHECK((inSrc.starts_with("//") && inSrc.ends_with("\n")) ||
-                    (inSrc.starts_with("/*") && inSrc.ends_with("*/")));
-  if (!outputSrc.empty() && last_output() != ' ' && last_output() != '\n')
-    outputSrc += ' ';
-  bool isNewLine{outputSrc.empty() || last_output() == '\n'};
-  write_indent_if_newline();
-  if (!isNewLine && inSrc.starts_with("//"))
-    lineCommentsToAlign.emplace_back(outputSrc.size(), current_column());
-  outputSrc += inSrc;
-  // If the user put 1 or more newlines after the comment, preserve
-  // 1 visibly blank line.
-  if (consume_input_space().count('\n') > 0)
-    outputSrc += '\n';
-  else if (inSrc.starts_with("/*"))
-    outputSrc += ' ';
+  if (!inSrc.empty() && !options.noComments) {
+    SMDL_SANITY_CHECK((inSrc.starts_with("//") && inSrc.ends_with("\n")) ||
+                      (inSrc.starts_with("/*") && inSrc.ends_with("*/")));
+    if (!outputSrc.empty() && last_output() != ' ' && last_output() != '\n') {
+      outputSrc += ' ';
+    }
+    bool isNewLine{outputSrc.empty() || last_output() == '\n'};
+    write_indent_if_newline();
+    if (!isNewLine && inSrc.starts_with("//")) {
+      lineCommentsToAlign.push_back({outputSrc.size(), current_column()});
+    }
+    outputSrc += inSrc;
+    if (!options.compact && consume_input_space().count('\n') > 0) {
+      // Preserve up to 1 extra newline
+      outputSrc += '\n';
+    } else if (inSrc.starts_with("/*")) {
+      // Guarantee a space after multi-line comment
+      outputSrc += ' ';
+    }
+  }
 }
 
 void Formatter::write_token(llvm::StringRef inSrc) {
-  if (inSrc.empty())
-    return;
-  SMDL_SANITY_CHECK(
-      (inputSrc.begin() <= inSrc.begin() && inSrc.end() <= inputSrc.end()) &&
-      inSrc.count('\n') == 0);
-  delim_none();
-  write_indent_if_newline();
-  consume_input(inSrc.begin() + inSrc.size() - inputSrc.begin());
-  outputSrc += std::string_view(inSrc);
-}
-
-void Formatter::align_line_comments() {
-  auto insertSpacesBeforeComment{[&](auto &comment, size_t numSpaces) {
-    for (size_t i = 0; i < numSpaces; i++)
-      outputSrc.insert(outputSrc.begin() + comment.first, ' ');
-    for (auto itr = &comment;
-         itr < lineCommentsToAlign.data() + lineCommentsToAlign.size(); ++itr) {
-      itr->first += numSpaces;
-      itr->second += numSpaces;
-    }
-  }};
-  for (auto itr1{lineCommentsToAlign.rbegin()};
-       itr1 != lineCommentsToAlign.rend();) {
-    auto column{itr1->second};
-    auto itrPrev{itr1};
-    auto itr2{itr1};
-    itr2++;
-    while (itr2 != lineCommentsToAlign.rend()) {
-      auto src{llvm::StringRef(outputSrc.data() + itr2->first,
-                               itrPrev->first - itr2->first)};
-      if (src.count('\n') > 1)
-        break;
-      column = std::max(column, itr2->second);
-      itrPrev = itr2;
-      ++itr2;
-    }
-    while (itr1 != itr2) {
-      insertSpacesBeforeComment(*itr1, column - itr1->second);
-      ++itr1;
-    }
+  if (!inSrc.empty()) {
+    SMDL_SANITY_CHECK(
+        (inputSrc.begin() <= inSrc.begin() && inSrc.end() <= inputSrc.end()) &&
+        inSrc.count('\n') == 0);
+    write_delim_none();
+    write_indent_if_newline();
+    consume_input(inSrc.begin() + inSrc.size() - inputSrc.begin());
+    outputSrc += inSrc;
   }
 }
 
 void Formatter::write(const AST::File &file) {
   write(DELIM_NONE);
-  if (file.is_smdl_syntax())
+  if (file.is_smdl_syntax()) {
     write(file.srcKwSmdlSyntax, DELIM_NEWLINE);
+  }
   if (file.version) {
     auto &version{*file.version};
     write(version.srcKwMdl, DELIM_SPACE, version.srcVersion,
           version.srcSemicolon, DELIM_NEWLINE);
   }
-  for (const auto &decl : file.importDecls)
+  for (const auto &decl : file.importDecls) {
     write(decl->srcKwExport, DELIM_SPACE, decl, DELIM_NEWLINE);
-  if (!file.srcKwModule.empty())
+  }
+  if (!file.srcKwModule.empty()) {
     write(file.srcKwModule, file.moduleAnnotations,
           file.srcSemicolonAfterModule, DELIM_NEWLINE);
-  for (const auto &decl : file.globalDecls)
+  }
+  for (const auto &decl : file.globalDecls) {
     write(decl->srcKwExport, DELIM_SPACE, decl, DELIM_NEWLINE);
+  }
   write(DELIM_NEWLINE);
 }
 
+//--{ Write: Decls
 void Formatter::write(const AST::Decl &decl) {
   write_type_switch<AST::Enum, AST::Function, AST::Import, AST::Struct,
                     AST::Tag, AST::Typedef, AST::UnitTest, AST::UsingAlias,
@@ -142,8 +176,10 @@ void Formatter::write(const AST::Decl &decl) {
 void Formatter::write(const AST::Enum &decl) {
   write(decl.srcKwEnum, DELIM_SPACE, decl.name, decl.annotations, DELIM_SPACE,
         decl.srcBraceL, DELIM_SPACE, PUSH_INDENT);
-  auto delim{start_list(decl.has_trailing_comma())};
+  auto delim{write_start_list(decl.has_trailing_comma())};
   for (const auto &each : decl.declarators) {
+    if (!options.noAnnotations && each.annotations)
+      write(DELIM_NEWLINE);
     write(each.name);
     if (each.exprInit) {
       write(DELIM_SPACE, each.srcEqual, DELIM_SPACE, PUSH_INDENT);
@@ -153,6 +189,8 @@ void Formatter::write(const AST::Enum &decl) {
     }
     write(each.annotations, each.srcComma,
           each.srcComma.empty() ? DELIM_NONE : delim);
+    if (!options.noAnnotations && each.annotations)
+      write(DELIM_NEWLINE);
   }
   write(delim, POP_INDENT, decl.srcBraceR, decl.srcSemicolon);
 }
@@ -183,7 +221,7 @@ void Formatter::write(const AST::Struct &decl) {
   write(decl.srcKwStruct, DELIM_SPACE, decl.name);
   if (!decl.srcColonBeforeTags.empty()) {
     write(decl.srcColonBeforeTags, DELIM_SPACE, PUSH_INDENT);
-    auto delim{start_list(decl.has_trailing_comma_on_tags())};
+    auto delim{write_start_list(decl.has_trailing_comma_on_tags())};
     for (const auto &[srcKwDefault, type, srcComma] : decl.tags) {
       write(srcKwDefault, DELIM_SPACE, type, srcComma,
             srcComma.empty() ? DELIM_NONE : delim);
@@ -206,8 +244,11 @@ void Formatter::write(const AST::Struct &decl) {
 
 void Formatter::write(const AST::Variable &decl) {
   write(decl.type, DELIM_SPACE, PUSH_INDENT);
-  auto delim{start_list(decl.has_trailing_comma())};
+  auto delim{write_start_list(decl.has_trailing_comma(),
+                              /*alignIndent=*/decl.declarators.size() > 1)};
   for (const auto &each : decl.declarators) {
+    if (!options.noAnnotations && each.annotations)
+      write(DELIM_NEWLINE);
     write(each.name);
     if (each.exprInit) {
       write(DELIM_SPACE, each.srcEqual, DELIM_SPACE, PUSH_INDENT);
@@ -219,10 +260,14 @@ void Formatter::write(const AST::Variable &decl) {
     }
     write(each.annotations, each.srcComma,
           each.srcComma.empty() ? DELIM_NONE : delim);
+    if (!options.noAnnotations && each.annotations)
+      write(DELIM_NEWLINE);
   }
   write(decl.srcSemicolon, POP_INDENT);
 }
+//--}
 
+//--{ Write: Exprs
 void Formatter::write(const AST::Expr &expr) {
   write_type_switch<AST::AccessField, AST::AccessIndex, AST::Binary, AST::Call,
                     AST::Identifier, AST::Intrinsic, AST::Let, AST::LiteralBool,
@@ -244,7 +289,9 @@ void Formatter::write(const AST::Let &expr) {
   }
   write(DELIM_SPACE, expr.srcKwIn, DELIM_SPACE, expr.expr);
 }
+//--}
 
+//--{ Write: Stmts
 void Formatter::write(const AST::Stmt &stmt) {
   write_type_switch<AST::Break, AST::Compound, AST::Continue, AST::DeclStmt,
                     AST::Defer, AST::DoWhile, AST::ExprStmt, AST::For, AST::If,
@@ -273,12 +320,8 @@ void Formatter::write(const AST::If &stmt) {
           POP_INDENT, DELIM_NEWLINE);
   }
   if (stmt.stmtElse) {
-    if (llvm::isa<AST::Compound>(stmt.stmtThen)) {
-      write(DELIM_SPACE);
-    } else {
-      write(DELIM_NEWLINE);
-    }
-    write(stmt.srcKwElse);
+    write(llvm::isa<AST::Compound>(stmt.stmtThen) ? DELIM_SPACE : DELIM_NEWLINE,
+          stmt.srcKwElse);
     if (llvm::isa<AST::Compound>(stmt.stmtElse) ||
         llvm::isa<AST::If>(stmt.stmtElse)) {
       write(DELIM_SPACE, stmt.stmtElse);
@@ -297,8 +340,7 @@ void Formatter::write(const AST::Switch &stmt) {
     if (!each.is_default())
       write(DELIM_SPACE, each.expr);
     write(each.srcColon);
-    if (each.stmts.size() == 1 &&
-        llvm::isa<AST::Compound>(each.stmts.front())) {
+    if (each.stmts.size() == 1 && !next_comment_forces_newline()) {
       write(DELIM_SPACE, each.stmts.front(), DELIM_NEWLINE);
     } else {
       write(PUSH_INDENT, INCREMENT_INDENT, DELIM_NEWLINE);
@@ -309,24 +351,30 @@ void Formatter::write(const AST::Switch &stmt) {
   }
   write(stmt.srcBraceR);
 }
+//--}
 
 void Formatter::write(const AST::AnnotationBlock &annos) {
-  write(PUSH_INDENT, INCREMENT_INDENT, DELIM_SPACE, annos.srcDoubleBrackL,
-        PUSH_INDENT);
-  auto delim{start_list(annos.has_trailing_comma())};
-  for (const auto &[identifier, args, srcComma] : annos.annotations)
-    write(identifier, args, srcComma, srcComma.empty() ? DELIM_NONE : delim);
-  write(POP_INDENT, annos.srcDoubleBrackR, POP_INDENT);
+  if (!options.noAnnotations) {
+    write(PUSH_INDENT, INCREMENT_INDENT, DELIM_SPACE, annos.srcDoubleBrackL,
+          PUSH_INDENT);
+    auto delim{write_start_list(annos.has_trailing_comma())};
+    for (const auto &[identifier, args, srcComma] : annos.annotations) {
+      write(identifier, args, srcComma, srcComma.empty() ? DELIM_NONE : delim);
+    }
+    write(POP_INDENT, annos.srcDoubleBrackR, POP_INDENT);
+  }
 }
 
 void Formatter::write(const AST::ArgumentList &args) {
   write(args.srcParenL, PUSH_INDENT);
-  auto delim{start_list(args.has_trailing_comma())};
+  auto delim{write_start_list(args.has_trailing_comma())};
   for (const auto &arg : args) {
-    if (arg.is_visited())
+    if (arg.is_visited()) {
       write(arg.srcKwVisit, DELIM_SPACE);
-    if (arg.is_named())
+    }
+    if (arg.is_named()) {
       write(arg.name, arg.srcColonAfterName, DELIM_SPACE);
+    }
     write(arg.expr, arg.srcComma, arg.srcComma.empty() ? DELIM_NONE : delim);
   }
   write(POP_INDENT, args.srcParenR);
@@ -334,21 +382,24 @@ void Formatter::write(const AST::ArgumentList &args) {
 
 void Formatter::write(const AST::ParameterList &params) {
   write(params.srcParenL, PUSH_INDENT);
-  auto delim{start_list(params.has_trailing_comma())};
+  auto delim{write_start_list(params.has_trailing_comma())};
   for (const auto &param : params) {
-    if (param.annotations)
+    if (!options.noAnnotations && param.annotations) {
       write(DELIM_NEWLINE);
+    }
     write(param.type, DELIM_SPACE, param.name);
     if (param.exprInit) {
       write(DELIM_SPACE, param.srcEqual, DELIM_SPACE, PUSH_INDENT);
-      if (delim == DELIM_NEWLINE)
+      if (delim == DELIM_NEWLINE) {
         write(ALIGN_INDENT);
+      }
       write(param.exprInit, POP_INDENT);
     }
     write(param.annotations, param.srcComma,
           param.srcComma.empty() ? DELIM_NONE : delim);
-    if (param.annotations)
+    if (!options.noAnnotations && param.annotations) {
       write(DELIM_NEWLINE);
+    }
   }
   write(POP_INDENT, params.srcParenR);
 }

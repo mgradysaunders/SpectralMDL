@@ -2,11 +2,7 @@
 
 import ::math::*;
 
-export enum coordinate_space {
-  coordinate_internal = 0,
-  coordinate_object = 1,
-  coordinate_world = 2
-};
+export enum coordinate_space { coordinate_internal = 0, coordinate_object = 1, coordinate_world = 2 };
 
 export @(macro) float3 position() = $state.position;
 
@@ -30,12 +26,7 @@ export @(macro) float3 geometry_tangent_v(const int i) = $state.geometry_tangent
 
 export @(macro) float3x3 tangent_space(const int i) = float3x3($state.texture_tangent_u[i], $state.texture_tangent_v[i], $state.normal);
 
-export @(macro) float3x3 geometry_tangent_space(const int i) =
-  float3x3(
-    $state.geometry_tangent_u[i],
-    $state.geometry_tangent_v[i],
-    $state.geometry_normal
-  );
+export @(macro) float3x3 geometry_tangent_space(const int i) = float3x3($state.geometry_tangent_u[i], $state.geometry_tangent_v[i], $state.geometry_normal);
 
 export @(macro) int object_id() = $state.object_id;
 
@@ -49,8 +40,7 @@ export @(macro) float wavelength_min() = $state.wavelength_min;
 
 export @(macro) float wavelength_max() = $state.wavelength_max;
 
-export @(macro) float[WAVELENGTH_BASE_MAX] wavelength_base() =
-  $state.wavelength_base;
+export @(macro) float[WAVELENGTH_BASE_MAX] wavelength_base() = $state.wavelength_base;
 
 export @(macro) float meters_per_scene_unit() = $state.meters_per_scene_unit;
 
@@ -58,14 +48,11 @@ export @(macro) float scene_units_per_meter() = 1.0 / $state.meters_per_scene_un
 
 @(pure) float4x4 affine_inverse(float4x4 matrix) {
   return float4x4(
-      float4(matrix[0].x, matrix[1].x, matrix[2].x, 0.0),
-      float4(matrix[0].y, matrix[1].y, matrix[2].y, 0.0),
-      float4(matrix[0].z, matrix[1].z, matrix[2].z, 0.0),
-      float4(
-        -#sum(matrix[0] * matrix[3]),
-        -#sum(matrix[1] * matrix[3]),
-        -#sum(matrix[2] * matrix[3]),
-        1.0));
+    float4(matrix[0].x, matrix[1].x, matrix[2].x, 0.0),
+    float4(matrix[0].y, matrix[1].y, matrix[2].y, 0.0),
+    float4(matrix[0].z, matrix[1].z, matrix[2].z, 0.0),
+    float4(-#sum(matrix[0] * matrix[3]), -#sum(matrix[1] * matrix[3]), -#sum(matrix[2] * matrix[3]), 1.0),
+  );
 }
 
 export @(macro) float4x4 transform(const coordinate_space from, const coordinate_space to) {

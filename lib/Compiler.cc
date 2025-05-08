@@ -123,10 +123,11 @@ std::optional<Error> Compiler::compile(OptLevel optLevel) {
   return std::nullopt;
 }
 
-std::optional<Error> Compiler::format_source_code() {
+std::optional<Error>
+Compiler::format_source_code(const FormatOptions &formatOptions) {
   for (auto &mod : modules) {
     if (!mod->is_builtin()) {
-      if (auto error{mod->format_source_code()})
+      if (auto error{mod->format_source_code(formatOptions)})
         return error;
     }
   }

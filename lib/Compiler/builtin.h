@@ -358,19 +358,14 @@ export @(pure macro) bool print(const auto a) {
 }
 )*";
 
-static const char *df = R"*(// vim:foldmethod=marker:foldlevel=0:fmr=--{,--} 
+static const char *df = R"*(// vim:foldmethod=marker:foldlevel=0:fmr=--{,--}
 #smdl
 
 using ::math import *;
 using ::monte_carlo import *;
 using ::specular import *;
 
-export enum scatter_mode {
-  scatter_none = 0,
-  scatter_reflect = 1,
-  scatter_transmit = 2,
-  scatter_reflect_transmit = 3
-};
+export enum scatter_mode { scatter_none = 0, scatter_reflect = 1, scatter_transmit = 2, scatter_reflect_transmit = 3 };
 
 /// Calculate the chance of reflection.
 @(pure macro) float scatter_reflect_chance(const scatter_mode mode) {
@@ -381,8 +376,7 @@ export enum scatter_mode {
 
 /// Calculate the orthogonal right-handed tangent space from the 
 /// given normal and tangent vectors.
-@(pure noinline) float3x3 build_tangent_space(
-    const float3 normal, const float3 tangent_u) {
+@(pure noinline) float3x3 build_tangent_space(const float3 normal, const float3 tangent_u) {
   const auto tw(normalize(normal) * #sign(normal.z));
   const auto tu(normalize(tangent_u - dot(tangent_u, tw) * tw));
   const auto tv(normalize(cross(tw, tu)));
@@ -416,10 +410,10 @@ struct scatter_evaluate_parameters {
 
   /// The tangent direction.
   float3 tangent_u = float3(1, 0, 0);
-  
+
   /// The outgoing direction.
   float3 wo = wo0;
-  
+
   /// The incoming direction.
   float3 wi = wi0;
 
@@ -427,7 +421,7 @@ struct scatter_evaluate_parameters {
     // If we hit the backface, flip everything so that `wo` 
     // is always in the upper hemisphere.
     if (hit_backface) {
-      wo0 = -wo0; 
+      wo0 = -wo0;
       wi0 = -wi0;
       wo = -wo;
       wi = -wi;
@@ -536,9 +530,7 @@ export struct diffuse_reflection_bsdf: bsdf {
   string handle = "";
 };
 
-@(pure) auto scatter_evaluate(
-    inline const &diffuse_reflection_bsdf this,
-    inline const &scatter_evaluate_parameters params) {
+@(pure) auto scatter_evaluate(inline const &diffuse_reflection_bsdf this, inline const &scatter_evaluate_parameters params) {
   if (mode == scatter_reflect && recalculate_tangent_space(params)) {
     const auto cos_theta(#abs(auto(wi.z, wo.z)));
     const auto pdf(cos_theta / $PI);
@@ -557,9 +549,7 @@ export struct diffuse_reflection_bsdf: bsdf {
   }
 }
 
-@(pure) auto scatter_sample(
-    inline const &diffuse_reflection_bsdf this,
-    inline const &scatter_sample_parameters params) {
+@(pure) auto scatter_sample(inline const &diffuse_reflection_bsdf this, inline const &scatter_sample_parameters params) {
   if ((tbn := recalculate_tangent_space(params))) {
     return scatter_sample_result(wi: (*tbn) * cosine_hemisphere_sample(xi.xy), mode: scatter_reflect);
   } else {
@@ -577,9 +567,7 @@ export struct diffuse_transmission_bsdf: bsdf {
   string handle = "";
 };
 
-@(pure) auto scatter_evaluate(
-    inline const &diffuse_transmission_bsdf this,
-    inline const &scatter_evaluate_parameters params) {
+@(pure) auto scatter_evaluate(inline const &diffuse_transmission_bsdf this, inline const &scatter_evaluate_parameters params) {
   if (mode == scatter_transmit && recalculate_tangent_space(params)) {
     const auto cos_theta(#abs(auto(wi.z, wo.z)));
     const auto pdf(cos_theta / $PI);
@@ -589,9 +577,7 @@ export struct diffuse_transmission_bsdf: bsdf {
   }
 }
 
-@(pure) auto scatter_sample(
-    inline const &diffuse_transmission_bsdf this, 
-    inline const &scatter_sample_parameters params) {
+@(pure) auto scatter_sample(inline const &diffuse_transmission_bsdf this, inline const &scatter_sample_parameters params) {
   if ((tbn := recalculate_tangent_space(params))) {
     return scatter_sample_result(wi: (*tbn) * -cosine_hemisphere_sample(xi.xy), mode: scatter_transmit);
   } else {
@@ -622,43 +608,34 @@ export struct sheen_bsdf: bsdf {
   }
 };
 
-@(pure) float sheen_lambda_l(const auto fit, const float mu) = 
-  fit[0] / (1.0 + fit[1] * #pow(mu, fit[2])) + fit[3] * mu + fit[4];
+@(pure) float sheen_lambda_l(const auto fit, const float mu) = fit[0] / (1.0 + fit[1] * #pow(mu, fit[2])) + fit[3] * mu + fit[4];
 
-@(pure) float sheen_lambda(const auto fit, const float mu) = 
-  #exp(mu < 0.5 ? sheen_lambda_l(fit, mu) : 
-                  2 * sheen_lambda_l(fit, 0.5) - 
-                      sheen_lambda_l(fit, #max(1 - mu, 0)));
+@(pure) float sheen_lambda(const auto fit, const float mu) = #exp(mu < 0.5 ? sheen_lambda_l(fit, mu) : 2 * sheen_lambda_l(fit, 0.5) - sheen_lambda_l(fit, #max(1 - mu, 0)));
 
-@(pure) auto scatter_evaluate(
-    inline const &sheen_bsdf this, 
-    inline const &scatter_evaluate_parameters params) {
+@(pure) auto scatter_evaluate(inline const &sheen_bsdf this, inline const &scatter_evaluate_parameters params) {
   if (mode == scatter_reflect && recalculate_tangent_space(params)) {
     const auto cos_thetao(#abs(wo.z));
     const auto cos_thetai(#abs(wi.z));
     const auto pdf(float2(cos_thetai, cos_thetao) / $PI);
-    const auto fss(let {
+    const auto fss = let {
       const auto alpha(lerp(0.1, 1.0, roughness * roughness));
-      const auto fit(lerp(
+      const auto fit = lerp(
         auto(21.5473, 3.82987, 0.19823, -1.97760, -4.32054),
-        auto(25.3245, 3.32435, 0.16801, -1.27393, -4.85967), 
-        (1 - alpha) * (1 - alpha))); 
+        auto(25.3245, 3.32435, 0.16801, -1.27393, -4.85967),
+        (1 - alpha) * (1 - alpha),
+      );
       const auto cos_thetah(normalize(wo + wi).z);
       const auto sin_thetah(#sqrt(1 - cos_thetah * cos_thetah + SCATTER_EPS));
       const auto D(1 / $TWO_PI * (2 + 1 / alpha) * #pow(sin_thetah, 1 / alpha));
-      const auto G(1 / (1 + 
-        sheen_lambda(fit, cos_thetao) + 
-        sheen_lambda(fit, cos_thetai)));
-    } in D * G / (4 * cos_thetao + SCATTER_EPS));
+      const auto G(1 / (1 + sheen_lambda(fit, cos_thetao) + sheen_lambda(fit, cos_thetai)));
+    } in D * G / (4 * cos_thetao + SCATTER_EPS);
     return scatter_evaluate_result(f: tint * fss, pdf: pdf);
   } else {
     return scatter_evaluate_result(is_black: true);
   }
 }
 
-@(pure) auto scatter_sample(
-    inline const &sheen_bsdf this, 
-    inline const &scatter_sample_parameters params) {
+@(pure) auto scatter_sample(inline const &sheen_bsdf this, inline const &scatter_sample_parameters params) {
   if ((tbn := recalculate_tangent_space(params))) {
     return scatter_sample_result(wi: (*tbn) * cosine_hemisphere_sample(xi.xy), mode: scatter_reflect);
   } else {
@@ -693,8 +670,7 @@ export struct ward_geisler_moroder_bsdf: bsdf {
   }
 };
 
-@(pure noinline) auto scatter_evaluate(
-    const &ward_geisler_moroder_bsdf this, inline const &scatter_evaluate_parameters params) {
+@(pure noinline) auto scatter_evaluate(const &ward_geisler_moroder_bsdf this, inline const &scatter_evaluate_parameters params) {
   preserve tangent_u;
   tangent_u = this.tangent_u;
   if (mode == scatter_reflect && recalculate_tangent_space(params)) {
@@ -702,8 +678,7 @@ export struct ward_geisler_moroder_bsdf: bsdf {
     const auto cos_thetai(#abs(wi.z));
     const auto roughness(this.roughness_u, this.roughness_v);
     const auto alpha(#max(0.001, roughness * roughness));
-    const auto f(#sum((h := wo + wi) * h) / ($PI * alpha.x * alpha.y * #pow(h.z, 4)) * 
-                 #exp(-#sum((g := h.xy / (h.z * alpha)) * g)));
+    const auto f(#sum((h := wo + wi) * h) / ($PI * alpha.x * alpha.y * #pow(h.z, 4)) * #exp(-#sum((g := h.xy / (h.z * alpha)) * g)));
     // Single-scattering.
     const auto fss_pdf(float2(f * (cos_thetao + cos_thetai) / 2));
     const auto fss(f * cos_thetai);
@@ -712,28 +687,28 @@ export struct ward_geisler_moroder_bsdf: bsdf {
     } else {
       // Multiple-scattering.
       const auto fms_pdf(float2(cos_thetai, cos_thetao) / $PI);
-      const auto fms(let {
+      const auto fms = let {
         const auto r0(#sqrt(roughness.x * roughness.y));
-        const auto fit(return_from {
+        const auto fit = return_from {
           // Parallel evaluation of 3 different 8th-order polynomials
           // fit[0] = 1st coefficient in directional albedo fit
           // fit[1] = 2nd coefficient in directional albedo fit
           // fit[2] = Average albedo
-          float3 fit(-1.1992005e+02, -1.4040313e+01, 7.8306640e-01);
-          fit = fit * r0 + float3( 4.1985368e+02,  4.6807753e+01, -1.6213743e+00);
+          float3 fit(-1.1992005e+02, -1.4040313e+01, +7.8306640e-01);
+          fit = fit * r0 + float3(+4.1985368e+02, +4.6807753e+01, -1.6213743e+00);
           fit = fit * r0 + float3(-5.8448171e+02, -6.1370147e+01, -1.3797964e+00);
-          fit = fit * r0 + float3( 4.2351783e+02,  4.1399258e+01,  5.6539624e+00);
+          fit = fit * r0 + float3(+4.2351783e+02, +4.1399258e+01, +5.6539624e+00);
           fit = fit * r0 + float3(-1.6959530e+02, -1.4979874e+01, -3.8064856e+00);
-          fit = fit * r0 + float3( 3.7025769e+01,  3.0665596e+00, -1.2666234e-01);
+          fit = fit * r0 + float3(+3.7025769e+01, +3.0665596e+00, -1.2666234e-01);
           fit = fit * r0 + float3(-3.4191809e+00, -2.9108604e-01, -1.8175253e-02);
-          fit = fit * r0 + float3( 1.6044891e-01,  8.8001559e-03,  1.4868175e-03);
-          fit = fit * r0 + float3(-7.1467185e-04,  1.8095055e-01,  9.9998607e-01);
+          fit = fit * r0 + float3(+1.6044891e-01, +8.8001559e-03, +1.4868175e-03);
+          fit = fit * r0 + float3(-7.1467185e-04, +1.8095055e-01, +9.9998607e-01);
           return fit;
-        });
+        };
         const auto Ewo(#min(1 - fit[1] * (t := #pow(cos_thetao / fit[0], 2.0 / 3.0)) * #exp(1 - t), 0.999));
         const auto Ewi(#min(1 - fit[1] * (t := #pow(cos_thetai / fit[0], 2.0 / 3.0)) * #exp(1 - t), 0.999));
         const auto Eav(#min(fit[2], 0.999));
-      } in (1 - Ewo) * (1 - Ewi) / (1 - Eav) * cos_thetai / $PI);
+      } in (1 - Ewo) * (1 - Ewi) / (1 - Eav) * cos_thetai / $PI;
       return scatter_evaluate_result(f: this.tint * (fss + this.multiscatter_tint * fms), pdf: 0.8 * fss_pdf + 0.2 * fms_pdf);
     }
   } else {
@@ -741,8 +716,7 @@ export struct ward_geisler_moroder_bsdf: bsdf {
   }
 }
 
-@(pure noinline) auto scatter_sample(
-    const &ward_geisler_moroder_bsdf this, inline const &scatter_sample_parameters params) {
+@(pure noinline) auto scatter_sample(const &ward_geisler_moroder_bsdf this, inline const &scatter_sample_parameters params) {
   preserve tangent_u;
   tangent_u = this.tangent_u;
   if ((tbn := recalculate_tangent_space(params))) {
@@ -754,11 +728,9 @@ export struct ward_geisler_moroder_bsdf: bsdf {
     const auto roughness(this.roughness_u, this.roughness_v);
     const auto alpha(#max(0.001, roughness * roughness));
     const auto phi(#atan2(alpha.y * #sin(t := $TWO_PI * xi.x), alpha.x * #cos(t)));
-    const auto cos_phi(#cos(phi)); 
+    const auto cos_phi(#cos(phi));
     const auto sin_phi(#sin(phi));
-    const auto theta(#atan(#sqrt(-#log(1 - xi.y) / 
-      (#pow(cos_phi / alpha.x, 2) + 
-       #pow(sin_phi / alpha.y, 2)))));
+    const auto theta(#atan(#sqrt(-#log(1 - xi.y) / (#pow(cos_phi / alpha.x, 2) + #pow(sin_phi / alpha.y, 2)))));
     const auto wm(float3(#sin(theta) * float2(cos_phi, sin_phi), #cos(theta)));
     const auto wi(normalize(reflect(wo, wm)));
     if (wi.z > 0) {
@@ -801,12 +773,12 @@ export @(pure macro) auto tint(const auto tint, const edf base) = tint1(tint, ba
 export @(pure macro) auto tint(const auto tint, const hair_bsdf base) = tint1(tint, base);
 
 /// Construct 2-value tint of the given `bsdf`.
-export @(pure macro) auto tint(const auto reflection_tint, const auto transmission_tint, const bsdf base) =
-  tint2(reflection_tint, transmission_tint, base);
+export @(pure macro) auto tint(const auto reflection_tint, const auto transmission_tint, const bsdf base) = tint2(reflection_tint, transmission_tint, base);
 
 @(pure macro) auto scatter_evaluate(const &tint1 this, const &scatter_evaluate_parameters params) {
   auto result(scatter_evaluate(visit &this.base, params));
-  if (!result.is_black) result.f *= this.tint;
+  if (!result.is_black)
+    result.f *= this.tint;
   return result;
 }
 
@@ -871,21 +843,15 @@ export struct weighted_layer: bsdf {
   }
 };
 
-@(pure macro) auto scatter_evaluate(
-    const &weighted_layer this, inline const &scatter_evaluate_parameters params) {
+@(pure macro) auto scatter_evaluate(const &weighted_layer this, inline const &scatter_evaluate_parameters params) {
   auto result0(scatter_evaluate(visit &this.base, params));
   preserve normal;
   normal = this.normal;
   auto result1(scatter_evaluate(visit &this.layer, params));
-  return scatter_evaluate_result(
-    f:   lerp(result0.f,   result1.f,   this.weight), 
-    pdf: lerp(result0.pdf, result1.pdf, this.chance),
-    is_black: result0.is_black & result1.is_black
-  );
+  return scatter_evaluate_result(f: lerp(result0.f, result1.f, this.weight), pdf: lerp(result0.pdf, result1.pdf, this.chance), is_black: result0.is_black & result1.is_black);
 }
 
-@(pure macro) auto scatter_sample(
-    const &weighted_layer this, inline const &scatter_sample_parameters params) {
+@(pure macro) auto scatter_sample(const &weighted_layer this, inline const &scatter_sample_parameters params) {
   if (bool_sample(&xi.w, this.chance)) {
     preserve normal;
     normal = this.normal;
@@ -900,32 +866,33 @@ export typedef weighted_layer color_weighted_layer;
 //--}
 
 export @(pure macro) int $scatter_evaluate(
-    const &$material_instance instance,
-    const &float3 wo, 
-    const &float3 wi,  
-    const &float pdf_fwd, 
-    const &float pdf_rev, 
-    const &float f) {
-  auto params(scatter_evaluate_parameters(
+  const &$material_instance instance,
+  const &float3 wo,
+  const &float3 wi,
+  const &float pdf_fwd,
+  const &float pdf_rev,
+  const &float f,
+) {
+  auto params = scatter_evaluate_parameters(
     wo0: normalize(*wo), // Guarantee normalized
     wi0: normalize(*wi), // Guarantee normalized
     thin_walled: instance.mat.thin_walled,
-    normal: normalize(*instance.normal)));
-  auto result(
-    (#typeof(instance.mat.backface) == #typeof(material_surface()) || !params.hit_backface)
-      ? scatter_evaluate(&instance.mat.surface.scattering, &params)
-      : scatter_evaluate(&instance.mat.backface.scattering, &params));
+    normal: normalize(*instance.normal),
+  );
+  auto result = #typeof(instance.mat.backface) == #typeof(material_surface()) || !params.hit_backface //
+                ? scatter_evaluate(&instance.mat.surface.scattering, &params)                         //
+                : scatter_evaluate(&instance.mat.backface.scattering, &params);
   visit result in result {
     if (result.is_black) {
       *pdf_fwd = 0;
       *pdf_rev = 0;
-      for (int i = 0; i < $WAVELENGTH_BASE_MAX; i++) 
+      for (int i = 0; i < $WAVELENGTH_BASE_MAX; i++)
         f[i] = 0.0;
     } else {
       *pdf_fwd = result.pdf[0];
       *pdf_rev = result.pdf[1];
       if (#typeof(result.f) == float) {
-        for (int i = 0; i < $WAVELENGTH_BASE_MAX; i++) 
+        for (int i = 0; i < $WAVELENGTH_BASE_MAX; i++)
           f[i] = result.f;
       } else {
         #memcpy(f, &result.f, #sizeof(float) * $WAVELENGTH_BASE_MAX);
@@ -936,27 +903,27 @@ export @(pure macro) int $scatter_evaluate(
 }
 
 export @(pure macro) int $scatter_sample(
-    const &$material_instance instance,
-    const &float4 xi,
-    const &float3 wo, 
-    const &float3 wi,  
-    const &float pdf_fwd, 
-    const &float pdf_rev, 
-    const &float f,
-    const &int is_delta) {
-  auto params(scatter_sample_parameters(
-    xi:  saturate(*xi),  // Guarantee clamped to [0,1]
+  const &$material_instance instance,
+  const &float4 xi,
+  const &float3 wo,
+  const &float3 wi,
+  const &float pdf_fwd,
+  const &float pdf_rev,
+  const &float f,
+  const &int is_delta,
+) {
+  auto params = scatter_sample_parameters(
+    xi: saturate(*xi),   // Guarantee clamped to [0,1]
     wo0: normalize(*wo), // Guarantee normalized
     thin_walled: instance.mat.thin_walled,
-    normal: normalize(*instance.normal)));
-  auto result(
-    (#typeof(instance.mat.backface) == #typeof(material_surface()) || !params.hit_backface) 
-      ? scatter_sample(&instance.mat.surface.scattering, &params)
-      : scatter_sample(&instance.mat.backface.scattering, &params));
+    normal: normalize(*instance.normal),
+  );
+  auto result = #typeof(instance.mat.backface) == #typeof(material_surface()) || !params.hit_backface //
+                ? scatter_sample(&instance.mat.surface.scattering, &params)                           //
+                : scatter_sample(&instance.mat.backface.scattering, &params);
   visit result in result {
     *wi = #select(params.hit_backface, -result.wi, +result.wi);
-    if (result.mode == scatter_none ||
-        ((wo.z < 0) == (wi.z < 0)) != (result.mode == scatter_reflect)) {
+    if (result.mode == scatter_none || ((wo.z < 0) == (wi.z < 0)) != (result.mode == scatter_reflect)) {
       *pdf_fwd = 0.0;
       *pdf_rev = 0.0;
       for (int i = 0; i < $WAVELENGTH_BASE_MAX; i++)
@@ -1008,8 +975,7 @@ export @(pure macro) auto max(const auto a, const auto b) = #max(a, b);
 
 export @(pure macro) auto min(const auto a, const auto b) = #min(a, b);
 
-export @(pure macro) auto clamp(const auto a, const auto min, const auto max) =
-  #max(min, #min(a, max));
+export @(pure macro) auto clamp(const auto a, const auto min, const auto max) = #max(min, #min(a, max));
 
 export @(pure macro) auto saturate(const auto a) = clamp(a, 0.0, 1.0);
 
@@ -1023,8 +989,7 @@ export @(pure macro) auto trunc(const auto a) = #trunc(a);
 
 export @(pure macro) auto frac(const auto a) = a - #floor(a);
 
-export @(pure macro) auto fmod(const auto a, const auto b) =
-  a % b;
+export @(pure macro) auto fmod(const auto a, const auto b) = a % b;
 
 // TODO modf
 
@@ -1092,11 +1057,9 @@ export @(pure macro) auto max_value(const auto a) = #max_value(a);
 
 export @(pure macro) auto average(const auto a) = #sum(a) / a.size;
 
-export @(pure macro) auto lerp(const auto a, const auto b, const auto l) =
-  (1.0 - l) * a + l * b;
+export @(pure macro) auto lerp(const auto a, const auto b, const auto l) = (1.0 - l) * a + l * b;
 
-export @(pure macro) auto step(const auto a, const auto b) =
-  #select(b < a, 0.0, 1.0);
+export @(pure macro) auto step(const auto a, const auto b) = #select(b < a, 0.0, 1.0);
 
 export @(pure macro) auto smoothstep(const auto a, const auto b, const auto l) {
   const auto t(saturate(l));
@@ -1110,11 +1073,9 @@ export @(pure macro) auto length(const auto a) = #sqrt(#sum(a * a));
 
 export @(pure macro) auto normalize(const auto a) = a * (1 / length(a));
 
-export @(pure macro) auto distance(const auto a, const auto b) =
-  length(b - a);
+export @(pure macro) auto distance(const auto a, const auto b) = length(b - a);
 
-export @(pure macro) auto cross(const auto a, const auto b) =
-  a.yzx * b.zxy - a.zxy * b.yzx;
+export @(pure macro) auto cross(const auto a, const auto b) = a.yzx * b.zxy - a.zxy * b.yzx;
 
 export @(pure macro) auto transpose(const auto a) = #transpose(a);
 
@@ -1155,14 +1116,11 @@ static const char *monte_carlo = R"*(#smdl
 
 import ::math::*;
 
-export @(pure macro) float2 advance_low_discrepancy(const &float2 xi) =
-  (*xi = math::frac(*xi + float2(0.75487766, 0.56984029)));
+export @(pure macro) float2 advance_low_discrepancy(const &float2 xi) = (*xi = math::frac(*xi + float2(0.75487766, 0.56984029)));
 
-export @(pure macro) float3 advance_low_discrepancy(const &float3 xi) =
-  (*xi = math::frac(*xi + float3(0.81917251, 0.67104360, 0.54970047)));
+export @(pure macro) float3 advance_low_discrepancy(const &float3 xi) = (*xi = math::frac(*xi + float3(0.81917251, 0.67104360, 0.54970047)));
 
-export @(pure macro) float4 advance_low_discrepancy(const &float4 xi) =
-  (*xi = math::frac(*xi + float4(0.85667488, 0.73389185, 0.62870672, 0.53859725)));
+export @(pure macro) float4 advance_low_discrepancy(const &float4 xi) = (*xi = math::frac(*xi + float4(0.85667488, 0.73389185, 0.62870672, 0.53859725)));
 
 export @(pure) bool bool_sample(const &float xi, const float chance) {
   if (*xi < chance) {
@@ -1189,46 +1147,35 @@ export @(pure noinline) float2 uniform_disk_sample(float2 xi) {
   return rad * float2(#cos(phi), #sin(phi));
 }
 
-export @(pure noinline) float3 cosine_hemisphere_sample(float2 xi) = 
-  float3((p := uniform_disk_sample(xi)), #sqrt(#max(1 - #sum(p * p), 0)));
+export @(pure noinline) float3 cosine_hemisphere_sample(float2 xi) = float3((p := uniform_disk_sample(xi)), #sqrt(#max(1 - #sum(p * p), 0)));
 )*";
 
 static const char *scene = R"*(#smdl
 
 export @(macro) bool data_isvalid(const string name) = #data_exists(name);
 
-export @(macro) int data_lookup_int(const string name, int default_value = int()) =
-  #data_lookup(name, default_value);
+export @(macro) int data_lookup_int(const string name, int default_value = int()) = #data_lookup(name, default_value);
 
-export @(macro) int2 data_lookup_int2(const string name, int2 default_value = int2()) =
-  #data_lookup(name, default_value);
+export @(macro) int2 data_lookup_int2(const string name, int2 default_value = int2()) = #data_lookup(name, default_value);
 
-export @(macro) int3 data_lookup_int3(const string name, int3 default_value = int3()) =
-  #data_lookup(name, default_value);
+export @(macro) int3 data_lookup_int3(const string name, int3 default_value = int3()) = #data_lookup(name, default_value);
 
-export @(macro) int4 data_lookup_int4(const string name, int4 default_value = int4()) =
-  #data_lookup(name, default_value);
+export @(macro) int4 data_lookup_int4(const string name, int4 default_value = int4()) = #data_lookup(name, default_value);
 
-export @(macro) float data_lookup_float(const string name, float default_value = float()) =
-  #data_lookup(name, default_value);
+export @(macro) float data_lookup_float(const string name, float default_value = float()) = #data_lookup(name, default_value);
 
-export @(macro) float2 data_lookup_float2(const string name, float2 default_value = float2()) =
-  #data_lookup(name, default_value);
+export @(macro) float2 data_lookup_float2(const string name, float2 default_value = float2()) = #data_lookup(name, default_value);
 
-export @(macro) float3 data_lookup_float3(const string name, float3 default_value = float3()) =
-  #data_lookup(name, default_value);
+export @(macro) float3 data_lookup_float3(const string name, float3 default_value = float3()) = #data_lookup(name, default_value);
 
-export @(macro) float4 data_lookup_float4(const string name, float4 default_value = float4()) =
-  #data_lookup(name, default_value);
+export @(macro) float4 data_lookup_float4(const string name, float4 default_value = float4()) = #data_lookup(name, default_value);
 
-export @(macro) color data_lookup_color(const string name, color default_value = color()) =
-  #data_lookup(name, default_value);
+export @(macro) color data_lookup_color(const string name, color default_value = color()) = #data_lookup(name, default_value);
 )*";
 
 static const char *specular = R"*(#smdl
 
-export @(pure macro) auto reflect(const float3 wi, const float3 wm) =
-  2 * #sum(wi * wm) * wm - wi;
+export @(pure macro) auto reflect(const float3 wi, const float3 wm) = 2 * #sum(wi * wm) * wm - wi;
 
 export @(pure macro) auto refract(const float3 wi, const float3 wm, const float ior) {
   const auto cos_thetai(#sum(wi * wm));
@@ -1238,16 +1185,13 @@ export @(pure macro) auto refract(const float3 wi, const float3 wm, const float 
   return -ior * wi + (ior * cos_thetai + cos_thetat) * wm;
 }
 
-export @(pure macro) auto refraction_half_vector(const float3 wo, const float3 wi, const float ior) =
-  (vh := -ior * wo + wi) * #sign(vh.z);
+export @(pure macro) auto refraction_half_vector(const float3 wo, const float3 wi, const float ior) = (vh := -ior * wo + wi) * #sign(vh.z);
 
-export @(pure macro) auto refraction_half_vector_jacobian(const float3 wo, const float3 wi, const float ior) =
-  #abs(#sum(wi * (vh := refraction_half_vector(wo, wi, ior)))) / ((vh2 := #sum(vh * vh)) * #sqrt(vh2));
+export @(pure macro) auto refraction_half_vector_jacobian(const float3 wo, const float3 wi, const float ior) = #abs(#sum(wi * (vh := refraction_half_vector(wo, wi, ior)))) / ((vh2 := #sum(vh * vh)) * #sqrt(vh2));
 
 export @(pure macro) auto schlick_F0(const auto ior) = #pow((ior - 1) / (ior + 1), 2);
 
-export @(pure macro) auto schlick_fresnel(const auto cos_theta, const auto F0, const auto F90 = 1.0, const float exponent = 5) =
-  F0 + (F90 - F0) * #pow(#max(1 - #abs(cos_theta), 0), exponent);
+export @(pure macro) auto schlick_fresnel(const auto cos_theta, const auto F0, const auto F90 = 1.0, const float exponent = 5) = F0 + (F90 - F0) * #pow(#max(1 - #abs(cos_theta), 0), exponent);
 
 export @(pure) auto dielectric_fresnel(const float cos_thetai, const auto ior) {
   const auto cos2_thetat(1 - ior * ior * (1 - cos_thetai * cos_thetai));
@@ -1262,11 +1206,7 @@ static const char *state = R"*(#smdl
 
 import ::math::*;
 
-export enum coordinate_space {
-  coordinate_internal = 0,
-  coordinate_object = 1,
-  coordinate_world = 2
-};
+export enum coordinate_space { coordinate_internal = 0, coordinate_object = 1, coordinate_world = 2 };
 
 export @(macro) float3 position() = $state.position;
 
@@ -1290,12 +1230,7 @@ export @(macro) float3 geometry_tangent_v(const int i) = $state.geometry_tangent
 
 export @(macro) float3x3 tangent_space(const int i) = float3x3($state.texture_tangent_u[i], $state.texture_tangent_v[i], $state.normal);
 
-export @(macro) float3x3 geometry_tangent_space(const int i) =
-  float3x3(
-    $state.geometry_tangent_u[i],
-    $state.geometry_tangent_v[i],
-    $state.geometry_normal
-  );
+export @(macro) float3x3 geometry_tangent_space(const int i) = float3x3($state.geometry_tangent_u[i], $state.geometry_tangent_v[i], $state.geometry_normal);
 
 export @(macro) int object_id() = $state.object_id;
 
@@ -1309,8 +1244,7 @@ export @(macro) float wavelength_min() = $state.wavelength_min;
 
 export @(macro) float wavelength_max() = $state.wavelength_max;
 
-export @(macro) float[WAVELENGTH_BASE_MAX] wavelength_base() =
-  $state.wavelength_base;
+export @(macro) float[WAVELENGTH_BASE_MAX] wavelength_base() = $state.wavelength_base;
 
 export @(macro) float meters_per_scene_unit() = $state.meters_per_scene_unit;
 
@@ -1318,14 +1252,11 @@ export @(macro) float scene_units_per_meter() = 1.0 / $state.meters_per_scene_un
 
 @(pure) float4x4 affine_inverse(float4x4 matrix) {
   return float4x4(
-      float4(matrix[0].x, matrix[1].x, matrix[2].x, 0.0),
-      float4(matrix[0].y, matrix[1].y, matrix[2].y, 0.0),
-      float4(matrix[0].z, matrix[1].z, matrix[2].z, 0.0),
-      float4(
-        -#sum(matrix[0] * matrix[3]),
-        -#sum(matrix[1] * matrix[3]),
-        -#sum(matrix[2] * matrix[3]),
-        1.0));
+    float4(matrix[0].x, matrix[1].x, matrix[2].x, 0.0),
+    float4(matrix[0].y, matrix[1].y, matrix[2].y, 0.0),
+    float4(matrix[0].z, matrix[1].z, matrix[2].z, 0.0),
+    float4(-#sum(matrix[0] * matrix[3]), -#sum(matrix[1] * matrix[3]), -#sum(matrix[2] * matrix[3]), 1.0),
+  );
 }
 
 export @(macro) float4x4 transform(const coordinate_space from, const coordinate_space to) {
@@ -1382,23 +1313,15 @@ static const char *tex = R"*(#smdl
 
 import ::math::lerp;
 
-export enum gamma_mode {
-  gamma_default = 0,
-  gamma_linear = 0,
-  gamma_srgb = 1
-};
+export enum gamma_mode { gamma_default = 0, gamma_linear = 0, gamma_srgb = 1 };
 
-@(pure macro) float4 apply_gamma(const int gamma, const float4 texel) =
-  gamma == int(gamma_srgb) ? float4((texel * texel).xyz, texel.w) : texel;
+@(pure macro) float4 apply_gamma(const int gamma, const float4 texel) = gamma == int(gamma_srgb) ? float4((texel * texel).xyz, texel.w) : texel;
 
-@(pure macro) float3 apply_gamma(const int gamma, const float3 texel) =
-  gamma == int(gamma_srgb) ? (texel * texel) : texel;
+@(pure macro) float3 apply_gamma(const int gamma, const float3 texel) = gamma == int(gamma_srgb) ? (texel * texel) : texel;
 
-@(pure macro) float2 apply_gamma(const int gamma, const float2 texel) =
-  gamma == int(gamma_srgb) ? (texel * texel) : texel;
+@(pure macro) float2 apply_gamma(const int gamma, const float2 texel) = gamma == int(gamma_srgb) ? (texel * texel) : texel;
 
-@(pure macro) float apply_gamma(const int gamma, const float texel) =
-  gamma == int(gamma_srgb) ? (texel * texel) : texel;
+@(pure macro) float apply_gamma(const int gamma, const float texel) = gamma == int(gamma_srgb) ? (texel * texel) : texel;
 
 @(pure macro) int uv_tile_index(const texture_2d tex, const int2 uv_tile) {
   return -1 if (#any((uv_tile < 0) | (uv_tile >= tex.tile_count)));
@@ -1423,15 +1346,13 @@ export @(pure macro) int height(const texture_2d tex, const int2 uv_tile = int2(
 
 // TODO int height(const texture_cube tex)
 
-export @(pure macro) bool texture_isvalid(const texture_2d tex) =
-  bool(tex.tile_buffers[0]);
+export @(pure macro) bool texture_isvalid(const texture_2d tex) = bool(tex.tile_buffers[0]);
 
 // TODO bool texture_isvalid(const texture_3d tex)
 
 // TODO bool texture_isvalid(const texture_cube tex)
 
-export @(pure macro) bool texture_isvalid(const texture_ptex tex) =
-  bool(tex.texture);
+export @(pure macro) bool texture_isvalid(const texture_ptex tex) = bool(tex.texture);
 
 @(pure) auto texel_fetch(const texture_2d tex, const int2 coord, const int2 uv_tile = int2(0)) {
   const auto i(uv_tile_index(tex, uv_tile));
@@ -1442,24 +1363,15 @@ export @(pure macro) bool texture_isvalid(const texture_ptex tex) =
   return tile_buffer[coord.y * tile_extent.x + coord.x];
 }
 
-export @(pure macro) float4 texel_float4(const texture_2d tex, const int2 coord, const int2 uv_tile = int2(0)) =
-  apply_gamma(tex.gamma, #unpack_float4(texel_fetch(tex, coord, uv_tile)));
+export @(pure macro) float4 texel_float4(const texture_2d tex, const int2 coord, const int2 uv_tile = int2(0)) = apply_gamma(tex.gamma, #unpack_float4(texel_fetch(tex, coord, uv_tile)));
 
-export @(pure macro) float3 texel_float3(const texture_2d tex, const int2 coord, const int2 uv_tile = int2(0)) =
-  apply_gamma(tex.gamma, #unpack_float4(texel_fetch(tex, coord, uv_tile)).xyz);
+export @(pure macro) float3 texel_float3(const texture_2d tex, const int2 coord, const int2 uv_tile = int2(0)) = apply_gamma(tex.gamma, #unpack_float4(texel_fetch(tex, coord, uv_tile)).xyz);
 
-export @(pure macro) float2 texel_float2(const texture_2d tex, const int2 coord, const int2 uv_tile = int2(0)) =
-  apply_gamma(tex.gamma, #unpack_float4(texel_fetch(tex, coord, uv_tile)).xy);
+export @(pure macro) float2 texel_float2(const texture_2d tex, const int2 coord, const int2 uv_tile = int2(0)) = apply_gamma(tex.gamma, #unpack_float4(texel_fetch(tex, coord, uv_tile)).xy);
 
-export @(pure macro) float texel_float(const texture_2d tex, const int2 coord, const int2 uv_tile = int2(0)) =
-  apply_gamma(tex.gamma, #unpack_float4(texel_fetch(tex, coord, uv_tile)).x);
+export @(pure macro) float texel_float(const texture_2d tex, const int2 coord, const int2 uv_tile = int2(0)) = apply_gamma(tex.gamma, #unpack_float4(texel_fetch(tex, coord, uv_tile)).x);
 
-export enum wrap_mode {
-  wrap_clamp = 0,
-  wrap_repeat = 1,
-  wrap_mirrored_repeat = 2,
-  wrap_clip = 3
-};
+export enum wrap_mode { wrap_clamp = 0, wrap_repeat = 1, wrap_mirrored_repeat = 2, wrap_clip = 3 };
 
 @(pure macro) auto apply_wrap(const auto wrap, const auto n, auto i) {
   auto rem(i % n);
@@ -1474,12 +1386,13 @@ export enum wrap_mode {
 }
 
 export @(pure) float4 lookup_float4(
-    const texture_2d tex,
-    float2 coord,
-    const wrap_mode wrap_u = wrap_repeat,
-    const wrap_mode wrap_v = wrap_repeat,
-    const float2 crop_u = float2(0.0, 1.0),
-    const float2 crop_v = float2(0.0, 1.0)) {
+  const texture_2d tex,
+  float2 coord,
+  const wrap_mode wrap_u = wrap_repeat,
+  const wrap_mode wrap_v = wrap_repeat,
+  const float2 crop_u = float2(0.0, 1.0),
+  const float2 crop_v = float2(0.0, 1.0),
+) {
   if ((tex.tile_count_u > 1) | (tex.tile_count_v > 1)) {
     // MDL specification:
     // The wrap mode and crop parameters are ignored if the texture references a uv-tileset. In this case,
@@ -1501,16 +1414,11 @@ export @(pure) float4 lookup_float4(
     coord -= ic;
     return apply_gamma(
       tex.gamma,
-      math::lerp(
-        math::lerp( 
-          #unpack_float4(tile_buffer[ic0.x + tile_extent.x * ic0.y]), 
-          #unpack_float4(tile_buffer[ic1.x + tile_extent.x * ic0.y]),
-          coord.x),
-        math::lerp( 
-          #unpack_float4(tile_buffer[ic0.x + tile_extent.x * ic1.y]),
-          #unpack_float4(tile_buffer[ic1.x + tile_extent.x * ic1.y]),
-          coord.x),
-        coord.y));
+      math::lerp(math::lerp(#unpack_float4(tile_buffer[ic0.x + tile_extent.x * ic0.y]),           //
+                            #unpack_float4(tile_buffer[ic1.x + tile_extent.x * ic0.y]), coord.x), //
+                 math::lerp(#unpack_float4(tile_buffer[ic0.x + tile_extent.x * ic1.y]),           //
+                            #unpack_float4(tile_buffer[ic1.x + tile_extent.x * ic1.y]), coord.x), coord.y),
+    );
   } else {
     const auto i(uv_tile_index(tex, int2(0)));
     return float4(0) if (i < 0);
@@ -1531,42 +1439,40 @@ export @(pure) float4 lookup_float4(
     coord -= ic;
     return apply_gamma(
       tex.gamma,
-      math::lerp(
-        math::lerp( 
-          #unpack_float4(tile_buffer[ic0.x + tile_extent.x * ic0.y]), 
-          #unpack_float4(tile_buffer[ic1.x + tile_extent.x * ic0.y]),
-          coord.x),
-        math::lerp(
-          #unpack_float4(tile_buffer[ic0.x + tile_extent.x * ic1.y]),
-          #unpack_float4(tile_buffer[ic1.x + tile_extent.x * ic1.y]),
-          coord.x),
-        coord.y));
+      math::lerp(math::lerp(#unpack_float4(tile_buffer[ic0.x + tile_extent.x * ic0.y]),           //
+                            #unpack_float4(tile_buffer[ic1.x + tile_extent.x * ic0.y]), coord.x), //
+                 math::lerp(#unpack_float4(tile_buffer[ic0.x + tile_extent.x * ic1.y]),           //
+                            #unpack_float4(tile_buffer[ic1.x + tile_extent.x * ic1.y]), coord.x), coord.y),
+    );
   }
 }
 
 export @(pure macro) float3 lookup_float3(
-    const texture_2d tex,
-    const float2 coord,
-    const wrap_mode wrap_u = wrap_repeat,
-    const wrap_mode wrap_v = wrap_repeat,
-    const float2 crop_u = float2(0.0, 1.0),
-    const float2 crop_v = float2(0.0, 1.0)) = lookup_float4(tex, coord, wrap_u, wrap_v, crop_u, crop_v).xyz;
+  const texture_2d tex,
+  const float2 coord,
+  const wrap_mode wrap_u = wrap_repeat,
+  const wrap_mode wrap_v = wrap_repeat,
+  const float2 crop_u = float2(0.0, 1.0),
+  const float2 crop_v = float2(0.0, 1.0),
+) = lookup_float4(tex, coord, wrap_u, wrap_v, crop_u, crop_v).xyz;
 
 export @(pure macro) float2 lookup_float2(
-    const texture_2d tex,
-    const float2 coord,
-    const wrap_mode wrap_u = wrap_repeat,
-    const wrap_mode wrap_v = wrap_repeat,
-    const float2 crop_u = float2(0.0, 1.0),
-    const float2 crop_v = float2(0.0, 1.0)) = lookup_float4(tex, coord, wrap_u, wrap_v, crop_u, crop_v).xy;
+  const texture_2d tex,
+  const float2 coord,
+  const wrap_mode wrap_u = wrap_repeat,
+  const wrap_mode wrap_v = wrap_repeat,
+  const float2 crop_u = float2(0.0, 1.0),
+  const float2 crop_v = float2(0.0, 1.0),
+) = lookup_float4(tex, coord, wrap_u, wrap_v, crop_u, crop_v).xy;
 
 export @(pure macro) float lookup_float(
-    const texture_2d tex,
-    const float2 coord,
-    const wrap_mode wrap_u = wrap_repeat,
-    const wrap_mode wrap_v = wrap_repeat,
-    const float2 crop_u = float2(0.0, 1.0),
-    const float2 crop_v = float2(0.0, 1.0)) = lookup_float4(tex, coord, wrap_u, wrap_v, crop_u, crop_v).x;
+  const texture_2d tex,
+  const float2 coord,
+  const wrap_mode wrap_u = wrap_repeat,
+  const wrap_mode wrap_v = wrap_repeat,
+  const float2 crop_u = float2(0.0, 1.0),
+  const float2 crop_v = float2(0.0, 1.0),
+) = lookup_float4(tex, coord, wrap_u, wrap_v, crop_u, crop_v).x;
 
 export @(macro) float4 lookup_float4(texture_ptex tex, const int channel = 0) {
   float4 result;

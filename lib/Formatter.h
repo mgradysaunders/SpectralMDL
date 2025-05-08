@@ -7,13 +7,12 @@
 
 namespace smdl {
 
-class SMDL_EXPORT Formatter final {
+class Formatter final {
 public:
-  Formatter() = default;
+  Formatter(const FormatOptions &options) : options(options) {}
 
   [[nodiscard]] std::string format(llvm::StringRef inSrc,
                                    const AST::Node &node) {
-    inputSrc0 = inSrc;
     inputSrc = inSrc;
     outputSrc.clear();
     indent = 0;
@@ -21,6 +20,8 @@ public:
     align_line_comments();
     return outputSrc;
   }
+
+  void align_line_comments();
 
 private:
   enum Delim { DELIM_NONE, DELIM_SPACE, DELIM_NEWLINE };
@@ -69,11 +70,13 @@ private:
     return column;
   }
 
-  void delim_none();
+  [[nodiscard]] bool next_comment_forces_newline() const;
 
-  void delim_space();
+  void write_delim_none();
 
-  void delim_newline();
+  void write_delim_space();
+
+  void write_delim_newline();
 
   void write_indent_if_newline() {
     if (last_output() == '\n')
@@ -95,39 +98,17 @@ private:
 
   void write_token(llvm::StringRef inSrc);
 
-  void align_line_comments();
-
-  [[nodiscard]] Delim start_list(bool newLines) {
-    bool initialNewLine{newLines};
-    auto inSrc{inputSrc};
-    while (!inSrc.empty() && !newLines) {
-      auto ws{inSrc.take_while(is_space)};
-      inSrc = inSrc.drop_front(ws.size());
-      if (inSrc.starts_with("//")) {
-        initialNewLine = true;
-        break;
-      } else if (inSrc.starts_with("/*")) {
-        if (ws.count('\n') > 0) {
-          initialNewLine = true;
-          break;
-        }
-        auto pos{inSrc.find("*/", 2)};
-        if (pos == inSrc.npos)
-          break; // Shouldn't happen?
-        inSrc = inSrc.drop_front(pos + 2);
-        if (inSrc.take_while(is_space).count('\n') > 0) {
-          initialNewLine = true;
-          break;
-        }
-      } else {
-        break; // Shouldn't happen?
-      }
-    }
-    if (initialNewLine)
+  [[nodiscard]] Delim write_start_list(bool forceNewLines,
+                                       bool alignIndent = true) {
+    bool initialNewLine{forceNewLines || next_comment_forces_newline()};
+    if (initialNewLine) {
       write(INCREMENT_INDENT, DELIM_NEWLINE);
-    else
-      write(ALIGN_INDENT, DELIM_NONE);
-    return newLines ? DELIM_NEWLINE : DELIM_SPACE;
+    } else {
+      if (alignIndent)
+        write(ALIGN_INDENT);
+      write(DELIM_NONE);
+    }
+    return forceNewLines ? DELIM_NEWLINE : DELIM_SPACE;
   }
 
 private:
@@ -136,13 +117,13 @@ private:
   void write(Delim delim) {
     switch (delim) {
     case DELIM_NONE:
-      delim_none();
+      write_delim_none();
       break;
     case DELIM_SPACE:
-      delim_space();
+      write_delim_space();
       break;
     case DELIM_NEWLINE:
-      delim_newline();
+      write_delim_newline();
       break;
     default:
       break;
@@ -185,9 +166,10 @@ private:
 
   void write(const AST::Import &decl) {
     write(decl.srcKwImport, DELIM_SPACE, PUSH_INDENT);
-    auto delim{start_list(decl.has_trailing_comma())};
-    for (const auto &[importPath, srcComma] : decl.importPathWrappers)
+    auto delim{write_start_list(decl.has_trailing_comma())};
+    for (const auto &[importPath, srcComma] : decl.importPathWrappers) {
       write(importPath, srcComma, srcComma.empty() ? DELIM_NONE : delim);
+    }
     write(decl.srcSemicolon, POP_INDENT);
   }
 
@@ -214,7 +196,7 @@ private:
   void write(const AST::UsingImport &decl) {
     write(decl.srcKwUsing, DELIM_SPACE, decl.importPath, DELIM_SPACE,
           decl.srcKwImport, DELIM_SPACE, PUSH_INDENT);
-    auto delim{start_list(decl.has_trailing_comma())};
+    auto delim{write_start_list(decl.has_trailing_comma())};
     for (const auto &[srcName, srcComma] : decl.names)
       write(srcName, srcComma, srcComma.empty() ? DELIM_NONE : delim);
     write(decl.srcSemicolon, POP_INDENT);
@@ -232,9 +214,10 @@ private:
 
   void write(const AST::AccessIndex &expr) {
     write(expr.expr);
-    for (const auto &index : expr.indexes)
+    for (const auto &index : expr.indexes) {
       write(index.srcBrackL, PUSH_INDENT, ALIGN_INDENT, index.expr, POP_INDENT,
             index.srcBrackR);
+    }
   }
 
   void write(const AST::Binary &expr) {
@@ -245,8 +228,9 @@ private:
   void write(const AST::Call &expr) { write(expr.expr, expr.args); }
 
   void write(const AST::Identifier &expr) {
-    for (const auto &[srcDoubleColon, name] : expr.elements)
+    for (const auto &[srcDoubleColon, name] : expr.elements) {
       write(srcDoubleColon, name);
+    }
   }
 
   void write(const AST::Intrinsic &expr) { write(expr.srcName); }
@@ -271,9 +255,9 @@ private:
   }
 
   void write(const AST::Select &expr) {
-    write(expr.exprCond, DELIM_SPACE, expr.srcQuestion, DELIM_SPACE,
-          expr.exprThen, DELIM_SPACE, expr.srcColon, DELIM_SPACE,
-          expr.exprElse);
+    write(PUSH_INDENT, ALIGN_INDENT, expr.exprCond, DELIM_SPACE,
+          expr.srcQuestion, DELIM_SPACE, expr.exprThen, DELIM_SPACE,
+          expr.srcColon, DELIM_SPACE, expr.exprElse, POP_INDENT);
   }
 
   void write(const AST::SizeName &expr) {
@@ -309,8 +293,9 @@ private:
 
   void write(const AST::Compound &stmt) {
     write(stmt.srcBraceL, PUSH_INDENT, INCREMENT_INDENT, DELIM_NEWLINE);
-    for (const auto &subStmt : stmt.stmts)
+    for (const auto &subStmt : stmt.stmts) {
       write(subStmt, DELIM_NEWLINE);
+    }
     write(POP_INDENT, stmt.srcBraceR);
   }
 
@@ -339,9 +324,10 @@ private:
 
   void write(const AST::Preserve &stmt) {
     write(stmt.srcKwPreserve, DELIM_SPACE, PUSH_INDENT);
-    auto delim{start_list(stmt.has_trailing_comma())};
-    for (const auto &[expr, srcComma] : stmt.exprWrappers)
+    auto delim{write_start_list(stmt.has_trailing_comma())};
+    for (const auto &[expr, srcComma] : stmt.exprWrappers) {
       write(expr, srcComma, srcComma.empty() ? DELIM_NONE : delim);
+    }
     write(stmt.srcSemicolon, POP_INDENT);
   }
 
@@ -411,7 +397,7 @@ private:
   }
 
 private:
-  llvm::StringRef inputSrc0{};
+  FormatOptions options{};
 
   llvm::StringRef inputSrc{};
 
@@ -421,7 +407,13 @@ private:
 
   std::vector<int> indentStack{};
 
-  std::vector<std::pair<size_t, size_t>> lineCommentsToAlign{};
+  struct LineCommentInfo final {
+    size_t i{};
+
+    size_t column{};
+  };
+
+  std::vector<LineCommentInfo> lineCommentsToAlign{};
 };
 
 } // namespace smdl

@@ -70,7 +70,8 @@ public:
   [[nodiscard]] std::optional<Error> compile(OptLevel optLevel = OptLevel::O2);
 
   /// Format source code.
-  [[nodiscard]] std::optional<Error> format_source_code();
+  [[nodiscard]] std::optional<Error>
+  format_source_code(const FormatOptions &formatOptions);
 
 private:
   /// Get the LLVM context.

@@ -16,8 +16,7 @@ export @(pure macro) auto max(const auto a, const auto b) = #max(a, b);
 
 export @(pure macro) auto min(const auto a, const auto b) = #min(a, b);
 
-export @(pure macro) auto clamp(const auto a, const auto min, const auto max) =
-  #max(min, #min(a, max));
+export @(pure macro) auto clamp(const auto a, const auto min, const auto max) = #max(min, #min(a, max));
 
 export @(pure macro) auto saturate(const auto a) = clamp(a, 0.0, 1.0);
 
@@ -31,8 +30,7 @@ export @(pure macro) auto trunc(const auto a) = #trunc(a);
 
 export @(pure macro) auto frac(const auto a) = a - #floor(a);
 
-export @(pure macro) auto fmod(const auto a, const auto b) =
-  a % b;
+export @(pure macro) auto fmod(const auto a, const auto b) = a % b;
 
 // TODO modf
 
@@ -100,11 +98,9 @@ export @(pure macro) auto max_value(const auto a) = #max_value(a);
 
 export @(pure macro) auto average(const auto a) = #sum(a) / a.size;
 
-export @(pure macro) auto lerp(const auto a, const auto b, const auto l) =
-  (1.0 - l) * a + l * b;
+export @(pure macro) auto lerp(const auto a, const auto b, const auto l) = (1.0 - l) * a + l * b;
 
-export @(pure macro) auto step(const auto a, const auto b) =
-  #select(b < a, 0.0, 1.0);
+export @(pure macro) auto step(const auto a, const auto b) = #select(b < a, 0.0, 1.0);
 
 export @(pure macro) auto smoothstep(const auto a, const auto b, const auto l) {
   const auto t(saturate(l));
@@ -118,11 +114,9 @@ export @(pure macro) auto length(const auto a) = #sqrt(#sum(a * a));
 
 export @(pure macro) auto normalize(const auto a) = a * (1 / length(a));
 
-export @(pure macro) auto distance(const auto a, const auto b) =
-  length(b - a);
+export @(pure macro) auto distance(const auto a, const auto b) = length(b - a);
 
-export @(pure macro) auto cross(const auto a, const auto b) =
-  a.yzx * b.zxy - a.zxy * b.yzx;
+export @(pure macro) auto cross(const auto a, const auto b) = a.yzx * b.zxy - a.zxy * b.yzx;
 
 export @(pure macro) auto transpose(const auto a) = #transpose(a);
 
