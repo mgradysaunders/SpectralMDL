@@ -18,7 +18,7 @@ public:
     outputSrc.clear();
     indent = 0;
     write(node);
-    realign_end_of_line_comments();
+    align_line_comments();
     return outputSrc;
   }
 
@@ -27,34 +27,25 @@ private:
 
   enum Command { INCREMENT_INDENT, ALIGN_INDENT, PUSH_INDENT, POP_INDENT };
 
-  /// Consume input characters.
   llvm::StringRef consume_input(size_t numChars) {
     auto inSrc{inputSrc.take_front(numChars)};
     inputSrc = inputSrc.drop_front(numChars);
     return inSrc;
   }
 
-  /// Consume input whitespace.
-  [[nodiscard]] llvm::StringRef consume_input_whitespace() {
-    auto inSrc{inputSrc.take_while([](char ch) { return is_space(ch); })};
+  llvm::StringRef consume_input_space() {
+    auto inSrc{inputSrc.take_while(is_space)};
     inputSrc = inputSrc.drop_front(inSrc.size());
     return inSrc;
   }
 
-  /// Consume input comment.
-  ///
-  /// \note
-  /// - If beginning with `//`, the result includes the closing newline.
-  /// - If beginning with `/*`, the result includes the closing `*/` but
-  ///   does not include any trailing whitespace characeters.
-  ///
   [[nodiscard]] llvm::StringRef consume_input_comment() {
     if (inputSrc.starts_with("//")) {
-      auto pos{inputSrc.find('\n')};
+      auto pos{inputSrc.find('\n', 1)};
       return consume_input(pos == inputSrc.npos ? pos : pos + 1);
     }
     if (inputSrc.starts_with("/*")) {
-      auto pos{inputSrc.find("*/")};
+      auto pos{inputSrc.find("*/", 2)};
       return consume_input(pos == inputSrc.npos ? pos : pos + 2);
     }
     return {};
@@ -64,7 +55,13 @@ private:
     return outputSrc.empty() ? '\0' : outputSrc.back();
   }
 
-  [[nodiscard]] size_t current_output_column() const {
+  [[nodiscard]] char last_output(int i) const {
+    if (i += outputSrc.size(); 0 <= i && i < int(outputSrc.size()))
+      return outputSrc[i];
+    return '\0';
+  }
+
+  [[nodiscard]] size_t current_column() const {
     size_t column{};
     for (auto itr{outputSrc.rbegin()}; itr != outputSrc.rend() && *itr != '\n';
          ++itr)
@@ -72,35 +69,11 @@ private:
     return column;
   }
 
-  [[nodiscard]] Delim current_output_delim() const {
-    switch (last_output()) {
-    default:
-      return DELIM_NONE;
-    case ' ':
-      return DELIM_SPACE;
-    case '\n':
-      return DELIM_NEWLINE;
-    }
-  }
+  void delim_none();
 
-  void realign_end_of_line_comments();
+  void delim_space();
 
-  /// Process comments.
-  void write_comments();
-
-  /// Request separation with space.
-  void delim_space() {
-    if (last_output() != ' ' && last_output() != '\n')
-      outputSrc += ' ';
-  }
-
-  /// Request separation with newline.
-  void delim_newline() {
-    while (last_output() == ' ') // Remove spaces
-      outputSrc.pop_back();
-    if (last_output() != '\n')
-      outputSrc += '\n';
-  }
+  void delim_newline();
 
   void write_indent_if_newline() {
     if (last_output() == '\n')
@@ -108,26 +81,63 @@ private:
         outputSrc += ' ';
   }
 
+  void write_comment(llvm::StringRef inSrc);
+
+  void write_more_comments() {
+    while (true) {
+      auto nextComment{consume_input_comment()};
+      if (!nextComment.empty())
+        write_comment(nextComment);
+      else
+        break;
+    }
+  }
+
   void write_token(llvm::StringRef inSrc);
 
-  [[nodiscard]] Delim start_list(bool separateLines) {
-    // If processing comments implicitly inserts a newline, increment indent
-    write_comments();
-    if (current_output_delim() == DELIM_NEWLINE)
-      write(INCREMENT_INDENT);
-    else if (separateLines)
-      write(DELIM_NEWLINE, INCREMENT_INDENT);
+  void align_line_comments();
+
+  [[nodiscard]] Delim start_list(bool newLines) {
+    bool initialNewLine{newLines};
+    auto inSrc{inputSrc};
+    while (!inSrc.empty() && !newLines) {
+      auto ws{inSrc.take_while(is_space)};
+      inSrc = inSrc.drop_front(ws.size());
+      if (inSrc.starts_with("//")) {
+        initialNewLine = true;
+        break;
+      } else if (inSrc.starts_with("/*")) {
+        if (ws.count('\n') > 0) {
+          initialNewLine = true;
+          break;
+        }
+        auto pos{inSrc.find("*/", 2)};
+        if (pos == inSrc.npos)
+          break; // Shouldn't happen?
+        inSrc = inSrc.drop_front(pos + 2);
+        if (inSrc.take_while(is_space).count('\n') > 0) {
+          initialNewLine = true;
+          break;
+        }
+      } else {
+        break; // Shouldn't happen?
+      }
+    }
+    if (initialNewLine)
+      write(INCREMENT_INDENT, DELIM_NEWLINE);
     else
-      write(ALIGN_INDENT);
-    return separateLines ? DELIM_NEWLINE : DELIM_SPACE;
+      write(ALIGN_INDENT, DELIM_NONE);
+    return newLines ? DELIM_NEWLINE : DELIM_SPACE;
   }
 
 private:
   void write(std::string_view inSrc) { write_token(inSrc); }
 
   void write(Delim delim) {
-    write_comments();
     switch (delim) {
+    case DELIM_NONE:
+      delim_none();
+      break;
     case DELIM_SPACE:
       delim_space();
       break;
@@ -145,7 +155,7 @@ private:
       indent += 2;
       break;
     case ALIGN_INDENT:
-      indent = current_output_column();
+      indent = current_column();
       break;
     case PUSH_INDENT:
       indentStack.push_back(indent);
@@ -409,7 +419,7 @@ private:
 
   std::vector<int> indentStack{};
 
-  std::vector<std::pair<size_t, size_t>> outputLineComments{};
+  std::vector<std::pair<size_t, size_t>> lineCommentsToAlign{};
 };
 
 } // namespace smdl

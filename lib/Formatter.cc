@@ -3,23 +3,101 @@
 
 namespace smdl {
 
-void Formatter::realign_end_of_line_comments() {
-  auto insertSpacesBeforeComment{[&](auto &comment, size_t n) {
-    for (size_t i = 0; i < n; i++)
+void Formatter::delim_none() {
+  auto numNewLines{consume_input_space().count('\n')};
+  if (auto firstComment{consume_input_comment()}; !firstComment.empty()) {
+    // If the user put a newline before the comment, preserve the line break.
+    if (numNewLines == 1 && last_output() != '\n')
+      outputSrc += '\n';
+    write_comment(firstComment);
+    write_more_comments();
+  }
+}
+
+void Formatter::delim_space() {
+  delim_none();
+  if (!outputSrc.empty() && last_output() != ' ' && last_output() != '\n')
+    outputSrc += ' ';
+}
+
+void Formatter::delim_newline() {
+  while (last_output() == ' ') // Remove spaces
+    outputSrc.pop_back();
+  // We call this function to request at least 1 syntactic newline
+  // in the output source. We consume the corresponding whitespace
+  // in the input source to determine whether we want 1 or 2 newlines,
+  // the idea being to preserve blank lines the user inserts explicitly
+  // between newline-separated elements.
+  if (auto numNewLines{consume_input_space().count('\n')}; numNewLines <= 1) {
+    if (auto firstComment{consume_input_comment()}; !firstComment.empty()) {
+      // If the user put a newline before the comment, preserve the line break.
+      if (numNewLines == 1 && last_output() != '\n')
+        outputSrc += '\n';
+      write_comment(firstComment);
+      write_more_comments();
+    }
+    if (!outputSrc.empty() && last_output() != '\n')
+      outputSrc += '\n';
+  } else {
+    // Add up to 2 newlines, to preserve 1 visibly blank line in the
+    // output source.
+    while (last_output(-1) != '\n' || last_output(-2) != '\n')
+      outputSrc += '\n';
+    if (auto firstComment{consume_input_comment()}; !firstComment.empty()) {
+      write_comment(firstComment);
+      write_more_comments();
+    }
+  }
+}
+
+void Formatter::write_comment(llvm::StringRef inSrc) {
+  if (inSrc.empty())
+    return;
+  SMDL_SANITY_CHECK((inSrc.starts_with("//") && inSrc.ends_with("\n")) ||
+                    (inSrc.starts_with("/*") && inSrc.ends_with("*/")));
+  if (!outputSrc.empty() && last_output() != ' ' && last_output() != '\n')
+    outputSrc += ' ';
+  bool isNewLine{outputSrc.empty() || last_output() == '\n'};
+  write_indent_if_newline();
+  if (!isNewLine && inSrc.starts_with("//"))
+    lineCommentsToAlign.emplace_back(outputSrc.size(), current_column());
+  outputSrc += inSrc;
+  // If the user put 1 or more newlines after the comment, preserve
+  // 1 visibly blank line.
+  if (consume_input_space().count('\n') > 0)
+    outputSrc += '\n';
+  else if (inSrc.starts_with("/*"))
+    outputSrc += ' ';
+}
+
+void Formatter::write_token(llvm::StringRef inSrc) {
+  if (inSrc.empty())
+    return;
+  SMDL_SANITY_CHECK(
+      (inputSrc.begin() <= inSrc.begin() && inSrc.end() <= inputSrc.end()) &&
+      inSrc.count('\n') == 0);
+  write_indent_if_newline();
+  consume_input(inSrc.begin() + inSrc.size() - inputSrc.begin());
+  outputSrc += std::string_view(inSrc);
+}
+
+void Formatter::align_line_comments() {
+  auto insertSpacesBeforeComment{[&](auto &comment, size_t numSpaces) {
+    for (size_t i = 0; i < numSpaces; i++)
       outputSrc.insert(outputSrc.begin() + comment.first, ' ');
     for (auto itr = &comment;
-         itr < outputLineComments.data() + outputLineComments.size(); ++itr) {
-      itr->first += n;
-      itr->second += n;
+         itr < lineCommentsToAlign.data() + lineCommentsToAlign.size(); ++itr) {
+      itr->first += numSpaces;
+      itr->second += numSpaces;
     }
   }};
-  for (auto itr1{outputLineComments.rbegin()};
-       itr1 != outputLineComments.rend();) {
+  for (auto itr1{lineCommentsToAlign.rbegin()};
+       itr1 != lineCommentsToAlign.rend();) {
     auto column{itr1->second};
     auto itrPrev{itr1};
     auto itr2{itr1};
     itr2++;
-    while (itr2 != outputLineComments.rend()) {
+    while (itr2 != lineCommentsToAlign.rend()) {
       auto src{llvm::StringRef(outputSrc.data() + itr2->first,
                                itrPrev->first - itr2->first)};
       if (src.count('\n') > 1)
@@ -35,69 +113,22 @@ void Formatter::realign_end_of_line_comments() {
   }
 }
 
-void Formatter::write_comments() {
-  auto firstWhitespace{consume_input_whitespace()};
-  auto firstComment{consume_input_comment()};
-  if (!firstComment.empty()) {
-    if (firstWhitespace.count('\n') > 0) {
-      delim_newline();
-    } else {
-      delim_space();
-    }
-    bool isNewLine{last_output() == '\n'};
-    write_indent_if_newline();
-    if (!isNewLine && firstComment.starts_with("//"))
-      outputLineComments.emplace_back(outputSrc.size(),
-                                      current_output_column());
-    outputSrc += std::string_view(firstComment);
-    if (firstComment.starts_with("/*"))
-      delim_space();
-    while (true) {
-      auto nextWhitespace{consume_input_whitespace()};
-      auto nextComment{consume_input_comment()};
-      if (nextComment.empty())
-        return;
-      isNewLine = last_output() == '\n';
-      write_indent_if_newline();
-      if (!isNewLine && nextComment.starts_with("//"))
-        outputLineComments.emplace_back(outputSrc.size(),
-                                        current_output_column());
-      outputSrc += std::string_view(nextComment);
-    }
-  }
-}
-
-void Formatter::write_token(llvm::StringRef inSrc) {
-  if (!inSrc.empty()) {
-    write_comments();
-    SMDL_SANITY_CHECK(inputSrc.begin() <= inSrc.begin() &&
-                      inSrc.end() <= inputSrc.end());
-    SMDL_SANITY_CHECK(inSrc.count('\n') == 0);
-    write_indent_if_newline();
-    consume_input(inSrc.begin() + inSrc.size() - inputSrc.begin());
-    outputSrc += std::string_view(inSrc);
-  }
-}
-
 void Formatter::write(const AST::File &file) {
-  if (file.is_smdl_syntax()) {
+  write(DELIM_NONE);
+  if (file.is_smdl_syntax())
     write(file.srcKwSmdlSyntax, DELIM_NEWLINE);
-  }
   if (file.version) {
     auto &version{*file.version};
     write(version.srcKwMdl, DELIM_SPACE, version.srcVersion,
           version.srcSemicolon, DELIM_NEWLINE);
   }
-  for (const auto &decl : file.importDecls) {
+  for (const auto &decl : file.importDecls)
     write(decl, DELIM_NEWLINE);
-  }
-  if (!file.srcKwModule.empty()) {
+  if (!file.srcKwModule.empty())
     write(file.srcKwModule, file.moduleAnnotations,
           file.srcSemicolonAfterModule, DELIM_NEWLINE);
-  }
-  for (const auto &decl : file.globalDecls) {
+  for (const auto &decl : file.globalDecls)
     write(decl->srcKwExport, DELIM_SPACE, decl, DELIM_NEWLINE);
-  }
   write(DELIM_NEWLINE);
 }
 
