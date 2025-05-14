@@ -1987,7 +1987,7 @@ void Emitter::emit_print(Value os, Value value, const SourceLocation &srcLoc,
     }
   } else if (auto arrayType{llvm::dyn_cast<ArrayType>(value.type)}) {
     emit_print(os, "[", srcLoc);
-    for (uint32_t i = 1; i < arrayType->size; i++) {
+    for (uint32_t i = 0; i < arrayType->size; i++) {
       emit_print(os, access_index(value, i, srcLoc), srcLoc,
                  /*quoteStrings=*/true);
       if (i + 1 < arrayType->size) {
