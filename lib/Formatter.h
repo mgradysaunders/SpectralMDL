@@ -29,7 +29,12 @@ public:
   void align_line_comments();
 
 private:
-  enum Delim { DELIM_NONE, DELIM_SPACE, DELIM_NEWLINE };
+  enum Delim {
+    DELIM_NONE,
+    DELIM_SPACE,
+    DELIM_UNNECESSARY_SPACE,
+    DELIM_NEWLINE
+  };
 
   enum Command { INCREMENT_INDENT, ALIGN_INDENT, PUSH_INDENT, POP_INDENT };
 
@@ -103,8 +108,10 @@ private:
 
   void write_token(llvm::StringRef inSrc);
 
-  [[nodiscard]] Delim write_start_list(bool forceNewLines,
+  [[nodiscard]] Delim write_start_list(size_t size, bool forceNewLines,
                                        bool alignIndent = true) {
+    if (options.compact && size < 4)
+      forceNewLines = false;
     bool initialNewLine{forceNewLines || next_comment_forces_newline()};
     if (initialNewLine) {
       write(INCREMENT_INDENT, DELIM_NEWLINE);
@@ -113,7 +120,7 @@ private:
         write(ALIGN_INDENT);
       write(DELIM_NONE);
     }
-    return forceNewLines ? DELIM_NEWLINE : DELIM_SPACE;
+    return forceNewLines ? DELIM_NEWLINE : DELIM_UNNECESSARY_SPACE;
   }
 
 private:
@@ -126,6 +133,12 @@ private:
       break;
     case DELIM_SPACE:
       write_delim_space();
+      break;
+    case DELIM_UNNECESSARY_SPACE:
+      if (options.compact)
+        write_delim_none();
+      else
+        write_delim_space();
       break;
     case DELIM_NEWLINE:
       write_delim_newline();
@@ -172,7 +185,8 @@ private:
 
   void write(const AST::Import &decl) {
     write(decl.srcKwImport, DELIM_SPACE, PUSH_INDENT);
-    auto delim{write_start_list(decl.has_trailing_comma())};
+    auto delim{write_start_list(decl.importPathWrappers.size(),
+                                decl.has_trailing_comma())};
     for (const auto &[importPath, srcComma] : decl.importPathWrappers) {
       write(importPath, srcComma, srcComma.empty() ? DELIM_NONE : delim);
     }
@@ -202,7 +216,7 @@ private:
   void write(const AST::UsingImport &decl) {
     write(decl.srcKwUsing, DELIM_SPACE, decl.importPath, DELIM_SPACE,
           decl.srcKwImport, DELIM_SPACE, PUSH_INDENT);
-    auto delim{write_start_list(decl.has_trailing_comma())};
+    auto delim{write_start_list(decl.names.size(), decl.has_trailing_comma())};
     for (const auto &[srcName, srcComma] : decl.names)
       write(srcName, srcComma, srcComma.empty() ? DELIM_NONE : delim);
     write(decl.srcSemicolon, POP_INDENT);
@@ -227,8 +241,14 @@ private:
   }
 
   void write(const AST::Binary &expr) {
-    write(expr.exprLhs, expr.op == AST::BINOP_COMMA ? DELIM_NONE : DELIM_SPACE,
-          expr.srcOp, DELIM_SPACE, expr.exprRhs);
+    bool mustHaveSpaceBefore{
+        (expr.op == AST::BINOP_ADD && last_output() == '+') ||
+        (expr.op == AST::BINOP_SUB && last_output() == '-')};
+    write(expr.exprLhs,
+          expr.op == AST::BINOP_COMMA ? DELIM_NONE
+          : mustHaveSpaceBefore       ? DELIM_SPACE
+                                      : DELIM_UNNECESSARY_SPACE,
+          expr.srcOp, DELIM_UNNECESSARY_SPACE, expr.exprRhs);
   }
 
   void write(const AST::Call &expr) { write(expr.expr, expr.args); }
@@ -257,13 +277,15 @@ private:
   }
 
   void write(const AST::ReturnFrom &expr) {
-    write(expr.srcKwReturnFrom, DELIM_SPACE, expr.stmt);
+    write(expr.srcKwReturnFrom, DELIM_UNNECESSARY_SPACE, expr.stmt);
   }
 
   void write(const AST::Select &expr) {
-    write(PUSH_INDENT, ALIGN_INDENT, expr.exprCond, DELIM_SPACE,
-          expr.srcQuestion, DELIM_SPACE, expr.exprThen, DELIM_SPACE,
-          expr.srcColon, DELIM_SPACE, expr.exprElse, POP_INDENT);
+    write(PUSH_INDENT, ALIGN_INDENT,                 //
+          expr.exprCond, DELIM_UNNECESSARY_SPACE,    //
+          expr.srcQuestion, DELIM_UNNECESSARY_SPACE, //
+          expr.exprThen, DELIM_UNNECESSARY_SPACE,    //
+          expr.srcColon, DELIM_UNNECESSARY_SPACE, expr.exprElse, POP_INDENT);
   }
 
   void write(const AST::SizeName &expr) {
@@ -283,10 +305,23 @@ private:
   }
 
   void write(const AST::Unary &expr) {
-    if (expr.is_postfix())
+    if (expr.is_postfix()) {
       write(expr.expr, expr.srcOp);
-    else
-      write(expr.srcOp, expr.expr);
+    } else {
+      // Don't write unnecessary plus in compact mode
+      if (expr.op == AST::UNOP_POS && options.compact) {
+        write(DELIM_NONE);
+        consume_input(expr.srcOp.size());
+        write(expr.expr);
+      } else {
+        if (((expr.op == AST::UNOP_INC || expr.op == AST::UNOP_POS) &&
+             last_output() == '+') ||
+            ((expr.op == AST::UNOP_DEC || expr.op == AST::UNOP_NEG) &&
+             last_output() == '-'))
+          write(DELIM_SPACE);
+        write(expr.srcOp, expr.expr);
+      }
+    }
   }
   //--}
 
@@ -316,8 +351,9 @@ private:
   }
 
   void write(const AST::DoWhile &stmt) {
-    write(stmt.srcKwDo, DELIM_SPACE, stmt.stmt, DELIM_SPACE, //
-          stmt.srcKwWhile, DELIM_SPACE, stmt.expr, stmt.srcSemicolon);
+    write(stmt.srcKwDo, DELIM_SPACE, stmt.stmt, DELIM_UNNECESSARY_SPACE, //
+          stmt.srcKwWhile, DELIM_UNNECESSARY_SPACE, stmt.expr,
+          stmt.srcSemicolon);
   }
 
   void write(const AST::ExprStmt &stmt) {
@@ -330,7 +366,8 @@ private:
 
   void write(const AST::Preserve &stmt) {
     write(stmt.srcKwPreserve, DELIM_SPACE, PUSH_INDENT);
-    auto delim{write_start_list(stmt.has_trailing_comma())};
+    auto delim{
+        write_start_list(stmt.exprWrappers.size(), stmt.has_trailing_comma())};
     for (const auto &[expr, srcComma] : stmt.exprWrappers) {
       write(expr, srcComma, srcComma.empty() ? DELIM_NONE : delim);
     }
@@ -338,9 +375,11 @@ private:
   }
 
   void write(const AST::Return &stmt) {
-    write(stmt.srcKwReturn);
+    // This may be empty in abbreviated function definitions!
+    if (!stmt.srcKwReturn.empty())
+      write(stmt.srcKwReturn, DELIM_SPACE);
     if (stmt.expr)
-      write(DELIM_SPACE, stmt.expr);
+      write(stmt.expr);
     write(stmt.lateIf, stmt.srcSemicolon);
   }
 
@@ -352,11 +391,13 @@ private:
 
   void write(const AST::Visit &stmt) {
     write(stmt.srcKwVisit, DELIM_SPACE, stmt.name, DELIM_SPACE, //
-          stmt.srcKwIn, DELIM_SPACE, stmt.expr, DELIM_SPACE, stmt.stmt);
+          stmt.srcKwIn, DELIM_SPACE, stmt.expr, DELIM_UNNECESSARY_SPACE,
+          stmt.stmt);
   }
 
   void write(const AST::While &stmt) {
-    write(stmt.srcKwWhile, DELIM_SPACE, stmt.expr, DELIM_SPACE, stmt.stmt);
+    write(stmt.srcKwWhile, DELIM_UNNECESSARY_SPACE, stmt.expr,
+          DELIM_UNNECESSARY_SPACE, stmt.stmt);
   }
   //--}
 
@@ -376,7 +417,7 @@ private:
 
   void write(const AST::LateIf &lateIf) {
     write(PUSH_INDENT, INCREMENT_INDENT, DELIM_SPACE, lateIf.srcKwIf,
-          DELIM_SPACE, lateIf.expr, POP_INDENT);
+          DELIM_UNNECESSARY_SPACE, lateIf.expr, POP_INDENT);
   }
 
   template <typename T> void write(const BumpPtr<T> &ptr) {

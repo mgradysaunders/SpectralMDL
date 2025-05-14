@@ -13,9 +13,8 @@ STR
 fnames = ['anno', 'api', 'debug', 'df', 'limits', 'math', 'monte_carlo', 'scene', 'specular', 'state', 'std', 'tex']
 
 for fname in fnames 
-  text = File.read "builtin/#{fname}.smdl"
-  #text = text.gsub /\/\/.*$/, ''
-  #text = text.gsub /\n(\s*\n)+/, "\n"
+  text = `smdl format -c --no-comments --no-annotations builtin/#{fname}.smdl`
+  text = File.read "builtin/#{fname}.smdl" unless $?.success?
   f.write "static const char *#{fname} = R\"*(#{text})*\";\n\n"
 end
 
