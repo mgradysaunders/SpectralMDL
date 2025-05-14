@@ -342,10 +342,15 @@ ConversionRule Context::get_conversion_rule(Type *typeA, Type *typeB) {
     if (typeA == get_pointer_type(get_float_type()))
       return ConversionRule::Explicit;
   }
-  return ConversionRule::NotAllowed;
-#if 0
   // If the source type is an array ...
   if (typeA->is_array()) {
+    // If the destination type is an inferred-size array, conversion is whatever
+    // the element conversion is.
+    if (typeB->is_inferred_size_array())
+      return get_conversion_rule(
+          static_cast<ArrayType *>(typeA)->elemType,
+          static_cast<InferredSizeArrayType *>(typeB)->elemType);
+#if 0
     // If the destination type is a pointer with the same element type, conversion is implicit.
     // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
     // auto someArray = float[4](/* ... */);
@@ -362,11 +367,10 @@ ConversionRule Context::get_conversion_rule(Type *typeA, Type *typeB) {
     if (typeB->is_array() && typeA->get_array_size() == typeB->get_array_size() &&
         get_conversion_rule(typeA->get_element_type(), typeB->get_element_type()) != ConversionRule::NotAllowed)
       return ConversionRule::Explicit;
-    // If the destination type is a size-deferred array, conversion is whatever the element conversion is.
-    if (typeB->is_size_deferred_array())
-      return get_conversion_rule(typeA->get_element_type(), typeB->get_element_type());
-  }
 #endif
+  }
+
+  return ConversionRule::NotAllowed;
 }
 
 Value Context::get_comptime_union_index_map(UnionType *unionTypeA,

@@ -104,6 +104,11 @@ public:
   /// Is instance of `ArrayType`?
   [[nodiscard]] bool is_array() const { return typeKind == TypeKind::Array; }
 
+  /// Is instance of `InferredSizeArrayType`?
+  [[nodiscard]] bool is_inferred_size_array() const {
+    return typeKind == TypeKind::InferredSizeArray;
+  }
+
   /// Is instance of `ArithmeticType`?
   [[nodiscard]] bool is_arithmetic() const {
     return typeKind == TypeKind::Arithmetic;
@@ -785,9 +790,6 @@ public:
     /// The concrete return type.
     Type *returnType{};
 
-    /// The concrete parameters.
-    ParameterList params{};
-
     /// The LLVM function.
     llvm::Function *llvmFunc{};
 
@@ -822,6 +824,8 @@ public:
   /// The function instances.
   std::map<llvm::SmallVector<Type *>, Instance> instances{};
 
+  /// The macro recursion depth counter to detect run-away
+  /// recursion at compile time.
   size_t macroRecursionDepth{};
 
 private:
@@ -842,6 +846,7 @@ public:
       displayName += '>';
     }
     displayName += ']';
+    sizeNameStrv = this->sizeName;
   }
 
   /// \name Virtual interface
@@ -862,6 +867,8 @@ public:
   /// The name of the inferred size, e.g., `Size` in the expression
   /// `int[<Size>]`. This may be empty!
   std::string sizeName{};
+
+  std::string_view sizeNameStrv{};
 };
 
 /// A meta type, essentially a compile-time pointer (represented in LLVM

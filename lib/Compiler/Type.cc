@@ -2,6 +2,8 @@
 #include "Type.h"
 #include "Emitter.h"
 
+#include "smdl/Logger.h"
+
 #include "llvm/IR/DerivedTypes.h"
 #include "llvm/IR/Type.h"
 
@@ -1028,11 +1030,8 @@ FunctionType::instantiate(Emitter &emitter,
     SMDL_SANITY_CHECK(!inst.isCompiling);
     inst.isCompiling = true;
     inst.returnType = returnType;
-    inst.params = params;
-    for (size_t i{}; i < params.size(); i++)
-      inst.params[i].type = paramTypes[i];
     emitter.create_function(inst.llvmFunc, decl.name, is_pure(),
-                            inst.returnType, inst.params, decl.srcLoc,
+                            inst.returnType, paramTypes, params, decl.srcLoc,
                             [&] { emitter.emit(decl.definition); });
     static const std::pair<const char *, llvm::Attribute::AttrKind> attrs[] = {
         {"alwaysinline", llvm::Attribute::AlwaysInline},
@@ -1244,6 +1243,10 @@ Value InferredSizeArrayType::invoke(Emitter &emitter, const ArgumentList &args,
     // elements as there are arguments.
     return emitter.context.get_array_type(elemType, args.size());
   }()};
+
+  if (!sizeNameStrv.empty()) {
+    emitter.declare_crumb(sizeNameStrv, nullptr, emitter.context.get_comptime_int(inferredArrayType->size));
+  }
 
   // Delegate.
   return inferredArrayType->invoke(emitter, args, srcLoc);

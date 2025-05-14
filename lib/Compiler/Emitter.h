@@ -112,7 +112,7 @@ public:
   /// Create function.
   ///
   /// \param[out] llvmFunc
-  /// The LLVM function. This is a reference in order to support concrete 
+  /// The LLVM function. This is a reference in order to support concrete
   /// recursion, such that the pointer is initialized with a placeholder LLVM
   /// function before invoking the callback.
   ///
@@ -128,6 +128,10 @@ public:
   /// The return type. This may be an abstract type like `auto`, in
   /// which case it is overwritten with the inferred concrete type.
   ///
+  /// \param[in] paramTypes
+  /// The parameter types, must be resolved to concrete types compatible with
+  /// the types implied by the `params`!
+  ///
   /// \param[in] params
   /// The parameters.
   ///
@@ -139,6 +143,7 @@ public:
   ///
   void create_function(llvm::Function *&llvmFunc, //
                        std::string_view name, bool isPure, Type *&returnType,
+                       llvm::ArrayRef<Type *> paramTypes,
                        const ParameterList &params,
                        const SourceLocation &srcLoc,
                        const std::function<void()> &callback);
@@ -148,8 +153,8 @@ public:
                   const ParameterList &params, const SourceLocation &srcLoc,
                   const std::function<void()> &callback) {
     llvm::Function *llvmFunc{};
-    create_function(llvmFunc, name, isPure, returnType, params, srcLoc,
-                    callback);
+    create_function(llvmFunc, name, isPure, returnType, params.get_types(),
+                    params, srcLoc, callback);
     return llvmFunc;
   }
 

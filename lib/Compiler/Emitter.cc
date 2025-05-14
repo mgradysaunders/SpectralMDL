@@ -43,17 +43,22 @@ Value Emitter::create_function_implementation(
 
 void Emitter::create_function(llvm::Function *&llvmFunc, std::string_view name,
                               bool isPure, Type *&returnType,
+                              llvm::ArrayRef<Type *> paramTypes,
                               const ParameterList &params,
                               const SourceLocation &srcLoc,
                               const std::function<void()> &callback) {
-  SMDL_SANITY_CHECK(returnType && params.is_concrete());
-  auto llvmParamTys{params.get_llvm_types()};
+  SMDL_SANITY_CHECK(returnType && params.size() == paramTypes.size());
+  auto llvmParamTys{std::vector<llvm::Type *>{}};
   if (!isPure)
-    llvmParamTys.insert(llvmParamTys.begin(),
-                        llvm::PointerType::get(context, 0));
+    llvmParamTys.push_back(llvm::PointerType::get(context, 0));
+  for (const auto &paramType : paramTypes) {
+    SMDL_SANITY_CHECK(paramType);
+    SMDL_SANITY_CHECK(paramType->llvmType);
+    llvmParamTys.push_back(paramType->llvmType);
+  }
   // Initialize LLVM function with a placeholder. If we have a return type
-  // with a well-defined LLVM type, then use that as the placeholder return 
-  // type in order to permit recursion. Otherwise use 
+  // with a well-defined LLVM type, then use that as the placeholder return
+  // type in order to permit recursion. Otherwise use
   // `Context::llvmIncompleteReturnTy`.
   llvmFunc = llvm::Function::Create(
       llvm::FunctionType::get(returnType->llvmType
@@ -77,9 +82,9 @@ void Emitter::create_function(llvm::Function *&llvmFunc, std::string_view name,
                      &*llvmArg++);
     }
     auto paramValues{llvm::SmallVector<Value>()};
-    for (auto &param : params) {
-      llvmArg->setName(param.name);
-      paramValues.push_back(RValue(param.type, &*llvmArg++));
+    for (size_t i = 0; i < params.size(); i++) {
+      llvmArg->setName(params[i].name);
+      paramValues.push_back(RValue(paramTypes[i], &*llvmArg++));
     }
     auto result{create_function_implementation(name, isPure, returnType, params,
                                                paramValues, srcLoc, callback)};
@@ -1282,8 +1287,8 @@ Value Emitter::emit_intrinsic(std::string_view name, const ArgumentList &args,
       SMDL_SANITY_CHECK(commonType->is_arithmetic_floating_point());
       auto value0{invoke(commonType, args[0].value, srcLoc)};
       auto value1{invoke(commonType, args[1].value, srcLoc)};
-      return RValue(commonType,
-                    builder.CreateBinaryIntrinsic(llvm::Intrinsic::atan2, value0, value1));
+      return RValue(commonType, builder.CreateBinaryIntrinsic(
+                                    llvm::Intrinsic::atan2, value0, value1));
     }
     if (name == "approx_equal") {
       if (!(args.size() == 3 && //
