@@ -9,6 +9,7 @@ const float RGB_TO_COLOR_MIN_WAVELENGTH = 380.0;
 /// The maximum wavelength of the RGB-to-color curves in nanometers.
 const float RGB_TO_COLOR_MAX_WAVELENGTH = 720.0;
 
+// smdl format off
 /// The RGB-to-color curves.
 const static auto RGB_TO_COLOR_CURVES = auto[](
   auto[]( // White
@@ -60,6 +61,7 @@ const static auto RGB_TO_COLOR_CURVES = auto[](
      0.0037999, -0.0005510, -0.0000437,  0.0075875,  0.0257957,  0.0381684,
      0.0494896,  0.0495960,  0.0498148,  0.0398409,  0.0305010,  0.0212431,
      0.0069597,  0.0041734));
+// smdl format on
 
 /// The nontrivial RGB-to-color implementation.
 ///
@@ -82,17 +84,15 @@ const static auto RGB_TO_COLOR_CURVES = auto[](
   color c(0.0);
   color w(color($state.wavelength_base));
   w -= RGB_TO_COLOR_MIN_WAVELENGTH;
-  w *= RGB_TO_COLOR_NUM_WAVELENGTHS / 
-      (RGB_TO_COLOR_MAX_WAVELENGTH - RGB_TO_COLOR_MIN_WAVELENGTH);
+  w *= RGB_TO_COLOR_NUM_WAVELENGTHS / (RGB_TO_COLOR_MAX_WAVELENGTH - RGB_TO_COLOR_MIN_WAVELENGTH);
   for (int i = 0; i < $WAVELENGTH_BASE_MAX; i++) {
     auto t(w[i]);
     if ((0.0 <= t) & (t <= RGB_TO_COLOR_NUM_WAVELENGTHS)) {
       int t0(#min(int(t), RGB_TO_COLOR_NUM_WAVELENGTHS - 2));
       t = #min(t - t0, 1.0);
-      c[i] = #sum(float2(1 - t, t) * 
-            (coeff_w * float2(&RGB_TO_COLOR_CURVES[0][t0]) + 
-             coeff_cmy * float2(&RGB_TO_COLOR_CURVES[k0 + 1][t0]) + 
-             coeff_rgb * float2(&RGB_TO_COLOR_CURVES[k2 + 4][t0])));
+      c[i] = #sum(float2(1 - t, t) * (coeff_w * float2(&RGB_TO_COLOR_CURVES[0][t0]) +        //
+                                      coeff_cmy * float2(&RGB_TO_COLOR_CURVES[k0 + 1][t0]) + //
+                                      coeff_rgb * float2(&RGB_TO_COLOR_CURVES[k2 + 4][t0])));
     }
   }
   return #max(c * 0.94, 0.0);
@@ -119,7 +119,8 @@ export @(pure) float3 $wyman_xyz(const float w) {
   x *= #select(
     x < 0,
     auto(0.0624, 0.0264, 0.0490, 0.0213, 0.0613, 0.0845, 0.0385),
-    auto(0.0374, 0.0323, 0.0382, 0.0247, 0.0322, 0.0278, 0.0725));
+    auto(0.0374, 0.0323, 0.0382, 0.0247, 0.0322, 0.0278, 0.0725),
+  );
   x *= 0.5 * x;
   const auto x1(x);
   auto y(1 + x);
@@ -152,11 +153,11 @@ export @(hot noinline) float3 $color_to_rgb(const color c) {
   }
   result /= $WAVELENGTH_BASE_MAX;
   result *= $state.wavelength_max - $state.wavelength_min; // TODO $state.wavelength_pdf?
-  result = float3x3(
-    float3(+3.240450, -0.969266,  0.0556434),
-    float3(-1.537140,  1.876010, -0.2040260),
-    float3(-0.498532,  0.041556,  1.0572300)) * result;
-  return result;
+  return float3x3(
+    float3(+3.240450, -0.969266, 0.0556434),
+    float3(-1.537140, 1.876010, -0.2040260),
+    float3(-0.498532, 0.041556, 1.0572300),
+  ) * result;
 }
 
 /// The JIT-visible RGB-to-color function advertised by the `Compiler` 
@@ -174,10 +175,8 @@ export @(hot noinline) float3 $color_to_rgb(const color c) {
 
 /// The intensity mode enum.
 export enum intensity_mode {
-  /// Power (watts) per unit area (meters squared).
-  intensity_radiant_exitance,
-  /// Power (watts).
-  intensity_power
+  intensity_radiant_exitance, ///< Power (watts) per unit area (meters squared).
+  intensity_power,            ///< Power (watts).
 };
 
 /// The Bidirectional Scattering Distribution Function (BSDF) tag.
@@ -193,16 +192,20 @@ export tag edf;
 export tag hair_bsdf;
 
 /// The default BSDF is just an empty struct!
-export struct $default_bsdf: default bsdf {};
+export struct $default_bsdf: default bsdf {
+};
 
 /// The default VDF is just an empty struct!
-export struct $default_vdf: default vdf {};
+export struct $default_vdf: default vdf {
+};
 
 /// The default EDF is just an empty struct!
-export struct $default_edf: default edf {};
+export struct $default_edf: default edf {
+};
 
 /// The default hair BSDF is just an empty struct!
-export struct $default_hair_bsdf: default hair_bsdf {};
+export struct $default_hair_bsdf: default hair_bsdf {
+};
 
 /// The material emission description.
 export struct material_emission {
@@ -222,7 +225,7 @@ export struct material_surface {
   bsdf scattering = bsdf();
 
   /// The material emission description.
-  material_emission emission = material_emission(); 
+  material_emission emission = material_emission();
 };
 
 /// The material volume description.
@@ -264,7 +267,7 @@ export struct material {
   color ior = color(1.0);
 
   /// The material volume description.
-  material_volume volume = material_volume(); 
+  material_volume volume = material_volume();
 
   /// The material geometry description.
   material_geometry geometry = material_geometry();
@@ -274,21 +277,21 @@ export struct material {
 };
 
 /// Is thin walled?
-const int THIN_WALLED = (1 << 0);
+const int THIN_WALLED = 0b00001;
 
 /// Has a non-default surface component?
-const int HAS_SURFACE = (1 << 1);
+const int HAS_SURFACE = 0b00010;
 
 /// Has a non-default backface surface component?
-const int HAS_BACKFACE = (1 << 2);
+const int HAS_BACKFACE = 0b00100;
 
 /// Has a non-default volume component?
-const int HAS_VOLUME = (1 << 3);
+const int HAS_VOLUME = 0b01000;
 
 /// Has a non-default hair component?
-const int HAS_HAIR = (1 << 4);
+const int HAS_HAIR = 0b10000;
 
-/// An mat of a material corresponding to `smdl::JIT::Material::Instance` 
+/// An instance of a material corresponding to `smdl::JIT::Material::Instance` 
 /// in the C++ API.
 export struct $material_instance {
   /// The material deep copied with `#bump()`.
@@ -316,16 +319,16 @@ export struct $material_instance {
   const int wavelength_base_max = $WAVELENGTH_BASE_MAX;
 
   /// The flags.
-  const int flags = 
-    (mat.thin_walled                                      ? THIN_WALLED  : 0) |
-    (#typeof(mat.surface)  != #typeof(material_surface()) ? HAS_SURFACE  : 0) |
-    (#typeof(mat.backface) != #typeof(material_surface()) ? HAS_BACKFACE : 0) |
-    (#typeof(mat.volume)   != #typeof(material_volume())  ? HAS_VOLUME   : 0) |
-    (#typeof(mat.hair)     != #typeof(hair_bsdf())        ? HAS_HAIR     : 0);
+  const int flags = (mat.thin_walled ? THIN_WALLED : 0)                                         //
+                    | (#typeof(mat.surface) != #typeof(material_surface()) ? HAS_SURFACE : 0)   //
+                    | (#typeof(mat.backface) != #typeof(material_surface()) ? HAS_BACKFACE : 0) //
+                    | (#typeof(mat.volume) != #typeof(material_volume()) ? HAS_VOLUME : 0)      //
+                    | (#typeof(mat.hair) != #typeof(hair_bsdf()) ? HAS_HAIR : 0);
 
   /// The tangent space matrix held by the `State` during construction.
   const float3x3 tangent_space = float3x3(
-    $state.tangent_to_object_matrix[0].xyz,
-    $state.tangent_to_object_matrix[1].xyz,
-    $state.tangent_to_object_matrix[2].xyz);
+                                   $state.tangent_to_object_matrix[0].xyz,
+                                   $state.tangent_to_object_matrix[1].xyz,
+                                   $state.tangent_to_object_matrix[2].xyz,
+                                 );
 };
