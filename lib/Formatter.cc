@@ -1,6 +1,8 @@
 // vim:foldmethod=marker:foldlevel=0:fmr=--{,--}
 #include "Formatter.h"
 
+#include "smdl/Logger.h"
+
 namespace smdl {
 
 void Formatter::align_line_comments() {
@@ -110,14 +112,38 @@ void Formatter::write_delim_newline() {
 
 void Formatter::write_comment(llvm::StringRef inSrc) {
   if (!inSrc.empty() && !options.noComments) {
+    // This better be a line comment or a multiline comment!
     SMDL_SANITY_CHECK((inSrc.starts_with("//") && inSrc.ends_with("\n")) ||
                       (inSrc.starts_with("/*") && inSrc.ends_with("*/")));
     if (!outputSrc.empty() && last_output() != ' ' && last_output() != '\n') {
       outputSrc += ' ';
     }
+    // Parse format on/off directives
+    if (inSrc.starts_with("//") || !inSrc.contains('\n')) {
+      auto text{inSrc.starts_with("//")
+                    ? inSrc.drop_front(2).trim()
+                    : inSrc.drop_front(2).drop_back(2).trim()};
+      auto tokens{llvm::SmallVector<llvm::StringRef>{}};
+      while (!text.empty() && tokens.size() < 3) {
+        text = text.drop_while(is_space);
+        auto token{text.take_while([&](char ch) { return !is_space(ch); })};
+        if (!token.empty()) {
+          tokens.push_back(token);
+          text = text.drop_front(token.size());
+        }
+      }
+      if (tokens.size() == 3 && tokens[0] == "smdl" && tokens[1] == "format") {
+        if (tokens[2] == "off" && !formatOff)
+          formatOff = FormatOffInfo{inSrc.data(), outputSrc.size()};
+        if (tokens[2] == "on" && formatOff) 
+          apply_format_off(inSrc.data());
+      }
+    }
     bool isNewLine{outputSrc.empty() || last_output() == '\n'};
     write_indent_if_newline();
-    if (!isNewLine && inSrc.starts_with("//")) {
+    // Remember line comments to align later, but only remember if not
+    // disabled by `// smdl format off`!
+    if (inSrc.starts_with("//") && !isNewLine && !formatOff) {
       lineCommentsToAlign.push_back({outputSrc.size(), current_column()});
     }
     outputSrc += inSrc;

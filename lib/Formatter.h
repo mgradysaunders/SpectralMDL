@@ -13,10 +13,15 @@ public:
 
   [[nodiscard]] std::string format(llvm::StringRef inSrc,
                                    const AST::Node &node) {
-    inputSrc = inSrc;
     outputSrc.clear();
+    inputSrc = inSrc;
     indent = 0;
+    // Write!
     write(node);
+    // If there was a dangling `// smdl format off` that was
+    // never turned back on, then it hasn't been processed yet!
+    apply_format_off(inSrc.data() + inSrc.size());
+    // Align line comments
     align_line_comments();
     return outputSrc;
   }
@@ -136,7 +141,8 @@ private:
       indent += 2;
       break;
     case ALIGN_INDENT:
-      indent = current_column();
+      if (last_output() != '\n')
+        indent = current_column();
       break;
     case PUSH_INDENT:
       indentStack.push_back(indent);
@@ -399,9 +405,9 @@ private:
 private:
   FormatOptions options{};
 
-  llvm::StringRef inputSrc{};
-
   std::string outputSrc{};
+
+  llvm::StringRef inputSrc{};
 
   int indent{};
 
@@ -414,6 +420,24 @@ private:
   };
 
   std::vector<LineCommentInfo> lineCommentsToAlign{};
+
+  struct FormatOffInfo final {
+    const char *inputSrcPos{};
+
+    size_t outputSrcPos{};
+  };
+
+  std::optional<FormatOffInfo> formatOff{};
+
+  void apply_format_off(const char *inputSrcPos) {
+    if (formatOff) {
+      SMDL_SANITY_CHECK(formatOff->inputSrcPos < inputSrcPos);
+      outputSrc.resize(formatOff->outputSrcPos);
+      outputSrc += std::string_view(formatOff->inputSrcPos,
+                                    inputSrcPos - formatOff->inputSrcPos);
+      formatOff.reset();
+    }
+  }
 };
 
 } // namespace smdl
