@@ -1,6 +1,13 @@
 #include "smdl/Logger.h"
 
+#include <cstddef>
+#include <cstdio>
 #include <iostream>
+
+#if __linux__ || __unix__ || defined(_POSIX_VERSION)
+#define HAS_UNISTD 1
+#include <unistd.h>
+#endif // #if __linux__ || __unix__ || defined(_POSIX_VERSION)
 
 namespace smdl {
 
@@ -38,15 +45,35 @@ void Logger::log_message(LogLevel level, std::string_view message) {
 
 namespace LogSinks {
 
-static const char *Labels[]{"\033[36m[debug]\033[0m ", "",
-                            "\033[33m[warn]\033[0m ",
-                            "\033[91m[error]\033[0m "};
+static const char *LabelsWithColors[]{"\033[36m[debug]\033[0m ", "",
+                                      "\033[33m[warn]\033[0m ",
+                                      "\033[91m[error]\033[0m "};
+
+static const char *LabelsWithoutColors[]{"[debug] ", "", "[warn] ", "[error] "};
 
 void print_to_cerr::log_message(LogLevel level, std::string_view message) {
+  static const bool cerr_supports_colors{[]() -> bool {
+#if HAS_UNISTD
+    return isatty(STDERR_FILENO);
+#else
+    return false;
+#endif
+  }()};
+  static const auto Labels{cerr_supports_colors ? &LabelsWithColors[0]
+                                                : &LabelsWithoutColors[0]};
   std::cerr << Labels[int(level)] << message << '\n';
 }
 
 void print_to_cout::log_message(LogLevel level, std::string_view message) {
+  static const bool cout_supports_colors{[]() -> bool {
+#if HAS_UNISTD
+    return isatty(STDOUT_FILENO);
+#else
+    return false;
+#endif
+  }()};
+  static const auto Labels{cout_supports_colors ? &LabelsWithColors[0]
+                                                : &LabelsWithoutColors[0]};
   std::cout << Labels[int(level)] << message << '\n';
 }
 
