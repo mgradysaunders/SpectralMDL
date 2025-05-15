@@ -1,10 +1,19 @@
 #smdl
 
-int get_array_dim(auto[<N>] x) = N;
+int get_array_dim(auto[<N>] x) {
+  x; // Silence unused parameter warning
+  return N;
+}
 
-int get_array_dim_rows(auto[<M>][<N>] x) = M;
+int get_array_dim_rows(auto[<M>][<N>] x) {
+  x; // Silence unused parameter warning
+  return M;
+}
 
-int get_array_dim_cols(auto[<M>][<N>] x) = N;
+int get_array_dim_cols(auto[<M>][<N>] x) {
+  x; // Silence unused parameter warning
+  return N;
+}
 
 unit_test "Inferred-size arrays" {
   auto arr1 = int[3](4, 5, 6);

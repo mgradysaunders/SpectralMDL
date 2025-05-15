@@ -45,7 +45,7 @@ public:
 };
 
 /// A parameter.
-class SMDL_EXPORT Parameter final {
+class SMDL_EXPORT Parameter final : public NodeSubclass<NodeKind::Parameter> {
 public:
   /// The type.
   BumpPtr<Type> type{};
@@ -70,7 +70,8 @@ public:
 };
 
 /// A parameter list.
-class SMDL_EXPORT ParameterList final {
+class SMDL_EXPORT ParameterList final
+    : public NodeSubclass<NodeKind::ParameterList> {
 public:
   /// The size.
   [[nodiscard]] size_t size() const { return params.size(); }
@@ -230,6 +231,7 @@ public:
 /// A function declaration.
 class SMDL_EXPORT Function final : public DeclSubclass<DeclKind::Function> {
 public:
+  /// The function attributes, e.g., `@(pure macro)`.
   class SMDL_EXPORT Attributes final {
   public:
     [[nodiscard]] bool has(std::string_view attr) const {
@@ -379,7 +381,7 @@ public:
   };
 
   /// A `struct` field declarator.
-  class Field final {
+  class Field final : public NodeSubclass<NodeKind::StructField> {
   public:
     /// The type.
     BumpPtr<Type> type{};

@@ -2,6 +2,8 @@
 #include "smdl/Logger.h"
 #include "smdl/Module.h"
 
+#include "filesystem.h"
+
 #include "llvm/MC/TargetRegistry.h"
 #include "llvm/Support/Allocator.h"
 #include "llvm/Support/Error.h"
@@ -108,25 +110,39 @@ void SourceLocation::throw_error(std::string message) const {
 }
 
 SourceLocation::operator std::string() const {
-  if (module_)
-    return concat("[",
-                  module_->is_builtin() ? module_->get_name()
-                                        : module_->get_file_name(),
-                  ":", lineNo, "]");
-  else
-    return {};
+  std::string str{};
+  if (module_) {
+    str += '[';
+    if (module_->is_builtin()) {
+      str += module_->get_name();
+    } else {
+      auto fileName{std::string(module_->get_file_name())};
+      auto fileNameRel{std::string{}};
+      try {
+        fileNameRel = fs::relative(fs_make_path(fileName)).string();
+      } catch (...) {
+        fileNameRel = fileName; // Fallback
+      }
+      // Only use the relative file name if it is shorter than the absolute
+      // file name! The entire purpose of this is to make the output more
+      // concise
+      if (fileNameRel.size() < fileName.size())
+        str += fileNameRel;
+      else
+        str += fileName;
+    }
+    str += ':';
+    str += std::to_string(lineNo);
+    str += ']';
+  }
+  return str;
 }
 
 void Error::print() const {
-  auto str{std::string()};
-  auto os{llvm::raw_string_ostream(str)};
-  if (srcLoc.module_)
-    llvm::WithColor(os, llvm::HighlightColor::Address)
-        << '['
-        << (srcLoc.module_->is_builtin() ? srcLoc.module_->get_name()
-                                         : srcLoc.module_->get_file_name())
-        << ':' << srcLoc.lineNo << "] ";
-  os << message;
+  std::string str{srcLoc};
+  if (!str.empty())
+    str += ' ';
+  str += message;
   SMDL_LOG_ERROR(str);
 }
 

@@ -24,10 +24,22 @@ Value Emitter::create_function_implementation(
   handle_scope(nullptr, nullptr, [&] {
     labelBreak = labelContinue = {}; // Invalidate
     inDefer = false;
+    auto paramCrumbs{llvm::SmallVector<Crumb *>{}};
     for (size_t i = 0; i < params.size(); i++) {
-      declare_parameter(params[i], paramValues[i]);
+      declare_parameter(paramCrumbs, params[i], paramValues[i]);
     }
     callback();
+    // TODO More sophisticated warnings concerning inline parameters?
+    for (auto *paramCrumb : paramCrumbs) {
+      SMDL_SANITY_CHECK(paramCrumb->name.size() == 1);
+      auto paramSrcLoc{paramCrumb->get_source_location()};
+      if ((paramCrumb->flags & CRUMB_IS_LOOKED_UP) == 0 &&
+          (paramCrumb->flags & CRUMB_IS_PARAMETER) != 0) {
+        paramSrcLoc.log_warn(concat("unused parameter ",
+                                    quoted(paramCrumb->name[0]),
+                                    " in function ", quoted(name)));
+      }
+    }
     if (!has_terminator()) {
       // TODO Warn or error?
       returns.push_back(Result{RValue(context.get_void_type(), nullptr),
@@ -148,23 +160,30 @@ Value Emitter::create_alloca(Type *type, const llvm::Twine &name) {
   return value;
 }
 
-void Emitter::declare_parameter(const Parameter &param, Value value) {
+void Emitter::declare_parameter(llvm::SmallVector<Crumb *> &paramCrumbs,
+                                const Parameter &param, Value value) {
   value = invoke(param.type, value, param.get_source_location());
   value = param.is_const() ? value : to_lvalue(value);
-  declare_crumb(param.name, /*decl=*/{}, value);
+  paramCrumbs.push_back(
+      declare_crumb(param.name,
+                    param.astParam   ? static_cast<AST::Node *>(param.astParam)
+                    : param.astField ? static_cast<AST::Node *>(param.astField)
+                                     : nullptr,
+                    value, {}, param.is_inline() ? 0 : CRUMB_IS_PARAMETER));
   if (param.is_inline())
-    declare_parameter_inline(crumb->value);
+    declare_parameter_inline(paramCrumbs, crumb->value);
 }
 
-void Emitter::declare_parameter_inline(Value value) {
+void Emitter::declare_parameter_inline(llvm::SmallVector<Crumb *> &paramCrumbs,
+                                       Value value) {
   if (auto structType{llvm::dyn_cast<StructType>(
           value.type->get_first_non_pointer_type())}) {
     for (auto &param : structType->params) {
       auto srcLoc{param.get_source_location()};
-      declare_crumb(param.name, /*decl=*/{},
-                    access_field(value, param.name, srcLoc));
+      paramCrumbs.push_back(declare_crumb(
+          param.name, /*decl=*/{}, access_field(value, param.name, srcLoc)));
       if (param.is_inline())
-        declare_parameter_inline(crumb->value);
+        declare_parameter_inline(paramCrumbs, crumb->value);
     }
   }
 }
@@ -208,7 +227,7 @@ void Emitter::unwind(Crumb *lastCrumb) {
         emit(static_cast<AST::Defer *>(crumb->node)->stmt);
       });
     } else if (crumb->is_ast_preserve()) {
-      builder.CreateStore(crumb->preservedValue, crumb->value);
+      builder.CreateStore(crumb->valueToPreserve, crumb->value);
     } else if (crumb->value) {
       create_lifetime_end(crumb->value);
     }

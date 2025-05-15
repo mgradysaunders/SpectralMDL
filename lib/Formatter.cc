@@ -253,9 +253,10 @@ void Formatter::write(const AST::Struct &decl) {
     write(decl.srcColonBeforeTags, DELIM_SPACE, PUSH_INDENT);
     auto delim{
         write_start_list(decl.tags.size(), decl.has_trailing_comma_on_tags())};
-    for (const auto &[srcKwDefault, type, srcComma] : decl.tags) {
-      write(srcKwDefault, DELIM_SPACE, type, srcComma,
-            srcComma.empty() ? DELIM_NONE : delim);
+    for (const auto &tag : decl.tags) {
+      write(tag.srcKwDefault,
+            tag.srcKwDefault.empty() ? DELIM_UNNECESSARY_SPACE : DELIM_SPACE,
+            tag.type, tag.srcComma, tag.srcComma.empty() ? DELIM_NONE : delim);
     }
     write(POP_INDENT);
   }

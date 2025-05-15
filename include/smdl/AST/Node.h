@@ -26,7 +26,15 @@ public:
   std::string_view srcName{};
 };
 
-enum class NodeKind : uint8_t { Decl, Expr, File, Stmt };
+enum class NodeKind : uint8_t {
+  File,          ///< The kind of the top-level file.
+  Parameter,     ///< The kind of a function parameter, for bookkeeping.
+  ParameterList, ///< The kind of a function parameter list, for bookkeeping.
+  StructField,   ///< The kind of a struct field, for bookkeeping.
+  Decl,          ///< The base kind of all declarations in `AST/Decl.h`.
+  Expr,          ///< The base kind of all expressions in `AST/Expr.h`.
+  Stmt,          ///< The base kind of all statements in `AST/Stmt.h`.
+};
 
 /// The base type for all nodes.
 class SMDL_EXPORT Node {

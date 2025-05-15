@@ -57,24 +57,23 @@ Crumb *Crumb::find(Context &context, Span<std::string_view> name,
     if (crumb->value.is_comptime_meta_module(context)) {
       // Look inside the module if it is either
       // 1. A universal import in unqualified form `using foo::bar import *`
-      // 2. A universal import in qualified form `import foo::bar::*` or
+      // 2. A universal import in qualified form `import foo::bar::*`
       if ((name.size() == 1 && crumb->is_ast_using_import()) ||
           (name.size() >= 2 && crumb->is_ast_import() &&
            crumb->name == name.subspan(0, name.size() - 1))) {
-        if (auto innerCrumb{
-                Crumb::find(context, name.back(), llvmFunc,
-                            crumb->value
-                                .get_comptime_meta_module(
-                                    context, crumb->get_source_location())
-                                ->lastCrumb,
-                            /*ignoreIfNotExported=*/true)}) {
-          return innerCrumb;
+        auto subCrumb0{
+            crumb->value
+                .get_comptime_meta_module(context, crumb->get_source_location())
+                ->lastCrumb};
+        if (auto subCrumb{Crumb::find(context, name.back(), llvmFunc, subCrumb0,
+                                      /*ignoreIfNotExported=*/true)}) {
+          return subCrumb->flags |= CRUMB_IS_LOOKED_UP, subCrumb;
         }
       }
     }
     // TODO Handle specific using imports (match identifier or simple name)
     if (crumb->name == name) {
-      return crumb;
+      return crumb->flags |= CRUMB_IS_LOOKED_UP, crumb;
     }
   }
   return nullptr;

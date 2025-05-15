@@ -221,6 +221,7 @@ auto Parser::parse_parameter() -> std::optional<AST::Parameter> {
     return std::nullopt;
   }
   auto param{AST::Parameter{}};
+  param.srcLoc = srcLoc0;
   param.type = std::move(type);
   param.name = *name;
   if (auto srcEqual{next_delimiter("=")}) {
@@ -243,6 +244,7 @@ auto Parser::parse_parameter_list() -> std::optional<AST::ParameterList> {
     reject();
     return std::nullopt;
   }
+  params.srcLoc = srcLoc0;
   params.srcParenL = *srcParenL;
   skip();
   if (auto srcStar{next_delimiter("*")}) {
@@ -1280,6 +1282,7 @@ auto Parser::parse_struct_field_declarator()
     reject();
     return std::nullopt;
   }
+  field.srcLoc = srcLoc0;
   field.type = std::move(type);
   auto name{parse_simple_name()};
   if (!name) {

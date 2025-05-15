@@ -215,16 +215,18 @@ public:
 
   /// Declare crumb.
   auto declare_crumb(Span<std::string_view> name, AST::Node *node, Value value,
-                     Value preservedValue = {}) {
+                     Value valueToPreserve = {}, uint8_t flags = {}) {
     return (crumb = context.allocator.allocate<Crumb>(crumb, name, node, value,
-                                                      preservedValue));
+                                                      valueToPreserve, flags));
   }
 
   /// Declare parameter.
-  void declare_parameter(const Parameter &param, Value value);
+  void declare_parameter(llvm::SmallVector<Crumb *> &paramCrumbs,
+                         const Parameter &param, Value value);
 
   /// Declare parameter as inline.
-  void declare_parameter_inline(Value value);
+  void declare_parameter_inline(llvm::SmallVector<Crumb *> &paramCrumbs,
+                                Value value);
 
   /// Declare import.
   void declare_import(Span<std::string_view> importPath, bool isAbs,
@@ -522,8 +524,6 @@ public:
 
   /// Emit select expression.
   Value emit(AST::Select &expr);
-
-  // TODO SizeName
 
   /// Emit type expression.
   Value emit(AST::Type &expr) {

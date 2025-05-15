@@ -145,6 +145,10 @@ public:
   return Value(Value::Kind::RValue, type, llvmValue);
 }
 
+static constexpr uint8_t CRUMB_IS_LOOKED_UP = (1 << 0);
+
+static constexpr uint8_t CRUMB_IS_PARAMETER = (1 << 1);
+
 /// A crumb, the fundamental unit of name resolution and scope.
 class Crumb final {
 public:
@@ -213,8 +217,10 @@ public:
   /// The value.
   Value value{};
 
-  /// If this is an AST preserve statement, the preserved value.
-  Value preservedValue{};
+  /// If this is an AST preserve statement, the value to preserve.
+  Value valueToPreserve{};
+
+  uint8_t flags{};
 };
 
 /// A parameter.
