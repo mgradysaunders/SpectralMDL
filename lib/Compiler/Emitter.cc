@@ -22,31 +22,21 @@ Value Emitter::create_function_implementation(
   labelReturn.block = create_block(llvm::StringRef(name) + ".return");
   returns.clear();
   handle_scope(nullptr, nullptr, [&] {
+    auto crumbsToWarnAboutSize{crumbsToWarnAbout.size()};
     labelBreak = labelContinue = {}; // Invalidate
     inDefer = false;
-    auto paramCrumbs{llvm::SmallVector<Crumb *>{}};
-    for (size_t i = 0; i < params.size(); i++) {
-      declare_parameter(paramCrumbs, params[i], paramValues[i]);
-    }
+    for (size_t i = 0; i < params.size(); ++i)
+      declare_parameter(params[i], paramValues[i]);
     callback();
-    // TODO More sophisticated warnings concerning inline parameters?
-    for (auto *paramCrumb : paramCrumbs) {
-      SMDL_SANITY_CHECK(paramCrumb->name.size() == 1);
-      auto paramSrcLoc{paramCrumb->get_source_location()};
-      if ((paramCrumb->flags & CRUMB_IS_LOOKED_UP) == 0 &&
-          (paramCrumb->flags & CRUMB_IS_PARAMETER) != 0) {
-        paramSrcLoc.log_warn(concat("unused parameter ",
-                                    quoted(paramCrumb->name[0]),
-                                    " in function ", quoted(name)));
-      }
-    }
     if (!has_terminator()) {
-      // TODO Warn or error?
       returns.push_back(Result{RValue(context.get_void_type(), nullptr),
                                get_insert_block(), srcLoc});
       unwind(labelReturn.crumb);
       builder.CreateBr(labelReturn.block);
     }
+    for (size_t i = crumbsToWarnAboutSize; i < crumbsToWarnAbout.size(); i++)
+      crumbsToWarnAbout[i]->maybe_warn_about_unused_value();
+    crumbsToWarnAbout.resize(crumbsToWarnAboutSize);
   });
   llvm_move_block_to_end(labelReturn.block);
   builder.SetInsertPoint(labelReturn.block);
@@ -160,30 +150,28 @@ Value Emitter::create_alloca(Type *type, const llvm::Twine &name) {
   return value;
 }
 
-void Emitter::declare_parameter(llvm::SmallVector<Crumb *> &paramCrumbs,
-                                const Parameter &param, Value value) {
+void Emitter::declare_parameter(const Parameter &param, Value value) {
   value = invoke(param.type, value, param.get_source_location());
   value = param.is_const() ? value : to_lvalue(value);
-  paramCrumbs.push_back(
+  crumbsToWarnAbout.push_back(
       declare_crumb(param.name,
                     param.astParam   ? static_cast<AST::Node *>(param.astParam)
                     : param.astField ? static_cast<AST::Node *>(param.astField)
                                      : nullptr,
-                    value, {}, param.is_inline() ? 0 : CRUMB_IS_PARAMETER));
+                    value));
   if (param.is_inline())
-    declare_parameter_inline(paramCrumbs, crumb->value);
+    declare_parameter_inline(crumb->value);
 }
 
-void Emitter::declare_parameter_inline(llvm::SmallVector<Crumb *> &paramCrumbs,
-                                       Value value) {
+void Emitter::declare_parameter_inline(Value value) {
   if (auto structType{llvm::dyn_cast<StructType>(
           value.type->get_first_non_pointer_type())}) {
     for (auto &param : structType->params) {
       auto srcLoc{param.get_source_location()};
-      paramCrumbs.push_back(declare_crumb(
-          param.name, /*decl=*/{}, access_field(value, param.name, srcLoc)));
+      declare_crumb(param.name, /*decl=*/{},
+                    access_field(value, param.name, srcLoc));
       if (param.is_inline())
-        declare_parameter_inline(paramCrumbs, crumb->value);
+        declare_parameter_inline(crumb->value);
     }
   }
 }
@@ -380,7 +368,9 @@ Value Emitter::emit(AST::Variable &decl) {
       builder.CreateStore(value, valueAlloca);
       value = LValue(value.type, valueAlloca);
     }
-    declare_crumb(declarator.name, &decl, value);
+    declare_crumb(declarator.name, &declarator, value);
+    if (get_llvm_function())
+      crumbsToWarnAbout.push_back(crumb);
   }
   return Value();
 }

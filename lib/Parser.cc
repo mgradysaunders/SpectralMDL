@@ -1402,6 +1402,7 @@ auto Parser::parse_variable_declarator()
     return std::nullopt;
   }
   auto declarator{AST::Variable::Declarator{}};
+  declarator.srcLoc = srcLoc0;
   declarator.name = *name;
   if (auto srcEqual{next_delimiter("=")}) {
     auto exprInit{parse_assignment_expression()};

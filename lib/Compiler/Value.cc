@@ -67,13 +67,13 @@ Crumb *Crumb::find(Context &context, Span<std::string_view> name,
                 ->lastCrumb};
         if (auto subCrumb{Crumb::find(context, name.back(), llvmFunc, subCrumb0,
                                       /*ignoreIfNotExported=*/true)}) {
-          return subCrumb->flags |= CRUMB_IS_LOOKED_UP, subCrumb;
+          return subCrumb->isUsed = 1, subCrumb;
         }
       }
     }
     // TODO Handle specific using imports (match identifier or simple name)
     if (crumb->name == name) {
-      return crumb->flags |= CRUMB_IS_LOOKED_UP, crumb;
+      return crumb->isUsed = 1, crumb;
     }
   }
   return nullptr;

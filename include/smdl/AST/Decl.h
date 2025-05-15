@@ -67,6 +67,10 @@ public:
 
   /// The complete source region.
   std::string_view src{};
+
+  /// Has warning been issued about this parameter yet? Used to prevent
+  /// the same warning being logged over and over again.
+  bool warningIssued{};
 };
 
 /// A parameter list.
@@ -583,7 +587,7 @@ public:
 /// A variable declaration.
 class SMDL_EXPORT Variable final : public DeclSubclass<DeclKind::Variable> {
 public:
-  class Declarator final {
+  class Declarator final : public NodeSubclass<NodeKind::VariableDeclarator> {
   public:
     /// The name.
     Name name{};
@@ -602,6 +606,10 @@ public:
 
     /// The next comma `,`. This may be empty!
     std::string_view srcComma{};
+
+    /// Has warning been issued about this variable yet? Used to prevent
+    /// the same warning being logged over and over again.
+    bool warningIssued{};
   };
 
   explicit Variable(BumpPtr<Type> type, std::vector<Declarator> declarators,

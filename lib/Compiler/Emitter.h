@@ -215,18 +215,16 @@ public:
 
   /// Declare crumb.
   auto declare_crumb(Span<std::string_view> name, AST::Node *node, Value value,
-                     Value valueToPreserve = {}, uint8_t flags = {}) {
+                     Value valueToPreserve = {}) {
     return (crumb = context.allocator.allocate<Crumb>(crumb, name, node, value,
-                                                      valueToPreserve, flags));
+                                                      valueToPreserve));
   }
 
   /// Declare parameter.
-  void declare_parameter(llvm::SmallVector<Crumb *> &paramCrumbs,
-                         const Parameter &param, Value value);
+  void declare_parameter(const Parameter &param, Value value);
 
   /// Declare parameter as inline.
-  void declare_parameter_inline(llvm::SmallVector<Crumb *> &paramCrumbs,
-                                Value value);
+  void declare_parameter_inline(Value value);
 
   /// Declare import.
   void declare_import(Span<std::string_view> importPath, bool isAbs,
@@ -885,6 +883,8 @@ public:
 
   /// The LLVM-IR builder.
   llvm::IRBuilder<> builder;
+
+  llvm::SmallVector<Crumb *> crumbsToWarnAbout{};
 };
 
 /// \}

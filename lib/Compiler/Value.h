@@ -145,10 +145,6 @@ public:
   return Value(Value::Kind::RValue, type, llvmValue);
 }
 
-static constexpr uint8_t CRUMB_IS_LOOKED_UP = (1 << 0);
-
-static constexpr uint8_t CRUMB_IS_PARAMETER = (1 << 1);
-
 /// A crumb, the fundamental unit of name resolution and scope.
 class Crumb final {
 public:
@@ -204,6 +200,29 @@ public:
     return llvm::isa_and_present<AST::Preserve>(node);
   }
 
+  /// Maybe issue warning about an unused value.
+  void maybe_warn_about_unused_value() const {
+    if (isUsed == 0 && name.size() == 1) {
+      if (llvm::isa_and_present<AST::Parameter>(node)) {
+        auto astParam{static_cast<AST::Parameter *>(node)};
+        if (!astParam->warningIssued &&
+            !astParam->type->has_qualifier("inline")) {
+          astParam->warningIssued = true;
+          get_source_location().log_warn(
+              concat("unused parameter ", quoted(name[0])));
+        }
+      }
+      if (llvm::isa_and_present<AST::Variable::Declarator>(node)) {
+        auto astVar{static_cast<AST::Variable::Declarator *>(node)};
+        if (!astVar->warningIssued) {
+          astVar->warningIssued = true;
+          get_source_location().log_warn(
+              concat("unused variable ", quoted(name[0])));
+        }
+      }
+    }
+  }
+
 public:
   /// The previous crumb.
   Crumb *prev{};
@@ -220,7 +239,7 @@ public:
   /// If this is an AST preserve statement, the value to preserve.
   Value valueToPreserve{};
 
-  uint8_t flags{};
+  uint8_t isUsed{};
 };
 
 /// A parameter.
