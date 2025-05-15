@@ -898,7 +898,8 @@ affine_inverse(const Matrix<T, 4, 4> &m) {
 /// The MDL state passed in at runtime.
 class SMDL_EXPORT State final {
 public:
-  /// The allocator.
+  /// The allocator, which must point to thread-local
+  /// instance of `BumpPtrAllocator`.
   void *allocator{};
 
   /// The position or ray intersection point in object space.
@@ -1027,14 +1028,19 @@ private:
   std::tuple<Ts...> backupValues;
 };
 
+/// The formatter options.
 class SMDL_EXPORT FormatOptions final {
 public:
+  /// Format files in-place. If false, prints formatted source code to `stdout`.
   bool inPlace{};
 
+  /// Remove comments from formatted source code.
   bool noComments{};
 
+  /// Remove annotations from formatted source code.
   bool noAnnotations{};
 
+  /// Want compact?
   bool compact{};
 };
 
