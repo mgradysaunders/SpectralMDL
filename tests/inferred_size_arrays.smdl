@@ -1,0 +1,20 @@
+#smdl
+
+int get_array_dim(auto[<N>] x) = N;
+
+int get_array_dim_rows(auto[<M>][<N>] x) = M;
+
+int get_array_dim_cols(auto[<M>][<N>] x) = N;
+
+unit_test "Inferred-size arrays" {
+  auto arr1 = int[3](4, 5, 6);
+  auto arr2 = int[4][2](
+    int[2](1, 2),
+    int[2](3, 4),
+    int[2](5, 6),
+    int[2](7, 8),
+  );
+  #assert(get_array_dim(arr1) == 3);
+  #assert(get_array_dim_rows(arr2) == 4);
+  #assert(get_array_dim_cols(arr2) == 2);
+}
