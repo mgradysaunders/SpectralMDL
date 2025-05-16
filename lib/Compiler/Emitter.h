@@ -419,6 +419,17 @@ public:
     return Value();
   }
 
+  /// Emit namespace declaration.
+  Value emit(AST::Namespace &decl) {
+    declare_crumb(*decl.identifier, &decl,
+                  context.get_comptime_meta_namespace(&decl));
+    auto preserve{Preserve(crumb)};
+    for (auto &each : decl.decls)
+      emit(each);
+    decl.lastCrumb = crumb;
+    return Value();
+  }
+
   /// Emit struct declaration.
   Value emit(AST::Struct &decl) {
     context.get_struct_type(&decl)->initialize(*this);

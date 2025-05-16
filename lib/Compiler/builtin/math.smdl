@@ -151,3 +151,85 @@ export @(noinline) float luminance(const color a) {
   }
   return result / $WAVELENGTH_BASE_MAX;
 }
+
+// NOTE: Non-standard! Used internally to implement df
+export namespace monte_carlo {
+
+export @(pure macro) float2 advance_low_discrepancy(const &float2 xi) = (*xi = frac(*xi + float2(0.75487766, 0.56984029)));
+
+export @(pure macro) float3 advance_low_discrepancy(const &float3 xi) = (*xi = frac(*xi + float3(0.81917251, 0.67104360, 0.54970047)));
+
+export @(pure macro) float4 advance_low_discrepancy(const &float4 xi) = (*xi = frac(*xi + float4(0.85667488, 0.73389185, 0.62870672, 0.53859725)));
+
+export @(pure) bool bool_sample(const &float xi, const float chance) {
+  if (*xi < chance) {
+    *xi = (*xi / chance);
+    return true;
+  } else {
+    *xi = (*xi - chance) / (1 - chance);
+    return false;
+  }
+}
+
+export @(pure) int uniform_wavelength_index_sample(const &float xi) {
+  const int i(#min(int(*xi *= $WAVELENGTH_BASE_MAX), $WAVELENGTH_BASE_MAX - 1));
+  *xi -= i;
+  return i;
+}
+
+export @(pure noinline) float2 uniform_disk_sample(float2 xi) {
+  xi = 2 * xi - 1;
+  xi = #select(xi == 0, 1e-5, xi);
+  const bool cond((absxi := #abs(xi), absxi.x > absxi.y));
+  const float rad(#select(cond, xi.x, xi.y));
+  const float phi(#select(cond, ($PI / 4) * xi.y / xi.x, ($PI / 2) - ($PI / 4) * xi.x / xi.y));
+  return rad * float2(#cos(phi), #sin(phi));
+}
+
+export @(pure noinline) float3 cosine_hemisphere_sample(float2 xi) = float3((p := uniform_disk_sample(xi)), #sqrt(#max(1 - #sum(p * p), 0)));
+
+} // namespace monte_carlo
+
+// NOTE: Non-standard! Used internally to implement df
+export namespace specular {
+
+export @(pure macro) auto reflect(const float3 wi, const float3 wm) = 2 * #sum(wi * wm) * wm - wi;
+
+export @(pure macro) auto refract(const float3 wi, const float3 wm, const float ior) {
+  const auto cos_thetai(#sum(wi * wm));
+  const auto cos2_thetai(#min(cos_thetai * cos_thetai, 1));
+  const auto cos2_thetat(#max(1 - ior * ior * (1 - cos2_thetai), 0));
+  const auto cos_thetat(#sqrt(cos2_thetat) * -#sign(cos_thetai));
+  return -ior * wi + (ior * cos_thetai + cos_thetat) * wm;
+}
+
+export @(pure macro) auto refraction_half_vector(
+  const float3 wo,
+  const float3 wi,
+  const float ior,
+) = (vh := -ior * wo + wi) * #sign(vh.z);
+
+export @(pure macro) auto refraction_half_vector_jacobian(
+  const float3 wo,
+  const float3 wi,
+  const float ior,
+) = #abs(#sum(wi * (vh := refraction_half_vector(wo, wi, ior)))) / ((vh2 := #sum(vh * vh)) * #sqrt(vh2));
+
+export @(pure macro) auto schlick_F0(const auto ior) = #pow((ior - 1) / (ior + 1), 2);
+
+export @(pure macro) auto schlick_fresnel(
+  const auto cos_theta,
+  const auto F0,
+  const auto F90 = 1.0,
+  const float exponent = 5,
+) = F0 + (F90 - F0) * #pow(#max(1 - #abs(cos_theta), 0), exponent);
+
+export @(pure) auto dielectric_fresnel(const float cos_thetai, const auto ior) {
+  const auto cos2_thetat(1 - ior * ior * (1 - cos_thetai * cos_thetai));
+  const auto cos_thetat(#sqrt(#max(cos2_thetat, 0)) * #sign(cos_thetai));
+  const auto rs((ior * cos_thetai - cos_thetat) / (ior * cos_thetai + cos_thetat));
+  const auto rp((cos_thetai - ior * cos_thetat) / (cos_thetai + ior * cos_thetat));
+  return #min(0.5 * (rs * rs + rp * rp), 1.0);
+}
+
+} // namespace specular

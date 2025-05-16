@@ -131,6 +131,11 @@ public:
     return metaIntrinsicType.get();
   }
 
+  /// Get meta `AST::Namespace` type.
+  [[nodiscard]] Type *get_meta_namespace_type() {
+    return metaNamespaceType.get();
+  }
+
   /// Get array type.
   [[nodiscard]] ArrayType *get_array_type(Type *elemType, uint32_t size);
 
@@ -297,6 +302,12 @@ public:
                   llvm_ptr_as_constant_int(llvmContext, value));
   }
 
+  /// Get compile-time meta `AST::Namespace` constant.
+  [[nodiscard]] Value get_comptime_meta_namespace(AST::Namespace *value) {
+    return RValue(get_meta_namespace_type(),
+                  llvm_ptr_as_constant_int(llvmContext, value));
+  }
+
   /// Get compile-time union index map. This is useful for converting
   /// `unionTypeA` to `unionTypeB`.
   [[nodiscard]] Value get_comptime_union_index_map(UnionType *unionTypeA,
@@ -389,6 +400,10 @@ private:
   /// The meta `AST::Intrinsic` type.
   const BumpPtr<MetaType> metaIntrinsicType{
       allocator.allocate<MetaType>(*this, "intrinsic")};
+
+  /// The meta `AST::Namespace` type.
+  const BumpPtr<MetaType> metaNamespaceType{
+      allocator.allocate<MetaType>(*this, "namespace")};
 
   /// The `void` type.
   const BumpPtr<VoidType> voidType{allocator.allocate<VoidType>(*this)};

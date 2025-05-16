@@ -92,6 +92,9 @@ public:
   /// Is compile-time meta `AST::Intrinsic`?
   [[nodiscard]] bool is_comptime_meta_intrinsic(Context &context) const;
 
+  /// Is compile-time meta `AST::Namespace`?
+  [[nodiscard]] bool is_comptime_meta_namespace(Context &context) const;
+
   /// Get the compile-time `Module` or throw an error.
   [[nodiscard]] Module *
   get_comptime_meta_module(Context &context,
@@ -116,6 +119,15 @@ public:
     if (!is_comptime_meta_intrinsic(context))
       srcLoc.throw_error("expected compile-time intrinsic");
     return llvm_constant_int_as_ptr<AST::Intrinsic>(llvmValue);
+  }
+
+  /// Get the compile-time `AST::Namespace` or throw an error.
+  [[nodiscard]] AST::Namespace *
+  get_comptime_meta_namespace(Context &context,
+                              const SourceLocation &srcLoc) const {
+    if (!is_comptime_meta_namespace(context))
+      srcLoc.throw_error("expected compile-time intrinsic");
+    return llvm_constant_int_as_ptr<AST::Namespace>(llvmValue);
   }
 
   /// Implicit conversion to bool.
@@ -152,6 +164,7 @@ public:
   [[nodiscard]] static Crumb *find(Context &context,
                                    Span<std::string_view> name,
                                    llvm::Function *llvmFunc, Crumb *crumb,
+                                   Crumb *stopCrumb = nullptr,
                                    bool ignoreIfNotExported = false);
 
   /// Get the source location if applicable.
@@ -163,7 +176,7 @@ public:
   [[nodiscard]] bool is_exported() const {
     if (auto decl{llvm::dyn_cast_if_present<AST::Decl>(node)})
       return decl->is_exported();
-    return false;
+    return isExported;
   }
 
   /// Is named?
@@ -238,6 +251,8 @@ public:
 
   /// If this is an AST preserve statement, the value to preserve.
   Value valueToPreserve{};
+
+  uint8_t isExported{};
 
   uint8_t isUsed{};
 };

@@ -2,8 +2,6 @@
 #smdl
 
 using ::math import *;
-using ::monte_carlo import *;
-using ::specular import *;
 
 export enum scatter_mode { scatter_none = 0, scatter_reflect = 1, scatter_transmit = 2, scatter_reflect_transmit = 3 };
 
@@ -78,7 +76,7 @@ struct scatter_evaluate_parameters {
 }
 
 @(pure) float3 half_direction(inline const &scatter_evaluate_parameters params) {
-  return normalize(mode == scatter_reflect ? wo + wi : refraction_half_vector(wo, wi, ior));
+  return normalize(mode == scatter_reflect ? wo + wi : specular::refraction_half_vector(wo, wi, ior));
 }
 
 struct scatter_evaluate_result {
@@ -86,8 +84,8 @@ struct scatter_evaluate_result {
   $(color | float) f = 0.0;
 
   /// The Probability Density Function (PDF) evaluations.
-  /// - `pdf[0]` is the forward density of sampling ωi given ωo.
-  /// - `pdf[1]` is the reverse density of sampling ωo given ωi.
+  /// - `pdf[0]` is the forward density of sampling `wi` given `wo`.
+  /// - `pdf[1]` is the reverse density of sampling `wo` given `wi`.
   float2 pdf = float2(0.0);
 
   /// Is known to be black by construction? Faster than checking every 
@@ -191,7 +189,7 @@ export struct diffuse_reflection_bsdf: bsdf {
 
 @(pure) auto scatter_sample(inline const &diffuse_reflection_bsdf this, inline const &scatter_sample_parameters params) {
   if ((tbn := recalculate_tangent_space(params))) {
-    return scatter_sample_result(wi: (*tbn) * cosine_hemisphere_sample(xi.xy), mode: scatter_reflect);
+    return scatter_sample_result(wi: (*tbn) * monte_carlo::cosine_hemisphere_sample(xi.xy), mode: scatter_reflect);
   } else {
     return scatter_sample_result(); // Reject
   }
@@ -219,7 +217,7 @@ export struct diffuse_transmission_bsdf: bsdf {
 
 @(pure) auto scatter_sample(inline const &diffuse_transmission_bsdf this, inline const &scatter_sample_parameters params) {
   if ((tbn := recalculate_tangent_space(params))) {
-    return scatter_sample_result(wi: (*tbn) * -cosine_hemisphere_sample(xi.xy), mode: scatter_transmit);
+    return scatter_sample_result(wi: (*tbn) * -monte_carlo::cosine_hemisphere_sample(xi.xy), mode: scatter_transmit);
   } else {
     return scatter_sample_result(); // Reject
   }
@@ -277,7 +275,7 @@ export struct sheen_bsdf: bsdf {
 
 @(pure) auto scatter_sample(inline const &sheen_bsdf this, inline const &scatter_sample_parameters params) {
   if ((tbn := recalculate_tangent_space(params))) {
-    return scatter_sample_result(wi: (*tbn) * cosine_hemisphere_sample(xi.xy), mode: scatter_reflect);
+    return scatter_sample_result(wi: (*tbn) * monte_carlo::cosine_hemisphere_sample(xi.xy), mode: scatter_reflect);
   } else {
     return scatter_sample_result(); // Reject
   }
@@ -361,8 +359,8 @@ export struct ward_geisler_moroder_bsdf: bsdf {
   tangent_u = this.tangent_u;
   if ((tbn := recalculate_tangent_space(params))) {
     // Sample diffuse (20% chance if multiscattering)
-    if (#typeof(this.multiscatter_tint) != void && bool_sample(&xi.w, 0.2)) {
-      return scatter_sample_result(wi: (*tbn) * cosine_hemisphere_sample(xi.xy), mode: scatter_reflect);
+    if (#typeof(this.multiscatter_tint) != void && monte_carlo::bool_sample(&xi.w, 0.2)) {
+      return scatter_sample_result(wi: (*tbn) * monte_carlo::cosine_hemisphere_sample(xi.xy), mode: scatter_reflect);
     }
     // Sample specular.
     const auto roughness(this.roughness_u, this.roughness_v);
@@ -372,7 +370,7 @@ export struct ward_geisler_moroder_bsdf: bsdf {
     const auto sin_phi(#sin(phi));
     const auto theta(#atan(#sqrt(-#log(1 - xi.y) / (#pow(cos_phi / alpha.x, 2) + #pow(sin_phi / alpha.y, 2)))));
     const auto wm(float3(#sin(theta) * float2(cos_phi, sin_phi), #cos(theta)));
-    const auto wi(normalize(reflect(wo, wm)));
+    const auto wi(normalize(specular::reflect(wo, wm)));
     if (wi.z > 0) {
       return scatter_sample_result(wi: (*tbn) * wi, mode: scatter_reflect);
     }
@@ -492,7 +490,7 @@ export struct weighted_layer: bsdf {
 }
 
 @(pure macro) auto scatter_sample(const &weighted_layer this, inline const &scatter_sample_parameters params) {
-  if (bool_sample(&xi.w, this.chance)) {
+  if (monte_carlo::bool_sample(&xi.w, this.chance)) {
     preserve normal;
     normal = this.normal;
     return scatter_sample(visit &this.layer, params);
@@ -507,11 +505,11 @@ export typedef weighted_layer color_weighted_layer;
 
 export @(pure macro) int $scatter_evaluate(
   const &$material_instance instance,
-  const &float3 wo,
-  const &float3 wi,
-  const &float pdf_fwd,
-  const &float pdf_rev,
-  const &float f,
+  const &float3 wo,     ///< \param[in] The outgoing direction
+  const &float3 wi,     ///< \param[in] The incoming direction
+  const &float pdf_fwd, ///< \param[out] The PDF of sampling `wi` from `wo`
+  const &float pdf_rev, ///< \param[out] The PDF of sampling `wo` from `wi`
+  const &float f,       ///< \param[out] The scattering function
 ) {
   auto params = scatter_evaluate_parameters(
     wo0: normalize(*wo), // Guarantee normalized
@@ -544,13 +542,13 @@ export @(pure macro) int $scatter_evaluate(
 
 export @(pure macro) int $scatter_sample(
   const &$material_instance instance,
-  const &float4 xi,
-  const &float3 wo,
-  const &float3 wi,
-  const &float pdf_fwd,
-  const &float pdf_rev,
-  const &float f,
-  const &int is_delta,
+  const &float4 xi,     ///< \param[in] The canonical random sample in `[0,1]^4`
+  const &float3 wo,     ///< \param[in] The outgoing direction
+  const &float3 wi,     ///< \param[out] The incoming direction
+  const &float pdf_fwd, ///< \param[out] The PDF of sampling `wi` from `wo`
+  const &float pdf_rev, ///< \param[out] The PDF of sampling `wo` from `wi`
+  const &float f,       ///< \param[out] The scattering function
+  const &int is_delta,  ///< \param[out] Is delta direction?
 ) {
   auto params = scatter_sample_parameters(
     xi: saturate(*xi),   // Guarantee clamped to [0,1]

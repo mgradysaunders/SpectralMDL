@@ -41,12 +41,17 @@ bool Value::is_comptime_meta_intrinsic(Context &context) const {
   return is_comptime() && type == context.get_meta_intrinsic_type();
 }
 
+bool Value::is_comptime_meta_namespace(Context &context) const {
+  return is_comptime() && type == context.get_meta_namespace_type();
+}
+
 Crumb *Crumb::find(Context &context, Span<std::string_view> name,
-                   llvm::Function *llvmFunc, Crumb *crumb,
+                   llvm::Function *llvmFunc, Crumb *crumb, Crumb *stopCrumb,
                    bool ignoreIfNotExported) {
-  if (name.empty())
+  if (name.empty()) {
     return nullptr;
-  for (; crumb; crumb = crumb->prev) {
+  }
+  for (; crumb && crumb != stopCrumb; crumb = crumb->prev) {
     // If this is not usable, don't consider it.
     // If this is not exported and we recursed into a module, don't consider it.
     if (!crumb->value || //
@@ -55,23 +60,37 @@ Crumb *Crumb::find(Context &context, Span<std::string_view> name,
       continue;
     // If the crumb value is a `Module` ...
     if (crumb->value.is_comptime_meta_module(context)) {
+      auto module_{crumb->value.get_comptime_meta_module(
+          context, crumb->get_source_location())};
       // Look inside the module if it is either
       // 1. A universal import in unqualified form `using foo::bar import *`
       // 2. A universal import in qualified form `import foo::bar::*`
-      if ((name.size() == 1 && crumb->is_ast_using_import()) ||
-          (name.size() >= 2 && crumb->is_ast_import() &&
-           crumb->name == name.subspan(0, name.size() - 1))) {
-        auto subCrumb0{
-            crumb->value
-                .get_comptime_meta_module(context, crumb->get_source_location())
-                ->lastCrumb};
-        if (auto subCrumb{Crumb::find(context, name.back(), llvmFunc, subCrumb0,
+      if (crumb->is_ast_using_import() ||
+          (crumb->is_ast_import() && name.size() > crumb->name.size() &&
+           name.starts_with(crumb->name))) {
+        if (auto subCrumb{Crumb::find(context,
+                                      crumb->is_ast_using_import()
+                                          ? name
+                                          : name.subspan(crumb->name.size()),
+                                      llvmFunc, module_->lastCrumb, nullptr,
                                       /*ignoreIfNotExported=*/true)}) {
-          return subCrumb->isUsed = 1, subCrumb;
+          return subCrumb;
         }
       }
     }
-    // TODO Handle specific using imports (match identifier or simple name)
+    // If the crumb value is an `AST::Namespace` ...
+    if (crumb->value.is_comptime_meta_namespace(context)) {
+      auto astNamespace{crumb->value.get_comptime_meta_namespace(
+          context, crumb->get_source_location())};
+      if (name.size() > crumb->name.size() && //
+          name.starts_with(crumb->name)) {
+        if (auto subCrumb{Crumb::find(context, name.subspan(crumb->name.size()),
+                                      llvmFunc, astNamespace->lastCrumb, crumb,
+                                      /*ignoreIfNotExported=*/true)}) {
+          return subCrumb;
+        }
+      }
+    }
     if (crumb->name == name) {
       return crumb->isUsed = 1, crumb;
     }

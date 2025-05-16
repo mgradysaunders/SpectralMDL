@@ -1,12 +1,11 @@
 #smdl
 
 import ::math::*;
-import ::monte_carlo::*;
 
 @(pure) auto run_low_discrepancy_tests(auto xi) {
   auto xi_av(xi);
   for (int i = 0; i < 5000; i++) {
-    monte_carlo::advance_low_discrepancy(&xi);
+    math::monte_carlo::advance_low_discrepancy(&xi);
     xi_av += xi;
   }
   xi_av /= 5000;
@@ -29,8 +28,8 @@ unit_test "Cosine-weighted hemisphere sample" {
   auto xi(float2(0.5, 0.7));
   auto wi_av(float3(0.0));
   for (int i = 0; i < 5000; i++) {
-    monte_carlo::advance_low_discrepancy(&xi);
-    wi_av += monte_carlo::cosine_hemisphere_sample(xi);
+    math::monte_carlo::advance_low_discrepancy(&xi);
+    wi_av += math::monte_carlo::cosine_hemisphere_sample(xi);
   }
   wi_av /= 5000;
   #assert(#all(#approx_equal(wi_av, float3(0.0, 0.0, 0.666), 0.001)));

@@ -196,8 +196,8 @@ private:
   void write(const AST::Namespace &decl) {
     write(decl.srcKwNamespace, DELIM_SPACE, decl.identifier, DELIM_SPACE,
           decl.srcBraceL, DELIM_NEWLINE);
-    for (auto &subDecl : decl.decls)
-      write(subDecl, DELIM_NEWLINE);
+    for (const auto &subDecl : decl.decls)
+      write(subDecl->srcKwExport, DELIM_SPACE, subDecl, DELIM_NEWLINE);
     write(decl.srcBraceR, DELIM_NEWLINE);
   }
 

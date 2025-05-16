@@ -10,7 +10,7 @@ namespace smdl::builtin {
 
 STR
 
-fnames = ['anno', 'api', 'debug', 'df', 'limits', 'math', 'monte_carlo', 'scene', 'specular', 'state', 'std', 'tex']
+fnames = ['anno', 'api', 'debug', 'df', 'limits', 'math', 'scene', 'state', 'std', 'tex']
 
 for fname in fnames 
   text = `smdl format -c --no-comments --no-annotations builtin/#{fname}.smdl`

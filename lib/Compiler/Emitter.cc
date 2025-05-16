@@ -192,9 +192,9 @@ void Emitter::declare_import(Span<std::string_view> importPath, bool isAbs,
     declare_crumb(importPath, &decl,
                   context.get_comptime_meta_module(importedModule));
   } else {
-    auto importedCrumb{
-        Crumb::find(context, importPath.back(), get_llvm_function(),
-                    importedModule->lastCrumb, /*ignoreIfNotExported=*/true)};
+    auto importedCrumb{Crumb::find(
+        context, importPath.back(), get_llvm_function(),
+        importedModule->lastCrumb, nullptr, /*ignoreIfNotExported=*/true)};
     if (!importedCrumb)
       decl.srcLoc.throw_error(concat("cannot resolve import identifier ",
                                      quoted(join(importPath, "::"))));
@@ -281,8 +281,8 @@ Value Emitter::emit(AST::Node &node) {
 //--{ Emit: Decl
 Value Emitter::emit(AST::Decl &decl) {
   return emit_type_switch< //
-      AST::Enum, AST::Function, AST::Import, AST::Struct, AST::Tag,
-      AST::Typedef, AST::UnitTest, AST::UsingAlias, AST::UsingImport,
+      AST::Enum, AST::Function, AST::Import, AST::Namespace, AST::Struct,
+      AST::Tag, AST::Typedef, AST::UnitTest, AST::UsingAlias, AST::UsingImport,
       AST::Variable>(decl);
 }
 
@@ -369,6 +369,7 @@ Value Emitter::emit(AST::Variable &decl) {
       value = LValue(value.type, valueAlloca);
     }
     declare_crumb(declarator.name, &declarator, value);
+    crumb->isExported = decl.is_exported();
     if (get_llvm_function())
       crumbsToWarnAbout.push_back(crumb);
   }

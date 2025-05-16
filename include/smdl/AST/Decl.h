@@ -2,6 +2,12 @@
 
 #include "smdl/AST/Expr.h"
 
+namespace smdl {
+
+class Crumb;
+
+} // namespace smdl
+
 namespace smdl::AST {
 
 /// An annotation.
@@ -387,6 +393,9 @@ public:
 
   /// The brace `}`.
   std::string_view srcBraceR{};
+
+  /// The last crumb for inside-namespace lookup. This is populated later.
+  Crumb *lastCrumb{};
 };
 
 /// A `struct` declaration.

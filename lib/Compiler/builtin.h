@@ -160,8 +160,6 @@ export @(pure macro) bool print(const auto a){
 
 static const char *df = R"*(#smdl
 using ::math import *;
-using ::monte_carlo import *;
-using ::specular import *;
 export enum scatter_mode{scatter_none=0,scatter_reflect=1,scatter_transmit=2,scatter_reflect_transmit=3};
 @(pure macro) float scatter_reflect_chance(const scatter_mode mode){
   const auto refl_weight(#select((int(mode)&1)!=0,1.0,0.0));
@@ -203,7 +201,7 @@ struct scatter_evaluate_parameters{
   return ((wo.z<0)==(wo0.z<0))&((wi.z<0)==(wi0.z<0));
 }
 @(pure) float3 half_direction(inline const &scatter_evaluate_parameters params){
-  return normalize(mode==scatter_reflect?wo+wi:refraction_half_vector(wo,wi,ior));
+  return normalize(mode==scatter_reflect?wo+wi:specular::refraction_half_vector(wo,wi,ior));
 }
 struct scatter_evaluate_result{
   $(color|float) f=0.0;
@@ -267,7 +265,7 @@ export struct diffuse_reflection_bsdf: bsdf{
 }
 @(pure) auto scatter_sample(inline const &diffuse_reflection_bsdf this,inline const &scatter_sample_parameters params){
   if((tbn:=recalculate_tangent_space(params))){
-    return scatter_sample_result(wi: (*tbn)*cosine_hemisphere_sample(xi.xy),mode: scatter_reflect);
+    return scatter_sample_result(wi: (*tbn)*monte_carlo::cosine_hemisphere_sample(xi.xy),mode: scatter_reflect);
   } else {
     return scatter_sample_result();
   }
@@ -287,7 +285,7 @@ export struct diffuse_transmission_bsdf: bsdf{
 }
 @(pure) auto scatter_sample(inline const &diffuse_transmission_bsdf this,inline const &scatter_sample_parameters params){
   if((tbn:=recalculate_tangent_space(params))){
-    return scatter_sample_result(wi: (*tbn)*-cosine_hemisphere_sample(xi.xy),mode: scatter_transmit);
+    return scatter_sample_result(wi: (*tbn)*-monte_carlo::cosine_hemisphere_sample(xi.xy),mode: scatter_transmit);
   } else {
     return scatter_sample_result();
   }
@@ -324,7 +322,7 @@ export struct sheen_bsdf: bsdf{
 }
 @(pure) auto scatter_sample(inline const &sheen_bsdf this,inline const &scatter_sample_parameters params){
   if((tbn:=recalculate_tangent_space(params))){
-    return scatter_sample_result(wi: (*tbn)*cosine_hemisphere_sample(xi.xy),mode: scatter_reflect);
+    return scatter_sample_result(wi: (*tbn)*monte_carlo::cosine_hemisphere_sample(xi.xy),mode: scatter_reflect);
   } else {
     return scatter_sample_result();
   }
@@ -384,8 +382,8 @@ export struct ward_geisler_moroder_bsdf: bsdf{
   preserve tangent_u;
   tangent_u=this.tangent_u;
   if((tbn:=recalculate_tangent_space(params))){
-    if(#typeof(this.multiscatter_tint)!=void&&bool_sample(&xi.w,0.2)){
-      return scatter_sample_result(wi: (*tbn)*cosine_hemisphere_sample(xi.xy),mode: scatter_reflect);
+    if(#typeof(this.multiscatter_tint)!=void&&monte_carlo::bool_sample(&xi.w,0.2)){
+      return scatter_sample_result(wi: (*tbn)*monte_carlo::cosine_hemisphere_sample(xi.xy),mode: scatter_reflect);
     }
     const auto roughness(this.roughness_u,this.roughness_v);
     const auto alpha(#max(0.001,roughness*roughness));
@@ -394,14 +392,14 @@ export struct ward_geisler_moroder_bsdf: bsdf{
     const auto sin_phi(#sin(phi));
     const auto theta(#atan(#sqrt(-#log(1-xi.y)/(#pow(cos_phi/alpha.x,2)+#pow(sin_phi/alpha.y,2)))));
     const auto wm(float3(#sin(theta)*float2(cos_phi,sin_phi),#cos(theta)));
-    const auto wi(normalize(reflect(wo,wm)));
+    const auto wi(normalize(specular::reflect(wo,wm)));
     if(wi.z>0){
       return scatter_sample_result(wi: (*tbn)*wi,mode: scatter_reflect);
     }
   }
   return scatter_sample_result();
 }
-struct tint1: bsdf, edf, hair_bsdf{
+struct tint1: bsdf,edf,hair_bsdf{
   $(color|float) tint;
   auto base;
 };
@@ -467,7 +465,7 @@ export struct weighted_layer: bsdf{
   return scatter_evaluate_result(f: lerp(result0.f,result1.f,this.weight),pdf: lerp(result0.pdf,result1.pdf,this.chance),is_black: result0.is_black&result1.is_black);
 }
 @(pure macro) auto scatter_sample(const &weighted_layer this,inline const &scatter_sample_parameters params){
-  if(bool_sample(&xi.w,this.chance)){
+  if(monte_carlo::bool_sample(&xi.w,this.chance)){
     preserve normal;
     normal=this.normal;
     return scatter_sample(visit &this.layer,params);
@@ -638,13 +636,10 @@ export @(noinline) float luminance(const color a){
   }
   return result/$WAVELENGTH_BASE_MAX;
 }
-)*";
-
-static const char *monte_carlo = R"*(#smdl
-import ::math::*;
-export @(pure macro) float2 advance_low_discrepancy(const &float2 xi)=(*xi=math::frac(*xi+float2(0.75487766,0.56984029)));
-export @(pure macro) float3 advance_low_discrepancy(const &float3 xi)=(*xi=math::frac(*xi+float3(0.81917251,0.67104360,0.54970047)));
-export @(pure macro) float4 advance_low_discrepancy(const &float4 xi)=(*xi=math::frac(*xi+float4(0.85667488,0.73389185,0.62870672,0.53859725)));
+export namespace monte_carlo {
+export @(pure macro) float2 advance_low_discrepancy(const &float2 xi)=(*xi=frac(*xi+float2(0.75487766,0.56984029)));
+export @(pure macro) float3 advance_low_discrepancy(const &float3 xi)=(*xi=frac(*xi+float3(0.81917251,0.67104360,0.54970047)));
+export @(pure macro) float4 advance_low_discrepancy(const &float4 xi)=(*xi=frac(*xi+float4(0.85667488,0.73389185,0.62870672,0.53859725)));
 export @(pure) bool bool_sample(const &float xi,const float chance){
   if(*xi<chance){
     *xi=(*xi/chance);
@@ -668,6 +663,33 @@ export @(pure noinline) float2 uniform_disk_sample(float2 xi){
   return rad*float2(#cos(phi),#sin(phi));
 }
 export @(pure noinline) float3 cosine_hemisphere_sample(float2 xi)=float3((p:=uniform_disk_sample(xi)),#sqrt(#max(1-#sum(p*p),0)));
+}
+export namespace specular {
+export @(pure macro) auto reflect(const float3 wi,const float3 wm)=2*#sum(wi*wm)*wm-wi;
+export @(pure macro) auto refract(const float3 wi,const float3 wm,const float ior){
+  const auto cos_thetai(#sum(wi*wm));
+  const auto cos2_thetai(#min(cos_thetai*cos_thetai,1));
+  const auto cos2_thetat(#max(1-ior*ior*(1-cos2_thetai),0));
+  const auto cos_thetat(#sqrt(cos2_thetat)*-#sign(cos_thetai));
+  return -ior*wi+(ior*cos_thetai+cos_thetat)*wm;
+}
+export @(pure macro) auto refraction_half_vector(const float3 wo,const float3 wi,const float ior,)=(vh:=-ior*wo+wi)*#sign(vh.z);
+export @(pure macro) auto refraction_half_vector_jacobian(const float3 wo,const float3 wi,const float ior,)=#abs(#sum(wi*(vh:=refraction_half_vector(wo,wi,ior))))/((vh2:=#sum(vh*vh))*#sqrt(vh2));
+export @(pure macro) auto schlick_F0(const auto ior)=#pow((ior-1)/(ior+1),2);
+export @(pure macro) auto schlick_fresnel(
+  const auto cos_theta,
+  const auto F0,
+  const auto F90=1.0,
+  const float exponent=5,
+)=F0+(F90-F0)*#pow(#max(1-#abs(cos_theta),0),exponent);
+export @(pure) auto dielectric_fresnel(const float cos_thetai,const auto ior){
+  const auto cos2_thetat(1-ior*ior*(1-cos_thetai*cos_thetai));
+  const auto cos_thetat(#sqrt(#max(cos2_thetat,0))*#sign(cos_thetai));
+  const auto rs((ior*cos_thetai-cos_thetat)/(ior*cos_thetai+cos_thetat));
+  const auto rp((cos_thetai-ior*cos_thetat)/(cos_thetai+ior*cos_thetat));
+  return #min(0.5*(rs*rs+rp*rp),1.0);
+}
+}
 )*";
 
 static const char *scene = R"*(#smdl
@@ -681,28 +703,6 @@ export @(macro) float2 data_lookup_float2(const string name,float2 default_value
 export @(macro) float3 data_lookup_float3(const string name,float3 default_value=float3())=#data_lookup(name,default_value);
 export @(macro) float4 data_lookup_float4(const string name,float4 default_value=float4())=#data_lookup(name,default_value);
 export @(macro) color data_lookup_color(const string name,color default_value=color())=#data_lookup(name,default_value);
-)*";
-
-static const char *specular = R"*(#smdl
-export @(pure macro) auto reflect(const float3 wi,const float3 wm)=2*#sum(wi*wm)*wm-wi;
-export @(pure macro) auto refract(const float3 wi,const float3 wm,const float ior){
-  const auto cos_thetai(#sum(wi*wm));
-  const auto cos2_thetai(#min(cos_thetai*cos_thetai,1));
-  const auto cos2_thetat(#max(1-ior*ior*(1-cos2_thetai),0));
-  const auto cos_thetat(#sqrt(cos2_thetat)*-#sign(cos_thetai));
-  return -ior*wi+(ior*cos_thetai+cos_thetat)*wm;
-}
-export @(pure macro) auto refraction_half_vector(const float3 wo,const float3 wi,const float ior)=(vh:=-ior*wo+wi)*#sign(vh.z);
-export @(pure macro) auto refraction_half_vector_jacobian(const float3 wo,const float3 wi,const float ior)=#abs(#sum(wi*(vh:=refraction_half_vector(wo,wi,ior))))/((vh2:=#sum(vh*vh))*#sqrt(vh2));
-export @(pure macro) auto schlick_F0(const auto ior)=#pow((ior-1)/(ior+1),2);
-export @(pure macro) auto schlick_fresnel(const auto cos_theta,const auto F0,const auto F90=1.0,const float exponent=5)=F0+(F90-F0)*#pow(#max(1-#abs(cos_theta),0),exponent);
-export @(pure) auto dielectric_fresnel(const float cos_thetai,const auto ior){
-  const auto cos2_thetat(1-ior*ior*(1-cos_thetai*cos_thetai));
-  const auto cos_thetat(#sqrt(#max(cos2_thetat,0))*#sign(cos_thetai));
-  const auto rs((ior*cos_thetai-cos_thetat)/(ior*cos_thetai+cos_thetat));
-  const auto rp((cos_thetai-ior*cos_thetat)/(cos_thetai+ior*cos_thetat));
-  return #min(0.5*(rs*rs+rp*rp),1.0);
-}
 )*";
 
 static const char *state = R"*(#smdl
@@ -928,12 +928,8 @@ export @(macro) float lookup_float(texture_ptex tex,const int channel=0){
     return limits;
   if (name == "math")
     return math;
-  if (name == "monte_carlo")
-    return monte_carlo;
   if (name == "scene")
     return scene;
-  if (name == "specular")
-    return specular;
   if (name == "state")
     return state;
   if (name == "std")

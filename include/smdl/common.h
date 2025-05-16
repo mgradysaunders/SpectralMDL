@@ -124,6 +124,16 @@ public:
     return std::find(begin(), end(), value) != end();
   }
 
+  /// Starts with the given sequence of values?
+  [[nodiscard]] constexpr bool starts_with(Span<T> other) const {
+    if (count < other.count)
+      return false;
+    for (size_t i = 0; i < other.count; i++)
+      if (operator[](i) != other[i])
+        return false;
+    return true;
+  }
+
   /// Get element by index.
   [[nodiscard]] constexpr const T &operator[](size_t i) const {
     return first[i];
