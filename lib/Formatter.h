@@ -193,6 +193,14 @@ private:
     write(decl.srcSemicolon, POP_INDENT);
   }
 
+  void write(const AST::Namespace &decl) {
+    write(decl.srcKwNamespace, DELIM_SPACE, decl.identifier, DELIM_SPACE,
+          decl.srcBraceL, DELIM_NEWLINE);
+    for (auto &subDecl : decl.decls)
+      write(subDecl, DELIM_NEWLINE);
+    write(decl.srcBraceR, DELIM_NEWLINE);
+  }
+
   void write(const AST::Struct &decl);
 
   void write(const AST::Tag &decl) {

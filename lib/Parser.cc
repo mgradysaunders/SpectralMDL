@@ -129,8 +129,8 @@ auto Parser::parse_simple_name() -> std::optional<AST::Name> {
     }
     if (isSmdl) {
       static const std::string_view keywordsSmdlSyntax[]{
-          "defer", "inline",      "return_from", "static",
-          "tag",   "unreachable", "visit",
+          "defer",  "inline", "namespace",   "return_from",
+          "static", "tag",    "unreachable", "visit",
       };
       for (const auto &keyword : keywordsSmdlSyntax) {
         if (*name == keyword) {
@@ -1095,7 +1095,7 @@ auto Parser::parse_using_import() -> BumpPtr<AST::UsingImport> {
       auto name{parse_simple_name()};
       if (!name)
         break;
-        // srcLoc0.throw_error("expected import name");
+      // srcLoc0.throw_error("expected import name");
       names.push_back(AST::UsingImport::Name{name->srcName, {}});
       auto srcComma{next_delimiter(",")};
       if (!srcComma)
@@ -1126,7 +1126,7 @@ auto Parser::parse_import() -> BumpPtr<AST::Import> {
     auto importPath{parse_import_path()};
     if (!importPath)
       break;
-      // srcLoc0.throw_error("expected import path");
+    // srcLoc0.throw_error("expected import path");
     importPathWrappers.push_back(
         AST::Import::ImportPathWrapper{std::move(*importPath), {}});
     auto srcComma{next_delimiter(",")};
@@ -1153,6 +1153,8 @@ auto Parser::parse_global_declaration() -> BumpPtr<AST::Decl> {
       return decl;
     if (isSmdl) {
       if (auto decl{parse_unit_test_declaration()})
+        return decl;
+      if (auto decl{parse_namespace_declaration()})
         return decl;
     }
     return nullptr;
@@ -1544,6 +1546,36 @@ auto Parser::parse_unit_test_declaration() -> BumpPtr<AST::UnitTest> {
     srcLoc0.throw_error("expected compound statement after 'unit_test ...'");
   return allocate<AST::UnitTest>(srcLoc0, std::in_place, *srcKwUnitTest,
                                  std::move(name), std::move(stmt));
+}
+
+auto Parser::parse_namespace_declaration() -> BumpPtr<AST::Namespace> {
+  skip();
+  auto srcLoc0{srcLoc};
+  auto srcKwNamespace{next_keyword("namespace")};
+  if (!srcKwNamespace)
+    return nullptr;
+  auto identifier{parse_identifier()};
+  if (!identifier)
+    srcLoc0.throw_error("expected identifier after 'namespace'");
+  auto srcBraceL{next_delimiter("{")};
+  if (!srcBraceL)
+    srcLoc0.throw_error("expected '{' after 'namespace ...'");
+  auto decls{std::vector<BumpPtr<AST::Decl>>{}};
+  while (true) {
+    auto decl{parse_global_declaration()};
+    if (!decl)
+      break;
+    decls.push_back(std::move(decl));
+    skip();
+    if (is_eof())
+      break;
+  }
+  auto srcBraceR{next_delimiter("}")};
+  if (!srcBraceR)
+    srcLoc0.throw_error("expected '}' after 'namespace ... { ...'");
+  return allocate<AST::Namespace>(srcLoc0, std::in_place, *srcKwNamespace,
+                                  std::move(identifier), *srcBraceL,
+                                  std::move(decls), *srcBraceR);
 }
 //--}
 

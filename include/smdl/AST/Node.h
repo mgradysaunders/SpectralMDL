@@ -65,6 +65,7 @@ enum class DeclKind : uint8_t {
   Enum,
   Function,
   Import,
+  Namespace,
   Struct,
   Tag,
   Typedef,

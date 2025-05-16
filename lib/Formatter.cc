@@ -194,9 +194,9 @@ void Formatter::write(const AST::File &file) {
 
 //--{ Write: Decls
 void Formatter::write(const AST::Decl &decl) {
-  write_type_switch<AST::Enum, AST::Function, AST::Import, AST::Struct,
-                    AST::Tag, AST::Typedef, AST::UnitTest, AST::UsingAlias,
-                    AST::UsingImport, AST::Variable>(decl);
+  write_type_switch<AST::Enum, AST::Function, AST::Import, AST::Namespace,
+                    AST::Struct, AST::Tag, AST::Typedef, AST::UnitTest,
+                    AST::UsingAlias, AST::UsingImport, AST::Variable>(decl);
 }
 
 void Formatter::write(const AST::Enum &decl) {

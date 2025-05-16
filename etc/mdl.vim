@@ -72,7 +72,7 @@ hi def link mdlSubst      Identifier
 hi def link mdlIntrinsic  Function
 
 " Keywords
-syn keyword mdlModule      mdl module export import using unit_test
+syn keyword mdlModule      mdl module export import using unit_test namespace
 syn keyword mdlRepeat      for while do
 syn keyword mdlConditional if else switch case default
 syn keyword mdlStatement   return break continue let in typedef cast defer preserve return_from unreachable visit finalize

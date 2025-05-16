@@ -363,6 +363,32 @@ public:
   }
 };
 
+/// A `namespace` declaration.
+class SMDL_EXPORT Namespace final : public DeclSubclass<DeclKind::Namespace> {
+public:
+  explicit Namespace(std::string_view srcKwNamespace,
+                     BumpPtr<Identifier> identifier, std::string_view srcBraceL,
+                     std::vector<BumpPtr<Decl>> decls,
+                     std::string_view srcBraceR)
+      : srcKwNamespace(srcKwNamespace), identifier(std::move(identifier)),
+        srcBraceL(srcBraceL), decls(std::move(decls)), srcBraceR(srcBraceR) {}
+
+  /// The keyword `namespace`.
+  std::string_view srcKwNamespace{};
+
+  /// The identifier.
+  BumpPtr<Identifier> identifier{};
+
+  /// The brace `{`.
+  std::string_view srcBraceL{};
+
+  /// The declarations.
+  std::vector<BumpPtr<Decl>> decls{};
+
+  /// The brace `}`.
+  std::string_view srcBraceR{};
+};
+
 /// A `struct` declaration.
 class SMDL_EXPORT Struct final : public DeclSubclass<DeclKind::Struct> {
 public:
