@@ -236,7 +236,7 @@ public:
   /// - If the value is an rvalue, copy it into an alloca and return the lvalue.
   ///
   [[nodiscard]] Value to_lvalue(Value value) {
-    if (value.is_rvalue()) {
+    if (value.is_rvalue() && !value.is_void()) {
       auto lv{create_alloca(value.type, value.llvmValue->hasName()
                                             ? value.llvmValue->getName() + ".lv"
                                             : "")};
@@ -255,11 +255,14 @@ public:
   ///
   [[nodiscard]] Value to_rvalue(Value value) {
     if (value.is_lvalue())
-      return RValue(value.type,
-                    builder.CreateLoad(value.type->llvmType, value,
-                                       value.llvmValue->hasName()
-                                           ? value.llvmValue->getName() + ".rv"
-                                           : ""));
+      return RValue(
+          value.type,
+          value.type->is_void()
+              ? nullptr
+              : builder.CreateLoad(value.type->llvmType, value,
+                                   value.llvmValue->hasName()
+                                       ? value.llvmValue->getName() + ".rv"
+                                       : ""));
     return value;
   }
 

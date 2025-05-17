@@ -54,7 +54,7 @@ public:
   /// same LLVM function.
   [[nodiscard]] bool
   is_usable_in_llvm_function(llvm::Function *llvmFunc) const {
-    if (auto llvmInst{llvm::dyn_cast_if_present<llvm::Instruction>(llvmValue)})
+    if (auto llvmInst{llvm::dyn_cast_if_present<llvm::Instruction>(llvmValue)}; llvmInst && llvmInst->getParent())
       return llvmInst->getFunction() == llvmFunc;
     return true;
   }

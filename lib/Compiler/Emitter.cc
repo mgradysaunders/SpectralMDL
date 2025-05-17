@@ -152,7 +152,7 @@ Value Emitter::create_alloca(Type *type, const llvm::Twine &name) {
 
 void Emitter::declare_parameter(const Parameter &param, Value value) {
   value = invoke(param.type, value, param.get_source_location());
-  value = param.is_const() ? value : to_lvalue(value);
+  value = param.is_const() || value.is_void() ? value : to_lvalue(value);
   crumbsToWarnAbout.push_back(
       declare_crumb(param.name,
                     param.astParam   ? static_cast<AST::Node *>(param.astParam)
@@ -348,25 +348,27 @@ Value Emitter::emit(AST::Variable &decl) {
     }()};
     unwind(crumb0);
     auto value{invoke(type, args, declarator.name.srcLoc)};
-    if (isStatic) {
-      if (!value.is_comptime())
-        declarator.name.srcLoc.throw_error(
-            concat("static variable ", quoted(declarator.name.srcName),
-                   " requires compile-time initializer"));
-      auto llvmGlobal{new llvm::GlobalVariable(
-          context.llvmModule, value.type->llvmType, /*isConst=*/true,
-          llvm::GlobalValue::PrivateLinkage,
-          static_cast<llvm::Constant *>(value.llvmValue))};
-      llvmGlobal->setUnnamedAddr(llvm::GlobalValue::UnnamedAddr::Global);
-      llvmGlobal->setName(declarator.name.srcName);
-      value = LValue(value.type, llvmGlobal);
-    } else if (isConst) {
-      value.llvmValue->setName(declarator.name.srcName);
-    } else {
-      auto valueAlloca{create_alloca(value.type, declarator.name.srcName)};
-      create_lifetime_start(valueAlloca);
-      builder.CreateStore(value, valueAlloca);
-      value = LValue(value.type, valueAlloca);
+    if (!value.is_void()) {
+      if (isStatic) {
+        if (!value.is_comptime())
+          declarator.name.srcLoc.throw_error(
+              concat("static variable ", quoted(declarator.name.srcName),
+                     " requires compile-time initializer"));
+        auto llvmGlobal{new llvm::GlobalVariable(
+            context.llvmModule, value.type->llvmType, /*isConst=*/true,
+            llvm::GlobalValue::PrivateLinkage,
+            static_cast<llvm::Constant *>(value.llvmValue))};
+        llvmGlobal->setUnnamedAddr(llvm::GlobalValue::UnnamedAddr::Global);
+        llvmGlobal->setName(declarator.name.srcName);
+        value = LValue(value.type, llvmGlobal);
+      } else if (isConst) {
+        value.llvmValue->setName(declarator.name.srcName);
+      } else {
+        auto valueAlloca{create_alloca(value.type, declarator.name.srcName)};
+        create_lifetime_start(valueAlloca);
+        builder.CreateStore(value, valueAlloca);
+        value = LValue(value.type, valueAlloca);
+      }
     }
     declare_crumb(declarator.name, &declarator, value);
     if (get_llvm_function())
@@ -778,9 +780,14 @@ Value Emitter::emit_op(AST::UnaryOp op, Value value,
     }
     // Unary logic not, e.g., `!value`
     if (op == UNOP_LOGIC_NOT) {
+      if (value.is_void())
+        return context.get_comptime_bool(true);
       if (value.type->is_arithmetic() || value.type->is_color() ||
           value.type->is_pointer() || value.type->is_enum())
         return emit_op(BINOP_CMP_EQ, value, Value::zero(value.type), srcLoc);
+      if (value.type->is_optional_union())
+        return emit_op(UNOP_LOGIC_NOT,
+                       invoke(context.get_bool_type(), value, srcLoc), srcLoc);
     }
     // Unary address, e.g., `&value`
     if (op == UNOP_ADDR) {
@@ -808,7 +815,7 @@ Value Emitter::emit_op(AST::UnaryOp op, Value value,
     }
   }
   srcLoc.throw_error(concat("unimplemented unary operator ",
-                            quoted(to_string(op)), "' for type ",
+                            quoted(to_string(op)), " for type ",
                             quoted(value.type->displayName)));
   return Value();
 }
@@ -1106,8 +1113,12 @@ Value Emitter::emit_op(AST::BinaryOp op, Value lhs, Value rhs,
   // Type-checking
   if (lhs.type != context.get_meta_type_type() && //
       rhs.type == context.get_meta_type_type() && op == BINOP_SUBSET) {
-    return context.get_comptime_bool(context.is_perfectly_convertible(
-        lhs.type, rhs.get_comptime_meta_type(context, srcLoc)));
+    if (rhs.is_comptime()) {
+      auto lhsTy{lhs.type};
+      auto rhsTy{rhs.get_comptime_meta_type(context, srcLoc)};
+      return context.get_comptime_bool(
+          context.is_perfectly_convertible(lhsTy, rhsTy));
+    }
   }
   srcLoc.throw_error(concat("unimplemented binary operator ",
                             quoted(to_string(op)), " for argument types ",
@@ -1415,6 +1426,12 @@ Value Emitter::emit_intrinsic(std::string_view name, const ArgumentList &args,
       auto result{to_rvalue(valueTmp)};
       create_lifetime_end(valueTmp);
       return result;
+    }
+    break;
+  }
+  case 'i': {
+    if (name == "isfpclass") {
+      // TODO
     }
     break;
   }
@@ -2057,6 +2074,9 @@ Value Emitter::resolve_identifier(Span<std::string_view> names,
         srcLoc.throw_error(
             "cannot resolve identifier '$state' in pure context");
       return state;
+    }
+    if (names[0] == "$nothing") {
+      return RValue(context.get_void_type(), nullptr);
     }
     if (auto value{context.get_keyword_value(names[0])}) {
       return value;

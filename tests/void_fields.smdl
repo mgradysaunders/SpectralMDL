@@ -10,8 +10,8 @@ unit_test "Void fields" {
   auto foo = Foo(bar: void(), baz: void());
 
   // Accessing these fields returns `void`.
-  #assert(#typeof(foo.bar) == void);
-  #assert(#typeof(foo.baz) == void);
+  #assert(foo.bar <: void);
+  #assert(foo.baz <: void);
 
   // However, in the struct layout, the fields reduce to 
   // 8-bit integers, so the memory addresses remain

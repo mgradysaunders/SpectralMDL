@@ -192,20 +192,16 @@ export tag edf;
 export tag hair_bsdf;
 
 /// The default BSDF is just an empty struct!
-export struct $default_bsdf: default bsdf {
-};
+export struct $default_bsdf: default bsdf {};
 
 /// The default VDF is just an empty struct!
-export struct $default_vdf: default vdf {
-};
+export struct $default_vdf: default vdf {};
 
 /// The default EDF is just an empty struct!
-export struct $default_edf: default edf {
-};
+export struct $default_edf: default edf {};
 
 /// The default hair BSDF is just an empty struct!
-export struct $default_hair_bsdf: default hair_bsdf {
-};
+export struct $default_hair_bsdf: default hair_bsdf {};
 
 /// The material emission description.
 export struct material_emission {

@@ -88,10 +88,10 @@ export tag bsdf;
 export tag vdf;
 export tag edf;
 export tag hair_bsdf;
-export struct $default_bsdf:default bsdf{ };
-export struct $default_vdf:default vdf{ };
-export struct $default_edf:default edf{ };
-export struct $default_hair_bsdf:default hair_bsdf{ };
+export struct $default_bsdf:default bsdf{};
+export struct $default_vdf:default vdf{};
+export struct $default_edf:default edf{};
+export struct $default_hair_bsdf:default hair_bsdf{};
 export struct material_emission{
   edf emission=edf();
   $(color|float) intensity=1.0;
@@ -162,12 +162,8 @@ export enum scatter_mode{scatter_none=0,scatter_reflect=1,scatter_transmit=2,sca
   const auto tran_weight(#select((int(mode)&2)!=0,1.0,0.0));
   return refl_weight/(refl_weight+tran_weight);
 }
-@(pure noinline) float3x3 build_tangent_space(const float3 normal,const float3 tangent_u){
-  const auto tw(normalize(normal)*#sign(normal.z));
-  const auto tu(normalize(tangent_u-dot(tangent_u,tw)*tw));
-  const auto tv(normalize(cross(tw,tu)));
-  return float3x3(tu,tv,tw);
-}
+const float SCATTER_EPS=0.001;
+const float MULTISCATTER_DIFFUSE_CHANCE=0.2;
 export namespace monte_carlo {
 export @(pure macro) float2 advance_low_discrepancy(const &float2 xi)=(*xi=frac(*xi+float2(0.75487766,0.56984029)));
 export @(pure macro) float3 advance_low_discrepancy(const &float3 xi)=(*xi=frac(*xi+float3(0.81917251,0.67104360,0.54970047)));
@@ -222,8 +218,12 @@ export @(pure) auto dielectric_fresnel(const float cos_thetai,const auto ior){
   return #min(0.5*(rs*rs+rp*rp),1.0);
 }
 }
-const float SCATTER_EPS=0.001;
-const float MULTISCATTER_DIFFUSE_CHANCE=0.2;
+@(pure noinline) float3x3 build_tangent_space(const float3 normal,const float3 tangent_u){
+  const auto tw(normalize(normal)*#sign(normal.z));
+  const auto tu(normalize(tangent_u-dot(tangent_u,tw)*tw));
+  const auto tv(normalize(cross(tw,tu)));
+  return float3x3(tu,tv,tw);
+}
 struct scatter_evaluate_parameters{
   float3 wo0;
   float3 wi0;
@@ -351,8 +351,12 @@ export struct sheen_bsdf:bsdf{
     roughness=saturate(roughness);
   }
 };
-@(pure) float sheen_lambda_l(const auto fit,const float mu)=fit[0]/(1.0+fit[1]*#pow(mu,fit[2]))+fit[3]*mu+fit[4];
-@(pure) float sheen_lambda(const auto fit,const float mu)=#exp(mu<0.5?sheen_lambda_l(fit,mu):2*sheen_lambda_l(fit,0.5)-sheen_lambda_l(fit,#max(1-mu,0)));
+@(pure) float sheen_lambda_l(const auto fit,const float mu){
+  return fit[0]/(1.0+fit[1]*#pow(mu,fit[2]))+fit[3]*mu+fit[4];
+}
+@(pure) float sheen_lambda(const auto fit,const float mu){
+  return #exp(mu<0.5?sheen_lambda_l(fit,mu):2*sheen_lambda_l(fit,0.5)-sheen_lambda_l(fit,#max(1-mu,0)));
+}
 @(pure) auto scatter_evaluate(inline const &sheen_bsdf this,inline const &scatter_evaluate_parameters params){
   if(mode==scatter_reflect&&recalculate_tangent_space(params)){
     const auto cos_thetao(#abs(wo.z));
@@ -452,13 +456,27 @@ export struct ward_geisler_moroder_bsdf:bsdf{
 }
 export namespace microfacet {
 export tag distribution;
-export struct distribution_ggx:default distribution{ };
-export struct distribution_beckmann:distribution{ };
-export @(pure macro) float smith_lambda(const distribution_ggx this,const float m)=0.5*(#sign(m)*#sqrt(1+1/(m*m+SCATTER_EPS)))-0.5;
-export @(pure macro) float smith_lambda(const distribution_beckmann this,const float m)=0.5*(#exp(-m*m)/m/#sqrt($PI)-erfcf(m));
-export @(pure macro) float smith_slope_pdf(const distribution_ggx this,const float2 m)=(1.0/$PI)/#pow(1+#sum(m*m),2);
-export @(pure macro) float smith_slope_pdf(const distribution_beckmann this,const float2 m)=(1.0/$PI)*#exp(-#sum(m*m));
-export @(pure macro) float smith_normal_pdf(const distribution this,const float2 alpha,const float3 wm){
+export struct distribution_ggx:default distribution{};
+export struct distribution_beckmann:distribution{};
+export struct distribution_blinn:distribution{};
+export @(pure macro) float smith_lambda(const distribution_ggx this[[anno::unused()]],
+                                        const float m){
+  return 0.5*(#sign(m)*#sqrt(1+1/(m*m+SCATTER_EPS)))-0.5;
+}
+export @(pure macro) float smith_lambda(const distribution_beckmann this[[anno::unused()]],
+                                        const float m){
+  return 0.5*(#exp(-m*m)/m/#sqrt($PI)-erfcf(m));
+}
+export @(pure macro) float smith_slope_pdf(const distribution_ggx this[[anno::unused()]],
+                                           const float2 m){
+  return (1/$PI)/#pow(1+#sum(m*m),2);
+}
+export @(pure macro) float smith_slope_pdf(const distribution_beckmann this[[anno::unused()]],
+                                           const float2 m){
+  return (1/$PI)*#exp(-#sum(m*m));
+}
+export @(pure macro) float smith_normal_pdf(const distribution this[[anno::unused()]],
+                                            const float2 alpha,const float3 wm){
   return wm.z>0.0?smith_slope_pdf(this,-wm.xy/(wm.z*alpha+SCATTER_EPS))/(alpha.x*alpha.y*#pow(wm.z,4)+SCATTER_EPS):0.0;
 }
 export @(pure noinline) float2 smith_visible_slope_sample(
@@ -531,24 +549,29 @@ export @(pure noinline) float3 blinn_normal_sample(const float xi0,const float x
   return float3(#sqrt(1-cos_theta*cos_theta+SCATTER_EPS)*float2(#cos(phi),#sin(phi)),cos_theta);
 }
 export tag shadowing;
-export struct shadowing_smith:default shadowing{ };
-export struct shadowing_vcavities:shadowing{ };
+export struct shadowing_smith:default shadowing{};
+export struct shadowing_vcavities:shadowing{};
 }
 struct microfacet_bsdf:bsdf{
-  const float2 roughness;
-  const float2 alpha=roughness*roughness;
-  const float roughness0=#sqrt(#prod(roughness));
-  const $(color|float) tint;
-  const $(color|float|void) multiscatter_tint=void();
-  const float3 tangent_u=state::texture_tangent_u(0);
-  const scatter_mode mode=scatter_reflect;
+  float2 roughness;
+  float2 alpha=roughness*roughness;
+  float roughness0=#sqrt(#prod(roughness));
+  $(color|float) tint;
+  $(color|float|void) multiscatter_tint=void();
+  float3 tangent_u=state::texture_tangent_u(0);
+  scatter_mode mode=scatter_reflect;
   const microfacet::distribution distribution=microfacet::distribution();
   const microfacet::shadowing shadowing=microfacet::shadowing();
+  finalize {
+    alpha=#max(alpha,0.00001);
+    alpha=#min(alpha,1.0);
+    tangent_u=normalize(tangent_u);
+  }
 };
 @(pure noinline) auto scatter_evaluate(const &microfacet_bsdf this,inline const &scatter_evaluate_parameters params){
   preserve tangent_u;
   tangent_u=this.tangent_u;
-  return scatter_evaluate_result(is_black: true) if(!apply_tangent_space(params));
+  return scatter_evaluate_result(is_black: true) if(!recalculate_tangent_space(params));
   const auto reflect_chance(scatter_reflect_chance(this.mode));
   const auto wm(normalize(mode==scatter_reflect?wo+wi:specular::refraction_half_vector(wo,wi,ior)));
   const auto dot_wo_wm(#sum(wo*wm));
@@ -587,7 +610,7 @@ struct microfacet_bsdf:bsdf{
     const auto proj_areai((1+lambdai)*#abs(wi.z));
     const auto g=return_from{
       if$(this.shadowing<:microfacet::shadowing_smith){
-        return mode==scatter_reflect?1/(1+lambdao+lambdai):microfacet::beta(1+lambdao,1+lambdai);
+        return mode==scatter_reflect?1/(1+lambdao+lambdai):0;
       } else {
         return #min(1,2*wm.z*#min(#abs(wo.z/(dot_wo_wm+SCATTER_EPS)),#abs(wi.z/(dot_wi_wm+SCATTER_EPS))));
       }
@@ -666,7 +689,7 @@ struct microfacet_bsdf:bsdf{
 @(pure noinline) auto scatter_sample(const &microfacet_bsdf this,inline const &scatter_sample_parameters params){
   preserve tangent_u;
   tangent_u=this.tangent_u;
-  auto tbn(apply_tangent_space(params));
+  auto tbn(recalculate_tangent_space(params));
   if(!tbn)
     return scatter_sample_result();
   const auto mode(monte_carlo::bool_sample(&xi.z,scatter_reflect_chance(this.mode))?scatter_reflect:scatter_transmit);
@@ -683,6 +706,32 @@ struct microfacet_bsdf:bsdf{
   const auto wi=normalize(mode==scatter_reflect?specular::reflect(wo,wm):specular::refract(wo,wm,ior));
   return scatter_sample_result(wi: (*tbn)*wi,mode: mode);
 }
+@(macro) auto initialize_microfacet_bsdf(
+  const float roughness_u,
+  const float roughness_v=roughness_u,
+  const $(color|float) tint=1.0,
+  const $(color|float|void) multiscatter_tint=$nothing,
+  const float3 tangent_u=$state.texture_tangent_u[0],
+  const scatter_mode mode=scatter_reflect,
+  const string handle="" [[anno::unused()]],
+  const microfacet::distribution distribution=microfacet::distribution(),
+  const microfacet::shadowing shadowing=microfacet::shadowing(),
+){
+  return microfacet_bsdf(
+    roughness: float2(roughness_u,roughness_v),
+    tint: tint,
+    multiscatter_tint: multiscatter_tint,
+    tangent_u: tangent_u,
+    mode: mode,
+    distribution: distribution,
+    shadowing: shadowing,
+  );
+}
+export auto simple_glossy_bsdf(*)=initialize_microfacet_bsdf(distribution: microfacet::distribution_blinn(),shadowing: microfacet::shadowing_vcavities());
+export auto microfacet_ggx_smith_bsdf(*)=initialize_microfacet_bsdf(distribution: microfacet::distribution_ggx(),shadowing: microfacet::shadowing_smith());
+export auto microfacet_ggx_vcavities_bsdf(*)=initialize_microfacet_bsdf(distribution: microfacet::distribution_ggx(),shadowing: microfacet::shadowing_vcavities());
+export auto microfacet_beckmann_smith_bsdf(*)=initialize_microfacet_bsdf(distribution: microfacet::distribution_beckmann(),shadowing: microfacet::shadowing_smith());
+export auto microfacet_beckmann_vcavities_bsdf(*)=initialize_microfacet_bsdf(distribution: microfacet::distribution_beckmann(),shadowing: microfacet::shadowing_vcavities());
 struct tint1:bsdf,edf,hair_bsdf{
   $(color|float) tint;
   auto base;

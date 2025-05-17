@@ -261,7 +261,7 @@ void Formatter::write(const AST::Struct &decl) {
     write(POP_INDENT);
   }
   write(decl.annotations, DELIM_UNNECESSARY_SPACE, decl.srcBraceL, PUSH_INDENT,
-        INCREMENT_INDENT, decl.fields.empty() ? DELIM_SPACE : DELIM_NEWLINE);
+        INCREMENT_INDENT, decl.fields.empty() ? DELIM_NONE : DELIM_NEWLINE);
   for (const auto &field : decl.fields) {
     write(field.type, DELIM_SPACE, field.name);
     if (field.exprInit)
@@ -271,7 +271,7 @@ void Formatter::write(const AST::Struct &decl) {
     write(field.annotations, field.srcSemicolon, DELIM_NEWLINE);
   }
   if (decl.stmtFinalize) {
-    write(decl.srcKwFinalize, DELIM_SPACE, decl.stmtFinalize, DELIM_NEWLINE);
+    write(DELIM_NEWLINE, decl.srcKwFinalize, DELIM_SPACE, decl.stmtFinalize, DELIM_NEWLINE);
   }
   write(POP_INDENT, decl.srcBraceR, decl.srcSemicolon);
 }
@@ -418,24 +418,28 @@ void Formatter::write(const AST::ArgumentList &args) {
 
 void Formatter::write(const AST::ParameterList &params) {
   write(params.srcParenL, PUSH_INDENT);
-  auto delim{write_start_list(params.size(), params.has_trailing_comma())};
-  for (const auto &param : params) {
-    if (!options.noAnnotations && param.annotations) {
-      write(DELIM_NEWLINE);
-    }
-    write(param.type, DELIM_SPACE, param.name);
-    if (param.exprInit) {
-      write(DELIM_UNNECESSARY_SPACE, param.srcEqual, DELIM_UNNECESSARY_SPACE,
-            PUSH_INDENT);
-      if (delim == DELIM_NEWLINE) {
-        write(ALIGN_INDENT);
+  if (params.is_variant()) {
+    write(params.srcStar);
+  } else {
+    auto delim{write_start_list(params.size(), params.has_trailing_comma())};
+    for (const auto &param : params) {
+      if (!options.noAnnotations && param.annotations && &param != &params[0]) {
+        write(DELIM_NEWLINE);
       }
-      write(param.exprInit, POP_INDENT);
-    }
-    write(param.annotations, param.srcComma,
-          param.srcComma.empty() ? DELIM_NONE : delim);
-    if (!options.noAnnotations && param.annotations) {
-      write(DELIM_NEWLINE);
+      write(param.type, DELIM_SPACE, param.name);
+      if (param.exprInit) {
+        write(DELIM_UNNECESSARY_SPACE, param.srcEqual, DELIM_UNNECESSARY_SPACE,
+              PUSH_INDENT);
+        if (delim == DELIM_NEWLINE) {
+          write(ALIGN_INDENT);
+        }
+        write(param.exprInit, POP_INDENT);
+      }
+      write(param.annotations, param.srcComma,
+            param.srcComma.empty() ? DELIM_NONE : delim);
+      if (!options.noAnnotations && param.annotations) {
+        write(DELIM_NEWLINE);
+      }
     }
   }
   write(POP_INDENT, params.srcParenR);

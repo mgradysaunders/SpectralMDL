@@ -408,14 +408,14 @@ private:
   /// The `void` type.
   const BumpPtr<VoidType> voidType{allocator.allocate<VoidType>(*this)};
 
-  /// The `State` type.
-  const BumpPtr<StateType> stateType{allocator.allocate<StateType>(*this)};
-
   /// The `string` type.
   const BumpPtr<StringType> stringType{allocator.allocate<StringType>(*this)};
 
   /// The `color` type.
   const BumpPtr<ColorType> colorType{allocator.allocate<ColorType>(*this)};
+
+  /// The `State` type.
+  const BumpPtr<StateType> stateType{allocator.allocate<StateType>(*this)};
 
   /// The `texture_2d` type.
   const BumpPtr<Texture2DType> texture2DType{
@@ -467,13 +467,13 @@ struct get_type<T, std::enable_if_t<std::is_arithmetic_v<T>, void>> {
 
 template <typename T> struct get_type<T &, void> {
   [[nodiscard]] static Type *get(Context &context) {
-    return context.get_pointer_type(get_type<T>::get(context));
+    return context.get_pointer_type(get_type<std::decay_t<T>>::get(context));
   }
 };
 
 template <typename T> struct get_type<T *, void> {
   [[nodiscard]] static Type *get(Context &context) {
-    return context.get_pointer_type(get_type<T>::get(context));
+    return context.get_pointer_type(get_type<std::decay_t<T>>::get(context));
   }
 };
 

@@ -1112,7 +1112,7 @@ void FunctionType::initialize_jit_material_functions(Emitter &emitter) {
           materialInstancePtrType =
               context.get_pointer_type(materialInstanceType);
           auto out{emitter.to_rvalue(emitter.resolve_identifier(
-              std::string_view("out"), decl.srcLoc))};
+              "out"sv, decl.srcLoc))};
           emitter.builder.CreateStore(materialInstance, out);
         })};
     func->setLinkage(llvm::Function::ExternalLinkage);

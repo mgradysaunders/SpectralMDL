@@ -112,7 +112,7 @@ std::optional<Error> Compiler::compile(OptLevel optLevel) {
     SMDL_LOG_INFO(concat("Loading images done. [",
                          std::to_string(duration * 1e-6), " seconds]"));
   }
-  if (optLevel != OptLevel::None)
+  if (optLevel != OptLevel::None) {
     llvmJitModule->withModuleDo([&](llvm::Module &llvmModule) {
       LLVMOptimizer llvmOptimizer{};
       llvmOptimizer.run(
@@ -120,6 +120,7 @@ std::optional<Error> Compiler::compile(OptLevel optLevel) {
                       : optLevel == OptLevel::O2 ? llvm::OptimizationLevel::O2
                                                  : llvm::OptimizationLevel::O3);
     });
+  }
   return std::nullopt;
 }
 
