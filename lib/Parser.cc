@@ -244,7 +244,6 @@ auto Parser::parse_parameter_list() -> std::optional<AST::ParameterList> {
     reject();
     return std::nullopt;
   }
-  params.srcLoc = srcLoc0;
   params.srcParenL = *srcParenL;
   skip();
   if (auto srcStar{next_delimiter("*")}) {
@@ -357,16 +356,16 @@ auto Parser::parse_annotation_block() -> BumpPtr<AST::AnnotationBlock> {
   auto srcDoubleBrackL{next_delimiter("[[")};
   if (!srcDoubleBrackL)
     return nullptr;
-  auto annotations{std::vector<AST::Annotation>{}};
+  auto annos{std::vector<AST::Annotation>{}};
   while (true) {
-    auto annotation{parse_annotation()};
-    if (!annotation)
+    auto anno{parse_annotation()};
+    if (!anno)
       break;
-    annotations.push_back(std::move(*annotation));
+    annos.push_back(std::move(*anno));
     auto srcComma{next_delimiter(",")};
     if (!srcComma)
       break;
-    annotations.back().srcComma = *srcComma;
+    annos.back().srcComma = *srcComma;
     skip();
     if (starts_with(get_remaining_source_code(), "]]"))
       break;
@@ -374,9 +373,9 @@ auto Parser::parse_annotation_block() -> BumpPtr<AST::AnnotationBlock> {
   auto srcDoubleBrackR{next_delimiter("]]")};
   if (!srcDoubleBrackR)
     srcLoc0.throw_error("expected ']]' to close annotation block");
-  return allocate<AST::AnnotationBlock>(
-      srcLoc0, std::in_place, *srcDoubleBrackL, std::move(annotations),
-      *srcDoubleBrackR);
+  return allocate<AST::AnnotationBlock>(srcLoc0, std::in_place,
+                                        *srcDoubleBrackL, std::move(annos),
+                                        *srcDoubleBrackR);
 }
 
 auto Parser::parse_expression_in_parentheses() -> BumpPtr<AST::Expr> {
@@ -1352,6 +1351,7 @@ auto Parser::parse_enum_value_declarator()
     return std::nullopt;
   }
   auto declarator{AST::Enum::Declarator{}};
+  declarator.srcLoc = srcLoc0;
   declarator.name = *name;
   if (auto srcEqual{next_delimiter("=")}) {
     auto exprInit{parse_assignment_expression()};

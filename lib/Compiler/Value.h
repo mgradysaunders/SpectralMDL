@@ -176,7 +176,12 @@ public:
   [[nodiscard]] bool is_exported() const {
     if (auto decl{llvm::dyn_cast_if_present<AST::Decl>(node)})
       return decl->is_exported();
-    return isExported;
+    if (auto declarator{llvm::dyn_cast_if_present<AST::Enum::Declarator>(node)})
+      return declarator->decl->is_exported();
+    if (auto declarator{
+            llvm::dyn_cast_if_present<AST::Variable::Declarator>(node)})
+      return declarator->decl->is_exported();
+    return false;
   }
 
   /// Is named?
@@ -219,16 +224,20 @@ public:
       if (llvm::isa_and_present<AST::Parameter>(node)) {
         auto astParam{static_cast<AST::Parameter *>(node)};
         if (!astParam->warningIssued &&
-            !astParam->type->has_qualifier("inline")) {
+            !astParam->type->has_qualifier("inline") &&
+            !(astParam->annotations &&
+              astParam->annotations->is_marked_unused())) {
           astParam->warningIssued = true;
           get_source_location().log_warn(
               concat("unused parameter ", quoted(name[0])));
         }
       }
       if (llvm::isa_and_present<AST::Variable::Declarator>(node)) {
-        auto astVar{static_cast<AST::Variable::Declarator *>(node)};
-        if (!astVar->warningIssued) {
-          astVar->warningIssued = true;
+        auto declarator{static_cast<AST::Variable::Declarator *>(node)};
+        if (!declarator->warningIssued &&
+            !(declarator->annotations &&
+              declarator->annotations->is_marked_unused())) {
+          declarator->warningIssued = true;
           get_source_location().log_warn(
               concat("unused variable ", quoted(name[0])));
         }
@@ -251,8 +260,6 @@ public:
 
   /// If this is an AST preserve statement, the value to preserve.
   Value valueToPreserve{};
-
-  uint8_t isExported{};
 
   uint8_t isUsed{};
 };

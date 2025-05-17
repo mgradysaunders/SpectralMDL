@@ -7,9 +7,10 @@ struct Foo {
 };
 
 unit_test "Defaults" {
-  int x = 102;
-  int y = 103;
-  int z = 104;
+  // Variables with same names as Foo fields to make sure nothing shadows!
+  int x = 102 [[anno::unused()]];
+  int y = 103 [[anno::unused()]];
+  int z = 104 [[anno::unused()]];
   auto foo0 = Foo();
   #assert(foo0.x == 2);
   #assert(foo0.y == 3 + 2);

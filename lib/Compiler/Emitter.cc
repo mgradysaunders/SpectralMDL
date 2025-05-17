@@ -369,7 +369,6 @@ Value Emitter::emit(AST::Variable &decl) {
       value = LValue(value.type, valueAlloca);
     }
     declare_crumb(declarator.name, &declarator, value);
-    crumb->isExported = decl.is_exported();
     if (get_llvm_function())
       crumbsToWarnAbout.push_back(crumb);
   }
@@ -1103,6 +1102,12 @@ Value Emitter::emit_op(AST::BinaryOp op, Value lhs, Value rhs,
         return context.get_comptime_bool(
             context.is_perfectly_convertible(lhsTy, rhsTy));
     }
+  }
+  // Type-checking
+  if (lhs.type != context.get_meta_type_type() && //
+      rhs.type == context.get_meta_type_type() && op == BINOP_SUBSET) {
+    return context.get_comptime_bool(context.is_perfectly_convertible(
+        lhs.type, rhs.get_comptime_meta_type(context, srcLoc)));
   }
   srcLoc.throw_error(concat("unimplemented binary operator ",
                             quoted(to_string(op)), " for argument types ",

@@ -28,13 +28,13 @@ public:
 
 enum class NodeKind : uint8_t {
   File,               ///< The kind of the top-level file.
-  Parameter,          ///< The kind of a parameter, for bookkeeping.
-  ParameterList,      ///< The kind of a parameter list, for bookkeeping.
-  StructField,        ///< The kind of a struct field, for bookkeeping.
-  VariableDeclarator, ///< The kind of a variable declarator, for bookkeeping.
   Decl,               ///< The base kind of all declarations in `AST/Decl.h`.
   Expr,               ///< The base kind of all expressions in `AST/Expr.h`.
   Stmt,               ///< The base kind of all statements in `AST/Stmt.h`.
+  Parameter,          ///< The kind of `Parameter`.
+  Field,              ///< The kind of `Struct::Field`.
+  EnumDeclarator,     ///< The kind of `Enum::Declarator`.
+  VariableDeclarator, ///< The kind of `Variable::Declarator`.
 };
 
 /// The base type for all nodes.

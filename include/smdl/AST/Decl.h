@@ -21,17 +21,66 @@ public:
 
   /// The next comma `,`. This may be empty!
   std::string_view srcComma{};
+
+  /// Has identifier with the given name sequence?
+  [[nodiscard]] bool has_identifier(Span<std::string_view> names) const {
+    return identifier && Span<std::string_view>(*identifier) == names;
+  }
 };
 
 /// An annotation block (between double brackets `[[ ... ]]`).
 class SMDL_EXPORT AnnotationBlock final {
 public:
   explicit AnnotationBlock(std::string_view srcDoubleBrackL,
-                           std::vector<Annotation> annotations,
+                           std::vector<Annotation> annos,
                            std::string_view srcDoubleBrackR)
-      : srcDoubleBrackL(srcDoubleBrackL), annotations(std::move(annotations)),
+      : srcDoubleBrackL(srcDoubleBrackL), annos(std::move(annos)),
         srcDoubleBrackR(srcDoubleBrackR) {}
 
+public:
+  /// The size.
+  [[nodiscard]] size_t size() const { return annos.size(); }
+
+  /// The begin iterator.
+  [[nodiscard]] auto begin() { return annos.begin(); }
+
+  /// The begin iterator, const variant.
+  [[nodiscard]] auto begin() const { return annos.begin(); }
+
+  /// The end iterator.
+  [[nodiscard]] auto end() { return annos.end(); }
+
+  /// The end iterator, const variant.
+  [[nodiscard]] auto end() const { return annos.end(); }
+
+  /// The access operator.
+  [[nodiscard]] auto &operator[](size_t i) const { return annos[i]; }
+
+public:
+  /// Has comma `,` after the last annotation?
+  [[nodiscard]] bool has_trailing_comma() const {
+    return !annos.empty() && !annos.back().srcComma.empty();
+  }
+
+  /// Is marked as `unused()` or `anno::unused()`?
+  [[nodiscard]] bool is_marked_unused() const {
+    for (const auto &anno : annos)
+      if (anno.has_identifier({"unused"}) ||
+          anno.has_identifier({"anno", "unused"}))
+        return true;
+    return false;
+  }
+
+  /// Is marked as `deprecated()` or `anno::deprecated()`?
+  [[nodiscard]] bool is_marked_deprecated() const {
+    for (const auto &anno : annos)
+      if (anno.has_identifier({"deprecated"}) ||
+          anno.has_identifier({"anno", "deprecated"}))
+        return true;
+    return false;
+  }
+
+public:
   /// The source location.
   SourceLocation srcLoc{};
 
@@ -39,15 +88,10 @@ public:
   std::string_view srcDoubleBrackL{};
 
   /// The annotations.
-  std::vector<Annotation> annotations{};
+  std::vector<Annotation> annos{};
 
   /// The double bracket `]]`.
   std::string_view srcDoubleBrackR{};
-
-  /// Has comma `,` after the last annotation?
-  [[nodiscard]] bool has_trailing_comma() const {
-    return !annotations.empty() && !annotations.back().srcComma.empty();
-  }
 };
 
 /// A parameter.
@@ -80,8 +124,7 @@ public:
 };
 
 /// A parameter list.
-class SMDL_EXPORT ParameterList final
-    : public NodeSubclass<NodeKind::ParameterList> {
+class SMDL_EXPORT ParameterList final {
 public:
   /// The size.
   [[nodiscard]] size_t size() const { return params.size(); }
@@ -101,6 +144,7 @@ public:
   /// The access operator.
   [[nodiscard]] auto &operator[](size_t i) const { return params[i]; }
 
+public:
   /// Is parameter list for function variant?
   [[nodiscard]] bool is_variant() const { return !srcStar.empty(); }
 
@@ -109,6 +153,7 @@ public:
     return !params.empty() && !params.back().srcComma.empty();
   }
 
+public:
   /// The parenthesis `(`.
   std::string_view srcParenL{};
 
@@ -122,6 +167,13 @@ public:
   std::string_view srcParenR{};
 };
 
+/// An import path.
+///
+/// \note
+/// This is almost the same as an `Identifier` in that it is a sequence of
+/// elements separated by double colons. However, elements in an import path may
+/// also be literal strings to account for spaces in directory names.
+///
 class SMDL_EXPORT ImportPath final {
 public:
   class Element final {
@@ -181,8 +233,11 @@ public:
 class SMDL_EXPORT Enum final : public DeclSubclass<DeclKind::Enum> {
 public:
   /// An `enum` declarator name and optional initializer.
-  class Declarator final {
+  class Declarator final : public NodeSubclass<NodeKind::EnumDeclarator> {
   public:
+    /// The enum declaration that contains this declarator.
+    Enum *const decl{};
+
     /// The name.
     Name name{};
 
@@ -200,6 +255,10 @@ public:
 
     /// The LLVM constant value (This is computed later during compilation)
     llvm::ConstantInt *llvmConst{};
+
+    /// Has warning been issued about this parameter yet? Used to prevent
+    /// the same warning being logged over and over again.
+    bool warningIssued{};
   };
 
   explicit Enum(std::string_view srcKwEnum, Name name,
@@ -209,7 +268,11 @@ public:
       : srcKwEnum(srcKwEnum), name(std::move(name)),
         annotations(std::move(annotations)), srcBraceL(srcBraceL),
         declarators(std::move(declarators)), srcBraceR(srcBraceR),
-        srcSemicolon(srcSemicolon) {}
+        srcSemicolon(srcSemicolon) {
+    for (auto &declarator : this->declarators) {
+      const_cast<Enum *&>(declarator.decl) = this;
+    }
+  }
 
   /// The keyword `enum`.
   std::string_view srcKwEnum{};
@@ -420,7 +483,7 @@ public:
   };
 
   /// A `struct` field declarator.
-  class Field final : public NodeSubclass<NodeKind::StructField> {
+  class Field final : public NodeSubclass<NodeKind::Field> {
   public:
     /// The type.
     BumpPtr<Type> type{};
@@ -624,6 +687,9 @@ class SMDL_EXPORT Variable final : public DeclSubclass<DeclKind::Variable> {
 public:
   class Declarator final : public NodeSubclass<NodeKind::VariableDeclarator> {
   public:
+    /// The variable declaration that contains this declarator.
+    Variable *const decl{};
+
     /// The name.
     Name name{};
 
@@ -650,7 +716,11 @@ public:
   explicit Variable(BumpPtr<Type> type, std::vector<Declarator> declarators,
                     std::string_view srcSemicolon)
       : type(std::move(type)), declarators(std::move(declarators)),
-        srcSemicolon(srcSemicolon) {}
+        srcSemicolon(srcSemicolon) {
+    for (auto &declarator : this->declarators) {
+      const_cast<Variable *&>(declarator.decl) = this;
+    }
+  }
 
   /// The type.
   BumpPtr<Type> type{};

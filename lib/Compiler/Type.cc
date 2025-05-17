@@ -804,7 +804,7 @@ void EnumType::initialize(Emitter &emitter) {
       name.srcLoc.throw_error(
           concat("expected ", quoted(name.srcName),
                  " initializer to resolve to compile-time int"));
-    emitter.declare_crumb(name.srcName, &decl, RValue(this, value));
+    emitter.declare_crumb(name.srcName, &declarator, RValue(this, value));
     declarator.llvmConst = static_cast<llvm::ConstantInt *>(value.llvmValue);
     lastValue = value;
   }

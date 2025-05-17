@@ -66,29 +66,6 @@ std::string_view SourceLocation::get_module_file_name() const {
   return module_ ? module_->get_file_name() : std::string_view();
 }
 
-std::string_view SourceLocation::get_source_code() const {
-  if (module_) {
-    auto sourceCode{module_->get_source_code()};
-    const char *ptrBegin{sourceCode.data()};
-    const char *ptrEnd{sourceCode.data() + sourceCode.size()};
-    const char *ptr0{ptrBegin + i};
-    const char *ptr1{ptrBegin + i};
-    while (ptr0 > ptrBegin) {
-      if (*(ptr0 - 1) == '\n')
-        break;
-      --ptr0;
-    }
-    while (ptr1 < ptrEnd) {
-      if (*ptr1 == '\n')
-        break;
-      ++ptr1;
-    }
-    return std::string_view(ptr0, size_t(ptr1 - ptr0));
-  } else {
-    return std::string_view();
-  }
-}
-
 void SourceLocation::log_warn(std::string_view message) const {
   auto str{std::string(*this)};
   if (!str.empty())
@@ -106,7 +83,11 @@ void SourceLocation::log_error(std::string_view message) const {
 }
 
 void SourceLocation::throw_error(std::string message) const {
-  throw Error(std::move(message), *this);
+  auto str{std::string(*this)};
+  if (!str.empty())
+    str += ' ';
+  str += message;
+  throw Error(std::move(str));
 }
 
 SourceLocation::operator std::string() const {
@@ -139,11 +120,7 @@ SourceLocation::operator std::string() const {
 }
 
 void Error::print() const {
-  std::string str{srcLoc};
-  if (!str.empty())
-    str += ' ';
-  str += message;
-  SMDL_LOG_ERROR(str);
+  SMDL_LOG_ERROR(message);
 }
 
 void Error::print_and_exit() const {

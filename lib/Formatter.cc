@@ -250,7 +250,7 @@ void Formatter::write(const AST::Function &decl) {
 void Formatter::write(const AST::Struct &decl) {
   write(decl.srcKwStruct, DELIM_SPACE, decl.name);
   if (!decl.srcColonBeforeTags.empty()) {
-    write(decl.srcColonBeforeTags, DELIM_SPACE, PUSH_INDENT);
+    write(decl.srcColonBeforeTags, DELIM_UNNECESSARY_SPACE, PUSH_INDENT);
     auto delim{
         write_start_list(decl.tags.size(), decl.has_trailing_comma_on_tags())};
     for (const auto &tag : decl.tags) {
@@ -261,7 +261,7 @@ void Formatter::write(const AST::Struct &decl) {
     write(POP_INDENT);
   }
   write(decl.annotations, DELIM_UNNECESSARY_SPACE, decl.srcBraceL, PUSH_INDENT,
-        INCREMENT_INDENT, DELIM_NEWLINE);
+        INCREMENT_INDENT, decl.fields.empty() ? DELIM_SPACE : DELIM_NEWLINE);
   for (const auto &field : decl.fields) {
     write(field.type, DELIM_SPACE, field.name);
     if (field.exprInit)
@@ -270,18 +270,20 @@ void Formatter::write(const AST::Struct &decl) {
             POP_INDENT);
     write(field.annotations, field.srcSemicolon, DELIM_NEWLINE);
   }
-  if (decl.stmtFinalize)
+  if (decl.stmtFinalize) {
     write(decl.srcKwFinalize, DELIM_SPACE, decl.stmtFinalize, DELIM_NEWLINE);
+  }
   write(POP_INDENT, decl.srcBraceR, decl.srcSemicolon);
 }
 
 void Formatter::write(const AST::Variable &decl) {
   write(decl.type, DELIM_SPACE, PUSH_INDENT);
+  auto moreThanOne{decl.declarators.size() > 1};
   auto delim{write_start_list(decl.declarators.size(),
                               decl.has_trailing_comma(),
-                              /*alignIndent=*/decl.declarators.size() > 1)};
+                              /*alignIndent=*/moreThanOne)};
   for (const auto &each : decl.declarators) {
-    if (!options.noAnnotations && each.annotations)
+    if (!options.noAnnotations && each.annotations && moreThanOne)
       write(DELIM_NEWLINE);
     write(each.name);
     if (each.exprInit) {
@@ -295,7 +297,7 @@ void Formatter::write(const AST::Variable &decl) {
     }
     write(each.annotations, each.srcComma,
           each.srcComma.empty() ? DELIM_NONE : delim);
-    if (!options.noAnnotations && each.annotations)
+    if (!options.noAnnotations && each.annotations && moreThanOne)
       write(DELIM_NEWLINE);
   }
   write(decl.srcSemicolon, POP_INDENT);
@@ -393,9 +395,8 @@ void Formatter::write(const AST::AnnotationBlock &annos) {
   if (!options.noAnnotations) {
     write(PUSH_INDENT, INCREMENT_INDENT, DELIM_UNNECESSARY_SPACE,
           annos.srcDoubleBrackL, PUSH_INDENT);
-    auto delim{
-        write_start_list(annos.annotations.size(), annos.has_trailing_comma())};
-    for (const auto &[identifier, args, srcComma] : annos.annotations) {
+    auto delim{write_start_list(annos.size(), annos.has_trailing_comma())};
+    for (const auto &[identifier, args, srcComma] : annos) {
       write(identifier, args, srcComma, srcComma.empty() ? DELIM_NONE : delim);
     }
     write(POP_INDENT, annos.srcDoubleBrackR, POP_INDENT);

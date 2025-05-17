@@ -329,6 +329,7 @@ public:
     return elements.size() == 1 && is_relative();
   }
 
+  /// Implicit conversion to span of string views.
   [[nodiscard]] operator Span<std::string_view>() const { return elementViews; }
 
   /// The elements.

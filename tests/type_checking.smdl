@@ -1,0 +1,12 @@
+#smdl
+
+struct Foo { };
+
+unit_test "Type checking" {
+  auto foo = Foo();
+  #assert(2 <: int);
+  #assert(2.0f <: float);
+  #assert(2.0d <: double);
+  #assert("Hi!" <: string);
+  #assert(foo <: Foo);
+}

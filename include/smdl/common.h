@@ -458,9 +458,6 @@ public:
   /// Get the file name.
   [[nodiscard]] std::string_view get_module_file_name() const;
 
-  /// Get the source code line.
-  [[nodiscard]] std::string_view get_source_code() const;
-
   /// Log a warning.
   void log_warn(std::string_view message) const;
 
@@ -498,9 +495,6 @@ class SMDL_EXPORT Error final : public std::exception {
 public:
   explicit Error(std::string message) : message(std::move(message)) {}
 
-  explicit Error(std::string message, SourceLocation srcLoc)
-      : message(std::move(message)), srcLoc(srcLoc) {}
-
   /// Print to standard error.
   void print() const;
 
@@ -512,10 +506,6 @@ public:
 public:
   /// The message.
   std::string message{};
-
-  /// The source location. This may be empty if the error is
-  /// not traceable to MDL source code.
-  SourceLocation srcLoc{};
 };
 
 /// \}
