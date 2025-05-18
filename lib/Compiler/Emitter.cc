@@ -1431,7 +1431,18 @@ Value Emitter::emit_intrinsic(std::string_view name, const ArgumentList &args,
   }
   case 'i': {
     if (name == "isfpclass") {
-      // TODO
+      if (!(args.size() == 2 &&                                    //
+            (args[0].value.type->is_arithmetic_floating_point() || //
+             args[0].value.type->is_color()) &&                    //
+            args[1].value.is_comptime_int()))
+        srcLoc.throw_error(
+            "intrinsic 'isfpclass' expects 1 vectorized floating point "
+            "argument and 1 compile-time int argument");
+      auto value{to_rvalue(args[0].value)};
+      return RValue(
+          static_cast<ArithmeticType *>(value.type)
+              ->get_with_different_scalar(context, Scalar::get_bool()),
+          builder.createIsFPClass(value, args[1].value.get_comptime_int()));
     }
     break;
   }
@@ -1791,6 +1802,23 @@ Value Emitter::emit_intrinsic(std::string_view name, const ArgumentList &args,
         return RValue(value.type, builder.CreateUnaryIntrinsic(intrID, value));
       }
     }
+  }
+  if (name == "lgamma" || name == "tgamma" || name == "erf" || name == "erfc") {
+    auto value{to_rvalue(expectOne())};
+    if (!value.type->is_arithmetic_scalar())
+      srcLoc.throw_error(concat("intrinsic ", quoted(name),
+                                " expects 1 arithmetic scalar argument"));
+    bool isDouble{value.type == context.get_double_type()};
+    if (!isDouble)
+      value = invoke(context.get_float_type(), value, srcLoc);
+    auto nameLibm{std::string(name)};
+    if (!isDouble)
+      nameLibm += 'f';
+    auto callee{
+        !isDouble
+            ? context.get_builtin_callee<float, float>(nameLibm.c_str())
+            : context.get_builtin_callee<double, double>(nameLibm.c_str())};
+    return RValue(value.type, builder.CreateCall(callee, {value.llvmValue}));
   }
   srcLoc.throw_error(concat("unimplemented intrinsic ", quoted(name)));
   return Value();

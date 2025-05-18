@@ -584,6 +584,8 @@ export struct shadowing_smith: default shadowing {};
 
 export struct shadowing_vcavities: shadowing {};
 
+export @(pure) float beta(const float x, const float y) = #exp(#lgamma(x) + #lgamma(y) - #lgamma(x + y));
+
 } // namespace microfacet
 
 struct microfacet_bsdf: bsdf {
@@ -657,7 +659,7 @@ struct microfacet_bsdf: bsdf {
     const auto proj_areai((1 + lambdai) * #abs(wi.z));
     const auto g = return_from {
       if $(this.shadowing <: microfacet::shadowing_smith) {
-        return mode == scatter_reflect ? 1 / (1 + lambdao + lambdai) : 0 /* microfacet::beta(1 + lambdao, 1 + lambdai) */ ;
+        return mode == scatter_reflect ? 1 / (1 + lambdao + lambdai) : microfacet::beta(1 + lambdao, 1 + lambdai);
       } else {
         // V-cavities
         return #min(1, 2 * wm.z * #min(#abs(wo.z / (dot_wo_wm + SCATTER_EPS)), //

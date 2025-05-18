@@ -935,6 +935,8 @@ Value FunctionType::invoke(Emitter &emitter, const ArgumentList &args,
                               " from '@(pure)' context"));
   if (func->is_variant()) {
     auto result{Value()};
+    auto preserve{Preserve(emitter.crumb)};
+    emitter.crumb = func->params.lastCrumb;
     emitter.handle_scope(nullptr, nullptr, [&]() {
       auto [astLet, astCall] =
           func->decl.get_variant_let_and_call_expressions();

@@ -31,8 +31,7 @@ public:
 
   /// Get builtin callee.
   template <typename T, typename... U>
-  [[nodiscard]] llvm::FunctionCallee get_builtin_callee(const char *name,
-                                                        T (*value)(U...)) {
+  [[nodiscard]] llvm::FunctionCallee get_builtin_callee(const char *name) {
     auto &callee{builtinCallees[name]};
     if (!callee) {
       auto llvmFuncType{llvm_get_type<T(U...)>(llvmContext)};
@@ -42,6 +41,12 @@ public:
       callee = llvm::FunctionCallee(llvmFuncType, llvmFunc);
     }
     return callee;
+  }
+
+  template <typename T, typename... U>
+  [[nodiscard]] llvm::FunctionCallee get_builtin_callee(const char *name,
+                                                        T (*value)(U...)) {
+    return get_builtin_callee<T, U...>(name);
   }
 
   /// Get a unique name by appending a number to it, useful for

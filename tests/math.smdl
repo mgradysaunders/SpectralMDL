@@ -5,8 +5,19 @@ import ::math::*;
 unit_test "Math" {
   #assert(math::abs(-7) == 7);
   #assert(math::abs(-7.1) == 7.1);
+  #assert(math::isinf($INF) && !math::isnan($INF) && !math::isfinite($INF));
+  #assert(math::isnan($NAN) && !math::isinf($NAN) && !math::isfinite($NAN));
   #assert(#approx_equal(math::cos(math::acos(0.349)), 0.349, 0.00001));
   #assert(#approx_equal(math::sin(math::asin(0.715)), 0.715, 0.00001));
   #assert(#approx_equal(math::tan(math::atan(0.631)), 0.631, 0.00001));
   #assert(#approx_equal(math::atan2(math::sin(theta := 1.491), math::cos(theta)), theta, 0.00001));
+  #assert(#approx_equal(math::log(math::exp(0.617)), 0.617, 0.00001));
+  #assert(#approx_equal(math::log2(math::exp2(0.617)), 0.617, 0.00001));
+  #assert(#approx_equal(math::log10(math::exp10(0.617)), 0.617, 0.00001));
+  #assert(#approx_equal(math::lerp(2.7, 8.1, 0.5), 0.5 * (2.7 + 8.1), 0.00001));
+  #assert(math::lerp(2.7, 8.1, 0.0) == 2.7);
+  #assert(math::lerp(2.7, 8.1, 1.0) == 8.1);
+  #assert(math::smoothstep(2.7, 8.1, 0.0) == 2.7);
+  #assert(math::smoothstep(2.7, 8.1, 1.0) == 8.1);
+  #assert(#all(math::cross(float3(1, 0, 0), float3(0, 1, 0)) == float3(0, 0, 1)));
 }
