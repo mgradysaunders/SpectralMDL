@@ -245,6 +245,11 @@ struct scatter_evaluate_parameters{
     }
   }
 };
+struct scatter_evaluate_result{
+  $(color|float) f=0.0;
+  float2 pdf=float2(0.0);
+  bool is_black=false;
+};
 @(pure noinline) bool recalculate_tangent_space(inline const &scatter_evaluate_parameters params){
   auto tbn(build_tangent_space(normal,tangent_u));
   wo=wo0*tbn;
@@ -254,11 +259,6 @@ struct scatter_evaluate_parameters{
 @(pure) float3 half_direction(inline const &scatter_evaluate_parameters params){
   return normalize(mode==scatter_reflect?wo+wi:specular::refraction_half_vector(wo,wi,ior));
 }
-struct scatter_evaluate_result{
-  $(color|float) f=0.0;
-  float2 pdf=float2(0.0);
-  bool is_black=false;
-};
 struct scatter_sample_parameters{
   float3 wo0;
   bool hit_backface=wo0.z<0;
@@ -276,16 +276,19 @@ struct scatter_sample_parameters{
     }
   }
 };
-@(pure noinline) ?float3x3 recalculate_tangent_space(inline const &scatter_sample_parameters params){
-  auto tbn(build_tangent_space(normal,tangent_u));
-  wo=wo0*tbn;
-  return tbn if((wo.z<0)==(wo0.z<0));
-}
 struct scatter_sample_result{
   float3 wi=float3(0.0);
   scatter_mode mode=scatter_none;
   ?color delta_f=void();
 };
+@(pure noinline) ?float3x3 recalculate_tangent_space(inline const &scatter_sample_parameters params){
+  auto tbn(build_tangent_space(normal,tangent_u));
+  wo=wo0*tbn;
+  return tbn if((wo.z<0)==(wo0.z<0));
+}
+@(pure) float3 half_direction(inline const &scatter_sample_parameters this,inline const &scatter_sample_result result){
+  return normalize(mode==scatter_reflect?wo+wi:specular::refraction_half_vector(wo,wi,ior));
+}
 @(pure macro) auto scatter_evaluate(const &$default_bsdf this,const &scatter_evaluate_parameters params){
   return scatter_evaluate_result(is_black: true);
 }
@@ -808,6 +811,52 @@ export struct weighted_layer:bsdf{
   }
 }
 export typedef weighted_layer color_weighted_layer;
+export struct fresnel_layer:bsdf{
+  $(color|float) ior;
+  $(color|float) weight=1.0;
+  bsdf layer=bsdf();
+  bsdf base=bsdf();
+  float3 normal=$state.normal;
+  const float av_ior=average(ior);
+  const float av_weight=average(weight);
+};
+@(pure macro) auto scatter_evaluate(const &fresnel_layer this,inline const &scatter_evaluate_parameters params){
+  const auto cos_thetao(dot(wo,this.normal)*#sign(this.normal.z));
+  const auto cos_thetai(dot(wi,this.normal)*#sign(this.normal.z));
+  if((cos_thetao<SCATTER_EPS)|((mode==scatter_reflect)&(cos_thetai<SCATTER_EPS))|((mode==scatter_transmit)&(cos_thetai>-SCATTER_EPS)))
+    return scatter_evaluate_result(is_black: true);
+  const auto result0(scatter_evaluate(visit &this.base,params));
+  const auto result1=return_from{
+    preserve normal,ior;
+    normal=this.normal,ior=1/this.av_ior;
+    return scatter_evaluate(visit &this.layer,params);
+  };
+  if(result0.is_black&result1.is_black){
+    return scatter_evaluate_result(is_black: true);
+  } else {
+    return scatter_evaluate_result(pdf: lerp(result0.pdf,result1.pdf,this.av_weight*specular::schlick_fresnel(float2(cos_thetao,cos_thetai),specular::schlick_F0(this.av_ior))),f: lerp(result0.f,result1.f,this.weight*specular::dielectric_fresnel(dot(wo,half_direction(params)),1/this.ior)),);
+  }
+}
+@(pure macro) auto scatter_sample(const &fresnel_layer this,inline const &scatter_sample_parameters params){
+  const auto cos_theta(dot(wo,this.normal)*#sign(this.normal.z));
+  if(cos_theta<SCATTER_EPS)
+    return scatter_sample_result();
+  const auto chance(this.av_weight*specular::schlick_fresnel(cos_theta,specular::schlick_F0(this.av_ior)));
+  if(monte_carlo::bool_sample(&xi.z,chance)){
+    preserve normal,ior;
+    normal=this.normal,ior=1/this.av_ior;
+    auto result(scatter_sample(visit &this.layer,params));
+    if(result.delta_f)
+      *result.delta_f*=this.weight*specular::dielectric_fresnel(dot(wo,half_direction(params,&result)),1/this.ior)/chance;
+    return result;
+  } else {
+    auto result(scatter_sample(visit &this.base,params));
+    if(result.delta_f)
+      *result.delta_f*=(1-this.weight*specular::dielectric_fresnel(dot(wo,half_direction(params,&result)),1/this.ior))/(1-chance);
+    return result;
+  }
+}
+export typedef fresnel_layer color_fresnel_layer;
 export @(pure macro) int $scatter_evaluate(
   const &$material_instance instance,
   const &float3 wo,
