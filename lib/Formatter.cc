@@ -233,7 +233,7 @@ void Formatter::write(const AST::Function &decl) {
       if (i + 1 < attributes.attrs.size())
         write(DELIM_SPACE);
     }
-    write(attributes.srcParenR, POP_INDENT, DELIM_SPACE);
+    write(attributes.srcParenR, POP_INDENT, DELIM_UNNECESSARY_SPACE);
   }
   write(decl.returnType, decl.earlyAnnotations, DELIM_SPACE, decl.name,
         decl.params, DELIM_UNNECESSARY_SPACE, decl.srcFrequency,

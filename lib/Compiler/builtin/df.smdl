@@ -509,7 +509,7 @@ export @(pure macro) float smith_normal_pdf(const distribution this [[anno::unus
 }
 
 export @(pure noinline) float2 smith_visible_slope_sample(
-  const distribution_ggx this,
+  const distribution_ggx this [[anno::unused()]],
   const float xi0,
   const float xi1,
   float cos_thetao,
