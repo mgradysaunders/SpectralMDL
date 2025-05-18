@@ -1,6 +1,7 @@
 add_library(
   SpectralMDL 
   SHARED
+    "AST/Decl.cc"
     "common.cc"
     "Compiler.cc"
     "Compiler/Context.cc"

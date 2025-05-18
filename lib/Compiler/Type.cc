@@ -876,6 +876,12 @@ void FunctionType::initialize(Emitter &emitter) {
     if (!prevType || !prevType->is_function())
       decl.srcLoc.throw_error(
           concat("function ", quoted(declName), " shadows non-function"));
+    if (static_cast<FunctionType *>(prevType)->is_variant())
+      decl.srcLoc.throw_error(concat("function ", quoted(declName),
+                                     " must not overload function variant"));
+    if (decl.is_variant())
+      decl.srcLoc.throw_error(concat("function variant ", quoted(declName),
+                                     " must not overload another function"));
     prevOverload = static_cast<FunctionType *>(prevType);
     prevOverload->nextOverload = this;
   }
@@ -927,6 +933,34 @@ Value FunctionType::invoke(Emitter &emitter, const ArgumentList &args,
   if (!func->is_pure() && !emitter.state)
     srcLoc.throw_error(concat("cannot call ", quoted(func->declName),
                               " from '@(pure)' context"));
+  if (func->is_variant()) {
+    auto result{Value()};
+    emitter.handle_scope(nullptr, nullptr, [&]() {
+      auto [astLet, astCall] =
+          func->decl.get_variant_let_and_call_expressions();
+      // If the function variant has a `let` expression, generate the variable
+      // declarations.
+      if (astLet) {
+        for (auto &subDecl : astLet->decls) {
+          emitter.emit(subDecl);
+        }
+      }
+      // In the function variant call expression, we visit each argument in the
+      // AST argument list and add it to the patched argument list but only if
+      // the caller did not explicitly set it by name.
+      auto patchedArgs{args};
+      for (auto &astArg : astCall->args) {
+        if (!patchedArgs.has_name(astArg.name.srcName)) {
+          patchedArgs.push_back(Argument{astArg.name.srcName,
+                                         emitter.emit(astArg.expr), &astArg});
+        }
+      }
+      auto callee{emitter.emit(astCall->expr)};
+      result = emitter.emit_call(callee, patchedArgs, srcLoc);
+      result = emitter.invoke(decl.returnType->type, result, srcLoc);
+    });
+    return result;
+  }
   auto resolved{emitter.resolve_arguments(func->params, args, srcLoc)};
   if (auto impliedVisitArgs{resolved.get_implied_visit_arguments()})
     return emitter.emit_call(emitter.context.get_comptime_meta_type(this),
@@ -961,6 +995,11 @@ Value FunctionType::invoke(Emitter &emitter, const ArgumentList &args,
 FunctionType *FunctionType::resolve_overload(Emitter &emitter,
                                              const ArgumentList &args,
                                              const SourceLocation &srcLoc) {
+  if (is_variant()) {
+    // We should have already verified the function variant does not
+    // illegally overload another function by now!
+    return this;
+  }
   struct Overload final {
     FunctionType *func{};
     llvm::SmallVector<const Parameter *> params{};
@@ -1111,8 +1150,8 @@ void FunctionType::initialize_jit_material_functions(Emitter &emitter) {
           materialInstanceType = materialInstance.type;
           materialInstancePtrType =
               context.get_pointer_type(materialInstanceType);
-          auto out{emitter.to_rvalue(emitter.resolve_identifier(
-              "out"sv, decl.srcLoc))};
+          auto out{emitter.to_rvalue(
+              emitter.resolve_identifier("out"sv, decl.srcLoc))};
           emitter.builder.CreateStore(materialInstance, out);
         })};
     func->setLinkage(llvm::Function::ExternalLinkage);

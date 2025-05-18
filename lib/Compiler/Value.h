@@ -473,6 +473,10 @@ public:
     });
   }
 
+  [[nodiscard]] bool has_name(std::string_view name) const {
+    return is_any_true([&](auto &arg) { return arg.is_named() && arg.name == name; });
+  }
+
   /// Is any argument visited?
   [[nodiscard]] bool is_any_visited() const {
     return is_any_true([](auto &arg) { return arg.is_visited(); });

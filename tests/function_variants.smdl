@@ -1,0 +1,22 @@
+#smdl
+
+int foo(int a, int b, int c) = a + b + c;
+
+// A function variant may be expressed in two ways. The first is simply
+// a call expression with named arguments that will operate as defaults
+// if not explicitly set in the variant call.
+int foo_variant(*) = foo(a: 2);
+
+/// The second is a let expression followed by a call expression with 
+/// a call expression with named arguments. This allows the user to
+/// define arbitrary helper variables conveniently.
+int foo_variant_of_variant(*) = let {
+                                  int f = 7;
+                                  int g = 11;
+                                } in foo_variant(c: f * g + 1);
+
+unit_test "Function variants" {
+  #assert(foo_variant(4, 7) == 2 + 4 + 7);
+  #assert(foo_variant_of_variant(8) == 2 + 8 + (7 * 11 + 1));
+  #assert(foo_variant_of_variant(8, c: 1) == 2 + 8 + 1);
+}

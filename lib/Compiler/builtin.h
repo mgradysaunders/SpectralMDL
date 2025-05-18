@@ -807,6 +807,55 @@ export struct weighted_layer:bsdf{
   }
 }
 export typedef weighted_layer color_weighted_layer;
+export struct fresnel_layer:bsdf{
+  $(color|float) ior;
+  $(color|float) weight=1.0;
+  bsdf layer=bsdf();
+  bsdf base=bsdf();
+  float3 normal=$state.normal;
+  const float average_ior=average(ior);
+  const float average_weight=average(weight);
+};
+@(macro) auto scatter_evaluate(const &fresnel_layer this,inline const &scatter_evaluate_parameters params){
+  const auto cos_thetao(dot(wo,this.normal)*#sign(this.normal.z));
+  const auto cos_thetai(dot(wi,this.normal)*#sign(this.normal.z));
+  if((cos_thetao<STABILITY_EPS)|((mode==scatter_reflect)&(cos_thetai<STABILITY_EPS))|((mode==scatter_transmit)&(cos_thetai>-STABILITY_EPS)))
+    return scatter_evaluate_result(is_black: true);
+  const auto result0(scatter_evaluate(visit &this.base,params));
+  preserve ior;
+  ior=hit_backface?1/this.average_ior:this.average_ior;
+  const auto result1=return_from{
+    preserve normal;
+    normal=this.normal;
+    return scatter_evaluate(visit &this.layer,params);
+  };
+  if(result0.is_black&result1.is_black){
+    return scatter_evaluate_result(is_black: true);
+  } else {
+    return scatter_evaluate_result(pdf: lerp(result0.pdf,result1.pdf,this.average_weight*specular::schlick_fresnel(float2(cos_thetao,cos_thetai),specular::schlick_F0(this.average_ior))),f: lerp(result0.f,result1.f,this.weight*specular::dielectric_fresnel(dot(wo,half_direction(params)),hit_backface?1/this.ior:this.ior)),);
+  }
+}
+@(macro) auto scatter_sample(const &fresnel_layer this,inline const &scatter_sample_parameters params){
+  const auto cos_theta(dot(wo,this.normal)*#sign(this.normal.z));
+  if(cos_theta<STABILITY_EPS)
+    return scatter_sample_result();
+  const auto chance(this.average_weight*specular::schlick_fresnel(cos_theta,specular::schlick_F0(this.average_ior)));
+  if(monte_carlo::bool_sample(&xi.z,chance)){
+    preserve normal,ior;
+    normal=this.normal;
+    ior=hit_backface?1/this.average_ior:this.average_ior;
+    auto result(scatter_sample(visit &this.layer,params));
+    if(result.delta_f)
+      *result.delta_f*=this.weight*specular::dielectric_fresnel(dot(wo,half_direction(params,&result)),hit_backface?1/this.ior:this.ior)/chance;
+    return result;
+  } else {
+    auto result(scatter_sample(visit &this.base,params));
+    if(result.delta_f)
+      *result.delta_f*=(1-this.weight*specular::dielectric_fresnel(dot(wo,half_direction(params,&result)),hit_backface?1/this.ior:this.ior))/(1-chance);
+    return result;
+  }
+}
+export typedef fresnel_layer color_fresnel_layer;
 export @(pure macro) int $scatter_evaluate(
   const &$material_instance instance,
   const &float3 wo,
