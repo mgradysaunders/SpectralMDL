@@ -1028,10 +1028,12 @@ Value Emitter::emit_op(AST::BinaryOp op, Value lhs, Value rhs,
   }
   // Enums
   if (lhs.type->is_enum() && rhs.type->is_enum()) {
-    if (auto llvmOp{llvm_cmp_op(Scalar::Intent::Int, op)}) {
+    if (auto llvmOp{llvm_arith_op(Scalar::Intent::Int, op)};
+        llvmOp && lhs.type == rhs.type)
+      return RValue(lhs.type, builder.CreateBinOp(*llvmOp, lhs, rhs));
+    if (auto llvmOp{llvm_cmp_op(Scalar::Intent::Int, op)})
       return RValue(context.get_bool_type(),
                     builder.CreateCmp(*llvmOp, lhs, rhs));
-    }
   }
   // Colors
   if ((lhs.type->is_color() &&

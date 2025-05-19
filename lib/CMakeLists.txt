@@ -1,3 +1,8 @@
+add_custom_target(
+  builtin_header
+  COMMAND "./builtin.h.rb"
+  WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/Compiler"
+  )
 add_library(
   SpectralMDL 
   SHARED

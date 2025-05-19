@@ -156,18 +156,18 @@ export @(pure macro)bool print(const auto a){
 
 static const char *df = R"*(#smdl
 using ::math import *;
-export enum scatter_mode{scatter_none=0,scatter_reflect=1,scatter_transmit=2,scatter_reflect_transmit=3};
+const float EPSILON=0.00001;
+const float MULTISCATTER_DIFFUSE_CHANCE=0.2;
+export enum scatter_mode{scatter_none=0x0,scatter_reflect=0x1,scatter_transmit=0x2,scatter_reflect_transmit=0x3};
 @(pure macro)float scatter_reflect_chance(const scatter_mode mode){
   const auto refl_weight(#select((int(mode)&1)!=0,1.0,0.0));
   const auto tran_weight(#select((int(mode)&2)!=0,1.0,0.0));
   return refl_weight/(refl_weight+tran_weight);
 }
-const float SCATTER_EPS=0.001;
-const float MULTISCATTER_DIFFUSE_CHANCE=0.2;
 export namespace monte_carlo {
-export @(pure macro)float2 advance_low_discrepancy(const &float2 xi)=(*xi=frac(*xi+float2(0.75487766,0.56984029)));
-export @(pure macro)float3 advance_low_discrepancy(const &float3 xi)=(*xi=frac(*xi+float3(0.81917251,0.67104360,0.54970047)));
-export @(pure macro)float4 advance_low_discrepancy(const &float4 xi)=(*xi=frac(*xi+float4(0.85667488,0.73389185,0.62870672,0.53859725)));
+export @(pure macro)float2 next_low_discrepancy(const &float2 xi)=(*xi=frac(*xi+float2(0.75487766,0.56984029)));
+export @(pure macro)float3 next_low_discrepancy(const &float3 xi)=(*xi=frac(*xi+float3(0.81917251,0.67104360,0.54970047)));
+export @(pure macro)float4 next_low_discrepancy(const &float4 xi)=(*xi=frac(*xi+float4(0.85667488,0.73389185,0.62870672,0.53859725)));
 export @(pure)bool bool_sample(const &float xi,const float chance){
   if(*xi<chance){
     *xi=(*xi/chance);
@@ -184,13 +184,15 @@ export @(pure)int uniform_wavelength_index_sample(const &float xi){
 }
 export @(pure noinline)float2 uniform_disk_sample(float2 xi){
   xi=2*xi-1;
-  xi=#select(xi==0,1e-5,xi);
+  xi=#select(xi==0,EPSILON,xi);
   const bool cond((absxi:=#abs(xi),absxi.x>absxi.y));
   const float rad(#select(cond,xi.x,xi.y));
   const float phi(#select(cond,($PI/4)*xi.y/xi.x,($PI/2)-($PI/4)*xi.x/xi.y));
   return rad*float2(#cos(phi),#sin(phi));
 }
-export @(pure noinline)float3 cosine_hemisphere_sample(float2 xi)=float3((p:=uniform_disk_sample(xi)),#sqrt(#max(1-#sum(p*p),0)));
+export @(pure noinline)float3 cosine_hemisphere_sample(float2 xi){
+  return float3((p:=uniform_disk_sample(xi)),#sqrt(#max(1-#sum(p*p),0)));
+}
 }
 export namespace specular {
 export @(pure macro)auto reflect(const float3 wi,const float3 wm)=2*#sum(wi*wm)*wm-wi;
@@ -218,7 +220,7 @@ export @(pure)auto dielectric_fresnel(const float cos_thetai,const auto ior){
   return #min(0.5*(rs*rs+rp*rp),1.0);
 }
 }
-@(pure noinline)float3x3 build_tangent_space(const float3 normal,const float3 tangent_u){
+@(pure noinline)float3x3 calculate_tangent_space(const float3 normal,const float3 tangent_u){
   const auto tw(normalize(normal)*#sign(normal.z));
   const auto tu(normalize(tangent_u-dot(tangent_u,tw)*tw));
   const auto tv(normalize(cross(tw,tu)));
@@ -251,7 +253,7 @@ struct scatter_evaluate_result{
   bool is_black=false;
 };
 @(pure noinline)bool recalculate_tangent_space(inline const &scatter_evaluate_parameters params){
-  auto tbn(build_tangent_space(normal,tangent_u));
+  auto tbn(calculate_tangent_space(normal,tangent_u));
   wo=wo0*tbn;
   wi=wi0*tbn;
   return ((wo.z<0)==(wo0.z<0))&((wi.z<0)==(wi0.z<0));
@@ -279,10 +281,10 @@ struct scatter_sample_parameters{
 struct scatter_sample_result{
   float3 wi=float3(0.0);
   scatter_mode mode=scatter_none;
-  ?color delta_f=void();
+  ?color delta_f=$nothing;
 };
 @(pure noinline)?float3x3 recalculate_tangent_space(inline const &scatter_sample_parameters params){
-  auto tbn(build_tangent_space(normal,tangent_u));
+  auto tbn(calculate_tangent_space(normal,tangent_u));
   wo=wo0*tbn;
   return tbn if((wo.z<0)==(wo0.z<0));
 }
@@ -347,8 +349,8 @@ export struct diffuse_transmission_bsdf:bsdf{
 export struct sheen_bsdf:bsdf{
   float roughness;
   $(color|float) tint=1.0;
-  $(color|float|void) multiscatter_tint=void();
-  void multiscatter=void();
+  $(?(color|float)) multiscatter_tint=$nothing;
+  void multiscatter=$nothing;
   string handle="";
   finalize {
     roughness=saturate(roughness);
@@ -369,10 +371,10 @@ export struct sheen_bsdf:bsdf{
       const auto alpha(lerp(0.1,1.0,roughness*roughness));
       const auto fit=lerp(auto(21.5473,3.82987,0.19823,-1.97760,-4.32054),auto(25.3245,3.32435,0.16801,-1.27393,-4.85967),(1-alpha)*(1-alpha),);
       const auto cos_thetah(normalize(wo+wi).z);
-      const auto sin_thetah(#sqrt(1-cos_thetah*cos_thetah+SCATTER_EPS));
+      const auto sin_thetah(#sqrt(1-cos_thetah*cos_thetah+EPSILON));
       const auto D(1/$TWO_PI*(2+1/alpha)*#pow(sin_thetah,1/alpha));
       const auto G(1/(1+sheen_lambda(fit,cos_thetao)+sheen_lambda(fit,cos_thetai)));
-    } in D*G/(4*cos_thetao+SCATTER_EPS);
+    } in D*G/(4*cos_thetao+EPSILON);
     return scatter_evaluate_result(f: tint*fss,pdf: pdf);
   } else {
     return scatter_evaluate_result(is_black: true);
@@ -389,7 +391,7 @@ export struct ward_geisler_moroder_bsdf:bsdf{
   float roughness_u;
   float roughness_v=roughness_u;
   $(color|float) tint=1.0;
-  $(color|float|void) multiscatter_tint=void();
+  $(?(color|float)) multiscatter_tint=$nothing;
   float3 tangent_u=$state.texture_tangent_u[0];
   string handle="";
   finalize {
@@ -461,10 +463,9 @@ export namespace microfacet {
 export tag distribution;
 export struct distribution_ggx:default distribution{};
 export struct distribution_beckmann:distribution{};
-export struct distribution_blinn:distribution{};
 export @(pure macro)float smith_lambda(const distribution_ggx this[[anno::unused()]],
                                        const float m){
-  return 0.5*(#sign(m)*#sqrt(1+1/(m*m+SCATTER_EPS)))-0.5;
+  return 0.5*(#sign(m)*#sqrt(1+1/(m*m+EPSILON)))-0.5;
 }
 export @(pure macro)float smith_lambda(const distribution_beckmann this[[anno::unused()]],
                                        const float m){
@@ -478,17 +479,13 @@ export @(pure macro)float smith_slope_pdf(const distribution_beckmann this[[anno
                                           const float2 m){
   return (1/$PI)*#exp(-#sum(m*m));
 }
-export @(pure macro)float smith_normal_pdf(const distribution this[[anno::unused()]],
-                                           const float2 alpha,const float3 wm){
-  return wm.z>0.0?smith_slope_pdf(this,-wm.xy/(wm.z*alpha+SCATTER_EPS))/(alpha.x*alpha.y*#pow(wm.z,4)+SCATTER_EPS):0.0;
-}
 export @(pure noinline)float2 smith_visible_slope_sample(
   const distribution_ggx this[[anno::unused()]],
   const float xi0,
   const float xi1,
   float cos_thetao,
 ){
-  return #sqrt(xi0/(1-xi0+SCATTER_EPS))*float2(#cos(phi:=$TWO_PI*xi1),#sin(phi)) if(cos_thetao>0.9999);
+  return #sqrt(xi0/(1-xi0+EPSILON))*float2(#cos(phi:=$TWO_PI*xi1),#sin(phi)) if(cos_thetao>0.9999);
   cos_thetao=#max(cos_thetao,-0.9999);
   const auto mx=return_from{
     const auto sin_thetao(#sqrt(1-cos_thetao*cos_thetao));
@@ -503,9 +500,32 @@ export @(pure noinline)float2 smith_visible_slope_sample(
   const auto my=return_from{
     const auto s(#select(xi1>0.5,1.0,-1.0));
     const auto t(#min(s*(2*xi1-1),1));
-    return #sqrt(1+mx*mx)*s*((t*(t*(t*0.273850-0.733690)+0.463410))/(t*(t*(t*0.093073+0.309420)-1.000000)+0.597999));
+    return #sqrt(1+mx*mx)*s*((t*(t*(t*0.27385-0.73369)+0.46341))/(t*(t*(t*0.093073+0.30942)-1.0)+0.597999));
   };
   return float2(mx,my);
+}
+export @(pure noinline)float2 smith_visible_slope_sample(
+  const distribution_beckmann this[[anno::unused()]],
+  const float xi0,
+  const float xi1,
+  float cos_thetao,
+){
+  return #sqrt(-#log(1-xi0+EPSILON))*float2(#cos((phi:=$TWO_PI*xi1)),#sin(phi)) if(cos_thetao>0.9999);
+  cos_thetao=#max(cos_thetao,-0.9999);
+  xi0=#max(xi0,0.00001);
+  xi0=#min(xi0,0.99999);
+  const auto thetao(#acos(cos_thetao));
+  const auto sin_thetao(#sqrt(1-cos_thetao*cos_thetao));
+  const auto cot_thetao(cos_thetao/sin_thetao);
+  auto xmax(#erf(cot_thetao));
+  auto xmin(-1.0);
+  auto x(xmax-(1+xmax)*#pow(1-xi0,1+thetao*(thetao*(thetao*-0.0564+0.4265)-0.876)));
+  const auto visible_cdf_norm(1/(0.5*(cos_thetao*#erfc(-cot_thetao)+sin_thetao*#exp(-cot_thetao*cot_thetao)/#sqrt($PI))));
+  return float2();
+}
+export @(pure macro)float smith_normal_pdf(const distribution this[[anno::unused()]],
+                                           const float2 alpha,const float3 wm){
+  return wm.z>0.0?smith_slope_pdf(this,-wm.xy/(wm.z*alpha+EPSILON))/(alpha.x*alpha.y*#pow(wm.z,4)+EPSILON):0.0;
 }
 export @(pure noinline)float3 smith_visible_normal_sample(
   const distribution this,
@@ -522,6 +542,7 @@ export @(pure noinline)float3 smith_visible_normal_sample(
   const auto m(float2(alpha.x*dot(float2(cos_phi,-sin_phi),m11),alpha.y*dot(float2(sin_phi,cos_phi),m11)));
   return #all(isfinite(m))?normalize(float3(m,1)):wo.z==0?normalize(wo):float3(0,0,1);
 }
+export struct distribution_blinn:distribution{};
 export @(pure macro)void blinn_normal_first_quadrant_sample(
   const float xi0,
   const float xi1,
@@ -537,7 +558,7 @@ export @(pure macro)void blinn_normal_first_quadrant_sample(
     *cos_theta=#pow(xi1,1/(1+e.x*(cos_phi:=#cos(*phi))*cos_phi+e.y*(sin_phi:=#sin(*phi))*sin_phi));
   }
 }
-export @(pure noinline)float3 blinn_normal_sample(const float xi0,const float xi1,const float2 e){
+export @(pure noinline)float3 blinn_normal_sample(const float xi0,const float xi1,const float2 e,){
   float phi=0;
   float cos_theta=0;
   if(xi0<0.25){
@@ -549,7 +570,7 @@ export @(pure noinline)float3 blinn_normal_sample(const float xi0,const float xi
   } else {
     blinn_normal_first_quadrant_sample(4*(1-xi0),xi1,e,&phi,&cos_theta),phi=$TWO_PI-phi;
   }
-  return float3(#sqrt(1-cos_theta*cos_theta+SCATTER_EPS)*float2(#cos(phi),#sin(phi)),cos_theta);
+  return float3(#sqrt(1-cos_theta*cos_theta+EPSILON)*float2(#cos(phi),#sin(phi)),cos_theta);
 }
 export tag shadowing;
 export struct shadowing_smith:default shadowing{};
@@ -557,20 +578,15 @@ export struct shadowing_vcavities:shadowing{};
 export @(pure)float beta(const float x,const float y)=#exp(#lgamma(x)+#lgamma(y)-#lgamma(x+y));
 }
 struct microfacet_bsdf:bsdf{
-  float2 roughness;
-  float2 alpha=roughness*roughness;
-  float roughness0=#sqrt(#prod(roughness));
+  const float2 roughness;
+  const float roughness0=#sqrt(#prod(roughness));
+  const float2 alpha=clamp(roughness*roughness,EPSILON,1.0);
   $(color|float) tint;
-  $(color|float|void) multiscatter_tint=void();
-  float3 tangent_u=state::texture_tangent_u(0);
-  scatter_mode mode=scatter_reflect;
+  $(?(color|float)) multiscatter_tint=$nothing;
+  float3 tangent_u=$state.texture_tangent_u[0];
+  const scatter_mode mode=scatter_reflect;
   const microfacet::distribution distribution=microfacet::distribution();
   const microfacet::shadowing shadowing=microfacet::shadowing();
-  finalize {
-    alpha=#max(alpha,0.00001);
-    alpha=#min(alpha,1.0);
-    tangent_u=normalize(tangent_u);
-  }
 };
 @(pure noinline)auto scatter_evaluate(const &microfacet_bsdf this,inline const &scatter_evaluate_parameters params){
   preserve tangent_u;
@@ -581,50 +597,50 @@ struct microfacet_bsdf:bsdf{
   const auto dot_wo_wm(#sum(wo*wm));
   const auto dot_wi_wm(#sum(wi*wm));
   if$(this.distribution<:microfacet::distribution_blinn){
-    const auto e(2/(this.alpha*this.alpha+SCATTER_EPS));
-    const auto d(#pow(wm.z,(e.x*wm.x*wm.x+e.y*wm.y*wm.y)/(1-wm.z*wm.z+SCATTER_EPS))/$TWO_PI);
+    const auto e(2/(this.alpha*this.alpha+EPSILON));
+    const auto d(#pow(wm.z,(e.x*wm.x*wm.x+e.y*wm.y*wm.y)/(1-wm.z*wm.z+EPSILON))/$TWO_PI);
     const auto norm1(#sqrt(#prod(1+e)));
     const auto norm2(#sqrt(#prod(2+e)));
-    const auto g(#min(1,2*wm.z*#min(#abs(wo.z/(dot_wo_wm+SCATTER_EPS)),#abs(wi.z/(dot_wi_wm+SCATTER_EPS)))));
-    switch(int(mode)&int(this.mode)){
-    case int(scatter_reflect): {
-      const auto fss_pdf(norm1*d/(4*float2(dot_wo_wm,dot_wi_wm)+SCATTER_EPS));
-      const auto fss(norm2*d*g/(4*#abs(wo.z)+SCATTER_EPS));
+    const auto g(#min(1,2*wm.z*#min(#abs(wo.z/(dot_wo_wm+EPSILON)),#abs(wi.z/(dot_wi_wm+EPSILON)))));
+    switch(mode&this.mode){
+    case scatter_reflect: {
+      const auto fss_pdf(norm1*d/(4*float2(dot_wo_wm,dot_wi_wm)+EPSILON));
+      const auto fss(norm2*d*g/(4*#abs(wo.z)+EPSILON));
       if$(this.multiscatter_tint<:void){
-        return scatter_evaluate_result(pdf: reflect_chance*fss_pdf,f: this.tint*(reflect_chance*fss));
+        return scatter_evaluate_result(f: this.tint*(reflect_chance*fss),pdf: reflect_chance*fss_pdf);
       } else {
         const auto r0(this.roughness0);
         const auto fms_pdf(#abs(wi.z)/$PI);
         const auto fms=return_from{
           return 0.0;
         };
-        return scatter_evaluate_result(pdf: reflect_chance*lerp(fss_pdf,fms_pdf,MULTISCATTER_DIFFUSE_CHANCE),f: reflect_chance*this.tint*(fss+this.multiscatter_tint*fms));
+        return scatter_evaluate_result(f: reflect_chance*(this.tint*(fss+this.multiscatter_tint*fms)),pdf: reflect_chance*lerp(fss_pdf,fms_pdf,MULTISCATTER_DIFFUSE_CHANCE),);
       }
     }
-    case int(scatter_transmit): {
+    case scatter_transmit: {
       return scatter_evaluate_result(is_black: true) if(!((dot_wo_wm>0)&(dot_wi_wm<0)));
     }
-    default: break;
+    default: return scatter_evaluate_result(is_black: true);
     }
   } else {
     const auto d(microfacet::smith_normal_pdf(this.distribution,this.alpha,wm));
-    const auto lambdao(microfacet::smith_lambda(this.distribution,#abs(wo.z)/(length(this.alpha*wo.xy)+SCATTER_EPS)));
-    const auto lambdai(microfacet::smith_lambda(this.distribution,#abs(wi.z)/(length(this.alpha*wi.xy)+SCATTER_EPS)));
+    const auto lambdao(microfacet::smith_lambda(this.distribution,#abs(wo.z)/(length(this.alpha*wo.xy)+EPSILON)));
+    const auto lambdai(microfacet::smith_lambda(this.distribution,#abs(wi.z)/(length(this.alpha*wi.xy)+EPSILON)));
     const auto proj_areao((1+lambdao)*#abs(wo.z));
     const auto proj_areai((1+lambdai)*#abs(wi.z));
     const auto g=return_from{
       if$(this.shadowing<:microfacet::shadowing_smith){
         return mode==scatter_reflect?1/(1+lambdao+lambdai):microfacet::beta(1+lambdao,1+lambdai);
       } else {
-        return #min(1,2*wm.z*#min(#abs(wo.z/(dot_wo_wm+SCATTER_EPS)),#abs(wi.z/(dot_wi_wm+SCATTER_EPS))));
+        return #min(1,2*wm.z*#min(#abs(wo.z/(dot_wo_wm+EPSILON)),#abs(wi.z/(dot_wi_wm+EPSILON))));
       }
     };
-    switch(int(mode)&int(this.mode)){
-    case int(scatter_reflect): {
-      const auto fss_pdf(d/(4*float2(proj_areao,proj_areai)+SCATTER_EPS));
-      const auto fss(d*g/(4*#abs(wo.z)+SCATTER_EPS));
+    switch(mode&this.mode){
+    case scatter_reflect: {
+      const auto fss_pdf(d/(4*float2(proj_areao,proj_areai)+EPSILON));
+      const auto fss(d*g/(4*#abs(wo.z)+EPSILON));
       if$(this.multiscatter_tint<:void){
-        return scatter_evaluate_result(pdf: reflect_chance*fss_pdf,f: this.tint*(reflect_chance*fss));
+        return scatter_evaluate_result(f: this.tint*(reflect_chance*fss),pdf: reflect_chance*fss_pdf);
       } else {
         const auto r0(this.roughness0);
         const auto fms_pdf(#abs(wi.z)/$PI);
@@ -675,17 +691,17 @@ struct microfacet_bsdf:bsdf{
             return 0;
           }
         };
-        return scatter_evaluate_result(pdf: reflect_chance*lerp(fss_pdf,fms_pdf,MULTISCATTER_DIFFUSE_CHANCE),f: reflect_chance*this.tint*(fss+this.multiscatter_tint*fms));
+        return scatter_evaluate_result(f: reflect_chance*(this.tint*(fss+this.multiscatter_tint*fms)),pdf: reflect_chance*lerp(fss_pdf,fms_pdf,MULTISCATTER_DIFFUSE_CHANCE),);
       }
     }
-    case int(scatter_transmit): {
+    case scatter_transmit: {
       return scatter_evaluate_result(is_black: true) if(!((dot_wo_wm>0)&(dot_wi_wm<0)));
       const auto j(float2(specular::refraction_half_vector_jacobian(wo,wi,ior),specular::refraction_half_vector_jacobian(wi,wo,1/ior)));
-      const auto fss_pdf(d*j*float2(dot_wo_wm,-dot_wi_wm)/(float2(proj_areao,proj_areai)+SCATTER_EPS));
-      const auto fss(d*g*j[0]*dot_wo_wm/(#abs(wo.z)+SCATTER_EPS));
-      return scatter_evaluate_result(pdf: (1-reflect_chance)*fss_pdf,f: this.tint*((1-reflect_chance)*fss));
+      const auto fss_pdf(d*j*float2(dot_wo_wm,-dot_wi_wm)/(float2(proj_areao,proj_areai)+EPSILON));
+      const auto fss(d*g*j[0]*dot_wo_wm/(#abs(wo.z)+EPSILON));
+      return scatter_evaluate_result(f: this.tint*((1-reflect_chance)*fss),pdf: (1-reflect_chance)*fss_pdf);
     }
-    default: break;
+    default: return scatter_evaluate_result(is_black: true);
     }
   }
   return scatter_evaluate_result(is_black: true);
@@ -702,7 +718,7 @@ struct microfacet_bsdf:bsdf{
   }
   const auto wm=return_from{
     if$(this.distribution<:microfacet::distribution_blinn){
-      return microfacet::blinn_normal_sample(xi.x,xi.y,2/(this.alpha*this.alpha+SCATTER_EPS));
+      return microfacet::blinn_normal_sample(xi.x,xi.y,2/(this.alpha*this.alpha+EPSILON));
     } else {
       return microfacet::smith_visible_normal_sample(this.distribution,xi.x,xi.y,this.alpha,wo);
     }
@@ -714,7 +730,7 @@ struct microfacet_bsdf:bsdf{
   const float roughness_u,
   const float roughness_v=roughness_u,
   const $(color|float) tint=1.0,
-  const $(color|float|void) multiscatter_tint=$nothing,
+  const $(?(color|float)) multiscatter_tint=$nothing,
   const float3 tangent_u=$state.texture_tangent_u[0],
   const scatter_mode mode=scatter_reflect,
   const string handle="" [[anno::unused()]],
@@ -725,7 +741,7 @@ struct microfacet_bsdf:bsdf{
     roughness: float2(roughness_u,roughness_v),
     tint: tint,
     multiscatter_tint: multiscatter_tint,
-    tangent_u: tangent_u,
+    tangent_u: normalize(tangent_u),
     mode: mode,
     distribution: distribution,
     shadowing: shadowing,
@@ -794,14 +810,14 @@ export struct weighted_layer:bsdf{
     chance=saturate(chance);
   }
 };
-@(pure macro)auto scatter_evaluate(const &weighted_layer this,inline const &scatter_evaluate_parameters params){
+@(macro)auto scatter_evaluate(const &weighted_layer this,inline const &scatter_evaluate_parameters params){
   auto result0(scatter_evaluate(visit &this.base,params));
   preserve normal;
   normal=this.normal;
   auto result1(scatter_evaluate(visit &this.layer,params));
   return scatter_evaluate_result(f: lerp(result0.f,result1.f,this.weight),pdf: lerp(result0.pdf,result1.pdf,this.chance),is_black: result0.is_black&result1.is_black);
 }
-@(pure macro)auto scatter_sample(const &weighted_layer this,inline const &scatter_sample_parameters params){
+@(macro)auto scatter_sample(const &weighted_layer this,inline const &scatter_sample_parameters params){
   if(monte_carlo::bool_sample(&xi.w,this.chance)){
     preserve normal;
     normal=this.normal;
@@ -820,10 +836,10 @@ export struct fresnel_layer:bsdf{
   const float av_ior=average(ior);
   const float av_weight=average(weight);
 };
-@(pure macro)auto scatter_evaluate(const &fresnel_layer this,inline const &scatter_evaluate_parameters params){
+@(macro)auto scatter_evaluate(const &fresnel_layer this,inline const &scatter_evaluate_parameters params){
   const auto cos_thetao(dot(wo,this.normal)*#sign(this.normal.z));
   const auto cos_thetai(dot(wi,this.normal)*#sign(this.normal.z));
-  if((cos_thetao<SCATTER_EPS)|((mode==scatter_reflect)&(cos_thetai<SCATTER_EPS))|((mode==scatter_transmit)&(cos_thetai>-SCATTER_EPS)))
+  if((cos_thetao<EPSILON)|((mode==scatter_reflect)&(cos_thetai<EPSILON))|((mode==scatter_transmit)&(cos_thetai>-EPSILON)))
     return scatter_evaluate_result(is_black: true);
   const auto result0(scatter_evaluate(visit &this.base,params));
   const auto result1=return_from{
@@ -834,31 +850,29 @@ export struct fresnel_layer:bsdf{
   if(result0.is_black&result1.is_black){
     return scatter_evaluate_result(is_black: true);
   } else {
-    return scatter_evaluate_result(pdf: lerp(result0.pdf,result1.pdf,this.av_weight*specular::schlick_fresnel(float2(cos_thetao,cos_thetai),specular::schlick_F0(this.av_ior))),f: lerp(result0.f,result1.f,this.weight*specular::dielectric_fresnel(dot(wo,half_direction(params)),1/this.ior)),);
+    return scatter_evaluate_result(f: lerp(result0.f,result1.f,this.weight*specular::dielectric_fresnel(dot(wo,half_direction(params)),1/this.ior)),pdf: lerp(result0.pdf,result1.pdf,this.av_weight*specular::schlick_fresnel(auto(cos_thetao,cos_thetai),specular::schlick_F0(this.av_ior))),);
   }
 }
-@(pure macro)auto scatter_sample(const &fresnel_layer this,inline const &scatter_sample_parameters params){
+@(macro)auto scatter_sample(const &fresnel_layer this,inline const &scatter_sample_parameters params){
   const auto cos_theta(dot(wo,this.normal)*#sign(this.normal.z));
-  if(cos_theta<SCATTER_EPS)
+  if(cos_theta<EPSILON)
     return scatter_sample_result();
   const auto chance(this.av_weight*specular::schlick_fresnel(cos_theta,specular::schlick_F0(this.av_ior)));
   if(monte_carlo::bool_sample(&xi.z,chance)){
     preserve normal,ior;
     normal=this.normal,ior=1/this.av_ior;
     auto result(scatter_sample(visit &this.layer,params));
-    if(result.delta_f)
-      *result.delta_f*=this.weight*specular::dielectric_fresnel(dot(wo,half_direction(params,&result)),1/this.ior)/chance;
+    *result.delta_f*=this.weight*specular::dielectric_fresnel(dot(wo,half_direction(params,&result)),1/this.ior)/chance if(result.delta_f);
     return result;
   } else {
     auto result(scatter_sample(visit &this.base,params));
-    if(result.delta_f)
-      *result.delta_f*=(1-this.weight*specular::dielectric_fresnel(dot(wo,half_direction(params,&result)),1/this.ior))/(1-chance);
+    *result.delta_f*=(1-this.weight*specular::dielectric_fresnel(dot(wo,half_direction(params,&result)),1/this.ior))/(1-chance) if(result.delta_f);
     return result;
   }
 }
 export typedef fresnel_layer color_fresnel_layer;
-export @(pure macro)int $scatter_evaluate(
-  const &$material_instance instance,
+export @(macro)int $scatter_evaluate(
+  const &$material_instance inst,
   const &float3 wo,
   const &float3 wi,
   const &float pdf_fwd,
@@ -868,14 +882,14 @@ export @(pure macro)int $scatter_evaluate(
   auto params=scatter_evaluate_parameters(
     wo0: normalize(*wo),
     wi0: normalize(*wi),
-    thin_walled: instance.mat.thin_walled,
-    normal: normalize(*instance.normal),
+    thin_walled: inst.mat.thin_walled,
+    normal: normalize(*inst.normal),
   );
-  auto result=#typeof(instance.mat.backface)==#typeof(material_surface())||!params.hit_backface?scatter_evaluate(&instance.mat.surface.scattering,&params):scatter_evaluate(&instance.mat.backface.scattering,&params);
+  auto result=inst.mat.backface<:#typeof(material_surface())||!params.hit_backface?scatter_evaluate(&inst.mat.surface.scattering,&params):scatter_evaluate(&inst.mat.backface.scattering,&params);
   visit result in result{
     if(result.is_black){
-      *pdf_fwd=0;
-      *pdf_rev=0;
+      *pdf_fwd=0.0;
+      *pdf_rev=0.0;
       for(int i=0;i<$WAVELENGTH_BASE_MAX;i++)
         f[i]=0.0;
     } else {
@@ -891,8 +905,8 @@ export @(pure macro)int $scatter_evaluate(
     return !result.is_black;
   }
 }
-export @(pure macro)int $scatter_sample(
-  const &$material_instance instance,
+export @(macro)int $scatter_sample(
+  const &$material_instance inst,
   const &float4 xi,
   const &float3 wo,
   const &float3 wi,
@@ -904,13 +918,13 @@ export @(pure macro)int $scatter_sample(
   auto params=scatter_sample_parameters(
     xi: saturate(*xi),
     wo0: normalize(*wo),
-    thin_walled: instance.mat.thin_walled,
-    normal: normalize(*instance.normal),
+    thin_walled: inst.mat.thin_walled,
+    normal: normalize(*inst.normal),
   );
-  auto result=#typeof(instance.mat.backface)==#typeof(material_surface())||!params.hit_backface?scatter_sample(&instance.mat.surface.scattering,&params):scatter_sample(&instance.mat.backface.scattering,&params);
+  auto result=inst.mat.backface<:#typeof(material_surface())||!params.hit_backface?scatter_sample(&inst.mat.surface.scattering,&params):scatter_sample(&inst.mat.backface.scattering,&params);
   visit result in result{
     *wi=#select(params.hit_backface,-result.wi,result.wi);
-    if(result.mode==scatter_none||((wo.z<0)==(wi.z<0))!=(result.mode==scatter_reflect)){
+    if(result.mode==scatter_none||((wo.z<0.0)==(wi.z<0.0))!=(result.mode==scatter_reflect)){
       *pdf_fwd=0.0;
       *pdf_rev=0.0;
       for(int i=0;i<$WAVELENGTH_BASE_MAX;i++)
@@ -923,7 +937,7 @@ export @(pure macro)int $scatter_sample(
       #memcpy(f,&*result.delta_f,#sizeof(float)*$WAVELENGTH_BASE_MAX);
       return true;
     } else {
-      return $scatter_evaluate(instance,wo,wi,pdf_fwd,pdf_rev,f);
+      return $scatter_evaluate(inst,wo,wi,pdf_fwd,pdf_rev,f);
     }
   }
 }

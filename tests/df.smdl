@@ -5,7 +5,7 @@ import ::df::*;
 @(pure) auto run_low_discrepancy_tests(auto xi) {
   auto xi_av(xi);
   for (int i = 0; i < 5000; i++) {
-    df::monte_carlo::advance_low_discrepancy(&xi);
+    df::monte_carlo::next_low_discrepancy(&xi);
     xi_av += xi;
   }
   xi_av /= 5000;
@@ -27,8 +27,7 @@ unit_test "Low discrepancy 4D" {
 unit_test "Cosine-weighted hemisphere sample" {
   auto xi(float2(0.5, 0.7));
   auto wi_av(float3(0.0));
-  for (int i = 0; i < 5000; i++) {
-    df::monte_carlo::advance_low_discrepancy(&xi);
+  for (int i = 0; i < 5000; i++, df::monte_carlo::next_low_discrepancy(&xi)) {
     wi_av += df::monte_carlo::cosine_hemisphere_sample(xi);
   }
   wi_av /= 5000;

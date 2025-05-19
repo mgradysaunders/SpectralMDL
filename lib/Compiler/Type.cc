@@ -930,9 +930,6 @@ void FunctionType::initialize(Emitter &emitter) {
 Value FunctionType::invoke(Emitter &emitter, const ArgumentList &args,
                            const SourceLocation &srcLoc) {
   auto func{resolve_overload(emitter, args, srcLoc)};
-  if (!func->is_pure() && !emitter.state)
-    srcLoc.throw_error(concat("cannot call ", quoted(func->declName),
-                              " from '@(pure)' context"));
   if (func->is_variant()) {
     auto result{Value()};
     auto preserve{Preserve(emitter.crumb)};
@@ -975,12 +972,15 @@ Value FunctionType::invoke(Emitter &emitter, const ArgumentList &args,
     auto preserve{Preserve(emitter.crumb)};
     emitter.crumb = func->params.lastCrumb;
     auto result{emitter.create_function_implementation(
-        func->decl.name, func->is_pure(), func->returnType, func->params,
-        resolved.values, srcLoc,
+        func->decl.name, func->is_pure() || !emitter.state, func->returnType,
+        func->params, resolved.values, srcLoc,
         [&]() { emitter.emit(func->decl.definition); })};
     --macroRecursionDepth;
     return result;
   } else {
+    if (!func->is_pure() && !emitter.state)
+      srcLoc.throw_error(concat("cannot call ", quoted(func->declName),
+                                " from '@(pure)' context"));
     auto &instance{func->instantiate(emitter, resolved.get_value_types())};
     auto llvmArgs{llvm::SmallVector<llvm::Value *>{}};
     if (!func->is_pure())

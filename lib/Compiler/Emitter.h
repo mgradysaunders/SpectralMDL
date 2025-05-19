@@ -898,6 +898,7 @@ public:
   /// The LLVM-IR builder.
   llvm::IRBuilder<> builder;
 
+  /// The intermediate crumbs to potentially warn about later.
   llvm::SmallVector<Crumb *> crumbsToWarnAbout{};
 };
 
