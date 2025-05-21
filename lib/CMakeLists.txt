@@ -47,6 +47,7 @@ target_compile_options(
   SpectralMDL
   PRIVATE 
     "$<$<CONFIG:RELEASE>:-O3;-DNDEBUG>"
+    "${RTTI_FLAG}"
   )
 target_include_directories(
   SpectralMDL
@@ -72,6 +73,11 @@ if(SMDL_USE_BOOST_FILESYSTEM)
 endif()
 
 if(TARGET Ptex_static)
+  target_compile_options(
+    Ptex_static
+    PRIVATE
+      "${RTTI_FLAG}"
+    )
   target_link_libraries(SpectralMDL PRIVATE Ptex_static)
   target_include_directories(SpectralMDL PRIVATE "${ptex_SOURCE_DIR}/src/ptex")
   target_compile_definitions(SpectralMDL PRIVATE "-DSMDL_HAS_PTEX=1")

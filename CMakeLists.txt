@@ -14,6 +14,12 @@ if(NOT CMAKE_BUILD_TYPE)
   set(CMAKE_BUILD_TYPE Release) 
 endif()
 
+if(NOT SMDL_ENABLE_RTTI)
+  set(RTTI_FLAG "-fno-rtti")
+else()
+  set(RTTI_FLAG "")
+endif()
+
 # Include GNUInstallDirs and print them out.
 include(GNUInstallDirs)
 message(STATUS "INSTALL_PREFIX: ${CMAKE_INSTALL_PREFIX}")
