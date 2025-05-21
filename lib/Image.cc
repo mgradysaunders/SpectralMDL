@@ -8,6 +8,7 @@
 
 #include "filesystem.h"
 
+extern "C" {
 #define STBI_ASSERT(X) ((void)0)
 #define STB_ONLY_JPEG 1
 #define STB_ONLY_PNG 1
@@ -23,6 +24,7 @@
 #define STB_IMAGE_WRITE_STATIC 1
 #define STB_IMAGE_WRITE_IMPLEMENTATION 1
 #include "thirdparty/stb_image_write.h"
+} // extern "C"
 
 #define TINYEXR_USE_MINIZ 0
 #define TINYEXR_USE_STB_ZLIB 1
