@@ -22,11 +22,19 @@ if(SMDL_BUILD_LLVM)
   set(LLVM_INCLUDE_BENCHMARKS OFF CACHE BOOL "" FORCE)
   set(LLVM_INSTALL_TOOLCHAIN_ONLY ON CACHE BOOL "" FORCE)
   set(LLVM_TARGETS_TO_BUILD "AArch64;ARM;X86;XCore" CACHE STRING "" FORCE)
-  add_subdirectory("${CMAKE_BINARY_DIR}/llvm-project/llvm")
+  add_subdirectory(
+    "${CMAKE_BINARY_DIR}/llvm-project/llvm" 
+    "${CMAKE_BINARY_DIR}/llvm-project-build"
+    )
+  set(
+    LLVM_INCLUDE_DIR 
+    "${CMAKE_BINARY_DIR}/llvm-project/llvm/include"
+    "${CMAKE_BINARY_DIR}/llvm-project-build/include"
+    )
 else()
   find_package(LLVM REQUIRED)
-  message(STATUS "LLVM_INCLUDE_DIR: ${LLVM_INCLUDE_DIR}")
 endif()
+message(STATUS "LLVM_INCLUDE_DIR: ${LLVM_INCLUDE_DIR}")
 set(
   SMDL_LLVM_TARGETS 
   "LLVMTarget"
