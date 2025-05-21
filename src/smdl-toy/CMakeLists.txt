@@ -10,11 +10,12 @@ set_target_properties(
   )
 target_link_libraries(
   smdl-toy
-  PUBLIC
+  PRIVATE
     "SpectralMDL"
     "tbb"
     "embree"
     "assimp"
+    ${SMDL_LLVM_TARGETS}
   )
 target_include_directories(
   smdl-toy

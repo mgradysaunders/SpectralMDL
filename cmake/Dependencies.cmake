@@ -1,5 +1,41 @@
-find_package(LLVM REQUIRED)
-message(STATUS "LLVM_INCLUDE_DIR: ${LLVM_INCLUDE_DIR}")
+include_guard(GLOBAL)
+
+if(SMDL_BUILD_LLVM)
+  execute_process(
+    COMMAND
+      "git"
+      "clone"
+      "--depth=1"
+      "--branch=llvmorg-20.1.3"
+      "https://github.com/llvm/llvm-project"
+      "llvm-project"
+    WORKING_DIRECTORY "${CMAKE_BINARY_DIR}"
+    )
+  set(LLVM_ENABLE_PROJECTS "llvm" CACHE STRING "" FORCE)
+  set(LLVM_ENABLE_RTTI ${SMDL_ENABLE_RTTI} CACHE BOOL "" FORCE)
+  set(LLVM_ENABLE_BINDINGS OFF CACHE BOOL "" FORCE)
+  set(LLVM_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
+  set(LLVM_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+  set(LLVM_BUILD_TOOLS OFF CACHE BOOL "" FORCE)
+  set(LLVM_ENABLE_ZLIB OFF CACHE BOOL "" FORCE)
+  set(LLVM_ENABLE_ZSTD OFF CACHE BOOL "" FORCE)
+  set(LLVM_INCLUDE_BENCHMARKS OFF CACHE BOOL "" FORCE)
+  set(LLVM_INSTALL_TOOLCHAIN_ONLY ON CACHE BOOL "" FORCE)
+  set(LLVM_TARGETS_TO_BUILD "AArch64;ARM;X86;XCore" CACHE STRING "" FORCE)
+  add_subdirectory("${CMAKE_BINARY_DIR}/llvm-project/llvm")
+else()
+  find_package(LLVM REQUIRED)
+  message(STATUS "LLVM_INCLUDE_DIR: ${LLVM_INCLUDE_DIR}")
+endif()
+set(
+  SMDL_LLVM_TARGETS 
+  "LLVMTarget"
+  "LLVMAArch64CodeGen"
+  "LLVMARMCodeGen"
+  "LLVMXCoreCodeGen" 
+  "LLVMX86CodeGen"
+  "LLVMOrcJIT"
+  )
 
 include(FetchContent)
 set(FETCHCONTENT_QUIET FALSE)
@@ -7,31 +43,23 @@ set(FETCHCONTENT_QUIET FALSE)
 if(SMDL_ENABLE_PTEX)
   FetchContent_Declare(
     "Ptex"
-    GIT_REPOSITORY https://github.com/wdas/ptex
-    GIT_TAG v2.4.3
+    GIT_REPOSITORY "https://github.com/wdas/ptex"
+    GIT_TAG "v2.4.3"
+    GIT_SHALLOW TRUE
     GIT_PROGRESS TRUE
-  )
+    )
   FetchContent_MakeAvailable("Ptex")
 endif()
 
-# if(SMDL_ENABLE_MATERIALX)
-#   FetchContent_Declare(
-#     "MaterialX"
-#     GIT_REPOSITORY https://github.com/AcademySoftwareFoundation/MaterialX
-#     GIT_TAG v1.39.1
-#     GIT_PROGRESS TRUE
-#   )
-#   FetchContent_MakeAvailable("MaterialX")
-# endif()
-
-if(SMDL_BUILD_TOY)
+if(SMDL_TOY)
   # Assimp
   FetchContent_Declare(
     "Assimp"
-    GIT_REPOSITORY https://github.com/assimp/assimp
-    GIT_TAG v5.4.3
+    GIT_REPOSITORY "https://github.com/assimp/assimp"
+    GIT_TAG "v5.4.3"
+    GIT_SHALLOW TRUE
     GIT_PROGRESS TRUE
-  )
+    )
   set(ASSIMP_NO_EXPORT ON CACHE INTERNAL "")
   set(ASSIMP_BUILD_SAMPLES OFF CACHE INTERNAL "")
   set(ASSIMP_BUILD_TESTS OFF CACHE INTERNAL "")
@@ -43,10 +71,11 @@ if(SMDL_BUILD_TOY)
   # TBB
   FetchContent_Declare(
     "TBB"
-    GIT_REPOSITORY https://github.com/uxlfoundation/oneTBB
-    GIT_TAG v2022.1.0
+    GIT_REPOSITORY "https://github.com/uxlfoundation/oneTBB"
+    GIT_TAG "v2022.1.0"
+    GIT_SHALLOW TRUE
     GIT_PROGRESS TRUE
-  )
+    )
   set(TBB_STRICT OFF CACHE INTERNAL "")
   set(TBB_TEST OFF CACHE INTERNAL "")
   FetchContent_MakeAvailable("TBB")
@@ -54,10 +83,11 @@ if(SMDL_BUILD_TOY)
   # Embree
   FetchContent_Declare(
     "Embree"
-    GIT_REPOSITORY https://github.com/RenderKit/embree
-    GIT_TAG v4.4.0
+    GIT_REPOSITORY "https://github.com/RenderKit/embree"
+    GIT_TAG "v4.4.0"
+    GIT_SHALLOW TRUE
     GIT_PROGRESS TRUE
-  )
+    )
   set(EMBREE_TUTORIALS OFF CACHE INTERNAL "")
   set(EMBREE_ISPC_SUPPORT OFF CACHE INTERNAL "")
   set(EMBREE_TASKING_SYSTEM OFF CACHE INTERNAL "")

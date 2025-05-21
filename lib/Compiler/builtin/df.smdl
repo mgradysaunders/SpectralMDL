@@ -867,15 +867,8 @@ struct microfacet_bsdf: bsdf {
   const microfacet::shadowing shadowing = microfacet::shadowing(),
 ) {
   // if ((roughness_u > 0) | (roughness_v > 0)) {
-  return microfacet_bsdf(
-    roughness: float2(roughness_u, roughness_v),
-    tint: tint,
-    multiscatter_tint: multiscatter_tint,
-    tangent_u: normalize(tangent_u),
-    mode: mode,
-    distribution: distribution,
-    shadowing: shadowing,
-  );
+  return microfacet_bsdf(roughness: float2(roughness_u, roughness_v), tint: tint, multiscatter_tint: multiscatter_tint, tangent_u: normalize(tangent_u), mode: mode, //
+                         distribution: distribution, shadowing: shadowing);
   // } else {
   //   return specular_bsdf(tint: tint, mode: mode);
   // }
@@ -926,14 +919,14 @@ export @(pure macro) auto tint(const auto tint, const hair_bsdf base) = tint1(ti
 /// Construct 2-value tint of the given `bsdf`.
 export @(pure macro) auto tint(const auto reflection_tint, const auto transmission_tint, const bsdf base) = tint2(reflection_tint, transmission_tint, base);
 
-@(pure macro) auto scatter_evaluate(const &tint1 this, const &scatter_evaluate_parameters params) {
+@(macro) auto scatter_evaluate(const &tint1 this, const &scatter_evaluate_parameters params) {
   auto result(scatter_evaluate(visit &this.base, params));
   if (!result.is_black)
     result.f *= this.tint;
   return result;
 }
 
-@(pure macro) auto scatter_evaluate(const &tint2 this, const &scatter_evaluate_parameters params) {
+@(macro) auto scatter_evaluate(const &tint2 this, const &scatter_evaluate_parameters params) {
   auto result(scatter_evaluate(visit &this.base, params));
   if (!result.is_black) {
     if (params.mode == scatter_reflect) {
@@ -945,14 +938,14 @@ export @(pure macro) auto tint(const auto reflection_tint, const auto transmissi
   return result;
 }
 
-@(pure macro) auto scatter_sample(const &tint1 this, const &scatter_sample_parameters params) {
+@(macro) auto scatter_sample(const &tint1 this, const &scatter_sample_parameters params) {
   auto result(scatter_sample(visit &this.base, params));
   if ((result.mode != scatter_none) & bool(result.delta_f))
     *result.delta_f *= this.tint;
   return result;
 }
 
-@(pure macro) auto scatter_sample(const &tint2 this, const &scatter_sample_parameters params) {
+@(macro) auto scatter_sample(const &tint2 this, const &scatter_sample_parameters params) {
   auto result(scatter_sample(visit &this.base, params));
   if ((result.mode != scatter_none) & bool(result.delta_f)) {
     if (params.mode == scatter_reflect) {
@@ -1085,22 +1078,17 @@ export typedef fresnel_layer color_fresnel_layer;
 //--}
 
 export @(macro) int $scatter_evaluate(
-  const &$material_instance inst,
+  const &$material_instance instance,
   const &float3 wo,     ///< The outgoing direction
   const &float3 wi,     ///< The incoming direction
   const &float pdf_fwd, ///< output: The PDF of sampling `wi` from `wo`
   const &float pdf_rev, ///< output: The PDF of sampling `wo` from `wi`
   const &float f,       ///< output: The scattering function
 ) {
-  auto params = scatter_evaluate_parameters(
-    wo0: normalize(*wo), // Guarantee normalized
-    wi0: normalize(*wi), // Guarantee normalized
-    thin_walled: inst.mat.thin_walled,
-    normal: normalize(*inst.normal),
-  );
-  auto result = inst.mat.backface <: #typeof(material_surface()) || !params.hit_backface //
-                ? scatter_evaluate(&inst.mat.surface.scattering, &params)                //
-                : scatter_evaluate(&inst.mat.backface.scattering, &params);
+  auto params = scatter_evaluate_parameters(wo0: normalize(*wo), wi0: normalize(*wi), normal: normalize(*instance.normal), thin_walled: instance.mat.thin_walled);
+  auto result = instance.mat.backface <: #typeof(material_surface()) || !params.hit_backface //
+                ? scatter_evaluate(&instance.mat.surface.scattering, &params)                //
+                : scatter_evaluate(&instance.mat.backface.scattering, &params);
   visit result in result {
     if (result.is_black) {
       *pdf_fwd = 0.0;
@@ -1122,7 +1110,7 @@ export @(macro) int $scatter_evaluate(
 }
 
 export @(macro) int $scatter_sample(
-  const &$material_instance inst,
+  const &$material_instance instance,
   const &float4 xi,     ///< The canonical random sample in `[0,1]^4`
   const &float3 wo,     ///< The outgoing direction
   const &float3 wi,     ///< output: The incoming direction
@@ -1131,15 +1119,10 @@ export @(macro) int $scatter_sample(
   const &float f,       ///< output: The scattering function
   const &int is_delta,  ///< output: Is delta direction?
 ) {
-  auto params = scatter_sample_parameters(
-    xi: saturate(*xi),   // Guarantee clamped to [0,1]
-    wo0: normalize(*wo), // Guarantee normalized
-    thin_walled: inst.mat.thin_walled,
-    normal: normalize(*inst.normal),
-  );
-  auto result = inst.mat.backface <: #typeof(material_surface()) || !params.hit_backface //
-                ? scatter_sample(&inst.mat.surface.scattering, &params)                  //
-                : scatter_sample(&inst.mat.backface.scattering, &params);
+  auto params = scatter_sample_parameters(xi: saturate(*xi), wo0: normalize(*wo), normal: normalize(*instance.normal), thin_walled: instance.mat.thin_walled);
+  auto result = instance.mat.backface <: #typeof(material_surface()) || !params.hit_backface //
+                ? scatter_sample(&instance.mat.surface.scattering, &params)                  //
+                : scatter_sample(&instance.mat.backface.scattering, &params);
   visit result in result {
     *wi = #select(params.hit_backface, -result.wi, +result.wi);
     if (result.mode == scatter_none || ((wo.z < 0.0) == (wi.z < 0.0)) != (result.mode == scatter_reflect)) {
@@ -1155,7 +1138,7 @@ export @(macro) int $scatter_sample(
       #memcpy(f, &*result.delta_f, #sizeof(float) * $WAVELENGTH_BASE_MAX);
       return true;
     } else {
-      return $scatter_evaluate(inst, wo, wi, pdf_fwd, pdf_rev, f);
+      return $scatter_evaluate(instance, wo, wi, pdf_fwd, pdf_rev, f);
     }
   }
 }

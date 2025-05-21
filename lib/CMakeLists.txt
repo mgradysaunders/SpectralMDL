@@ -6,7 +6,7 @@ add_custom_target(
 add_library(
   SpectralMDL 
   SHARED
-    "AST/Decl.cc"
+    "AST.cc"
     "common.cc"
     "Compiler.cc"
     "Compiler/Context.cc"
@@ -62,17 +62,8 @@ target_include_directories(
     "${CMAKE_CURRENT_LIST_DIR}"
     "${CMAKE_CURRENT_LIST_DIR}/Compiler"
   )
-target_link_libraries(
-  SpectralMDL
-  PUBLIC
-    "LLVMTarget"
-    "LLVMXCoreCodeGen" 
-    "LLVMX86CodeGen"
-    "LLVMOrcJIT"
-  )
-
 find_package(Threads REQUIRED)
-target_link_libraries(SpectralMDL PRIVATE Threads::Threads)
+target_link_libraries(SpectralMDL PRIVATE Threads::Threads ${SMDL_LLVM_TARGETS})
 
 if(SMDL_USE_BOOST_FILESYSTEM)
   find_package(Boost CONFIG COMPONENTS filesystem REQUIRED)

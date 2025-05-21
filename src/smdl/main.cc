@@ -30,11 +30,11 @@ static cl::opt<bool> enableDebug{"g", cl::desc("Enable debugging"),
 static cl::opt<smdl::DumpFormat> dumpFormat{
     "f", cl::desc("Dump format:"),
     cl::values(
-        cl::OptionEnumValue("llvm-ir", int(smdl::DumpFormat::IR), "LLVM-IR"),
-        cl::OptionEnumValue("asm", int(smdl::DumpFormat::Assembly),
-                            "Native assembly"),
-        cl::OptionEnumValue("obj", int(smdl::DumpFormat::Object),
-                            "Native object file")),
+        cl::OptionEnumValue{"llvm-ir", int(smdl::DumpFormat::IR), "LLVM-IR"},
+        cl::OptionEnumValue{"asm", int(smdl::DumpFormat::Assembly),
+                            "Native assembly"},
+        cl::OptionEnumValue{"obj", int(smdl::DumpFormat::Object),
+                            "Native object file"}),
     cl::sub(subDump), cl::cat(optionsCat)};
 static cl::opt<std::string> outputFilename{
     "output", cl::desc("Output filename (default stdout)"), cl::Optional,
