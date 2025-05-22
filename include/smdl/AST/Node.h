@@ -61,6 +61,9 @@ public:
   static bool classof(const Node *node) { return node->nodeKind == K; }
 };
 
+/// Convert `NodeKind` to string.
+[[nodiscard]] SMDL_EXPORT std::string_view to_string(NodeKind nodeKind);
+
 enum class DeclKind : uint8_t {
   Enum,
   Function,
@@ -109,6 +112,9 @@ public:
   }
 };
 
+/// Convert `DeclKind` to string.
+[[nodiscard]] SMDL_EXPORT std::string_view to_string(DeclKind declKind);
+
 enum class ExprKind : uint8_t {
   AccessField,
   AccessIndex,
@@ -155,6 +161,9 @@ public:
   }
 };
 
+/// Convert `ExprKind` to string.
+[[nodiscard]] SMDL_EXPORT std::string_view to_string(ExprKind exprKind);
+
 enum class StmtKind : uint8_t {
   Break,
   Compound,
@@ -197,5 +206,8 @@ public:
            classof(static_cast<const Stmt *>(node));
   }
 };
+
+/// Convert `StmtKind` to string.
+[[nodiscard]] SMDL_EXPORT std::string_view to_string(StmtKind stmtKind);
 
 } // namespace smdl::AST
