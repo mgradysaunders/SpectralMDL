@@ -462,7 +462,9 @@ Value Emitter::emit(AST::Binary &expr) {
     }
   }
   // Default.
-  return emit_op(expr.op, emit(expr.exprLhs), emit(expr.exprRhs), expr.srcLoc);
+  auto lhs{emit(expr.exprLhs)};
+  auto rhs{emit(expr.exprRhs)};
+  return emit_op(expr.op, lhs, rhs, expr.srcLoc);
 }
 
 Value Emitter::emit(AST::Parens &expr) {
