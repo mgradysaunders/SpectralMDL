@@ -6,8 +6,6 @@
 
 #include "smdl/Image.h"
 
-#include "filesystem.h"
-
 extern "C" {
 #define STBI_ASSERT(X) ((void)0)
 #define STB_ONLY_JPEG 1
@@ -63,7 +61,7 @@ ForEachPixel(const EXRHeader &header, const EXRImage &image,
           if (iX < size_t(image.width) && iY < size_t(image.height)) {
             for (size_t iC = 0; iC < nC; iC++) {
               size_t pixelSize{GetPixelSize(header.channels[iC])};
-              callback(iX, iY, iC, tile.images[iC] + pixelSize * i, pixelSize);
+              callback(int(iX), int(iY), int(iC), tile.images[iC] + pixelSize * i, pixelSize);
             }
           }
           i++;
@@ -79,7 +77,7 @@ ForEachPixel(const EXRHeader &header, const EXRImage &image,
       for (size_t iX = 0; iX < nX; iX++) {
         for (size_t iC = 0; iC < nC; iC++) {
           size_t pixelSize{GetPixelSize(header.channels[iC])};
-          callback(iX, iY, iC, image.images[iC] + pixelSize * i, pixelSize);
+          callback(int(iX), int(iY), int(iC), image.images[iC] + pixelSize * i, pixelSize);
         }
         i++;
       }
@@ -237,7 +235,7 @@ void Image::start_load(const std::string &fileName) {
             [&](int iX, int iY, int iC, const void *pixel, size_t pixelSize) {
               iY = numTexelsY - iY - 1; // Flip vertically!
               if (iC == 0)
-                std::memcpy(texels.get() + (iX + numTexelsX * iY) * texelSize,
+                std::memcpy(texels.get() + ptrdiff_t((iX + numTexelsX * iY) * texelSize),
                             pixel, pixelSize);
             });
       } else {
@@ -246,16 +244,16 @@ void Image::start_load(const std::string &fileName) {
                                              tinyexr::FindChannel(header, "G"),
                                              tinyexr::FindChannel(header, "B"),
                                              tinyexr::FindChannel(header, "A")};
-        int channelIndexR = channels[0] - &header.channels[0]; // Required!
-        int channelIndexG = channels[1] - &header.channels[0]; // Required!
-        int channelIndexB = channels[2] - &header.channels[0]; // Required!
+        int channelIndexR = int(channels[0] - &header.channels[0]); // Required!
+        int channelIndexG = int(channels[1] - &header.channels[0]); // Required!
+        int channelIndexB = int(channels[2] - &header.channels[0]); // Required!
         int channelIndexA =
-            channels[3] ? channels[3] - &header.channels[0] : -1;
+            channels[3] ? int(channels[3] - &header.channels[0]) : -1;
         tinyexr::ForEachPixel(
             header, image,
             [&](int iX, int iY, int iC, const void *pixel, size_t pixelSize) {
               iY = numTexelsY - iY - 1; // Flip vertically!
-              auto texel{texels.get() + (iX + numTexelsX * iY) * texelSize};
+              auto texel{texels.get() + ptrdiff_t((iX + numTexelsX * iY) * texelSize)};
               if (iC == channelIndexR) {
                 std::memcpy(texel + 0 * pixelSize, pixel, pixelSize);
               } else if (iC == channelIndexG) {
