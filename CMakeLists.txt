@@ -6,7 +6,9 @@ project(
   LANGUAGES CXX C
   )
 
-#include(cmake/Git.cmake)
+set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
+
+include(cmake/Git.cmake)
 include(cmake/Options.cmake)
 include(cmake/Dependencies.cmake)
 

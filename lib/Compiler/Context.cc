@@ -61,7 +61,8 @@ Context::Context(Compiler &compiler) : compiler(compiler) {
       {"$stderr", get_comptime_ptr(get_void_pointer_type(), &llvm::errs())},
       {"$stdout", get_comptime_ptr(get_void_pointer_type(), &llvm::outs())},
       {"$TWO_PI", get_comptime_float(2 * 3.14159265359f)},
-      {"$WAVELENGTH_BASE_MAX", get_comptime_int(compiler.wavelengthBaseMax)},
+      {"$WAVELENGTH_BASE_MAX",
+       get_comptime_int(int(compiler.wavelengthBaseMax))},
   };
 
   // Compile builtin `api` module and use all exports as keywords!
@@ -369,7 +370,6 @@ ConversionRule Context::get_conversion_rule(Type *typeA, Type *typeB) {
       return ConversionRule::Explicit;
 #endif
   }
-
   return ConversionRule::NotAllowed;
 }
 
@@ -386,12 +386,12 @@ Value Context::get_comptime_union_index_map(UnionType *unionTypeA,
           get_comptime_int(
               unionTypeB->get_case_type_index(unionTypeA->caseTypes[i])),
           {i});
-    indexMap = LValue(indexMap.type,
-                      new llvm::GlobalVariable(
-                          llvmModule, indexMap.type->llvmType, /*isConst=*/true,
-                          llvm::GlobalValue::PrivateLinkage,
-                          static_cast<llvm::Constant *>(indexMap.llvmValue),
-                          ".union_map"));
+    indexMap = LValue(
+        indexMap.type,
+        new llvm::GlobalVariable(
+            llvmModule, indexMap.type->llvmType, /*isConstant=*/true,
+            llvm::GlobalValue::PrivateLinkage,
+            static_cast<llvm::Constant *>(indexMap.llvmValue), ".union_map"));
   }
   return indexMap;
 }

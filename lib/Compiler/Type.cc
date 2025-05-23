@@ -77,21 +77,21 @@ Value Type::invoke(Emitter &emitter, const ArgumentList &args,
   return Value();
 }
 
-Value Type::access_field(Emitter &emitter, Value value, std::string_view name,
+Value Type::access_field(Emitter &, Value, std::string_view,
                          const SourceLocation &srcLoc) {
   srcLoc.throw_error(
       concat("type ", quoted(displayName), " has no field access operator"));
   return Value();
 }
 
-Value Type::access_index(Emitter &emitter, Value value, Value name,
+Value Type::access_index(Emitter &, Value, Value,
                          const SourceLocation &srcLoc) {
   srcLoc.throw_error(
       concat("type ", quoted(displayName), " has no index access operator"));
   return Value();
 }
 
-Value Type::insert(Emitter &emitter, Value value, Value elem, unsigned pos,
+Value Type::insert(Emitter &, Value, Value, unsigned,
                    const SourceLocation &srcLoc) {
   srcLoc.throw_error(
       concat("type ", quoted(displayName), " has unimplemented insert method"));
@@ -153,7 +153,8 @@ Value ArithmeticType::invoke(Emitter &emitter, const ArgumentList &args,
           emitter.builder.CreateICmpNE(
               emitter.to_rvalue(emitter.access_field(value, "#idx", srcLoc)),
               emitter.context.get_comptime_int(
-                  static_cast<UnionType *>(value.type)->caseTypes.size() - 1)));
+                  int(static_cast<UnionType *>(value.type)->caseTypes.size() -
+                      1))));
     // If constructing from another scalar or enum type, cast the
     // underlying LLVM representation.
     if (value.type->is_arithmetic_scalar() || value.type->is_enum())
@@ -315,7 +316,7 @@ Value ArithmeticType::invoke(Emitter &emitter, const ArgumentList &args,
         return construct([&](unsigned j) { return args[j].value; });
 
       const bool canConstructFromScalars{
-          args.size() == extent.numCols * extent.numRows &&
+          args.size() == size_t(extent.numCols * extent.numRows) &&
           args.is_all_true([](auto &arg) {
             return arg.value.type->is_arithmetic_scalar();
           })};
@@ -359,8 +360,8 @@ Value ArithmeticType::access_field(Emitter &emitter, Value value,
   }
   if (name.size() == 1) {
     if (auto i{to_index(name[0])}) {
-      auto result{access_index(emitter, value,
-                               emitter.context.get_comptime_int(*i), srcLoc)};
+      auto result{access_index(
+          emitter, value, emitter.context.get_comptime_int(int(*i)), srcLoc)};
       // Set LLVM name for more readable LLVM-IR.
       if (value.llvmValue->hasName()) {
         auto name0{value.llvmValue->getName().str()};
@@ -1290,7 +1291,7 @@ Value InferredSizeArrayType::invoke(Emitter &emitter, const ArgumentList &args,
   if (!sizeNameStrv.empty()) {
     emitter.declare_crumb(
         sizeNameStrv, nullptr,
-        emitter.context.get_comptime_int(inferredArrayType->size));
+        emitter.context.get_comptime_int(int(inferredArrayType->size)));
   }
 
   // Delegate.
@@ -1458,7 +1459,7 @@ Value StringType::access_field(Emitter &emitter, Value value,
   if (name == "size") {
     if (value.is_comptime()) {
       return emitter.context.get_comptime_int(
-          value.get_comptime_string().size());
+          int(value.get_comptime_string().size()));
     } else {
       return RValue(
           emitter.context.get_int_type(),
@@ -1807,7 +1808,8 @@ Value Texture2DType::invoke(Emitter &emitter, const ArgumentList &args,
       : tileImages[0]->get_format() == Image::F16 ? Scalar::get_half()
                                                   : Scalar::get_float(),
       Extent(tileImages[0]->get_num_channels()))};
-  auto textureType{instantiate(context, texelType, tileCountU, tileCountV)};
+  auto textureType{
+      instantiate(context, texelType, int(tileCountU), int(tileCountV))};
   auto valueTileExtents{Value::zero(textureType->tileExtentsType)};
   auto valueTileBuffers{Value::zero(textureType->tileBuffersType)};
   for (unsigned i = 0; i < tileImagePaths.size(); i++) {
@@ -1972,7 +1974,7 @@ Value UnionType::invoke(Emitter &emitter, const ArgumentList &args,
     auto result{Value::zero(this)};
     result.llvmValue = emitter.builder.CreateInsertValue(
         result.llvmValue,
-        emitter.context.get_comptime_int(caseTypes.size() - 1), {1U});
+        emitter.context.get_comptime_int(int(caseTypes.size() - 1)), {1U});
     return result;
   }
   if (args.is_one_positional(this)) {
