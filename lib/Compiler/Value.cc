@@ -54,7 +54,7 @@ Crumb *Crumb::find(Context &context, Span<std::string_view> name,
   for (; crumb && crumb != stopCrumb; crumb = crumb->prev) {
     // If this is not usable, don't consider it.
     // If this is not exported and we recursed into a module, don't consider it.
-    if (// !crumb->value || //
+    if ( // !crumb->value || //
         (!crumb->value.is_usable_in_llvm_function(llvmFunc)) ||
         (!crumb->is_exported() && ignoreIfNotExported))
       continue;
@@ -77,6 +77,9 @@ Crumb *Crumb::find(Context &context, Span<std::string_view> name,
           return subCrumb;
         }
       }
+    } else if (crumb->is_ast_using_import() &&
+               crumb->name.back() == name.back() && name.size() == 1) {
+      return crumb->isUsed = 1, crumb;
     }
     // If the crumb value is an `AST::Namespace` ...
     if (crumb->value.is_comptime_meta_namespace(context)) {
