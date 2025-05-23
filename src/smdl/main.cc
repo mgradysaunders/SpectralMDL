@@ -94,13 +94,13 @@ int main(int argc, char **argv) {
     } else if (subTest) {
       if (auto error{compiler.jit_compile()})
         error->print_and_exit();
-      float wavelengths[16]{};
+      std::array<float, 16> wavelengths{};
       smdl::BumpPtrAllocator allocator{};
       smdl::State state{};
       state.allocator = &allocator;
       state.wavelength_base = &wavelengths[0];
       for (unsigned i = 0; i < 16; i++) {
-        float fac = i / 15.0f;
+        float fac = float(i) / 15.0f;
         wavelengths[i] =
             (1 - fac) * state.wavelength_min + fac * state.wavelength_max;
       }

@@ -358,7 +358,7 @@ public:
   /// Wraps `Type::access_index()`
   [[nodiscard]] Value access_index(Value value, unsigned i,
                                    const SourceLocation &srcLoc = {}) {
-    return access_index(value, context.get_comptime_int(i), srcLoc);
+    return access_index(value, context.get_comptime_int(int(i)), srcLoc);
   }
 
   /// Wraps `Type::access_index()` for every index.
@@ -515,12 +515,12 @@ public:
   Value emit(AST::LiteralFloat &expr) {
     return expr.srcValue.back() == 'd' || expr.srcValue.back() == 'D'
                ? context.get_comptime_double(expr.value)
-               : context.get_comptime_float(expr.value);
+               : context.get_comptime_float(float(expr.value));
   }
 
   /// Emit literal int expression.
   Value emit(AST::LiteralInt &expr) {
-    return context.get_comptime_int(expr.value);
+    return context.get_comptime_int(int(expr.value));
   }
 
   /// Emit literal string expression.

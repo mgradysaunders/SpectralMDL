@@ -69,7 +69,6 @@ void Emitter::create_function(llvm::Function *&llvmFunc, std::string_view name,
                               llvmParamTys,
                               /*isVarArg=*/false),
       llvm::Function::InternalLinkage, "", context.llvmModule);
-  // TODO Interpret null callback as function without definition
   auto lastIP{builder.saveIP()};
   {
     auto preserve{Preserve(state, inlines)};
@@ -168,7 +167,7 @@ void Emitter::declare_parameter_inline(Value value) {
           value.type->get_first_non_pointer_type())}) {
     for (auto &param : structType->params) {
       auto srcLoc{param.get_source_location()};
-      declare_crumb(param.name, /*decl=*/{},
+      declare_crumb(param.name, /*node=*/{},
                     access_field(value, param.name, srcLoc));
       if (param.is_inline())
         declare_parameter_inline(crumb->value);
@@ -355,7 +354,7 @@ Value Emitter::emit(AST::Variable &decl) {
               concat("static variable ", quoted(declarator.name.srcName),
                      " requires compile-time initializer"));
         auto llvmGlobal{new llvm::GlobalVariable(
-            context.llvmModule, value.type->llvmType, /*isConst=*/true,
+            context.llvmModule, value.type->llvmType, /*isConstant=*/true,
             llvm::GlobalValue::PrivateLinkage,
             static_cast<llvm::Constant *>(value.llvmValue))};
         llvmGlobal->setUnnamedAddr(llvm::GlobalValue::UnnamedAddr::Global);
@@ -1150,7 +1149,7 @@ SMDL_EXPORT int smdl_data_exists(void *sceneData, const char *name) {
   return false;
 }
 
-SMDL_EXPORT void smdl_data_lookup(void *sceneData, void *state,
+SMDL_EXPORT void smdl_data_lookup(void *sceneData, void *state, // NOLINT
                                   const char *name, int kind, int size,
                                   void *ptr) {
   if (auto getter{static_cast<SceneData *>(sceneData)->get(name)})
@@ -1247,9 +1246,11 @@ Value Emitter::emit_intrinsic(std::string_view name, const ArgumentList &args,
     return nullptr;
   }};
   switch (name[0]) {
+  default:
+    break;
   case 'a': {
     if (name == "alignof") {
-      return context.get_comptime_int(context.get_align_of(expectOneType()));
+      return context.get_comptime_int(int(context.get_align_of(expectOneType())));
     }
     if (name == "abs") {
       auto value{to_rvalue(expectOneVectorized())};
@@ -1358,8 +1359,8 @@ Value Emitter::emit_intrinsic(std::string_view name, const ArgumentList &args,
       auto callInst{builder.CreateCall(
           callee,
           {state.llvmValue,
-           context.get_comptime_int(context.get_size_of(value.type)).llvmValue,
-           context.get_comptime_int(context.get_align_of(value.type))
+           context.get_comptime_int(int(context.get_size_of(value.type))).llvmValue,
+           context.get_comptime_int(int(context.get_align_of(value.type)))
                .llvmValue})};
       builder.CreateStore(value, callInst);
       return RValue(context.get_pointer_type(value.type), callInst);
@@ -1420,7 +1421,7 @@ Value Emitter::emit_intrinsic(std::string_view name, const ArgumentList &args,
       } else {
         SMDL_SANITY_CHECK(value.type->is_color());
         kind = int(SceneData::Kind::Color);
-        size = static_cast<ColorType *>(value.type)->wavelengthBaseMax;
+        size = int(static_cast<ColorType *>(value.type)->wavelengthBaseMax);
       }
       builder.CreateCall(
           context.get_builtin_callee("smdl_data_lookup", &smdl_data_lookup),
@@ -1614,7 +1615,7 @@ Value Emitter::emit_intrinsic(std::string_view name, const ArgumentList &args,
   }
   case 's': {
     if (name == "sizeof") {
-      return context.get_comptime_int(context.get_size_of(expectOneType()));
+      return context.get_comptime_int(int(context.get_size_of(expectOneType())));
     }
     if (name == "sum") {
       auto value{to_rvalue(expectOneVectorized())};
@@ -2201,7 +2202,7 @@ Emitter::resolve_arguments(const ParameterList &params,
             value = *param.builtinDefaultValue;
         }
         value = invoke(param.type, value, param.get_source_location());
-        declare_crumb(param.name, /*decl=*/nullptr, value);
+        declare_crumb(param.name, /*node=*/nullptr, value);
       }
     });
   }

@@ -164,7 +164,7 @@ auto Parser::parse_identifier() -> BumpPtr<AST::Identifier> {
   }
   while (true) {
     checkpoint();
-    if ((srcDoubleColon = next("::"))) {
+    if (srcDoubleColon = next("::"); srcDoubleColon) {
       if (auto name{parse_simple_name()}) {
         elements.push_back(AST::Identifier::Element{*srcDoubleColon, *name});
         accept();
@@ -594,7 +594,7 @@ auto Parser::parse_let_expression() -> BumpPtr<AST::Expr> {
   auto decls{std::vector<BumpPtr<AST::Decl>>{}};
   auto srcBraceL{std::optional<std::string_view>()};
   auto srcBraceR{std::optional<std::string_view>()};
-  if ((srcBraceL = next_delimiter("{"))) {
+  if (srcBraceL = next_delimiter("{"); srcBraceL) {
     while (true) {
       auto decl{parse_variable_declaration()};
       if (!decl)
@@ -604,7 +604,7 @@ auto Parser::parse_let_expression() -> BumpPtr<AST::Expr> {
       if (peek() == '}')
         break;
     }
-    if (!(srcBraceR = next_delimiter("}")))
+    if (srcBraceR = next_delimiter("}"); !srcBraceR)
       srcLoc0.throw_error("expected closing '}' after 'let'");
   } else {
     auto decl{parse_variable_declaration()};
@@ -798,7 +798,7 @@ auto Parser::parse_literal_number_expression() -> BumpPtr<AST::Expr> {
     while (isDigit(peek())) {
       digits.push_back(peek());
       next();
-      if (next("'")) { // UNOP_MAYBE consume single-quote separator
+      if (next("'")) { // Maybe consume single-quote separator
         if (peek() == '\'')
           srcLoc0.throw_error("numeric literal must not contain adjacent "
                               "single-quote separators");
@@ -1484,15 +1484,15 @@ auto Parser::parse_function_declaration() -> BumpPtr<AST::Function> {
   if (params->is_variant() && peek() != '=')
     srcLoc0.throw_error(
         "function variant must be defined by 'let' or call expression");
-  if ((srcSemicolon = next_delimiter(";"))) {
+  if (srcSemicolon = next_delimiter(";"); srcSemicolon) {
     // Nothing
-  } else if ((srcEqual = next_delimiter("="))) {
+  } else if (srcEqual = next_delimiter("="); srcEqual) {
     skip();
     auto srcLoc1{srcLoc};
     auto def{parse_expression()};
     if (!def)
       srcLoc0.throw_error("expected function expression after '='");
-    if (!(srcSemicolon = next_delimiter(";")))
+    if (srcSemicolon = next_delimiter(";"); !srcSemicolon)
       srcLoc0.throw_error("expected ';' after function expression");
     if (params->is_variant() && !llvm::isa<AST::Let>(def.get()) &&
         !llvm::isa<AST::Call>(def.get()))
