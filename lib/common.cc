@@ -33,6 +33,7 @@ void init_or_exit() {
         target->createTargetMachine(triple, name, "", opts, llvm::Reloc::PIC_);
     return 0;
   }();
+  SMDL_SANITY_CHECK(onlyOnce == 0); // Silence unused variable warning
 }
 
 const NativeTarget &get_native_target() { return nativeTarget; }

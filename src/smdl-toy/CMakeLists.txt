@@ -9,7 +9,7 @@ set_target_properties(
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
   )
 target_compile_options(
-  smdl 
+  smdl-toy
   PRIVATE 
     "${RTTI_FLAG}"
   )
@@ -17,7 +17,7 @@ target_link_libraries(
   smdl-toy
   PRIVATE
     "SpectralMDL"
-    "tbb"
+    "TBB::tbb"
     "embree"
     "assimp"
     ${SMDL_LLVM_TARGETS}

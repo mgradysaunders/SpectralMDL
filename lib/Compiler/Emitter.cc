@@ -1009,12 +1009,12 @@ Value Emitter::emit_op(AST::BinaryOp op, Value lhs, Value rhs,
         rhsType->extent.is_matrix() &&
         lhsType->extent.numRows == rhsType->extent.numRows) {
       auto scalar{lhsType->scalar.get_common(rhsType->scalar)};
-      auto extentN{rhsType->extent.numRows};
-      auto extentP{rhsType->extent.numCols};
       lhs = invoke(lhsType->get_with_different_scalar(context, scalar), lhs,
                    srcLoc);
       rhs = invoke(rhsType->get_with_different_scalar(context, scalar), rhs,
                    srcLoc);
+      /* auto extentN{rhsType->extent.numRows}; */
+      auto extentP{rhsType->extent.numCols};
       auto result{
           Value::zero(context.get_arithmetic_type(scalar, Extent(extentP)))};
       // Row-vector times matrix, equivalent to `#transpose(matrix) * vector`
@@ -1144,9 +1144,7 @@ SMDL_EXPORT void *smdl_bump(void *state, int size, int align) {
 }
 
 SMDL_EXPORT int smdl_data_exists(void *sceneData, const char *name) {
-  if (auto getter{static_cast<SceneData *>(sceneData)->get(name)})
-    return true;
-  return false;
+  return static_cast<SceneData *>(sceneData)->get(name) != nullptr;
 }
 
 SMDL_EXPORT void smdl_data_lookup(void *sceneData, void *state, // NOLINT

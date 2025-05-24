@@ -43,10 +43,19 @@ set_target_properties(
     LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/lib"
     ARCHIVE_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/lib"
   )
+if(UNIX)
+  target_compile_options(
+    SpectralMDL
+    PRIVATE 
+      "$<$<CONFIG:RELEASE>:-O3;-DNDEBUG>"
+      "-Wall"
+      "-Wextra"
+      "-Wno-unused-parameter"
+    )
+endif()
 target_compile_options(
   SpectralMDL
   PRIVATE 
-    "$<$<CONFIG:RELEASE>:-O3;-DNDEBUG>"
     "${RTTI_FLAG}"
   )
 target_include_directories(
@@ -68,16 +77,12 @@ target_link_libraries(SpectralMDL PRIVATE Threads::Threads ${SMDL_LLVM_TARGETS})
 
 if(SMDL_USE_BOOST_FILESYSTEM)
   find_package(Boost CONFIG COMPONENTS filesystem REQUIRED)
-  target_link_libraries(SpectralMDL PRIVATE Boost::filesystem)
+  target_link_libraries(SpectralMDL PRIVATE "Boost::filesystem")
   target_compile_definitions(SpectralMDL PRIVATE "-DSMDL_USE_BOOST_FILESYSTEM=1")
 endif()
 
 if(TARGET Ptex_static)
-  target_compile_options(
-    Ptex_static
-    PRIVATE
-      "${RTTI_FLAG}"
-    )
+  target_compile_options(Ptex_static PRIVATE "${RTTI_FLAG}")
   target_link_libraries(SpectralMDL PRIVATE Ptex_static)
   target_include_directories(SpectralMDL PRIVATE "${ptex_SOURCE_DIR}/src/ptex")
   target_compile_definitions(SpectralMDL PRIVATE "-DSMDL_HAS_PTEX=1")

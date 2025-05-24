@@ -1,3 +1,5 @@
+#include "tinyexr_alloc.h"
+
 #ifndef TINYEXR_H_
 #define TINYEXR_H_
 /*
@@ -326,7 +328,7 @@ typedef struct TDeepImage {
 // @deprecated { For backward compatibility. Not recommended to use. }
 // Loads single-frame OpenEXR image. Assume EXR image contains A(single channel
 // alpha) or RGB(A) channels.
-// Application must free image data as returned by `out_rgba`
+// Application must TINYEXR_FREE image data as returned by `out_rgba`
 // Result image format is: float x RGBA x width x hight
 // Returns negative value and may set error string in `err` when there's an
 // error
@@ -334,7 +336,7 @@ extern int LoadEXR(float **out_rgba, int *width, int *height,
                    const char *filename, const char **err);
 
 // Loads single-frame OpenEXR image by specifying layer name. Assume EXR image
-// contains A(single channel alpha) or RGB(A) channels. Application must free
+// contains A(single channel alpha) or RGB(A) channels. Application must TINYEXR_FREE
 // image data as returned by `out_rgba` Result image format is: float x RGBA x
 // width x hight Returns negative value and may set error string in `err` when
 // there's an error When the specified layer name is not found in the EXR file,
@@ -346,7 +348,7 @@ extern int LoadEXRWithLayer(float **out_rgba, int *width, int *height,
 //
 // Get layer infos from EXR file.
 //
-// @param[out] layer_names List of layer names. Application must free memory
+// @param[out] layer_names List of layer names. Application must TINYEXR_FREE memory
 // after using this.
 // @param[out] num_layers The number of layers
 // @param[out] err Error string(will be filled when the function returns error
@@ -433,13 +435,13 @@ extern int ParseEXRVersionFromMemory(EXRVersion *version,
                                      const unsigned char *memory, size_t size);
 
 // Parse single-part OpenEXR header from a file and initialize `EXRHeader`.
-// When there was an error message, Application must free `err` with
+// When there was an error message, Application must TINYEXR_FREE `err` with
 // FreeEXRErrorMessage()
 extern int ParseEXRHeaderFromFile(EXRHeader *header, const EXRVersion *version,
                                   const char *filename, const char **err);
 
 // Parse single-part OpenEXR header from a memory and initialize `EXRHeader`.
-// When there was an error message, Application must free `err` with
+// When there was an error message, Application must TINYEXR_FREE `err` with
 // FreeEXRErrorMessage()
 extern int ParseEXRHeaderFromMemory(EXRHeader *header,
                                     const EXRVersion *version,
@@ -448,7 +450,7 @@ extern int ParseEXRHeaderFromMemory(EXRHeader *header,
 
 // Parse multi-part OpenEXR headers from a file and initialize `EXRHeader*`
 // array.
-// When there was an error message, Application must free `err` with
+// When there was an error message, Application must TINYEXR_FREE `err` with
 // FreeEXRErrorMessage()
 extern int ParseEXRMultipartHeaderFromFile(EXRHeader ***headers,
                                            int *num_headers,
@@ -458,7 +460,7 @@ extern int ParseEXRMultipartHeaderFromFile(EXRHeader ***headers,
 
 // Parse multi-part OpenEXR headers from a memory and initialize `EXRHeader*`
 // array
-// When there was an error message, Application must free `err` with
+// When there was an error message, Application must TINYEXR_FREE `err` with
 // FreeEXRErrorMessage()
 extern int ParseEXRMultipartHeaderFromMemory(EXRHeader ***headers,
                                              int *num_headers,
@@ -468,10 +470,10 @@ extern int ParseEXRMultipartHeaderFromMemory(EXRHeader ***headers,
 
 // Loads single-part OpenEXR image from a file.
 // Application must setup `ParseEXRHeaderFromFile` before calling this function.
-// Application can free EXRImage using `FreeEXRImage`
+// Application can TINYEXR_FREE EXRImage using `FreeEXRImage`
 // Returns negative value and may set error string in `err` when there's an
 // error
-// When there was an error message, Application must free `err` with
+// When there was an error message, Application must TINYEXR_FREE `err` with
 // FreeEXRErrorMessage()
 extern int LoadEXRImageFromFile(EXRImage *image, const EXRHeader *header,
                                 const char *filename, const char **err);
@@ -479,10 +481,10 @@ extern int LoadEXRImageFromFile(EXRImage *image, const EXRHeader *header,
 // Loads single-part OpenEXR image from a memory.
 // Application must setup `EXRHeader` with
 // `ParseEXRHeaderFromMemory` before calling this function.
-// Application can free EXRImage using `FreeEXRImage`
+// Application can TINYEXR_FREE EXRImage using `FreeEXRImage`
 // Returns negative value and may set error string in `err` when there's an
 // error
-// When there was an error message, Application must free `err` with
+// When there was an error message, Application must TINYEXR_FREE `err` with
 // FreeEXRErrorMessage()
 extern int LoadEXRImageFromMemory(EXRImage *image, const EXRHeader *header,
                                   const unsigned char *memory,
@@ -491,10 +493,10 @@ extern int LoadEXRImageFromMemory(EXRImage *image, const EXRHeader *header,
 // Loads multi-part OpenEXR image from a file.
 // Application must setup `ParseEXRMultipartHeaderFromFile` before calling this
 // function.
-// Application can free EXRImage using `FreeEXRImage`
+// Application can TINYEXR_FREE EXRImage using `FreeEXRImage`
 // Returns negative value and may set error string in `err` when there's an
 // error
-// When there was an error message, Application must free `err` with
+// When there was an error message, Application must TINYEXR_FREE `err` with
 // FreeEXRErrorMessage()
 extern int LoadEXRMultipartImageFromFile(EXRImage *images,
                                          const EXRHeader **headers,
@@ -505,10 +507,10 @@ extern int LoadEXRMultipartImageFromFile(EXRImage *images,
 // Loads multi-part OpenEXR image from a memory.
 // Application must setup `EXRHeader*` array with
 // `ParseEXRMultipartHeaderFromMemory` before calling this function.
-// Application can free EXRImage using `FreeEXRImage`
+// Application can TINYEXR_FREE EXRImage using `FreeEXRImage`
 // Returns negative value and may set error string in `err` when there's an
 // error
-// When there was an error message, Application must free `err` with
+// When there was an error message, Application must TINYEXR_FREE `err` with
 // FreeEXRErrorMessage()
 extern int LoadEXRMultipartImageFromMemory(EXRImage *images,
                                            const EXRHeader **headers,
@@ -519,7 +521,7 @@ extern int LoadEXRMultipartImageFromMemory(EXRImage *images,
 // Saves multi-channel, single-frame OpenEXR image to a file.
 // Returns negative value and may set error string in `err` when there's an
 // error
-// When there was an error message, Application must free `err` with
+// When there was an error message, Application must TINYEXR_FREE `err` with
 // FreeEXRErrorMessage()
 extern int SaveEXRImageToFile(const EXRImage *image,
                               const EXRHeader *exr_header, const char *filename,
@@ -530,7 +532,7 @@ extern int SaveEXRImageToFile(const EXRImage *image,
 // Return the number of bytes if success.
 // Return zero and will set error string in `err` when there's an
 // error.
-// When there was an error message, Application must free `err` with
+// When there was an error message, Application must TINYEXR_FREE `err` with
 // FreeEXRErrorMessage()
 extern size_t SaveEXRImageToMemory(const EXRImage *image,
                                    const EXRHeader *exr_header,
@@ -541,7 +543,7 @@ extern size_t SaveEXRImageToMemory(const EXRImage *image,
 // File global attributes (eg. display_window) must be set in the first header.
 // Returns negative value and may set error string in `err` when there's an
 // error
-// When there was an error message, Application must free `err` with
+// When there was an error message, Application must TINYEXR_FREE `err` with
 // FreeEXRErrorMessage()
 extern int SaveEXRMultipartImageToFile(const EXRImage *images,
                                        const EXRHeader **exr_headers,
@@ -554,17 +556,17 @@ extern int SaveEXRMultipartImageToFile(const EXRImage *images,
 // Return the number of bytes if success.
 // Return zero and will set error string in `err` when there's an
 // error.
-// When there was an error message, Application must free `err` with
+// When there was an error message, Application must TINYEXR_FREE `err` with
 // FreeEXRErrorMessage()
 extern size_t SaveEXRMultipartImageToMemory(const EXRImage *images,
                                             const EXRHeader **exr_headers,
                                             unsigned int num_parts,
                                             unsigned char **memory, const char **err);
 // Loads single-frame OpenEXR deep image.
-// Application must free memory of variables in DeepImage(image, offset_table)
+// Application must TINYEXR_FREE memory of variables in DeepImage(image, offset_table)
 // Returns negative value and may set error string in `err` when there's an
 // error
-// When there was an error message, Application must free `err` with
+// When there was an error message, Application must TINYEXR_FREE `err` with
 // FreeEXRErrorMessage()
 extern int LoadDeepEXR(DeepImage *out_image, const char *filename,
                        const char **err);
@@ -578,7 +580,7 @@ extern int LoadDeepEXR(DeepImage *out_image, const char *filename,
 
 // NOT YET IMPLEMENTED:
 // Loads multi-part OpenEXR deep image.
-// Application must free memory of variables in DeepImage(image, offset_table)
+// Application must TINYEXR_FREE memory of variables in DeepImage(image, offset_table)
 // extern int LoadMultiPartDeepEXR(DeepImage **out_image, int num_parts, const
 // char *filename,
 //                       const char **err);
@@ -588,7 +590,7 @@ extern int LoadDeepEXR(DeepImage *out_image, const char *filename,
 // RGB(A) channels.
 // Returns negative value and may set error string in `err` when there's an
 // error
-// When there was an error message, Application must free `err` with
+// When there was an error message, Application must TINYEXR_FREE `err` with
 // FreeEXRErrorMessage()
 extern int LoadEXRFromMemory(float **out_rgba, int *width, int *height,
                              const unsigned char *memory, size_t size,
@@ -1378,7 +1380,7 @@ static bool CompressZip(unsigned char *dst,
     return false;
   }
   memcpy(dst, ret, outSize);
-  free(ret);
+  TINYEXR_FREE(ret);
 
   compressedSize = outSize;
 #elif defined(TINYEXR_USE_NANOZLIB) && (TINYEXR_USE_NANOZLIB==1)
@@ -1390,7 +1392,7 @@ static bool CompressZip(unsigned char *dst,
   }
 
   memcpy(dst, ret, outSize);
-  free(ret);
+  TINYEXR_FREE(ret);
   
   compressedSize = outSize;
 #else
@@ -4280,7 +4282,7 @@ static unsigned char **AllocateImage(int num_channels,
                                      int data_width, int data_height, bool *success) {
   unsigned char **images =
       reinterpret_cast<unsigned char **>(static_cast<float **>(
-          malloc(sizeof(float *) * static_cast<size_t>(num_channels))));
+          TINYEXR_MALLOC(sizeof(float *) * static_cast<size_t>(num_channels))));
 
   for (size_t c = 0; c < static_cast<size_t>(num_channels); c++) {
     images[c] = NULL;
@@ -4298,10 +4300,10 @@ static unsigned char **AllocateImage(int num_channels,
       if (requested_pixel_types[c] == TINYEXR_PIXELTYPE_HALF) {
         images[c] =
             reinterpret_cast<unsigned char *>(static_cast<unsigned short *>(
-                malloc(sizeof(unsigned short) * data_len)));
+                TINYEXR_MALLOC(sizeof(unsigned short) * data_len)));
       } else if (requested_pixel_types[c] == TINYEXR_PIXELTYPE_FLOAT) {
         images[c] = reinterpret_cast<unsigned char *>(
-            static_cast<float *>(malloc(sizeof(float) * data_len)));
+            static_cast<float *>(TINYEXR_MALLOC(sizeof(float) * data_len)));
       } else {
         images[c] = NULL; // just in case.
         valid = false;
@@ -4311,12 +4313,12 @@ static unsigned char **AllocateImage(int num_channels,
       // pixel_data_size += sizeof(float);
       // channel_offset += sizeof(float);
       images[c] = reinterpret_cast<unsigned char *>(
-          static_cast<float *>(malloc(sizeof(float) * data_len)));
+          static_cast<float *>(TINYEXR_MALLOC(sizeof(float) * data_len)));
     } else if (channels[c].pixel_type == TINYEXR_PIXELTYPE_UINT) {
       // pixel_data_size += sizeof(unsigned int);
       // channel_offset += sizeof(unsigned int);
       images[c] = reinterpret_cast<unsigned char *>(
-          static_cast<unsigned int *>(malloc(sizeof(unsigned int) * data_len)));
+          static_cast<unsigned int *>(TINYEXR_MALLOC(sizeof(unsigned int) * data_len)));
     } else {
       images[c] = NULL; // just in case.
       valid = false;
@@ -4327,7 +4329,7 @@ static unsigned char **AllocateImage(int num_channels,
   if (!valid) {
     for (size_t c = 0; c < static_cast<size_t>(num_channels); c++) {
       if (images[c]) {
-        free(images[c]);
+        TINYEXR_FREE(images[c]);
         images[c] = NULL;
       }
     }
@@ -4630,7 +4632,7 @@ static int ParseEXRHeader(HeaderInfo *info, bool *empty_header,
         attrib.type[255] = '\0';
         //std::cout << "i = " << info->attributes.size() << ", dsize = " << data.size() << "\n";
         attrib.size = static_cast<int>(data.size());
-        attrib.value = static_cast<unsigned char *>(malloc(data.size()));
+        attrib.value = static_cast<unsigned char *>(TINYEXR_MALLOC(data.size()));
         memcpy(reinterpret_cast<char *>(attrib.value), &data.at(0),
                data.size());
         info->attributes.push_back(attrib);
@@ -4778,7 +4780,7 @@ static bool ConvertHeader(EXRHeader *exr_header, const HeaderInfo &info, std::st
 
   exr_header->num_channels = static_cast<int>(info.channels.size());
 
-  exr_header->channels = static_cast<EXRChannelInfo *>(malloc(
+  exr_header->channels = static_cast<EXRChannelInfo *>(TINYEXR_MALLOC(
       sizeof(EXRChannelInfo) * static_cast<size_t>(exr_header->num_channels)));
   for (size_t c = 0; c < static_cast<size_t>(exr_header->num_channels); c++) {
 #ifdef _MSC_VER
@@ -4796,14 +4798,14 @@ static bool ConvertHeader(EXRHeader *exr_header, const HeaderInfo &info, std::st
   }
 
   exr_header->pixel_types = static_cast<int *>(
-      malloc(sizeof(int) * static_cast<size_t>(exr_header->num_channels)));
+      TINYEXR_MALLOC(sizeof(int) * static_cast<size_t>(exr_header->num_channels)));
   for (size_t c = 0; c < static_cast<size_t>(exr_header->num_channels); c++) {
     exr_header->pixel_types[c] = info.channels[c].pixel_type;
   }
 
   // Initially fill with values of `pixel_types`
   exr_header->requested_pixel_types = static_cast<int *>(
-      malloc(sizeof(int) * static_cast<size_t>(exr_header->num_channels)));
+      TINYEXR_MALLOC(sizeof(int) * static_cast<size_t>(exr_header->num_channels)));
   for (size_t c = 0; c < static_cast<size_t>(exr_header->num_channels); c++) {
     exr_header->requested_pixel_types[c] = info.channels[c].pixel_type;
   }
@@ -4817,7 +4819,7 @@ static bool ConvertHeader(EXRHeader *exr_header, const HeaderInfo &info, std::st
       exr_header->num_custom_attributes = TINYEXR_MAX_CUSTOM_ATTRIBUTES;
     }
 
-    exr_header->custom_attributes = static_cast<EXRAttribute *>(malloc(
+    exr_header->custom_attributes = static_cast<EXRAttribute *>(TINYEXR_MALLOC(
         sizeof(EXRAttribute) * size_t(exr_header->num_custom_attributes)));
 
     for (size_t i = 0; i < size_t(exr_header->num_custom_attributes); i++) {
@@ -4923,7 +4925,7 @@ static int DecodeTiledLevel(EXRImage* exr_image, const EXRHeader* exr_header,
   }
 #endif
   exr_image->tiles = static_cast<EXRTile*>(
-    calloc(static_cast<size_t>(num_tiles), sizeof(EXRTile)));
+    TINYEXR_CALLOC(static_cast<size_t>(num_tiles), sizeof(EXRTile)));
 
 #if TINYEXR_HAS_CXX11 && (TINYEXR_USE_THREAD > 0)
   std::vector<std::thread> workers;
@@ -5400,10 +5402,10 @@ static int DecodeChunk(EXRImage *exr_image, const EXRHeader *exr_header,
       (*err) += "Invalid/Corrupted data found when decoding pixels.\n";
     }
 
-    // free alloced image.
+    // TINYEXR_FREE alloced image.
     for (size_t c = 0; c < static_cast<size_t>(num_channels); c++) {
       if (exr_image->images[c]) {
-        free(exr_image->images[c]);
+        TINYEXR_FREE(exr_image->images[c]);
         exr_image->images[c] = NULL;
       }
     }
@@ -6069,11 +6071,11 @@ static int DecodeEXRImage(EXRImage *exr_image, const EXRHeader *exr_header,
       if ((exr_header->num_channels > 0) && exr_image && exr_image->images) {
         for (size_t c = 0; c < size_t(exr_header->num_channels); c++) {
           if (exr_image->images[c]) {
-            free(exr_image->images[c]);
+            TINYEXR_FREE(exr_image->images[c]);
             exr_image->images[c] = NULL;
           }
         }
-        free(exr_image->images);
+        TINYEXR_FREE(exr_image->images);
         exr_image->images = NULL;
       }
 #endif
@@ -6168,7 +6170,7 @@ int EXRLayers(const char *filename, const char **layer_names[], int *num_layers,
 
   (*num_layers) = int(layer_vec.size());
   (*layer_names) = static_cast<const char **>(
-      malloc(sizeof(const char *) * static_cast<size_t>(layer_vec.size())));
+      TINYEXR_MALLOC(sizeof(const char *) * static_cast<size_t>(layer_vec.size())));
   for (size_t c = 0; c < static_cast<size_t>(layer_vec.size()); c++) {
 #ifdef _MSC_VER
     (*layer_names)[c] = _strdup(layer_vec[c].c_str());
@@ -6289,7 +6291,7 @@ int LoadEXRWithLayer(float **out_rgba, int *width, int *height,
     // Grayscale channel only.
 
     (*out_rgba) = reinterpret_cast<float *>(
-        malloc(4 * sizeof(float) * static_cast<size_t>(exr_image.width) *
+        TINYEXR_MALLOC(4 * sizeof(float) * static_cast<size_t>(exr_image.width) *
                static_cast<size_t>(exr_image.height)));
 
     if (exr_header.tiled) {
@@ -6364,7 +6366,7 @@ int LoadEXRWithLayer(float **out_rgba, int *width, int *height,
     }
 
     (*out_rgba) = reinterpret_cast<float *>(
-        malloc(4 * sizeof(float) * static_cast<size_t>(exr_image.width) *
+        TINYEXR_MALLOC(4 * sizeof(float) * static_cast<size_t>(exr_image.width) *
                static_cast<size_t>(exr_image.height)));
     if (exr_header.tiled) {
       const size_t tile_size_x = static_cast<size_t>(exr_header.tile_size_x);
@@ -6501,7 +6503,7 @@ int ParseEXRHeaderFromMemory(EXRHeader *exr_header, const EXRVersion *version,
       // release mem
       for (size_t i = 0; i < info.attributes.size(); i++) {
         if (info.attributes[i].value) {
-          free(info.attributes[i].value);
+          TINYEXR_FREE(info.attributes[i].value);
         }
       }
       if (err && !err_str.empty()) {
@@ -6579,7 +6581,7 @@ int LoadEXRFromMemory(float **out_rgba, int *width, int *height,
     // Grayscale channel only.
 
     (*out_rgba) = reinterpret_cast<float *>(
-        malloc(4 * sizeof(float) * static_cast<size_t>(exr_image.width) *
+        TINYEXR_MALLOC(4 * sizeof(float) * static_cast<size_t>(exr_image.width) *
                static_cast<size_t>(exr_image.height)));
 
     if (exr_header.tiled) {
@@ -6636,24 +6638,24 @@ int LoadEXRFromMemory(float **out_rgba, int *width, int *height,
     if (idxR == -1) {
       tinyexr::SetErrorMessage("R channel not found", err);
 
-      // @todo { free exr_image }
+      // @todo { TINYEXR_FREE exr_image }
       return TINYEXR_ERROR_INVALID_DATA;
     }
 
     if (idxG == -1) {
       tinyexr::SetErrorMessage("G channel not found", err);
-      // @todo { free exr_image }
+      // @todo { TINYEXR_FREE exr_image }
       return TINYEXR_ERROR_INVALID_DATA;
     }
 
     if (idxB == -1) {
       tinyexr::SetErrorMessage("B channel not found", err);
-      // @todo { free exr_image }
+      // @todo { TINYEXR_FREE exr_image }
       return TINYEXR_ERROR_INVALID_DATA;
     }
 
     (*out_rgba) = reinterpret_cast<float *>(
-        malloc(4 * sizeof(float) * static_cast<size_t>(exr_image.width) *
+        TINYEXR_MALLOC(4 * sizeof(float) * static_cast<size_t>(exr_image.width) *
                static_cast<size_t>(exr_image.height)));
 
     if (exr_header.tiled) {
@@ -6847,7 +6849,7 @@ struct MemoryMappedFile {
       return;
     }
 
-    data = reinterpret_cast<unsigned char *>(malloc(size));
+    data = reinterpret_cast<unsigned char *>(TINYEXR_MALLOC(size));
     if (!data) {
       size = 0;
       fclose(fp);
@@ -6891,7 +6893,7 @@ struct MemoryMappedFile {
     }
 #else
     if (data) {
-      (void)free(data);
+      (void)TINYEXR_FREE(data);
     }
     data = NULL;
 #endif
@@ -7906,7 +7908,7 @@ static size_t SaveEXRNPartImageToMemory(const EXRImage* exr_images,
     tinyexr::SetErrorMessage("Output memory size is zero", err);
     return TINYEXR_ERROR_INVALID_DATA;
   }
-  (*memory_out) = static_cast<unsigned char*>(malloc(size_t(total_size)));
+  (*memory_out) = static_cast<unsigned char*>(TINYEXR_MALLOC(size_t(total_size)));
 
   // Writing header
   memcpy((*memory_out), &memory[0], memory.size());
@@ -8050,7 +8052,7 @@ int SaveEXRImageToFile(const EXRImage *exr_image, const EXRHeader *exr_header,
   if ((mem_size > 0) && mem) {
     written_size = fwrite(mem, 1, mem_size, fp);
   }
-  free(mem);
+  TINYEXR_FREE(mem);
 
   fclose(fp);
 
@@ -8120,7 +8122,7 @@ int SaveEXRMultipartImageToFile(const EXRImage* exr_images,
   if ((mem_size > 0) && mem) {
     written_size = fwrite(mem, 1, mem_size, fp);
   }
-  free(mem);
+  TINYEXR_FREE(mem);
 
   fclose(fp);
 
@@ -8313,19 +8315,19 @@ int LoadDeepEXR(DeepImage *deep_image, const char *filename, const char **err) {
   }
 
   deep_image->image = static_cast<float ***>(
-      malloc(sizeof(float **) * static_cast<size_t>(num_channels)));
+      TINYEXR_MALLOC(sizeof(float **) * static_cast<size_t>(num_channels)));
   for (int c = 0; c < num_channels; c++) {
     deep_image->image[c] = static_cast<float **>(
-        malloc(sizeof(float *) * static_cast<size_t>(data_height)));
+        TINYEXR_MALLOC(sizeof(float *) * static_cast<size_t>(data_height)));
     for (int y = 0; y < data_height; y++) {
     }
   }
 
   deep_image->offset_table = static_cast<int **>(
-      malloc(sizeof(int *) * static_cast<size_t>(data_height)));
+      TINYEXR_MALLOC(sizeof(int *) * static_cast<size_t>(data_height)));
   for (int y = 0; y < data_height; y++) {
     deep_image->offset_table[y] = static_cast<int *>(
-        malloc(sizeof(int) * static_cast<size_t>(data_width)));
+        TINYEXR_MALLOC(sizeof(int) * static_cast<size_t>(data_width)));
   }
 
   for (size_t y = 0; y < static_cast<size_t>(num_blocks); y++) {
@@ -8433,7 +8435,7 @@ int LoadDeepEXR(DeepImage *deep_image, const char *filename, const char **err) {
       tinyexr::tinyexr_uint64 data_offset = 0;
       for (size_t c = 0; c < static_cast<size_t>(num_channels); c++) {
         deep_image->image[c][y] = static_cast<float *>(
-            malloc(sizeof(float) * static_cast<size_t>(samples_per_line)));
+            TINYEXR_MALLOC(sizeof(float) * static_cast<size_t>(samples_per_line)));
 
         if (channels[c].pixel_type == 0) {  // UINT
           for (size_t x = 0; x < static_cast<size_t>(samples_per_line); x++) {
@@ -8473,7 +8475,7 @@ int LoadDeepEXR(DeepImage *deep_image, const char *filename, const char **err) {
   deep_image->height = data_height;
 
   deep_image->channel_names = static_cast<const char **>(
-      malloc(sizeof(const char *) * static_cast<size_t>(num_channels)));
+      TINYEXR_MALLOC(sizeof(const char *) * static_cast<size_t>(num_channels)));
   for (size_t c = 0; c < static_cast<size_t>(num_channels); c++) {
 #ifdef _WIN32
     deep_image->channel_names[c] = _strdup(channels[c].name.c_str());
@@ -8506,7 +8508,7 @@ void InitEXRImage(EXRImage *exr_image) {
 
 void FreeEXRErrorMessage(const char *msg) {
   if (msg) {
-    free(reinterpret_cast<void *>(const_cast<char *>(msg)));
+    TINYEXR_FREE(reinterpret_cast<void *>(const_cast<char *>(msg)));
   }
   return;
 }
@@ -8525,25 +8527,25 @@ int FreeEXRHeader(EXRHeader *exr_header) {
   }
 
   if (exr_header->channels) {
-    free(exr_header->channels);
+    TINYEXR_FREE(exr_header->channels);
   }
 
   if (exr_header->pixel_types) {
-    free(exr_header->pixel_types);
+    TINYEXR_FREE(exr_header->pixel_types);
   }
 
   if (exr_header->requested_pixel_types) {
-    free(exr_header->requested_pixel_types);
+    TINYEXR_FREE(exr_header->requested_pixel_types);
   }
 
   for (int i = 0; i < exr_header->num_custom_attributes; i++) {
     if (exr_header->custom_attributes[i].value) {
-      free(exr_header->custom_attributes[i].value);
+      TINYEXR_FREE(exr_header->custom_attributes[i].value);
     }
   }
 
   if (exr_header->custom_attributes) {
-    free(exr_header->custom_attributes);
+    TINYEXR_FREE(exr_header->custom_attributes);
   }
 
   EXRSetNameAttr(exr_header, NULL);
@@ -8585,26 +8587,26 @@ int FreeEXRImage(EXRImage *exr_image) {
 
   for (int i = 0; i < exr_image->num_channels; i++) {
     if (exr_image->images && exr_image->images[i]) {
-      free(exr_image->images[i]);
+      TINYEXR_FREE(exr_image->images[i]);
     }
   }
 
   if (exr_image->images) {
-    free(exr_image->images);
+    TINYEXR_FREE(exr_image->images);
   }
 
   if (exr_image->tiles) {
     for (int tid = 0; tid < exr_image->num_tiles; tid++) {
       for (int i = 0; i < exr_image->num_channels; i++) {
         if (exr_image->tiles[tid].images && exr_image->tiles[tid].images[i]) {
-          free(exr_image->tiles[tid].images[i]);
+          TINYEXR_FREE(exr_image->tiles[tid].images[i]);
         }
       }
       if (exr_image->tiles[tid].images) {
-        free(exr_image->tiles[tid].images);
+        TINYEXR_FREE(exr_image->tiles[tid].images);
       }
     }
-    free(exr_image->tiles);
+    TINYEXR_FREE(exr_image->tiles);
   }
 
   return TINYEXR_SUCCESS;
@@ -8662,10 +8664,10 @@ int ParseEXRMultipartHeaderFromMemory(EXRHeader ***exr_headers,
 
     if (ret != TINYEXR_SUCCESS) {
 
-      // Free malloc-allocated memory here.
+      // Free TINYEXR_MALLOC-allocated memory here.
       for (size_t i = 0; i < info.attributes.size(); i++) {
         if (info.attributes[i].value) {
-          free(info.attributes[i].value);
+          TINYEXR_FREE(info.attributes[i].value);
         }
       }
 
@@ -8681,10 +8683,10 @@ int ParseEXRMultipartHeaderFromMemory(EXRHeader ***exr_headers,
     // `chunkCount` must exist in the header.
     if (info.chunk_count == 0) {
 
-      // Free malloc-allocated memory here.
+      // Free TINYEXR_MALLOC-allocated memory here.
       for (size_t i = 0; i < info.attributes.size(); i++) {
         if (info.attributes[i].value) {
-          free(info.attributes[i].value);
+          TINYEXR_FREE(info.attributes[i].value);
         }
       }
 
@@ -8702,23 +8704,23 @@ int ParseEXRMultipartHeaderFromMemory(EXRHeader ***exr_headers,
 
   // allocate memory for EXRHeader and create array of EXRHeader pointers.
   (*exr_headers) =
-      static_cast<EXRHeader **>(malloc(sizeof(EXRHeader *) * infos.size()));
+      static_cast<EXRHeader **>(TINYEXR_MALLOC(sizeof(EXRHeader *) * infos.size()));
 
 
   int retcode = TINYEXR_SUCCESS;
 
   for (size_t i = 0; i < infos.size(); i++) {
-    EXRHeader *exr_header = static_cast<EXRHeader *>(malloc(sizeof(EXRHeader)));
+    EXRHeader *exr_header = static_cast<EXRHeader *>(TINYEXR_MALLOC(sizeof(EXRHeader)));
     memset(exr_header, 0, sizeof(EXRHeader));
 
     std::string warn;
     std::string _err;
     if (!ConvertHeader(exr_header, infos[i], &warn, &_err)) {
 
-      // Free malloc-allocated memory here.
+      // Free TINYEXR_MALLOC-allocated memory here.
       for (size_t k = 0; k < infos[i].attributes.size(); k++) {
         if (infos[i].attributes[k].value) {
-          free(infos[i].attributes[k].value);
+          TINYEXR_FREE(infos[i].attributes[k].value);
         }
       }
 
@@ -9076,7 +9078,7 @@ int SaveEXRToMemory(const float *data, int width, int height, int components,
   image.height = height;
 
   header.num_channels = components;
-  header.channels = static_cast<EXRChannelInfo *>(malloc(
+  header.channels = static_cast<EXRChannelInfo *>(TINYEXR_MALLOC(
       sizeof(EXRChannelInfo) * static_cast<size_t>(header.num_channels)));
   // Must be (A)BGR order, since most of EXR viewers expect this channel order.
   if (components == 4) {
@@ -9118,9 +9120,9 @@ int SaveEXRToMemory(const float *data, int width, int height, int components,
   }
 
   header.pixel_types = static_cast<int *>(
-      malloc(sizeof(int) * static_cast<size_t>(header.num_channels)));
+      TINYEXR_MALLOC(sizeof(int) * static_cast<size_t>(header.num_channels)));
   header.requested_pixel_types = static_cast<int *>(
-      malloc(sizeof(int) * static_cast<size_t>(header.num_channels)));
+      TINYEXR_MALLOC(sizeof(int) * static_cast<size_t>(header.num_channels)));
   for (int i = 0; i < header.num_channels; i++) {
     header.pixel_types[i] =
         TINYEXR_PIXELTYPE_FLOAT;  // pixel type of input image
@@ -9143,12 +9145,12 @@ int SaveEXRToMemory(const float *data, int width, int height, int components,
     return TINYEXR_ERROR_SERIALIZATION_FAILED;
   }
 
-  free(header.channels);
-  free(header.pixel_types);
-  free(header.requested_pixel_types);
+  TINYEXR_FREE(header.channels);
+  TINYEXR_FREE(header.pixel_types);
+  TINYEXR_FREE(header.requested_pixel_types);
 
   if (mem_size > size_t(std::numeric_limits<int>::max())) {
-    free(mem_buf);
+    TINYEXR_FREE(mem_buf);
     return TINYEXR_ERROR_DATA_TOO_LARGE;
   }
 
@@ -9227,7 +9229,7 @@ int SaveEXR(const float *data, int width, int height, int components,
   image.height = height;
 
   header.num_channels = components;
-  header.channels = static_cast<EXRChannelInfo *>(malloc(
+  header.channels = static_cast<EXRChannelInfo *>(TINYEXR_MALLOC(
       sizeof(EXRChannelInfo) * static_cast<size_t>(header.num_channels)));
   // Must be (A)BGR order, since most of EXR viewers expect this channel order.
   if (components == 4) {
@@ -9269,9 +9271,9 @@ int SaveEXR(const float *data, int width, int height, int components,
   }
 
   header.pixel_types = static_cast<int *>(
-      malloc(sizeof(int) * static_cast<size_t>(header.num_channels)));
+      TINYEXR_MALLOC(sizeof(int) * static_cast<size_t>(header.num_channels)));
   header.requested_pixel_types = static_cast<int *>(
-      malloc(sizeof(int) * static_cast<size_t>(header.num_channels)));
+      TINYEXR_MALLOC(sizeof(int) * static_cast<size_t>(header.num_channels)));
   for (int i = 0; i < header.num_channels; i++) {
     header.pixel_types[i] =
         TINYEXR_PIXELTYPE_FLOAT;  // pixel type of input image
@@ -9288,9 +9290,9 @@ int SaveEXR(const float *data, int width, int height, int components,
 
   int ret = SaveEXRImageToFile(&image, &header, outfilename, err);
 
-  free(header.channels);
-  free(header.pixel_types);
-  free(header.requested_pixel_types);
+  TINYEXR_FREE(header.channels);
+  TINYEXR_FREE(header.pixel_types);
+  TINYEXR_FREE(header.requested_pixel_types);
 
   return ret;
 }

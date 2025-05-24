@@ -4,10 +4,21 @@
 #endif
 #endif
 
+#include <cstdlib>
+
 #include "smdl/Image.h"
+
+#if defined(__GNUC__) || defined(__clang__)
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wunused-function"
+#pragma GCC diagnostic ignored "-Wmissing-field-initializers"
+#endif
 
 extern "C" {
 #define STBI_ASSERT(X) ((void)0)
+#define STBI_MALLOC(sz) ::smdl::Image::Image_malloc(sz)
+#define STBI_REALLOC(p, newsz) ::smdl::Image::Image_realloc(p, newsz)
+#define STBI_FREE(p) ::smdl::Image::Image_free(p)
 #define STB_ONLY_JPEG 1
 #define STB_ONLY_PNG 1
 #define STB_ONLY_TGA 1
@@ -19,13 +30,24 @@ extern "C" {
 #include "thirdparty/stb_image.h"
 
 #define STBIW_ASSERT(X) ((void)0)
+#define STBIW_MALLOC(sz) ::smdl::Image::Image_malloc(sz)
+#define STBIW_REALLOC(p, newsz) ::smdl::Image::Image_realloc(p, newsz)
+#define STBIW_FREE(p) ::smdl::Image::Image_free(p)
 #define STB_IMAGE_WRITE_STATIC 1
 #define STB_IMAGE_WRITE_IMPLEMENTATION 1
 #include "thirdparty/stb_image_write.h"
 } // extern "C"
 
+#if defined(__GNUC__) || defined(__clang__)
+#pragma GCC diagnostic pop
+#endif
+
+#define TINYEXR_MALLOC(sz) ::smdl::Image::Image_malloc(sz)
+#define TINYEXR_CALLOC(n, sz) ::smdl::Image::Image_calloc(n, sz)
+#define TINYEXR_FREE(p) ::smdl::Image::Image_free(p)
 #define TINYEXR_USE_MINIZ 0
 #define TINYEXR_USE_STB_ZLIB 1
+#define TINYEXR_USE_THREAD 0
 #define TINYEXR_IMPLEMENTATION 1
 #include "thirdparty/tinyexr.h"
 
@@ -61,7 +83,8 @@ ForEachPixel(const EXRHeader &header, const EXRImage &image,
           if (iX < size_t(image.width) && iY < size_t(image.height)) {
             for (size_t iC = 0; iC < nC; iC++) {
               size_t pixelSize{GetPixelSize(header.channels[iC])};
-              callback(int(iX), int(iY), int(iC), tile.images[iC] + pixelSize * i, pixelSize);
+              callback(int(iX), int(iY), int(iC),
+                       tile.images[iC] + pixelSize * i, pixelSize);
             }
           }
           i++;
@@ -77,7 +100,8 @@ ForEachPixel(const EXRHeader &header, const EXRImage &image,
       for (size_t iX = 0; iX < nX; iX++) {
         for (size_t iC = 0; iC < nC; iC++) {
           size_t pixelSize{GetPixelSize(header.channels[iC])};
-          callback(int(iX), int(iY), int(iC), image.images[iC] + pixelSize * i, pixelSize);
+          callback(int(iX), int(iY), int(iC), image.images[iC] + pixelSize * i,
+                   pixelSize);
         }
         i++;
       }
@@ -88,6 +112,14 @@ ForEachPixel(const EXRHeader &header, const EXRImage &image,
 } // namespace tinyexr
 
 namespace smdl {
+
+Image::Image_malloc_t Image::Image_malloc = &std::malloc;
+
+Image::Image_calloc_t Image::Image_calloc = &std::calloc;
+
+Image::Image_realloc_t Image::Image_realloc = &std::realloc;
+
+Image::Image_free_t Image::Image_free = &std::free;
 
 void Image::clear() {
   format = U8;
@@ -235,7 +267,8 @@ void Image::start_load(const std::string &fileName) {
             [&](int iX, int iY, int iC, const void *pixel, size_t pixelSize) {
               iY = numTexelsY - iY - 1; // Flip vertically!
               if (iC == 0)
-                std::memcpy(texels.get() + ptrdiff_t((iX + numTexelsX * iY) * texelSize),
+                std::memcpy(texels.get() +
+                                ptrdiff_t((iX + numTexelsX * iY) * texelSize),
                             pixel, pixelSize);
             });
       } else {
@@ -253,7 +286,8 @@ void Image::start_load(const std::string &fileName) {
             header, image,
             [&](int iX, int iY, int iC, const void *pixel, size_t pixelSize) {
               iY = numTexelsY - iY - 1; // Flip vertically!
-              auto texel{texels.get() + ptrdiff_t((iX + numTexelsX * iY) * texelSize)};
+              auto texel{texels.get() +
+                         ptrdiff_t((iX + numTexelsX * iY) * texelSize)};
               if (iC == channelIndexR) {
                 std::memcpy(texel + 0 * pixelSize, pixel, pixelSize);
               } else if (iC == channelIndexG) {

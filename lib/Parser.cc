@@ -237,7 +237,7 @@ auto Parser::parse_parameter() -> std::optional<AST::Parameter> {
 }
 
 auto Parser::parse_parameter_list() -> std::optional<AST::ParameterList> {
-  auto srcLoc0{checkpoint()};
+  checkpoint();
   auto params{AST::ParameterList{}};
   auto srcParenL{next_delimiter("(")};
   if (!srcParenL) {
@@ -1000,7 +1000,7 @@ auto Parser::parse_file_version() -> std::optional<AST::File::Version> {
 }
 
 auto Parser::parse_import_path() -> std::optional<AST::ImportPath> {
-  auto srcLoc0{checkpoint()};
+  checkpoint();
   auto elements{std::vector<AST::ImportPath::Element>{}};
   while (true) {
     checkpoint();
