@@ -666,7 +666,8 @@ Value AutoType::invoke(Emitter &emitter, const ArgumentList &args,
 ColorType::ColorType(Context &context) {
   displayName = "color";
   llvmType = Scalar::get_float().get_llvm_type(context);
-  llvmType = Extent(context.compiler.wavelengthBaseMax).get_llvm_type(llvmType);
+  llvmType =
+      llvm::FixedVectorType::get(llvmType, context.compiler.wavelengthBaseMax);
   wavelengthBaseMax = context.compiler.wavelengthBaseMax;
 }
 
