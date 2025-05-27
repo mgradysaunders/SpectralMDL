@@ -1049,14 +1049,28 @@ public:
 /// \addtogroup Main
 /// \{
 
-/// Sanity check a condition, like an assertion except it
-/// always runs even in release mode.
-#define SMDL_SANITY_CHECK(cond, ...)                                           \
+/// Expand third macro in variadic arguments, used to implement
+/// `SMDL_SANITY_CHECK`.
+#define SMDL_EXPAND_THIRD_MACRO(A, B, C, ...) C
+
+/// Sanity check a condition.
+#define SMDL_SANITY_CHECK_1(cond)                                              \
   do {                                                                         \
     if (!(cond))                                                               \
-      ::smdl::sanity_check_failed(#cond, __FILE__,                             \
-                                  __LINE__ __VA_OPT__(, ) __VA_ARGS__);        \
+      ::smdl::sanity_check_failed(#cond, __FILE__, __LINE__);                  \
   } while (false)
+
+/// Sanity check a condition with a message.
+#define SMDL_SANITY_CHECK_2(cond, message)                                     \
+  do {                                                                         \
+    if (!(cond))                                                               \
+      ::smdl::sanity_check_failed(#cond, __FILE__, __LINE__, message);         \
+  } while (false)
+
+/// Sanity check a condition with or without a message.
+#define SMDL_SANITY_CHECK(...)                                                 \
+  SMDL_EXPAND_THIRD_MACRO(__VA_ARGS__, SMDL_SANITY_CHECK_2,                    \
+                          SMDL_SANITY_CHECK_1)(__VA_ARGS__)
 
 /// If `SMDL_SANITY_CHECK` fails, this prints the relevant information and
 /// exits the program with code `EXIT_FAILURE`.
