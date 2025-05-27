@@ -28,11 +28,13 @@ namespace smdl {
   return fs::path(str);
 }
 
-[[nodiscard]] inline std::string fs_extension(const fs::path &path) {
+[[nodiscard]] inline std::string fs_extension(const fs::path &path) try {
   auto extension{path.extension().string()};
   for (char &ch : extension)
     ch = std::tolower(static_cast<unsigned char>(ch));
   return extension;
+} catch (...) {
+  return {};
 }
 
 } // namespace smdl

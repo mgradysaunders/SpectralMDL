@@ -43,19 +43,28 @@ std::optional<Error> Compiler::add(std::string fileOrDirName) {
     if (moduleFileNames.insert(fileName).second)
       modules.emplace_back(Module::load_from_file(fileName));
   }};
-  if (auto pathStr{fileLocator.locate(
+  if (auto maybePathStr{fileLocator.locate(
           fileOrDirName, {}, FileLocator::REGULAR_FILES | FileLocator::DIRS)}) {
-    auto path{fs_make_path(*pathStr)};
-    if (fs::is_regular_file(path)) {
-      addFile(path.string());
+    auto &pathStr{*maybePathStr};
+    auto path{fs_make_path(pathStr)};
+    auto ec{fs_error_code{}};
+    if (fs::is_regular_file(path, ec)) {
+      SMDL_LOG_DEBUG(concat("Adding MDL file: ", quoted(pathStr)));
+      addFile(pathStr);
       return std::nullopt;
     }
-    if (fs::is_directory(path) && moduleDirNames.insert(path.string()).second) {
+    if (fs::is_directory(path, ec) && moduleDirNames.insert(pathStr).second) {
+      SMDL_LOG_DEBUG(concat("Adding MDL directory: ", quoted(pathStr)));
       for (const auto &entry : fs::recursive_directory_iterator(path)) {
-        if (fs::is_regular_file(entry.path())) {
-          if (auto extension{fs_extension(entry.path())};
-              extension == ".mdl" || extension == ".smdl") {
-            addFile(fs::canonical(entry.path()).string());
+        if (fs::is_regular_file(entry.path(), ec)) {
+          if (auto ext{fs_extension(entry.path())};
+              ext == ".mdl" || ext == ".smdl") {
+            if (auto canonPath{fs::canonical(entry.path(), ec)}; !ec) {
+              auto canonPathStr{canonPath.string()};
+              SMDL_LOG_DEBUG(
+                  concat("  Adding MDL file: ", quoted(canonPathStr)));
+              addFile(canonPathStr);
+            }
           }
         }
       }
