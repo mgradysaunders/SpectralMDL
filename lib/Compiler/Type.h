@@ -1044,6 +1044,10 @@ public:
 
   /// \}
 
+  class StaticField final {
+  public:
+  };
+
 public:
   /// If applicable, the abstract struct this is an instance of.
   StructType *instanceOf{};
@@ -1059,6 +1063,7 @@ public:
 
   /// If applicable, the instances of this abstract struct.
   std::map<llvm::SmallVector<Type *>, BumpPtr<StructType>> instances{};
+
 };
 
 /// A tag type.

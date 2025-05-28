@@ -273,19 +273,25 @@ export struct material {
 };
 
 /// Is thin walled?
-const int THIN_WALLED = 0b00001;
+const int THIN_WALLED = (1 << 0);
 
 /// Has a non-default surface component?
-const int HAS_SURFACE = 0b00010;
+const int HAS_SURFACE = (1 << 1);
 
 /// Has a non-default backface surface component?
-const int HAS_BACKFACE = 0b00100;
+const int HAS_BACKFACE = (1 << 2);
 
 /// Has a non-default volume component?
-const int HAS_VOLUME = 0b01000;
+const int HAS_VOLUME = (1 << 3);
 
 /// Has a non-default hair component?
-const int HAS_HAIR = 0b10000;
+const int HAS_HAIR = (1 << 4);
+
+/// Has possibly non-zero BRDF?
+const int HAS_POSSIBLY_NON_ZERO_BRDF = (1 << 5);
+
+/// Has possibly non-zero BTDF?
+const int HAS_POSSIBLY_NON_ZERO_BTDF = (1 << 6);
 
 /// An instance of a material corresponding to `smdl::JIT::Material::Instance` 
 /// in the C++ API.

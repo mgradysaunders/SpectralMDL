@@ -474,8 +474,15 @@ public:
   /// Log an error.
   void log_error(std::string_view message) const;
 
-  /// Throw an `Error` with this source location attached.
+  /// Throw an `Error`.
   void throw_error(std::string message) const;
+
+  /// Throw an `Error` using `concat` to concatenate the arguments.
+  template <typename T0, typename T1, typename... Ts>
+  void throw_error(T0 &&value0, T1 &&value1, Ts &&...values) const {
+    throw_error(concat(std::forward<T0>(value0), std::forward<T1>(value1),
+                       std::forward<Ts>(values)...));
+  }
 
   /// Is not-valid?
   [[nodiscard]] bool operator!() const { return !module_; }

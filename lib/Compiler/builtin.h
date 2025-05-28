@@ -120,11 +120,13 @@ export struct material{
   material_geometry geometry=material_geometry();
   hair_bsdf hair=hair_bsdf();
 };
-const int THIN_WALLED=0b00001;
-const int HAS_SURFACE=0b00010;
-const int HAS_BACKFACE=0b00100;
-const int HAS_VOLUME=0b01000;
-const int HAS_HAIR=0b10000;
+const int THIN_WALLED=(1<<0);
+const int HAS_SURFACE=(1<<1);
+const int HAS_BACKFACE=(1<<2);
+const int HAS_VOLUME=(1<<3);
+const int HAS_HAIR=(1<<4);
+const int HAS_POSSIBLY_NON_ZERO_BRDF=(1<<5);
+const int HAS_POSSIBLY_NON_ZERO_BTDF=(1<<6);
 export struct $material_instance{
   const &material mat;
   const &float3 displacement=&mat.geometry.displacement;

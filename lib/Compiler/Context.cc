@@ -216,8 +216,8 @@ Type *Context::get_common_type(llvm::ArrayRef<Type *> types,
         (typeB->is_arithmetic_scalar() && typeA->is_color()))
       return get_color_type();
     if (!defaultToUnion || typeA->is_abstract() || typeB->is_abstract())
-      srcLoc.throw_error(concat("no common type between '", typeA->displayName,
-                                "' and '", typeB->displayName, "'"));
+      srcLoc.throw_error("no common type between ", quoted(typeA->displayName),
+                         " and ", quoted(typeB->displayName));
     return get_union_type({typeA, typeB});
   }};
   Type *commonType{types[0]};

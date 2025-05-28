@@ -812,8 +812,8 @@ auto Parser::parse_literal_number_expression() -> BumpPtr<AST::Expr> {
   auto parseIntWithPrefix{[&](auto &&isDigit, int radix, const char *prefix,
                               const char *info, std::string &digitsStr) {
     if (!isDigit(peek()))
-      srcLoc0.throw_error(concat("expected literal prefix '", prefix,
-                                 "' to be followed by ", info));
+      srcLoc0.throw_error("expected literal prefix ", quoted(prefix),
+                          " to be followed by ", info);
     auto digits{parseDigits(is_digit)};
     auto bits{llvm::APInt::getBitsNeeded(digits, radix)};
     if (bits > 64)

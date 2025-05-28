@@ -66,6 +66,12 @@ public:
   /// Has a non-default hair component?
   static constexpr int HAS_HAIR = (1 << 4);
 
+  /// Has a possibly non-zero BRDF (`wo` and `wi` in same hemisphere)?
+  static constexpr int HAS_POSSIBLY_NON_ZERO_BRDF = (1 << 5);
+
+  /// Has a possibly non-zero BTDF (`wo` and `wi` in opposite hemispheres)?
+  static constexpr int HAS_POSSIBLY_NON_ZERO_BTDF = (1 << 6);
+
   /// An instance of the material.
   struct Instance final {
     /// The material memory block.
