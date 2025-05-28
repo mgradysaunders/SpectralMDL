@@ -1303,6 +1303,22 @@ Value InferredSizeArrayType::invoke(Emitter &emitter, const ArgumentList &args,
 }
 //--}
 
+Value MetaType::access_field(Emitter &emitter, Value value,
+                             std::string_view name,
+                             const SourceLocation &srcLoc) {
+  // Make static fields available thru dot access
+  if (value.is_comptime_meta_type(emitter.context)) {
+    auto type{value.get_comptime_meta_type(emitter.context, srcLoc)};
+    if (auto structType{llvm::dyn_cast<StructType>(type)}) {
+      auto &staticFields{structType->static_fields()};
+      if (auto itr{staticFields.find(name)}; itr != staticFields.end()) {
+        return itr->second;
+      }
+    }
+  }
+  return RValue(emitter.context.get_void_type(), nullptr);
+}
+
 //--{ PointerType
 PointerType::PointerType(Context &context, Type *pointeeType)
     : pointeeType(pointeeType) {
@@ -1484,6 +1500,7 @@ Value StringType::access_field(Emitter &emitter, Value value,
 void StructType::initialize(Emitter &emitter) {
   params.lastCrumb = emitter.declare_crumb(
       decl.name, &decl, emitter.context.get_comptime_meta_type(this));
+  auto preserve{Preserve(emitter.crumb)};
   // Initialize tags.
   for (auto &tag : decl.tags) {
     emitter.emit(tag.type);
@@ -1500,19 +1517,32 @@ void StructType::initialize(Emitter &emitter) {
   }
   // Initialize fields.
   for (auto &field : decl.fields) {
+    auto fieldType{
+        emitter.emit(field.type)
+            .get_comptime_meta_type(emitter.context, field.name.srcLoc)};
+    if (fieldType == this)
+      field.name.srcLoc.throw_error(
+          "struct ", quoted(displayName),
+          " cannot be type of field in its definition");
+    // Handle static constant fields!
     if (field.type->has_qualifier("static")) {
-
+      const char *reasonForError = //
+          field.type->has_qualifier("inline")   ? "must not be 'inline'"
+          : !field.type->has_qualifier("const") ? "must also be 'const'"
+          : !field.exprInit                     ? "must have initializer"
+                                                : nullptr;
+      if (reasonForError)
+        field.name.srcLoc.throw_error("field ", quoted(field.name),
+                                      " declared 'static' ", reasonForError);
+      auto value{emitter.invoke(fieldType, emitter.emit(field.exprInit),
+                                field.name.srcLoc)};
+      staticFields[field.name.srcName] = value;
+      params.lastCrumb = emitter.declare_crumb(field.name, &field, value);
     } else {
       auto &param{params.emplace_back()};
-      param.type =
-          emitter.emit(field.type)
-              .get_comptime_meta_type(emitter.context, field.name.srcLoc);
+      param.type = fieldType;
       param.name = field.name.srcName;
       param.astField = &field;
-      if (param.type == this)
-        field.name.srcLoc.throw_error(
-            "struct ", quoted(displayName),
-            " cannot be type of field in its definition");
     }
   }
   // Initialize LLVM type. Note: We don't check `is_abstract()`
@@ -1627,6 +1657,12 @@ Value StructType::invoke(Emitter &emitter, const ArgumentList &args,
   return Value();
 }
 
+bool StructType::has_field(std::string_view name) {
+  if (params.is_any_true([&](auto &param) { return param.name == name; }))
+    return true;
+  return static_fields().contains(name);
+}
+
 Value StructType::access_field(Emitter &emitter, Value value,
                                std::string_view name,
                                const SourceLocation &srcLoc) {
@@ -1650,6 +1686,8 @@ Value StructType::access_field(Emitter &emitter, Value value,
     }
     return isConst ? emitter.to_rvalue(value) : value;
   }
+  if (auto itr{static_fields().find(name)}; itr != static_fields().end())
+    return itr->second;
   srcLoc.throw_error("no field ", quoted(name), " in struct ",
                      quoted(displayName));
   return Value();

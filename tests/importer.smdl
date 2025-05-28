@@ -1,0 +1,12 @@
+#smdl
+
+using import1 = "importee";
+using import2 = .::package1::foo;
+
+import import1::*;
+import import2::*;
+
+unit_test "Imports" {
+  #assert(import1::message == "Hello, world!");
+  #assert(import2::message == "Hellope");
+}

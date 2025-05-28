@@ -1,0 +1,22 @@
+#smdl
+
+struct Foo {
+  static const int BAR = 11;
+
+  static const int BAZ = 3 * BAR - 9;
+
+  int v = 2 * BAR - BAZ;
+};
+
+unit_test "Static fields" {
+  #assert(#sizeof(Foo) == #sizeof(int));
+  #assert(Foo.BAR == 11);
+  #assert(Foo.BAZ == 33 - 9);
+
+  auto foo = Foo();
+  #assert(#typeof(foo) == Foo);
+  #assert(#typeof(foo).BAR == foo.BAR);
+  #assert(#typeof(foo).BAZ == foo.BAZ);
+  #assert(foo.v == 22 - 33 + 9);
+}
+

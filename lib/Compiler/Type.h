@@ -879,6 +879,23 @@ public:
     displayName = std::move(name);
     llvmType = llvm_int_ptr_type(context);
   }
+
+public:
+  /// \name Virtual interface
+  /// \{
+
+  [[nodiscard]] bool has_field(std::string_view) final {
+    // We consider that meta-types have all possible fields, so attempting
+    // to look up any given string is legal. If no such field exists, we
+    // ultimately return void without considering it an error.
+    return true;
+  }
+
+  [[nodiscard]]
+  Value access_field(Emitter &emitter, Value value, std::string_view name,
+                     const SourceLocation &srcLoc) final;
+
+  /// \}
 };
 
 /// A pointer type.
@@ -1030,9 +1047,7 @@ public:
   Value invoke(Emitter &emitter, const ArgumentList &args,
                const SourceLocation &srcLoc) final;
 
-  [[nodiscard]] bool has_field(std::string_view name) final {
-    return params.is_any_true([&](auto &param) { return param.name == name; });
-  }
+  [[nodiscard]] bool has_field(std::string_view name) final;
 
   [[nodiscard]]
   Value access_field(Emitter &emitter, Value value, std::string_view name,
@@ -1044,10 +1059,6 @@ public:
 
   /// \}
 
-  class StaticField final {
-  public:
-  };
-
 public:
   /// If applicable, the abstract struct this is an instance of.
   StructType *instanceOf{};
@@ -1058,12 +1069,31 @@ public:
   /// The tags.
   llvm::SmallVector<TagType *> tags{};
 
+  /// The static fields.
+  ///
+  /// \note
+  /// For instances of generic structs, we do not copy the static fields
+  /// and instead use `static_fields()` to access the lookup table in the
+  /// parent struct.
+  ///
+  llvm::StringMap<Value> staticFields{};
+
   /// The parameters, i.e., the struct fields.
   ParameterList params{};
 
   /// If applicable, the instances of this abstract struct.
   std::map<llvm::SmallVector<Type *>, BumpPtr<StructType>> instances{};
 
+public:
+  /// Get the static fields applicable to this type.
+  [[nodiscard]] auto &static_fields() {
+    return instanceOf ? instanceOf->staticFields : staticFields;
+  }
+
+  /// Get the static fields applicable to this type, const variant.
+  [[nodiscard]] auto &static_fields() const {
+    return instanceOf ? instanceOf->staticFields : staticFields;
+  }
 };
 
 /// A tag type.

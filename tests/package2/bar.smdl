@@ -1,0 +1,3 @@
+#smdl
+
+export const string message = "Hellope";
