@@ -1101,8 +1101,8 @@ FunctionType::instantiate(Emitter &emitter,
 }
 
 void FunctionType::initialize_jit_material_functions(Emitter &emitter) {
-  SMDL_LOG_DEBUG(concat(std::string(decl.srcLoc), " New material ",
-                        quoted(decl.name.srcName)));
+  SMDL_LOG_DEBUG(std::string(decl.srcLoc), " New material ",
+                 quoted(decl.name.srcName));
   using namespace std::literals::string_view_literals;
   auto &context{emitter.context};
   auto &jitMaterial{context.compiler.jitMaterials.emplace_back()};

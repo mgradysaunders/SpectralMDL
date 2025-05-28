@@ -98,20 +98,7 @@ SourceLocation::operator std::string() const {
     if (module_->is_builtin()) {
       str += module_->get_name();
     } else {
-      auto fileName{std::string(module_->get_file_name())};
-      auto fileNameRel{std::string{}};
-      try {
-        fileNameRel = fs::relative(fs_make_path(fileName)).string();
-      } catch (...) {
-        fileNameRel = fileName; // Fallback
-      }
-      // Only use the relative file name if it is shorter than the absolute
-      // file name! The entire purpose of this is to make the output more
-      // concise
-      if (fileNameRel.size() < fileName.size())
-        str += fileNameRel;
-      else
-        str += fileName;
+      str += fs_abbreviate(fs_make_path(module_->get_file_name()));
     }
     str += ':';
     str += std::to_string(lineNo);

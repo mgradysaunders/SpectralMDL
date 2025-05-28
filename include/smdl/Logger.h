@@ -10,11 +10,11 @@ namespace smdl {
 /// \{
 
 /// Log level.
-enum class LogLevel : int {
-  Debug = 0, ///< Debug message.
-  Info,      ///< Informational message.
-  Warn,      ///< Warning!
-  Error,     ///< Error!
+enum LogLevel : int {
+  LOG_LEVEL_DEBUG = 0, ///< Debug message.
+  LOG_LEVEL_INFO,      ///< Informational message.
+  LOG_LEVEL_WARN,      ///< Warning!
+  LOG_LEVEL_ERROR,     ///< Error!
 };
 
 /// A log sink to receive log messages.
@@ -73,21 +73,25 @@ private:
   std::vector<std::unique_ptr<LogSink>> sinks{};
 };
 
-/// Log a message with `LogLevel::Debug`.
-#define SMDL_LOG_DEBUG(message)                                                \
-  ::smdl::Logger::get().log_message(::smdl::LogLevel::Debug, message)
+/// Log a message with `LOG_LEVEL_DEBUG`.
+#define SMDL_LOG_DEBUG(...)                                                    \
+  ::smdl::Logger::get().log_message(::smdl::LOG_LEVEL_DEBUG,                   \
+                                    ::smdl::concat(__VA_ARGS__))
 
-/// Log a message with `LogLevel::Info`.
-#define SMDL_LOG_INFO(message)                                                 \
-  ::smdl::Logger::get().log_message(::smdl::LogLevel::Info, message)
+/// Log a message with `LOG_LEVEL_INFO`.
+#define SMDL_LOG_INFO(...)                                                     \
+  ::smdl::Logger::get().log_message(::smdl::LOG_LEVEL_INFO,                    \
+                                    ::smdl::concat(__VA_ARGS__))
 
-/// Log a message with `LogLevel::Warn`.
-#define SMDL_LOG_WARN(message)                                                 \
-  ::smdl::Logger::get().log_message(::smdl::LogLevel::Warn, message)
+/// Log a message with `LOG_LEVEL_WARN`.
+#define SMDL_LOG_WARN(...)                                                     \
+  ::smdl::Logger::get().log_message(::smdl::LOG_LEVEL_WARN,                    \
+                                    ::smdl::concat(__VA_ARGS__))
 
-/// Log a message with `LogLevel::Error`.
-#define SMDL_LOG_ERROR(message)                                                \
-  ::smdl::Logger::get().log_message(::smdl::LogLevel::Error, message)
+/// Log a message with `LOG_LEVEL_ERROR`.
+#define SMDL_LOG_ERROR(...)                                                    \
+  ::smdl::Logger::get().log_message(::smdl::LOG_LEVEL_ERROR,                   \
+                                    ::smdl::concat(__VA_ARGS__))
 
 /// The default log-sinks for convenience.
 ///
@@ -115,6 +119,12 @@ public:
 };
 
 } // namespace LogSinks
+
+/// Use `<unistd.h>` on POSIX to test if cerr routes to a terminal.
+[[nodiscard]] SMDL_EXPORT bool cerr_supports_ansi_colors();
+
+/// Use `<unistd.h>` on POSIX to test if cout routes to a terminal.
+[[nodiscard]] SMDL_EXPORT bool cout_supports_ansi_colors();
 
 /// \}
 

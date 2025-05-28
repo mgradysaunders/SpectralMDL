@@ -52,33 +52,37 @@ static const char *LabelsWithColors[]{"\033[36m[debug]\033[0m ", "",
 static const char *LabelsWithoutColors[]{"[debug] ", "", "[warn] ", "[error] "};
 
 void print_to_cerr::log_message(LogLevel level, std::string_view message) {
-  static const bool cerr_supports_colors{[]() -> bool {
-#if HAS_UNISTD
-    return isatty(STDERR_FILENO);
-#else
-    return false;
-#endif
-  }()};
-  static const auto Labels{cerr_supports_colors ? &LabelsWithColors[0]
-                                                : &LabelsWithoutColors[0]};
+  static const auto Labels{cerr_supports_ansi_colors()
+                               ? &LabelsWithColors[0]
+                               : &LabelsWithoutColors[0]};
   std::cerr << Labels[int(level)] << message << '\n';
 }
 
 void print_to_cout::log_message(LogLevel level, std::string_view message) {
-  static const bool cout_supports_colors{[]() -> bool {
-#if HAS_UNISTD
-    return isatty(STDOUT_FILENO);
-#else
-    return false;
-#endif
-  }()};
-  static const auto Labels{cout_supports_colors ? &LabelsWithColors[0]
-                                                : &LabelsWithoutColors[0]};
-  std::cout << Labels[int(level)] << message << '\n';
+  static const auto Labels{cout_supports_ansi_colors()
+                               ? &LabelsWithColors[0]
+                               : &LabelsWithoutColors[0]};
+  std::cout << Labels[int(level)] << message << std::endl;
 }
 
 void print_to_cout::flush() { std::cout.flush(); }
 
 } // namespace LogSinks
+
+bool cerr_supports_ansi_colors() {
+#if HAS_UNISTD
+  return isatty(STDERR_FILENO);
+#else
+  return false;
+#endif // #if HAS_UNISTD
+}
+
+bool cout_supports_ansi_colors() {
+#if HAS_UNISTD
+  return isatty(STDOUT_FILENO);
+#else
+  return false;
+#endif // #if HAS_UNISTD
+}
 
 } // namespace smdl

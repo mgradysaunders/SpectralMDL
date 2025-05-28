@@ -49,21 +49,20 @@ std::optional<Error> Compiler::add(std::string fileOrDirName) {
     auto path{fs_make_path(pathStr)};
     auto ec{fs_error_code{}};
     if (fs::is_regular_file(path, ec)) {
-      SMDL_LOG_DEBUG(concat("Adding MDL file: ", quoted(pathStr)));
+      SMDL_LOG_DEBUG("Adding MDL file ", quoted(fs_abbreviate(path)));
       addFile(pathStr);
       return std::nullopt;
     }
     if (fs::is_directory(path, ec) && moduleDirNames.insert(pathStr).second) {
-      SMDL_LOG_DEBUG(concat("Adding MDL directory: ", quoted(pathStr)));
+      SMDL_LOG_DEBUG("Adding MDL directory ", quoted(fs_abbreviate(path)));
       for (const auto &entry : fs::recursive_directory_iterator(path)) {
         if (fs::is_regular_file(entry.path(), ec)) {
           if (auto ext{fs_extension(entry.path())};
               ext == ".mdl" || ext == ".smdl") {
             if (auto canonPath{fs::canonical(entry.path(), ec)}; !ec) {
-              auto canonPathStr{canonPath.string()};
-              SMDL_LOG_DEBUG(
-                  concat("  Adding MDL file: ", quoted(canonPathStr)));
-              addFile(canonPathStr);
+              SMDL_LOG_DEBUG("  Adding MDL file ",
+                             quoted(fs_abbreviate(canonPath)));
+              addFile(canonPath.string());
             }
           }
         }
@@ -110,7 +109,8 @@ std::optional<Error> Compiler::compile(OptLevel optLevel) {
     for (auto &fileNameAndImage : images)
       imageLoads.push_back(std::async(std::launch::async, [&]() {
         auto &[fileName, image] = fileNameAndImage;
-        SMDL_LOG_INFO(concat("  Loading ", quoted(fileName), " ..."));
+        SMDL_LOG_DEBUG("Loading image ", quoted(fs_abbreviate(fileName)),
+                       " ...");
         image->finish_load();
       }));
     for (auto &imageLoad : imageLoads)
@@ -118,8 +118,8 @@ std::optional<Error> Compiler::compile(OptLevel optLevel) {
     auto duration{std::chrono::duration_cast<std::chrono::microseconds>(
                       std::chrono::steady_clock::now() - now)
                       .count()};
-    SMDL_LOG_INFO(concat("Loading images done. [",
-                         std::to_string(duration * 1e-6), " seconds]"));
+    SMDL_LOG_INFO("Loading images done. [", std::to_string(duration * 1e-6),
+                  " seconds]");
   }
   if (optLevel != OptLevel::None) {
     llvmJitModule->withModuleDo([&](llvm::Module &llvmModule) {
@@ -134,7 +134,7 @@ std::optional<Error> Compiler::compile(OptLevel optLevel) {
 }
 
 std::optional<Error>
-Compiler::format_source_code(const FormatOptions &formatOptions) {
+Compiler::format_source_code(const FormatOptions &formatOptions) noexcept {
   for (auto &mod : modules) {
     if (!mod->is_builtin()) {
       if (auto error{mod->format_source_code(formatOptions)})
@@ -144,12 +144,12 @@ Compiler::format_source_code(const FormatOptions &formatOptions) {
   return std::nullopt;
 }
 
-llvm::LLVMContext &Compiler::get_llvm_context() {
+llvm::LLVMContext &Compiler::get_llvm_context() noexcept {
   SMDL_SANITY_CHECK(llvmJitModule.get() != nullptr);
   return *llvmJitModule.get()->getContext().getContext();
 }
 
-llvm::Module &Compiler::get_llvm_module() {
+llvm::Module &Compiler::get_llvm_module() noexcept {
   SMDL_SANITY_CHECK(llvmJitModule.get() != nullptr);
   return *llvmJitModule.get()->getModuleUnlocked();
 }
@@ -225,7 +225,7 @@ std::string Compiler::dump(DumpFormat dumpFormat) {
   }
 }
 
-std::optional<Error> Compiler::jit_compile() {
+std::optional<Error> Compiler::jit_compile() noexcept {
   return catch_and_return_error([&] {
     llvm_throw_if_error(llvmJit->addIRModule(std::move(*llvmJitModule)));
     llvmJitModule.reset();
@@ -247,32 +247,15 @@ std::optional<Error> Compiler::jit_compile() {
   });
 }
 
-void *Compiler::jit_lookup(std::string_view name) {
+void *Compiler::jit_lookup(std::string_view name) noexcept {
   llvm::Expected<llvm::orc::ExecutorAddr> symbol{llvmJit->lookup(name)};
   if (!symbol)
     return nullptr;
   return symbol->toPtr<void *>();
 }
 
-std::optional<Error> Compiler::run_jit_unit_tests(const State &state) {
-  return catch_and_return_error([&] {
-    for (auto &jitUnitTest : jitUnitTests) {
-      std::cerr << concat("Running test ", quoted(jitUnitTest.testName),
-                          " ... ");
-      try {
-        SMDL_SANITY_CHECK(jitUnitTest.test);
-        jitUnitTest.test(state);
-        std::cerr << "success\n";
-      } catch (const Error &error) {
-        std::cerr << "failure\n";
-        throw;
-      }
-    }
-  });
-}
-
 const JIT::Material *
-Compiler::find_jit_material(std::string_view materialName) const {
+Compiler::find_jit_material(std::string_view materialName) const noexcept try {
   auto results{llvm::SmallVector<const JIT::Material *>()};
   for (const auto &jitMaterial : jitMaterials) {
     if (jitMaterial.materialName == materialName) {
@@ -294,11 +277,13 @@ Compiler::find_jit_material(std::string_view materialName) const {
     SMDL_LOG_WARN(message);
   }
   return results.front();
+} catch (...) {
+  return nullptr;
 }
 
 const JIT::Material *
 Compiler::find_jit_material(std::string_view moduleName,
-                            std::string_view materialName) const {
+                            std::string_view materialName) const noexcept {
   for (const auto &jitMaterial : jitMaterials) {
     if (jitMaterial.moduleName == moduleName &&
         jitMaterial.materialName == materialName) {
@@ -309,7 +294,7 @@ Compiler::find_jit_material(std::string_view moduleName,
 }
 
 float3 Compiler::jit_color_to_rgb(const State &state,
-                                  const float *color) const {
+                                  const float *color) const noexcept {
   SMDL_SANITY_CHECK(jitColorToRgb && color);
   SMDL_SANITY_CHECK(state.wavelength_base != nullptr);
   float3 rgb{};
@@ -318,10 +303,27 @@ float3 Compiler::jit_color_to_rgb(const State &state,
 }
 
 void Compiler::jit_rgb_to_color(const State &state, const float3 &rgb,
-                                float *color) const {
+                                float *color) const noexcept {
   SMDL_SANITY_CHECK(jitRgbToColor && color);
   SMDL_SANITY_CHECK(state.wavelength_base != nullptr);
   jitRgbToColor(state, rgb, color);
+}
+
+std::optional<Error> Compiler::run_jit_unit_tests(const State &state) noexcept {
+  return catch_and_return_error([&] {
+    for (auto &jitUnitTest : jitUnitTests) {
+      std::cerr << concat("Running test ", quoted(jitUnitTest.testName),
+                          " ... ");
+      try {
+        SMDL_SANITY_CHECK(jitUnitTest.test);
+        jitUnitTest.test(state);
+        std::cerr << "success\n";
+      } catch (const Error &error) {
+        std::cerr << "failure\n";
+        throw;
+      }
+    }
+  });
 }
 
 } // namespace smdl

@@ -71,14 +71,14 @@ public:
 
   /// Format source code.
   [[nodiscard]] std::optional<Error>
-  format_source_code(const FormatOptions &formatOptions);
+  format_source_code(const FormatOptions &formatOptions) noexcept;
 
 private:
   /// Get the LLVM context.
-  [[nodiscard]] llvm::LLVMContext &get_llvm_context();
+  [[nodiscard]] llvm::LLVMContext &get_llvm_context() noexcept;
 
   /// Get the LLVM module.
-  [[nodiscard]] llvm::Module &get_llvm_module();
+  [[nodiscard]] llvm::Module &get_llvm_module() noexcept;
 
   /// Load image.
   [[nodiscard]] const Image &load_image(const std::string &fileName,
@@ -93,11 +93,11 @@ public:
   [[nodiscard]] std::string dump(DumpFormat dumpFormat);
 
   /// JIT-compile to machine code.
-  [[nodiscard]] std::optional<Error> jit_compile();
+  [[nodiscard]] std::optional<Error> jit_compile() noexcept;
 
 private:
   /// After JIT-compiling, lookup symbol with the given name.
-  [[nodiscard]] void *jit_lookup(std::string_view name);
+  [[nodiscard]] void *jit_lookup(std::string_view name) noexcept;
 
   /// After JIT-compiling, lookup symbol with the given name or throw an error
   /// if it is not present.
@@ -118,13 +118,15 @@ public:
   /// ambiguity and returns the first material found.
   ///
   [[nodiscard]]
-  const JIT::Material *find_jit_material(std::string_view materialName) const;
+  const JIT::Material *
+  find_jit_material(std::string_view materialName) const noexcept;
 
   /// Find JIT-compiled material named `materialName` in the MDL module named
   /// `moduleName`, or return `nullptr` on failure.
   [[nodiscard]]
-  const JIT::Material *find_jit_material(std::string_view moduleName,
-                                         std::string_view materialName) const;
+  const JIT::Material *
+  find_jit_material(std::string_view moduleName,
+                    std::string_view materialName) const noexcept;
 
   /// Run the JIT-compiled color-to-RGB function.
   ///
@@ -138,7 +140,8 @@ public:
   /// The pointer to the color spectrum.
   ///
   [[nodiscard]]
-  float3 jit_color_to_rgb(const State &state, const float *color) const;
+  float3 jit_color_to_rgb(const State &state,
+                          const float *color) const noexcept;
 
   /// Run the JIT-compiled RGB-to-color function.
   ///
@@ -155,10 +158,11 @@ public:
   /// The pointer to the color spectrum.
   ///
   void jit_rgb_to_color(const State &state, const float3 &rgb,
-                        float *color) const;
+                        float *color) const noexcept;
 
   /// Run JIT-compiled unit tests and print results to standard error.
-  [[nodiscard]] std::optional<Error> run_jit_unit_tests(const State &state);
+  [[nodiscard]] std::optional<Error>
+  run_jit_unit_tests(const State &state) noexcept;
 
 public:
   /// The file locator.

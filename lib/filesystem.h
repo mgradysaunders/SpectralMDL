@@ -37,4 +37,14 @@ namespace smdl {
   return {};
 }
 
+[[nodiscard]] inline std::string fs_abbreviate(const fs::path &path) {
+  auto pathStr{path.string()};
+  try {
+    if (auto s{fs::relative(path).string()}; s.size() < pathStr.size())
+      return s;
+  } catch (...) {
+  }
+  return pathStr;
+}
+
 } // namespace smdl

@@ -265,12 +265,22 @@ inline void do_concat(std::string &str, T &&value, Ts &&...values) {
 /// \{
 
 /// Concatenate the given values into a string.
-template <typename... Ts>
-[[nodiscard]] inline std::string concat(Ts &&...values) {
-  std::string str{};
-  str.reserve(128);
-  detail::do_concat(str, std::forward<Ts>(values)...);
-  return str;
+template <typename T, typename... Ts>
+[[nodiscard]] inline auto concat(T &&value0, Ts &&...values) {
+  if constexpr (sizeof...(Ts) == 0 &&
+                std::is_same_v<std::decay_t<T>, std::string>) {
+    return value0;
+  } else if constexpr (sizeof...(Ts) == 0 &&
+                       std::is_constructible_v<std::string_view,
+                                               std::decay_t<T>>) {
+    return std::string_view(value0);
+  } else {
+    std::string str{};
+    str.reserve(128);
+    detail::do_concat(str, std::forward<T>(value0),
+                      std::forward<Ts>(values)...);
+    return str;
+  }
 }
 
 /// Join the given string views by the given delimiter.
