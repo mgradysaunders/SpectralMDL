@@ -52,6 +52,42 @@ static cl::opt<bool> formatCompact{"c",
                                    cl::desc("Format output more compactly"),
                                    cl::sub(subFormat), cl::cat(optionsCat)};
 
+static cl::OptionCategory catState{"State Options"};
+static cl::opt<unsigned> wavelengthBaseMax{
+    "wavelength_base_max", cl::desc("Number of wavelengths (default 16)"),
+    cl::init(16U), cl::sub(subsWithCompileOptions), cl::cat(catState)};
+static cl::opt<float> minWavelen{
+    "wavelength_min",
+    cl::desc("Wavelength minimum in nanometers (default 380)"),
+    cl::init(380.0f), cl::sub(subTest), cl::cat(catState)};
+static cl::opt<float> maxWavelen{
+    "wavelength_max",
+    cl::desc("Wavelength maximum in nanometers (default 720)"),
+    cl::init(720.0f), cl::sub(subTest), cl::cat(catState)};
+static cl::opt<float> animationTime{
+    "animation_time", cl::desc("Animation time (default 0)"), cl::init(0.0f),
+    cl::sub(subTest), cl::cat(catState)};
+static cl::opt<int> objectID{"object_id", cl::desc("Object ID (default 0)"),
+                             cl::init(0), cl::sub(subTest), cl::cat(catState)};
+static cl::opt<float> texCoordU{
+    "texcoord_u", cl::desc("Texture coordinate U (default 0)"), cl::init(0.0f),
+    cl::sub(subTest), cl::cat(catState)};
+static cl::opt<float> texCoordV{
+    "texcoord_v", cl::desc("Texture coordinate V (default 0)"), cl::init(0.0f),
+    cl::sub(subTest), cl::cat(catState)};
+static cl::opt<float> texCoordW{
+    "texcoord_w", cl::desc("Texture coordinate W (default 0)"), cl::init(0.0f),
+    cl::sub(subTest), cl::cat(catState)};
+static cl::opt<int> ptexFaceID{
+    "ptex_face_id", cl::desc("Ptex face ID (default 0)"), cl::init(0),
+    cl::sub(subTest), cl::cat(catState)};
+static cl::opt<float> ptexFaceU{
+    "ptex_face_u", cl::desc("Ptex face coordinate U (default 0)"),
+    cl::init(0.0f), cl::sub(subTest), cl::cat(catState)};
+static cl::opt<float> ptexFaceV{
+    "ptex_face_v", cl::desc("Ptex face coordinate V (default 0)"),
+    cl::init(0.0f), cl::sub(subTest), cl::cat(catState)};
+
 int main(int argc, char **argv) {
   llvm::InitLLVM X(argc, argv);
   smdl::Logger::get().add_sink<smdl::LogSinks::print_to_cerr>();
@@ -61,7 +97,7 @@ int main(int argc, char **argv) {
   auto compiler{smdl::Compiler{}};
   compiler.enableDebug = enableDebug;
   compiler.enableUnitTests = true;
-  compiler.wavelengthBaseMax = 16;
+  compiler.wavelengthBaseMax = wavelengthBaseMax;
 
   for (auto &inputFile : inputFiles) {
     if (auto error{compiler.add(std::string(inputFile))}) {
@@ -98,9 +134,19 @@ int main(int argc, char **argv) {
       smdl::BumpPtrAllocator allocator{};
       smdl::State state{};
       state.allocator = &allocator;
+      state.texture_coordinate[0][0] = texCoordU;
+      state.texture_coordinate[0][1] = texCoordV;
+      state.texture_coordinate[0][2] = texCoordW;
+      state.animation_time = animationTime;
+      state.object_id = objectID;
+      state.ptex_face_id = ptexFaceID;
+      state.ptex_face_uv[0] = ptexFaceU;
+      state.ptex_face_uv[1] = ptexFaceV;
+      state.wavelength_min = minWavelen;
+      state.wavelength_max = maxWavelen;
       state.wavelength_base = &wavelengths[0];
-      for (unsigned i = 0; i < 16; i++) {
-        float fac = float(i) / 15.0f;
+      for (unsigned i = 0; i < compiler.wavelengthBaseMax; i++) {
+        float fac = float(i) / float(compiler.wavelengthBaseMax - 1);
         wavelengths[i] =
             (1 - fac) * state.wavelength_min + fac * state.wavelength_max;
       }
