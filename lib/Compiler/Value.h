@@ -54,7 +54,8 @@ public:
   /// same LLVM function.
   [[nodiscard]] bool
   is_usable_in_llvm_function(llvm::Function *llvmFunc) const {
-    if (auto llvmInst{llvm::dyn_cast_if_present<llvm::Instruction>(llvmValue)}; llvmInst && llvmInst->getParent())
+    if (auto llvmInst{llvm::dyn_cast_if_present<llvm::Instruction>(llvmValue)};
+        llvmInst && llvmInst->getParent())
       return llvmInst->getFunction() == llvmFunc;
     return true;
   }
@@ -474,7 +475,8 @@ public:
   }
 
   [[nodiscard]] bool has_name(std::string_view name) const {
-    return is_any_true([&](auto &arg) { return arg.is_named() && arg.name == name; });
+    return is_any_true(
+        [&](auto &arg) { return arg.is_named() && arg.name == name; });
   }
 
   /// Is any argument visited?

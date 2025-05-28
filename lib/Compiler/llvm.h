@@ -2,6 +2,7 @@
 
 #include <map>
 
+#include "smdl/AST.h"
 #include "smdl/Compiler.h"
 
 #include "llvm/ADT/ArrayRef.h"

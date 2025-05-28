@@ -9,6 +9,11 @@
 
 namespace smdl {
 
+Module::Module(std::string name, std::string sourceCode)
+    : name(std::move(name)), sourceCode(std::move(sourceCode)) {}
+
+Module::~Module() {}
+
 std::unique_ptr<Module> Module::load_from_file(const std::string &fileName) {
   auto ifs{std::ifstream(fileName, std::ios::in)};
   if (!ifs.is_open())
@@ -68,6 +73,12 @@ std::optional<Error> Module::format_source_code(const FormatOptions &options) {
     }
     return std::nullopt;
   }
+}
+
+void Module::reset() {
+  root.reset();
+  compileStatus = CompileStatus::NotStarted;
+  lastCrumb = nullptr;
 }
 
 } // namespace smdl

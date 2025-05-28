@@ -1,8 +1,14 @@
 #pragma once
 
-#include "smdl/AST.h"
+#include "smdl/common.h"
 
 namespace smdl {
+
+namespace AST {
+
+class Node;
+
+} // namespace AST
 
 class Context;
 
@@ -29,8 +35,9 @@ public:
   /// \param[in] name         The name of the module.
   /// \param[in] sourceCode   The source code.
   ///
-  explicit Module(std::string name, std::string sourceCode)
-      : name(std::move(name)), sourceCode(std::move(sourceCode)) {}
+  explicit Module(std::string name, std::string sourceCode);
+
+  ~Module();
 
   /// Load from file.
   ///
@@ -72,11 +79,7 @@ public:
   /// Is parsed yet?
   [[nodiscard]] bool is_parsed() const { return root; }
 
-  void reset() {
-    root.reset();
-    compileStatus = CompileStatus::NotStarted;
-    lastCrumb = nullptr;
-  }
+  void reset();
 
 private:
   /// The file name if applicable. This is empty if the module is builtin.
