@@ -100,8 +100,16 @@ std::optional<Error> Compiler::compile(OptLevel optLevel) {
   for (auto &mod : modules)
     if (auto error{mod->compile(context)})
       return error;
+  // Sort JIT materials by filename and line number in case we
+  // want to print them later
+  std::sort(
+      jitMaterials.begin(), jitMaterials.end(),
+      [](const auto &lhs, const auto &rhs) {
+        return std::pair(std::string_view(lhs.moduleFileName), lhs.lineNo) <
+               std::pair(std::string_view(rhs.moduleFileName), rhs.lineNo);
+      });
+  // Finish loading images.
   if (!images.empty()) {
-    // Finish loading images.
     SMDL_LOG_INFO("Loading images ...");
     auto now{std::chrono::steady_clock::now()};
     std::vector<std::future<void>> imageLoads{};
@@ -142,6 +150,27 @@ Compiler::format_source_code(const FormatOptions &formatOptions) noexcept {
     }
   }
   return std::nullopt;
+}
+
+std::string Compiler::summarize_materials() const {
+  std::string message{};
+  for (auto itr0{jitMaterials.begin()}; itr0 != jitMaterials.end();) {
+    auto numMaterials{0};
+    auto itr1{itr0};
+    while (itr1 != jitMaterials.end() &&
+           itr1->moduleFileName == itr0->moduleFileName) {
+      ++itr1;
+      ++numMaterials;
+    }
+    message += concat(quoted(fs_abbreviate(itr0->moduleFileName)), " contains ",
+                      numMaterials, " materials:\n");
+    for (; itr0 != itr1; ++itr0) {
+      message += "  ";
+      message +=
+          concat(quoted(itr0->materialName), " (line ", itr0->lineNo, ")\n");
+    }
+  }
+  return message;
 }
 
 llvm::LLVMContext &Compiler::get_llvm_context() noexcept {

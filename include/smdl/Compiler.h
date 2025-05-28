@@ -73,6 +73,9 @@ public:
   [[nodiscard]] std::optional<Error>
   format_source_code(const FormatOptions &formatOptions) noexcept;
 
+  /// Summarize all compiled materials.
+  [[nodiscard]] std::string summarize_materials() const;
+
 private:
   /// Get the LLVM context.
   [[nodiscard]] llvm::LLVMContext &get_llvm_context() noexcept;

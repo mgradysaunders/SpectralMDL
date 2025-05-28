@@ -9,10 +9,11 @@
 namespace cl = llvm::cl;
 static cl::OptionCategory optionsCat{"Options"};
 static cl::SubCommand subDump{"dump", "Dump as LLVM-IR or native assembly"};
+static cl::SubCommand subList{"list", "List all materials"};
 static cl::SubCommand subTest{"test", "Execute unit tests"};
 static cl::SubCommand subFormat{"format", "Format source code"};
-static cl::SubCommandGroup subsWithCompileOptions{&subDump, &subTest};
-static cl::SubCommandGroup allSubs{&subDump, &subTest, &subFormat};
+static cl::SubCommandGroup subsWithCompileOptions{&subDump, &subList, &subTest};
+static cl::SubCommandGroup allSubs{&subDump, &subList, &subTest, &subFormat};
 
 static cl::list<std::string> inputFiles{cl::Positional, cl::desc("<input>"),
                                         cl::OneOrMore, cl::sub(allSubs),
@@ -127,6 +128,9 @@ int main(int argc, char **argv) {
         std::cout << compiler.dump(dumpFormat);
         std::cout.flush();
       }
+    } else if (subList) {
+      std::cout << compiler.summarize_materials();
+      std::cout.flush();
     } else if (subTest) {
       if (auto error{compiler.jit_compile()})
         error->print_and_exit();
