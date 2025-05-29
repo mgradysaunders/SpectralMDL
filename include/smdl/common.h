@@ -303,6 +303,28 @@ template <typename T, typename... Ts>
 /// \defgroup Main Main
 /// \{
 
+/// Build information.
+class SMDL_EXPORT BuildInfo final {
+public:
+  /// The version major number.
+  int versionMajor{};
+
+  /// The version minor number.
+  int versionMinor{};
+
+  /// The version patch number.
+  int versionPatch{};
+
+  /// The git branch name.
+  const char *gitBranch{};
+
+  /// The git commit hash.
+  const char *gitCommit{};
+
+  /// Get.
+  [[nodiscard]] static BuildInfo get() noexcept;
+};
+
 /// Either initialize successfully or dump an error message and
 /// exit with code `EXIT_FAILURE`.
 ///

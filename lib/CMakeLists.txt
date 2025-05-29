@@ -72,6 +72,15 @@ target_include_directories(
     "${CMAKE_CURRENT_LIST_DIR}"
     "${CMAKE_CURRENT_LIST_DIR}/Compiler"
   )
+target_compile_definitions(
+  SpectralMDL
+  PRIVATE
+    "-DSMDL_VERSION_MAJOR=${SMDL_VERSION_MAJOR}"
+    "-DSMDL_VERSION_MINOR=${SMDL_VERSION_MINOR}"
+    "-DSMDL_VERSION_PATCH=${SMDL_VERSION_PATCH}"
+    "-DSMDL_GIT_BRANCH=\"${SMDL_GIT_BRANCH}\""
+    "-DSMDL_GIT_COMMIT=\"${SMDL_GIT_COMMIT}\""
+  )
 find_package(Threads REQUIRED)
 target_link_libraries(SpectralMDL PRIVATE Threads::Threads ${SMDL_LLVM_TARGETS})
 

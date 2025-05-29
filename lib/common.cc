@@ -14,6 +14,14 @@
 
 namespace smdl {
 
+BuildInfo BuildInfo::get() noexcept {
+  return {SMDL_VERSION_MAJOR, //
+          SMDL_VERSION_MINOR, //
+          SMDL_VERSION_PATCH, //
+          SMDL_GIT_BRANCH,    //
+          SMDL_GIT_COMMIT};
+}
+
 static NativeTarget nativeTarget{};
 
 void init_or_exit() {
@@ -107,9 +115,7 @@ SourceLocation::operator std::string() const {
   return str;
 }
 
-void Error::print() const {
-  SMDL_LOG_ERROR(message);
-}
+void Error::print() const { SMDL_LOG_ERROR(message); }
 
 void Error::print_and_exit() const {
   print();
