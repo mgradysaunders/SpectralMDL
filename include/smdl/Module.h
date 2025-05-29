@@ -112,6 +112,8 @@ private:
   friend class SourceLocation;
 
   friend class FunctionType;
+
+  friend class MetaType;
 };
 
 /// \}

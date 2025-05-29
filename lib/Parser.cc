@@ -411,7 +411,12 @@ auto Parser::parse_assignment_expression() -> BumpPtr<AST::Expr> {
        BINOP_EQ_LSHR, BINOP_EQ_ADD, BINOP_EQ_SUB, BINOP_EQ_MUL, BINOP_EQ_DIV,
        BINOP_EQ_REM, BINOP_EQ_SHL, BINOP_EQ_ASHR, BINOP_EQ_AND, BINOP_EQ_OR,
        BINOP_EQ_XOR, BINOP_EQ},
-      [&] { return parse_conditional_expression(); });
+      [&] { return parse_else_expression(); });
+}
+
+auto Parser::parse_else_expression() -> BumpPtr<AST::Expr> {
+  return parse_binary_right_associative(
+      {BINOP_ELSE}, [&] { return parse_conditional_expression(); });
 }
 
 auto Parser::parse_conditional_expression() -> BumpPtr<AST::Expr> {
@@ -900,14 +905,19 @@ auto Parser::parse_unary_op() -> std::optional<ParsedUnaryOp> {
 auto Parser::parse_binary_op(Span<AST::BinaryOp> ops)
     -> std::optional<ParsedBinaryOp> {
   for (auto op : ops) {
-    // Don't process ":=" or "<:" unless in extended syntax mode.
-    if ((op == BINOP_LET || op == BINOP_SUBSET) && !isSmdl)
+    // Don't process ":=", "<:", or "else" unless in extended syntax mode.
+    if ((op == BINOP_LET || op == BINOP_SUBSET || op == BINOP_ELSE) && !isSmdl)
       continue;
     // Don't mistake bit and for logical and.
     if (op == BINOP_AND && starts_with(get_remaining_source_code(), "&&"))
       continue;
-    if (auto srcOp{next(to_string(op))})
-      return ParsedBinaryOp{*srcOp, op};
+    if (op == BINOP_ELSE) {
+      if (auto srcOp{next_keyword(to_string(op))})
+        return ParsedBinaryOp{*srcOp, op};
+    } else {
+      if (auto srcOp{next(to_string(op))})
+        return ParsedBinaryOp{*srcOp, op};
+    }
   }
   return std::nullopt;
 }

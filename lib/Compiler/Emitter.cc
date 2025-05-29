@@ -462,6 +462,42 @@ Value Emitter::emit(AST::Binary &expr) {
       return RValue(boolType, phiInst);
     }
   }
+  // Short-circuit else
+  if (expr.op == BINOP_ELSE) {
+    auto valueLhs{emit(expr.exprLhs)};
+    auto valueLhsCond{invoke(context.get_bool_type(), valueLhs, expr.srcLoc)};
+    if (valueLhsCond.is_comptime_int()) {
+      return valueLhsCond.get_comptime_int() ? valueLhs : emit(expr.exprRhs);
+    } else {
+      auto [blockLhs, blockRhs, blockEnd] =
+          create_blocks<3>("else", {".lhs", ".rhs", ".end"});
+      builder.CreateCondBr(valueLhsCond, blockLhs, blockRhs);
+      builder.SetInsertPoint(blockLhs);
+      auto valueLhsIP{builder.saveIP()};
+      llvm_move_block_to_end(blockRhs);
+      builder.SetInsertPoint(blockRhs);
+      auto valueRhs{emit(expr.exprRhs)};
+      auto valueRhsIP{builder.saveIP()};
+      auto commonType{context.get_common_type({valueLhs.type, valueRhs.type},
+                                              /*defaultToUnion=*/true,
+                                              expr.srcLoc)};
+      builder.restoreIP(valueLhsIP);
+      valueLhs = invoke(commonType, valueLhs, expr.exprLhs->srcLoc);
+      blockLhs = get_insert_block();
+      builder.CreateBr(blockEnd);
+      builder.restoreIP(valueRhsIP);
+      valueRhs = invoke(commonType, valueRhs, expr.exprRhs->srcLoc);
+      blockRhs = get_insert_block();
+      builder.CreateBr(blockEnd);
+      // Create PHI instruction.
+      llvm_move_block_to_end(blockEnd);
+      builder.SetInsertPoint(blockEnd);
+      auto phiInst{builder.CreatePHI(commonType->llvmType, 2)};
+      phiInst->addIncoming(valueLhs, blockLhs);
+      phiInst->addIncoming(valueRhs, blockRhs);
+      return RValue(commonType, phiInst);
+    }
+  }
   // Default.
   auto lhs{emit(expr.exprLhs)};
   auto rhs{emit(expr.exprRhs)};
@@ -2105,11 +2141,13 @@ Value Emitter::resolve_identifier(Span<std::string_view> names,
         srcLoc.throw_error(
             "cannot resolve identifier '$state' in pure context");
       return state;
-    }
-    if (names[0] == "$nothing") {
+    } else if (names[0] == "void") {
+      // TODO Only if in extended syntax mode?
+      return context.get_comptime_meta_type(context.get_void_type());
+    } else if (names[0] == "null") {
+      // TODO Only if in extended syntax mode?
       return RValue(context.get_void_type(), nullptr);
-    }
-    if (auto value{context.get_keyword_value(names[0])}) {
+    } else if (auto value{context.get_keyword_value(names[0])}) {
       return value;
     }
   }

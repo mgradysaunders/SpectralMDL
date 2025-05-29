@@ -801,7 +801,7 @@ void EnumType::initialize(Emitter &emitter) {
       return Value::zero(context.get_int_type());
     }()};
     if (!value.is_comptime_int())
-      name.srcLoc.throw_error("expected ", quoted(name.srcName),
+      name.srcLoc.throw_error("expected ", quoted(name),
                               " initializer to resolve to compile-time int");
     emitter.declare_crumb(name.srcName, &declarator, RValue(this, value));
     declarator.llvmConst = static_cast<llvm::ConstantInt *>(value.llvmValue);
@@ -1104,8 +1104,7 @@ FunctionType::instantiate(Emitter &emitter,
 }
 
 void FunctionType::initialize_jit_material_functions(Emitter &emitter) {
-  SMDL_LOG_DEBUG(std::string(decl.srcLoc), " New material ",
-                 quoted(decl.name.srcName));
+  SMDL_LOG_DEBUG(std::string(decl.srcLoc), " New material ", quoted(decl.name));
   using namespace std::literals::string_view_literals;
   auto &context{emitter.context};
   auto &jitMaterial{context.compiler.jitMaterials.emplace_back()};
@@ -1306,15 +1305,29 @@ Value InferredSizeArrayType::invoke(Emitter &emitter, const ArgumentList &args,
 Value MetaType::access_field(Emitter &emitter, Value value,
                              std::string_view name,
                              const SourceLocation &srcLoc) {
-  // Make static fields available thru dot access
   if (value.is_comptime_meta_type(emitter.context)) {
     auto type{value.get_comptime_meta_type(emitter.context, srcLoc)};
+    // Make static fields available
     if (auto structType{llvm::dyn_cast<StructType>(type)}) {
-      auto &staticFields{structType->static_fields()};
-      if (auto itr{staticFields.find(name)}; itr != staticFields.end()) {
+      const auto &staticFields{structType->static_fields()};
+      if (auto itr{staticFields.find(name)}; itr != staticFields.end())
         return itr->second;
-      }
     }
+  } else if (value.is_comptime_meta_module(emitter.context)) {
+    // Make exported declarations available
+    auto module_{value.get_comptime_meta_module(emitter.context, srcLoc)};
+    if (auto crumb{Crumb::find(emitter.context, name,
+                               emitter.get_llvm_function(), module_->lastCrumb,
+                               nullptr, /*ignoreIfNotExported=*/true)})
+      return crumb->value;
+  } else if (value.is_comptime_meta_namespace(emitter.context)) {
+    // Make exported declarations available
+    auto namespace_{value.get_comptime_meta_namespace(emitter.context, srcLoc)};
+    if (auto crumb{Crumb::find(emitter.context, name,
+                               emitter.get_llvm_function(),
+                               namespace_->lastCrumb, namespace_->firstCrumb,
+                               /*ignoreIfNotExported=*/true)})
+      return crumb->value;
   }
   return RValue(emitter.context.get_void_type(), nullptr);
 }

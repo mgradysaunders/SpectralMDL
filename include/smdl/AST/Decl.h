@@ -457,6 +457,9 @@ public:
   /// The brace `}`.
   std::string_view srcBraceR{};
 
+  /// The first crumb for inside-namespace lookup. This is populated later.
+  Crumb *firstCrumb{};
+
   /// The last crumb for inside-namespace lookup. This is populated later.
   Crumb *lastCrumb{};
 };

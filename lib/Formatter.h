@@ -249,14 +249,18 @@ private:
   }
 
   void write(const AST::Binary &expr) {
-    bool mustHaveSpaceBefore{
-        (expr.op == AST::BINOP_ADD && last_output() == '+') ||
-        (expr.op == AST::BINOP_SUB && last_output() == '-')};
-    write(expr.exprLhs,
-          expr.op == AST::BINOP_COMMA ? DELIM_NONE
-          : mustHaveSpaceBefore       ? DELIM_SPACE
-                                      : DELIM_UNNECESSARY_SPACE,
-          expr.srcOp, DELIM_UNNECESSARY_SPACE, expr.exprRhs);
+    if (expr.op == AST::BINOP_ELSE) {
+      write(expr.exprLhs, DELIM_SPACE, expr.srcOp, DELIM_SPACE, expr.exprRhs);
+    } else {
+      bool mustHaveSpaceBefore{
+          (expr.op == AST::BINOP_ADD && last_output() == '+') ||
+          (expr.op == AST::BINOP_SUB && last_output() == '-')};
+      write(expr.exprLhs,
+            expr.op == AST::BINOP_COMMA ? DELIM_NONE
+            : mustHaveSpaceBefore       ? DELIM_SPACE
+                                        : DELIM_UNNECESSARY_SPACE,
+            expr.srcOp, DELIM_UNNECESSARY_SPACE, expr.exprRhs);
+    }
   }
 
   void write(const AST::Call &expr) { write(expr.expr, expr.args); }

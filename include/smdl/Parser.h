@@ -123,6 +123,8 @@ private:
 
   [[nodiscard]] auto parse_assignment_expression() -> BumpPtr<AST::Expr>;
 
+  [[nodiscard]] auto parse_else_expression() -> BumpPtr<AST::Expr>;
+
   [[nodiscard]] auto parse_conditional_expression() -> BumpPtr<AST::Expr>;
 
   [[nodiscard]] auto parse_logical_or_expression() -> BumpPtr<AST::Expr>;

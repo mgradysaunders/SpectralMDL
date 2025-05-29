@@ -162,6 +162,7 @@ enum BinaryOp : uint32_t {
   BINOP_COMMA = 18,                          ///< `,`
   BINOP_LET = 19,                            ///< `:=`
   BINOP_SUBSET = 20,                         ///< `<:`
+  BINOP_ELSE = 21                            ///< `else`
 };
 
 } // namespace binary_ops
@@ -248,10 +249,13 @@ enum BinaryOp : uint32_t {
     return "||";
   case BINOP_COMMA:
     return ",";
+  // Extended syntax
   case BINOP_LET:
     return ":=";
   case BINOP_SUBSET:
     return "<:";
+  case BINOP_ELSE:
+    return "else";
   default:
     break;
   }

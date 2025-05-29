@@ -449,7 +449,7 @@ public:
 
   /// Is one positional `null` argument?
   [[nodiscard]] bool is_null() const {
-    return is_one_positional() && !elems[0].value;
+    return is_one_positional() && elems[0].value.is_void();
   }
 
   /// Is all positional arguments?

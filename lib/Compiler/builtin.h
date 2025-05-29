@@ -283,7 +283,7 @@ struct scatter_sample_parameters{
 struct scatter_sample_result{
   float3 wi=float3(0.0);
   scatter_mode mode=scatter_none;
-  ?color delta_f=$nothing;
+  ?color delta_f=null;
 };
 @(pure noinline)?float3x3 recalculate_tangent_space(inline const &scatter_sample_parameters params){
   auto tbn(calculate_tangent_space(normal,tangent_u));
@@ -303,6 +303,7 @@ export struct diffuse_reflection_bsdf:bsdf{
   $(color|float) tint=1.0;
   float roughness=0.0;
   string handle="";
+  static const scatter_mode mode=scatter_reflect;
 };
 @(pure)auto scatter_evaluate(inline const &diffuse_reflection_bsdf this,inline const &scatter_evaluate_parameters params){
   if(mode==scatter_reflect&&recalculate_tangent_space(params)){
@@ -331,6 +332,7 @@ export struct diffuse_reflection_bsdf:bsdf{
 export struct diffuse_transmission_bsdf:bsdf{
   $(color|float) tint=1.0;
   string handle="";
+  static const scatter_mode mode=scatter_transmit;
 };
 @(pure)auto scatter_evaluate(inline const &diffuse_transmission_bsdf this,inline const &scatter_evaluate_parameters params){
   if(mode==scatter_transmit&&recalculate_tangent_space(params)){
@@ -351,8 +353,8 @@ export struct diffuse_transmission_bsdf:bsdf{
 export struct sheen_bsdf:bsdf{
   float roughness;
   $(color|float) tint=1.0;
-  $(?(color|float)) multiscatter_tint=$nothing;
-  void multiscatter=$nothing;
+  $(?(color|float)) multiscatter_tint=null;
+  void multiscatter=null;
   string handle="";
   finalize {
     roughness=saturate(roughness);
@@ -393,7 +395,7 @@ export struct ward_geisler_moroder_bsdf:bsdf{
   float roughness_u;
   float roughness_v=roughness_u;
   $(color|float) tint=1.0;
-  $(?(color|float)) multiscatter_tint=$nothing;
+  $(?(color|float)) multiscatter_tint=null;
   float3 tangent_u=$state.texture_tangent_u[0];
   string handle="";
   finalize {
@@ -584,7 +586,7 @@ struct microfacet_bsdf:bsdf{
   const float roughness0=#sqrt(#prod(roughness));
   const float2 alpha=clamp(roughness*roughness,EPSILON,1.0);
   $(color|float) tint;
-  $(?(color|float)) multiscatter_tint=$nothing;
+  $(?(color|float)) multiscatter_tint=null;
   float3 tangent_u=$state.texture_tangent_u[0];
   const scatter_mode mode=scatter_reflect;
   const microfacet::distribution distribution=microfacet::distribution();
@@ -732,7 +734,7 @@ struct microfacet_bsdf:bsdf{
   const float roughness_u,
   const float roughness_v=roughness_u,
   const $(color|float) tint=1.0,
-  const $(?(color|float)) multiscatter_tint=$nothing,
+  const $(?(color|float)) multiscatter_tint=null,
   const float3 tangent_u=$state.texture_tangent_u[0],
   const scatter_mode mode=scatter_reflect,
   const string handle="" [[anno::unused()]],

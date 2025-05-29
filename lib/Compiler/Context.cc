@@ -46,7 +46,6 @@ Context::Context(Compiler &compiler) : compiler(compiler) {
       {"string", get_comptime_meta_type(get_string_type())},
       {"texture_2d", get_comptime_meta_type(texture2DType.get())},
       {"texture_ptex", get_comptime_meta_type(texturePtexType.get())},
-      {"void", get_comptime_meta_type(get_void_type())},
       {"$DEBUG", get_comptime_bool(compiler.enableDebug)},
       {"$DOUBLE_MAX", get_comptime_double(std::numeric_limits<double>::max())},
       {"$DOUBLE_MIN", get_comptime_double(std::numeric_limits<double>::min())},
@@ -234,6 +233,8 @@ ConversionRule Context::get_conversion_rule(Type *typeA, Type *typeB) {
   }
   if (typeA->is_abstract())
     return ConversionRule::Explicit;
+  if (typeA->is_void())
+    return ConversionRule::Implicit;
   // If the source and destination types are both arithmetic ...
   if (typeA->is_arithmetic() && typeB->is_arithmetic()) {
     // If the source and destination extents are equivalent, conversion is

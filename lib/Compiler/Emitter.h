@@ -416,7 +416,7 @@ public:
   /// Emit import declaration.
   Value emit(AST::Import &decl) {
     if (decl.is_exported())
-      decl.srcLoc.throw_error("can't re-export qualified 'import'");
+      decl.srcLoc.throw_error("cannot re-export qualified 'import'");
     for (auto &[importPath, srcComma] : decl.importPathWrappers)
       declare_import(importPath, importPath.is_absolute(), decl);
     return Value();
@@ -424,8 +424,8 @@ public:
 
   /// Emit namespace declaration.
   Value emit(AST::Namespace &decl) {
-    declare_crumb(*decl.identifier, &decl,
-                  context.get_comptime_meta_namespace(&decl));
+    decl.firstCrumb = declare_crumb(*decl.identifier, &decl,
+                                    context.get_comptime_meta_namespace(&decl));
     auto preserve{Preserve(crumb)};
     for (auto &each : decl.decls)
       emit(each);
