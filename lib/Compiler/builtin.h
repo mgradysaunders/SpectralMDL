@@ -560,22 +560,35 @@ export @(pure noinline)float2 smith_visible_slope_sample(
 }
 export @(pure noinline)float2 smith_visible_slope_sample(
   const distribution_beckmann this[[anno::unused()]],
-  const float xi0,
-  const float xi1,
+  float xi0,
+  float xi1,
   float cos_thetao,
 ){
   return #sqrt(-#log(1-xi0+EPSILON))*float2(#cos((phi:=$TWO_PI*xi1)),#sin(phi)) if(cos_thetao>0.9999);
-  cos_thetao=#max(cos_thetao,-0.9999);
-  xi0=#max(xi0,0.00001);
-  xi0=#min(xi0,0.99999);
-  const auto thetao(#acos(cos_thetao));
-  const auto sin_thetao(#sqrt(1-cos_thetao*cos_thetao));
-  const auto cot_thetao(cos_thetao/sin_thetao);
-  auto xmax(#erf(cot_thetao));
-  auto xmin(-1.0);
-  auto x(xmax-(1+xmax)*#pow(1-xi0,1+thetao*(thetao*(thetao*-0.0564+0.4265)-0.876)));
-  const auto visible_cdf_norm(1/(0.5*(cos_thetao*#erfc(-cot_thetao)+sin_thetao*#exp(-cot_thetao*cot_thetao)/#sqrt($PI))));
-  return float2();
+  xi0=#max(xi0,1e-6);
+  xi1=#max(xi1,1e-6);
+  const float SQRT_PI_INV=1/#sqrt($PI);
+  const float thetao=#acos(cos_thetao);
+  const float sin_thetao=#sqrt(#max(0,1-cos_thetao*cos_thetao));
+  const float tan_thetao=sin_thetao/cos_thetao;
+  const float cot_thetao=1/tan_thetao;
+  float xmin=-1;
+  float xmax=#erf(cot_thetao);
+  float x=xmax-(1+xmax)*#pow(1-xi0,1+thetao*(-0.876+thetao*(0.4265-0.0594*thetao)));
+  float norm=1/(1+xmax+SQRT_PI_INV*tan_thetao*#exp(-cot_thetao*cot_thetao));
+  for(int i=0;i<10;++i){
+    if(!(xmin<=x&&x<=xmax))
+      x=0.5*(xmin+xmax);
+    const float a=monte_carlo::erf_inverse(x);
+    const float f=norm*(1+x+SQRT_PI_INV*tan_thetao*#exp(-a*a))-xi0;
+    break if(f~==[1e-5]0.0);
+    if(f>0)
+      xmax=x;
+    else
+      xmin=x;
+    x-=f/(norm*(1-a*tan_thetao));
+  }
+  return float2(monte_carlo::erf_inverse(x),monte_carlo::erf_inverse(2*xi1-1),);
 }
 export @(pure macro)float smith_normal_pdf(const distribution this[[anno::unused()]],
                                            const float2 alpha,const float3 wm){

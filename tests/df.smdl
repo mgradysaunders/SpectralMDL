@@ -57,6 +57,7 @@ unit_test "Cosine-weighted hemisphere sample" {
   wi_av /= 5000;
   #assert(#all(wi_av ~== [1e-3] float3(0.0, 0.0, 0.666)));
 }
+
 // Integrate Smith slope PDF by transforming the open square `(-1, 1)^2` 
 // into the entire plane `(-inf, inf)^2`.
 @(pure) float integrate_smith_slope_pdf(const df::microfacet::distribution distr) {
