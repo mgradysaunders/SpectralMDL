@@ -73,9 +73,6 @@ public:
   [[nodiscard]] std::optional<Error>
   format_source_code(const FormatOptions &formatOptions) noexcept;
 
-  /// Summarize all compiled materials.
-  [[nodiscard]] std::string summarize_materials() const;
-
 private:
   /// Get the LLVM context.
   [[nodiscard]] llvm::LLVMContext &get_llvm_context() noexcept;
@@ -166,6 +163,9 @@ public:
   /// Run JIT-compiled unit tests and print results to standard error.
   [[nodiscard]] std::optional<Error>
   run_jit_unit_tests(const State &state) noexcept;
+
+  /// Summarize all compiled materials.
+  [[nodiscard]] std::string summarize_materials() const;
 
 public:
   /// The file locator.

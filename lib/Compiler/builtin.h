@@ -523,7 +523,7 @@ export @(pure macro)float smith_lambda(const distribution_ggx this[[anno::unused
 }
 export @(pure macro)float smith_lambda(const distribution_beckmann this[[anno::unused()]],
                                        const float m){
-  return 0.5*(#exp(-m*m)/m/#sqrt($PI)-erfcf(m));
+  return 0.5*(#exp(-m*m)/m/#sqrt($PI)-#erfc(m));
 }
 export @(pure macro)float smith_slope_pdf(const distribution_ggx this[[anno::unused()]],
                                           const float2 m){

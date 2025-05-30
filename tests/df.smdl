@@ -20,6 +20,13 @@ unit_test "Specular half vector for refraction" {
   #assert(#all(df::specular::refract(wi, wm, 1 / ior) ~== [1e-5] wo));
 }
 
+unit_test "Erf inverse" {
+  #assert(df::monte_carlo::erf_inverse(#erf(-1.1d)) ~== [1e-5d] -1.1d);
+  #assert(df::monte_carlo::erf_inverse(#erf(-0.3d)) ~== [1e-5d] -0.3d);
+  #assert(df::monte_carlo::erf_inverse(#erf(+1.2d)) ~== [1e-5d] +1.2d);
+  #assert(df::monte_carlo::erf_inverse(#erf(+2.7d)) ~== [1e-5d] +2.7d);
+}
+
 @(pure) auto run_low_discrepancy_tests(auto xi) {
   auto xi_av(xi);
   for (int i = 0; i < 5000; i++) {
@@ -50,18 +57,39 @@ unit_test "Cosine-weighted hemisphere sample" {
   wi_av /= 5000;
   #assert(#all(wi_av ~== [1e-3] float3(0.0, 0.0, 0.666)));
 }
-
-unit_test "Inverse error function" {
-  #assert(df::monte_carlo::erf_inverse(#erf(-1.1d)) ~== [1e-5d] -1.1d);
-  #assert(df::monte_carlo::erf_inverse(#erf(-0.3d)) ~== [1e-5d] -0.3d);
-  #assert(df::monte_carlo::erf_inverse(#erf(+1.2d)) ~== [1e-5d] +1.2d);
-  #assert(df::monte_carlo::erf_inverse(#erf(+2.7d)) ~== [1e-5d] +2.7d);
+// Integrate Smith slope PDF by transforming the open square `(-1, 1)^2` 
+// into the entire plane `(-inf, inf)^2`.
+@(pure) float integrate_smith_slope_pdf(const df::microfacet::distribution distr) {
+  double fsum = 0;
+  const int n = 512;
+  for (int ix = 0; ix < n; ix++) {
+    const float tx = math::lerp(-0.99999, 0.99999, ix / float(n - 1));
+    const float mx = tx / (1 - tx * tx);
+    double ftmp = 0;
+    for (int iy = 0; iy < n; iy++) {
+      const float ty = math::lerp(-0.99999, 0.99999, iy / float(n - 1));
+      const float my = ty / (1 - ty * ty);
+      ftmp += 2 * (1 + ty * ty) / #pow(1 - ty * ty, 2) * df::microfacet::smith_slope_pdf(distr, float2(mx, my));
+    }
+    fsum += 2 * (1 + tx * tx) / #pow(1 - tx * tx, 2) * ftmp / n;
+  }
+  return fsum / n;
 }
 
-// TODO Verify microfacet::smith_slope_pdf is normalized for microfacet::distribution_ggx
+// Integrate Smith normal PDF by cosine-weighted hemisphere sampling.
+@(pure) float integrate_smith_normal_pdf(const df::microfacet::distribution distr, const float2 alpha) {
+  double fsum = 0;
+  const int n = 512 * 512;
+  float2 xi = float2(0.228, 0.712);
+  for (int i = 0; i < n; i++, df::monte_carlo::next_low_discrepancy(&xi)) {
+    fsum += df::microfacet::smith_normal_pdf(distr, alpha, df::monte_carlo::cosine_hemisphere_sample(xi));
+  }
+  return $PI * fsum / n;
+}
 
-// TODO Verify microfacet::smith_slope_pdf is normalized for microfacet::distribution_beckmann
-
-// TODO Verify microfacet::smith_normal_pdf is normalized for microfacet::distribution_ggx
-
-// TODO Verify microfacet::smith_normal_pdf is normalized for microfacet::distribution_beckmann
+unit_test "Microfacet distributions" {
+  #assert(integrate_smith_slope_pdf(df::microfacet::distribution_ggx()) ~== [1e-2] 1.0);
+  #assert(integrate_smith_slope_pdf(df::microfacet::distribution_beckmann()) ~== [1e-2] 1.0);
+  #assert(integrate_smith_normal_pdf(df::microfacet::distribution_ggx(), float2(0.8, 1.2)) ~== [1e-2] 1.0);
+  #assert(integrate_smith_normal_pdf(df::microfacet::distribution_beckmann(), float2(1.1, 0.7)) ~== [1e-2] 1.0);
+}

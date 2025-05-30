@@ -297,6 +297,7 @@ Value Emitter::emit(AST::UnitTest &decl) {
     auto &jitTest{context.compiler.jitUnitTests.emplace_back()};
     jitTest.moduleName = std::string(decl.srcLoc.get_module_name());
     jitTest.moduleFileName = std::string(decl.srcLoc.get_module_file_name());
+    jitTest.lineNo = decl.srcLoc.lineNo;
     jitTest.testName = decl.name->value;
     jitTest.test.name = llvmFunc->getName().str();
     jitTest.test.func = nullptr; // Lookup later

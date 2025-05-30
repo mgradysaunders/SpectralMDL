@@ -595,7 +595,7 @@ export @(pure macro) float smith_lambda(const distribution_ggx this [[anno::unus
 /// The Smith Lambda function for the Beckmann distribution.
 export @(pure macro) float smith_lambda(const distribution_beckmann this [[anno::unused()]],
                                         const float m) {
-  return 0.5 * (#exp(-m * m) / m / #sqrt($PI) - erfcf(m));
+  return 0.5 * (#exp(-m * m) / m / #sqrt($PI) - #erfc(m));
 }
 
 /// The 2-dimensional Smith slope PDF for the GGX distribution.

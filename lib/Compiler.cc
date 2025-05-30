@@ -57,8 +57,9 @@ std::optional<Error> Compiler::add(std::string fileOrDirName) {
       SMDL_LOG_DEBUG("Adding MDL directory ", quoted(fs_abbreviate(path)));
       for (const auto &entry : fs::recursive_directory_iterator(path)) {
         if (fs::is_regular_file(entry.path(), ec)) {
-          if (auto ext{fs_extension(entry.path())};
-              ext == ".mdl" || ext == ".smdl") {
+          if (auto extension{fs_extension(entry.path())};
+              extension == ".mdl" || //
+              extension == ".smdl") {
             if (auto canonPath{fs::canonical(entry.path(), ec)}; !ec) {
               SMDL_LOG_DEBUG("  Adding MDL file ",
                              quoted(fs_abbreviate(canonPath)));
@@ -108,6 +109,13 @@ std::optional<Error> Compiler::compile(OptLevel optLevel) {
         return std::pair(std::string_view(lhs.moduleFileName), lhs.lineNo) <
                std::pair(std::string_view(rhs.moduleFileName), rhs.lineNo);
       });
+  // Sort JIT unit tests by filename and line number for similar reasons
+  std::sort(
+      jitUnitTests.begin(), jitUnitTests.end(),
+      [](const auto &lhs, const auto &rhs) {
+        return std::pair(std::string_view(lhs.moduleFileName), lhs.lineNo) <
+               std::pair(std::string_view(rhs.moduleFileName), rhs.lineNo);
+      });
   // Finish loading images.
   if (!images.empty()) {
     SMDL_LOG_INFO("Loading images ...");
@@ -150,27 +158,6 @@ Compiler::format_source_code(const FormatOptions &formatOptions) noexcept {
     }
   }
   return std::nullopt;
-}
-
-std::string Compiler::summarize_materials() const {
-  std::string message{};
-  for (auto itr0{jitMaterials.begin()}; itr0 != jitMaterials.end();) {
-    auto numMaterials{0};
-    auto itr1{itr0};
-    while (itr1 != jitMaterials.end() &&
-           itr1->moduleFileName == itr0->moduleFileName) {
-      ++itr1;
-      ++numMaterials;
-    }
-    message += concat(quoted(fs_abbreviate(itr0->moduleFileName)), " contains ",
-                      numMaterials, " materials:\n");
-    for (; itr0 != itr1; ++itr0) {
-      message += "  ";
-      message +=
-          concat(quoted(itr0->materialName), " (line ", itr0->lineNo, ")\n");
-    }
-  }
-  return message;
 }
 
 llvm::LLVMContext &Compiler::get_llvm_context() noexcept {
@@ -340,19 +327,50 @@ void Compiler::jit_rgb_to_color(const State &state, const float3 &rgb,
 
 std::optional<Error> Compiler::run_jit_unit_tests(const State &state) noexcept {
   return catch_and_return_error([&] {
-    for (auto &jitUnitTest : jitUnitTests) {
-      std::cerr << concat("Running test ", quoted(jitUnitTest.testName),
-                          " ... ");
-      try {
-        SMDL_SANITY_CHECK(jitUnitTest.test);
-        jitUnitTest.test(state);
-        std::cerr << "success\n";
-      } catch (const Error &error) {
-        std::cerr << "failure\n";
-        throw;
+    for (auto itr0 = jitUnitTests.begin(); itr0 != jitUnitTests.end();) {
+      auto itr1{itr0};
+      while (itr1 != jitUnitTests.end() &&
+             itr1->moduleFileName == itr0->moduleFileName) {
+        ++itr1;
       }
+      std::cerr << concat("Running tests in ",
+                          quoted(fs_abbreviate(itr0->moduleFileName)), ":\n");
+      for (; itr0 != itr1; ++itr0) {
+        std::cerr << concat("  ", quoted(itr0->testName), " (line ",
+                            itr0->lineNo, ") ... ");
+        try {
+          SMDL_SANITY_CHECK(itr0->test);
+          itr0->test(state);
+          std::cerr << "success\n";
+        } catch (const Error &error) {
+          std::cerr << "failure\n";
+          throw;
+        }
+      }
+      std::cerr << '\n';
     }
   });
+}
+
+std::string Compiler::summarize_materials() const {
+  std::string message{};
+  for (auto itr0{jitMaterials.begin()}; itr0 != jitMaterials.end();) {
+    auto numMaterials{0};
+    auto itr1{itr0};
+    while (itr1 != jitMaterials.end() &&
+           itr1->moduleFileName == itr0->moduleFileName) {
+      ++itr1;
+      ++numMaterials;
+    }
+    message += concat(quoted(fs_abbreviate(itr0->moduleFileName)), " contains ",
+                      numMaterials, " materials:\n");
+    for (; itr0 != itr1; ++itr0) {
+      message += "  ";
+      message +=
+          concat(quoted(itr0->materialName), " (line ", itr0->lineNo, ")\n");
+    }
+  }
+  return message;
 }
 
 } // namespace smdl

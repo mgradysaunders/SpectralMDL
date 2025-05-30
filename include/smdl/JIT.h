@@ -195,6 +195,9 @@ public:
   /// The module file name.
   std::string moduleFileName{};
 
+  /// The line number.
+  uint32_t lineNo{};
+
   /// The name of the test.
   std::string testName{};
 
