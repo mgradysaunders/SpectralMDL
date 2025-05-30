@@ -111,7 +111,7 @@ export namespace specular {
 /// - The result is not normalized.
 /// - The result is guaranteed in the upper Z hemisphere.
 ///
-export @(pure macro) float3 reflection_half_vector(const float3 wo, const float3 wi) = (vh := 0.5 * (wo + wi)) * #sign(vh.z);
+export @(pure macro) float3 reflection_half_vector(const float3 wo, const float3 wi) = (vh := (wo + wi)) * #sign(vh.z);
 
 /// Reflect direction `wi` across normal direction `wm`.
 export @(pure macro) float3 reflect(const float3 wi, const float3 wm) = 2 * #sum(wi * wm) * wm - wi;
@@ -135,7 +135,7 @@ export @(pure macro) float3 refraction_half_vector(
   const float3 wo,
   const float3 wi,
   const float ior,
-) = (vh := -ior * wo + wi) * #sign(vh.z); 
+) = (vh := -(ior * wo + wi)) * #sign(vh.z); 
 
 export @(pure macro) auto refraction_half_vector_jacobian(
   const float3 wo,

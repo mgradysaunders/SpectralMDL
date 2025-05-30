@@ -231,7 +231,7 @@ export @(pure noinline)double erf_inverse(double y){
 }
 }
 export namespace specular {
-export @(pure macro)float3 reflection_half_vector(const float3 wo,const float3 wi)=(vh:=0.5*(wo+wi))*#sign(vh.z);
+export @(pure macro)float3 reflection_half_vector(const float3 wo,const float3 wi)=(vh:=(wo+wi))*#sign(vh.z);
 export @(pure macro)float3 reflect(const float3 wi,const float3 wm)=2*#sum(wi*wm)*wm-wi;
 export @(pure macro)float3 refract(const float3 wi,const float3 wm,const float ior){
   const auto cos_thetai(#sum(wi*wm));
@@ -240,7 +240,7 @@ export @(pure macro)float3 refract(const float3 wi,const float3 wm,const float i
   const auto cos_thetat(#sqrt(cos2_thetat)*-#sign(cos_thetai));
   return -ior*wi+(ior*cos_thetai+cos_thetat)*wm;
 }
-export @(pure macro)float3 refraction_half_vector(const float3 wo,const float3 wi,const float ior,)=(vh:=-ior*wo+wi)*#sign(vh.z);
+export @(pure macro)float3 refraction_half_vector(const float3 wo,const float3 wi,const float ior,)=(vh:=-(ior*wo+wi))*#sign(vh.z);
 export @(pure macro)auto refraction_half_vector_jacobian(const float3 wo,const float3 wi,const float ior,)=#abs(#sum(wi*(vh:=refraction_half_vector(wo,wi,ior))))/((vh2:=#sum(vh*vh))*#sqrt(vh2));
 export @(pure macro)auto schlick_F0(const auto ior)=#pow((ior-1)/(ior+1),2);
 export @(pure macro)auto schlick_fresnel(
