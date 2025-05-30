@@ -468,9 +468,9 @@ auto Parser::parse_and_expression() -> BumpPtr<AST::Expr> {
 }
 
 auto Parser::parse_equality_expression() -> BumpPtr<AST::Expr> {
-  return parse_binary_left_associative({BINOP_CMP_EQ, BINOP_CMP_NE}, [&] {
-    return parse_relational_expression();
-  });
+  return parse_binary_left_associative(
+      {BINOP_CMP_EQ, BINOP_CMP_NE, BINOP_APPROX_CMP_EQ, BINOP_APPROX_CMP_NE},
+      [&] { return parse_relational_expression(); });
 }
 
 auto Parser::parse_relational_expression() -> BumpPtr<AST::Expr> {
@@ -905,16 +905,15 @@ auto Parser::parse_unary_op() -> std::optional<ParsedUnaryOp> {
 auto Parser::parse_binary_op(Span<AST::BinaryOp> ops)
     -> std::optional<ParsedBinaryOp> {
   for (auto op : ops) {
-    // Don't process ":=", "<:", or "else" unless in extended syntax mode.
-    if ((op == BINOP_LET || op == BINOP_SUBSET || op == BINOP_ELSE) && !isSmdl)
-      continue;
-    // Don't mistake bit and for logical and.
-    if (op == BINOP_AND && starts_with(get_remaining_source_code(), "&&"))
+    if (!isSmdl && is_extended_syntax(op))
       continue;
     if (op == BINOP_ELSE) {
       if (auto srcOp{next_keyword(to_string(op))})
         return ParsedBinaryOp{*srcOp, op};
     } else {
+      // Don't mistake bit and for logical and.
+      if (op == BINOP_AND && starts_with(get_remaining_source_code(), "&&"))
+        continue;
       if (auto srcOp{next(to_string(op))})
         return ParsedBinaryOp{*srcOp, op};
     }

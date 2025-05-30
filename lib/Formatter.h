@@ -249,7 +249,16 @@ private:
   }
 
   void write(const AST::Binary &expr) {
-    if (expr.op == AST::BINOP_ELSE) {
+    if (expr.op == AST::BINOP_APPROX_CMP_EQ ||
+        expr.op == AST::BINOP_APPROX_CMP_NE) {
+      // Format approximate comparison syntax
+      // `lhs ~== [eps] rhs`
+      // `lhs ~!= [eps] rhs`
+      write(expr.exprLhs,                        //
+            DELIM_UNNECESSARY_SPACE, expr.srcOp, //
+            DELIM_UNNECESSARY_SPACE, expr.srcBrackL, expr.exprEps,
+            expr.srcBrackR, DELIM_UNNECESSARY_SPACE, expr.exprRhs);
+    } else if (expr.op == AST::BINOP_ELSE) {
       write(expr.exprLhs, DELIM_SPACE, expr.srcOp, DELIM_SPACE, expr.exprRhs);
     } else {
       bool mustHaveSpaceBefore{

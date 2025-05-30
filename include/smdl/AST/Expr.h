@@ -160,12 +160,19 @@ enum BinaryOp : uint32_t {
   BINOP_LOGIC_AND = BINOP_LOGIC | BINOP_AND, ///< `&&`
   BINOP_LOGIC_OR = BINOP_LOGIC | BINOP_OR,   ///< `||`
   BINOP_COMMA = 18,                          ///< `,`
-  BINOP_LET = 19,                            ///< `:=`
-  BINOP_SUBSET = 20,                         ///< `<:`
-  BINOP_ELSE = 21                            ///< `else`
+  BINOP_LET = 19,                            ///< Extended syntax: `:=`
+  BINOP_APPROX_CMP_EQ = 20,                  ///< Extended syntax: `==~`
+  BINOP_APPROX_CMP_NE = 21,                  ///< Extended syntax: `!=~`
+  BINOP_SUBSET = 22,                         ///< Extended syntax: `<:`
+  BINOP_ELSE = 23                            ///< Extended syntax: `else`
 };
 
 } // namespace binary_ops
+
+[[nodiscard]] constexpr bool is_extended_syntax(BinaryOp op) {
+  return op == BINOP_LET || op == BINOP_APPROX_CMP_EQ ||
+         op == BINOP_APPROX_CMP_NE || op == BINOP_SUBSET || op == BINOP_ELSE;
+}
 
 [[nodiscard]] constexpr bool is_compare_op(BinaryOp op) {
   return BINOP_CMP_EQ <= op && op <= BINOP_CMP_GE;
@@ -252,6 +259,10 @@ enum BinaryOp : uint32_t {
   // Extended syntax
   case BINOP_LET:
     return ":=";
+  case BINOP_APPROX_CMP_EQ:
+    return "~==";
+  case BINOP_APPROX_CMP_NE:
+    return "~!=";
   case BINOP_SUBSET:
     return "<:";
   case BINOP_ELSE:
@@ -270,14 +281,30 @@ public:
       : exprLhs(std::move(exprLhs)), srcOp(srcOp), op(op),
         exprRhs(std::move(exprRhs)) {}
 
+  explicit Binary(BumpPtr<Expr> exprLhs, std::string_view srcOp, BinaryOp op,
+                  std::string_view srcBrackL, BumpPtr<Expr> exprEps,
+                  std::string_view srcBrackR, BumpPtr<Expr> exprRhs)
+      : exprLhs(std::move(exprLhs)), srcOp(srcOp), op(op), srcBrackL(srcBrackL),
+        exprEps(std::move(exprEps)), srcBrackR(srcBrackR),
+        exprRhs(std::move(exprRhs)) {}
+
   /// The left-hand side expression.
   BumpPtr<Expr> exprLhs{};
 
-  /// The source of the operator.
+  /// The source operator.
   std::string_view srcOp{};
 
   /// The operator.
   BinaryOp op{};
+
+  /// The bracket `[`.
+  std::string_view srcBrackL{};
+
+  /// The epsilon expression.
+  BumpPtr<Expr> exprEps{};
+
+  /// The bracket `]`.
+  std::string_view srcBrackR{};
 
   /// The right-hand side expression.
   BumpPtr<Expr> exprRhs{};

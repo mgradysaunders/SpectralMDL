@@ -45,20 +45,25 @@ void run_4x4_tests(texture_2d t) {
     }
 
   // Test linear interpolation.
-  #assert(#all(#approx_equal(tex::lookup_float4(t, float2(0.25, 0.5)), float4(32.0, 96.0, 0.0, 255.0) / 255.0, 1e-5)));
-  #assert(#all(#approx_equal(tex::lookup_float4(t, float2(0.5, 0.75)), float4(96.0, 191.5, 0.0, 255.0) / 255.0, 1e-5)));
+  #assert(#all(tex::lookup_float4(t, float2(0.25, 0.5)) ~== [1e-5] float4(32.0, 96.0, 0.0, 255.0) / 255.0));
+  #assert(#all(tex::lookup_float4(t, float2(0.5, 0.75)) ~== [1e-5] float4(96.0, 191.5, 0.0, 255.0) / 255.0));
 
   // The lookup wrap mode is 'wrap_repeat' by default. So evaluating at 0 or 1 will interpolate between
   // the opposite borders of the image.
-  #assert(#all(#approx_equal(tex::lookup_float4(t, float2(0.0, 0.0)), float4(127.5, 127.5, 0.0, 255.0) / 255.0, 1e-5)));
-  #assert(#all(#approx_equal(tex::lookup_float4(t, float2(1.0, 1.0)), float4(127.5, 127.5, 0.0, 255.0) / 255.0, 1e-5)));
-  #assert(#all(#approx_equal(tex::lookup_float4(t, float2(1.0, 1.0), wrap_u: tex::wrap_clamp), float4(255.0, 127.5, 0.0, 255.0) / 255.0, 1e-5)));
-  #assert(#all(#approx_equal(tex::lookup_float4(t, float2(1.0, 0.0), wrap_v: tex::wrap_clamp), float4(127.5, 0.0, 0.0, 255.0) / 255.0, 1e-5)));
+  #assert(#all(tex::lookup_float4(t, float2(0.0, 0.0)) ~== [1e-5] float4(127.5, 127.5, 0.0, 255.0) / 255.0));
+  #assert(#all(tex::lookup_float4(t, float2(1.0, 1.0)) ~== [1e-5] float4(127.5, 127.5, 0.0, 255.0) / 255.0));
+  #assert(#all(tex::lookup_float4(t, float2(1.0, 1.0), wrap_u: tex::wrap_clamp) ~== [1e-5] float4(255.0, 127.5, 0.0, 255.0) / 255.0));
+  #assert(#all(tex::lookup_float4(t, float2(1.0, 0.0), wrap_v: tex::wrap_clamp) ~== [1e-5] float4(127.5, 0.0, 0.0, 255.0) / 255.0));
 
   // Test cropping. Setting 'crop_u: float2(0.0, 0.75)' and 'crop_v: float2(0.25, 1.0)' should restrict to the 3x3 region
   // between (X=0, Y=1) and (X=3, Y=4). Then interpolating at (2/3, 1/3) should line up with the center of the uncropped
   // image.
-  #assert(#all(#approx_equal(tex::lookup_float4(t, float2(2.0, 1.0) / 3.0, crop_u: float2(0.0, 0.75), crop_v: float2(0.25, 1.0)), float4(96.0, 96.0, 0.0, 255.0) / 255.0, 1e-5)));
+  #assert(#all(tex::lookup_float4(
+                 t,
+                 float2(2.0, 1.0) / 3.0,
+                 crop_u: float2(0.0, 0.75),
+                 crop_v: float2(0.25, 1.0),
+               ) ~== [1e-5] float4(96.0, 96.0, 0.0, 255.0) / 255.0));
 }
 
 unit_test "Texture 2D tests (4x4.png)" {

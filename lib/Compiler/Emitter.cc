@@ -462,7 +462,7 @@ Value Emitter::emit(AST::Binary &expr) {
       return RValue(boolType, phiInst);
     }
   }
-  // Short-circuit else
+  // Short-circuit else.
   if (expr.op == BINOP_ELSE) {
     auto valueLhs{emit(expr.exprLhs)};
     auto valueLhsCond{invoke(context.get_bool_type(), valueLhs, expr.srcLoc)};
@@ -501,6 +501,18 @@ Value Emitter::emit(AST::Binary &expr) {
   // Default.
   auto lhs{emit(expr.exprLhs)};
   auto rhs{emit(expr.exprRhs)};
+  if (expr.op == BINOP_APPROX_CMP_EQ || //
+      expr.op == BINOP_APPROX_CMP_NE) {
+    // Approximate comparison operators
+    // `lhs ~== [eps] rhs`
+    // `lhs ~!= [eps] rhs`
+    auto res{emit_op(BINOP_SUB, lhs, rhs, expr.srcLoc)};
+    res = emit_intrinsic("abs", res, expr.srcLoc);
+    res = emit_op(BINOP_CMP_LT, res, emit(expr.exprEps), expr.srcLoc);
+    if (expr.op == BINOP_APPROX_CMP_NE)
+      res = emit_op(UNOP_LOGIC_NOT, res, expr.srcLoc);
+    return res;
+  }
   return emit_op(expr.op, lhs, rhs, expr.srcLoc);
 }
 
@@ -1352,21 +1364,6 @@ Value Emitter::emit_intrinsic(std::string_view name, const ArgumentList &args,
       auto value1{invoke(commonType, args[1].value, srcLoc)};
       return RValue(commonType, builder.CreateBinaryIntrinsic(
                                     llvm::Intrinsic::atan2, value0, value1));
-    }
-    if (name == "approx_equal") {
-      if (!(args.size() == 3 && //
-            args[0].value.type->is_vectorized() &&
-            args[1].value.type->is_vectorized() &&
-            args[2].value.type->is_vectorized()))
-        srcLoc.throw_error(
-            "intrinsic 'approx_equal' expects 3 vectorized arguments");
-      return emit_op(
-          BINOP_CMP_LT,
-          emit_intrinsic("abs",
-                         emit_op(BINOP_SUB, //
-                                 args[0].value, args[1].value, srcLoc),
-                         srcLoc),
-          args[2].value, srcLoc);
     }
     break;
   }

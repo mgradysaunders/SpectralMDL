@@ -1,6 +1,7 @@
 #smdl
 
 import ::df::*;
+import ::math::*;
 
 @(pure) auto run_low_discrepancy_tests(auto xi) {
   auto xi_av(xi);
@@ -8,7 +9,7 @@ import ::df::*;
     xi_av += df::monte_carlo::next_low_discrepancy(&xi);
   }
   xi_av /= 5000;
-  #assert(#all(#approx_equal(xi_av, #typeof(xi)(0.5), 0.001)));
+  #assert(#all(xi_av ~== [1e-3] 0.5));
 }
 
 unit_test "Low discrepancy 2D" {
@@ -30,7 +31,22 @@ unit_test "Cosine-weighted hemisphere sample" {
     wi_av += df::monte_carlo::cosine_hemisphere_sample(xi);
   }
   wi_av /= 5000;
-  #assert(#all(#approx_equal(wi_av, float3(0.0, 0.0, 0.666), 0.001)));
+  #assert(#all(wi_av ~== [1e-3] float3(0.0, 0.0, 0.666)));
+}
+
+unit_test "Erf inverse" {
+  #assert(df::monte_carlo::erf_inverse(#erf(-1.1d)) ~== [1e-5d] -1.1d);
+  #assert(df::monte_carlo::erf_inverse(#erf(-0.3d)) ~== [1e-5d] -0.3d);
+  #assert(df::monte_carlo::erf_inverse(#erf(+1.2d)) ~== [1e-5d] +1.2d);
+  #assert(df::monte_carlo::erf_inverse(#erf(+2.7d)) ~== [1e-5d] +2.7d);
+}
+
+unit_test "Half vector (reflection)" {
+  const auto wo = math::normalize(float3(-0.4, 1.2, 1.6));
+  const auto wi = math::normalize(float3(+0.1, -0.7, 0.4));
+  const auto wm = math::normalize(df::specular::reflection_half_vector(wo, wi));
+  #assert(#all(df::specular::reflect(wo, wm) ~== [1e-5] wi));
+  #assert(#all(df::specular::reflect(wi, wm) ~== [1e-5] wo));
 }
 
 // TODO Verify microfacet::smith_slope_pdf is normalized for microfacet::distribution_ggx

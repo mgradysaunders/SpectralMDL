@@ -106,8 +106,8 @@ private:
 
   [[nodiscard]] auto parse_parameter() -> std::optional<AST::Parameter>;
 
-  [[nodiscard]] auto
-  parse_parameter_list() -> std::optional<AST::ParameterList>;
+  [[nodiscard]] auto parse_parameter_list()
+      -> std::optional<AST::ParameterList>;
 
   [[nodiscard]] auto parse_argument() -> std::optional<AST::Argument>;
 
@@ -159,11 +159,11 @@ private:
 
   [[nodiscard]] auto parse_literal_expression() -> BumpPtr<AST::Expr>;
 
-  [[nodiscard]] auto
-  parse_literal_bool_expression() -> BumpPtr<AST::LiteralBool>;
+  [[nodiscard]] auto parse_literal_bool_expression()
+      -> BumpPtr<AST::LiteralBool>;
 
-  [[nodiscard]] auto
-  parse_literal_string_expression() -> BumpPtr<AST::LiteralString>;
+  [[nodiscard]] auto parse_literal_string_expression()
+      -> BumpPtr<AST::LiteralString>;
 
   [[nodiscard]] auto parse_literal_number_expression() -> BumpPtr<AST::Expr>;
 
@@ -179,13 +179,13 @@ private:
     AST::BinaryOp op{};
   };
 
-  [[nodiscard]] auto
-  parse_binary_op(Span<AST::BinaryOp> ops) -> std::optional<ParsedBinaryOp>;
+  [[nodiscard]] auto parse_binary_op(Span<AST::BinaryOp> ops)
+      -> std::optional<ParsedBinaryOp>;
 
   template <typename Func>
-  [[nodiscard]] auto
-  parse_binary_left_associative(Span<AST::BinaryOp> ops,
-                                const Func &parseInner) -> BumpPtr<AST::Expr> {
+  [[nodiscard]] auto parse_binary_left_associative(Span<AST::BinaryOp> ops,
+                                                   const Func &parseInner)
+      -> BumpPtr<AST::Expr> {
     auto exprLhs{parseInner()};
     if (!exprLhs) {
       return nullptr;
@@ -198,6 +198,28 @@ private:
         break;
       }
       skip();
+
+      // If parsing an approximate comparison operator `==~` or `!=~`, then
+      // also parse the epsilon in `[ ... ]` after the operator and before
+      // the right-hand side expression. This is extended syntax!
+      if (op->op == BINOP_APPROX_CMP_EQ || //
+          op->op == BINOP_APPROX_CMP_NE) {
+        auto srcBrackL{next_delimiter("[")};
+        auto exprEps{parse_unary_expression()};
+        auto srcBrackR{next_delimiter("]")};
+        if (!srcBrackL || !exprEps || !srcBrackR)
+          srcLoc0.throw_error("expected '[EPSILON]' after ", quoted(op->srcOp));
+        auto exprRhs{parseInner()};
+        if (!exprRhs)
+          srcLoc0.throw_error("expected '[EPSILON] EXPRESSION' after ",
+                              quoted(op->srcOp));
+        accept();
+        exprLhs = allocate<AST::Binary>(
+            srcLoc0, std::in_place, std::move(exprLhs), op->srcOp, op->op,
+            *srcBrackL, std::move(exprEps), *srcBrackR, std::move(exprRhs));
+        continue;
+      }
+
       auto exprRhs{parseInner()};
       if (!exprRhs) {
         reject();
@@ -213,9 +235,9 @@ private:
   }
 
   template <typename Func>
-  [[nodiscard]] auto
-  parse_binary_right_associative(Span<AST::BinaryOp> ops,
-                                 const Func &parseInner) -> BumpPtr<AST::Expr> {
+  [[nodiscard]] auto parse_binary_right_associative(Span<AST::BinaryOp> ops,
+                                                    const Func &parseInner)
+      -> BumpPtr<AST::Expr> {
     auto exprLhs{parseInner()};
     if (!exprLhs)
       return nullptr;
@@ -260,18 +282,18 @@ private:
 
   [[nodiscard]] auto parse_struct_type_declaration() -> BumpPtr<AST::Struct>;
 
-  [[nodiscard]] auto
-  parse_struct_field_declarator() -> std::optional<AST::Struct::Field>;
+  [[nodiscard]] auto parse_struct_field_declarator()
+      -> std::optional<AST::Struct::Field>;
 
   [[nodiscard]] auto parse_enum_type_declaration() -> BumpPtr<AST::Enum>;
 
-  [[nodiscard]] auto
-  parse_enum_value_declarator() -> std::optional<AST::Enum::Declarator>;
+  [[nodiscard]] auto parse_enum_value_declarator()
+      -> std::optional<AST::Enum::Declarator>;
 
   [[nodiscard]] auto parse_variable_declaration() -> BumpPtr<AST::Variable>;
 
-  [[nodiscard]] auto
-  parse_variable_declarator() -> std::optional<AST::Variable::Declarator>;
+  [[nodiscard]] auto parse_variable_declarator()
+      -> std::optional<AST::Variable::Declarator>;
 
   [[nodiscard]] auto parse_function_declaration_attributes()
       -> std::optional<AST::Function::Attributes>;
