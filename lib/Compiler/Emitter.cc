@@ -1,6 +1,10 @@
 // vim:foldmethod=marker:foldlevel=0:fmr=--{,--}
 #include "Emitter.h"
 
+#include "llvm/Support/Format.h"
+#include "llvm/Support/Parallel.h"
+#include <atomic>
+
 #include "filesystem.h"
 
 #if SMDL_HAS_PTEX
@@ -1248,6 +1252,65 @@ SMDL_EXPORT void smdl_ptex_evaluate(const void *state, const void *tex,
 #endif // #if SMDL_HAS_PTEX
 }
 
+// TODO This is a specific solution to a specific problem of calculating
+// tabulated albedos conveniently and efficiently. There might be a more
+// general way of addressing this in the future.
+SMDL_EXPORT void smdl_tabulate_albedo(const void *state, const char *name,
+                                      int num_cos_theta, int num_roughness,
+                                      const void *func) {
+  SMDL_SANITY_CHECK(num_cos_theta > 1);
+  SMDL_SANITY_CHECK(num_roughness > 1);
+  SMDL_SANITY_CHECK(func);
+  auto numCalculationsTodo{num_cos_theta * num_roughness};
+  auto numCalculationsDone{std::atomic_int(0)};
+  auto directionalAlbedo{std::vector<float>(size_t(numCalculationsTodo), 0.0f)};
+  llvm::parallelFor(0, num_cos_theta, [&](size_t i) {
+    float cos_theta{i / float(num_cos_theta - 1)};
+    for (int j = 0; j < num_roughness; j++) {
+      float roughness{j / float(num_roughness - 1)};
+      directionalAlbedo[int(i) * num_roughness + j] =
+          reinterpret_cast<float (*)(const void *, float, float)>(
+              const_cast<void *>(func))(state, cos_theta, roughness);
+      llvm::errs() << llvm::format("\rTabulating '%s': %2.1f%%", name,
+                                   float(double(++numCalculationsDone) * 100.0 /
+                                         double(numCalculationsTodo)));
+    }
+  });
+  llvm::errs() << '\n';
+  std::error_code ec{};
+  auto outputFileName{std::string(name) + ".inl"};
+  auto outputFile{llvm::raw_fd_stream{outputFileName, ec}};
+  outputFile << llvm::format(
+      "static const std::array<float, %d * %d> %s_directional_albedo = {\n",
+      num_cos_theta, num_roughness, name);
+  for (int i = 0; i < num_cos_theta; i++) {
+    for (int j = 0; j < num_roughness; j++) {
+      outputFile << llvm::format("%1.7ef, ",
+                                 directionalAlbedo[i * num_roughness + j]);
+    }
+    outputFile << '\n';
+  }
+  outputFile << "};\n";
+  outputFile << llvm::format(
+      "static const std::array<float, %d> %s_average_albedo = {\n",
+      num_roughness, name);
+  for (int j = 0; j < num_roughness; j++) {
+    double numer = 0.0;
+    double denom = 0.0;
+    for (int i = 0; i < num_cos_theta; i++) {
+      float cos_theta{i / float(num_cos_theta - 1)};
+      numer += cos_theta * directionalAlbedo[i * num_roughness + j];
+      denom += cos_theta;
+    }
+    outputFile << llvm::format("%1.7ef, ", numer / denom);
+  }
+  outputFile << "};\n";
+  outputFile << llvm::format(
+      "static const AlbedoLUT %s = {%d, %d, %s_directional_albedo.data(), "
+      "%s_average_albedo.data()};\n",
+      name, num_cos_theta, num_roughness, name, name);
+}
+
 } // extern "C"
 
 //--{ emit_intrinsic
@@ -1365,6 +1428,35 @@ Value Emitter::emit_intrinsic(std::string_view name, const ArgumentList &args,
       auto value1{invoke(commonType, args[1].value, srcLoc)};
       return RValue(commonType, builder.CreateBinaryIntrinsic(
                                     llvm::Intrinsic::atan2, value0, value1));
+    }
+    if (name == "albedo_lut") {
+      if (!(args.size() == 1 && args[0].value.is_comptime_string()))
+        srcLoc.throw_error(
+            "intrinsic 'albedo_lut' expects 1 compile-time string argument");
+      auto lutName{args[0].value.get_comptime_string()};
+      auto lutType{context.get_keyword_value("$albedo_lut")
+                       .get_comptime_meta_type(context, srcLoc)};
+      auto lut{context.get_builtin_albedo_lut(lutName)};
+      if (!lut)
+        srcLoc.throw_error(
+            "intrinsic 'albedo_lut' passed invalid name ", quoted(lutName),
+            " that does not identify any known look-up table at compile time");
+      auto args{ArgumentList{}};
+      args.push_back(Argument{"num_cos_theta",
+                              context.get_comptime_int(lut->num_cos_theta)});
+      args.push_back(Argument{"num_roughness",
+                              context.get_comptime_int(lut->num_roughness)});
+      args.push_back(
+          Argument{"directional_albedo",
+                   context.get_comptime_ptr(
+                       context.get_pointer_type(context.get_float_type()),
+                       lut->directional_albedo)});
+      args.push_back(
+          Argument{"average_albedo",
+                   context.get_comptime_ptr(
+                       context.get_pointer_type(context.get_float_type()),
+                       lut->average_albedo)});
+      return invoke(lutType, args, srcLoc);
     }
     break;
   }
@@ -1556,13 +1648,15 @@ Value Emitter::emit_intrinsic(std::string_view name, const ArgumentList &args,
           {value.llvmValue});
       return Value();
     }
-    if (name == "ofile_print") {
+    if (name == "ofile_print" || name == "ofile_println") {
       if (args.size() < 2)
         srcLoc.throw_error("intrinsic 'ofile_print' expects 1 file pointer "
                            "argument and 1 or more printable arguments");
       auto os{to_rvalue(args[0].value)};
       for (size_t i = 1; i < args.size(); i++)
         emit_print(os, args[i].value, srcLoc);
+      if (name == "ofile_println")
+        emit_print(os, context.get_comptime_string("\n"), srcLoc);
       return {};
     }
     break;
@@ -1598,11 +1692,13 @@ Value Emitter::emit_intrinsic(std::string_view name, const ArgumentList &args,
                                           llvm::Intrinsic::pow, value0,
                                           invoke(resultType, value1, srcLoc)));
     }
-    if (name == "print") {
+    if (name == "print" || name == "println") {
       auto os{context.get_comptime_ptr(context.get_void_pointer_type(),
                                        &llvm::errs())};
       for (auto &arg : args)
         emit_print(os, arg.value, srcLoc);
+      if (name == "println")
+        emit_print(os, context.get_comptime_string("\n"), srcLoc);
       return Value();
     }
     if (name == "prod") {
@@ -1699,6 +1795,47 @@ Value Emitter::emit_intrinsic(std::string_view name, const ArgumentList &args,
     break;
   }
   case 't': {
+    // TODO This is a specific solution to a specific problem of calculating
+    // tabulated albedos conveniently and efficiently. There might be a more
+    // general way of addressing this in the future.
+    if (name == "tabulate_albedo") {
+      if (!(args.size() == 4 &&
+            args[0].value.type == context.get_string_type() &&
+            args[1].value.type == context.get_int_type() &&
+            args[2].value.type == context.get_int_type() &&
+            args[3].value.is_comptime_meta_type(context)))
+        srcLoc.throw_error("intrinsic 'tabulate_albedo' expects 1 compile-time "
+                           "string argument, 2 compile-time integer arguments, "
+                           "and 1 function argument");
+      auto funcType{llvm::dyn_cast<FunctionType>(
+          args[3].value.get_comptime_meta_type(context, srcLoc))};
+      if (!(funcType &&                //
+            !funcType->is_pure() &&    //
+            !funcType->is_macro() &&   //
+            !funcType->is_variant() && //
+            funcType->has_no_overloads() &&
+            funcType->returnType == context.get_float_type() &&
+            funcType->params.size() == 2 &&
+            funcType->params[0].type == context.get_float_type() &&
+            funcType->params[1].type == context.get_float_type())) {
+        srcLoc.throw_error("intrinsic 'tabulate_albedo' function argument must "
+                           "have signature 'float(float, float)'");
+      }
+      if (!state)
+        srcLoc.throw_error("intrinsic 'tabulate_albedo' cannot be called in "
+                           "'@(pure)' context");
+      auto &funcInst{funcType->instantiate(
+          *this, {context.get_float_type(), context.get_float_type()})};
+      auto callee{context.get_builtin_callee("smdl_tabulate_albedo",
+                                             &smdl_tabulate_albedo)};
+      auto callInst{
+          builder.CreateCall(callee, {state.llvmValue,                    //
+                                      to_rvalue(args[0].value).llvmValue, //
+                                      to_rvalue(args[1].value).llvmValue, //
+                                      to_rvalue(args[2].value).llvmValue, //
+                                      funcInst.llvmFunc})};
+      return RValue(context.get_void_type(), callInst);
+    }
     if (name == "typeof") {
       return context.get_comptime_meta_type(expectOne().type);
     }

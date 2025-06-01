@@ -780,6 +780,9 @@ public:
   /// Is function variant?
   [[nodiscard]] bool is_variant() const { return decl.is_variant(); }
 
+  /// Has no overloads?
+  [[nodiscard]] bool has_no_overloads() const { return !prevOverload && !nextOverload; }
+
   /// Resolve overload.
   [[nodiscard]] FunctionType *resolve_overload(Emitter &emitter,
                                                const ArgumentList &args,

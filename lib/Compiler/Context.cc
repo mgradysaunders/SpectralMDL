@@ -112,6 +112,10 @@ Module *Context::get_builtin_module(llvm::StringRef name) {
   return mod.get();
 }
 
+const AlbedoLUT *Context::get_builtin_albedo_lut(llvm::StringRef name) {
+  return builtin::get_albedo_lut(name);
+}
+
 Type *Context::get_arithmetic_type(Scalar scalar, Extent extent) {
   uint64_t key{};
   key |= uint64_t(scalar.intent) << 48;

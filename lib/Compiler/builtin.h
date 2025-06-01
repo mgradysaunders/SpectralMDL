@@ -1,5 +1,6 @@
 #pragma once
 
+#include <array>
 #include <string_view>
 
 namespace smdl::builtin {
@@ -30,9 +31,9 @@ const static auto RGB_TO_COLOR_CURVES=auto[](auto[](1.0618958,1.0615020,1.061433
   for(int i=0;i<$WAVELENGTH_BASE_MAX;i++){
     auto t(w[i]);
     if((0.0<=t)&(t<=RGB_TO_COLOR_NUM_WAVELENGTHS)){
-      int t0(#min(int(t),RGB_TO_COLOR_NUM_WAVELENGTHS-2));
-      t=#min(t-t0,1.0);
-      c[i]=#sum(float2(1-t,t)*(coeff_w*float2(&RGB_TO_COLOR_CURVES[0][t0])+coeff_cmy*float2(&RGB_TO_COLOR_CURVES[k0+1][t0])+coeff_rgb*float2(&RGB_TO_COLOR_CURVES[k2+4][t0])));
+      int j(#min(int(t),RGB_TO_COLOR_NUM_WAVELENGTHS-2));
+      t=#min(t-j,1.0);
+      c[i]=#sum(float2(1-t,t)*(coeff_w*float2(&RGB_TO_COLOR_CURVES[0][j])+coeff_cmy*float2(&RGB_TO_COLOR_CURVES[k0+1][j])+coeff_rgb*float2(&RGB_TO_COLOR_CURVES[k2+4][j])));
     }
   }
   return #max(c*0.94,0.0);
@@ -133,12 +134,42 @@ export struct $material_instance{
   const &float cutout_opacity=&mat.geometry.cutout_opacity;
   const &float3 normal=&mat.geometry.normal;
   const &color ior=&mat.ior;
-  const &color absorption_coefficient=($(#typeof(mat.volume.absorption_coefficient)==void)?void():&mat.volume.absorption_coefficient);
-  const &color scattering_coefficient=($(#typeof(mat.volume.scattering_coefficient)==void)?void():&mat.volume.scattering_coefficient);
+  const &color absorption_coefficient=($(#typeof(mat.volume.absorption_coefficient)==void)?null:&mat.volume.absorption_coefficient);
+  const &color scattering_coefficient=($(#typeof(mat.volume.scattering_coefficient)==void)?null:&mat.volume.scattering_coefficient);
   const int wavelength_base_max=$WAVELENGTH_BASE_MAX;
   const int flags=(mat.thin_walled?THIN_WALLED:0)|(#typeof(mat.surface)!=#typeof(material_surface())?HAS_SURFACE:0)|(#typeof(mat.backface)!=#typeof(material_surface())?HAS_BACKFACE:0)|(#typeof(mat.volume)!=#typeof(material_volume())?HAS_VOLUME:0)|(#typeof(mat.hair)!=#typeof(hair_bsdf())?HAS_HAIR:0);
   const float3x3 tangent_space=float3x3($state.tangent_to_object_matrix[0].xyz,$state.tangent_to_object_matrix[1].xyz,$state.tangent_to_object_matrix[2].xyz,);
 };
+export struct $albedo_lut{
+  const int num_cos_theta=0;
+  const int num_roughness=0;
+  const &float directional_albedo=null;
+  const &float average_albedo=null;
+};
+export @(pure macro)float $energy_compensation(const string lut_name,const float cos_thetao,const float cos_thetai,const float roughness){
+  const $albedo_lut lut(#albedo_lut(lut_name));
+  float t((lut.num_roughness-1)*#max(0,#min(roughness,1)));
+  const int j(#max(0,#min(int(#floor(t)),lut.num_roughness-2)));
+  t=t-j;
+  const float Ewo=return_from{
+    float s((lut.num_cos_theta-1)*#max(0,#min(#abs(cos_thetao),1)));
+    const int i(#max(0,#min(int(#floor(s)),lut.num_cos_theta-2)));
+    const &float ptr0(&lut.directional_albedo[lut.num_roughness*(i+0)+j]);
+    const &float ptr1(&lut.directional_albedo[lut.num_roughness*(i+1)+j]);
+    s=s-i;
+    return #min(1,(1-s)*((1-t)*ptr0[0]+t*ptr0[1])+s*((1-t)*ptr1[0]+t*ptr1[1]));
+  };
+  const float Ewi=return_from{
+    float s((lut.num_cos_theta-1)*#max(0,#min(#abs(cos_thetai),1)));
+    const int i(#max(0,#min(int(#floor(s)),lut.num_cos_theta-2)));
+    const &float ptr0(&lut.directional_albedo[lut.num_roughness*(i+0)+j]);
+    const &float ptr1(&lut.directional_albedo[lut.num_roughness*(i+1)+j]);
+    s=s-i;
+    return #min(1,(1-s)*((1-t)*ptr0[0]+t*ptr0[1])+s*((1-t)*ptr1[0]+t*ptr1[1]));
+  };
+  const float Eav=#min(1,(1-t)*lut.average_albedo[j]+t*lut.average_albedo[j+1]);
+  return (1-Ewo)*(1-Ewi)/(1-Eav+1e-7f)*#abs(cos_thetai)/$PI;
+}
 )*";
 
 static const char *debug = R"*(#smdl
@@ -338,6 +369,7 @@ export struct diffuse_reflection_bsdf:bsdf{
   $(color|float) tint=1.0;
   float roughness=0.0;
   string handle="";
+  $(?(color|float)) multiscatter_tint=null;
   static const scatter_mode mode=scatter_reflect;
 };
 @(pure)auto scatter_evaluate(inline const &diffuse_reflection_bsdf this,inline const &scatter_evaluate_parameters params){
@@ -350,8 +382,15 @@ export struct diffuse_reflection_bsdf:bsdf{
       const auto sigma2(2.0*roughness*roughness);
       const auto A(1.00-sigma2/(2.0*sigma2+0.66));
       const auto B(0.45*sigma2/(sigma2+0.09));
-      const auto fac(#max(#sum(wo.xy*wi.xy),0)/#max_value(cos_theta));
-      return scatter_evaluate_result(f: pdf[0]*(A+fac*B)*tint,pdf: pdf);
+      const auto fss(pdf[0]*(A+#max(#sum(wo.xy*wi.xy),0)/(#max_value(cos_theta)+EPSILON)*B));
+      const auto fms=return_from{
+        if$(multiscatter_tint<:void){
+          return 0.0;
+        } else {
+          return multiscatter_tint*$energy_compensation("diffuse_reflection_bsdf",wo.z,wi.z,roughness);
+        }
+      };
+      return scatter_evaluate_result(f: tint*(fss+fms),pdf: pdf);
     }
   } else {
     return scatter_evaluate_result(is_black: true);
@@ -425,11 +464,18 @@ export struct sheen_bsdf:bsdf{
       const auto alpha(lerp(0.1,1.0,roughness*roughness));
       const auto fit=lerp(auto(21.5473,3.82987,0.19823,-1.97760,-4.32054),auto(25.3245,3.32435,0.16801,-1.27393,-4.85967),(1-alpha)*(1-alpha),);
       const auto cos_thetah(normalize(wo+wi).z);
-      const auto sin_thetah(#sqrt(1-cos_thetah*cos_thetah+EPSILON));
+      const auto sin_thetah(#sqrt(1-cos_thetah*cos_thetah));
       const auto D(1/$TWO_PI*(2+1/alpha)*#pow(sin_thetah,1/alpha));
       const auto G(1/(1+sheen_lambda(fit,cos_thetao)+sheen_lambda(fit,cos_thetai)));
-    } in D*G/(4*cos_thetao+EPSILON);
-    return scatter_evaluate_result(f: tint*fss,pdf: pdf);
+    } in D*G/(4*cos_thetao);
+    const auto fms=return_from{
+      if$(multiscatter_tint<:void){
+        return 0.0;
+      } else {
+        return multiscatter_tint*$energy_compensation("sheen_bsdf",wo.z,wi.z,roughness);
+      }
+    };
+    return scatter_evaluate_result(f: tint*(fss+fms),pdf: pdf);
   } else {
     return scatter_evaluate_result(is_black: true);
   }
@@ -468,24 +514,9 @@ export struct ward_geisler_moroder_bsdf:bsdf{
       return scatter_evaluate_result(f: this.tint*fss,pdf: fss_pdf);
     } else {
       const auto fms_pdf(float2(cos_thetai,cos_thetao)/$PI);
-      const auto fms=let {
-        const auto r0(#sqrt(roughness.x*roughness.y));
-        const auto fit=return_from{
-          float3 fit(-1.1992005e+02,-1.4040313e+01,7.8306640e-01);
-          fit=fit*r0+float3(4.1985368e+02,4.6807753e+01,-1.6213743e+00);
-          fit=fit*r0+float3(-5.8448171e+02,-6.1370147e+01,-1.3797964e+00);
-          fit=fit*r0+float3(4.2351783e+02,4.1399258e+01,5.6539624e+00);
-          fit=fit*r0+float3(-1.6959530e+02,-1.4979874e+01,-3.8064856e+00);
-          fit=fit*r0+float3(3.7025769e+01,3.0665596e+00,-1.2666234e-01);
-          fit=fit*r0+float3(-3.4191809e+00,-2.9108604e-01,-1.8175253e-02);
-          fit=fit*r0+float3(1.6044891e-01,8.8001559e-03,1.4868175e-03);
-          fit=fit*r0+float3(-7.1467185e-04,1.8095055e-01,9.9998607e-01);
-          return fit;
-        };
-        const auto Ewo(#min(1-fit[1]*(t:=#pow(cos_thetao/fit[0],2.0/3.0))*#exp(1-t),0.999));
-        const auto Ewi(#min(1-fit[1]*(t:=#pow(cos_thetai/fit[0],2.0/3.0))*#exp(1-t),0.999));
-        const auto Eav(#min(fit[2],0.999));
-      } in (1-Ewo)*(1-Ewi)/(1-Eav)*cos_thetai/$PI;
+      const auto fms=return_from{
+        return 0.0;
+      };
       return scatter_evaluate_result(f: this.tint*(fss+this.multiscatter_tint*fms),pdf: lerp(fss_pdf,fms_pdf,MULTISCATTER_DIFFUSE_CHANCE));
     }
   } else {
@@ -676,11 +707,8 @@ struct microfacet_bsdf:bsdf{
       if$(this.multiscatter_tint<:void){
         return scatter_evaluate_result(f: this.tint*(reflect_chance*fss),pdf: reflect_chance*fss_pdf);
       } else {
-        const auto r0(this.roughness0);
-        const auto fms_pdf(#abs(wi.z)/$PI);
-        const auto fms=return_from{
-          return 0.0;
-        };
+        const auto fms_pdf(float2(#abs(wi.z),#abs(wo.z))/$PI);
+        const auto fms=$energy_compensation("simple_glossy_bsdf",wo.z,wi.z,this.roughness0);
         return scatter_evaluate_result(f: reflect_chance*(this.tint*(fss+this.multiscatter_tint*fms)),pdf: reflect_chance*lerp(fss_pdf,fms_pdf,MULTISCATTER_DIFFUSE_CHANCE),);
       }
     }
@@ -709,53 +737,12 @@ struct microfacet_bsdf:bsdf{
       if$(this.multiscatter_tint<:void){
         return scatter_evaluate_result(f: this.tint*(reflect_chance*fss),pdf: reflect_chance*fss_pdf);
       } else {
-        const auto r0(this.roughness0);
-        const auto fms_pdf(#abs(wi.z)/$PI);
+        const auto fms_pdf(float2(#abs(wi.z),#abs(wo.z))/$PI);
         const auto fms=return_from{
           if(this.distribution<:microfacet::distribution_ggx){
-            const auto fit=return_from{
-              auto fit(float3(0.0));
-              if(r0<0.06299){
-                fit=float3(29.2553519,0.3728114,0.1845677);
-              } else if(r0<0.1259843){
-                fit=float3(-6.2876897e+07,-4.9194766e+06,3.3173219e+06);
-                fit=fit*r0+float3(3.4025124e+07,2.4576227e+06,-1.6123845e+06);
-                fit=fit*r0+float3(-7.2367180e+06,-4.8558372e+05,3.0882525e+05);
-                fit=fit*r0+float3(7.5011789e+05,4.7293248e+04,-2.9071452e+04);
-                fit=fit*r0+float3(-3.7635419e+04,-2.2570320e+03,1.3407965e+03);
-                fit=fit*r0+float3(7.5899155e+02,4.2444028e+01,-2.4013229e+01);
-              } else if(r0<0.503970){
-                fit=float3(-4.2253228e+03,1.6913746e+02,-7.8179263e+00);
-                fit=fit*r0+float3(9.6952817e+03,-3.5406749e+02,1.1760316e+01);
-                fit=fit*r0+float3(-8.8256161e+03,2.7638671e+02,-5.2975185e+00);
-                fit=fit*r0+float3(4.0337334e+03,-9.8577485e+01,1.2001528e+00);
-                fit=fit*r0+float3(-9.5198727e+02,1.5754557e+01,-1.4087179e-01);
-                fit=fit*r0+float3(1.0006441e+02,-1.4926819e-01,1.1518670e-01);
-              } else {
-                fit=float3(-5.9786880e+01,-5.8887035e+01,4.1460911e+02);
-                fit=fit*r0+float3(2.2101716e+02,2.1996966e+02,-1.3466323e+03);
-                fit=fit*r0+float3(-3.3692861e+02,-3.1412912e+02,1.7465495e+03);
-                fit=fit*r0+float3(2.8006161e+02,2.1178043e+02,-1.1260412e+03);
-                fit=fit*r0+float3(-1.3115488e+02,-6.7437900e+01,3.6066098e+02);
-                fit=fit*r0+float3(2.8927807e+01,8.9207463e+00,-4.5752769e+01);
-              }
-              fit.z*=#pow(2.71828182459*fit.x*fit.y,1.0/fit.y);
-              return fit;
-            };
-            const auto Ewo(#min(#exp(-fit[2]*#abs(wo.z)*#exp(-fit[0]*#pow(#abs(wo.z),fit[1]))),0.999));
-            const auto Ewi(#min(#exp(-fit[2]*#abs(wi.z)*#exp(-fit[0]*#pow(#abs(wi.z),fit[1]))),0.999));
-            const auto Eav=return_from{
-              float fit=-0.40461439;
-              fit=fit*r0+2.33942628;
-              fit=fit*r0-3.15953698;
-              fit=fit*r0+0.69762445;
-              fit=fit*r0-0.06449884;
-              fit=fit*r0+1.00125673;
-              return #min(fit,0.999);
-            };
-            return (1-Ewo)*(1-Ewi)/(1-Eav)*#abs(wi.z)/$PI;
+            return $energy_compensation("microfacet_ggx_smith_bsdf",wo.z,wi.z,this.roughness0);
           } else {
-            return 0;
+            return $energy_compensation("microfacet_beckmann_smith_bsdf",wo.z,wi.z,this.roughness0);
           }
         };
         return scatter_evaluate_result(f: reflect_chance*(this.tint*(fss+this.multiscatter_tint*fms)),pdf: reflect_chance*lerp(fss_pdf,fms_pdf,MULTISCATTER_DIFFUSE_CHANCE),);
@@ -1332,6 +1319,15 @@ export @(macro)float lookup_float(texture_ptex tex,const int channel=0){
     return std;
   if (name == "tex")
     return tex;
+  return nullptr;
+}
+#include "builtin/albedo/diffuse_reflection_bsdf.inl"
+#include "builtin/albedo/sheen_bsdf.inl"
+[[nodiscard]] static const AlbedoLUT *get_albedo_lut(std::string_view name) {
+  if (name == "diffuse_reflection_bsdf")
+    return &diffuse_reflection_bsdf;
+  if (name == "sheen_bsdf")
+    return &sheen_bsdf;
   return nullptr;
 }
 

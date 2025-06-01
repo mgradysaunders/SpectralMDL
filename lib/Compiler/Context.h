@@ -29,6 +29,9 @@ public:
   /// Get builtin module by name.
   Module *get_builtin_module(llvm::StringRef name);
 
+  /// Get builtin albedo LUT by name.
+  [[nodiscard]] const AlbedoLUT *get_builtin_albedo_lut(llvm::StringRef name);
+
   /// Get builtin callee.
   template <typename T, typename... U>
   [[nodiscard]] llvm::FunctionCallee get_builtin_callee(const char *name) {

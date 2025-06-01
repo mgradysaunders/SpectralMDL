@@ -1025,6 +1025,17 @@ public:
   void finalize_for_runtime_conventions();
 };
 
+class SMDL_EXPORT AlbedoLUT final {
+public:
+  int num_cos_theta = 0;
+
+  int num_roughness = 0;
+
+  const float *directional_albedo = nullptr;
+
+  const float *average_albedo = nullptr;
+};
+
 /// \}
 
 /// \addtogroup Support
@@ -1067,6 +1078,11 @@ private:
   std::tuple<Ts...> backupValues;
 };
 
+/// \}
+
+/// \addtogroup Main
+/// \{
+
 /// The formatter options.
 class SMDL_EXPORT FormatOptions final {
 public:
@@ -1082,11 +1098,6 @@ public:
   /// Want compact?
   bool compact{};
 };
-
-/// \}
-
-/// \addtogroup Main
-/// \{
 
 /// Expand third macro in variadic arguments, used to implement
 /// `SMDL_SANITY_CHECK`.

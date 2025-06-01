@@ -2,11 +2,11 @@
 #include "smdl/Logger.h"
 
 #include <chrono>
-#include <future>
 #include <iostream>
 
 #include "llvm/ExecutionEngine/Orc/LLJIT.h"
 #include "llvm/ExecutionEngine/Orc/ThreadSafeModule.h"
+#include "llvm/Support/Parallel.h"
 
 #include "filesystem.h"
 
@@ -120,17 +120,11 @@ std::optional<Error> Compiler::compile(OptLevel optLevel) {
   if (!images.empty()) {
     SMDL_LOG_INFO("Loading images ...");
     auto now{std::chrono::steady_clock::now()};
-    std::vector<std::future<void>> imageLoads{};
-    imageLoads.reserve(images.size());
-    for (auto &fileNameAndImage : images)
-      imageLoads.push_back(std::async(std::launch::async, [&]() {
-        auto &[fileName, image] = fileNameAndImage;
-        SMDL_LOG_DEBUG("Loading image ", quoted(fs_abbreviate(fileName)),
-                       " ...");
-        image->finish_load();
-      }));
-    for (auto &imageLoad : imageLoads)
-      imageLoad.wait();
+    llvm::parallelFor(0, images.size(), [&](size_t i) {
+      auto &[fileName, image] = *std::next(images.begin(), i);
+      SMDL_LOG_DEBUG("Loading image ", quoted(fs_abbreviate(fileName)), " ...");
+      image->finish_load();
+    });
     auto duration{std::chrono::duration_cast<std::chrono::microseconds>(
                       std::chrono::steady_clock::now() - now)
                       .count()};
