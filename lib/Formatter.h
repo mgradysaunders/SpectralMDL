@@ -181,6 +181,10 @@ private:
 
   void write(const AST::Enum &decl);
 
+  void write(const AST::Exec &decl) {
+    write(decl.srcKwExec, DELIM_UNNECESSARY_SPACE, decl.stmt);
+  }
+
   void write(const AST::Function &decl);
 
   void write(const AST::Import &decl) {

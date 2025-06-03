@@ -301,6 +301,19 @@ public:
   }
 };
 
+/// An `exec` declaration. (This is an extension!)
+class SMDL_EXPORT Exec final : public DeclSubclass<DeclKind::Exec> {
+public:
+  explicit Exec(std::string_view srcKwExec, BumpPtr<Stmt> stmt)
+      : srcKwExec(srcKwExec), stmt(std::move(stmt)) {}
+
+  /// The keyword `exec`.
+  std::string_view srcKwExec{};
+
+  /// The statement, must be a compound statement.
+  BumpPtr<Stmt> stmt{};
+};
+
 /// A function declaration.
 class SMDL_EXPORT Function final : public DeclSubclass<DeclKind::Function> {
 public:
@@ -432,7 +445,7 @@ public:
   }
 };
 
-/// A `namespace` declaration.
+/// A `namespace` declaration. (This is an extension!)
 class SMDL_EXPORT Namespace final : public DeclSubclass<DeclKind::Namespace> {
 public:
   explicit Namespace(std::string_view srcKwNamespace,
@@ -559,7 +572,7 @@ public:
   }
 };
 
-/// A `tag` declaration.
+/// A `tag` declaration. (This is an extension!)
 class SMDL_EXPORT Tag final : public DeclSubclass<DeclKind::Tag> {
 public:
   explicit Tag(std::string_view srcKwTag, Name name,
@@ -597,7 +610,7 @@ public:
   std::string_view srcSemicolon{};
 };
 
-/// A `unit_test` declaration.
+/// A `unit_test` declaration. (This is an extension!)
 class SMDL_EXPORT UnitTest final : public DeclSubclass<DeclKind::UnitTest> {
 public:
   explicit UnitTest(std::string_view srcKwUnitTest, BumpPtr<LiteralString> name,

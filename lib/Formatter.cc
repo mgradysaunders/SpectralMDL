@@ -194,9 +194,10 @@ void Formatter::write(const AST::File &file) {
 
 //--{ Write: Decls
 void Formatter::write(const AST::Decl &decl) {
-  write_type_switch<AST::Enum, AST::Function, AST::Import, AST::Namespace,
-                    AST::Struct, AST::Tag, AST::Typedef, AST::UnitTest,
-                    AST::UsingAlias, AST::UsingImport, AST::Variable>(decl);
+  write_type_switch<AST::Enum, AST::Exec, AST::Function, AST::Import,
+                    AST::Namespace, AST::Struct, AST::Tag, AST::Typedef,
+                    AST::UnitTest, AST::UsingAlias, AST::UsingImport,
+                    AST::Variable>(decl);
 }
 
 void Formatter::write(const AST::Enum &decl) {
@@ -271,7 +272,8 @@ void Formatter::write(const AST::Struct &decl) {
     write(field.annotations, field.srcSemicolon, DELIM_NEWLINE);
   }
   if (decl.stmtFinalize) {
-    write(DELIM_NEWLINE, decl.srcKwFinalize, DELIM_SPACE, decl.stmtFinalize, DELIM_NEWLINE);
+    write(DELIM_NEWLINE, decl.srcKwFinalize, DELIM_SPACE, decl.stmtFinalize,
+          DELIM_NEWLINE);
   }
   write(POP_INDENT, decl.srcBraceR, decl.srcSemicolon);
 }

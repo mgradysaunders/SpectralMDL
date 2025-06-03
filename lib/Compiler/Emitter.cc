@@ -286,9 +286,19 @@ Value Emitter::emit(AST::Node &node) {
 //--{ Emit: Decl
 Value Emitter::emit(AST::Decl &decl) {
   return emit_type_switch< //
-      AST::Enum, AST::Function, AST::Import, AST::Namespace, AST::Struct,
-      AST::Tag, AST::Typedef, AST::UnitTest, AST::UsingAlias, AST::UsingImport,
-      AST::Variable>(decl);
+      AST::Enum, AST::Exec, AST::Function, AST::Import, AST::Namespace,
+      AST::Struct, AST::Tag, AST::Typedef, AST::UnitTest, AST::UsingAlias,
+      AST::UsingImport, AST::Variable>(decl);
+}
+
+Value Emitter::emit(AST::Exec &decl) {
+  auto returnType{context.get_void_type()};
+  auto llvmFunc{create_function( //
+      ".exec", /*isPure=*/false, returnType, ParameterList(), decl.srcLoc,
+      [&] { emit(decl.stmt); })};
+  llvmFunc->setLinkage(llvm::Function::ExternalLinkage);
+  context.compiler.jitExecs.emplace_back(llvmFunc->getName().str());
+  return Value();
 }
 
 Value Emitter::emit(AST::UnitTest &decl) {
@@ -1255,9 +1265,8 @@ SMDL_EXPORT void smdl_ptex_evaluate(const void *state, const void *tex,
 // TODO This is a specific solution to a specific problem of calculating
 // tabulated albedos conveniently and efficiently. There might be a more
 // general way of addressing this in the future.
-SMDL_EXPORT void smdl_tabulate_albedo(const void *state, const char *name,
-                                      int num_cos_theta, int num_roughness,
-                                      const void *func) {
+SMDL_EXPORT void smdl_tabulate_albedo(const char *name, int num_cos_theta,
+                                      int num_roughness, const void *func) {
   SMDL_SANITY_CHECK(num_cos_theta > 1);
   SMDL_SANITY_CHECK(num_roughness > 1);
   SMDL_SANITY_CHECK(func);
@@ -1269,8 +1278,8 @@ SMDL_EXPORT void smdl_tabulate_albedo(const void *state, const char *name,
     for (int j = 0; j < num_roughness; j++) {
       float roughness{j / float(num_roughness - 1)};
       directionalAlbedo[int(i) * num_roughness + j] =
-          reinterpret_cast<float (*)(const void *, float, float)>(
-              const_cast<void *>(func))(state, cos_theta, roughness);
+          reinterpret_cast<float (*)(float, float)>(const_cast<void *>(func))(
+              cos_theta, roughness);
       llvm::errs() << llvm::format("\rTabulating '%s': %2.1f%%", name,
                                    float(double(++numCalculationsDone) * 100.0 /
                                          double(numCalculationsTodo)));
@@ -1824,7 +1833,7 @@ Value Emitter::emit_intrinsic(std::string_view name, const ArgumentList &args,
       auto funcType{llvm::dyn_cast<FunctionType>(
           args[3].value.get_comptime_meta_type(context, srcLoc))};
       if (!(funcType &&                //
-            !funcType->is_pure() &&    //
+            funcType->is_pure() &&     //
             !funcType->is_macro() &&   //
             !funcType->is_variant() && //
             funcType->has_no_overloads() &&
@@ -1833,18 +1842,14 @@ Value Emitter::emit_intrinsic(std::string_view name, const ArgumentList &args,
             funcType->params[0].type == context.get_float_type() &&
             funcType->params[1].type == context.get_float_type())) {
         srcLoc.throw_error("intrinsic 'tabulate_albedo' function argument must "
-                           "have signature 'float(float, float)'");
+                           "have signature '@(pure) float(float, float)'");
       }
-      if (!state)
-        srcLoc.throw_error("intrinsic 'tabulate_albedo' cannot be called in "
-                           "'@(pure)' context");
       auto &funcInst{funcType->instantiate(
           *this, {context.get_float_type(), context.get_float_type()})};
       auto callee{context.get_builtin_callee("smdl_tabulate_albedo",
                                              &smdl_tabulate_albedo)};
       auto callInst{
-          builder.CreateCall(callee, {state.llvmValue,                    //
-                                      to_rvalue(args[0].value).llvmValue, //
+          builder.CreateCall(callee, {to_rvalue(args[0].value).llvmValue, //
                                       to_rvalue(args[1].value).llvmValue, //
                                       to_rvalue(args[2].value).llvmValue, //
                                       funcInst.llvmFunc})};

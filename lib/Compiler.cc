@@ -249,11 +249,17 @@ std::optional<Error> Compiler::jit_compile() noexcept {
     for (auto &jitUnitTest : jitUnitTests) {
       jit_lookup_or_throw(jitUnitTest.test);
     }
+    for (auto &jitExec : jitExecs) {
+      jit_lookup_or_throw(jitExec);
+    }
     // Deallocate everything we no longer need!
     for (auto &mod : modules) {
       mod->reset();
     }
     allocator.reset();
+    for (auto &jitExec : jitExecs) {
+      jitExec();
+    }
   });
 }
 

@@ -1160,6 +1160,8 @@ auto Parser::parse_global_declaration() -> BumpPtr<AST::Decl> {
     if (auto decl{parse_variable_declaration()})
       return decl;
     if (isSmdl) {
+      if (auto decl{parse_exec_declaration()})
+        return decl;
       if (auto decl{parse_unit_test_declaration()})
         return decl;
       if (auto decl{parse_namespace_declaration()})
@@ -1539,6 +1541,19 @@ auto Parser::parse_tag_declaration() -> BumpPtr<AST::Tag> {
     srcLoc0.throw_error("expected ';' after 'tag ...'");
   return allocate<AST::Tag>(srcLoc0, std::in_place, *srcKwTag, *name,
                             *srcSemicolon);
+}
+
+auto Parser::parse_exec_declaration() -> BumpPtr<AST::Exec> {
+  skip();
+  auto srcLoc0{srcLoc};
+  auto srcKwExec{next_keyword("exec")};
+  if (!srcKwExec)
+    return nullptr;
+  auto stmt{parse_compound_statement()};
+  if (!stmt)
+    srcLoc0.throw_error("expected compound statement after 'exec'");
+  return allocate<AST::Exec>(srcLoc0, std::in_place, *srcKwExec,
+                             std::move(stmt));
 }
 
 auto Parser::parse_unit_test_declaration() -> BumpPtr<AST::UnitTest> {

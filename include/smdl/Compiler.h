@@ -230,6 +230,9 @@ private:
   /// The JIT-compiled unit tests.
   std::vector<JIT::UnitTest> jitUnitTests{};
 
+  /// The JIT-compiled exec blocks.
+  std::vector<JIT::Function<void()>> jitExecs{};
+
   friend class Context;
 
   friend class Emitter;

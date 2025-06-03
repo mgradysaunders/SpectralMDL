@@ -66,6 +66,7 @@ public:
 
 enum class DeclKind : uint8_t {
   Enum,
+  Exec,
   Function,
   Import,
   Namespace,

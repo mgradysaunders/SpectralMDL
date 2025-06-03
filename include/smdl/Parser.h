@@ -302,6 +302,8 @@ private:
 
   [[nodiscard]] auto parse_tag_declaration() -> BumpPtr<AST::Tag>;
 
+  [[nodiscard]] auto parse_exec_declaration() -> BumpPtr<AST::Exec>;
+
   [[nodiscard]] auto parse_unit_test_declaration() -> BumpPtr<AST::UnitTest>;
 
   [[nodiscard]] auto parse_namespace_declaration() -> BumpPtr<AST::Namespace>;

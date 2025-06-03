@@ -64,15 +64,15 @@ syn match mdlLabel "\<[a-zA-Z]\w*:\ze[^:]"me=e-1 display
 hi def link mdlLabel Label
 
 " Identifiers
-syn match mdlIdent        "[a-zA-Z_][a-zA-Z0-9_]*" display contained
-syn match mdlSubst        "[$][a-zA-Z]\w*" display
-syn match mdlIntrinsic    "[#][a-zA-Z]\w*" display
-hi def link mdlIdent      Identifier
-hi def link mdlSubst      Identifier
-hi def link mdlIntrinsic  Function
+syn match mdlIdentifier    "[a-zA-Z_][a-zA-Z0-9_]*" display contained
+syn match mdlIntrinsic     "[#][a-zA-Z]\w*" display
+syn match mdlSpecialName   "[$][a-zA-Z]\w*" display
+hi def link mdlIdentifier  Identifier
+hi def link mdlIntrinsic   Function
+hi def link mdlSpecialName Macro
 
 " Keywords
-syn keyword mdlModule      mdl module export import using unit_test namespace
+syn keyword mdlModule      mdl module export import using unit_test namespace exec
 syn keyword mdlRepeat      for while do
 syn keyword mdlConditional if else switch case default
 syn keyword mdlStatement   return break continue let in typedef cast defer preserve return_from unreachable visit finalize
@@ -84,9 +84,9 @@ hi def link mdlStatement   Statement
 hi def link mdlQualifier   StorageClass
 
 " Types
-syn keyword mdlStructure struct nextgroup=mdlIdent skipwhite skipempty
-syn keyword mdlStructure enum   nextgroup=mdlIdent skipwhite skipempty
-syn keyword mdlStructure tag    nextgroup=mdlIdent skipwhite skipempty
+syn keyword mdlStructure struct nextgroup=mdlIdentifier skipwhite skipempty
+syn keyword mdlStructure enum   nextgroup=mdlIdentifier skipwhite skipempty
+syn keyword mdlStructure tag    nextgroup=mdlIdentifier skipwhite skipempty
 syn keyword mdlType auto void
 syn keyword mdlType bool bool2 bool3 bool4
 syn keyword mdlType int int2 int3 int4

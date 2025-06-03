@@ -1,3 +1,4 @@
+// vim:foldmethod=marker:foldlevel=0:fmr=--{,--}
 #smdl
 
 import ::df::*;
@@ -5,12 +6,10 @@ import ::math::*;
 
 const float EPSILON = 1e-6;
 
-float integrate_diffuse_reflection_bsdf(float cos_theta, float roughness) {
+//--{ diffuse_reflection_bsdf
+@(pure) float integrate_diffuse_reflection_bsdf(float cos_theta, float roughness) {
   const int NUM_SAMPLES = 1048576;
-  cos_theta = #max(cos_theta, 0.0001);
-  cos_theta = #min(cos_theta, 0.9999);
-  const float sin_theta = #sqrt(1 - cos_theta * cos_theta);
-  const float3 wo = float3(sin_theta, 0, cos_theta);
+  const float3 wo = float3(#sqrt(1 - cos_theta * cos_theta), 0, cos_theta);
   float2 xi = float2(0.713, 0.489);
   double f_sum = 0;
   for (int i = 0; i < NUM_SAMPLES; i++, df::monte_carlo::next_low_discrepancy(&xi)) {
@@ -22,11 +21,9 @@ float integrate_diffuse_reflection_bsdf(float cos_theta, float roughness) {
   const float B = 0.45 * sigma2 / (sigma2 + 0.09);
   return A + (f_sum / NUM_SAMPLES) * B;
 }
+//--}
 
-unit_test "Diffuse reflection BSDF" {
-  //#tabulate_albedo("diffuse_reflection_bsdf", 64, 64, integrate_diffuse_reflection_bsdf);
-}
-
+//--{ sheen_bsdf
 @(pure) float sheen_lambda_L(const auto fit, const float mu) {
   return fit[0] / (1.0 + fit[1] * #pow(mu, fit[2])) + fit[3] * mu + fit[4];
 }
@@ -35,7 +32,7 @@ unit_test "Diffuse reflection BSDF" {
   return #exp(mu < 0.5 ? sheen_lambda_L(fit, mu) : 2 * sheen_lambda_L(fit, 0.5) - sheen_lambda_L(fit, #max(1 - mu, 0)));
 }
 
-float integrate_sheen_bsdf(float cos_theta, float roughness) {
+@(pure) float integrate_sheen_bsdf(float cos_theta, float roughness) {
   const int NUM_SAMPLES = 1048576;
   cos_theta = #max(cos_theta, 0.00001);
   cos_theta = #min(cos_theta, 1);
@@ -50,54 +47,76 @@ float integrate_sheen_bsdf(float cos_theta, float roughness) {
   float2 xi = float2(0.713, 0.489);
   double f_sum = 0;
   for (int i = 0; i < NUM_SAMPLES; i++, df::monte_carlo::next_low_discrepancy(&xi)) {
-    const float cos_thetai(xi.x);
-    const float sin_thetai(#sqrt(1 - cos_thetai * cos_thetai));
-    float3 wi = float3(
-      sin_thetai * #cos($TWO_PI * xi.y),
-      sin_thetai * #sin($TWO_PI * xi.y),
-      cos_thetai,
-    );
-    const float cos_thetam(math::normalize(wo + wi).z);
+    const float3 wi(df::monte_carlo::uniform_hemisphere_sample(xi));
+    const float3 wm(math::normalize(wo + wi));
+    const float cos_thetam(wm.z);
     const float sin_thetam(#sqrt(1 - cos_thetam * cos_thetam));
     f_sum += #pow(sin_thetam, 1 / alpha) / (1 + sheen_lambda(fit, wo.z) + sheen_lambda(fit, wi.z));
   }
   return (2 + 1 / alpha) * (f_sum / NUM_SAMPLES) / (4 * wo.z);
 }
+//--}
 
-unit_test "Sheen BSDF" {
-  //#tabulate_albedo("sheen_bsdf", 64, 64, integrate_sheen_bsdf);
-}
-
-float integrate_microfacet_smith(const df::microfacet::distribution d, float cos_theta, float roughness) {
+//--{ simple_glossy_bsdf
+@(pure) float integrate_simple_glossy_bsdf(float cos_theta, float roughness) {
   const int NUM_SAMPLES = 1024 * 512;
   cos_theta = #max(cos_theta, 0.0001);
   cos_theta = #min(cos_theta, 0.9999);
-  const float sin_theta = #sqrt(1 - cos_theta * cos_theta);
-  const float3 wo = float3(sin_theta, 0, cos_theta);
+  const float3 wo = float3(#sqrt(1 - cos_theta * cos_theta), 0, cos_theta);
+  const float alpha(roughness * roughness);
+  const float e(2 / (alpha * alpha + EPSILON));
+  float2 xi = float2(0.713, 0.489);
+  double f_sum = 0;
+  for (int i = 0; i < NUM_SAMPLES; i++, df::monte_carlo::next_low_discrepancy(&xi)) {
+    const float3 wm = math::normalize(df::microfacet::blinn_normal_sample(xi.x, xi.y, float2(e)));
+    const float3 wi = math::normalize(df::specular::reflect(wo, wm));
+    const float dot_wo_wm = math::dot(wo, wm);
+    if (wi.z > 0 && dot_wo_wm > 0) {
+      f_sum += (2 + e) / (1 + e) * #min(1, 2 * wm.z * #min(wo.z, wi.z) / dot_wo_wm) * dot_wo_wm;
+    }
+  }
+  return f_sum / NUM_SAMPLES / wo.z;
+}
+//--}
+
+//--{ microfacet_ggx_smith_bsdf, microfacet_beckmann_smith_bsdf
+@(pure) float integrate_microfacet_smith(const df::microfacet::distribution distribution, float cos_theta, float roughness) {
+  const int NUM_SAMPLES = 1024 * 512;
+  cos_theta = #max(cos_theta, 0.0001);
+  cos_theta = #min(cos_theta, 0.9999);
+  const float3 wo = float3(#sqrt(1 - cos_theta * cos_theta), 0, cos_theta);
   float2 xi = float2(0.713, 0.489);
   float2 alpha = float2(#max(roughness * roughness, 1e-6));
   double f_sum = 0;
   for (int i = 0; i < NUM_SAMPLES; i++, df::monte_carlo::next_low_discrepancy(&xi)) {
-    float3 wm = math::normalize(df::microfacet::smith_visible_normal_sample(d, xi.x, xi.y, alpha, wo));
+    float3 wm = math::normalize(df::microfacet::smith_visible_normal_sample(distribution, xi.x, xi.y, alpha, wo));
     float3 wi = math::normalize(df::specular::reflect(wo, wm));
     if (wi.z > 0) {
-      float lambdao = df::microfacet::smith_lambda(d, #abs(wo.z) / (math::length(alpha * wo.xy)));
-      float lambdai = df::microfacet::smith_lambda(d, #abs(wi.z) / (math::length(alpha * wi.xy)));
+      float lambdao = df::microfacet::smith_lambda(distribution, #abs(wo.z) / (math::length(alpha * wo.xy)));
+      float lambdai = df::microfacet::smith_lambda(distribution, #abs(wi.z) / (math::length(alpha * wi.xy)));
       f_sum += (1 + lambdao) / (1 + lambdao + lambdai);
     }
   }
   return f_sum / NUM_SAMPLES;
 }
 
-float integrate_microfacet_ggx_smith_bsdf(float cos_theta, float roughness) {
+@(pure) float integrate_microfacet_ggx_smith_bsdf(float cos_theta, float roughness) {
   return integrate_microfacet_smith(df::microfacet::distribution_ggx(), cos_theta, roughness);
 }
 
-float integrate_microfacet_beckmann_smith_bsdf(float cos_theta, float roughness) {
+@(pure) float integrate_microfacet_beckmann_smith_bsdf(float cos_theta, float roughness) {
   return integrate_microfacet_smith(df::microfacet::distribution_beckmann(), cos_theta, roughness);
 }
+//--}
 
-unit_test "Microfacet BSDFs" {
+//--{ ward_geisler_moroder_bsdf
+
+//--}
+
+exec {
+  #tabulate_albedo("diffuse_reflection_bsdf", 64, 64, integrate_diffuse_reflection_bsdf);
+  #tabulate_albedo("sheen_bsdf", 64, 64, integrate_sheen_bsdf);
+  #tabulate_albedo("simple_glossy_bsdf", 64, 64, integrate_simple_glossy_bsdf);
   #tabulate_albedo("microfacet_ggx_smith_bsdf", 64, 64, integrate_microfacet_ggx_smith_bsdf);
   #tabulate_albedo("microfacet_beckmann_smith_bsdf", 64, 64, integrate_microfacet_beckmann_smith_bsdf);
 }

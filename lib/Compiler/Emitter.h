@@ -407,6 +407,9 @@ public:
     return Value();
   }
 
+  /// Emit exec declaration.
+  Value emit(AST::Exec &decl);
+
   /// Emit function declaration.
   Value emit(AST::Function &decl) {
     context.get_function_type(&decl)->initialize(*this);

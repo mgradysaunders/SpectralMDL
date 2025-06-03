@@ -31,7 +31,7 @@ f.write <<STR
 }
 STR
 
-fnames = ['diffuse_reflection_bsdf', 'microfacet_ggx_smith_bsdf', 'microfacet_beckmann_smith_bsdf', 'sheen_bsdf']
+fnames = ['diffuse_reflection_bsdf', 'microfacet_ggx_smith_bsdf', 'microfacet_beckmann_smith_bsdf', 'sheen_bsdf', 'simple_glossy_bsdf']
 for fname in fnames
   f.write "#include \"builtin/albedo/#{fname}.inl\"\n"
 end
