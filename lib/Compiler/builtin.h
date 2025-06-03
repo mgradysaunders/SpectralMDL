@@ -936,7 +936,7 @@ export @(macro)int $scatter_evaluate(
   const &float f,
 ){
   auto params=scatter_evaluate_parameters(wo0: normalize(*wo),wi0: normalize(*wi),normal: normalize(*instance.normal),thin_walled: instance.mat.thin_walled);
-  auto result=instance.mat.backface<:#typeof(material_surface())||!params.hit_backface?scatter_evaluate(&instance.mat.surface.scattering,&params):scatter_evaluate(&instance.mat.backface.scattering,&params);
+  auto result=instance.mat.backface<:#typeof(material_surface())||!params.hit_backface?scatter_evaluate(visit &instance.mat.surface.scattering,&params):scatter_evaluate(visit &instance.mat.backface.scattering,&params);
   visit result in result{
     if(result.is_black){
       *pdf_fwd=0.0;
@@ -967,7 +967,7 @@ export @(macro)int $scatter_sample(
   const &int is_delta,
 ){
   auto params=scatter_sample_parameters(xi: saturate(*xi),wo0: normalize(*wo),normal: normalize(*instance.normal),thin_walled: instance.mat.thin_walled);
-  auto result=instance.mat.backface<:#typeof(material_surface())||!params.hit_backface?scatter_sample(&instance.mat.surface.scattering,&params):scatter_sample(&instance.mat.backface.scattering,&params);
+  auto result=instance.mat.backface<:#typeof(material_surface())||!params.hit_backface?scatter_sample(visit &instance.mat.surface.scattering,&params):scatter_sample(visit &instance.mat.backface.scattering,&params);
   visit result in result{
     *wi=#select(params.hit_backface,-result.wi,result.wi);
     if(result.mode==scatter_none||((wo.z<0.0)==(wi.z<0.0))!=(result.mode==scatter_reflect)){
