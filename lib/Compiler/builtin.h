@@ -515,7 +515,7 @@ export struct ward_geisler_moroder_bsdf:bsdf{
     const auto cos_thetai(#abs(wi.z));
     const auto roughness(this.roughness_u,this.roughness_v);
     const auto alpha(#max(0.001,roughness*roughness));
-    const auto f(#sum((h:=wo+wi)*h)/($PI*alpha.x*alpha.y*#pow(h.z,4))*#exp(-#sum((g:=h.xy/(h.z*alpha))*g)));
+    const auto f(#sum((h:=wo+wi)*h)/($PI*alpha.x*alpha.y*#pow(h.z,4))*#exp(-#sum((G:=h.xy/(h.z*alpha))*G)));
     const auto fss_pdf(float2(f*(cos_thetao+cos_thetai)/2));
     const auto fms_pdf(float2(cos_thetai,cos_thetao)/$PI);
     const auto fss(f*cos_thetai);
@@ -583,9 +583,9 @@ export @(pure noinline)float2 smith_visible_slope_sample(
     const auto tan_thetao(sin_thetao/cos_thetao);
     const auto mu(xi0*(1+1/cos_thetao)-1);
     const auto nu(1/(1-mu*mu));
-    const auto d(#sqrt(#max(nu*(mu*mu-(1-nu)*tan_thetao*tan_thetao),0)));
-    const auto mx0(-nu*tan_thetao-d);
-    const auto mx1(-nu*tan_thetao+d);
+    const auto D(#sqrt(#max(nu*(mu*mu-(1-nu)*tan_thetao*tan_thetao),0)));
+    const auto mx0(-nu*tan_thetao-D);
+    const auto mx1(-nu*tan_thetao+D);
     return #select((mu<0)|(mx1*sin_thetao>cos_thetao),mx0,mx1);
   };
   const auto my=return_from{
@@ -702,14 +702,14 @@ struct microfacet_bsdf:bsdf{
   const auto dot_wi_wm(#sum(wi*wm));
   if$(this.distribution<:microfacet::distribution_blinn){
     const auto e(2/(this.alpha*this.alpha+EPSILON));
-    const auto d(#pow(wm.z,(e.x*wm.x*wm.x+e.y*wm.y*wm.y)/(1-wm.z*wm.z+EPSILON))/$TWO_PI);
+    const auto D(#pow(wm.z,(e.x*wm.x*wm.x+e.y*wm.y*wm.y)/(1-wm.z*wm.z+EPSILON))/$TWO_PI);
     const auto norm1(#sqrt(#prod(1+e)));
     const auto norm2(#sqrt(#prod(2+e)));
-    const auto g(#min(1,2*wm.z*#min(#abs(wo.z/dot_wo_wm),#abs(wi.z/dot_wi_wm))));
+    const auto G(#min(1,2*wm.z*#min(#abs(wo.z/dot_wo_wm),#abs(wi.z/dot_wi_wm))));
     switch(mode&this.mode){
     case scatter_reflect: {
-      const auto fss_pdf(norm1*d/(4*float2(dot_wo_wm,dot_wi_wm)+EPSILON));
-      const auto fss(norm2*d*g/(4*#abs(wo.z)+EPSILON));
+      const auto fss_pdf(norm1*D/(4*float2(dot_wo_wm,dot_wi_wm)+EPSILON));
+      const auto fss(norm2*D*G/(4*#abs(wo.z)+EPSILON));
       if$(this.multiscatter_tint<:void){
         return scatter_evaluate_result(f: this.tint*(reflect_chance*fss),pdf: reflect_chance*fss_pdf);
       } else {
@@ -724,12 +724,12 @@ struct microfacet_bsdf:bsdf{
     default: return scatter_evaluate_result(is_black: true);
     }
   } else {
-    const auto d(microfacet::smith_normal_pdf(this.distribution,this.alpha,wm));
+    const auto D(microfacet::smith_normal_pdf(this.distribution,this.alpha,wm));
     const auto lambdao(microfacet::smith_lambda(this.distribution,#abs(wo.z)/length(this.alpha*wo.xy)));
     const auto lambdai(microfacet::smith_lambda(this.distribution,#abs(wi.z)/length(this.alpha*wi.xy)));
     const auto proj_areao((1+lambdao)*#abs(wo.z));
     const auto proj_areai((1+lambdai)*#abs(wi.z));
-    const auto g=return_from{
+    const auto G=return_from{
       if$(this.shadowing<:microfacet::shadowing_smith){
         return mode==scatter_reflect?1/(1+lambdao+lambdai):microfacet::beta(1+lambdao,1+lambdai);
       } else {
@@ -738,8 +738,8 @@ struct microfacet_bsdf:bsdf{
     };
     switch(mode&this.mode){
     case scatter_reflect: {
-      const auto fss_pdf(d/(4*float2(proj_areao,proj_areai)+EPSILON));
-      const auto fss(d*g/(4*#abs(wo.z)+EPSILON));
+      const auto fss_pdf(D/(4*float2(proj_areao,proj_areai)+EPSILON));
+      const auto fss(D*G/(4*#abs(wo.z)+EPSILON));
       if$(this.multiscatter_tint<:void){
         return scatter_evaluate_result(f: this.tint*(reflect_chance*fss),pdf: reflect_chance*fss_pdf);
       } else {
@@ -757,8 +757,8 @@ struct microfacet_bsdf:bsdf{
     case scatter_transmit: {
       return scatter_evaluate_result(is_black: true) if(!((dot_wo_wm>0)&(dot_wi_wm<0)));
       const auto j(float2(specular::refraction_half_vector_jacobian(wo,wi,ior),specular::refraction_half_vector_jacobian(wi,wo,1/ior)));
-      const auto fss_pdf(d*j*float2(dot_wo_wm,-dot_wi_wm)/(float2(proj_areao,proj_areai)+EPSILON));
-      const auto fss(d*g*j[0]*dot_wo_wm/(#abs(wo.z)+EPSILON));
+      const auto fss_pdf(D*j*float2(dot_wo_wm,-dot_wi_wm)/(float2(proj_areao,proj_areai)+EPSILON));
+      const auto fss(D*G*j[0]*dot_wo_wm/(#abs(wo.z)+EPSILON));
       return scatter_evaluate_result(f: this.tint*((1-reflect_chance)*fss),pdf: (1-reflect_chance)*fss_pdf);
     }
     default: return scatter_evaluate_result(is_black: true);
