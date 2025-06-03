@@ -515,7 +515,7 @@ export struct ward_geisler_moroder_bsdf:bsdf{
     const auto cos_thetai(#abs(wi.z));
     const auto roughness(this.roughness_u,this.roughness_v);
     const auto alpha(#max(0.001,roughness*roughness));
-    const auto f(#sum((h:=wo+wi)*h)/($PI*alpha.x*alpha.y*#pow(h.z,4))*#exp(-#sum((G:=h.xy/(h.z*alpha))*G)));
+    const auto f(#sum((h:=wo+wi)*h)/($PI*alpha.x*alpha.y*#pow(h.z,4))*#exp(-#sum((g:=h.xy/(h.z*alpha))*g)));
     const auto fss_pdf(float2(f*(cos_thetao+cos_thetai)/2));
     const auto fms_pdf(float2(cos_thetai,cos_thetao)/$PI);
     const auto fss(f*cos_thetai);
@@ -756,9 +756,9 @@ struct microfacet_bsdf:bsdf{
     }
     case scatter_transmit: {
       return scatter_evaluate_result(is_black: true) if(!((dot_wo_wm>0)&(dot_wi_wm<0)));
-      const auto j(float2(specular::refraction_half_vector_jacobian(wo,wi,ior),specular::refraction_half_vector_jacobian(wi,wo,1/ior)));
-      const auto fss_pdf(D*j*float2(dot_wo_wm,-dot_wi_wm)/(float2(proj_areao,proj_areai)+EPSILON));
-      const auto fss(D*G*j[0]*dot_wo_wm/(#abs(wo.z)+EPSILON));
+      const auto jac(float2(specular::refraction_half_vector_jacobian(wo,wi,ior),specular::refraction_half_vector_jacobian(wi,wo,1/ior)));
+      const auto fss_pdf(D*jac*float2(dot_wo_wm,-dot_wi_wm)/(float2(proj_areao,proj_areai)+EPSILON));
+      const auto fss(D*G*jac[0]*dot_wo_wm/(#abs(wo.z)+EPSILON));
       return scatter_evaluate_result(f: this.tint*((1-reflect_chance)*fss),pdf: (1-reflect_chance)*fss_pdf);
     }
     default: return scatter_evaluate_result(is_black: true);
@@ -1332,6 +1332,7 @@ export @(macro)float lookup_float(texture_ptex tex,const int channel=0){
 #include "builtin/albedo/microfacet_beckmann_smith_bsdf.inl"
 #include "builtin/albedo/sheen_bsdf.inl"
 #include "builtin/albedo/simple_glossy_bsdf.inl"
+#include "builtin/albedo/ward_geisler_moroder_bsdf.inl"
 [[nodiscard]] static const AlbedoLUT *get_albedo_lut(std::string_view name) {
   if (name == "diffuse_reflection_bsdf")
     return &diffuse_reflection_bsdf;
@@ -1343,6 +1344,8 @@ export @(macro)float lookup_float(texture_ptex tex,const int channel=0){
     return &sheen_bsdf;
   if (name == "simple_glossy_bsdf")
     return &simple_glossy_bsdf;
+  if (name == "ward_geisler_moroder_bsdf")
+    return &ward_geisler_moroder_bsdf;
   return nullptr;
 }
 

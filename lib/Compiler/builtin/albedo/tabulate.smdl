@@ -110,7 +110,27 @@ const float EPSILON = 1e-6;
 //--}
 
 //--{ ward_geisler_moroder_bsdf
-
+@(pure) float integrate_ward_geisler_moroder_bsdf(float cos_theta, float roughness) {
+  const int NUM_SAMPLES = 1024 * 512;
+  cos_theta = #max(cos_theta, 0.0001);
+  cos_theta = #min(cos_theta, 0.9999);
+  const float3 wo = float3(#sqrt(1 - cos_theta * cos_theta), 0, cos_theta);
+  const float alpha(#max(0.001, roughness * roughness));
+  float2 xi = float2(0.713, 0.489);
+  double f_sum = 0;
+  for (int i = 0; i < NUM_SAMPLES; i++, df::monte_carlo::next_low_discrepancy(&xi)) {
+    const auto phi(#atan2(alpha * #sin(t := $TWO_PI * xi.x), alpha * #cos(t)));
+    const auto cos_phi(#cos(phi));
+    const auto sin_phi(#sin(phi));
+    const auto theta(#atan(#sqrt(-#log(1 - xi.y) / (#pow(cos_phi / alpha, 2) + #pow(sin_phi / alpha, 2)))));
+    const auto wm(float3(#sin(theta) * float2(cos_phi, sin_phi), #cos(theta)));
+    const auto wi(math::normalize(df::specular::reflect(wo, wm)));
+    if (wi.z > 0) {
+      f_sum += 2 * wi.z / (wo.z + wi.z);
+    }
+  }
+  return f_sum / NUM_SAMPLES;
+}
 //--}
 
 exec {
@@ -119,4 +139,5 @@ exec {
   #tabulate_albedo("simple_glossy_bsdf", 64, 64, integrate_simple_glossy_bsdf);
   #tabulate_albedo("microfacet_ggx_smith_bsdf", 64, 64, integrate_microfacet_ggx_smith_bsdf);
   #tabulate_albedo("microfacet_beckmann_smith_bsdf", 64, 64, integrate_microfacet_beckmann_smith_bsdf);
+  #tabulate_albedo("ward_geisler_moroder_bsdf", 64, 64, integrate_ward_geisler_moroder_bsdf);
 }
