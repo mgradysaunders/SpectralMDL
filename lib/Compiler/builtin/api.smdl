@@ -346,39 +346,15 @@ export struct $albedo_lut {
   /// The directional albedo.
   ///
   /// \note
-  /// This is `num_cos_theta` rows by `num_roughness` values.
+  /// This must point to `num_cos_theta` rows by `num_roughness` values.
   ///
   const &float directional_albedo = null;
 
   /// The average albedo.
   ///
   /// \note
-  /// This is `num_roughness` values.
+  /// This must point to `num_roughness` values.
   ///
   const &float average_albedo = null;
 };
 
-export @(pure macro) float $energy_compensation(const string lut_name, const float cos_thetao, const float cos_thetai, const float roughness) {
-  const $albedo_lut lut(#albedo_lut(lut_name));
-  float t((lut.num_roughness - 1) * #max(0, #min(roughness, 1)));
-  const int j(#max(0, #min(int(#floor(t)), lut.num_roughness - 2)));
-  t = t - j;
-  const float Ewo = return_from {
-    float s((lut.num_cos_theta - 1) * #max(0, #min(#abs(cos_thetao), 1)));
-    const int i(#max(0, #min(int(#floor(s)), lut.num_cos_theta - 2)));
-    const &float ptr0(&lut.directional_albedo[lut.num_roughness * (i + 0) + j]);
-    const &float ptr1(&lut.directional_albedo[lut.num_roughness * (i + 1) + j]);
-    s = s - i;
-    return #min(1, (1 - s) * ((1 - t) * ptr0[0] + t * ptr0[1]) + s * ((1 - t) * ptr1[0] + t * ptr1[1]));
-  };
-  const float Ewi = return_from {
-    float s((lut.num_cos_theta - 1) * #max(0, #min(#abs(cos_thetai), 1)));
-    const int i(#max(0, #min(int(#floor(s)), lut.num_cos_theta - 2)));
-    const &float ptr0(&lut.directional_albedo[lut.num_roughness * (i + 0) + j]);
-    const &float ptr1(&lut.directional_albedo[lut.num_roughness * (i + 1) + j]);
-    s = s - i;
-    return #min(1, (1 - s) * ((1 - t) * ptr0[0] + t * ptr0[1]) + s * ((1 - t) * ptr1[0] + t * ptr1[1]));
-  };
-  const float Eav = #min(1, (1 - t) * lut.average_albedo[j] + t * lut.average_albedo[j + 1]);
-  return (1 - Ewo) * (1 - Ewi) / (1 - Eav + 1e-7f) * #abs(cos_thetai) / $PI;
-}

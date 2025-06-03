@@ -1025,15 +1025,28 @@ public:
   void finalize_for_runtime_conventions();
 };
 
+/// An albedo look-up table (LUT) for energy compensation in lossy BSDFs.
 class SMDL_EXPORT AlbedoLUT final {
 public:
-  int num_cos_theta = 0;
+  /// The number of samples of the cosine of the viewing angle.
+  const int num_cos_theta = 0;
 
-  int num_roughness = 0;
+  /// The number of samples of the roughness parameter.
+  const int num_roughness = 0;
 
-  const float *directional_albedo = nullptr;
+  /// The directional albedo.
+  ///
+  /// \note
+  /// This must point to `num_cos_theta` rows by `num_roughness` values.
+  ///
+  const float *const directional_albedo = nullptr;
 
-  const float *average_albedo = nullptr;
+  /// The average albedo.
+  ///
+  /// \note
+  /// This must point to `num_roughness` values.
+  ///
+  const float *const average_albedo = nullptr;
 };
 
 /// \}

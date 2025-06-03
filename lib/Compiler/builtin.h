@@ -146,30 +146,6 @@ export struct $albedo_lut{
   const &float directional_albedo=null;
   const &float average_albedo=null;
 };
-export @(pure macro)float $energy_compensation(const string lut_name,const float cos_thetao,const float cos_thetai,const float roughness){
-  const $albedo_lut lut(#albedo_lut(lut_name));
-  float t((lut.num_roughness-1)*#max(0,#min(roughness,1)));
-  const int j(#max(0,#min(int(#floor(t)),lut.num_roughness-2)));
-  t=t-j;
-  const float Ewo=return_from{
-    float s((lut.num_cos_theta-1)*#max(0,#min(#abs(cos_thetao),1)));
-    const int i(#max(0,#min(int(#floor(s)),lut.num_cos_theta-2)));
-    const &float ptr0(&lut.directional_albedo[lut.num_roughness*(i+0)+j]);
-    const &float ptr1(&lut.directional_albedo[lut.num_roughness*(i+1)+j]);
-    s=s-i;
-    return #min(1,(1-s)*((1-t)*ptr0[0]+t*ptr0[1])+s*((1-t)*ptr1[0]+t*ptr1[1]));
-  };
-  const float Ewi=return_from{
-    float s((lut.num_cos_theta-1)*#max(0,#min(#abs(cos_thetai),1)));
-    const int i(#max(0,#min(int(#floor(s)),lut.num_cos_theta-2)));
-    const &float ptr0(&lut.directional_albedo[lut.num_roughness*(i+0)+j]);
-    const &float ptr1(&lut.directional_albedo[lut.num_roughness*(i+1)+j]);
-    s=s-i;
-    return #min(1,(1-s)*((1-t)*ptr0[0]+t*ptr0[1])+s*((1-t)*ptr1[0]+t*ptr1[1]));
-  };
-  const float Eav=#min(1,(1-t)*lut.average_albedo[j]+t*lut.average_albedo[j+1]);
-  return (1-Ewo)*(1-Ewi)/(1-Eav+1e-7f)*#abs(cos_thetai)/$PI;
-}
 )*";
 
 static const char *debug = R"*(#smdl
@@ -189,7 +165,7 @@ export @(pure macro)bool print(const auto a){
 
 static const char *df = R"*(#smdl
 using ::math import *;
-const float EPSILON=0.00001;
+const float EPSILON=1e-6;
 const float MULTISCATTER_DIFFUSE_CHANCE=0.2;
 export enum scatter_mode{
   scatter_none=0x0,
@@ -201,6 +177,40 @@ export enum scatter_mode{
   const auto refl_weight(#select((int(mode)&1)!=0,1.0,0.0));
   const auto tran_weight(#select((int(mode)&2)!=0,1.0,0.0));
   return refl_weight/(refl_weight+tran_weight);
+}
+@(pure macro)auto energy_compensation(
+  const string lut_name[[anno::unused()]],
+  const float cos_thetao[[anno::unused()]],
+  const float cos_thetai[[anno::unused()]],
+  const float roughness[[anno::unused()]],
+  const auto multiscatter_tint,
+){
+  if$(multiscatter_tint<:void){
+    return 0.0;
+  } else {
+    const $albedo_lut lut(#albedo_lut(lut_name));
+    float t((lut.num_roughness-1)*#max(0,#min(roughness,1)));
+    const int j(#min(int(#floor(t)),lut.num_roughness-2));
+    t=t-j;
+    const float Ewo=return_from{
+      float s((lut.num_cos_theta-1)*#max(0,#min(#abs(cos_thetao),1)));
+      const int i(#min(int(#floor(s)),lut.num_cos_theta-2));
+      const &float ptr0(&lut.directional_albedo[lut.num_roughness*(i+0)+j]);
+      const &float ptr1(&lut.directional_albedo[lut.num_roughness*(i+1)+j]);
+      s=s-i;
+      return #min(1,(1-s)*((1-t)*ptr0[0]+t*ptr0[1])+s*((1-t)*ptr1[0]+t*ptr1[1]));
+    };
+    const float Ewi=return_from{
+      float s((lut.num_cos_theta-1)*#max(0,#min(#abs(cos_thetai),1)));
+      const int i(#min(int(#floor(s)),lut.num_cos_theta-2));
+      const &float ptr0(&lut.directional_albedo[lut.num_roughness*(i+0)+j]);
+      const &float ptr1(&lut.directional_albedo[lut.num_roughness*(i+1)+j]);
+      s=s-i;
+      return #min(1,(1-s)*((1-t)*ptr0[0]+t*ptr0[1])+s*((1-t)*ptr1[0]+t*ptr1[1]));
+    };
+    const float Eav=#min(1,(1-t)*lut.average_albedo[j]+t*lut.average_albedo[j+1]);
+    return #abs(cos_thetai)/$PI*(1-Ewo)*(1-Ewi)/(1-Eav+1e-6)*multiscatter_tint;
+  }
 }
 export namespace monte_carlo {
 export @(pure macro)float2 next_low_discrepancy(const &float2 xi)=(*xi=frac(*xi+float2(0.75487766,0.56984029)));
@@ -383,13 +393,7 @@ export struct diffuse_reflection_bsdf:bsdf{
       const auto A(1.00-sigma2/(2.0*sigma2+0.66));
       const auto B(0.45*sigma2/(sigma2+0.09));
       const auto fss(pdf[0]*(A+#max(#sum(wo.xy*wi.xy),0)/(#max_value(cos_theta)+EPSILON)*B));
-      const auto fms=return_from{
-        if$(multiscatter_tint<:void){
-          return 0.0;
-        } else {
-          return multiscatter_tint*$energy_compensation("diffuse_reflection_bsdf",wo.z,wi.z,roughness);
-        }
-      };
+      const auto fms(energy_compensation("diffuse_reflection_bsdf",wo.z,wi.z,roughness,multiscatter_tint));
       return scatter_evaluate_result(f: tint*(fss+fms),pdf: pdf);
     }
   } else {
@@ -449,11 +453,11 @@ export struct sheen_bsdf:bsdf{
     roughness=saturate(roughness);
   }
 };
-@(pure)float sheen_lambda_l(const auto fit,const float mu){
+@(pure)float sheen_lambda_L(const auto fit,const float mu){
   return fit[0]/(1.0+fit[1]*#pow(mu,fit[2]))+fit[3]*mu+fit[4];
 }
 @(pure)float sheen_lambda(const auto fit,const float mu){
-  return #exp(mu<0.5?sheen_lambda_l(fit,mu):2*sheen_lambda_l(fit,0.5)-sheen_lambda_l(fit,#max(1-mu,0)));
+  return #exp(mu<0.5?sheen_lambda_L(fit,mu):2*sheen_lambda_L(fit,0.5)-sheen_lambda_L(fit,#max(1-mu,0)));
 }
 @(pure)auto scatter_evaluate(inline const &sheen_bsdf this,inline const &scatter_evaluate_parameters params){
   if(mode==scatter_reflect&&recalculate_tangent_space(params)){
@@ -462,19 +466,13 @@ export struct sheen_bsdf:bsdf{
     const auto pdf(float2(cos_thetai,cos_thetao)/$PI);
     const auto fss=let {
       const auto alpha(lerp(0.1,1.0,roughness*roughness));
-      const auto fit=lerp(auto(21.5473,3.82987,0.19823,-1.97760,-4.32054),auto(25.3245,3.32435,0.16801,-1.27393,-4.85967),(1-alpha)*(1-alpha),);
+      const auto fit=lerp(auto(21.5473,3.82987,0.19823,-1.97760,-4.32054),auto(25.3245,3.32435,0.16801,-1.27393,-4.85967),#pow(1-#pow(roughness,2),2),);
       const auto cos_thetah(normalize(wo+wi).z);
       const auto sin_thetah(#sqrt(1-cos_thetah*cos_thetah));
       const auto D(1/$TWO_PI*(2+1/alpha)*#pow(sin_thetah,1/alpha));
       const auto G(1/(1+sheen_lambda(fit,cos_thetao)+sheen_lambda(fit,cos_thetai)));
     } in D*G/(4*cos_thetao);
-    const auto fms=return_from{
-      if$(multiscatter_tint<:void){
-        return 0.0;
-      } else {
-        return multiscatter_tint*$energy_compensation("sheen_bsdf",wo.z,wi.z,roughness);
-      }
-    };
+    const auto fms(energy_compensation("sheen_bsdf",wo.z,wi.z,roughness,multiscatter_tint));
     return scatter_evaluate_result(f: tint*(fss+fms),pdf: pdf);
   } else {
     return scatter_evaluate_result(is_black: true);
@@ -509,15 +507,13 @@ export struct ward_geisler_moroder_bsdf:bsdf{
     const auto alpha(#max(0.001,roughness*roughness));
     const auto f(#sum((h:=wo+wi)*h)/($PI*alpha.x*alpha.y*#pow(h.z,4))*#exp(-#sum((g:=h.xy/(h.z*alpha))*g)));
     const auto fss_pdf(float2(f*(cos_thetao+cos_thetai)/2));
+    const auto fms_pdf(float2(cos_thetai,cos_thetao)/$PI);
     const auto fss(f*cos_thetai);
+    const auto fms(energy_compensation("ward_geisler_moroder_bsdf",wo.z,wi.z,#sqrt(#prod(roughness)),this.multiscatter_tint));
     if$(#typeof(this.multiscatter_tint)==void){
       return scatter_evaluate_result(f: this.tint*fss,pdf: fss_pdf);
     } else {
-      const auto fms_pdf(float2(cos_thetai,cos_thetao)/$PI);
-      const auto fms=return_from{
-        return 0.0;
-      };
-      return scatter_evaluate_result(f: this.tint*(fss+this.multiscatter_tint*fms),pdf: lerp(fss_pdf,fms_pdf,MULTISCATTER_DIFFUSE_CHANCE));
+      return scatter_evaluate_result(f: this.tint*(fss+fms),pdf: lerp(fss_pdf,fms_pdf,MULTISCATTER_DIFFUSE_CHANCE));
     }
   } else {
     return scatter_evaluate_result(is_black: true);
@@ -570,7 +566,7 @@ export @(pure noinline)float2 smith_visible_slope_sample(
   const float xi1,
   float cos_thetao,
 ){
-  return #sqrt(xi0/(1-xi0+EPSILON))*float2(#cos(phi:=$TWO_PI*xi1),#sin(phi)) if(cos_thetao>0.9999);
+  return #sqrt(xi0/(1-xi0+EPSILON))*float2(#cos(phi:=$TWO_PI*xi1),#sin(phi)) if(cos_thetao>1-EPSILON);
   cos_thetao=#max(cos_thetao,-0.9999);
   const auto mx=return_from{
     const auto sin_thetao(#sqrt(1-cos_thetao*cos_thetao));
@@ -595,9 +591,9 @@ export @(pure noinline)float2 smith_visible_slope_sample(
   float xi1,
   float cos_thetao,
 ){
-  return #sqrt(-#log(1-xi0+EPSILON))*float2(#cos((phi:=$TWO_PI*xi1)),#sin(phi)) if(cos_thetao>0.9999);
-  xi0=#max(xi0,1e-6);
-  xi1=#max(xi1,1e-6);
+  return #sqrt(-#log(1-xi0+EPSILON))*float2(#cos((phi:=$TWO_PI*xi1)),#sin(phi)) if(cos_thetao>1-EPSILON);
+  xi0=#max(xi0,EPSILON);
+  xi1=#max(xi1,EPSILON);
   const float SQRT_PI_INV=1/#sqrt($PI);
   const float thetao=#acos(cos_thetao);
   const float sin_thetao=#sqrt(#max(0,1-cos_thetao*cos_thetao));
@@ -638,7 +634,7 @@ export @(pure noinline)float3 smith_visible_normal_sample(
   const auto sin_phi(w11.y/sin_theta);
   const auto m11(smith_visible_slope_sample(this,xi0,xi1,w11.z));
   const auto m(float2(alpha.x*dot(float2(cos_phi,-sin_phi),m11),alpha.y*dot(float2(sin_phi,cos_phi),m11)));
-  return #all(isfinite(m))?normalize(float3(m,1)):wo.z==0?normalize(wo):float3(0,0,1);
+  return #all(isfinite(m))?normalize(float3(-m,1)):wo.z==0?normalize(wo):float3(0,0,1);
 }
 export struct distribution_blinn:distribution{};
 export @(pure macro)void blinn_normal_first_quadrant_sample(
@@ -699,7 +695,7 @@ struct microfacet_bsdf:bsdf{
     const auto d(#pow(wm.z,(e.x*wm.x*wm.x+e.y*wm.y*wm.y)/(1-wm.z*wm.z+EPSILON))/$TWO_PI);
     const auto norm1(#sqrt(#prod(1+e)));
     const auto norm2(#sqrt(#prod(2+e)));
-    const auto g(#min(1,2*wm.z*#min(#abs(wo.z/(dot_wo_wm+EPSILON)),#abs(wi.z/(dot_wi_wm+EPSILON)))));
+    const auto g(#min(1,2*wm.z*#min(#abs(wo.z/dot_wo_wm),#abs(wi.z/dot_wi_wm))));
     switch(mode&this.mode){
     case scatter_reflect: {
       const auto fss_pdf(norm1*d/(4*float2(dot_wo_wm,dot_wi_wm)+EPSILON));
@@ -708,8 +704,8 @@ struct microfacet_bsdf:bsdf{
         return scatter_evaluate_result(f: this.tint*(reflect_chance*fss),pdf: reflect_chance*fss_pdf);
       } else {
         const auto fms_pdf(float2(#abs(wi.z),#abs(wo.z))/$PI);
-        const auto fms=$energy_compensation("simple_glossy_bsdf",wo.z,wi.z,this.roughness0);
-        return scatter_evaluate_result(f: reflect_chance*(this.tint*(fss+this.multiscatter_tint*fms)),pdf: reflect_chance*lerp(fss_pdf,fms_pdf,MULTISCATTER_DIFFUSE_CHANCE),);
+        const auto fms(energy_compensation("simple_glossy_bsdf",wo.z,wi.z,this.roughness0,this.multiscatter_tint));
+        return scatter_evaluate_result(f: reflect_chance*(this.tint*(fss+fms)),pdf: reflect_chance*lerp(fss_pdf,fms_pdf,MULTISCATTER_DIFFUSE_CHANCE),);
       }
     }
     case scatter_transmit: {
@@ -719,15 +715,15 @@ struct microfacet_bsdf:bsdf{
     }
   } else {
     const auto d(microfacet::smith_normal_pdf(this.distribution,this.alpha,wm));
-    const auto lambdao(microfacet::smith_lambda(this.distribution,#abs(wo.z)/(length(this.alpha*wo.xy)+EPSILON)));
-    const auto lambdai(microfacet::smith_lambda(this.distribution,#abs(wi.z)/(length(this.alpha*wi.xy)+EPSILON)));
+    const auto lambdao(microfacet::smith_lambda(this.distribution,#abs(wo.z)/length(this.alpha*wo.xy)));
+    const auto lambdai(microfacet::smith_lambda(this.distribution,#abs(wi.z)/length(this.alpha*wi.xy)));
     const auto proj_areao((1+lambdao)*#abs(wo.z));
     const auto proj_areai((1+lambdai)*#abs(wi.z));
     const auto g=return_from{
       if$(this.shadowing<:microfacet::shadowing_smith){
         return mode==scatter_reflect?1/(1+lambdao+lambdai):microfacet::beta(1+lambdao,1+lambdai);
       } else {
-        return #min(1,2*wm.z*#min(#abs(wo.z/(dot_wo_wm+EPSILON)),#abs(wi.z/(dot_wi_wm+EPSILON))));
+        return #min(1,2*wm.z*#min(#abs(wo.z/dot_wo_wm),#abs(wi.z/dot_wi_wm)));
       }
     };
     switch(mode&this.mode){
@@ -739,13 +735,13 @@ struct microfacet_bsdf:bsdf{
       } else {
         const auto fms_pdf(float2(#abs(wi.z),#abs(wo.z))/$PI);
         const auto fms=return_from{
-          if(this.distribution<:microfacet::distribution_ggx){
-            return $energy_compensation("microfacet_ggx_smith_bsdf",wo.z,wi.z,this.roughness0);
+          if$(this.distribution<:microfacet::distribution_ggx){
+            return energy_compensation("microfacet_ggx_smith_bsdf",wo.z,wi.z,this.roughness0,this.multiscatter_tint);
           } else {
-            return $energy_compensation("microfacet_beckmann_smith_bsdf",wo.z,wi.z,this.roughness0);
+            return energy_compensation("microfacet_beckmann_smith_bsdf",wo.z,wi.z,this.roughness0,this.multiscatter_tint);
           }
         };
-        return scatter_evaluate_result(f: reflect_chance*(this.tint*(fss+this.multiscatter_tint*fms)),pdf: reflect_chance*lerp(fss_pdf,fms_pdf,MULTISCATTER_DIFFUSE_CHANCE),);
+        return scatter_evaluate_result(f: reflect_chance*(this.tint*(fss+fms)),pdf: reflect_chance*lerp(fss_pdf,fms_pdf,MULTISCATTER_DIFFUSE_CHANCE),);
       }
     }
     case scatter_transmit: {
@@ -1322,10 +1318,16 @@ export @(macro)float lookup_float(texture_ptex tex,const int channel=0){
   return nullptr;
 }
 #include "builtin/albedo/diffuse_reflection_bsdf.inl"
+#include "builtin/albedo/microfacet_ggx_smith_bsdf.inl"
+#include "builtin/albedo/microfacet_beckmann_smith_bsdf.inl"
 #include "builtin/albedo/sheen_bsdf.inl"
 [[nodiscard]] static const AlbedoLUT *get_albedo_lut(std::string_view name) {
   if (name == "diffuse_reflection_bsdf")
     return &diffuse_reflection_bsdf;
+  if (name == "microfacet_ggx_smith_bsdf")
+    return &microfacet_ggx_smith_bsdf;
+  if (name == "microfacet_beckmann_smith_bsdf")
+    return &microfacet_beckmann_smith_bsdf;
   if (name == "sheen_bsdf")
     return &sheen_bsdf;
   return nullptr;

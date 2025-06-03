@@ -1277,38 +1277,52 @@ SMDL_EXPORT void smdl_tabulate_albedo(const void *state, const char *name,
     }
   });
   llvm::errs() << '\n';
-  std::error_code ec{};
-  auto outputFileName{std::string(name) + ".inl"};
-  auto outputFile{llvm::raw_fd_stream{outputFileName, ec}};
-  outputFile << llvm::format(
-      "static const std::array<float, %d * %d> %s_directional_albedo = {\n",
-      num_cos_theta, num_roughness, name);
-  for (int i = 0; i < num_cos_theta; i++) {
-    for (int j = 0; j < num_roughness; j++) {
-      outputFile << llvm::format("%1.7ef, ",
-                                 directionalAlbedo[i * num_roughness + j]);
-    }
-    outputFile << '\n';
-  }
-  outputFile << "};\n";
-  outputFile << llvm::format(
-      "static const std::array<float, %d> %s_average_albedo = {\n",
-      num_roughness, name);
-  for (int j = 0; j < num_roughness; j++) {
-    double numer = 0.0;
-    double denom = 0.0;
+  {
+    std::error_code ec{};
+    auto outputFileName{std::string(name) + ".inl"};
+    auto outputFile{llvm::raw_fd_stream{outputFileName, ec}};
+    outputFile << llvm::format(
+        "static const std::array<float, %d * %d> %s_directional_albedo = {\n",
+        num_cos_theta, num_roughness, name);
     for (int i = 0; i < num_cos_theta; i++) {
-      float cos_theta{i / float(num_cos_theta - 1)};
-      numer += cos_theta * directionalAlbedo[i * num_roughness + j];
-      denom += cos_theta;
+      for (int j = 0; j < num_roughness; j++) {
+        outputFile << llvm::format("%1.7ef, ",
+                                   directionalAlbedo[i * num_roughness + j]);
+      }
+      outputFile << '\n';
     }
-    outputFile << llvm::format("%1.7ef, ", numer / denom);
+    outputFile << "};\n";
+    outputFile << llvm::format(
+        "static const std::array<float, %d> %s_average_albedo = {\n",
+        num_roughness, name);
+    for (int j = 0; j < num_roughness; j++) {
+      double numer = 0.0;
+      double denom = 0.0;
+      for (int i = 0; i < num_cos_theta; i++) {
+        float cos_theta{i / float(num_cos_theta - 1)};
+        numer += 2 * cos_theta * directionalAlbedo[i * num_roughness + j];
+        denom += 1;
+      }
+      outputFile << llvm::format("%1.7ef, ", numer / denom);
+    }
+    outputFile << "};\n";
+    outputFile << llvm::format(
+        "static const AlbedoLUT %s = {%d, %d, %s_directional_albedo.data(), "
+        "%s_average_albedo.data()};\n",
+        name, num_cos_theta, num_roughness, name, name);
   }
-  outputFile << "};\n";
-  outputFile << llvm::format(
-      "static const AlbedoLUT %s = {%d, %d, %s_directional_albedo.data(), "
-      "%s_average_albedo.data()};\n",
-      name, num_cos_theta, num_roughness, name, name);
+  {
+    std::error_code ec{};
+    auto outputFileName{std::string(name) + ".txt"};
+    auto outputFile{llvm::raw_fd_stream{outputFileName, ec}};
+    for (int i = 0; i < num_cos_theta; i++) {
+      for (int j = 0; j < num_roughness; j++) {
+        outputFile << llvm::format("%1.7e ",
+                                   directionalAlbedo[i * num_roughness + j]);
+      }
+      outputFile << '\n';
+    }
+  }
 }
 
 } // extern "C"
