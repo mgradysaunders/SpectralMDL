@@ -127,14 +127,6 @@ export @(pure noinline) double erf_inverse(double y) {
 //--{ specular
 export namespace specular {
 
-/// Calculate half vector that reflects direction `wo` to direction `wi`.
-///
-/// \note
-/// - The result is not normalized.
-/// - The result is guaranteed in the upper Z hemisphere.
-///
-export @(pure macro) float3 reflection_half_vector(const float3 wo, const float3 wi) = (vh := (wo + wi)) * #sign(vh.z);
-
 /// Reflect direction `wi` across normal direction `wm`.
 export @(pure macro) float3 reflect(const float3 wi, const float3 wm) = 2 * #sum(wi * wm) * wm - wi;
 
@@ -146,6 +138,14 @@ export @(pure macro) float3 refract(const float3 wi, const float3 wm, const floa
   const auto cos_thetat(#sqrt(cos2_thetat) * -#sign(cos_thetai));
   return -ior * wi + (ior * cos_thetai + cos_thetat) * wm;
 }
+
+/// Calculate half vector that reflects direction `wo` to direction `wi`.
+///
+/// \note
+/// - The result is not normalized.
+/// - The result is guaranteed in the upper Z hemisphere.
+///
+export @(pure macro) float3 reflection_half_vector(const float3 wo, const float3 wi) = (vh := (wo + wi)) * #sign(vh.z);
 
 /// Calculate half vector that refracts direction `wo` to direction `wi` through index-of-refraction `ior`.
 ///
@@ -266,7 +266,7 @@ struct scatter_evaluate_result {
 }
 
 @(pure) float3 half_direction(inline const &scatter_evaluate_parameters params) {
-  return normalize(mode == scatter_reflect ? wo + wi : specular::refraction_half_vector(wo, wi, ior));
+  return normalize(mode == scatter_reflect ? specular::reflection_half_vector(wo, wi) : specular::refraction_half_vector(wo, wi, ior));
 }
 
 struct scatter_sample_parameters {
@@ -323,7 +323,7 @@ struct scatter_sample_result {
 }
 
 @(pure) float3 half_direction(inline const &scatter_sample_parameters this, inline const &scatter_sample_result result) {
-  return normalize(mode == scatter_reflect ? wo + wi : specular::refraction_half_vector(wo, wi, ior));
+  return normalize(mode == scatter_reflect ? specular::reflection_half_vector(wo, wi) : specular::refraction_half_vector(wo, wi, ior));
 }
 
 export @(pure macro) auto $energy_loss_compensation(
@@ -345,16 +345,14 @@ export @(pure macro) auto $energy_loss_compensation(
       const int i(#min(int(#floor(s)), lut.num_cos_theta - 2));
       const &float ptr0(&lut.directional_albedo[lut.num_roughness * (i + 0) + j]);
       const &float ptr1(&lut.directional_albedo[lut.num_roughness * (i + 1) + j]);
-      s = s - i;
-      return #min(1, (1 - s) * ((1 - t) * ptr0[0] + t * ptr0[1]) + s * ((1 - t) * ptr1[0] + t * ptr1[1]));
+      return #min(1.0, lerp(lerp(ptr0[0], ptr0[1], t), lerp(ptr1[0], ptr1[1], t), s - i));
     };
     const float Ewi = return_from {
       float s((lut.num_cos_theta - 1) * #max(0, #min(#abs(cos_thetai), 1)));
       const int i(#min(int(#floor(s)), lut.num_cos_theta - 2));
       const &float ptr0(&lut.directional_albedo[lut.num_roughness * (i + 0) + j]);
       const &float ptr1(&lut.directional_albedo[lut.num_roughness * (i + 1) + j]);
-      s = s - i;
-      return #min(1, (1 - s) * ((1 - t) * ptr0[0] + t * ptr0[1]) + s * ((1 - t) * ptr1[0] + t * ptr1[1]));
+      return #min(1.0, lerp(lerp(ptr0[0], ptr0[1], t), lerp(ptr1[0], ptr1[1], t), s - i));
     };
     const float Eav = #min(1, (1 - t) * lut.average_albedo[j] + t * lut.average_albedo[j + 1]);
     return #abs(cos_thetai) / $PI * (1 - Ewo) * (1 - Ewi) / (1 - Eav + 1e-6) * multiscatter_tint;
@@ -1264,7 +1262,7 @@ export @(pure macro) auto unbounded_mix(component[<N>] components) {
 
 @(macro) auto scatter_evaluate(const &component_mix this, const &scatter_evaluate_parameters params) {
   auto result(scatter_evaluate_result(f: color(0), is_black: true));
-  for (int i = 0; i < this.components.$size; i++) {
+  for (int i = 0; i < #num(this.components); i++) {
     visit component in this.components[i] { // In general this is a union!
       auto component_result(scatter_evaluate(&component.component, params));
       if (!component_result.is_black) {
@@ -1279,7 +1277,7 @@ export @(pure macro) auto unbounded_mix(component[<N>] components) {
 
 @(macro) auto scatter_sample(const &component_mix this, const &scatter_sample_parameters params) {
   const auto xi(&params.xi.z);
-  for (int i = 0; i < this.components.$size; i++) {
+  for (int i = 0; i < #num(this.components); i++) {
     visit component in this.components[i] { // In general this is a union!
       if (!(*xi < component.chance)) {
         *xi -= component.chance;

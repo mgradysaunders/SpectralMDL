@@ -248,7 +248,6 @@ export @(pure noinline)double erf_inverse(double y){
 }
 }
 export namespace specular {
-export @(pure macro)float3 reflection_half_vector(const float3 wo,const float3 wi)=(vh:=(wo+wi))*#sign(vh.z);
 export @(pure macro)float3 reflect(const float3 wi,const float3 wm)=2*#sum(wi*wm)*wm-wi;
 export @(pure macro)float3 refract(const float3 wi,const float3 wm,const float ior){
   const auto cos_thetai(#sum(wi*wm));
@@ -257,6 +256,7 @@ export @(pure macro)float3 refract(const float3 wi,const float3 wm,const float i
   const auto cos_thetat(#sqrt(cos2_thetat)*-#sign(cos_thetai));
   return -ior*wi+(ior*cos_thetai+cos_thetat)*wm;
 }
+export @(pure macro)float3 reflection_half_vector(const float3 wo,const float3 wi)=(vh:=(wo+wi))*#sign(vh.z);
 export @(pure macro)float3 refraction_half_vector(const float3 wo,const float3 wi,const float ior,)=(vh:=-(ior*wo+wi))*#sign(vh.z);
 export @(pure macro)auto refraction_half_vector_jacobian(const float3 wo,const float3 wi,const float ior,)=#abs(#sum(wi*(vh:=refraction_half_vector(wo,wi,ior))))/((vh2:=#sum(vh*vh))*#sqrt(vh2));
 export @(pure macro)auto schlick_F0(const auto ior)=#pow((ior-1)/(ior+1),2);
@@ -313,7 +313,7 @@ struct scatter_evaluate_result{
   return ((wo.z<0)==(wo0.z<0))&((wi.z<0)==(wi0.z<0));
 }
 @(pure)float3 half_direction(inline const &scatter_evaluate_parameters params){
-  return normalize(mode==scatter_reflect?wo+wi:specular::refraction_half_vector(wo,wi,ior));
+  return normalize(mode==scatter_reflect?specular::reflection_half_vector(wo,wi):specular::refraction_half_vector(wo,wi,ior));
 }
 struct scatter_sample_parameters{
   float3 wo0;
@@ -343,7 +343,7 @@ struct scatter_sample_result{
   return tbn if((wo.z<0)==(wo0.z<0));
 }
 @(pure)float3 half_direction(inline const &scatter_sample_parameters this,inline const &scatter_sample_result result){
-  return normalize(mode==scatter_reflect?wo+wi:specular::refraction_half_vector(wo,wi,ior));
+  return normalize(mode==scatter_reflect?specular::reflection_half_vector(wo,wi):specular::refraction_half_vector(wo,wi,ior));
 }
 export @(pure macro)auto $energy_loss_compensation(
   const string lut_name[[anno::unused()]],
@@ -364,16 +364,14 @@ export @(pure macro)auto $energy_loss_compensation(
       const int i(#min(int(#floor(s)),lut.num_cos_theta-2));
       const &float ptr0(&lut.directional_albedo[lut.num_roughness*(i+0)+j]);
       const &float ptr1(&lut.directional_albedo[lut.num_roughness*(i+1)+j]);
-      s=s-i;
-      return #min(1,(1-s)*((1-t)*ptr0[0]+t*ptr0[1])+s*((1-t)*ptr1[0]+t*ptr1[1]));
+      return #min(1.0,lerp(lerp(ptr0[0],ptr0[1],t),lerp(ptr1[0],ptr1[1],t),s-i));
     };
     const float Ewi=return_from{
       float s((lut.num_cos_theta-1)*#max(0,#min(#abs(cos_thetai),1)));
       const int i(#min(int(#floor(s)),lut.num_cos_theta-2));
       const &float ptr0(&lut.directional_albedo[lut.num_roughness*(i+0)+j]);
       const &float ptr1(&lut.directional_albedo[lut.num_roughness*(i+1)+j]);
-      s=s-i;
-      return #min(1,(1-s)*((1-t)*ptr0[0]+t*ptr0[1])+s*((1-t)*ptr1[0]+t*ptr1[1]));
+      return #min(1.0,lerp(lerp(ptr0[0],ptr0[1],t),lerp(ptr1[0],ptr1[1],t),s-i));
     };
     const float Eav=#min(1,(1-t)*lut.average_albedo[j]+t*lut.average_albedo[j+1]);
     return #abs(cos_thetai)/$PI*(1-Ewo)*(1-Ewi)/(1-Eav+1e-6)*multiscatter_tint;
@@ -1009,7 +1007,7 @@ export @(pure macro)auto unbounded_mix(component[<N>] components){
 }
 @(macro)auto scatter_evaluate(const &component_mix this,const &scatter_evaluate_parameters params){
   auto result(scatter_evaluate_result(f: color(0),is_black: true));
-  for(int i=0;i<this.components.$size;i++){
+  for(int i=0;i<#num(this.components);i++){
     visit component in this.components[i]{
       auto component_result(scatter_evaluate(&component.component,params));
       if(!component_result.is_black){
@@ -1023,7 +1021,7 @@ export @(pure macro)auto unbounded_mix(component[<N>] components){
 }
 @(macro)auto scatter_sample(const &component_mix this,const &scatter_sample_parameters params){
   const auto xi(&params.xi.z);
-  for(int i=0;i<this.components.$size;i++){
+  for(int i=0;i<#num(this.components);i++){
     visit component in this.components[i]{
       if(!(*xi<component.chance)){
         *xi-=component.chance;
@@ -1178,7 +1176,7 @@ export @(pure)float max_value_wavelength(const color a){
   }
   return $state.wavelength_base[imax];
 }
-export @(pure macro)auto average(const auto a)=#sum(a)/a.size;
+export @(pure macro)auto average(const auto a)=#sum(a)/#num(a);
 export @(pure macro)auto lerp(const auto a,const auto b,const auto l)=(1.0-l)*a+l*b;
 export @(pure macro)auto step(const auto a,const auto b)=#select(b<a,0.0,1.0);
 export @(pure macro)auto smoothstep(const auto a,const auto b,const auto l){
@@ -1192,6 +1190,14 @@ export @(pure macro)auto normalize(const auto a)=a*(1/length(a));
 export @(pure macro)auto distance(const auto a,const auto b)=length(b-a);
 export @(pure macro)auto cross(const auto a,const auto b)=a.yzx*b.zxy-a.zxy*b.yzx;
 export @(pure macro)auto transpose(const auto a)=#transpose(a);
+export @(macro)float luminance(const float3 a)=dot(float3(0.2126,0.7152,0.0722),a);
+export @(noinline)float luminance(const color a){
+  float result(0.0);
+  for(int i=0;i<$WAVELENGTH_BASE_MAX;++i){
+    result+=$wyman_y($state.wavelength_base[i])*a[i];
+  }
+  return result/$WAVELENGTH_BASE_MAX;
+}
 export @(noinline)color blackbody(const float temperature){
   const auto t(color($state.wavelength_base)*(temperature/14.387e6));
   auto res(1+2*t);
@@ -1206,13 +1212,34 @@ export @(noinline)color blackbody(const float temperature){
   }
   return 5.659994086/res;
 }
-export @(macro)float luminance(const float3 a)=dot(float3(0.2126,0.7152,0.0722),a);
-export @(noinline)float luminance(const color a){
-  float result(0.0);
-  for(int i=0;i<$WAVELENGTH_BASE_MAX;++i){
-    result+=$wyman_y($state.wavelength_base[i])*a[i];
+export float eval_at_wavelength(color a,float wavelength){
+  if$($WAVELENGTH_BASE_MAX==1){
+    return a[0];
+  } else {
+    int first=0;
+    if$($WAVELENGTH_BASE_MAX<=4){
+      while(first<$WAVELENGTH_BASE_MAX){
+        break if(!($state.wavelength_base[first]<wavelength));
+        first++;
+      }
+    } else {
+      int count=$WAVELENGTH_BASE_MAX;
+      while(count>0){
+        const int step=count/2;
+        const int i=first+step;
+        if($state.wavelength_base[i]<wavelength){
+          first=i+1;
+          count=count-step+1;
+        } else {
+          count=step;
+        }
+      }
+    }
+    const int i=clamp(first-1,0,$WAVELENGTH_BASE_MAX-2);
+    const float w0=$state.wavelength_base[i];
+    const float w1=$state.wavelength_base[i+1];
+    return lerp(a[i],a[i+1],saturate((wavelength-w0)/(w1-w0)));
   }
-  return result/$WAVELENGTH_BASE_MAX;
 }
 )*";
 

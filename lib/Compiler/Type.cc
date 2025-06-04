@@ -340,9 +340,7 @@ bool ArithmeticType::has_field(std::string_view name) {
     if (name.size() == 1)
       return to_index(name[0]).has_value();
     if (extent.is_vector())
-      return name == "size" || to_index_swizzle(name).has_value();
-    if (extent.is_matrix())
-      return name == "size" || name == "rows" || name == "cols";
+      return to_index_swizzle(name).has_value();
   }
   return false;
 }
@@ -351,10 +349,6 @@ Value ArithmeticType::access_field(Emitter &emitter, Value value,
                                    std::string_view name,
                                    const SourceLocation &srcLoc) {
   if (extent.is_scalar()) {
-    // Allow `.size` for easy implementation of `math::average()`.
-    if (name == "size") {
-      return emitter.context.get_comptime_int(1);
-    }
     srcLoc.throw_error("scalar ", quoted(displayName),
                        " has no field access operator");
   }
@@ -387,14 +381,6 @@ Value ArithmeticType::access_field(Emitter &emitter, Value value,
       }
       return result;
     }
-    if (name == "size")
-      return emitter.context.get_comptime_int(extent.numRows);
-  }
-  if (extent.is_matrix()) {
-    if (name == "rows")
-      return emitter.context.get_comptime_int(extent.numRows);
-    if (name == "cols" || name == "size")
-      return emitter.context.get_comptime_int(extent.numCols);
   }
   srcLoc.throw_error("no field ", quoted(name), " in ", quoted(displayName));
   return Value();
@@ -558,9 +544,6 @@ Value ArrayType::access_field(Emitter &emitter, Value value,
                               std::string_view name,
                               const SourceLocation &srcLoc) {
   SMDL_SANITY_CHECK(!is_abstract());
-  if (name == "$size") {
-    return emitter.context.get_comptime_int(int(size));
-  }
   if (has_field(name)) {
     if (!value.is_lvalue()) {
       auto lv{emitter.to_lvalue(value)};

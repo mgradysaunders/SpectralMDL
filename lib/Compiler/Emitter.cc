@@ -1656,6 +1656,36 @@ Value Emitter::emit_intrinsic(std::string_view name, const ArgumentList &args,
     }
     break;
   }
+  case 'n': {
+    if (name == "num") {
+      auto type{expectOneType()};
+      auto size{[&]() -> int {
+        if (type->is_arithmetic_vector()) {
+          return static_cast<ArithmeticType *>(type)->extent.numRows;
+        } else if (type->is_arithmetic_matrix()) {
+          return static_cast<ArithmeticType *>(type)->extent.numCols;
+        } else if (type->is_color()) {
+          return static_cast<ColorType *>(type)->wavelengthBaseMax;
+        } else if (type->is_array()) {
+          return static_cast<ArrayType *>(type)->size;
+        } else {
+          return 1;
+        }
+      }()};
+      return context.get_comptime_int(size);
+    }
+    if (name == "num_rows" || name == "num_cols") {
+      auto type{expectOneType()};
+      if (!type->is_arithmetic_matrix())
+        srcLoc.throw_error("intrinsic ", quoted(name),
+                           " expects 1 matrix argument");
+      return context.get_comptime_int(
+          name == "num_rows"
+              ? int(static_cast<ArithmeticType *>(type)->extent.numRows)
+              : int(static_cast<ArithmeticType *>(type)->extent.numCols));
+    }
+    break;
+  }
   case 'o': {
     if (name == "ofile_open") {
       auto value{to_rvalue(expectOne())};

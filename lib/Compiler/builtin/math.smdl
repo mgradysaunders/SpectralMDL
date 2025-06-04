@@ -116,7 +116,7 @@ export @(pure) float max_value_wavelength(const color a) {
   return $state.wavelength_base[imax];
 }
 
-export @(pure macro) auto average(const auto a) = #sum(a) / a.size;
+export @(pure macro) auto average(const auto a) = #sum(a) / #num(a);
 
 export @(pure macro) auto lerp(const auto a, const auto b, const auto l) = (1.0 - l) * a + l * b;
 
@@ -140,15 +140,27 @@ export @(pure macro) auto cross(const auto a, const auto b) = a.yzx * b.zxy - a.
 
 export @(pure macro) auto transpose(const auto a) = #transpose(a);
 
-// The implementation below is a series expansion of this calculation:
+export @(macro) float luminance(const float3 a) = dot(float3(0.2126, 0.7152, 0.0722), a);
+
+export @(noinline) float luminance(const color a) {
+  float result(0.0);
+  for (int i = 0; i < $WAVELENGTH_BASE_MAX; ++i) {
+    result += $wyman_y($state.wavelength_base[i]) * a[i];
+  }
+  return result / $WAVELENGTH_BASE_MAX;
+}
+
+// This implementation is a series expansion of the calculation below, which
+// is around 2x faster if using 16 wavelengths. For more wavelengths, the 
+// performance difference only becomes more exaggerated.
+//
 // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 // const auto t(color($state.wavelength_base) * temperature);
 // const auto numer(#pow(2897.7719e3 / t, 5));
 // const auto denom(#exp(14.387773e6 / t) - 1.0);
 // return 142.3251316 * numer / denom;
 // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-// At 16 wavelengths, the series expansion is around 2x faster. For more
-// wavelengths, the performance difference only becomes more exaggerated.
+//
 export @(noinline) color blackbody(const float temperature) {
   const auto t(color($state.wavelength_base) * (temperature / 14.387e6));
   auto res(1 + 2 * t);
@@ -164,12 +176,34 @@ export @(noinline) color blackbody(const float temperature) {
   return 5.659994086 / res;
 }
 
-export @(macro) float luminance(const float3 a) = dot(float3(0.2126, 0.7152, 0.0722), a);
-
-export @(noinline) float luminance(const color a) {
-  float result(0.0);
-  for (int i = 0; i < $WAVELENGTH_BASE_MAX; ++i) {
-    result += $wyman_y($state.wavelength_base[i]) * a[i];
+export float eval_at_wavelength(color a, float wavelength) {
+  if $($WAVELENGTH_BASE_MAX == 1) {
+    return a[0];
+  } else {
+    int first = 0;
+    if $($WAVELENGTH_BASE_MAX <= 4) {
+      // For 4 or more wavelengths, use linear search
+      while (first < $WAVELENGTH_BASE_MAX) {
+        break if (!($state.wavelength_base[first] < wavelength));
+        first++;
+      }
+    } else {
+      // For 5 or more wavelengths, use binary search
+      int count = $WAVELENGTH_BASE_MAX;
+      while (count > 0) {
+        const int step = count / 2;
+        const int i = first + step;
+        if ($state.wavelength_base[i] < wavelength) {
+          first = i + 1;
+          count = count - step + 1;
+        } else {
+          count = step;
+        }
+      }
+    }
+    const int i = clamp(first - 1, 0, $WAVELENGTH_BASE_MAX - 2);
+    const float w0 = $state.wavelength_base[i];
+    const float w1 = $state.wavelength_base[i + 1];
+    return lerp(a[i], a[i + 1], saturate((wavelength - w0) / (w1 - w0)));
   }
-  return result / $WAVELENGTH_BASE_MAX;
 }
