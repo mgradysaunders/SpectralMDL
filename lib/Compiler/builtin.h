@@ -1126,6 +1126,7 @@ export @(pure macro)auto round(const auto a)=#round(a);
 export @(pure macro)auto trunc(const auto a)=#trunc(a);
 export @(pure macro)auto frac(const auto a)=a-#floor(a);
 export @(pure macro)auto fmod(const auto a,const auto b)=a%b;
+export @(pure macro)auto modf(const auto a)=auto[2](a0:=#trunc(a),a-a0);
 export @(pure macro)auto isfinite(const auto a)=#isfpclass(a,0b0111111000);
 export @(pure macro)auto isnormal(const auto a)=#isfpclass(a,0b0100001000);
 export @(pure macro)auto isinf(const auto a)=#isfpclass(a,0b1000000100);
@@ -1155,6 +1156,28 @@ export @(pure macro)auto log2(const auto a)=#log2(a);
 export @(pure macro)auto log10(const auto a)=#log10(a);
 export @(pure macro)auto min_value(const auto a)=#min_value(a);
 export @(pure macro)auto max_value(const auto a)=#max_value(a);
+export @(pure)float min_value_wavelength(const color a){
+  int imin=0;
+  float amin=a[0];
+  for(int i=1;i<$WAVELENGTH_BASE_MAX;i++){
+    if(amin>a[i]){
+      amin=a[i];
+      imin=i;
+    }
+  }
+  return $state.wavelength_base[imin];
+}
+export @(pure)float max_value_wavelength(const color a){
+  int imax=0;
+  float amax=a[0];
+  for(int i=1;i<$WAVELENGTH_BASE_MAX;i++){
+    if(amax<a[i]){
+      amax=a[i];
+      imax=i;
+    }
+  }
+  return $state.wavelength_base[imax];
+}
 export @(pure macro)auto average(const auto a)=#sum(a)/a.size;
 export @(pure macro)auto lerp(const auto a,const auto b,const auto l)=(1.0-l)*a+l*b;
 export @(pure macro)auto step(const auto a,const auto b)=#select(b<a,0.0,1.0);
@@ -1183,6 +1206,7 @@ export @(noinline)color blackbody(const float temperature){
   }
   return 5.659994086/res;
 }
+export @(macro)float luminance(const float3 a)=dot(float3(0.2126,0.7152,0.0722),a);
 export @(noinline)float luminance(const color a){
   float result(0.0);
   for(int i=0;i<$WAVELENGTH_BASE_MAX;++i){

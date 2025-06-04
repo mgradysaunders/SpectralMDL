@@ -20,4 +20,10 @@ unit_test "Math" {
   #assert(math::smoothstep(2.7, 8.1, 0.0) == 2.7);
   #assert(math::smoothstep(2.7, 8.1, 1.0) == 8.1);
   #assert(#all(math::cross(float3(1, 0, 0), float3(0, 1, 0)) == float3(0, 0, 1)));
+  auto tmp0 = math::sincos(0.411);
+  #assert(tmp0[0] ~== [1e-5] math::sin(0.411));
+  #assert(tmp0[1] ~== [1e-5] math::cos(0.411));
+  auto tmp1 = math::modf(float2(-1.8, 11.7));
+  #assert(#all(tmp1[0] ~== [1e-5] float2(-1, 11)));
+  #assert(#all(tmp1[1] ~== [1e-5] float2(-0.8, 0.7)));
 }
