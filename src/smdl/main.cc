@@ -134,6 +134,8 @@ int main(int argc, char **argv) {
     } else if (subTest) {
       if (auto error{compiler.jit_compile()})
         error->print_and_exit();
+      if (auto error{compiler.jit_execs()})
+        error->print_and_exit();
       std::array<float, 16> wavelengths{};
       smdl::BumpPtrAllocator allocator{};
       smdl::State state{};
@@ -154,7 +156,7 @@ int main(int argc, char **argv) {
         wavelengths[i] =
             (1 - fac) * state.wavelength_min + fac * state.wavelength_max;
       }
-      if (auto error{compiler.run_jit_unit_tests(state)}) {
+      if (auto error{compiler.jit_unit_tests(state)}) {
         std::cerr << '\n';
         error->print_and_exit();
       }

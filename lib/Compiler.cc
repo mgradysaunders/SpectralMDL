@@ -257,9 +257,6 @@ std::optional<Error> Compiler::jit_compile() noexcept {
       mod->reset();
     }
     allocator.reset();
-    for (auto &jitExec : jitExecs) {
-      jitExec();
-    }
   });
 }
 
@@ -325,7 +322,7 @@ void Compiler::jit_rgb_to_color(const State &state, const float3 &rgb,
   jitRgbToColor(state, rgb, color);
 }
 
-std::optional<Error> Compiler::run_jit_unit_tests(const State &state) noexcept {
+std::optional<Error> Compiler::jit_unit_tests(const State &state) noexcept {
   return catch_and_return_error([&] {
     for (auto itr0 = jitUnitTests.begin(); itr0 != jitUnitTests.end();) {
       auto itr1{itr0};
@@ -349,6 +346,13 @@ std::optional<Error> Compiler::run_jit_unit_tests(const State &state) noexcept {
       }
       std::cerr << '\n';
     }
+  });
+}
+
+std::optional<Error> Compiler::jit_execs() noexcept {
+  return catch_and_return_error([&] {
+    for (auto &jitExec : jitExecs)
+      jitExec();
   });
 }
 

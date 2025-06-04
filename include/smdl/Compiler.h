@@ -162,7 +162,10 @@ public:
 
   /// Run JIT-compiled unit tests and print results to standard error.
   [[nodiscard]] std::optional<Error>
-  run_jit_unit_tests(const State &state) noexcept;
+  jit_unit_tests(const State &state) noexcept;
+
+  /// Run JIT-compiled execs.
+  [[nodiscard]] std::optional<Error> jit_execs() noexcept;
 
   /// Summarize all compiled materials.
   [[nodiscard]] std::string summarize_materials() const;
