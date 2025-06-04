@@ -558,6 +558,9 @@ Value ArrayType::access_field(Emitter &emitter, Value value,
                               std::string_view name,
                               const SourceLocation &srcLoc) {
   SMDL_SANITY_CHECK(!is_abstract());
+  if (name == "$size") {
+    return emitter.context.get_comptime_int(int(size));
+  }
   if (has_field(name)) {
     if (!value.is_lvalue()) {
       auto lv{emitter.to_lvalue(value)};

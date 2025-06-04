@@ -1171,6 +1171,131 @@ export struct fresnel_layer: bsdf {
 export typedef fresnel_layer color_fresnel_layer;
 //--}
 
+//--{ normalized_mix, clamped_mix, unbounded_mix
+tag component;
+
+export struct bsdf_component: component {
+  float weight = 0.0;
+  bsdf component = bsdf();
+  float chance = weight; // NOTE: Non-standard!
+};
+export struct edf_component: component {
+  float weight = 0.0;
+  edf component = edf();
+  float chance = weight; // NOTE: Non-standard!
+};
+export struct vdf_component: component {
+  float weight = 0.0;
+  vdf component = vdf();
+  float chance = weight; // NOTE: Non-standard!
+};
+
+struct component_mix: bsdf, edf, vdf {
+  component[] components;
+};
+
+export @(pure macro) auto normalized_mix(component[<N>] components) {
+  float total_weight(0);
+  float total_chance(0);
+  for (int i = 0; i < N; i++) {
+    auto component(&components[i]);
+    component.weight = #max(component.weight, 0.0);
+    component.chance = #max(component.chance, 0.0);
+    total_weight += component.weight;
+    total_chance += component.chance;
+  }
+  if (total_weight > 1.0)
+    total_weight = 1.0 / total_weight;
+  else
+    total_weight = 1.0;
+  total_chance = 1.0 / total_chance if (total_chance > 0.0);
+  for (int i = 0; i < N; i++) {
+    auto component(&components[i]);
+    component.weight *= total_weight;
+    component.chance *= total_chance;
+  }
+  return component_mix(components);
+}
+
+export @(pure macro) auto clamped_mix(component[<N>] components) {
+  float total_weight(0);
+  float total_chance(0);
+  for (int i = 0; i < N; i++) {
+    auto component(&components[i]);
+    component.weight = #max(component.weight, 0.0);
+    component.chance = #max(component.chance, 0.0);
+    if (total_weight + component.weight < 1.0) {
+      total_weight += component.weight;
+      total_chance += component.chance;
+    } else {
+      // MDL specification:
+      // Once a component weight would cause the sum to exceed 1.0, 
+      // it is replaced with the result of subtracting the sum from 1.0.
+      // All subsequent weights are then set to 0.0.
+      component.weight = 1.0 - total_weight;
+      for (int j = i + 1; j < N; j++) {
+        components[j].weight = 0;
+        components[j].chance = 0;
+      }
+      break;
+    }
+  }
+  total_chance = 1.0 / total_chance if (total_chance > 0.0);
+  for (int i = 0; i < N; i++) {
+    components[i].chance *= total_chance;
+  }
+  return component_mix(components);
+}
+
+export @(pure macro) auto unbounded_mix(component[<N>] components) {
+  float total_chance(0);
+  for (int i = 0; i < N; i++) {
+    auto component(&components[i]);
+    component.weight = #max(component.weight, 0.0);
+    component.chance = #max(component.chance, 0.0);
+    total_chance += component.chance;
+  }
+  total_chance = 1.0 / total_chance if (total_chance > 0.0);
+  for (int i = 0; i < N; i++) {
+    components[i].chance *= total_chance;
+  }
+  return component_mix(components);
+}
+
+@(macro) auto scatter_evaluate(const &component_mix this, const &scatter_evaluate_parameters params) {
+  auto result(scatter_evaluate_result(f: color(0), is_black: true));
+  for (int i = 0; i < this.components.$size; i++) {
+    visit component in this.components[i] { // In general this is a union!
+      auto component_result(scatter_evaluate(&component.component, params));
+      if (!component_result.is_black) {
+        result.pdf += component.chance * component_result.pdf;
+        result.f += component.weight * component_result.f;
+        result.is_black = false;
+      }
+    }
+  }
+  return result;
+}
+
+@(macro) auto scatter_sample(const &component_mix this, const &scatter_sample_parameters params) {
+  const auto xi(&params.xi.z);
+  for (int i = 0; i < this.components.$size; i++) {
+    visit component in this.components[i] { // In general this is a union!
+      if (!(*xi < component.chance)) {
+        *xi -= component.chance;
+      } else {
+        *xi /= component.chance;
+        auto result(scatter_sample(&component.component, params));
+        if ((result.mode != scatter_none) & bool(result.delta_f))
+          *result.delta_f *= component.weight;
+        return result;
+      }
+    }
+  }
+  return scatter_sample_result();
+}
+//--}
+
 export @(macro) int $scatter_evaluate(
   const &$material_instance instance,
   const &float3 wo,     ///< The outgoing direction
