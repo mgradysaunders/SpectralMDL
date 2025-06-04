@@ -86,6 +86,16 @@ void SceneData::set_float4(std::string_view name, float4 var) {
   });
 }
 
+void SceneData::set_color(std::string_view name,
+                          std::function<void(State &, float *)> getter) {
+  SMDL_SANITY_CHECK(getter != nullptr);
+  set(name,
+      [getter = std::move(getter)](State *state, Kind kind, int, void *out) {
+        if (kind == Kind::Color)
+          getter(*state, static_cast<float *>(out));
+      });
+}
+
 const SceneData::Getter *SceneData::get(std::string_view name) const {
   auto &lookup{*static_cast<const llvm::StringMap<Getter> *>(ptr)};
   if (auto itr{lookup.find(llvm::StringRef(name))}; itr != lookup.end())

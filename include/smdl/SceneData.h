@@ -61,8 +61,14 @@ public:
   /// Associate the given name with a constant `float4`.
   void set_float4(std::string_view name, float4 var);
 
+  /// Associate the given name with a `color`.
+  ///
+  /// \param[in] getter
+  /// The getter to calculate the color which must generally depend on
+  /// the wavelengths in the `State`.
+  ///
   void set_color(std::string_view name,
-                 std::function<void(State &, int, float *)> getter);
+                 std::function<void(State &, float *)> getter);
 
   [[nodiscard]] const Getter *get(std::string_view name) const;
 
