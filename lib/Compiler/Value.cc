@@ -68,14 +68,20 @@ Crumb *Crumb::find(Context &context, Span<std::string_view> name,
       if (crumb->is_ast_using_import() ||
           (crumb->is_ast_import() && name.size() > crumb->name.size() &&
            name.starts_with(crumb->name))) {
-        if (auto subCrumb{Crumb::find(context,
-                                      crumb->is_ast_using_import()
-                                          ? name
-                                          : name.subspan(crumb->name.size()),
+        // Search for qualified names `foo::bar::baz`
+        if (auto subCrumb{Crumb::find(context, name.subspan(crumb->name.size()),
                                       llvmFunc, module_->lastCrumb, nullptr,
                                       /*ignoreIfNotExported=*/true)}) {
           return subCrumb;
         }
+        // Search for unqualified names `baz` if universal unqualified
+        // import `using foo::bar import *`
+        if (crumb->is_ast_using_import())
+          if (auto subCrumb{Crumb::find(context, name, llvmFunc,
+                                        module_->lastCrumb, nullptr,
+                                        /*ignoreIfNotExported=*/true)}) {
+            return subCrumb;
+          }
       }
     } else if (crumb->is_ast_using_import() &&
                crumb->name.back() == name.back() && name.size() == 1) {
