@@ -1,3 +1,4 @@
+// NOTE: This module is non-standard!
 #smdl
 
 using ::math import *;

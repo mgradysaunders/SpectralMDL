@@ -1,0 +1,45 @@
+// NOTE: This module is non-standard!
+#smdl
+
+typedef #type_int(32) int32_t;
+
+typedef #type_int(64) int64_t;
+
+export struct PCG32 {
+  int64_t state = 0;
+
+  int64_t increment = 1442695040888963407;
+};
+
+export @(pure) int32_t generate_int(inline const &PCG32 this) {
+  state = 6364136223846793005 * state + increment;
+  return #rotr(int32_t(((state >>> 18) ^ state) >>> 27), int32_t(31 & (state >>> 59)));
+}
+
+export @(pure) float generate_float(inline const &PCG32 this) {
+  return #min(float(#unsigned_to_fp(generate_int(this), double) / 4294967296.0d), 1.0 - $FLOAT_EPS / 2);
+}
+
+export @(pure) float2 generate_float2(inline const &PCG32 this) {
+  return float2(
+    generate_float(this),
+    generate_float(this),
+  );
+}
+
+export @(pure) float3 generate_float3(inline const &PCG32 this) {
+  return float3(
+    generate_float(this),
+    generate_float(this),
+    generate_float(this),
+  );
+}
+
+export @(pure) float4 generate_float4(inline const &PCG32 this) {
+  return float4(
+    generate_float(this),
+    generate_float(this),
+    generate_float(this),
+    generate_float(this),
+  );
+}
