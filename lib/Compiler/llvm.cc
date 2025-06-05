@@ -27,10 +27,8 @@ llvm::Value *llvm_emit_cast(llvm::IRBuilderBase &builder, llvm::Value *value,
     return builder.CreateFPCast(value, dstType);
   bool isSrcInt{srcType->isIntOrIntVectorTy()};
   bool isDstInt{dstType->isIntOrIntVectorTy()};
-  bool isSrcBool{isSrcInt &&
-                 srcType->getScalarType()->getPrimitiveSizeInBits() == 1};
-  bool isDstBool{isDstInt &&
-                 dstType->getScalarType()->getPrimitiveSizeInBits() == 1};
+  bool isSrcBool{isSrcInt && srcType->getScalarSizeInBits() == 1};
+  bool isDstBool{isDstInt && dstType->getScalarSizeInBits() == 1};
   // bool => int
   if (isSrcBool && isDstInt)
     return builder.CreateIntCast(value, dstType, /*isSigned=*/false);
@@ -47,8 +45,16 @@ llvm::Value *llvm_emit_cast(llvm::IRBuilderBase &builder, llvm::Value *value,
   if (isSrcInt && isDstFP)
     return builder.CreateSIToFP(value, dstType);
   // float => int
-  if (isSrcFP && isDstInt)
-    return builder.CreateFPToSI(value, dstType);
+  if (isSrcFP && isDstInt) {
+    if (srcType->getScalarSizeInBits() != dstType->getScalarSizeInBits()) {
+      auto dstTypeSameSize =
+          dstType->getWithNewBitWidth(srcType->getScalarSizeInBits());
+      value = builder.CreateFPToSI(value, dstTypeSameSize);
+      return builder.CreateIntCast(value, dstType, /*isSigned=*/true);
+    } else {
+      return builder.CreateFPToSI(value, dstType);
+    }
+  }
   // int => int
   if (isSrcInt && isDstInt)
     return builder.CreateIntCast(value, dstType, /*isSigned=*/true);

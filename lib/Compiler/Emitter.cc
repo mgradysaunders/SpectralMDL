@@ -1739,7 +1739,7 @@ Value Emitter::emit_intrinsic(std::string_view name, const ArgumentList &args,
           {value0.type, value1.type, context.get_float_type()},
           /*defaultToUnion=*/false, srcLoc)};
       value0 = invoke(resultType, value0, srcLoc);
-      return RValue(resultType, value1.type == context.get_int_type()
+      return RValue(resultType, value1.type->is_arithmetic_scalar_int()
                                     ? llvm_emit_powi(builder, value0, value1)
                                     : builder.CreateBinaryIntrinsic(
                                           llvm::Intrinsic::pow, value0,
@@ -1790,6 +1790,29 @@ Value Emitter::emit_intrinsic(std::string_view name, const ArgumentList &args,
       if (!args[0].value.is_lvalue())
         create_lifetime_end(lv);
       return RValue(context.get_void_type(), callInst);
+    }
+    break;
+  }
+  case 'r': {
+    if (name == "rotl" || name == "rotr") {
+      if (!(args.size() == 2 && //
+            args[0].value.type->is_arithmetic_integral() &&
+            args[1].value.type->is_arithmetic_integral())) {
+        srcLoc.throw_error(
+            "intrinsic ", quoted(name),
+            " expects 2 integer or vectorized integer arguments");
+      }
+      auto intType{
+          context.get_common_type({args[0].value.type, args[1].value.type},
+                                  /*defaultToUnion=*/false, srcLoc)};
+      auto value0{invoke(intType, args[0].value, srcLoc)};
+      auto value1{invoke(intType, args[1].value, srcLoc)};
+      auto intrID{name == "rotl" ? llvm::Intrinsic::fshl
+                                 : llvm::Intrinsic::fshr};
+      return RValue(intType,
+                    builder.CreateIntrinsic(intType->llvmType, intrID,
+                                            {value0.llvmValue, value0.llvmValue,
+                                             value1.llvmValue}));
     }
     break;
   }
@@ -1854,8 +1877,8 @@ Value Emitter::emit_intrinsic(std::string_view name, const ArgumentList &args,
     if (name == "tabulate_albedo") {
       if (!(args.size() == 4 &&
             args[0].value.type == context.get_string_type() &&
-            args[1].value.type == context.get_int_type() &&
-            args[2].value.type == context.get_int_type() &&
+            args[1].value.type->is_arithmetic_scalar_int() &&
+            args[2].value.type->is_arithmetic_scalar_int() &&
             args[3].value.is_comptime_meta_type(context)))
         srcLoc.throw_error("intrinsic 'tabulate_albedo' expects 1 compile-time "
                            "string argument, 2 compile-time integer arguments, "
@@ -1963,6 +1986,21 @@ Value Emitter::emit_intrinsic(std::string_view name, const ArgumentList &args,
     break;
   }
   case 'u': {
+    if (name == "unsigned_to_fp") {
+      if (!(args.size() == 2 && args[0].value.type->is_arithmetic_integral() &&
+            args[1].value.is_comptime_meta_type(context))) {
+        srcLoc.throw_error(
+            "intrinsic 'unsigned_to_fp' expects 1 int argument and "
+            "1 type argument");
+      }
+      auto floatType{args[1].value.get_comptime_meta_type(context, srcLoc)};
+      if (!floatType->is_arithmetic_floating_point())
+        srcLoc.throw_error(
+            "intrinsic 'unsigned_to_fp' expects 1 int argument and "
+            "1 floating point type argument");
+      return RValue(floatType, builder.CreateUIToFP(to_rvalue(args[0].value),
+                                                    floatType->llvmType));
+    }
     if (name == "unpack_float4") {
       auto value{to_rvalue(expectOne())};
       if (!value.type->is_arithmetic_scalar() &&
