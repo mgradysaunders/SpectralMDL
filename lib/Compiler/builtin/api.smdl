@@ -1,5 +1,17 @@
 #smdl
 
+/// The 8-bit sized integer type.
+export typedef #type_int(8) $int8_t;
+
+/// The 16-bit sized integer type.
+export typedef #type_int(16) $int16_t;
+
+/// The 32-bit sized integer type.
+export typedef #type_int(32) $int32_t;
+
+/// The 64-bit sized integer type.
+export typedef #type_int(64) $int64_t;
+
 /// The number of wavelengths in the RGB-to-color curves.
 const int RGB_TO_COLOR_NUM_WAVELENGTHS = 32;
 
@@ -60,7 +72,7 @@ const static auto RGB_TO_COLOR_CURVES = auto[](
      0.1369241,  0.0189149, -0.0000051, -0.0004240, -0.0004193,  0.0017473, 
      0.0037999, -0.0005510, -0.0000437,  0.0075875,  0.0257957,  0.0381684,
      0.0494896,  0.0495960,  0.0498148,  0.0398409,  0.0305010,  0.0212431,
-     0.0069597,  0.0041734));
+     0.0069597,  0.0041734),);
 // smdl format on
 
 /// The nontrivial RGB-to-color implementation.
@@ -171,6 +183,59 @@ export @(hot noinline) float3 $color_to_rgb(const color c) {
 /// for convenience.
 @(visible noinline) void jit_color_to_rgb(const &float cptr, const &float3 rgb) {
   *rgb = $color_to_rgb(color(cptr));
+}
+
+/// The hash integer type.
+export typedef $int32_t $hash_t;
+
+/// A straight-forward hash function for use with procedural algorithms.
+export @(pure) $hash_t $hash(auto value) {
+  if $(#is_arithmetic_scalar(value)) {
+    if $(#is_arithmetic_integral(value)) {
+      if $(#sizeof(value) <= 4) {
+        // MurmurHash3 finalizer for 32-bits
+        auto h($int32_t(value) + 3266445271);
+        h ^= h >>> 16, h *= 0x85EBCA6B;
+        h ^= h >>> 13, h *= 0xC2B2AE35;
+        h ^= h >>> 16;
+        return h;
+      } else {
+        // MurmurHash3 finalizer for 64-bits
+        auto h($int64_t(value) + 13898551614298330943);
+        h ^= h >>> 33, h *= 0xFF51AFD7ED558CCD;
+        h ^= h >>> 33, h *= 0xC4CEB9FE1A85EC53;
+        h ^= h >>> 33;
+        return h;
+      }
+    } else {
+      // Interpret bit pattern as equivalent-sized integer type
+      auto h(#type_int(8 * #sizeof(value))());
+      #memcpy(&h, &value, #sizeof(value));
+      return $hash(h);
+    }
+  } else if $(#is_array(value) | #is_arithmetic_vector(value) | #is_arithmetic_matrix(value) | (#typeof(value) == color)) {
+    auto hTotal($hash(value[0]));
+    for (int i = 1; i < #num(value); ++i) {
+      auto h($hash(value[i]));
+      h = 0x55555555 * (h ^ (h >>> 16));
+      h = 3423571495 * (h ^ (h >>> 16));
+      hTotal = #rotl(hTotal, 10) ^ h;
+    }
+    return hTotal;
+  } else if $(#is_pointer(value)) {
+    // Interpret bit pattern as equivalent-sized integer type
+    auto h(#type_int(8 * #sizeof(value))());
+    #memcpy(&h, &value, #sizeof(value));
+    return $hash(h);
+  } else if $(#is_union(value)) {
+    visit v in value {
+      return $hash(v);
+    }
+  } else {
+    // TODO More?
+    #panic("Unimplemented hash");
+    return 0;
+  }
 }
 
 /// The intensity mode enum.
@@ -357,4 +422,3 @@ export struct $albedo_lut {
   ///
   const &float average_albedo = null;
 };
-

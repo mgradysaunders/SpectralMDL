@@ -9,10 +9,22 @@ static const char *anno = R"*(#smdl
 )*";
 
 static const char *api = R"*(#smdl
+export typedef #type_int(8) $int8_t;
+export typedef #type_int(16) $int16_t;
+export typedef #type_int(32) $int32_t;
+export typedef #type_int(64) $int64_t;
 const int RGB_TO_COLOR_NUM_WAVELENGTHS=32;
 const float RGB_TO_COLOR_MIN_WAVELENGTH=380.0;
 const float RGB_TO_COLOR_MAX_WAVELENGTH=720.0;
-const static auto RGB_TO_COLOR_CURVES=auto[](auto[](1.0618958,1.0615020,1.0614336,1.0622711,1.0622036,1.0625060,1.0623939,1.0624707,1.0625048,1.0624366,1.0620694,1.0613167,1.0610334,1.0613868,1.0614215,1.0620337,1.0625497,1.0624317,1.0625249,1.0624278,1.0624750,1.0625539,1.0625327,1.0623922,1.0623651,1.0625256,1.0612278,1.0594263,1.0599811,1.0602547,1.0601263,1.0606565),auto[](1.0414628,1.0328661,1.0126146,1.0350461,1.0078661,1.0422280,1.0442597,1.0535238,1.0180776,1.0442730,1.0529362,1.0537034,1.0533901,1.0537783,1.0527093,1.0530449,1.0550555,1.0553674,1.0454307,0.6234895,0.1803807,-0.0076304,-0.0001522,-0.0075102,-0.0021709,0.0006592,0.0122788,-0.0044670,0.0171198,0.0049211,0.0058763,0.0252594),auto[](0.9942214,0.9898694,0.9829366,0.9962787,1.0198956,1.0166396,1.0220913,0.9965166,1.0097766,1.0215422,0.6403195,0.0025012,0.0065340,0.0028334,-0.0000000,-0.0090592,0.0033937,-0.0030639,0.2220394,0.6314114,0.9748099,0.9720956,1.0173770,0.9987519,0.9470173,0.8525862,0.9489780,0.9475188,0.9959894,0.8630135,0.8915099,0.8486649),auto[](0.0055741,-0.0047983,-0.0052537,-0.0064571,-0.0059694,-0.0021837,0.0167811,0.0960964,0.2121736,0.3616913,0.5396101,0.7440881,0.9220957,1.0460304,1.0513825,1.0511992,1.0510530,1.0517397,1.0516043,1.0511944,1.0511590,1.0516613,1.0514039,1.0515941,1.0511460,1.0515124,1.0508871,1.0508924,1.0477493,1.0493273,1.0435964,1.0392281),auto[](0.1657560,0.1184644,0.1240829,0.1137127,0.0789924,0.0322056,-0.0107984,0.0180520,0.0053407,0.0136549,-0.0059564,-0.0018444,-0.0105719,-0.0029376,-0.0107905,-0.0080224,-0.0022669,0.0070200,-0.0081528,0.6077287,0.9883156,0.9939169,1.0039339,0.9923450,0.9992653,1.0084622,0.9835830,1.0085024,0.9745114,0.9854327,0.9349576,0.9871391),auto[](0.0026494,-0.0050175,-0.0125472,-0.0094555,-0.0125261,-0.0079171,-0.0079956,-0.0093559,0.0654686,0.3957288,0.7524402,0.9637648,0.9985443,0.9999298,0.9993908,0.9999437,0.9993912,0.9991124,0.9601958,0.6318628,0.2579740,0.0094015,-0.0030798,-0.0045230,-0.0068933,-0.0090352,-0.0085914,-0.0083691,-0.0078686,-0.0000084,0.0054301,-0.0027746),auto[](0.9920977,0.9887643,0.9953904,0.9952932,0.9918145,1.0002584,0.9996848,0.9998812,0.9850401,0.7902985,0.5608220,0.3313346,0.1369241,0.0189149,-0.0000051,-0.0004240,-0.0004193,0.0017473,0.0037999,-0.0005510,-0.0000437,0.0075875,0.0257957,0.0381684,0.0494896,0.0495960,0.0498148,0.0398409,0.0305010,0.0212431,0.0069597,0.0041734));
+const static auto RGB_TO_COLOR_CURVES=auto[](
+  auto[](1.0618958,1.0615020,1.0614336,1.0622711,1.0622036,1.0625060,1.0623939,1.0624707,1.0625048,1.0624366,1.0620694,1.0613167,1.0610334,1.0613868,1.0614215,1.0620337,1.0625497,1.0624317,1.0625249,1.0624278,1.0624750,1.0625539,1.0625327,1.0623922,1.0623651,1.0625256,1.0612278,1.0594263,1.0599811,1.0602547,1.0601263,1.0606565),
+  auto[](1.0414628,1.0328661,1.0126146,1.0350461,1.0078661,1.0422280,1.0442597,1.0535238,1.0180776,1.0442730,1.0529362,1.0537034,1.0533901,1.0537783,1.0527093,1.0530449,1.0550555,1.0553674,1.0454307,0.6234895,0.1803807,-0.0076304,-0.0001522,-0.0075102,-0.0021709,0.0006592,0.0122788,-0.0044670,0.0171198,0.0049211,0.0058763,0.0252594),
+  auto[](0.9942214,0.9898694,0.9829366,0.9962787,1.0198956,1.0166396,1.0220913,0.9965166,1.0097766,1.0215422,0.6403195,0.0025012,0.0065340,0.0028334,-0.0000000,-0.0090592,0.0033937,-0.0030639,0.2220394,0.6314114,0.9748099,0.9720956,1.0173770,0.9987519,0.9470173,0.8525862,0.9489780,0.9475188,0.9959894,0.8630135,0.8915099,0.8486649),
+  auto[](0.0055741,-0.0047983,-0.0052537,-0.0064571,-0.0059694,-0.0021837,0.0167811,0.0960964,0.2121736,0.3616913,0.5396101,0.7440881,0.9220957,1.0460304,1.0513825,1.0511992,1.0510530,1.0517397,1.0516043,1.0511944,1.0511590,1.0516613,1.0514039,1.0515941,1.0511460,1.0515124,1.0508871,1.0508924,1.0477493,1.0493273,1.0435964,1.0392281),
+  auto[](0.1657560,0.1184644,0.1240829,0.1137127,0.0789924,0.0322056,-0.0107984,0.0180520,0.0053407,0.0136549,-0.0059564,-0.0018444,-0.0105719,-0.0029376,-0.0107905,-0.0080224,-0.0022669,0.0070200,-0.0081528,0.6077287,0.9883156,0.9939169,1.0039339,0.9923450,0.9992653,1.0084622,0.9835830,1.0085024,0.9745114,0.9854327,0.9349576,0.9871391),
+  auto[](0.0026494,-0.0050175,-0.0125472,-0.0094555,-0.0125261,-0.0079171,-0.0079956,-0.0093559,0.0654686,0.3957288,0.7524402,0.9637648,0.9985443,0.9999298,0.9993908,0.9999437,0.9993912,0.9991124,0.9601958,0.6318628,0.2579740,0.0094015,-0.0030798,-0.0045230,-0.0068933,-0.0090352,-0.0085914,-0.0083691,-0.0078686,-0.0000084,0.0054301,-0.0027746),
+  auto[](0.9920977,0.9887643,0.9953904,0.9952932,0.9918145,1.0002584,0.9996848,0.9998812,0.9850401,0.7902985,0.5608220,0.3313346,0.1369241,0.0189149,-0.0000051,-0.0004240,-0.0004193,0.0017473,0.0037999,-0.0005510,-0.0000437,0.0075875,0.0257957,0.0381684,0.0494896,0.0495960,0.0498148,0.0398409,0.0305010,0.0212431,0.0069597,0.0041734),
+);
 @(hot noinline)color rgb_to_color_nontrivial(float3 rgb){
   #assert(bool($state.wavelength_base));
   const int k0(#all(rgb.xx<rgb.yz)?0:rgb.y<rgb.z?1:2);
@@ -83,6 +95,50 @@ export @(hot noinline)float3 $color_to_rgb(const color c){
 }
 @(visible noinline)void jit_color_to_rgb(const &float cptr,const &float3 rgb){
   *rgb=$color_to_rgb(color(cptr));
+}
+export typedef $int32_t $hash_t;
+export @(pure)$hash_t $hash(auto value){
+  if$(#is_arithmetic_scalar(value)){
+    if$(#is_arithmetic_integral(value)){
+      if$(#sizeof(value)<=4){
+        auto h($int32_t(value)+3266445271);
+        h^=h>>>16,h*=0x85EBCA6B;
+        h^=h>>>13,h*=0xC2B2AE35;
+        h^=h>>>16;
+        return h;
+      } else {
+        auto h($int64_t(value)+13898551614298330943);
+        h^=h>>>33,h*=0xFF51AFD7ED558CCD;
+        h^=h>>>33,h*=0xC4CEB9FE1A85EC53;
+        h^=h>>>33;
+        return h;
+      }
+    } else {
+      auto h(#type_int(8*#sizeof(value))());
+      #memcpy(&h,&value,#sizeof(value));
+      return $hash(h);
+    }
+  } else if$(#is_array(value)|#is_arithmetic_vector(value)|#is_arithmetic_matrix(value)|(#typeof(value)==color)){
+    auto hTotal($hash(value[0]));
+    for(int i=1;i<#num(value);++i){
+      auto h($hash(value[i]));
+      h=0x55555555*(h^(h>>>16));
+      h=3423571495*(h^(h>>>16));
+      hTotal=#rotl(hTotal,10)^h;
+    }
+    return hTotal;
+  } else if$(#is_pointer(value)){
+    auto h(#type_int(8*#sizeof(value))());
+    #memcpy(&h,&value,#sizeof(value));
+    return $hash(h);
+  } else if$(#is_union(value)){
+    visit v in value{
+      return $hash(v);
+    }
+  } else {
+    #panic("Unimplemented hash");
+    return 0;
+  }
 }
 export enum intensity_mode{intensity_radiant_exitance,intensity_power,};
 export tag bsdf;
@@ -1467,32 +1523,59 @@ export @(macro)float lookup_float(texture_ptex tex,const int channel=0){
 )*";
 
 static const char *PCG32 = R"*(#smdl
-typedef #type_int(32) int32_t;
-typedef #type_int(64) int64_t;
+const $int64_t PCG32_MULTIPLIER=6364136223846793005;
+const $int64_t PCG32_DEFAULT_INCREMENT=1442695040888963407;
 export struct PCG32{
-  int64_t state=0;
-  int64_t increment=1442695040888963407;
+  $int64_t state=0;
+  $int64_t increment=PCG32_DEFAULT_INCREMENT;
 };
-export @(pure)int32_t generate_int(inline const &PCG32 this){
-  state=6364136223846793005*state+increment;
-  return #rotr(int32_t(((state>>>18)^state)>>>27),int32_t(31&(state>>>59)));
+export @(pure macro)auto make_PCG32($int64_t seed){
+  auto pcg(PCG32(state: seed));
+  pcg.state=pcg.state+pcg.increment;
+  pcg.state=pcg.state*PCG32_MULTIPLIER+pcg.increment;
+  return pcg;
 }
-export @(pure)float generate_float(inline const &PCG32 this){
+export @(pure macro)auto make_PCG32($int64_t seed,$int64_t stream){
+  auto pcg(PCG32(state: seed,increment: (stream<<1)|1));
+  pcg.state=pcg.state+pcg.increment;
+  pcg.state=pcg.state*PCG32_MULTIPLIER+pcg.increment;
+  return pcg;
+}
+export @(pure)$int32_t generate_int(inline const &PCG32 this){
+  state=state*PCG32_MULTIPLIER+increment;
+  return #rotr($int32_t(((state>>>18)^state)>>>27),$int32_t(31&(state>>>59)));
+}
+export @(pure)$int32_t generate_int(const &PCG32 this,const $int32_t bound){
+  if(bound>1){
+    const auto xmin((-bound)%bound);
+    while(true){
+      const auto x(generate_int(this));
+      return x%bound if(x>=xmin);
+    }
+  }
+  return 0;
+}
+export @(pure)float generate_float(const &PCG32 this){
   return #min(float(#unsigned_to_fp(generate_int(this),double)/4294967296.0d),1.0-$FLOAT_EPS/2);
 }
-export @(pure)float2 generate_float2(inline const &PCG32 this){
-  return float2(generate_float(this),generate_float(this),);
-}
-export @(pure)float3 generate_float3(inline const &PCG32 this){
-  return float3(generate_float(this),generate_float(this),generate_float(this),);
-}
-export @(pure)float4 generate_float4(inline const &PCG32 this){
-  return float4(
-    generate_float(this),
-    generate_float(this),
-    generate_float(this),
-    generate_float(this),
-  );
+export @(pure)float2 generate_float2(const &PCG32 this)=float2(generate_float(this),generate_float(this));
+export @(pure)float3 generate_float3(const &PCG32 this)=float3(generate_float(this),generate_float(this),generate_float(this));
+export @(pure)float4 generate_float4(const &PCG32 this)=float4(generate_float(this),generate_float(this),generate_float(this),generate_float(this));
+export @(pure)void discard(inline const &PCG32 this,$int64_t n){
+  $int64_t aTotal(1);
+  $int64_t bTotal(0);
+  $int64_t a(PCG32_MULTIPLIER);
+  $int64_t b(increment);
+  while(n!=0){
+    if((n&1)!=0){
+      aTotal=aTotal*a;
+      bTotal=bTotal*a+b;
+    }
+    b*=a+1;
+    a*=a;
+    n>>>=1;
+  }
+  state=state*aTotal+bTotal;
 }
 )*";
 

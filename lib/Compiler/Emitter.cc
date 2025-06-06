@@ -1,6 +1,7 @@
 // vim:foldmethod=marker:foldlevel=0:fmr=--{,--}
 #include "Emitter.h"
 
+#include "smdl/Logger.h"
 #include "llvm/Support/Format.h"
 #include "llvm/Support/Parallel.h"
 #include <atomic>
@@ -1217,49 +1218,18 @@ SMDL_EXPORT void smdl_data_lookup(void *sceneData, void *state, // NOLINT
 
 SMDL_EXPORT void *smdl_ofile_open(const char *fname) {
   std::error_code ec{};
-  return new llvm::raw_fd_ostream(std::string_view(fname), ec);
+  auto result{new llvm::raw_fd_ostream(std::string_view(fname), ec)};
+  if (ec) {
+    SMDL_LOG_WARN("cannot open ", quoted(fname), ": ", quoted(ec.message()));
+    delete result;
+    return nullptr;
+  }
+  return result;
 }
 
 SMDL_EXPORT void smdl_ofile_close(void *ofile) {
   if (ofile)
     delete static_cast<llvm::raw_fd_ostream *>(ofile);
-}
-
-SMDL_EXPORT void smdl_ptex_evaluate(const void *state, const void *tex,
-                                    int first, int num, float *out) {
-  SMDL_SANITY_CHECK(state != nullptr);
-  SMDL_SANITY_CHECK(tex != nullptr);
-  SMDL_SANITY_CHECK(out != nullptr);
-  for (int i = 0; i < num; i++)
-    out[i] = 0.0f;
-#if SMDL_HAS_PTEX
-  struct texture_ptex_t final {
-    PtexTexture *texture{};
-    PtexFilter *texture_filter{};
-    int channel_count{};
-    int alpha_index{};
-    int gamma{};
-  };
-  if (auto ptex{static_cast<const texture_ptex_t *>(tex)};
-      ptex && ptex->texture_filter && first < ptex->channel_count) {
-    num = std::min(num, int(ptex->channel_count - first));
-    ptex->texture_filter->eval(
-        out, first, num, static_cast<const State *>(state)->ptex_face_id,
-        static_cast<const State *>(state)->ptex_face_uv.x,
-        static_cast<const State *>(state)->ptex_face_uv.y,
-        /*uw1=*/0.0f, /*vw1=*/0.0f,
-        /*uw2=*/0.0f, /*vw2=*/0.0f,
-        /*width=*/1.0f, /*blur=*/0.0f);
-    if (ptex->gamma == 1) { // sRGB?
-      for (int i = 0; i < num; i++) {
-        int channel{first + i};
-        if (channel != ptex->alpha_index) {
-          out[i] *= out[i];
-        }
-      }
-    }
-  }
-#endif // #if SMDL_HAS_PTEX
 }
 
 // TODO This is a specific solution to a specific problem of calculating
@@ -1332,6 +1302,43 @@ SMDL_EXPORT void smdl_tabulate_albedo(const char *name, int num_cos_theta,
       outputFile << '\n';
     }
   }
+}
+
+SMDL_EXPORT void smdl_ptex_evaluate(const void *state, const void *tex,
+                                    int first, int num, float *out) {
+  SMDL_SANITY_CHECK(state != nullptr);
+  SMDL_SANITY_CHECK(tex != nullptr);
+  SMDL_SANITY_CHECK(out != nullptr);
+  for (int i = 0; i < num; i++)
+    out[i] = 0.0f;
+#if SMDL_HAS_PTEX
+  struct texture_ptex_t final {
+    PtexTexture *texture{};
+    PtexFilter *texture_filter{};
+    int channel_count{};
+    int alpha_index{};
+    int gamma{};
+  };
+  if (auto ptex{static_cast<const texture_ptex_t *>(tex)};
+      ptex && ptex->texture_filter && first < ptex->channel_count) {
+    num = std::min(num, int(ptex->channel_count - first));
+    ptex->texture_filter->eval(
+        out, first, num, static_cast<const State *>(state)->ptex_face_id,
+        static_cast<const State *>(state)->ptex_face_uv.x,
+        static_cast<const State *>(state)->ptex_face_uv.y,
+        /*uw1=*/0.0f, /*vw1=*/0.0f,
+        /*uw2=*/0.0f, /*vw2=*/0.0f,
+        /*width=*/1.0f, /*blur=*/0.0f);
+    if (ptex->gamma == 1) { // sRGB?
+      for (int i = 0; i < num; i++) {
+        int channel{first + i};
+        if (channel != ptex->alpha_index) {
+          out[i] *= out[i];
+        }
+      }
+    }
+  }
+#endif // #if SMDL_HAS_PTEX
 }
 
 } // extern "C"
@@ -1594,6 +1601,40 @@ Value Emitter::emit_intrinsic(std::string_view name, const ArgumentList &args,
           static_cast<ArithmeticType *>(value.type)
               ->get_with_different_scalar(context, Scalar::get_bool()),
           builder.createIsFPClass(value, args[1].value.get_comptime_int()));
+    }
+    if (starts_with(name, "is_")) {
+      auto type{expectOneType()};
+      auto result{std::optional<bool>{}};
+      if (name == "is_array") {
+        result = type->is_array();
+      } else if (name == "is_arithmetic") {
+        result = type->is_arithmetic();
+      } else if (name == "is_arithmetic_integral") {
+        result = type->is_arithmetic_integral();
+      } else if (name == "is_arithmetic_floating_point") {
+        result = type->is_arithmetic_floating_point();
+      } else if (name == "is_arithmetic_scalar") {
+        result = type->is_arithmetic_scalar();
+      } else if (name == "is_arithmetic_vector") {
+        result = type->is_arithmetic_vector();
+      } else if (name == "is_arithmetic_matrix") {
+        result = type->is_arithmetic_matrix();
+      } else if (name == "is_enum") {
+        result = type->is_enum();
+      } else if (name == "is_optional_union") {
+        result = type->is_optional_union();
+      } else if (name == "is_pointer") {
+        result = type->is_pointer();
+      } else if (name == "is_struct") {
+        result = type->is_struct();
+      } else if (name == "is_tag") {
+        result = type->is_tag();
+      } else if (name == "is_union") {
+        result = type->is_union();
+      }
+      if (result) {
+        return context.get_comptime_bool(*result);
+      }
     }
     break;
   }
@@ -2156,7 +2197,7 @@ Value Emitter::emit_visit(Value value, const SourceLocation &srcLoc,
 
 extern "C" {
 
-SMDL_EXPORT void smdl_panic(const char *message) { // TODO SourceLocation?
+SMDL_EXPORT void smdl_panic(const char *message) {
   throw Error(std::string(message));
 }
 
