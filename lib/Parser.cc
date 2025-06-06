@@ -807,7 +807,7 @@ auto Parser::parse_literal_number_expression() -> BumpPtr<AST::Expr> {
         if (peek() == '\'')
           srcLoc0.throw_error("numeric literal must not contain adjacent "
                               "single-quote separators");
-        if (!is_digit(peek()))
+        if (!isDigit(peek()))
           srcLoc0.throw_error("numeric literal must not be terminated by "
                               "single-quote separator");
       }
@@ -819,7 +819,7 @@ auto Parser::parse_literal_number_expression() -> BumpPtr<AST::Expr> {
     if (!isDigit(peek()))
       srcLoc0.throw_error("expected literal prefix ", quoted(prefix),
                           " to be followed by ", info);
-    auto digits{parseDigits(is_digit)};
+    auto digits{parseDigits(isDigit)};
     auto bits{llvm::APInt::getBitsNeeded(digits, radix)};
     if (bits > 64)
       srcLoc0.log_warn("integer literal exceeds 64 bits");
