@@ -552,6 +552,12 @@ public:
 /// \addtogroup Support
 /// \{
 
+/// Use C++ ABI to demangle the given name.
+[[nodiscard]] SMDL_EXPORT std::string abi_demangle(const char *name);
+
+/// Use C++ ABI to retrieve and demangle the current exception name.
+[[nodiscard]] SMDL_EXPORT std::string abi_demangle_exception_name();
+
 /// Run the given function, catch whatever it might throw, and return it as
 /// an `Error` value.
 template <typename Func>
@@ -562,9 +568,10 @@ catch_and_return_error(Func &&func) try {
 } catch (Error error) {
   return std::move(error);
 } catch (const std::exception &error) {
-  return Error(error.what());
+  return Error(concat("converted from ", abi_demangle_exception_name(), //
+                      ": ", error.what()));
 } catch (...) {
-  return Error("unknown error converted from unknown exception type");
+  return Error(concat("converted from ", abi_demangle_exception_name()));
 }
 
 /// \}

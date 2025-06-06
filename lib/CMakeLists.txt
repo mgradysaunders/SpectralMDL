@@ -26,6 +26,7 @@ add_library(
     "Module.cc"
     "Parser.cc"
     "SceneData.cc"
+    "thirdparty/miniz.c"
   )
 add_library(
   ${PROJECT_NAME}::SpectralMDL ALIAS SpectralMDL

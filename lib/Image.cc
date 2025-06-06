@@ -45,7 +45,7 @@ extern "C" {
 #define TINYEXR_MALLOC(sz) ::smdl::Image::Image_malloc(sz)
 #define TINYEXR_CALLOC(n, sz) ::smdl::Image::Image_calloc(n, sz)
 #define TINYEXR_FREE(p) ::smdl::Image::Image_free(p)
-#define TINYEXR_USE_MINIZ 0
+#define TINYEXR_USE_MINIZ 1
 #define TINYEXR_USE_STB_ZLIB 1
 #define TINYEXR_USE_THREAD 0
 #define TINYEXR_IMPLEMENTATION 1

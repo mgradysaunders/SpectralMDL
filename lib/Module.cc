@@ -15,15 +15,11 @@ Module::Module(std::string name, std::string sourceCode)
 Module::~Module() {}
 
 std::unique_ptr<Module> Module::load_from_file(const std::string &fileName) {
-  auto ifs{std::ifstream(fileName, std::ios::in)};
-  if (!ifs.is_open())
-    throw std::runtime_error(concat("cannot open file ", quoted(fileName)));
-  auto mod{std::make_unique<Module>()};
-  mod->fileName = fileName;
-  mod->name = fs_make_path(fileName).stem().string();
-  mod->sourceCode = std::string((std::istreambuf_iterator<char>(ifs)),
-                                std::istreambuf_iterator<char>());
-  return mod;
+  auto module_{std::make_unique<Module>()};
+  module_->fileName = fileName;
+  module_->name = fs_make_path(fileName).stem().string();
+  module_->sourceCode = fs_read_file(fileName);
+  return module_;
 }
 
 std::optional<Error> Module::parse(BumpPtrAllocator &allocator) {

@@ -10,10 +10,13 @@ namespace cl = llvm::cl;
 static cl::OptionCategory optionsCat{"Options"};
 static cl::SubCommand subDump{"dump", "Dump as LLVM-IR or native assembly"};
 static cl::SubCommand subList{"list", "List all materials"};
-static cl::SubCommand subTest{"test", "Execute unit tests"};
+static cl::SubCommand subRun{"run", "Run execs"};
+static cl::SubCommand subTest{"test", "Run execs and unit tests"};
 static cl::SubCommand subFormat{"format", "Format source code"};
-static cl::SubCommandGroup subsWithCompileOptions{&subDump, &subList, &subTest};
-static cl::SubCommandGroup allSubs{&subDump, &subList, &subTest, &subFormat};
+static cl::SubCommandGroup subsWithCompileOptions{&subDump, &subList, &subRun,
+                                                  &subTest};
+static cl::SubCommandGroup allSubs{&subDump, &subList, &subRun, &subTest,
+                                   &subFormat};
 
 static cl::list<std::string> inputFiles{cl::Positional, cl::desc("<input>"),
                                         cl::OneOrMore, cl::sub(allSubs),
@@ -99,8 +102,7 @@ int main(int argc, char **argv) {
   compiler.enableDebug = enableDebug;
   compiler.enableUnitTests = true;
   compiler.wavelengthBaseMax = wavelengthBaseMax;
-
-  for (auto &inputFile : inputFiles) {
+  for (const auto &inputFile : inputFiles) {
     if (auto error{compiler.add(std::string(inputFile))}) {
       error->print_and_exit();
     }
@@ -131,34 +133,36 @@ int main(int argc, char **argv) {
     } else if (subList) {
       std::cout << compiler.summarize_materials();
       std::cout.flush();
-    } else if (subTest) {
+    } else if (subRun || subTest) {
       if (auto error{compiler.jit_compile()})
         error->print_and_exit();
       if (auto error{compiler.jit_execs()})
         error->print_and_exit();
-      std::array<float, 16> wavelengths{};
-      smdl::BumpPtrAllocator allocator{};
-      smdl::State state{};
-      state.allocator = &allocator;
-      state.texture_coordinate[0][0] = texCoordU;
-      state.texture_coordinate[0][1] = texCoordV;
-      state.texture_coordinate[0][2] = texCoordW;
-      state.animation_time = animationTime;
-      state.object_id = objectID;
-      state.ptex_face_id = ptexFaceID;
-      state.ptex_face_uv[0] = ptexFaceU;
-      state.ptex_face_uv[1] = ptexFaceV;
-      state.wavelength_min = minWavelen;
-      state.wavelength_max = maxWavelen;
-      state.wavelength_base = &wavelengths[0];
-      for (unsigned i = 0; i < compiler.wavelengthBaseMax; i++) {
-        float fac = float(i) / float(compiler.wavelengthBaseMax - 1);
-        wavelengths[i] =
-            (1 - fac) * state.wavelength_min + fac * state.wavelength_max;
-      }
-      if (auto error{compiler.jit_unit_tests(state)}) {
-        std::cerr << '\n';
-        error->print_and_exit();
+      if (subTest) {
+        std::array<float, 16> wavelengths{};
+        smdl::BumpPtrAllocator allocator{};
+        smdl::State state{};
+        state.allocator = &allocator;
+        state.texture_coordinate[0][0] = texCoordU;
+        state.texture_coordinate[0][1] = texCoordV;
+        state.texture_coordinate[0][2] = texCoordW;
+        state.animation_time = animationTime;
+        state.object_id = objectID;
+        state.ptex_face_id = ptexFaceID;
+        state.ptex_face_uv[0] = ptexFaceU;
+        state.ptex_face_uv[1] = ptexFaceV;
+        state.wavelength_min = minWavelen;
+        state.wavelength_max = maxWavelen;
+        state.wavelength_base = &wavelengths[0];
+        for (unsigned i = 0; i < compiler.wavelengthBaseMax; i++) {
+          float fac = float(i) / float(compiler.wavelengthBaseMax - 1);
+          wavelengths[i] =
+              (1 - fac) * state.wavelength_min + fac * state.wavelength_max;
+        }
+        if (auto error{compiler.jit_unit_tests(state)}) {
+          std::cerr << '\n';
+          error->print_and_exit();
+        }
       }
     }
   }

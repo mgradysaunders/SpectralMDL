@@ -1,6 +1,8 @@
 #pragma once
 
+#include <cerrno>
 #include <cctype>
+#include <cstring>
 #include <fstream>
 #include <streambuf>
 #include <string>
@@ -26,6 +28,25 @@ namespace smdl {
 
 [[nodiscard]] inline fs::path fs_make_path(const std::string &str) {
   return fs::path(str);
+}
+
+[[nodiscard]] inline std::fstream fs_open_file(const fs::path &path,
+                                               std::ios::openmode mode) {
+#if SMDL_USE_BOOST_FILESYSTEM
+  auto stream{std::fstream(path.string(), mode)};
+#else
+  auto stream{std::fstream(path, mode)};
+#endif // #if SMDL_USE_BOOST_FILESYSTEM
+  if (!stream.is_open())
+    throw Error(concat("cannot open ", quoted(path.string()), ": ",
+                       std::strerror(errno)));
+  return stream;
+}
+
+[[nodiscard]] inline std::string fs_read_file(const fs::path &path) {
+  auto stream{fs_open_file(path, std::ios::in | std::ios::binary)};
+  return std::string((std::istreambuf_iterator<char>(stream)),
+                     std::istreambuf_iterator<char>());
 }
 
 [[nodiscard]] inline std::string fs_extension(const fs::path &path) try {
