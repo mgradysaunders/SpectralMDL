@@ -27,6 +27,7 @@ add_library(
     "Module.cc"
     "Parser.cc"
     "SceneData.cc"
+    "thirdparty/md5.c"
     "thirdparty/miniz.c"
   )
 add_library(
