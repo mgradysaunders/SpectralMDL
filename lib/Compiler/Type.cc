@@ -900,7 +900,8 @@ void FunctionType::initialize(Emitter &emitter) {
   }
   // If this is a function with no parameters that returns `material`,
   // it is a material definition!
-  if (params.empty() && returnType == context.materialType) {
+  if (returnType == context.materialType &&
+      (params.empty() || params.all_default_initializers())) {
     if (decl.has_attribute("pure"))
       decl.srcLoc.throw_error("material ", quoted(declName),
                               " must not be declared '@(pure)'");
@@ -1103,6 +1104,10 @@ void FunctionType::initialize_jit_material_functions(Emitter &emitter) {
                     inst.returnType->is_struct() &&
                     static_cast<StructType *>(inst.returnType)
                         ->is_instance_of(context.materialType));
+  if (!params.empty()) {
+    // TODO
+    SMDL_SANITY_CHECK("materials with default initializers not supported yet!");
+  }
   auto dfModule{context.get_builtin_module("df")};
   SMDL_SANITY_CHECK(dfModule);
   Type *materialInstanceType{};

@@ -352,6 +352,12 @@ public:
   /// Is concrete? i.e., is every type concrete?
   [[nodiscard]] bool is_concrete() const { return !is_abstract(); }
 
+  /// Do all parameters have default initializers?
+  [[nodiscard]] bool all_default_initializers() const {
+    return is_all_true(
+        [](auto &param) { return param.get_ast_initializer() != nullptr; });
+  }
+
   /// Get the parameter names.
   [[nodiscard]] std::vector<std::string_view> get_names() const;
 
