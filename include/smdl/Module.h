@@ -55,31 +55,36 @@ public:
 
 public:
   /// Is a builtin module?
-  [[nodiscard]] bool is_builtin() const { return fileName.empty(); }
+  [[nodiscard]] bool is_builtin() const noexcept { return fileName.empty(); }
 
   /// Get the file name. This is empty if the module is builtin.
-  [[nodiscard]] std::string_view get_file_name() const { return fileName; }
+  [[nodiscard]] std::string_view get_file_name() const noexcept {
+    return fileName;
+  }
 
   /// Get the name.
-  [[nodiscard]] std::string_view get_name() const { return name; }
+  [[nodiscard]] std::string_view get_name() const noexcept { return name; }
 
   /// Get the source code.
-  [[nodiscard]] std::string_view get_source_code() const { return sourceCode; }
+  [[nodiscard]] std::string_view get_source_code() const noexcept {
+    return sourceCode;
+  }
 
   /// Parse the source code.
-  [[nodiscard]] std::optional<Error> parse(BumpPtrAllocator &allocator);
+  [[nodiscard]] std::optional<Error>
+  parse(BumpPtrAllocator &allocator) noexcept;
 
   /// Compile the source code to LLVM IR.
-  [[nodiscard]] std::optional<Error> compile(Context &context);
+  [[nodiscard]] std::optional<Error> compile(Context &context) noexcept;
 
-  /// Format the source code and overwrite the file on disk.
+  /// Format the source code and write or overwrite the file on disk.
   [[nodiscard]] std::optional<Error>
-  format_source_code(const FormatOptions &options);
+  format_source_code(const FormatOptions &formatOptions) noexcept;
 
   /// Is parsed yet?
-  [[nodiscard]] bool is_parsed() const { return root; }
+  [[nodiscard]] bool is_parsed() const noexcept { return root; }
 
-  void reset();
+  void reset() noexcept;
 
 private:
   /// The file name if applicable. This is empty if the module is builtin.

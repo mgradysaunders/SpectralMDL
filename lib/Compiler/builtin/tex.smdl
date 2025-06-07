@@ -52,13 +52,25 @@ export @(pure macro) bool texture_isvalid(const texture_ptex tex) = bool(tex.tex
   return tile_buffer[coord.y * tile_extent.x + coord.x];
 }
 
-export @(pure macro) float4 texel_float4(const texture_2d tex, const int2 coord, const int2 uv_tile = int2(0)) = apply_gamma(tex.gamma, #unpack_float4(texel_fetch(tex, coord, uv_tile)));
+export @(pure macro) float4 texel_float4(const texture_2d tex, const int2 coord, const int2 uv_tile = int2(0)) {
+  return apply_gamma(tex.gamma, #unpack_float4(texel_fetch(tex, coord, uv_tile)));
+}
 
-export @(pure macro) float3 texel_float3(const texture_2d tex, const int2 coord, const int2 uv_tile = int2(0)) = apply_gamma(tex.gamma, #unpack_float4(texel_fetch(tex, coord, uv_tile)).xyz);
+export @(pure macro) float3 texel_float3(const texture_2d tex, const int2 coord, const int2 uv_tile = int2(0)) {
+  return apply_gamma(tex.gamma, #unpack_float4(texel_fetch(tex, coord, uv_tile)).xyz);
+}
 
-export @(pure macro) float2 texel_float2(const texture_2d tex, const int2 coord, const int2 uv_tile = int2(0)) = apply_gamma(tex.gamma, #unpack_float4(texel_fetch(tex, coord, uv_tile)).xy);
+export @(pure macro) float2 texel_float2(const texture_2d tex, const int2 coord, const int2 uv_tile = int2(0)) {
+  return apply_gamma(tex.gamma, #unpack_float4(texel_fetch(tex, coord, uv_tile)).xy);
+}
 
-export @(pure macro) float texel_float(const texture_2d tex, const int2 coord, const int2 uv_tile = int2(0)) = apply_gamma(tex.gamma, #unpack_float4(texel_fetch(tex, coord, uv_tile)).x);
+export @(pure macro) float texel_float(const texture_2d tex, const int2 coord, const int2 uv_tile = int2(0)) {
+  return apply_gamma(tex.gamma, #unpack_float4(texel_fetch(tex, coord, uv_tile)).x);
+}
+
+export @(pure macro) color texel_color(const texture_2d tex, const int2 coord, const int2 uv_tile = int2(0)) {
+  return color(texel_float3(tex, coord, uv_tile));
+}
 
 export enum wrap_mode { wrap_clamp = 0, wrap_repeat = 1, wrap_mirrored_repeat = 2, wrap_clip = 3 };
 
@@ -162,6 +174,15 @@ export @(pure macro) float lookup_float(
   const float2 crop_u = float2(0.0, 1.0),
   const float2 crop_v = float2(0.0, 1.0),
 ) = lookup_float4(tex, coord, wrap_u, wrap_v, crop_u, crop_v).x;
+
+export @(pure macro) color lookup_color(
+  const texture_2d tex,
+  const float2 coord,
+  const wrap_mode wrap_u = wrap_repeat,
+  const wrap_mode wrap_v = wrap_repeat,
+  const float2 crop_u = float2(0.0, 1.0),
+  const float2 crop_v = float2(0.0, 1.0),
+) = color(lookup_float4(tex, coord, wrap_u, wrap_v, crop_u, crop_v).xyz);
 
 export @(macro) float4 lookup_float4(texture_ptex tex, const int channel = 0) {
   float4 result;

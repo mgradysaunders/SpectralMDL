@@ -11,6 +11,7 @@ add_custom_target(
 add_library(
   SpectralMDL 
   SHARED
+    "Archive.cc"
     "AST.cc"
     "common.cc"
     "Compiler.cc"

@@ -49,12 +49,12 @@ std::optional<Error> Compiler::add(std::string fileOrDirName) {
     auto path{fs_make_path(pathStr)};
     auto ec{fs_error_code{}};
     if (fs::is_regular_file(path, ec)) {
-      SMDL_LOG_DEBUG("Adding MDL file ", quoted(fs_abbreviate(path)));
+      SMDL_LOG_DEBUG("Adding MDL file ", quoted(fs_abbreviate_path(path)));
       addFile(pathStr);
       return std::nullopt;
     }
     if (fs::is_directory(path, ec) && moduleDirNames.insert(pathStr).second) {
-      SMDL_LOG_DEBUG("Adding MDL directory ", quoted(fs_abbreviate(path)));
+      SMDL_LOG_DEBUG("Adding MDL directory ", quoted(fs_abbreviate_path(path)));
       for (const auto &entry : fs::recursive_directory_iterator(path)) {
         if (fs::is_regular_file(entry.path(), ec)) {
           if (auto extension{fs_extension(entry.path())};
@@ -62,7 +62,7 @@ std::optional<Error> Compiler::add(std::string fileOrDirName) {
               extension == ".smdl") {
             if (auto canonPath{fs::canonical(entry.path(), ec)}; !ec) {
               SMDL_LOG_DEBUG("  Adding MDL file ",
-                             quoted(fs_abbreviate(canonPath)));
+                             quoted(fs_abbreviate_path(canonPath)));
               addFile(canonPath.string());
             }
           }
@@ -122,7 +122,8 @@ std::optional<Error> Compiler::compile(OptLevel optLevel) {
     auto now{std::chrono::steady_clock::now()};
     llvm::parallelFor(0, images.size(), [&](size_t i) {
       auto &[fileName, image] = *std::next(images.begin(), i);
-      SMDL_LOG_DEBUG("Loading image ", quoted(fs_abbreviate(fileName)), " ...");
+      SMDL_LOG_DEBUG("Loading image ", quoted(fs_abbreviate_path(fileName)),
+                     " ...");
       image->finish_load();
     });
     auto duration{std::chrono::duration_cast<std::chrono::microseconds>(
@@ -331,7 +332,8 @@ std::optional<Error> Compiler::jit_unit_tests(const State &state) noexcept {
         ++itr1;
       }
       std::cerr << concat("Running tests in ",
-                          quoted(fs_abbreviate(itr0->moduleFileName)), ":\n");
+                          quoted(fs_abbreviate_path(itr0->moduleFileName)),
+                          ":\n");
       for (; itr0 != itr1; ++itr0) {
         std::cerr << concat("  ", quoted(itr0->testName), " (line ",
                             itr0->lineNo, ") ... ");
@@ -366,8 +368,8 @@ std::string Compiler::summarize_materials() const {
       ++itr1;
       ++numMaterials;
     }
-    message += concat(quoted(fs_abbreviate(itr0->moduleFileName)), " contains ",
-                      numMaterials, " materials:\n");
+    message += concat(quoted(fs_abbreviate_path(itr0->moduleFileName)),
+                      " contains ", numMaterials, " materials:\n");
     for (; itr0 != itr1; ++itr0) {
       message += "  ";
       message +=
