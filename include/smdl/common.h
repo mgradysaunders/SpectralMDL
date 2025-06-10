@@ -5,6 +5,8 @@
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <cstdlib>
+#include <cstring>
 #include <functional>
 #include <memory>
 #include <optional>
@@ -333,7 +335,7 @@ public:
 /// called automatically the first time an instance of the `Compiler`
 /// is constructed.
 ///
-SMDL_EXPORT void init_or_exit();
+SMDL_EXPORT void init_or_exit() noexcept;
 
 /// The LLVM native target.
 class SMDL_EXPORT NativeTarget final {
@@ -349,12 +351,18 @@ public:
 };
 
 /// Get the LLVM native target, only available after `init_or_exit()`
-[[nodiscard]] SMDL_EXPORT const NativeTarget &get_native_target();
+[[nodiscard]] SMDL_EXPORT const NativeTarget &get_native_target() noexcept;
 
 /// \}
 
 /// \addtogroup Support
 /// \{
+
+/// Is host little endian?
+[[nodiscard]] SMDL_EXPORT bool is_host_little_endian() noexcept;
+
+/// Is host big endian?
+[[nodiscard]] SMDL_EXPORT bool is_host_big_endian() noexcept;
 
 /// A bump pointer allocated by `BumpPtrAllocator` that does not need to be
 /// freed, but does need to be destructed.
@@ -934,6 +942,14 @@ affine_inverse(const Matrix<T, 4, 4> &m) {
           float4{from.x, from.y, from.z, 1.0f}};
 }
 
+template <typename T, size_t N>
+[[nodiscard]] inline bool is_all_finite(const Vector<T, N> &v) {
+  for (size_t i = 0; i < N; i++)
+    if (!std::isfinite(v[i]))
+      return false;
+  return true;
+}
+
 /// \}
 
 /// \}
@@ -1117,6 +1133,40 @@ public:
 
   /// Want compact?
   bool compact{};
+};
+
+/// An MD5 hasher.
+class SMDL_EXPORT MD5Hasher final {
+public:
+  MD5Hasher() { reset(); }
+
+  MD5Hasher(const MD5Hasher &) = delete;
+
+  MD5Hasher(MD5Hasher &&other)
+      : context(std::exchange(other.context, nullptr)) {}
+
+  MD5Hasher &operator=(const MD5Hasher &) = delete;
+
+  MD5Hasher &operator=(MD5Hasher &&other) {
+    clear();
+    context = std::exchange(other.context, nullptr);
+    return *this;
+  }
+
+  ~MD5Hasher() { clear(); }
+
+  void clear() noexcept;
+
+  void reset();
+
+  void add(const void *buf, size_t len);
+
+  [[nodiscard]] std::optional<Error> add_file(const std::string &fileName);
+
+  [[nodiscard]] std::array<uint8_t, 16> finalize();
+
+private:
+  void *context{};
 };
 
 /// Expand third macro in variadic arguments, used to implement

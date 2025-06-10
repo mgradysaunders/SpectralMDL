@@ -10,6 +10,7 @@
 #endif // #if __GNUC__ || __clang__
 
 #include "filesystem.h"
+#include "thirdparty/md5.h"
 
 #include "llvm/MC/TargetRegistry.h"
 #include "llvm/Support/Allocator.h"
@@ -31,7 +32,7 @@ BuildInfo BuildInfo::get() noexcept {
 
 static NativeTarget nativeTarget{};
 
-void init_or_exit() {
+void init_or_exit() noexcept {
   static const int onlyOnce = []() {
     llvm::InitializeNativeTarget();
     llvm::InitializeNativeTargetAsmPrinter();
@@ -51,7 +52,11 @@ void init_or_exit() {
   SMDL_SANITY_CHECK(onlyOnce == 0); // Silence unused variable warning
 }
 
-const NativeTarget &get_native_target() { return nativeTarget; }
+const NativeTarget &get_native_target() noexcept { return nativeTarget; }
+
+bool is_host_little_endian() noexcept { return llvm::sys::IsBigEndianHost; }
+
+bool is_host_big_endian() noexcept { return llvm::sys::IsLittleEndianHost; }
 
 BumpPtrAllocator::BumpPtrAllocator() { ptr = new llvm::BumpPtrAllocator(); }
 
@@ -156,22 +161,40 @@ std::string abi_demangle_exception_name() {
 void State::finalize_for_runtime_conventions() {
   // 1. Orthonormalize normal and tangent vectors.
   normal = normalize(normal);
+  if (!is_all_finite(normal)) {
+    normal = {0, 0, 1};
+  }
   for (int i = 0; i < texture_space_max; i++) {
     auto &tu{texture_tangent_u[i]};
     auto &tv{texture_tangent_v[i]};
     auto &tw{normal};
     tu = normalize(tu - dot(tu, tw) * tw);
+    if (!is_all_finite(tv)) {
+      tu = normalize(perpendicular_to(tw));
+    }
     tv = normalize(tv - dot(tv, tw) * tw - dot(tv, tu) * tu);
+    if (!is_all_finite(tv)) {
+      tv = normalize(cross(tw, tu));
+    }
   }
 
   // 2. Orthonormalize geometry normal and tangent vectors.
   geometry_normal = normalize(geometry_normal);
+  if (!is_all_finite(geometry_normal)) {
+    geometry_normal = normal;
+  }
   for (int i = 0; i < texture_space_max; i++) {
     auto &tu{geometry_tangent_u[i]};
     auto &tv{geometry_tangent_v[i]};
     auto &tw{geometry_normal};
     tu = normalize(tu - dot(tu, tw) * tw);
+    if (!is_all_finite(tu)) {
+      tu = normalize(perpendicular_to(tw));
+    }
     tv = normalize(tv - dot(tv, tw) * tw - dot(tv, tu) * tu);
+    if (!is_all_finite(tv)) {
+      tv = normalize(cross(tw, tu));
+    }
   }
 
   // 3. Construct the tangent-to-object matrix.
@@ -197,6 +220,48 @@ void State::finalize_for_runtime_conventions() {
     geometry_tangent_v[i] =
         object_to_tangent_matrix * float4(geometry_tangent_v[i], 0.0f);
   }
+}
+
+void MD5Hasher::clear() noexcept {
+  if (context) {
+    delete static_cast<MD5Context *>(context);
+    context = nullptr;
+  }
+}
+
+void MD5Hasher::reset() {
+  if (!context)
+    context = new MD5Context;
+  md5Init(static_cast<MD5Context *>(context));
+}
+
+void MD5Hasher::add(const void *buf, size_t len) {
+  if (!context)
+    reset();
+  md5Update(static_cast<MD5Context *>(context),
+            static_cast<const uint8_t *>(buf), len);
+}
+
+std::optional<Error> MD5Hasher::add_file(const std::string &fileName) {
+  return catch_and_return_error([&] {
+    auto stream{fs_open(fileName, std::ios::in | std::ios::binary)};
+    auto buffer{std::array<char, 128>{}};
+    while (!stream.eof()) {
+      stream.read(buffer.data(), buffer.size());
+      add(buffer.data(), stream.gcount());
+    }
+  });
+}
+
+std::array<uint8_t, 16> MD5Hasher::finalize() {
+  if (!context)
+    reset();
+  std::array<uint8_t, 16> digest{};
+  md5Finalize(static_cast<MD5Context *>(context));
+  std::copy(&static_cast<MD5Context *>(context)->digest[0],
+            &static_cast<MD5Context *>(context)->digest[0] + 16, &digest[0]);
+  reset();
+  return digest;
 }
 
 void sanity_check_failed(const char *condition, const char *file, int line,
