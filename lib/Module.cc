@@ -18,7 +18,8 @@ std::unique_ptr<Module> Module::load_from_file(const std::string &fileName) {
   auto module_{std::make_unique<Module>()};
   module_->fileName = fileName;
   module_->name = fs_make_path(fileName).stem().string();
-  module_->sourceCode = fs_read(fileName);
+  module_->sourceCode =
+      fs_read_thru_archive(fileName, module_->isExtractedFromArchive);
   return module_;
 }
 
@@ -34,14 +35,14 @@ std::optional<Error> Module::compile(Context &context) noexcept {
     return Error("module not yet parsed");
   }
   return catch_and_return_error([&] {
-    if (compileStatus == CompileStatus::InProgress)
+    if (compileStatus == COMPILE_STATUS_IN_PROGRESS)
       throw Error(concat("detected cyclic import of module ", quoted(name)));
-    if (compileStatus == CompileStatus::NotStarted) {
-      compileStatus = CompileStatus::InProgress;
+    if (compileStatus == COMPILE_STATUS_NOT_STARTED) {
+      compileStatus = COMPILE_STATUS_IN_PROGRESS;
       Emitter emitter{context};
       emitter.emit(root);
       lastCrumb = emitter.crumb;
-      compileStatus = CompileStatus::Finished;
+      compileStatus = COMPILE_STATUS_FINISHED;
     }
   });
 }
@@ -74,7 +75,7 @@ Module::format_source_code(const FormatOptions &formatOptions) noexcept {
 
 void Module::reset() noexcept {
   root.reset();
-  compileStatus = CompileStatus::NotStarted;
+  compileStatus = COMPILE_STATUS_NOT_STARTED;
   lastCrumb = nullptr;
 }
 

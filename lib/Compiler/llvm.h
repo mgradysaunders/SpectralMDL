@@ -58,7 +58,7 @@ template <typename T>
 
 class LLVMOptimizer final {
 public:
-  LLVMOptimizer() : passBuilder(get_native_target().machine) {
+  LLVMOptimizer() : passBuilder(NativeTarget::get().machine) {
     passBuilder.registerModuleAnalyses(moduleAnalysis);
     passBuilder.registerCGSCCAnalyses(cgsccAnalysis);
     passBuilder.registerFunctionAnalyses(funcAnalysis);

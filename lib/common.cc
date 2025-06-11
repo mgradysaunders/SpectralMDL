@@ -10,7 +10,6 @@
 #endif // #if __GNUC__ || __clang__
 
 #include "filesystem.h"
-#include "thirdparty/md5.h"
 
 #include "llvm/MC/TargetRegistry.h"
 #include "llvm/Support/Allocator.h"
@@ -22,6 +21,23 @@
 
 namespace smdl {
 
+static const NativeTarget nativeTarget{[]() {
+  llvm::InitializeNativeTarget();
+  llvm::InitializeNativeTargetAsmPrinter();
+  std::string name{llvm::sys::getHostCPUName()};
+  std::string triple{llvm::sys::getDefaultTargetTriple()};
+  auto targetError{std::string{}};
+  auto target{llvm::TargetRegistry::lookupTarget(triple, targetError)};
+  if (!target)
+    llvm::report_fatal_error(targetError.c_str());
+  llvm::TargetOptions opts{};
+  return NativeTarget{
+      name, triple,
+      target->createTargetMachine(triple, name, "", opts, llvm::Reloc::PIC_)};
+}()};
+
+const NativeTarget &NativeTarget::get() noexcept { return nativeTarget; }
+
 BuildInfo BuildInfo::get() noexcept {
   return {SMDL_VERSION_MAJOR, //
           SMDL_VERSION_MINOR, //
@@ -30,33 +46,27 @@ BuildInfo BuildInfo::get() noexcept {
           SMDL_GIT_COMMIT};
 }
 
-static NativeTarget nativeTarget{};
-
-void init_or_exit() noexcept {
-  static const int onlyOnce = []() {
-    llvm::InitializeNativeTarget();
-    llvm::InitializeNativeTargetAsmPrinter();
-    static std::string name{llvm::sys::getHostCPUName()};
-    static std::string triple{llvm::sys::getDefaultTargetTriple()};
-    auto targetError{std::string{}};
-    auto target{llvm::TargetRegistry::lookupTarget(triple, targetError)};
-    if (!target)
-      llvm::report_fatal_error(targetError.c_str());
-    llvm::TargetOptions opts{};
-    nativeTarget.name = name;
-    nativeTarget.triple = triple;
-    nativeTarget.machine =
-        target->createTargetMachine(triple, name, "", opts, llvm::Reloc::PIC_);
-    return 0;
-  }();
-  SMDL_SANITY_CHECK(onlyOnce == 0); // Silence unused variable warning
+SemanticVersion SemanticVersion::parse(const std::string &versionStr) {
+  auto version{SemanticVersion{}};
+  auto success{[&]() {
+    auto src{llvm::StringRef(versionStr).trim()};
+    if (src.consumeInteger(10, version.major) || !src.consume_front(".") ||
+        src.consumeInteger(10, version.minor) || !src.consume_front(".") ||
+        src.consumeInteger(10, version.patch))
+      return false;
+    if (src.consume_front("-")) {
+      auto [src0, src1] = src.split('+');
+      version.preRelease = std::string(src0);
+      version.buildMetadata = std::string(src1);
+    } else if (src.consume_front("+")) {
+      version.buildMetadata = std::string(src);
+    }
+    return true;
+  }()};
+  if (!success)
+    throw Error(concat("invalid version string ", quoted(versionStr)));
+  return version;
 }
-
-const NativeTarget &get_native_target() noexcept { return nativeTarget; }
-
-bool is_host_little_endian() noexcept { return llvm::sys::IsBigEndianHost; }
-
-bool is_host_big_endian() noexcept { return llvm::sys::IsLittleEndianHost; }
 
 BumpPtrAllocator::BumpPtrAllocator() { ptr = new llvm::BumpPtrAllocator(); }
 
@@ -158,6 +168,92 @@ std::string abi_demangle_exception_name() {
 #endif // #if HAS_CXXABI
 }
 
+SemanticVersion::CompareResult
+SemanticVersion::compare(const SemanticVersion &other) const noexcept {
+  const SemanticVersion &lhs{*this};
+  const SemanticVersion &rhs{other};
+  // 1. Precedence MUST be calculated by separating the version into major,
+  //    minor, patch, and pre-release identifiers in that order (Build
+  //    metadata does not figure into precedence).
+  // 2. Precedence is determined by the first difference when comparing each
+  //    of these identifiers from left to right as follows: Major, minor, and
+  //    patch version are always compared numerically
+  if (lhs.major != rhs.major)
+    return lhs.major > rhs.major ? NEWER_BY_MAJOR_VERSION
+                                 : OLDER_BY_MAJOR_VERSION;
+  if (lhs.minor != rhs.minor)
+    return lhs.minor > rhs.minor ? NEWER_BY_MINOR_VERSION
+                                 : OLDER_BY_MINOR_VERSION;
+  if (lhs.patch != rhs.patch)
+    return lhs.patch > rhs.patch ? NEWER_BY_PATCH_VERSION
+                                 : OLDER_BY_PATCH_VERSION;
+  if (lhs.has_pre_release() || rhs.has_pre_release()) {
+    // 3. When major, minor, and patch are equal, a pre-release version
+    //    has lower precedence than a normal version.
+    if (!lhs.has_pre_release())
+      return NEWER_BY_PRE_RELEASE;
+    if (!rhs.has_pre_release())
+      return OLDER_BY_PRE_RELEASE;
+    // 4. Precedence for two pre-release versions with the same major,
+    //    minor, and patch version MUST be determined by comparing each
+    //    dot separated identifier from left to right until a difference is
+    //    found as follows:
+    //    1. Identifiers consisting of only digits are compared
+    //       numerically
+    //    2. Identifiers with letters or hyphens are compared lexically in
+    //       ASCII sort order
+    //    3. Numeric identifiers always have lower precedence than non-numeric
+    //       identifiers
+    //    4. A larger set of pre-release fields has a higher precedence than
+    //       a smaller set, if all of the preceding identifiers are equal.
+    auto lhsIdents{llvm::SmallVector<llvm::StringRef>{}};
+    auto rhsIdents{llvm::SmallVector<llvm::StringRef>{}};
+    llvm::StringRef(lhs.preRelease).split(lhsIdents, '.');
+    llvm::StringRef(rhs.preRelease).split(rhsIdents, '.');
+    for (size_t i = 0; i < size_t(std::min(lhsIdents.size(), rhsIdents.size()));
+         i++) {
+      llvm::errs() << lhsIdents[i] << " <=> " << rhsIdents[i] << '\n';
+      uint32_t lhsNum{};
+      uint32_t rhsNum{};
+      bool lhsIsNumeric{!lhsIdents[i].getAsInteger(10, lhsNum)};
+      bool rhsIsNumeric{!rhsIdents[i].getAsInteger(10, rhsNum)};
+      if (lhsIsNumeric && rhsIsNumeric) {
+        if (lhsNum != rhsNum)
+          return lhsNum > rhsNum ? NEWER_BY_PRE_RELEASE : OLDER_BY_PRE_RELEASE;
+      } else if (!lhsIsNumeric && rhsIsNumeric) {
+        return NEWER_BY_PRE_RELEASE;
+      } else if (lhsIsNumeric && !rhsIsNumeric) {
+        return OLDER_BY_PRE_RELEASE;
+      } else {
+        int result{lhsIdents[i].compare(rhsIdents[i])};
+        if (result != 0)
+          return result > 0 ? NEWER_BY_PRE_RELEASE : OLDER_BY_PRE_RELEASE;
+      }
+    }
+    if (lhsIdents.size() != rhsIdents.size()) {
+      return lhsIdents.size() > rhsIdents.size() ? NEWER_BY_PRE_RELEASE
+                                                 : OLDER_BY_PRE_RELEASE;
+    }
+  }
+  return EXACTLY_EQUAL;
+}
+
+SemanticVersion::operator std::string() const {
+  auto str{std::string()};
+  str += std::to_string(major), str += '.';
+  str += std::to_string(minor), str += '.';
+  str += std::to_string(patch);
+  if (!preRelease.empty()) {
+    str += '-';
+    str += preRelease;
+  }
+  if (!buildMetadata.empty()) {
+    str += '+';
+    str += buildMetadata;
+  }
+  return str;
+}
+
 void State::finalize_for_runtime_conventions() {
   // 1. Orthonormalize normal and tangent vectors.
   normal = normalize(normal);
@@ -220,48 +316,6 @@ void State::finalize_for_runtime_conventions() {
     geometry_tangent_v[i] =
         object_to_tangent_matrix * float4(geometry_tangent_v[i], 0.0f);
   }
-}
-
-void MD5Hasher::clear() noexcept {
-  if (context) {
-    delete static_cast<MD5Context *>(context);
-    context = nullptr;
-  }
-}
-
-void MD5Hasher::reset() {
-  if (!context)
-    context = new MD5Context;
-  md5Init(static_cast<MD5Context *>(context));
-}
-
-void MD5Hasher::add(const void *buf, size_t len) {
-  if (!context)
-    reset();
-  md5Update(static_cast<MD5Context *>(context),
-            static_cast<const uint8_t *>(buf), len);
-}
-
-std::optional<Error> MD5Hasher::add_file(const std::string &fileName) {
-  return catch_and_return_error([&] {
-    auto stream{fs_open(fileName, std::ios::in | std::ios::binary)};
-    auto buffer{std::array<char, 128>{}};
-    while (!stream.eof()) {
-      stream.read(buffer.data(), buffer.size());
-      add(buffer.data(), stream.gcount());
-    }
-  });
-}
-
-std::array<uint8_t, 16> MD5Hasher::finalize() {
-  if (!context)
-    reset();
-  std::array<uint8_t, 16> digest{};
-  md5Finalize(static_cast<MD5Context *>(context));
-  std::copy(&static_cast<MD5Context *>(context)->digest[0],
-            &static_cast<MD5Context *>(context)->digest[0] + 16, &digest[0]);
-  reset();
-  return digest;
 }
 
 void sanity_check_failed(const char *condition, const char *file, int line,

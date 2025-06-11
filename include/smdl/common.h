@@ -170,55 +170,55 @@ public:
 /// \{
 
 /// Is ASCII alphabetic character?
-[[nodiscard]] constexpr bool is_alpha(char ch) {
+[[nodiscard]] constexpr bool is_alpha(char ch) noexcept {
   return (static_cast<int>('A' <= ch) & static_cast<int>(ch <= 'Z')) |
          (static_cast<int>('a' <= ch) & static_cast<int>(ch <= 'z'));
 }
 
 /// Is ASCII digit?
-[[nodiscard]] constexpr bool is_digit(char ch) {
+[[nodiscard]] constexpr bool is_digit(char ch) noexcept {
   return (static_cast<int>('0' <= ch) & static_cast<int>(ch <= '9'));
 }
 
 /// Is ASCII binary digit?
-[[nodiscard]] constexpr bool is_digit_2(char ch) {
+[[nodiscard]] constexpr bool is_digit_2(char ch) noexcept {
   return (static_cast<int>('0' <= ch) & static_cast<int>(ch <= '1'));
 }
 
 /// Is ASCII octal digit?
-[[nodiscard]] constexpr bool is_digit_8(char ch) {
+[[nodiscard]] constexpr bool is_digit_8(char ch) noexcept {
   return (static_cast<int>('0' <= ch) & static_cast<int>(ch <= '7'));
 }
 
 /// Is ASCII hexadecimal digit?
-[[nodiscard]] constexpr bool is_digit_16(char ch) {
+[[nodiscard]] constexpr bool is_digit_16(char ch) noexcept {
   return is_digit(ch) |
          (static_cast<int>('A' <= ch) & static_cast<int>(ch <= 'F')) |
          (static_cast<int>('a' <= ch) & static_cast<int>(ch <= 'f'));
 }
 
 /// Is ASCII alphabetic character, digit, or underscore?
-[[nodiscard]] constexpr bool is_word(char ch) {
+[[nodiscard]] constexpr bool is_word(char ch) noexcept {
   return static_cast<int>(is_alpha(ch)) | static_cast<int>(is_digit(ch)) |
          static_cast<int>(ch == '_');
 }
 
 /// Is ASCII whitespace character?
-[[nodiscard]] constexpr bool is_space(char ch) {
+[[nodiscard]] constexpr bool is_space(char ch) noexcept {
   return static_cast<int>(ch == ' ') | static_cast<int>(ch == '\t') |
          static_cast<int>(ch == '\n') | static_cast<int>(ch == '\r') |
          static_cast<int>(ch == '\v');
 }
 
 /// Convert ASCII octal character to runtime int.
-[[nodiscard]] constexpr int oct_to_int(int ch) {
+[[nodiscard]] constexpr int oct_to_int(int ch) noexcept {
   if ('0' <= ch && ch <= '7')
     return ch - '0';
   return 0;
 }
 
 /// Convert ASCII hexadecimal character to runtime int.
-[[nodiscard]] constexpr int hex_to_int(int ch) {
+[[nodiscard]] constexpr int hex_to_int(int ch) noexcept {
   if ('0' <= ch && ch <= '9')
     return ch - '0';
   if ('a' <= ch && ch <= 'f')
@@ -230,7 +230,7 @@ public:
 
 /// Determine if `str0` starts with `str1`.
 [[nodiscard]] constexpr bool starts_with(std::string_view str0,
-                                         std::string_view str1) {
+                                         std::string_view str1) noexcept {
   return str0.size() >= str1.size() && str0.substr(0, str1.size()) == str1;
 }
 
@@ -305,40 +305,12 @@ template <typename T, typename... Ts>
 /// \defgroup Main Main
 /// \{
 
-/// Build information.
-class SMDL_EXPORT BuildInfo final {
-public:
-  /// The version major number.
-  int versionMajor{};
-
-  /// The version minor number.
-  int versionMinor{};
-
-  /// The version patch number.
-  int versionPatch{};
-
-  /// The git branch name.
-  const char *gitBranch{};
-
-  /// The git commit hash.
-  const char *gitCommit{};
-
-  /// Get.
-  [[nodiscard]] static BuildInfo get() noexcept;
-};
-
-/// Either initialize successfully or dump an error message and
-/// exit with code `EXIT_FAILURE`.
-///
-/// This may be called more than once, subsequent calls do nothing. If
-/// this is not explicitly called by the host application, it will be
-/// called automatically the first time an instance of the `Compiler`
-/// is constructed.
-///
-SMDL_EXPORT void init_or_exit() noexcept;
-
 /// The LLVM native target.
 class SMDL_EXPORT NativeTarget final {
+public:
+  /// Get.
+  [[nodiscard]] static const NativeTarget &get() noexcept;
+
 public:
   /// The CPU name.
   std::string_view name{};
@@ -350,19 +322,33 @@ public:
   llvm::TargetMachine *machine{};
 };
 
-/// Get the LLVM native target, only available after `init_or_exit()`
-[[nodiscard]] SMDL_EXPORT const NativeTarget &get_native_target() noexcept;
+/// The SMDL build information.
+class SMDL_EXPORT BuildInfo final {
+public:
+  /// Get.
+  [[nodiscard]] static BuildInfo get() noexcept;
+
+public:
+  /// The major version number.
+  uint32_t major{};
+
+  /// The minor version number.
+  uint32_t minor{};
+
+  /// The patch version number.
+  uint32_t patch{};
+
+  /// The git branch name.
+  const char *gitBranch{};
+
+  /// The git commit hash.
+  const char *gitCommit{};
+};
 
 /// \}
 
 /// \addtogroup Support
 /// \{
-
-/// Is host little endian?
-[[nodiscard]] SMDL_EXPORT bool is_host_little_endian() noexcept;
-
-/// Is host big endian?
-[[nodiscard]] SMDL_EXPORT bool is_host_big_endian() noexcept;
 
 /// A bump pointer allocated by `BumpPtrAllocator` that does not need to be
 /// freed, but does need to be destructed.
@@ -581,6 +567,98 @@ catch_and_return_error(Func &&func) try {
 } catch (...) {
   return Error(concat("converted from ", abi_demangle_exception_name()));
 }
+
+/// A semantic version per [Semantic Versioning 2.0.0](https://semver.org).
+class SMDL_EXPORT SemanticVersion final {
+public:
+  /// Parse from string representation or throw an `Error`.
+  [[nodiscard]] static SemanticVersion parse(const std::string &versionStr);
+
+  /// Has pre-release version?
+  [[nodiscard]] bool has_pre_release() const noexcept {
+    return !preRelease.empty();
+  }
+
+  /// Has build metadata?
+  [[nodiscard]] bool has_build_metadata() const noexcept {
+    return !buildMetadata.empty();
+  }
+
+  /// Compare result.
+  enum CompareResult : int {
+    OLDER_BY_MAJOR_VERSION = -4,
+    OLDER_BY_MINOR_VERSION = -3,
+    OLDER_BY_PATCH_VERSION = -2,
+    OLDER_BY_PRE_RELEASE = -1,
+    EXACTLY_EQUAL = 0,
+    NEWER_BY_PRE_RELEASE = +1,
+    NEWER_BY_PATCH_VERSION = +2,
+    NEWER_BY_MINOR_VERSION = +3,
+    NEWER_BY_MAJOR_VERSION = +4,
+  };
+
+  /// Compare.
+  [[nodiscard]] CompareResult
+  compare(const SemanticVersion &other) const noexcept;
+
+  /// \name Comparison operators
+  /// \{
+
+  [[nodiscard]] bool operator==(const SemanticVersion &other) const noexcept {
+    return compare(other) == EXACTLY_EQUAL;
+  }
+
+  [[nodiscard]] bool operator!=(const SemanticVersion &other) const noexcept {
+    return compare(other) != EXACTLY_EQUAL;
+  }
+
+  [[nodiscard]] bool operator<(const SemanticVersion &other) const noexcept {
+    return compare(other) < EXACTLY_EQUAL;
+  }
+
+  [[nodiscard]] bool operator>(const SemanticVersion &other) const noexcept {
+    return compare(other) > EXACTLY_EQUAL;
+  }
+
+  [[nodiscard]] bool operator<=(const SemanticVersion &other) const noexcept {
+    return compare(other) <= EXACTLY_EQUAL;
+  }
+
+  [[nodiscard]] bool operator>=(const SemanticVersion &other) const noexcept {
+    return compare(other) >= EXACTLY_EQUAL;
+  }
+
+  /// \}
+
+  /// Convert to string representation.
+  [[nodiscard]] operator std::string() const;
+
+public:
+  /// The major version number.
+  uint32_t major{};
+
+  /// The minor version number.
+  uint32_t minor{};
+
+  /// The patch version number.
+  uint32_t patch{};
+
+  /// The pre-release version.
+  ///
+  /// > A pre-release version MAY be denoted by appending a hyphen
+  /// > and a series of dot separated identifiers immediately following
+  /// > the patch version.
+  ///
+  std::string preRelease{};
+
+  /// The build metadata.
+  ///
+  /// > Build metadata MAY be denoted by appending a plus sign and a
+  /// > series of dot separated identifiers immediately following the
+  /// > patch or pre-release version.
+  ///
+  std::string buildMetadata{};
+};
 
 /// \}
 
@@ -1133,40 +1211,6 @@ public:
 
   /// Want compact?
   bool compact{};
-};
-
-/// An MD5 hasher.
-class SMDL_EXPORT MD5Hasher final {
-public:
-  MD5Hasher() { reset(); }
-
-  MD5Hasher(const MD5Hasher &) = delete;
-
-  MD5Hasher(MD5Hasher &&other)
-      : context(std::exchange(other.context, nullptr)) {}
-
-  MD5Hasher &operator=(const MD5Hasher &) = delete;
-
-  MD5Hasher &operator=(MD5Hasher &&other) {
-    clear();
-    context = std::exchange(other.context, nullptr);
-    return *this;
-  }
-
-  ~MD5Hasher() { clear(); }
-
-  void clear() noexcept;
-
-  void reset();
-
-  void add(const void *buf, size_t len);
-
-  [[nodiscard]] std::optional<Error> add_file(const std::string &fileName);
-
-  [[nodiscard]] std::array<uint8_t, 16> finalize();
-
-private:
-  void *context{};
 };
 
 /// Expand third macro in variadic arguments, used to implement

@@ -21,10 +21,10 @@ class Crumb;
 class SMDL_EXPORT Module final {
 public:
   /// The compile status, primarily used to detect cyclic imports.
-  enum class CompileStatus {
-    NotStarted, ///< Not started yet.
-    InProgress, ///< Currently in progress.
-    Finished    ///< Finished!
+  enum CompileStatus {
+    COMPILE_STATUS_NOT_STARTED, ///< Not started yet.
+    COMPILE_STATUS_IN_PROGRESS, ///< Currently in progress.
+    COMPILE_STATUS_FINISHED,    ///< Finished!
   };
 
 public:
@@ -57,6 +57,11 @@ public:
   /// Is a builtin module?
   [[nodiscard]] bool is_builtin() const noexcept { return fileName.empty(); }
 
+  /// Is extracted from an archive?
+  [[nodiscard]] bool is_extracted_from_archive() const noexcept {
+    return isExtractedFromArchive;
+  }
+
   /// Get the file name. This is empty if the module is builtin.
   [[nodiscard]] std::string_view get_file_name() const noexcept {
     return fileName;
@@ -87,6 +92,9 @@ public:
   void reset() noexcept;
 
 private:
+  /// Is extracted from an archive?
+  bool isExtractedFromArchive{};
+
   /// The file name if applicable. This is empty if the module is builtin.
   std::string fileName{};
 
@@ -100,7 +108,7 @@ private:
   BumpPtr<AST::Node> root{};
 
   /// The compile status.
-  CompileStatus compileStatus{CompileStatus::NotStarted};
+  CompileStatus compileStatus{COMPILE_STATUS_NOT_STARTED};
 
   /// The last crumb. This is the starting point to search for exported
   /// declarations.

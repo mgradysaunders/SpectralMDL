@@ -11,7 +11,6 @@ add_custom_target(
 add_library(
   SpectralMDL 
   SHARED
-    "Archive.cc"
     "AST.cc"
     "common.cc"
     "Compiler.cc"
@@ -21,13 +20,13 @@ add_library(
     "Compiler/Type.cc"
     "Compiler/Value.cc"
     "FileLocator.cc"
+    "filesystem.cc"
     "Formatter.cc"
     "Image.cc"
     "Logger.cc"
     "Module.cc"
     "Parser.cc"
     "SceneData.cc"
-    "thirdparty/md5.c"
     "thirdparty/miniz.c"
   )
 add_library(

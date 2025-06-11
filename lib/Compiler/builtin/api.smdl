@@ -335,6 +335,8 @@ export struct material {
 
   /// The hair Bidirectional Scattering Distribution Function (BSDF).
   hair_bsdf hair = hair_bsdf();
+
+  // TODO float temperature = -1;
 };
 
 /// Is thin walled?

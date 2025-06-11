@@ -2,10 +2,8 @@
 
 #include <cctype>
 #include <cerrno>
-#include <cstring>
 #include <fstream>
 #include <streambuf>
-#include <string>
 
 #if SMDL_USE_BOOST_FILESYSTEM
 #include "boost/filesystem.hpp"
@@ -61,19 +59,17 @@ namespace smdl {
   return stream;
 }
 
-[[nodiscard]] inline std::string fs_read(const fs::path &path) {
-  auto stream{fs_open(path, std::ios::in | std::ios::binary)};
-  return std::string((std::istreambuf_iterator<char>(stream)),
-                     std::istreambuf_iterator<char>());
-}
+[[nodiscard]] std::string fs_read(const fs::path &path);
+
+[[nodiscard]] std::string fs_read_thru_archive(const fs::path &path,
+                                               bool &isExtractedFromArchive);
 
 template <size_t N>
-[[nodiscard]] inline bool fs_test_header(const fs::path &path,
-                                         const std::array<char, N> &header) {
-  auto stream{fs_open(path, std::ios::in | std::ios::binary)};
+[[nodiscard]] inline std::array<char, N> fs_read_header(const fs::path &path) {
   auto buffer{std::array<char, N>{}};
+  auto stream{fs_open(path, std::ios::in | std::ios::binary)};
   stream.read(buffer.data(), buffer.size());
-  return buffer == header;
+  return buffer;
 }
 
 } // namespace smdl

@@ -19,9 +19,7 @@
 namespace smdl {
 
 Compiler::Compiler(uint32_t wavelengthBaseMax)
-    : wavelengthBaseMax(wavelengthBaseMax) {
-  init_or_exit();
-}
+    : wavelengthBaseMax(wavelengthBaseMax) {}
 
 Compiler::~Compiler() {
 #if SMDL_HAS_PTEX
@@ -55,6 +53,12 @@ std::optional<Error> Compiler::add(std::string fileOrDirName) {
     }
     if (fs::is_directory(path, ec) && moduleDirNames.insert(pathStr).second) {
       SMDL_LOG_DEBUG("Adding MDL directory ", quoted(fs_abbreviate_path(path)));
+      for (const auto &entry : fs::directory_iteratory(path)) {
+        if (fs::is_regular_file(entry.path(), ec) &&
+            fs_extension(entry.path()) == ".mdr") {
+          // TODO
+        }
+      }
       for (const auto &entry : fs::recursive_directory_iterator(path)) {
         if (fs::is_regular_file(entry.path(), ec)) {
           if (auto extension{fs_extension(entry.path())};
@@ -82,8 +86,8 @@ std::optional<Error> Compiler::compile(OptLevel optLevel) {
     llvm::ExitOnError exitOnError;
     auto llvmContext{std::make_unique<llvm::LLVMContext>()};
     auto llvmModule{std::make_unique<llvm::Module>("MDL", *llvmContext)};
-    llvmModule->setTargetTriple(get_native_target().triple);
-    llvmModule->setDataLayout(get_native_target().machine->createDataLayout());
+    llvmModule->setTargetTriple(NativeTarget::get().triple);
+    llvmModule->setDataLayout(NativeTarget::get().machine->createDataLayout());
     llvmJitModule = std::make_unique<llvm::orc::ThreadSafeModule>(
         std::move(llvmModule), std::move(llvmContext));
     llvmJit = exitOnError(llvm::orc::LLJITBuilder().create());
@@ -225,7 +229,7 @@ std::string Compiler::dump(DumpFormat dumpFormat) {
     llvm::SmallVector<char> str{};
     llvm::raw_svector_ostream os{str};
     llvm::legacy::PassManager passManager{};
-    if (get_native_target().machine->addPassesToEmitFile(
+    if (NativeTarget::get().machine->addPassesToEmitFile(
             passManager, os, nullptr,
             dumpFormat == DumpFormat::Assembly
                 ? llvm::CodeGenFileType::AssemblyFile
