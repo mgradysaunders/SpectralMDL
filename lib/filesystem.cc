@@ -1,7 +1,5 @@
 #include "filesystem.h"
 
-#include "thirdparty/miniz.h"
-
 namespace smdl {
 
 std::string fs_read(const fs::path &path) {
@@ -29,36 +27,17 @@ std::string fs_read_thru_archive(const fs::path &path,
     throw Error(
         concat("cannot load ", quoted(path.string()), ": file not found"));
   }
-  auto zipFileName{zipPath.string()};
-  auto zip{mz_zip_archive{}};
-  auto zipDefer{Defer([&] { mz_zip_reader_end(&zip); })};
-  auto zipError{
-      [&] { return mz_zip_get_error_string(mz_zip_get_last_error(&zip)); }};
-  mz_zip_zero_struct(&zip);
-  if (!mz_zip_reader_init_file(&zip, zipFileName.c_str(), /*flags=*/0)) {
-    throw Error(concat("cannot load ", quoted(zipFileName), ": ", zipError()));
-  }
-  auto fileName{path.lexically_relative(zipPath).lexically_normal().string()};
-  auto fileIndex{mz_zip_reader_locate_file(&zip, fileName.c_str(), nullptr,
-                                           /*flags=*/0)};
-  if (fileIndex < 0) {
-    throw Error(concat("cannot load ", quoted(path.string()),
-                       ": file not found in ZIP archive"));
-  }
-  auto fileStat{mz_zip_archive_file_stat{}};
-  if (!mz_zip_reader_file_stat(&zip, fileIndex, &fileStat)) {
+  try {
+    isExtractedFromArchive = true;
+    auto archive{Archive{zipPath.string()}};
+    auto fileName{path.lexically_relative(zipPath).lexically_normal().string()};
+    auto fileIndex{archive.get_file_index(fileName)};
+    return archive.extract_file(fileIndex);
+  } catch (const Error &error) {
     throw Error(
-        concat("cannot load ", quoted(path.string()), ": ", zipError()));
+        concat("cannot load ", quoted(path.string()), ": ", error.message));
   }
-  auto file{std::string()};
-  file.resize(fileStat.m_uncomp_size);
-  if (!mz_zip_reader_extract_to_mem(&zip, fileIndex, file.data(), file.size(),
-                                    /*flags=*/0)) {
-    throw Error(
-        concat("cannot load ", quoted(path.string()), ": ", zipError()));
-  }
-  isExtractedFromArchive = true;
-  return file;
+  return {};
 }
 
 } // namespace smdl

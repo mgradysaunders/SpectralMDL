@@ -23,6 +23,17 @@ std::unique_ptr<Module> Module::load_from_file(const std::string &fileName) {
   return module_;
 }
 
+std::unique_ptr<Module>
+Module::load_from_file_extracted_from_archive(const std::string &fileName,
+                                              const std::string &file) {
+  auto module_{std::make_unique<Module>()};
+  module_->isExtractedFromArchive = true;
+  module_->fileName = fileName;
+  module_->name = fs_make_path(fileName).stem().string();
+  module_->sourceCode = file;
+  return module_;
+}
+
 std::optional<Error> Module::parse(BumpPtrAllocator &allocator) noexcept {
   return catch_and_return_error([&] {
     if (!root)

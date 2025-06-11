@@ -53,6 +53,20 @@ public:
   [[nodiscard]] static std::unique_ptr<Module>
   load_from_file(const std::string &fileName);
 
+  /// Load from file extracted from archive.
+  ///
+  /// \param[in] fileName
+  /// The semantic file name. This is the file name of the archive itself
+  /// concatenated to the file name within the archive, as if the archive
+  /// were a directory.
+  ///
+  /// \param[in] file
+  /// The file extracted and decompressed from the archive.
+  ///
+  [[nodiscard]] static std::unique_ptr<Module>
+  load_from_file_extracted_from_archive(const std::string &fileName,
+                                        const std::string &file);
+
 public:
   /// Is a builtin module?
   [[nodiscard]] bool is_builtin() const noexcept { return fileName.empty(); }
