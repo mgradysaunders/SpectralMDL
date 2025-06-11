@@ -53,7 +53,7 @@ std::optional<Error> Compiler::add(std::string fileOrDirName) {
     }
     if (fs::is_directory(path, ec) && moduleDirNames.insert(pathStr).second) {
       SMDL_LOG_DEBUG("Adding MDL directory ", quoted(fs_abbreviate_path(path)));
-      for (const auto &entry : fs::directory_iteratory(path)) {
+      for (const auto &entry : fs::directory_iterator(path)) {
         if (fs::is_regular_file(entry.path(), ec) &&
             fs_extension(entry.path()) == ".mdr") {
           // TODO
