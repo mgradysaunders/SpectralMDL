@@ -77,7 +77,7 @@ Module::format_source_code(const FormatOptions &formatOptions) noexcept {
     auto formatted{formatter.format(sourceCode, *root)};
     if (formatOptions.inPlace) {
       if (is_extracted_from_archive()) {
-        return Error(
+        throw Error(
             concat("cannot format module extracted from archive in-place ",
                    quoted(fileName)));
       }
