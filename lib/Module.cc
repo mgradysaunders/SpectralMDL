@@ -63,6 +63,7 @@ Module::format_source_code(const FormatOptions &formatOptions) noexcept {
   if (is_builtin()) {
     return Error(concat("cannot format builtin module ", quoted(name)));
   }
+
   if (!is_parsed()) {
     auto allocator{BumpPtrAllocator{}};
     if (auto error{parse(allocator)})
@@ -75,6 +76,11 @@ Module::format_source_code(const FormatOptions &formatOptions) noexcept {
     auto formatter{Formatter{formatOptions}};
     auto formatted{formatter.format(sourceCode, *root)};
     if (formatOptions.inPlace) {
+      if (is_extracted_from_archive()) {
+        return Error(
+            concat("cannot format module extracted from archive in-place ",
+                   quoted(fileName)));
+      }
       auto stream{fs_open(fileName, std::ios::out)};
       stream << formatted;
     } else {
