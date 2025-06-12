@@ -155,7 +155,7 @@ float3 BSDFMeasurement::interpolate(const float3 &wo,
   fractThetaO -= indexThetaO;
   fractThetaI -= indexThetaI;
   float3 table[2][2]{};
-  if (numPhi > 1 && false) {
+  if (numPhi > 1) {
     float fractPhi = (numPhi - 2) * (phi / PI);
     int indexPhi = std::floor(fractPhi);
     indexPhi = std::min(indexPhi, int(numPhi - 2));
