@@ -24,6 +24,7 @@ add_library(
     "Formatter.cc"
     "Image.cc"
     "Logger.cc"
+    "MeasuredBSDF.cc"
     "Module.cc"
     "Parser.cc"
     "SceneData.cc"
