@@ -12,6 +12,7 @@ add_library(
   SpectralMDL 
   SHARED
     "AST.cc"
+    "BSDFMeasurement.cc"
     "common.cc"
     "Compiler.cc"
     "Compiler/Context.cc"
@@ -24,7 +25,6 @@ add_library(
     "Formatter.cc"
     "Image.cc"
     "Logger.cc"
-    "MeasuredBSDF.cc"
     "Module.cc"
     "Parser.cc"
     "SceneData.cc"

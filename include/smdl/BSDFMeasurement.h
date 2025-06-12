@@ -6,7 +6,7 @@
 
 namespace smdl {
 
-class SMDL_EXPORT MeasuredBSDF final {
+class SMDL_EXPORT BSDFMeasurement final {
 public:
   enum Kind { KIND_BRDF, KIND_BTDF };
 
@@ -25,16 +25,16 @@ public:
     }
   }
 
-  MeasuredBSDF() = default;
+  BSDFMeasurement() = default;
 
-  MeasuredBSDF(const MeasuredBSDF &) = delete;
+  BSDFMeasurement(const BSDFMeasurement &) = delete;
 
-  ~MeasuredBSDF() { clear(); }
+  ~BSDFMeasurement() { clear(); }
 
-  [[nodiscard]] static std::unique_ptr<MeasuredBSDF>
+  [[nodiscard]] static std::unique_ptr<BSDFMeasurement>
   load_from_memory(const std::string &file);
 
-  [[nodiscard]] static std::unique_ptr<MeasuredBSDF>
+  [[nodiscard]] static std::unique_ptr<BSDFMeasurement>
   load_from_file(const std::string &fileName);
 
   void clear() noexcept;

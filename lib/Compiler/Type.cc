@@ -647,6 +647,32 @@ Value AutoType::invoke(Emitter &emitter, const ArgumentList &args,
 }
 //--}
 
+BSDFMeasurementType::BSDFMeasurementType(Context &context) {
+  displayName = "bsdf_measurement";
+  llvmType = llvm::PointerType::get(context, 0);
+}
+
+Value BSDFMeasurementType::invoke(Emitter &emitter, const ArgumentList &args,
+                                  const SourceLocation &srcLoc) {
+  if (args.empty() || args.is_null()) {
+    return emitter.context.get_comptime_ptr(this, nullptr);
+  }
+  if (args.size() == 1) {
+    auto valueFileName{emitter.to_rvalue(args[0].value)};
+    if (!valueFileName.is_comptime_string())
+      srcLoc.throw_error(
+          "expected 'bsdf_measurement' parameter 'name' to resolve to "
+          "compile-time string");
+    auto fileName{valueFileName.get_comptime_string()};
+    return emitter.context.get_comptime_ptr(
+        this, emitter.context.compiler.load_bsdf_measurement(
+                  std::string(fileName), srcLoc));
+  }
+  srcLoc.throw_error("cannot construct 'bsdf_measurement' from ",
+                     std::string(args));
+  return Value();
+}
+
 //--{ ColorType
 ColorType::ColorType(Context &context) {
   displayName = "color";

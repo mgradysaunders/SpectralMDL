@@ -34,6 +34,8 @@ public:
   int alphaIndex{-1};
 };
 
+class BSDFMeasurement;
+
 /// \}
 
 /// \addtogroup Main
@@ -87,6 +89,11 @@ private:
   /// Load ptex texture.
   [[nodiscard]] Ptexture load_ptexture(const std::string &fileName,
                                        const SourceLocation &srcLoc);
+
+  /// Load BSDF measurement.
+  [[nodiscard]] const BSDFMeasurement *
+  load_bsdf_measurement(const std::string &fileName,
+                        const SourceLocation &srcLoc);
 
 public:
   /// Dump as LLVM-IR or native assembly.
@@ -204,6 +211,10 @@ private:
   /// The ptex textures.
   std::map<std::string, Ptexture, std::less<>> ptextures{};
 
+  /// The BSDF measurements.
+  std::map<std::string, std::unique_ptr<BSDFMeasurement>, std::less<>>
+      bsdfMeasurements{};
+
   /// The MDL module file names.
   std::set<std::string> moduleFileNames{};
 
@@ -239,6 +250,8 @@ private:
   friend class Context;
 
   friend class Emitter;
+
+  friend class BSDFMeasurementType;
 
   friend class FunctionType;
 

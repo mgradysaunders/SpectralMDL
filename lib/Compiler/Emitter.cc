@@ -1,6 +1,7 @@
 // vim:foldmethod=marker:foldlevel=0:fmr=--{,--}
 #include "Emitter.h"
 
+#include "smdl/BSDFMeasurement.h"
 #include "smdl/Logger.h"
 #include "llvm/Support/Format.h"
 #include "llvm/Support/Parallel.h"
@@ -1341,6 +1342,17 @@ SMDL_EXPORT void smdl_ptex_evaluate(const void *state, const void *tex,
 #endif // #if SMDL_HAS_PTEX
 }
 
+SMDL_EXPORT void smdl_bsdf_measurement_evaluate(const void *bsdfMeasurement,
+                                                const float3 &wo,
+                                                const float3 &wi,
+                                                float3 &result) {
+  if (!bsdfMeasurement)
+    result = float3(0);
+  else
+    result = static_cast<const BSDFMeasurement *>(bsdfMeasurement)
+                 ->interpolate(wo, wi);
+}
+
 } // extern "C"
 
 //--{ emit_intrinsic
@@ -1518,6 +1530,20 @@ Value Emitter::emit_intrinsic(std::string_view name, const ArgumentList &args,
       builder.CreateStore(value, callInst);
       return RValue(context.get_pointer_type(value.type), callInst);
     }
+    // TODO Clean this up
+#if 0
+    if (name == "bsdf_measurement_evaluate") {
+      auto callee{context.get_builtin_callee("smdl_bsdf_measurement_evaluate",
+                                             &smdl_bsdf_measurement_evaluate)};
+      auto bsdfMeasurement{to_rvalue(args[0])};
+      auto wo{to_lvalue(args[1])};
+      auto wi{to_lvalue(args[2])};
+      auto result{to_lvalue(invoke(context.get_float_type(3), {}, srcLoc))};
+      builder.CreateCall(callee, {bsdfMeasurement.llvmValue, wo.llvmValue,
+                                  wi.llvmValue, result.llvmValue});
+      return to_rvalue(result);
+    }
+#endif
     break;
   }
   case 'c': {

@@ -1,4 +1,4 @@
-#include "smdl/MeasuredBSDF.h"
+#include "smdl/BSDFMeasurement.h"
 
 #include "filesystem.h"
 
@@ -7,13 +7,11 @@
 #include "llvm/Support/Endian.h"
 #include "llvm/Support/MemAlloc.h"
 
-#include <iostream>
-
 namespace smdl {
 
-std::unique_ptr<MeasuredBSDF>
-MeasuredBSDF::load_from_memory(const std::string &file) {
-  auto result{std::make_unique<MeasuredBSDF>()};
+std::unique_ptr<BSDFMeasurement>
+BSDFMeasurement::load_from_memory(const std::string &file) {
+  auto result{std::make_unique<BSDFMeasurement>()};
   auto mem{llvm::StringRef(file)};
   if (!mem.consume_front("NVIDIA ARC MBSDF V1\n")) {
     throw Error("not an MBSDF file");
@@ -72,7 +70,7 @@ MeasuredBSDF::load_from_memory(const std::string &file) {
                                 result->numPhi * size_of(result->type),
                             16);
   mem = mem.substr(12);
-  auto num{result->numTheta * result->numPhi};
+  auto num{result->numTheta * result->numTheta * result->numPhi};
   auto srcPtr{reinterpret_cast<const uint32_t *>(mem.data())};
   auto dstPtr{static_cast<uint32_t *>(result->buffer)};
   switch (result->type) {
@@ -97,9 +95,9 @@ MeasuredBSDF::load_from_memory(const std::string &file) {
   return result;
 }
 
-std::unique_ptr<MeasuredBSDF>
-MeasuredBSDF::load_from_file(const std::string &fileName) {
-  auto result{std::unique_ptr<MeasuredBSDF>{}};
+std::unique_ptr<BSDFMeasurement>
+BSDFMeasurement::load_from_file(const std::string &fileName) {
+  auto result{std::unique_ptr<BSDFMeasurement>{}};
   auto file{fs_read(fileName)};
   if (auto error{
           catch_and_return_error([&] { result = load_from_memory(file); })}) {
@@ -108,7 +106,7 @@ MeasuredBSDF::load_from_file(const std::string &fileName) {
   return result;
 }
 
-void MeasuredBSDF::clear() noexcept {
+void BSDFMeasurement::clear() noexcept {
   if (buffer)
     llvm::deallocate_buffer(buffer,
                             numTheta * numTheta * numPhi * size_of(type), 16);
@@ -118,17 +116,17 @@ void MeasuredBSDF::clear() noexcept {
   metaData.clear();
 }
 
-float3 MeasuredBSDF::fetch(size_t indexThetaO, size_t indexThetaI,
-                           size_t indexPhi) const noexcept {
+float3 BSDFMeasurement::fetch(size_t indexThetaO, size_t indexThetaI,
+                              size_t indexPhi) const noexcept {
   const void *ptr = static_cast<const uint8_t *>(buffer) +
                     size_of(type) * (indexThetaI * numTheta * numPhi +
-                                     indexThetaO * numTheta + indexPhi);
+                                     indexThetaO * numPhi + indexPhi);
   return type == TYPE_FLOAT ? float3(*static_cast<const float *>(ptr))
                             : float3(*static_cast<const float3 *>(ptr));
 }
 
-float3 MeasuredBSDF::interpolate(const float3 &wo,
-                                 const float3 &wi) const noexcept {
+float3 BSDFMeasurement::interpolate(const float3 &wo,
+                                    const float3 &wi) const noexcept {
   if ((std::signbit(wo.z) == std::signbit(wi.z)) != (kind == KIND_BRDF)) {
     return float3(0);
   }
@@ -157,10 +155,9 @@ float3 MeasuredBSDF::interpolate(const float3 &wo,
   fractThetaO -= indexThetaO;
   fractThetaI -= indexThetaI;
   float3 table[2][2]{};
-  if (numPhi > 1) {
-    int indexPhi = 0;
+  if (numPhi > 1 && false) {
     float fractPhi = (numPhi - 2) * (phi / PI);
-    indexPhi = std::floor(fractPhi);
+    int indexPhi = std::floor(fractPhi);
     indexPhi = std::min(indexPhi, int(numPhi - 2));
     indexPhi = std::max(indexPhi, 0);
     fractPhi -= indexPhi;

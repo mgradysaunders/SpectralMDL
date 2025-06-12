@@ -16,6 +16,7 @@ enum class TypeKind : uint32_t {
   Auto,
   Arithmetic,
   Array,
+  BSDFMeasurement,
   Color,
   ComptimeUnion,
   Enum,
@@ -622,6 +623,22 @@ public:
   /// \}
 };
 
+class BSDFMeasurementType final
+    : public TypeSubclass<TypeKind::BSDFMeasurement> {
+public:
+  explicit BSDFMeasurementType(Context &context);
+
+public:
+  /// \name Virtual interface
+  /// \{
+
+  [[nodiscard]]
+  Value invoke(Emitter &emitter, const ArgumentList &args,
+               const SourceLocation &srcLoc) final;
+
+  /// \}
+};
+
 /// The color type, essentially a float vector.
 class ColorType final : public TypeSubclass<TypeKind::Color> {
 public:
@@ -781,7 +798,9 @@ public:
   [[nodiscard]] bool is_variant() const { return decl.is_variant(); }
 
   /// Has no overloads?
-  [[nodiscard]] bool has_no_overloads() const { return !prevOverload && !nextOverload; }
+  [[nodiscard]] bool has_no_overloads() const {
+    return !prevOverload && !nextOverload;
+  }
 
   /// Resolve overload.
   [[nodiscard]] FunctionType *resolve_overload(Emitter &emitter,

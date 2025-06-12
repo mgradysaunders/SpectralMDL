@@ -1,4 +1,5 @@
 #include "smdl/Compiler.h"
+#include "smdl/BSDFMeasurement.h"
 #include "smdl/Logger.h"
 
 #include <chrono>
@@ -191,12 +192,11 @@ const Image &Compiler::load_image(const std::string &fileName,
   auto &image{images[fileName]};
   if (!image) {
     image.reset(new Image());
-    try {
-      image->start_load(fileName);
-    } catch (const std::exception &err) {
+    if (auto error{
+            catch_and_return_error([&] { image->start_load(fileName); })}) {
       image->clear();
       srcLoc.log_warn(
-          concat("cannot load ", quoted(fileName), ": ", err.what()));
+          concat("cannot load ", quoted(fileName), ": ", error->message));
     }
   }
   return *image;
@@ -234,6 +234,30 @@ Ptexture Compiler::load_ptexture(const std::string &fileName,
 #endif // #if SMDL_HAS_PTEX
   }
   return ptex;
+}
+
+const BSDFMeasurement *
+Compiler::load_bsdf_measurement(const std::string &fileName,
+                                const SourceLocation &srcLoc) {
+  auto resolvedFileName{
+      fileLocator.locate(fileName, srcLoc.get_module_file_name())};
+  if (!resolvedFileName) {
+    srcLoc.log_warn(
+        concat("cannot load ", quoted(fileName), ": file not found"));
+    return nullptr;
+  }
+  auto itrAndInserted = bsdfMeasurements.try_emplace(*resolvedFileName);
+  auto itr{itrAndInserted.first};
+  auto inserted{itrAndInserted.second};
+  if (inserted) {
+    if (auto error{catch_and_return_error([&] {
+          itr->second = BSDFMeasurement::load_from_file(*resolvedFileName);
+        })}) {
+      srcLoc.log_warn(
+          concat("cannot load ", quoted(fileName), ": ", error->message));
+    }
+  }
+  return itr->second.get();
 }
 
 std::string Compiler::dump(DumpFormat dumpFormat) {
