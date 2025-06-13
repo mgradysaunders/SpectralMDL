@@ -149,9 +149,14 @@ export struct $default_bsdf:default bsdf{};
 export struct $default_vdf:default vdf{};
 export struct $default_edf:default edf{};
 export struct $default_hair_bsdf:default hair_bsdf{};
+export struct texture_ptex{
+  texture_ptex(const string name,const auto gamma=0)=texture_ptex(handle: #load_ptexture(name),gamma: int(gamma));
+  const &void handle=null;
+  const int gamma=0;
+};
 export struct bsdf_measurement{
-  bsdf_measurement(const string filename)=bsdf_measurement(ptr: #load_bsdf_measurement(filename));
-  const &void ptr=null;
+  bsdf_measurement(const string filename)=bsdf_measurement(handle: #load_bsdf_measurement(filename));
+  const &void handle=null;
 };
 export struct material_emission{
   edf emission=edf();
@@ -1421,7 +1426,7 @@ export @(pure macro)int height(const texture_2d tex,const int2 uv_tile=int2(0)){
   return i<0?0:tex.tile_extents[i].y;
 }
 export @(pure macro)bool texture_isvalid(const texture_2d tex)=bool(tex.tile_buffers[0]);
-export @(pure macro)bool texture_isvalid(const texture_ptex tex)=bool(tex.texture);
+export @(pure macro)bool texture_isvalid(const texture_ptex tex)=bool(tex.handle);
 @(pure)auto texel_fetch(const texture_2d tex,const int2 coord,const int2 uv_tile=int2(0)){
   const auto i(uv_tile_index(tex,uv_tile));
   return tex.texel_type(0) if(i<0);
@@ -1535,33 +1540,34 @@ export @(pure macro)color lookup_color(
 )=color(lookup_float4(tex,coord,wrap_u,wrap_v,crop_u,crop_v).xyz);
 @(foreign)void smdl_ptex_evaluate(
   &void tex,
+  int gamma,
   int first,
   int num,
   &float result,
 );
-export @(macro)float4 lookup_float4(texture_ptex tex,const int channel=0){
+export @(macro)float4 lookup_float4(const texture_ptex tex,const int channel=0){
   float4 result;
-  ptex_evaluate(&tex,channel,4,&result[0]);
+  smdl_ptex_evaluate(tex.handle,tex.gamma,channel,4,&result[0]);
   return result;
 }
-export @(macro)float3 lookup_float3(texture_ptex tex,const int channel=0){
+export @(macro)float3 lookup_float3(const texture_ptex tex,const int channel=0){
   float3 result;
-  ptex_evaluate(tex,channel,3,&result[0]);
+  smdl_ptex_evaluate(tex.handle,tex.gamma,channel,3,&result[0]);
   return result;
 }
-export @(macro)float2 lookup_float2(texture_ptex tex,const int channel=0){
+export @(macro)float2 lookup_float2(const texture_ptex tex,const int channel=0){
   float2 result;
-  ptex_evaluate(tex,channel,2,&result[0]);
+  smdl_ptex_evaluate(tex.handle,tex.gamma,channel,2,&result[0]);
   return result;
 }
-export @(macro)float lookup_float(texture_ptex tex,const int channel=0){
+export @(macro)float lookup_float(const texture_ptex tex,const int channel=0){
   float result;
-  ptex_evaluate(tex,channel,1,&result);
+  smdl_ptex_evaluate(tex.handle,tex.gamma,channel,1,&result);
   return result;
 }
-export @(macro)color lookup_color(texture_ptex tex,const int channel=0){
+export @(macro)color lookup_color(const texture_ptex tex,const int channel=0){
   float3 result;
-  ptex_evaluate(tex,channel,3,&result);
+  smdl_ptex_evaluate(tex.handle,tex.gamma,channel,3,&result[0]);
   return color(result);
 }
 )*";

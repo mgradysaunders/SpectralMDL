@@ -45,7 +45,6 @@ Context::Context(Compiler &compiler) : compiler(compiler) {
       {"int4", get_comptime_meta_type(get_int_type(Extent(4)))},
       {"string", get_comptime_meta_type(get_string_type())},
       {"texture_2d", get_comptime_meta_type(texture2DType.get())},
-      {"texture_ptex", get_comptime_meta_type(texturePtexType.get())},
       {"$DEBUG", get_comptime_bool(compiler.enableDebug)},
       {"$DOUBLE_EPS",
        get_comptime_double(std::numeric_limits<double>::epsilon())},

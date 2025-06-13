@@ -188,11 +188,6 @@ public:
     return texture2DType.get();
   }
 
-  /// Get the `texture_ptex` type.
-  [[nodiscard]] TexturePtexType *get_texture_ptex_type() {
-    return texturePtexType.get();
-  }
-
   /// Get union type.
   [[nodiscard]] Type *get_union_type(llvm::ArrayRef<Type *> types);
 
@@ -434,10 +429,6 @@ private:
   /// The `texture_2d` type.
   const BumpPtr<Texture2DType> texture2DType{
       allocator.allocate<Texture2DType>()};
-
-  /// The `texture_ptex` type.
-  const BumpPtr<TexturePtexType> texturePtexType{
-      allocator.allocate<TexturePtexType>(*this)};
 
   /// The AST associated types.
   llvm::DenseMap<AST::Decl *, BumpPtr<Type>> astTypes{};

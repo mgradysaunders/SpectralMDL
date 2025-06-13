@@ -1582,6 +1582,17 @@ Value Emitter::emit_intrinsic(std::string_view name, const ArgumentList &args,
           context.compiler.load_bsdf_measurement(
               std::string(fileName.get_comptime_string()), srcLoc));
     }
+    if (name == "load_ptexture") {
+      auto fileName{expectOne()};
+      if (!fileName.is_comptime_string()) {
+        srcLoc.throw_error("intrinsic 'load_ptexture' expects 1 "
+                           "compile-time string argument");
+      }
+      return context.get_comptime_ptr(
+          context.get_void_pointer_type(),
+          context.compiler.load_ptexture(
+              std::string(fileName.get_comptime_string()), srcLoc));
+    }
     break;
   }
   case 'm': {

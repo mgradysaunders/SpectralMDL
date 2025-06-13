@@ -268,11 +268,23 @@ export struct $default_edf: default edf {};
 /// The default hair BSDF is just an empty struct!
 export struct $default_hair_bsdf: default hair_bsdf {};
 
+/// The texture ptex structure.
+export struct texture_ptex {
+  texture_ptex(const string name, const auto gamma = 0) = texture_ptex(handle: #load_ptexture(name), gamma: int(gamma));
+
+  /// The pointer to the `smdl::Ptexture`
+  const &void handle = null;
+
+  /// The gamma mode
+  const int gamma = 0;
+};
+
 /// The BSDF measurement structure.
 export struct bsdf_measurement {
-  bsdf_measurement(const string filename) = bsdf_measurement(ptr: #load_bsdf_measurement(filename));
+  bsdf_measurement(const string filename) = bsdf_measurement(handle: #load_bsdf_measurement(filename));
 
-  const &void ptr = null;
+  /// The pointer to the `smdl::BSDFMeasurement`
+  const &void handle = null;
 };
 
 /// The material emission description.

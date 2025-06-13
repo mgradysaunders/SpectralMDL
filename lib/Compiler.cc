@@ -202,14 +202,14 @@ const Image &Compiler::load_image(const std::string &fileName,
   return *image;
 }
 
-Ptexture Compiler::load_ptexture(const std::string &fileName,
-                                 const SourceLocation &srcLoc) {
+const Ptexture *Compiler::load_ptexture(const std::string &fileName,
+                                        const SourceLocation &srcLoc) {
   auto resolvedFileName{
       fileLocator.locate(fileName, srcLoc.get_module_file_name())};
   if (!resolvedFileName) {
     srcLoc.log_warn(
         concat("cannot load ", quoted(fileName), ": file not found"));
-    return Ptexture{};
+    return nullptr;
   }
   auto [itr, inserted] = ptextures.try_emplace(*resolvedFileName, Ptexture{});
   auto &ptex{itr->second};
@@ -233,7 +233,7 @@ Ptexture Compiler::load_ptexture(const std::string &fileName,
         concat("cannot load ", quoted(fileName), ": built without ptex!"));
 #endif // #if SMDL_HAS_PTEX
   }
-  return ptex;
+  return ptex.texture ? &ptex : nullptr;
 }
 
 const BSDFMeasurement *
@@ -437,35 +437,28 @@ SMDL_EXPORT void smdl_data_lookup(void *state, void *sceneData, // NOLINT
     (*getter)(static_cast<State *>(state), SceneData::Kind(kind), size, ptr);
 }
 
-SMDL_EXPORT void smdl_ptex_evaluate(const void *state, const void *tex,
+SMDL_EXPORT void smdl_ptex_evaluate(const void *state,
+                                    const ::smdl::Ptexture *ptex, int gamma,
                                     int first, int num, float *out) {
   SMDL_SANITY_CHECK(state != nullptr);
-  SMDL_SANITY_CHECK(tex != nullptr);
   SMDL_SANITY_CHECK(out != nullptr);
-  for (int i = 0; i < num; i++)
+  for (int i = 0; i < num; i++) {
     out[i] = 0.0f;
+  }
 #if SMDL_HAS_PTEX
-  struct texture_ptex_t final {
-    PtexTexture *texture{};
-    PtexFilter *texture_filter{};
-    int channel_count{};
-    int alpha_index{};
-    int gamma{};
-  };
-  if (auto ptex{static_cast<const texture_ptex_t *>(tex)};
-      ptex && ptex->texture_filter && first < ptex->channel_count) {
-    num = std::min(num, int(ptex->channel_count - first));
-    ptex->texture_filter->eval(
-        out, first, num, static_cast<const State *>(state)->ptex_face_id,
-        static_cast<const State *>(state)->ptex_face_uv.x,
-        static_cast<const State *>(state)->ptex_face_uv.y,
-        /*uw1=*/0.0f, /*vw1=*/0.0f,
-        /*uw2=*/0.0f, /*vw2=*/0.0f,
-        /*width=*/1.0f, /*blur=*/0.0f);
-    if (ptex->gamma == 1) { // sRGB?
+  if (ptex && first < ptex->channelCount) {
+    num = std::min(num, int(ptex->channelCount - first));
+    static_cast<PtexFilter *>(ptex->textureFilter)
+        ->eval(out, first, num, static_cast<const State *>(state)->ptex_face_id,
+               static_cast<const State *>(state)->ptex_face_uv.x,
+               static_cast<const State *>(state)->ptex_face_uv.y,
+               /*uw1=*/0.0f, /*vw1=*/0.0f,
+               /*uw2=*/0.0f, /*vw2=*/0.0f,
+               /*width=*/1.0f, /*blur=*/0.0f);
+    if (gamma == 1) { // sRGB?
       for (int i = 0; i < num; i++) {
         int channel{first + i};
-        if (channel != ptex->alpha_index) {
+        if (channel != ptex->alphaIndex) {
           out[i] *= out[i];
         }
       }

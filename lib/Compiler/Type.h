@@ -29,7 +29,6 @@ enum class TypeKind : uint32_t {
   Tag,
   Texture2DInstance,
   Texture2D,
-  TexturePtex,
   Union,
   Void
 };
@@ -1246,47 +1245,6 @@ private:
   /// The instances.
   std::map<std::tuple<Type *, int, int>, BumpPtr<Texture2DInstanceType>>
       instances{};
-};
-
-/// The `texture_ptex` type.
-///
-/// This is essentially the following struct type:
-/// ~~~~~~~~~~~~~~~~~~~~~~~
-/// struct texture_ptex {
-///   &void texture;
-///   &void texture_filter;
-///   int channel_count;
-///   int alpha_index;
-///   int gamma;
-/// }
-/// ~~~~~~~~~~~~~~~~~~~~~~~
-///
-/// \note
-/// If SMDL is built without Ptex support (`-DSMDL_ENABLE_PTEX=OFF`),
-/// every attempt to load a Ptex texture prints a warning and returns
-/// the nullified structure.
-///
-class TexturePtexType final : public TypeSubclass<TypeKind::TexturePtex> {
-public:
-  explicit TexturePtexType(Context &context);
-
-public:
-  /// \name Virtual interface
-  /// \{
-
-  [[nodiscard]] Value invoke(Emitter &emitter, const ArgumentList &args,
-                             const SourceLocation &srcLoc) final;
-
-  [[nodiscard]] bool has_field(std::string_view name) final {
-    return name == "texture" || name == "texture_filter" ||
-           name == "channel_count" || name == "alpha_index" || name == "gamma";
-  }
-
-  [[nodiscard]]
-  Value access_field(Emitter &emitter, Value value, std::string_view name,
-                     const SourceLocation &srcLoc) final;
-
-  /// \}
 };
 
 /// A union type.

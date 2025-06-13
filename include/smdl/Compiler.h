@@ -87,8 +87,8 @@ private:
                                         const SourceLocation &srcLoc);
 
   /// Load ptex texture.
-  [[nodiscard]] Ptexture load_ptexture(const std::string &fileName,
-                                       const SourceLocation &srcLoc);
+  [[nodiscard]] const Ptexture *load_ptexture(const std::string &fileName,
+                                              const SourceLocation &srcLoc);
 
   /// Load BSDF measurement.
   [[nodiscard]] const BSDFMeasurement *
