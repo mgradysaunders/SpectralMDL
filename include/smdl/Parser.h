@@ -282,6 +282,9 @@ private:
 
   [[nodiscard]] auto parse_struct_type_declaration() -> BumpPtr<AST::Struct>;
 
+  [[nodiscard]] auto parse_struct_constructor()
+      -> std::optional<AST::Struct::Constructor>;
+
   [[nodiscard]] auto parse_struct_field_declarator()
       -> std::optional<AST::Struct::Field>;
 

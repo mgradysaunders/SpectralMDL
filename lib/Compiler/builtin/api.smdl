@@ -268,6 +268,13 @@ export struct $default_edf: default edf {};
 /// The default hair BSDF is just an empty struct!
 export struct $default_hair_bsdf: default hair_bsdf {};
 
+/// The BSDF measurement structure.
+export struct bsdf_measurement {
+  bsdf_measurement(const string filename) = bsdf_measurement(ptr: #load_bsdf_measurement(filename));
+
+  const &void ptr = null;
+};
+
 /// The material emission description.
 export struct material_emission {
   /// The Emission Distribution Function (EDF).

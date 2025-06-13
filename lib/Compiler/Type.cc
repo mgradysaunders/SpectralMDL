@@ -647,32 +647,6 @@ Value AutoType::invoke(Emitter &emitter, const ArgumentList &args,
 }
 //--}
 
-BSDFMeasurementType::BSDFMeasurementType(Context &context) {
-  displayName = "bsdf_measurement";
-  llvmType = llvm::PointerType::get(context, 0);
-}
-
-Value BSDFMeasurementType::invoke(Emitter &emitter, const ArgumentList &args,
-                                  const SourceLocation &srcLoc) {
-  if (args.empty() || args.is_null()) {
-    return emitter.context.get_comptime_ptr(this, nullptr);
-  }
-  if (args.size() == 1) {
-    auto valueFileName{emitter.to_rvalue(args[0].value)};
-    if (!valueFileName.is_comptime_string())
-      srcLoc.throw_error(
-          "expected 'bsdf_measurement' parameter 'name' to resolve to "
-          "compile-time string");
-    auto fileName{valueFileName.get_comptime_string()};
-    return emitter.context.get_comptime_ptr(
-        this, emitter.context.compiler.load_bsdf_measurement(
-                  std::string(fileName), srcLoc));
-  }
-  srcLoc.throw_error("cannot construct 'bsdf_measurement' from ",
-                     std::string(args));
-  return Value();
-}
-
 //--{ ColorType
 ColorType::ColorType(Context &context) {
   displayName = "color";
@@ -1352,7 +1326,7 @@ Value MetaType::access_field(Emitter &emitter, Value value,
     auto type{value.get_comptime_meta_type(emitter.context, srcLoc)};
     // Make static fields available
     if (auto structType{llvm::dyn_cast<StructType>(type)}) {
-      const auto &staticFields{structType->static_fields()};
+      const auto &staticFields{structType->instance_of().staticFields};
       if (auto itr{staticFields.find(name)}; itr != staticFields.end())
         return itr->second;
     }
@@ -1571,6 +1545,10 @@ void StructType::initialize(Emitter &emitter) {
     }
     tags.push_back(tagType);
   }
+  for (auto &astConstructor : decl.constructors) {
+    constructors.emplace_back(Constructor{
+        &astConstructor, emitter.emit_parameter_list(astConstructor.params)});
+  }
   // Initialize fields.
   for (auto &field : decl.fields) {
     auto fieldType{
@@ -1708,6 +1686,31 @@ Value StructType::invoke(Emitter &emitter, const ArgumentList &args,
     }
     return result;
   }
+  // TODO Overload resolution?
+  auto viableConstructors{llvm::SmallVector<Constructor *>{}};
+  for (auto &constructor : instance_of().constructors) {
+    if (!constructor.isInvoking &&
+        emitter.can_resolve_arguments(constructor.params, args, srcLoc)) {
+      viableConstructors.push_back(&constructor);
+    }
+  }
+  if (viableConstructors.size() == 1) {
+    auto &constructor{*viableConstructors[0]};
+    auto resolved{emitter.resolve_arguments(constructor.params, args, srcLoc)};
+    auto preserve{Preserve(emitter.crumb, constructor.isInvoking)};
+    emitter.crumb = constructor.params.lastCrumb;
+    constructor.isInvoking = true;
+    return emitter.create_function_implementation(
+        decl.name, !emitter.state, this, constructor.params, resolved.values,
+        srcLoc, [&]() {
+          emitter.emit_return(emitter.emit(constructor.astConstructor->expr),
+                              srcLoc);
+        });
+  } else if (viableConstructors.size() > 1) {
+    srcLoc.throw_error("cannot construct ", quoted(displayName), " from ",
+                       quoted(std::string(args)), ": ",
+                       viableConstructors.size(), " ambiguous overloads");
+  }
   srcLoc.throw_error("cannot construct ", quoted(displayName), " from ",
                      quoted(std::string(args)));
   return Value();
@@ -1716,7 +1719,7 @@ Value StructType::invoke(Emitter &emitter, const ArgumentList &args,
 bool StructType::has_field(std::string_view name) {
   if (params.is_any_true([&](auto &param) { return param.name == name; }))
     return true;
-  return static_fields().contains(name);
+  return instance_of().staticFields.contains(name);
 }
 
 Value StructType::access_field(Emitter &emitter, Value value,
@@ -1742,7 +1745,8 @@ Value StructType::access_field(Emitter &emitter, Value value,
     }
     return isConst ? emitter.to_rvalue(value) : value;
   }
-  if (auto itr{static_fields().find(name)}; itr != static_fields().end())
+  if (auto itr{instance_of().staticFields.find(name)};
+      itr != instance_of().staticFields.end())
     return itr->second;
   srcLoc.throw_error("no field ", quoted(name), " in struct ",
                      quoted(displayName));

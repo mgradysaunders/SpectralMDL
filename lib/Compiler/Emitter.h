@@ -527,8 +527,9 @@ public:
     // it to `int64`.
     if (expr.value > uint64_t(std::numeric_limits<int>::max())) {
       auto intType{context.get_arithmetic_type(Scalar::get_int(64), Extent(1))};
-      return RValue(intType, llvm::ConstantInt::get(intType->llvmType,
-                                                    llvm::APInt(64, expr.value)));
+      return RValue(intType,
+                    llvm::ConstantInt::get(intType->llvmType,
+                                           llvm::APInt(64, expr.value)));
     }
     return context.get_comptime_int(int(expr.value));
   }
@@ -781,6 +782,21 @@ public:
     returns.push_back(Result{value, get_insert_block(), srcLoc});
     unwind(labelReturn.crumb);
     builder.CreateBr(labelReturn.block);
+  }
+
+  [[nodiscard]] Parameter emit_parameter(AST::Parameter &astParam) {
+    return Parameter{emit(astParam.type)
+                         .get_comptime_meta_type(context, astParam.name.srcLoc),
+                     astParam.name, &astParam};
+  }
+
+  [[nodiscard]] ParameterList
+  emit_parameter_list(AST::ParameterList &astParams) {
+    ParameterList params{};
+    for (auto &astParam : astParams)
+      params.emplace_back(emit_parameter(astParam));
+    params.lastCrumb = crumb;
+    return params;
   }
 
   /// \}

@@ -16,7 +16,6 @@ enum class TypeKind : uint32_t {
   Auto,
   Arithmetic,
   Array,
-  BSDFMeasurement,
   Color,
   ComptimeUnion,
   Enum,
@@ -623,22 +622,6 @@ public:
   /// \}
 };
 
-class BSDFMeasurementType final
-    : public TypeSubclass<TypeKind::BSDFMeasurement> {
-public:
-  explicit BSDFMeasurementType(Context &context);
-
-public:
-  /// \name Virtual interface
-  /// \{
-
-  [[nodiscard]]
-  Value invoke(Emitter &emitter, const ArgumentList &args,
-               const SourceLocation &srcLoc) final;
-
-  /// \}
-};
-
 /// The color type, essentially a float vector.
 class ColorType final : public TypeSubclass<TypeKind::Color> {
 public:
@@ -1094,30 +1077,46 @@ public:
   /// The tags.
   llvm::SmallVector<TagType *> tags{};
 
-  /// The static fields.
-  ///
-  /// \note
-  /// For instances of generic structs, we do not copy the static fields
-  /// and instead use `static_fields()` to access the lookup table in the
-  /// parent struct.
-  ///
-  llvm::StringMap<Value> staticFields{};
+  /// A constructor.
+  class Constructor final {
+  public:
+    /// The AST constructor.
+    AST::Struct::Constructor *astConstructor{};
+
+    /// The parameters.
+    ParameterList params{};
+
+    /// Is currently invoking? This is used to prevent recursion which
+    /// we do not allow for constructors.
+    bool isInvoking{};
+  };
+
+  /// The constructors.
+  std::vector<Constructor> constructors{};
 
   /// The parameters, i.e., the struct fields.
   ParameterList params{};
 
+  /// The static fields.
+  ///
+  /// \note
+  /// For instances of generic structs, we do not copy the static fields
+  /// and instead use `instance_of().staticFields` to access the lookup 
+  /// table in the parent struct.
+  ///
+  llvm::StringMap<Value> staticFields{};
+
   /// If applicable, the instances of this abstract struct.
   std::map<llvm::SmallVector<Type *>, BumpPtr<StructType>> instances{};
 
+
 public:
-  /// Get the static fields applicable to this type.
-  [[nodiscard]] auto &static_fields() {
-    return instanceOf ? instanceOf->staticFields : staticFields;
+  [[nodiscard]] auto &instance_of() {
+    return instanceOf ? *instanceOf : *this;
   }
 
-  /// Get the static fields applicable to this type, const variant.
-  [[nodiscard]] auto &static_fields() const {
-    return instanceOf ? instanceOf->staticFields : staticFields;
+  [[nodiscard]] auto &instance_of() const {
+    return instanceOf ? *instanceOf : *this;
   }
 };
 

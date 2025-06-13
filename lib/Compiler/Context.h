@@ -183,11 +183,6 @@ public:
   /// Get tag type.
   [[nodiscard]] TagType *get_tag_type(AST::Tag *decl);
 
-  /// Get the `bsdf_measurement` type.
-  [[nodiscard]] BSDFMeasurementType *get_bsdf_measurement_type() {
-    return bsdfMeasurementType.get();
-  }
-
   /// Get the `texture_2d` type.
   [[nodiscard]] Texture2DType *get_texture_2d_type() {
     return texture2DType.get();
@@ -435,10 +430,6 @@ private:
 
   /// The `State` type.
   const BumpPtr<StateType> stateType{allocator.allocate<StateType>(*this)};
-
-  /// The `bsdf_measurement` type.
-  const BumpPtr<BSDFMeasurementType> bsdfMeasurementType{
-      allocator.allocate<BSDFMeasurementType>(*this)};
 
   /// The `texture_2d` type.
   const BumpPtr<Texture2DType> texture2DType{

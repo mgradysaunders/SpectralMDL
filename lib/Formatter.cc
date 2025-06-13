@@ -268,6 +268,11 @@ void Formatter::write(const AST::Struct &decl) {
   }
   write(decl.annotations, DELIM_UNNECESSARY_SPACE, decl.srcBraceL, PUSH_INDENT,
         INCREMENT_INDENT, decl.fields.empty() ? DELIM_NONE : DELIM_NEWLINE);
+  for (const auto &constructor : decl.constructors) {
+    write(constructor.name.srcName, constructor.params, DELIM_UNNECESSARY_SPACE,
+          constructor.srcEqual, DELIM_UNNECESSARY_SPACE, constructor.expr,
+          constructor.srcSemicolon, DELIM_NEWLINE);
+  }
   for (const auto &field : decl.fields) {
     write(field.type, DELIM_SPACE, field.name);
     if (field.exprInit)

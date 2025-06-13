@@ -149,6 +149,10 @@ export struct $default_bsdf:default bsdf{};
 export struct $default_vdf:default vdf{};
 export struct $default_edf:default edf{};
 export struct $default_hair_bsdf:default hair_bsdf{};
+export struct bsdf_measurement{
+  bsdf_measurement(const string filename)=bsdf_measurement(ptr: #load_bsdf_measurement(filename));
+  const &void ptr=null;
+};
 export struct material_emission{
   edf emission=edf();
   $(color|float) intensity=1.0;

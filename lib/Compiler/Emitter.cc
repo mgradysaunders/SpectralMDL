@@ -1570,6 +1570,20 @@ Value Emitter::emit_intrinsic(std::string_view name, const ArgumentList &args,
     }
     break;
   }
+  case 'l': {
+    if (name == "load_bsdf_measurement") {
+      auto fileName{expectOne()};
+      if (!fileName.is_comptime_string()) {
+        srcLoc.throw_error("intrinsic 'load_bsdf_measurement' expects 1 "
+                           "compile-time string argument");
+      }
+      return context.get_comptime_ptr(
+          context.get_void_pointer_type(),
+          context.compiler.load_bsdf_measurement(
+              std::string(fileName.get_comptime_string()), srcLoc));
+    }
+    break;
+  }
   case 'm': {
     if (name == "memcpy") {
       if (!(args.size() == 3 &&                             //

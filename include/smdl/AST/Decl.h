@@ -230,6 +230,15 @@ public:
 };
 
 /// An `enum` declaration.
+///
+/// ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+/// enum Weather {
+///   Sunny = 1,
+///   PartlyCloudy = 7,
+///   ChanceOfRain, // Implicitly 8
+///   Rainy         // Implicitly 9
+/// };
+/// ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 class SMDL_EXPORT Enum final : public DeclSubclass<DeclKind::Enum> {
 public:
   /// An `enum` declarator name and optional initializer.
@@ -302,6 +311,12 @@ public:
 };
 
 /// An `exec` declaration. (This is an extension!)
+///
+/// ~~~~~~~~~~~~~~~~~~~~~~~~~~
+/// exec {
+///   #print("Hello, world!");
+/// }
+/// ~~~~~~~~~~~~~~~~~~~~~~~~~~
 class SMDL_EXPORT Exec final : public DeclSubclass<DeclKind::Exec> {
 public:
   explicit Exec(std::string_view srcKwExec, BumpPtr<Stmt> stmt)
@@ -480,7 +495,7 @@ public:
 /// A `struct` declaration.
 class SMDL_EXPORT Struct final : public DeclSubclass<DeclKind::Struct> {
 public:
-  /// A `struct` tag declarator.
+  /// A `struct` tag. This is an extension!
   class Tag final {
   public:
     /// Is marked with the keyword `default`?
@@ -496,6 +511,25 @@ public:
 
     /// The next comma `,`. This may be empty!
     std::string_view srcComma{};
+  };
+
+  /// A `struct` constructor. This is an extension!
+  class Constructor final {
+  public:
+    /// The name, which must be equivalent to the struct name.
+    Name name{};
+
+    /// The parameters.
+    ParameterList params{};
+
+    /// The source equal `=`.
+    std::string_view srcEqual{};
+
+    /// The expression.
+    BumpPtr<Expr> expr{};
+
+    /// The source semicolon `;`.
+    std::string_view srcSemicolon{};
   };
 
   /// A `struct` field declarator.
@@ -523,15 +557,17 @@ public:
   explicit Struct(std::string_view srcKwStruct, Name name,
                   std::string_view srcColonBeforeTags, std::vector<Tag> tags,
                   BumpPtr<AnnotationBlock> annotations,
-                  std::string_view srcBraceL, std::vector<Field> fields,
-                  std::string_view srcKwFinalize, BumpPtr<Stmt> stmtFinalize,
-                  std::string_view srcBraceR, std::string_view srcSemicolon)
+                  std::string_view srcBraceL,
+                  std::vector<Constructor> constructors,
+                  std::vector<Field> fields, std::string_view srcKwFinalize,
+                  BumpPtr<Stmt> stmtFinalize, std::string_view srcBraceR,
+                  std::string_view srcSemicolon)
       : srcKwStruct(srcKwStruct), name(std::move(name)),
         srcColonBeforeTags(srcColonBeforeTags), tags(std::move(tags)),
         annotations(std::move(annotations)), srcBraceL(srcBraceL),
-        fields(std::move(fields)), srcKwFinalize(srcKwFinalize),
-        stmtFinalize(std::move(stmtFinalize)), srcBraceR(srcBraceR),
-        srcSemicolon(srcSemicolon) {}
+        constructors(std::move(constructors)), fields(std::move(fields)),
+        srcKwFinalize(srcKwFinalize), stmtFinalize(std::move(stmtFinalize)),
+        srcBraceR(srcBraceR), srcSemicolon(srcSemicolon) {}
 
   /// The keyword `struct`.
   std::string_view srcKwStruct{};
@@ -551,13 +587,16 @@ public:
   /// The brace `{`.
   std::string_view srcBraceL{};
 
+  /// The constructors. This is an extension and may be empty!
+  std::vector<Constructor> constructors{};
+
   /// The fields.
   std::vector<Field> fields{};
 
-  /// The keyword `finalize`. This may be empty!
+  /// The keyword `finalize`. This is an extension and may be empty!
   std::string_view srcKwFinalize{};
 
-  /// The statement after `finalize`. This may be nulL!
+  /// The statement after `finalize`. This is an extension and may be nulL!
   BumpPtr<Stmt> stmtFinalize{};
 
   /// The brace `}`.

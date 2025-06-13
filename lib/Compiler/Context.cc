@@ -8,7 +8,6 @@ Context::Context(Compiler &compiler) : compiler(compiler) {
   // Initialize keywords.
   keywords = {
       {"auto", get_comptime_meta_type(get_auto_type())},
-      {"bsdf_measurement", get_comptime_meta_type(get_bsdf_measurement_type())},
       {"bool", get_comptime_meta_type(get_bool_type())},
       {"bool2", get_comptime_meta_type(get_bool_type(Extent(2)))},
       {"bool3", get_comptime_meta_type(get_bool_type(Extent(3)))},

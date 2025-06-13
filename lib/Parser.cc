@@ -1252,12 +1252,30 @@ auto Parser::parse_struct_type_declaration() -> BumpPtr<AST::Struct> {
   auto srcBraceL{next_delimiter("{")};
   if (!srcBraceL)
     srcLoc0.throw_error("expected '{' after 'struct ...'");
+  auto constructors{std::vector<AST::Struct::Constructor>{}};
   auto fields{std::vector<AST::Struct::Field>{}};
   auto srcKwFinalize{std::optional<std::string_view>{}};
   auto stmtFinalize{BumpPtr<AST::Stmt>{}};
+  // Parse constructors, which must appear at the top of the
+  // struct declaration. This is an extension!
+  while (true) {
+    auto constructor{parse_struct_constructor()};
+    if (!constructor)
+      break;
+    if (constructor->name.srcName != name->srcName)
+      constructor->name.srcLoc.throw_error(
+          "constructor must name the containing struct ", quoted(*name));
+    constructors.push_back(std::move(*constructor));
+    skip();
+    if (peek() == '}')
+      break;
+  }
+  // Parse fields
   while (true) {
     auto field{parse_struct_field_declarator()};
     if (!field) {
+      // Parse finalize block, which must appear at the bottom of the 
+      // struct declaration if it appears at all. This is an extension!
       if (srcKwFinalize = next_keyword("finalize"); srcKwFinalize) {
         if (stmtFinalize = parse_compound_statement(); !stmtFinalize) {
           srcLoc0.throw_error("expected '{ ... }' after 'finalize'");
@@ -1280,9 +1298,42 @@ auto Parser::parse_struct_type_declaration() -> BumpPtr<AST::Struct> {
   return allocate<AST::Struct>(
       srcLoc0, std::in_place, *srcKwStruct, *name,
       srcColonBeforeTags ? *srcColonBeforeTags : std::string_view(),
-      std::move(tags), std::move(annotations), *srcBraceL, std::move(fields),
+      std::move(tags), std::move(annotations), *srcBraceL,
+      std::move(constructors), std::move(fields),
       srcKwFinalize ? *srcKwFinalize : std::string_view(),
       std::move(stmtFinalize), *srcBraceR, *srcSemicolon);
+}
+
+auto Parser::parse_struct_constructor()
+    -> std::optional<AST::Struct::Constructor> {
+  auto srcLoc0{checkpoint()};
+  auto name{parse_simple_name()};
+  if (!name) {
+    reject();
+    return std::nullopt;
+  }
+  skip();
+  auto params{parse_parameter_list()};
+  if (!params) {
+    reject();
+    return std::nullopt;
+  }
+  auto srcEqual{next_delimiter("=")};
+  if (!srcEqual) {
+    reject();
+    return std::nullopt;
+  }
+  auto expr{parse_expression()};
+  if (!expr) {
+    srcLoc0.throw_error("expected expression after '='");
+  }
+  auto srcSemicolon{next_delimiter(";")};
+  if (!srcSemicolon) {
+    srcLoc0.throw_error("expected ';' after constructor expression");
+  }
+  accept();
+  return AST::Struct::Constructor{std::move(*name), std::move(*params),
+                                  *srcEqual, std::move(expr), *srcSemicolon};
 }
 
 auto Parser::parse_struct_field_declarator()
