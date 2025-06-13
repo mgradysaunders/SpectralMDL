@@ -22,6 +22,12 @@ export enum scatter_mode {
   return refl_weight / (refl_weight + tran_weight);
 }
 
+/// Declare libm `erf`
+@(pure foreign) double erf(double x);
+
+/// Declare libm `erfc`
+@(pure foreign) double erfc(double x);
+
 //--{ monte_carlo
 export namespace monte_carlo {
 
@@ -116,8 +122,8 @@ export @(pure noinline) double erf_inverse(double y) {
   }
   x *= y;
   // Two rounds of Newton iteration.
-  x -= (#erf(x) - y) / (1.1283791671d * #exp(-x * x));
-  x -= (#erf(x) - y) / (1.1283791671d * #exp(-x * x));
+  x -= (erf(x) - y) / (1.1283791671d * #exp(-x * x));
+  x -= (erf(x) - y) / (1.1283791671d * #exp(-x * x));
   return x;
 }
 
@@ -634,7 +640,7 @@ export @(pure macro) float smith_lambda(const distribution_ggx this [[anno::unus
 /// The Smith Lambda function for the Beckmann distribution.
 export @(pure macro) float smith_lambda(const distribution_beckmann this [[anno::unused()]],
                                         const float m) {
-  return 0.5 * (#exp(-m * m) / m / #sqrt($PI) - #erfc(m));
+  return 0.5 * (#exp(-m * m) / m / #sqrt($PI) - float(erfc(m)));
 }
 
 /// The 2-dimensional Smith slope PDF for the GGX distribution.
@@ -676,6 +682,7 @@ export @(pure noinline) float2 smith_visible_slope_sample(
   return float2(mx, my);
 }
 
+
 /// The Smith visible slope sampling function for the Beckmann distribution.
 export @(pure noinline) float2 smith_visible_slope_sample(
   const distribution_beckmann this [[anno::unused()]],
@@ -693,7 +700,7 @@ export @(pure noinline) float2 smith_visible_slope_sample(
   const float tan_thetao = sin_thetao / cos_thetao;
   const float cot_thetao = 1 / tan_thetao;
   float xmin = -1;
-  float xmax = #erf(cot_thetao);
+  float xmax = float(erf(cot_thetao));
   float x = xmax - (1 + xmax) * #pow(1 - xi0, 1 + thetao * (-0.876 + thetao * (0.4265 - 0.0594 * thetao)));
   float norm = 1 / (1 + xmax + SQRT_PI_INV * tan_thetao * #exp(-cot_thetao * cot_thetao));
   for (int i = 0; i < 10; ++i) {
@@ -787,8 +794,10 @@ export struct shadowing_smith: default shadowing {};
 /// The V-cavities shadowing function. (This is the older simpler approximation!)
 export struct shadowing_vcavities: shadowing {};
 
+@(pure foreign) double lgamma(double x);
+
 /// The beta function for Smith shadowing in transmission calculations.
-export @(pure) float beta(const float x, const float y) = #exp(#lgamma(x) + #lgamma(y) - #lgamma(x + y));
+export @(macro) double beta(const double x, const double y) = #exp(lgamma(x) + lgamma(y) - lgamma(x + y));
 
 } // namespace microfacet
 

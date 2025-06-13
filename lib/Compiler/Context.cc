@@ -278,6 +278,9 @@ ConversionRule Context::get_conversion_rule(Type *typeA, Type *typeB) {
     // auto ptrToInt = cast<&int>(ptr);
     // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
     if (typeB->is_pointer()) {
+      // ... unless the destination type is `&void`
+      if (typeB == get_void_pointer_type())
+        return ConversionRule::Implicit;
       // ... unless the destination type is a pointer to `auto`, in which case
       // conversion is perfect as long as the underlying pointee type conversion
       // is perfect.

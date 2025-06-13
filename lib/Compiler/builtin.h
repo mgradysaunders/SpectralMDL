@@ -234,6 +234,8 @@ export enum scatter_mode{
   const auto tran_weight(#select((int(mode)&2)!=0,1.0,0.0));
   return refl_weight/(refl_weight+tran_weight);
 }
+@(pure foreign)double erf(double x);
+@(pure foreign)double erfc(double x);
 export namespace monte_carlo {
 export @(pure macro)float2 next_low_discrepancy(const &float2 xi)=(*xi=frac(*xi+float2(0.75487766,0.56984029)));
 export @(pure macro)float3 next_low_discrepancy(const &float3 xi)=(*xi=frac(*xi+float3(0.81917251,0.67104360,0.54970047)));
@@ -298,8 +300,8 @@ export @(pure noinline)double erf_inverse(double y){
     x=w*x+2.83297682d;
   }
   x*=y;
-  x-=(#erf(x)-y)/(1.1283791671d*#exp(-x*x));
-  x-=(#erf(x)-y)/(1.1283791671d*#exp(-x*x));
+  x-=(erf(x)-y)/(1.1283791671d*#exp(-x*x));
+  x-=(erf(x)-y)/(1.1283791671d*#exp(-x*x));
   return x;
 }
 }
@@ -614,7 +616,7 @@ export @(pure macro)float smith_lambda(const distribution_ggx this[[anno::unused
 }
 export @(pure macro)float smith_lambda(const distribution_beckmann this[[anno::unused()]],
                                        const float m){
-  return 0.5*(#exp(-m*m)/m/#sqrt($PI)-#erfc(m));
+  return 0.5*(#exp(-m*m)/m/#sqrt($PI)-float(erfc(m)));
 }
 export @(pure macro)float smith_slope_pdf(const distribution_ggx this[[anno::unused()]],
                                           const float2 m){
@@ -664,7 +666,7 @@ export @(pure noinline)float2 smith_visible_slope_sample(
   const float tan_thetao=sin_thetao/cos_thetao;
   const float cot_thetao=1/tan_thetao;
   float xmin=-1;
-  float xmax=#erf(cot_thetao);
+  float xmax=float(erf(cot_thetao));
   float x=xmax-(1+xmax)*#pow(1-xi0,1+thetao*(-0.876+thetao*(0.4265-0.0594*thetao)));
   float norm=1/(1+xmax+SQRT_PI_INV*tan_thetao*#exp(-cot_thetao*cot_thetao));
   for(int i=0;i<10;++i){
@@ -733,7 +735,8 @@ export @(pure noinline)float3 blinn_normal_sample(const float xi0,const float xi
 export tag shadowing;
 export struct shadowing_smith:default shadowing{};
 export struct shadowing_vcavities:shadowing{};
-export @(pure)float beta(const float x,const float y)=#exp(#lgamma(x)+#lgamma(y)-#lgamma(x+y));
+@(pure foreign)double lgamma(double x);
+export @(macro)double beta(const double x,const double y)=#exp(lgamma(x)+lgamma(y)-lgamma(x+y));
 }
 struct microfacet_bsdf:bsdf{
   const float2 roughness;
@@ -1300,16 +1303,23 @@ export float eval_at_wavelength(color a,float wavelength){
 )*";
 
 static const char *scene = R"*(#smdl
-export @(macro)bool data_isvalid(const string name)=#data_exists(name);
-export @(macro)int data_lookup_int(const string name,int default_value=int())=#data_lookup(name,default_value);
-export @(macro)int2 data_lookup_int2(const string name,int2 default_value=int2())=#data_lookup(name,default_value);
-export @(macro)int3 data_lookup_int3(const string name,int3 default_value=int3())=#data_lookup(name,default_value);
-export @(macro)int4 data_lookup_int4(const string name,int4 default_value=int4())=#data_lookup(name,default_value);
-export @(macro)float data_lookup_float(const string name,float default_value=float())=#data_lookup(name,default_value);
-export @(macro)float2 data_lookup_float2(const string name,float2 default_value=float2())=#data_lookup(name,default_value);
-export @(macro)float3 data_lookup_float3(const string name,float3 default_value=float3())=#data_lookup(name,default_value);
-export @(macro)float4 data_lookup_float4(const string name,float4 default_value=float4())=#data_lookup(name,default_value);
-export @(macro)color data_lookup_color(const string name,color default_value=color())=#data_lookup(name,default_value);
+@(foreign pure)int smdl_data_exists(&void scene_data,string name);
+@(foreign)void smdl_data_lookup(&void scene_data,string name,int kind,int size,&void result);
+@(macro)auto data_lookup(const string name,auto value){
+  const int kind=#is_arithmetic_integral(value)?0:#is_arithmetic_floating_point(value)?1:2;
+  smdl_data_lookup($scene_data,name,kind,#num(value),cast<&void>(&value));
+  return value;
+}
+export @(macro)bool data_isvalid(const string name)=smdl_data_exists($scene_data,name)!=0;
+export @(macro)int data_lookup_int(const string name,int default_value=int())=data_lookup(name,default_value);
+export @(macro)int2 data_lookup_int2(const string name,int2 default_value=int2())=data_lookup(name,default_value);
+export @(macro)int3 data_lookup_int3(const string name,int3 default_value=int3())=data_lookup(name,default_value);
+export @(macro)int4 data_lookup_int4(const string name,int4 default_value=int4())=data_lookup(name,default_value);
+export @(macro)float data_lookup_float(const string name,float default_value=float())=data_lookup(name,default_value);
+export @(macro)float2 data_lookup_float2(const string name,float2 default_value=float2())=data_lookup(name,default_value);
+export @(macro)float3 data_lookup_float3(const string name,float3 default_value=float3())=data_lookup(name,default_value);
+export @(macro)float4 data_lookup_float4(const string name,float4 default_value=float4())=data_lookup(name,default_value);
+export @(macro)color data_lookup_color(const string name,color default_value=color())=data_lookup(name,default_value);
 )*";
 
 static const char *state = R"*(#smdl
@@ -1519,25 +1529,36 @@ export @(pure macro)color lookup_color(
   const float2 crop_u=float2(0.0,1.0),
   const float2 crop_v=float2(0.0,1.0),
 )=color(lookup_float4(tex,coord,wrap_u,wrap_v,crop_u,crop_v).xyz);
+@(foreign)void smdl_ptex_evaluate(
+  &void tex,
+  int first,
+  int num,
+  &float result,
+);
 export @(macro)float4 lookup_float4(texture_ptex tex,const int channel=0){
   float4 result;
-  #ptex_evaluate(tex,channel,4,&result[0]);
+  ptex_evaluate(&tex,channel,4,&result[0]);
   return result;
 }
 export @(macro)float3 lookup_float3(texture_ptex tex,const int channel=0){
   float3 result;
-  #ptex_evaluate(tex,channel,3,&result[0]);
+  ptex_evaluate(tex,channel,3,&result[0]);
   return result;
 }
 export @(macro)float2 lookup_float2(texture_ptex tex,const int channel=0){
   float2 result;
-  #ptex_evaluate(tex,channel,2,&result[0]);
+  ptex_evaluate(tex,channel,2,&result[0]);
   return result;
 }
 export @(macro)float lookup_float(texture_ptex tex,const int channel=0){
   float result;
-  #ptex_evaluate(tex,channel,1,&result);
+  ptex_evaluate(tex,channel,1,&result);
   return result;
+}
+export @(macro)color lookup_color(texture_ptex tex,const int channel=0){
+  float3 result;
+  ptex_evaluate(tex,channel,3,&result);
+  return color(result);
 }
 )*";
 

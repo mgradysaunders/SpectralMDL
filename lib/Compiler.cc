@@ -424,4 +424,56 @@ std::string Compiler::summarize_materials() const {
   return message;
 }
 
+extern "C" {
+
+SMDL_EXPORT int smdl_data_exists(void *sceneData, const char *name) {
+  return static_cast<SceneData *>(sceneData)->get(name) != nullptr;
+}
+
+SMDL_EXPORT void smdl_data_lookup(void *state, void *sceneData, // NOLINT
+                                  const char *name, int kind, int size,
+                                  void *ptr) {
+  if (auto getter{static_cast<SceneData *>(sceneData)->get(name)})
+    (*getter)(static_cast<State *>(state), SceneData::Kind(kind), size, ptr);
+}
+
+SMDL_EXPORT void smdl_ptex_evaluate(const void *state, const void *tex,
+                                    int first, int num, float *out) {
+  SMDL_SANITY_CHECK(state != nullptr);
+  SMDL_SANITY_CHECK(tex != nullptr);
+  SMDL_SANITY_CHECK(out != nullptr);
+  for (int i = 0; i < num; i++)
+    out[i] = 0.0f;
+#if SMDL_HAS_PTEX
+  struct texture_ptex_t final {
+    PtexTexture *texture{};
+    PtexFilter *texture_filter{};
+    int channel_count{};
+    int alpha_index{};
+    int gamma{};
+  };
+  if (auto ptex{static_cast<const texture_ptex_t *>(tex)};
+      ptex && ptex->texture_filter && first < ptex->channel_count) {
+    num = std::min(num, int(ptex->channel_count - first));
+    ptex->texture_filter->eval(
+        out, first, num, static_cast<const State *>(state)->ptex_face_id,
+        static_cast<const State *>(state)->ptex_face_uv.x,
+        static_cast<const State *>(state)->ptex_face_uv.y,
+        /*uw1=*/0.0f, /*vw1=*/0.0f,
+        /*uw2=*/0.0f, /*vw2=*/0.0f,
+        /*width=*/1.0f, /*blur=*/0.0f);
+    if (ptex->gamma == 1) { // sRGB?
+      for (int i = 0; i < num; i++) {
+        int channel{first + i};
+        if (channel != ptex->alpha_index) {
+          out[i] *= out[i];
+        }
+      }
+    }
+  }
+#endif // #if SMDL_HAS_PTEX
+}
+
+} // extern "C"
+
 } // namespace smdl

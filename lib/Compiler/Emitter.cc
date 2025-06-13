@@ -66,6 +66,19 @@ void Emitter::create_function(llvm::Function *&llvmFunc, std::string_view name,
     SMDL_SANITY_CHECK(paramType->llvmType);
     llvmParamTys.push_back(paramType->llvmType);
   }
+  // Interpret null callback as foreign.
+  if (!callback) {
+    SMDL_SANITY_CHECK(!returnType->is_abstract());
+    auto llvmFuncTy{llvm::FunctionType::get(returnType->llvmType, llvmParamTys,
+                                            /*isVarArg=*/false)};
+    auto llvmCallee{context.get_builtin_callee(name, llvmFuncTy)};
+    if (llvmFuncTy != llvmCallee.getFunctionType()) {
+      srcLoc.throw_error("conflicting definitions of '@(foreign)' function ",
+                         quoted(name));
+    }
+    llvmFunc = static_cast<llvm::Function *>(llvmCallee.getCallee());
+    return;
+  }
   // Initialize LLVM function with a placeholder. If we have a return type
   // with a well-defined LLVM type, then use that as the placeholder return
   // type in order to permit recursion. Otherwise use
@@ -77,6 +90,7 @@ void Emitter::create_function(llvm::Function *&llvmFunc, std::string_view name,
                               llvmParamTys,
                               /*isVarArg=*/false),
       llvm::Function::InternalLinkage, "", context.llvmModule);
+
   auto lastIP{builder.saveIP()};
   {
     auto preserve{Preserve(state, inlines)};
@@ -1196,7 +1210,7 @@ Value Emitter::emit_op(AST::BinaryOp op, Value lhs, Value rhs,
 
 extern "C" {
 
-SMDL_EXPORT void *smdl_bump(void *state, int size, int align) {
+SMDL_EXPORT void *smdl_bump_allocate(void *state, int size, int align) {
   SMDL_SANITY_CHECK(state != nullptr && align > 0);
   if (size <= 0)
     return nullptr;
@@ -1204,17 +1218,6 @@ SMDL_EXPORT void *smdl_bump(void *state, int size, int align) {
       static_cast<BumpPtrAllocator *>(static_cast<State *>(state)->allocator)};
   SMDL_SANITY_CHECK(allocator != nullptr, "allocator cannot be null!");
   return allocator->allocate(size, align);
-}
-
-SMDL_EXPORT int smdl_data_exists(void *sceneData, const char *name) {
-  return static_cast<SceneData *>(sceneData)->get(name) != nullptr;
-}
-
-SMDL_EXPORT void smdl_data_lookup(void *sceneData, void *state, // NOLINT
-                                  const char *name, int kind, int size,
-                                  void *ptr) {
-  if (auto getter{static_cast<SceneData *>(sceneData)->get(name)})
-    (*getter)(static_cast<State *>(state), SceneData::Kind(kind), size, ptr);
 }
 
 SMDL_EXPORT void *smdl_ofile_open(const char *fname) {
@@ -1303,43 +1306,6 @@ SMDL_EXPORT void smdl_tabulate_albedo(const char *name, int num_cos_theta,
       outputFile << '\n';
     }
   }
-}
-
-SMDL_EXPORT void smdl_ptex_evaluate(const void *state, const void *tex,
-                                    int first, int num, float *out) {
-  SMDL_SANITY_CHECK(state != nullptr);
-  SMDL_SANITY_CHECK(tex != nullptr);
-  SMDL_SANITY_CHECK(out != nullptr);
-  for (int i = 0; i < num; i++)
-    out[i] = 0.0f;
-#if SMDL_HAS_PTEX
-  struct texture_ptex_t final {
-    PtexTexture *texture{};
-    PtexFilter *texture_filter{};
-    int channel_count{};
-    int alpha_index{};
-    int gamma{};
-  };
-  if (auto ptex{static_cast<const texture_ptex_t *>(tex)};
-      ptex && ptex->texture_filter && first < ptex->channel_count) {
-    num = std::min(num, int(ptex->channel_count - first));
-    ptex->texture_filter->eval(
-        out, first, num, static_cast<const State *>(state)->ptex_face_id,
-        static_cast<const State *>(state)->ptex_face_uv.x,
-        static_cast<const State *>(state)->ptex_face_uv.y,
-        /*uw1=*/0.0f, /*vw1=*/0.0f,
-        /*uw2=*/0.0f, /*vw2=*/0.0f,
-        /*width=*/1.0f, /*blur=*/0.0f);
-    if (ptex->gamma == 1) { // sRGB?
-      for (int i = 0; i < num; i++) {
-        int channel{first + i};
-        if (channel != ptex->alpha_index) {
-          out[i] *= out[i];
-        }
-      }
-    }
-  }
-#endif // #if SMDL_HAS_PTEX
 }
 
 SMDL_EXPORT void smdl_bsdf_measurement_evaluate(const void *bsdfMeasurement,
@@ -1515,9 +1481,10 @@ Value Emitter::emit_intrinsic(std::string_view name, const ArgumentList &args,
                               llvm::Intrinsic::debugtrap, {});
       return RValue(context.get_void_type(), nullptr);
     }
-    if (name == "bump") {
+    if (name == "bump_allocate") {
       auto value{to_rvalue(expectOne())};
-      auto callee{context.get_builtin_callee("smdl_bump", &smdl_bump)};
+      auto callee{context.get_builtin_callee("smdl_bump_allocate",
+                                             &smdl_bump_allocate)};
       if (auto func{llvm::dyn_cast<llvm::Function>(callee.getCallee())})
         func->setReturnDoesNotAlias();
       auto callInst{builder.CreateCall(
@@ -1530,20 +1497,6 @@ Value Emitter::emit_intrinsic(std::string_view name, const ArgumentList &args,
       builder.CreateStore(value, callInst);
       return RValue(context.get_pointer_type(value.type), callInst);
     }
-    // TODO Clean this up
-#if 0
-    if (name == "bsdf_measurement_evaluate") {
-      auto callee{context.get_builtin_callee("smdl_bsdf_measurement_evaluate",
-                                             &smdl_bsdf_measurement_evaluate)};
-      auto bsdfMeasurement{to_rvalue(args[0])};
-      auto wo{to_lvalue(args[1])};
-      auto wi{to_lvalue(args[2])};
-      auto result{to_lvalue(invoke(context.get_float_type(3), {}, srcLoc))};
-      builder.CreateCall(callee, {bsdfMeasurement.llvmValue, wo.llvmValue,
-                                  wi.llvmValue, result.llvmValue});
-      return to_rvalue(result);
-    }
-#endif
     break;
   }
   case 'c': {
@@ -1563,53 +1516,6 @@ Value Emitter::emit_intrinsic(std::string_view name, const ArgumentList &args,
       auto value{to_rvalue(expectOneIntOrIntVector())};
       return RValue(value.type, builder.CreateUnaryIntrinsic(
                                     llvm::Intrinsic::ctpop, value));
-    }
-    break;
-  }
-  case 'd': {
-    if (name == "data_exists") {
-      if (args.size() != 1 || !args[0].value.type->is_string())
-        srcLoc.throw_error("intrinsic 'data_exists' expects 1 string argument");
-      auto scene{context.get_comptime_ptr(context.get_void_pointer_type(),
-                                          &context.compiler.sceneData)};
-      return RValue(
-          context.get_int_type(),
-          builder.CreateCall(
-              context.get_builtin_callee("smdl_data_exists", &smdl_data_exists),
-              {scene.llvmValue, to_rvalue(args[0].value).llvmValue}));
-    }
-    if (name == "data_lookup") {
-      if (args.size() != 2 ||                 //
-          !args[0].value.type->is_string() || //
-          !args[1].value.type->is_vectorized()) {
-        srcLoc.throw_error("intrinsic 'data_lookup' expects 1 string "
-                           "argument and 1 vectorized argument");
-      }
-      auto scene{context.get_comptime_ptr(context.get_void_pointer_type(),
-                                          &context.compiler.sceneData)};
-      auto value{to_rvalue(args[1].value)};
-      auto valueTmp{create_alloca(value.type)};
-      create_lifetime_start(valueTmp);
-      builder.CreateStore(value, valueTmp);
-      int kind = 0;
-      int size = 0;
-      if (auto arithType{llvm::dyn_cast<ArithmeticType>(value.type)}) {
-        kind = arithType->scalar.is_integral() ? int(SceneData::Kind::Int)
-                                               : int(SceneData::Kind::Float);
-        size = arithType->extent.numRows;
-      } else {
-        SMDL_SANITY_CHECK(value.type->is_color());
-        kind = int(SceneData::Kind::Color);
-        size = int(static_cast<ColorType *>(value.type)->wavelengthBaseMax);
-      }
-      builder.CreateCall(
-          context.get_builtin_callee("smdl_data_lookup", &smdl_data_lookup),
-          {scene.llvmValue, state.llvmValue, to_rvalue(args[0].value).llvmValue,
-           context.get_comptime_int(int(kind)).llvmValue,
-           context.get_comptime_int(size), valueTmp.llvmValue});
-      auto result{to_rvalue(valueTmp)};
-      create_lifetime_end(valueTmp);
-      return result;
     }
     break;
   }
@@ -1833,30 +1739,6 @@ Value Emitter::emit_intrinsic(std::string_view name, const ArgumentList &args,
               : builder.CreateFMulReduce(
                     invoke(scalarType, context.get_comptime_float(1), srcLoc),
                     value));
-    }
-    if (name == "ptex_evaluate") {
-      if (!(args.size() == 4 &&
-            args[0].value.type == context.get_texture_ptex_type() &&
-            args[1].value.type == context.get_int_type() &&
-            args[2].value.type == context.get_int_type() &&
-            args[3].value.type ==
-                context.get_pointer_type(context.get_float_type())))
-        srcLoc.throw_error("intrinsic 'ptex_evaluate' expects arguments "
-                           "'(texture_ptex, int, int, &float)'");
-      if (!state)
-        srcLoc.throw_error(
-            "intrinsic 'ptex_evaluate' cannot be used in '@(pure)' context");
-      auto lv{to_lvalue(args[0].value)};
-      auto callee{context.get_builtin_callee("smdl_ptex_evaluate",
-                                             &smdl_ptex_evaluate)};
-      auto callInst{
-          builder.CreateCall(callee, {state.llvmValue, lv.llvmValue,
-                                      to_rvalue(args[1].value).llvmValue,
-                                      to_rvalue(args[2].value).llvmValue,
-                                      to_rvalue(args[3].value).llvmValue})};
-      if (!args[0].value.is_lvalue())
-        create_lifetime_end(lv);
-      return RValue(context.get_void_type(), callInst);
     }
     break;
   }
@@ -2130,23 +2012,6 @@ Value Emitter::emit_intrinsic(std::string_view name, const ArgumentList &args,
         return RValue(value.type, builder.CreateUnaryIntrinsic(intrID, value));
       }
     }
-  }
-  if (name == "lgamma" || name == "tgamma" || name == "erf" || name == "erfc") {
-    auto value{to_rvalue(expectOne())};
-    if (!value.type->is_arithmetic_scalar())
-      srcLoc.throw_error("intrinsic ", quoted(name),
-                         " expects 1 arithmetic scalar argument");
-    bool isDouble{value.type == context.get_double_type()};
-    if (!isDouble)
-      value = invoke(context.get_float_type(), value, srcLoc);
-    auto nameLibm{std::string(name)};
-    if (!isDouble)
-      nameLibm += 'f';
-    auto callee{
-        !isDouble
-            ? context.get_builtin_callee<float, float>(nameLibm.c_str())
-            : context.get_builtin_callee<double, double>(nameLibm.c_str())};
-    return RValue(value.type, builder.CreateCall(callee, {value.llvmValue}));
   }
   srcLoc.throw_error("unimplemented intrinsic ", quoted(name));
   return Value();
@@ -2430,6 +2295,9 @@ Value Emitter::resolve_identifier(Span<std::string_view> names,
         srcLoc.throw_error(
             "cannot resolve identifier '$state' in pure context");
       return state;
+    } else if (names[0] == "$scene_data") {
+      return context.get_comptime_ptr(context.get_void_pointer_type(),
+                                      &context.compiler.sceneData);
     } else if (names[0] == "void") {
       // TODO Only if in extended syntax mode?
       return context.get_comptime_meta_type(context.get_void_type());

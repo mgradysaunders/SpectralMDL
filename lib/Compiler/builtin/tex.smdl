@@ -184,26 +184,39 @@ export @(pure macro) color lookup_color(
   const float2 crop_v = float2(0.0, 1.0),
 ) = color(lookup_float4(tex, coord, wrap_u, wrap_v, crop_u, crop_v).xyz);
 
+@(foreign) void smdl_ptex_evaluate(
+  &void tex,
+  int first,
+  int num,
+  &float result,
+);
+
 export @(macro) float4 lookup_float4(texture_ptex tex, const int channel = 0) {
   float4 result;
-  #ptex_evaluate(tex, channel, 4, &result[0]);
+  ptex_evaluate(&tex, channel, 4, &result[0]);
   return result;
 }
 
 export @(macro) float3 lookup_float3(texture_ptex tex, const int channel = 0) {
   float3 result;
-  #ptex_evaluate(tex, channel, 3, &result[0]);
+  ptex_evaluate(tex, channel, 3, &result[0]);
   return result;
 }
 
 export @(macro) float2 lookup_float2(texture_ptex tex, const int channel = 0) {
   float2 result;
-  #ptex_evaluate(tex, channel, 2, &result[0]);
+  ptex_evaluate(tex, channel, 2, &result[0]);
   return result;
 }
 
 export @(macro) float lookup_float(texture_ptex tex, const int channel = 0) {
   float result;
-  #ptex_evaluate(tex, channel, 1, &result);
+  ptex_evaluate(tex, channel, 1, &result);
   return result;
+}
+
+export @(macro) color lookup_color(texture_ptex tex, const int channel = 0) {
+  float3 result;
+  ptex_evaluate(tex, channel, 3, &result);
+  return color(result);
 }

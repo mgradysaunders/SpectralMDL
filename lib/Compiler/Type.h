@@ -794,6 +794,9 @@ public:
   /// Is marked with the attribute `@(macro)`?
   [[nodiscard]] bool is_macro() const { return decl.has_attribute("macro"); }
 
+  /// Is marked with the attribute `@(foreign)`?
+  [[nodiscard]] bool is_foreign() const { return decl.has_attribute("foreign"); }
+
   /// Is function variant?
   [[nodiscard]] bool is_variant() const { return decl.is_variant(); }
 

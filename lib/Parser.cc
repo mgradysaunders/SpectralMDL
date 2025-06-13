@@ -1446,9 +1446,9 @@ auto Parser::parse_function_declaration_attributes()
   attributes.srcParenL = *srcParenL;
   while (true) {
     checkpoint();
-    if (auto attr{next_keyword({"alwaysinline", "cold", "fastmath", "hot",
-                                "macro", "noinline", "optnone", "optsize",
-                                "pure", "visible"})}) {
+    if (auto attr{next_keyword({"alwaysinline", "cold", "fastmath", "foreign",
+                                "hot", "macro", "noinline", "optnone",
+                                "optsize", "pure", "visible"})}) {
       accept();
       attributes.attrs.push_back(*attr);
     } else {

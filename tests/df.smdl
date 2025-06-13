@@ -20,11 +20,13 @@ unit_test "Specular half vector for refraction" {
   #assert(#all(df::specular::refract(wi, wm, 1 / ior) ~== [1e-5] wo));
 }
 
+@(pure foreign) double erf(double x);
+
 unit_test "Erf inverse" {
-  #assert(df::monte_carlo::erf_inverse(#erf(-1.1d)) ~== [1e-5d] -1.1d);
-  #assert(df::monte_carlo::erf_inverse(#erf(-0.3d)) ~== [1e-5d] -0.3d);
-  #assert(df::monte_carlo::erf_inverse(#erf(+1.2d)) ~== [1e-5d] +1.2d);
-  #assert(df::monte_carlo::erf_inverse(#erf(+2.7d)) ~== [1e-5d] +2.7d);
+  #assert(df::monte_carlo::erf_inverse(erf(-1.1d)) ~== [1e-5d] -1.1d);
+  #assert(df::monte_carlo::erf_inverse(erf(-0.3d)) ~== [1e-5d] -0.3d);
+  #assert(df::monte_carlo::erf_inverse(erf(+1.2d)) ~== [1e-5d] +1.2d);
+  #assert(df::monte_carlo::erf_inverse(erf(+2.7d)) ~== [1e-5d] +2.7d);
 }
 
 @(pure) auto run_low_discrepancy_tests(auto xi) {

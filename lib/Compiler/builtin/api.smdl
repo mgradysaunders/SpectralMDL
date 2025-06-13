@@ -424,3 +424,4 @@ export struct $albedo_lut {
   ///
   const &float average_albedo = null;
 };
+

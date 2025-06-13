@@ -890,9 +890,16 @@ void FunctionType::initialize(Emitter &emitter) {
     if (static_cast<FunctionType *>(prevType)->is_variant())
       decl.srcLoc.throw_error("function ", quoted(declName),
                               " must not overload function variant");
+    if (static_cast<FunctionType *>(prevType)->is_foreign())
+      decl.srcLoc.throw_error("function ", quoted(declName),
+                              " must not overload '@(foreign)' function");
     if (decl.is_variant())
       decl.srcLoc.throw_error("function variant ", quoted(declName),
                               " must not overload another function");
+    if (decl.has_attribute("foreign"))
+      decl.srcLoc.throw_error(
+          "function ", quoted(declName),
+          " declared '@(foreign)' must not overload another function");
     prevOverload = static_cast<FunctionType *>(prevType);
     prevOverload->nextOverload = this;
   }
@@ -910,6 +917,19 @@ void FunctionType::initialize(Emitter &emitter) {
         .astParam = &param,
         .astField = nullptr,
         .builtinDefaultValue = {}});
+  if (decl.has_attribute("foreign")) {
+    if (!params.is_concrete())
+      decl.srcLoc.throw_error(
+          "function ", quoted(declName),
+          " declared '@(foreign)' must have concrete parameters");
+    if (decl.definition)
+      decl.srcLoc.throw_error(
+          "function ", quoted(declName),
+          " declared '@(foreign)' must not have definition");
+    auto paramTypes{params.get_types()};
+    instantiate(emitter, llvm::SmallVector<Type *>(paramTypes.begin(),
+                                                   paramTypes.end()));
+  }
   // If this is declared `@(visible)`, we compile it immediately to
   // guarantee that the symbol exists for the C++ runtime.
   if (decl.has_attribute("visible")) {
@@ -1011,7 +1031,7 @@ Value FunctionType::invoke(Emitter &emitter, const ArgumentList &args,
 FunctionType *FunctionType::resolve_overload(Emitter &emitter,
                                              const ArgumentList &args,
                                              const SourceLocation &srcLoc) {
-  if (is_variant()) {
+  if (is_variant() || is_foreign()) {
     // We should have already verified the function variant does not
     // illegally overload another function by now!
     return this;
@@ -1078,32 +1098,38 @@ FunctionType *FunctionType::resolve_overload(Emitter &emitter,
 FunctionType::Instance &
 FunctionType::instantiate(Emitter &emitter,
                           const llvm::SmallVector<Type *> paramTypes) {
-  SMDL_SANITY_CHECK(decl.definition);
   SMDL_SANITY_CHECK(paramTypes.size() == params.size());
   auto &inst{instances[paramTypes]};
   if (!inst.llvmFunc) {
     SMDL_SANITY_CHECK(!inst.isCompiling);
     inst.isCompiling = true;
     inst.returnType = returnType;
-    emitter.create_function(
-        inst.llvmFunc, decl.name, is_pure(), inst.returnType, paramTypes,
-        params, decl.srcLoc, [&] {
-          if (decl.has_attribute("fastmath"))
-            emitter.builder.setFastMathFlags(llvm::FastMathFlags::getFast());
-          emitter.emit(decl.definition);
-        });
-    static const std::pair<const char *, llvm::Attribute::AttrKind> attrs[] = {
-        {"alwaysinline", llvm::Attribute::AlwaysInline},
-        {"noinline", llvm::Attribute::NoInline},
-        {"hot", llvm::Attribute::Hot},
-        {"cold", llvm::Attribute::Cold},
-        {"optsize", llvm::Attribute::OptimizeForSize},
-        {"optnone", llvm::Attribute::OptimizeNone}};
-    for (auto [attrName, attrID] : attrs)
-      if (decl.has_attribute(attrName))
-        inst.llvmFunc->addFnAttr(attrID);
-    if (decl.has_attribute("visible"))
-      inst.llvmFunc->setLinkage(llvm::Function::ExternalLinkage);
+    if (is_foreign()) {
+      emitter.create_function(inst.llvmFunc, decl.name, is_pure(),
+                              inst.returnType, paramTypes, params, decl.srcLoc,
+                              nullptr);
+    } else {
+      SMDL_SANITY_CHECK(decl.definition);
+      emitter.create_function(
+          inst.llvmFunc, decl.name, is_pure(), inst.returnType, paramTypes,
+          params, decl.srcLoc, [&] {
+            if (decl.has_attribute("fastmath"))
+              emitter.builder.setFastMathFlags(llvm::FastMathFlags::getFast());
+            emitter.emit(decl.definition);
+          });
+      static const std::pair<const char *, llvm::Attribute::AttrKind> attrs[] =
+          {{"alwaysinline", llvm::Attribute::AlwaysInline},
+           {"noinline", llvm::Attribute::NoInline},
+           {"hot", llvm::Attribute::Hot},
+           {"cold", llvm::Attribute::Cold},
+           {"optsize", llvm::Attribute::OptimizeForSize},
+           {"optnone", llvm::Attribute::OptimizeNone}};
+      for (auto [attrName, attrID] : attrs)
+        if (decl.has_attribute(attrName))
+          inst.llvmFunc->addFnAttr(attrID);
+      if (decl.has_attribute("visible"))
+        inst.llvmFunc->setLinkage(llvm::Function::ExternalLinkage);
+    }
     inst.isCompiling = false;
   } else if (inst.llvmFunc->getReturnType() ==
              emitter.context.llvmIncompleteReturnTy) {
@@ -1154,7 +1180,7 @@ void FunctionType::initialize_jit_material_functions(Emitter &emitter) {
     // Generate the allocate function:
     // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
     // @(visible) void "material_name.allocate"(&auto out) {
-    //   *out = $material_instance(#bump(material_name()));
+    //   *out = $material_instance(#bump_allocate(material_name()));
     // }
     // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
     auto funcReturnType{static_cast<Type *>(context.get_void_type())};
@@ -1168,7 +1194,7 @@ void FunctionType::initialize_jit_material_functions(Emitter &emitter) {
                                    inst.llvmFunc, {emitter.state.llvmValue}))};
           auto materialInstance{emitter.emit_call(
               context.get_keyword_value("$material_instance"),
-              emitter.emit_intrinsic("bump", material, decl.srcLoc),
+              emitter.emit_intrinsic("bump_allocate", material, decl.srcLoc),
               decl.srcLoc)};
           materialInstanceType = materialInstance.type;
           materialInstancePtrType =

@@ -237,14 +237,19 @@ void Formatter::write(const AST::Function &decl) {
     write(attributes.srcParenR, POP_INDENT, DELIM_UNNECESSARY_SPACE);
   }
   write(decl.returnType, decl.earlyAnnotations, DELIM_SPACE, decl.name,
-        decl.params, DELIM_UNNECESSARY_SPACE, decl.srcFrequency,
-        decl.lateAnnotations);
+        decl.params);
+  if (!decl.srcFrequency.empty())
+    write(DELIM_UNNECESSARY_SPACE, decl.srcFrequency);
+  if (decl.lateAnnotations)
+    write(decl.lateAnnotations);
   if (!decl.srcEqual.empty()) {
     write(PUSH_INDENT, INCREMENT_INDENT, DELIM_UNNECESSARY_SPACE, decl.srcEqual,
           DELIM_UNNECESSARY_SPACE, PUSH_INDENT, ALIGN_INDENT, decl.definition,
           decl.srcSemicolon, POP_INDENT, POP_INDENT);
-  } else {
+  } else if (decl.definition) {
     write(DELIM_UNNECESSARY_SPACE, decl.definition);
+  } else {
+    write(decl.srcSemicolon);
   }
 }
 
