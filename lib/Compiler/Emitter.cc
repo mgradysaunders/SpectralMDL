@@ -1593,6 +1593,67 @@ Value Emitter::emit_intrinsic(std::string_view name, const ArgumentList &args,
           context.compiler.load_ptexture(
               std::string(fileName.get_comptime_string()), srcLoc));
     }
+    if (name == "load_texture_2d") {
+      if (!(args.size() == 2 && args[0].value.is_comptime_string() &&
+            args[1].value.type->is_arithmetic_scalar_int()))
+        srcLoc.throw_error("intrinsic 'load_texture_2d' expects 1 "
+                           "compile-time string argument and 1 int argument");
+      auto texture2DType{context.get_texture_2d_type()};
+      auto fileName{args[0].value.get_comptime_string()};
+      auto tileImagePaths{context.compiler.fileLocator.locate_images(
+          fileName, context.currentModule->get_file_name())};
+      if (tileImagePaths.empty()) {
+        srcLoc.log_warn(concat("no image(s) found for ", quoted(fileName)));
+        return invoke(texture2DType, {}, srcLoc);
+      }
+      auto tileCountU{uint32_t(1)};
+      auto tileCountV{uint32_t(1)};
+      auto tileImages{llvm::SmallVector<const Image *>{}};
+      for (auto &[tileIndexU, tileIndexV, filePath] : tileImagePaths) {
+        tileCountU = std::max(tileCountU, tileIndexU + 1);
+        tileCountV = std::max(tileCountV, tileIndexV + 1);
+        tileImages.push_back(&context.compiler.load_image(filePath, srcLoc));
+        if (tileImages.back()->get_format() != tileImages[0]->get_format() ||
+            tileImages.back()->get_num_channels() !=
+                tileImages[0]->get_num_channels()) {
+          srcLoc.log_warn(
+              concat("inconsistent image formats for ", quoted(fileName)));
+          return invoke(texture2DType, {}, srcLoc);
+        }
+      }
+      auto texelType{context.get_arithmetic_type(
+          tileImages[0]->get_format() == Image::U8    ? Scalar::get_int(8)
+          : tileImages[0]->get_format() == Image::U16 ? Scalar::get_int(16)
+          : tileImages[0]->get_format() == Image::F16 ? Scalar::get_half()
+                                                      : Scalar::get_float(),
+          Extent(tileImages[0]->get_num_channels()))};
+      auto valueTileExtents{Value::zero(context.get_array_type(
+          context.get_int_type(2), tileCountU * tileCountV))};
+      auto valueTileBuffers{Value::zero(context.get_array_type(
+          context.get_pointer_type(texelType), tileCountU * tileCountV))};
+      for (unsigned i = 0; i < tileImagePaths.size(); i++) {
+        auto valueTileExtent{context.get_comptime_vector(
+            int2(tileImages[i]->get_num_texels_x(),
+                 tileImages[i]->get_num_texels_y()))};
+        auto valueTileBuffer{context.get_comptime_ptr(
+            context.get_pointer_type(texelType), tileImages[i]->get_texels())};
+        auto tileIndexU{tileImagePaths[i].tileIndexU};
+        auto tileIndexV{tileImagePaths[i].tileIndexV};
+        auto insertPos{tileIndexV * tileCountU + tileIndexU};
+        valueTileExtents =
+            insert(valueTileExtents, valueTileExtent, insertPos, srcLoc);
+        valueTileBuffers =
+            insert(valueTileBuffers, valueTileBuffer, insertPos, srcLoc);
+      }
+      auto structArgs{ArgumentList{}};
+      structArgs.push_back(Argument{
+          "tile_count",
+          context.get_comptime_vector(int2(int(tileCountU), int(tileCountV)))});
+      structArgs.push_back(Argument{"tile_extents", valueTileExtents});
+      structArgs.push_back(Argument{"tile_buffers", valueTileBuffers});
+      structArgs.push_back(Argument{"gamma", to_rvalue(args[1].value)});
+      return invoke(texture2DType, structArgs, srcLoc);
+    }
     break;
   }
   case 'm': {

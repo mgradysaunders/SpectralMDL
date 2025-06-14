@@ -44,7 +44,6 @@ Context::Context(Compiler &compiler) : compiler(compiler) {
       {"int3", get_comptime_meta_type(get_int_type(Extent(3)))},
       {"int4", get_comptime_meta_type(get_int_type(Extent(4)))},
       {"string", get_comptime_meta_type(get_string_type())},
-      {"texture_2d", get_comptime_meta_type(texture2DType.get())},
       {"$DEBUG", get_comptime_bool(compiler.enableDebug)},
       {"$DOUBLE_EPS",
        get_comptime_double(std::numeric_limits<double>::epsilon())},
@@ -94,6 +93,8 @@ Context::Context(Compiler &compiler) : compiler(compiler) {
   }
   materialType =
       get_keyword_value("material").get_comptime_meta_type(*this, {});
+  texture2DType =
+      get_keyword_value("texture_2d").get_comptime_meta_type(*this, {});
 }
 
 Module *Context::get_builtin_module(llvm::StringRef name) {
@@ -334,13 +335,6 @@ ConversionRule Context::get_conversion_rule(Type *typeA, Type *typeB) {
   // is one of the case types, conversion is perfect.
   if (auto unionTypeB{llvm::dyn_cast<ComptimeUnionType>(typeB)};
       unionTypeB && unionTypeB->unionType->has_case_type(typeA)) {
-    return ConversionRule::Perfect;
-  }
-  // If the source type is an instance of texture 2D (with concrete
-  // texel type and tile dimensions) and the destination type is the abstract
-  // texture 2D type, conversion is perfect.
-  if (llvm::isa<Texture2DInstanceType>(typeA) &&
-      llvm::isa<Texture2DType>(typeB)) {
     return ConversionRule::Perfect;
   }
   // If the destination type is a color ...

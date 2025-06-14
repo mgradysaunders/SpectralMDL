@@ -27,8 +27,6 @@ enum class TypeKind : uint32_t {
   String,
   Struct,
   Tag,
-  Texture2DInstance,
-  Texture2D,
   Union,
   Void
 };
@@ -1140,113 +1138,6 @@ public:
   Type *defaultType{};
 };
 
-/// A concrete instance of the `texture_2d` type.
-///
-/// All `Texture2DInstanceType` instances are managed by the `Texture2DType`
-/// implementation. Each concrete instance is parameterized by the texel type,
-/// which must be an arithmetic type, and the image tile counts in U and V.
-///
-class Texture2DInstanceType final
-    : public TypeSubclass<TypeKind::Texture2DInstance> {
-public:
-  explicit Texture2DInstanceType(Context &context, Type *texelType,
-                                 int tileCountU, int tileCountV);
-
-public:
-  /// \name Virtual interface
-  /// \{
-
-  [[nodiscard]] Value invoke(Emitter &emitter, const ArgumentList &args,
-                             const SourceLocation &srcLoc) final;
-
-  [[nodiscard]] bool has_field(std::string_view name) final {
-    return name == "gamma" || name == "tile_count" || //
-           name == "tile_count_u" || name == "tile_count_v" ||
-           name == "tile_extents" || name == "tile_buffers" ||
-           name == "texel_type";
-  }
-
-  /// Access field.
-  ///
-  /// If `tex` is a `Texture2DInstanceType`:
-  /// - `tex.gamma` returns the gamma mode as an `int`
-  /// - `tex.tile_count` returns both tile counts as a compile-time `int2`
-  /// - `tex.tile_count_u` returns the tile count in U as a compile-time `int`
-  /// - `tex.tile_count_v` returns the tile count in V as a compile-time `int`
-  /// - `tex.tile_extents` returns the array of tile extents
-  /// - `tex.tile_buffers` returns the array of tile buffer pointers
-  /// - `tex.texel_type` returns the texel type as a compile-time meta type
-  ///
-  [[nodiscard]]
-  Value access_field(Emitter &emitter, Value value, std::string_view name,
-                     const SourceLocation &srcLoc) final;
-
-  /// \}
-
-public:
-  /// The texel type.
-  Type *const texelType;
-
-  /// The tile count in U.
-  const int tileCountU;
-
-  /// The tile count in V.
-  const int tileCountV;
-
-  /// The type of the `tile_extents` field.
-  ArrayType *tileExtentsType{};
-
-  /// The type of the `tile_buffers` field.
-  ArrayType *tileBuffersType{};
-};
-
-/// The `texture_2d` type.
-///
-/// This is an abstract type which acts as a constructor for
-/// the `Texture2DInstanceType`.
-///
-class Texture2DType final : public TypeSubclass<TypeKind::Texture2D> {
-public:
-  Texture2DType() { displayName = "texture_2d"; }
-
-  /// Look up or instantiate a `Texture2DInstanceType`.
-  ///
-  /// \param[in] context     The context.
-  /// \param[in] texelType   The texel type.
-  /// \param[in] tileCountU  The tile count in U.
-  /// \param[in] tileCountV  The tile count in V.
-  ///
-  [[nodiscard]] Texture2DInstanceType *instantiate(Context &context,
-                                                   Type *texelType,
-                                                   int tileCountU,
-                                                   int tileCountV);
-
-public:
-  /// \name Virtual interface
-  /// \{
-
-  [[nodiscard]] bool is_abstract() final { return true; }
-
-  /// Invoke, handles image loading!
-  ///
-  /// In MDL, the `texture_2d` constructor accepts a `name` parameter, which
-  /// must be a compile-time string, and an optional `gamma` parameter to
-  /// specify the gamma mode.
-  ///
-  /// \see Image
-  /// \see Compiler::load_image()
-  ///
-  [[nodiscard]] Value invoke(Emitter &emitter, const ArgumentList &args,
-                             const SourceLocation &srcLoc) final;
-
-  /// \}
-
-private:
-  /// The instances.
-  std::map<std::tuple<Type *, int, int>, BumpPtr<Texture2DInstanceType>>
-      instances{};
-};
-
 /// A union type.
 class UnionType final : public TypeSubclass<TypeKind::Union> {
 public:
@@ -1302,14 +1193,12 @@ public:
   ///   the given type (which must be an abstract `StructType`)
   /// - Every case type is a `StructType` that is tagged as the given type
   ///   (which must be an abstract `TagType`)
-  /// - Every case type is a `Texture2DInstanceType` and `type` is the abstract
-  ///   `Texture2DType`
   [[nodiscard]] bool is_always_instance_of(Type *type) const {
     for (auto caseType : caseTypes)
       if (!(caseType->is_struct() &&
-            static_cast<StructType *>(caseType)->is_instance_of(type)) &&
+            static_cast<StructType *>(caseType)->is_instance_of(type)) /* &&
           !(llvm::isa<Texture2DInstanceType>(caseType) &&
-            llvm::isa<Texture2DType>(type)))
+            llvm::isa<Texture2DType>(type)) */)
         return false;
     return true;
   }

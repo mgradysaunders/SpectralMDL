@@ -89,11 +89,13 @@ private:
   /// Load ptex texture.
   [[nodiscard]] const Ptexture *load_ptexture(const std::string &fileName,
                                               const SourceLocation &srcLoc);
+  // TODO from module
 
   /// Load BSDF measurement.
   [[nodiscard]] const BSDFMeasurement *
   load_bsdf_measurement(const std::string &fileName,
                         const SourceLocation &srcLoc);
+  // TODO from module
 
 public:
   /// Dump as LLVM-IR or native assembly.

@@ -268,6 +268,22 @@ export struct $default_edf: default edf {};
 /// The default hair BSDF is just an empty struct!
 export struct $default_hair_bsdf: default hair_bsdf {};
 
+export struct texture_2d {
+  texture_2d(const string name, const auto gamma = 0) = #load_texture_2d(name, int(gamma));
+
+  /// The tile count.
+  const int2 tile_count = int2(1, 1);
+
+  /// The tile extents.
+  const auto tile_extents = int2[](int2(0));
+
+  /// The tile buffers.
+  const auto tile_buffers = auto[](cast<&float4>(null));
+
+  /// The gamma mode
+  const int gamma = 0;
+};
+
 /// The texture ptex structure.
 export struct texture_ptex {
   texture_ptex(const string name, const auto gamma = 0) = texture_ptex(handle: #load_ptexture(name), gamma: int(gamma));

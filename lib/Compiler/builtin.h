@@ -149,6 +149,13 @@ export struct $default_bsdf:default bsdf{};
 export struct $default_vdf:default vdf{};
 export struct $default_edf:default edf{};
 export struct $default_hair_bsdf:default hair_bsdf{};
+export struct texture_2d{
+  texture_2d(const string name,const auto gamma=0)=#load_texture_2d(name,int(gamma));
+  const int2 tile_count=int2(1,1);
+  const auto tile_extents=int2[](int2(0));
+  const auto tile_buffers=auto[](cast<&float4>(null));
+  const int gamma=0;
+};
 export struct texture_ptex{
   texture_ptex(const string name,const auto gamma=0)=texture_ptex(handle: #load_ptexture(name),gamma: int(gamma));
   const &void handle=null;
@@ -1415,7 +1422,7 @@ export enum gamma_mode{gamma_default=0,gamma_linear=0,gamma_srgb=1};
 @(pure macro)float apply_gamma(const int gamma,const float texel)=gamma==int(gamma_srgb)?(texel*texel):texel;
 @(pure macro)int uv_tile_index(const texture_2d tex,const int2 uv_tile){
   return -1 if(#any((uv_tile<0)|(uv_tile>=tex.tile_count)));
-  return uv_tile.y*tex.tile_count_u+uv_tile.x;
+  return uv_tile.y*tex.tile_count.x+uv_tile.x;
 }
 export @(pure macro)int width(const texture_2d tex,const int2 uv_tile=int2(0)){
   const auto i(uv_tile_index(tex,uv_tile));
@@ -1428,11 +1435,12 @@ export @(pure macro)int height(const texture_2d tex,const int2 uv_tile=int2(0)){
 export @(pure macro)bool texture_isvalid(const texture_2d tex)=bool(tex.tile_buffers[0]);
 export @(pure macro)bool texture_isvalid(const texture_ptex tex)=bool(tex.handle);
 @(pure)auto texel_fetch(const texture_2d tex,const int2 coord,const int2 uv_tile=int2(0)){
+  const auto texel_type(*#typeof(tex.tile_buffers[0]));
   const auto i(uv_tile_index(tex,uv_tile));
-  return tex.texel_type(0) if(i<0);
+  return texel_type(0) if(i<0);
   const auto tile_extent(tex.tile_extents[i]);
   const auto tile_buffer(tex.tile_buffers[i]);
-  return tex.texel_type(0) if(!tile_buffer|#any((coord<0)|(coord>=tile_extent)));
+  return texel_type(0) if(!tile_buffer|#any((coord<0)|(coord>=tile_extent)));
   return tile_buffer[coord.y*tile_extent.x+coord.x];
 }
 export @(pure macro)float4 texel_float4(const texture_2d tex,const int2 coord,const int2 uv_tile=int2(0)){
@@ -1470,7 +1478,7 @@ export @(pure)float4 lookup_float4(
   const float2 crop_u=float2(0.0,1.0),
   const float2 crop_v=float2(0.0,1.0),
 ){
-  if((tex.tile_count_u>1)|(tex.tile_count_v>1)){
+  if((tex.tile_count.x>1)|(tex.tile_count.y>1)){
     const int2 tile_index(#floor(coord));
     const auto i(uv_tile_index(tex,tile_index));
     return float4(0) if(i<0);

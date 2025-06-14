@@ -184,9 +184,7 @@ public:
   [[nodiscard]] TagType *get_tag_type(AST::Tag *decl);
 
   /// Get the `texture_2d` type.
-  [[nodiscard]] Texture2DType *get_texture_2d_type() {
-    return texture2DType.get();
-  }
+  [[nodiscard]] Type *get_texture_2d_type() { return texture2DType; }
 
   /// Get union type.
   [[nodiscard]] Type *get_union_type(llvm::ArrayRef<Type *> types);
@@ -362,6 +360,8 @@ public:
   llvm::Type *const llvmIncompleteReturnTy{
       llvm::StructType::create(llvmContext, {}, "$incomplete")};
 
+  Module *currentModule{};
+
 private:
   /// The builtin modules. See `get_builtin_module()`
   llvm::StringMap<BumpPtr<Module>> builtinModules{};
@@ -426,10 +426,6 @@ private:
   /// The `State` type.
   const BumpPtr<StateType> stateType{allocator.allocate<StateType>(*this)};
 
-  /// The `texture_2d` type.
-  const BumpPtr<Texture2DType> texture2DType{
-      allocator.allocate<Texture2DType>()};
-
   /// The AST associated types.
   llvm::DenseMap<AST::Decl *, BumpPtr<Type>> astTypes{};
 
@@ -448,6 +444,9 @@ private:
 
   /// The `material` type defined by the builtin `api` module.
   Type *materialType{};
+
+  /// The `texture_2d` type defined by the builtin `api` module.
+  Type *texture2DType{};
 
   friend class FunctionType;
 };

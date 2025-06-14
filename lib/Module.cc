@@ -50,6 +50,8 @@ std::optional<Error> Module::compile(Context &context) noexcept {
       throw Error(concat("detected cyclic import of module ", quoted(name)));
     if (compileStatus == COMPILE_STATUS_NOT_STARTED) {
       compileStatus = COMPILE_STATUS_IN_PROGRESS;
+      auto preserve{Preserve(context.currentModule)};
+      context.currentModule = this;
       Emitter emitter{context};
       emitter.emit(root);
       lastCrumb = emitter.crumb;
