@@ -3,6 +3,7 @@
 #include <map>
 #include <set>
 
+#include "smdl/BSDFMeasurement.h"
 #include "smdl/FileLocator.h"
 #include "smdl/Image.h"
 #include "smdl/JIT.h"
@@ -33,8 +34,6 @@ public:
   /// The alpha channel index if present, else `-1`.
   int alphaIndex{-1};
 };
-
-class BSDFMeasurement;
 
 /// \}
 
@@ -253,13 +252,7 @@ private:
 
   friend class Emitter;
 
-  friend class BSDFMeasurementType;
-
   friend class FunctionType;
-
-  friend class Texture2DType;
-
-  friend class TexturePtexType;
 };
 
 /// \}
