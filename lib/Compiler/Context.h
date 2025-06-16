@@ -184,7 +184,26 @@ public:
   [[nodiscard]] TagType *get_tag_type(AST::Tag *decl);
 
   /// Get the `texture_2d` type.
-  [[nodiscard]] Type *get_texture_2d_type() { return texture2DType; }
+  [[nodiscard]] StructType *get_texture_2d_type() { return texture2DType; }
+
+  /// Get the `texture_3d` type.
+  [[nodiscard]] StructType *get_texture_3d_type() { return texture3DType; }
+
+  /// Get the `texture_cube` type.
+  [[nodiscard]] StructType *get_texture_cube_type() { return textureCubeType; }
+
+  /// Get the `texture_ptex` type.
+  [[nodiscard]] StructType *get_texture_ptex_type() { return texturePtexType; }
+
+  /// Get the `bsdf_measurement` type.
+  [[nodiscard]] StructType *get_bsdf_measurement_type() {
+    return bsdfMeasurementType;
+  }
+
+  /// Get the `light_profile` type.
+  [[nodiscard]] StructType *get_light_profile_type() {
+    return lightProfileType;
+  }
 
   /// Get union type.
   [[nodiscard]] Type *get_union_type(llvm::ArrayRef<Type *> types);
@@ -328,6 +347,17 @@ public:
                                   type->llvmType));
   }
 
+  [[nodiscard]] std::optional<std::string> locate(const std::string &fileName) {
+    return compiler.fileLocator.locate(fileName,
+                                       currentModule->get_file_name());
+  }
+
+  [[nodiscard]] std::vector<FileLocator::ImagePath>
+  locate_images(const std::string &fileName) {
+    return compiler.fileLocator.locate_images(fileName,
+                                              currentModule->get_file_name());
+  }
+
 public:
   /// The compiler.
   Compiler &compiler;
@@ -446,7 +476,22 @@ private:
   Type *materialType{};
 
   /// The `texture_2d` type defined by the builtin `api` module.
-  Type *texture2DType{};
+  StructType *texture2DType{};
+
+  /// The `texture_3d` type defined by the builtin `api` module.
+  StructType *texture3DType{};
+
+  /// The `texture_cube` type defined by the builtin `api` module.
+  StructType *textureCubeType{};
+
+  /// The `texture_ptex` type defined by the builtin `api` module.
+  StructType *texturePtexType{};
+
+  /// The `bsdf_measurement` type defined by the builtin `api` module.
+  StructType *bsdfMeasurementType{};
+
+  /// The `light_profile` type defined by the builtin `api` module.
+  StructType *lightProfileType{};
 
   friend class FunctionType;
 };

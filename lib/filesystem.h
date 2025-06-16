@@ -23,6 +23,15 @@ using fs_error_code = std::error_code;
 
 namespace smdl {
 
+[[nodiscard]] inline std::string fs_abbreviate(std::string str) try {
+  if (auto abbrevStr{fs::relative(str).string()}; abbrevStr.size() < str.size())
+    return abbrevStr;
+  return str;
+} catch (...) {
+  // No-op on failure
+  return str;
+}
+
 [[nodiscard]] inline fs::path fs_make_path(const std::string &str) {
   return fs::path(str);
 }
@@ -30,17 +39,6 @@ namespace smdl {
 [[nodiscard]] inline fs::path fs_make_path(std::string_view str) {
   // NOTE: Boost doesn't have `std::string_view` constructor
   return fs::path(str.begin(), str.end());
-}
-
-[[nodiscard]] inline std::string fs_abbreviate_path(const fs::path &path) {
-  auto pathStr{path.string()};
-  try {
-    if (auto str{fs::relative(path).string()}; str.size() < pathStr.size())
-      return str;
-  } catch (...) {
-    // Ignore on failure
-  }
-  return pathStr;
 }
 
 [[nodiscard]] inline bool fs_has_extension(const fs::path &path,

@@ -181,29 +181,45 @@ template <typename T>
 
 template <typename T> class SmallVectorOf {
 public:
+  // Only use `llvm::SmallVector` if `T` is reasonably small.
+  [[nodiscard]] static constexpr auto preferred_vector_type() noexcept {
+    if constexpr (sizeof(T) <= 256) {
+      return llvm::SmallVector<T>();
+    } else {
+      return std::vector<T>();
+    }
+  }
+
+  using vector_type = std::decay_t<decltype(preferred_vector_type())>;
+
+  SmallVectorOf() = default;
+
+  template <typename Iterator>
+  SmallVectorOf(Iterator itr0, Iterator itrN) : elems(itr0, itrN) {}
+
   /// Is empty?
-  [[nodiscard]] bool empty() const { return elems.empty(); }
+  [[nodiscard]] bool empty() const noexcept { return elems.empty(); }
 
   /// The size.
-  [[nodiscard]] size_t size() const { return elems.size(); }
+  [[nodiscard]] size_t size() const noexcept { return elems.size(); }
 
   /// The begin iterator.
-  [[nodiscard]] auto begin() { return elems.begin(); }
+  [[nodiscard]] auto begin() noexcept { return elems.begin(); }
 
   /// The begin iterator, const variant.
-  [[nodiscard]] auto begin() const { return elems.begin(); }
+  [[nodiscard]] auto begin() const noexcept { return elems.begin(); }
 
   /// The end iterator.
-  [[nodiscard]] auto end() { return elems.end(); }
+  [[nodiscard]] auto end() noexcept { return elems.end(); }
 
   /// The end iterator, const variant.
-  [[nodiscard]] auto end() const { return elems.end(); }
+  [[nodiscard]] auto end() const noexcept { return elems.end(); }
 
   /// The index access operator.
-  [[nodiscard]] auto operator[](size_t i) -> T & { return elems[i]; }
+  [[nodiscard]] auto operator[](size_t i) noexcept -> T & { return elems[i]; }
 
   /// The index access operator, const variant.
-  [[nodiscard]] auto operator[](size_t i) const -> const T & {
+  [[nodiscard]] auto operator[](size_t i) const noexcept -> const T & {
     return elems[i];
   }
 
@@ -248,7 +264,7 @@ public:
   }
 
 public:
-  std::vector<T> elems{};
+  vector_type elems{};
 };
 
 /// \}

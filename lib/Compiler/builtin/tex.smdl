@@ -41,7 +41,7 @@ export @(pure macro) bool texture_isvalid(const texture_2d tex) = bool(tex.tile_
 
 // TODO bool texture_isvalid(const texture_cube tex)
 
-export @(pure macro) bool texture_isvalid(const texture_ptex tex) = bool(tex.handle);
+export @(pure macro) bool texture_isvalid(const texture_ptex tex) = bool(tex.ptr);
 
 @(pure) auto texel_fetch(const texture_2d tex, const int2 coord, const int2 uv_tile = int2(0)) {
   const auto texel_type(*#typeof(tex.tile_buffers[0]));
@@ -195,30 +195,30 @@ export @(pure macro) color lookup_color(
 
 export @(macro) float4 lookup_float4(const texture_ptex tex, const int channel = 0) {
   float4 result;
-  smdl_ptex_evaluate(tex.handle, tex.gamma, channel, 4, &result[0]);
+  smdl_ptex_evaluate(tex.ptr, tex.gamma, channel, 4, &result[0]);
   return result;
 }
 
 export @(macro) float3 lookup_float3(const texture_ptex tex, const int channel = 0) {
   float3 result;
-  smdl_ptex_evaluate(tex.handle, tex.gamma, channel, 3, &result[0]);
+  smdl_ptex_evaluate(tex.ptr, tex.gamma, channel, 3, &result[0]);
   return result;
 }
 
 export @(macro) float2 lookup_float2(const texture_ptex tex, const int channel = 0) {
   float2 result;
-  smdl_ptex_evaluate(tex.handle, tex.gamma, channel, 2, &result[0]);
+  smdl_ptex_evaluate(tex.ptr, tex.gamma, channel, 2, &result[0]);
   return result;
 }
 
 export @(macro) float lookup_float(const texture_ptex tex, const int channel = 0) {
   float result;
-  smdl_ptex_evaluate(tex.handle, tex.gamma, channel, 1, &result);
+  smdl_ptex_evaluate(tex.ptr, tex.gamma, channel, 1, &result);
   return result;
 }
 
 export @(macro) color lookup_color(const texture_ptex tex, const int channel = 0) {
   float3 result;
-  smdl_ptex_evaluate(tex.handle, tex.gamma, channel, 3, &result[0]);
+  smdl_ptex_evaluate(tex.ptr, tex.gamma, channel, 3, &result[0]);
   return color(result);
 }

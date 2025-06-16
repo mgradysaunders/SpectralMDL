@@ -91,10 +91,16 @@ Context::Context(Compiler &compiler) : compiler(compiler) {
       keywords[simpleName] = crumb->value;
     }
   }
+  texture2DType = static_cast<StructType *>(
+      get_keyword_value("texture_2d").get_comptime_meta_type(*this, {}));
+  texturePtexType = static_cast<StructType *>(
+      get_keyword_value("texture_ptex").get_comptime_meta_type(*this, {}));
+  bsdfMeasurementType = static_cast<StructType *>(
+      get_keyword_value("bsdf_measurement").get_comptime_meta_type(*this, {}));
+  lightProfileType = static_cast<StructType *>(
+      get_keyword_value("light_profile").get_comptime_meta_type(*this, {}));
   materialType =
       get_keyword_value("material").get_comptime_meta_type(*this, {});
-  texture2DType =
-      get_keyword_value("texture_2d").get_comptime_meta_type(*this, {});
 }
 
 Module *Context::get_builtin_module(llvm::StringRef name) {

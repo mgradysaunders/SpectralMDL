@@ -128,7 +128,7 @@ SourceLocation::operator std::string() const {
     if (module_->is_builtin()) {
       str += module_->get_name();
     } else {
-      str += fs_abbreviate_path(fs_make_path(module_->get_file_name()));
+      str += fs_abbreviate(std::string(module_->get_file_name()));
     }
     str += ':';
     str += std::to_string(lineNo);

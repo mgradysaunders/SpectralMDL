@@ -268,6 +268,7 @@ export struct $default_edf: default edf {};
 /// The default hair BSDF is just an empty struct!
 export struct $default_hair_bsdf: default hair_bsdf {};
 
+/// The texture 2D structure.
 export struct texture_2d {
   texture_2d(const string name, const auto gamma = 0) = #load_texture_2d(name, int(gamma));
 
@@ -280,27 +281,58 @@ export struct texture_2d {
   /// The tile buffers.
   const auto tile_buffers = auto[](cast<&float4>(null));
 
-  /// The gamma mode
+  /// The gamma mode.
   const int gamma = 0;
+};
+
+/// The texture 3D structure.
+export struct texture_3d {texture_3d(const string name, const auto gamma = 0) = #load_texture_3d(name, int(gamma));
+
+  // TODO
+};
+
+/// The texture cube structure.
+export struct texture_cube {texture_cube(const string name, const auto gamma = 0) = #load_texture_cube(name, int(gamma));
+
+  // TODO
 };
 
 /// The texture ptex structure.
 export struct texture_ptex {
-  texture_ptex(const string name, const auto gamma = 0) = texture_ptex(handle: #load_ptexture(name), gamma: int(gamma));
+  texture_ptex(const string name, const auto gamma = 0) = #load_texture_ptex(name, int(gamma));
 
   /// The pointer to the `smdl::Ptexture`
-  const &void handle = null;
+  const &void ptr = null;
 
-  /// The gamma mode
+  /// The gamma mode.
   const int gamma = 0;
 };
 
 /// The BSDF measurement structure.
 export struct bsdf_measurement {
-  bsdf_measurement(const string filename) = bsdf_measurement(handle: #load_bsdf_measurement(filename));
+  bsdf_measurement(const string name) = #load_bsdf_measurement(name);
 
-  /// The pointer to the `smdl::BSDFMeasurement`
-  const &void handle = null;
+  /// The scatter mode, either `scatter_reflect` or `scatter_transmit`.
+  const int mode = 0;
+
+  /// The number of samples in zenith.
+  const int num_theta = 0;
+
+  /// The number of samples in azimuth.
+  const int num_phi = 0;
+
+  /// The buffer `smdl::BSDFMeasurement::buffer` which points to a
+  /// table of `num_theta * num_theta * num_phi` values of type `float` 
+  /// or `float3`.
+  const auto buffer = cast<&float>(null);
+};
+
+/// The light profile structure.
+export struct light_profile {
+  light_profile(const string name) = #load_light_profile(name);
+
+  /// The pointer to the `smdl::LightProfile`
+  const &void ptr = null;
 };
 
 /// The material emission description.

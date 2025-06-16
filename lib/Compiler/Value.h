@@ -382,6 +382,14 @@ public:
 /// An argument.
 class Argument final {
 public:
+  Argument() = default;
+
+  Argument(std::string_view name, Value value = {},
+           AST::Argument *astArg = nullptr)
+      : name(name), value(value), astArg(astArg) {}
+
+  Argument(Value value) : value(value) {}
+
   /// Get the source location. Returns the empty source location if this
   /// has no associated `astArg`.
   [[nodiscard]] auto get_source_location() const {
@@ -423,18 +431,18 @@ public:
 /// An argument list.
 class ArgumentList final : public SmallVectorOf<Argument> {
 public:
+  using Base = SmallVectorOf<Argument>;
+
   ArgumentList() = default;
 
-  ArgumentList(Value arg) { elems.push_back(Argument{{}, arg, {}}); }
+  ArgumentList(const Argument &arg) { elems.push_back(arg); }
 
-  ArgumentList(Argument arg) { elems.push_back(std::move(arg)); }
+  ArgumentList(const Value &arg) { elems.push_back(Argument(arg)); }
 
-  ArgumentList(llvm::ArrayRef<Value> args) {
-    elems.resize(args.size());
-    for (size_t i = 0; i < elems.size(); i++) {
-      elems[i] = Argument{{}, args[i], {}};
-    }
-  }
+  ArgumentList(llvm::ArrayRef<Value> args) : Base(args.begin(), args.end()) {}
+
+  ArgumentList(std::initializer_list<Argument> args)
+      : Base(args.begin(), args.end()) {}
 
 public:
   /// Get the source location. Returns the empty source location if this

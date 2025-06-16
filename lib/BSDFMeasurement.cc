@@ -17,12 +17,12 @@ BSDFMeasurement::load_from_memory(const std::string &file) {
     throw Error("not an MBSDF file");
   }
   auto dataBlockOffset{[&]() -> size_t {
-    result->kind = KIND_BRDF;
+    result->kind = KIND_REFLECTION;
     if (auto i{mem.find("MBSDF_DATA=\n")}; i < mem.size())
       return i;
     if (auto i{mem.find("MBSDF_DATA_REFLECTION=\n")}; i < mem.size())
       return i;
-    result->kind = KIND_BTDF;
+    result->kind = KIND_TRANSMISSION;
     if (auto i{mem.find("MBSDF_DATA_TRANSMISSION=\n")}; i < mem.size())
       return i;
     throw Error("missing data block");
@@ -114,70 +114,6 @@ void BSDFMeasurement::clear() noexcept {
   numPhi = 0;
   buffer = nullptr;
   metaData.clear();
-}
-
-float3 BSDFMeasurement::fetch(size_t indexThetaO, size_t indexThetaI,
-                              size_t indexPhi) const noexcept {
-  const void *ptr = static_cast<const uint8_t *>(buffer) +
-                    size_of(type) * (indexThetaI * numTheta * numPhi +
-                                     indexThetaO * numPhi + indexPhi);
-  return type == TYPE_FLOAT ? float3(*static_cast<const float *>(ptr))
-                            : float3(*static_cast<const float3 *>(ptr));
-}
-
-float3 BSDFMeasurement::interpolate(const float3 &wo,
-                                    const float3 &wi) const noexcept {
-  if ((std::signbit(wo.z) == std::signbit(wi.z)) != (kind == KIND_BRDF)) {
-    return float3(0);
-  }
-  if (!buffer) {
-    return float3(0);
-  }
-  float thetaO = std::atan2(std::hypot(wo.x, wo.y), std::abs(wo.z));
-  float thetaI = std::atan2(std::hypot(wi.x, wi.y), std::abs(wi.z));
-  float phi = std::abs(std::atan2(wo.x * wi.y - wo.y * wi.x, //
-                                  wo.x * wi.x + wo.y * wi.y));
-  if (!std::isfinite(thetaO) || !std::isfinite(thetaI) || !std::isfinite(phi)) {
-    return float3(0);
-  }
-  if (numTheta < 2) {
-    return fetch(0, 0, 0);
-  }
-  constexpr float PI = 3.14159265359f;
-  float fractThetaO = (numTheta - 1) * (2 / PI * thetaO);
-  float fractThetaI = (numTheta - 1) * (2 / PI * thetaI);
-  int indexThetaO = std::floor(fractThetaO);
-  int indexThetaI = std::floor(fractThetaI);
-  indexThetaO = std::min(indexThetaO, int(numTheta - 2));
-  indexThetaI = std::min(indexThetaI, int(numTheta - 2));
-  indexThetaO = std::max(indexThetaO, 0);
-  indexThetaI = std::max(indexThetaI, 0);
-  fractThetaO -= indexThetaO;
-  fractThetaI -= indexThetaI;
-  float3 table[2][2]{};
-  if (numPhi > 1) {
-    float fractPhi = (numPhi - 2) * (phi / PI);
-    int indexPhi = std::floor(fractPhi);
-    indexPhi = std::min(indexPhi, int(numPhi - 2));
-    indexPhi = std::max(indexPhi, 0);
-    fractPhi -= indexPhi;
-    for (int j = 0; j < 2; j++) {
-      for (int i = 0; i < 2; i++) {
-        const auto v0{fetch(indexThetaO + i, indexThetaI + j, indexPhi + 0)};
-        const auto v1{fetch(indexThetaO + i, indexThetaI + j, indexPhi + 1)};
-        table[i][j] = (1 - fractPhi) * v0 + fractPhi * v1;
-      }
-    }
-  } else {
-    for (int j = 0; j < 2; j++) {
-      for (int i = 0; i < 2; i++) {
-        table[i][j] = fetch(indexThetaO + i, indexThetaI + j, 0);
-      }
-    }
-  }
-  const auto v0{(1 - fractThetaI) * table[0][0] + fractThetaI * table[0][1]};
-  const auto v1{(1 - fractThetaI) * table[1][0] + fractThetaI * table[1][1]};
-  return (1 - fractThetaO) * v0 + fractThetaO * v1;
 }
 
 } // namespace smdl

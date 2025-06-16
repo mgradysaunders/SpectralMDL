@@ -1308,17 +1308,6 @@ SMDL_EXPORT void smdl_tabulate_albedo(const char *name, int num_cos_theta,
   }
 }
 
-SMDL_EXPORT void smdl_bsdf_measurement_evaluate(const void *bsdfMeasurement,
-                                                const float3 &wo,
-                                                const float3 &wi,
-                                                float3 &result) {
-  if (!bsdfMeasurement)
-    result = float3(0);
-  else
-    result = static_cast<const BSDFMeasurement *>(bsdfMeasurement)
-                 ->interpolate(wo, wi);
-}
-
 } // extern "C"
 
 //--{ emit_intrinsic
@@ -1571,88 +1560,152 @@ Value Emitter::emit_intrinsic(std::string_view name, const ArgumentList &args,
     break;
   }
   case 'l': {
-    if (name == "load_bsdf_measurement") {
-      auto fileName{expectOne()};
-      if (!fileName.is_comptime_string()) {
-        srcLoc.throw_error("intrinsic 'load_bsdf_measurement' expects 1 "
-                           "compile-time string argument");
-      }
-      return context.get_comptime_ptr(
-          context.get_void_pointer_type(),
-          context.compiler.load_bsdf_measurement(
-              std::string(fileName.get_comptime_string()), srcLoc));
-    }
-    if (name == "load_ptexture") {
-      auto fileName{expectOne()};
-      if (!fileName.is_comptime_string()) {
-        srcLoc.throw_error("intrinsic 'load_ptexture' expects 1 "
-                           "compile-time string argument");
-      }
-      return context.get_comptime_ptr(
-          context.get_void_pointer_type(),
-          context.compiler.load_ptexture(
-              std::string(fileName.get_comptime_string()), srcLoc));
-    }
-    if (name == "load_texture_2d") {
-      if (!(args.size() == 2 && args[0].value.is_comptime_string() &&
-            args[1].value.type->is_arithmetic_scalar_int()))
-        srcLoc.throw_error("intrinsic 'load_texture_2d' expects 1 "
-                           "compile-time string argument and 1 int argument");
-      auto texture2DType{context.get_texture_2d_type()};
-      auto fileName{args[0].value.get_comptime_string()};
-      auto tileImagePaths{context.compiler.fileLocator.locate_images(
-          fileName, context.currentModule->get_file_name())};
-      if (tileImagePaths.empty()) {
-        srcLoc.log_warn(concat("no image(s) found for ", quoted(fileName)));
-        return invoke(texture2DType, {}, srcLoc);
-      }
-      auto tileCountU{uint32_t(1)};
-      auto tileCountV{uint32_t(1)};
-      auto tileImages{llvm::SmallVector<const Image *>{}};
-      for (auto &[tileIndexU, tileIndexV, filePath] : tileImagePaths) {
-        tileCountU = std::max(tileCountU, tileIndexU + 1);
-        tileCountV = std::max(tileCountV, tileIndexV + 1);
-        tileImages.push_back(&context.compiler.load_image(filePath, srcLoc));
-        if (tileImages.back()->get_format() != tileImages[0]->get_format() ||
-            tileImages.back()->get_num_channels() !=
-                tileImages[0]->get_num_channels()) {
-          srcLoc.log_warn(
-              concat("inconsistent image formats for ", quoted(fileName)));
+    if (starts_with(name, "load_")) {
+      auto expectOneComptimeString{[&]() {
+        if (!(args.size() == 1 && args[0].value.is_comptime_string()))
+          srcLoc.throw_error("intrinsic ", quoted(name),
+                             " expects 1 compile-time string argument");
+        return std::string(args[0].value.get_comptime_string());
+      }};
+      auto expectOneComptimeStringAndOneInt{[&]() {
+        if (!(args.size() == 2 &&                   //
+              args[0].value.is_comptime_string() && //
+              args[1].value.type->is_arithmetic_scalar_int()))
+          srcLoc.throw_error(
+              "intrinsic ", quoted(name),
+              " expects 1 compile-time string argument and 1 int argument");
+        return std::make_pair(std::string(args[0].value.get_comptime_string()),
+                              to_rvalue(args[1].value));
+      }};
+      if (name == "load_texture_2d") {
+        auto texture2DType{context.get_texture_2d_type()};
+        auto [fileName, valueGammaAsInt] = expectOneComptimeStringAndOneInt();
+        auto resolvedImagePaths{context.locate_images(fileName)};
+        if (resolvedImagePaths.empty()) {
+          srcLoc.log_warn(concat("no image(s) found for ", quoted(fileName)));
           return invoke(texture2DType, {}, srcLoc);
         }
+        auto tileCountU{uint32_t(1)};
+        auto tileCountV{uint32_t(1)};
+        auto images{llvm::SmallVector<const Image *>{}};
+        for (auto &[tileIndexU, tileIndexV, filePath] : resolvedImagePaths) {
+          tileCountU = std::max(tileCountU, tileIndexU + 1);
+          tileCountV = std::max(tileCountV, tileIndexV + 1);
+          images.push_back(&context.compiler.load_image(filePath, srcLoc));
+          if (images.back()->get_format() != images.front()->get_format() ||
+              images.back()->get_num_channels() !=
+                  images.front()->get_num_channels()) {
+            srcLoc.log_warn(
+                concat("inconsistent image formats for ", quoted(fileName)));
+            return invoke(texture2DType, {}, srcLoc);
+          }
+        }
+        auto texelPtrType{context.get_pointer_type(context.get_arithmetic_type(
+            images[0]->get_format() == Image::U8    ? Scalar::get_int(8)
+            : images[0]->get_format() == Image::U16 ? Scalar::get_int(16)
+            : images[0]->get_format() == Image::F16 ? Scalar::get_half()
+                                                    : Scalar::get_float(),
+            Extent(images[0]->get_num_channels())))};
+        auto valueTileExtents{Value::zero(context.get_array_type(
+            context.get_int_type(2), tileCountU * tileCountV))};
+        auto valueTileBuffers{Value::zero(
+            context.get_array_type(texelPtrType, tileCountU * tileCountV))};
+        for (unsigned int i = 0; i < resolvedImagePaths.size(); i++) {
+          auto &imagePath{resolvedImagePaths[i]};
+          auto &image{images[i]};
+          auto insertPos{imagePath.tileIndexV * tileCountU +
+                         imagePath.tileIndexU};
+          valueTileExtents = insert(
+              valueTileExtents,
+              context.get_comptime_vector(int2(int(image->get_num_texels_x()),
+                                               int(image->get_num_texels_y()))),
+              insertPos, srcLoc);
+          valueTileBuffers = insert(
+              valueTileBuffers,
+              context.get_comptime_ptr(texelPtrType, image->get_texels()),
+              insertPos, srcLoc);
+        }
+        return invoke(
+            texture2DType,
+            {Argument{"tile_count", context.get_comptime_vector(int2(
+                                        int(tileCountU), int(tileCountV)))},
+             Argument{"tile_extents", valueTileExtents},
+             Argument{"tile_buffers", valueTileBuffers},
+             Argument{"gamma", valueGammaAsInt}},
+            srcLoc);
       }
-      auto texelType{context.get_arithmetic_type(
-          tileImages[0]->get_format() == Image::U8    ? Scalar::get_int(8)
-          : tileImages[0]->get_format() == Image::U16 ? Scalar::get_int(16)
-          : tileImages[0]->get_format() == Image::F16 ? Scalar::get_half()
-                                                      : Scalar::get_float(),
-          Extent(tileImages[0]->get_num_channels()))};
-      auto valueTileExtents{Value::zero(context.get_array_type(
-          context.get_int_type(2), tileCountU * tileCountV))};
-      auto valueTileBuffers{Value::zero(context.get_array_type(
-          context.get_pointer_type(texelType), tileCountU * tileCountV))};
-      for (unsigned i = 0; i < tileImagePaths.size(); i++) {
-        auto valueTileExtent{context.get_comptime_vector(
-            int2(tileImages[i]->get_num_texels_x(),
-                 tileImages[i]->get_num_texels_y()))};
-        auto valueTileBuffer{context.get_comptime_ptr(
-            context.get_pointer_type(texelType), tileImages[i]->get_texels())};
-        auto tileIndexU{tileImagePaths[i].tileIndexU};
-        auto tileIndexV{tileImagePaths[i].tileIndexV};
-        auto insertPos{tileIndexV * tileCountU + tileIndexU};
-        valueTileExtents =
-            insert(valueTileExtents, valueTileExtent, insertPos, srcLoc);
-        valueTileBuffers =
-            insert(valueTileBuffers, valueTileBuffer, insertPos, srcLoc);
+      if (name == "load_texture_3d") {
+        auto texture3DType{context.get_texture_3d_type()};
+        auto [fileName, valueGammaAsInt] = expectOneComptimeStringAndOneInt();
+        // TODO
+        return invoke(texture3DType, {}, srcLoc);
       }
-      auto structArgs{ArgumentList{}};
-      structArgs.push_back(Argument{
-          "tile_count",
-          context.get_comptime_vector(int2(int(tileCountU), int(tileCountV)))});
-      structArgs.push_back(Argument{"tile_extents", valueTileExtents});
-      structArgs.push_back(Argument{"tile_buffers", valueTileBuffers});
-      structArgs.push_back(Argument{"gamma", to_rvalue(args[1].value)});
-      return invoke(texture2DType, structArgs, srcLoc);
+      if (name == "load_texture_cube") {
+        auto textureCubeType{context.get_texture_cube_type()};
+        auto [fileName, valueGammaAsInt] = expectOneComptimeStringAndOneInt();
+        // TODO
+        return invoke(textureCubeType, {}, srcLoc);
+      }
+      if (name == "load_texture_ptex") {
+        auto texturePtexType{context.get_texture_ptex_type()};
+        auto [fileName, valueGammaAsInt] = expectOneComptimeStringAndOneInt();
+        auto resolvedFileName{context.locate(fileName)};
+        if (!resolvedFileName) {
+          srcLoc.log_warn(
+              concat("cannot load ", quoted(fileName), ": file not found"));
+          return invoke(texturePtexType, {}, srcLoc);
+        }
+        auto valuePtr{context.get_comptime_ptr(
+            context.get_void_pointer_type(),
+            context.compiler.load_ptexture(*resolvedFileName, srcLoc))};
+        return invoke(
+            texturePtexType,
+            {Argument{"ptr", valuePtr}, Argument{"gamma", valueGammaAsInt}},
+            srcLoc);
+      }
+      if (name == "load_bsdf_measurement") {
+        auto bsdfMeasurementType{context.get_bsdf_measurement_type()};
+        auto fileName{expectOneComptimeString()};
+        auto resolvedFileName{context.locate(fileName)};
+        if (!resolvedFileName) {
+          srcLoc.log_warn(
+              concat("cannot load ", quoted(fileName), ": file not found"));
+          return invoke(bsdfMeasurementType, {}, srcLoc);
+        }
+        auto bsdfMeasurement{
+            context.compiler.load_bsdf_measurement(*resolvedFileName, srcLoc)};
+        if (!bsdfMeasurement) {
+          return invoke(bsdfMeasurementType, {}, srcLoc);
+        }
+        auto bufferPtrType{context.get_pointer_type(context.get_float_type(
+            bsdfMeasurement->type == BSDFMeasurement::TYPE_FLOAT ? 1 : 3))};
+        return invoke(
+            bsdfMeasurementType,
+            {Argument{"mode", context.get_comptime_int(
+                                  bsdfMeasurement->kind ==
+                                          BSDFMeasurement::KIND_REFLECTION
+                                      ? /* scatter_reflect  */ 1
+                                      : /* scatter_transmit */ 2)},
+             Argument{"num_theta",
+                      context.get_comptime_int(int(bsdfMeasurement->numTheta))},
+             Argument{"num_phi",
+                      context.get_comptime_int(int(bsdfMeasurement->numPhi))},
+             Argument{"buffer", context.get_comptime_ptr(
+                                    bufferPtrType, bsdfMeasurement->buffer)}},
+            srcLoc);
+      }
+      if (name == "load_light_profile") {
+        auto lightProfileType{context.get_light_profile_type()};
+        auto fileName{expectOneComptimeString()};
+        auto resolvedFileName{context.locate(fileName)};
+        if (!resolvedFileName) {
+          srcLoc.log_warn(
+              concat("cannot load ", quoted(fileName), ": file not found"));
+          return invoke(lightProfileType, {}, srcLoc);
+        }
+        // TODO
+        return invoke(lightProfileType, {}, srcLoc);
+      }
     }
     break;
   }

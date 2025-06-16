@@ -40,8 +40,7 @@ Compiler::~Compiler() {
 std::optional<Error> Compiler::add(std::string fileOrDirName) {
   auto addFile{[&](std::string fileName) {
     if (llvm::StringRef(fileName).ends_with_insensitive(".mdr")) {
-      SMDL_LOG_DEBUG("Adding MDL archive ",
-                     quoted(fs_abbreviate_path(fileName)));
+      SMDL_LOG_DEBUG("Adding MDL archive ", quoted(fs_abbreviate(fileName)));
       auto archive{Archive{fileName}};
       for (int i = 0; i < archive.get_file_count(); i++) {
         if (auto entryFileName{archive.get_file_name(i)};
@@ -50,7 +49,7 @@ std::optional<Error> Compiler::add(std::string fileOrDirName) {
           if (moduleFileNames.insert(completeEntryFileName).second) {
             SMDL_LOG_DEBUG(
                 "Adding MDL file from archive ",
-                quoted(fs_abbreviate_path(fileName) + "/" + entryFileName));
+                quoted(fs_abbreviate(fileName) + "/" + entryFileName));
             modules.emplace_back(Module::load_from_file_extracted_from_archive(
                 completeEntryFileName, archive.extract_file(i)));
           }
@@ -58,8 +57,7 @@ std::optional<Error> Compiler::add(std::string fileOrDirName) {
       }
     } else {
       if (moduleFileNames.insert(fileName).second) {
-        SMDL_LOG_DEBUG("Adding MDL file ",
-                       quoted(fs_abbreviate_path(fileName)));
+        SMDL_LOG_DEBUG("Adding MDL file ", quoted(fs_abbreviate(fileName)));
         modules.emplace_back(Module::load_from_file(fileName));
       }
     }
@@ -74,7 +72,7 @@ std::optional<Error> Compiler::add(std::string fileOrDirName) {
       return std::nullopt;
     }
     if (fs::is_directory(path, ec) && moduleDirNames.insert(pathStr).second) {
-      SMDL_LOG_DEBUG("Adding MDL directory ", quoted(fs_abbreviate_path(path)));
+      SMDL_LOG_DEBUG("Adding MDL directory ", quoted(fs_abbreviate(path)));
       for (const auto &entry : fs::directory_iterator(path)) {
         if (auto entryPath{fs::canonical(entry.path(), ec)};
             !ec && fs::is_regular_file(entryPath, ec) &&
@@ -144,8 +142,7 @@ std::optional<Error> Compiler::compile(OptLevel optLevel) {
     auto now{std::chrono::steady_clock::now()};
     llvm::parallelFor(0, images.size(), [&](size_t i) {
       auto &[fileName, image] = *std::next(images.begin(), i);
-      SMDL_LOG_DEBUG("Loading image ", quoted(fs_abbreviate_path(fileName)),
-                     " ...");
+      SMDL_LOG_DEBUG("Loading image ", quoted(fs_abbreviate(fileName)), " ...");
       image->finish_load();
     });
     auto duration{std::chrono::duration_cast<std::chrono::microseconds>(
@@ -187,40 +184,35 @@ llvm::Module &Compiler::get_llvm_module() noexcept {
   return *llvmJitModule.get()->getModuleUnlocked();
 }
 
-const Image &Compiler::load_image(const std::string &fileName,
+const Image &Compiler::load_image(const std::string &resolvedFileName,
                                   const SourceLocation &srcLoc) {
-  auto &image{images[fileName]};
+  auto &image{images[resolvedFileName]};
   if (!image) {
     image.reset(new Image());
-    if (auto error{
-            catch_and_return_error([&] { image->start_load(fileName); })}) {
+    if (auto error{catch_and_return_error(
+            [&] { image->start_load(resolvedFileName); })}) {
       image->clear();
-      srcLoc.log_warn(
-          concat("cannot load ", quoted(fileName), ": ", error->message));
+      srcLoc.log_warn(concat("cannot load ",
+                             quoted(fs_abbreviate(resolvedFileName)), ": ",
+                             error->message));
     }
   }
   return *image;
 }
 
-const Ptexture *Compiler::load_ptexture(const std::string &fileName,
+const Ptexture *Compiler::load_ptexture(const std::string &resolvedFileName,
                                         const SourceLocation &srcLoc) {
-  auto resolvedFileName{
-      fileLocator.locate(fileName, srcLoc.get_module_file_name())};
-  if (!resolvedFileName) {
-    srcLoc.log_warn(
-        concat("cannot load ", quoted(fileName), ": file not found"));
-    return nullptr;
-  }
-  auto [itr, inserted] = ptextures.try_emplace(*resolvedFileName, Ptexture{});
+  auto [itr, inserted] = ptextures.try_emplace(resolvedFileName, Ptexture{});
   auto &ptex{itr->second};
   if (inserted) {
 #if SMDL_HAS_PTEX
     Ptex::String message{};
-    auto texture{PtexTexture::open(resolvedFileName->c_str(), message,
+    auto texture{PtexTexture::open(resolvedFileName.c_str(), message,
                                    /*premultiply=*/false)};
     if (!texture) {
-      srcLoc.log_warn(
-          concat("cannot load ", quoted(fileName), ": ", message.c_str()));
+      srcLoc.log_warn(concat("cannot load ",
+                             quoted(fs_abbreviate(resolvedFileName)), ": ",
+                             message.c_str()));
     } else {
       ptex.texture = texture;
       ptex.textureFilter = PtexFilter::getFilter(
@@ -229,32 +221,27 @@ const Ptexture *Compiler::load_ptexture(const std::string &fileName,
       ptex.alphaIndex = texture->alphaChannel();
     }
 #else
-    srcLoc.log_warn(
-        concat("cannot load ", quoted(fileName), ": built without ptex!"));
+    srcLoc.log_warn(concat("cannot load ",
+                           quoted(fs_abbreviate(resolvedFileName)),
+                           ": built without ptex!"));
 #endif // #if SMDL_HAS_PTEX
   }
   return ptex.texture ? &ptex : nullptr;
 }
 
 const BSDFMeasurement *
-Compiler::load_bsdf_measurement(const std::string &fileName,
+Compiler::load_bsdf_measurement(const std::string &resolvedFileName,
                                 const SourceLocation &srcLoc) {
-  auto resolvedFileName{
-      fileLocator.locate(fileName, srcLoc.get_module_file_name())};
-  if (!resolvedFileName) {
-    srcLoc.log_warn(
-        concat("cannot load ", quoted(fileName), ": file not found"));
-    return nullptr;
-  }
-  auto itrAndInserted = bsdfMeasurements.try_emplace(*resolvedFileName);
+  auto itrAndInserted = bsdfMeasurements.try_emplace(resolvedFileName);
   auto itr{itrAndInserted.first};
   auto inserted{itrAndInserted.second};
   if (inserted) {
     if (auto error{catch_and_return_error([&] {
-          itr->second = BSDFMeasurement::load_from_file(*resolvedFileName);
+          itr->second = BSDFMeasurement::load_from_file(resolvedFileName);
         })}) {
-      srcLoc.log_warn(
-          concat("cannot load ", quoted(fileName), ": ", error->message));
+      srcLoc.log_warn(concat("cannot load ",
+                             quoted(fs_abbreviate(resolvedFileName)), ": ",
+                             error->message));
     }
   }
   return itr->second.get();
@@ -377,8 +364,7 @@ std::optional<Error> Compiler::jit_unit_tests(const State &state) noexcept {
         ++itr1;
       }
       std::cerr << concat("Running tests in ",
-                          quoted(fs_abbreviate_path(itr0->moduleFileName)),
-                          ":\n");
+                          quoted(fs_abbreviate(itr0->moduleFileName)), ":\n");
       for (; itr0 != itr1; ++itr0) {
         std::cerr << concat("  ", quoted(itr0->testName), " (line ",
                             itr0->lineNo, ") ... ");
@@ -413,8 +399,8 @@ std::string Compiler::summarize_materials() const {
       ++itr1;
       ++numMaterials;
     }
-    message += concat(quoted(fs_abbreviate_path(itr0->moduleFileName)),
-                      " contains ", numMaterials, " materials:\n");
+    message += concat(quoted(fs_abbreviate(itr0->moduleFileName)), " contains ",
+                      numMaterials, " materials:\n");
     for (; itr0 != itr1; ++itr0) {
       message += "  ";
       message +=

@@ -82,19 +82,18 @@ private:
   [[nodiscard]] llvm::Module &get_llvm_module() noexcept;
 
   /// Load image.
-  [[nodiscard]] const Image &load_image(const std::string &fileName,
+  [[nodiscard]] const Image &load_image(const std::string &resolvedFileName,
                                         const SourceLocation &srcLoc);
 
   /// Load ptex texture.
-  [[nodiscard]] const Ptexture *load_ptexture(const std::string &fileName,
-                                              const SourceLocation &srcLoc);
-  // TODO from module
+  [[nodiscard]] const Ptexture *
+  load_ptexture(const std::string &resolvedFileName,
+                const SourceLocation &srcLoc);
 
   /// Load BSDF measurement.
   [[nodiscard]] const BSDFMeasurement *
-  load_bsdf_measurement(const std::string &fileName,
+  load_bsdf_measurement(const std::string &resolvedFileName,
                         const SourceLocation &srcLoc);
-  // TODO from module
 
 public:
   /// Dump as LLVM-IR or native assembly.

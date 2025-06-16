@@ -156,14 +156,25 @@ export struct texture_2d{
   const auto tile_buffers=auto[](cast<&float4>(null));
   const int gamma=0;
 };
+export struct texture_3d{texture_3d(const string name,const auto gamma=0)=#load_texture_3d(name,int(gamma));
+};
+export struct texture_cube{texture_cube(const string name,const auto gamma=0)=#load_texture_cube(name,int(gamma));
+};
 export struct texture_ptex{
-  texture_ptex(const string name,const auto gamma=0)=texture_ptex(handle: #load_ptexture(name),gamma: int(gamma));
-  const &void handle=null;
+  texture_ptex(const string name,const auto gamma=0)=#load_texture_ptex(name,int(gamma));
+  const &void ptr=null;
   const int gamma=0;
 };
 export struct bsdf_measurement{
-  bsdf_measurement(const string filename)=bsdf_measurement(handle: #load_bsdf_measurement(filename));
-  const &void handle=null;
+  bsdf_measurement(const string name)=#load_bsdf_measurement(name);
+  const int mode=0;
+  const int num_theta=0;
+  const int num_phi=0;
+  const auto buffer=cast<&float>(null);
+};
+export struct light_profile{
+  light_profile(const string name)=#load_light_profile(name);
+  const &void ptr=null;
 };
 export struct material_emission{
   edf emission=edf();
@@ -1433,7 +1444,7 @@ export @(pure macro)int height(const texture_2d tex,const int2 uv_tile=int2(0)){
   return i<0?0:tex.tile_extents[i].y;
 }
 export @(pure macro)bool texture_isvalid(const texture_2d tex)=bool(tex.tile_buffers[0]);
-export @(pure macro)bool texture_isvalid(const texture_ptex tex)=bool(tex.handle);
+export @(pure macro)bool texture_isvalid(const texture_ptex tex)=bool(tex.ptr);
 @(pure)auto texel_fetch(const texture_2d tex,const int2 coord,const int2 uv_tile=int2(0)){
   const auto texel_type(*#typeof(tex.tile_buffers[0]));
   const auto i(uv_tile_index(tex,uv_tile));
@@ -1555,27 +1566,27 @@ export @(pure macro)color lookup_color(
 );
 export @(macro)float4 lookup_float4(const texture_ptex tex,const int channel=0){
   float4 result;
-  smdl_ptex_evaluate(tex.handle,tex.gamma,channel,4,&result[0]);
+  smdl_ptex_evaluate(tex.ptr,tex.gamma,channel,4,&result[0]);
   return result;
 }
 export @(macro)float3 lookup_float3(const texture_ptex tex,const int channel=0){
   float3 result;
-  smdl_ptex_evaluate(tex.handle,tex.gamma,channel,3,&result[0]);
+  smdl_ptex_evaluate(tex.ptr,tex.gamma,channel,3,&result[0]);
   return result;
 }
 export @(macro)float2 lookup_float2(const texture_ptex tex,const int channel=0){
   float2 result;
-  smdl_ptex_evaluate(tex.handle,tex.gamma,channel,2,&result[0]);
+  smdl_ptex_evaluate(tex.ptr,tex.gamma,channel,2,&result[0]);
   return result;
 }
 export @(macro)float lookup_float(const texture_ptex tex,const int channel=0){
   float result;
-  smdl_ptex_evaluate(tex.handle,tex.gamma,channel,1,&result);
+  smdl_ptex_evaluate(tex.ptr,tex.gamma,channel,1,&result);
   return result;
 }
 export @(macro)color lookup_color(const texture_ptex tex,const int channel=0){
   float3 result;
-  smdl_ptex_evaluate(tex.handle,tex.gamma,channel,3,&result[0]);
+  smdl_ptex_evaluate(tex.ptr,tex.gamma,channel,3,&result[0]);
   return color(result);
 }
 )*";

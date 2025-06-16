@@ -8,7 +8,7 @@ namespace smdl {
 
 class SMDL_EXPORT BSDFMeasurement final {
 public:
-  enum Kind { KIND_BRDF, KIND_BTDF };
+  enum Kind { KIND_REFLECTION, KIND_TRANSMISSION };
 
   enum Type { TYPE_FLOAT, TYPE_FLOAT3 };
 
@@ -39,14 +39,8 @@ public:
 
   void clear() noexcept;
 
-  [[nodiscard]] float3 fetch(size_t indexThetaO, size_t indexThetaI,
-                             size_t indexPhi) const noexcept;
-
-  [[nodiscard]] float3 interpolate(const float3 &wo,
-                                   const float3 &wi) const noexcept;
-
 public:
-  Kind kind{KIND_BRDF};
+  Kind kind{KIND_REFLECTION};
 
   Type type{TYPE_FLOAT};
 
