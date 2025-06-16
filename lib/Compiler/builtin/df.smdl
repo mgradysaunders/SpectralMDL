@@ -881,7 +881,7 @@ struct microfacet_bsdf: bsdf {
     const auto proj_areai((1 + lambdai) * #abs(wi.z));
     const auto G = return_from {
       if $(this.shadowing <: microfacet::shadowing_smith) {
-        return mode == scatter_reflect ? 1 / (1 + lambdao + lambdai) : microfacet::beta(1 + lambdao, 1 + lambdai);
+        return mode == scatter_reflect ? 1 / (1 + lambdao + lambdai) : float(microfacet::beta(1 + lambdao, 1 + lambdai));
       } else {
         // V-cavities
         return #min(1, 2 * wm.z * #min(#abs(wo.z / dot_wo_wm), //

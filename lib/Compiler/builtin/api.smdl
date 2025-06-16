@@ -286,15 +286,19 @@ export struct texture_2d {
 };
 
 /// The texture 3D structure.
-export struct texture_3d {texture_3d(const string name, const auto gamma = 0) = #load_texture_3d(name, int(gamma));
+export struct texture_3d {
+  texture_3d(const string name, const auto gamma = 0) = #load_texture_3d(name, int(gamma));
 
   // TODO
+  const int gamma = 0;
 };
 
 /// The texture cube structure.
-export struct texture_cube {texture_cube(const string name, const auto gamma = 0) = #load_texture_cube(name, int(gamma));
+export struct texture_cube {
+  texture_cube(const string name, const auto gamma = 0) = #load_texture_cube(name, int(gamma));
 
   // TODO
+  const int gamma = 0;
 };
 
 /// The texture ptex structure.

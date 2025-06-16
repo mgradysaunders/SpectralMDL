@@ -156,9 +156,13 @@ export struct texture_2d{
   const auto tile_buffers=auto[](cast<&float4>(null));
   const int gamma=0;
 };
-export struct texture_3d{texture_3d(const string name,const auto gamma=0)=#load_texture_3d(name,int(gamma));
+export struct texture_3d{
+  texture_3d(const string name,const auto gamma=0)=#load_texture_3d(name,int(gamma));
+  const int gamma=0;
 };
-export struct texture_cube{texture_cube(const string name,const auto gamma=0)=#load_texture_cube(name,int(gamma));
+export struct texture_cube{
+  texture_cube(const string name,const auto gamma=0)=#load_texture_cube(name,int(gamma));
+  const int gamma=0;
 };
 export struct texture_ptex{
   texture_ptex(const string name,const auto gamma=0)=#load_texture_ptex(name,int(gamma));
@@ -815,7 +819,7 @@ struct microfacet_bsdf:bsdf{
     const auto proj_areai((1+lambdai)*#abs(wi.z));
     const auto G=return_from{
       if$(this.shadowing<:microfacet::shadowing_smith){
-        return mode==scatter_reflect?1/(1+lambdao+lambdai):microfacet::beta(1+lambdao,1+lambdai);
+        return mode==scatter_reflect?1/(1+lambdao+lambdai):float(microfacet::beta(1+lambdao,1+lambdai));
       } else {
         return #min(1,2*wm.z*#min(#abs(wo.z/dot_wo_wm),#abs(wi.z/dot_wi_wm)));
       }

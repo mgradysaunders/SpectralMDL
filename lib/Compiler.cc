@@ -24,7 +24,7 @@ Compiler::Compiler(uint32_t wavelengthBaseMax)
 
 Compiler::~Compiler() {
 #if SMDL_HAS_PTEX
-  for (auto &[fileName, ptexture] : ptextures) {
+  for (auto &[fileHash, ptexture] : ptextures) {
     if (ptexture.textureFilter) {
       static_cast<PtexFilter *>(ptexture.textureFilter)->release();
       ptexture.textureFilter = nullptr;
@@ -98,6 +98,8 @@ std::optional<Error> Compiler::compile(OptLevel optLevel) {
   {
     images.clear();
     ptextures.clear();
+    bsdfMeasurements.clear();
+    // TODO lightProfiles.clear();
     llvmJit.reset();
     llvm::ExitOnError exitOnError;
     auto llvmContext{std::make_unique<llvm::LLVMContext>()};
@@ -141,9 +143,11 @@ std::optional<Error> Compiler::compile(OptLevel optLevel) {
     SMDL_LOG_INFO("Loading images ...");
     auto now{std::chrono::steady_clock::now()};
     llvm::parallelFor(0, images.size(), [&](size_t i) {
-      auto &[fileName, image] = *std::next(images.begin(), i);
-      SMDL_LOG_DEBUG("Loading image ", quoted(fs_abbreviate(fileName)), " ...");
-      image->finish_load();
+      auto &[fileHash, image] = *std::next(images.begin(), i);
+      SMDL_LOG_DEBUG("Loading image ",
+                     quoted(fs_abbreviate(fileHash->canonicalFileNames[0])),
+                     " ...");
+      image.finish_load();
     });
     auto duration{std::chrono::duration_cast<std::chrono::microseconds>(
                       std::chrono::steady_clock::now() - now)
@@ -184,67 +188,62 @@ llvm::Module &Compiler::get_llvm_module() noexcept {
   return *llvmJitModule.get()->getModuleUnlocked();
 }
 
-const Image &Compiler::load_image(const std::string &resolvedFileName,
+const Image &Compiler::load_image(const std::string &fileName,
                                   const SourceLocation &srcLoc) {
-  auto &image{images[resolvedFileName]};
-  if (!image) {
-    image.reset(new Image());
-    if (auto error{catch_and_return_error(
-            [&] { image->start_load(resolvedFileName); })}) {
-      image->clear();
-      srcLoc.log_warn(concat("cannot load ",
-                             quoted(fs_abbreviate(resolvedFileName)), ": ",
-                             error->message));
+  auto [itr, inserted] = images.try_emplace(fileHasher[fileName]);
+  auto &image{itr->second};
+  if (inserted) {
+    // TODO Make `start_load()` return an error with the `"cannot load "` prefix
+    // already attached to the message
+    if (auto error{
+            catch_and_return_error([&] { image.start_load(fileName); })}) {
+      srcLoc.log_warn(concat("cannot load ", quoted(fs_abbreviate(fileName)),
+                             ": ", error->message));
+      image.clear();
     }
   }
-  return *image;
+  return image;
 }
 
-const Ptexture *Compiler::load_ptexture(const std::string &resolvedFileName,
+const Ptexture &Compiler::load_ptexture(const std::string &fileName,
                                         const SourceLocation &srcLoc) {
-  auto [itr, inserted] = ptextures.try_emplace(resolvedFileName, Ptexture{});
-  auto &ptex{itr->second};
+  auto [itr, inserted] = ptextures.try_emplace(fileHasher[fileName]);
+  auto &ptexture{itr->second};
   if (inserted) {
 #if SMDL_HAS_PTEX
     Ptex::String message{};
-    auto texture{PtexTexture::open(resolvedFileName.c_str(), message,
+    auto texture{PtexTexture::open(fileName.c_str(), message,
                                    /*premultiply=*/false)};
     if (!texture) {
-      srcLoc.log_warn(concat("cannot load ",
-                             quoted(fs_abbreviate(resolvedFileName)), ": ",
-                             message.c_str()));
+      srcLoc.log_warn(concat("cannot load ", quoted(fs_abbreviate(fileName)),
+                             ": ", message.c_str()));
     } else {
-      ptex.texture = texture;
-      ptex.textureFilter = PtexFilter::getFilter(
+      ptexture.texture = texture;
+      ptexture.textureFilter = PtexFilter::getFilter(
           texture, PtexFilter::Options(PtexFilter::f_bilinear));
-      ptex.channelCount = texture->numChannels();
-      ptex.alphaIndex = texture->alphaChannel();
+      ptexture.channelCount = texture->numChannels();
+      ptexture.alphaIndex = texture->alphaChannel();
     }
 #else
-    srcLoc.log_warn(concat("cannot load ",
-                           quoted(fs_abbreviate(resolvedFileName)),
+    srcLoc.log_warn(concat("cannot load ", quoted(fs_abbreviate(fileName)),
                            ": built without ptex!"));
 #endif // #if SMDL_HAS_PTEX
   }
-  return ptex.texture ? &ptex : nullptr;
+  return ptexture;
 }
 
-const BSDFMeasurement *
-Compiler::load_bsdf_measurement(const std::string &resolvedFileName,
+const BSDFMeasurement &
+Compiler::load_bsdf_measurement(const std::string &fileName,
                                 const SourceLocation &srcLoc) {
-  auto itrAndInserted = bsdfMeasurements.try_emplace(resolvedFileName);
-  auto itr{itrAndInserted.first};
-  auto inserted{itrAndInserted.second};
+  auto [itr, inserted] = bsdfMeasurements.try_emplace(fileHasher[fileName]);
+  auto &bsdfMeasurement{itr->second};
   if (inserted) {
-    if (auto error{catch_and_return_error([&] {
-          itr->second = BSDFMeasurement::load_from_file(resolvedFileName);
-        })}) {
-      srcLoc.log_warn(concat("cannot load ",
-                             quoted(fs_abbreviate(resolvedFileName)), ": ",
-                             error->message));
+    if (auto error{bsdfMeasurement.load_from_file(fileName)}) {
+      srcLoc.log_warn(error->message);
+      bsdfMeasurement.clear();
     }
   }
-  return itr->second.get();
+  return bsdfMeasurement;
 }
 
 std::string Compiler::dump(DumpFormat dumpFormat) {

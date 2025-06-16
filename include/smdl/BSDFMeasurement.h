@@ -31,11 +31,11 @@ public:
 
   ~BSDFMeasurement() { clear(); }
 
-  [[nodiscard]] static std::unique_ptr<BSDFMeasurement>
-  load_from_memory(const std::string &file);
+  [[nodiscard]]
+  std::optional<Error> load_from_file_memory(const std::string &file) noexcept;
 
-  [[nodiscard]] static std::unique_ptr<BSDFMeasurement>
-  load_from_file(const std::string &fileName);
+  [[nodiscard]]
+  std::optional<Error> load_from_file(const std::string &fileName) noexcept;
 
   void clear() noexcept;
 

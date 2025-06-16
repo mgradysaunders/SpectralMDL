@@ -23,6 +23,12 @@ using fs_error_code = std::error_code;
 
 namespace smdl {
 
+[[nodiscard]] inline std::string fs_canonicalize(std::string str) try {
+  return fs::canonical(str).string();
+} catch (...) {
+  return str;
+}
+
 [[nodiscard]] inline std::string fs_abbreviate(std::string str) try {
   if (auto abbrevStr{fs::relative(str).string()}; abbrevStr.size() < str.size())
     return abbrevStr;

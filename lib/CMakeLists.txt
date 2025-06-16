@@ -25,6 +25,7 @@ add_library(
     "Formatter.cc"
     "Image.cc"
     "Logger.cc"
+    "MD5Hash.cc"
     "Module.cc"
     "Parser.cc"
     "SceneData.cc"

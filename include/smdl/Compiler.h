@@ -7,6 +7,7 @@
 #include "smdl/FileLocator.h"
 #include "smdl/Image.h"
 #include "smdl/JIT.h"
+#include "smdl/MD5Hash.h"
 #include "smdl/Module.h"
 #include "smdl/SceneData.h"
 
@@ -82,17 +83,16 @@ private:
   [[nodiscard]] llvm::Module &get_llvm_module() noexcept;
 
   /// Load image.
-  [[nodiscard]] const Image &load_image(const std::string &resolvedFileName,
+  [[nodiscard]] const Image &load_image(const std::string &fileName,
                                         const SourceLocation &srcLoc);
 
   /// Load ptex texture.
-  [[nodiscard]] const Ptexture *
-  load_ptexture(const std::string &resolvedFileName,
-                const SourceLocation &srcLoc);
+  [[nodiscard]] const Ptexture &load_ptexture(const std::string &fileName,
+                                              const SourceLocation &srcLoc);
 
   /// Load BSDF measurement.
-  [[nodiscard]] const BSDFMeasurement *
-  load_bsdf_measurement(const std::string &resolvedFileName,
+  [[nodiscard]] const BSDFMeasurement &
+  load_bsdf_measurement(const std::string &fileName,
                         const SourceLocation &srcLoc);
 
 public:
@@ -205,15 +205,17 @@ private:
   ///
   BumpPtrAllocator allocator{};
 
+  /// The MD5 file hasher.
+  MD5FileHasher fileHasher{};
+
   /// The images used by textures.
-  std::map<std::string, std::unique_ptr<Image>, std::less<>> images{};
+  std::map<const MD5FileHash *, Image> images{};
 
   /// The ptex textures.
-  std::map<std::string, Ptexture, std::less<>> ptextures{};
+  std::map<const MD5FileHash *, Ptexture> ptextures{};
 
   /// The BSDF measurements.
-  std::map<std::string, std::unique_ptr<BSDFMeasurement>, std::less<>>
-      bsdfMeasurements{};
+  std::map<const MD5FileHash *, BSDFMeasurement> bsdfMeasurements{};
 
   /// The MDL module file names.
   std::set<std::string> moduleFileNames{};

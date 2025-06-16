@@ -1655,9 +1655,11 @@ Value Emitter::emit_intrinsic(std::string_view name, const ArgumentList &args,
               concat("cannot load ", quoted(fileName), ": file not found"));
           return invoke(texturePtexType, {}, srcLoc);
         }
-        auto valuePtr{context.get_comptime_ptr(
-            context.get_void_pointer_type(),
-            context.compiler.load_ptexture(*resolvedFileName, srcLoc))};
+        auto &ptexture{
+            context.compiler.load_ptexture(*resolvedFileName, srcLoc)};
+        auto valuePtr{
+            context.get_comptime_ptr(context.get_void_pointer_type(),
+                                     ptexture.texture ? &ptexture : nullptr)};
         return invoke(
             texturePtexType,
             {Argument{"ptr", valuePtr}, Argument{"gamma", valueGammaAsInt}},
@@ -1672,26 +1674,23 @@ Value Emitter::emit_intrinsic(std::string_view name, const ArgumentList &args,
               concat("cannot load ", quoted(fileName), ": file not found"));
           return invoke(bsdfMeasurementType, {}, srcLoc);
         }
-        auto bsdfMeasurement{
+        auto &bsdfMeasurement{
             context.compiler.load_bsdf_measurement(*resolvedFileName, srcLoc)};
-        if (!bsdfMeasurement) {
-          return invoke(bsdfMeasurementType, {}, srcLoc);
-        }
         auto bufferPtrType{context.get_pointer_type(context.get_float_type(
-            bsdfMeasurement->type == BSDFMeasurement::TYPE_FLOAT ? 1 : 3))};
+            bsdfMeasurement.type == BSDFMeasurement::TYPE_FLOAT ? 1 : 3))};
         return invoke(
             bsdfMeasurementType,
             {Argument{"mode", context.get_comptime_int(
-                                  bsdfMeasurement->kind ==
+                                  bsdfMeasurement.kind ==
                                           BSDFMeasurement::KIND_REFLECTION
                                       ? /* scatter_reflect  */ 1
                                       : /* scatter_transmit */ 2)},
              Argument{"num_theta",
-                      context.get_comptime_int(int(bsdfMeasurement->numTheta))},
+                      context.get_comptime_int(int(bsdfMeasurement.numTheta))},
              Argument{"num_phi",
-                      context.get_comptime_int(int(bsdfMeasurement->numPhi))},
+                      context.get_comptime_int(int(bsdfMeasurement.numPhi))},
              Argument{"buffer", context.get_comptime_ptr(
-                                    bufferPtrType, bsdfMeasurement->buffer)}},
+                                    bufferPtrType, bsdfMeasurement.buffer)}},
             srcLoc);
       }
       if (name == "load_light_profile") {
