@@ -21,7 +21,6 @@ add_library(
     "Compiler/Type.cc"
     "Compiler/Value.cc"
     "FileLocator.cc"
-    "filesystem.cc"
     "Formatter.cc"
     "Image.cc"
     "LightProfile.cc"
