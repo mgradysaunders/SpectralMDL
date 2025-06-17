@@ -986,6 +986,20 @@ export auto microfacet_beckmann_smith_bsdf(*) = initialize_microfacet_bsdf(distr
 
 export auto microfacet_beckmann_vcavities_bsdf(*) = initialize_microfacet_bsdf(distribution: microfacet::distribution_beckmann(), shadowing: microfacet::shadowing_vcavities());
 
+export bool bsdf_measurement_isvalid(const bsdf_measurement measurement) = bool(measurement.buffer);
+
+export struct measured_bsdf: bsdf {
+  bsdf_measurement measurement;
+
+  float multiplier = 1.0;
+
+  scatter_mode mode = scatter_reflect;
+
+  string handle = "";
+};
+
+// TODO measured_bsdf
+
 //--{ tint
 /// A 1-value tint.
 struct tint1: bsdf, edf, hair_bsdf {
@@ -1368,3 +1382,10 @@ export @(macro) int $scatter_sample(
     }
   }
 }
+
+
+// TODO light_profile_isvalid(const light_profile profile)
+
+// TODO light_profile_maximum(const light_profile profile)
+
+// TODO light_profile_power(const light_profile profile)

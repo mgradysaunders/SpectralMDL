@@ -12,7 +12,7 @@ namespace smdl {
 std::optional<Error>
 BSDFMeasurement::load_from_file_memory(const std::string &file) noexcept {
   clear();
-  return catch_and_return_error([&] {
+  auto error{catch_and_return_error([&] {
     auto mem{llvm::StringRef(file)};
     if (!mem.consume_front("NVIDIA ARC MBSDF V1\n")) {
       throw Error("not an MBSDF file");
@@ -91,11 +91,16 @@ BSDFMeasurement::load_from_file_memory(const std::string &file) noexcept {
       throw Error("unknown type");
       break;
     }
-  });
+  })};
+  if (error) {
+    clear();
+  }
+  return error;
 }
 
 std::optional<Error>
 BSDFMeasurement::load_from_file(const std::string &fileName) noexcept {
+  clear();
   auto file{std::string()};
   if (auto error{catch_and_return_error([&] { file = fs_read(fileName); })})
     return error;

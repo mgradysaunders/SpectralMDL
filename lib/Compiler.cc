@@ -99,7 +99,7 @@ std::optional<Error> Compiler::compile(OptLevel optLevel) {
     images.clear();
     ptextures.clear();
     bsdfMeasurements.clear();
-    // TODO lightProfiles.clear();
+    lightProfiles.clear();
     llvmJit.reset();
     llvm::ExitOnError exitOnError;
     auto llvmContext{std::make_unique<llvm::LLVMContext>()};
@@ -240,10 +240,21 @@ Compiler::load_bsdf_measurement(const std::string &fileName,
   if (inserted) {
     if (auto error{bsdfMeasurement.load_from_file(fileName)}) {
       srcLoc.log_warn(error->message);
-      bsdfMeasurement.clear();
     }
   }
   return bsdfMeasurement;
+}
+
+const LightProfile &Compiler::load_light_profile(const std::string &fileName,
+                                                 const SourceLocation &srcLoc) {
+  auto [itr, inserted] = lightProfiles.try_emplace(fileHasher[fileName]);
+  auto &lightProfile{itr->second};
+  if (inserted) {
+    if (auto error{lightProfile.load_from_file(fileName)}) {
+      srcLoc.log_warn(error->message);
+    }
+  }
+  return lightProfile;
 }
 
 std::string Compiler::dump(DumpFormat dumpFormat) {

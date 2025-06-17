@@ -24,6 +24,7 @@ add_library(
     "filesystem.cc"
     "Formatter.cc"
     "Image.cc"
+    "LightProfile.cc"
     "Logger.cc"
     "MD5Hash.cc"
     "Module.cc"

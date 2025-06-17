@@ -7,6 +7,7 @@
 #include "smdl/FileLocator.h"
 #include "smdl/Image.h"
 #include "smdl/JIT.h"
+#include "smdl/LightProfile.h"
 #include "smdl/MD5Hash.h"
 #include "smdl/Module.h"
 #include "smdl/SceneData.h"
@@ -91,9 +92,14 @@ private:
                                               const SourceLocation &srcLoc);
 
   /// Load BSDF measurement.
-  [[nodiscard]] const BSDFMeasurement &
-  load_bsdf_measurement(const std::string &fileName,
-                        const SourceLocation &srcLoc);
+  [[nodiscard]]
+  const BSDFMeasurement &load_bsdf_measurement(const std::string &fileName,
+                                               const SourceLocation &srcLoc);
+
+  /// Load light profile.
+  [[nodiscard]]
+  const LightProfile &load_light_profile(const std::string &fileName,
+                                         const SourceLocation &srcLoc);
 
 public:
   /// Dump as LLVM-IR or native assembly.
@@ -216,6 +222,9 @@ private:
 
   /// The BSDF measurements.
   std::map<const MD5FileHash *, BSDFMeasurement> bsdfMeasurements{};
+
+  /// The light profiles.
+  std::map<const MD5FileHash *, LightProfile> lightProfiles{};
 
   /// The MDL module file names.
   std::set<std::string> moduleFileNames{};
