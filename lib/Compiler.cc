@@ -9,6 +9,7 @@
 #include "llvm/ExecutionEngine/Orc/ThreadSafeModule.h"
 #include "llvm/Support/Parallel.h"
 
+#include "Archive.h"
 #include "filesystem.h"
 
 #include "Compiler/Context.h"
