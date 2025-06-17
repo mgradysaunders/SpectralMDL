@@ -84,6 +84,7 @@ public:
   std::pair<uint64_t, uint64_t> hash{};
 };
 
+/// An MD5 file hash.
 class SMDL_EXPORT MD5FileHash final {
 public:
   /// The hash code.
@@ -94,6 +95,11 @@ public:
   std::vector<std::string> canonicalFileNames{};
 };
 
+/// An MD5 file hasher.
+///
+/// This caches the `MD5FileHash` for every file that is hashed, so that we
+/// do not have to calculate hashes redundantly.
+///
 class SMDL_EXPORT MD5FileHasher final {
 public:
   MD5FileHasher() = default;

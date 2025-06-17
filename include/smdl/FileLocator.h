@@ -4,7 +4,7 @@
 
 namespace smdl {
 
-/// \addtogroup Main
+/// \addtogroup Support
 /// \{
 
 /// The file locator.
@@ -29,7 +29,13 @@ public:
   /// Returns true if successful, and false if the given `dirPath`
   /// did not resolve to a valid path.
   ///
-  bool add_search_dir(std::string_view dir, bool isRecursive = false);
+  bool add_search_dir(const std::string &dir, bool isRecursive = false) {
+    if (is_directory(dir)) {
+      searchDirs.emplace_back(SearchDir{canonical(dir), isRecursive});
+      return true;
+    }
+    return false;
+  }
 
   /// Get all active search directories.
   ///

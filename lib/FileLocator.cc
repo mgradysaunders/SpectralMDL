@@ -8,46 +8,34 @@
 
 namespace smdl {
 
-bool FileLocator::add_search_dir(std::string_view dir, bool isRecursive) {
-  auto ec{fs_error_code()};
-  auto dirPath{fs::canonical(fs_make_path(dir), ec)};
-  if (!ec && fs::is_directory(dirPath, ec)) {
-    searchDirs.push_back(SearchDir{dirPath.string(), isRecursive});
-    return true;
-  }
-  return false;
-}
-
 std::vector<std::string>
 FileLocator::get_search_dirs(std::string_view relativeTo) const {
-  auto ec{fs_error_code()};
   auto results{std::vector<std::string>()};
   auto resultSet{llvm::StringSet()};
-  auto add{[&](fs::path dirPath) {
-    auto dir{dirPath.string()};
+  auto add{[&](std::string dir) {
     if (auto [itr, inserted] = resultSet.insert(dir); inserted) {
       results.push_back(std::move(dir));
     }
   }};
   if (!relativeTo.empty()) {
-    if (auto fileOrDir{fs::canonical(fs_make_path(relativeTo), ec)}; !ec) {
-      if (fs::is_regular_file(fileOrDir, ec)) {
-        add(fileOrDir.parent_path());
-      } else if (fs::is_directory(fileOrDir, ec)) {
-        add(fileOrDir);
-      }
+    auto fileOrDir{canonical(std::string(relativeTo))};
+    if (is_directory(fileOrDir)) {
+      add(fileOrDir);
+    } else {
+      add(parent_path(fileOrDir));
     }
   }
   if (searchPwd) {
+    auto ec{fs_error_code()};
     if (auto pwd{fs::current_path(ec)}; !ec) {
       add(std::move(pwd));
     }
   }
   for (const auto &[dir, isRecursive] : searchDirs) {
-    add(fs_make_path(dir));
+    add(dir);
     if (isRecursive) {
-      for (auto &&entry : fs::recursive_directory_iterator(fs_make_path(dir))) {
-        if (auto subDir{entry.path()}; fs::is_directory(subDir, ec)) {
+      for (auto &&entry : fs::recursive_directory_iterator(dir)) {
+        if (auto subDir{entry.path().string()}; is_directory(subDir)) {
           add(std::move(subDir));
         }
       }
@@ -59,27 +47,28 @@ FileLocator::get_search_dirs(std::string_view relativeTo) const {
 std::optional<std::string> FileLocator::locate(std::string_view fileName,
                                                std::string_view relativeTo,
                                                LocateFlags flags) const {
-  auto ec{fs_error_code()};
-  auto result{fs::path()};
+  auto result{std::string()};
   auto accept{[&](fs::path attempt) {
-    attempt = fs::canonical(attempt, ec);
-    if (!ec) {
+    try {
+      auto ec{fs_error_code()};
       if (((flags & REGULAR_FILES) != 0 && fs::is_regular_file(attempt, ec)) ||
           ((flags & DIRS) != 0 && fs::is_directory(attempt, ec))) {
-        result = std::move(attempt);
+        result = canonical(attempt.string());
         return true;
       }
+    } catch (...) {
+      // Do nothing
     }
     return false;
   }};
   auto fname{fs_make_path(fileName)};
   if (fname.is_absolute() && accept(fname)) {
-    return result.string();
+    return result;
   }
   if (fname.is_relative()) {
     for (auto &&dir : get_search_dirs(relativeTo)) {
       if (accept(fs_make_path(dir) / fname)) {
-        return result.string();
+        return result;
       }
     }
   }

@@ -1,7 +1,5 @@
 #include "smdl/BSDFMeasurement.h"
 
-#include "filesystem.h"
-
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/StringRef.h"
 #include "llvm/Support/Endian.h"
@@ -102,10 +100,11 @@ std::optional<Error>
 BSDFMeasurement::load_from_file(const std::string &fileName) noexcept {
   clear();
   auto file{std::string()};
-  if (auto error{catch_and_return_error([&] { file = fs_read(fileName); })})
+  if (auto error{
+          catch_and_return_error([&] { file = read_or_throw(fileName); })})
     return error;
   if (auto error{load_from_file_memory(file)})
-    return Error(concat("cannot load ", quoted(fs_abbreviate(fileName)), ": ",
+    return Error(concat("cannot load ", quoted(relative(fileName)), ": ",
                         error->message));
   return std::nullopt;
 }

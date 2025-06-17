@@ -1,42 +1,20 @@
 #pragma once
 
-#include <cerrno>
-#include <fstream>
-#include <streambuf>
-
 #if SMDL_USE_BOOST_FILESYSTEM
 #include "boost/filesystem.hpp"
 namespace fs = boost::filesystem;
-using fs_fstream = boost::filesystem::fstream;
 using fs_error_code = boost::system::error_code;
 #else
 #include <filesystem>
 namespace fs = std::filesystem;
-using fs_fstream = std::fstream;
 using fs_error_code = std::error_code;
 #endif // #if SMDL_USE_BOOST_FILESYSTEM
 
 #include "thirdparty/miniz.h"
-#include "llvm/ADT/StringRef.h"
 
 #include "smdl/common.h"
 
 namespace smdl {
-
-[[nodiscard]] inline std::string fs_canonicalize(std::string str) try {
-  return fs::canonical(str).string();
-} catch (...) {
-  return str;
-}
-
-[[nodiscard]] inline std::string fs_abbreviate(std::string str) try {
-  if (auto abbrevStr{fs::relative(str).string()}; abbrevStr.size() < str.size())
-    return abbrevStr;
-  return str;
-} catch (...) {
-  // No-op on failure
-  return str;
-}
 
 [[nodiscard]] inline fs::path fs_make_path(const std::string &str) {
   return fs::path(str);
@@ -45,36 +23,6 @@ namespace smdl {
 [[nodiscard]] inline fs::path fs_make_path(std::string_view str) {
   // NOTE: Boost doesn't have `std::string_view` constructor
   return fs::path(str.begin(), str.end());
-}
-
-[[nodiscard]] inline bool fs_has_extension(const fs::path &path,
-                                           std::string_view extension) try {
-  auto pathStr{path.string()};
-  return llvm::StringRef(pathStr).ends_with_insensitive(extension);
-} catch (...) {
-  return false;
-}
-
-[[nodiscard]] inline fs_fstream fs_open(const fs::path &path,
-                                        std::ios::openmode mode) {
-  auto stream{fs_fstream(path, mode)};
-  if (!stream.is_open())
-    throw Error(concat("cannot open ", quoted(path.string()), ": ",
-                       std::strerror(errno)));
-  return stream;
-}
-
-[[nodiscard]] std::string fs_read(const fs::path &path);
-
-[[nodiscard]] std::string fs_read_thru_archive(const fs::path &path,
-                                               bool &isExtractedFromArchive);
-
-template <size_t N>
-[[nodiscard]] inline std::array<char, N> fs_read_header(const fs::path &path) {
-  auto buffer{std::array<char, N>{}};
-  auto stream{fs_open(path, std::ios::in | std::ios::binary)};
-  stream.read(buffer.data(), buffer.size());
-  return buffer;
 }
 
 /// A zip archive.

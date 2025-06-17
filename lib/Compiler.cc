@@ -40,16 +40,15 @@ Compiler::~Compiler() {
 std::optional<Error> Compiler::add(std::string fileOrDirName) {
   auto addFile{[&](std::string fileName) {
     if (llvm::StringRef(fileName).ends_with_insensitive(".mdr")) {
-      SMDL_LOG_DEBUG("Adding MDL archive ", quoted(fs_abbreviate(fileName)));
+      SMDL_LOG_DEBUG("Adding MDL archive ", quoted(relative(fileName)));
       auto archive{Archive{fileName}};
       for (int i = 0; i < archive.get_file_count(); i++) {
         if (auto entryFileName{archive.get_file_name(i)};
             llvm::StringRef(entryFileName).ends_with_insensitive(".mdl")) {
           auto completeEntryFileName{fileName + "/" + entryFileName};
           if (moduleFileNames.insert(completeEntryFileName).second) {
-            SMDL_LOG_DEBUG(
-                "Adding MDL file from archive ",
-                quoted(fs_abbreviate(fileName) + "/" + entryFileName));
+            SMDL_LOG_DEBUG("Adding MDL file from archive ",
+                           quoted(relative(fileName) + "/" + entryFileName));
             modules.emplace_back(Module::load_from_file_extracted_from_archive(
                 completeEntryFileName, archive.extract_file(i)));
           }
@@ -57,35 +56,32 @@ std::optional<Error> Compiler::add(std::string fileOrDirName) {
       }
     } else {
       if (moduleFileNames.insert(fileName).second) {
-        SMDL_LOG_DEBUG("Adding MDL file ", quoted(fs_abbreviate(fileName)));
+        SMDL_LOG_DEBUG("Adding MDL file ", quoted(relative(fileName)));
         modules.emplace_back(Module::load_from_file(fileName));
       }
     }
   }};
-  if (auto maybePathStr{fileLocator.locate(
+  if (auto maybePath{fileLocator.locate(
           fileOrDirName, {}, FileLocator::REGULAR_FILES | FileLocator::DIRS)}) {
-    auto &pathStr{*maybePathStr};
-    auto path{fs_make_path(pathStr)};
-    auto ec{fs_error_code{}};
-    if (fs::is_regular_file(path, ec)) {
-      addFile(pathStr);
+    auto &path{*maybePath};
+    if (is_file(path)) {
+      addFile(path);
       return std::nullopt;
-    }
-    if (fs::is_directory(path, ec) && moduleDirNames.insert(pathStr).second) {
-      SMDL_LOG_DEBUG("Adding MDL directory ", quoted(fs_abbreviate(path)));
+    } else if (is_directory(path) && moduleDirNames.insert(path).second) {
+      SMDL_LOG_DEBUG("Adding MDL directory ", quoted(relative(path)));
       for (const auto &entry : fs::directory_iterator(path)) {
-        if (auto entryPath{fs::canonical(entry.path(), ec)};
-            !ec && fs::is_regular_file(entryPath, ec) &&
-            fs_has_extension(entryPath, ".mdr")) {
-          addFile(entryPath.string());
+        if (auto entryPath{canonical(entry.path().string())};
+            is_file(entryPath) &&
+            llvm::StringRef(entryPath).ends_with_insensitive(".mdr")) {
+          addFile(entryPath);
         }
       }
       for (const auto &entry : fs::recursive_directory_iterator(path)) {
-        if (auto entryPath{fs::canonical(entry.path(), ec)};
-            !ec && fs::is_regular_file(entryPath, ec) &&
-            (fs_has_extension(entryPath, ".mdl") ||
-             fs_has_extension(entryPath, ".smdl"))) {
-          addFile(entryPath.string());
+        if (auto entryPath{canonical(entry.path().string())};
+            is_file(entryPath) &&
+            (llvm::StringRef(entryPath).ends_with_insensitive(".mdl") ||
+             llvm::StringRef(entryPath).ends_with_insensitive(".smdl"))) {
+          addFile(entryPath);
         }
       }
       return std::nullopt;
@@ -145,8 +141,7 @@ std::optional<Error> Compiler::compile(OptLevel optLevel) {
     llvm::parallelFor(0, images.size(), [&](size_t i) {
       auto &[fileHash, image] = *std::next(images.begin(), i);
       SMDL_LOG_DEBUG("Loading image ",
-                     quoted(fs_abbreviate(fileHash->canonicalFileNames[0])),
-                     " ...");
+                     quoted(relative(fileHash->canonicalFileNames[0])), " ...");
       image.finish_load();
     });
     auto duration{std::chrono::duration_cast<std::chrono::microseconds>(
@@ -193,13 +188,8 @@ const Image &Compiler::load_image(const std::string &fileName,
   auto [itr, inserted] = images.try_emplace(fileHasher[fileName]);
   auto &image{itr->second};
   if (inserted) {
-    // TODO Make `start_load()` return an error with the `"cannot load "` prefix
-    // already attached to the message
-    if (auto error{
-            catch_and_return_error([&] { image.start_load(fileName); })}) {
-      srcLoc.log_warn(concat("cannot load ", quoted(fs_abbreviate(fileName)),
-                             ": ", error->message));
-      image.clear();
+    if (auto error{image.start_load(fileName)}) {
+      srcLoc.log_warn(error->message);
     }
   }
   return image;
@@ -215,8 +205,8 @@ const Ptexture &Compiler::load_ptexture(const std::string &fileName,
     auto texture{PtexTexture::open(fileName.c_str(), message,
                                    /*premultiply=*/false)};
     if (!texture) {
-      srcLoc.log_warn(concat("cannot load ", quoted(fs_abbreviate(fileName)),
-                             ": ", message.c_str()));
+      srcLoc.log_warn(concat("cannot load ", quoted(relative(fileName)), ": ",
+                             message.c_str()));
     } else {
       ptexture.texture = texture;
       ptexture.textureFilter = PtexFilter::getFilter(
@@ -225,7 +215,7 @@ const Ptexture &Compiler::load_ptexture(const std::string &fileName,
       ptexture.alphaIndex = texture->alphaChannel();
     }
 #else
-    srcLoc.log_warn(concat("cannot load ", quoted(fs_abbreviate(fileName)),
+    srcLoc.log_warn(concat("cannot load ", quoted(relative(fileName)),
                            ": built without ptex!"));
 #endif // #if SMDL_HAS_PTEX
   }
@@ -374,7 +364,7 @@ std::optional<Error> Compiler::jit_unit_tests(const State &state) noexcept {
         ++itr1;
       }
       std::cerr << concat("Running tests in ",
-                          quoted(fs_abbreviate(itr0->moduleFileName)), ":\n");
+                          quoted(relative(itr0->moduleFileName)), ":\n");
       for (; itr0 != itr1; ++itr0) {
         std::cerr << concat("  ", quoted(itr0->testName), " (line ",
                             itr0->lineNo, ") ... ");
@@ -409,7 +399,7 @@ std::string Compiler::summarize_materials() const {
       ++itr1;
       ++numMaterials;
     }
-    message += concat(quoted(fs_abbreviate(itr0->moduleFileName)), " contains ",
+    message += concat(quoted(relative(itr0->moduleFileName)), " contains ",
                       numMaterials, " materials:\n");
     for (; itr0 != itr1; ++itr0) {
       message += "  ";

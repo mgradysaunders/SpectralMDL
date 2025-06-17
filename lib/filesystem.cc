@@ -2,12 +2,7 @@
 
 namespace smdl {
 
-std::string fs_read(const fs::path &path) {
-  auto stream{fs_open(path, std::ios::in | std::ios::binary)};
-  return std::string((std::istreambuf_iterator<char>(stream)),
-                     std::istreambuf_iterator<char>());
-}
-
+#if 0
 std::string fs_read_thru_archive(const fs::path &path,
                                  bool &isExtractedFromArchive) {
   isExtractedFromArchive = false;
@@ -39,5 +34,6 @@ std::string fs_read_thru_archive(const fs::path &path,
   }
   return {};
 }
+#endif
 
 } // namespace smdl

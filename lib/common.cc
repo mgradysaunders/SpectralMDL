@@ -9,6 +9,9 @@
 #endif // #if __has_include(<cxxabi.h>)
 #endif // #if __GNUC__ || __clang__
 
+#include <cerrno>
+#include <streambuf>
+
 #include "filesystem.h"
 
 #include "llvm/MC/TargetRegistry.h"
@@ -44,28 +47,6 @@ BuildInfo BuildInfo::get() noexcept {
           SMDL_VERSION_PATCH, //
           SMDL_GIT_BRANCH,    //
           SMDL_GIT_COMMIT};
-}
-
-SemanticVersion SemanticVersion::parse(const std::string &versionStr) {
-  auto version{SemanticVersion{}};
-  auto success{[&]() {
-    auto src{llvm::StringRef(versionStr).trim()};
-    if (src.consumeInteger(10, version.major) || !src.consume_front(".") ||
-        src.consumeInteger(10, version.minor) || !src.consume_front(".") ||
-        src.consumeInteger(10, version.patch))
-      return false;
-    if (src.consume_front("-")) {
-      auto [src0, src1] = src.split('+');
-      version.preRelease = std::string(src0);
-      version.buildMetadata = std::string(src1);
-    } else if (src.consume_front("+")) {
-      version.buildMetadata = std::string(src);
-    }
-    return true;
-  }()};
-  if (!success)
-    throw Error(concat("invalid version string ", quoted(versionStr)));
-  return version;
 }
 
 BumpPtrAllocator::BumpPtrAllocator() { ptr = new llvm::BumpPtrAllocator(); }
@@ -128,7 +109,7 @@ SourceLocation::operator std::string() const {
     if (module_->is_builtin()) {
       str += module_->get_name();
     } else {
-      str += fs_abbreviate(std::string(module_->get_file_name()));
+      str += relative(std::string(module_->get_file_name()));
     }
     str += ':';
     str += std::to_string(lineNo);
@@ -166,6 +147,28 @@ std::string abi_demangle_exception_name() {
 #else
   return "unknown exception";
 #endif // #if HAS_CXXABI
+}
+
+SemanticVersion SemanticVersion::parse(const std::string &versionStr) {
+  auto version{SemanticVersion{}};
+  auto success{[&]() {
+    auto src{llvm::StringRef(versionStr).trim()};
+    if (src.consumeInteger(10, version.major) || !src.consume_front(".") ||
+        src.consumeInteger(10, version.minor) || !src.consume_front(".") ||
+        src.consumeInteger(10, version.patch))
+      return false;
+    if (src.consume_front("-")) {
+      auto [src0, src1] = src.split('+');
+      version.preRelease = std::string(src0);
+      version.buildMetadata = std::string(src1);
+    } else if (src.consume_front("+")) {
+      version.buildMetadata = std::string(src);
+    }
+    return true;
+  }()};
+  if (!success)
+    throw Error(concat("invalid version string ", quoted(versionStr)));
+  return version;
 }
 
 SemanticVersion::CompareResult
@@ -252,6 +255,58 @@ SemanticVersion::operator std::string() const {
     str += buildMetadata;
   }
   return str;
+}
+
+bool exists(const std::string &path) noexcept try {
+  return fs::exists(path);
+} catch (...) {
+  return false;
+}
+
+bool is_file(const std::string &path) noexcept try {
+  return fs::is_regular_file(path);
+} catch (...) {
+  return false;
+}
+
+bool is_directory(const std::string &path) noexcept try {
+  return fs::is_directory(path);
+} catch (...) {
+  return false;
+}
+
+std::string canonical(std::string path) noexcept try {
+  return fs::weakly_canonical(path).string();
+} catch (...) {
+  return path;
+}
+
+std::string relative(std::string path) noexcept try {
+  if (auto relPath{fs::relative(path).string()}; relPath.size() < path.size())
+    return relPath;
+  return path;
+} catch (...) {
+  return path;
+}
+
+std::string parent_path(std::string path) noexcept try {
+  return fs::path(path).parent_path().string();
+} catch (...) {
+  return path;
+}
+
+std::fstream open_or_throw(const std::string &path, std::ios::openmode mode) {
+  auto stream{std::fstream(path, mode)};
+  if (!stream.is_open())
+    throw Error(
+        concat("cannot open ", quoted(path), ": ", std::strerror(errno)));
+  return stream;
+}
+
+std::string read_or_throw(const std::string &path) {
+  auto stream{open_or_throw(path, std::ios::in | std::ios::binary)};
+  return std::string((std::istreambuf_iterator<char>(stream)),
+                     std::istreambuf_iterator<char>());
 }
 
 void State::finalize_for_runtime_conventions() {

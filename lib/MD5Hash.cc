@@ -11,7 +11,7 @@ namespace smdl {
 MD5Hash MD5Hash::hash_file(const std::string &fileName) noexcept try {
   auto hasher{llvm::MD5()};
   auto buffer{std::array<char, 128>{}};
-  auto stream{fs_open(fileName, std::ios::in | std::ios::binary)};
+  auto stream{open_or_throw(fileName, std::ios::in | std::ios::binary)};
   while (!stream.eof()) {
     stream.read(buffer.data(), buffer.size());
     hasher.update(llvm::StringRef(buffer.data(), stream.gcount()));
@@ -36,7 +36,7 @@ MD5Hash::operator std::string() const {
 }
 
 const MD5FileHash *MD5FileHasher::operator[](const std::string &fileName) {
-  auto canonicalFileName{fs_canonicalize(fileName)};
+  auto canonicalFileName{canonical(fileName)};
   auto [itr, inserted] = fileHashes.try_emplace(canonicalFileName);
   auto &fileHash{itr->second};
   if (inserted) {

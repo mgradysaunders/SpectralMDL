@@ -17,9 +17,8 @@ Module::~Module() {}
 std::unique_ptr<Module> Module::load_from_file(const std::string &fileName) {
   auto module_{std::make_unique<Module>()};
   module_->fileName = fileName;
-  module_->name = fs_make_path(fileName).stem().string();
-  module_->sourceCode =
-      fs_read_thru_archive(fileName, module_->isExtractedFromArchive);
+  module_->name = fs::path(fileName).stem().string();
+  module_->sourceCode = read_or_throw(fileName);
   return module_;
 }
 
@@ -29,7 +28,7 @@ Module::load_from_file_extracted_from_archive(const std::string &fileName,
   auto module_{std::make_unique<Module>()};
   module_->isExtractedFromArchive = true;
   module_->fileName = fileName;
-  module_->name = fs_make_path(fileName).stem().string();
+  module_->name = fs::path(fileName).stem().string();
   module_->sourceCode = file;
   return module_;
 }
@@ -83,7 +82,7 @@ Module::format_source_code(const FormatOptions &formatOptions) noexcept {
             concat("cannot format module extracted from archive in-place ",
                    quoted(fileName)));
       }
-      auto stream{fs_open(fileName, std::ios::out)};
+      auto stream{open_or_throw(fileName, std::ios::out)};
       stream << formatted;
     } else {
       std::cout << formatted;

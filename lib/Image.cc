@@ -4,8 +4,6 @@
 #endif
 #endif
 
-#include <cstdlib>
-
 #include "smdl/Image.h"
 
 #if defined(__GNUC__) || defined(__clang__)
@@ -50,6 +48,8 @@ extern "C" {
 #define TINYEXR_USE_THREAD 0
 #define TINYEXR_IMPLEMENTATION 1
 #include "thirdparty/tinyexr.h"
+
+#include "filesystem.h"
 
 namespace tinyexr {
 
@@ -131,192 +131,210 @@ void Image::clear() {
   finishLoad = nullptr;
 }
 
-void Image::start_load(const std::string &fileName) {
-  if (stbi_info(fileName.c_str(), &numTexelsX, &numTexelsY, &numChannels)) {
-    // If the number of channels is 3, i.e., RGB, round it up to 4
-    // so all of our alignment assumptions work.
-    if (numChannels == 3)
-      numChannels = 4;
-    // Determine whether we should load 32-bit float, 16-bit unsigned int, or
-    // 8-bit unsigned int.
-    if (stbi_is_hdr(fileName.c_str())) {
-      format = F32;
-      texelSize = 4 * numChannels;
-    } else if (stbi_is_16_bit(fileName.c_str())) {
-      format = U16;
-      texelSize = 2 * numChannels;
-    } else {
-      format = U8;
-      texelSize = 1 * numChannels;
-    }
-    // Pre-allocate the texels.
-    texels.reset(new std::byte[size_t(numTexelsX) * size_t(numTexelsY) *
-                               size_t(texelSize)]);
-    // Defer the actual load until later!
-    finishLoad = [this, fileName]() {
-      stbi_set_flip_vertically_on_load(1);
-      int nTexelsX{};
-      int nTexelsY{};
-      int nChannels{};
-      void *ptr{};
-      switch (format) {
-      default:
-      case Format::U8:
-        // Load 8-bit unsigned int.
-        ptr = stbi_load(fileName.c_str(), &nTexelsX, &nTexelsY, &nChannels,
-                        numChannels);
-        break;
-      case Format::U16:
-        // Load 16-bit unsigned int.
-        ptr = stbi_load_16(fileName.c_str(), &nTexelsX, &nTexelsY, &nChannels,
+std::optional<Error> Image::start_load(const std::string &fileName) noexcept {
+  clear();
+  auto error{catch_and_return_error([&] {
+    if (stbi_info(fileName.c_str(), &numTexelsX, &numTexelsY, &numChannels)) {
+      // If the number of channels is 3, i.e., RGB, round it up to 4
+      // so all of our alignment assumptions work.
+      if (numChannels == 3)
+        numChannels = 4;
+      // Determine whether we should load 32-bit float, 16-bit unsigned int, or
+      // 8-bit unsigned int.
+      if (stbi_is_hdr(fileName.c_str())) {
+        format = F32;
+        texelSize = 4 * numChannels;
+      } else if (stbi_is_16_bit(fileName.c_str())) {
+        format = U16;
+        texelSize = 2 * numChannels;
+      } else {
+        format = U8;
+        texelSize = 1 * numChannels;
+      }
+      // Pre-allocate the texels.
+      texels.reset(new std::byte[size_t(numTexelsX) * size_t(numTexelsY) *
+                                 size_t(texelSize)]);
+      // Defer the actual load until later!
+      finishLoad = [this, fileName]() {
+        stbi_set_flip_vertically_on_load(1);
+        int nTexelsX{};
+        int nTexelsY{};
+        int nChannels{};
+        void *ptr{};
+        switch (format) {
+        default:
+        case Format::U8:
+          // Load 8-bit unsigned int.
+          ptr = stbi_load(fileName.c_str(), &nTexelsX, &nTexelsY, &nChannels,
+                          numChannels);
+          break;
+        case Format::U16:
+          // Load 16-bit unsigned int.
+          ptr = stbi_load_16(fileName.c_str(), &nTexelsX, &nTexelsY, &nChannels,
+                             numChannels);
+          break;
+        case Format::F32:
+          // Load 32-bit float.
+          ptr = stbi_loadf(fileName.c_str(), &nTexelsX, &nTexelsY, &nChannels,
                            numChannels);
-        break;
-      case Format::F32:
-        // Load 32-bit float.
-        ptr = stbi_loadf(fileName.c_str(), &nTexelsX, &nTexelsY, &nChannels,
-                         numChannels);
-        break;
-      }
-      if (!ptr)
-        throw std::runtime_error(std::string("stb image failure: ") +
-                                 stbi_failure_reason());
-      // Copy into the pre-allocated texel buffer, then free the pointer.
-      SMDL_SANITY_CHECK(texels != nullptr);
-      SMDL_SANITY_CHECK(numTexelsX == nTexelsX);
-      SMDL_SANITY_CHECK(numTexelsY == nTexelsY);
-      std::memcpy(texels.get(), ptr,
-                  size_t(numTexelsX) * size_t(numTexelsY) * size_t(texelSize));
-      stbi_image_free(ptr);
-    };
-  } else if (EXRVersion version{};
-             ParseEXRVersionFromFile(&version, fileName.c_str()) ==
-             TINYEXR_SUCCESS) {
-    // Fail if deep or multipart!
-    if (version.non_image || version.multipart)
-      throw std::runtime_error("deep or multipart EXR is not supported");
-    // Parse the header.
-    EXRHeader header{};
-    InitEXRHeader(&header);
-    const char *err{};
-    if (ParseEXRHeaderFromFile(&header, &version, fileName.c_str(), &err) !=
-        TINYEXR_SUCCESS) {
-      FreeEXRErrorMessage(err);
-      throw std::runtime_error("cannot parse EXR header");
-    }
-    int nTexelsX{header.data_window.max_x - header.data_window.min_x + 1};
-    int nTexelsY{header.data_window.max_y - header.data_window.min_y + 1};
-    if (nTexelsX < 0 || nTexelsY < 0)
-      throw std::runtime_error("cannot parse EXR header: invalid data window");
-
-    auto setFormatFromPixelType{[&](int pixelType) {
-      if (pixelType == TINYEXR_PIXELTYPE_UINT)
-        throw std::runtime_error("uint EXR is not supported");
-      else if (pixelType == TINYEXR_PIXELTYPE_HALF)
-        format = F16, texelSize = 2 * numChannels;
-      else if (pixelType == TINYEXR_PIXELTYPE_FLOAT)
-        format = F32, texelSize = 4 * numChannels;
-      else
-        SMDL_SANITY_CHECK(false, "unknown EXR pixel type");
-    }};
-    if (header.num_channels == 1) {
-      // 1-channel R
-      numChannels = 1;
-      setFormatFromPixelType(header.channels[0].pixel_type);
-    } else {
-      // 4-channel RGBA
-      numChannels = 4;
-      const EXRChannelInfo *channels[4] = {tinyexr::FindChannel(header, "R"), //
-                                           tinyexr::FindChannel(header, "G"),
-                                           tinyexr::FindChannel(header, "B"),
-                                           tinyexr::FindChannel(header, "A")};
-      if (!channels[0])
-        throw std::runtime_error("expected EXR channel 'R' is missing");
-      if (!channels[1])
-        throw std::runtime_error("expected EXR channel 'G' is missing");
-      if (!channels[2])
-        throw std::runtime_error("expected EXR channel 'B' is missing");
-      // NOTE: We allow missing 'A' channel!
-      for (auto channel : channels)
-        if (channel && channel->pixel_type != channels[0]->pixel_type)
-          throw std::runtime_error("inconsistent EXR pixel types");
-      setFormatFromPixelType(channels[0]->pixel_type);
-    }
-    numTexelsX = nTexelsX;
-    numTexelsY = nTexelsY;
-    texels.reset(new std::byte[size_t(numTexelsX) * size_t(numTexelsY) *
-                               size_t(texelSize)]);
-    finishLoad = [this, fileName, header]() {
-      auto headerDtor{Defer(
-          [&header]() { FreeEXRHeader(const_cast<EXRHeader *>(&header)); })};
-      EXRImage image{};
-      InitEXRImage(&image);
+          break;
+        }
+        if (!ptr)
+          throw std::runtime_error(std::string("stb image failure: ") +
+                                   stbi_failure_reason());
+        // Copy into the pre-allocated texel buffer, then free the pointer.
+        SMDL_SANITY_CHECK(texels != nullptr);
+        SMDL_SANITY_CHECK(numTexelsX == nTexelsX);
+        SMDL_SANITY_CHECK(numTexelsY == nTexelsY);
+        std::memcpy(texels.get(), ptr,
+                    size_t(numTexelsX) * size_t(numTexelsY) *
+                        size_t(texelSize));
+        stbi_image_free(ptr);
+      };
+    } else if (EXRVersion version{};
+               ParseEXRVersionFromFile(&version, fileName.c_str()) ==
+               TINYEXR_SUCCESS) {
+      // Fail if deep or multipart!
+      if (version.non_image || version.multipart)
+        throw std::runtime_error("deep or multipart EXR is not supported");
+      // Parse the header.
+      EXRHeader header{};
+      InitEXRHeader(&header);
       const char *err{};
-      if (LoadEXRImageFromFile(&image, &header, fileName.c_str(), &err) !=
+      if (ParseEXRHeaderFromFile(&header, &version, fileName.c_str(), &err) !=
           TINYEXR_SUCCESS) {
-        auto message{std::string("tinyexr failed: ") + err};
         FreeEXRErrorMessage(err);
-        throw std::runtime_error(message);
+        throw std::runtime_error("cannot parse EXR header");
       }
-      auto imageDtor{Defer([&image]() { FreeEXRImage(&image); })};
-      SMDL_SANITY_CHECK(numTexelsX == image.width);
-      SMDL_SANITY_CHECK(numTexelsY == image.height);
-      if (numChannels == 1) {
+      int nTexelsX{header.data_window.max_x - header.data_window.min_x + 1};
+      int nTexelsY{header.data_window.max_y - header.data_window.min_y + 1};
+      if (nTexelsX < 0 || nTexelsY < 0)
+        throw std::runtime_error(
+            "cannot parse EXR header: invalid data window");
+
+      auto setFormatFromPixelType{[&](int pixelType) {
+        if (pixelType == TINYEXR_PIXELTYPE_UINT)
+          throw std::runtime_error("uint EXR is not supported");
+        else if (pixelType == TINYEXR_PIXELTYPE_HALF)
+          format = F16, texelSize = 2 * numChannels;
+        else if (pixelType == TINYEXR_PIXELTYPE_FLOAT)
+          format = F32, texelSize = 4 * numChannels;
+        else
+          SMDL_SANITY_CHECK(false, "unknown EXR pixel type");
+      }};
+      if (header.num_channels == 1) {
         // 1-channel R
-        tinyexr::ForEachPixel(
-            header, image,
-            [&](int iX, int iY, int iC, const void *pixel, size_t pixelSize) {
-              iY = numTexelsY - iY - 1; // Flip vertically!
-              if (iC == 0)
-                std::memcpy(texels.get() +
-                                ptrdiff_t((iX + numTexelsX * iY) * texelSize),
-                            pixel, pixelSize);
-            });
+        numChannels = 1;
+        setFormatFromPixelType(header.channels[0].pixel_type);
       } else {
         // 4-channel RGBA
-        const EXRChannelInfo *channels[4] = {tinyexr::FindChannel(header, "R"),
-                                             tinyexr::FindChannel(header, "G"),
-                                             tinyexr::FindChannel(header, "B"),
-                                             tinyexr::FindChannel(header, "A")};
-        int channelIndexR = int(channels[0] - &header.channels[0]); // Required!
-        int channelIndexG = int(channels[1] - &header.channels[0]); // Required!
-        int channelIndexB = int(channels[2] - &header.channels[0]); // Required!
-        int channelIndexA =
-            channels[3] ? int(channels[3] - &header.channels[0]) : -1;
-        tinyexr::ForEachPixel(
-            header, image,
-            [&](int iX, int iY, int iC, const void *pixel, size_t pixelSize) {
-              iY = numTexelsY - iY - 1; // Flip vertically!
-              auto texel{texels.get() +
-                         ptrdiff_t((iX + numTexelsX * iY) * texelSize)};
-              if (iC == channelIndexR) {
-                std::memcpy(texel + 0 * pixelSize, pixel, pixelSize);
-              } else if (iC == channelIndexG) {
-                std::memcpy(texel + 1 * pixelSize, pixel, pixelSize);
-              } else if (iC == channelIndexB) {
-                std::memcpy(texel + 2 * pixelSize, pixel, pixelSize);
-              } else if (iC == channelIndexA) {
-                std::memcpy(texel + 3 * pixelSize, pixel, pixelSize);
-              }
-            });
-        // If the alpha channel is missing, fill with 1.
-        if (!channels[3]) {
-          if (format == F16) {
-            auto one{uint16_t(0x3C00)};
-            auto itr{texels.get() + 6};
-            for (int i = 0; i < numTexelsY * numTexelsY; i++, itr += texelSize)
-              std::memcpy(itr, &one, 2);
-          } else if (format == F32) {
-            auto one{float(1.0f)};
-            auto itr{texels.get() + 12};
-            for (int i = 0; i < numTexelsY * numTexelsY; i++, itr += texelSize)
-              std::memcpy(itr, &one, 4);
-          } else {
-            SMDL_SANITY_CHECK(false, "format must be F16 or F32 by now!");
+        numChannels = 4;
+        const EXRChannelInfo *channels[4] = {
+            tinyexr::FindChannel(header, "R"), //
+            tinyexr::FindChannel(header, "G"),
+            tinyexr::FindChannel(header, "B"),
+            tinyexr::FindChannel(header, "A")};
+        if (!channels[0])
+          throw std::runtime_error("expected EXR channel 'R' is missing");
+        if (!channels[1])
+          throw std::runtime_error("expected EXR channel 'G' is missing");
+        if (!channels[2])
+          throw std::runtime_error("expected EXR channel 'B' is missing");
+        // NOTE: We allow missing 'A' channel!
+        for (auto channel : channels)
+          if (channel && channel->pixel_type != channels[0]->pixel_type)
+            throw std::runtime_error("inconsistent EXR pixel types");
+        setFormatFromPixelType(channels[0]->pixel_type);
+      }
+      numTexelsX = nTexelsX;
+      numTexelsY = nTexelsY;
+      texels.reset(new std::byte[size_t(numTexelsX) * size_t(numTexelsY) *
+                                 size_t(texelSize)]);
+      finishLoad = [this, fileName, header]() {
+        auto headerDtor{Defer(
+            [&header]() { FreeEXRHeader(const_cast<EXRHeader *>(&header)); })};
+        EXRImage image{};
+        InitEXRImage(&image);
+        const char *err{};
+        if (LoadEXRImageFromFile(&image, &header, fileName.c_str(), &err) !=
+            TINYEXR_SUCCESS) {
+          auto message{std::string("tinyexr failed: ") + err};
+          FreeEXRErrorMessage(err);
+          throw std::runtime_error(message);
+        }
+        auto imageDtor{Defer([&image]() { FreeEXRImage(&image); })};
+        SMDL_SANITY_CHECK(numTexelsX == image.width);
+        SMDL_SANITY_CHECK(numTexelsY == image.height);
+        if (numChannels == 1) {
+          // 1-channel R
+          tinyexr::ForEachPixel(
+              header, image,
+              [&](int iX, int iY, int iC, const void *pixel, size_t pixelSize) {
+                iY = numTexelsY - iY - 1; // Flip vertically!
+                if (iC == 0)
+                  std::memcpy(texels.get() +
+                                  ptrdiff_t((iX + numTexelsX * iY) * texelSize),
+                              pixel, pixelSize);
+              });
+        } else {
+          // 4-channel RGBA
+          const EXRChannelInfo *channels[4] = {
+              tinyexr::FindChannel(header, "R"),
+              tinyexr::FindChannel(header, "G"),
+              tinyexr::FindChannel(header, "B"),
+              tinyexr::FindChannel(header, "A")};
+          int channelIndexR =
+              int(channels[0] - &header.channels[0]); // Required!
+          int channelIndexG =
+              int(channels[1] - &header.channels[0]); // Required!
+          int channelIndexB =
+              int(channels[2] - &header.channels[0]); // Required!
+          int channelIndexA =
+              channels[3] ? int(channels[3] - &header.channels[0]) : -1;
+          tinyexr::ForEachPixel(
+              header, image,
+              [&](int iX, int iY, int iC, const void *pixel, size_t pixelSize) {
+                iY = numTexelsY - iY - 1; // Flip vertically!
+                auto texel{texels.get() +
+                           ptrdiff_t((iX + numTexelsX * iY) * texelSize)};
+                if (iC == channelIndexR) {
+                  std::memcpy(texel + 0 * pixelSize, pixel, pixelSize);
+                } else if (iC == channelIndexG) {
+                  std::memcpy(texel + 1 * pixelSize, pixel, pixelSize);
+                } else if (iC == channelIndexB) {
+                  std::memcpy(texel + 2 * pixelSize, pixel, pixelSize);
+                } else if (iC == channelIndexA) {
+                  std::memcpy(texel + 3 * pixelSize, pixel, pixelSize);
+                }
+              });
+          // If the alpha channel is missing, fill with 1.
+          if (!channels[3]) {
+            if (format == F16) {
+              auto one{uint16_t(0x3C00)};
+              auto itr{texels.get() + 6};
+              for (int i = 0; i < numTexelsY * numTexelsY;
+                   i++, itr += texelSize)
+                std::memcpy(itr, &one, 2);
+            } else if (format == F32) {
+              auto one{float(1.0f)};
+              auto itr{texels.get() + 12};
+              for (int i = 0; i < numTexelsY * numTexelsY;
+                   i++, itr += texelSize)
+                std::memcpy(itr, &one, 4);
+            } else {
+              SMDL_SANITY_CHECK(false, "format must be F16 or F32 by now!");
+            }
           }
         }
-      }
-    };
+      };
+    }
+  })};
+  if (error) {
+    clear();
+    error->message = concat("cannot load ", quoted(relative(fileName)), ": ",
+                            error->message);
   }
+  return error;
 }
 
 void Image::finish_load() {

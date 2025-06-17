@@ -50,16 +50,16 @@ public:
 
 public:
   /// Get the format.
-  [[nodiscard]] Format get_format() const { return format; }
+  [[nodiscard]] Format get_format() const noexcept { return format; }
 
   /// Get the number of channels, must be 1, 2, or 4.
-  [[nodiscard]] int get_num_channels() const { return numChannels; }
+  [[nodiscard]] int get_num_channels() const noexcept { return numChannels; }
 
   /// Get the number of texels in X.
-  [[nodiscard]] int get_num_texels_x() const { return numTexelsX; }
+  [[nodiscard]] int get_num_texels_x() const noexcept { return numTexelsX; }
 
   /// Get the number of texels in Y.
-  [[nodiscard]] int get_num_texels_y() const { return numTexelsY; }
+  [[nodiscard]] int get_num_texels_y() const noexcept { return numTexelsY; }
 
   /// Get the texel size in bytes.
   ///
@@ -67,13 +67,17 @@ public:
   /// This is necessarily the number of channels times the
   /// implied size of the format.
   ///
-  [[nodiscard]] int get_texel_size_in_bytes() const { return texelSize; }
+  [[nodiscard]] int get_texel_size_in_bytes() const noexcept {
+    return texelSize;
+  }
 
   /// Get the texels.
-  [[nodiscard]] auto get_texels() -> std::byte * { return texels.get(); }
+  [[nodiscard]] auto get_texels() noexcept -> std::byte * {
+    return texels.get();
+  }
 
   /// Get the texels, const variant.
-  [[nodiscard]] auto get_texels() const -> const std::byte * {
+  [[nodiscard]] auto get_texels() const noexcept -> const std::byte * {
     return texels.get();
   }
 
@@ -100,9 +104,8 @@ public:
   /// SMDL code, but we can defer loading the entire image until later, so
   /// that we can parallelize all of the image loads.
   ///
-  /// \throw std::runtime_error If anything fails.
-  ///
-  void start_load(const std::string &fileName);
+  [[nodiscard]] std::optional<Error>
+  start_load(const std::string &fileName) noexcept;
 
   /// If `start_load()` was successful, finish loading the texels.
   ///

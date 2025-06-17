@@ -7,6 +7,7 @@
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
+#include <fstream>
 #include <functional>
 #include <memory>
 #include <optional>
@@ -660,6 +661,33 @@ public:
   std::string buildMetadata{};
 };
 
+/// \name Filesystem
+/// \{
+
+[[nodiscard]] SMDL_EXPORT bool exists(const std::string &path) noexcept;
+
+[[nodiscard]] SMDL_EXPORT bool is_file(const std::string &path) noexcept;
+
+[[nodiscard]] SMDL_EXPORT bool is_directory(const std::string &path) noexcept;
+
+[[nodiscard]]
+SMDL_EXPORT std::string canonical(std::string path) noexcept;
+
+[[nodiscard]]
+SMDL_EXPORT std::string relative(std::string path) noexcept;
+
+[[nodiscard]]
+SMDL_EXPORT std::string parent_path(std::string path) noexcept;
+
+[[nodiscard]]
+SMDL_EXPORT std::fstream open_or_throw(const std::string &path,
+                                            std::ios::openmode mode);
+
+[[nodiscard]]
+SMDL_EXPORT std::string read_or_throw(const std::string &path);
+
+/// \}
+
 /// \}
 
 /// \addtogroup Main
@@ -1126,6 +1154,11 @@ public:
   void finalize_for_runtime_conventions();
 };
 
+/// \}
+
+/// \addtogroup Support
+/// \{
+
 /// An albedo look-up table (LUT) for energy compensation in lossy BSDFs.
 class SMDL_EXPORT AlbedoLUT final {
 public:
@@ -1149,11 +1182,6 @@ public:
   ///
   const float *const average_albedo = nullptr;
 };
-
-/// \}
-
-/// \addtogroup Support
-/// \{
 
 /// Defer until end-of-scope.
 template <typename F> struct Defer final {
