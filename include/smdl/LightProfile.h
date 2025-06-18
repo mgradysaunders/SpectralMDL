@@ -23,16 +23,25 @@ public:
   /// Clear.
   void clear() noexcept;
 
+  /// Is valid?
   [[nodiscard]] bool is_valid() const noexcept {
     return !intensityValues.empty();
   }
 
-  [[nodiscard]] float max_intensity() const noexcept;
+  /// Calculate the radiometric max intensity.
+  [[nodiscard]] float max_intensity() const noexcept {
+    float result{};
+    for (float intensityValue : intensityValues)
+      result = std::max(result, intensityValue);
+    return result;
+  }
 
+  /// Calculate the radiometric power.
   [[nodiscard]] float power() const noexcept;
 
   /// Interpolate.
   [[nodiscard]] float interpolate(float3 wo) const noexcept;
+
 
 public:
   /// The version string.

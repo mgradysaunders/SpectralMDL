@@ -158,16 +158,10 @@ void LightProfile::clear() noexcept {
   intensityValues.clear();
 }
 
-float LightProfile::max_intensity() const noexcept {
-  float result{};
-  for (float intensityValue : intensityValues)
-    result = std::max(result, intensityValue);
-  return result;
-}
-
 float LightProfile::power() const noexcept {
-  // TODO
-  return 0;
+  // TODO Actually calculate this instead of relying on 
+  //      measured electric power consumption
+  return inputWatts;
 }
 
 struct LerpLookup final {
@@ -220,11 +214,6 @@ float LightProfile::interpolate(float3 wo) const noexcept {
     return theta;
   }};
   if (photometryType == 1) {
-    // 0 degrees is nadir/downlooking according to diagram here:
-    // https://lightinganalysts.freshdesk.com/support/solutions/articles/22000209748-type-a-type-b-and-type-c-photometry
-    wo.z *= -1;
-    wo.y *= -1; // Preserve right-handedness?
-
     // > Type C photometry is normally used for architectural and
     // > roadway luminaires. The polar axis of the photometric web
     // > coincides with the vertical axis of the luminaire, and the
