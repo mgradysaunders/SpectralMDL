@@ -1195,10 +1195,107 @@ export @(macro)int $scatter_sample(
     }
   }
 }
-export @(macro)bool light_profile_isvalid(const light_profile profile)=bool(profile.ptr);
-export @(macro)float light_profile_maximum(const light_profile profile)=profile.max_intensity;
-export @(macro)float light_profile_power(const light_profile profile)=profile.power;
-@(foreign pure)float smdl_light_profile_interpolate(const &void profile_ptr,const &float3 wo);
+struct emission_evaluate_parameters{
+  float3 we;
+};
+struct emission_evaluate_result{
+  float intensity=0;
+  float pdf=0;
+  bool is_black=false;
+};
+struct emission_sample_parameters{
+  float4 xi;
+};
+struct emission_sample_result{
+  ?float3 we=null;
+};
+@(pure macro)auto emission_evaluate(const &$default_edf this[[anno::unused()]],
+                                    const &emission_evaluate_parameters params[[anno::unused()]],
+){
+  return emission_evaluate_result(is_black: true);
+}
+@(pure macro)auto emission_sample(const &$default_edf this[[anno::unused()]],
+                                  const &emission_sample_parameters params[[anno::unused()]],
+){
+  return emission_sample_result();
+}
+export struct diffuse_edf:edf{
+  string handle="";
+};
+@(pure macro)auto emission_evaluate(const &diffuse_edf this[[anno::unused()]],
+                                    const &emission_evaluate_parameters params){
+  const float pdf(#max(params.we.z,0.0)/$PI);
+  return emission_evaluate_result(intensity: pdf,pdf: pdf);
+}
+@(pure macro)auto emission_sample(const &diffuse_edf this[[anno::unused()]],
+                                  const &emission_sample_parameters params){
+  return emission_sample_result(we: monte_carlo::cosine_hemisphere_sample(params.xi.xy));
+}
+export struct spot_edf:edf{
+  float exponent;
+  float spread=$PI;
+  bool global_distribution=true;
+  float3x3 global_frame=float3x3(1.0);
+  string handle="";
+};
+@(pure macro)auto emission_evaluate(const &spot_edf this,const &emission_evaluate_parameters params){
+  return emission_evaluate_result(is_black: true);
+}
+@(pure macro)auto emission_sample(const &spot_edf this,const &emission_sample_parameters params){
+  return emission_sample_result();
+}
+export @(pure macro)bool light_profile_isvalid(const light_profile profile)=bool(profile.ptr);
+export @(pure macro)float light_profile_maximum(const light_profile profile)=profile.max_intensity;
+export @(pure macro)float light_profile_power(const light_profile profile)=profile.power;
+export struct measured_edf:edf{
+  light_profile profile;
+  float multiplier=1.0;
+  bool global_distribution=true;
+  float3x3 global_frame=float3x3(1.0);
+  float3 tangent_u=$state.texture_tangent_u[0];
+  string handle="";
+};
+@(foreign pure)float smdl_light_profile_interpolate(const &void profile_ptr,const &float3 we);
+@(pure macro)auto emission_evaluate(const &measured_edf this,const &emission_evaluate_parameters params){
+  return emission_evaluate_result(is_black: true);
+}
+@(pure macro)auto emission_sample(const &measured_edf this,const &emission_sample_parameters params){
+  return emission_sample_result();
+}
+export @(macro)int $emission_evaluate(
+  const &$material_instance instance,
+  const &float3 we,
+  const &float pdf,
+  const &float Le,
+){
+  auto emission=&instance.mat.surface.emission;
+  auto params=emission_evaluate_parameters(we: normalize(*we));
+  auto result=emission_evaluate(visit &emission.emission,&params);
+  auto result_Le=color(result.intensity*emission.intensity);
+  if(emission.mode==intensity_power){
+    result_Le/=4*PI;
+  }
+  *pdf=result.pdf;
+  #memcpy(Le,&result_Le,#sizeof(float)*$WAVELENGTH_BASE_MAX);
+  return result.is_black;
+}
+export @(macro)int $emission_sample(
+  const &$material_instance instance,
+  const &float4 xi,
+  const &float3 we,
+  const &float pdf,
+  const &float Le,
+){
+  auto emission=&instance.mat.surface.emission;
+  auto params=emission_sample_parameters(xi: *xi);
+  auto result=emission_sample(visit &emission.emission,&params);
+  if(!result.we){
+    return 0;
+  } else {
+    *we=*result.we;
+    return $emission_evaluate(instance,we,pdf,Le);
+  }
+}
 )*";
 
 static const char *limits = R"*(#smdl

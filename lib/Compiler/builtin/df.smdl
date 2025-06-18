@@ -985,6 +985,8 @@ export auto microfacet_beckmann_smith_bsdf(*) = initialize_microfacet_bsdf(distr
 
 export auto microfacet_beckmann_vcavities_bsdf(*) = initialize_microfacet_bsdf(distribution: microfacet::distribution_beckmann(), shadowing: microfacet::shadowing_vcavities());
 
+// TODO
+//--{ measured_bsdf
 export bool bsdf_measurement_isvalid(const bsdf_measurement measurement) = bool(measurement.buffer);
 
 export struct measured_bsdf: bsdf {
@@ -996,8 +998,7 @@ export struct measured_bsdf: bsdf {
 
   string handle = "";
 };
-
-// TODO measured_bsdf
+//--}
 
 //--{ tint
 /// A 1-value tint.
@@ -1382,16 +1383,153 @@ export @(macro) int $scatter_sample(
   }
 }
 
-export @(macro) bool light_profile_isvalid(const light_profile profile) = bool(profile.ptr);
+// TODO This all needs work!
+struct emission_evaluate_parameters {
+  float3 we;
+};
 
-export @(macro) float light_profile_maximum(const light_profile profile) = profile.max_intensity;
+struct emission_evaluate_result {
+  float intensity = 0;
 
-export @(macro) float light_profile_power(const light_profile profile) = profile.power;
+  float pdf = 0;
 
-// TODO diffuse_edf
+  bool is_black = false;
+};
 
-// TODO spot_edf
+struct emission_sample_parameters {
+  float4 xi;
+};
 
-@(foreign pure) float smdl_light_profile_interpolate(const &void profile_ptr, const &float3 wo);
+struct emission_sample_result {
+  ?float3 we = null;
+};
 
-// TODO measured_edf
+//--{ default_edf
+@(pure macro) auto emission_evaluate(
+  const &$default_edf this [[anno::unused()]],
+  const &emission_evaluate_parameters params [[anno::unused()]],
+) {
+  return emission_evaluate_result(is_black: true);
+}
+
+@(pure macro) auto emission_sample(
+  const &$default_edf this [[anno::unused()]],
+  const &emission_sample_parameters params [[anno::unused()]],
+) {
+  return emission_sample_result();
+}
+//--}
+
+//--{ diffuse_edf
+export struct diffuse_edf: edf {
+  string handle = "";
+};
+
+@(pure macro) auto emission_evaluate(const &diffuse_edf this [[anno::unused()]],
+                                     const &emission_evaluate_parameters params) {
+  const float pdf(#max(params.we.z, 0.0) / $PI);
+  return emission_evaluate_result(intensity: pdf, pdf: pdf);
+}
+
+@(pure macro) auto emission_sample(const &diffuse_edf this [[anno::unused()]],
+                                   const &emission_sample_parameters params) {
+  return emission_sample_result(we: monte_carlo::cosine_hemisphere_sample(params.xi.xy));
+}
+//--}
+
+//--{ spot_edf
+export struct spot_edf: edf {
+  float exponent;
+
+  float spread = $PI;
+
+  bool global_distribution = true;
+
+  float3x3 global_frame = float3x3(1.0);
+
+  string handle = "";
+};
+
+@(pure macro) auto emission_evaluate(const &spot_edf this, const &emission_evaluate_parameters params) {
+  // TODO
+  return emission_evaluate_result(is_black: true);
+}
+
+@(pure macro) auto emission_sample(const &spot_edf this, const &emission_sample_parameters params) {
+  // TODO
+  return emission_sample_result();
+}
+//--}
+
+//--{ measured_edf
+export @(pure macro) bool light_profile_isvalid(const light_profile profile) = bool(profile.ptr);
+
+export @(pure macro) float light_profile_maximum(const light_profile profile) = profile.max_intensity;
+
+export @(pure macro) float light_profile_power(const light_profile profile) = profile.power;
+
+export struct measured_edf: edf {
+  light_profile profile;
+
+  float multiplier = 1.0;
+
+  bool global_distribution = true;
+
+  float3x3 global_frame = float3x3(1.0);
+
+  float3 tangent_u = $state.texture_tangent_u[0];
+
+  string handle = "";
+};
+
+@(foreign pure) float smdl_light_profile_interpolate(const &void profile_ptr, const &float3 we);
+
+@(pure macro) auto emission_evaluate(const &measured_edf this, const &emission_evaluate_parameters params) {
+  // TODO
+  return emission_evaluate_result(is_black: true);
+}
+
+@(pure macro) auto emission_sample(const &measured_edf this, const &emission_sample_parameters params) {
+  // TODO
+  return emission_sample_result();
+}
+//--}
+
+export @(macro) int $emission_evaluate(
+  const &$material_instance instance,
+  const &float3 we, ///< The emission direction
+  const &float pdf, ///< output: The PDF of sampling `we`
+  const &float Le,  ///< output: The emission function
+) {
+  // TODO Account for backface
+  auto emission = &instance.mat.surface.emission;
+  auto params = emission_evaluate_parameters(we: normalize(*we));
+  auto result = emission_evaluate(visit &emission.emission, &params);
+  auto result_Le = color(result.intensity * emission.intensity);
+  if (emission.mode == intensity_power) {
+    result_Le /= 4 * PI; // TODO Is this right?
+  }
+  *pdf = result.pdf;
+  #memcpy(Le, &result_Le, #sizeof(float) * $WAVELENGTH_BASE_MAX);
+  return result.is_black;
+}
+
+export @(macro) int $emission_sample(
+  const &$material_instance instance,
+  const &float4 xi, ///< The canonical random sample in `[0,1]^4`
+  const &float3 we, ///< output: The emission direction
+  const &float pdf, ///< output: The PDF of sampling `we` 
+  const &float Le,  ///< output: The emission function
+) {
+  // TODO Account for backface - I suppose we have to randomly pick
+  //      between surface and backface if both are present?
+  auto emission = &instance.mat.surface.emission;
+  auto params = emission_sample_parameters(xi: *xi);
+  auto result = emission_sample(visit &emission.emission, &params);
+  if (!result.we) {
+    return 0;
+  } else {
+    *we = *result.we;
+    return $emission_evaluate(instance, we, pdf, Le);
+  }
+}

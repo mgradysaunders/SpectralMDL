@@ -184,6 +184,17 @@ public:
                float3 &wi, float &pdf_fwd, float &pdf_rev, float *f,
                int &is_delta)>
       scatter_sample{};
+
+  // TODO
+#if 0
+  Function<int(const Instance &instance, const float3 &we, float &pdf,
+               float *Le)>
+      emission_evaluate{};
+
+  Function<int(const Instance &instance, const float4 &xi, float3 &we,
+               float &pdf, float *Le)>
+      emission_sample{};
+#endif
 };
 
 /// A just-in-time SMDL unit test.

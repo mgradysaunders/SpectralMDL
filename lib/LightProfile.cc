@@ -12,7 +12,6 @@ LightProfile::load_from_file_memory(std::string file) noexcept {
     auto text{llvm::StringRef(file).trim()};
     if (!text.starts_with("IESNA"))
       throw Error("not an IES file");
-
     // Parse version
     {
       auto [line, remainder] = text.split('\n');
@@ -20,9 +19,9 @@ LightProfile::load_from_file_memory(std::string file) noexcept {
       // IESNA:LM-63-1986
       // IESNA:LM-63-1991
       // IESNA:LM-63-1995
+      // IESNA91
       text = remainder;
     }
-
     // Parse properties
     while (true) {
       auto [line, remainder] = text.ltrim().split('\n');
@@ -35,7 +34,6 @@ LightProfile::load_from_file_memory(std::string file) noexcept {
       properties[std::string(key)] = std::string(val);
       text = remainder;
     }
-
     auto parseNumberOrThrow{[&](const char *what, auto &value) {
       text = text.ltrim();
       if constexpr (std::is_floating_point_v<std::decay_t<decltype(value)>>) {
@@ -53,7 +51,6 @@ LightProfile::load_from_file_memory(std::string file) noexcept {
         }
       }
     }};
-
     // Parse tilt
     {
       auto [line, remainder] = text.ltrim().split('\n');
@@ -77,7 +74,6 @@ LightProfile::load_from_file_memory(std::string file) noexcept {
           parseNumberOrThrow("tilt multiplying factor", multiplyingFactor);
       }
     }
-
     float multiplier{};
     size_t numVertAngles{};
     size_t numHorzAngles{};
@@ -108,6 +104,7 @@ LightProfile::load_from_file_memory(std::string file) noexcept {
     parseNumberOrThrow("ballast factor", ballastFactor);
     parseNumberOrThrow("ballast lamp photometric factor", futureUse);
     parseNumberOrThrow("input watts", inputWatts);
+    inputWatts *= multiplier * ballastFactor;
 
     vertAngles.resize(numVertAngles);
     horzAngles.resize(numHorzAngles);
