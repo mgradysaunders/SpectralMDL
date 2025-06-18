@@ -179,6 +179,8 @@ export struct bsdf_measurement{
 export struct light_profile{
   light_profile(const string name)=#load_light_profile(name);
   const &void ptr=null;
+  const float max_intensity=0;
+  const float power=0;
 };
 export struct material_emission{
   edf emission=edf();
@@ -896,6 +898,13 @@ export auto microfacet_ggx_smith_bsdf(*)=initialize_microfacet_bsdf(distribution
 export auto microfacet_ggx_vcavities_bsdf(*)=initialize_microfacet_bsdf(distribution: microfacet::distribution_ggx(),shadowing: microfacet::shadowing_vcavities());
 export auto microfacet_beckmann_smith_bsdf(*)=initialize_microfacet_bsdf(distribution: microfacet::distribution_beckmann(),shadowing: microfacet::shadowing_smith());
 export auto microfacet_beckmann_vcavities_bsdf(*)=initialize_microfacet_bsdf(distribution: microfacet::distribution_beckmann(),shadowing: microfacet::shadowing_vcavities());
+export bool bsdf_measurement_isvalid(const bsdf_measurement measurement)=bool(measurement.buffer);
+export struct measured_bsdf:bsdf{
+  bsdf_measurement measurement;
+  float multiplier=1.0;
+  scatter_mode mode=scatter_reflect;
+  string handle="";
+};
 struct tint1:bsdf,edf,hair_bsdf{
   $(color|float) tint;
   auto base;
@@ -1186,6 +1195,10 @@ export @(macro)int $scatter_sample(
     }
   }
 }
+export @(macro)bool light_profile_isvalid(const light_profile profile)=bool(profile.ptr);
+export @(macro)float light_profile_maximum(const light_profile profile)=profile.max_intensity;
+export @(macro)float light_profile_power(const light_profile profile)=profile.power;
+@(foreign pure)float smdl_light_profile_interpolate(const &void profile_ptr,const &float3 wo);
 )*";
 
 static const char *limits = R"*(#smdl

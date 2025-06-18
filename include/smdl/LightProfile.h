@@ -20,7 +20,19 @@ public:
   [[nodiscard]]
   std::optional<Error> load_from_file(const std::string &fileName) noexcept;
 
+  /// Clear.
   void clear() noexcept;
+
+  [[nodiscard]] bool is_valid() const noexcept {
+    return !intensityValues.empty();
+  }
+
+  [[nodiscard]] float max_intensity() const noexcept;
+
+  [[nodiscard]] float power() const noexcept;
+
+  /// Interpolate.
+  [[nodiscard]] float interpolate(float3 wo) const noexcept;
 
 public:
   /// The version string.
@@ -34,7 +46,7 @@ public:
     int lampToLuminaireGeometry{};
 
     /// The angles in degrees.
-    std::vector<float> anglesDegrees{};
+    std::vector<float> angles{};
 
     /// The multiplying factors.
     std::vector<float> multiplyingFactors{};
@@ -47,39 +59,56 @@ public:
   int numLamps{};
 
   /// The lumens per lamp.
-  int lumensPerLamp{};
+  float lumensPerLamp{};
 
-  /// The photometric type.
+  /// The photometry type.
   ///
-  /// - `photometricType==1`: Type C
-  /// - `photometricType==2`: Type B
-  /// - `photometricType==3`: Type A
+  /// - `photometryType==1`: Type C
+  /// - `photometryType==2`: Type B
+  /// - `photometryType==3`: Type A
   ///
-  int photometricType{};
+  int photometryType{};
 
-  /// The width in meters.
-  float widthMeters{};
+  /// The length in meters of the luminous opening.
+  ///
+  /// \note
+  /// This is measured along the _major axis_, which we
+  /// understand to be the X axis.
+  ///
+  float length{};
 
-  /// The length in meters.
-  float lengthMeters{};
+  /// The width in meters of the luminous opening.
+  ///
+  /// \note
+  /// This is measured along the _minor axis_, which we
+  /// understand to be the Y axis.
+  ///
+  float width{};
 
-  /// The height in meters.
-  float heightMeters{};
-
-  /// The ballast factor.
-  float ballastFactor{};
+  /// The height in meters of the luminous opening.
+  ///
+  /// \note
+  /// This is measured along the _vertical axis_, which we
+  /// understand to be the Z axis.
+  ///
+  float height{};
 
   /// The input watts.
   float inputWatts{};
 
   /// The vertical angles in degrees.
-  std::vector<float> vertAnglesDegrees{};
+  std::vector<float> vertAngles{};
 
   /// The horizontal angles in degrees.
-  std::vector<float> horzAnglesDegrees{};
+  std::vector<float> horzAngles{};
 
-  /// The candela values.
-  std::vector<float> candelaValues{};
+  /// The intensity values in Watts per steradian.
+  ///
+  /// \note
+  /// The implementation pre-multiplies all candela values by
+  /// the `multiplier` and `ballastFactor` in the IES file.
+  ///
+  std::vector<float> intensityValues{};
 };
 
 /// \}

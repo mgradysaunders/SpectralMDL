@@ -337,6 +337,12 @@ export struct light_profile {
 
   /// The pointer to the `smdl::LightProfile`
   const &void ptr = null;
+
+  /// The maximum intensity.
+  const float max_intensity = 0;
+
+  /// The power.
+  const float power = 0;
 };
 
 /// The material emission description.

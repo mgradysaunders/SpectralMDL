@@ -682,7 +682,6 @@ export @(pure noinline) float2 smith_visible_slope_sample(
   return float2(mx, my);
 }
 
-
 /// The Smith visible slope sampling function for the Beckmann distribution.
 export @(pure noinline) float2 smith_visible_slope_sample(
   const distribution_beckmann this [[anno::unused()]],
@@ -1383,9 +1382,16 @@ export @(macro) int $scatter_sample(
   }
 }
 
+export @(macro) bool light_profile_isvalid(const light_profile profile) = bool(profile.ptr);
 
-// TODO light_profile_isvalid(const light_profile profile)
+export @(macro) float light_profile_maximum(const light_profile profile) = profile.max_intensity;
 
-// TODO light_profile_maximum(const light_profile profile)
+export @(macro) float light_profile_power(const light_profile profile) = profile.power;
 
-// TODO light_profile_power(const light_profile profile)
+// TODO diffuse_edf
+
+// TODO spot_edf
+
+@(foreign pure) float smdl_light_profile_interpolate(const &void profile_ptr, const &float3 wo);
+
+// TODO measured_edf

@@ -1702,8 +1702,19 @@ Value Emitter::emit_intrinsic(std::string_view name, const ArgumentList &args,
               concat("cannot load ", quoted(fileName), ": file not found"));
           return invoke(lightProfileType, {}, srcLoc);
         }
-        // TODO
-        return invoke(lightProfileType, {}, srcLoc);
+        auto &lightProfile{
+            context.compiler.load_light_profile(*resolvedFileName, srcLoc)};
+        return invoke(
+            lightProfileType,
+            {Argument{"ptr",
+                      context.get_comptime_ptr(
+                          context.get_void_pointer_type(),
+                          lightProfile.is_valid() ? &lightProfile : nullptr)},
+             Argument{"max_intensity",
+                      context.get_comptime_float(lightProfile.max_intensity())},
+             Argument{"power",
+                      context.get_comptime_float(lightProfile.power())}},
+            srcLoc);
       }
     }
     break;
