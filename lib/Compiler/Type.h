@@ -1068,6 +1068,7 @@ public:
   /// If applicable, the abstract struct this is an instance of.
   StructType *instanceOf{};
 
+
   /// The AST declaration.
   AST::Struct &decl;
 
@@ -1106,6 +1107,8 @@ public:
   /// If applicable, the instances of this abstract struct.
   std::map<llvm::SmallVector<Type *>, BumpPtr<StructType>> instances{};
 
+  /// Is this the default instance of the abstract `instanceOf` struct?
+  bool isDefaultInstance{};
 
 public:
   [[nodiscard]] auto &instance_of() {
@@ -1196,9 +1199,7 @@ public:
   [[nodiscard]] bool is_always_instance_of(Type *type) const {
     for (auto caseType : caseTypes)
       if (!(caseType->is_struct() &&
-            static_cast<StructType *>(caseType)->is_instance_of(type)) /* &&
-          !(llvm::isa<Texture2DInstanceType>(caseType) &&
-            llvm::isa<Texture2DType>(type)) */)
+            static_cast<StructType *>(caseType)->is_instance_of(type)))
         return false;
     return true;
   }

@@ -342,7 +342,7 @@ export @(pure macro) auto $energy_loss_compensation(
   if $(multiscatter_tint <: void) {
     return 0.0;
   } else {
-    const $albedo_lut lut(#albedo_lut(lut_name));
+    const auto lut(#albedo_lut(lut_name));
     float t((lut.num_roughness - 1) * #max(0, #min(roughness, 1)));
     const int j(#min(int(#floor(t)), lut.num_roughness - 2));
     t = t - j;
@@ -1326,8 +1326,8 @@ export @(macro) int $scatter_evaluate(
   const &float f,       ///< output: The scattering function
 ) {
   auto params = scatter_evaluate_parameters(wo0: normalize(*wo), wi0: normalize(*wi), normal: normalize(*instance.normal), thin_walled: instance.mat.thin_walled);
-  auto result = instance.mat.backface <: #typeof(material_surface()) || !params.hit_backface //
-                ? scatter_evaluate(visit &instance.mat.surface.scattering, &params)          //
+  auto result = #is_default(instance.mat.backface) || !params.hit_backface          //
+                ? scatter_evaluate(visit &instance.mat.surface.scattering, &params) //
                 : scatter_evaluate(visit &instance.mat.backface.scattering, &params);
   visit result in result {
     if (result.is_black) {
@@ -1360,8 +1360,8 @@ export @(macro) int $scatter_sample(
   const &int is_delta,  ///< output: Is delta direction?
 ) {
   auto params = scatter_sample_parameters(xi: saturate(*xi), wo0: normalize(*wo), normal: normalize(*instance.normal), thin_walled: instance.mat.thin_walled);
-  auto result = instance.mat.backface <: #typeof(material_surface()) || !params.hit_backface //
-                ? scatter_sample(visit &instance.mat.surface.scattering, &params)            //
+  auto result = #is_default(instance.mat.backface) || !params.hit_backface        //
+                ? scatter_sample(visit &instance.mat.surface.scattering, &params) //
                 : scatter_sample(visit &instance.mat.backface.scattering, &params);
   visit result in result {
     *wi = #select(params.hit_backface, -result.wi, +result.wi);
@@ -1501,14 +1501,18 @@ export @(macro) int $emission_evaluate(
   const &float pdf, ///< output: The PDF of sampling `we`
   const &float Le,  ///< output: The emission function
 ) {
-  // TODO Account for backface
-  auto emission = &instance.mat.surface.emission;
-  auto params = emission_evaluate_parameters(we: normalize(*we));
+  auto emission = we.z < 0                         //
+                  ? &instance.mat.surface.emission //
+                  : &instance.mat.backface.emission;
+  auto params = emission_evaluate_parameters(we: normalize(*we) * #sign(we.z));
   auto result = emission_evaluate(visit &emission.emission, &params);
   auto result_Le = color(result.intensity * emission.intensity);
   if (emission.mode == intensity_power) {
     result_Le /= 4 * PI; // TODO Is this right?
   }
+  if (!#is_default(instance.mat.surface.emission) && //
+      !#is_default(instance.mat.backface.emission))
+    result.pdf /= 2;
   *pdf = result.pdf;
   #memcpy(Le, &result_Le, #sizeof(float) * $WAVELENGTH_BASE_MAX);
   return result.is_black;
@@ -1521,15 +1525,19 @@ export @(macro) int $emission_sample(
   const &float pdf, ///< output: The PDF of sampling `we` 
   const &float Le,  ///< output: The emission function
 ) {
-  // TODO Account for backface - I suppose we have to randomly pick
-  //      between surface and backface if both are present?
   auto emission = &instance.mat.surface.emission;
+  auto backface = false;
+  if (#is_default(instance.mat.surface.emission) || (!#is_default(instance.mat.backface.emission) && monte_carlo::bool_sample(&xi.z, 0.5))) {
+    emission = &instance.mat.backface.emission;
+    backface = true;
+  }
   auto params = emission_sample_parameters(xi: *xi);
   auto result = emission_sample(visit &emission.emission, &params);
   if (!result.we) {
     return 0;
   } else {
     *we = *result.we;
+    *we *= -1 if (backface);
     return $emission_evaluate(instance, we, pdf, Le);
   }
 }

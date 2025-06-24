@@ -65,7 +65,7 @@ Context::Context(Compiler &compiler) : compiler(compiler) {
        get_comptime_int(int(compiler.wavelengthBaseMax))},
   };
 
-  // Compile builtin `api` module and use all exports as keywords!
+  // Compile builtin `API` module and use all exports as keywords!
   // - `enum intensity_mode`
   //   - `intensity_radiant_exitance`
   //   - `intensity_power`
@@ -82,12 +82,12 @@ Context::Context(Compiler &compiler) : compiler(compiler) {
   // - Function `$wyman_1931_y`
   // - Function `$color_to_rgb`
   // - Function `$rgb_to_color`
-  for (auto crumb{get_builtin_module("api")->lastCrumb}; crumb;
+  for (auto crumb{get_builtin_module("API")->lastCrumb}; crumb;
        crumb = crumb->prev) {
     if (crumb->is_exported() && crumb->has_simple_name()) {
       auto simpleName{llvm::StringRef(crumb->name[0])};
       SMDL_SANITY_CHECK(!keywords.contains(simpleName),
-                        "keyword collision in builtin 'api' module");
+                        "keyword collision in builtin 'API' module");
       keywords[simpleName] = crumb->value;
     }
   }
@@ -121,8 +121,8 @@ Module *Context::get_builtin_module(llvm::StringRef name) {
   return mod.get();
 }
 
-const AlbedoLUT *Context::get_builtin_albedo_lut(llvm::StringRef name) {
-  return builtin::get_albedo_lut(name);
+const AlbedoLUT *Context::get_builtin_albedo(llvm::StringRef name) {
+  return builtin::get_albedo(name);
 }
 
 Type *Context::get_arithmetic_type(Scalar scalar, Extent extent) {

@@ -1433,7 +1433,7 @@ Value Emitter::emit_intrinsic(std::string_view name, const ArgumentList &args,
       auto lutName{args[0].value.get_comptime_string()};
       auto lutType{context.get_keyword_value("$albedo_lut")
                        .get_comptime_meta_type(context, srcLoc)};
-      auto lut{context.get_builtin_albedo_lut(lutName)};
+      auto lut{context.get_builtin_albedo(lutName)};
       if (!lut)
         srcLoc.throw_error(
             "intrinsic 'albedo_lut' passed invalid name ", quoted(lutName),
@@ -1552,6 +1552,10 @@ Value Emitter::emit_intrinsic(std::string_view name, const ArgumentList &args,
         result = type->is_tag();
       } else if (name == "is_union") {
         result = type->is_union();
+      } else if (name == "is_default") {
+        if (auto structType{llvm::dyn_cast<StructType>(type)}) {
+          result = structType->isDefaultInstance;
+        }
       }
       if (result) {
         return context.get_comptime_bool(*result);

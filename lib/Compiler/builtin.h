@@ -8,7 +8,7 @@ namespace smdl::builtin {
 static const char *anno = R"*(#smdl
 )*";
 
-static const char *api = R"*(#smdl
+static const char *API = R"*(#smdl
 export typedef #type_int(8) $int8_t;
 export typedef #type_int(16) $int16_t;
 export typedef #type_int(32) $int32_t;
@@ -213,10 +213,12 @@ export struct material{
 const int THIN_WALLED=(1<<0);
 const int HAS_SURFACE=(1<<1);
 const int HAS_BACKFACE=(1<<2);
-const int HAS_VOLUME=(1<<3);
-const int HAS_HAIR=(1<<4);
-const int HAS_POSSIBLY_NON_ZERO_BRDF=(1<<5);
-const int HAS_POSSIBLY_NON_ZERO_BTDF=(1<<6);
+const int HAS_SURFACE_EMISSION=(1<<3);
+const int HAS_BACKFACE_EMISSION=(1<<4);
+const int HAS_VOLUME=(1<<5);
+const int HAS_HAIR=(1<<6);
+const int HAS_POSSIBLY_NON_ZERO_BRDF=(1<<7);
+const int HAS_POSSIBLY_NON_ZERO_BTDF=(1<<8);
 export struct $material_instance{
   const &material mat;
   const &float3 displacement=&mat.geometry.displacement;
@@ -226,7 +228,7 @@ export struct $material_instance{
   const &color absorption_coefficient=($(#typeof(mat.volume.absorption_coefficient)==void)?null:&mat.volume.absorption_coefficient);
   const &color scattering_coefficient=($(#typeof(mat.volume.scattering_coefficient)==void)?null:&mat.volume.scattering_coefficient);
   const int wavelength_base_max=$WAVELENGTH_BASE_MAX;
-  const int flags=(mat.thin_walled?THIN_WALLED:0)|(#typeof(mat.surface)!=#typeof(material_surface())?HAS_SURFACE:0)|(#typeof(mat.backface)!=#typeof(material_surface())?HAS_BACKFACE:0)|(#typeof(mat.volume)!=#typeof(material_volume())?HAS_VOLUME:0)|(#typeof(mat.hair)!=#typeof(hair_bsdf())?HAS_HAIR:0);
+  const int flags=(mat.thin_walled?THIN_WALLED:0)|(!#is_default(mat.surface)?HAS_SURFACE:0)|(!#is_default(mat.backface)?HAS_BACKFACE:0)|(!#is_default(mat.surface.emission)?HAS_SURFACE_EMISSION:0)|(!#is_default(mat.backface.emission)?HAS_BACKFACE_EMISSION:0)|(!#is_default(mat.volume)?HAS_VOLUME:0)|(#typeof(mat.hair)!=#typeof(hair_bsdf())?HAS_HAIR:0);
   const float3x3 tangent_space=float3x3($state.tangent_to_object_matrix[0].xyz,$state.tangent_to_object_matrix[1].xyz,$state.tangent_to_object_matrix[2].xyz,);
 };
 export struct $albedo_lut{
@@ -446,7 +448,7 @@ export @(pure macro)auto $energy_loss_compensation(
   if$(multiscatter_tint<:void){
     return 0.0;
   } else {
-    const $albedo_lut lut(#albedo_lut(lut_name));
+    const auto lut(#albedo_lut(lut_name));
     float t((lut.num_roughness-1)*#max(0,#min(roughness,1)));
     const int j(#min(int(#floor(t)),lut.num_roughness-2));
     t=t-j;
@@ -1144,7 +1146,7 @@ export @(macro)int $scatter_evaluate(
   const &float f,
 ){
   auto params=scatter_evaluate_parameters(wo0: normalize(*wo),wi0: normalize(*wi),normal: normalize(*instance.normal),thin_walled: instance.mat.thin_walled);
-  auto result=instance.mat.backface<:#typeof(material_surface())||!params.hit_backface?scatter_evaluate(visit &instance.mat.surface.scattering,&params):scatter_evaluate(visit &instance.mat.backface.scattering,&params);
+  auto result=#is_default(instance.mat.backface)||!params.hit_backface?scatter_evaluate(visit &instance.mat.surface.scattering,&params):scatter_evaluate(visit &instance.mat.backface.scattering,&params);
   visit result in result{
     if(result.is_black){
       *pdf_fwd=0.0;
@@ -1175,7 +1177,7 @@ export @(macro)int $scatter_sample(
   const &int is_delta,
 ){
   auto params=scatter_sample_parameters(xi: saturate(*xi),wo0: normalize(*wo),normal: normalize(*instance.normal),thin_walled: instance.mat.thin_walled);
-  auto result=instance.mat.backface<:#typeof(material_surface())||!params.hit_backface?scatter_sample(visit &instance.mat.surface.scattering,&params):scatter_sample(visit &instance.mat.backface.scattering,&params);
+  auto result=#is_default(instance.mat.backface)||!params.hit_backface?scatter_sample(visit &instance.mat.surface.scattering,&params):scatter_sample(visit &instance.mat.backface.scattering,&params);
   visit result in result{
     *wi=#select(params.hit_backface,-result.wi,result.wi);
     if(result.mode==scatter_none||((wo.z<0.0)==(wi.z<0.0))!=(result.mode==scatter_reflect)){
@@ -1268,13 +1270,15 @@ export @(macro)int $emission_evaluate(
   const &float pdf,
   const &float Le,
 ){
-  auto emission=&instance.mat.surface.emission;
-  auto params=emission_evaluate_parameters(we: normalize(*we));
+  auto emission=we.z<0?&instance.mat.surface.emission:&instance.mat.backface.emission;
+  auto params=emission_evaluate_parameters(we: normalize(*we)*#sign(we.z));
   auto result=emission_evaluate(visit &emission.emission,&params);
   auto result_Le=color(result.intensity*emission.intensity);
   if(emission.mode==intensity_power){
     result_Le/=4*PI;
   }
+  if(!#is_default(instance.mat.surface.emission)&&!#is_default(instance.mat.backface.emission))
+    result.pdf/=2;
   *pdf=result.pdf;
   #memcpy(Le,&result_Le,#sizeof(float)*$WAVELENGTH_BASE_MAX);
   return result.is_black;
@@ -1287,12 +1291,18 @@ export @(macro)int $emission_sample(
   const &float Le,
 ){
   auto emission=&instance.mat.surface.emission;
+  auto backface=false;
+  if(#is_default(instance.mat.surface.emission)||(!#is_default(instance.mat.backface.emission)&&monte_carlo::bool_sample(&xi.z,0.5))){
+    emission=&instance.mat.backface.emission;
+    backface=true;
+  }
   auto params=emission_sample_parameters(xi: *xi);
   auto result=emission_sample(visit &emission.emission,&params);
   if(!result.we){
     return 0;
   } else {
     *we=*result.we;
+    *we*=-1 if(backface);
     return $emission_evaluate(instance,we,pdf,Le);
   }
 }
@@ -2904,8 +2914,8 @@ export @(noinline)PROSPECT_result PROSPECT(
 [[nodiscard]] static const char *get_source_code(std::string_view name) {
   if (name == "anno")
     return anno;
-  if (name == "api")
-    return api;
+  if (name == "API")
+    return API;
   if (name == "debug")
     return debug;
   if (name == "df")
@@ -2934,7 +2944,7 @@ export @(noinline)PROSPECT_result PROSPECT(
 #include "builtin/albedo/sheen_bsdf.inl"
 #include "builtin/albedo/simple_glossy_bsdf.inl"
 #include "builtin/albedo/ward_geisler_moroder_bsdf.inl"
-[[nodiscard]] static const AlbedoLUT *get_albedo_lut(std::string_view name) {
+[[nodiscard]] static const AlbedoLUT *get_albedo(std::string_view name) {
   if (name == "diffuse_reflection_bsdf")
     return &diffuse_reflection_bsdf;
   if (name == "microfacet_ggx_smith_bsdf")

@@ -60,17 +60,23 @@ public:
   /// Has a non-default backface surface component?
   static constexpr int HAS_BACKFACE = (1 << 2);
 
+  /// Has a non-default surface emission component?
+  static constexpr int HAS_SURFACE_EMISSION = (1 << 3);
+
+  /// Has a non-default backface emission component?
+  static constexpr int HAS_BACKFACE_EMISSION = (1 << 4);
+
   /// Has a non-default volume component?
-  static constexpr int HAS_VOLUME = (1 << 3);
+  static constexpr int HAS_VOLUME = (1 << 5);
 
   /// Has a non-default hair component?
-  static constexpr int HAS_HAIR = (1 << 4);
+  static constexpr int HAS_HAIR = (1 << 6);
 
   /// Has a possibly non-zero BRDF (`wo` and `wi` in same hemisphere)?
-  static constexpr int HAS_POSSIBLY_NON_ZERO_BRDF = (1 << 5);
+  static constexpr int HAS_POSSIBLY_NON_ZERO_BRDF = (1 << 7);
 
   /// Has a possibly non-zero BTDF (`wo` and `wi` in opposite hemispheres)?
-  static constexpr int HAS_POSSIBLY_NON_ZERO_BTDF = (1 << 6);
+  static constexpr int HAS_POSSIBLY_NON_ZERO_BTDF = (1 << 8);
 
   /// An instance of the material.
   struct Instance final {
@@ -133,10 +139,10 @@ public:
   /// The instance obtained from the `allocate` function.
   ///
   /// \param[in] wo
-  /// The outgoing direction in the local tangent-space.
+  /// The outgoing direction in tangent space.
   ///
   /// \param[in] wi
-  /// The incoming direction in the local tangent-space.
+  /// The incoming direction in tangent space.
   ///
   /// \param[out] pdf_fwd
   /// The forward PDF of sampling `wi` given `wo`.
@@ -163,10 +169,10 @@ public:
   /// The canonical random sample in \f$ [0,1]^4 \f$.
   ///
   /// \param[in] wo
-  /// The outgoing direction in the local tangent-space.
+  /// The outgoing direction in tangent space.
   ///
   /// \param[out] wi
-  /// The incoming direction in the local tangent-space.
+  /// The incoming direction in tangent space.
   ///
   /// \param[out] pdf_fwd
   /// The forward PDF of sampling `wi` given `wo`.
@@ -185,16 +191,44 @@ public:
                int &is_delta)>
       scatter_sample{};
 
-  // TODO
-#if 0
+  /// The emission evaluate function.
+  //
+  /// \param[in] instance
+  /// The instance obtained from the `allocate` function.
+  ///
+  /// \param[in] we
+  /// The emission direction in tangent space.
+  ///
+  /// \param[out] pdf
+  /// The PDF.
+  ///
+  /// \param[out] Le
+  /// The emission spectrum.
+  ///
   Function<int(const Instance &instance, const float3 &we, float &pdf,
                float *Le)>
       emission_evaluate{};
 
+  /// The emission sample function.
+  ///
+  /// \param[in] instance
+  /// The instance obtained from the `allocate` function.
+  ///
+  /// \param[in] xi
+  /// The canonical random sample in \f$ [0,1]^4 \f$.
+  ///
+  /// \param[out] we
+  /// The emission direction in tangent space.
+  ///
+  /// \param[out] pdf
+  /// The PDF.
+  ///
+  /// \param[out] Le
+  /// The emission spectrum.
+  ///
   Function<int(const Instance &instance, const float4 &xi, float3 &we,
                float &pdf, float *Le)>
       emission_sample{};
-#endif
 };
 
 /// A just-in-time SMDL unit test.

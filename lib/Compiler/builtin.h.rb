@@ -11,7 +11,7 @@ namespace smdl::builtin {
 
 STR
 
-fnames = ['anno', 'api', 'debug', 'df', 'limits', 'math', 'scene', 'state', 'std', 'tex', 'PCG32', 'PROSPECT']
+fnames = ['anno', 'API', 'debug', 'df', 'limits', 'math', 'scene', 'state', 'std', 'tex', 'PCG32', 'PROSPECT']
 for fname in fnames 
   text = `smdl format -c --no-comments builtin/#{fname}.smdl`
   text = File.read "builtin/#{fname}.smdl" unless $?.success?
@@ -36,7 +36,7 @@ for fname in fnames
   f.write "#include \"builtin/albedo/#{fname}.inl\"\n"
 end
 f.write <<STR
-[[nodiscard]] static const AlbedoLUT *get_albedo_lut(std::string_view name) {
+[[nodiscard]] static const AlbedoLUT *get_albedo(std::string_view name) {
 STR
 for fname in fnames
   f.write <<STR

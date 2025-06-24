@@ -1662,6 +1662,7 @@ Value StructType::invoke(Emitter &emitter, const ArgumentList &args,
     auto resultType{this};
     if (resultType->is_abstract()) {
       resultType = instantiate(emitter.context, resolved.get_value_types());
+      resultType->isDefaultInstance = args.empty();
       SMDL_SANITY_CHECK(!resultType->is_abstract());
     }
     auto result{Value::zero(resultType)};
