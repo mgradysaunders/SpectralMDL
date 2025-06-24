@@ -1086,6 +1086,22 @@ template <typename T, size_t N>
 /// \addtogroup Main
 /// \{
 
+/// The format options.
+class SMDL_EXPORT FormatOptions final {
+public:
+  /// Format files in-place. If false, prints formatted source code to `stdout`.
+  bool inPlace{};
+
+  /// Remove comments from formatted source code.
+  bool noComments{};
+
+  /// Remove annotations from formatted source code.
+  bool noAnnotations{};
+
+  /// Want compact?
+  bool compact{};
+};
+
 /// The MDL state passed in at runtime.
 class SMDL_EXPORT State final {
 public:
@@ -1177,11 +1193,6 @@ public:
   void finalize_for_runtime_conventions();
 };
 
-/// \}
-
-/// \addtogroup Support
-/// \{
-
 /// An albedo look-up table (LUT) for energy compensation in lossy BSDFs.
 class SMDL_EXPORT AlbedoLUT final {
 public:
@@ -1205,6 +1216,11 @@ public:
   ///
   const float *const average_albedo = nullptr;
 };
+
+/// \}
+
+/// \addtogroup Support
+/// \{
 
 /// Defer until end-of-scope.
 template <typename F> struct Defer final {
@@ -1247,22 +1263,6 @@ private:
 
 /// \addtogroup Main
 /// \{
-
-/// The formatter options.
-class SMDL_EXPORT FormatOptions final {
-public:
-  /// Format files in-place. If false, prints formatted source code to `stdout`.
-  bool inPlace{};
-
-  /// Remove comments from formatted source code.
-  bool noComments{};
-
-  /// Remove annotations from formatted source code.
-  bool noAnnotations{};
-
-  /// Want compact?
-  bool compact{};
-};
 
 /// Expand third macro in variadic arguments, used to implement
 /// `SMDL_SANITY_CHECK`.
