@@ -1,3 +1,4 @@
+/// \file
 #pragma once
 
 #include "smdl/common.h"
@@ -151,7 +152,7 @@ public:
   /// The reverse PDF of sampling `wo` given `wi`.
   ///
   /// \param[out] f
-  /// The BSDF spectrum.
+  /// The BSDF spectrum. This must be non-null!
   ///
   /// \return
   /// Returns `true` if the result is non-zero.
@@ -181,7 +182,7 @@ public:
   /// The reverse PDF of sampling `wo` given `wi`.
   ///
   /// \param[out] f
-  /// The BSDF spectrum.
+  /// The BSDF spectrum. This must be non-null!
   ///
   /// \param[out] is_delta
   /// Set to `true` if sampling Dirac delta distribution.
@@ -203,7 +204,7 @@ public:
   /// The PDF.
   ///
   /// \param[out] Le
-  /// The emission spectrum.
+  /// The emission spectrum. This must be non-null!
   ///
   Function<int(const Instance &instance, const float3 &we, float &pdf,
                float *Le)>
@@ -224,7 +225,7 @@ public:
   /// The PDF.
   ///
   /// \param[out] Le
-  /// The emission spectrum.
+  /// The emission spectrum. This must be non-null!
   ///
   Function<int(const Instance &instance, const float4 &xi, float3 &we,
                float &pdf, float *Le)>

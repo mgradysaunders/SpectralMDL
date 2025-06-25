@@ -279,6 +279,8 @@ std::optional<Error> Compiler::jit_compile() noexcept {
       jit_lookup_or_throw(jitMaterial.allocate);
       jit_lookup_or_throw(jitMaterial.scatter_evaluate);
       jit_lookup_or_throw(jitMaterial.scatter_sample);
+      jit_lookup_or_throw(jitMaterial.emission_evaluate);
+      jit_lookup_or_throw(jitMaterial.emission_sample);
     }
     for (auto &jitUnitTest : jitUnitTests) {
       jit_lookup_or_throw(jitUnitTest.test);

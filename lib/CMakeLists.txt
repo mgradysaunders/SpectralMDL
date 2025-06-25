@@ -20,6 +20,7 @@ add_library(
     "Compiler/llvm.cc"
     "Compiler/Type.cc"
     "Compiler/Value.cc"
+    "Distribution.cc"
     "FileLocator.cc"
     "Formatter.cc"
     "Image.cc"

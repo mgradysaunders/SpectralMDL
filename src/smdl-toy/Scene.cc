@@ -202,6 +202,16 @@ Color Scene::trace_path(smdl::BumpPtrAllocator &allocator,
       jitMaterial->allocate(state, jitMaterialInstance);
     }
     auto invTbn{smdl::transpose(jitMaterialInstance.tangent_space)};
+    if ((jitMaterialInstance.flags &
+         (smdl::JIT::Material::HAS_SURFACE_EMISSION |
+          smdl::JIT::Material::HAS_BACKFACE_EMISSION)) != 0) {
+      float pdf{};
+      Color Le{};
+      if (jitMaterial->emission_evaluate(jitMaterialInstance, invTbn * wo, pdf,
+                                         &Le[0]))
+        for (size_t i = 0; i < WAVELENGTH_BASE_MAX; i++)
+          L[i] += w[i] * Le[i];
+    }
     {
       Ray shadowRay{};
       Hit shadowHit{};

@@ -772,10 +772,14 @@ public:
   [[nodiscard]] bool is_pure() const { return decl.has_attribute("pure"); }
 
   /// Is marked with the attribute `@(macro)`?
-  [[nodiscard]] bool is_macro() const { return decl.has_attribute("macro"); }
+  [[nodiscard]] bool is_macro() const {
+    return decl.has_attribute("macro") || isMaterial;
+  }
 
   /// Is marked with the attribute `@(foreign)`?
-  [[nodiscard]] bool is_foreign() const { return decl.has_attribute("foreign"); }
+  [[nodiscard]] bool is_foreign() const {
+    return decl.has_attribute("foreign");
+  }
 
   /// Is function variant?
   [[nodiscard]] bool is_variant() const { return decl.is_variant(); }
@@ -832,6 +836,8 @@ public:
   /// The macro recursion depth counter to detect run-away
   /// recursion at compile time.
   size_t macroRecursionDepth{};
+
+  bool isMaterial{};
 
 private:
   void initialize_jit_material_functions(Emitter &emitter);
@@ -1068,7 +1074,6 @@ public:
   /// If applicable, the abstract struct this is an instance of.
   StructType *instanceOf{};
 
-
   /// The AST declaration.
   AST::Struct &decl;
 
@@ -1099,7 +1104,7 @@ public:
   ///
   /// \note
   /// For instances of generic structs, we do not copy the static fields
-  /// and instead use `instance_of().staticFields` to access the lookup 
+  /// and instead use `instance_of().staticFields` to access the lookup
   /// table in the parent struct.
   ///
   llvm::StringMap<Value> staticFields{};
@@ -1111,9 +1116,7 @@ public:
   bool isDefaultInstance{};
 
 public:
-  [[nodiscard]] auto &instance_of() {
-    return instanceOf ? *instanceOf : *this;
-  }
+  [[nodiscard]] auto &instance_of() { return instanceOf ? *instanceOf : *this; }
 
   [[nodiscard]] auto &instance_of() const {
     return instanceOf ? *instanceOf : *this;

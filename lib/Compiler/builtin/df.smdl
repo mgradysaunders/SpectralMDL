@@ -1383,24 +1383,29 @@ export @(macro) int $scatter_sample(
   }
 }
 
-// TODO This all needs work!
 struct emission_evaluate_parameters {
+  /// The emission direction.
   float3 we;
 };
 
 struct emission_evaluate_result {
+  /// The intensity.
   float intensity = 0;
 
+  /// The probability density function.
   float pdf = 0;
 
+  /// Is black?
   bool is_black = false;
 };
 
 struct emission_sample_parameters {
+  /// The canonical random sample in `[0,1]^4`.
   float4 xi;
 };
 
 struct emission_sample_result {
+  /// The emission direction.
   ?float3 we = null;
 };
 
@@ -1462,31 +1467,70 @@ export struct spot_edf: edf {
 //--}
 
 //--{ measured_edf
+
+/// > Returns `true` if the value of `profile` is a valid light profile reference and `false` otherwise.
 export @(pure macro) bool light_profile_isvalid(const light_profile profile) = bool(profile.ptr);
 
+/// > Returns the maximum intensity in this light profile. A lookup on an invalid light profile reference returns zero.
 export @(pure macro) float light_profile_maximum(const light_profile profile) = profile.max_intensity;
 
+/// > Returns the power emitted by the light profile. A lookup on an invalid light profile reference returns zero.
 export @(pure macro) float light_profile_power(const light_profile profile) = profile.power;
 
 export struct measured_edf: edf {
+  /// The profile.
   light_profile profile;
 
+  /// The multiplier.
   float multiplier = 1.0;
 
+  /// Is global distribution?
+  ///
+  /// > If `true`, the global coordinate system defines the orientation of the
+  /// > light distribution. Otherwise, it is oriented along the local tangent space
+  /// > defined by the `tangent_u` parameter.
+  ///
   bool global_distribution = true;
 
+  /// The global coordinate system.
+  ///
+  /// > Orthonormal coordinate system that defines the orientation of the light
+  /// > distribution with respect to the object space. In other words, multiplying
+  /// > a direction in the coordinate frame of the light distribution with this
+  /// > matrix transforms it into object space.
+  ///
   float3x3 global_frame = float3x3(1.0);
 
+  /// The tangent in the U direction, in internal space.
   float3 tangent_u = $state.texture_tangent_u[0];
 
+  /// The handle.
+  ///
+  /// > Name to provide access to this component for use in an MDL integration.
+  ///
+  /// \note 
+  /// At the moment, SpectralMDL does not care about handles! This is not used
+  /// anywhere and only provided for compatibility with the MDL specification.
+  ///
   string handle = "";
 };
 
-@(foreign pure) float smdl_light_profile_interpolate(const &void profile_ptr, const &float3 we);
+// Defined in `lib/LightProfile.cc`
+@(foreign pure) float smdl_light_profile_interpolate(const &void ptr, const &float3 we);
 
 @(pure macro) auto emission_evaluate(const &measured_edf this, const &emission_evaluate_parameters params) {
-  // TODO
-  return emission_evaluate_result(is_black: true);
+  auto we = return_from {
+    if (this.global_distribution) {
+      return params.we * this.global_frame; // TODO Is this right?
+    } else {
+      return params.we * calculate_tangent_space($state.normal, this.tangent_u);
+    }
+  };
+  if (!(we.z > 0) || !(params.multiplier > 0)) {
+    return emission_evaluate_result(is_black: true);
+  } else {
+    return emission_evaluate_result(intensity: params.multiplier * smdl_light_profile_interpolate(this.profile.ptr, &we), pdf: 1.0); // TODO 
+  }
 }
 
 @(pure macro) auto emission_sample(const &measured_edf this, const &emission_sample_parameters params) {
@@ -1496,48 +1540,69 @@ export struct measured_edf: edf {
 //--}
 
 export @(macro) int $emission_evaluate(
-  const &$material_instance instance,
-  const &float3 we, ///< The emission direction
-  const &float pdf, ///< output: The PDF of sampling `we`
-  const &float Le,  ///< output: The emission function
+  const &$material_instance instance [[anno::unused()]],
+  const &float3 we [[anno::unused()]], ///< The emission direction
+  const &float pdf [[anno::unused()]], ///< output: The probability density function
+  const &float Le [[anno::unused()]],  ///< output: The emission
 ) {
-  auto emission = we.z < 0                         //
-                  ? &instance.mat.surface.emission //
-                  : &instance.mat.backface.emission;
-  auto params = emission_evaluate_parameters(we: normalize(*we) * #sign(we.z));
-  auto result = emission_evaluate(visit &emission.emission, &params);
-  auto result_Le = color(result.intensity * emission.intensity);
-  if (emission.mode == intensity_power) {
-    result_Le /= 4 * PI; // TODO Is this right?
+  if (#is_default(instance.mat.surface.emission) && //
+      #is_default(instance.mat.backface.emission)) {
+    return 0;
+  } else {
+    auto params = emission_evaluate_parameters(we: normalize(*we) * #sign(we.z));
+    auto result_intensity = color(0.0);
+    auto result = return_from {
+      if (we.z > 0) {
+        auto emission = &instance.mat.surface.emission;
+        auto result = emission_evaluate(visit &emission.emission, &params);
+        result.intensity /= 4 * PI if (emission.mode == intensity_power); // TODO Is this right?
+        result_intensity = emission.intensity * result.intensity;
+        return result;
+      } else {
+        auto emission = &instance.mat.backface.emission;
+        auto result = emission_evaluate(visit &emission.emission, &params);
+        result.intensity /= 4 * PI if (emission.mode == intensity_power); // TODO Is this right?
+        result_intensity = emission.intensity * result.intensity;
+        return result;
+      }
+    };
+    if (!#is_default(instance.mat.surface.emission) && //
+        !#is_default(instance.mat.backface.emission)) {
+      result.pdf /= 2;
+    }
+    *pdf = result.pdf;
+    #memcpy(Le, &result_intensity, #sizeof(float) * $WAVELENGTH_BASE_MAX);
+    return !result.is_black;
   }
-  if (!#is_default(instance.mat.surface.emission) && //
-      !#is_default(instance.mat.backface.emission))
-    result.pdf /= 2;
-  *pdf = result.pdf;
-  #memcpy(Le, &result_Le, #sizeof(float) * $WAVELENGTH_BASE_MAX);
-  return result.is_black;
 }
 
 export @(macro) int $emission_sample(
-  const &$material_instance instance,
-  const &float4 xi, ///< The canonical random sample in `[0,1]^4`
-  const &float3 we, ///< output: The emission direction
-  const &float pdf, ///< output: The PDF of sampling `we` 
-  const &float Le,  ///< output: The emission function
+  const &$material_instance instance [[anno::unused()]],
+  const &float4 xi [[anno::unused()]], ///< The canonical random sample in `[0,1]^4`
+  const &float3 we [[anno::unused()]], ///< output: The emission direction
+  const &float pdf [[anno::unused()]], ///< output: The probability density function
+  const &float Le [[anno::unused()]],  ///< output: The emission
 ) {
-  auto emission = &instance.mat.surface.emission;
-  auto backface = false;
-  if (#is_default(instance.mat.surface.emission) || (!#is_default(instance.mat.backface.emission) && monte_carlo::bool_sample(&xi.z, 0.5))) {
-    emission = &instance.mat.backface.emission;
-    backface = true;
-  }
-  auto params = emission_sample_parameters(xi: *xi);
-  auto result = emission_sample(visit &emission.emission, &params);
-  if (!result.we) {
+  if (#is_default(instance.mat.surface.emission) && //
+      #is_default(instance.mat.backface.emission)) {
     return 0;
   } else {
-    *we = *result.we;
-    *we *= -1 if (backface);
-    return $emission_evaluate(instance, we, pdf, Le);
+    auto params = emission_sample_parameters(xi: *xi);
+    auto result = return_from {
+      if (#is_default(instance.mat.surface.emission) || (!#is_default(instance.mat.backface.emission) && monte_carlo::bool_sample(&xi.z, 0.5))) {
+        auto result = emission_sample(visit &instance.mat.surface.emission.emission, &params);
+        return result;
+      } else {
+        auto result = emission_sample(visit &instance.mat.backface.emission.emission, &params);
+        *result.we *= -1 if (result.we); // Flip
+        return result;
+      }
+    };
+    if (!result.we) {
+      return 0;
+    } else {
+      *we = *result.we;
+      return $emission_evaluate(instance, we, pdf, Le);
+    }
   }
 }

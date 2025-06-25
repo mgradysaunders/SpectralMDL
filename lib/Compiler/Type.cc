@@ -928,6 +928,7 @@ void FunctionType::initialize(Emitter &emitter) {
     if (decl.has_attribute("macro"))
       decl.srcLoc.throw_error("material ", quoted(declName),
                               " must not be declared '@(macro)'");
+    isMaterial = true;
     initialize_jit_material_functions(emitter);
   }
 }
@@ -1117,23 +1118,14 @@ FunctionType::instantiate(Emitter &emitter,
 }
 
 void FunctionType::initialize_jit_material_functions(Emitter &emitter) {
-  SMDL_LOG_DEBUG(std::string(decl.srcLoc), " New material ", quoted(decl.name));
   using namespace std::literals::string_view_literals;
+  SMDL_LOG_DEBUG(std::string(decl.srcLoc), " New material ", quoted(decl.name));
   auto &context{emitter.context};
   auto &jitMaterial{context.compiler.jitMaterials.emplace_back()};
   jitMaterial.moduleName = std::string(decl.srcLoc.get_module_name());
   jitMaterial.moduleFileName = std::string(decl.srcLoc.get_module_file_name());
   jitMaterial.lineNo = decl.srcLoc.lineNo;
   jitMaterial.materialName = std::string(decl.name.srcName);
-  auto &inst{instantiate(emitter, {})};
-  SMDL_SANITY_CHECK(!inst.returnType->is_abstract() &&
-                    inst.returnType->is_struct() &&
-                    static_cast<StructType *>(inst.returnType)
-                        ->is_instance_of(context.materialType));
-  if (!params.empty()) {
-    // TODO
-    SMDL_SANITY_CHECK("materials with default initializers not supported yet!");
-  }
   auto dfModule{context.get_builtin_module("df")};
   SMDL_SANITY_CHECK(dfModule);
   Type *materialInstanceType{};
@@ -1152,20 +1144,17 @@ void FunctionType::initialize_jit_material_functions(Emitter &emitter) {
   }};
   {
     // Generate the allocate function:
-    // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
     // @(visible) void "material_name.allocate"(&auto out) {
     //   *out = $material_instance(#bump_allocate(material_name()));
     // }
-    // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
     auto funcReturnType{static_cast<Type *>(context.get_void_type())};
     auto func{emitter.create_function(
         concat(declName, ".allocate"), /*isPure=*/false, funcReturnType,
         {constParameter(context.get_void_pointer_type(), "out")}, decl.srcLoc,
         [&] {
-          auto material{RValue(inst.returnType,
-                               emitter.builder.CreateCall(
-                                   inst.llvmFunc->getFunctionType(),
-                                   inst.llvmFunc, {emitter.state.llvmValue}))};
+          auto material{invoke(emitter, {}, decl.srcLoc)};
           auto materialInstance{emitter.emit_call(
               context.get_keyword_value("$material_instance"),
               emitter.emit_intrinsic("bump_allocate", material, decl.srcLoc),
@@ -1184,20 +1173,20 @@ void FunctionType::initialize_jit_material_functions(Emitter &emitter) {
     // Generate the scatter evaluate function:
     // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
     // @(pure visible) int "material_name.scatter_evaluate"(
-    //     &$material_instance self,
+    //     &$material_instance instance,
     //     &float3 wo,
     //     &float3 wi,
     //     &float pdf_fwd,
     //     &float pdf_rev,
     //     &float f) {
     //   return ::df::$scatter_evaluate(
-    //     self.instance, wo, wi, pdf_fwd, pdf_rev, f);
+    //     instance, wo, wi, pdf_fwd, pdf_rev, f);
     // }
     // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
     auto funcReturnType{static_cast<Type *>(context.get_int_type())};
     auto func{emitter.create_function(
         concat(declName, ".scatter_evaluate"), /*isPure=*/true, funcReturnType,
-        {constParameter(materialInstancePtrType, "self"),
+        {constParameter(materialInstancePtrType, "instance"),
          constParameter(float3PtrType, "wo"),
          constParameter(float3PtrType, "wi"),
          constParameter(floatPtrType, "pdf_fwd"),
@@ -1211,7 +1200,7 @@ void FunctionType::initialize_jit_material_functions(Emitter &emitter) {
               emitter.emit_call(
                   dfFunc->value,
                   llvm::ArrayRef<Value>{
-                      emitter.resolve_identifier("self"sv, decl.srcLoc),
+                      emitter.resolve_identifier("instance"sv, decl.srcLoc),
                       emitter.resolve_identifier("wo"sv, decl.srcLoc),
                       emitter.resolve_identifier("wi"sv, decl.srcLoc),
                       emitter.resolve_identifier("pdf_fwd"sv, decl.srcLoc),
@@ -1225,9 +1214,9 @@ void FunctionType::initialize_jit_material_functions(Emitter &emitter) {
   }
   {
     // Generate the scatter sample function:
-    // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
     // @(pure visible) int "material_name.scatter_sample"(
-    //     &$material_instance self,
+    //     &$material_instance instance,
     //     &float4 xi,
     //     &float3 wo,
     //     &float3 wi,
@@ -1236,13 +1225,13 @@ void FunctionType::initialize_jit_material_functions(Emitter &emitter) {
     //     &float f,
     //     &int is_delta) {
     //   return ::df::$scatter_sample(
-    //     self.instance, xi, wo, wi, pdf_fwd, pdf_rev, f, is_delta);
+    //     instance, xi, wo, wi, pdf_fwd, pdf_rev, f, is_delta);
     // }
-    // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
     auto funcReturnType{static_cast<Type *>(context.get_int_type())};
     auto func{emitter.create_function(
         concat(declName, ".scatter_sample"), /*isPure=*/true, funcReturnType,
-        {constParameter(materialInstancePtrType, "self"),
+        {constParameter(materialInstancePtrType, "instance"),
          constParameter(float4PtrType, "xi"),
          constParameter(float3PtrType, "wo"),
          constParameter(float3PtrType, "wi"),
@@ -1258,7 +1247,7 @@ void FunctionType::initialize_jit_material_functions(Emitter &emitter) {
               emitter.emit_call(
                   dfFunc->value,
                   llvm::ArrayRef<Value>{
-                      emitter.resolve_identifier("self"sv, decl.srcLoc),
+                      emitter.resolve_identifier("instance"sv, decl.srcLoc),
                       emitter.resolve_identifier("xi"sv, decl.srcLoc),
                       emitter.resolve_identifier("wo"sv, decl.srcLoc),
                       emitter.resolve_identifier("wi"sv, decl.srcLoc),
@@ -1271,6 +1260,81 @@ void FunctionType::initialize_jit_material_functions(Emitter &emitter) {
         })};
     func->setLinkage(llvm::Function::ExternalLinkage);
     jitMaterial.scatter_sample.name = func->getName().str();
+  }
+  {
+    // Generate the emission evaluate function:
+    // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    // @(pure visible) int "material_name.emission_evaluate"(
+    //     &$material_instance instance,
+    //     &float3 we,
+    //     &float pdf,
+    //     &float Le) {
+    //   return ::df::$emission_evaluate(instance, we, pdf, Le);
+    // }
+    // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    auto funcReturnType{static_cast<Type *>(context.get_int_type())};
+    auto func{emitter.create_function(
+        concat(declName, ".emission_evaluate"), /*isPure=*/true, funcReturnType,
+        {constParameter(materialInstancePtrType, "instance"),
+         constParameter(float3PtrType, "we"),
+         constParameter(floatPtrType, "pdf"),
+         constParameter(floatPtrType, "Le")},
+        decl.srcLoc, [&] {
+          auto dfFunc{Crumb::find(context, "$emission_evaluate"sv, nullptr,
+                                  dfModule->lastCrumb)};
+          SMDL_SANITY_CHECK(dfFunc);
+          emitter.emit_return(
+              emitter.emit_call(
+                  dfFunc->value,
+                  llvm::ArrayRef<Value>{
+                      emitter.resolve_identifier("instance"sv, decl.srcLoc),
+                      emitter.resolve_identifier("we"sv, decl.srcLoc),
+                      emitter.resolve_identifier("pdf"sv, decl.srcLoc),
+                      emitter.resolve_identifier("Le"sv, decl.srcLoc)},
+                  decl.srcLoc),
+              decl.srcLoc);
+        })};
+    func->setLinkage(llvm::Function::ExternalLinkage);
+    jitMaterial.emission_evaluate.name = func->getName().str();
+  }
+  {
+    // Generate the emission sample function:
+    // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    // @(pure visible) int "material_name.emission_sample"(
+    //     &$material_instance instance,
+    //     &float4 xi,
+    //     &float3 we,
+    //     &float pdf,
+    //     &float Le) {
+    //   return ::df::$emission_sample(instance, xi, we, pdf, Le);
+    // }
+    // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    auto funcReturnType{static_cast<Type *>(context.get_int_type())};
+    auto func{emitter.create_function(
+        concat(declName, ".emission_sample"), /*isPure=*/true, funcReturnType,
+        {constParameter(materialInstancePtrType, "instance"),
+         constParameter(float4PtrType, "xi"),
+         constParameter(float3PtrType, "we"),
+         constParameter(floatPtrType, "pdf"),
+         constParameter(floatPtrType, "Le")},
+        decl.srcLoc, [&] {
+          auto dfFunc{Crumb::find(context, "$emission_sample"sv, nullptr,
+                                  dfModule->lastCrumb)};
+          SMDL_SANITY_CHECK(dfFunc);
+          emitter.emit_return(
+              emitter.emit_call(
+                  dfFunc->value,
+                  llvm::ArrayRef<Value>{
+                      emitter.resolve_identifier("instance"sv, decl.srcLoc),
+                      emitter.resolve_identifier("xi"sv, decl.srcLoc),
+                      emitter.resolve_identifier("we"sv, decl.srcLoc),
+                      emitter.resolve_identifier("pdf"sv, decl.srcLoc),
+                      emitter.resolve_identifier("Le"sv, decl.srcLoc)},
+                  decl.srcLoc),
+              decl.srcLoc);
+        })};
+    func->setLinkage(llvm::Function::ExternalLinkage);
+    jitMaterial.emission_sample.name = func->getName().str();
   }
 }
 //--}

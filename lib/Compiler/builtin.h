@@ -1257,53 +1257,85 @@ export struct measured_edf:edf{
   float3 tangent_u=$state.texture_tangent_u[0];
   string handle="";
 };
-@(foreign pure)float smdl_light_profile_interpolate(const &void profile_ptr,const &float3 we);
+@(foreign pure)float smdl_light_profile_interpolate(const &void ptr,const &float3 we);
 @(pure macro)auto emission_evaluate(const &measured_edf this,const &emission_evaluate_parameters params){
-  return emission_evaluate_result(is_black: true);
+  auto we=return_from{
+    if(this.global_distribution){
+      return params.we*this.global_frame;
+    } else {
+      return params.we*calculate_tangent_space($state.normal,this.tangent_u);
+    }
+  };
+  if(!(we.z>0)||!(params.multiplier>0)){
+    return emission_evaluate_result(is_black: true);
+  } else {
+    return emission_evaluate_result(intensity: params.multiplier*smdl_light_profile_interpolate(this.profile.ptr,&we),pdf: 1.0);
+  }
 }
 @(pure macro)auto emission_sample(const &measured_edf this,const &emission_sample_parameters params){
   return emission_sample_result();
 }
 export @(macro)int $emission_evaluate(
-  const &$material_instance instance,
-  const &float3 we,
-  const &float pdf,
-  const &float Le,
+  const &$material_instance instance[[anno::unused()]],
+  const &float3 we[[anno::unused()]],
+  const &float pdf[[anno::unused()]],
+  const &float Le[[anno::unused()]],
 ){
-  auto emission=we.z<0?&instance.mat.surface.emission:&instance.mat.backface.emission;
-  auto params=emission_evaluate_parameters(we: normalize(*we)*#sign(we.z));
-  auto result=emission_evaluate(visit &emission.emission,&params);
-  auto result_Le=color(result.intensity*emission.intensity);
-  if(emission.mode==intensity_power){
-    result_Le/=4*PI;
-  }
-  if(!#is_default(instance.mat.surface.emission)&&!#is_default(instance.mat.backface.emission))
-    result.pdf/=2;
-  *pdf=result.pdf;
-  #memcpy(Le,&result_Le,#sizeof(float)*$WAVELENGTH_BASE_MAX);
-  return result.is_black;
-}
-export @(macro)int $emission_sample(
-  const &$material_instance instance,
-  const &float4 xi,
-  const &float3 we,
-  const &float pdf,
-  const &float Le,
-){
-  auto emission=&instance.mat.surface.emission;
-  auto backface=false;
-  if(#is_default(instance.mat.surface.emission)||(!#is_default(instance.mat.backface.emission)&&monte_carlo::bool_sample(&xi.z,0.5))){
-    emission=&instance.mat.backface.emission;
-    backface=true;
-  }
-  auto params=emission_sample_parameters(xi: *xi);
-  auto result=emission_sample(visit &emission.emission,&params);
-  if(!result.we){
+  if(#is_default(instance.mat.surface.emission)&&#is_default(instance.mat.backface.emission)){
     return 0;
   } else {
-    *we=*result.we;
-    *we*=-1 if(backface);
-    return $emission_evaluate(instance,we,pdf,Le);
+    auto params=emission_evaluate_parameters(we: normalize(*we)*#sign(we.z));
+    auto result_intensity=color(0.0);
+    auto result=return_from{
+      if(we.z>0){
+        auto emission=&instance.mat.surface.emission;
+        auto result=emission_evaluate(visit &emission.emission,&params);
+        result.intensity/=4*PI if(emission.mode==intensity_power);
+        result_intensity=emission.intensity*result.intensity;
+        return result;
+      } else {
+        auto emission=&instance.mat.backface.emission;
+        auto result=emission_evaluate(visit &emission.emission,&params);
+        result.intensity/=4*PI if(emission.mode==intensity_power);
+        result_intensity=emission.intensity*result.intensity;
+        return result;
+      }
+    };
+    if(!#is_default(instance.mat.surface.emission)&&!#is_default(instance.mat.backface.emission)){
+      result.pdf/=2;
+    }
+    *pdf=result.pdf;
+    #memcpy(Le,&result_intensity,#sizeof(float)*$WAVELENGTH_BASE_MAX);
+    return !result.is_black;
+  }
+}
+export @(macro)int $emission_sample(
+  const &$material_instance instance[[anno::unused()]],
+  const &float4 xi[[anno::unused()]],
+  const &float3 we[[anno::unused()]],
+  const &float pdf[[anno::unused()]],
+  const &float Le[[anno::unused()]],
+){
+  if(#is_default(instance.mat.surface.emission)&&#is_default(instance.mat.backface.emission)){
+    return 0;
+  } else {
+    auto params=emission_sample_parameters(xi: *xi);
+    auto result=return_from{
+      if(#is_default(instance.mat.surface.emission)||(!#is_default(instance.mat.backface.emission)&&monte_carlo::bool_sample(&xi.z,0.5))){
+        auto result=emission_sample(visit &instance.mat.surface.emission.emission,&params);
+        return result;
+      } else {
+        auto result=emission_sample(visit &instance.mat.backface.emission.emission,&params);
+        *result.we*=-1 if(result.we);
+        return result;
+      }
+    };
+    if(!result.we){
+      return 0;
+    } else {
+      *we=*result.we;
+      return $emission_evaluate(instance,we,pdf,Le);
+    }
   }
 }
 )*";
@@ -1497,7 +1529,7 @@ export @(macro)float wavelength_max()=$state.wavelength_max;
 export @(macro)float[WAVELENGTH_BASE_MAX] wavelength_base()=$state.wavelength_base;
 export @(macro)float meters_per_scene_unit()=$state.meters_per_scene_unit;
 export @(macro)float scene_units_per_meter()=1.0/$state.meters_per_scene_unit;
-@(pure)float4x4 affine_inverse(float4x4 matrix){
+@(pure macro)float4x4 affine_inverse(const float4x4 matrix){
   return float4x4(
     float4(matrix[0].x,matrix[1].x,matrix[2].x,0.0),
     float4(matrix[0].y,matrix[1].y,matrix[2].y,0.0),

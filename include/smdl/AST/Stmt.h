@@ -1,3 +1,4 @@
+/// \file
 #pragma once
 
 #include "smdl/AST/Decl.h"

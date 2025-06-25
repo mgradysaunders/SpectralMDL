@@ -46,7 +46,7 @@ export @(macro) float meters_per_scene_unit() = $state.meters_per_scene_unit;
 
 export @(macro) float scene_units_per_meter() = 1.0 / $state.meters_per_scene_unit;
 
-@(pure) float4x4 affine_inverse(float4x4 matrix) {
+@(pure macro) float4x4 affine_inverse(const float4x4 matrix) {
   return float4x4(
     float4(matrix[0].x, matrix[1].x, matrix[2].x, 0.0),
     float4(matrix[0].y, matrix[1].y, matrix[2].y, 0.0),

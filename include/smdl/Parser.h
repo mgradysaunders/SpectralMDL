@@ -1,3 +1,4 @@
+/// \file
 // vim:foldmethod=marker:foldlevel=0:fmr=--{,--}
 #pragma once
 

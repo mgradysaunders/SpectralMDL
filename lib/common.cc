@@ -17,6 +17,7 @@
 #include "llvm/MC/TargetRegistry.h"
 #include "llvm/Support/Allocator.h"
 #include "llvm/Support/Error.h"
+#include "llvm/Support/FileSystem.h"
 #include "llvm/Support/TargetSelect.h"
 #include "llvm/Support/WithColor.h"
 #include "llvm/Target/TargetOptions.h"
@@ -276,6 +277,11 @@ bool is_directory(const std::string &path) noexcept try {
 }
 
 std::string canonical(std::string path) noexcept try {
+  if (starts_with(path, "~")) {
+    llvm::SmallString<128> pathTmp{};
+    llvm::sys::fs::expand_tilde(path, pathTmp);
+    path = pathTmp.str();
+  }
   return fs::weakly_canonical(path).string();
 } catch (...) {
   return path;
