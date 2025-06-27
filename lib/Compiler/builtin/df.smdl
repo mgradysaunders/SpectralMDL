@@ -332,36 +332,44 @@ struct scatter_sample_result {
   return normalize(mode == scatter_reflect ? specular::reflection_half_vector(wo, wi) : specular::refraction_half_vector(wo, wi, ior));
 }
 
-export @(pure macro) auto $energy_loss_compensation(
-  const string lut_name [[anno::unused()]],
-  const float cos_thetao [[anno::unused()]],
-  const float cos_thetai [[anno::unused()]],
+export @(pure macro) auto $scatter_evaluate_result_with_energy_loss_compensation(
+  const auto this,
+  const auto f,
+  const float2 pdf,
+  float cos_thetao [[anno::unused()]],
+  float cos_thetai [[anno::unused()]],
   const float roughness [[anno::unused()]],
-  const auto multiscatter_tint,
+  const string lut_name [[anno::unused()]],
 ) {
-  if $(multiscatter_tint <: void) {
-    return 0.0;
+  if (#typeof(this.multiscatter_tint) == void || (#typeof(this.multiscatter_tint) == float && this.multiscatter_tint == 0.0)) {
+    return scatter_evaluate_result(f: this.tint * f, pdf: pdf);
   } else {
+    cos_thetao = #abs(cos_thetao);
+    cos_thetai = #abs(cos_thetai);
     const auto lut(#albedo_lut(lut_name));
-    float t((lut.num_roughness - 1) * #max(0, #min(roughness, 1)));
+    float t((lut.num_roughness - 1) * saturate(roughness));
     const int j(#min(int(#floor(t)), lut.num_roughness - 2));
     t = t - j;
     const float Ewo = return_from {
-      float s((lut.num_cos_theta - 1) * #max(0, #min(#abs(cos_thetao), 1)));
+      float s((lut.num_cos_theta - 1) * #min(cos_thetao, 1));
       const int i(#min(int(#floor(s)), lut.num_cos_theta - 2));
       const &float ptr0(&lut.directional_albedo[lut.num_roughness * (i + 0) + j]);
       const &float ptr1(&lut.directional_albedo[lut.num_roughness * (i + 1) + j]);
-      return #min(1.0, lerp(lerp(ptr0[0], ptr0[1], t), lerp(ptr1[0], ptr1[1], t), s - i));
+      s = s - i;
+      return #min(1.0, lerp(lerp(ptr0[0], ptr0[1], t), lerp(ptr1[0], ptr1[1], t), s));
     };
     const float Ewi = return_from {
-      float s((lut.num_cos_theta - 1) * #max(0, #min(#abs(cos_thetai), 1)));
+      float s((lut.num_cos_theta - 1) * #min(cos_thetai, 1));
       const int i(#min(int(#floor(s)), lut.num_cos_theta - 2));
       const &float ptr0(&lut.directional_albedo[lut.num_roughness * (i + 0) + j]);
       const &float ptr1(&lut.directional_albedo[lut.num_roughness * (i + 1) + j]);
-      return #min(1.0, lerp(lerp(ptr0[0], ptr0[1], t), lerp(ptr1[0], ptr1[1], t), s - i));
+      s = s - i;
+      return #min(1.0, lerp(lerp(ptr0[0], ptr0[1], t), lerp(ptr1[0], ptr1[1], t), s));
     };
-    const float Eav = #min(1, (1 - t) * lut.average_albedo[j] + t * lut.average_albedo[j + 1]);
-    return #abs(cos_thetai) / $PI * (1 - Ewo) * (1 - Ewi) / (1 - Eav + 1e-6) * multiscatter_tint;
+    const float Eav = #min(1.0, lerp(lut.average_albedo[j], lut.average_albedo[j + 1], t));
+    const auto ms_f = cos_thetai / $PI * (1 - Ewo) * (1 - Ewi) / (1 - Eav + 1e-6);
+    const auto ms_pdf = auto(cos_thetai, cos_thetao) / $PI;
+    return scatter_evaluate_result(f: this.tint * (f + this.multiscatter_tint * ms_f), pdf: lerp(pdf, ms_pdf, MULTISCATTER_DIFFUSE_CHANCE));
   }
 }
 
@@ -393,27 +401,26 @@ export struct diffuse_reflection_bsdf: bsdf {
   static const scatter_mode mode = scatter_reflect;
 };
 
-@(pure) auto scatter_evaluate(inline const &diffuse_reflection_bsdf this, inline const &scatter_evaluate_parameters params) {
+@(pure) auto scatter_evaluate(const &diffuse_reflection_bsdf this, inline const &scatter_evaluate_parameters params) {
   if (mode == scatter_reflect && recalculate_tangent_space(params)) {
     const auto cos_theta(#abs(auto(wi.z, wo.z)));
     const auto pdf(cos_theta / $PI);
-    if (roughness == 0) {
-      return scatter_evaluate_result(f: pdf[0] * tint, pdf: pdf);
+    if (this.roughness == 0) {
+      return scatter_evaluate_result(f: this.tint * pdf[0], pdf: pdf);
     } else {
       // Oren-Nayar terms.
-      const auto sigma2(2.0 * roughness * roughness);
+      const auto sigma2(2.0 * this.roughness * this.roughness);
       const auto A(1.00 - sigma2 / (2.0 * sigma2 + 0.66));
       const auto B(0.45 * sigma2 / (sigma2 + 0.09));
-      const auto fss(pdf[0] * (A + #max(#sum(wo.xy * wi.xy), 0) / (#max_value(cos_theta) + EPSILON) * B));
-      const auto fms($energy_loss_compensation("diffuse_reflection_bsdf", wo.z, wi.z, roughness, multiscatter_tint));
-      return scatter_evaluate_result(f: tint * (fss + fms), pdf: pdf);
+      const auto f(pdf[0] * (A + #max(#sum(wo.xy * wi.xy), 0) / (#max_value(cos_theta) + EPSILON) * B));
+      return $scatter_evaluate_result_with_energy_loss_compensation(this, f, pdf, wo.z, wi.z, this.roughness, "diffuse_reflection_bsdf");
     }
   } else {
     return scatter_evaluate_result(is_black: true);
   }
 }
 
-@(pure) auto scatter_sample(inline const &diffuse_reflection_bsdf this, inline const &scatter_sample_parameters params) {
+@(pure) auto scatter_sample(const &diffuse_reflection_bsdf this, inline const &scatter_sample_parameters params) {
   if ((tbn := recalculate_tangent_space(params))) {
     return scatter_sample_result(wi: (*tbn) * monte_carlo::cosine_hemisphere_sample(xi.xy), mode: scatter_reflect);
   } else {
@@ -510,31 +517,30 @@ export struct sheen_bsdf: bsdf {
   return #exp(mu < 0.5 ? sheen_lambda_L(fit, mu) : 2 * sheen_lambda_L(fit, 0.5) - sheen_lambda_L(fit, #max(1 - mu, 0)));
 }
 
-@(pure) auto scatter_evaluate(inline const &sheen_bsdf this, inline const &scatter_evaluate_parameters params) {
+@(pure) auto scatter_evaluate(const &sheen_bsdf this, inline const &scatter_evaluate_parameters params) {
   if (mode == scatter_reflect && recalculate_tangent_space(params)) {
     const auto cos_thetao(#abs(wo.z));
     const auto cos_thetai(#abs(wi.z));
     const auto pdf(float2(cos_thetai, cos_thetao) / $PI);
-    const auto fss = let {
-      const auto alpha(lerp(0.1, 1.0, roughness * roughness));
+    const auto f = let {
+      const auto alpha(lerp(0.1, 1.0, #pow(this.roughness, 2)));
       const auto fit = lerp(
         auto(21.5473, 3.82987, 0.19823, -1.97760, -4.32054),
         auto(25.3245, 3.32435, 0.16801, -1.27393, -4.85967),
-        #pow(1 - #pow(roughness, 2), 2),
+        #pow(1 - #pow(this.roughness, 2), 2),
       );
       const auto cos_thetah(normalize(wo + wi).z);
       const auto sin_thetah(#sqrt(1 - cos_thetah * cos_thetah));
       const auto D(1 / $TWO_PI * (2 + 1 / alpha) * #pow(sin_thetah, 1 / alpha));
       const auto G(1 / (1 + sheen_lambda(fit, cos_thetao) + sheen_lambda(fit, cos_thetai)));
     } in D * G / (4 * cos_thetao);
-    const auto fms($energy_loss_compensation("sheen_bsdf", wo.z, wi.z, roughness, multiscatter_tint));
-    return scatter_evaluate_result(f: tint * (fss + fms), pdf: pdf);
+    return $scatter_evaluate_result_with_energy_loss_compensation(this, f, pdf, cos_thetao, cos_thetai, this.roughness, "sheen_bsdf");
   } else {
     return scatter_evaluate_result(is_black: true);
   }
 }
 
-@(pure) auto scatter_sample(inline const &sheen_bsdf this, inline const &scatter_sample_parameters params) {
+@(pure) auto scatter_sample(const &sheen_bsdf this, inline const &scatter_sample_parameters params) {
   if ((tbn := recalculate_tangent_space(params))) {
     return scatter_sample_result(wi: (*tbn) * monte_carlo::cosine_hemisphere_sample(xi.xy), mode: scatter_reflect);
   } else {
@@ -576,19 +582,12 @@ export struct ward_geisler_moroder_bsdf: bsdf {
     const auto cos_thetao(#abs(wo.z));
     const auto cos_thetai(#abs(wi.z));
     const auto roughness(this.roughness_u, this.roughness_v);
+    const auto roughness0(#sqrt(#prod(roughness)));
     const auto alpha(#max(0.001, roughness * roughness));
-    const auto f(#sum((h := wo + wi) * h) / ($PI * alpha.x * alpha.y * #pow(h.z, 4)) * #exp(-#sum((g := h.xy / (h.z * alpha)) * g)));
-    // Single-scattering.
-    const auto fss_pdf(float2(f * (cos_thetao + cos_thetai) / 2));
-    const auto fms_pdf(float2(cos_thetai, cos_thetao) / $PI);
-    const auto fss(f * cos_thetai);
-    const auto fms($energy_loss_compensation("ward_geisler_moroder_bsdf", wo.z, wi.z, #sqrt(#prod(roughness)), this.multiscatter_tint));
-    if $(#typeof(this.multiscatter_tint) == void) {
-      return scatter_evaluate_result(f: this.tint * fss, pdf: fss_pdf);
-    } else {
-      // Multiple-scattering.
-      return scatter_evaluate_result(f: this.tint * (fss + fms), pdf: lerp(fss_pdf, fms_pdf, MULTISCATTER_DIFFUSE_CHANCE));
-    }
+    const auto f0(#sum((h := wo + wi) * h) / ($PI * alpha.x * alpha.y * #pow(h.z, 4)) * #exp(-#sum((g := h.xy / (h.z * alpha)) * g)));
+    const auto f(f0 * cos_thetai);
+    const auto pdf(float2(f * (cos_thetao + cos_thetai) / 2));
+    return $scatter_evaluate_result_with_energy_loss_compensation(this, f, pdf, cos_thetao, cos_thetai, roughness0, "ward_geisler_moroder_bsdf");
   } else {
     return scatter_evaluate_result(is_black: true);
   }
@@ -853,18 +852,12 @@ struct microfacet_bsdf: bsdf {
                                          #abs(wi.z / dot_wi_wm))));
     switch (mode & this.mode) {
     case scatter_reflect: {
-      const auto fss_pdf(norm1 * D / (4 * float2(dot_wo_wm, dot_wi_wm) + EPSILON));
-      const auto fss(norm2 * D * G / (4 * #abs(wo.z) + EPSILON));
-      if $(this.multiscatter_tint <: void) {
-        return scatter_evaluate_result(f: this.tint * (reflect_chance * fss), pdf: reflect_chance * fss_pdf);
-      } else {
-        const auto fms_pdf(float2(#abs(wi.z), #abs(wo.z)) / $PI);
-        const auto fms($energy_loss_compensation("simple_glossy_bsdf", wo.z, wi.z, this.roughness0, this.multiscatter_tint));
-        return scatter_evaluate_result(
-          f: reflect_chance * (this.tint * (fss + fms)),
-          pdf: reflect_chance * lerp(fss_pdf, fms_pdf, MULTISCATTER_DIFFUSE_CHANCE),
-        );
-      }
+      const auto pdf(norm1 * D / (4 * float2(dot_wo_wm, dot_wi_wm) + EPSILON));
+      const auto f(norm2 * D * G / (4 * #abs(wo.z) + EPSILON));
+      auto result($scatter_evaluate_result_with_energy_loss_compensation(this, f, pdf, wo.z, wi.z, this.roughness0, "simple_glossy_bsdf"));
+      result.f *= reflect_chance;
+      result.pdf *= reflect_chance;
+      return result;
     }
     case scatter_transmit: {
       // TODO
@@ -889,32 +882,21 @@ struct microfacet_bsdf: bsdf {
     };
     switch (mode & this.mode) {
     case scatter_reflect: {
-      const auto fss_pdf(D / (4 * float2(proj_areao, proj_areai) + EPSILON));
-      const auto fss(D * G / (4 * #abs(wo.z) + EPSILON));
-      if $(this.multiscatter_tint <: void) {
-        return scatter_evaluate_result(f: this.tint * (reflect_chance * fss), pdf: reflect_chance * fss_pdf);
-      } else {
-        const auto fms_pdf(float2(#abs(wi.z), #abs(wo.z)) / $PI);
-        const auto fms = return_from {
-          if $(this.distribution <: microfacet::distribution_ggx) {
-            return $energy_loss_compensation("microfacet_ggx_smith_bsdf", wo.z, wi.z, this.roughness0, this.multiscatter_tint);
-          } else {
-            return $energy_loss_compensation("microfacet_beckmann_smith_bsdf", wo.z, wi.z, this.roughness0, this.multiscatter_tint);
-          }
-        };
-        return scatter_evaluate_result(
-          f: reflect_chance * (this.tint * (fss + fms)),
-          pdf: reflect_chance * lerp(fss_pdf, fms_pdf, MULTISCATTER_DIFFUSE_CHANCE),
-        );
-      }
+      const auto lut_name(this.distribution <: microfacet::distribution_ggx ? "microfacet_ggx_smith_bsdf" : "microfacet_beckmann_smith_bsdf");
+      const auto pdf(D / (4 * float2(proj_areao, proj_areai) + EPSILON));
+      const auto f(D * G / (4 * #abs(wo.z) + EPSILON));
+      auto result($scatter_evaluate_result_with_energy_loss_compensation(this, f, pdf, wo.z, wi.z, this.roughness0, lut_name));
+      result.f *= reflect_chance;
+      result.pdf *= reflect_chance;
+      return result;
     }
     case scatter_transmit: {
       return scatter_evaluate_result(is_black: true) if (!((dot_wo_wm > 0) & (dot_wi_wm < 0)));
       const auto jac(float2(specular::refraction_half_vector_jacobian(wo, wi, ior), //
                             specular::refraction_half_vector_jacobian(wi, wo, 1 / ior)));
-      const auto fss_pdf(D * jac * float2(dot_wo_wm, -dot_wi_wm) / (float2(proj_areao, proj_areai) + EPSILON));
-      const auto fss(D * G * jac[0] * dot_wo_wm / (#abs(wo.z) + EPSILON));
-      return scatter_evaluate_result(f: this.tint * ((1 - reflect_chance) * fss), pdf: (1 - reflect_chance) * fss_pdf);
+      const auto pdf(D * jac * float2(dot_wo_wm, -dot_wi_wm) / (float2(proj_areao, proj_areai) + EPSILON));
+      const auto f(D * G * jac[0] * dot_wo_wm / (#abs(wo.z) + EPSILON));
+      return scatter_evaluate_result(f: this.tint * ((1 - reflect_chance) * f), pdf: (1 - reflect_chance) * pdf);
     }
     default: return scatter_evaluate_result(is_black: true);
     }
