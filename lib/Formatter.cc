@@ -159,9 +159,9 @@ void Formatter::write_comment(llvm::StringRef inSrc) {
 
 void Formatter::write_token(llvm::StringRef inSrc) {
   if (!inSrc.empty()) {
-    SMDL_SANITY_CHECK(
-        (inputSrc.begin() <= inSrc.begin() && inSrc.end() <= inputSrc.end()) &&
-        inSrc.count('\n') == 0);
+    SMDL_SANITY_CHECK(inputSrc.begin() <= inSrc.begin() &&
+                      inSrc.end() <= inputSrc.end());
+    SMDL_SANITY_CHECK(inSrc.count('\n') == 0);
     write_delim_none();
     write_indent_if_newline();
     consume_input(inSrc.begin() + inSrc.size() - inputSrc.begin());

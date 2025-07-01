@@ -716,6 +716,7 @@ auto Parser::parse_literal_string_expression() -> BumpPtr<AST::LiteralString> {
     str.insert(str.end(), &result[0], resultPtr);
     return true;
   }};
+  auto srcValues{std::vector<std::string_view>{}};
   while (next_delimiter("\"")) {
     while (true) {
       if (is_eof())
@@ -787,10 +788,12 @@ auto Parser::parse_literal_string_expression() -> BumpPtr<AST::LiteralString> {
     }
     if (!next_delimiter("\""))
       srcLoc0.throw_error("expected '\"' to close literal string");
+    srcValues.push_back(get_source_code_between(srcLoc0, srcLoc));
+    skip();
+    srcLoc0 = srcLoc;
   }
   return allocate<AST::LiteralString>(srcLoc0, std::in_place,
-                                      get_source_code_between(srcLoc0, srcLoc),
-                                      std::move(str));
+                                      std::move(srcValues), std::move(str));
 }
 
 auto Parser::parse_literal_number_expression() -> BumpPtr<AST::Expr> {
@@ -1274,7 +1277,7 @@ auto Parser::parse_struct_type_declaration() -> BumpPtr<AST::Struct> {
   while (true) {
     auto field{parse_struct_field_declarator()};
     if (!field) {
-      // Parse finalize block, which must appear at the bottom of the 
+      // Parse finalize block, which must appear at the bottom of the
       // struct declaration if it appears at all. This is an extension!
       if (srcKwFinalize = next_keyword("finalize"); srcKwFinalize) {
         if (stmtFinalize = parse_compound_statement(); !stmtFinalize) {

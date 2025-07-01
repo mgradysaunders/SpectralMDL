@@ -460,11 +460,18 @@ public:
 class SMDL_EXPORT LiteralString final
     : public ExprSubclass<ExprKind::LiteralString> {
 public:
-  explicit LiteralString(std::string_view srcValue, std::string value)
-      : srcValue(srcValue), value(std::move(value)) {}
+  explicit LiteralString(std::vector<std::string_view> srcValues,
+                         std::string value)
+      : srcValues(std::move(srcValues)), value(std::move(value)) {}
 
-  /// The source of the literal value.
-  std::string_view srcValue{};
+  /// The source(s) of the literal value.
+  ///
+  /// \note
+  /// This is a vector and not just a string view because adjacent literal
+  /// source strings like `"Hello "/* A comment */"world!"` form just 1 logical
+  /// literal string `"Hello world!"`.
+  ///
+  std::vector<std::string_view> srcValues{};
 
   /// The literal value.
   std::string value{};

@@ -294,11 +294,15 @@ private:
 
   void write(const AST::LiteralInt &expr) { write(expr.srcValue); }
 
-  void write(const AST::LiteralString &expr) { write(expr.srcValue); }
+  void write(const AST::LiteralString &expr) {
+    for (const auto &srcValue : expr.srcValues)
+      write(srcValue);
+  }
 
   void write(const AST::Parens &expr) {
-    write(expr.srcDollar, expr.srcParenL, PUSH_INDENT, ALIGN_INDENT, expr.expr,
-          POP_INDENT, expr.srcParenR);
+    write(expr.srcDollar, PUSH_INDENT, ALIGN_INDENT, expr.srcParenL,
+          PUSH_INDENT, ALIGN_INDENT, expr.expr, POP_INDENT, expr.srcParenR,
+          POP_INDENT);
   }
 
   void write(const AST::ReturnFrom &expr) {
@@ -401,11 +405,18 @@ private:
 
   void write(const AST::Return &stmt) {
     // This may be empty in abbreviated function definitions!
-    if (!stmt.srcKwReturn.empty())
-      write(stmt.srcKwReturn, DELIM_SPACE);
-    if (stmt.expr)
+    write(PUSH_INDENT);
+    if (!stmt.srcKwReturn.empty()) {
+      write(stmt.srcKwReturn);
+      if (stmt.expr || stmt.lateIf)
+        write(DELIM_SPACE);
+    }
+    write(ALIGN_INDENT);
+    if (stmt.expr) {
       write(stmt.expr);
+    }
     write(stmt.lateIf, stmt.srcSemicolon);
+    write(POP_INDENT);
   }
 
   void write(const AST::Switch &stmt);
