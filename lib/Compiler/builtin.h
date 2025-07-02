@@ -473,7 +473,10 @@ struct scatter_sample_result{
     return scatter_evaluate_result(f: this.tint*(f+this.multiscatter_tint*ms_f),pdf: lerp(pdf,ms_pdf,MULTISCATTER_DIFFUSE_CHANCE));
   }
 }
-@(pure macro)?scatter_sample_result $scatter_sample_result_with_multiscatter(const auto this,const &float4 xi,const float3x3 tbn){
+@(pure macro)?scatter_sample_result $scatter_sample_result_with_multiscatter(const auto this,
+                                                                             const &float4 xi[[anno::unused()]],
+                                                                             const float3x3 tbn[[anno::unused()]]
+){
   if(#typeof(this.multiscatter_tint)==void||(#typeof(this.multiscatter_tint)==float&&this.multiscatter_tint==0.0)){
   } else {
     if(monte_carlo::bool_sample(&xi.w,MULTISCATTER_DIFFUSE_CHANCE)){
