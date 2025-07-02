@@ -851,34 +851,38 @@ struct microfacet_bsdf:bsdf{
 };
 @(pure noinline)
 auto scatter_evaluate(const &microfacet_bsdf this,inline const &scatter_evaluate_parameters params){
+  auto reflect_chance(scatter_reflect_chance(this.mode));
+  auto effective_mode(this.mode&mode);
   preserve tangent_u;
   tangent_u=this.tangent_u;
-  return scatter_evaluate_result(is_black: true) if(!recalculate_tangent_space(params));
+  return scatter_evaluate_result(is_black: true) if(!recalculate_tangent_space(params)||effective_mode==scatter_none);
+  preserve wi,mode;
+  if(thin_walled&&effective_mode==scatter_transmit){
+    reflect_chance=1-reflect_chance;
+    effective_mode=scatter_reflect;
+    mode=scatter_reflect;
+    wi.z=-wi.z;
+  }
   const auto cos_thetao(#abs(wo.z));
   const auto cos_thetai(#abs(wi.z));
   const auto wm(half_direction(params));
   const auto dot_wo_wm(#sum(wo*wm));
   const auto dot_wi_wm(#sum(wi*wm));
-  const auto reflect_chance(scatter_reflect_chance(this.mode));
   if$(this.distribution<:microfacet::distribution_blinn){
     const auto e(2/(this.alpha*this.alpha+EPSILON));
     const auto D(#pow(wm.z,(e.x*wm.x*wm.x+e.y*wm.y*wm.y)/(1-wm.z*wm.z+EPSILON))/$TWO_PI);
     const auto norm1(#sqrt(#prod(1+e)));
     const auto norm2(#sqrt(#prod(2+e)));
     const auto G(#min(1,2*wm.z*#min(#abs(cos_thetao/dot_wo_wm),#abs(cos_thetai/dot_wi_wm))));
-    switch(mode&this.mode){
-    case scatter_reflect: {
+    if(effective_mode==scatter_reflect){
       const auto pdf(norm1*D/(4*float2(dot_wo_wm,dot_wi_wm)+EPSILON));
       const auto f(norm2*D*G/(4*cos_thetao+EPSILON));
-      auto result($scatter_evaluate_result_with_multiscatter(this,f,pdf,wo.z,wi.z,this.roughness0,"simple_glossy_bsdf"));
+      auto result($scatter_evaluate_result_with_multiscatter(this,f,pdf,cos_thetao,cos_thetai,this.roughness0,"simple_glossy_bsdf"));
       result.f*=reflect_chance;
       result.pdf*=reflect_chance;
       return result;
-    }
-    case scatter_transmit: {
+    } else {
       return scatter_evaluate_result(is_black: true) if(!((dot_wo_wm>0)&(dot_wi_wm<0)));
-    }
-    default: return scatter_evaluate_result(is_black: true);
     }
   } else {
     const auto D(microfacet::smith_normal_pdf(this.distribution,this.alpha,wm));
@@ -888,29 +892,28 @@ auto scatter_evaluate(const &microfacet_bsdf this,inline const &scatter_evaluate
     const auto proj_areai((1+lambdai)*cos_thetai);
     const auto G=return_from{
       if$(this.shadowing<:microfacet::shadowing_smith){
-        return mode==scatter_reflect?1/(1+lambdao+lambdai):float(microfacet::beta(1+lambdao,1+lambdai));
+        return effective_mode==scatter_reflect?float(1.0/(1.0+lambdao+lambdai)):float(microfacet::beta(1.0+lambdao,1.0+lambdai));
       } else {
-        return #min(1,2*wm.z*#min(#abs(cos_thetao/dot_wo_wm),#abs(cos_thetai/dot_wi_wm)));
+        return #min(1.0,2.0*wm.z*#min(#abs(cos_thetao/dot_wo_wm),#abs(cos_thetai/dot_wi_wm)));
       }
     };
-    switch(mode&this.mode){
-    case scatter_reflect: {
+    if(effective_mode==scatter_reflect){
       const auto lut_name(this.distribution<:microfacet::distribution_ggx?"microfacet_ggx_smith_bsdf":"microfacet_beckmann_smith_bsdf");
       const auto pdf(D/(4*float2(proj_areao,proj_areai)+EPSILON));
       const auto f(D*G/(4*cos_thetao+EPSILON));
-      auto result($scatter_evaluate_result_with_multiscatter(this,f,pdf,wo.z,wi.z,this.roughness0,lut_name));
+      auto result($scatter_evaluate_result_with_multiscatter(this,f,pdf,cos_thetao,cos_thetai,this.roughness0,lut_name));
       result.f*=reflect_chance;
       result.pdf*=reflect_chance;
       return result;
-    }
-    case scatter_transmit: {
+    } else {
       return scatter_evaluate_result(is_black: true) if(!((dot_wo_wm>0)&(dot_wi_wm<0)));
       const auto jac(float2(specular::refraction_half_vector_jacobian(wo,wi,ior),specular::refraction_half_vector_jacobian(wi,wo,1/ior)));
       const auto pdf(D*jac*float2(dot_wo_wm,-dot_wi_wm)/(float2(proj_areao,proj_areai)+EPSILON));
       const auto f(D*G*jac[0]*dot_wo_wm/(cos_thetao+EPSILON));
-      return scatter_evaluate_result(f: this.tint*((1-reflect_chance)*f),pdf: (1-reflect_chance)*pdf);
-    }
-    default: return scatter_evaluate_result(is_black: true);
+      auto result(scatter_evaluate_result(f: this.tint*f,pdf: pdf));
+      result.f*=1-reflect_chance;
+      result.pdf*=1-reflect_chance;
+      return result;
     }
   }
   return scatter_evaluate_result(is_black: true);
@@ -923,8 +926,10 @@ auto scatter_sample(const &microfacet_bsdf this,inline const &scatter_sample_par
   if(!tbn)
     return scatter_sample_result();
   const auto mode(monte_carlo::bool_sample(&xi.z,scatter_reflect_chance(this.mode))?scatter_reflect:scatter_transmit);
-  if(mode==scatter_reflect){
+  if(mode==scatter_reflect||thin_walled){
     if(result:=$scatter_sample_result_with_multiscatter(this,&xi,*tbn)){
+      if(mode==scatter_transmit)
+        return scatter_sample_result(wi: result.wi*float3(1,1,-1),mode: mode);
       return *result;
     }
   }
@@ -935,8 +940,18 @@ auto scatter_sample(const &microfacet_bsdf this,inline const &scatter_sample_par
       return microfacet::smith_visible_normal_sample(this.distribution,xi.x,xi.y,this.alpha,wo);
     }
   };
-  const auto wi=normalize(mode==scatter_reflect?specular::reflect(wo,wm):specular::refract(wo,wm,ior));
-  return scatter_sample_result(wi: (*tbn)*wi,mode: mode);
+  const auto wi=return_from{
+    if(mode==scatter_reflect){
+      return specular::reflect(wo,wm);
+    } else {
+      if(thin_walled){
+        return specular::reflect(wo,wm)*float3(1,1,-1);
+      } else {
+        return specular::refract(wo,wm,ior);
+      }
+    }
+  };
+  return scatter_sample_result(wi: normalize((*tbn)*wi),mode: mode);
 }
 @(macro)
 auto initialize_microfacet_bsdf(
@@ -1103,9 +1118,10 @@ export struct directional_factor:bsdf{
 auto scatter_evaluate(const &directional_factor this,const &scatter_evaluate_parameters params){
   auto result(scatter_evaluate(visit &this.base,params));
   if(!result.is_black&&params.mode==scatter_reflect){
-    return scatter_evaluate_result(f: result.f*specular::schlick_fresnel(dot(params.wo,half_direction(params)),this.normal_tint,this.grazing_tint,this.exponent),pdf: result.pdf);
+    return scatter_evaluate_result(f: specular::schlick_fresnel(dot(params.wo,half_direction(params)),this.normal_tint,this.grazing_tint,this.exponent)*result.f,pdf: result.pdf);
+  } else {
+    return result;
   }
-  return result;
 }
 @(macro)
 auto scatter_sample(const &directional_factor this,const &scatter_sample_parameters params){

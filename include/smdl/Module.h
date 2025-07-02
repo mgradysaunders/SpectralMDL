@@ -7,7 +7,7 @@ namespace smdl {
 
 namespace AST {
 
-class Node;
+class File;
 
 } // namespace AST
 
@@ -90,10 +90,6 @@ public:
     return sourceCode;
   }
 
-  /// Is SMDL syntax?
-  [[nodiscard]] bool is_smdl_syntax() const noexcept {
-    return starts_with(sourceCode, "#smdl\n");
-  }
 
   /// Parse the source code.
   [[nodiscard]] std::optional<Error>
@@ -108,6 +104,9 @@ public:
 
   /// Is parsed yet?
   [[nodiscard]] bool is_parsed() const noexcept { return root; }
+
+  /// Is SMDL syntax? Only known after the module is parsed.
+  [[nodiscard]] bool is_smdl_syntax() const noexcept;
 
   void reset() noexcept;
 
@@ -125,7 +124,7 @@ private:
   std::string sourceCode{};
 
   /// The AST root node parsed from the source code.
-  BumpPtr<AST::Node> root{};
+  BumpPtr<AST::File> root{};
 
   /// The compile status.
   CompileStatus compileStatus{COMPILE_STATUS_NOT_STARTED};

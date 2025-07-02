@@ -91,6 +91,10 @@ Module::format_source_code(const FormatOptions &formatOptions) noexcept {
   });
 }
 
+bool Module::is_smdl_syntax() const noexcept {
+  return root && root->is_smdl_syntax();
+}
+
 void Module::reset() noexcept {
   root.reset();
   compileStatus = COMPILE_STATUS_NOT_STARTED;
