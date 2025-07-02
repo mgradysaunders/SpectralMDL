@@ -9,10 +9,6 @@ static const char *anno = R"*(#smdl
 )*";
 
 static const char *API = R"*(#smdl
-export typedef #type_int(8) $int8_t;
-export typedef #type_int(16) $int16_t;
-export typedef #type_int(32) $int32_t;
-export typedef #type_int(64) $int64_t;
 const int RGB_TO_COLOR_NUM_WAVELENGTHS=32;
 const float RGB_TO_COLOR_MIN_WAVELENGTH=380.0;
 const float RGB_TO_COLOR_MAX_WAVELENGTH=720.0;
@@ -96,18 +92,17 @@ export @(hot noinline)float3 $color_to_rgb(const color c){
 @(visible noinline)void jit_color_to_rgb(const &float cptr,const &float3 rgb){
   *rgb=$color_to_rgb(color(cptr));
 }
-export typedef $int32_t $hash_t;
-export @(pure)$hash_t $hash(auto value){
+export @(pure)i32 $hash(auto value){
   if$(#is_arithmetic_scalar(value)){
     if$(#is_arithmetic_integral(value)){
       if$(#sizeof(value)<=4){
-        auto h($int32_t(value)+3266445271);
+        auto h(i32(value)+3266445271);
         h^=h>>>16,h*=0x85EBCA6B;
         h^=h>>>13,h*=0xC2B2AE35;
         h^=h>>>16;
         return h;
       } else {
-        auto h($int64_t(value)+13898551614298330943);
+        auto h(i64(value)+13898551614298330943);
         h^=h>>>33,h*=0xFF51AFD7ED558CCD;
         h^=h>>>33,h*=0xC4CEB9FE1A85EC53;
         h^=h>>>33;
@@ -153,7 +148,7 @@ export struct texture_2d{
   texture_2d(const string name,const auto gamma=0)=#load_texture_2d(name,int(gamma));
   const int2 tile_count=int2(1,1);
   const auto tile_extents=int2[](int2(0));
-  const auto tile_buffers=auto[](cast<&float4>(null));
+  const auto tile_buffers=auto[](cast<&float4>(none));
   const int gamma=0;
 };
 export struct texture_3d{
@@ -166,7 +161,7 @@ export struct texture_cube{
 };
 export struct texture_ptex{
   texture_ptex(const string name,const auto gamma=0)=#load_texture_ptex(name,int(gamma));
-  const &void ptr=null;
+  const &void ptr=none;
   const int gamma=0;
 };
 export struct bsdf_measurement{
@@ -174,11 +169,11 @@ export struct bsdf_measurement{
   const int mode=0;
   const int num_theta=0;
   const int num_phi=0;
-  const auto buffer=cast<&float>(null);
+  const auto buffer=cast<&float>(none);
 };
 export struct light_profile{
   light_profile(const string name)=#load_light_profile(name);
-  const &void ptr=null;
+  const &void ptr=none;
   const float max_intensity=0;
   const float power=0;
 };
@@ -225,8 +220,8 @@ export struct $material_instance{
   const &float cutout_opacity=&mat.geometry.cutout_opacity;
   const &float3 normal=&mat.geometry.normal;
   const &color ior=&mat.ior;
-  const &color absorption_coefficient=($(#typeof(mat.volume.absorption_coefficient)==void)?null:&mat.volume.absorption_coefficient);
-  const &color scattering_coefficient=($(#typeof(mat.volume.scattering_coefficient)==void)?null:&mat.volume.scattering_coefficient);
+  const &color absorption_coefficient=($(#typeof(mat.volume.absorption_coefficient)==void)?none:&mat.volume.absorption_coefficient);
+  const &color scattering_coefficient=($(#typeof(mat.volume.scattering_coefficient)==void)?none:&mat.volume.scattering_coefficient);
   const int wavelength_base_max=$WAVELENGTH_BASE_MAX;
   const int flags=(mat.thin_walled?THIN_WALLED:0)|(!#is_default(mat.surface)?HAS_SURFACE:0)|(!#is_default(mat.backface)?HAS_BACKFACE:0)|(!#is_default(mat.surface.emission)?HAS_SURFACE_EMISSION:0)|(!#is_default(mat.backface.emission)?HAS_BACKFACE_EMISSION:0)|(!#is_default(mat.volume)?HAS_VOLUME:0)|(#typeof(mat.hair)!=#typeof(hair_bsdf())?HAS_HAIR:0);
   const float3x3 tangent_space=float3x3($state.tangent_to_object_matrix[0].xyz,$state.tangent_to_object_matrix[1].xyz,$state.tangent_to_object_matrix[2].xyz,);
@@ -234,8 +229,8 @@ export struct $material_instance{
 export struct $albedo_lut{
   const int num_cos_theta=0;
   const int num_roughness=0;
-  const &float directional_albedo=null;
-  const &float average_albedo=null;
+  const &float directional_albedo=none;
+  const &float average_albedo=none;
 };
 )*";
 
@@ -428,7 +423,7 @@ struct scatter_sample_parameters{
 struct scatter_sample_result{
   float3 wi=float3(0.0);
   scatter_mode mode=scatter_none;
-  ?color delta_f=null;
+  ?color delta_f=none;
 };
 @(pure noinline)?float3x3 recalculate_tangent_space(inline const &scatter_sample_parameters params){
   auto tbn(calculate_tangent_space(normal,tangent_u));
@@ -438,7 +433,7 @@ struct scatter_sample_result{
 @(pure)float3 half_direction(inline const &scatter_sample_parameters this,inline const &scatter_sample_result result){
   return normalize(mode==scatter_reflect?specular::reflection_half_vector(wo,wi):specular::refraction_half_vector(wo,wi,ior));
 }
-export @(pure macro)auto $scatter_evaluate_result_with_energy_loss_compensation(
+@(pure macro)auto $scatter_evaluate_result_with_multiscatter(
   const auto this,
   const auto f,
   const float2 pdf,
@@ -478,17 +473,29 @@ export @(pure macro)auto $scatter_evaluate_result_with_energy_loss_compensation(
     return scatter_evaluate_result(f: this.tint*(f+this.multiscatter_tint*ms_f),pdf: lerp(pdf,ms_pdf,MULTISCATTER_DIFFUSE_CHANCE));
   }
 }
-@(pure macro)auto scatter_evaluate(const &$default_bsdf this,const &scatter_evaluate_parameters params){
+@(pure macro)?scatter_sample_result $scatter_sample_result_with_multiscatter(const auto this,const &float4 xi,const float3x3 tbn){
+  if(#typeof(this.multiscatter_tint)==void||(#typeof(this.multiscatter_tint)==float&&this.multiscatter_tint==0.0)){
+  } else {
+    if(monte_carlo::bool_sample(&xi.w,MULTISCATTER_DIFFUSE_CHANCE)){
+      return scatter_sample_result(wi: tbn*monte_carlo::cosine_hemisphere_sample(xi.xy),mode: scatter_reflect);
+    }
+  }
+}
+@(pure macro)auto scatter_evaluate(const &$default_bsdf this[[anno::unused()]],
+                                   const &scatter_evaluate_parameters params[[anno::unused()]]
+){
   return scatter_evaluate_result(is_black: true);
 }
-@(pure macro)auto scatter_sample(const &$default_bsdf this,const &scatter_sample_parameters params){
+@(pure macro)auto scatter_sample(const &$default_bsdf this[[anno::unused()]],
+                                 const &scatter_sample_parameters params[[anno::unused()]]
+){
   return scatter_sample_result();
 }
 export struct diffuse_reflection_bsdf:bsdf{
   $(color|float) tint=1.0;
   float roughness=0.0;
   string handle="";
-  $(?(color|float)) multiscatter_tint=null;
+  $(?(color|float)) multiscatter_tint=none;
   static const scatter_mode mode=scatter_reflect;
 };
 @(pure)auto scatter_evaluate(const &diffuse_reflection_bsdf this,inline const &scatter_evaluate_parameters params){
@@ -502,13 +509,14 @@ export struct diffuse_reflection_bsdf:bsdf{
       const auto A(1.00-sigma2/(2.0*sigma2+0.66));
       const auto B(0.45*sigma2/(sigma2+0.09));
       const auto f(pdf[0]*(A+#max(#sum(wo.xy*wi.xy),0)/(#max_value(cos_theta)+EPSILON)*B));
-      return $scatter_evaluate_result_with_energy_loss_compensation(this,f,pdf,wo.z,wi.z,this.roughness,"diffuse_reflection_bsdf");
+      return $scatter_evaluate_result_with_multiscatter(this,f,pdf,wo.z,wi.z,this.roughness,"diffuse_reflection_bsdf");
     }
   } else {
     return scatter_evaluate_result(is_black: true);
   }
 }
-@(pure)auto scatter_sample(const &diffuse_reflection_bsdf this,inline const &scatter_sample_parameters params){
+@(pure)auto scatter_sample(const &diffuse_reflection_bsdf this[[anno::unused()]],
+                           inline const &scatter_sample_parameters params){
   if((tbn:=recalculate_tangent_space(params))){
     return scatter_sample_result(wi: (*tbn)*monte_carlo::cosine_hemisphere_sample(xi.xy),mode: scatter_reflect);
   } else {
@@ -554,8 +562,8 @@ export struct specular_bsdf:bsdf{
 export struct sheen_bsdf:bsdf{
   float roughness;
   $(color|float) tint=1.0;
-  $(?(color|float)) multiscatter_tint=null;
-  void multiscatter=null;
+  $(?(color|float)) multiscatter_tint=none;
+  void multiscatter=none;
   string handle="";
   finalize {
     roughness=saturate(roughness);
@@ -580,7 +588,7 @@ export struct sheen_bsdf:bsdf{
       const auto D(1/$TWO_PI*(2+1/alpha)*#pow(sin_thetah,1/alpha));
       const auto G(1/(1+sheen_lambda(fit,cos_thetao)+sheen_lambda(fit,cos_thetai)));
     } in D*G/(4*cos_thetao);
-    return $scatter_evaluate_result_with_energy_loss_compensation(this,f,pdf,cos_thetao,cos_thetai,this.roughness,"sheen_bsdf");
+    return $scatter_evaluate_result_with_multiscatter(this,f,pdf,cos_thetao,cos_thetai,this.roughness,"sheen_bsdf");
   } else {
     return scatter_evaluate_result(is_black: true);
   }
@@ -596,7 +604,7 @@ export struct ward_geisler_moroder_bsdf:bsdf{
   float roughness_u;
   float roughness_v=roughness_u;
   $(color|float) tint=1.0;
-  $(?(color|float)) multiscatter_tint=null;
+  $(?(color|float)) multiscatter_tint=none;
   float3 tangent_u=$state.texture_tangent_u[0];
   string handle="";
   finalize {
@@ -616,7 +624,7 @@ export struct ward_geisler_moroder_bsdf:bsdf{
     const auto f0(#sum((h:=wo+wi)*h)/($PI*alpha.x*alpha.y*#pow(h.z,4))*#exp(-#sum((g:=h.xy/(h.z*alpha))*g)));
     const auto f(f0*cos_thetai);
     const auto pdf(float2(f*(cos_thetao+cos_thetai)/2));
-    return $scatter_evaluate_result_with_energy_loss_compensation(this,f,pdf,cos_thetao,cos_thetai,roughness0,"ward_geisler_moroder_bsdf");
+    return $scatter_evaluate_result_with_multiscatter(this,f,pdf,cos_thetao,cos_thetai,roughness0,"ward_geisler_moroder_bsdf");
   } else {
     return scatter_evaluate_result(is_black: true);
   }
@@ -625,19 +633,20 @@ export struct ward_geisler_moroder_bsdf:bsdf{
   preserve tangent_u;
   tangent_u=this.tangent_u;
   if((tbn:=recalculate_tangent_space(params))){
-    if(#typeof(this.multiscatter_tint)!=void&&monte_carlo::bool_sample(&xi.w,MULTISCATTER_DIFFUSE_CHANCE)){
-      return scatter_sample_result(wi: (*tbn)*monte_carlo::cosine_hemisphere_sample(xi.xy),mode: scatter_reflect);
-    }
-    const auto roughness(this.roughness_u,this.roughness_v);
-    const auto alpha(#max(0.001,roughness*roughness));
-    const auto phi(#atan2(alpha.y*#sin(t:=$TWO_PI*xi.x),alpha.x*#cos(t)));
-    const auto cos_phi(#cos(phi));
-    const auto sin_phi(#sin(phi));
-    const auto theta(#atan(#sqrt(-#log(1-xi.y)/(#pow(cos_phi/alpha.x,2)+#pow(sin_phi/alpha.y,2)))));
-    const auto wm(float3(#sin(theta)*float2(cos_phi,sin_phi),#cos(theta)));
-    const auto wi(normalize(specular::reflect(wo,wm)));
-    if(wi.z>0){
-      return scatter_sample_result(wi: (*tbn)*wi,mode: scatter_reflect);
+    if(result:=$scatter_sample_result_with_multiscatter(this,xi,*tbn)){
+      return *result;
+    } else {
+      const auto roughness(this.roughness_u,this.roughness_v);
+      const auto alpha(#max(0.001,roughness*roughness));
+      const auto phi(#atan2(alpha.y*#sin(t:=$TWO_PI*xi.x),alpha.x*#cos(t)));
+      const auto cos_phi(#cos(phi));
+      const auto sin_phi(#sin(phi));
+      const auto theta(#atan(#sqrt(-#log(1-xi.y)/(#pow(cos_phi/alpha.x,2)+#pow(sin_phi/alpha.y,2)))));
+      const auto wm(float3(#sin(theta)*float2(cos_phi,sin_phi),#cos(theta)));
+      const auto wi(normalize(specular::reflect(wo,wm)));
+      if(wi.z>0){
+        return scatter_sample_result(wi: (*tbn)*wi,mode: scatter_reflect);
+      }
     }
   }
   return scatter_sample_result();
@@ -779,7 +788,7 @@ struct microfacet_bsdf:bsdf{
   const float roughness0=#sqrt(#prod(roughness));
   const float2 alpha=clamp(roughness*roughness,EPSILON,1.0);
   $(color|float) tint;
-  $(?(color|float)) multiscatter_tint=null;
+  $(?(color|float)) multiscatter_tint=none;
   float3 tangent_u=$state.texture_tangent_u[0];
   const scatter_mode mode=scatter_reflect;
   const microfacet::distribution distribution=microfacet::distribution();
@@ -789,21 +798,23 @@ struct microfacet_bsdf:bsdf{
   preserve tangent_u;
   tangent_u=this.tangent_u;
   return scatter_evaluate_result(is_black: true) if(!recalculate_tangent_space(params));
-  const auto reflect_chance(scatter_reflect_chance(this.mode));
-  const auto wm(normalize(mode==scatter_reflect?wo+wi:specular::refraction_half_vector(wo,wi,ior)));
+  const auto cos_thetao(#abs(wo.z));
+  const auto cos_thetai(#abs(wi.z));
+  const auto wm(half_direction(params));
   const auto dot_wo_wm(#sum(wo*wm));
   const auto dot_wi_wm(#sum(wi*wm));
+  const auto reflect_chance(scatter_reflect_chance(this.mode));
   if$(this.distribution<:microfacet::distribution_blinn){
     const auto e(2/(this.alpha*this.alpha+EPSILON));
     const auto D(#pow(wm.z,(e.x*wm.x*wm.x+e.y*wm.y*wm.y)/(1-wm.z*wm.z+EPSILON))/$TWO_PI);
     const auto norm1(#sqrt(#prod(1+e)));
     const auto norm2(#sqrt(#prod(2+e)));
-    const auto G(#min(1,2*wm.z*#min(#abs(wo.z/dot_wo_wm),#abs(wi.z/dot_wi_wm))));
+    const auto G(#min(1,2*wm.z*#min(#abs(cos_thetao/dot_wo_wm),#abs(cos_thetai/dot_wi_wm))));
     switch(mode&this.mode){
     case scatter_reflect: {
       const auto pdf(norm1*D/(4*float2(dot_wo_wm,dot_wi_wm)+EPSILON));
-      const auto f(norm2*D*G/(4*#abs(wo.z)+EPSILON));
-      auto result($scatter_evaluate_result_with_energy_loss_compensation(this,f,pdf,wo.z,wi.z,this.roughness0,"simple_glossy_bsdf"));
+      const auto f(norm2*D*G/(4*cos_thetao+EPSILON));
+      auto result($scatter_evaluate_result_with_multiscatter(this,f,pdf,wo.z,wi.z,this.roughness0,"simple_glossy_bsdf"));
       result.f*=reflect_chance;
       result.pdf*=reflect_chance;
       return result;
@@ -815,23 +826,23 @@ struct microfacet_bsdf:bsdf{
     }
   } else {
     const auto D(microfacet::smith_normal_pdf(this.distribution,this.alpha,wm));
-    const auto lambdao(microfacet::smith_lambda(this.distribution,#abs(wo.z)/length(this.alpha*wo.xy)));
-    const auto lambdai(microfacet::smith_lambda(this.distribution,#abs(wi.z)/length(this.alpha*wi.xy)));
-    const auto proj_areao((1+lambdao)*#abs(wo.z));
-    const auto proj_areai((1+lambdai)*#abs(wi.z));
+    const auto lambdao(microfacet::smith_lambda(this.distribution,cos_thetao/length(this.alpha*wo.xy)));
+    const auto lambdai(microfacet::smith_lambda(this.distribution,cos_thetai/length(this.alpha*wi.xy)));
+    const auto proj_areao((1+lambdao)*cos_thetao);
+    const auto proj_areai((1+lambdai)*cos_thetai);
     const auto G=return_from{
       if$(this.shadowing<:microfacet::shadowing_smith){
         return mode==scatter_reflect?1/(1+lambdao+lambdai):float(microfacet::beta(1+lambdao,1+lambdai));
       } else {
-        return #min(1,2*wm.z*#min(#abs(wo.z/dot_wo_wm),#abs(wi.z/dot_wi_wm)));
+        return #min(1,2*wm.z*#min(#abs(cos_thetao/dot_wo_wm),#abs(cos_thetai/dot_wi_wm)));
       }
     };
     switch(mode&this.mode){
     case scatter_reflect: {
-      const auto lut_name(this.distribution<:microfacet::distribution_ggx?"microfacet_ggx_smith_bsdf" :"microfacet_beckmann_smith_bsdf");
+      const auto lut_name(this.distribution<:microfacet::distribution_ggx?"microfacet_ggx_smith_bsdf":"microfacet_beckmann_smith_bsdf");
       const auto pdf(D/(4*float2(proj_areao,proj_areai)+EPSILON));
-      const auto f(D*G/(4*#abs(wo.z)+EPSILON));
-      auto result($scatter_evaluate_result_with_energy_loss_compensation(this,f,pdf,wo.z,wi.z,this.roughness0,lut_name));
+      const auto f(D*G/(4*cos_thetao+EPSILON));
+      auto result($scatter_evaluate_result_with_multiscatter(this,f,pdf,wo.z,wi.z,this.roughness0,lut_name));
       result.f*=reflect_chance;
       result.pdf*=reflect_chance;
       return result;
@@ -840,7 +851,7 @@ struct microfacet_bsdf:bsdf{
       return scatter_evaluate_result(is_black: true) if(!((dot_wo_wm>0)&(dot_wi_wm<0)));
       const auto jac(float2(specular::refraction_half_vector_jacobian(wo,wi,ior),specular::refraction_half_vector_jacobian(wi,wo,1/ior)));
       const auto pdf(D*jac*float2(dot_wo_wm,-dot_wi_wm)/(float2(proj_areao,proj_areai)+EPSILON));
-      const auto f(D*G*jac[0]*dot_wo_wm/(#abs(wo.z)+EPSILON));
+      const auto f(D*G*jac[0]*dot_wo_wm/(cos_thetao+EPSILON));
       return scatter_evaluate_result(f: this.tint*((1-reflect_chance)*f),pdf: (1-reflect_chance)*pdf);
     }
     default: return scatter_evaluate_result(is_black: true);
@@ -855,8 +866,10 @@ struct microfacet_bsdf:bsdf{
   if(!tbn)
     return scatter_sample_result();
   const auto mode(monte_carlo::bool_sample(&xi.z,scatter_reflect_chance(this.mode))?scatter_reflect:scatter_transmit);
-  if(!(this.multiscatter_tint<:void)&&mode==scatter_reflect&&monte_carlo::bool_sample(&xi.w,MULTISCATTER_DIFFUSE_CHANCE)){
-    return scatter_sample_result(wi: (*tbn)*monte_carlo::cosine_hemisphere_sample(xi.xy),mode: scatter_reflect);
+  if(mode==scatter_reflect){
+    if(result:=$scatter_sample_result_with_multiscatter(this,&xi,*tbn)){
+      return *result;
+    }
   }
   const auto wm=return_from{
     if$(this.distribution<:microfacet::distribution_blinn){
@@ -872,15 +885,23 @@ struct microfacet_bsdf:bsdf{
   const float roughness_u,
   const float roughness_v=roughness_u,
   const $(color|float) tint=1.0,
-  const $(?(color|float)) multiscatter_tint=null,
+  const $(?(color|float)) multiscatter_tint=none,
   const float3 tangent_u=$state.texture_tangent_u[0],
   const scatter_mode mode=scatter_reflect,
-  const string handle="" [[anno::unused()]],
+  const string handle=""[[anno::unused()]],
   const microfacet::distribution distribution=microfacet::distribution(),
   const microfacet::shadowing shadowing=microfacet::shadowing(),
 ){
   if((roughness_u>0)|(roughness_v>0)){
-    return microfacet_bsdf(roughness: float2(roughness_u,roughness_v),tint: tint,multiscatter_tint: multiscatter_tint,tangent_u: normalize(tangent_u),mode: mode,distribution: distribution,shadowing: shadowing);
+    return microfacet_bsdf(
+             roughness: float2(roughness_u,roughness_v),
+             tint: tint,
+             multiscatter_tint: multiscatter_tint,
+             tangent_u: normalize(tangent_u),
+             mode: mode,
+             distribution: distribution,
+             shadowing: shadowing,
+           );
   } else {
     return specular_bsdf(tint: tint,mode: mode);
   }
@@ -995,14 +1016,14 @@ export struct fresnel_layer:bsdf{
   if(result0.is_black&result1.is_black){
     return scatter_evaluate_result(is_black: true);
   } else {
-    return scatter_evaluate_result(f: lerp(result0.f,result1.f,this.weight*specular::dielectric_fresnel(dot(wo,half_direction(params)),1/this.ior)),pdf: lerp(result0.pdf,result1.pdf,this.av_weight*specular::schlick_fresnel(auto(cos_thetao,cos_thetai),specular::schlick_F0(this.av_ior))),);
+    return scatter_evaluate_result(f: lerp(result0.f,result1.f,this.weight*specular::dielectric_fresnel(dot(wo,half_direction(params)),1/this.ior)),pdf: lerp(result0.pdf,result1.pdf,this.av_weight*specular::schlick_fresnel(#abs(auto(cos_thetao,cos_thetai)),specular::schlick_F0(this.av_ior))),);
   }
 }
 @(macro)auto scatter_sample(const &fresnel_layer this,inline const &scatter_sample_parameters params){
   const auto cos_theta(dot(wo,this.normal)*#sign(this.normal.z));
   if(cos_theta<EPSILON)
     return scatter_sample_result();
-  const auto chance(this.av_weight*specular::schlick_fresnel(cos_theta,specular::schlick_F0(this.av_ior)));
+  const auto chance(this.av_weight*specular::schlick_fresnel(#abs(cos_theta),specular::schlick_F0(this.av_ior)));
   if(monte_carlo::bool_sample(&xi.z,chance)){
     preserve normal,ior;
     normal=this.normal,ior=1/this.av_ior;
@@ -1199,7 +1220,7 @@ struct emission_sample_parameters{
   float4 xi;
 };
 struct emission_sample_result{
-  ?float3 we=null;
+  ?float3 we=none;
 };
 @(pure macro)auto emission_evaluate(const &$default_edf this[[anno::unused()]],
                                     const &emission_evaluate_parameters params[[anno::unused()]],
@@ -1521,11 +1542,11 @@ export @(macro)float meters_per_scene_unit()=$state.meters_per_scene_unit;
 export @(macro)float scene_units_per_meter()=1.0/$state.meters_per_scene_unit;
 @(pure macro)float4x4 affine_inverse(const float4x4 matrix){
   return float4x4(
-    float4(matrix[0].x,matrix[1].x,matrix[2].x,0.0),
-    float4(matrix[0].y,matrix[1].y,matrix[2].y,0.0),
-    float4(matrix[0].z,matrix[1].z,matrix[2].z,0.0),
-    float4(-#sum(matrix[0]*matrix[3]),-#sum(matrix[1]*matrix[3]),-#sum(matrix[2]*matrix[3]),1.0),
-  );
+           float4(matrix[0].x,matrix[1].x,matrix[2].x,0.0),
+           float4(matrix[0].y,matrix[1].y,matrix[2].y,0.0),
+           float4(matrix[0].z,matrix[1].z,matrix[2].z,0.0),
+           float4(-#sum(matrix[0]*matrix[3]),-#sum(matrix[1]*matrix[3]),-#sum(matrix[2]*matrix[3]),1.0),
+         );
 }
 export @(macro)float4x4 transform(const coordinate_space from,const coordinate_space to){
   if(from==to){
@@ -1738,29 +1759,29 @@ export @(macro)color lookup_color(const texture_ptex tex,const int channel=0){
 )*";
 
 static const char *PCG32 = R"*(#smdl
-const $int64_t PCG32_MULTIPLIER=6364136223846793005;
-const $int64_t PCG32_DEFAULT_INCREMENT=1442695040888963407;
+const i64 PCG32_MULTIPLIER=6364136223846793005;
+const i64 PCG32_DEFAULT_INCREMENT=1442695040888963407;
 export struct PCG32{
-  $int64_t state=0;
-  $int64_t increment=PCG32_DEFAULT_INCREMENT;
+  i64 state=0;
+  i64 increment=PCG32_DEFAULT_INCREMENT;
 };
-export @(pure macro)auto make_PCG32($int64_t seed){
+export @(pure macro)auto make_PCG32(i64 seed){
   auto pcg(PCG32(state: seed));
   pcg.state=pcg.state+pcg.increment;
   pcg.state=pcg.state*PCG32_MULTIPLIER+pcg.increment;
   return pcg;
 }
-export @(pure macro)auto make_PCG32($int64_t seed,$int64_t stream){
+export @(pure macro)auto make_PCG32(i64 seed,i64 stream){
   auto pcg(PCG32(state: seed,increment: (stream<<1)|1));
   pcg.state=pcg.state+pcg.increment;
   pcg.state=pcg.state*PCG32_MULTIPLIER+pcg.increment;
   return pcg;
 }
-export @(pure)$int32_t generate_int(inline const &PCG32 this){
+export @(pure)i32 generate_int(inline const &PCG32 this){
   state=state*PCG32_MULTIPLIER+increment;
-  return #rotr($int32_t(((state>>>18)^state)>>>27),$int32_t(31&(state>>>59)));
+  return #rotr(i32(((state>>>18)^state)>>>27),i32(31&(state>>>59)));
 }
-export @(pure)$int32_t generate_int(const &PCG32 this,const $int32_t bound){
+export @(pure)i32 generate_int(const &PCG32 this,const i32 bound){
   if(bound>1){
     const auto xmin((-bound)%bound);
     while(true){
@@ -1776,11 +1797,11 @@ export @(pure)float generate_float(const &PCG32 this){
 export @(pure)float2 generate_float2(const &PCG32 this)=float2(generate_float(this),generate_float(this));
 export @(pure)float3 generate_float3(const &PCG32 this)=float3(generate_float(this),generate_float(this),generate_float(this));
 export @(pure)float4 generate_float4(const &PCG32 this)=float4(generate_float(this),generate_float(this),generate_float(this),generate_float(this));
-export @(pure)void discard(inline const &PCG32 this,$int64_t n){
-  $int64_t aTotal(1);
-  $int64_t bTotal(0);
-  $int64_t a(PCG32_MULTIPLIER);
-  $int64_t b(increment);
+export @(pure)void discard(inline const &PCG32 this,i64 n){
+  i64 aTotal(1);
+  i64 bTotal(0);
+  i64 a(PCG32_MULTIPLIER);
+  i64 b(increment);
   while(n!=0){
     if((n&1)!=0){
       aTotal=aTotal*a;

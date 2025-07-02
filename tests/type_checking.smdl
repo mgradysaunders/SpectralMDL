@@ -1,6 +1,6 @@
 #smdl
 
-struct Foo { };
+struct Foo {};
 
 unit_test "Type checking" {
   auto foo = Foo();
@@ -9,4 +9,8 @@ unit_test "Type checking" {
   #assert(2.0d <: double);
   #assert("Hi!" <: string);
   #assert(foo <: Foo);
+  #assert(#sizeof(i8) == 1);
+  #assert(#sizeof(i16) == 2);
+  #assert(#sizeof(i32) == 4);
+  #assert(#sizeof(i64) == 8);
 }

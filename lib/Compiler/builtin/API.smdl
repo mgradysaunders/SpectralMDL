@@ -1,17 +1,5 @@
 #smdl
 
-/// The 8-bit sized integer type.
-export typedef #type_int(8) $int8_t;
-
-/// The 16-bit sized integer type.
-export typedef #type_int(16) $int16_t;
-
-/// The 32-bit sized integer type.
-export typedef #type_int(32) $int32_t;
-
-/// The 64-bit sized integer type.
-export typedef #type_int(64) $int64_t;
-
 /// The number of wavelengths in the RGB-to-color curves.
 const int RGB_TO_COLOR_NUM_WAVELENGTHS = 32;
 
@@ -185,23 +173,20 @@ export @(hot noinline) float3 $color_to_rgb(const color c) {
   *rgb = $color_to_rgb(color(cptr));
 }
 
-/// The hash integer type.
-export typedef $int32_t $hash_t;
-
 /// A straight-forward hash function for use with procedural algorithms.
-export @(pure) $hash_t $hash(auto value) {
+export @(pure) i32 $hash(auto value) {
   if $(#is_arithmetic_scalar(value)) {
     if $(#is_arithmetic_integral(value)) {
       if $(#sizeof(value) <= 4) {
         // MurmurHash3 finalizer for 32-bits
-        auto h($int32_t(value) + 3266445271);
+        auto h(i32(value) + 3266445271);
         h ^= h >>> 16, h *= 0x85EBCA6B;
         h ^= h >>> 13, h *= 0xC2B2AE35;
         h ^= h >>> 16;
         return h;
       } else {
         // MurmurHash3 finalizer for 64-bits
-        auto h($int64_t(value) + 13898551614298330943);
+        auto h(i64(value) + 13898551614298330943);
         h ^= h >>> 33, h *= 0xFF51AFD7ED558CCD;
         h ^= h >>> 33, h *= 0xC4CEB9FE1A85EC53;
         h ^= h >>> 33;
@@ -279,7 +264,7 @@ export struct texture_2d {
   const auto tile_extents = int2[](int2(0));
 
   /// The tile buffers.
-  const auto tile_buffers = auto[](cast<&float4>(null));
+  const auto tile_buffers = auto[](cast<&float4>(none));
 
   /// The gamma mode.
   const int gamma = 0;
@@ -306,7 +291,7 @@ export struct texture_ptex {
   texture_ptex(const string name, const auto gamma = 0) = #load_texture_ptex(name, int(gamma));
 
   /// The pointer to the `smdl::Ptexture`
-  const &void ptr = null;
+  const &void ptr = none;
 
   /// The gamma mode.
   const int gamma = 0;
@@ -328,7 +313,7 @@ export struct bsdf_measurement {
   /// The buffer `smdl::BSDFMeasurement::buffer` which points to a
   /// table of `num_theta * num_theta * num_phi` values of type `float` 
   /// or `float3`.
-  const auto buffer = cast<&float>(null);
+  const auto buffer = cast<&float>(none);
 };
 
 /// The light profile structure.
@@ -336,7 +321,7 @@ export struct light_profile {
   light_profile(const string name) = #load_light_profile(name);
 
   /// The pointer to the `smdl::LightProfile`
-  const &void ptr = null;
+  const &void ptr = none;
 
   /// The maximum intensity.
   const float max_intensity = 0;
@@ -462,10 +447,10 @@ export struct $material_instance {
   const &color ior = &mat.ior;
 
   /// The volume absorption coefficient.
-  const &color absorption_coefficient = ($(#typeof(mat.volume.absorption_coefficient) == void) ? null : &mat.volume.absorption_coefficient);
+  const &color absorption_coefficient = ($(#typeof(mat.volume.absorption_coefficient) == void) ? none : &mat.volume.absorption_coefficient);
 
   /// The volume scattering coefficient.
-  const &color scattering_coefficient = ($(#typeof(mat.volume.scattering_coefficient) == void) ? null : &mat.volume.scattering_coefficient);
+  const &color scattering_coefficient = ($(#typeof(mat.volume.scattering_coefficient) == void) ? none : &mat.volume.scattering_coefficient);
 
   /// The wavelength count.
   const int wavelength_base_max = $WAVELENGTH_BASE_MAX;
@@ -500,13 +485,13 @@ export struct $albedo_lut {
   /// \note
   /// This must point to `num_cos_theta` rows by `num_roughness` values.
   ///
-  const &float directional_albedo = null;
+  const &float directional_albedo = none;
 
   /// The average albedo.
   ///
   /// \note
   /// This must point to `num_roughness` values.
   ///
-  const &float average_albedo = null;
+  const &float average_albedo = none;
 };
 

@@ -228,7 +228,6 @@ Color Scene::trace_path(smdl::BumpPtrAllocator &allocator,
                                           &f[0]))
           for (size_t i = 0; i < WAVELENGTH_BASE_MAX; i++)
             L[i] += w[i] * f[i];
-        return L;
       }
     }
     smdl::float3 wi{};

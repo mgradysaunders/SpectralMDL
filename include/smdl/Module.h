@@ -90,6 +90,11 @@ public:
     return sourceCode;
   }
 
+  /// Is SMDL syntax?
+  [[nodiscard]] bool is_smdl_syntax() const noexcept {
+    return starts_with(sourceCode, "#smdl\n");
+  }
+
   /// Parse the source code.
   [[nodiscard]] std::optional<Error>
   parse(BumpPtrAllocator &allocator) noexcept;

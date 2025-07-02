@@ -941,6 +941,7 @@ Value FunctionType::invoke(Emitter &emitter, const ArgumentList &args,
     auto preserve{Preserve(emitter.crumb)};
     emitter.crumb = func->params.lastCrumb;
     emitter.handle_scope(nullptr, nullptr, [&]() {
+      emitter.currentModule = func->decl.srcLoc.module_;
       auto [astLet, astCall] =
           func->decl.get_variant_let_and_call_expressions();
       // If the function variant has a `let` expression, generate the variable
@@ -982,6 +983,7 @@ Value FunctionType::invoke(Emitter &emitter, const ArgumentList &args,
         func->params, resolved.values, srcLoc, [&]() {
           if (func->decl.has_attribute("fastmath"))
             emitter.builder.setFastMathFlags(llvm::FastMathFlags::getFast());
+          emitter.currentModule = func->decl.srcLoc.module_;
           emitter.emit(func->decl.definition);
         })};
     --macroRecursionDepth;
@@ -1090,6 +1092,7 @@ FunctionType::instantiate(Emitter &emitter,
           params, decl.srcLoc, [&] {
             if (decl.has_attribute("fastmath"))
               emitter.builder.setFastMathFlags(llvm::FastMathFlags::getFast());
+            emitter.currentModule = decl.srcLoc.module_;
             emitter.emit(decl.definition);
           });
       static const std::pair<const char *, llvm::Attribute::AttrKind> attrs[] =
@@ -1740,6 +1743,7 @@ Value StructType::invoke(Emitter &emitter, const ArgumentList &args,
         emitter.labelReturn = {};   // Invalidate!
         emitter.labelBreak = {};    // Invalidate!
         emitter.labelContinue = {}; // Invalidate!
+        emitter.currentModule = decl.srcLoc.module_;
         auto lv{emitter.to_lvalue(result)};
         for (auto &param : params)
           emitter.declare_crumb(param.name, &decl,
@@ -1768,6 +1772,7 @@ Value StructType::invoke(Emitter &emitter, const ArgumentList &args,
     return emitter.create_function_implementation(
         decl.name, !emitter.state, this, constructor.params, resolved.values,
         srcLoc, [&]() {
+          emitter.currentModule = decl.srcLoc.module_;
           emitter.emit_return(emitter.emit(constructor.astConstructor->expr),
                               srcLoc);
         });

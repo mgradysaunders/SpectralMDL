@@ -11,6 +11,6 @@ unit_test "Else expressions" {
   int b = 1;
   int c = 9;
   #assert(first_nonnull(&a, &b, &c) == &a);
-  #assert(first_nonnull(cast<&int>(null), &b, &c) == &b);
-  #assert(first_nonnull(cast<&int>(null), cast<&int>(null), &c) == &c);
+  #assert(first_nonnull(cast<&int>(none), &b, &c) == &b);
+  #assert(first_nonnull(cast<&int>(none), cast<&int>(none), &c) == &c);
 }

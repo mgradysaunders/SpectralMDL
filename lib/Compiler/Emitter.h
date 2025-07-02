@@ -300,7 +300,7 @@ public:
   void handle_scope(llvm::BasicBlock *blockStart, llvm::BasicBlock *blockEnd,
                     Func &&func) {
     auto preserve{Preserve( //
-        crumb, state, labelReturn, labelBreak, labelContinue, inDefer)};
+        crumb, state, labelReturn, labelBreak, labelContinue, inDefer, currentModule)};
     auto crumb0{crumb};
     if (blockStart) {
       llvm_move_block_to_end(blockStart);
@@ -926,6 +926,8 @@ public:
 
   /// The intermediate crumbs to potentially warn about later.
   llvm::SmallVector<Crumb *> crumbsToWarnAbout{};
+
+  Module *currentModule{context.currentModule};
 };
 
 /// \}

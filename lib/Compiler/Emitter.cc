@@ -2341,7 +2341,7 @@ void Emitter::emit_print(Value os, Value value, const SourceLocation &srcLoc,
     emit_print(os, value.get_comptime_meta_type(context, srcLoc)->displayName,
                srcLoc);
   } else if (value.is_void()) {
-    emit_print(os, "null", srcLoc);
+    emit_print(os, "none", srcLoc);
   } else if (value.type->is_pointer()) {
     builder.CreateCall(
         context.get_builtin_callee("smdl_print_pointer", &smdl_print_pointer),
@@ -2443,21 +2443,34 @@ Value Emitter::resolve_identifier(Span<std::string_view> names,
     return crumb0->value;
   }
   if (names.size() == 1) {
-    if (names[0] == "$state") {
-      if (!state)
-        srcLoc.throw_error(
-            "cannot resolve identifier '$state' in pure context");
-      return state;
-    } else if (names[0] == "$scene_data") {
-      return context.get_comptime_ptr(context.get_void_pointer_type(),
-                                      &context.compiler.sceneData);
-    } else if (names[0] == "void") {
-      // TODO Only if in extended syntax mode?
-      return context.get_comptime_meta_type(context.get_void_type());
-    } else if (names[0] == "null") {
-      // TODO Only if in extended syntax mode?
-      return RValue(context.get_void_type(), nullptr);
-    } else if (auto value{context.get_keyword_value(names[0])}) {
+    if (!currentModule || currentModule->is_smdl_syntax()) {
+      if (names[0] == "$state") {
+        if (!state)
+          srcLoc.throw_error(
+              "cannot resolve identifier '$state' in pure context");
+        return state;
+      } else if (names[0] == "$scene_data") {
+        return context.get_comptime_ptr(context.get_void_pointer_type(),
+                                        &context.compiler.sceneData);
+      } else if (names[0] == "i8") {
+        return context.get_comptime_meta_type(
+            context.get_arithmetic_type(Scalar::get_int(8)));
+      } else if (names[0] == "i16") {
+        return context.get_comptime_meta_type(
+            context.get_arithmetic_type(Scalar::get_int(16)));
+      } else if (names[0] == "i32") {
+        return context.get_comptime_meta_type(
+            context.get_arithmetic_type(Scalar::get_int(32)));
+      } else if (names[0] == "i64") {
+        return context.get_comptime_meta_type(
+            context.get_arithmetic_type(Scalar::get_int(64)));
+      } else if (names[0] == "void") {
+        return context.get_comptime_meta_type(context.get_void_type());
+      } else if (names[0] == "none") {
+        return RValue(context.get_void_type(), nullptr);
+      }
+    }
+    if (auto value{context.get_keyword_value(names[0])}) {
       return value;
     }
   }
@@ -2539,10 +2552,12 @@ Emitter::resolve_arguments(const ParameterList &params,
         auto &param{params[paramIndex]};
         auto &value{resolved.values[paramIndex]};
         if (!value) {
-          if (auto expr{param.get_ast_initializer()})
+          if (auto expr{param.get_ast_initializer()}) {
+            currentModule = expr->srcLoc.module_;
             value = emit(expr);
-          else
+          } else {
             value = *param.builtinDefaultValue;
+          }
         }
         value = invoke(param.type, value, param.get_source_location());
         declare_crumb(param.name, /*node=*/nullptr, value);
