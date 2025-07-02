@@ -492,7 +492,9 @@ export struct specular_bsdf: bsdf {
   string handle = "";
 };
 
-@(pure macro) auto scatter_evaluate(const &specular_bsdf this, const &scatter_evaluate_parameters params) {
+@(pure macro) auto scatter_evaluate(const &specular_bsdf this [[anno::unused()]],
+                                    const &scatter_evaluate_parameters params [[anno::unused()]]
+) {
   return scatter_evaluate_result(is_black: true); // Delta function!
 }
 

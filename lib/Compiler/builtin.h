@@ -552,7 +552,9 @@ export struct specular_bsdf:bsdf{
   scatter_mode mode=scatter_reflect;
   string handle="";
 };
-@(pure macro)auto scatter_evaluate(const &specular_bsdf this,const &scatter_evaluate_parameters params){
+@(pure macro)auto scatter_evaluate(const &specular_bsdf this[[anno::unused()]],
+                                   const &scatter_evaluate_parameters params[[anno::unused()]]
+){
   return scatter_evaluate_result(is_black: true);
 }
 @(pure macro)auto scatter_sample(const &specular_bsdf this,inline const &scatter_sample_parameters params){
