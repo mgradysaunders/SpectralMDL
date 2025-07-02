@@ -19,14 +19,18 @@ public:
   DiscreteDistribution(Iterator weight0, Iterator weightN)
       : DiscreteDistribution(std::vector<double>(weight0, weightN)) {}
 
+  template <typename Float>
+  DiscreteDistribution(std::initializer_list<Float> weights)
+      : DiscreteDistribution(weights.begin(), weights.end()) {}
+
 public:
   /// The number of indexes.
   [[nodiscard]] int size() const { return int(cmfs.size()) - 1; }
 
-  /// The index probability mass function.
+  /// The index probability mass function (PMF).
   [[nodiscard]] float index_pmf(int i) const;
 
-  /// The index cumulative mass function.
+  /// The index cumulative mass function (CMF).
   [[nodiscard]] float index_cmf(int i) const;
 
   /// The index sample function.
@@ -34,6 +38,9 @@ public:
   /// \param[inout] u
   /// The canonical random sample in `[0,1]`, which is overwritten after
   /// sampling to remap it back into `[0,1]` so it can be reused.
+  ///
+  /// \returns
+  /// The sampled index and the associated PMF.
   ///
   [[nodiscard]] std::pair<int, float> index_sample(float &u) const;
 

@@ -20,7 +20,7 @@ add_library(
     "Compiler/llvm.cc"
     "Compiler/Type.cc"
     "Compiler/Value.cc"
-    "Distribution.cc"
+    "DiscreteDistribution.cc"
     "FileLocator.cc"
     "Formatter.cc"
     "Image.cc"
@@ -125,3 +125,5 @@ install(
   RUNTIME DESTINATION "${CMAKE_INSTALL_BINDIR}"
   COMPONENT "SpectralMDL"
   ) 
+
+add_subdirectory(unit_tests)

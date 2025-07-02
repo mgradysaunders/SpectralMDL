@@ -863,6 +863,7 @@ struct microfacet_bsdf: bsdf {
   preserve tangent_u;
   tangent_u = this.tangent_u;
   return scatter_evaluate_result(is_black: true) if (!recalculate_tangent_space(params));
+  // TODO Handle thin_walled
   const auto cos_thetao(#abs(wo.z));
   const auto cos_thetai(#abs(wi.z));
   const auto wm(half_direction(params));
@@ -936,6 +937,7 @@ struct microfacet_bsdf: bsdf {
   auto tbn(recalculate_tangent_space(params));
   if (!tbn)
     return scatter_sample_result();
+  // TODO Handle thin_walled
   // Decide whether to reflect or transmit. NOTE: This is not Fresnel-weighted, it is either deterministic or 50/50.
   const auto mode(monte_carlo::bool_sample(&xi.z, scatter_reflect_chance(this.mode)) //
                   ? scatter_reflect                                                  //

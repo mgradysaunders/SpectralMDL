@@ -12,6 +12,7 @@ project(
 
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
+include(CTest)
 include(cmake/Git.cmake)
 include(cmake/Options.cmake)
 include(cmake/Dependencies.cmake)
