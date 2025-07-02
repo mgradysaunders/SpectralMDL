@@ -593,7 +593,8 @@ export struct sheen_bsdf:bsdf{
     return scatter_evaluate_result(is_black: true);
   }
 }
-@(pure)auto scatter_sample(const &sheen_bsdf this,inline const &scatter_sample_parameters params){
+@(pure)auto scatter_sample(const &sheen_bsdf this[[anno::unused()]],
+                           inline const &scatter_sample_parameters params){
   if((tbn:=recalculate_tangent_space(params))){
     return scatter_sample_result(wi: (*tbn)*monte_carlo::cosine_hemisphere_sample(xi.xy),mode: scatter_reflect);
   } else {
