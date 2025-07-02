@@ -1205,7 +1205,8 @@ export static const auto PROSPECT_TABLE_ABSORPTIONS = auto[1051](
   auto(0.0000000e+00, 0.0000000e+00, 0.0000000e+00, 0.0000000e+00, 9.5300000e+01, 3.8710000e+01, 9.4077800e+00, 4.2636600e+01),
 );
 
-export @(noinline) PROSPECT_result PROSPECT(
+@(noinline)
+export PROSPECT_result PROSPECT(
   float num_layers = 1.5,          ///< The number of layers.
   float incident_cone_angle = 0.7, ///< The incident cone angle in radians.
   float dry_matter = 5.0,          ///< The dry matter content in milligrams per square centimeter.

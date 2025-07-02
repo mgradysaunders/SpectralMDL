@@ -11,26 +11,30 @@ export struct PCG32 {
   i64 increment = PCG32_DEFAULT_INCREMENT;
 };
 
-export @(pure macro) auto make_PCG32(i64 seed) {
+@(pure macro)
+export auto make_PCG32(i64 seed) {
   auto pcg(PCG32(state: seed));
   pcg.state = pcg.state + pcg.increment;
   pcg.state = pcg.state * PCG32_MULTIPLIER + pcg.increment;
   return pcg;
 }
 
-export @(pure macro) auto make_PCG32(i64 seed, i64 stream) {
+@(pure macro)
+export auto make_PCG32(i64 seed, i64 stream) {
   auto pcg(PCG32(state: seed, increment: (stream << 1) | 1));
   pcg.state = pcg.state + pcg.increment;
   pcg.state = pcg.state * PCG32_MULTIPLIER + pcg.increment;
   return pcg;
 }
 
-export @(pure) i32 generate_int(inline const &PCG32 this) {
+@(pure)
+export i32 generate_int(inline const &PCG32 this) {
   state = state * PCG32_MULTIPLIER + increment;
   return #rotr(i32(((state >>> 18) ^ state) >>> 27), i32(31 & (state >>> 59)));
 }
 
-export @(pure) i32 generate_int(const &PCG32 this, const i32 bound) {
+@(pure)
+export i32 generate_int(const &PCG32 this, const i32 bound) {
   if (bound > 1) {
     const auto xmin((-bound) % bound);
     while (true) {
@@ -41,17 +45,22 @@ export @(pure) i32 generate_int(const &PCG32 this, const i32 bound) {
   return 0;
 }
 
-export @(pure) float generate_float(const &PCG32 this) {
+@(pure)
+export float generate_float(const &PCG32 this) {
   return #min(float(#unsigned_to_fp(generate_int(this), double) / 4294967296.0d), 1.0 - $FLOAT_EPS / 2);
 }
 
-export @(pure) float2 generate_float2(const &PCG32 this) = float2(generate_float(this), generate_float(this));
+@(pure)
+export float2 generate_float2(const &PCG32 this) = float2(generate_float(this), generate_float(this));
 
-export @(pure) float3 generate_float3(const &PCG32 this) = float3(generate_float(this), generate_float(this), generate_float(this));
+@(pure)
+export float3 generate_float3(const &PCG32 this) = float3(generate_float(this), generate_float(this), generate_float(this));
 
-export @(pure) float4 generate_float4(const &PCG32 this) = float4(generate_float(this), generate_float(this), generate_float(this), generate_float(this));
+@(pure)
+export float4 generate_float4(const &PCG32 this) = float4(generate_float(this), generate_float(this), generate_float(this), generate_float(this));
 
-export @(pure) void discard(inline const &PCG32 this, i64 n) {
+@(pure)
+export void discard(inline const &PCG32 this, i64 n) {
   // Fast power by squaring.
   i64 aTotal(1);
   i64 bTotal(0);

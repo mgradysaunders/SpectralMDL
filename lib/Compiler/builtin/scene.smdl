@@ -1,32 +1,45 @@
 #smdl
 
-@(foreign pure) int smdl_data_exists(&void scene_data, string name);
+@(foreign pure)
+int smdl_data_exists(&void scene_data, string name);
 
-@(foreign) void smdl_data_lookup(&void scene_data, string name, int kind, int size, &void result);
+@(foreign)
+void smdl_data_lookup(&void scene_data, string name, int kind, int size, &void result);
 
-@(macro) auto data_lookup(const string name, auto value) {
+@(macro)
+auto data_lookup(const string name, auto value) {
   const int kind = #is_arithmetic_integral(value) ? 0 : //
                    #is_arithmetic_floating_point(value) ? 1 : 2;
   smdl_data_lookup($scene_data, name, kind, #num(value), cast<&void>(&value));
   return value;
 }
 
-export @(macro) bool data_isvalid(const string name) = smdl_data_exists($scene_data, name) != 0;
+@(macro)
+export bool data_isvalid(const string name) = smdl_data_exists($scene_data, name) != 0;
 
-export @(macro) int data_lookup_int(const string name, int default_value = int()) = data_lookup(name, default_value);
+@(macro)
+export int data_lookup_int(const string name, int default_value = int()) = data_lookup(name, default_value);
 
-export @(macro) int2 data_lookup_int2(const string name, int2 default_value = int2()) = data_lookup(name, default_value);
+@(macro)
+export int2 data_lookup_int2(const string name, int2 default_value = int2()) = data_lookup(name, default_value);
 
-export @(macro) int3 data_lookup_int3(const string name, int3 default_value = int3()) = data_lookup(name, default_value);
+@(macro)
+export int3 data_lookup_int3(const string name, int3 default_value = int3()) = data_lookup(name, default_value);
 
-export @(macro) int4 data_lookup_int4(const string name, int4 default_value = int4()) = data_lookup(name, default_value);
+@(macro)
+export int4 data_lookup_int4(const string name, int4 default_value = int4()) = data_lookup(name, default_value);
 
-export @(macro) float data_lookup_float(const string name, float default_value = float()) = data_lookup(name, default_value);
+@(macro)
+export float data_lookup_float(const string name, float default_value = float()) = data_lookup(name, default_value);
 
-export @(macro) float2 data_lookup_float2(const string name, float2 default_value = float2()) = data_lookup(name, default_value);
+@(macro)
+export float2 data_lookup_float2(const string name, float2 default_value = float2()) = data_lookup(name, default_value);
 
-export @(macro) float3 data_lookup_float3(const string name, float3 default_value = float3()) = data_lookup(name, default_value);
+@(macro)
+export float3 data_lookup_float3(const string name, float3 default_value = float3()) = data_lookup(name, default_value);
 
-export @(macro) float4 data_lookup_float4(const string name, float4 default_value = float4()) = data_lookup(name, default_value);
+@(macro)
+export float4 data_lookup_float4(const string name, float4 default_value = float4()) = data_lookup(name, default_value);
 
-export @(macro) color data_lookup_color(const string name, color default_value = color()) = data_lookup(name, default_value);
+@(macro)
+export color data_lookup_color(const string name, color default_value = color()) = data_lookup(name, default_value);

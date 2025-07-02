@@ -19,11 +19,13 @@ struct Bison {
 // conditional expressions. The result of the inner 'i == 1' conditional 
 // expression is a '(Zebra | Bison)' which then unites with 'Horse' to
 // form '(Horse | Zebra | Bison)'.
-@(pure noinline) auto get_implied_union_from_conditional(int i) = i == 0 ? Horse() : (i == 1 ? Zebra() : Bison());
+@(pure noinline)
+auto get_implied_union_from_conditional(int i) = i == 0 ? Horse() : (i == 1 ? Zebra() : Bison());
 
 // This implicitly constructs a '(Horse | Zebra | Bison)' by looking at
 // the 'return' statements of a function with 'auto' return type.
-@(pure noinline) auto get_implied_union_from_returns(int i) {
+@(pure noinline)
+auto get_implied_union_from_returns(int i) {
   switch (i) {
   case 0: return Horse();
   case 1: return Zebra();
@@ -51,10 +53,12 @@ unit_test "Implied union" {
 // 'double' to 'double', then the outer expression promotes 'int' and
 // 'double' to 'double. This demonstrates that arithmetic promotion 
 // is preferred to union when possible!
-@(pure noinline) auto get_implied_promotion_from_conditional(int i) = i == 0 ? 7 : (i == 1 ? 7.1f : 7.2d);
+@(pure noinline)
+auto get_implied_promotion_from_conditional(int i) = i == 0 ? 7 : (i == 1 ? 7.1f : 7.2d);
 
 // Same as above.
-@(pure noinline) auto get_implied_promotion_from_returns(int i) {
+@(pure noinline)
+auto get_implied_promotion_from_returns(int i) {
   switch (i) {
   case 0: return 7;
   case 1: return 7.1f;

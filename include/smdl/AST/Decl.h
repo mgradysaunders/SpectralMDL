@@ -333,25 +333,6 @@ public:
 /// A function declaration.
 class SMDL_EXPORT Function final : public DeclSubclass<DeclKind::Function> {
 public:
-  /// The function attributes, e.g., `@(pure macro)`.
-  class SMDL_EXPORT Attributes final {
-  public:
-    [[nodiscard]] bool has(std::string_view attr) const {
-      return std::find(attrs.begin(), attrs.end(), attr) != attrs.end();
-    }
-
-    /// The at `@`.
-    std::string_view srcAt{};
-
-    /// The parenthesis `(`.
-    std::string_view srcParenL{};
-
-    /// The attributes.
-    std::vector<std::string_view> attrs{};
-
-    /// The parenthesis `)`.
-    std::string_view srcParenR{};
-  };
 
   class LetAndCall final {
   public:
@@ -364,23 +345,17 @@ public:
     [[nodiscard]] operator bool() const { return call; }
   };
 
-  explicit Function(std::optional<Attributes> attributes,
-                    BumpPtr<Type> returnType,
+  explicit Function(BumpPtr<Type> returnType,
                     BumpPtr<AnnotationBlock> earlyAnnotations, Name name,
                     ParameterList params, std::string_view srcFrequency,
                     BumpPtr<AnnotationBlock> lateAnnotations,
                     std::string_view srcEqual, BumpPtr<Node> definition,
                     std::string_view srcSemicolon)
-      : attributes(std::move(attributes)), returnType(std::move(returnType)),
+      : returnType(std::move(returnType)),
         earlyAnnotations(std::move(earlyAnnotations)), name(name),
         params(std::move(params)), srcFrequency(srcFrequency),
         lateAnnotations(std::move(lateAnnotations)), srcEqual(srcEqual),
         definition(std::move(definition)), srcSemicolon(srcSemicolon) {}
-
-  /// Has the given attribute?
-  [[nodiscard]] bool has_attribute(std::string_view attr) const {
-    return attributes && attributes->has(attr);
-  }
 
   /// Is a function declaration without a definition?
   [[nodiscard]] bool is_declaration_without_definition() const {
@@ -395,9 +370,6 @@ public:
   [[nodiscard]] LetAndCall get_variant_let_and_call_expressions() const;
 
 public:
-  /// The attributes. This may be null!
-  std::optional<Attributes> attributes{};
-
   /// The return type.
   BumpPtr<Type> returnType{};
 

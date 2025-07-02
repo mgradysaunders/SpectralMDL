@@ -187,7 +187,7 @@ void Formatter::write(const AST::File &file) {
           file.srcSemicolonAfterModule, DELIM_NEWLINE);
   }
   for (const auto &decl : file.globalDecls) {
-    write(decl->srcKwExport, DELIM_SPACE, decl, DELIM_NEWLINE);
+    write(decl->attributes, decl->srcKwExport, DELIM_SPACE, decl, DELIM_NEWLINE);
   }
   write(DELIM_NEWLINE);
 }
@@ -226,16 +226,7 @@ void Formatter::write(const AST::Enum &decl) {
 }
 
 void Formatter::write(const AST::Function &decl) {
-  if (decl.attributes) {
-    auto &attributes{*decl.attributes};
-    write(attributes.srcAt, attributes.srcParenL, PUSH_INDENT, ALIGN_INDENT);
-    for (size_t i = 0; i < attributes.attrs.size(); i++) {
-      write(attributes.attrs[i]);
-      if (i + 1 < attributes.attrs.size())
-        write(DELIM_SPACE);
-    }
-    write(attributes.srcParenR, POP_INDENT, DELIM_UNNECESSARY_SPACE);
-  }
+
   write(decl.returnType, decl.earlyAnnotations, DELIM_SPACE, decl.name,
         decl.params);
   if (!decl.srcFrequency.empty())
@@ -435,9 +426,10 @@ void Formatter::write(const AST::ParameterList &params) {
   } else {
     auto delim{write_start_list(params.size(), params.has_trailing_comma())};
     for (const auto &param : params) {
-      if (!options.noAnnotations && param.annotations && &param != &params[0]) {
-        write(DELIM_NEWLINE);
-      }
+      // if (!options.noAnnotations && param.annotations && &param !=
+      // &params[0]) {
+      //  write(DELIM_NEWLINE);
+      // }
       write(param.type, DELIM_SPACE, param.name);
       if (param.exprInit) {
         write(DELIM_UNNECESSARY_SPACE, param.srcEqual, DELIM_UNNECESSARY_SPACE,
@@ -449,9 +441,9 @@ void Formatter::write(const AST::ParameterList &params) {
       }
       write(param.annotations, param.srcComma,
             param.srcComma.empty() ? DELIM_NONE : delim);
-      if (!options.noAnnotations && param.annotations) {
-        write(DELIM_NEWLINE);
-      }
+      // if (!options.noAnnotations && param.annotations) {
+      //  write(DELIM_NEWLINE);
+      // }
     }
   }
   write(POP_INDENT, params.srcParenR);

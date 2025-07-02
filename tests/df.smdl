@@ -20,7 +20,8 @@ unit_test "Specular half vector for refraction" {
   #assert(#all(df::specular::refract(wi, wm, 1 / ior) ~== [1e-5] wo));
 }
 
-@(pure foreign) double erf(double x);
+@(pure foreign)
+double erf(double x);
 
 unit_test "Erf inverse" {
   #assert(df::monte_carlo::erf_inverse(erf(-1.1d)) ~== [1e-5d] -1.1d);
@@ -29,7 +30,8 @@ unit_test "Erf inverse" {
   #assert(df::monte_carlo::erf_inverse(erf(+2.7d)) ~== [1e-5d] +2.7d);
 }
 
-@(pure) auto run_low_discrepancy_tests(auto xi) {
+@(pure)
+auto run_low_discrepancy_tests(auto xi) {
   auto xi_av(xi);
   for (int i = 0; i < 5000; i++) {
     xi_av += df::monte_carlo::next_low_discrepancy(&xi);
@@ -62,7 +64,8 @@ unit_test "Cosine-weighted hemisphere sample" {
 
 // Integrate Smith slope PDF by transforming the open square `(-1, 1)^2` 
 // into the entire plane `(-inf, inf)^2`.
-@(pure) float integrate_smith_slope_pdf(const df::microfacet::distribution distr) {
+@(pure)
+float integrate_smith_slope_pdf(const df::microfacet::distribution distr) {
   double fsum = 0;
   const int n = 512;
   for (int ix = 0; ix < n; ix++) {
@@ -80,7 +83,8 @@ unit_test "Cosine-weighted hemisphere sample" {
 }
 
 // Integrate Smith normal PDF by cosine-weighted hemisphere sampling.
-@(pure) float integrate_smith_normal_pdf(const df::microfacet::distribution distr, const float2 alpha) {
+@(pure)
+float integrate_smith_normal_pdf(const df::microfacet::distribution distr, const float2 alpha) {
   double fsum = 0;
   const int n = 512 * 512;
   float2 xi = float2(0.228, 0.712);

@@ -201,7 +201,7 @@ private:
     write(decl.srcKwNamespace, DELIM_SPACE, decl.identifier, DELIM_SPACE,
           decl.srcBraceL, DELIM_NEWLINE);
     for (const auto &subDecl : decl.decls)
-      write(subDecl->srcKwExport, DELIM_SPACE, subDecl, DELIM_NEWLINE);
+      write(subDecl->attributes, subDecl->srcKwExport, DELIM_SPACE, subDecl, DELIM_NEWLINE);
     write(decl.srcBraceR, DELIM_NEWLINE);
   }
 
@@ -438,6 +438,16 @@ private:
   //--}
 
   void write(const AST::Name &name) { write(name.srcName); }
+
+  void write(const AST::Decl::Attributes &attributes) {
+    write(attributes.srcAt, attributes.srcParenL, PUSH_INDENT, ALIGN_INDENT);
+    for (size_t i = 0; i < attributes.attrs.size(); i++) {
+      write(attributes.attrs[i]);
+      if (i + 1 < attributes.attrs.size())
+        write(DELIM_SPACE);
+    }
+    write(attributes.srcParenR, POP_INDENT, DELIM_NEWLINE);
+  }
 
   void write(const AST::AnnotationBlock &annos);
 

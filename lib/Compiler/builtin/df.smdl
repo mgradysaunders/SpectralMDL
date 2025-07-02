@@ -16,32 +16,39 @@ export enum scatter_mode {
   scatter_reflect_transmit = 0x3, ///< Reflect or transmit 
 };
 
-@(pure macro) float scatter_reflect_chance(const scatter_mode mode) {
+@(pure macro)
+float scatter_reflect_chance(const scatter_mode mode) {
   const auto refl_weight(#select((int(mode) & 1) != 0, 1.0, 0.0));
   const auto tran_weight(#select((int(mode) & 2) != 0, 1.0, 0.0));
   return refl_weight / (refl_weight + tran_weight);
 }
 
 /// Declare libm `erf`
-@(pure foreign) double erf(double x);
+@(pure foreign)
+double erf(double x);
 
 /// Declare libm `erfc`
-@(pure foreign) double erfc(double x);
+@(pure foreign)
+double erfc(double x);
 
 //--{ monte_carlo
 export namespace monte_carlo {
 
 /// Next canonical random vector in quasi-random 2-dimensional low discrepancy sequence.
-export @(pure macro) float2 next_low_discrepancy(const &float2 xi) = (*xi = frac(*xi + float2(0.75487766, 0.56984029)));
+@(pure macro)
+export float2 next_low_discrepancy(const &float2 xi) = (*xi = frac(*xi + float2(0.75487766, 0.56984029)));
 
 /// Next canonical random vector in quasi-random 3-dimensional low discrepancy sequence.
-export @(pure macro) float3 next_low_discrepancy(const &float3 xi) = (*xi = frac(*xi + float3(0.81917251, 0.67104360, 0.54970047)));
+@(pure macro)
+export float3 next_low_discrepancy(const &float3 xi) = (*xi = frac(*xi + float3(0.81917251, 0.67104360, 0.54970047)));
 
 /// Next canonical random vector in quasi-random 4-dimensional low discrepancy sequence.
-export @(pure macro) float4 next_low_discrepancy(const &float4 xi) = (*xi = frac(*xi + float4(0.85667488, 0.73389185, 0.62870672, 0.53859725)));
+@(pure macro)
+export float4 next_low_discrepancy(const &float4 xi) = (*xi = frac(*xi + float4(0.85667488, 0.73389185, 0.62870672, 0.53859725)));
 
 /// Bool sample with `chance` probability of returning `true`.
-export @(pure) bool bool_sample(const &float xi, const float chance) {
+@(pure macro)
+export bool bool_sample(const &float xi, const float chance) {
   if (*xi < chance) {
     *xi = (*xi / chance);
     return true;
@@ -52,14 +59,16 @@ export @(pure) bool bool_sample(const &float xi, const float chance) {
 }
 
 /// Uniform wavelength index sample.
-export @(pure) int uniform_wavelength_index_sample(const &float xi) {
+@(pure macro)
+export int uniform_wavelength_index_sample(const &float xi) {
   const int i(#min(int(*xi *= $WAVELENGTH_BASE_MAX), $WAVELENGTH_BASE_MAX - 1));
   *xi -= i;
   return i;
 }
 
 /// Uniform disk sample.
-export @(pure noinline) float2 uniform_disk_sample(float2 xi) {
+@(pure)
+export float2 uniform_disk_sample(float2 xi) {
   xi = 2 * xi - 1;
   xi = #select(xi == 0, EPSILON, xi);
   const bool cond((absxi := #abs(xi), absxi.x > absxi.y));
@@ -69,12 +78,14 @@ export @(pure noinline) float2 uniform_disk_sample(float2 xi) {
 }
 
 /// Cosine-weighted hemisphere sample.
-export @(pure noinline) float3 cosine_hemisphere_sample(float2 xi) {
+@(pure)
+export float3 cosine_hemisphere_sample(float2 xi) {
   return float3((p := uniform_disk_sample(xi)), #sqrt(#max(1 - #sum(p * p), 0)));
 }
 
 /// Uniform hemisphere sample.
-export @(pure noinline) float3 uniform_hemisphere_sample(float2 xi) {
+@(pure)
+export float3 uniform_hemisphere_sample(float2 xi) {
   const float cos_theta = saturate(xi.x);
   const float sin_theta = #sqrt(1 - cos_theta * cos_theta);
   return float3(
@@ -85,7 +96,8 @@ export @(pure noinline) float3 uniform_hemisphere_sample(float2 xi) {
 }
 
 /// Uniform sphere sample.
-export @(pure noinline) float3 uniform_sphere_sample(float2 xi) {
+@(pure)
+export float3 uniform_sphere_sample(float2 xi) {
   const float cos_theta = 2 * saturate(xi.x) - 1;
   const float sin_theta = #sqrt(1 - cos_theta * cos_theta);
   return float3(
@@ -96,7 +108,8 @@ export @(pure noinline) float3 uniform_sphere_sample(float2 xi) {
 }
 
 /// Erf inverse.
-export @(pure noinline) double erf_inverse(double y) {
+@(pure)
+export double erf_inverse(double y) {
   double w = -#log(#max(1e-6d, (1 - y) * (1 + y)));
   double x = 0;
   if (w < 5) {
@@ -134,10 +147,12 @@ export @(pure noinline) double erf_inverse(double y) {
 export namespace specular {
 
 /// Reflect direction `wi` across normal direction `wm`.
-export @(pure macro) float3 reflect(const float3 wi, const float3 wm) = 2 * #sum(wi * wm) * wm - wi;
+@(pure)
+export float3 reflect(const float3 wi, const float3 wm) = 2 * #sum(wi * wm) * wm - wi;
 
 /// Reflect direction `wi` across normal direction `wm` with index of refraction `ior`.
-export @(pure macro) float3 refract(const float3 wi, const float3 wm, const float ior) {
+@(pure)
+export float3 refract(const float3 wi, const float3 wm, const float ior) {
   const auto cos_thetai(#sum(wi * wm));
   const auto cos2_thetai(#min(cos_thetai * cos_thetai, 1));
   const auto cos2_thetat(#max(1 - ior * ior * (1 - cos2_thetai), 0));
@@ -151,7 +166,8 @@ export @(pure macro) float3 refract(const float3 wi, const float3 wm, const floa
 /// - The result is not normalized.
 /// - The result is guaranteed in the upper Z hemisphere.
 ///
-export @(pure macro) float3 reflection_half_vector(const float3 wo, const float3 wi) = (vh := (wo + wi)) * #sign(vh.z);
+@(pure)
+export float3 reflection_half_vector(const float3 wo, const float3 wi) = (vh := (wo + wi)) * #sign(vh.z);
 
 /// Calculate half vector that refracts direction `wo` to direction `wi` through index-of-refraction `ior`.
 ///
@@ -159,28 +175,33 @@ export @(pure macro) float3 reflection_half_vector(const float3 wo, const float3
 /// - The result is not normalized.
 /// - The result is guaranteed in the upper Z hemisphere.
 ///
-export @(pure macro) float3 refraction_half_vector(
+@(pure)
+export float3 refraction_half_vector(
   const float3 wo,
   const float3 wi,
   const float ior,
 ) = (vh := -(ior * wo + wi)) * #sign(vh.z);
 
-export @(pure macro) auto refraction_half_vector_jacobian(
+@(pure)
+export auto refraction_half_vector_jacobian(
   const float3 wo,
   const float3 wi,
   const float ior,
 ) = #abs(#sum(wi * (vh := refraction_half_vector(wo, wi, ior)))) / ((vh2 := #sum(vh * vh)) * #sqrt(vh2));
 
-export @(pure macro) auto schlick_F0(const auto ior) = #pow((ior - 1) / (ior + 1), 2);
+@(pure macro)
+export auto schlick_F0(const auto ior) = #pow((ior - 1) / (ior + 1), 2);
 
-export @(pure macro) auto schlick_fresnel(
+@(pure macro)
+export auto schlick_fresnel(
   const auto cos_theta,
   const auto F0,
   const auto F90 = 1.0,
   const float exponent = 5,
 ) = F0 + (F90 - F0) * #pow(#max(1 - #abs(cos_theta), 0), exponent);
 
-export @(pure) auto dielectric_fresnel(const float cos_thetai, const auto ior) {
+@(pure)
+export auto dielectric_fresnel(const float cos_thetai, const auto ior) {
   const auto cos2_thetat(1 - ior * ior * (1 - cos_thetai * cos_thetai));
   const auto cos_thetat(#sqrt(#max(cos2_thetat, 0)) * #sign(cos_thetai));
   const auto rs((ior * cos_thetai - cos_thetat) / (ior * cos_thetai + cos_thetat));
@@ -193,7 +214,8 @@ export @(pure) auto dielectric_fresnel(const float cos_thetai, const auto ior) {
 
 /// Calculate the orthogonal right-handed tangent space from the 
 /// given normal and tangent vectors.
-@(pure noinline) float3x3 calculate_tangent_space(const float3 normal, const float3 tangent_u) {
+@(pure noinline)
+float3x3 calculate_tangent_space(const float3 normal, const float3 tangent_u) {
   const auto tw(normalize(normal) * #sign(normal.z));
   const auto tu(normalize(tangent_u - dot(tangent_u, tw) * tw));
   const auto tv(normalize(cross(tw, tu)));
@@ -264,14 +286,16 @@ struct scatter_evaluate_result {
 /// Returns `true` if the directions are still consistent with the scatter mode 
 /// after applying the effective tangent space.
 ///
-@(pure noinline) bool recalculate_tangent_space(inline const &scatter_evaluate_parameters params) {
+@(pure noinline)
+bool recalculate_tangent_space(inline const &scatter_evaluate_parameters params) {
   auto tbn(calculate_tangent_space(normal, tangent_u));
   wo = wo0 * tbn;
   wi = wi0 * tbn;
   return ((wo.z < 0) == (wo0.z < 0)) & ((wi.z < 0) == (wi0.z < 0));
 }
 
-@(pure) float3 half_direction(inline const &scatter_evaluate_parameters params) {
+@(pure)
+float3 half_direction(inline const &scatter_evaluate_parameters params) {
   return normalize(mode == scatter_reflect                    //
                    ? specular::reflection_half_vector(wo, wi) //
                    : specular::refraction_half_vector(wo, wi, ior));
@@ -324,17 +348,20 @@ struct scatter_sample_result {
   ?color delta_f = none;
 };
 
-@(pure noinline) ?float3x3 recalculate_tangent_space(inline const &scatter_sample_parameters params) {
+@(pure noinline)
+?float3x3 recalculate_tangent_space(inline const &scatter_sample_parameters params) {
   auto tbn(calculate_tangent_space(normal, tangent_u));
   wo = wo0 * tbn;
   return tbn if ((wo.z < 0) == (wo0.z < 0));
 }
 
-@(pure) float3 half_direction(inline const &scatter_sample_parameters this, inline const &scatter_sample_result result) {
+@(pure)
+float3 half_direction(inline const &scatter_sample_parameters this, inline const &scatter_sample_result result) {
   return normalize(mode == scatter_reflect ? specular::reflection_half_vector(wo, wi) : specular::refraction_half_vector(wo, wi, ior));
 }
 
-@(pure macro) auto $scatter_evaluate_result_with_multiscatter(
+@(pure macro)
+auto $scatter_evaluate_result_with_multiscatter(
   const auto this,
   const auto f,
   const float2 pdf,
@@ -375,10 +402,8 @@ struct scatter_sample_result {
   }
 }
 
-@(pure macro) ?scatter_sample_result $scatter_sample_result_with_multiscatter(const auto this,
-                                                                              const &float4 xi [[anno::unused()]],
-                                                                              const float3x3 tbn [[anno::unused()]]
-) {
+@(pure macro)
+?scatter_sample_result $scatter_sample_result_with_multiscatter(const auto this, const &float4 xi [[anno::unused()]], const float3x3 tbn [[anno::unused()]]) {
   if (#typeof(this.multiscatter_tint) == void || (#typeof(this.multiscatter_tint) == float && this.multiscatter_tint == 0.0)) {
     // Do nothing
   } else {
@@ -389,15 +414,13 @@ struct scatter_sample_result {
 }
 
 //--{ default_bsdf
-@(pure macro) auto scatter_evaluate(const &$default_bsdf this [[anno::unused()]],
-                                    const &scatter_evaluate_parameters params [[anno::unused()]]
-) {
+@(pure macro)
+auto scatter_evaluate(const &$default_bsdf this [[anno::unused()]], const &scatter_evaluate_parameters params [[anno::unused()]]) {
   return scatter_evaluate_result(is_black: true);
 }
 
-@(pure macro) auto scatter_sample(const &$default_bsdf this [[anno::unused()]],
-                                  const &scatter_sample_parameters params [[anno::unused()]]
-) {
+@(pure macro)
+auto scatter_sample(const &$default_bsdf this [[anno::unused()]], const &scatter_sample_parameters params [[anno::unused()]]) {
   return scatter_sample_result();
 }
 //--}
@@ -420,7 +443,8 @@ export struct diffuse_reflection_bsdf: bsdf {
   static const scatter_mode mode = scatter_reflect;
 };
 
-@(pure) auto scatter_evaluate(const &diffuse_reflection_bsdf this, inline const &scatter_evaluate_parameters params) {
+@(pure)
+auto scatter_evaluate(const &diffuse_reflection_bsdf this, inline const &scatter_evaluate_parameters params) {
   if (mode == scatter_reflect && recalculate_tangent_space(params)) {
     const auto cos_theta(#abs(auto(wi.z, wo.z)));
     const auto pdf(cos_theta / $PI);
@@ -439,8 +463,8 @@ export struct diffuse_reflection_bsdf: bsdf {
   }
 }
 
-@(pure) auto scatter_sample(const &diffuse_reflection_bsdf this [[anno::unused()]],
-                            inline const &scatter_sample_parameters params) {
+@(pure)
+auto scatter_sample(const &diffuse_reflection_bsdf this [[anno::unused()]], inline const &scatter_sample_parameters params) {
   if ((tbn := recalculate_tangent_space(params))) {
     return scatter_sample_result(wi: (*tbn) * monte_carlo::cosine_hemisphere_sample(xi.xy), mode: scatter_reflect);
   } else {
@@ -461,7 +485,8 @@ export struct diffuse_transmission_bsdf: bsdf {
   static const scatter_mode mode = scatter_transmit;
 };
 
-@(pure) auto scatter_evaluate(inline const &diffuse_transmission_bsdf this, inline const &scatter_evaluate_parameters params) {
+@(pure)
+auto scatter_evaluate(inline const &diffuse_transmission_bsdf this, inline const &scatter_evaluate_parameters params) {
   if (mode == scatter_transmit && recalculate_tangent_space(params)) {
     const auto cos_theta(#abs(auto(wi.z, wo.z)));
     const auto pdf(cos_theta / $PI);
@@ -471,7 +496,8 @@ export struct diffuse_transmission_bsdf: bsdf {
   }
 }
 
-@(pure) auto scatter_sample(inline const &diffuse_transmission_bsdf this, inline const &scatter_sample_parameters params) {
+@(pure)
+auto scatter_sample(inline const &diffuse_transmission_bsdf this, inline const &scatter_sample_parameters params) {
   if ((tbn := recalculate_tangent_space(params))) {
     return scatter_sample_result(wi: (*tbn) * -monte_carlo::cosine_hemisphere_sample(xi.xy), mode: scatter_transmit);
   } else {
@@ -492,13 +518,13 @@ export struct specular_bsdf: bsdf {
   string handle = "";
 };
 
-@(pure macro) auto scatter_evaluate(const &specular_bsdf this [[anno::unused()]],
-                                    const &scatter_evaluate_parameters params [[anno::unused()]]
-) {
+@(pure macro)
+auto scatter_evaluate(const &specular_bsdf this [[anno::unused()]], const &scatter_evaluate_parameters params [[anno::unused()]]) {
   return scatter_evaluate_result(is_black: true); // Delta function!
 }
 
-@(pure macro) auto scatter_sample(const &specular_bsdf this, inline const &scatter_sample_parameters params) {
+@(pure macro)
+auto scatter_sample(const &specular_bsdf this, inline const &scatter_sample_parameters params) {
   if ((tbn := recalculate_tangent_space(params))) {
     return xi.x < scatter_reflect_chance(this.mode)                                                                                       //
            ? scatter_sample_result(wi: (*tbn) * specular::reflect(wo, float3(0, 0, 1)), mode: scatter_reflect, delta_f: color(this.tint)) //
@@ -531,15 +557,18 @@ export struct sheen_bsdf: bsdf {
   }
 };
 
-@(pure) float sheen_lambda_L(const auto fit, const float mu) {
+@(pure)
+float sheen_lambda_L(const auto fit, const float mu) {
   return fit[0] / (1.0 + fit[1] * #pow(mu, fit[2])) + fit[3] * mu + fit[4];
 }
 
-@(pure) float sheen_lambda(const auto fit, const float mu) {
+@(pure)
+float sheen_lambda(const auto fit, const float mu) {
   return #exp(mu < 0.5 ? sheen_lambda_L(fit, mu) : 2 * sheen_lambda_L(fit, 0.5) - sheen_lambda_L(fit, #max(1 - mu, 0)));
 }
 
-@(pure) auto scatter_evaluate(const &sheen_bsdf this, inline const &scatter_evaluate_parameters params) {
+@(pure)
+auto scatter_evaluate(const &sheen_bsdf this, inline const &scatter_evaluate_parameters params) {
   if (mode == scatter_reflect && recalculate_tangent_space(params)) {
     const auto cos_thetao(#abs(wo.z));
     const auto cos_thetai(#abs(wi.z));
@@ -562,8 +591,8 @@ export struct sheen_bsdf: bsdf {
   }
 }
 
-@(pure) auto scatter_sample(const &sheen_bsdf this [[anno::unused()]],
-                            inline const &scatter_sample_parameters params) {
+@(pure)
+auto scatter_sample(const &sheen_bsdf this [[anno::unused()]], inline const &scatter_sample_parameters params) {
   if ((tbn := recalculate_tangent_space(params))) {
     return scatter_sample_result(wi: (*tbn) * monte_carlo::cosine_hemisphere_sample(xi.xy), mode: scatter_reflect);
   } else {
@@ -598,7 +627,8 @@ export struct ward_geisler_moroder_bsdf: bsdf {
   }
 };
 
-@(pure noinline) auto scatter_evaluate(const &ward_geisler_moroder_bsdf this, inline const &scatter_evaluate_parameters params) {
+@(pure noinline)
+auto scatter_evaluate(const &ward_geisler_moroder_bsdf this, inline const &scatter_evaluate_parameters params) {
   preserve tangent_u;
   tangent_u = this.tangent_u;
   if (mode == scatter_reflect && recalculate_tangent_space(params)) {
@@ -616,7 +646,8 @@ export struct ward_geisler_moroder_bsdf: bsdf {
   }
 }
 
-@(pure noinline) auto scatter_sample(const &ward_geisler_moroder_bsdf this, inline const &scatter_sample_parameters params) {
+@(pure noinline)
+auto scatter_sample(const &ward_geisler_moroder_bsdf this, inline const &scatter_sample_parameters params) {
   preserve tangent_u;
   tangent_u = this.tangent_u;
   if ((tbn := recalculate_tangent_space(params))) {
@@ -655,31 +686,32 @@ export struct distribution_ggx: default distribution {};
 export struct distribution_beckmann: distribution {};
 
 /// The Smith Lambda function for the GGX distribution.
-export @(pure macro) float smith_lambda(const distribution_ggx this [[anno::unused()]],
-                                        const float m) {
+@(pure macro)
+export float smith_lambda(const distribution_ggx this [[anno::unused()]], const float m) {
   return 0.5 * (#sign(m) * #sqrt(1 + 1 / (m * m + EPSILON))) - 0.5;
 }
 
 /// The Smith Lambda function for the Beckmann distribution.
-export @(pure macro) float smith_lambda(const distribution_beckmann this [[anno::unused()]],
-                                        const float m) {
+@(pure macro)
+export float smith_lambda(const distribution_beckmann this [[anno::unused()]], const float m) {
   return 0.5 * (#exp(-m * m) / m / #sqrt($PI) - float(erfc(m)));
 }
 
 /// The 2-dimensional Smith slope PDF for the GGX distribution.
-export @(pure macro) float smith_slope_pdf(const distribution_ggx this [[anno::unused()]],
-                                           const float2 m) {
+@(pure macro)
+export float smith_slope_pdf(const distribution_ggx this [[anno::unused()]], const float2 m) {
   return (1 / $PI) / #pow(1 + #sum(m * m), 2);
 }
 
 /// The 2-dimensional Smith slope PDF for the Beckmann distribution.
-export @(pure macro) float smith_slope_pdf(const distribution_beckmann this [[anno::unused()]],
-                                           const float2 m) {
+@(pure macro)
+export float smith_slope_pdf(const distribution_beckmann this [[anno::unused()]], const float2 m) {
   return (1 / $PI) * #exp(-#sum(m * m));
 }
 
 /// The Smith visible slope sampling function for the GGX distribution.
-export @(pure noinline) float2 smith_visible_slope_sample(
+@(pure)
+export float2 smith_visible_slope_sample(
   const distribution_ggx this [[anno::unused()]],
   const float xi0,  ///< A canonical random number in `[0,1]`
   const float xi1,  ///< A canonical random number in `[0,1]`
@@ -706,7 +738,8 @@ export @(pure noinline) float2 smith_visible_slope_sample(
 }
 
 /// The Smith visible slope sampling function for the Beckmann distribution.
-export @(pure noinline) float2 smith_visible_slope_sample(
+@(pure)
+export float2 smith_visible_slope_sample(
   const distribution_beckmann this [[anno::unused()]],
   float xi0,        ///< A canonical random number in `[0,1]`
   float xi1,        ///< A canonical random number in `[0,1]`
@@ -744,13 +777,14 @@ export @(pure noinline) float2 smith_visible_slope_sample(
 }
 
 // The Smith normal PDF.
-export @(pure macro) float smith_normal_pdf(const distribution this [[anno::unused()]],
-                                            const float2 alpha, const float3 wm) {
+@(pure macro)
+export float smith_normal_pdf(const distribution this [[anno::unused()]], const float2 alpha, const float3 wm) {
   return wm.z > 0.0 ? smith_slope_pdf(this, -wm.xy / (wm.z * alpha + EPSILON)) / (alpha.x * alpha.y * #pow(wm.z, 4) + EPSILON) : 0.0;
 }
 
 /// The Smith visible normal sampling function.
-export @(pure noinline) float3 smith_visible_normal_sample(
+@(pure)
+export float3 smith_visible_normal_sample(
   const distribution this,
   const float xi0,    ///< A canonical random number in `[0,1]`
   const float xi1,    ///< A canonical random number in `[0,1]`
@@ -771,7 +805,8 @@ export @(pure noinline) float3 smith_visible_normal_sample(
 export struct distribution_blinn: distribution {};
 
 /// The Blinn normal first-quadrant sampling function.
-export @(pure macro) void blinn_normal_first_quadrant_sample(
+@(pure)
+export void blinn_normal_first_quadrant_sample(
   const float xi0,  ///< A canonical random number in `[0,1]`
   const float xi1,  ///< A canonical random number in `[0,1]`
   const float2 e,   ///< The exponent
@@ -788,7 +823,8 @@ export @(pure macro) void blinn_normal_first_quadrant_sample(
 }
 
 /// The Blinn normal sampling function.
-export @(pure noinline) float3 blinn_normal_sample(
+@(pure)
+export float3 blinn_normal_sample(
   const float xi0, ///< A canonical random number in `[0,1]`
   const float xi1, ///< A canonical random number in `[0,1]`
   const float2 e,  ///< The exponent
@@ -816,10 +852,12 @@ export struct shadowing_smith: default shadowing {};
 /// The V-cavities shadowing function. (This is the older simpler approximation!)
 export struct shadowing_vcavities: shadowing {};
 
-@(pure foreign) double lgamma(double x);
+@(foreign pure)
+double lgamma(double x);
 
 /// The beta function for Smith shadowing in transmission calculations.
-export @(macro) double beta(const double x, const double y) = #exp(lgamma(x) + lgamma(y) - lgamma(x + y));
+@(pure)
+export double beta(const double x, const double y) = #exp(lgamma(x) + lgamma(y) - lgamma(x + y));
 
 } // namespace microfacet
 
@@ -859,7 +897,8 @@ struct microfacet_bsdf: bsdf {
   const microfacet::shadowing shadowing = microfacet::shadowing();
 };
 
-@(pure noinline) auto scatter_evaluate(const &microfacet_bsdf this, inline const &scatter_evaluate_parameters params) {
+@(pure noinline)
+auto scatter_evaluate(const &microfacet_bsdf this, inline const &scatter_evaluate_parameters params) {
   preserve tangent_u;
   tangent_u = this.tangent_u;
   return scatter_evaluate_result(is_black: true) if (!recalculate_tangent_space(params));
@@ -931,7 +970,8 @@ struct microfacet_bsdf: bsdf {
   return scatter_evaluate_result(is_black: true);
 }
 
-@(pure noinline) auto scatter_sample(const &microfacet_bsdf this, inline const &scatter_sample_parameters params) {
+@(pure noinline)
+auto scatter_sample(const &microfacet_bsdf this, inline const &scatter_sample_parameters params) {
   preserve tangent_u;
   tangent_u = this.tangent_u;
   auto tbn(recalculate_tangent_space(params));
@@ -964,7 +1004,8 @@ struct microfacet_bsdf: bsdf {
   return scatter_sample_result(wi: (*tbn) * wi, mode: mode);
 }
 
-@(macro) auto initialize_microfacet_bsdf(
+@(macro)
+auto initialize_microfacet_bsdf(
   const float roughness_u,
   const float roughness_v = roughness_u,
   const $(color | float) tint = 1.0,
@@ -1001,7 +1042,6 @@ export auto microfacet_beckmann_smith_bsdf(*) = initialize_microfacet_bsdf(distr
 
 export auto microfacet_beckmann_vcavities_bsdf(*) = initialize_microfacet_bsdf(distribution: microfacet::distribution_beckmann(), shadowing: microfacet::shadowing_vcavities());
 
-// TODO
 //--{ measured_bsdf
 export bool bsdf_measurement_isvalid(const bsdf_measurement measurement) = bool(measurement.buffer);
 
@@ -1014,6 +1054,18 @@ export struct measured_bsdf: bsdf {
 
   string handle = "";
 };
+
+@(macro)
+auto scatter_evaluate(const &measured_bsdf this [[anno::unused()]], const &scatter_evaluate_parameters params [[anno::unused()]]) {
+  // TODO
+  return scatter_evaluate_result(is_black: true);
+}
+
+@(macro)
+auto scatter_sample(const &measured_bsdf this [[anno::unused()]], const &scatter_sample_parameters params [[anno::unused()]]) {
+  // TODO
+  return scatter_sample_result();
+}
 //--}
 
 //--{ tint
@@ -1039,25 +1091,31 @@ struct tint2: bsdf {
 };
 
 /// Construct 1-value tint of the given `bsdf`.
-export @(pure macro) auto tint(const auto tint, const bsdf base) = tint1(tint, base);
+@(macro)
+export auto tint(const auto tint, const bsdf base) = tint1(tint, base);
 
 /// Construct 1-value tint of the given `edf`.
-export @(pure macro) auto tint(const auto tint, const edf base) = tint1(tint, base);
+@(macro)
+export auto tint(const auto tint, const edf base) = tint1(tint, base);
 
 /// Construct 1-value tint of the given `hair_bsdf`.
-export @(pure macro) auto tint(const auto tint, const hair_bsdf base) = tint1(tint, base);
+@(macro)
+export auto tint(const auto tint, const hair_bsdf base) = tint1(tint, base);
 
 /// Construct 2-value tint of the given `bsdf`.
-export @(pure macro) auto tint(const auto reflection_tint, const auto transmission_tint, const bsdf base) = tint2(reflection_tint, transmission_tint, base);
+@(macro)
+export auto tint(const auto reflection_tint, const auto transmission_tint, const bsdf base) = tint2(reflection_tint, transmission_tint, base);
 
-@(macro) auto scatter_evaluate(const &tint1 this, const &scatter_evaluate_parameters params) {
+@(macro)
+auto scatter_evaluate(const &tint1 this, const &scatter_evaluate_parameters params) {
   auto result(scatter_evaluate(visit &this.base, params));
   if (!result.is_black)
     result.f *= this.tint;
   return result;
 }
 
-@(macro) auto scatter_evaluate(const &tint2 this, const &scatter_evaluate_parameters params) {
+@(macro)
+auto scatter_evaluate(const &tint2 this, const &scatter_evaluate_parameters params) {
   auto result(scatter_evaluate(visit &this.base, params));
   if (!result.is_black) {
     if (params.mode == scatter_reflect) {
@@ -1069,14 +1127,16 @@ export @(pure macro) auto tint(const auto reflection_tint, const auto transmissi
   return result;
 }
 
-@(macro) auto scatter_sample(const &tint1 this, const &scatter_sample_parameters params) {
+@(macro)
+auto scatter_sample(const &tint1 this, const &scatter_sample_parameters params) {
   auto result(scatter_sample(visit &this.base, params));
   if ((result.mode != scatter_none) & bool(result.delta_f))
     *result.delta_f *= this.tint;
   return result;
 }
 
-@(macro) auto scatter_sample(const &tint2 this, const &scatter_sample_parameters params) {
+@(macro)
+auto scatter_sample(const &tint2 this, const &scatter_sample_parameters params) {
   auto result(scatter_sample(visit &this.base, params));
   if ((result.mode != scatter_none) & bool(result.delta_f)) {
     if (params.mode == scatter_reflect) {
@@ -1118,7 +1178,8 @@ export struct weighted_layer: bsdf {
   }
 };
 
-@(macro) auto scatter_evaluate(const &weighted_layer this, inline const &scatter_evaluate_parameters params) {
+@(macro)
+auto scatter_evaluate(const &weighted_layer this, inline const &scatter_evaluate_parameters params) {
   auto result0(scatter_evaluate(visit &this.base, params));
   preserve normal;
   normal = this.normal;
@@ -1126,7 +1187,8 @@ export struct weighted_layer: bsdf {
   return scatter_evaluate_result(f: lerp(result0.f, result1.f, this.weight), pdf: lerp(result0.pdf, result1.pdf, this.chance), is_black: result0.is_black & result1.is_black);
 }
 
-@(macro) auto scatter_sample(const &weighted_layer this, inline const &scatter_sample_parameters params) {
+@(macro)
+auto scatter_sample(const &weighted_layer this, inline const &scatter_sample_parameters params) {
   if (monte_carlo::bool_sample(&xi.w, this.chance)) {
     preserve normal;
     normal = this.normal;
@@ -1139,6 +1201,85 @@ export struct weighted_layer: bsdf {
 /// The `color_weighted_layer` is also implemented by the `weighted_layer`.
 export typedef weighted_layer color_weighted_layer;
 //--}
+
+export struct thin_film: bsdf {
+  $(color | float) thickness;
+
+  $(color | float) ior;
+
+  bsdf base = bsdf();
+};
+
+//--{ fresnel_factor
+export struct fresnel_factor: bsdf {
+  $(color | float) ior;
+
+  $(color | float) extinction_coefficient;
+
+  bsdf base = bsdf();
+};
+
+@(macro)
+auto scatter_evaluate(const &fresnel_factor this, const &scatter_evaluate_parameters params) {
+  auto result(scatter_evaluate(visit &this.base, params));
+  if (!result.is_black) {
+    // TODO 
+  }
+  return result;
+}
+
+@(macro)
+auto scatter_sample(const &fresnel_factor this, const &scatter_sample_parameters params) {
+  auto result(scatter_sample(visit &this.base, params));
+  if ((result.mode == scatter_reflect) & bool(result.delta_f)) {
+    // TODO
+  }
+  return result;
+}
+//--}
+
+//--{ directional_factor
+export struct directional_factor: bsdf {
+  $(color | float) normal_tint = 1.0;
+
+  $(color | float) grazing_tint = 1.0;
+
+  float exponent = 5.0;
+
+  bsdf base = bsdf();
+};
+
+@(macro)
+auto scatter_evaluate(const &directional_factor this, const &scatter_evaluate_parameters params) {
+  auto result(scatter_evaluate(visit &this.base, params));
+  if (!result.is_black && params.mode == scatter_reflect) {
+    return scatter_evaluate_result(f: specular::schlick_fresnel(dot(params.wo, half_direction(params)), this.normal_tint, this.grazing_tint, this.exponent) * result.f, pdf: result.pdf);
+  } else {
+    return result;
+  }
+}
+
+@(macro)
+auto scatter_sample(const &directional_factor this, const &scatter_sample_parameters params) {
+  auto result(scatter_sample(visit &this.base, params));
+  if ((result.mode == scatter_reflect) & bool(result.delta_f)) {
+    *result.delta_f *= specular::schlick_fresnel(dot(params.wo, half_direction(params, &result)), this.normal_tint, this.grazing_tint, this.exponent);
+  }
+  return result;
+}
+//--}
+
+export struct measured_curve_factor: bsdf {
+  color[] curve_values;
+
+  bsdf base = bsdf();
+};
+
+export struct measured_factor: bsdf {
+  texture_2d values;
+
+  bsdf base = bsdf();
+};
 
 //--{ fresnel_layer, color_fresnel_layer
 export struct fresnel_layer: bsdf {
@@ -1164,7 +1305,8 @@ export struct fresnel_layer: bsdf {
   const float av_weight = average(weight);
 };
 
-@(macro) auto scatter_evaluate(const &fresnel_layer this, inline const &scatter_evaluate_parameters params) {
+@(macro)
+auto scatter_evaluate(const &fresnel_layer this, inline const &scatter_evaluate_parameters params) {
   const auto cos_thetao(dot(wo, this.normal) * #sign(this.normal.z));
   const auto cos_thetai(dot(wi, this.normal) * #sign(this.normal.z));
   if ((cos_thetao < EPSILON)                                 //
@@ -1187,7 +1329,8 @@ export struct fresnel_layer: bsdf {
   }
 }
 
-@(macro) auto scatter_sample(const &fresnel_layer this, inline const &scatter_sample_parameters params) {
+@(macro)
+auto scatter_sample(const &fresnel_layer this, inline const &scatter_sample_parameters params) {
   const auto cos_theta(dot(wo, this.normal) * #sign(this.normal.z));
   if (cos_theta < EPSILON)
     return scatter_sample_result();
@@ -1207,6 +1350,10 @@ export struct fresnel_layer: bsdf {
 
 export typedef fresnel_layer color_fresnel_layer;
 //--}
+
+// TODO custom_curve_layer, color_custom_curve_layer
+
+// TODO measured_curve_layer, color_measured_curve_layer
 
 //--{ normalized_mix, clamped_mix, unbounded_mix
 tag component;
@@ -1231,7 +1378,8 @@ struct component_mix: bsdf, edf, vdf {
   component[] components;
 };
 
-export @(pure macro) auto normalized_mix(component[<N>] components) {
+@(macro)
+export auto normalized_mix(component[<N>] components) {
   float total_weight(0);
   float total_chance(0);
   for (int i = 0; i < N; i++) {
@@ -1254,7 +1402,8 @@ export @(pure macro) auto normalized_mix(component[<N>] components) {
   return component_mix(components);
 }
 
-export @(pure macro) auto clamped_mix(component[<N>] components) {
+@(macro)
+export auto clamped_mix(component[<N>] components) {
   float total_weight(0);
   float total_chance(0);
   for (int i = 0; i < N; i++) {
@@ -1284,7 +1433,8 @@ export @(pure macro) auto clamped_mix(component[<N>] components) {
   return component_mix(components);
 }
 
-export @(pure macro) auto unbounded_mix(component[<N>] components) {
+@(macro)
+export auto unbounded_mix(component[<N>] components) {
   float total_chance(0);
   for (int i = 0; i < N; i++) {
     auto component(&components[i]);
@@ -1299,7 +1449,8 @@ export @(pure macro) auto unbounded_mix(component[<N>] components) {
   return component_mix(components);
 }
 
-@(macro) auto scatter_evaluate(const &component_mix this, const &scatter_evaluate_parameters params) {
+@(macro)
+auto scatter_evaluate(const &component_mix this, const &scatter_evaluate_parameters params) {
   auto result(scatter_evaluate_result(f: color(0), is_black: true));
   for (int i = 0; i < #num(this.components); i++) {
     visit component in this.components[i] { // In general this is a union!
@@ -1314,7 +1465,8 @@ export @(pure macro) auto unbounded_mix(component[<N>] components) {
   return result;
 }
 
-@(macro) auto scatter_sample(const &component_mix this, const &scatter_sample_parameters params) {
+@(macro)
+auto scatter_sample(const &component_mix this, const &scatter_sample_parameters params) {
   const auto xi(&params.xi.z);
   for (int i = 0; i < #num(this.components); i++) {
     visit component in this.components[i] { // In general this is a union!
@@ -1333,7 +1485,8 @@ export @(pure macro) auto unbounded_mix(component[<N>] components) {
 }
 //--}
 
-export @(macro) int $scatter_evaluate(
+@(macro)
+export int $scatter_evaluate(
   const &$material_instance instance,
   const &float3 wo,     ///< The outgoing direction
   const &float3 wi,     ///< The incoming direction
@@ -1365,7 +1518,8 @@ export @(macro) int $scatter_evaluate(
   }
 }
 
-export @(macro) int $scatter_sample(
+@(macro)
+export int $scatter_sample(
   const &$material_instance instance,
   const &float4 xi,     ///< The canonical random sample in `[0,1]^4`
   const &float3 wo,     ///< The outgoing direction
@@ -1399,6 +1553,8 @@ export @(macro) int $scatter_sample(
   }
 }
 
+// TODO VDF
+
 struct emission_evaluate_parameters {
   /// The emission direction.
   float3 we;
@@ -1426,14 +1582,16 @@ struct emission_sample_result {
 };
 
 //--{ default_edf
-@(pure macro) auto emission_evaluate(
+@(pure macro)
+auto emission_evaluate(
   const &$default_edf this [[anno::unused()]],
   const &emission_evaluate_parameters params [[anno::unused()]],
 ) {
   return emission_evaluate_result(is_black: true);
 }
 
-@(pure macro) auto emission_sample(
+@(pure macro)
+auto emission_sample(
   const &$default_edf this [[anno::unused()]],
   const &emission_sample_parameters params [[anno::unused()]],
 ) {
@@ -1446,14 +1604,14 @@ export struct diffuse_edf: edf {
   string handle = "";
 };
 
-@(pure macro) auto emission_evaluate(const &diffuse_edf this [[anno::unused()]],
-                                     const &emission_evaluate_parameters params) {
+@(pure macro)
+auto emission_evaluate(const &diffuse_edf this [[anno::unused()]], const &emission_evaluate_parameters params) {
   const float pdf(#max(params.we.z, 0.0) / $PI);
   return emission_evaluate_result(intensity: pdf, pdf: pdf);
 }
 
-@(pure macro) auto emission_sample(const &diffuse_edf this [[anno::unused()]],
-                                   const &emission_sample_parameters params) {
+@(pure macro)
+auto emission_sample(const &diffuse_edf this [[anno::unused()]], const &emission_sample_parameters params) {
   return emission_sample_result(we: monte_carlo::cosine_hemisphere_sample(params.xi.xy));
 }
 //--}
@@ -1471,12 +1629,14 @@ export struct spot_edf: edf {
   string handle = "";
 };
 
-@(pure macro) auto emission_evaluate(const &spot_edf this, const &emission_evaluate_parameters params) {
+@(pure macro)
+auto emission_evaluate(const &spot_edf this, const &emission_evaluate_parameters params) {
   // TODO
   return emission_evaluate_result(is_black: true);
 }
 
-@(pure macro) auto emission_sample(const &spot_edf this, const &emission_sample_parameters params) {
+@(pure macro)
+auto emission_sample(const &spot_edf this, const &emission_sample_parameters params) {
   // TODO
   return emission_sample_result();
 }
@@ -1485,13 +1645,16 @@ export struct spot_edf: edf {
 //--{ measured_edf
 
 /// > Returns `true` if the value of `profile` is a valid light profile reference and `false` otherwise.
-export @(pure macro) bool light_profile_isvalid(const light_profile profile) = bool(profile.ptr);
+@(pure macro)
+export bool light_profile_isvalid(const light_profile profile) = bool(profile.ptr);
 
 /// > Returns the maximum intensity in this light profile. A lookup on an invalid light profile reference returns zero.
-export @(pure macro) float light_profile_maximum(const light_profile profile) = profile.max_intensity;
+@(pure macro)
+export float light_profile_maximum(const light_profile profile) = profile.max_intensity;
 
 /// > Returns the power emitted by the light profile. A lookup on an invalid light profile reference returns zero.
-export @(pure macro) float light_profile_power(const light_profile profile) = profile.power;
+@(pure macro)
+export float light_profile_power(const light_profile profile) = profile.power;
 
 export struct measured_edf: edf {
   /// The profile.
@@ -1532,9 +1695,11 @@ export struct measured_edf: edf {
 };
 
 // Defined in `lib/LightProfile.cc`
-@(foreign pure) float smdl_light_profile_interpolate(const &void ptr, const &float3 we);
+@(foreign pure)
+float smdl_light_profile_interpolate(const &void ptr, const &float3 we);
 
-@(pure macro) auto emission_evaluate(const &measured_edf this, const &emission_evaluate_parameters params) {
+@(pure macro)
+auto emission_evaluate(const &measured_edf this, const &emission_evaluate_parameters params) {
   auto we = return_from {
     if (this.global_distribution) {
       return params.we * this.global_frame; // TODO Is this right?
@@ -1549,13 +1714,15 @@ export struct measured_edf: edf {
   }
 }
 
-@(pure macro) auto emission_sample(const &measured_edf this, const &emission_sample_parameters params) {
+@(pure macro)
+auto emission_sample(const &measured_edf this, const &emission_sample_parameters params) {
   // TODO
   return emission_sample_result();
 }
 //--}
 
-export @(macro) int $emission_evaluate(
+@(macro)
+export int $emission_evaluate(
   const &$material_instance instance [[anno::unused()]],
   const &float3 we [[anno::unused()]], ///< The emission direction
   const &float pdf [[anno::unused()]], ///< output: The probability density function
@@ -1592,7 +1759,8 @@ export @(macro) int $emission_evaluate(
   }
 }
 
-export @(macro) int $emission_sample(
+@(macro)
+export int $emission_sample(
   const &$material_instance instance [[anno::unused()]],
   const &float4 xi [[anno::unused()]], ///< The canonical random sample in `[0,1]^4`
   const &float3 we [[anno::unused()]], ///< output: The emission direction

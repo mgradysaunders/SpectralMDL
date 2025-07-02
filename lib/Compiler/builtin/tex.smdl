@@ -4,20 +4,26 @@ import ::math::lerp;
 
 export enum gamma_mode { gamma_default = 0, gamma_linear = 0, gamma_srgb = 1 };
 
-@(pure macro) float4 apply_gamma(const int gamma, const float4 texel) = gamma == int(gamma_srgb) ? float4((texel * texel).xyz, texel.w) : texel;
+@(pure macro)
+float4 apply_gamma(const int gamma, const float4 texel) = gamma == int(gamma_srgb) ? float4((texel * texel).xyz, texel.w) : texel;
 
-@(pure macro) float3 apply_gamma(const int gamma, const float3 texel) = gamma == int(gamma_srgb) ? (texel * texel) : texel;
+@(pure macro)
+float3 apply_gamma(const int gamma, const float3 texel) = gamma == int(gamma_srgb) ? (texel * texel) : texel;
 
-@(pure macro) float2 apply_gamma(const int gamma, const float2 texel) = gamma == int(gamma_srgb) ? (texel * texel) : texel;
+@(pure macro)
+float2 apply_gamma(const int gamma, const float2 texel) = gamma == int(gamma_srgb) ? (texel * texel) : texel;
 
-@(pure macro) float apply_gamma(const int gamma, const float texel) = gamma == int(gamma_srgb) ? (texel * texel) : texel;
+@(pure macro)
+float apply_gamma(const int gamma, const float texel) = gamma == int(gamma_srgb) ? (texel * texel) : texel;
 
-@(pure macro) int uv_tile_index(const texture_2d tex, const int2 uv_tile) {
+@(pure macro)
+int uv_tile_index(const texture_2d tex, const int2 uv_tile) {
   return -1 if (#any((uv_tile < 0) | (uv_tile >= tex.tile_count)));
   return uv_tile.y * tex.tile_count.x + uv_tile.x;
 }
 
-export @(pure macro) int width(const texture_2d tex, const int2 uv_tile = int2(0)) {
+@(pure macro)
+export int width(const texture_2d tex, const int2 uv_tile = int2(0)) {
   const auto i(uv_tile_index(tex, uv_tile));
   return i < 0 ? 0 : tex.tile_extents[i].x;
 }
@@ -26,7 +32,8 @@ export @(pure macro) int width(const texture_2d tex, const int2 uv_tile = int2(0
 
 // TODO int width(const texture_cube tex)
 
-export @(pure macro) int height(const texture_2d tex, const int2 uv_tile = int2(0)) {
+@(pure macro)
+export int height(const texture_2d tex, const int2 uv_tile = int2(0)) {
   const auto i(uv_tile_index(tex, uv_tile));
   return i < 0 ? 0 : tex.tile_extents[i].y;
 }
@@ -35,15 +42,18 @@ export @(pure macro) int height(const texture_2d tex, const int2 uv_tile = int2(
 
 // TODO int height(const texture_cube tex)
 
-export @(pure macro) bool texture_isvalid(const texture_2d tex) = bool(tex.tile_buffers[0]);
+@(pure macro)
+export bool texture_isvalid(const texture_2d tex) = bool(tex.tile_buffers[0]);
 
 // TODO bool texture_isvalid(const texture_3d tex)
 
 // TODO bool texture_isvalid(const texture_cube tex)
 
-export @(pure macro) bool texture_isvalid(const texture_ptex tex) = bool(tex.ptr);
+@(pure macro)
+export bool texture_isvalid(const texture_ptex tex) = bool(tex.ptr);
 
-@(pure) auto texel_fetch(const texture_2d tex, const int2 coord, const int2 uv_tile = int2(0)) {
+@(pure)
+auto texel_fetch(const texture_2d tex, const int2 coord, const int2 uv_tile = int2(0)) {
   const auto texel_type(*#typeof(tex.tile_buffers[0]));
   const auto i(uv_tile_index(tex, uv_tile));
   return texel_type(0) if (i < 0);
@@ -53,29 +63,35 @@ export @(pure macro) bool texture_isvalid(const texture_ptex tex) = bool(tex.ptr
   return tile_buffer[coord.y * tile_extent.x + coord.x];
 }
 
-export @(pure macro) float4 texel_float4(const texture_2d tex, const int2 coord, const int2 uv_tile = int2(0)) {
+@(pure macro)
+export float4 texel_float4(const texture_2d tex, const int2 coord, const int2 uv_tile = int2(0)) {
   return apply_gamma(tex.gamma, #unpack_float4(texel_fetch(tex, coord, uv_tile)));
 }
 
-export @(pure macro) float3 texel_float3(const texture_2d tex, const int2 coord, const int2 uv_tile = int2(0)) {
+@(pure macro)
+export float3 texel_float3(const texture_2d tex, const int2 coord, const int2 uv_tile = int2(0)) {
   return apply_gamma(tex.gamma, #unpack_float4(texel_fetch(tex, coord, uv_tile)).xyz);
 }
 
-export @(pure macro) float2 texel_float2(const texture_2d tex, const int2 coord, const int2 uv_tile = int2(0)) {
+@(pure macro)
+export float2 texel_float2(const texture_2d tex, const int2 coord, const int2 uv_tile = int2(0)) {
   return apply_gamma(tex.gamma, #unpack_float4(texel_fetch(tex, coord, uv_tile)).xy);
 }
 
-export @(pure macro) float texel_float(const texture_2d tex, const int2 coord, const int2 uv_tile = int2(0)) {
+@(pure macro)
+export float texel_float(const texture_2d tex, const int2 coord, const int2 uv_tile = int2(0)) {
   return apply_gamma(tex.gamma, #unpack_float4(texel_fetch(tex, coord, uv_tile)).x);
 }
 
-export @(pure macro) color texel_color(const texture_2d tex, const int2 coord, const int2 uv_tile = int2(0)) {
+@(pure macro)
+export color texel_color(const texture_2d tex, const int2 coord, const int2 uv_tile = int2(0)) {
   return color(texel_float3(tex, coord, uv_tile));
 }
 
 export enum wrap_mode { wrap_clamp = 0, wrap_repeat = 1, wrap_mirrored_repeat = 2, wrap_clip = 3 };
 
-@(pure macro) auto apply_wrap(const auto wrap, const auto n, auto i) {
+@(pure macro)
+auto apply_wrap(const auto wrap, const auto n, auto i) {
   auto rem(i % n);
   const auto neg(#select(rem < 0, 1, 0));
   rem += n * neg;
@@ -87,7 +103,8 @@ export enum wrap_mode { wrap_clamp = 0, wrap_repeat = 1, wrap_mirrored_repeat = 
   return i;
 }
 
-export @(pure) float4 lookup_float4(
+@(pure)
+export float4 lookup_float4(
   const texture_2d tex,
   float2 coord,
   const wrap_mode wrap_u = wrap_repeat,
@@ -115,12 +132,12 @@ export @(pure) float4 lookup_float4(
     const int2 ic1(#min(ic + 1, tile_extent - 1));
     coord -= ic;
     return apply_gamma(
-      tex.gamma,
-      math::lerp(math::lerp(#unpack_float4(tile_buffer[ic0.x + tile_extent.x * ic0.y]),           //
-                            #unpack_float4(tile_buffer[ic1.x + tile_extent.x * ic0.y]), coord.x), //
-                 math::lerp(#unpack_float4(tile_buffer[ic0.x + tile_extent.x * ic1.y]),           //
-                            #unpack_float4(tile_buffer[ic1.x + tile_extent.x * ic1.y]), coord.x), coord.y),
-    );
+             tex.gamma,
+             math::lerp(math::lerp(#unpack_float4(tile_buffer[ic0.x + tile_extent.x * ic0.y]),           //
+                                   #unpack_float4(tile_buffer[ic1.x + tile_extent.x * ic0.y]), coord.x), //
+                        math::lerp(#unpack_float4(tile_buffer[ic0.x + tile_extent.x * ic1.y]),           //
+                                   #unpack_float4(tile_buffer[ic1.x + tile_extent.x * ic1.y]), coord.x), coord.y),
+           );
   } else {
     const auto i(uv_tile_index(tex, int2(0)));
     return float4(0) if (i < 0);
@@ -140,16 +157,17 @@ export @(pure) float4 lookup_float4(
     const auto ic1(icorner0 + apply_wrap(wrap, subextent, ic + 1));
     coord -= ic;
     return apply_gamma(
-      tex.gamma,
-      math::lerp(math::lerp(#unpack_float4(tile_buffer[ic0.x + tile_extent.x * ic0.y]),           //
-                            #unpack_float4(tile_buffer[ic1.x + tile_extent.x * ic0.y]), coord.x), //
-                 math::lerp(#unpack_float4(tile_buffer[ic0.x + tile_extent.x * ic1.y]),           //
-                            #unpack_float4(tile_buffer[ic1.x + tile_extent.x * ic1.y]), coord.x), coord.y),
-    );
+             tex.gamma,
+             math::lerp(math::lerp(#unpack_float4(tile_buffer[ic0.x + tile_extent.x * ic0.y]),           //
+                                   #unpack_float4(tile_buffer[ic1.x + tile_extent.x * ic0.y]), coord.x), //
+                        math::lerp(#unpack_float4(tile_buffer[ic0.x + tile_extent.x * ic1.y]),           //
+                                   #unpack_float4(tile_buffer[ic1.x + tile_extent.x * ic1.y]), coord.x), coord.y),
+           );
   }
 }
 
-export @(pure macro) float3 lookup_float3(
+@(pure macro)
+export float3 lookup_float3(
   const texture_2d tex,
   const float2 coord,
   const wrap_mode wrap_u = wrap_repeat,
@@ -158,7 +176,8 @@ export @(pure macro) float3 lookup_float3(
   const float2 crop_v = float2(0.0, 1.0),
 ) = lookup_float4(tex, coord, wrap_u, wrap_v, crop_u, crop_v).xyz;
 
-export @(pure macro) float2 lookup_float2(
+@(pure macro)
+export float2 lookup_float2(
   const texture_2d tex,
   const float2 coord,
   const wrap_mode wrap_u = wrap_repeat,
@@ -167,7 +186,8 @@ export @(pure macro) float2 lookup_float2(
   const float2 crop_v = float2(0.0, 1.0),
 ) = lookup_float4(tex, coord, wrap_u, wrap_v, crop_u, crop_v).xy;
 
-export @(pure macro) float lookup_float(
+@(pure macro)
+export float lookup_float(
   const texture_2d tex,
   const float2 coord,
   const wrap_mode wrap_u = wrap_repeat,
@@ -176,7 +196,8 @@ export @(pure macro) float lookup_float(
   const float2 crop_v = float2(0.0, 1.0),
 ) = lookup_float4(tex, coord, wrap_u, wrap_v, crop_u, crop_v).x;
 
-export @(pure macro) color lookup_color(
+@(pure macro)
+export color lookup_color(
   const texture_2d tex,
   const float2 coord,
   const wrap_mode wrap_u = wrap_repeat,
@@ -185,7 +206,8 @@ export @(pure macro) color lookup_color(
   const float2 crop_v = float2(0.0, 1.0),
 ) = color(lookup_float4(tex, coord, wrap_u, wrap_v, crop_u, crop_v).xyz);
 
-@(foreign) void smdl_ptex_evaluate(
+@(foreign)
+void smdl_ptex_evaluate(
   &void tex,
   int gamma,
   int first,
@@ -193,31 +215,36 @@ export @(pure macro) color lookup_color(
   &float result,
 );
 
-export @(macro) float4 lookup_float4(const texture_ptex tex, const int channel = 0) {
+@(macro)
+export float4 lookup_float4(const texture_ptex tex, const int channel = 0) {
   float4 result;
   smdl_ptex_evaluate(tex.ptr, tex.gamma, channel, 4, &result[0]);
   return result;
 }
 
-export @(macro) float3 lookup_float3(const texture_ptex tex, const int channel = 0) {
+@(macro)
+export float3 lookup_float3(const texture_ptex tex, const int channel = 0) {
   float3 result;
   smdl_ptex_evaluate(tex.ptr, tex.gamma, channel, 3, &result[0]);
   return result;
 }
 
-export @(macro) float2 lookup_float2(const texture_ptex tex, const int channel = 0) {
+@(macro)
+export float2 lookup_float2(const texture_ptex tex, const int channel = 0) {
   float2 result;
   smdl_ptex_evaluate(tex.ptr, tex.gamma, channel, 2, &result[0]);
   return result;
 }
 
-export @(macro) float lookup_float(const texture_ptex tex, const int channel = 0) {
+@(macro)
+export float lookup_float(const texture_ptex tex, const int channel = 0) {
   float result;
   smdl_ptex_evaluate(tex.ptr, tex.gamma, channel, 1, &result);
   return result;
 }
 
-export @(macro) color lookup_color(const texture_ptex tex, const int channel = 0) {
+@(macro)
+export color lookup_color(const texture_ptex tex, const int channel = 0) {
   float3 result;
   smdl_ptex_evaluate(tex.ptr, tex.gamma, channel, 3, &result[0]);
   return color(result);

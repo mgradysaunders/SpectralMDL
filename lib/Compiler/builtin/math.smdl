@@ -6,93 +6,137 @@ export const float TWO_PI = $TWO_PI;
 
 export const float HALF_PI = $HALF_PI;
 
-export @(pure macro) auto abs(const auto a) = #abs(a);
+@(macro)
+export auto abs(const auto a) = #abs(a);
 
-export @(pure macro) auto all(const auto a) = #all(a);
+@(macro)
+export auto all(const auto a) = #all(a);
 
-export @(pure macro) auto any(const auto a) = #any(a);
+@(macro)
+export auto any(const auto a) = #any(a);
 
-export @(pure macro) auto max(const auto a, const auto b) = #max(a, b);
+@(macro)
+export auto max(const auto a, const auto b) = #max(a, b);
 
-export @(pure macro) auto min(const auto a, const auto b) = #min(a, b);
+@(macro)
+export auto min(const auto a, const auto b) = #min(a, b);
 
-export @(pure macro) auto clamp(const auto a, const auto min, const auto max) = #max(min, #min(a, max));
+@(macro)
+export auto clamp(const auto a, const auto min, const auto max) = #max(min, #min(a, max));
 
-export @(pure macro) auto saturate(const auto a) = clamp(a, 0.0, 1.0);
+@(macro)
+export auto saturate(const auto a) = clamp(a, 0.0, 1.0);
 
-export @(pure macro) auto floor(const auto a) = #floor(a);
+@(macro)
+export auto floor(const auto a) = #floor(a);
 
-export @(pure macro) auto ceil(const auto a) = #ceil(a);
+@(macro)
+export auto ceil(const auto a) = #ceil(a);
 
-export @(pure macro) auto round(const auto a) = #round(a);
+@(macro)
+export auto round(const auto a) = #round(a);
 
-export @(pure macro) auto trunc(const auto a) = #trunc(a);
+@(macro)
+export auto trunc(const auto a) = #trunc(a);
 
-export @(pure macro) auto frac(const auto a) = a - #floor(a);
+@(macro)
+export auto frac(const auto a) = a - #floor(a);
 
-export @(pure macro) auto fmod(const auto a, const auto b) = a % b;
+@(macro)
+export auto fmod(const auto a, const auto b) = a % b;
 
-export @(pure macro) auto modf(const auto a) = auto[2](a0 := #trunc(a), a - a0);
+@(macro)
+export auto modf(const auto a) = auto[2](a0 := #trunc(a), a - a0);
 
-export @(pure macro) auto isfinite(const auto a) = #isfpclass(a, 0b0111111000);
+@(macro)
+export auto isfinite(const auto a) = #isfpclass(a, 0b0111111000);
 
-export @(pure macro) auto isnormal(const auto a) = #isfpclass(a, 0b0100001000);
+@(macro)
+export auto isnormal(const auto a) = #isfpclass(a, 0b0100001000);
 
-export @(pure macro) auto isinf(const auto a) = #isfpclass(a, 0b1000000100);
+@(macro)
+export auto isinf(const auto a) = #isfpclass(a, 0b1000000100);
 
-export @(pure macro) auto isnan(const auto a) = #isfpclass(a, 0b0000000011);
+@(macro)
+export auto isnan(const auto a) = #isfpclass(a, 0b0000000011);
 
-export @(pure macro) auto sign(const auto a) = #sign(a);
+@(macro)
+export auto sign(const auto a) = #sign(a);
 
-export @(pure macro) auto sqrt(const auto a) = #sqrt(a);
+@(macro)
+export auto sqrt(const auto a) = #sqrt(a);
 
-export @(pure macro) auto rsqrt(const auto a) = 1.0 / #sqrt(a);
+@(macro)
+export auto rsqrt(const auto a) = 1.0 / #sqrt(a);
 
-export @(pure macro) auto pow(const auto a, const auto b) = #pow(a, b);
+@(macro)
+export auto pow(const auto a, const auto b) = #pow(a, b);
 
-export @(pure macro) auto cos(const auto a) = #cos(a);
+@(macro)
+export auto cos(const auto a) = #cos(a);
 
-export @(pure macro) auto sin(const auto a) = #sin(a);
+@(macro)
+export auto sin(const auto a) = #sin(a);
 
-export @(pure macro) auto tan(const auto a) = #tan(a);
+@(macro)
+export auto tan(const auto a) = #tan(a);
 
-export @(pure macro) auto acos(const auto a) = #acos(a);
+@(macro)
+export auto acos(const auto a) = #acos(a);
 
-export @(pure macro) auto asin(const auto a) = #asin(a);
+@(macro)
+export auto asin(const auto a) = #asin(a);
 
-export @(pure macro) auto atan(const auto a) = #atan(a);
+@(macro)
+export auto atan(const auto a) = #atan(a);
 
-export @(pure macro) auto atan2(const auto y, const auto x) = #atan2(y, x);
+@(macro)
+export auto atan2(const auto y, const auto x) = #atan2(y, x);
 
-export @(pure macro) auto cosh(const auto a) = #cosh(a);
+@(macro)
+export auto cosh(const auto a) = #cosh(a);
 
-export @(pure macro) auto sinh(const auto a) = #sinh(a);
+@(macro)
+export auto sinh(const auto a) = #sinh(a);
 
-export @(pure macro) auto tanh(const auto a) = #tanh(a);
+@(macro)
+export auto tanh(const auto a) = #tanh(a);
 
-export @(pure macro) auto sincos(const auto a) = auto[2](#sin(a), #cos(a));
+@(macro)
+export auto sincos(const auto a) = auto[2](#sin(a), #cos(a));
 
-export @(pure macro) auto radians(const auto a) = a * (PI / 180.0);
+@(macro)
+export auto radians(const auto a) = a * (PI / 180.0);
 
-export @(pure macro) auto degrees(const auto a) = a * (180.0 / PI);
+@(macro)
+export auto degrees(const auto a) = a * (180.0 / PI);
 
-export @(pure macro) auto exp(const auto a) = #exp(a);
+@(macro)
+export auto exp(const auto a) = #exp(a);
 
-export @(pure macro) auto exp2(const auto a) = #exp2(a);
+@(macro)
+export auto exp2(const auto a) = #exp2(a);
 
-export @(pure macro) auto exp10(const auto a) = #exp10(a);
+@(macro)
+export auto exp10(const auto a) = #exp10(a);
 
-export @(pure macro) auto log(const auto a) = #log(a);
+@(macro)
+export auto log(const auto a) = #log(a);
 
-export @(pure macro) auto log2(const auto a) = #log2(a);
+@(macro)
+export auto log2(const auto a) = #log2(a);
 
-export @(pure macro) auto log10(const auto a) = #log10(a);
+@(macro)
+export auto log10(const auto a) = #log10(a);
 
-export @(pure macro) auto min_value(const auto a) = #min_value(a);
+@(macro)
+export auto min_value(const auto a) = #min_value(a);
 
-export @(pure macro) auto max_value(const auto a) = #max_value(a);
+@(macro)
+export auto max_value(const auto a) = #max_value(a);
 
-export @(pure) float min_value_wavelength(const color a) {
+@(pure)
+export float min_value_wavelength(const color a) {
   int imin = 0;
   float amin = a[0];
   for (int i = 1; i < $WAVELENGTH_BASE_MAX; i++) {
@@ -104,7 +148,8 @@ export @(pure) float min_value_wavelength(const color a) {
   return $state.wavelength_base[imin];
 }
 
-export @(pure) float max_value_wavelength(const color a) {
+@(pure)
+export float max_value_wavelength(const color a) {
   int imax = 0;
   float amax = a[0];
   for (int i = 1; i < $WAVELENGTH_BASE_MAX; i++) {
@@ -116,33 +161,45 @@ export @(pure) float max_value_wavelength(const color a) {
   return $state.wavelength_base[imax];
 }
 
-export @(pure macro) auto average(const auto a) = #sum(a) / #num(a);
+@(macro)
+export auto average(const auto a) = #sum(a) / #num(a);
 
-export @(pure macro) auto lerp(const auto a, const auto b, const auto l) = (1.0 - l) * a + l * b;
+@(macro)
+export auto lerp(const auto a, const auto b, const auto l) = (1.0 - l) * a + l * b;
 
-export @(pure macro) auto step(const auto a, const auto b) = #select(b < a, 0.0, 1.0);
+@(macro)
+export auto step(const auto a, const auto b) = #select(b < a, 0.0, 1.0);
 
-export @(pure macro) auto smoothstep(const auto a, const auto b, const auto l) {
+@(macro)
+export auto smoothstep(const auto a, const auto b, const auto l) {
   const auto t(saturate(l));
   const auto s(1 - t);
   return s * s * (1 + 2 * t) * a + t * t * (1 + 2 * s) * b;
 }
 
-export @(pure macro) auto dot(const auto a, const auto b) = #sum(a * b);
+@(macro)
+export auto dot(const auto a, const auto b) = #sum(a * b);
 
-export @(pure macro) auto length(const auto a) = #sqrt(#sum(a * a));
+@(macro)
+export auto length(const auto a) = #sqrt(#sum(a * a));
 
-export @(pure macro) auto normalize(const auto a) = a * (1 / length(a));
+@(macro)
+export auto normalize(const auto a) = a * (1 / length(a));
 
-export @(pure macro) auto distance(const auto a, const auto b) = length(b - a);
+@(macro)
+export auto distance(const auto a, const auto b) = length(b - a);
 
-export @(pure macro) auto cross(const auto a, const auto b) = a.yzx * b.zxy - a.zxy * b.yzx;
+@(macro)
+export auto cross(const auto a, const auto b) = a.yzx * b.zxy - a.zxy * b.yzx;
 
-export @(pure macro) auto transpose(const auto a) = #transpose(a);
+@(macro)
+export auto transpose(const auto a) = #transpose(a);
 
-export @(macro) float luminance(const float3 a) = dot(float3(0.2126, 0.7152, 0.0722), a);
+@(macro)
+export float luminance(const float3 a) = dot(float3(0.2126, 0.7152, 0.0722), a);
 
-export @(noinline) float luminance(const color a) {
+@(noinline)
+export float luminance(const color a) {
   float result(0.0);
   for (int i = 0; i < $WAVELENGTH_BASE_MAX; ++i) {
     result += $wyman_y($state.wavelength_base[i]) * a[i];
@@ -161,7 +218,8 @@ export @(noinline) float luminance(const color a) {
 // return 142.3251316 * numer / denom;
 // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 //
-export @(noinline) color blackbody(const float temperature) {
+@(noinline)
+export color blackbody(const float temperature) {
   const auto t(color($state.wavelength_base) * (temperature / 14.387e6));
   auto res(1 + 2 * t);
   res = 1 + 3 * t * res;

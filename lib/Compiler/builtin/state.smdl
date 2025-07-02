@@ -4,58 +4,80 @@ import ::math::*;
 
 export enum coordinate_space { coordinate_internal = 0, coordinate_object = 1, coordinate_world = 2 };
 
-export @(macro) float3 position() = $state.position;
+@(macro)
+export float3 position() = $state.position;
 
-export @(macro) float3 normal() = $state.normal;
+@(macro)
+export float3 normal() = $state.normal;
 
-export @(macro) float3 geometry_normal() = $state.geometry_normal;
+@(macro)
+export float3 geometry_normal() = $state.geometry_normal;
 
-export @(macro) float3 motion() = $state.motion;
+@(macro)
+export float3 motion() = $state.motion;
 
-export @(macro) int texture_space_max() = $state.texture_space_max;
+@(macro)
+export int texture_space_max() = $state.texture_space_max;
 
-export @(macro) float3 texture_coordinate(const int i) = $state.texture_coordinate[i];
+@(macro)
+export float3 texture_coordinate(const int i) = $state.texture_coordinate[i];
 
-export @(macro) float3 texture_tangent_u(const int i) = $state.texture_tangent_u[i];
+@(macro)
+export float3 texture_tangent_u(const int i) = $state.texture_tangent_u[i];
 
-export @(macro) float3 texture_tangent_v(const int i) = $state.texture_tangent_v[i];
+@(macro)
+export float3 texture_tangent_v(const int i) = $state.texture_tangent_v[i];
 
-export @(macro) float3 geometry_tangent_u(const int i) = $state.geometry_tangent_u[i];
+@(macro)
+export float3 geometry_tangent_u(const int i) = $state.geometry_tangent_u[i];
 
-export @(macro) float3 geometry_tangent_v(const int i) = $state.geometry_tangent_v[i];
+@(macro)
+export float3 geometry_tangent_v(const int i) = $state.geometry_tangent_v[i];
 
-export @(macro) float3x3 tangent_space(const int i) = float3x3($state.texture_tangent_u[i], $state.texture_tangent_v[i], $state.normal);
+@(macro)
+export float3x3 tangent_space(const int i) = float3x3($state.texture_tangent_u[i], $state.texture_tangent_v[i], $state.normal);
 
-export @(macro) float3x3 geometry_tangent_space(const int i) = float3x3($state.geometry_tangent_u[i], $state.geometry_tangent_v[i], $state.geometry_normal);
+@(macro)
+export float3x3 geometry_tangent_space(const int i) = float3x3($state.geometry_tangent_u[i], $state.geometry_tangent_v[i], $state.geometry_normal);
 
-export @(macro) int object_id() = $state.object_id;
+@(macro)
+export int object_id() = $state.object_id;
 
-export @(macro) float3 direction() = $state.direction;
+@(macro)
+export float3 direction() = $state.direction;
 
-export @(macro) float animation_time() = $state.animation_time;
+@(macro)
+export float animation_time() = $state.animation_time;
 
 export const int WAVELENGTH_BASE_MAX = $WAVELENGTH_BASE_MAX;
 
-export @(macro) float wavelength_min() = $state.wavelength_min;
+@(macro)
+export float wavelength_min() = $state.wavelength_min;
 
-export @(macro) float wavelength_max() = $state.wavelength_max;
+@(macro)
+export float wavelength_max() = $state.wavelength_max;
 
-export @(macro) float[WAVELENGTH_BASE_MAX] wavelength_base() = $state.wavelength_base;
+@(macro)
+export float[WAVELENGTH_BASE_MAX] wavelength_base() = $state.wavelength_base;
 
-export @(macro) float meters_per_scene_unit() = $state.meters_per_scene_unit;
+@(macro)
+export float meters_per_scene_unit() = $state.meters_per_scene_unit;
 
-export @(macro) float scene_units_per_meter() = 1.0 / $state.meters_per_scene_unit;
+@(macro)
+export float scene_units_per_meter() = 1.0 / $state.meters_per_scene_unit;
 
-@(pure macro) float4x4 affine_inverse(const float4x4 matrix) {
+@(pure macro)
+float4x4 affine_inverse(const float4x4 matrix) {
   return float4x4(
-    float4(matrix[0].x, matrix[1].x, matrix[2].x, 0.0),
-    float4(matrix[0].y, matrix[1].y, matrix[2].y, 0.0),
-    float4(matrix[0].z, matrix[1].z, matrix[2].z, 0.0),
-    float4(-#sum(matrix[0] * matrix[3]), -#sum(matrix[1] * matrix[3]), -#sum(matrix[2] * matrix[3]), 1.0),
-  );
+           float4(matrix[0].x, matrix[1].x, matrix[2].x, 0.0),
+           float4(matrix[0].y, matrix[1].y, matrix[2].y, 0.0),
+           float4(matrix[0].z, matrix[1].z, matrix[2].z, 0.0),
+           float4(-#sum(matrix[0] * matrix[3]), -#sum(matrix[1] * matrix[3]), -#sum(matrix[2] * matrix[3]), 1.0),
+         );
 }
 
-export @(macro) float4x4 transform(const coordinate_space from, const coordinate_space to) {
+@(macro)
+export float4x4 transform(const coordinate_space from, const coordinate_space to) {
   if (from == to) {
     return float4x4(1.0);
   } else if ((from == coordinate_internal) & (to == coordinate_object)) {
@@ -76,19 +98,23 @@ export @(macro) float4x4 transform(const coordinate_space from, const coordinate
   }
 }
 
-export @(macro) float3 transform_point(const coordinate_space from, const coordinate_space to, const float3 point) {
+@(macro)
+export float3 transform_point(const coordinate_space from, const coordinate_space to, const float3 point) {
   return from == to ? point : (transform(from, to) * float4(point, 1)).xyz;
 }
 
-export @(macro) float3 transform_vector(const coordinate_space from, const coordinate_space to, const float3 vector) {
+@(macro)
+export float3 transform_vector(const coordinate_space from, const coordinate_space to, const float3 vector) {
   return from == to ? vector : (transform(from, to) * float4(vector, 0)).xyz;
 }
 
-export @(macro) float3 transform_normal(const coordinate_space from, const coordinate_space to, const float3 normal) {
+@(macro)
+export float3 transform_normal(const coordinate_space from, const coordinate_space to, const float3 normal) {
   return from == to ? normal : (float4(normal, 0) * transform(to, from)).xyz;
 }
 
-export @(macro) float transform_scale(const coordinate_space from, const coordinate_space to, const float scale) {
+@(macro)
+export float transform_scale(const coordinate_space from, const coordinate_space to, const float scale) {
   // TODO
   return 1.0 * scale;
 }

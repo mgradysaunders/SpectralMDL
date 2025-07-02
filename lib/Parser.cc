@@ -1154,6 +1154,7 @@ auto Parser::parse_import() -> BumpPtr<AST::Import> {
 
 auto Parser::parse_global_declaration() -> BumpPtr<AST::Decl> {
   auto srcLoc0{checkpoint()};
+  auto attributes{parse_attributes()};
   auto srcKwExport{next_keyword("export")};
   auto decl{[&]() -> BumpPtr<AST::Decl> {
     if (auto decl{parse_function_declaration()})
@@ -1180,6 +1181,8 @@ auto Parser::parse_global_declaration() -> BumpPtr<AST::Decl> {
     return nullptr;
   }
   decl->isGlobal = true;
+  if (attributes)
+    decl->attributes = std::move(attributes);
   if (srcKwExport)
     decl->srcKwExport = *srcKwExport;
   accept();
@@ -1485,8 +1488,8 @@ auto Parser::parse_variable_declarator()
   return std::move(declarator);
 }
 
-auto Parser::parse_function_declaration_attributes()
-    -> std::optional<AST::Function::Attributes> {
+auto Parser::parse_attributes()
+    -> std::optional<AST::Decl::Attributes> {
   skip();
   auto srcLoc0{srcLoc};
   auto srcAt{next_delimiter("@")};
@@ -1508,14 +1511,14 @@ auto Parser::parse_function_declaration_attributes()
     } else {
       skip();
       if (peek() != ')')
-        srcLoc0.throw_error("unrecognized function attribute");
+        srcLoc0.throw_error("unrecognized attribute");
       reject();
       break;
     }
   }
   auto srcParenR{next_delimiter(")")};
   if (!srcParenR)
-    srcLoc0.throw_error("expected '@(...)' syntax for function attributes");
+    srcLoc0.throw_error("expected '@(...)' syntax for attributes");
   attributes.srcParenR = *srcParenR;
   return std::move(attributes);
 }
@@ -1523,7 +1526,6 @@ auto Parser::parse_function_declaration_attributes()
 auto Parser::parse_function_declaration() -> BumpPtr<AST::Function> {
   checkpoint();
   auto srcLoc0{checkpoint()};
-  auto attributes{parse_function_declaration_attributes()};
   auto type{parse_type()};
   if (!type) {
     reject();
@@ -1574,7 +1576,7 @@ auto Parser::parse_function_declaration() -> BumpPtr<AST::Function> {
   }
   accept();
   return allocate<AST::Function>(
-      srcLoc0, std::in_place, std::move(attributes), std::move(type),
+      srcLoc0, std::in_place, std::move(type),
       std::move(earlyAnnotations), *name, std::move(*params),
       srcFrequency ? *srcFrequency : std::string_view(),
       std::move(lateAnnotations), srcEqual ? *srcEqual : std::string_view(),

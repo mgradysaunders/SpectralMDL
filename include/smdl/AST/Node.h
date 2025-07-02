@@ -83,6 +83,26 @@ enum class DeclKind : uint8_t {
 /// The base type for declarations.
 class SMDL_EXPORT Decl : public NodeSubclass<NodeKind::Decl> {
 public:
+  /// The attributes, e.g., `@(pure noinline)`.
+  class SMDL_EXPORT Attributes final {
+  public:
+    [[nodiscard]] bool has(std::string_view attr) const {
+      return std::find(attrs.begin(), attrs.end(), attr) != attrs.end();
+    }
+
+    /// The at `@`.
+    std::string_view srcAt{};
+
+    /// The parenthesis `(`.
+    std::string_view srcParenL{};
+
+    /// The attributes.
+    std::vector<std::string_view> attrs{};
+
+    /// The parenthesis `)`.
+    std::string_view srcParenR{};
+  };
+
   explicit Decl(DeclKind declKind) : declKind(declKind) {}
 
   /// The declaration kind.
@@ -91,8 +111,16 @@ public:
   /// Is a global declaration?
   bool isGlobal{};
 
+  /// The attributes. This may be null!
+  std::optional<Attributes> attributes{};
+
   /// The keyword `export`. This may be empty!
   std::string_view srcKwExport{};
+
+  /// Has the given attribute?
+  [[nodiscard]] bool has_attribute(std::string_view attr) const {
+    return attributes && attributes->has(attr);
+  }
 
   /// Is marked with the keyword `export`?
   [[nodiscard]] bool is_exported() const { return !srcKwExport.empty(); }

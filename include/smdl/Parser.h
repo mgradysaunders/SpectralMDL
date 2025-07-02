@@ -299,8 +299,8 @@ private:
   [[nodiscard]] auto parse_variable_declarator()
       -> std::optional<AST::Variable::Declarator>;
 
-  [[nodiscard]] auto parse_function_declaration_attributes()
-      -> std::optional<AST::Function::Attributes>;
+  [[nodiscard]] auto parse_attributes()
+      -> std::optional<AST::Decl::Attributes>;
 
   [[nodiscard]] auto parse_function_declaration() -> BumpPtr<AST::Function>;
 
