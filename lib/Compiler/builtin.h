@@ -303,6 +303,28 @@ float scatter_reflect_chance(const scatter_mode mode){
 double erf(double x);
 @(pure foreign)
 double erfc(double x);
+export struct Complex{
+  auto a=0.0;
+  auto b=0.0;
+};
+@(pure macro)
+export auto Complex_norm(const Complex z)=z.a*z.a+z.b*z.b;
+@(pure macro)
+export auto Complex_inv(const Complex z)=let {
+                                           const auto denom=Complex_norm(z);
+                                         } in Complex(z.a/denom,-z.b/denom);
+@(pure macro)
+export auto Complex_add(const Complex z,const Complex w)=Complex(z.a+w.a,z.b+w.b);
+@(pure macro)
+export auto Complex_sub(const Complex z,const Complex w)=Complex(z.a-w.a,z.b-w.b);
+@(pure macro)
+export auto Complex_mul(const Complex z,const Complex w)=Complex(z.a*w.a-z.b*w.b,z.a*w.b+z.b*w.a);
+@(pure macro)
+export auto Complex_div(const Complex z,const Complex w)=Complex_mul(z,Complex_inv(w));
+@(pure macro)
+export auto Complex_sqrt(const Complex z)=let {
+                                            const auto z_mag=#sqrt(Complex_norm(z));
+                                          } in Complex(#sqrt(0.5*(z_mag+z.a)),#sqrt(0.5*(z_mag-z.a))*#sign(z.b),);
 export namespace monte_carlo {
 @(pure macro)
 export float2 next_low_discrepancy(const &float2 xi)=(*xi=frac(*xi+float2(0.75487766,0.56984029)));
@@ -410,11 +432,22 @@ export auto schlick_fresnel(
 )=F0+(F90-F0)*#pow(#max(1-#abs(cos_theta),0),exponent);
 @(pure)
 export auto dielectric_fresnel(const float cos_thetai,const auto ior){
-  const auto cos2_thetat(1-ior*ior*(1-cos_thetai*cos_thetai));
-  const auto cos_thetat(#sqrt(#max(cos2_thetat,0))*#sign(cos_thetai));
-  const auto rs((ior*cos_thetai-cos_thetat)/(ior*cos_thetai+cos_thetat));
-  const auto rp((cos_thetai-ior*cos_thetat)/(cos_thetai+ior*cos_thetat));
+  const auto cos2_thetat=1-ior*ior*(1-cos_thetai*cos_thetai);
+  const auto cos_thetat=#sqrt(#max(cos2_thetat,0))*#sign(cos_thetai);
+  const auto ior_cos_thetai=ior*cos_thetai;
+  const auto ior_cos_thetat=ior*cos_thetat;
+  const auto rs=(ior_cos_thetai-cos_thetat)/(ior_cos_thetai+cos_thetat);
+  const auto rp=(cos_thetai-ior_cos_thetat)/(cos_thetai+ior_cos_thetat);
   return #min(0.5*(rs*rs+rp*rp),1.0);
+}
+@(pure)
+export auto conductor_fresnel(const float cos_thetai,const auto ior){
+  const auto cos_thetat=Complex_sqrt(Complex_sub(Complex(1.0),Complex_mul(Complex_mul(ior,ior),Complex(1.0-cos_thetai*cos_thetai))));
+  const auto ior_cos_thetai=Complex_mul(ior,Complex(cos_thetai));
+  const auto ior_cos_thetat=Complex_mul(ior,cos_thetat);
+  const auto rs=Complex_div(Complex_sub(ior_cos_thetai,cos_thetat),Complex_add(ior_cos_thetai,cos_thetat));
+  const auto rp=Complex_div(Complex_sub(Complex(cos_thetai),ior_cos_thetat),Complex_add(Complex(cos_thetai),ior_cos_thetat));
+  return #min(0.5*(Complex_norm(rs)+Complex_norm(rp)),1.0);
 }
 }
 @(pure noinline)
@@ -1120,7 +1153,8 @@ export struct fresnel_factor:bsdf{
 @(macro)
 auto scatter_evaluate(const &fresnel_factor this,const &scatter_evaluate_parameters params){
   auto result(scatter_evaluate(visit &this.base,params));
-  if(!result.is_black){
+  if(!result.is_black&&params.mode==scatter_reflect){
+    return scatter_evaluate_result(f: specular::conductor_fresnel(#abs(dot(params.wo,half_direction(params))),Complex_inv(Complex(this.ior,this.extinction_coefficient)))*result.f,pdf: result.pdf,);
   }
   return result;
 }
@@ -1128,6 +1162,7 @@ auto scatter_evaluate(const &fresnel_factor this,const &scatter_evaluate_paramet
 auto scatter_sample(const &fresnel_factor this,const &scatter_sample_parameters params){
   auto result(scatter_sample(visit &this.base,params));
   if((result.mode==scatter_reflect)&bool(result.delta_f)){
+    *result.delta_f*=specular::conductor_fresnel(#abs(dot(params.wo,half_direction(params,&result))),Complex_inv(Complex(this.ior,this.extinction_coefficient)));
   }
   return result;
 }
@@ -1168,8 +1203,8 @@ export struct fresnel_layer:bsdf{
   bsdf layer=bsdf();
   bsdf base=bsdf();
   float3 normal=$state.normal;
-  const float av_ior=average(ior);
-  const float av_weight=average(weight);
+  const float average_ior=average(ior);
+  const float average_weight=average(weight);
 };
 @(macro)
 auto scatter_evaluate(const &fresnel_layer this,inline const &scatter_evaluate_parameters params){
@@ -1180,13 +1215,13 @@ auto scatter_evaluate(const &fresnel_layer this,inline const &scatter_evaluate_p
   const auto result0(scatter_evaluate(visit &this.base,params));
   const auto result1=return_from{
     preserve normal,ior;
-    normal=this.normal,ior=1/this.av_ior;
+    normal=this.normal,ior=1/this.average_ior;
     return scatter_evaluate(visit &this.layer,params);
   };
   if(result0.is_black&result1.is_black){
     return scatter_evaluate_result(is_black: true);
   } else {
-    return scatter_evaluate_result(f: lerp(result0.f,result1.f,this.weight*specular::dielectric_fresnel(dot(wo,half_direction(params)),1/this.ior)),pdf: lerp(result0.pdf,result1.pdf,this.av_weight*specular::schlick_fresnel(#abs(auto(cos_thetao,cos_thetai)),specular::schlick_F0(this.av_ior))),);
+    return scatter_evaluate_result(f: lerp(result0.f,result1.f,this.weight*specular::dielectric_fresnel(dot(wo,half_direction(params)),1/this.ior),),pdf: lerp(result0.pdf,result1.pdf,this.average_weight*specular::schlick_fresnel(float2(cos_thetao,cos_thetai),specular::schlick_F0(this.average_ior)),),);
   }
 }
 @(macro)
@@ -1194,10 +1229,10 @@ auto scatter_sample(const &fresnel_layer this,inline const &scatter_sample_param
   const auto cos_theta(dot(wo,this.normal)*#sign(this.normal.z));
   if(cos_theta<EPSILON)
     return scatter_sample_result();
-  const auto chance(this.av_weight*specular::schlick_fresnel(#abs(cos_theta),specular::schlick_F0(this.av_ior)));
+  const auto chance(this.average_weight*specular::schlick_fresnel(cos_theta,specular::schlick_F0(this.average_ior)));
   if(monte_carlo::bool_sample(&xi.z,chance)){
     preserve normal,ior;
-    normal=this.normal,ior=1/this.av_ior;
+    normal=this.normal,ior=1/this.average_ior;
     auto result(scatter_sample(visit &this.layer,params));
     *result.delta_f*=this.weight*specular::dielectric_fresnel(dot(wo,half_direction(params,&result)),1/this.ior)/chance if(result.delta_f);
     return result;
