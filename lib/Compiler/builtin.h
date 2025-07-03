@@ -670,7 +670,7 @@ auto scatter_evaluate(const &ward_geisler_moroder_bsdf this,inline const &scatte
     const auto alpha(#max(0.001,roughness*roughness));
     const auto f0(#sum((h:=wo+wi)*h)/($PI*alpha.x*alpha.y*#pow(h.z,4))*#exp(-#sum((g:=h.xy/(h.z*alpha))*g)));
     const auto f(f0*cos_thetai);
-    const auto pdf(float2(f*(cos_thetao+cos_thetai)/2));
+    const auto pdf(float2(f0*(cos_thetao+cos_thetai)/2));
     return $scatter_evaluate_result_with_multiscatter(this,f,pdf,cos_thetao,cos_thetai,roughness0,"ward_geisler_moroder_bsdf");
   } else {
     return scatter_evaluate_result(is_black: true);
@@ -892,9 +892,9 @@ auto scatter_evaluate(const &microfacet_bsdf this,inline const &scatter_evaluate
     const auto proj_areai((1+lambdai)*cos_thetai);
     const auto G=return_from{
       if$(this.shadowing<:microfacet::shadowing_smith){
-        return effective_mode==scatter_reflect?float(1.0/(1.0+lambdao+lambdai)):float(microfacet::beta(1.0+lambdao,1.0+lambdai));
+        return effective_mode==scatter_reflect?float(1/(1+lambdao+lambdai)):float(microfacet::beta(1+lambdao,1+lambdai));
       } else {
-        return #min(1.0,2.0*wm.z*#min(#abs(cos_thetao/dot_wo_wm),#abs(cos_thetai/dot_wi_wm)));
+        return #min(1,2*wm.z*#min(#abs(cos_thetao/dot_wo_wm),#abs(cos_thetai/dot_wi_wm)));
       }
     };
     if(effective_mode==scatter_reflect){

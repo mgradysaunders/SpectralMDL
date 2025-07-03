@@ -100,3 +100,43 @@ unit_test "Microfacet distributions" {
   #assert(integrate_smith_normal_pdf(df::microfacet::distribution_ggx(), float2(0.8, 1.2)) ~== [1e-2] 1.0);
   #assert(integrate_smith_normal_pdf(df::microfacet::distribution_beckmann(), float2(1.1, 0.7)) ~== [1e-2] 1.0);
 }
+
+struct evaluate_result {
+  color f = color(0);
+
+  float2 pdf = float2(0);
+};
+
+evaluate_result evaluate(const bsdf scattering, float3 wo, float3 wi) {
+  auto mat = material(surface: material_surface(scattering: scattering));
+  auto instance = $material_instance(&mat);
+  float pdf_fwd = 0;
+  float pdf_rev = 0;
+  color f = color(0);
+  if (df::$scatter_evaluate(&instance, &wo, &wi, &pdf_fwd, &pdf_rev, cast<&float>(&f)))
+    return evaluate_result(f, float2(pdf_fwd, pdf_rev));
+  else
+    return evaluate_result();
+}
+
+unit_test "Reciprocity" {
+  const auto wo = math::normalize(float3(-0.4, 1.2, 0.2));
+  const auto wi = math::normalize(float3(+0.1, -0.7, 0.4));
+  const auto f = df::weighted_layer(
+    weight: 0.5,
+    layer: df::sheen_bsdf(tint: 0.8, roughness: 0.6),
+    base: df::fresnel_layer(
+      ior: 1.4,
+      layer: df::weighted_layer(
+        weight: 0.5,
+        layer: df::ward_geisler_moroder_bsdf(roughness_u: 0.4, roughness_v: 0.8, tint: 1.0, multiscatter_tint: 1.0),
+        base: df::microfacet_ggx_smith_bsdf(roughness_u: 0.2, roughness_v: 0.5, tint: 1.0, multiscatter_tint: 1.0),
+      ),
+      base: df::diffuse_reflection_bsdf(tint: 0.8, roughness: 0.6),
+    ),
+  );
+  const auto result0 = evaluate(f, wo, wi);
+  const auto result1 = evaluate(f, wi, wo);
+  #assert(#all(#abs(result0.pdf - result1.pdf.yx) ~== [1e-6] 0.0));
+  #assert(#all(#abs(result0.f / #abs(wi.z) - result1.f / #abs(wo.z)) ~== [1e-6] 0.0));
+}
