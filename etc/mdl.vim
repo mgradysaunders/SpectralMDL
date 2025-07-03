@@ -99,7 +99,7 @@ syn keyword smdlStatement   defer preserve return_from unreachable visit finaliz
 syn keyword smdlType        void i8 i16 i32 i64 f16 f32 f64
 hi def link smdlModule      Macro
 hi def link smdlSpecialName Preproc
-hi def link smdlIntrinsic   Function
+hi def link smdlIntrinsic   Preproc
 hi def link smdlConstant    Constant
 hi def link smdlOperator    Operator
 hi def link smdlStatement   Statement
