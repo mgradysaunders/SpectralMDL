@@ -66,6 +66,7 @@ public:
 [[nodiscard]] SMDL_EXPORT std::string_view to_string(NodeKind nodeKind);
 
 enum class DeclKind : uint8_t {
+  AnnotationDecl,
   Enum,
   Exec,
   Function,

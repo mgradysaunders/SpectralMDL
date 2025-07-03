@@ -230,6 +230,38 @@ public:
   std::vector<std::string_view> elementViews{};
 };
 
+/// An `annotation` declaration.
+///
+/// ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+/// annotation my_annotation(string message = "", int flags = 0);
+/// ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+///
+class SMDL_EXPORT AnnotationDecl final
+    : public DeclSubclass<DeclKind::AnnotationDecl> {
+public:
+  explicit AnnotationDecl(std::string_view srcKwAnnotation, Name name,
+                          ParameterList params,
+                          BumpPtr<AnnotationBlock> annotations,
+                          std::string_view srcSemicolon)
+      : srcKwAnnotation(srcKwAnnotation), name(name), params(std::move(params)),
+        annotations(std::move(annotations)), srcSemicolon(srcSemicolon) {}
+
+  /// The keyword `annotation`.
+  std::string_view srcKwAnnotation{};
+
+  /// The name.
+  Name name{};
+
+  /// The parameters.
+  ParameterList params{};
+
+  /// The annotations on this annotation.
+  BumpPtr<AnnotationBlock> annotations{};
+
+  /// The semicolon `;`.
+  std::string_view srcSemicolon{};
+};
+
 /// An `enum` declaration.
 ///
 /// ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -333,7 +365,6 @@ public:
 /// A function declaration.
 class SMDL_EXPORT Function final : public DeclSubclass<DeclKind::Function> {
 public:
-
   class LetAndCall final {
   public:
     /// The let expression. This may be null.

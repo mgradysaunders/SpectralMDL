@@ -180,24 +180,26 @@ void Formatter::write(const AST::File &file) {
           version.srcSemicolon, DELIM_NEWLINE);
   }
   for (const auto &decl : file.importDecls) {
-    write(decl->srcKwExport, DELIM_SPACE, decl, DELIM_NEWLINE);
+    write(decl->attributes, decl->srcKwExport, DELIM_SPACE, decl,
+          DELIM_NEWLINE);
   }
   if (!file.srcKwModule.empty()) {
     write(file.srcKwModule, file.moduleAnnotations,
           file.srcSemicolonAfterModule, DELIM_NEWLINE);
   }
   for (const auto &decl : file.globalDecls) {
-    write(decl->attributes, decl->srcKwExport, DELIM_SPACE, decl, DELIM_NEWLINE);
+    write(decl->attributes, decl->srcKwExport, DELIM_SPACE, decl,
+          DELIM_NEWLINE);
   }
   write(DELIM_NEWLINE);
 }
 
 //--{ Write: Decls
 void Formatter::write(const AST::Decl &decl) {
-  write_type_switch<AST::Enum, AST::Exec, AST::Function, AST::Import,
-                    AST::Namespace, AST::Struct, AST::Tag, AST::Typedef,
-                    AST::UnitTest, AST::UsingAlias, AST::UsingImport,
-                    AST::Variable>(decl);
+  write_type_switch<AST::AnnotationDecl, AST::Enum, AST::Exec, AST::Function,
+                    AST::Import, AST::Namespace, AST::Struct, AST::Tag,
+                    AST::Typedef, AST::UnitTest, AST::UsingAlias,
+                    AST::UsingImport, AST::Variable>(decl);
 }
 
 void Formatter::write(const AST::Enum &decl) {

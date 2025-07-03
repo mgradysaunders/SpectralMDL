@@ -302,9 +302,9 @@ Value Emitter::emit(AST::Node &node) {
 //--{ Emit: Decl
 Value Emitter::emit(AST::Decl &decl) {
   return emit_type_switch< //
-      AST::Enum, AST::Exec, AST::Function, AST::Import, AST::Namespace,
-      AST::Struct, AST::Tag, AST::Typedef, AST::UnitTest, AST::UsingAlias,
-      AST::UsingImport, AST::Variable>(decl);
+      AST::AnnotationDecl, AST::Enum, AST::Exec, AST::Function, AST::Import,
+      AST::Namespace, AST::Struct, AST::Tag, AST::Typedef, AST::UnitTest,
+      AST::UsingAlias, AST::UsingImport, AST::Variable>(decl);
 }
 
 Value Emitter::emit(AST::Exec &decl) {

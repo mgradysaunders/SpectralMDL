@@ -75,8 +75,9 @@ hi def link mdlStatement   Statement
 hi def link mdlQualifier   StorageClass
 
 " Types
-syn keyword mdlStructure struct nextgroup=mdlIdentifier skipwhite skipempty
-syn keyword mdlStructure enum   nextgroup=mdlIdentifier skipwhite skipempty
+syn keyword mdlStructure annotation nextgroup=mdlIdentifier skipwhite skipempty
+syn keyword mdlStructure struct     nextgroup=mdlIdentifier skipwhite skipempty
+syn keyword mdlStructure enum       nextgroup=mdlIdentifier skipwhite skipempty
 syn keyword mdlType auto
 syn keyword mdlType bool bool2 bool3 bool4
 syn keyword mdlType int int2 int3 int4

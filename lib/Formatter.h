@@ -179,6 +179,11 @@ private:
   //--{ Write: Decls
   void write(const AST::Decl &decl);
 
+  void write(const AST::AnnotationDecl &decl) {
+    write(decl.srcKwAnnotation, DELIM_SPACE, decl.name, decl.params,
+          decl.annotations, decl.srcSemicolon);
+  }
+
   void write(const AST::Enum &decl);
 
   void write(const AST::Exec &decl) {
@@ -201,7 +206,8 @@ private:
     write(decl.srcKwNamespace, DELIM_SPACE, decl.identifier, DELIM_SPACE,
           decl.srcBraceL, DELIM_NEWLINE);
     for (const auto &subDecl : decl.decls)
-      write(subDecl->attributes, subDecl->srcKwExport, DELIM_SPACE, subDecl, DELIM_NEWLINE);
+      write(subDecl->attributes, subDecl->srcKwExport, DELIM_SPACE, subDecl,
+            DELIM_NEWLINE);
     write(decl.srcBraceR, DELIM_NEWLINE);
   }
 

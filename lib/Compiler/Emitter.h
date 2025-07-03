@@ -401,6 +401,12 @@ public:
   /// Emit declaration.
   Value emit(AST::Decl &decl);
 
+  /// Emit annotation declaration.
+  Value emit(AST::AnnotationDecl &/*decl*/) {
+    // TODO
+    return Value();
+  }
+
   /// Emit enum declaration.
   Value emit(AST::Enum &decl) {
     context.get_enum_type(&decl)->initialize(*this);

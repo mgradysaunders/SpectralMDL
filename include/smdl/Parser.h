@@ -275,7 +275,11 @@ private:
 
   [[nodiscard]] auto parse_import() -> BumpPtr<AST::Import>;
 
+  [[nodiscard]] auto parse_attributes() -> std::optional<AST::Decl::Attributes>;
+
   [[nodiscard]] auto parse_global_declaration() -> BumpPtr<AST::Decl>;
+
+  [[nodiscard]] auto parse_annotation_declaration() -> BumpPtr<AST::Decl>;
 
   [[nodiscard]] auto parse_type_declaration() -> BumpPtr<AST::Decl>;
 
@@ -298,9 +302,6 @@ private:
 
   [[nodiscard]] auto parse_variable_declarator()
       -> std::optional<AST::Variable::Declarator>;
-
-  [[nodiscard]] auto parse_attributes()
-      -> std::optional<AST::Decl::Attributes>;
 
   [[nodiscard]] auto parse_function_declaration() -> BumpPtr<AST::Function>;
 

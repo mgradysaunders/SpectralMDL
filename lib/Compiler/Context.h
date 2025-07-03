@@ -275,13 +275,14 @@ public:
   template <typename T> [[nodiscard]] Value get_comptime_scalar(T value) {
     static_assert(std::is_arithmetic_v<T>);
     auto type{get_arithmetic_type(Scalar::get<T>())};
-    if constexpr (std::is_integral_v<T>)
+    if constexpr (std::is_integral_v<T>) {
       return RValue(type,
                     llvm::ConstantInt::get(type->llvmType,
                                            llvm::APInt(sizeof(T) * 8, value)));
-    else
+    } else {
       return RValue(
           type, llvm::ConstantFP::get(type->llvmType, llvm::APFloat(value)));
+    }
   }
 
   /// Get compile-time vector constant.

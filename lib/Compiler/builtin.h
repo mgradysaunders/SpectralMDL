@@ -6,6 +6,29 @@
 namespace smdl::builtin {
 
 static const char *anno = R"*(#smdl
+export annotation soft_range(auto min,auto max);
+export annotation hard_range(auto min,auto max);
+export annotation display_name(string name);
+export annotation in_group(string group);
+export annotation in_group(string group,string subgroup);
+export annotation in_group(string group,string subgroup,string subsubgroup);
+export annotation ui_order(int order);
+export annotation enable_if(string condition);
+export annotation hidden();
+export annotation description(string description);
+export annotation thumbnail(string name);
+export annotation author(string name);
+export annotation contributor(string name);
+export annotation copyright_notice(string copyright);
+export annotation created(int year,int month,int day,string notes);
+export annotation modified(int year,int month,int day,string notes);
+export annotation version(int major,int minor,int patch,string prerelease="");
+export annotation dependency(string module_name,int major,int minor,int patch,string prerelease="");
+export annotation key_words(string[] words);
+export annotation unused(string description="");
+export annotation deprecated(string description="");
+export annotation usage(string hint="");
+export annotation origin(string name="");
 )*";
 
 static const char *API = R"*(#smdl
