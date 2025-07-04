@@ -409,7 +409,7 @@ float3 half_direction(inline const &scatter_sample_parameters this, inline const
 }
 
 @(pure macro)
-auto $scatter_evaluate_result_with_multiscatter(
+auto __scatter_evaluate_result_with_multiscatter(
   const auto this,
   const auto f,
   const float2 pdf,
@@ -451,7 +451,7 @@ auto $scatter_evaluate_result_with_multiscatter(
 }
 
 @(pure macro)
-?scatter_sample_result $scatter_sample_result_with_multiscatter(const auto this, const &float4 xi [[anno::unused()]], const float3x3 tbn [[anno::unused()]]) {
+?scatter_sample_result __scatter_sample_result_with_multiscatter(const auto this, const &float4 xi [[anno::unused()]], const float3x3 tbn [[anno::unused()]]) {
   if (#typeof(this.multiscatter_tint) == void || (#typeof(this.multiscatter_tint) == float && this.multiscatter_tint == 0.0)) {
     // Do nothing
   } else {
@@ -463,12 +463,12 @@ auto $scatter_evaluate_result_with_multiscatter(
 
 //--{ default_bsdf
 @(pure macro)
-auto scatter_evaluate(const &$default_bsdf this [[anno::unused()]], const &scatter_evaluate_parameters params [[anno::unused()]]) {
+auto scatter_evaluate(const &__default_bsdf this [[anno::unused()]], const &scatter_evaluate_parameters params [[anno::unused()]]) {
   return scatter_evaluate_result(is_black: true);
 }
 
 @(pure macro)
-auto scatter_sample(const &$default_bsdf this [[anno::unused()]], const &scatter_sample_parameters params [[anno::unused()]]) {
+auto scatter_sample(const &__default_bsdf this [[anno::unused()]], const &scatter_sample_parameters params [[anno::unused()]]) {
   return scatter_sample_result();
 }
 //--}
@@ -504,7 +504,7 @@ auto scatter_evaluate(const &diffuse_reflection_bsdf this, inline const &scatter
       const auto A(1.00 - sigma2 / (2.0 * sigma2 + 0.66));
       const auto B(0.45 * sigma2 / (sigma2 + 0.09));
       const auto f(pdf[0] * (A + #max(#sum(wo.xy * wi.xy), 0) / (#max_value(cos_theta) + EPSILON) * B));
-      return $scatter_evaluate_result_with_multiscatter(this, f, pdf, wo.z, wi.z, this.roughness, "diffuse_reflection_bsdf");
+      return __scatter_evaluate_result_with_multiscatter(this, f, pdf, wo.z, wi.z, this.roughness, "diffuse_reflection_bsdf");
     }
   } else {
     return scatter_evaluate_result(is_black: true);
@@ -633,7 +633,7 @@ auto scatter_evaluate(const &sheen_bsdf this, inline const &scatter_evaluate_par
       const auto D(1 / $TWO_PI * (2 + 1 / alpha) * #pow(sin_thetah, 1 / alpha));
       const auto G(1 / (1 + sheen_lambda(fit, cos_thetao) + sheen_lambda(fit, cos_thetai)));
     } in D * G / (4 * cos_thetao);
-    return $scatter_evaluate_result_with_multiscatter(this, f, pdf, cos_thetao, cos_thetai, this.roughness, "sheen_bsdf");
+    return __scatter_evaluate_result_with_multiscatter(this, f, pdf, cos_thetao, cos_thetai, this.roughness, "sheen_bsdf");
   } else {
     return scatter_evaluate_result(is_black: true);
   }
@@ -688,7 +688,7 @@ auto scatter_evaluate(const &ward_geisler_moroder_bsdf this, inline const &scatt
     const auto f0(#sum((h := wo + wi) * h) / ($PI * alpha.x * alpha.y * #pow(h.z, 4)) * #exp(-#sum((g := h.xy / (h.z * alpha)) * g)));
     const auto f(f0 * cos_thetai);
     const auto pdf(float2(f0 * (cos_thetao + cos_thetai) / 2));
-    return $scatter_evaluate_result_with_multiscatter(this, f, pdf, cos_thetao, cos_thetai, roughness0, "ward_geisler_moroder_bsdf");
+    return __scatter_evaluate_result_with_multiscatter(this, f, pdf, cos_thetao, cos_thetai, roughness0, "ward_geisler_moroder_bsdf");
   } else {
     return scatter_evaluate_result(is_black: true);
   }
@@ -700,7 +700,7 @@ auto scatter_sample(const &ward_geisler_moroder_bsdf this, inline const &scatter
   tangent_u = this.tangent_u;
   if ((tbn := recalculate_tangent_space(params))) {
     // Sample multiscatter.
-    if (result := $scatter_sample_result_with_multiscatter(this, xi, *tbn)) {
+    if (result := __scatter_sample_result_with_multiscatter(this, xi, *tbn)) {
       return *result;
     } else {
       // Sample specular.
@@ -976,7 +976,7 @@ auto scatter_evaluate(const &microfacet_bsdf this, inline const &scatter_evaluat
     if (effective_mode == scatter_reflect) {
       const auto pdf(norm1 * D / (4 * float2(dot_wo_wm, dot_wi_wm) + EPSILON));
       const auto f(norm2 * D * G / (4 * cos_thetao + EPSILON));
-      auto result($scatter_evaluate_result_with_multiscatter(this, f, pdf, cos_thetao, cos_thetai, this.roughness0, "simple_glossy_bsdf"));
+      auto result(__scatter_evaluate_result_with_multiscatter(this, f, pdf, cos_thetao, cos_thetai, this.roughness0, "simple_glossy_bsdf"));
       result.f *= reflect_chance;
       result.pdf *= reflect_chance;
       return result;
@@ -1005,7 +1005,7 @@ auto scatter_evaluate(const &microfacet_bsdf this, inline const &scatter_evaluat
       const auto lut_name(this.distribution <: microfacet::distribution_ggx ? "microfacet_ggx_smith_bsdf" : "microfacet_beckmann_smith_bsdf");
       const auto pdf(D / (4 * float2(proj_areao, proj_areai) + EPSILON));
       const auto f(D * G / (4 * cos_thetao + EPSILON));
-      auto result($scatter_evaluate_result_with_multiscatter(this, f, pdf, cos_thetao, cos_thetai, this.roughness0, lut_name));
+      auto result(__scatter_evaluate_result_with_multiscatter(this, f, pdf, cos_thetao, cos_thetai, this.roughness0, lut_name));
       result.f *= reflect_chance;
       result.pdf *= reflect_chance;
       return result;
@@ -1036,7 +1036,7 @@ auto scatter_sample(const &microfacet_bsdf this, inline const &scatter_sample_pa
                   ? scatter_reflect                                                  //
                   : scatter_transmit);
   if (mode == scatter_reflect || thin_walled) {
-    if (result := $scatter_sample_result_with_multiscatter(this, &xi, *tbn)) {
+    if (result := __scatter_sample_result_with_multiscatter(this, &xi, *tbn)) {
       if (mode == scatter_transmit)
         return scatter_sample_result(wi: result.wi * float3(+1, +1, -1), mode: mode);
       return *result;
@@ -1561,8 +1561,8 @@ auto scatter_sample(const &component_mix this, const &scatter_sample_parameters 
 //--}
 
 @(macro)
-export int $scatter_evaluate(
-  const &$material_instance instance,
+export int __scatter_evaluate(
+  const &__material_instance instance,
   const &float3 wo,     ///< The outgoing direction
   const &float3 wi,     ///< The incoming direction
   const &float pdf_fwd, ///< output: The PDF of sampling `wi` from `wo`
@@ -1594,8 +1594,8 @@ export int $scatter_evaluate(
 }
 
 @(macro)
-export int $scatter_sample(
-  const &$material_instance instance,
+export int __scatter_sample(
+  const &__material_instance instance,
   const &float4 xi,     ///< The canonical random sample in `[0,1]^4`
   const &float3 wo,     ///< The outgoing direction
   const &float3 wi,     ///< output: The incoming direction
@@ -1623,7 +1623,7 @@ export int $scatter_sample(
       #memcpy(f, &*result.delta_f, #sizeof(float) * $WAVELENGTH_BASE_MAX);
       return true;
     } else {
-      return $scatter_evaluate(instance, wo, wi, pdf_fwd, pdf_rev, f);
+      return __scatter_evaluate(instance, wo, wi, pdf_fwd, pdf_rev, f);
     }
   }
 }
@@ -1659,7 +1659,7 @@ struct emission_sample_result {
 //--{ default_edf
 @(pure macro)
 auto emission_evaluate(
-  const &$default_edf this [[anno::unused()]],
+  const &__default_edf this [[anno::unused()]],
   const &emission_evaluate_parameters params [[anno::unused()]],
 ) {
   return emission_evaluate_result(is_black: true);
@@ -1667,7 +1667,7 @@ auto emission_evaluate(
 
 @(pure macro)
 auto emission_sample(
-  const &$default_edf this [[anno::unused()]],
+  const &__default_edf this [[anno::unused()]],
   const &emission_sample_parameters params [[anno::unused()]],
 ) {
   return emission_sample_result();
@@ -1797,8 +1797,8 @@ auto emission_sample(const &measured_edf this, const &emission_sample_parameters
 //--}
 
 @(macro)
-export int $emission_evaluate(
-  const &$material_instance instance [[anno::unused()]],
+export int __emission_evaluate(
+  const &__material_instance instance [[anno::unused()]],
   const &float3 we [[anno::unused()]], ///< The emission direction
   const &float pdf [[anno::unused()]], ///< output: The probability density function
   const &float Le [[anno::unused()]],  ///< output: The emission
@@ -1835,8 +1835,8 @@ export int $emission_evaluate(
 }
 
 @(macro)
-export int $emission_sample(
-  const &$material_instance instance [[anno::unused()]],
+export int __emission_sample(
+  const &__material_instance instance [[anno::unused()]],
   const &float4 xi [[anno::unused()]], ///< The canonical random sample in `[0,1]^4`
   const &float3 we [[anno::unused()]], ///< output: The emission direction
   const &float pdf [[anno::unused()]], ///< output: The probability density function
@@ -1861,7 +1861,7 @@ export int $emission_sample(
       return 0;
     } else {
       *we = *result.we;
-      return $emission_evaluate(instance, we, pdf, Le);
+      return __emission_evaluate(instance, we, pdf, Le);
     }
   }
 }

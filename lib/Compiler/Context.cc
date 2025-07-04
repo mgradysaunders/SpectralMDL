@@ -80,8 +80,8 @@ Context::Context(Compiler &compiler) : compiler(compiler) {
   // - `struct material`
   // - Function `$wyman_1931_xyz`
   // - Function `$wyman_1931_y`
-  // - Function `$color_to_rgb`
-  // - Function `$rgb_to_color`
+  // - Function `__color_to_rgb`
+  // - Function `__rgb_to_color`
   for (auto crumb{get_builtin_module("API")->lastCrumb}; crumb;
        crumb = crumb->prev) {
     if (crumb->is_exported() && crumb->has_simple_name()) {

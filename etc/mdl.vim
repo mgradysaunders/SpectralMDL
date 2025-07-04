@@ -36,7 +36,7 @@ syn match mdlOperator "[.,=+\-*/%!~&|^<>?:]" display
 hi def link mdlOperator Operator
 
 " Comments and annotations
-syn keyword mdlTodo         contained TODO FIXME XXX NOTE
+syn keyword mdlTodo         contained TODO FIXME XXX NOTE 
 syn region mdlLineComment   start="//" skip="\\$" end="$" keepend contains=mdlTodo
 syn region mdlComment       start="/\*" end="\*/" extend contains=mdlTodo matchgroup=mdlCommentStart 
 syn region mdlAnnotation    start="\[\[" end="\]\]" keepend contains=mdlBool,mdlInt,mdlFloat,mdlString
@@ -59,8 +59,8 @@ syn match mdlLabel "\<[a-zA-Z]\w*:\ze[^:]"me=e-1 display
 hi def link mdlLabel Label
 
 " Identifiers
-syn match mdlIdentifier    "[a-zA-Z_][a-zA-Z0-9_]*" display contained
-hi def link mdlIdentifier  Identifier
+syn match mdlIdentifier "[a-zA-Z_][a-zA-Z0-9_]*" display contained
+hi def link mdlIdentifier Identifier
 
 " Keywords
 syn keyword mdlModule      mdl module export import using
@@ -89,22 +89,24 @@ syn keyword mdlType material material_surface material_emission material_volume 
 hi def link mdlStructure Structure
 hi def link mdlType      Type
 
-syn keyword smdlStructure   tag nextgroup=mdlIdentifier skipwhite skipempty
-syn match   smdlOperator    "[$]" display
-syn match   smdlSpecialName "[$][a-zA-Z]\w*" display
-syn match   smdlIntrinsic   "[#][a-zA-Z]\w*" display
-syn keyword smdlModule      namespace exec unit_test
-syn keyword smdlConstant    none
-syn keyword smdlStatement   defer preserve return_from unreachable visit finalize
-syn keyword smdlType        void i8 i16 i32 i64 f16 f32 f64
-hi def link smdlModule      Macro
-hi def link smdlSpecialName Preproc
-hi def link smdlIntrinsic   Preproc
-hi def link smdlConstant    Constant
-hi def link smdlOperator    Operator
-hi def link smdlStatement   Statement
-hi def link smdlStructure   Structure
-hi def link smdlType        Type
+syn keyword smdlConstant        none
+syn match   smdlConstName       "[a-zA-Z_][a-zA-Z0-9_]*" display contained
+syn match   smdlConstCode       "[$]" skipwhite skipempty nextgroup=smdlConstCodeParens,smdlConstName
+syn region  smdlConstCodeParens start="(" end=")" contained contains=ALLBUT,mdlTodo,mdlIdentifier,smdlConstName
+syn match   smdlIntrinsic       "[#][a-zA-Z]\w*" display
+syn keyword smdlModule          namespace exec unit_test
+syn keyword smdlStatement       defer preserve return_from unreachable visit finalize
+syn keyword smdlStructure       tag nextgroup=mdlIdentifier skipwhite skipempty
+syn keyword smdlType            void i8 i16 i32 i64 f16 f32 f64
+hi def link smdlModule          Macro
+hi def link smdlConstant        Constant
+hi def link smdlConstName       Constant
+hi def link smdlConstCode       Constant
+hi def link smdlConstCodeParens Constant
+hi def link smdlIntrinsic       Function
+hi def link smdlStatement       Statement
+hi def link smdlStructure       Structure
+hi def link smdlType            Type
 
 if !exists("b:current_syntax")
   let b:current_syntax = "mdl"

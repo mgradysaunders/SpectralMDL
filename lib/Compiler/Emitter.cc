@@ -1431,7 +1431,7 @@ Value Emitter::emit_intrinsic(std::string_view name, const ArgumentList &args,
         srcLoc.throw_error(
             "intrinsic 'albedo_lut' expects 1 compile-time string argument");
       auto lutName{args[0].value.get_comptime_string()};
-      auto lutType{context.get_keyword_value("$albedo_lut")
+      auto lutType{context.get_keyword_value("__albedo_lut")
                        .get_comptime_meta_type(context, srcLoc)};
       auto lut{context.get_builtin_albedo(lutName)};
       if (!lut)

@@ -192,11 +192,11 @@ Value ArithmeticType::invoke(Emitter &emitter, const ArgumentList &args,
                                 llvm::Align(emitter.context.get_align_of(
                                     get_scalar_type(emitter.context)))));
       // If constructing from color and this is a 3-dimensional vector,
-      // delegate to the `$color_to_rgb` function in the `api` module.
+      // delegate to the `__color_to_rgb` function in the `api` module.
       if (value.type == emitter.context.get_color_type() && dim == 3)
         return invoke(emitter,
                       emitter.emit_call(
-                          emitter.context.get_keyword_value("$color_to_rgb"),
+                          emitter.context.get_keyword_value("__color_to_rgb"),
                           value, srcLoc),
                       srcLoc);
     }
@@ -683,7 +683,7 @@ Value ColorType::invoke(Emitter &emitter, const ArgumentList &args,
                               llvmType, emitter.to_rvalue(value),
                               llvm::Align(alignof(float))));
     if (value.type == context.get_float_type(Extent(3)))
-      return emitter.emit_call(context.get_keyword_value("$rgb_to_color"),
+      return emitter.emit_call(context.get_keyword_value("__rgb_to_color"),
                                value, srcLoc);
   }
   if (args.size() <= 3 && args.is_only_these_names({"r", "g", "b"})) {
@@ -694,7 +694,7 @@ Value ColorType::invoke(Emitter &emitter, const ArgumentList &args,
     if (emitter.can_resolve_arguments(params, args, srcLoc)) {
       auto resolved{emitter.resolve_arguments(params, args, srcLoc)};
       return emitter.emit_call(
-          context.get_keyword_value("$rgb_to_color"),
+          context.get_keyword_value("__rgb_to_color"),
           emitter.invoke(context.get_float_type(Extent(3)),
                          llvm::ArrayRef<Value>(resolved.values), srcLoc),
           srcLoc);
@@ -715,7 +715,7 @@ Value ColorType::invoke(Emitter &emitter, const ArgumentList &args,
         srcLoc.throw_error(
             "expected wavelength and amplitude arrays to be same size");
       return emitter.emit_call(
-          context.get_keyword_value("$samples_to_color"),
+          context.get_keyword_value("__samples_to_color"),
           ArgumentList{context.get_comptime_int(int(arrayType0->size)),
                        resolved.values[0], resolved.values[1]},
           srcLoc);
@@ -1172,7 +1172,7 @@ void FunctionType::initialize_jit_material_functions(Emitter &emitter) {
     // Generate the allocate function:
     // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
     // @(visible) void "material_name.allocate"(&auto out) {
-    //   *out = $material_instance(#bump_allocate(material_name()));
+    //   *out = __material_instance(#bump_allocate(material_name()));
     // }
     // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
     auto funcReturnType{static_cast<Type *>(context.get_void_type())};
@@ -1182,7 +1182,7 @@ void FunctionType::initialize_jit_material_functions(Emitter &emitter) {
         [&] {
           auto material{invoke(emitter, {}, decl.srcLoc)};
           auto materialInstance{emitter.emit_call(
-              context.get_keyword_value("$material_instance"),
+              context.get_keyword_value("__material_instance"),
               emitter.emit_intrinsic("bump_allocate", material, decl.srcLoc),
               decl.srcLoc)};
           materialInstanceType = materialInstance.type;
@@ -1199,13 +1199,13 @@ void FunctionType::initialize_jit_material_functions(Emitter &emitter) {
     // Generate the scatter evaluate function:
     // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
     // @(pure visible) int "material_name.scatter_evaluate"(
-    //     &$material_instance instance,
+    //     &__material_instance instance,
     //     &float3 wo,
     //     &float3 wi,
     //     &float pdf_fwd,
     //     &float pdf_rev,
     //     &float f) {
-    //   return ::df::$scatter_evaluate(
+    //   return ::df::__scatter_evaluate(
     //     instance, wo, wi, pdf_fwd, pdf_rev, f);
     // }
     // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -1219,7 +1219,7 @@ void FunctionType::initialize_jit_material_functions(Emitter &emitter) {
          constParameter(floatPtrType, "pdf_rev"),
          constParameter(floatPtrType, "f")},
         decl.srcLoc, [&] {
-          auto dfFunc{Crumb::find(context, "$scatter_evaluate"sv, nullptr,
+          auto dfFunc{Crumb::find(context, "__scatter_evaluate"sv, nullptr,
                                   dfModule->lastCrumb)};
           SMDL_SANITY_CHECK(dfFunc);
           emitter.emit_return(
@@ -1242,7 +1242,7 @@ void FunctionType::initialize_jit_material_functions(Emitter &emitter) {
     // Generate the scatter sample function:
     // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
     // @(pure visible) int "material_name.scatter_sample"(
-    //     &$material_instance instance,
+    //     &__material_instance instance,
     //     &float4 xi,
     //     &float3 wo,
     //     &float3 wi,
@@ -1250,7 +1250,7 @@ void FunctionType::initialize_jit_material_functions(Emitter &emitter) {
     //     &float pdf_rev,
     //     &float f,
     //     &int is_delta) {
-    //   return ::df::$scatter_sample(
+    //   return ::df::__scatter_sample(
     //     instance, xi, wo, wi, pdf_fwd, pdf_rev, f, is_delta);
     // }
     // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -1266,7 +1266,7 @@ void FunctionType::initialize_jit_material_functions(Emitter &emitter) {
          constParameter(floatPtrType, "f"),
          constParameter(intPtrType, "is_delta")},
         decl.srcLoc, [&] {
-          auto dfFunc{Crumb::find(context, "$scatter_sample"sv, nullptr,
+          auto dfFunc{Crumb::find(context, "__scatter_sample"sv, nullptr,
                                   dfModule->lastCrumb)};
           SMDL_SANITY_CHECK(dfFunc);
           emitter.emit_return(
@@ -1291,11 +1291,11 @@ void FunctionType::initialize_jit_material_functions(Emitter &emitter) {
     // Generate the emission evaluate function:
     // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
     // @(pure visible) int "material_name.emission_evaluate"(
-    //     &$material_instance instance,
+    //     &__material_instance instance,
     //     &float3 we,
     //     &float pdf,
     //     &float Le) {
-    //   return ::df::$emission_evaluate(instance, we, pdf, Le);
+    //   return ::df::__emission_evaluate(instance, we, pdf, Le);
     // }
     // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
     auto funcReturnType{static_cast<Type *>(context.get_int_type())};
@@ -1306,7 +1306,7 @@ void FunctionType::initialize_jit_material_functions(Emitter &emitter) {
          constParameter(floatPtrType, "pdf"),
          constParameter(floatPtrType, "Le")},
         decl.srcLoc, [&] {
-          auto dfFunc{Crumb::find(context, "$emission_evaluate"sv, nullptr,
+          auto dfFunc{Crumb::find(context, "__emission_evaluate"sv, nullptr,
                                   dfModule->lastCrumb)};
           SMDL_SANITY_CHECK(dfFunc);
           emitter.emit_return(
@@ -1327,12 +1327,12 @@ void FunctionType::initialize_jit_material_functions(Emitter &emitter) {
     // Generate the emission sample function:
     // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
     // @(pure visible) int "material_name.emission_sample"(
-    //     &$material_instance instance,
+    //     &__material_instance instance,
     //     &float4 xi,
     //     &float3 we,
     //     &float pdf,
     //     &float Le) {
-    //   return ::df::$emission_sample(instance, xi, we, pdf, Le);
+    //   return ::df::__emission_sample(instance, xi, we, pdf, Le);
     // }
     // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
     auto funcReturnType{static_cast<Type *>(context.get_int_type())};
@@ -1344,7 +1344,7 @@ void FunctionType::initialize_jit_material_functions(Emitter &emitter) {
          constParameter(floatPtrType, "pdf"),
          constParameter(floatPtrType, "Le")},
         decl.srcLoc, [&] {
-          auto dfFunc{Crumb::find(context, "$emission_sample"sv, nullptr,
+          auto dfFunc{Crumb::find(context, "__emission_sample"sv, nullptr,
                                   dfModule->lastCrumb)};
           SMDL_SANITY_CHECK(dfFunc);
           emitter.emit_return(

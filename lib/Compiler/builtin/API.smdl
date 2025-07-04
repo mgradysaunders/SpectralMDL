@@ -101,7 +101,7 @@ color rgb_to_color_nontrivial(float3 rgb) {
 
 /// Convert RGB to color, used by `color` constructor!
 @(macro)
-export color $rgb_to_color(const float3 rgb) {
+export color __rgb_to_color(const float3 rgb) {
   if (#all(rgb.xx == rgb.yz)) {
     return color(rgb.x);
   } else {
@@ -110,7 +110,7 @@ export color $rgb_to_color(const float3 rgb) {
 }
 
 @(pure macro)
-export int $lower_bound(int count, const &float xs, const float x) {
+export int __lower_bound(int count, const &float xs, const float x) {
   int first = 0;
   while (count > 0) {
     const int step = count / 2;
@@ -126,13 +126,13 @@ export int $lower_bound(int count, const &float xs, const float x) {
 }
 
 @(pure)
-export float $lerp_polyline(int count, const &float xs, const &float ys, const float x) {
+export float __polyline_lerp(int count, const &float xs, const &float ys, const float x) {
   if (count <= 0) {
     return 0.0;
   } else if (count == 1) {
     return ys[0];
   } else {
-    int i = $lower_bound(count, xs, x) - 1;
+    int i = __lower_bound(count, xs, x) - 1;
     i = #min(i, count - 2);
     i = #max(i, 0);
     const auto x0 = xs[i];
@@ -145,14 +145,14 @@ export float $lerp_polyline(int count, const &float xs, const &float ys, const f
 }
 
 @(noinline)
-export color $samples_to_color(const int count, const &float wavelengths, const &float amplitudes) {
+export color __samples_to_color(const int count, const &float wavelengths, const &float amplitudes) {
   auto c = color(0.0);
   if (count > 0) {
     if (count == 1) {
       c = color(amplitudes[0]);
     } else {
       for (int i = 0; i < $WAVELENGTH_BASE_MAX; i++) {
-        c[i] = $lerp_polyline(count, wavelengths, amplitudes, $state.wavelength_base[i]);
+        c[i] = __polyline_lerp(count, wavelengths, amplitudes, $state.wavelength_base[i]);
       }
     }
   }
@@ -167,7 +167,7 @@ export color $samples_to_color(const int count, const &float wavelengths, const 
 /// by explicitly evaluating the first few terms of the exponential series.
 ///
 @(pure)
-export float3 $wyman_xyz(const float w) {
+export float3 __wyman_xyz(const float w) {
   auto x(w - auto(442.0, 599.8, 501.1, 568.8, 530.9, 437.0, 459.0));
   x *= #select(
     x < 0,
@@ -187,7 +187,7 @@ export float3 $wyman_xyz(const float w) {
 /// The fit of CIE 1931 Y, without X or Z, by Wyman et al fit 
 /// for wavelength in nanometers.
 @(pure)
-export float $wyman_y(const float w) {
+export float __wyman_y(const float w) {
   auto x(w - auto(568.8, 530.9));
   x *= #select(x < 0, auto(0.0213, 0.0613), auto(0.0247, 0.0322));
   x *= 0.5 * x;
@@ -201,10 +201,10 @@ export float $wyman_y(const float w) {
 
 /// Convert color to RGB, used by `float3` constructor!
 @(hot noinline)
-export float3 $color_to_rgb(const color c) {
+export float3 __color_to_rgb(const color c) {
   float3 result(0.0);
   for (int i = 0; i < $WAVELENGTH_BASE_MAX; ++i) {
-    result += $wyman_xyz($state.wavelength_base[i]) * c[i];
+    result += __wyman_xyz($state.wavelength_base[i]) * c[i];
   }
   result /= $WAVELENGTH_BASE_MAX;
   result *= $state.wavelength_max - $state.wavelength_min; // TODO $state.wavelength_pdf?
@@ -219,7 +219,7 @@ export float3 $color_to_rgb(const color c) {
 /// for convenience.
 @(visible noinline)
 void jit_rgb_to_color(const &float3 rgb, const &float cptr) {
-  color c($rgb_to_color(*rgb));
+  color c(__rgb_to_color(*rgb));
   #memcpy(cptr, &c, #sizeof(color));
 }
 
@@ -227,12 +227,12 @@ void jit_rgb_to_color(const &float3 rgb, const &float cptr) {
 /// for convenience.
 @(visible noinline)
 void jit_color_to_rgb(const &float cptr, const &float3 rgb) {
-  *rgb = $color_to_rgb(color(cptr));
+  *rgb = __color_to_rgb(color(cptr));
 }
 
 /// A straight-forward hash function for use with procedural algorithms.
 @(pure)
-export i32 $hash(auto value) {
+export i32 __hash(auto value) {
   if $(#is_arithmetic_scalar(value)) {
     if $(#is_arithmetic_integral(value)) {
       if $(#sizeof(value) <= 4) {
@@ -254,12 +254,12 @@ export i32 $hash(auto value) {
       // Interpret bit pattern as equivalent-sized integer type
       auto h(#type_int(8 * #sizeof(value))());
       #memcpy(&h, &value, #sizeof(value));
-      return $hash(h);
+      return __hash(h);
     }
   } else if $(#is_array(value) | #is_arithmetic_vector(value) | #is_arithmetic_matrix(value) | (#typeof(value) == color)) {
-    auto hTotal($hash(value[0]));
+    auto hTotal(__hash(value[0]));
     for (int i = 1; i < #num(value); ++i) {
-      auto h($hash(value[i]));
+      auto h(__hash(value[i]));
       h = 0x55555555 * (h ^ (h >>> 16));
       h = 3423571495 * (h ^ (h >>> 16));
       hTotal = #rotl(hTotal, 10) ^ h;
@@ -269,10 +269,10 @@ export i32 $hash(auto value) {
     // Interpret bit pattern as equivalent-sized integer type
     auto h(#type_int(8 * #sizeof(value))());
     #memcpy(&h, &value, #sizeof(value));
-    return $hash(h);
+    return __hash(h);
   } else if $(#is_union(value)) {
     visit v in value {
-      return $hash(v);
+      return __hash(v);
     }
   } else {
     // TODO More?
@@ -300,16 +300,16 @@ export tag edf;
 export tag hair_bsdf;
 
 /// The default BSDF is just an empty struct!
-export struct $default_bsdf: default bsdf {};
+export struct __default_bsdf: default bsdf {};
 
 /// The default VDF is just an empty struct!
-export struct $default_vdf: default vdf {};
+export struct __default_vdf: default vdf {};
 
 /// The default EDF is just an empty struct!
-export struct $default_edf: default edf {};
+export struct __default_edf: default edf {};
 
 /// The default hair BSDF is just an empty struct!
-export struct $default_hair_bsdf: default hair_bsdf {};
+export struct __default_hair_bsdf: default hair_bsdf {};
 
 /// The texture 2D structure.
 export struct texture_2d {
@@ -488,7 +488,7 @@ const int HAS_POSSIBLY_NON_ZERO_BTDF = (1 << 8); // TODO
 
 /// An instance of a material corresponding to `smdl::JIT::Material::Instance` 
 /// in the C++ API.
-export struct $material_instance {
+export struct __material_instance {
   /// The material deep copied with `#bump()`.
   const &material mat;
 
@@ -505,10 +505,10 @@ export struct $material_instance {
   const &color ior = &mat.ior;
 
   /// The volume absorption coefficient.
-  const &color absorption_coefficient = ($(#typeof(mat.volume.absorption_coefficient) == void) ? none : &mat.volume.absorption_coefficient);
+  const &color absorption_coefficient = (#typeof(mat.volume.absorption_coefficient) == void) ? none : &mat.volume.absorption_coefficient;
 
   /// The volume scattering coefficient.
-  const &color scattering_coefficient = ($(#typeof(mat.volume.scattering_coefficient) == void) ? none : &mat.volume.scattering_coefficient);
+  const &color scattering_coefficient = (#typeof(mat.volume.scattering_coefficient) == void) ? none : &mat.volume.scattering_coefficient;
 
   /// The wavelength count.
   const int wavelength_base_max = $WAVELENGTH_BASE_MAX;
@@ -531,7 +531,7 @@ export struct $material_instance {
 };
 
 /// Albedo look-up table (LUT) for energy correction.
-export struct $albedo_lut {
+export struct __albedo_lut {
   /// The number of samples of view angle cosine. 
   const int num_cos_theta = 0;
 

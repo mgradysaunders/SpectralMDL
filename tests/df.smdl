@@ -109,11 +109,11 @@ struct evaluate_result {
 
 evaluate_result evaluate(const bsdf scattering, float3 wo, float3 wi) {
   auto mat = material(surface: material_surface(scattering: scattering));
-  auto instance = $material_instance(&mat);
+  auto instance = __material_instance(&mat);
   float pdf_fwd = 0;
   float pdf_rev = 0;
   color f = color(0);
-  if (df::$scatter_evaluate(&instance, &wo, &wi, &pdf_fwd, &pdf_rev, cast<&float>(&f)))
+  if (df::__scatter_evaluate(&instance, &wo, &wi, &pdf_fwd, &pdf_rev, cast<&float>(&f)))
     return evaluate_result(f, float2(pdf_fwd, pdf_rev));
   else
     return evaluate_result();
