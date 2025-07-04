@@ -310,6 +310,28 @@ export struct __albedo_lut{
   const &float directional_albedo=none;
   const &float average_albedo=none;
 };
+export struct __complex{
+  auto a=0.0;
+  auto b=0.0;
+};
+@(pure macro)
+export auto __complex_norm(const __complex z)=z.a*z.a+z.b*z.b;
+@(pure macro)
+export auto __complex_inv(const __complex z)=let {
+                                               const auto denom=__complex_norm(z);
+                                             } in __complex(z.a/denom,-z.b/denom);
+@(pure macro)
+export auto __complex_add(const __complex z,const __complex w)=__complex(z.a+w.a,z.b+w.b);
+@(pure macro)
+export auto __complex_sub(const __complex z,const __complex w)=__complex(z.a-w.a,z.b-w.b);
+@(pure macro)
+export auto __complex_mul(const __complex z,const __complex w)=__complex(z.a*w.a-z.b*w.b,z.a*w.b+z.b*w.a);
+@(pure macro)
+export auto __complex_div(const __complex z,const __complex w)=__complex_mul(z,__complex_inv(w));
+@(pure macro)
+export auto __complex_sqrt(const __complex z)=let {
+                                                const auto z_mag=#sqrt(__complex_norm(z));
+                                              } in __complex(#sqrt(0.5*(z_mag+z.a)),#sqrt(0.5*(z_mag-z.a))*#sign(z.b),);
 )*";
 
 static const char *debug = R"*(#smdl
@@ -350,28 +372,6 @@ float scatter_reflect_chance(const scatter_mode mode){
 double erf(double x);
 @(pure foreign)
 double erfc(double x);
-export struct Complex{
-  auto a=0.0;
-  auto b=0.0;
-};
-@(pure macro)
-export auto Complex_norm(const Complex z)=z.a*z.a+z.b*z.b;
-@(pure macro)
-export auto Complex_inv(const Complex z)=let {
-                                           const auto denom=Complex_norm(z);
-                                         } in Complex(z.a/denom,-z.b/denom);
-@(pure macro)
-export auto Complex_add(const Complex z,const Complex w)=Complex(z.a+w.a,z.b+w.b);
-@(pure macro)
-export auto Complex_sub(const Complex z,const Complex w)=Complex(z.a-w.a,z.b-w.b);
-@(pure macro)
-export auto Complex_mul(const Complex z,const Complex w)=Complex(z.a*w.a-z.b*w.b,z.a*w.b+z.b*w.a);
-@(pure macro)
-export auto Complex_div(const Complex z,const Complex w)=Complex_mul(z,Complex_inv(w));
-@(pure macro)
-export auto Complex_sqrt(const Complex z)=let {
-                                            const auto z_mag=#sqrt(Complex_norm(z));
-                                          } in Complex(#sqrt(0.5*(z_mag+z.a)),#sqrt(0.5*(z_mag-z.a))*#sign(z.b),);
 export namespace monte_carlo {
 @(pure macro)
 export float2 next_low_discrepancy(const &float2 xi)=(*xi=frac(*xi+float2(0.75487766,0.56984029)));
@@ -489,12 +489,12 @@ export auto dielectric_fresnel(const float cos_thetai,const auto ior){
 }
 @(pure)
 export auto conductor_fresnel(const float cos_thetai,const auto ior){
-  const auto cos_thetat=Complex_sqrt(Complex_sub(Complex(1.0),Complex_mul(Complex_mul(ior,ior),Complex(1.0-cos_thetai*cos_thetai))));
-  const auto ior_cos_thetai=Complex_mul(ior,Complex(cos_thetai));
-  const auto ior_cos_thetat=Complex_mul(ior,cos_thetat);
-  const auto rs=Complex_div(Complex_sub(ior_cos_thetai,cos_thetat),Complex_add(ior_cos_thetai,cos_thetat));
-  const auto rp=Complex_div(Complex_sub(Complex(cos_thetai),ior_cos_thetat),Complex_add(Complex(cos_thetai),ior_cos_thetat));
-  return #min(0.5*(Complex_norm(rs)+Complex_norm(rp)),1.0);
+  const auto cos_thetat=__complex_sqrt(__complex_sub(__complex(1.0),__complex_mul(__complex_mul(ior,ior),__complex(1.0-cos_thetai*cos_thetai))));
+  const auto ior_cos_thetai=__complex_mul(ior,__complex(cos_thetai));
+  const auto ior_cos_thetat=__complex_mul(ior,cos_thetat);
+  const auto rs=__complex_div(__complex_sub(ior_cos_thetai,cos_thetat),__complex_add(ior_cos_thetai,cos_thetat));
+  const auto rp=__complex_div(__complex_sub(__complex(cos_thetai),ior_cos_thetat),__complex_add(__complex(cos_thetai),ior_cos_thetat));
+  return #min(0.5*(__complex_norm(rs)+__complex_norm(rp)),1.0);
 }
 }
 @(pure noinline)
@@ -1201,7 +1201,7 @@ export struct fresnel_factor:bsdf{
 auto scatter_evaluate(const &fresnel_factor this,const &scatter_evaluate_parameters params){
   auto result(scatter_evaluate(visit &this.base,params));
   if(!result.is_black&&params.mode==scatter_reflect){
-    return scatter_evaluate_result(f: specular::conductor_fresnel(#abs(dot(params.wo,half_direction(params))),Complex_inv(Complex(this.ior,this.extinction_coefficient)))*result.f,pdf: result.pdf,);
+    return scatter_evaluate_result(f: specular::conductor_fresnel(#abs(dot(params.wo,half_direction(params))),__complex_inv(__complex(this.ior,this.extinction_coefficient)))*result.f,pdf: result.pdf,);
   }
   return result;
 }
@@ -1209,7 +1209,7 @@ auto scatter_evaluate(const &fresnel_factor this,const &scatter_evaluate_paramet
 auto scatter_sample(const &fresnel_factor this,const &scatter_sample_parameters params){
   auto result(scatter_sample(visit &this.base,params));
   if((result.mode==scatter_reflect)&bool(result.delta_f)){
-    *result.delta_f*=specular::conductor_fresnel(#abs(dot(params.wo,half_direction(params,&result))),Complex_inv(Complex(this.ior,this.extinction_coefficient)));
+    *result.delta_f*=specular::conductor_fresnel(#abs(dot(params.wo,half_direction(params,&result))),__complex_inv(__complex(this.ior,this.extinction_coefficient)));
   }
   return result;
 }

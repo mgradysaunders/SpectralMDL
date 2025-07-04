@@ -553,3 +553,36 @@ export struct __albedo_lut {
   const &float average_albedo = none;
 };
 
+
+export struct __complex {
+  auto a = 0.0;
+  auto b = 0.0;
+};
+
+@(pure macro)
+export auto __complex_norm(const __complex z) = z.a * z.a + z.b * z.b;
+
+@(pure macro)
+export auto __complex_inv(const __complex z) = let {
+                                                 const auto denom = __complex_norm(z);
+                                               } in __complex(z.a / denom, -z.b / denom);
+
+@(pure macro)
+export auto __complex_add(const __complex z, const __complex w) = __complex(z.a + w.a, z.b + w.b);
+
+@(pure macro)
+export auto __complex_sub(const __complex z, const __complex w) = __complex(z.a - w.a, z.b - w.b);
+
+@(pure macro)
+export auto __complex_mul(const __complex z, const __complex w) = __complex(z.a * w.a - z.b * w.b, z.a * w.b + z.b * w.a);
+
+@(pure macro)
+export auto __complex_div(const __complex z, const __complex w) = __complex_mul(z, __complex_inv(w));
+
+@(pure macro)
+export auto __complex_sqrt(const __complex z) = let {
+                                                  const auto z_mag = #sqrt(__complex_norm(z));
+                                                } in __complex(
+                                                  #sqrt(0.5 * (z_mag + z.a)),
+                                                  #sqrt(0.5 * (z_mag - z.a)) * #sign(z.b),
+                                                );
