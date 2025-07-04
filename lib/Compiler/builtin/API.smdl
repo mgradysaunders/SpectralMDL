@@ -564,8 +564,8 @@ export auto __complex_norm(const __complex z) = z.a * z.a + z.b * z.b;
 
 @(pure macro)
 export auto __complex_inv(const __complex z) = let {
-                                                 const auto denom = __complex_norm(z);
-                                               } in __complex(z.a / denom, -z.b / denom);
+                                                 const auto denom = 1.0 / __complex_norm(z);
+                                               } in __complex(z.a * denom, -z.b * denom);
 
 @(pure macro)
 export auto __complex_add(const __complex z, const __complex w) = __complex(z.a + w.a, z.b + w.b);
