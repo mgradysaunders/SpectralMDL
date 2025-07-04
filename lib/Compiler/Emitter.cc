@@ -255,7 +255,7 @@ Value Emitter::create_result(Type *type, llvm::ArrayRef<Result> results,
     auto resultType{
         context.get_common_type(resultTypes, /*defaultToUnion=*/true, srcLoc)};
     if (context.get_conversion_rule(resultType, type) ==
-        ConversionRule::NotAllowed)
+        CONVERSION_RULE_NOT_ALLOWED)
       srcLoc.throw_error("inferred result type ",
                          quoted(resultType->displayName),
                          " is not convertible to ", quoted(type->displayName));

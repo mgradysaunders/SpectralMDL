@@ -242,19 +242,19 @@ ConversionRule Context::get_conversion_rule(Type *typeA, Type *typeB) {
   // If the source type is equivalent to the destination type OR the destination
   // type is pure `auto`, conversion is perfect!
   if (typeA == typeB || typeB == get_auto_type()) {
-    return ConversionRule::Perfect;
+    return CONVERSION_RULE_PERFECT;
   }
   if (typeA->is_abstract())
-    return ConversionRule::Explicit;
+    return CONVERSION_RULE_EXPLICIT;
   if (typeA->is_void())
-    return ConversionRule::Implicit;
+    return CONVERSION_RULE_IMPLICIT;
   // If the source and destination types are both arithmetic ...
   if (typeA->is_arithmetic() && typeB->is_arithmetic()) {
     // If the source and destination extents are equivalent, conversion is
     // implicit.
     if (static_cast<ArithmeticType *>(typeA)->extent ==
         static_cast<ArithmeticType *>(typeB)->extent)
-      return ConversionRule::Implicit;
+      return CONVERSION_RULE_IMPLICIT;
     // If the source type is a scalar and the destination type is a vector or
     // matrix, conversion is explicit.
     // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -263,7 +263,7 @@ ConversionRule Context::get_conversion_rule(Type *typeA, Type *typeB) {
     // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
     if (typeA->is_arithmetic_scalar() &&
         (typeB->is_arithmetic_vector() || typeB->is_arithmetic_matrix()))
-      return ConversionRule::Explicit;
+      return CONVERSION_RULE_EXPLICIT;
   }
   // If the source and destination types are different enum and/or int-like
   // types, conversion is explicit.
@@ -272,7 +272,7 @@ ConversionRule Context::get_conversion_rule(Type *typeA, Type *typeB) {
        typeB->is_arithmetic_integral()) ||
       (typeB->is_enum() && typeA->is_arithmetic_scalar() &&
        typeA->is_arithmetic_integral())) {
-    return ConversionRule::Explicit;
+    return CONVERSION_RULE_EXPLICIT;
   }
   // If the source type is a pointer ...
   if (typeA->is_pointer()) {
@@ -285,14 +285,14 @@ ConversionRule Context::get_conversion_rule(Type *typeA, Type *typeB) {
     if (typeB->is_pointer()) {
       // ... unless the destination type is `&void`
       if (typeB == get_void_pointer_type())
-        return ConversionRule::Implicit;
+        return CONVERSION_RULE_IMPLICIT;
       // ... unless the destination type is a pointer to `auto`, in which case
       // conversion is perfect as long as the underlying pointee type conversion
       // is perfect.
       if (typeB->is_abstract())
         return get_conversion_rule(typeA->get_pointee_type(),
                                    typeB->get_pointee_type());
-      return ConversionRule::Explicit;
+      return CONVERSION_RULE_EXPLICIT;
     }
     // If the destination type is a boolean, conversion is implicit. This is a
     // non-NULL test.
@@ -300,27 +300,27 @@ ConversionRule Context::get_conversion_rule(Type *typeA, Type *typeB) {
     // bool isNonNull = ptr;
     // ~~~~~~~~~~~~~~~~~~~~~
     if (typeB == get_bool_type()) {
-      return ConversionRule::Implicit;
+      return CONVERSION_RULE_IMPLICIT;
     }
     // If the destination type is a vector with equivalent scalar type,
     // conversion is explicit (Load from the pointer!).
     if (auto arithTypeB{llvm::dyn_cast<ArithmeticType>(typeB)};
         arithTypeB->extent.is_vector() &&
         arithTypeB->get_scalar_type(*this) == typeA->get_pointee_type()) {
-      return ConversionRule::Explicit;
+      return CONVERSION_RULE_EXPLICIT;
     }
   }
   // If the source type is a struct that is an instance of the
   // destination type, conversion is perfect.
   if (auto structTypeA{llvm::dyn_cast<StructType>(typeA)};
       structTypeA && structTypeA->is_instance_of(typeB)) {
-    return ConversionRule::Perfect;
+    return CONVERSION_RULE_PERFECT;
   }
   // If the source type is a union that is always an instance of the
   // destination type, conversion is perfect.
   if (auto unionTypeA{llvm::dyn_cast<UnionType>(typeA)};
       unionTypeA && unionTypeA->is_always_instance_of(typeB)) {
-    return ConversionRule::Perfect;
+    return CONVERSION_RULE_PERFECT;
   }
   // If the destination type is a union ...
   if (auto unionTypeB{llvm::dyn_cast<UnionType>(typeB)}) {
@@ -328,59 +328,65 @@ ConversionRule Context::get_conversion_rule(Type *typeA, Type *typeB) {
     // of the source case types, conversion is implicit.
     if (auto unionTypeA{llvm::dyn_cast<UnionType>(typeA)}) {
       return unionTypeB->has_all_case_types(unionTypeA)
-                 ? ConversionRule::Implicit
-                 : ConversionRule::Explicit;
+                 ? CONVERSION_RULE_IMPLICIT
+                 : CONVERSION_RULE_EXPLICIT;
     } else {
       // If the source type is not a union and the destination type has the
       // source as a case type, conversion is implicit.
       if (unionTypeB->has_case_type(typeA))
-        return ConversionRule::Implicit;
+        return CONVERSION_RULE_IMPLICIT;
     }
   }
   // If the destination type is a compile-time union and the source type
   // is one of the case types, conversion is perfect.
   if (auto unionTypeB{llvm::dyn_cast<ComptimeUnionType>(typeB)};
       unionTypeB && unionTypeB->unionType->has_case_type(typeA)) {
-    return ConversionRule::Perfect;
+    return CONVERSION_RULE_PERFECT;
   }
   // If the destination type is a color ...
   if (typeB->is_color()) {
     // If the source type is float or float3, conversion is implicit.
     if (typeA == get_float_type() || typeA == get_float_type(Extent(3)))
-      return ConversionRule::Implicit;
+      return CONVERSION_RULE_IMPLICIT;
     // If the source type is a pointer to a float, conversion is explicit.
     // (Loads from the pointer)
     if (typeA == get_pointer_type(get_float_type()))
-      return ConversionRule::Explicit;
+      return CONVERSION_RULE_EXPLICIT;
   }
   // If the source type is an array ...
-  if (typeA->is_array()) {
+  if (auto arrayTypeA{llvm::dyn_cast<ArrayType>(typeA)}) {
     // If the destination type is an inferred-size array, conversion is whatever
     // the element conversion is.
-    if (typeB->is_inferred_size_array())
-      return get_conversion_rule(
-          static_cast<ArrayType *>(typeA)->elemType,
-          static_cast<InferredSizeArrayType *>(typeB)->elemType);
-#if 0
-    // If the destination type is a pointer with the same element type, conversion is implicit.
+    if (auto inferredSizeArrayTypeB{
+            llvm::dyn_cast<InferredSizeArrayType>(typeB)}) {
+      return get_conversion_rule(arrayTypeA->elemType,
+                                 inferredSizeArrayTypeB->elemType);
+    }
+    // If the destination type is a pointer with the same element type,
+    // conversion is implicit.
     // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
     // auto someArray = float[4](/* ... */);
     // &float somePtr = someArray;
     // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-    if (typeB->is_pointer() && typeA->get_element_type() == typeB->get_element_type())
-      return ConversionRule::Implicit;
-    // If the destination type is an array with the same size, conversion is explicit. NOTE: At this point, we know the
-    // source type is not equivalent to the destination type, so we know the element types are different.
+    if (auto pointerTypeB{llvm::dyn_cast<PointerType>(typeB)};
+        pointerTypeB && arrayTypeA->elemType == pointerTypeB->pointeeType) {
+      return CONVERSION_RULE_IMPLICIT;
+    }
+    // If the destination type is an array with the same size, conversion is
+    // explicit. NOTE: At this point, we know the source type is not equivalent
+    // to the destination type, so we know the element types are different.
     // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
     // auto someArray = float[4](/* ... */);
     // auto someArray2 = cast<double[4]>(someArray);
     // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-    if (typeB->is_array() && typeA->get_array_size() == typeB->get_array_size() &&
-        get_conversion_rule(typeA->get_element_type(), typeB->get_element_type()) != ConversionRule::NotAllowed)
-      return ConversionRule::Explicit;
-#endif
+    if (auto arrayTypeB{llvm::dyn_cast<ArrayType>(typeB)};
+        arrayTypeB && arrayTypeA->size == arrayTypeB->size &&
+        get_conversion_rule(arrayTypeA->elemType, arrayTypeB->elemType) !=
+            CONVERSION_RULE_NOT_ALLOWED) {
+      return CONVERSION_RULE_EXPLICIT;
+    }
   }
-  return ConversionRule::NotAllowed;
+  return CONVERSION_RULE_NOT_ALLOWED;
 }
 
 Value Context::get_comptime_union_index_map(UnionType *unionTypeA,

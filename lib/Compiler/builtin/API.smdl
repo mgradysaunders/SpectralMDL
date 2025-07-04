@@ -109,6 +109,56 @@ export color $rgb_to_color(const float3 rgb) {
   }
 }
 
+@(pure macro)
+export int $lower_bound(int count, const &float xs, const float x) {
+  int first = 0;
+  while (count > 0) {
+    const int step = count / 2;
+    const int i = first + step;
+    if (xs[i] < x) {
+      first = i + 1;
+      count = count - step + 1;
+    } else {
+      count = step;
+    }
+  }
+  return first;
+}
+
+@(pure)
+export float $lerp_polyline(int count, const &float xs, const &float ys, const float x) {
+  if (count <= 0) {
+    return 0.0;
+  } else if (count == 1) {
+    return ys[0];
+  } else {
+    int i = $lower_bound(count, xs, x) - 1;
+    i = #min(i, count - 2);
+    i = #max(i, 0);
+    const auto x0 = xs[i];
+    const auto x1 = xs[i + 1];
+    float t = (x - x0) / (x1 - x0);
+    t = #max(t, 0.0);
+    t = #min(t, 1.0);
+    return (1 - t) * ys[i] + t * ys[i + 1];
+  }
+}
+
+@(noinline)
+export color $samples_to_color(const int count, const &float wavelengths, const &float amplitudes) {
+  auto c = color(0.0);
+  if (count > 0) {
+    if (count == 1) {
+      c = color(amplitudes[0]);
+    } else {
+      for (int i = 0; i < $WAVELENGTH_BASE_MAX; i++) {
+        c[i] = $lerp_polyline(count, wavelengths, amplitudes, $state.wavelength_base[i]);
+      }
+    }
+  }
+  return c;
+}
+
 /// The fits of CIE 1931 XYZ by Wyman et al for wavelength in nanometers.
 ///
 /// \note

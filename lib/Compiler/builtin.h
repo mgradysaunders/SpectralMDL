@@ -78,6 +78,53 @@ export color $rgb_to_color(const float3 rgb){
     return rgb_to_color_nontrivial(rgb);
   }
 }
+@(pure macro)
+export int $lower_bound(int count,const &float xs,const float x){
+  int first=0;
+  while(count>0){
+    const int step=count/2;
+    const int i=first+step;
+    if(xs[i]<x){
+      first=i+1;
+      count=count-step+1;
+    } else {
+      count=step;
+    }
+  }
+  return first;
+}
+@(pure)
+export float $lerp_polyline(int count,const &float xs,const &float ys,const float x){
+  if(count<=0){
+    return 0.0;
+  } else if(count==1){
+    return ys[0];
+  } else {
+    int i=$lower_bound(count,xs,x)-1;
+    i=#min(i,count-2);
+    i=#max(i,0);
+    const auto x0=xs[i];
+    const auto x1=xs[i+1];
+    float t=(x-x0)/(x1-x0);
+    t=#max(t,0.0);
+    t=#min(t,1.0);
+    return (1-t)*ys[i]+t*ys[i+1];
+  }
+}
+@(noinline)
+export color $samples_to_color(const int count,const &float wavelengths,const &float amplitudes){
+  auto c=color(0.0);
+  if(count>0){
+    if(count==1){
+      c=color(amplitudes[0]);
+    } else {
+      for(int i=0;i<$WAVELENGTH_BASE_MAX;i++){
+        c[i]=$lerp_polyline(count,wavelengths,amplitudes,$state.wavelength_base[i]);
+      }
+    }
+  }
+  return c;
+}
 @(pure)
 export float3 $wyman_xyz(const float w){
   auto x(w-auto(442.0,599.8,501.1,568.8,530.9,437.0,459.0));
@@ -1748,29 +1795,7 @@ export float eval_at_wavelength(color a,float wavelength){
   if$($WAVELENGTH_BASE_MAX==1){
     return a[0];
   } else {
-    int first=0;
-    if$($WAVELENGTH_BASE_MAX<=4){
-      while(first<$WAVELENGTH_BASE_MAX){
-        break if(!($state.wavelength_base[first]<wavelength));
-        first++;
-      }
-    } else {
-      int count=$WAVELENGTH_BASE_MAX;
-      while(count>0){
-        const int step=count/2;
-        const int i=first+step;
-        if($state.wavelength_base[i]<wavelength){
-          first=i+1;
-          count=count-step+1;
-        } else {
-          count=step;
-        }
-      }
-    }
-    const int i=clamp(first-1,0,$WAVELENGTH_BASE_MAX-2);
-    const float w0=$state.wavelength_base[i];
-    const float w1=$state.wavelength_base[i+1];
-    return lerp(a[i],a[i+1],saturate((wavelength-w0)/(w1-w0)));
+    return $lerp_polyline($WAVELENGTH_BASE_MAX,&$state.wavelength_base[0],&a[0],wavelength);
   }
 }
 )*";

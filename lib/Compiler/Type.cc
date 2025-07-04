@@ -691,12 +691,35 @@ Value ColorType::invoke(Emitter &emitter, const ArgumentList &args,
         Parameter{context.get_float_type(), "r", {}, {}, {}, true},
         Parameter{context.get_float_type(), "g", {}, {}, {}, true},
         Parameter{context.get_float_type(), "b", {}, {}, {}, true}}};
-    auto resolved{emitter.resolve_arguments(params, args, srcLoc)};
-    return emitter.emit_call(
-        context.get_keyword_value("$rgb_to_color"),
-        emitter.invoke(context.get_float_type(Extent(3)),
-                       llvm::ArrayRef<Value>(resolved.values), srcLoc),
-        srcLoc);
+    if (emitter.can_resolve_arguments(params, args, srcLoc)) {
+      auto resolved{emitter.resolve_arguments(params, args, srcLoc)};
+      return emitter.emit_call(
+          context.get_keyword_value("$rgb_to_color"),
+          emitter.invoke(context.get_float_type(Extent(3)),
+                         llvm::ArrayRef<Value>(resolved.values), srcLoc),
+          srcLoc);
+    }
+  }
+  if (args.size() == 2 &&
+      args.is_only_these_names({"wavelengths", "amplitudes"})) {
+    auto floatArrayType{
+        context.get_inferred_size_array_type(context.get_float_type())};
+    auto params{ParameterList{
+        Parameter{floatArrayType, "wavelengths", {}, {}, {}, false},
+        Parameter{floatArrayType, "amplitudes", {}, {}, {}, false}}};
+    if (emitter.can_resolve_arguments(params, args, srcLoc)) {
+      auto resolved{emitter.resolve_arguments(params, args, srcLoc)};
+      auto arrayType0{llvm::dyn_cast<ArrayType>(resolved.values[0].type)};
+      auto arrayType1{llvm::dyn_cast<ArrayType>(resolved.values[1].type)};
+      if (!(arrayType0 && arrayType1 && arrayType0 == arrayType1))
+        srcLoc.throw_error(
+            "expected wavelength and amplitude arrays to be same size");
+      return emitter.emit_call(
+          context.get_keyword_value("$samples_to_color"),
+          ArgumentList{context.get_comptime_int(int(arrayType0->size)),
+                       resolved.values[0], resolved.values[1]},
+          srcLoc);
+    }
   }
   srcLoc.throw_error("cannot construct 'color' from ",
                      quoted(std::string(args)));
@@ -1445,14 +1468,26 @@ Value PointerType::invoke(Emitter &emitter, const ArgumentList &args,
       auto value{args[0].value};
       if (value.type->is_pointer()) {
         return RValue(this, emitter.to_rvalue(value));
-      } else if (value.type == pointeeType) {
-        if (value.is_lvalue()) {
-          return RValue(this, value);
-        } else {
-          auto lv{emitter.to_lvalue(value)};
-          emitter.declare_crumb(/*name=*/{}, /*node=*/{}, lv);
-          return RValue(this, lv);
+      }
+      // If the value is an instance of the pointee type or
+      // if the value is an instance of an array of the pointee type,
+      // decay to a pointer.
+      if ((value.type == pointeeType) ||
+          (value.type->is_array() &&
+           llvm::dyn_cast<ArrayType>(value.type)->elemType == pointeeType)) {
+        // If not an lvalue, make it an lvalue so we actually have
+        // an address to work with.
+        if (!value.is_lvalue()) {
+          value = emitter.to_lvalue(value);
+          // NOTE: The way the scopes and lifetimes work right now, this 
+          // does not actually work. The lifetime would implicitly end before 
+          // being used in argument conversions and thus leads to undefined
+          // behavior, so for now we "leak" these lvalues.
+          // emitter.declare_crumb(/*name=*/{}, /*node=*/{}, value);
         }
+        // Do not worry about pointer cast because in modern LLVM
+        // we treat all pointers as opaque anyway.
+        return RValue(this, value);
       }
     }
   }

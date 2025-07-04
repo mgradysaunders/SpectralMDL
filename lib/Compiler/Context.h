@@ -8,11 +8,11 @@ namespace smdl {
 /// \{
 
 /// The conversion rule for converting one type into another type.
-enum class ConversionRule : uint32_t {
-  NotAllowed, ///< Conversion is not allowed.
-  Explicit,   ///< Conversion is allowed but should be explicit.
-  Implicit,   ///< Conversion is allowed and may be implicit.
-  Perfect,    ///< Conversion is perfect!
+enum ConversionRule : uint32_t {
+  CONVERSION_RULE_NOT_ALLOWED, ///< Conversion is not allowed.
+  CONVERSION_RULE_EXPLICIT, ///< Conversion is allowed but should be explicit.
+  CONVERSION_RULE_IMPLICIT, ///< Conversion is allowed and may be implicit.
+  CONVERSION_RULE_PERFECT,  ///< Conversion is perfect!
 };
 
 /// The compiler context.
@@ -230,17 +230,17 @@ public:
 
   /// Is `typeA` explicitly convertible to `typeB`?
   [[nodiscard]] bool is_explicitly_convertible(Type *typeA, Type *typeB) {
-    return get_conversion_rule(typeA, typeB) >= ConversionRule::Explicit;
+    return get_conversion_rule(typeA, typeB) >= CONVERSION_RULE_EXPLICIT;
   }
 
   /// Is `typeA` implicitly convertible to `typeB`?
   [[nodiscard]] bool is_implicitly_convertible(Type *typeA, Type *typeB) {
-    return get_conversion_rule(typeA, typeB) >= ConversionRule::Implicit;
+    return get_conversion_rule(typeA, typeB) >= CONVERSION_RULE_IMPLICIT;
   }
 
   /// Is `typeA` perfectly convertible to `typeB`?
   [[nodiscard]] bool is_perfectly_convertible(Type *typeA, Type *typeB) {
-    return get_conversion_rule(typeA, typeB) == ConversionRule::Perfect;
+    return get_conversion_rule(typeA, typeB) == CONVERSION_RULE_PERFECT;
   }
 
 public:

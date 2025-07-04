@@ -238,30 +238,6 @@ export float eval_at_wavelength(color a, float wavelength) {
   if $($WAVELENGTH_BASE_MAX == 1) {
     return a[0];
   } else {
-    int first = 0;
-    if $($WAVELENGTH_BASE_MAX <= 4) {
-      // For 4 or more wavelengths, use linear search
-      while (first < $WAVELENGTH_BASE_MAX) {
-        break if (!($state.wavelength_base[first] < wavelength));
-        first++;
-      }
-    } else {
-      // For 5 or more wavelengths, use binary search
-      int count = $WAVELENGTH_BASE_MAX;
-      while (count > 0) {
-        const int step = count / 2;
-        const int i = first + step;
-        if ($state.wavelength_base[i] < wavelength) {
-          first = i + 1;
-          count = count - step + 1;
-        } else {
-          count = step;
-        }
-      }
-    }
-    const int i = clamp(first - 1, 0, $WAVELENGTH_BASE_MAX - 2);
-    const float w0 = $state.wavelength_base[i];
-    const float w1 = $state.wavelength_base[i + 1];
-    return lerp(a[i], a[i + 1], saturate((wavelength - w0) / (w1 - w0)));
+    return $lerp_polyline($WAVELENGTH_BASE_MAX, &$state.wavelength_base[0], &a[0], wavelength);
   }
 }
