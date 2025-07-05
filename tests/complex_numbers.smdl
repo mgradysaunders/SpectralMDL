@@ -7,4 +7,10 @@ unit_test "Complex numbers" {
   #assert(#norm(z) ~== [1e-6] #real(z * #conj(z)));
   #assert(#real(sqrt_z * sqrt_z) ~== [1e-6] #real(z));
   #assert(#imag(sqrt_z * sqrt_z) ~== [1e-6] #imag(z));
+
+  // Intrinsics also behave as expected on real numbers
+  #assert(#real(2.4) == 2.4);
+  #assert(#imag(2.4) == 0.0);
+  #assert(#conj(2.4) == 2.4);
+  #assert(#norm(2.4) ~== [1e-6] 2.4 * 2.4);
 }
