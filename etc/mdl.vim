@@ -14,10 +14,10 @@ syn match   mdlInt      display "\<\(0\|[1-9]\d*\)"
 syn match   mdlInt      display "\<0\o\+"
 syn match   mdlInt      display "\<0[xX]\x\+"
 syn match   mdlInt      display "\<0[bB][01]\+"
-syn match   mdlFloat    display "\<\d\+\.\([eE][+-]\=\d\+\)\=\(f\|F\|d\|D\)\="
-syn match   mdlFloat    display "\<\.\d\+\([eE][+-]\=\d\+\)\=\(f\|F\|d\|D\)\="
-syn match   mdlFloat    display "\<\d\+[eE][+-]\=\d\+\(f\|F\|d\|D\)\="
-syn match   mdlFloat    display "\<\d\+\.\d\+\([eE][+-]\=\d\+\)\=\(f\|F\|d\|D\)\="
+syn match   mdlFloat    display "\<\d\+\.\([eE][+-]\=\d\+\)\=j\=\(f\|F\|d\|D\)\="
+syn match   mdlFloat    display "\<\.\d\+\([eE][+-]\=\d\+\)\=j\=\(f\|F\|d\|D\)\="
+syn match   mdlFloat    display "\<\d\+[eE][+-]\=\d\+j\=\(f\|F\|d\|D\)\="
+syn match   mdlFloat    display "\<\d\+\.\d\+\([eE][+-]\=\d\+\)\=j\=\(f\|F\|d\|D\)\="
 syn region  mdlString   start="\"" skip="\\\"" end="\"" keepend
 syn keyword mdlConstant PI TWO_PI HALF_PI FLOAT_MIN FLOAT_MAX DOUBLE_MIN DOUBLE_MAX INT_MIN INT_MAX
 syn keyword mdlConstant intensity_radiant_exitance intensity_power

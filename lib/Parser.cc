@@ -867,6 +867,9 @@ auto Parser::parse_literal_number_expression() -> BumpPtr<AST::Expr> {
       digits += parseDigits(is_digit);
       isInt = false;
     }
+    if (isSmdl && next("j")) { // Imaginary unit
+      isInt = false;
+    }
     if (next("d") || next("D") || next("f") || next("F")) {
       isInt = false;
     }

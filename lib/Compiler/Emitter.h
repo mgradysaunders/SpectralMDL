@@ -529,9 +529,29 @@ public:
 
   /// Emit literal float expression.
   Value emit(AST::LiteralFloat &expr) {
+#if 0
     return expr.srcValue.back() == 'd' || expr.srcValue.back() == 'D'
                ? context.get_comptime_double(expr.value)
                : context.get_comptime_float(float(expr.value));
+#else
+    auto src{llvm::StringRef(expr.srcValue)};
+    if (src.ends_with_insensitive("jd")) {
+      return invoke("complex",
+                    {context.get_comptime_double(0.0),
+                     context.get_comptime_double(expr.value)},
+                    expr.srcLoc);
+    } else if (src.ends_with_insensitive("jf") ||
+               src.ends_with_insensitive("j")) {
+      return invoke("complex",
+                    {context.get_comptime_float(0.0f),
+                     context.get_comptime_float(float(expr.value))},
+                    expr.srcLoc);
+    } else if (src.ends_with_insensitive("d")) {
+      return context.get_comptime_double(expr.value);
+    } else {
+      return context.get_comptime_float(float(expr.value));
+    }
+#endif
   }
 
   /// Emit literal int expression.
