@@ -310,28 +310,40 @@ export struct __albedo_lut{
   const &float directional_albedo=none;
   const &float average_albedo=none;
 };
-export struct __complex{
+export struct complex{
   auto a=0.0;
   auto b=0.0;
 };
 @(pure macro)
-export auto __complex_norm(const __complex z)=z.a*z.a+z.b*z.b;
+export auto __complex_neg(const complex z)=complex(-z.a,-z.b);
 @(pure macro)
-export auto __complex_inv(const __complex z)=let {
-                                               const auto denom=1.0/__complex_norm(z);
-                                             } in __complex(z.a*denom,-z.b*denom);
+export auto __complex_conj(const complex z)=complex(z.a,-z.b);
 @(pure macro)
-export auto __complex_add(const __complex z,const __complex w)=__complex(z.a+w.a,z.b+w.b);
+export auto __complex_norm(const complex z)=z.a*z.a+z.b*z.b;
 @(pure macro)
-export auto __complex_sub(const __complex z,const __complex w)=__complex(z.a-w.a,z.b-w.b);
+export auto __complex_abs(const complex z)=#sqrt(__complex_norm(z));
 @(pure macro)
-export auto __complex_mul(const __complex z,const __complex w)=__complex(z.a*w.a-z.b*w.b,z.a*w.b+z.b*w.a);
+export auto __complex_inv(const complex z)=let {
+                                             const auto denom=1.0/__complex_norm(z);
+                                           } in complex(z.a*denom,-z.b*denom);
 @(pure macro)
-export auto __complex_div(const __complex z,const __complex w)=__complex_mul(z,__complex_inv(w));
+export auto __complex_add(const complex z,const complex w)=complex(z.a+w.a,z.b+w.b);
 @(pure macro)
-export auto __complex_sqrt(const __complex z)=let {
-                                                const auto z_mag=#sqrt(__complex_norm(z));
-                                              } in __complex(#sqrt(0.5*(z_mag+z.a)),#sqrt(0.5*(z_mag-z.a))*#sign(z.b),);
+export auto __complex_sub(const complex z,const complex w)=complex(z.a-w.a,z.b-w.b);
+@(pure macro)
+export auto __complex_mul(const complex z,const complex w)=complex(z.a*w.a-z.b*w.b,z.a*w.b+z.b*w.a);
+@(pure macro)
+export auto __complex_div(const complex z,const complex w)=__complex_mul(z,__complex_inv(w));
+@(pure macro)
+export auto __complex_exp(const complex z)=let {
+                                             const auto exp_a=#exp(z.a);
+                                           } in complex(exp_a*#cos(z.b),exp_a*#sin(z.b));
+@(pure macro)
+export auto __complex_log(const complex z)=complex(#log(__complex_abs(z)),#atan2(z.b,z.a));
+@(pure macro)
+export auto __complex_sqrt(const complex z)=let {
+                                              const auto abs_z=__complex_abs(z);
+                                            } in complex(#sqrt(0.5*(abs_z+z.a)),#sqrt(0.5*(abs_z-z.a))*#sign(z.b),);
 )*";
 
 static const char *debug = R"*(#smdl
@@ -479,8 +491,7 @@ export auto schlick_fresnel(
 )=F0+(F90-F0)*#pow(#max(1-#abs(cos_theta),0),exponent);
 @(pure)
 export auto dielectric_fresnel(const float cos_thetai,const auto ior){
-  const auto cos2_thetat=1-ior*ior*(1-cos_thetai*cos_thetai);
-  const auto cos_thetat=#sqrt(#max(cos2_thetat,0))*#sign(cos_thetai);
+  const auto cos_thetat=#sqrt(#max(1.0-ior*ior*(1.0-cos_thetai*cos_thetai),0.0))*#sign(cos_thetai);
   const auto ior_cos_thetai=ior*cos_thetai;
   const auto ior_cos_thetat=ior*cos_thetat;
   const auto rs=(ior_cos_thetai-cos_thetat)/(ior_cos_thetai+cos_thetat);
@@ -489,12 +500,12 @@ export auto dielectric_fresnel(const float cos_thetai,const auto ior){
 }
 @(pure)
 export auto conductor_fresnel(const float cos_thetai,const auto ior){
-  const auto cos_thetat=__complex_sqrt(__complex_sub(__complex(1.0),__complex_mul(__complex_mul(ior,ior),__complex(1.0-cos_thetai*cos_thetai))));
-  const auto ior_cos_thetai=__complex_mul(ior,__complex(cos_thetai));
-  const auto ior_cos_thetat=__complex_mul(ior,cos_thetat);
-  const auto rs=__complex_div(__complex_sub(ior_cos_thetai,cos_thetat),__complex_add(ior_cos_thetai,cos_thetat));
-  const auto rp=__complex_div(__complex_sub(__complex(cos_thetai),ior_cos_thetat),__complex_add(__complex(cos_thetai),ior_cos_thetat));
-  return #min(0.5*(__complex_norm(rs)+__complex_norm(rp)),1.0);
+  const auto cos_thetat=#sqrt(1.0-ior*ior*(1.0-cos_thetai*cos_thetai))*#sign(cos_thetai);
+  const auto ior_cos_thetai=ior*cos_thetai;
+  const auto ior_cos_thetat=ior*cos_thetat;
+  const auto rs=(ior_cos_thetai-cos_thetat)/(ior_cos_thetai+cos_thetat);
+  const auto rp=(cos_thetai-ior_cos_thetat)/(cos_thetai+ior_cos_thetat);
+  return #min(0.5*(#norm(rs)+#norm(rp)),1.0);
 }
 }
 @(pure noinline)
@@ -1201,7 +1212,7 @@ export struct fresnel_factor:bsdf{
 auto scatter_evaluate(const &fresnel_factor this,const &scatter_evaluate_parameters params){
   auto result(scatter_evaluate(visit &this.base,params));
   if(!result.is_black&&params.mode==scatter_reflect){
-    return scatter_evaluate_result(f: specular::conductor_fresnel(#abs(dot(params.wo,half_direction(params))),__complex_inv(__complex(this.ior,this.extinction_coefficient)))*result.f,pdf: result.pdf,);
+    return scatter_evaluate_result(f: specular::conductor_fresnel(#abs(dot(params.wo,half_direction(params))),1.0/complex(this.ior,this.extinction_coefficient))*result.f,pdf: result.pdf,);
   }
   return result;
 }
@@ -1209,7 +1220,7 @@ auto scatter_evaluate(const &fresnel_factor this,const &scatter_evaluate_paramet
 auto scatter_sample(const &fresnel_factor this,const &scatter_sample_parameters params){
   auto result(scatter_sample(visit &this.base,params));
   if((result.mode==scatter_reflect)&bool(result.delta_f)){
-    *result.delta_f*=specular::conductor_fresnel(#abs(dot(params.wo,half_direction(params,&result))),__complex_inv(__complex(this.ior,this.extinction_coefficient)));
+    *result.delta_f*=specular::conductor_fresnel(#abs(dot(params.wo,half_direction(params,&result))),1.0/complex(this.ior,this.extinction_coefficient));
   }
   return result;
 }

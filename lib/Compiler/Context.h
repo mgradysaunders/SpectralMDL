@@ -66,10 +66,16 @@ public:
   }
 
   /// Get keyword value. Return `Value()` if undefined.
-  [[nodiscard]] Value get_keyword_value(llvm::StringRef name) {
+  [[nodiscard]] Value get_keyword(llvm::StringRef name) {
     if (auto itr{keywords.find(name)}; itr != keywords.end())
       return itr->second;
     return Value();
+  }
+
+  /// Get keyword value as `Type`.
+  [[nodiscard]] Type *get_keyword_as_type(llvm::StringRef name,
+                                          const SourceLocation &srcLoc = {}) {
+    return get_keyword(name).get_comptime_meta_type(*this, srcLoc);
   }
 
   /// Has keyword value?
@@ -204,6 +210,9 @@ public:
   [[nodiscard]] StructType *get_light_profile_type() {
     return lightProfileType;
   }
+
+  /// Get the `complex` type.
+  [[nodiscard]] StructType *get_complex_type() { return complexType; }
 
   /// Get union type.
   [[nodiscard]] Type *get_union_type(llvm::ArrayRef<Type *> types);
@@ -473,26 +482,29 @@ private:
   /// the same global string constant.
   llvm::StringMap<Value> strings{};
 
-  /// The `material` type defined by the builtin `api` module.
-  Type *materialType{};
+  /// The `material` type defined by the builtin `API` module.
+  StructType *materialType{};
 
-  /// The `texture_2d` type defined by the builtin `api` module.
+  /// The `texture_2d` type defined by the builtin `API` module.
   StructType *texture2DType{};
 
-  /// The `texture_3d` type defined by the builtin `api` module.
+  /// The `texture_3d` type defined by the builtin `API` module.
   StructType *texture3DType{};
 
-  /// The `texture_cube` type defined by the builtin `api` module.
+  /// The `texture_cube` type defined by the builtin `API` module.
   StructType *textureCubeType{};
 
-  /// The `texture_ptex` type defined by the builtin `api` module.
+  /// The `texture_ptex` type defined by the builtin `API` module.
   StructType *texturePtexType{};
 
-  /// The `bsdf_measurement` type defined by the builtin `api` module.
+  /// The `bsdf_measurement` type defined by the builtin `API` module.
   StructType *bsdfMeasurementType{};
 
-  /// The `light_profile` type defined by the builtin `api` module.
+  /// The `light_profile` type defined by the builtin `API` module.
   StructType *lightProfileType{};
+
+  /// The `complex` type defined by the builtin `API` module.
+  StructType *complexType{};
 
   friend class FunctionType;
 };

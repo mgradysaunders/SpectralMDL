@@ -202,8 +202,7 @@ export auto schlick_fresnel(
 
 @(pure)
 export auto dielectric_fresnel(const float cos_thetai, const auto ior) {
-  const auto cos2_thetat = 1 - ior * ior * (1 - cos_thetai * cos_thetai);
-  const auto cos_thetat = #sqrt(#max(cos2_thetat, 0)) * #sign(cos_thetai);
+  const auto cos_thetat = #sqrt(#max(1.0 - ior * ior * (1.0 - cos_thetai * cos_thetai), 0.0)) * #sign(cos_thetai);
   const auto ior_cos_thetai = ior * cos_thetai;
   const auto ior_cos_thetat = ior * cos_thetat;
   const auto rs = (ior_cos_thetai - cos_thetat) / (ior_cos_thetai + cos_thetat);
@@ -213,13 +212,12 @@ export auto dielectric_fresnel(const float cos_thetai, const auto ior) {
 
 @(pure)
 export auto conductor_fresnel(const float cos_thetai, const auto ior) {
-  const auto cos_thetat = __complex_sqrt(__complex_sub(__complex(1.0), __complex_mul(__complex_mul(ior, ior), __complex(1.0 - cos_thetai * cos_thetai))));
-  const auto ior_cos_thetai = __complex_mul(ior, __complex(cos_thetai));
-  const auto ior_cos_thetat = __complex_mul(ior, cos_thetat);
-  const auto rs = __complex_div(__complex_sub(ior_cos_thetai, cos_thetat), __complex_add(ior_cos_thetai, cos_thetat));
-  const auto rp = __complex_div(__complex_sub(__complex(cos_thetai), ior_cos_thetat), //
-                                __complex_add(__complex(cos_thetai), ior_cos_thetat));
-  return #min(0.5 * (__complex_norm(rs) + __complex_norm(rp)), 1.0);
+  const auto cos_thetat = #sqrt(1.0 - ior * ior * (1.0 - cos_thetai * cos_thetai)) * #sign(cos_thetai);
+  const auto ior_cos_thetai = ior * cos_thetai;
+  const auto ior_cos_thetat = ior * cos_thetat;
+  const auto rs = (ior_cos_thetai - cos_thetat) / (ior_cos_thetai + cos_thetat);
+  const auto rp = (cos_thetai - ior_cos_thetat) / (cos_thetai + ior_cos_thetat);
+  return #min(0.5 * (#norm(rs) + #norm(rp)), 1.0);
 }
 
 }
@@ -1253,7 +1251,7 @@ auto scatter_evaluate(const &fresnel_factor this, const &scatter_evaluate_parame
   auto result(scatter_evaluate(visit &this.base, params));
   if (!result.is_black && params.mode == scatter_reflect) {
     return scatter_evaluate_result(
-             f: specular::conductor_fresnel(#abs(dot(params.wo, half_direction(params))), __complex_inv(__complex(this.ior, this.extinction_coefficient))) * result.f,
+             f: specular::conductor_fresnel(#abs(dot(params.wo, half_direction(params))), 1.0 / complex(this.ior, this.extinction_coefficient)) * result.f,
              pdf: result.pdf,
            );
   }
@@ -1264,7 +1262,7 @@ auto scatter_evaluate(const &fresnel_factor this, const &scatter_evaluate_parame
 auto scatter_sample(const &fresnel_factor this, const &scatter_sample_parameters params) {
   auto result(scatter_sample(visit &this.base, params));
   if ((result.mode == scatter_reflect) & bool(result.delta_f)) {
-    *result.delta_f *= specular::conductor_fresnel(#abs(dot(params.wo, half_direction(params, &result))), __complex_inv(__complex(this.ior, this.extinction_coefficient)));
+    *result.delta_f *= specular::conductor_fresnel(#abs(dot(params.wo, half_direction(params, &result))), 1.0 / complex(this.ior, this.extinction_coefficient));
   }
   return result;
 }

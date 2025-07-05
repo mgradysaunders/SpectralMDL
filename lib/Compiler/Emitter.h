@@ -300,7 +300,8 @@ public:
   void handle_scope(llvm::BasicBlock *blockStart, llvm::BasicBlock *blockEnd,
                     Func &&func) {
     auto preserve{Preserve( //
-        crumb, state, labelReturn, labelBreak, labelContinue, inDefer, currentModule)};
+        crumb, state, labelReturn, labelBreak, labelContinue, inDefer,
+        currentModule)};
     auto crumb0{crumb};
     if (blockStart) {
       llvm_move_block_to_end(blockStart);
@@ -341,6 +342,12 @@ public:
   [[nodiscard]] Value invoke(Type *type, const ArgumentList &args,
                              const SourceLocation &srcLoc) {
     return type->invoke(*this, args, srcLoc);
+  }
+
+  /// Wraps `Type::invoke()` after looking up `keyword` in the context.
+  [[nodiscard]] Value invoke(const char *keyword, const ArgumentList &args,
+                             const SourceLocation &srcLoc) {
+    return invoke(context.get_keyword_as_type(keyword, srcLoc), args, srcLoc);
   }
 
   /// Wraps `Type::access_field()`
@@ -402,7 +409,7 @@ public:
   Value emit(AST::Decl &decl);
 
   /// Emit annotation declaration.
-  Value emit(AST::AnnotationDecl &/*decl*/) {
+  Value emit(AST::AnnotationDecl & /*decl*/) {
     // TODO
     return Value();
   }

@@ -40,6 +40,13 @@ bool Type::is_arithmetic_matrix() const {
          static_cast<const ArithmeticType *>(this)->extent.is_matrix();
 }
 
+bool Type::is_complex(Context &context) const {
+  return typeKind == TypeKind::Struct &&
+         (this == context.get_complex_type() ||
+          static_cast<const StructType *>(this)->instanceOf ==
+              context.get_complex_type());
+}
+
 bool Type::is_optional_union() const {
   // NOTE: `Union::canonicalize_types()` always places `void` at the end!
   return is_union() &&
@@ -196,7 +203,7 @@ Value ArithmeticType::invoke(Emitter &emitter, const ArgumentList &args,
       if (value.type == emitter.context.get_color_type() && dim == 3)
         return invoke(emitter,
                       emitter.emit_call(
-                          emitter.context.get_keyword_value("__color_to_rgb"),
+                          emitter.context.get_keyword("__color_to_rgb"),
                           value, srcLoc),
                       srcLoc);
     }
@@ -683,7 +690,7 @@ Value ColorType::invoke(Emitter &emitter, const ArgumentList &args,
                               llvmType, emitter.to_rvalue(value),
                               llvm::Align(alignof(float))));
     if (value.type == context.get_float_type(Extent(3)))
-      return emitter.emit_call(context.get_keyword_value("__rgb_to_color"),
+      return emitter.emit_call(context.get_keyword("__rgb_to_color"),
                                value, srcLoc);
   }
   if (args.size() <= 3 && args.is_only_these_names({"r", "g", "b"})) {
@@ -694,7 +701,7 @@ Value ColorType::invoke(Emitter &emitter, const ArgumentList &args,
     if (emitter.can_resolve_arguments(params, args, srcLoc)) {
       auto resolved{emitter.resolve_arguments(params, args, srcLoc)};
       return emitter.emit_call(
-          context.get_keyword_value("__rgb_to_color"),
+          context.get_keyword("__rgb_to_color"),
           emitter.invoke(context.get_float_type(Extent(3)),
                          llvm::ArrayRef<Value>(resolved.values), srcLoc),
           srcLoc);
@@ -715,7 +722,7 @@ Value ColorType::invoke(Emitter &emitter, const ArgumentList &args,
         srcLoc.throw_error(
             "expected wavelength and amplitude arrays to be same size");
       return emitter.emit_call(
-          context.get_keyword_value("__samples_to_color"),
+          context.get_keyword("__samples_to_color"),
           ArgumentList{context.get_comptime_int(int(arrayType0->size)),
                        resolved.values[0], resolved.values[1]},
           srcLoc);
@@ -1182,7 +1189,7 @@ void FunctionType::initialize_jit_material_functions(Emitter &emitter) {
         [&] {
           auto material{invoke(emitter, {}, decl.srcLoc)};
           auto materialInstance{emitter.emit_call(
-              context.get_keyword_value("__material_instance"),
+              context.get_keyword("__material_instance"),
               emitter.emit_intrinsic("bump_allocate", material, decl.srcLoc),
               decl.srcLoc)};
           materialInstanceType = materialInstance.type;
@@ -1479,8 +1486,8 @@ Value PointerType::invoke(Emitter &emitter, const ArgumentList &args,
         // an address to work with.
         if (!value.is_lvalue()) {
           value = emitter.to_lvalue(value);
-          // NOTE: The way the scopes and lifetimes work right now, this 
-          // does not actually work. The lifetime would implicitly end before 
+          // NOTE: The way the scopes and lifetimes work right now, this
+          // does not actually work. The lifetime would implicitly end before
           // being used in argument conversions and thus leads to undefined
           // behavior, so for now we "leak" these lvalues.
           // emitter.declare_crumb(/*name=*/{}, /*node=*/{}, value);

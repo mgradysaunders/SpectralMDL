@@ -69,17 +69,17 @@ Context::Context(Compiler &compiler) : compiler(compiler) {
   // - `enum intensity_mode`
   //   - `intensity_radiant_exitance`
   //   - `intensity_power`
-  // - `tag bsdf` and `struct default_bsdf`
-  // - `tag vdf` and `struct default_vdf`
-  // - `tag edf` and `struct default_edf`
-  // - `tag hair_bsdf` and `struct default_hair_bsdf`
+  // - `tag bsdf` and `struct __default_bsdf`
+  // - `tag vdf` and `struct  __default_vdf`
+  // - `tag edf` and `struct  __default_edf`
+  // - `tag hair_bsdf` and `struct  __default_hair_bsdf`
   // - `struct material_emission`
   // - `struct material_surface`
   // - `struct material_volume`
   // - `struct material_geometry`
   // - `struct material`
-  // - Function `$wyman_1931_xyz`
-  // - Function `$wyman_1931_y`
+  // - Function `__wyman_xyz`
+  // - Function `__wyman_y`
   // - Function `__color_to_rgb`
   // - Function `__rgb_to_color`
   for (auto crumb{get_builtin_module("API")->lastCrumb}; crumb;
@@ -91,16 +91,18 @@ Context::Context(Compiler &compiler) : compiler(compiler) {
       keywords[simpleName] = crumb->value;
     }
   }
-  texture2DType = static_cast<StructType *>(
-      get_keyword_value("texture_2d").get_comptime_meta_type(*this, {}));
-  texturePtexType = static_cast<StructType *>(
-      get_keyword_value("texture_ptex").get_comptime_meta_type(*this, {}));
-  bsdfMeasurementType = static_cast<StructType *>(
-      get_keyword_value("bsdf_measurement").get_comptime_meta_type(*this, {}));
-  lightProfileType = static_cast<StructType *>(
-      get_keyword_value("light_profile").get_comptime_meta_type(*this, {}));
-  materialType =
-      get_keyword_value("material").get_comptime_meta_type(*this, {});
+  materialType = static_cast<StructType *>(get_keyword_as_type("material"));
+  texture2DType = static_cast<StructType *>(get_keyword_as_type("texture_2d"));
+  texture3DType = static_cast<StructType *>(get_keyword_as_type("texture_3d"));
+  textureCubeType =
+      static_cast<StructType *>(get_keyword_as_type("texture_cube"));
+  texturePtexType =
+      static_cast<StructType *>(get_keyword_as_type("texture_ptex"));
+  bsdfMeasurementType =
+      static_cast<StructType *>(get_keyword_as_type("bsdf_measurement"));
+  lightProfileType =
+      static_cast<StructType *>(get_keyword_as_type("light_profile"));
+  complexType = static_cast<StructType *>(get_keyword_as_type("complex"));
 }
 
 Module *Context::get_builtin_module(llvm::StringRef name) {

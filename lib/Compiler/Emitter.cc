@@ -850,14 +850,17 @@ Value Emitter::emit_op(AST::UnaryOp op, Value value,
         return emit_op_columnwise(value.type, [&](unsigned j) {
           return emit_op(op, access_index(value, j, srcLoc), srcLoc);
         });
+      } else if (value.type->is_complex(context)) {
+        return invoke("__complex_neg", value, srcLoc);
       }
     }
     // Unary not, e.g., `~value`
     if (op == UNOP_NOT) {
       if ((value.type->is_arithmetic_scalar() ||
            value.type->is_arithmetic_vector()) &&
-          value.type->is_arithmetic_integral())
+          value.type->is_arithmetic_integral()) {
         return RValue(value.type, builder.CreateNot(to_rvalue(value)));
+      }
     }
     // Unary logic not, e.g., `!value`
     if (op == UNOP_LOGIC_NOT) {
@@ -1134,6 +1137,25 @@ Value Emitter::emit_op(AST::BinaryOp op, Value lhs, Value rhs,
           builder.CreateCmp(*llvmOp, lhs, rhs));
     }
   }
+  // Complex numbers
+  if (lhs.type->is_complex(context) || rhs.type->is_complex(context)) {
+    // Promote both to `complex`
+    lhs = invoke(context.get_complex_type(), lhs, srcLoc);
+    rhs = invoke(context.get_complex_type(), rhs, srcLoc);
+    const char *funcName{};
+    if (op == BINOP_ADD) {
+      funcName = "__complex_add";
+    } else if (op == BINOP_SUB) {
+      funcName = "__complex_sub";
+    } else if (op == BINOP_MUL) {
+      funcName = "__complex_mul";
+    } else if (op == BINOP_DIV) {
+      funcName = "__complex_div";
+    }
+    if (funcName) {
+      return invoke(funcName, {lhs, rhs}, srcLoc);
+    }
+  }
   // Strings
   if (lhs.type->is_string() && rhs.type->is_string() &&
       (op == BINOP_CMP_EQ || op == BINOP_CMP_NE)) {
@@ -1358,6 +1380,10 @@ Value Emitter::emit_intrinsic(std::string_view name, const ArgumentList &args,
           int(context.get_align_of(expectOneType())));
     }
     if (name == "abs") {
+      // Intercept instances of `complex` and forward appropriately.
+      if (args.size() == 1 && args[0].value.type->is_complex(context)) {
+        return invoke("__complex_abs", args, srcLoc);
+      }
       auto value{to_rvalue(expectOneVectorized())};
       return RValue(
           value.type,
@@ -1431,7 +1457,7 @@ Value Emitter::emit_intrinsic(std::string_view name, const ArgumentList &args,
         srcLoc.throw_error(
             "intrinsic 'albedo_lut' expects 1 compile-time string argument");
       auto lutName{args[0].value.get_comptime_string()};
-      auto lutType{context.get_keyword_value("__albedo_lut")
+      auto lutType{context.get_keyword("__albedo_lut")
                        .get_comptime_meta_type(context, srcLoc)};
       auto lut{context.get_builtin_albedo(lutName)};
       if (!lut)
@@ -2142,7 +2168,36 @@ Value Emitter::emit_intrinsic(std::string_view name, const ArgumentList &args,
   }
   }
   // Unary floating-point math intrinsics
-  if (name.size() <= 5) {
+  if (args.size() == 1 && name.size() <= 5) {
+    // Intercept instances of `complex` and forward appropriately.
+    {
+      auto value{args[0].value};
+      auto valueIsComplex{value.type->is_complex(context)};
+      if (name == "conj") {
+        // NOTE: Conjugate of real number is no-op
+        return valueIsComplex ? invoke("__complex_conj", value, srcLoc)
+                              : to_rvalue(value);
+      } else if (name == "real") {
+        // NOTE: Real part of real number is identity
+        return valueIsComplex ? access_field(value, "a", srcLoc) : value;
+      } else if (name == "imag") {
+        // NOTE: Imag part of real number is zero
+        return valueIsComplex ? access_field(value, "b", srcLoc)
+                              : invoke(value.type, {}, srcLoc);
+      } else if (name == "norm") {
+        // NOTE: Norm of real number is square
+        return valueIsComplex ? invoke("__complex_norm", value, srcLoc)
+                              : emit_op(BINOP_MUL, value, value, srcLoc);
+      } else if (valueIsComplex) {
+        if (name == "exp") {
+          return invoke("__complex_exp", value, srcLoc);
+        } else if (name == "log") {
+          return invoke("__complex_log", value, srcLoc);
+        } else if (name == "sqrt") {
+          return invoke("__complex_sqrt", value, srcLoc);
+        }
+      }
+    }
     static const std::pair<std::string_view, llvm::Intrinsic::ID> intrs[] = {
         {"floor", llvm::Intrinsic::floor}, {"ceil", llvm::Intrinsic::ceil},
         {"trunc", llvm::Intrinsic::trunc}, {"round", llvm::Intrinsic::round},
@@ -2470,7 +2525,7 @@ Value Emitter::resolve_identifier(Span<std::string_view> names,
         return RValue(context.get_void_type(), nullptr);
       }
     }
-    if (auto value{context.get_keyword_value(names[0])}) {
+    if (auto value{context.get_keyword(names[0])}) {
       return value;
     }
   }

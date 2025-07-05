@@ -553,36 +553,68 @@ export struct __albedo_lut {
   const &float average_albedo = none;
 };
 
-
-export struct __complex {
+/// A complex value.
+export struct complex {
+  /// The real coefficient.
   auto a = 0.0;
+
+  /// The imaginary coefficient.
   auto b = 0.0;
 };
 
+/// Complex negative.
 @(pure macro)
-export auto __complex_norm(const __complex z) = z.a * z.a + z.b * z.b;
+export auto __complex_neg(const complex z) = complex(-z.a, -z.b);
 
+/// Complex conjugate.
 @(pure macro)
-export auto __complex_inv(const __complex z) = let {
-                                                 const auto denom = 1.0 / __complex_norm(z);
-                                               } in __complex(z.a * denom, -z.b * denom);
+export auto __complex_conj(const complex z) = complex(z.a, -z.b);
 
+/// Complex norm.
 @(pure macro)
-export auto __complex_add(const __complex z, const __complex w) = __complex(z.a + w.a, z.b + w.b);
+export auto __complex_norm(const complex z) = z.a * z.a + z.b * z.b;
 
+/// Complex absolute value.
 @(pure macro)
-export auto __complex_sub(const __complex z, const __complex w) = __complex(z.a - w.a, z.b - w.b);
+export auto __complex_abs(const complex z) = #sqrt(__complex_norm(z));
 
+/// Complex inverse.
 @(pure macro)
-export auto __complex_mul(const __complex z, const __complex w) = __complex(z.a * w.a - z.b * w.b, z.a * w.b + z.b * w.a);
+export auto __complex_inv(const complex z) = let {
+                                               const auto denom = 1.0 / __complex_norm(z);
+                                             } in complex(z.a * denom, -z.b * denom);
 
+/// Complex addition.
 @(pure macro)
-export auto __complex_div(const __complex z, const __complex w) = __complex_mul(z, __complex_inv(w));
+export auto __complex_add(const complex z, const complex w) = complex(z.a + w.a, z.b + w.b);
 
+/// Complex subtraction.
 @(pure macro)
-export auto __complex_sqrt(const __complex z) = let {
-                                                  const auto z_mag = #sqrt(__complex_norm(z));
-                                                } in __complex(
-                                                  #sqrt(0.5 * (z_mag + z.a)),
-                                                  #sqrt(0.5 * (z_mag - z.a)) * #sign(z.b),
-                                                );
+export auto __complex_sub(const complex z, const complex w) = complex(z.a - w.a, z.b - w.b);
+
+/// Complex multiplication.
+@(pure macro)
+export auto __complex_mul(const complex z, const complex w) = complex(z.a * w.a - z.b * w.b, z.a * w.b + z.b * w.a);
+
+/// Complex division.
+@(pure macro)
+export auto __complex_div(const complex z, const complex w) = __complex_mul(z, __complex_inv(w));
+
+/// Complex exponential.
+@(pure macro)
+export auto __complex_exp(const complex z) = let {
+                                               const auto exp_a = #exp(z.a);
+                                             } in complex(exp_a * #cos(z.b), exp_a * #sin(z.b));
+
+/// Complex logarithm.
+@(pure macro)
+export auto __complex_log(const complex z) = complex(#log(__complex_abs(z)), #atan2(z.b, z.a));
+
+/// Complex square root.
+@(pure macro)
+export auto __complex_sqrt(const complex z) = let {
+                                                const auto abs_z = __complex_abs(z);
+                                              } in complex(
+                                                #sqrt(0.5 * (abs_z + z.a)),
+                                                #sqrt(0.5 * (abs_z - z.a)) * #sign(z.b),
+                                              );
