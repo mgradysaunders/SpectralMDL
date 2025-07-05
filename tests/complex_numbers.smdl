@@ -1,0 +1,10 @@
+#smdl
+
+unit_test "Complex numbers" {
+  auto z = complex(0.884, -0.318);
+  auto sqrt_z = #sqrt(z);
+  #assert(#abs(z) ~== [1e-6] #sqrt(#norm(z)));
+  #assert(#norm(z) ~== [1e-6] #real(z * #conj(z)));
+  #assert(#real(sqrt_z * sqrt_z) ~== [1e-6] #real(z));
+  #assert(#imag(sqrt_z * sqrt_z) ~== [1e-6] #imag(z));
+}
