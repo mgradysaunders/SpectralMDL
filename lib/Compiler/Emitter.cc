@@ -368,6 +368,9 @@ Value Emitter::emit(AST::Variable &decl) {
   if (isInline)
     decl.srcLoc.throw_error("variables must not be declared 'inline'");
   for (auto &declarator : decl.declarators) {
+    if (declarator.is_destructure() && type != context.get_auto_type())
+      declarator.srcLoc.throw_error(
+          "destructure declarator must have 'auto' type");
     auto crumb0{crumb};
     auto args{[&]() -> ArgumentList {
       if (declarator.exprInit) {
@@ -381,17 +384,27 @@ Value Emitter::emit(AST::Variable &decl) {
     unwind(crumb0);
     auto value{invoke(type, args, declarator.srcLoc)};
     if (declarator.is_destructure()) {
-      // TODO
-      declarator.srcLoc.throw_error("destructure not supported yet");
+      SMDL_SANITY_CHECK(declarator.names.size() >= 1);
+      if (auto structType{llvm::dyn_cast<StructType>(value.type)}) {
+        if (structType->params.size() != declarator.names.size())
+          declarator.srcLoc.throw_error(
+              "cannot destructure ", quoted(structType->displayName),
+              ", expected ", structType->params.size(), " names");
+        // TODO
+        SMDL_SANITY_CHECK(false);
+      } else {
+        declarator.srcLoc.throw_error("unsupported destructure");
+      }
     } else {
       // NOTE: This must be a reference for `declare_crumb` below
+      SMDL_SANITY_CHECK(declarator.names.size() == 1);
       const auto &name{declarator.names[0].name};
       if (!value.is_void()) {
         if (isStatic) {
           if (!value.is_comptime())
-            declarator.srcLoc.throw_error("static variable ",
-                                          quoted(name.srcName),
-                                          " requires compile-time initializer");
+            declarator.srcLoc.throw_error(
+                "variable ", quoted(name.srcName),
+                " declared 'static' requires compile-time initializer");
           auto llvmGlobal{new llvm::GlobalVariable(
               context.llvmModule, value.type->llvmType, /*isConstant=*/true,
               llvm::GlobalValue::PrivateLinkage,
@@ -409,8 +422,9 @@ Value Emitter::emit(AST::Variable &decl) {
         }
       }
       declare_crumb(name, &declarator, value);
-      if (get_llvm_function())
+      if (get_llvm_function()) {
         crumbsToWarnAbout.push_back(crumb);
+      }
     }
   }
   return Value();
