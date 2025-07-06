@@ -1527,14 +1527,35 @@ auto Parser::parse_variable_declaration() -> BumpPtr<AST::Variable> {
 auto Parser::parse_variable_declarator()
     -> std::optional<AST::Variable::Declarator> {
   auto srcLoc0{checkpoint()};
-  auto name{parse_simple_name()};
-  if (!name) {
+  auto declarator{AST::Variable::Declarator{}};
+  declarator.srcLoc = srcLoc0;
+  if (auto name{parse_simple_name()}) {
+    declarator.names.push_back(
+        AST::Variable::Declarator::DeclaratorName{*name});
+  } else if (auto srcBraceL{next_delimiter("{")}; srcBraceL && isSmdl) {
+    // Parse destructure syntax `{foo, bar, baz}`
+    declarator.srcBraceL = *srcBraceL;
+    while (true) {
+      auto name{parse_simple_name()};
+      if (!name)
+        break;
+      declarator.names.push_back(
+          AST::Variable::Declarator::DeclaratorName{*name});
+      auto srcComma{next_delimiter(",")};
+      if (!srcComma)
+        break;
+      declarator.names.back().srcComma = *srcComma;
+    }
+    auto srcBraceR{next_delimiter("}")};
+    if (!srcBraceR) {
+      reject();
+      return std::nullopt;
+    }
+    declarator.srcBraceR = *srcBraceR;
+  } else {
     reject();
     return std::nullopt;
   }
-  auto declarator{AST::Variable::Declarator{}};
-  declarator.srcLoc = srcLoc0;
-  declarator.name = *name;
   if (auto srcEqual{next_delimiter("=")}) {
     auto exprInit{parse_assignment_expression()};
     if (!exprInit)

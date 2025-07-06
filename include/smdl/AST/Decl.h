@@ -746,11 +746,32 @@ class SMDL_EXPORT Variable final : public DeclSubclass<DeclKind::Variable> {
 public:
   class Declarator final : public NodeSubclass<NodeKind::VariableDeclarator> {
   public:
+    /// Is destructure declarator? E.g., `{foo, bar, baz}`
+    [[nodiscard]] bool is_destructure() const noexcept {
+      return !srcBraceL.empty() && !srcBraceR.empty();
+    }
+
+  public:
     /// The variable declaration that contains this declarator.
     Variable *const decl{};
 
-    /// The name.
-    Name name{};
+    class DeclaratorName final {
+    public:
+      /// The name.
+      Name name{};
+
+      /// The next comma `,`. This may be empty!
+      std::string_view srcComma{};
+    };
+
+    /// The destructure brace `{`. This may be empty!
+    std::string_view srcBraceL{};
+
+    /// The name(s).
+    std::vector<DeclaratorName> names{};
+
+    /// The destructure brace `}`. This may be empty!
+    std::string_view srcBraceR{};
 
     /// The equal `=`. This may be empty!
     std::string_view srcEqual{};

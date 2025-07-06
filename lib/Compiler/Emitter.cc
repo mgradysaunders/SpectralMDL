@@ -379,32 +379,39 @@ Value Emitter::emit(AST::Variable &decl) {
       }
     }()};
     unwind(crumb0);
-    auto value{invoke(type, args, declarator.name.srcLoc)};
-    if (!value.is_void()) {
-      if (isStatic) {
-        if (!value.is_comptime())
-          declarator.name.srcLoc.throw_error(
-              "static variable ", quoted(declarator.name.srcName),
-              " requires compile-time initializer");
-        auto llvmGlobal{new llvm::GlobalVariable(
-            context.llvmModule, value.type->llvmType, /*isConstant=*/true,
-            llvm::GlobalValue::PrivateLinkage,
-            static_cast<llvm::Constant *>(value.llvmValue))};
-        llvmGlobal->setUnnamedAddr(llvm::GlobalValue::UnnamedAddr::Global);
-        llvmGlobal->setName(declarator.name.srcName);
-        value = LValue(value.type, llvmGlobal);
-      } else if (isConst) {
-        value.llvmValue->setName(declarator.name.srcName);
-      } else {
-        auto valueAlloca{create_alloca(value.type, declarator.name.srcName)};
-        create_lifetime_start(valueAlloca);
-        builder.CreateStore(value, valueAlloca);
-        value = LValue(value.type, valueAlloca);
+    auto value{invoke(type, args, declarator.srcLoc)};
+    if (declarator.is_destructure()) {
+      // TODO
+      declarator.srcLoc.throw_error("destructure not supported yet");
+    } else {
+      // NOTE: This must be a reference for `declare_crumb` below
+      const auto &name{declarator.names[0].name};
+      if (!value.is_void()) {
+        if (isStatic) {
+          if (!value.is_comptime())
+            declarator.srcLoc.throw_error("static variable ",
+                                          quoted(name.srcName),
+                                          " requires compile-time initializer");
+          auto llvmGlobal{new llvm::GlobalVariable(
+              context.llvmModule, value.type->llvmType, /*isConstant=*/true,
+              llvm::GlobalValue::PrivateLinkage,
+              static_cast<llvm::Constant *>(value.llvmValue))};
+          llvmGlobal->setUnnamedAddr(llvm::GlobalValue::UnnamedAddr::Global);
+          llvmGlobal->setName(name.srcName);
+          value = LValue(value.type, llvmGlobal);
+        } else if (isConst) {
+          value.llvmValue->setName(name.srcName);
+        } else {
+          auto valueAlloca{create_alloca(value.type, name.srcName)};
+          create_lifetime_start(valueAlloca);
+          builder.CreateStore(value, valueAlloca);
+          value = LValue(value.type, valueAlloca);
+        }
       }
+      declare_crumb(name, &declarator, value);
+      if (get_llvm_function())
+        crumbsToWarnAbout.push_back(crumb);
     }
-    declare_crumb(declarator.name, &declarator, value);
-    if (get_llvm_function())
-      crumbsToWarnAbout.push_back(crumb);
   }
   return Value();
 }

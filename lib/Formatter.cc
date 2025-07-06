@@ -290,7 +290,15 @@ void Formatter::write(const AST::Variable &decl) {
   for (const auto &each : decl.declarators) {
     if (!options.noAnnotations && each.annotations && moreThanOne)
       write(DELIM_NEWLINE);
-    write(each.name);
+    if (!each.srcBraceL.empty())
+      write(DELIM_UNNECESSARY_SPACE);
+    write(each.srcBraceL);
+    for (const auto &[name, srcComma] : each.names) {
+      write(name, srcComma);
+      if (!srcComma.empty())
+        write(DELIM_UNNECESSARY_SPACE);
+    }
+    write(each.srcBraceR);
     if (each.exprInit) {
       write(DELIM_UNNECESSARY_SPACE, each.srcEqual, DELIM_UNNECESSARY_SPACE,
             PUSH_INDENT);
