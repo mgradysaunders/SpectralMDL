@@ -384,14 +384,26 @@ Value Emitter::emit(AST::Variable &decl) {
     unwind(crumb0);
     auto value{invoke(type, args, declarator.srcLoc)};
     if (declarator.is_destructure()) {
+      if (isStatic)
+        declarator.srcLoc.throw_error(
+            "cannot destructure 'static' variables (yet)");
       SMDL_SANITY_CHECK(declarator.names.size() >= 1);
       if (auto structType{llvm::dyn_cast<StructType>(value.type)}) {
         if (structType->params.size() != declarator.names.size())
           declarator.srcLoc.throw_error(
               "cannot destructure ", quoted(structType->displayName),
               ", expected ", structType->params.size(), " names");
-        // TODO
-        SMDL_SANITY_CHECK(false);
+        if (!isConst) {
+          auto valueAlloca{create_alloca(value.type)};
+          create_lifetime_start(valueAlloca);
+          builder.CreateStore(value, valueAlloca);
+          value = LValue(value.type, valueAlloca);
+        }
+        for (size_t i = 0; i < structType->params.size(); i++) {
+          declare_crumb(declarator.names[i].name, &declarator,
+                        access_field(value, structType->params[i].name,
+                                     declarator.srcLoc));
+        }
       } else {
         declarator.srcLoc.throw_error("unsupported destructure");
       }

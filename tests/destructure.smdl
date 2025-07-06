@@ -1,0 +1,13 @@
+#smdl
+
+struct Foo {
+  int bar = 2;
+  int baz = 3;
+};
+
+unit_test "Destructure" {
+  const auto foo = Foo(bar: 7, baz: 5);
+  const auto {bar, baz} = foo;
+  #assert(bar == 7);
+  #assert(baz == 5);
+}
