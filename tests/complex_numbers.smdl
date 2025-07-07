@@ -2,13 +2,24 @@
 
 unit_test "Complex numbers" {
   auto z = complex(0.884, -0.318);
-  auto sqrt_z = #sqrt(z);
+  #assert(#real(z) ~== [1e-6] 0.884);
+  #assert(#imag(z) ~== [1e-6] -0.318);
+  #assert(#norm(z) ~== [1e-6] #real(#conj(z) * z));
   #assert(#abs(z) ~== [1e-6] #sqrt(#norm(z)));
-  #assert(#norm(z) ~== [1e-6] #real(z * #conj(z)));
+
+  const auto sqrt_z = #sqrt(z);
   #assert(#real(sqrt_z * sqrt_z) ~== [1e-6] #real(z));
   #assert(#imag(sqrt_z * sqrt_z) ~== [1e-6] #imag(z));
 
-  // Intrinsics also behave as expected on real numbers
+  const auto log_z = #log(z);
+  #assert(#real(#exp(log_z)) ~== [1e-6] #real(z));
+  #assert(#imag(#exp(log_z)) ~== [1e-6] #imag(z));
+
+  // Literal imaginary
+  #assert(#real(#exp(0.558j)) ~== [1e-6] #cos(0.558));
+  #assert(#imag(#exp(0.558j)) ~== [1e-6] #sin(0.558));
+
+  // Intrinsics behave as expected on real numbers
   #assert(#real(2.4) == 2.4);
   #assert(#imag(2.4) == 0.0);
   #assert(#conj(2.4) == 2.4);

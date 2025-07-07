@@ -10,4 +10,9 @@ unit_test "Destructure" {
   const auto {bar, baz} = foo;
   #assert(bar == 7);
   #assert(baz == 5);
+  auto {bar2, baz2} = foo; // No const
+  bar2 = 8;
+  baz2 = 11;
+  #assert(bar2 == 8);
+  #assert(baz2 == 11);
 }
