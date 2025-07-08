@@ -7,8 +7,6 @@
 #include "llvm/Support/Parallel.h"
 #include <atomic>
 
-#include "filesystem.h"
-
 #if SMDL_HAS_PTEX
 #include "Ptexture.h"
 #endif // #if SMDL_HAS_PTEX
@@ -2657,61 +2655,72 @@ Emitter::resolve_arguments(const ParameterList &params,
 
 Module *Emitter::resolve_module(Span<std::string_view> importPath, bool isAbs,
                                 Module *thisModule) {
-  // First resolve using aliases in the import path. That is, make
-  // sense of declarations like this:
-  // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-  // using menu = "coffee shop"::drinks;
-  // import menu::latte::*;
-  // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-  // In this case the import path is `menu::latte` and `menu` is an alias for
-  // `"coffee shop"::drinks` so that the final import path is actually
-  // `"coffee shop"::drinks::latte`.
-  auto finalImportPath{llvm::SmallVector<std::string_view>{}};
-  resolve_import_using_aliases(crumb, importPath, finalImportPath);
-  SMDL_SANITY_CHECK(!finalImportPath.empty());
+  llvm::SmallVector<std::string_view> resolvedImportPath{};
+  resolve_import_using_aliases(crumb, importPath, resolvedImportPath);
+  SMDL_SANITY_CHECK(!resolvedImportPath.empty());
 
-  // If the import path is absolute and is a single name, we prioritize
-  // builtins.
-  if (isAbs && finalImportPath.size() == 1) {
-    if (auto mod{context.get_builtin_module(finalImportPath[0])}) {
-      return mod;
+  auto findModuleInDirectory{[&](std::string dirPath) -> Module * {
+    for (auto resolvedImportDirPath :
+         Span<std::string_view>(resolvedImportPath.data(), //
+                                resolvedImportPath.size() - 1)) {
+      dirPath = join_paths(dirPath, resolvedImportDirPath);
     }
-  }
-
-  if (!thisModule->is_builtin()) {
-    // Add the elements of the import path to the directory path of the
-    // current module and lexically normalize. If the current module
-    // file is '/path/to/package/current.mdl', and we are resolving
-    // this import:
-    // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-    // import .::..::menu::latte::*;
-    // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-    // the filesystem directory path we end up with is
-    // '/path/to/package/./../coffee shop/drinks', which lexically normalizes to
-    // '/path/to/coffee shop/drinks'.
-    auto thisDir{fs_make_path(thisModule->get_file_name()).parent_path()};
-    for (size_t i = 0; i + 1 < finalImportPath.size(); i++) // Next-to-last
-      thisDir /= fs_make_path(finalImportPath[i]);
-    thisDir = thisDir.lexically_normal();
-    // Now look for the module with the expected name that lives in
-    // the expected directory.
     for (auto &otherModule : context.compiler.modules) {
       if (otherModule.get() != thisModule && !otherModule->is_builtin() &&
-          otherModule->get_name() == finalImportPath.back()) {
-        auto otherDir{fs_make_path(otherModule->get_file_name()).parent_path()};
-        auto ec{fs_error_code()};
-        if (fs::equivalent(thisDir, otherDir, ec)) {
-          if (auto error{otherModule->compile(context)})
-            throw std::move(*error);
-          return otherModule.get();
+          otherModule->get_name() == resolvedImportPath.back() &&
+          is_path_equivalent(dirPath, otherModule->get_directory())) {
+        if (auto error{otherModule->compile(context)}) {
+          throw std::move(*error);
         }
+        return otherModule.get();
       }
     }
-  }
+    return nullptr;
+  }};
+  auto searchRelativeToCurrentModule{[&]() -> Module * {
+    if (!thisModule->is_builtin())
+      if (auto module_{findModuleInDirectory(thisModule->get_directory())})
+        return module_;
+    return nullptr;
+  }};
+  auto searchCompilerDirPaths{[&]() -> Module * {
+    if (!thisModule->is_builtin())
+      for (const auto &dirPath : context.compiler.moduleDirSearchPaths)
+        if (auto module_{findModuleInDirectory(dirPath)})
+          return module_;
+    return nullptr;
+  }};
+  auto searchCompilerBuiltins{[&]() -> Module * {
+    if (resolvedImportPath.size() == 1)
+      if (auto module_{context.get_builtin_module(resolvedImportPath[0])})
+        return module_;
+    return nullptr;
+  }};
 
-  if (finalImportPath.size() == 1) {
-    if (auto mod{context.get_builtin_module(finalImportPath[0])}) {
-      return mod;
+  if (isAbs) {
+    // If the import path is absolute, meaning it starts with `::`,
+    // prioritize compiler builtins first and compiler dir paths
+    // second. This guarantees that `::df` always gets the builtin
+    // df module for example.
+    if (auto module_{searchCompilerBuiltins()})
+      return module_;
+    if (auto module_{searchCompilerDirPaths()})
+      return module_;
+  } else {
+    // If the import path is relative, meaning it does NOT starts with `::`,
+    // prioritize modules relative to the current module first.
+    if (auto module_{searchRelativeToCurrentModule()})
+      return module_;
+    // If the import path is not explicitly relative, meaning it does
+    // not start with `.` or `..`, also search the compiler dir paths
+    // first and then lastly default to compiler builtins.
+    if (bool isExplicitlyRelative{importPath[0] == "." ||
+                                  importPath[0] == ".."};
+        !isExplicitlyRelative) {
+      if (auto module_{searchCompilerDirPaths()})
+        return module_;
+      if (auto module_{searchCompilerBuiltins()})
+        return module_;
     }
   }
   return nullptr;
@@ -2719,7 +2728,7 @@ Module *Emitter::resolve_module(Span<std::string_view> importPath, bool isAbs,
 
 void Emitter::resolve_import_using_aliases(
     Crumb *crumbStart, Span<std::string_view> importPath,
-    llvm::SmallVector<std::string_view> &finalImportPath) {
+    llvm::SmallVector<std::string_view> &resolvedImportPath) {
   for (auto &importPathElem : importPath) {
     auto crumbItr{crumbStart};
     for (; crumbItr; crumbItr = crumbItr->prev) {
@@ -2731,9 +2740,9 @@ void Emitter::resolve_import_using_aliases(
     if (crumbItr) {
       resolve_import_using_aliases(
           crumbItr, static_cast<AST::UsingAlias *>(crumbItr->node)->importPath,
-          finalImportPath);
+          resolvedImportPath);
     } else {
-      finalImportPath.push_back(importPathElem);
+      resolvedImportPath.push_back(importPathElem);
     }
   }
 }

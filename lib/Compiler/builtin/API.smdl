@@ -230,57 +230,6 @@ void jit_color_to_rgb(const &float cptr, const &float3 rgb) {
   *rgb = __color_to_rgb(color(cptr));
 }
 
-/// A straight-forward hash function for use with procedural algorithms.
-@(pure)
-export i32 __hash(auto value) {
-  if $(#is_arithmetic_scalar(value)) {
-    if $(#is_arithmetic_integral(value)) {
-      if $(#sizeof(value) <= 4) {
-        // MurmurHash3 finalizer for 32-bits
-        auto h(i32(value) + 3266445271);
-        h ^= h >>> 16, h *= 0x85EBCA6B;
-        h ^= h >>> 13, h *= 0xC2B2AE35;
-        h ^= h >>> 16;
-        return h;
-      } else {
-        // MurmurHash3 finalizer for 64-bits
-        auto h(i64(value) + 13898551614298330943);
-        h ^= h >>> 33, h *= 0xFF51AFD7ED558CCD;
-        h ^= h >>> 33, h *= 0xC4CEB9FE1A85EC53;
-        h ^= h >>> 33;
-        return h;
-      }
-    } else {
-      // Interpret bit pattern as equivalent-sized integer type
-      auto h(#type_int(8 * #sizeof(value))());
-      #memcpy(&h, &value, #sizeof(value));
-      return __hash(h);
-    }
-  } else if $(#is_array(value) | #is_arithmetic_vector(value) | #is_arithmetic_matrix(value) | (#typeof(value) == color)) {
-    auto hTotal(__hash(value[0]));
-    for (int i = 1; i < #num(value); ++i) {
-      auto h(__hash(value[i]));
-      h = 0x55555555 * (h ^ (h >>> 16));
-      h = 3423571495 * (h ^ (h >>> 16));
-      hTotal = #rotl(hTotal, 10) ^ h;
-    }
-    return hTotal;
-  } else if $(#is_pointer(value)) {
-    // Interpret bit pattern as equivalent-sized integer type
-    auto h(#type_int(8 * #sizeof(value))());
-    #memcpy(&h, &value, #sizeof(value));
-    return __hash(h);
-  } else if $(#is_union(value)) {
-    visit v in value {
-      return __hash(v);
-    }
-  } else {
-    // TODO More?
-    #panic("Unimplemented hash");
-    return 0;
-  }
-}
-
 /// The intensity mode enum.
 export enum intensity_mode {
   intensity_radiant_exitance, ///< Power (watts) per unit area (meters squared).
@@ -618,3 +567,54 @@ export auto __complex_sqrt(const complex z) = let {
                                                 #sqrt(0.5 * (abs_z + z.a)),
                                                 #sqrt(0.5 * (abs_z - z.a)) * #sign(z.b),
                                               );
+
+/// A straight-forward hash function for use with procedural algorithms.
+@(pure)
+export i32 __hash(auto value) {
+  if $(#is_arithmetic_scalar(value)) {
+    if $(#is_arithmetic_integral(value)) {
+      if $(#sizeof(value) <= 4) {
+        // MurmurHash3 finalizer for 32-bits
+        auto h(i32(value) + 3266445271);
+        h ^= h >>> 16, h *= 0x85EBCA6B;
+        h ^= h >>> 13, h *= 0xC2B2AE35;
+        h ^= h >>> 16;
+        return h;
+      } else {
+        // MurmurHash3 finalizer for 64-bits
+        auto h(i64(value) + 13898551614298330943);
+        h ^= h >>> 33, h *= 0xFF51AFD7ED558CCD;
+        h ^= h >>> 33, h *= 0xC4CEB9FE1A85EC53;
+        h ^= h >>> 33;
+        return h;
+      }
+    } else {
+      // Interpret bit pattern as equivalent-sized integer type
+      auto h(#type_int(8 * #sizeof(value))());
+      #memcpy(&h, &value, #sizeof(value));
+      return __hash(h);
+    }
+  } else if $(#is_array(value) | #is_arithmetic_vector(value) | #is_arithmetic_matrix(value) | (#typeof(value) == color)) {
+    auto hTotal(__hash(value[0]));
+    for (int i = 1; i < #num(value); ++i) {
+      auto h(__hash(value[i]));
+      h = 0x55555555 * (h ^ (h >>> 16));
+      h = 3423571495 * (h ^ (h >>> 16));
+      hTotal = #rotl(hTotal, 10) ^ h;
+    }
+    return hTotal;
+  } else if $(#is_pointer(value)) {
+    // Interpret bit pattern as equivalent-sized integer type
+    auto h(#type_int(8 * #sizeof(value))());
+    #memcpy(&h, &value, #sizeof(value));
+    return __hash(h);
+  } else if $(#is_union(value)) {
+    visit v in value {
+      return __hash(v);
+    }
+  } else {
+    // TODO More?
+    #panic("Unimplemented hash");
+    return 0;
+  }
+}

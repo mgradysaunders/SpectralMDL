@@ -331,8 +331,8 @@ std::optional<Error> Image::start_load(const std::string &fileName) noexcept {
   })};
   if (error) {
     clear();
-    error->message = concat("cannot load ", quoted(relative(fileName)), ": ",
-                            error->message);
+    error->message =
+        concat("cannot load ", quoted_path(fileName), ": ", error->message);
   }
   return error;
 }

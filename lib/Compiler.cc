@@ -41,23 +41,22 @@ Compiler::~Compiler() {
 std::optional<Error> Compiler::add(std::string fileOrDirName) {
   auto addFile{[&](std::string fileName) {
     if (llvm::StringRef(fileName).ends_with_insensitive(".mdr")) {
-      SMDL_LOG_DEBUG("Adding MDL archive ", quoted(relative(fileName)));
+      SMDL_LOG_DEBUG("Adding MDL archive ", quoted_path(fileName));
       auto archive{Archive{fileName}};
       for (int i = 0; i < archive.get_file_count(); i++) {
-        if (auto entryFileName{archive.get_file_name(i)};
-            llvm::StringRef(entryFileName).ends_with_insensitive(".mdl")) {
-          auto completeEntryFileName{fileName + "/" + entryFileName};
-          if (moduleFileNames.insert(completeEntryFileName).second) {
+        if (auto entryPath{join_paths(fileName, archive.get_file_name(i))};
+            has_extension(entryPath, ".mdl")) {
+          if (moduleFileNames.insert(entryPath).second) {
             SMDL_LOG_DEBUG("Adding MDL file from archive ",
-                           quoted(relative(fileName) + "/" + entryFileName));
+                           quoted_path(entryPath));
             modules.emplace_back(Module::load_from_file_extracted_from_archive(
-                completeEntryFileName, archive.extract_file(i)));
+                entryPath, archive.extract_file(i)));
           }
         }
       }
     } else {
       if (moduleFileNames.insert(fileName).second) {
-        SMDL_LOG_DEBUG("Adding MDL file ", quoted(relative(fileName)));
+        SMDL_LOG_DEBUG("Adding MDL file ", quoted_path(fileName));
         modules.emplace_back(Module::load_from_file(fileName));
       }
     }
@@ -69,19 +68,18 @@ std::optional<Error> Compiler::add(std::string fileOrDirName) {
       addFile(path);
       return std::nullopt;
     } else if (is_directory(path) && moduleDirNames.insert(path).second) {
-      SMDL_LOG_DEBUG("Adding MDL directory ", quoted(relative(path)));
+      SMDL_LOG_DEBUG("Adding MDL directory ", quoted_path(path));
+      moduleDirSearchPaths.emplace_back(path);
       for (const auto &entry : fs::directory_iterator(path)) {
         if (auto entryPath{canonical(entry.path().string())};
-            is_file(entryPath) &&
-            llvm::StringRef(entryPath).ends_with_insensitive(".mdr")) {
+            is_file(entryPath) && has_extension(entryPath, ".mdr")) {
           addFile(entryPath);
         }
       }
       for (const auto &entry : fs::recursive_directory_iterator(path)) {
         if (auto entryPath{canonical(entry.path().string())};
-            is_file(entryPath) &&
-            (llvm::StringRef(entryPath).ends_with_insensitive(".mdl") ||
-             llvm::StringRef(entryPath).ends_with_insensitive(".smdl"))) {
+            is_file(entryPath) && (has_extension(entryPath, ".mdl") ||
+                                   has_extension(entryPath, ".smdl"))) {
           addFile(entryPath);
         }
       }
@@ -142,7 +140,7 @@ std::optional<Error> Compiler::compile(OptLevel optLevel) {
     llvm::parallelFor(0, images.size(), [&](size_t i) {
       auto &[fileHash, image] = *std::next(images.begin(), i);
       SMDL_LOG_DEBUG("Loading image ",
-                     quoted(relative(fileHash->canonicalFileNames[0])), " ...");
+                     quoted_path(fileHash->canonicalFileNames[0]), " ...");
       image.finish_load();
     });
     auto duration{std::chrono::duration_cast<std::chrono::microseconds>(
@@ -206,8 +204,8 @@ const Ptexture &Compiler::load_ptexture(const std::string &fileName,
     auto texture{PtexTexture::open(fileName.c_str(), message,
                                    /*premultiply=*/false)};
     if (!texture) {
-      srcLoc.log_warn(concat("cannot load ", quoted(relative(fileName)), ": ",
-                             message.c_str()));
+      srcLoc.log_warn(
+          concat("cannot load ", quoted_path(fileName), ": ", message.c_str()));
     } else {
       ptexture.texture = texture;
       ptexture.textureFilter = PtexFilter::getFilter(
@@ -216,8 +214,8 @@ const Ptexture &Compiler::load_ptexture(const std::string &fileName,
       ptexture.alphaIndex = texture->alphaChannel();
     }
 #else
-    srcLoc.log_warn(concat("cannot load ", quoted(relative(fileName)),
-                           ": built without ptex!"));
+    srcLoc.log_warn(
+        concat("cannot load ", quoted_path(fileName), ": built without ptex!"));
 #endif // #if SMDL_HAS_PTEX
   }
   return ptexture;
@@ -367,7 +365,7 @@ std::optional<Error> Compiler::jit_unit_tests(const State &state) noexcept {
         ++itr1;
       }
       std::cerr << concat("Running tests in ",
-                          quoted(relative(itr0->moduleFileName)), ":\n");
+                          quoted_path(itr0->moduleFileName), ":\n");
       for (; itr0 != itr1; ++itr0) {
         std::cerr << concat("  ", quoted(itr0->testName), " (line ",
                             itr0->lineNo, ") ... ");
@@ -402,7 +400,7 @@ std::string Compiler::summarize_materials() const {
       ++itr1;
       ++numMaterials;
     }
-    message += concat(quoted(relative(itr0->moduleFileName)), " contains ",
+    message += concat(quoted_path(itr0->moduleFileName), " contains ",
                       numMaterials, " materials:\n");
     for (; itr0 != itr1; ++itr0) {
       message += "  ";

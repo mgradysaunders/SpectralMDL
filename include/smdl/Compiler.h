@@ -233,6 +233,15 @@ private:
   /// The MDL module directory names.
   std::set<std::string> moduleDirNames{};
 
+  /// The MDL module directory search paths. 
+  ///
+  /// \note
+  /// This is maintained separately from `moduleDirNames` but should
+  /// contain all of the same paths. This is necessary to preserve the
+  /// order in which the paths were added.
+  ///
+  std::vector<std::string> moduleDirSearchPaths{};
+
   /// The MDL modules.
   std::vector<std::unique_ptr<Module>> modules{};
 

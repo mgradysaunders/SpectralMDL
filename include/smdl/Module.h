@@ -82,6 +82,11 @@ public:
     return fileName;
   }
 
+  /// Get the directory. This is empty if the module is builtin.
+  [[nodiscard]] std::string get_directory() const {
+    return parent_path(fileName);
+  }
+
   /// Get the name.
   [[nodiscard]] std::string_view get_name() const noexcept { return name; }
 
@@ -89,7 +94,6 @@ public:
   [[nodiscard]] std::string_view get_source_code() const noexcept {
     return sourceCode;
   }
-
 
   /// Parse the source code.
   [[nodiscard]] std::optional<Error>

@@ -25,6 +25,14 @@
 
 namespace smdl {
 
+BuildInfo BuildInfo::get() noexcept {
+  return {SMDL_VERSION_MAJOR, //
+          SMDL_VERSION_MINOR, //
+          SMDL_VERSION_PATCH, //
+          SMDL_GIT_BRANCH,    //
+          SMDL_GIT_COMMIT};
+}
+
 static const NativeTarget nativeTarget{[]() {
   llvm::InitializeNativeTarget();
   llvm::InitializeNativeTargetAsmPrinter();
@@ -42,12 +50,102 @@ static const NativeTarget nativeTarget{[]() {
 
 const NativeTarget &NativeTarget::get() noexcept { return nativeTarget; }
 
-BuildInfo BuildInfo::get() noexcept {
-  return {SMDL_VERSION_MAJOR, //
-          SMDL_VERSION_MINOR, //
-          SMDL_VERSION_PATCH, //
-          SMDL_GIT_BRANCH,    //
-          SMDL_GIT_COMMIT};
+bool has_extension(std::string_view path, std::string_view extension) noexcept {
+  return llvm::StringRef(path).ends_with_insensitive(extension);
+}
+
+bool exists(const std::string &path) noexcept try {
+  return fs::exists(path);
+} catch (...) {
+  return false;
+}
+
+bool is_file(const std::string &path) noexcept try {
+  return fs::is_regular_file(path);
+} catch (...) {
+  return false;
+}
+
+bool is_directory(const std::string &path) noexcept try {
+  return fs::is_directory(path);
+} catch (...) {
+  return false;
+}
+
+bool is_path_equivalent(const std::string &path0,
+                        const std::string &path1) noexcept try {
+  return canonical(path0) == canonical(path1);
+} catch (...) {
+  return false;
+}
+
+bool is_parent_path_of(const std::string &path0,
+                       const std::string &path1) noexcept try {
+  return fs::relative(canonical(path1), canonical(path0)) != fs::path();
+} catch (...) {
+  return false;
+}
+
+std::string join_paths(std::string_view path0, std::string_view path1) {
+  if (path1.empty())
+    return std::string(path0);
+  if (path0.empty())
+    return std::string(path1);
+  return (fs_make_path(path0) / fs_make_path(path1)).string();
+}
+
+std::string canonical(std::string path) noexcept try {
+  if (starts_with(path, "~")) {
+    llvm::SmallString<128> pathTmp{};
+    llvm::sys::fs::expand_tilde(path, pathTmp);
+    path = pathTmp.str();
+  }
+  return fs::weakly_canonical(path).string();
+} catch (...) {
+  return path;
+}
+
+std::string relative(std::string path) noexcept try {
+  return fs::relative(path).string();
+} catch (...) {
+  return path;
+}
+
+std::string parent_path(std::string path) noexcept try {
+  return fs::path(path).parent_path().string();
+} catch (...) {
+  return path;
+}
+
+std::fstream open_or_throw(const std::string &path, std::ios::openmode mode) {
+  auto stream{std::fstream(path, mode)};
+  if (!stream.is_open())
+    throw Error(
+        concat("cannot open ", quoted(path), ": ", std::strerror(errno)));
+  return stream;
+}
+
+std::string read_or_throw(const std::string &path) {
+  auto stream{open_or_throw(path, std::ios::in | std::ios::binary)};
+  return std::string((std::istreambuf_iterator<char>(stream)),
+                     std::istreambuf_iterator<char>());
+}
+
+void quoted::append_to(std::string &result) {
+  result += '\'';
+  result += str;
+  result += '\'';
+}
+
+void quoted_path::append_to(std::string &result) {
+  result += '\'';
+  auto relPath{relative(std::string(str))};
+  if (!relPath.empty() && relPath.size() < str.size()) {
+    result += relPath;
+  } else {
+    result += str;
+  }
+  result += '\'';
 }
 
 BumpPtrAllocator::BumpPtrAllocator() { ptr = new llvm::BumpPtrAllocator(); }
@@ -256,63 +354,6 @@ SemanticVersion::operator std::string() const {
     str += buildMetadata;
   }
   return str;
-}
-
-bool exists(const std::string &path) noexcept try {
-  return fs::exists(path);
-} catch (...) {
-  return false;
-}
-
-bool is_file(const std::string &path) noexcept try {
-  return fs::is_regular_file(path);
-} catch (...) {
-  return false;
-}
-
-bool is_directory(const std::string &path) noexcept try {
-  return fs::is_directory(path);
-} catch (...) {
-  return false;
-}
-
-std::string canonical(std::string path) noexcept try {
-  if (starts_with(path, "~")) {
-    llvm::SmallString<128> pathTmp{};
-    llvm::sys::fs::expand_tilde(path, pathTmp);
-    path = pathTmp.str();
-  }
-  return fs::weakly_canonical(path).string();
-} catch (...) {
-  return path;
-}
-
-std::string relative(std::string path) noexcept try {
-  if (auto relPath{fs::relative(path).string()}; relPath.size() < path.size())
-    return relPath;
-  return path;
-} catch (...) {
-  return path;
-}
-
-std::string parent_path(std::string path) noexcept try {
-  return fs::path(path).parent_path().string();
-} catch (...) {
-  return path;
-}
-
-std::fstream open_or_throw(const std::string &path, std::ios::openmode mode) {
-  auto stream{std::fstream(path, mode)};
-  if (!stream.is_open())
-    throw Error(
-        concat("cannot open ", quoted(path), ": ", std::strerror(errno)));
-  return stream;
-}
-
-std::string read_or_throw(const std::string &path) {
-  auto stream{open_or_throw(path, std::ios::in | std::ios::binary)};
-  return std::string((std::istreambuf_iterator<char>(stream)),
-                     std::istreambuf_iterator<char>());
 }
 
 void State::finalize_for_runtime_conventions() {

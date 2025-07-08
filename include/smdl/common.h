@@ -42,6 +42,51 @@ class LLJIT;
 /// The top-level SMDL namespace.
 namespace smdl {
 
+/// \defgroup Main Main
+/// \{
+
+/// The SMDL build information.
+class SMDL_EXPORT BuildInfo final {
+public:
+  /// Get.
+  [[nodiscard]] static BuildInfo get() noexcept;
+
+public:
+  /// The major version number.
+  uint32_t major{};
+
+  /// The minor version number.
+  uint32_t minor{};
+
+  /// The patch version number.
+  uint32_t patch{};
+
+  /// The git branch name.
+  const char *gitBranch{};
+
+  /// The git commit hash.
+  const char *gitCommit{};
+};
+
+/// The LLVM native target.
+class SMDL_EXPORT NativeTarget final {
+public:
+  /// Get.
+  [[nodiscard]] static const NativeTarget &get() noexcept;
+
+public:
+  /// The CPU name.
+  std::string_view name{};
+
+  /// The CPU triple.
+  std::string_view triple{};
+
+  /// The LLVM target machine representation.
+  llvm::TargetMachine *machine{};
+};
+
+/// \}
+
 /// \defgroup Support Support
 /// \{
 
@@ -168,6 +213,76 @@ public:
   size_t count{};
 };
 
+/// \name Filesystem
+/// \{
+
+/// Has extension?
+[[nodiscard]]
+SMDL_EXPORT bool has_extension(std::string_view path,
+                               std::string_view extension) noexcept;
+
+/// Exists?
+[[nodiscard]] SMDL_EXPORT bool exists(const std::string &path) noexcept;
+
+/// Is file?
+[[nodiscard]] SMDL_EXPORT bool is_file(const std::string &path) noexcept;
+
+/// Is directory?
+[[nodiscard]] SMDL_EXPORT bool is_directory(const std::string &path) noexcept;
+
+/// Is path equivalent?
+[[nodiscard]]
+SMDL_EXPORT bool is_path_equivalent(const std::string &path0,
+                                    const std::string &path1) noexcept;
+
+/// Is path0 a parent path of path1?
+[[nodiscard]]
+SMDL_EXPORT bool is_parent_path_of(const std::string &path0,
+                                   const std::string &path1) noexcept;
+
+/// Join paths.
+[[nodiscard]]
+SMDL_EXPORT std::string join_paths(std::string_view path0,
+                                   std::string_view path1);
+
+/// Make path canonical.
+///
+/// \note
+/// This does not throw. If the implementation fails for any reason, the input
+/// path is returned unchanged.
+///
+[[nodiscard]]
+SMDL_EXPORT std::string canonical(std::string path) noexcept;
+
+/// Make path relative to working directory.
+///
+/// \note
+/// This does not throw. If the implementation fails for any reason, the input
+/// path is returned unchanged.
+///
+[[nodiscard]]
+SMDL_EXPORT std::string relative(std::string path) noexcept;
+
+/// Determine parent path.
+///
+/// \note
+/// This does not throw. If the implementation fails for any reason, the input
+/// path is returned unchanged.
+///
+[[nodiscard]]
+SMDL_EXPORT std::string parent_path(std::string path) noexcept;
+
+/// Open file or throw an `Error`.
+[[nodiscard]]
+SMDL_EXPORT std::fstream open_or_throw(const std::string &path,
+                                       std::ios::openmode mode);
+
+/// Read file or throw an `Error`.
+[[nodiscard]]
+SMDL_EXPORT std::string read_or_throw(const std::string &path);
+
+/// \}
+
 /// \name Functions (strings)
 /// \{
 
@@ -238,10 +353,23 @@ public:
 
 /// \}
 
-/// A quoted string for use with `concat`.
-struct quoted final {
+struct SMDL_EXPORT quoted final {
+public:
   constexpr quoted(std::string_view str) : str(str) {}
 
+  void append_to(std::string &result);
+
+public:
+  std::string_view str{};
+};
+
+struct SMDL_EXPORT quoted_path final {
+public:
+  constexpr quoted_path(std::string_view str) : str(str) {}
+
+  void append_to(std::string &result);
+
+public:
   std::string_view str{};
 };
 
@@ -252,10 +380,9 @@ inline void do_concat(std::string &str, T &&value, Ts &&...values) {
   using DecayT = std::decay_t<T>;
   if constexpr (std::is_arithmetic_v<DecayT>) {
     str += std::to_string(value);
-  } else if constexpr (std::is_same_v<DecayT, quoted>) {
-    str += '\'';
-    str += value.str;
-    str += '\'';
+  } else if constexpr (std::is_same_v<DecayT, quoted> ||
+                       std::is_same_v<DecayT, quoted_path>) {
+    value.append_to(str);
   } else {
     str += value;
   }
@@ -301,51 +428,6 @@ template <typename T, typename... Ts>
 }
 
 /// \}
-
-/// \}
-
-/// \defgroup Main Main
-/// \{
-
-/// The LLVM native target.
-class SMDL_EXPORT NativeTarget final {
-public:
-  /// Get.
-  [[nodiscard]] static const NativeTarget &get() noexcept;
-
-public:
-  /// The CPU name.
-  std::string_view name{};
-
-  /// The CPU triple.
-  std::string_view triple{};
-
-  /// The LLVM target machine representation.
-  llvm::TargetMachine *machine{};
-};
-
-/// The SMDL build information.
-class SMDL_EXPORT BuildInfo final {
-public:
-  /// Get.
-  [[nodiscard]] static BuildInfo get() noexcept;
-
-public:
-  /// The major version number.
-  uint32_t major{};
-
-  /// The minor version number.
-  uint32_t minor{};
-
-  /// The patch version number.
-  uint32_t patch{};
-
-  /// The git branch name.
-  const char *gitBranch{};
-
-  /// The git commit hash.
-  const char *gitCommit{};
-};
 
 /// \}
 
@@ -661,56 +743,6 @@ public:
   ///
   std::string buildMetadata{};
 };
-
-/// \name Filesystem
-/// \{
-
-/// Exists?
-[[nodiscard]] SMDL_EXPORT bool exists(const std::string &path) noexcept;
-
-/// Is file?
-[[nodiscard]] SMDL_EXPORT bool is_file(const std::string &path) noexcept;
-
-/// Is directory?
-[[nodiscard]] SMDL_EXPORT bool is_directory(const std::string &path) noexcept;
-
-/// Make path canonical.
-///
-/// \note
-/// This does not throw. If the implementation fails for any reason, the input
-/// path is returned unchanged.
-///
-[[nodiscard]]
-SMDL_EXPORT std::string canonical(std::string path) noexcept;
-
-/// Make path relative to working directory.
-///
-/// \note
-/// This does not throw. If the implementation fails for any reason, the input
-/// path is returned unchanged.
-///
-[[nodiscard]]
-SMDL_EXPORT std::string relative(std::string path) noexcept;
-
-/// Determine parent path.
-///
-/// \note
-/// This does not throw. If the implementation fails for any reason, the input
-/// path is returned unchanged.
-///
-[[nodiscard]]
-SMDL_EXPORT std::string parent_path(std::string path) noexcept;
-
-/// Open file or throw an `Error`.
-[[nodiscard]]
-SMDL_EXPORT std::fstream open_or_throw(const std::string &path,
-                                       std::ios::openmode mode);
-
-/// Read file or throw an `Error`.
-[[nodiscard]]
-SMDL_EXPORT std::string read_or_throw(const std::string &path);
-
-/// \}
 
 /// \}
 
