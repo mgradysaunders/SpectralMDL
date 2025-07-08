@@ -213,7 +213,7 @@ public:
   size_t count{};
 };
 
-/// \name Filesystem
+/// \name Functions (filesystem) 
 /// \{
 
 /// Has extension?
@@ -353,6 +353,7 @@ SMDL_EXPORT std::string read_or_throw(const std::string &path);
 
 /// \}
 
+/// A quoted string for use with `concat`.
 struct SMDL_EXPORT quoted final {
 public:
   constexpr quoted(std::string_view str) : str(str) {}
@@ -363,6 +364,7 @@ public:
   std::string_view str{};
 };
 
+/// A quoted path string for use with `concat`.
 struct SMDL_EXPORT quoted_path final {
 public:
   constexpr quoted_path(std::string_view str) : str(str) {}
