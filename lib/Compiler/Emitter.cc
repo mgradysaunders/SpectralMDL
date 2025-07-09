@@ -1609,9 +1609,20 @@ Value Emitter::emit_intrinsic(std::string_view name, const ArgumentList &args,
         result = type->is_tag();
       } else if (name == "is_union") {
         result = type->is_union();
+      } else if (name == "is_void") {
+        result = type->is_void();
       } else if (name == "is_default") {
         if (auto structType{llvm::dyn_cast<StructType>(type)}) {
-          result = structType->isDefaultInstance;
+          if (!structType->instanceOf) {
+            // The struct is considered 'default' if it is 
+            // the default type for its first tag.
+            result = structType->tags.size() >= 1 &&
+                     structType->tags[0]->defaultType == structType;
+          } else {
+            // The struct is considered 'default' if it is 
+            // the default instantiation of an abstract struct.
+            result = structType->isDefaultInstance;
+          }
         }
       }
       if (result) {
