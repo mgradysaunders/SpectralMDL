@@ -162,7 +162,8 @@ bool Scene::intersect(Ray ray, Hit &hit) const {
   }
 }
 
-Color Scene::trace_path(smdl::BumpPtrAllocator &allocator,
+Color Scene::trace_path(const smdl::Compiler &compiler,
+                        smdl::BumpPtrAllocator &allocator,
                         smdl::Span<float> wavelengthBase,
                         smdl::Span<const smdl::JIT::Material *> jitMaterials,
                         RNG &rng, Ray ray) const {
@@ -174,8 +175,44 @@ Color Scene::trace_path(smdl::BumpPtrAllocator &allocator,
   for (int bounce = 0; bounce < 5; bounce++) {
     ray.dir = smdl::normalize(ray.dir);
     Hit hit{};
-    if (!intersect(ray, hit))
+    if (!intersect(ray, hit)) {
+      if (imageLight) {
+        float theta = std::acos(ray.dir.z);
+        float phi = std::atan2(ray.dir.y, ray.dir.x);
+        if (phi < 0)
+          phi += 2 * 3.1415965359f;
+        const int numTexelsX = imageLight->get_num_texels_x();
+        const int numTexelsY = imageLight->get_num_texels_y();
+        float u = std::max(0.0f, std::min(phi / (2 * 3.1415965359f), 1.0f));
+        float v = std::max(0.0f, std::min(theta / 3.1415965359f, 1.0f));
+        auto texel =
+            imageLight->fetch(std::min(int(u * numTexelsX), numTexelsX - 1),
+                            std::min(int(v * numTexelsY), numTexelsY - 1));
+        switch (imageLight->get_num_channels()) {
+        case 1:
+        case 2: {
+          for (size_t i = 0; i < WAVELENGTH_BASE_MAX; i++)
+            L[i] += imageLightScale * w[i] * texel[0];
+          break;
+        }
+        case 4: {
+          Color Le{};
+          smdl::State state{};
+          state.wavelength_base = wavelengthBase.data();
+          state.wavelength_min = WAVELENGTH_MIN;
+          state.wavelength_max = WAVELENGTH_MAX;
+          compiler.jit_rgb_to_color(state, smdl::float3(texel), &Le[0]);
+          for (size_t i = 0; i < WAVELENGTH_BASE_MAX; i++)
+            L[i] += imageLightScale * w[i] * Le[0];
+          break;
+        }
+        default:
+          SMDL_SANITY_CHECK(false, "Unexpected num channels!");
+          break;
+        }
+      }
       break;
+    }
     smdl::float3 wo{-ray.dir.x, -ray.dir.y, -ray.dir.z};
     auto jitMaterial{jitMaterials[hit.materialIndex]};
     auto jitMaterialInstance{smdl::JIT::Material::Instance{}};

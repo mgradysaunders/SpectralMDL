@@ -32,6 +32,13 @@ static cl::opt<unsigned> samplesPerPixel{
     "spp", cl::desc("The number of samples per pixel (default: 8)"),
     cl::init(8U), cl::cat(catCamera)};
 
+static cl::OptionCategory catIBL{"Image-Based Light (IBL) Options"};
+static cl::opt<std::string> imageLightFile{"ibl", cl::desc("The IBL filename"),
+                                           cl::cat(catIBL)};
+static cl::opt<float> imageLightScale{"ibl-scale",
+                                      cl::desc("The IBL scale factor"),
+                                      cl::init(1.0f), cl::cat(catIBL)};
+
 int main(int argc, char **argv) try {
   llvm::InitLLVM X(argc, argv);
   smdl::Logger::get().add_sink<smdl::LogSinks::print_to_cerr>();
@@ -59,6 +66,14 @@ int main(int argc, char **argv) try {
   for (size_t i = 0; i < WAVELENGTH_BASE_MAX; i++) {
     float t = i / float(WAVELENGTH_BASE_MAX - 1);
     wavelengthBase[i] = (1 - t) * WAVELENGTH_MIN + t * WAVELENGTH_MAX;
+  }
+  if (imageLightFile.getNumOccurrences() > 0) {
+    scene.imageLight = std::make_unique<smdl::Image>();
+    if (auto error{scene.imageLight->start_load(std::string(imageLightFile))}) {
+      error->print_and_exit();
+    }
+    scene.imageLight->finish_load();
+    scene.imageLightScale = float(imageLightScale) ;
   }
 
   const auto imageExtent{smdl::int2(cameraDims)};
@@ -92,8 +107,8 @@ int main(int argc, char **argv) try {
             ray.dir.z = -focalLen;
             ray.dir = smdl::normalize(ray.dir);
             ray.transform(cameraTransform);
-            Color L{scene.trace_path(allocator, wavelengthBase, jitMaterials,
-                                     rng, ray)};
+            Color L{scene.trace_path(compiler, allocator, wavelengthBase,
+                                     jitMaterials, rng, ray)};
             for (size_t k = 0; k < WAVELENGTH_BASE_MAX; k++)
               Lsum[k] += L[k] / float(N);
             allocator.reset();

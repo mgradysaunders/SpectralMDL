@@ -60,7 +60,8 @@ private:
 public:
   bool intersect(Ray ray, Hit &hit) const;
 
-  Color trace_path(smdl::BumpPtrAllocator &allocator,
+  Color trace_path(const smdl::Compiler &compiler,
+                   smdl::BumpPtrAllocator &allocator,
                    smdl::Span<float> wavelengthBase,
                    smdl::Span<const smdl::JIT::Material *> jitMaterials,
                    RNG &rng, Ray ray) const;
@@ -75,4 +76,8 @@ public:
   std::vector<MeshInstance> meshInstances{};
 
   std::vector<std::string> materialNames{};
+
+  std::unique_ptr<smdl::Image> imageLight{};
+
+  float imageLightScale{1.0f};
 };
