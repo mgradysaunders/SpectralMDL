@@ -49,8 +49,6 @@ extern "C" {
 #define TINYEXR_IMPLEMENTATION 1
 #include "thirdparty/tinyexr.h"
 
-#include "filesystem.h"
-
 namespace tinyexr {
 
 [[nodiscard]] static const EXRChannelInfo *FindChannel(const EXRHeader &header,
@@ -342,6 +340,66 @@ void Image::finish_load() {
     finishLoad();
     finishLoad = nullptr;
   }
+}
+
+[[nodiscard]] static float unpack_half(const void *ptr) noexcept {
+#if __clang__
+  return float(*static_cast<const _Float16 *>(ptr));
+#else
+  uint16_t h = *static_cast<const uint16_t *>(ptr);
+  uint32_t f = 0;
+  int32_t exponent = (h >> 10) & 0x001F;
+  int32_t negative = (h >> 15) & 0x0001;
+  int32_t mantissa = h & 0x03FF;
+  f = negative << 31;
+  if (exponent == 0) {
+    if (mantissa != 0) {
+      exponent = 113;
+      while (!(mantissa & 0x0400))
+        exponent--, mantissa <<= 1;
+      f |= (exponent << 23) | ((mantissa & ~0x0400) << 13); // Subnormal
+    }
+  } else {
+    f |= mantissa << 13;
+    f |= exponent == 31 ? 0x7F800000 : ((exponent + 112) << 23);
+  }
+  return std::bit_cast<float>(f);
+#endif // #if __clang__
+}
+
+float4 Image::fetch(int x, int y) const noexcept {
+  SMDL_SANITY_CHECK(texels != nullptr);
+  SMDL_SANITY_CHECK(0 <= x && x < numTexelsX);
+  SMDL_SANITY_CHECK(0 <= y && y < numTexelsY);
+  auto texel{float4{std::numeric_limits<float>::quiet_NaN(),
+                    std::numeric_limits<float>::quiet_NaN(),
+                    std::numeric_limits<float>::quiet_NaN(),
+                    std::numeric_limits<float>::quiet_NaN()}};
+  auto texelPtr{&texels[texelSize * (x + numTexelsX * y)]};
+  for (int i = 0; i < numChannels; i++) {
+    switch (format) {
+    case U8:
+      texel[i] = *reinterpret_cast<const uint8_t *>(texelPtr) / 255.0f;
+      texelPtr += 1;
+      break;
+    case U16:
+      texel[i] = *reinterpret_cast<const uint16_t *>(texelPtr) / 65535.0f;
+      texelPtr += 2;
+      break;
+    case F16:
+      texel[i] = unpack_half(texelPtr);
+      texelPtr += 2;
+      break;
+    case F32:
+      texel[i] = *reinterpret_cast<const float *>(texelPtr);
+      texelPtr += 4;
+      break;
+    default:
+      SMDL_SANITY_CHECK(false, "Unexpected texel format!");
+      break;
+    }
+  }
+  return texel;
 }
 
 } // namespace smdl

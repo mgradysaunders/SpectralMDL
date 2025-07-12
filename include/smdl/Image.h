@@ -50,39 +50,6 @@ public:
   Image(const Image &) = delete;
 
 public:
-  /// Get the format.
-  [[nodiscard]] Format get_format() const noexcept { return format; }
-
-  /// Get the number of channels, must be 1, 2, or 4.
-  [[nodiscard]] int get_num_channels() const noexcept { return numChannels; }
-
-  /// Get the number of texels in X.
-  [[nodiscard]] int get_num_texels_x() const noexcept { return numTexelsX; }
-
-  /// Get the number of texels in Y.
-  [[nodiscard]] int get_num_texels_y() const noexcept { return numTexelsY; }
-
-  /// Get the texel size in bytes.
-  ///
-  /// \note
-  /// This is necessarily the number of channels times the
-  /// implied size of the format.
-  ///
-  [[nodiscard]] int get_texel_size_in_bytes() const noexcept {
-    return texelSize;
-  }
-
-  /// Get the texels.
-  [[nodiscard]] auto get_texels() noexcept -> std::byte * {
-    return texels.get();
-  }
-
-  /// Get the texels, const variant.
-  [[nodiscard]] auto get_texels() const noexcept -> const std::byte * {
-    return texels.get();
-  }
-
-public:
   /// Clear everything.
   void clear();
 
@@ -115,6 +82,59 @@ public:
   void finish_load();
 
   /// \}
+
+public:
+  /// Get the format.
+  [[nodiscard]] Format get_format() const noexcept { return format; }
+
+  /// Get the number of channels, must be 1, 2, or 4.
+  [[nodiscard]] int get_num_channels() const noexcept { return numChannels; }
+
+  /// Get the number of texels in X.
+  [[nodiscard]] int get_num_texels_x() const noexcept { return numTexelsX; }
+
+  /// Get the number of texels in Y.
+  [[nodiscard]] int get_num_texels_y() const noexcept { return numTexelsY; }
+
+  /// Get the texel size in bytes.
+  ///
+  /// \note
+  /// This is necessarily the number of channels times the
+  /// implied size of the format.
+  ///
+  [[nodiscard]] int get_texel_size_in_bytes() const noexcept {
+    return texelSize;
+  }
+
+  /// Get texels.
+  [[nodiscard]] auto get_texels() noexcept -> std::byte * {
+    return texels.get();
+  }
+
+  /// Get texels, const variant.
+  [[nodiscard]] auto get_texels() const noexcept -> const std::byte * {
+    return texels.get();
+  }
+
+  /// Fetch texel.
+  ///
+  /// The valid runtime formats must contain 1, 2, or 4 channels of U8, 
+  /// U16, F16, or F32 channel type. The implementation converts all types
+  /// to `float` by unsigned normalized integer conversion or by half-to-single
+  /// precision conversion.
+  ///
+  /// Format | Conversion
+  /// -------|----------------------
+  /// U8     | `value / 255.0f`
+  /// U16    | `value / 65535.0f`
+  /// F16    | `unpack_half(value)`
+  /// F32    | `value`
+  ///
+  /// The implementation copies post-conversion channel values to 
+  /// the returned `float4` in order. Any channel not present is
+  /// set to NaN.
+  /// 
+  [[nodiscard]] float4 fetch(int x, int y) const noexcept;
 
 private:
   /// The format.
