@@ -28,9 +28,13 @@ export int width(const texture_2d tex, const int2 uv_tile = int2(0)) {
   return i < 0 ? 0 : tex.tile_extents[i].x;
 }
 
-// TODO int width(const texture_3d tex)
+// TODO
+@(pure macro)
+export int width(const texture_3d tex) = 0; 
 
-// TODO int width(const texture_cube tex)
+// TODO
+@(pure macro)
+export int width(const texture_cube tex) = 0;
 
 @(pure macro)
 export int height(const texture_2d tex, const int2 uv_tile = int2(0)) {
@@ -38,16 +42,24 @@ export int height(const texture_2d tex, const int2 uv_tile = int2(0)) {
   return i < 0 ? 0 : tex.tile_extents[i].y;
 }
 
-// TODO int height(const texture_3d tex)
+// TODO
+@(pure macro)
+export int height(const texture_3d tex) = 0;
 
-// TODO int height(const texture_cube tex)
+// TODO
+@(pure macro)
+export int height(const texture_cube tex) = 0;
 
 @(pure macro)
 export bool texture_isvalid(const texture_2d tex) = bool(tex.tile_buffers[0]);
 
-// TODO bool texture_isvalid(const texture_3d tex)
+// TODO
+@(pure macro)
+export bool texture_isvalid(const texture_3d tex) = false;
 
-// TODO bool texture_isvalid(const texture_cube tex)
+// TODO
+@(pure macro)
+export bool texture_isvalid(const texture_cube tex) = false;
 
 @(pure macro)
 export bool texture_isvalid(const texture_ptex tex) = bool(tex.ptr);

@@ -169,50 +169,6 @@ void jit_rgb_to_color(const &float3 rgb,const &float cptr){
 void jit_color_to_rgb(const &float cptr,const &float3 rgb){
   *rgb=__color_to_rgb(color(cptr));
 }
-@(pure)
-export i32 __hash(auto value){
-  if$(#is_arithmetic_scalar(value)){
-    if$(#is_arithmetic_integral(value)){
-      if$(#sizeof(value)<=4){
-        auto h(i32(value)+3266445271);
-        h^=h>>>16,h*=0x85EBCA6B;
-        h^=h>>>13,h*=0xC2B2AE35;
-        h^=h>>>16;
-        return h;
-      } else {
-        auto h(i64(value)+13898551614298330943);
-        h^=h>>>33,h*=0xFF51AFD7ED558CCD;
-        h^=h>>>33,h*=0xC4CEB9FE1A85EC53;
-        h^=h>>>33;
-        return h;
-      }
-    } else {
-      auto h(#type_int(8*#sizeof(value))());
-      #memcpy(&h,&value,#sizeof(value));
-      return __hash(h);
-    }
-  } else if$(#is_array(value)|#is_arithmetic_vector(value)|#is_arithmetic_matrix(value)|(#typeof(value)==color)){
-    auto hTotal(__hash(value[0]));
-    for(int i=1;i<#num(value);++i){
-      auto h(__hash(value[i]));
-      h=0x55555555*(h^(h>>>16));
-      h=3423571495*(h^(h>>>16));
-      hTotal=#rotl(hTotal,10)^h;
-    }
-    return hTotal;
-  } else if$(#is_pointer(value)){
-    auto h(#type_int(8*#sizeof(value))());
-    #memcpy(&h,&value,#sizeof(value));
-    return __hash(h);
-  } else if$(#is_union(value)){
-    visit v in value{
-      return __hash(v);
-    }
-  } else {
-    #panic("Unimplemented hash");
-    return 0;
-  }
-}
 export enum intensity_mode{intensity_radiant_exitance,intensity_power,};
 export tag bsdf;
 export tag vdf;
@@ -344,6 +300,50 @@ export auto __complex_log(const complex z)=complex(#log(__complex_abs(z)),#atan2
 export auto __complex_sqrt(const complex z)=let {
                                               const auto abs_z=__complex_abs(z);
                                             } in complex(#sqrt(0.5*(abs_z+z.a)),#sqrt(0.5*(abs_z-z.a))*#sign(z.b),);
+@(pure)
+export i32 __hash(auto value){
+  if$(#is_arithmetic_scalar(value)){
+    if$(#is_arithmetic_integral(value)){
+      if$(#sizeof(value)<=4){
+        auto h(i32(value)+3266445271);
+        h^=h>>>16,h*=0x85EBCA6B;
+        h^=h>>>13,h*=0xC2B2AE35;
+        h^=h>>>16;
+        return h;
+      } else {
+        auto h(i64(value)+13898551614298330943);
+        h^=h>>>33,h*=0xFF51AFD7ED558CCD;
+        h^=h>>>33,h*=0xC4CEB9FE1A85EC53;
+        h^=h>>>33;
+        return h;
+      }
+    } else {
+      auto h(#type_int(8*#sizeof(value))());
+      #memcpy(&h,&value,#sizeof(value));
+      return __hash(h);
+    }
+  } else if$(#is_array(value)|#is_arithmetic_vector(value)|#is_arithmetic_matrix(value)|(#typeof(value)==color)){
+    auto hTotal(__hash(value[0]));
+    for(int i=1;i<#num(value);++i){
+      auto h(__hash(value[i]));
+      h=0x55555555*(h^(h>>>16));
+      h=3423571495*(h^(h>>>16));
+      hTotal=#rotl(hTotal,10)^h;
+    }
+    return hTotal;
+  } else if$(#is_pointer(value)){
+    auto h(#type_int(8*#sizeof(value))());
+    #memcpy(&h,&value,#sizeof(value));
+    return __hash(h);
+  } else if$(#is_union(value)){
+    visit v in value{
+      return __hash(v);
+    }
+  } else {
+    #panic("Unimplemented hash");
+    return 0;
+  }
+}
 )*";
 
 static const char *debug = R"*(#smdl
@@ -1967,12 +1967,24 @@ export int width(const texture_2d tex,const int2 uv_tile=int2(0)){
   return i<0?0:tex.tile_extents[i].x;
 }
 @(pure macro)
+export int width(const texture_3d tex)=0;
+@(pure macro)
+export int width(const texture_cube tex)=0;
+@(pure macro)
 export int height(const texture_2d tex,const int2 uv_tile=int2(0)){
   const auto i(uv_tile_index(tex,uv_tile));
   return i<0?0:tex.tile_extents[i].y;
 }
 @(pure macro)
+export int height(const texture_3d tex)=0;
+@(pure macro)
+export int height(const texture_cube tex)=0;
+@(pure macro)
 export bool texture_isvalid(const texture_2d tex)=bool(tex.tile_buffers[0]);
+@(pure macro)
+export bool texture_isvalid(const texture_3d tex)=false;
+@(pure macro)
+export bool texture_isvalid(const texture_cube tex)=false;
 @(pure macro)
 export bool texture_isvalid(const texture_ptex tex)=bool(tex.ptr);
 @(pure)
