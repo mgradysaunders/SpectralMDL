@@ -249,7 +249,10 @@ export tag edf;
 export tag hair_bsdf;
 
 /// The default BSDF is just an empty struct!
-export struct __default_bsdf: default bsdf {};
+export struct __default_bsdf: default bsdf {
+  /// The scatter mode.
+  static const int mode = 0;
+};
 
 /// The default VDF is just an empty struct!
 export struct __default_vdf: default vdf {};
@@ -364,10 +367,10 @@ export struct material_volume {
   vdf scattering = vdf();
 
   /// The absorption coefficient in units of inverse distance.
-  $(color | void) absorption_coefficient = void();
+  $(?color) absorption_coefficient = none;
 
   /// The scattering coefficient in units of inverse distance.
-  $(color | void) scattering_coefficient = void();
+  $(?color) scattering_coefficient = none;
 };
 
 /// The material geometry description.
@@ -411,11 +414,11 @@ export struct material {
 /// Is thin walled?
 const int THIN_WALLED = (1 << 0);
 
-/// Has a non-default surface component?
-const int HAS_SURFACE = (1 << 1);
+/// Has a non-default surface scattering component?
+const int HAS_SURFACE_SCATTERING = (1 << 1);
 
-/// Has a non-default backface surface component?
-const int HAS_BACKFACE = (1 << 2);
+/// Has a non-default backface scattering component?
+const int HAS_BACKFACE_SCATTERING = (1 << 2);
 
 /// Has a non-default surface emission component?
 const int HAS_SURFACE_EMISSION = (1 << 3);
@@ -438,7 +441,7 @@ const int HAS_POSSIBLY_NON_ZERO_BTDF = (1 << 8); // TODO
 /// An instance of a material corresponding to `smdl::JIT::Material::Instance` 
 /// in the C++ API.
 export struct __material_instance {
-  /// The material deep copied with `#bump()`.
+  /// The material deep copied with `#bump_allocate()`.
   const &material mat;
 
   /// The geometry displacement.
@@ -454,22 +457,22 @@ export struct __material_instance {
   const &color ior = &mat.ior;
 
   /// The volume absorption coefficient.
-  const &color absorption_coefficient = (#typeof(mat.volume.absorption_coefficient) == void) ? none : &mat.volume.absorption_coefficient;
+  const &color absorption_coefficient = #is_void(mat.volume.absorption_coefficient) ? none : &mat.volume.absorption_coefficient;
 
   /// The volume scattering coefficient.
-  const &color scattering_coefficient = (#typeof(mat.volume.scattering_coefficient) == void) ? none : &mat.volume.scattering_coefficient;
+  const &color scattering_coefficient = #is_void(mat.volume.scattering_coefficient) ? none : &mat.volume.scattering_coefficient;
 
   /// The wavelength count.
   const int wavelength_base_max = $WAVELENGTH_BASE_MAX;
 
   /// The flags.
-  const int flags = (mat.thin_walled ? THIN_WALLED : 0)                                 //
-                    | (!#is_default(mat.surface) ? HAS_SURFACE : 0)                     //
-                    | (!#is_default(mat.backface) ? HAS_BACKFACE : 0)                   //
-                    | (!#is_default(mat.surface.emission) ? HAS_SURFACE_EMISSION : 0)   //
-                    | (!#is_default(mat.backface.emission) ? HAS_BACKFACE_EMISSION : 0) //
-                    | (!#is_default(mat.volume) ? HAS_VOLUME : 0)                       //
-                    | (#typeof(mat.hair) != #typeof(hair_bsdf()) ? HAS_HAIR : 0);
+  const int flags = (mat.thin_walled ? THIN_WALLED : 0)                                     //
+                    | (!#is_default(mat.surface.scattering) ? HAS_SURFACE_SCATTERING : 0)   //
+                    | (!#is_default(mat.backface.scattering) ? HAS_BACKFACE_SCATTERING : 0) //
+                    | (!#is_default(mat.surface.emission) ? HAS_SURFACE_EMISSION : 0)       //
+                    | (!#is_default(mat.backface.emission) ? HAS_BACKFACE_EMISSION : 0)     //
+                    | (!#is_default(mat.volume) ? HAS_VOLUME : 0)                           //
+                    | (!#is_default(mat.hair) ? HAS_HAIR : 0);
 
   /// The tangent space matrix held by the `State` during construction.
   const float3x3 tangent_space = float3x3(

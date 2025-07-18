@@ -4,8 +4,6 @@
 #include "llvm/ADT/StringRef.h"
 #include "llvm/Support/MD5.h"
 
-#include "filesystem.h"
-
 namespace smdl {
 
 MD5Hash MD5Hash::hash_file(const std::string &fileName) noexcept try {

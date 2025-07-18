@@ -4,25 +4,26 @@
 #include "assimp/postprocess.h"
 #include <iostream>
 
-Scene::Scene()
-    : device(rtcNewDevice("verbose=0")), scene(rtcNewScene(device)) {}
+Scene::Scene(const smdl::Compiler &compiler, const std::string &fileName)
+    : compiler(compiler), device(rtcNewDevice("verbose=0")),
+      scene(rtcNewScene(device)) {
+  auto assImporter{Assimp::Importer{}};
+  auto assScene{assImporter.ReadFile(fileName.c_str(),
+                                     aiProcessPreset_TargetRealtime_MaxQuality &
+                                         ~aiProcess_RemoveRedundantMaterials)};
+  if (!assScene)
+    throw smdl::Error(
+        smdl::concat("assimp failed to read ", smdl::quoted_path(fileName)));
+  load(*assScene);
+  for (auto &materialName : materialNames)
+    jitMaterials.push_back(compiler.find_jit_material(materialName));
+}
 
 Scene::~Scene() {
   for (auto &mesh : meshes)
     rtcReleaseScene(mesh->scene), mesh->scene = {};
   rtcReleaseScene(scene), scene = {};
   rtcReleaseDevice(device), device = {};
-}
-
-void Scene::load(const std::string &filename) {
-  auto assImporter{Assimp::Importer{}};
-  auto assScene{assImporter.ReadFile(filename.c_str(),
-                                     aiProcessPreset_TargetRealtime_MaxQuality &
-                                         ~aiProcess_RemoveRedundantMaterials)};
-  if (!assScene)
-    throw smdl::Error(
-        smdl::concat("assimp failed to read ", smdl::quoted(filename)));
-  load(*assScene);
 }
 
 void Scene::load(const aiScene &assScene) {
@@ -110,63 +111,61 @@ void Scene::load(const aiNode &assNode, aiMatrix4x4 xf) {
     load(*assNode.mChildren[i], xf);
 }
 
-bool Scene::intersect(Ray ray, Hit &hit) const {
-  RTCRayHit rayhit{};
-  rayhit.ray.org_x = ray.org.x;
-  rayhit.ray.org_y = ray.org.y;
-  rayhit.ray.org_z = ray.org.z;
-  rayhit.ray.dir_x = ray.dir.x;
-  rayhit.ray.dir_y = ray.dir.y;
-  rayhit.ray.dir_z = ray.dir.z;
-  rayhit.ray.tnear = ray.tmin;
-  rayhit.ray.tfar = ray.tmax;
-  rayhit.ray.time = 0;
-  rayhit.ray.mask = unsigned(-1);
-  rayhit.ray.id = 0;
-  rayhit.ray.flags = 0;
-  rayhit.hit.primID = unsigned(-1);
-  rayhit.hit.geomID = unsigned(-1);
-  rtcIntersect1(scene, &rayhit, nullptr);
-  if (rayhit.hit.primID == unsigned(-1)) {
+bool Scene::intersect(Ray ray, Intersection &intersection) const {
+  RTCRayHit rayHit{};
+  rayHit.ray.org_x = ray.org.x;
+  rayHit.ray.org_y = ray.org.y;
+  rayHit.ray.org_z = ray.org.z;
+  rayHit.ray.dir_x = ray.dir.x;
+  rayHit.ray.dir_y = ray.dir.y;
+  rayHit.ray.dir_z = ray.dir.z;
+  rayHit.ray.tnear = ray.tmin;
+  rayHit.ray.tfar = ray.tmax;
+  rayHit.ray.time = 0;
+  rayHit.ray.mask = unsigned(-1);
+  rayHit.ray.id = 0;
+  rayHit.ray.flags = 0;
+  rayHit.hit.primID = unsigned(-1);
+  rayHit.hit.geomID = unsigned(-1);
+  rtcIntersect1(scene, &rayHit, nullptr);
+  if (rayHit.hit.primID == unsigned(-1)) {
     return false;
   } else {
-    const auto &meshInstance{meshInstances[rayhit.hit.instID[0]]};
+    const auto &meshInstance{meshInstances[rayHit.hit.instID[0]]};
     const auto &mesh{*meshes[meshInstance.meshIndex]};
-    const auto &face{mesh.faces[rayhit.hit.primID]};
+    const auto &face{mesh.faces[rayHit.hit.primID]};
     const auto &vert0{mesh.verts[face[0]]};
     const auto &vert1{mesh.verts[face[1]]};
     const auto &vert2{mesh.verts[face[2]]};
-    float w1{std::max(0.0f, std::min(1.0f, rayhit.hit.u))};
-    float w2{std::max(0.0f, std::min(1.0f, rayhit.hit.v))};
-    float w0{std::max(0.0f, std::min(1.0f, 1.0f - w1 - w2))};
-    hit.meshInstanceIndex = rayhit.hit.instID[0];
-    hit.meshIndex = meshInstance.meshIndex;
-    hit.faceIndex = rayhit.hit.primID;
-    hit.materialIndex = mesh.materialIndex;
-    hit.bary = {w0, w1, w2};
-    hit.point = w0 * vert0.point + //
-                w1 * vert1.point + //
-                w2 * vert2.point;
-    hit.normal = smdl::normalize(w0 * vert0.normal + w1 * vert1.normal +
-                                 w2 * vert2.normal);
-    hit.tangent = smdl::normalize(w0 * vert0.tangent + w1 * vert1.tangent +
-                                  w2 * vert2.tangent);
-    hit.geometryNormal = smdl::normalize(
+    float baryU{std::max(0.0f, std::min(1.0f, rayHit.hit.u))};
+    float baryV{std::max(0.0f, std::min(1.0f, rayHit.hit.v))};
+    float baryW{std::max(0.0f, std::min(1.0f, 1.0f - baryU - baryV))};
+    intersection.meshInstanceIndex = rayHit.hit.instID[0];
+    intersection.meshIndex = meshInstance.meshIndex;
+    intersection.faceIndex = rayHit.hit.primID;
+    intersection.materialIndex = mesh.materialIndex;
+    intersection.bary = {baryW, baryU, baryV};
+    intersection.point =
+        baryW * vert0.point + baryU * vert1.point + baryV * vert2.point;
+    intersection.normal = smdl::normalize(
+        baryW * vert0.normal + baryU * vert1.normal + baryV * vert2.normal);
+    intersection.tangent = smdl::normalize(
+        baryW * vert0.tangent + baryU * vert1.tangent + baryV * vert2.tangent);
+    intersection.geometryNormal = smdl::normalize(
         smdl::cross(vert1.point - vert0.point, vert2.point - vert0.point));
-    hit.geometryTangent = smdl::perpendicular_to(hit.geometryNormal);
-    hit.texcoord = w0 * vert0.texcoord + //
-                   w1 * vert1.texcoord + //
-                   w2 * vert2.texcoord;
-    hit.transform(meshInstance.transform);
+    intersection.geometryTangent =
+        smdl::perpendicular_to(intersection.geometryNormal);
+    intersection.texcoord = baryW * vert0.texcoord + baryU * vert1.texcoord +
+                            baryV * vert2.texcoord;
+    intersection.transform(meshInstance.transform);
     return true;
   }
 }
 
-Color Scene::trace_path(const smdl::Compiler &compiler,
-                        smdl::BumpPtrAllocator &allocator,
-                        smdl::Span<float> wavelengthBase,
-                        smdl::Span<const smdl::JIT::Material *> jitMaterials,
-                        RNG &rng, Ray ray) const {
+#if 0
+Color Scene::trace_path(smdl::BumpPtrAllocator &allocator,
+                        smdl::Span<float> wavelengthBase, RNG &rng,
+                        Ray ray) const {
   const smdl::float3 lightDir = {1, -2, 2};
   Color L{};
   Color w{};
@@ -187,7 +186,7 @@ Color Scene::trace_path(const smdl::Compiler &compiler,
         float v = std::max(0.0f, std::min(theta / 3.1415965359f, 1.0f));
         auto texel =
             imageLight->fetch(std::min(int(u * numTexelsX), numTexelsX - 1),
-                            std::min(int(v * numTexelsY), numTexelsY - 1));
+                              std::min(int(v * numTexelsY), numTexelsY - 1));
         switch (imageLight->get_num_channels()) {
         case 1:
         case 2: {
@@ -216,28 +215,6 @@ Color Scene::trace_path(const smdl::Compiler &compiler,
     smdl::float3 wo{-ray.dir.x, -ray.dir.y, -ray.dir.z};
     auto jitMaterial{jitMaterials[hit.materialIndex]};
     auto jitMaterialInstance{smdl::JIT::Material::Instance{}};
-    {
-      smdl::State state{};
-      state.allocator = &allocator;
-      state.wavelength_base = wavelengthBase.data();
-      state.wavelength_min = WAVELENGTH_MIN;
-      state.wavelength_max = WAVELENGTH_MAX;
-      state.position = hit.point;
-      state.normal = hit.normal;
-      state.texture_coordinate[0] = {hit.texcoord.x, hit.texcoord.y, 0};
-      state.texture_tangent_u[0] = hit.tangent;
-      state.texture_tangent_v[0] =
-          smdl::cross(state.normal, state.texture_tangent_u[0]);
-      state.geometry_normal = hit.geometryNormal;
-      state.geometry_tangent_u[0] = hit.geometryTangent;
-      state.geometry_tangent_v[0] =
-          smdl::cross(hit.geometryNormal, state.geometry_tangent_u[0]);
-      state.object_id = hit.meshInstanceIndex;
-      state.ptex_face_id = hit.faceIndex;
-      state.ptex_face_uv = {hit.bary[1], hit.bary[2]};
-      state.finalize_for_runtime_conventions();
-      jitMaterial->allocate(state, jitMaterialInstance);
-    }
     auto invTbn{smdl::transpose(jitMaterialInstance.tangent_space)};
     if ((jitMaterialInstance.flags &
          (smdl::JIT::Material::HAS_SURFACE_EMISSION |
@@ -249,46 +226,158 @@ Color Scene::trace_path(const smdl::Compiler &compiler,
         for (size_t i = 0; i < WAVELENGTH_BASE_MAX; i++)
           L[i] += w[i] * Le[i];
     }
-    {
-      Ray shadowRay{};
-      Hit shadowHit{};
-      shadowRay.org = hit.point;
-      shadowRay.dir = smdl::normalize(lightDir);
-      shadowRay.tmin = 0.0001f;
-      shadowRay.tmax = std::numeric_limits<float>::infinity();
-      if (!intersect(shadowRay, shadowHit)) {
-        float pdf_fwd{};
-        float pdf_rev{};
-        Color f{};
-        if (jitMaterial->scatter_evaluate(jitMaterialInstance, invTbn * wo,
-                                          invTbn * lightDir, pdf_fwd, pdf_rev,
-                                          &f[0]))
-          for (size_t i = 0; i < WAVELENGTH_BASE_MAX; i++)
-            L[i] += w[i] * f[i];
-      }
-    }
-    smdl::float3 wi{};
-    smdl::float4 xi{std::generate_canonical<float, 32>(rng),
-                    std::generate_canonical<float, 32>(rng),
-                    std::generate_canonical<float, 32>(rng),
-                    std::generate_canonical<float, 32>(rng)};
-    float pdf_fwd{};
-    float pdf_rev{};
-    Color f{};
-    int is_delta{0};
-    if (!jitMaterial->scatter_sample(jitMaterialInstance, xi, invTbn * wo, wi,
-                                     pdf_fwd, pdf_rev, &f[0], is_delta) ||
-        pdf_fwd == 0)
-      break;
-    for (size_t i = 0; i < WAVELENGTH_BASE_MAX; i++) {
-      w[i] *= f[i] / pdf_fwd;
-      if (!std::isfinite(w[i]))
-        w[i] = 0;
-    }
-    ray.org = hit.point;
-    ray.dir = jitMaterialInstance.tangent_space * wi;
-    ray.tmin = 0.0001f;
-    ray.tmax = std::numeric_limits<float>::infinity();
+
   }
   return L;
 }
+#endif
+
+int Scene::random_walk(const std::function<float()> &rng,
+                       smdl::BumpPtrAllocator &allocator,
+                       smdl::Span<float> wavelengthBase, int maxPathLen,
+                       Vertex firstVertex, Vertex *path) const {
+  if (maxPathLen <= 0)
+    return 0;
+  Color beta{};
+  for (size_t i = 0; i < WAVELENGTH_BASE_MAX; i++)
+    beta[i] = 1.0f;
+  smdl::State state{};
+  state.allocator = &allocator;
+  state.wavelength_base = wavelengthBase.data();
+  state.wavelength_min = WAVELENGTH_MIN;
+  state.wavelength_max = WAVELENGTH_MAX;
+  Ray ray = {firstVertex.position, firstVertex.omegaI, Eps, Inf};
+  path[0] = std::move(firstVertex);
+  path[0].beta = beta;
+  int pathLen{1};
+  for (; pathLen < maxPathLen; pathLen++) {
+    ray.dir = smdl::normalize(ray.dir);
+    Vertex &lastVertex{path[pathLen - 1]};
+    Vertex &vertex{path[pathLen]};
+    vertex = {}; // Reset
+    vertex.flags.isOnLightSubpath = lastVertex.flags.isOnLightSubpath;
+    vertex.beta = beta;
+    vertex.omegaO = -ray.dir;
+    if (!intersect(ray, vertex.intersection)) {
+      vertex.position = lastVertex.position + ray.dir;
+      vertex.flags.isTerminal = true;
+      vertex.flags.isTerminalAtInfinity = true;
+      break;
+    }
+
+#if 0
+      // Account for volume scattering by sampling an intercept in the current medium, between the
+      // current vertex position and the hit surface, or simply at any position if we did not
+      // intersect a surface.
+      if (auto medEvent{medium.transmission_sample(rng, ray, L)}; medEvent && medEvent->tHit < ray.tmax) {
+        hit = hitMedium = true;
+        v.p = ray(medEvent->tHit);
+        v.manifold = {};            // Nullify
+        v.materialInitializer = {}; // Nullify
+        v.material.medium = MediumOrMediumTransition(std::move(medium));
+        v.material.bsdf = std::move(medEvent->bsdf);
+        v.info.isKnownOpaque = false;
+        must_succeed(v.validate_initial_volume_vertex()); // Sanity checks.
+      }
+
+      // Intersected surface specifically?
+      if (hit && !hitMedium) {
+        v.material_initializer(waveLens);
+        // Hit medium boundary? If so, pass through and skip to the next iteration.
+        if (!v.material.has_BSDF()) {
+          ray.org = v.p;
+          ray.tmin = shadowEps;
+          ray.tmax = K_inf<float>;
+          medium = std::move(v.material.medium(ray.dir));
+          depth--; // Also do not count this iteration as a bounce!
+          continue;
+        }
+      }
+#endif
+
+    vertex.intersection.initialize_state(state);
+    vertex.flags.isSurfaceScattering = true;
+    vertex.position = vertex.intersection.point;
+    vertex.material = jitMaterials[vertex.intersection.materialIndex];
+    vertex.material->allocate(state, vertex.materialInstance);
+
+    int isDelta{};
+    if (vertex.scatter_sample(smdl::float4{rng(), rng(), rng(), rng()}, //
+                              vertex.omegaO, vertex.omegaI,             //
+                              vertex.directionSolidAnglePDF.forward,
+                              vertex.directionSolidAnglePDF.reverse, beta,
+                              isDelta)) {
+      if (isDelta) {
+        vertex.flags.isSurfaceScatteringDeltaDirection = true;
+        vertex.directionSolidAnglePDF.forward = 1.0f; // TODO Ok?
+        vertex.directionSolidAnglePDF.reverse = 1.0f; // TODO Ok?
+      }
+      ray = Ray{vertex.position, vertex.omegaI, Eps, Inf};
+    } else {
+      break;
+    }
+  }
+  for (int i = 0; i + 1 < pathLen; i++) {
+    path[i + 1].calculate_path_PDF(METHOD_FORWARD, path[i + 0]);
+    path[i + 0].calculate_path_PDF(METHOD_REVERSE, path[i + 1]);
+  }
+  return pathLen;
+}
+
+bool Scene::test_visibility(const std::function<float()> &rng,
+                            smdl::BumpPtrAllocator &allocator,
+                            const Vertex &fromVertex, const Vertex &toVertex,
+                            Color &beta) const {
+  // TODO
+  return true;
+}
+
+#if 0
+bool Scene::visibility(const Spectrum &waveLens, RNG &rng, Vertex v0, vec3 wI, float d, Spectrum &L) const {
+  if (d *= 1 - shadowEps; !(d > shadowEps)) return true;
+  auto ray{Ray3f{v0.p, normalize(wI), shadowEps, d}};
+  Vertex vLast{std::move(v0)};
+  Vertex v{};
+  while (true) {
+    // First use the surface intersection routine to find the nearest surface vertex. If the surface has
+    // no scattering functions and only serves to separate participating media, then we must iterate past
+    // it and account for the intermediate transmission term. If the surface is otherwise opaque, then we
+    // return false to indicate no visibility.
+    bool hit{false};
+    if (auto tHit{intersect(ray, v)}) {
+      ray.tmax = *tHit;
+      hit = true;
+      must_succeed(v.validate_initial_surface_vertex());
+      // Check the opaque flag first. If true, we already know that this vertex blocks visibility and
+      // we do not have to construct the material. Otherwise, initialize the material from the provider and test
+      // if it is opaque.
+      if (v.info.isKnownOpaque) return false;
+      if (v.material_initializer(waveLens); v.material.is_on_opaque_surface()) return false;
+    }
+
+    // Account for medium transmission.
+    vLast.material.medium(ray.dir).transmission(rng, ray, L);
+    // If the transmission collapses to zero (or potentially explodes, but hopefully not), then
+    // return false to indicate no visibility.
+    if (!is_positive_and_finite(L.span(), /*eps=*/1e-8f)) [[unlikely]]
+      return false;
+
+    // If we did not intersect something, then we are done. We have performed intersection tests until failure,
+    // so we know the ray parameter range is exhausted, and we know that we have accounted for all transmission.
+    if (!hit) break;
+
+    // Scoot the ray parameters. In the extremely rare case that the shadow epsilon pushes the minimum past the
+    // maximum, then we will assume that no surface intersection would be detected within that epsilon distance
+    // and thus return true.
+    ray.tmin = ray.tmax + shadowEps;
+    ray.tmax = d;
+    if (ray.tmin >= ray.tmax) [[unlikely]]
+      break;
+
+    // Prepare for the next iteration of the loop.
+    vLast = std::move(v);
+    v.clear();
+  }
+  return true;
+}
+#endif

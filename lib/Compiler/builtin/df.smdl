@@ -334,7 +334,7 @@ struct scatter_sample_parameters {
   /// The active outgoing direction (expanded in the active tangent space).
   float3 wo = wo0;
 
-  /// The canonical random sample in [0,1]^4. 
+  /// The canonical random sample in `[0,1]^4`. 
   float4 xi;
 
   finalize {
@@ -372,7 +372,7 @@ float3 half_direction(inline const &scatter_sample_parameters this, inline const
 }
 
 @(pure macro)
-auto __scatter_evaluate_result_with_multiscatter(
+auto scatter_evaluate_result_with_multiscatter(
   const auto this,
   const auto f,
   const float2 pdf,
@@ -439,18 +439,34 @@ auto scatter_sample(const &__default_bsdf this [[anno::unused()]], const &scatte
 //--{ diffuse_reflection_bsdf
 export struct diffuse_reflection_bsdf: bsdf {
   /// The tint.
+  ///
+  /// > Scaling factor, defined as a color, multiplied by the 
+  /// > result of the distribution function.
+  ///
   $(color | float) tint = 1.0;
 
   /// The roughness.
+  ///
+  /// > Oren-Nayar roughness coefficient, simulating view-dependent diffuse 
+  /// > reflection. Range: `[0,1]`, with `0` specifying complete view 
+  /// > independence.
+  ///
   float roughness = 0.0;
 
   /// The handle.
-  string handle = "";
+  ///
+  /// > Name to provide access to this component for use in an MDL 
+  /// > integration.
+  ///
+  /// \note
+  /// This should be a `string` but we `void` it because we have no use for it.
+  ///
+  void handle = "";
 
   /// The multiscatter tint.
   $(?(color | float)) multiscatter_tint = none;
 
-  /// The mode implied by this BSDF.
+  /// The scatter mode.
   static const scatter_mode mode = scatter_reflect;
 };
 
@@ -467,7 +483,7 @@ auto scatter_evaluate(const &diffuse_reflection_bsdf this, inline const &scatter
       const auto A(1.00 - sigma2 / (2.0 * sigma2 + 0.66));
       const auto B(0.45 * sigma2 / (sigma2 + 0.09));
       const auto f(pdf[0] * (A + #max(#sum(wo.xy * wi.xy), 0) / (#max_value(cos_theta) + EPSILON) * B));
-      return __scatter_evaluate_result_with_multiscatter(this, f, pdf, wo.z, wi.z, this.roughness, "diffuse_reflection_bsdf");
+      return scatter_evaluate_result_with_multiscatter(this, f, pdf, wo.z, wi.z, this.roughness, "diffuse_reflection_bsdf");
     }
   } else {
     return scatter_evaluate_result(is_black: true);
@@ -487,12 +503,23 @@ auto scatter_sample(const &diffuse_reflection_bsdf this [[anno::unused()]], inli
 //--{ diffuse_transmission_bsdf
 export struct diffuse_transmission_bsdf: bsdf {
   /// The tint.
+  ///
+  /// > Scaling factor, defined as a color, multiplied by the 
+  /// > result of the distribution function.
+  ///
   $(color | float) tint = 1.0;
 
   /// The handle.
-  string handle = "";
+  ///
+  /// > Name to provide access to this component for use in an MDL 
+  /// > integration.
+  ///
+  /// \note
+  /// This should be a `string` but we `void` it because we have no use for it.
+  ///
+  void handle = "";
 
-  /// The mode implied by this BSDF.
+  /// The scatter mode.
   static const scatter_mode mode = scatter_transmit;
 };
 
@@ -520,13 +547,28 @@ auto scatter_sample(inline const &diffuse_transmission_bsdf this, inline const &
 //--{ specular_bsdf
 export struct specular_bsdf: bsdf {
   /// The tint.
+  ///
+  /// > Scaling factor, defined as a color, multiplied by the 
+  /// > result of the distribution function.
+  ///
   $(color | float) tint = 1.0;
 
   /// The scatter mode.
+  ///
+  /// > One of three values: `scatter_reflect`, `scatter_transmit`, 
+  /// > or (for both) `scatter_reflect_transmit`.
+  ///
   scatter_mode mode = scatter_reflect;
 
   /// The handle.
-  string handle = "";
+  ///
+  /// > Name to provide access to this component for use in an MDL 
+  /// > integration.
+  ///
+  /// \note
+  /// This should be a `string` but we `void` it because we have no use for it.
+  ///
+  void handle = "";
 };
 
 @(pure macro)
@@ -549,19 +591,42 @@ auto scatter_sample(const &specular_bsdf this, inline const &scatter_sample_para
 //--{ sheen_bsdf
 export struct sheen_bsdf: bsdf {
   /// The roughness.
+  ///
+  /// > Roughness coefficient. Range: `[0,inf)`, with `0` specifying pure 
+  /// > specular reflection.
+  ///
   float roughness;
 
   /// The tint.
+  ///
+  /// > Scaling factor, defined as a color, multiplied by the result of the 
+  /// > distribution function.
+  ///
   $(color | float) tint = 1.0;
 
   /// The multiscatter tint.
+  ///
+  /// > Scaling factor, defined as a color, of the diffuse multiscattering 
+  /// > compensation, `color(0.0)` does not add any, `color(1.0)` fully 
+  /// > compensates the energy loss.
+  ///
   $(?(color | float)) multiscatter_tint = none;
 
-  /// The multiscatter lobe. Unused, but I think this part of the later MDL spec?
+  /// The multiscatter lobe.
+  ///
+  /// Currently unused, part of the later MDL spec?
+  ///
   void multiscatter = none;
 
   /// The handle.
-  string handle = "";
+  ///
+  /// > Name to provide access to this component for use in an MDL 
+  /// > integration.
+  ///
+  /// \note
+  /// This should be a `string` but we `void` it because we have no use for it.
+  ///
+  void handle = "";
 
   finalize {
     roughness = saturate(roughness);
@@ -596,7 +661,7 @@ auto scatter_evaluate(const &sheen_bsdf this, inline const &scatter_evaluate_par
       const auto D(1 / $TWO_PI * (2 + 1 / alpha) * #pow(sin_thetah, 1 / alpha));
       const auto G(1 / (1 + sheen_lambda(fit, cos_thetao) + sheen_lambda(fit, cos_thetai)));
     } in D * G / (4 * cos_thetao);
-    return __scatter_evaluate_result_with_multiscatter(this, f, pdf, cos_thetao, cos_thetai, this.roughness, "sheen_bsdf");
+    return scatter_evaluate_result_with_multiscatter(this, f, pdf, cos_thetao, cos_thetai, this.roughness, "sheen_bsdf");
   } else {
     return scatter_evaluate_result(is_black: true);
   }
@@ -615,24 +680,52 @@ auto scatter_sample(const &sheen_bsdf this [[anno::unused()]], inline const &sca
 //--{ ward_geisler_moroder_bsdf 
 export struct ward_geisler_moroder_bsdf: bsdf {
   /// The roughness in U.
+  ///
+  /// > Roughness coefficient in the U direction. Range: `[0,inf)`, with `0`
+  /// > specifying pure specular reflection.
+  ///
   float roughness_u;
 
   /// The roughness in V.
+  ///
+  /// > Roughness coefficient in the V direction. Range: `[0,inf)`, with `0`
+  /// > specifying pure specular reflection.
+  ///
   float roughness_v = roughness_u;
 
   /// The tint.
+  ///
+  /// > Scaling factor, defined as a color, multiplied by the result of the 
+  /// > distribution function.
+  ///
   $(color | float) tint = 1.0;
 
-  /// The multiscatter tint, or `none` for no multiscatter.
+  /// The multiscatter tint.
+  ///
+  /// > Scaling factor, defined as a color, of the diffuse multiscattering 
+  /// > compensation, `color(0.0)` does not add any, `color(1.0)` fully 
+  /// > compensates the energy loss.
+  ///
   $(?(color | float)) multiscatter_tint = none;
 
   /// The tangent in U.
   float3 tangent_u = $state.texture_tangent_u[0];
 
   /// The handle.
-  string handle = "";
+  ///
+  /// > Name to provide access to this component for use in an MDL 
+  /// > integration.
+  ///
+  /// \note
+  /// This should be a `string` but we `void` it because we have no use for it.
+  ///
+  void handle = "";
+
+  /// The scatter mode.
+  static const scatter_mode mode = scatter_reflect;
 
   finalize {
+    // We limit to `[0,1]`!
     roughness_u = saturate(roughness_u);
     roughness_v = saturate(roughness_v);
   }
@@ -651,7 +744,7 @@ auto scatter_evaluate(const &ward_geisler_moroder_bsdf this, inline const &scatt
     const auto f0(#sum((h := wo + wi) * h) / ($PI * alpha.x * alpha.y * #pow(h.z, 4)) * #exp(-#sum((g := h.xy / (h.z * alpha)) * g)));
     const auto f(f0 * cos_thetai);
     const auto pdf(float2(f0 * (cos_thetao + cos_thetai) / 2));
-    return __scatter_evaluate_result_with_multiscatter(this, f, pdf, cos_thetao, cos_thetai, roughness0, "ward_geisler_moroder_bsdf");
+    return scatter_evaluate_result_with_multiscatter(this, f, pdf, cos_thetao, cos_thetai, roughness0, "ward_geisler_moroder_bsdf");
   } else {
     return scatter_evaluate_result(is_black: true);
   }
@@ -939,7 +1032,7 @@ auto scatter_evaluate(const &microfacet_bsdf this, inline const &scatter_evaluat
     if (effective_mode == scatter_reflect) {
       const auto pdf(norm1 * D / (4 * float2(dot_wo_wm, dot_wi_wm) + EPSILON));
       const auto f(norm2 * D * G / (4 * cos_thetao + EPSILON));
-      auto result(__scatter_evaluate_result_with_multiscatter(this, f, pdf, cos_thetao, cos_thetai, this.roughness0, "simple_glossy_bsdf"));
+      auto result(scatter_evaluate_result_with_multiscatter(this, f, pdf, cos_thetao, cos_thetai, this.roughness0, "simple_glossy_bsdf"));
       result.f *= reflect_chance;
       result.pdf *= reflect_chance;
       return result;
@@ -968,7 +1061,7 @@ auto scatter_evaluate(const &microfacet_bsdf this, inline const &scatter_evaluat
       const auto lut_name(this.distribution <: microfacet::distribution_ggx ? "microfacet_ggx_smith_bsdf" : "microfacet_beckmann_smith_bsdf");
       const auto pdf(D / (4 * float2(proj_areao, proj_areai) + EPSILON));
       const auto f(D * G / (4 * cos_thetao + EPSILON));
-      auto result(__scatter_evaluate_result_with_multiscatter(this, f, pdf, cos_thetao, cos_thetai, this.roughness0, lut_name));
+      auto result(scatter_evaluate_result_with_multiscatter(this, f, pdf, cos_thetao, cos_thetai, this.roughness0, lut_name));
       result.f *= reflect_chance;
       result.pdf *= reflect_chance;
       return result;
@@ -1229,20 +1322,62 @@ auto scatter_sample(const &weighted_layer this, inline const &scatter_sample_par
 export typedef weighted_layer color_weighted_layer;
 //--}
 
+//--{ thin_film
+
+/// A thin film layer.
+///
+/// > Add reflective thin-film interference color to an elemental or
+/// > compound BSDF.
+///
 export struct thin_film: bsdf {
+  /// The thickness in nanometers.
   $(color | float) thickness;
 
+  /// The index of refraction.
   $(color | float) ior;
 
+  /// The base BSDF.
   bsdf base = bsdf();
 };
 
+@(macro)
+auto scatter_evaluate(const &thin_film this, const &scatter_evaluate_parameters params) {
+  auto result(scatter_evaluate(visit &this.base, params));
+  if (!result.is_black && params.mode == scatter_reflect) {
+    // TODO
+    return scatter_evaluate_result(f: result.f, pdf: result.pdf);
+  } else {
+    return result;
+  }
+}
+
+@(macro)
+auto scatter_sample(const &thin_film this, const &scatter_sample_parameters params) {
+  auto result(scatter_sample(visit &this.base, params));
+  if ((result.mode == scatter_reflect) & bool(result.delta_f)) {
+    // TODO
+  }
+  return result;
+}
+//--}
+
 //--{ fresnel_factor
+
+/// A fresnel factor.
+///
+/// > Modifier weighting a base BSDF based on the Fresnel reflection 
+/// > equation for a complex number IOR, comprising a real number IOR 
+/// > and an extinction coefficient. This modifier is useful to model
+/// > the reflectance behavior of conductors and semi-conductors.
+///
 export struct fresnel_factor: bsdf {
+  /// The index of refraction.
   $(color | float) ior;
 
+  /// The extinction coefficient.
   $(color | float) extinction_coefficient;
 
+  /// The base BSDF.
   bsdf base = bsdf();
 };
 
@@ -1270,12 +1405,29 @@ auto scatter_sample(const &fresnel_factor this, const &scatter_sample_parameters
 
 //--{ directional_factor
 export struct directional_factor: bsdf {
+  /// The normal tint.
+  ///
+  /// > Color scaling factor at the normal.
+  ///
   $(color | float) normal_tint = 1.0;
 
+  /// The grazing tint.
+  /// 
+  /// > Color scaling factor at the grazing angle.
+  ///
   $(color | float) grazing_tint = 1.0;
 
+  /// The exponent.
+  ///
+  /// > Exponent for directional factor. Default value (5.0) is 
+  /// > from Schlick's approximation.
+  ///
   float exponent = 5.0;
 
+  /// The base BSDF.
+  ///
+  /// > Base BSDF to be modified by directional factor.
+  ///
   bsdf base = bsdf();
 };
 
@@ -1299,17 +1451,85 @@ auto scatter_sample(const &directional_factor this, const &scatter_sample_parame
 }
 //--}
 
+//--{ measured_curve_factor
 export struct measured_curve_factor: bsdf {
+  /// The curve values.
+  ///
+  /// > Measured data for the reflection behavior. A 1-d function 
+  /// > measured in the pre-image range from zero to pi/2 with equally 
+  /// > spaced measured reflectance values.
+  ///
   color[] curve_values;
 
+  /// The base BSDF.
+  ///
+  /// > Base BSDF to be modified by the measured reflectance curve.
+  ///
   bsdf base = bsdf();
 };
 
+@(macro)
+auto scatter_evaluate(const &measured_curve_factor this, const &scatter_evaluate_parameters params) {
+  auto result(scatter_evaluate(visit &this.base, params));
+  if (!result.is_black && params.mode == scatter_reflect) {
+    // TODO
+    return scatter_evaluate_result(f: result.f, pdf: result.pdf);
+  } else {
+    return result;
+  }
+}
+
+@(macro)
+auto scatter_sample(const &measured_curve_factor this, const &scatter_sample_parameters params) {
+  auto result(scatter_sample(visit &this.base, params));
+  if ((result.mode == scatter_reflect) & bool(result.delta_f)) {
+    // TODO
+  }
+  return result;
+}
+//--}
+
+//--{ measured_factor
 export struct measured_factor: bsdf {
+  /// The values.
+  ///
+  /// > Measured data of type color for the reflection behavior. A 2-d 
+  /// > function measured in the pre-image range `[0,pi/2]^2` with equally
+  /// > spaced reflectance values, where the texture-space u-coordinate 
+  /// > corresponds to the angle alpha between the incoming direction and 
+  /// > the half-vector h from the microfacet model, and the texture-space
+  /// > v-coordinate corresponds to the angle beta between the half-vector 
+  /// > h and the shading surface normal.
+  ///
   texture_2d values;
 
+  /// The base BSDF.
+  ///
+  /// > Base BSDF to be modified by the measured reflectance values.
+  ///
   bsdf base = bsdf();
 };
+
+@(macro)
+auto scatter_evaluate(const &measured_factor this, const &scatter_evaluate_parameters params) {
+  auto result(scatter_evaluate(visit &this.base, params));
+  if (!result.is_black && params.mode == scatter_reflect) {
+    // TODO
+    return scatter_evaluate_result(f: result.f, pdf: result.pdf);
+  } else {
+    return result;
+  }
+}
+
+@(macro)
+auto scatter_sample(const &measured_factor this, const &scatter_sample_parameters params) {
+  auto result(scatter_sample(visit &this.base, params));
+  if ((result.mode == scatter_reflect) & bool(result.delta_f)) {
+    // TODO
+  }
+  return result;
+}
+//--}
 
 //--{ fresnel_layer, color_fresnel_layer
 export struct fresnel_layer: bsdf {
@@ -1346,7 +1566,7 @@ auto scatter_evaluate(const &fresnel_layer this, inline const &scatter_evaluate_
   const auto result0(scatter_evaluate(visit &this.base, params));
   const auto result1 = return_from {
     preserve normal, ior;
-    normal = this.normal, ior = 1 / this.average_ior; // Assume IOR of 1.4 => relative IOR of 1 / 1.4
+    normal = this.normal, ior = 1.0 / this.average_ior; // Assume IOR of 1.4 => relative IOR of 1 / 1.4
     return scatter_evaluate(visit &this.layer, params);
   };
   if (result0.is_black & result1.is_black) {
@@ -1375,7 +1595,7 @@ auto scatter_sample(const &fresnel_layer this, inline const &scatter_sample_para
   const auto chance(this.average_weight * specular::schlick_fresnel(cos_theta, specular::schlick_F0(this.average_ior)));
   if (monte_carlo::bool_sample(&xi.z, chance)) {
     preserve normal, ior;
-    normal = this.normal, ior = 1 / this.average_ior; // Assume IOR of 1.4 => relative IOR of 1/1.4
+    normal = this.normal, ior = 1.0 / this.average_ior; // Assume IOR of 1.4 => relative IOR of 1/1.4
     auto result(scatter_sample(visit &this.layer, params));
     *result.delta_f *= this.weight * specular::dielectric_fresnel(dot(wo, half_direction(params, &result)), 1 / this.ior) / chance if (result.delta_f);
     return result;
@@ -1492,7 +1712,7 @@ auto scatter_evaluate(const &component_mix this, const &scatter_evaluate_paramet
   auto result(scatter_evaluate_result(f: color(0), is_black: true));
   for (int i = 0; i < #num(this.components); i++) {
     visit component in this.components[i] { // In general this is a union!
-      auto component_result(scatter_evaluate(&component.component, params));
+      auto component_result(scatter_evaluate(visit &component.component, params));
       if (!component_result.is_black) {
         result.pdf += component.chance * component_result.pdf;
         result.f += component.weight * component_result.f;
@@ -1512,7 +1732,7 @@ auto scatter_sample(const &component_mix this, const &scatter_sample_parameters 
         *xi -= component.chance;
       } else {
         *xi /= component.chance;
-        auto result(scatter_sample(&component.component, params));
+        auto result(scatter_sample(visit &component.component, params));
         if ((result.mode != scatter_none) & bool(result.delta_f))
           *result.delta_f *= component.weight;
         return result;
@@ -1639,7 +1859,7 @@ auto emission_sample(
 
 //--{ diffuse_edf
 export struct diffuse_edf: edf {
-  string handle = "";
+  void handle = "";
 };
 
 @(pure macro)
@@ -1664,7 +1884,7 @@ export struct spot_edf: edf {
 
   float3x3 global_frame = float3x3(1.0);
 
-  string handle = "";
+  void handle = "";
 };
 
 @(pure macro)
@@ -1726,10 +1946,9 @@ export struct measured_edf: edf {
   /// > Name to provide access to this component for use in an MDL integration.
   ///
   /// \note 
-  /// At the moment, SpectralMDL does not care about handles! This is not used
-  /// anywhere and only provided for compatibility with the MDL specification.
+  /// This should be a `string` but we `void` it because we have no use for it.
   ///
-  string handle = "";
+  void handle = "";
 };
 
 // Defined in `lib/LightProfile.cc`

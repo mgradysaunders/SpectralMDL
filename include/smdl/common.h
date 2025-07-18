@@ -10,6 +10,7 @@
 #include <cstring>
 #include <fstream>
 #include <functional>
+#include <map>
 #include <memory>
 #include <optional>
 #include <string>
@@ -44,6 +45,35 @@ namespace smdl {
 
 /// \defgroup Main Main
 /// \{
+
+/// Expand third macro in variadic arguments, used to implement
+/// `SMDL_SANITY_CHECK`.
+#define SMDL_EXPAND_THIRD_MACRO(A, B, C, ...) C
+
+/// Sanity check a condition.
+#define SMDL_SANITY_CHECK_1(cond)                                              \
+  do {                                                                         \
+    if (!(cond))                                                               \
+      ::smdl::sanity_check_failed(#cond, __FILE__, __LINE__);                  \
+  } while (false)
+
+/// Sanity check a condition with a message.
+#define SMDL_SANITY_CHECK_2(cond, message)                                     \
+  do {                                                                         \
+    if (!(cond))                                                               \
+      ::smdl::sanity_check_failed(#cond, __FILE__, __LINE__, message);         \
+  } while (false)
+
+/// Sanity check a condition with or without a message.
+#define SMDL_SANITY_CHECK(...)                                                 \
+  SMDL_EXPAND_THIRD_MACRO(__VA_ARGS__, SMDL_SANITY_CHECK_2,                    \
+                          SMDL_SANITY_CHECK_1)(__VA_ARGS__)
+
+/// If `SMDL_SANITY_CHECK` fails, this prints the relevant information and
+/// exits the program with code `EXIT_FAILURE`.
+[[noreturn]] SMDL_EXPORT void sanity_check_failed(const char *condition,
+                                                  const char *file, int line,
+                                                  const char *more = nullptr);
 
 /// The SMDL build information.
 class SMDL_EXPORT BuildInfo final {
@@ -213,7 +243,7 @@ public:
   size_t count{};
 };
 
-/// \name Functions (filesystem) 
+/// \name Functions (filesystem)
 /// \{
 
 /// Has extension?
@@ -767,10 +797,10 @@ public:
   explicit constexpr Vector(const U *v) : Vector(v[0], v[1]) {}
 
   /// The access operator.
-  [[nodiscard]] constexpr T &operator[](size_t i) { return (&x)[i]; }
+  [[nodiscard]] constexpr T &operator[](size_t i) noexcept { return (&x)[i]; }
 
   /// The access operator, const variant.
-  [[nodiscard]] constexpr const T &operator[](size_t i) const {
+  [[nodiscard]] constexpr const T &operator[](size_t i) const noexcept {
     return (&x)[i];
   }
 
@@ -790,10 +820,10 @@ public:
   explicit constexpr Vector(const U *v) : Vector(v[0], v[1], v[2]) {}
 
   /// The access operator.
-  [[nodiscard]] constexpr T &operator[](size_t i) { return (&x)[i]; }
+  [[nodiscard]] constexpr T &operator[](size_t i) noexcept { return (&x)[i]; }
 
   /// The access operator, const variant.
-  [[nodiscard]] constexpr const T &operator[](size_t i) const {
+  [[nodiscard]] constexpr const T &operator[](size_t i) const noexcept {
     return (&x)[i];
   }
 
@@ -815,14 +845,16 @@ public:
   explicit constexpr Vector(const U *v) : Vector(v[0], v[1], v[2], v[3]) {}
 
   /// The access operator.
-  [[nodiscard]] constexpr T &operator[](size_t i) { return (&x)[i]; }
+  [[nodiscard]] constexpr T &operator[](size_t i) noexcept { return (&x)[i]; }
 
   /// The access operator, const variant.
-  [[nodiscard]] constexpr const T &operator[](size_t i) const {
+  [[nodiscard]] constexpr const T &operator[](size_t i) const noexcept {
     return (&x)[i];
   }
 
-  [[nodiscard]] constexpr operator Vector<T, 3>() const { return {x, y, z}; }
+  [[nodiscard]] constexpr operator Vector<T, 3>() const noexcept {
+    return {x, y, z};
+  }
 
   T x{}, y{}, z{}, w{};
 };
@@ -854,6 +886,10 @@ using double3 = Vector<double, 3>;
 /// The equivalent of the MDL `double4` vector type.
 using double4 = Vector<double, 4>;
 
+static_assert(sizeof(float2) == 2 * sizeof(float));
+static_assert(sizeof(float3) == 4 * sizeof(float));
+static_assert(sizeof(float4) == 4 * sizeof(float));
+
 /// The matrix template.
 ///
 /// \tparam T  The value type.
@@ -880,10 +916,28 @@ public:
   }
 
   /// The column access operator.
-  [[nodiscard]] constexpr auto &operator[](size_t i) { return v[i]; }
+  [[nodiscard]] constexpr auto operator[](size_t j) noexcept -> Vector<T, M> & {
+    return v[j];
+  }
 
   /// The column access operator, const variant.
-  [[nodiscard]] constexpr auto &operator[](size_t i) const { return v[i]; }
+  [[nodiscard]] constexpr auto operator[](size_t j) const noexcept
+      -> const Vector<T, M> & {
+    return v[j];
+  }
+
+  // Get column vector.
+  [[nodiscard]] constexpr Vector<T, M> col(size_t j) const noexcept {
+    return v[j];
+  }
+
+  /// Get row vector.
+  [[nodiscard]] constexpr Vector<T, N> row(size_t i) const noexcept {
+    Vector<T, N> u{};
+    for (size_t j = 0; j < N; j++)
+      u[j] = v[j][i];
+    return u;
+  }
 
   /// The column vectors.
   std::array<Vector<T, M>, N> v{};
@@ -951,10 +1005,24 @@ using double4x4 = Matrix<double, 4, 4>;
 /// \name Functions (math)
 /// \{
 
+/// Vector unary `operator+`.
+template <typename T, size_t N>
+[[nodiscard]] constexpr Vector<T, N> operator+(Vector<T, N> v) noexcept {
+  return v;
+}
+
+/// Vector unary `operator-`.
+template <typename T, size_t N>
+[[nodiscard]] constexpr Vector<T, N> operator-(Vector<T, N> v) noexcept {
+  for (size_t i = 0; i < N; i++)
+    v[i] = -v[i];
+  return v;
+}
+
 /// Vector-Vector `operator+`.
 template <typename T, size_t N>
-[[nodiscard]] constexpr Vector<T, N> operator+(const Vector<T, N> &v0,
-                                               const Vector<T, N> &v1) {
+[[nodiscard]] constexpr Vector<T, N>
+operator+(const Vector<T, N> &v0, const Vector<T, N> &v1) noexcept {
   Vector<T, N> v{};
   for (size_t i = 0; i < N; i++)
     v[i] = v0[i] + v1[i];
@@ -963,8 +1031,8 @@ template <typename T, size_t N>
 
 /// Vector-Vector `operator-`.
 template <typename T, size_t N>
-[[nodiscard]] constexpr Vector<T, N> operator-(const Vector<T, N> &v0,
-                                               const Vector<T, N> &v1) {
+[[nodiscard]] constexpr Vector<T, N>
+operator-(const Vector<T, N> &v0, const Vector<T, N> &v1) noexcept {
   Vector<T, N> v{};
   for (size_t i = 0; i < N; i++)
     v[i] = v0[i] - v1[i];
@@ -973,8 +1041,8 @@ template <typename T, size_t N>
 
 /// Scalar-Vector `operator*`.
 template <typename T, size_t N>
-[[nodiscard]] constexpr Vector<T, N> operator*(const T &s0,
-                                               const Vector<T, N> &v1) {
+[[nodiscard]] constexpr Vector<T, N>
+operator*(const T &s0, const Vector<T, N> &v1) noexcept {
   Vector<T, N> v{};
   for (size_t i = 0; i < N; i++)
     v[i] = s0 * v1[i];
@@ -984,7 +1052,7 @@ template <typename T, size_t N>
 /// Vector-Scalar `operator*`.
 template <typename T, size_t N>
 [[nodiscard]] constexpr Vector<T, N> operator*(const Vector<T, N> &v0,
-                                               const T &s1) {
+                                               const T &s1) noexcept {
   Vector<T, N> v{};
   for (size_t i = 0; i < N; i++)
     v[i] = v0[i] * s1;
@@ -994,7 +1062,7 @@ template <typename T, size_t N>
 /// Vector-scalar `operator/`.
 template <typename T, size_t N>
 [[nodiscard]] constexpr Vector<T, N> operator/(const Vector<T, N> &v0,
-                                               const T &s1) {
+                                               const T &s1) noexcept {
   Vector<T, N> v{};
   for (size_t i = 0; i < N; i++)
     v[i] = v0[i] / s1;
@@ -1003,8 +1071,8 @@ template <typename T, size_t N>
 
 /// Matrix-Matrix `operator*`.
 template <typename T, size_t P, size_t N, size_t M>
-[[nodiscard]] constexpr Matrix<T, P, M> operator*(const Matrix<T, N, M> &m0,
-                                                  const Matrix<T, P, N> &m1) {
+[[nodiscard]] constexpr Matrix<T, P, M>
+operator*(const Matrix<T, N, M> &m0, const Matrix<T, P, N> &m1) noexcept {
   Matrix<T, P, M> m{};
   for (size_t i = 0; i < M; i++)
     for (size_t j = 0; j < P; j++)
@@ -1015,8 +1083,8 @@ template <typename T, size_t P, size_t N, size_t M>
 
 /// Matrix-Vector `operator*`.
 template <typename T, size_t N, size_t M>
-[[nodiscard]] constexpr Vector<T, M> operator*(const Matrix<T, N, M> &m0,
-                                               const Vector<T, N> &v1) {
+[[nodiscard]] constexpr Vector<T, M>
+operator*(const Matrix<T, N, M> &m0, const Vector<T, N> &v1) noexcept {
   Vector<T, M> v{};
   for (size_t i = 0; i < M; i++)
     for (size_t k = 0; k < N; k++)
@@ -1024,48 +1092,77 @@ template <typename T, size_t N, size_t M>
   return v;
 }
 
+/// Vector-Vector `operator==`.
+template <typename T, size_t N>
+[[nodiscard]] constexpr Vector<bool, N>
+operator==(const Vector<T, N> &v0, const Vector<T, N> &v1) noexcept {
+  Vector<bool, N> v{};
+  for (size_t i = 0; i < N; i++)
+    v[i] = v0[i] == v1[i];
+  return v;
+}
+
+/// Vector-Vector `operator==`.
+template <typename T, size_t N>
+[[nodiscard]] constexpr Vector<bool, N>
+operator!=(const Vector<T, N> &v0, const Vector<T, N> &v1) noexcept {
+  Vector<bool, N> v{};
+  for (size_t i = 0; i < N; i++)
+    v[i] = v0[i] != v1[i];
+  return v;
+}
+
 /// Vector dot product in 2 dimensions.
 template <typename T>
-[[nodiscard]] constexpr T dot(Vector<T, 2> u, Vector<T, 2> v) {
+[[nodiscard]] constexpr T dot(Vector<T, 2> u, Vector<T, 2> v) noexcept {
   return u.x * v.x + u.y * v.y;
 }
 
 /// Vector dot product in 3 dimensions.
 template <typename T>
-[[nodiscard]] constexpr T dot(Vector<T, 3> u, Vector<T, 3> v) {
+[[nodiscard]] constexpr T dot(Vector<T, 3> u, Vector<T, 3> v) noexcept {
   return u.x * v.x + u.y * v.y + u.z * v.z;
 }
 
 /// Vector dot product in 4 dimensions.
 template <typename T>
-[[nodiscard]] constexpr T dot(Vector<T, 4> u, Vector<T, 4> v) {
+[[nodiscard]] constexpr T dot(Vector<T, 4> u, Vector<T, 4> v) noexcept {
   return u.x * v.x + u.y * v.y + u.z * v.z + u.w * v.w;
 }
 
 /// Vector cross product in 3 dimensions.
 template <typename T>
-[[nodiscard]] constexpr Vector<T, 3> cross(Vector<T, 3> u, Vector<T, 3> v) {
+[[nodiscard]] constexpr Vector<T, 3> cross(Vector<T, 3> u,
+                                           Vector<T, 3> v) noexcept {
   return {u.y * v.z - u.z * v.y, //
           u.z * v.x - u.x * v.z, //
           u.x * v.y - u.y * v.x};
 }
 
+/// Vector length squared.
+template <typename T, size_t N>
+[[nodiscard]] constexpr T length_squared(Vector<T, N> v) noexcept {
+  return dot(v, v);
+}
+
 /// Vector length.
-template <typename T, size_t N> [[nodiscard]] inline T length(Vector<T, N> v) {
+template <typename T, size_t N>
+[[nodiscard]] inline T length(Vector<T, N> v) noexcept {
   static_assert(std::is_floating_point_v<T>);
   return std::sqrt(dot(v, v));
 }
 
 /// Normalize.
 template <typename T, size_t N>
-[[nodiscard]] inline Vector<T, N> normalize(Vector<T, N> v) {
+[[nodiscard]] inline Vector<T, N> normalize(Vector<T, N> v) noexcept {
   static_assert(std::is_floating_point_v<T>);
   return v / length(v);
 }
 
 /// Matrix transpose.
 template <typename T, size_t N, size_t M>
-[[nodiscard]] constexpr Matrix<T, M, N> transpose(const Matrix<T, N, M> &m) {
+[[nodiscard]] constexpr Matrix<T, M, N>
+transpose(const Matrix<T, N, M> &m) noexcept {
   auto mT{Matrix<T, M, N>{}};
   for (size_t i = 0; i < N; i++)
     for (size_t j = 0; j < M; j++)
@@ -1076,7 +1173,7 @@ template <typename T, size_t N, size_t M>
 /// Calculate affine inverse.
 template <typename T>
 [[nodiscard]] constexpr Matrix<T, 4, 4>
-affine_inverse(const Matrix<T, 4, 4> &m) {
+affine_inverse(const Matrix<T, 4, 4> &m) noexcept {
   auto mI{Matrix<T, 4, 4>{}};
   mI[0] = {m[0].x, m[1].x, m[2].x, T(0)};
   mI[1] = {m[0].y, m[1].y, m[2].y, T(0)};
@@ -1086,7 +1183,7 @@ affine_inverse(const Matrix<T, 4, 4> &m) {
 }
 
 /// Calculate vector perpendicular to the given vector.
-[[nodiscard]] inline float3 perpendicular_to(float3 v) {
+[[nodiscard]] inline float3 perpendicular_to(float3 v) noexcept {
   float3 z{normalize(v)};
   float3 x{z.z < -0.9999f ? float3(0.0f, -1.0f, 0.0f)
                           : float3(-z.x / (z.z + 1.0f) + 1.0f,
@@ -1096,7 +1193,7 @@ affine_inverse(const Matrix<T, 4, 4> &m) {
 
 /// Calculate look-at transform.
 [[nodiscard]] inline float4x4 look_at(float3 from, float3 to,
-                                      float3 up = {0, 0, 1}) {
+                                      float3 up = {0, 0, 1}) noexcept {
   float3 z{normalize(from - to)};
   float3 x{normalize(cross(up, z))};
   float3 y{cross(z, x)};
@@ -1106,8 +1203,27 @@ affine_inverse(const Matrix<T, 4, 4> &m) {
           float4{from.x, from.y, from.z, 1.0f}};
 }
 
+/// Is any element true?
+template <size_t N>
+[[nodiscard]] inline bool is_any_true(Vector<bool, N> v) noexcept {
+  for (size_t i = 0; i < N; i++)
+    if (v[i])
+      return true;
+  return false;
+}
+
+/// Is every element true?
+template <size_t N>
+[[nodiscard]] inline bool is_all_true(Vector<bool, N> v) noexcept {
+  for (size_t i = 0; i < N; i++)
+    if (!v[i])
+      return false;
+  return true;
+}
+
+/// Is every element finite?
 template <typename T, size_t N>
-[[nodiscard]] inline bool is_all_finite(const Vector<T, N> &v) {
+[[nodiscard]] inline bool is_all_finite(const Vector<T, N> &v) noexcept {
   for (size_t i = 0; i < N; i++)
     if (!std::isfinite(v[i]))
       return false;
@@ -1296,37 +1412,113 @@ private:
 
 /// \}
 
-/// \addtogroup Main
+/// \addtogroup Support
 /// \{
 
-/// Expand third macro in variadic arguments, used to implement
-/// `SMDL_SANITY_CHECK`.
-#define SMDL_EXPAND_THIRD_MACRO(A, B, C, ...) C
+/// A 128-bit MD5 hash.
+class SMDL_EXPORT MD5Hash final {
+public:
+  /// Hash file on disk. Returns zero if there is an error.
+  [[nodiscard]] static MD5Hash hash_file(const std::string &fileName) noexcept;
 
-/// Sanity check a condition.
-#define SMDL_SANITY_CHECK_1(cond)                                              \
-  do {                                                                         \
-    if (!(cond))                                                               \
-      ::smdl::sanity_check_failed(#cond, __FILE__, __LINE__);                  \
-  } while (false)
+  /// Hash memory.
+  [[nodiscard]] static MD5Hash hash_memory(const void *mem,
+                                           size_t memSize) noexcept;
 
-/// Sanity check a condition with a message.
-#define SMDL_SANITY_CHECK_2(cond, message)                                     \
-  do {                                                                         \
-    if (!(cond))                                                               \
-      ::smdl::sanity_check_failed(#cond, __FILE__, __LINE__, message);         \
-  } while (false)
+  /// Hash memory.
+  [[nodiscard]] static MD5Hash hash_memory(std::string_view mem) noexcept {
+    return hash_memory(mem.data(), mem.size());
+  }
 
-/// Sanity check a condition with or without a message.
-#define SMDL_SANITY_CHECK(...)                                                 \
-  SMDL_EXPAND_THIRD_MACRO(__VA_ARGS__, SMDL_SANITY_CHECK_2,                    \
-                          SMDL_SANITY_CHECK_1)(__VA_ARGS__)
+public:
+  /// Construct zero.
+  constexpr MD5Hash() = default;
 
-/// If `SMDL_SANITY_CHECK` fails, this prints the relevant information and
-/// exits the program with code `EXIT_FAILURE`.
-[[noreturn]] SMDL_EXPORT void sanity_check_failed(const char *condition,
-                                                  const char *file, int line,
-                                                  const char *more = nullptr);
+  /// Construct from hash code.
+  constexpr MD5Hash(std::pair<uint64_t, uint64_t> hash) : hash(hash) {}
+
+  /// Get the upper or most significant bits.
+  [[nodiscard]] constexpr uint64_t upper_bits() const noexcept {
+    return hash.first;
+  }
+
+  /// Get the lower or least significant bits.
+  [[nodiscard]] constexpr uint64_t lower_bits() const noexcept {
+    return hash.second;
+  }
+
+  /// Wrap `operator==`.
+  [[nodiscard]] constexpr bool operator==(const MD5Hash &other) const noexcept {
+    return hash == other.hash;
+  }
+
+  /// Wrap `operator!=`.
+  [[nodiscard]] constexpr bool operator!=(const MD5Hash &other) const noexcept {
+    return hash != other.hash;
+  }
+
+  /// Wrap `operator<`.
+  [[nodiscard]] constexpr bool operator<(const MD5Hash &other) const noexcept {
+    return hash < other.hash;
+  }
+
+  /// Wrap `operator>`.
+  [[nodiscard]] constexpr bool operator>(const MD5Hash &other) const noexcept {
+    return hash > other.hash;
+  }
+
+  /// Wrap `operator<=`.
+  [[nodiscard]] constexpr bool operator<=(const MD5Hash &other) const noexcept {
+    return hash <= other.hash;
+  }
+
+  /// Wrap `operator>=`.
+  [[nodiscard]] constexpr bool operator>=(const MD5Hash &other) const noexcept {
+    return hash >= other.hash;
+  }
+
+  /// Wrap `operator!`.
+  [[nodiscard]] constexpr bool operator!() const noexcept {
+    return hash == std::pair<uint64_t, uint64_t>();
+  }
+
+  /// Stringify for display.
+  [[nodiscard]] operator std::string() const;
+
+public:
+  /// The hash code.
+  std::pair<uint64_t, uint64_t> hash{};
+};
+
+/// An MD5 file hash.
+class SMDL_EXPORT MD5FileHash final {
+public:
+  /// The hash code.
+  MD5Hash hash{};
+
+  /// The file names that produced this hash code (presumably all duplicates of
+  /// the same file).
+  std::vector<std::string> canonicalFileNames{};
+};
+
+/// An MD5 file hasher.
+///
+/// This caches the `MD5FileHash` for every file that is hashed, so that we
+/// do not have to calculate hashes redundantly.
+///
+class SMDL_EXPORT MD5FileHasher final {
+public:
+  MD5FileHasher() = default;
+
+  MD5FileHasher(const MD5FileHasher &) = delete;
+
+  /// Hash.
+  [[nodiscard]] const MD5FileHash *operator[](const std::string &fileName);
+
+private:
+  /// The file hashes.
+  std::map<std::string, MD5FileHash> fileHashes{};
+};
 
 /// \}
 

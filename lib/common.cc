@@ -14,16 +14,33 @@
 
 #include "filesystem.h"
 
+#include "llvm/ADT/StringExtras.h"
+#include "llvm/ADT/StringRef.h"
 #include "llvm/MC/TargetRegistry.h"
 #include "llvm/Support/Allocator.h"
 #include "llvm/Support/Error.h"
 #include "llvm/Support/FileSystem.h"
+#include "llvm/Support/MD5.h"
 #include "llvm/Support/TargetSelect.h"
 #include "llvm/Support/WithColor.h"
 #include "llvm/Target/TargetOptions.h"
 #include "llvm/TargetParser/Host.h"
 
 namespace smdl {
+
+void sanity_check_failed(const char *condition, const char *file, int line,
+                         const char *more) {
+  std::string message{"Sanity check failed! "};
+  message += condition, message += '\n';
+  message += "  File = ", message += file, message += '\n';
+  message += "  Line = ", message += std::to_string(line), message += '\n';
+  if (more) {
+    message += "\n...\n\n";
+    message += more;
+    message += "\n";
+  }
+  llvm::report_fatal_error(message.c_str());
+}
 
 BuildInfo BuildInfo::get() noexcept {
   return {SMDL_VERSION_MAJOR, //
@@ -420,18 +437,42 @@ void State::finalize_for_runtime_conventions() {
   }
 }
 
-void sanity_check_failed(const char *condition, const char *file, int line,
-                         const char *more) {
-  std::string message{"Sanity check failed! "};
-  message += condition, message += '\n';
-  message += "  File = ", message += file, message += '\n';
-  message += "  Line = ", message += std::to_string(line), message += '\n';
-  if (more) {
-    message += "\n...\n\n";
-    message += more;
-    message += "\n";
+MD5Hash MD5Hash::hash_file(const std::string &fileName) noexcept try {
+  auto hasher{llvm::MD5()};
+  auto buffer{std::array<char, 128>{}};
+  auto stream{open_or_throw(fileName, std::ios::in | std::ios::binary)};
+  while (!stream.eof()) {
+    stream.read(buffer.data(), buffer.size());
+    hasher.update(llvm::StringRef(buffer.data(), stream.gcount()));
   }
-  llvm::report_fatal_error(message.c_str());
+  return MD5Hash{hasher.result().words()};
+} catch (...) {
+  return MD5Hash{}; // Zero
+}
+
+MD5Hash MD5Hash::hash_memory(const void *mem, size_t memSize) noexcept {
+  auto result{llvm::MD5::hash(
+      llvm::ArrayRef<uint8_t>{static_cast<const uint8_t *>(mem), memSize})};
+  return MD5Hash{result.words()};
+}
+
+MD5Hash::operator std::string() const {
+  auto bytes{std::array<uint8_t, 16>{}};
+  llvm::support::endian::write64le(&bytes[0], lower_bits());
+  llvm::support::endian::write64le(&bytes[8], upper_bits());
+  return llvm::toHex(llvm::ArrayRef<uint8_t>{bytes.data(), 16},
+                     /*LowerCase=*/true);
+}
+
+const MD5FileHash *MD5FileHasher::operator[](const std::string &fileName) {
+  auto canonicalFileName{canonical(fileName)};
+  auto [itr, inserted] = fileHashes.try_emplace(canonicalFileName);
+  auto &fileHash{itr->second};
+  if (inserted) {
+    fileHash.hash = MD5Hash::hash_file(canonicalFileName);
+    fileHash.canonicalFileNames.push_back(canonicalFileName);
+  }
+  return &fileHash;
 }
 
 } // namespace smdl

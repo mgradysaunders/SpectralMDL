@@ -57,11 +57,7 @@ int main(int argc, char **argv) try {
   if (auto error{compiler.jit_compile()})
     error->print_and_exit();
 
-  Scene scene{};
-  scene.load(inputSceneFile);
-  std::vector<const smdl::JIT::Material *> jitMaterials{};
-  for (auto &materialName : scene.materialNames)
-    jitMaterials.push_back(compiler.find_jit_material(materialName));
+  Scene scene{compiler, inputSceneFile};
   Color wavelengthBase{};
   for (size_t i = 0; i < WAVELENGTH_BASE_MAX; i++) {
     float t = i / float(WAVELENGTH_BASE_MAX - 1);
@@ -73,9 +69,10 @@ int main(int argc, char **argv) try {
       error->print_and_exit();
     }
     scene.imageLight->finish_load();
-    scene.imageLightScale = float(imageLightScale) ;
+    scene.imageLightScale = float(imageLightScale);
   }
 
+#if 0
   const auto imageExtent{smdl::int2(cameraDims)};
   const auto imageAspect{float(imageExtent.x) / float(imageExtent.y)};
   const auto focalLen{0.5f /
@@ -107,8 +104,7 @@ int main(int argc, char **argv) try {
             ray.dir.z = -focalLen;
             ray.dir = smdl::normalize(ray.dir);
             ray.transform(cameraTransform);
-            Color L{scene.trace_path(compiler, allocator, wavelengthBase,
-                                     jitMaterials, rng, ray)};
+            Color L{scene.trace_path(allocator, wavelengthBase, rng, ray)};
             for (size_t k = 0; k < WAVELENGTH_BASE_MAX; k++)
               Lsum[k] += L[k] / float(N);
             allocator.reset();
@@ -134,6 +130,7 @@ int main(int argc, char **argv) try {
   ofs << imageExtent.y << " 255\n";
   for (auto &imagePixel : imagePixels)
     ofs.write(reinterpret_cast<const char *>(&imagePixel[0]), 3);
+#endif
 } catch (const smdl::Error &error) {
   error.print();
   return EXIT_FAILURE;

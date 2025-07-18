@@ -9,7 +9,6 @@
 #include "smdl/Image.h"
 #include "smdl/JIT.h"
 #include "smdl/LightProfile.h"
-#include "smdl/MD5Hash.h"
 #include "smdl/Module.h"
 #include "smdl/SceneData.h"
 
@@ -233,7 +232,7 @@ private:
   /// The MDL module directory names.
   std::set<std::string> moduleDirNames{};
 
-  /// The MDL module directory search paths. 
+  /// The MDL module directory search paths.
   ///
   /// \note
   /// This is maintained separately from `moduleDirNames` but should

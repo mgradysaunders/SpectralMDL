@@ -1,4 +1,11 @@
-add_executable(smdl-toy "main.cc" "Scene.cc")
+add_executable(
+  smdl-toy 
+  "main.cc"
+  "BidirConnector.cc"
+  "Metropolis.cc"
+  "Scene.cc"
+  "Vertex.cc"
+  )
 set_target_properties(
   smdl-toy
   PROPERTIES
@@ -25,5 +32,6 @@ target_link_libraries(
 target_include_directories(
   smdl-toy
   PRIVATE 
+    "${CMAKE_CURRENT_SOURCE_DIR}/pcg-cpp"
     "${LLVM_INCLUDE_DIR}"
   )
