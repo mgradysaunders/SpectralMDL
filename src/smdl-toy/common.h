@@ -2,6 +2,7 @@
 
 #include <array>
 #include <random>
+#include <variant>
 
 #include "oneapi/tbb/parallel_for.h"
 
@@ -14,6 +15,7 @@
 #include "embree4/rtcore_scene.h"
 
 #include "smdl/Compiler.h"
+#include "smdl/DiscreteDistribution.h"
 #include "smdl/Logger.h"
 
 #include "pcg_random.hpp"
@@ -22,18 +24,272 @@
 #define SMDL_USE_EXT_VECTOR_TYPES 1
 #endif // #if __clang__
 
-typedef pcg32_k1024 RNG;
+constexpr float PI = smdl::PI;
+
+constexpr float EPS = 0.0001f;
+
+constexpr float INF = std::numeric_limits<float>::infinity();
+
+constexpr float QUIET_NAN = std::numeric_limits<float>::quiet_NaN();
+
+constexpr size_t WAVELENGTH_BASE_MAX = 16;
+
+constexpr float WAVELENGTH_MIN = 380.0f;
+
+constexpr float WAVELENGTH_MAX = 720.0f;
+
+class Color final {
+public:
+#if SMDL_USE_EXT_VECTOR_TYPES
+  using vector_type =
+      float __attribute__((ext_vector_type(WAVELENGTH_BASE_MAX)));
+#else
+  using vector_type = std::array<float, WAVELENGTH_BASE_MAX>;
+#endif // #if SMDL_USE_EXT_VECTOR_TYPES
+
+  constexpr Color() = default;
+
+  constexpr Color(vector_type v) : v(v) {}
+
+#if SMDL_USE_EXT_VECTOR_TYPES
+  constexpr Color(float s) : v(s) {}
+#else
+  constexpr Color(float s) {
+    for (size_t i = 0; i < WAVELENGTH_BASE_MAX; i++)
+      v[i] = s;
+  }
+#endif
+
+public:
+  [[nodiscard]] constexpr size_t size() const noexcept {
+    return WAVELENGTH_BASE_MAX;
+  }
+
+  [[nodiscard]] auto data() noexcept -> float * {
+#if SMDL_USE_EXT_VECTOR_TYPES
+    return reinterpret_cast<float *>(&v);
+#else
+    return v.data();
+#endif // #if SMDL_USE_EXT_VECTOR_TYPES
+  }
+
+  [[nodiscard]] auto data() const noexcept -> const float * {
+    return const_cast<Color &>(*this).data();
+  }
+
+  [[nodiscard]] auto operator[](size_t i) noexcept -> float & {
+    return data()[i];
+  }
+
+  [[nodiscard]] auto operator[](size_t i) const noexcept -> const float & {
+    return data()[i];
+  }
+
+public:
+#if SMDL_USE_EXT_VECTOR_TYPES
+  [[nodiscard]] constexpr Color operator+() const noexcept { return v; }
+
+  [[nodiscard]] constexpr Color operator-() const noexcept { return -v; }
+
+  [[nodiscard]]
+  constexpr Color operator+(const Color &rhs) const noexcept {
+    return v + rhs.v;
+  }
+
+  [[nodiscard]]
+  constexpr Color operator-(const Color &rhs) const noexcept {
+    return v - rhs.v;
+  }
+
+  [[nodiscard]]
+  constexpr Color operator*(const Color &rhs) const noexcept {
+    return v * rhs.v;
+  }
+
+  [[nodiscard]]
+  constexpr Color operator/(const Color &rhs) const noexcept {
+    return v / rhs.v;
+  }
+
+  [[nodiscard]] constexpr Color operator+(float rhs) const noexcept {
+    return v + rhs;
+  }
+
+  [[nodiscard]] constexpr Color operator-(float rhs) const noexcept {
+    return v - rhs;
+  }
+
+  [[nodiscard]] constexpr Color operator*(float rhs) const noexcept {
+    return v * rhs;
+  }
+
+  [[nodiscard]] constexpr Color operator/(float rhs) const noexcept {
+    return v / rhs;
+  }
+
+  [[nodiscard]]
+  friend constexpr Color operator+(float lhs, const Color &rhs) noexcept {
+    return lhs + rhs.v;
+  }
+
+  [[nodiscard]]
+  friend constexpr Color operator-(float lhs, const Color &rhs) noexcept {
+    return lhs - rhs.v;
+  }
+
+  [[nodiscard]]
+  friend constexpr Color operator*(float lhs, const Color &rhs) noexcept {
+    return lhs * rhs.v;
+  }
+
+  [[nodiscard]]
+  friend constexpr Color operator/(float lhs, const Color &rhs) noexcept {
+    return lhs / rhs.v;
+  }
+#else
+  [[nodiscard]] constexpr Color operator+() const noexcept { return v; }
+
+  [[nodiscard]] constexpr Color operator-() const noexcept {
+    Color result{};
+    for (size_t i = 0; i < WAVELENGTH_BASE_MAX; i++)
+      result.v[i] = -v[i];
+    return result;
+  }
+
+  [[nodiscard]]
+  constexpr Color operator+(const Color &rhs) const noexcept {
+    Color result{};
+    for (size_t i = 0; i < WAVELENGTH_BASE_MAX; i++)
+      result.v[i] = v[i] + rhs.v[i];
+    return result;
+  }
+
+  [[nodiscard]]
+  constexpr Color operator-(const Color &rhs) const noexcept {
+    Color result{};
+    for (size_t i = 0; i < WAVELENGTH_BASE_MAX; i++)
+      result.v[i] = v[i] - rhs.v[i];
+    return result;
+  }
+
+  [[nodiscard]]
+  constexpr Color operator*(const Color &rhs) const noexcept {
+    Color result{};
+    for (size_t i = 0; i < WAVELENGTH_BASE_MAX; i++)
+      result.v[i] = v[i] * rhs.v[i];
+    return result;
+  }
+
+  [[nodiscard]]
+  constexpr Color operator/(const Color &rhs) const noexcept {
+    Color result{};
+    for (size_t i = 0; i < WAVELENGTH_BASE_MAX; i++)
+      result.v[i] = v[i] / rhs.v[i];
+    return result;
+  }
+
+  [[nodiscard]] constexpr Color operator+(float rhs) const noexcept {
+    Color result{};
+    for (size_t i = 0; i < WAVELENGTH_BASE_MAX; i++)
+      result.v[i] = v[i] + rhs;
+    return result;
+  }
+
+  [[nodiscard]] constexpr Color operator-(float rhs) const noexcept {
+    Color result{};
+    for (size_t i = 0; i < WAVELENGTH_BASE_MAX; i++)
+      result.v[i] = v[i] - rhs;
+    return result;
+  }
+
+  [[nodiscard]] constexpr Color operator*(float rhs) const noexcept {
+    Color result{};
+    for (size_t i = 0; i < WAVELENGTH_BASE_MAX; i++)
+      result.v[i] = v[i] * rhs;
+    return result;
+  }
+
+  [[nodiscard]] constexpr Color operator/(float rhs) const noexcept {
+    Color result{};
+    for (size_t i = 0; i < WAVELENGTH_BASE_MAX; i++)
+      result.v[i] = v[i] / rhs;
+    return result;
+  }
+
+  [[nodiscard]]
+  friend constexpr Color operator+(float lhs, const Color &rhs) noexcept {
+    Color result{};
+    for (size_t i = 0; i < WAVELENGTH_BASE_MAX; i++)
+      result.v[i] = lhs + rhs.v[i];
+    return result;
+  }
+
+  [[nodiscard]]
+  friend constexpr Color operator-(float lhs, const Color &rhs) noexcept {
+    Color result{};
+    for (size_t i = 0; i < WAVELENGTH_BASE_MAX; i++)
+      result.v[i] = lhs - rhs.v[i];
+    return result;
+  }
+
+  [[nodiscard]]
+  friend constexpr Color operator*(float lhs, const Color &rhs) noexcept {
+    Color result{};
+    for (size_t i = 0; i < WAVELENGTH_BASE_MAX; i++)
+      result.v[i] = lhs * rhs.v[i];
+    return result;
+  }
+
+  [[nodiscard]]
+  friend constexpr Color operator/(float lhs, const Color &rhs) noexcept {
+    Color result{};
+    for (size_t i = 0; i < WAVELENGTH_BASE_MAX; i++)
+      result.v[i] = lhs / rhs.v[i];
+    return result;
+  }
+#endif // #if SMDL_USE_EXT_VECTOR_TYPES
+
+  template <typename U> constexpr Color &operator+=(const U &rhs) noexcept {
+    return *this = *this + rhs;
+  }
+
+  template <typename U> constexpr Color &operator-=(const U &rhs) noexcept {
+    return *this = *this - rhs;
+  }
+
+  template <typename U> constexpr Color &operator*=(const U &rhs) noexcept {
+    return *this = *this * rhs;
+  }
+
+  template <typename U> constexpr Color &operator/=(const U &rhs) noexcept {
+    return *this = *this / rhs;
+  }
+
+  [[nodiscard]] float average() const noexcept {
+    float result{};
+    for (size_t i = 0; i < WAVELENGTH_BASE_MAX; i++)
+      result += v[i];
+    return result / WAVELENGTH_BASE_MAX;
+  }
+
+  void set_non_finite_to_zero() noexcept {
+    for (size_t i = 0; i < WAVELENGTH_BASE_MAX; i++)
+      v[i] = smdl::finite_or_zero(v[i]);
+  }
+
+public:
+  vector_type v{};
+};
+
+using RNG = pcg32_k1024;
 
 [[nodiscard]] inline float generate_canonical(RNG &rng) noexcept {
   return std::min(static_cast<float>(static_cast<double>(rng()) * 0x1.0p-32),
                   0x1.FFFFFEp-1f);
 }
 
-constexpr float Eps = 0.0001f;
-
-constexpr float Inf = std::numeric_limits<float>::infinity();
-
-struct Ray final {
+class Ray final {
+public:
   smdl::float3 org{};
 
   smdl::float3 dir{};
@@ -48,7 +304,8 @@ struct Ray final {
   }
 };
 
-struct Intersection final {
+class Intersection final {
+public:
   uint32_t meshInstanceIndex{uint32_t(-1)};
 
   uint32_t meshIndex{uint32_t(-1)};
@@ -97,252 +354,49 @@ struct Intersection final {
   }
 };
 
-static constexpr size_t WAVELENGTH_BASE_MAX = 16;
+[[nodiscard]]
+inline smdl::float2 uniform_disk_sample(smdl::float2 xi) noexcept {
+  xi = xi * 2.0f - smdl::float2(1.0f);
+  xi.x = (xi.x == 0.0f) ? EPS : 0.0f;
+  xi.y = (xi.y == 0.0f) ? EPS : 0.0f;
+  bool cond = std::abs(xi.x) > std::abs(xi.y);
+  float rad = cond ? xi.x : xi.y;
+  float phi = cond ? (PI / 4.0f) * xi.y / xi.x
+                   : (PI / 2.0f) - (PI / 4.0f) * xi.x / xi.y;
+  return smdl::float2(rad * std::cos(phi), rad * std::sin(phi));
+}
 
-static constexpr float WAVELENGTH_MIN = 380.0f;
+[[nodiscard]]
+inline smdl::float3 cosine_hemisphere_sample(smdl::float2 xi,
+                                             float *pdf = nullptr) noexcept {
+  auto sinTheta{uniform_disk_sample(xi)};
+  auto cosTheta{std::sqrt(std::max(0.0f, 1.0f - sinTheta.x * sinTheta.x -
+                                             sinTheta.y * sinTheta.y))};
+  if (pdf)
+    *pdf = cosTheta / PI;
+  return smdl::float3(sinTheta.x, sinTheta.y, cosTheta);
+}
 
-static constexpr float WAVELENGTH_MAX = 720.0f;
+[[nodiscard]]
+inline smdl::float3 uniform_sphere_sample(smdl::float2 xi,
+                                          float *pdf = nullptr) noexcept {
+  float cosTheta{std::max(-1.0f, std::min(2.0f * xi.x - 1.0f, 1.0f))};
+  float sinTheta{std::sqrt(1.0f - cosTheta * cosTheta)};
+  float phi{2.0f * PI * xi.y};
+  if (pdf)
+    *pdf = 1.0f / (4.0f * PI);
+  return smdl::float3(sinTheta * std::cos(phi), sinTheta * std::sin(phi),
+                      cosTheta);
+}
 
-typedef std::array<float, WAVELENGTH_BASE_MAX> Color;
-
-#if 0
-template <size_t N> class ColorVector final {
-public:
-#if SMDL_USE_EXT_VECTOR_TYPES
-  using vector_type = float __attribute__((ext_vector_type(N)));
-#else
-  using vector_type = std::array<float, N>;
-#endif // #if SMDL_USE_EXT_VECTOR_TYPES
-
-  constexpr ColorVector() = default;
-
-  constexpr ColorVector(vector_type v) : v(v) {}
-
-#if SMDL_USE_EXT_VECTOR_TYPES
-  constexpr ColorVector(float s) : v(v) {}
-#else
-  constexpr ColorVector(float s) {
-    for (size_t i = 0; i < N; i++)
-      v[i] = s;
-  }
-#endif
-
-public:
-  [[nodiscard]] constexpr size_t size() const noexcept { return N; }
-
-  [[nodiscard]] auto data() noexcept -> float * {
-#if SMDL_USE_EXT_VECTOR_TYPES
-    return reinterpret_cast<float *>(&v);
-#else
-    return v.data();
-#endif // #if SMDL_USE_EXT_VECTOR_TYPES
-  }
-
-  [[nodiscard]] auto data() const noexcept -> const float * {
-    return const_cast<ColorVector &>(*this).data();
-  }
-
-  [[nodiscard]] auto operator[](size_t i) noexcept -> float & {
-    return data()[i];
-  }
-
-  [[nodiscard]] auto operator[](size_t i) const noexcept -> const float & {
-    return data()[i];
-  }
-
-public:
-#if SMDL_USE_EXT_VECTOR_TYPES
-  [[nodiscard]] constexpr ColorVector operator+() const noexcept { return v; }
-
-  [[nodiscard]] constexpr ColorVector operator-() const noexcept { return -v; }
-
-  [[nodiscard]]
-  constexpr ColorVector operator+(const ColorVector &rhs) const noexcept {
-    return v + rhs.v;
-  }
-
-  [[nodiscard]]
-  constexpr ColorVector operator-(const ColorVector &rhs) const noexcept {
-    return v - rhs.v;
-  }
-
-  [[nodiscard]]
-  constexpr ColorVector operator*(const ColorVector &rhs) const noexcept {
-    return v * rhs.v;
-  }
-
-  [[nodiscard]]
-  constexpr ColorVector operator/(const ColorVector &rhs) const noexcept {
-    return v / rhs.v;
-  }
-
-  [[nodiscard]] constexpr ColorVector operator+(float rhs) const noexcept {
-    return v + rhs;
-  }
-
-  [[nodiscard]] constexpr ColorVector operator-(float rhs) const noexcept {
-    return v - rhs;
-  }
-
-  [[nodiscard]] constexpr ColorVector operator*(float rhs) const noexcept {
-    return v * rhs;
-  }
-
-  [[nodiscard]] constexpr ColorVector operator/(float rhs) const noexcept {
-    return v / rhs;
-  }
-
-  [[nodiscard]]
-  friend constexpr ColorVector operator+(float lhs,
-                                         const ColorVector &rhs) noexcept {
-    return lhs + rhs.v;
-  }
-
-  [[nodiscard]]
-  friend constexpr ColorVector operator-(float lhs,
-                                         const ColorVector &rhs) noexcept {
-    return lhs - rhs.v;
-  }
-
-  [[nodiscard]]
-  friend constexpr ColorVector operator*(float lhs,
-                                         const ColorVector &rhs) noexcept {
-    return lhs * rhs.v;
-  }
-
-  [[nodiscard]]
-  friend constexpr ColorVector operator/(float lhs,
-                                         const ColorVector &rhs) noexcept {
-    return lhs / rhs.v;
-  }
-#else
-  [[nodiscard]] constexpr ColorVector operator+() const noexcept { return v; }
-
-  [[nodiscard]] constexpr ColorVector operator-() const noexcept {
-    ColorVector result{};
-    for (size_t i = 0; i < N; i++)
-      result.v[i] = -v[i];
-    return result;
-  }
-
-  [[nodiscard]]
-  constexpr ColorVector operator+(const ColorVector &rhs) const noexcept {
-    ColorVector result{};
-    for (size_t i = 0; i < N; i++)
-      result.v[i] = v[i] + rhs.v[i];
-    return result;
-  }
-
-  [[nodiscard]]
-  constexpr ColorVector operator-(const ColorVector &rhs) const noexcept {
-    ColorVector result{};
-    for (size_t i = 0; i < N; i++)
-      result.v[i] = v[i] - rhs.v[i];
-    return result;
-  }
-
-  [[nodiscard]]
-  constexpr ColorVector operator*(const ColorVector &rhs) const noexcept {
-    ColorVector result{};
-    for (size_t i = 0; i < N; i++)
-      result.v[i] = v[i] * rhs.v[i];
-    return result;
-  }
-
-  [[nodiscard]]
-  constexpr ColorVector operator/(const ColorVector &rhs) const noexcept {
-    ColorVector result{};
-    for (size_t i = 0; i < N; i++)
-      result.v[i] = v[i] / rhs.v[i];
-    return result;
-  }
-
-  [[nodiscard]] constexpr ColorVector operator+(float rhs) const noexcept {
-    ColorVector result{};
-    for (size_t i = 0; i < N; i++)
-      result.v[i] = v[i] + rhs;
-    return result;
-  }
-
-  [[nodiscard]] constexpr ColorVector operator-(float rhs) const noexcept {
-    ColorVector result{};
-    for (size_t i = 0; i < N; i++)
-      result.v[i] = v[i] - rhs;
-    return result;
-  }
-
-  [[nodiscard]] constexpr ColorVector operator*(float rhs) const noexcept {
-    ColorVector result{};
-    for (size_t i = 0; i < N; i++)
-      result.v[i] = v[i] * rhs;
-    return result;
-  }
-
-  [[nodiscard]] constexpr ColorVector operator/(float rhs) const noexcept {
-    ColorVector result{};
-    for (size_t i = 0; i < N; i++)
-      result.v[i] = v[i] / rhs;
-    return result;
-  }
-
-  [[nodiscard]]
-  friend constexpr ColorVector operator+(float lhs,
-                                         const ColorVector &rhs) noexcept {
-    ColorVector result{};
-    for (size_t i = 0; i < N; i++)
-      result.v[i] = lhs + rhs.v[i];
-    return result;
-  }
-
-  [[nodiscard]]
-  friend constexpr ColorVector operator-(float lhs,
-                                         const ColorVector &rhs) noexcept {
-    ColorVector result{};
-    for (size_t i = 0; i < N; i++)
-      result.v[i] = lhs - rhs.v[i];
-    return result;
-  }
-
-  [[nodiscard]]
-  friend constexpr ColorVector operator*(float lhs,
-                                         const ColorVector &rhs) noexcept {
-    ColorVector result{};
-    for (size_t i = 0; i < N; i++)
-      result.v[i] = lhs * rhs.v[i];
-    return result;
-  }
-
-  [[nodiscard]]
-  friend constexpr ColorVector operator/(float lhs,
-                                         const ColorVector &rhs) noexcept {
-    ColorVector result{};
-    for (size_t i = 0; i < N; i++)
-      result.v[i] = lhs / rhs.v[i];
-    return result;
-  }
-#endif // #if SMDL_USE_EXT_VECTOR_TYPES
-
-  template <typename U>
-  constexpr ColorVector &operator+=(const U &rhs) noexcept {
-    return *this = *this + rhs;
-  }
-
-  template <typename U>
-  constexpr ColorVector &operator-=(const U &rhs) noexcept {
-    return *this = *this - rhs;
-  }
-
-  template <typename U>
-  constexpr ColorVector &operator*=(const U &rhs) noexcept {
-    return *this = *this * rhs;
-  }
-
-  template <typename U>
-  constexpr ColorVector &operator/=(const U &rhs) noexcept {
-    return *this = *this / rhs;
-  }
-
-public:
-  vector_type v{};
-};
-#endif
+[[nodiscard]]
+inline smdl::float3 uniform_cone_sample(smdl::float2 xi, float zMin,
+                                        float *pdf = nullptr) noexcept {
+  float cosTheta{std::max(zMin, std::min((1.0f - xi.x) * zMin + xi.x, 1.0f))};
+  float sinTheta{std::sqrt(1.0f - cosTheta * cosTheta)};
+  float phi{2.0f * PI * xi.y};
+  if (pdf)
+    *pdf = 1.0f / (2.0f * PI * (1.0f - zMin));
+  return smdl::float3(sinTheta * std::cos(phi), sinTheta * std::sin(phi),
+                      cosTheta);
+}

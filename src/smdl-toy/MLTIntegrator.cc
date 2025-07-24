@@ -1,12 +1,12 @@
-#include "Metropolis.h"
+#include "MLTIntegrator.h"
 
-void Metropolis::Sampler::next_iteration() noexcept {
+void MLTIntegrator::Sampler::next_iteration() noexcept {
   iteration++;
   isLargeStep = generate_canonical(rng) < largeStepProbability;
   sampleCount = sequenceCount = 0;
 }
 
-void Metropolis::Sampler::next_sequence() {
+void MLTIntegrator::Sampler::next_sequence() {
   sampleCount = 0;
   sequenceCount++;
   if (sequences.size() < sequenceCount) {
@@ -15,7 +15,7 @@ void Metropolis::Sampler::next_sequence() {
   }
 }
 
-double Metropolis::Sampler::next_sample() {
+double MLTIntegrator::Sampler::next_sample() {
   auto &sequence{sequences[sequenceCount - 1]};
   sampleCount++;
   if (sequence.size() < sampleCount)
@@ -44,13 +44,13 @@ double Metropolis::Sampler::next_sample() {
   return sample.value;
 }
 
-void Metropolis::Sampler::finish_and_accept_iteration() noexcept {
+void MLTIntegrator::Sampler::finish_and_accept_iteration() noexcept {
   if (isLargeStep) {
     iterationOfLastLargeStep = iteration;
   }
 }
 
-void Metropolis::Sampler::finish_and_reject_iteration() noexcept {
+void MLTIntegrator::Sampler::finish_and_reject_iteration() noexcept {
   for (auto &sequence : sequences) {
     for (auto &sample : sequence) {
       if (sample.iteration == iteration) {
@@ -62,7 +62,7 @@ void Metropolis::Sampler::finish_and_reject_iteration() noexcept {
 }
 
 #if 0
-void Metropolis::operator()(const RandomSampler &randomSampler, const Recorder &recorder) const {
+void MLTIntegrator::operator()(const RandomSampler &randomSampler, const Recorder &recorder) const {
   // TODO 
   const size_t seed{mOptions.seed};
   const size_t minBounces{mOptions.minBounces};

@@ -1,8 +1,7 @@
 add_executable(
   smdl-toy 
   "main.cc"
-  "BidirConnector.cc"
-  "Metropolis.cc"
+  "MLTIntegrator.cc"
   "Scene.cc"
   "Vertex.cc"
   )

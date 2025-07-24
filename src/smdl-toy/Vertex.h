@@ -1,154 +1,203 @@
+// vim:foldmethod=marker:foldlevel=0:fmr=--{,--}
 #pragma once
 
 #include "common.h"
 
-enum Method : int {
-  METHOD_FORWARD = 0,
-  METHOD_REVERSE = 1,
-};
+class Scene;
 
-[[nodiscard]] constexpr Method operator!(Method method) noexcept {
-  return Method(!int(method));
-}
-
-class BPDF final {
+class Camera final {
 public:
-  /// The forward value.
-  float forward{};
+  explicit Camera(smdl::float4x4 cameraToWorld, smdl::int2 imageExtent,
+                  float fovY)
+      : cameraToWorld(cameraToWorld), imageExtent(imageExtent),
+        imageAspect(float(imageExtent.x) / float(imageExtent.y)),
+        focalLen(0.5f / std::tan(0.5f * fovY)) {}
 
-  /// The reverse value.
-  float reverse{};
+public:
+  /// The camera-to-world matrix.
+  smdl::float4x4 cameraToWorld{1.0f};
 
-  [[nodiscard]] auto operator[](Method method) noexcept -> float & {
-    return (&forward)[int(method)];
-  }
+  /// The image extent in pixels.
+  smdl::int2 imageExtent{1920, 1080};
 
-  [[nodiscard]] auto operator[](Method method) const noexcept -> const float & {
-    return (&forward)[int(method)];
-  }
+  /// The image aspect ratio.
+  float imageAspect{16.0f / 9.0f};
+
+  /// The focal length.
+  float focalLen{1.0f};
 };
+
+/// A point light.
+class PointLight final {
+public:
+  /// The intensity.
+  Color intensity{1.0f};
+
+  /// The origin.
+  smdl::float3 origin{};
+};
+
+/// A direction light.
+class DirectionLight final {
+public:
+  /// The intensity.
+  Color intensity{1.0f};
+
+  /// The direction.
+  smdl::float3 direction{0, 0, -1};
+};
+
+/// A spot light.
+class SpotLight final {
+public:
+  /// The intensity.
+  Color intensity{1.0f};
+
+  /// The origin.
+  smdl::float3 origin{0, 0, 5};
+
+  /// The direction.
+  smdl::float3 direction{0, 0, -1};
+
+  /// The cosine of the inner cone angle.
+  float cosThetaInner{0.866f};
+
+  /// The cosine of the outer cone angle.
+  float cosThetaOuter{0.707f};
+};
+
+/// A disk light.
+class DiskLight final {
+public:
+  /// The intensity.
+  Color intensity{1.0f};
+
+  /// The origin.
+  smdl::float3 origin{0, 0, 5};
+
+  /// The direction.
+  smdl::float3 direction{0, 0, -1};
+
+  /// The radius.
+  float radius{1.0f};
+};
+
+/// An ambient light.
+class AmbientLight final {
+public:
+  /// The intensity.
+  Color intensity{1.0f};
+};
+
+/// An environment light.
+class EnvironmentLight final {
+public:
+  /// The intensity scale.
+  float intensityScale{1.0f};
+
+  /// The intensity image.
+  std::shared_ptr<smdl::Image> intensityImage{};
+};
+
+/// A light.
+using Light = std::variant<PointLight, DirectionLight, SpotLight, DiskLight,
+                           AmbientLight, EnvironmentLight>;
 
 class Vertex final {
 public:
-  [[nodiscard]] bool is_on_same_subpath(const Vertex &other) const noexcept {
-    return flags.isOnLightSubpath == other.flags.isOnLightSubpath;
-  }
+  [[nodiscard]]
+  bool scatter_sample(const smdl::float4 &xi, const smdl::float3 &omegaO,
+                      smdl::float3 &omegaI, float &pdfOmegaI, float &pdfOmegaO,
+                      Color &f, bool &isDeltaOmegaI) const;
 
-  [[nodiscard]] bool is_on_light_subpath() const noexcept {
-    return flags.isOnLightSubpath == 1;
-  }
-
-  [[nodiscard]] bool is_on_camera_subpath() const noexcept {
-    return flags.isOnLightSubpath == 0;
-  }
-
-  [[nodiscard]] bool is_terminal_vertex() const noexcept {
-    return flags.isTerminal;
-  }
-
-  [[nodiscard]] bool is_surface_scattering_vertex() const noexcept {
-    return flags.isSurfaceScattering;
-  }
-
-  [[nodiscard]] bool is_volume_scattering_vertex() const noexcept {
-    return flags.isVolumeScattering;
-  }
-
-  [[nodiscard]] bool is_scattering_vertex() const noexcept {
-    return flags.isSurfaceScattering | flags.isVolumeScattering;
-  }
-
-  [[nodiscard]] bool scatter_sample(const smdl::float4 &xi,
-                                    const smdl::float3 &wo, smdl::float3 &wi,
-                                    float &pdfForward, float &pdfReverse,
-                                    Color &beta, int &isDelta) const {
-    Color f{};
-    if (!material->scatter_sample(
-            materialInstance, xi,
-            smdl::transpose(materialInstance.tangent_space) * wo, wi,
-            pdfForward, pdfReverse, &f[0], isDelta) ||
-        !(pdfForward > 0)) {
-      return false;
-    }
-    wi = materialInstance.tangent_space * wi;
-    wi = smdl::normalize(wi);
-    for (size_t i = 0; i < WAVELENGTH_BASE_MAX; i++) {
-      if (beta[i] *= f[i] / pdfForward; !std::isfinite(beta[i])) {
-        beta[i] = 0.0f;
-      }
-    }
-    return true;
-  }
-
-  void calculate_path_PDF(Method method, const Vertex &from) noexcept;
+  [[nodiscard]]
+  float convert_solid_angle_to_point_density(float pdf,
+                                             const Vertex &nextVertex) const;
 
 public:
-  struct Flags final {
-    /// Is on light subpath? If false, on camera subpath.
-    uint8_t isOnLightSubpath : 1;
+  /// The accumulated path weight.
+  Color weight{QUIET_NAN};
 
-    /// Is terminal vertex?
-    uint8_t isTerminal : 1;
+  /// The point.
+  smdl::float3 point{QUIET_NAN};
 
-    /// Is terminal vertex at infinity?
-    uint8_t isTerminalAtInfinity : 1;
+  /// If applicable, the associated image coordinate.
+  smdl::float2 imageCoord{QUIET_NAN};
 
-    /// Is terminal vertex on intangible surface?
-    uint8_t isTerminalOnIntangibleSurface : 1;
+  /// If applicable, the camera. (Non-null if terminal vertex on camera)
+  const Camera *camera{};
 
-    /// Is terminal vertex with delta position?
-    uint8_t isTerminalDeltaPosition : 1;
-
-    /// Is terminal vertex with delta direction?
-    uint8_t isTerminalDeltaDirection : 1;
-
-    /// Is surface scattering vertex?
-    uint8_t isSurfaceScattering : 1;
-
-    /// Is surface scattering vertex with delta direction?
-    uint8_t isSurfaceScatteringDeltaDirection : 1;
-
-    /// Is volume scattering vertex?
-    uint8_t isVolumeScattering : 1;
-
-    /// Is known to be non-connectible?
-    uint8_t isKnownNonConnectible : 1;
-
-  } flags = {.isOnLightSubpath = 0,
-             .isTerminal = 0,
-             .isTerminalAtInfinity = 0,
-             .isTerminalOnIntangibleSurface = 0,
-             .isTerminalDeltaPosition = 0,
-             .isTerminalDeltaDirection = 0,
-             .isSurfaceScattering = 0,
-             .isSurfaceScatteringDeltaDirection = 0,
-             .isVolumeScattering = 0,
-             .isKnownNonConnectible = 0};
-
-  /// The position.
-  smdl::float3 position{};
+  /// If applicable, the light. (Non-null if terminal vertex on light)
+  const Light *light{};
 
   /// If applicable, the intersection.
-  Intersection intersection{};
+  std::optional<Intersection> intersection{};
 
-  /// If applicable, the material.
-  const smdl::JIT::Material *material{};
+  /// The material.
+  const smdl::JIT::Material *jitMaterial{};
 
-  /// If applicable, the material instance.
-  smdl::JIT::Material::Instance materialInstance{};
+  /// The material instance.
+  smdl::JIT::Material::Instance jitMaterialInstance{};
 
-  /// The Monte-Carlo weight.
-  Color beta{};
+  /// The direction to the previous vertex.
+  smdl::float3 omegaPrev{QUIET_NAN};
 
-  /// If applicable, the direction to the previous vertex.
-  smdl::float3 omegaO{};
+  /// The direction to the next vertex.
+  smdl::float3 omegaNext{QUIET_NAN};
 
-  /// If applicable, the direction to the next vertex.
-  smdl::float3 omegaI{};
+  /// Is PDF associated with sampling `point` a Dirac delta distribution?
+  bool isDeltaPdfPoint{};
 
-  /// The direction solid-angle PDF.
-  BPDF directionSolidAnglePDF{};
+  /// Is PDF associated with sampling `omegaNext` a Dirac delta distribution?
+  bool isDeltaPdfOmega{};
 
-  /// The path-space PDF.
-  BPDF pathSpacePDF{};
+  /// The PDF associated with sampling `point`.
+  float pdfPoint{QUIET_NAN};
+
+  /// The PDF associated with sampling `omegaNext`.
+  float pdfOmega{QUIET_NAN};
+
+  /// The PDF associated with sampling `point` by the adjoint technique.
+  float adjointPdfPoint{QUIET_NAN};
+
+  /// The PDF associated with sampling `omegaPrev` by the adjoint technique.
+  float adjointPdfOmega{QUIET_NAN};
+
+  /// Is at infinity?
+  bool isAtInfinity{};
 };
+
+/// Emission sample.
+[[nodiscard]]
+bool Camera_first_vertex_sample(const Camera &camera,
+                                const smdl::float2 &imageCoord,
+                                Vertex &firstVertex);
+
+/// Calculate power estimate.
+[[nodiscard]] float Light_power_estimate(const Scene &scene,
+                                         const Light &light);
+
+/// Is delta point?
+[[nodiscard]]
+inline bool Light_is_delta_point(const Light &light) {
+  return std::holds_alternative<PointLight>(light) ||
+         std::holds_alternative<SpotLight>(light);
+}
+
+/// Is delta direction?
+[[nodiscard]]
+inline bool Light_is_delta_direction(const Light &light) {
+  return std::holds_alternative<DirectionLight>(light);
+}
+
+/// Sample first vertex from light.
+[[nodiscard]]
+bool Light_first_vertex_sample(const Scene &scene, const Light &light,
+                               const smdl::float2 &xi0, const smdl::float2 &xi1,
+                               Vertex &firstVertex);
+
+/// Sample last vertex from light.
+[[nodiscard]]
+bool Light_last_vertex_sample(const Scene &scene, const Light &light,
+                              const smdl::float2 &xi0, const smdl::float2 &xi1,
+                              const Vertex &vertex, Vertex &lastVertex);

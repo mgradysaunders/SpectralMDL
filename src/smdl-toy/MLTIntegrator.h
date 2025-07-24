@@ -1,8 +1,8 @@
 #pragma once
 
-#include "BidirConnector.h"
+#include "Scene.h"
 
-class Metropolis final {
+class MLTIntegrator final {
 public:
   class Options final {
   public:
@@ -29,17 +29,18 @@ public:
     /// Typically this is the number of desired mutations per pixel times the
     /// number of pixels in the image, though it is important to note that the
     /// mutations will not be perfectly distributed across pixels in general,
-    /// and that is by design. The nature of Metropolis is to focus more effort
+    /// and that is by design. The nature of metropolis is to focus more effort
     /// in the areas of highest contribution.
+    ///
     uint64_t numMutations{5'000'000};
 
     /// The number of Markov chains.
     uint64_t numChains{1000};
   };
 
-  Metropolis() = default;
+  MLTIntegrator() = default;
 
-  explicit Metropolis(const Options &options) : options(options) {}
+  explicit MLTIntegrator(const Options &options) : options(options) {}
 
 private:
   class Sampler final {

@@ -386,7 +386,7 @@ SMDL_EXPORT std::string read_or_throw(const std::string &path);
 /// A quoted string for use with `concat`.
 struct SMDL_EXPORT quoted final {
 public:
-  constexpr quoted(std::string_view str) : str(str) {}
+  quoted(std::string_view str) : str(str) {}
 
   void append_to(std::string &result);
 
@@ -397,7 +397,7 @@ public:
 /// A quoted path string for use with `concat`.
 struct SMDL_EXPORT quoted_path final {
 public:
-  constexpr quoted_path(std::string_view str) : str(str) {}
+  quoted_path(std::string_view str) : str(str) {}
 
   void append_to(std::string &result);
 
@@ -781,6 +781,9 @@ public:
 /// \addtogroup Main
 /// \{
 
+/// The constant `PI`.
+constexpr float PI = 3.141592653589793f;
+
 /// The vector template.
 template <typename T, size_t M> class Vector;
 
@@ -804,6 +807,14 @@ public:
     return (&x)[i];
   }
 
+  template <typename OtherT, size_t OtherN>
+  [[nodiscard]] constexpr operator Vector<OtherT, OtherN>() const noexcept {
+    Vector<OtherT, OtherN> result{};
+    for (size_t i = 0; i < std::min<size_t>(2, OtherN); i++)
+      result[i] = operator[](i);
+    return result;
+  }
+
   T x{}, y{};
 };
 
@@ -825,6 +836,14 @@ public:
   /// The access operator, const variant.
   [[nodiscard]] constexpr const T &operator[](size_t i) const noexcept {
     return (&x)[i];
+  }
+
+  template <typename OtherT, size_t OtherN>
+  [[nodiscard]] constexpr operator Vector<OtherT, OtherN>() const noexcept {
+    Vector<OtherT, OtherN> result{};
+    for (size_t i = 0; i < std::min<size_t>(3, OtherN); i++)
+      result[i] = operator[](i);
+    return result;
   }
 
   T x{}, y{}, z{};
@@ -852,8 +871,12 @@ public:
     return (&x)[i];
   }
 
-  [[nodiscard]] constexpr operator Vector<T, 3>() const noexcept {
-    return {x, y, z};
+  template <typename OtherT, size_t OtherN>
+  [[nodiscard]] constexpr operator Vector<OtherT, OtherN>() const noexcept {
+    Vector<OtherT, OtherN> result{};
+    for (size_t i = 0; i < std::min<size_t>(4, OtherN); i++)
+      result[i] = operator[](i);
+    return result;
   }
 
   T x{}, y{}, z{}, w{};
@@ -939,6 +962,16 @@ public:
     return u;
   }
 
+  template <typename OtherT, size_t OtherN, size_t OtherM>
+  [[nodiscard]] constexpr
+  operator Matrix<OtherT, OtherN, OtherM>() const noexcept {
+    Matrix<OtherT, OtherN, OtherM> matrix{};
+    for (size_t j = 0; j < std::min(N, OtherN); ++j)
+      for (size_t i = 0; i < std::min(M, OtherM); ++i)
+        matrix.v[j][i] = v[j][i];
+    return matrix;
+  }
+
   /// The column vectors.
   std::array<Vector<T, M>, N> v{};
 };
@@ -1004,6 +1037,33 @@ using double4x4 = Matrix<double, 4, 4>;
 
 /// \name Functions (math)
 /// \{
+
+/// Is any element true?
+template <size_t N>
+[[nodiscard]] inline bool is_any_true(Vector<bool, N> v) noexcept {
+  for (size_t i = 0; i < N; i++)
+    if (v[i])
+      return true;
+  return false;
+}
+
+/// Is every element true?
+template <size_t N>
+[[nodiscard]] inline bool is_all_true(Vector<bool, N> v) noexcept {
+  for (size_t i = 0; i < N; i++)
+    if (!v[i])
+      return false;
+  return true;
+}
+
+/// Is every element finite?
+template <typename T, size_t N>
+[[nodiscard]] inline bool is_all_finite(const Vector<T, N> &v) noexcept {
+  for (size_t i = 0; i < N; i++)
+    if (!std::isfinite(v[i]))
+      return false;
+  return true;
+}
 
 /// Vector unary `operator+`.
 template <typename T, size_t N>
@@ -1159,6 +1219,12 @@ template <typename T, size_t N>
   return v / length(v);
 }
 
+/// Absolute value of dot product.
+template <typename T, size_t N>
+[[nodiscard]] constexpr T abs_dot(Vector<T, N> u, Vector<T, N> v) noexcept {
+  return std::abs(dot(u, v));
+}
+
 /// Matrix transpose.
 template <typename T, size_t N, size_t M>
 [[nodiscard]] constexpr Matrix<T, M, N>
@@ -1183,12 +1249,20 @@ affine_inverse(const Matrix<T, 4, 4> &m) noexcept {
 }
 
 /// Calculate vector perpendicular to the given vector.
-[[nodiscard]] inline float3 perpendicular_to(float3 v) noexcept {
-  float3 z{normalize(v)};
-  float3 x{z.z < -0.9999f ? float3(0.0f, -1.0f, 0.0f)
-                          : float3(-z.x / (z.z + 1.0f) + 1.0f,
-                                   -z.y / (z.z + 1.0f), -1.0f)};
+[[nodiscard]] inline float3 perpendicular_to(float3 z) noexcept {
+  z = normalize(z);
+  auto x{z.z < -0.9999f
+             ? float3(0.0f, -1.0f, 0.0f)
+             : float3(-z.x / (z.z + 1.0f) + 1.0f, -z.y / (z.z + 1.0f), -1.0f)};
   return normalize(x - dot(x, z) * z);
+}
+
+/// Calculate orthonormal coordinate system with the given vector as the Z axis.
+[[nodiscard]] inline float3x3 coordinate_system(float3 z) noexcept {
+  z = normalize(z);
+  auto x{perpendicular_to(z)};
+  auto y{normalize(cross(z, x))};
+  return float3x3(x, y, z);
 }
 
 /// Calculate look-at transform.
@@ -1203,31 +1277,8 @@ affine_inverse(const Matrix<T, 4, 4> &m) noexcept {
           float4{from.x, from.y, from.z, 1.0f}};
 }
 
-/// Is any element true?
-template <size_t N>
-[[nodiscard]] inline bool is_any_true(Vector<bool, N> v) noexcept {
-  for (size_t i = 0; i < N; i++)
-    if (v[i])
-      return true;
-  return false;
-}
-
-/// Is every element true?
-template <size_t N>
-[[nodiscard]] inline bool is_all_true(Vector<bool, N> v) noexcept {
-  for (size_t i = 0; i < N; i++)
-    if (!v[i])
-      return false;
-  return true;
-}
-
-/// Is every element finite?
-template <typename T, size_t N>
-[[nodiscard]] inline bool is_all_finite(const Vector<T, N> &v) noexcept {
-  for (size_t i = 0; i < N; i++)
-    if (!std::isfinite(v[i]))
-      return false;
-  return true;
+[[nodiscard]] inline float finite_or_zero(float x) noexcept {
+  return std::isfinite(x) ? x : 0.0f;
 }
 
 /// \}
