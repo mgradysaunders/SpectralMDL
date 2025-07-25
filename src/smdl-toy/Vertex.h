@@ -13,6 +13,27 @@ public:
         imageAspect(float(imageExtent.x) / float(imageExtent.y)),
         focalLen(0.5f / std::tan(0.5f * fovY)) {}
 
+  [[nodiscard]] smdl::float3 origin() const { return cameraToWorld[3]; }
+
+  [[nodiscard]] smdl::float3 normal() const { return cameraToWorld[2]; }
+
+  [[nodiscard]] float direction_pdf(smdl::float3 omega,
+                                    smdl::float2 &imageCoord) const {
+    omega = smdl::transpose(smdl::float3x3(cameraToWorld)) * omega;
+    omega = smdl::normalize(omega);
+    if (!(omega.z < 0.0f))
+      return 0.0f;
+    float cosTheta{std::abs(omega.z)};
+    float u{+focalLen / cosTheta * omega.x / imageAspect};
+    float v{-focalLen / cosTheta * omega.y};
+    if (!(std::abs(u) < 0.5f && std::abs(v) < 0.5f))
+      return 0.0f;
+    imageCoord.x = imageExtent.x * std::max(0.0f, std::min(u + 0.5f, 1.0f));
+    imageCoord.y = imageExtent.y * std::max(0.0f, std::min(v + 0.5f, 1.0f));
+    return (focalLen * focalLen) /
+           (imageAspect * cosTheta * cosTheta * cosTheta);
+  }
+
 public:
   /// The camera-to-world matrix.
   smdl::float4x4 cameraToWorld{1.0f};
@@ -49,6 +70,15 @@ public:
 
 /// A spot light.
 class SpotLight final {
+public:
+  [[nodiscard]] float falloff(const smdl::float3 &omega) const {
+    float cosTheta{smdl::dot(omega, direction)};
+    cosTheta = std::max(cosTheta, cosThetaOuter);
+    cosTheta = std::min(cosTheta, cosThetaInner);
+    return std::pow(
+        (cosTheta - cosThetaOuter) / (cosThetaInner - cosThetaOuter), 4.0f);
+  }
+
 public:
   /// The intensity.
   Color intensity{1.0f};
@@ -105,18 +135,47 @@ using Light = std::variant<PointLight, DirectionLight, SpotLight, DiskLight,
 
 class Vertex final {
 public:
-  [[nodiscard]]
-  bool scatter_sample(const smdl::float4 &xi, const smdl::float3 &omegaO,
-                      smdl::float3 &omegaI, float &pdfOmegaI, float &pdfOmegaO,
-                      Color &f, bool &isDeltaOmegaI) const;
+  [[nodiscard]] Color scatter(const smdl::float3 &w) const {
+    float dirPdf{};
+    float dirPdfAdjoint{};
+    Color f{};
+    if (scatter(w, dirPdf, dirPdfAdjoint, f))
+      return f;
+    return Color(0.0f);
+  }
+
+  [[nodiscard]] bool scatter(const smdl::float3 &w, float &dirPdf,
+                             float &dirPdfAdjoint, Color &f) const {
+    SMDL_SANITY_CHECK(material);
+    auto tbnInv{smdl::transpose(materialInstance.tangent_space)};
+    return material->scatter_evaluate(materialInstance, tbnInv * wPrev,
+                                      tbnInv * w, dirPdf, dirPdfAdjoint,
+                                      f.data());
+  }
+
+  [[nodiscard]] bool scatter_sample(const smdl::float4 &xi, smdl::float3 &w,
+                                    float &dirPdf, float &dirPdfAdjoint,
+                                    Color &f, int &isDelta) const {
+    auto tbn{materialInstance.tangent_space};
+    auto tbnInv{smdl::transpose(tbn)};
+    if (material->scatter_sample(materialInstance, xi, tbnInv * wPrev, w,
+                                 dirPdf, dirPdfAdjoint, f.data(), isDelta)) {
+      w = smdl::normalize(tbn * w);
+      return true;
+    } else {
+      dirPdf = 0;
+      dirPdfAdjoint = 0;
+      return false;
+    }
+  }
 
   [[nodiscard]]
-  float convert_solid_angle_to_point_density(float pdf,
-                                             const Vertex &nextVertex) const;
+  float convert_direction_pdf_to_point_pdf(float pdf,
+                                           const Vertex &nextVertex) const;
 
 public:
   /// The accumulated path weight.
-  Color weight{QUIET_NAN};
+  Color beta{QUIET_NAN};
 
   /// The point.
   smdl::float3 point{QUIET_NAN};
@@ -134,44 +193,39 @@ public:
   std::optional<Intersection> intersection{};
 
   /// The material.
-  const smdl::JIT::Material *jitMaterial{};
+  const smdl::JIT::Material *material{};
 
   /// The material instance.
-  smdl::JIT::Material::Instance jitMaterialInstance{};
+  smdl::JIT::Material::Instance materialInstance{};
 
   /// The direction to the previous vertex.
-  smdl::float3 omegaPrev{QUIET_NAN};
+  smdl::float3 wPrev{QUIET_NAN};
 
   /// The direction to the next vertex.
-  smdl::float3 omegaNext{QUIET_NAN};
+  smdl::float3 wNext{QUIET_NAN};
 
-  /// Is PDF associated with sampling `point` a Dirac delta distribution?
-  bool isDeltaPdfPoint{};
+  /// The PDF associated with sampling the vertex point.
+  float pdf{QUIET_NAN};
 
-  /// Is PDF associated with sampling `omegaNext` a Dirac delta distribution?
-  bool isDeltaPdfOmega{};
-
-  /// The PDF associated with sampling `point`.
-  float pdfPoint{QUIET_NAN};
-
-  /// The PDF associated with sampling `omegaNext`.
-  float pdfOmega{QUIET_NAN};
-
-  /// The PDF associated with sampling `point` by the adjoint technique.
-  float adjointPdfPoint{QUIET_NAN};
-
-  /// The PDF associated with sampling `omegaPrev` by the adjoint technique.
-  float adjointPdfOmega{QUIET_NAN};
+  /// The PDF associated with sampling the vertex point by the adjoint
+  /// technique.
+  float pdfAdjoint{QUIET_NAN};
 
   /// Is at infinity?
   bool isAtInfinity{};
 };
 
-/// Emission sample.
+/// Sample first vertex from camera.
 [[nodiscard]]
 bool Camera_first_vertex_sample(const Camera &camera,
                                 const smdl::float2 &imageCoord,
-                                Vertex &firstVertex);
+                                Vertex &firstVertex, float &dirPdf);
+
+/// Sample last vertex from camera.
+[[nodiscard]]
+bool Camera_last_vertex_sample(const Camera &camera, const smdl::float2 &xi,
+                               Vertex *secondToLastLightVertex,
+                               Vertex &lastLightVertex, Vertex &cameraVertex);
 
 /// Calculate power estimate.
 [[nodiscard]] float Light_power_estimate(const Scene &scene,
@@ -194,10 +248,15 @@ inline bool Light_is_delta_direction(const Light &light) {
 [[nodiscard]]
 bool Light_first_vertex_sample(const Scene &scene, const Light &light,
                                const smdl::float2 &xi0, const smdl::float2 &xi1,
-                               Vertex &firstVertex);
+                               Vertex &firstVertex, float &dirPdf);
 
 /// Sample last vertex from light.
 [[nodiscard]]
 bool Light_last_vertex_sample(const Scene &scene, const Light &light,
                               const smdl::float2 &xi0, const smdl::float2 &xi1,
-                              const Vertex &vertex, Vertex &lastVertex);
+                              Vertex *secondToLastCameraVertex,
+                              Vertex &lastCameraVertex, Vertex &lightVertex);
+
+[[nodiscard]]
+float multiple_importance_weight(smdl::Span<Vertex> cameraPath,
+                                 smdl::Span<Vertex> lightPath);

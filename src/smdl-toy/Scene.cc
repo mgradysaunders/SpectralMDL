@@ -175,12 +175,12 @@ bool Scene::intersect(Ray &ray, Intersection &intersection) const {
 
 int Scene::random_walk(smdl::BumpPtrAllocator &allocator,
                        const std::function<float()> &rng,
-                       const Color &wavelengthBase, int maxDepth,
+                       const Color &wavelengthBase, float dirPdf, int maxDepth,
                        Vertex *path) const {
   if (maxDepth <= 0)
     return 0;
 
-  Color weight{path[-1].weight};
+  Color beta{path[-1].beta};
   Color f{};
 
   // We declare the state here and set up the variables that never
@@ -198,19 +198,19 @@ int Scene::random_walk(smdl::BumpPtrAllocator &allocator,
     auto &prevVertex{path[depth - 1]};
     auto &vertex{path[depth]};
     vertex = Vertex{};
-    vertex.weight = weight;
-    vertex.omegaPrev = -prevVertex.omegaNext;
-    auto ray{Ray{prevVertex.point, prevVertex.omegaNext, EPS, INF}};
+    vertex.beta = beta;
+    vertex.wPrev = -prevVertex.wNext;
+    auto ray{Ray{prevVertex.point, prevVertex.wNext, EPS, INF}};
     auto intersection{Intersection{}};
     bool intersectedSurface{intersect(ray, intersection)};
     if (!intersectedSurface) {
       depth++;
-      vertex.point = prevVertex.point + prevVertex.omegaNext;
-      vertex.pdfPoint = prevVertex.pdfOmega;
+      vertex.point = prevVertex.point + 2 * boundRadius * prevVertex.wNext;
+      vertex.pdf = dirPdf;
       vertex.isAtInfinity = true;
       // TODO adjointPdfOmega
       /*
-      prevVertex.adjointPdfPoint = vertex.convert_solid_angle_to_point_density(
+      prevVertex.adjointPdfPoint = vertex.convert_direction_pdf_to_point_pdf(
           vertex.adjointPdfOmega, prevVertex);
        */
       break;
@@ -220,20 +220,31 @@ int Scene::random_walk(smdl::BumpPtrAllocator &allocator,
     vertex.point = intersection.point;
     vertex.intersection = intersection;
     vertex.intersection->initialize_state(state);
-    vertex.jitMaterial = materials[intersection.materialIndex];
-    vertex.jitMaterial->allocate(state, vertex.jitMaterialInstance);
-    vertex.pdfPoint = prevVertex.convert_solid_angle_to_point_density(
-        prevVertex.pdfOmega, vertex);
+    vertex.material = materials[intersection.materialIndex];
+    vertex.material->allocate(state, vertex.materialInstance);
+    vertex.pdf = prevVertex.convert_direction_pdf_to_point_pdf(dirPdf, vertex);
+    float dirPdfAdjoint{};
+    int isDelta{};
     if (!vertex.scatter_sample(smdl::float4(rng(), rng(), rng(), rng()),
-                               vertex.omegaPrev, vertex.omegaNext,
-                               vertex.pdfOmega, vertex.adjointPdfOmega, f,
-                               vertex.isDeltaPdfOmega)) {
+                               vertex.wNext, dirPdf, dirPdfAdjoint, f,
+                               isDelta)) {
       break;
     }
-    weight *= f / vertex.pdfOmega;
-    weight.set_non_finite_to_zero();
-    prevVertex.adjointPdfPoint = vertex.convert_solid_angle_to_point_density(
-        vertex.adjointPdfOmega, prevVertex);
+    // TODO Handle isDelta
+    beta *= f / dirPdf;
+    beta.set_non_finite_to_zero();
+    prevVertex.pdfAdjoint =
+        vertex.convert_direction_pdf_to_point_pdf(dirPdfAdjoint, prevVertex);
   }
   return depth;
+}
+
+bool Scene::test_visibility(smdl::BumpPtrAllocator &allocator,
+                            const std::function<float()> &rng,
+                            const Color &wavelengthBase,
+                            const Vertex &fromVertex, const Vertex &toVertex,
+                            Color &beta) const {
+  Ray ray{fromVertex.point, toVertex.point - fromVertex.point, EPS, 1.0f - EPS};
+  Intersection intersection{};
+  return !intersect(ray, intersection);
 }

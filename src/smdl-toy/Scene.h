@@ -77,9 +77,10 @@ public:
                                            smdl::float2 imageCoord,
                                            int maxDepth, Vertex *path) const {
     if (maxDepth > 0) {
-      if (Camera_first_vertex_sample(camera, imageCoord, path[0]))
-        return 1 + random_walk(allocator, rng, wavelengthBase, maxDepth - 1,
-                               path + 1);
+      float dirPdf{};
+      if (Camera_first_vertex_sample(camera, imageCoord, path[0], dirPdf))
+        return 1 + random_walk(allocator, rng, wavelengthBase, dirPdf,
+                               maxDepth - 1, path + 1);
     }
     return 0;
   }
@@ -89,43 +90,51 @@ public:
                                           const Color &wavelengthBase,
                                           int maxDepth, Vertex *path) const {
     if (maxDepth > 0) {
+      float dirPdf{};
       auto xi0{smdl::float2(rng(), rng())};
       auto xi1{smdl::float2(rng(), rng())};
       auto &light{light_sample(xi1.y)};
-      if (Light_first_vertex_sample(*this, light, xi0, xi1, path[0]))
-        return 1 + random_walk(allocator, rng, wavelengthBase, maxDepth - 1,
-                               path + 1);
+      if (Light_first_vertex_sample(*this, light, xi0, xi1, path[0], dirPdf))
+        return 1 + random_walk(allocator, rng, wavelengthBase, dirPdf,
+                               maxDepth - 1, path + 1);
     }
     return 0;
   }
 
-  [[nodiscard]] bool test_visibility(const std::function<float()> &rng,
-                                     smdl::BumpPtrAllocator &allocator,
+  [[nodiscard]] bool test_visibility(smdl::BumpPtrAllocator &allocator,
+                                     const std::function<float()> &rng,
+                                     const Color &wavelengthBase,
                                      const Vertex &fromVertex,
-                                     const Vertex &toVertex,
-                                     Color &weight) const;
+                                     const Vertex &toVertex, Color &beta) const;
 
 private:
   [[nodiscard]] int random_walk(smdl::BumpPtrAllocator &allocator,
                                 const std::function<float()> &rng,
-                                const Color &wavelengthBase, int maxDepth,
-                                Vertex *path) const;
+                                const Color &wavelengthBase, float dirPdf,
+                                int maxDepth, Vertex *path) const;
 
 public:
-  [[nodiscard]] const Light &light_sample(float &u) const noexcept {
+  void initialize_light_distribution() {
+    auto weights{std::vector<double>{}};
+    for (auto &light : lights)
+      weights.push_back(Light_power_estimate(*this, light));
+    lightDistribution = smdl::DiscreteDistribution(std::move(weights));
+  }
+
+  [[nodiscard]] const Light &light_sample(float &u) const {
     return lights[lightDistribution.index_sample(u).first];
   }
 
-  [[nodiscard]] float light_probability(const Light &light) const noexcept {
+  [[nodiscard]] float light_probability(const Light &light) const {
     return lightDistribution.index_pmf(&light - &lights[0]);
   }
 
   [[nodiscard]]
   smdl::float3 infinite_disk_emission_point_sample(smdl::float3 omega,
                                                    smdl::float2 xi,
-                                                   float *pdf) const noexcept {
+                                                   float *pdf) const {
     if (pdf)
-      *pdf = 1.0f / (smdl::PI * boundRadius * boundRadius);
+      *pdf = uniform_disk_pdf(boundRadius);
     return boundCenter - boundRadius * smdl::normalize(omega) +
            boundRadius * (smdl::coordinate_system(omega) *
                           smdl::float3(uniform_disk_sample(xi)));

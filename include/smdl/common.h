@@ -1219,6 +1219,16 @@ template <typename T, size_t N>
   return v / length(v);
 }
 
+/// Normalize, maybe returning length.
+template <typename T, size_t N>
+[[nodiscard]] inline Vector<T, N> normalize(Vector<T, N> v, T *vLen) noexcept {
+  static_assert(std::is_floating_point_v<T>);
+  auto len{length(v)};
+  if (vLen)
+    *vLen = len;
+  return v / len;
+}
+
 /// Absolute value of dot product.
 template <typename T, size_t N>
 [[nodiscard]] constexpr T abs_dot(Vector<T, N> u, Vector<T, N> v) noexcept {

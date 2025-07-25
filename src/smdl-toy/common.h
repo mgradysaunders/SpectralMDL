@@ -4,6 +4,11 @@
 #include <random>
 #include <variant>
 
+#if __clang__
+#pragma clang diagnostic ignored "-Wpsabi"
+#endif // #if __clang__
+
+
 #include "oneapi/tbb/parallel_for.h"
 
 #include "embree4/rtcore_buffer.h"
@@ -37,6 +42,21 @@ constexpr size_t WAVELENGTH_BASE_MAX = 16;
 constexpr float WAVELENGTH_MIN = 380.0f;
 
 constexpr float WAVELENGTH_MAX = 720.0f;
+
+constexpr float DIRAC_DELTA = -1.0f;
+
+using RNG = pcg32_k1024;
+
+[[nodiscard]] inline float generate_canonical(RNG &rng) {
+  return std::min(static_cast<float>(static_cast<double>(rng()) * 0x1.0p-32),
+                  0x1.FFFFFEp-1f);
+}
+
+[[nodiscard]] constexpr float DiracDelta(float pdf) { return -pdf; }
+
+[[nodiscard]] inline bool IsDiracDelta(float pdf) {
+  return std::signbit(pdf) && std::isfinite(pdf);
+}
 
 class Color final {
 public:
@@ -281,11 +301,71 @@ public:
   vector_type v{};
 };
 
-using RNG = pcg32_k1024;
+[[nodiscard]] inline float uniform_disk_pdf(float radius = 1) {
+  return 1.0f / (PI * radius * radius);
+}
 
-[[nodiscard]] inline float generate_canonical(RNG &rng) noexcept {
-  return std::min(static_cast<float>(static_cast<double>(rng()) * 0x1.0p-32),
-                  0x1.FFFFFEp-1f);
+[[nodiscard]] inline smdl::float2 uniform_disk_sample(smdl::float2 xi) {
+  xi = xi * 2.0f - smdl::float2(1.0f);
+  xi.x = (xi.x == 0.0f) ? EPS : 0.0f;
+  xi.y = (xi.y == 0.0f) ? EPS : 0.0f;
+  bool cond = std::abs(xi.x) > std::abs(xi.y);
+  float rad = cond ? xi.x : xi.y;
+  float phi = cond ? (PI / 4.0f) * xi.y / xi.x
+                   : (PI / 2.0f) - (PI / 4.0f) * xi.x / xi.y;
+  return smdl::float2(rad * std::cos(phi), rad * std::sin(phi));
+}
+
+[[nodiscard]] inline smdl::float3 cosine_hemisphere_sample(smdl::float2 xi,
+                                                           float *pdf = {}) {
+  auto sinTheta{uniform_disk_sample(xi)};
+  auto cosTheta{std::sqrt(std::max(0.0f, 1.0f - sinTheta.x * sinTheta.x -
+                                             sinTheta.y * sinTheta.y))};
+  if (pdf)
+    *pdf = cosTheta / PI;
+  return smdl::float3(sinTheta.x, sinTheta.y, cosTheta);
+}
+
+[[nodiscard]] inline float uniform_sphere_pdf(float radius = 1) {
+  return 1.0f / (4.0f * PI * radius * radius);
+}
+
+[[nodiscard]] inline smdl::float3 uniform_sphere_sample(smdl::float2 xi,
+                                                        float *pdf = {}) {
+  float cosTheta{std::max(-1.0f, std::min(2.0f * xi.x - 1.0f, 1.0f))};
+  float sinTheta{std::sqrt(1.0f - cosTheta * cosTheta)};
+  float phi{2.0f * PI * xi.y};
+  if (pdf)
+    *pdf = uniform_sphere_pdf();
+  return smdl::float3(sinTheta * std::cos(phi), sinTheta * std::sin(phi),
+                      cosTheta);
+}
+
+[[nodiscard]] inline float uniform_cone_pdf(float zMin) {
+  return 1.0f / (2.0f * PI * (1.0f - zMin));
+}
+
+[[nodiscard]] inline smdl::float3 uniform_cone_sample(smdl::float2 xi, //
+                                                      float zMin,      //
+                                                      float *pdf = {}) {
+  float cosTheta{std::max(zMin, std::min((1.0f - xi.x) * zMin + xi.x, 1.0f))};
+  float sinTheta{std::sqrt(1.0f - cosTheta * cosTheta)};
+  float phi{2.0f * PI * xi.y};
+  if (pdf)
+    *pdf = uniform_cone_pdf(zMin);
+  return smdl::float3(sinTheta * std::cos(phi), sinTheta * std::sin(phi),
+                      cosTheta);
+}
+
+[[nodiscard]]
+inline std::pair<smdl::float3, float> direction_and_distance(smdl::float3 from,
+                                                             smdl::float3 to) {
+  auto vec{smdl::double3(to) - smdl::double3(from)};
+  if (auto vecLen{smdl::length(vec)}; vecLen > 0.0) {
+    return {smdl::float3(vec / vecLen), float(vecLen)};
+  } else {
+    return {smdl::float3(0.f), 0.f};
+  }
 }
 
 class Ray final {
@@ -353,50 +433,3 @@ public:
     state.finalize_for_runtime_conventions();
   }
 };
-
-[[nodiscard]]
-inline smdl::float2 uniform_disk_sample(smdl::float2 xi) noexcept {
-  xi = xi * 2.0f - smdl::float2(1.0f);
-  xi.x = (xi.x == 0.0f) ? EPS : 0.0f;
-  xi.y = (xi.y == 0.0f) ? EPS : 0.0f;
-  bool cond = std::abs(xi.x) > std::abs(xi.y);
-  float rad = cond ? xi.x : xi.y;
-  float phi = cond ? (PI / 4.0f) * xi.y / xi.x
-                   : (PI / 2.0f) - (PI / 4.0f) * xi.x / xi.y;
-  return smdl::float2(rad * std::cos(phi), rad * std::sin(phi));
-}
-
-[[nodiscard]]
-inline smdl::float3 cosine_hemisphere_sample(smdl::float2 xi,
-                                             float *pdf = nullptr) noexcept {
-  auto sinTheta{uniform_disk_sample(xi)};
-  auto cosTheta{std::sqrt(std::max(0.0f, 1.0f - sinTheta.x * sinTheta.x -
-                                             sinTheta.y * sinTheta.y))};
-  if (pdf)
-    *pdf = cosTheta / PI;
-  return smdl::float3(sinTheta.x, sinTheta.y, cosTheta);
-}
-
-[[nodiscard]]
-inline smdl::float3 uniform_sphere_sample(smdl::float2 xi,
-                                          float *pdf = nullptr) noexcept {
-  float cosTheta{std::max(-1.0f, std::min(2.0f * xi.x - 1.0f, 1.0f))};
-  float sinTheta{std::sqrt(1.0f - cosTheta * cosTheta)};
-  float phi{2.0f * PI * xi.y};
-  if (pdf)
-    *pdf = 1.0f / (4.0f * PI);
-  return smdl::float3(sinTheta * std::cos(phi), sinTheta * std::sin(phi),
-                      cosTheta);
-}
-
-[[nodiscard]]
-inline smdl::float3 uniform_cone_sample(smdl::float2 xi, float zMin,
-                                        float *pdf = nullptr) noexcept {
-  float cosTheta{std::max(zMin, std::min((1.0f - xi.x) * zMin + xi.x, 1.0f))};
-  float sinTheta{std::sqrt(1.0f - cosTheta * cosTheta)};
-  float phi{2.0f * PI * xi.y};
-  if (pdf)
-    *pdf = 1.0f / (2.0f * PI * (1.0f - zMin));
-  return smdl::float3(sinTheta * std::cos(phi), sinTheta * std::sin(phi),
-                      cosTheta);
-}
