@@ -8,7 +8,6 @@
 #pragma clang diagnostic ignored "-Wpsabi"
 #endif // #if __clang__
 
-
 #include "oneapi/tbb/parallel_for.h"
 
 #include "embree4/rtcore_buffer.h"
@@ -20,8 +19,9 @@
 #include "embree4/rtcore_scene.h"
 
 #include "smdl/Compiler.h"
-#include "smdl/DiscreteDistribution.h"
 #include "smdl/Logger.h"
+#include "smdl/Support/DiscreteDistribution.h"
+#include "smdl/Support/SpectralRenderImage.h"
 
 #include "pcg_random.hpp"
 
@@ -43,7 +43,7 @@ constexpr float WAVELENGTH_MIN = 380.0f;
 
 constexpr float WAVELENGTH_MAX = 720.0f;
 
-constexpr float DIRAC_DELTA = -1.0f;
+constexpr float DIRAC_DELTA = 1.0f;
 
 using RNG = pcg32_k1024;
 
@@ -307,8 +307,8 @@ public:
 
 [[nodiscard]] inline smdl::float2 uniform_disk_sample(smdl::float2 xi) {
   xi = xi * 2.0f - smdl::float2(1.0f);
-  xi.x = (xi.x == 0.0f) ? EPS : 0.0f;
-  xi.y = (xi.y == 0.0f) ? EPS : 0.0f;
+  xi.x = (xi.x == 0.0f) ? EPS : xi.x;
+  xi.y = (xi.y == 0.0f) ? EPS : xi.y;
   bool cond = std::abs(xi.x) > std::abs(xi.y);
   float rad = cond ? xi.x : xi.y;
   float phi = cond ? (PI / 4.0f) * xi.y / xi.x

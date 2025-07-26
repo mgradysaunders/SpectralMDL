@@ -62,7 +62,16 @@ int main(int argc, char **argv) try {
                       imageExtent, float(cameraFov) * PI / 180.0f};
   Scene scene{compiler, camera, inputSceneFile};
   scene.lights.emplace_back(
-      PointLight{.intensity = Color(20.0f), .origin = smdl::float3(0, 0, 5)});
+#if 0
+      SpotLight{.intensity = Color(20.0f),
+                                      .origin = smdl::float3(0, 0, 5),
+                                      .direction = smdl::float3(0, 0, -1),
+                                      .cosThetaInner = 0.866f,
+                                      .cosThetaOuter = 0.707f}
+#else
+      DirectionLight{.intensity = Color(2.0f), .direction = smdl::normalize(smdl::float3(0, 0, -3))}
+#endif
+  );
   scene.initialize_light_distribution();
   Color wavelengthBase{};
   for (size_t i = 0; i < WAVELENGTH_BASE_MAX; i++) {
@@ -81,13 +90,10 @@ int main(int argc, char **argv) try {
 #endif
   std::vector<std::array<uint8_t, 4>> imagePixels{};
   imagePixels.resize(imageExtent.x * imageExtent.y);
-  std::cerr << camera.focalLen << std::endl;
-  std::cerr << camera.imageAspect << std::endl;
-#define TRACE_FROM_LIGHT 1
+#define TRACE_FROM_LIGHT 0
 #if TRACE_FROM_LIGHT
-  std::mutex imageColorsMutex{};
-  std::vector<Color> imageColors{};
-  imageColors.resize(imageExtent.x * imageExtent.y);
+  auto imageColors{smdl::SpectralRenderImage(WAVELENGTH_BASE_MAX, imageExtent.x,
+                                             imageExtent.y)};
   size_t nPaths = imageExtent.x * imageExtent.y * size_t(samplesPerPixel);
   oneapi::tbb::parallel_for(
       oneapi::tbb::blocked_range<size_t>(0, nPaths, 128),
@@ -105,41 +111,45 @@ int main(int argc, char **argv) try {
               if (Camera_last_vertex_sample(camera,
                                             smdl::float2(rngFunc(), rngFunc()),
                                             &path[k - 1], path[k], vLast)) {
-#if 1
                 if (scene.test_visibility(allocator, rngFunc, wavelengthBase, v,
                                           vLast, vLast.beta)) {
                   int x = int(vLast.imageCoord.x);
                   int y = int(vLast.imageCoord.y);
                   if (0 <= x && x < camera.imageExtent.x && //
                       0 <= y && y < camera.imageExtent.y) {
-                    std::lock_guard guard{imageColorsMutex};
-                    auto &color{imageColors[y * camera.imageExtent.x + x]};
-                    color += vLast.beta ;
+                    imageColors.pixel_ref(x, y).add_sample(
+                        1.0, smdl::Span<float>(vLast.beta.data(),
+                                               vLast.beta.size()));
                   }
                 }
-#endif
               }
             }
           }
           allocator.reset();
         }
       });
-  for (size_t i = 0; i < imageColors.size(); i++) {
-    imageColors[i] /= float(size_t(samplesPerPixel));
-    smdl::State state{};
-    state.wavelength_base = wavelengthBase.data();
-    state.wavelength_min = WAVELENGTH_MIN;
-    state.wavelength_max = WAVELENGTH_MAX;
-    smdl::float3 rgb{compiler.jit_color_to_rgb(state, imageColors[i].data())};
-    rgb[0] = std::pow(std::min(2 * rgb[0], 1.0f), 1.0f / 2.2f);
-    rgb[1] = std::pow(std::min(2 * rgb[1], 1.0f), 1.0f / 2.2f);
-    rgb[2] = std::pow(std::min(2 * rgb[2], 1.0f), 1.0f / 2.2f);
-    auto &pixel{imagePixels[i]};
-    pixel[0] = std::round(255 * rgb[0]);
-    pixel[1] = std::round(255 * rgb[1]);
-    pixel[2] = std::round(255 * rgb[2]);
-    pixel[3] = 255;
-  }
+  for (int y = 0; y < imageExtent.y; y++)
+    for (int x = 0; x < imageExtent.x; x++) {
+      auto imageColor{Color()};
+      auto pixelRef{imageColors.pixel_ref(x, y)};
+      for (int k = 0; k < WAVELENGTH_BASE_MAX; k++) {
+        imageColor[k] =
+            double(pixelRef.totalValues[k]) / double(size_t(samplesPerPixel));
+      }
+      smdl::State state{};
+      state.wavelength_base = wavelengthBase.data();
+      state.wavelength_min = WAVELENGTH_MIN;
+      state.wavelength_max = WAVELENGTH_MAX;
+      smdl::float3 rgb{compiler.jit_color_to_rgb(state, imageColor.data())};
+      rgb[0] = std::pow(std::min(2 * rgb[0], 1.0f), 1.0f / 2.2f);
+      rgb[1] = std::pow(std::min(2 * rgb[1], 1.0f), 1.0f / 2.2f);
+      rgb[2] = std::pow(std::min(2 * rgb[2], 1.0f), 1.0f / 2.2f);
+      auto &pixel{imagePixels[y * imageExtent.x + x]};
+      pixel[0] = std::round(255 * rgb[0]);
+      pixel[1] = std::round(255 * rgb[1]);
+      pixel[2] = std::round(255 * rgb[2]);
+      pixel[3] = 255;
+    }
 #else
   oneapi::tbb::parallel_for(
       oneapi::tbb::blocked_range<size_t>(0, imageExtent.x * imageExtent.y, 8),

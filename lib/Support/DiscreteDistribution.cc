@@ -1,4 +1,4 @@
-#include "smdl/DiscreteDistribution.h"
+#include "smdl/Support/DiscreteDistribution.h"
 
 namespace smdl {
 

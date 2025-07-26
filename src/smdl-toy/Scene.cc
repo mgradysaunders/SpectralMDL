@@ -39,6 +39,10 @@ void Scene::load(const aiScene &assScene) {
       smdl::length(smdl::float3(0.5f * (bounds.upper_x - bounds.lower_x),
                                 0.5f * (bounds.upper_y - bounds.lower_y),
                                 0.5f * (bounds.upper_z - bounds.lower_z)));
+  std::cerr << smdl::concat("boundCenter = (", //
+                            boundCenter.x, ", ", boundCenter.y, ", ",
+                            boundCenter.z, ")\n", //
+                            "boundRadius = ", boundRadius, "\n");
   for (unsigned int i = 0; i < assScene.mNumMaterials; i++) {
     auto name{assScene.mMaterials[i]->GetName()};
     materials.push_back(compiler.find_jit_material(name.C_Str()));
@@ -198,6 +202,7 @@ int Scene::random_walk(smdl::BumpPtrAllocator &allocator,
     auto &prevVertex{path[depth - 1]};
     auto &vertex{path[depth]};
     vertex = Vertex{};
+    vertex.prevVertex = &prevVertex;
     vertex.beta = beta;
     vertex.wPrev = -prevVertex.wNext;
     auto ray{Ray{prevVertex.point, prevVertex.wNext, EPS, INF}};

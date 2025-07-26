@@ -174,6 +174,9 @@ public:
                                            const Vertex &nextVertex) const;
 
 public:
+  /// If applicable, the previous vertex.
+  const Vertex *prevVertex{nullptr};
+
   /// The accumulated path weight.
   Color beta{QUIET_NAN};
 

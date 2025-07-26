@@ -67,8 +67,9 @@ bool Camera_last_vertex_sample(const Camera &camera, const smdl::float2 &xi,
           dirPdfAdjoint, *secondToLastLightVertex);
 
   float cosTheta = smdl::abs_dot(camera.normal(), direction);
-  cameraVertex.beta = /*(1.0f / (distance * distance)) */ cameraDirPdfAdjoint * cosTheta;
+  cameraVertex.beta = (1.0f / (distance * distance)) * cameraDirPdfAdjoint;
   cameraVertex.beta *= f;
+  cameraVertex.beta *= lastLightVertex.beta;
   return true;
 }
 
@@ -110,14 +111,14 @@ bool Light_first_vertex_sample(const Scene &scene, const Light &light,
       firstVertex.point = light.origin;
       firstVertex.wNext = uniform_sphere_sample(xi0, &dirPdf);
       firstVertex.pdf = DIRAC_DELTA;
-      firstVertex.beta = light.intensity;
+      firstVertex.beta = light.intensity / dirPdf;
       return true;
     }
     [[nodiscard]] bool operator()(const DirectionLight &light) const {
-      firstVertex.wNext = light.direction;
       firstVertex.point = scene.infinite_disk_emission_point_sample(
-          firstVertex.wNext, xi0, &firstVertex.pdf);
-      firstVertex.beta = light.intensity;
+          light.direction, xi0, &firstVertex.pdf);
+      firstVertex.wNext = light.direction;
+      firstVertex.beta = light.intensity / firstVertex.pdf;
       firstVertex.isAtInfinity = true;
       dirPdf = DIRAC_DELTA;
       return true;
@@ -128,7 +129,8 @@ bool Light_first_vertex_sample(const Scene &scene, const Light &light,
       firstVertex.wNext =
           smdl::coordinate_system(light.direction) *
           uniform_cone_sample(xi0, light.cosThetaOuter, &dirPdf);
-      firstVertex.beta = light.intensity * light.falloff(firstVertex.wNext);
+      firstVertex.beta =
+          (light.falloff(firstVertex.wNext) / dirPdf) * light.intensity;
       return true;
     }
     [[nodiscard]] bool operator()(const DiskLight &light) const {
@@ -137,14 +139,14 @@ bool Light_first_vertex_sample(const Scene &scene, const Light &light,
       firstVertex.point = light.origin + lightToWorld * firstVertex.point;
       firstVertex.wNext = lightToWorld * cosine_hemisphere_sample(xi1, &dirPdf);
       firstVertex.pdf = uniform_disk_pdf(light.radius);
-      firstVertex.beta = light.intensity;
+      firstVertex.beta = (1.0f / (firstVertex.pdf * dirPdf)) * light.intensity;
       return true;
     }
     [[nodiscard]] bool operator()(const AmbientLight &light) const {
       firstVertex.wNext = uniform_sphere_sample(xi0, &dirPdf);
       firstVertex.point = scene.infinite_disk_emission_point_sample(
           firstVertex.wNext, xi1, &firstVertex.pdf);
-      firstVertex.beta = light.intensity;
+      firstVertex.beta = (1.0f / (firstVertex.pdf * dirPdf)) * light.intensity;
       firstVertex.isAtInfinity = true;
       return true;
     }
@@ -194,33 +196,66 @@ bool Light_last_vertex_sample(const Scene &scene, const Light &light,
 
       lightVertex.beta = (1.0f / (distance * distance)) * light.intensity;
       lightVertex.beta *= f;
+      lightVertex.beta *= lastCameraVertex.beta;
       return true;
     }
     [[nodiscard]] bool operator()(const DirectionLight &light) const {
-#if 0
-      lastVertex.point = vertex.point - 2 * scene.boundRadius * light.direction;
-      lastVertex.wNext = light.direction;
-      lastVertex.pdf = DIRAC_DELTA;
-      lastVertex.pdfAdjoint = uniform_disk_pdf(scene.boundRadius);
-      lastVertex.isAtInfinity = true;
-      lastVertex.beta = light.intensity;
-#endif
-      return false;
+      if (!secondToLastCameraVertex) {
+        return false;
+      }
+      lightVertex.point = lastCameraVertex.point - 2 * scene.boundRadius * light.direction;
+      lightVertex.wPrev = light.direction;
+      lightVertex.pdf = DIRAC_DELTA;
+      lightVertex.pdfAdjoint = uniform_disk_pdf(scene.boundRadius);
+      lightVertex.isAtInfinity = true;
+
+      lastCameraVertex.pdfAdjoint = DIRAC_DELTA; // TODO Is this right?
+      float dirPdf{};
+      float dirPdfAdjoint{};
+      Color f{};
+      if (!lastCameraVertex.scatter(-light.direction, dirPdf, dirPdfAdjoint, f)) {
+        return false;
+      }
+      secondToLastCameraVertex->pdfAdjoint =
+          lastCameraVertex.convert_direction_pdf_to_point_pdf(
+              dirPdfAdjoint, *secondToLastCameraVertex);
+
+      lightVertex.beta = light.intensity;
+      lightVertex.beta *= f;
+      lightVertex.beta *= lastCameraVertex.beta;
+      return true;
     }
     [[nodiscard]] bool operator()(const SpotLight &light) const {
+      if (!secondToLastCameraVertex) {
+        return false;
+      }
       auto [direction, distance] =
           direction_and_distance(light.origin, lastCameraVertex.point);
       float falloff{light.falloff(direction)};
       if (!(falloff > 0.0f))
         return false;
-#if 0
-      lastVertex.point = light.origin;
-      lastVertex.wNext = direction;
-      lastVertex.pdf = DIRAC_DELTA;
-      lastVertex.pdfAdjoint = DIRAC_DELTA;
-      lastVertex.beta = (falloff / (distance * distance)) * light.intensity;
-#endif
-      return false;
+      lightVertex.point = light.origin;
+      lightVertex.wPrev = direction;
+      lightVertex.pdf = DIRAC_DELTA;
+      lightVertex.pdfAdjoint = DIRAC_DELTA;
+
+      lastCameraVertex.pdfAdjoint =
+          lightVertex.convert_direction_pdf_to_point_pdf(
+              uniform_cone_pdf(light.cosThetaOuter), lastCameraVertex);
+      float dirPdf{};
+      float dirPdfAdjoint{};
+      Color f{};
+      if (!lastCameraVertex.scatter(-direction, dirPdf, dirPdfAdjoint, f)) {
+        return false;
+      }
+      secondToLastCameraVertex->pdfAdjoint =
+          lastCameraVertex.convert_direction_pdf_to_point_pdf(
+              dirPdfAdjoint, *secondToLastCameraVertex);
+
+      lightVertex.beta = (falloff / (distance * distance)) * light.intensity;
+      lightVertex.beta *= f;
+      lightVertex.beta *= lastCameraVertex.beta;
+      return true;
     }
     [[nodiscard]] bool operator()(const DiskLight &light) const {
       // TODO

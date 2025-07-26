@@ -2,7 +2,7 @@
 
 #include <random>
 
-#include "smdl/DiscreteDistribution.h"
+#include "smdl/Support/DiscreteDistribution.h"
 
 TEST_CASE("DiscreteDistribution") {
   smdl::DiscreteDistribution distr = {1.0, 2.0, 3.0, 1.0};

@@ -135,9 +135,9 @@ public:
                                                    float *pdf) const {
     if (pdf)
       *pdf = uniform_disk_pdf(boundRadius);
-    return boundCenter - boundRadius * smdl::normalize(omega) +
-           boundRadius * (smdl::coordinate_system(omega) *
-                          smdl::float3(uniform_disk_sample(xi)));
+    auto pointOnDisk{uniform_disk_sample(xi)};
+    auto point{smdl::float3(pointOnDisk.x, pointOnDisk.y, -1)};
+    return boundCenter + boundRadius * (smdl::coordinate_system(omega) * point);
   }
 
 public:
