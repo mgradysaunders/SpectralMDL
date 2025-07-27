@@ -104,8 +104,11 @@ public:
     AtomicDouble *totalValues;
   };
 
-  [[nodiscard]] PixelRef pixel_ref(int x, int y) noexcept {
-    auto ptr{buf.get() + pixel_size_in_bytes() * (numPixelsX * y + x)};
+  [[nodiscard]] PixelRef pixel_ref(size_t pixelX, size_t pixelY) noexcept {
+    SMDL_SANITY_CHECK(pixelX < numPixelsX);
+    SMDL_SANITY_CHECK(pixelY < numPixelsY);
+    auto ptr{buf.get() +
+             pixel_size_in_bytes() * (numPixelsX * pixelY + pixelX)};
     return {*reinterpret_cast<AtomicUInt64 *>(ptr),
             *reinterpret_cast<AtomicDouble *>(ptr + sizeof(AtomicUInt64)),
             reinterpret_cast<AtomicDouble *>(ptr + sizeof(AtomicUInt64) +

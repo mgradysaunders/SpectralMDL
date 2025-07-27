@@ -203,6 +203,7 @@ int Scene::random_walk(smdl::BumpPtrAllocator &allocator,
     auto &vertex{path[depth]};
     vertex = Vertex{};
     vertex.prevVertex = &prevVertex;
+    vertex.pathOrigin = prevVertex.pathOrigin;
     vertex.beta = beta;
     vertex.wPrev = -prevVertex.wNext;
     auto ray{Ray{prevVertex.point, prevVertex.wNext, EPS, INF}};
@@ -236,7 +237,7 @@ int Scene::random_walk(smdl::BumpPtrAllocator &allocator,
       break;
     }
     // TODO Handle isDelta
-    beta *= f / dirPdf;
+    beta *= (1.0f / dirPdf) * f;
     beta.set_non_finite_to_zero();
     prevVertex.pdfAdjoint =
         vertex.convert_direction_pdf_to_point_pdf(dirPdfAdjoint, prevVertex);

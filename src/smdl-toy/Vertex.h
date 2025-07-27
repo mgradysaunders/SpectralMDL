@@ -71,8 +71,8 @@ public:
 /// A spot light.
 class SpotLight final {
 public:
-  [[nodiscard]] float falloff(const smdl::float3 &omega) const {
-    float cosTheta{smdl::dot(omega, direction)};
+  [[nodiscard]] float falloff(const smdl::float3 &w) const {
+    float cosTheta{smdl::dot(w, direction)};
     cosTheta = std::max(cosTheta, cosThetaOuter);
     cosTheta = std::min(cosTheta, cosThetaInner);
     return std::pow(
@@ -133,6 +133,12 @@ public:
 using Light = std::variant<PointLight, DirectionLight, SpotLight, DiskLight,
                            AmbientLight, EnvironmentLight>;
 
+enum PathOrigin {
+  PATH_ORIGIN_UNINITIALIZED = -1,
+  PATH_ORIGIN_CAMERA = 0,
+  PATH_ORIGIN_LIGHT = 1
+};
+
 class Vertex final {
 public:
   [[nodiscard]] Color scatter(const smdl::float3 &w) const {
@@ -148,9 +154,13 @@ public:
                              float &dirPdfAdjoint, Color &f) const {
     SMDL_SANITY_CHECK(material);
     auto tbnInv{smdl::transpose(materialInstance.tangent_space)};
-    return material->scatter_evaluate(materialInstance, tbnInv * wPrev,
-                                      tbnInv * w, dirPdf, dirPdfAdjoint,
-                                      f.data());
+    if (!material->scatter_evaluate(materialInstance, tbnInv * wPrev,
+                                    tbnInv * w, dirPdf, dirPdfAdjoint,
+                                    f.data()))
+      return false;
+    if (pathOrigin == PATH_ORIGIN_LIGHT && intersection)
+      f *= intersection->shading_normal_correction(wPrev, w);
+    return true;
   }
 
   [[nodiscard]] bool scatter_sample(const smdl::float4 &xi, smdl::float3 &w,
@@ -161,6 +171,8 @@ public:
     if (material->scatter_sample(materialInstance, xi, tbnInv * wPrev, w,
                                  dirPdf, dirPdfAdjoint, f.data(), isDelta)) {
       w = smdl::normalize(tbn * w);
+      if (pathOrigin == PATH_ORIGIN_LIGHT && intersection)
+        f *= intersection->shading_normal_correction(wPrev, w);
       return true;
     } else {
       dirPdf = 0;
@@ -173,9 +185,27 @@ public:
   float convert_direction_pdf_to_point_pdf(float pdf,
                                            const Vertex &nextVertex) const;
 
+  [[nodiscard]]
+  bool reconnect(const Vertex &nextVertex, float dirPdfAdjoint,
+                 Color &f) const {
+    pdfAdjoint =
+        nextVertex.convert_direction_pdf_to_point_pdf(dirPdfAdjoint, *this);
+    if (float unused{}; scatter(smdl::normalize(nextVertex.point - point), unused, dirPdfAdjoint, f)) {
+      if (prevVertex) {
+        prevVertex->pdfAdjoint =
+            convert_direction_pdf_to_point_pdf(dirPdfAdjoint, *prevVertex);
+      }
+      return true;
+    }
+    return false;
+  }
+
 public:
   /// If applicable, the previous vertex.
   const Vertex *prevVertex{nullptr};
+
+  /// Is from light?
+  PathOrigin pathOrigin{PATH_ORIGIN_UNINITIALIZED};
 
   /// The accumulated path weight.
   Color beta{QUIET_NAN};
@@ -212,7 +242,7 @@ public:
 
   /// The PDF associated with sampling the vertex point by the adjoint
   /// technique.
-  float pdfAdjoint{QUIET_NAN};
+  mutable float pdfAdjoint{QUIET_NAN};
 
   /// Is at infinity?
   bool isAtInfinity{};
@@ -227,8 +257,8 @@ bool Camera_first_vertex_sample(const Camera &camera,
 /// Sample last vertex from camera.
 [[nodiscard]]
 bool Camera_last_vertex_sample(const Camera &camera, const smdl::float2 &xi,
-                               Vertex *secondToLastLightVertex,
-                               Vertex &lastLightVertex, Vertex &cameraVertex);
+                               const Vertex &lastLightVertex,
+                               Vertex &cameraVertex);
 
 /// Calculate power estimate.
 [[nodiscard]] float Light_power_estimate(const Scene &scene,
@@ -257,8 +287,8 @@ bool Light_first_vertex_sample(const Scene &scene, const Light &light,
 [[nodiscard]]
 bool Light_last_vertex_sample(const Scene &scene, const Light &light,
                               const smdl::float2 &xi0, const smdl::float2 &xi1,
-                              Vertex *secondToLastCameraVertex,
-                              Vertex &lastCameraVertex, Vertex &lightVertex);
+                              const Vertex &lastCameraVertex,
+                              Vertex &lightVertex);
 
 [[nodiscard]]
 float multiple_importance_weight(smdl::Span<Vertex> cameraPath,

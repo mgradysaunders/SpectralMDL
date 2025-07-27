@@ -22,6 +22,7 @@ bool Camera_first_vertex_sample(const Camera &camera,
       -(imageCoord.y / float(camera.imageExtent.y) - 0.5f), -camera.focalLen))};
   auto cosTheta{std::abs(w.z)};
   firstVertex = Vertex{}; // Reset
+  firstVertex.pathOrigin = PATH_ORIGIN_CAMERA;
   firstVertex.camera = &camera;
   firstVertex.imageCoord = imageCoord;
   firstVertex.point = camera.origin();
@@ -35,41 +36,31 @@ bool Camera_first_vertex_sample(const Camera &camera,
 }
 
 bool Camera_last_vertex_sample(const Camera &camera, const smdl::float2 &xi,
-                               Vertex *secondToLastLightVertex,
-                               Vertex &lastLightVertex, Vertex &cameraVertex) {
-  if (!secondToLastLightVertex) {
+                               const Vertex &lastLightVertex,
+                               Vertex &cameraVertex) {
+  SMDL_SANITY_CHECK(lastLightVertex.pathOrigin == PATH_ORIGIN_LIGHT);
+  if (!lastLightVertex.prevVertex) {
     return false;
   }
   auto [direction, distance] =
       direction_and_distance(camera.origin(), lastLightVertex.point);
   cameraVertex = Vertex{}; // Reset
+  cameraVertex.pathOrigin = PATH_ORIGIN_LIGHT;
   cameraVertex.camera = &camera;
   cameraVertex.point = camera.origin();
   cameraVertex.wPrev = direction;
+  cameraVertex.pdf = cameraVertex.pdfAdjoint = DIRAC_DELTA;
   float cameraDirPdfAdjoint{
       camera.direction_pdf(direction, cameraVertex.imageCoord)};
   if (!(cameraDirPdfAdjoint > 0)) {
     return false;
   }
-  cameraVertex.pdf = DIRAC_DELTA;
-  cameraVertex.pdfAdjoint = DIRAC_DELTA;
-
-  lastLightVertex.pdfAdjoint = cameraVertex.convert_direction_pdf_to_point_pdf(
-      cameraDirPdfAdjoint, lastLightVertex);
-  float dirPdf{};
-  float dirPdfAdjoint{};
   Color f{};
-  if (!lastLightVertex.scatter(-direction, dirPdf, dirPdfAdjoint, f)) {
+  if (!lastLightVertex.reconnect(cameraVertex, cameraDirPdfAdjoint, f)) {
     return false;
   }
-  secondToLastLightVertex->pdfAdjoint =
-      lastLightVertex.convert_direction_pdf_to_point_pdf(
-          dirPdfAdjoint, *secondToLastLightVertex);
-
-  float cosTheta = smdl::abs_dot(camera.normal(), direction);
-  cameraVertex.beta = (1.0f / (distance * distance)) * cameraDirPdfAdjoint;
-  cameraVertex.beta *= f;
-  cameraVertex.beta *= lastLightVertex.beta;
+  cameraVertex.beta =
+      lastLightVertex.beta * f * (cameraDirPdfAdjoint / (distance * distance));
   return true;
 }
 
@@ -105,6 +96,7 @@ bool Light_first_vertex_sample(const Scene &scene, const Light &light,
                                const smdl::float2 &xi0, const smdl::float2 &xi1,
                                Vertex &firstVertex, float &dirPdf) {
   firstVertex = Vertex{}; // Reset
+  firstVertex.pathOrigin = PATH_ORIGIN_LIGHT;
   firstVertex.light = &light;
   struct Visitor final {
     [[nodiscard]] bool operator()(const PointLight &light) const {
@@ -135,11 +127,15 @@ bool Light_first_vertex_sample(const Scene &scene, const Light &light,
     }
     [[nodiscard]] bool operator()(const DiskLight &light) const {
       auto lightToWorld{smdl::coordinate_system(light.direction)};
-      firstVertex.point = light.radius * smdl::float3(uniform_disk_sample(xi0));
-      firstVertex.point = light.origin + lightToWorld * firstVertex.point;
-      firstVertex.wNext = lightToWorld * cosine_hemisphere_sample(xi1, &dirPdf);
+      firstVertex.point =
+          light.origin +
+          lightToWorld * smdl::float3(light.radius * uniform_disk_sample(xi0));
+      firstVertex.wNext = smdl::normalize(
+          lightToWorld * cosine_hemisphere_sample(xi1, &dirPdf));
       firstVertex.pdf = uniform_disk_pdf(light.radius);
-      firstVertex.beta = (1.0f / (firstVertex.pdf * dirPdf)) * light.intensity;
+      firstVertex.beta = (smdl::dot(firstVertex.wNext, light.direction) /
+                          (firstVertex.pdf * dirPdf)) *
+                         light.intensity;
       return true;
     }
     [[nodiscard]] bool operator()(const AmbientLight &light) const {
@@ -165,68 +161,53 @@ bool Light_first_vertex_sample(const Scene &scene, const Light &light,
 
 bool Light_last_vertex_sample(const Scene &scene, const Light &light,
                               const smdl::float2 &xi0, const smdl::float2 &xi1,
-                              Vertex *secondToLastCameraVertex,
-                              Vertex &lastCameraVertex, Vertex &lightVertex) {
+                              const Vertex &lastCameraVertex,
+                              Vertex &lightVertex) {
+  SMDL_SANITY_CHECK(lastCameraVertex.pathOrigin == PATH_ORIGIN_CAMERA);
   lightVertex = Vertex{};
+  lightVertex.pathOrigin = PATH_ORIGIN_CAMERA;
   lightVertex.light = &light;
   struct Visitor final {
     [[nodiscard]] bool operator()(const PointLight &light) const {
-      if (!secondToLastCameraVertex) {
+      if (!lastCameraVertex.prevVertex) {
         return false;
       }
       auto [direction, distance] =
           direction_and_distance(light.origin, lastCameraVertex.point);
       lightVertex.point = light.origin;
       lightVertex.wPrev = direction;
-      lightVertex.pdf = DIRAC_DELTA;
-      lightVertex.pdfAdjoint = DIRAC_DELTA;
+      lightVertex.pdf = lightVertex.pdfAdjoint = DIRAC_DELTA;
 
-      lastCameraVertex.pdfAdjoint =
-          lightVertex.convert_direction_pdf_to_point_pdf(uniform_sphere_pdf(),
-                                                         lastCameraVertex);
-      float dirPdf{};
-      float dirPdfAdjoint{};
       Color f{};
-      if (!lastCameraVertex.scatter(-direction, dirPdf, dirPdfAdjoint, f)) {
+      float lightDirPdfAdjoint{uniform_sphere_pdf()};
+      if (!lastCameraVertex.reconnect(lightVertex, lightDirPdfAdjoint, f)) {
         return false;
       }
-      secondToLastCameraVertex->pdfAdjoint =
-          lastCameraVertex.convert_direction_pdf_to_point_pdf(
-              dirPdfAdjoint, *secondToLastCameraVertex);
-
-      lightVertex.beta = (1.0f / (distance * distance)) * light.intensity;
-      lightVertex.beta *= f;
-      lightVertex.beta *= lastCameraVertex.beta;
+      lightVertex.beta = lastCameraVertex.beta * f *
+                         (1.0f / (distance * distance)) * light.intensity;
       return true;
     }
     [[nodiscard]] bool operator()(const DirectionLight &light) const {
-      if (!secondToLastCameraVertex) {
+      if (!lastCameraVertex.prevVertex) {
         return false;
       }
-      lightVertex.point = lastCameraVertex.point - 2 * scene.boundRadius * light.direction;
+      lightVertex.point =
+          lastCameraVertex.point - 2 * scene.boundRadius * light.direction;
       lightVertex.wPrev = light.direction;
       lightVertex.pdf = DIRAC_DELTA;
       lightVertex.pdfAdjoint = uniform_disk_pdf(scene.boundRadius);
       lightVertex.isAtInfinity = true;
 
-      lastCameraVertex.pdfAdjoint = DIRAC_DELTA; // TODO Is this right?
-      float dirPdf{};
-      float dirPdfAdjoint{};
       Color f{};
-      if (!lastCameraVertex.scatter(-light.direction, dirPdf, dirPdfAdjoint, f)) {
+      float lightDirPdfAdjoint{DIRAC_DELTA}; // TODO Is this right?
+      if (!lastCameraVertex.reconnect(lightVertex, lightDirPdfAdjoint, f)) {
         return false;
       }
-      secondToLastCameraVertex->pdfAdjoint =
-          lastCameraVertex.convert_direction_pdf_to_point_pdf(
-              dirPdfAdjoint, *secondToLastCameraVertex);
-
-      lightVertex.beta = light.intensity;
-      lightVertex.beta *= f;
-      lightVertex.beta *= lastCameraVertex.beta;
+      lightVertex.beta = lastCameraVertex.beta * f * light.intensity;
       return true;
     }
     [[nodiscard]] bool operator()(const SpotLight &light) const {
-      if (!secondToLastCameraVertex) {
+      if (!lastCameraVertex.prevVertex) {
         return false;
       }
       auto [direction, distance] =
@@ -236,30 +217,42 @@ bool Light_last_vertex_sample(const Scene &scene, const Light &light,
         return false;
       lightVertex.point = light.origin;
       lightVertex.wPrev = direction;
-      lightVertex.pdf = DIRAC_DELTA;
-      lightVertex.pdfAdjoint = DIRAC_DELTA;
+      lightVertex.pdf = lightVertex.pdfAdjoint = DIRAC_DELTA;
 
-      lastCameraVertex.pdfAdjoint =
-          lightVertex.convert_direction_pdf_to_point_pdf(
-              uniform_cone_pdf(light.cosThetaOuter), lastCameraVertex);
-      float dirPdf{};
-      float dirPdfAdjoint{};
       Color f{};
-      if (!lastCameraVertex.scatter(-direction, dirPdf, dirPdfAdjoint, f)) {
+      float lightDirPdfAdjoint{uniform_cone_pdf(light.cosThetaOuter)};
+      if (!lastCameraVertex.reconnect(lightVertex, lightDirPdfAdjoint, f)) {
         return false;
       }
-      secondToLastCameraVertex->pdfAdjoint =
-          lastCameraVertex.convert_direction_pdf_to_point_pdf(
-              dirPdfAdjoint, *secondToLastCameraVertex);
-
-      lightVertex.beta = (falloff / (distance * distance)) * light.intensity;
-      lightVertex.beta *= f;
-      lightVertex.beta *= lastCameraVertex.beta;
+      lightVertex.beta = lastCameraVertex.beta * f *
+                         (falloff / (distance * distance)) * light.intensity;
       return true;
     }
     [[nodiscard]] bool operator()(const DiskLight &light) const {
-      // TODO
-      return false;
+      if (!lastCameraVertex.prevVertex) {
+        return false;
+      }
+      auto lightToWorld{smdl::coordinate_system(light.direction)};
+      lightVertex.point =
+          light.origin +
+          lightToWorld * smdl::float3(light.radius * uniform_disk_sample(xi0));
+      lightVertex.wPrev =
+          smdl::normalize(lastCameraVertex.point - lightVertex.point);
+      lightVertex.pdf = lightVertex.pdfAdjoint = uniform_disk_pdf(light.radius);
+
+      Color f{};
+      float distance{smdl::length(lightVertex.point - lastCameraVertex.point)};
+      float cosTheta{smdl::dot(lightVertex.wPrev, light.direction)};
+      if (!(cosTheta > 0))
+        return false;
+      float lightDirPdfAdjoint{cosTheta / PI};
+      if (!lastCameraVertex.reconnect(lightVertex, lightDirPdfAdjoint, f)) {
+        return false;
+      }
+      lightVertex.beta = lastCameraVertex.beta * f *
+                         (cosTheta / (distance * distance * lightVertex.pdf)) *
+                         light.intensity;
+      return true;
     }
     [[nodiscard]] bool operator()(const AmbientLight &light) const {
       // TODO
@@ -272,11 +265,9 @@ bool Light_last_vertex_sample(const Scene &scene, const Light &light,
     const Scene &scene;
     const smdl::float2 &xi0;
     const smdl::float2 &xi1;
-    Vertex *secondToLastCameraVertex{};
-    Vertex &lastCameraVertex;
+    const Vertex &lastCameraVertex;
     Vertex &lightVertex;
   };
-  return std::visit(Visitor{scene, xi0, xi1, secondToLastCameraVertex,
-                            lastCameraVertex, lightVertex},
+  return std::visit(Visitor{scene, xi0, xi1, lastCameraVertex, lightVertex},
                     light);
 }

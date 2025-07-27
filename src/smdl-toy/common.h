@@ -316,6 +316,10 @@ public:
   return smdl::float2(rad * std::cos(phi), rad * std::sin(phi));
 }
 
+[[nodiscard]] inline float cosine_hemisphere_pdf(float cosTheta) {
+  return std::max(cosTheta, 0.0f) / PI;
+}
+
 [[nodiscard]] inline smdl::float3 cosine_hemisphere_sample(smdl::float2 xi,
                                                            float *pdf = {}) {
   auto sinTheta{uniform_disk_sample(xi)};
@@ -431,5 +435,13 @@ public:
     state.ptex_face_id = faceIndex;
     state.ptex_face_uv = {bary[1], bary[2]};
     state.finalize_for_runtime_conventions();
+  }
+
+  [[nodiscard]] float
+  shading_normal_correction(const smdl::float3 &wPrev,
+                            const smdl::float3 &wNext) const {
+    float numer{smdl::dot(wPrev, normal) * smdl::dot(wNext, geometryNormal)};
+    float denom{smdl::dot(wPrev, geometryNormal) * smdl::dot(wNext, normal)};
+    return denom == 0.0f ? 1.0f : numer / denom;
   }
 };
