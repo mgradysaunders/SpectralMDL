@@ -10,19 +10,16 @@ public:
     uint32_t seed{0};
 
     /// The small-step standard deviation.
-    float smallStepSigma{0.01f};
+    float smallStepSigma{0.008f};
 
     /// The large-step probability.
     float largeStepProbability{0.3f};
 
-    /// The minimum depth.
-    uint64_t minBounces{0};
-
     /// The maximum depth.
-    uint64_t maxBounces{5};
+    uint64_t maxBounces{4};
 
     /// The number of bootstrap paths to initialize the algorithm.
-    uint64_t numBootstrapPaths{50'000};
+    uint64_t numBootstrapPaths{100'000};
 
     /// The number of mutations.
     ///
@@ -32,15 +29,18 @@ public:
     /// and that is by design. The nature of metropolis is to focus more effort
     /// in the areas of highest contribution.
     ///
-    uint64_t numMutations{5'000'000};
+    uint64_t numMutationsPerPixel{100};
 
     /// The number of Markov chains.
-    uint64_t numChains{1000};
+    uint64_t numChains{5000};
   };
 
   MLTIntegrator() = default;
 
   explicit MLTIntegrator(const Options &options) : options(options) {}
+
+  void integrate(const Scene &scene, const Color &wavelengthBase,
+                 smdl::SpectralRenderImage &renderImage) const;
 
 private:
   class Sampler final {
@@ -49,13 +49,19 @@ private:
     explicit Sampler(const Options &options, const Seeds &...seeds)
         : rng(std::seed_seq{options.seed, uint32_t(seeds)...}),
           smallStepSigma(options.smallStepSigma),
-          largeStepProbability(options.largeStepProbability) {}
+          largeStepProbability(options.largeStepProbability) {
+      next_iteration();
+    }
 
     void next_iteration() noexcept;
 
     void next_sequence();
 
-    [[nodiscard]] double next_sample();
+    [[nodiscard]] float next_sample();
+
+    [[nodiscard]] size_t next_sample_as_index(size_t n) {
+      return std::min(size_t(std::floor(float(n) * next_sample())), n - 1);
+    }
 
     void finish_and_accept_iteration() noexcept;
 
@@ -108,37 +114,19 @@ private:
     std::vector<std::vector<Sample>> sequences{};
   };
 
-  class Contribution final {
-  public:
-    /// The subpath traced from the camera.
-    std::vector<Vertex> cameraPath{};
-
-    /// The subpath traced from the light.
-    std::vector<Vertex> lightPath{};
-
-    /// The path contribution.
-    Color L{};
-
-    /// The path contribution intensity measure which guides the acceptance
-    /// probability. This is typically luminance, but can be calculated in any
-    /// way that is linear with respect to the path contribution itself.
-    float I{};
-
-    /// The pixel coordinate.
-    smdl::float2 pixelCoord{};
-  };
-
-#if 0
-  using RandomSampler = std::function<std::optional<Contribution>(
-      Random &random, uint64_t depthFromCamera, uint64_t depthFromLight)>;
-
-  using Recorder =
-      std::function<void(const Contribution &contribution, double multiplier)>;
-
-  void operator()(const RandomSampler &randomSampler,
-                  const Recorder &recorder) const;
-#endif
-
 private:
   Options options{};
+
+  struct Contribution final {
+    explicit Contribution(size_t maxDepth)
+        : cameraPath(maxDepth), lightPath(maxDepth) {}
+    size_t cameraPathLen{};
+    size_t lightPathLen{};
+    std::vector<Vertex> cameraPath{};
+    std::vector<Vertex> lightPath{};
+    Color beta{};
+    float betaMeasurement{};
+    float misWeight{};
+    smdl::float2 imageCoord{};
+  };
 };

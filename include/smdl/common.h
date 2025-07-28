@@ -1581,6 +1581,9 @@ private:
   std::map<std::string, MD5FileHash> fileHashes{};
 };
 
+SMDL_EXPORT void parallel_for(size_t count,
+                              const std::function<void(size_t)> &func);
+
 /// \}
 
 } // namespace smdl

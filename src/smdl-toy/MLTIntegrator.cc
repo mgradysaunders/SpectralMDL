@@ -1,5 +1,7 @@
 #include "MLTIntegrator.h"
 
+#include <numeric>
+
 void MLTIntegrator::Sampler::next_iteration() noexcept {
   iteration++;
   isLargeStep = generate_canonical(rng) < largeStepProbability;
@@ -15,7 +17,8 @@ void MLTIntegrator::Sampler::next_sequence() {
   }
 }
 
-double MLTIntegrator::Sampler::next_sample() {
+float MLTIntegrator::Sampler::next_sample() {
+  SMDL_SANITY_CHECK(sequenceCount > 0);
   auto &sequence{sequences[sequenceCount - 1]};
   sampleCount++;
   if (sequence.size() < sampleCount)
@@ -41,6 +44,8 @@ double MLTIntegrator::Sampler::next_sample() {
     sample.value -= std::floor(sample.value);
     sample.iteration = iteration;
   }
+  sample.value = std::fmax(sample.value, 0.0f);
+  sample.value = std::fmin(sample.value, 0.999999f);
   return sample.value;
 }
 
@@ -61,76 +66,134 @@ void MLTIntegrator::Sampler::finish_and_reject_iteration() noexcept {
   --iteration;
 }
 
-#if 0
-void MLTIntegrator::operator()(const RandomSampler &randomSampler, const Recorder &recorder) const {
-  // TODO 
-  const size_t seed{mOptions.seed};
-  const size_t minBounces{mOptions.minBounces};
-  const size_t maxBounces{mOptions.maxBounces};
-  const size_t numBootstrapPaths{mOptions.numBootstrapPaths};
-  const size_t numBootstrapBounces{maxBounces - minBounces + 1};
-  const size_t numMutations{mOptions.numMutations};
-  const size_t numChains{mOptions.numChains};
+void MLTIntegrator::integrate(const Scene &scene, const Color &wavelengthBase,
+                              smdl::SpectralRenderImage &renderImage) const {
+  auto scalarMeasurement{[](const Color &beta) { return beta.average(); }};
 
-  auto doRandomSample = [&](Random &random, size_t numBounces) -> std::optional<Contribution> {
-    random.as<PSMLTRandom>().nextSequence();
-    size_t depth{numBounces + 2};
-    size_t depthFromCamera{static_cast<size_t>(random.generateIndex(depth + 1))};
-    size_t depthFromLight{depth - depthFromCamera};
-    std::swap(depthFromCamera, depthFromLight);
-    if (auto contribution{randomSampler(random, depthFromCamera, depthFromLight)}; //
-        contribution && contribution->subpathFromCamera.size() == depthFromCamera && contribution->subpathFromLight.size() == depthFromLight) {
-      // Account for the probability of the specific depth combination we asked for.
-      contribution->pathL *= depth + 1;
-      contribution->pathI *= depth + 1;
-      return contribution;
-    }
-    return std::nullopt;
-  };
+  const auto seed{options.seed};
+  const auto maxBounces{options.maxBounces};
+  const auto numBootstrapPaths{options.numBootstrapPaths};
+  const auto numMutationsPerPixel{options.numMutationsPerPixel};
+  const auto numTotalMutations{scene.camera.imageExtent.x *
+                               scene.camera.imageExtent.y *
+                               numMutationsPerPixel};
+  const auto numChains{options.numChains};
 
-  std::vector<double> bootstrapValues(numBootstrapPaths * ((maxBounces - minBounces) + 1), 0.0);
-#pragma omp parallel for schedule(dynamic)
-  for (size_t pathIndex = 0; pathIndex < numBootstrapPaths; pathIndex++) {
-    for (size_t bounceIndex = minBounces; bounceIndex <= maxBounces; bounceIndex++) {
-      size_t bootstrapIndex{pathIndex * numBootstrapBounces + bounceIndex};
-      Random random{PSMLTRandom{ExtendedPcg32<>{std::seed_seq{static_cast<unsigned long>(seed), 0xA7CBE565UL, 0x6AF93C73UL, static_cast<unsigned long>(bootstrapIndex), 0xE5C6FB2CUL, 0x24718FB5UL}}, mOptions.smallStepSigma, mOptions.largeStepProbability}};
-      if (std::optional<Contribution> contribution{doRandomSample(random, bounceIndex)}) bootstrapValues[bootstrapIndex] = contribution->pathI;
-    }
-  }
-  double overallValue{0};
-  for (double value : bootstrapValues) overallValue += value;
-  overallValue /= numBootstrapPaths;
-  DiscreteDistribution<double> bootstrap(std::move(bootstrapValues));
+  auto contributionSample{[&](smdl::BumpPtrAllocator &allocator,
+                              Sampler &sampler, size_t numBounces,
+                              Contribution &contribution) -> bool {
+    sampler.next_sequence();
+    auto rng{[&]() { return sampler.next_sample(); }};
+    if (numBounces == 0)
+      return false;
+    float u = sampler.next_sample();
+    size_t numStrategies{numBounces + 1};
+    size_t depthFromCamera = size_t(numStrategies * u) + 1;
+    size_t depthFromLight = numStrategies + 1 - depthFromCamera;
+    contribution.imageCoord =
+        smdl::float2(float(scene.camera.imageExtent.x) * rng(),
+                     float(scene.camera.imageExtent.y) * rng());
+    contribution.cameraPathLen = scene.trace_path_from_camera(
+        allocator, rng, wavelengthBase, contribution.imageCoord,
+        depthFromCamera, &contribution.cameraPath[0]);
+    if (depthFromCamera != contribution.cameraPathLen)
+      return false;
+    sampler.next_sequence();
+    contribution.lightPathLen =
+        scene.trace_path_from_light(allocator, rng, wavelengthBase,
+                                    depthFromLight, &contribution.lightPath[0]);
+    if (depthFromLight != contribution.lightPathLen)
+      return false;
+    sampler.next_sequence();
+    if (!connect_bidirectional(
+            scene, allocator, rng, wavelengthBase,
+            contribution.cameraPathLen == 0
+                ? nullptr
+                : &contribution.cameraPath[contribution.cameraPathLen - 1],
+            contribution.lightPathLen == 0
+                ? nullptr
+                : &contribution.lightPath[contribution.lightPathLen - 1],
+            contribution.beta, contribution.misWeight, contribution.imageCoord))
+      return false;
+    contribution.beta *= contribution.misWeight * numStrategies;
+    contribution.betaMeasurement = scalarMeasurement(contribution.beta);
+    return true;
+  }};
 
-  Progress progress{"Rendering", numMutations};
-#pragma omp parallel for schedule(dynamic)
-  for (size_t chainIndex = 0; chainIndex < numChains; chainIndex++) {
-    ExtendedPcg32<> otherRandom{std::seed_seq{static_cast<unsigned long>(chainIndex), 0x3D6411FFUL, 0xDE44B7D2UL, static_cast<unsigned long>(seed), 0xE9F523E9UL, 0xD64CFEEEUL}};
-    const size_t bootstrapIndex{static_cast<size_t>(bootstrap(otherRandom))};
-    const size_t numBounces{bootstrapIndex % numBootstrapBounces + minBounces};
-    const size_t numMutationsStep0{((chainIndex + 0) * numMutations) / numChains};
-    const size_t numMutationsStep1{((chainIndex + 1) * numMutations) / numChains};
-    const size_t numChainMutations{min(numMutationsStep1, numMutations) - numMutationsStep0};
-    Random random{PSMLTRandom{ExtendedPcg32<>{std::seed_seq{static_cast<unsigned long>(seed), 0xA7CBE565UL, 0x6AF93C73UL, static_cast<unsigned long>(bootstrapIndex), 0xE5C6FB2CUL, 0x24718FB5UL}}, mOptions.smallStepSigma, mOptions.largeStepProbability}};
-    std::optional<Contribution> CCurr{doRandomSample(random, numBounces)};
-    std::optional<Contribution> CNext;
-    if (!CCurr) [[unlikely]] {
-      throw Error(std::logic_error("Bootstrap contribution should have been non-null!"));
-    }
-    for (size_t mutationIndex = 0; mutationIndex < numChainMutations; mutationIndex++) {
-      random.as<PSMLTRandom>().nextIteration();
-      double accept{0};
-      if ((CNext = doRandomSample(random, numBounces))) accept = fmin(1.0, CNext->pathI / CCurr->pathI);
-      if (accept > 0) recorder(*CNext, overallValue / CNext->pathI * accept);
-      if (accept < 1) recorder(*CCurr, overallValue / CCurr->pathI * (1 - accept));
-      if (randomize<double>(otherRandom) < accept) {
-        CCurr = std::move(CNext);
-        random.as<PSMLTRandom>().finishAndAccept();
-      } else {
-        random.as<PSMLTRandom>().finishAndReject();
+  auto bootstraps{std::vector<double>(
+      size_t(numBootstrapPaths * (maxBounces + 1)), 0.0)};
+  auto bootstrapSampler{[&](unsigned long bootstrapIndex) {
+    return Sampler(options, 0xA7CBE565UL, 0x6AF93C73UL, bootstrapIndex,
+                   0xE5C6FB2CUL, 0x24718FB5UL);
+  }};
+  smdl::parallel_for(numBootstrapPaths, [&](size_t pathIndex) {
+    auto allocator{smdl::BumpPtrAllocator{}};
+    auto contribution{Contribution(maxBounces + 2)};
+    for (size_t numBounces = 0; numBounces <= maxBounces; numBounces++) {
+      auto bootstrapIndex{pathIndex * (maxBounces + 1)+ numBounces};
+      auto sampler{bootstrapSampler(bootstrapIndex)};
+      if (contributionSample(allocator, sampler, numBounces, contribution)) {
+        bootstraps[bootstrapIndex] = contribution.betaMeasurement;
       }
-      progress.increment();
+      allocator.reset();
     }
-  }
+  });
+  auto bootstrapIntegral{ 4 * 
+      std::accumulate(bootstraps.begin(), bootstraps.end(), 0.0) /
+      bootstraps.size() * (maxBounces + 1)};
+  auto bootstrap{smdl::DiscreteDistribution(bootstraps)};
+
+  smdl::parallel_for(numChains, [&](size_t chainIndex) {
+    auto allocator{smdl::BumpPtrAllocator{}};
+    auto rng{RNG{std::seed_seq{
+        static_cast<unsigned long>(chainIndex), 0x3D6411FFUL, 0xDE44B7D2UL,
+        static_cast<unsigned long>(seed), 0xE9F523E9UL, 0xD64CFEEEUL}}};
+    const auto bootstrapIndex{bootstrap(rng)};
+    const auto numBounces{bootstrapIndex % (maxBounces + 1)};
+    const auto numChainMutations{
+        std::min((chainIndex + 1) * numTotalMutations / numChains,
+                 numTotalMutations) -
+        chainIndex * numTotalMutations / numChains};
+    auto sampler{bootstrapSampler(bootstrapIndex)};
+    auto prevContribution{Contribution(maxBounces + 2)};
+    auto nextContribution{Contribution(maxBounces + 2)};
+    if (!contributionSample(allocator, sampler, numBounces, prevContribution))
+      SMDL_SANITY_CHECK(false,
+                        "Bootstrap contribution should have been non-zero!");
+    for (size_t mutationIndex{}; mutationIndex < numChainMutations;
+         mutationIndex++) {
+      sampler.next_iteration();
+      float acceptChance{0.0f};
+      if (contributionSample(allocator, sampler, numBounces,
+                             nextContribution)) {
+        acceptChance = std::fmin(1.0f, nextContribution.betaMeasurement /
+                                           prevContribution.betaMeasurement);
+      }
+      if (acceptChance > 0.0f) {
+        renderImage
+            .pixel_ref(size_t(nextContribution.imageCoord.x),
+                       size_t(nextContribution.imageCoord.y))
+            .add_sample(bootstrapIntegral / nextContribution.betaMeasurement *
+                            acceptChance,
+                        smdl::Span<float>(nextContribution.beta.data(),
+                                          nextContribution.beta.size()));
+      }
+      if (acceptChance < 1.0f) {
+        renderImage
+            .pixel_ref(size_t(prevContribution.imageCoord.x),
+                       size_t(prevContribution.imageCoord.y))
+            .add_sample(bootstrapIntegral / prevContribution.betaMeasurement *
+                            (1.0 - acceptChance),
+                        smdl::Span<float>(prevContribution.beta.data(),
+                                          prevContribution.beta.size()));
+      }
+      if (generate_canonical(rng) < acceptChance) {
+        sampler.finish_and_accept_iteration();
+        std::swap(prevContribution, nextContribution);
+      } else {
+        sampler.finish_and_reject_iteration();
+      }
+      allocator.reset();
+    }
+  });
 }
-#endif

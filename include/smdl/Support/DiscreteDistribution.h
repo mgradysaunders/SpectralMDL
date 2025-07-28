@@ -1,6 +1,8 @@
 /// \file
 #pragma once
 
+#include <random>
+
 #include "smdl/common.h"
 
 namespace smdl {
@@ -15,6 +17,7 @@ public:
 
   DiscreteDistribution(const std::vector<double> &weights);
 
+#if 0
   template <typename Iterator>
   DiscreteDistribution(Iterator weight0, Iterator weightN)
       : DiscreteDistribution(std::vector<double>(weight0, weightN)) {}
@@ -22,6 +25,7 @@ public:
   template <typename Float>
   DiscreteDistribution(std::initializer_list<Float> weights)
       : DiscreteDistribution(weights.begin(), weights.end()) {}
+#endif
 
 public:
   /// The number of indexes.
@@ -43,6 +47,11 @@ public:
   /// The sampled index and the associated PMF.
   ///
   [[nodiscard]] std::pair<int, float> index_sample(float &u) const;
+
+  template <typename G> [[nodiscard]] int operator()(G &gen) const {
+    float u{std::generate_canonical<float, 32>(gen)};
+    return index_sample(u).first;
+  }
 
 private:
   /// The cumulative mass function values.

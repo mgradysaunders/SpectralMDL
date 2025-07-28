@@ -292,8 +292,9 @@ bool Light_last_vertex_sample(const Scene &scene, const Light &light,
                               Vertex &lightVertex);
 
 [[nodiscard]]
-bool connect_paths(const Scene &scene, smdl::BumpPtrAllocator &allocator,
-                   const std::function<float()> &rngf,
-                   const Color &wavelengthBase, Vertex &cameraVertex,
-                   Vertex &lightVertex, Color &beta, float &misWeight,
-                   smdl::float2 &imageCoord);
+bool connect_bidirectional(const Scene &scene,
+                           smdl::BumpPtrAllocator &allocator,
+                           const std::function<float()> &rngf,
+                           const Color &wavelengthBase, Vertex *cameraVertex,
+                           Vertex *lightVertex, Color &beta, float &misWeight,
+                           smdl::float2 &imageCoord);

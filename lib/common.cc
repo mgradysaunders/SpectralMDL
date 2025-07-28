@@ -21,6 +21,7 @@
 #include "llvm/Support/Error.h"
 #include "llvm/Support/FileSystem.h"
 #include "llvm/Support/MD5.h"
+#include "llvm/Support/Parallel.h"
 #include "llvm/Support/TargetSelect.h"
 #include "llvm/Support/WithColor.h"
 #include "llvm/Target/TargetOptions.h"
@@ -473,6 +474,11 @@ const MD5FileHash *MD5FileHasher::operator[](const std::string &fileName) {
     fileHash.canonicalFileNames.push_back(canonicalFileName);
   }
   return &fileHash;
+}
+
+void parallel_for(size_t count, const std::function<void(size_t)> &func) {
+  SMDL_SANITY_CHECK(func);
+  llvm::parallelFor(0, count, func);
 }
 
 } // namespace smdl

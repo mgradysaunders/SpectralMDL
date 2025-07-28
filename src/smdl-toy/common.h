@@ -8,8 +8,6 @@
 #pragma clang diagnostic ignored "-Wpsabi"
 #endif // #if __clang__
 
-#include "oneapi/tbb/parallel_for.h"
-
 #include "embree4/rtcore_buffer.h"
 #include "embree4/rtcore_common.h"
 #include "embree4/rtcore_config.h"
