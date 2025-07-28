@@ -124,6 +124,10 @@ int main(int argc, char **argv) try {
             auto &cameraVertex{cameraPath[cameraPathIndex]};
             for (int lightPathIndex = 0; lightPathIndex < lightPathLen;
                  lightPathIndex++) {
+              // Limit path length to 6 (effective max path length in
+              // unidirectional light or camera mode)
+              if (cameraPathIndex + lightPathIndex + 2 > 6)
+                continue;
               auto &lightVertex{lightPath[lightPathIndex]};
               Color beta{};
               float misWeight{};
@@ -197,7 +201,7 @@ int main(int argc, char **argv) try {
           for (size_t j = 0; j < N; j++) {
             auto imageCoord{smdl::float2(static_cast<float>(x) + rngf(),
                                          static_cast<float>(y) + rngf())};
-            auto path{std::array<Vertex, 10>{}};
+            auto path{std::array<Vertex, 5>{}};
             auto pathLen{scene.trace_path_from_camera(
                 allocator, rngf, wavelengthBase, imageCoord, path.size(),
                 path.data())};
