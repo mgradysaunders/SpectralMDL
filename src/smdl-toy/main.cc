@@ -98,8 +98,7 @@ int main(int argc, char **argv) try {
 #endif
   std::vector<std::array<uint8_t, 4>> imagePixels{};
   imagePixels.resize(imageExtent.x * imageExtent.y);
-#define TRACE_FROM_LIGHT 1
-#if TRACE_FROM_LIGHT
+#if 1
   auto renderImage{smdl::SpectralRenderImage(WAVELENGTH_BASE_MAX, imageExtent.x,
                                              imageExtent.y)};
   oneapi::tbb::parallel_for(
@@ -110,11 +109,39 @@ int main(int argc, char **argv) try {
         for (size_t i = indexes.begin(); i != indexes.end(); ++i) {
           auto rng{RNG{i}};
           auto rngf{[&rng]() { return generate_canonical(rng); }};
-          auto path{std::array<Vertex, 5>{}};
-          auto pathLen{scene.trace_path_from_light(
-              allocator, rngf, wavelengthBase, path.size(), path.data())};
-          for (int k = 1; k < pathLen; k++) {
-            if (auto &v{path[k]}; !v.isAtInfinity) {
+          auto cameraPath{std::array<Vertex, 5>{}};
+          auto cameraPathLen{scene.trace_path_from_camera(
+              allocator, rngf, wavelengthBase,
+              smdl::float2(imageExtent.x * rngf(), imageExtent.y * rngf()),
+              cameraPath.size(), cameraPath.data())};
+          auto lightPath{std::array<Vertex, 5>{}};
+          auto lightPathLen{
+              scene.trace_path_from_light(allocator, rngf, wavelengthBase,
+                                          lightPath.size(), lightPath.data())};
+#if 1
+          for (int cameraPathIndex = 0; cameraPathIndex < cameraPathLen;
+               cameraPathIndex++) {
+            auto &cameraVertex{cameraPath[cameraPathIndex]};
+            for (int lightPathIndex = 0; lightPathIndex < lightPathLen;
+                 lightPathIndex++) {
+              auto &lightVertex{lightPath[lightPathIndex]};
+              Color beta{};
+              float misWeight{};
+              smdl::float2 imageCoord{cameraPath[0].imageCoord};
+              if (connect_paths(scene, allocator, rngf, wavelengthBase,
+                                cameraVertex, lightVertex, beta, misWeight,
+                                imageCoord)) {
+                renderImage
+                    .pixel_ref(size_t(imageCoord.x), size_t(imageCoord.y))
+                    .add_sample(misWeight,
+                                smdl::Span<float>(beta.data(), beta.size()));
+              }
+            }
+          }
+#else
+          for (int lightPathIndex = 1; lightPathIndex < lightPathLen;
+               lightPathIndex++) {
+            if (auto &v{lightPath[lightPathIndex]}; !v.isAtInfinity) {
               Vertex vLast{};
               if (Camera_last_vertex_sample(
                       camera, smdl::float2(rngf(), rngf()), v, vLast)) {
@@ -129,6 +156,7 @@ int main(int argc, char **argv) try {
               }
             }
           }
+#endif
           allocator.reset();
         }
       });
@@ -169,17 +197,14 @@ int main(int argc, char **argv) try {
           for (size_t j = 0; j < N; j++) {
             auto imageCoord{smdl::float2(static_cast<float>(x) + rngf(),
                                          static_cast<float>(y) + rngf())};
-            auto path{std::array<Vertex, 5>{}};
+            auto path{std::array<Vertex, 10>{}};
             auto pathLen{scene.trace_path_from_camera(
                 allocator, rngf, wavelengthBase, imageCoord, path.size(),
                 path.data())};
             for (int k = 1; k < pathLen; k++) {
-              auto preserve{
-                  smdl::Preserve(path[k].pdfAdjoint, path[k - 1].pdfAdjoint)};
               if (auto &v = path[k]; !v.isAtInfinity) {
                 Vertex vLast{};
-                if (Light_last_vertex_sample(scene, scene.lights[0], //
-                                             smdl::float2(rngf(), rngf()),
+                if (Light_last_vertex_sample(scene, scene.lights[0],
                                              smdl::float2(rngf(), rngf()), v,
                                              vLast)) {
                   if (scene.test_visibility(allocator, rngf, wavelengthBase, v,

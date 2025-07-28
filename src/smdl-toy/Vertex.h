@@ -190,8 +190,9 @@ public:
                  Color &f) const {
     pdfAdjoint =
         nextVertex.convert_direction_pdf_to_point_pdf(dirPdfAdjoint, *this);
-    if (float unused{}; scatter(smdl::normalize(nextVertex.point - point), unused, dirPdfAdjoint, f)) {
-      if (prevVertex) {
+    if (float unused{}; scatter(smdl::normalize(nextVertex.point - point),
+                                unused, dirPdfAdjoint, f)) {
+      if (prevVertex && prevVertex->prevVertex) {
         prevVertex->pdfAdjoint =
             convert_direction_pdf_to_point_pdf(dirPdfAdjoint, *prevVertex);
       }
@@ -286,10 +287,13 @@ bool Light_first_vertex_sample(const Scene &scene, const Light &light,
 /// Sample last vertex from light.
 [[nodiscard]]
 bool Light_last_vertex_sample(const Scene &scene, const Light &light,
-                              const smdl::float2 &xi0, const smdl::float2 &xi1,
+                              const smdl::float2 &xi,
                               const Vertex &lastCameraVertex,
                               Vertex &lightVertex);
 
 [[nodiscard]]
-float multiple_importance_weight(smdl::Span<Vertex> cameraPath,
-                                 smdl::Span<Vertex> lightPath);
+bool connect_paths(const Scene &scene, smdl::BumpPtrAllocator &allocator,
+                   const std::function<float()> &rngf,
+                   const Color &wavelengthBase, Vertex &cameraVertex,
+                   Vertex &lightVertex, Color &beta, float &misWeight,
+                   smdl::float2 &imageCoord);
