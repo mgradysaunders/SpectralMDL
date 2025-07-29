@@ -23,7 +23,6 @@ target_link_libraries(
   smdl-toy
   PRIVATE
     "SpectralMDL"
-    "TBB::tbb"
     "embree"
     "assimp"
     ${SMDL_LLVM_TARGETS}

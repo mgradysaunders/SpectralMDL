@@ -299,9 +299,8 @@ public:
   template <typename Func>
   void handle_scope(llvm::BasicBlock *blockStart, llvm::BasicBlock *blockEnd,
                     Func &&func) {
-    auto preserve{Preserve( //
-        crumb, state, labelReturn, labelBreak, labelContinue, inDefer,
-        currentModule)};
+    SMDL_PRESERVE(crumb, state, labelReturn, labelBreak, labelContinue, inDefer,
+                  currentModule);
     auto crumb0{crumb};
     if (blockStart) {
       llvm_move_block_to_end(blockStart);
@@ -442,7 +441,7 @@ public:
   Value emit(AST::Namespace &decl) {
     decl.firstCrumb = declare_crumb(*decl.identifier, &decl,
                                     context.get_comptime_meta_namespace(&decl));
-    auto preserve{Preserve(crumb)};
+    SMDL_PRESERVE(crumb);
     for (auto &each : decl.decls)
       emit(each);
     decl.lastCrumb = crumb;

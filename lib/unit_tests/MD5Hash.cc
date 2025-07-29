@@ -1,6 +1,6 @@
 #include "doctest.h"
 
-#include "smdl/common.h"
+#include "smdl/Support/MD5Hash.h"
 
 TEST_CASE("MD5Hash") {
   CHECK(std::string(smdl::MD5Hash::hash_memory("Hello, world!")) ==

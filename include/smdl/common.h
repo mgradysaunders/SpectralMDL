@@ -19,6 +19,11 @@
 #include <vector>
 
 #include "smdl/Export.h"
+#include "smdl/Support/BumpPtrAllocator.h"
+#include "smdl/Support/Error.h"
+#include "smdl/Support/Filesystem.h"
+#include "smdl/Support/Span.h"
+#include "smdl/Support/StringHelpers.h"
 
 namespace llvm {
 
@@ -43,22 +48,39 @@ class LLJIT;
 /// The top-level SMDL namespace.
 namespace smdl {
 
+/// \defgroup Support Support
+/// \{
+/// \}
+
 /// \defgroup Main Main
 /// \{
 
-/// Expand third macro in variadic arguments, used to implement
-/// `SMDL_SANITY_CHECK`.
-#define SMDL_EXPAND_THIRD_MACRO(A, B, C, ...) C
+/// Helper to implement `SMDL_CAT` correctly (Yes this is necessary!)
+#define SMDL_CAT__HELPER(X, Y) X##Y
+
+/// Concatenate macros.
+#define SMDL_CAT(X, Y) SMDL_CAT__HELPER(X, Y)
+
+/// Defer until end of scope.
+#define SMDL_DEFER(...)                                                        \
+  const auto SMDL_CAT(__defer, __LINE__) = ::smdl::Defer(__VA_ARGS__)
+
+/// Preserve values, restoring at end of scope.
+#define SMDL_PRESERVE(...)                                                     \
+  const auto SMDL_CAT(__preserve, __LINE__) = ::smdl::Preserve(__VA_ARGS__)
+
+/// Expand the correct sanity check macro.
+#define SMDL_SANITY_CHECK__EXPAND(A, B, C, ...) C
 
 /// Sanity check a condition.
-#define SMDL_SANITY_CHECK_1(cond)                                              \
+#define SMDL_SANITY_CHECK__1(cond)                                             \
   do {                                                                         \
     if (!(cond))                                                               \
       ::smdl::sanity_check_failed(#cond, __FILE__, __LINE__);                  \
   } while (false)
 
 /// Sanity check a condition with a message.
-#define SMDL_SANITY_CHECK_2(cond, message)                                     \
+#define SMDL_SANITY_CHECK__2(cond, message)                                    \
   do {                                                                         \
     if (!(cond))                                                               \
       ::smdl::sanity_check_failed(#cond, __FILE__, __LINE__, message);         \
@@ -66,8 +88,45 @@ namespace smdl {
 
 /// Sanity check a condition with or without a message.
 #define SMDL_SANITY_CHECK(...)                                                 \
-  SMDL_EXPAND_THIRD_MACRO(__VA_ARGS__, SMDL_SANITY_CHECK_2,                    \
-                          SMDL_SANITY_CHECK_1)(__VA_ARGS__)
+  SMDL_SANITY_CHECK__EXPAND(__VA_ARGS__, SMDL_SANITY_CHECK__2,                 \
+                            SMDL_SANITY_CHECK__1)(__VA_ARGS__)
+
+/// Defer until end-of-scope.
+template <typename F> class Defer final {
+public:
+  constexpr Defer(F f) : f(std::move(f)) {}
+
+  ~Defer() { std::invoke(f); }
+
+  F f;
+};
+
+/// Preserve values, restoring at end-of-scope.
+template <typename... Ts> class Preserve final {
+public:
+  constexpr Preserve(Ts &...values)
+      : values(values...), backupValues(values...) {}
+
+  Preserve(const Preserve &) = delete;
+
+  Preserve(Preserve &&) = delete;
+
+  ~Preserve() { restore(); }
+
+  template <size_t... I>
+  constexpr void restore(std::integer_sequence<size_t, I...>) {
+    ((std::get<I>(values) = std::get<I>(backupValues)), ...);
+  }
+
+  constexpr void restore() {
+    restore(std::make_index_sequence<sizeof...(Ts)>());
+  }
+
+private:
+  std::tuple<Ts &...> values;
+
+  std::tuple<Ts...> backupValues;
+};
 
 /// If `SMDL_SANITY_CHECK` fails, this prints the relevant information and
 /// exits the program with code `EXIT_FAILURE`.
@@ -117,475 +176,8 @@ public:
 
 /// \}
 
-/// \defgroup Support Support
-/// \{
-
-/// A span.
-///
-/// We target C++17, which does not have `std::span` yet. We also
-/// do not want to include any LLVM headers from our headers, so
-/// we also cannot use `llvm::ArrayRef`.
-///
-template <typename T> class Span final {
-public:
-  constexpr Span() = default;
-
-  /// Construct from single element.
-  constexpr Span(const T &elem) : first(&elem), count(1) {}
-
-  /// Construct from pointer to first element and element count.
-  constexpr Span(const T *first, size_t count) : first(first), count(count) {}
-
-  /// Construct from `std::initializer_list`.
-  constexpr Span(std::initializer_list<T> elems)
-      : first(elems.begin()), count(elems.size()) {}
-
-  /// Construct from `std::array`.
-  template <size_t N>
-  constexpr Span(const std::array<T, N> &elems)
-      : first(elems.data()), count(elems.size()) {}
-
-  /// Construct from `std::vector`.
-  Span(const std::vector<T> &elems)
-      : first(elems.data()), count(elems.size()) {}
-
-  /// Is empty?
-  [[nodiscard]] constexpr bool empty() const { return count == 0; }
-
-  /// Get the size.
-  [[nodiscard]] constexpr size_t size() const { return count; }
-
-  /// Get the begin iterator.
-  [[nodiscard]] constexpr auto begin() const { return first; }
-
-  /// Get the end iterator.
-  [[nodiscard]] constexpr auto end() const { return first + count; }
-
-  /// Get the data pointer.
-  [[nodiscard]] constexpr const T *data() const { return first; }
-
-  /// Get the front element.
-  [[nodiscard]] constexpr const T &front() const { return first[0]; }
-
-  /// Get the back element.
-  [[nodiscard]] constexpr const T &back() const { return first[count - 1]; }
-
-  /// Drop the front element while the given predicate is true.
-  template <typename Pred>
-  [[nodiscard]] constexpr Span<T> drop_front_while(Pred &&pred) const {
-    size_t i = 0;
-    size_t n = count;
-    while (i < count && pred(first[i])) {
-      i++;
-      n--;
-    }
-    return subspan(i, n);
-  }
-
-  /// Drop the front element.
-  [[nodiscard]] constexpr Span<T> drop_front() const {
-    return subspan(1, count - 1);
-  }
-
-  /// Drop the back element.
-  [[nodiscard]] constexpr Span<T> drop_back() const {
-    return subspan(0, count - 1);
-  }
-
-  /// Get subspan.
-  [[nodiscard]] constexpr Span<T> subspan(size_t i,
-                                          size_t n = size_t(-1)) const {
-    return Span(first + i, std::min(count - i, n));
-  }
-
-  /// Contains the given value?
-  [[nodiscard]] constexpr bool contains(const T &value) const {
-    return std::find(begin(), end(), value) != end();
-  }
-
-  /// Starts with the given sequence of values?
-  [[nodiscard]] constexpr bool starts_with(Span<T> other) const {
-    if (count < other.count)
-      return false;
-    for (size_t i = 0; i < other.count; i++)
-      if (operator[](i) != other[i])
-        return false;
-    return true;
-  }
-
-  /// Get element by index.
-  [[nodiscard]] constexpr const T &operator[](size_t i) const {
-    return first[i];
-  }
-
-  /// Implicit conversion to bool.
-  [[nodiscard]] constexpr operator bool() const { return first && count > 0; }
-
-  /// All equal?
-  [[nodiscard]] constexpr bool operator==(const Span &other) const {
-    if (count != other.count)
-      return false;
-    for (size_t i = 0; i < count; i++)
-      if (first[i] != other.first[i])
-        return false;
-    return true;
-  }
-
-  /// Any not-equal?
-  [[nodiscard]] constexpr bool operator!=(const Span &other) const {
-    return !operator==(other);
-  }
-
-  /// The pointer to the first element.
-  const T *first{};
-
-  /// The element count.
-  size_t count{};
-};
-
-/// \name Functions (filesystem)
-/// \{
-
-/// Has extension?
-[[nodiscard]]
-SMDL_EXPORT bool has_extension(std::string_view path,
-                               std::string_view extension) noexcept;
-
-/// Exists?
-[[nodiscard]] SMDL_EXPORT bool exists(const std::string &path) noexcept;
-
-/// Is file?
-[[nodiscard]] SMDL_EXPORT bool is_file(const std::string &path) noexcept;
-
-/// Is directory?
-[[nodiscard]] SMDL_EXPORT bool is_directory(const std::string &path) noexcept;
-
-/// Is path equivalent?
-[[nodiscard]]
-SMDL_EXPORT bool is_path_equivalent(const std::string &path0,
-                                    const std::string &path1) noexcept;
-
-/// Is path0 a parent path of path1?
-[[nodiscard]]
-SMDL_EXPORT bool is_parent_path_of(const std::string &path0,
-                                   const std::string &path1) noexcept;
-
-/// Join paths.
-[[nodiscard]]
-SMDL_EXPORT std::string join_paths(std::string_view path0,
-                                   std::string_view path1);
-
-/// Make path canonical.
-///
-/// \note
-/// This does not throw. If the implementation fails for any reason, the input
-/// path is returned unchanged.
-///
-[[nodiscard]]
-SMDL_EXPORT std::string canonical(std::string path) noexcept;
-
-/// Make path relative to working directory.
-///
-/// \note
-/// This does not throw. If the implementation fails for any reason, the input
-/// path is returned unchanged.
-///
-[[nodiscard]]
-SMDL_EXPORT std::string relative(std::string path) noexcept;
-
-/// Determine parent path.
-///
-/// \note
-/// This does not throw. If the implementation fails for any reason, the input
-/// path is returned unchanged.
-///
-[[nodiscard]]
-SMDL_EXPORT std::string parent_path(std::string path) noexcept;
-
-/// Open file or throw an `Error`.
-[[nodiscard]]
-SMDL_EXPORT std::fstream open_or_throw(const std::string &path,
-                                       std::ios::openmode mode);
-
-/// Read file or throw an `Error`.
-[[nodiscard]]
-SMDL_EXPORT std::string read_or_throw(const std::string &path);
-
-/// \}
-
-/// \name Functions (strings)
-/// \{
-
-/// Is ASCII alphabetic character?
-[[nodiscard]] constexpr bool is_alpha(char ch) noexcept {
-  return (static_cast<int>('A' <= ch) & static_cast<int>(ch <= 'Z')) |
-         (static_cast<int>('a' <= ch) & static_cast<int>(ch <= 'z'));
-}
-
-/// Is ASCII digit?
-[[nodiscard]] constexpr bool is_digit(char ch) noexcept {
-  return (static_cast<int>('0' <= ch) & static_cast<int>(ch <= '9'));
-}
-
-/// Is ASCII binary digit?
-[[nodiscard]] constexpr bool is_digit_2(char ch) noexcept {
-  return (static_cast<int>('0' <= ch) & static_cast<int>(ch <= '1'));
-}
-
-/// Is ASCII octal digit?
-[[nodiscard]] constexpr bool is_digit_8(char ch) noexcept {
-  return (static_cast<int>('0' <= ch) & static_cast<int>(ch <= '7'));
-}
-
-/// Is ASCII hexadecimal digit?
-[[nodiscard]] constexpr bool is_digit_16(char ch) noexcept {
-  return is_digit(ch) |
-         (static_cast<int>('A' <= ch) & static_cast<int>(ch <= 'F')) |
-         (static_cast<int>('a' <= ch) & static_cast<int>(ch <= 'f'));
-}
-
-/// Is ASCII alphabetic character, digit, or underscore?
-[[nodiscard]] constexpr bool is_word(char ch) noexcept {
-  return static_cast<int>(is_alpha(ch)) | static_cast<int>(is_digit(ch)) |
-         static_cast<int>(ch == '_');
-}
-
-/// Is ASCII whitespace character?
-[[nodiscard]] constexpr bool is_space(char ch) noexcept {
-  return static_cast<int>(ch == ' ') | static_cast<int>(ch == '\t') |
-         static_cast<int>(ch == '\n') | static_cast<int>(ch == '\r') |
-         static_cast<int>(ch == '\v');
-}
-
-/// Convert ASCII octal character to runtime int.
-[[nodiscard]] constexpr int oct_to_int(int ch) noexcept {
-  if ('0' <= ch && ch <= '7')
-    return ch - '0';
-  return 0;
-}
-
-/// Convert ASCII hexadecimal character to runtime int.
-[[nodiscard]] constexpr int hex_to_int(int ch) noexcept {
-  if ('0' <= ch && ch <= '9')
-    return ch - '0';
-  if ('a' <= ch && ch <= 'f')
-    return ch - 'a' + 10;
-  if ('A' <= ch && ch <= 'F')
-    return ch - 'A' + 10;
-  return 0;
-}
-
-/// Determine if `str0` starts with `str1`.
-[[nodiscard]] constexpr bool starts_with(std::string_view str0,
-                                         std::string_view str1) noexcept {
-  return str0.size() >= str1.size() && str0.substr(0, str1.size()) == str1;
-}
-
-/// \}
-
-/// A quoted string for use with `concat`.
-struct SMDL_EXPORT quoted final {
-public:
-  quoted(std::string_view str) : str(str) {}
-
-  void append_to(std::string &result);
-
-public:
-  std::string_view str{};
-};
-
-/// A quoted path string for use with `concat`.
-struct SMDL_EXPORT quoted_path final {
-public:
-  quoted_path(std::string_view str) : str(str) {}
-
-  void append_to(std::string &result);
-
-public:
-  std::string_view str{};
-};
-
-namespace detail {
-
-template <typename T, typename... Ts>
-inline void do_concat(std::string &str, T &&value, Ts &&...values) {
-  using DecayT = std::decay_t<T>;
-  if constexpr (std::is_arithmetic_v<DecayT>) {
-    str += std::to_string(value);
-  } else if constexpr (std::is_same_v<DecayT, quoted> ||
-                       std::is_same_v<DecayT, quoted_path>) {
-    value.append_to(str);
-  } else {
-    str += value;
-  }
-  if constexpr (sizeof...(Ts) > 0)
-    do_concat(str, std::forward<Ts>(values)...);
-}
-
-} // namespace detail
-
-/// \name Functions (strings)
-/// \{
-
-/// Concatenate the given values into a string.
-template <typename T, typename... Ts>
-[[nodiscard]] inline auto concat(T &&value0, Ts &&...values) {
-  if constexpr (sizeof...(Ts) == 0 &&
-                std::is_same_v<std::decay_t<T>, std::string>) {
-    return value0;
-  } else if constexpr (sizeof...(Ts) == 0 &&
-                       std::is_constructible_v<std::string_view,
-                                               std::decay_t<T>>) {
-    return std::string_view(value0);
-  } else {
-    std::string str{};
-    str.reserve(128);
-    detail::do_concat(str, std::forward<T>(value0),
-                      std::forward<Ts>(values)...);
-    return str;
-  }
-}
-
-/// Join the given string views by the given delimiter.
-[[nodiscard]] inline std::string join(Span<std::string_view> strs,
-                                      std::string_view delim) {
-  std::string str{};
-  str.reserve(128);
-  for (size_t i = 0; i < strs.size(); i++) {
-    str += strs[i];
-    if (i + 1 < strs.size())
-      str += delim;
-  }
-  return str;
-}
-
-/// \}
-
-/// \}
-
-/// \addtogroup Support
-/// \{
-
-/// A bump pointer allocated by `BumpPtrAllocator` that does not need to be
-/// freed, but does need to be destructed.
-///
-/// This is effectively a `std::unique_ptr` with a deleter that only
-/// invokes the destructor.
-template <typename T> class BumpPtr final {
-public:
-  BumpPtr() = default;
-
-  BumpPtr(std::nullptr_t) {}
-
-  /// Construct from raw pointer.
-  template <typename U> BumpPtr(U *ptr) : ptr(static_cast<T *>(ptr)) {
-    static_assert(std::is_base_of_v<T, U>);
-  }
-
-  /// Copy constructor is disabled!
-  BumpPtr(const BumpPtr &) = delete;
-
-  /// Move constructor.
-  BumpPtr(BumpPtr &&other) : ptr(std::exchange(other.ptr, nullptr)) {}
-
-  /// Move constructor from derived type.
-  template <typename U>
-  BumpPtr(BumpPtr<U> &&other) : BumpPtr(std::exchange(other.ptr, nullptr)) {}
-
-  /// Copy assignment is disabled!
-  BumpPtr &operator=(const BumpPtr &) = delete;
-
-  /// Move assignment.
-  BumpPtr &operator=(BumpPtr &&other) {
-    reset(std::exchange(other.ptr, nullptr));
-    return *this;
-  }
-
-  /// Move assignment from derived type.
-  template <typename U> BumpPtr &operator=(BumpPtr<U> &&other) {
-    static_assert(std::is_base_of_v<T, U>);
-    reset(std::exchange(other.ptr, nullptr));
-    return *this;
-  }
-
-  ~BumpPtr() { reset(); }
-
-  [[nodiscard]] auto *get() { return ptr; }
-
-  [[nodiscard]] auto *get() const { return ptr; }
-
-  [[nodiscard]] auto *operator->() { return ptr; }
-
-  [[nodiscard]] auto *operator->() const { return ptr; }
-
-  [[nodiscard]] auto &operator*() { return *ptr; }
-
-  [[nodiscard]] auto &operator*() const { return *ptr; }
-
-  [[nodiscard]] operator bool() const { return ptr != nullptr; }
-
-  [[nodiscard]] bool operator!() const { return ptr == nullptr; }
-
-  void reset() {
-    if (ptr) {
-      ptr->~T();
-      ptr = nullptr;
-    }
-  }
-
-  template <typename U> void reset(U *newPtr) {
-    static_assert(std::is_base_of_v<T, U>);
-    reset();
-    ptr = static_cast<T *>(newPtr);
-  }
-
-public:
-  T *ptr{};
-};
-
-/// \}
-
 /// \addtogroup Main
 /// \{
-
-/// A bump pointer allocator, opaque wrapper around
-/// `llvm::BumpPtrAllocator`.
-class SMDL_EXPORT BumpPtrAllocator final {
-public:
-  BumpPtrAllocator();
-
-  BumpPtrAllocator(const BumpPtrAllocator &) = delete;
-
-  ~BumpPtrAllocator();
-
-  /// Allocate raw memory.
-  ///
-  /// \param[in] size   The size in bytes.
-  /// \param[in] align  The alignment in bytes.
-  ///
-  [[nodiscard]] void *allocate(size_t size, size_t align);
-
-  /// Allocate and initialize type `T` by passing `Args...` to the constructor.
-  template <typename T, typename... Args>
-  [[nodiscard]] auto allocate(Args &&...args) {
-    auto result{new (allocate(sizeof(T), alignof(T)))
-                    T{std::forward<Args>(args)...}};
-    if constexpr (std::is_trivially_destructible_v<T>)
-      return result;
-    else
-      return BumpPtr<T>(result);
-  }
-
-  /// Reset the allocator, freeing all memory.
-  void reset();
-
-  /// Get the number of bytes allocated.
-  [[nodiscard]] size_t bytes_allocated() const;
-
-private:
-  /// The pointer to the `llvm::BumpPtrAllocator`.
-  void *ptr{};
-};
 
 class Compiler;
 class Module;
@@ -637,143 +229,6 @@ public:
 
   /// The raw index in the source code string.
   uint64_t i{};
-};
-
-/// The error representation.
-class SMDL_EXPORT Error final : public std::exception {
-public:
-  explicit Error(std::string message) : message(std::move(message)) {}
-
-  /// Print to standard error.
-  void print() const;
-
-  /// Print to standard error and exit with `EXIT_FAILURE`.
-  void print_and_exit() const;
-
-  const char *what() const noexcept final { return message.c_str(); }
-
-public:
-  /// The message.
-  std::string message{};
-};
-
-/// \}
-
-/// \addtogroup Support
-/// \{
-
-/// Use C++ ABI to demangle the given name.
-[[nodiscard]] SMDL_EXPORT std::string abi_demangle(const char *name);
-
-/// Use C++ ABI to retrieve and demangle the current exception name.
-[[nodiscard]] SMDL_EXPORT std::string abi_demangle_exception_name();
-
-/// Run the given function, catch whatever it might throw, and return it as
-/// an `Error` value.
-template <typename Func>
-[[nodiscard]] inline std::optional<Error>
-catch_and_return_error(Func &&func) try {
-  std::invoke(std::forward<Func>(func));
-  return std::nullopt;
-} catch (Error error) {
-  return std::move(error);
-} catch (const std::exception &error) {
-  return Error(concat("converted from ", abi_demangle_exception_name(), //
-                      ": ", error.what()));
-} catch (...) {
-  return Error(concat("converted from ", abi_demangle_exception_name()));
-}
-
-/// A semantic version per [Semantic Versioning 2.0.0](https://semver.org).
-class SMDL_EXPORT SemanticVersion final {
-public:
-  /// Parse from string representation or throw an `Error`.
-  [[nodiscard]] static SemanticVersion parse(const std::string &versionStr);
-
-  /// Has pre-release version?
-  [[nodiscard]] bool has_pre_release() const noexcept {
-    return !preRelease.empty();
-  }
-
-  /// Has build metadata?
-  [[nodiscard]] bool has_build_metadata() const noexcept {
-    return !buildMetadata.empty();
-  }
-
-  /// Compare result.
-  enum CompareResult : int {
-    OLDER_BY_MAJOR_VERSION = -4,
-    OLDER_BY_MINOR_VERSION = -3,
-    OLDER_BY_PATCH_VERSION = -2,
-    OLDER_BY_PRE_RELEASE = -1,
-    EXACTLY_EQUAL = 0,
-    NEWER_BY_PRE_RELEASE = +1,
-    NEWER_BY_PATCH_VERSION = +2,
-    NEWER_BY_MINOR_VERSION = +3,
-    NEWER_BY_MAJOR_VERSION = +4,
-  };
-
-  /// Compare.
-  [[nodiscard]] CompareResult
-  compare(const SemanticVersion &other) const noexcept;
-
-  /// \name Comparison operators
-  /// \{
-
-  [[nodiscard]] bool operator==(const SemanticVersion &other) const noexcept {
-    return compare(other) == EXACTLY_EQUAL;
-  }
-
-  [[nodiscard]] bool operator!=(const SemanticVersion &other) const noexcept {
-    return compare(other) != EXACTLY_EQUAL;
-  }
-
-  [[nodiscard]] bool operator<(const SemanticVersion &other) const noexcept {
-    return compare(other) < EXACTLY_EQUAL;
-  }
-
-  [[nodiscard]] bool operator>(const SemanticVersion &other) const noexcept {
-    return compare(other) > EXACTLY_EQUAL;
-  }
-
-  [[nodiscard]] bool operator<=(const SemanticVersion &other) const noexcept {
-    return compare(other) <= EXACTLY_EQUAL;
-  }
-
-  [[nodiscard]] bool operator>=(const SemanticVersion &other) const noexcept {
-    return compare(other) >= EXACTLY_EQUAL;
-  }
-
-  /// \}
-
-  /// Convert to string representation.
-  [[nodiscard]] operator std::string() const;
-
-public:
-  /// The major version number.
-  uint32_t major{};
-
-  /// The minor version number.
-  uint32_t minor{};
-
-  /// The patch version number.
-  uint32_t patch{};
-
-  /// The pre-release version.
-  ///
-  /// > A pre-release version MAY be denoted by appending a hyphen
-  /// > and a series of dot separated identifiers immediately following
-  /// > the patch version.
-  ///
-  std::string preRelease{};
-
-  /// The build metadata.
-  ///
-  /// > Build metadata MAY be denoted by appending a plus sign and a
-  /// > series of dot separated identifiers immediately following the
-  /// > patch or pre-release version.
-  ///
-  std::string buildMetadata{};
 };
 
 /// \}
@@ -1434,154 +889,7 @@ public:
 /// \addtogroup Support
 /// \{
 
-/// Defer until end-of-scope.
-template <typename F> struct Defer final {
-public:
-  constexpr Defer(F f) : f(std::move(f)) {}
-
-  ~Defer() { std::invoke(f); }
-
-  F f;
-};
-
-/// Preserve values, restoring at end-of-scope.
-template <typename... Ts> struct Preserve final {
-public:
-  constexpr Preserve(Ts &...values)
-      : values(values...), backupValues(values...) {}
-
-  Preserve(const Preserve &) = delete;
-
-  Preserve(Preserve &&) = delete;
-
-  ~Preserve() { restore(); }
-
-  template <size_t... I>
-  constexpr void restore(std::integer_sequence<size_t, I...>) {
-    ((std::get<I>(values) = std::get<I>(backupValues)), ...);
-  }
-
-  constexpr void restore() {
-    restore(std::make_index_sequence<sizeof...(Ts)>());
-  }
-
-private:
-  std::tuple<Ts &...> values;
-
-  std::tuple<Ts...> backupValues;
-};
-
-/// \}
-
-/// \addtogroup Support
-/// \{
-
-/// A 128-bit MD5 hash.
-class SMDL_EXPORT MD5Hash final {
-public:
-  /// Hash file on disk. Returns zero if there is an error.
-  [[nodiscard]] static MD5Hash hash_file(const std::string &fileName) noexcept;
-
-  /// Hash memory.
-  [[nodiscard]] static MD5Hash hash_memory(const void *mem,
-                                           size_t memSize) noexcept;
-
-  /// Hash memory.
-  [[nodiscard]] static MD5Hash hash_memory(std::string_view mem) noexcept {
-    return hash_memory(mem.data(), mem.size());
-  }
-
-public:
-  /// Construct zero.
-  constexpr MD5Hash() = default;
-
-  /// Construct from hash code.
-  constexpr MD5Hash(std::pair<uint64_t, uint64_t> hash) : hash(hash) {}
-
-  /// Get the upper or most significant bits.
-  [[nodiscard]] constexpr uint64_t upper_bits() const noexcept {
-    return hash.first;
-  }
-
-  /// Get the lower or least significant bits.
-  [[nodiscard]] constexpr uint64_t lower_bits() const noexcept {
-    return hash.second;
-  }
-
-  /// Wrap `operator==`.
-  [[nodiscard]] constexpr bool operator==(const MD5Hash &other) const noexcept {
-    return hash == other.hash;
-  }
-
-  /// Wrap `operator!=`.
-  [[nodiscard]] constexpr bool operator!=(const MD5Hash &other) const noexcept {
-    return hash != other.hash;
-  }
-
-  /// Wrap `operator<`.
-  [[nodiscard]] constexpr bool operator<(const MD5Hash &other) const noexcept {
-    return hash < other.hash;
-  }
-
-  /// Wrap `operator>`.
-  [[nodiscard]] constexpr bool operator>(const MD5Hash &other) const noexcept {
-    return hash > other.hash;
-  }
-
-  /// Wrap `operator<=`.
-  [[nodiscard]] constexpr bool operator<=(const MD5Hash &other) const noexcept {
-    return hash <= other.hash;
-  }
-
-  /// Wrap `operator>=`.
-  [[nodiscard]] constexpr bool operator>=(const MD5Hash &other) const noexcept {
-    return hash >= other.hash;
-  }
-
-  /// Wrap `operator!`.
-  [[nodiscard]] constexpr bool operator!() const noexcept {
-    return hash == std::pair<uint64_t, uint64_t>();
-  }
-
-  /// Stringify for display.
-  [[nodiscard]] operator std::string() const;
-
-public:
-  /// The hash code.
-  std::pair<uint64_t, uint64_t> hash{};
-};
-
-/// An MD5 file hash.
-class SMDL_EXPORT MD5FileHash final {
-public:
-  /// The hash code.
-  MD5Hash hash{};
-
-  /// The file names that produced this hash code (presumably all duplicates of
-  /// the same file).
-  std::vector<std::string> canonicalFileNames{};
-};
-
-/// An MD5 file hasher.
-///
-/// This caches the `MD5FileHash` for every file that is hashed, so that we
-/// do not have to calculate hashes redundantly.
-///
-class SMDL_EXPORT MD5FileHasher final {
-public:
-  MD5FileHasher() = default;
-
-  MD5FileHasher(const MD5FileHasher &) = delete;
-
-  /// Hash.
-  [[nodiscard]] const MD5FileHash *operator[](const std::string &fileName);
-
-private:
-  /// The file hashes.
-  std::map<std::string, MD5FileHash> fileHashes{};
-};
-
-SMDL_EXPORT void parallel_for(size_t count,
+SMDL_EXPORT void parallel_for(size_t num,
                               const std::function<void(size_t)> &func);
 
 /// \}

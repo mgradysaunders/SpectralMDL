@@ -10,29 +10,25 @@ public:
     uint32_t seed{0};
 
     /// The small-step standard deviation.
-    float smallStepSigma{0.008f};
+    float smallStepSigma{0.01f};
 
     /// The large-step probability.
     float largeStepProbability{0.3f};
 
-    /// The maximum depth.
-    uint64_t maxBounces{4};
+    /// The minimum scattering order (number of bounces).
+    uint64_t minOrder{0};
+
+    /// The maximum scattering order (number of bounces).
+    uint64_t maxOrder{4};
 
     /// The number of bootstrap paths to initialize the algorithm.
-    uint64_t numBootstrapPaths{100'000};
+    uint64_t nBootstrap{100'000};
 
-    /// The number of mutations.
-    ///
-    /// Typically this is the number of desired mutations per pixel times the
-    /// number of pixels in the image, though it is important to note that the
-    /// mutations will not be perfectly distributed across pixels in general,
-    /// and that is by design. The nature of metropolis is to focus more effort
-    /// in the areas of highest contribution.
-    ///
-    uint64_t numMutationsPerPixel{100};
+    /// The number of mutations per pixel.
+    uint64_t nMutationsPerPixel{100};
 
     /// The number of Markov chains.
-    uint64_t numChains{5000};
+    uint64_t nChains{1000};
   };
 
   MLTIntegrator() = default;

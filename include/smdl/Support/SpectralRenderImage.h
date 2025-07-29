@@ -2,8 +2,11 @@
 #pragma once
 
 #include <atomic>
+#include <cstring>
+#include <memory>
 
-#include "smdl/common.h"
+#include "smdl/Export.h"
+#include "smdl/Support/Span.h"
 
 namespace smdl {
 
@@ -57,20 +60,9 @@ public:
     resize(nBands, nPixelsX, nPixelsY);
   }
 
-  void clear() noexcept {
-    numBands = 0;
-    numPixelsX = 0;
-    numPixelsY = 0;
-    buf.reset();
-  }
+  void clear() noexcept;
 
-  void resize(size_t nBands, size_t nPixelsX, size_t nPixelsY) {
-    clear();
-    numBands = nBands;
-    numPixelsX = nPixelsX;
-    numPixelsY = nPixelsY;
-    buf.reset(new uint8_t[image_size_in_bytes()]);
-  }
+  void resize(size_t nBands, size_t nPixelsX, size_t nPixelsY);
 
   [[nodiscard]] size_t num_bands() const noexcept { return numBands; }
 
@@ -87,7 +79,7 @@ public:
            sizeof(AtomicDouble) * numBands;
   }
 
-  struct PixelRef final {
+  struct PixelReference final {
     template <typename Float>
     void add_sample(double weight, Span<Float> values) noexcept {
       numSamples += 1;
@@ -104,16 +96,8 @@ public:
     AtomicDouble *totalValues;
   };
 
-  [[nodiscard]] PixelRef pixel_ref(size_t pixelX, size_t pixelY) noexcept {
-    SMDL_SANITY_CHECK(pixelX < numPixelsX);
-    SMDL_SANITY_CHECK(pixelY < numPixelsY);
-    auto ptr{buf.get() +
-             pixel_size_in_bytes() * (numPixelsX * pixelY + pixelX)};
-    return {*reinterpret_cast<AtomicUInt64 *>(ptr),
-            *reinterpret_cast<AtomicDouble *>(ptr + sizeof(AtomicUInt64)),
-            reinterpret_cast<AtomicDouble *>(ptr + sizeof(AtomicUInt64) +
-                                             sizeof(AtomicDouble))};
-  }
+  [[nodiscard]] PixelReference pixel_reference(size_t pixelX,
+                                               size_t pixelY) noexcept;
 
 private:
   size_t numBands{};

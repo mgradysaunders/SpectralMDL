@@ -1,5 +1,6 @@
 #include "doctest.h"
 
+#include <array>
 #include <random>
 
 #include "smdl/Support/DiscreteDistribution.h"

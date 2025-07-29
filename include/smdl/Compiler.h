@@ -12,6 +12,8 @@
 #include "smdl/Module.h"
 #include "smdl/SceneData.h"
 
+#include "smdl/Support/MD5Hash.h"
+
 namespace smdl {
 
 /// \addtogroup Support

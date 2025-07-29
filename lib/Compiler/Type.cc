@@ -968,7 +968,7 @@ Value FunctionType::invoke(Emitter &emitter, const ArgumentList &args,
   auto func{resolve_overload(emitter, args, srcLoc)};
   if (func->is_variant()) {
     auto result{Value()};
-    auto preserve{Preserve(emitter.crumb)};
+    SMDL_PRESERVE(emitter.crumb);
     emitter.crumb = func->params.lastCrumb;
     emitter.handle_scope(nullptr, nullptr, [&]() {
       emitter.currentModule = func->decl.srcLoc.module_;
@@ -1006,7 +1006,7 @@ Value FunctionType::invoke(Emitter &emitter, const ArgumentList &args,
     if (macroRecursionDepth >= 1024)
       srcLoc.throw_error("call to ", quoted(func->declName),
                          " exceeds compile-time recursion limit 1024");
-    auto preserve{Preserve(emitter.crumb)};
+    SMDL_PRESERVE(emitter.crumb);
     emitter.crumb = func->params.lastCrumb;
     auto result{emitter.create_function_implementation(
         func->decl.name, func->is_pure() || !emitter.state, func->returnType,
@@ -1639,7 +1639,7 @@ Value StringType::access_field(Emitter &emitter, Value value,
 void StructType::initialize(Emitter &emitter) {
   params.lastCrumb = emitter.declare_crumb(
       decl.name, &decl, emitter.context.get_comptime_meta_type(this));
-  auto preserve{Preserve(emitter.crumb)};
+  SMDL_PRESERVE(emitter.crumb);
   // Initialize tags.
   for (auto &tag : decl.tags) {
     emitter.emit(tag.type);
@@ -1779,7 +1779,7 @@ Value StructType::invoke(Emitter &emitter, const ArgumentList &args,
     for (auto &value : resolved.values)
       result = emitter.insert(result, value, i++, srcLoc);
     if (decl.stmtFinalize) {
-      auto preserve{Preserve(emitter.crumb)};
+      SMDL_PRESERVE(emitter.crumb);
       emitter.crumb = params.lastCrumb;
       emitter.handle_scope(nullptr, nullptr, [&] {
         emitter.labelReturn = {};   // Invalidate!
@@ -1808,7 +1808,7 @@ Value StructType::invoke(Emitter &emitter, const ArgumentList &args,
   if (viableConstructors.size() == 1) {
     auto &constructor{*viableConstructors[0]};
     auto resolved{emitter.resolve_arguments(constructor.params, args, srcLoc)};
-    auto preserve{Preserve(emitter.crumb, constructor.isInvoking)};
+    SMDL_PRESERVE(emitter.crumb, constructor.isInvoking);
     emitter.crumb = constructor.params.lastCrumb;
     constructor.isInvoking = true;
     return emitter.create_function_implementation(

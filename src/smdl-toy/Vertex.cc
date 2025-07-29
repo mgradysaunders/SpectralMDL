@@ -67,22 +67,22 @@ bool Camera_last_vertex_sample(const Camera &camera, const smdl::float2 &xi,
 float Light_power_estimate(const Scene &scene, const Light &light) {
   struct Visitor final {
     [[nodiscard]] float operator()(const PointLight &light) const {
-      return 4 * PI * light.intensity.average();
+      return 4 * PI * light.intensity.average_value();
     }
     [[nodiscard]] float operator()(const DirectionLight &light) const {
       return PI * scene.boundRadius * scene.boundRadius *
-             light.intensity.average();
+             light.intensity.average_value();
     }
     [[nodiscard]] float operator()(const SpotLight &light) const {
       return 2 * PI * (1 - (light.cosThetaInner + light.cosThetaOuter) / 2) *
-             light.intensity.average();
+             light.intensity.average_value();
     }
     [[nodiscard]] float operator()(const DiskLight &light) const {
-      return PI * light.radius * light.radius * PI * light.intensity.average();
+      return PI * light.radius * light.radius * PI * light.intensity.average_value();
     }
     [[nodiscard]] float operator()(const AmbientLight &light) const {
       return PI * scene.boundRadius * scene.boundRadius *
-             light.intensity.average();
+             light.intensity.average_value();
     }
     [[nodiscard]] float operator()(const EnvironmentLight &light) const {
       return PI * scene.boundRadius * scene.boundRadius * light.intensityScale;

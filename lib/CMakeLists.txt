@@ -28,7 +28,14 @@ add_library(
     "Module.cc"
     "Parser.cc"
     "SceneData.cc"
+    "Support/BumpPtrAllocator.cc"
     "Support/DiscreteDistribution.cc"
+    "Support/Error.cc"
+    "Support/Filesystem.cc"
+    "Support/MD5Hash.cc"
+    "Support/SemanticVersion.cc"
+    "Support/SpectralRenderImage.cc"
+    "Support/StringHelpers.cc"
     "thirdparty/miniz.c"
   )
 add_library(

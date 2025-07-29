@@ -97,9 +97,9 @@ int main(int argc, char **argv) try {
                                              imageExtent.y)};
 #if 1
   auto options{MLTIntegrator::Options{}};
-  options.maxBounces = 3;
-  options.numMutationsPerPixel = size_t(samplesPerPixel);
-  options.numChains = 1000;
+  options.maxOrder = 5;
+  options.nMutationsPerPixel = size_t(samplesPerPixel);
+  options.nChains = 1000;
   auto integrator{MLTIntegrator{options}};
   integrator.integrate(scene, wavelengthBase, renderImage);
 #else
@@ -130,7 +130,7 @@ int main(int argc, char **argv) try {
           if (connect_bidirectional(scene, allocator, rngf, wavelengthBase,
                                     &cameraPath[s], &lightPath[t], beta,
                                     misWeight, imageCoord)) {
-            renderImage.pixel_ref(size_t(imageCoord.x), size_t(imageCoord.y))
+            renderImage.pixel_reference(size_t(imageCoord.x), size_t(imageCoord.y))
                 .add_sample(misWeight,
                             smdl::Span<float>(beta.data(), beta.size()));
           }
@@ -145,7 +145,7 @@ int main(int argc, char **argv) try {
             if (scene.test_visibility(allocator, rngf, wavelengthBase, v, vLast,
                                       vLast.beta)) {
               renderImage
-                  .pixel_ref(size_t(vLast.imageCoord.x),
+                  .pixel_reference(size_t(vLast.imageCoord.x),
                              size_t(vLast.imageCoord.y))
                   .add_sample(1.0, smdl::Span<float>(vLast.beta.data(),
                                                      vLast.beta.size()));
@@ -186,7 +186,7 @@ int main(int argc, char **argv) try {
       }
       allocator.reset();
     }
-    renderImage.pixel_ref(x, y).add_sample(
+    renderImage.pixel_reference(x, y).add_sample(
         1.0, smdl::Span<float>(Lsum.data(), Lsum.size()));
   });
 #endif
@@ -199,7 +199,7 @@ int main(int argc, char **argv) try {
   for (int y = 0; y < imageExtent.y; y++)
     for (int x = 0; x < imageExtent.x; x++) {
       auto color{Color()};
-      auto pixelRef{renderImage.pixel_ref(x, y)};
+      auto pixelRef{renderImage.pixel_reference(x, y)};
       for (int k = 0; k < WAVELENGTH_BASE_MAX; k++) {
         color[k] =
             double(pixelRef.totalValues[k]) / double(size_t(samplesPerPixel));

@@ -41,11 +41,17 @@ float MLTIntegrator::Sampler::next_sample() {
   } else {
     auto sigma{smallStepSigma * float(std::sqrt(iteration - sample.iteration))};
     sample.value += std::normal_distribution<float>(0.0f, sigma)(rng);
-    sample.value -= std::floor(sample.value);
+    if (std::isfinite(sample.value)) {
+      sample.value = generate_canonical(rng);
+    } else {
+      sample.value -= std::floor(sample.value);
+      sample.value =
+          std::fmax(sample.value, std::numeric_limits<float>::denorm_min());
+      sample.value = std::fmin(sample.value,
+                               1 - std::numeric_limits<float>::epsilon() / 2);
+    }
     sample.iteration = iteration;
   }
-  sample.value = std::fmax(sample.value, 0.0f);
-  sample.value = std::fmin(sample.value, 0.999999f);
   return sample.value;
 }
 
@@ -68,26 +74,27 @@ void MLTIntegrator::Sampler::finish_and_reject_iteration() noexcept {
 
 void MLTIntegrator::integrate(const Scene &scene, const Color &wavelengthBase,
                               smdl::SpectralRenderImage &renderImage) const {
-  auto scalarMeasurement{[](const Color &beta) { return beta.average(); }};
+  auto scalarMeasurement{
+      [](const Color &beta) { return beta.average_value(); }};
 
   const auto seed{options.seed};
-  const auto maxBounces{options.maxBounces};
-  const auto numBootstrapPaths{options.numBootstrapPaths};
-  const auto numMutationsPerPixel{options.numMutationsPerPixel};
-  const auto numTotalMutations{scene.camera.imageExtent.x *
-                               scene.camera.imageExtent.y *
-                               numMutationsPerPixel};
-  const auto numChains{options.numChains};
+  const auto minOrder{options.minOrder};
+  const auto maxOrder{options.maxOrder};
+  const auto nBootstrap{options.nBootstrap};
+  const auto nMutationsPerPixel{options.nMutationsPerPixel};
+  const auto nTotalMutations{scene.camera.imageExtent.x *
+                             scene.camera.imageExtent.y * nMutationsPerPixel};
+  const auto nChains{options.nChains};
 
   auto contributionSample{[&](smdl::BumpPtrAllocator &allocator,
-                              Sampler &sampler, size_t numBounces,
+                              Sampler &sampler, size_t order,
                               Contribution &contribution) -> bool {
     sampler.next_sequence();
     auto rng{[&]() { return sampler.next_sample(); }};
-    if (numBounces == 0)
+    if (order == 0)
       return false;
     float u = sampler.next_sample();
-    size_t numStrategies{numBounces + 1};
+    size_t numStrategies{order + 1};
     size_t depthFromCamera = size_t(numStrategies * u) + 1;
     size_t depthFromLight = numStrategies + 1 - depthFromCamera;
     contribution.imageCoord =
@@ -120,59 +127,59 @@ void MLTIntegrator::integrate(const Scene &scene, const Color &wavelengthBase,
     return true;
   }};
 
-  auto bootstraps{std::vector<double>(
-      size_t(numBootstrapPaths * (maxBounces + 1)), 0.0)};
+  auto bootstraps{
+      std::vector<double>(size_t(nBootstrap * (maxOrder - minOrder + 1)), 0.0)};
   auto bootstrapSampler{[&](unsigned long bootstrapIndex) {
     return Sampler(options, 0xA7CBE565UL, 0x6AF93C73UL, bootstrapIndex,
                    0xE5C6FB2CUL, 0x24718FB5UL);
   }};
-  smdl::parallel_for(numBootstrapPaths, [&](size_t pathIndex) {
+  smdl::parallel_for(nBootstrap, [&](size_t pathIndex) {
     auto allocator{smdl::BumpPtrAllocator{}};
-    auto contribution{Contribution(maxBounces + 2)};
-    for (size_t numBounces = 0; numBounces <= maxBounces; numBounces++) {
-      auto bootstrapIndex{pathIndex * (maxBounces + 1)+ numBounces};
+    auto contribution{Contribution(maxOrder + 2)};
+    for (size_t order{minOrder}; order <= maxOrder; order++) {
+      auto bootstrapIndex{pathIndex * (maxOrder - minOrder + 1) + order -
+                          minOrder};
       auto sampler{bootstrapSampler(bootstrapIndex)};
-      if (contributionSample(allocator, sampler, numBounces, contribution)) {
+      if (contributionSample(allocator, sampler, order, contribution)) {
         bootstraps[bootstrapIndex] = contribution.betaMeasurement;
       }
       allocator.reset();
     }
   });
-  auto bootstrapIntegral{ 4 * 
+  auto bootstrapIntegral{
       std::accumulate(bootstraps.begin(), bootstraps.end(), 0.0) /
-      bootstraps.size() * (maxBounces + 1)};
+      bootstraps.size() * (maxOrder - minOrder + 1)};
   auto bootstrap{smdl::DiscreteDistribution(bootstraps)};
 
-  smdl::parallel_for(numChains, [&](size_t chainIndex) {
+  smdl::parallel_for(nChains, [&](size_t chainIndex) {
     auto allocator{smdl::BumpPtrAllocator{}};
     auto rng{RNG{std::seed_seq{
         static_cast<unsigned long>(chainIndex), 0x3D6411FFUL, 0xDE44B7D2UL,
         static_cast<unsigned long>(seed), 0xE9F523E9UL, 0xD64CFEEEUL}}};
     const auto bootstrapIndex{bootstrap(rng)};
-    const auto numBounces{bootstrapIndex % (maxBounces + 1)};
+    const auto order{bootstrapIndex % (maxOrder - minOrder + 1) + minOrder};
     const auto numChainMutations{
-        std::min((chainIndex + 1) * numTotalMutations / numChains,
-                 numTotalMutations) -
-        chainIndex * numTotalMutations / numChains};
+        std::min((chainIndex + 1) * nTotalMutations / nChains,
+                 nTotalMutations) -
+        chainIndex * nTotalMutations / nChains};
     auto sampler{bootstrapSampler(bootstrapIndex)};
-    auto prevContribution{Contribution(maxBounces + 2)};
-    auto nextContribution{Contribution(maxBounces + 2)};
-    if (!contributionSample(allocator, sampler, numBounces, prevContribution))
+    auto prevContribution{Contribution(maxOrder + 2)};
+    auto nextContribution{Contribution(maxOrder + 2)};
+    if (!contributionSample(allocator, sampler, order, prevContribution))
       SMDL_SANITY_CHECK(false,
                         "Bootstrap contribution should have been non-zero!");
     for (size_t mutationIndex{}; mutationIndex < numChainMutations;
          mutationIndex++) {
       sampler.next_iteration();
       float acceptChance{0.0f};
-      if (contributionSample(allocator, sampler, numBounces,
-                             nextContribution)) {
+      if (contributionSample(allocator, sampler, order, nextContribution)) {
         acceptChance = std::fmin(1.0f, nextContribution.betaMeasurement /
                                            prevContribution.betaMeasurement);
       }
       if (acceptChance > 0.0f) {
         renderImage
-            .pixel_ref(size_t(nextContribution.imageCoord.x),
-                       size_t(nextContribution.imageCoord.y))
+            .pixel_reference(size_t(nextContribution.imageCoord.x),
+                             size_t(nextContribution.imageCoord.y))
             .add_sample(bootstrapIntegral / nextContribution.betaMeasurement *
                             acceptChance,
                         smdl::Span<float>(nextContribution.beta.data(),
@@ -180,8 +187,8 @@ void MLTIntegrator::integrate(const Scene &scene, const Color &wavelengthBase,
       }
       if (acceptChance < 1.0f) {
         renderImage
-            .pixel_ref(size_t(prevContribution.imageCoord.x),
-                       size_t(prevContribution.imageCoord.y))
+            .pixel_reference(size_t(prevContribution.imageCoord.x),
+                             size_t(prevContribution.imageCoord.y))
             .add_sample(bootstrapIntegral / prevContribution.betaMeasurement *
                             (1.0 - acceptChance),
                         smdl::Span<float>(prevContribution.beta.data(),

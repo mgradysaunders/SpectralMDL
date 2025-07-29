@@ -75,18 +75,6 @@ if(SMDL_ENABLE_PTEX)
 endif()
 
 if(SMDL_TOY)
-  # TBB
-  FetchContent_Declare(
-    "TBB"
-    GIT_REPOSITORY "https://github.com/uxlfoundation/oneTBB"
-    GIT_TAG "v2022.1.0"
-    GIT_SHALLOW TRUE
-    GIT_PROGRESS TRUE
-    )
-  set(TBB_STRICT OFF CACHE INTERNAL "")
-  set(TBB_TEST OFF CACHE INTERNAL "")
-  FetchContent_MakeAvailable("TBB")
-
   # Embree
   FetchContent_Declare(
     "Embree"

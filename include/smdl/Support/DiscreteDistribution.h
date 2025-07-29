@@ -2,8 +2,9 @@
 #pragma once
 
 #include <random>
+#include <vector>
 
-#include "smdl/common.h"
+#include "smdl/Export.h"
 
 namespace smdl {
 
@@ -16,16 +17,6 @@ public:
   DiscreteDistribution() = default;
 
   DiscreteDistribution(const std::vector<double> &weights);
-
-#if 0
-  template <typename Iterator>
-  DiscreteDistribution(Iterator weight0, Iterator weightN)
-      : DiscreteDistribution(std::vector<double>(weight0, weightN)) {}
-
-  template <typename Float>
-  DiscreteDistribution(std::initializer_list<Float> weights)
-      : DiscreteDistribution(weights.begin(), weights.end()) {}
-#endif
 
 public:
   /// The number of indexes.

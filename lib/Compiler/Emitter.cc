@@ -20,8 +20,8 @@ Value Emitter::create_function_implementation(
   SMDL_SANITY_CHECK(params.size() == paramValues.size());
   SMDL_SANITY_CHECK(callback != nullptr);
   auto fmf{builder.getFastMathFlags()};
-  auto fmfDefer{Defer([&] { builder.setFastMathFlags(fmf); })};
-  auto preserve{Preserve(labelReturn, returns, crumb)};
+  SMDL_DEFER([&] { builder.setFastMathFlags(fmf); });
+  SMDL_PRESERVE(labelReturn, returns, crumb);
   if (params.lastCrumb)
     crumb = params.lastCrumb;
   labelReturn.crumb = crumb;
@@ -91,7 +91,7 @@ void Emitter::create_function(llvm::Function *&llvmFunc, std::string_view name,
 
   auto lastIP{builder.saveIP()};
   {
-    auto preserve{Preserve(state, inlines)};
+    SMDL_PRESERVE(state, inlines);
     state = {}; // Invalidate
     inlines.clear();
     builder.SetInsertPoint(
@@ -600,7 +600,7 @@ Value Emitter::emit(AST::Parens &expr) {
 Value Emitter::emit(AST::ReturnFrom &expr) {
   auto [blockBegin, blockEnd] =
       create_blocks<2>("return_from", {".begin", ".end"});
-  auto preserve{Preserve(returns)};
+  SMDL_PRESERVE(returns);
   returns.clear();
   builder.CreateBr(blockBegin);
   builder.SetInsertPoint(blockBegin);
@@ -2642,7 +2642,7 @@ Emitter::resolve_arguments(const ParameterList &params,
     SMDL_SANITY_CHECK(isResolved(argIndex));
   }
   if (!dontEmit) {
-    auto preserve{Preserve(crumb)};
+    SMDL_PRESERVE(crumb);
     crumb = params.lastCrumb;
     handle_scope(nullptr, nullptr, [&] {
       for (size_t paramIndex = 0; paramIndex < params.size(); paramIndex++) {
