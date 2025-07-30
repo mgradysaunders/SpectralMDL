@@ -1,9 +1,9 @@
 #include "llvm/Support/InitLLVM.h"
 
+#include "MLTIntegrator.h"
 #include "Scene.h"
 #include "command_line.h"
 #include "common.h"
-#include "MLTIntegrator.h"
 
 #include <fstream>
 #include <iostream>
@@ -61,7 +61,9 @@ int main(int argc, char **argv) try {
   const smdl::int2 imageExtent{cameraImageExtent};
   const Camera camera{smdl::look_at(cameraFrom, cameraTo, cameraUp),
                       imageExtent, float(cameraFov) * PI / 180.0f};
-  std::cerr << "Focal plane area = " << camera.focalLen * camera.focalLen / camera.imageAspect << std::endl;
+  std::cerr << "Focal plane area = "
+            << camera.focalLen * camera.focalLen / camera.imageAspect
+            << std::endl;
   Scene scene{compiler, camera, inputSceneFile};
   scene.lights.emplace_back(
 #if 0
@@ -97,6 +99,8 @@ int main(int argc, char **argv) try {
                                              imageExtent.y)};
 #if 1
   auto options{MLTIntegrator::Options{}};
+  options.smallStepSigma = 0.01f;
+  options.minOrder = 2;
   options.maxOrder = 5;
   options.nMutationsPerPixel = size_t(samplesPerPixel);
   options.nChains = 1000;
@@ -130,7 +134,8 @@ int main(int argc, char **argv) try {
           if (connect_bidirectional(scene, allocator, rngf, wavelengthBase,
                                     &cameraPath[s], &lightPath[t], beta,
                                     misWeight, imageCoord)) {
-            renderImage.pixel_reference(size_t(imageCoord.x), size_t(imageCoord.y))
+            renderImage
+                .pixel_reference(size_t(imageCoord.x), size_t(imageCoord.y))
                 .add_sample(misWeight,
                             smdl::Span<float>(beta.data(), beta.size()));
           }

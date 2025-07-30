@@ -18,9 +18,9 @@
 
 #include "smdl/Compiler.h"
 #include "smdl/Logger.h"
+#include "smdl/Support/ColorVector.h"
 #include "smdl/Support/DiscreteDistribution.h"
 #include "smdl/Support/SpectralRenderImage.h"
-#include "smdl/Support/ColorVector.h"
 
 #include "pcg_random.hpp"
 
@@ -46,10 +46,11 @@ constexpr float DIRAC_DELTA = 1.0f;
 
 using RNG = pcg32_k1024;
 
-[[nodiscard]] inline float generate_canonical(RNG &rng) {
-  float u{static_cast<float>(static_cast<double>(rng()) * 0x1.0p-32)};
+template <typename Gen>
+[[nodiscard]] inline float generate_canonical(Gen & gen) {
+  float u{std::generate_canonical<float, 32>(gen)};
   u = std::fmax(u, std::numeric_limits<float>::denorm_min());
-  u = std::fmin(u, 0x1.FFFFFEp-1f);
+  u = std::fmin(u, 1 - std::numeric_limits<float>::epsilon() / 2);
   return u;
 }
 

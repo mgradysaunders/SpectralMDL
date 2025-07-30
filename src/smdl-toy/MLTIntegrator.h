@@ -10,10 +10,10 @@ public:
     uint32_t seed{0};
 
     /// The small-step standard deviation.
-    float smallStepSigma{0.01f};
+    float smallStepSigma{0.2f};
 
     /// The large-step probability.
-    float largeStepProbability{0.3f};
+    float largeStepProbability{0.1f};
 
     /// The minimum scattering order (number of bounces).
     uint64_t minOrder{0};
@@ -46,7 +46,6 @@ private:
         : rng(std::seed_seq{options.seed, uint32_t(seeds)...}),
           smallStepSigma(options.smallStepSigma),
           largeStepProbability(options.largeStepProbability) {
-      next_iteration();
     }
 
     void next_iteration() noexcept;
@@ -55,21 +54,17 @@ private:
 
     [[nodiscard]] float next_sample();
 
-    [[nodiscard]] size_t next_sample_as_index(size_t n) {
-      return std::min(size_t(std::floor(float(n) * next_sample())), n - 1);
-    }
-
     void finish_and_accept_iteration() noexcept;
 
     void finish_and_reject_iteration() noexcept;
 
   private:
     struct Sample final {
-      void checkpoint() noexcept {
+      void backup() noexcept {
         valueBackup = value, iterationBackup = iteration;
       }
 
-      void rewind() noexcept {
+      void restore() noexcept {
         value = valueBackup, iteration = iterationBackup;
       }
 
@@ -77,34 +72,34 @@ private:
 
       float valueBackup{};
 
-      uint64_t iteration{};
+      int64_t iteration{};
 
-      uint64_t iterationBackup{};
+      int64_t iterationBackup{};
     };
 
     /// The random number generator.
     pcg32_k1024 rng{};
 
     /// The iteration.
-    uint64_t iteration{};
+    int64_t iteration{};
 
     /// The iteration of the last large step.
-    uint64_t iterationOfLastLargeStep{};
+    int64_t iterationOfLastLargeStep{};
 
     /// The small-step standard deviation.
-    const float smallStepSigma{0.01};
+    const float smallStepSigma{0.01f};
 
     /// The large-step probability.
-    const float largeStepProbability{0.3};
+    const float largeStepProbability{0.3f};
 
     /// Is large-step currently?
     bool isLargeStep{true};
 
     /// The total sample count.
-    uint64_t sampleCount{0};
+    size_t sampleCount{0};
 
     /// The total sequence count.
-    uint64_t sequenceCount{0};
+    size_t sequenceCount{0};
 
     /// The sequences.
     std::vector<std::vector<Sample>> sequences{};
