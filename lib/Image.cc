@@ -111,6 +111,31 @@ ForEachPixel(const EXRHeader &header, const EXRImage &image,
 
 namespace smdl {
 
+float unpack_half(const void *ptr) noexcept {
+#if __clang__
+  return float(*static_cast<const _Float16 *>(ptr));
+#else
+  uint16_t h = *static_cast<const uint16_t *>(ptr);
+  uint32_t f = 0;
+  int32_t exponent = (h >> 10) & 0x001F;
+  int32_t negative = (h >> 15) & 0x0001;
+  int32_t mantissa = h & 0x03FF;
+  f = negative << 31;
+  if (exponent == 0) {
+    if (mantissa != 0) {
+      exponent = 113;
+      while (!(mantissa & 0x0400))
+        exponent--, mantissa <<= 1;
+      f |= (exponent << 23) | ((mantissa & ~0x0400) << 13); // Subnormal
+    }
+  } else {
+    f |= mantissa << 13;
+    f |= exponent == 31 ? 0x7F800000 : ((exponent + 112) << 23);
+  }
+  return std::bit_cast<float>(f);
+#endif // #if __clang__
+}
+
 Image::Image_malloc_t Image::Image_malloc = &std::malloc;
 
 Image::Image_calloc_t Image::Image_calloc = &std::calloc;
@@ -120,10 +145,10 @@ Image::Image_realloc_t Image::Image_realloc = &std::realloc;
 Image::Image_free_t Image::Image_free = &std::free;
 
 void Image::clear() {
-  format = U8;
-  numChannels = 1;
+  format = UINT8;
   numTexelsX = 0;
   numTexelsY = 0;
+  numChannels = 1;
   texelSize = 1;
   texels.reset();
   finishLoad = nullptr;
@@ -140,13 +165,13 @@ std::optional<Error> Image::start_load(const std::string &fileName) noexcept {
       // Determine whether we should load 32-bit float, 16-bit unsigned int, or
       // 8-bit unsigned int.
       if (stbi_is_hdr(fileName.c_str())) {
-        format = F32;
+        format = FLOAT32;
         texelSize = 4 * numChannels;
       } else if (stbi_is_16_bit(fileName.c_str())) {
-        format = U16;
+        format = UINT16;
         texelSize = 2 * numChannels;
       } else {
-        format = U8;
+        format = UINT8;
         texelSize = 1 * numChannels;
       }
       // Pre-allocate the texels.
@@ -161,17 +186,17 @@ std::optional<Error> Image::start_load(const std::string &fileName) noexcept {
         void *ptr{};
         switch (format) {
         default:
-        case Format::U8:
+        case Format::UINT8:
           // Load 8-bit unsigned int.
           ptr = stbi_load(fileName.c_str(), &nTexelsX, &nTexelsY, &nChannels,
                           numChannels);
           break;
-        case Format::U16:
+        case Format::UINT16:
           // Load 16-bit unsigned int.
           ptr = stbi_load_16(fileName.c_str(), &nTexelsX, &nTexelsY, &nChannels,
                              numChannels);
           break;
-        case Format::F32:
+        case Format::FLOAT32:
           // Load 32-bit float.
           ptr = stbi_loadf(fileName.c_str(), &nTexelsX, &nTexelsY, &nChannels,
                            numChannels);
@@ -214,9 +239,9 @@ std::optional<Error> Image::start_load(const std::string &fileName) noexcept {
         if (pixelType == TINYEXR_PIXELTYPE_UINT)
           throw std::runtime_error("uint EXR is not supported");
         else if (pixelType == TINYEXR_PIXELTYPE_HALF)
-          format = F16, texelSize = 2 * numChannels;
+          format = FLOAT16, texelSize = 2 * numChannels;
         else if (pixelType == TINYEXR_PIXELTYPE_FLOAT)
-          format = F32, texelSize = 4 * numChannels;
+          format = FLOAT32, texelSize = 4 * numChannels;
         else
           SMDL_SANITY_CHECK(false, "unknown EXR pixel type");
       }};
@@ -307,20 +332,21 @@ std::optional<Error> Image::start_load(const std::string &fileName) noexcept {
               });
           // If the alpha channel is missing, fill with 1.
           if (!channels[3]) {
-            if (format == F16) {
+            if (format == FLOAT16) {
               auto one{uint16_t(0x3C00)};
               auto itr{texels.get() + 6};
               for (int i = 0; i < numTexelsY * numTexelsY;
                    i++, itr += texelSize)
                 std::memcpy(itr, &one, 2);
-            } else if (format == F32) {
+            } else if (format == FLOAT32) {
               auto one{float(1.0f)};
               auto itr{texels.get() + 12};
               for (int i = 0; i < numTexelsY * numTexelsY;
                    i++, itr += texelSize)
                 std::memcpy(itr, &one, 4);
             } else {
-              SMDL_SANITY_CHECK(false, "format must be F16 or F32 by now!");
+              SMDL_SANITY_CHECK(false,
+                                "format must be FLOAT16 or FLOAT32 by now!");
             }
           }
         }
@@ -342,31 +368,6 @@ void Image::finish_load() {
   }
 }
 
-[[nodiscard]] static float unpack_half(const void *ptr) noexcept {
-#if __clang__
-  return float(*static_cast<const _Float16 *>(ptr));
-#else
-  uint16_t h = *static_cast<const uint16_t *>(ptr);
-  uint32_t f = 0;
-  int32_t exponent = (h >> 10) & 0x001F;
-  int32_t negative = (h >> 15) & 0x0001;
-  int32_t mantissa = h & 0x03FF;
-  f = negative << 31;
-  if (exponent == 0) {
-    if (mantissa != 0) {
-      exponent = 113;
-      while (!(mantissa & 0x0400))
-        exponent--, mantissa <<= 1;
-      f |= (exponent << 23) | ((mantissa & ~0x0400) << 13); // Subnormal
-    }
-  } else {
-    f |= mantissa << 13;
-    f |= exponent == 31 ? 0x7F800000 : ((exponent + 112) << 23);
-  }
-  return std::bit_cast<float>(f);
-#endif // #if __clang__
-}
-
 float4 Image::fetch(int x, int y) const noexcept {
   SMDL_SANITY_CHECK(texels != nullptr);
   SMDL_SANITY_CHECK(0 <= x && x < numTexelsX);
@@ -378,19 +379,19 @@ float4 Image::fetch(int x, int y) const noexcept {
   auto texelPtr{&texels[texelSize * (x + numTexelsX * y)]};
   for (int i = 0; i < numChannels; i++) {
     switch (format) {
-    case U8:
+    case UINT8:
       texel[i] = *reinterpret_cast<const uint8_t *>(texelPtr) / 255.0f;
       texelPtr += 1;
       break;
-    case U16:
+    case UINT16:
       texel[i] = *reinterpret_cast<const uint16_t *>(texelPtr) / 65535.0f;
       texelPtr += 2;
       break;
-    case F16:
+    case FLOAT16:
       texel[i] = unpack_half(texelPtr);
       texelPtr += 2;
       break;
-    case F32:
+    case FLOAT32:
       texel[i] = *reinterpret_cast<const float *>(texelPtr);
       texelPtr += 4;
       break;
@@ -400,6 +401,59 @@ float4 Image::fetch(int x, int y) const noexcept {
     }
   }
   return texel;
+}
+
+std::optional<Error> write_8_bit_image(const std::string &fileName,
+                                       int numTexelsX, int numTexelsY,
+                                       int numChannels, const void *ptr) {
+  SMDL_SANITY_CHECK(0 < numTexelsX);
+  SMDL_SANITY_CHECK(0 < numTexelsY);
+  SMDL_SANITY_CHECK(0 < numChannels && numChannels <= 4);
+  SMDL_SANITY_CHECK(ptr);
+  int result{};
+  if (has_extension(fileName, ".png")) {
+    result = stbi_write_png(fileName.c_str(), numTexelsX, numTexelsY,
+                            numChannels, ptr, 0);
+  } else if (has_extension(fileName, ".jpeg") ||
+             has_extension(fileName, ".jpg")) {
+    result = stbi_write_jpg(fileName.c_str(), numTexelsX, numTexelsY,
+                            numChannels, ptr, 90);
+  } else if (has_extension(fileName, ".bmp")) {
+    result = stbi_write_bmp(fileName.c_str(), numTexelsX, numTexelsY,
+                            numChannels, ptr);
+  } else if (has_extension(fileName, ".tga")) {
+    result = stbi_write_tga(fileName.c_str(), numTexelsX, numTexelsY,
+                            numChannels, ptr);
+  } else if (has_extension(fileName, ".pgm") ||
+             has_extension(fileName, ".ppm")) {
+    return catch_and_return_error([&] {
+      auto isGray{has_extension(fileName, ".pgm")};
+      auto stream{open_or_throw(fileName, std::ios::binary | std::ios::out)};
+      stream << (isGray ? "P5 " : "P6 ");
+      stream << numTexelsX << ' ';
+      stream << numTexelsY << " 255\n";
+      auto texelPtr{static_cast<const char *>(ptr)};
+      auto texelPtrEnd{texelPtr + numChannels * numTexelsX * numTexelsY};
+      if (isGray) {
+        for (; texelPtr < texelPtrEnd; texelPtr += numChannels) {
+          stream.write(texelPtr, 1);
+        }
+      } else {
+        auto effNumChannels{std::min(numChannels, 3)};
+        for (; texelPtr < texelPtrEnd; texelPtr += numChannels) {
+          stream.write(texelPtr, effNumChannels);
+          stream.write("\0\0\0", 3 - effNumChannels);
+        }
+      }
+    });
+  } else {
+    return Error(concat("cannot write ", quoted_path(fileName),
+                        ": unrecognized extension"));
+  }
+  if (result == 0) {
+    return Error(concat("cannot write ", quoted_path(fileName)));
+  }
+  return std::nullopt;
 }
 
 } // namespace smdl

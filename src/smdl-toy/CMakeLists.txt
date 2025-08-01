@@ -1,9 +1,12 @@
 add_executable(
   smdl-toy 
-  "main.cc"
+  "BDPTIntegrator.cc"
+  "Integrator.cc"
   "MLTIntegrator.cc"
+  "PathIntegrator.cc"
   "Scene.cc"
   "Vertex.cc"
+  "main.cc"
   )
 set_target_properties(
   smdl-toy

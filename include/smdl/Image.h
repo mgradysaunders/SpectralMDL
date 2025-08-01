@@ -8,6 +8,8 @@ namespace smdl {
 /// \addtogroup Support
 /// \{
 
+[[nodiscard]] SMDL_EXPORT float unpack_half(const void *ptr) noexcept;
+
 /// An image.
 ///
 /// This is a generic container for image data held by the compiler
@@ -38,10 +40,10 @@ public:
 
   /// The underlying format.
   enum Format : int {
-    U8 = 1,  ///< 8-bit unsigned integer.
-    U16 = 2, ///< 16-bit unsigned integer.
-    F16 = 3, ///< 16-bit floating point, AKA half precision.
-    F32 = 4  ///< 32-bit floating point, AKA single precision.
+    UINT8 = 1,   ///< 8-bit unsigned integer.
+    UINT16 = 2,  ///< 16-bit unsigned integer.
+    FLOAT16 = 3, ///< 16-bit floating point, AKA half precision.
+    FLOAT32 = 4  ///< 32-bit floating point, AKA single precision.
   };
 
   Image() = default;
@@ -118,27 +120,27 @@ public:
 
   /// Fetch texel.
   ///
-  /// The valid runtime formats must contain 1, 2, or 4 channels of U8, 
-  /// U16, F16, or F32 channel type. The implementation converts all types
-  /// to `float` by unsigned normalized integer conversion or by half-to-single
-  /// precision conversion.
+  /// The valid runtime formats must contain 1, 2, or 4 channels of UINT8,
+  /// UINT16, FLOAT16, or FLOAT32 channel type. The implementation converts all
+  /// types to `float` by unsigned normalized integer conversion or by
+  /// half-to-single precision conversion.
   ///
-  /// Format | Conversion
-  /// -------|----------------------
-  /// U8     | `value / 255.0f`
-  /// U16    | `value / 65535.0f`
-  /// F16    | `unpack_half(value)`
-  /// F32    | `value`
+  /// Format  | Conversion
+  /// --------|----------------------
+  /// UINT8   | `value / 255.0f`
+  /// UINT16  | `value / 65535.0f`
+  /// FLOAT16 | `unpack_half(value)`
+  /// FLOAT32 | `value`
   ///
-  /// The implementation copies post-conversion channel values to 
+  /// The implementation copies post-conversion channel values to
   /// the returned `float4` in order. Any channel not present is
   /// set to NaN.
-  /// 
+  ///
   [[nodiscard]] float4 fetch(int x, int y) const noexcept;
 
 private:
   /// The format.
-  Format format{U8};
+  Format format{UINT8};
 
   /// The number of channels, must be 1, 2, or 4 for proper alignment.
   int numChannels{1};
@@ -158,6 +160,12 @@ private:
   /// The function to finish loading the image.
   std::function<void()> finishLoad{};
 };
+
+[[nodiscard]]
+SMDL_EXPORT std::optional<Error>
+write_8_bit_image(const std::string &fileName, //
+                  int numTexelsX, int numTexelsY, int numChannels,
+                  const void *texels);
 
 /// \}
 

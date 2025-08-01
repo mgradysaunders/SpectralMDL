@@ -78,7 +78,8 @@ float Light_power_estimate(const Scene &scene, const Light &light) {
              light.intensity.average_value();
     }
     [[nodiscard]] float operator()(const DiskLight &light) const {
-      return PI * light.radius * light.radius * PI * light.intensity.average_value();
+      return PI * light.radius * light.radius * PI *
+             light.intensity.average_value();
     }
     [[nodiscard]] float operator()(const AmbientLight &light) const {
       return PI * scene.boundRadius * scene.boundRadius *
@@ -159,11 +160,12 @@ bool Light_first_vertex_sample(const Scene &scene, const Light &light,
   return std::visit(Visitor{scene, xi0, xi1, firstVertex, dirPdf}, light);
 }
 
-bool Light_last_vertex_sample(const Scene &scene, const Light &light,
-                              const smdl::float2 &xi,
+bool Light_last_vertex_sample(const Scene &scene, /* const Light &light, */
+                              float xi0, const smdl::float2 &xi1,
                               const Vertex &lastCameraVertex,
                               Vertex &lightVertex) {
   SMDL_SANITY_CHECK(lastCameraVertex.pathOrigin == PATH_ORIGIN_CAMERA);
+  const Light &light = scene.light_sample(xi0);
   lightVertex = Vertex{};
   lightVertex.pathOrigin = PATH_ORIGIN_CAMERA;
   lightVertex.light = &light;
@@ -267,7 +269,15 @@ bool Light_last_vertex_sample(const Scene &scene, const Light &light,
     const Vertex &lastCameraVertex;
     Vertex &lightVertex;
   };
-  return std::visit(Visitor{scene, xi, lastCameraVertex, lightVertex}, light);
+  bool result{
+      std::visit(Visitor{scene, xi1, lastCameraVertex, lightVertex}, light)};
+  if (result) {
+    float invProbability = 1.0f / scene.light_probability(light);
+    lightVertex.pdf *= invProbability;
+    lightVertex.pdfAdjoint *= invProbability;
+    lightVertex.beta *= invProbability;
+  }
+  return result;
 }
 
 [[nodiscard]]
@@ -333,7 +343,7 @@ bool connect_bidirectional(const Scene &scene,
   if (cameraVertex->prevVertex && !lightVertex->prevVertex &&
       !cameraVertex->isAtInfinity) {
     SMDL_PRESERVE(cameraVertex->prevVertex->pdfAdjoint);
-    auto result{Light_last_vertex_sample(scene, scene.lights[0],
+    auto result{Light_last_vertex_sample(scene, rngf(),
                                          smdl::float2(rngf(), rngf()),
                                          *cameraVertex, *lightVertex)};
     beta = lightVertex->beta;
@@ -346,7 +356,7 @@ bool connect_bidirectional(const Scene &scene,
     return false;
   }
   SMDL_PRESERVE(cameraVertex->prevVertex->pdfAdjoint,
-                                lightVertex->prevVertex->pdfAdjoint);
+                lightVertex->prevVertex->pdfAdjoint);
   smdl::float3 w{smdl::normalize(lightVertex->point - cameraVertex->point)};
   float cameraDirPdf{};
   float cameraDirPdfAdjoint{};

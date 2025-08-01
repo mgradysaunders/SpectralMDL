@@ -1,52 +1,32 @@
 #pragma once
 
-#include "Scene.h"
+#include "Integrator.h"
 
-class MLTIntegrator final {
+class MLTIntegrator final : public Integrator {
 public:
-  class Options final {
-  public:
-    /// The random seed.
-    uint32_t seed{0};
-
-    /// The small-step standard deviation.
-    float smallStepSigma{0.2f};
-
-    /// The large-step probability.
-    float largeStepProbability{0.1f};
-
-    /// The minimum scattering order (number of bounces).
-    uint64_t minOrder{0};
-
-    /// The maximum scattering order (number of bounces).
-    uint64_t maxOrder{4};
-
-    /// The number of bootstrap paths to initialize the algorithm.
-    uint64_t nBootstrap{100'000};
-
-    /// The number of mutations per pixel.
-    uint64_t nMutationsPerPixel{100};
-
-    /// The number of Markov chains.
-    uint64_t nChains{1000};
-  };
-
-  MLTIntegrator() = default;
-
-  explicit MLTIntegrator(const Options &options) : options(options) {}
+  explicit MLTIntegrator(unsigned seed, unsigned samplesPerPixel,
+                         unsigned minOrder, unsigned maxOrder,
+                         float smallStepSigma = 0.01f,
+                         float largeStepProbability = 0.1f,
+                         unsigned numBootstrap = 100'000,
+                         unsigned numChains = 1000)
+      : Integrator(seed, samplesPerPixel, minOrder, maxOrder),
+        smallStepSigma(smallStepSigma),
+        largeStepProbability(largeStepProbability), numBootstrap(numBootstrap),
+        numChains(numChains) {}
 
   void integrate(const Scene &scene, const Color &wavelengthBase,
-                 smdl::SpectralRenderImage &renderImage) const;
+                 smdl::SpectralRenderImage &renderImage) const final;
 
 private:
   class Sampler final {
   public:
     template <typename... Seeds>
-    explicit Sampler(const Options &options, const Seeds &...seeds)
-        : rng(std::seed_seq{options.seed, uint32_t(seeds)...}),
-          smallStepSigma(options.smallStepSigma),
-          largeStepProbability(options.largeStepProbability) {
-    }
+    explicit Sampler(float smallStepSigma, float largeStepProbability,
+                     const Seeds &...seeds)
+        : rng(std::seed_seq{uint32_t(seeds)...}),
+          smallStepSigma(smallStepSigma),
+          largeStepProbability(largeStepProbability) {}
 
     void next_iteration() noexcept;
 
@@ -54,9 +34,22 @@ private:
 
     [[nodiscard]] float next_sample();
 
-    void finish_and_accept_iteration() noexcept;
+    void accept() noexcept {
+      if (isLargeStep) {
+        iterationOfLastLargeStep = iteration;
+      }
+    }
 
-    void finish_and_reject_iteration() noexcept;
+    void reject() noexcept {
+      for (auto &sequence : sequences) {
+        for (auto &sample : sequence) {
+          if (sample.iteration == iteration) {
+            sample.restore();
+          }
+        }
+      }
+      --iteration;
+    }
 
   private:
     struct Sample final {
@@ -106,18 +99,11 @@ private:
   };
 
 private:
-  Options options{};
+  const float smallStepSigma{0.01f};
 
-  struct Contribution final {
-    explicit Contribution(size_t maxDepth)
-        : cameraPath(maxDepth), lightPath(maxDepth) {}
-    size_t cameraPathLen{};
-    size_t lightPathLen{};
-    std::vector<Vertex> cameraPath{};
-    std::vector<Vertex> lightPath{};
-    Color beta{};
-    float betaMeasurement{};
-    float misWeight{};
-    smdl::float2 imageCoord{};
-  };
+  const float largeStepProbability{0.1f};
+
+  const unsigned numBootstrap{100'000};
+
+  const unsigned numChains{1000};
 };

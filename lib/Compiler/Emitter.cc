@@ -1614,12 +1614,12 @@ Value Emitter::emit_intrinsic(std::string_view name, const ArgumentList &args,
       } else if (name == "is_default") {
         if (auto structType{llvm::dyn_cast<StructType>(type)}) {
           if (!structType->instanceOf) {
-            // The struct is considered 'default' if it is 
+            // The struct is considered 'default' if it is
             // the default type for its first tag.
             result = structType->tags.size() >= 1 &&
                      structType->tags[0]->defaultType == structType;
           } else {
-            // The struct is considered 'default' if it is 
+            // The struct is considered 'default' if it is
             // the default instantiation of an abstract struct.
             result = structType->isDefaultInstance;
           }
@@ -1673,10 +1673,10 @@ Value Emitter::emit_intrinsic(std::string_view name, const ArgumentList &args,
           }
         }
         auto texelPtrType{context.get_pointer_type(context.get_arithmetic_type(
-            images[0]->get_format() == Image::U8    ? Scalar::get_int(8)
-            : images[0]->get_format() == Image::U16 ? Scalar::get_int(16)
-            : images[0]->get_format() == Image::F16 ? Scalar::get_half()
-                                                    : Scalar::get_float(),
+            images[0]->get_format() == Image::UINT8     ? Scalar::get_int(8)
+            : images[0]->get_format() == Image::UINT16  ? Scalar::get_int(16)
+            : images[0]->get_format() == Image::FLOAT16 ? Scalar::get_half()
+                                                        : Scalar::get_float(),
             Extent(images[0]->get_num_channels())))};
         auto valueTileExtents{Value::zero(context.get_array_type(
             context.get_int_type(2), tileCountU * tileCountV))};

@@ -46,6 +46,16 @@ constexpr float DIRAC_DELTA = 1.0f;
 
 using RNG = pcg32_k1024;
 
+template <typename... Seeds>
+[[nodiscard]] inline RNG make_RNG(Seeds... seeds) noexcept {
+  if constexpr (sizeof...(Seeds) == 1) {
+    return RNG{seeds...};
+  } else {
+    using SeedT = std::common_type_t<Seeds...>;
+    return RNG{std::seed_seq{static_cast<SeedT>(seeds)...}};
+  }
+}
+
 template <typename Gen>
 [[nodiscard]] inline float generate_canonical(Gen &gen) {
   float u{std::generate_canonical<float, 32>(gen)};

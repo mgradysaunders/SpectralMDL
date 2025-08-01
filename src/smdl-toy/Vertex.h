@@ -286,7 +286,8 @@ bool Light_first_vertex_sample(const Scene &scene, const Light &light,
 
 /// Sample last vertex from light.
 [[nodiscard]]
-bool Light_last_vertex_sample(const Scene &scene, const Light &light,
+bool Light_last_vertex_sample(const Scene &scene, /* const Light &light, */
+    float xi0,
                               const smdl::float2 &xi,
                               const Vertex &lastCameraVertex,
                               Vertex &lightVertex);

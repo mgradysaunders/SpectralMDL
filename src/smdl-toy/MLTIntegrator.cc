@@ -87,65 +87,54 @@ float MLTIntegrator::Sampler::next_sample() {
   return sample.value;
 }
 
-void MLTIntegrator::Sampler::finish_and_accept_iteration() noexcept {
-  if (isLargeStep) {
-    iterationOfLastLargeStep = iteration;
-  }
-}
-
-void MLTIntegrator::Sampler::finish_and_reject_iteration() noexcept {
-  for (auto &sequence : sequences) {
-    for (auto &sample : sequence) {
-      if (sample.iteration == iteration) {
-        sample.restore();
-      }
-    }
-  }
-  --iteration;
-}
-
 void MLTIntegrator::integrate(const Scene &scene, const Color &wavelengthBase,
                               smdl::SpectralRenderImage &renderImage) const {
   SMDL_PROFILER_ENTRY("MLTIntegrator::integrate()");
   auto scalarMeasurement{
       [](const Color &beta) { return beta.average_value(); }};
 
-  const auto seed{options.seed};
-  const auto minOrder{options.minOrder};
-  const auto maxOrder{options.maxOrder};
-  const auto nBootstrap{options.nBootstrap};
-  const auto nTotalMutations{scene.camera.imageExtent.x *
-                             scene.camera.imageExtent.y *
-                             options.nMutationsPerPixel};
-  const auto nChains{options.nChains};
-
+  const auto numTotalMutations{size_t(scene.camera.imageExtent.x) *
+                               size_t(scene.camera.imageExtent.y) *
+                               size_t(samplesPerPixel)};
+  struct Contribution final {
+    explicit Contribution(size_t maxDepth)
+        : cameraPath(maxDepth), lightPath(maxDepth) {}
+    size_t cameraPathLen{};
+    size_t lightPathLen{};
+    std::vector<Vertex> cameraPath{};
+    std::vector<Vertex> lightPath{};
+    Color beta{};
+    float betaMeasurement{};
+    float misWeight{};
+    smdl::float2 imageCoord{};
+  };
   auto contributionSample{[&](smdl::BumpPtrAllocator &allocator,
                               Sampler &sampler, size_t order,
                               Contribution &contribution) -> bool {
     sampler.next_sequence();
-    auto rng{[&]() { return sampler.next_sample(); }};
+    auto rngf{[&]() { return sampler.next_sample(); }};
     if (order == 0)
       return false;
     size_t numStrategies{order + 1};
-    size_t depthFromCamera = size_t(numStrategies * sampler.next_sample()) + 1;
+    size_t depthFromCamera = size_t(numStrategies * rngf()) + 1;
     size_t depthFromLight = numStrategies + 1 - depthFromCamera;
     contribution.imageCoord =
-        smdl::float2(float(scene.camera.imageExtent.x) * rng(),
-                     float(scene.camera.imageExtent.y) * rng());
+        smdl::float2(float(scene.camera.imageExtent.x) * rngf(),
+                     float(scene.camera.imageExtent.y) * rngf());
     contribution.cameraPathLen = scene.trace_path_from_camera(
-        allocator, rng, wavelengthBase, contribution.imageCoord,
+        allocator, rngf, wavelengthBase, contribution.imageCoord,
         depthFromCamera, &contribution.cameraPath[0]);
     if (depthFromCamera != contribution.cameraPathLen)
       return false;
     sampler.next_sequence();
     contribution.lightPathLen =
-        scene.trace_path_from_light(allocator, rng, wavelengthBase,
+        scene.trace_path_from_light(allocator, rngf, wavelengthBase,
                                     depthFromLight, &contribution.lightPath[0]);
     if (depthFromLight != contribution.lightPathLen)
       return false;
     sampler.next_sequence();
     if (!connect_bidirectional(
-            scene, allocator, rng, wavelengthBase,
+            scene, allocator, rngf, wavelengthBase,
             contribution.cameraPathLen == 0
                 ? nullptr
                 : &contribution.cameraPath[contribution.cameraPathLen - 1],
@@ -159,15 +148,15 @@ void MLTIntegrator::integrate(const Scene &scene, const Color &wavelengthBase,
     return true;
   }};
 
-  auto bootstraps{
-      std::vector<double>(size_t(nBootstrap * (maxOrder - minOrder + 1)), 0.0)};
+  auto bootstraps{std::vector<double>(
+      size_t(numBootstrap * (maxOrder - minOrder + 1)), 0.0)};
   auto bootstrapSampler{[&](unsigned long bootstrapIndex) {
-    return Sampler(options, 0xA7CBE565UL, 0x6AF93C73UL, bootstrapIndex,
-                   0xE5C6FB2CUL, 0x24718FB5UL);
+    return Sampler(smallStepSigma, largeStepProbability, seed, 0xA7CBE565UL,
+                   0x6AF93C73UL, bootstrapIndex, 0xE5C6FB2CUL, 0x24718FB5UL);
   }};
   {
     SMDL_PROFILER_ENTRY("Bootstrap");
-    smdl::parallel_for(0, nBootstrap, [&](size_t i) {
+    smdl::parallel_for(0, numBootstrap, [&](size_t i) {
       auto allocator{smdl::BumpPtrAllocator{}};
       auto contribution{Contribution(maxOrder + 2)};
       for (size_t order{minOrder}; order <= maxOrder; order++) {
@@ -187,36 +176,36 @@ void MLTIntegrator::integrate(const Scene &scene, const Color &wavelengthBase,
 
   {
     SMDL_PROFILER_ENTRY("Markov chains");
-    smdl::parallel_for(0, nChains, [&](size_t i) {
+    smdl::parallel_for(0, numChains, [&](size_t i) {
       auto allocator{smdl::BumpPtrAllocator{}};
       auto rng{RNG{std::seed_seq{static_cast<unsigned long>(i), 0x3D6411FFUL,
                                  0xDE44B7D2UL, static_cast<unsigned long>(seed),
                                  0xE9F523E9UL, 0xD64CFEEEUL}}};
       const auto bootstrapIndex{bootstrap(rng)};
       const auto order{bootstrapIndex % (maxOrder - minOrder + 1) + minOrder};
-      const auto nChainMutations{
-          std::min((i + 1) * nTotalMutations / nChains, nTotalMutations) -
-          i * nTotalMutations / nChains};
+      const auto numChainMutations{
+          std::min(size_t((i + 1) * numTotalMutations / numChains),
+                   size_t(numTotalMutations)) -
+          size_t(i * numTotalMutations / numChains)};
       auto sampler{bootstrapSampler(bootstrapIndex)};
       auto prevContribution{Contribution(maxOrder + 2)};
       auto nextContribution{Contribution(maxOrder + 2)};
       if (!contributionSample(allocator, sampler, order, prevContribution))
         SMDL_SANITY_CHECK(false,
                           "Bootstrap contribution should have been non-zero!");
-      for (size_t j{}; j < nChainMutations; j++) {
+      for (size_t j{}; j < numChainMutations; j++) {
         sampler.next_iteration();
         float acceptChance{0.0f};
         if (contributionSample(allocator, sampler, order, nextContribution)) {
           acceptChance = std::fmin(1.0f, nextContribution.betaMeasurement /
                                              prevContribution.betaMeasurement);
         }
-        // std::cerr << "acceptChance = " + std::to_string(acceptChance) + "\n";
         if (acceptChance > 0.0f) {
           renderImage
               .pixel_reference(size_t(nextContribution.imageCoord.x),
                                size_t(nextContribution.imageCoord.y))
               .add_sample(bootstrapIntegral / nextContribution.betaMeasurement *
-                              acceptChance,
+                              acceptChance / float(samplesPerPixel),
                           smdl::Span<float>(nextContribution.beta.data(),
                                             nextContribution.beta.size()));
         }
@@ -225,15 +214,15 @@ void MLTIntegrator::integrate(const Scene &scene, const Color &wavelengthBase,
               .pixel_reference(size_t(prevContribution.imageCoord.x),
                                size_t(prevContribution.imageCoord.y))
               .add_sample(bootstrapIntegral / prevContribution.betaMeasurement *
-                              (1.0 - acceptChance),
+                              (1.0 - acceptChance)/ float(samplesPerPixel),
                           smdl::Span<float>(prevContribution.beta.data(),
                                             prevContribution.beta.size()));
         }
         if (generate_canonical(rng) < acceptChance) {
-          sampler.finish_and_accept_iteration();
+          sampler.accept();
           std::swap(prevContribution, nextContribution);
         } else {
-          sampler.finish_and_reject_iteration();
+          sampler.reject();
         }
         allocator.reset();
       }
