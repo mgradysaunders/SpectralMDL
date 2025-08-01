@@ -2,7 +2,7 @@
 #include "Emitter.h"
 
 #include "smdl/BSDFMeasurement.h"
-#include "smdl/Logger.h"
+#include "smdl/Support/Logger.h"
 #include "llvm/Support/Format.h"
 #include "llvm/Support/Parallel.h"
 #include <atomic>

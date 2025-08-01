@@ -2,7 +2,7 @@
 #include "Type.h"
 #include "Emitter.h"
 
-#include "smdl/Logger.h"
+#include "smdl/Support/Logger.h"
 
 #include "llvm/IR/DerivedTypes.h"
 #include "llvm/IR/Type.h"

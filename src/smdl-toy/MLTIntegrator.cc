@@ -1,5 +1,7 @@
 #include "MLTIntegrator.h"
 
+#include "smdl/Support/Profiler.h"
+
 #include <numeric>
 
 void MLTIntegrator::Sampler::next_iteration() noexcept {
@@ -104,6 +106,7 @@ void MLTIntegrator::Sampler::finish_and_reject_iteration() noexcept {
 
 void MLTIntegrator::integrate(const Scene &scene, const Color &wavelengthBase,
                               smdl::SpectralRenderImage &renderImage) const {
+  SMDL_PROFILER_ENTRY("MLTIntegrator::integrate()");
   auto scalarMeasurement{
       [](const Color &beta) { return beta.average_value(); }};
 
@@ -162,72 +165,78 @@ void MLTIntegrator::integrate(const Scene &scene, const Color &wavelengthBase,
     return Sampler(options, 0xA7CBE565UL, 0x6AF93C73UL, bootstrapIndex,
                    0xE5C6FB2CUL, 0x24718FB5UL);
   }};
-  smdl::parallel_for(nBootstrap, [&](size_t i) {
-    auto allocator{smdl::BumpPtrAllocator{}};
-    auto contribution{Contribution(maxOrder + 2)};
-    for (size_t order{minOrder}; order <= maxOrder; order++) {
-      auto bootstrapIndex{i * (maxOrder - minOrder + 1) + order - minOrder};
-      auto sampler{bootstrapSampler(bootstrapIndex)};
-      if (contributionSample(allocator, sampler, order, contribution)) {
-        bootstraps[bootstrapIndex] = contribution.betaMeasurement;
+  {
+    SMDL_PROFILER_ENTRY("Bootstrap");
+    smdl::parallel_for(0, nBootstrap, [&](size_t i) {
+      auto allocator{smdl::BumpPtrAllocator{}};
+      auto contribution{Contribution(maxOrder + 2)};
+      for (size_t order{minOrder}; order <= maxOrder; order++) {
+        auto bootstrapIndex{i * (maxOrder - minOrder + 1) + order - minOrder};
+        auto sampler{bootstrapSampler(bootstrapIndex)};
+        if (contributionSample(allocator, sampler, order, contribution)) {
+          bootstraps[bootstrapIndex] = contribution.betaMeasurement;
+        }
+        allocator.reset();
       }
-      allocator.reset();
-    }
-  });
+    });
+  }
   auto bootstrapIntegral{
       std::accumulate(bootstraps.begin(), bootstraps.end(), 0.0) /
       bootstraps.size() * (maxOrder - minOrder + 1)};
   auto bootstrap{smdl::DiscreteDistribution(bootstraps)};
 
-  smdl::parallel_for(nChains, [&](size_t i) {
-    auto allocator{smdl::BumpPtrAllocator{}};
-    auto rng{RNG{std::seed_seq{static_cast<unsigned long>(i), 0x3D6411FFUL,
-                               0xDE44B7D2UL, static_cast<unsigned long>(seed),
-                               0xE9F523E9UL, 0xD64CFEEEUL}}};
-    const auto bootstrapIndex{bootstrap(rng)};
-    const auto order{bootstrapIndex % (maxOrder - minOrder + 1) + minOrder};
-    const auto nChainMutations{
-        std::min((i + 1) * nTotalMutations / nChains, nTotalMutations) -
-        i * nTotalMutations / nChains};
-    auto sampler{bootstrapSampler(bootstrapIndex)};
-    auto prevContribution{Contribution(maxOrder + 2)};
-    auto nextContribution{Contribution(maxOrder + 2)};
-    if (!contributionSample(allocator, sampler, order, prevContribution))
-      SMDL_SANITY_CHECK(false,
-                        "Bootstrap contribution should have been non-zero!");
-    for (size_t j{}; j < nChainMutations; j++) {
-      sampler.next_iteration();
-      float acceptChance{0.0f};
-      if (contributionSample(allocator, sampler, order, nextContribution)) {
-        acceptChance = std::fmin(1.0f, nextContribution.betaMeasurement /
-                                           prevContribution.betaMeasurement);
+  {
+    SMDL_PROFILER_ENTRY("Markov chains");
+    smdl::parallel_for(0, nChains, [&](size_t i) {
+      auto allocator{smdl::BumpPtrAllocator{}};
+      auto rng{RNG{std::seed_seq{static_cast<unsigned long>(i), 0x3D6411FFUL,
+                                 0xDE44B7D2UL, static_cast<unsigned long>(seed),
+                                 0xE9F523E9UL, 0xD64CFEEEUL}}};
+      const auto bootstrapIndex{bootstrap(rng)};
+      const auto order{bootstrapIndex % (maxOrder - minOrder + 1) + minOrder};
+      const auto nChainMutations{
+          std::min((i + 1) * nTotalMutations / nChains, nTotalMutations) -
+          i * nTotalMutations / nChains};
+      auto sampler{bootstrapSampler(bootstrapIndex)};
+      auto prevContribution{Contribution(maxOrder + 2)};
+      auto nextContribution{Contribution(maxOrder + 2)};
+      if (!contributionSample(allocator, sampler, order, prevContribution))
+        SMDL_SANITY_CHECK(false,
+                          "Bootstrap contribution should have been non-zero!");
+      for (size_t j{}; j < nChainMutations; j++) {
+        sampler.next_iteration();
+        float acceptChance{0.0f};
+        if (contributionSample(allocator, sampler, order, nextContribution)) {
+          acceptChance = std::fmin(1.0f, nextContribution.betaMeasurement /
+                                             prevContribution.betaMeasurement);
+        }
+        // std::cerr << "acceptChance = " + std::to_string(acceptChance) + "\n";
+        if (acceptChance > 0.0f) {
+          renderImage
+              .pixel_reference(size_t(nextContribution.imageCoord.x),
+                               size_t(nextContribution.imageCoord.y))
+              .add_sample(bootstrapIntegral / nextContribution.betaMeasurement *
+                              acceptChance,
+                          smdl::Span<float>(nextContribution.beta.data(),
+                                            nextContribution.beta.size()));
+        }
+        if (acceptChance < 1.0f) {
+          renderImage
+              .pixel_reference(size_t(prevContribution.imageCoord.x),
+                               size_t(prevContribution.imageCoord.y))
+              .add_sample(bootstrapIntegral / prevContribution.betaMeasurement *
+                              (1.0 - acceptChance),
+                          smdl::Span<float>(prevContribution.beta.data(),
+                                            prevContribution.beta.size()));
+        }
+        if (generate_canonical(rng) < acceptChance) {
+          sampler.finish_and_accept_iteration();
+          std::swap(prevContribution, nextContribution);
+        } else {
+          sampler.finish_and_reject_iteration();
+        }
+        allocator.reset();
       }
-      // std::cerr << "acceptChance = " + std::to_string(acceptChance) + "\n";
-      if (acceptChance > 0.0f) {
-        renderImage
-            .pixel_reference(size_t(nextContribution.imageCoord.x),
-                             size_t(nextContribution.imageCoord.y))
-            .add_sample(bootstrapIntegral / nextContribution.betaMeasurement *
-                            acceptChance,
-                        smdl::Span<float>(nextContribution.beta.data(),
-                                          nextContribution.beta.size()));
-      }
-      if (acceptChance < 1.0f) {
-        renderImage
-            .pixel_reference(size_t(prevContribution.imageCoord.x),
-                             size_t(prevContribution.imageCoord.y))
-            .add_sample(bootstrapIntegral / prevContribution.betaMeasurement *
-                            (1.0 - acceptChance),
-                        smdl::Span<float>(prevContribution.beta.data(),
-                                          prevContribution.beta.size()));
-      }
-      if (generate_canonical(rng) < acceptChance) {
-        sampler.finish_and_accept_iteration();
-        std::swap(prevContribution, nextContribution);
-      } else {
-        sampler.finish_and_reject_iteration();
-      }
-      allocator.reset();
-    }
-  });
+    });
+  }
 }

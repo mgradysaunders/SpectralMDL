@@ -1,13 +1,17 @@
 /// \file
 #pragma once
 
+#include <memory>
 #include <mutex>
+#include <string>
+#include <string_view>
+#include <vector>
 
-#include "smdl/common.h"
+#include "smdl/Support/StringHelpers.h"
 
 namespace smdl {
 
-/// \addtogroup Main
+/// \addtogroup Support
 /// \{
 
 /// Log level.

@@ -4,6 +4,8 @@
 #include "assimp/postprocess.h"
 #include <iostream>
 
+#include "smdl/Support/Profiler.h"
+
 Scene::Scene(const smdl::Compiler &compiler, const Camera &camera,
              const std::string &fileName)
     : compiler(compiler), camera(camera), device(rtcNewDevice("verbose=0")),
@@ -26,6 +28,7 @@ Scene::~Scene() {
 }
 
 void Scene::load(const aiScene &assScene) {
+  SMDL_PROFILER_ENTRY("Scene::load()", "Scene");
   for (unsigned int i = 0; i < assScene.mNumMeshes; i++)
     load(*assScene.mMeshes[i]);
   load(*assScene.mRootNode);
@@ -51,6 +54,7 @@ void Scene::load(const aiScene &assScene) {
 }
 
 void Scene::load(const aiMesh &assMesh) {
+  SMDL_PROFILER_ENTRY("Scene::load()", "Mesh");
   auto &mesh{meshes.emplace_back(new Mesh())};
   mesh->scene = rtcNewScene(device);
   rtcSetSceneFlags(mesh->scene, RTC_SCENE_FLAG_ROBUST);
@@ -99,6 +103,7 @@ void Scene::load(const aiMesh &assMesh) {
 }
 
 void Scene::load(const aiNode &assNode, aiMatrix4x4 xf) {
+  SMDL_PROFILER_ENTRY("Scene::load()", "Node");
   xf = xf * assNode.mTransformation;
   for (unsigned int i = 0; i < assNode.mNumMeshes; i++) {
     auto meshIndex = assNode.mMeshes[i];
@@ -181,6 +186,7 @@ int Scene::random_walk(smdl::BumpPtrAllocator &allocator,
                        const std::function<float()> &rng,
                        const Color &wavelengthBase, float dirPdf, int maxDepth,
                        Vertex *path) const {
+  SMDL_PROFILER_ENTRY("Scene::random_walk()");
   if (maxDepth <= 0)
     return 0;
 

@@ -249,8 +249,8 @@ std::optional<Error> Image::start_load(const std::string &fileName) noexcept {
       texels.reset(new std::byte[size_t(numTexelsX) * size_t(numTexelsY) *
                                  size_t(texelSize)]);
       finishLoad = [this, fileName, header]() {
-        auto headerDtor{Defer(
-            [&header]() { FreeEXRHeader(const_cast<EXRHeader *>(&header)); })};
+        SMDL_DEFER(
+            [&header]() { FreeEXRHeader(const_cast<EXRHeader *>(&header)); });
         EXRImage image{};
         InitEXRImage(&image);
         const char *err{};
@@ -260,7 +260,7 @@ std::optional<Error> Image::start_load(const std::string &fileName) noexcept {
           FreeEXRErrorMessage(err);
           throw std::runtime_error(message);
         }
-        auto imageDtor{Defer([&image]() { FreeEXRImage(&image); })};
+        SMDL_DEFER([&image]() { FreeEXRImage(&image); });
         SMDL_SANITY_CHECK(numTexelsX == image.width);
         SMDL_SANITY_CHECK(numTexelsY == image.height);
         if (numChannels == 1) {

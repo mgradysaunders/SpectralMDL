@@ -1,5 +1,5 @@
 #include "smdl/Compiler.h"
-#include "smdl/Logger.h"
+#include "smdl/Support/Logger.h"
 #include <fstream>
 #include <iostream>
 

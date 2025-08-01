@@ -315,12 +315,12 @@ bool connect_bidirectional(const Scene &scene,
   if (!lightVertex) {
     return false;
   }
-  auto preserve0{smdl::Preserve(*cameraVertex, *lightVertex)};
+  SMDL_PRESERVE(*cameraVertex, *lightVertex);
   SMDL_SANITY_CHECK(cameraVertex->pathOrigin == PATH_ORIGIN_CAMERA);
   SMDL_SANITY_CHECK(lightVertex->pathOrigin == PATH_ORIGIN_LIGHT);
   if (!cameraVertex->prevVertex && lightVertex->prevVertex &&
       !lightVertex->isAtInfinity) {
-    auto preserve1{smdl::Preserve(lightVertex->prevVertex->pdfAdjoint)};
+    SMDL_PRESERVE(lightVertex->prevVertex->pdfAdjoint);
     auto result{Camera_last_vertex_sample(scene.camera,
                                           smdl::float2(rngf(), rngf()),
                                           *lightVertex, *cameraVertex)};
@@ -332,7 +332,7 @@ bool connect_bidirectional(const Scene &scene,
   }
   if (cameraVertex->prevVertex && !lightVertex->prevVertex &&
       !cameraVertex->isAtInfinity) {
-    auto preserve1{smdl::Preserve(cameraVertex->prevVertex->pdfAdjoint)};
+    SMDL_PRESERVE(cameraVertex->prevVertex->pdfAdjoint);
     auto result{Light_last_vertex_sample(scene, scene.lights[0],
                                          smdl::float2(rngf(), rngf()),
                                          *cameraVertex, *lightVertex)};
@@ -345,8 +345,8 @@ bool connect_bidirectional(const Scene &scene,
       !lightVertex->prevVertex || lightVertex->isAtInfinity) {
     return false;
   }
-  auto preserve1{smdl::Preserve(cameraVertex->prevVertex->pdfAdjoint,
-                                lightVertex->prevVertex->pdfAdjoint)};
+  SMDL_PRESERVE(cameraVertex->prevVertex->pdfAdjoint,
+                                lightVertex->prevVertex->pdfAdjoint);
   smdl::float3 w{smdl::normalize(lightVertex->point - cameraVertex->point)};
   float cameraDirPdf{};
   float cameraDirPdfAdjoint{};

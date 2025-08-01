@@ -1,13 +1,13 @@
 #include "smdl/Compiler.h"
-#include "smdl/BSDFMeasurement.h"
-#include "smdl/Logger.h"
+#include "smdl/Support/Logger.h"
+#include "smdl/Support/Parallel.h"
+#include "smdl/Support/Profiler.h"
 
 #include <chrono>
 #include <iostream>
 
 #include "llvm/ExecutionEngine/Orc/LLJIT.h"
 #include "llvm/ExecutionEngine/Orc/ThreadSafeModule.h"
-#include "llvm/Support/Parallel.h"
 
 #include "Archive.h"
 #include "filesystem.h"
@@ -39,6 +39,7 @@ Compiler::~Compiler() {
 }
 
 std::optional<Error> Compiler::add(std::string fileOrDirName) {
+  SMDL_PROFILER_ENTRY("Compiler::add()", fileOrDirName.c_str());
   auto addFile{[&](std::string fileName) {
     if (llvm::StringRef(fileName).ends_with_insensitive(".mdr")) {
       SMDL_LOG_DEBUG("Adding MDL archive ", quoted_path(fileName));
@@ -90,6 +91,7 @@ std::optional<Error> Compiler::add(std::string fileOrDirName) {
 }
 
 std::optional<Error> Compiler::compile(OptLevel optLevel) {
+  SMDL_PROFILER_ENTRY("Compiler::compile()");
   {
     images.clear();
     ptextures.clear();
@@ -109,15 +111,23 @@ std::optional<Error> Compiler::compile(OptLevel optLevel) {
     jitMaterials.clear();
     jitUnitTests.clear();
   }
+  auto initializeEntry{profiler_entry_begin("Initialize")};
   Context context{*this};
-  for (auto &mod : modules)
-    mod->reset();
-  for (auto &mod : modules)
-    if (auto error{mod->parse(allocator)})
-      return error;
-  for (auto &mod : modules)
-    if (auto error{mod->compile(context)})
-      return error;
+  for (auto &module_ : modules)
+    module_->reset();
+  profiler_entry_end(initializeEntry);
+  {
+    SMDL_PROFILER_ENTRY("Parse AST");
+    for (auto &module_ : modules)
+      if (auto error{module_->parse(allocator)})
+        return error;
+  }
+  {
+    SMDL_PROFILER_ENTRY("Emit LLVM-IR");
+    for (auto &module_ : modules)
+      if (auto error{module_->compile(context)})
+        return error;
+  }
   // Sort JIT materials by filename and line number in case we
   // want to print them later
   std::sort(
@@ -135,10 +145,13 @@ std::optional<Error> Compiler::compile(OptLevel optLevel) {
       });
   // Finish loading images.
   if (!images.empty()) {
+    SMDL_PROFILER_ENTRY("Load images in parallel");
     SMDL_LOG_INFO("Loading images ...");
     auto now{std::chrono::steady_clock::now()};
-    llvm::parallelFor(0, images.size(), [&](size_t i) {
+    parallel_for(0, images.size(), [&](size_t i) {
       auto &[fileHash, image] = *std::next(images.begin(), i);
+      SMDL_PROFILER_ENTRY("Load image",
+                          fileHash->canonicalFileNames[0].c_str());
       SMDL_LOG_DEBUG("Loading image ",
                      quoted_path(fileHash->canonicalFileNames[0]), " ...");
       image.finish_load();
@@ -150,6 +163,7 @@ std::optional<Error> Compiler::compile(OptLevel optLevel) {
                   " seconds]");
   }
   if (optLevel != OptLevel::None) {
+    SMDL_PROFILER_ENTRY("Optimize LLVM-IR");
     llvmJitModule->withModuleDo([&](llvm::Module &llvmModule) {
       LLVMOptimizer llvmOptimizer{};
       llvmOptimizer.run(
@@ -163,9 +177,10 @@ std::optional<Error> Compiler::compile(OptLevel optLevel) {
 
 std::optional<Error>
 Compiler::format_source_code(const FormatOptions &formatOptions) noexcept {
-  for (auto &mod : modules) {
-    if (!mod->is_builtin()) {
-      if (auto error{mod->format_source_code(formatOptions)})
+  SMDL_PROFILER_ENTRY("Compiler::format_source_code()");
+  for (auto &module_ : modules) {
+    if (!module_->is_builtin()) {
+      if (auto error{module_->format_source_code(formatOptions)})
         return error;
     }
   }
@@ -187,6 +202,7 @@ const Image &Compiler::load_image(const std::string &fileName,
   auto [itr, inserted] = images.try_emplace(fileHasher[fileName]);
   auto &image{itr->second};
   if (inserted) {
+    SMDL_PROFILER_ENTRY("Compiler::load_image()", fileName.c_str());
     if (auto error{image.start_load(fileName)}) {
       srcLoc.log_warn(error->message);
     }
@@ -200,6 +216,7 @@ const Ptexture &Compiler::load_ptexture(const std::string &fileName,
   auto &ptexture{itr->second};
   if (inserted) {
 #if SMDL_HAS_PTEX
+    SMDL_PROFILER_ENTRY("Compiler::load_ptexture()", fileName.c_str());
     Ptex::String message{};
     auto texture{PtexTexture::open(fileName.c_str(), message,
                                    /*premultiply=*/false)};
@@ -227,6 +244,7 @@ Compiler::load_bsdf_measurement(const std::string &fileName,
   auto [itr, inserted] = bsdfMeasurements.try_emplace(fileHasher[fileName]);
   auto &bsdfMeasurement{itr->second};
   if (inserted) {
+    SMDL_PROFILER_ENTRY("Compiler::load_bsdf_measurement()", fileName.c_str());
     if (auto error{bsdfMeasurement.load_from_file(fileName)}) {
       srcLoc.log_warn(error->message);
     }
@@ -239,6 +257,7 @@ const LightProfile &Compiler::load_light_profile(const std::string &fileName,
   auto [itr, inserted] = lightProfiles.try_emplace(fileHasher[fileName]);
   auto &lightProfile{itr->second};
   if (inserted) {
+    SMDL_PROFILER_ENTRY("Compiler::load_light_profile()", fileName.c_str());
     if (auto error{lightProfile.load_from_file(fileName)}) {
       srcLoc.log_warn(error->message);
     }
@@ -268,6 +287,7 @@ std::string Compiler::dump(DumpFormat dumpFormat) {
 }
 
 std::optional<Error> Compiler::jit_compile() noexcept {
+  SMDL_PROFILER_ENTRY("Compiler::jit_compile()");
   return catch_and_return_error([&] {
     llvm_throw_if_error(llvmJit->addIRModule(std::move(*llvmJitModule)));
     llvmJitModule.reset();
@@ -287,8 +307,8 @@ std::optional<Error> Compiler::jit_compile() noexcept {
       jit_lookup_or_throw(jitExec);
     }
     // Deallocate everything we no longer need!
-    for (auto &mod : modules) {
-      mod->reset();
+    for (auto &module_ : modules) {
+      module_->reset();
     }
     allocator.reset();
   });
@@ -344,6 +364,7 @@ float3 Compiler::jit_color_to_rgb(const State &state,
                                   const float *color) const noexcept {
   SMDL_SANITY_CHECK(jitColorToRgb && color);
   SMDL_SANITY_CHECK(state.wavelength_base != nullptr);
+  SMDL_PROFILER_ENTRY("Compiler::jit_color_to_rgb()");
   float3 rgb{};
   jitColorToRgb(state, color, rgb);
   return rgb;
@@ -353,6 +374,7 @@ void Compiler::jit_rgb_to_color(const State &state, const float3 &rgb,
                                 float *color) const noexcept {
   SMDL_SANITY_CHECK(jitRgbToColor && color);
   SMDL_SANITY_CHECK(state.wavelength_base != nullptr);
+  SMDL_PROFILER_ENTRY("Compiler::jit_rgb_to_color()");
   jitRgbToColor(state, rgb, color);
 }
 

@@ -4,6 +4,7 @@
 
 #include "smdl/AST.h"
 #include "smdl/Compiler.h"
+#include "smdl/Support/Profiler.h"
 
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/DenseMap.h"

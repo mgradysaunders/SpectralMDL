@@ -1,5 +1,6 @@
 #include "smdl/Module.h"
 #include "smdl/Parser.h"
+#include "smdl/Support/Profiler.h"
 
 #include "Compiler/Emitter.h"
 #include "Formatter.h"
@@ -35,8 +36,11 @@ Module::load_from_file_extracted_from_archive(const std::string &fileName,
 
 std::optional<Error> Module::parse(BumpPtrAllocator &allocator) noexcept {
   return catch_and_return_error([&] {
-    if (!root)
+    if (!root) {
+      SMDL_PROFILER_ENTRY("Module::parse()",
+                          is_builtin() ? name.c_str() : fileName.c_str());
       root = Parser(allocator, *this).parse();
+    }
   });
 }
 
@@ -49,6 +53,8 @@ std::optional<Error> Module::compile(Context &context) noexcept {
       throw Error(concat("detected cyclic import of module ", quoted(name)));
     if (compileStatus == COMPILE_STATUS_NOT_STARTED) {
       compileStatus = COMPILE_STATUS_IN_PROGRESS;
+      SMDL_PROFILER_ENTRY("Module::compile()",
+                          is_builtin() ? name.c_str() : fileName.c_str());
       SMDL_PRESERVE(context.currentModule);
       context.currentModule = this;
       Emitter emitter{context};
@@ -64,7 +70,6 @@ Module::format_source_code(const FormatOptions &formatOptions) noexcept {
   if (is_builtin()) {
     return Error(concat("cannot format builtin module ", quoted(name)));
   }
-
   if (!is_parsed()) {
     auto allocator{BumpPtrAllocator{}};
     if (auto error{parse(allocator)})
@@ -74,6 +79,8 @@ Module::format_source_code(const FormatOptions &formatOptions) noexcept {
     return error;
   }
   return catch_and_return_error([&] {
+    SMDL_PROFILER_ENTRY("Module::format_source_code()",
+                        is_builtin() ? name.c_str() : fileName.c_str());
     auto formatter{Formatter{formatOptions}};
     auto formatted{formatter.format(sourceCode, *root)};
     if (formatOptions.inPlace) {

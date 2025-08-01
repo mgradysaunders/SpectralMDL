@@ -1,31 +1,16 @@
 #include "smdl/common.h"
-#include "smdl/Logger.h"
 #include "smdl/Module.h"
+#include "smdl/Support/Logger.h"
 
 #include "llvm/ADT/StringRef.h"
 #include "llvm/MC/TargetRegistry.h"
 #include "llvm/Support/Error.h"
-#include "llvm/Support/Parallel.h"
 #include "llvm/Support/TargetSelect.h"
 #include "llvm/Support/WithColor.h"
 #include "llvm/Target/TargetOptions.h"
 #include "llvm/TargetParser/Host.h"
 
 namespace smdl {
-
-void sanity_check_failed(const char *condition, const char *file, int line,
-                         const char *more) {
-  std::string message{"Sanity check failed! "};
-  message += condition, message += '\n';
-  message += "  File = ", message += file, message += '\n';
-  message += "  Line = ", message += std::to_string(line), message += '\n';
-  if (more) {
-    message += "\n...\n\n";
-    message += more;
-    message += "\n";
-  }
-  llvm::report_fatal_error(message.c_str());
-}
 
 BuildInfo BuildInfo::get() noexcept {
   return {SMDL_VERSION_MAJOR, //
@@ -162,11 +147,6 @@ void State::finalize_for_runtime_conventions() {
     geometry_tangent_v[i] =
         object_to_tangent_matrix * float4(geometry_tangent_v[i], 0.0f);
   }
-}
-
-void parallel_for(size_t num, const std::function<void(size_t)> &func) {
-  SMDL_SANITY_CHECK(func);
-  llvm::parallelFor(0, num, func);
 }
 
 } // namespace smdl

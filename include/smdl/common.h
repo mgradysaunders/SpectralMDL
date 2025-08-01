@@ -22,6 +22,8 @@
 #include "smdl/Support/BumpPtrAllocator.h"
 #include "smdl/Support/Error.h"
 #include "smdl/Support/Filesystem.h"
+#include "smdl/Support/MacroHelpers.h"
+#include "smdl/Support/Parallel.h"
 #include "smdl/Support/Span.h"
 #include "smdl/Support/StringHelpers.h"
 
@@ -54,85 +56,6 @@ namespace smdl {
 
 /// \defgroup Main Main
 /// \{
-
-/// Helper to implement `SMDL_CAT` correctly (Yes this is necessary!)
-#define SMDL_CAT__HELPER(X, Y) X##Y
-
-/// Concatenate macros.
-#define SMDL_CAT(X, Y) SMDL_CAT__HELPER(X, Y)
-
-/// Defer until end of scope.
-#define SMDL_DEFER(...)                                                        \
-  const auto SMDL_CAT(__defer, __LINE__) = ::smdl::Defer(__VA_ARGS__)
-
-/// Preserve values, restoring at end of scope.
-#define SMDL_PRESERVE(...)                                                     \
-  const auto SMDL_CAT(__preserve, __LINE__) = ::smdl::Preserve(__VA_ARGS__)
-
-/// Expand the correct sanity check macro.
-#define SMDL_SANITY_CHECK__EXPAND(A, B, C, ...) C
-
-/// Sanity check a condition.
-#define SMDL_SANITY_CHECK__1(cond)                                             \
-  do {                                                                         \
-    if (!(cond))                                                               \
-      ::smdl::sanity_check_failed(#cond, __FILE__, __LINE__);                  \
-  } while (false)
-
-/// Sanity check a condition with a message.
-#define SMDL_SANITY_CHECK__2(cond, message)                                    \
-  do {                                                                         \
-    if (!(cond))                                                               \
-      ::smdl::sanity_check_failed(#cond, __FILE__, __LINE__, message);         \
-  } while (false)
-
-/// Sanity check a condition with or without a message.
-#define SMDL_SANITY_CHECK(...)                                                 \
-  SMDL_SANITY_CHECK__EXPAND(__VA_ARGS__, SMDL_SANITY_CHECK__2,                 \
-                            SMDL_SANITY_CHECK__1)(__VA_ARGS__)
-
-/// Defer until end-of-scope.
-template <typename F> class Defer final {
-public:
-  constexpr Defer(F f) : f(std::move(f)) {}
-
-  ~Defer() { std::invoke(f); }
-
-  F f;
-};
-
-/// Preserve values, restoring at end-of-scope.
-template <typename... Ts> class Preserve final {
-public:
-  constexpr Preserve(Ts &...values)
-      : values(values...), backupValues(values...) {}
-
-  Preserve(const Preserve &) = delete;
-
-  Preserve(Preserve &&) = delete;
-
-  ~Preserve() { restore(); }
-
-  template <size_t... I>
-  constexpr void restore(std::integer_sequence<size_t, I...>) {
-    ((std::get<I>(values) = std::get<I>(backupValues)), ...);
-  }
-
-  constexpr void restore() {
-    restore(std::make_index_sequence<sizeof...(Ts)>());
-  }
-
-private:
-  std::tuple<Ts &...> values;
-
-  std::tuple<Ts...> backupValues;
-};
-
-/// If `SMDL_SANITY_CHECK` fails, this prints the relevant information and
-/// exits the program with code `EXIT_FAILURE`.
-[[noreturn]] SMDL_EXPORT void sanity_check_failed(const char *condition,
-                                                  const char *file, int line,
-                                                  const char *more = nullptr);
 
 /// The SMDL build information.
 class SMDL_EXPORT BuildInfo final {
@@ -883,14 +806,6 @@ public:
   ///
   const float *const average_albedo = nullptr;
 };
-
-/// \}
-
-/// \addtogroup Support
-/// \{
-
-SMDL_EXPORT void parallel_for(size_t num,
-                              const std::function<void(size_t)> &func);
 
 /// \}
 

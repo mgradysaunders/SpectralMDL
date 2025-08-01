@@ -5,6 +5,8 @@
 #include "command_line.h"
 #include "common.h"
 
+#include "smdl/Support/Profiler.h"
+
 #include <fstream>
 #include <iostream>
 
@@ -43,6 +45,8 @@ static cl::opt<float> imageLightScale{"ibl-scale",
 int main(int argc, char **argv) try {
   llvm::InitLLVM X(argc, argv);
   smdl::Logger::get().add_sink<smdl::LogSinks::print_to_cerr>();
+  smdl::profiler_initialize();
+  SMDL_DEFER([]() { smdl::profiler_finalize(); });
   cl::HideUnrelatedOptions({&catCamera});
   cl::ParseCommandLineOptions(argc, argv, "SpectralMDL toy renderer");
 
@@ -104,11 +108,11 @@ int main(int argc, char **argv) try {
   options.maxOrder = 5;
   options.nMutationsPerPixel = size_t(samplesPerPixel);
   options.nChains = 1000;
-  auto integrator{MLTIntegrator{options}};
-  integrator.integrate(scene, wavelengthBase, renderImage);
+    auto integrator{MLTIntegrator{options}};
+    integrator.integrate(scene, wavelengthBase, renderImage);
 #else
 #if 1
-  smdl::parallel_for(imageExtent.x * imageExtent.y, [&](size_t i) {
+  smdl::parallel_for(0, imageExtent.x * imageExtent.y, [&](size_t i) {
     auto allocator{smdl::BumpPtrAllocator()};
     auto rng{RNG{i}};
     auto rngf{[&rng]() { return generate_canonical(rng); }};
@@ -163,7 +167,7 @@ int main(int argc, char **argv) try {
     }
   });
 #else
-  smdl::parallel_for(imageExtent.x * imageExtent.y, [&](size_t i) {
+  smdl::parallel_for(0, imageExtent.x * imageExtent.y, [&](size_t i) {
     auto allocator{smdl::BumpPtrAllocator()};
     size_t y{i / size_t(imageExtent.x)};
     size_t x{i % size_t(imageExtent.x)};
