@@ -102,7 +102,7 @@ bool Light_first_vertex_sample(const Scene &scene, const Light &light,
   struct Visitor final {
     [[nodiscard]] bool operator()(const PointLight &light) const {
       firstVertex.point = light.origin;
-      firstVertex.wNext = uniform_sphere_sample(xi0, &dirPdf);
+      firstVertex.wNext = smdl::uniform_sphere_sample(xi0, &dirPdf);
       firstVertex.pdf = DIRAC_DELTA;
       firstVertex.beta = light.intensity / dirPdf;
       return true;
@@ -121,7 +121,7 @@ bool Light_first_vertex_sample(const Scene &scene, const Light &light,
       firstVertex.pdf = DIRAC_DELTA;
       firstVertex.wNext =
           smdl::coordinate_system(light.direction) *
-          uniform_cone_sample(xi0, light.cosThetaOuter, &dirPdf);
+          smdl::uniform_cone_sample(xi0, light.cosThetaOuter, &dirPdf);
       firstVertex.beta =
           (light.falloff(firstVertex.wNext) / dirPdf) * light.intensity;
       return true;
@@ -130,17 +130,18 @@ bool Light_first_vertex_sample(const Scene &scene, const Light &light,
       auto lightToWorld{smdl::coordinate_system(light.direction)};
       firstVertex.point =
           light.origin +
-          lightToWorld * smdl::float3(light.radius * uniform_disk_sample(xi0));
+          lightToWorld *
+              smdl::float3(light.radius * smdl::uniform_disk_sample(xi0));
       firstVertex.wNext = smdl::normalize(
-          lightToWorld * cosine_hemisphere_sample(xi1, &dirPdf));
-      firstVertex.pdf = uniform_disk_pdf(light.radius);
+          lightToWorld * smdl::cosine_hemisphere_sample(xi1, &dirPdf));
+      firstVertex.pdf = smdl::uniform_disk_pdf(light.radius);
       firstVertex.beta = (smdl::dot(firstVertex.wNext, light.direction) /
                           (firstVertex.pdf * dirPdf)) *
                          light.intensity;
       return true;
     }
     [[nodiscard]] bool operator()(const AmbientLight &light) const {
-      firstVertex.wNext = uniform_sphere_sample(xi0, &dirPdf);
+      firstVertex.wNext = smdl::uniform_sphere_sample(xi0, &dirPdf);
       firstVertex.point = scene.infinite_disk_emission_point_sample(
           firstVertex.wNext, xi1, &firstVertex.pdf);
       firstVertex.beta = (1.0f / (firstVertex.pdf * dirPdf)) * light.intensity;
@@ -181,7 +182,7 @@ bool Light_last_vertex_sample(const Scene &scene, /* const Light &light, */
       lightVertex.pdf = lightVertex.pdfAdjoint = DIRAC_DELTA;
 
       Color f{};
-      float lightDirPdfAdjoint{uniform_sphere_pdf()};
+      float lightDirPdfAdjoint{smdl::uniform_sphere_pdf()};
       if (!lastCameraVertex.reconnect(lightVertex, lightDirPdfAdjoint, f)) {
         return false;
       }
@@ -197,7 +198,7 @@ bool Light_last_vertex_sample(const Scene &scene, /* const Light &light, */
           lastCameraVertex.point - 2 * scene.boundRadius * light.direction;
       lightVertex.wPrev = light.direction;
       lightVertex.pdf = DIRAC_DELTA;
-      lightVertex.pdfAdjoint = uniform_disk_pdf(scene.boundRadius);
+      lightVertex.pdfAdjoint = smdl::uniform_disk_pdf(scene.boundRadius);
       lightVertex.isAtInfinity = true;
 
       Color f{};
@@ -222,7 +223,7 @@ bool Light_last_vertex_sample(const Scene &scene, /* const Light &light, */
       lightVertex.pdf = lightVertex.pdfAdjoint = DIRAC_DELTA;
 
       Color f{};
-      float lightDirPdfAdjoint{uniform_cone_pdf(light.cosThetaOuter)};
+      float lightDirPdfAdjoint{smdl::uniform_cone_pdf(light.cosThetaOuter)};
       if (!lastCameraVertex.reconnect(lightVertex, lightDirPdfAdjoint, f)) {
         return false;
       }
@@ -237,10 +238,12 @@ bool Light_last_vertex_sample(const Scene &scene, /* const Light &light, */
       auto lightToWorld{smdl::coordinate_system(light.direction)};
       lightVertex.point =
           light.origin +
-          lightToWorld * smdl::float3(light.radius * uniform_disk_sample(xi));
+          lightToWorld *
+              smdl::float3(light.radius * smdl::uniform_disk_sample(xi));
       lightVertex.wPrev =
           smdl::normalize(lastCameraVertex.point - lightVertex.point);
-      lightVertex.pdf = lightVertex.pdfAdjoint = uniform_disk_pdf(light.radius);
+      lightVertex.pdf = lightVertex.pdfAdjoint =
+          smdl::uniform_disk_pdf(light.radius);
 
       Color f{};
       float distance{smdl::length(lightVertex.point - lastCameraVertex.point)};

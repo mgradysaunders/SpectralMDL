@@ -20,7 +20,7 @@ void Integrator::integrate_and_write_file(
       auto color{Color()};
       auto pixel{renderImage.pixel_reference(x, y)};
       for (size_t i = 0; i < WAVELENGTH_BASE_MAX; i++)
-        color[i] = float(double(pixel.totalValues[i]));
+        color[i] = float(double(pixel[i]));
       smdl::State state{};
       state.wavelength_base = wavelengthBase.data();
       state.wavelength_min = WAVELENGTH_MIN;

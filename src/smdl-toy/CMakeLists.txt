@@ -1,9 +1,10 @@
 add_executable(
   smdl-toy 
-  "BDPTIntegrator.cc"
   "Integrator.cc"
-  "MLTIntegrator.cc"
-  "PathIntegrator.cc"
+  "integrators/BDPTIntegrator.cc"
+  "integrators/PSMLTIntegrator.cc"
+  "integrators/PTIntegrator.cc"
+  "integrators/PTLightIntegrator.cc"
   "Scene.cc"
   "Vertex.cc"
   "main.cc"

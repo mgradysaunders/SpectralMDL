@@ -1,11 +1,11 @@
 #pragma once
 
-#include "Integrator.h"
+#include "../Integrator.h"
 
-class PathIntegrator final : public Integrator {
+class BDPTIntegrator final : public Integrator {
 public:
-  explicit PathIntegrator(unsigned seed, unsigned samplesPerPixel,
-                          unsigned minOrder, unsigned maxOrder)
+  explicit BDPTIntegrator(size_t seed, size_t samplesPerPixel, size_t minOrder,
+                          size_t maxOrder)
       : Integrator(seed, samplesPerPixel, minOrder, maxOrder) {}
 
   void integrate(const Scene &scene, const Color &wavelengthBase,

@@ -20,6 +20,7 @@
 #include "smdl/Support/ColorVector.h"
 #include "smdl/Support/DiscreteDistribution.h"
 #include "smdl/Support/Logger.h"
+#include "smdl/Support/Sampling.h"
 #include "smdl/Support/SpectralRenderImage.h"
 
 #include "pcg_random.hpp"
@@ -65,66 +66,6 @@ template <typename Gen>
 }
 
 using Color = smdl::ColorVector<WAVELENGTH_BASE_MAX>;
-
-[[nodiscard]] inline float uniform_disk_pdf(float radius = 1) {
-  return 1.0f / (PI * radius * radius);
-}
-
-[[nodiscard]] inline smdl::float2 uniform_disk_sample(smdl::float2 xi) {
-  xi = xi * 2.0f - smdl::float2(1.0f);
-  xi.x = (xi.x == 0.0f) ? EPS : xi.x;
-  xi.y = (xi.y == 0.0f) ? EPS : xi.y;
-  bool cond = std::abs(xi.x) > std::abs(xi.y);
-  float rad = cond ? xi.x : xi.y;
-  float phi = cond ? (PI / 4.0f) * xi.y / xi.x
-                   : (PI / 2.0f) - (PI / 4.0f) * xi.x / xi.y;
-  return smdl::float2(rad * std::cos(phi), rad * std::sin(phi));
-}
-
-[[nodiscard]] inline float cosine_hemisphere_pdf(float cosTheta) {
-  return std::max(cosTheta, 0.0f) / PI;
-}
-
-[[nodiscard]] inline smdl::float3 cosine_hemisphere_sample(smdl::float2 xi,
-                                                           float *pdf = {}) {
-  auto sinTheta{uniform_disk_sample(xi)};
-  auto cosTheta{std::sqrt(std::max(0.0f, 1.0f - sinTheta.x * sinTheta.x -
-                                             sinTheta.y * sinTheta.y))};
-  if (pdf)
-    *pdf = cosTheta / PI;
-  return smdl::float3(sinTheta.x, sinTheta.y, cosTheta);
-}
-
-[[nodiscard]] inline float uniform_sphere_pdf(float radius = 1) {
-  return 1.0f / (4.0f * PI * radius * radius);
-}
-
-[[nodiscard]] inline smdl::float3 uniform_sphere_sample(smdl::float2 xi,
-                                                        float *pdf = {}) {
-  float cosTheta{std::max(-1.0f, std::min(2.0f * xi.x - 1.0f, 1.0f))};
-  float sinTheta{std::sqrt(1.0f - cosTheta * cosTheta)};
-  float phi{2.0f * PI * xi.y};
-  if (pdf)
-    *pdf = uniform_sphere_pdf();
-  return smdl::float3(sinTheta * std::cos(phi), sinTheta * std::sin(phi),
-                      cosTheta);
-}
-
-[[nodiscard]] inline float uniform_cone_pdf(float zMin) {
-  return 1.0f / (2.0f * PI * (1.0f - zMin));
-}
-
-[[nodiscard]] inline smdl::float3 uniform_cone_sample(smdl::float2 xi, //
-                                                      float zMin,      //
-                                                      float *pdf = {}) {
-  float cosTheta{std::max(zMin, std::min((1.0f - xi.x) * zMin + xi.x, 1.0f))};
-  float sinTheta{std::sqrt(1.0f - cosTheta * cosTheta)};
-  float phi{2.0f * PI * xi.y};
-  if (pdf)
-    *pdf = uniform_cone_pdf(zMin);
-  return smdl::float3(sinTheta * std::cos(phi), sinTheta * std::sin(phi),
-                      cosTheta);
-}
 
 [[nodiscard]]
 inline std::pair<smdl::float3, float> direction_and_distance(smdl::float3 from,

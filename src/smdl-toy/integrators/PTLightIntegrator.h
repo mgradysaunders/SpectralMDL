@@ -1,11 +1,11 @@
 #pragma once
 
-#include "Integrator.h"
+#include "../Integrator.h"
 
-class BDPTIntegrator final : public Integrator {
+class PTLightIntegrator final : public Integrator {
 public:
-  explicit BDPTIntegrator(unsigned seed, unsigned samplesPerPixel,
-                          unsigned minOrder, unsigned maxOrder)
+  explicit PTLightIntegrator(size_t seed, size_t samplesPerPixel,
+                             size_t minOrder, size_t maxOrder)
       : Integrator(seed, samplesPerPixel, minOrder, maxOrder) {}
 
   void integrate(const Scene &scene, const Color &wavelengthBase,

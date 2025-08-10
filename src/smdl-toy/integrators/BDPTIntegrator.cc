@@ -15,7 +15,7 @@ void BDPTIntegrator::integrate(const Scene &scene, const Color &wavelengthBase,
     auto rngf{[&rng] { return generate_canonical(rng); }};
     auto cameraPath{std::vector<Vertex>(size_t(maxOrder + 2))};
     auto lightPath{std::vector<Vertex>(size_t(maxOrder + 2))};
-    for (unsigned sample = 0; sample < samplesPerPixel; sample++) {
+    for (size_t sample = 0; sample < samplesPerPixel; sample++) {
       auto cameraPathLen{scene.trace_path_from_camera(
           allocator, rngf, wavelengthBase,
           smdl::float2(static_cast<float>(pixelIndexX) + rngf(),
@@ -23,9 +23,9 @@ void BDPTIntegrator::integrate(const Scene &scene, const Color &wavelengthBase,
           cameraPath.size(), cameraPath.data())};
       auto lightPathLen{scene.trace_path_from_light(
           allocator, rngf, wavelengthBase, lightPath.size(), lightPath.data())};
-      for (unsigned s = 0; s < cameraPathLen; s++) {
-        for (unsigned t = 0; t < lightPathLen; t++) {
-          unsigned order{s + t};
+      for (size_t s = 0; s < cameraPathLen; s++) {
+        for (size_t t = 0; t < lightPathLen; t++) {
+          size_t order{s + t};
           if (!(minOrder <= order && order <= maxOrder))
             continue;
           Color beta{};
@@ -36,8 +36,7 @@ void BDPTIntegrator::integrate(const Scene &scene, const Color &wavelengthBase,
                                     misWeight, imageCoord)) {
             renderImage
                 .pixel_reference(size_t(imageCoord.x), size_t(imageCoord.y))
-                .add_sample(misWeight / float(samplesPerPixel),
-                            smdl::Span<float>(beta.data(), beta.size()));
+                .add(misWeight / float(samplesPerPixel), beta.data());
           }
         }
       }
@@ -45,22 +44,3 @@ void BDPTIntegrator::integrate(const Scene &scene, const Color &wavelengthBase,
     }
   });
 }
-
-#if 0
-      for (int t = 1; t < lightPathLen; t++) {
-        if (auto &v{lightPath[t]}; !v.isAtInfinity) {
-          Vertex vLast{};
-          if (Camera_last_vertex_sample(camera, smdl::float2(rngf(), rngf()), v,
-                                        vLast)) {
-            if (scene.test_visibility(allocator, rngf, wavelengthBase, v, vLast,
-                                      vLast.beta)) {
-              renderImage
-                  .pixel_reference(size_t(vLast.imageCoord.x),
-                             size_t(vLast.imageCoord.y))
-                  .add_sample(1.0, smdl::Span<float>(vLast.beta.data(),
-                                                     vLast.beta.size()));
-            }
-          }
-        }
-      }
-#endif

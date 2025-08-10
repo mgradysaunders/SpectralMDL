@@ -1,7 +1,7 @@
-#include "PathIntegrator.h"
+#include "PTIntegrator.h"
 
-void PathIntegrator::integrate(const Scene &scene, const Color &wavelengthBase,
-                               smdl::SpectralRenderImage &renderImage) const {
+void PTIntegrator::integrate(const Scene &scene, const Color &wavelengthBase,
+                             smdl::SpectralRenderImage &renderImage) const {
   const auto imageExtentX{size_t(scene.camera.imageExtent.x)};
   const auto imageExtentY{size_t(scene.camera.imageExtent.y)};
   smdl::parallel_for(0, imageExtentX * imageExtentY, [&](size_t pixelIndex) {
@@ -14,13 +14,13 @@ void PathIntegrator::integrate(const Scene &scene, const Color &wavelengthBase,
                       0xB729A7D3UL)};
     auto rngf{[&rng] { return generate_canonical(rng); }};
     auto path{std::vector<Vertex>(size_t(maxOrder + 1))};
-    for (unsigned sample = 0; sample < samplesPerPixel; sample++) {
+    for (size_t sample = 0; sample < samplesPerPixel; sample++) {
       auto pathLen{scene.trace_path_from_camera(
           allocator, rngf, wavelengthBase,
           smdl::float2(static_cast<float>(pixelIndexX) + rngf(),
                        static_cast<float>(pixelIndexY) + rngf()),
           path.size(), path.data())};
-      for (unsigned order = minOrder; order < pathLen; order++) {
+      for (size_t order = minOrder; order < size_t(pathLen); order++) {
         const auto &cameraVertex{path[order]};
         if (cameraVertex.isAtInfinity) {
           // TODO
@@ -41,8 +41,7 @@ void PathIntegrator::integrate(const Scene &scene, const Color &wavelengthBase,
       }
       allocator.reset();
     }
-    result /= float(samplesPerPixel);
     renderImage.pixel_reference(pixelIndexX, pixelIndexY)
-        .add_sample(1.0, smdl::Span<float>(result.data(), result.size()));
+        .add(1.0 / double(samplesPerPixel), result.data());
   });
 }

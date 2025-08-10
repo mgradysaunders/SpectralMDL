@@ -1,16 +1,17 @@
 #pragma once
 
-#include "Integrator.h"
+#include "../Integrator.h"
 
-class MLTIntegrator final : public Integrator {
+class PSMLTIntegrator final : public Integrator {
 public:
-  explicit MLTIntegrator(unsigned seed, unsigned samplesPerPixel,
-                         unsigned minOrder, unsigned maxOrder,
-                         float smallStepSigma = 0.01f,
-                         float largeStepProbability = 0.1f,
-                         unsigned numBootstrap = 100'000,
-                         unsigned numChains = 1000)
+  explicit PSMLTIntegrator(size_t seed, size_t samplesPerPixel, size_t minOrder,
+                           size_t maxOrder, bool onlyIndirectPSMLT = false,
+                           float smallStepSigma = 0.01f,
+                           float largeStepProbability = 0.1f,
+                           size_t numBootstrap = 100'000,
+                           size_t numChains = 1000)
       : Integrator(seed, samplesPerPixel, minOrder, maxOrder),
+        onlyIndirectPSMLT(onlyIndirectPSMLT && minOrder < 2),
         smallStepSigma(smallStepSigma),
         largeStepProbability(largeStepProbability), numBootstrap(numBootstrap),
         numChains(numChains) {}
@@ -24,8 +25,7 @@ private:
     template <typename... Seeds>
     explicit Sampler(float smallStepSigma, float largeStepProbability,
                      const Seeds &...seeds)
-        : rng(std::seed_seq{uint32_t(seeds)...}),
-          smallStepSigma(smallStepSigma),
+        : rng(make_RNG(seeds...)), smallStepSigma(smallStepSigma),
           largeStepProbability(largeStepProbability) {}
 
     void next_iteration() noexcept;
@@ -99,11 +99,13 @@ private:
   };
 
 private:
+  const bool onlyIndirectPSMLT{false};
+
   const float smallStepSigma{0.01f};
 
   const float largeStepProbability{0.1f};
 
-  const unsigned numBootstrap{100'000};
+  const size_t numBootstrap{100'000};
 
-  const unsigned numChains{1000};
+  const size_t numChains{1000};
 };

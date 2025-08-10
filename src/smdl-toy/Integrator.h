@@ -4,25 +4,25 @@
 
 class Integrator {
 public:
-  explicit Integrator(unsigned seed, unsigned samplesPerPixel,
-                      unsigned minOrder, unsigned maxOrder)
+  explicit Integrator(size_t seed, size_t samplesPerPixel, size_t minOrder,
+                      size_t maxOrder)
       : seed(seed), samplesPerPixel(samplesPerPixel), minOrder(minOrder),
         maxOrder(maxOrder) {}
 
   virtual ~Integrator() = default;
 
-  void integrate_and_write_file(const Scene &scene, float imageScale,
-                                const std::string &imageFileName) const;
-
   virtual void integrate(const Scene &scene, const Color &wavelengthBase,
                          smdl::SpectralRenderImage &renderImage) const = 0;
 
+  void integrate_and_write_file(const Scene &scene, float imageScale,
+                                const std::string &imageFileName) const;
+
 protected:
-  const unsigned seed{};
+  const size_t seed{};
 
-  const unsigned samplesPerPixel{};
+  const size_t samplesPerPixel{};
 
-  const unsigned minOrder{};
+  const size_t minOrder{};
 
-  const unsigned maxOrder{};
+  const size_t maxOrder{};
 };

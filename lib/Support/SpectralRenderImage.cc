@@ -26,9 +26,24 @@ SpectralRenderImage::pixel_reference(size_t pixelX, size_t pixelY) noexcept {
   SMDL_SANITY_CHECK(pixelY < numPixelsY);
   auto ptr{buf.get() + pixel_size_in_bytes() * (numPixelsX * pixelY + pixelX)};
   return {*reinterpret_cast<AtomicUInt64 *>(ptr),
-          *reinterpret_cast<AtomicDouble *>(ptr + sizeof(AtomicUInt64)),
-          reinterpret_cast<AtomicDouble *>(ptr + sizeof(AtomicUInt64) +
-                                           sizeof(AtomicDouble))};
+          reinterpret_cast<AtomicDouble *>(ptr + sizeof(AtomicUInt64)),
+          numBands};
+}
+
+void SpectralRenderImage::add(const SpectralRenderImage &other) noexcept {
+  SMDL_SANITY_CHECK(numBands == other.numBands);
+  SMDL_SANITY_CHECK(numPixelsX == other.numPixelsX);
+  SMDL_SANITY_CHECK(numPixelsY == other.numPixelsY);
+  for (size_t pixelY{}; pixelY < numPixelsY; pixelY++) {
+    for (size_t pixelX{}; pixelX < numPixelsX; pixelX++) {
+      auto lhs{pixel_reference(pixelX, pixelY)};
+      auto rhs{const_cast<SpectralRenderImage &>(other).pixel_reference(
+          pixelX, pixelY)};
+      lhs.totalCount += rhs.totalCount;
+      for (size_t i = 0; i < numBands; i++)
+        lhs.totals[i] += rhs.totals[i];
+    }
+  }
 }
 
 } // namespace smdl

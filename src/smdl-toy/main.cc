@@ -1,11 +1,12 @@
 #include "llvm/Support/InitLLVM.h"
 
-#include "MLTIntegrator.h"
-#include "PathIntegrator.h"
-#include "BDPTIntegrator.h"
 #include "Scene.h"
 #include "command_line.h"
 #include "common.h"
+#include "integrators/BDPTIntegrator.h"
+#include "integrators/PSMLTIntegrator.h"
+#include "integrators/PTIntegrator.h"
+#include "integrators/PTLightIntegrator.h"
 
 #include "smdl/Support/Profiler.h"
 
@@ -17,7 +18,7 @@ static cl::opt<std::string> inputSceneFile{
 static cl::list<std::string> inputMDLFiles{
     cl::Positional, cl::desc("<input mdl>"), cl::OneOrMore};
 
-static cl::OptionCategory catCamera{"Camera Options"};
+static cl::OptionCategory catCamera{"Render Options (Camera)"};
 static cl::opt<smdl::int2> cameraImageExtent{
     "dims", cl::desc("The image dimensions in pixels (default: 1280,720)"),
     cl::init(smdl::int2{1280, 720}), cl::cat(catCamera)};
@@ -33,23 +34,60 @@ static cl::opt<smdl::float3> cameraUp{
 static cl::opt<float> cameraFov{"fov",
                                 cl::desc("The FOV in degrees (default: 60)"),
                                 cl::init(60.0f), cl::cat(catCamera)};
-static cl::opt<unsigned> samplesPerPixel{
-    "spp", cl::desc("The number of samples per pixel (default: 8)"),
-    cl::init(8U), cl::cat(catCamera)};
 
-static cl::OptionCategory catIBL{"Image-Based Light (IBL) Options"};
+static cl::OptionCategory catIntegrator{"Render Options (Integrator)"};
+enum IntegratorKind : int {
+  INTEGRATOR_KIND_PT,
+  INTEGRATOR_KIND_PT_LIGHT,
+  INTEGRATOR_KIND_BDPT,
+  INTEGRATOR_KIND_PSMLT,
+  INTEGRATOR_KIND_PSMLT_INDIRECT
+};
+static cl::opt<IntegratorKind> integratorKind{
+    "integrator", cl::desc("Integrator (default: pt)"),
+    cl::values(
+        cl::OptionEnumValue{"pt", int(INTEGRATOR_KIND_PT),
+                            "Path tracing (PT) from camera"},
+        cl::OptionEnumValue{"pt-light", int(INTEGRATOR_KIND_PT_LIGHT),
+                            "Path tracing (PT) from lights"},
+        cl::OptionEnumValue{
+            "bdpt", int(INTEGRATOR_KIND_BDPT),
+            "Bidirectional path tracing (BDPT) from camera and lights"},
+        cl::OptionEnumValue{"psmlt", int(INTEGRATOR_KIND_PSMLT),
+                            "Primary-space metropolis light transport (PSMLT)"},
+        cl::OptionEnumValue{
+            "psmlt-indirect", int(INTEGRATOR_KIND_PSMLT_INDIRECT),
+            "PT for direct light and PSMLT for indirect light"}),
+    cl::init(INTEGRATOR_KIND_PT), cl::cat(catIntegrator)};
+static cl::opt<size_t> minOrder{
+    "min-order", cl::desc("The minimum scattering order (default: 0)"),
+    cl::init(0u), cl::cat(catIntegrator)};
+static cl::opt<size_t> maxOrder{
+    "max-order", cl::desc("The maximum scattering order (default: 5)"),
+    cl::init(5u), cl::cat(catIntegrator)};
+static cl::opt<size_t> samplesPerPixel{
+    "spp", cl::desc("The number of samples per pixel (default: 8)"),
+    cl::init(8U), cl::cat(catIntegrator)};
+static cl::opt<size_t> seed{"seed", cl::desc("The random seed (default: 0)"),
+                            cl::init(0u), cl::cat(catIntegrator)};
+static cl::opt<float> imageGain{
+    "image-gain", cl::desc("The final image gain multiplier (default: 1)"),
+    cl::init(1.0f), cl::cat(catIntegrator)};
+
+/*
 static cl::opt<std::string> imageLightFile{"ibl", cl::desc("The IBL filename"),
-                                           cl::cat(catIBL)};
+                                           cl::cat(catCamera)};
 static cl::opt<float> imageLightScale{"ibl-scale",
                                       cl::desc("The IBL scale factor"),
-                                      cl::init(1.0f), cl::cat(catIBL)};
+                                      cl::init(1.0f), cl::cat(catCamera)};
+ */
 
 int main(int argc, char **argv) try {
   llvm::InitLLVM X(argc, argv);
   smdl::Logger::get().add_sink<smdl::LogSinks::print_to_cerr>();
   smdl::profiler_initialize();
   SMDL_DEFER([]() { smdl::profiler_finalize(); });
-  cl::HideUnrelatedOptions({&catCamera});
+  cl::HideUnrelatedOptions({&catCamera, &catIntegrator});
   cl::ParseCommandLineOptions(argc, argv, "SpectralMDL toy renderer");
 
   smdl::Compiler compiler{};
@@ -76,7 +114,7 @@ int main(int argc, char **argv) try {
                 .cosThetaInner = 0.866f,
                 .cosThetaOuter = 0.707f}
 #else
-      DiskLight{.intensity = Color(20.0f),
+      DiskLight{.intensity = Color(40.0f),
                 .origin = smdl::float3(1, 2, 3),
                 .direction = smdl::normalize(smdl::float3(-1, -2, -3)),
                 .radius = 0.5f}
@@ -93,9 +131,32 @@ int main(int argc, char **argv) try {
     scene.imageLightScale = float(imageLightScale);
   }
 #endif
-  auto integrator{
-      std::make_unique<PathIntegrator>(0x12345, samplesPerPixel, 2, 5)};
-  integrator->integrate_and_write_file(scene, 2.0f, "output-path.png");
+  auto integrator{[&]() -> std::unique_ptr<Integrator> {
+    switch (IntegratorKind(integratorKind)) {
+    case INTEGRATOR_KIND_PT:
+      return std::make_unique<PTIntegrator>(seed, samplesPerPixel, minOrder,
+                                            maxOrder);
+    case INTEGRATOR_KIND_PT_LIGHT:
+      return std::make_unique<PTLightIntegrator>(seed, samplesPerPixel,
+                                                 minOrder, maxOrder);
+    case INTEGRATOR_KIND_BDPT:
+      return std::make_unique<BDPTIntegrator>(seed, samplesPerPixel, minOrder,
+                                              maxOrder);
+    case INTEGRATOR_KIND_PSMLT:
+      return std::make_unique<PSMLTIntegrator>(seed, samplesPerPixel, minOrder,
+                                               maxOrder,
+                                               /*onlyIndirectPSMLT=*/false);
+    case INTEGRATOR_KIND_PSMLT_INDIRECT:
+      return std::make_unique<PSMLTIntegrator>(seed, samplesPerPixel, minOrder,
+                                               maxOrder,
+                                               /*onlyIndirectPSMLT=*/true);
+    default:
+      SMDL_SANITY_CHECK(false, "Invalid integrator kind");
+      break;
+    }
+    return nullptr;
+  }()};
+  integrator->integrate_and_write_file(scene, imageGain, "output.png");
 } catch (const smdl::Error &error) {
   error.print();
   return EXIT_FAILURE;
