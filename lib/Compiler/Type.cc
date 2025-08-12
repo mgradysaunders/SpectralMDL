@@ -201,11 +201,11 @@ Value ArithmeticType::invoke(Emitter &emitter, const ArgumentList &args,
       // If constructing from color and this is a 3-dimensional vector,
       // delegate to the `__color_to_rgb` function in the `api` module.
       if (value.type == emitter.context.get_color_type() && dim == 3)
-        return invoke(emitter,
-                      emitter.emit_call(
-                          emitter.context.get_keyword("__color_to_rgb"),
-                          value, srcLoc),
-                      srcLoc);
+        return invoke(
+            emitter,
+            emitter.emit_call(emitter.context.get_keyword("__color_to_rgb"),
+                              value, srcLoc),
+            srcLoc);
     }
     // From scalars
     auto canConstructFromScalars{[&] {
@@ -690,8 +690,8 @@ Value ColorType::invoke(Emitter &emitter, const ArgumentList &args,
                               llvmType, emitter.to_rvalue(value),
                               llvm::Align(alignof(float))));
     if (value.type == context.get_float_type(Extent(3)))
-      return emitter.emit_call(context.get_keyword("__rgb_to_color"),
-                               value, srcLoc);
+      return emitter.emit_call(context.get_keyword("__rgb_to_color"), value,
+                               srcLoc);
   }
   if (args.size() <= 3 && args.is_only_these_names({"r", "g", "b"})) {
     auto params{ParameterList{
@@ -1167,6 +1167,7 @@ void FunctionType::initialize_jit_material_functions(Emitter &emitter) {
   Type *float3PtrType{context.get_pointer_type(context.get_float_type(3))};
   Type *floatPtrType{context.get_pointer_type(context.get_float_type())};
   Type *intPtrType{context.get_pointer_type(context.get_int_type())};
+  Type *intType{context.get_int_type()};
   auto constParameter{[](Type *type, std::string_view name) {
     return Parameter{.type = type,
                      .name = name,
@@ -1177,11 +1178,11 @@ void FunctionType::initialize_jit_material_functions(Emitter &emitter) {
   }};
   {
     // Generate the allocate function:
-    // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
     // @(visible) void "material_name.allocate"(&auto out) {
     //   *out = __material_instance(#bump_allocate(material_name()));
     // }
-    // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
     auto funcReturnType{static_cast<Type *>(context.get_void_type())};
     auto func{emitter.create_function(
         concat(declName, ".allocate"), /*isPure=*/false, funcReturnType,
@@ -1204,22 +1205,24 @@ void FunctionType::initialize_jit_material_functions(Emitter &emitter) {
   }
   {
     // Generate the scatter evaluate function:
-    // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
     // @(pure visible) int "material_name.scatter_evaluate"(
     //     &__material_instance instance,
+    //     int is_importance,
     //     &float3 wo,
     //     &float3 wi,
     //     &float pdf_fwd,
     //     &float pdf_rev,
     //     &float f) {
     //   return ::df::__scatter_evaluate(
-    //     instance, wo, wi, pdf_fwd, pdf_rev, f);
+    //     instance, is_importance, wo, wi, pdf_fwd, pdf_rev, f);
     // }
-    // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
     auto funcReturnType{static_cast<Type *>(context.get_int_type())};
     auto func{emitter.create_function(
         concat(declName, ".scatter_evaluate"), /*isPure=*/true, funcReturnType,
         {constParameter(materialInstancePtrType, "instance"),
+         constParameter(intType, "is_importance"),
          constParameter(float3PtrType, "wo"),
          constParameter(float3PtrType, "wi"),
          constParameter(floatPtrType, "pdf_fwd"),
@@ -1234,6 +1237,8 @@ void FunctionType::initialize_jit_material_functions(Emitter &emitter) {
                   dfFunc->value,
                   llvm::ArrayRef<Value>{
                       emitter.resolve_identifier("instance"sv, decl.srcLoc),
+                      emitter.resolve_identifier("is_importance"sv,
+                                                 decl.srcLoc),
                       emitter.resolve_identifier("wo"sv, decl.srcLoc),
                       emitter.resolve_identifier("wi"sv, decl.srcLoc),
                       emitter.resolve_identifier("pdf_fwd"sv, decl.srcLoc),
@@ -1247,10 +1252,11 @@ void FunctionType::initialize_jit_material_functions(Emitter &emitter) {
   }
   {
     // Generate the scatter sample function:
-    // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
     // @(pure visible) int "material_name.scatter_sample"(
     //     &__material_instance instance,
     //     &float4 xi,
+    //     int is_importance,
     //     &float3 wo,
     //     &float3 wi,
     //     &float pdf_fwd,
@@ -1258,13 +1264,14 @@ void FunctionType::initialize_jit_material_functions(Emitter &emitter) {
     //     &float f,
     //     &int is_delta) {
     //   return ::df::__scatter_sample(
-    //     instance, xi, wo, wi, pdf_fwd, pdf_rev, f, is_delta);
+    //     instance, is_importance, xi, wo, wi, pdf_fwd, pdf_rev, f, is_delta);
     // }
-    // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
     auto funcReturnType{static_cast<Type *>(context.get_int_type())};
     auto func{emitter.create_function(
         concat(declName, ".scatter_sample"), /*isPure=*/true, funcReturnType,
         {constParameter(materialInstancePtrType, "instance"),
+         constParameter(intType, "is_importance"),
          constParameter(float4PtrType, "xi"),
          constParameter(float3PtrType, "wo"),
          constParameter(float3PtrType, "wi"),
@@ -1281,6 +1288,8 @@ void FunctionType::initialize_jit_material_functions(Emitter &emitter) {
                   dfFunc->value,
                   llvm::ArrayRef<Value>{
                       emitter.resolve_identifier("instance"sv, decl.srcLoc),
+                      emitter.resolve_identifier("is_importance"sv,
+                                                 decl.srcLoc),
                       emitter.resolve_identifier("xi"sv, decl.srcLoc),
                       emitter.resolve_identifier("wo"sv, decl.srcLoc),
                       emitter.resolve_identifier("wi"sv, decl.srcLoc),
@@ -1296,7 +1305,7 @@ void FunctionType::initialize_jit_material_functions(Emitter &emitter) {
   }
   {
     // Generate the emission evaluate function:
-    // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
     // @(pure visible) int "material_name.emission_evaluate"(
     //     &__material_instance instance,
     //     &float3 we,
@@ -1304,7 +1313,7 @@ void FunctionType::initialize_jit_material_functions(Emitter &emitter) {
     //     &float Le) {
     //   return ::df::__emission_evaluate(instance, we, pdf, Le);
     // }
-    // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
     auto funcReturnType{static_cast<Type *>(context.get_int_type())};
     auto func{emitter.create_function(
         concat(declName, ".emission_evaluate"), /*isPure=*/true, funcReturnType,
@@ -1332,7 +1341,7 @@ void FunctionType::initialize_jit_material_functions(Emitter &emitter) {
   }
   {
     // Generate the emission sample function:
-    // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
     // @(pure visible) int "material_name.emission_sample"(
     //     &__material_instance instance,
     //     &float4 xi,
@@ -1341,7 +1350,7 @@ void FunctionType::initialize_jit_material_functions(Emitter &emitter) {
     //     &float Le) {
     //   return ::df::__emission_sample(instance, xi, we, pdf, Le);
     // }
-    // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
     auto funcReturnType{static_cast<Type *>(context.get_int_type())};
     auto func{emitter.create_function(
         concat(declName, ".emission_sample"), /*isPure=*/true, funcReturnType,

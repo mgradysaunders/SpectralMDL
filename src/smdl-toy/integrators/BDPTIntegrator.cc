@@ -30,12 +30,12 @@ void BDPTIntegrator::integrate(const Scene &scene, const Color &wavelengthBase,
             continue;
           Color beta{};
           float misWeight{};
-          smdl::float2 imageCoord{cameraPath[0].imageCoord};
+          smdl::float2 pixelCoord{cameraPath[0].pixelCoord};
           if (connect_bidirectional(scene, allocator, rngf, wavelengthBase,
                                     &cameraPath[s], &lightPath[t], beta,
-                                    misWeight, imageCoord)) {
+                                    misWeight, pixelCoord)) {
             renderImage
-                .pixel_reference(size_t(imageCoord.x), size_t(imageCoord.y))
+                .pixel_reference(size_t(pixelCoord.x), size_t(pixelCoord.y))
                 .add(misWeight / float(samplesPerPixel), beta.data());
           }
         }

@@ -73,12 +73,6 @@ public:
   /// Has a non-default hair component?
   static constexpr int HAS_HAIR = (1 << 6);
 
-  /// Has a possibly non-zero BRDF (`wo` and `wi` in same hemisphere)?
-  static constexpr int HAS_POSSIBLY_NON_ZERO_BRDF = (1 << 7);
-
-  /// Has a possibly non-zero BTDF (`wo` and `wi` in opposite hemispheres)?
-  static constexpr int HAS_POSSIBLY_NON_ZERO_BTDF = (1 << 8);
-
   /// An instance of the material.
   struct Instance final {
     /// The material memory block.
@@ -89,13 +83,13 @@ public:
     const void *mat{};
 
     /// The displacement vector.
-    const float3 *displacement;
+    const float3 *displacement{};
 
     /// The cutout opacity.
-    const float *cutout_opacity;
+    const float *cutout_opacity{};
 
     /// The normal.
-    const float3 *normal;
+    const float3 *normal{};
 
     /// The index of refraction.
     const float *ior{};
@@ -140,10 +134,10 @@ public:
   /// The instance obtained from the `allocate` function.
   ///
   /// \param[in] wo
-  /// The outgoing direction in tangent space.
+  /// The outgoing direction in world space.
   ///
   /// \param[in] wi
-  /// The incoming direction in tangent space.
+  /// The incoming direction in world space.
   ///
   /// \param[out] pdf_fwd
   /// The forward PDF of sampling `wi` given `wo`.
@@ -157,8 +151,9 @@ public:
   /// \return
   /// Returns `true` if the result is non-zero.
   ///
-  Function<int(const Instance &instance, const float3 &wo, const float3 &wi,
-               float &pdf_fwd, float &pdf_rev, float *f)>
+  Function<int(const Instance &instance, TransportMode transport,
+               const float3 &wo, const float3 &wi, float &pdf_fwd,
+               float &pdf_rev, float *f)>
       scatter_evaluate{};
 
   /// The scatter sample function.
@@ -170,10 +165,10 @@ public:
   /// The canonical random sample in \f$ [0,1]^4 \f$.
   ///
   /// \param[in] wo
-  /// The outgoing direction in tangent space.
+  /// The outgoing direction in world space.
   ///
   /// \param[out] wi
-  /// The incoming direction in tangent space.
+  /// The incoming direction in world space.
   ///
   /// \param[out] pdf_fwd
   /// The forward PDF of sampling `wi` given `wo`.
@@ -187,9 +182,9 @@ public:
   /// \param[out] is_delta
   /// Set to `true` if sampling Dirac delta distribution.
   ///
-  Function<int(const Instance &instance, const float4 &xi, const float3 &wo,
-               float3 &wi, float &pdf_fwd, float &pdf_rev, float *f,
-               int &is_delta)>
+  Function<int(const Instance &instance, TransportMode transport,
+               const float4 &xi, const float3 &wo, float3 &wi, float &pdf_fwd,
+               float &pdf_rev, float *f, int &is_delta)>
       scatter_sample{};
 
   /// The emission evaluate function.

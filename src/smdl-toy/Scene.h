@@ -1,6 +1,7 @@
 #pragma once
 
-#include "Vertex.h"
+#include "Camera.h"
+#include "Light.h"
 
 #include "assimp/scene.h"
 
@@ -68,77 +69,39 @@ private:
             aiMatrix4x4 xf = {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1});
 
 public:
-  [[nodiscard]]
-  bool intersect(Ray &ray, Intersection &intersection) const;
+  [[nodiscard]] bool intersect(Ray &ray, Intersection &intersection) const;
 
-  [[nodiscard]] int trace_path_from_camera(smdl::BumpPtrAllocator &allocator,
-                                           const std::function<float()> &rng,
-                                           const Color &wavelengthBase,
-                                           smdl::float2 imageCoord,
-                                           int maxDepth, Vertex *path) const {
-    if (maxDepth > 0) {
-      float dirPdf{};
-      if (Camera_first_vertex_sample(camera, imageCoord, path[0], dirPdf))
-        return 1 + random_walk(allocator, rng, wavelengthBase, dirPdf,
-                               maxDepth - 1, path + 1);
-    }
-    return 0;
-  }
+  [[nodiscard]] size_t trace_path_from_camera(smdl::BumpPtrAllocator &allocator,
+                                              const Random &random,
+                                              const Color &wavelengthBase,
+                                              smdl::float2 pixelCoord,
+                                              size_t maxDepth,
+                                              Vertex *path) const;
 
-  [[nodiscard]] int trace_path_from_light(smdl::BumpPtrAllocator &allocator,
-                                          const std::function<float()> &rng,
-                                          const Color &wavelengthBase,
-                                          int maxDepth, Vertex *path) const {
-    if (maxDepth > 0) {
-      float dirPdf{};
-      auto xi0{smdl::float2(rng(), rng())};
-      auto xi1{smdl::float2(rng(), rng())};
-      auto &light{light_sample(xi1.y)};
-      if (Light_first_vertex_sample(*this, light, xi0, xi1, path[0], dirPdf))
-        return 1 + random_walk(allocator, rng, wavelengthBase, dirPdf,
-                               maxDepth - 1, path + 1);
-    }
-    return 0;
-  }
+  [[nodiscard]] size_t trace_path_from_light(smdl::BumpPtrAllocator &allocator,
+                                             const Random &random,
+                                             const Color &wavelengthBase,
+                                             size_t maxDepth,
+                                             Vertex *path) const;
 
+private:
+  [[nodiscard]] size_t random_walk(smdl::BumpPtrAllocator &allocator,
+                                   const Random &random,
+                                   const Color &wavelengthBase, float dirPdf,
+                                   size_t maxDepth, Vertex *path) const;
+
+public:
   [[nodiscard]] bool test_visibility(smdl::BumpPtrAllocator &allocator,
-                                     const std::function<float()> &rng,
+                                     const Random &random,
                                      const Color &wavelengthBase,
                                      const Vertex &fromVertex,
                                      const Vertex &toVertex, Color &beta) const;
 
-private:
-  [[nodiscard]] int random_walk(smdl::BumpPtrAllocator &allocator,
-                                const std::function<float()> &rng,
-                                const Color &wavelengthBase, float dirPdf,
-                                int maxDepth, Vertex *path) const;
-
-public:
-  void initialize_light_distribution() {
-    auto weights{std::vector<double>{}};
-    for (auto &light : lights)
-      weights.push_back(Light_power_estimate(*this, light));
-    lightDistribution = smdl::DiscreteDistribution(std::move(weights));
-  }
-
-  [[nodiscard]] const Light &light_sample(float &u) const {
-    return lights[lightDistribution.index_sample(u).first];
-  }
-
-  [[nodiscard]] float light_probability(const Light &light) const {
-    return lightDistribution.index_pmf(&light - &lights[0]);
-  }
-
-  [[nodiscard]]
-  smdl::float3 infinite_disk_emission_point_sample(smdl::float3 omega,
-                                                   smdl::float2 xi,
-                                                   float *pdf) const {
-    if (pdf)
-      *pdf = smdl::uniform_disk_pdf(boundRadius);
-    auto pointOnDisk{uniform_disk_sample(xi)};
-    auto point{smdl::float3(pointOnDisk.x, pointOnDisk.y, -1)};
-    return boundCenter + boundRadius * (smdl::coordinate_system(omega) * point);
-  }
+  [[nodiscard]] bool light_last_vertex_sample(smdl::BumpPtrAllocator &allocator,
+                                              const Random &random,
+                                              const Color &wavelengthBase,
+                                              const Vertex &cameraVertex,
+                                              Vertex &lightVertex) const;
 
 public:
   /// The compiler.
@@ -168,9 +131,5 @@ public:
   /// The materials.
   std::vector<const smdl::JIT::Material *> materials{};
 
-  /// The lights.
-  std::vector<Light> lights{};
-
-  /// The light distribution.
-  smdl::DiscreteDistribution lightDistribution{};
+  LightDistribution lights{};
 };

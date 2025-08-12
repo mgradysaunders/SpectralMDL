@@ -8,15 +8,14 @@ void Integrator::integrate_and_write_file(
     float t = i / float(WAVELENGTH_BASE_MAX - 1);
     wavelengthBase[i] = (1 - t) * WAVELENGTH_MIN + t * WAVELENGTH_MAX;
   }
-  auto renderImage{smdl::SpectralRenderImage(WAVELENGTH_BASE_MAX,
-                                             scene.camera.imageExtent.x,
-                                             scene.camera.imageExtent.y)};
+  auto renderImage{smdl::SpectralRenderImage(
+      WAVELENGTH_BASE_MAX, scene.camera.extent.x, scene.camera.extent.y)};
   integrate(scene, wavelengthBase, renderImage);
-  auto rgbImage{std::vector<uint8_t>(size_t(scene.camera.imageExtent.x * //
-                                            scene.camera.imageExtent.y * 3))};
+  auto rgbImage{std::vector<uint8_t>(size_t(scene.camera.extent.x) * //
+                                     size_t(scene.camera.extent.y) * 3)};
   auto rgbImageIndex{0};
-  for (int y = 0; y < scene.camera.imageExtent.y; y++) {
-    for (int x = 0; x < scene.camera.imageExtent.x; x++) {
+  for (int y = 0; y < scene.camera.extent.y; y++) {
+    for (int x = 0; x < scene.camera.extent.x; x++) {
       auto color{Color()};
       auto pixel{renderImage.pixel_reference(x, y)};
       for (size_t i = 0; i < WAVELENGTH_BASE_MAX; i++)
@@ -37,9 +36,8 @@ void Integrator::integrate_and_write_file(
       rgbImage[rgbImageIndex++] = std::round(255.0f * rgb[2]);
     }
   }
-  if (auto error{smdl::write_8_bit_image(imageFileName, //
-                                         scene.camera.imageExtent.x,
-                                         scene.camera.imageExtent.y, 3,
+  if (auto error{smdl::write_8_bit_image(imageFileName, scene.camera.extent.x,
+                                         scene.camera.extent.y, 3,
                                          rgbImage.data())}) {
     error->print();
   }

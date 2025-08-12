@@ -1,12 +1,18 @@
 #include "llvm/Support/InitLLVM.h"
 
-#include "Scene.h"
 #include "command_line.h"
 #include "common.h"
-#include "integrators/BDPTIntegrator.h"
-#include "integrators/PSMLTIntegrator.h"
+
+#include "Scene.h"
+// #include "integrators/BDPTIntegrator.h"
+// #include "integrators/PSMLTIntegrator.h"
 #include "integrators/PTIntegrator.h"
 #include "integrators/PTLightIntegrator.h"
+#include "lights/AmbientLight.h"
+#include "lights/DirectionLight.h"
+#include "lights/DiskLight.h"
+#include "lights/PointLight.h"
+#include "lights/SpotLight.h"
 
 #include "smdl/Support/Profiler.h"
 
@@ -106,31 +112,8 @@ int main(int argc, char **argv) try {
                       smdl::int2(cameraImageExtent),
                       float(cameraFov) * PI / 180.0f};
   Scene scene{compiler, camera, inputSceneFile};
-  scene.lights.emplace_back(
-#if 0
-      SpotLight{.intensity = Color(20.0f),
-                .origin = smdl::float3(0, 0, 5),
-                .direction = smdl::float3(0, 0, -1),
-                .cosThetaInner = 0.866f,
-                .cosThetaOuter = 0.707f}
-#else
-      DiskLight{.intensity = Color(40.0f),
-                .origin = smdl::float3(1, 2, 3),
-                .direction = smdl::normalize(smdl::float3(-1, -2, -3)),
-                .radius = 0.5f}
-#endif
-  );
-  scene.initialize_light_distribution();
-#if 0
-  if (imageLightFile.getNumOccurrences() > 0) {
-    scene.imageLight = std::make_unique<smdl::Image>();
-    if (auto error{scene.imageLight->start_load(std::string(imageLightFile))}) {
-      error->print_and_exit();
-    }
-    scene.imageLight->finish_load();
-    scene.imageLightScale = float(imageLightScale);
-  }
-#endif
+  scene.lights.emplace<PointLight>(Color(40.0f), smdl::float3(-1, -3, 5));
+  scene.lights.finalize(scene);
   auto integrator{[&]() -> std::unique_ptr<Integrator> {
     switch (IntegratorKind(integratorKind)) {
     case INTEGRATOR_KIND_PT:
@@ -139,6 +122,7 @@ int main(int argc, char **argv) try {
     case INTEGRATOR_KIND_PT_LIGHT:
       return std::make_unique<PTLightIntegrator>(seed, samplesPerPixel,
                                                  minOrder, maxOrder);
+#if 0
     case INTEGRATOR_KIND_BDPT:
       return std::make_unique<BDPTIntegrator>(seed, samplesPerPixel, minOrder,
                                               maxOrder);
@@ -150,6 +134,7 @@ int main(int argc, char **argv) try {
       return std::make_unique<PSMLTIntegrator>(seed, samplesPerPixel, minOrder,
                                                maxOrder,
                                                /*onlyIndirectPSMLT=*/true);
+#endif
     default:
       SMDL_SANITY_CHECK(false, "Invalid integrator kind");
       break;
@@ -157,6 +142,7 @@ int main(int argc, char **argv) try {
     return nullptr;
   }()};
   integrator->integrate_and_write_file(scene, imageGain, "output.png");
+  return EXIT_SUCCESS;
 } catch (const smdl::Error &error) {
   error.print();
   return EXIT_FAILURE;

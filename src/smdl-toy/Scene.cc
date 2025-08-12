@@ -6,6 +6,8 @@
 
 #include "smdl/Support/Profiler.h"
 
+#include "llvm/Support/JSON.h"
+
 Scene::Scene(const smdl::Compiler &compiler, const Camera &camera,
              const std::string &fileName)
     : compiler(compiler), camera(camera), device(rtcNewDevice("verbose=0")),
@@ -48,13 +50,15 @@ void Scene::load(const aiScene &assScene) {
                             "boundRadius = ", boundRadius, "\n");
   for (unsigned int i = 0; i < assScene.mNumMaterials; i++) {
     auto name{assScene.mMaterials[i]->GetName()};
-    materials.push_back(compiler.find_jit_material(name.C_Str()));
+    auto material{compiler.find_jit_material(name.C_Str())};
+    if (!material)
+      material = compiler.find_jit_material("default_material");
+    materials.push_back(material);
     std::cerr << "Material: " << name.C_Str() << '\n';
   }
 }
 
 void Scene::load(const aiMesh &assMesh) {
-  SMDL_PROFILER_ENTRY("Scene::load()", "Mesh");
   auto &mesh{meshes.emplace_back(new Mesh())};
   mesh->scene = rtcNewScene(device);
   rtcSetSceneFlags(mesh->scene, RTC_SCENE_FLAG_ROBUST);
@@ -103,7 +107,6 @@ void Scene::load(const aiMesh &assMesh) {
 }
 
 void Scene::load(const aiNode &assNode, aiMatrix4x4 xf) {
-  SMDL_PROFILER_ENTRY("Scene::load()", "Node");
   xf = xf * assNode.mTransformation;
   for (unsigned int i = 0; i < assNode.mNumMeshes; i++) {
     auto meshIndex = assNode.mMeshes[i];
@@ -182,12 +185,40 @@ bool Scene::intersect(Ray &ray, Intersection &intersection) const {
   }
 }
 
-int Scene::random_walk(smdl::BumpPtrAllocator &allocator,
-                       const std::function<float()> &rng,
-                       const Color &wavelengthBase, float dirPdf, int maxDepth,
-                       Vertex *path) const {
-  SMDL_PROFILER_ENTRY("Scene::random_walk()");
-  if (maxDepth <= 0)
+size_t Scene::trace_path_from_camera(smdl::BumpPtrAllocator &allocator,
+                                     const Random &random,
+                                     const Color &wavelengthBase,
+                                     smdl::float2 pixelCoord, size_t maxDepth,
+                                     Vertex *path) const {
+  if (maxDepth > 0) {
+    float dirPdf{};
+    if (camera.first_vertex_sample(pixelCoord, path[0], dirPdf)) {
+      return 1 + random_walk(allocator, random, wavelengthBase, dirPdf,
+                             maxDepth - 1, path + 1);
+    }
+  }
+  return 0;
+}
+
+size_t Scene::trace_path_from_light(smdl::BumpPtrAllocator &allocator,
+                                    const Random &random,
+                                    const Color &wavelengthBase,
+                                    size_t maxDepth, Vertex *path) const {
+  if (maxDepth > 0) {
+    float dirPdf{};
+    const Light *light{lights.light_sample(random)};
+    if (light && light->first_vertex_sample(*this, random, path[0], dirPdf)) {
+      return 1 + random_walk(allocator, random, wavelengthBase, dirPdf,
+                             maxDepth - 1, path + 1);
+    }
+  }
+  return 0;
+}
+
+size_t Scene::random_walk(smdl::BumpPtrAllocator &allocator,
+                          const Random &random, const Color &wavelengthBase,
+                          float dirPdf, size_t maxDepth, Vertex *path) const {
+  if (maxDepth == 0)
     return 0;
 
   Color beta{path[-1].beta};
@@ -202,21 +233,21 @@ int Scene::random_walk(smdl::BumpPtrAllocator &allocator,
   state.wavelength_min = WAVELENGTH_MIN;
   state.wavelength_max = WAVELENGTH_MAX;
 
+  auto ray{Ray{path[-1].point, path[-1].wNext, EPS, INF}};
   int depth{};
-  while (depth < maxDepth) {
+  while (depth < int(maxDepth)) {
     // Intersect the ray from the previous vertex with the scene.
     auto &prevVertex{path[depth - 1]};
     auto &vertex{path[depth]};
     vertex = Vertex{};
     vertex.prevVertex = &prevVertex;
-    vertex.pathOrigin = prevVertex.pathOrigin;
+    vertex.transportMode = prevVertex.transportMode;
     vertex.beta = beta;
     vertex.wPrev = -prevVertex.wNext;
-    auto ray{Ray{prevVertex.point, prevVertex.wNext, EPS, INF}};
     auto intersection{Intersection{}};
     bool intersectedSurface{intersect(ray, intersection)};
     if (!intersectedSurface) {
-      depth++;
+      ++depth;
       vertex.point = prevVertex.point + 2 * boundRadius * prevVertex.wNext;
       vertex.pdf = dirPdf;
       vertex.isAtInfinity = true;
@@ -228,18 +259,30 @@ int Scene::random_walk(smdl::BumpPtrAllocator &allocator,
       break;
     }
 
-    depth++;
+    ++depth;
     vertex.point = intersection.point;
     vertex.intersection = intersection;
     vertex.intersection->initialize_state(state);
     vertex.material = materials[intersection.materialIndex];
     vertex.material->allocate(state, vertex.materialInstance);
+    vertex.intersection->normal =
+        smdl::normalize(vertex.materialInstance.tangent_space *
+                        (*vertex.materialInstance.normal));
+    if (*vertex.materialInstance.cutout_opacity < 1.0f) {
+      if (*vertex.materialInstance.cutout_opacity <= 0.0f ||
+          !(random.generate_canonical() <
+            *vertex.materialInstance.cutout_opacity)) {
+        --depth;
+        ray.tmin = smdl::increment_float(ray.tmax + EPS);
+        ray.tmax = INF;
+        continue;
+      }
+    }
     vertex.pdf = prevVertex.convert_direction_pdf_to_point_pdf(dirPdf, vertex);
     float dirPdfAdjoint{};
     int isDelta{};
-    if (!vertex.scatter_sample(smdl::float4(rng(), rng(), rng(), rng()),
-                               vertex.wNext, dirPdf, dirPdfAdjoint, f,
-                               isDelta)) {
+    if (!vertex.scatter_sample(random.generate_canonical4(), vertex.wNext,
+                               dirPdf, dirPdfAdjoint, f, isDelta)) {
       break;
     }
     // TODO Handle isDelta
@@ -247,16 +290,53 @@ int Scene::random_walk(smdl::BumpPtrAllocator &allocator,
     beta.set_non_finite_to_zero();
     prevVertex.pdfAdjoint =
         vertex.convert_direction_pdf_to_point_pdf(dirPdfAdjoint, prevVertex);
+    ray = Ray{vertex.point, vertex.wNext, EPS, INF};
   }
   return depth;
 }
 
 bool Scene::test_visibility(smdl::BumpPtrAllocator &allocator,
-                            const std::function<float()> &rng,
-                            const Color &wavelengthBase,
+                            const Random &random, const Color &wavelengthBase,
                             const Vertex &fromVertex, const Vertex &toVertex,
                             Color &beta) const {
-  Ray ray{fromVertex.point, toVertex.point - fromVertex.point, EPS, 1.0f - EPS};
-  Intersection intersection{};
-  return !intersect(ray, intersection);
+  smdl::State state{};
+  state.allocator = &allocator;
+  state.wavelength_base = wavelengthBase.data();
+  state.wavelength_min = WAVELENGTH_MIN;
+  state.wavelength_max = WAVELENGTH_MAX;
+  Ray ray{fromVertex.point, toVertex.point - fromVertex.point, EPS, 1 - EPS};
+  while (true) {
+    if (Intersection intersection{}; intersect(ray, intersection)) {
+      intersection.initialize_state(state);
+      auto material = materials[intersection.materialIndex];
+      auto materialInstance{smdl::JIT::Material::Instance{}};
+      material->allocate(state, materialInstance);
+      if (*materialInstance.cutout_opacity < 1.0f) {
+        if (*materialInstance.cutout_opacity <= 0.0f ||
+            !(random.generate_canonical() < *materialInstance.cutout_opacity)) {
+          ray.tmin = smdl::increment_float(ray.tmax + EPS);
+          ray.tmax = 1 - EPS;
+          if (!(ray.tmin < ray.tmax))
+            return true;
+          continue;
+        }
+      }
+      break;
+    } else {
+      return true;
+    }
+  }
+  return false;
+}
+
+bool Scene::light_last_vertex_sample(smdl::BumpPtrAllocator &allocator,
+                                     const Random &random,
+                                     const Color &wavelengthBase,
+                                     const Vertex &cameraVertex,
+                                     Vertex &lightVertex) const {
+  const Light *light{lights.light_sample(random)};
+  return light &&
+         light->last_vertex_sample(*this, random, cameraVertex, lightVertex) &&
+         test_visibility(allocator, random, wavelengthBase, cameraVertex,
+                         lightVertex, lightVertex.beta);
 }

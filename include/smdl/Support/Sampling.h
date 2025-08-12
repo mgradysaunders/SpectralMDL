@@ -1,7 +1,7 @@
 /// \file
 #pragma once
 
-#include <limits>
+#include <random>
 
 #include "smdl/Support/VectorMath.h"
 
@@ -10,49 +10,28 @@ namespace smdl {
 /// \addtogroup Support
 /// \{
 
-/// The constant `PI`.
-constexpr float PI = 3.141592653589793f;
-
-/// The inverse of the error function.
-[[nodiscard]] inline float erf_inverse(float y) {
-  float w = -std::log(
-      std::max(std::numeric_limits<float>::denorm_min(), (1 - y) * (1 + y)));
-  float x = 0;
-  if (w < 5) {
-    w = w - 2.5f;
-    x = w * 2.81022636e-08f + 3.43273939e-7f;
-    x = w * x - 3.52338770e-6f;
-    x = w * x - 4.39150654e-6f;
-    x = w * x + 2.18580870e-4f;
-    x = w * x - 1.25372503e-3f;
-    x = w * x - 4.17768164e-3f;
-    x = w * x + 2.46640727e-1f;
-    x = w * x + 1.50140941f;
-  } else {
-    w = std::sqrt(w) - 3;
-    x = x * -2.00214257e-4f + 1.00950558e-4f;
-    x = w * x + 1.34934322e-3f;
-    x = w * x - 3.67342844e-3f;
-    x = w * x + 5.73950773e-3f;
-    x = w * x - 7.62246130e-3f;
-    x = w * x + 9.43887047e-3f;
-    x = w * x + 1.00167406f;
-    x = w * x + 2.83297682f;
-  }
-  x *= y;
-  return x;
+/// Generate canonical random sample.
+template <typename G> [[nodiscard]] inline float generate_canonical(G &g) {
+  float xi{std::generate_canonical<float, 32>(g)};
+  xi = std::fmax(xi, std::numeric_limits<float>::denorm_min());      // > 0.0f
+  xi = std::fmin(xi, 1 - std::numeric_limits<float>::epsilon() / 2); // < 1.0f
+  return xi;
 }
 
-[[nodiscard]] inline float standard_normal_pdf(float x) {
-  return /*1/sqrt(2pi)=*/0.398942280401f * std::exp(-0.5f * x * x);
+/// Generate canonical random sample in `(0,1)^2`.
+template <typename G> [[nodiscard]] inline float2 generate_canonical2(G &g) {
+  return {generate_canonical(g), generate_canonical(g)};
 }
 
-[[nodiscard]] inline float standard_normal_cdf(float x) {
-  return 0.5f + 0.5f * std::erf(/*1/sqrt(2)=*/0.707106781187f * x);
+/// Generate canonical random sample in `(0,1)^3`.
+template <typename G> [[nodiscard]] inline float3 generate_canonical3(G &g) {
+  return {generate_canonical(g), generate_canonical(g), generate_canonical(g)};
 }
 
-[[nodiscard]] inline float standard_normal_sample(float u) {
-  return /*sqrt(2)=*/1.41421356237f * erf_inverse(2 * u - 1);
+/// Generate canonical random sample in `(0,1)^4`.
+template <typename G> [[nodiscard]] inline float4 generate_canonical4(G &g) {
+  return {generate_canonical(g), generate_canonical(g), generate_canonical(g),
+          generate_canonical(g)};
 }
 
 [[nodiscard]] inline float uniform_disk_pdf(float r = 1) {
@@ -110,6 +89,48 @@ constexpr float PI = 3.141592653589793f;
   if (pdf)
     *pdf = uniform_cone_pdf(zMin);
   return float3(sinTheta * std::cos(phi), sinTheta * std::sin(phi), cosTheta);
+}
+
+/// The inverse of the error function.
+[[nodiscard]] inline float erf_inverse(float y) {
+  float w = -std::log(
+      std::max(std::numeric_limits<float>::denorm_min(), (1 - y) * (1 + y)));
+  float x = 0;
+  if (w < 5) {
+    w = w - 2.5f;
+    x = w * 2.81022636e-08f + 3.43273939e-7f;
+    x = w * x - 3.52338770e-6f;
+    x = w * x - 4.39150654e-6f;
+    x = w * x + 2.18580870e-4f;
+    x = w * x - 1.25372503e-3f;
+    x = w * x - 4.17768164e-3f;
+    x = w * x + 2.46640727e-1f;
+    x = w * x + 1.50140941f;
+  } else {
+    w = std::sqrt(w) - 3;
+    x = x * -2.00214257e-4f + 1.00950558e-4f;
+    x = w * x + 1.34934322e-3f;
+    x = w * x - 3.67342844e-3f;
+    x = w * x + 5.73950773e-3f;
+    x = w * x - 7.62246130e-3f;
+    x = w * x + 9.43887047e-3f;
+    x = w * x + 1.00167406f;
+    x = w * x + 2.83297682f;
+  }
+  x *= y;
+  return x;
+}
+
+[[nodiscard]] inline float standard_normal_pdf(float x) {
+  return /*1/sqrt(2pi)=*/0.398942280401f * std::exp(-0.5f * x * x);
+}
+
+[[nodiscard]] inline float standard_normal_cdf(float x) {
+  return 0.5f + 0.5f * std::erf(/*1/sqrt(2)=*/0.707106781187f * x);
+}
+
+[[nodiscard]] inline float standard_normal_sample(float u) {
+  return /*sqrt(2)=*/1.41421356237f * erf_inverse(2 * u - 1);
 }
 
 /// \}

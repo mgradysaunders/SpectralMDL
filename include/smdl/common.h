@@ -107,6 +107,11 @@ class Compiler;
 class Module;
 class Type;
 
+enum TransportMode : int {
+  TRANSPORT_MODE_RADIANCE = 0,
+  TRANSPORT_MODE_IMPORTANCE = 1,
+};
+
 /// A source location somewhere in an MDL module.
 class SMDL_EXPORT SourceLocation final {
 public:
@@ -154,11 +159,6 @@ public:
   /// The raw index in the source code string.
   uint64_t i{};
 };
-
-/// \}
-
-/// \addtogroup Main
-/// \{
 
 /// The format options.
 class SMDL_EXPORT FormatOptions final {

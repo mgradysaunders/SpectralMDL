@@ -1623,6 +1623,8 @@ Value Emitter::emit_intrinsic(std::string_view name, const ArgumentList &args,
             // the default instantiation of an abstract struct.
             result = structType->isDefaultInstance;
           }
+        } else {
+          result = false;
         }
       }
       if (result) {

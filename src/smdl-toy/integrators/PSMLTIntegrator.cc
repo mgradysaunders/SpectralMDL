@@ -79,7 +79,7 @@ void PSMLTIntegrator::integrate(const Scene &scene, const Color &wavelengthBase,
       Color beta{};
       float betaMeasurement{};
       float misWeight{};
-      smdl::float2 imageCoord{};
+      smdl::float2 pixelCoord{};
     };
     auto contributionSample{[&](smdl::BumpPtrAllocator &allocator,
                                 Sampler &sampler, size_t order,
@@ -91,11 +91,11 @@ void PSMLTIntegrator::integrate(const Scene &scene, const Color &wavelengthBase,
       size_t numStrategies{order + 1};
       size_t depthFromCamera = size_t(numStrategies * rngf()) + 1;
       size_t depthFromLight = numStrategies + 1 - depthFromCamera;
-      contribution.imageCoord =
+      contribution.pixelCoord =
           smdl::float2(float(scene.camera.imageExtent.x) * rngf(),
                        float(scene.camera.imageExtent.y) * rngf());
       contribution.cameraPathLen = scene.trace_path_from_camera(
-          allocator, rngf, wavelengthBase, contribution.imageCoord,
+          allocator, rngf, wavelengthBase, contribution.pixelCoord,
           depthFromCamera, &contribution.cameraPath[0]);
       if (depthFromCamera != contribution.cameraPathLen)
         return false;
@@ -115,7 +115,7 @@ void PSMLTIntegrator::integrate(const Scene &scene, const Color &wavelengthBase,
                   ? nullptr
                   : &contribution.lightPath[contribution.lightPathLen - 1],
               contribution.beta, contribution.misWeight,
-              contribution.imageCoord))
+              contribution.pixelCoord))
         return false;
       contribution.beta *= contribution.misWeight * numStrategies;
       contribution.betaMeasurement = scalarMeasurement(contribution.beta);
@@ -178,16 +178,16 @@ void PSMLTIntegrator::integrate(const Scene &scene, const Color &wavelengthBase,
           }
           if (acceptChance > 0.0f) {
             renderImage
-                .pixel_reference(size_t(nextContribution.imageCoord.x),
-                                 size_t(nextContribution.imageCoord.y))
+                .pixel_reference(size_t(nextContribution.pixelCoord.x),
+                                 size_t(nextContribution.pixelCoord.y))
                 .add(bootstrapIntegral / nextContribution.betaMeasurement *
                          acceptChance / double(samplesPerPixel),
                      nextContribution.beta.data());
           }
           if (acceptChance < 1.0f) {
             renderImage
-                .pixel_reference(size_t(prevContribution.imageCoord.x),
-                                 size_t(prevContribution.imageCoord.y))
+                .pixel_reference(size_t(prevContribution.pixelCoord.x),
+                                 size_t(prevContribution.pixelCoord.y))
                 .add(bootstrapIntegral / prevContribution.betaMeasurement *
                          (1.0 - acceptChance) / double(samplesPerPixel),
                      prevContribution.beta.data());

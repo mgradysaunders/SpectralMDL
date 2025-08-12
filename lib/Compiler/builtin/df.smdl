@@ -234,6 +234,8 @@ float3x3 calculate_tangent_space(const float3 normal, const float3 tangent_u) {
 }
 
 struct scatter_evaluate_parameters {
+  int is_importance;
+
   /// The reference outgoing direction in the natural tangent space.
   float3 wo0;
 
@@ -263,6 +265,8 @@ struct scatter_evaluate_parameters {
 
   /// The incoming direction.
   float3 wi = wi0;
+
+  float shading_normal_correction = 1;
 
   finalize {
     // If we hit the backface, flip everything so that `wo` 
@@ -300,8 +304,15 @@ struct scatter_evaluate_result {
 @(pure noinline)
 bool recalculate_tangent_space(inline const &scatter_evaluate_parameters params) {
   auto tbn(calculate_tangent_space(normal, tangent_u));
-  wo = wo0 * tbn;
-  wi = wi0 * tbn;
+  wo = normalize(wo0 * tbn);
+  wi = normalize(wi0 * tbn);
+  if (is_importance) {
+    const auto numer = wo.z * wi0.z;
+    const auto denom = wi.z * wo0.z;
+    shading_normal_correction = (denom == 0 ? 1 : #abs(numer / denom));
+  } else {
+    shading_normal_correction = 1;
+  }
   return ((wo.z < 0) == (wo0.z < 0)) & ((wi.z < 0) == (wi0.z < 0));
 }
 
@@ -313,6 +324,8 @@ float3 half_direction(inline const &scatter_evaluate_parameters params) {
 }
 
 struct scatter_sample_parameters {
+  int is_importance;
+
   /// The primary outgoing direction in the natural geometric tangent space.
   float3 wo0;
 
@@ -476,14 +489,18 @@ auto scatter_evaluate(const &diffuse_reflection_bsdf this, inline const &scatter
     const auto cos_theta(#abs(auto(wi.z, wo.z)));
     const auto pdf(cos_theta / $PI);
     if (this.roughness == 0) {
-      return scatter_evaluate_result(f: this.tint * pdf[0], pdf: pdf);
+      auto result(scatter_evaluate_result(f: this.tint * pdf[0], pdf: pdf));
+      result.f *= shading_normal_correction if (is_importance);
+      return result;
     } else {
       // Oren-Nayar terms.
       const auto sigma2(2.0 * this.roughness * this.roughness);
       const auto A(1.00 - sigma2 / (2.0 * sigma2 + 0.66));
       const auto B(0.45 * sigma2 / (sigma2 + 0.09));
       const auto f(pdf[0] * (A + #max(#sum(wo.xy * wi.xy), 0) / (#max_value(cos_theta) + EPSILON) * B));
-      return scatter_evaluate_result_with_multiscatter(this, f, pdf, wo.z, wi.z, this.roughness, "diffuse_reflection_bsdf");
+      auto result(scatter_evaluate_result_with_multiscatter(this, f, pdf, wo.z, wi.z, this.roughness, "diffuse_reflection_bsdf"));
+      result.f *= shading_normal_correction if (is_importance);
+      return result;
     }
   } else {
     return scatter_evaluate_result(is_black: true);
@@ -528,7 +545,9 @@ auto scatter_evaluate(inline const &diffuse_transmission_bsdf this, inline const
   if (mode == scatter_transmit && recalculate_tangent_space(params)) {
     const auto cos_theta(#abs(auto(wi.z, wo.z)));
     const auto pdf(cos_theta / $PI);
-    return scatter_evaluate_result(f: tint * pdf[0], pdf: pdf);
+    auto result(scatter_evaluate_result(f: tint * pdf[0], pdf: pdf));
+    result.f *= shading_normal_correction if (is_importance);
+    return result;
   } else {
     return scatter_evaluate_result(is_black: true);
   }
@@ -661,7 +680,9 @@ auto scatter_evaluate(const &sheen_bsdf this, inline const &scatter_evaluate_par
       const auto D(1 / $TWO_PI * (2 + 1 / alpha) * #pow(sin_thetah, 1 / alpha));
       const auto G(1 / (1 + sheen_lambda(fit, cos_thetao) + sheen_lambda(fit, cos_thetai)));
     } in D * G / (4 * cos_thetao);
-    return scatter_evaluate_result_with_multiscatter(this, f, pdf, cos_thetao, cos_thetai, this.roughness, "sheen_bsdf");
+    auto result(scatter_evaluate_result_with_multiscatter(this, f, pdf, cos_thetao, cos_thetai, this.roughness, "sheen_bsdf"));
+    result.f *= shading_normal_correction if (is_importance);
+    return result;
   } else {
     return scatter_evaluate_result(is_black: true);
   }
@@ -744,7 +765,9 @@ auto scatter_evaluate(const &ward_geisler_moroder_bsdf this, inline const &scatt
     const auto f0(#sum((h := wo + wi) * h) / ($PI * alpha.x * alpha.y * #pow(h.z, 4)) * #exp(-#sum((g := h.xy / (h.z * alpha)) * g)));
     const auto f(f0 * cos_thetai);
     const auto pdf(float2(f0 * (cos_thetao + cos_thetai) / 2));
-    return scatter_evaluate_result_with_multiscatter(this, f, pdf, cos_thetao, cos_thetai, roughness0, "ward_geisler_moroder_bsdf");
+    auto result(scatter_evaluate_result_with_multiscatter(this, f, pdf, cos_thetao, cos_thetai, roughness0, "ward_geisler_moroder_bsdf"));
+    result.f *= shading_normal_correction if (is_importance);
+    return result;
   } else {
     return scatter_evaluate_result(is_black: true);
   }
@@ -1033,6 +1056,7 @@ auto scatter_evaluate(const &microfacet_bsdf this, inline const &scatter_evaluat
       const auto pdf(norm1 * D / (4 * float2(dot_wo_wm, dot_wi_wm) + EPSILON));
       const auto f(norm2 * D * G / (4 * cos_thetao + EPSILON));
       auto result(scatter_evaluate_result_with_multiscatter(this, f, pdf, cos_thetao, cos_thetai, this.roughness0, "simple_glossy_bsdf"));
+      result.f *= shading_normal_correction if (is_importance);
       result.f *= reflect_chance;
       result.pdf *= reflect_chance;
       return result;
@@ -1062,6 +1086,7 @@ auto scatter_evaluate(const &microfacet_bsdf this, inline const &scatter_evaluat
       const auto pdf(D / (4 * float2(proj_areao, proj_areai) + EPSILON));
       const auto f(D * G / (4 * cos_thetao + EPSILON));
       auto result(scatter_evaluate_result_with_multiscatter(this, f, pdf, cos_thetao, cos_thetai, this.roughness0, lut_name));
+      result.f *= shading_normal_correction if (is_importance);
       result.f *= reflect_chance;
       result.pdf *= reflect_chance;
       return result;
@@ -1072,6 +1097,7 @@ auto scatter_evaluate(const &microfacet_bsdf this, inline const &scatter_evaluat
       const auto pdf(D * jac * float2(dot_wo_wm, -dot_wi_wm) / (float2(proj_areao, proj_areai) + EPSILON));
       const auto f(D * G * jac[0] * dot_wo_wm / (cos_thetao + EPSILON));
       auto result(scatter_evaluate_result(f: this.tint * f, pdf: pdf));
+      result.f *= shading_normal_correction if (is_importance);
       result.f *= 1 - reflect_chance;
       result.pdf *= 1 - reflect_chance;
       return result;
@@ -1746,13 +1772,20 @@ auto scatter_sample(const &component_mix this, const &scatter_sample_parameters 
 @(macro)
 export int __scatter_evaluate(
   const &__material_instance instance,
-  const &float3 wo,     ///< The outgoing direction
-  const &float3 wi,     ///< The incoming direction
-  const &float pdf_fwd, ///< output: The PDF of sampling `wi` from `wo`
-  const &float pdf_rev, ///< output: The PDF of sampling `wo` from `wi`
-  const &float f,       ///< output: The scattering function
+  const int is_importance, ///< Is importance?
+  const &float3 wo_world,  ///< The outgoing direction in world space
+  const &float3 wi_world,  ///< The incoming direction in world space
+  const &float pdf_fwd,    ///< output: The PDF of sampling `wi` from `wo`
+  const &float pdf_rev,    ///< output: The PDF of sampling `wo` from `wi`
+  const &float f,          ///< output: The scattering function
 ) {
-  auto params = scatter_evaluate_parameters(wo0: normalize(*wo), wi0: normalize(*wi), normal: normalize(*instance.normal), thin_walled: instance.mat.thin_walled);
+  auto params = scatter_evaluate_parameters(
+    is_importance: is_importance,
+    wo0: normalize((*wo_world) * instance.tangent_space),
+    wi0: normalize((*wi_world) * instance.tangent_space),
+    normal: normalize(*instance.normal),
+    thin_walled: instance.mat.thin_walled,
+  );
   auto result = #is_default(instance.mat.backface) || !params.hit_backface          //
                 ? scatter_evaluate(visit &instance.mat.surface.scattering, &params) //
                 : scatter_evaluate(visit &instance.mat.backface.scattering, &params);
@@ -1779,20 +1812,28 @@ export int __scatter_evaluate(
 @(macro)
 export int __scatter_sample(
   const &__material_instance instance,
-  const &float4 xi,     ///< The canonical random sample in `[0,1]^4`
-  const &float3 wo,     ///< The outgoing direction
-  const &float3 wi,     ///< output: The incoming direction
-  const &float pdf_fwd, ///< output: The PDF of sampling `wi` from `wo`
-  const &float pdf_rev, ///< output: The PDF of sampling `wo` from `wi`
-  const &float f,       ///< output: The scattering function
-  const &int is_delta,  ///< output: Is delta direction?
+  const int is_importance, ///< Is importance?
+  const &float4 xi,        ///< The canonical random sample in `[0,1]^4`
+  const &float3 wo_world,  ///< The outgoing direction in world space
+  const &float3 wi_world,  ///< output: The incoming direction in world space
+  const &float pdf_fwd,    ///< output: The PDF of sampling `wi` from `wo`
+  const &float pdf_rev,    ///< output: The PDF of sampling `wo` from `wi`
+  const &float f,          ///< output: The scattering function
+  const &int is_delta,     ///< output: Is delta direction?
 ) {
-  auto params = scatter_sample_parameters(xi: saturate(*xi), wo0: normalize(*wo), normal: normalize(*instance.normal), thin_walled: instance.mat.thin_walled);
+  auto wo = normalize((*wo_world) * instance.tangent_space);
+  auto params = scatter_sample_parameters(
+    is_importance: is_importance,
+    xi: *xi,
+    wo0: wo,
+    normal: normalize(*instance.normal),
+    thin_walled: instance.mat.thin_walled,
+  );
   auto result = #is_default(instance.mat.backface) || !params.hit_backface        //
                 ? scatter_sample(visit &instance.mat.surface.scattering, &params) //
                 : scatter_sample(visit &instance.mat.backface.scattering, &params);
   visit result in result {
-    *wi = #select(params.hit_backface, -result.wi, +result.wi);
+    const auto wi = #select(params.hit_backface, -result.wi, +result.wi);
     if (result.mode == scatter_none || ((wo.z < 0.0) == (wi.z < 0.0)) != (result.mode == scatter_reflect)) {
       *pdf_fwd = 0.0;
       *pdf_rev = 0.0;
@@ -1800,18 +1841,17 @@ export int __scatter_sample(
         f[i] = 0.0;
       return false;
     }
+    *wi_world = normalize(instance.tangent_space * wi);
     if ((*is_delta = bool(result.delta_f))) {
       *pdf_fwd = 1.0;
       *pdf_rev = 1.0;
       #memcpy(f, &*result.delta_f, #sizeof(float) * $WAVELENGTH_BASE_MAX);
       return true;
     } else {
-      return __scatter_evaluate(instance, wo, wi, pdf_fwd, pdf_rev, f);
+      return __scatter_evaluate(instance, is_importance, wo_world, wi_world, pdf_fwd, pdf_rev, f);
     }
   }
 }
-
-// TODO VDF
 
 struct emission_evaluate_parameters {
   /// The emission direction.

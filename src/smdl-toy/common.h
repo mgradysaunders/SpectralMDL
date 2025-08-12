@@ -57,26 +57,29 @@ template <typename... Seeds>
   }
 }
 
-template <typename Gen>
-[[nodiscard]] inline float generate_canonical(Gen &gen) {
-  float u{std::generate_canonical<float, 32>(gen)};
-  u = std::fmax(u, std::numeric_limits<float>::denorm_min());
-  u = std::fmin(u, 1 - std::numeric_limits<float>::epsilon() / 2);
-  return u;
-}
+class Random final {
+public:
+  Random(std::function<float()> gen) : gen(std::move(gen)) {}
+
+  [[nodiscard]] float generate_canonical() const { return gen(); }
+
+  [[nodiscard]] smdl::float2 generate_canonical2() const {
+    return {gen(), gen()};
+  }
+
+  [[nodiscard]] smdl::float3 generate_canonical3() const {
+    return {gen(), gen(), gen()};
+  }
+
+  [[nodiscard]] smdl::float4 generate_canonical4() const {
+    return {gen(), gen(), gen(), gen()};
+  }
+
+private:
+  std::function<float()> gen{};
+};
 
 using Color = smdl::ColorVector<WAVELENGTH_BASE_MAX>;
-
-[[nodiscard]]
-inline std::pair<smdl::float3, float> direction_and_distance(smdl::float3 from,
-                                                             smdl::float3 to) {
-  auto vec{smdl::double3(to) - smdl::double3(from)};
-  if (auto vecLen{smdl::length(vec)}; vecLen > 0.0) {
-    return {smdl::float3(vec / vecLen), float(vecLen)};
-  } else {
-    return {smdl::float3(0.f), 0.f};
-  }
-}
 
 class Ray final {
 public:
@@ -148,6 +151,17 @@ public:
                             const smdl::float3 &wNext) const {
     float numer{smdl::dot(wPrev, normal) * smdl::dot(wNext, geometryNormal)};
     float denom{smdl::dot(wPrev, geometryNormal) * smdl::dot(wNext, normal)};
-    return denom == 0.0f ? 1.0f : numer / denom;
+    return denom == 0.0f ? 1.0f : std::abs(numer / denom);
   }
 };
+
+[[nodiscard]]
+inline std::pair<smdl::float3, float> direction_and_distance(smdl::float3 from,
+                                                             smdl::float3 to) {
+  auto vec{smdl::double3(to) - smdl::double3(from)};
+  if (auto vecLen{smdl::length(vec)}; vecLen > 0.0) {
+    return {smdl::float3(vec / vecLen), float(vecLen)};
+  } else {
+    return {smdl::float3(0.f), 0.f};
+  }
+}

@@ -519,12 +519,14 @@ private:
   /// - 'z' is 2
   /// - 'w' is 3
   ///
-  [[nodiscard]] std::optional<uint32_t> to_index(char name) const {
+  [[nodiscard]] std::optional<uint32_t> to_index(char c) const {
     if (!extent.is_scalar()) {
       for (uint16_t i{};
-           i < extent.is_vector() ? extent.numRows : extent.numCols; i++)
-        if (name == "xyzw"[i])
+           i < (extent.is_vector() ? extent.numRows : extent.numCols); i++) {
+        if (c == "xyzw"[i] || (extent.is_vector() && c == "rgba"[i])) {
           return i;
+        }
+      }
     }
     return std::nullopt;
   }
@@ -535,10 +537,10 @@ private:
     if (extent.is_vector()) {
       llvm::SmallVector<int> swizzle{};
       for (char c : name) {
-        int i{(int(c - 'w') + 3) & 3};
-        if (i < 0 || unsigned(i) >= extent.numRows)
+        auto i{to_index(c)};
+        if (!i)
           return std::nullopt;
-        swizzle.push_back(i);
+        swizzle.push_back(*i);
       }
       return swizzle;
     }

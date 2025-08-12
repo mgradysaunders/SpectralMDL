@@ -432,12 +432,6 @@ const int HAS_VOLUME = (1 << 5);
 /// Has a non-default hair component?
 const int HAS_HAIR = (1 << 6);
 
-/// Has possibly non-zero BRDF?
-const int HAS_POSSIBLY_NON_ZERO_BRDF = (1 << 7); // TODO
-
-/// Has possibly non-zero BTDF?
-const int HAS_POSSIBLY_NON_ZERO_BTDF = (1 << 8); // TODO
-
 /// An instance of a material corresponding to `smdl::JIT::Material::Instance` 
 /// in the C++ API.
 export struct __material_instance {

@@ -5,16 +5,19 @@ import ::math::lerp;
 export enum gamma_mode { gamma_default = 0, gamma_linear = 0, gamma_srgb = 1 };
 
 @(pure macro)
-float4 apply_gamma(const int gamma, const float4 texel) = gamma == int(gamma_srgb) ? float4((texel * texel).xyz, texel.w) : texel;
+auto decode_srgb(const auto texel) = #pow(texel, 2.2);
 
 @(pure macro)
-float3 apply_gamma(const int gamma, const float3 texel) = gamma == int(gamma_srgb) ? (texel * texel) : texel;
+float4 apply_gamma(const int gamma, const float4 texel) = gamma == int(gamma_srgb) ? float4(decode_srgb(texel.rgb), texel.a) : texel;
 
 @(pure macro)
-float2 apply_gamma(const int gamma, const float2 texel) = gamma == int(gamma_srgb) ? (texel * texel) : texel;
+float3 apply_gamma(const int gamma, const float3 texel) = gamma == int(gamma_srgb) ? decode_srgb(texel) : texel;
 
 @(pure macro)
-float apply_gamma(const int gamma, const float texel) = gamma == int(gamma_srgb) ? (texel * texel) : texel;
+float2 apply_gamma(const int gamma, const float2 texel) = gamma == int(gamma_srgb) ? decode_srgb(texel) : texel;
+
+@(pure macro)
+float apply_gamma(const int gamma, const float texel) = gamma == int(gamma_srgb) ? decode_srgb(texel) : texel;
 
 @(pure macro)
 int uv_tile_index(const texture_2d tex, const int2 uv_tile) {

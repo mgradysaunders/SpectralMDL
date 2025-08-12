@@ -3,11 +3,27 @@
 
 #include <algorithm>
 #include <cmath>
+#include <limits>
 
 namespace smdl {
 
 /// \addtogroup Support
 /// \{
+
+/// The constant `PI`.
+constexpr float PI = 3.141592653589793f;
+
+[[nodiscard]] inline float finite_or_zero(float x) noexcept {
+  return std::isfinite(x) ? x : 0.0f;
+}
+
+[[nodiscard]] inline float increment_float(float x) noexcept {
+  return std::nextafter(x, +std::numeric_limits<float>::infinity());
+}
+
+[[nodiscard]] inline float decrement_float(float x) noexcept {
+  return std::nextafter(x, -std::numeric_limits<float>::infinity());
+}
 
 /// The vector template.
 template <typename T, size_t M> class Vector;
@@ -502,10 +518,6 @@ affine_inverse(const Matrix<T, 4, 4> &m) noexcept {
           float4{y.x, y.y, y.z, 0.0f}, //
           float4{z.x, z.y, z.z, 0.0f}, //
           float4{from.x, from.y, from.z, 1.0f}};
-}
-
-[[nodiscard]] inline float finite_or_zero(float x) noexcept {
-  return std::isfinite(x) ? x : 0.0f;
 }
 
 /// \}
