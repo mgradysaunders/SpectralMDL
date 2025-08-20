@@ -175,11 +175,17 @@ export tag vdf;
 export tag edf;
 export tag hair_bsdf;
 export struct __default_bsdf:default bsdf{
-  static const int mode=0;
+  static const int __flags=0;
 };
-export struct __default_vdf:default vdf{};
-export struct __default_edf:default edf{};
-export struct __default_hair_bsdf:default hair_bsdf{};
+export struct __default_vdf:default vdf{
+  static const int __flags=0;
+};
+export struct __default_edf:default edf{
+  static const int __flags=0;
+};
+export struct __default_hair_bsdf:default hair_bsdf{
+  static const int __flags=0;
+};
 export struct texture_2d{
   texture_2d(const string name,const auto gamma=0)=#load_texture_2d(name,int(gamma));
   const int2 tile_count=int2(1,1);
@@ -241,13 +247,12 @@ export struct material{
   material_geometry geometry=material_geometry();
   hair_bsdf hair=hair_bsdf();
 };
-const int THIN_WALLED=(1<<0);
-const int HAS_SURFACE_SCATTERING=(1<<1);
-const int HAS_BACKFACE_SCATTERING=(1<<2);
-const int HAS_SURFACE_EMISSION=(1<<3);
-const int HAS_BACKFACE_EMISSION=(1<<4);
-const int HAS_VOLUME=(1<<5);
-const int HAS_HAIR=(1<<6);
+const int MATERIAL_TRANSPORT_IMPORTANCE=(1<<0);
+const int MATERIAL_THIN_WALLED=(1<<1);
+const int MATERIAL_HAS_SURFACE=(1<<2);
+const int MATERIAL_HAS_BACKFACE=(1<<3);
+const int MATERIAL_HAS_VOLUME=(1<<6);
+const int MATERIAL_HAS_HAIR=(1<<7);
 export struct __material_instance{
   const &material mat;
   const &float3 displacement=&mat.geometry.displacement;
@@ -257,7 +262,9 @@ export struct __material_instance{
   const &color absorption_coefficient=#is_void(mat.volume.absorption_coefficient)?none:&mat.volume.absorption_coefficient;
   const &color scattering_coefficient=#is_void(mat.volume.scattering_coefficient)?none:&mat.volume.scattering_coefficient;
   const int wavelength_base_max=$WAVELENGTH_BASE_MAX;
-  const int flags=(mat.thin_walled?THIN_WALLED:0)|(!#is_default(mat.surface.scattering)?HAS_SURFACE_SCATTERING:0)|(!#is_default(mat.backface.scattering)?HAS_BACKFACE_SCATTERING:0)|(!#is_default(mat.surface.emission)?HAS_SURFACE_EMISSION:0)|(!#is_default(mat.backface.emission)?HAS_BACKFACE_EMISSION:0)|(!#is_default(mat.volume)?HAS_VOLUME:0)|(!#is_default(mat.hair)?HAS_HAIR:0);
+  const int flags=$state.transport|(mat.thin_walled?MATERIAL_THIN_WALLED:0)|(!#is_default(mat.surface)?MATERIAL_HAS_SURFACE:0)|(!#is_default(mat.backface)?MATERIAL_HAS_BACKFACE:0)|(!#is_default(mat.volume)?MATERIAL_HAS_VOLUME:0)|(!#is_default(mat.hair)?MATERIAL_HAS_HAIR:0);
+  const int df_flags_surface=mat.surface.scattering.__flags;
+  const int df_flags_backface=mat.backface.scattering.__flags;
   const float3x3 tangent_space=float3x3($state.tangent_to_object_matrix[0].xyz,$state.tangent_to_object_matrix[1].xyz,$state.tangent_to_object_matrix[2].xyz,);
 };
 export struct __albedo_lut{
@@ -368,6 +375,12 @@ static const char *df = R"*(#smdl
 using ::math import *;
 const float EPSILON=1e-6;
 const float MULTISCATTER_DIFFUSE_CHANCE=0.2;
+const int DF_REFLECTION=(1<<0);
+const int DF_TRANSMISSION=(1<<1);
+const int DF_DIFFUSE=(1<<2);
+const int DF_GLOSSY=(1<<3);
+const int DF_SPECULAR=(1<<4);
+const int DF_EMISSION=(1<<5);
 export enum scatter_mode{
   scatter_none=0x0,
   scatter_reflect=0x1,
@@ -653,11 +666,11 @@ auto scatter_sample(const &__default_bsdf this[[anno::unused()]],const &scatter_
   return scatter_sample_result();
 }
 export struct diffuse_reflection_bsdf:bsdf{
-  $(color|float) tint=1.0;
-  float roughness=0.0;
+  const $(color|float) tint=1.0;
+  const float roughness=0.0;
   void handle="";
-  $(?(color|float)) multiscatter_tint=none;
-  static const scatter_mode mode=scatter_reflect;
+  const $(?(color|float)) multiscatter_tint=none;
+  static const int __flags=DF_REFLECTION|DF_DIFFUSE;
 };
 @(pure)
 auto scatter_evaluate(const &diffuse_reflection_bsdf this,inline const &scatter_evaluate_parameters params){
@@ -690,9 +703,9 @@ auto scatter_sample(const &diffuse_reflection_bsdf this[[anno::unused()]],inline
   }
 }
 export struct diffuse_transmission_bsdf:bsdf{
-  $(color|float) tint=1.0;
+  const $(color|float) tint=1.0;
   void handle="";
-  static const scatter_mode mode=scatter_transmit;
+  static const int __flags=DF_TRANSMISSION|DF_DIFFUSE;
 };
 @(pure)
 auto scatter_evaluate(inline const &diffuse_transmission_bsdf this,inline const &scatter_evaluate_parameters params){
@@ -715,9 +728,10 @@ auto scatter_sample(inline const &diffuse_transmission_bsdf this,inline const &s
   }
 }
 export struct specular_bsdf:bsdf{
-  $(color|float) tint=1.0;
-  scatter_mode mode=scatter_reflect;
+  const $(color|float) tint=1.0;
+  const scatter_mode mode=scatter_reflect;
   void handle="";
+  const int __flags=int(mode)|DF_SPECULAR;
 };
 @(pure macro)
 auto scatter_evaluate(const &specular_bsdf this[[anno::unused()]],const &scatter_evaluate_parameters params[[anno::unused()]]){
@@ -726,17 +740,26 @@ auto scatter_evaluate(const &specular_bsdf this[[anno::unused()]],const &scatter
 @(pure macro)
 auto scatter_sample(const &specular_bsdf this,inline const &scatter_sample_parameters params){
   if((tbn:=recalculate_tangent_space(params))){
-    return xi.x<scatter_reflect_chance(this.mode)?scatter_sample_result(wi: (*tbn)*specular::reflect(wo,float3(0,0,1)),mode: scatter_reflect,delta_f: color(this.tint)):scatter_sample_result(wi: (*tbn)*specular::refract(wo,float3(0,0,1),ior),mode: scatter_transmit,delta_f: color(this.tint));
+    if(xi.x<scatter_reflect_chance(this.mode)){
+      return scatter_sample_result(wi: (*tbn)*specular::reflect(wo,float3(0,0,1)),mode: scatter_reflect,delta_f: color(this.tint));
+    } else {
+      auto result=scatter_sample_result(wi: (*tbn)*specular::refract(wo,float3(0,0,1),ior),mode: scatter_transmit,delta_f: color(this.tint));
+      *result.delta_f*=ior*ior if(!is_importance);
+      if(is_importance){
+      }
+      return result;
+    }
   } else {
     return scatter_sample_result();
   }
 }
 export struct sheen_bsdf:bsdf{
   float roughness;
-  $(color|float) tint=1.0;
-  $(?(color|float)) multiscatter_tint=none;
+  const $(color|float) tint=1.0;
+  const $(?(color|float)) multiscatter_tint=none;
   void multiscatter=none;
   void handle="";
+  static const int __flags=DF_REFLECTION|DF_DIFFUSE;
   finalize {
     roughness=saturate(roughness);
   }
@@ -785,7 +808,7 @@ export struct ward_geisler_moroder_bsdf:bsdf{
   $(?(color|float)) multiscatter_tint=none;
   float3 tangent_u=$state.texture_tangent_u[0];
   void handle="";
-  static const scatter_mode mode=scatter_reflect;
+  static const int __flags=DF_REFLECTION|DF_GLOSSY;
   finalize {
     roughness_u=saturate(roughness_u);
     roughness_v=saturate(roughness_v);
@@ -983,6 +1006,7 @@ struct microfacet_bsdf:bsdf{
   const scatter_mode mode=scatter_reflect;
   const microfacet::distribution distribution=microfacet::distribution();
   const microfacet::shadowing shadowing=microfacet::shadowing();
+  const int __flags=int(mode)|DF_GLOSSY;
 };
 @(pure noinline)
 auto scatter_evaluate(const &microfacet_bsdf this,inline const &scatter_evaluate_parameters params){
@@ -1140,11 +1164,13 @@ auto scatter_sample(const &measured_bsdf this[[anno::unused()]],const &scatter_s
 struct tint1:bsdf,edf,hair_bsdf{
   $(color|float) tint;
   auto base;
+  const int __flags=base.__flags;
 };
 struct tint2:bsdf{
   $(color|float) reflection_tint;
   $(color|float) transmission_tint;
   bsdf base;
+  const int __flags=base.__flags;
 };
 @(macro)
 export auto tint(const auto tint,const bsdf base)=tint1(tint,base);
@@ -1198,6 +1224,7 @@ export struct weighted_layer:bsdf{
   bsdf base=bsdf();
   float3 normal=$state.normal;
   float chance=average(weight);
+  const int __flags=layer.__flags|base.__flags;
   finalize {
     weight=saturate(weight);
     chance=saturate(chance);
@@ -1226,6 +1253,7 @@ export struct thin_film:bsdf{
   $(color|float) thickness;
   $(color|float) ior;
   bsdf base=bsdf();
+  const int __flags=base.__flags;
 };
 @(macro)
 auto scatter_evaluate(const &thin_film this,const &scatter_evaluate_parameters params){
@@ -1247,6 +1275,7 @@ export struct fresnel_factor:bsdf{
   $(color|float) ior;
   $(color|float) extinction_coefficient;
   bsdf base=bsdf();
+  const int __flags=base.__flags;
 };
 @(macro)
 auto scatter_evaluate(const &fresnel_factor this,const &scatter_evaluate_parameters params){
@@ -1269,6 +1298,7 @@ export struct directional_factor:bsdf{
   $(color|float) grazing_tint=1.0;
   float exponent=5.0;
   bsdf base=bsdf();
+  const int __flags=base.__flags;
 };
 @(macro)
 auto scatter_evaluate(const &directional_factor this,const &scatter_evaluate_parameters params){
@@ -1290,6 +1320,7 @@ auto scatter_sample(const &directional_factor this,const &scatter_sample_paramet
 export struct measured_curve_factor:bsdf{
   color[] curve_values;
   bsdf base=bsdf();
+  const int __flags=base.__flags;
 };
 @(macro)
 auto scatter_evaluate(const &measured_curve_factor this,const &scatter_evaluate_parameters params){
@@ -1310,6 +1341,7 @@ auto scatter_sample(const &measured_curve_factor this,const &scatter_sample_para
 export struct measured_factor:bsdf{
   texture_2d values;
   bsdf base=bsdf();
+  const int __flags=base.__flags;
 };
 @(macro)
 auto scatter_evaluate(const &measured_factor this,const &scatter_evaluate_parameters params){
@@ -1335,6 +1367,7 @@ export struct fresnel_layer:bsdf{
   float3 normal=$state.normal;
   const float average_ior=average(ior);
   const float average_weight=average(weight);
+  const int __flags=layer.__flags|base.__flags;
 };
 @(macro)
 auto scatter_evaluate(const &fresnel_layer this,inline const &scatter_evaluate_parameters params){
@@ -1391,9 +1424,11 @@ export struct vdf_component:component{
 };
 struct component_mix:bsdf,edf,vdf{
   component[] components;
+  int __flags=0;
 };
 @(macro)
 export auto normalized_mix(component[<N>] components){
+  int __flags(0);
   float total_weight(0);
   float total_chance(0);
   for(int i=0;i<N;i++){
@@ -1402,6 +1437,7 @@ export auto normalized_mix(component[<N>] components){
     component.chance=#max(component.chance,0.0);
     total_weight+=component.weight;
     total_chance+=component.chance;
+    __flags|=component.component.__flags;
   }
   if(total_weight>1.0)
     total_weight=1.0/total_weight;
@@ -1413,10 +1449,11 @@ export auto normalized_mix(component[<N>] components){
     component.weight*=total_weight;
     component.chance*=total_chance;
   }
-  return component_mix(components);
+  return component_mix(components,__flags);
 }
 @(macro)
 export auto clamped_mix(component[<N>] components){
+  int __flags(0);
   float total_weight(0);
   float total_chance(0);
   for(int i=0;i<N;i++){
@@ -1426,6 +1463,7 @@ export auto clamped_mix(component[<N>] components){
     if(total_weight+component.weight<1.0){
       total_weight+=component.weight;
       total_chance+=component.chance;
+      __flags|=component.component.__flags;
     } else {
       component.weight=1.0-total_weight;
       for(int j=i+1;j<N;j++){
@@ -1439,22 +1477,24 @@ export auto clamped_mix(component[<N>] components){
   for(int i=0;i<N;i++){
     components[i].chance*=total_chance;
   }
-  return component_mix(components);
+  return component_mix(components,__flags);
 }
 @(macro)
 export auto unbounded_mix(component[<N>] components){
+  int __flags(0);
   float total_chance(0);
   for(int i=0;i<N;i++){
     auto component(&components[i]);
     component.weight=#max(component.weight,0.0);
     component.chance=#max(component.chance,0.0);
     total_chance+=component.chance;
+    __flags|=component.__flags;
   }
   total_chance=1.0/total_chance if(total_chance>0.0);
   for(int i=0;i<N;i++){
     components[i].chance*=total_chance;
   }
-  return component_mix(components);
+  return component_mix(components,__flags);
 }
 @(macro)
 auto scatter_evaluate(const &component_mix this,const &scatter_evaluate_parameters params){
@@ -1492,7 +1532,6 @@ auto scatter_sample(const &component_mix this,const &scatter_sample_parameters p
 @(macro)
 export int __scatter_evaluate(
   const &__material_instance instance,
-  const int is_importance,
   const &float3 wo_world,
   const &float3 wi_world,
   const &float pdf_fwd,
@@ -1500,7 +1539,7 @@ export int __scatter_evaluate(
   const &float f,
 ){
   auto params=scatter_evaluate_parameters(
-    is_importance: is_importance,
+    is_importance: (instance.flags&1)!=0,
     wo0: normalize((*wo_world)*instance.tangent_space),
     wi0: normalize((*wi_world)*instance.tangent_space),
     normal: normalize(*instance.normal),
@@ -1529,7 +1568,6 @@ export int __scatter_evaluate(
 @(macro)
 export int __scatter_sample(
   const &__material_instance instance,
-  const int is_importance,
   const &float4 xi,
   const &float3 wo_world,
   const &float3 wi_world,
@@ -1540,7 +1578,7 @@ export int __scatter_sample(
 ){
   auto wo=normalize((*wo_world)*instance.tangent_space);
   auto params=scatter_sample_parameters(
-    is_importance: is_importance,
+    is_importance: (instance.flags&1)!=0,
     xi: *xi,
     wo0: wo,
     normal: normalize(*instance.normal),
@@ -1563,156 +1601,7 @@ export int __scatter_sample(
       #memcpy(f,&*result.delta_f,#sizeof(float)*$WAVELENGTH_BASE_MAX);
       return true;
     } else {
-      return __scatter_evaluate(instance,is_importance,wo_world,wi_world,pdf_fwd,pdf_rev,f);
-    }
-  }
-}
-struct emission_evaluate_parameters{
-  float3 we;
-};
-struct emission_evaluate_result{
-  float intensity=0;
-  float pdf=0;
-  bool is_black=false;
-};
-struct emission_sample_parameters{
-  float4 xi;
-};
-struct emission_sample_result{
-  ?float3 we=none;
-};
-@(pure macro)
-auto emission_evaluate(const &__default_edf this[[anno::unused()]],const &emission_evaluate_parameters params[[anno::unused()]],){
-  return emission_evaluate_result(is_black: true);
-}
-@(pure macro)
-auto emission_sample(const &__default_edf this[[anno::unused()]],const &emission_sample_parameters params[[anno::unused()]],){
-  return emission_sample_result();
-}
-export struct diffuse_edf:edf{
-  void handle="";
-};
-@(pure macro)
-auto emission_evaluate(const &diffuse_edf this[[anno::unused()]],const &emission_evaluate_parameters params){
-  const float pdf(#max(params.we.z,0.0)/$PI);
-  return emission_evaluate_result(intensity: pdf,pdf: pdf);
-}
-@(pure macro)
-auto emission_sample(const &diffuse_edf this[[anno::unused()]],const &emission_sample_parameters params){
-  return emission_sample_result(we: monte_carlo::cosine_hemisphere_sample(params.xi.xy));
-}
-export struct spot_edf:edf{
-  float exponent;
-  float spread=$PI;
-  bool global_distribution=true;
-  float3x3 global_frame=float3x3(1.0);
-  void handle="";
-};
-@(pure macro)
-auto emission_evaluate(const &spot_edf this,const &emission_evaluate_parameters params){
-  return emission_evaluate_result(is_black: true);
-}
-@(pure macro)
-auto emission_sample(const &spot_edf this,const &emission_sample_parameters params){
-  return emission_sample_result();
-}
-@(pure macro)
-export bool light_profile_isvalid(const light_profile profile)=bool(profile.ptr);
-@(pure macro)
-export float light_profile_maximum(const light_profile profile)=profile.max_intensity;
-@(pure macro)
-export float light_profile_power(const light_profile profile)=profile.power;
-export struct measured_edf:edf{
-  light_profile profile;
-  float multiplier=1.0;
-  bool global_distribution=true;
-  float3x3 global_frame=float3x3(1.0);
-  float3 tangent_u=$state.texture_tangent_u[0];
-  void handle="";
-};
-@(foreign pure)
-float smdl_light_profile_interpolate(const &void ptr,const &float3 we);
-@(pure macro)
-auto emission_evaluate(const &measured_edf this,const &emission_evaluate_parameters params){
-  auto we=return_from{
-    if(this.global_distribution){
-      return params.we*this.global_frame;
-    } else {
-      return params.we*calculate_tangent_space($state.normal,this.tangent_u);
-    }
-  };
-  if(!(we.z>0)||!(params.multiplier>0)){
-    return emission_evaluate_result(is_black: true);
-  } else {
-    return emission_evaluate_result(intensity: params.multiplier*smdl_light_profile_interpolate(this.profile.ptr,&we),pdf: 1.0);
-  }
-}
-@(pure macro)
-auto emission_sample(const &measured_edf this,const &emission_sample_parameters params){
-  return emission_sample_result();
-}
-@(macro)
-export int __emission_evaluate(
-  const &__material_instance instance[[anno::unused()]],
-  const &float3 we[[anno::unused()]],
-  const &float pdf[[anno::unused()]],
-  const &float Le[[anno::unused()]],
-){
-  if(#is_default(instance.mat.surface.emission)&&#is_default(instance.mat.backface.emission)){
-    return 0;
-  } else {
-    auto params=emission_evaluate_parameters(we: normalize(*we)*#sign(we.z));
-    auto result_intensity=color(0.0);
-    auto result=return_from{
-      if(we.z>0){
-        auto emission=&instance.mat.surface.emission;
-        auto result=emission_evaluate(visit &emission.emission,&params);
-        result.intensity/=4*PI if(emission.mode==intensity_power);
-        result_intensity=emission.intensity*result.intensity;
-        return result;
-      } else {
-        auto emission=&instance.mat.backface.emission;
-        auto result=emission_evaluate(visit &emission.emission,&params);
-        result.intensity/=4*PI if(emission.mode==intensity_power);
-        result_intensity=emission.intensity*result.intensity;
-        return result;
-      }
-    };
-    if(!#is_default(instance.mat.surface.emission)&&!#is_default(instance.mat.backface.emission)){
-      result.pdf/=2;
-    }
-    *pdf=result.pdf;
-    #memcpy(Le,&result_intensity,#sizeof(float)*$WAVELENGTH_BASE_MAX);
-    return !result.is_black;
-  }
-}
-@(macro)
-export int __emission_sample(
-  const &__material_instance instance[[anno::unused()]],
-  const &float4 xi[[anno::unused()]],
-  const &float3 we[[anno::unused()]],
-  const &float pdf[[anno::unused()]],
-  const &float Le[[anno::unused()]],
-){
-  if(#is_default(instance.mat.surface.emission)&&#is_default(instance.mat.backface.emission)){
-    return 0;
-  } else {
-    auto params=emission_sample_parameters(xi: *xi);
-    auto result=return_from{
-      if(#is_default(instance.mat.surface.emission)||(!#is_default(instance.mat.backface.emission)&&monte_carlo::bool_sample(&xi.z,0.5))){
-        auto result=emission_sample(visit &instance.mat.surface.emission.emission,&params);
-        return result;
-      } else {
-        auto result=emission_sample(visit &instance.mat.backface.emission.emission,&params);
-        *result.we*=-1 if(result.we);
-        return result;
-      }
-    };
-    if(!result.we){
-      return 0;
-    } else {
-      *we=*result.we;
-      return __emission_evaluate(instance,we,pdf,Le);
+      return __scatter_evaluate(instance,wo_world,wi_world,pdf_fwd,pdf_rev,f);
     }
   }
 }

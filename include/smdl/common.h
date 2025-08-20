@@ -107,11 +107,6 @@ class Compiler;
 class Module;
 class Type;
 
-enum TransportMode : int {
-  TRANSPORT_MODE_RADIANCE = 0,
-  TRANSPORT_MODE_IMPORTANCE = 1,
-};
-
 /// A source location somewhere in an MDL module.
 class SMDL_EXPORT SourceLocation final {
 public:
@@ -174,6 +169,14 @@ public:
 
   /// Want compact?
   bool compact{};
+};
+
+/// The transport mode.
+enum Transport : int {
+  /// Transport radiance (tracing rays from cameras to lights).
+  TRANSPORT_RADIANCE = 0,
+  /// Transport importance (tracing rays from lights to cameras).
+  TRANSPORT_IMPORTANCE = 1,
 };
 
 /// The MDL state passed in at runtime.
@@ -262,6 +265,9 @@ public:
   /// `geometry_normal`, and `position`.
   ///
   float4x4 tangent_to_object_matrix{float4x4(1.0f)};
+
+  /// The transport mode.
+  int transport{int(TRANSPORT_RADIANCE)};
 
 public:
   void finalize_for_runtime_conventions();

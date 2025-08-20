@@ -7,9 +7,10 @@
 
 namespace smdl {
 
-/// \addtogroup Support
+/// \addtogroup Main
 /// \{
 
+/// A BSDF measurement (`.mbsdf`).
 class SMDL_EXPORT BSDFMeasurement final {
 public:
   enum Kind { KIND_REFLECTION, KIND_TRANSMISSION };

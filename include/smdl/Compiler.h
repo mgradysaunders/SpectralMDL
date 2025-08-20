@@ -45,18 +45,18 @@ public:
 /// \{
 
 /// The optimization level.
-enum class OptLevel : uint32_t {
-  None = 0, ///< No optimization at all.
-  O1 = 1,   ///< Level 1 - basic optimizations.
-  O2 = 2,   ///< Level 2 - sensible optimizations.
-  O3 = 3    ///< Level 3 - aggressive optimizations.
+enum OptLevel : int {
+  OPT_LEVEL_NONE = 0, ///< No optimization at all.
+  OPT_LEVEL_O1 = 1,   ///< Level 1 - basic optimizations.
+  OPT_LEVEL_O2 = 2,   ///< Level 2 - sensible optimizations.
+  OPT_LEVEL_O3 = 3    ///< Level 3 - aggressive optimizations.
 };
 
 /// The dump format for `Compiler::dump()`.
-enum class DumpFormat : uint32_t {
-  IR,       ///< LLVM-IR.
-  Assembly, ///< Native assembly code.
-  Object    ///< Native object code.
+enum DumpFormat : int {
+  DUMP_FORMAT_IR,  ///< LLVM-IR.
+  DUMP_FORMAT_ASM, ///< Native assembly code.
+  DUMP_FORMAT_OBJ  ///< Native object code.
 };
 
 /// The compiler.
@@ -72,7 +72,7 @@ public:
   [[nodiscard]] std::optional<Error> add(std::string fileOrDirName);
 
   /// Compile to LLVM-IR.
-  [[nodiscard]] std::optional<Error> compile(OptLevel optLevel = OptLevel::O2);
+  [[nodiscard]] std::optional<Error> compile(OptLevel optLevel = OPT_LEVEL_O2);
 
   /// Format source code.
   [[nodiscard]] std::optional<Error>

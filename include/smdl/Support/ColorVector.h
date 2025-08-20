@@ -15,6 +15,11 @@ namespace smdl {
 /// \addtogroup Support
 /// \{
 
+/// A color vector to parallelize math operations.
+///
+/// \tparam[N]
+/// The number of bands/channels.
+///
 template <size_t N> class ColorVector final {
 public:
 #if SMDL_USE_EXT_VECTOR_TYPES
@@ -252,60 +257,83 @@ public:
   }
 
 public:
-  [[nodiscard]] float average_value() const noexcept {
-    float result{};
+  /// Is all exactly or approximately zero?
+  ///
+  /// \param[in] thresh
+  /// The threshold. This is zero by default so we only detect
+  /// exactly black color spectra. If set to something small,
+  /// the implementation also detects nearly black color
+  /// spectra.
+  ///
+  [[nodiscard]] bool is_all_zero(float thresh = 0.0f) const noexcept {
     for (size_t i = 0; i < N; i++)
-      result += v[i];
-    return result / N;
+      if (!(std::abs(v[i]) <= thresh))
+        return false;
+    return true;
   }
 
-  [[nodiscard]] float maximum_value() const noexcept {
-    float result{v[0]};
-    for (size_t i = 1; i < N; i++)
-      result = std::fmax(result, v[i]);
-    return result;
-  }
-
-  [[nodiscard]] float minimum_value() const noexcept {
-    float result{v[0]};
-    for (size_t i = 1; i < N; i++)
-      result = std::fmin(result, v[i]);
-    return result;
-  }
-
-  [[nodiscard]] bool any_inf() const noexcept {
+  /// Is any component infinite?
+  [[nodiscard]] bool is_any_inf() const noexcept {
     for (size_t i = 0; i < N; i++)
       if (std::isinf(v[i]))
         return true;
     return false;
   }
 
-  [[nodiscard]] bool any_nan() const noexcept {
+  /// Is any component not-a-number?
+  [[nodiscard]] bool is_any_nan() const noexcept {
     for (size_t i = 0; i < N; i++)
       if (std::isnan(v[i]))
         return true;
     return false;
   }
 
-  [[nodiscard]] bool any_non_finite() const noexcept {
+  /// Is any component either infinite or not-a-number?
+  [[nodiscard]] bool is_any_non_finite() const noexcept {
     for (size_t i = 0; i < N; i++)
       if (!std::isfinite(v[i]))
         return true;
     return false;
   }
 
+  /// Set all non-positive components to zero.
   void set_non_positive_to_zero() noexcept {
     for (size_t i = 0; i < N; i++) {
       v[i] = std::fmax(v[i], 0.0f);
     }
   }
 
+  /// Set all non-finite components to zero.
   void set_non_finite_to_zero() noexcept {
     for (size_t i = 0; i < N; i++) {
       if (!std::isfinite(v[i])) {
         v[i] = 0.0f;
       }
     }
+  }
+
+  /// Calculate the average.
+  [[nodiscard]] float average() const noexcept {
+    float result{};
+    for (size_t i = 0; i < N; i++)
+      result += v[i];
+    return result / N;
+  }
+
+  /// Find the maximum component.
+  [[nodiscard]] float maximum_component() const noexcept {
+    float result{v[0]};
+    for (size_t i = 1; i < N; i++)
+      result = std::fmax(result, v[i]);
+    return result;
+  }
+
+  /// Find the minimum component.
+  [[nodiscard]] float minimum_component() const noexcept {
+    float result{v[0]};
+    for (size_t i = 1; i < N; i++)
+      result = std::fmin(result, v[i]);
+    return result;
   }
 
 public:

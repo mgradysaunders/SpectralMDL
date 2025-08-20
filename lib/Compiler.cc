@@ -162,13 +162,13 @@ std::optional<Error> Compiler::compile(OptLevel optLevel) {
     SMDL_LOG_INFO("Loading images done. [", std::to_string(duration * 1e-6),
                   " seconds]");
   }
-  if (optLevel != OptLevel::None) {
+  if (optLevel != OPT_LEVEL_NONE) {
     SMDL_PROFILER_ENTRY("Optimize LLVM-IR");
     llvmJitModule->withModuleDo([&](llvm::Module &llvmModule) {
       LLVMOptimizer llvmOptimizer{};
       llvmOptimizer.run(
-          llvmModule, optLevel == OptLevel::O1   ? llvm::OptimizationLevel::O1
-                      : optLevel == OptLevel::O2 ? llvm::OptimizationLevel::O2
+          llvmModule, optLevel == OPT_LEVEL_O1   ? llvm::OptimizationLevel::O1
+                      : optLevel == OPT_LEVEL_O2 ? llvm::OptimizationLevel::O2
                                                  : llvm::OptimizationLevel::O3);
     });
   }
@@ -266,7 +266,7 @@ const LightProfile &Compiler::load_light_profile(const std::string &fileName,
 }
 
 std::string Compiler::dump(DumpFormat dumpFormat) {
-  if (dumpFormat == DumpFormat::IR) {
+  if (dumpFormat == DUMP_FORMAT_IR) {
     std::string str{};
     llvm::raw_string_ostream os{str};
     os << get_llvm_module();
@@ -277,9 +277,8 @@ std::string Compiler::dump(DumpFormat dumpFormat) {
     llvm::legacy::PassManager passManager{};
     if (NativeTarget::get().machine->addPassesToEmitFile(
             passManager, os, nullptr,
-            dumpFormat == DumpFormat::Assembly
-                ? llvm::CodeGenFileType::AssemblyFile
-                : llvm::CodeGenFileType::ObjectFile))
+            dumpFormat == DUMP_FORMAT_ASM ? llvm::CodeGenFileType::AssemblyFile
+                                          : llvm::CodeGenFileType::ObjectFile))
       return "cannot dump";
     passManager.run(get_llvm_module());
     return std::string(os.str());
@@ -297,8 +296,8 @@ std::optional<Error> Compiler::jit_compile() noexcept {
       jit_lookup_or_throw(jitMaterial.allocate);
       jit_lookup_or_throw(jitMaterial.scatter_evaluate);
       jit_lookup_or_throw(jitMaterial.scatter_sample);
-      jit_lookup_or_throw(jitMaterial.emission_evaluate);
-      jit_lookup_or_throw(jitMaterial.emission_sample);
+      // jit_lookup_or_throw(jitMaterial.emission_evaluate);
+      // jit_lookup_or_throw(jitMaterial.emission_sample);
     }
     for (auto &jitUnitTest : jitUnitTests) {
       jit_lookup_or_throw(jitUnitTest.test);

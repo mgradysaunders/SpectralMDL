@@ -7,7 +7,7 @@
 
 namespace smdl {
 
-/// \addtogroup Support
+/// \addtogroup Main
 /// \{
 
 /// An IES light profile.

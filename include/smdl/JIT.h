@@ -37,6 +37,49 @@ public:
   function_pointer func{};
 };
 
+// \name Material Flags
+// \{
+
+/// Indicates that the material is transporting importance.
+static constexpr int MATERIAL_TRANSPORT_IMPORTANCE = (1 << 0);
+
+/// Indicates that the material is thin-walled.
+static constexpr int MATERIAL_THIN_WALLED = (1 << 1);
+
+/// Indicates that the material has a non-default `surface` initializer.
+static constexpr int MATERIAL_HAS_SURFACE = (1 << 2);
+
+/// Indicates that the material has a non-default `backface` initializer.
+static constexpr int MATERIAL_HAS_BACKFACE = (1 << 3);
+
+/// Indicates that the material has a non-default `volume` initializer.
+static constexpr int MATERIAL_HAS_VOLUME = (1 << 6);
+
+/// Indicates that the material has a non-default `hair` initializer.
+static constexpr int MATERIAL_HAS_HAIR = (1 << 7);
+
+/// \}
+
+/// \name Distribution Function (DF) Flags
+/// \{
+
+/// Indicates that the function has a non-zero reflection component.
+static constexpr int DF_REFLECTION = (1 << 0);
+
+/// Indicates that the function has a non-zero transmission component.
+static constexpr int DF_TRANSMISSION = (1 << 1);
+
+/// Indicates that the function has a diffuse component.
+static constexpr int DF_DIFFUSE = (1 << 2);
+
+/// Indicates that the function has a glossy component.
+static constexpr int DF_GLOSSY = (1 << 3);
+
+/// Indicates that the function has a specular (Dirac delta) component.
+static constexpr int DF_SPECULAR = (1 << 4);
+
+/// \}
+
 /// A just-in-time SMDL material.
 struct Material final {
 public:
@@ -51,27 +94,6 @@ public:
 
   /// The material name.
   std::string materialName{};
-
-  /// Is thin walled?
-  static constexpr int THIN_WALLED = (1 << 0);
-
-  /// Has a non-default surface component?
-  static constexpr int HAS_SURFACE = (1 << 1);
-
-  /// Has a non-default backface surface component?
-  static constexpr int HAS_BACKFACE = (1 << 2);
-
-  /// Has a non-default surface emission component?
-  static constexpr int HAS_SURFACE_EMISSION = (1 << 3);
-
-  /// Has a non-default backface emission component?
-  static constexpr int HAS_BACKFACE_EMISSION = (1 << 4);
-
-  /// Has a non-default volume component?
-  static constexpr int HAS_VOLUME = (1 << 5);
-
-  /// Has a non-default hair component?
-  static constexpr int HAS_HAIR = (1 << 6);
 
   /// An instance of the material.
   struct Instance final {
@@ -105,6 +127,12 @@ public:
 
     /// The flags.
     int flags{};
+
+    /// The df flags for the material `surface` component.
+    int df_flags_surface{};
+
+    /// The df flags for the material `backface` component.
+    int df_flags_backface{};
 
     /// The tangent space matrix held by the `State` when constructing the
     /// instance.
@@ -151,9 +179,8 @@ public:
   /// \return
   /// Returns `true` if the result is non-zero.
   ///
-  Function<int(const Instance &instance, TransportMode transport,
-               const float3 &wo, const float3 &wi, float &pdf_fwd,
-               float &pdf_rev, float *f)>
+  Function<int(const Instance &instance, const float3 &wo, const float3 &wi,
+               float &pdf_fwd, float &pdf_rev, float *f)>
       scatter_evaluate{};
 
   /// The scatter sample function.
@@ -182,49 +209,10 @@ public:
   /// \param[out] is_delta
   /// Set to `true` if sampling Dirac delta distribution.
   ///
-  Function<int(const Instance &instance, TransportMode transport,
-               const float4 &xi, const float3 &wo, float3 &wi, float &pdf_fwd,
-               float &pdf_rev, float *f, int &is_delta)>
+  Function<int(const Instance &instance, const float4 &xi, const float3 &wo,
+               float3 &wi, float &pdf_fwd, float &pdf_rev, float *f,
+               int &is_delta)>
       scatter_sample{};
-
-  /// The emission evaluate function.
-  //
-  /// \param[in] instance
-  /// The instance obtained from the `allocate` function.
-  ///
-  /// \param[in] we
-  /// The emission direction in tangent space.
-  ///
-  /// \param[out] pdf
-  /// The PDF.
-  ///
-  /// \param[out] Le
-  /// The emission spectrum. This must be non-null!
-  ///
-  Function<int(const Instance &instance, const float3 &we, float &pdf,
-               float *Le)>
-      emission_evaluate{};
-
-  /// The emission sample function.
-  ///
-  /// \param[in] instance
-  /// The instance obtained from the `allocate` function.
-  ///
-  /// \param[in] xi
-  /// The canonical random sample in \f$ [0,1]^4 \f$.
-  ///
-  /// \param[out] we
-  /// The emission direction in tangent space.
-  ///
-  /// \param[out] pdf
-  /// The PDF.
-  ///
-  /// \param[out] Le
-  /// The emission spectrum. This must be non-null!
-  ///
-  Function<int(const Instance &instance, const float4 &xi, float3 &we,
-               float &pdf, float *Le)>
-      emission_sample{};
 };
 
 /// A just-in-time SMDL unit test.

@@ -5,7 +5,7 @@
 
 namespace smdl {
 
-/// \addtogroup Support
+/// \addtogroup Main
 /// \{
 
 [[nodiscard]] SMDL_EXPORT float unpack_half(const void *ptr) noexcept;

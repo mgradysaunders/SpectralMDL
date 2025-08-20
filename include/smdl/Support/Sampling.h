@@ -10,7 +10,10 @@ namespace smdl {
 /// \addtogroup Support
 /// \{
 
-/// Generate canonical random sample.
+/// \name Functions (sampling)
+/// \{
+
+/// Generate canonical random sample in \f$ (0,1) \f$.
 template <typename G> [[nodiscard]] inline float generate_canonical(G &g) {
   float xi{std::generate_canonical<float, 32>(g)};
   xi = std::fmax(xi, std::numeric_limits<float>::denorm_min());      // > 0.0f
@@ -18,27 +21,37 @@ template <typename G> [[nodiscard]] inline float generate_canonical(G &g) {
   return xi;
 }
 
-/// Generate canonical random sample in `(0,1)^2`.
+/// Generate canonical random sample in \f$ (0,1)^2 \f$.
 template <typename G> [[nodiscard]] inline float2 generate_canonical2(G &g) {
   return {generate_canonical(g), generate_canonical(g)};
 }
 
-/// Generate canonical random sample in `(0,1)^3`.
+/// Generate canonical random sample in \f$ (0,1)^3 \f$.
 template <typename G> [[nodiscard]] inline float3 generate_canonical3(G &g) {
   return {generate_canonical(g), generate_canonical(g), generate_canonical(g)};
 }
 
-/// Generate canonical random sample in `(0,1)^4`.
+/// Generate canonical random sample in \f$ (0,1)^4 \f$.
 template <typename G> [[nodiscard]] inline float4 generate_canonical4(G &g) {
   return {generate_canonical(g), generate_canonical(g), generate_canonical(g),
           generate_canonical(g)};
 }
 
-[[nodiscard]] inline float uniform_disk_pdf(float r = 1) {
+/// Uniform disk PDF.
+///
+/// \f[ p(\mathbf{X}) = \frac{1}{\pi r^2} \f]
+///
+[[nodiscard]] inline float uniform_disk_pdf(float r = 1) noexcept {
   return 1.0f / (PI * r * r);
 }
 
-[[nodiscard]] inline float2 uniform_disk_sample(float2 xi) {
+/// Uniform disk sample using concentric mapping to better preserve stratified
+/// samples.
+///
+/// \param[in] xi
+/// The random sample \f$ \xi \in (0,1)^2 \f$.
+///
+[[nodiscard]] inline float2 uniform_disk_sample(float2 xi) noexcept {
   xi = xi * 2.0f - float2(1.0f);
   xi.x = (xi.x == 0.0f) ? std::numeric_limits<float>::epsilon() : xi.x;
   xi.y = (xi.y == 0.0f) ? std::numeric_limits<float>::epsilon() : xi.y;
@@ -49,49 +62,72 @@ template <typename G> [[nodiscard]] inline float4 generate_canonical4(G &g) {
   return float2(rad * std::cos(phi), rad * std::sin(phi));
 }
 
-[[nodiscard]] inline float cosine_hemisphere_pdf(float cosTheta) {
+/// Cosine-weighted hemisphere direction PDF.
+///
+/// \f[ p(\omega) = \frac{\max(\omega\cdot\hat{z}, 0)}{\pi} \f]
+///
+[[nodiscard]] inline float cosine_hemisphere_pdf(float cosTheta) noexcept {
   return std::max(cosTheta, 0.0f) / PI;
 }
 
-[[nodiscard]] inline float3 cosine_hemisphere_sample(float2 xi,
-                                                     float *pdf = {}) {
+/// Cosine-weighted hemisphere direction sample.
+///
+/// \param[in] xi
+/// The random sample \f$ \xi \in (0,1)^2 \f$.
+///
+[[nodiscard]] inline float3 cosine_hemisphere_sample(float2 xi) noexcept {
   auto sinTheta{uniform_disk_sample(xi)};
-  auto cosTheta{std::sqrt(std::max(0.0f, 1.0f - sinTheta.x * sinTheta.x -
-                                             sinTheta.y * sinTheta.y))};
-  if (pdf)
-    *pdf = cosTheta / PI;
+  auto cosTheta{std::sqrt(std::max(0.0f, 1.0f - length_squared(sinTheta)))};
   return float3(sinTheta.x, sinTheta.y, cosTheta);
 }
 
-[[nodiscard]] inline float uniform_sphere_pdf(float r = 1) {
-  return 1.0f / (4.0f * PI * r * r);
-}
+/// Uniform sphere direction PDF.
+///
+/// \f[ p(\omega) = \frac{1}{4\pi} \f]
+///
+[[nodiscard]] inline float uniform_sphere_pdf() noexcept { return 0.25f / PI; }
 
-[[nodiscard]] inline float3 uniform_sphere_sample(float2 xi, float *pdf = {}) {
+/// Uniform sphere direction sample.
+///
+/// \param[in] xi
+/// The random sample \f$ \xi \in (0,1)^2 \f$.
+///
+[[nodiscard]] inline float3 uniform_sphere_sample(float2 xi) {
   float cosTheta{std::max(-1.0f, std::min(2.0f * xi.x - 1.0f, 1.0f))};
   float sinTheta{std::sqrt(1.0f - cosTheta * cosTheta)};
   float phi{2.0f * PI * xi.y};
-  if (pdf)
-    *pdf = uniform_sphere_pdf();
   return float3(sinTheta * std::cos(phi), sinTheta * std::sin(phi), cosTheta);
 }
 
-[[nodiscard]] inline float uniform_cone_pdf(float zMin) {
-  return 1.0f / (2.0f * PI * (1.0f - zMin));
+/// Uniform cone direction PDF.
+///
+/// \f[ p(\omega) = \frac{1}{2\pi(1 - \cos\theta_C)} \f]
+///
+/// \param[in] cosThetaC
+/// The cosine of the cone angle \f$ \theta_C \f$.
+///
+[[nodiscard]] inline float uniform_cone_pdf(float cosThetaC) {
+  return 0.5f / (PI * (1.0f - cosThetaC));
 }
 
-[[nodiscard]] inline float3 uniform_cone_sample(float2 xi,  //
-                                                float zMin, //
-                                                float *pdf = {}) {
-  float cosTheta{std::max(zMin, std::min((1.0f - xi.x) * zMin + xi.x, 1.0f))};
+/// Uniform cone direction sample.
+///
+/// \param[in] cosThetaC
+/// The cosine of the cone angle \f$ \theta_C \f$.
+///
+/// \param[in] xi
+/// The random sample \f$ \xi \in (0,1)^2 \f$.
+///
+[[nodiscard]] inline float3 uniform_cone_sample(float cosThetaC, float2 xi) {
+  float cosTheta{
+      std::max(zMin, std::min((1.0f - xi.x) * cosThetaC + xi.x, 1.0f))};
   float sinTheta{std::sqrt(1.0f - cosTheta * cosTheta)};
   float phi{2.0f * PI * xi.y};
-  if (pdf)
-    *pdf = uniform_cone_pdf(zMin);
   return float3(sinTheta * std::cos(phi), sinTheta * std::sin(phi), cosTheta);
 }
 
-/// The inverse of the error function.
+/// The error function inverse, necessary to sample the standard normal
+/// distribution.
 [[nodiscard]] inline float erf_inverse(float y) {
   float w = -std::log(
       std::max(std::numeric_limits<float>::denorm_min(), (1 - y) * (1 + y)));
@@ -121,17 +157,28 @@ template <typename G> [[nodiscard]] inline float4 generate_canonical4(G &g) {
   return x;
 }
 
+/// Standard normal distribution PDF.
+///
+/// \f[ p(x) = \frac{1}{\sqrt{2\pi}} \exp\left(-\frac{1}{2}x^2\right) \f]
+///
 [[nodiscard]] inline float standard_normal_pdf(float x) {
   return /*1/sqrt(2pi)=*/0.398942280401f * std::exp(-0.5f * x * x);
 }
 
+/// Standard normal distribution CDF.
+///
+/// \f[ P(x) = \frac{1}{2}\left(1 + \mathrm{erf}\frac{x}{\sqrt2}\right) \f]
+///
 [[nodiscard]] inline float standard_normal_cdf(float x) {
-  return 0.5f + 0.5f * std::erf(/*1/sqrt(2)=*/0.707106781187f * x);
+  return 0.5f * (1 + std::erf(/*1/sqrt(2)=*/0.707106781187f * x));
 }
 
+/// Standard normal distribution sample.
 [[nodiscard]] inline float standard_normal_sample(float u) {
   return /*sqrt(2)=*/1.41421356237f * erf_inverse(2 * u - 1);
 }
+
+/// \}
 
 /// \}
 

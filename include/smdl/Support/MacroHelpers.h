@@ -81,16 +81,7 @@ public:
 
   Preserve(Preserve &&) = delete;
 
-  ~Preserve() { restore(); }
-
-  template <size_t... I>
-  constexpr void restore(std::integer_sequence<size_t, I...>) {
-    ((std::get<I>(values) = std::get<I>(backupValues)), ...);
-  }
-
-  constexpr void restore() {
-    restore(std::make_index_sequence<sizeof...(Ts)>());
-  }
+  ~Preserve() { values = backupValues; }
 
 private:
   std::tuple<Ts &...> values;

@@ -5,7 +5,7 @@
 
 namespace smdl {
 
-/// \addtogroup Support
+/// \addtogroup Main
 /// \{
 
 /// The file locator.

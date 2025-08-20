@@ -11,19 +11,8 @@ DiscreteDistribution::DiscreteDistribution(const std::vector<double> &weights) {
     cmf /= cmfs.back();
 }
 
-float DiscreteDistribution::index_pmf(int i) const {
-  if (0 <= i && i < size())
-    return static_cast<float>(cmfs[i + 1] - cmfs[i]);
-  return 0.0f;
-}
-
-float DiscreteDistribution::index_cmf(int i) const {
-  if (0 <= i && i < size())
-    return static_cast<float>(cmfs[i]);
-  return i < 0 ? 0.0f : 1.0f;
-}
-
-std::pair<int, float> DiscreteDistribution::index_sample(float &u) const {
+std::pair<int, float> DiscreteDistribution::index_sample(float u,
+                                                         float *uRemap) const {
   if (cmfs.size() < 2)
     return {0, 1.0f};
   auto itr{std::lower_bound(cmfs.begin(), cmfs.end(), static_cast<double>(u))};
@@ -36,9 +25,11 @@ std::pair<int, float> DiscreteDistribution::index_sample(float &u) const {
   auto cmf0{*itr++};
   auto cmf1{*itr};
   auto pmf{cmf1 - cmf0};
-  u = static_cast<float>(static_cast<double>(u) - cmf0) / pmf;
-  u = std::fmax(u, 0.0f);
-  u = std::fmin(u, 1.0f);
+  if (uRemap) {
+    *uRemap = static_cast<float>(static_cast<double>(u) - cmf0) / pmf;
+    *uRemap = std::fmax(*uRemap, std::numeric_limits<float>::denorm_min());
+    *uRemap = std::fmin(*uRemap, 1 - std::numeric_limits<float>::epsilon() / 2);
+  }
   return {i, static_cast<float>(pmf)};
 }
 
