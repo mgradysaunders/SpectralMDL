@@ -19,8 +19,6 @@ const int DF_GLOSSY = (1 << 3);
 
 const int DF_SPECULAR = (1 << 4);
 
-const int DF_EMISSION = (1 << 5);
-
 export enum scatter_mode {
   scatter_none = 0x0,             ///< None
   scatter_reflect = 0x1,          ///< Reflect (same hemisphere)
@@ -616,7 +614,7 @@ auto scatter_sample(const &specular_bsdf this, inline const &scatter_sample_para
     if (xi.x < scatter_reflect_chance(this.mode)) {
       return scatter_sample_result(wi: (*tbn) * specular::reflect(wo, float3(0, 0, 1)), mode: scatter_reflect, delta_f: color(this.tint));
     } else {
-      auto result = scatter_sample_result(wi: (*tbn) * specular::refract(wo, float3(0,0,1), ior), mode: scatter_transmit, delta_f: color(this.tint));
+      auto result = scatter_sample_result(wi: (*tbn) * specular::refract(wo, float3(0, 0, 1), ior), mode: scatter_transmit, delta_f: color(this.tint));
       *result.delta_f *= ior * ior if (!is_importance);
       if (is_importance) {
         // TODO Account for shading normal correction
@@ -1351,7 +1349,7 @@ export struct weighted_layer: bsdf {
   /// have to average it down to a single probability.
   ///
   float chance = average(weight);
-  
+
   /// The flags.
   const int __flags = layer.__flags | base.__flags;
 
@@ -1835,22 +1833,22 @@ auto scatter_sample(const &component_mix this, const &scatter_sample_parameters 
 @(macro)
 export int __scatter_evaluate(
   const &__material_instance instance,
-  const &float3 wo_world,  ///< The outgoing direction in world space
-  const &float3 wi_world,  ///< The incoming direction in world space
-  const &float pdf_fwd,    ///< output: The PDF of sampling `wi` from `wo`
-  const &float pdf_rev,    ///< output: The PDF of sampling `wo` from `wi`
-  const &float f,          ///< output: The scattering function
+  const &float3 wo_world, ///< The outgoing direction in world space
+  const &float3 wi_world, ///< The incoming direction in world space
+  const &float pdf_fwd,   ///< output: The PDF of sampling `wi` from `wo`
+  const &float pdf_rev,   ///< output: The PDF of sampling `wo` from `wi`
+  const &float f,         ///< output: The scattering function
 ) {
   auto params = scatter_evaluate_parameters(
     is_importance: (instance.flags & 1) != 0,
     wo0: normalize((*wo_world) * instance.tangent_space),
     wi0: normalize((*wi_world) * instance.tangent_space),
     normal: normalize(*instance.normal),
-    thin_walled: instance.mat.thin_walled,
+    thin_walled: instance.jit_struct.thin_walled,
   );
-  auto result = #is_default(instance.mat.backface) || !params.hit_backface          //
-                ? scatter_evaluate(visit &instance.mat.surface.scattering, &params) //
-                : scatter_evaluate(visit &instance.mat.backface.scattering, &params);
+  auto result = #is_default(instance.jit_struct.backface) || !params.hit_backface          //
+                ? scatter_evaluate(visit &instance.jit_struct.surface.scattering, &params) //
+                : scatter_evaluate(visit &instance.jit_struct.backface.scattering, &params);
   visit result in result {
     if (result.is_black) {
       *pdf_fwd = 0.0;
@@ -1874,13 +1872,13 @@ export int __scatter_evaluate(
 @(macro)
 export int __scatter_sample(
   const &__material_instance instance,
-  const &float4 xi,        ///< The canonical random sample in `[0,1]^4`
-  const &float3 wo_world,  ///< The outgoing direction in world space
-  const &float3 wi_world,  ///< output: The incoming direction in world space
-  const &float pdf_fwd,    ///< output: The PDF of sampling `wi` from `wo`
-  const &float pdf_rev,    ///< output: The PDF of sampling `wo` from `wi`
-  const &float f,          ///< output: The scattering function
-  const &int is_delta,     ///< output: Is delta direction?
+  const &float4 xi,       ///< The canonical random sample in `[0,1]^4`
+  const &float3 wo_world, ///< The outgoing direction in world space
+  const &float3 wi_world, ///< output: The incoming direction in world space
+  const &float pdf_fwd,   ///< output: The PDF of sampling `wi` from `wo`
+  const &float pdf_rev,   ///< output: The PDF of sampling `wo` from `wi`
+  const &float f,         ///< output: The scattering function
+  const &int is_delta,    ///< output: Is delta direction?
 ) {
   auto wo = normalize((*wo_world) * instance.tangent_space);
   auto params = scatter_sample_parameters(
@@ -1888,11 +1886,11 @@ export int __scatter_sample(
     xi: *xi,
     wo0: wo,
     normal: normalize(*instance.normal),
-    thin_walled: instance.mat.thin_walled,
+    thin_walled: instance.jit_struct.thin_walled,
   );
-  auto result = #is_default(instance.mat.backface) || !params.hit_backface        //
-                ? scatter_sample(visit &instance.mat.surface.scattering, &params) //
-                : scatter_sample(visit &instance.mat.backface.scattering, &params);
+  auto result = #is_default(instance.jit_struct.backface) || !params.hit_backface        //
+                ? scatter_sample(visit &instance.jit_struct.surface.scattering, &params) //
+                : scatter_sample(visit &instance.jit_struct.backface.scattering, &params);
   visit result in result {
     const auto wi = #select(params.hit_backface, -result.wi, +result.wi);
     if (result.mode == scatter_none || ((wo.z < 0.0) == (wi.z < 0.0)) != (result.mode == scatter_reflect)) {

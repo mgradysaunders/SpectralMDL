@@ -44,7 +44,7 @@ export float3x3 geometry_tangent_space(const int i) = float3x3($state.geometry_t
 export int object_id() = $state.object_id;
 
 @(macro)
-export float3 direction() = $state.direction;
+export float3 direction() = /* $state.direction */ float3(0.0, 0.0, 0.0);
 
 @(macro)
 export float animation_time() = $state.animation_time;

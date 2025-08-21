@@ -254,18 +254,20 @@ const int MATERIAL_HAS_BACKFACE=(1<<3);
 const int MATERIAL_HAS_VOLUME=(1<<6);
 const int MATERIAL_HAS_HAIR=(1<<7);
 export struct __material_instance{
-  const &material mat;
-  const &float3 displacement=&mat.geometry.displacement;
-  const &float cutout_opacity=&mat.geometry.cutout_opacity;
-  const &float3 normal=&mat.geometry.normal;
-  const &color ior=&mat.ior;
-  const &color absorption_coefficient=#is_void(mat.volume.absorption_coefficient)?none:&mat.volume.absorption_coefficient;
-  const &color scattering_coefficient=#is_void(mat.volume.scattering_coefficient)?none:&mat.volume.scattering_coefficient;
+  const &material jit_struct;
+  const &float3 displacement=&jit_struct.geometry.displacement;
+  const &float cutout_opacity=&jit_struct.geometry.cutout_opacity;
+  const &float3 normal=&jit_struct.geometry.normal;
+  const &color ior=&jit_struct.ior;
+  const &color absorption_coefficient=#is_void(jit_struct.volume.absorption_coefficient)?none:&jit_struct.volume.absorption_coefficient;
+  const &color scattering_coefficient=#is_void(jit_struct.volume.scattering_coefficient)?none:&jit_struct.volume.scattering_coefficient;
   const int wavelength_base_max=$WAVELENGTH_BASE_MAX;
-  const int flags=$state.transport|(mat.thin_walled?MATERIAL_THIN_WALLED:0)|(!#is_default(mat.surface)?MATERIAL_HAS_SURFACE:0)|(!#is_default(mat.backface)?MATERIAL_HAS_BACKFACE:0)|(!#is_default(mat.volume)?MATERIAL_HAS_VOLUME:0)|(!#is_default(mat.hair)?MATERIAL_HAS_HAIR:0);
-  const int df_flags_surface=mat.surface.scattering.__flags;
-  const int df_flags_backface=mat.backface.scattering.__flags;
-  const float3x3 tangent_space=float3x3($state.tangent_to_object_matrix[0].xyz,$state.tangent_to_object_matrix[1].xyz,$state.tangent_to_object_matrix[2].xyz,);
+  const int flags=$state.transport|(jit_struct.thin_walled?MATERIAL_THIN_WALLED:0)|(!#is_default(jit_struct.surface)?MATERIAL_HAS_SURFACE:0)|(!#is_default(jit_struct.backface)?MATERIAL_HAS_BACKFACE:0)|(!#is_default(jit_struct.volume)?MATERIAL_HAS_VOLUME:0)|(!#is_default(jit_struct.hair)?MATERIAL_HAS_HAIR:0);
+  const int df_flags_surface=jit_struct.surface.scattering.__flags;
+  const int df_flags_backface=jit_struct.backface.scattering.__flags;
+  const float3x3 tangent_space=let {
+                                 const auto tangent_to_world_matrix=$state.object_to_world_matrix*$state.tangent_to_object_matrix;
+                               } in float3x3(tangent_to_world_matrix[0].xyz,tangent_to_world_matrix[1].xyz,tangent_to_world_matrix[2].xyz,);
 };
 export struct __albedo_lut{
   const int num_cos_theta=0;
@@ -380,7 +382,6 @@ const int DF_TRANSMISSION=(1<<1);
 const int DF_DIFFUSE=(1<<2);
 const int DF_GLOSSY=(1<<3);
 const int DF_SPECULAR=(1<<4);
-const int DF_EMISSION=(1<<5);
 export enum scatter_mode{
   scatter_none=0x0,
   scatter_reflect=0x1,
@@ -1543,9 +1544,9 @@ export int __scatter_evaluate(
     wo0: normalize((*wo_world)*instance.tangent_space),
     wi0: normalize((*wi_world)*instance.tangent_space),
     normal: normalize(*instance.normal),
-    thin_walled: instance.mat.thin_walled,
+    thin_walled: instance.jit_struct.thin_walled,
   );
-  auto result=#is_default(instance.mat.backface)||!params.hit_backface?scatter_evaluate(visit &instance.mat.surface.scattering,&params):scatter_evaluate(visit &instance.mat.backface.scattering,&params);
+  auto result=#is_default(instance.jit_struct.backface)||!params.hit_backface?scatter_evaluate(visit &instance.jit_struct.surface.scattering,&params):scatter_evaluate(visit &instance.jit_struct.backface.scattering,&params);
   visit result in result{
     if(result.is_black){
       *pdf_fwd=0.0;
@@ -1582,9 +1583,9 @@ export int __scatter_sample(
     xi: *xi,
     wo0: wo,
     normal: normalize(*instance.normal),
-    thin_walled: instance.mat.thin_walled,
+    thin_walled: instance.jit_struct.thin_walled,
   );
-  auto result=#is_default(instance.mat.backface)||!params.hit_backface?scatter_sample(visit &instance.mat.surface.scattering,&params):scatter_sample(visit &instance.mat.backface.scattering,&params);
+  auto result=#is_default(instance.jit_struct.backface)||!params.hit_backface?scatter_sample(visit &instance.jit_struct.surface.scattering,&params):scatter_sample(visit &instance.jit_struct.backface.scattering,&params);
   visit result in result{
     const auto wi=#select(params.hit_backface,-result.wi,result.wi);
     if(result.mode==scatter_none||((wo.z<0.0)==(wi.z<0.0))!=(result.mode==scatter_reflect)){
@@ -1851,7 +1852,7 @@ export float3x3 geometry_tangent_space(const int i)=float3x3($state.geometry_tan
 @(macro)
 export int object_id()=$state.object_id;
 @(macro)
-export float3 direction()=$state.direction;
+export float3 direction()=float3(0.0,0.0,0.0);
 @(macro)
 export float animation_time()=$state.animation_time;
 export const int WAVELENGTH_BASE_MAX=$WAVELENGTH_BASE_MAX;

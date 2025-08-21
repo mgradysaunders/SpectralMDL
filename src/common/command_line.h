@@ -2,6 +2,7 @@
 
 #include "smdl/common.h"
 #include "llvm/Support/CommandLine.h"
+#include "llvm/Support/InitLLVM.h"
 
 namespace cl = llvm::cl;
 

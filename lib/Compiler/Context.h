@@ -518,9 +518,9 @@ template <> struct get_type<void, void> {
 };
 
 template <typename T>
-struct get_type<T, std::enable_if_t<std::is_arithmetic_v<T>, void>> {
+struct get_type<T, std::enable_if_t<std::is_arithmetic_v<T> || std::is_enum_v<T>, void>> {
   [[nodiscard]] static Type *get(Context &context) {
-    if constexpr (std::is_integral_v<T>)
+    if constexpr (std::is_integral_v<T> || std::is_enum_v<T>)
       return context.get_arithmetic_type(Scalar::get_int(sizeof(T) * 8));
     else
       return context.get_arithmetic_type(Scalar::get_FP(sizeof(T) * 8));

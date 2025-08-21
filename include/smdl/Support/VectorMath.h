@@ -323,6 +323,18 @@ template <typename T, size_t N>
   return v * invLen;
 }
 
+/// Try to normalize, return true if successful.
+template <typename T, size_t N>
+[[nodiscard]] inline bool try_normalize(Vector<T, N> &v) noexcept {
+  static_assert(std::is_floating_point_v<T>);
+  if (T len{length(v)}; len > 0) {
+    v = v / len;
+    return true;
+  } else {
+    return false;
+  }
+}
+
 /// Vector cross product in 3 dimensions.
 template <typename T>
 [[nodiscard]] constexpr Vector<T, 3> cross(Vector<T, 3> u,

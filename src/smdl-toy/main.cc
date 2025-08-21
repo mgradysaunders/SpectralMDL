@@ -1,21 +1,9 @@
-#include "llvm/Support/InitLLVM.h"
-
 #include "command_line.h"
-#include "common.h"
-
-#include "Scene.h"
-// #include "integrators/BDPTIntegrator.h"
-// #include "integrators/PSMLTIntegrator.h"
-#include "integrators/PTIntegrator.h"
-#include "integrators/PTLightIntegrator.h"
-#include "lights/AmbientLight.h"
-#include "lights/DirectionLight.h"
-#include "lights/DiskLight.h"
-#include "lights/PointLight.h"
-#include "lights/SpotLight.h"
-
-#include "smdl/Support/Profiler.h"
-
+#include "rt.h"
+#include "smdl/Support/Logger.h"
+#include "smdl/Support/Parallel.h"
+#include "smdl/Support/Sampling.h"
+#include "smdl/Support/SpectralRenderImage.h"
 #include <fstream>
 #include <iostream>
 
@@ -24,124 +12,127 @@ static cl::opt<std::string> inputSceneFile{
 static cl::list<std::string> inputMDLFiles{
     cl::Positional, cl::desc("<input mdl>"), cl::OneOrMore};
 
-static cl::OptionCategory catCamera{"Render Options (Camera)"};
-static cl::opt<smdl::int2> cameraImageExtent{
+static cl::OptionCategory catCamera{"Camera Options"};
+static cl::opt<int2> cameraDims{
     "dims", cl::desc("The image dimensions in pixels (default: 1280,720)"),
-    cl::init(smdl::int2{1280, 720}), cl::cat(catCamera)};
-static cl::opt<smdl::float3> cameraFrom{
+    cl::init(int2{1280, 720}), cl::cat(catCamera)};
+static cl::opt<float3> cameraFrom{
     "look-from", cl::desc("The position to look from (default: -6,0,2)"),
-    cl::init(smdl::float3{-6, 0, 2}), cl::cat(catCamera)};
-static cl::opt<smdl::float3> cameraTo{
+    cl::init(float3{-6, 0, 2}), cl::cat(catCamera)};
+static cl::opt<float3> cameraTo{
     "look-to", cl::desc("The position to look to (default: 0,0,0.5)"),
-    cl::init(smdl::float3{0, 0, 0.5}), cl::cat(catCamera)};
-static cl::opt<smdl::float3> cameraUp{
-    "up", cl::desc("The up vector (default: 0,0,1)"),
-    cl::init(smdl::float3{0, 0, 1}), cl::cat(catCamera)};
-static cl::opt<float> cameraFov{"fov",
+    cl::init(float3{0, 0, 0.5}), cl::cat(catCamera)};
+static cl::opt<float3> cameraUp{"up",
+                                cl::desc("The up vector (default: 0,0,1)"),
+                                cl::init(float3{0, 0, 1}), cl::cat(catCamera)};
+static cl::opt<float> cameraFOV{"fov",
                                 cl::desc("The FOV in degrees (default: 60)"),
                                 cl::init(60.0f), cl::cat(catCamera)};
-
-static cl::OptionCategory catIntegrator{"Render Options (Integrator)"};
-enum IntegratorKind : int {
-  INTEGRATOR_KIND_PT,
-  INTEGRATOR_KIND_PT_LIGHT,
-  INTEGRATOR_KIND_BDPT,
-  INTEGRATOR_KIND_PSMLT,
-  INTEGRATOR_KIND_PSMLT_INDIRECT
-};
-static cl::opt<IntegratorKind> integratorKind{
-    "integrator", cl::desc("Integrator (default: pt)"),
-    cl::values(
-        cl::OptionEnumValue{"pt", int(INTEGRATOR_KIND_PT),
-                            "Path tracing (PT) from camera"},
-        cl::OptionEnumValue{"pt-light", int(INTEGRATOR_KIND_PT_LIGHT),
-                            "Path tracing (PT) from lights"},
-        cl::OptionEnumValue{
-            "bdpt", int(INTEGRATOR_KIND_BDPT),
-            "Bidirectional path tracing (BDPT) from camera and lights"},
-        cl::OptionEnumValue{"psmlt", int(INTEGRATOR_KIND_PSMLT),
-                            "Primary-space metropolis light transport (PSMLT)"},
-        cl::OptionEnumValue{
-            "psmlt-indirect", int(INTEGRATOR_KIND_PSMLT_INDIRECT),
-            "PT for direct light and PSMLT for indirect light"}),
-    cl::init(INTEGRATOR_KIND_PT), cl::cat(catIntegrator)};
-static cl::opt<size_t> minOrder{
-    "min-order", cl::desc("The minimum scattering order (default: 0)"),
-    cl::init(0u), cl::cat(catIntegrator)};
-static cl::opt<size_t> maxOrder{
-    "max-order", cl::desc("The maximum scattering order (default: 5)"),
-    cl::init(5u), cl::cat(catIntegrator)};
-static cl::opt<size_t> samplesPerPixel{
+static cl::opt<unsigned> samplesPerPixel{
     "spp", cl::desc("The number of samples per pixel (default: 8)"),
-    cl::init(8U), cl::cat(catIntegrator)};
-static cl::opt<size_t> seed{"seed", cl::desc("The random seed (default: 0)"),
-                            cl::init(0u), cl::cat(catIntegrator)};
-static cl::opt<float> imageGain{
-    "image-gain", cl::desc("The final image gain multiplier (default: 1)"),
-    cl::init(1.0f), cl::cat(catIntegrator)};
-
-/*
-static cl::opt<std::string> imageLightFile{"ibl", cl::desc("The IBL filename"),
-                                           cl::cat(catCamera)};
-static cl::opt<float> imageLightScale{"ibl-scale",
-                                      cl::desc("The IBL scale factor"),
-                                      cl::init(1.0f), cl::cat(catCamera)};
- */
+    cl::init(8U), cl::cat(catCamera)};
 
 int main(int argc, char **argv) try {
   llvm::InitLLVM X(argc, argv);
   smdl::Logger::get().add_sink<smdl::LogSinks::print_to_cerr>();
-  smdl::profiler_initialize();
-  SMDL_DEFER([]() { smdl::profiler_finalize(); });
-  cl::HideUnrelatedOptions({&catCamera, &catIntegrator});
+  cl::HideUnrelatedOptions({&catCamera});
   cl::ParseCommandLineOptions(argc, argv, "SpectralMDL toy renderer");
 
-  smdl::Compiler compiler{};
+  auto compiler{smdl::Compiler{}};
   compiler.wavelengthBaseMax = WAVELENGTH_BASE_MAX;
   compiler.enableDebug = false;
   compiler.enableUnitTests = false;
   for (auto &inputMDLFile : inputMDLFiles)
     if (auto error{compiler.add(std::string(inputMDLFile))})
       error->print_and_exit();
-  if (auto error{compiler.compile(smdl::OptLevel::O2)})
+  if (auto error{compiler.compile(smdl::OPT_LEVEL_O2)})
     error->print_and_exit();
   if (auto error{compiler.jit_compile()})
     error->print_and_exit();
+  const auto scene{Scene(compiler, inputSceneFile)};
 
-  const Camera camera{smdl::look_at(cameraFrom, cameraTo, cameraUp),
-                      smdl::int2(cameraImageExtent),
-                      float(cameraFov) * PI / 180.0f};
-  Scene scene{compiler, camera, inputSceneFile};
-  scene.lights.emplace<PointLight>(Color(40.0f), smdl::float3(-1, -3, 5));
-  scene.lights.finalize(scene);
-  auto integrator{[&]() -> std::unique_ptr<Integrator> {
-    switch (IntegratorKind(integratorKind)) {
-    case INTEGRATOR_KIND_PT:
-      return std::make_unique<PTIntegrator>(seed, samplesPerPixel, minOrder,
-                                            maxOrder);
-    case INTEGRATOR_KIND_PT_LIGHT:
-      return std::make_unique<PTLightIntegrator>(seed, samplesPerPixel,
-                                                 minOrder, maxOrder);
-#if 0
-    case INTEGRATOR_KIND_BDPT:
-      return std::make_unique<BDPTIntegrator>(seed, samplesPerPixel, minOrder,
-                                              maxOrder);
-    case INTEGRATOR_KIND_PSMLT:
-      return std::make_unique<PSMLTIntegrator>(seed, samplesPerPixel, minOrder,
-                                               maxOrder,
-                                               /*onlyIndirectPSMLT=*/false);
-    case INTEGRATOR_KIND_PSMLT_INDIRECT:
-      return std::make_unique<PSMLTIntegrator>(seed, samplesPerPixel, minOrder,
-                                               maxOrder,
-                                               /*onlyIndirectPSMLT=*/true);
-#endif
-    default:
-      SMDL_SANITY_CHECK(false, "Invalid integrator kind");
-      break;
+  auto wavelengthBase{Color()};
+  for (size_t i = 0; i < WAVELENGTH_BASE_MAX; i++) {
+    float t = i / float(WAVELENGTH_BASE_MAX - 1);
+    wavelengthBase[i] = (1 - t) * WAVELENGTH_MIN + t * WAVELENGTH_MAX;
+  }
+  const auto dims{int2(cameraDims)};
+  const auto numPixelsX{size_t(dims.x)};
+  const auto numPixelsY{size_t(dims.y)};
+  const auto aspectRatio{float(numPixelsX) / float(numPixelsY)};
+  const auto focalLength{0.5f / std::tan(float(cameraFOV) / 2 * PI / 180)};
+  const auto cameraToWorld{smdl::look_at(cameraFrom, cameraTo, cameraUp)};
+  auto renderImage{
+      smdl::SpectralRenderImage(WAVELENGTH_BASE_MAX, numPixelsX, numPixelsY)};
+  smdl::parallel_for(0, numPixelsX * numPixelsY, [&](size_t i) {
+    auto allocator{smdl::BumpPtrAllocator()};
+    auto state{smdl::State{}};
+    state.allocator = &allocator;
+    state.wavelength_base = wavelengthBase.data();
+    state.wavelength_min = WAVELENGTH_MIN;
+    state.wavelength_max = WAVELENGTH_MAX;
+    auto rng{make_RNG(0x8f54190b ^ i, 0xbb7c1003 + i)};
+    auto spp{size_t(samplesPerPixel)};
+    auto y{i / numPixelsX};
+    auto x{i % numPixelsX};
+    Color Lsum{};
+    for (size_t s = 0; s < spp; s++) {
+      Ray ray{};
+      float u{(x + smdl::generate_canonical(rng)) / float(numPixelsX)};
+      float v{(y + smdl::generate_canonical(rng)) / float(numPixelsY)};
+      ray.dir.x = (u - 0.5f) * aspectRatio;
+      ray.dir.y = -(v - 0.5f);
+      ray.dir.z = -focalLength;
+      ray.dir = normalize(ray.dir);
+      ray.tmin = EPS;
+      ray.tmax = INF;
+      ray.transform(cameraToWorld);
+      Hit hit{};
+      if (scene.intersect(ray, hit)) {
+        hit.apply_geometry_to_state(state);
+        smdl::JIT::MaterialInstance material{hit.material, state};
+        float pdfFwd{};
+        float pdfRev{};
+        Color f{};
+        auto lightDir{smdl::normalize(float3(1.0f, -1.0f, 1.0f))};
+        if (material.scatter_evaluate(-ray.dir, lightDir, pdfFwd, pdfRev, f.data())) {
+          Lsum += f; 
+        }
+      }
+      allocator.reset();
     }
-    return nullptr;
-  }()};
-  integrator->integrate_and_write_file(scene, imageGain, "output.png");
+    Lsum /= spp;
+    renderImage(x, y).add(Lsum.data());
+  });
+  auto imageScale{2.0f};
+  auto rgbImage{std::vector<uint8_t>(numPixelsX * numPixelsY * 3)};
+  auto rgbImageIndex{0};
+  for (size_t y{}; y < numPixelsY; y++) {
+    for (size_t x{}; x < numPixelsX; x++) {
+      auto color{Color()};
+      auto pixel{renderImage(x, y)};
+      for (size_t i = 0; i < WAVELENGTH_BASE_MAX; i++)
+        color[i] = float(double(pixel[i]));
+      smdl::State state{};
+      state.wavelength_base = wavelengthBase.data();
+      state.wavelength_min = WAVELENGTH_MIN;
+      state.wavelength_max = WAVELENGTH_MAX;
+      auto rgb{compiler.jit_color_to_rgb(state, color.data())};
+      rgb[0] *= imageScale;
+      rgb[1] *= imageScale;
+      rgb[2] *= imageScale;
+      rgb[0] = std::pow(std::fmin(std::fmax(0.0f, rgb[0]), 1.0f), 1.0f / 2.2f);
+      rgb[1] = std::pow(std::fmin(std::fmax(0.0f, rgb[1]), 1.0f), 1.0f / 2.2f);
+      rgb[2] = std::pow(std::fmin(std::fmax(0.0f, rgb[2]), 1.0f), 1.0f / 2.2f);
+      rgbImage[rgbImageIndex++] = std::round(255.0f * rgb[0]);
+      rgbImage[rgbImageIndex++] = std::round(255.0f * rgb[1]);
+      rgbImage[rgbImageIndex++] = std::round(255.0f * rgb[2]);
+    }
+  }
+  if (auto error{smdl::write_8_bit_image("output.png", numPixelsX, numPixelsY,
+                                         3, rgbImage.data())}) {
+    error->print();
+  }
   return EXIT_SUCCESS;
 } catch (const smdl::Error &error) {
   error.print();

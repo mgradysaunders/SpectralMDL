@@ -5,6 +5,8 @@
 
 namespace smdl {
 
+class Compiler;
+
 /// \addtogroup Main
 /// \{
 
@@ -97,12 +99,24 @@ public:
 
   /// An instance of the material.
   struct Instance final {
-    /// The material memory block.
+  public:
+    /// Is null?
+    [[nodiscard]] bool operator!() const noexcept {
+      return jit_struct == nullptr;
+    }
+
+    /// Is non-null?
+    [[nodiscard]] operator bool() const noexcept {
+      return jit_struct != nullptr;
+    }
+
+  public:
+    /// The JIT struct memory block.
     ///
     /// This holds the JIT material structure, which is entirely opaque to the
     /// user over in C++ land. Just ignore this!
     ///
-    const void *mat{};
+    const void *jit_struct{};
 
     /// The displacement vector.
     const float3 *displacement{};
@@ -213,6 +227,55 @@ public:
                float3 &wi, float &pdf_fwd, float &pdf_rev, float *f,
                int &is_delta)>
       scatter_sample{};
+};
+
+/// A just-in-time SMDL material pointer and an instance of the material.
+struct MaterialInstance final {
+public:
+  MaterialInstance() = default;
+
+  MaterialInstance(const Material *material) : material(material) {}
+
+  MaterialInstance(const Material *material, State &state)
+      : material(material) {
+    allocate(state);
+  }
+
+  void allocate(State &state) {
+    SMDL_SANITY_CHECK(material && !instance);
+    material->allocate(state, instance);
+  }
+
+  [[nodiscard]]
+  bool scatter_evaluate(const float3 &wo, //
+                        const float3 &wi, //
+                        float &pdf_fwd,   //
+                        float &pdf_rev,   //
+                        float *f) const {
+    SMDL_SANITY_CHECK(material && instance);
+    SMDL_SANITY_CHECK(f);
+    return material->scatter_evaluate(instance, wo, wi, pdf_fwd, pdf_rev, f);
+  }
+
+  [[nodiscard]]
+  bool scatter_sample(const float4 &xi, //
+                      const float3 &wo, //
+                      float3 &wi,       //
+                      float &pdf_fwd,   //
+                      float &pdf_rev,   //
+                      float *f, int &is_delta) const {
+    SMDL_SANITY_CHECK(material && instance);
+    SMDL_SANITY_CHECK(f);
+    return material->scatter_sample(instance, xi, wo, wi, pdf_fwd, pdf_rev, f,
+                                    is_delta);
+  }
+
+public:
+  /// The material pointer.
+  const Material *material{};
+
+  /// The instance.
+  Material::Instance instance{};
 };
 
 /// A just-in-time SMDL unit test.

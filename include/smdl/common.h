@@ -173,30 +173,67 @@ public:
 
 /// The transport mode.
 enum Transport : int {
-  /// Transport radiance (tracing rays from cameras to lights).
+  /// Transport radiance (tracing paths from cameras to lights).
   TRANSPORT_RADIANCE = 0,
-  /// Transport importance (tracing rays from lights to cameras).
+  /// Transport importance (tracing paths from lights to cameras).
   TRANSPORT_IMPORTANCE = 1,
 };
 
 /// The MDL state passed in at runtime.
 class SMDL_EXPORT State final {
 public:
+  /// Finalize and apply internal space conventions.
+  void finalize_and_apply_internal_space_conventions() noexcept;
+
+public:
   /// The allocator, which must point to thread-local
   /// instance of `BumpPtrAllocator`.
   void *allocator{};
 
+  /// The wavelengths in nanometers, must be sorted in increasing order!
+  const float *wavelength_base{};
+
+  /// The minimum wavelength in nanometers.
+  float wavelength_min{};
+
+  /// The maximum wavelength in nanometers.
+  float wavelength_max{};
+
+  /// The meters per scene unit.
+  float meters_per_scene_unit{1.0f};
+
+  /// The animation time.
+  float animation_time{0.0f};
+
+  /// The object ID.
+  int object_id{};
+
+  /// If applicable, the Ptex face ID.
+  int ptex_face_id{};
+
+  /// If applicable, the Ptex face UV.
+  float2 ptex_face_uv{};
+
   /// The position or ray intersection point in object space.
   float3 position{};
+
+#if 0
+  /// The direction in the context of an environment lookup.
+  ///
+  /// \note
+  /// Not sure exactly how this fits yet.
+  ///
+  float3 direction{};
+#endif
+
+  /// The motion vector in object space.
+  float3 motion{};
 
   /// The normal in object space.
   float3 normal{0, 0, 1};
 
   /// The geometry normal in object space.
   float3 geometry_normal{0, 0, 1};
-
-  /// The motion vector in object space.
-  float3 motion{};
 
   /// The max supported number of texture spaces.
   static constexpr size_t TEXTURE_SPACE_MAX = 4;
@@ -223,35 +260,6 @@ public:
   float3 geometry_tangent_v[TEXTURE_SPACE_MAX] = {
       float3{0, 1, 0}, float3{0, 1, 0}, float3{0, 1, 0}, float3{0, 1, 0}};
 
-  /// The object ID.
-  int object_id{};
-
-  /// The Ptex face ID if applicable.
-  int ptex_face_id{};
-
-  /// The Ptex face UV if applicable.
-  float2 ptex_face_uv{};
-
-  float3 direction{};
-
-  /// The animation time.
-  float animation_time{0.0f};
-
-  /// The wavelengths in nanometers.
-  const float *wavelength_base{};
-
-  /// The wavelength range minimum in nanometers.
-  float wavelength_min{380.0f};
-
-  /// The wavelength range maximum in nanometers.
-  float wavelength_max{720.0f};
-
-  /// The meters per scene unit.
-  float meters_per_scene_unit{1.0f};
-
-  /// The object-to-world matrix.
-  float4x4 object_to_world_matrix{float4x4(1.0f)};
-
   /// The tangent-to-object matrix.
   ///
   /// The tangent space is the coordinate system where
@@ -260,17 +268,26 @@ public:
   /// - The Z axis is aligned to the geometry normal.
   /// - The origin is the ray intersection point.
   ///
-  /// Do not populate this! Instead call `finalize_for_runtime_conventions()`
+  /// Do not populate this!
+  ///
+  /// Instead call `finalize_and_apply_internal_space_conventions()`
   /// to compute this from `geometry_tangent_u[0]`, `geometry_tangent_v[0]`,
   /// `geometry_normal`, and `position`.
   ///
   float4x4 tangent_to_object_matrix{float4x4(1.0f)};
 
-  /// The transport mode.
-  int transport{int(TRANSPORT_RADIANCE)};
+  /// The object-to-world matrix.
+  float4x4 object_to_world_matrix{float4x4(1.0f)};
 
-public:
-  void finalize_for_runtime_conventions();
+  /// The transport mode.
+  ///
+  /// \note
+  /// This is necessary to account for asymmetric scattering in
+  /// bidirectional methods.
+  /// - `TRANSPORT_RADIANCE` means tracing paths from cameras to lights,
+  /// - `TRANSPORT_IMPORTANCE` means tracing paths from lights to cameras.
+  ///
+  Transport transport{TRANSPORT_RADIANCE};
 };
 
 /// An albedo look-up table (LUT) for energy compensation in lossy BSDFs.

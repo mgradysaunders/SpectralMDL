@@ -85,44 +85,33 @@ SourceLocation::operator std::string() const {
   return str;
 }
 
-void State::finalize_for_runtime_conventions() {
+static void gram_schmidt_orthonormalize(const float3 &normal, float3 &tangentU,
+                                        float3 &tangentV) {
+  tangentU = tangentU - dot(tangentU, normal) * normal;
+  if (!try_normalize(tangentU)) {
+    tangentU = normalize(perpendicular_to(normal));
+  }
+  tangentV = tangentV - dot(tangentV, normal) * normal -
+             dot(tangentV, tangentU) * tangentU;
+  if (!try_normalize(tangentV)) {
+    tangentV = normalize(cross(normal, tangentU));
+  }
+}
+
+void State::finalize_and_apply_internal_space_conventions() noexcept {
   // 1. Orthonormalize normal and tangent vectors.
-  normal = normalize(normal);
-  if (!is_all_finite(normal)) {
+  if (!try_normalize(normal))
     normal = {0, 0, 1};
-  }
-  for (int i = 0; i < texture_space_max; i++) {
-    auto &tu{texture_tangent_u[i]};
-    auto &tv{texture_tangent_v[i]};
-    auto &tw{normal};
-    tu = normalize(tu - dot(tu, tw) * tw);
-    if (!is_all_finite(tv)) {
-      tu = normalize(perpendicular_to(tw));
-    }
-    tv = normalize(tv - dot(tv, tw) * tw - dot(tv, tu) * tu);
-    if (!is_all_finite(tv)) {
-      tv = normalize(cross(tw, tu));
-    }
-  }
+  for (int i = 0; i < texture_space_max; i++)
+    gram_schmidt_orthonormalize(normal, texture_tangent_u[i],
+                                texture_tangent_v[i]);
 
   // 2. Orthonormalize geometry normal and tangent vectors.
-  geometry_normal = normalize(geometry_normal);
-  if (!is_all_finite(geometry_normal)) {
+  if (!try_normalize(geometry_normal))
     geometry_normal = normal;
-  }
-  for (int i = 0; i < texture_space_max; i++) {
-    auto &tu{geometry_tangent_u[i]};
-    auto &tv{geometry_tangent_v[i]};
-    auto &tw{geometry_normal};
-    tu = normalize(tu - dot(tu, tw) * tw);
-    if (!is_all_finite(tu)) {
-      tu = normalize(perpendicular_to(tw));
-    }
-    tv = normalize(tv - dot(tv, tw) * tw - dot(tv, tu) * tu);
-    if (!is_all_finite(tv)) {
-      tv = normalize(cross(tw, tu));
-    }
-  }
+  for (int i = 0; i < texture_space_max; i++)
+    gram_schmidt_orthonormalize(geometry_normal, geometry_tangent_u[i],
+                                geometry_tangent_v[i]);
 
   // 3. Construct the tangent-to-object matrix.
   tangent_to_object_matrix[0] = float4(geometry_tangent_u[0], 0.0f);
@@ -133,10 +122,10 @@ void State::finalize_for_runtime_conventions() {
   // 4. Transform everything from object space to tangent space.
   auto object_to_tangent_matrix{affine_inverse(tangent_to_object_matrix)};
   position = {};
-  geometry_normal = {0, 0, 1};
-  normal = object_to_tangent_matrix * float4(normal, 0.0f);
+  /* direction = object_to_tangent_matrix * float4(direction, 0.0f); */
   motion = object_to_tangent_matrix * float4(motion, 0.0f);
-  direction = object_to_tangent_matrix * float4(direction, 0.0f);
+  normal = object_to_tangent_matrix * float4(normal, 0.0f);
+  geometry_normal = {0, 0, 1};
   for (int i = 0; i < texture_space_max; i++) {
     texture_tangent_u[i] =
         object_to_tangent_matrix * float4(texture_tangent_u[i], 0.0f);

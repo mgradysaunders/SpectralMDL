@@ -1451,27 +1451,27 @@ StateType::StateType(Context &context) {
   fields.push_back({context.get_type(&State::name), #name,                     \
                     uint64_t(offsetof(State, name))})
   ADD_FIELD(allocator);
+  ADD_FIELD(wavelength_base);
+  ADD_FIELD(wavelength_min);
+  ADD_FIELD(wavelength_max);
+  ADD_FIELD(meters_per_scene_unit);
+  ADD_FIELD(animation_time);
+  ADD_FIELD(object_id);
+  ADD_FIELD(ptex_face_id);
+  ADD_FIELD(ptex_face_uv);
   ADD_FIELD(position);
+  /* ADD_FIELD(direction); */
+  ADD_FIELD(motion);
   ADD_FIELD(normal);
   ADD_FIELD(geometry_normal);
-  ADD_FIELD(motion);
   ADD_FIELD(texture_space_max);
   ADD_FIELD(texture_coordinate);
   ADD_FIELD(texture_tangent_u);
   ADD_FIELD(texture_tangent_v);
   ADD_FIELD(geometry_tangent_u);
   ADD_FIELD(geometry_tangent_v);
-  ADD_FIELD(object_id);
-  ADD_FIELD(ptex_face_id);
-  ADD_FIELD(ptex_face_uv);
-  ADD_FIELD(direction);
-  ADD_FIELD(animation_time);
-  ADD_FIELD(wavelength_base);
-  ADD_FIELD(wavelength_min);
-  ADD_FIELD(wavelength_max);
-  ADD_FIELD(meters_per_scene_unit);
-  ADD_FIELD(object_to_world_matrix);
   ADD_FIELD(tangent_to_object_matrix);
+  ADD_FIELD(object_to_world_matrix);
   ADD_FIELD(transport);
 #undef ADD_FIELD
   auto llvmTypes{llvm::SmallVector<llvm::Type *>{}};

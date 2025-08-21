@@ -436,48 +436,50 @@ const int MATERIAL_HAS_HAIR = (1 << 7);
 /// in the C++ API.
 export struct __material_instance {
   /// The material deep copied with `#bump_allocate()`.
-  const &material mat;
+  const &material jit_struct;
 
   /// The geometry displacement.
-  const &float3 displacement = &mat.geometry.displacement;
+  const &float3 displacement = &jit_struct.geometry.displacement;
 
   /// The geometry cutout opacity.
-  const &float cutout_opacity = &mat.geometry.cutout_opacity;
+  const &float cutout_opacity = &jit_struct.geometry.cutout_opacity;
 
   /// The geometry normal.
-  const &float3 normal = &mat.geometry.normal;
+  const &float3 normal = &jit_struct.geometry.normal;
 
   /// The index of refraction.
-  const &color ior = &mat.ior;
+  const &color ior = &jit_struct.ior;
 
   /// The volume absorption coefficient.
-  const &color absorption_coefficient = #is_void(mat.volume.absorption_coefficient) ? none : &mat.volume.absorption_coefficient;
+  const &color absorption_coefficient = #is_void(jit_struct.volume.absorption_coefficient) ? none : &jit_struct.volume.absorption_coefficient;
 
   /// The volume scattering coefficient.
-  const &color scattering_coefficient = #is_void(mat.volume.scattering_coefficient) ? none : &mat.volume.scattering_coefficient;
+  const &color scattering_coefficient = #is_void(jit_struct.volume.scattering_coefficient) ? none : &jit_struct.volume.scattering_coefficient;
 
   /// The wavelength count.
   const int wavelength_base_max = $WAVELENGTH_BASE_MAX;
 
   /// The flags.
-  const int flags = $state.transport                                           //
-                    | (mat.thin_walled ? MATERIAL_THIN_WALLED : 0)             //
-                    | (!#is_default(mat.surface) ? MATERIAL_HAS_SURFACE : 0)   //
-                    | (!#is_default(mat.backface) ? MATERIAL_HAS_BACKFACE : 0) //
-                    | (!#is_default(mat.volume) ? MATERIAL_HAS_VOLUME : 0)     //
-                    | (!#is_default(mat.hair) ? MATERIAL_HAS_HAIR : 0);
+  const int flags = $state.transport                                                  //
+                    | (jit_struct.thin_walled ? MATERIAL_THIN_WALLED : 0)             //
+                    | (!#is_default(jit_struct.surface) ? MATERIAL_HAS_SURFACE : 0)   //
+                    | (!#is_default(jit_struct.backface) ? MATERIAL_HAS_BACKFACE : 0) //
+                    | (!#is_default(jit_struct.volume) ? MATERIAL_HAS_VOLUME : 0)     //
+                    | (!#is_default(jit_struct.hair) ? MATERIAL_HAS_HAIR : 0);
 
   /// The df flags for the `surface` component.
-  const int df_flags_surface = mat.surface.scattering.__flags;
+  const int df_flags_surface = jit_struct.surface.scattering.__flags;
 
   /// The df flags for the `backface` component.
-  const int df_flags_backface = mat.backface.scattering.__flags;
+  const int df_flags_backface = jit_struct.backface.scattering.__flags;
 
   /// The tangent space matrix held by the `State` during construction.
-  const float3x3 tangent_space = float3x3(
-                                   $state.tangent_to_object_matrix[0].xyz,
-                                   $state.tangent_to_object_matrix[1].xyz,
-                                   $state.tangent_to_object_matrix[2].xyz,
+  const float3x3 tangent_space = let {
+                                   const auto tangent_to_world_matrix = $state.object_to_world_matrix * $state.tangent_to_object_matrix;
+                                 } in float3x3(
+                                   tangent_to_world_matrix[0].xyz,
+                                   tangent_to_world_matrix[1].xyz,
+                                   tangent_to_world_matrix[2].xyz,
                                  );
 };
 

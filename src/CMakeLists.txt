@@ -36,6 +36,12 @@ macro(smdl_add_program BIN_NAME)
         target_include_directories(${BIN_NAME} PRIVATE ${INCLUDE_DIR})
       endforeach(DEPEND)
     endif()
+    target_include_directories(
+      ${BIN_NAME} 
+      PRIVATE 
+        "${CMAKE_SOURCE_DIR}/src/common"
+        "${CMAKE_SOURCE_DIR}/src/common/pcg-cpp"
+      )
     install(
       TARGETS "${BIN_NAME}"
       EXPORT "${PROJECT_NAME}_Targets"
@@ -50,6 +56,6 @@ endmacro()
 
 #add_subdirectory(assimp-material-extractor)
 add_subdirectory(smdl)
-#if(SMDL_TOY)
-#  add_subdirectory(smdl-toy)
-#endif()
+if(SMDL_TOY)
+  add_subdirectory(smdl-toy)
+endif()

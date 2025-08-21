@@ -119,9 +119,8 @@ template <typename G> [[nodiscard]] inline float4 generate_canonical4(G &g) {
 /// The random sample \f$ \xi \in (0,1)^2 \f$.
 ///
 [[nodiscard]] inline float3 uniform_cone_sample(float cosThetaC, float2 xi) {
-  float cosTheta{
-      std::max(zMin, std::min((1.0f - xi.x) * cosThetaC + xi.x, 1.0f))};
-  float sinTheta{std::sqrt(1.0f - cosTheta * cosTheta)};
+  float cosTheta{(1.0f - xi.x) * cosThetaC + xi.x};
+  float sinTheta{std::sqrt(std::max(1.0f - cosTheta * cosTheta, 0.0f))};
   float phi{2.0f * PI * xi.y};
   return float3(sinTheta * std::cos(phi), sinTheta * std::sin(phi), cosTheta);
 }

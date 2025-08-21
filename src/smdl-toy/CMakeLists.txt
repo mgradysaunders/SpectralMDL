@@ -1,24 +1,9 @@
 smdl_add_program(
   "smdl-toy"
   SOURCES
-    "Camera.cc"
-    "Integrator.cc"
-    #"integrators/BDPTIntegrator.cc"
-    #"integrators/PSMLTIntegrator.cc"
-    "integrators/PTIntegrator.cc"
-    "integrators/PTLightIntegrator.cc"
-    "Light.cc"
-    "lights/AmbientLight.cc"
-    "lights/DirectionLight.cc"
-    "lights/DiskLight.cc"
-    "lights/PointLight.cc"
-    "lights/SpotLight.cc"
-    "Scene.cc"
-    "Vertex.cc"
+    "rt.cc"
     "main.cc"
   DEPENDS
     "embree"
     "assimp"
-  MORE_INCLUDES 
-    "${CMAKE_CURRENT_SOURCE_DIR}/pcg-cpp"
   )
