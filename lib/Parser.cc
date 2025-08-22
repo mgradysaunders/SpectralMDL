@@ -908,7 +908,7 @@ auto Parser::parse_unary_op() -> std::optional<ParsedUnaryOp> {
   return std::nullopt;
 }
 
-auto Parser::parse_binary_op(Span<AST::BinaryOp> ops)
+auto Parser::parse_binary_op(Span<const AST::BinaryOp> ops)
     -> std::optional<ParsedBinaryOp> {
   for (auto op : ops) {
     if (!isSmdl && is_extended_syntax(op))

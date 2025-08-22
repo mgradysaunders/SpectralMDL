@@ -8,6 +8,8 @@
 
 #if __clang__
 #define SMDL_USE_EXT_VECTOR_TYPES 1
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wpsabi"
 #endif // #if __clang__
 
 namespace smdl {
@@ -343,3 +345,7 @@ public:
 /// \}
 
 } // namespace smdl
+
+#if __clang__
+#pragma clang diagnostic pop
+#endif // #if __clang__

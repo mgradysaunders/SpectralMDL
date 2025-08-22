@@ -118,14 +118,19 @@ public:
     ///
     const void *jit_struct{};
 
-    /// The displacement vector.
-    const float3 *displacement{};
+    struct material_geometry final {
+      /// The displacement vector.
+      const float3 displacement{};
 
-    /// The cutout opacity.
-    const float *cutout_opacity{};
+      /// The cutout opacity.
+      const float cutout_opacity{};
 
-    /// The normal.
-    const float3 *normal{};
+      /// The normal.
+      const float3 normal{};
+    };
+
+    /// The geometry.
+    const material_geometry *geometry{};
 
     /// The index of refraction.
     const float *ior{};
@@ -148,9 +153,9 @@ public:
     /// The df flags for the material `backface` component.
     int df_flags_backface{};
 
-    /// The tangent space matrix held by the `State` when constructing the
+    /// The tangent-to-world space matrix present when constructing the
     /// instance.
-    float3x3 tangent_space{};
+    float3x3 tangent_to_world_space{};
   };
 
   /// The allocate function.
@@ -181,10 +186,10 @@ public:
   /// \param[in] wi
   /// The incoming direction in world space.
   ///
-  /// \param[out] pdf_fwd
+  /// \param[out] pdfFwd
   /// The forward PDF of sampling `wi` given `wo`.
   ///
-  /// \param[out] pdf_rev
+  /// \param[out] pdfRev
   /// The reverse PDF of sampling `wo` given `wi`.
   ///
   /// \param[out] f
@@ -194,7 +199,7 @@ public:
   /// Returns `true` if the result is non-zero.
   ///
   Function<int(const Instance &instance, const float3 &wo, const float3 &wi,
-               float &pdf_fwd, float &pdf_rev, float *f)>
+               float &pdfFwd, float &pdfRev, float *f)>
       scatter_evaluate{};
 
   /// The scatter sample function.
@@ -211,21 +216,24 @@ public:
   /// \param[out] wi
   /// The incoming direction in world space.
   ///
-  /// \param[out] pdf_fwd
+  /// \param[out] pdfFwd
   /// The forward PDF of sampling `wi` given `wo`.
   ///
-  /// \param[out] pdf_rev
+  /// \param[out] pdfRev
   /// The reverse PDF of sampling `wo` given `wi`.
   ///
   /// \param[out] f
   /// The BSDF spectrum. This must be non-null!
   ///
-  /// \param[out] is_delta
+  /// \param[out] isDelta
   /// Set to `true` if sampling Dirac delta distribution.
   ///
+  /// \return
+  /// Returns `true` if the result is non-zero.
+  ///
   Function<int(const Instance &instance, const float4 &xi, const float3 &wo,
-               float3 &wi, float &pdf_fwd, float &pdf_rev, float *f,
-               int &is_delta)>
+               float3 &wi, float &pdfFwd, float &pdfRev, float *f,
+               int &isDelta)>
       scatter_sample{};
 };
 
@@ -234,44 +242,124 @@ struct MaterialInstance final {
 public:
   MaterialInstance() = default;
 
-  MaterialInstance(const Material *material) : material(material) {}
-
-  MaterialInstance(const Material *material, State &state)
+  /// Allocate and initialize from the given state and material.
+  explicit MaterialInstance(State &state, const Material *material)
       : material(material) {
-    allocate(state);
-  }
-
-  void allocate(State &state) {
-    SMDL_SANITY_CHECK(material && !instance);
+    SMDL_SANITY_CHECK(material);
     material->allocate(state, instance);
   }
 
-  [[nodiscard]]
-  bool scatter_evaluate(const float3 &wo, //
-                        const float3 &wi, //
-                        float &pdf_fwd,   //
-                        float &pdf_rev,   //
-                        float *f) const {
-    SMDL_SANITY_CHECK(material && instance);
-    SMDL_SANITY_CHECK(f);
-    return material->scatter_evaluate(instance, wo, wi, pdf_fwd, pdf_rev, f);
+  /// The cutout opacity.
+  [[nodiscard]] float cutout_opacity() const noexcept {
+    return instance.geometry->cutout_opacity;
   }
 
-  [[nodiscard]]
-  bool scatter_sample(const float4 &xi, //
-                      const float3 &wo, //
-                      float3 &wi,       //
-                      float &pdf_fwd,   //
-                      float &pdf_rev,   //
-                      float *f, int &is_delta) const {
+  /// The index of refraction.
+  ///
+  /// \note
+  /// TODO: Possibly force this to always be scalar for simplicity?
+  ///
+  [[nodiscard]] Span<const float> ior() const noexcept {
+    return Span<const float>(instance.ior, instance.wavelength_base_max);
+  }
+
+  /// The absorption coefficient of the medium, or empty if none.
+  [[nodiscard]] Span<const float> absorption_coefficient() const noexcept {
+    return Span<const float>(
+        instance.absorption_coefficient,
+        instance.absorption_coefficient ? instance.wavelength_base_max : 0);
+  }
+
+  /// The scattering coefficient of the medium, or empty if none.
+  [[nodiscard]] Span<const float> scattering_coefficient() const noexcept {
+    return Span<const float>(
+        instance.scattering_coefficient,
+        instance.scattering_coefficient ? instance.wavelength_base_max : 0);
+  }
+
+  /// The geometry normal in world space.
+  [[nodiscard]] float3 geometry_normal() const noexcept {
+    return instance.tangent_to_world_space[2];
+  }
+
+  /// Is the given direction in the upper hemisphere?
+  [[nodiscard]] bool is_upper_hemisphere(float3 w) const noexcept {
+    return dot(geometry_normal(), w) > 0.0f;
+  }
+
+  /// Is the given direction in the lower hemisphere?
+  [[nodiscard]] bool is_lower_hemisphere(float3 w) const noexcept {
+    return dot(geometry_normal(), w) < 0.0f;
+  }
+
+  /// The scatter evaluate function.
+  ///
+  /// \param[in] wo
+  /// The outgoing direction in world space.
+  ///
+  /// \param[in] wi
+  /// The incoming direction in world space.
+  ///
+  /// \param[out] pdfFwd
+  /// The forward PDF of sampling `wi` given `wo`.
+  ///
+  /// \param[out] pdfRev
+  /// The reverse PDF of sampling `wo` given `wi`.
+  ///
+  /// \param[out] f
+  /// The BSDF spectrum. This must be non-null!
+  ///
+  /// \return
+  /// Returns `true` if the result is non-zero.
+  ///
+  [[nodiscard]] bool scatter_evaluate(const float3 &wo, const float3 &wi,
+                                      float &pdfFwd, float &pdfRev,
+                                      float *f) const {
     SMDL_SANITY_CHECK(material && instance);
     SMDL_SANITY_CHECK(f);
-    return material->scatter_sample(instance, xi, wo, wi, pdf_fwd, pdf_rev, f,
-                                    is_delta);
+    return material->scatter_evaluate(instance, wo, wi, pdfFwd, pdfRev, f);
+  }
+
+  /// The scatter sample function.
+  ///
+  /// \param[in] xi
+  /// The canonical random sample in \f$ [0,1]^4 \f$.
+  ///
+  /// \param[in] wo
+  /// The outgoing direction in world space.
+  ///
+  /// \param[out] wi
+  /// The incoming direction in world space.
+  ///
+  /// \param[out] pdfFwd
+  /// The forward PDF of sampling `wi` given `wo`.
+  ///
+  /// \param[out] pdfRev
+  /// The reverse PDF of sampling `wo` given `wi`.
+  ///
+  /// \param[out] f
+  /// The BSDF spectrum. This must be non-null!
+  ///
+  /// \param[out] isDelta
+  /// Set to `true` if sampling Dirac delta distribution.
+  ///
+  /// \return
+  /// Returns `true` if the result is non-zero.
+  ///
+  [[nodiscard]] bool scatter_sample(const float4 &xi, const float3 &wo,
+                                    float3 &wi, float &pdfFwd, float &pdfRev,
+                                    float *f, bool &isDelta) const {
+    SMDL_SANITY_CHECK(material && instance);
+    SMDL_SANITY_CHECK(f);
+    auto isDeltaInt{int(0)};
+    auto isNonZero{material->scatter_sample(instance, xi, wo, wi, pdfFwd,
+                                            pdfRev, f, isDeltaInt)};
+    isDelta = isDeltaInt;
+    return isNonZero;
   }
 
 public:
-  /// The material pointer.
+  /// The material.
   const Material *material{};
 
   /// The instance.

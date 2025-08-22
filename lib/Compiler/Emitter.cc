@@ -195,8 +195,8 @@ void Emitter::declare_parameter_inline(Value value) {
   }
 }
 
-void Emitter::declare_import(Span<std::string_view> importPath, bool isAbs,
-                             AST::Decl &decl) {
+void Emitter::declare_import(Span<const std::string_view> importPath,
+                             bool isAbs, AST::Decl &decl) {
   if (importPath.size() < 2)
     decl.srcLoc.throw_error("invalid import path (missing '::*'?)");
   auto isDots{[](auto elem) { return elem == "." || elem == ".."; }};
@@ -2534,7 +2534,7 @@ void Emitter::emit_print(Value os, Value value, const SourceLocation &srcLoc,
   }
 }
 
-Value Emitter::resolve_identifier(Span<std::string_view> names,
+Value Emitter::resolve_identifier(Span<const std::string_view> names,
                                   const SourceLocation &srcLoc,
                                   bool voidByDefault) {
   SMDL_SANITY_CHECK(!names.empty());
@@ -2666,16 +2666,16 @@ Emitter::resolve_arguments(const ParameterList &params,
   return resolved;
 }
 
-Module *Emitter::resolve_module(Span<std::string_view> importPath, bool isAbs,
-                                Module *thisModule) {
+Module *Emitter::resolve_module(Span<const std::string_view> importPath,
+                                bool isAbs, Module *thisModule) {
   llvm::SmallVector<std::string_view> resolvedImportPath{};
   resolve_import_using_aliases(crumb, importPath, resolvedImportPath);
   SMDL_SANITY_CHECK(!resolvedImportPath.empty());
 
   auto findModuleInDirectory{[&](std::string dirPath) -> Module * {
     for (auto resolvedImportDirPath :
-         Span<std::string_view>(resolvedImportPath.data(), //
-                                resolvedImportPath.size() - 1)) {
+         Span<const std::string_view>(resolvedImportPath.data(), //
+                                      resolvedImportPath.size() - 1)) {
       dirPath = join_paths(dirPath, resolvedImportDirPath);
     }
     for (auto &otherModule : context.compiler.modules) {
@@ -2740,7 +2740,7 @@ Module *Emitter::resolve_module(Span<std::string_view> importPath, bool isAbs,
 }
 
 void Emitter::resolve_import_using_aliases(
-    Crumb *crumbStart, Span<std::string_view> importPath,
+    Crumb *crumbStart, Span<const std::string_view> importPath,
     llvm::SmallVector<std::string_view> &resolvedImportPath) {
   for (auto &importPathElem : importPath) {
     auto crumbItr{crumbStart};

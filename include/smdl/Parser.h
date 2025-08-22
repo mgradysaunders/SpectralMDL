@@ -180,13 +180,13 @@ private:
     AST::BinaryOp op{};
   };
 
-  [[nodiscard]] auto parse_binary_op(Span<AST::BinaryOp> ops)
+  [[nodiscard]] auto parse_binary_op(Span<const AST::BinaryOp> ops)
       -> std::optional<ParsedBinaryOp>;
 
   template <typename Func>
-  [[nodiscard]] auto parse_binary_left_associative(Span<AST::BinaryOp> ops,
-                                                   const Func &parseInner)
-      -> BumpPtr<AST::Expr> {
+  [[nodiscard]] auto
+  parse_binary_left_associative(Span<const AST::BinaryOp> ops,
+                                const Func &parseInner) -> BumpPtr<AST::Expr> {
     auto exprLhs{parseInner()};
     if (!exprLhs) {
       return nullptr;
@@ -236,9 +236,9 @@ private:
   }
 
   template <typename Func>
-  [[nodiscard]] auto parse_binary_right_associative(Span<AST::BinaryOp> ops,
-                                                    const Func &parseInner)
-      -> BumpPtr<AST::Expr> {
+  [[nodiscard]] auto
+  parse_binary_right_associative(Span<const AST::BinaryOp> ops,
+                                 const Func &parseInner) -> BumpPtr<AST::Expr> {
     auto exprLhs{parseInner()};
     if (!exprLhs)
       return nullptr;

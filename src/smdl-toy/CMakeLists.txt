@@ -1,8 +1,9 @@
 smdl_add_program(
   "smdl-toy"
   SOURCES
-    "rt.cc"
     "main.cc"
+    "raytracing.cc"
+    "vertex.cc"
   DEPENDS
     "embree"
     "assimp"

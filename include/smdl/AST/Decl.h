@@ -24,8 +24,8 @@ public:
   std::string_view srcComma{};
 
   /// Has identifier with the given name sequence?
-  [[nodiscard]] bool has_identifier(Span<std::string_view> names) const {
-    return identifier && Span<std::string_view>(*identifier) == names;
+  [[nodiscard]] bool has_identifier(Span<const std::string_view> names) const {
+    return identifier && Span<const std::string_view>(*identifier) == names;
   }
 };
 
@@ -221,7 +221,9 @@ public:
     return !elements.empty() && elements.back().srcName == "*";
   }
 
-  [[nodiscard]] operator Span<std::string_view>() const { return elementViews; }
+  [[nodiscard]] operator Span<const std::string_view>() const {
+    return elementViews;
+  }
 
   /// The elements.
   std::vector<Element> elements{};

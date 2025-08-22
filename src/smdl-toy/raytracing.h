@@ -13,6 +13,7 @@
 #include "smdl/Compiler.h"
 #include "smdl/Support/ColorVector.h"
 #include "smdl/Support/DiscreteDistribution.h"
+#include "smdl/Support/Sampling.h"
 
 constexpr size_t WAVELENGTH_BASE_MAX = 16;
 constexpr float WAVELENGTH_MIN = 380.0f;
@@ -37,6 +38,26 @@ template <typename... Seeds>
   }
 }
 
+class RandomFP final {
+public:
+  explicit RandomFP(std::in_place_t, std::function<float()> gen)
+      : gen(std::move(gen)) {}
+
+  explicit RandomFP(RNG &rng)
+      : gen([&rng]() { return smdl::generate_canonical(rng); }) {}
+
+  [[nodiscard]] operator float() const { return gen(); }
+
+  [[nodiscard]] operator float2() const { return {gen(), gen()}; }
+
+  [[nodiscard]] operator float3() const { return {gen(), gen(), gen()}; }
+
+  [[nodiscard]] operator float4() const { return {gen(), gen(), gen(), gen()}; }
+
+private:
+  std::function<float()> gen{};
+};
+
 class Ray final {
 public:
   /// Evaluate.
@@ -51,11 +72,10 @@ public:
   }
 
 public:
-  float3 org{};                                   ///< The origin.
-  float3 dir{};                                   ///< The direction.
-  float tmin{EPS};                                ///< The minimum parameter.
-  mutable float tmax{INF};                        ///< The maximum parameter.
-  smdl::JIT::MaterialInstance materialInstance{}; ///< The last material.
+  float3 org{};            ///< The origin.
+  float3 dir{};            ///< The direction.
+  float tmin{EPS};         ///< The minimum parameter.
+  mutable float tmax{INF}; ///< The maximum parameter.
 };
 
 /// A hit.
@@ -144,18 +164,14 @@ private:
             aiMatrix4x4 xf = {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1});
 
 public:
-  [[nodiscard]] std::pair<float3, float3> get_scene_bounds() const {
-    RTCBounds bounds{};
-    rtcGetSceneBounds(scene, &bounds);
-    return {float3(bounds.lower_x, bounds.lower_y, bounds.lower_z),
-            float3(bounds.upper_x, bounds.upper_y, bounds.upper_z)};
-  }
   [[nodiscard]] bool intersect(Ray &ray, Hit &hit) const;
 
 public:
   const smdl::Compiler &compiler;                       ///< The compiler.
   RTCDevice device{};                                   ///< The Embree device.
   RTCScene scene{};                                     ///< The Embree scene.
+  float3 boundCenter{};                                 ///< The bound center.
+  float boundRadius{};                                  ///< The bound radius.
   std::vector<std::unique_ptr<Mesh>> meshes{};          ///< The meshes.
   std::vector<MeshInstance> meshInstances{};            ///< The mesh instances.
   std::vector<const smdl::JIT::Material *> materials{}; ///< The materials.

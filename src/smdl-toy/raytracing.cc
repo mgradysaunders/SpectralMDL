@@ -1,4 +1,4 @@
-#include "rt.h"
+#include "raytracing.h"
 
 #include "assimp/Importer.hpp"
 #include "assimp/postprocess.h"
@@ -28,6 +28,12 @@ void Scene::load(const aiScene &assScene) {
     load(*assScene.mMeshes[i]);
   load(*assScene.mRootNode);
   rtcCommitScene(scene);
+  RTCBounds bounds{};
+  rtcGetSceneBounds(scene, &bounds);
+  auto lower{float3(bounds.lower_x, bounds.lower_y, bounds.lower_z)};
+  auto upper{float3(bounds.upper_x, bounds.upper_y, bounds.upper_z)};
+  boundCenter = 0.5f * (lower + upper);
+  boundRadius = 0.5f * length(upper - lower);
   for (unsigned int i = 0; i < assScene.mNumMaterials; i++) {
     auto name{assScene.mMaterials[i]->GetName()};
     auto material{compiler.find_jit_material(name.C_Str())};

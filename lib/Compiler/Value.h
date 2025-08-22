@@ -163,7 +163,7 @@ class Crumb final {
 public:
   /// Find by name starting from the given crumb and walking upwards.
   [[nodiscard]] static Crumb *find(Context &context,
-                                   Span<std::string_view> name,
+                                   Span<const std::string_view> name,
                                    llvm::Function *llvmFunc, Crumb *crumb,
                                    Crumb *stopCrumb = nullptr,
                                    bool ignoreIfNotExported = false);
@@ -251,7 +251,7 @@ public:
   Crumb *prev{};
 
   /// The name. This may be empty!
-  Span<std::string_view> name{};
+  Span<const std::string_view> name{};
 
   /// The AST node if applicable.
   AST::Node *node{};
@@ -482,7 +482,8 @@ public:
   }
 
   /// Is only arguments with the given names?
-  [[nodiscard]] bool is_only_these_names(Span<std::string_view> names) const {
+  [[nodiscard]] bool
+  is_only_these_names(Span<const std::string_view> names) const {
     return is_all_true([&](auto &arg) {
       return arg.name.empty() || names.contains(arg.name);
     });

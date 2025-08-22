@@ -136,6 +136,17 @@ void State::finalize_and_apply_internal_space_conventions() noexcept {
     geometry_tangent_v[i] =
         object_to_tangent_matrix * float4(geometry_tangent_v[i], 0.0f);
   }
+
+  // 5. Orthonormalize object-to-world matrix.
+  float3 axisX{object_to_world_matrix[0]};
+  float3 axisY{object_to_world_matrix[1]};
+  float3 axisZ{object_to_world_matrix[2]};
+  if (!try_normalize(axisZ))
+    axisZ = {0, 0, 1};
+  gram_schmidt_orthonormalize(axisZ, axisX, axisY);
+  object_to_world_matrix[0] = float4(axisX, 0.0f);
+  object_to_world_matrix[1] = float4(axisY, 0.0f);
+  object_to_world_matrix[2] = float4(axisZ, 0.0f);
 }
 
 } // namespace smdl

@@ -143,7 +143,7 @@ template <typename T, typename... Ts>
 }
 
 /// Join the given string views by the given delimiter.
-[[nodiscard]] inline std::string join(Span<std::string_view> strs,
+[[nodiscard]] inline std::string join(Span<const std::string_view> strs,
                                       std::string_view delim) {
   std::string str{};
   str.reserve(128);

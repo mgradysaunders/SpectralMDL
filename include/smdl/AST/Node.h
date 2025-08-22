@@ -18,7 +18,7 @@ public:
 
   [[nodiscard]] operator std::string_view() const { return srcName; }
 
-  [[nodiscard]] operator Span<std::string_view>() const { return srcName; }
+  [[nodiscard]] operator Span<const std::string_view>() const { return srcName; }
 
   /// The source location.
   SourceLocation srcLoc{};

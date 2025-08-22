@@ -255,9 +255,7 @@ const int MATERIAL_HAS_VOLUME=(1<<6);
 const int MATERIAL_HAS_HAIR=(1<<7);
 export struct __material_instance{
   const &material jit_struct;
-  const &float3 displacement=&jit_struct.geometry.displacement;
-  const &float cutout_opacity=&jit_struct.geometry.cutout_opacity;
-  const &float3 normal=&jit_struct.geometry.normal;
+  const &material_geometry geometry=&jit_struct.geometry;
   const &color ior=&jit_struct.ior;
   const &color absorption_coefficient=#is_void(jit_struct.volume.absorption_coefficient)?none:&jit_struct.volume.absorption_coefficient;
   const &color scattering_coefficient=#is_void(jit_struct.volume.scattering_coefficient)?none:&jit_struct.volume.scattering_coefficient;
@@ -1543,7 +1541,7 @@ export int __scatter_evaluate(
     is_importance: (instance.flags&1)!=0,
     wo0: normalize((*wo_world)*instance.tangent_space),
     wi0: normalize((*wi_world)*instance.tangent_space),
-    normal: normalize(*instance.normal),
+    normal: normalize(instance.geometry.normal),
     thin_walled: instance.jit_struct.thin_walled,
   );
   auto result=#is_default(instance.jit_struct.backface)||!params.hit_backface?scatter_evaluate(visit &instance.jit_struct.surface.scattering,&params):scatter_evaluate(visit &instance.jit_struct.backface.scattering,&params);
@@ -1582,7 +1580,7 @@ export int __scatter_sample(
     is_importance: (instance.flags&1)!=0,
     xi: *xi,
     wo0: wo,
-    normal: normalize(*instance.normal),
+    normal: normalize(instance.geometry.normal),
     thin_walled: instance.jit_struct.thin_walled,
   );
   auto result=#is_default(instance.jit_struct.backface)||!params.hit_backface?scatter_sample(visit &instance.jit_struct.surface.scattering,&params):scatter_sample(visit &instance.jit_struct.backface.scattering,&params);

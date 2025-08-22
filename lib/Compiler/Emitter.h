@@ -214,8 +214,8 @@ public:
   }
 
   /// Declare crumb.
-  auto declare_crumb(Span<std::string_view> name, AST::Node *node, Value value,
-                     Value valueToPreserve = {}) {
+  auto declare_crumb(Span<const std::string_view> name, AST::Node *node,
+                     Value value, Value valueToPreserve = {}) {
     return (crumb = context.allocator.allocate<Crumb>(crumb, name, node, value,
                                                       valueToPreserve));
   }
@@ -227,7 +227,7 @@ public:
   void declare_parameter_inline(Value value);
 
   /// Declare import.
-  void declare_import(Span<std::string_view> importPath, bool isAbs,
+  void declare_import(Span<const std::string_view> importPath, bool isAbs,
                       AST::Decl &decl);
 
   /// Guarantee that the given value is an lvalue.
@@ -838,7 +838,7 @@ public:
   /// \{
 
   /// Resolve identifier to value.
-  [[nodiscard]] Value resolve_identifier(Span<std::string_view> names,
+  [[nodiscard]] Value resolve_identifier(Span<const std::string_view> names,
                                          const SourceLocation &srcLoc,
                                          bool voidByDefault = false);
 
@@ -913,12 +913,12 @@ public:
   }
 
   /// Resolve module.
-  [[nodiscard]] Module *resolve_module(Span<std::string_view> importPath,
+  [[nodiscard]] Module *resolve_module(Span<const std::string_view> importPath,
                                        bool isAbs, Module *thisModule);
 
   /// Resolve import using aliases in import path.
   void resolve_import_using_aliases(
-      Crumb *crumbStart, Span<std::string_view> importPath,
+      Crumb *crumbStart, Span<const std::string_view> importPath,
       llvm::SmallVector<std::string_view> &finalImportPath);
 
   /// \}

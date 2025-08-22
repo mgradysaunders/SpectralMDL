@@ -1,9 +1,12 @@
-#include "command_line.h"
-#include "rt.h"
+#include "cl.h"
+#include "raytracing.h"
+#include "vertex.h"
+
 #include "smdl/Support/Logger.h"
 #include "smdl/Support/Parallel.h"
 #include "smdl/Support/Sampling.h"
 #include "smdl/Support/SpectralRenderImage.h"
+
 #include <fstream>
 #include <iostream>
 
@@ -51,10 +54,10 @@ int main(int argc, char **argv) try {
     error->print_and_exit();
   const auto scene{Scene(compiler, inputSceneFile)};
 
-  auto wavelengthBase{Color()};
+  auto wavelengths{Color()};
   for (size_t i = 0; i < WAVELENGTH_BASE_MAX; i++) {
     float t = i / float(WAVELENGTH_BASE_MAX - 1);
-    wavelengthBase[i] = (1 - t) * WAVELENGTH_MIN + t * WAVELENGTH_MAX;
+    wavelengths[i] = (1 - t) * WAVELENGTH_MIN + t * WAVELENGTH_MAX;
   }
   const auto dims{int2(cameraDims)};
   const auto numPixelsX{size_t(dims.x)};
@@ -68,37 +71,65 @@ int main(int argc, char **argv) try {
     auto allocator{smdl::BumpPtrAllocator()};
     auto state{smdl::State{}};
     state.allocator = &allocator;
-    state.wavelength_base = wavelengthBase.data();
+    state.wavelength_base = wavelengths.data();
     state.wavelength_min = WAVELENGTH_MIN;
     state.wavelength_max = WAVELENGTH_MAX;
-    auto rng{make_RNG(0x8f54190b ^ i, 0xbb7c1003 + i)};
     auto spp{size_t(samplesPerPixel)};
+    auto rng{make_RNG(0x8f54190b ^ i, 0xbb7c1003 + i)};
+    auto random{RandomFP(rng)};
     auto y{i / numPixelsX};
     auto x{i % numPixelsX};
     Color Lsum{};
     for (size_t s = 0; s < spp; s++) {
-      Ray ray{};
-      float u{(x + smdl::generate_canonical(rng)) / float(numPixelsX)};
-      float v{(y + smdl::generate_canonical(rng)) / float(numPixelsY)};
-      ray.dir.x = (u - 0.5f) * aspectRatio;
-      ray.dir.y = -(v - 0.5f);
-      ray.dir.z = -focalLength;
-      ray.dir = normalize(ray.dir);
-      ray.tmin = EPS;
-      ray.tmax = INF;
+      float u{(x + float(random)) / float(numPixelsX)};
+      float v{(y + float(random)) / float(numPixelsY)};
+      Ray ray{float3(0.0f),
+              float3(+(u - 0.5f) * aspectRatio, -(v - 0.5f), -focalLength), EPS,
+              INF};
       ray.transform(cameraToWorld);
+      ray.dir = normalize(ray.dir);
+      Vertex path0{};
+      path0.point = ray.org;
+      path0.beta = Color(1.0f);
+      path0.wNext = ray.dir;
+      path0.pdfFwd = 0;
+      path0.pdfRev = 0;
+      Vertex path[5]{};
+      size_t pathLen{random_walk(scene, random, wavelengths, allocator,
+                                 smdl::TRANSPORT_RADIANCE, path0, 1, 5,
+                                 &path[0])};
+      for (size_t depth = 1; depth < pathLen; ++depth) {
+        if (!path[depth].isInfiniteLight) {
+          auto wi{normalize(float3(1.0f, -1.0f, 1.0f))};
+          auto wo{normalize(path[depth - 1].point - path[depth].point)};
+          float pdfFwd{};
+          float pdfRev{};
+          Color f{};
+          if (path[depth].materialInstance.scatter_evaluate(wo, wi, pdfFwd,
+                                                            pdfRev, f.data())) {
+            Ray ray{path[depth].point, wi, EPS, INF};
+            Hit hit{};
+            if (!scene.intersect(ray, hit)) {
+              Lsum += f * path[depth].beta;
+            }
+          }
+        }
+      }
+#if 0
       Hit hit{};
       if (scene.intersect(ray, hit)) {
         hit.apply_geometry_to_state(state);
-        smdl::JIT::MaterialInstance material{hit.material, state};
+        smdl::JIT::MaterialInstance material{state, hit.material};
         float pdfFwd{};
         float pdfRev{};
         Color f{};
         auto lightDir{smdl::normalize(float3(1.0f, -1.0f, 1.0f))};
-        if (material.scatter_evaluate(-ray.dir, lightDir, pdfFwd, pdfRev, f.data())) {
-          Lsum += f; 
+        if (material.scatter_evaluate(-ray.dir, lightDir, pdfFwd, pdfRev,
+                                      f.data())) {
+          Lsum += f;
         }
       }
+#endif
       allocator.reset();
     }
     Lsum /= spp;
@@ -114,7 +145,7 @@ int main(int argc, char **argv) try {
       for (size_t i = 0; i < WAVELENGTH_BASE_MAX; i++)
         color[i] = float(double(pixel[i]));
       smdl::State state{};
-      state.wavelength_base = wavelengthBase.data();
+      state.wavelength_base = wavelengths.data();
       state.wavelength_min = WAVELENGTH_MIN;
       state.wavelength_max = WAVELENGTH_MAX;
       auto rgb{compiler.jit_color_to_rgb(state, color.data())};

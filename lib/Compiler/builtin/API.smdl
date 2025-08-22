@@ -439,13 +439,7 @@ export struct __material_instance {
   const &material jit_struct;
 
   /// The geometry displacement.
-  const &float3 displacement = &jit_struct.geometry.displacement;
-
-  /// The geometry cutout opacity.
-  const &float cutout_opacity = &jit_struct.geometry.cutout_opacity;
-
-  /// The geometry normal.
-  const &float3 normal = &jit_struct.geometry.normal;
+  const &material_geometry geometry = &jit_struct.geometry;
 
   /// The index of refraction.
   const &color ior = &jit_struct.ior;

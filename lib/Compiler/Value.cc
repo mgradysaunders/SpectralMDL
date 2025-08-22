@@ -45,7 +45,7 @@ bool Value::is_comptime_meta_namespace(Context &context) const {
   return is_comptime() && type == context.get_meta_namespace_type();
 }
 
-Crumb *Crumb::find(Context &context, Span<std::string_view> name,
+Crumb *Crumb::find(Context &context, Span<const std::string_view> name,
                    llvm::Function *llvmFunc, Crumb *crumb, Crumb *stopCrumb,
                    bool ignoreIfNotExported) {
   if (name.empty()) {

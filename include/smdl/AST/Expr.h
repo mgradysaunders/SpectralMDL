@@ -362,7 +362,9 @@ public:
   }
 
   /// Implicit conversion to span of string views.
-  [[nodiscard]] operator Span<std::string_view>() const { return elementViews; }
+  [[nodiscard]] operator Span<const std::string_view>() const {
+    return elementViews;
+  }
 
   /// The elements.
   std::vector<Element> elements{};

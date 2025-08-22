@@ -1843,7 +1843,7 @@ export int __scatter_evaluate(
     is_importance: (instance.flags & 1) != 0,
     wo0: normalize((*wo_world) * instance.tangent_space),
     wi0: normalize((*wi_world) * instance.tangent_space),
-    normal: normalize(*instance.normal),
+    normal: normalize(instance.geometry.normal),
     thin_walled: instance.jit_struct.thin_walled,
   );
   auto result = #is_default(instance.jit_struct.backface) || !params.hit_backface          //
@@ -1885,7 +1885,7 @@ export int __scatter_sample(
     is_importance: (instance.flags & 1) != 0,
     xi: *xi,
     wo0: wo,
-    normal: normalize(*instance.normal),
+    normal: normalize(instance.geometry.normal),
     thin_walled: instance.jit_struct.thin_walled,
   );
   auto result = #is_default(instance.jit_struct.backface) || !params.hit_backface        //
