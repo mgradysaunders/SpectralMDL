@@ -2,11 +2,14 @@
 
 #include "llvm/Support/Parallel.h"
 
+#include <atomic>
 #include <condition_variable>
 #include <mutex>
 
 namespace smdl {
 
+// TODO Uh oh, this thread locks on my laptop
+#if 0
 void invoke_once_on_each_worker_thread(const std::function<void()> &func) {
   SMDL_SANITY_CHECK(func);
   auto taskGroup{llvm::parallel::TaskGroup()};
@@ -52,9 +55,10 @@ static const int dummyInitialize{[]() -> int {
 bool is_main_thread() noexcept { return isMainThread; }
 
 bool is_worker_thread() noexcept { return isWorkerThread; }
+#endif
 
 int get_worker_thread_index() noexcept {
-  return isWorkerThread ? llvm::parallel::getThreadIndex() : -1;
+  return llvm::parallel::getThreadIndex();
 }
 
 int get_worker_thread_count() noexcept {

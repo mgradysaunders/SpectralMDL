@@ -107,9 +107,9 @@ int main(int argc, char **argv) try {
           Color f{};
           if (path[depth].materialInstance.scatter_evaluate(wo, wi, pdfFwd,
                                                             pdfRev, f.data())) {
-            Ray ray{path[depth].point, wi, EPS, INF};
-            Hit hit{};
-            if (!scene.intersect(ray, hit)) {
+            if (test_visibility(
+                    scene, random, wavelengths, allocator, path[depth].point,
+                    path[depth].point + 2 * scene.boundRadius * wi, f)) {
               Lsum += f * path[depth].beta;
             }
           }
