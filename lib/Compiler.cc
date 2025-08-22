@@ -293,7 +293,7 @@ std::optional<Error> Compiler::jit_compile() noexcept {
     jit_lookup_or_throw(jitColorToRgb);
     jit_lookup_or_throw(jitRgbToColor);
     for (auto &jitMaterial : jitMaterials) {
-      jit_lookup_or_throw(jitMaterial.allocate);
+      jit_lookup_or_throw(jitMaterial.evaluate);
       jit_lookup_or_throw(jitMaterial.scatter_evaluate);
       jit_lookup_or_throw(jitMaterial.scatter_sample);
       // jit_lookup_or_throw(jitMaterial.emission_evaluate);

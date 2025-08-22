@@ -1176,21 +1176,22 @@ void FunctionType::initialize_jit_material_functions(Emitter &emitter) {
                      .builtinConst = true};
   }};
   {
-    // Generate the allocate function:
+    // Generate the evaluate function:
     // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-    // @(visible) void "material_name.allocate"(&auto out) {
+    // @(visible) void "material_name.evaluate"(&auto out) {
     //   *out = __material_instance(#bump_allocate(material_name()));
     // }
     // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
     auto funcReturnType{static_cast<Type *>(context.get_void_type())};
     auto func{emitter.create_function(
-        concat(declName, ".allocate"), /*isPure=*/false, funcReturnType,
+        concat(declName, ".evaluate"), /*isPure=*/false, funcReturnType,
         {constParameter(context.get_void_pointer_type(), "out")}, decl.srcLoc,
         [&] {
-          auto material{invoke(emitter, {}, decl.srcLoc)};
           auto materialInstance{emitter.emit_call(
               context.get_keyword("__material_instance"),
-              emitter.emit_intrinsic("bump_allocate", material, decl.srcLoc),
+              emitter.emit_intrinsic("bump_allocate",
+                                     invoke(emitter, {}, decl.srcLoc),
+                                     decl.srcLoc),
               decl.srcLoc)};
           materialInstanceType = materialInstance.type;
           materialInstancePtrType =
@@ -1200,7 +1201,7 @@ void FunctionType::initialize_jit_material_functions(Emitter &emitter) {
           emitter.builder.CreateStore(materialInstance, out);
         })};
     func->setLinkage(llvm::Function::ExternalLinkage);
-    jitMaterial.allocate.name = func->getName().str();
+    jitMaterial.evaluate.name = func->getName().str();
   }
   {
     // Generate the scatter evaluate function:
@@ -1294,6 +1295,8 @@ void FunctionType::initialize_jit_material_functions(Emitter &emitter) {
     func->setLinkage(llvm::Function::ExternalLinkage);
     jitMaterial.scatter_sample.name = func->getName().str();
   }
+  // TODO __volume_scatter_evaluate
+  // TODO __volume_scatter_sample
 }
 //--}
 

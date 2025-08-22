@@ -263,9 +263,9 @@ export struct __material_instance{
   const int flags=$state.transport|(jit_struct.thin_walled?MATERIAL_THIN_WALLED:0)|(!#is_default(jit_struct.surface)?MATERIAL_HAS_SURFACE:0)|(!#is_default(jit_struct.backface)?MATERIAL_HAS_BACKFACE:0)|(!#is_default(jit_struct.volume)?MATERIAL_HAS_VOLUME:0)|(!#is_default(jit_struct.hair)?MATERIAL_HAS_HAIR:0);
   const int df_flags_surface=jit_struct.surface.scattering.__flags;
   const int df_flags_backface=jit_struct.backface.scattering.__flags;
-  const float3x3 tangent_space=let {
-                                 const auto tangent_to_world_matrix=$state.object_to_world_matrix*$state.tangent_to_object_matrix;
-                               } in float3x3(tangent_to_world_matrix[0].xyz,tangent_to_world_matrix[1].xyz,tangent_to_world_matrix[2].xyz,);
+  const float3x3 tangent_to_world=let {
+                                    const auto tangent_to_world_matrix=$state.object_to_world_matrix*$state.tangent_to_object_matrix;
+                                  } in float3x3(tangent_to_world_matrix[0].xyz,tangent_to_world_matrix[1].xyz,tangent_to_world_matrix[2].xyz,);
 };
 export struct __albedo_lut{
   const int num_cos_theta=0;
@@ -380,6 +380,14 @@ const int DF_TRANSMISSION=(1<<1);
 const int DF_DIFFUSE=(1<<2);
 const int DF_GLOSSY=(1<<3);
 const int DF_SPECULAR=(1<<4);
+@(macro)
+float3x3 orthonormal_basis(float3 z){
+  z=normalize(z);
+  auto x=z.z<-0.9999?float3(0.0,-1.0,0.0):float3(-z.x/(z.z+1.0)+1.0,-z.y/(z.z+1.0),-1.0);
+  x=normalize(x-dot(x,z)*z);
+  auto y=normalize(cross(z,x));
+  return float3x3(x,y,z);
+}
 export enum scatter_mode{
   scatter_none=0x0,
   scatter_reflect=0x1,
@@ -528,7 +536,7 @@ float3x3 calculate_tangent_space(const float3 normal,const float3 tangent_u){
   return float3x3(tu,tv,tw);
 }
 struct scatter_evaluate_parameters{
-  int is_importance;
+  bool is_importance;
   float3 wo0;
   float3 wi0;
   scatter_mode mode=(wo0.z<0)==(wi0.z<0)?scatter_reflect:scatter_transmit;
@@ -574,7 +582,6 @@ float3 half_direction(inline const &scatter_evaluate_parameters params){
   return normalize(mode==scatter_reflect?specular::reflection_half_vector(wo,wi):specular::refraction_half_vector(wo,wi,ior));
 }
 struct scatter_sample_parameters{
-  int is_importance;
   float3 wo0;
   bool hit_backface=wo0.z<0;
   bool thin_walled=false;
@@ -662,6 +669,14 @@ auto scatter_evaluate(const &__default_bsdf this[[anno::unused()]],const &scatte
 }
 @(pure macro)
 auto scatter_sample(const &__default_bsdf this[[anno::unused()]],const &scatter_sample_parameters params[[anno::unused()]]){
+  return scatter_sample_result();
+}
+@(macro)
+auto scatter_evaluate(const &__default_vdf this[[anno::unused()]],const &scatter_evaluate_parameters params[[anno::unused()]]){
+  return scatter_evaluate_result(is_black: true);
+}
+@(macro)
+auto scatter_sample(const &__default_vdf this[[anno::unused()]],const &scatter_sample_parameters params[[anno::unused()]]){
   return scatter_sample_result();
 }
 export struct diffuse_reflection_bsdf:bsdf{
@@ -1528,6 +1543,30 @@ auto scatter_sample(const &component_mix this,const &scatter_sample_parameters p
   }
   return scatter_sample_result();
 }
+export struct anisotropic_vdf:vdf{
+  float directional_bias=0.0;
+  void handle="";
+  static const int __flags=0;
+  finalize {
+    directional_bias=#max(directional_bias,-0.999);
+    directional_bias=#min(directional_bias,0.999);
+  }
+};
+@(macro)
+auto scatter_evaluate(const &anisotropic_vdf this,inline const &scatter_evaluate_parameters params){
+  const auto cos_theta=dot(wo,wi);
+  const auto g=this.directional_bias;
+  const auto p=(1.0-g*g)/(4.0*$PI*(denom:=1.0+g*g+2.0*g*cos_theta)*#sqrt(denom));
+  return scatter_evaluate_result(f: p,pdf: float2(p));
+}
+@(macro)
+auto scatter_sample(const &anisotropic_vdf this,inline const &scatter_sample_parameters params){
+  const auto g=this.directional_bias;
+  const auto cos_theta=#abs(g)<0.001?1.0-2.0*xi.x:-(1.0+g*g-#pow((1.0-g*g)/(1.0+g*(1.0-2.0*xi.x)),2))/(2.0*g);
+  const auto sin_theta=#sqrt(#max(0.0,1.0-cos_theta*cos_theta));
+  const auto phi=2.0*$PI*xi.y;
+  return scatter_sample_result(wi: orthonormal_basis(wo)*float3(sin_theta*#cos(phi),sin_theta*#sin(phi),cos_theta),mode: scatter_reflect_transmit);
+}
 @(macro)
 export int __scatter_evaluate(
   const &__material_instance instance,
@@ -1539,8 +1578,8 @@ export int __scatter_evaluate(
 ){
   auto params=scatter_evaluate_parameters(
     is_importance: (instance.flags&1)!=0,
-    wo0: normalize((*wo_world)*instance.tangent_space),
-    wi0: normalize((*wi_world)*instance.tangent_space),
+    wo0: normalize((*wo_world)*instance.tangent_to_world),
+    wi0: normalize((*wi_world)*instance.tangent_to_world),
     normal: normalize(instance.geometry.normal),
     thin_walled: instance.jit_struct.thin_walled,
   );
@@ -1575,9 +1614,8 @@ export int __scatter_sample(
   const &float f,
   const &int is_delta,
 ){
-  auto wo=normalize((*wo_world)*instance.tangent_space);
+  auto wo=normalize((*wo_world)*instance.tangent_to_world);
   auto params=scatter_sample_parameters(
-    is_importance: (instance.flags&1)!=0,
     xi: *xi,
     wo0: wo,
     normal: normalize(instance.geometry.normal),
@@ -1593,7 +1631,7 @@ export int __scatter_sample(
         f[i]=0.0;
       return false;
     }
-    *wi_world=normalize(instance.tangent_space*wi);
+    *wi_world=normalize(instance.tangent_to_world*wi);
     if((*is_delta=bool(result.delta_f))){
       *pdf_fwd=1.0;
       *pdf_rev=1.0;
@@ -1603,6 +1641,32 @@ export int __scatter_sample(
       return __scatter_evaluate(instance,wo_world,wi_world,pdf_fwd,pdf_rev,f);
     }
   }
+}
+@(macro)
+export float __volume_scatter_evaluate(const &__material_instance instance,const &float3 wo_world,const &float3 wi_world,){
+  auto params=scatter_evaluate_parameters(
+    is_importance: 0,
+    wo0: normalize(*wo_world),
+    wi0: normalize(*wi_world),
+    hit_backface: false,
+  );
+  return scatter_evaluate(visit &instance.jit_struct.volume.scattering,&params).f;
+}
+@(macro)
+export float __volume_scatter_sample(
+  const &__material_instance instance,
+  const &float4 xi,
+  const &float3 wo_world,
+  const &float3 wi_world,
+){
+  auto wo=normalize(*wo_world);
+  auto params=scatter_sample_parameters(xi: *xi,wo0: wo,hit_backface: false);
+  auto result=scatter_sample(visit &instance.jit_struct.volume.scattering,&params);
+  if(result.mode==scatter_none){
+    return 0.0;
+  }
+  *wi_world=normalize(result.wi);
+  return __volume_scatter_evaluate(instance,wo_world,wi_world);
 }
 )*";
 

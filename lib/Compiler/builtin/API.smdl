@@ -467,8 +467,8 @@ export struct __material_instance {
   /// The df flags for the `backface` component.
   const int df_flags_backface = jit_struct.backface.scattering.__flags;
 
-  /// The tangent space matrix held by the `State` during construction.
-  const float3x3 tangent_space = let {
+  /// The tangent-to-world matrix held by the `State` during construction.
+  const float3x3 tangent_to_world = let {
                                    const auto tangent_to_world_matrix = $state.object_to_world_matrix * $state.tangent_to_object_matrix;
                                  } in float3x3(
                                    tangent_to_world_matrix[0].xyz,

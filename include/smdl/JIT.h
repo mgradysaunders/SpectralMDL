@@ -158,7 +158,7 @@ public:
     float3x3 tangent_to_world_space{};
   };
 
-  /// The allocate function.
+  /// The evaluate function.
   ///
   /// \param[inout] state
   /// The state.
@@ -173,12 +173,12 @@ public:
   /// After the user obtains an `Instance`, the `State` can be
   /// dropped.
   ///
-  Function<void(State &state, Instance &instance)> allocate{};
+  Function<void(State &state, Instance &instance)> evaluate{};
 
   /// The scatter evaluate function.
   ///
   /// \param[in] instance
-  /// The instance obtained from the `allocate` function.
+  /// The instance obtained from the `evaluate` function.
   ///
   /// \param[in] wo
   /// The outgoing direction in world space.
@@ -205,7 +205,7 @@ public:
   /// The scatter sample function.
   ///
   /// \param[in] instance
-  /// The instance obtained from the `allocate` function.
+  /// The instance obtained from the `evaluate` function.
   ///
   /// \param[in] xi
   /// The canonical random sample in \f$ [0,1]^4 \f$.
@@ -235,9 +235,6 @@ public:
                float3 &wi, float &pdfFwd, float &pdfRev, float *f,
                int &isDelta)>
       scatter_sample{};
-
-  // TODO ??
-  // mutable std::atomic<const Material *> otherSideMaterial{};
 };
 
 /// A just-in-time SMDL material pointer and an instance of the material.
@@ -249,7 +246,7 @@ public:
   explicit MaterialInstance(State &state, const Material *material)
       : material(material) {
     SMDL_SANITY_CHECK(material);
-    material->allocate(state, instance);
+    material->evaluate(state, instance);
   }
 
   /// The cutout opacity.
