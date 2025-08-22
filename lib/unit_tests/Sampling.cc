@@ -3,10 +3,10 @@
 #include <array>
 #include <random>
 
-#include "smdl/Support/DiscreteDistribution.h"
+#include "smdl/Support/Sampling.h"
 
-TEST_CASE("DiscreteDistribution") {
-  smdl::DiscreteDistribution distr = std::vector<double>{1.0, 2.0, 3.0, 1.0};
+TEST_CASE("Sampling") {
+  smdl::Distribution1D distr = std::vector<double>{1.0, 2.0, 3.0, 1.0};
   CHECK(distr.index_pmf(0) == doctest::Approx(1.0 / 7.0));
   CHECK(distr.index_pmf(1) == doctest::Approx(2.0 / 7.0));
   CHECK(distr.index_pmf(2) == doctest::Approx(3.0 / 7.0));

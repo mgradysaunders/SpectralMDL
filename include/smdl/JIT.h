@@ -235,6 +235,9 @@ public:
                float3 &wi, float &pdfFwd, float &pdfRev, float *f,
                int &isDelta)>
       scatter_sample{};
+
+  // TODO ??
+  // mutable std::atomic<const Material *> otherSideMaterial{};
 };
 
 /// A just-in-time SMDL material pointer and an instance of the material.
@@ -252,6 +255,17 @@ public:
   /// The cutout opacity.
   [[nodiscard]] float cutout_opacity() const noexcept {
     return instance.geometry->cutout_opacity;
+  }
+
+  /// Is thin walled?
+  [[nodiscard]] bool is_thin_walled() const noexcept {
+    return (instance.flags & MATERIAL_THIN_WALLED) != 0;
+  }
+
+  /// Has medium properties?
+  [[nodiscard]] bool has_medium() const noexcept {
+    return !is_thin_walled() && (instance.absorption_coefficient != nullptr ||
+                                 instance.scattering_coefficient != nullptr);
   }
 
   /// The index of refraction.
@@ -282,14 +296,20 @@ public:
     return instance.tangent_to_world_space[2];
   }
 
-  /// Is the given direction in the upper hemisphere?
-  [[nodiscard]] bool is_upper_hemisphere(float3 w) const noexcept {
+  /// Is the given direction on the exterior side of the geometry?
+  [[nodiscard]] bool is_exterior(const float3 &w) const noexcept {
     return dot(geometry_normal(), w) > 0.0f;
   }
 
-  /// Is the given direction in the lower hemisphere?
-  [[nodiscard]] bool is_lower_hemisphere(float3 w) const noexcept {
-    return dot(geometry_normal(), w) < 0.0f;
+  /// Is the given direction on the interior side of the geometry?
+  [[nodiscard]] bool is_interior(const float3 &w) const noexcept {
+    return !is_exterior(w);
+  }
+
+  /// Is the given pair of directions transmitting through the geometry?
+  [[nodiscard]] bool is_transmitting(const float3 &wo,
+                                     const float3 &wi) const noexcept {
+    return is_exterior(wo) != is_exterior(wi);
   }
 
   /// The scatter evaluate function.

@@ -5,6 +5,7 @@
 #include <cmath>
 
 #include "smdl/Export.h"
+#include "smdl/Support/Span.h"
 
 #if __clang__
 #define SMDL_USE_EXT_VECTOR_TYPES 1
@@ -41,7 +42,13 @@ public:
     for (size_t i = 0; i < N; i++)
       v[i] = s;
   }
-#endif
+#endif // #if SMDL_USE_EXT_VECTOR_TYPES
+
+  constexpr ColorVector(Span<const float> s) {
+    for (size_t i = 0; i < std::min(N, s.size()); i++) {
+      v[i] = s[i];
+    }
+  }
 
 public:
   [[nodiscard]] constexpr size_t size() const noexcept { return N; }
@@ -336,6 +343,14 @@ public:
     for (size_t i = 1; i < N; i++)
       result = std::fmin(result, v[i]);
     return result;
+  }
+
+  [[nodiscard]] operator Span<float>() noexcept {
+    return Span<float>(data(), size());
+  }
+
+  [[nodiscard]] operator Span<const float>() const noexcept {
+    return Span<const float>(data(), size());
   }
 
 public:

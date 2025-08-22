@@ -1,8 +1,8 @@
-#include "smdl/Support/DiscreteDistribution.h"
+#include "smdl/Support/Sampling.h"
 
 namespace smdl {
 
-DiscreteDistribution::DiscreteDistribution(const std::vector<double> &weights) {
+Distribution1D::Distribution1D(const std::vector<double> &weights) {
   cmfs.reserve(weights.size() + 1);
   cmfs.emplace_back(0.0);
   for (auto &weight : weights)
@@ -11,8 +11,8 @@ DiscreteDistribution::DiscreteDistribution(const std::vector<double> &weights) {
     cmf /= cmfs.back();
 }
 
-std::pair<int, float> DiscreteDistribution::index_sample(float u,
-                                                         float *uRemap) const {
+std::pair<int, float> Distribution1D::index_sample(float u,
+                                                   float *uRemap) const {
   if (cmfs.size() < 2)
     return {0, 1.0f};
   auto itr{std::lower_bound(cmfs.begin(), cmfs.end(), static_cast<double>(u))};

@@ -76,7 +76,7 @@ int main(int argc, char **argv) try {
     state.wavelength_max = WAVELENGTH_MAX;
     auto spp{size_t(samplesPerPixel)};
     auto rng{make_RNG(0x8f54190b ^ i, 0xbb7c1003 + i)};
-    auto random{RandomFP(rng)};
+    auto random{AnyRandom(rng)};
     auto y{i / numPixelsX};
     auto x{i % numPixelsX};
     Color Lsum{};

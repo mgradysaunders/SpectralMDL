@@ -29,7 +29,13 @@ public:
   bool isInfiniteLight{};
 };
 
-[[nodiscard]] uint64_t random_walk(const Scene &scene, const RandomFP &random,
+[[nodiscard]] bool test_visibility(const Scene &scene, const AnyRandom &random,
+                                   const Color &wavelengths,
+                                   smdl::BumpPtrAllocator &allocator,
+                                   const float3 &point0, const float3 &point1,
+                                   Color &beta);
+
+[[nodiscard]] uint64_t random_walk(const Scene &scene, const AnyRandom &random,
                                    const Color &wavelengths,
                                    smdl::BumpPtrAllocator &allocator,
                                    smdl::Transport transport, Vertex path0,

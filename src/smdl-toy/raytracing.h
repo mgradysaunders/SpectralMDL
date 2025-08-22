@@ -12,7 +12,6 @@
 
 #include "smdl/Compiler.h"
 #include "smdl/Support/ColorVector.h"
-#include "smdl/Support/DiscreteDistribution.h"
 #include "smdl/Support/Sampling.h"
 
 constexpr size_t WAVELENGTH_BASE_MAX = 16;
@@ -38,12 +37,12 @@ template <typename... Seeds>
   }
 }
 
-class RandomFP final {
+class AnyRandom final {
 public:
-  explicit RandomFP(std::in_place_t, std::function<float()> gen)
+  explicit AnyRandom(std::in_place_t, std::function<float()> gen)
       : gen(std::move(gen)) {}
 
-  explicit RandomFP(RNG &rng)
+  explicit AnyRandom(RNG &rng)
       : gen([&rng]() { return smdl::generate_canonical(rng); }) {}
 
   [[nodiscard]] operator float() const { return gen(); }
