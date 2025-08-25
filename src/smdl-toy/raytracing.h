@@ -53,6 +53,13 @@ public:
 
   [[nodiscard]] operator float4() const { return {gen(), gen(), gen(), gen()}; }
 
+  [[nodiscard]] int index(int n) const {
+    int i{int(std::floor(n * gen()))};
+    i = std::min(i, n - 1);
+    i = std::max(i, 0);
+    return i;
+  }
+
 private:
   std::function<float()> gen{};
 };

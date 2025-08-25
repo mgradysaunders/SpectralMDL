@@ -87,18 +87,31 @@ uint64_t random_walk(const Scene &scene, const AnyRandom &random,
     auto hit{Hit{}};
     bool hitSurface{scene.intersect(ray, hit)};
     bool hitMedium{false};
+#if 0
     if (mediumStack.current.has_medium()) {
-      Color sigma = Color(mediumStack.current.absorption_coefficient()) +
-                    Color(mediumStack.current.scattering_coefficient());
-      float t = -std::log1p(-float(random)) / sigma[0];
+      Color muA = Color(mediumStack.current.absorption_coefficient());
+      Color muS = Color(mediumStack.current.scattering_coefficient());
+      Color mu = muA + muS;
+      float t =
+          -std::log1p(-float(random)) / mu[random.index(WAVELENGTH_BASE_MAX)];
+      t = std::min(t, ray.tmax);
+      Color Tr{};
+      for (size_t i = 0; i < WAVELENGTH_BASE_MAX; i++)
+        Tr[i] =
+            std::exp(-mu[i] * std::min(t, std::numeric_limits<float>::max()));
       if (t < ray.tmax) {
+        beta *= muS * Tr / (mu * Tr).average();
         hitMedium = true;
         vertex.point = ray(t);
         vertex.beta = beta;
         vertex.wNext = smdl::uniform_sphere_sample(float2(random));
         vertex.materialInstance = mediumStack.current;
+        // TODO
+      } else {
+        beta *= Tr / Tr.average();
       }
     }
+#endif
     if (!hitSurface && !hitMedium) {
       if (transport == smdl::TRANSPORT_RADIANCE) {
         ++depth;
