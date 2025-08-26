@@ -105,11 +105,11 @@ int main(int argc, char **argv) try {
           float pdfFwd{};
           float pdfRev{};
           Color f{};
-          if (path[depth].materialInstance.scatter_evaluate(wo, wi, pdfFwd,
-                                                            pdfRev, f.data())) {
-            if (test_visibility(
-                    scene, random, wavelengths, allocator, path[depth].point,
-                    path[depth].point + 2 * scene.boundRadius * wi, f)) {
+          if (path[depth].scatter_evaluate(wo, wi, pdfFwd, pdfRev, f)) {
+            if (test_visibility(scene, random, wavelengths, allocator,
+                                path[depth].medium, path[depth].point,
+                                path[depth].point + 2 * scene.boundRadius * wi,
+                                f)) {
               Lsum += f * path[depth].beta;
             }
           }

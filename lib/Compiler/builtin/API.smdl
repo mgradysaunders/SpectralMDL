@@ -406,7 +406,7 @@ export struct material {
   material_surface backface = material_surface();
 
   /// The index of refraction.
-  color ior = color(1.0);
+  color ior = color(1.4);
 
   /// The material volume description.
   material_volume volume = material_volume();

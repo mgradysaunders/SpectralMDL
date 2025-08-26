@@ -2,6 +2,7 @@
 #pragma once
 
 #include <cstddef>
+#include <new>
 #include <type_traits>
 #include <utility>
 
@@ -131,3 +132,8 @@ private:
 /// \}
 
 } // namespace smdl
+
+[[nodiscard]] inline void *operator new(std::size_t sz, 
+                                        smdl::BumpPtrAllocator &allocator) {
+  return allocator.allocate(sz, alignof(std::max_align_t));
+}

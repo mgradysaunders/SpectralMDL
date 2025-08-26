@@ -242,7 +242,7 @@ export struct material{
   bool thin_walled=false;
   material_surface surface=material_surface();
   material_surface backface=material_surface();
-  color ior=color(1.0);
+  color ior=color(1.4);
   material_volume volume=material_volume();
   material_geometry geometry=material_geometry();
   hair_bsdf hair=hair_bsdf();
@@ -582,6 +582,7 @@ float3 half_direction(inline const &scatter_evaluate_parameters params){
   return normalize(mode==scatter_reflect?specular::reflection_half_vector(wo,wi):specular::refraction_half_vector(wo,wi,ior));
 }
 struct scatter_sample_parameters{
+  bool is_importance;
   float3 wo0;
   bool hit_backface=wo0.z<0;
   bool thin_walled=false;
@@ -1578,6 +1579,7 @@ export int __scatter_evaluate(
 ){
   auto params=scatter_evaluate_parameters(
     is_importance: (instance.flags&1)!=0,
+    ior: 1.0/average(*instance.ior),
     wo0: normalize((*wo_world)*instance.tangent_to_world),
     wi0: normalize((*wi_world)*instance.tangent_to_world),
     normal: normalize(instance.geometry.normal),
@@ -1616,8 +1618,10 @@ export int __scatter_sample(
 ){
   auto wo=normalize((*wo_world)*instance.tangent_to_world);
   auto params=scatter_sample_parameters(
+    is_importance: (instance.flags&1)!=0,
     xi: *xi,
     wo0: wo,
+    ior: 1.0/average(*instance.ior),
     normal: normalize(instance.geometry.normal),
     thin_walled: instance.jit_struct.thin_walled,
   );

@@ -2,36 +2,26 @@
 
 #include <vector>
 
-class MediumStack final {
-public:
-  MediumStack() { history.reserve(16); }
-
-  void update(smdl::JIT::MaterialInstance mat, const float3 &wo,
-              const float3 &wi) {
-    if (!mat.is_thin_walled() && mat.is_transmitting(wo, wi)) {
-      if (mat.is_interior(wi)) {
-        history.push_back(current);
-        current = mat;
-      } else if (!history.empty()) {
-        current = history.back();
-        history.pop_back();
-      }
-    }
-  }
-
-  smdl::JIT::MaterialInstance current{};
-  std::vector<smdl::JIT::MaterialInstance> history{};
-};
-
 bool test_visibility(const Scene &scene, const AnyRandom &random,
                      const Color &wavelengths,
                      smdl::BumpPtrAllocator &allocator, //
-                     const float3 &point0, const float3 &point1, Color &beta) {
+                     const MediumStack *medium, const float3 &point0,
+                     const float3 &point1, Color &beta) {
+  float d{length(point1 - point0)};
   Ray ray{point0, point1 - point0, EPS, 1.0f - EPS};
   while (ray.tmin < ray.tmax) {
     Hit hit{};
     if (!scene.intersect(ray, hit)) {
       break;
+    }
+    if (medium && medium->materialInstance.has_medium()) {
+      Color muA = Color(medium->materialInstance.absorption_coefficient());
+      Color muS = Color(medium->materialInstance.scattering_coefficient());
+      Color mu = muA + muS;
+      Color Tr{};
+      for (size_t i = 0; i < WAVELENGTH_BASE_MAX; i++)
+        Tr[i] = std::exp(-mu[i] * (ray.tmax - ray.tmin) * d);
+      beta *= Tr;
     }
     smdl::State state{};
     state.allocator = &allocator;
@@ -44,6 +34,7 @@ bool test_visibility(const Scene &scene, const AnyRandom &random,
         opacity == 1 || float(random) < opacity) {
       return false; // Blocks visibility!
     }
+    MediumStack::Update(medium, allocator, materialInstance, -ray.dir, ray.dir);
     ray.tmin = smdl::increment_float(ray.tmax + EPS);
     ray.tmax = 1.0f - EPS;
   }
@@ -64,7 +55,7 @@ uint64_t random_walk(const Scene &scene, const AnyRandom &random,
   // Default construct a medium stack, assuming we start on
   // the exterior of all materials with interior participating
   // media.
-  MediumStack mediumStack{};
+  const MediumStack *medium{};
 
   // We declare the state here and set up the variables that never
   // change. The other state variables get updated at every vertex
@@ -86,11 +77,9 @@ uint64_t random_walk(const Scene &scene, const AnyRandom &random,
 
     auto hit{Hit{}};
     bool hitSurface{scene.intersect(ray, hit)};
-    bool hitMedium{false};
-#if 0
-    if (mediumStack.current.has_medium()) {
-      Color muA = Color(mediumStack.current.absorption_coefficient());
-      Color muS = Color(mediumStack.current.scattering_coefficient());
+    if (medium && medium->materialInstance.has_medium()) {
+      Color muA = Color(medium->materialInstance.absorption_coefficient());
+      Color muS = Color(medium->materialInstance.scattering_coefficient());
       Color mu = muA + muS;
       float t =
           -std::log1p(-float(random)) / mu[random.index(WAVELENGTH_BASE_MAX)];
@@ -101,18 +90,19 @@ uint64_t random_walk(const Scene &scene, const AnyRandom &random,
             std::exp(-mu[i] * std::min(t, std::numeric_limits<float>::max()));
       if (t < ray.tmax) {
         beta *= muS * Tr / (mu * Tr).average();
-        hitMedium = true;
+        ++depth;
         vertex.point = ray(t);
         vertex.beta = beta;
+        vertex.medium = medium;
+        vertex.materialInstance = medium->materialInstance;
         vertex.wNext = smdl::uniform_sphere_sample(float2(random));
-        vertex.materialInstance = mediumStack.current;
-        // TODO
+        vertex.isMedium = true;
+        continue;
       } else {
         beta *= Tr / Tr.average();
       }
     }
-#endif
-    if (!hitSurface && !hitMedium) {
+    if (!hitSurface) {
       if (transport == smdl::TRANSPORT_RADIANCE) {
         ++depth;
         vertex.point =
@@ -131,7 +121,8 @@ uint64_t random_walk(const Scene &scene, const AnyRandom &random,
     auto materialInstance{smdl::JIT::MaterialInstance(state, hit.material)};
     if (float opacity{materialInstance.cutout_opacity()};
         opacity < 1 && (opacity == 0 || float(random) > opacity)) {
-      mediumStack.update(materialInstance, -ray.dir, ray.dir);
+      MediumStack::Update(medium, allocator, materialInstance, -ray.dir,
+                          ray.dir);
       ray = Ray{hit.point, ray.dir, EPS, INF};
       continue;
     }
@@ -139,11 +130,12 @@ uint64_t random_walk(const Scene &scene, const AnyRandom &random,
     ++depth;
     vertex.point = hit.point;
     vertex.beta = beta;
+    vertex.medium = medium;
     vertex.materialInstance = materialInstance;
     float wpdfRev{};
     if (!materialInstance.scatter_sample(float4(random), -vertexPrev.wNext,
-                                         vertex.wNext, wpdfFwd, wpdfRev,
-                                         f.data(), vertex.isDeltaBounce)) {
+                                         vertex.wNext, wpdfFwd, wpdfRev, f,
+                                         vertex.isDeltaBounce)) {
       break;
     }
     beta *= (1.0f / wpdfFwd) * f;
@@ -151,7 +143,8 @@ uint64_t random_walk(const Scene &scene, const AnyRandom &random,
     if (beta.is_all_zero()) {
       break;
     }
-    mediumStack.update(materialInstance, -vertexPrev.wNext, vertex.wNext);
+    MediumStack::Update(medium, allocator, materialInstance, -vertexPrev.wNext,
+                        vertex.wNext);
     ray = Ray{vertex.point, vertex.wNext, EPS, INF};
   }
   return depth;

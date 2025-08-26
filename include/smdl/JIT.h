@@ -331,10 +331,11 @@ public:
   ///
   [[nodiscard]] bool scatter_evaluate(const float3 &wo, const float3 &wi,
                                       float &pdfFwd, float &pdfRev,
-                                      float *f) const {
+                                      Span<float> f) const {
     SMDL_SANITY_CHECK(material && instance);
-    SMDL_SANITY_CHECK(f);
-    return material->scatter_evaluate(instance, wo, wi, pdfFwd, pdfRev, f);
+    SMDL_SANITY_CHECK(f.size() == size_t(instance.wavelength_base_max));
+    return material->scatter_evaluate(instance, wo, wi, pdfFwd, pdfRev,
+                                      f.data());
   }
 
   /// The scatter sample function.
@@ -365,12 +366,12 @@ public:
   ///
   [[nodiscard]] bool scatter_sample(const float4 &xi, const float3 &wo,
                                     float3 &wi, float &pdfFwd, float &pdfRev,
-                                    float *f, bool &isDelta) const {
+                                    Span<float> f, bool &isDelta) const {
     SMDL_SANITY_CHECK(material && instance);
-    SMDL_SANITY_CHECK(f);
+    SMDL_SANITY_CHECK(f.size() == size_t(instance.wavelength_base_max));
     auto isDeltaInt{int(0)};
     auto isNonZero{material->scatter_sample(instance, xi, wo, wi, pdfFwd,
-                                            pdfRev, f, isDeltaInt)};
+                                            pdfRev, f.data(), isDeltaInt)};
     isDelta = isDeltaInt;
     return isNonZero;
   }

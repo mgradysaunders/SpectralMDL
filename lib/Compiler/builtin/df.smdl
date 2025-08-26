@@ -346,6 +346,8 @@ float3 half_direction(inline const &scatter_evaluate_parameters params) {
 }
 
 struct scatter_sample_parameters {
+  bool is_importance;
+
   /// The primary outgoing direction in the natural geometric tangent space.
   float3 wo0;
 
@@ -1895,6 +1897,7 @@ export int __scatter_evaluate(
 ) {
   auto params = scatter_evaluate_parameters(
     is_importance: (instance.flags & 1) != 0,
+    ior: 1.0 / average(*instance.ior),
     wo0: normalize((*wo_world) * instance.tangent_to_world),
     wi0: normalize((*wi_world) * instance.tangent_to_world),
     normal: normalize(instance.geometry.normal),
@@ -1936,8 +1939,10 @@ export int __scatter_sample(
 ) {
   auto wo = normalize((*wo_world) * instance.tangent_to_world);
   auto params = scatter_sample_parameters(
+    is_importance: (instance.flags & 1) != 0,
     xi: *xi,
     wo0: wo,
+    ior: 1.0 / average(*instance.ior),
     normal: normalize(instance.geometry.normal),
     thin_walled: instance.jit_struct.thin_walled,
   );
