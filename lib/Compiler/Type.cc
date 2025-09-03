@@ -199,11 +199,11 @@ Value ArithmeticType::invoke(Emitter &emitter, const ArgumentList &args,
                                 llvm::Align(emitter.context.get_align_of(
                                     get_scalar_type(emitter.context)))));
       // If constructing from color and this is a 3-dimensional vector,
-      // delegate to the `__color_to_rgb` function in the `api` module.
+      // delegate to the `_color_to_rgb` function in the `api` module.
       if (value.type == emitter.context.get_color_type() && dim == 3)
         return invoke(
             emitter,
-            emitter.emit_call(emitter.context.get_keyword("__color_to_rgb"),
+            emitter.emit_call(emitter.context.get_keyword("_color_to_rgb"),
                               value, srcLoc),
             srcLoc);
     }
@@ -690,7 +690,7 @@ Value ColorType::invoke(Emitter &emitter, const ArgumentList &args,
                               llvmType, emitter.to_rvalue(value),
                               llvm::Align(alignof(float))));
     if (value.type == context.get_float_type(Extent(3)))
-      return emitter.emit_call(context.get_keyword("__rgb_to_color"), value,
+      return emitter.emit_call(context.get_keyword("_rgb_to_color"), value,
                                srcLoc);
   }
   if (args.size() <= 3 && args.is_only_these_names({"r", "g", "b"})) {
@@ -701,7 +701,7 @@ Value ColorType::invoke(Emitter &emitter, const ArgumentList &args,
     if (emitter.can_resolve_arguments(params, args, srcLoc)) {
       auto resolved{emitter.resolve_arguments(params, args, srcLoc)};
       return emitter.emit_call(
-          context.get_keyword("__rgb_to_color"),
+          context.get_keyword("_rgb_to_color"),
           emitter.invoke(context.get_float_type(Extent(3)),
                          llvm::ArrayRef<Value>(resolved.values), srcLoc),
           srcLoc);
@@ -722,7 +722,7 @@ Value ColorType::invoke(Emitter &emitter, const ArgumentList &args,
         srcLoc.throw_error(
             "expected wavelength and amplitude arrays to be same size");
       return emitter.emit_call(
-          context.get_keyword("__samples_to_color"),
+          context.get_keyword("_samples_to_color"),
           ArgumentList{context.get_comptime_int(int(arrayType0->size)),
                        resolved.values[0], resolved.values[1]},
           srcLoc);
@@ -1179,7 +1179,7 @@ void FunctionType::initialize_jit_material_functions(Emitter &emitter) {
     // Generate the evaluate function:
     // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
     // @(visible) void "material_name.evaluate"(&auto out) {
-    //   *out = __material_instance(#bump_allocate(material_name()));
+    //   *out = _material_instance(#bump_allocate(material_name()));
     // }
     // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
     auto funcReturnType{static_cast<Type *>(context.get_void_type())};
@@ -1188,7 +1188,7 @@ void FunctionType::initialize_jit_material_functions(Emitter &emitter) {
         {constParameter(context.get_void_pointer_type(), "out")}, decl.srcLoc,
         [&] {
           auto materialInstance{emitter.emit_call(
-              context.get_keyword("__material_instance"),
+              context.get_keyword("_material_instance"),
               emitter.emit_intrinsic("bump_allocate",
                                      invoke(emitter, {}, decl.srcLoc),
                                      decl.srcLoc),
@@ -1207,13 +1207,13 @@ void FunctionType::initialize_jit_material_functions(Emitter &emitter) {
     // Generate the scatter evaluate function:
     // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
     // @(pure visible) int "material_name.scatter_evaluate"(
-    //     &__material_instance instance,
+    //     &_material_instance instance,
     //     &float3 wo,
     //     &float3 wi,
     //     &float pdf_fwd,
     //     &float pdf_rev,
     //     &float f) {
-    //   return ::df::__scatter_evaluate(
+    //   return ::df::_scatter_evaluate(
     //     instance, wo, wi, pdf_fwd, pdf_rev, f);
     // }
     // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -1227,7 +1227,7 @@ void FunctionType::initialize_jit_material_functions(Emitter &emitter) {
          constParameter(floatPtrType, "pdf_rev"),
          constParameter(floatPtrType, "f")},
         decl.srcLoc, [&] {
-          auto dfFunc{Crumb::find(context, "__scatter_evaluate"sv, nullptr,
+          auto dfFunc{Crumb::find(context, "_scatter_evaluate"sv, nullptr,
                                   dfModule->lastCrumb)};
           SMDL_SANITY_CHECK(dfFunc);
           emitter.emit_return(
@@ -1250,7 +1250,7 @@ void FunctionType::initialize_jit_material_functions(Emitter &emitter) {
     // Generate the scatter sample function:
     // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
     // @(pure visible) int "material_name.scatter_sample"(
-    //     &__material_instance instance,
+    //     &_material_instance instance,
     //     &float4 xi,
     //     &float3 wo,
     //     &float3 wi,
@@ -1258,7 +1258,7 @@ void FunctionType::initialize_jit_material_functions(Emitter &emitter) {
     //     &float pdf_rev,
     //     &float f,
     //     &int is_delta) {
-    //   return ::df::__scatter_sample(
+    //   return ::df::_scatter_sample(
     //     instance, xi, wo, wi, pdf_fwd, pdf_rev, f, is_delta);
     // }
     // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -1274,7 +1274,7 @@ void FunctionType::initialize_jit_material_functions(Emitter &emitter) {
          constParameter(floatPtrType, "f"),
          constParameter(intPtrType, "is_delta")},
         decl.srcLoc, [&] {
-          auto dfFunc{Crumb::find(context, "__scatter_sample"sv, nullptr,
+          auto dfFunc{Crumb::find(context, "_scatter_sample"sv, nullptr,
                                   dfModule->lastCrumb)};
           SMDL_SANITY_CHECK(dfFunc);
           emitter.emit_return(
@@ -1295,8 +1295,8 @@ void FunctionType::initialize_jit_material_functions(Emitter &emitter) {
     func->setLinkage(llvm::Function::ExternalLinkage);
     jitMaterial.scatter_sample.name = func->getName().str();
   }
-  // TODO __volume_scatter_evaluate
-  // TODO __volume_scatter_sample
+  // TODO _volume_scatter_evaluate
+  // TODO _volume_scatter_sample
 }
 //--}
 

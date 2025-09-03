@@ -4,6 +4,8 @@
 #include <random>
 
 #include "smdl/Export.h"
+#include "smdl/Support/MacroHelpers.h"
+#include "smdl/Support/Span.h"
 #include "smdl/Support/VectorMath.h"
 
 namespace smdl {
@@ -14,11 +16,27 @@ namespace smdl {
 /// A data-driven distribution in 1 dimension.
 class SMDL_EXPORT Distribution1D final {
 public:
+  /// Default constructor.
   Distribution1D() = default;
 
-  Distribution1D(const std::vector<double> &weights);
+  /// Construct from weighting values.
+  template <typename Float> Distribution1D(Span<const Float> values) {
+    static_assert(std::is_floating_point_v<Float>);
+    cmfs.reserve(values.size() + 1);
+    cmfs.emplace_back(0.0);
+    for (const auto &value : values) {
+      inputSum += std::fmax(static_cast<double>(value), 0.0);
+      cmfs.emplace_back(inputSum);
+    }
+    for (auto &cmf : cmfs) {
+      cmf /= inputSum;
+    }
+  }
 
 public:
+  /// The non-normalized sum.
+  [[nodiscard]] double non_normalized_sum() const { return inputSum; }
+
   /// The number of indexes.
   [[nodiscard]] int size() const { return int(cmfs.size()) - 1; }
 
@@ -36,7 +54,7 @@ public:
     return i < 0 ? 0.0f : 1.0f;
   }
 
-  /// The index sample function.
+  /// The index sampling routine.
   ///
   /// \param[in] u
   /// The random sample in \f$ (0,1) \f$.
@@ -46,18 +64,96 @@ public:
   /// so it can be reused.
   ///
   /// \returns
-  /// The sampled index and the associated PMF.
+  /// The sampled index and the associated probability mass as if calculated by
+  /// `index_pmf()`.
   ///
   [[nodiscard]] std::pair<int, float> index_sample(float u,
                                                    float *uRemap = {}) const;
 
-  template <typename G> [[nodiscard]] int operator()(G &gen) const {
+  template <typename Gen> [[nodiscard]] int operator()(Gen &gen) const {
     return index_sample(std::generate_canonical<float, 32>(gen)).first;
   }
 
 private:
-  /// The cumulative mass function values.
+  double inputSum{};
+
   std::vector<double> cmfs{};
+};
+
+/// A data-driven distribution in 2 dimensions.
+class SMDL_EXPORT Distribution2D final {
+public:
+  Distribution2D() = default;
+
+  /// Construct from weighting values.
+  ///
+  /// \param[in] sizeX   The size in X.
+  /// \param[in] sizeY   The size in Y.
+  /// \param[in] values  The values in row-major order.
+  ///
+  template <typename Float>
+  explicit Distribution2D(size_t sizeX, size_t sizeY, Span<const Float> values)
+      : sizeX(sizeX), sizeY(sizeY) {
+    static_assert(std::is_floating_point_v<Float>);
+    SMDL_SANITY_CHECK(sizeX * sizeY == values.size());
+    conditionals.reserve(sizeY);
+    auto margins{std::vector<double>(sizeY)};
+    for (size_t iY = 0; iY < sizeY; iY++) {
+      conditionals.emplace_back(values.subspan(sizeX * iY, sizeX));
+      margins[iY] = conditionals.back().non_normalized_sum();
+    }
+    marginal = Distribution1D(Span<const double>(margins));
+  }
+
+public:
+  /// The size in X.
+  [[nodiscard]] int size_x() const { return int(sizeX); }
+
+  /// The size in Y.
+  [[nodiscard]] int size_y() const { return int(sizeY); }
+
+  /// The index probability mass function (PMF).
+  [[nodiscard]] float index_pmf(int2 i) const {
+    if (0 <= i.y && i.y < size_y())
+      return marginal.index_pmf(i.y) * conditionals[i.y].index_pmf(i.x);
+    return 0.0f;
+  }
+
+  /// The index sampling routine.
+  ///
+  /// \param[in] u
+  /// The random sample in \f$ (0,1)^2 \f$.
+  ///
+  /// \param[out] uRemap
+  /// If non-null, receives the random sample remapped back into \f$ (0,1)^2 \f$
+  /// so it can be reused.
+  ///
+  /// \returns
+  /// The sampled index and the associated probability mass as if calculated by
+  /// `index_pmf()`.
+  ///
+  [[nodiscard]] std::pair<int2, float> index_sample(float2 u,
+                                                    float2 *uRemap = {}) const {
+    if (conditionals.empty()) {
+      return {int2(0), 1.0f};
+    }
+    auto [iY, pmfY] = marginal.index_sample(u.x, &u.x);
+    SMDL_SANITY_CHECK(iY < int(conditionals.size()));
+    auto [iX, pmfX] = conditionals[iY].index_sample(u.y, &u.y);
+    if (uRemap) {
+      *uRemap = u;
+    }
+    return {int2(iX, iY), pmfX * pmfY};
+  }
+
+private:
+  size_t sizeX{};
+
+  size_t sizeY{};
+
+  std::vector<Distribution1D> conditionals{};
+
+  Distribution1D marginal{};
 };
 
 /// \name Functions (sampling)

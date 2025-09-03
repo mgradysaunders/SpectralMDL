@@ -202,7 +202,7 @@ export float luminance(const float3 a) = dot(float3(0.2126, 0.7152, 0.0722), a);
 export float luminance(const color a) {
   float result(0.0);
   for (int i = 0; i < $WAVELENGTH_BASE_MAX; ++i) {
-    result += __wyman_y($state.wavelength_base[i]) * a[i];
+    result += _wyman_y($state.wavelength_base[i]) * a[i];
   }
   return result / $WAVELENGTH_BASE_MAX;
 }
@@ -238,6 +238,6 @@ export float eval_at_wavelength(color a, float wavelength) {
   if $($WAVELENGTH_BASE_MAX == 1) {
     return a[0];
   } else {
-    return __polyline_lerp($WAVELENGTH_BASE_MAX, &$state.wavelength_base[0], &a[0], wavelength);
+    return _polyline_lerp($WAVELENGTH_BASE_MAX, &$state.wavelength_base[0], &a[0], wavelength);
   }
 }

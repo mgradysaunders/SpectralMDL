@@ -109,11 +109,11 @@ struct evaluate_result {
 
 evaluate_result evaluate(const bsdf scattering, float3 wo, float3 wi) {
   auto mat = material(surface: material_surface(scattering: scattering));
-  auto instance = __material_instance(&mat);
+  auto instance = _material_instance(&mat);
   float pdf_fwd = 0;
   float pdf_rev = 0;
   color f = color(0);
-  if (df::__scatter_evaluate(&instance, &wo, &wi, &pdf_fwd, &pdf_rev, cast<&float>(&f)))
+  if (df::_scatter_evaluate(&instance, &wo, &wi, &pdf_fwd, &pdf_rev, cast<&float>(&f)))
     return evaluate_result(f, float2(pdf_fwd, pdf_rev));
   else
     return evaluate_result();
@@ -140,3 +140,14 @@ unit_test "Reciprocity" {
   #assert(#all(#abs(result0.pdf - result1.pdf.yx) ~== [1e-6] 0.0));
   #assert(#all(#abs(result0.f / #abs(wi.z) - result1.f / #abs(wo.z)) ~== [1e-6] 0.0));
 }
+
+/*
+unit_test "Phase" {
+  auto wo = math::normalize(float3(-1.0, 0.0, 0.0));
+  auto wi = math::normalize(float3(+1.0, -0.0, 0.0));
+  auto mat = material(volume: material_volume(scattering: df::anisotropic_vdf(directional_bias: 0.5)));
+  auto instance = _material_instance(&mat);
+  #print(df::_volume_scatter_evaluate(&instance, &wo, &wi), "\n");
+  #print(df::_volume_scatter_evaluate(&instance, &wo, &wo), "\n");
+}
+ */

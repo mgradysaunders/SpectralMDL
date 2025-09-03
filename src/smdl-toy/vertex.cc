@@ -139,8 +139,7 @@ uint64_t random_walk(const Scene &scene, const AnyRandom &random,
       break;
     }
     beta *= (1.0f / wpdfFwd) * f;
-    beta.set_non_finite_to_zero();
-    if (beta.is_all_zero()) {
+    if (beta.is_any_non_finite()) {
       break;
     }
     MediumStack::Update(medium, allocator, materialInstance, -vertexPrev.wNext,

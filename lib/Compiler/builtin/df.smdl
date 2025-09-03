@@ -298,7 +298,7 @@ struct scatter_evaluate_parameters {
       wi0 = -wi0;
       wo = -wo;
       wi = -wi;
-      ior = 1 / ior;
+      ior = 1.0 / ior;
     }
   }
 };
@@ -449,7 +449,7 @@ auto scatter_evaluate_result_with_multiscatter(
 }
 
 @(pure macro)
-?scatter_sample_result __scatter_sample_result_with_multiscatter(const auto this, const &float4 xi [[anno::unused()]], const float3x3 tbn [[anno::unused()]]) {
+?scatter_sample_result _scatter_sample_result_with_multiscatter(const auto this, const &float4 xi [[anno::unused()]], const float3x3 tbn [[anno::unused()]]) {
   if (#typeof(this.multiscatter_tint) == void || (#typeof(this.multiscatter_tint) == float && this.multiscatter_tint == 0.0)) {
     // Do nothing
   } else {
@@ -459,26 +459,26 @@ auto scatter_evaluate_result_with_multiscatter(
   }
 }
 
-//--{ __default_bsdf
+//--{ _default_bsdf
 @(pure macro)
-auto scatter_evaluate(const &__default_bsdf this [[anno::unused()]], const &scatter_evaluate_parameters params [[anno::unused()]]) {
+auto scatter_evaluate(const &_default_bsdf this [[anno::unused()]], const &scatter_evaluate_parameters params [[anno::unused()]]) {
   return scatter_evaluate_result(is_black: true);
 }
 
 @(pure macro)
-auto scatter_sample(const &__default_bsdf this [[anno::unused()]], const &scatter_sample_parameters params [[anno::unused()]]) {
+auto scatter_sample(const &_default_bsdf this [[anno::unused()]], const &scatter_sample_parameters params [[anno::unused()]]) {
   return scatter_sample_result();
 }
 //--}
 
-//--{ __default_vdf
+//--{ _default_vdf
 @(macro)
-auto scatter_evaluate(const &__default_vdf this [[anno::unused()]], const &scatter_evaluate_parameters params [[anno::unused()]]) {
+auto scatter_evaluate(const &_default_vdf this [[anno::unused()]], const &scatter_evaluate_parameters params [[anno::unused()]]) {
   return scatter_evaluate_result(is_black: true);
 }
 
 @(macro)
-auto scatter_sample(const &__default_vdf this [[anno::unused()]], const &scatter_sample_parameters params [[anno::unused()]]) {
+auto scatter_sample(const &_default_vdf this [[anno::unused()]], const &scatter_sample_parameters params [[anno::unused()]]) {
   return scatter_sample_result();
 }
 //--}
@@ -514,7 +514,7 @@ export struct diffuse_reflection_bsdf: bsdf {
   const $(?(color | float)) multiscatter_tint = none;
 
   /// The flags.
-  static const int __flags = DF_REFLECTION | DF_DIFFUSE;
+  static const int _flags = DF_REFLECTION | DF_DIFFUSE;
 };
 
 @(pure)
@@ -571,7 +571,7 @@ export struct diffuse_transmission_bsdf: bsdf {
   void handle = "";
 
   /// The flags.
-  static const int __flags = DF_TRANSMISSION | DF_DIFFUSE;
+  static const int _flags = DF_TRANSMISSION | DF_DIFFUSE;
 };
 
 @(pure)
@@ -624,7 +624,7 @@ export struct specular_bsdf: bsdf {
   void handle = "";
 
   /// The flags.
-  const int __flags = int(mode) | DF_SPECULAR;
+  const int _flags = int(mode) | DF_SPECULAR;
 };
 
 @(pure macro)
@@ -692,7 +692,7 @@ export struct sheen_bsdf: bsdf {
   void handle = "";
 
   /// The flags.
-  static const int __flags = DF_REFLECTION | DF_DIFFUSE;
+  static const int _flags = DF_REFLECTION | DF_DIFFUSE;
 
   finalize {
     roughness = saturate(roughness);
@@ -790,7 +790,7 @@ export struct ward_geisler_moroder_bsdf: bsdf {
   void handle = "";
 
   /// The flags.
-  static const int __flags = DF_REFLECTION | DF_GLOSSY;
+  static const int _flags = DF_REFLECTION | DF_GLOSSY;
 
   finalize {
     // We limit to `[0,1]`!
@@ -826,7 +826,7 @@ auto scatter_sample(const &ward_geisler_moroder_bsdf this, inline const &scatter
   tangent_u = this.tangent_u;
   if ((tbn := recalculate_tangent_space(params))) {
     // Sample multiscatter.
-    if (result := __scatter_sample_result_with_multiscatter(this, xi, *tbn)) {
+    if (result := _scatter_sample_result_with_multiscatter(this, xi, *tbn)) {
       return *result;
     } else {
       // Sample specular.
@@ -1071,7 +1071,7 @@ struct microfacet_bsdf: bsdf {
   const microfacet::shadowing shadowing = microfacet::shadowing();
 
   /// The flags.
-  const int __flags = int(mode) | DF_GLOSSY;
+  const int _flags = int(mode) | DF_GLOSSY;
 };
 
 @(pure noinline)
@@ -1168,7 +1168,7 @@ auto scatter_sample(const &microfacet_bsdf this, inline const &scatter_sample_pa
                   ? scatter_reflect                                                  //
                   : scatter_transmit);
   if (mode == scatter_reflect || thin_walled) {
-    if (result := __scatter_sample_result_with_multiscatter(this, &xi, *tbn)) {
+    if (result := _scatter_sample_result_with_multiscatter(this, &xi, *tbn)) {
       if (mode == scatter_transmit)
         return scatter_sample_result(wi: result.wi * float3(+1, +1, -1), mode: mode);
       return *result;
@@ -1274,7 +1274,7 @@ struct tint1: bsdf, edf, hair_bsdf {
   auto base;
 
   /// The flags.
-  const int __flags = base.__flags;
+  const int _flags = base._flags;
 };
 
 /// A 2-value tint.
@@ -1289,7 +1289,7 @@ struct tint2: bsdf {
   bsdf base;
 
   /// The flags.
-  const int __flags = base.__flags;
+  const int _flags = base._flags;
 };
 
 /// Construct 1-value tint of the given `bsdf`.
@@ -1375,7 +1375,7 @@ export struct weighted_layer: bsdf {
   float chance = average(weight);
 
   /// The flags.
-  const int __flags = layer.__flags | base.__flags;
+  const int _flags = layer._flags | base._flags;
 
   finalize {
     weight = saturate(weight);
@@ -1425,7 +1425,7 @@ export struct thin_film: bsdf {
   bsdf base = bsdf();
 
   /// The flags.
-  const int __flags = base.__flags;
+  const int _flags = base._flags;
 };
 
 @(macro)
@@ -1469,7 +1469,7 @@ export struct fresnel_factor: bsdf {
   bsdf base = bsdf();
 
   /// The flags.
-  const int __flags = base.__flags;
+  const int _flags = base._flags;
 };
 
 @(macro)
@@ -1522,7 +1522,7 @@ export struct directional_factor: bsdf {
   bsdf base = bsdf();
 
   /// The flags.
-  const int __flags = base.__flags;
+  const int _flags = base._flags;
 };
 
 @(macro)
@@ -1562,7 +1562,7 @@ export struct measured_curve_factor: bsdf {
   bsdf base = bsdf();
 
   /// The flags.
-  const int __flags = base.__flags;
+  const int _flags = base._flags;
 };
 
 @(macro)
@@ -1607,7 +1607,7 @@ export struct measured_factor: bsdf {
   bsdf base = bsdf();
 
   /// The flags.
-  const int __flags = base.__flags;
+  const int _flags = base._flags;
 };
 
 @(macro)
@@ -1655,7 +1655,7 @@ export struct fresnel_layer: bsdf {
   const float average_weight = average(weight);
 
   /// The flags.
-  const int __flags = layer.__flags | base.__flags;
+  const int _flags = layer._flags | base._flags;
 };
 
 @(macro)
@@ -1738,12 +1738,12 @@ export struct vdf_component: component {
 struct component_mix: bsdf, edf, vdf {
   component[] components;
 
-  int __flags = 0;
+  int _flags = 0;
 };
 
 @(macro)
 export auto normalized_mix(component[<N>] components) {
-  int __flags(0);
+  int _flags(0);
   float total_weight(0);
   float total_chance(0);
   for (int i = 0; i < N; i++) {
@@ -1752,7 +1752,7 @@ export auto normalized_mix(component[<N>] components) {
     component.chance = #max(component.chance, 0.0);
     total_weight += component.weight;
     total_chance += component.chance;
-    __flags |= component.component.__flags;
+    _flags |= component.component._flags;
   }
   if (total_weight > 1.0)
     total_weight = 1.0 / total_weight;
@@ -1764,12 +1764,12 @@ export auto normalized_mix(component[<N>] components) {
     component.weight *= total_weight;
     component.chance *= total_chance;
   }
-  return component_mix(components, __flags);
+  return component_mix(components, _flags);
 }
 
 @(macro)
 export auto clamped_mix(component[<N>] components) {
-  int __flags(0);
+  int _flags(0);
   float total_weight(0);
   float total_chance(0);
   for (int i = 0; i < N; i++) {
@@ -1779,7 +1779,7 @@ export auto clamped_mix(component[<N>] components) {
     if (total_weight + component.weight < 1.0) {
       total_weight += component.weight;
       total_chance += component.chance;
-      __flags |= component.component.__flags;
+      _flags |= component.component._flags;
     } else {
       // MDL specification:
       // Once a component weight would cause the sum to exceed 1.0, 
@@ -1797,25 +1797,25 @@ export auto clamped_mix(component[<N>] components) {
   for (int i = 0; i < N; i++) {
     components[i].chance *= total_chance;
   }
-  return component_mix(components, __flags);
+  return component_mix(components, _flags);
 }
 
 @(macro)
 export auto unbounded_mix(component[<N>] components) {
-  int __flags(0);
+  int _flags(0);
   float total_chance(0);
   for (int i = 0; i < N; i++) {
     auto component(&components[i]);
     component.weight = #max(component.weight, 0.0);
     component.chance = #max(component.chance, 0.0);
     total_chance += component.chance;
-    __flags |= component.__flags;
+    _flags |= component._flags;
   }
   total_chance = 1.0 / total_chance if (total_chance > 0.0);
   for (int i = 0; i < N; i++) {
     components[i].chance *= total_chance;
   }
-  return component_mix(components, __flags);
+  return component_mix(components, _flags);
 }
 
 @(macro)
@@ -1859,7 +1859,7 @@ export struct anisotropic_vdf: vdf {
 
   void handle = "";
 
-  static const int __flags = 0;
+  static const int _flags = 0;
 
   finalize {
     directional_bias = #max(directional_bias, -0.999);
@@ -1887,8 +1887,8 @@ auto scatter_sample(const &anisotropic_vdf this, inline const &scatter_sample_pa
 }
 
 @(macro)
-export int __scatter_evaluate(
-  const &__material_instance instance,
+export int _scatter_evaluate(
+  const &_material_instance instance,
   const &float3 wo_world, ///< The outgoing direction in world space
   const &float3 wi_world, ///< The incoming direction in world space
   const &float pdf_fwd,   ///< output: The PDF of sampling `wi` from `wo`
@@ -1897,7 +1897,7 @@ export int __scatter_evaluate(
 ) {
   auto params = scatter_evaluate_parameters(
     is_importance: (instance.flags & 1) != 0,
-    ior: 1.0 / average(*instance.ior),
+    ior: 1.0 / instance.ior,
     wo0: normalize((*wo_world) * instance.tangent_to_world),
     wi0: normalize((*wi_world) * instance.tangent_to_world),
     normal: normalize(instance.geometry.normal),
@@ -1927,8 +1927,8 @@ export int __scatter_evaluate(
 }
 
 @(macro)
-export int __scatter_sample(
-  const &__material_instance instance,
+export int _scatter_sample(
+  const &_material_instance instance,
   const &float4 xi,       ///< The canonical random sample in `[0,1]^4`
   const &float3 wo_world, ///< The outgoing direction in world space
   const &float3 wi_world, ///< output: The incoming direction in world space
@@ -1942,7 +1942,7 @@ export int __scatter_sample(
     is_importance: (instance.flags & 1) != 0,
     xi: *xi,
     wo0: wo,
-    ior: 1.0 / average(*instance.ior),
+    ior: 1.0 / instance.ior,
     normal: normalize(instance.geometry.normal),
     thin_walled: instance.jit_struct.thin_walled,
   );
@@ -1965,14 +1965,14 @@ export int __scatter_sample(
       #memcpy(f, &*result.delta_f, #sizeof(float) * $WAVELENGTH_BASE_MAX);
       return true;
     } else {
-      return __scatter_evaluate(instance, wo_world, wi_world, pdf_fwd, pdf_rev, f);
+      return _scatter_evaluate(instance, wo_world, wi_world, pdf_fwd, pdf_rev, f);
     }
   }
 }
 
 @(macro)
-export float __volume_scatter_evaluate(
-  const &__material_instance instance,
+export float _volume_scatter_evaluate(
+  const &_material_instance instance,
   const &float3 wo_world, ///< The outgoing direction in world space
   const &float3 wi_world, ///< The incoming direction in world space
 ) {
@@ -1986,8 +1986,8 @@ export float __volume_scatter_evaluate(
 }
 
 @(macro)
-export float __volume_scatter_sample(
-  const &__material_instance instance,
+export float _volume_scatter_sample(
+  const &_material_instance instance,
   const &float4 xi,       ///< The canonical random sample in `[0,1]^4`
   const &float3 wo_world, ///< The outgoing direction in world space
   const &float3 wi_world, ///< output: The incoming direction in world space
@@ -1999,5 +1999,5 @@ export float __volume_scatter_sample(
     return 0.0;
   }
   *wi_world = normalize(result.wi);
-  return __volume_scatter_evaluate(instance, wo_world, wi_world);
+  return _volume_scatter_evaluate(instance, wo_world, wi_world);
 }

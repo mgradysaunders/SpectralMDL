@@ -349,10 +349,12 @@ private:
         consume_input(expr.srcOp.size());
         write(expr.expr);
       } else {
+        // Avoid `+++`, `---`, and `/*`
         if (((expr.op == AST::UNOP_INC || expr.op == AST::UNOP_POS) &&
-             last_output() == '+') ||
+             last_output() == '+') || 
             ((expr.op == AST::UNOP_DEC || expr.op == AST::UNOP_NEG) &&
-             last_output() == '-'))
+             last_output() == '-') ||
+            ((expr.op == AST::UNOP_DEREF) && last_output() == '/'))
           write(DELIM_SPACE);
         write(expr.srcOp, expr.expr);
       }

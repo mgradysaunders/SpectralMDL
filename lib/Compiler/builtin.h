@@ -71,7 +71,7 @@ color rgb_to_color_nontrivial(float3 rgb){
   return #max(c*0.94,0.0);
 }
 @(macro)
-export color __rgb_to_color(const float3 rgb){
+export color _rgb_to_color(const float3 rgb){
   if(#all(rgb.xx==rgb.yz)){
     return color(rgb.x);
   } else {
@@ -79,7 +79,7 @@ export color __rgb_to_color(const float3 rgb){
   }
 }
 @(pure macro)
-export int __lower_bound(int count,const &float xs,const float x){
+export int _lower_bound(int count,const &float xs,const float x){
   int first=0;
   while(count>0){
     const int step=count/2;
@@ -94,13 +94,13 @@ export int __lower_bound(int count,const &float xs,const float x){
   return first;
 }
 @(pure)
-export float __polyline_lerp(int count,const &float xs,const &float ys,const float x){
+export float _polyline_lerp(int count,const &float xs,const &float ys,const float x){
   if(count<=0){
     return 0.0;
   } else if(count==1){
     return ys[0];
   } else {
-    int i=__lower_bound(count,xs,x)-1;
+    int i=_lower_bound(count,xs,x)-1;
     i=#min(i,count-2);
     i=#max(i,0);
     const auto x0=xs[i];
@@ -112,21 +112,21 @@ export float __polyline_lerp(int count,const &float xs,const &float ys,const flo
   }
 }
 @(noinline)
-export color __samples_to_color(const int count,const &float wavelengths,const &float amplitudes){
+export color _samples_to_color(const int count,const &float wavelengths,const &float amplitudes){
   auto c=color(0.0);
   if(count>0){
     if(count==1){
       c=color(amplitudes[0]);
     } else {
       for(int i=0;i<$WAVELENGTH_BASE_MAX;i++){
-        c[i]=__polyline_lerp(count,wavelengths,amplitudes,$state.wavelength_base[i]);
+        c[i]=_polyline_lerp(count,wavelengths,amplitudes,$state.wavelength_base[i]);
       }
     }
   }
   return c;
 }
 @(pure)
-export float3 __wyman_xyz(const float w){
+export float3 _wyman_xyz(const float w){
   auto x(w-auto(442.0,599.8,501.1,568.8,530.9,437.0,459.0));
   x*=#select(x<0,auto(0.0624,0.0264,0.0490,0.0213,0.0613,0.0845,0.0385),auto(0.0374,0.0323,0.0382,0.0247,0.0322,0.0278,0.0725),);
   x*=0.5*x;
@@ -139,7 +139,7 @@ export float3 __wyman_xyz(const float w){
   return float3(y[0]+y[1]+y[2],y[3]+y[4],y[5]+y[6]);
 }
 @(pure)
-export float __wyman_y(const float w){
+export float _wyman_y(const float w){
   auto x(w-auto(568.8,530.9));
   x*=#select(x<0,auto(0.0213,0.0613),auto(0.0247,0.0322));
   x*=0.5*x;
@@ -151,10 +151,10 @@ export float __wyman_y(const float w){
   return #sum(auto(0.821,0.286)*0.01/y);
 }
 @(hot noinline)
-export float3 __color_to_rgb(const color c){
+export float3 _color_to_rgb(const color c){
   float3 result(0.0);
   for(int i=0;i<$WAVELENGTH_BASE_MAX;++i){
-    result+=__wyman_xyz($state.wavelength_base[i])*c[i];
+    result+=_wyman_xyz($state.wavelength_base[i])*c[i];
   }
   result/=$WAVELENGTH_BASE_MAX;
   result*=$state.wavelength_max-$state.wavelength_min;
@@ -162,29 +162,29 @@ export float3 __color_to_rgb(const color c){
 }
 @(visible noinline)
 void jit_rgb_to_color(const &float3 rgb,const &float cptr){
-  color c(__rgb_to_color(*rgb));
+  color c(_rgb_to_color(*rgb));
   #memcpy(cptr,&c,#sizeof(color));
 }
 @(visible noinline)
 void jit_color_to_rgb(const &float cptr,const &float3 rgb){
-  *rgb=__color_to_rgb(color(cptr));
+  *rgb=_color_to_rgb(color(cptr));
 }
 export enum intensity_mode{intensity_radiant_exitance,intensity_power,};
 export tag bsdf;
 export tag vdf;
 export tag edf;
 export tag hair_bsdf;
-export struct __default_bsdf:default bsdf{
-  static const int __flags=0;
+export struct _default_bsdf:default bsdf{
+  static const int _flags=0;
 };
-export struct __default_vdf:default vdf{
-  static const int __flags=0;
+export struct _default_vdf:default vdf{
+  static const int _flags=0;
 };
-export struct __default_edf:default edf{
-  static const int __flags=0;
+export struct _default_edf:default edf{
+  static const int _flags=0;
 };
-export struct __default_hair_bsdf:default hair_bsdf{
-  static const int __flags=0;
+export struct _default_hair_bsdf:default hair_bsdf{
+  static const int _flags=0;
 };
 export struct texture_2d{
   texture_2d(const string name,const auto gamma=0)=#load_texture_2d(name,int(gamma));
@@ -242,7 +242,7 @@ export struct material{
   bool thin_walled=false;
   material_surface surface=material_surface();
   material_surface backface=material_surface();
-  color ior=color(1.4);
+  float ior=1.4;
   material_volume volume=material_volume();
   material_geometry geometry=material_geometry();
   hair_bsdf hair=hair_bsdf();
@@ -253,21 +253,21 @@ const int MATERIAL_HAS_SURFACE=(1<<2);
 const int MATERIAL_HAS_BACKFACE=(1<<3);
 const int MATERIAL_HAS_VOLUME=(1<<6);
 const int MATERIAL_HAS_HAIR=(1<<7);
-export struct __material_instance{
+export struct _material_instance{
   const &material jit_struct;
   const &material_geometry geometry=&jit_struct.geometry;
-  const &color ior=&jit_struct.ior;
+  const float ior=jit_struct.ior;
   const &color absorption_coefficient=#is_void(jit_struct.volume.absorption_coefficient)?none:&jit_struct.volume.absorption_coefficient;
   const &color scattering_coefficient=#is_void(jit_struct.volume.scattering_coefficient)?none:&jit_struct.volume.scattering_coefficient;
   const int wavelength_base_max=$WAVELENGTH_BASE_MAX;
   const int flags=$state.transport|(jit_struct.thin_walled?MATERIAL_THIN_WALLED:0)|(!#is_default(jit_struct.surface)?MATERIAL_HAS_SURFACE:0)|(!#is_default(jit_struct.backface)?MATERIAL_HAS_BACKFACE:0)|(!#is_default(jit_struct.volume)?MATERIAL_HAS_VOLUME:0)|(!#is_default(jit_struct.hair)?MATERIAL_HAS_HAIR:0);
-  const int df_flags_surface=jit_struct.surface.scattering.__flags;
-  const int df_flags_backface=jit_struct.backface.scattering.__flags;
+  const int df_flags_surface=jit_struct.surface.scattering._flags;
+  const int df_flags_backface=jit_struct.backface.scattering._flags;
   const float3x3 tangent_to_world=let {
                                     const auto tangent_to_world_matrix=$state.object_to_world_matrix*$state.tangent_to_object_matrix;
                                   } in float3x3(tangent_to_world_matrix[0].xyz,tangent_to_world_matrix[1].xyz,tangent_to_world_matrix[2].xyz,);
 };
-export struct __albedo_lut{
+export struct _albedo_lut{
   const int num_cos_theta=0;
   const int num_roughness=0;
   const &float directional_albedo=none;
@@ -278,37 +278,37 @@ export struct complex{
   auto b=0.0;
 };
 @(pure macro)
-export auto __complex_neg(const complex z)=complex(-z.a,-z.b);
+export auto _complex_neg(const complex z)=complex(-z.a,-z.b);
 @(pure macro)
-export auto __complex_conj(const complex z)=complex(z.a,-z.b);
+export auto _complex_conj(const complex z)=complex(z.a,-z.b);
 @(pure macro)
-export auto __complex_norm(const complex z)=z.a*z.a+z.b*z.b;
+export auto _complex_norm(const complex z)=z.a*z.a+z.b*z.b;
 @(pure macro)
-export auto __complex_abs(const complex z)=#sqrt(__complex_norm(z));
+export auto _complex_abs(const complex z)=#sqrt(_complex_norm(z));
 @(pure macro)
-export auto __complex_inv(const complex z)=let {
-                                             const auto denom=1.0/__complex_norm(z);
-                                           } in complex(z.a*denom,-z.b*denom);
+export auto _complex_inv(const complex z)=let {
+                                            const auto denom=1.0/_complex_norm(z);
+                                          } in complex(z.a*denom,-z.b*denom);
 @(pure macro)
-export auto __complex_add(const complex z,const complex w)=complex(z.a+w.a,z.b+w.b);
+export auto _complex_add(const complex z,const complex w)=complex(z.a+w.a,z.b+w.b);
 @(pure macro)
-export auto __complex_sub(const complex z,const complex w)=complex(z.a-w.a,z.b-w.b);
+export auto _complex_sub(const complex z,const complex w)=complex(z.a-w.a,z.b-w.b);
 @(pure macro)
-export auto __complex_mul(const complex z,const complex w)=complex(z.a*w.a-z.b*w.b,z.a*w.b+z.b*w.a);
+export auto _complex_mul(const complex z,const complex w)=complex(z.a*w.a-z.b*w.b,z.a*w.b+z.b*w.a);
 @(pure macro)
-export auto __complex_div(const complex z,const complex w)=__complex_mul(z,__complex_inv(w));
+export auto _complex_div(const complex z,const complex w)=_complex_mul(z,_complex_inv(w));
 @(pure macro)
-export auto __complex_exp(const complex z)=let {
-                                             const auto exp_a=#exp(z.a);
-                                           } in complex(exp_a*#cos(z.b),exp_a*#sin(z.b));
+export auto _complex_exp(const complex z)=let {
+                                            const auto exp_a=#exp(z.a);
+                                          } in complex(exp_a*#cos(z.b),exp_a*#sin(z.b));
 @(pure macro)
-export auto __complex_log(const complex z)=complex(#log(__complex_abs(z)),#atan2(z.b,z.a));
+export auto _complex_log(const complex z)=complex(#log(_complex_abs(z)),#atan2(z.b,z.a));
 @(pure macro)
-export auto __complex_sqrt(const complex z)=let {
-                                              const auto abs_z=__complex_abs(z);
-                                            } in complex(#sqrt(0.5*(abs_z+z.a)),#sqrt(0.5*(abs_z-z.a))*#sign(z.b),);
+export auto _complex_sqrt(const complex z)=let {
+                                             const auto abs_z=_complex_abs(z);
+                                           } in complex(#sqrt(0.5*(abs_z+z.a)),#sqrt(0.5*(abs_z-z.a))*#sign(z.b),);
 @(pure)
-export i32 __hash(auto value){
+export i32 _hash(auto value){
   if$(#is_arithmetic_scalar(value)){
     if$(#is_arithmetic_integral(value)){
       if$(#sizeof(value)<=4){
@@ -327,12 +327,12 @@ export i32 __hash(auto value){
     } else {
       auto h(#type_int(8*#sizeof(value))());
       #memcpy(&h,&value,#sizeof(value));
-      return __hash(h);
+      return _hash(h);
     }
   } else if$(#is_array(value)|#is_arithmetic_vector(value)|#is_arithmetic_matrix(value)|(#typeof(value)==color)){
-    auto hTotal(__hash(value[0]));
+    auto hTotal(_hash(value[0]));
     for(int i=1;i<#num(value);++i){
-      auto h(__hash(value[i]));
+      auto h(_hash(value[i]));
       h=0x55555555*(h^(h>>>16));
       h=3423571495*(h^(h>>>16));
       hTotal=#rotl(hTotal,10)^h;
@@ -341,10 +341,10 @@ export i32 __hash(auto value){
   } else if$(#is_pointer(value)){
     auto h(#type_int(8*#sizeof(value))());
     #memcpy(&h,&value,#sizeof(value));
-    return __hash(h);
+    return _hash(h);
   } else if$(#is_union(value)){
     visit v in value{
-      return __hash(v);
+      return _hash(v);
     }
   } else {
     #panic("Unimplemented hash");
@@ -554,7 +554,7 @@ struct scatter_evaluate_parameters{
       wi0=-wi0;
       wo=-wo;
       wi=-wi;
-      ior=1/ior;
+      ior=1.0/ior;
     }
   }
 };
@@ -656,7 +656,7 @@ auto scatter_evaluate_result_with_multiscatter(
   }
 }
 @(pure macro)
-?scatter_sample_result __scatter_sample_result_with_multiscatter(const auto this,const &float4 xi[[anno::unused()]],const float3x3 tbn[[anno::unused()]]){
+?scatter_sample_result _scatter_sample_result_with_multiscatter(const auto this,const &float4 xi[[anno::unused()]],const float3x3 tbn[[anno::unused()]]){
   if(#typeof(this.multiscatter_tint)==void||(#typeof(this.multiscatter_tint)==float&&this.multiscatter_tint==0.0)){
   } else {
     if(monte_carlo::bool_sample(&xi.w,MULTISCATTER_DIFFUSE_CHANCE)){
@@ -665,19 +665,19 @@ auto scatter_evaluate_result_with_multiscatter(
   }
 }
 @(pure macro)
-auto scatter_evaluate(const &__default_bsdf this[[anno::unused()]],const &scatter_evaluate_parameters params[[anno::unused()]]){
+auto scatter_evaluate(const &_default_bsdf this[[anno::unused()]],const &scatter_evaluate_parameters params[[anno::unused()]]){
   return scatter_evaluate_result(is_black: true);
 }
 @(pure macro)
-auto scatter_sample(const &__default_bsdf this[[anno::unused()]],const &scatter_sample_parameters params[[anno::unused()]]){
+auto scatter_sample(const &_default_bsdf this[[anno::unused()]],const &scatter_sample_parameters params[[anno::unused()]]){
   return scatter_sample_result();
 }
 @(macro)
-auto scatter_evaluate(const &__default_vdf this[[anno::unused()]],const &scatter_evaluate_parameters params[[anno::unused()]]){
+auto scatter_evaluate(const &_default_vdf this[[anno::unused()]],const &scatter_evaluate_parameters params[[anno::unused()]]){
   return scatter_evaluate_result(is_black: true);
 }
 @(macro)
-auto scatter_sample(const &__default_vdf this[[anno::unused()]],const &scatter_sample_parameters params[[anno::unused()]]){
+auto scatter_sample(const &_default_vdf this[[anno::unused()]],const &scatter_sample_parameters params[[anno::unused()]]){
   return scatter_sample_result();
 }
 export struct diffuse_reflection_bsdf:bsdf{
@@ -685,7 +685,7 @@ export struct diffuse_reflection_bsdf:bsdf{
   const float roughness=0.0;
   void handle="";
   const $(?(color|float)) multiscatter_tint=none;
-  static const int __flags=DF_REFLECTION|DF_DIFFUSE;
+  static const int _flags=DF_REFLECTION|DF_DIFFUSE;
 };
 @(pure)
 auto scatter_evaluate(const &diffuse_reflection_bsdf this,inline const &scatter_evaluate_parameters params){
@@ -720,7 +720,7 @@ auto scatter_sample(const &diffuse_reflection_bsdf this[[anno::unused()]],inline
 export struct diffuse_transmission_bsdf:bsdf{
   const $(color|float) tint=1.0;
   void handle="";
-  static const int __flags=DF_TRANSMISSION|DF_DIFFUSE;
+  static const int _flags=DF_TRANSMISSION|DF_DIFFUSE;
 };
 @(pure)
 auto scatter_evaluate(inline const &diffuse_transmission_bsdf this,inline const &scatter_evaluate_parameters params){
@@ -746,7 +746,7 @@ export struct specular_bsdf:bsdf{
   const $(color|float) tint=1.0;
   const scatter_mode mode=scatter_reflect;
   void handle="";
-  const int __flags=int(mode)|DF_SPECULAR;
+  const int _flags=int(mode)|DF_SPECULAR;
 };
 @(pure macro)
 auto scatter_evaluate(const &specular_bsdf this[[anno::unused()]],const &scatter_evaluate_parameters params[[anno::unused()]]){
@@ -774,7 +774,7 @@ export struct sheen_bsdf:bsdf{
   const $(?(color|float)) multiscatter_tint=none;
   void multiscatter=none;
   void handle="";
-  static const int __flags=DF_REFLECTION|DF_DIFFUSE;
+  static const int _flags=DF_REFLECTION|DF_DIFFUSE;
   finalize {
     roughness=saturate(roughness);
   }
@@ -823,7 +823,7 @@ export struct ward_geisler_moroder_bsdf:bsdf{
   $(?(color|float)) multiscatter_tint=none;
   float3 tangent_u=$state.texture_tangent_u[0];
   void handle="";
-  static const int __flags=DF_REFLECTION|DF_GLOSSY;
+  static const int _flags=DF_REFLECTION|DF_GLOSSY;
   finalize {
     roughness_u=saturate(roughness_u);
     roughness_v=saturate(roughness_v);
@@ -854,7 +854,7 @@ auto scatter_sample(const &ward_geisler_moroder_bsdf this,inline const &scatter_
   preserve tangent_u;
   tangent_u=this.tangent_u;
   if((tbn:=recalculate_tangent_space(params))){
-    if(result:=__scatter_sample_result_with_multiscatter(this,xi,*tbn)){
+    if(result:=_scatter_sample_result_with_multiscatter(this,xi,*tbn)){
       return *result;
     } else {
       const auto roughness(this.roughness_u,this.roughness_v);
@@ -1021,7 +1021,7 @@ struct microfacet_bsdf:bsdf{
   const scatter_mode mode=scatter_reflect;
   const microfacet::distribution distribution=microfacet::distribution();
   const microfacet::shadowing shadowing=microfacet::shadowing();
-  const int __flags=int(mode)|DF_GLOSSY;
+  const int _flags=int(mode)|DF_GLOSSY;
 };
 @(pure noinline)
 auto scatter_evaluate(const &microfacet_bsdf this,inline const &scatter_evaluate_parameters params){
@@ -1104,7 +1104,7 @@ auto scatter_sample(const &microfacet_bsdf this,inline const &scatter_sample_par
     return scatter_sample_result();
   const auto mode(monte_carlo::bool_sample(&xi.z,scatter_reflect_chance(this.mode))?scatter_reflect:scatter_transmit);
   if(mode==scatter_reflect||thin_walled){
-    if(result:=__scatter_sample_result_with_multiscatter(this,&xi,*tbn)){
+    if(result:=_scatter_sample_result_with_multiscatter(this,&xi,*tbn)){
       if(mode==scatter_transmit)
         return scatter_sample_result(wi: result.wi*float3(1,1,-1),mode: mode);
       return *result;
@@ -1179,13 +1179,13 @@ auto scatter_sample(const &measured_bsdf this[[anno::unused()]],const &scatter_s
 struct tint1:bsdf,edf,hair_bsdf{
   $(color|float) tint;
   auto base;
-  const int __flags=base.__flags;
+  const int _flags=base._flags;
 };
 struct tint2:bsdf{
   $(color|float) reflection_tint;
   $(color|float) transmission_tint;
   bsdf base;
-  const int __flags=base.__flags;
+  const int _flags=base._flags;
 };
 @(macro)
 export auto tint(const auto tint,const bsdf base)=tint1(tint,base);
@@ -1239,7 +1239,7 @@ export struct weighted_layer:bsdf{
   bsdf base=bsdf();
   float3 normal=$state.normal;
   float chance=average(weight);
-  const int __flags=layer.__flags|base.__flags;
+  const int _flags=layer._flags|base._flags;
   finalize {
     weight=saturate(weight);
     chance=saturate(chance);
@@ -1268,7 +1268,7 @@ export struct thin_film:bsdf{
   $(color|float) thickness;
   $(color|float) ior;
   bsdf base=bsdf();
-  const int __flags=base.__flags;
+  const int _flags=base._flags;
 };
 @(macro)
 auto scatter_evaluate(const &thin_film this,const &scatter_evaluate_parameters params){
@@ -1290,7 +1290,7 @@ export struct fresnel_factor:bsdf{
   $(color|float) ior;
   $(color|float) extinction_coefficient;
   bsdf base=bsdf();
-  const int __flags=base.__flags;
+  const int _flags=base._flags;
 };
 @(macro)
 auto scatter_evaluate(const &fresnel_factor this,const &scatter_evaluate_parameters params){
@@ -1313,7 +1313,7 @@ export struct directional_factor:bsdf{
   $(color|float) grazing_tint=1.0;
   float exponent=5.0;
   bsdf base=bsdf();
-  const int __flags=base.__flags;
+  const int _flags=base._flags;
 };
 @(macro)
 auto scatter_evaluate(const &directional_factor this,const &scatter_evaluate_parameters params){
@@ -1335,7 +1335,7 @@ auto scatter_sample(const &directional_factor this,const &scatter_sample_paramet
 export struct measured_curve_factor:bsdf{
   color[] curve_values;
   bsdf base=bsdf();
-  const int __flags=base.__flags;
+  const int _flags=base._flags;
 };
 @(macro)
 auto scatter_evaluate(const &measured_curve_factor this,const &scatter_evaluate_parameters params){
@@ -1356,7 +1356,7 @@ auto scatter_sample(const &measured_curve_factor this,const &scatter_sample_para
 export struct measured_factor:bsdf{
   texture_2d values;
   bsdf base=bsdf();
-  const int __flags=base.__flags;
+  const int _flags=base._flags;
 };
 @(macro)
 auto scatter_evaluate(const &measured_factor this,const &scatter_evaluate_parameters params){
@@ -1382,7 +1382,7 @@ export struct fresnel_layer:bsdf{
   float3 normal=$state.normal;
   const float average_ior=average(ior);
   const float average_weight=average(weight);
-  const int __flags=layer.__flags|base.__flags;
+  const int _flags=layer._flags|base._flags;
 };
 @(macro)
 auto scatter_evaluate(const &fresnel_layer this,inline const &scatter_evaluate_parameters params){
@@ -1439,11 +1439,11 @@ export struct vdf_component:component{
 };
 struct component_mix:bsdf,edf,vdf{
   component[] components;
-  int __flags=0;
+  int _flags=0;
 };
 @(macro)
 export auto normalized_mix(component[<N>] components){
-  int __flags(0);
+  int _flags(0);
   float total_weight(0);
   float total_chance(0);
   for(int i=0;i<N;i++){
@@ -1452,7 +1452,7 @@ export auto normalized_mix(component[<N>] components){
     component.chance=#max(component.chance,0.0);
     total_weight+=component.weight;
     total_chance+=component.chance;
-    __flags|=component.component.__flags;
+    _flags|=component.component._flags;
   }
   if(total_weight>1.0)
     total_weight=1.0/total_weight;
@@ -1464,11 +1464,11 @@ export auto normalized_mix(component[<N>] components){
     component.weight*=total_weight;
     component.chance*=total_chance;
   }
-  return component_mix(components,__flags);
+  return component_mix(components,_flags);
 }
 @(macro)
 export auto clamped_mix(component[<N>] components){
-  int __flags(0);
+  int _flags(0);
   float total_weight(0);
   float total_chance(0);
   for(int i=0;i<N;i++){
@@ -1478,7 +1478,7 @@ export auto clamped_mix(component[<N>] components){
     if(total_weight+component.weight<1.0){
       total_weight+=component.weight;
       total_chance+=component.chance;
-      __flags|=component.component.__flags;
+      _flags|=component.component._flags;
     } else {
       component.weight=1.0-total_weight;
       for(int j=i+1;j<N;j++){
@@ -1492,24 +1492,24 @@ export auto clamped_mix(component[<N>] components){
   for(int i=0;i<N;i++){
     components[i].chance*=total_chance;
   }
-  return component_mix(components,__flags);
+  return component_mix(components,_flags);
 }
 @(macro)
 export auto unbounded_mix(component[<N>] components){
-  int __flags(0);
+  int _flags(0);
   float total_chance(0);
   for(int i=0;i<N;i++){
     auto component(&components[i]);
     component.weight=#max(component.weight,0.0);
     component.chance=#max(component.chance,0.0);
     total_chance+=component.chance;
-    __flags|=component.__flags;
+    _flags|=component._flags;
   }
   total_chance=1.0/total_chance if(total_chance>0.0);
   for(int i=0;i<N;i++){
     components[i].chance*=total_chance;
   }
-  return component_mix(components,__flags);
+  return component_mix(components,_flags);
 }
 @(macro)
 auto scatter_evaluate(const &component_mix this,const &scatter_evaluate_parameters params){
@@ -1547,7 +1547,7 @@ auto scatter_sample(const &component_mix this,const &scatter_sample_parameters p
 export struct anisotropic_vdf:vdf{
   float directional_bias=0.0;
   void handle="";
-  static const int __flags=0;
+  static const int _flags=0;
   finalize {
     directional_bias=#max(directional_bias,-0.999);
     directional_bias=#min(directional_bias,0.999);
@@ -1569,8 +1569,8 @@ auto scatter_sample(const &anisotropic_vdf this,inline const &scatter_sample_par
   return scatter_sample_result(wi: orthonormal_basis(wo)*float3(sin_theta*#cos(phi),sin_theta*#sin(phi),cos_theta),mode: scatter_reflect_transmit);
 }
 @(macro)
-export int __scatter_evaluate(
-  const &__material_instance instance,
+export int _scatter_evaluate(
+  const &_material_instance instance,
   const &float3 wo_world,
   const &float3 wi_world,
   const &float pdf_fwd,
@@ -1579,7 +1579,7 @@ export int __scatter_evaluate(
 ){
   auto params=scatter_evaluate_parameters(
     is_importance: (instance.flags&1)!=0,
-    ior: 1.0/average(*instance.ior),
+    ior: 1.0/instance.ior,
     wo0: normalize((*wo_world)*instance.tangent_to_world),
     wi0: normalize((*wi_world)*instance.tangent_to_world),
     normal: normalize(instance.geometry.normal),
@@ -1606,8 +1606,8 @@ export int __scatter_evaluate(
   }
 }
 @(macro)
-export int __scatter_sample(
-  const &__material_instance instance,
+export int _scatter_sample(
+  const &_material_instance instance,
   const &float4 xi,
   const &float3 wo_world,
   const &float3 wi_world,
@@ -1621,7 +1621,7 @@ export int __scatter_sample(
     is_importance: (instance.flags&1)!=0,
     xi: *xi,
     wo0: wo,
-    ior: 1.0/average(*instance.ior),
+    ior: 1.0/instance.ior,
     normal: normalize(instance.geometry.normal),
     thin_walled: instance.jit_struct.thin_walled,
   );
@@ -1642,12 +1642,12 @@ export int __scatter_sample(
       #memcpy(f,&*result.delta_f,#sizeof(float)*$WAVELENGTH_BASE_MAX);
       return true;
     } else {
-      return __scatter_evaluate(instance,wo_world,wi_world,pdf_fwd,pdf_rev,f);
+      return _scatter_evaluate(instance,wo_world,wi_world,pdf_fwd,pdf_rev,f);
     }
   }
 }
 @(macro)
-export float __volume_scatter_evaluate(const &__material_instance instance,const &float3 wo_world,const &float3 wi_world,){
+export float _volume_scatter_evaluate(const &_material_instance instance,const &float3 wo_world,const &float3 wi_world,){
   auto params=scatter_evaluate_parameters(
     is_importance: 0,
     wo0: normalize(*wo_world),
@@ -1657,8 +1657,8 @@ export float __volume_scatter_evaluate(const &__material_instance instance,const
   return scatter_evaluate(visit &instance.jit_struct.volume.scattering,&params).f;
 }
 @(macro)
-export float __volume_scatter_sample(
-  const &__material_instance instance,
+export float _volume_scatter_sample(
+  const &_material_instance instance,
   const &float4 xi,
   const &float3 wo_world,
   const &float3 wi_world,
@@ -1670,7 +1670,7 @@ export float __volume_scatter_sample(
     return 0.0;
   }
   *wi_world=normalize(result.wi);
-  return __volume_scatter_evaluate(instance,wo_world,wi_world);
+  return _volume_scatter_evaluate(instance,wo_world,wi_world);
 }
 )*";
 
@@ -1827,7 +1827,7 @@ export float luminance(const float3 a)=dot(float3(0.2126,0.7152,0.0722),a);
 export float luminance(const color a){
   float result(0.0);
   for(int i=0;i<$WAVELENGTH_BASE_MAX;++i){
-    result+=__wyman_y($state.wavelength_base[i])*a[i];
+    result+=_wyman_y($state.wavelength_base[i])*a[i];
   }
   return result/$WAVELENGTH_BASE_MAX;
 }
@@ -1850,7 +1850,7 @@ export float eval_at_wavelength(color a,float wavelength){
   if$($WAVELENGTH_BASE_MAX==1){
     return a[0];
   } else {
-    return __polyline_lerp($WAVELENGTH_BASE_MAX,&$state.wavelength_base[0],&a[0],wavelength);
+    return _polyline_lerp($WAVELENGTH_BASE_MAX,&$state.wavelength_base[0],&a[0],wavelength);
   }
 }
 )*";

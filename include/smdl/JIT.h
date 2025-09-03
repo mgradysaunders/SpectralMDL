@@ -133,12 +133,20 @@ public:
     const material_geometry *geometry{};
 
     /// The index of refraction.
-    const float *ior{};
+    float ior{};
 
     /// The volume absorption coefficient if applicable.
+    ///
+    /// \note
+    /// If non-null, this necessarily points to `wavelength_base_max` values.
+    ///
     const float *absorption_coefficient{};
 
     /// The volume scattering coefficient if applicable.
+    ///
+    /// \note
+    /// If non-null, this necessarily points to `wavelength_base_max` values.
+    ///
     const float *scattering_coefficient{};
 
     /// The wavelength count.
@@ -266,13 +274,7 @@ public:
   }
 
   /// The index of refraction.
-  ///
-  /// \note
-  /// TODO: Possibly force this to always be scalar for simplicity?
-  ///
-  [[nodiscard]] Span<const float> ior() const noexcept {
-    return Span<const float>(instance.ior, instance.wavelength_base_max);
-  }
+  [[nodiscard]] float ior() const noexcept { return instance.ior; }
 
   /// The absorption coefficient of the medium, or empty if none.
   [[nodiscard]] Span<const float> absorption_coefficient() const noexcept {

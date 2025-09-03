@@ -137,7 +137,7 @@ public:
   /// Is instance of `ColorType`?
   [[nodiscard]] bool is_color() const { return typeKind == TypeKind::Color; }
 
-  /// Is instance of `__complex`?
+  /// Is instance of `complex`?
   [[nodiscard]] bool is_complex(Context &context) const;
 
   /// Is instance of `EnumType`?

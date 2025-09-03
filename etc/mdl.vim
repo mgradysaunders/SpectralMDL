@@ -47,7 +47,7 @@ hi def link mdlLineComment  mdlComment
 hi def link mdlCommentStart mdlComment
 hi def link mdlComment      Comment
 hi def link mdlAnnotation   Comment
-hi def link mdlAttributes   Comment
+hi def link mdlAttributes   Label
 hi def link mdlSizeDeferred Constant
 
 " Labels. This is context independent and can trigger both false positives and false negatives!

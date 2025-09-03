@@ -882,7 +882,7 @@ Value Emitter::emit_op(AST::UnaryOp op, Value value,
           return emit_op(op, access_index(value, j, srcLoc), srcLoc);
         });
       } else if (value.type->is_complex(context)) {
-        return invoke("__complex_neg", value, srcLoc);
+        return invoke("_complex_neg", value, srcLoc);
       }
     }
     // Unary not, e.g., `~value`
@@ -1175,13 +1175,13 @@ Value Emitter::emit_op(AST::BinaryOp op, Value lhs, Value rhs,
     rhs = invoke(context.get_complex_type(), rhs, srcLoc);
     const char *funcName{};
     if (op == BINOP_ADD) {
-      funcName = "__complex_add";
+      funcName = "_complex_add";
     } else if (op == BINOP_SUB) {
-      funcName = "__complex_sub";
+      funcName = "_complex_sub";
     } else if (op == BINOP_MUL) {
-      funcName = "__complex_mul";
+      funcName = "_complex_mul";
     } else if (op == BINOP_DIV) {
-      funcName = "__complex_div";
+      funcName = "_complex_div";
     }
     if (funcName) {
       return invoke(funcName, {lhs, rhs}, srcLoc);
@@ -1413,7 +1413,7 @@ Value Emitter::emit_intrinsic(std::string_view name, const ArgumentList &args,
     if (name == "abs") {
       // Intercept instances of `complex` and forward appropriately.
       if (args.size() == 1 && args[0].value.type->is_complex(context)) {
-        return invoke("__complex_abs", args, srcLoc);
+        return invoke("_complex_abs", args, srcLoc);
       }
       auto value{to_rvalue(expectOneVectorized())};
       return RValue(
@@ -1488,7 +1488,7 @@ Value Emitter::emit_intrinsic(std::string_view name, const ArgumentList &args,
         srcLoc.throw_error(
             "intrinsic 'albedo_lut' expects 1 compile-time string argument");
       auto lutName{args[0].value.get_comptime_string()};
-      auto lutType{context.get_keyword("__albedo_lut")
+      auto lutType{context.get_keyword("_albedo_lut")
                        .get_comptime_meta_type(context, srcLoc)};
       auto lut{context.get_builtin_albedo(lutName)};
       if (!lut)
@@ -2219,7 +2219,7 @@ Value Emitter::emit_intrinsic(std::string_view name, const ArgumentList &args,
       auto valueIsComplex{value.type->is_complex(context)};
       if (name == "conj") {
         // NOTE: Conjugate of real number is no-op
-        return valueIsComplex ? invoke("__complex_conj", value, srcLoc)
+        return valueIsComplex ? invoke("_complex_conj", value, srcLoc)
                               : to_rvalue(value);
       } else if (name == "real") {
         // NOTE: Real part of real number is identity
@@ -2230,15 +2230,15 @@ Value Emitter::emit_intrinsic(std::string_view name, const ArgumentList &args,
                               : invoke(value.type, {}, srcLoc);
       } else if (name == "norm") {
         // NOTE: Norm of real number is square
-        return valueIsComplex ? invoke("__complex_norm", value, srcLoc)
+        return valueIsComplex ? invoke("_complex_norm", value, srcLoc)
                               : emit_op(BINOP_MUL, value, value, srcLoc);
       } else if (valueIsComplex) {
         if (name == "exp") {
-          return invoke("__complex_exp", value, srcLoc);
+          return invoke("_complex_exp", value, srcLoc);
         } else if (name == "log") {
-          return invoke("__complex_log", value, srcLoc);
+          return invoke("_complex_log", value, srcLoc);
         } else if (name == "sqrt") {
-          return invoke("__complex_sqrt", value, srcLoc);
+          return invoke("_complex_sqrt", value, srcLoc);
         }
       }
     }

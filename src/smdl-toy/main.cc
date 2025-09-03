@@ -94,13 +94,13 @@ int main(int argc, char **argv) try {
       path0.wNext = ray.dir;
       path0.pdfFwd = 0;
       path0.pdfRev = 0;
-      Vertex path[5]{};
+      Vertex path[7]{};
       size_t pathLen{random_walk(scene, random, wavelengths, allocator,
-                                 smdl::TRANSPORT_RADIANCE, path0, 1, 5,
+                                 smdl::TRANSPORT_RADIANCE, path0, 1, 7,
                                  &path[0])};
       for (size_t depth = 1; depth < pathLen; ++depth) {
         if (!path[depth].isInfiniteLight) {
-          auto wi{normalize(float3(1.0f, -1.0f, 1.0f))};
+          auto wi{normalize(float3(2.5f, 2.0f, 3.0f))};
           auto wo{normalize(path[depth - 1].point - path[depth].point)};
           float pdfFwd{};
           float pdfRev{};
@@ -110,32 +110,19 @@ int main(int argc, char **argv) try {
                                 path[depth].medium, path[depth].point,
                                 path[depth].point + 2 * scene.boundRadius * wi,
                                 f)) {
-              Lsum += f * path[depth].beta;
+              auto L{f * path[depth].beta / float(spp)};
+              if (!L.is_any_non_finite())
+                Lsum += L;
             }
           }
         }
       }
-#if 0
-      Hit hit{};
-      if (scene.intersect(ray, hit)) {
-        hit.apply_geometry_to_state(state);
-        smdl::JIT::MaterialInstance material{state, hit.material};
-        float pdfFwd{};
-        float pdfRev{};
-        Color f{};
-        auto lightDir{smdl::normalize(float3(1.0f, -1.0f, 1.0f))};
-        if (material.scatter_evaluate(-ray.dir, lightDir, pdfFwd, pdfRev,
-                                      f.data())) {
-          Lsum += f;
-        }
-      }
-#endif
       allocator.reset();
     }
-    Lsum /= spp;
+    // Lsum /= spp;
     renderImage(x, y).add(Lsum.data());
   });
-  auto imageScale{2.0f};
+  auto imageScale{4.0f};
   auto rgbImage{std::vector<uint8_t>(numPixelsX * numPixelsY * 3)};
   auto rgbImageIndex{0};
   for (size_t y{}; y < numPixelsY; y++) {

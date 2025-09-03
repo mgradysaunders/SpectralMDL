@@ -69,19 +69,19 @@ Context::Context(Compiler &compiler) : compiler(compiler) {
   // - `enum intensity_mode`
   //   - `intensity_radiant_exitance`
   //   - `intensity_power`
-  // - `tag bsdf` and `struct __default_bsdf`
-  // - `tag vdf` and `struct  __default_vdf`
-  // - `tag edf` and `struct  __default_edf`
-  // - `tag hair_bsdf` and `struct  __default_hair_bsdf`
+  // - `tag bsdf` and `struct _default_bsdf`
+  // - `tag vdf` and `struct _default_vdf`
+  // - `tag edf` and `struct _default_edf`
+  // - `tag hair_bsdf` and `struct  _default_hair_bsdf`
   // - `struct material_emission`
   // - `struct material_surface`
   // - `struct material_volume`
   // - `struct material_geometry`
   // - `struct material`
-  // - Function `__wyman_xyz`
-  // - Function `__wyman_y`
-  // - Function `__color_to_rgb`
-  // - Function `__rgb_to_color`
+  // - Function `_wyman_xyz`
+  // - Function `_wyman_y`
+  // - Function `_color_to_rgb`
+  // - Function `_rgb_to_color`
   for (auto crumb{get_builtin_module("API")->lastCrumb}; crumb;
        crumb = crumb->prev) {
     if (crumb->is_exported() && crumb->has_simple_name()) {
