@@ -1,7 +1,6 @@
 /// \file
 #pragma once
 
-#include <array>
 #include <cmath>
 
 #include "smdl/Export.h"

@@ -534,6 +534,20 @@ constexpr Matrix<T, 4, 4> affine_inverse(const Matrix<T, 4, 4> &m) noexcept {
   return float3x3(x, y, z);
 }
 
+/// Calculate orthornormal coordinate system with Gram-Schmidt process.
+[[nodiscard]] inline float3x3 orthonormalize(float3x3 m) noexcept {
+  float3 &x{m[0]};
+  float3 &y{m[1]};
+  float3 &z{m[2]};
+  if (!try_normalize(z))
+    z = float3(0, 0, 1);
+  x = x - dot(x, z) * z;
+  if (!try_normalize(x))
+    x = perpendicular_to(z);
+  y = normalize(cross(z, x));
+  return m;
+}
+
 /// Calculate look-at transform.
 [[nodiscard]] inline float4x4 look_at(float3 from, float3 to,
                                       float3 up = {0, 0, 1}) noexcept {
