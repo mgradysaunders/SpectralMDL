@@ -85,6 +85,9 @@ public:
 
   /// \}
 
+  /// Flip vertically.
+  void flip_vertically() noexcept;
+
 public:
   /// Get the format.
   [[nodiscard]] Format get_format() const noexcept { return format; }
@@ -163,9 +166,8 @@ private:
 
 [[nodiscard]]
 SMDL_EXPORT std::optional<Error>
-write_8_bit_image(const std::string &fileName, //
-                  int numTexelsX, int numTexelsY, int numChannels,
-                  const void *texels);
+write_8_bit_image(const std::string &fileName, int numTexelsX, int numTexelsY,
+                  int numChannels, const void *texels);
 
 /// \}
 

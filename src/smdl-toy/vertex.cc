@@ -108,9 +108,7 @@ uint64_t random_walk(const Scene &scene, const AnyRandom &random,
         vertex.point =
             vertexPrev.point + 2 * scene.boundRadius * vertexPrev.wNext;
         vertex.beta = beta;
-        // Set wNext to point in the direction of propagation
-        // for infinite light vertices
-        vertex.wNext = -vertexPrev.wNext;
+        vertex.wNext = vertexPrev.wNext;
         vertex.pdfFwd = wpdfFwd;
         vertex.isInfiniteLight = true;
       }

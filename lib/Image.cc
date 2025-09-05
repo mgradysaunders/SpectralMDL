@@ -179,7 +179,7 @@ std::optional<Error> Image::start_load(const std::string &fileName) noexcept {
                                  size_t(texelSize)]);
       // Defer the actual load until later!
       finishLoad = [this, fileName]() {
-        stbi_set_flip_vertically_on_load(1);
+        stbi_set_flip_vertically_on_load(0);
         int nTexelsX{};
         int nTexelsY{};
         int nChannels{};
@@ -293,7 +293,7 @@ std::optional<Error> Image::start_load(const std::string &fileName) noexcept {
           tinyexr::ForEachPixel(
               header, image,
               [&](int iX, int iY, int iC, const void *pixel, size_t pixelSize) {
-                iY = numTexelsY - iY - 1; // Flip vertically!
+                // iY = numTexelsY - iY - 1; // Flip vertically!
                 if (iC == 0)
                   std::memcpy(texels.get() +
                                   ptrdiff_t((iX + numTexelsX * iY) * texelSize),
@@ -317,7 +317,7 @@ std::optional<Error> Image::start_load(const std::string &fileName) noexcept {
           tinyexr::ForEachPixel(
               header, image,
               [&](int iX, int iY, int iC, const void *pixel, size_t pixelSize) {
-                iY = numTexelsY - iY - 1; // Flip vertically!
+                // iY = numTexelsY - iY - 1; // Flip vertically!
                 auto texel{texels.get() +
                            ptrdiff_t((iX + numTexelsX * iY) * texelSize)};
                 if (iC == channelIndexR) {
@@ -365,6 +365,15 @@ void Image::finish_load() {
   if (finishLoad) {
     finishLoad();
     finishLoad = nullptr;
+  }
+}
+
+void Image::flip_vertically() noexcept {
+  for (int iY = 0; iY < numTexelsY / 2; iY++) {
+    std::swap_ranges(texels.get() + texelSize * numTexelsX * (iY + 0),
+                     texels.get() + texelSize * numTexelsX * (iY + 1),
+                     texels.get() +
+                         texelSize * numTexelsX * (numTexelsY - iY - 1));
   }
 }
 

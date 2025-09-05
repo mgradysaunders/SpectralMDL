@@ -42,6 +42,13 @@ public:
     }
   }
 
+  [[nodiscard]] bool scatter_sample(const float4 &xi, const float3 &wo,
+                                    float3 &wi, float &wpdfFwd, float &wpdfRev,
+                                    Color &f, bool &isDeltaBounce) const {
+    return materialInstance.scatter_sample(xi, wo, wi, wpdfFwd, wpdfRev, f,
+                                           isDeltaBounce);
+  }
+
 public:
   float3 point{};
 

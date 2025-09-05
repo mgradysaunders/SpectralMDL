@@ -241,31 +241,31 @@ public:
 
   /// Constructor.
   ///
-  /// \param[in] numPixelsX  The number of pixels in X.
-  /// \param[in] numPixelsY  The number of pixels in Y.
+  /// \param[in] numTexelsX  The number of texels in X.
+  /// \param[in] numTexelsY  The number of texels in Y.
   /// \param[in] values      The values in row-major order.
   ///
-  explicit Distribution2D(int numPixelsX, int numPixelsY,
+  explicit Distribution2D(int numTexelsX, int numTexelsY,
                           Span<const float> values);
 
 public:
   /// Clear.
   void clear() noexcept {
-    numPixelsX = 0;
-    numPixelsY = 0;
+    numTexelsX = 0;
+    numTexelsY = 0;
     conditionals.clear();
     marginal.clear();
   }
 
   /// The number of pixels in X.
-  [[nodiscard]] int num_pixels_x() const noexcept { return numPixelsX; }
+  [[nodiscard]] int get_num_texels_x() const noexcept { return numTexelsX; }
 
   /// The number of pixels in Y.
-  [[nodiscard]] int num_pixels_y() const noexcept { return numPixelsY; }
+  [[nodiscard]] int get_num_texels_y() const noexcept { return numTexelsY; }
 
   /// The pixel probability mass function (PMF).
   [[nodiscard]] float pixel_pmf(int2 i) const noexcept {
-    if (0 <= i.y && i.y < numPixelsY)
+    if (0 <= i.y && i.y < numTexelsY)
       return marginal.index_pmf(i.y) * conditionals[i.y].index_pmf(i.x);
     return 0.0f;
   }
@@ -285,12 +285,13 @@ public:
                                   float *pmf = {}) const noexcept;
 
 private:
-  int numPixelsX{};
-  int numPixelsY{};
+  int numTexelsX{};
+  int numTexelsY{};
   std::vector<Distribution1D> conditionals{};
   Distribution1D marginal{};
 };
 
+#if 0
 /// A data-driven image-based-light distribution in 2 dimensions.
 class SMDL_EXPORT IBLDistribution2D final {
 public:
@@ -299,39 +300,37 @@ public:
 
   /// Constructor.
   ///
-  /// \param[in] numPixelsX
+  /// \param[in] numTexelsX
   /// The number of pixels in X. Must be non-negative!
   ///
-  /// \param[in] numPixelsY
+  /// \param[in] numTexelsY
   /// The number of pixels in Y. Must be non-negative!
   ///
   /// \param[in] values
   /// The values in row-major order. Must have size
-  /// equivalent to `numPixelsX * numPixelsY`!
+  /// equivalent to `numTexelsX * numTexelsY`!
   ///
-  /// \param[in] lightToWorld
-  /// The light-to-world transform. Note that Z is the up vector by
-  /// default, and this can be used to rotate the distribution.
-  ///
-  explicit IBLDistribution2D(int numPixelsX, int numPixelsY,
-                             Span<const float> values,
-                             float3x3 lightToWorld = float3x3(1.0f));
+  explicit IBLDistribution2D(int numTexelsX, int numTexelsY,
+                             Span<const float> values);
 
   /// Clear.
   void clear() noexcept {
-    lightToWorld = float3x3(1.0f);
     lightDistr.clear();
   }
 
   /// The number of pixels in X.
-  [[nodiscard]] int num_pixels_x() const noexcept {
-    return lightDistr.num_pixels_x();
+  [[nodiscard]] int get_num_texels_x() const noexcept {
+    return lightDistr.get_num_texels_x();
   }
 
   /// The number of pixels in Y.
-  [[nodiscard]] int num_pixels_y() const noexcept {
-    return lightDistr.num_pixels_y();
+  [[nodiscard]] int get_num_texels_y() const noexcept {
+    return lightDistr.get_num_texels_y();
   }
+
+  /// Convert direction to pixel.
+  [[nodiscard]] int2 direction_to_pixel(float3 w,
+                                        float *sinTheta = {}) const noexcept;
 
   /// The direction PDF.
   [[nodiscard]] float direction_pdf(float3 w) const noexcept;
@@ -348,9 +347,9 @@ public:
                                         float *pdf = {}) const noexcept;
 
 private:
-  float3x3 lightToWorld{1.0f};
   Distribution2D lightDistr{};
 };
+#endif
 
 /// \}
 

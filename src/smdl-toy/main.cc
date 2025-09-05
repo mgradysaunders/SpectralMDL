@@ -1,3 +1,4 @@
+#include "EnvLight.h"
 #include "cl.h"
 #include "raytracing.h"
 #include "vertex.h"
@@ -35,6 +36,12 @@ static cl::opt<unsigned> samplesPerPixel{
     "spp", cl::desc("The number of samples per pixel (default: 8)"),
     cl::init(8U), cl::cat(catCamera)};
 
+static cl::opt<std::string> envLightFile{
+    "ibl-filename", cl::desc("The IBL filename"), cl::cat(catCamera)};
+static cl::opt<float> envLightScale{"ibl-scale",
+                                    cl::desc("The IBL scale factor"),
+                                    cl::init(1.0f), cl::cat(catCamera)};
+
 int main(int argc, char **argv) try {
   llvm::InitLLVM X(argc, argv);
   smdl::Logger::get().add_sink<smdl::LogSinks::print_to_cerr>();
@@ -53,6 +60,12 @@ int main(int argc, char **argv) try {
   if (auto error{compiler.jit_compile()})
     error->print_and_exit();
   const auto scene{Scene(compiler, inputSceneFile)};
+
+  std::unique_ptr<EnvLight> envLight{};
+  if (envLightFile.getNumOccurrences() > 0) {
+    envLight.reset(
+        new EnvLight(std::string(envLightFile), float(envLightScale)));
+  }
 
   auto wavelengths{Color()};
   for (size_t i = 0; i < WAVELENGTH_BASE_MAX; i++) {
@@ -100,6 +113,7 @@ int main(int argc, char **argv) try {
                                  &path[0])};
       for (size_t depth = 1; depth < pathLen; ++depth) {
         if (!path[depth].isInfiniteLight) {
+#if 0
           auto wi{normalize(float3(2.5f, 2.0f, 3.0f))};
           auto wo{normalize(path[depth - 1].point - path[depth].point)};
           float pdfFwd{};
@@ -114,6 +128,62 @@ int main(int argc, char **argv) try {
               if (!L.is_any_non_finite())
                 Lsum += L;
             }
+          }
+#else
+          const float3 wo{normalize(path[depth - 1].point - path[depth].point)};
+          {
+            float Lipdf{};
+            Color Li{};
+            auto wi{envLight->Li_sample(compiler, state, float2(random), Lipdf,
+                                        Li)};
+            float fpdfFwd{};
+            float fpdfRev{};
+            Color f{};
+            if (path[depth].scatter_evaluate(wo, wi, fpdfFwd, fpdfRev, f)) {
+              if (test_visibility(
+                      scene, random, wavelengths, allocator, path[depth].medium,
+                      path[depth].point,
+                      path[depth].point + 2 * scene.boundRadius * wi, f)) {
+                auto L{path[depth].beta * f * Li / (Lipdf * float(spp))};
+                if (!L.is_any_non_finite()) {
+                  L *= std::pow(Lipdf / (fpdfFwd + Lipdf), 2.0f);
+                  Lsum += L;
+                }
+              }
+            }
+          }
+          {
+            float3 wi{};
+            float fpdfFwd{};
+            float fpdfRev{};
+            Color f{};
+            bool isDeltaBounce{};
+            if (path[depth].scatter_sample(float4(random), wo, wi, fpdfFwd,
+                                           fpdfRev, f, isDeltaBounce)) {
+              float Lipdf{};
+              Color Li{envLight->Li(compiler, state, wi, Lipdf)};
+              if (Lipdf > 0) {
+                if (test_visibility(
+                        scene, random, wavelengths, allocator,
+                        path[depth].medium, path[depth].point,
+                        path[depth].point + 2 * scene.boundRadius * wi, f)) {
+                  auto L{path[depth].beta * f * Li / (fpdfFwd * float(spp))};
+                  if (!L.is_any_non_finite()) {
+                    L *= std::pow(fpdfFwd / (fpdfFwd + Lipdf), 2.0f);
+                    Lsum += L;
+                  }
+                }
+              }
+            }
+          }
+#endif
+        } else {
+          if (envLight && depth == 1) {
+              float Lipdf{};
+              Color Li{envLight->Li(compiler, state, path[depth].wNext, Lipdf)};
+            auto L{path[depth].beta * Li / float(spp)};
+            if (!L.is_any_non_finite())
+              Lsum += L;
           }
         }
       }

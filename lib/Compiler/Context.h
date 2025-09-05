@@ -386,7 +386,7 @@ public:
 
   /// The LLVM target library info implementation.
   llvm::TargetLibraryInfoImpl llvmTargetLibraryInfoImpl{
-      llvm::Triple(NativeTarget::get().triple)};
+      llvm::Triple(llvm::StringRef(NativeTarget::get().triple))};
 
   /// The LLVM target library info.
   llvm::TargetLibraryInfo llvmTargetLibraryInfo{llvmTargetLibraryInfoImpl};

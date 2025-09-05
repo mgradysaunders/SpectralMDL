@@ -54,16 +54,16 @@ int Distribution1D::index_sample(float xi, float *xiRemap,
   return i;
 }
 
-Distribution2D::Distribution2D(int numPixelsX, int numPixelsY,
+Distribution2D::Distribution2D(int numTexelsX, int numTexelsY,
                                Span<const float> values)
-    : numPixelsX(numPixelsX), numPixelsY(numPixelsY) {
-  SMDL_SANITY_CHECK(numPixelsX >= 0);
-  SMDL_SANITY_CHECK(numPixelsY >= 0);
-  SMDL_SANITY_CHECK(numPixelsX * numPixelsY == int(values.size()));
-  conditionals.reserve(numPixelsY);
-  auto margins{std::vector<float>(size_t(numPixelsY))};
-  for (int iY{}; iY < numPixelsY; iY++) {
-    conditionals.emplace_back(values.subspan(numPixelsX * iY, numPixelsX));
+    : numTexelsX(numTexelsX), numTexelsY(numTexelsY) {
+  SMDL_SANITY_CHECK(numTexelsX >= 0);
+  SMDL_SANITY_CHECK(numTexelsY >= 0);
+  SMDL_SANITY_CHECK(numTexelsX * numTexelsY == int(values.size()));
+  conditionals.reserve(numTexelsY);
+  auto margins{std::vector<float>(size_t(numTexelsY))};
+  for (int iY{}; iY < numTexelsY; iY++) {
+    conditionals.emplace_back(values.subspan(numTexelsX * iY, numTexelsX));
     margins[iY] = conditionals.back().non_normalized_sum();
   }
   marginal = Distribution1D(margins);
@@ -71,7 +71,7 @@ Distribution2D::Distribution2D(int numPixelsX, int numPixelsY,
 
 int2 Distribution2D::pixel_sample(float2 xi, float2 *xiRemap,
                                   float *pmf) const noexcept {
-  if (numPixelsX == 0 || numPixelsY == 0) {
+  if (numTexelsX == 0 || numTexelsY == 0) {
     if (pmf) {
       *pmf = 1.0f;
     }
@@ -92,59 +92,23 @@ int2 Distribution2D::pixel_sample(float2 xi, float2 *xiRemap,
   return int2(iX, iY);
 }
 
-IBLDistribution2D::IBLDistribution2D(int numPixelsX, int numPixelsY,
-                                     Span<const float> values,
-                                     float3x3 lightToWorld)
-    : lightToWorld(orthonormalize(lightToWorld)) {
-  SMDL_SANITY_CHECK(numPixelsX >= 0);
-  SMDL_SANITY_CHECK(numPixelsY >= 0);
-  SMDL_SANITY_CHECK(numPixelsX * numPixelsY == int(values.size()));
+#if 0
+IBLDistribution2D::IBLDistribution2D(int numTexelsX, int numTexelsY,
+                                     Span<const float> values) {
+  SMDL_SANITY_CHECK(numTexelsX >= 0);
+  SMDL_SANITY_CHECK(numTexelsY >= 0);
+  SMDL_SANITY_CHECK(numTexelsX * numTexelsY == int(values.size()));
   auto sinWeighted{std::vector<float>(values.size())};
-  for (int iY = 0; iY < numPixelsY; iY++) {
-    auto theta{PI * (iY + 0.5f) / float(numPixelsY)};
+  for (int iY = 0; iY < numTexelsY; iY++) {
+    auto theta{PI * (iY + 0.5f) / float(numTexelsY)};
     auto sinTheta{std::sin(theta)};
-    for (int iX = 0; iX < numPixelsX; iX++) {
-      sinWeighted[iY * numPixelsX + iX] =
-          sinTheta * values[iY * numPixelsX + iX];
+    for (int iX = 0; iX < numTexelsX; iX++) {
+      sinWeighted[iY * numTexelsX + iX] =
+          sinTheta * values[iY * numTexelsX + iX];
     }
   }
-  lightDistr = Distribution2D(numPixelsX, numPixelsY, sinWeighted);
+  lightDistr = Distribution2D(numTexelsX, numTexelsY, sinWeighted);
 }
-
-float IBLDistribution2D::direction_pdf(float3 w) const noexcept {
-  w = transpose(lightToWorld) * w;
-  float theta = std::atan2(std::hypot(w.x, w.y), w.z);
-  theta = std::max(theta, 0.0f);
-  theta = std::min(theta, PI);
-  float sinTheta = std::sin(theta);
-  if (!(sinTheta > 0.0f))
-    return 0.0f;
-  float phi = std::atan2(w.y, w.x);
-  if (phi < 0.0f)
-    phi += 2.0f * PI;
-  phi = std::max(phi, 0.0f);
-  phi = std::min(phi, 2.0f * PI);
-  return lightDistr.pixel_pmf(int2(int(num_pixels_x() * phi / (2.0f * PI)),
-                                   int(num_pixels_y() * theta / PI))) /
-         (2.0f * PI * PI * sinTheta);
-}
-
-float3 IBLDistribution2D::direction_sample(float2 xi,
-                                           float *pdf) const noexcept {
-  auto i{lightDistr.pixel_sample(xi, &xi, pdf)};
-  auto phi{2.0f * PI * (i.x + xi.x) / float(num_pixels_x())};
-  auto theta{PI * (i.y + xi.y) / float(num_pixels_y())};
-  auto cosTheta{std::cos(theta)};
-  auto sinTheta{std::sin(theta)};
-  if (pdf) {
-    if (sinTheta == 0.0f) {
-      *pdf = 0;
-    } else {
-      *pdf /= 2.0f * PI * PI * sinTheta;
-    }
-  }
-  return normalize(lightToWorld * float3(sinTheta * std::cos(phi),
-                                         sinTheta * std::sin(phi), cosTheta));
-}
+#endif
 
 } // namespace smdl

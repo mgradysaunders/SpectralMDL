@@ -101,7 +101,8 @@ std::optional<Error> Compiler::compile(OptLevel optLevel) {
     llvm::ExitOnError exitOnError;
     auto llvmContext{std::make_unique<llvm::LLVMContext>()};
     auto llvmModule{std::make_unique<llvm::Module>("MDL", *llvmContext)};
-    llvmModule->setTargetTriple(NativeTarget::get().triple);
+    llvmModule->setTargetTriple(
+        llvm::Triple(llvm::StringRef(NativeTarget::get().triple)));
     llvmModule->setDataLayout(NativeTarget::get().machine->createDataLayout());
     llvmJitModule = std::make_unique<llvm::orc::ThreadSafeModule>(
         std::move(llvmModule), std::move(llvmContext));
@@ -155,6 +156,10 @@ std::optional<Error> Compiler::compile(OptLevel optLevel) {
       SMDL_LOG_DEBUG("Loading image ",
                      quoted_path(fileHash->canonicalFileNames[0]), " ...");
       image.finish_load();
+      // NOTE: Images flipped vertically (at least for now) because it
+      // makes the implementation of the tex evaluation functions more
+      // straightforward
+      image.flip_vertically();
     });
     auto duration{std::chrono::duration_cast<std::chrono::microseconds>(
                       std::chrono::steady_clock::now() - now)
@@ -189,7 +194,11 @@ Compiler::format_source_code(const FormatOptions &formatOptions) noexcept {
 
 llvm::LLVMContext &Compiler::get_llvm_context() noexcept {
   SMDL_SANITY_CHECK(llvmJitModule.get() != nullptr);
-  return *llvmJitModule.get()->getContext().getContext();
+  // TODO Unsafe?
+  llvm::LLVMContext *context{};
+  llvmJitModule.get()->getContext().withContextDo(
+      [&](auto *C) { context = C; });
+  return *context;
 }
 
 llvm::Module &Compiler::get_llvm_module() noexcept {
