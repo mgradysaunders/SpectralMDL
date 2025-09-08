@@ -37,6 +37,7 @@ add_library(
     "Support/Profiler.cc"
     "Support/Sampling.cc"
     "Support/SemanticVersion.cc"
+    "Support/SpectralData.cc"
     "Support/SpectralRenderImage.cc"
     "Support/StringHelpers.cc"
     "thirdparty/miniz.c"
