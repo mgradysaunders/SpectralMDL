@@ -9,7 +9,10 @@
 
 namespace smdl {
 
-/// A light-weight non-owning view of a spectral curve.
+/// \addtogroup Main
+/// \{
+
+/// A spectrum view.
 class SpectrumView final {
 public:
   /// The wavelengths in nanometers.
@@ -19,6 +22,7 @@ public:
   Span<const float> curveValues{};
 };
 
+/// A spectrum loaded from a text file.
 class SMDL_EXPORT Spectrum final {
 public:
   void clear() noexcept {
@@ -69,6 +73,7 @@ private:
   std::vector<float> curveValues{};
 };
 
+/// A spectrum library loaded from an ENVI Spectral Library file.
 class SMDL_EXPORT SpectrumLibrary final {
 public:
   void clear() noexcept {
@@ -77,6 +82,7 @@ public:
     curveNames.clear();
   }
 
+  // TODO Document
   [[nodiscard]]
   std::optional<Error> load_from_file(const std::string &fileName) noexcept;
 
@@ -102,5 +108,7 @@ private:
 
   std::vector<std::string> curveNames{};
 };
+
+/// \}
 
 } // namespace smdl
