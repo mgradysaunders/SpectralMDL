@@ -35,12 +35,12 @@ public:
   /// Construct from `std::array`.
   template <size_t N>
   constexpr Span(const std::array<std::decay_t<T>, N> &elems)
-      : first(elems.data()), count(elems.size()) {}
+      : first(const_cast<T *>(elems.data())), count(elems.size()) {}
 
   /// Construct from `std::vector`.
   template <typename Allocator>
   Span(const std::vector<std::decay_t<T>, Allocator> &elems)
-      : first(elems.data()), count(elems.size()) {}
+      : first(const_cast<T *>(elems.data())), count(elems.size()) {}
 
   /// Is empty?
   [[nodiscard]] constexpr bool empty() const noexcept { return count == 0; }

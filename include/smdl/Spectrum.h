@@ -82,13 +82,34 @@ public:
     curveNames.clear();
   }
 
-  // TODO Document
+  /// Load from file.
+  ///
+  /// The expected format is an ENVI Spectral Library, which is an uncompressed
+  /// binary file with an associated plain-text header file. The implementation
+  /// expects the filename of the binary file and infers the filename of the
+  /// header by appending `.hdr`. For example, `myLibrary.sli` is associated
+  /// with the header `myLibrary.sli.hdr`.
+  ///
+  /// The relevant fields in the header file are:
+  /// - `file type`: this must be `ENVI Spectral Library`
+  /// - `data type`: this must be `4` (float) or `5` (double)
+  /// - `samples`: this is the number of wavelength samples
+  /// - `lines`: this is the number of spectral curves
+  /// - `bands`: this must be `1`
+  /// - `wavelength`: this is the wavelength samples
+  /// - `wavelength units`: this must be `Micrometers`, `Nanometers`,
+  ///   `Wavenumber`, `MHz`, or `GHz`
+  /// - `spectra names`: this is optional, if present contiains the names
+  ///    for each spectral curve
+  ///
   [[nodiscard]]
   std::optional<Error> load_from_file(const std::string &fileName) noexcept;
 
+  /// Get curve by name, or return empty view on failure.
   [[nodiscard]]
   SpectrumView get_curve_by_name(std::string_view name) const noexcept;
 
+  /// Get curve by index, or return empty view on failure.
   [[nodiscard]]
   SpectrumView get_curve_by_index(int i) const noexcept {
     if (0 <= i && i < int(numCurves)) {
@@ -100,12 +121,16 @@ public:
   }
 
 private:
+  /// The number of curves.
   size_t numCurves{};
 
+  /// The wavelengths in nanometers.
   std::vector<float> wavelengths{};
 
+  /// The curve values.
   std::vector<float> curveValues{};
 
+  /// The curve names. Optional!
   std::vector<std::string> curveNames{};
 };
 

@@ -10,6 +10,25 @@
 
 namespace smdl {
 
+[[nodiscard]]
+static std::vector<size_t> sort_order(const std::vector<float> &wavelengths) {
+  std::vector<size_t> order{};
+  order.reserve(wavelengths.size());
+  for (size_t i = 0; i < wavelengths.size(); i++)
+    order.push_back(i);
+  std::sort(order.begin(), order.end(), [&](size_t i, size_t j) {
+    return wavelengths[i] < wavelengths[j];
+  });
+  return order;
+}
+
+void apply_sort_order(const std::vector<size_t> &order, Span<float> values) {
+  SMDL_SANITY_CHECK(order.size() == values.size());
+  std::vector<float> tmpValues{values.begin(), values.end()};
+  for (size_t i = 0; i < order.size(); i++)
+    values[i] = tmpValues[order[i]];
+}
+
 /// Wavelength units.
 enum WaveUnits : int {
   WAVE_UNITS_ANGSTROMS,   ///< Angstroms.
@@ -81,6 +100,10 @@ Spectrum::load_from_file(const std::string &fileName) noexcept {
       wavelengths.push_back(to_nanometers(units, wavelength));
       curveValues.push_back(curveValue);
     }
+    // Sort wavelengths into increasing order
+    auto order{sort_order(wavelengths)};
+    apply_sort_order(order, wavelengths);
+    apply_sort_order(order, curveValues);
   });
 }
 
@@ -255,6 +278,13 @@ SpectrumLibrary::load_from_file(const std::string &fileName) noexcept {
         break;
       }
     }
+    // Sort wavelengths into increasing order
+    auto order{sort_order(wavelengths)};
+    apply_sort_order(order, wavelengths);
+    for (size_t i = 0; i < numCurves; i++)
+      apply_sort_order(order,
+                       Span<float>(curveValues.data() + wavelengths.size() * i,
+                                   wavelengths.size()));
   });
 }
 
