@@ -1,6 +1,7 @@
 #include "smdl/Support/SpectralRenderImage.h"
+#include "smdl/Support/Filesystem.h"
 
-#include "smdl/common.h"
+#include "llvm/Support/Endian.h"
 
 namespace smdl {
 
@@ -51,6 +52,45 @@ void SpectralRenderImage::add(const SpectralRenderImage &other) noexcept {
       lhs.totalCount += rhs.totalCount;
       for (size_t i = 0; i < numBands; i++)
         lhs.totals[i] += rhs.totals[i];
+    }
+  }
+}
+
+void SpectralRenderImage::write_envi_file(Span<const float> wavelengths,
+                                          const std::string &fileName) const {
+  // Write the header file
+  {
+    auto file{open_or_throw(fileName + ".hdr", std::ios::out)};
+    file << "ENVI\n";
+    file << "file type = ENVI Standard\n";
+    file << "data type = 4\n";
+    file << "byte order = "
+         << (llvm::endianness::native == llvm::endianness::little ? 0 : 1)
+         << '\n';
+    file << "samples = " << numPixelsX << '\n';
+    file << "lines = " << numPixelsY << '\n';
+    file << "bands = " << numBands << '\n';
+    file << "wavelength units = Nanometers\n";
+    file << "wavelength = {";
+    for (size_t i = 0; i < wavelengths.size(); i++) {
+      file << wavelengths[i];
+      file << (i + 1 < wavelengths.size() ? ", " : "}\n");
+    }
+    file << "header offset = 0\n";
+    file << "interleave = bip\n";
+  }
+  // Write the binary file
+  {
+    auto file{open_or_throw(fileName, std::ios::out | std::ios::binary)};
+    for (size_t iY = 0; iY < numPixelsY; iY++) {
+      for (size_t iX = 0; iX < numPixelsX; iX++) {
+        auto pixel{operator()(iX, iY)};
+        for (const AtomicDouble &value : pixel) {
+          auto valuef{float(static_cast<double>(value) /
+                            static_cast<double>(pixel.totalCount.load()))};
+          file.write(reinterpret_cast<const char *>(&valuef), 4);
+        }
+      }
     }
   }
 }

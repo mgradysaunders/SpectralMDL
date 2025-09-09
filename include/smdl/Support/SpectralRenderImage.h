@@ -194,6 +194,17 @@ public:
   /// Add the contents of another image pixel-by-pixel.
   void add(const SpectralRenderImage &other) noexcept;
 
+  /// Write an ENVI Standard image file and header.
+  ///
+  /// \param[in] wavelengths
+  /// The wavelengths in nanometers.
+  ///
+  /// \param[in] fileName
+  /// The filename of the image.
+  ///
+  void write_envi_file(Span<const float> wavelengths,
+                       const std::string &fileName) const;
+
 private:
   size_t numBands{};
 
