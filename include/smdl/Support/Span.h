@@ -113,11 +113,6 @@ public:
     return first[i];
   }
 
-  /// Implicit conversion to bool.
-  [[nodiscard]] constexpr operator bool() const noexcept {
-    return first && count > 0;
-  }
-
   /// All equal?
   [[nodiscard]] constexpr bool operator==(const Span &other) const {
     if (count != other.count)

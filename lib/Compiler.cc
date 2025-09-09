@@ -274,6 +274,46 @@ const LightProfile &Compiler::load_light_profile(const std::string &fileName,
   return lightProfile;
 }
 
+SpectrumView Compiler::load_spectrum(const std::string &fileName,
+                                     const SourceLocation &srcLoc) {
+  auto [itr, inserted] = spectrums.try_emplace(fileHasher[fileName]);
+  auto &spectrum{itr->second};
+  if (inserted) {
+    if (auto error{spectrum.load_from_file(fileName)}) {
+      srcLoc.log_warn(error->message);
+    }
+  }
+  return SpectrumView(spectrum);
+}
+
+SpectrumView Compiler::load_spectrum(const std::string &fileName,
+                                     int curveIndex,
+                                     const SourceLocation &srcLoc) {
+  auto [itr, inserted] = spectrumLibraries.try_emplace(fileHasher[fileName]);
+  auto &spectrumLibrary{itr->second};
+  if (inserted) {
+    SMDL_PROFILER_ENTRY("Compiler::load_spectrum()", fileName.c_str());
+    if (auto error{spectrumLibrary.load_from_file(fileName)}) {
+      srcLoc.log_warn(error->message);
+    }
+  }
+  return spectrumLibrary.get_curve_by_index(curveIndex);
+}
+
+SpectrumView Compiler::load_spectrum(const std::string &fileName,
+                                     const std::string &curveName,
+                                     const SourceLocation &srcLoc) {
+  auto [itr, inserted] = spectrumLibraries.try_emplace(fileHasher[fileName]);
+  auto &spectrumLibrary{itr->second};
+  if (inserted) {
+    SMDL_PROFILER_ENTRY("Compiler::load_spectrum()", fileName.c_str());
+    if (auto error{spectrumLibrary.load_from_file(fileName)}) {
+      srcLoc.log_warn(error->message);
+    }
+  }
+  return spectrumLibrary.get_curve_by_name(curveName);
+}
+
 std::string Compiler::dump(DumpFormat dumpFormat) {
   if (dumpFormat == DUMP_FORMAT_IR) {
     std::string str{};

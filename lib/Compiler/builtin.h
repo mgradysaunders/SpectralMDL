@@ -219,6 +219,14 @@ export struct light_profile{
   const float max_intensity=0;
   const float power=0;
 };
+export struct spectral_curve{
+  spectral_curve(const string name)=#load_spectral_curve(name);
+  spectral_curve(const string name,const int curve_index)=#load_spectral_curve(name,curve_index);
+  spectral_curve(const string name,const string curve_name)=#load_spectral_curve(name,curve_name);
+  const int size=0;
+  const &float wavelengths=none;
+  const &float values=none;
+};
 export struct material_emission{
   edf emission=edf();
   $(color|float) intensity=1.0;

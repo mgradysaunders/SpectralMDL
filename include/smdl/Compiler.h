@@ -11,6 +11,7 @@
 #include "smdl/LightProfile.h"
 #include "smdl/Module.h"
 #include "smdl/SceneData.h"
+#include "smdl/Spectrum.h"
 
 #include "smdl/Support/MD5Hash.h"
 
@@ -102,6 +103,22 @@ private:
   [[nodiscard]]
   const LightProfile &load_light_profile(const std::string &fileName,
                                          const SourceLocation &srcLoc);
+
+  /// Load spectrum from TXT file.
+  [[nodiscard]]
+  SpectrumView load_spectrum(const std::string &fileName,
+                             const SourceLocation &srcLoc);
+
+  /// Load spectrum from ENVI Spectral Library file.
+  [[nodiscard]]
+  SpectrumView load_spectrum(const std::string &fileName, int curveIndex,
+                             const SourceLocation &srcLoc);
+
+  /// Load spectrum from ENVI Spectral Library file.
+  [[nodiscard]]
+  SpectrumView load_spectrum(const std::string &fileName,
+                             const std::string &curveName,
+                             const SourceLocation &srcLoc);
 
 public:
   /// Dump as LLVM-IR or native assembly.
@@ -227,6 +244,12 @@ private:
 
   /// The light profiles.
   std::map<const MD5FileHash *, LightProfile> lightProfiles{};
+
+  /// The spectrums.
+  std::map<const MD5FileHash *, Spectrum> spectrums{};
+
+  /// The spectrum libraries.
+  std::map<const MD5FileHash *, SpectrumLibrary> spectrumLibraries{};
 
   /// The MDL module file names.
   std::set<std::string> moduleFileNames{};

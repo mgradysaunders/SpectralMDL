@@ -1790,6 +1790,60 @@ Value Emitter::emit_intrinsic(std::string_view name, const ArgumentList &args,
                       context.get_comptime_float(lightProfile.power())}},
             srcLoc);
       }
+      if (name == "load_spectral_curve") {
+        auto spectralCurveType{context.get_spectral_curve_type()};
+        if (args.size() == 1) {
+          if (!args[0].value.is_comptime_string()) {
+            srcLoc.throw_error("intrinsic ", quoted(name),
+                               " expects 1 compile-time string argument");
+          }
+        } else if (args.size() == 2) {
+          if (!(args[0].value.is_comptime_string() &&
+                (args[1].value.is_comptime_string() ||
+                 args[1].value.is_comptime_int()))) {
+            srcLoc.throw_error("intrinsic ", quoted(name),
+                               " expects 1 compile-time string argument and 1 "
+                               "compile-time string or int argument");
+          }
+        } else {
+          srcLoc.throw_error("intrinsic ", quoted(name),
+                             " expects 1 or 2 arguments");
+        }
+        auto fileName{std::string(args[0].value.get_comptime_string())};
+        auto resolvedFileName{context.locate(fileName)};
+        if (!resolvedFileName) {
+          srcLoc.log_warn(
+              concat("cannot load ", quoted(fileName), ": file not found"));
+          return invoke(spectralCurveType, {}, srcLoc);
+        }
+        auto spectrumView{SpectrumView{}};
+        if (args.size() == 1) {
+          spectrumView =
+              context.compiler.load_spectrum(*resolvedFileName, srcLoc);
+        } else if (args[1].value.is_comptime_string()) {
+          spectrumView = context.compiler.load_spectrum(
+              *resolvedFileName,
+              std::string(args[1].value.get_comptime_string()), srcLoc);
+        } else if (args[1].value.is_comptime_int()) {
+          spectrumView = context.compiler.load_spectrum(
+              *resolvedFileName, int(args[1].value.get_comptime_int()), srcLoc);
+        }
+        if (spectrumView.curveValues.empty()) {
+          return invoke(spectralCurveType, {}, srcLoc);
+        }
+        auto floatPtrType{context.get_pointer_type(context.get_float_type())};
+        return invoke(
+            spectralCurveType,
+            {Argument{"size", context.get_comptime_int(
+                                  spectrumView.wavelengths.size())},
+             Argument{"wavelengths",
+                      context.get_comptime_ptr(
+                          floatPtrType, spectrumView.wavelengths.data())},
+             Argument{"values",
+                      context.get_comptime_ptr(
+                          floatPtrType, spectrumView.curveValues.data())}},
+            srcLoc);
+      }
     }
     break;
   }

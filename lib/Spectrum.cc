@@ -1,6 +1,7 @@
-#include "smdl/Support/SpectralData.h"
+#include "smdl/Spectrum.h"
 #include "smdl/Support/Filesystem.h"
 #include "smdl/Support/MacroHelpers.h"
+#include "smdl/Support/StringHelpers.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/StringRef.h"
 #include "llvm/Support/Endian.h"
@@ -9,12 +10,26 @@
 
 namespace smdl {
 
+/// Wavelength units.
+enum WaveUnits : int {
+  WAVE_UNITS_ANGSTROMS,   ///< Angstroms.
+  WAVE_UNITS_WAVENUMBERS, ///< Wavenumbers.
+  WAVE_UNITS_MEGAHERTZ,   ///< Megahertz.
+  WAVE_UNITS_GIGAHERTZ,   ///< Gigahertz.
+  WAVE_UNITS_MICROMETERS, ///< Micrometers.
+  WAVE_UNITS_NANOMETERS,  ///< Nanometers.
+};
+
 [[nodiscard]] static float to_nanometers(WaveUnits units, float wave) {
   switch (units) {
   case WAVE_UNITS_ANGSTROMS:
     return 0.1f * wave;
   case WAVE_UNITS_WAVENUMBERS:
     return 10e6 / static_cast<double>(wave);
+  case WAVE_UNITS_MEGAHERTZ:
+    return 299792458.0e3 / static_cast<double>(wave);
+  case WAVE_UNITS_GIGAHERTZ:
+    return 299792458.0 / static_cast<double>(wave);
   case WAVE_UNITS_MICROMETERS:
     return 1e3f * wave;
   case WAVE_UNITS_NANOMETERS:
@@ -25,33 +40,61 @@ namespace smdl {
   return 0;
 }
 
-std::optional<Error> Spectrum::load_txt(const std::string &fileName,
-                                        WaveUnits units) noexcept {
+std::optional<Error>
+Spectrum::load_from_file(const std::string &fileName) noexcept {
   clear();
   return catch_and_return_error([&] {
     auto file{open_or_throw(fileName, std::ios::in)};
     auto line{std::string()};
+    auto units{WAVE_UNITS_MICROMETERS};
+    bool hasUnitsYet{false};
     while (std::getline(file, line)) {
-      if (line.empty() || line[0] == '#')
+      auto lineRef{llvm::StringRef(line).trim()};
+      if (lineRef.empty() || lineRef[0] == '#')
         continue;
+      if (!hasUnitsYet) {
+        hasUnitsYet = true;
+        if (lineRef.equals_insensitive("angstroms")) {
+          units = WAVE_UNITS_ANGSTROMS;
+        } else if (lineRef.equals_insensitive("micrometers")) {
+          units = WAVE_UNITS_MICROMETERS;
+          continue;
+        } else if (lineRef.equals_insensitive("nanometers")) {
+          units = WAVE_UNITS_NANOMETERS;
+          continue;
+        } else if (lineRef.equals_insensitive("wavenumbers")) {
+          units = WAVE_UNITS_WAVENUMBERS;
+          continue;
+        } else if (lineRef.equals_insensitive("megahertz")) {
+          units = WAVE_UNITS_MEGAHERTZ;
+          continue;
+        } else if (lineRef.equals_insensitive("gigahertz")) {
+          units = WAVE_UNITS_GIGAHERTZ;
+          continue;
+        }
+      }
       float wavelength{};
-      float value{};
-      if (std::sscanf(line.c_str(), "%f %f", &wavelength, &value) != 2)
-        throw Error("Expected 'wavelength value'");
+      float curveValue{};
+      if (std::sscanf(lineRef.data(), "%f %f", &wavelength, &curveValue) != 2)
+        throw Error(concat("cannot load ", quoted_path(fileName),
+                           ": expected 'wavelength value'"));
       wavelengths.push_back(to_nanometers(units, wavelength));
-      values.push_back(value);
+      curveValues.push_back(curveValue);
     }
   });
 }
 
 std::optional<Error>
-SpectrumLibrary::load_sli(const std::string &fileName) noexcept {
+SpectrumLibrary::load_from_file(const std::string &fileName) noexcept {
   clear();
   return catch_and_return_error([&] {
+    auto throwError{[&](const char *message) {
+      throw Error(concat("cannot load ", quoted_path(fileName), ": ", message));
+    }};
     auto hdrFile{read_or_throw(fileName + ".hdr")};
     auto hdr{llvm::StringRef(hdrFile)};
     if (!hdr.consume_front("ENVI")) {
-      throw Error("not an ENVI header file");
+      throwError("not an ENVI header file");
     }
     auto split{[&](char ch) {
       if (ch == '\n') {
@@ -87,34 +130,34 @@ SpectrumLibrary::load_sli(const std::string &fileName) noexcept {
       auto [key, value] = splitKeyValue();
       if (key.equals_insensitive("file type")) {
         if (!value.equals_insensitive("ENVI Spectral Library")) {
-          throw Error("not an ENVI Spectral Library");
+          throwError("not an ENVI Spectral Library");
         }
       } else if (key.equals_insensitive("data type")) {
         if (value.getAsInteger(10, dataType)) {
-          throw Error("invalid 'data type'");
+          throwError("invalid 'data type'");
         }
       } else if (key.equals_insensitive("byte order")) {
         if (value.getAsInteger(10, byteOrder)) {
-          throw Error("invalid 'byte order'");
+          throwError("invalid 'byte order'");
         }
       } else if (key.equals_insensitive("header offset")) {
         if (value.getAsInteger(10, headerOffset)) {
-          throw Error("invalid 'header offset'");
+          throwError("invalid 'header offset'");
         }
       } else if (key.equals_insensitive("samples")) {
         if (value.getAsInteger(10, samples)) {
-          throw Error("invalid 'samples'");
+          throwError("invalid 'samples'");
         }
       } else if (key.equals_insensitive("lines")) {
         if (value.getAsInteger(10, lines)) {
-          throw Error("invalid 'lines'");
+          throwError("invalid 'lines'");
         }
       } else if (key.equals_insensitive("bands")) {
         if (value.getAsInteger(10, bands)) {
-          throw Error("invalid 'bands'");
+          throwError("invalid 'bands'");
         }
         if (bands != 1) {
-          throw Error("invalid 'bands', expected 1 for ENVI Spectral Library");
+          throwError("invalid 'bands', expected 1 for ENVI Spectral Library");
         }
       } else if (key.equals_insensitive("wavelength units")) {
         if (value.equals_insensitive("micrometers")) {
@@ -123,9 +166,12 @@ SpectrumLibrary::load_sli(const std::string &fileName) noexcept {
           units = WAVE_UNITS_NANOMETERS;
         } else if (value.equals_insensitive("wavenumber")) {
           units = WAVE_UNITS_WAVENUMBERS;
+        } else if (value.equals_insensitive("mhz")) {
+          units = WAVE_UNITS_MEGAHERTZ;
+        } else if (value.equals_insensitive("ghz")) {
+          units = WAVE_UNITS_GIGAHERTZ;
         } else {
-          // TODO GHz, MHz?
-          throw Error("unsupported 'wavelength units'");
+          throwError("unsupported 'wavelength units'");
         }
       } else if (key.equals_insensitive("wavelength")) {
         wavelengths.clear();
@@ -134,7 +180,7 @@ SpectrumLibrary::load_sli(const std::string &fileName) noexcept {
         for (auto &split : splits) {
           double wavelength{};
           if (split.trim().getAsDouble(wavelength)) {
-            throw Error("invalid 'wavelength'");
+            throwError("invalid 'wavelength'");
           }
           wavelengths.push_back(wavelength);
         }
@@ -148,10 +194,10 @@ SpectrumLibrary::load_sli(const std::string &fileName) noexcept {
       }
     }
     if (wavelengths.size() != size_t(samples)) {
-      throw Error("invalid 'samples', inconsistent with 'wavelength'");
+      throwError("invalid 'samples', inconsistent with 'wavelength'");
     }
     if (curveNames.size() != size_t(lines) && !curveNames.empty()) {
-      throw Error("invalid 'lines', inconsistent with 'spectra names'");
+      throwError("invalid 'lines', inconsistent with 'spectra names'");
     }
     // data type
     // 1 = byte
@@ -166,7 +212,7 @@ SpectrumLibrary::load_sli(const std::string &fileName) noexcept {
     // 14 = 64-bit int
     // 15 = 64-bit unsigned integer
     if (!(dataType == 4 || dataType == 5)) {
-      throw Error("unsupported 'data type', expected 4 or 5");
+      throwError("unsupported 'data type', expected 4 or 5");
     }
     for (auto &wavelength : wavelengths) {
       wavelength = to_nanometers(units, wavelength);
@@ -176,31 +222,32 @@ SpectrumLibrary::load_sli(const std::string &fileName) noexcept {
     bin = bin.drop_front(headerOffset);
     auto endianness{byteOrder == 0 ? llvm::endianness::little
                                    : llvm::endianness::big};
-    auto numValues{size_t(samples) * size_t(lines)};
-    curves.clear();
-    curves.reserve(numValues);
-    for (size_t i = 0; i < numValues; i++) {
+    auto numCurveValues{size_t(samples) * size_t(lines)};
+    numCurves = size_t(lines);
+    curveValues.clear();
+    curveValues.reserve(numCurveValues);
+    for (size_t i = 0; i < numCurveValues; i++) {
       switch (dataType) {
       case 4: {
         if (bin.size() < 4) {
-          throw Error("invalid binary data");
+          throwError("invalid binary data");
         }
         auto value{float()};
         auto valueData{llvm::support::endian::read32(bin.data(), endianness)};
         bin = bin.drop_front(4);
         std::memcpy(&value, &valueData, 4);
-        curves.push_back(value);
+        curveValues.push_back(value);
         break;
       }
       case 5: {
         if (bin.size() < 8) {
-          throw Error("invalid binary data");
+          throwError("invalid binary data");
         }
         auto value{double()};
         auto valueData{llvm::support::endian::read64(bin.data(), endianness)};
         bin = bin.drop_front(8);
         std::memcpy(&value, &valueData, 8);
-        curves.push_back(value);
+        curveValues.push_back(value);
         break;
       }
       default:
@@ -209,6 +256,16 @@ SpectrumLibrary::load_sli(const std::string &fileName) noexcept {
       }
     }
   });
+}
+
+SpectrumView
+SpectrumLibrary::get_curve_by_name(std::string_view name) const noexcept {
+  for (size_t i = 0; i < curveNames.size(); i++) {
+    if (llvm::StringRef(curveNames[i])
+            .equals_insensitive(llvm::StringRef(name)))
+      return get_curve_by_index(i);
+  }
+  return {};
 }
 
 } // namespace smdl

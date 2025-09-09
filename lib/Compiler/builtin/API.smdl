@@ -349,6 +349,24 @@ export struct light_profile {
   const float power = 0;
 };
 
+/// The spectral curve structure.
+export struct spectral_curve {
+  spectral_curve(const string name) = #load_spectral_curve(name);
+
+  spectral_curve(const string name, const int curve_index) = #load_spectral_curve(name, curve_index);
+
+  spectral_curve(const string name, const string curve_name) = #load_spectral_curve(name, curve_name);
+
+  /// The number of wavelengths and values.
+  const int size = 0;
+
+  /// The wavelengths in nanometers.
+  const &float wavelengths = none;
+  
+  /// The values.
+  const &float values = none;
+};
+
 /// The material emission description.
 export struct material_emission {
   /// The Emission Distribution Function (EDF).

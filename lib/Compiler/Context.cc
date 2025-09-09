@@ -102,6 +102,8 @@ Context::Context(Compiler &compiler) : compiler(compiler) {
       static_cast<StructType *>(get_keyword_as_type("bsdf_measurement"));
   lightProfileType =
       static_cast<StructType *>(get_keyword_as_type("light_profile"));
+  spectralCurveType =
+      static_cast<StructType *>(get_keyword_as_type("spectral_curve"));
   complexType = static_cast<StructType *>(get_keyword_as_type("complex"));
 }
 

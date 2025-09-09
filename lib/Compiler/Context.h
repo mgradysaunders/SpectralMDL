@@ -211,6 +211,11 @@ public:
     return lightProfileType;
   }
 
+  /// Get the `spectral_curve` type.
+  [[nodiscard]] StructType *get_spectral_curve_type() {
+    return spectralCurveType;
+  }
+
   /// Get the `complex` type.
   [[nodiscard]] StructType *get_complex_type() { return complexType; }
 
@@ -502,6 +507,9 @@ private:
 
   /// The `light_profile` type defined by the builtin `API` module.
   StructType *lightProfileType{};
+
+  /// The `spectral_curve` type defined by the builtin `API` module.
+  StructType *spectralCurveType{};
 
   /// The `complex` type defined by the builtin `API` module.
   StructType *complexType{};
