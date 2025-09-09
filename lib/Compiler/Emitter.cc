@@ -1834,12 +1834,12 @@ Value Emitter::emit_intrinsic(std::string_view name, const ArgumentList &args,
         auto floatPtrType{context.get_pointer_type(context.get_float_type())};
         return invoke(
             spectralCurveType,
-            {Argument{"size", context.get_comptime_int(
-                                  spectrumView.wavelengths.size())},
+            {Argument{"count", context.get_comptime_int(
+                                   spectrumView.wavelengths.size())},
              Argument{"wavelengths",
                       context.get_comptime_ptr(
                           floatPtrType, spectrumView.wavelengths.data())},
-             Argument{"values",
+             Argument{"amplitudes",
                       context.get_comptime_ptr(
                           floatPtrType, spectrumView.curveValues.data())}},
             srcLoc);

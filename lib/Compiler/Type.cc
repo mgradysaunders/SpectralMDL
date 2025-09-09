@@ -692,6 +692,9 @@ Value ColorType::invoke(Emitter &emitter, const ArgumentList &args,
     if (value.type == context.get_float_type(Extent(3)))
       return emitter.emit_call(context.get_keyword("_rgb_to_color"), value,
                                srcLoc);
+    if (value.type == context.get_spectral_curve_type())
+      return emitter.emit_call(context.get_keyword("_spectral_curve_to_color"),
+                               value, srcLoc);
   }
   if (args.size() <= 3 && args.is_only_these_names({"r", "g", "b"})) {
     auto params{ParameterList{

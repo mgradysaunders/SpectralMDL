@@ -159,6 +159,7 @@ export color _samples_to_color(const int count, const &float wavelengths, const 
   return c;
 }
 
+
 /// The fits of CIE 1931 XYZ by Wyman et al for wavelength in nanometers.
 ///
 /// \note
@@ -358,14 +359,19 @@ export struct spectral_curve {
   spectral_curve(const string name, const string curve_name) = #load_spectral_curve(name, curve_name);
 
   /// The number of wavelengths and values.
-  const int size = 0;
+  const int count = 0;
 
   /// The wavelengths in nanometers.
   const &float wavelengths = none;
   
-  /// The values.
-  const &float values = none;
+  /// The amplitudes.
+  const &float amplitudes = none;
 };
+
+@(macro)
+export color _spectral_curve_to_color(const spectral_curve curve) {
+  return _samples_to_color(curve.count, curve.wavelengths, curve.amplitudes);
+}
 
 /// The material emission description.
 export struct material_emission {
