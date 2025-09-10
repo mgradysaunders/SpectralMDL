@@ -90,6 +90,32 @@ template <typename G> [[nodiscard]] inline float4 generate_canonical4(G &g) {
           generate_canonical(g)};
 }
 
+[[nodiscard]] inline float2 advance_low_discrepancy2(float2 &xi) {
+  xi = xi + float2(0.7548776662466927f, 0.5698402909980532f);
+  xi.x -= std::floor(xi.x);
+  xi.y -= std::floor(xi.y);
+  return xi;
+}
+
+[[nodiscard]] inline float3 advance_low_discrepancy3(float3 &xi) {
+  xi =
+      xi + float3(0.8191725133961644f, 0.671043606703789f, 0.5497004779019701f);
+  xi.x -= std::floor(xi.x);
+  xi.y -= std::floor(xi.y);
+  xi.z -= std::floor(xi.z);
+  return xi;
+}
+
+[[nodiscard]] inline float4 advance_low_discrepancy4(float4 &xi) {
+  xi = xi + float4(0.8566748838545029f, 0.733891856627126f, 0.6287067210378086f,
+                   0.53859725722361f);
+  xi.x -= std::floor(xi.x);
+  xi.y -= std::floor(xi.y);
+  xi.z -= std::floor(xi.z);
+  xi.w -= std::floor(xi.w);
+  return xi;
+}
+
 /// Uniform disk PDF.
 ///
 /// \f[ p(\mathbf{X}) = \frac{1}{\pi r^2} \f]

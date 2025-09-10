@@ -269,8 +269,8 @@ public:
 
   /// Has medium properties?
   [[nodiscard]] bool has_medium() const noexcept {
-    return !is_thin_walled() && (instance.absorption_coefficient != nullptr ||
-                                 instance.scattering_coefficient != nullptr);
+    return (instance.absorption_coefficient != nullptr ||
+            instance.scattering_coefficient != nullptr);
   }
 
   /// The index of refraction.

@@ -1,4 +1,4 @@
-#include "EnvLight.h"
+#include "light.h"
 
 EnvLight::EnvLight(const std::string &filename, float scaleFactor)
     : scaleFactor(scaleFactor) {
@@ -21,7 +21,7 @@ EnvLight::EnvLight(const std::string &filename, float scaleFactor)
 }
 
 Color EnvLight::Li(smdl::Compiler &compiler, const smdl::State &state,
-                   smdl::float3 wi, float &pdf) const {
+                   float3 wi, float &pdf) const {
   float theta = std::atan2(std::hypot(wi.x, wi.y), wi.z);
   theta = std::max(theta, 0.0f);
   theta = std::min(theta, PI);
@@ -48,9 +48,8 @@ Color EnvLight::Li(smdl::Compiler &compiler, const smdl::State &state,
   return Li * scaleFactor;
 }
 
-smdl::float3 EnvLight::Li_sample(smdl::Compiler &compiler,
-                                 const smdl::State &state, smdl::float2 xi,
-                                 float &pdf, Color &Li) const {
+float3 EnvLight::Li_sample(smdl::Compiler &compiler, const smdl::State &state,
+                           float2 xi, float &pdf, Color &Li) const {
   auto i{imageDistr.pixel_sample(xi, &xi, &pdf)};
   auto phi{2.0f * PI * (i.x + xi.x) / float(image.get_num_texels_x())};
   auto theta{PI * (i.y + xi.y) / float(image.get_num_texels_y())};
@@ -68,4 +67,21 @@ smdl::float3 EnvLight::Li_sample(smdl::Compiler &compiler,
     return normalize(float3(sinTheta * std::cos(phi), //
                             sinTheta * std::sin(phi), cosTheta));
   }
+}
+
+bool EnvLight::Le_sample(smdl::Compiler &compiler, const smdl::State &state,
+                         const Scene &scene, float4 xi, Ray &ray, float &ppdf,
+                         float &wpdf, Color &Le) const {
+  ray.dir = -Li_sample(compiler, state, float2(xi.x, xi.y), wpdf, Le);
+  if (wpdf == 0.0f) {
+    return false;
+  }
+  ray.tmin = EPS;
+  ray.tmax = INF;
+  auto coords{smdl::coordinate_system(ray.dir)};
+  auto disk{smdl::uniform_disk_sample(float2(xi.z, xi.w))};
+  ray.org = scene.boundCenter +
+            scene.boundRadius * (coords * float3(disk.x, disk.y, -1.0f));
+  ppdf = 1.0f / (PI * scene.boundRadius * scene.boundRadius);
+  return true;
 }

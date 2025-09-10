@@ -1,5 +1,5 @@
-#include "EnvLight.h"
 #include "cl.h"
+#include "light.h"
 #include "raytracing.h"
 #include "vertex.h"
 
@@ -75,27 +75,102 @@ int main(int argc, char **argv) try {
   const auto dims{int2(cameraDims)};
   const auto numPixelsX{size_t(dims.x)};
   const auto numPixelsY{size_t(dims.y)};
+  const auto spp{size_t(samplesPerPixel)};
   const auto aspectRatio{float(numPixelsX) / float(numPixelsY)};
   const auto focalLength{0.5f / std::tan(float(cameraFOV) / 2 * PI / 180)};
   const auto cameraToWorld{smdl::look_at(cameraFrom, cameraTo, cameraUp)};
   auto renderImage{
       smdl::SpectralRenderImage(WAVELENGTH_BASE_MAX, numPixelsX, numPixelsY)};
+  constexpr int MAX_PATH_LEN = 8;
+#define LIGHT_TRACE 0
+  std::atomic<size_t> progress{};
   smdl::parallel_for(0, numPixelsX * numPixelsY, [&](size_t i) {
+    {
+      size_t p = ++progress;
+      if (p % 100 == 0) {
+        std::cerr << smdl::concat(
+            "\r", p / double(numPixelsX * numPixelsY) * 100.0, "%");
+      }
+    }
     auto allocator{smdl::BumpPtrAllocator()};
     auto state{smdl::State{}};
     state.allocator = &allocator;
     state.wavelength_base = wavelengths.data();
     state.wavelength_min = WAVELENGTH_MIN;
     state.wavelength_max = WAVELENGTH_MAX;
-    auto spp{size_t(samplesPerPixel)};
-    auto rng{make_RNG(0x8f54190b ^ i, 0xbb7c1003 + i)};
+    auto rng{
+        make_RNG(0x8F54190B ^ i, 0x68712063, 0x7F245C06 & ~i, 0xBB7C1003 + i)};
     auto random{AnyRandom(rng)};
+    Vertex path[MAX_PATH_LEN]{};
+#if LIGHT_TRACE
+    float4 lowd{random};
+    for (size_t s = 0; s < spp; s++) {
+      Ray ray{};
+      float ppdf{};
+      float wpdf{};
+      Color Le{};
+      if (!envLight->Le_sample(compiler, state, scene,
+                               smdl::advance_low_discrepancy4(lowd), ray, ppdf,
+                               wpdf, Le)) {
+        continue;
+      }
+      Vertex path0{};
+      path0.point = ray.org;
+      path0.beta = Le / (ppdf * wpdf);
+      path0.wNext = ray.dir;
+      path0.pdfFwd = ppdf;
+      path0.isInfiniteLight = true;
+      Vertex path[MAX_PATH_LEN]{};
+      size_t pathLen{random_walk(scene, random, wavelengths, allocator,
+                                 smdl::TRANSPORT_IMPORTANCE, path0, 1,
+                                 MAX_PATH_LEN, &path[0])};
+      for (size_t depth = 1; depth < pathLen; ++depth) {
+        SMDL_SANITY_CHECK(!path[depth].isInfiniteLight);
+        float3 cameraPoint = cameraToWorld[3];
+        float3 w = path[depth].point - cameraPoint;
+        float3 wWorld = normalize(w);
+        w = transpose(float3x3(cameraToWorld)) * w;
+        w = normalize(w);
+        if (!(w.z < 0.0f))
+          continue;
+        float cosTheta{std::abs(w.z)};
+        float u{+focalLength / cosTheta * w.x / aspectRatio};
+        float v{-focalLength / cosTheta * w.y};
+        if (!(std::abs(u) < 0.5f && std::abs(v) < 0.5f))
+          continue;
+        float wpdf = (focalLength * focalLength) /
+                     (aspectRatio * cosTheta * cosTheta * cosTheta);
+        float fpdfFwd{};
+        float fpdfRev{};
+        Color f{};
+        if (path[depth].scatter_evaluate(-path[depth - 1].wNext, -wWorld,
+                                         fpdfFwd, fpdfRev, f)) {
+          if (test_visibility(scene, random, wavelengths, allocator,
+                              path[depth].medium, path[depth].point,
+                              cameraPoint, f)) {
+            f *= path[depth].beta;
+            f *= wpdf / length_squared(path[depth].point - cameraPoint);
+            if (!f.is_any_non_finite()) {
+              int pixelX = dims.x * std::max(0.0f, std::min(u + 0.5f, 1.0f));
+              int pixelY = dims.y * std::max(0.0f, std::min(v + 0.5f, 1.0f));
+              pixelX = std::min(pixelX, int(numPixelsX) - 1);
+              pixelY = std::min(pixelY, int(numPixelsY) - 1);
+              renderImage(pixelX, pixelY).add(1.0 / double(spp), f.data());
+            }
+          }
+        }
+      }
+      allocator.reset();
+    }
+#else
     auto y{i / numPixelsX};
     auto x{i % numPixelsX};
     Color Lsum{};
+    float2 lowd{random};
     for (size_t s = 0; s < spp; s++) {
-      float u{(x + float(random)) / float(numPixelsX)};
-      float v{(y + float(random)) / float(numPixelsY)};
+      auto xi{smdl::advance_low_discrepancy2(lowd)};
+      float u{(x + xi.x) / float(numPixelsX)};
+      float v{(y + xi.y) / float(numPixelsY)};
       Ray ray{float3(0.0f),
               float3(+(u - 0.5f) * aspectRatio, -(v - 0.5f), -focalLength), EPS,
               INF};
@@ -107,10 +182,10 @@ int main(int argc, char **argv) try {
       path0.wNext = ray.dir;
       path0.pdfFwd = 0;
       path0.pdfRev = 0;
-      Vertex path[7]{};
+      Vertex path[MAX_PATH_LEN]{};
       size_t pathLen{random_walk(scene, random, wavelengths, allocator,
-                                 smdl::TRANSPORT_RADIANCE, path0, 1, 7,
-                                 &path[0])};
+                                 smdl::TRANSPORT_RADIANCE, path0, 1,
+                                 MAX_PATH_LEN, &path[0])};
       for (size_t depth = 1; depth < pathLen; ++depth) {
         if (!path[depth].isInfiniteLight) {
 #if 0
@@ -179,8 +254,8 @@ int main(int argc, char **argv) try {
 #endif
         } else {
           if (envLight && depth == 1) {
-              float Lipdf{};
-              Color Li{envLight->Li(compiler, state, path[depth].wNext, Lipdf)};
+            float Lipdf{};
+            Color Li{envLight->Li(compiler, state, path[depth].wNext, Lipdf)};
             auto L{path[depth].beta * Li / float(spp)};
             if (!L.is_any_non_finite())
               Lsum += L;
@@ -191,6 +266,7 @@ int main(int argc, char **argv) try {
     }
     // Lsum /= spp;
     renderImage(x, y).add(Lsum.data());
+#endif
   });
   auto imageScale{4.0f};
   auto rgbImage{std::vector<uint8_t>(numPixelsX * numPixelsY * 3)};

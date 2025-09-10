@@ -95,8 +95,9 @@ uint64_t random_walk(const Scene &scene, const AnyRandom &random,
         vertex.beta = beta;
         vertex.medium = medium;
         vertex.materialInstance = medium->materialInstance;
+        vertex.pdfFwd = vertexPrev.convert_pdf(wpdfFwd, vertex);
         vertex.wNext = smdl::uniform_sphere_sample(float2(random));
-        vertex.isMedium = true;
+        vertex.isVolume = true;
         continue;
       } else {
         beta *= Tr / Tr.average();
@@ -130,11 +131,16 @@ uint64_t random_walk(const Scene &scene, const AnyRandom &random,
     vertex.beta = beta;
     vertex.medium = medium;
     vertex.materialInstance = materialInstance;
+    vertex.pdfFwd = vertexPrev.convert_pdf(wpdfFwd, vertex);
     float wpdfRev{};
     if (!materialInstance.scatter_sample(float4(random), -vertexPrev.wNext,
                                          vertex.wNext, wpdfFwd, wpdfRev, f,
                                          vertex.isDeltaBounce)) {
       break;
+    }
+    if (vertex.isDeltaBounce) {
+      wpdfFwd = 0;
+      wpdfRev = 0;
     }
     beta *= (1.0f / wpdfFwd) * f;
     if (beta.is_any_non_finite()) {
@@ -142,7 +148,110 @@ uint64_t random_walk(const Scene &scene, const AnyRandom &random,
     }
     MediumStack::Update(medium, allocator, materialInstance, -vertexPrev.wNext,
                         vertex.wNext);
+    vertexPrev.pdfRev = vertex.convert_pdf(wpdfRev, vertexPrev);
     ray = Ray{vertex.point, vertex.wNext, EPS, INF};
   }
   return depth;
 }
+
+#if 0
+[[nodiscard]]
+static float multiple_importance_weight(const Vertex *cameraVertex,
+                                        const Vertex *lightVertex) {
+  float termSum{0.0f};
+  if (cameraVertex) {
+    for (float term{1.0f}; cameraVertex->prevVertex;
+         cameraVertex = cameraVertex->prevVertex) {
+      term *= cameraVertex->pdfAdjoint / cameraVertex->pdf;
+      termSum += term;
+    }
+  }
+  if (lightVertex) {
+    for (float term{1.0f}; lightVertex->prevVertex;
+         lightVertex = lightVertex->prevVertex) {
+      term *= lightVertex->pdfAdjoint / lightVertex->pdf;
+      termSum += term;
+    }
+  }
+  return 1.0f / (1.0f + termSum);
+}
+
+bool connect_bidirectional(const Scene &scene,
+                           smdl::BumpPtrAllocator &allocator,
+                           const std::function<float()> &rngf,
+                           const Color &wavelengthBase, Vertex *cameraVertex,
+                           Vertex *lightVertex, Color &beta, float &misWeight,
+                           float2 &pixelCoord) {
+  if (!cameraVertex) {
+    return false;
+  }
+  if (!lightVertex) {
+    return false;
+  }
+  SMDL_PRESERVE(*cameraVertex, *lightVertex);
+  SMDL_SANITY_CHECK(cameraVertex->source == smdl::TRANSPORT_MODE_RADIANCE);
+  SMDL_SANITY_CHECK(lightVertex->source == smdl::TRANSPORT_MODE_IMPORTANCE);
+  if (!cameraVertex->prevVertex && lightVertex->prevVertex &&
+      !lightVertex->isAtInfinity) {
+    SMDL_PRESERVE(lightVertex->prevVertex->pdfAdjoint);
+    auto result{Camera_last_vertex_sample(scene.camera,
+                                          float2(rngf(), rngf()),
+                                          *lightVertex, *cameraVertex)};
+    beta = cameraVertex->beta;
+    misWeight = multiple_importance_weight(cameraVertex, lightVertex);
+    pixelCoord = cameraVertex->pixelCoord;
+    return result && scene.test_visibility(allocator, rngf, wavelengthBase,
+                                           *cameraVertex, *lightVertex, beta);
+  }
+  if (cameraVertex->prevVertex && !lightVertex->prevVertex &&
+      !cameraVertex->isAtInfinity) {
+    SMDL_PRESERVE(cameraVertex->prevVertex->pdfAdjoint);
+    auto result{Light_last_vertex_sample(scene, rngf(),
+                                         float2(rngf(), rngf()),
+                                         *cameraVertex, *lightVertex)};
+    beta = lightVertex->beta;
+    misWeight = multiple_importance_weight(cameraVertex, lightVertex);
+    return result && scene.test_visibility(allocator, rngf, wavelengthBase,
+                                           *cameraVertex, *lightVertex, beta);
+  }
+  if (!cameraVertex->prevVertex || cameraVertex->isAtInfinity ||
+      !lightVertex->prevVertex || lightVertex->isAtInfinity) {
+    return false;
+  }
+  SMDL_PRESERVE(cameraVertex->prevVertex->pdfAdjoint,
+                lightVertex->prevVertex->pdfAdjoint);
+  float3 w{smdl::normalize(lightVertex->point - cameraVertex->point)};
+  float cameraDirPdf{};
+  float cameraDirPdfAdjoint{};
+  Color cameraf{};
+  if (!cameraVertex->scatter(w, cameraDirPdf, cameraDirPdfAdjoint, cameraf)) {
+    return false;
+  }
+  lightVertex->pdfAdjoint = cameraVertex->convert_direction_pdf_to_point_pdf(
+      cameraDirPdf, *lightVertex);
+  if (cameraVertex->prevVertex && cameraVertex->prevVertex->prevVertex) {
+    cameraVertex->prevVertex->pdfAdjoint =
+        cameraVertex->convert_direction_pdf_to_point_pdf(
+            cameraDirPdfAdjoint, *cameraVertex->prevVertex);
+  }
+  float lightDirPdf{};
+  float lightDirPdfAdjoint{};
+  Color lightf{};
+  if (!lightVertex->scatter(-w, lightDirPdf, lightDirPdfAdjoint, lightf)) {
+    return false;
+  }
+  cameraVertex->pdfAdjoint = lightVertex->convert_direction_pdf_to_point_pdf(
+      lightDirPdf, *cameraVertex);
+  if (lightVertex->prevVertex && lightVertex->prevVertex->prevVertex) {
+    lightVertex->prevVertex->pdfAdjoint =
+        lightVertex->convert_direction_pdf_to_point_pdf(
+            lightDirPdfAdjoint, *lightVertex->prevVertex);
+  }
+  beta =
+      cameraVertex->beta * cameraf * lightf * lightVertex->beta *
+      (1.0f / smdl::length_squared(cameraVertex->point - lightVertex->point));
+  misWeight = multiple_importance_weight(cameraVertex, lightVertex);
+  return scene.test_visibility(allocator, rngf, wavelengthBase, *cameraVertex,
+                               *lightVertex, beta);
+}
+#endif

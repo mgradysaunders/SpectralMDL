@@ -1,10 +1,10 @@
 smdl_add_program(
   "smdl-toy"
   SOURCES
+    "light.cc"
     "main.cc"
     "raytracing.cc"
     "vertex.cc"
-    "EnvLight.cc"
   DEPENDS
     "embree"
     "assimp"
