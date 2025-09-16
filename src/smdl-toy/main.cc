@@ -183,9 +183,9 @@ int main(int argc, char **argv) try {
       path0.pdfFwd = 0;
       path0.pdfRev = 0;
       Vertex path[MAX_PATH_LEN]{};
-      size_t pathLen{random_walk(scene, random, wavelengths, allocator,
+      size_t pathLen{random_walk(compiler, scene, random, wavelengths, allocator,
                                  smdl::TRANSPORT_RADIANCE, path0, 1,
-                                 MAX_PATH_LEN, &path[0])};
+                                 MAX_PATH_LEN, &path[0], *envLight)};
       for (size_t depth = 1; depth < pathLen; ++depth) {
         if (!path[depth].isInfiniteLight) {
 #if 0

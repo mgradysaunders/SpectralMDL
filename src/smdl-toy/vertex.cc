@@ -1,6 +1,5 @@
 #include "vertex.h"
-
-#include <vector>
+#include "light.h"
 
 bool test_visibility(const Scene &scene, const AnyRandom &random,
                      const Color &wavelengths,
@@ -41,11 +40,12 @@ bool test_visibility(const Scene &scene, const AnyRandom &random,
   return true;
 }
 
-uint64_t random_walk(const Scene &scene, const AnyRandom &random,
-                     const Color &wavelengths,
+uint64_t random_walk(smdl::Compiler &compiler, const Scene &scene,
+                     const AnyRandom &random, const Color &wavelengths,
                      smdl::BumpPtrAllocator &allocator,
                      smdl::Transport transport, Vertex path0, float wpdfFwd,
-                     uint64_t maxDepth, Vertex *path) {
+                     uint64_t maxDepth, Vertex *path,
+                     const EnvLight &envLight) {
   if (maxDepth == 0)
     return 0;
   path[0] = std::move(path0);
@@ -132,15 +132,72 @@ uint64_t random_walk(const Scene &scene, const AnyRandom &random,
     vertex.medium = medium;
     vertex.materialInstance = materialInstance;
     vertex.pdfFwd = vertexPrev.convert_pdf(wpdfFwd, vertex);
-    float wpdfRev{};
-    if (!materialInstance.scatter_sample(float4(random), -vertexPrev.wNext,
-                                         vertex.wNext, wpdfFwd, wpdfRev, f,
-                                         vertex.isDeltaBounce)) {
-      break;
+
+    if (depth > 2) {
+      float wpdfRev{};
+      if (!materialInstance.scatter_sample(float4(random), -vertexPrev.wNext,
+                                           vertex.wNext, wpdfFwd, wpdfRev, f,
+                                           vertex.isDeltaBounce)) {
+        break;
+      }
+    } else {
+      struct SampleResult final {
+        float3 wi{};
+        float Lpdf{};
+        float fpdf{};
+        Color f{};
+      };
+      auto doSampleLight{[&] {
+        SampleResult result{};
+        Color Li{};
+        result.wi = envLight.Li_sample(compiler, state, float2(random),
+                                       result.Lpdf, Li);
+        float fpdfFwd{};
+        float fpdfRev{};
+        if (materialInstance.scatter_evaluate(-vertexPrev.wNext, result.wi,
+                                              fpdfFwd, fpdfRev, result.f)) {
+          result.fpdf = fpdfFwd;
+        }
+        return result;
+      }};
+      auto doSampleBSDF{[&] {
+        SampleResult result{};
+        float fpdfFwd{};
+        float fpdfRev{};
+        if (materialInstance.scatter_sample(float4(random), -vertexPrev.wNext,
+                                            result.wi, fpdfFwd, fpdfRev,
+                                            result.f, vertex.isDeltaBounce)) {
+          result.fpdf = fpdfFwd;
+          Color Li = envLight.Li(compiler, state, result.wi, result.Lpdf);
+          return result;
+        }
+        return result;
+      }};
+      auto sampleLight = doSampleLight();
+      auto sampleBSDF = doSampleBSDF();
+      auto balance{[](float a, float b) {
+        return 1.0f / (1.0f + std::pow(b / a, 2.0f));
+      }};
+      float weightLight = balance(sampleLight.Lpdf, sampleLight.fpdf);
+      float weightBSDF = balance(sampleBSDF.fpdf, sampleBSDF.Lpdf);
+      if (depth > 2)
+        weightBSDF = 1, weightLight = 0;
+      float chanceLight = balance(weightLight, weightBSDF);
+      if (float(random) < chanceLight) {
+        wpdfFwd = chanceLight * sampleLight.Lpdf +
+                  (1 - chanceLight) * sampleLight.fpdf;
+        vertex.wNext = sampleLight.wi;
+        f = sampleLight.f;
+      } else {
+        wpdfFwd =
+            (1 - chanceLight) * sampleBSDF.fpdf + chanceLight * sampleBSDF.Lpdf;
+        vertex.wNext = sampleBSDF.wi;
+        f = sampleBSDF.f;
+      }
     }
     if (vertex.isDeltaBounce) {
       wpdfFwd = 0;
-      wpdfRev = 0;
+      // wpdfRev = 0;
     }
     beta *= (1.0f / wpdfFwd) * f;
     if (beta.is_any_non_finite()) {
@@ -148,7 +205,7 @@ uint64_t random_walk(const Scene &scene, const AnyRandom &random,
     }
     MediumStack::Update(medium, allocator, materialInstance, -vertexPrev.wNext,
                         vertex.wNext);
-    vertexPrev.pdfRev = vertex.convert_pdf(wpdfRev, vertexPrev);
+    // vertexPrev.pdfRev = vertex.convert_pdf(wpdfRev, vertexPrev);
     ray = Ray{vertex.point, vertex.wNext, EPS, INF};
   }
   return depth;

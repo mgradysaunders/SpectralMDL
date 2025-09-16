@@ -63,7 +63,7 @@ void SpectralRenderImage::write_envi_file(Span<const float> wavelengths,
     auto file{open_or_throw(fileName + ".hdr", std::ios::out)};
     file << "ENVI\n";
     file << "file type = ENVI Standard\n";
-    file << "data type = 4\n";
+    file << "data type = 5\n";
     file << "byte order = "
          << (llvm::endianness::native == llvm::endianness::little ? 0 : 1)
          << '\n';
@@ -85,10 +85,8 @@ void SpectralRenderImage::write_envi_file(Span<const float> wavelengths,
     for (size_t iY = 0; iY < numPixelsY; iY++) {
       for (size_t iX = 0; iX < numPixelsX; iX++) {
         auto pixel{operator()(iX, iY)};
-        for (const AtomicDouble &value : pixel) {
-          auto valuef{float(static_cast<double>(value) /
-                            static_cast<double>(pixel.totalCount.load()))};
-          file.write(reinterpret_cast<const char *>(&valuef), 4);
+        for (double pixelValue : pixel) {
+          file.write(reinterpret_cast<const char *>(&pixelValue), 8);
         }
       }
     }

@@ -110,12 +110,15 @@ inline float3 DistanceSquared(const Vertex &from, const Vertex &to) noexcept {
                                    const float3 &point0, const float3 &point1,
                                    Color &beta);
 
-[[nodiscard]] uint64_t random_walk(const Scene &scene, const AnyRandom &random,
+class EnvLight;
+[[nodiscard]] uint64_t random_walk(smdl::Compiler &compiler, const Scene &scene, const AnyRandom &random,
                                    const Color &wavelengths,
                                    smdl::BumpPtrAllocator &allocator,
                                    smdl::Transport transport, Vertex path0,
                                    float wpdfFwd, uint64_t maxDepth,
-                                   Vertex *path);
+                                   Vertex *path,
+                                   const EnvLight &envLight
+                                   );
 
 class Subpath final {
 public:
