@@ -13,7 +13,7 @@ add_library(
   SHARED
     "AST.cc"
     "BSDFMeasurement.cc"
-    "common.cc"
+    "Common.cc"
     "Compiler.cc"
     "Compiler/Context.cc"
     "Compiler/Emitter.cc"
@@ -34,7 +34,6 @@ add_library(
     "Support/Logger.cc"
     "Support/MacroHelpers.cc"
     "Support/MD5Hash.cc"
-    "Support/Parallel.cc"
     "Support/Profiler.cc"
     "Support/Sampling.cc"
     "Support/SemanticVersion.cc"

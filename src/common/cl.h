@@ -1,6 +1,6 @@
 #pragma once
 
-#include "smdl/common.h"
+#include "smdl/Common.h"
 #include "llvm/Support/CommandLine.h"
 #include "llvm/Support/InitLLVM.h"
 

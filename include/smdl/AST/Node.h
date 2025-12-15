@@ -1,7 +1,7 @@
 /// \file
 #pragma once
 
-#include "smdl/common.h"
+#include "smdl/Common.h"
 
 /// Abstract-syntax-tree interfaces.
 namespace smdl::AST {

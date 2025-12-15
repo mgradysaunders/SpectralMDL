@@ -1,12 +1,12 @@
 #include "smdl/Compiler.h"
 #include "smdl/Support/Logger.h"
-#include "smdl/Support/Parallel.h"
 #include "smdl/Support/Profiler.h"
 
 #include <chrono>
 #include <filesystem>
 #include <iostream>
 
+#include "llvm/Support/Parallel.h"
 #include "llvm/ExecutionEngine/Orc/LLJIT.h"
 #include "llvm/ExecutionEngine/Orc/ThreadSafeModule.h"
 
@@ -149,8 +149,8 @@ std::optional<Error> Compiler::compile(OptLevel optLevel) {
     SMDL_PROFILER_ENTRY("Load images in parallel");
     SMDL_LOG_INFO("Loading images ...");
     auto now{std::chrono::steady_clock::now()};
-    parallel_for(0, images.size(), [&](size_t i) {
-      auto &[fileHash, image] = *std::next(images.begin(), i);
+    llvm::parallelFor(0, images.size(), [&](size_t i) {
+      auto &[fileHash, image] = *std::next(images.begin(), ptrdiff_t(i));
       SMDL_PROFILER_ENTRY("Load image",
                           fileHash->canonicalFileNames[0].c_str());
       SMDL_LOG_DEBUG("Loading image ",

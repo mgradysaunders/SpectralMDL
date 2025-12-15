@@ -4,10 +4,10 @@
 #include "vertex.h"
 
 #include "smdl/Support/Logger.h"
-#include "smdl/Support/Parallel.h"
 #include "smdl/Support/Sampling.h"
 #include "smdl/Support/SpectralRenderImage.h"
 
+#include "llvm/Support/Parallel.h"
 #include <fstream>
 #include <iostream>
 
@@ -84,7 +84,7 @@ int main(int argc, char **argv) try {
   constexpr int MAX_PATH_LEN = 8;
 #define LIGHT_TRACE 0
   std::atomic<size_t> progress{};
-  smdl::parallel_for(0, numPixelsX * numPixelsY, [&](size_t i) {
+  llvm::parallelFor(0, numPixelsX * numPixelsY, [&](size_t i) {
     {
       size_t p = ++progress;
       if (p % 100 == 0) {

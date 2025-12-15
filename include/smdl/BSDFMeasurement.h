@@ -3,7 +3,7 @@
 
 #include <unordered_map>
 
-#include "smdl/common.h"
+#include "smdl/Common.h"
 
 namespace smdl {
 

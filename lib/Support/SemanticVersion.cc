@@ -1,6 +1,6 @@
 #include "smdl/Support/SemanticVersion.h"
 
-#include "smdl/common.h"
+#include "smdl/Common.h"
 
 #include "llvm/ADT/StringRef.h"
 #include "llvm/ADT/SmallVector.h"

@@ -1,4 +1,4 @@
-#include "smdl/common.h"
+#include "smdl/Common.h"
 #include "smdl/Module.h"
 #include "smdl/Support/Logger.h"
 

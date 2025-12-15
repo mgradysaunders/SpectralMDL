@@ -1,6 +1,6 @@
 #pragma once
 
-#include "smdl/common.h"
+#include "smdl/Common.h"
 
 #include "thirdparty/miniz.h"
 
