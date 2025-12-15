@@ -36,9 +36,9 @@ void Scene::load(const aiScene &assScene) {
   boundRadius = 0.5f * length(upper - lower);
   for (unsigned int i = 0; i < assScene.mNumMaterials; i++) {
     auto name{assScene.mMaterials[i]->GetName()};
-    auto material{compiler.findJitMaterial(name.C_Str())};
+    auto material{compiler.findMaterial(name.C_Str())};
     if (!material)
-      material = compiler.findJitMaterial("default_material");
+      material = compiler.findMaterial("default_material");
     materials.push_back(material);
   }
 }

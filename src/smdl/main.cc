@@ -136,7 +136,7 @@ int main(int argc, char **argv) {
     } else if (subRun || subTest) {
       if (auto error{compiler.jitCompile()})
         error->printAndExit();
-      if (auto error{compiler.runJitExecs()})
+      if (auto error{compiler.runExecs()})
         error->printAndExit();
       if (subTest) {
         std::array<float, 16> wavelengths{};
@@ -159,7 +159,7 @@ int main(int argc, char **argv) {
           wavelengths[i] =
               (1 - fac) * state.wavelength_min + fac * state.wavelength_max;
         }
-        if (auto error{compiler.runJitUnitTests(state)}) {
+        if (auto error{compiler.runUnitTests(state)}) {
           std::cerr << '\n';
           error->printAndExit();
         }

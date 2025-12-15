@@ -148,7 +148,7 @@ public:
                       const std::function<void()> &callback);
 
   [[nodiscard]] llvm::Function *
-  CreateFunction(std::string_view name, bool isPure, Type *&returnType,
+  createFunction(std::string_view name, bool isPure, Type *&returnType,
                  const ParameterList &params, const SourceLocation &srcLoc,
                  const std::function<void()> &callback) {
     llvm::Function *llvmFunc{};

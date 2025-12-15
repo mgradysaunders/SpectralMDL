@@ -824,7 +824,7 @@ void EnumType::initialize(Emitter &emitter) {
 
   // Initialize the to-string LLVM function. This is just a big switch.
   auto returnType{emitter.context.getStringType()};
-  llvmFuncToString = emitter.CreateFunction(
+  llvmFuncToString = emitter.createFunction(
       displayName + ".to_string", /*isPure=*/true, returnType,
       {Parameter{this, "value"}}, decl.name.srcLoc, [&]() {
         auto valueName{std::string_view("value")};
@@ -1181,7 +1181,7 @@ void FunctionType::initializeJitMaterialFunctions(Emitter &emitter) {
     // }
     // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
     auto funcReturnType{static_cast<Type *>(context.getVoidType())};
-    auto func{emitter.CreateFunction(
+    auto func{emitter.createFunction(
         concat(declName, ".evaluate"), /*isPure=*/false, funcReturnType,
         {constParameter(context.getVoidPointerType(), "out")}, decl.srcLoc,
         [&] {
@@ -1216,7 +1216,7 @@ void FunctionType::initializeJitMaterialFunctions(Emitter &emitter) {
     // }
     // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
     auto funcReturnType{static_cast<Type *>(context.getIntType())};
-    auto func{emitter.CreateFunction(
+    auto func{emitter.createFunction(
         concat(declName, ".scatter_evaluate"), /*isPure=*/true, funcReturnType,
         {constParameter(materialInstancePtrType, "instance"),
          constParameter(float3PtrType, "wo"),
@@ -1261,7 +1261,7 @@ void FunctionType::initializeJitMaterialFunctions(Emitter &emitter) {
     // }
     // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
     auto funcReturnType{static_cast<Type *>(context.getIntType())};
-    auto func{emitter.CreateFunction(
+    auto func{emitter.createFunction(
         concat(declName, ".scatter_sample"), /*isPure=*/true, funcReturnType,
         {constParameter(materialInstancePtrType, "instance"),
          constParameter(float4PtrType, "xi"),

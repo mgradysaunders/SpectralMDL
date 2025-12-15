@@ -307,7 +307,7 @@ Value Emitter::emit(AST::Decl &decl) {
 
 Value Emitter::emit(AST::Exec &decl) {
   auto returnType{context.getVoidType()};
-  auto llvmFunc{CreateFunction( //
+  auto llvmFunc{createFunction( //
       ".exec", /*isPure=*/false, returnType, ParameterList(), decl.srcLoc,
       [&] { emit(decl.stmt); })};
   llvmFunc->setLinkage(llvm::Function::ExternalLinkage);
@@ -318,7 +318,7 @@ Value Emitter::emit(AST::Exec &decl) {
 Value Emitter::emit(AST::UnitTest &decl) {
   if (context.compiler.enableUnitTests) {
     auto returnType{context.getVoidType()};
-    auto llvmFunc{CreateFunction( //
+    auto llvmFunc{createFunction( //
         ".unit_test", /*isPure=*/false, returnType, ParameterList(),
         decl.srcLoc, [&] { emit(decl.stmt); })};
     llvmFunc->setLinkage(llvm::Function::ExternalLinkage);

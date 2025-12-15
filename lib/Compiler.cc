@@ -367,7 +367,7 @@ void *Compiler::jitLookup(std::string_view name) noexcept {
 }
 
 const JIT::Material *
-Compiler::findJitMaterial(std::string_view materialName) const noexcept try {
+Compiler::findMaterial(std::string_view materialName) const noexcept try {
   auto results{llvm::SmallVector<const JIT::Material *>()};
   for (const auto &jitMaterial : jitMaterials) {
     if (jitMaterial.materialName == materialName) {
@@ -394,7 +394,7 @@ Compiler::findJitMaterial(std::string_view materialName) const noexcept try {
 }
 
 const JIT::Material *
-Compiler::findJitMaterial(std::string_view moduleName,
+Compiler::findMaterial(std::string_view moduleName,
                           std::string_view materialName) const noexcept {
   for (const auto &jitMaterial : jitMaterials) {
     if (jitMaterial.moduleName == moduleName &&
@@ -421,7 +421,7 @@ void Compiler::convertRGBToColor(const State &state, const float3 &rgb,
   jitRgbToColor(state, rgb, color);
 }
 
-std::optional<Error> Compiler::runJitUnitTests(const State &state) noexcept {
+std::optional<Error> Compiler::runUnitTests(const State &state) noexcept {
   return catchAndReturnError([&] {
     for (auto itr0 = jitUnitTests.begin(); itr0 != jitUnitTests.end();) {
       auto itr1{itr0};
@@ -448,7 +448,7 @@ std::optional<Error> Compiler::runJitUnitTests(const State &state) noexcept {
   });
 }
 
-std::optional<Error> Compiler::runJitExecs() noexcept {
+std::optional<Error> Compiler::runExecs() noexcept {
   return catchAndReturnError([&] {
     for (auto &jitExec : jitExecs)
       jitExec();

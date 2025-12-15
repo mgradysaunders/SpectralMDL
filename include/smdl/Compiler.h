@@ -150,14 +150,14 @@ public:
   ///
   [[nodiscard]]
   const JIT::Material *
-  findJitMaterial(std::string_view materialName) const noexcept;
+  findMaterial(std::string_view materialName) const noexcept;
 
   /// Find JIT-compiled material named `materialName` in the MDL module named
   /// `moduleName`, or return `nullptr` on failure.
   [[nodiscard]]
   const JIT::Material *
-  findJitMaterial(std::string_view moduleName,
-                  std::string_view materialName) const noexcept;
+  findMaterial(std::string_view moduleName,
+               std::string_view materialName) const noexcept;
 
   /// Run the JIT-compiled color-to-RGB function.
   ///
@@ -192,11 +192,10 @@ public:
                          float *color) const noexcept;
 
   /// Run JIT-compiled unit tests and print results to standard error.
-  [[nodiscard]] std::optional<Error>
-  runJitUnitTests(const State &state) noexcept;
+  [[nodiscard]] std::optional<Error> runUnitTests(const State &state) noexcept;
 
   /// Run JIT-compiled execs.
-  [[nodiscard]] std::optional<Error> runJitExecs() noexcept;
+  [[nodiscard]] std::optional<Error> runExecs() noexcept;
 
   /// Summarize all compiled materials.
   [[nodiscard]] std::string printMaterialSummary() const;
