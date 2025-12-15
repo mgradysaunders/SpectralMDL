@@ -20,7 +20,7 @@ if(SMDL_BUILD_LLVM)
       "git"
       "clone"
       "--depth=1"
-      "--branch=llvmorg-20.1.5"
+      "--branch=llvmorg-21.1.7"
       "https://github.com/llvm/llvm-project"
       "llvm-project"
     WORKING_DIRECTORY "${CMAKE_BINARY_DIR}"
@@ -92,7 +92,7 @@ if(SMDL_TOY)
   FetchContent_Declare(
     "Assimp"
     GIT_REPOSITORY "https://github.com/assimp/assimp"
-    GIT_TAG "v5.4.3"
+    GIT_TAG "v6.0.2"
     GIT_SHALLOW TRUE
     GIT_PROGRESS TRUE
     )
