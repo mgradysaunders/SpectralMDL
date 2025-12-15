@@ -28,8 +28,8 @@ MD5Hash MD5Hash::hashMemory(const void *mem, size_t memSize) noexcept {
 
 MD5Hash::operator std::string() const {
   auto bytes{std::array<uint8_t, 16>{}};
-  llvm::support::endian::write64le(&bytes[0], lower_bits());
-  llvm::support::endian::write64le(&bytes[8], upper_bits());
+  llvm::support::endian::write64le(&bytes[0], getLowerBits());
+  llvm::support::endian::write64le(&bytes[8], getUpperBits());
   return llvm::toHex(llvm::ArrayRef<uint8_t>{bytes.data(), 16},
                      /*LowerCase=*/true);
 }

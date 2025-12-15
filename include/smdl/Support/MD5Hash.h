@@ -25,7 +25,7 @@ public:
                                           size_t memSize) noexcept;
 
   /// Hash memory.
-  [[nodiscard]] static MD5Hash hash_memory(std::string_view mem) noexcept {
+  [[nodiscard]] static MD5Hash hashMemory(std::string_view mem) noexcept {
     return hashMemory(mem.data(), mem.size());
   }
 
@@ -37,12 +37,12 @@ public:
   constexpr MD5Hash(std::pair<uint64_t, uint64_t> hash) : hash(hash) {}
 
   /// Get the upper or most significant bits.
-  [[nodiscard]] constexpr uint64_t upper_bits() const noexcept {
+  [[nodiscard]] constexpr uint64_t getUpperBits() const noexcept {
     return hash.first;
   }
 
   /// Get the lower or least significant bits.
-  [[nodiscard]] constexpr uint64_t lower_bits() const noexcept {
+  [[nodiscard]] constexpr uint64_t getLowerBits() const noexcept {
     return hash.second;
   }
 
