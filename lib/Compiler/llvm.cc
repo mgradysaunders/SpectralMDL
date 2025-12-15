@@ -2,7 +2,7 @@
 
 namespace smdl {
 
-void llvm_throw_if_error(llvm::Error error) {
+void llvmThrowIfError(llvm::Error error) {
   uint32_t numErrors{};
   std::string message{};
   llvm::raw_string_ostream os{message};
@@ -15,8 +15,8 @@ void llvm_throw_if_error(llvm::Error error) {
     throw Error(std::move(message));
 }
 
-llvm::Value *llvm_emit_cast(llvm::IRBuilderBase &builder, llvm::Value *value,
-                            llvm::Type *dstType) {
+llvm::Value *llvmEmitCast(llvm::IRBuilderBase &builder, llvm::Value *value,
+                          llvm::Type *dstType) {
   auto srcType{value->getType()};
   if (srcType == dstType)
     return value;
@@ -61,23 +61,23 @@ llvm::Value *llvm_emit_cast(llvm::IRBuilderBase &builder, llvm::Value *value,
   return nullptr;
 }
 
-llvm::Value *llvm_emit_powi(llvm::IRBuilderBase &builder, llvm::Value *lhs,
-                            llvm::Value *rhs) {
+llvm::Value *llvmEmitPowi(llvm::IRBuilderBase &builder, llvm::Value *lhs,
+                          llvm::Value *rhs) {
   auto func{llvm::Intrinsic::getOrInsertDeclaration(
       builder.GetInsertBlock()->getModule(), llvm::Intrinsic::powi,
       {lhs->getType(), rhs->getType()})};
   return builder.CreateCall(func, {lhs, rhs});
 }
 
-llvm::Value *llvm_emit_ldexp(llvm::IRBuilderBase &builder, llvm::Value *lhs,
-                             llvm::Value *rhs) {
+llvm::Value *llvmEmitLdexp(llvm::IRBuilderBase &builder, llvm::Value *lhs,
+                           llvm::Value *rhs) {
   auto func{llvm::Intrinsic::getOrInsertDeclaration(
       builder.GetInsertBlock()->getModule(), llvm::Intrinsic::ldexp,
       {lhs->getType(), rhs->getType()})};
   return builder.CreateCall(func, {lhs, rhs});
 }
 
-llvm::InlineResult llvm_force_inline(llvm::Value *value, bool isRecursive) {
+llvm::InlineResult llvmForceInline(llvm::Value *value, bool isRecursive) {
   auto call{llvm::dyn_cast_if_present<llvm::CallBase>(value)};
   if (!call)
     return llvm::InlineResult::failure("expected 'llvm::CallBase'");
@@ -100,7 +100,7 @@ llvm::InlineResult llvm_force_inline(llvm::Value *value, bool isRecursive) {
   return result;
 }
 
-void llvm_force_inline_flatten(llvm::Function &func) {
+void llvmForceInlineFlatten(llvm::Function &func) {
   auto calls{llvm::SmallVector<llvm::CallBase *>{}};
   for (auto &block : func) {
     for (auto &inst : block) {
@@ -110,11 +110,11 @@ void llvm_force_inline_flatten(llvm::Function &func) {
     }
   }
   for (auto *call : calls) {
-    llvm_force_inline(call, /*isRecursive=*/true);
+    llvmForceInline(call, /*isRecursive=*/true);
   }
 }
 
-void llvm_move_block_to_end(llvm::BasicBlock *block) {
+void llvmMoveBlockToEnd(llvm::BasicBlock *block) {
   auto func{block->getParent()};
   SMDL_SANITY_CHECK(func);
   block->removeFromParent();

@@ -59,19 +59,19 @@ public:
 
 public:
   /// Get the active insert block.
-  [[nodiscard]] llvm::BasicBlock *get_insert_block() {
+  [[nodiscard]] llvm::BasicBlock *getInsertBlock() {
     return builder.GetInsertBlock();
   }
 
   /// Get the LLVM function of the active insert block.
-  [[nodiscard]] llvm::Function *get_llvm_function() {
-    return get_insert_block() ? get_insert_block()->getParent() : nullptr;
+  [[nodiscard]] llvm::Function *getLLVMFunction() {
+    return getInsertBlock() ? getInsertBlock()->getParent() : nullptr;
   }
 
   /// Does the insert block have a terminator instruction? (e.g.,
   /// unconditional branch, unreachable, no-return function call)
-  [[nodiscard]] bool has_terminator() {
-    return get_insert_block() && get_insert_block()->getTerminator() != nullptr;
+  [[nodiscard]] bool hasTerminator() {
+    return getInsertBlock() && getInsertBlock()->getTerminator() != nullptr;
   }
 
 public:
@@ -102,12 +102,12 @@ public:
   /// \param[in] callback
   /// The callback to populate the LLVM function body.
   ///
-  Value create_function_implementation(std::string_view name, bool isPure,
-                                       Type *returnType,
-                                       const ParameterList &params,
-                                       llvm::ArrayRef<Value> paramValues,
-                                       const SourceLocation &srcLoc,
-                                       const std::function<void()> &callback);
+  Value createFunctionImplementation(std::string_view name, bool isPure,
+                                     Type *returnType,
+                                     const ParameterList &params,
+                                     llvm::ArrayRef<Value> paramValues,
+                                     const SourceLocation &srcLoc,
+                                     const std::function<void()> &callback);
 
   /// Create function.
   ///
@@ -141,26 +141,25 @@ public:
   /// \param[in] callback
   /// The callback to populate the LLVM function body.
   ///
-  void create_function(llvm::Function *&llvmFunc, //
-                       std::string_view name, bool isPure, Type *&returnType,
-                       llvm::ArrayRef<Type *> paramTypes,
-                       const ParameterList &params,
-                       const SourceLocation &srcLoc,
-                       const std::function<void()> &callback);
+  void createFunction(llvm::Function *&llvmFunc, //
+                      std::string_view name, bool isPure, Type *&returnType,
+                      llvm::ArrayRef<Type *> paramTypes,
+                      const ParameterList &params, const SourceLocation &srcLoc,
+                      const std::function<void()> &callback);
 
   [[nodiscard]] llvm::Function *
-  create_function(std::string_view name, bool isPure, Type *&returnType,
-                  const ParameterList &params, const SourceLocation &srcLoc,
-                  const std::function<void()> &callback) {
+  CreateFunction(std::string_view name, bool isPure, Type *&returnType,
+                 const ParameterList &params, const SourceLocation &srcLoc,
+                 const std::function<void()> &callback) {
     llvm::Function *llvmFunc{};
-    create_function(llvmFunc, name, isPure, returnType, params.get_types(),
-                    params, srcLoc, callback);
+    createFunction(llvmFunc, name, isPure, returnType, params.getTypes(),
+                   params, srcLoc, callback);
     return llvmFunc;
   }
 
   /// Create block with the given name.
-  [[nodiscard]] llvm::BasicBlock *create_block(const llvm::Twine &name = {}) {
-    return llvm::BasicBlock::Create(context, name, get_llvm_function());
+  [[nodiscard]] llvm::BasicBlock *createBlock(const llvm::Twine &name = {}) {
+    return llvm::BasicBlock::Create(context, name, getLLVMFunction());
   }
 
   /// Create 1 or more blocks at once with a `baseName + extension` naming
@@ -179,12 +178,12 @@ public:
   ///
   template <size_t N>
   [[nodiscard]] std::array<llvm::BasicBlock *, N>
-  create_blocks(llvm::StringRef baseName,
-                std::array<llvm::StringRef, N> extensions) {
-    auto name{context.get_unique_name(baseName, get_llvm_function())};
+  createBlocks(llvm::StringRef baseName,
+               std::array<llvm::StringRef, N> extensions) {
+    auto name{context.getUniqueName(baseName, getLLVMFunction())};
     auto blocks{std::array<llvm::BasicBlock *, N>{}};
     for (size_t i = 0; i < N; i++)
-      blocks[i] = create_block(name + extensions[i]);
+      blocks[i] = createBlock(name + extensions[i]);
     return blocks;
   }
 
@@ -195,52 +194,52 @@ public:
   /// no LLVM function (i.e., `create_function()` was never called), an
   /// `SMDL_SANITY_CHECK` crashes the program!
   ///
-  [[nodiscard]] Value create_alloca(Type *type, const llvm::Twine &name = {});
+  [[nodiscard]] Value createAlloca(Type *type, const llvm::Twine &name = {});
 
   /// Create lifetime start intrinsic for optimizing alloca usage.
-  void create_lifetime_start(Value value) {
-    if (value.is_lvalue() && llvm::isa<llvm::AllocaInst>(value.llvmValue)) {
+  void createLifetimeStart(Value value) {
+    if (value.isLValue() && llvm::isa<llvm::AllocaInst>(value.llvmValue)) {
       builder.CreateLifetimeStart(
-          value, builder.getInt64(context.get_size_of(value.type)));
+          value, builder.getInt64(context.getSizeOf(value.type)));
     }
   }
 
   /// Create lifetime end intrinsic for optimizing alloca usage.
-  void create_lifetime_end(Value value) {
-    if (value.is_lvalue() && llvm::isa<llvm::AllocaInst>(value.llvmValue)) {
+  void createLifetimeEnd(Value value) {
+    if (value.isLValue() && llvm::isa<llvm::AllocaInst>(value.llvmValue)) {
       builder.CreateLifetimeEnd(
-          value, builder.getInt64(context.get_size_of(value.type)));
+          value, builder.getInt64(context.getSizeOf(value.type)));
     }
   }
 
   /// Declare crumb.
-  auto declare_crumb(Span<const std::string_view> name, AST::Node *node,
-                     Value value, Value valueToPreserve = {}) {
+  auto declareCrumb(Span<const std::string_view> name, AST::Node *node,
+                    Value value, Value valueToPreserve = {}) {
     return (crumb = context.allocator.allocate<Crumb>(crumb, name, node, value,
                                                       valueToPreserve));
   }
 
   /// Declare parameter.
-  void declare_parameter(const Parameter &param, Value value);
+  void declareParameter(const Parameter &param, Value value);
 
   /// Declare parameter as inline.
-  void declare_parameter_inline(Value value);
+  void declareParameterInline(Value value);
 
   /// Declare import.
-  void declare_import(Span<const std::string_view> importPath, bool isAbs,
-                      AST::Decl &decl);
+  void declareImport(Span<const std::string_view> importPath, bool isAbs,
+                     AST::Decl &decl);
 
   /// Guarantee that the given value is an lvalue.
   ///
   /// - If the value is already an lvalue, return it.
   /// - If the value is an rvalue, copy it into an alloca and return the lvalue.
   ///
-  [[nodiscard]] Value to_lvalue(Value value) {
-    if (value.is_rvalue() && !value.is_void()) {
-      auto lv{create_alloca(value.type, value.llvmValue->hasName()
-                                            ? value.llvmValue->getName() + ".lv"
-                                            : "")};
-      create_lifetime_start(lv);
+  [[nodiscard]] Value toLValue(Value value) {
+    if (value.isRValue() && !value.isVoid()) {
+      auto lv{createAlloca(value.type, value.llvmValue->hasName()
+                                           ? value.llvmValue->getName() + ".lv"
+                                           : "")};
+      createLifetimeStart(lv);
       builder.CreateStore(value, lv);
       return lv;
     }
@@ -253,11 +252,11 @@ public:
   /// - If the value is an lvalue, load it into a register and return the
   ///   rvalue.
   ///
-  [[nodiscard]] Value to_rvalue(Value value) {
-    if (value.is_lvalue())
+  [[nodiscard]] Value toRValue(Value value) {
+    if (value.isLValue())
       return RValue(
           value.type,
-          value.type->is_void()
+          value.type->isVoid()
               ? nullptr
               : builder.CreateLoad(value.type->llvmType, value,
                                    value.llvmValue->hasName()
@@ -297,39 +296,39 @@ public:
   ///   they will be restored at the end of the scope.
   ///
   template <typename Func>
-  void handle_scope(llvm::BasicBlock *blockStart, llvm::BasicBlock *blockEnd,
-                    Func &&func) {
+  void handleScope(llvm::BasicBlock *blockStart, llvm::BasicBlock *blockEnd,
+                   Func &&func) {
     SMDL_PRESERVE(crumb, state, labelReturn, labelBreak, labelContinue, inDefer,
                   currentModule);
     auto crumb0{crumb};
     if (blockStart) {
-      llvm_move_block_to_end(blockStart);
+      llvmMoveBlockToEnd(blockStart);
       builder.SetInsertPoint(blockStart);
     }
     std::invoke(std::forward<Func>(func));
-    if (!has_terminator()) {
+    if (!hasTerminator()) {
       unwind(crumb0);
       if (blockEnd)
         builder.CreateBr(blockEnd);
     }
     if (blockEnd && !blockEnd->getTerminator())
-      llvm_move_block_to_end(blockEnd);
+      llvmMoveBlockToEnd(blockEnd);
   }
 
   /// Move the insert point to the beginning of the given block if it has been
   /// branched to. If the block has no predecessors, erase it.
-  void handle_block_end(llvm::BasicBlock *block) {
+  void handleBlockEnd(llvm::BasicBlock *block) {
     if (block->hasNPredecessors(0)) {
       block->eraseFromParent();
     } else {
-      llvm_move_block_to_end(block);
+      llvmMoveBlockToEnd(block);
       builder.SetInsertPoint(block);
     }
   }
 
   /// Create result PHI instruction.
-  Value create_result(Type *resultType, llvm::ArrayRef<Result> results,
-                      const SourceLocation &srcLoc);
+  Value createResult(Type *resultType, llvm::ArrayRef<Result> results,
+                     const SourceLocation &srcLoc);
 
   /// \}
 
@@ -346,34 +345,34 @@ public:
   /// Wraps `Type::invoke()` after looking up `keyword` in the context.
   [[nodiscard]] Value invoke(const char *keyword, const ArgumentList &args,
                              const SourceLocation &srcLoc) {
-    return invoke(context.get_keyword_as_type(keyword, srcLoc), args, srcLoc);
+    return invoke(context.getKeywordAsType(keyword, srcLoc), args, srcLoc);
   }
 
-  /// Wraps `Type::access_field()`
-  [[nodiscard]] Value access_field(Value value, std::string_view key,
-                                   const SourceLocation &srcLoc) {
-    return value.type->access_field(*this, value, key, srcLoc);
+  /// Wraps `Type::accessField()`
+  [[nodiscard]] Value accessField(Value value, std::string_view key,
+                                  const SourceLocation &srcLoc) {
+    return value.type->accessField(*this, value, key, srcLoc);
   }
 
-  /// Wraps `Type::access_index()`
-  [[nodiscard]] Value access_index(Value value, Value i,
-                                   const SourceLocation &srcLoc) {
-    return value.type->access_index(*this, value, i, srcLoc);
+  /// Wraps `Type::accessIndex()`
+  [[nodiscard]] Value accessIndex(Value value, Value i,
+                                  const SourceLocation &srcLoc) {
+    return value.type->accessIndex(*this, value, i, srcLoc);
   }
 
-  /// Wraps `Type::access_index()`
-  [[nodiscard]] Value access_index(Value value, unsigned i,
-                                   const SourceLocation &srcLoc = {}) {
-    return access_index(value, context.get_comptime_int(int(i)), srcLoc);
+  /// Wraps `Type::accessIndex()`
+  [[nodiscard]] Value accessIndex(Value value, unsigned i,
+                                  const SourceLocation &srcLoc = {}) {
+    return accessIndex(value, context.getComptimeInt(int(i)), srcLoc);
   }
 
   /// Wraps `Type::access_index()` for every index.
   [[nodiscard]] std::vector<Value>
-  access_every_index(Value value, unsigned n, const SourceLocation &srcLoc,
-                     const std::function<Value(unsigned, Value)> &pred = {}) {
+  accessEveryIndex(Value value, unsigned n, const SourceLocation &srcLoc,
+                   const std::function<Value(unsigned, Value)> &pred = {}) {
     std::vector<Value> elems{};
     for (unsigned i = 0; i < n; i++) {
-      auto &elem{elems.emplace_back(access_index(value, i, srcLoc))};
+      auto &elem{elems.emplace_back(accessIndex(value, i, srcLoc))};
       if (pred)
         elem = pred(i, elem);
     }
@@ -415,7 +414,7 @@ public:
 
   /// Emit enum declaration.
   Value emit(AST::Enum &decl) {
-    context.get_enum_type(&decl)->initialize(*this);
+    context.getEnumType(&decl)->initialize(*this);
     return Value();
   }
 
@@ -424,7 +423,7 @@ public:
 
   /// Emit function declaration.
   Value emit(AST::Function &decl) {
-    context.get_function_type(&decl)->initialize(*this);
+    context.getFunctionType(&decl)->initialize(*this);
     return Value();
   }
 
@@ -433,14 +432,14 @@ public:
     if (decl.is_exported())
       decl.srcLoc.throw_error("cannot re-export qualified 'import'");
     for (auto &[importPath, srcComma] : decl.importPathWrappers)
-      declare_import(importPath, importPath.is_absolute(), decl);
+      declareImport(importPath, importPath.is_absolute(), decl);
     return Value();
   }
 
   /// Emit namespace declaration.
   Value emit(AST::Namespace &decl) {
-    decl.firstCrumb = declare_crumb(*decl.identifier, &decl,
-                                    context.get_comptime_meta_namespace(&decl));
+    decl.firstCrumb = declareCrumb(*decl.identifier, &decl,
+                                   context.getComptimeMetaNamespace(&decl));
     SMDL_PRESERVE(crumb);
     for (auto &each : decl.decls)
       emit(each);
@@ -450,20 +449,20 @@ public:
 
   /// Emit struct declaration.
   Value emit(AST::Struct &decl) {
-    context.get_struct_type(&decl)->initialize(*this);
+    context.getStructType(&decl)->initialize(*this);
     return Value();
   }
 
   /// Emit tag declaration.
   Value emit(AST::Tag &decl) {
-    declare_crumb(decl.name, &decl,
-                  context.get_comptime_meta_type(context.get_tag_type(&decl)));
+    declareCrumb(decl.name, &decl,
+                 context.getComptimeMetaType(context.getTagType(&decl)));
     return Value();
   }
 
   /// Emit typedef declaration.
   Value emit(AST::Typedef &decl) {
-    declare_crumb(decl.name, &decl, emit(decl.type));
+    declareCrumb(decl.name, &decl, emit(decl.type));
     return Value();
   }
 
@@ -472,7 +471,7 @@ public:
 
   /// Emit using alias declaration.
   Value emit(AST::UsingAlias &decl) {
-    declare_crumb(/*name=*/{}, &decl, /*value=*/{});
+    declareCrumb(/*name=*/{}, &decl, /*value=*/{});
     return Value();
   }
 
@@ -487,7 +486,7 @@ public:
 
   /// Emit access-field expression.
   Value emit(AST::AccessField &expr) {
-    return access_field(emit(expr.expr), expr.name.srcName, expr.srcLoc);
+    return accessField(emit(expr.expr), expr.name.srcName, expr.srcLoc);
   }
 
   /// Emit access-index expression.
@@ -498,17 +497,17 @@ public:
 
   /// Emit call expression.
   Value emit(AST::Call &expr) {
-    return emit_call(emit(expr.expr), emit(expr.args), expr.srcLoc);
+    return emitCall(emit(expr.expr), emit(expr.args), expr.srcLoc);
   }
 
   /// Emit identifier expression.
   Value emit(AST::Identifier &expr) {
-    return resolve_identifier(expr, expr.srcLoc);
+    return resolveIdentifier(expr, expr.srcLoc);
   }
 
   /// Emit intrinsic expression.
   Value emit(AST::Intrinsic &expr) {
-    return context.get_comptime_meta_intrinsic(&expr);
+    return context.getComptimeMetaIntrinsic(&expr);
   }
 
   /// Emit let expression.
@@ -516,41 +515,35 @@ public:
     auto crumb0{crumb};
     for (auto &decl : expr.decls)
       emit(decl);
-    auto value{to_rvalue(emit(expr.expr))};
+    auto value{toRValue(emit(expr.expr))};
     unwind(crumb0);
     return value;
   }
 
   /// Emit literal bool expression.
   Value emit(AST::LiteralBool &expr) {
-    return context.get_comptime_bool(expr.value);
+    return context.getComptimeBool(expr.value);
   }
 
   /// Emit literal float expression.
   Value emit(AST::LiteralFloat &expr) {
-#if 0
-    return expr.srcValue.back() == 'd' || expr.srcValue.back() == 'D'
-               ? context.get_comptime_double(expr.value)
-               : context.get_comptime_float(float(expr.value));
-#else
     auto src{llvm::StringRef(expr.srcValue)};
     if (src.ends_with_insensitive("jd")) {
       return invoke("complex",
-                    {context.get_comptime_double(0.0),
-                     context.get_comptime_double(expr.value)},
+                    {context.getComptimeDouble(0.0),
+                     context.getComptimeDouble(expr.value)},
                     expr.srcLoc);
     } else if (src.ends_with_insensitive("jf") ||
                src.ends_with_insensitive("j")) {
       return invoke("complex",
-                    {context.get_comptime_float(0.0f),
-                     context.get_comptime_float(float(expr.value))},
+                    {context.getComptimeFloat(0.0f),
+                     context.getComptimeFloat(float(expr.value))},
                     expr.srcLoc);
     } else if (src.ends_with_insensitive("d")) {
-      return context.get_comptime_double(expr.value);
+      return context.getComptimeDouble(expr.value);
     } else {
-      return context.get_comptime_float(float(expr.value));
+      return context.getComptimeFloat(float(expr.value));
     }
-#endif
   }
 
   /// Emit literal int expression.
@@ -558,17 +551,17 @@ public:
     // If the literal value is greater than the maximum `int` promote
     // it to `int64`.
     if (expr.value > uint64_t(std::numeric_limits<int>::max())) {
-      auto intType{context.get_arithmetic_type(Scalar::get_int(64), Extent(1))};
+      auto intType{context.getArithmeticType(Scalar::getInt(64), Extent(1))};
       return RValue(intType,
                     llvm::ConstantInt::get(intType->llvmType,
                                            llvm::APInt(64, expr.value)));
     }
-    return context.get_comptime_int(int(expr.value));
+    return context.getComptimeInt(int(expr.value));
   }
 
   /// Emit literal string expression.
   Value emit(AST::LiteralString &expr) {
-    return context.get_comptime_string(expr.value);
+    return context.getComptimeString(expr.value);
   }
 
   /// Emit parenthesized expression.
@@ -583,35 +576,35 @@ public:
   /// Emit type expression.
   Value emit(AST::Type &expr) {
     auto value{emit(expr.expr)};
-    if (value.type != context.get_meta_type_type())
+    if (value.type != context.getMetaTypeType())
       expr.srcLoc.throw_error("expected expression to resolve to a type");
-    expr.type = value.get_comptime_meta_type(context, expr.srcLoc);
+    expr.type = value.getComptimeMetaType(context, expr.srcLoc);
     return value;
   }
 
   /// Emit type-cast expression.
   Value emit(AST::TypeCast &expr) {
-    return invoke(emit(expr.type).get_comptime_meta_type(context, expr.srcLoc),
+    return invoke(emit(expr.type).getComptimeMetaType(context, expr.srcLoc),
                   emit(expr.expr), expr.srcLoc);
   }
 
   /// Emit unary expression.
   Value emit(AST::Unary &expr) {
-    return emit_op(expr.op, emit(expr.expr), expr.srcLoc);
+    return emitOp(expr.op, emit(expr.expr), expr.srcLoc);
   }
 
   /// Emit late-if helper.
   template <typename Func>
-  void emit_late_if(std::optional<AST::LateIf> &lateIf, Func &&func) {
+  void emitLateIf(std::optional<AST::LateIf> &lateIf, Func &&func) {
     if (!lateIf) {
       std::invoke(std::forward<Func>(func));
     } else {
       auto [blockThen, blockElse] =
-          create_blocks<2>("late_if", {".then", ".else"});
-      builder.CreateCondBr(invoke(context.get_bool_type(), emit(lateIf->expr),
+          createBlocks<2>("late_if", {".then", ".else"});
+      builder.CreateCondBr(invoke(context.getBoolType(), emit(lateIf->expr),
                                   lateIf->expr->srcLoc),
                            blockThen, blockElse);
-      handle_scope(blockThen, blockElse, std::forward<Func>(func));
+      handleScope(blockThen, blockElse, std::forward<Func>(func));
       builder.SetInsertPoint(blockElse);
     }
   }
@@ -621,11 +614,11 @@ public:
 
   /// Emit break statement.
   Value emit(AST::Break &stmt) {
-    SMDL_SANITY_CHECK(!has_terminator());
+    SMDL_SANITY_CHECK(!hasTerminator());
     if (!labelBreak)
       stmt.srcLoc.throw_error(inDefer ? "cannot 'break' from 'defer'"
                                       : "nowhere to 'break'");
-    emit_late_if(stmt.lateIf, [&] {
+    emitLateIf(stmt.lateIf, [&] {
       unwind(labelBreak.crumb);
       builder.CreateBr(labelBreak.block);
     });
@@ -637,11 +630,11 @@ public:
 
   /// Emit continue statement.
   Value emit(AST::Continue &stmt) {
-    SMDL_SANITY_CHECK(!has_terminator());
+    SMDL_SANITY_CHECK(!hasTerminator());
     if (!labelContinue)
       stmt.srcLoc.throw_error(inDefer ? "cannot 'continue' from 'defer'"
                                       : "nowhere to 'continue'");
-    emit_late_if(stmt.lateIf, [&] {
+    emitLateIf(stmt.lateIf, [&] {
       unwind(labelContinue.crumb);
       builder.CreateBr(labelContinue.block);
     });
@@ -653,7 +646,7 @@ public:
 
   /// Emit defer statement.
   Value emit(AST::Defer &stmt) {
-    declare_crumb(/*name=*/{}, &stmt, /*value=*/{});
+    declareCrumb(/*name=*/{}, &stmt, /*value=*/{});
     return Value();
   }
 
@@ -663,7 +656,7 @@ public:
   /// Emit expression statement.
   Value emit(AST::ExprStmt &stmt) {
     if (stmt.expr)
-      emit_late_if(stmt.lateIf, [&] { emit(stmt.expr); });
+      emitLateIf(stmt.lateIf, [&] { emit(stmt.expr); });
     return Value();
   }
 
@@ -677,24 +670,24 @@ public:
   Value emit(AST::Preserve &stmt) {
     for (auto &[expr, srcComma] : stmt.exprWrappers) {
       auto value{emit(expr)};
-      if (!value.is_lvalue())
+      if (!value.isLValue())
         stmt.srcLoc.throw_error("cannot 'preserve' rvalue");
-      declare_crumb({}, &stmt, value, to_rvalue(value));
+      declareCrumb({}, &stmt, value, toRValue(value));
     }
     return Value();
   }
 
   /// Emit return statement.
   Value emit(AST::Return &stmt) {
-    SMDL_SANITY_CHECK(!has_terminator());
+    SMDL_SANITY_CHECK(!hasTerminator());
     if (!labelReturn)
       stmt.srcLoc.throw_error(inDefer ? "cannot 'return' from 'defer'"
                                       : "nowhere to 'return'");
-    emit_late_if(stmt.lateIf, [&] {
+    emitLateIf(stmt.lateIf, [&] {
       Value value{};
       if (stmt.expr)
-        value = to_rvalue(emit(stmt.expr));
-      returns.push_back(Result{value, get_insert_block(), stmt.srcLoc});
+        value = toRValue(emit(stmt.expr));
+      returns.push_back(Result{value, getInsertBlock(), stmt.srcLoc});
       unwind(labelReturn.crumb);
       builder.CreateBr(labelReturn.block);
     });
@@ -706,7 +699,7 @@ public:
 
   /// Emit unreachable statement.
   Value emit(AST::Unreachable &stmt) {
-    if (!get_llvm_function())
+    if (!getLLVMFunction())
       stmt.srcLoc.throw_error(
           "'unreachable' must be within function definition");
     builder.CreateUnreachable();
@@ -715,9 +708,9 @@ public:
 
   /// Emit visit statement.
   Value emit(AST::Visit &stmt) {
-    return emit_visit(emit(stmt.expr), stmt.srcLoc, [&](Value value) {
-      declare_crumb(stmt.name, &stmt, value);
-      if (!value.type->is_void())
+    return emitVisit(emit(stmt.expr), stmt.srcLoc, [&](Value value) {
+      declareCrumb(stmt.name, &stmt, value);
+      if (!value.type->isVoid())
         emit(stmt.stmt);
       return Value();
     });
@@ -732,7 +725,7 @@ public:
     for (auto &astArg : astArgs)
       args.push_back(Argument{astArg.name.srcName, emit(astArg.expr), &astArg});
     args.astArgs = &astArgs;
-    args.validate_names();
+    args.validateNames();
     return args;
   }
 
@@ -753,7 +746,7 @@ public:
 
   /// Emit type switch, useful to implement `Node`, `Decl`, `Expr`, and `Stmt`
   /// sub-class dispatch.
-  template <typename... Ts, typename T> Value emit_type_switch(T &node) {
+  template <typename... Ts, typename T> Value emitTypeSwitch(T &node) {
     return llvm::TypeSwitch<T *, Value>(&node).template Case<Ts...>(
         [&](auto each) { return emit(*each); });
   }
@@ -765,18 +758,18 @@ public:
   /// \{
 
   /// Emit unary operation.
-  Value emit_op(AST::UnaryOp op, Value value, const SourceLocation &srcLoc);
+  Value emitOp(AST::UnaryOp op, Value value, const SourceLocation &srcLoc);
 
   /// Emit binary operation.
-  Value emit_op(AST::BinaryOp op, Value lhs, Value rhs,
-                const SourceLocation &srcLoc);
+  Value emitOp(AST::BinaryOp op, Value lhs, Value rhs,
+               const SourceLocation &srcLoc);
 
   /// Helper to emit unary or binary operation columnwise, assuming
   /// `Type` is an arithmetic matrix type.
   template <typename Func>
-  [[nodiscard]] Value emit_op_columnwise(Type *type, Func &&func) {
+  [[nodiscard]] Value emitOpColumnwise(Type *type, Func &&func) {
     SMDL_SANITY_CHECK(type);
-    SMDL_SANITY_CHECK(type->is_arithmetic_matrix());
+    SMDL_SANITY_CHECK(type->isArithmeticMatrix());
     auto result{Value::zero(type)};
     for (unsigned j = 0;
          j < static_cast<ArithmeticType *>(type)->extent.numCols; j++)
@@ -785,48 +778,47 @@ public:
   }
 
   /// Emit intrinsic.
-  Value emit_intrinsic(std::string_view name, const ArgumentList &args,
-                       const SourceLocation &srcLoc);
+  Value emitIntrinsic(std::string_view name, const ArgumentList &args,
+                      const SourceLocation &srcLoc);
 
   /// Emit call.
-  Value emit_call(Value callee, const ArgumentList &args,
-                  const SourceLocation &srcLoc);
+  Value emitCall(Value callee, const ArgumentList &args,
+                 const SourceLocation &srcLoc);
 
   /// Emit visit.
-  Value emit_visit(Value value, const SourceLocation &srcLoc,
-                   const std::function<Value(Value)> &visitor);
+  Value emitVisit(Value value, const SourceLocation &srcLoc,
+                  const std::function<Value(Value)> &visitor);
 
   /// Emit panic.
-  void emit_panic(Value message, const SourceLocation &srcLoc);
+  void emitPanic(Value message, const SourceLocation &srcLoc);
 
   /// Emit print.
-  void emit_print(Value os, Value value, const SourceLocation &srcLoc,
-                  bool quoteStrings = false);
+  void emitPrint(Value os, Value value, const SourceLocation &srcLoc,
+                 bool quoteStrings = false);
 
-  void emit_print(Value os, std::string_view value,
-                  const SourceLocation &srcLoc) {
-    emit_print(os, context.get_comptime_string(value), srcLoc);
+  void emitPrint(Value os, std::string_view value,
+                 const SourceLocation &srcLoc) {
+    emitPrint(os, context.getComptimeString(value), srcLoc);
   }
 
-  void emit_return(Value value, const SourceLocation &srcLoc) {
-    SMDL_SANITY_CHECK(!has_terminator());
+  void emitReturn(Value value, const SourceLocation &srcLoc) {
+    SMDL_SANITY_CHECK(!hasTerminator());
     SMDL_SANITY_CHECK(labelReturn.block);
-    returns.push_back(Result{value, get_insert_block(), srcLoc});
+    returns.push_back(Result{value, getInsertBlock(), srcLoc});
     unwind(labelReturn.crumb);
     builder.CreateBr(labelReturn.block);
   }
 
-  [[nodiscard]] Parameter emit_parameter(AST::Parameter &astParam) {
-    return Parameter{emit(astParam.type)
-                         .get_comptime_meta_type(context, astParam.name.srcLoc),
-                     astParam.name, &astParam};
+  [[nodiscard]] Parameter emitParameter(AST::Parameter &astParam) {
+    return Parameter{
+        emit(astParam.type).getComptimeMetaType(context, astParam.name.srcLoc),
+        astParam.name, &astParam};
   }
 
-  [[nodiscard]] ParameterList
-  emit_parameter_list(AST::ParameterList &astParams) {
+  [[nodiscard]] ParameterList emitParameterList(AST::ParameterList &astParams) {
     ParameterList params{};
     for (auto &astParam : astParams)
-      params.emplace_back(emit_parameter(astParam));
+      params.emplace_back(emitParameter(astParam));
     params.lastCrumb = crumb;
     return params;
   }
@@ -838,27 +830,26 @@ public:
   /// \{
 
   /// Resolve identifier to value.
-  [[nodiscard]] Value resolve_identifier(Span<const std::string_view> names,
-                                         const SourceLocation &srcLoc,
-                                         bool voidByDefault = false);
+  [[nodiscard]] Value resolveIdentifier(Span<const std::string_view> names,
+                                        const SourceLocation &srcLoc,
+                                        bool voidByDefault = false);
 
   /// The return structure of `resolve_arguments()`.
   struct ResolvedArguments final {
   public:
-    [[nodiscard]] llvm::SmallVector<Type *> get_value_types() const {
+    [[nodiscard]] llvm::SmallVector<Type *> GetValueTypes() const {
       auto valueTypes{llvm::SmallVector<Type *>(values.size())};
       for (size_t i = 0; i < values.size(); i++)
         valueTypes[i] = values[i].type;
       return valueTypes;
     }
 
-    [[nodiscard]] std::optional<ArgumentList>
-    get_implied_visit_arguments() const {
+    [[nodiscard]] std::optional<ArgumentList> GetImpliedVisitArguments() const {
       bool impliedVisit{false};
       auto impliedVisitArgs{args};
       for (size_t i = 0; i < args.size(); i++) {
-        if (argParams[i]->type->is_abstract() &&
-            args[i].value.type->is_union_or_pointer_to_union()) {
+        if (argParams[i]->type->isAbstract() &&
+            args[i].value.type->isUnionOrPointerToUnion()) {
           impliedVisitArgs[i].impliedVisit = impliedVisit = true;
         }
       }
@@ -894,30 +885,31 @@ public:
   /// do not actually emit the code for converting the arguments
   /// into the types and order of the parameters.
   ///
-  [[nodiscard]] ResolvedArguments
-  resolve_arguments(const ParameterList &params, const ArgumentList &args,
-                    const SourceLocation &srcLoc, bool dontEmit = false);
+  [[nodiscard]] ResolvedArguments resolveArguments(const ParameterList &params,
+                                                   const ArgumentList &args,
+                                                   const SourceLocation &srcLoc,
+                                                   bool dontEmit = false);
 
   /// Can resolve arguments?
   ///
   /// This simply wraps `resolve_arguments()` with a `try` block and returns
   /// false if an error is thrown.
   ///
-  [[nodiscard]] bool can_resolve_arguments(const ParameterList &params,
-                                           const ArgumentList &args,
-                                           const SourceLocation &srcLoc) try {
-    auto res{resolve_arguments(params, args, srcLoc, /*dontEmit=*/true)};
+  [[nodiscard]] bool canResolveArguments(const ParameterList &params,
+                                         const ArgumentList &args,
+                                         const SourceLocation &srcLoc) try {
+    auto res{resolveArguments(params, args, srcLoc, /*dontEmit=*/true)};
     return true;
   } catch (...) {
     return false;
   }
 
   /// Resolve module.
-  [[nodiscard]] Module *resolve_module(Span<const std::string_view> importPath,
-                                       bool isAbs, Module *thisModule);
+  [[nodiscard]] Module *resolveModule(Span<const std::string_view> importPath,
+                                      bool isAbs, Module *thisModule);
 
   /// Resolve import using aliases in import path.
-  void resolve_import_using_aliases(
+  void resolveImportUsingAliases(
       Crumb *crumbStart, Span<const std::string_view> importPath,
       llvm::SmallVector<std::string_view> &finalImportPath);
 

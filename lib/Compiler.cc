@@ -337,7 +337,7 @@ std::string Compiler::dump(DumpFormat dumpFormat) {
 std::optional<Error> Compiler::jit_compile() noexcept {
   SMDL_PROFILER_ENTRY("Compiler::jit_compile()");
   return catch_and_return_error([&] {
-    llvm_throw_if_error(llvmJit->addIRModule(std::move(*llvmJitModule)));
+    llvmThrowIfError(llvmJit->addIRModule(std::move(*llvmJitModule)));
     llvmJitModule.reset();
     jit_lookup_or_throw(jitColorToRgb);
     jit_lookup_or_throw(jitRgbToColor);

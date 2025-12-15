@@ -43,7 +43,7 @@ public:
   /// \{
 
   /// Is abstract?
-  [[nodiscard]] virtual bool is_abstract() { return false; }
+  [[nodiscard]] virtual bool isAbstract() { return false; }
 
   /// Invoke.
   ///
@@ -60,7 +60,7 @@ public:
                        const SourceLocation &srcLoc);
 
   /// Has the given field?
-  [[nodiscard]] virtual bool has_field(std::string_view name) {
+  [[nodiscard]] virtual bool hasField(std::string_view name) {
     (void)name;
     return false;
   }
@@ -73,9 +73,9 @@ public:
   /// \param[in]    srcLoc   The source location if applicable.
   ///
   [[nodiscard]]
-  virtual Value access_field(Emitter &emitter, Value value,
-                             std::string_view name,
-                             const SourceLocation &srcLoc);
+  virtual Value accessField(Emitter &emitter, Value value,
+                            std::string_view name,
+                            const SourceLocation &srcLoc);
 
   /// Access the given index or throw an `Error` on failure.
   ///
@@ -85,8 +85,8 @@ public:
   /// \param[in]    srcLoc   The source location if applicable.
   ///
   [[nodiscard]]
-  virtual Value access_index(Emitter &emitter, Value value, Value i,
-                             const SourceLocation &srcLoc);
+  virtual Value accessIndex(Emitter &emitter, Value value, Value i,
+                            const SourceLocation &srcLoc);
 
   /// Insert element into compound value. Turns everything into rvalues.
   ///
@@ -99,104 +99,102 @@ public:
 
 public:
   /// Is instance of `ArrayType`?
-  [[nodiscard]] bool is_array() const { return typeKind == TypeKind::Array; }
+  [[nodiscard]] bool isArray() const { return typeKind == TypeKind::Array; }
 
   /// Is instance of `InferredSizeArrayType`?
-  [[nodiscard]] bool is_inferred_size_array() const {
+  [[nodiscard]] bool isInferredSizeArray() const {
     return typeKind == TypeKind::InferredSizeArray;
   }
 
   /// Is instance of `ArithmeticType`?
-  [[nodiscard]] bool is_arithmetic() const {
+  [[nodiscard]] bool isArithmetic() const {
     return typeKind == TypeKind::Arithmetic;
   }
 
   /// Is instance of `ArithmeticType` with integral boolean scalar?
-  [[nodiscard]] bool is_arithmetic_boolean() const;
+  [[nodiscard]] bool isArithmeticBoolean() const;
 
   /// Is instance of `ArithmeticType` with integral scalar?
-  [[nodiscard]] bool is_arithmetic_integral() const;
+  [[nodiscard]] bool isArithmeticIntegral() const;
 
   /// Is instance of `ArithmeticType` with floating point scalar?
-  [[nodiscard]] bool is_arithmetic_floating_point() const;
+  [[nodiscard]] bool isArithmeticFloatingPoint() const;
 
   /// Is instance of `ArithmeticType` with scalar extent?
-  [[nodiscard]] bool is_arithmetic_scalar() const;
+  [[nodiscard]] bool isArithmeticScalar() const;
 
   /// Is instance of `ArithmeticType` with vector extent?
-  [[nodiscard]] bool is_arithmetic_vector() const;
+  [[nodiscard]] bool isArithmeticVector() const;
 
   /// Is instance of `ArithmeticType` with matrix extent?
-  [[nodiscard]] bool is_arithmetic_matrix() const;
+  [[nodiscard]] bool isArithmeticMatrix() const;
 
   /// Is arithmetic scalar int type?
-  [[nodiscard]] bool is_arithmetic_scalar_int() const {
-    return is_arithmetic_scalar() && is_arithmetic_integral();
+  [[nodiscard]] bool isArithmeticScalarInt() const {
+    return isArithmeticScalar() && isArithmeticIntegral();
   }
 
   /// Is instance of `ColorType`?
-  [[nodiscard]] bool is_color() const { return typeKind == TypeKind::Color; }
+  [[nodiscard]] bool isColor() const { return typeKind == TypeKind::Color; }
 
   /// Is instance of `complex`?
-  [[nodiscard]] bool is_complex(Context &context) const;
+  [[nodiscard]] bool isComplex(Context &context) const;
 
   /// Is instance of `EnumType`?
-  [[nodiscard]] bool is_enum() const { return typeKind == TypeKind::Enum; }
+  [[nodiscard]] bool isEnum() const { return typeKind == TypeKind::Enum; }
 
   /// Is instance of `FunctionType`?
-  [[nodiscard]] bool is_function() const {
+  [[nodiscard]] bool isFunction() const {
     return typeKind == TypeKind::Function;
   }
 
   /// Is instance of `MetaType`?
-  [[nodiscard]] bool is_meta() const { return typeKind == TypeKind::Meta; }
+  [[nodiscard]] bool isMeta() const { return typeKind == TypeKind::Meta; }
 
   /// Is instance of `PointerType`?
-  [[nodiscard]] bool is_pointer() const {
-    return typeKind == TypeKind::Pointer;
-  }
+  [[nodiscard]] bool isPointer() const { return typeKind == TypeKind::Pointer; }
 
   /// Is instance of `StringType`?
-  [[nodiscard]] bool is_string() const { return typeKind == TypeKind::String; }
+  [[nodiscard]] bool isString() const { return typeKind == TypeKind::String; }
 
   /// Is instance of `StructType`?
-  [[nodiscard]] bool is_struct() const { return typeKind == TypeKind::Struct; }
+  [[nodiscard]] bool isStruct() const { return typeKind == TypeKind::Struct; }
 
   /// Is instance of `TagType`?
-  [[nodiscard]] bool is_tag() const { return typeKind == TypeKind::Tag; }
+  [[nodiscard]] bool isTag() const { return typeKind == TypeKind::Tag; }
 
   /// Is instance of `UnionType`?
-  [[nodiscard]] bool is_union() const { return typeKind == TypeKind::Union; }
+  [[nodiscard]] bool isUnion() const { return typeKind == TypeKind::Union; }
 
   /// Is instance of `UnionType` where `void` is an alternative?
-  [[nodiscard]] bool is_optional_union() const;
+  [[nodiscard]] bool isOptionalUnion() const;
 
   /// Is instance of `UnionType` or multi-level `PointerType`
   /// to instance of `UnionType`?
-  [[nodiscard]] bool is_union_or_pointer_to_union() const {
-    return get_first_non_pointer_type()->is_union();
+  [[nodiscard]] bool isUnionOrPointerToUnion() const {
+    return getFirstNonPointerType()->isUnion();
   }
 
   /// Is instance of `ComptimeUnionType`?
-  [[nodiscard]] bool is_comptime_union() const {
+  [[nodiscard]] bool isComptimeUnion() const {
     return typeKind == TypeKind::ComptimeUnion;
   }
 
   /// Is instance of `ArithmeticType` with scalar or vector extent OR
   /// is instance of `ColorType`?
-  [[nodiscard]] bool is_vectorized() const {
-    return is_arithmetic_scalar() || is_arithmetic_vector() || is_color();
+  [[nodiscard]] bool isVectorized() const {
+    return isArithmeticScalar() || isArithmeticVector() || isColor();
   }
 
   /// Is instance of `VoidType`?
-  [[nodiscard]] bool is_void() const { return typeKind == TypeKind::Void; }
+  [[nodiscard]] bool isVoid() const { return typeKind == TypeKind::Void; }
 
 public:
   /// If `is_pointer()`, returns the `pointeeType`, else returns null.
-  [[nodiscard]] Type *get_pointee_type() const;
+  [[nodiscard]] Type *getPointeeType() const;
 
   /// Get the first non-pointer type.
-  [[nodiscard]] Type *get_first_non_pointer_type() const;
+  [[nodiscard]] Type *getFirstNonPointerType() const;
 
   /// Get the first non-pointer type depth.
   ///
@@ -206,10 +204,10 @@ public:
   /// - Pointer depth is 2 for `&&int`
   /// - Pointer depth is 3 for `&&&int`
   ///
-  [[nodiscard]] size_t get_first_non_pointer_type_depth() const;
+  [[nodiscard]] size_t getFirstNonPointerTypeDepth() const;
 
   /// Get the display name as C-string.
-  [[nodiscard]] const char *get_display_name() const {
+  [[nodiscard]] const char *getDisplayName() const {
     return displayName.c_str();
   }
 
@@ -242,18 +240,16 @@ public:
   [[nodiscard]] operator bool() const { return intent != Intent::None; }
 
   /// Is boolean? (i.e., integral and has only 1 bit)
-  [[nodiscard]] bool is_boolean() const {
-    return is_integral() && numBits == 1;
-  }
+  [[nodiscard]] bool isBoolean() const { return isIntegral() && numBits == 1; }
 
   /// Is integral?
-  [[nodiscard]] bool is_integral() const { return intent == Intent::Int; }
+  [[nodiscard]] bool isIntegral() const { return intent == Intent::Int; }
 
   /// Is floating point?
-  [[nodiscard]] bool is_floating_point() const { return intent == Intent::FP; }
+  [[nodiscard]] bool isFloatingPoint() const { return intent == Intent::FP; }
 
   /// Get common scalar between this and the given `other` scalar.
-  [[nodiscard]] Scalar get_common(const Scalar &other) const {
+  [[nodiscard]] Scalar getCommon(const Scalar &other) const {
     auto result{Scalar{std::max(intent, other.intent),
                        std::max(numBits, other.numBits)}};
     if (result.intent == Intent::FP) {
@@ -272,7 +268,7 @@ public:
   }
 
   /// Get the corresponding LLVM type.
-  [[nodiscard]] llvm::Type *get_llvm_type(llvm::LLVMContext &context) const;
+  [[nodiscard]] llvm::Type *getLLVMType(llvm::LLVMContext &context) const;
 
   /// Convert to string printing and debugging.
   [[nodiscard]] std::string to_string() const {
@@ -304,7 +300,7 @@ public:
 
 public:
   /// Get boolean scalar, i.e., `get_int(1)`.
-  [[nodiscard]] static constexpr Scalar get_bool() { return {Intent::Int, 1}; }
+  [[nodiscard]] static constexpr Scalar getBool() { return {Intent::Int, 1}; }
 
   /// Get integral scalar with the given `numBits`.
   ///
@@ -315,7 +311,7 @@ public:
   /// For integral scalars, the `numBits` is not restricted to be a power of
   /// two. That is, `get_int(11)` represents an 11-bit integer, and LLVM is
   /// capable of emulating arbitrary widths (or at least I think?)
-  [[nodiscard]] static constexpr Scalar get_int(uint8_t numBits) {
+  [[nodiscard]] static constexpr Scalar getInt(uint8_t numBits) {
     return {Intent::Int, numBits};
   }
 
@@ -331,27 +327,25 @@ public:
   /// - `numBits = 64` or double precision,
   /// - `numBits = 80` or extended precision (not always portable),
   /// - `numBits = 128` or quadruple precision (not always portable).
-  [[nodiscard]] static constexpr Scalar get_FP(uint8_t numBits) {
+  [[nodiscard]] static constexpr Scalar getFP(uint8_t numBits) {
     return {Intent::FP, numBits};
   }
 
   /// Get half-precision floating point scalar.
-  [[nodiscard]] static constexpr Scalar get_half() { return {Intent::FP, 16}; }
+  [[nodiscard]] static constexpr Scalar getHalf() { return {Intent::FP, 16}; }
 
   /// Get single-precision floating point scalar.
-  [[nodiscard]] static constexpr Scalar get_float() { return {Intent::FP, 32}; }
+  [[nodiscard]] static constexpr Scalar getFloat() { return {Intent::FP, 32}; }
 
   /// Get double-precision floating point scalar.
-  [[nodiscard]] static constexpr Scalar get_double() {
-    return {Intent::FP, 64};
-  }
+  [[nodiscard]] static constexpr Scalar getDouble() { return {Intent::FP, 64}; }
 
   template <typename T> [[nodiscard]] static constexpr Scalar get() {
     static_assert(std::is_arithmetic_v<T>);
     if constexpr (std::is_integral_v<T>)
-      return get_int(sizeof(T) * 8);
+      return getInt(sizeof(T) * 8);
     else
-      return get_FP(sizeof(T) * 8);
+      return getFP(sizeof(T) * 8);
   }
 };
 //--}
@@ -369,30 +363,30 @@ public:
       : numCols(numCols), numRows(numRows) {}
 
   /// Get the vector size.
-  [[nodiscard]] constexpr uint16_t get_vector_size() const { return numRows; }
+  [[nodiscard]] constexpr uint16_t getVectorSize() const { return numRows; }
 
   /// Is scalar?
-  [[nodiscard]] constexpr bool is_scalar() const {
+  [[nodiscard]] constexpr bool isScalar() const {
     return numCols == 1 && numRows == 1;
   }
 
   /// Is vector?
-  [[nodiscard]] constexpr bool is_vector() const {
+  [[nodiscard]] constexpr bool isVector() const {
     return numCols == 1 && numRows > 1;
   }
 
   /// Is matrix?
-  [[nodiscard]] constexpr bool is_matrix() const {
+  [[nodiscard]] constexpr bool isMatrix() const {
     return numCols > 1 && numRows > 1;
   }
 
   /// Get the transpose extent.
-  [[nodiscard]] constexpr Extent get_transpose() const {
+  [[nodiscard]] constexpr Extent getTranspose() const {
     return {numRows, numCols};
   }
 
   /// Get the common extent.
-  [[nodiscard]] constexpr Extent get_common(const Extent &other) const {
+  [[nodiscard]] constexpr Extent getCommon(const Extent &other) const {
     return {std::max(numCols, other.numCols), std::max(numRows, other.numRows)};
   }
 
@@ -402,7 +396,7 @@ public:
   /// - If `is_vector()`, returns vector type of `llvmType`.
   /// - If `is_matrix()`, returns array type of column vector types
   ///   of `llvmType`.
-  [[nodiscard]] llvm::Type *get_llvm_type(llvm::Type *llvmType) const {
+  [[nodiscard]] llvm::Type *getLLVMType(llvm::Type *llvmType) const {
     if (numRows > 1)
       llvmType = llvm::FixedVectorType::get(llvmType, numRows);
     if (numCols > 1)
@@ -413,13 +407,13 @@ public:
   /// Convert to string for printing or debugging.
   [[nodiscard]] std::string to_string(const Scalar &scalar) const {
     std::string str{scalar.to_string()};
-    if (is_scalar()) {
+    if (isScalar()) {
       return str;
-    } else if (is_vector()) {
+    } else if (isVector()) {
       return str[0] != '#' && numRows <= 4
                  ? concat(str, numRows)
                  : concat("#type_vector(", str, ", ", numRows, ")");
-    } else if (is_matrix()) {
+    } else if (isMatrix()) {
       return str[0] != '#' && numCols <= 4 && numRows <= 4
                  ? concat(str, numCols, "x", numRows)
                  : concat("#type_matrix(", str, ", ", numCols, ", ", numRows,
@@ -459,15 +453,15 @@ public:
   Value invoke(Emitter &emitter, const ArgumentList &args,
                const SourceLocation &srcLoc) final;
 
-  [[nodiscard]] bool has_field(std::string_view name) final;
+  [[nodiscard]] bool hasField(std::string_view name) final;
 
   [[nodiscard]]
-  Value access_field(Emitter &emitter, Value value, std::string_view name,
-                     const SourceLocation &srcLoc) final;
+  Value accessField(Emitter &emitter, Value value, std::string_view name,
+                    const SourceLocation &srcLoc) final;
 
   [[nodiscard]]
-  Value access_index(Emitter &emitter, Value value, Value i,
-                     const SourceLocation &srcLoc) final;
+  Value accessIndex(Emitter &emitter, Value value, Value i,
+                    const SourceLocation &srcLoc) final;
 
   [[nodiscard]]
   Value insert(Emitter &emitter, Value value, Value elem, unsigned i,
@@ -477,32 +471,32 @@ public:
 
 public:
   /// Get the `ArithmeticType` with the given `newScalar`.
-  [[nodiscard]] ArithmeticType *get_with_different_scalar(Context &context,
-                                                          Scalar newScalar);
+  [[nodiscard]] ArithmeticType *getWithDifferentScalar(Context &context,
+                                                       Scalar newScalar);
 
   /// Get the `ArithmeticType` with the given `newExtent`.
-  [[nodiscard]] ArithmeticType *get_with_different_extent(Context &context,
-                                                          Extent newExtent);
+  [[nodiscard]] ArithmeticType *getWithDifferentExtent(Context &context,
+                                                       Extent newExtent);
 
   /// Get the `ArithmeticType` with the same `scalar` and `Extent(1)`.
-  [[nodiscard]] ArithmeticType *get_scalar_type(Context &context) {
-    return get_with_different_extent(context, Extent(1));
+  [[nodiscard]] ArithmeticType *getScalarType(Context &context) {
+    return getWithDifferentExtent(context, Extent(1));
   }
 
   /// Get the `ArithmeticType` with the same `scalar` and `Extent(numRows)`.
-  [[nodiscard]] ArithmeticType *get_column_type(Context &context) {
-    return get_with_different_extent(context, Extent(extent.numRows));
+  [[nodiscard]] ArithmeticType *getColumnType(Context &context) {
+    return getWithDifferentExtent(context, Extent(extent.numRows));
   }
 
   /// Get the `ArithmeticType` with the same `scalar` and
   /// `extent.get_transpose()`.
-  [[nodiscard]] ArithmeticType *get_transpose_type(Context &context) {
-    return get_with_different_extent(context, extent.get_transpose());
+  [[nodiscard]] ArithmeticType *getTransposeType(Context &context) {
+    return getWithDifferentExtent(context, extent.getTranspose());
   }
 
   /// Get the common type.
-  [[nodiscard]] ArithmeticType *get_common_type(Context &context,
-                                                ArithmeticType *otherType);
+  [[nodiscard]] ArithmeticType *getCommonType(Context &context,
+                                              ArithmeticType *otherType);
 
 public:
   /// The scalar type.
@@ -519,11 +513,11 @@ private:
   /// - 'z' is 2
   /// - 'w' is 3
   ///
-  [[nodiscard]] std::optional<uint32_t> to_index(char c) const {
-    if (!extent.is_scalar()) {
+  [[nodiscard]] std::optional<uint32_t> toIndex(char c) const {
+    if (!extent.isScalar()) {
       for (uint16_t i{};
-           i < (extent.is_vector() ? extent.numRows : extent.numCols); i++) {
-        if (c == "xyzw"[i] || (extent.is_vector() && c == "rgba"[i])) {
+           i < (extent.isVector() ? extent.numRows : extent.numCols); i++) {
+        if (c == "xyzw"[i] || (extent.isVector() && c == "rgba"[i])) {
           return i;
         }
       }
@@ -533,11 +527,11 @@ private:
 
   /// Convert the given string to an index sequence for swizzling.
   [[nodiscard]] std::optional<llvm::SmallVector<int>>
-  to_index_swizzle(llvm::StringRef name) const {
-    if (extent.is_vector()) {
+  toIndexSwizzle(llvm::StringRef name) const {
+    if (extent.isVector()) {
       llvm::SmallVector<int> swizzle{};
       for (char c : name) {
-        auto i{to_index(c)};
+        auto i{toIndex(c)};
         if (!i)
           return std::nullopt;
         swizzle.push_back(static_cast<int>(*i));
@@ -557,25 +551,25 @@ public:
   /// \name Virtual interface
   /// \{
 
-  [[nodiscard]] bool is_abstract() final {
-    return !llvmType || elemType->is_abstract();
+  [[nodiscard]] bool isAbstract() final {
+    return !llvmType || elemType->isAbstract();
   }
 
   [[nodiscard]]
   Value invoke(Emitter &emitter, const ArgumentList &args,
                const SourceLocation &srcLoc) final;
 
-  [[nodiscard]] bool has_field(std::string_view name) final {
-    return elemType->has_field(name);
+  [[nodiscard]] bool hasField(std::string_view name) final {
+    return elemType->hasField(name);
   }
 
   [[nodiscard]]
-  Value access_field(Emitter &emitter, Value value, std::string_view name,
-                     const SourceLocation &srcLoc) final;
+  Value accessField(Emitter &emitter, Value value, std::string_view name,
+                    const SourceLocation &srcLoc) final;
 
   [[nodiscard]]
-  Value access_index(Emitter &emitter, Value value, Value i,
-                     const SourceLocation &srcLoc) final;
+  Value accessIndex(Emitter &emitter, Value value, Value i,
+                    const SourceLocation &srcLoc) final;
 
   [[nodiscard]]
   Value insert(Emitter &emitter, Value value, Value elem, unsigned i,
@@ -585,12 +579,12 @@ public:
 
 public:
   /// Get the `ArrayType` with the given `newElemType`.
-  [[nodiscard]] ArrayType *get_with_different_element_type(Context &context,
-                                                           Type *newElemType);
+  [[nodiscard]] ArrayType *getWithDifferentElementType(Context &context,
+                                                       Type *newElemType);
 
   /// Get the `ArrayType` with the given `newSize`.
-  [[nodiscard]] ArrayType *get_with_different_size(Context &context,
-                                                   uint32_t newSize);
+  [[nodiscard]] ArrayType *getWithDifferentSize(Context &context,
+                                                uint32_t newSize);
 
 public:
   /// The element type.
@@ -615,7 +609,7 @@ public:
   /// \name Virtual interface
   /// \{
 
-  [[nodiscard]] bool is_abstract() final { return true; }
+  [[nodiscard]] bool isAbstract() final { return true; }
 
   [[nodiscard]]
   Value invoke(Emitter &emitter, const ArgumentList &args,
@@ -638,8 +632,8 @@ public:
                const SourceLocation &srcLoc) final;
 
   [[nodiscard]]
-  Value access_index(Emitter &emitter, Value value, Value i,
-                     const SourceLocation &srcLoc) final;
+  Value accessIndex(Emitter &emitter, Value value, Value i,
+                    const SourceLocation &srcLoc) final;
 
   [[nodiscard]]
   Value insert(Emitter &emitter, Value value, Value elem, unsigned i,
@@ -649,11 +643,11 @@ public:
 
 public:
   /// Get the arithmetic scalar type, i.e., `float`.
-  [[nodiscard]] ArithmeticType *get_arithmetic_scalar_type(Context &context);
+  [[nodiscard]] ArithmeticType *getArithmeticScalarType(Context &context);
 
   /// Get the arithmetic vector type, i.e, `floatN` where `N` is
   /// `wavelengthBaseMax`.
-  [[nodiscard]] ArithmeticType *get_arithmetic_vector_type(Context &context);
+  [[nodiscard]] ArithmeticType *getArithmeticVectorType(Context &context);
 
 public:
   /// The number of wavelengths.
@@ -678,7 +672,7 @@ public:
   /// \name Virtual interface
   /// \{
 
-  [[nodiscard]] bool is_abstract() final { return true; }
+  [[nodiscard]] bool isAbstract() final { return true; }
 
   [[nodiscard]]
   Value invoke(Emitter &emitter, const ArgumentList &args,
@@ -738,7 +732,7 @@ public:
   /// \name Virtual interface
   /// \{
 
-  [[nodiscard]] bool is_abstract() final { return params.is_abstract(); }
+  [[nodiscard]] bool isAbstract() final { return params.isAbstract(); }
 
   /// Invoke. This is the entry point for function calls and function
   /// overload resolution.
@@ -774,30 +768,28 @@ public:
 
 public:
   /// Is marked with the attribute `@(pure)`?
-  [[nodiscard]] bool is_pure() const { return decl.has_attribute("pure"); }
+  [[nodiscard]] bool isPure() const { return decl.has_attribute("pure"); }
 
   /// Is marked with the attribute `@(macro)`?
-  [[nodiscard]] bool is_macro() const {
+  [[nodiscard]] bool isMacro() const {
     return decl.has_attribute("macro") || isMaterial;
   }
 
   /// Is marked with the attribute `@(foreign)`?
-  [[nodiscard]] bool is_foreign() const {
-    return decl.has_attribute("foreign");
-  }
+  [[nodiscard]] bool isForeign() const { return decl.has_attribute("foreign"); }
 
   /// Is function variant?
-  [[nodiscard]] bool is_variant() const { return decl.is_variant(); }
+  [[nodiscard]] bool isVariant() const { return decl.is_variant(); }
 
   /// Has no overloads?
-  [[nodiscard]] bool has_no_overloads() const {
+  [[nodiscard]] bool hasNoOverloads() const {
     return !prevOverload && !nextOverload;
   }
 
   /// Resolve overload.
-  [[nodiscard]] FunctionType *resolve_overload(Emitter &emitter,
-                                               const ArgumentList &args,
-                                               const SourceLocation &srcLoc);
+  [[nodiscard]] FunctionType *resolveOverload(Emitter &emitter,
+                                              const ArgumentList &args,
+                                              const SourceLocation &srcLoc);
 
   /// An instantiation with concrete types and a concrete LLVM function.
   struct Instance final {
@@ -845,7 +837,7 @@ public:
   bool isMaterial{};
 
 private:
-  void initialize_jit_material_functions(Emitter &emitter);
+  void initializeJitMaterialFunctions(Emitter &emitter);
 };
 
 /// An inferred-size array type.
@@ -868,7 +860,7 @@ public:
   /// \name Virtual interface
   /// \{
 
-  [[nodiscard]] bool is_abstract() final { return true; }
+  [[nodiscard]] bool isAbstract() final { return true; }
 
   [[nodiscard]]
   Value invoke(Emitter &emitter, const ArgumentList &args,
@@ -893,14 +885,14 @@ class MetaType final : public TypeSubclass<TypeKind::Meta> {
 public:
   explicit MetaType(llvm::LLVMContext &context, std::string name) {
     displayName = std::move(name);
-    llvmType = llvm_int_ptr_type(context);
+    llvmType = llvmIntPtrType(context);
   }
 
 public:
   /// \name Virtual interface
   /// \{
 
-  [[nodiscard]] bool has_field(std::string_view) final {
+  [[nodiscard]] bool hasField(std::string_view) final {
     // We consider that meta-types have all possible fields, so attempting
     // to look up any given string is legal. If no such field exists, we
     // ultimately return void without considering it an error.
@@ -908,8 +900,8 @@ public:
   }
 
   [[nodiscard]]
-  Value access_field(Emitter &emitter, Value value, std::string_view name,
-                     const SourceLocation &srcLoc) final;
+  Value accessField(Emitter &emitter, Value value, std::string_view name,
+                    const SourceLocation &srcLoc) final;
 
   /// \}
 };
@@ -923,23 +915,23 @@ public:
   /// \name Virtual interface
   /// \{
 
-  [[nodiscard]] bool is_abstract() final { return pointeeType->is_abstract(); }
+  [[nodiscard]] bool isAbstract() final { return pointeeType->isAbstract(); }
 
   [[nodiscard]]
   Value invoke(Emitter &emitter, const ArgumentList &args,
                const SourceLocation &srcLoc) final;
 
-  [[nodiscard]] bool has_field(std::string_view name) final {
-    return pointeeType->has_field(name);
+  [[nodiscard]] bool hasField(std::string_view name) final {
+    return pointeeType->hasField(name);
   }
 
   [[nodiscard]]
-  Value access_field(Emitter &emitter, Value value, std::string_view name,
-                     const SourceLocation &srcLoc) final;
+  Value accessField(Emitter &emitter, Value value, std::string_view name,
+                    const SourceLocation &srcLoc) final;
 
   [[nodiscard]]
-  Value access_index(Emitter &emitter, Value value, Value i,
-                     const SourceLocation &srcLoc) final;
+  Value accessIndex(Emitter &emitter, Value value, Value i,
+                    const SourceLocation &srcLoc) final;
 
   /// \}
 
@@ -956,7 +948,7 @@ public:
   /// \name Virtual interface
   /// \{
 
-  [[nodiscard]] bool has_field(std::string_view name) final {
+  [[nodiscard]] bool hasField(std::string_view name) final {
     for (auto &field : fields)
       if (field.name == name)
         return true;
@@ -964,8 +956,8 @@ public:
   }
 
   [[nodiscard]]
-  Value access_field(Emitter &emitter, Value value, std::string_view name,
-                     const SourceLocation &srcLoc) final;
+  Value accessField(Emitter &emitter, Value value, std::string_view name,
+                    const SourceLocation &srcLoc) final;
 
   /// \}
 
@@ -993,13 +985,13 @@ public:
   Value invoke(Emitter &emitter, const ArgumentList &args,
                const SourceLocation &srcLoc) final;
 
-  [[nodiscard]] bool has_field(std::string_view name) final {
+  [[nodiscard]] bool hasField(std::string_view name) final {
     return name == "size";
   }
 
   [[nodiscard]]
-  Value access_field(Emitter &emitter, Value value, std::string_view name,
-                     const SourceLocation &srcLoc) final;
+  Value accessField(Emitter &emitter, Value value, std::string_view name,
+                    const SourceLocation &srcLoc) final;
 
   /// \}
 };
@@ -1048,7 +1040,7 @@ public:
   /// - `type` is a struct type and `instanceOf == type`, OR
   /// - `type` is a tag type that appears in `tags`.
   ///
-  [[nodiscard]] bool is_instance_of(Type *type) const {
+  [[nodiscard]] bool isInstanceOf(Type *type) const {
     return instanceOf == type ||
            std::find(tags.begin(), tags.end(), type) != tags.end();
   }
@@ -1057,17 +1049,17 @@ public:
   /// \name Virtual interface
   /// \{
 
-  [[nodiscard]] bool is_abstract() final;
+  [[nodiscard]] bool isAbstract() final;
 
   [[nodiscard]]
   Value invoke(Emitter &emitter, const ArgumentList &args,
                const SourceLocation &srcLoc) final;
 
-  [[nodiscard]] bool has_field(std::string_view name) final;
+  [[nodiscard]] bool hasField(std::string_view name) final;
 
   [[nodiscard]]
-  Value access_field(Emitter &emitter, Value value, std::string_view name,
-                     const SourceLocation &srcLoc) final;
+  Value accessField(Emitter &emitter, Value value, std::string_view name,
+                    const SourceLocation &srcLoc) final;
 
   [[nodiscard]]
   Value insert(Emitter &emitter, Value value, Value elem, unsigned i,
@@ -1121,9 +1113,9 @@ public:
   bool isDefaultInstance{};
 
 public:
-  [[nodiscard]] auto &instance_of() { return instanceOf ? *instanceOf : *this; }
+  [[nodiscard]] auto &getInstanceOf() { return instanceOf ? *instanceOf : *this; }
 
-  [[nodiscard]] auto &instance_of() const {
+  [[nodiscard]] auto &getInstanceOf() const {
     return instanceOf ? *instanceOf : *this;
   }
 };
@@ -1137,7 +1129,7 @@ public:
   /// \name Virtual interface
   /// \{
 
-  [[nodiscard]] bool is_abstract() final { return true; }
+  [[nodiscard]] bool isAbstract() final { return true; }
 
   [[nodiscard]] Value invoke(Emitter &emitter, const ArgumentList &args,
                              const SourceLocation &srcLoc) final;
@@ -1161,22 +1153,22 @@ public:
   [[nodiscard]] Value invoke(Emitter &emitter, const ArgumentList &args,
                              const SourceLocation &srcLoc) final;
 
-  [[nodiscard]] bool has_field(std::string_view name) final {
+  [[nodiscard]] bool hasField(std::string_view name) final {
     for (auto caseType : caseTypes)
-      if (!(caseType->is_void() || caseType->has_field(name)))
+      if (!(caseType->isVoid() || caseType->hasField(name)))
         return false;
     return true;
   }
 
   [[nodiscard]]
-  Value access_field(Emitter &emitter, Value value, std::string_view name,
-                     const SourceLocation &srcLoc) final;
+  Value accessField(Emitter &emitter, Value value, std::string_view name,
+                    const SourceLocation &srcLoc) final;
 
   /// \}
 
 public:
   /// Get the index of the given case type.
-  [[nodiscard]] int get_case_type_index(Type *type) const {
+  [[nodiscard]] int getCaseTypeIndex(Type *type) const {
     for (int i = 0; i < int(caseTypes.size()); i++)
       if (caseTypes[i] == type)
         return i;
@@ -1184,15 +1176,15 @@ public:
   }
 
   /// Has the given case type?
-  [[nodiscard]] bool has_case_type(Type *type) const {
+  [[nodiscard]] bool hasCaseType(Type *type) const {
     return std::find(caseTypes.begin(), caseTypes.end(), type) !=
            caseTypes.end();
   }
 
   /// Has all case types of the given union type?
-  [[nodiscard]] bool has_all_case_types(UnionType *unionType) const {
+  [[nodiscard]] bool hasAllCaseTypes(UnionType *unionType) const {
     for (auto caseType : unionType->caseTypes)
-      if (!has_case_type(caseType))
+      if (!hasCaseType(caseType))
         return false;
     return true;
   }
@@ -1204,10 +1196,10 @@ public:
   ///   the given type (which must be an abstract `StructType`)
   /// - Every case type is a `StructType` that is tagged as the given type
   ///   (which must be an abstract `TagType`)
-  [[nodiscard]] bool is_always_instance_of(Type *type) const {
+  [[nodiscard]] bool isAlwaysInstanceOf(Type *type) const {
     for (auto caseType : caseTypes)
-      if (!(caseType->is_struct() &&
-            static_cast<StructType *>(caseType)->is_instance_of(type)))
+      if (!(caseType->isStruct() &&
+            static_cast<StructType *>(caseType)->isInstanceOf(type)))
         return false;
     return true;
   }
@@ -1227,7 +1219,7 @@ public:
   /// type key and remove redundant union type definitions.
   [[nodiscard]]
   static llvm::SmallVector<Type *>
-  canonicalize_types(llvm::ArrayRef<Type *> types);
+  canonicalizeTypes(llvm::ArrayRef<Type *> types);
 };
 
 /// The void type.

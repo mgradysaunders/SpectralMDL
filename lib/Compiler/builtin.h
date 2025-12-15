@@ -3443,8 +3443,8 @@ export PROSPECT_result PROSPECT(
   return nullptr;
 }
 #include "builtin/albedo/diffuse_reflection_bsdf.inl"
-#include "builtin/albedo/microfacet_ggx_smith_bsdf.inl"
 #include "builtin/albedo/microfacet_beckmann_smith_bsdf.inl"
+#include "builtin/albedo/microfacet_ggx_smith_bsdf.inl"
 #include "builtin/albedo/sheen_bsdf.inl"
 #include "builtin/albedo/simple_glossy_bsdf.inl"
 #include "builtin/albedo/ward_geisler_moroder_bsdf.inl"

@@ -39,19 +39,19 @@ namespace smdl {
 /// \defgroup Compiler Compiler Implementation
 /// \{
 
-void llvm_throw_if_error(llvm::Error error);
+void llvmThrowIfError(llvm::Error error);
 
 template <typename T>
-[[nodiscard]] inline T llvm_throw_if_error(llvm::Expected<T> valueOrError) {
+[[nodiscard]] inline T llvmThrowIfError(llvm::Expected<T> valueOrError) {
   if (!valueOrError)
-    llvm_throw_if_error(valueOrError.takeError());
+    llvmThrowIfError(valueOrError.takeError());
   return std::move(*valueOrError);
 }
 
 template <typename T>
-[[nodiscard]] inline T llvm_throw_if_error(llvm::ErrorOr<T> valueOrError) {
+[[nodiscard]] inline T llvmThrowIfError(llvm::ErrorOr<T> valueOrError) {
   if (!valueOrError)
-    llvm_throw_if_error(llvm::make_error<llvm::StringError>(
+    llvmThrowIfError(llvm::make_error<llvm::StringError>(
         "STL error: " + valueOrError.getError().message(),
         valueOrError.getError()));
   return std::move(*valueOrError);
@@ -85,21 +85,21 @@ public:
   llvm::ModuleAnalysisManager moduleAnalysis;
 };
 
-[[nodiscard]] inline auto llvm_int_ptr_type(llvm::LLVMContext &context) {
+[[nodiscard]] inline auto llvmIntPtrType(llvm::LLVMContext &context) {
   return llvm::Type::getIntNTy(context, sizeof(void *) * 8);
 }
 
-[[nodiscard]] inline auto llvm_ptr_as_constant_int(llvm::LLVMContext &context,
-                                                   const void *ptr) {
+[[nodiscard]] inline auto llvmPtrAsConstantInt(llvm::LLVMContext &context,
+                                               const void *ptr) {
   uintptr_t addr{};
   std::memcpy(&addr, &ptr, sizeof(ptr));
   static_assert(sizeof(addr) == sizeof(ptr));
-  return llvm::ConstantInt::get(llvm_int_ptr_type(context),
+  return llvm::ConstantInt::get(llvmIntPtrType(context),
                                 llvm::APInt(sizeof(addr) * 8, addr));
 }
 
 template <typename T>
-[[nodiscard]] inline T *llvm_constant_int_as_ptr(llvm::Value *value) {
+[[nodiscard]] inline T *llvmConstantIntAsPtr(llvm::Value *value) {
   if (auto constantInt{llvm::dyn_cast<llvm::ConstantInt>(value)}) {
     uintptr_t addr = constantInt->getValue().getLimitedValue(
         std::numeric_limits<uintptr_t>::max());
@@ -110,21 +110,21 @@ template <typename T>
   return nullptr;
 }
 
-llvm::Value *llvm_emit_cast(llvm::IRBuilderBase &builder, llvm::Value *value,
-                            llvm::Type *dstType);
+llvm::Value *llvmEmitCast(llvm::IRBuilderBase &builder, llvm::Value *value,
+                          llvm::Type *dstType);
 
-llvm::Value *llvm_emit_powi(llvm::IRBuilderBase &builder, llvm::Value *lhs,
-                            llvm::Value *rhs);
+llvm::Value *llvmEmitPowi(llvm::IRBuilderBase &builder, llvm::Value *lhs,
+                          llvm::Value *rhs);
 
-llvm::Value *llvm_emit_ldexp(llvm::IRBuilderBase &builder, llvm::Value *lhs,
-                             llvm::Value *rhs);
+llvm::Value *llvmEmitLdexp(llvm::IRBuilderBase &builder, llvm::Value *lhs,
+                           llvm::Value *rhs);
 
-llvm::InlineResult llvm_force_inline(llvm::Value *value,
-                                     bool isRecursive = false);
+llvm::InlineResult llvmForceInline(llvm::Value *value,
+                                   bool isRecursive = false);
 
-void llvm_force_inline_flatten(llvm::Function &func);
+void llvmForceInlineFlatten(llvm::Function &func);
 
-void llvm_move_block_to_end(llvm::BasicBlock *block);
+void llvmMoveBlockToEnd(llvm::BasicBlock *block);
 
 template <typename, typename = void> struct llvm_get_type_template;
 
@@ -238,7 +238,7 @@ public:
 
 public:
   /// Is the given predicate true for any element? Returns false if empty.
-  template <typename Pred> [[nodiscard]] bool is_any_true(Pred &&pred) const {
+  template <typename Pred> [[nodiscard]] bool isAnyTrue(Pred &&pred) const {
     for (auto &elem : elems)
       if (std::invoke(pred, elem))
         return true;
@@ -246,7 +246,7 @@ public:
   }
 
   /// Is the given predicate true for all elements? Returns true if empty.
-  template <typename Pred> [[nodiscard]] bool is_all_true(Pred &&pred) const {
+  template <typename Pred> [[nodiscard]] bool isAllTrue(Pred &&pred) const {
     for (auto &elem : elems)
       if (!std::invoke(pred, elem))
         return false;

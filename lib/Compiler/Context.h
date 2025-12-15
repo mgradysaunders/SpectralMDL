@@ -27,15 +27,15 @@ public:
 
 public:
   /// Get builtin module by name.
-  Module *get_builtin_module(llvm::StringRef name);
+  Module *getBuiltinModule(llvm::StringRef name);
 
   /// Get builtin albedo by name.
-  [[nodiscard]] const AlbedoLUT *get_builtin_albedo(llvm::StringRef name);
+  [[nodiscard]] const AlbedoLUT *getBuiltinAlbedo(llvm::StringRef name);
 
   /// Get builtin callee.
   [[nodiscard]]
-  llvm::FunctionCallee get_builtin_callee(llvm::StringRef name,
-                                          llvm::FunctionType *llvmFuncTy) {
+  llvm::FunctionCallee getBuiltinCallee(llvm::StringRef name,
+                                        llvm::FunctionType *llvmFuncTy) {
     auto &callee{builtinCallees[name]};
     if (!callee) {
       auto llvmFunc{llvm::Function::Create(
@@ -48,51 +48,51 @@ public:
 
   /// Get builtin callee.
   template <typename T, typename... U>
-  [[nodiscard]] llvm::FunctionCallee get_builtin_callee(const char *name) {
-    return get_builtin_callee(name, llvm_get_type<T(U...)>(llvmContext));
+  [[nodiscard]] llvm::FunctionCallee getBuiltinCallee(const char *name) {
+    return getBuiltinCallee(name, llvm_get_type<T(U...)>(llvmContext));
   }
 
   template <typename T, typename... U>
-  [[nodiscard]] llvm::FunctionCallee get_builtin_callee(const char *name,
-                                                        T (*value)(U...)) {
-    return get_builtin_callee<T, U...>(name);
+  [[nodiscard]] llvm::FunctionCallee getBuiltinCallee(const char *name,
+                                                      T (*value)(U...)) {
+    return getBuiltinCallee<T, U...>(name);
   }
 
   /// Get a unique name by appending a number to it, useful for
   /// generating more readable names for LLVM basic blocks.
-  [[nodiscard]] std::string get_unique_name(llvm::StringRef name,
-                                            llvm::Function *llvmFunc = {}) {
+  [[nodiscard]] std::string getUniqueName(llvm::StringRef name,
+                                          llvm::Function *llvmFunc = {}) {
     return name.str() + std::to_string(uniqueNames[name][llvmFunc]++);
   }
 
   /// Get keyword value. Return `Value()` if undefined.
-  [[nodiscard]] Value get_keyword(llvm::StringRef name) {
+  [[nodiscard]] Value getKeyword(llvm::StringRef name) {
     if (auto itr{keywords.find(name)}; itr != keywords.end())
       return itr->second;
     return Value();
   }
 
   /// Get keyword value as `Type`.
-  [[nodiscard]] Type *get_keyword_as_type(llvm::StringRef name,
-                                          const SourceLocation &srcLoc = {}) {
-    return get_keyword(name).get_comptime_meta_type(*this, srcLoc);
+  [[nodiscard]] Type *getKeywordAsType(llvm::StringRef name,
+                                       const SourceLocation &srcLoc = {}) {
+    return getKeyword(name).getComptimeMetaType(*this, srcLoc);
   }
 
   /// Has keyword value?
-  [[nodiscard]] bool has_keyword_value(llvm::StringRef name) {
+  [[nodiscard]] bool hasKeywordValue(llvm::StringRef name) {
     return keywords.contains(name);
   }
 
 public:
   /// Get the alignment of the given type in bytes. Return 0 if undefined.
-  [[nodiscard]] uint64_t get_align_of(Type *type) {
+  [[nodiscard]] uint64_t getAlignOf(Type *type) {
     return type && type->llvmType && type != voidType.get()
                ? uint64_t(llvmLayout.getABITypeAlign(type->llvmType).value())
                : uint64_t(0);
   }
 
   /// Get the size of the given type in bytes. Return 0 if undefined.
-  [[nodiscard]] uint64_t get_size_of(Type *type) {
+  [[nodiscard]] uint64_t getSizeOf(Type *type) {
     return type && type->llvmType && type != voidType.get()
                ? uint64_t(llvmLayout.getTypeAllocSize(type->llvmType))
                : uint64_t(0);
@@ -100,195 +100,186 @@ public:
 
 public:
   /// Get arithmetic type.
-  [[nodiscard]] Type *get_arithmetic_type(Scalar scalar,
-                                          Extent extent = Extent(1));
+  [[nodiscard]] Type *getArithmeticType(Scalar scalar,
+                                        Extent extent = Extent(1));
 
   /// Get arithmetic `bool` type.
-  [[nodiscard]] Type *get_bool_type(Extent extent = Extent(1)) {
-    return get_arithmetic_type(Scalar::get_int(1), extent);
+  [[nodiscard]] Type *getBoolType(Extent extent = Extent(1)) {
+    return getArithmeticType(Scalar::getInt(1), extent);
   }
 
   /// Get arithmetic `int` type.
-  [[nodiscard]] Type *get_int_type(Extent extent = Extent(1)) {
-    return get_arithmetic_type(Scalar::get_int(sizeof(int) * 8), extent);
+  [[nodiscard]] Type *getIntType(Extent extent = Extent(1)) {
+    return getArithmeticType(Scalar::getInt(sizeof(int) * 8), extent);
   }
 
   /// Get arithmetic `float` type.
-  [[nodiscard]] Type *get_float_type(Extent extent = Extent(1)) {
-    return get_arithmetic_type(Scalar::get_float(), extent);
+  [[nodiscard]] Type *getFloatType(Extent extent = Extent(1)) {
+    return getArithmeticType(Scalar::getFloat(), extent);
   }
 
   /// Get arithmetic `double` type.
-  [[nodiscard]] Type *get_double_type(Extent extent = Extent(1)) {
-    return get_arithmetic_type(Scalar::get_double(), extent);
+  [[nodiscard]] Type *getDoubleType(Extent extent = Extent(1)) {
+    return getArithmeticType(Scalar::getDouble(), extent);
   }
 
   /// Get `auto` type.
-  [[nodiscard]] Type *get_auto_type() { return autoType.get(); }
+  [[nodiscard]] Type *getAutoType() { return autoType.get(); }
 
   /// Get `color` type.
-  [[nodiscard]] ColorType *get_color_type() { return colorType.get(); }
+  [[nodiscard]] ColorType *getColorType() { return colorType.get(); }
 
   /// Get `string` type.
-  [[nodiscard]] Type *get_string_type() { return stringType.get(); }
+  [[nodiscard]] Type *getStringType() { return stringType.get(); }
 
   /// Get `void` type.
-  [[nodiscard]] Type *get_void_type() { return voidType.get(); }
+  [[nodiscard]] Type *getVoidType() { return voidType.get(); }
 
   /// Get `&void` type.
-  [[nodiscard]] Type *get_void_pointer_type() {
-    return get_pointer_type(voidType.get());
+  [[nodiscard]] Type *getVoidPointerType() {
+    return getPointerType(voidType.get());
   }
 
   /// Get meta `Module` type.
-  [[nodiscard]] Type *get_meta_module_type() { return metaModuleType.get(); }
+  [[nodiscard]] Type *getMetaModuleType() { return metaModuleType.get(); }
 
   /// Get meta `Type` type.
-  [[nodiscard]] Type *get_meta_type_type() { return metaTypeType.get(); }
+  [[nodiscard]] Type *getMetaTypeType() { return metaTypeType.get(); }
 
   /// Get meta `AST::Intrinsic` type.
-  [[nodiscard]] Type *get_meta_intrinsic_type() {
-    return metaIntrinsicType.get();
-  }
+  [[nodiscard]] Type *getMetaIntrinsicType() { return metaIntrinsicType.get(); }
 
   /// Get meta `AST::Namespace` type.
-  [[nodiscard]] Type *get_meta_namespace_type() {
-    return metaNamespaceType.get();
-  }
+  [[nodiscard]] Type *getMetaNamespaceType() { return metaNamespaceType.get(); }
 
   /// Get array type.
-  [[nodiscard]] ArrayType *get_array_type(Type *elemType, uint32_t size);
+  [[nodiscard]] ArrayType *getArrayType(Type *elemType, uint32_t size);
 
   /// Get inferred-size array type.
   [[nodiscard]] InferredSizeArrayType *
-  get_inferred_size_array_type(Type *elemType, std::string sizeName = {});
+  getInferredSizeArrayType(Type *elemType, std::string sizeName = {});
 
   /// Get pointer type.
-  [[nodiscard]] PointerType *get_pointer_type(Type *pointeeType);
+  [[nodiscard]] PointerType *getPointerType(Type *pointeeType);
 
   /// Get pointer type with the given depth, where depth is the number of
   /// pointers to add.
-  [[nodiscard]] Type *get_pointer_type(Type *pointeeType, size_t depth) {
+  [[nodiscard]] Type *getPointerType(Type *pointeeType, size_t depth) {
     while (depth-- > 0)
-      pointeeType = get_pointer_type(pointeeType);
+      pointeeType = getPointerType(pointeeType);
     return pointeeType;
   }
 
   /// Get enum type.
-  [[nodiscard]] EnumType *get_enum_type(AST::Enum *decl);
+  [[nodiscard]] EnumType *getEnumType(AST::Enum *decl);
 
   /// Get function type.
-  [[nodiscard]] FunctionType *get_function_type(AST::Function *decl);
+  [[nodiscard]] FunctionType *getFunctionType(AST::Function *decl);
 
   /// Get state type.
-  [[nodiscard]] StateType *get_state_type() { return stateType.get(); }
+  [[nodiscard]] StateType *getStateType() { return stateType.get(); }
 
   /// Get struct type.
-  [[nodiscard]] StructType *get_struct_type(AST::Struct *decl);
+  [[nodiscard]] StructType *getStructType(AST::Struct *decl);
 
   /// Get tag type.
-  [[nodiscard]] TagType *get_tag_type(AST::Tag *decl);
+  [[nodiscard]] TagType *getTagType(AST::Tag *decl);
 
   /// Get the `texture_2d` type.
-  [[nodiscard]] StructType *get_texture_2d_type() { return texture2DType; }
+  [[nodiscard]] StructType *getTexture2DType() { return texture2DType; }
 
   /// Get the `texture_3d` type.
-  [[nodiscard]] StructType *get_texture_3d_type() { return texture3DType; }
+  [[nodiscard]] StructType *getTexture3DType() { return texture3DType; }
 
   /// Get the `texture_cube` type.
-  [[nodiscard]] StructType *get_texture_cube_type() { return textureCubeType; }
+  [[nodiscard]] StructType *getTextureCubeType() { return textureCubeType; }
 
   /// Get the `texture_ptex` type.
-  [[nodiscard]] StructType *get_texture_ptex_type() { return texturePtexType; }
+  [[nodiscard]] StructType *getTexturePtexType() { return texturePtexType; }
 
   /// Get the `bsdf_measurement` type.
-  [[nodiscard]] StructType *get_bsdf_measurement_type() {
+  [[nodiscard]] StructType *getBSDFMeasurementType() {
     return bsdfMeasurementType;
   }
 
   /// Get the `light_profile` type.
-  [[nodiscard]] StructType *get_light_profile_type() {
-    return lightProfileType;
-  }
+  [[nodiscard]] StructType *getLightProfileType() { return lightProfileType; }
 
   /// Get the `spectral_curve` type.
-  [[nodiscard]] StructType *get_spectral_curve_type() {
-    return spectralCurveType;
-  }
+  [[nodiscard]] StructType *getSpectralCurveType() { return spectralCurveType; }
 
   /// Get the `complex` type.
-  [[nodiscard]] StructType *get_complex_type() { return complexType; }
+  [[nodiscard]] StructType *getComplexType() { return complexType; }
 
   /// Get union type.
-  [[nodiscard]] Type *get_union_type(llvm::ArrayRef<Type *> types);
+  [[nodiscard]] Type *getUnionType(llvm::ArrayRef<Type *> types);
 
   /// Get compile-time union type.
-  [[nodiscard]] ComptimeUnionType *
-  get_comptime_union_type(UnionType *unionType);
+  [[nodiscard]] ComptimeUnionType *getComptimeUnionType(UnionType *unionType);
 
 public:
-  template <typename T> [[nodiscard]] Type *get_type();
+  template <typename T> [[nodiscard]] Type *getType();
 
-  template <typename S, typename T> [[nodiscard]] Type *get_type(T S::*) {
-    return get_type<T>();
+  template <typename S, typename T> [[nodiscard]] Type *getType(T S::*) {
+    return getType<T>();
   }
 
 public:
   /// Get the common type of the given types.
-  [[nodiscard]] Type *get_common_type(llvm::ArrayRef<Type *> types,
-                                      bool defaultToUnion = true,
-                                      const SourceLocation &srcLoc = {});
+  [[nodiscard]] Type *getCommonType(llvm::ArrayRef<Type *> types,
+                                    bool defaultToUnion = true,
+                                    const SourceLocation &srcLoc = {});
 
   /// Get the conversion rule for converting `typeA` to `typeB`.
-  [[nodiscard]] ConversionRule get_conversion_rule(Type *typeA, Type *typeB);
+  [[nodiscard]] ConversionRule getConversionRule(Type *typeA, Type *typeB);
 
   /// Is `typeA` explicitly convertible to `typeB`?
-  [[nodiscard]] bool is_explicitly_convertible(Type *typeA, Type *typeB) {
-    return get_conversion_rule(typeA, typeB) >= CONVERSION_RULE_EXPLICIT;
+  [[nodiscard]] bool isExplicitlyConvertible(Type *typeA, Type *typeB) {
+    return getConversionRule(typeA, typeB) >= CONVERSION_RULE_EXPLICIT;
   }
 
   /// Is `typeA` implicitly convertible to `typeB`?
-  [[nodiscard]] bool is_implicitly_convertible(Type *typeA, Type *typeB) {
-    return get_conversion_rule(typeA, typeB) >= CONVERSION_RULE_IMPLICIT;
+  [[nodiscard]] bool isImplicitlyConvertible(Type *typeA, Type *typeB) {
+    return getConversionRule(typeA, typeB) >= CONVERSION_RULE_IMPLICIT;
   }
 
   /// Is `typeA` perfectly convertible to `typeB`?
-  [[nodiscard]] bool is_perfectly_convertible(Type *typeA, Type *typeB) {
-    return get_conversion_rule(typeA, typeB) == CONVERSION_RULE_PERFECT;
+  [[nodiscard]] bool isPerfectlyConvertible(Type *typeA, Type *typeB) {
+    return getConversionRule(typeA, typeB) == CONVERSION_RULE_PERFECT;
   }
 
 public:
   /// Get compile-time `bool` constant.
-  [[nodiscard]] Value get_comptime_bool(bool value) {
-    return RValue(get_bool_type(),
-                  llvm::ConstantInt::getBool(get_bool_type()->llvmType, value));
+  [[nodiscard]] Value getComptimeBool(bool value) {
+    return RValue(getBoolType(),
+                  llvm::ConstantInt::getBool(getBoolType()->llvmType, value));
   }
 
   /// Get compile-time `int` constant.
-  [[nodiscard]] Value get_comptime_int(int value) {
-    return RValue(get_int_type(),
-                  llvm::ConstantInt::get(get_int_type()->llvmType,
+  [[nodiscard]] Value getComptimeInt(int value) {
+    return RValue(getIntType(),
+                  llvm::ConstantInt::get(getIntType()->llvmType,
                                          llvm::APInt(sizeof(int) * 8, value)));
   }
 
   /// Get compile-time `float` constant.
-  [[nodiscard]] Value get_comptime_float(float value) {
-    return RValue(get_float_type(),
-                  llvm::ConstantFP::get(get_float_type()->llvmType,
-                                        llvm::APFloat(value)));
+  [[nodiscard]] Value getComptimeFloat(float value) {
+    return RValue(
+        getFloatType(),
+        llvm::ConstantFP::get(getFloatType()->llvmType, llvm::APFloat(value)));
   }
 
   /// Get compile-time `double` constant.
-  [[nodiscard]] Value get_comptime_double(double value) {
-    return RValue(get_double_type(),
-                  llvm::ConstantFP::get(get_double_type()->llvmType,
-                                        llvm::APFloat(value)));
+  [[nodiscard]] Value getComptimeDouble(double value) {
+    return RValue(
+        getDoubleType(),
+        llvm::ConstantFP::get(getDoubleType()->llvmType, llvm::APFloat(value)));
   }
 
   /// Get compile-time scalar constant.
-  template <typename T> [[nodiscard]] Value get_comptime_scalar(T value) {
+  template <typename T> [[nodiscard]] Value getComptimeScalar(T value) {
     static_assert(std::is_arithmetic_v<T>);
-    auto type{get_arithmetic_type(Scalar::get<T>())};
+    auto type{getArithmeticType(Scalar::get<T>())};
     if constexpr (std::is_integral_v<T>) {
       return RValue(type,
                     llvm::ConstantInt::get(type->llvmType,
@@ -301,19 +292,18 @@ public:
 
   /// Get compile-time vector constant.
   template <typename T, size_t M>
-  [[nodiscard]] Value get_comptime_vector(Vector<T, M> value) {
+  [[nodiscard]] Value getComptimeVector(Vector<T, M> value) {
     static_assert(std::is_arithmetic_v<T> && M > 1);
     auto builder{llvm::IRBuilder<>{llvmContext}};
-    auto result{Value::zero(get_arithmetic_type(Scalar::get<T>(), Extent(M)))};
+    auto result{Value::zero(getArithmeticType(Scalar::get<T>(), Extent(M)))};
     for (size_t i = 0; i < M; i++)
       result.llvmValue = builder.CreateInsertElement(
-          result.llvmValue, get_comptime_scalar(value[i]).llvmValue,
-          uint64_t(i));
+          result.llvmValue, getComptimeScalar(value[i]).llvmValue, uint64_t(i));
     return result;
   }
 
   /// Get compile-time `string` constant.
-  [[nodiscard]] Value get_comptime_string(std::string_view value) {
+  [[nodiscard]] Value getComptimeString(std::string_view value) {
     auto &result{strings[value]};
     if (!result) {
       auto builder{llvm::IRBuilder<>(llvmContext)};
@@ -326,49 +316,48 @@ public:
   }
 
   /// Get compile-time meta `Module` constant.
-  [[nodiscard]] Value get_comptime_meta_module(Module *value) {
-    return RValue(get_meta_module_type(),
-                  llvm_ptr_as_constant_int(llvmContext, value));
+  [[nodiscard]] Value getComptimeMetaModule(Module *value) {
+    return RValue(getMetaModuleType(),
+                  llvmPtrAsConstantInt(llvmContext, value));
   }
 
   /// Get compile-time meta `Type` constant.
-  [[nodiscard]] Value get_comptime_meta_type(Type *value) {
-    return RValue(get_meta_type_type(),
-                  llvm_ptr_as_constant_int(llvmContext, value));
+  [[nodiscard]] Value getComptimeMetaType(Type *value) {
+    return RValue(getMetaTypeType(), llvmPtrAsConstantInt(llvmContext, value));
   }
 
   /// Get compile-time meta `AST::Intrinsic` constant.
-  [[nodiscard]] Value get_comptime_meta_intrinsic(AST::Intrinsic *value) {
-    return RValue(get_meta_intrinsic_type(),
-                  llvm_ptr_as_constant_int(llvmContext, value));
+  [[nodiscard]] Value getComptimeMetaIntrinsic(AST::Intrinsic *value) {
+    return RValue(getMetaIntrinsicType(),
+                  llvmPtrAsConstantInt(llvmContext, value));
   }
 
   /// Get compile-time meta `AST::Namespace` constant.
-  [[nodiscard]] Value get_comptime_meta_namespace(AST::Namespace *value) {
-    return RValue(get_meta_namespace_type(),
-                  llvm_ptr_as_constant_int(llvmContext, value));
+  [[nodiscard]] Value getComptimeMetaNamespace(AST::Namespace *value) {
+    return RValue(getMetaNamespaceType(),
+                  llvmPtrAsConstantInt(llvmContext, value));
   }
 
   /// Get compile-time union index map. This is useful for converting
   /// `unionTypeA` to `unionTypeB`.
-  [[nodiscard]] Value get_comptime_union_index_map(UnionType *unionTypeA,
-                                                   UnionType *unionTypeB);
+  [[nodiscard]] Value getComptimeUnionIndexMap(UnionType *unionTypeA,
+                                               UnionType *unionTypeB);
 
-  [[nodiscard]] Value get_comptime_ptr(Type *type, const void *value) {
+  [[nodiscard]] Value getComptimePtr(Type *type, const void *value) {
     SMDL_SANITY_CHECK(type && type->llvmType);
-    return RValue(
-        type, llvm::IRBuilder<>(llvmContext)
-                  .CreateIntToPtr(llvm_ptr_as_constant_int(llvmContext, value),
-                                  type->llvmType));
+    return RValue(type,
+                  llvm::IRBuilder<>(llvmContext)
+                      .CreateIntToPtr(llvmPtrAsConstantInt(llvmContext, value),
+                                      type->llvmType));
   }
 
-  [[nodiscard]] std::optional<std::string> locate(const std::string &fileName) {
+  [[nodiscard]] std::optional<std::string> Locate(const std::string &fileName) {
     return compiler.fileLocator.locate(fileName,
                                        currentModule->get_file_name());
   }
 
   [[nodiscard]] std::vector<FileLocator::ImagePath>
-  locate_images(const std::string &fileName) {
+  LocateImages(const std::string &fileName) {
     return compiler.fileLocator.locate_images(fileName,
                                               currentModule->get_file_name());
   }
@@ -521,42 +510,43 @@ template <typename T, typename = void> struct get_type;
 
 template <> struct get_type<void, void> {
   [[nodiscard]] static Type *get(Context &context) {
-    return context.get_void_type();
+    return context.getVoidType();
   }
 };
 
 template <typename T>
-struct get_type<T, std::enable_if_t<std::is_arithmetic_v<T> || std::is_enum_v<T>, void>> {
+struct get_type<
+    T, std::enable_if_t<std::is_arithmetic_v<T> || std::is_enum_v<T>, void>> {
   [[nodiscard]] static Type *get(Context &context) {
     if constexpr (std::is_integral_v<T> || std::is_enum_v<T>)
-      return context.get_arithmetic_type(Scalar::get_int(sizeof(T) * 8));
+      return context.getArithmeticType(Scalar::getInt(sizeof(T) * 8));
     else
-      return context.get_arithmetic_type(Scalar::get_FP(sizeof(T) * 8));
+      return context.getArithmeticType(Scalar::getFP(sizeof(T) * 8));
   }
 };
 
 template <typename T> struct get_type<T &, void> {
   [[nodiscard]] static Type *get(Context &context) {
-    return context.get_pointer_type(get_type<std::decay_t<T>>::get(context));
+    return context.getPointerType(get_type<std::decay_t<T>>::get(context));
   }
 };
 
 template <typename T> struct get_type<T *, void> {
   [[nodiscard]] static Type *get(Context &context) {
-    return context.get_pointer_type(get_type<std::decay_t<T>>::get(context));
+    return context.getPointerType(get_type<std::decay_t<T>>::get(context));
   }
 };
 
 template <typename T, size_t M> struct get_type<T[M], void> {
   [[nodiscard]] static Type *get(Context &context) {
-    return context.get_array_type(get_type<T>::get(context), M);
+    return context.getArrayType(get_type<T>::get(context), M);
   }
 };
 
 template <typename T, size_t M> struct get_type<Vector<T, M>, void> {
   [[nodiscard]] static Type *get(Context &context) {
     return static_cast<ArithmeticType *>(get_type<T>::get(context))
-        ->get_with_different_extent(context, Extent(M));
+        ->getWithDifferentExtent(context, Extent(M));
   }
 };
 
@@ -564,11 +554,11 @@ template <typename T, size_t N, size_t M>
 struct get_type<Matrix<T, N, M>, void> {
   [[nodiscard]] static Type *get(Context &context) {
     return static_cast<ArithmeticType *>(get_type<T>::get(context))
-        ->get_with_different_extent(context, Extent(N, M));
+        ->getWithDifferentExtent(context, Extent(N, M));
   }
 };
 
-template <typename T> inline Type *Context::get_type() {
+template <typename T> inline Type *Context::getType() {
   return smdl::get_type<T>::get(*this);
 }
 

@@ -24,27 +24,27 @@ public:
   [[nodiscard]] static Value zero(Type *type);
 
   /// Is void?
-  [[nodiscard]] bool is_void() const;
+  [[nodiscard]] bool isVoid() const;
 
   /// Is an lvalue?
-  [[nodiscard]] bool is_lvalue() const { return kind == Kind::LValue; }
+  [[nodiscard]] bool isLValue() const { return kind == Kind::LValue; }
 
   /// Is an rvalue?
-  [[nodiscard]] bool is_rvalue() const { return kind == Kind::RValue; }
+  [[nodiscard]] bool isRValue() const { return kind == Kind::RValue; }
 
   /// Is this an LLVM instruction?
-  [[nodiscard]] bool is_llvm_instruction() const {
+  [[nodiscard]] bool isLLVMInstruction() const {
     return llvm::isa_and_present<llvm::Instruction>(llvmValue);
   }
 
   /// Is this an LLVM constant?
-  [[nodiscard]] bool is_llvm_constant() const {
+  [[nodiscard]] bool isLLVMConstant() const {
     return llvm::isa_and_present<llvm::Constant>(llvmValue);
   }
 
   /// Is this an LLVM global? Note: Every LLVM global is also technically an
   /// LLVM constant.
-  [[nodiscard]] bool is_llvm_global() const {
+  [[nodiscard]] bool isLLVMGlobal() const {
     return llvm::isa_and_present<llvm::GlobalValue>(llvmValue);
   }
 
@@ -52,8 +52,7 @@ public:
   /// - If this is an LLVM constant or global, it is usable.
   /// - If this is an LLVM instruction, it is only usable if it belongs to the
   /// same LLVM function.
-  [[nodiscard]] bool
-  is_usable_in_llvm_function(llvm::Function *llvmFunc) const {
+  [[nodiscard]] bool isUsableInLLVMFunction(llvm::Function *llvmFunc) const {
     if (auto llvmInst{llvm::dyn_cast_if_present<llvm::Instruction>(llvmValue)};
         llvmInst && llvmInst->getParent())
       return llvmInst->getFunction() == llvmFunc;
@@ -61,20 +60,20 @@ public:
   }
 
   /// Is known at compile time?
-  [[nodiscard]] bool is_comptime() const {
-    return is_rvalue() && is_llvm_constant();
+  [[nodiscard]] bool isComptime() const {
+    return isRValue() && isLLVMConstant();
   }
 
   /// Is compile-time int?
-  [[nodiscard]] bool is_comptime_int() const {
+  [[nodiscard]] bool isComptimeInt() const {
     return llvm::dyn_cast_if_present<llvm::ConstantInt>(llvmValue) != nullptr;
   }
 
   /// Is compile-time string?
-  [[nodiscard]] bool is_comptime_string() const;
+  [[nodiscard]] bool isComptimeString() const;
 
   /// Get value as compile-time int or `unsigned(-1)` on failure.
-  [[nodiscard]] unsigned get_comptime_int() const {
+  [[nodiscard]] unsigned getComptimeInt() const {
     if (auto llvmConst{llvm::dyn_cast_if_present<llvm::ConstantInt>(llvmValue)})
       return llvmConst->getValue().getLimitedValue(
           std::numeric_limits<unsigned>::max());
@@ -82,53 +81,52 @@ public:
   }
 
   /// Get value as compile-time string or the `std::string_view()` on failure.
-  [[nodiscard]] std::string_view get_comptime_string() const;
+  [[nodiscard]] std::string_view getComptimeString() const;
 
   /// Is compile-time meta `Module`?
-  [[nodiscard]] bool is_comptime_meta_module(Context &context) const;
+  [[nodiscard]] bool isComptimeMetaModule(Context &context) const;
 
   /// Is compile-time meta `Type`?
-  [[nodiscard]] bool is_comptime_meta_type(Context &context) const;
+  [[nodiscard]] bool isComptimeMetaType(Context &context) const;
 
   /// Is compile-time meta `AST::Intrinsic`?
-  [[nodiscard]] bool is_comptime_meta_intrinsic(Context &context) const;
+  [[nodiscard]] bool isComptimeMetaIntrinsic(Context &context) const;
 
   /// Is compile-time meta `AST::Namespace`?
-  [[nodiscard]] bool is_comptime_meta_namespace(Context &context) const;
+  [[nodiscard]] bool isComptimeMetaNamespace(Context &context) const;
 
   /// Get the compile-time `Module` or throw an error.
   [[nodiscard]] Module *
-  get_comptime_meta_module(Context &context,
-                           const SourceLocation &srcLoc) const {
-    if (!is_comptime_meta_module(context))
+  getComptimeMetaModule(Context &context, const SourceLocation &srcLoc) const {
+    if (!isComptimeMetaModule(context))
       srcLoc.throw_error("expected compile-time module");
-    return llvm_constant_int_as_ptr<Module>(llvmValue);
+    return llvmConstantIntAsPtr<Module>(llvmValue);
   }
 
   /// Get the compile-time `Type` or throw an error.
-  [[nodiscard]] Type *
-  get_comptime_meta_type(Context &context, const SourceLocation &srcLoc) const {
-    if (!is_comptime_meta_type(context))
+  [[nodiscard]] Type *getComptimeMetaType(Context &context,
+                                          const SourceLocation &srcLoc) const {
+    if (!isComptimeMetaType(context))
       srcLoc.throw_error("expected compile-time type");
-    return llvm_constant_int_as_ptr<Type>(llvmValue);
+    return llvmConstantIntAsPtr<Type>(llvmValue);
   }
 
   /// Get the compile-time `AST::Intrinsic` or throw an error.
   [[nodiscard]] AST::Intrinsic *
-  get_comptime_meta_intrinsic(Context &context,
-                              const SourceLocation &srcLoc) const {
-    if (!is_comptime_meta_intrinsic(context))
+  getComptimeMetaIntrinsic(Context &context,
+                           const SourceLocation &srcLoc) const {
+    if (!isComptimeMetaIntrinsic(context))
       srcLoc.throw_error("expected compile-time intrinsic");
-    return llvm_constant_int_as_ptr<AST::Intrinsic>(llvmValue);
+    return llvmConstantIntAsPtr<AST::Intrinsic>(llvmValue);
   }
 
   /// Get the compile-time `AST::Namespace` or throw an error.
   [[nodiscard]] AST::Namespace *
-  get_comptime_meta_namespace(Context &context,
-                              const SourceLocation &srcLoc) const {
-    if (!is_comptime_meta_namespace(context))
+  getComptimeMetaNamespace(Context &context,
+                           const SourceLocation &srcLoc) const {
+    if (!isComptimeMetaNamespace(context))
       srcLoc.throw_error("expected compile-time intrinsic");
-    return llvm_constant_int_as_ptr<AST::Namespace>(llvmValue);
+    return llvmConstantIntAsPtr<AST::Namespace>(llvmValue);
   }
 
   /// Implicit conversion to bool.
@@ -169,12 +167,12 @@ public:
                                    bool ignoreIfNotExported = false);
 
   /// Get the source location if applicable.
-  [[nodiscard]] SourceLocation get_source_location() const {
+  [[nodiscard]] SourceLocation getSourceLocation() const {
     return node ? node->srcLoc : SourceLocation();
   }
 
   /// Is exported?
-  [[nodiscard]] bool is_exported() const {
+  [[nodiscard]] bool isExported() const {
     if (auto decl{llvm::dyn_cast_if_present<AST::Decl>(node)})
       return decl->is_exported();
     if (auto declarator{llvm::dyn_cast_if_present<AST::Enum::Declarator>(node)})
@@ -186,41 +184,41 @@ public:
   }
 
   /// Is named?
-  [[nodiscard]] bool is_named() const { return !name.empty(); }
+  [[nodiscard]] bool isNamed() const { return !name.empty(); }
 
   /// Has simple name?
-  [[nodiscard]] bool has_simple_name() const { return name.size() == 1; }
+  [[nodiscard]] bool hasSimpleName() const { return name.size() == 1; }
 
   /// Has qualified name?
-  [[nodiscard]] bool has_qualified_name() const { return name.size() > 1; }
+  [[nodiscard]] bool hasQualifiedName() const { return name.size() > 1; }
 
   /// Is this an AST import declaration?
-  [[nodiscard]] bool is_ast_import() const {
+  [[nodiscard]] bool isASTImport() const {
     return llvm::isa_and_present<AST::Import>(node);
   }
 
   /// Is this an AST using import declaration?
-  [[nodiscard]] bool is_ast_using_import() const {
+  [[nodiscard]] bool isASTUsingImport() const {
     return llvm::isa_and_present<AST::UsingImport>(node);
   }
 
   /// Is this an AST using alias declaration?
-  [[nodiscard]] bool is_ast_using_alias() const {
+  [[nodiscard]] bool isASTUsingAlias() const {
     return llvm::isa_and_present<AST::UsingAlias>(node);
   }
 
   /// Is this an AST defer statement?
-  [[nodiscard]] bool is_ast_defer() const {
+  [[nodiscard]] bool isASTDefer() const {
     return llvm::isa_and_present<AST::Defer>(node);
   }
 
   /// Is this an AST preserve statement?
-  [[nodiscard]] bool is_ast_preserve() const {
+  [[nodiscard]] bool isASTPreserve() const {
     return llvm::isa_and_present<AST::Preserve>(node);
   }
 
   /// Maybe issue warning about an unused value.
-  void maybe_warn_about_unused_value() const {
+  void maybeWarnAboutUnusedValue() const {
     if (isUsed == 0 && name.size() == 1) {
       if (llvm::isa_and_present<AST::Parameter>(node)) {
         auto astParam{static_cast<AST::Parameter *>(node)};
@@ -229,7 +227,7 @@ public:
             !(astParam->annotations &&
               astParam->annotations->is_marked_unused())) {
           astParam->warningIssued = true;
-          get_source_location().log_warn(
+          getSourceLocation().log_warn(
               concat("unused parameter ", quoted(name[0])));
         }
       }
@@ -239,7 +237,7 @@ public:
             !(declarator->annotations &&
               declarator->annotations->is_marked_unused())) {
           declarator->warningIssued = true;
-          get_source_location().log_warn(
+          getSourceLocation().log_warn(
               concat("unused variable ", quoted(name[0])));
         }
       }
@@ -270,7 +268,7 @@ class Parameter final {
 public:
   /// Get the source location. Returns the empty source location if this
   /// has no associated `astParam` or `astField`.
-  [[nodiscard]] auto get_source_location() const {
+  [[nodiscard]] auto getSourceLocation() const {
     if (astParam)
       return astParam->name.srcLoc;
     if (astField)
@@ -279,13 +277,13 @@ public:
   }
 
   /// Is this an AST function parameter?
-  [[nodiscard]] bool is_ast_parameter() const { return astParam != nullptr; }
+  [[nodiscard]] bool isASTParameter() const { return astParam != nullptr; }
 
   /// Is this an AST struct field?
-  [[nodiscard]] bool is_ast_field() const { return astField != nullptr; }
+  [[nodiscard]] bool isASTField() const { return astField != nullptr; }
 
   /// Get the AST type. This may be null!
-  [[nodiscard]] AST::Type *get_ast_type() const {
+  [[nodiscard]] AST::Type *getASTType() const {
     if (astParam)
       return astParam->type.get();
     if (astField)
@@ -294,21 +292,21 @@ public:
   }
 
   /// Is marked with the keyword `const`?
-  [[nodiscard]] bool is_const() const {
-    if (auto astType{get_ast_type()})
+  [[nodiscard]] bool isConst() const {
+    if (auto astType{getASTType()})
       return astType->has_qualifier("const") || builtinConst;
     return builtinConst;
   }
 
   /// Is marked with the keyword `inline`?
-  [[nodiscard]] bool is_inline() const {
-    if (auto astType{get_ast_type()})
+  [[nodiscard]] bool isInline() const {
+    if (auto astType{getASTType()})
       return astType->has_qualifier("inline");
     return false;
   }
 
   /// Get the default AST initializer expression. This may be null!
-  [[nodiscard]] AST::Expr *get_ast_initializer() const {
+  [[nodiscard]] AST::Expr *getASTInitializer() const {
     if (astParam)
       return astParam->exprInit.get();
     if (astField)
@@ -347,33 +345,33 @@ public:
   }
 
   /// Is abstract? i.e., is any type abstract?
-  [[nodiscard]] bool is_abstract() const;
+  [[nodiscard]] bool isAbstract() const;
 
   /// Is concrete? i.e., is every type concrete?
-  [[nodiscard]] bool is_concrete() const { return !is_abstract(); }
+  [[nodiscard]] bool isConcrete() const { return !isAbstract(); }
 
   /// Do all parameters have default initializers?
-  [[nodiscard]] bool all_default_initializers() const {
-    return is_all_true(
-        [](auto &param) { return param.get_ast_initializer() != nullptr; });
+  [[nodiscard]] bool allDefaultInitializers() const {
+    return isAllTrue(
+        [](auto &param) { return param.getASTInitializer() != nullptr; });
   }
 
   /// Get the parameter names.
-  [[nodiscard]] std::vector<std::string_view> get_names() const;
+  [[nodiscard]] std::vector<std::string_view> getNames() const;
 
   /// Get the parameter types.
-  [[nodiscard]] std::vector<Type *> get_types() const;
+  [[nodiscard]] std::vector<Type *> getTypes() const;
 
   /// Get the paramter LLVM types.
-  [[nodiscard]] std::vector<llvm::Type *> get_llvm_types() const;
+  [[nodiscard]] std::vector<llvm::Type *> getLLVMTypes() const;
 
   /// The lookup sequence.
   using LookupSeq = std::vector<std::pair<const Parameter *, unsigned>>;
 
   /// Get the lookup sequence to access the given parameter name. Returns false
   /// on failure.
-  [[nodiscard]] bool get_lookup_sequence(std::string_view name,
-                                         LookupSeq &seq) const;
+  [[nodiscard]] bool getLookupSequence(std::string_view name,
+                                       LookupSeq &seq) const;
 
   /// The last crumb before the parameter list.
   Crumb *lastCrumb{};
@@ -392,24 +390,24 @@ public:
 
   /// Get the source location. Returns the empty source location if this
   /// has no associated `astArg`.
-  [[nodiscard]] auto get_source_location() const {
+  [[nodiscard]] auto getSourceLocation() const {
     return astArg ? astArg->srcLoc : SourceLocation();
   }
 
   /// Get the source. Returns the empty string view if this has no
   /// associated `astArg`.
-  [[nodiscard]] auto get_source() const {
+  [[nodiscard]] auto getSource() const {
     return astArg ? astArg->src : std::string_view();
   }
 
   /// Is positional or unnamed?
-  [[nodiscard]] bool is_positional() const { return name.empty(); }
+  [[nodiscard]] bool isPositional() const { return name.empty(); }
 
   /// Is named?
-  [[nodiscard]] bool is_named() const { return !name.empty(); }
+  [[nodiscard]] bool isNamed() const { return !name.empty(); }
 
   /// Is marked with the keyword `visit` and is actually visitable?
-  [[nodiscard]] bool is_visited() const;
+  [[nodiscard]] bool isVisited() const;
 
   /// Implicit conversion to `Value`.
   [[nodiscard]] operator Value() const { return value; }
@@ -447,85 +445,85 @@ public:
 public:
   /// Get the source location. Returns the empty source location if this
   /// has no associated `astArgs`.
-  [[nodiscard]] auto get_source_location() const {
+  [[nodiscard]] auto getSourceLocation() const {
     return astArgs ? astArgs->srcLoc : SourceLocation();
   }
 
   /// Is one positional argument?
-  [[nodiscard]] bool is_one_positional() const {
-    return elems.size() == 1 && elems[0].is_positional();
+  [[nodiscard]] bool isOnePositional() const {
+    return elems.size() == 1 && elems[0].isPositional();
   }
 
   /// Is one positional argument with the given type?
-  [[nodiscard]] bool is_one_positional(Type *type) const {
-    return is_one_positional() && elems[0].value.type == type;
+  [[nodiscard]] bool isOnePositional(Type *type) const {
+    return isOnePositional() && elems[0].value.type == type;
   }
 
   /// Is one positional `null` argument?
-  [[nodiscard]] bool is_null() const {
-    return is_one_positional() && elems[0].value.is_void();
+  [[nodiscard]] bool isNull() const {
+    return isOnePositional() && elems[0].value.isVoid();
   }
 
   /// Is all positional arguments?
-  [[nodiscard]] bool is_all_positional() const {
-    return is_all_true([](auto &arg) { return arg.is_positional(); });
+  [[nodiscard]] bool isAllPositional() const {
+    return isAllTrue([](auto &arg) { return arg.isPositional(); });
   }
 
   /// Is all named arguments?
-  [[nodiscard]] bool is_all_named() const {
-    return is_all_true([](auto &arg) { return arg.is_named(); });
+  [[nodiscard]] bool isAllNamed() const {
+    return isAllTrue([](auto &arg) { return arg.isNamed(); });
   }
 
   /// Is any argument named?
-  [[nodiscard]] bool is_any_named() const {
-    return is_any_true([](auto &arg) { return arg.is_named(); });
+  [[nodiscard]] bool isAnyNamed() const {
+    return isAnyTrue([](auto &arg) { return arg.isNamed(); });
   }
 
   /// Is only arguments with the given names?
   [[nodiscard]] bool
-  is_only_these_names(Span<const std::string_view> names) const {
-    return is_all_true([&](auto &arg) {
+  isOnlyTheseNames(Span<const std::string_view> names) const {
+    return isAllTrue([&](auto &arg) {
       return arg.name.empty() || names.contains(arg.name);
     });
   }
 
-  [[nodiscard]] bool has_name(std::string_view name) const {
-    return is_any_true(
-        [&](auto &arg) { return arg.is_named() && arg.name == name; });
+  [[nodiscard]] bool hasName(std::string_view name) const {
+    return isAnyTrue(
+        [&](auto &arg) { return arg.isNamed() && arg.name == name; });
   }
 
   /// Is any argument visited?
-  [[nodiscard]] bool is_any_visited() const {
-    return is_any_true([](auto &arg) { return arg.is_visited(); });
+  [[nodiscard]] bool isAnyVisited() const {
+    return isAnyTrue([](auto &arg) { return arg.isVisited(); });
   }
 
   /// Get index of first argument marked with the keyword `visit`.
-  [[nodiscard]] size_t index_of_first_visited() const {
+  [[nodiscard]] size_t indexOfFirstVisited() const {
     for (size_t i = 0; i < elems.size(); i++) {
-      if (elems[i].is_visited())
+      if (elems[i].isVisited())
         return i;
     }
     return size_t(-1);
   }
 
   /// Get the argument names.
-  [[nodiscard]] std::vector<std::string_view> get_names() const;
+  [[nodiscard]] std::vector<std::string_view> getNames() const;
 
   /// Get the argument types.
-  [[nodiscard]] std::vector<Type *> get_types() const;
+  [[nodiscard]] std::vector<Type *> getTypes() const;
 
   /// Get the argument LLVM types.
-  [[nodiscard]] std::vector<llvm::Type *> get_llvm_types() const;
+  [[nodiscard]] std::vector<llvm::Type *> getLLVMTypes() const;
 
   /// Get the argument values.
-  [[nodiscard]] std::vector<Value> get_values() const;
+  [[nodiscard]] std::vector<Value> getValues() const;
 
   /// Get the argument LLVM values for creating a call instruction.
   [[nodiscard]] std::vector<llvm::Value *>
-  get_llvm_values_for_call(Emitter &emitter, bool isPure) const;
+  getLLVMValuesForCall(Emitter &emitter, bool isPure) const;
 
   /// Validate names or throw an `Error` on failure.
-  void validate_names();
+  void validateNames();
 
   /// Convert to string for debugging or error messages.
   [[nodiscard]] operator std::string() const;
