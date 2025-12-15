@@ -31,6 +31,9 @@ public:
 public:
   Module() = default;
 
+  /// Non-copyable!
+  Module(const Module &) = delete;
+
   /// The builtin module constructor.
   ///
   /// \param[in] name         The name of the module.
@@ -110,6 +113,10 @@ public:
   [[nodiscard]] bool is_parsed() const noexcept { return root; }
 
   /// Is SMDL syntax? Only known after the module is parsed.
+  ///
+  /// This is true if the module file begins with the pragma `#smdl` 
+  /// used to indicate to the parser that the source code contains 
+  /// SMDL-specific syntax.
   [[nodiscard]] bool is_smdl_syntax() const noexcept;
 
   void reset() noexcept;
