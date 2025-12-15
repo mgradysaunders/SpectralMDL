@@ -881,7 +881,7 @@ void FunctionType::initialize(Emitter &emitter) {
   auto &context{emitter.context};
   // Find previous overload.
   if (auto prev{emitter.resolveIdentifier(decl.name, decl.srcLoc,
-                                           /*voidByDefault=*/true)};
+                                          /*voidByDefault=*/true)};
       !prev.isVoid()) {
     auto prevType{prev.isComptimeMetaType(context)
                       ? prev.getComptimeMetaType(context, decl.srcLoc)
@@ -1685,8 +1685,7 @@ Value StructType::invoke(Emitter &emitter, const ArgumentList &args,
   }
   if (args.isOnePositional()) {
     if (auto structType{llvm::dyn_cast<StructType>(args[0].value.type)};
-        structType &&
-        (structType == this || structType->isInstanceOf(this))) {
+        structType && (structType == this || structType->isInstanceOf(this))) {
       return emitter.toRValue(args[0].value);
     }
   }

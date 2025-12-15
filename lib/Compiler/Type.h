@@ -1113,7 +1113,9 @@ public:
   bool isDefaultInstance{};
 
 public:
-  [[nodiscard]] auto &getInstanceOf() { return instanceOf ? *instanceOf : *this; }
+  [[nodiscard]] auto &getInstanceOf() {
+    return instanceOf ? *instanceOf : *this;
+  }
 
   [[nodiscard]] auto &getInstanceOf() const {
     return instanceOf ? *instanceOf : *this;

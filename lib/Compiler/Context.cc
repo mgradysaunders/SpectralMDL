@@ -327,9 +327,8 @@ ConversionRule Context::getConversionRule(Type *typeA, Type *typeB) {
     // If the source type is a union and the destination type has all
     // of the source case types, conversion is implicit.
     if (auto unionTypeA{llvm::dyn_cast<UnionType>(typeA)}) {
-      return unionTypeB->hasAllCaseTypes(unionTypeA)
-                 ? CONVERSION_RULE_IMPLICIT
-                 : CONVERSION_RULE_EXPLICIT;
+      return unionTypeB->hasAllCaseTypes(unionTypeA) ? CONVERSION_RULE_IMPLICIT
+                                                     : CONVERSION_RULE_EXPLICIT;
     } else {
       // If the source type is not a union and the destination type has the
       // source as a case type, conversion is implicit.
@@ -397,11 +396,11 @@ Value Context::getComptimeUnionIndexMap(UnionType *unionTypeA,
         Value::zero(getArrayType(getIntType(), unionTypeA->caseTypes.size()));
     auto builder{llvm::IRBuilder<>(llvmContext)};
     for (unsigned i = 0; i < unionTypeA->caseTypes.size(); i++)
-      indexMap.llvmValue = builder.CreateInsertValue(
-          indexMap.llvmValue,
-          getComptimeInt(
-              unionTypeB->getCaseTypeIndex(unionTypeA->caseTypes[i])),
-          {i});
+      indexMap.llvmValue =
+          builder.CreateInsertValue(indexMap.llvmValue,
+                                    getComptimeInt(unionTypeB->getCaseTypeIndex(
+                                        unionTypeA->caseTypes[i])),
+                                    {i});
     indexMap = LValue(
         indexMap.type,
         new llvm::GlobalVariable(

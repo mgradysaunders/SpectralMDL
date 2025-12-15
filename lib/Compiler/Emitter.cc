@@ -1061,7 +1061,7 @@ Value Emitter::emitOp(AST::BinaryOp op, Value lhs, Value rhs,
     }
     // Matrix-Matrix (ADD, SUB)
     if ((op == BINOP_ADD || op == BINOP_SUB) && //
-        lhsType->extent.isMatrix() &&          //
+        lhsType->extent.isMatrix() &&           //
         lhsType->extent == rhsType->extent) {
       return emitOpColumnwise(lhsType->getCommonType(context, rhsType),
                               [&](unsigned j) {
@@ -1072,7 +1072,7 @@ Value Emitter::emitOp(AST::BinaryOp op, Value lhs, Value rhs,
     }
     // Matrix-Scalar (MUL, DIV, REM)
     if ((op == BINOP_MUL || op == BINOP_DIV || op == BINOP_REM) && //
-        lhsType->extent.isMatrix() &&                             //
+        lhsType->extent.isMatrix() &&                              //
         rhsType->extent.isScalar()) {
       auto commonType{lhsType->getCommonType(context, rhsType)};
       auto scalarAsColumn{
@@ -2570,8 +2570,8 @@ void Emitter::emitPrint(Value os, Value value, const SourceLocation &srcLoc,
 }
 
 Value Emitter::resolveIdentifier(Span<const std::string_view> names,
-                                  const SourceLocation &srcLoc,
-                                  bool voidByDefault) {
+                                 const SourceLocation &srcLoc,
+                                 bool voidByDefault) {
   SMDL_SANITY_CHECK(!names.empty());
   if (auto crumb0{Crumb::find(context, names, getLLVMFunction(), crumb)}) {
     return crumb0->value;
