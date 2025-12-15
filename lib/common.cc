@@ -4,7 +4,6 @@
 
 #include "llvm/ADT/StringRef.h"
 #include "llvm/MC/TargetRegistry.h"
-#include "llvm/Support/Error.h"
 #include "llvm/Support/TargetSelect.h"
 #include "llvm/Support/WithColor.h"
 #include "llvm/Target/TargetOptions.h"
@@ -30,9 +29,9 @@ static const NativeTarget nativeTarget{[]() {
   if (!target)
     llvm::report_fatal_error(targetError.c_str());
   llvm::TargetOptions opts{};
-  return NativeTarget{
-      name, triple,
-      target->createTargetMachine(triple, name, "", opts, llvm::Reloc::PIC_)};
+  return NativeTarget{name, triple,
+                      target->createTargetMachine(llvm::Triple(triple), name,
+                                                  "", opts, llvm::Reloc::PIC_)};
 }()};
 
 const NativeTarget &NativeTarget::get() noexcept { return nativeTarget; }
