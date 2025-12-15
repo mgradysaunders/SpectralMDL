@@ -4,14 +4,13 @@
 #include "smdl/Support/Profiler.h"
 
 #include <chrono>
+#include <filesystem>
 #include <iostream>
 
 #include "llvm/ExecutionEngine/Orc/LLJIT.h"
 #include "llvm/ExecutionEngine/Orc/ThreadSafeModule.h"
 
 #include "Archive.h"
-#include "filesystem.h"
-
 #include "Compiler/Context.h"
 
 #if SMDL_HAS_PTEX
@@ -71,13 +70,14 @@ std::optional<Error> Compiler::add(std::string fileOrDirName) {
     } else if (is_directory(path) && moduleDirNames.insert(path).second) {
       SMDL_LOG_DEBUG("Adding MDL directory ", quoted_path(path));
       moduleDirSearchPaths.emplace_back(path);
-      for (const auto &entry : fs::directory_iterator(path)) {
+      for (const auto &entry : std::filesystem::directory_iterator(path)) {
         if (auto entryPath{canonical(entry.path().string())};
             is_file(entryPath) && has_extension(entryPath, ".mdr")) {
           addFile(entryPath);
         }
       }
-      for (const auto &entry : fs::recursive_directory_iterator(path)) {
+      for (const auto &entry :
+           std::filesystem::recursive_directory_iterator(path)) {
         if (auto entryPath{canonical(entry.path().string())};
             is_file(entryPath) && (has_extension(entryPath, ".mdl") ||
                                    has_extension(entryPath, ".smdl"))) {

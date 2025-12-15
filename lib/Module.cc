@@ -4,9 +4,9 @@
 
 #include "Compiler/Emitter.h"
 #include "Formatter.h"
-#include "filesystem.h"
 
 #include <iostream>
+#include <filesystem>
 
 namespace smdl {
 
@@ -18,7 +18,7 @@ Module::~Module() {}
 std::unique_ptr<Module> Module::load_from_file(const std::string &fileName) {
   auto module_{std::make_unique<Module>()};
   module_->fileName = fileName;
-  module_->name = fs::path(fileName).stem().string();
+  module_->name = std::filesystem::path(fileName).stem().string();
   module_->sourceCode = read_or_throw(fileName);
   return module_;
 }
@@ -29,7 +29,7 @@ Module::load_from_file_extracted_from_archive(const std::string &fileName,
   auto module_{std::make_unique<Module>()};
   module_->isExtractedFromArchive = true;
   module_->fileName = fileName;
-  module_->name = fs::path(fileName).stem().string();
+  module_->name = std::filesystem::path(fileName).stem().string();
   module_->sourceCode = file;
   return module_;
 }

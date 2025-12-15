@@ -1,7 +1,6 @@
 #include "smdl/FileLocator.h"
 
-#include "filesystem.h"
-
+#include <filesystem>
 #include <set>
 
 #include "llvm/ADT/StringSet.h"
@@ -26,15 +25,15 @@ FileLocator::get_search_dirs(std::string_view relativeTo) const {
     }
   }
   if (searchPwd) {
-    auto ec{fs_error_code()};
-    if (auto pwd{fs::current_path(ec)}; !ec) {
+    auto ec{std::error_code()};
+    if (auto pwd{std::filesystem::current_path(ec)}; !ec) {
       add(std::move(pwd));
     }
   }
   for (const auto &[dir, isRecursive] : searchDirs) {
     add(dir);
     if (isRecursive) {
-      for (auto &&entry : fs::recursive_directory_iterator(dir)) {
+      for (auto &&entry : std::filesystem::recursive_directory_iterator(dir)) {
         if (auto subDir{entry.path().string()}; is_directory(subDir)) {
           add(std::move(subDir));
         }
@@ -48,11 +47,12 @@ std::optional<std::string> FileLocator::locate(std::string_view fileName,
                                                std::string_view relativeTo,
                                                LocateFlags flags) const {
   auto result{std::string()};
-  auto accept{[&](fs::path attempt) {
+  auto accept{[&](std::filesystem::path attempt) {
     try {
-      auto ec{fs_error_code()};
-      if (((flags & REGULAR_FILES) != 0 && fs::is_regular_file(attempt, ec)) ||
-          ((flags & DIRS) != 0 && fs::is_directory(attempt, ec))) {
+      auto ec{std::error_code()};
+      if (((flags & REGULAR_FILES) != 0 &&
+           std::filesystem::is_regular_file(attempt, ec)) ||
+          ((flags & DIRS) != 0 && std::filesystem::is_directory(attempt, ec))) {
         result = canonical(attempt.string());
         return true;
       }
@@ -61,13 +61,13 @@ std::optional<std::string> FileLocator::locate(std::string_view fileName,
     }
     return false;
   }};
-  auto fname{fs_make_path(fileName)};
+  auto fname{std::filesystem::path(fileName)};
   if (fname.is_absolute() && accept(fname)) {
     return result;
   }
   if (fname.is_relative()) {
     for (auto &&dir : get_search_dirs(relativeTo)) {
-      if (accept(fs_make_path(dir) / fname)) {
+      if (accept(std::filesystem::path(dir) / fname)) {
         return result;
       }
     }
