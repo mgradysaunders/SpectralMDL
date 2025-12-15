@@ -18,15 +18,15 @@ namespace smdl {
 class SMDL_EXPORT MD5Hash final {
 public:
   /// Hash file on disk. Returns zero if there is an error.
-  [[nodiscard]] static MD5Hash hash_file(const std::string &fileName) noexcept;
+  [[nodiscard]] static MD5Hash hashFile(const std::string &fileName) noexcept;
 
   /// Hash memory.
-  [[nodiscard]] static MD5Hash hash_memory(const void *mem,
-                                           size_t memSize) noexcept;
+  [[nodiscard]] static MD5Hash hashMemory(const void *mem,
+                                          size_t memSize) noexcept;
 
   /// Hash memory.
   [[nodiscard]] static MD5Hash hash_memory(std::string_view mem) noexcept {
-    return hash_memory(mem.data(), mem.size());
+    return hashMemory(mem.data(), mem.size());
   }
 
 public:

@@ -36,15 +36,15 @@ static const NativeTarget nativeTarget{[]() {
 
 const NativeTarget &NativeTarget::get() noexcept { return nativeTarget; }
 
-std::string_view SourceLocation::get_module_name() const {
-  return module_ ? module_->get_name() : std::string_view();
+std::string_view SourceLocation::getModuleName() const {
+  return module_ ? module_->getName() : std::string_view();
 }
 
-std::string_view SourceLocation::get_module_file_name() const {
-  return module_ ? module_->get_file_name() : std::string_view();
+std::string_view SourceLocation::getModuleFileName() const {
+  return module_ ? module_->getFileName() : std::string_view();
 }
 
-void SourceLocation::log_warn(std::string_view message) const {
+void SourceLocation::logWarn(std::string_view message) const {
   auto str{std::string(*this)};
   if (!str.empty())
     str += ' ';
@@ -52,7 +52,7 @@ void SourceLocation::log_warn(std::string_view message) const {
   SMDL_LOG_WARN(str);
 }
 
-void SourceLocation::log_error(std::string_view message) const {
+void SourceLocation::logError(std::string_view message) const {
   auto str{std::string(*this)};
   if (!str.empty())
     str += ' ';
@@ -60,7 +60,7 @@ void SourceLocation::log_error(std::string_view message) const {
   SMDL_LOG_ERROR(str);
 }
 
-void SourceLocation::throw_error(std::string message) const {
+void SourceLocation::throwError(std::string message) const {
   auto str{std::string(*this)};
   if (!str.empty())
     str += ' ';
@@ -72,10 +72,10 @@ SourceLocation::operator std::string() const {
   std::string str{};
   if (module_) {
     str += '[';
-    if (module_->is_builtin()) {
-      str += module_->get_name();
+    if (module_->isBuiltin()) {
+      str += module_->getName();
     } else {
-      str += relative(std::string(module_->get_file_name()));
+      str += makePathRelative(std::string(module_->getFileName()));
     }
     str += ':';
     str += std::to_string(lineNo);
@@ -84,33 +84,33 @@ SourceLocation::operator std::string() const {
   return str;
 }
 
-static void gram_schmidt_orthonormalize(const float3 &normal, float3 &tangentU,
-                                        float3 &tangentV) {
+static void gramSchmidtOrthonormalize(const float3 &normal, float3 &tangentU,
+                                      float3 &tangentV) {
   tangentU = tangentU - dot(tangentU, normal) * normal;
-  if (!try_normalize(tangentU)) {
-    tangentU = normalize(perpendicular_to(normal));
+  if (!tryNormalize(tangentU)) {
+    tangentU = normalize(perpendicularTo(normal));
   }
   tangentV = tangentV - dot(tangentV, normal) * normal -
              dot(tangentV, tangentU) * tangentU;
-  if (!try_normalize(tangentV)) {
+  if (!tryNormalize(tangentV)) {
     tangentV = normalize(cross(normal, tangentU));
   }
 }
 
-void State::finalize_and_apply_internal_space_conventions() noexcept {
+void State::finalizeAndApplyInternalSpaceConventions() noexcept {
   // 1. Orthonormalize normal and tangent vectors.
-  if (!try_normalize(normal))
+  if (!tryNormalize(normal))
     normal = {0, 0, 1};
   for (int i = 0; i < texture_space_max; i++)
-    gram_schmidt_orthonormalize(normal, texture_tangent_u[i],
-                                texture_tangent_v[i]);
+    gramSchmidtOrthonormalize(normal, texture_tangent_u[i],
+                              texture_tangent_v[i]);
 
   // 2. Orthonormalize geometry normal and tangent vectors.
-  if (!try_normalize(geometry_normal))
+  if (!tryNormalize(geometry_normal))
     geometry_normal = normal;
   for (int i = 0; i < texture_space_max; i++)
-    gram_schmidt_orthonormalize(geometry_normal, geometry_tangent_u[i],
-                                geometry_tangent_v[i]);
+    gramSchmidtOrthonormalize(geometry_normal, geometry_tangent_u[i],
+                              geometry_tangent_v[i]);
 
   // 3. Construct the tangent-to-object matrix.
   tangent_to_object_matrix[0] = float4(geometry_tangent_u[0], 0.0f);
@@ -119,7 +119,7 @@ void State::finalize_and_apply_internal_space_conventions() noexcept {
   tangent_to_object_matrix[3] = float4(position, 1.0f);
 
   // 4. Transform everything from object space to tangent space.
-  auto object_to_tangent_matrix{affine_inverse(tangent_to_object_matrix)};
+  auto object_to_tangent_matrix{affineInverse(tangent_to_object_matrix)};
   position = {};
   /* direction = object_to_tangent_matrix * float4(direction, 0.0f); */
   motion = object_to_tangent_matrix * float4(motion, 0.0f);
@@ -140,9 +140,9 @@ void State::finalize_and_apply_internal_space_conventions() noexcept {
   float3 axisX{object_to_world_matrix[0]};
   float3 axisY{object_to_world_matrix[1]};
   float3 axisZ{object_to_world_matrix[2]};
-  if (!try_normalize(axisZ))
+  if (!tryNormalize(axisZ))
     axisZ = {0, 0, 1};
-  gram_schmidt_orthonormalize(axisZ, axisX, axisY);
+  gramSchmidtOrthonormalize(axisZ, axisX, axisY);
   object_to_world_matrix[0] = float4(axisX, 0.0f);
   object_to_world_matrix[1] = float4(axisY, 0.0f);
   object_to_world_matrix[2] = float4(axisZ, 0.0f);

@@ -143,8 +143,8 @@ std::string_view to_string(StmtKind stmtKind) {
 
 Function::LetAndCall Function::get_variant_let_and_call_expressions() const {
   if (!(is_variant() && definition && llvm::isa<Return>(definition.get())))
-    srcLoc.throw_error(concat("function variant ", quoted(name.srcName),
-                              " has invalid declaration"));
+    srcLoc.throwError(concat("function variant ", Quoted(name.srcName),
+                             " has invalid declaration"));
   auto letAndCall{LetAndCall{}};
   auto expr{static_cast<Return *>(definition.get())->expr.get()};
   if (llvm::isa<Call>(expr)) {
@@ -153,20 +153,20 @@ Function::LetAndCall Function::get_variant_let_and_call_expressions() const {
     letAndCall.let = static_cast<Let *>(expr);
     letAndCall.call = llvm::dyn_cast<Call>(letAndCall.let->expr.get());
     if (!letAndCall.call) {
-      srcLoc.throw_error(
-          concat("function variant ", quoted(name.srcName),
+      srcLoc.throwError(
+          concat("function variant ", Quoted(name.srcName),
                  " definition with 'let' must be followed by call expression"));
     }
   }
   if (!letAndCall.call) {
-    srcLoc.throw_error(concat("function variant ", quoted(name.srcName),
-                              " definition must be 'let' or call expression"));
+    srcLoc.throwError(concat("function variant ", Quoted(name.srcName),
+                             " definition must be 'let' or call expression"));
   }
   for (auto &arg : letAndCall.call->args) {
     if (!arg.is_named()) {
-      srcLoc.throw_error(concat("call in definition of function variant ",
-                                quoted(name.srcName),
-                                " must only use named arguments"));
+      srcLoc.throwError(concat("call in definition of function variant ",
+                               Quoted(name.srcName),
+                               " must only use named arguments"));
     }
   }
   return letAndCall;

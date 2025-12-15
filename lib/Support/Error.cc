@@ -13,12 +13,12 @@ namespace smdl {
 
 void Error::print() const { SMDL_LOG_ERROR(message); }
 
-void Error::print_and_exit() const {
+void Error::printAndExit() const {
   print();
   std::exit(EXIT_FAILURE);
 }
 
-std::string abi_demangle(const char *name) {
+std::string abiDemangle(const char *name) {
   if (!name)
     return {};
 #if SMDL_HAS_CXXABI
@@ -34,9 +34,9 @@ std::string abi_demangle(const char *name) {
 #endif // #if SMDL_HAS_CXXABI
 }
 
-std::string abi_demangle_exception_name() {
+std::string abiDemangleExceptionName() {
 #if SMDL_HAS_CXXABI
-  return abi_demangle(::abi::__cxa_current_exception_type()->name());
+  return abiDemangle(::abi::__cxa_current_exception_type()->name());
 #else
   return "unknown exception";
 #endif // #if SMDL_HAS_CXXABI

@@ -36,7 +36,7 @@ private:
   }
 
   [[nodiscard]] std::string_view get_source_code() const {
-    return module_.get_source_code();
+    return module_.getSourceCode();
   }
 
   [[nodiscard]] std::string_view
@@ -209,11 +209,11 @@ private:
         auto exprEps{parse_unary_expression()};
         auto srcBrackR{next_delimiter("]")};
         if (!srcBrackL || !exprEps || !srcBrackR)
-          srcLoc0.throw_error("expected '[EPSILON]' after ", quoted(op->srcOp));
+          srcLoc0.throwError("expected '[EPSILON]' after ", Quoted(op->srcOp));
         auto exprRhs{parseInner()};
         if (!exprRhs)
-          srcLoc0.throw_error("expected '[EPSILON] EXPRESSION' after ",
-                              quoted(op->srcOp));
+          srcLoc0.throwError("expected '[EPSILON] EXPRESSION' after ",
+                             Quoted(op->srcOp));
         accept();
         exprLhs = allocate<AST::Binary>(
             srcLoc0, std::in_place, std::move(exprLhs), op->srcOp, op->op,

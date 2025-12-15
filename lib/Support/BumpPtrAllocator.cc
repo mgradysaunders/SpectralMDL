@@ -21,7 +21,7 @@ void BumpPtrAllocator::reset() noexcept {
   static_cast<llvm::BumpPtrAllocator *>(object)->Reset();
 }
 
-size_t BumpPtrAllocator::bytes_allocated() const noexcept {
+size_t BumpPtrAllocator::getBytesAllocated() const noexcept {
   return static_cast<const llvm::BumpPtrAllocator *>(object)
       ->getBytesAllocated();
 }

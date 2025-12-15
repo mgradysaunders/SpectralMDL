@@ -39,10 +39,10 @@ void Logger::close() {
     sink->close();
 }
 
-void Logger::log_message(LogLevel level, std::string_view message) {
+void Logger::logMessage(LogLevel level, std::string_view message) {
   std::lock_guard guard{mtx};
   for (auto &sink : sinks)
-    sink->log_message(level, message);
+    sink->logMessage(level, message);
 }
 
 namespace LogSinks {
@@ -53,17 +53,15 @@ static const char *LabelsWithColors[]{"\033[36m[debug]\033[0m ", "",
 
 static const char *LabelsWithoutColors[]{"[debug] ", "", "[warn] ", "[error] "};
 
-void print_to_cerr::log_message(LogLevel level, std::string_view message) {
-  static const auto Labels{cerr_supports_ansi_colors()
-                               ? &LabelsWithColors[0]
-                               : &LabelsWithoutColors[0]};
+void print_to_cerr::logMessage(LogLevel level, std::string_view message) {
+  static const auto Labels{cerrSupportsANSIColors() ? &LabelsWithColors[0]
+                                                    : &LabelsWithoutColors[0]};
   std::cerr << Labels[int(level)] << message << '\n';
 }
 
-void print_to_cout::log_message(LogLevel level, std::string_view message) {
-  static const auto Labels{cout_supports_ansi_colors()
-                               ? &LabelsWithColors[0]
-                               : &LabelsWithoutColors[0]};
+void print_to_cout::logMessage(LogLevel level, std::string_view message) {
+  static const auto Labels{coutSupportsANSIColors() ? &LabelsWithColors[0]
+                                                    : &LabelsWithoutColors[0]};
   std::cout << Labels[int(level)] << message << std::endl;
 }
 
@@ -71,7 +69,7 @@ void print_to_cout::flush() { std::cout.flush(); }
 
 } // namespace LogSinks
 
-bool cerr_supports_ansi_colors() {
+bool cerrSupportsANSIColors() {
 #if SMDL_HAS_UNISTD
   return isatty(STDERR_FILENO);
 #else
@@ -79,7 +77,7 @@ bool cerr_supports_ansi_colors() {
 #endif // #if SMDL_HAS_UNISTD
 }
 
-bool cout_supports_ansi_colors() {
+bool coutSupportsANSIColors() {
 #if SMDL_HAS_UNISTD
   return isatty(STDOUT_FILENO);
 #else

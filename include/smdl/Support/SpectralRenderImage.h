@@ -78,21 +78,21 @@ public:
   void resize(size_t nBands, size_t nPixelsX, size_t nPixelsY);
 
   /// The number of spectral bands.
-  [[nodiscard]] size_t num_bands() const noexcept { return numBands; }
+  [[nodiscard]] size_t getNumBands() const noexcept { return numBands; }
 
   /// The number of pixels in X.
-  [[nodiscard]] size_t num_pixels_x() const noexcept { return numPixelsX; }
+  [[nodiscard]] size_t getNumPixelsX() const noexcept { return numPixelsX; }
 
   /// The number of pixels in Y.
-  [[nodiscard]] size_t num_pixels_y() const noexcept { return numPixelsY; }
+  [[nodiscard]] size_t getNumPixelsY() const noexcept { return numPixelsY; }
 
   /// The image size in bytes.
-  [[nodiscard]] size_t image_size_in_bytes() const noexcept {
-    return numPixelsX * numPixelsY * pixel_size_in_bytes();
+  [[nodiscard]] size_t getImageSizeInBytes() const noexcept {
+    return numPixelsX * numPixelsY * getPixelSizeInBytes();
   }
 
   /// The pixel size in bytes.
-  [[nodiscard]] size_t pixel_size_in_bytes() const noexcept {
+  [[nodiscard]] size_t getPixelSizeInBytes() const noexcept {
     return sizeof(AtomicUInt64) + sizeof(AtomicDouble) * numBands;
   }
 
@@ -202,8 +202,8 @@ public:
   /// \param[in] fileName
   /// The filename of the image.
   ///
-  void write_envi_file(Span<const float> wavelengths,
-                       const std::string &fileName) const;
+  void writeENVIFile(Span<const float> wavelengths,
+                     const std::string &fileName) const;
 
 private:
   size_t numBands{};

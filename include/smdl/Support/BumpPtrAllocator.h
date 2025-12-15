@@ -122,7 +122,7 @@ public:
   void reset() noexcept;
 
   /// Get the number of bytes allocated.
-  [[nodiscard]] size_t bytes_allocated() const noexcept;
+  [[nodiscard]] size_t getBytesAllocated() const noexcept;
 
 private:
   /// The pointer to the `llvm::BumpPtrAllocator`.
@@ -133,7 +133,7 @@ private:
 
 } // namespace smdl
 
-[[nodiscard]] inline void *operator new(std::size_t sz, 
+[[nodiscard]] inline void *operator new(std::size_t sz,
                                         smdl::BumpPtrAllocator &allocator) {
   return allocator.allocate(sz, alignof(std::max_align_t));
 }

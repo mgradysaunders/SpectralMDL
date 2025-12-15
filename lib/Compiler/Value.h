@@ -99,7 +99,7 @@ public:
   [[nodiscard]] Module *
   getComptimeMetaModule(Context &context, const SourceLocation &srcLoc) const {
     if (!isComptimeMetaModule(context))
-      srcLoc.throw_error("expected compile-time module");
+      srcLoc.throwError("expected compile-time module");
     return llvmConstantIntAsPtr<Module>(llvmValue);
   }
 
@@ -107,7 +107,7 @@ public:
   [[nodiscard]] Type *getComptimeMetaType(Context &context,
                                           const SourceLocation &srcLoc) const {
     if (!isComptimeMetaType(context))
-      srcLoc.throw_error("expected compile-time type");
+      srcLoc.throwError("expected compile-time type");
     return llvmConstantIntAsPtr<Type>(llvmValue);
   }
 
@@ -116,7 +116,7 @@ public:
   getComptimeMetaIntrinsic(Context &context,
                            const SourceLocation &srcLoc) const {
     if (!isComptimeMetaIntrinsic(context))
-      srcLoc.throw_error("expected compile-time intrinsic");
+      srcLoc.throwError("expected compile-time intrinsic");
     return llvmConstantIntAsPtr<AST::Intrinsic>(llvmValue);
   }
 
@@ -125,7 +125,7 @@ public:
   getComptimeMetaNamespace(Context &context,
                            const SourceLocation &srcLoc) const {
     if (!isComptimeMetaNamespace(context))
-      srcLoc.throw_error("expected compile-time intrinsic");
+      srcLoc.throwError("expected compile-time intrinsic");
     return llvmConstantIntAsPtr<AST::Namespace>(llvmValue);
   }
 
@@ -227,8 +227,8 @@ public:
             !(astParam->annotations &&
               astParam->annotations->is_marked_unused())) {
           astParam->warningIssued = true;
-          getSourceLocation().log_warn(
-              concat("unused parameter ", quoted(name[0])));
+          getSourceLocation().logWarn(
+              concat("unused parameter ", Quoted(name[0])));
         }
       }
       if (llvm::isa_and_present<AST::Variable::Declarator>(node)) {
@@ -237,8 +237,8 @@ public:
             !(declarator->annotations &&
               declarator->annotations->is_marked_unused())) {
           declarator->warningIssued = true;
-          getSourceLocation().log_warn(
-              concat("unused variable ", quoted(name[0])));
+          getSourceLocation().logWarn(
+              concat("unused variable ", Quoted(name[0])));
         }
       }
     }

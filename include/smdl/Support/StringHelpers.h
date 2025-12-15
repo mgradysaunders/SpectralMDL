@@ -15,22 +15,22 @@ namespace smdl {
 /// \{
 
 /// A quoted string for use with `concat`.
-class SMDL_EXPORT quoted final {
+class SMDL_EXPORT Quoted final {
 public:
-  constexpr quoted(std::string_view str) : str(str) {}
+  constexpr Quoted(std::string_view str) : str(str) {}
 
-  void append_to(std::string &result);
+  void appendTo(std::string &result);
 
 public:
   std::string_view str{};
 };
 
 /// A quoted path string for use with `concat`.
-class SMDL_EXPORT quoted_path final {
+class SMDL_EXPORT QuotedPath final {
 public:
-  constexpr quoted_path(std::string_view str) : str(str) {}
+  constexpr QuotedPath(std::string_view str) : str(str) {}
 
-  void append_to(std::string &result);
+  void appendTo(std::string &result);
 
 public:
   std::string_view str{};
@@ -43,9 +43,9 @@ inline void do_concat(std::string &str, T &&value, Ts &&...values) {
   using DecayT = std::decay_t<T>;
   if constexpr (std::is_arithmetic_v<DecayT>) {
     str += std::to_string(value);
-  } else if constexpr (std::is_same_v<DecayT, quoted> ||
-                       std::is_same_v<DecayT, quoted_path>) {
-    value.append_to(str);
+  } else if constexpr (std::is_same_v<DecayT, Quoted> ||
+                       std::is_same_v<DecayT, QuotedPath>) {
+    value.appendTo(str);
   } else {
     str += value;
   }

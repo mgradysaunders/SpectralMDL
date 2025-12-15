@@ -110,25 +110,25 @@ class Type;
 class SMDL_EXPORT SourceLocation final {
 public:
   /// Get the module name.
-  [[nodiscard]] std::string_view get_module_name() const;
+  [[nodiscard]] std::string_view getModuleName() const;
 
   /// Get the file name.
-  [[nodiscard]] std::string_view get_module_file_name() const;
+  [[nodiscard]] std::string_view getModuleFileName() const;
 
   /// Log a warning.
-  void log_warn(std::string_view message) const;
+  void logWarn(std::string_view message) const;
 
   /// Log an error.
-  void log_error(std::string_view message) const;
+  void logError(std::string_view message) const;
 
   /// Throw an `Error`.
-  void throw_error(std::string message) const;
+  void throwError(std::string message) const;
 
   /// Throw an `Error` using `concat` to concatenate the arguments.
   template <typename T0, typename T1, typename... Ts>
-  void throw_error(T0 &&value0, T1 &&value1, Ts &&...values) const {
-    throw_error(concat(std::forward<T0>(value0), std::forward<T1>(value1),
-                       std::forward<Ts>(values)...));
+  void throwError(T0 &&value0, T1 &&value1, Ts &&...values) const {
+    throwError(concat(std::forward<T0>(value0), std::forward<T1>(value1),
+                      std::forward<Ts>(values)...));
   }
 
   /// Is not-valid?
@@ -188,7 +188,7 @@ public:
   /// 2. Orthonormalize the geometric normal and tangent vectors.
   /// 3. Construct the matrix pair for transforming between geometric tangent
   ///    space and object space.
-  /// 4. Transform every member variable defined in object space to 
+  /// 4. Transform every member variable defined in object space to
   ///    geometric tangent space.
   /// 5. Orthonormalize the object-to-world matrix.
   ///
@@ -197,8 +197,8 @@ public:
   /// - `geometry_tangent_u[0]` is the X axis `float3(1,0,0)`
   /// - `geometry_tangent_v[0]` is the Y axis `float3(0,1,0)`
   /// - `geometry_normal` is the Z axis `float3(0,0,1)`
-  /// 
-  void finalize_and_apply_internal_space_conventions() noexcept;
+  ///
+  void finalizeAndApplyInternalSpaceConventions() noexcept;
 
 public:
   /// The allocator, which must point to thread-local

@@ -8,7 +8,7 @@ namespace smdl {
 /// \addtogroup Main
 /// \{
 
-[[nodiscard]] SMDL_EXPORT float unpack_half(const void *ptr) noexcept;
+[[nodiscard]] SMDL_EXPORT float unpackHalf(const void *ptr) noexcept;
 
 /// An image.
 ///
@@ -75,31 +75,31 @@ public:
   /// that we can parallelize all of the image loads.
   ///
   [[nodiscard]] std::optional<Error>
-  start_load(const std::string &fileName) noexcept;
+  startLoad(const std::string &fileName) noexcept;
 
   /// If `start_load()` was successful, finish loading the texels.
   ///
   /// \throw std::runtime_error If anything fails.
   ///
-  void finish_load();
+  void finishLoad();
 
   /// \}
 
   /// Flip vertically.
-  void flip_vertically() noexcept;
+  void flipVertically() noexcept;
 
 public:
   /// Get the format.
-  [[nodiscard]] Format get_format() const noexcept { return format; }
+  [[nodiscard]] Format getFormat() const noexcept { return format; }
 
   /// Get the number of channels, must be 1, 2, or 4.
-  [[nodiscard]] int get_num_channels() const noexcept { return numChannels; }
+  [[nodiscard]] int getNumChannels() const noexcept { return numChannels; }
 
   /// Get the number of texels in X.
-  [[nodiscard]] int get_num_texels_x() const noexcept { return numTexelsX; }
+  [[nodiscard]] int getNumTexelsX() const noexcept { return numTexelsX; }
 
   /// Get the number of texels in Y.
-  [[nodiscard]] int get_num_texels_y() const noexcept { return numTexelsY; }
+  [[nodiscard]] int getNumTexelsY() const noexcept { return numTexelsY; }
 
   /// Get the texel size in bytes.
   ///
@@ -107,17 +107,15 @@ public:
   /// This is necessarily the number of channels times the
   /// implied size of the format.
   ///
-  [[nodiscard]] int get_texel_size_in_bytes() const noexcept {
-    return texelSize;
-  }
+  [[nodiscard]] int getTexelSizeInBytes() const noexcept { return texelSize; }
 
   /// Get texels.
-  [[nodiscard]] auto get_texels() noexcept -> std::byte * {
+  [[nodiscard]] auto getTexels() noexcept -> std::byte * {
     return texels.get();
   }
 
   /// Get texels, const variant.
-  [[nodiscard]] auto get_texels() const noexcept -> const std::byte * {
+  [[nodiscard]] auto getTexels() const noexcept -> const std::byte * {
     return texels.get();
   }
 
@@ -161,13 +159,13 @@ private:
   std::unique_ptr<std::byte[]> texels{};
 
   /// The function to finish loading the image.
-  std::function<void()> finishLoad{};
+  std::function<void()> finishLoadFn{};
 };
 
 [[nodiscard]]
 SMDL_EXPORT std::optional<Error>
-write_8_bit_image(const std::string &fileName, int numTexelsX, int numTexelsY,
-                  int numChannels, const void *texels);
+write8bitImage(const std::string &fileName, int numTexelsX, int numTexelsY,
+               int numChannels, const void *texels);
 
 /// \}
 

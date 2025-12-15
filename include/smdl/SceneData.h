@@ -39,28 +39,28 @@ public:
   void set(std::string_view name, Getter getter);
 
   /// Associate the given name with a constant `int`.
-  void set_int(std::string_view name, int var);
+  void setInt(std::string_view name, int var);
 
   /// Associate the given name with a constant `int2`.
-  void set_int2(std::string_view name, int2 var);
+  void setInt2(std::string_view name, int2 var);
 
   /// Associate the given name with a constant `int3`.
-  void set_int3(std::string_view name, int3 var);
+  void setInt3(std::string_view name, int3 var);
 
   /// Associate the given name with a constant `int4`.
-  void set_int4(std::string_view name, int4 var);
+  void setInt4(std::string_view name, int4 var);
 
   /// Associate the given name with a constant `float`.
-  void set_float(std::string_view name, float var);
+  void setFloat(std::string_view name, float var);
 
   /// Associate the given name with a constant `float2`.
-  void set_float2(std::string_view name, float2 var);
+  void setFloat2(std::string_view name, float2 var);
 
   /// Associate the given name with a constant `float3`.
-  void set_float3(std::string_view name, float3 var);
+  void setFloat3(std::string_view name, float3 var);
 
   /// Associate the given name with a constant `float4`.
-  void set_float4(std::string_view name, float4 var);
+  void setFloat4(std::string_view name, float4 var);
 
   /// Associate the given name with a `color`.
   ///
@@ -68,8 +68,8 @@ public:
   /// The getter to calculate the color which must generally depend on
   /// the wavelengths in the `State`.
   ///
-  void set_color(std::string_view name,
-                 std::function<void(State &, float *)> getter);
+  void setColor(std::string_view name,
+                std::function<void(State &, float *)> getter);
 
   [[nodiscard]] const Getter *get(std::string_view name) const;
 

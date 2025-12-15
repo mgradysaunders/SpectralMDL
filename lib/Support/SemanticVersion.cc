@@ -2,8 +2,8 @@
 
 #include "smdl/Common.h"
 
-#include "llvm/ADT/StringRef.h"
 #include "llvm/ADT/SmallVector.h"
+#include "llvm/ADT/StringRef.h"
 
 namespace smdl {
 
@@ -25,7 +25,7 @@ SemanticVersion SemanticVersion::parse(const std::string &versionStr) {
     return true;
   }()};
   if (!success)
-    throw Error(concat("invalid version string ", quoted(versionStr)));
+    throw Error(concat("invalid version string ", Quoted(versionStr)));
   return version;
 }
 

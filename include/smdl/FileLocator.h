@@ -16,7 +16,7 @@ public:
 public:
   /// Set whether or not the locator should search the present working
   /// directory.
-  void set_search_pwd(bool yes) { searchPwd = yes; }
+  void setSearchPwd(bool yes) { searchPwd = yes; }
 
   /// Add search directory.
   ///
@@ -30,9 +30,9 @@ public:
   /// Returns true if successful, and false if the given `dirPath`
   /// did not resolve to a valid path.
   ///
-  bool add_search_dir(const std::string &dir, bool isRecursive = false) {
-    if (is_directory(dir)) {
-      searchDirs.emplace_back(SearchDir{canonical(dir), isRecursive});
+  bool addSearchDir(const std::string &dir, bool isRecursive = false) {
+    if (isDirectory(dir)) {
+      searchDirs.emplace_back(SearchDir{makePathCanonical(dir), isRecursive});
       return true;
     }
     return false;
@@ -51,7 +51,7 @@ public:
   /// paths removed.
   ///
   [[nodiscard]] std::vector<std::string>
-  get_search_dirs(std::string_view relativeTo = {}) const;
+  getSearchDirs(std::string_view relativeTo = {}) const;
 
   typedef uint32_t LocateFlags;
 
@@ -110,8 +110,8 @@ public:
   // TODO Document
   /// Locate images according to the MDL specification for UV tile filenames.
   [[nodiscard]] std::vector<ImagePath>
-  locate_images(std::string_view fileName,
-                std::string_view relativeTo = {}) const;
+  locateImages(std::string_view fileName,
+               std::string_view relativeTo = {}) const;
 
 private:
   /// Always search the present working directory?

@@ -7,7 +7,7 @@
 namespace smdl {
 
 std::vector<std::string>
-FileLocator::get_search_dirs(std::string_view relativeTo) const {
+FileLocator::getSearchDirs(std::string_view relativeTo) const {
   auto results{std::vector<std::string>()};
   auto resultsSet{llvm::StringSet()};
   auto add{[&](std::string dir) {
@@ -16,11 +16,11 @@ FileLocator::get_search_dirs(std::string_view relativeTo) const {
     }
   }};
   if (!relativeTo.empty()) {
-    auto fileOrDir{canonical(std::string(relativeTo))};
-    if (is_directory(fileOrDir)) {
+    auto fileOrDir{makePathCanonical(std::string(relativeTo))};
+    if (isDirectory(fileOrDir)) {
       add(fileOrDir);
     } else {
-      add(parent_path(fileOrDir));
+      add(parentPathOf(fileOrDir));
     }
   }
   if (searchPwd) {
@@ -33,7 +33,7 @@ FileLocator::get_search_dirs(std::string_view relativeTo) const {
     add(dir);
     if (isRecursive) {
       for (auto &&entry : std::filesystem::recursive_directory_iterator(dir)) {
-        if (auto subDir{entry.path().string()}; is_directory(subDir)) {
+        if (auto subDir{entry.path().string()}; isDirectory(subDir)) {
           add(std::move(subDir));
         }
       }
@@ -52,7 +52,7 @@ std::optional<std::string> FileLocator::locate(std::string_view fileName,
       if (((flags & REGULAR_FILES) != 0 &&
            std::filesystem::is_regular_file(attempt, ec)) ||
           ((flags & DIRS) != 0 && std::filesystem::is_directory(attempt, ec))) {
-        result = canonical(attempt.string());
+        result = makePathCanonical(attempt.string());
         return true;
       }
     } catch (...) {
@@ -65,7 +65,7 @@ std::optional<std::string> FileLocator::locate(std::string_view fileName,
     return result;
   }
   if (fname.is_relative()) {
-    for (auto &&dir : get_search_dirs(relativeTo)) {
+    for (auto &&dir : getSearchDirs(relativeTo)) {
       if (accept(std::filesystem::path(dir) / fname)) {
         return result;
       }
@@ -75,8 +75,8 @@ std::optional<std::string> FileLocator::locate(std::string_view fileName,
 }
 
 std::vector<FileLocator::ImagePath>
-FileLocator::locate_images(std::string_view fileName,
-                           std::string_view relativeTo) const {
+FileLocator::locateImages(std::string_view fileName,
+                          std::string_view relativeTo) const {
   const auto fileNameStrRef{llvm::StringRef(fileName)};
   // Look for tile placeholders:
   // - "<UDIM>"
@@ -132,7 +132,7 @@ FileLocator::locate_images(std::string_view fileName,
     auto results{std::vector<ImagePath>{}};
     auto resultsSet{llvm::StringSet()};
     auto parentPath{std::optional<std::filesystem::path>{}};
-    for (auto &&dir : get_search_dirs(relativeTo)) {
+    for (auto &&dir : getSearchDirs(relativeTo)) {
       for (auto &&dirEntry : std::filesystem::directory_iterator(dir)) {
         if (dirEntry.is_regular_file()) {
           // Only proceed if either we have not yet established the parent

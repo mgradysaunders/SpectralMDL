@@ -60,10 +60,10 @@ enum WaveUnits : int {
 }
 
 std::optional<Error>
-Spectrum::load_from_file(const std::string &fileName) noexcept {
+Spectrum::loadFromFile(const std::string &fileName) noexcept {
   clear();
-  return catch_and_return_error([&] {
-    auto file{open_or_throw(fileName, std::ios::in)};
+  return catchAndReturnError([&] {
+    auto file{openOrThrow(fileName, std::ios::in)};
     auto line{std::string()};
     auto units{WAVE_UNITS_MICROMETERS};
     bool hasUnitsYet{false};
@@ -95,7 +95,7 @@ Spectrum::load_from_file(const std::string &fileName) noexcept {
       float wavelength{};
       float curveValue{};
       if (std::sscanf(lineRef.data(), "%f %f", &wavelength, &curveValue) != 2)
-        throw Error(concat("cannot load ", quoted_path(fileName),
+        throw Error(concat("cannot load ", QuotedPath(fileName),
                            ": expected 'wavelength value'"));
       wavelengths.push_back(to_nanometers(units, wavelength));
       curveValues.push_back(curveValue);
@@ -108,13 +108,13 @@ Spectrum::load_from_file(const std::string &fileName) noexcept {
 }
 
 std::optional<Error>
-SpectrumLibrary::load_from_file(const std::string &fileName) noexcept {
+SpectrumLibrary::loadFromFile(const std::string &fileName) noexcept {
   clear();
-  return catch_and_return_error([&] {
+  return catchAndReturnError([&] {
     auto throwError{[&](const char *message) {
-      throw Error(concat("cannot load ", quoted_path(fileName), ": ", message));
+      throw Error(concat("cannot load ", QuotedPath(fileName), ": ", message));
     }};
-    auto hdrFile{read_or_throw(fileName + ".hdr")};
+    auto hdrFile{readOrThrow(fileName + ".hdr")};
     auto hdr{llvm::StringRef(hdrFile)};
     if (!hdr.consume_front("ENVI")) {
       throwError("not an ENVI header file");
@@ -240,7 +240,7 @@ SpectrumLibrary::load_from_file(const std::string &fileName) noexcept {
     for (auto &wavelength : wavelengths) {
       wavelength = to_nanometers(units, wavelength);
     }
-    auto binFile{read_or_throw(fileName)};
+    auto binFile{readOrThrow(fileName)};
     auto bin{llvm::StringRef(binFile)};
     bin = bin.drop_front(headerOffset);
     auto endianness{byteOrder == 0 ? llvm::endianness::little
@@ -289,11 +289,11 @@ SpectrumLibrary::load_from_file(const std::string &fileName) noexcept {
 }
 
 SpectrumView
-SpectrumLibrary::get_curve_by_name(std::string_view name) const noexcept {
+SpectrumLibrary::getCurveByName(std::string_view name) const noexcept {
   for (size_t i = 0; i < curveNames.size(); i++) {
     if (llvm::StringRef(curveNames[i])
             .equals_insensitive(llvm::StringRef(name)))
-      return get_curve_by_index(i);
+      return getCurveByIndex(i);
   }
   return {};
 }

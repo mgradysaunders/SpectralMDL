@@ -33,7 +33,7 @@ public:
                         float &pdfRev, Color &f) const {
     if (isVolume) {
       // TODO
-      float phase = smdl::uniform_sphere_pdf();
+      float phase = smdl::uniformSpherePDF();
       pdfFwd = phase;
       pdfRev = phase;
       f = phase;
@@ -55,9 +55,9 @@ public:
   float convert_pdf(float wpdf, const Vertex &next) const {
     if (!next.isInfiniteLight) {
       auto v{next.point - point};
-      wpdf /= length_squared(v);
+      wpdf /= lengthSquared(v);
       if (!next.isVolume) {
-        wpdf *= abs_dot(next.materialInstance.geometry_normal(), normalize(v));
+        wpdf *= absDot(next.materialInstance.geometry_normal(), normalize(v));
       }
     }
     return wpdf;
@@ -100,7 +100,7 @@ inline float3 Direction(const Vertex &from, const Vertex &to) noexcept {
 inline float3 DistanceSquared(const Vertex &from, const Vertex &to) noexcept {
   if (from.isInfiniteLight || to.isInfiniteLight)
     return 1.0f;
-  return length_squared(to.point - from.point);
+  return lengthSquared(to.point - from.point);
 }
 
 [[nodiscard]] bool test_visibility(const Scene &scene, const AnyRandom &random,

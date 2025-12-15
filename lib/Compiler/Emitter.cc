@@ -71,8 +71,8 @@ void Emitter::createFunction(llvm::Function *&llvmFunc, std::string_view name,
                                             /*isVarArg=*/false)};
     auto llvmCallee{context.getBuiltinCallee(name, llvmFuncTy)};
     if (llvmFuncTy != llvmCallee.getFunctionType()) {
-      srcLoc.throw_error("conflicting definitions of '@(foreign)' function ",
-                         quoted(name));
+      srcLoc.throwError("conflicting definitions of '@(foreign)' function ",
+                         Quoted(name));
     }
     llvmFunc = static_cast<llvm::Function *>(llvmCallee.getCallee());
     return;
@@ -142,14 +142,14 @@ void Emitter::createFunction(llvm::Function *&llvmFunc, std::string_view name,
     std::string message{};
     if (llvm::raw_string_ostream os{message};
         llvm::verifyFunction(*llvmFunc, &os))
-      srcLoc.throw_error("function ", quoted(name),
+      srcLoc.throwError("function ", Quoted(name),
                          " LLVM-IR verification failed: ", message);
     // Inline.
     for (auto &inlineReq : inlines) {
       auto result{llvmForceInline(inlineReq.value, //
                                   inlineReq.isRecursive)};
       if (!result.isSuccess())
-        inlineReq.srcLoc.log_warn(std::string("cannot force inline: ") +
+        inlineReq.srcLoc.logWarn(std::string("cannot force inline: ") +
                                   result.getFailureReason());
     }
   }
@@ -198,13 +198,13 @@ void Emitter::declareParameterInline(Value value) {
 void Emitter::declareImport(Span<const std::string_view> importPath, bool isAbs,
                             AST::Decl &decl) {
   if (importPath.size() < 2)
-    decl.srcLoc.throw_error("invalid import path (missing '::*'?)");
+    decl.srcLoc.throwError("invalid import path (missing '::*'?)");
   auto isDots{[](auto elem) { return elem == "." || elem == ".."; }};
   auto importedModule{
       resolveModule(importPath.drop_back(), isAbs, decl.srcLoc.module_)};
   if (!importedModule)
-    decl.srcLoc.throw_error("cannot resolve import identifier ",
-                            quoted(join(importPath, "::")));
+    decl.srcLoc.throwError("cannot resolve import identifier ",
+                            Quoted(join(importPath, "::")));
   if (importPath.back() == "*") {
     importPath = importPath.drop_back();
     importPath = importPath.drop_front_while(isDots);
@@ -215,8 +215,8 @@ void Emitter::declareImport(Span<const std::string_view> importPath, bool isAbs,
                                    getLLVMFunction(), importedModule->lastCrumb,
                                    nullptr, /*ignoreIfNotExported=*/true)};
     if (!importedCrumb)
-      decl.srcLoc.throw_error("cannot resolve import identifier ",
-                              quoted(join(importPath, "::")));
+      decl.srcLoc.throwError("cannot resolve import identifier ",
+                              Quoted(join(importPath, "::")));
     declareCrumb(importPath.drop_front_while(isDots), &decl,
                  importedCrumb->value);
   }
@@ -254,9 +254,9 @@ Value Emitter::createResult(Type *type, llvm::ArrayRef<Result> results,
         context.getCommonType(resultTypes, /*defaultToUnion=*/true, srcLoc)};
     if (context.getConversionRule(resultType, type) ==
         CONVERSION_RULE_NOT_ALLOWED)
-      srcLoc.throw_error("inferred result type ",
-                         quoted(resultType->displayName),
-                         " is not convertible to ", quoted(type->displayName));
+      srcLoc.throwError("inferred result type ",
+                         Quoted(resultType->displayName),
+                         " is not convertible to ", Quoted(type->displayName));
     type = resultType;
     SMDL_SANITY_CHECK(!type->isAbstract());
   }
@@ -323,8 +323,8 @@ Value Emitter::emit(AST::UnitTest &decl) {
         decl.srcLoc, [&] { emit(decl.stmt); })};
     llvmFunc->setLinkage(llvm::Function::ExternalLinkage);
     auto &jitTest{context.compiler.jitUnitTests.emplace_back()};
-    jitTest.moduleName = std::string(decl.srcLoc.get_module_name());
-    jitTest.moduleFileName = std::string(decl.srcLoc.get_module_file_name());
+    jitTest.moduleName = std::string(decl.srcLoc.getModuleName());
+    jitTest.moduleFileName = std::string(decl.srcLoc.getModuleFileName());
     jitTest.lineNo = decl.srcLoc.lineNo;
     jitTest.testName = decl.name->value;
     jitTest.test.name = llvmFunc->getName().str();
@@ -352,22 +352,22 @@ Value Emitter::emit(AST::UsingImport &decl) {
 Value Emitter::emit(AST::Variable &decl) {
   auto type{emit(decl.type).getComptimeMetaType(context, decl.srcLoc)};
   if (type->isFunction())
-    decl.srcLoc.throw_error("variable must not have function type ",
-                            quoted(type->displayName));
+    decl.srcLoc.throwError("variable must not have function type ",
+                            Quoted(type->displayName));
   const bool isConst{decl.type->has_qualifier("const")};
   const bool isStatic{decl.type->has_qualifier("static")};
   const bool isInline{decl.type->has_qualifier("inline")};
   if (!getLLVMFunction() && !isConst)
-    decl.srcLoc.throw_error(
+    decl.srcLoc.throwError(
         "variables declared at module scope must be 'const'");
   if (isStatic && !isConst)
-    decl.srcLoc.throw_error(
+    decl.srcLoc.throwError(
         "variables declared 'static' must be 'const' (at least for now)");
   if (isInline)
-    decl.srcLoc.throw_error("variables must not be declared 'inline'");
+    decl.srcLoc.throwError("variables must not be declared 'inline'");
   for (auto &declarator : decl.declarators) {
     if (declarator.is_destructure() && type != context.getAutoType())
-      declarator.srcLoc.throw_error(
+      declarator.srcLoc.throwError(
           "destructure declarator must have 'auto' type");
     auto crumb0{crumb};
     auto args{[&]() -> ArgumentList {
@@ -383,13 +383,13 @@ Value Emitter::emit(AST::Variable &decl) {
     auto value{invoke(type, args, declarator.srcLoc)};
     if (declarator.is_destructure()) {
       if (isStatic)
-        declarator.srcLoc.throw_error(
+        declarator.srcLoc.throwError(
             "cannot destructure 'static' variables (yet)");
       SMDL_SANITY_CHECK(declarator.names.size() >= 1);
       if (auto structType{llvm::dyn_cast<StructType>(value.type)}) {
         if (structType->params.size() != declarator.names.size())
-          declarator.srcLoc.throw_error(
-              "cannot destructure ", quoted(structType->displayName),
+          declarator.srcLoc.throwError(
+              "cannot destructure ", Quoted(structType->displayName),
               ", expected ", structType->params.size(), " names");
         if (!isConst) {
           auto valueAlloca{createAlloca(value.type)};
@@ -403,7 +403,7 @@ Value Emitter::emit(AST::Variable &decl) {
                                    declarator.srcLoc));
         }
       } else {
-        declarator.srcLoc.throw_error("unsupported destructure");
+        declarator.srcLoc.throwError("unsupported destructure");
       }
     } else {
       // NOTE: This must be a reference for `declare_crumb` below
@@ -412,8 +412,8 @@ Value Emitter::emit(AST::Variable &decl) {
       if (!value.isVoid()) {
         if (isStatic) {
           if (!value.isComptime())
-            declarator.srcLoc.throw_error(
-                "variable ", quoted(name.srcName),
+            declarator.srcLoc.throwError(
+                "variable ", Quoted(name.srcName),
                 " declared 'static' requires compile-time initializer");
           auto llvmGlobal{new llvm::GlobalVariable(
               context.llvmModule, value.type->llvmType, /*isConstant=*/true,
@@ -455,7 +455,7 @@ Value Emitter::emit(AST::AccessIndex &expr) {
   if (!value.isComptimeMetaType(context)) {
     for (auto &index : expr.indexes) {
       if (!index.expr)
-        expr.srcLoc.throw_error("expected non-empty '[]'");
+        expr.srcLoc.throwError("expected non-empty '[]'");
       value = accessIndex(
           value, invoke(context.getIntType(), emit(index.expr), expr.srcLoc),
           expr.srcLoc);
@@ -474,7 +474,7 @@ Value Emitter::emit(AST::AccessIndex &expr) {
       } else {
         auto size{invoke(context.getIntType(), emit(index.expr), expr.srcLoc)};
         if (!size.isComptimeInt())
-          expr.srcLoc.throw_error(
+          expr.srcLoc.throwError(
               "expected array size expression to resolve to compile-time int");
         type = context.getArrayType(type, size.getComptimeInt());
       }
@@ -488,7 +488,7 @@ Value Emitter::emit(AST::Binary &expr) {
   if (expr.op == BINOP_LET) {
     auto ident{llvm::dyn_cast<AST::Identifier>(&*expr.exprLhs)};
     if (!ident) // || !ident->is_simple_name())
-      expr.srcLoc.throw_error(
+      expr.srcLoc.throwError(
           "expected lhs of operator ':=' to be an identifier");
     auto rv{toRValue(emit(expr.exprRhs))};
     declareCrumb(*ident, ident, rv);
@@ -581,7 +581,7 @@ Value Emitter::emit(AST::Parens &expr) {
   if (expr.is_comptime()) {
     auto value{emit(expr.expr)};
     if (!value.isComptime()) {
-      expr.srcLoc.throw_error("expected compile-time constant");
+      expr.srcLoc.throwError("expected compile-time constant");
     }
     if (value.isComptimeMetaType(context)) {
       auto type{value.getComptimeMetaType(context, expr.srcLoc)};
@@ -752,7 +752,7 @@ Value Emitter::emit(AST::Switch &stmt) {
   for (auto &astCase : stmt.cases) {
     if (astCase.is_default()) {
       if (blockDefault)
-        stmt.srcLoc.throw_error(
+        stmt.srcLoc.throwError(
             "expected at most 1 'default' case in 'switch'");
       switchCases.push_back(SwitchCase{
           &astCase, nullptr, createBlock(switchNameRef + ".default")});
@@ -761,7 +761,7 @@ Value Emitter::emit(AST::Switch &stmt) {
       auto value{emit(astCase.expr)};
       auto llvmConst{llvm::dyn_cast<llvm::ConstantInt>(value.llvmValue)};
       if (!llvmConst)
-        astCase.expr->srcLoc.throw_error(
+        astCase.expr->srcLoc.throwError(
             "expected 'case' expression to resolve to compile-time int");
       switchCases.push_back(SwitchCase{
           &astCase, llvmConst,
@@ -830,15 +830,15 @@ Value Emitter::emitOp(AST::UnaryOp op, Value value,
     case UNOP_DEREF:
       if (type->isPointer())
         return context.getComptimeMetaType(type->getPointeeType());
-      srcLoc.throw_error("cannot dereference ", quoted(type->displayName));
+      srcLoc.throwError("cannot dereference ", Quoted(type->displayName));
       break;
     // Union with `void`, e.g., `?int`
     case UNOP_MAYBE:
       if (type->isVoid())
-        srcLoc.throw_error("cannot optionalize 'void'");
+        srcLoc.throwError("cannot optionalize 'void'");
       if (type->isAbstract())
-        srcLoc.throw_error("cannot optionalize abstract type ",
-                           quoted(type->displayName));
+        srcLoc.throwError("cannot optionalize abstract type ",
+                           Quoted(type->displayName));
       return context.getComptimeMetaType(
           context.getUnionType({context.getVoidType(), type}));
     default:
@@ -862,8 +862,8 @@ Value Emitter::emitOp(AST::UnaryOp op, Value value,
           value.type->isPointer())
         return emitOp(op == UNOP_INC ? BINOP_EQ_ADD : BINOP_EQ_SUB, value,
                       context.getComptimeInt(1), srcLoc);
-      srcLoc.throw_error("cannot increment or decrement ",
-                         quoted(value.type->displayName));
+      srcLoc.throwError("cannot increment or decrement ",
+                         Quoted(value.type->displayName));
     }
     // Unary positive, e.g., `+value`
     if (op == UNOP_POS) {
@@ -905,7 +905,7 @@ Value Emitter::emitOp(AST::UnaryOp op, Value value,
     // Unary address, e.g., `&value`
     if (op == UNOP_ADDR) {
       if (!value.isLValue())
-        srcLoc.throw_error("cannot take address of rvalue");
+        srcLoc.throwError("cannot take address of rvalue");
       return RValue(context.getPointerType(value.type), value);
     }
     // Unary dereference, e.g., `*value`
@@ -927,8 +927,8 @@ Value Emitter::emitOp(AST::UnaryOp op, Value value,
       }
     }
   }
-  srcLoc.throw_error("unimplemented unary operator ", quoted(to_string(op)),
-                     " for type ", quoted(value.type->displayName));
+  srcLoc.throwError("unimplemented unary operator ", Quoted(to_string(op)),
+                     " for type ", Quoted(value.type->displayName));
   return Value();
 }
 //--}
@@ -1032,7 +1032,7 @@ Value Emitter::emitOp(AST::BinaryOp op, Value lhs, Value rhs,
     return rhs;
   if ((op & BINOP_EQ) == BINOP_EQ) {
     if (!lhs.isLValue())
-      srcLoc.throw_error("cannot apply ", quoted(to_string(op)), " to rvalue");
+      srcLoc.throwError("cannot apply ", Quoted(to_string(op)), " to rvalue");
     if (op != BINOP_EQ)
       rhs = emitOp(op & ~BINOP_EQ, toRValue(lhs), rhs, srcLoc);
     builder.CreateStore(invoke(lhs.type, rhs, srcLoc), lhs);
@@ -1207,7 +1207,7 @@ Value Emitter::emitOp(AST::BinaryOp op, Value lhs, Value rhs,
   if (lhs.type->isPointer() && rhs.type->isPointer()) {
     if (op == BINOP_SUB) {
       if (lhs.type != rhs.type)
-        srcLoc.throw_error(
+        srcLoc.throwError(
             "pointer subtraction requires both pointers to be the same type");
       return RValue(context.getIntType(),
                     builder.CreateIntCast(
@@ -1250,9 +1250,9 @@ Value Emitter::emitOp(AST::BinaryOp op, Value lhs, Value rhs,
           context.isPerfectlyConvertible(lhsTy, rhsTy));
     }
   }
-  srcLoc.throw_error("unimplemented binary operator ", quoted(to_string(op)),
-                     " for argument types ", quoted(lhs.type->displayName),
-                     " and ", quoted(rhs.type->displayName));
+  srcLoc.throwError("unimplemented binary operator ", Quoted(to_string(op)),
+                     " for argument types ", Quoted(lhs.type->displayName),
+                     " and ", Quoted(rhs.type->displayName));
   return Value();
 }
 //--}
@@ -1273,7 +1273,7 @@ SMDL_EXPORT void *smdl_ofile_open(const char *fname) {
   std::error_code ec{};
   auto result{new llvm::raw_fd_ostream(std::string_view(fname), ec)};
   if (ec) {
-    SMDL_LOG_WARN("cannot open ", quoted(fname), ": ", quoted(ec.message()));
+    SMDL_LOG_WARN("cannot open ", Quoted(fname), ": ", Quoted(ec.message()));
     delete result;
     return nullptr;
   }
@@ -1363,15 +1363,15 @@ SMDL_EXPORT void smdl_tabulate_albedo(const char *name, int num_cos_theta,
 Value Emitter::emitIntrinsic(std::string_view name, const ArgumentList &args,
                              const SourceLocation &srcLoc) {
   if (args.isAnyNamed())
-    srcLoc.throw_error("intrinsics expect only unnamed arguments");
+    srcLoc.throwError("intrinsics expect only unnamed arguments");
   auto expectOne{[&]() {
     if (args.size() != 1)
-      srcLoc.throw_error("intrinsic ", quoted(name), " expects 1 argument");
+      srcLoc.throwError("intrinsic ", Quoted(name), " expects 1 argument");
     return args[0].value;
   }};
   auto expectOneVectorized{[&]() {
     if (args.size() != 1 || !args[0].value.type->isVectorized())
-      srcLoc.throw_error("intrinsic ", quoted(name),
+      srcLoc.throwError("intrinsic ", Quoted(name),
                          " expects 1 vectorized argument");
     return args[0].value;
   }};
@@ -1379,7 +1379,7 @@ Value Emitter::emitIntrinsic(std::string_view name, const ArgumentList &args,
     if (args.size() != 1 ||                    //
         !args[0].value.type->isVectorized() || //
         !args[0].value.type->isArithmeticIntegral())
-      srcLoc.throw_error("intrinsic ", quoted(name),
+      srcLoc.throwError("intrinsic ", Quoted(name),
                          " expects 1 int or int vector argument");
     return args[0].value;
   }};
@@ -1421,7 +1421,7 @@ Value Emitter::emitIntrinsic(std::string_view name, const ArgumentList &args,
       auto value{expectOne()};
       if (!value.type->isArithmeticScalar() &&
           !value.type->isArithmeticVector())
-        srcLoc.throw_error("intrinsic ", quoted(name),
+        srcLoc.throwError("intrinsic ", Quoted(name),
                            " expects 1 scalar or vector argument");
       value = invoke(static_cast<ArithmeticType *>(value.type)
                          ->getWithDifferentScalar(context, Scalar::getBool()),
@@ -1438,7 +1438,7 @@ Value Emitter::emitIntrinsic(std::string_view name, const ArgumentList &args,
       if (!((args.size() == 1 && args[0].value.type == context.getBoolType()) ||
             (args.size() == 2 && args[0].value.type == context.getBoolType() &&
              args[1].value.type == context.getStringType())))
-        srcLoc.throw_error("intrinsic 'assert' expects 1 bool argument and 1 "
+        srcLoc.throwError("intrinsic 'assert' expects 1 bool argument and 1 "
                            "optional string argument");
       auto [blockPanic, blockOk] = createBlocks<2>("assert", {".panic", ".ok"});
       builder.CreateCondBr(toRValue(args[0].value), blockOk, blockPanic);
@@ -1463,7 +1463,7 @@ Value Emitter::emitIntrinsic(std::string_view name, const ArgumentList &args,
       if (!(args.size() == 2 &&                   //
             args[0].value.type->isVectorized() && //
             args[1].value.type->isVectorized()))
-        srcLoc.throw_error("intrinsic 'atan2' expects 2 vectorized arguments");
+        srcLoc.throwError("intrinsic 'atan2' expects 2 vectorized arguments");
       auto commonType{context.getCommonType(
           {args[0].value.type, args[1].value.type, context.getFloatType()},
           /*defaultToUnion=*/false, srcLoc)};
@@ -1475,15 +1475,15 @@ Value Emitter::emitIntrinsic(std::string_view name, const ArgumentList &args,
     }
     if (name == "albedo_lut") {
       if (!(args.size() == 1 && args[0].value.isComptimeString()))
-        srcLoc.throw_error(
+        srcLoc.throwError(
             "intrinsic 'albedo_lut' expects 1 compile-time string argument");
       auto lutName{args[0].value.getComptimeString()};
       auto lutType{context.getKeyword("_albedo_lut")
                        .getComptimeMetaType(context, srcLoc)};
       auto lut{context.getBuiltinAlbedo(lutName)};
       if (!lut)
-        srcLoc.throw_error(
-            "intrinsic 'albedo_lut' passed invalid name ", quoted(lutName),
+        srcLoc.throwError(
+            "intrinsic 'albedo_lut' passed invalid name ", Quoted(lutName),
             " that does not identify any known look-up table at compile time");
       auto args{ArgumentList{}};
       args.push_back(Argument{"num_cos_theta",
@@ -1510,7 +1510,7 @@ Value Emitter::emitIntrinsic(std::string_view name, const ArgumentList &args,
     }
     if (name == "breakpoint") {
       if (!args.empty())
-        srcLoc.throw_error("intrinsic 'breakpoint' expects no arguments");
+        srcLoc.throwError("intrinsic 'breakpoint' expects no arguments");
       builder.CreateIntrinsic(context.getVoidType()->llvmType,
                               llvm::Intrinsic::debugtrap, {});
       return RValue(context.getVoidType(), nullptr);
@@ -1558,7 +1558,7 @@ Value Emitter::emitIntrinsic(std::string_view name, const ArgumentList &args,
             (args[0].value.type->isArithmeticFloatingPoint() || //
              args[0].value.type->isColor()) &&                  //
             args[1].value.isComptimeInt()))
-        srcLoc.throw_error(
+        srcLoc.throwError(
             "intrinsic 'isfpclass' expects 1 vectorized floating point "
             "argument and 1 compile-time int argument");
       auto value{toRValue(args[0].value)};
@@ -1624,7 +1624,7 @@ Value Emitter::emitIntrinsic(std::string_view name, const ArgumentList &args,
     if (starts_with(name, "load_")) {
       auto expectOneComptimeString{[&]() {
         if (!(args.size() == 1 && args[0].value.isComptimeString()))
-          srcLoc.throw_error("intrinsic ", quoted(name),
+          srcLoc.throwError("intrinsic ", Quoted(name),
                              " expects 1 compile-time string argument");
         return std::string(args[0].value.getComptimeString());
       }};
@@ -1632,8 +1632,8 @@ Value Emitter::emitIntrinsic(std::string_view name, const ArgumentList &args,
         if (!(args.size() == 2 &&                 //
               args[0].value.isComptimeString() && //
               args[1].value.type->isArithmeticScalarInt()))
-          srcLoc.throw_error(
-              "intrinsic ", quoted(name),
+          srcLoc.throwError(
+              "intrinsic ", Quoted(name),
               " expects 1 compile-time string argument and 1 int argument");
         return std::make_pair(std::string(args[0].value.getComptimeString()),
                               toRValue(args[1].value));
@@ -1641,9 +1641,9 @@ Value Emitter::emitIntrinsic(std::string_view name, const ArgumentList &args,
       if (name == "load_texture_2d") {
         auto texture2DType{context.getTexture2DType()};
         auto [fileName, valueGammaAsInt] = expectOneComptimeStringAndOneInt();
-        auto resolvedImagePaths{context.LocateImages(fileName)};
+        auto resolvedImagePaths{context.locateImages(fileName)};
         if (resolvedImagePaths.empty()) {
-          srcLoc.log_warn(concat("no image(s) found for ", quoted(fileName)));
+          srcLoc.logWarn(concat("no image(s) found for ", Quoted(fileName)));
           return invoke(texture2DType, {}, srcLoc);
         }
         auto tileCountU{uint32_t(1)};
@@ -1652,21 +1652,21 @@ Value Emitter::emitIntrinsic(std::string_view name, const ArgumentList &args,
         for (auto &[tileIndexU, tileIndexV, filePath] : resolvedImagePaths) {
           tileCountU = std::max(tileCountU, tileIndexU + 1);
           tileCountV = std::max(tileCountV, tileIndexV + 1);
-          images.push_back(&context.compiler.load_image(filePath, srcLoc));
-          if (images.back()->get_format() != images.front()->get_format() ||
-              images.back()->get_num_channels() !=
-                  images.front()->get_num_channels()) {
-            srcLoc.log_warn(
-                concat("inconsistent image formats for ", quoted(fileName)));
+          images.push_back(&context.compiler.loadImage(filePath, srcLoc));
+          if (images.back()->getFormat() != images.front()->getFormat() ||
+              images.back()->getNumChannels() !=
+                  images.front()->getNumChannels()) {
+            srcLoc.logWarn(
+                concat("inconsistent image formats for ", Quoted(fileName)));
             return invoke(texture2DType, {}, srcLoc);
           }
         }
         auto texelPtrType{context.getPointerType(context.getArithmeticType(
-            images[0]->get_format() == Image::UINT8     ? Scalar::getInt(8)
-            : images[0]->get_format() == Image::UINT16  ? Scalar::getInt(16)
-            : images[0]->get_format() == Image::FLOAT16 ? Scalar::getHalf()
+            images[0]->getFormat() == Image::UINT8     ? Scalar::getInt(8)
+            : images[0]->getFormat() == Image::UINT16  ? Scalar::getInt(16)
+            : images[0]->getFormat() == Image::FLOAT16 ? Scalar::getHalf()
                                                         : Scalar::getFloat(),
-            Extent(images[0]->get_num_channels())))};
+            Extent(images[0]->getNumChannels())))};
         auto valueTileExtents{Value::zero(context.getArrayType(
             context.getIntType(2), tileCountU * tileCountV))};
         auto valueTileBuffers{Value::zero(
@@ -1678,12 +1678,12 @@ Value Emitter::emitIntrinsic(std::string_view name, const ArgumentList &args,
                          imagePath.tileIndexU};
           valueTileExtents = insert(
               valueTileExtents,
-              context.getComptimeVector(int2(int(image->get_num_texels_x()),
-                                             int(image->get_num_texels_y()))),
+              context.getComptimeVector(int2(int(image->getNumTexelsX()),
+                                             int(image->getNumTexelsY()))),
               insertPos, srcLoc);
           valueTileBuffers =
               insert(valueTileBuffers,
-                     context.getComptimePtr(texelPtrType, image->get_texels()),
+                     context.getComptimePtr(texelPtrType, image->getTexels()),
                      insertPos, srcLoc);
         }
         return invoke(
@@ -1710,14 +1710,14 @@ Value Emitter::emitIntrinsic(std::string_view name, const ArgumentList &args,
       if (name == "load_texture_ptex") {
         auto texturePtexType{context.getTexturePtexType()};
         auto [fileName, valueGammaAsInt] = expectOneComptimeStringAndOneInt();
-        auto resolvedFileName{context.Locate(fileName)};
+        auto resolvedFileName{context.locate(fileName)};
         if (!resolvedFileName) {
-          srcLoc.log_warn(
-              concat("cannot load ", quoted(fileName), ": file not found"));
+          srcLoc.logWarn(
+              concat("cannot load ", Quoted(fileName), ": file not found"));
           return invoke(texturePtexType, {}, srcLoc);
         }
         auto &ptexture{
-            context.compiler.load_ptexture(*resolvedFileName, srcLoc)};
+            context.compiler.loadPtexture(*resolvedFileName, srcLoc)};
         auto valuePtr{
             context.getComptimePtr(context.getVoidPointerType(),
                                    ptexture.texture ? &ptexture : nullptr)};
@@ -1729,14 +1729,14 @@ Value Emitter::emitIntrinsic(std::string_view name, const ArgumentList &args,
       if (name == "load_bsdf_measurement") {
         auto bsdfMeasurementType{context.getBSDFMeasurementType()};
         auto fileName{expectOneComptimeString()};
-        auto resolvedFileName{context.Locate(fileName)};
+        auto resolvedFileName{context.locate(fileName)};
         if (!resolvedFileName) {
-          srcLoc.log_warn(
-              concat("cannot load ", quoted(fileName), ": file not found"));
+          srcLoc.logWarn(
+              concat("cannot load ", Quoted(fileName), ": file not found"));
           return invoke(bsdfMeasurementType, {}, srcLoc);
         }
         auto &bsdfMeasurement{
-            context.compiler.load_bsdf_measurement(*resolvedFileName, srcLoc)};
+            context.compiler.loadBSDFMeasurement(*resolvedFileName, srcLoc)};
         auto bufferPtrType{context.getPointerType(context.getFloatType(
             bsdfMeasurement.type == BSDFMeasurement::TYPE_FLOAT ? 1 : 3))};
         return invoke(
@@ -1757,14 +1757,14 @@ Value Emitter::emitIntrinsic(std::string_view name, const ArgumentList &args,
       if (name == "load_light_profile") {
         auto lightProfileType{context.getLightProfileType()};
         auto fileName{expectOneComptimeString()};
-        auto resolvedFileName{context.Locate(fileName)};
+        auto resolvedFileName{context.locate(fileName)};
         if (!resolvedFileName) {
-          srcLoc.log_warn(
-              concat("cannot load ", quoted(fileName), ": file not found"));
+          srcLoc.logWarn(
+              concat("cannot load ", Quoted(fileName), ": file not found"));
           return invoke(lightProfileType, {}, srcLoc);
         }
         auto &lightProfile{
-            context.compiler.load_light_profile(*resolvedFileName, srcLoc)};
+            context.compiler.loadLightProfile(*resolvedFileName, srcLoc)};
         return invoke(
             lightProfileType,
             {Argument{"ptr",
@@ -1780,38 +1780,38 @@ Value Emitter::emitIntrinsic(std::string_view name, const ArgumentList &args,
         auto spectralCurveType{context.getSpectralCurveType()};
         if (args.size() == 1) {
           if (!args[0].value.isComptimeString()) {
-            srcLoc.throw_error("intrinsic ", quoted(name),
+            srcLoc.throwError("intrinsic ", Quoted(name),
                                " expects 1 compile-time string argument");
           }
         } else if (args.size() == 2) {
           if (!(args[0].value.isComptimeString() &&
                 (args[1].value.isComptimeString() ||
                  args[1].value.isComptimeInt()))) {
-            srcLoc.throw_error("intrinsic ", quoted(name),
+            srcLoc.throwError("intrinsic ", Quoted(name),
                                " expects 1 compile-time string argument and 1 "
                                "compile-time string or int argument");
           }
         } else {
-          srcLoc.throw_error("intrinsic ", quoted(name),
+          srcLoc.throwError("intrinsic ", Quoted(name),
                              " expects 1 or 2 arguments");
         }
         auto fileName{std::string(args[0].value.getComptimeString())};
-        auto resolvedFileName{context.Locate(fileName)};
+        auto resolvedFileName{context.locate(fileName)};
         if (!resolvedFileName) {
-          srcLoc.log_warn(
-              concat("cannot load ", quoted(fileName), ": file not found"));
+          srcLoc.logWarn(
+              concat("cannot load ", Quoted(fileName), ": file not found"));
           return invoke(spectralCurveType, {}, srcLoc);
         }
         auto spectrumView{SpectrumView{}};
         if (args.size() == 1) {
           spectrumView =
-              context.compiler.load_spectrum(*resolvedFileName, srcLoc);
+              context.compiler.loadSpectrum(*resolvedFileName, srcLoc);
         } else if (args[1].value.isComptimeString()) {
-          spectrumView = context.compiler.load_spectrum(
+          spectrumView = context.compiler.loadSpectrum(
               *resolvedFileName, std::string(args[1].value.getComptimeString()),
               srcLoc);
         } else if (args[1].value.isComptimeInt()) {
-          spectrumView = context.compiler.load_spectrum(
+          spectrumView = context.compiler.loadSpectrum(
               *resolvedFileName, int(args[1].value.getComptimeInt()), srcLoc);
         }
         if (spectrumView.curveValues.empty()) {
@@ -1840,7 +1840,7 @@ Value Emitter::emitIntrinsic(std::string_view name, const ArgumentList &args,
             args[1].value.type->isPointer() &&            //
             args[2].value.type->isArithmeticIntegral() && //
             args[2].value.type->isArithmeticScalar()))
-        srcLoc.throw_error("intrinsic 'memcpy' expects 2 pointer arguments "
+        srcLoc.throwError("intrinsic 'memcpy' expects 2 pointer arguments "
                            "and 1 int argument");
       auto dst{toRValue(args[0].value)};
       auto src{toRValue(args[1].value)};
@@ -1853,7 +1853,7 @@ Value Emitter::emitIntrinsic(std::string_view name, const ArgumentList &args,
       if (args.size() != 2 || !args.isAllTrue([](auto &arg) {
             return arg.value.type->isVectorized();
           }))
-        srcLoc.throw_error("intrinsic ", quoted(name),
+        srcLoc.throwError("intrinsic ", Quoted(name),
                            " expects 2 vectorized arguments");
       auto value0{args[0].value};
       auto value1{args[1].value};
@@ -1913,7 +1913,7 @@ Value Emitter::emitIntrinsic(std::string_view name, const ArgumentList &args,
     if (name == "num_rows" || name == "num_cols") {
       auto type{expectOneType()};
       if (!type->isArithmeticMatrix())
-        srcLoc.throw_error("intrinsic ", quoted(name),
+        srcLoc.throwError("intrinsic ", Quoted(name),
                            " expects 1 matrix argument");
       return context.getComptimeInt(
           name == "num_rows"
@@ -1939,7 +1939,7 @@ Value Emitter::emitIntrinsic(std::string_view name, const ArgumentList &args,
     }
     if (name == "ofile_print" || name == "ofile_println") {
       if (args.size() < 2)
-        srcLoc.throw_error("intrinsic 'ofile_print' expects 1 file pointer "
+        srcLoc.throwError("intrinsic 'ofile_print' expects 1 file pointer "
                            "argument and 1 or more printable arguments");
       auto os{toRValue(args[0].value)};
       for (size_t i = 1; i < args.size(); i++)
@@ -1953,7 +1953,7 @@ Value Emitter::emitIntrinsic(std::string_view name, const ArgumentList &args,
   case 'p': {
     if (name == "panic") {
       if (args.size() != 1 || args[0].value.type != context.getStringType())
-        srcLoc.throw_error("intrinsic 'panic' expects 1 string argument");
+        srcLoc.throwError("intrinsic 'panic' expects 1 string argument");
       emitPanic(args[0].value, srcLoc);
       return Value();
     }
@@ -1961,7 +1961,7 @@ Value Emitter::emitIntrinsic(std::string_view name, const ArgumentList &args,
       if (args.size() != 2 ||                    //
           !args[0].value.type->isVectorized() || //
           !args[1].value.type->isVectorized())
-        srcLoc.throw_error("intrinsic 'pow' expects 2 vectorized arguments");
+        srcLoc.throwError("intrinsic 'pow' expects 2 vectorized arguments");
       auto value0{toRValue(args[0].value)};
       auto value1{toRValue(args[1].value)};
       if (value1.isComptimeInt()) {
@@ -2010,8 +2010,8 @@ Value Emitter::emitIntrinsic(std::string_view name, const ArgumentList &args,
       if (!(args.size() == 2 && //
             args[0].value.type->isArithmeticIntegral() &&
             args[1].value.type->isArithmeticIntegral())) {
-        srcLoc.throw_error(
-            "intrinsic ", quoted(name),
+        srcLoc.throwError(
+            "intrinsic ", Quoted(name),
             " expects 2 integer or vectorized integer arguments");
       }
       auto intType{
@@ -2064,7 +2064,7 @@ Value Emitter::emitIntrinsic(std::string_view name, const ArgumentList &args,
       if (args.size() != 3 || !args[0].value.type->isArithmeticBoolean() ||
           !args.isAllTrue(
               [](auto arg) { return arg.value.type->isVectorized(); }))
-        srcLoc.throw_error("intrinsic 'select' expects 1 vectorized boolean "
+        srcLoc.throwError("intrinsic 'select' expects 1 vectorized boolean "
                            "argument and 2 vectorized selection arguments");
       auto valueCond{toRValue(args[0].value)};
       auto valueThen{args[1].value};
@@ -2089,7 +2089,7 @@ Value Emitter::emitIntrinsic(std::string_view name, const ArgumentList &args,
             args[1].value.type->isArithmeticScalarInt() &&
             args[2].value.type->isArithmeticScalarInt() &&
             args[3].value.isComptimeMetaType(context)))
-        srcLoc.throw_error("intrinsic 'tabulate_albedo' expects 1 compile-time "
+        srcLoc.throwError("intrinsic 'tabulate_albedo' expects 1 compile-time "
                            "string argument, 2 compile-time integer arguments, "
                            "and 1 function argument");
       auto funcType{llvm::dyn_cast<FunctionType>(
@@ -2103,7 +2103,7 @@ Value Emitter::emitIntrinsic(std::string_view name, const ArgumentList &args,
             funcType->params.size() == 2 &&
             funcType->params[0].type == context.getFloatType() &&
             funcType->params[1].type == context.getFloatType())) {
-        srcLoc.throw_error("intrinsic 'tabulate_albedo' function argument must "
+        srcLoc.throwError("intrinsic 'tabulate_albedo' function argument must "
                            "have signature '@(pure) float(float, float)'");
       }
       auto &funcInst{funcType->instantiate(
@@ -2126,20 +2126,20 @@ Value Emitter::emitIntrinsic(std::string_view name, const ArgumentList &args,
     if (name == "type_int") {
       auto value{toRValue(expectOne())};
       if (!value.isComptimeInt())
-        srcLoc.throw_error("intrinsic 'type_int' expects 1 compile-time int");
+        srcLoc.throwError("intrinsic 'type_int' expects 1 compile-time int");
       return context.getComptimeMetaType(context.getArithmeticType(
           Scalar::getInt(value.getComptimeInt()), Extent(1)));
     }
     if (name == "type_float") {
       auto value{toRValue(expectOne())};
       if (!value.isComptimeInt())
-        srcLoc.throw_error("intrinsic 'type_float' expects 1 compile-time int");
+        srcLoc.throwError("intrinsic 'type_float' expects 1 compile-time int");
       return context.getComptimeMetaType(context.getArithmeticType(
           Scalar::getFP(value.getComptimeInt()), Extent(1)));
     }
     if (name == "type_vector") {
       auto reportError{[&] {
-        srcLoc.throw_error("intrinsic 'type_vector' expects 1 compile-time "
+        srcLoc.throwError("intrinsic 'type_vector' expects 1 compile-time "
                            "scalar type and 1 compile-time positive int");
       }};
       if (!(args.size() == 2 &&                          //
@@ -2155,7 +2155,7 @@ Value Emitter::emitIntrinsic(std::string_view name, const ArgumentList &args,
     }
     if (name == "type_matrix") {
       auto reportError{[&] {
-        srcLoc.throw_error("intrinsic 'type_matrix' expects 1 compile-time "
+        srcLoc.throwError("intrinsic 'type_matrix' expects 1 compile-time "
                            "scalar type and 2 compile-time positive ints");
       }};
       if (!(args.size() == 3 &&                          //
@@ -2174,7 +2174,7 @@ Value Emitter::emitIntrinsic(std::string_view name, const ArgumentList &args,
     }
     if (name == "transpose") {
       if (!(args.size() == 1 && args[0].value.type->isArithmeticMatrix()))
-        srcLoc.throw_error("intrinsic 'transpose' expects 1 matrix argument");
+        srcLoc.throwError("intrinsic 'transpose' expects 1 matrix argument");
       auto value{args[0].value};
       auto valueCols{llvm::SmallVector<Value>{}};
       for (unsigned j = 0;
@@ -2198,13 +2198,13 @@ Value Emitter::emitIntrinsic(std::string_view name, const ArgumentList &args,
     if (name == "unsigned_to_fp") {
       if (!(args.size() == 2 && args[0].value.type->isArithmeticIntegral() &&
             args[1].value.isComptimeMetaType(context))) {
-        srcLoc.throw_error(
+        srcLoc.throwError(
             "intrinsic 'unsigned_to_fp' expects 1 int argument and "
             "1 type argument");
       }
       auto floatType{args[1].value.getComptimeMetaType(context, srcLoc)};
       if (!floatType->isArithmeticFloatingPoint())
-        srcLoc.throw_error(
+        srcLoc.throwError(
             "intrinsic 'unsigned_to_fp' expects 1 int argument and "
             "1 floating point type argument");
       return RValue(floatType, builder.CreateUIToFP(toRValue(args[0].value),
@@ -2214,7 +2214,7 @@ Value Emitter::emitIntrinsic(std::string_view name, const ArgumentList &args,
       auto value{toRValue(expectOne())};
       if (!value.type->isArithmeticScalar() &&
           !value.type->isArithmeticVector())
-        srcLoc.throw_error(
+        srcLoc.throwError(
             "intrinsic 'unpack_float4' expects 1 scalar or vector argument");
       auto texelType{static_cast<ArithmeticType *>(value.type)};
       value.type =
@@ -2301,7 +2301,7 @@ Value Emitter::emitIntrinsic(std::string_view name, const ArgumentList &args,
       }
     }
   }
-  srcLoc.throw_error("unimplemented intrinsic ", quoted(name));
+  srcLoc.throwError("unimplemented intrinsic ", Quoted(name));
   return Value();
 }
 //--}
@@ -2325,7 +2325,7 @@ Value Emitter::emitCall(Value callee, const ArgumentList &args,
           args, srcLoc);
     }
   }
-  srcLoc.throw_error("unimplemented or invalid call");
+  srcLoc.throwError("unimplemented or invalid call");
   return Value();
 }
 
@@ -2577,10 +2577,10 @@ Value Emitter::resolveIdentifier(Span<const std::string_view> names,
     return crumb0->value;
   }
   if (names.size() == 1) {
-    if (!currentModule || currentModule->is_smdl_syntax()) {
+    if (!currentModule || currentModule->isSMDLSyntax()) {
       if (names[0] == "$state") {
         if (!state)
-          srcLoc.throw_error(
+          srcLoc.throwError(
               "cannot resolve identifier '$state' in pure context");
         return state;
       } else if (names[0] == "$scene_data") {
@@ -2611,7 +2611,7 @@ Value Emitter::resolveIdentifier(Span<const std::string_view> names,
   if (voidByDefault) {
     return RValue(context.getVoidType(), nullptr);
   }
-  srcLoc.throw_error("cannot resolve identifier ", quoted(join(names, "::")));
+  srcLoc.throwError("cannot resolve identifier ", Quoted(join(names, "::")));
   return Value();
 }
 
@@ -2621,12 +2621,12 @@ Emitter::resolveArguments(const ParameterList &params, const ArgumentList &args,
   // Obvious case: If there are more arguments than parameters, resolution
   // fails.
   if (args.size() > params.size()) {
-    srcLoc.throw_error("too many arguments");
+    srcLoc.throwError("too many arguments");
   }
   // Obvious case: If there are argument names that do not correspond to any
   // parameter names, resolution fails.
   if (!args.isOnlyTheseNames(params.getNames())) {
-    srcLoc.throw_error("invalid argument name(s)");
+    srcLoc.throwError("invalid argument name(s)");
   }
   // The primary resolution logic.
   ResolvedArguments resolved{args};
@@ -2643,7 +2643,7 @@ Emitter::resolveArguments(const ParameterList &params, const ArgumentList &args,
           // If this has already been resolved by a positional argument,
           // resolution fails.
           if (isResolved(argIndex))
-            srcLoc.throw_error("named argument ", quoted(arg.name),
+            srcLoc.throwError("named argument ", Quoted(arg.name),
                                " already resolved by positional argument");
           resolved.argParams[argIndex] = &param;
           return &arg;
@@ -2663,13 +2663,13 @@ Emitter::resolveArguments(const ParameterList &params, const ArgumentList &args,
     if (arg) {
       resolved.values[paramIndex] = arg->value;
       if (!context.isImplicitlyConvertible(arg->value.type, param.type))
-        srcLoc.throw_error("argument type ",
-                           quoted(arg->value.type->displayName),
+        srcLoc.throwError("argument type ",
+                           Quoted(arg->value.type->displayName),
                            " is not implicitly convertible to type ",
-                           quoted(param.type->displayName), " of parameter ",
-                           quoted(param.name));
+                           Quoted(param.type->displayName), " of parameter ",
+                           Quoted(param.name));
     } else if (!param.getASTInitializer() && !param.builtinDefaultValue) {
-      srcLoc.throw_error("missing argument for parameter ", quoted(param.name),
+      srcLoc.throwError("missing argument for parameter ", Quoted(param.name),
                          " without default initializer");
     }
   }
@@ -2710,12 +2710,12 @@ Module *Emitter::resolveModule(Span<const std::string_view> importPath,
     for (auto resolvedImportDirPath :
          Span<const std::string_view>(resolvedImportPath.data(), //
                                       resolvedImportPath.size() - 1)) {
-      dirPath = join_paths(dirPath, resolvedImportDirPath);
+      dirPath = joinPaths(dirPath, resolvedImportDirPath);
     }
     for (auto &otherModule : context.compiler.modules) {
-      if (otherModule.get() != thisModule && !otherModule->is_builtin() &&
-          otherModule->get_name() == resolvedImportPath.back() &&
-          is_path_equivalent(dirPath, otherModule->get_directory())) {
+      if (otherModule.get() != thisModule && !otherModule->isBuiltin() &&
+          otherModule->getName() == resolvedImportPath.back() &&
+          isPathEquivalent(dirPath, otherModule->getDirectory())) {
         if (auto error{otherModule->compile(context)}) {
           throw std::move(*error);
         }
@@ -2725,13 +2725,13 @@ Module *Emitter::resolveModule(Span<const std::string_view> importPath,
     return nullptr;
   }};
   auto searchRelativeToCurrentModule{[&]() -> Module * {
-    if (!thisModule->is_builtin())
-      if (auto module_{findModuleInDirectory(thisModule->get_directory())})
+    if (!thisModule->isBuiltin())
+      if (auto module_{findModuleInDirectory(thisModule->getDirectory())})
         return module_;
     return nullptr;
   }};
   auto searchCompilerDirPaths{[&]() -> Module * {
-    if (!thisModule->is_builtin())
+    if (!thisModule->isBuiltin())
       for (const auto &dirPath : context.compiler.moduleDirSearchPaths)
         if (auto module_{findModuleInDirectory(dirPath)})
           return module_;

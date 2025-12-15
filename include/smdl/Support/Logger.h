@@ -3,7 +3,6 @@
 
 #include <memory>
 #include <mutex>
-#include <string>
 #include <string_view>
 #include <vector>
 
@@ -30,7 +29,7 @@ public:
   virtual ~LogSink() = default;
 
   /// Write.
-  virtual void log_message(LogLevel level, std::string_view message) {}
+  virtual void logMessage(LogLevel level, std::string_view message) {}
 
   /// Flush the file or stream if appliable.
   virtual void flush() {}
@@ -53,7 +52,7 @@ public:
   [[nodiscard]] static Logger &get();
 
   /// Add a new sink.
-  template <typename T, typename... Args> T &add_sink(Args &&...args) {
+  template <typename T, typename... Args> T &addSink(Args &&...args) {
     return static_cast<T &>(
         *sinks.emplace_back(std::make_unique<T>(std::forward<Args>(args)...)));
   }
@@ -65,7 +64,7 @@ public:
   void close();
 
   /// Log message with the given level.
-  void log_message(LogLevel level, std::string_view message);
+  void logMessage(LogLevel level, std::string_view message);
 
   /// Remove all sinks!
   void reset();
@@ -80,23 +79,23 @@ private:
 
 /// Log a message with `LOG_LEVEL_DEBUG`.
 #define SMDL_LOG_DEBUG(...)                                                    \
-  ::smdl::Logger::get().log_message(::smdl::LOG_LEVEL_DEBUG,                   \
-                                    ::smdl::concat(__VA_ARGS__))
+  ::smdl::Logger::get().logMessage(::smdl::LOG_LEVEL_DEBUG,                    \
+                                   ::smdl::concat(__VA_ARGS__))
 
 /// Log a message with `LOG_LEVEL_INFO`.
 #define SMDL_LOG_INFO(...)                                                     \
-  ::smdl::Logger::get().log_message(::smdl::LOG_LEVEL_INFO,                    \
-                                    ::smdl::concat(__VA_ARGS__))
+  ::smdl::Logger::get().logMessage(::smdl::LOG_LEVEL_INFO,                     \
+                                   ::smdl::concat(__VA_ARGS__))
 
 /// Log a message with `LOG_LEVEL_WARN`.
 #define SMDL_LOG_WARN(...)                                                     \
-  ::smdl::Logger::get().log_message(::smdl::LOG_LEVEL_WARN,                    \
-                                    ::smdl::concat(__VA_ARGS__))
+  ::smdl::Logger::get().logMessage(::smdl::LOG_LEVEL_WARN,                     \
+                                   ::smdl::concat(__VA_ARGS__))
 
 /// Log a message with `LOG_LEVEL_ERROR`.
 #define SMDL_LOG_ERROR(...)                                                    \
-  ::smdl::Logger::get().log_message(::smdl::LOG_LEVEL_ERROR,                   \
-                                    ::smdl::concat(__VA_ARGS__))
+  ::smdl::Logger::get().logMessage(::smdl::LOG_LEVEL_ERROR,                    \
+                                   ::smdl::concat(__VA_ARGS__))
 
 /// The default log-sinks for convenience.
 ///
@@ -112,13 +111,13 @@ namespace LogSinks {
 /// A default log sink to print to `std::cerr`.
 class SMDL_EXPORT print_to_cerr final : public LogSink {
 public:
-  void log_message(LogLevel level, std::string_view message) final;
+  void logMessage(LogLevel level, std::string_view message) final;
 };
 
 /// A default log sink to print to `std::cout`.
 class SMDL_EXPORT print_to_cout final : public LogSink {
 public:
-  void log_message(LogLevel level, std::string_view message) final;
+  void logMessage(LogLevel level, std::string_view message) final;
 
   void flush() final;
 };
@@ -126,10 +125,10 @@ public:
 } // namespace LogSinks
 
 /// Use `<unistd.h>` on POSIX to test if cerr routes to a terminal.
-[[nodiscard]] SMDL_EXPORT bool cerr_supports_ansi_colors();
+[[nodiscard]] SMDL_EXPORT bool cerrSupportsANSIColors();
 
 /// Use `<unistd.h>` on POSIX to test if cout routes to a terminal.
-[[nodiscard]] SMDL_EXPORT bool cout_supports_ansi_colors();
+[[nodiscard]] SMDL_EXPORT bool coutSupportsANSIColors();
 
 /// \}
 

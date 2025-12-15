@@ -38,11 +38,11 @@ public:
 
   /// Load from file memory.
   [[nodiscard]]
-  std::optional<Error> load_from_file_memory(const std::string &file) noexcept;
+  std::optional<Error> loadFromFileMemory(const std::string &file) noexcept;
 
   /// Load from file.
   [[nodiscard]]
-  std::optional<Error> load_from_file(const std::string &fileName) noexcept;
+  std::optional<Error> loadFromFile(const std::string &fileName) noexcept;
 
   void clear() noexcept;
 

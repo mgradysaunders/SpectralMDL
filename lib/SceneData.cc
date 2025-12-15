@@ -22,7 +22,7 @@ void SceneData::set(std::string_view name, Getter getter) {
   lookup[llvm::StringRef(name)] = std::move(getter);
 }
 
-void SceneData::set_int(std::string_view name, int var) {
+void SceneData::setInt(std::string_view name, int var) {
   set(name, [var](State *, Kind kind, int size, void *out) {
     if (kind == Kind::Int)
       for (int i = 0; i < size; i++)
@@ -30,7 +30,7 @@ void SceneData::set_int(std::string_view name, int var) {
   });
 }
 
-void SceneData::set_int2(std::string_view name, int2 var) {
+void SceneData::setInt2(std::string_view name, int2 var) {
   set(name, [var](State *, Kind kind, int size, void *out) {
     if (kind == Kind::Int && size == 2)
       for (int i = 0; i < 2; i++)
@@ -38,7 +38,7 @@ void SceneData::set_int2(std::string_view name, int2 var) {
   });
 }
 
-void SceneData::set_int3(std::string_view name, int3 var) {
+void SceneData::setInt3(std::string_view name, int3 var) {
   set(name, [var](State *, Kind kind, int size, void *out) {
     if (kind == Kind::Int && size == 3)
       for (int i = 0; i < 3; i++)
@@ -46,7 +46,7 @@ void SceneData::set_int3(std::string_view name, int3 var) {
   });
 }
 
-void SceneData::set_int4(std::string_view name, int4 var) {
+void SceneData::setInt4(std::string_view name, int4 var) {
   set(name, [var](State *, Kind kind, int size, void *out) {
     if (kind == Kind::Int && size <= 4)
       for (int i = 0; i < size; i++)
@@ -54,7 +54,7 @@ void SceneData::set_int4(std::string_view name, int4 var) {
   });
 }
 
-void SceneData::set_float(std::string_view name, float var) {
+void SceneData::setFloat(std::string_view name, float var) {
   set(name, [var](State *, Kind kind, int size, void *out) {
     if (kind == Kind::Float || kind == Kind::Color)
       for (int i = 0; i < size; i++)
@@ -62,7 +62,7 @@ void SceneData::set_float(std::string_view name, float var) {
   });
 }
 
-void SceneData::set_float2(std::string_view name, float2 var) {
+void SceneData::setFloat2(std::string_view name, float2 var) {
   set(name, [var](State *, Kind kind, int size, void *out) {
     if (kind == Kind::Float && size == 2)
       for (int i = 0; i < 2; i++)
@@ -70,7 +70,7 @@ void SceneData::set_float2(std::string_view name, float2 var) {
   });
 }
 
-void SceneData::set_float3(std::string_view name, float3 var) {
+void SceneData::setFloat3(std::string_view name, float3 var) {
   set(name, [var](State *, Kind kind, int size, void *out) {
     if (kind == Kind::Float && size == 3)
       for (int i = 0; i < 3; i++)
@@ -78,7 +78,7 @@ void SceneData::set_float3(std::string_view name, float3 var) {
   });
 }
 
-void SceneData::set_float4(std::string_view name, float4 var) {
+void SceneData::setFloat4(std::string_view name, float4 var) {
   set(name, [var](State *, Kind kind, int size, void *out) {
     if (kind == Kind::Float && size <= 4)
       for (int i = 0; i < size; i++)
@@ -86,8 +86,8 @@ void SceneData::set_float4(std::string_view name, float4 var) {
   });
 }
 
-void SceneData::set_color(std::string_view name,
-                          std::function<void(State &, float *)> getter) {
+void SceneData::setColor(std::string_view name,
+                         std::function<void(State &, float *)> getter) {
   SMDL_SANITY_CHECK(getter != nullptr);
   set(name,
       [getter = std::move(getter)](State *state, Kind kind, int, void *out) {

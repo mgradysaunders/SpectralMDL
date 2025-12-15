@@ -17,15 +17,15 @@ constexpr float PI = 3.141592653589793f;
 /// \name Functions (math)
 /// \{
 
-[[nodiscard]] inline float finite_or_zero(float x) noexcept {
+[[nodiscard]] inline float finiteOrZero(float x) noexcept {
   return std::isfinite(x) ? x : 0.0f;
 }
 
-[[nodiscard]] inline float increment_float(float x) noexcept {
+[[nodiscard]] inline float incrementFloat(float x) noexcept {
   return std::nextafter(x, +std::numeric_limits<float>::infinity());
 }
 
-[[nodiscard]] inline float decrement_float(float x) noexcept {
+[[nodiscard]] inline float decrementFloat(float x) noexcept {
   return std::nextafter(x, -std::numeric_limits<float>::infinity());
 }
 
@@ -169,7 +169,7 @@ static_assert(sizeof(float4) == 4 * sizeof(float));
 
 /// Is any element true?
 template <size_t N>
-[[nodiscard]] inline bool is_any_true(Vector<bool, N> v) noexcept {
+[[nodiscard]] inline bool isAnyTrue(Vector<bool, N> v) noexcept {
   for (size_t i = 0; i < N; i++)
     if (v[i])
       return true;
@@ -178,7 +178,7 @@ template <size_t N>
 
 /// Is every element true?
 template <size_t N>
-[[nodiscard]] inline bool is_all_true(Vector<bool, N> v) noexcept {
+[[nodiscard]] inline bool isAllTrue(Vector<bool, N> v) noexcept {
   for (size_t i = 0; i < N; i++)
     if (!v[i])
       return false;
@@ -187,7 +187,7 @@ template <size_t N>
 
 /// Is every element finite?
 template <typename T, size_t N>
-[[nodiscard]] inline bool is_all_finite(const Vector<T, N> &v) noexcept {
+[[nodiscard]] inline bool isAllFinite(const Vector<T, N> &v) noexcept {
   for (size_t i = 0; i < N; i++)
     if (!std::isfinite(v[i]))
       return false;
@@ -298,13 +298,13 @@ template <typename T>
 
 /// Absolute value of dot product.
 template <typename T, size_t N>
-[[nodiscard]] constexpr T abs_dot(Vector<T, N> u, Vector<T, N> v) noexcept {
+[[nodiscard]] constexpr T absDot(Vector<T, N> u, Vector<T, N> v) noexcept {
   return std::abs(dot(u, v));
 }
 
 /// Vector length squared.
 template <typename T, size_t N>
-[[nodiscard]] constexpr T length_squared(Vector<T, N> v) noexcept {
+[[nodiscard]] constexpr T lengthSquared(Vector<T, N> v) noexcept {
   return dot(v, v);
 }
 
@@ -326,7 +326,7 @@ template <typename T, size_t N>
 
 /// Try to normalize, return true if successful.
 template <typename T, size_t N>
-[[nodiscard]] inline bool try_normalize(Vector<T, N> &v) noexcept {
+[[nodiscard]] inline bool tryNormalize(Vector<T, N> &v) noexcept {
   static_assert(std::is_floating_point_v<T>);
   if (T len{length(v)}; len > 0) {
     v = v / len;
@@ -508,7 +508,7 @@ constexpr Matrix<T, M, N> transpose(const Matrix<T, N, M> &m) noexcept {
 /// Calculate affine inverse.
 template <typename T>
 [[nodiscard]]
-constexpr Matrix<T, 4, 4> affine_inverse(const Matrix<T, 4, 4> &m) noexcept {
+constexpr Matrix<T, 4, 4> affineInverse(const Matrix<T, 4, 4> &m) noexcept {
   auto mI{Matrix<T, 4, 4>{}};
   mI[0] = {m[0].x, m[1].x, m[2].x, T(0)};
   mI[1] = {m[0].y, m[1].y, m[2].y, T(0)};
@@ -518,7 +518,7 @@ constexpr Matrix<T, 4, 4> affine_inverse(const Matrix<T, 4, 4> &m) noexcept {
 }
 
 /// Calculate vector perpendicular to the given vector.
-[[nodiscard]] inline float3 perpendicular_to(float3 z) noexcept {
+[[nodiscard]] inline float3 perpendicularTo(float3 z) noexcept {
   z = normalize(z);
   auto x{z.z < -0.9999f
              ? float3(0.0f, -1.0f, 0.0f)
@@ -527,9 +527,9 @@ constexpr Matrix<T, 4, 4> affine_inverse(const Matrix<T, 4, 4> &m) noexcept {
 }
 
 /// Calculate orthonormal coordinate system with the given vector as the Z axis.
-[[nodiscard]] inline float3x3 coordinate_system(float3 z) noexcept {
+[[nodiscard]] inline float3x3 coordinateSystem(float3 z) noexcept {
   z = normalize(z);
-  auto x{perpendicular_to(z)};
+  auto x{perpendicularTo(z)};
   auto y{normalize(cross(z, x))};
   return float3x3(x, y, z);
 }
@@ -539,18 +539,18 @@ constexpr Matrix<T, 4, 4> affine_inverse(const Matrix<T, 4, 4> &m) noexcept {
   float3 &x{m[0]};
   float3 &y{m[1]};
   float3 &z{m[2]};
-  if (!try_normalize(z))
+  if (!tryNormalize(z))
     z = float3(0, 0, 1);
   x = x - dot(x, z) * z;
-  if (!try_normalize(x))
-    x = perpendicular_to(z);
+  if (!tryNormalize(x))
+    x = perpendicularTo(z);
   y = normalize(cross(z, x));
   return m;
 }
 
 /// Calculate look-at transform.
-[[nodiscard]] inline float4x4 look_at(float3 from, float3 to,
-                                      float3 up = {0, 0, 1}) noexcept {
+[[nodiscard]] inline float4x4 lookAt(float3 from, float3 to,
+                                     float3 up = {0, 0, 1}) noexcept {
   float3 z{normalize(from - to)};
   float3 x{normalize(cross(up, z))};
   float3 y{cross(z, x)};

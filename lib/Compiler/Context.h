@@ -351,15 +351,14 @@ public:
                                       type->llvmType));
   }
 
-  [[nodiscard]] std::optional<std::string> Locate(const std::string &fileName) {
-    return compiler.fileLocator.locate(fileName,
-                                       currentModule->get_file_name());
+  [[nodiscard]] std::optional<std::string> locate(const std::string &fileName) {
+    return compiler.fileLocator.locate(fileName, currentModule->getFileName());
   }
 
   [[nodiscard]] std::vector<FileLocator::ImagePath>
-  LocateImages(const std::string &fileName) {
-    return compiler.fileLocator.locate_images(fileName,
-                                              currentModule->get_file_name());
+  locateImages(const std::string &fileName) {
+    return compiler.fileLocator.locateImages(fileName,
+                                             currentModule->getFileName());
   }
 
 public:
@@ -370,10 +369,10 @@ public:
   BumpPtrAllocator &allocator{compiler.allocator};
 
   /// The LLVM context.
-  llvm::LLVMContext &llvmContext{compiler.get_llvm_context()};
+  llvm::LLVMContext &llvmContext{compiler.getLLVMContext()};
 
   /// The LLVM module.
-  llvm::Module &llvmModule{compiler.get_llvm_module()};
+  llvm::Module &llvmModule{compiler.getLLVMModule()};
 
   /// The LLVM data layout.
   const llvm::DataLayout &llvmLayout{llvmModule.getDataLayout()};

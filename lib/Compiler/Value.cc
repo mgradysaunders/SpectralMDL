@@ -177,10 +177,10 @@ void ArgumentList::validateNames() {
     if (arg.isNamed()) {
       auto [itr, inserted] = uniqueNames.insert(arg.name);
       if (!inserted)
-        getSourceLocation().throw_error("ambiguous name '", arg.name,
+        getSourceLocation().throwError("ambiguous name '", arg.name,
                                         "' in argument list");
     } else if (!uniqueNames.empty()) {
-      getSourceLocation().throw_error(
+      getSourceLocation().throwError(
           "unnamed arguments must appear before named "
           "arguments in argument list");
     }

@@ -3,15 +3,15 @@
 
 namespace smdl {
 
-void quoted::append_to(std::string &result) {
+void Quoted::appendTo(std::string &result) {
   result += '\'';
   result += str;
   result += '\'';
 }
 
-void quoted_path::append_to(std::string &result) {
+void QuotedPath::appendTo(std::string &result) {
   result += '\'';
-  auto relPath{relative(std::string(str))};
+  auto relPath{makePathRelative(std::string(str))};
   if (!relPath.empty() && relPath.size() < str.size()) {
     result += relPath;
   } else {

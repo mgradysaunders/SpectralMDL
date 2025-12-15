@@ -34,7 +34,7 @@ bool test_visibility(const Scene &scene, const AnyRandom &random,
       return false; // Blocks visibility!
     }
     MediumStack::Update(medium, allocator, materialInstance, -ray.dir, ray.dir);
-    ray.tmin = smdl::increment_float(ray.tmax + EPS);
+    ray.tmin = smdl::incrementFloat(ray.tmax + EPS);
     ray.tmax = 1.0f - EPS;
   }
   return true;
@@ -96,7 +96,7 @@ uint64_t random_walk(smdl::Compiler &compiler, const Scene &scene,
         vertex.medium = medium;
         vertex.materialInstance = medium->materialInstance;
         vertex.pdfFwd = vertexPrev.convert_pdf(wpdfFwd, vertex);
-        vertex.wNext = smdl::uniform_sphere_sample(float2(random));
+        vertex.wNext = smdl::uniformSphereSample(float2(random));
         vertex.isVolume = true;
         continue;
       } else {

@@ -15,11 +15,11 @@ class SMDL_EXPORT LightProfile final {
 public:
   /// Load from file memory.
   [[nodiscard]]
-  std::optional<Error> load_from_file_memory(std::string file) noexcept;
+  std::optional<Error> loadFromFileMemory(std::string file) noexcept;
 
   /// Load from file.
   [[nodiscard]]
-  std::optional<Error> load_from_file(const std::string &fileName) noexcept;
+  std::optional<Error> loadFromFile(const std::string &fileName) noexcept;
 
   /// Clear.
   void clear() noexcept;
@@ -42,7 +42,6 @@ public:
 
   /// Interpolate.
   [[nodiscard]] float interpolate(float3 wo) const noexcept;
-
 
 public:
   /// The version string.

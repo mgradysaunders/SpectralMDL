@@ -430,7 +430,7 @@ public:
   /// Emit import declaration.
   Value emit(AST::Import &decl) {
     if (decl.is_exported())
-      decl.srcLoc.throw_error("cannot re-export qualified 'import'");
+      decl.srcLoc.throwError("cannot re-export qualified 'import'");
     for (auto &[importPath, srcComma] : decl.importPathWrappers)
       declareImport(importPath, importPath.is_absolute(), decl);
     return Value();
@@ -577,7 +577,7 @@ public:
   Value emit(AST::Type &expr) {
     auto value{emit(expr.expr)};
     if (value.type != context.getMetaTypeType())
-      expr.srcLoc.throw_error("expected expression to resolve to a type");
+      expr.srcLoc.throwError("expected expression to resolve to a type");
     expr.type = value.getComptimeMetaType(context, expr.srcLoc);
     return value;
   }
@@ -616,7 +616,7 @@ public:
   Value emit(AST::Break &stmt) {
     SMDL_SANITY_CHECK(!hasTerminator());
     if (!labelBreak)
-      stmt.srcLoc.throw_error(inDefer ? "cannot 'break' from 'defer'"
+      stmt.srcLoc.throwError(inDefer ? "cannot 'break' from 'defer'"
                                       : "nowhere to 'break'");
     emitLateIf(stmt.lateIf, [&] {
       unwind(labelBreak.crumb);
@@ -632,7 +632,7 @@ public:
   Value emit(AST::Continue &stmt) {
     SMDL_SANITY_CHECK(!hasTerminator());
     if (!labelContinue)
-      stmt.srcLoc.throw_error(inDefer ? "cannot 'continue' from 'defer'"
+      stmt.srcLoc.throwError(inDefer ? "cannot 'continue' from 'defer'"
                                       : "nowhere to 'continue'");
     emitLateIf(stmt.lateIf, [&] {
       unwind(labelContinue.crumb);
@@ -671,7 +671,7 @@ public:
     for (auto &[expr, srcComma] : stmt.exprWrappers) {
       auto value{emit(expr)};
       if (!value.isLValue())
-        stmt.srcLoc.throw_error("cannot 'preserve' rvalue");
+        stmt.srcLoc.throwError("cannot 'preserve' rvalue");
       declareCrumb({}, &stmt, value, toRValue(value));
     }
     return Value();
@@ -681,7 +681,7 @@ public:
   Value emit(AST::Return &stmt) {
     SMDL_SANITY_CHECK(!hasTerminator());
     if (!labelReturn)
-      stmt.srcLoc.throw_error(inDefer ? "cannot 'return' from 'defer'"
+      stmt.srcLoc.throwError(inDefer ? "cannot 'return' from 'defer'"
                                       : "nowhere to 'return'");
     emitLateIf(stmt.lateIf, [&] {
       Value value{};
@@ -700,7 +700,7 @@ public:
   /// Emit unreachable statement.
   Value emit(AST::Unreachable &stmt) {
     if (!getLLVMFunction())
-      stmt.srcLoc.throw_error(
+      stmt.srcLoc.throwError(
           "'unreachable' must be within function definition");
     builder.CreateUnreachable();
     return Value();

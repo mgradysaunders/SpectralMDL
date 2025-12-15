@@ -9,7 +9,7 @@
 
 namespace smdl {
 
-bool has_extension(std::string_view path, std::string_view extension) noexcept {
+bool hasExtension(std::string_view path, std::string_view extension) noexcept {
   return llvm::StringRef(path).ends_with_insensitive(extension);
 }
 
@@ -19,34 +19,35 @@ bool exists(const std::string &path) noexcept try {
   return false;
 }
 
-bool is_file(const std::string &path) noexcept try {
+bool isFile(const std::string &path) noexcept try {
   return std::filesystem::is_regular_file(path);
 } catch (...) {
   return false;
 }
 
-bool is_directory(const std::string &path) noexcept try {
+bool isDirectory(const std::string &path) noexcept try {
   return std::filesystem::is_directory(path);
 } catch (...) {
   return false;
 }
 
-bool is_path_equivalent(const std::string &path0,
-                        const std::string &path1) noexcept try {
-  return canonical(path0) == canonical(path1);
+bool isPathEquivalent(const std::string &path0,
+                      const std::string &path1) noexcept try {
+  return makePathCanonical(path0) == makePathCanonical(path1);
 } catch (...) {
   return false;
 }
 
-bool is_parent_path_of(const std::string &path0,
-                       const std::string &path1) noexcept try {
-  return std::filesystem::relative(canonical(path1), canonical(path0)) !=
+bool isParentPathOf(const std::string &path0, const std::string &path1) noexcept
+    try {
+  return std::filesystem::relative(makePathCanonical(path1),
+                                   makePathCanonical(path0)) !=
          std::filesystem::path();
 } catch (...) {
   return false;
 }
 
-std::string join_paths(std::string_view path0, std::string_view path1) {
+std::string joinPaths(std::string_view path0, std::string_view path1) {
   if (path1.empty())
     return std::string(path0);
   if (path0.empty())
@@ -54,7 +55,7 @@ std::string join_paths(std::string_view path0, std::string_view path1) {
   return (std::filesystem::path(path0) / std::filesystem::path(path1)).string();
 }
 
-std::string canonical(std::string path) noexcept try {
+std::string makePathCanonical(std::string path) noexcept try {
   if (!path.empty() && path[0] == '~') {
     llvm::SmallString<128> pathTmp{};
     llvm::sys::fs::expand_tilde(path, pathTmp);
@@ -65,28 +66,28 @@ std::string canonical(std::string path) noexcept try {
   return path;
 }
 
-std::string relative(std::string path) noexcept try {
+std::string makePathRelative(std::string path) noexcept try {
   return std::filesystem::relative(path).string();
 } catch (...) {
   return path;
 }
 
-std::string parent_path(std::string path) noexcept try {
+std::string parentPathOf(std::string path) noexcept try {
   return std::filesystem::path(path).parent_path().string();
 } catch (...) {
   return path;
 }
 
-std::fstream open_or_throw(const std::string &path, std::ios::openmode mode) {
+std::fstream openOrThrow(const std::string &path, std::ios::openmode mode) {
   auto stream{std::fstream(path, mode)};
   if (!stream.is_open())
     throw Error(
-        concat("cannot open ", quoted_path(path), ": ", std::strerror(errno)));
+        concat("cannot open ", QuotedPath(path), ": ", std::strerror(errno)));
   return stream;
 }
 
-std::string read_or_throw(const std::string &path) {
-  auto stream{open_or_throw(path, std::ios::in | std::ios::binary)};
+std::string readOrThrow(const std::string &path) {
+  auto stream{openOrThrow(path, std::ios::in | std::ios::binary)};
   return std::string((std::istreambuf_iterator<char>(stream)),
                      std::istreambuf_iterator<char>());
 }

@@ -94,7 +94,7 @@ static cl::opt<float> ptexFaceV{
 
 int main(int argc, char **argv) {
   llvm::InitLLVM X(argc, argv);
-  smdl::Logger::get().add_sink<smdl::LogSinks::print_to_cerr>();
+  smdl::Logger::get().addSink<smdl::LogSinks::print_to_cerr>();
   cl::HideUnrelatedOptions({&optionsCat});
   cl::ParseCommandLineOptions(argc, argv, "SpectralMDL compiler");
 
@@ -104,7 +104,7 @@ int main(int argc, char **argv) {
   compiler.wavelengthBaseMax = wavelengthBaseMax;
   for (const auto &inputFile : inputFiles) {
     if (auto error{compiler.add(std::string(inputFile))}) {
-      error->print_and_exit();
+      error->printAndExit();
     }
   }
   if (subFormat) {
@@ -113,12 +113,12 @@ int main(int argc, char **argv) {
     options.noComments = formatNoComments;
     options.noAnnotations = formatNoAnnotations;
     options.compact = formatCompact;
-    if (auto error{compiler.format_source_code(options)}) {
-      error->print_and_exit();
+    if (auto error{compiler.formatSourceCode(options)}) {
+      error->printAndExit();
     }
   } else {
     if (auto error{compiler.compile(smdl::OptLevel(unsigned(optLevel)))}) {
-      error->print_and_exit();
+      error->printAndExit();
     }
     if (subDump) {
       if (outputFilename.getNumOccurrences()) {
@@ -131,13 +131,13 @@ int main(int argc, char **argv) {
         std::cout.flush();
       }
     } else if (subList) {
-      std::cout << compiler.summarize_materials();
+      std::cout << compiler.printMaterialSummary();
       std::cout.flush();
     } else if (subRun || subTest) {
-      if (auto error{compiler.jit_compile()})
-        error->print_and_exit();
-      if (auto error{compiler.jit_execs()})
-        error->print_and_exit();
+      if (auto error{compiler.jitCompile()})
+        error->printAndExit();
+      if (auto error{compiler.runJitExecs()})
+        error->printAndExit();
       if (subTest) {
         std::array<float, 16> wavelengths{};
         smdl::BumpPtrAllocator allocator{};
@@ -159,9 +159,9 @@ int main(int argc, char **argv) {
           wavelengths[i] =
               (1 - fac) * state.wavelength_min + fac * state.wavelength_max;
         }
-        if (auto error{compiler.jit_unit_tests(state)}) {
+        if (auto error{compiler.runJitUnitTests(state)}) {
           std::cerr << '\n';
-          error->print_and_exit();
+          error->printAndExit();
         }
       }
     }

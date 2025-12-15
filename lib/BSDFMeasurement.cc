@@ -8,9 +8,9 @@
 namespace smdl {
 
 std::optional<Error>
-BSDFMeasurement::load_from_file_memory(const std::string &file) noexcept {
+BSDFMeasurement::loadFromFileMemory(const std::string &file) noexcept {
   clear();
-  auto error{catch_and_return_error([&] {
+  auto error{catchAndReturnError([&] {
     auto mem{llvm::StringRef(file)};
     if (!mem.consume_front("NVIDIA ARC MBSDF V1\n")) {
       throw Error("not an MBSDF file");
@@ -97,15 +97,14 @@ BSDFMeasurement::load_from_file_memory(const std::string &file) noexcept {
 }
 
 std::optional<Error>
-BSDFMeasurement::load_from_file(const std::string &fileName) noexcept {
+BSDFMeasurement::loadFromFile(const std::string &fileName) noexcept {
   clear();
   auto file{std::string()};
-  if (auto error{
-          catch_and_return_error([&] { file = read_or_throw(fileName); })})
+  if (auto error{catchAndReturnError([&] { file = readOrThrow(fileName); })})
     return error;
-  if (auto error{load_from_file_memory(file)})
+  if (auto error{loadFromFileMemory(file)})
     return Error(
-        concat("cannot load ", quoted_path(fileName), ": ", error->message));
+        concat("cannot load ", QuotedPath(fileName), ": ", error->message));
   return std::nullopt;
 }
 

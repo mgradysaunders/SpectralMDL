@@ -43,7 +43,7 @@ public:
       : gen(std::move(gen)) {}
 
   explicit AnyRandom(RNG &rng)
-      : gen([&rng]() { return smdl::generate_canonical(rng); }) {}
+      : gen([&rng]() { return smdl::generateCanonical(rng); }) {}
 
   [[nodiscard]] operator float() const { return gen(); }
 
@@ -102,7 +102,7 @@ public:
     state.object_id = meshInstanceIndex;
     state.ptex_face_id = faceIndex;
     state.ptex_face_uv = {bary[1], bary[2]};
-    state.finalize_and_apply_internal_space_conventions();
+    state.finalizeAndApplyInternalSpaceConventions();
   }
 
   /// Apply transform.

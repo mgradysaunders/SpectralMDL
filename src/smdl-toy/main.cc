@@ -44,7 +44,7 @@ static cl::opt<float> envLightScale{"ibl-scale",
 
 int main(int argc, char **argv) try {
   llvm::InitLLVM X(argc, argv);
-  smdl::Logger::get().add_sink<smdl::LogSinks::print_to_cerr>();
+  smdl::Logger::get().addSink<smdl::LogSinks::print_to_cerr>();
   cl::HideUnrelatedOptions({&catCamera});
   cl::ParseCommandLineOptions(argc, argv, "SpectralMDL toy renderer");
 
@@ -54,11 +54,11 @@ int main(int argc, char **argv) try {
   compiler.enableUnitTests = false;
   for (auto &inputMDLFile : inputMDLFiles)
     if (auto error{compiler.add(std::string(inputMDLFile))})
-      error->print_and_exit();
+      error->printAndExit();
   if (auto error{compiler.compile(smdl::OPT_LEVEL_O2)})
-    error->print_and_exit();
-  if (auto error{compiler.jit_compile()})
-    error->print_and_exit();
+    error->printAndExit();
+  if (auto error{compiler.jitCompile()})
+    error->printAndExit();
   const auto scene{Scene(compiler, inputSceneFile)};
 
   std::unique_ptr<EnvLight> envLight{};
@@ -78,7 +78,7 @@ int main(int argc, char **argv) try {
   const auto spp{size_t(samplesPerPixel)};
   const auto aspectRatio{float(numPixelsX) / float(numPixelsY)};
   const auto focalLength{0.5f / std::tan(float(cameraFOV) / 2 * PI / 180)};
-  const auto cameraToWorld{smdl::look_at(cameraFrom, cameraTo, cameraUp)};
+  const auto cameraToWorld{smdl::lookAt(cameraFrom, cameraTo, cameraUp)};
   auto renderImage{
       smdl::SpectralRenderImage(WAVELENGTH_BASE_MAX, numPixelsX, numPixelsY)};
   constexpr int MAX_PATH_LEN = 8;
@@ -168,7 +168,7 @@ int main(int argc, char **argv) try {
     Color Lsum{};
     float2 lowd{random};
     for (size_t s = 0; s < spp; s++) {
-      auto xi{smdl::advance_low_discrepancy2(lowd)};
+      auto xi{smdl::advanceLowDiscrepancy2(lowd)};
       float u{(x + xi.x) / float(numPixelsX)};
       float v{(y + xi.y) / float(numPixelsY)};
       Ray ray{float3(0.0f),
@@ -281,7 +281,7 @@ int main(int argc, char **argv) try {
       state.wavelength_base = wavelengths.data();
       state.wavelength_min = WAVELENGTH_MIN;
       state.wavelength_max = WAVELENGTH_MAX;
-      auto rgb{compiler.jit_color_to_rgb(state, color.data())};
+      auto rgb{compiler.convertColorToRGB(state, color.data())};
       rgb[0] *= imageScale;
       rgb[1] *= imageScale;
       rgb[2] *= imageScale;
@@ -293,7 +293,7 @@ int main(int argc, char **argv) try {
       rgbImage[rgbImageIndex++] = std::round(255.0f * rgb[2]);
     }
   }
-  if (auto error{smdl::write_8_bit_image("output.png", numPixelsX, numPixelsY,
+  if (auto error{smdl::write8bitImage("output.png", numPixelsX, numPixelsY,
                                          3, rgbImage.data())}) {
     error->print();
   }

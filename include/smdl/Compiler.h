@@ -76,67 +76,67 @@ public:
 
   /// Format source code.
   [[nodiscard]] std::optional<Error>
-  format_source_code(const FormatOptions &formatOptions) noexcept;
+  formatSourceCode(const FormatOptions &formatOptions) noexcept;
 
 private:
   /// Get the LLVM context.
-  [[nodiscard]] llvm::LLVMContext &get_llvm_context() noexcept;
+  [[nodiscard]] llvm::LLVMContext &getLLVMContext() noexcept;
 
   /// Get the LLVM module.
-  [[nodiscard]] llvm::Module &get_llvm_module() noexcept;
+  [[nodiscard]] llvm::Module &getLLVMModule() noexcept;
 
   /// Load image.
-  [[nodiscard]] const Image &load_image(const std::string &fileName,
-                                        const SourceLocation &srcLoc);
+  [[nodiscard]] const Image &loadImage(const std::string &fileName,
+                                       const SourceLocation &srcLoc);
 
   /// Load ptex texture.
-  [[nodiscard]] const Ptexture &load_ptexture(const std::string &fileName,
-                                              const SourceLocation &srcLoc);
+  [[nodiscard]] const Ptexture &loadPtexture(const std::string &fileName,
+                                             const SourceLocation &srcLoc);
 
   /// Load BSDF measurement.
   [[nodiscard]]
-  const BSDFMeasurement &load_bsdf_measurement(const std::string &fileName,
-                                               const SourceLocation &srcLoc);
+  const BSDFMeasurement &loadBSDFMeasurement(const std::string &fileName,
+                                             const SourceLocation &srcLoc);
 
   /// Load light profile.
   [[nodiscard]]
-  const LightProfile &load_light_profile(const std::string &fileName,
-                                         const SourceLocation &srcLoc);
+  const LightProfile &loadLightProfile(const std::string &fileName,
+                                       const SourceLocation &srcLoc);
 
   /// Load spectrum from TXT file.
   [[nodiscard]]
-  SpectrumView load_spectrum(const std::string &fileName,
-                             const SourceLocation &srcLoc);
+  SpectrumView loadSpectrum(const std::string &fileName,
+                            const SourceLocation &srcLoc);
 
   /// Load spectrum from ENVI Spectral Library file.
   [[nodiscard]]
-  SpectrumView load_spectrum(const std::string &fileName, int curveIndex,
-                             const SourceLocation &srcLoc);
+  SpectrumView loadSpectrum(const std::string &fileName, int curveIndex,
+                            const SourceLocation &srcLoc);
 
   /// Load spectrum from ENVI Spectral Library file.
   [[nodiscard]]
-  SpectrumView load_spectrum(const std::string &fileName,
-                             const std::string &curveName,
-                             const SourceLocation &srcLoc);
+  SpectrumView loadSpectrum(const std::string &fileName,
+                            const std::string &curveName,
+                            const SourceLocation &srcLoc);
 
 public:
   /// Dump as LLVM-IR or native assembly.
   [[nodiscard]] std::string dump(DumpFormat dumpFormat);
 
   /// JIT-compile to machine code.
-  [[nodiscard]] std::optional<Error> jit_compile() noexcept;
+  [[nodiscard]] std::optional<Error> jitCompile() noexcept;
 
 private:
   /// After JIT-compiling, lookup symbol with the given name.
-  [[nodiscard]] void *jit_lookup(std::string_view name) noexcept;
+  [[nodiscard]] void *jitLookup(std::string_view name) noexcept;
 
   /// After JIT-compiling, lookup symbol with the given name or throw an error
   /// if it is not present.
-  template <typename T> void jit_lookup_or_throw(JIT::Function<T> &func) {
+  template <typename T> void jitLookupOrThrow(JIT::Function<T> &func) {
     func.func = reinterpret_cast<typename JIT::Function<T>::function_pointer>(
-        jit_lookup(func.name));
+        jitLookup(func.name));
     if (!func.func)
-      throw Error(concat("cannot resolve JIT function ", quoted(func.name)));
+      throw Error(concat("cannot resolve JIT function ", Quoted(func.name)));
   }
 
 public:
@@ -150,14 +150,14 @@ public:
   ///
   [[nodiscard]]
   const JIT::Material *
-  find_jit_material(std::string_view materialName) const noexcept;
+  findJitMaterial(std::string_view materialName) const noexcept;
 
   /// Find JIT-compiled material named `materialName` in the MDL module named
   /// `moduleName`, or return `nullptr` on failure.
   [[nodiscard]]
   const JIT::Material *
-  find_jit_material(std::string_view moduleName,
-                    std::string_view materialName) const noexcept;
+  findJitMaterial(std::string_view moduleName,
+                  std::string_view materialName) const noexcept;
 
   /// Run the JIT-compiled color-to-RGB function.
   ///
@@ -171,8 +171,8 @@ public:
   /// The pointer to the color spectrum.
   ///
   [[nodiscard]]
-  float3 jit_color_to_rgb(const State &state,
-                          const float *color) const noexcept;
+  float3 convertColorToRGB(const State &state,
+                           const float *color) const noexcept;
 
   /// Run the JIT-compiled RGB-to-color function.
   ///
@@ -188,18 +188,18 @@ public:
   /// \param[out] color
   /// The pointer to the color spectrum.
   ///
-  void jit_rgb_to_color(const State &state, const float3 &rgb,
-                        float *color) const noexcept;
+  void convertRGBToColor(const State &state, const float3 &rgb,
+                         float *color) const noexcept;
 
   /// Run JIT-compiled unit tests and print results to standard error.
   [[nodiscard]] std::optional<Error>
-  jit_unit_tests(const State &state) noexcept;
+  runJitUnitTests(const State &state) noexcept;
 
   /// Run JIT-compiled execs.
-  [[nodiscard]] std::optional<Error> jit_execs() noexcept;
+  [[nodiscard]] std::optional<Error> runJitExecs() noexcept;
 
   /// Summarize all compiled materials.
-  [[nodiscard]] std::string summarize_materials() const;
+  [[nodiscard]] std::string printMaterialSummary() const;
 
 public:
   /// The file locator.

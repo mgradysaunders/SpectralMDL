@@ -18,14 +18,14 @@ void SpectralRenderImage::resize(size_t nBands, size_t nPixelsX,
   numBands = nBands;
   numPixelsX = nPixelsX;
   numPixelsY = nPixelsY;
-  buf.reset(new uint8_t[image_size_in_bytes()]);
+  buf.reset(new uint8_t[getImageSizeInBytes()]);
 }
 
 SpectralRenderImage::PixelRef
 SpectralRenderImage::operator()(size_t iX, size_t iY) noexcept {
   SMDL_SANITY_CHECK(iX < numPixelsX);
   SMDL_SANITY_CHECK(iY < numPixelsY);
-  auto ptr{buf.get() + pixel_size_in_bytes() * (numPixelsX * iY + iX)};
+  auto ptr{buf.get() + getPixelSizeInBytes() * (numPixelsX * iY + iX)};
   return {*reinterpret_cast<AtomicUInt64 *>(ptr),
           reinterpret_cast<AtomicDouble *>(ptr + sizeof(AtomicUInt64)),
           numBands};
@@ -35,7 +35,7 @@ SpectralRenderImage::PixelConstRef
 SpectralRenderImage::operator()(size_t iX, size_t iY) const noexcept {
   SMDL_SANITY_CHECK(iX < numPixelsX);
   SMDL_SANITY_CHECK(iY < numPixelsY);
-  auto ptr{buf.get() + pixel_size_in_bytes() * (numPixelsX * iY + iX)};
+  auto ptr{buf.get() + getPixelSizeInBytes() * (numPixelsX * iY + iX)};
   return {*reinterpret_cast<const AtomicUInt64 *>(ptr),
           reinterpret_cast<const AtomicDouble *>(ptr + sizeof(AtomicUInt64)),
           numBands};
@@ -56,11 +56,11 @@ void SpectralRenderImage::add(const SpectralRenderImage &other) noexcept {
   }
 }
 
-void SpectralRenderImage::write_envi_file(Span<const float> wavelengths,
-                                          const std::string &fileName) const {
+void SpectralRenderImage::writeENVIFile(Span<const float> wavelengths,
+                                        const std::string &fileName) const {
   // Write the header file
   {
-    auto file{open_or_throw(fileName + ".hdr", std::ios::out)};
+    auto file{openOrThrow(fileName + ".hdr", std::ios::out)};
     file << "ENVI\n";
     file << "file type = ENVI Standard\n";
     file << "data type = 5\n";
@@ -81,7 +81,7 @@ void SpectralRenderImage::write_envi_file(Span<const float> wavelengths,
   }
   // Write the binary file
   {
-    auto file{open_or_throw(fileName, std::ios::out | std::ios::binary)};
+    auto file{openOrThrow(fileName, std::ios::out | std::ios::binary)};
     for (size_t iY = 0; iY < numPixelsY; iY++) {
       for (size_t iX = 0; iX < numPixelsX; iX++) {
         auto pixel{operator()(iX, iY)};

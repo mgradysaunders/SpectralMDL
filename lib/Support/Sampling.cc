@@ -14,20 +14,20 @@ Distribution1D::Distribution1D(Span<const float> values) {
   }
 }
 
-float Distribution1D::index_pmf(int i) const noexcept {
+float Distribution1D::indexPMF(int i) const noexcept {
   if (0 <= i && i < size())
     return static_cast<float>(cmfs[i + 1] - cmfs[i]);
   return 0.0f;
 }
 
-float Distribution1D::index_cmf(int i) const noexcept {
+float Distribution1D::indexCMF(int i) const noexcept {
   if (0 <= i && i < size())
     return static_cast<float>(cmfs[i]);
   return i < 0 ? 0.0f : 1.0f;
 }
 
-int Distribution1D::index_sample(float xi, float *xiRemap,
-                                 float *pmf) const noexcept {
+int Distribution1D::indexSample(float xi, float *xiRemap,
+                                float *pmf) const noexcept {
   if (cmfs.size() < 2) {
     if (pmf)
       *pmf = 1;
@@ -64,13 +64,13 @@ Distribution2D::Distribution2D(int numTexelsX, int numTexelsY,
   auto margins{std::vector<float>(size_t(numTexelsY))};
   for (int iY{}; iY < numTexelsY; iY++) {
     conditionals.emplace_back(values.subspan(numTexelsX * iY, numTexelsX));
-    margins[iY] = conditionals.back().non_normalized_sum();
+    margins[iY] = conditionals.back().unnormalizedSum();
   }
   marginal = Distribution1D(margins);
 }
 
-int2 Distribution2D::pixel_sample(float2 xi, float2 *xiRemap,
-                                  float *pmf) const noexcept {
+int2 Distribution2D::pixelSample(float2 xi, float2 *xiRemap,
+                                 float *pmf) const noexcept {
   if (numTexelsX == 0 || numTexelsY == 0) {
     if (pmf) {
       *pmf = 1.0f;
@@ -79,10 +79,10 @@ int2 Distribution2D::pixel_sample(float2 xi, float2 *xiRemap,
   }
   float pmfX{};
   float pmfY{};
-  int iY{marginal.index_sample(xi.y, &xi.y, &pmfY)};
+  int iY{marginal.indexSample(xi.y, &xi.y, &pmfY)};
   SMDL_SANITY_CHECK(iY >= 0);
   SMDL_SANITY_CHECK(iY < int(conditionals.size()));
-  int iX{conditionals[iY].index_sample(xi.x, &xi.x, &pmfX)};
+  int iX{conditionals[iY].indexSample(xi.x, &xi.x, &pmfX)};
   if (xiRemap) {
     *xiRemap = xi;
   }
@@ -92,7 +92,7 @@ int2 Distribution2D::pixel_sample(float2 xi, float2 *xiRemap,
   return int2(iX, iY);
 }
 
-float Distribution2D::direction_pdf(float3 wi, int2 *iPixel) const noexcept {
+float Distribution2D::directionPDF(float3 wi, int2 *iPixel) const noexcept {
   float theta = std::atan2(std::hypot(wi.x, wi.y), wi.z);
   theta = std::max(theta, 0.0f);
   theta = std::min(theta, PI);
@@ -110,15 +110,15 @@ float Distribution2D::direction_pdf(float3 wi, int2 *iPixel) const noexcept {
   iY = std::max(0, std::min(iY, nY - 1));
   if (iPixel)
     *iPixel = {iX, iY};
-  float pdf = pixel_pmf(int2(iX, iY));
+  float pdf = pixelPMF(int2(iX, iY));
   pdf *= numTexelsX * numTexelsY;
   pdf /= 2.0f * PI * PI * sinTheta;
   return pdf;
 }
 
-float3 Distribution2D::direction_sample(float2 xi, int2 *iPixel,
-                                        float *pdf) const noexcept {
-  auto i{pixel_sample(xi, &xi, pdf)};
+float3 Distribution2D::directionSample(float2 xi, int2 *iPixel,
+                                       float *pdf) const noexcept {
+  auto i{pixelSample(xi, &xi, pdf)};
   if (iPixel)
     *iPixel = i;
   auto phi{2.0f * PI * (i.x + xi.x) / float(numTexelsX)};

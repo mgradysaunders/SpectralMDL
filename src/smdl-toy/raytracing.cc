@@ -12,7 +12,7 @@ Scene::Scene(const smdl::Compiler &compiler, const std::string &fileName)
                                          ~aiProcess_RemoveRedundantMaterials)};
   if (!assScene)
     throw smdl::Error(
-        smdl::concat("assimp failed to read ", smdl::quoted_path(fileName)));
+        smdl::concat("assimp failed to read ", smdl::QuotedPath(fileName)));
   load(*assScene);
 }
 
@@ -36,9 +36,9 @@ void Scene::load(const aiScene &assScene) {
   boundRadius = 0.5f * length(upper - lower);
   for (unsigned int i = 0; i < assScene.mNumMaterials; i++) {
     auto name{assScene.mMaterials[i]->GetName()};
-    auto material{compiler.find_jit_material(name.C_Str())};
+    auto material{compiler.findJitMaterial(name.C_Str())};
     if (!material)
-      material = compiler.find_jit_material("default_material");
+      material = compiler.findJitMaterial("default_material");
     materials.push_back(material);
   }
 }
@@ -64,7 +64,7 @@ void Scene::load(const aiMesh &assMesh) {
       vert.tangent.y = assMesh.mTangents[i].y;
       vert.tangent.z = assMesh.mTangents[i].z;
     } else {
-      vert.tangent = smdl::perpendicular_to(smdl::normalize(vert.normal));
+      vert.tangent = smdl::perpendicularTo(smdl::normalize(vert.normal));
     }
     if (assMesh.mTextureCoords[0]) {
       vert.texcoord.x = assMesh.mTextureCoords[0][i].x;

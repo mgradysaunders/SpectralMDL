@@ -12,30 +12,30 @@ namespace smdl {
 /// \name Functions (profiler)
 /// \{
 
-SMDL_EXPORT void profiler_initialize(unsigned granularityMicroseconds = 100,
-                                     const char *processName = "");
+SMDL_EXPORT void profilerInitialize(unsigned granularityMicroseconds = 100,
+                                    const char *processName = "");
 
 struct ProfilerEntry;
 
 [[nodiscard]]
-SMDL_EXPORT ProfilerEntry *profiler_entry_begin(const char *name,
-                                                const char *detail = "");
+SMDL_EXPORT ProfilerEntry *profilerEntryBegin(const char *name,
+                                              const char *detail = "");
 
-SMDL_EXPORT void profiler_entry_end(ProfilerEntry *entry);
+SMDL_EXPORT void profilerEntryEnd(ProfilerEntry *entry);
 
 SMDL_EXPORT void
-profiler_finalize(const char *outputFilename = "profiler_output.json");
+profilerFinalize(const char *outputFilename = "profiler_output.json");
 
 /// \}
 
 class ProfilerEntryScope final {
 public:
   ProfilerEntryScope(const char *name, const char *detail = "")
-      : entry(profiler_entry_begin(name, detail)) {}
+      : entry(profilerEntryBegin(name, detail)) {}
 
   ProfilerEntryScope(const ProfilerEntryScope &) = delete;
 
-  ~ProfilerEntryScope() { profiler_entry_end(entry); }
+  ~ProfilerEntryScope() { profilerEntryEnd(entry); }
 
 private:
   ProfilerEntry *entry{};

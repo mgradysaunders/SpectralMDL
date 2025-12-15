@@ -55,7 +55,7 @@ public:
   /// what it may or may not throw on failure.
   ///
   [[nodiscard]] static std::unique_ptr<Module>
-  load_from_file(const std::string &fileName);
+  loadFromFile(const std::string &fileName);
 
   /// Load from file extracted from archive.
   ///
@@ -68,12 +68,12 @@ public:
   /// The file extracted and decompressed from the archive.
   ///
   [[nodiscard]] static std::unique_ptr<Module>
-  load_from_file_extracted_from_archive(const std::string &fileName,
-                                        const std::string &file);
+  loadFromFileExtractedFromArchive(const std::string &fileName,
+                                   const std::string &file);
 
 public:
   /// Is a builtin module?
-  [[nodiscard]] bool is_builtin() const noexcept { return fileName.empty(); }
+  [[nodiscard]] bool isBuiltin() const noexcept { return fileName.empty(); }
 
   /// Is extracted from an archive?
   [[nodiscard]] bool is_extracted_from_archive() const noexcept {
@@ -81,20 +81,20 @@ public:
   }
 
   /// Get the file name. This is empty if the module is builtin.
-  [[nodiscard]] std::string_view get_file_name() const noexcept {
+  [[nodiscard]] std::string_view getFileName() const noexcept {
     return fileName;
   }
 
   /// Get the directory. This is empty if the module is builtin.
-  [[nodiscard]] std::string get_directory() const {
-    return parent_path(fileName);
+  [[nodiscard]] std::string getDirectory() const {
+    return parentPathOf(fileName);
   }
 
   /// Get the name.
-  [[nodiscard]] std::string_view get_name() const noexcept { return name; }
+  [[nodiscard]] std::string_view getName() const noexcept { return name; }
 
   /// Get the source code.
-  [[nodiscard]] std::string_view get_source_code() const noexcept {
+  [[nodiscard]] std::string_view getSourceCode() const noexcept {
     return sourceCode;
   }
 
@@ -107,17 +107,17 @@ public:
 
   /// Format the source code and write or overwrite the file on disk.
   [[nodiscard]] std::optional<Error>
-  format_source_code(const FormatOptions &formatOptions) noexcept;
+  formatSourceCode(const FormatOptions &formatOptions) noexcept;
 
   /// Is parsed yet?
-  [[nodiscard]] bool is_parsed() const noexcept { return root; }
+  [[nodiscard]] bool isParsed() const noexcept { return root; }
 
   /// Is SMDL syntax? Only known after the module is parsed.
   ///
-  /// This is true if the module file begins with the pragma `#smdl` 
-  /// used to indicate to the parser that the source code contains 
+  /// This is true if the module file begins with the pragma `#smdl`
+  /// used to indicate to the parser that the source code contains
   /// SMDL-specific syntax.
-  [[nodiscard]] bool is_smdl_syntax() const noexcept;
+  [[nodiscard]] bool isSMDLSyntax() const noexcept;
 
   void reset() noexcept;
 

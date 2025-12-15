@@ -5,10 +5,10 @@
 namespace smdl {
 
 std::optional<Error>
-LightProfile::load_from_file_memory(std::string file) noexcept {
+LightProfile::loadFromFileMemory(std::string file) noexcept {
   clear();
   std::replace(file.begin(), file.end(), ',', ' ');
-  auto error{catch_and_return_error([&] {
+  auto error{catchAndReturnError([&] {
     auto text{llvm::StringRef(file).trim()};
     if (!text.starts_with("IESNA"))
       throw Error("not an IES file");
@@ -58,7 +58,7 @@ LightProfile::load_from_file_memory(std::string file) noexcept {
         throw Error("expected 'TILT='");
       auto tiltKind{std::string(line.trim())};
       if (tiltKind != "NONE" && tiltKind != "INCLUDE")
-        throw Error(concat("unsupported tilt ", quoted(tiltKind)));
+        throw Error(concat("unsupported tilt ", Quoted(tiltKind)));
       text = remainder;
       if (tiltKind == "INCLUDE") {
         tilt = Tilt();
@@ -128,14 +128,13 @@ LightProfile::load_from_file_memory(std::string file) noexcept {
 }
 
 std::optional<Error>
-LightProfile::load_from_file(const std::string &fileName) noexcept {
+LightProfile::loadFromFile(const std::string &fileName) noexcept {
   auto file{std::string()};
-  if (auto error{
-          catch_and_return_error([&] { file = read_or_throw(fileName); })})
+  if (auto error{catchAndReturnError([&] { file = readOrThrow(fileName); })})
     return error;
-  if (auto error{load_from_file_memory(std::move(file))})
+  if (auto error{loadFromFileMemory(std::move(file))})
     return Error(
-        concat("cannot load ", quoted_path(fileName), ": ", error->message));
+        concat("cannot load ", QuotedPath(fileName), ": ", error->message));
   return std::nullopt;
 }
 
@@ -167,8 +166,8 @@ struct LerpLookup final {
   float fraction{};
 };
 
-[[nodiscard]] static LerpLookup lerp_lookup(const std::vector<float> &values,
-                                            float value) {
+[[nodiscard]] static LerpLookup lerpLookup(const std::vector<float> &values,
+                                           float value) {
   auto itr1{std::lower_bound(values.begin(), values.end(), value)};
   if (itr1 == values.end()) {
     return {int(values.size()) - 1, int(values.size()) - 1, 0.0f};
@@ -247,7 +246,7 @@ float LightProfile::interpolate(float3 wo) const noexcept {
       return 0.0f;
     }
     if (horzAngles.size() <= 1) {
-      auto lookup{lerp_lookup(vertAngles, vertAngle)};
+      auto lookup{lerpLookup(vertAngles, vertAngle)};
       return lerp(lookup.fraction, intensityValues[lookup.index0],
                   intensityValues[lookup.index1]);
     } else {
@@ -268,8 +267,8 @@ float LightProfile::interpolate(float3 wo) const noexcept {
           return 0.0f;
         }
       }()};
-      auto vertLookup{lerp_lookup(vertAngles, vertAngle)};
-      auto horzLookup{lerp_lookup(horzAngles, horzAngle)};
+      auto vertLookup{lerpLookup(vertAngles, vertAngle)};
+      auto horzLookup{lerpLookup(horzAngles, horzAngle)};
       auto intensityRow0{&intensityValues[0] +
                          vertAngles.size() * horzLookup.index0};
       auto intensityRow1{&intensityValues[0] +

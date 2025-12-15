@@ -58,7 +58,7 @@ public:
   /// are specified, the default is `micrometers`.
   ///
   [[nodiscard]]
-  std::optional<Error> load_from_file(const std::string &fileName) noexcept;
+  std::optional<Error> loadFromFile(const std::string &fileName) noexcept;
 
   [[nodiscard]]
   operator SpectrumView() const noexcept {
@@ -103,15 +103,15 @@ public:
   ///    for each spectral curve
   ///
   [[nodiscard]]
-  std::optional<Error> load_from_file(const std::string &fileName) noexcept;
+  std::optional<Error> loadFromFile(const std::string &fileName) noexcept;
 
   /// Get curve by name, or return empty view on failure.
   [[nodiscard]]
-  SpectrumView get_curve_by_name(std::string_view name) const noexcept;
+  SpectrumView getCurveByName(std::string_view name) const noexcept;
 
   /// Get curve by index, or return empty view on failure.
   [[nodiscard]]
-  SpectrumView get_curve_by_index(int i) const noexcept {
+  SpectrumView getCurveByIndex(int i) const noexcept {
     if (0 <= i && i < int(numCurves)) {
       return {Span<const float>(wavelengths),
               Span<const float>(curveValues.data() + wavelengths.size() * i,

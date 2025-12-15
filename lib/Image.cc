@@ -111,7 +111,7 @@ ForEachPixel(const EXRHeader &header, const EXRImage &image,
 
 namespace smdl {
 
-float unpack_half(const void *ptr) noexcept {
+float unpackHalf(const void *ptr) noexcept {
 #if __clang__
   return float(*static_cast<const _Float16 *>(ptr));
 #else
@@ -151,12 +151,12 @@ void Image::clear() {
   numChannels = 1;
   texelSize = 1;
   texels.reset();
-  finishLoad = nullptr;
+  finishLoadFn = nullptr;
 }
 
-std::optional<Error> Image::start_load(const std::string &fileName) noexcept {
+std::optional<Error> Image::startLoad(const std::string &fileName) noexcept {
   clear();
-  auto error{catch_and_return_error([&] {
+  auto error{catchAndReturnError([&] {
     if (stbi_info(fileName.c_str(), &numTexelsX, &numTexelsY, &numChannels)) {
       // If the number of channels is 3, i.e., RGB, round it up to 4
       // so all of our alignment assumptions work.
@@ -178,7 +178,7 @@ std::optional<Error> Image::start_load(const std::string &fileName) noexcept {
       texels.reset(new std::byte[size_t(numTexelsX) * size_t(numTexelsY) *
                                  size_t(texelSize)]);
       // Defer the actual load until later!
-      finishLoad = [this, fileName]() {
+      finishLoadFn = [this, fileName]() {
         stbi_set_flip_vertically_on_load(0);
         int nTexelsX{};
         int nTexelsY{};
@@ -273,7 +273,7 @@ std::optional<Error> Image::start_load(const std::string &fileName) noexcept {
       numTexelsY = nTexelsY;
       texels.reset(new std::byte[size_t(numTexelsX) * size_t(numTexelsY) *
                                  size_t(texelSize)]);
-      finishLoad = [this, fileName, header]() {
+      finishLoadFn = [this, fileName, header]() {
         SMDL_DEFER(
             [&header]() { FreeEXRHeader(const_cast<EXRHeader *>(&header)); });
         EXRImage image{};
@@ -356,19 +356,19 @@ std::optional<Error> Image::start_load(const std::string &fileName) noexcept {
   if (error) {
     clear();
     error->message =
-        concat("cannot load ", quoted_path(fileName), ": ", error->message);
+        concat("cannot load ", QuotedPath(fileName), ": ", error->message);
   }
   return error;
 }
 
-void Image::finish_load() {
-  if (finishLoad) {
-    finishLoad();
-    finishLoad = nullptr;
+void Image::finishLoad() {
+  if (finishLoadFn) {
+    finishLoadFn();
+    finishLoadFn = nullptr;
   }
 }
 
-void Image::flip_vertically() noexcept {
+void Image::flipVertically() noexcept {
   for (int iY = 0; iY < numTexelsY / 2; iY++) {
     std::swap_ranges(texels.get() + texelSize * numTexelsX * (iY + 0),
                      texels.get() + texelSize * numTexelsX * (iY + 1),
@@ -397,7 +397,7 @@ float4 Image::fetch(int x, int y) const noexcept {
       texelPtr += 2;
       break;
     case FLOAT16:
-      texel[i] = unpack_half(texelPtr);
+      texel[i] = unpackHalf(texelPtr);
       texelPtr += 2;
       break;
     case FLOAT32:
@@ -412,32 +412,31 @@ float4 Image::fetch(int x, int y) const noexcept {
   return texel;
 }
 
-std::optional<Error> write_8_bit_image(const std::string &fileName,
-                                       int numTexelsX, int numTexelsY,
-                                       int numChannels, const void *ptr) {
+std::optional<Error> write8bitImage(const std::string &fileName, int numTexelsX,
+                                    int numTexelsY, int numChannels,
+                                    const void *ptr) {
   SMDL_SANITY_CHECK(0 < numTexelsX);
   SMDL_SANITY_CHECK(0 < numTexelsY);
   SMDL_SANITY_CHECK(0 < numChannels && numChannels <= 4);
   SMDL_SANITY_CHECK(ptr);
   int result{};
-  if (has_extension(fileName, ".png")) {
+  if (hasExtension(fileName, ".png")) {
     result = stbi_write_png(fileName.c_str(), numTexelsX, numTexelsY,
                             numChannels, ptr, 0);
-  } else if (has_extension(fileName, ".jpeg") ||
-             has_extension(fileName, ".jpg")) {
+  } else if (hasExtension(fileName, ".jpeg") ||
+             hasExtension(fileName, ".jpg")) {
     result = stbi_write_jpg(fileName.c_str(), numTexelsX, numTexelsY,
                             numChannels, ptr, 90);
-  } else if (has_extension(fileName, ".bmp")) {
+  } else if (hasExtension(fileName, ".bmp")) {
     result = stbi_write_bmp(fileName.c_str(), numTexelsX, numTexelsY,
                             numChannels, ptr);
-  } else if (has_extension(fileName, ".tga")) {
+  } else if (hasExtension(fileName, ".tga")) {
     result = stbi_write_tga(fileName.c_str(), numTexelsX, numTexelsY,
                             numChannels, ptr);
-  } else if (has_extension(fileName, ".pgm") ||
-             has_extension(fileName, ".ppm")) {
-    return catch_and_return_error([&] {
-      auto isGray{has_extension(fileName, ".pgm")};
-      auto stream{open_or_throw(fileName, std::ios::binary | std::ios::out)};
+  } else if (hasExtension(fileName, ".pgm") || hasExtension(fileName, ".ppm")) {
+    return catchAndReturnError([&] {
+      auto isGray{hasExtension(fileName, ".pgm")};
+      auto stream{openOrThrow(fileName, std::ios::binary | std::ios::out)};
       stream << (isGray ? "P5 " : "P6 ");
       stream << numTexelsX << ' ';
       stream << numTexelsY << " 255\n";
@@ -456,11 +455,11 @@ std::optional<Error> write_8_bit_image(const std::string &fileName,
       }
     });
   } else {
-    return Error(concat("cannot write ", quoted_path(fileName),
+    return Error(concat("cannot write ", QuotedPath(fileName),
                         ": unrecognized extension"));
   }
   if (result == 0) {
-    return Error(concat("cannot write ", quoted_path(fileName)));
+    return Error(concat("cannot write ", QuotedPath(fileName)));
   }
   return std::nullopt;
 }

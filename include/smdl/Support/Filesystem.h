@@ -18,30 +18,30 @@ namespace smdl {
 
 /// Has extension?
 [[nodiscard]] SMDL_EXPORT bool
-has_extension(std::string_view path, std::string_view extension) noexcept;
+hasExtension(std::string_view path, std::string_view extension) noexcept;
 
 /// Exists?
 [[nodiscard]] SMDL_EXPORT bool exists(const std::string &path) noexcept;
 
 /// Is file?
-[[nodiscard]] SMDL_EXPORT bool is_file(const std::string &path) noexcept;
+[[nodiscard]] SMDL_EXPORT bool isFile(const std::string &path) noexcept;
 
 /// Is directory?
-[[nodiscard]] SMDL_EXPORT bool is_directory(const std::string &path) noexcept;
+[[nodiscard]] SMDL_EXPORT bool isDirectory(const std::string &path) noexcept;
 
 /// Is path equivalent?
 [[nodiscard]]
-SMDL_EXPORT bool is_path_equivalent(const std::string &path0,
-                                    const std::string &path1) noexcept;
+SMDL_EXPORT bool isPathEquivalent(const std::string &path0,
+                                  const std::string &path1) noexcept;
 
 /// Is path0 a parent path of path1?
 [[nodiscard]]
-SMDL_EXPORT bool is_parent_path_of(const std::string &path0,
-                                   const std::string &path1) noexcept;
+SMDL_EXPORT bool isParentPathOf(const std::string &path0,
+                                const std::string &path1) noexcept;
 
 /// Join paths.
-[[nodiscard]] SMDL_EXPORT std::string join_paths(std::string_view path0,
-                                                 std::string_view path1);
+[[nodiscard]] SMDL_EXPORT std::string joinPaths(std::string_view path0,
+                                                std::string_view path1);
 
 /// Make path canonical.
 ///
@@ -49,7 +49,7 @@ SMDL_EXPORT bool is_parent_path_of(const std::string &path0,
 /// This does not throw. If the implementation fails for any reason, the input
 /// path is returned unchanged.
 ///
-[[nodiscard]] SMDL_EXPORT std::string canonical(std::string path) noexcept;
+[[nodiscard]] SMDL_EXPORT std::string makePathCanonical(std::string path) noexcept;
 
 /// Make path relative to working directory.
 ///
@@ -57,7 +57,7 @@ SMDL_EXPORT bool is_parent_path_of(const std::string &path0,
 /// This does not throw. If the implementation fails for any reason, the input
 /// path is returned unchanged.
 ///
-[[nodiscard]] SMDL_EXPORT std::string relative(std::string path) noexcept;
+[[nodiscard]] SMDL_EXPORT std::string makePathRelative(std::string path) noexcept;
 
 /// Determine parent path.
 ///
@@ -65,14 +65,14 @@ SMDL_EXPORT bool is_parent_path_of(const std::string &path0,
 /// This does not throw. If the implementation fails for any reason, the input
 /// path is returned unchanged.
 ///
-[[nodiscard]] SMDL_EXPORT std::string parent_path(std::string path) noexcept;
+[[nodiscard]] SMDL_EXPORT std::string parentPathOf(std::string path) noexcept;
 
 /// Open file or throw an `Error`.
-[[nodiscard]] SMDL_EXPORT std::fstream open_or_throw(const std::string &path,
-                                                     std::ios::openmode mode);
+[[nodiscard]] SMDL_EXPORT std::fstream openOrThrow(const std::string &path,
+                                                   std::ios::openmode mode);
 
 /// Read file or throw an `Error`.
-[[nodiscard]] SMDL_EXPORT std::string read_or_throw(const std::string &path);
+[[nodiscard]] SMDL_EXPORT std::string readOrThrow(const std::string &path);
 
 /// \}
 
