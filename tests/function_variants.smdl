@@ -7,9 +7,9 @@ int foo(int a, int b, int c) = a + b + c;
 // if not explicitly set in the variant call.
 int foo_variant(*) = foo(a: 2);
 
-/// The second is a let expression followed by a call expression with 
-/// a call expression with named arguments. This allows the user to
-/// define arbitrary helper variables conveniently.
+// The second is a let expression followed by a call expression with 
+// a call expression with named arguments. This allows the user to
+// define arbitrary helper variables conveniently.
 int foo_variant_of_variant(*) = let {
                                   int f = 7;
                                   int g = 11;
