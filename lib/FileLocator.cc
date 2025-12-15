@@ -1,7 +1,6 @@
 #include "smdl/FileLocator.h"
 
 #include <filesystem>
-#include <set>
 
 #include "llvm/ADT/StringSet.h"
 
@@ -10,9 +9,9 @@ namespace smdl {
 std::vector<std::string>
 FileLocator::get_search_dirs(std::string_view relativeTo) const {
   auto results{std::vector<std::string>()};
-  auto resultSet{llvm::StringSet()};
+  auto resultsSet{llvm::StringSet()};
   auto add{[&](std::string dir) {
-    if (auto [itr, inserted] = resultSet.insert(dir); inserted) {
+    if (auto [itr, inserted] = resultsSet.insert(dir); inserted) {
       results.push_back(std::move(dir));
     }
   }};
@@ -129,49 +128,37 @@ FileLocator::locate_images(std::string_view fileName,
       }
       return path == fileNameAfter;
     }};
-    // Collect results in an STL set so we do not duplicate image paths somehow.
-    auto results{std::set<ImagePath>{}};
+    // We collect results in an STL to be not to duplicate anything.
+    auto results{std::vector<ImagePath>{}};
+    auto resultsSet{llvm::StringSet()};
+    auto parentPath{std::optional<std::filesystem::path>{}};
     for (auto &&dir : get_search_dirs(relativeTo)) {
-      // TODO
-    }
-    return std::vector<ImagePath>(results.begin(), results.end());
-  }
-}
-
-#if 0
-  auto ec{std::error_code()};
-  std::optional<std::filesystem::path> pathDir0{};
-  auto searchForFiles{[&](auto &&dirIterator) {
-    for (const auto &dirEntry : dirIterator) {
-      ImagePath imagePath{};
-      imagePath.path = dirEntry.path();
-      if (match(imagePath)) {
-        if (auto path{std::filesystem::canonical(imagePath.path, ec)}; !ec && (!pathDir0 || *pathDir0 == path.parent_path())) {
-          if (!pathDir0)
-            pathDir0 = path.parent_path();
-          imagePath.path = std::move(path);
-          imagePaths.insert(std::move(imagePath));
+      for (auto &&dirEntry : std::filesystem::directory_iterator(dir)) {
+        if (dirEntry.is_regular_file()) {
+          // Only proceed if either we have not yet established the parent
+          // path, or if the parent path is consistent.
+          auto ec{std::error_code{}};
+          auto path{std::filesystem::canonical(dirEntry.path(), ec)};
+          if (ec || (parentPath && *parentPath != path.parent_path()))
+            continue;
+          ImagePath imagePath{};
+          imagePath.path = path.string();
+          if (tryMatch(imagePath.path, imagePath.tileIndexU,
+                       imagePath.tileIndexV)) {
+            // If we have not yet established the parent path, use the
+            // parent path of this image.
+            if (!parentPath)
+              *parentPath = path.parent_path();
+            if (auto [itr, inserted] = resultsSet.insert(imagePath.path);
+                inserted) {
+              results.emplace_back(std::move(imagePath));
+            }
+          }
         }
       }
     }
-  }};
-  if (!fname0.empty()) {
-    if (fname0 = std::filesystem::canonical(fname0, ec); !ec) {
-      if (std::filesystem::is_regular_file(fname0, ec))
-        fname0 = fname0.parent_path();
-      if (std::filesystem::is_directory(fname0, ec))
-        searchForFiles(std::filesystem::directory_iterator(fname0));
-    }
+    return results;
   }
-  if (searchPwd)
-    if (auto pwd{std::filesystem::current_path(ec)}; !ec)
-      searchForFiles(std::filesystem::directory_iterator(pwd));
-  for (const auto &[dir, isRecursive] : searchDirs) {
-    if (isRecursive)
-      searchForFiles(std::filesystem::recursive_directory_iterator(dir));
-    else
-      searchForFiles(std::filesystem::directory_iterator(dir));
-  }
-#endif
+}
 
 } // namespace smdl
