@@ -182,6 +182,22 @@ enum Transport : int {
 class SMDL_EXPORT State final {
 public:
   /// Finalize and apply internal space conventions.
+  ///
+  /// The implementation does the following:
+  /// 1. Orthonormalize the normal and tangent vectors.
+  /// 2. Orthonormalize the geometric normal and tangent vectors.
+  /// 3. Construct the matrix pair for transforming between geometric tangent
+  ///    space and object space.
+  /// 4. Transform every member variable defined in object space to 
+  ///    geometric tangent space.
+  /// 5. Orthonormalize the object-to-world matrix.
+  ///
+  /// Afterward,
+  /// - `position` is at the origin `float3(0,0,0)`
+  /// - `geometry_tangent_u[0]` is the X axis `float3(1,0,0)`
+  /// - `geometry_tangent_v[0]` is the Y axis `float3(0,1,0)`
+  /// - `geometry_normal` is the Z axis `float3(0,0,1)`
+  /// 
   void finalize_and_apply_internal_space_conventions() noexcept;
 
 public:
