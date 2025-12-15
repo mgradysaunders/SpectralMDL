@@ -310,72 +310,38 @@ public:
   [[nodiscard]] int2 pixel_sample(float2 xi, float2 *xiRemap = {},
                                   float *pmf = {}) const noexcept;
 
-private:
-  int numTexelsX{};
-  int numTexelsY{};
-  std::vector<Distribution1D> conditionals{};
-  Distribution1D marginal{};
-};
-
-#if 0
-/// A data-driven image-based-light distribution in 2 dimensions.
-class SMDL_EXPORT IBLDistribution2D final {
-public:
-  /// Default constructor.
-  IBLDistribution2D() = default;
-
-  /// Constructor.
-  ///
-  /// \param[in] numTexelsX
-  /// The number of pixels in X. Must be non-negative!
-  ///
-  /// \param[in] numTexelsY
-  /// The number of pixels in Y. Must be non-negative!
-  ///
-  /// \param[in] values
-  /// The values in row-major order. Must have size
-  /// equivalent to `numTexelsX * numTexelsY`!
-  ///
-  explicit IBLDistribution2D(int numTexelsX, int numTexelsY,
-                             Span<const float> values);
-
-  /// Clear.
-  void clear() noexcept {
-    lightDistr.clear();
-  }
-
-  /// The number of pixels in X.
-  [[nodiscard]] int get_num_texels_x() const noexcept {
-    return lightDistr.get_num_texels_x();
-  }
-
-  /// The number of pixels in Y.
-  [[nodiscard]] int get_num_texels_y() const noexcept {
-    return lightDistr.get_num_texels_y();
-  }
-
-  /// Convert direction to pixel.
-  [[nodiscard]] int2 direction_to_pixel(float3 w,
-                                        float *sinTheta = {}) const noexcept;
-
   /// The direction PDF.
-  [[nodiscard]] float direction_pdf(float3 w) const noexcept;
+  ///
+  /// \param[in] wi
+  /// The incident direction \f$ \omega_i \f$.
+  ///
+  /// \param[out] iPixel
+  /// If non-null, receives the associated pixel index.
+  ///
+  [[nodiscard]] float direction_pdf(float3 wi,
+                                    int2 *iPixel = {}) const noexcept;
+
 
   /// The direction sampling routine.
   ///
   /// \param[in] xi
   /// The random sample \f$ \xi \in (0,1)^2 \f$.
   ///
+  /// \param[out] iPixel
+  /// If non-null, receives the associated pixel index.
+  ///
   /// \param[out] pdf
   /// If non-null, receives the associated PDF.
   ///
-  [[nodiscard]] float3 direction_sample(float2 xi,
+  [[nodiscard]] float3 direction_sample(float2 xi, int2 *iPixel = {},
                                         float *pdf = {}) const noexcept;
 
 private:
-  Distribution2D lightDistr{};
+  int numTexelsX{};
+  int numTexelsY{};
+  std::vector<Distribution1D> conditionals{};
+  Distribution1D marginal{};
 };
-#endif
 
 /// \}
 

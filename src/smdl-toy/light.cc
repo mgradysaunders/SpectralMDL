@@ -22,51 +22,27 @@ EnvLight::EnvLight(const std::string &filename, float scaleFactor)
 
 Color EnvLight::Li(smdl::Compiler &compiler, const smdl::State &state,
                    float3 wi, float &pdf) const {
-  float theta = std::atan2(std::hypot(wi.x, wi.y), wi.z);
-  theta = std::max(theta, 0.0f);
-  theta = std::min(theta, PI);
-  float sinTheta{std::sin(theta)};
-  if (!(sinTheta > 0)) {
-    pdf = 0;
-    return {};
-  }
-  float phi = std::atan2(wi.y, wi.x);
-  if (phi < 0.0f)
-    phi += 2.0f * PI;
-  phi = std::max(phi, 0.0f);
-  phi = std::min(phi, 2.0f * PI);
-
-  int nX = image.get_num_texels_x(), iX = int(nX * phi / (2.0f * PI));
-  int nY = image.get_num_texels_y(), iY = int(nY * theta / PI);
-  iX = std::max(0, std::min(iX, nX - 1));
-  iY = std::max(0, std::min(iY, nY - 1));
-  pdf = imageDistr.pixel_pmf(int2(iX, iY));
-  pdf *= image.get_num_texels_x() * image.get_num_texels_y();
-  pdf /= 2.0f * PI * PI * sinTheta;
   Color Li{};
-  compiler.jit_rgb_to_color(state, image.fetch(iX, iY), Li.data());
+  int2 iPixel{};
+  pdf = imageDistr.direction_pdf(wi, &iPixel);
+  if (pdf > 0)
+    compiler.jit_rgb_to_color(state, image.fetch(iPixel.x, iPixel.y),
+                              Li.data());
   return Li * scaleFactor;
 }
 
 float3 EnvLight::Li_sample(smdl::Compiler &compiler, const smdl::State &state,
                            float2 xi, float &pdf, Color &Li) const {
-  auto i{imageDistr.pixel_sample(xi, &xi, &pdf)};
-  auto phi{2.0f * PI * (i.x + xi.x) / float(image.get_num_texels_x())};
-  auto theta{PI * (i.y + xi.y) / float(image.get_num_texels_y())};
-  auto cosTheta{std::cos(theta)};
-  auto sinTheta{std::sin(theta)};
-  if (sinTheta == 0.0f) {
-    pdf = 0.0f;
-    Li = Color(0.0f);
-    return {};
-  } else {
-    pdf *= image.get_num_texels_x() * image.get_num_texels_y();
-    pdf /= 2.0f * PI * PI * sinTheta;
-    compiler.jit_rgb_to_color(state, image.fetch(i.x, i.y), Li.data());
+  int2 iPixel{};
+  float3 wi{imageDistr.direction_sample(xi, &iPixel, &pdf)};
+  if (pdf > 0.0f) {
+    compiler.jit_rgb_to_color(state, image.fetch(iPixel.x, iPixel.y),
+                              Li.data());
     Li *= scaleFactor;
-    return normalize(float3(sinTheta * std::cos(phi), //
-                            sinTheta * std::sin(phi), cosTheta));
+  } else {
+    Li = Color(0.0f);
   }
+  return wi;
 }
 
 bool EnvLight::Le_sample(smdl::Compiler &compiler, const smdl::State &state,

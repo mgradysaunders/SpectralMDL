@@ -92,23 +92,51 @@ int2 Distribution2D::pixel_sample(float2 xi, float2 *xiRemap,
   return int2(iX, iY);
 }
 
-#if 0
-IBLDistribution2D::IBLDistribution2D(int numTexelsX, int numTexelsY,
-                                     Span<const float> values) {
-  SMDL_SANITY_CHECK(numTexelsX >= 0);
-  SMDL_SANITY_CHECK(numTexelsY >= 0);
-  SMDL_SANITY_CHECK(numTexelsX * numTexelsY == int(values.size()));
-  auto sinWeighted{std::vector<float>(values.size())};
-  for (int iY = 0; iY < numTexelsY; iY++) {
-    auto theta{PI * (iY + 0.5f) / float(numTexelsY)};
-    auto sinTheta{std::sin(theta)};
-    for (int iX = 0; iX < numTexelsX; iX++) {
-      sinWeighted[iY * numTexelsX + iX] =
-          sinTheta * values[iY * numTexelsX + iX];
-    }
-  }
-  lightDistr = Distribution2D(numTexelsX, numTexelsY, sinWeighted);
+float Distribution2D::direction_pdf(float3 wi, int2 *iPixel) const noexcept {
+  float theta = std::atan2(std::hypot(wi.x, wi.y), wi.z);
+  theta = std::max(theta, 0.0f);
+  theta = std::min(theta, PI);
+  float sinTheta{std::sin(theta)};
+  if (!(sinTheta > 0))
+    return 0.0f;
+  float phi = std::atan2(wi.y, wi.x);
+  if (phi < 0.0f)
+    phi += 2.0f * PI;
+  phi = std::max(phi, 0.0f);
+  phi = std::min(phi, 2.0f * PI);
+  int nX = numTexelsX, iX = int(nX * phi / (2.0f * PI));
+  int nY = numTexelsY, iY = int(nY * theta / PI);
+  iX = std::max(0, std::min(iX, nX - 1));
+  iY = std::max(0, std::min(iY, nY - 1));
+  if (iPixel)
+    *iPixel = {iX, iY};
+  float pdf = pixel_pmf(int2(iX, iY));
+  pdf *= numTexelsX * numTexelsY;
+  pdf /= 2.0f * PI * PI * sinTheta;
+  return pdf;
 }
-#endif
+
+float3 Distribution2D::direction_sample(float2 xi, int2 *iPixel,
+                                        float *pdf) const noexcept {
+  auto i{pixel_sample(xi, &xi, pdf)};
+  if (iPixel)
+    *iPixel = i;
+  auto phi{2.0f * PI * (i.x + xi.x) / float(numTexelsX)};
+  auto theta{PI * (i.y + xi.y) / float(numTexelsY)};
+  auto cosTheta{std::cos(theta)};
+  auto sinTheta{std::sin(theta)};
+  if (sinTheta == 0.0f) {
+    if (pdf)
+      *pdf = 0.0f;
+    return {};
+  } else {
+    if (pdf) {
+      *pdf *= numTexelsX * numTexelsY;
+      *pdf /= 2.0f * PI * PI * sinTheta;
+    }
+    return normalize(float3(sinTheta * std::cos(phi), //
+                            sinTheta * std::sin(phi), cosTheta));
+  }
+}
 
 } // namespace smdl
