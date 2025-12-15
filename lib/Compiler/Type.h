@@ -540,7 +540,7 @@ private:
         auto i{to_index(c)};
         if (!i)
           return std::nullopt;
-        swizzle.push_back(*i);
+        swizzle.push_back(static_cast<int>(*i));
       }
       return swizzle;
     }
