@@ -104,12 +104,6 @@ target_compile_definitions(
 find_package(Threads REQUIRED)
 target_link_libraries(SpectralMDL PRIVATE Threads::Threads ${SMDL_LLVM_TARGETS})
 
-if(SMDL_USE_BOOST_FILESYSTEM)
-  find_package(Boost CONFIG COMPONENTS filesystem REQUIRED)
-  target_link_libraries(SpectralMDL PRIVATE "Boost::filesystem")
-  target_compile_definitions(SpectralMDL PRIVATE "-DSMDL_USE_BOOST_FILESYSTEM=1")
-endif()
-
 if(TARGET Ptex_static)
   target_compile_options(Ptex_static PRIVATE "${RTTI_FLAG}")
   target_link_libraries(SpectralMDL PRIVATE Ptex_static)

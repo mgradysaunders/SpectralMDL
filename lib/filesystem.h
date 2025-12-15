@@ -1,14 +1,8 @@
 #pragma once
 
-#if SMDL_USE_BOOST_FILESYSTEM
-#include "boost/filesystem.hpp"
-namespace fs = boost::filesystem;
-using fs_error_code = boost::system::error_code;
-#else
 #include <filesystem>
 namespace fs = std::filesystem;
 using fs_error_code = std::error_code;
-#endif // #if SMDL_USE_BOOST_FILESYSTEM
 
 #include "smdl/common.h"
 
