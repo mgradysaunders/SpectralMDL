@@ -19,7 +19,7 @@ namespace smdl {
 
 /// A color vector to parallelize math operations.
 ///
-/// \tparam[N]
+/// \tparam N
 /// The number of bands/channels.
 ///
 template <size_t N> class ColorVector final {
