@@ -14,9 +14,9 @@
 
 extern "C" {
 #define STBI_ASSERT(X) ((void)0)
-#define STBI_MALLOC(sz) ::smdl::Image::Image_malloc(sz)
-#define STBI_REALLOC(p, newsz) ::smdl::Image::Image_realloc(p, newsz)
-#define STBI_FREE(p) ::smdl::Image::Image_free(p)
+#define STBI_MALLOC(sz) ::smdl::Image::image_malloc(sz)
+#define STBI_REALLOC(p, newsz) ::smdl::Image::image_realloc(p, newsz)
+#define STBI_FREE(p) ::smdl::Image::image_free(p)
 #define STB_ONLY_JPEG 1
 #define STB_ONLY_PNG 1
 #define STB_ONLY_TGA 1
@@ -28,9 +28,9 @@ extern "C" {
 #include "thirdparty/stb_image.h"
 
 #define STBIW_ASSERT(X) ((void)0)
-#define STBIW_MALLOC(sz) ::smdl::Image::Image_malloc(sz)
-#define STBIW_REALLOC(p, newsz) ::smdl::Image::Image_realloc(p, newsz)
-#define STBIW_FREE(p) ::smdl::Image::Image_free(p)
+#define STBIW_MALLOC(sz) ::smdl::Image::image_malloc(sz)
+#define STBIW_REALLOC(p, newsz) ::smdl::Image::image_realloc(p, newsz)
+#define STBIW_FREE(p) ::smdl::Image::image_free(p)
 #define STB_IMAGE_WRITE_STATIC 1
 #define STB_IMAGE_WRITE_IMPLEMENTATION 1
 #include "thirdparty/stb_image_write.h"
@@ -40,9 +40,9 @@ extern "C" {
 #pragma GCC diagnostic pop
 #endif
 
-#define TINYEXR_MALLOC(sz) ::smdl::Image::Image_malloc(sz)
-#define TINYEXR_CALLOC(n, sz) ::smdl::Image::Image_calloc(n, sz)
-#define TINYEXR_FREE(p) ::smdl::Image::Image_free(p)
+#define TINYEXR_MALLOC(sz) ::smdl::Image::image_malloc(sz)
+#define TINYEXR_CALLOC(n, sz) ::smdl::Image::image_calloc(n, sz)
+#define TINYEXR_FREE(p) ::smdl::Image::image_free(p)
 #define TINYEXR_USE_MINIZ 1
 #define TINYEXR_USE_STB_ZLIB 1
 #define TINYEXR_USE_THREAD 0
@@ -136,13 +136,13 @@ float unpackHalf(const void *ptr) noexcept {
 #endif // #if __clang__
 }
 
-Image::Image_malloc_t Image::Image_malloc = &std::malloc;
+Image::image_malloc_t Image::image_malloc = &std::malloc;
 
-Image::Image_calloc_t Image::Image_calloc = &std::calloc;
+Image::image_calloc_t Image::image_calloc = &std::calloc;
 
-Image::Image_realloc_t Image::Image_realloc = &std::realloc;
+Image::image_realloc_t Image::image_realloc = &std::realloc;
 
-Image::Image_free_t Image::Image_free = &std::free;
+Image::image_free_t Image::image_free = &std::free;
 
 void Image::clear() {
   format = UINT8;

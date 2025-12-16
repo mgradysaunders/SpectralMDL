@@ -48,12 +48,12 @@ SemanticVersion::compare(const SemanticVersion &other) const noexcept {
   if (lhs.patch != rhs.patch)
     return lhs.patch > rhs.patch ? NEWER_BY_PATCH_VERSION
                                  : OLDER_BY_PATCH_VERSION;
-  if (lhs.has_pre_release() || rhs.has_pre_release()) {
+  if (lhs.hasPreRelease() || rhs.hasPreRelease()) {
     // 3. When major, minor, and patch are equal, a pre-release version
     //    has lower precedence than a normal version.
-    if (!lhs.has_pre_release())
+    if (!lhs.hasPreRelease())
       return NEWER_BY_PRE_RELEASE;
-    if (!rhs.has_pre_release())
+    if (!rhs.hasPreRelease())
       return OLDER_BY_PRE_RELEASE;
     // 4. Precedence for two pre-release versions with the same major,
     //    minor, and patch version MUST be determined by comparing each

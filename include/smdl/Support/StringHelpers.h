@@ -39,7 +39,7 @@ public:
 namespace detail {
 
 template <typename T, typename... Ts>
-inline void do_concat(std::string &str, T &&value, Ts &&...values) {
+inline void doConcat(std::string &str, T &&value, Ts &&...values) {
   using DecayT = std::decay_t<T>;
   if constexpr (std::is_arithmetic_v<DecayT>) {
     str += std::to_string(value);
@@ -50,7 +50,7 @@ inline void do_concat(std::string &str, T &&value, Ts &&...values) {
     str += value;
   }
   if constexpr (sizeof...(Ts) > 0)
-    do_concat(str, std::forward<Ts>(values)...);
+    doConcat(str, std::forward<Ts>(values)...);
 }
 
 } // namespace detail
@@ -71,62 +71,61 @@ template <typename T, typename... Ts>
   } else {
     std::string str{};
     str.reserve(128);
-    detail::do_concat(str, std::forward<T>(value0),
-                      std::forward<Ts>(values)...);
+    detail::doConcat(str, std::forward<T>(value0), std::forward<Ts>(values)...);
     return str;
   }
 }
 
 /// Is ASCII alphabetic character?
-[[nodiscard]] constexpr bool is_alpha(char ch) noexcept {
+[[nodiscard]] constexpr bool isAlpha(char ch) noexcept {
   return (static_cast<int>('A' <= ch) & static_cast<int>(ch <= 'Z')) |
          (static_cast<int>('a' <= ch) & static_cast<int>(ch <= 'z'));
 }
 
 /// Is ASCII digit?
-[[nodiscard]] constexpr bool is_digit(char ch) noexcept {
+[[nodiscard]] constexpr bool isDigit(char ch) noexcept {
   return (static_cast<int>('0' <= ch) & static_cast<int>(ch <= '9'));
 }
 
 /// Is ASCII binary digit?
-[[nodiscard]] constexpr bool is_digit_2(char ch) noexcept {
+[[nodiscard]] constexpr bool isDigit2(char ch) noexcept {
   return (static_cast<int>('0' <= ch) & static_cast<int>(ch <= '1'));
 }
 
 /// Is ASCII octal digit?
-[[nodiscard]] constexpr bool is_digit_8(char ch) noexcept {
+[[nodiscard]] constexpr bool isDigit8(char ch) noexcept {
   return (static_cast<int>('0' <= ch) & static_cast<int>(ch <= '7'));
 }
 
 /// Is ASCII hexadecimal digit?
-[[nodiscard]] constexpr bool is_digit_16(char ch) noexcept {
-  return is_digit(ch) |
+[[nodiscard]] constexpr bool isDigit16(char ch) noexcept {
+  return isDigit(ch) |
          (static_cast<int>('A' <= ch) & static_cast<int>(ch <= 'F')) |
          (static_cast<int>('a' <= ch) & static_cast<int>(ch <= 'f'));
 }
 
 /// Is ASCII alphabetic character, digit, or underscore?
-[[nodiscard]] constexpr bool is_word(char ch) noexcept {
-  return static_cast<int>(is_alpha(ch)) | static_cast<int>(is_digit(ch)) |
+[[nodiscard]] constexpr bool isWord(char ch) noexcept {
+  return static_cast<int>(isAlpha(ch)) | static_cast<int>(isDigit(ch)) |
          static_cast<int>(ch == '_');
 }
 
 /// Is ASCII whitespace character?
-[[nodiscard]] constexpr bool is_space(char ch) noexcept {
+[[nodiscard]] constexpr bool isSpace(char ch) noexcept {
   return static_cast<int>(ch == ' ') | static_cast<int>(ch == '\t') |
          static_cast<int>(ch == '\n') | static_cast<int>(ch == '\r') |
          static_cast<int>(ch == '\v');
 }
 
 /// Convert ASCII octal character to runtime int.
-[[nodiscard]] constexpr int oct_to_int(int ch) noexcept {
+[[nodiscard]] constexpr int octToInt(int ch) noexcept {
   if ('0' <= ch && ch <= '7')
     return ch - '0';
   return 0;
 }
 
 /// Convert ASCII hexadecimal character to runtime int.
-[[nodiscard]] constexpr int hex_to_int(int ch) noexcept {
+[[nodiscard]] constexpr int hexToInt(int ch) noexcept {
   if ('0' <= ch && ch <= '9')
     return ch - '0';
   if ('a' <= ch && ch <= 'f')
@@ -137,8 +136,8 @@ template <typename T, typename... Ts>
 }
 
 /// Determine if `str0` starts with `str1`.
-[[nodiscard]] constexpr bool starts_with(std::string_view str0,
-                                         std::string_view str1) noexcept {
+[[nodiscard]] constexpr bool startsWith(std::string_view str0,
+                                        std::string_view str1) noexcept {
   return str0.size() >= str1.size() && str0.substr(0, str1.size()) == str1;
 }
 

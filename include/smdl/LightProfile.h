@@ -25,12 +25,12 @@ public:
   void clear() noexcept;
 
   /// Is valid?
-  [[nodiscard]] bool is_valid() const noexcept {
+  [[nodiscard]] bool isValid() const noexcept {
     return !intensityValues.empty();
   }
 
   /// Calculate the radiometric max intensity.
-  [[nodiscard]] float max_intensity() const noexcept {
+  [[nodiscard]] float maxIntensity() const noexcept {
     float result{};
     for (float intensityValue : intensityValues)
       result = std::max(result, intensityValue);

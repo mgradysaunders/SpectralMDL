@@ -38,7 +38,7 @@ LightProfile::loadFromFileMemory(std::string file) noexcept {
       text = text.ltrim();
       if constexpr (std::is_floating_point_v<std::decay_t<decltype(value)>>) {
         auto result{double(0)};
-        auto num{text.take_until(is_space)};
+        auto num{text.take_until(isSpace)};
         if (!num.getAsDouble(result, /*AllowInexact=*/true)) {
           value = result;
           text = text.drop_front(num.size());

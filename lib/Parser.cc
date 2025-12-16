@@ -38,7 +38,7 @@ std::string_view Parser::next(size_t n) {
 }
 
 std::optional<std::string_view> Parser::next(std::string_view str) {
-  if (starts_with(getRemainingSourceCode(), str))
+  if (startsWith(getRemainingSourceCode(), str))
     return next(str.size());
   return std::nullopt;
 }
@@ -46,7 +46,7 @@ std::optional<std::string_view> Parser::next(std::string_view str) {
 std::optional<std::string_view> Parser::nextKeyword(std::string_view str) {
   checkpoint();
   auto result{next(str)};
-  if (!result || is_word(peek())) {
+  if (!result || isWord(peek())) {
     reject();
     return std::nullopt;
   } else {
@@ -60,9 +60,9 @@ std::optional<std::string_view> Parser::nextWord() {
   auto i{srcLoc.i};
   if (peek() == '$')
     next();
-  if (is_alpha(peek()) || peek() == '_') {
+  if (isAlpha(peek()) || peek() == '_') {
     next();
-    while (is_word(peek()))
+    while (isWord(peek()))
       next();
     accept();
     return getSourceCode().substr(i, srcLoc.i - i);
@@ -74,7 +74,7 @@ std::optional<std::string_view> Parser::nextWord() {
 
 std::optional<std::string_view> Parser::nextInteger() {
   auto i{srcLoc.i};
-  while (is_digit(peek()))
+  while (isDigit(peek()))
     next();
   if (srcLoc.i > i) {
     return getSourceCode().substr(i, srcLoc.i - i);
@@ -85,20 +85,20 @@ std::optional<std::string_view> Parser::nextInteger() {
 
 void Parser::skip() {
   auto skipSome{[&] {
-    if (starts_with(getRemainingSourceCode(), "//")) {
+    if (startsWith(getRemainingSourceCode(), "//")) {
       next(2);
       while (!isEOF() && peek() != '\n')
         next(1);
       return true;
-    } else if (starts_with(getRemainingSourceCode(), "/*")) {
+    } else if (startsWith(getRemainingSourceCode(), "/*")) {
       next(2);
-      while (!isEOF() && !starts_with(getRemainingSourceCode(), "*/"))
+      while (!isEOF() && !startsWith(getRemainingSourceCode(), "*/"))
         next(1);
       if (isEOF())
         srcLoc.throwError("unexpected EOF in multiline comment");
       next(2);
       return true;
-    } else if (is_space(peek())) {
+    } else if (isSpace(peek())) {
       next(1);
       return true;
     } else {
@@ -367,7 +367,7 @@ auto Parser::parseAnnotationBlock() -> BumpPtr<AST::AnnotationBlock> {
       break;
     annos.back().srcComma = *srcComma;
     skip();
-    if (starts_with(getRemainingSourceCode(), "]]"))
+    if (startsWith(getRemainingSourceCode(), "]]"))
       break;
   }
   auto srcDoubleBrackR{nextDelimiter("]]")};
@@ -548,7 +548,7 @@ auto Parser::parsePostfixExpression() -> BumpPtr<AST::Expr> {
       return allocate<AST::Call>(srcLoc0, std::in_place, std::move(expr),
                                  std::move(*args));
     auto indexes{std::vector<AST::AccessIndex::Index>{}};
-    while (!starts_with(getRemainingSourceCode(), "[[")) {
+    while (!startsWith(getRemainingSourceCode(), "[[")) {
       auto index{AST::AccessIndex::Index{}};
       auto srcBrackL{nextDelimiter("[")};
       if (!srcBrackL)
@@ -739,31 +739,31 @@ auto Parser::parseLiteralStringExpression() -> BumpPtr<AST::LiteralString> {
           str += '\t';
         } else if (ch == 'v') { // vertical tab
           str += '\v';
-        } else if (is_digit_8(ch)) { // octal
-          uint8_t byte = uint8_t(oct_to_int(ch));
+        } else if (isDigit8(ch)) { // octal
+          uint8_t byte = uint8_t(octToInt(ch));
           for (int i{}; i < 2; i++) {
             ch = next();
-            if (!is_digit_8(ch))
+            if (!isDigit8(ch))
               srcLoc0.throwError("expected 3 octal digits after '\\'");
-            byte = (byte << 3) | uint8_t(oct_to_int(ch));
+            byte = (byte << 3) | uint8_t(octToInt(ch));
           }
           str += static_cast<char>(byte); // Could overflow?
         } else if (ch == 'x') {           // hexadecimal
           uint8_t byte{};
           for (int i{}; i < 2; i++) {
             ch = next();
-            if (!is_digit_16(ch))
+            if (!isDigit16(ch))
               srcLoc0.throwError("expected 2 hexadecimal digits after '\\x'");
-            byte = (byte << 4) | uint8_t(hex_to_int(ch));
+            byte = (byte << 4) | uint8_t(hexToInt(ch));
           }
           str += static_cast<char>(byte);
         } else if (ch == 'u') { // unicode 16-bit
           uint32_t codepoint{};
           for (int i{}; i < 4; i++) {
             ch = next();
-            if (!is_digit_16(ch))
+            if (!isDigit16(ch))
               srcLoc0.throwError("expected 4 hexadecimal digits after '\\u'");
-            codepoint = (codepoint << 4) | uint32_t(hex_to_int(ch));
+            codepoint = (codepoint << 4) | uint32_t(hexToInt(ch));
           }
           if (!appendCodepointAsUTF8(codepoint))
             srcLoc0.throwError("UTF-8 encoding of '\\u' sequence failed");
@@ -771,9 +771,9 @@ auto Parser::parseLiteralStringExpression() -> BumpPtr<AST::LiteralString> {
           uint32_t codepoint{};
           for (int i{}; i < 8; i++) {
             ch = next();
-            if (!is_digit_16(ch))
+            if (!isDigit16(ch))
               srcLoc0.throwError("expected 8 hexadecimal digits after '\\U'");
-            codepoint = (codepoint << 4) | uint32_t(hex_to_int(ch));
+            codepoint = (codepoint << 4) | uint32_t(hexToInt(ch));
           }
           if (!appendCodepointAsUTF8(codepoint))
             srcLoc0.throwError("UTF-8 encoding of '\\U' sequence failed");
@@ -794,7 +794,7 @@ auto Parser::parseLiteralStringExpression() -> BumpPtr<AST::LiteralString> {
 
 auto Parser::parseLiteralNumberExpression() -> BumpPtr<AST::Expr> {
   skip();
-  if (!is_digit(peek()))
+  if (!isDigit(peek()))
     return nullptr;
   auto srcLoc0{srcLoc};
   auto parseDigits{[&](auto &&isDigit) {
@@ -827,16 +827,16 @@ auto Parser::parseLiteralNumberExpression() -> BumpPtr<AST::Expr> {
     return llvm::APInt(bits, digits, radix);
   }};
   if (auto remaining{getRemainingSourceCode()};
-      !starts_with(remaining, "0.") && !starts_with(remaining, "0e") &&
-      !starts_with(remaining, "0E") && next("0")) {
+      !startsWith(remaining, "0.") && !startsWith(remaining, "0e") &&
+      !startsWith(remaining, "0E") && next("0")) {
     llvm::APInt value{64, 0};
     std::string digits{};
-    if (is_digit_8(peek())) {
-      value = parseIntWithPrefix(is_digit_8, 8, "0", "[0-7]", digits);
+    if (isDigit8(peek())) {
+      value = parseIntWithPrefix(isDigit8, 8, "0", "[0-7]", digits);
     } else if (next("b") || next("B")) {
-      value = parseIntWithPrefix(is_digit_2, 2, "0b", "[0-1]", digits);
+      value = parseIntWithPrefix(isDigit2, 2, "0b", "[0-1]", digits);
     } else if (next("x") || next("X")) {
-      value = parseIntWithPrefix(is_digit_16, 16, "0x", "[0-9a-fA-F]", digits);
+      value = parseIntWithPrefix(isDigit16, 16, "0x", "[0-9a-fA-F]", digits);
     } else {
       digits = "0";
     }
@@ -845,10 +845,10 @@ auto Parser::parseLiteralNumberExpression() -> BumpPtr<AST::Expr> {
                                      value.getLimitedValue());
   } else {
     bool isInt{true};
-    auto digits{parseDigits(is_digit)};
+    auto digits{parseDigits(isDigit)};
     if (next(".")) {
       digits += '.';
-      digits += parseDigits(is_digit);
+      digits += parseDigits(isDigit);
       isInt = false;
     }
     if (next("e") || next("E")) {
@@ -857,10 +857,10 @@ auto Parser::parseLiteralNumberExpression() -> BumpPtr<AST::Expr> {
         digits += '+';
       else if (next("-"))
         digits += '-';
-      if (!is_digit(peek()))
+      if (!isDigit(peek()))
         srcLoc0.throwError(
             "expected exponent after 'e' in floating point literal");
-      digits += parseDigits(is_digit);
+      digits += parseDigits(isDigit);
       isInt = false;
     }
     if (isSmdl && next("j")) { // Imaginary unit
@@ -914,7 +914,7 @@ auto Parser::parseBinaryOp(Span<const AST::BinaryOp> ops)
         return ParsedBinaryOp{*srcOp, op};
     } else {
       // Don't mistake bit and for logical and.
-      if (op == BINOP_AND && starts_with(getRemainingSourceCode(), "&&"))
+      if (op == BINOP_AND && startsWith(getRemainingSourceCode(), "&&"))
         continue;
       if (auto srcOp{next(to_string(op))})
         return ParsedBinaryOp{*srcOp, op};

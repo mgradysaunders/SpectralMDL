@@ -18,12 +18,12 @@ public:
   [[nodiscard]] static SemanticVersion parse(const std::string &versionStr);
 
   /// Has pre-release version?
-  [[nodiscard]] bool has_pre_release() const noexcept {
+  [[nodiscard]] bool hasPreRelease() const noexcept {
     return !preRelease.empty();
   }
 
   /// Has build metadata?
-  [[nodiscard]] bool has_build_metadata() const noexcept {
+  [[nodiscard]] bool hasBuildMetadata() const noexcept {
     return !buildMetadata.empty();
   }
 

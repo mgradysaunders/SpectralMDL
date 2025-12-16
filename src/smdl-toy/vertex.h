@@ -16,8 +16,8 @@ public:
                      smdl::BumpPtrAllocator &allocator,
                      smdl::JIT::MaterialInstance mat, const float3 &wo,
                      const float3 &wi) {
-    if (mat.is_transmitting(wo, wi)) {
-      if (mat.is_interior(wi)) {
+    if (mat.isTransmitting(wo, wi)) {
+      if (mat.isInterior(wi)) {
         stack = new (allocator) MediumStack{stack, mat};
       } else if (stack) {
         stack = stack->prev;
@@ -39,7 +39,7 @@ public:
       f = phase;
       return true;
     } else {
-      return materialInstance.scatter_evaluate(wo, wi, pdfFwd, pdfRev, f);
+      return materialInstance.scatterEvaluate(wo, wi, pdfFwd, pdfRev, f);
     }
   }
 
@@ -47,7 +47,7 @@ public:
   bool scatter_sample(const float4 &xi, const float3 &wo, float3 &wi,
                       float &wpdfFwd, float &wpdfRev, Color &f,
                       bool &isDeltaBounce) const {
-    return materialInstance.scatter_sample(xi, wo, wi, wpdfFwd, wpdfRev, f,
+    return materialInstance.scatterSample(xi, wo, wi, wpdfFwd, wpdfRev, f,
                                            isDeltaBounce);
   }
 
@@ -57,7 +57,7 @@ public:
       auto v{next.point - point};
       wpdf /= lengthSquared(v);
       if (!next.isVolume) {
-        wpdf *= absDot(next.materialInstance.geometry_normal(), normalize(v));
+        wpdf *= absDot(next.materialInstance.getGeometryNormal(), normalize(v));
       }
     }
     return wpdf;

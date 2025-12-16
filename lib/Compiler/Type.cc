@@ -1242,7 +1242,7 @@ void FunctionType::initializeJitMaterialFunctions(Emitter &emitter) {
               decl.srcLoc);
         })};
     func->setLinkage(llvm::Function::ExternalLinkage);
-    jitMaterial.scatter_evaluate.name = func->getName().str();
+    jitMaterial.scatterEvaluate.name = func->getName().str();
   }
   {
     // Generate the scatter sample function:
@@ -1291,7 +1291,7 @@ void FunctionType::initializeJitMaterialFunctions(Emitter &emitter) {
               decl.srcLoc);
         })};
     func->setLinkage(llvm::Function::ExternalLinkage);
-    jitMaterial.scatter_sample.name = func->getName().str();
+    jitMaterial.scatterSample.name = func->getName().str();
   }
   // TODO _volume_scatter_evaluate
   // TODO _volume_scatter_sample

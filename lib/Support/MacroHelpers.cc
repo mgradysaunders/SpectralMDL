@@ -8,7 +8,7 @@ namespace smdl {
 
 namespace detail {
 
-void sanity_check_failed(const char *condition, const char *file, int line,
+void sanityCheckFailed(const char *condition, const char *file, int line,
                          const char *more) {
   std::string message{"Sanity check failed! "};
   message += condition, message += '\n';

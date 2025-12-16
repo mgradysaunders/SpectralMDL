@@ -1567,7 +1567,7 @@ Value Emitter::emitIntrinsic(std::string_view name, const ArgumentList &args,
               ->getWithDifferentScalar(context, Scalar::getBool()),
           builder.createIsFPClass(value, args[1].value.getComptimeInt()));
     }
-    if (starts_with(name, "is_")) {
+    if (startsWith(name, "is_")) {
       auto type{expectOneType()};
       auto result{std::optional<bool>{}};
       if (name == "is_array") {
@@ -1621,7 +1621,7 @@ Value Emitter::emitIntrinsic(std::string_view name, const ArgumentList &args,
     break;
   }
   case 'l': {
-    if (starts_with(name, "load_")) {
+    if (startsWith(name, "load_")) {
       auto expectOneComptimeString{[&]() {
         if (!(args.size() == 1 && args[0].value.isComptimeString()))
           srcLoc.throwError("intrinsic ", Quoted(name),
@@ -1770,9 +1770,9 @@ Value Emitter::emitIntrinsic(std::string_view name, const ArgumentList &args,
             {Argument{"ptr",
                       context.getComptimePtr(
                           context.getVoidPointerType(),
-                          lightProfile.is_valid() ? &lightProfile : nullptr)},
+                          lightProfile.isValid() ? &lightProfile : nullptr)},
              Argument{"max_intensity",
-                      context.getComptimeFloat(lightProfile.max_intensity())},
+                      context.getComptimeFloat(lightProfile.maxIntensity())},
              Argument{"power", context.getComptimeFloat(lightProfile.power())}},
             srcLoc);
       }

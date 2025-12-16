@@ -42,7 +42,7 @@ bool Formatter::next_comment_forces_newline() const {
     return false;
   auto inSrc{inputSrc};
   while (!inSrc.empty()) {
-    auto ws{inSrc.take_while(is_space)};
+    auto ws{inSrc.take_while(isSpace)};
     inSrc = inSrc.drop_front(ws.size());
     if (inSrc.starts_with("//")) {
       return true;
@@ -54,7 +54,7 @@ bool Formatter::next_comment_forces_newline() const {
       if (pos == inSrc.npos)
         break; // Shouldn't happen?
       inSrc = inSrc.drop_front(pos + 2);
-      if (inSrc.take_while(is_space).count('\n') > 0) {
+      if (inSrc.take_while(isSpace).count('\n') > 0) {
         return true;
       }
     } else {
@@ -125,8 +125,8 @@ void Formatter::write_comment(llvm::StringRef inSrc) {
                     : inSrc.drop_front(2).drop_back(2).trim()};
       auto tokens{llvm::SmallVector<llvm::StringRef>{}};
       while (!text.empty() && tokens.size() < 3) {
-        text = text.drop_while(is_space);
-        auto token{text.take_while([&](char ch) { return !is_space(ch); })};
+        text = text.drop_while(isSpace);
+        auto token{text.take_while([&](char ch) { return !isSpace(ch); })};
         if (!token.empty()) {
           tokens.push_back(token);
           text = text.drop_front(token.size());

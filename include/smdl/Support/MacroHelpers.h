@@ -19,14 +19,14 @@ namespace smdl {
 #define SMDL_SANITY_CHECK__1(cond)                                             \
   do {                                                                         \
     if (!(cond))                                                               \
-      ::smdl::detail::sanity_check_failed(#cond, __FILE__, __LINE__);          \
+      ::smdl::detail::sanityCheckFailed(#cond, __FILE__, __LINE__);            \
   } while (false)
 
 /// Sanity check a condition with a message.
 #define SMDL_SANITY_CHECK__2(cond, message)                                    \
   do {                                                                         \
     if (!(cond))                                                               \
-      ::smdl::detail::sanity_check_failed(#cond, __FILE__, __LINE__, message); \
+      ::smdl::detail::sanityCheckFailed(#cond, __FILE__, __LINE__, message);   \
   } while (false)
 
 /// Sanity check a condition with or without a message.
@@ -36,9 +36,9 @@ namespace smdl {
 
 namespace detail {
 
-[[noreturn]] SMDL_EXPORT void sanity_check_failed(const char *condition,
-                                                  const char *file, int line,
-                                                  const char *more = nullptr);
+[[noreturn]] SMDL_EXPORT void sanityCheckFailed(const char *condition,
+                                                const char *file, int line,
+                                                const char *more = nullptr);
 
 } // namespace detail
 

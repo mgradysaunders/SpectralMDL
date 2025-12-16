@@ -18,25 +18,25 @@ namespace smdl {
 ///
 class SMDL_EXPORT Image final {
 public:
-  typedef void *(*Image_malloc_t)(size_t);
+  typedef void *(*image_malloc_t)(size_t);
 
-  typedef void *(*Image_calloc_t)(size_t, size_t);
+  typedef void *(*image_calloc_t)(size_t, size_t);
 
-  typedef void *(*Image_realloc_t)(void *, size_t);
+  typedef void *(*image_realloc_t)(void *, size_t);
 
-  typedef void (*Image_free_t)(void *);
+  typedef void (*image_free_t)(void *);
 
   /// The function to use to mimic `std::malloc`.
-  static Image_malloc_t Image_malloc;
+  static image_malloc_t image_malloc;
 
   /// The function to use to mimic `std::calloc`.
-  static Image_calloc_t Image_calloc;
+  static image_calloc_t image_calloc;
 
   /// The function to use to mimic `std::realloc`.
-  static Image_realloc_t Image_realloc;
+  static image_realloc_t image_realloc;
 
   /// The function to use to mimic `std::free`.
-  static Image_free_t Image_free;
+  static image_free_t image_free;
 
   /// The underlying format.
   enum Format : int {

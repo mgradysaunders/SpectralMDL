@@ -45,7 +45,7 @@ private:
   }
 
   llvm::StringRef consume_input_space() {
-    auto inSrc{inputSrc.take_while(is_space)};
+    auto inSrc{inputSrc.take_while(isSpace)};
     inputSrc = inputSrc.drop_front(inSrc.size());
     return inSrc;
   }

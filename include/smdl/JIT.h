@@ -208,7 +208,7 @@ public:
   ///
   Function<int(const Instance &instance, const float3 &wo, const float3 &wi,
                float &pdfFwd, float &pdfRev, float *f)>
-      scatter_evaluate{};
+      scatterEvaluate{};
 
   /// The scatter sample function.
   ///
@@ -242,7 +242,7 @@ public:
   Function<int(const Instance &instance, const float4 &xi, const float3 &wo,
                float3 &wi, float &pdfFwd, float &pdfRev, float *f,
                int &isDelta)>
-      scatter_sample{};
+      scatterSample{};
 };
 
 /// A just-in-time SMDL material pointer and an instance of the material.
@@ -258,57 +258,57 @@ public:
   }
 
   /// The cutout opacity.
-  [[nodiscard]] float cutout_opacity() const noexcept {
+  [[nodiscard]] float getCutoutOpacity() const noexcept {
     return instance.geometry->cutout_opacity;
   }
 
   /// Is thin walled?
-  [[nodiscard]] bool is_thin_walled() const noexcept {
+  [[nodiscard]] bool isThinWalled() const noexcept {
     return (instance.flags & MATERIAL_THIN_WALLED) != 0;
   }
 
   /// Has medium properties?
-  [[nodiscard]] bool has_medium() const noexcept {
+  [[nodiscard]] bool hasMedium() const noexcept {
     return (instance.absorption_coefficient != nullptr ||
             instance.scattering_coefficient != nullptr);
   }
 
   /// The index of refraction.
-  [[nodiscard]] float ior() const noexcept { return instance.ior; }
+  [[nodiscard]] float getIOR() const noexcept { return instance.ior; }
 
   /// The absorption coefficient of the medium, or empty if none.
-  [[nodiscard]] Span<const float> absorption_coefficient() const noexcept {
+  [[nodiscard]] Span<const float> getAbsorptionCoefficient() const noexcept {
     return Span<const float>(
         instance.absorption_coefficient,
         instance.absorption_coefficient ? instance.wavelength_base_max : 0);
   }
 
   /// The scattering coefficient of the medium, or empty if none.
-  [[nodiscard]] Span<const float> scattering_coefficient() const noexcept {
+  [[nodiscard]] Span<const float> getScatteringCoefficient() const noexcept {
     return Span<const float>(
         instance.scattering_coefficient,
         instance.scattering_coefficient ? instance.wavelength_base_max : 0);
   }
 
   /// The geometry normal in world space.
-  [[nodiscard]] float3 geometry_normal() const noexcept {
+  [[nodiscard]] float3 getGeometryNormal() const noexcept {
     return instance.tangent_to_world_space[2];
   }
 
   /// Is the given direction on the exterior side of the geometry?
-  [[nodiscard]] bool is_exterior(const float3 &w) const noexcept {
-    return dot(geometry_normal(), w) > 0.0f;
+  [[nodiscard]] bool isExterior(const float3 &w) const noexcept {
+    return dot(getGeometryNormal(), w) > 0.0f;
   }
 
   /// Is the given direction on the interior side of the geometry?
-  [[nodiscard]] bool is_interior(const float3 &w) const noexcept {
-    return !is_exterior(w);
+  [[nodiscard]] bool isInterior(const float3 &w) const noexcept {
+    return !isExterior(w);
   }
 
   /// Is the given pair of directions transmitting through the geometry?
-  [[nodiscard]] bool is_transmitting(const float3 &wo,
-                                     const float3 &wi) const noexcept {
-    return is_exterior(wo) != is_exterior(wi);
+  [[nodiscard]] bool isTransmitting(const float3 &wo,
+                                    const float3 &wi) const noexcept {
+    return isExterior(wo) != isExterior(wi);
   }
 
   /// The scatter evaluate function.
@@ -331,13 +331,13 @@ public:
   /// \return
   /// Returns `true` if the result is non-zero.
   ///
-  [[nodiscard]] bool scatter_evaluate(const float3 &wo, const float3 &wi,
-                                      float &pdfFwd, float &pdfRev,
-                                      Span<float> f) const {
+  [[nodiscard]] bool scatterEvaluate(const float3 &wo, const float3 &wi,
+                                     float &pdfFwd, float &pdfRev,
+                                     Span<float> f) const {
     SMDL_SANITY_CHECK(material && instance);
     SMDL_SANITY_CHECK(f.size() == size_t(instance.wavelength_base_max));
-    return material->scatter_evaluate(instance, wo, wi, pdfFwd, pdfRev,
-                                      f.data());
+    return material->scatterEvaluate(instance, wo, wi, pdfFwd, pdfRev,
+                                     f.data());
   }
 
   /// The scatter sample function.
@@ -366,14 +366,14 @@ public:
   /// \return
   /// Returns `true` if the result is non-zero.
   ///
-  [[nodiscard]] bool scatter_sample(const float4 &xi, const float3 &wo,
-                                    float3 &wi, float &pdfFwd, float &pdfRev,
-                                    Span<float> f, bool &isDelta) const {
+  [[nodiscard]] bool scatterSample(const float4 &xi, const float3 &wo,
+                                   float3 &wi, float &pdfFwd, float &pdfRev,
+                                   Span<float> f, bool &isDelta) const {
     SMDL_SANITY_CHECK(material && instance);
     SMDL_SANITY_CHECK(f.size() == size_t(instance.wavelength_base_max));
     auto isDeltaInt{int(0)};
-    auto isNonZero{material->scatter_sample(instance, xi, wo, wi, pdfFwd,
-                                            pdfRev, f.data(), isDeltaInt)};
+    auto isNonZero{material->scatterSample(instance, xi, wo, wi, pdfFwd, pdfRev,
+                                           f.data(), isDeltaInt)};
     isDelta = isDeltaInt;
     return isNonZero;
   }

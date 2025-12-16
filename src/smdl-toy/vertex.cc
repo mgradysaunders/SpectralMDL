@@ -13,9 +13,9 @@ bool test_visibility(const Scene &scene, const AnyRandom &random,
     if (!scene.intersect(ray, hit)) {
       break;
     }
-    if (medium && medium->materialInstance.has_medium()) {
-      Color muA = Color(medium->materialInstance.absorption_coefficient());
-      Color muS = Color(medium->materialInstance.scattering_coefficient());
+    if (medium && medium->materialInstance.hasMedium()) {
+      Color muA = Color(medium->materialInstance.getAbsorptionCoefficient());
+      Color muS = Color(medium->materialInstance.getScatteringCoefficient());
       Color mu = muA + muS;
       Color Tr{};
       for (size_t i = 0; i < WAVELENGTH_BASE_MAX; i++)
@@ -29,7 +29,7 @@ bool test_visibility(const Scene &scene, const AnyRandom &random,
     state.wavelength_max = WAVELENGTH_MAX;
     hit.apply_geometry_to_state(state);
     smdl::JIT::MaterialInstance materialInstance{state, hit.material};
-    if (float opacity{materialInstance.cutout_opacity()};
+    if (float opacity{materialInstance.getCutoutOpacity()};
         opacity == 1 || float(random) < opacity) {
       return false; // Blocks visibility!
     }
@@ -77,9 +77,9 @@ uint64_t random_walk(smdl::Compiler &compiler, const Scene &scene,
 
     auto hit{Hit{}};
     bool hitSurface{scene.intersect(ray, hit)};
-    if (medium && medium->materialInstance.has_medium()) {
-      Color muA = Color(medium->materialInstance.absorption_coefficient());
-      Color muS = Color(medium->materialInstance.scattering_coefficient());
+    if (medium && medium->materialInstance.hasMedium()) {
+      Color muA = Color(medium->materialInstance.getAbsorptionCoefficient());
+      Color muS = Color(medium->materialInstance.getScatteringCoefficient());
       Color mu = muA + muS;
       float t =
           -std::log1p(-float(random)) / mu[random.index(WAVELENGTH_BASE_MAX)];
@@ -118,7 +118,7 @@ uint64_t random_walk(smdl::Compiler &compiler, const Scene &scene,
 
     hit.apply_geometry_to_state(state);
     auto materialInstance{smdl::JIT::MaterialInstance(state, hit.material)};
-    if (float opacity{materialInstance.cutout_opacity()};
+    if (float opacity{materialInstance.getCutoutOpacity()};
         opacity < 1 && (opacity == 0 || float(random) > opacity)) {
       MediumStack::Update(medium, allocator, materialInstance, -ray.dir,
                           ray.dir);
@@ -135,7 +135,7 @@ uint64_t random_walk(smdl::Compiler &compiler, const Scene &scene,
 
     if (depth > 2) {
       float wpdfRev{};
-      if (!materialInstance.scatter_sample(float4(random), -vertexPrev.wNext,
+      if (!materialInstance.scatterSample(float4(random), -vertexPrev.wNext,
                                            vertex.wNext, wpdfFwd, wpdfRev, f,
                                            vertex.isDeltaBounce)) {
         break;
@@ -154,7 +154,7 @@ uint64_t random_walk(smdl::Compiler &compiler, const Scene &scene,
                                        result.Lpdf, Li);
         float fpdfFwd{};
         float fpdfRev{};
-        if (materialInstance.scatter_evaluate(-vertexPrev.wNext, result.wi,
+        if (materialInstance.scatterEvaluate(-vertexPrev.wNext, result.wi,
                                               fpdfFwd, fpdfRev, result.f)) {
           result.fpdf = fpdfFwd;
         }
@@ -164,7 +164,7 @@ uint64_t random_walk(smdl::Compiler &compiler, const Scene &scene,
         SampleResult result{};
         float fpdfFwd{};
         float fpdfRev{};
-        if (materialInstance.scatter_sample(float4(random), -vertexPrev.wNext,
+        if (materialInstance.scatterSample(float4(random), -vertexPrev.wNext,
                                             result.wi, fpdfFwd, fpdfRev,
                                             result.f, vertex.isDeltaBounce)) {
           result.fpdf = fpdfFwd;
