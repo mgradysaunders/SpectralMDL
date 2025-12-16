@@ -9,13 +9,13 @@ namespace smdl::AST {
 class SMDL_EXPORT Argument final {
 public:
   /// Is positional or unnamed?
-  [[nodiscard]] bool is_positional() const { return name.srcName.empty(); }
+  [[nodiscard]] bool isPositional() const { return name.srcName.empty(); }
 
   /// Is named?
-  [[nodiscard]] bool is_named() const { return !name.srcName.empty(); }
+  [[nodiscard]] bool isNamed() const { return !name.srcName.empty(); }
 
   /// Is marked with the keyword `visit`?
-  [[nodiscard]] bool is_visited() const { return !srcKwVisit.empty(); }
+  [[nodiscard]] bool isVisited() const { return !srcKwVisit.empty(); }
 
 public:
   /// The source location.
@@ -65,7 +65,7 @@ public:
   [[nodiscard]] auto &operator[](size_t i) const { return args[i]; }
 
   /// Has comma `,` after the last argument?
-  [[nodiscard]] bool has_trailing_comma() const {
+  [[nodiscard]] bool hasTrailingComma() const {
     return !args.empty() && !args.back().srcComma.empty();
   }
 
@@ -170,12 +170,12 @@ enum BinaryOp : uint32_t {
 
 } // namespace binary_ops
 
-[[nodiscard]] constexpr bool is_extended_syntax(BinaryOp op) {
+[[nodiscard]] constexpr bool isExtendedSyntax(BinaryOp op) {
   return op == BINOP_LET || op == BINOP_APPROX_CMP_EQ ||
          op == BINOP_APPROX_CMP_NE || op == BINOP_SUBSET || op == BINOP_ELSE;
 }
 
-[[nodiscard]] constexpr bool is_compare_op(BinaryOp op) {
+[[nodiscard]] constexpr bool isCompareOp(BinaryOp op) {
   return BINOP_CMP_EQ <= op && op <= BINOP_CMP_GE;
 }
 
@@ -347,18 +347,18 @@ public:
   [[nodiscard]] size_t size() const { return elements.size(); }
 
   /// Is absolute identifier? e.g., `::absolute::id`.
-  [[nodiscard]] bool is_absolute() const {
+  [[nodiscard]] bool isAbsolute() const {
     return !elements.empty() && !elements[0].srcDoubleColon.empty();
   }
 
   /// Is relative identifier? e.g., `relative::id`.
-  [[nodiscard]] bool is_relative() const {
+  [[nodiscard]] bool isRelative() const {
     return !elements.empty() && elements[0].srcDoubleColon.empty();
   }
 
   /// Is simple name?
-  [[nodiscard]] bool is_simple_name() const {
-    return elements.size() == 1 && is_relative();
+  [[nodiscard]] bool isSimpleName() const {
+    return elements.size() == 1 && isRelative();
   }
 
   /// Implicit conversion to span of string views.
@@ -500,7 +500,7 @@ public:
   std::string_view srcParenR{};
 
   /// Is intended to force compile-time evaluation?
-  [[nodiscard]] bool is_comptime() const { return !srcDollar.empty(); }
+  [[nodiscard]] bool isComptime() const { return !srcDollar.empty(); }
 };
 
 /// A `return_from` expression.
@@ -678,12 +678,12 @@ public:
       : srcOp(srcOp), op(op), expr(std::move(expr)) {}
 
   /// Is a postfix expression?
-  [[nodiscard]] bool is_postfix() const {
+  [[nodiscard]] bool isPostfix() const {
     return (op & UNOP_POSTFIX) == UNOP_POSTFIX;
   }
 
   /// Get the operator enum without the postfix flag.
-  [[nodiscard]] UnaryOp op_without_postfix() const {
+  [[nodiscard]] UnaryOp getOpWithoutPostfix() const {
     return (op & ~UNOP_POSTFIX);
   }
 

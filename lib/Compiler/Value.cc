@@ -150,7 +150,7 @@ bool ParameterList::getLookupSequence(std::string_view name,
 }
 
 bool Argument::isVisited() const {
-  return ((astArg && astArg->is_visited()) || impliedVisit) &&
+  return ((astArg && astArg->isVisited()) || impliedVisit) &&
          value.type->isUnionOrPointerToUnion();
 }
 

@@ -895,10 +895,10 @@ void FunctionType::initialize(Emitter &emitter) {
     if (static_cast<FunctionType *>(prevType)->isForeign())
       decl.srcLoc.throwError("function ", Quoted(declName),
                               " must not overload '@(foreign)' function");
-    if (decl.is_variant())
+    if (decl.isVariant())
       decl.srcLoc.throwError("function variant ", Quoted(declName),
                               " must not overload another function");
-    if (decl.has_attribute("foreign"))
+    if (decl.hasAttribute("foreign"))
       decl.srcLoc.throwError(
           "function ", Quoted(declName),
           " declared '@(foreign)' must not overload another function");
@@ -919,7 +919,7 @@ void FunctionType::initialize(Emitter &emitter) {
                   .astParam = &param,
                   .astField = nullptr,
                   .builtinDefaultValue = {}});
-  if (decl.has_attribute("foreign")) {
+  if (decl.hasAttribute("foreign")) {
     if (!params.isConcrete())
       decl.srcLoc.throwError(
           "function ", Quoted(declName),
@@ -934,7 +934,7 @@ void FunctionType::initialize(Emitter &emitter) {
   }
   // If this is declared `@(visible)`, we compile it immediately to
   // guarantee that the symbol exists for the C++ runtime.
-  if (decl.has_attribute("visible")) {
+  if (decl.hasAttribute("visible")) {
     if (!params.isConcrete())
       decl.srcLoc.throwError(
           "function ", Quoted(declName),
@@ -950,10 +950,10 @@ void FunctionType::initialize(Emitter &emitter) {
   // it is a material definition!
   if (returnType == context.materialType &&
       (params.empty() || params.allDefaultInitializers())) {
-    if (decl.has_attribute("pure"))
+    if (decl.hasAttribute("pure"))
       decl.srcLoc.throwError("material ", Quoted(declName),
                               " must not be declared '@(pure)'");
-    if (decl.has_attribute("macro"))
+    if (decl.hasAttribute("macro"))
       decl.srcLoc.throwError("material ", Quoted(declName),
                               " must not be declared '@(macro)'");
     isMaterial = true;
@@ -971,7 +971,7 @@ Value FunctionType::invoke(Emitter &emitter, const ArgumentList &args,
     emitter.handleScope(nullptr, nullptr, [&]() {
       emitter.currentModule = func->decl.srcLoc.module_;
       auto [astLet, astCall] =
-          func->decl.get_variant_let_and_call_expressions();
+          func->decl.getVariantLetAndCallExpressions();
       // If the function variant has a `let` expression, generate the variable
       // declarations.
       if (astLet) {
@@ -1009,7 +1009,7 @@ Value FunctionType::invoke(Emitter &emitter, const ArgumentList &args,
     auto result{emitter.createFunctionImplementation(
         func->decl.name, func->isPure() || !emitter.state, func->returnType,
         func->params, resolved.values, srcLoc, [&]() {
-          if (func->decl.has_attribute("fastmath"))
+          if (func->decl.hasAttribute("fastmath"))
             emitter.builder.setFastMathFlags(llvm::FastMathFlags::getFast());
           emitter.currentModule = func->decl.srcLoc.module_;
           emitter.emit(func->decl.definition);
@@ -1118,7 +1118,7 @@ FunctionType::instantiate(Emitter &emitter,
       emitter.createFunction(
           inst.llvmFunc, decl.name, isPure(), inst.returnType, paramTypes,
           params, decl.srcLoc, [&] {
-            if (decl.has_attribute("fastmath"))
+            if (decl.hasAttribute("fastmath"))
               emitter.builder.setFastMathFlags(llvm::FastMathFlags::getFast());
             emitter.currentModule = decl.srcLoc.module_;
             emitter.emit(decl.definition);
@@ -1131,9 +1131,9 @@ FunctionType::instantiate(Emitter &emitter,
            {"optsize", llvm::Attribute::OptimizeForSize},
            {"optnone", llvm::Attribute::OptimizeNone}};
       for (auto [attrName, attrID] : attrs)
-        if (decl.has_attribute(attrName))
+        if (decl.hasAttribute(attrName))
           inst.llvmFunc->addFnAttr(attrID);
-      if (decl.has_attribute("visible"))
+      if (decl.hasAttribute("visible"))
         inst.llvmFunc->setLinkage(llvm::Function::ExternalLinkage);
     }
     inst.isCompiling = false;
@@ -1570,7 +1570,7 @@ void StructType::initialize(Emitter &emitter) {
     auto tagType{llvm::dyn_cast<TagType>(tag.type->type)};
     if (!tagType)
       decl.srcLoc.throwError("unknown tag");
-    if (tag.is_default()) {
+    if (tag.isDefault()) {
       if (tagType->defaultType)
         decl.srcLoc.throwError("tag ", Quoted(tagType->displayName),
                                 " already has default");

@@ -207,7 +207,7 @@ void Formatter::write(const AST::Enum &decl) {
         DELIM_UNNECESSARY_SPACE, decl.srcBraceL, DELIM_UNNECESSARY_SPACE,
         PUSH_INDENT);
   auto delim{
-      write_start_list(decl.declarators.size(), decl.has_trailing_comma())};
+      write_start_list(decl.declarators.size(), decl.hasTrailingComma())};
   for (const auto &each : decl.declarators) {
     if (!options.noAnnotations && each.annotations)
       write(DELIM_NEWLINE);
@@ -251,7 +251,7 @@ void Formatter::write(const AST::Struct &decl) {
   if (!decl.srcColonBeforeTags.empty()) {
     write(decl.srcColonBeforeTags, DELIM_UNNECESSARY_SPACE, PUSH_INDENT);
     auto delim{
-        write_start_list(decl.tags.size(), decl.has_trailing_comma_on_tags())};
+        write_start_list(decl.tags.size(), decl.hasTrailingCommaOnTags())};
     for (const auto &tag : decl.tags) {
       write(tag.srcKwDefault,
             tag.srcKwDefault.empty() ? DELIM_UNNECESSARY_SPACE : DELIM_SPACE,
@@ -285,7 +285,7 @@ void Formatter::write(const AST::Variable &decl) {
   write(decl.type, DELIM_SPACE, PUSH_INDENT);
   auto moreThanOne{decl.declarators.size() > 1};
   auto delim{write_start_list(decl.declarators.size(),
-                              decl.has_trailing_comma(),
+                              decl.hasTrailingComma(),
                               /*alignIndent=*/moreThanOne)};
   for (const auto &each : decl.declarators) {
     if (!options.noAnnotations && each.annotations && moreThanOne)
@@ -408,7 +408,7 @@ void Formatter::write(const AST::AnnotationBlock &annos) {
   if (!options.noAnnotations) {
     write(PUSH_INDENT, INCREMENT_INDENT, DELIM_UNNECESSARY_SPACE,
           annos.srcDoubleBrackL, PUSH_INDENT);
-    auto delim{write_start_list(annos.size(), annos.has_trailing_comma())};
+    auto delim{write_start_list(annos.size(), annos.hasTrailingComma())};
     for (const auto &[identifier, args, srcComma] : annos) {
       write(identifier, args, srcComma, srcComma.empty() ? DELIM_NONE : delim);
     }
@@ -418,11 +418,11 @@ void Formatter::write(const AST::AnnotationBlock &annos) {
 
 void Formatter::write(const AST::ArgumentList &args) {
   write(args.srcParenL, PUSH_INDENT);
-  auto delim{write_start_list(args.size(), args.has_trailing_comma())};
+  auto delim{write_start_list(args.size(), args.hasTrailingComma())};
   for (const auto &arg : args) {
-    if (arg.is_visited())
+    if (arg.isVisited())
       write(arg.srcKwVisit, DELIM_SPACE);
-    if (arg.is_named())
+    if (arg.isNamed())
       write(arg.name, arg.srcColonAfterName, DELIM_SPACE);
     write(arg.expr, arg.srcComma, arg.srcComma.empty() ? DELIM_NONE : delim);
   }
@@ -431,10 +431,10 @@ void Formatter::write(const AST::ArgumentList &args) {
 
 void Formatter::write(const AST::ParameterList &params) {
   write(params.srcParenL, PUSH_INDENT);
-  if (params.is_variant()) {
+  if (params.isVariant()) {
     write(params.srcStar);
   } else {
-    auto delim{write_start_list(params.size(), params.has_trailing_comma())};
+    auto delim{write_start_list(params.size(), params.hasTrailingComma())};
     for (const auto &param : params) {
       // if (!options.noAnnotations && param.annotations && &param !=
       // &params[0]) {

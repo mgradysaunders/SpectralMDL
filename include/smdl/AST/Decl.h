@@ -24,7 +24,7 @@ public:
   std::string_view srcComma{};
 
   /// Has identifier with the given name sequence?
-  [[nodiscard]] bool has_identifier(Span<const std::string_view> names) const {
+  [[nodiscard]] bool hasIdentifier(Span<const std::string_view> names) const {
     return identifier && Span<const std::string_view>(*identifier) == names;
   }
 };
@@ -59,24 +59,24 @@ public:
 
 public:
   /// Has comma `,` after the last annotation?
-  [[nodiscard]] bool has_trailing_comma() const {
+  [[nodiscard]] bool hasTrailingComma() const {
     return !annos.empty() && !annos.back().srcComma.empty();
   }
 
   /// Is marked as `unused()` or `anno::unused()`?
-  [[nodiscard]] bool is_marked_unused() const {
+  [[nodiscard]] bool isMarkedUnused() const {
     for (const auto &anno : annos)
-      if (anno.has_identifier({"unused"}) ||
-          anno.has_identifier({"anno", "unused"}))
+      if (anno.hasIdentifier({"unused"}) ||
+          anno.hasIdentifier({"anno", "unused"}))
         return true;
     return false;
   }
 
   /// Is marked as `deprecated()` or `anno::deprecated()`?
-  [[nodiscard]] bool is_marked_deprecated() const {
+  [[nodiscard]] bool isMarkedDeprecated() const {
     for (const auto &anno : annos)
-      if (anno.has_identifier({"deprecated"}) ||
-          anno.has_identifier({"anno", "deprecated"}))
+      if (anno.hasIdentifier({"deprecated"}) ||
+          anno.hasIdentifier({"anno", "deprecated"}))
         return true;
     return false;
   }
@@ -147,10 +147,10 @@ public:
 
 public:
   /// Is parameter list for function variant?
-  [[nodiscard]] bool is_variant() const { return !srcStar.empty(); }
+  [[nodiscard]] bool isVariant() const { return !srcStar.empty(); }
 
   /// Has comma `,` after the last parameter?
-  [[nodiscard]] bool has_trailing_comma() const {
+  [[nodiscard]] bool hasTrailingComma() const {
     return !params.empty() && !params.back().srcComma.empty();
   }
 
@@ -207,17 +207,17 @@ public:
   [[nodiscard]] size_t size() const { return elements.size(); }
 
   /// Is absolute import path? (e.g., `::df::*`)
-  [[nodiscard]] bool is_absolute() const {
+  [[nodiscard]] bool isAbsolute() const {
     return !elements.empty() && !elements[0].srcDoubleColon.empty();
   }
 
   /// Is relative import path? (e.g., `df::*`)
-  [[nodiscard]] bool is_relative() const {
+  [[nodiscard]] bool isRelative() const {
     return !elements.empty() && elements[0].srcDoubleColon.empty();
   }
 
   /// Is import all? (i.e., ends with `::*`?)
-  [[nodiscard]] bool is_import_all() const {
+  [[nodiscard]] bool isImportAll() const {
     return !elements.empty() && elements.back().srcName == "*";
   }
 
@@ -340,7 +340,7 @@ public:
   std::string_view srcSemicolon{};
 
   /// Has comma `,` after the last declarator?
-  [[nodiscard]] bool has_trailing_comma() const {
+  [[nodiscard]] bool hasTrailingComma() const {
     return !declarators.empty() && !declarators.back().srcComma.empty();
   }
 };
@@ -391,16 +391,16 @@ public:
         definition(std::move(definition)), srcSemicolon(srcSemicolon) {}
 
   /// Is a function declaration without a definition?
-  [[nodiscard]] bool is_declaration_without_definition() const {
+  [[nodiscard]] bool isDeclarationWithoutDefinition() const {
     return !definition;
   }
 
   /// Is a function variant?
-  [[nodiscard]] bool is_variant() const { return params.is_variant(); }
+  [[nodiscard]] bool isVariant() const { return params.isVariant(); }
 
   /// If this is a function variant, get the variant let and call expressions.
   /// Else throw an error.
-  [[nodiscard]] LetAndCall get_variant_let_and_call_expressions() const;
+  [[nodiscard]] LetAndCall getVariantLetAndCallExpressions() const;
 
 public:
   /// The return type.
@@ -460,7 +460,7 @@ public:
   std::string_view srcSemicolon{};
 
   /// Has comma `,` after the last import path?
-  [[nodiscard]] bool has_trailing_comma() const {
+  [[nodiscard]] bool hasTrailingComma() const {
     return !importPathWrappers.empty() &&
            !importPathWrappers.back().srcComma.empty();
   }
@@ -505,7 +505,7 @@ public:
   class Tag final {
   public:
     /// Is marked with the keyword `default`?
-    [[nodiscard]] bool is_default() const { return !srcKwDefault.empty(); }
+    [[nodiscard]] bool isDefault() const { return !srcKwDefault.empty(); }
 
     /// The keyword `default`. This may be empty!
     std::string_view srcKwDefault{};
@@ -612,7 +612,7 @@ public:
   std::string_view srcSemicolon{};
 
   /// Has comma `,` after the last tag?
-  [[nodiscard]] bool has_trailing_comma_on_tags() const {
+  [[nodiscard]] bool hasTrailingCommaOnTags() const {
     return !tags.empty() && !tags.back().srcComma.empty();
   }
 };
@@ -718,7 +718,7 @@ public:
         srcKwImport(srcKwImport), names(std::move(names)),
         srcSemicolon(srcSemicolon) {}
 
-  [[nodiscard]] bool is_import_all() const {
+  [[nodiscard]] bool isImportAll() const {
     return names.size() == 1 && names[0].srcName == "*";
   }
 
@@ -738,7 +738,7 @@ public:
   std::string_view srcSemicolon{};
 
   /// Has comma `,` after last import name?
-  [[nodiscard]] bool has_trailing_comma() const {
+  [[nodiscard]] bool hasTrailingComma() const {
     return !names.empty() && !names.back().srcComma.empty();
   }
 };
@@ -749,7 +749,7 @@ public:
   class Declarator final : public NodeSubclass<NodeKind::VariableDeclarator> {
   public:
     /// Is destructure declarator? E.g., `{foo, bar, baz}`
-    [[nodiscard]] bool is_destructure() const noexcept {
+    [[nodiscard]] bool isDestructure() const noexcept {
       return !srcBraceL.empty() && !srcBraceR.empty();
     }
 
@@ -814,7 +814,7 @@ public:
   std::string_view srcSemicolon{};
 
   /// Has comma `,` after the last declarator?
-  [[nodiscard]] bool has_trailing_comma() const {
+  [[nodiscard]] bool hasTrailingComma() const {
     return !declarators.empty() && !declarators.back().srcComma.empty();
   }
 };

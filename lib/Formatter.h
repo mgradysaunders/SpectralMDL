@@ -195,7 +195,7 @@ private:
   void write(const AST::Import &decl) {
     write(decl.srcKwImport, DELIM_SPACE, PUSH_INDENT);
     auto delim{write_start_list(decl.importPathWrappers.size(),
-                                decl.has_trailing_comma())};
+                                decl.hasTrailingComma())};
     for (const auto &[importPath, srcComma] : decl.importPathWrappers) {
       write(importPath, srcComma, srcComma.empty() ? DELIM_NONE : delim);
     }
@@ -234,7 +234,7 @@ private:
   void write(const AST::UsingImport &decl) {
     write(decl.srcKwUsing, DELIM_SPACE, decl.importPath, DELIM_SPACE,
           decl.srcKwImport, DELIM_SPACE, PUSH_INDENT);
-    auto delim{write_start_list(decl.names.size(), decl.has_trailing_comma())};
+    auto delim{write_start_list(decl.names.size(), decl.hasTrailingComma())};
     for (const auto &[srcName, srcComma] : decl.names)
       write(srcName, srcComma, srcComma.empty() ? DELIM_NONE : delim);
     write(decl.srcSemicolon, POP_INDENT);
@@ -340,7 +340,7 @@ private:
   }
 
   void write(const AST::Unary &expr) {
-    if (expr.is_postfix()) {
+    if (expr.isPostfix()) {
       write(expr.expr, expr.srcOp);
     } else {
       // Don't write unnecessary plus in compact mode
@@ -404,7 +404,7 @@ private:
   void write(const AST::Preserve &stmt) {
     write(stmt.srcKwPreserve, DELIM_SPACE, PUSH_INDENT);
     auto delim{
-        write_start_list(stmt.exprWrappers.size(), stmt.has_trailing_comma())};
+        write_start_list(stmt.exprWrappers.size(), stmt.hasTrailingComma())};
     for (const auto &[expr, srcComma] : stmt.exprWrappers) {
       write(expr, srcComma, srcComma.empty() ? DELIM_NONE : delim);
     }

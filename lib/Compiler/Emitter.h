@@ -429,10 +429,10 @@ public:
 
   /// Emit import declaration.
   Value emit(AST::Import &decl) {
-    if (decl.is_exported())
+    if (decl.isExported())
       decl.srcLoc.throwError("cannot re-export qualified 'import'");
     for (auto &[importPath, srcComma] : decl.importPathWrappers)
-      declareImport(importPath, importPath.is_absolute(), decl);
+      declareImport(importPath, importPath.isAbsolute(), decl);
     return Value();
   }
 

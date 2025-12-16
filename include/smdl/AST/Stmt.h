@@ -230,7 +230,7 @@ public:
   std::string_view srcSemicolon{};
 
   /// Has comma `,` after the last expression?
-  [[nodiscard]] bool has_trailing_comma() const {
+  [[nodiscard]] bool hasTrailingComma() const {
     return !exprWrappers.empty() && !exprWrappers.back().srcComma.empty();
   }
 };

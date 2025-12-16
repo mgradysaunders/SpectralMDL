@@ -18,7 +18,9 @@ public:
 
   [[nodiscard]] operator std::string_view() const { return srcName; }
 
-  [[nodiscard]] operator Span<const std::string_view>() const { return srcName; }
+  [[nodiscard]] operator Span<const std::string_view>() const {
+    return srcName;
+  }
 
   /// The source location.
   SourceLocation srcLoc{};
@@ -119,12 +121,12 @@ public:
   std::string_view srcKwExport{};
 
   /// Has the given attribute?
-  [[nodiscard]] bool has_attribute(std::string_view attr) const {
+  [[nodiscard]] bool hasAttribute(std::string_view attr) const {
     return attributes && attributes->has(attr);
   }
 
   /// Is marked with the keyword `export`?
-  [[nodiscard]] bool is_exported() const { return !srcKwExport.empty(); }
+  [[nodiscard]] bool isExported() const { return !srcKwExport.empty(); }
 };
 
 /// The helper to define declaration subclasses that sets the `DeclKind` and

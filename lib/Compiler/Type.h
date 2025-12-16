@@ -768,18 +768,18 @@ public:
 
 public:
   /// Is marked with the attribute `@(pure)`?
-  [[nodiscard]] bool isPure() const { return decl.has_attribute("pure"); }
+  [[nodiscard]] bool isPure() const { return decl.hasAttribute("pure"); }
 
   /// Is marked with the attribute `@(macro)`?
   [[nodiscard]] bool isMacro() const {
-    return decl.has_attribute("macro") || isMaterial;
+    return decl.hasAttribute("macro") || isMaterial;
   }
 
   /// Is marked with the attribute `@(foreign)`?
-  [[nodiscard]] bool isForeign() const { return decl.has_attribute("foreign"); }
+  [[nodiscard]] bool isForeign() const { return decl.hasAttribute("foreign"); }
 
   /// Is function variant?
-  [[nodiscard]] bool isVariant() const { return decl.is_variant(); }
+  [[nodiscard]] bool isVariant() const { return decl.isVariant(); }
 
   /// Has no overloads?
   [[nodiscard]] bool hasNoOverloads() const {

@@ -141,8 +141,8 @@ std::string_view to_string(StmtKind stmtKind) {
   return {};
 }
 
-Function::LetAndCall Function::get_variant_let_and_call_expressions() const {
-  if (!(is_variant() && definition && llvm::isa<Return>(definition.get())))
+Function::LetAndCall Function::getVariantLetAndCallExpressions() const {
+  if (!(isVariant() && definition && llvm::isa<Return>(definition.get())))
     srcLoc.throwError(concat("function variant ", Quoted(name.srcName),
                              " has invalid declaration"));
   auto letAndCall{LetAndCall{}};
@@ -163,7 +163,7 @@ Function::LetAndCall Function::get_variant_let_and_call_expressions() const {
                              " definition must be 'let' or call expression"));
   }
   for (auto &arg : letAndCall.call->args) {
-    if (!arg.is_named()) {
+    if (!arg.isNamed()) {
       srcLoc.throwError(concat("call in definition of function variant ",
                                Quoted(name.srcName),
                                " must only use named arguments"));

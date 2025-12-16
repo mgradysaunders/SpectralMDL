@@ -174,12 +174,12 @@ public:
   /// Is exported?
   [[nodiscard]] bool isExported() const {
     if (auto decl{llvm::dyn_cast_if_present<AST::Decl>(node)})
-      return decl->is_exported();
+      return decl->isExported();
     if (auto declarator{llvm::dyn_cast_if_present<AST::Enum::Declarator>(node)})
-      return declarator->decl->is_exported();
+      return declarator->decl->isExported();
     if (auto declarator{
             llvm::dyn_cast_if_present<AST::Variable::Declarator>(node)})
-      return declarator->decl->is_exported();
+      return declarator->decl->isExported();
     return false;
   }
 
@@ -225,7 +225,7 @@ public:
         if (!astParam->warningIssued &&
             !astParam->type->has_qualifier("inline") &&
             !(astParam->annotations &&
-              astParam->annotations->is_marked_unused())) {
+              astParam->annotations->isMarkedUnused())) {
           astParam->warningIssued = true;
           getSourceLocation().logWarn(
               concat("unused parameter ", Quoted(name[0])));
@@ -235,7 +235,7 @@ public:
         auto declarator{static_cast<AST::Variable::Declarator *>(node)};
         if (!declarator->warningIssued &&
             !(declarator->annotations &&
-              declarator->annotations->is_marked_unused())) {
+              declarator->annotations->isMarkedUnused())) {
           declarator->warningIssued = true;
           getSourceLocation().logWarn(
               concat("unused variable ", Quoted(name[0])));

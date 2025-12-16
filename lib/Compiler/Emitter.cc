@@ -343,7 +343,7 @@ Value Emitter::emit(AST::UsingImport &decl) {
     std::uninitialized_copy(importPath.begin(), importPath.end(),
                             importPathPtr);
     declareImport(Span(importPathPtr, importPath.size()),
-                  decl.importPath.is_absolute(), decl);
+                  decl.importPath.isAbsolute(), decl);
     importPath.pop_back();
   }
   return Value();
@@ -366,7 +366,7 @@ Value Emitter::emit(AST::Variable &decl) {
   if (isInline)
     decl.srcLoc.throwError("variables must not be declared 'inline'");
   for (auto &declarator : decl.declarators) {
-    if (declarator.is_destructure() && type != context.getAutoType())
+    if (declarator.isDestructure() && type != context.getAutoType())
       declarator.srcLoc.throwError(
           "destructure declarator must have 'auto' type");
     auto crumb0{crumb};
@@ -381,7 +381,7 @@ Value Emitter::emit(AST::Variable &decl) {
     }()};
     unwind(crumb0);
     auto value{invoke(type, args, declarator.srcLoc)};
-    if (declarator.is_destructure()) {
+    if (declarator.isDestructure()) {
       if (isStatic)
         declarator.srcLoc.throwError(
             "cannot destructure 'static' variables (yet)");
@@ -578,7 +578,7 @@ Value Emitter::emit(AST::Binary &expr) {
 }
 
 Value Emitter::emit(AST::Parens &expr) {
-  if (expr.is_comptime()) {
+  if (expr.isComptime()) {
     auto value{emit(expr.expr)};
     if (!value.isComptime()) {
       expr.srcLoc.throwError("expected compile-time constant");
