@@ -816,7 +816,7 @@ Value Emitter::emit(AST::While &stmt) {
 }
 //--}
 
-//--{ emit_op (AST::UnaryOp)
+//--{ emitOp (AST::UnaryOp)
 Value Emitter::emitOp(AST::UnaryOp op, Value value,
                       const SourceLocation &srcLoc) {
   if (value.isComptimeMetaType(context)) {
@@ -932,9 +932,9 @@ Value Emitter::emitOp(AST::UnaryOp op, Value value,
 }
 //--}
 
-//--{ Helper: llvm_arith_op
+//--{ Helper: llvmArithOp
 [[nodiscard]] static std::optional<llvm::Instruction::BinaryOps>
-llvm_arith_op(Scalar::Intent intent, AST::BinaryOp op) {
+llvmArithOp(Scalar::Intent intent, AST::BinaryOp op) {
   if (intent == Scalar::Intent::Int) {
     switch (op) {
     case BINOP_ADD:
@@ -982,9 +982,9 @@ llvm_arith_op(Scalar::Intent intent, AST::BinaryOp op) {
 }
 //--}
 
-//--{ Helper: llvm_cmp_op
+//--{ Helper: llvmCmpOp
 [[nodiscard]] static std::optional<llvm::CmpInst::Predicate>
-llvm_cmp_op(Scalar::Intent intent, AST::BinaryOp op, bool isSigned = true) {
+llvmCmpOp(Scalar::Intent intent, AST::BinaryOp op, bool isSigned = true) {
   if (intent == Scalar::Intent::Int) {
     switch (op) {
     case BINOP_CMP_EQ:
@@ -1024,7 +1024,7 @@ llvm_cmp_op(Scalar::Intent intent, AST::BinaryOp op, bool isSigned = true) {
 }
 //--}
 
-//--{ emit_op (AST::BinaryOp)
+//--{ emitOp (AST::BinaryOp)
 Value Emitter::emitOp(AST::BinaryOp op, Value lhs, Value rhs,
                       const SourceLocation &srcLoc) {
   if (op == BINOP_COMMA)
@@ -1051,9 +1051,9 @@ Value Emitter::emitOp(AST::BinaryOp op, Value lhs, Value rhs,
       auto commonType{lhsType->getCommonType(context, rhsType)};
       lhs = invoke(commonType, lhs, srcLoc);
       rhs = invoke(commonType, rhs, srcLoc);
-      if (auto llvmOp{llvm_arith_op(commonType->scalar.intent, op)})
+      if (auto llvmOp{llvmArithOp(commonType->scalar.intent, op)})
         return RValue(commonType, builder.CreateBinOp(*llvmOp, lhs, rhs));
-      if (auto llvmOp{llvm_cmp_op(commonType->scalar.intent, op)})
+      if (auto llvmOp{llvmCmpOp(commonType->scalar.intent, op)})
         return RValue(
             commonType->getWithDifferentScalar(context, Scalar::getBool()),
             builder.CreateCmp(*llvmOp, lhs, rhs));
@@ -1137,10 +1137,10 @@ Value Emitter::emitOp(AST::BinaryOp op, Value lhs, Value rhs,
   }
   // Enums
   if (lhs.type->isEnum() && rhs.type->isEnum()) {
-    if (auto llvmOp{llvm_arith_op(Scalar::Intent::Int, op)};
+    if (auto llvmOp{llvmArithOp(Scalar::Intent::Int, op)};
         llvmOp && lhs.type == rhs.type)
       return RValue(lhs.type, builder.CreateBinOp(*llvmOp, lhs, rhs));
-    if (auto llvmOp{llvm_cmp_op(Scalar::Intent::Int, op)})
+    if (auto llvmOp{llvmCmpOp(Scalar::Intent::Int, op)})
       return RValue(context.getBoolType(),
                     builder.CreateCmp(*llvmOp, lhs, rhs));
   }
@@ -1148,13 +1148,13 @@ Value Emitter::emitOp(AST::BinaryOp op, Value lhs, Value rhs,
   if ((lhs.type->isColor() &&
        (rhs.type->isColor() || rhs.type->isArithmeticScalar())) ||
       (lhs.type->isArithmeticScalar() && rhs.type->isColor())) {
-    if (auto llvmOp{llvm_arith_op(Scalar::Intent::FP, op)}) {
+    if (auto llvmOp{llvmArithOp(Scalar::Intent::FP, op)}) {
       lhs = invoke(context.getColorType(), lhs, srcLoc);
       rhs = invoke(context.getColorType(), rhs, srcLoc);
       return RValue(context.getColorType(),
                     builder.CreateBinOp(*llvmOp, lhs, rhs));
     }
-    if (auto llvmOp{llvm_cmp_op(Scalar::Intent::FP, op)}) {
+    if (auto llvmOp{llvmCmpOp(Scalar::Intent::FP, op)}) {
       lhs = invoke(context.getColorType(), lhs, srcLoc);
       rhs = invoke(context.getColorType(), rhs, srcLoc);
       return RValue(context.getColorType()
@@ -1214,7 +1214,7 @@ Value Emitter::emitOp(AST::BinaryOp op, Value lhs, Value rhs,
                             lhs.type->getPointeeType()->llvmType, lhs, rhs),
                         context.getIntType()->llvmType, /*isSigned=*/true));
     }
-    if (auto llvmOp{llvm_cmp_op(Scalar::Intent::Int, op, /*isSigned=*/false)}) {
+    if (auto llvmOp{llvmCmpOp(Scalar::Intent::Int, op, /*isSigned=*/false)}) {
       auto intPtrTy{builder.getIntNTy(sizeof(void *) * 8)};
       return RValue(context.getBoolType(),
                     builder.CreateCmp(*llvmOp,                               //
@@ -1225,7 +1225,7 @@ Value Emitter::emitOp(AST::BinaryOp op, Value lhs, Value rhs,
   // Types
   if (lhs.type == context.getMetaTypeType() && //
       rhs.type == context.getMetaTypeType()) {
-    if (auto llvmOp{llvm_cmp_op(Scalar::Intent::Int, op)})
+    if (auto llvmOp{llvmCmpOp(Scalar::Intent::Int, op)})
       return RValue(context.getBoolType(),
                     builder.CreateCmp(*llvmOp, lhs, rhs));
     if (lhs.isComptime() && rhs.isComptime()) {
