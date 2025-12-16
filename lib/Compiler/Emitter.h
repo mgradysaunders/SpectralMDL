@@ -617,7 +617,7 @@ public:
     SMDL_SANITY_CHECK(!hasTerminator());
     if (!labelBreak)
       stmt.srcLoc.throwError(inDefer ? "cannot 'break' from 'defer'"
-                                      : "nowhere to 'break'");
+                                     : "nowhere to 'break'");
     emitLateIf(stmt.lateIf, [&] {
       unwind(labelBreak.crumb);
       builder.CreateBr(labelBreak.block);
@@ -633,7 +633,7 @@ public:
     SMDL_SANITY_CHECK(!hasTerminator());
     if (!labelContinue)
       stmt.srcLoc.throwError(inDefer ? "cannot 'continue' from 'defer'"
-                                      : "nowhere to 'continue'");
+                                     : "nowhere to 'continue'");
     emitLateIf(stmt.lateIf, [&] {
       unwind(labelContinue.crumb);
       builder.CreateBr(labelContinue.block);
@@ -682,7 +682,7 @@ public:
     SMDL_SANITY_CHECK(!hasTerminator());
     if (!labelReturn)
       stmt.srcLoc.throwError(inDefer ? "cannot 'return' from 'defer'"
-                                      : "nowhere to 'return'");
+                                     : "nowhere to 'return'");
     emitLateIf(stmt.lateIf, [&] {
       Value value{};
       if (stmt.expr)

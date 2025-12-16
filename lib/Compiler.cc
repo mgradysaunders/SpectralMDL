@@ -395,7 +395,7 @@ Compiler::findMaterial(std::string_view materialName) const noexcept try {
 
 const JIT::Material *
 Compiler::findMaterial(std::string_view moduleName,
-                          std::string_view materialName) const noexcept {
+                       std::string_view materialName) const noexcept {
   for (const auto &jitMaterial : jitMaterials) {
     if (jitMaterial.moduleName == moduleName &&
         jitMaterial.materialName == materialName) {
@@ -429,8 +429,8 @@ std::optional<Error> Compiler::runUnitTests(const State &state) noexcept {
              itr1->moduleFileName == itr0->moduleFileName) {
         ++itr1;
       }
-      std::cerr << concat("Running tests in ",
-                          QuotedPath(itr0->moduleFileName), ":\n");
+      std::cerr << concat("Running tests in ", QuotedPath(itr0->moduleFileName),
+                          ":\n");
       for (; itr0 != itr1; ++itr0) {
         std::cerr << concat("  ", Quoted(itr0->testName), " (line ",
                             itr0->lineNo, ") ... ");

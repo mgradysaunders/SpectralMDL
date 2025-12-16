@@ -229,7 +229,7 @@ Type *Context::getCommonType(llvm::ArrayRef<Type *> types, bool defaultToUnion,
       return getColorType();
     if (!defaultToUnion || typeA->isAbstract() || typeB->isAbstract())
       srcLoc.throwError("no common type between ", Quoted(typeA->displayName),
-                         " and ", Quoted(typeB->displayName));
+                        " and ", Quoted(typeB->displayName));
     return getUnionType({typeA, typeB});
   }};
   Type *commonType{types[0]};

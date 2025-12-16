@@ -284,8 +284,7 @@ void Formatter::write(const AST::Struct &decl) {
 void Formatter::write(const AST::Variable &decl) {
   write(decl.type, DELIM_SPACE, PUSH_INDENT);
   auto moreThanOne{decl.declarators.size() > 1};
-  auto delim{write_start_list(decl.declarators.size(),
-                              decl.hasTrailingComma(),
+  auto delim{write_start_list(decl.declarators.size(), decl.hasTrailingComma(),
                               /*alignIndent=*/moreThanOne)};
   for (const auto &each : decl.declarators) {
     if (!options.noAnnotations && each.annotations && moreThanOne)

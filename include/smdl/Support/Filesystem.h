@@ -49,7 +49,8 @@ SMDL_EXPORT bool isParentPathOf(const std::string &path0,
 /// This does not throw. If the implementation fails for any reason, the input
 /// path is returned unchanged.
 ///
-[[nodiscard]] SMDL_EXPORT std::string makePathCanonical(std::string path) noexcept;
+[[nodiscard]] SMDL_EXPORT std::string
+makePathCanonical(std::string path) noexcept;
 
 /// Make path relative to working directory.
 ///
@@ -57,7 +58,8 @@ SMDL_EXPORT bool isParentPathOf(const std::string &path0,
 /// This does not throw. If the implementation fails for any reason, the input
 /// path is returned unchanged.
 ///
-[[nodiscard]] SMDL_EXPORT std::string makePathRelative(std::string path) noexcept;
+[[nodiscard]] SMDL_EXPORT std::string
+makePathRelative(std::string path) noexcept;
 
 /// Determine parent path.
 ///
