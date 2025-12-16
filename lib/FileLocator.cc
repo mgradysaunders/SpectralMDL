@@ -23,13 +23,13 @@ FileLocator::getSearchDirs(std::string_view relativeTo) const {
       add(parentPathOf(fileOrDir));
     }
   }
-  if (searchPwd) {
+  if (mSearchPwd) {
     auto ec{std::error_code()};
     if (auto pwd{std::filesystem::current_path(ec)}; !ec) {
       add(std::move(pwd));
     }
   }
-  for (const auto &[dir, isRecursive] : searchDirs) {
+  for (const auto &[dir, isRecursive] : mSearchDirs) {
     add(dir);
     if (isRecursive) {
       for (auto &&entry : std::filesystem::recursive_directory_iterator(dir)) {

@@ -141,8 +141,8 @@ public:
   /// \param[in] callback
   /// The callback to populate the LLVM function body.
   ///
-  void createFunction(llvm::Function *&llvmFunc, //
-                      std::string_view name, bool isPure, Type *&returnType,
+  void createFunction(llvm::Function *&llvmFunc, std::string_view name,
+                      bool isPure, Type *&returnType,
                       llvm::ArrayRef<Type *> paramTypes,
                       const ParameterList &params, const SourceLocation &srcLoc,
                       const std::function<void()> &callback);
@@ -793,12 +793,12 @@ public:
   void emitPanic(Value message, const SourceLocation &srcLoc);
 
   /// Emit print.
-  void emitPrint(Value os, Value value, const SourceLocation &srcLoc,
+  void emitPrint(Value file, Value value, const SourceLocation &srcLoc,
                  bool quoteStrings = false);
 
-  void emitPrint(Value os, std::string_view value,
+  void emitPrint(Value file, std::string_view value,
                  const SourceLocation &srcLoc) {
-    emitPrint(os, context.getComptimeString(value), srcLoc);
+    emitPrint(file, context.getComptimeString(value), srcLoc);
   }
 
   void emitReturn(Value value, const SourceLocation &srcLoc) {
@@ -837,14 +837,14 @@ public:
   /// The return structure of `resolve_arguments()`.
   struct ResolvedArguments final {
   public:
-    [[nodiscard]] llvm::SmallVector<Type *> GetValueTypes() const {
+    [[nodiscard]] llvm::SmallVector<Type *> getValueTypes() const {
       auto valueTypes{llvm::SmallVector<Type *>(values.size())};
       for (size_t i = 0; i < values.size(); i++)
         valueTypes[i] = values[i].type;
       return valueTypes;
     }
 
-    [[nodiscard]] std::optional<ArgumentList> GetImpliedVisitArguments() const {
+    [[nodiscard]] std::optional<ArgumentList> getImpliedVisitArguments() const {
       bool impliedVisit{false};
       auto impliedVisitArgs{args};
       for (size_t i = 0; i < args.size(); i++) {

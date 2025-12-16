@@ -74,7 +74,7 @@ public:
   [[nodiscard]] const Getter *get(std::string_view name) const;
 
 private:
-  void *ptr{};
+  void *mPtr{};
 };
 
 /// \}

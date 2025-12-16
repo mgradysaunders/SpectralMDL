@@ -5,20 +5,20 @@
 
 namespace smdl {
 
-SceneData::SceneData() : ptr(new llvm::StringMap<Getter>()) {}
+SceneData::SceneData() : mPtr(new llvm::StringMap<Getter>()) {}
 
 SceneData::~SceneData() {
-  delete static_cast<llvm::StringMap<Getter> *>(ptr);
-  ptr = nullptr;
+  delete static_cast<llvm::StringMap<Getter> *>(mPtr);
+  mPtr = nullptr;
 }
 
 void SceneData::clear() {
-  auto &lookup{*static_cast<llvm::StringMap<Getter> *>(ptr)};
+  auto &lookup{*static_cast<llvm::StringMap<Getter> *>(mPtr)};
   lookup.clear();
 }
 
 void SceneData::set(std::string_view name, Getter getter) {
-  auto &lookup{*static_cast<llvm::StringMap<Getter> *>(ptr)};
+  auto &lookup{*static_cast<llvm::StringMap<Getter> *>(mPtr)};
   lookup[llvm::StringRef(name)] = std::move(getter);
 }
 
@@ -97,7 +97,7 @@ void SceneData::setColor(std::string_view name,
 }
 
 const SceneData::Getter *SceneData::get(std::string_view name) const {
-  auto &lookup{*static_cast<const llvm::StringMap<Getter> *>(ptr)};
+  auto &lookup{*static_cast<const llvm::StringMap<Getter> *>(mPtr)};
   if (auto itr{lookup.find(llvm::StringRef(name))}; itr != lookup.end())
     return &itr->getValue();
   return nullptr;

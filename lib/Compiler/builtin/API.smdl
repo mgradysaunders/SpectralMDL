@@ -464,7 +464,7 @@ const int MATERIAL_HAS_HAIR = (1 << 7);
 /// An instance of a material corresponding to `smdl::JIT::Material::Instance` 
 /// in the C++ API.
 export struct _material_instance {
-  /// The material deep copied with `#bump_allocate()`.
+  /// The material deep copied with `#bump()`.
   const &material jit_struct;
 
   /// The geometry displacement.

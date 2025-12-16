@@ -97,13 +97,13 @@ Spectrum::loadFromFile(const std::string &fileName) noexcept {
       if (std::sscanf(lineRef.data(), "%f %f", &wavelength, &curveValue) != 2)
         throw Error(concat("cannot load ", QuotedPath(fileName),
                            ": expected 'wavelength value'"));
-      wavelengths.push_back(to_nanometers(units, wavelength));
-      curveValues.push_back(curveValue);
+      mWavelengths.push_back(to_nanometers(units, wavelength));
+      mCurveValues.push_back(curveValue);
     }
     // Sort wavelengths into increasing order
-    auto order{sort_order(wavelengths)};
-    apply_sort_order(order, wavelengths);
-    apply_sort_order(order, curveValues);
+    auto order{sort_order(mWavelengths)};
+    apply_sort_order(order, mWavelengths);
+    apply_sort_order(order, mCurveValues);
   });
 }
 
@@ -197,7 +197,7 @@ SpectrumLibrary::loadFromFile(const std::string &fileName) noexcept {
           throwError("unsupported 'wavelength units'");
         }
       } else if (key.equals_insensitive("wavelength")) {
-        wavelengths.clear();
+        mWavelengths.clear();
         llvm::SmallVector<llvm::StringRef> splits{};
         value.split(splits, ',');
         for (auto &split : splits) {
@@ -205,21 +205,21 @@ SpectrumLibrary::loadFromFile(const std::string &fileName) noexcept {
           if (split.trim().getAsDouble(wavelength)) {
             throwError("invalid 'wavelength'");
           }
-          wavelengths.push_back(wavelength);
+          mWavelengths.push_back(wavelength);
         }
       } else if (key.equals_insensitive("spectra names")) {
-        curveNames.clear();
+        mCurveNames.clear();
         llvm::SmallVector<llvm::StringRef> splits{};
         value.split(splits, ',');
         for (auto &split : splits) {
-          curveNames.push_back(split.trim().str());
+          mCurveNames.push_back(split.trim().str());
         }
       }
     }
-    if (wavelengths.size() != size_t(samples)) {
+    if (mWavelengths.size() != size_t(samples)) {
       throwError("invalid 'samples', inconsistent with 'wavelength'");
     }
-    if (curveNames.size() != size_t(lines) && !curveNames.empty()) {
+    if (mCurveNames.size() != size_t(lines) && !mCurveNames.empty()) {
       throwError("invalid 'lines', inconsistent with 'spectra names'");
     }
     // data type
@@ -237,7 +237,7 @@ SpectrumLibrary::loadFromFile(const std::string &fileName) noexcept {
     if (!(dataType == 4 || dataType == 5)) {
       throwError("unsupported 'data type', expected 4 or 5");
     }
-    for (auto &wavelength : wavelengths) {
+    for (auto &wavelength : mWavelengths) {
       wavelength = to_nanometers(units, wavelength);
     }
     auto binFile{readOrThrow(fileName)};
@@ -246,9 +246,9 @@ SpectrumLibrary::loadFromFile(const std::string &fileName) noexcept {
     auto endianness{byteOrder == 0 ? llvm::endianness::little
                                    : llvm::endianness::big};
     auto numCurveValues{size_t(samples) * size_t(lines)};
-    numCurves = size_t(lines);
-    curveValues.clear();
-    curveValues.reserve(numCurveValues);
+    mNumCurves = size_t(lines);
+    mCurveValues.clear();
+    mCurveValues.reserve(numCurveValues);
     for (size_t i = 0; i < numCurveValues; i++) {
       switch (dataType) {
       case 4: {
@@ -259,7 +259,7 @@ SpectrumLibrary::loadFromFile(const std::string &fileName) noexcept {
         auto valueData{llvm::support::endian::read32(bin.data(), endianness)};
         bin = bin.drop_front(4);
         std::memcpy(&value, &valueData, 4);
-        curveValues.push_back(value);
+        mCurveValues.push_back(value);
         break;
       }
       case 5: {
@@ -270,7 +270,7 @@ SpectrumLibrary::loadFromFile(const std::string &fileName) noexcept {
         auto valueData{llvm::support::endian::read64(bin.data(), endianness)};
         bin = bin.drop_front(8);
         std::memcpy(&value, &valueData, 8);
-        curveValues.push_back(value);
+        mCurveValues.push_back(value);
         break;
       }
       default:
@@ -279,19 +279,19 @@ SpectrumLibrary::loadFromFile(const std::string &fileName) noexcept {
       }
     }
     // Sort wavelengths into increasing order
-    auto order{sort_order(wavelengths)};
-    apply_sort_order(order, wavelengths);
-    for (size_t i = 0; i < numCurves; i++)
+    auto order{sort_order(mWavelengths)};
+    apply_sort_order(order, mWavelengths);
+    for (size_t i = 0; i < mNumCurves; i++)
       apply_sort_order(order,
-                       Span<float>(curveValues.data() + wavelengths.size() * i,
-                                   wavelengths.size()));
+                       Span<float>(mCurveValues.data() + mWavelengths.size() * i,
+                                   mWavelengths.size()));
   });
 }
 
 SpectrumView
 SpectrumLibrary::getCurveByName(std::string_view name) const noexcept {
-  for (size_t i = 0; i < curveNames.size(); i++) {
-    if (llvm::StringRef(curveNames[i])
+  for (size_t i = 0; i < mCurveNames.size(); i++) {
+    if (llvm::StringRef(mCurveNames[i])
             .equals_insensitive(llvm::StringRef(name)))
       return getCurveByIndex(i);
   }

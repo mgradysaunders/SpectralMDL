@@ -126,7 +126,7 @@ public:
 
 private:
   /// The pointer to the `llvm::BumpPtrAllocator`.
-  void *object{};
+  void *mPtr{};
 };
 
 /// \}

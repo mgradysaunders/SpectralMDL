@@ -145,73 +145,73 @@ Image::image_realloc_t Image::image_realloc = &std::realloc;
 Image::image_free_t Image::image_free = &std::free;
 
 void Image::clear() {
-  format = UINT8;
-  numTexelsX = 0;
-  numTexelsY = 0;
-  numChannels = 1;
-  texelSize = 1;
-  texels.reset();
-  finishLoadFn = nullptr;
+  mFormat = UINT8;
+  mNumTexelsX = 0;
+  mNumTexelsY = 0;
+  mNumChannels = 1;
+  mTexelSize = 1;
+  mTexels.reset();
+  mFinishLoad = nullptr;
 }
 
 std::optional<Error> Image::startLoad(const std::string &fileName) noexcept {
   clear();
   auto error{catchAndReturnError([&] {
-    if (stbi_info(fileName.c_str(), &numTexelsX, &numTexelsY, &numChannels)) {
+    if (stbi_info(fileName.c_str(), &mNumTexelsX, &mNumTexelsY, &mNumChannels)) {
       // If the number of channels is 3, i.e., RGB, round it up to 4
       // so all of our alignment assumptions work.
-      if (numChannels == 3)
-        numChannels = 4;
+      if (mNumChannels == 3)
+        mNumChannels = 4;
       // Determine whether we should load 32-bit float, 16-bit unsigned int, or
       // 8-bit unsigned int.
       if (stbi_is_hdr(fileName.c_str())) {
-        format = FLOAT32;
-        texelSize = 4 * numChannels;
+        mFormat = FLOAT32;
+        mTexelSize = 4 * mNumChannels;
       } else if (stbi_is_16_bit(fileName.c_str())) {
-        format = UINT16;
-        texelSize = 2 * numChannels;
+        mFormat = UINT16;
+        mTexelSize = 2 * mNumChannels;
       } else {
-        format = UINT8;
-        texelSize = 1 * numChannels;
+        mFormat = UINT8;
+        mTexelSize = 1 * mNumChannels;
       }
       // Pre-allocate the texels.
-      texels.reset(new std::byte[size_t(numTexelsX) * size_t(numTexelsY) *
-                                 size_t(texelSize)]);
+      mTexels.reset(new std::byte[size_t(mNumTexelsX) * size_t(mNumTexelsY) *
+                                 size_t(mTexelSize)]);
       // Defer the actual load until later!
-      finishLoadFn = [this, fileName]() {
+      mFinishLoad = [this, fileName]() {
         stbi_set_flip_vertically_on_load(0);
         int nTexelsX{};
         int nTexelsY{};
         int nChannels{};
         void *ptr{};
-        switch (format) {
+        switch (mFormat) {
         default:
         case Format::UINT8:
           // Load 8-bit unsigned int.
           ptr = stbi_load(fileName.c_str(), &nTexelsX, &nTexelsY, &nChannels,
-                          numChannels);
+                          mNumChannels);
           break;
         case Format::UINT16:
           // Load 16-bit unsigned int.
           ptr = stbi_load_16(fileName.c_str(), &nTexelsX, &nTexelsY, &nChannels,
-                             numChannels);
+                             mNumChannels);
           break;
         case Format::FLOAT32:
           // Load 32-bit float.
           ptr = stbi_loadf(fileName.c_str(), &nTexelsX, &nTexelsY, &nChannels,
-                           numChannels);
+                           mNumChannels);
           break;
         }
         if (!ptr)
           throw std::runtime_error(std::string("stb image failure: ") +
                                    stbi_failure_reason());
         // Copy into the pre-allocated texel buffer, then free the pointer.
-        SMDL_SANITY_CHECK(texels != nullptr);
-        SMDL_SANITY_CHECK(numTexelsX == nTexelsX);
-        SMDL_SANITY_CHECK(numTexelsY == nTexelsY);
-        std::memcpy(texels.get(), ptr,
-                    size_t(numTexelsX) * size_t(numTexelsY) *
-                        size_t(texelSize));
+        SMDL_SANITY_CHECK(mTexels != nullptr);
+        SMDL_SANITY_CHECK(mNumTexelsX == nTexelsX);
+        SMDL_SANITY_CHECK(mNumTexelsY == nTexelsY);
+        std::memcpy(mTexels.get(), ptr,
+                    size_t(mNumTexelsX) * size_t(mNumTexelsY) *
+                        size_t(mTexelSize));
         stbi_image_free(ptr);
       };
     } else if (EXRVersion version{};
@@ -239,19 +239,19 @@ std::optional<Error> Image::startLoad(const std::string &fileName) noexcept {
         if (pixelType == TINYEXR_PIXELTYPE_UINT)
           throw std::runtime_error("uint EXR is not supported");
         else if (pixelType == TINYEXR_PIXELTYPE_HALF)
-          format = FLOAT16, texelSize = 2 * numChannels;
+          mFormat = FLOAT16, mTexelSize = 2 * mNumChannels;
         else if (pixelType == TINYEXR_PIXELTYPE_FLOAT)
-          format = FLOAT32, texelSize = 4 * numChannels;
+          mFormat = FLOAT32, mTexelSize = 4 * mNumChannels;
         else
           SMDL_SANITY_CHECK(false, "unknown EXR pixel type");
       }};
       if (header.num_channels == 1) {
         // 1-channel R
-        numChannels = 1;
+        mNumChannels = 1;
         setFormatFromPixelType(header.channels[0].pixel_type);
       } else {
         // 4-channel RGBA
-        numChannels = 4;
+        mNumChannels = 4;
         const EXRChannelInfo *channels[4] = {
             tinyexr::FindChannel(header, "R"), //
             tinyexr::FindChannel(header, "G"),
@@ -269,11 +269,11 @@ std::optional<Error> Image::startLoad(const std::string &fileName) noexcept {
             throw std::runtime_error("inconsistent EXR pixel types");
         setFormatFromPixelType(channels[0]->pixel_type);
       }
-      numTexelsX = nTexelsX;
-      numTexelsY = nTexelsY;
-      texels.reset(new std::byte[size_t(numTexelsX) * size_t(numTexelsY) *
-                                 size_t(texelSize)]);
-      finishLoadFn = [this, fileName, header]() {
+      mNumTexelsX = nTexelsX;
+      mNumTexelsY = nTexelsY;
+      mTexels.reset(new std::byte[size_t(mNumTexelsX) * size_t(mNumTexelsY) *
+                                 size_t(mTexelSize)]);
+      mFinishLoad = [this, fileName, header]() {
         SMDL_DEFER(
             [&header]() { FreeEXRHeader(const_cast<EXRHeader *>(&header)); });
         EXRImage image{};
@@ -286,17 +286,17 @@ std::optional<Error> Image::startLoad(const std::string &fileName) noexcept {
           throw std::runtime_error(message);
         }
         SMDL_DEFER([&image]() { FreeEXRImage(&image); });
-        SMDL_SANITY_CHECK(numTexelsX == image.width);
-        SMDL_SANITY_CHECK(numTexelsY == image.height);
-        if (numChannels == 1) {
+        SMDL_SANITY_CHECK(mNumTexelsX == image.width);
+        SMDL_SANITY_CHECK(mNumTexelsY == image.height);
+        if (mNumChannels == 1) {
           // 1-channel R
           tinyexr::ForEachPixel(
               header, image,
               [&](int iX, int iY, int iC, const void *pixel, size_t pixelSize) {
                 // iY = numTexelsY - iY - 1; // Flip vertically!
                 if (iC == 0)
-                  std::memcpy(texels.get() +
-                                  ptrdiff_t((iX + numTexelsX * iY) * texelSize),
+                  std::memcpy(mTexels.get() +
+                                  ptrdiff_t((iX + mNumTexelsX * iY) * mTexelSize),
                               pixel, pixelSize);
               });
         } else {
@@ -318,8 +318,8 @@ std::optional<Error> Image::startLoad(const std::string &fileName) noexcept {
               header, image,
               [&](int iX, int iY, int iC, const void *pixel, size_t pixelSize) {
                 // iY = numTexelsY - iY - 1; // Flip vertically!
-                auto texel{texels.get() +
-                           ptrdiff_t((iX + numTexelsX * iY) * texelSize)};
+                auto texel{mTexels.get() +
+                           ptrdiff_t((iX + mNumTexelsX * iY) * mTexelSize)};
                 if (iC == channelIndexR) {
                   std::memcpy(texel + 0 * pixelSize, pixel, pixelSize);
                 } else if (iC == channelIndexG) {
@@ -332,17 +332,17 @@ std::optional<Error> Image::startLoad(const std::string &fileName) noexcept {
               });
           // If the alpha channel is missing, fill with 1.
           if (!channels[3]) {
-            if (format == FLOAT16) {
+            if (mFormat == FLOAT16) {
               auto one{uint16_t(0x3C00)};
-              auto itr{texels.get() + 6};
-              for (int i = 0; i < numTexelsY * numTexelsY;
-                   i++, itr += texelSize)
+              auto itr{mTexels.get() + 6};
+              for (int i = 0; i < mNumTexelsY * mNumTexelsY;
+                   i++, itr += mTexelSize)
                 std::memcpy(itr, &one, 2);
-            } else if (format == FLOAT32) {
+            } else if (mFormat == FLOAT32) {
               auto one{float(1.0f)};
-              auto itr{texels.get() + 12};
-              for (int i = 0; i < numTexelsY * numTexelsY;
-                   i++, itr += texelSize)
+              auto itr{mTexels.get() + 12};
+              for (int i = 0; i < mNumTexelsY * mNumTexelsY;
+                   i++, itr += mTexelSize)
                 std::memcpy(itr, &one, 4);
             } else {
               SMDL_SANITY_CHECK(false,
@@ -362,32 +362,32 @@ std::optional<Error> Image::startLoad(const std::string &fileName) noexcept {
 }
 
 void Image::finishLoad() {
-  if (finishLoadFn) {
-    finishLoadFn();
-    finishLoadFn = nullptr;
+  if (mFinishLoad) {
+    mFinishLoad();
+    mFinishLoad = nullptr;
   }
 }
 
 void Image::flipVertically() noexcept {
-  for (int iY = 0; iY < numTexelsY / 2; iY++) {
-    std::swap_ranges(texels.get() + texelSize * numTexelsX * (iY + 0),
-                     texels.get() + texelSize * numTexelsX * (iY + 1),
-                     texels.get() +
-                         texelSize * numTexelsX * (numTexelsY - iY - 1));
+  for (int iY = 0; iY < mNumTexelsY / 2; iY++) {
+    std::swap_ranges(mTexels.get() + mTexelSize * mNumTexelsX * (iY + 0),
+                     mTexels.get() + mTexelSize * mNumTexelsX * (iY + 1),
+                     mTexels.get() +
+                         mTexelSize * mNumTexelsX * (mNumTexelsY - iY - 1));
   }
 }
 
 float4 Image::fetch(int x, int y) const noexcept {
-  SMDL_SANITY_CHECK(texels != nullptr);
-  SMDL_SANITY_CHECK(0 <= x && x < numTexelsX);
-  SMDL_SANITY_CHECK(0 <= y && y < numTexelsY);
+  SMDL_SANITY_CHECK(mTexels != nullptr);
+  SMDL_SANITY_CHECK(0 <= x && x < mNumTexelsX);
+  SMDL_SANITY_CHECK(0 <= y && y < mNumTexelsY);
   auto texel{float4{std::numeric_limits<float>::quiet_NaN(),
                     std::numeric_limits<float>::quiet_NaN(),
                     std::numeric_limits<float>::quiet_NaN(),
                     std::numeric_limits<float>::quiet_NaN()}};
-  auto texelPtr{&texels[texelSize * (x + numTexelsX * y)]};
-  for (int i = 0; i < numChannels; i++) {
-    switch (format) {
+  auto texelPtr{&mTexels[mTexelSize * (x + mNumTexelsX * y)]};
+  for (int i = 0; i < mNumChannels; i++) {
+    switch (mFormat) {
     case UINT8:
       texel[i] = *reinterpret_cast<const uint8_t *>(texelPtr) / 255.0f;
       texelPtr += 1;

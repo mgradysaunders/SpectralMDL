@@ -226,34 +226,34 @@ private:
   /// intermediate representations are dropped and the allocator is
   /// reset.
   ///
-  BumpPtrAllocator allocator{};
+  BumpPtrAllocator mAllocator{};
 
   /// The MD5 file hasher.
-  MD5FileHasher fileHasher{};
+  MD5FileHasher mFileHasher{};
 
   /// The images used by textures.
-  std::map<const MD5FileHash *, Image> images{};
+  std::map<const MD5FileHash *, Image> mImages{};
 
   /// The ptex textures.
-  std::map<const MD5FileHash *, Ptexture> ptextures{};
+  std::map<const MD5FileHash *, Ptexture> mPtextures{};
 
   /// The BSDF measurements.
-  std::map<const MD5FileHash *, BSDFMeasurement> bsdfMeasurements{};
+  std::map<const MD5FileHash *, BSDFMeasurement> mBSDFMeasurements{};
 
   /// The light profiles.
-  std::map<const MD5FileHash *, LightProfile> lightProfiles{};
+  std::map<const MD5FileHash *, LightProfile> mLightProfiles{};
 
   /// The spectrums.
-  std::map<const MD5FileHash *, Spectrum> spectrums{};
+  std::map<const MD5FileHash *, Spectrum> mSpectrums{};
 
   /// The spectrum libraries.
-  std::map<const MD5FileHash *, SpectrumLibrary> spectrumLibraries{};
+  std::map<const MD5FileHash *, SpectrumLibrary> mSpectrumLibraries{};
 
   /// The MDL module file names.
-  std::set<std::string> moduleFileNames{};
+  std::set<std::string> mModuleFileNames{};
 
   /// The MDL module directory names.
-  std::set<std::string> moduleDirNames{};
+  std::set<std::string> mModuleDirNames{};
 
   /// The MDL module directory search paths.
   ///
@@ -262,33 +262,33 @@ private:
   /// contain all of the same paths. This is necessary to preserve the
   /// order in which the paths were added.
   ///
-  std::vector<std::string> moduleDirSearchPaths{};
+  std::vector<std::string> mModuleDirSearchPaths{};
 
   /// The MDL modules.
-  std::vector<std::unique_ptr<Module>> modules{};
+  std::vector<std::unique_ptr<Module>> mModules{};
 
   /// The LLVM JIT module.
-  std::unique_ptr<llvm::orc::ThreadSafeModule> llvmJitModule;
+  std::unique_ptr<llvm::orc::ThreadSafeModule> mLLVMJitModule;
 
   /// The LLVM JIT.
-  std::unique_ptr<llvm::orc::LLJIT> llvmJit;
+  std::unique_ptr<llvm::orc::LLJIT> mLLVMJit;
 
   /// The JIT-compiled color-to-RGB conversion function.
   JIT::Function<void(const State &state, const float *cptr, float3 &rgb)>
-      jitColorToRgb{"jit_color_to_rgb"};
+      mJitColorToRGB{"jit_color_to_rgb"};
 
   /// The JIT-compiled RGB-to-color conversion function.
   JIT::Function<void(const State &state, const float3 &rgb, float *cptr)>
-      jitRgbToColor{"jit_rgb_to_color"};
+      mJitRGBToColor{"jit_rgb_to_color"};
 
   /// The JIT-compiled materials.
-  std::vector<JIT::Material> jitMaterials{};
+  std::vector<JIT::Material> mJitMaterials{};
 
   /// The JIT-compiled unit tests.
-  std::vector<JIT::UnitTest> jitUnitTests{};
+  std::vector<JIT::UnitTest> mJitUnitTests{};
 
   /// The JIT-compiled execs.
-  std::vector<JIT::Function<void()>> jitExecs{};
+  std::vector<JIT::Function<void()>> mJitExecs{};
 
   friend class Context;
 

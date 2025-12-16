@@ -90,16 +90,16 @@ public:
 
 public:
   /// Get the format.
-  [[nodiscard]] Format getFormat() const noexcept { return format; }
+  [[nodiscard]] Format getFormat() const noexcept { return mFormat; }
 
   /// Get the number of channels, must be 1, 2, or 4.
-  [[nodiscard]] int getNumChannels() const noexcept { return numChannels; }
+  [[nodiscard]] int getNumChannels() const noexcept { return mNumChannels; }
 
   /// Get the number of texels in X.
-  [[nodiscard]] int getNumTexelsX() const noexcept { return numTexelsX; }
+  [[nodiscard]] int getNumTexelsX() const noexcept { return mNumTexelsX; }
 
   /// Get the number of texels in Y.
-  [[nodiscard]] int getNumTexelsY() const noexcept { return numTexelsY; }
+  [[nodiscard]] int getNumTexelsY() const noexcept { return mNumTexelsY; }
 
   /// Get the texel size in bytes.
   ///
@@ -107,16 +107,16 @@ public:
   /// This is necessarily the number of channels times the
   /// implied size of the format.
   ///
-  [[nodiscard]] int getTexelSizeInBytes() const noexcept { return texelSize; }
+  [[nodiscard]] int getTexelSizeInBytes() const noexcept { return mTexelSize; }
 
   /// Get texels.
   [[nodiscard]] auto getTexels() noexcept -> std::byte * {
-    return texels.get();
+    return mTexels.get();
   }
 
   /// Get texels, const variant.
   [[nodiscard]] auto getTexels() const noexcept -> const std::byte * {
-    return texels.get();
+    return mTexels.get();
   }
 
   /// Fetch texel.
@@ -141,25 +141,25 @@ public:
 
 private:
   /// The format.
-  Format format{UINT8};
+  Format mFormat{UINT8};
 
   /// The number of channels, must be 1, 2, or 4 for proper alignment.
-  int numChannels{1};
+  int mNumChannels{1};
 
   /// The number of texels in X.
-  int numTexelsX{0};
+  int mNumTexelsX{0};
 
   /// The number of texels in Y.
-  int numTexelsY{0};
+  int mNumTexelsY{0};
 
   /// The texel size in bytes.
-  int texelSize{1};
+  int mTexelSize{1};
 
   /// The texel memory.
-  std::unique_ptr<std::byte[]> texels{};
+  std::unique_ptr<std::byte[]> mTexels{};
 
   /// The function to finish loading the image.
-  std::function<void()> finishLoadFn{};
+  std::function<void()> mFinishLoad{};
 };
 
 [[nodiscard]]

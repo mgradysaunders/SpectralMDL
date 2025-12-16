@@ -73,29 +73,29 @@ public:
 
 public:
   /// Is a builtin module?
-  [[nodiscard]] bool isBuiltin() const noexcept { return fileName.empty(); }
+  [[nodiscard]] bool isBuiltin() const noexcept { return mFileName.empty(); }
 
   /// Is extracted from an archive?
-  [[nodiscard]] bool is_extracted_from_archive() const noexcept {
-    return isExtractedFromArchive;
+  [[nodiscard]] bool isExtractedFromArchive() const noexcept {
+    return mIsExtractedFromArchive;
   }
 
   /// Get the file name. This is empty if the module is builtin.
   [[nodiscard]] std::string_view getFileName() const noexcept {
-    return fileName;
+    return mFileName;
   }
 
   /// Get the directory. This is empty if the module is builtin.
   [[nodiscard]] std::string getDirectory() const {
-    return parentPathOf(fileName);
+    return parentPathOf(mFileName);
   }
 
   /// Get the name.
-  [[nodiscard]] std::string_view getName() const noexcept { return name; }
+  [[nodiscard]] std::string_view getName() const noexcept { return mName; }
 
   /// Get the source code.
   [[nodiscard]] std::string_view getSourceCode() const noexcept {
-    return sourceCode;
+    return mSourceCode;
   }
 
   /// Parse the source code.
@@ -110,7 +110,7 @@ public:
   formatSourceCode(const FormatOptions &formatOptions) noexcept;
 
   /// Is parsed yet?
-  [[nodiscard]] bool isParsed() const noexcept { return root; }
+  [[nodiscard]] bool isParsed() const noexcept { return mRoot; }
 
   /// Is SMDL syntax? Only known after the module is parsed.
   ///
@@ -123,26 +123,26 @@ public:
 
 private:
   /// Is extracted from an archive?
-  bool isExtractedFromArchive{};
+  bool mIsExtractedFromArchive{};
 
   /// The file name if applicable. This is empty if the module is builtin.
-  std::string fileName{};
+  std::string mFileName{};
 
   /// The name of the module.
-  std::string name{};
+  std::string mName{};
 
   /// The source code.
-  std::string sourceCode{};
+  std::string mSourceCode{};
 
   /// The AST root node parsed from the source code.
-  BumpPtr<AST::File> root{};
+  BumpPtr<AST::File> mRoot{};
 
   /// The compile status.
-  CompileStatus compileStatus{COMPILE_STATUS_NOT_STARTED};
+  CompileStatus mCompileStatus{COMPILE_STATUS_NOT_STARTED};
 
   /// The last crumb. This is the starting point to search for exported
   /// declarations.
-  Crumb *lastCrumb{};
+  Crumb *mLastCrumb{};
 
   friend class Compiler;
 

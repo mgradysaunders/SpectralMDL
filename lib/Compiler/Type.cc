@@ -946,7 +946,7 @@ void FunctionType::initialize(Emitter &emitter) {
   }
   // If this is a function with no parameters that returns `material`,
   // it is a material definition!
-  if (returnType == context.materialType &&
+  if (returnType == context.mMaterialType &&
       (params.empty() || params.allDefaultInitializers())) {
     if (decl.hasAttribute("pure"))
       decl.srcLoc.throwError("material ", Quoted(declName),
@@ -993,7 +993,7 @@ Value FunctionType::invoke(Emitter &emitter, const ArgumentList &args,
     return result;
   }
   auto resolved{emitter.resolveArguments(func->params, args, srcLoc)};
-  if (auto impliedVisitArgs{resolved.GetImpliedVisitArguments()})
+  if (auto impliedVisitArgs{resolved.getImpliedVisitArguments()})
     return emitter.emitCall(emitter.context.getComptimeMetaType(this),
                             *impliedVisitArgs, srcLoc);
   if (func->isMacro()) {
@@ -1017,7 +1017,7 @@ Value FunctionType::invoke(Emitter &emitter, const ArgumentList &args,
     if (!func->isPure() && !emitter.state)
       srcLoc.throwError("cannot call ", Quoted(func->declName),
                         " from '@(pure)' context");
-    auto &instance{func->instantiate(emitter, resolved.GetValueTypes())};
+    auto &instance{func->instantiate(emitter, resolved.getValueTypes())};
     auto llvmArgs{llvm::SmallVector<llvm::Value *>{}};
     if (!func->isPure())
       llvmArgs.push_back(emitter.state);
@@ -1149,7 +1149,7 @@ void FunctionType::initializeJitMaterialFunctions(Emitter &emitter) {
   using namespace std::literals::string_view_literals;
   SMDL_LOG_DEBUG(std::string(decl.srcLoc), " New material ", Quoted(decl.name));
   auto &context{emitter.context};
-  auto &jitMaterial{context.compiler.jitMaterials.emplace_back()};
+  auto &jitMaterial{context.compiler.mJitMaterials.emplace_back()};
   jitMaterial.moduleName = std::string(decl.srcLoc.getModuleName());
   jitMaterial.moduleFileName = std::string(decl.srcLoc.getModuleFileName());
   jitMaterial.lineNo = decl.srcLoc.lineNo;
@@ -1172,11 +1172,11 @@ void FunctionType::initializeJitMaterialFunctions(Emitter &emitter) {
   }};
   {
     // Generate the evaluate function:
-    // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
     // @(visible) void "material_name.evaluate"(&auto out) {
-    //   *out = _material_instance(#bump_allocate(material_name()));
+    //   *out = _material_instance(#bump(material_name()));
     // }
-    // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
     auto funcReturnType{static_cast<Type *>(context.getVoidType())};
     auto func{emitter.createFunction(
         concat(declName, ".evaluate"), /*isPure=*/false, funcReturnType,
@@ -1184,7 +1184,7 @@ void FunctionType::initializeJitMaterialFunctions(Emitter &emitter) {
         [&] {
           auto materialInstance{emitter.emitCall(
               context.getKeyword("_material_instance"),
-              emitter.emitIntrinsic("bump_allocate",
+              emitter.emitIntrinsic("bump",
                                     invoke(emitter, {}, decl.srcLoc),
                                     decl.srcLoc),
               decl.srcLoc)};
@@ -1223,7 +1223,7 @@ void FunctionType::initializeJitMaterialFunctions(Emitter &emitter) {
          constParameter(floatPtrType, "f")},
         decl.srcLoc, [&] {
           auto dfFunc{Crumb::find(context, "_scatter_evaluate"sv, nullptr,
-                                  dfModule->lastCrumb)};
+                                  dfModule->mLastCrumb)};
           SMDL_SANITY_CHECK(dfFunc);
           emitter.emitReturn(
               emitter.emitCall(
@@ -1270,7 +1270,7 @@ void FunctionType::initializeJitMaterialFunctions(Emitter &emitter) {
          constParameter(intPtrType, "is_delta")},
         decl.srcLoc, [&] {
           auto dfFunc{Crumb::find(context, "_scatter_sample"sv, nullptr,
-                                  dfModule->lastCrumb)};
+                                  dfModule->mLastCrumb)};
           SMDL_SANITY_CHECK(dfFunc);
           emitter.emitReturn(
               emitter.emitCall(
@@ -1354,7 +1354,7 @@ Value MetaType::accessField(Emitter &emitter, Value value,
     // Make exported declarations available
     auto module_{value.getComptimeMetaModule(emitter.context, srcLoc)};
     if (auto crumb{Crumb::find(emitter.context, name, emitter.getLLVMFunction(),
-                               module_->lastCrumb, nullptr,
+                               module_->mLastCrumb, nullptr,
                                /*ignoreIfNotExported=*/true)})
       return crumb->value;
   } else if (value.isComptimeMetaNamespace(emitter.context)) {
@@ -1690,7 +1690,7 @@ Value StructType::invoke(Emitter &emitter, const ArgumentList &args,
     auto resolved{emitter.resolveArguments(params, args, srcLoc)};
     auto resultType{this};
     if (resultType->isAbstract()) {
-      resultType = instantiate(emitter.context, resolved.GetValueTypes());
+      resultType = instantiate(emitter.context, resolved.getValueTypes());
       resultType->isDefaultInstance = args.empty();
       SMDL_SANITY_CHECK(!resultType->isAbstract());
     }

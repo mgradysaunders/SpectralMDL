@@ -211,9 +211,9 @@ void Emitter::declareImport(Span<const std::string_view> importPath, bool isAbs,
     declareCrumb(importPath, &decl,
                  context.getComptimeMetaModule(importedModule));
   } else {
-    auto importedCrumb{Crumb::find(context, importPath.back(),
-                                   getLLVMFunction(), importedModule->lastCrumb,
-                                   nullptr, /*ignoreIfNotExported=*/true)};
+    auto importedCrumb{Crumb::find(
+        context, importPath.back(), getLLVMFunction(),
+        importedModule->mLastCrumb, nullptr, /*ignoreIfNotExported=*/true)};
     if (!importedCrumb)
       decl.srcLoc.throwError("cannot resolve import identifier ",
                              Quoted(join(importPath, "::")));
@@ -311,7 +311,7 @@ Value Emitter::emit(AST::Exec &decl) {
       ".exec", /*isPure=*/false, returnType, ParameterList(), decl.srcLoc,
       [&] { emit(decl.stmt); })};
   llvmFunc->setLinkage(llvm::Function::ExternalLinkage);
-  context.compiler.jitExecs.emplace_back(llvmFunc->getName().str());
+  context.compiler.mJitExecs.emplace_back(llvmFunc->getName().str());
   return Value();
 }
 
@@ -322,7 +322,7 @@ Value Emitter::emit(AST::UnitTest &decl) {
         ".unit_test", /*isPure=*/false, returnType, ParameterList(),
         decl.srcLoc, [&] { emit(decl.stmt); })};
     llvmFunc->setLinkage(llvm::Function::ExternalLinkage);
-    auto &jitTest{context.compiler.jitUnitTests.emplace_back()};
+    auto &jitTest{context.compiler.mJitUnitTests.emplace_back()};
     jitTest.moduleName = std::string(decl.srcLoc.getModuleName());
     jitTest.moduleFileName = std::string(decl.srcLoc.getModuleFileName());
     jitTest.lineNo = decl.srcLoc.lineNo;
@@ -1258,7 +1258,20 @@ Value Emitter::emitOp(AST::BinaryOp op, Value lhs, Value rhs,
 
 extern "C" {
 
-SMDL_EXPORT void *smdl_bump_allocate(void *state, int size, int align) {
+SMDL_EXPORT void *smdlAllocate(int size, int align) {
+  SMDL_SANITY_CHECK(align > 0);
+  if (!(size > 0))
+    return nullptr;
+  auto ptr{std::aligned_alloc(align, size)};
+  if (!ptr)
+    throw std::bad_alloc();
+  std::memset(ptr, 0x0, size);
+  return ptr;
+}
+
+SMDL_EXPORT void smdlFree(void *ptr) { std::free(ptr); }
+
+SMDL_EXPORT void *smdlBumpAllocate(void *state, int size, int align) {
   SMDL_SANITY_CHECK(state != nullptr && align > 0);
   if (size <= 0)
     return nullptr;
@@ -1268,27 +1281,27 @@ SMDL_EXPORT void *smdl_bump_allocate(void *state, int size, int align) {
   return allocator->allocate(size, align);
 }
 
-SMDL_EXPORT void *smdl_ofile_open(const char *fname) {
-  std::error_code ec{};
-  auto result{new llvm::raw_fd_ostream(std::string_view(fname), ec)};
-  if (ec) {
-    SMDL_LOG_WARN("cannot open ", Quoted(fname), ": ", Quoted(ec.message()));
+SMDL_EXPORT void *smdlOFileOpen(const char *fname) {
+  auto result{std::fopen(fname, "wb")};
+  if (!result) {
+    SMDL_LOG_WARN("cannot open ", Quoted(fname), ": ",
+                  Quoted(std::strerror(errno)));
     delete result;
     return nullptr;
   }
   return result;
 }
 
-SMDL_EXPORT void smdl_ofile_close(void *ofile) {
+SMDL_EXPORT void smdlOFileClose(void *ofile) {
   if (ofile)
-    delete static_cast<llvm::raw_fd_ostream *>(ofile);
+    std::fclose(static_cast<std::FILE *>(ofile));
 }
 
 // TODO This is a specific solution to a specific problem of calculating
 // tabulated albedos conveniently and efficiently. There might be a more
 // general way of addressing this in the future.
-SMDL_EXPORT void smdl_tabulate_albedo(const char *name, int num_cos_theta,
-                                      int num_roughness, const void *func) {
+SMDL_EXPORT void smdlTabulateAlbedo(const char *name, int num_cos_theta,
+                                    int num_roughness, const void *func) {
   SMDL_SANITY_CHECK(num_cos_theta > 1);
   SMDL_SANITY_CHECK(num_roughness > 1);
   SMDL_SANITY_CHECK(func);
@@ -1296,9 +1309,9 @@ SMDL_EXPORT void smdl_tabulate_albedo(const char *name, int num_cos_theta,
   auto numCalculationsDone{std::atomic_int(0)};
   auto directionalAlbedo{std::vector<float>(size_t(numCalculationsTodo), 0.0f)};
   llvm::parallelFor(0, num_cos_theta, [&](size_t i) {
-    float cos_theta{i / float(num_cos_theta - 1)};
+    float cos_theta{float(i) / float(num_cos_theta - 1)};
     for (int j = 0; j < num_roughness; j++) {
-      float roughness{j / float(num_roughness - 1)};
+      float roughness{float(j) / float(num_roughness - 1)};
       directionalAlbedo[int(i) * num_roughness + j] =
           reinterpret_cast<float (*)(float, float)>(const_cast<void *>(func))(
               cos_theta, roughness);
@@ -1330,7 +1343,7 @@ SMDL_EXPORT void smdl_tabulate_albedo(const char *name, int num_cos_theta,
       double numer = 0.0;
       double denom = 0.0;
       for (int i = 0; i < num_cos_theta; i++) {
-        float cos_theta{i / float(num_cos_theta - 1)};
+        float cos_theta{float(i) / float(num_cos_theta - 1)};
         numer += 2 * cos_theta * directionalAlbedo[i * num_roughness + j];
         denom += 1;
       }
@@ -1400,6 +1413,24 @@ Value Emitter::emitIntrinsic(std::string_view name, const ArgumentList &args,
   default:
     break;
   case 'a': {
+    if (name == "allocate") {
+      auto callee{context.getBuiltinCallee("smdlAllocate", &smdlAllocate)};
+      if (auto func{llvm::dyn_cast<llvm::Function>(callee.getCallee())})
+        func->setReturnDoesNotAlias();
+      auto arg0{args.size() >= 1 ? args[0].value : context.getComptimeInt(0)};
+      auto arg1{args.size() == 2 ? args[1].value : context.getComptimeInt(1)};
+      if (!(args.size() == 1 || args.size() == 2) ||
+          !arg0.type->isArithmeticScalarInt() ||
+          !arg1.type->isArithmeticScalarInt())
+        srcLoc.throwError("intrinsic ", Quoted(name),
+                          " expects 1 or 2 int arguments");
+      auto intType{context.getIntType()};
+      arg0 = invoke(intType, toRValue(arg0), srcLoc);
+      arg1 = invoke(intType, toRValue(arg1), srcLoc);
+      return RValue(
+          context.getVoidPointerType(),
+          builder.CreateCall(callee, {arg0.llvmValue, arg1.llvmValue}));
+    }
     if (name == "alignof") {
       return context.getComptimeInt(int(context.getAlignOf(expectOneType())));
     }
@@ -1484,19 +1515,18 @@ Value Emitter::emitIntrinsic(std::string_view name, const ArgumentList &args,
         srcLoc.throwError(
             "intrinsic 'albedo_lut' passed invalid name ", Quoted(lutName),
             " that does not identify any known look-up table at compile time");
+      auto floatPtrType{context.getPointerType(context.getFloatType())};
       auto args{ArgumentList{}};
-      args.push_back(Argument{"num_cos_theta",
-                              context.getComptimeInt(lut->num_cos_theta)});
-      args.push_back(Argument{"num_roughness",
-                              context.getComptimeInt(lut->num_roughness)});
-      args.push_back(Argument{
+      args.emplace_back("num_cos_theta",
+                        context.getComptimeInt(lut->num_cos_theta));
+      args.emplace_back("num_roughness",
+                        context.getComptimeInt(lut->num_roughness));
+      args.emplace_back(
           "directional_albedo",
-          context.getComptimePtr(context.getPointerType(context.getFloatType()),
-                                 lut->directional_albedo)});
-      args.push_back(Argument{
+          context.getComptimePtr(floatPtrType, lut->directional_albedo));
+      args.emplace_back(
           "average_albedo",
-          context.getComptimePtr(context.getPointerType(context.getFloatType()),
-                                 lut->average_albedo)});
+          context.getComptimePtr(floatPtrType, lut->average_albedo));
       return invoke(lutType, args, srcLoc);
     }
     break;
@@ -1515,9 +1545,28 @@ Value Emitter::emitIntrinsic(std::string_view name, const ArgumentList &args,
       return RValue(context.getVoidType(), nullptr);
     }
     if (name == "bump_allocate") {
+      auto callee{
+          context.getBuiltinCallee("smdlBumpAllocate", &smdlBumpAllocate)};
+      if (auto func{llvm::dyn_cast<llvm::Function>(callee.getCallee())})
+        func->setReturnDoesNotAlias();
+      auto arg0{args.size() >= 1 ? args[0].value : context.getComptimeInt(0)};
+      auto arg1{args.size() == 2 ? args[1].value : context.getComptimeInt(1)};
+      if (!(args.size() == 1 || args.size() == 2) ||
+          !arg0.type->isArithmeticScalarInt() ||
+          !arg1.type->isArithmeticScalarInt())
+        srcLoc.throwError("intrinsic ", Quoted(name),
+                          " expects 1 or 2 int arguments");
+      auto intType{context.getIntType()};
+      arg0 = invoke(intType, toRValue(arg0), srcLoc);
+      arg1 = invoke(intType, toRValue(arg1), srcLoc);
+      return RValue(
+          context.getVoidPointerType(),
+          builder.CreateCall(callee, {arg0.llvmValue, arg1.llvmValue}));
+    }
+    if (name == "bump") {
       auto value{toRValue(expectOne())};
       auto callee{
-          context.getBuiltinCallee("smdl_bump_allocate", &smdl_bump_allocate)};
+          context.getBuiltinCallee("smdlBumpAllocate", &smdlBumpAllocate)};
       if (auto func{llvm::dyn_cast<llvm::Function>(callee.getCallee())})
         func->setReturnDoesNotAlias();
       auto callInst{builder.CreateCall(
@@ -1548,6 +1597,18 @@ Value Emitter::emitIntrinsic(std::string_view name, const ArgumentList &args,
       auto value{toRValue(expectOneIntOrIntVector())};
       return RValue(value.type, builder.CreateUnaryIntrinsic(
                                     llvm::Intrinsic::ctpop, value));
+    }
+    break;
+  }
+  case 'f': {
+    if (name == "free") {
+      auto value{expectOne()};
+      if (!value.type->isPointer())
+        srcLoc.throwError("intrinsic ", Quoted(name),
+                          " expects 1 pointer argument");
+      auto callee{context.getBuiltinCallee("smdlFree", &smdlFree)};
+      return RValue(context.getVoidType(),
+                    builder.CreateCall(callee, {toRValue(value).llvmValue}));
     }
     break;
   }
@@ -1819,8 +1880,8 @@ Value Emitter::emitIntrinsic(std::string_view name, const ArgumentList &args,
         auto floatPtrType{context.getPointerType(context.getFloatType())};
         return invoke(
             spectralCurveType,
-            {Argument{"count",
-                      context.getComptimeInt(spectrumView.wavelengths.size())},
+            {Argument{"count", context.getComptimeInt(
+                                   int(spectrumView.wavelengths.size()))},
              Argument{"wavelengths",
                       context.getComptimePtr(floatPtrType,
                                              spectrumView.wavelengths.data())},
@@ -1833,20 +1894,35 @@ Value Emitter::emitIntrinsic(std::string_view name, const ArgumentList &args,
     break;
   }
   case 'm': {
+    if (name == "memset") {
+      if (!(args.size() == 3 &&                            //
+            args[0].value.type->isPointer() &&             //
+            args[1].value.type->isArithmeticScalarInt() && //
+            args[2].value.type->isArithmeticScalarInt()))
+        srcLoc.throwError("intrinsic 'memset' expects 1 pointer argument "
+                          "and 2 int arguments");
+      auto ptr{toRValue(args[0].value)};
+      auto val{
+          llvmEmitCast(builder, toRValue(args[1].value), builder.getInt8Ty())};
+      auto count{
+          llvmEmitCast(builder, toRValue(args[2].value), builder.getInt64Ty())};
+      return RValue(context.getVoidType(),
+                    builder.CreateMemSet(ptr, val, count, std::nullopt));
+    }
     if (name == "memcpy") {
-      if (!(args.size() == 3 &&                           //
-            args[0].value.type->isPointer() &&            //
-            args[1].value.type->isPointer() &&            //
-            args[2].value.type->isArithmeticIntegral() && //
-            args[2].value.type->isArithmeticScalar()))
+      if (!(args.size() == 3 &&                //
+            args[0].value.type->isPointer() && //
+            args[1].value.type->isPointer() && //
+            args[2].value.type->isArithmeticScalarInt()))
         srcLoc.throwError("intrinsic 'memcpy' expects 2 pointer arguments "
                           "and 1 int argument");
       auto dst{toRValue(args[0].value)};
       auto src{toRValue(args[1].value)};
-      builder.CreateMemCpy(dst, std::nullopt, src, std::nullopt,
-                           llvmEmitCast(builder, toRValue(args[2].value),
-                                        llvm::Type::getInt64Ty(context)));
-      return Value();
+      auto count{
+          llvmEmitCast(builder, toRValue(args[2].value), builder.getInt64Ty())};
+      return RValue(
+          context.getVoidType(),
+          builder.CreateMemCpy(dst, std::nullopt, src, std::nullopt, count));
     }
     if (name == "max" || name == "min") {
       if (args.size() != 2 || !args.isAllTrue([](auto &arg) {
@@ -1925,14 +2001,14 @@ Value Emitter::emitIntrinsic(std::string_view name, const ArgumentList &args,
     if (name == "ofile_open") {
       auto value{toRValue(expectOne())};
       return RValue(context.getVoidPointerType(),
-                    builder.CreateCall(context.getBuiltinCallee(
-                                           "smdl_ofile_open", &smdl_ofile_open),
+                    builder.CreateCall(context.getBuiltinCallee("smdlOFileOpen",
+                                                                &smdlOFileOpen),
                                        {value.llvmValue}));
     }
     if (name == "ofile_close") {
       auto value{toRValue(expectOne())};
       builder.CreateCall(
-          context.getBuiltinCallee("smdl_ofile_close", &smdl_ofile_close),
+          context.getBuiltinCallee("smdlOFileClose", &smdlOFileClose),
           {value.llvmValue});
       return Value();
     }
@@ -1940,11 +2016,11 @@ Value Emitter::emitIntrinsic(std::string_view name, const ArgumentList &args,
       if (args.size() < 2)
         srcLoc.throwError("intrinsic 'ofile_print' expects 1 file pointer "
                           "argument and 1 or more printable arguments");
-      auto os{toRValue(args[0].value)};
+      auto file{toRValue(args[0].value)};
       for (size_t i = 1; i < args.size(); i++)
-        emitPrint(os, args[i].value, srcLoc);
+        emitPrint(file, args[i].value, srcLoc);
       if (name == "ofile_println")
-        emitPrint(os, context.getComptimeString("\n"), srcLoc);
+        emitPrint(file, context.getComptimeString("\n"), srcLoc);
       return {};
     }
     break;
@@ -1981,8 +2057,7 @@ Value Emitter::emitIntrinsic(std::string_view name, const ArgumentList &args,
                                           invoke(resultType, value1, srcLoc)));
     }
     if (name == "print" || name == "println") {
-      auto os{
-          context.getComptimePtr(context.getVoidPointerType(), &llvm::errs())};
+      auto os{context.getComptimePtr(context.getVoidPointerType(), stderr)};
       for (auto &arg : args)
         emitPrint(os, arg.value, srcLoc);
       if (name == "println")
@@ -2106,8 +2181,8 @@ Value Emitter::emitIntrinsic(std::string_view name, const ArgumentList &args,
       }
       auto &funcInst{funcType->instantiate(
           *this, {context.getFloatType(), context.getFloatType()})};
-      auto callee{context.getBuiltinCallee("smdl_tabulate_albedo",
-                                           &smdl_tabulate_albedo)};
+      auto callee{
+          context.getBuiltinCallee("smdlTabulateAlbedo", &smdlTabulateAlbedo)};
       auto callInst{
           builder.CreateCall(callee, {toRValue(args[0].value).llvmValue, //
                                       toRValue(args[1].value).llvmValue, //
@@ -2373,7 +2448,7 @@ Value Emitter::emitVisit(Value value, const SourceLocation &srcLoc,
 
 extern "C" {
 
-SMDL_EXPORT void smdl_panic(const char *message) {
+SMDL_EXPORT void smdlPanic(const char *message) {
   throw Error(std::string(message));
 }
 
@@ -2383,185 +2458,183 @@ void Emitter::emitPanic(Value message, const SourceLocation &srcLoc) {
   SMDL_SANITY_CHECK(message);
   SMDL_SANITY_CHECK(message.type == context.getStringType());
   message = toRValue(message);
-  auto callInst{
-      builder.CreateCall(context.getBuiltinCallee("smdl_panic", &smdl_panic),
-                         {message.llvmValue})};
+  auto callInst{builder.CreateCall(
+      context.getBuiltinCallee("smdlPanic", &smdlPanic), {message.llvmValue})};
   callInst->setIsNoInline();
   callInst->setDoesNotReturn();
 }
 
 extern "C" {
 
-SMDL_EXPORT void smdl_print_string(void *ptr, const char *value) {
-  *static_cast<llvm::raw_ostream *>(ptr) << std::string_view(value);
+SMDL_EXPORT void smdlPrintString(void *ptr, const char *value) {
+  std::fputs(value, static_cast<std::FILE *>(ptr));
 }
 
-SMDL_EXPORT void smdl_print_quoted_string(void *ptr, const char *value) {
-  auto &os{*static_cast<llvm::raw_ostream *>(ptr)};
-  os << '"';
+SMDL_EXPORT void smdlPrintQuotedString(void *ptr, const char *value) {
+  auto *file{static_cast<std::FILE *>(ptr)};
+  std::fputc('"', file);
   for (char ch : std::string_view(value)) {
     switch (ch) {
     case '\\':
-      os << "\\";
+      std::fputs("\\", file);
       break;
     case '\a':
-      os << "\\a";
+      std::fputs("\\a", file);
       break;
     case '\b':
-      os << "\\b";
+      std::fputs("\\b", file);
       break;
     case '\f':
-      os << "\\f";
+      std::fputs("\\f", file);
       break;
     case '\n':
-      os << "\\n";
+      std::fputs("\\n", file);
       break;
     case '\r':
-      os << "\\r";
+      std::fputs("\\r", file);
       break;
     case '\t':
-      os << "\\t";
+      std::fputs("\\t", file);
       break;
     case '\v':
-      os << "\\v";
+      std::fputs("\\v", file);
       break;
     case '"':
-      os << "\\\"";
+      std::fputs("\\\"", file);
       break;
     default: {
       if (std::isgraph(static_cast<uint8_t>(ch))) {
-        os << ch;
+        std::fputc(ch, file);
       } else {
-        os << "\\x";
-        os << "0123456789abcdef"[static_cast<uint8_t>(ch) / 16];
-        os << "0123456789abcdef"[static_cast<uint8_t>(ch) % 16];
+        std::fputs("\\x", file);
+        std::fputc("0123456789abcdef"[static_cast<uint8_t>(ch) / 16], file);
+        std::fputc("0123456789abcdef"[static_cast<uint8_t>(ch) % 16], file);
       }
       break;
     }
     }
   }
-  os << '"';
+  std::fputc('"', file);
 }
 
-SMDL_EXPORT void smdl_print_bool(void *ptr, int value) {
-  *static_cast<llvm::raw_ostream *>(ptr) << (value != 0 ? "true" : "false");
+SMDL_EXPORT void smdlPrintBool(void *ptr, int value) {
+  std::fputs(value != 0 ? "true" : "false", static_cast<std::FILE *>(ptr));
 }
 
-SMDL_EXPORT void smdl_print_int(void *ptr, int64_t value) {
-  *static_cast<llvm::raw_ostream *>(ptr) << value;
+SMDL_EXPORT void smdlPrintInt(void *ptr, int64_t value) {
+  std::fprintf(static_cast<std::FILE *>(ptr), "%lld",
+               static_cast<long long>(value));
 }
 
-SMDL_EXPORT void smdl_print_float(void *ptr, float value) {
-  *static_cast<llvm::raw_ostream *>(ptr) << value;
+SMDL_EXPORT void smdlPrintFloat(void *ptr, float value) {
+  std::fprintf(static_cast<std::FILE *>(ptr), "%f", value);
 }
 
-SMDL_EXPORT void smdl_print_double(void *ptr, double value) {
-  *static_cast<llvm::raw_ostream *>(ptr) << value;
+SMDL_EXPORT void smdlPrintDouble(void *ptr, double value) {
+  std::fprintf(static_cast<std::FILE *>(ptr), "%g", value);
 }
 
-SMDL_EXPORT void smdl_print_pointer(void *ptr, const void *value) {
-  *static_cast<llvm::raw_ostream *>(ptr) << value;
+SMDL_EXPORT void smdlPrintPointer(void *ptr, const void *value) {
+  std::fprintf(static_cast<std::FILE *>(ptr), "%p", value);
 }
 
 } // extern "C"
 
-void Emitter::emitPrint(Value os, Value value, const SourceLocation &srcLoc,
+void Emitter::emitPrint(Value file, Value value, const SourceLocation &srcLoc,
                         bool quoteStrings) {
-  SMDL_SANITY_CHECK(os.type->isPointer());
-  os = toRValue(os);
+  SMDL_SANITY_CHECK(file.type->isPointer());
+  file = toRValue(file);
   if (value.isComptimeMetaType(context)) {
-    emitPrint(os, value.getComptimeMetaType(context, srcLoc)->displayName,
+    emitPrint(file, value.getComptimeMetaType(context, srcLoc)->displayName,
               srcLoc);
   } else if (value.isVoid()) {
-    emitPrint(os, "none", srcLoc);
+    emitPrint(file, "none", srcLoc);
   } else if (value.type->isPointer()) {
     builder.CreateCall(
-        context.getBuiltinCallee("smdl_print_pointer", &smdl_print_pointer),
-        {os.llvmValue, toRValue(value).llvmValue});
+        context.getBuiltinCallee("smdlPrintPointer", &smdlPrintPointer),
+        {file.llvmValue, toRValue(value).llvmValue});
   } else if (value.type->isString()) {
-    auto call{quoteStrings
-                  ? context.getBuiltinCallee("smdl_print_quoted_string",
-                                             &smdl_print_quoted_string)
-                  : context.getBuiltinCallee("smdl_print_string",
-                                             &smdl_print_string)};
-    builder.CreateCall(call, {os.llvmValue, toRValue(value).llvmValue});
+    auto call{quoteStrings ? context.getBuiltinCallee("smdlPrintQuotedString",
+                                                      &smdlPrintQuotedString)
+                           : context.getBuiltinCallee("smdlPrintString",
+                                                      &smdlPrintString)};
+    builder.CreateCall(call, {file.llvmValue, toRValue(value).llvmValue});
   } else if (value.type->isEnum()) {
-    emitPrint(os, invoke(context.getStringType(), value, srcLoc), srcLoc);
+    emitPrint(file, invoke(context.getStringType(), value, srcLoc), srcLoc);
   } else if (auto arithType{llvm::dyn_cast<ArithmeticType>(value.type)}) {
     if (arithType->extent.isScalar()) {
       auto type{static_cast<Type *>(nullptr)};
       auto call{llvm::FunctionCallee()};
       if (arithType->scalar.isBoolean()) {
         type = context.getIntType();
-        call = context.getBuiltinCallee("smdl_print_bool", &smdl_print_bool);
+        call = context.getBuiltinCallee("smdlPrintBool", &smdlPrintBool);
       } else if (arithType->scalar.isIntegral()) {
         type = context.getArithmeticType(Scalar::getInt(64), Extent(1));
-        call = context.getBuiltinCallee("smdl_print_int", &smdl_print_int);
+        call = context.getBuiltinCallee("smdlPrintInt", &smdlPrintInt);
       } else {
         type = arithType->scalar.numBits < 64
                    ? context.getArithmeticType(Scalar::getFP(32), Extent(1))
                    : context.getArithmeticType(Scalar::getFP(64), Extent(1));
-        call = arithType->scalar.numBits < 64
-                   ? context.getBuiltinCallee("smdl_print_float",
-                                              &smdl_print_float)
-                   : context.getBuiltinCallee("smdl_print_double",
-                                              &smdl_print_double);
+        call =
+            arithType->scalar.numBits < 64
+                ? context.getBuiltinCallee("smdlPrintFloat", &smdlPrintFloat)
+                : context.getBuiltinCallee("smdlPrintDouble", &smdlPrintDouble);
       }
-      builder.CreateCall(call,
-                         {os.llvmValue, invoke(type, value, srcLoc).llvmValue});
+      builder.CreateCall(
+          call, {file.llvmValue, invoke(type, value, srcLoc).llvmValue});
     } else if (arithType->extent.isVector()) {
-      emitPrint(os, "<", srcLoc);
+      emitPrint(file, "<", srcLoc);
       for (uint32_t i = 0; i < arithType->extent.numRows; i++) {
-        emitPrint(os, accessIndex(value, i, srcLoc), srcLoc);
+        emitPrint(file, accessIndex(value, i, srcLoc), srcLoc);
         if (i + 1 < arithType->extent.numRows) {
-          emitPrint(os, ", ", srcLoc);
+          emitPrint(file, ", ", srcLoc);
         }
       }
-      emitPrint(os, ">", srcLoc);
+      emitPrint(file, ">", srcLoc);
     } else if (arithType->extent.isMatrix()) {
-      emitPrint(os, "[", srcLoc);
+      emitPrint(file, "[", srcLoc);
       for (uint32_t i = 0; i < arithType->extent.numCols; i++) {
-        emitPrint(os, accessIndex(value, i, srcLoc), srcLoc);
+        emitPrint(file, accessIndex(value, i, srcLoc), srcLoc);
         if (i + 1 < arithType->extent.numCols) {
-          emitPrint(os, ", ", srcLoc);
+          emitPrint(file, ", ", srcLoc);
         }
       }
-      emitPrint(os, "]", srcLoc);
+      emitPrint(file, "]", srcLoc);
     }
   } else if (auto arrayType{llvm::dyn_cast<ArrayType>(value.type)}) {
-    emitPrint(os, "[", srcLoc);
+    emitPrint(file, "[", srcLoc);
     for (uint32_t i = 0; i < arrayType->size; i++) {
-      emitPrint(os, accessIndex(value, i, srcLoc), srcLoc,
+      emitPrint(file, accessIndex(value, i, srcLoc), srcLoc,
                 /*quoteStrings=*/true);
       if (i + 1 < arrayType->size) {
-        emitPrint(os, ", ", srcLoc);
+        emitPrint(file, ", ", srcLoc);
       }
     }
-    emitPrint(os, "]", srcLoc);
+    emitPrint(file, "]", srcLoc);
   } else if (auto colorType{llvm::dyn_cast<ColorType>(value.type)}) {
-    emitPrint(os, "<", srcLoc);
+    emitPrint(file, "<", srcLoc);
     for (uint32_t i = 0; i < colorType->wavelengthBaseMax; i++) {
-      emitPrint(os, accessIndex(value, i, srcLoc), srcLoc);
+      emitPrint(file, accessIndex(value, i, srcLoc), srcLoc);
       if (i + 1 < colorType->wavelengthBaseMax) {
-        emitPrint(os, ", ", srcLoc);
+        emitPrint(file, ", ", srcLoc);
       }
     }
-    emitPrint(os, ">", srcLoc);
+    emitPrint(file, ">", srcLoc);
   } else if (auto structType{llvm::dyn_cast<StructType>(value.type)}) {
-    emitPrint(os, value.type->displayName + "(", srcLoc);
+    emitPrint(file, value.type->displayName + "(", srcLoc);
     for (uint32_t i = 0; i < structType->params.size(); i++) {
       auto paramName{std::string(structType->params[i].name)};
-      emitPrint(os, paramName + ": ", srcLoc);
-      emitPrint(os, accessField(value, paramName, srcLoc), srcLoc,
+      emitPrint(file, paramName + ": ", srcLoc);
+      emitPrint(file, accessField(value, paramName, srcLoc), srcLoc,
                 /*quoteStrings=*/true);
       if (i + 1 < structType->params.size()) {
-        emitPrint(os, ", ", srcLoc);
+        emitPrint(file, ", ", srcLoc);
       }
     }
-    emitPrint(os, ")", srcLoc);
+    emitPrint(file, ")", srcLoc);
   } else if (value.type->isUnion()) {
     emitVisit(value, srcLoc, [&](Value value) {
-      emitPrint(os, value, srcLoc, quoteStrings);
+      emitPrint(file, value, srcLoc, quoteStrings);
       return Value();
     });
   }
@@ -2584,7 +2657,7 @@ Value Emitter::resolveIdentifier(Span<const std::string_view> names,
       } else if (names[0] == "$scene_data") {
         return context.getComptimePtr(context.getVoidPointerType(),
                                       &context.compiler.sceneData);
-      } else if (names[0] == "i8") {
+      } else if (names[0] == "i8" || names[0] == "char") {
         return context.getComptimeMetaType(
             context.getArithmeticType(Scalar::getInt(8)));
       } else if (names[0] == "i16") {
@@ -2596,6 +2669,9 @@ Value Emitter::resolveIdentifier(Span<const std::string_view> names,
       } else if (names[0] == "i64") {
         return context.getComptimeMetaType(
             context.getArithmeticType(Scalar::getInt(64)));
+      } else if (names[0] == "size_t") {
+        return context.getComptimeMetaType(
+            context.getArithmeticType(Scalar::getInt(8 * sizeof(size_t))));
       } else if (names[0] == "void") {
         return context.getComptimeMetaType(context.getVoidType());
       } else if (names[0] == "none") {
@@ -2710,7 +2786,7 @@ Module *Emitter::resolveModule(Span<const std::string_view> importPath,
                                       resolvedImportPath.size() - 1)) {
       dirPath = joinPaths(dirPath, resolvedImportDirPath);
     }
-    for (auto &otherModule : context.compiler.modules) {
+    for (auto &otherModule : context.compiler.mModules) {
       if (otherModule.get() != thisModule && !otherModule->isBuiltin() &&
           otherModule->getName() == resolvedImportPath.back() &&
           isPathEquivalent(dirPath, otherModule->getDirectory())) {
@@ -2730,7 +2806,7 @@ Module *Emitter::resolveModule(Span<const std::string_view> importPath,
   }};
   auto searchCompilerDirPaths{[&]() -> Module * {
     if (!thisModule->isBuiltin())
-      for (const auto &dirPath : context.compiler.moduleDirSearchPaths)
+      for (const auto &dirPath : context.compiler.mModuleDirSearchPaths)
         if (auto module_{findModuleInDirectory(dirPath)})
           return module_;
     return nullptr;

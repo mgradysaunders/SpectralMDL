@@ -18,9 +18,9 @@ namespace smdl {
 class SMDL_EXPORT Parser final {
 public:
   explicit Parser(BumpPtrAllocator &allocator, Module &module_,
-                  bool isSmdl = false)
-      : allocator(allocator), module_(module_), isSmdl(isSmdl) {
-    srcLoc.module_ = &module_;
+                  bool isSMDL = false)
+      : mAllocator(allocator), mModule(module_), mIsSMDL(isSMDL) {
+    mSrcLoc.module_ = &module_;
   }
 
   /// Non-copyable and non-movable.
@@ -32,11 +32,11 @@ public:
 private:
   //--{ Basics
   [[nodiscard]] bool isEOF() const {
-    return srcLoc.i >= getSourceCode().size();
+    return mSrcLoc.i >= getSourceCode().size();
   }
 
   [[nodiscard]] std::string_view getSourceCode() const {
-    return module_.getSourceCode();
+    return mModule.getSourceCode();
   }
 
   [[nodiscard]] std::string_view
@@ -46,7 +46,7 @@ private:
   }
 
   [[nodiscard]] std::string_view getRemainingSourceCode() const {
-    return getSourceCode().substr(srcLoc.i);
+    return getSourceCode().substr(mSrcLoc.i);
   }
 
   [[nodiscard]] char peek() const;
@@ -82,18 +82,18 @@ private:
 
   SourceLocation checkpoint() {
     skip();
-    srcLocStack.push_back(srcLoc);
-    return srcLoc;
+    mSrcLocStack.push_back(mSrcLoc);
+    return mSrcLoc;
   }
 
   void accept() {
-    SMDL_SANITY_CHECK(srcLocStack.size() >= 1);
-    srcLocStack.pop_back();
+    SMDL_SANITY_CHECK(mSrcLocStack.size() >= 1);
+    mSrcLocStack.pop_back();
   }
 
   void reject() {
-    SMDL_SANITY_CHECK(srcLocStack.size() >= 1);
-    srcLoc = srcLocStack.back(), srcLocStack.pop_back();
+    SMDL_SANITY_CHECK(mSrcLocStack.size() >= 1);
+    mSrcLoc = mSrcLocStack.back(), mSrcLocStack.pop_back();
   }
   //--}
 
@@ -348,20 +348,20 @@ private:
   //--}
 
 private:
-  BumpPtrAllocator &allocator;
+  BumpPtrAllocator &mAllocator;
 
-  Module &module_;
+  Module &mModule;
 
-  SourceLocation srcLoc{};
+  SourceLocation mSrcLoc{};
 
-  std::vector<SourceLocation> srcLocStack{};
+  std::vector<SourceLocation> mSrcLocStack;
 
-  bool isSmdl{};
+  bool mIsSMDL{};
 
   template <typename T, typename... Args>
   [[nodiscard]] BumpPtr<T> allocate(SourceLocation srcLoc, std::in_place_t,
                                     Args &&...args) {
-    auto result{allocator.allocate<T>(std::forward<Args>(args)...)};
+    auto result{mAllocator.allocate<T>(std::forward<Args>(args)...)};
     result->srcLoc = srcLoc;
     return result;
   }

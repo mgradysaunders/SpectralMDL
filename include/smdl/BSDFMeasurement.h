@@ -64,7 +64,7 @@ public:
   void *buffer{};
 
   /// The meta-data.
-  std::unordered_map<std::string, std::string> metaData{};
+  std::unordered_map<std::string, std::string> metaData;
 };
 
 /// \}

@@ -183,7 +183,7 @@ template <typename T>
 template <typename T> class SmallVectorOf {
 public:
   // Only use `llvm::SmallVector` if `T` is reasonably small.
-  [[nodiscard]] static constexpr auto preferred_vector_type() noexcept {
+  [[nodiscard]] static constexpr auto preferredVectorType() noexcept {
     if constexpr (sizeof(T) <= 256) {
       return llvm::SmallVector<T>();
     } else {
@@ -191,7 +191,7 @@ public:
     }
   }
 
-  using vector_type = std::decay_t<decltype(preferred_vector_type())>;
+  using vector_type = std::decay_t<decltype(preferredVectorType())>;
 
   SmallVectorOf() = default;
 

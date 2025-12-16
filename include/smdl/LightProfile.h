@@ -45,20 +45,20 @@ public:
 
 public:
   /// The version string.
-  std::string version{};
+  std::string version;
 
   /// The properties.
-  std::unordered_map<std::string, std::string> properties{};
+  std::unordered_map<std::string, std::string> properties;
 
   class Tilt final {
   public:
     int lampToLuminaireGeometry{};
 
     /// The angles in degrees.
-    std::vector<float> angles{};
+    std::vector<float> angles;
 
     /// The multiplying factors.
-    std::vector<float> multiplyingFactors{};
+    std::vector<float> multiplyingFactors;
   };
 
   /// The tilt.
@@ -106,10 +106,10 @@ public:
   float inputWatts{};
 
   /// The vertical angles in degrees.
-  std::vector<float> vertAngles{};
+  std::vector<float> vertAngles;
 
   /// The horizontal angles in degrees.
-  std::vector<float> horzAngles{};
+  std::vector<float> horzAngles;
 
   /// The intensity values in Watts per steradian.
   ///
@@ -117,7 +117,7 @@ public:
   /// The implementation pre-multiplies all candela values by
   /// the `multiplier` and `ballastFactor` in the IES file.
   ///
-  std::vector<float> intensityValues{};
+  std::vector<float> intensityValues;
 };
 
 /// \}

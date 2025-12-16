@@ -26,8 +26,8 @@ public:
 class SMDL_EXPORT Spectrum final {
 public:
   void clear() noexcept {
-    wavelengths.clear();
-    curveValues.clear();
+    mWavelengths.clear();
+    mCurveValues.clear();
   }
 
   /// Load from file.
@@ -62,24 +62,24 @@ public:
 
   [[nodiscard]]
   operator SpectrumView() const noexcept {
-    return {wavelengths, curveValues};
+    return {mWavelengths, mCurveValues};
   }
 
 private:
   /// The wavelengths in nanometers.
-  std::vector<float> wavelengths{};
+  std::vector<float> mWavelengths;
 
   /// The values.
-  std::vector<float> curveValues{};
+  std::vector<float> mCurveValues;
 };
 
 /// A spectrum library loaded from an ENVI Spectral Library file.
 class SMDL_EXPORT SpectrumLibrary final {
 public:
   void clear() noexcept {
-    wavelengths.clear();
-    curveValues.clear();
-    curveNames.clear();
+    mWavelengths.clear();
+    mCurveValues.clear();
+    mCurveNames.clear();
   }
 
   /// Load from file.
@@ -112,26 +112,26 @@ public:
   /// Get curve by index, or return empty view on failure.
   [[nodiscard]]
   SpectrumView getCurveByIndex(int i) const noexcept {
-    if (0 <= i && i < int(numCurves)) {
-      return {Span<const float>(wavelengths),
-              Span<const float>(curveValues.data() + wavelengths.size() * i,
-                                wavelengths.size())};
+    if (0 <= i && i < int(mNumCurves)) {
+      return {Span<const float>(mWavelengths),
+              Span<const float>(mCurveValues.data() + mWavelengths.size() * i,
+                                mWavelengths.size())};
     }
     return {};
   }
 
 private:
   /// The number of curves.
-  size_t numCurves{};
+  size_t mNumCurves{};
 
   /// The wavelengths in nanometers.
-  std::vector<float> wavelengths{};
+  std::vector<float> mWavelengths;
 
   /// The curve values.
-  std::vector<float> curveValues{};
+  std::vector<float> mCurveValues;
 
   /// The curve names. Optional!
-  std::vector<std::string> curveNames{};
+  std::vector<std::string> mCurveNames;
 };
 
 /// \}

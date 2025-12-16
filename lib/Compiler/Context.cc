@@ -6,7 +6,7 @@ namespace smdl {
 
 Context::Context(Compiler &compiler) : compiler(compiler) {
   // Initialize keywords.
-  keywords = {
+  mKeywords = {
       {"auto", getComptimeMetaType(getAutoType())},
       {"bool", getComptimeMetaType(getBoolType())},
       {"bool2", getComptimeMetaType(getBoolType(Extent(2)))},
@@ -58,8 +58,8 @@ Context::Context(Compiler &compiler) : compiler(compiler) {
       {"$INT_MAX", getComptimeInt(std::numeric_limits<int>::max())},
       {"$NAN", getComptimeFloat(std::numeric_limits<float>::quiet_NaN())},
       {"$PI", getComptimeFloat(3.14159265359f)},
-      {"$stderr", getComptimePtr(getVoidPointerType(), &llvm::errs())},
-      {"$stdout", getComptimePtr(getVoidPointerType(), &llvm::outs())},
+      {"$stderr", getComptimePtr(getVoidPointerType(), stderr)},
+      {"$stdout", getComptimePtr(getVoidPointerType(), stdout)},
       {"$TWO_PI", getComptimeFloat(2 * 3.14159265359f)},
       {"$WAVELENGTH_BASE_MAX", getComptimeInt(int(compiler.wavelengthBaseMax))},
   };
@@ -81,27 +81,27 @@ Context::Context(Compiler &compiler) : compiler(compiler) {
   // - Function `_wyman_y`
   // - Function `_color_to_rgb`
   // - Function `_rgb_to_color`
-  for (auto crumb{getBuiltinModule("API")->lastCrumb}; crumb;
+  for (auto crumb{getBuiltinModule("API")->mLastCrumb}; crumb;
        crumb = crumb->prev) {
     if (crumb->isExported() && crumb->hasSimpleName()) {
       auto simpleName{llvm::StringRef(crumb->name[0])};
-      SMDL_SANITY_CHECK(!keywords.contains(simpleName),
+      SMDL_SANITY_CHECK(!mKeywords.contains(simpleName),
                         "keyword collision in builtin 'API' module");
-      keywords[simpleName] = crumb->value;
+      mKeywords[simpleName] = crumb->value;
     }
   }
-  materialType = static_cast<StructType *>(getKeywordAsType("material"));
-  texture2DType = static_cast<StructType *>(getKeywordAsType("texture_2d"));
-  texture3DType = static_cast<StructType *>(getKeywordAsType("texture_3d"));
-  textureCubeType = static_cast<StructType *>(getKeywordAsType("texture_cube"));
-  texturePtexType = static_cast<StructType *>(getKeywordAsType("texture_ptex"));
-  bsdfMeasurementType =
+  mMaterialType = static_cast<StructType *>(getKeywordAsType("material"));
+  mTexture2DType = static_cast<StructType *>(getKeywordAsType("texture_2d"));
+  mTexture3DType = static_cast<StructType *>(getKeywordAsType("texture_3d"));
+  mTextureCubeType = static_cast<StructType *>(getKeywordAsType("texture_cube"));
+  mTexturePtexType = static_cast<StructType *>(getKeywordAsType("texture_ptex"));
+  mBSDFMeasurementType =
       static_cast<StructType *>(getKeywordAsType("bsdf_measurement"));
-  lightProfileType =
+  mLightProfileType =
       static_cast<StructType *>(getKeywordAsType("light_profile"));
-  spectralCurveType =
+  mSpectralCurveType =
       static_cast<StructType *>(getKeywordAsType("spectral_curve"));
-  complexType = static_cast<StructType *>(getKeywordAsType("complex"));
+  mComplexType = static_cast<StructType *>(getKeywordAsType("complex"));
 }
 
 Module *Context::getBuiltinModule(llvm::StringRef name) {
@@ -109,7 +109,7 @@ Module *Context::getBuiltinModule(llvm::StringRef name) {
   if (!sourceCode) {
     return nullptr;
   }
-  auto &mod{builtinModules[name]};
+  auto &mod{mBuiltinModules[name]};
   if (!mod) {
     mod = allocator.allocate<Module>(name.str(), sourceCode);
     if (auto error{mod->parse(allocator)}) {
@@ -132,14 +132,14 @@ Type *Context::getArithmeticType(Scalar scalar, Extent extent) {
   key |= uint64_t(scalar.numBits) << 32;
   key |= uint64_t(extent.numCols) << 16;
   key |= uint64_t(extent.numRows);
-  auto &type{arithmeticTypes[key]};
+  auto &type{mArithmeticTypes[key]};
   if (!type)
     type = allocator.allocate<ArithmeticType>(*this, scalar, extent);
   return type.get();
 }
 
 ArrayType *Context::getArrayType(Type *elemType, uint32_t size) {
-  auto &type{arrayTypes[std::pair(elemType, size)]};
+  auto &type{mArrayTypes[std::pair(elemType, size)]};
   if (!type)
     type = allocator.allocate<ArrayType>(*this, elemType, size);
   return type.get();
@@ -147,7 +147,7 @@ ArrayType *Context::getArrayType(Type *elemType, uint32_t size) {
 
 InferredSizeArrayType *Context::getInferredSizeArrayType(Type *elemType,
                                                          std::string sizeName) {
-  auto &type{inferredSizeArrayTypes[std::pair(elemType, sizeName)]};
+  auto &type{mInferredSizeArrayTypes[std::pair(elemType, sizeName)]};
   if (!type)
     type = allocator.allocate<InferredSizeArrayType>(elemType,
                                                      std::move(sizeName));
@@ -155,35 +155,35 @@ InferredSizeArrayType *Context::getInferredSizeArrayType(Type *elemType,
 }
 
 PointerType *Context::getPointerType(Type *pointeeType) {
-  auto &type{pointerTypes[pointeeType]};
+  auto &type{mPointerTypes[pointeeType]};
   if (!type)
     type = allocator.allocate<PointerType>(*this, pointeeType);
   return type.get();
 }
 
 EnumType *Context::getEnumType(AST::Enum *decl) {
-  auto &type{astTypes[decl]};
+  auto &type{mASTTypes[decl]};
   if (!type)
     type = allocator.allocate<EnumType>(*decl);
   return static_cast<EnumType *>(type.get());
 }
 
 FunctionType *Context::getFunctionType(AST::Function *decl) {
-  auto &type{astTypes[decl]};
+  auto &type{mASTTypes[decl]};
   if (!type)
     type = allocator.allocate<FunctionType>(*decl);
   return static_cast<FunctionType *>(type.get());
 }
 
 StructType *Context::getStructType(AST::Struct *decl) {
-  auto &type{astTypes[decl]};
+  auto &type{mASTTypes[decl]};
   if (!type)
     type = allocator.allocate<StructType>(*decl);
   return static_cast<StructType *>(type.get());
 }
 
 TagType *Context::getTagType(AST::Tag *decl) {
-  auto &type{astTypes[decl]};
+  auto &type{mASTTypes[decl]};
   if (!type)
     type = allocator.allocate<TagType>(std::string(decl->name.srcName));
   return static_cast<TagType *>(type.get());
@@ -193,14 +193,14 @@ Type *Context::getUnionType(llvm::ArrayRef<Type *> types) {
   auto caseTypes{UnionType::canonicalizeTypes(types)};
   if (caseTypes.size() == 1)
     return caseTypes[0];
-  auto &type{unionTypes[caseTypes]};
+  auto &type{mUnionTypes[caseTypes]};
   if (!type)
     type = allocator.allocate<UnionType>(*this, std::move(caseTypes));
   return type.get();
 }
 
 ComptimeUnionType *Context::getComptimeUnionType(UnionType *unionType) {
-  auto &type{comptimeUnionTypes[unionType]};
+  auto &type{mComptimeUnionTypes[unionType]};
   if (!type)
     type = allocator.allocate<ComptimeUnionType>(unionType);
   return type.get();
@@ -390,7 +390,7 @@ ConversionRule Context::getConversionRule(Type *typeA, Type *typeB) {
 
 Value Context::getComptimeUnionIndexMap(UnionType *unionTypeA,
                                         UnionType *unionTypeB) {
-  auto &indexMap{unionIndexMaps[std::pair(unionTypeA, unionTypeB)]};
+  auto &indexMap{mUnionIndexMaps[std::pair(unionTypeA, unionTypeB)]};
   if (!indexMap) {
     indexMap =
         Value::zero(getArrayType(getIntType(), unionTypeA->caseTypes.size()));

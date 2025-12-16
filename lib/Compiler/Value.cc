@@ -70,7 +70,7 @@ Crumb *Crumb::find(Context &context, Span<const std::string_view> name,
            name.starts_with(crumb->name))) {
         // Search for qualified names `foo::bar::baz`
         if (auto subCrumb{Crumb::find(context, name.subspan(crumb->name.size()),
-                                      llvmFunc, module_->lastCrumb, nullptr,
+                                      llvmFunc, module_->mLastCrumb, nullptr,
                                       /*ignoreIfNotExported=*/true)}) {
           return subCrumb;
         }
@@ -78,7 +78,7 @@ Crumb *Crumb::find(Context &context, Span<const std::string_view> name,
         // import `using foo::bar import *`
         if (crumb->isASTUsingImport())
           if (auto subCrumb{Crumb::find(context, name, llvmFunc,
-                                        module_->lastCrumb, nullptr,
+                                        module_->mLastCrumb, nullptr,
                                         /*ignoreIfNotExported=*/true)}) {
             return subCrumb;
           }

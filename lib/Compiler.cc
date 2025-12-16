@@ -24,7 +24,7 @@ Compiler::Compiler(uint32_t wavelengthBaseMax)
 
 Compiler::~Compiler() {
 #if SMDL_HAS_PTEX
-  for (auto &[fileHash, ptexture] : ptextures) {
+  for (auto &[fileHash, ptexture] : mPtextures) {
     if (ptexture.textureFilter) {
       static_cast<PtexFilter *>(ptexture.textureFilter)->release();
       ptexture.textureFilter = nullptr;
@@ -46,18 +46,18 @@ std::optional<Error> Compiler::add(std::string fileOrDirName) {
       for (int i = 0; i < archive.get_file_count(); i++) {
         if (auto entryPath{joinPaths(fileName, archive.get_file_name(i))};
             hasExtension(entryPath, ".mdl")) {
-          if (moduleFileNames.insert(entryPath).second) {
+          if (mModuleFileNames.insert(entryPath).second) {
             SMDL_LOG_DEBUG("Adding MDL file from archive ",
                            QuotedPath(entryPath));
-            modules.emplace_back(Module::loadFromFileExtractedFromArchive(
+            mModules.emplace_back(Module::loadFromFileExtractedFromArchive(
                 entryPath, archive.extract_file(i)));
           }
         }
       }
     } else {
-      if (moduleFileNames.insert(fileName).second) {
+      if (mModuleFileNames.insert(fileName).second) {
         SMDL_LOG_DEBUG("Adding MDL file ", QuotedPath(fileName));
-        modules.emplace_back(Module::loadFromFile(fileName));
+        mModules.emplace_back(Module::loadFromFile(fileName));
       }
     }
   }};
@@ -67,9 +67,9 @@ std::optional<Error> Compiler::add(std::string fileOrDirName) {
     if (isFile(path)) {
       addFile(path);
       return std::nullopt;
-    } else if (isDirectory(path) && moduleDirNames.insert(path).second) {
+    } else if (isDirectory(path) && mModuleDirNames.insert(path).second) {
       SMDL_LOG_DEBUG("Adding MDL directory ", QuotedPath(path));
-      moduleDirSearchPaths.emplace_back(path);
+      mModuleDirSearchPaths.emplace_back(path);
       for (const auto &entry : std::filesystem::directory_iterator(path)) {
         if (auto entryPath{makePathCanonical(entry.path().string())};
             isFile(entryPath) && hasExtension(entryPath, ".mdr")) {
@@ -93,64 +93,64 @@ std::optional<Error> Compiler::add(std::string fileOrDirName) {
 std::optional<Error> Compiler::compile(OptLevel optLevel) {
   SMDL_PROFILER_ENTRY("Compiler::compile()");
   {
-    images.clear();
-    ptextures.clear();
-    bsdfMeasurements.clear();
-    lightProfiles.clear();
-    llvmJit.reset();
+    mImages.clear();
+    mPtextures.clear();
+    mBSDFMeasurements.clear();
+    mLightProfiles.clear();
+    mLLVMJit.reset();
     llvm::ExitOnError exitOnError;
     auto llvmContext{std::make_unique<llvm::LLVMContext>()};
     auto llvmModule{std::make_unique<llvm::Module>("MDL", *llvmContext)};
     llvmModule->setTargetTriple(
         llvm::Triple(llvm::StringRef(NativeTarget::get().triple)));
     llvmModule->setDataLayout(NativeTarget::get().machine->createDataLayout());
-    llvmJitModule = std::make_unique<llvm::orc::ThreadSafeModule>(
+    mLLVMJitModule = std::make_unique<llvm::orc::ThreadSafeModule>(
         std::move(llvmModule), std::move(llvmContext));
-    llvmJit = exitOnError(llvm::orc::LLJITBuilder().create());
-    jitRgbToColor.func = nullptr;
-    jitColorToRgb.func = nullptr;
-    jitMaterials.clear();
-    jitUnitTests.clear();
+    mLLVMJit = exitOnError(llvm::orc::LLJITBuilder().create());
+    mJitRGBToColor.func = nullptr;
+    mJitColorToRGB.func = nullptr;
+    mJitMaterials.clear();
+    mJitUnitTests.clear();
   }
   auto initializeEntry{profilerEntryBegin("Initialize")};
   Context context{*this};
-  for (auto &module_ : modules)
+  for (auto &module_ : mModules)
     module_->reset();
   profilerEntryEnd(initializeEntry);
   {
     SMDL_PROFILER_ENTRY("Parse AST");
-    for (auto &module_ : modules)
-      if (auto error{module_->parse(allocator)})
+    for (auto &module_ : mModules)
+      if (auto error{module_->parse(mAllocator)})
         return error;
   }
   {
     SMDL_PROFILER_ENTRY("Emit LLVM-IR");
-    for (auto &module_ : modules)
+    for (auto &module_ : mModules)
       if (auto error{module_->compile(context)})
         return error;
   }
   // Sort JIT materials by filename and line number in case we
   // want to print them later
   std::sort(
-      jitMaterials.begin(), jitMaterials.end(),
+      mJitMaterials.begin(), mJitMaterials.end(),
       [](const auto &lhs, const auto &rhs) {
         return std::pair(std::string_view(lhs.moduleFileName), lhs.lineNo) <
                std::pair(std::string_view(rhs.moduleFileName), rhs.lineNo);
       });
   // Sort JIT unit tests by filename and line number for similar reasons
   std::sort(
-      jitUnitTests.begin(), jitUnitTests.end(),
+      mJitUnitTests.begin(), mJitUnitTests.end(),
       [](const auto &lhs, const auto &rhs) {
         return std::pair(std::string_view(lhs.moduleFileName), lhs.lineNo) <
                std::pair(std::string_view(rhs.moduleFileName), rhs.lineNo);
       });
   // Finish loading images.
-  if (!images.empty()) {
+  if (!mImages.empty()) {
     SMDL_PROFILER_ENTRY("Load images in parallel");
     SMDL_LOG_INFO("Loading images ...");
     auto now{std::chrono::steady_clock::now()};
-    llvm::parallelFor(0, images.size(), [&](size_t i) {
-      auto &[fileHash, image] = *std::next(images.begin(), ptrdiff_t(i));
+    llvm::parallelFor(0, mImages.size(), [&](size_t i) {
+      auto &[fileHash, image] = *std::next(mImages.begin(), ptrdiff_t(i));
       SMDL_PROFILER_ENTRY("Load image",
                           fileHash->canonicalFileNames[0].c_str());
       SMDL_LOG_DEBUG("Loading image ",
@@ -169,7 +169,7 @@ std::optional<Error> Compiler::compile(OptLevel optLevel) {
   }
   if (optLevel != OPT_LEVEL_NONE) {
     SMDL_PROFILER_ENTRY("Optimize LLVM-IR");
-    llvmJitModule->withModuleDo([&](llvm::Module &llvmModule) {
+    mLLVMJitModule->withModuleDo([&](llvm::Module &llvmModule) {
       LLVMOptimizer llvmOptimizer{};
       llvmOptimizer.run(
           llvmModule, optLevel == OPT_LEVEL_O1   ? llvm::OptimizationLevel::O1
@@ -183,7 +183,7 @@ std::optional<Error> Compiler::compile(OptLevel optLevel) {
 std::optional<Error>
 Compiler::formatSourceCode(const FormatOptions &formatOptions) noexcept {
   SMDL_PROFILER_ENTRY("Compiler::formatSourceCode()");
-  for (auto &module_ : modules) {
+  for (auto &module_ : mModules) {
     if (!module_->isBuiltin()) {
       if (auto error{module_->formatSourceCode(formatOptions)})
         return error;
@@ -193,22 +193,22 @@ Compiler::formatSourceCode(const FormatOptions &formatOptions) noexcept {
 }
 
 llvm::LLVMContext &Compiler::getLLVMContext() noexcept {
-  SMDL_SANITY_CHECK(llvmJitModule.get() != nullptr);
+  SMDL_SANITY_CHECK(mLLVMJitModule.get() != nullptr);
   // TODO Unsafe?
   llvm::LLVMContext *context{};
-  llvmJitModule.get()->getContext().withContextDo(
+  mLLVMJitModule.get()->getContext().withContextDo(
       [&](auto *C) { context = C; });
   return *context;
 }
 
 llvm::Module &Compiler::getLLVMModule() noexcept {
-  SMDL_SANITY_CHECK(llvmJitModule.get() != nullptr);
-  return *llvmJitModule.get()->getModuleUnlocked();
+  SMDL_SANITY_CHECK(mLLVMJitModule.get() != nullptr);
+  return *mLLVMJitModule.get()->getModuleUnlocked();
 }
 
 const Image &Compiler::loadImage(const std::string &fileName,
                                  const SourceLocation &srcLoc) {
-  auto [itr, inserted] = images.try_emplace(fileHasher[fileName]);
+  auto [itr, inserted] = mImages.try_emplace(mFileHasher[fileName]);
   auto &image{itr->second};
   if (inserted) {
     SMDL_PROFILER_ENTRY("Compiler::loadImage()", fileName.c_str());
@@ -221,7 +221,7 @@ const Image &Compiler::loadImage(const std::string &fileName,
 
 const Ptexture &Compiler::loadPtexture(const std::string &fileName,
                                        const SourceLocation &srcLoc) {
-  auto [itr, inserted] = ptextures.try_emplace(fileHasher[fileName]);
+  auto [itr, inserted] = mPtextures.try_emplace(mFileHasher[fileName]);
   auto &ptexture{itr->second};
   if (inserted) {
 #if SMDL_HAS_PTEX
@@ -250,7 +250,7 @@ const Ptexture &Compiler::loadPtexture(const std::string &fileName,
 const BSDFMeasurement &
 Compiler::loadBSDFMeasurement(const std::string &fileName,
                               const SourceLocation &srcLoc) {
-  auto [itr, inserted] = bsdfMeasurements.try_emplace(fileHasher[fileName]);
+  auto [itr, inserted] = mBSDFMeasurements.try_emplace(mFileHasher[fileName]);
   auto &bsdfMeasurement{itr->second};
   if (inserted) {
     SMDL_PROFILER_ENTRY("Compiler::loadBSDFMeasurement()", fileName.c_str());
@@ -263,7 +263,7 @@ Compiler::loadBSDFMeasurement(const std::string &fileName,
 
 const LightProfile &Compiler::loadLightProfile(const std::string &fileName,
                                                const SourceLocation &srcLoc) {
-  auto [itr, inserted] = lightProfiles.try_emplace(fileHasher[fileName]);
+  auto [itr, inserted] = mLightProfiles.try_emplace(mFileHasher[fileName]);
   auto &lightProfile{itr->second};
   if (inserted) {
     SMDL_PROFILER_ENTRY("Compiler::loadLightProfile()", fileName.c_str());
@@ -276,7 +276,7 @@ const LightProfile &Compiler::loadLightProfile(const std::string &fileName,
 
 SpectrumView Compiler::loadSpectrum(const std::string &fileName,
                                     const SourceLocation &srcLoc) {
-  auto [itr, inserted] = spectrums.try_emplace(fileHasher[fileName]);
+  auto [itr, inserted] = mSpectrums.try_emplace(mFileHasher[fileName]);
   auto &spectrum{itr->second};
   if (inserted) {
     if (auto error{spectrum.loadFromFile(fileName)}) {
@@ -288,7 +288,7 @@ SpectrumView Compiler::loadSpectrum(const std::string &fileName,
 
 SpectrumView Compiler::loadSpectrum(const std::string &fileName, int curveIndex,
                                     const SourceLocation &srcLoc) {
-  auto [itr, inserted] = spectrumLibraries.try_emplace(fileHasher[fileName]);
+  auto [itr, inserted] = mSpectrumLibraries.try_emplace(mFileHasher[fileName]);
   auto &spectrumLibrary{itr->second};
   if (inserted) {
     SMDL_PROFILER_ENTRY("Compiler::loadSpectrum()", fileName.c_str());
@@ -302,7 +302,7 @@ SpectrumView Compiler::loadSpectrum(const std::string &fileName, int curveIndex,
 SpectrumView Compiler::loadSpectrum(const std::string &fileName,
                                     const std::string &curveName,
                                     const SourceLocation &srcLoc) {
-  auto [itr, inserted] = spectrumLibraries.try_emplace(fileHasher[fileName]);
+  auto [itr, inserted] = mSpectrumLibraries.try_emplace(mFileHasher[fileName]);
   auto &spectrumLibrary{itr->second};
   if (inserted) {
     SMDL_PROFILER_ENTRY("Compiler::loadSpectrum()", fileName.c_str());
@@ -336,31 +336,31 @@ std::string Compiler::dump(DumpFormat dumpFormat) {
 std::optional<Error> Compiler::jitCompile() noexcept {
   SMDL_PROFILER_ENTRY("Compiler::jit_compile()");
   return catchAndReturnError([&] {
-    llvmThrowIfError(llvmJit->addIRModule(std::move(*llvmJitModule)));
-    llvmJitModule.reset();
-    jitLookupOrThrow(jitColorToRgb);
-    jitLookupOrThrow(jitRgbToColor);
-    for (auto &jitMaterial : jitMaterials) {
+    llvmThrowIfError(mLLVMJit->addIRModule(std::move(*mLLVMJitModule)));
+    mLLVMJitModule.reset();
+    jitLookupOrThrow(mJitColorToRGB);
+    jitLookupOrThrow(mJitRGBToColor);
+    for (auto &jitMaterial : mJitMaterials) {
       jitLookupOrThrow(jitMaterial.evaluate);
       jitLookupOrThrow(jitMaterial.scatterEvaluate);
       jitLookupOrThrow(jitMaterial.scatterSample);
     }
-    for (auto &jitUnitTest : jitUnitTests) {
+    for (auto &jitUnitTest : mJitUnitTests) {
       jitLookupOrThrow(jitUnitTest.test);
     }
-    for (auto &jitExec : jitExecs) {
+    for (auto &jitExec : mJitExecs) {
       jitLookupOrThrow(jitExec);
     }
     // Deallocate everything we no longer need!
-    for (auto &module_ : modules) {
+    for (auto &module_ : mModules) {
       module_->reset();
     }
-    allocator.reset();
+    mAllocator.reset();
   });
 }
 
 void *Compiler::jitLookup(std::string_view name) noexcept {
-  llvm::Expected<llvm::orc::ExecutorAddr> symbol{llvmJit->lookup(name)};
+  llvm::Expected<llvm::orc::ExecutorAddr> symbol{mLLVMJit->lookup(name)};
   if (!symbol)
     return nullptr;
   return symbol->toPtr<void *>();
@@ -369,7 +369,7 @@ void *Compiler::jitLookup(std::string_view name) noexcept {
 const JIT::Material *
 Compiler::findMaterial(std::string_view materialName) const noexcept try {
   auto results{llvm::SmallVector<const JIT::Material *>()};
-  for (const auto &jitMaterial : jitMaterials) {
+  for (const auto &jitMaterial : mJitMaterials) {
     if (jitMaterial.materialName == materialName) {
       results.push_back(&jitMaterial);
     }
@@ -396,7 +396,7 @@ Compiler::findMaterial(std::string_view materialName) const noexcept try {
 const JIT::Material *
 Compiler::findMaterial(std::string_view moduleName,
                        std::string_view materialName) const noexcept {
-  for (const auto &jitMaterial : jitMaterials) {
+  for (const auto &jitMaterial : mJitMaterials) {
     if (jitMaterial.moduleName == moduleName &&
         jitMaterial.materialName == materialName) {
       return &jitMaterial;
@@ -407,25 +407,25 @@ Compiler::findMaterial(std::string_view moduleName,
 
 float3 Compiler::convertColorToRGB(const State &state,
                                    const float *color) const noexcept {
-  SMDL_SANITY_CHECK(jitColorToRgb && color);
+  SMDL_SANITY_CHECK(mJitColorToRGB && color);
   SMDL_SANITY_CHECK(state.wavelength_base != nullptr);
   float3 rgb{};
-  jitColorToRgb(state, color, rgb);
+  mJitColorToRGB(state, color, rgb);
   return rgb;
 }
 
 void Compiler::convertRGBToColor(const State &state, const float3 &rgb,
                                  float *color) const noexcept {
-  SMDL_SANITY_CHECK(jitRgbToColor && color);
+  SMDL_SANITY_CHECK(mJitRGBToColor && color);
   SMDL_SANITY_CHECK(state.wavelength_base != nullptr);
-  jitRgbToColor(state, rgb, color);
+  mJitRGBToColor(state, rgb, color);
 }
 
 std::optional<Error> Compiler::runUnitTests(const State &state) noexcept {
   return catchAndReturnError([&] {
-    for (auto itr0 = jitUnitTests.begin(); itr0 != jitUnitTests.end();) {
+    for (auto itr0 = mJitUnitTests.begin(); itr0 != mJitUnitTests.end();) {
       auto itr1{itr0};
-      while (itr1 != jitUnitTests.end() &&
+      while (itr1 != mJitUnitTests.end() &&
              itr1->moduleFileName == itr0->moduleFileName) {
         ++itr1;
       }
@@ -450,17 +450,17 @@ std::optional<Error> Compiler::runUnitTests(const State &state) noexcept {
 
 std::optional<Error> Compiler::runExecs() noexcept {
   return catchAndReturnError([&] {
-    for (auto &jitExec : jitExecs)
+    for (auto &jitExec : mJitExecs)
       jitExec();
   });
 }
 
 std::string Compiler::printMaterialSummary() const {
   std::string message{};
-  for (auto itr0{jitMaterials.begin()}; itr0 != jitMaterials.end();) {
+  for (auto itr0{mJitMaterials.begin()}; itr0 != mJitMaterials.end();) {
     auto numMaterials{0};
     auto itr1{itr0};
-    while (itr1 != jitMaterials.end() &&
+    while (itr1 != mJitMaterials.end() &&
            itr1->moduleFileName == itr0->moduleFileName) {
       ++itr1;
       ++numMaterials;

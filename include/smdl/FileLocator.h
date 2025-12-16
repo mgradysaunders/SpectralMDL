@@ -16,7 +16,7 @@ public:
 public:
   /// Set whether or not the locator should search the present working
   /// directory.
-  void setSearchPwd(bool yes) { searchPwd = yes; }
+  void setSearchPwd(bool yes) { mSearchPwd = yes; }
 
   /// Add search directory.
   ///
@@ -32,7 +32,7 @@ public:
   ///
   bool addSearchDir(const std::string &dir, bool isRecursive = false) {
     if (isDirectory(dir)) {
-      searchDirs.emplace_back(SearchDir{makePathCanonical(dir), isRecursive});
+      mSearchDirs.emplace_back(SearchDir{makePathCanonical(dir), isRecursive});
       return true;
     }
     return false;
@@ -104,7 +104,7 @@ public:
     uint32_t tileIndexV{};
 
     /// The file path.
-    std::string path{};
+    std::string path;
   };
 
   // TODO Document
@@ -115,20 +115,20 @@ public:
 
 private:
   /// Always search the present working directory?
-  bool searchPwd{true};
+  bool mSearchPwd{true};
 
   /// A search directory.
   class SearchDir final {
   public:
     /// The canonical directory path.
-    std::string dir{};
+    std::string dir;
 
     /// Search recursively?
     bool isRecursive{};
   };
 
   /// The search directories.
-  std::vector<SearchDir> searchDirs{};
+  std::vector<SearchDir> mSearchDirs;
 };
 
 /// \}
