@@ -200,7 +200,7 @@ uint64_t random_walk(smdl::Compiler &compiler, const Scene &scene,
       // wpdfRev = 0;
     }
     beta *= (1.0f / wpdfFwd) * f;
-    if (beta.is_any_non_finite()) {
+    if (beta.isAnyNonFinite()) {
       break;
     }
     MediumStack::Update(medium, allocator, materialInstance, -vertexPrev.wNext,

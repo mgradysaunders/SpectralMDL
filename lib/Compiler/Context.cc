@@ -58,8 +58,9 @@ Context::Context(Compiler &compiler) : compiler(compiler) {
       {"$INT_MAX", getComptimeInt(std::numeric_limits<int>::max())},
       {"$NAN", getComptimeFloat(std::numeric_limits<float>::quiet_NaN())},
       {"$PI", getComptimeFloat(3.14159265359f)},
-      {"$stderr", getComptimePtr(getVoidPointerType(), stderr)},
+      {"$stdin", getComptimePtr(getVoidPointerType(), stdin)},
       {"$stdout", getComptimePtr(getVoidPointerType(), stdout)},
+      {"$stderr", getComptimePtr(getVoidPointerType(), stderr)},
       {"$TWO_PI", getComptimeFloat(2 * 3.14159265359f)},
       {"$WAVELENGTH_BASE_MAX", getComptimeInt(int(compiler.wavelengthBaseMax))},
   };
@@ -81,20 +82,22 @@ Context::Context(Compiler &compiler) : compiler(compiler) {
   // - Function `_wyman_y`
   // - Function `_color_to_rgb`
   // - Function `_rgb_to_color`
-  for (auto crumb{getBuiltinModule("API")->mLastCrumb}; crumb;
+  for (auto crumb{getBuiltinModule("api")->mLastCrumb}; crumb;
        crumb = crumb->prev) {
     if (crumb->isExported() && crumb->hasSimpleName()) {
       auto simpleName{llvm::StringRef(crumb->name[0])};
       SMDL_SANITY_CHECK(!mKeywords.contains(simpleName),
-                        "keyword collision in builtin 'API' module");
+                        "keyword collision in builtin 'api' module");
       mKeywords[simpleName] = crumb->value;
     }
   }
   mMaterialType = static_cast<StructType *>(getKeywordAsType("material"));
   mTexture2DType = static_cast<StructType *>(getKeywordAsType("texture_2d"));
   mTexture3DType = static_cast<StructType *>(getKeywordAsType("texture_3d"));
-  mTextureCubeType = static_cast<StructType *>(getKeywordAsType("texture_cube"));
-  mTexturePtexType = static_cast<StructType *>(getKeywordAsType("texture_ptex"));
+  mTextureCubeType =
+      static_cast<StructType *>(getKeywordAsType("texture_cube"));
+  mTexturePtexType =
+      static_cast<StructType *>(getKeywordAsType("texture_ptex"));
   mBSDFMeasurementType =
       static_cast<StructType *>(getKeywordAsType("bsdf_measurement"));
   mLightProfileType =

@@ -67,7 +67,7 @@ public:
 
   /// Drop the front element while the given predicate is true.
   template <typename Pred>
-  [[nodiscard]] constexpr Span drop_front_while(Pred &&pred) const {
+  [[nodiscard]] constexpr Span dropFrontWhile(Pred &&pred) const {
     size_t i{};
     size_t n{count};
     while (i < count && pred(first[i])) {
@@ -78,12 +78,12 @@ public:
   }
 
   /// Drop the front element.
-  [[nodiscard]] constexpr Span drop_front() const noexcept {
+  [[nodiscard]] constexpr Span dropFront() const noexcept {
     return subspan(1, count - 1);
   }
 
   /// Drop the back element.
-  [[nodiscard]] constexpr Span drop_back() const noexcept {
+  [[nodiscard]] constexpr Span dropBack() const noexcept {
     return subspan(0, count - 1);
   }
 
@@ -99,7 +99,7 @@ public:
   }
 
   /// Starts with the given sequence of values?
-  [[nodiscard]] constexpr bool starts_with(Span other) const {
+  [[nodiscard]] constexpr bool startsWith(Span other) const {
     if (count < other.count)
       return false;
     for (size_t i = 0; i < other.count; i++)

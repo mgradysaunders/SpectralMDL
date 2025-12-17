@@ -12,10 +12,10 @@ public:
   class Version final {
   public:
     /// The keyword `mdl`.
-    std::string_view srcKwMdl{};
+    std::string_view srcKwMdl;
 
     /// The version string, e.g., `1.7`.
-    std::string_view srcVersion{};
+    std::string_view srcVersion;
 
     /// The major version number.
     uint32_t major{};
@@ -24,7 +24,7 @@ public:
     uint32_t minor{};
 
     /// The semicolon `;`.
-    std::string_view srcSemicolon{};
+    std::string_view srcSemicolon;
   };
 
   explicit File(std::string_view srcKwSmdlSyntax,
@@ -40,28 +40,28 @@ public:
         srcSemicolonAfterModule(srcSemicolonAfterModule),
         globalDecls(std::move(globalDecls)) {}
 
-  [[nodiscard]] bool is_smdl_syntax() const { return !srcKwSmdlSyntax.empty(); }
+  [[nodiscard]] bool isSMDLSyntax() const { return !srcKwSmdlSyntax.empty(); }
 
   /// The source keyword `#smdl_syntax`. This may be empty!
-  std::string_view srcKwSmdlSyntax{};
+  std::string_view srcKwSmdlSyntax;
 
   /// The version. This may be nullopt!
-  std::optional<Version> version{};
+  std::optional<Version> version;
 
   /// The import declarations.
-  std::vector<BumpPtr<Decl>> importDecls{};
+  std::vector<BumpPtr<Decl>> importDecls;
 
   /// The keyword `module`. This may be empty!
-  std::string_view srcKwModule{};
+  std::string_view srcKwModule;
 
   /// The module annotations. This may be null!
-  BumpPtr<AnnotationBlock> moduleAnnotations{};
+  BumpPtr<AnnotationBlock> moduleAnnotations;
 
   /// The semicolon `;` after the `module` keyword. This may be empty!
-  std::string_view srcSemicolonAfterModule{};
+  std::string_view srcSemicolonAfterModule;
 
   /// The global declarations.
-  std::vector<BumpPtr<Decl>> globalDecls{};
+  std::vector<BumpPtr<Decl>> globalDecls;
 };
 
 } // namespace smdl::AST

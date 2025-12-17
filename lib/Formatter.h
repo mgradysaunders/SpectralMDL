@@ -9,24 +9,24 @@ namespace smdl {
 
 class Formatter final {
 public:
-  Formatter(const FormatOptions &options) : options(options) {}
+  Formatter(const FormatOptions &options) : mOptions(options) {}
 
   [[nodiscard]] std::string format(llvm::StringRef inSrc,
                                    const AST::Node &node) {
-    outputSrc.clear();
-    inputSrc = inSrc;
-    indent = 0;
+    mOutputSrc.clear();
+    mInputSrc = inSrc;
+    mIndent = 0;
     // Write!
     write(node);
     // If there was a dangling `// smdl format off` that was
     // never turned back on, then it hasn't been processed yet!
-    apply_format_off(inSrc.data() + inSrc.size());
+    applyFormatOff(inSrc.data() + inSrc.size());
     // Align line comments
-    align_line_comments();
-    return outputSrc;
+    alignLineComments();
+    return mOutputSrc;
   }
 
-  void align_line_comments();
+  void alignLineComments();
 
 private:
   enum Delim {
@@ -38,81 +38,84 @@ private:
 
   enum Command { INCREMENT_INDENT, ALIGN_INDENT, PUSH_INDENT, POP_INDENT };
 
-  llvm::StringRef consume_input(size_t numChars) {
-    auto inSrc{inputSrc.take_front(numChars)};
-    inputSrc = inputSrc.drop_front(numChars);
+  llvm::StringRef consumeInput(size_t numChars) {
+    auto inSrc{mInputSrc.take_front(numChars)};
+    mInputSrc = mInputSrc.drop_front(numChars);
     return inSrc;
   }
 
-  llvm::StringRef consume_input_space() {
-    auto inSrc{inputSrc.take_while(isSpace)};
-    inputSrc = inputSrc.drop_front(inSrc.size());
+  llvm::StringRef consumeInputSpace() {
+    auto inSrc{mInputSrc.take_while(isSpace)};
+    mInputSrc = mInputSrc.drop_front(inSrc.size());
     return inSrc;
   }
 
-  [[nodiscard]] llvm::StringRef consume_input_comment() {
-    if (inputSrc.starts_with("//")) {
-      auto pos{inputSrc.find('\n', 1)};
-      return consume_input(pos == inputSrc.npos ? pos : pos + 1);
+  [[nodiscard]] llvm::StringRef consumeInputComment() {
+    if (mInputSrc.starts_with("//")) {
+      auto pos{mInputSrc.find('\n', 1)};
+      return consumeInput(pos == llvm::StringRef::npos ? pos : pos + 1);
     }
-    if (inputSrc.starts_with("/*")) {
-      auto pos{inputSrc.find("*/", 2)};
-      return consume_input(pos == inputSrc.npos ? pos : pos + 2);
+    if (mInputSrc.starts_with("/*")) {
+      auto pos{mInputSrc.find("*/", 2)};
+      return consumeInput(pos == llvm::StringRef::npos ? pos : pos + 2);
     }
     return {};
   }
 
-  [[nodiscard]] char last_output() const {
-    return outputSrc.empty() ? '\0' : outputSrc.back();
+  [[nodiscard]] char lastOutput() const {
+    return mOutputSrc.empty() ? '\0' : mOutputSrc.back();
   }
 
-  [[nodiscard]] char last_output(int i) const {
-    if (i += outputSrc.size(); 0 <= i && i < int(outputSrc.size()))
-      return outputSrc[i];
+  [[nodiscard]] char lastOutput(int i) const {
+    auto outputSrcSize{int(mOutputSrc.size())};
+    if (i += outputSrcSize; 0 <= i && i < outputSrcSize)
+      return mOutputSrc[i];
     return '\0';
   }
 
-  [[nodiscard]] size_t current_column() const {
-    size_t column{};
-    for (auto itr{outputSrc.rbegin()}; itr != outputSrc.rend() && *itr != '\n';
-         ++itr)
+  [[nodiscard]] int currentColumn() const {
+    auto column{int(0)};
+    auto itr{mOutputSrc.rbegin()};
+    while (itr != mOutputSrc.rend() && *itr != '\n') {
       ++column;
+      ++itr;
+    }
     return column;
   }
 
-  [[nodiscard]] bool next_comment_forces_newline() const;
+  [[nodiscard]] bool nextCommentForcesNewLine() const;
 
-  void write_delim_none();
+  void writeDelimNone();
 
-  void write_delim_space();
+  void writeDelimSpace();
 
-  void write_delim_newline();
+  void writeDelimNewLine();
 
-  void write_indent_if_newline() {
-    if (last_output() == '\n')
-      for (int i = 0; i < indent; i++)
-        outputSrc += ' ';
+  void writeIndentIfNewLine() {
+    if (lastOutput() == '\n')
+      for (int i = 0; i < mIndent; i++)
+        mOutputSrc += ' ';
   }
 
-  void write_comment(llvm::StringRef inSrc);
+  void writeComment(llvm::StringRef inSrc);
 
-  void write_more_comments() {
+  void writeMoreComments() {
     while (true) {
-      auto nextComment{consume_input_comment()};
+      auto nextComment{consumeInputComment()};
       if (!nextComment.empty())
-        write_comment(nextComment);
+        writeComment(nextComment);
       else
         break;
     }
   }
 
-  void write_token(llvm::StringRef inSrc);
+  void writeToken(llvm::StringRef inSrc);
 
-  [[nodiscard]] Delim write_start_list(size_t size, bool forceNewLines,
-                                       bool alignIndent = true) {
-    if (options.compact && size < 4)
+  [[nodiscard]] Delim writeStartList(size_t size, bool forceNewLines,
+                                     bool alignIndent = true) {
+    if (mOptions.compact && size < 4)
       forceNewLines = false;
-    bool initialNewLine{forceNewLines || next_comment_forces_newline()};
+    bool initialNewLine{forceNewLines || nextCommentForcesNewLine()};
     if (initialNewLine) {
       write(INCREMENT_INDENT, DELIM_NEWLINE);
     } else {
@@ -124,24 +127,24 @@ private:
   }
 
 private:
-  void write(std::string_view inSrc) { write_token(inSrc); }
+  void write(std::string_view inSrc) { writeToken(inSrc); }
 
   void write(Delim delim) {
     switch (delim) {
     case DELIM_NONE:
-      write_delim_none();
+      writeDelimNone();
       break;
     case DELIM_SPACE:
-      write_delim_space();
+      writeDelimSpace();
       break;
     case DELIM_UNNECESSARY_SPACE:
-      if (options.compact)
-        write_delim_none();
+      if (mOptions.compact)
+        writeDelimNone();
       else
-        write_delim_space();
+        writeDelimSpace();
       break;
     case DELIM_NEWLINE:
-      write_delim_newline();
+      writeDelimNewLine();
       break;
     default:
       break;
@@ -151,19 +154,19 @@ private:
   void write(Command command) {
     switch (command) {
     case INCREMENT_INDENT:
-      indent += 2;
+      mIndent += 2;
       break;
     case ALIGN_INDENT:
-      if (last_output() != '\n')
-        indent = current_column();
+      if (lastOutput() != '\n')
+        mIndent = currentColumn();
       break;
     case PUSH_INDENT:
-      indentStack.push_back(indent);
+      mIndentStack.push_back(mIndent);
       break;
     case POP_INDENT:
-      SMDL_SANITY_CHECK(!indentStack.empty());
-      indent = indentStack.back();
-      indentStack.pop_back();
+      SMDL_SANITY_CHECK(!mIndentStack.empty());
+      mIndent = mIndentStack.back();
+      mIndentStack.pop_back();
       break;
     default:
       break;
@@ -171,7 +174,7 @@ private:
   }
 
   void write(const AST::Node &node) {
-    write_type_switch<AST::Decl, AST::Expr, AST::File, AST::Stmt>(node);
+    writeTypeSwitch<AST::Decl, AST::Expr, AST::File, AST::Stmt>(node);
   }
 
   void write(const AST::File &file);
@@ -194,8 +197,8 @@ private:
 
   void write(const AST::Import &decl) {
     write(decl.srcKwImport, DELIM_SPACE, PUSH_INDENT);
-    auto delim{write_start_list(decl.importPathWrappers.size(),
-                                decl.hasTrailingComma())};
+    auto delim{writeStartList(decl.importPathWrappers.size(),
+                              decl.hasTrailingComma())};
     for (const auto &[importPath, srcComma] : decl.importPathWrappers) {
       write(importPath, srcComma, srcComma.empty() ? DELIM_NONE : delim);
     }
@@ -234,7 +237,7 @@ private:
   void write(const AST::UsingImport &decl) {
     write(decl.srcKwUsing, DELIM_SPACE, decl.importPath, DELIM_SPACE,
           decl.srcKwImport, DELIM_SPACE, PUSH_INDENT);
-    auto delim{write_start_list(decl.names.size(), decl.hasTrailingComma())};
+    auto delim{writeStartList(decl.names.size(), decl.hasTrailingComma())};
     for (const auto &[srcName, srcComma] : decl.names)
       write(srcName, srcComma, srcComma.empty() ? DELIM_NONE : delim);
     write(decl.srcSemicolon, POP_INDENT);
@@ -272,8 +275,8 @@ private:
       write(expr.exprLhs, DELIM_SPACE, expr.srcOp, DELIM_SPACE, expr.exprRhs);
     } else {
       bool mustHaveSpaceBefore{
-          (expr.op == AST::BINOP_ADD && last_output() == '+') ||
-          (expr.op == AST::BINOP_SUB && last_output() == '-')};
+          (expr.op == AST::BINOP_ADD && lastOutput() == '+') ||
+          (expr.op == AST::BINOP_SUB && lastOutput() == '-')};
       write(expr.exprLhs,
             expr.op == AST::BINOP_COMMA ? DELIM_NONE
             : mustHaveSpaceBefore       ? DELIM_SPACE
@@ -344,17 +347,17 @@ private:
       write(expr.expr, expr.srcOp);
     } else {
       // Don't write unnecessary plus in compact mode
-      if (expr.op == AST::UNOP_POS && options.compact) {
+      if (expr.op == AST::UNOP_POS && mOptions.compact) {
         write(DELIM_NONE);
-        consume_input(expr.srcOp.size());
+        consumeInput(expr.srcOp.size());
         write(expr.expr);
       } else {
         // Avoid `+++`, `---`, and `/*`
         if (((expr.op == AST::UNOP_INC || expr.op == AST::UNOP_POS) &&
-             last_output() == '+') ||
+             lastOutput() == '+') ||
             ((expr.op == AST::UNOP_DEC || expr.op == AST::UNOP_NEG) &&
-             last_output() == '-') ||
-            ((expr.op == AST::UNOP_DEREF) && last_output() == '/'))
+             lastOutput() == '-') ||
+            ((expr.op == AST::UNOP_DEREF) && lastOutput() == '/'))
           write(DELIM_SPACE);
         write(expr.srcOp, expr.expr);
       }
@@ -404,7 +407,7 @@ private:
   void write(const AST::Preserve &stmt) {
     write(stmt.srcKwPreserve, DELIM_SPACE, PUSH_INDENT);
     auto delim{
-        write_start_list(stmt.exprWrappers.size(), stmt.hasTrailingComma())};
+        writeStartList(stmt.exprWrappers.size(), stmt.hasTrailingComma())};
     for (const auto &[expr, srcComma] : stmt.exprWrappers) {
       write(expr, srcComma, srcComma.empty() ? DELIM_NONE : delim);
     }
@@ -492,21 +495,21 @@ private:
       (write(args), ...);
   }
 
-  template <typename... Ts, typename T> void write_type_switch(T &node) {
+  template <typename... Ts, typename T> void writeTypeSwitch(T &node) {
     llvm::TypeSwitch<T *, void>(&node).template Case<Ts...>(
         [&](auto each) { write(*each); });
   }
 
 private:
-  FormatOptions options{};
+  FormatOptions mOptions;
 
-  std::string outputSrc{};
+  std::string mOutputSrc;
 
-  llvm::StringRef inputSrc{};
+  llvm::StringRef mInputSrc;
 
-  int indent{};
+  int mIndent{};
 
-  std::vector<int> indentStack{};
+  std::vector<int> mIndentStack;
 
   struct LineCommentInfo final {
     size_t i{};
@@ -514,23 +517,23 @@ private:
     size_t column{};
   };
 
-  std::vector<LineCommentInfo> lineCommentsToAlign{};
+  std::vector<LineCommentInfo> mLineCommentsToAlign;
 
-  struct FormatOffInfo final {
+  struct FormatOff final {
     const char *inputSrcPos{};
 
     size_t outputSrcPos{};
   };
 
-  std::optional<FormatOffInfo> formatOff{};
+  std::optional<FormatOff> mFormatOff;
 
-  void apply_format_off(const char *inputSrcPos) {
-    if (formatOff) {
-      SMDL_SANITY_CHECK(formatOff->inputSrcPos < inputSrcPos);
-      outputSrc.resize(formatOff->outputSrcPos);
-      outputSrc += std::string_view(formatOff->inputSrcPos,
-                                    inputSrcPos - formatOff->inputSrcPos);
-      formatOff.reset();
+  void applyFormatOff(const char *inputSrcPos) {
+    if (mFormatOff) {
+      SMDL_SANITY_CHECK(mFormatOff->inputSrcPos < inputSrcPos);
+      mOutputSrc.resize(mFormatOff->outputSrcPos);
+      mOutputSrc += std::string_view(mFormatOff->inputSrcPos,
+                                     inputSrcPos - mFormatOff->inputSrcPos);
+      mFormatOff.reset();
     }
   }
 };

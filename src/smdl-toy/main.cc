@@ -220,7 +220,7 @@ int main(int argc, char **argv) try {
                       path[depth].point,
                       path[depth].point + 2 * scene.boundRadius * wi, f)) {
                 auto L{path[depth].beta * f * Li / (Lipdf * float(spp))};
-                if (!L.is_any_non_finite()) {
+                if (!L.isAnyNonFinite()) {
                   L *= std::pow(Lipdf / (fpdfFwd + Lipdf), 2.0f);
                   Lsum += L;
                 }
@@ -243,7 +243,7 @@ int main(int argc, char **argv) try {
                         path[depth].medium, path[depth].point,
                         path[depth].point + 2 * scene.boundRadius * wi, f)) {
                   auto L{path[depth].beta * f * Li / (fpdfFwd * float(spp))};
-                  if (!L.is_any_non_finite()) {
+                  if (!L.isAnyNonFinite()) {
                     L *= std::pow(fpdfFwd / (fpdfFwd + Lipdf), 2.0f);
                     Lsum += L;
                   }
@@ -257,7 +257,7 @@ int main(int argc, char **argv) try {
             float Lipdf{};
             Color Li{envLight->Li(compiler, state, path[depth].wNext, Lipdf)};
             auto L{path[depth].beta * Li / float(spp)};
-            if (!L.is_any_non_finite())
+            if (!L.isAnyNonFinite())
               Lsum += L;
           }
         }

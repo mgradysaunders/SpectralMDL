@@ -249,16 +249,27 @@ auto Parser::parseParameterList() -> std::optional<AST::ParameterList> {
   if (auto srcStar{nextDelimiter("*")}) {
     params.srcStar = *srcStar;
   } else {
+    params.params.reserve(4);
     while (true) {
       skip();
       auto param{parseParameter()};
       if (!param)
         break;
-      params.params.push_back(std::move(*param));
+      params.params.emplace_back(std::move(*param));
       auto srcComma{nextDelimiter(",")};
       if (!srcComma)
         break;
       params.params.back().srcComma = *srcComma;
+    }
+    auto srcEllipsis{nextDelimiter("...")};
+    if (srcEllipsis) {
+      // The last parameter must have a trailing comma if the parameter list 
+      // features a variadic ellipsis.
+      if (!params.params.empty() && params.params.back().srcComma.empty()) {
+        reject();
+        return std::nullopt;
+      }
+      params.srcEllipsis = *srcEllipsis;
     }
   }
   auto srcParenR{nextDelimiter(")")};

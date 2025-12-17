@@ -223,7 +223,7 @@ public:
       if (llvm::isa_and_present<AST::Parameter>(node)) {
         auto astParam{static_cast<AST::Parameter *>(node)};
         if (!astParam->warningIssued &&
-            !astParam->type->has_qualifier("inline") &&
+            !astParam->type->hasQualifier("inline") &&
             !(astParam->annotations &&
               astParam->annotations->isMarkedUnused())) {
           astParam->warningIssued = true;
@@ -294,14 +294,14 @@ public:
   /// Is marked with the keyword `const`?
   [[nodiscard]] bool isConst() const {
     if (auto astType{getASTType()})
-      return astType->has_qualifier("const") || builtinConst;
+      return astType->hasQualifier("const") || builtinConst;
     return builtinConst;
   }
 
   /// Is marked with the keyword `inline`?
   [[nodiscard]] bool isInline() const {
     if (auto astType{getASTType()})
-      return astType->has_qualifier("inline");
+      return astType->hasQualifier("inline");
     return false;
   }
 
@@ -351,7 +351,7 @@ public:
   [[nodiscard]] bool isConcrete() const { return !isAbstract(); }
 
   /// Do all parameters have default initializers?
-  [[nodiscard]] bool allDefaultInitializers() const {
+  [[nodiscard]] bool hasAllDefaultInitializers() const {
     return isAllTrue(
         [](auto &param) { return param.getASTInitializer() != nullptr; });
   }
@@ -366,12 +366,16 @@ public:
   [[nodiscard]] std::vector<llvm::Type *> getLLVMTypes() const;
 
   /// The lookup sequence.
-  using LookupSeq = std::vector<std::pair<const Parameter *, unsigned>>;
+  using LookupSequence = std::vector<std::pair<const Parameter *, unsigned>>;
 
   /// Get the lookup sequence to access the given parameter name. Returns false
   /// on failure.
   [[nodiscard]] bool getLookupSequence(std::string_view name,
-                                       LookupSeq &seq) const;
+                                       LookupSequence &seq) const;
+
+public:
+  /// Is variadic? i.e., ends with `...`?
+  bool isVariadic{};
 
   /// The last crumb before the parameter list.
   Crumb *lastCrumb{};

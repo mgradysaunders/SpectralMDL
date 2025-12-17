@@ -68,7 +68,7 @@ void Emitter::createFunction(llvm::Function *&llvmFunc, std::string_view name,
   if (!callback) {
     SMDL_SANITY_CHECK(!returnType->isAbstract());
     auto llvmFuncTy{llvm::FunctionType::get(returnType->llvmType, llvmParamTys,
-                                            /*isVarArg=*/false)};
+                                            params.isVariadic)};
     auto llvmCallee{context.getBuiltinCallee(name, llvmFuncTy)};
     if (llvmFuncTy != llvmCallee.getFunctionType()) {
       srcLoc.throwError("conflicting definitions of '@(foreign)' function ",
@@ -85,8 +85,7 @@ void Emitter::createFunction(llvm::Function *&llvmFunc, std::string_view name,
       llvm::FunctionType::get(returnType->llvmType
                                   ? returnType->llvmType
                                   : context.llvmIncompleteReturnTy,
-                              llvmParamTys,
-                              /*isVarArg=*/false),
+                              llvmParamTys, params.isVariadic),
       llvm::Function::InternalLinkage, "", context.llvmModule);
 
   auto lastIP{builder.saveIP()};
@@ -122,7 +121,7 @@ void Emitter::createFunction(llvm::Function *&llvmFunc, std::string_view name,
       llvmFunc = llvm::Function::Create(
           llvm::FunctionType::get(returnType->llvmType,
                                   llvmFunc->getFunctionType()->params(),
-                                  /*isVarArg=*/false),
+                                  params.isVariadic),
           llvm::Function::InternalLinkage, "", context.llvmModule);
       llvmFunc->splice(llvmFunc->begin(), llvmFunc0);
       auto llvmArg0{llvmFunc0->arg_begin()};
@@ -146,8 +145,7 @@ void Emitter::createFunction(llvm::Function *&llvmFunc, std::string_view name,
                         " LLVM-IR verification failed: ", message);
     // Inline.
     for (auto &inlineReq : inlines) {
-      auto result{llvmForceInline(inlineReq.value, //
-                                  inlineReq.isRecursive)};
+      auto result{llvmForceInline(inlineReq.value, inlineReq.isRecursive)};
       if (!result.isSuccess())
         inlineReq.srcLoc.logWarn(std::string("cannot force inline: ") +
                                  result.getFailureReason());
@@ -171,7 +169,7 @@ Value Emitter::createAlloca(Type *type, const llvm::Twine &name) {
 
 void Emitter::declareParameter(const Parameter &param, Value value) {
   value = invoke(param.type, value, param.getSourceLocation());
-  value = param.isConst() || value.isVoid() ? value : toLValue(value);
+  value = param.isConst() || value.isVoid() ? value : lvalue(value);
   crumbsToWarnAbout.push_back(
       declareCrumb(param.name,
                    param.astParam   ? static_cast<AST::Node *>(param.astParam)
@@ -201,13 +199,13 @@ void Emitter::declareImport(Span<const std::string_view> importPath, bool isAbs,
     decl.srcLoc.throwError("invalid import path (missing '::*'?)");
   auto isDots{[](auto elem) { return elem == "." || elem == ".."; }};
   auto importedModule{
-      resolveModule(importPath.drop_back(), isAbs, decl.srcLoc.module_)};
+      resolveModule(importPath.dropBack(), isAbs, decl.srcLoc.module_)};
   if (!importedModule)
     decl.srcLoc.throwError("cannot resolve import identifier ",
                            Quoted(join(importPath, "::")));
   if (importPath.back() == "*") {
-    importPath = importPath.drop_back();
-    importPath = importPath.drop_front_while(isDots);
+    importPath = importPath.dropBack();
+    importPath = importPath.dropFrontWhile(isDots);
     declareCrumb(importPath, &decl,
                  context.getComptimeMetaModule(importedModule));
   } else {
@@ -217,7 +215,7 @@ void Emitter::declareImport(Span<const std::string_view> importPath, bool isAbs,
     if (!importedCrumb)
       decl.srcLoc.throwError("cannot resolve import identifier ",
                              Quoted(join(importPath, "::")));
-    declareCrumb(importPath.drop_front_while(isDots), &decl,
+    declareCrumb(importPath.dropFrontWhile(isDots), &decl,
                  importedCrumb->value);
   }
 }
@@ -307,28 +305,28 @@ Value Emitter::emit(AST::Decl &decl) {
 
 Value Emitter::emit(AST::Exec &decl) {
   auto returnType{context.getVoidType()};
-  auto llvmFunc{createFunction( //
-      ".exec", /*isPure=*/false, returnType, ParameterList(), decl.srcLoc,
-      [&] { emit(decl.stmt); })};
+  auto llvmFunc{createFunction(".exec", /*isPure=*/false, returnType,
+                               ParameterList(), decl.srcLoc,
+                               [&] { emit(decl.stmt); })};
   llvmFunc->setLinkage(llvm::Function::ExternalLinkage);
-  context.compiler.mJitExecs.emplace_back(llvmFunc->getName().str());
+  context.compiler.mExecs.emplace_back(llvmFunc->getName().str());
   return Value();
 }
 
 Value Emitter::emit(AST::UnitTest &decl) {
   if (context.compiler.enableUnitTests) {
     auto returnType{context.getVoidType()};
-    auto llvmFunc{createFunction( //
-        ".unit_test", /*isPure=*/false, returnType, ParameterList(),
-        decl.srcLoc, [&] { emit(decl.stmt); })};
+    auto llvmFunc{createFunction(".unit_test", /*isPure=*/false, returnType,
+                                 ParameterList(), decl.srcLoc,
+                                 [&] { emit(decl.stmt); })};
     llvmFunc->setLinkage(llvm::Function::ExternalLinkage);
-    auto &jitTest{context.compiler.mJitUnitTests.emplace_back()};
-    jitTest.moduleName = std::string(decl.srcLoc.getModuleName());
-    jitTest.moduleFileName = std::string(decl.srcLoc.getModuleFileName());
-    jitTest.lineNo = decl.srcLoc.lineNo;
-    jitTest.testName = decl.name->value;
-    jitTest.test.name = llvmFunc->getName().str();
-    jitTest.test.func = nullptr; // Lookup later
+    auto &unitTest{context.compiler.mUnitTests.emplace_back()};
+    unitTest.moduleName = std::string(decl.srcLoc.getModuleName());
+    unitTest.moduleFileName = std::string(decl.srcLoc.getModuleFileName());
+    unitTest.lineNo = decl.srcLoc.lineNo;
+    unitTest.testName = decl.name->value;
+    unitTest.test.name = llvmFunc->getName().str();
+    unitTest.test.func = nullptr; // Lookup later
   }
   return Value();
 }
@@ -354,9 +352,9 @@ Value Emitter::emit(AST::Variable &decl) {
   if (type->isFunction())
     decl.srcLoc.throwError("variable must not have function type ",
                            Quoted(type->displayName));
-  const bool isConst{decl.type->has_qualifier("const")};
-  const bool isStatic{decl.type->has_qualifier("static")};
-  const bool isInline{decl.type->has_qualifier("inline")};
+  const bool isConst{decl.type->hasQualifier("const")};
+  const bool isStatic{decl.type->hasQualifier("static")};
+  const bool isInline{decl.type->hasQualifier("inline")};
   if (!getLLVMFunction() && !isConst)
     decl.srcLoc.throwError(
         "variables declared at module scope must be 'const'");
@@ -490,7 +488,7 @@ Value Emitter::emit(AST::Binary &expr) {
     if (!ident) // || !ident->is_simple_name())
       expr.srcLoc.throwError(
           "expected lhs of operator ':=' to be an identifier");
-    auto rv{toRValue(emit(expr.exprRhs))};
+    auto rv{rvalue(emit(expr.exprRhs))};
     declareCrumb(*ident, ident, rv);
     return rv;
   }
@@ -750,7 +748,7 @@ Value Emitter::emit(AST::Switch &stmt) {
   };
   auto switchCases{llvm::SmallVector<SwitchCase>{}};
   for (auto &astCase : stmt.cases) {
-    if (astCase.is_default()) {
+    if (astCase.isDefault()) {
       if (blockDefault)
         stmt.srcLoc.throwError("expected at most 1 'default' case in 'switch'");
       switchCases.push_back(SwitchCase{
@@ -848,7 +846,7 @@ Value Emitter::emitOp(AST::UnaryOp op, Value value,
     // follow the C convention of returning the value before the
     // operation is applied.
     if ((op & UNOP_POSTFIX) == UNOP_POSTFIX) {
-      auto result{toRValue(value)}; // Save
+      auto result{rvalue(value)}; // Save
       emitOp(op & ~UNOP_POSTFIX, value, srcLoc);
       return result;
     }
@@ -866,14 +864,14 @@ Value Emitter::emitOp(AST::UnaryOp op, Value value,
     }
     // Unary positive, e.g., `+value`
     if (op == UNOP_POS) {
-      return toRValue(value);
+      return rvalue(value);
     }
     // Unary negative, e.g., `-value`
     if (op == UNOP_NEG) {
       if (value.type->isVectorized() && value.type->isArithmeticIntegral()) {
-        return RValue(value.type, builder.CreateNeg(toRValue(value)));
+        return RValue(value.type, builder.CreateNeg(rvalue(value)));
       } else if (value.type->isVectorized()) {
-        return RValue(value.type, builder.CreateFNeg(toRValue(value)));
+        return RValue(value.type, builder.CreateFNeg(rvalue(value)));
       } else if (value.type->isArithmeticMatrix()) {
         return emitOpColumnwise(value.type, [&](unsigned j) {
           return emitOp(op, accessIndex(value, j, srcLoc), srcLoc);
@@ -887,7 +885,7 @@ Value Emitter::emitOp(AST::UnaryOp op, Value value,
       if ((value.type->isArithmeticScalar() ||
            value.type->isArithmeticVector()) &&
           value.type->isArithmeticIntegral()) {
-        return RValue(value.type, builder.CreateNot(toRValue(value)));
+        return RValue(value.type, builder.CreateNot(rvalue(value)));
       }
     }
     // Unary logic not, e.g., `!value`
@@ -910,11 +908,11 @@ Value Emitter::emitOp(AST::UnaryOp op, Value value,
     // Unary dereference, e.g., `*value`
     if (op == UNOP_DEREF) {
       if (value.type->isPointer())
-        return LValue(value.type->getPointeeType(), toRValue(value));
+        return LValue(value.type->getPointeeType(), rvalue(value));
       if (value.type->isOptionalUnion()) {
         if (value.isRValue()) {
-          auto lv{toLValue(value)};
-          auto rv{toRValue(emitOp(op, lv, srcLoc))};
+          auto lv{lvalue(value)};
+          auto rv{rvalue(emitOp(op, lv, srcLoc))};
           createLifetimeEnd(lv);
           return rv;
         }
@@ -1033,12 +1031,12 @@ Value Emitter::emitOp(AST::BinaryOp op, Value lhs, Value rhs,
     if (!lhs.isLValue())
       srcLoc.throwError("cannot apply ", Quoted(to_string(op)), " to rvalue");
     if (op != BINOP_EQ)
-      rhs = emitOp(op & ~BINOP_EQ, toRValue(lhs), rhs, srcLoc);
+      rhs = emitOp(op & ~BINOP_EQ, rvalue(lhs), rhs, srcLoc);
     builder.CreateStore(invoke(lhs.type, rhs, srcLoc), lhs);
     return lhs;
   }
-  lhs = toRValue(lhs);
-  rhs = toRValue(rhs);
+  lhs = rvalue(lhs);
+  rhs = rvalue(rhs);
   // Numbers
   if (lhs.type->isArithmetic() && rhs.type->isArithmetic()) {
     auto lhsType{static_cast<ArithmeticType *>(lhs.type)};
@@ -1286,15 +1284,14 @@ SMDL_EXPORT void *smdlOFileOpen(const char *fname) {
   if (!result) {
     SMDL_LOG_WARN("cannot open ", Quoted(fname), ": ",
                   Quoted(std::strerror(errno)));
-    delete result;
     return nullptr;
   }
   return result;
 }
 
-SMDL_EXPORT void smdlOFileClose(void *ofile) {
-  if (ofile)
-    std::fclose(static_cast<std::FILE *>(ofile));
+SMDL_EXPORT void smdlOFileClose(void *file) {
+  if (file)
+    std::fclose(static_cast<std::FILE *>(file));
 }
 
 // TODO This is a specific solution to a specific problem of calculating
@@ -1396,7 +1393,7 @@ Value Emitter::emitIntrinsic(std::string_view name, const ArgumentList &args,
     return args[0].value;
   }};
   auto expectOneType{[&]() {
-    auto value{toRValue(expectOne())};
+    auto value{rvalue(expectOne())};
     return value.isComptimeMetaType(context)
                ? value.getComptimeMetaType(context, srcLoc)
                : value.type;
@@ -1425,8 +1422,8 @@ Value Emitter::emitIntrinsic(std::string_view name, const ArgumentList &args,
         srcLoc.throwError("intrinsic ", Quoted(name),
                           " expects 1 or 2 int arguments");
       auto intType{context.getIntType()};
-      arg0 = invoke(intType, toRValue(arg0), srcLoc);
-      arg1 = invoke(intType, toRValue(arg1), srcLoc);
+      arg0 = invoke(intType, rvalue(arg0), srcLoc);
+      arg1 = invoke(intType, rvalue(arg1), srcLoc);
       return RValue(
           context.getVoidPointerType(),
           builder.CreateCall(callee, {arg0.llvmValue, arg1.llvmValue}));
@@ -1439,7 +1436,7 @@ Value Emitter::emitIntrinsic(std::string_view name, const ArgumentList &args,
       if (args.size() == 1 && args[0].value.type->isComplex(context)) {
         return invoke("_complex_abs", args, srcLoc);
       }
-      auto value{toRValue(expectOneVectorized())};
+      auto value{rvalue(expectOneVectorized())};
       return RValue(
           value.type,
           value.type->isArithmeticIntegral()
@@ -1471,7 +1468,7 @@ Value Emitter::emitIntrinsic(std::string_view name, const ArgumentList &args,
         srcLoc.throwError("intrinsic 'assert' expects 1 bool argument and 1 "
                           "optional string argument");
       auto [blockPanic, blockOk] = createBlocks<2>("assert", {".panic", ".ok"});
-      builder.CreateCondBr(toRValue(args[0].value), blockOk, blockPanic);
+      builder.CreateCondBr(rvalue(args[0].value), blockOk, blockPanic);
       builder.SetInsertPoint(blockPanic);
       handleScope(nullptr, nullptr, [&] {
         if (args.size() == 1) {
@@ -1482,7 +1479,7 @@ Value Emitter::emitIntrinsic(std::string_view name, const ArgumentList &args,
           }
           emitPanic(context.getComptimeString(message), srcLoc);
         } else {
-          emitPanic(toRValue(args[1].value), srcLoc);
+          emitPanic(rvalue(args[1].value), srcLoc);
         }
       });
       builder.CreateBr(blockOk);
@@ -1533,7 +1530,7 @@ Value Emitter::emitIntrinsic(std::string_view name, const ArgumentList &args,
   }
   case 'b': {
     if (name == "bitreverse") {
-      auto value{toRValue(expectOneIntOrIntVector())};
+      auto value{rvalue(expectOneIntOrIntVector())};
       return RValue(value.type, builder.CreateUnaryIntrinsic(
                                     llvm::Intrinsic::bitreverse, value));
     }
@@ -1557,14 +1554,14 @@ Value Emitter::emitIntrinsic(std::string_view name, const ArgumentList &args,
         srcLoc.throwError("intrinsic ", Quoted(name),
                           " expects 1 or 2 int arguments");
       auto intType{context.getIntType()};
-      arg0 = invoke(intType, toRValue(arg0), srcLoc);
-      arg1 = invoke(intType, toRValue(arg1), srcLoc);
+      arg0 = invoke(intType, rvalue(arg0), srcLoc);
+      arg1 = invoke(intType, rvalue(arg1), srcLoc);
       return RValue(
           context.getVoidPointerType(),
           builder.CreateCall(callee, {arg0.llvmValue, arg1.llvmValue}));
     }
     if (name == "bump") {
-      auto value{toRValue(expectOne())};
+      auto value{rvalue(expectOne())};
       auto callee{
           context.getBuiltinCallee("smdlBumpAllocate", &smdlBumpAllocate)};
       if (auto func{llvm::dyn_cast<llvm::Function>(callee.getCallee())})
@@ -1582,19 +1579,19 @@ Value Emitter::emitIntrinsic(std::string_view name, const ArgumentList &args,
   }
   case 'c': {
     if (name == "ctlz") {
-      auto value{toRValue(expectOneIntOrIntVector())};
+      auto value{rvalue(expectOneIntOrIntVector())};
       return RValue(value.type, builder.CreateBinaryIntrinsic(
                                     llvm::Intrinsic::ctlz, value,
                                     context.getComptimeBool(false)));
     }
     if (name == "cttz") {
-      auto value{toRValue(expectOneIntOrIntVector())};
+      auto value{rvalue(expectOneIntOrIntVector())};
       return RValue(value.type, builder.CreateBinaryIntrinsic(
                                     llvm::Intrinsic::cttz, value,
                                     context.getComptimeBool(false)));
     }
     if (name == "ctpop") {
-      auto value{toRValue(expectOneIntOrIntVector())};
+      auto value{rvalue(expectOneIntOrIntVector())};
       return RValue(value.type, builder.CreateUnaryIntrinsic(
                                     llvm::Intrinsic::ctpop, value));
     }
@@ -1608,7 +1605,7 @@ Value Emitter::emitIntrinsic(std::string_view name, const ArgumentList &args,
                           " expects 1 pointer argument");
       auto callee{context.getBuiltinCallee("smdlFree", &smdlFree)};
       return RValue(context.getVoidType(),
-                    builder.CreateCall(callee, {toRValue(value).llvmValue}));
+                    builder.CreateCall(callee, {rvalue(value).llvmValue}));
     }
     break;
   }
@@ -1621,7 +1618,7 @@ Value Emitter::emitIntrinsic(std::string_view name, const ArgumentList &args,
         srcLoc.throwError(
             "intrinsic 'isfpclass' expects 1 vectorized floating point "
             "argument and 1 compile-time int argument");
-      auto value{toRValue(args[0].value)};
+      auto value{rvalue(args[0].value)};
       return RValue(
           static_cast<ArithmeticType *>(value.type)
               ->getWithDifferentScalar(context, Scalar::getBool()),
@@ -1696,7 +1693,7 @@ Value Emitter::emitIntrinsic(std::string_view name, const ArgumentList &args,
               "intrinsic ", Quoted(name),
               " expects 1 compile-time string argument and 1 int argument");
         return std::make_pair(std::string(args[0].value.getComptimeString()),
-                              toRValue(args[1].value));
+                              rvalue(args[1].value));
       }};
       if (name == "load_texture_2d") {
         auto texture2DType{context.getTexture2DType()};
@@ -1901,11 +1898,11 @@ Value Emitter::emitIntrinsic(std::string_view name, const ArgumentList &args,
             args[2].value.type->isArithmeticScalarInt()))
         srcLoc.throwError("intrinsic 'memset' expects 1 pointer argument "
                           "and 2 int arguments");
-      auto ptr{toRValue(args[0].value)};
+      auto ptr{rvalue(args[0].value)};
       auto val{
-          llvmEmitCast(builder, toRValue(args[1].value), builder.getInt8Ty())};
+          llvmEmitCast(builder, rvalue(args[1].value), builder.getInt8Ty())};
       auto count{
-          llvmEmitCast(builder, toRValue(args[2].value), builder.getInt64Ty())};
+          llvmEmitCast(builder, rvalue(args[2].value), builder.getInt64Ty())};
       return RValue(context.getVoidType(),
                     builder.CreateMemSet(ptr, val, count, std::nullopt));
     }
@@ -1916,10 +1913,10 @@ Value Emitter::emitIntrinsic(std::string_view name, const ArgumentList &args,
             args[2].value.type->isArithmeticScalarInt()))
         srcLoc.throwError("intrinsic 'memcpy' expects 2 pointer arguments "
                           "and 1 int argument");
-      auto dst{toRValue(args[0].value)};
-      auto src{toRValue(args[1].value)};
+      auto dst{rvalue(args[0].value)};
+      auto src{rvalue(args[1].value)};
       auto count{
-          llvmEmitCast(builder, toRValue(args[2].value), builder.getInt64Ty())};
+          llvmEmitCast(builder, rvalue(args[2].value), builder.getInt64Ty())};
       return RValue(
           context.getVoidType(),
           builder.CreateMemCpy(dst, std::nullopt, src, std::nullopt, count));
@@ -1948,7 +1945,7 @@ Value Emitter::emitIntrinsic(std::string_view name, const ArgumentList &args,
                     builder.CreateBinaryIntrinsic(intrID, value0, value1));
     }
     if (name == "max_value" || name == "min_value") {
-      auto value{toRValue(expectOneVectorized())};
+      auto value{rvalue(expectOneVectorized())};
       if (value.type->isArithmeticScalar())
         return value;
       auto intrID = name == "max_value"
@@ -1999,14 +1996,14 @@ Value Emitter::emitIntrinsic(std::string_view name, const ArgumentList &args,
   }
   case 'o': {
     if (name == "ofile_open") {
-      auto value{toRValue(expectOne())};
+      auto value{rvalue(expectOne())};
       return RValue(context.getVoidPointerType(),
                     builder.CreateCall(context.getBuiltinCallee("smdlOFileOpen",
                                                                 &smdlOFileOpen),
                                        {value.llvmValue}));
     }
     if (name == "ofile_close") {
-      auto value{toRValue(expectOne())};
+      auto value{rvalue(expectOne())};
       builder.CreateCall(
           context.getBuiltinCallee("smdlOFileClose", &smdlOFileClose),
           {value.llvmValue});
@@ -2016,7 +2013,7 @@ Value Emitter::emitIntrinsic(std::string_view name, const ArgumentList &args,
       if (args.size() < 2)
         srcLoc.throwError("intrinsic 'ofile_print' expects 1 file pointer "
                           "argument and 1 or more printable arguments");
-      auto file{toRValue(args[0].value)};
+      auto file{rvalue(args[0].value)};
       for (size_t i = 1; i < args.size(); i++)
         emitPrint(file, args[i].value, srcLoc);
       if (name == "ofile_println")
@@ -2037,8 +2034,8 @@ Value Emitter::emitIntrinsic(std::string_view name, const ArgumentList &args,
           !args[0].value.type->isVectorized() || //
           !args[1].value.type->isVectorized())
         srcLoc.throwError("intrinsic 'pow' expects 2 vectorized arguments");
-      auto value0{toRValue(args[0].value)};
-      auto value1{toRValue(args[1].value)};
+      auto value0{rvalue(args[0].value)};
+      auto value1{rvalue(args[1].value)};
       if (value1.isComptimeInt()) {
         auto power{value1.getComptimeInt()};
         if (power == 1)
@@ -2065,7 +2062,7 @@ Value Emitter::emitIntrinsic(std::string_view name, const ArgumentList &args,
       return Value();
     }
     if (name == "prod") {
-      auto value{toRValue(expectOneVectorized())};
+      auto value{rvalue(expectOneVectorized())};
       if (value.type->isArithmeticScalar())
         return value;
       auto scalarType{scalarTypeOf(value.type)};
@@ -2106,7 +2103,7 @@ Value Emitter::emitIntrinsic(std::string_view name, const ArgumentList &args,
       return context.getComptimeInt(int(context.getSizeOf(expectOneType())));
     }
     if (name == "sum") {
-      auto value{toRValue(expectOneVectorized())};
+      auto value{rvalue(expectOneVectorized())};
       if (value.type->isArithmeticScalar())
         return value;
       auto scalarType{scalarTypeOf(value.type)};
@@ -2116,7 +2113,7 @@ Value Emitter::emitIntrinsic(std::string_view name, const ArgumentList &args,
                                           Value::zero(scalarType), value));
     }
     if (name == "sign") {
-      auto value{toRValue(expectOneVectorized())};
+      auto value{rvalue(expectOneVectorized())};
       if (value.type->isArithmeticIntegral()) {
         return RValue(
             value.type,
@@ -2139,7 +2136,7 @@ Value Emitter::emitIntrinsic(std::string_view name, const ArgumentList &args,
               [](auto arg) { return arg.value.type->isVectorized(); }))
         srcLoc.throwError("intrinsic 'select' expects 1 vectorized boolean "
                           "argument and 2 vectorized selection arguments");
-      auto valueCond{toRValue(args[0].value)};
+      auto valueCond{rvalue(args[0].value)};
       auto valueThen{args[1].value};
       auto valueElse{args[2].value};
       auto type{context.getCommonType(
@@ -2179,14 +2176,14 @@ Value Emitter::emitIntrinsic(std::string_view name, const ArgumentList &args,
         srcLoc.throwError("intrinsic 'tabulate_albedo' function argument must "
                           "have signature '@(pure) float(float, float)'");
       }
-      auto &funcInst{funcType->instantiate(
+      auto &funcInst{funcType->getInstance(
           *this, {context.getFloatType(), context.getFloatType()})};
       auto callee{
           context.getBuiltinCallee("smdlTabulateAlbedo", &smdlTabulateAlbedo)};
       auto callInst{
-          builder.CreateCall(callee, {toRValue(args[0].value).llvmValue, //
-                                      toRValue(args[1].value).llvmValue, //
-                                      toRValue(args[2].value).llvmValue, //
+          builder.CreateCall(callee, {rvalue(args[0].value).llvmValue, //
+                                      rvalue(args[1].value).llvmValue, //
+                                      rvalue(args[2].value).llvmValue, //
                                       funcInst.llvmFunc})};
       return RValue(context.getVoidType(), callInst);
     }
@@ -2197,14 +2194,14 @@ Value Emitter::emitIntrinsic(std::string_view name, const ArgumentList &args,
       return context.getComptimeString(expectOneType()->displayName);
     }
     if (name == "type_int") {
-      auto value{toRValue(expectOne())};
+      auto value{rvalue(expectOne())};
       if (!value.isComptimeInt())
         srcLoc.throwError("intrinsic 'type_int' expects 1 compile-time int");
       return context.getComptimeMetaType(context.getArithmeticType(
           Scalar::getInt(value.getComptimeInt()), Extent(1)));
     }
     if (name == "type_float") {
-      auto value{toRValue(expectOne())};
+      auto value{rvalue(expectOne())};
       if (!value.isComptimeInt())
         srcLoc.throwError("intrinsic 'type_float' expects 1 compile-time int");
       return context.getComptimeMetaType(context.getArithmeticType(
@@ -2252,7 +2249,7 @@ Value Emitter::emitIntrinsic(std::string_view name, const ArgumentList &args,
       auto valueCols{llvm::SmallVector<Value>{}};
       for (unsigned j = 0;
            j < static_cast<ArithmeticType *>(value.type)->extent.numCols; j++)
-        valueCols.push_back(toRValue(accessIndex(value, j, srcLoc)));
+        valueCols.push_back(rvalue(accessIndex(value, j, srcLoc)));
       auto resultType{
           static_cast<ArithmeticType *>(value.type)->getTransposeType(context)};
       auto result{Value::zero(resultType)};
@@ -2280,11 +2277,11 @@ Value Emitter::emitIntrinsic(std::string_view name, const ArgumentList &args,
         srcLoc.throwError(
             "intrinsic 'unsigned_to_fp' expects 1 int argument and "
             "1 floating point type argument");
-      return RValue(floatType, builder.CreateUIToFP(toRValue(args[0].value),
+      return RValue(floatType, builder.CreateUIToFP(rvalue(args[0].value),
                                                     floatType->llvmType));
     }
     if (name == "unpack_float4") {
-      auto value{toRValue(expectOne())};
+      auto value{rvalue(expectOne())};
       if (!value.type->isArithmeticScalar() &&
           !value.type->isArithmeticVector())
         srcLoc.throwError(
@@ -2329,7 +2326,7 @@ Value Emitter::emitIntrinsic(std::string_view name, const ArgumentList &args,
       if (name == "conj") {
         // NOTE: Conjugate of real number is no-op
         return valueIsComplex ? invoke("_complex_conj", value, srcLoc)
-                              : toRValue(value);
+                              : rvalue(value);
       } else if (name == "real") {
         // NOTE: Real part of real number is identity
         return valueIsComplex ? accessField(value, "a", srcLoc) : value;
@@ -2364,7 +2361,7 @@ Value Emitter::emitIntrinsic(std::string_view name, const ArgumentList &args,
         {"log2", llvm::Intrinsic::log2},   {"log10", llvm::Intrinsic::log10}};
     for (auto [intrName, intrID] : intrs) {
       if (name == intrName) {
-        auto value{toRValue(expectOneVectorized())};
+        auto value{rvalue(expectOneVectorized())};
         if (value.type->isArithmeticIntegral())
           value =
               invoke(static_cast<ArithmeticType *>(value.type)
@@ -2412,14 +2409,14 @@ Value Emitter::emitVisit(Value value, const SourceLocation &srcLoc,
     auto results{llvm::SmallVector<Result>{}};
     auto unionType{
         static_cast<UnionType *>(value.type->getFirstNonPointerType())};
-    auto ptr{value.type->isUnion() ? toRValue(accessField(value, "#ptr", {}))
+    auto ptr{value.type->isUnion() ? rvalue(accessField(value, "#ptr", {}))
                                    : Value()};
     auto visitName{context.getUniqueName("visit", getLLVMFunction())};
     auto visitNameRef{llvm::StringRef(visitName)};
     auto blockUnreachable{createBlock(visitNameRef + ".unreachable")};
     auto blockEnd{createBlock(visitNameRef + ".end")};
     auto switchInst{builder.CreateSwitch(
-        toRValue(accessField(value, "#idx", {})), blockUnreachable)};
+        rvalue(accessField(value, "#idx", {})), blockUnreachable)};
     for (size_t i = 0; i < unionType->caseTypes.size(); i++) {
       auto blockCase{createBlock(concat(visitName, ".case.", i))};
       switchInst->addCase(builder.getInt32(i), blockCase);
@@ -2428,7 +2425,7 @@ Value Emitter::emitVisit(Value value, const SourceLocation &srcLoc,
         auto caseValue{Value()};
         if (value.type->isUnion()) {
           caseValue = LValue(caseType, ptr);
-          caseValue = value.isRValue() ? toRValue(caseValue) : caseValue;
+          caseValue = value.isRValue() ? rvalue(caseValue) : caseValue;
         } else {
           caseValue = value;
           caseValue.type = context.getPointerType(
@@ -2457,7 +2454,7 @@ SMDL_EXPORT void smdlPanic(const char *message) {
 void Emitter::emitPanic(Value message, const SourceLocation &srcLoc) {
   SMDL_SANITY_CHECK(message);
   SMDL_SANITY_CHECK(message.type == context.getStringType());
-  message = toRValue(message);
+  message = rvalue(message);
   auto callInst{builder.CreateCall(
       context.getBuiltinCallee("smdlPanic", &smdlPanic), {message.llvmValue})};
   callInst->setIsNoInline();
@@ -2543,7 +2540,7 @@ SMDL_EXPORT void smdlPrintPointer(void *ptr, const void *value) {
 void Emitter::emitPrint(Value file, Value value, const SourceLocation &srcLoc,
                         bool quoteStrings) {
   SMDL_SANITY_CHECK(file.type->isPointer());
-  file = toRValue(file);
+  file = rvalue(file);
   if (value.isComptimeMetaType(context)) {
     emitPrint(file, value.getComptimeMetaType(context, srcLoc)->displayName,
               srcLoc);
@@ -2552,13 +2549,13 @@ void Emitter::emitPrint(Value file, Value value, const SourceLocation &srcLoc,
   } else if (value.type->isPointer()) {
     builder.CreateCall(
         context.getBuiltinCallee("smdlPrintPointer", &smdlPrintPointer),
-        {file.llvmValue, toRValue(value).llvmValue});
+        {file.llvmValue, rvalue(value).llvmValue});
   } else if (value.type->isString()) {
     auto call{quoteStrings ? context.getBuiltinCallee("smdlPrintQuotedString",
                                                       &smdlPrintQuotedString)
                            : context.getBuiltinCallee("smdlPrintString",
                                                       &smdlPrintString)};
-    builder.CreateCall(call, {file.llvmValue, toRValue(value).llvmValue});
+    builder.CreateCall(call, {file.llvmValue, rvalue(value).llvmValue});
   } else if (value.type->isEnum()) {
     emitPrint(file, invoke(context.getStringType(), value, srcLoc), srcLoc);
   } else if (auto arithType{llvm::dyn_cast<ArithmeticType>(value.type)}) {
@@ -2694,7 +2691,7 @@ Emitter::resolveArguments(const ParameterList &params, const ArgumentList &args,
                           const SourceLocation &srcLoc, bool dontEmit) {
   // Obvious case: If there are more arguments than parameters, resolution
   // fails.
-  if (args.size() > params.size()) {
+  if (args.size() > params.size() && !params.isVariadic) {
     srcLoc.throwError("too many arguments");
   }
   // Obvious case: If there are argument names that do not correspond to any
@@ -2703,39 +2700,34 @@ Emitter::resolveArguments(const ParameterList &params, const ArgumentList &args,
     srcLoc.throwError("invalid argument name(s)");
   }
   // The primary resolution logic.
-  ResolvedArguments resolved{args};
-  resolved.argParams.resize(args.size());
-  resolved.values.resize(params.size());
-  auto isResolved{
-      [&](size_t argIndex) { return resolved.argParams[argIndex] != nullptr; }};
-  for (size_t paramIndex = 0; paramIndex < params.size(); paramIndex++) {
-    auto &param{params[paramIndex]};
+  ResolvedArguments resolvedArgs{params, args};
+  for (size_t iParam{}; iParam < params.size(); iParam++) {
+    auto &param{params[iParam]};
     auto arg{[&]() -> const Argument * {
       // 1. Look for an explicitly named argument.
-      for (size_t argIndex = 0; argIndex < args.size(); argIndex++) {
-        if (auto &arg{args[argIndex]}; arg.name == param.name) {
+      for (size_t iArg{}; iArg < args.size(); iArg++) {
+        if (const auto &arg{args[iArg]}; arg.name == param.name) {
           // If this has already been resolved by a positional argument,
           // resolution fails.
-          if (isResolved(argIndex))
+          if (resolvedArgs.isResolved(iArg))
             srcLoc.throwError("named argument ", Quoted(arg.name),
                               " already resolved by positional argument");
-          resolved.argParams[argIndex] = &param;
+          resolvedArgs.argParams[iArg] = &param;
           return &arg;
         }
       }
-      // 2. If there is no named argument, default to the next positional
-      // argument.
-      for (size_t argIndex = 0; argIndex < args.size(); argIndex++) {
-        if (auto &arg{args[argIndex]};
-            arg.isPositional() && !isResolved(argIndex)) {
-          resolved.argParams[argIndex] = &param;
+      // 2. If no named argument, default to the next positional argument.
+      for (size_t iArg{}; iArg < args.size(); iArg++) {
+        if (const auto &arg{args[iArg]};
+            arg.isPositional() && !resolvedArgs.isResolved(iArg)) {
+          resolvedArgs.argParams[iArg] = &param;
           return &arg;
         }
       }
       return nullptr;
     }()};
     if (arg) {
-      resolved.values[paramIndex] = arg->value;
+      resolvedArgs.values[iParam] = arg->value;
       if (!context.isImplicitlyConvertible(arg->value.type, param.type))
         srcLoc.throwError("argument type ",
                           Quoted(arg->value.type->displayName),
@@ -2747,17 +2739,23 @@ Emitter::resolveArguments(const ParameterList &params, const ArgumentList &args,
                         " without default initializer");
     }
   }
-  // At this point, every argument should be resolved.
-  for (size_t argIndex = 0; argIndex < args.size(); argIndex++) {
-    SMDL_SANITY_CHECK(isResolved(argIndex));
+  // At this point, every parameter should have a resolved argument.
+  auto resolvedArgsCount{size_t(0)};
+  for (size_t iArg{}; iArg < args.size(); iArg++) {
+    if (resolvedArgs.isResolved(iArg)) {
+      resolvedArgsCount++;
+    } else {
+      resolvedArgs.values.emplace_back(args[iArg]);
+    }
   }
+  SMDL_SANITY_CHECK(resolvedArgsCount == params.size());
   if (!dontEmit) {
     SMDL_PRESERVE(crumb);
     crumb = params.lastCrumb;
     handleScope(nullptr, nullptr, [&] {
-      for (size_t paramIndex = 0; paramIndex < params.size(); paramIndex++) {
-        auto &param{params[paramIndex]};
-        auto &value{resolved.values[paramIndex]};
+      for (size_t iParam{}; iParam < params.size(); iParam++) {
+        auto &param{params[iParam]};
+        auto &value{resolvedArgs.values[iParam]};
         if (!value) {
           if (auto expr{param.getASTInitializer()}) {
             currentModule = expr->srcLoc.module_;
@@ -2769,9 +2767,15 @@ Emitter::resolveArguments(const ParameterList &params, const ArgumentList &args,
         value = invoke(param.type, value, param.getSourceLocation());
         declareCrumb(param.name, /*node=*/nullptr, value);
       }
+      if (params.isVariadic) {
+        for (size_t iArg{}; iArg < args.size(); iArg++)
+          if (!resolvedArgs.argParams[iArg])
+            resolvedArgs.values[iArg] = rvalue(resolvedArgs.values[iArg]);
+        SMDL_SANITY_CHECK(resolvedArgs.values.size() == args.size());
+      }
     });
   }
-  return resolved;
+  return resolvedArgs;
 }
 
 Module *Emitter::resolveModule(Span<const std::string_view> importPath,

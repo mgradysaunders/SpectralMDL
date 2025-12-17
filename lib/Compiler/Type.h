@@ -791,7 +791,7 @@ public:
                                               const ArgumentList &args,
                                               const SourceLocation &srcLoc);
 
-  /// An instantiation with concrete types and a concrete LLVM function.
+  /// An instance with concrete types and a concrete LLVM function.
   struct Instance final {
     /// The concrete return type.
     Type *returnType{};
@@ -804,9 +804,9 @@ public:
     bool isCompiling{};
   };
 
-  /// Instantiate a concrete LLVM function.
-  Instance &instantiate(Emitter &emitter,
-                        const llvm::SmallVector<Type *> paramTypes);
+  /// Get instance of a concrete LLVM function.
+  Instance &getInstance(Emitter &emitter,
+                        const llvm::SmallVector<Type *> &paramTypes);
 
 public:
   /// The AST declaration.
@@ -837,7 +837,7 @@ public:
   bool isMaterial{};
 
 private:
-  void initializeJitMaterialFunctions(Emitter &emitter);
+  void initializeMaterialFunctions(Emitter &emitter);
 };
 
 /// An inferred-size array type.
@@ -949,7 +949,7 @@ public:
   /// \{
 
   [[nodiscard]] bool hasField(std::string_view name) final {
-    for (auto &field : fields)
+    for (auto &field : mFields)
       if (field.name == name)
         return true;
     return false;
@@ -970,7 +970,7 @@ private:
     uint64_t offset{};
   };
 
-  std::vector<Field> fields{};
+  std::vector<Field> mFields{};
 };
 
 /// The string type, essentially a pointer to a null-terminated string literal.
@@ -1030,7 +1030,7 @@ public:
   /// struct types instantiated from the abstract `Foo` type definition.
   ///
   [[nodiscard]]
-  StructType *instantiate(Context &context,
+  StructType *getInstance(Context &context,
                           const llvm::SmallVector<Type *> &paramTypes);
 
   /// Is instantiation of the given type?

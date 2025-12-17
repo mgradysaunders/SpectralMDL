@@ -273,7 +273,7 @@ public:
   /// the implementation also detects nearly black color
   /// spectra.
   ///
-  [[nodiscard]] bool is_all_zero(float thresh = 0.0f) const noexcept {
+  [[nodiscard]] bool isAllZero(float thresh = 0.0f) const noexcept {
     for (size_t i = 0; i < N; i++)
       if (!(std::abs(v[i]) <= thresh))
         return false;
@@ -281,7 +281,7 @@ public:
   }
 
   /// Is any component infinite?
-  [[nodiscard]] bool is_any_inf() const noexcept {
+  [[nodiscard]] bool isAnyInf() const noexcept {
     for (size_t i = 0; i < N; i++)
       if (std::isinf(v[i]))
         return true;
@@ -289,7 +289,7 @@ public:
   }
 
   /// Is any component not-a-number?
-  [[nodiscard]] bool is_any_nan() const noexcept {
+  [[nodiscard]] bool isAnyNan() const noexcept {
     for (size_t i = 0; i < N; i++)
       if (std::isnan(v[i]))
         return true;
@@ -297,7 +297,7 @@ public:
   }
 
   /// Is any component either infinite or not-a-number?
-  [[nodiscard]] bool is_any_non_finite() const noexcept {
+  [[nodiscard]] bool isAnyNonFinite() const noexcept {
     for (size_t i = 0; i < N; i++)
       if (!std::isfinite(v[i]))
         return true;
@@ -305,14 +305,14 @@ public:
   }
 
   /// Set all non-positive components to zero.
-  void set_non_positive_to_zero() noexcept {
+  void setNonPositiveToZero() noexcept {
     for (size_t i = 0; i < N; i++) {
       v[i] = std::fmax(v[i], 0.0f);
     }
   }
 
   /// Set all non-finite components to zero.
-  void set_non_finite_to_zero() noexcept {
+  void setNonFiniteToZero() noexcept {
     for (size_t i = 0; i < N; i++) {
       if (!std::isfinite(v[i])) {
         v[i] = 0.0f;
@@ -329,7 +329,7 @@ public:
   }
 
   /// Find the maximum component.
-  [[nodiscard]] float maximum_component() const noexcept {
+  [[nodiscard]] float maxComponent() const noexcept {
     float result{v[0]};
     for (size_t i = 1; i < N; i++)
       result = std::fmax(result, v[i]);
@@ -337,7 +337,7 @@ public:
   }
 
   /// Find the minimum component.
-  [[nodiscard]] float minimum_component() const noexcept {
+  [[nodiscard]] float minComponent() const noexcept {
     float result{v[0]};
     for (size_t i = 1; i < N; i++)
       result = std::fmin(result, v[i]);

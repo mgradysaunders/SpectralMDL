@@ -12,10 +12,10 @@ public:
       : srcKwIf(srcKwIf), expr(std::move(expr)) {}
 
   /// The keyword `if`.
-  std::string_view srcKwIf{};
+  std::string_view srcKwIf;
 
   /// The condition expression.
-  BumpPtr<Expr> expr{};
+  BumpPtr<Expr> expr;
 };
 
 /// A `break` statement.
@@ -27,13 +27,13 @@ public:
         srcSemicolon(srcSemicolon) {}
 
   /// The keyword `break`.
-  std::string_view srcKwBreak{};
+  std::string_view srcKwBreak;
 
   /// The late if.
-  std::optional<LateIf> lateIf{};
+  std::optional<LateIf> lateIf;
 
   /// The semicolon `;`.
-  std::string_view srcSemicolon{};
+  std::string_view srcSemicolon;
 };
 
 /// A compound statement (between braces `{ ... }`).
@@ -45,13 +45,13 @@ public:
       : srcBraceL(srcBraceL), stmts(std::move(stmts)), srcBraceR(srcBraceR) {}
 
   /// The brace `{`.
-  std::string_view srcBraceL{};
+  std::string_view srcBraceL;
 
   /// The statements.
-  std::vector<BumpPtr<Stmt>> stmts{};
+  std::vector<BumpPtr<Stmt>> stmts;
 
   /// The brace `}`.
-  std::string_view srcBraceR{};
+  std::string_view srcBraceR;
 };
 
 /// A `continue` statement.
@@ -63,13 +63,13 @@ public:
         srcSemicolon(srcSemicolon) {}
 
   /// The keyword `continue`.
-  std::string_view srcKwContinue{};
+  std::string_view srcKwContinue;
 
   /// The late if.
-  std::optional<LateIf> lateIf{};
+  std::optional<LateIf> lateIf;
 
   /// The semicolon `;`.
-  std::string_view srcSemicolon{};
+  std::string_view srcSemicolon;
 };
 
 /// A declaration as a statement.
@@ -78,7 +78,7 @@ public:
   explicit DeclStmt(BumpPtr<Decl> decl) : decl(std::move(decl)) {}
 
   /// The declaration.
-  BumpPtr<Decl> decl{};
+  BumpPtr<Decl> decl;
 };
 
 /// A `defer` statement.
@@ -88,10 +88,10 @@ public:
       : srcKwDefer(srcKwDefer), stmt(std::move(stmt)) {}
 
   /// The keyword `defer`.
-  std::string_view srcKwDefer{};
+  std::string_view srcKwDefer;
 
   /// The statement.
-  BumpPtr<Stmt> stmt{};
+  BumpPtr<Stmt> stmt;
 };
 
 /// A `do ... while (...)` statement.
@@ -104,19 +104,19 @@ public:
         expr(std::move(expr)), srcSemicolon(srcSemicolon) {}
 
   /// The keyword `do`.
-  std::string_view srcKwDo{};
+  std::string_view srcKwDo;
 
   /// The body statement.
-  BumpPtr<Stmt> stmt{};
+  BumpPtr<Stmt> stmt;
 
   /// The keyword `while`.
-  std::string_view srcKwWhile{};
+  std::string_view srcKwWhile;
 
   /// The condition expression.
-  BumpPtr<Expr> expr{};
+  BumpPtr<Expr> expr;
 
   /// The semicolon `;`.
-  std::string_view srcSemicolon{};
+  std::string_view srcSemicolon;
 };
 
 /// An expression as a statement.
@@ -130,13 +130,13 @@ public:
         srcSemicolon(srcSemicolon) {}
 
   /// The expression.
-  BumpPtr<Expr> expr{};
+  BumpPtr<Expr> expr;
 
   /// The late if.
-  std::optional<LateIf> lateIf{};
+  std::optional<LateIf> lateIf;
 
   /// The semicolon `;`.
-  std::string_view srcSemicolon{};
+  std::string_view srcSemicolon;
 };
 
 /// A `for` statement.
@@ -153,28 +153,28 @@ public:
         stmtLoop(std::move(stmtLoop)) {}
 
   /// The keyword `for`.
-  std::string_view srcKwFor{};
+  std::string_view srcKwFor;
 
   /// The parenthesis `(`.
-  std::string_view srcParenL{};
+  std::string_view srcParenL;
 
   /// The initializer.
-  BumpPtr<Stmt> stmtInit{};
+  BumpPtr<Stmt> stmtInit;
 
   /// The condition expression.
-  BumpPtr<Expr> exprCond{};
+  BumpPtr<Expr> exprCond;
 
   /// The semicolon `;` after the condition expression.
-  std::string_view srcSemicolonAfterCond{};
+  std::string_view srcSemicolonAfterCond;
 
   /// The next expression.
-  BumpPtr<Expr> exprNext{};
+  BumpPtr<Expr> exprNext;
 
   /// The parenthesis `)`.
-  std::string_view srcParenR{};
+  std::string_view srcParenR;
 
   /// The body statement.
-  BumpPtr<Stmt> stmtLoop{};
+  BumpPtr<Stmt> stmtLoop;
 };
 
 /// An `if` statement.
@@ -187,19 +187,19 @@ public:
         srcKwElse(srcKwElse), stmtElse(std::move(stmtElse)) {}
 
   /// The keyword `if`.
-  std::string_view srcKwIf{};
+  std::string_view srcKwIf;
 
   /// The condition expression.
-  BumpPtr<Expr> expr{};
+  BumpPtr<Expr> expr;
 
   /// The then statement.
-  BumpPtr<Stmt> stmtThen{};
+  BumpPtr<Stmt> stmtThen;
 
   /// The keyword `else` (may be empty).
-  std::string_view srcKwElse{};
+  std::string_view srcKwElse;
 
   /// The else statement (may be null).
-  BumpPtr<Stmt> stmtElse{};
+  BumpPtr<Stmt> stmtElse;
 };
 
 /// A `preserve` statement.
@@ -208,10 +208,10 @@ public:
   class ExprWrapper final {
   public:
     /// The expression.
-    BumpPtr<Expr> expr{};
+    BumpPtr<Expr> expr;
 
     /// The next comma `,`. This may be empty!
-    std::string_view srcComma{};
+    std::string_view srcComma;
   };
 
   explicit Preserve(std::string_view srcKwPreserve,
@@ -221,13 +221,13 @@ public:
         srcSemicolon(srcSemicolon) {}
 
   /// The keyword `preserve`.
-  std::string_view srcKwPreserve{};
+  std::string_view srcKwPreserve;
 
   /// The expression wrappers.
-  std::vector<ExprWrapper> exprWrappers{};
+  std::vector<ExprWrapper> exprWrappers;
 
   /// The semicolon `;`.
-  std::string_view srcSemicolon{};
+  std::string_view srcSemicolon;
 
   /// Has comma `,` after the last expression?
   [[nodiscard]] bool hasTrailingComma() const {
@@ -244,16 +244,16 @@ public:
         lateIf(std::move(lateIf)), srcSemicolon(srcSemicolon) {}
 
   /// The keyword `return`.
-  std::string_view srcKwReturn{};
+  std::string_view srcKwReturn;
 
   /// The expression.
-  BumpPtr<Expr> expr{};
+  BumpPtr<Expr> expr;
 
   /// The late if.
-  std::optional<LateIf> lateIf{};
+  std::optional<LateIf> lateIf;
 
   /// The semicolon `;`.
-  std::string_view srcSemicolon{};
+  std::string_view srcSemicolon;
 };
 
 /// A `switch` statement.
@@ -261,19 +261,19 @@ class SMDL_EXPORT Switch final : public StmtSubclass<StmtKind::Switch> {
 public:
   struct Case final {
     /// Is default?
-    [[nodiscard]] bool is_default() const { return !expr; }
+    [[nodiscard]] bool isDefault() const { return !expr; }
 
     /// The keyword `case` or `default`.
-    std::string_view srcKwCaseOrDefault{};
+    std::string_view srcKwCaseOrDefault;
 
     /// The expression. This may be null! (if `default`)
-    BumpPtr<Expr> expr{};
+    BumpPtr<Expr> expr;
 
     /// The colon `:`.
-    std::string_view srcColon{};
+    std::string_view srcColon;
 
     /// The statements.
-    std::vector<BumpPtr<Stmt>> stmts{};
+    std::vector<BumpPtr<Stmt>> stmts;
   };
 
   explicit Switch(std::string_view srcKwSwitch, BumpPtr<Expr> expr,
@@ -283,19 +283,19 @@ public:
         cases(std::move(cases)), srcBraceR(srcBraceR) {}
 
   /// The keyword `switch`.
-  std::string_view srcKwSwitch{};
+  std::string_view srcKwSwitch;
 
   /// The expression.
-  BumpPtr<Expr> expr{};
+  BumpPtr<Expr> expr;
 
   /// The brace `{`.
-  std::string_view srcBraceL{};
+  std::string_view srcBraceL;
 
   /// The cases.
-  std::vector<Case> cases{};
+  std::vector<Case> cases;
 
   /// The brace `}`.
-  std::string_view srcBraceR{};
+  std::string_view srcBraceR;
 };
 
 /// An `unreachable` statement.
@@ -307,10 +307,10 @@ public:
       : srcKwUnreachable(srcKwUnreachable), srcSemicolon(srcSemicolon) {}
 
   /// The keyword `unreachable`.
-  std::string_view srcKwUnreachable{};
+  std::string_view srcKwUnreachable;
 
   /// The semicolon `;`.
-  std::string_view srcSemicolon{};
+  std::string_view srcSemicolon;
 };
 
 /// A `visit` statement.
@@ -323,19 +323,19 @@ public:
         expr(std::move(expr)), stmt(std::move(stmt)) {}
 
   /// The keyword `visit`.
-  std::string_view srcKwVisit{};
+  std::string_view srcKwVisit;
 
   /// The name.
-  Name name{};
+  Name name;
 
   /// The keyword `in`.
-  std::string_view srcKwIn{};
+  std::string_view srcKwIn;
 
   /// The expression.
-  BumpPtr<Expr> expr{};
+  BumpPtr<Expr> expr;
 
   /// The body statement.
-  BumpPtr<Stmt> stmt{};
+  BumpPtr<Stmt> stmt;
 };
 
 /// A `while` statement.
@@ -346,13 +346,13 @@ public:
       : srcKwWhile(srcKwWhile), expr(std::move(expr)), stmt(std::move(stmt)) {}
 
   /// The keyword `while`.
-  std::string_view srcKwWhile{};
+  std::string_view srcKwWhile;
 
   /// The condition expression.
-  BumpPtr<Expr> expr{};
+  BumpPtr<Expr> expr;
 
   /// The body statement.
-  BumpPtr<Stmt> stmt{};
+  BumpPtr<Stmt> stmt;
 };
 
 } // namespace smdl::AST

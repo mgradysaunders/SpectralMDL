@@ -1,0 +1,77 @@
+// NOTE: This module is non-standard!
+#smdl
+
+const i64 PCG32_MULTIPLIER = 6364136223846793005;
+
+const i64 PCG32_DEFAULT_INCREMENT = 1442695040888963407;
+
+export struct pcg32 {
+  pcg32(i64 seed) = return_from {
+    auto pcg(pcg32(state: seed));
+    pcg.state = pcg.state + pcg.increment;
+    pcg.state = pcg.state * PCG32_MULTIPLIER + pcg.increment;
+    return pcg;
+  };
+
+  pcg32(i64 seed, i64 stream) = return_from {
+    auto pcg(pcg32(state: seed, increment: (stream << 1) | 1));
+    pcg.state = pcg.state + pcg.increment;
+    pcg.state = pcg.state * PCG32_MULTIPLIER + pcg.increment;
+    return pcg;
+  };
+
+  i64 state = 0;
+
+  i64 increment = PCG32_DEFAULT_INCREMENT;
+};
+
+@(pure)
+export i32 generate_int(inline const &pcg32 this) {
+  state = state * PCG32_MULTIPLIER + increment;
+  return #rotr(i32(((state >>> 18) ^ state) >>> 27), i32(31 & (state >>> 59)));
+}
+
+@(pure)
+export i32 generate_int(const &pcg32 this, const i32 bound) {
+  if (bound > 1) {
+    const auto xmin((-bound) % bound);
+    while (true) {
+      const auto x(generate_int(this));
+      return x % bound if (x >= xmin);
+    }
+  }
+  return 0;
+}
+
+@(pure)
+export float generate_float(const &pcg32 this) {
+  return #min(float(#unsigned_to_fp(generate_int(this), double) / 4294967296.0d), 1.0 - $FLOAT_EPS / 2);
+}
+
+@(pure)
+export float2 generate_float2(const &pcg32 this) = float2(generate_float(this), generate_float(this));
+
+@(pure)
+export float3 generate_float3(const &pcg32 this) = float3(generate_float(this), generate_float(this), generate_float(this));
+
+@(pure)
+export float4 generate_float4(const &pcg32 this) = float4(generate_float(this), generate_float(this), generate_float(this), generate_float(this));
+
+@(pure)
+export void discard(inline const &pcg32 this, i64 n) {
+  // Fast power by squaring.
+  i64 aTotal(1);
+  i64 bTotal(0);
+  i64 a(PCG32_MULTIPLIER);
+  i64 b(increment);
+  while (n != 0) {
+    if ((n & 1) != 0) {
+      aTotal = aTotal * a;
+      bTotal = bTotal * a + b;
+    }
+    b *= a + 1;
+    a *= a;
+    n >>>= 1;
+  }
+  state = state * aTotal + bTotal;
+}

@@ -107,10 +107,10 @@ std::optional<Error> Compiler::compile(OptLevel optLevel) {
     mLLVMJitModule = std::make_unique<llvm::orc::ThreadSafeModule>(
         std::move(llvmModule), std::move(llvmContext));
     mLLVMJit = exitOnError(llvm::orc::LLJITBuilder().create());
-    mJitRGBToColor.func = nullptr;
-    mJitColorToRGB.func = nullptr;
-    mJitMaterials.clear();
-    mJitUnitTests.clear();
+    mRGBToColor.func = nullptr;
+    mColorToRGB.func = nullptr;
+    mMaterials.clear();
+    mUnitTests.clear();
   }
   auto initializeEntry{profilerEntryBegin("Initialize")};
   Context context{*this};
@@ -132,14 +132,14 @@ std::optional<Error> Compiler::compile(OptLevel optLevel) {
   // Sort JIT materials by filename and line number in case we
   // want to print them later
   std::sort(
-      mJitMaterials.begin(), mJitMaterials.end(),
+      mMaterials.begin(), mMaterials.end(),
       [](const auto &lhs, const auto &rhs) {
         return std::pair(std::string_view(lhs.moduleFileName), lhs.lineNo) <
                std::pair(std::string_view(rhs.moduleFileName), rhs.lineNo);
       });
   // Sort JIT unit tests by filename and line number for similar reasons
   std::sort(
-      mJitUnitTests.begin(), mJitUnitTests.end(),
+      mUnitTests.begin(), mUnitTests.end(),
       [](const auto &lhs, const auto &rhs) {
         return std::pair(std::string_view(lhs.moduleFileName), lhs.lineNo) <
                std::pair(std::string_view(rhs.moduleFileName), rhs.lineNo);
@@ -338,17 +338,17 @@ std::optional<Error> Compiler::jitCompile() noexcept {
   return catchAndReturnError([&] {
     llvmThrowIfError(mLLVMJit->addIRModule(std::move(*mLLVMJitModule)));
     mLLVMJitModule.reset();
-    jitLookupOrThrow(mJitColorToRGB);
-    jitLookupOrThrow(mJitRGBToColor);
-    for (auto &jitMaterial : mJitMaterials) {
+    jitLookupOrThrow(mColorToRGB);
+    jitLookupOrThrow(mRGBToColor);
+    for (auto &jitMaterial : mMaterials) {
       jitLookupOrThrow(jitMaterial.evaluate);
       jitLookupOrThrow(jitMaterial.scatterEvaluate);
       jitLookupOrThrow(jitMaterial.scatterSample);
     }
-    for (auto &jitUnitTest : mJitUnitTests) {
+    for (auto &jitUnitTest : mUnitTests) {
       jitLookupOrThrow(jitUnitTest.test);
     }
-    for (auto &jitExec : mJitExecs) {
+    for (auto &jitExec : mExecs) {
       jitLookupOrThrow(jitExec);
     }
     // Deallocate everything we no longer need!
@@ -369,7 +369,7 @@ void *Compiler::jitLookup(std::string_view name) noexcept {
 const JIT::Material *
 Compiler::findMaterial(std::string_view materialName) const noexcept try {
   auto results{llvm::SmallVector<const JIT::Material *>()};
-  for (const auto &jitMaterial : mJitMaterials) {
+  for (const auto &jitMaterial : mMaterials) {
     if (jitMaterial.materialName == materialName) {
       results.push_back(&jitMaterial);
     }
@@ -396,7 +396,7 @@ Compiler::findMaterial(std::string_view materialName) const noexcept try {
 const JIT::Material *
 Compiler::findMaterial(std::string_view moduleName,
                        std::string_view materialName) const noexcept {
-  for (const auto &jitMaterial : mJitMaterials) {
+  for (const auto &jitMaterial : mMaterials) {
     if (jitMaterial.moduleName == moduleName &&
         jitMaterial.materialName == materialName) {
       return &jitMaterial;
@@ -407,25 +407,25 @@ Compiler::findMaterial(std::string_view moduleName,
 
 float3 Compiler::convertColorToRGB(const State &state,
                                    const float *color) const noexcept {
-  SMDL_SANITY_CHECK(mJitColorToRGB && color);
+  SMDL_SANITY_CHECK(mColorToRGB && color);
   SMDL_SANITY_CHECK(state.wavelength_base != nullptr);
   float3 rgb{};
-  mJitColorToRGB(state, color, rgb);
+  mColorToRGB(state, color, rgb);
   return rgb;
 }
 
 void Compiler::convertRGBToColor(const State &state, const float3 &rgb,
                                  float *color) const noexcept {
-  SMDL_SANITY_CHECK(mJitRGBToColor && color);
+  SMDL_SANITY_CHECK(mRGBToColor && color);
   SMDL_SANITY_CHECK(state.wavelength_base != nullptr);
-  mJitRGBToColor(state, rgb, color);
+  mRGBToColor(state, rgb, color);
 }
 
 std::optional<Error> Compiler::runUnitTests(const State &state) noexcept {
   return catchAndReturnError([&] {
-    for (auto itr0 = mJitUnitTests.begin(); itr0 != mJitUnitTests.end();) {
+    for (auto itr0 = mUnitTests.begin(); itr0 != mUnitTests.end();) {
       auto itr1{itr0};
-      while (itr1 != mJitUnitTests.end() &&
+      while (itr1 != mUnitTests.end() &&
              itr1->moduleFileName == itr0->moduleFileName) {
         ++itr1;
       }
@@ -450,17 +450,17 @@ std::optional<Error> Compiler::runUnitTests(const State &state) noexcept {
 
 std::optional<Error> Compiler::runExecs() noexcept {
   return catchAndReturnError([&] {
-    for (auto &jitExec : mJitExecs)
+    for (auto &jitExec : mExecs)
       jitExec();
   });
 }
 
 std::string Compiler::printMaterialSummary() const {
   std::string message{};
-  for (auto itr0{mJitMaterials.begin()}; itr0 != mJitMaterials.end();) {
+  for (auto itr0{mMaterials.begin()}; itr0 != mMaterials.end();) {
     auto numMaterials{0};
     auto itr1{itr0};
-    while (itr1 != mJitMaterials.end() &&
+    while (itr1 != mMaterials.end() &&
            itr1->moduleFileName == itr0->moduleFileName) {
       ++itr1;
       ++numMaterials;

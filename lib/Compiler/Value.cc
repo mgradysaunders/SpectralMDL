@@ -67,7 +67,7 @@ Crumb *Crumb::find(Context &context, Span<const std::string_view> name,
       // 2. A universal import in qualified form `import foo::bar::*`
       if (crumb->isASTUsingImport() ||
           (crumb->isASTImport() && name.size() > crumb->name.size() &&
-           name.starts_with(crumb->name))) {
+           name.startsWith(crumb->name))) {
         // Search for qualified names `foo::bar::baz`
         if (auto subCrumb{Crumb::find(context, name.subspan(crumb->name.size()),
                                       llvmFunc, module_->mLastCrumb, nullptr,
@@ -92,7 +92,7 @@ Crumb *Crumb::find(Context &context, Span<const std::string_view> name,
       auto astNamespace{crumb->value.getComptimeMetaNamespace(
           context, crumb->getSourceLocation())};
       if (name.size() > crumb->name.size() && //
-          name.starts_with(crumb->name)) {
+          name.startsWith(crumb->name)) {
         if (auto subCrumb{Crumb::find(context, name.subspan(crumb->name.size()),
                                       llvmFunc, astNamespace->lastCrumb, crumb,
                                       /*ignoreIfNotExported=*/true)}) {
@@ -130,7 +130,7 @@ std::vector<llvm::Type *> ParameterList::getLLVMTypes() const {
 }
 
 bool ParameterList::getLookupSequence(std::string_view name,
-                                      LookupSeq &seq) const {
+                                      LookupSequence &seq) const {
   unsigned i = 0;
   for (auto &param : *this) {
     seq.push_back({&param, i});

@@ -79,7 +79,7 @@ Module::formatSourceCode(const FormatOptions &formatOptions) noexcept {
     return error;
   }
   return catchAndReturnError([&] {
-    SMDL_PROFILER_ENTRY("Module::format_source_code()",
+    SMDL_PROFILER_ENTRY("Module::formatSourceCode()",
                         isBuiltin() ? mName.c_str() : mFileName.c_str());
     auto formatter{Formatter{formatOptions}};
     auto formatted{formatter.format(mSourceCode, *mRoot)};
@@ -99,7 +99,7 @@ Module::formatSourceCode(const FormatOptions &formatOptions) noexcept {
 }
 
 bool Module::isSMDLSyntax() const noexcept {
-  return mRoot && mRoot->is_smdl_syntax();
+  return mRoot && mRoot->isSMDLSyntax();
 }
 
 void Module::reset() noexcept {

@@ -37,27 +37,27 @@ public:
     AtomicDouble() = default;
 
     /// Construct from value.
-    AtomicDouble(double value) noexcept : bits(bit_cast<uint64_t>(value)) {}
+    AtomicDouble(double value) noexcept : mBits(bit_cast<uint64_t>(value)) {}
 
     /// Assign new value.
-    void operator=(double value) noexcept { bits = bit_cast<uint64_t>(value); }
+    void operator=(double value) noexcept { mBits = bit_cast<uint64_t>(value); }
 
     /// Atomic add.
     void operator+=(double value) noexcept {
-      uint64_t oldBits = bits;
+      uint64_t oldBits = mBits;
       uint64_t newBits = 0;
       do {
         newBits = bit_cast<uint64_t>(bit_cast<double>(oldBits) + value);
-      } while (!bits.compare_exchange_weak(oldBits, newBits));
+      } while (!mBits.compare_exchange_weak(oldBits, newBits));
     }
 
     /// Read out the value.
     operator double() const noexcept {
-      return bit_cast<double>(uint64_t(bits));
+      return bit_cast<double>(uint64_t(mBits));
     }
 
   private:
-    AtomicUInt64 bits{};
+    AtomicUInt64 mBits{};
   };
 
   static_assert(sizeof(AtomicUInt64) == 8 && sizeof(AtomicDouble) == 8);
@@ -78,22 +78,22 @@ public:
   void resize(size_t nBands, size_t nPixelsX, size_t nPixelsY);
 
   /// The number of spectral bands.
-  [[nodiscard]] size_t getNumBands() const noexcept { return numBands; }
+  [[nodiscard]] size_t getNumBands() const noexcept { return mNumBands; }
 
   /// The number of pixels in X.
-  [[nodiscard]] size_t getNumPixelsX() const noexcept { return numPixelsX; }
+  [[nodiscard]] size_t getNumPixelsX() const noexcept { return mNumPixelsX; }
 
   /// The number of pixels in Y.
-  [[nodiscard]] size_t getNumPixelsY() const noexcept { return numPixelsY; }
+  [[nodiscard]] size_t getNumPixelsY() const noexcept { return mNumPixelsY; }
 
   /// The image size in bytes.
   [[nodiscard]] size_t getImageSizeInBytes() const noexcept {
-    return numPixelsX * numPixelsY * getPixelSizeInBytes();
+    return mNumPixelsX * mNumPixelsY * getPixelSizeInBytes();
   }
 
   /// The pixel size in bytes.
   [[nodiscard]] size_t getPixelSizeInBytes() const noexcept {
-    return sizeof(AtomicUInt64) + sizeof(AtomicDouble) * numBands;
+    return sizeof(AtomicUInt64) + sizeof(AtomicDouble) * mNumBands;
   }
 
   /// A pixel reference.
@@ -206,13 +206,13 @@ public:
                      const std::string &fileName) const;
 
 private:
-  size_t numBands{};
+  size_t mNumBands{};
 
-  size_t numPixelsX{};
+  size_t mNumPixelsX{};
 
-  size_t numPixelsY{};
+  size_t mNumPixelsY{};
 
-  std::unique_ptr<uint8_t[]> buf{};
+  std::unique_ptr<uint8_t[]> mBuf{};
 };
 
 /// \}

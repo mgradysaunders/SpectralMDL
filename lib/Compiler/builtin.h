@@ -31,7 +31,7 @@ export annotation usage(string hint="");
 export annotation origin(string name="");
 )*";
 
-static const char *API = R"*(#smdl
+static const char *api = R"*(#smdl
 const int RGB_TO_COLOR_NUM_WAVELENGTHS=32;
 const float RGB_TO_COLOR_MIN_WAVELENGTH=380.0;
 const float RGB_TO_COLOR_MAX_WAVELENGTH=720.0;
@@ -2209,34 +2209,32 @@ export color lookup_color(const texture_ptex tex,const int channel=0){
 }
 )*";
 
-static const char *PCG32 = R"*(#smdl
+static const char *pcg32 = R"*(#smdl
 const i64 PCG32_MULTIPLIER=6364136223846793005;
 const i64 PCG32_DEFAULT_INCREMENT=1442695040888963407;
-export struct PCG32{
+export struct pcg32{
+  pcg32(i64 seed)=return_from{
+    auto pcg(pcg32(state: seed));
+    pcg.state=pcg.state+pcg.increment;
+    pcg.state=pcg.state*PCG32_MULTIPLIER+pcg.increment;
+    return pcg;
+  };
+  pcg32(i64 seed,i64 stream)=return_from{
+    auto pcg(pcg32(state: seed,increment: (stream<<1)|1));
+    pcg.state=pcg.state+pcg.increment;
+    pcg.state=pcg.state*PCG32_MULTIPLIER+pcg.increment;
+    return pcg;
+  };
   i64 state=0;
   i64 increment=PCG32_DEFAULT_INCREMENT;
 };
-@(pure macro)
-export auto make_PCG32(i64 seed){
-  auto pcg(PCG32(state: seed));
-  pcg.state=pcg.state+pcg.increment;
-  pcg.state=pcg.state*PCG32_MULTIPLIER+pcg.increment;
-  return pcg;
-}
-@(pure macro)
-export auto make_PCG32(i64 seed,i64 stream){
-  auto pcg(PCG32(state: seed,increment: (stream<<1)|1));
-  pcg.state=pcg.state+pcg.increment;
-  pcg.state=pcg.state*PCG32_MULTIPLIER+pcg.increment;
-  return pcg;
-}
 @(pure)
-export i32 generate_int(inline const &PCG32 this){
+export i32 generate_int(inline const &pcg32 this){
   state=state*PCG32_MULTIPLIER+increment;
   return #rotr(i32(((state>>>18)^state)>>>27),i32(31&(state>>>59)));
 }
 @(pure)
-export i32 generate_int(const &PCG32 this,const i32 bound){
+export i32 generate_int(const &pcg32 this,const i32 bound){
   if(bound>1){
     const auto xmin((-bound)%bound);
     while(true){
@@ -2247,17 +2245,17 @@ export i32 generate_int(const &PCG32 this,const i32 bound){
   return 0;
 }
 @(pure)
-export float generate_float(const &PCG32 this){
+export float generate_float(const &pcg32 this){
   return #min(float(#unsigned_to_fp(generate_int(this),double)/4294967296.0d),1.0-$FLOAT_EPS/2);
 }
 @(pure)
-export float2 generate_float2(const &PCG32 this)=float2(generate_float(this),generate_float(this));
+export float2 generate_float2(const &pcg32 this)=float2(generate_float(this),generate_float(this));
 @(pure)
-export float3 generate_float3(const &PCG32 this)=float3(generate_float(this),generate_float(this),generate_float(this));
+export float3 generate_float3(const &pcg32 this)=float3(generate_float(this),generate_float(this),generate_float(this));
 @(pure)
-export float4 generate_float4(const &PCG32 this)=float4(generate_float(this),generate_float(this),generate_float(this),generate_float(this));
+export float4 generate_float4(const &pcg32 this)=float4(generate_float(this),generate_float(this),generate_float(this),generate_float(this));
 @(pure)
-export void discard(inline const &PCG32 this,i64 n){
+export void discard(inline const &pcg32 this,i64 n){
   i64 aTotal(1);
   i64 bTotal(0);
   i64 a(PCG32_MULTIPLIER);
@@ -2275,9 +2273,9 @@ export void discard(inline const &PCG32 this,i64 n){
 }
 )*";
 
-static const char *PROSPECT = R"*(#smdl
+static const char *prospect = R"*(#smdl
 using ::math import *;
-export struct PROSPECT_result{
+export struct prospect_result{
   color reflectance=color(0);
   color transmittance=color(0);
 };
@@ -3339,7 +3337,7 @@ export static const auto PROSPECT_TABLE_ABSORPTIONS=auto[1051](
   auto(0.0000000e+00,0.0000000e+00,0.0000000e+00,0.0000000e+00,9.5300000e+01,3.8710000e+01,9.4077800e+00,4.2636600e+01),
 );
 @(noinline)
-export PROSPECT_result PROSPECT(
+export prospect_result prospect(
   float num_layers=1.5,
   float incident_cone_angle=0.7,
   float dry_matter=5.0,
@@ -3411,15 +3409,15 @@ export PROSPECT_result PROSPECT(
       rSub[i]=1;
     }
   }
-  return PROSPECT_result(reflectance: rA+tA*rSub*t/(1-rSub*r),transmittance: tA*tSub/(1-rSub*r));
+  return prospect_result(reflectance: rA+tA*rSub*t/(1-rSub*r),transmittance: tA*tSub/(1-rSub*r));
 }
 )*";
 
 [[nodiscard]] static const char *get_source_code(std::string_view name) {
   if (name == "anno")
     return anno;
-  if (name == "API")
-    return API;
+  if (name == "api")
+    return api;
   if (name == "debug")
     return debug;
   if (name == "df")
@@ -3436,10 +3434,10 @@ export PROSPECT_result PROSPECT(
     return std;
   if (name == "tex")
     return tex;
-  if (name == "PCG32")
-    return PCG32;
-  if (name == "PROSPECT")
-    return PROSPECT;
+  if (name == "pcg32")
+    return pcg32;
+  if (name == "prospect")
+    return prospect;
   return nullptr;
 }
 #include "builtin/albedo/diffuse_reflection_bsdf.inl"

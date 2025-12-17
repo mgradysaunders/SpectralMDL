@@ -147,10 +147,11 @@ public:
                       const ParameterList &params, const SourceLocation &srcLoc,
                       const std::function<void()> &callback);
 
-  [[nodiscard]] llvm::Function *
-  createFunction(std::string_view name, bool isPure, Type *&returnType,
-                 const ParameterList &params, const SourceLocation &srcLoc,
-                 const std::function<void()> &callback) {
+  [[nodiscard]]
+  llvm::Function *createFunction(std::string_view name, bool isPure,
+                                 Type *&returnType, const ParameterList &params,
+                                 const SourceLocation &srcLoc,
+                                 const std::function<void()> &callback) {
     llvm::Function *llvmFunc{};
     createFunction(llvmFunc, name, isPure, returnType, params.getTypes(),
                    params, srcLoc, callback);
@@ -234,7 +235,7 @@ public:
   /// - If the value is already an lvalue, return it.
   /// - If the value is an rvalue, copy it into an alloca and return the lvalue.
   ///
-  [[nodiscard]] Value toLValue(Value value) {
+  [[nodiscard]] Value lvalue(Value value) {
     if (value.isRValue() && !value.isVoid()) {
       auto lv{createAlloca(value.type, value.llvmValue->hasName()
                                            ? value.llvmValue->getName() + ".lv"
@@ -252,7 +253,7 @@ public:
   /// - If the value is an lvalue, load it into a register and return the
   ///   rvalue.
   ///
-  [[nodiscard]] Value toRValue(Value value) {
+  [[nodiscard]] Value rvalue(Value value) {
     if (value.isLValue())
       return RValue(
           value.type,
@@ -515,7 +516,7 @@ public:
     auto crumb0{crumb};
     for (auto &decl : expr.decls)
       emit(decl);
-    auto value{toRValue(emit(expr.expr))};
+    auto value{rvalue(emit(expr.expr))};
     unwind(crumb0);
     return value;
   }
@@ -672,7 +673,7 @@ public:
       auto value{emit(expr)};
       if (!value.isLValue())
         stmt.srcLoc.throwError("cannot 'preserve' rvalue");
-      declareCrumb({}, &stmt, value, toRValue(value));
+      declareCrumb({}, &stmt, value, rvalue(value));
     }
     return Value();
   }
@@ -686,7 +687,7 @@ public:
     emitLateIf(stmt.lateIf, [&] {
       Value value{};
       if (stmt.expr)
-        value = toRValue(emit(stmt.expr));
+        value = rvalue(emit(stmt.expr));
       returns.push_back(Result{value, getInsertBlock(), stmt.srcLoc});
       unwind(labelReturn.crumb);
       builder.CreateBr(labelReturn.block);
@@ -819,6 +820,7 @@ public:
     ParameterList params{};
     for (auto &astParam : astParams)
       params.emplace_back(emitParameter(astParam));
+    params.isVariadic = astParams.hasTrailingEllipsis();
     params.lastCrumb = crumb;
     return params;
   }
@@ -834,13 +836,30 @@ public:
                                         const SourceLocation &srcLoc,
                                         bool voidByDefault = false);
 
-  /// The return structure of `resolve_arguments()`.
+  /// The return structure of `resolveArguments()`.
   struct ResolvedArguments final {
   public:
-    [[nodiscard]] llvm::SmallVector<Type *> getValueTypes() const {
+    ResolvedArguments(const ParameterList &params, const ArgumentList &args)
+        : params(params), args(args) {
+      argParams.resize(args.size());
+      values.resize(params.size());
+    }
+
+    [[nodiscard]] bool isResolved(size_t iArg) const {
+      return iArg < argParams.size() && argParams[iArg] != nullptr;
+    }
+
+    [[nodiscard]] llvm::SmallVector<Type *> getNonVariadicTypes() const {
       auto valueTypes{llvm::SmallVector<Type *>(values.size())};
       for (size_t i = 0; i < values.size(); i++)
         valueTypes[i] = values[i].type;
+      // For crappy support of C-style variadic functions, if the
+      // parameters have an ellipsis, then the resolveArguments() routine
+      // allows for more arguments than parameters, but we use this function
+      // for initializing the LLVM function type, which should only depend on
+      // the non-variadic value types
+      if (params.isVariadic)
+        valueTypes.resize(params.size());
       return valueTypes;
     }
 
@@ -848,7 +867,8 @@ public:
       bool impliedVisit{false};
       auto impliedVisitArgs{args};
       for (size_t i = 0; i < args.size(); i++) {
-        if (argParams[i]->type->isAbstract() &&
+        if (argParams[i] != nullptr && //
+            argParams[i]->type->isAbstract() &&
             args[i].value.type->isUnionOrPointerToUnion()) {
           impliedVisitArgs[i].impliedVisit = impliedVisit = true;
         }
@@ -859,14 +879,17 @@ public:
     }
 
   public:
-    /// The arguments passed to `resolve_arguments()`.
+    /// The parameters passed to `resolveArguments()`.
+    const ParameterList &params;
+
+    /// The arguments passed to `resolveArguments()`.
     const ArgumentList &args;
 
     /// The parameters matched to the arguments, in correspondence with `args`.
-    llvm::SmallVector<const Parameter *> argParams{};
+    llvm::SmallVector<const Parameter *> argParams;
 
     /// The values, in correspondence with `params`.
-    llvm::SmallVector<Value> values{};
+    llvm::SmallVector<Value> values;
   };
 
   /// Resolve the given arguments or throw an error on failure.
@@ -892,7 +915,7 @@ public:
 
   /// Can resolve arguments?
   ///
-  /// This simply wraps `resolve_arguments()` with a `try` block and returns
+  /// This simply wraps `resolveArguments()` with a `try` block and returns
   /// false if an error is thrown.
   ///
   [[nodiscard]] bool canResolveArguments(const ParameterList &params,

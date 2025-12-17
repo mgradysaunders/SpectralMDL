@@ -78,7 +78,7 @@ size_t Type::getFirstNonPointerTypeDepth() const {
 Value Type::invoke(Emitter &emitter, const ArgumentList &args,
                    const SourceLocation &srcLoc) {
   if (args.isOnePositional(this))
-    return emitter.toRValue(args[0].value);
+    return emitter.rvalue(args[0].value);
   srcLoc.throwError("type ", Quoted(displayName),
                     " has unimplemented constructor");
   return Value();
@@ -141,7 +141,7 @@ Value ArithmeticType::invoke(Emitter &emitter, const ArgumentList &args,
     return Value::zero(this);
   }
   if (args.isOnePositional(this)) {
-    return emitter.toRValue(args[0].value);
+    return emitter.rvalue(args[0].value);
   }
   if (extent.isScalar()) {
     if (!args.isOnePositional())
@@ -151,20 +151,20 @@ Value ArithmeticType::invoke(Emitter &emitter, const ArgumentList &args,
     // If constructing bool from pointer, check that it is non-NULL.
     if (scalar.isBoolean() && value.type->isPointer())
       return RValue(this,
-                    emitter.builder.CreateIsNotNull(emitter.toRValue(value)));
+                    emitter.builder.CreateIsNotNull(emitter.rvalue(value)));
     // If constructing bool from optional union, check that it is non-void.
     if (scalar.isBoolean() && value.type->isOptionalUnion())
       return RValue(
           this,
           emitter.builder.CreateICmpNE(
-              emitter.toRValue(emitter.accessField(value, "#idx", srcLoc)),
+              emitter.rvalue(emitter.accessField(value, "#idx", srcLoc)),
               emitter.context.getComptimeInt(
                   int(static_cast<UnionType *>(value.type)->caseTypes.size() -
                       1))));
     // If constructing from another scalar or enum type, cast the
     // underlying LLVM representation.
     if (value.type->isArithmeticScalar() || value.type->isEnum())
-      return RValue(this, llvmEmitCast(emitter.builder, emitter.toRValue(value),
+      return RValue(this, llvmEmitCast(emitter.builder, emitter.rvalue(value),
                                        llvmType));
   } else if (extent.isVector()) {
     auto dim{size_t(extent.getVectorSize())};
@@ -187,14 +187,14 @@ Value ArithmeticType::invoke(Emitter &emitter, const ArgumentList &args,
       if (value.type->isArithmeticVector() &&
           static_cast<ArithmeticType *>(value.type)->extent == extent)
         return RValue(this, llvmEmitCast(emitter.builder,
-                                         emitter.toRValue(value), llvmType));
+                                         emitter.rvalue(value), llvmType));
       // If constructing from a pointer to the scalar type, load from the
       // pointer. Assume the pointer is only as aligned as the scalar type
       // itself!
       if (value.type->isPointer() &&
           value.type->getPointeeType() == getScalarType(emitter.context))
         return RValue(this, emitter.builder.CreateAlignedLoad(
-                                llvmType, emitter.toRValue(value),
+                                llvmType, emitter.rvalue(value),
                                 llvm::Align(emitter.context.getAlignOf(
                                     getScalarType(emitter.context)))));
       // If constructing from color and this is a 3-dimensional vector,
@@ -375,7 +375,7 @@ Value ArithmeticType::accessField(Emitter &emitter, Value value,
     if (auto iMask{toIndexSwizzle(name)}) {
       auto result{RValue(
           emitter.context.getArithmeticType(scalar, Extent(iMask->size())),
-          emitter.builder.CreateShuffleVector(emitter.toRValue(value),
+          emitter.builder.CreateShuffleVector(emitter.rvalue(value),
                                               *iMask))};
       // Set LLVM name for more readable LLVM-IR.
       if (value.llvmValue->hasName()) {
@@ -407,8 +407,8 @@ Value ArithmeticType::accessIndex(Emitter &emitter, Value value, Value i,
                       emitter.builder.CreateExtractValue(value, {iNow}));
       }
     } else {
-      auto lv{emitter.toLValue(value)};
-      auto rv{emitter.toRValue(accessIndex(emitter, lv, i, srcLoc))};
+      auto lv{emitter.lvalue(value)};
+      auto rv{emitter.rvalue(accessIndex(emitter, lv, i, srcLoc))};
       emitter.createLifetimeEnd(lv);
       return rv;
     }
@@ -436,13 +436,13 @@ Value ArithmeticType::insert(Emitter &emitter, Value value, Value elem,
     return RValue(
         this,
         emitter.builder.CreateInsertElement(
-            emitter.toRValue(value),
+            emitter.rvalue(value),
             emitter.invoke(getScalarType(emitter.context), elem, srcLoc), i));
   if (extent.isMatrix())
     return RValue(
         this, //
         emitter.builder.CreateInsertValue(
-            emitter.toRValue(value),
+            emitter.rvalue(value),
             emitter.invoke(getColumnType(emitter.context), elem, srcLoc), {i}));
   srcLoc.throwError("cannot insert into ", Quoted(displayName));
   return Value();
@@ -496,7 +496,7 @@ Value ArrayType::invoke(Emitter &emitter, const ArgumentList &args,
     return Value::zero(this);
   }
   if (args.isOnePositional(this)) {
-    return emitter.toRValue(args[0].value);
+    return emitter.rvalue(args[0].value);
   }
   if (args.isAllPositional() && args.size() == size) {
     if (isAbstract()) {
@@ -535,7 +535,7 @@ Value ArrayType::invoke(Emitter &emitter, const ArgumentList &args,
         ptrType && ptrType == elemType) {
       return RValue(this,
                     emitter.builder.CreateAlignedLoad(
-                        llvmType, emitter.toRValue(value),
+                        llvmType, emitter.rvalue(value),
                         llvm::Align(emitter.context.getAlignOf(elemType))));
     }
   }
@@ -550,8 +550,8 @@ Value ArrayType::accessField(Emitter &emitter, Value value,
   SMDL_SANITY_CHECK(!isAbstract());
   if (hasField(name)) {
     if (!value.isLValue()) {
-      auto lv{emitter.toLValue(value)};
-      auto rv{emitter.toRValue(accessField(emitter, lv, name, srcLoc))};
+      auto lv{emitter.lvalue(value)};
+      auto rv{emitter.rvalue(accessField(emitter, lv, name, srcLoc))};
       emitter.createLifetimeEnd(lv);
       return rv;
     }
@@ -578,12 +578,12 @@ Value ArrayType::accessIndex(Emitter &emitter, Value value, Value i,
                                 value, {unsigned(i.getComptimeInt())}));
   } else {
     if (!value.isLValue()) {
-      auto lv{emitter.toLValue(value)};
-      auto rv{emitter.toRValue(accessIndex(emitter, lv, i, srcLoc))};
+      auto lv{emitter.lvalue(value)};
+      auto rv{emitter.rvalue(accessIndex(emitter, lv, i, srcLoc))};
       emitter.createLifetimeEnd(lv);
       return rv;
     }
-    i = emitter.toRValue(i);
+    i = emitter.rvalue(i);
     return LValue(elemType, emitter.builder.CreateGEP(
                                 llvmType, value,
                                 {emitter.builder.getInt32(0), i.llvmValue}));
@@ -595,7 +595,7 @@ Value ArrayType::insert(Emitter &emitter, Value value, Value elem, unsigned i,
   SMDL_SANITY_CHECK(!isAbstract());
   SMDL_SANITY_CHECK(i < size);
   return RValue(value.type, emitter.builder.CreateInsertValue(
-                                emitter.toRValue(value),
+                                emitter.rvalue(value),
                                 emitter.invoke(elemType, elem, srcLoc), {i}));
 }
 
@@ -618,7 +618,7 @@ Value AutoType::invoke(Emitter &emitter, const ArgumentList &args,
   }
   // If one positional argument, return it as an rvalue.
   if (args.isOnePositional()) {
-    return emitter.toRValue(args[0]);
+    return emitter.rvalue(args[0]);
   }
   // If every argument is an arithmetic scalar or vector, then we
   // concatenate them all into another arithmetic vector whose size
@@ -665,7 +665,7 @@ Value ColorType::invoke(Emitter &emitter, const ArgumentList &args,
     return Value::zero(this);
   }
   if (args.isOnePositional(this)) {
-    return emitter.toRValue(args[0].value);
+    return emitter.rvalue(args[0].value);
   }
   if (args.isOnePositional()) {
     auto value{args[0].value};
@@ -677,12 +677,12 @@ Value ColorType::invoke(Emitter &emitter, const ArgumentList &args,
     if (value.type->isArithmeticVector() &&
         static_cast<ArithmeticType *>(value.type)->extent.numRows ==
             wavelengthBaseMax)
-      return RValue(this, llvmEmitCast(emitter.builder, emitter.toRValue(value),
+      return RValue(this, llvmEmitCast(emitter.builder, emitter.rvalue(value),
                                        llvmType));
     if (value.type->isPointer() &&
         value.type->getPointeeType() == emitter.context.getFloatType())
       return RValue(this, emitter.builder.CreateAlignedLoad(
-                              llvmType, emitter.toRValue(value),
+                              llvmType, emitter.rvalue(value),
                               llvm::Align(alignof(float))));
     if (value.type == context.getFloatType(Extent(3)))
       return emitter.emitCall(context.getKeyword("_rgb_to_color"), value,
@@ -697,11 +697,11 @@ Value ColorType::invoke(Emitter &emitter, const ArgumentList &args,
         Parameter{context.getFloatType(), "g", {}, {}, {}, true},
         Parameter{context.getFloatType(), "b", {}, {}, {}, true}}};
     if (emitter.canResolveArguments(params, args, srcLoc)) {
-      auto resolved{emitter.resolveArguments(params, args, srcLoc)};
+      auto resolvedArgs{emitter.resolveArguments(params, args, srcLoc)};
       return emitter.emitCall(
           context.getKeyword("_rgb_to_color"),
           emitter.invoke(context.getFloatType(Extent(3)),
-                         llvm::ArrayRef<Value>(resolved.values), srcLoc),
+                         llvm::ArrayRef<Value>(resolvedArgs.values), srcLoc),
           srcLoc);
     }
   }
@@ -713,16 +713,16 @@ Value ColorType::invoke(Emitter &emitter, const ArgumentList &args,
         Parameter{floatArrayType, "wavelengths", {}, {}, {}, false},
         Parameter{floatArrayType, "amplitudes", {}, {}, {}, false}}};
     if (emitter.canResolveArguments(params, args, srcLoc)) {
-      auto resolved{emitter.resolveArguments(params, args, srcLoc)};
-      auto arrayType0{llvm::dyn_cast<ArrayType>(resolved.values[0].type)};
-      auto arrayType1{llvm::dyn_cast<ArrayType>(resolved.values[1].type)};
+      auto resolvedArgs{emitter.resolveArguments(params, args, srcLoc)};
+      auto arrayType0{llvm::dyn_cast<ArrayType>(resolvedArgs.values[0].type)};
+      auto arrayType1{llvm::dyn_cast<ArrayType>(resolvedArgs.values[1].type)};
       if (!(arrayType0 && arrayType1 && arrayType0 == arrayType1))
         srcLoc.throwError(
             "expected wavelength and amplitude arrays to be same size");
       return emitter.emitCall(
           context.getKeyword("_samples_to_color"),
           ArgumentList{context.getComptimeInt(int(arrayType0->size)),
-                       resolved.values[0], resolved.values[1]},
+                       resolvedArgs.values[0], resolvedArgs.values[1]},
           srcLoc);
     }
   }
@@ -739,8 +739,8 @@ Value ColorType::accessIndex(Emitter &emitter, Value value, Value i,
           getArithmeticScalarType(emitter.context),
           emitter.builder.CreateExtractElement(value, i.getComptimeInt()));
     } else {
-      auto lv{emitter.toLValue(value)};
-      auto rv{emitter.toRValue(accessIndex(emitter, lv, i, srcLoc))};
+      auto lv{emitter.lvalue(value)};
+      auto rv{emitter.rvalue(accessIndex(emitter, lv, i, srcLoc))};
       emitter.createLifetimeEnd(lv);
       return rv;
     }
@@ -759,7 +759,7 @@ Value ColorType::insert(Emitter &emitter, Value value, Value elem, unsigned i,
   SMDL_SANITY_CHECK(i < wavelengthBaseMax);
   return RValue(this,
                 emitter.builder.CreateInsertElement(
-                    emitter.toRValue(value),
+                    emitter.rvalue(value),
                     emitter.invoke(getArithmeticScalarType(emitter.context),
                                    elem, srcLoc),
                     i));
@@ -788,7 +788,7 @@ Value ComptimeUnionType::invoke(Emitter &emitter, const ArgumentList &args,
     srcLoc.throwError("cannot default construct ", Quoted(displayName));
   }
   if (args.isOnePositional() && unionType->hasCaseType(args[0].value.type)) {
-    return emitter.toRValue(args[0].value);
+    return emitter.rvalue(args[0].value);
   }
   srcLoc.throwError("cannot construct ", Quoted(displayName), " from ",
                     Quoted(std::string(args)));
@@ -829,7 +829,7 @@ void EnumType::initialize(Emitter &emitter) {
         auto valueName{std::string_view("value")};
         auto value{emitter.resolveIdentifier(valueName, decl.srcLoc)};
         auto blockDefault{emitter.createBlock("switch.default")};
-        auto switchInst{emitter.builder.CreateSwitch(emitter.toRValue(value),
+        auto switchInst{emitter.builder.CreateSwitch(emitter.rvalue(value),
                                                      blockDefault)};
         auto switchUniq{llvm::DenseSet<llvm::Value *>{}};
         for (unsigned i = 0; i < decl.declarators.size(); i++) {
@@ -860,13 +860,13 @@ Value EnumType::invoke(Emitter &emitter, const ArgumentList &args,
   if (args.empty() || args.isNull()) {
     return Value::zero(this);
   } else if (args.isOnePositional(this)) {
-    return emitter.toRValue(args[0].value);
+    return emitter.rvalue(args[0].value);
   } else if (args.isOnePositional()) {
     auto value{args[0].value};
     if ((value.type->isArithmeticScalar() &&
          value.type->isArithmeticIntegral()) ||
         value.type->isEnum())
-      return RValue(this, llvmEmitCast(emitter.builder, emitter.toRValue(value),
+      return RValue(this, llvmEmitCast(emitter.builder, emitter.rvalue(value),
                                        llvmType));
   }
   srcLoc.throwError("cannot construct ", Quoted(displayName), " from ",
@@ -918,6 +918,8 @@ void FunctionType::initialize(Emitter &emitter) {
                   .astParam = &param,
                   .astField = nullptr,
                   .builtinDefaultValue = {}});
+  // Initialize whether parameter list is variadic.
+  params.isVariadic = decl.params.hasTrailingEllipsis();
   if (decl.hasAttribute("foreign")) {
     if (!params.isConcrete())
       decl.srcLoc.throwError(
@@ -927,7 +929,7 @@ void FunctionType::initialize(Emitter &emitter) {
       decl.srcLoc.throwError("function ", Quoted(declName),
                              " declared '@(foreign)' must not have definition");
     auto paramTypes{params.getTypes()};
-    instantiate(emitter, llvm::SmallVector<Type *>(paramTypes.begin(),
+    getInstance(emitter, llvm::SmallVector<Type *>(paramTypes.begin(),
                                                    paramTypes.end()));
   }
   // If this is declared `@(visible)`, we compile it immediately to
@@ -941,13 +943,13 @@ void FunctionType::initialize(Emitter &emitter) {
       decl.srcLoc.throwError("function ", Quoted(declName),
                              " declared '@(visible)' must have definition");
     auto paramTypes{params.getTypes()};
-    instantiate(emitter, llvm::SmallVector<Type *>(paramTypes.begin(),
+    getInstance(emitter, llvm::SmallVector<Type *>(paramTypes.begin(),
                                                    paramTypes.end()));
   }
   // If this is a function with no parameters that returns `material`,
   // it is a material definition!
   if (returnType == context.mMaterialType &&
-      (params.empty() || params.allDefaultInitializers())) {
+      (params.empty() || params.hasAllDefaultInitializers())) {
     if (decl.hasAttribute("pure"))
       decl.srcLoc.throwError("material ", Quoted(declName),
                              " must not be declared '@(pure)'");
@@ -955,7 +957,7 @@ void FunctionType::initialize(Emitter &emitter) {
       decl.srcLoc.throwError("material ", Quoted(declName),
                              " must not be declared '@(macro)'");
     isMaterial = true;
-    initializeJitMaterialFunctions(emitter);
+    initializeMaterialFunctions(emitter);
   }
 }
 
@@ -992,8 +994,8 @@ Value FunctionType::invoke(Emitter &emitter, const ArgumentList &args,
     });
     return result;
   }
-  auto resolved{emitter.resolveArguments(func->params, args, srcLoc)};
-  if (auto impliedVisitArgs{resolved.getImpliedVisitArguments()})
+  auto resolvedArgs{emitter.resolveArguments(func->params, args, srcLoc)};
+  if (auto impliedVisitArgs{resolvedArgs.getImpliedVisitArguments()})
     return emitter.emitCall(emitter.context.getComptimeMetaType(this),
                             *impliedVisitArgs, srcLoc);
   if (func->isMacro()) {
@@ -1005,7 +1007,7 @@ Value FunctionType::invoke(Emitter &emitter, const ArgumentList &args,
     emitter.crumb = func->params.lastCrumb;
     auto result{emitter.createFunctionImplementation(
         func->decl.name, func->isPure() || !emitter.state, func->returnType,
-        func->params, resolved.values, srcLoc, [&]() {
+        func->params, resolvedArgs.values, srcLoc, [&]() {
           if (func->decl.hasAttribute("fastmath"))
             emitter.builder.setFastMathFlags(llvm::FastMathFlags::getFast());
           emitter.currentModule = func->decl.srcLoc.module_;
@@ -1017,13 +1019,14 @@ Value FunctionType::invoke(Emitter &emitter, const ArgumentList &args,
     if (!func->isPure() && !emitter.state)
       srcLoc.throwError("cannot call ", Quoted(func->declName),
                         " from '@(pure)' context");
-    auto &instance{func->instantiate(emitter, resolved.getValueTypes())};
+    auto &instance{
+        func->getInstance(emitter, resolvedArgs.getNonVariadicTypes())};
     auto llvmArgs{llvm::SmallVector<llvm::Value *>{}};
     if (!func->isPure())
       llvmArgs.push_back(emitter.state);
-    llvmArgs.insert(llvmArgs.end(),          //
-                    resolved.values.begin(), //
-                    resolved.values.end());
+    llvmArgs.insert(llvmArgs.end(),              //
+                    resolvedArgs.values.begin(), //
+                    resolvedArgs.values.end());
     return RValue(instance.returnType, emitter.builder.CreateCall(
                                            instance.llvmFunc->getFunctionType(),
                                            instance.llvmFunc, llvmArgs));
@@ -1052,9 +1055,9 @@ FunctionType *FunctionType::resolveOverload(Emitter &emitter,
   for (auto func{getLastOverload()}; func; func = func->prevOverload) {
     try {
       SMDL_SANITY_CHECK(!func->isVariant());
-      auto resolved{emitter.resolveArguments(func->params, args, srcLoc,
-                                             /*dontEmit=*/true)};
-      overloads.push_back({func, std::move(resolved.argParams)});
+      auto resolvedArgs{emitter.resolveArguments(func->params, args, srcLoc,
+                                                 /*dontEmit=*/true)};
+      overloads.push_back({func, std::move(resolvedArgs.argParams)});
     } catch (const Error &error) {
       // TODO Log?
     }
@@ -1098,8 +1101,8 @@ FunctionType *FunctionType::resolveOverload(Emitter &emitter,
 }
 
 FunctionType::Instance &
-FunctionType::instantiate(Emitter &emitter,
-                          const llvm::SmallVector<Type *> paramTypes) {
+FunctionType::getInstance(Emitter &emitter,
+                          const llvm::SmallVector<Type *> &paramTypes) {
   SMDL_SANITY_CHECK(paramTypes.size() == params.size());
   auto &inst{instances[paramTypes]};
   if (!inst.llvmFunc) {
@@ -1145,11 +1148,11 @@ FunctionType::instantiate(Emitter &emitter,
   return inst;
 }
 
-void FunctionType::initializeJitMaterialFunctions(Emitter &emitter) {
+void FunctionType::initializeMaterialFunctions(Emitter &emitter) {
   using namespace std::literals::string_view_literals;
   SMDL_LOG_DEBUG(std::string(decl.srcLoc), " New material ", Quoted(decl.name));
   auto &context{emitter.context};
-  auto &jitMaterial{context.compiler.mJitMaterials.emplace_back()};
+  auto &jitMaterial{context.compiler.mMaterials.emplace_back()};
   jitMaterial.moduleName = std::string(decl.srcLoc.getModuleName());
   jitMaterial.moduleFileName = std::string(decl.srcLoc.getModuleFileName());
   jitMaterial.lineNo = decl.srcLoc.lineNo;
@@ -1184,14 +1187,13 @@ void FunctionType::initializeJitMaterialFunctions(Emitter &emitter) {
         [&] {
           auto materialInstance{emitter.emitCall(
               context.getKeyword("_material_instance"),
-              emitter.emitIntrinsic("bump",
-                                    invoke(emitter, {}, decl.srcLoc),
+              emitter.emitIntrinsic("bump", invoke(emitter, {}, decl.srcLoc),
                                     decl.srcLoc),
               decl.srcLoc)};
           materialInstanceType = materialInstance.type;
           materialInstancePtrType =
               context.getPointerType(materialInstanceType);
-          auto out{emitter.toRValue(
+          auto out{emitter.rvalue(
               emitter.resolveIdentifier("out"sv, decl.srcLoc))};
           emitter.builder.CreateStore(materialInstance, out);
         })};
@@ -1339,6 +1341,7 @@ Value InferredSizeArrayType::invoke(Emitter &emitter, const ArgumentList &args,
 }
 //--}
 
+//--{ MetaType
 Value MetaType::accessField(Emitter &emitter, Value value,
                             std::string_view name,
                             const SourceLocation &srcLoc) {
@@ -1367,6 +1370,7 @@ Value MetaType::accessField(Emitter &emitter, Value value,
   }
   return RValue(emitter.context.getVoidType(), nullptr);
 }
+//--}
 
 //--{ PointerType
 PointerType::PointerType(Context &context, Type *pointeeType)
@@ -1386,7 +1390,7 @@ Value PointerType::invoke(Emitter &emitter, const ArgumentList &args,
       if (value.type->isPointer() &&
           emitter.context.isPerfectlyConvertible(value.type->getPointeeType(),
                                                  pointeeType)) {
-        return emitter.toRValue(value);
+        return emitter.rvalue(value);
       }
     }
   } else {
@@ -1396,7 +1400,7 @@ Value PointerType::invoke(Emitter &emitter, const ArgumentList &args,
     if (args.isOnePositional()) {
       auto value{args[0].value};
       if (value.type->isPointer()) {
-        return RValue(this, emitter.toRValue(value));
+        return RValue(this, emitter.rvalue(value));
       }
       // If the value is an instance of the pointee type or
       // if the value is an instance of an array of the pointee type,
@@ -1407,7 +1411,7 @@ Value PointerType::invoke(Emitter &emitter, const ArgumentList &args,
         // If not an lvalue, make it an lvalue so we actually have
         // an address to work with.
         if (!value.isLValue()) {
-          value = emitter.toLValue(value);
+          value = emitter.lvalue(value);
           // NOTE: The way the scopes and lifetimes work right now, this
           // does not actually work. The lifetime would implicitly end before
           // being used in argument conversions and thus leads to undefined
@@ -1429,14 +1433,14 @@ Value PointerType::accessField(Emitter &emitter, Value value,
                                std::string_view name,
                                const SourceLocation &srcLoc) {
   return pointeeType->accessField(
-      emitter, LValue(pointeeType, emitter.toRValue(value)), name, srcLoc);
+      emitter, LValue(pointeeType, emitter.rvalue(value)), name, srcLoc);
 }
 
 Value PointerType::accessIndex(Emitter &emitter, Value value, Value i,
                                const SourceLocation &srcLoc) {
   return LValue(pointeeType, emitter.builder.CreateGEP(
-                                 pointeeType->llvmType, emitter.toRValue(value),
-                                 {emitter.toRValue(i).llvmValue}));
+                                 pointeeType->llvmType, emitter.rvalue(value),
+                                 {emitter.rvalue(i).llvmValue}));
 }
 //--}
 
@@ -1444,7 +1448,7 @@ Value PointerType::accessIndex(Emitter &emitter, Value value, Value i,
 StateType::StateType(Context &context) {
   displayName = "state";
 #define ADD_FIELD(name)                                                        \
-  fields.push_back(                                                            \
+  mFields.push_back(                                                           \
       {context.getType(&State::name), #name, uint64_t(offsetof(State, name))})
   ADD_FIELD(allocator);
   ADD_FIELD(wavelength_base);
@@ -1471,7 +1475,7 @@ StateType::StateType(Context &context) {
   ADD_FIELD(transport);
 #undef ADD_FIELD
   auto llvmTypes{llvm::SmallVector<llvm::Type *>{}};
-  for (auto &field : fields) {
+  for (auto &field : mFields) {
     SMDL_SANITY_CHECK(field.type);
     SMDL_SANITY_CHECK(field.type->llvmType);
     llvmTypes.push_back(field.type->llvmType);
@@ -1479,24 +1483,24 @@ StateType::StateType(Context &context) {
   llvmType = llvm::StructType::create(context, llvmTypes, displayName);
   auto llvmLayout{context.llvmLayout.getStructLayout(
       static_cast<llvm::StructType *>(llvmType))};
-  for (unsigned i = 0; i < fields.size(); i++)
-    if (fields[i].offset != uint64_t(llvmLayout->getElementOffset(i)))
+  for (unsigned i = 0; i < mFields.size(); i++)
+    if (mFields[i].offset != uint64_t(llvmLayout->getElementOffset(i)))
       throw Error(
           concat("mismatch between C++ and SMDL 'state' structures (field ",
-                 Quoted(fields[i].name), " is misaligned)"));
+                 Quoted(mFields[i].name), " is misaligned)"));
 }
 
 Value StateType::accessField(Emitter &emitter, Value value,
                              std::string_view name,
                              const SourceLocation &srcLoc) {
   SMDL_SANITY_CHECK(value.isLValue());
-  for (unsigned i = 0; i < fields.size(); i++) {
-    if (fields[i].name == name) {
+  for (unsigned i = 0; i < mFields.size(); i++) {
+    if (mFields[i].name == name) {
       auto llvmValue{
           emitter.builder.CreateStructGEP(value.type->llvmType, value, i)};
       if (value.llvmValue->hasName())
         llvmValue->setName(concat(value.llvmValue->getName().str(), ".", name));
-      return LValue(fields[i].type, llvmValue);
+      return LValue(mFields[i].type, llvmValue);
     }
   }
   srcLoc.throwError("no field ", Quoted(name), " in 'state'");
@@ -1518,7 +1522,7 @@ Value StringType::invoke(Emitter &emitter, const ArgumentList &args,
   }
   // Construct from another string.
   if (args.isOnePositional(this)) {
-    return emitter.toRValue(args[0].value);
+    return emitter.rvalue(args[0].value);
   }
   // Construct from enum, call the enum-to-string conversion function.
   if (args.isOnePositional()) {
@@ -1527,7 +1531,7 @@ Value StringType::invoke(Emitter &emitter, const ArgumentList &args,
       return RValue(this, emitter.builder.CreateCall(
                               enumType->llvmFuncToString->getFunctionType(),
                               enumType->llvmFuncToString,
-                              {emitter.toRValue(value).llvmValue}));
+                              {emitter.rvalue(value).llvmValue}));
   }
   srcLoc.throwError("cannot construct 'string' from ",
                     Quoted(std::string(args)));
@@ -1545,7 +1549,7 @@ Value StringType::accessField(Emitter &emitter, Value value,
       return RValue(emitter.context.getIntType(),
                     llvmEmitCast(emitter.builder,
                                  llvm::emitStrLen(
-                                     emitter.toRValue(value), emitter.builder,
+                                     emitter.rvalue(value), emitter.builder,
                                      emitter.context.llvmLayout,
                                      &emitter.context.llvmTargetLibraryInfo),
                                  emitter.context.getIntType()->llvmType));
@@ -1589,12 +1593,12 @@ void StructType::initialize(Emitter &emitter) {
           "struct ", Quoted(displayName),
           " cannot be type of field in its definition");
     // Handle static constant fields!
-    if (field.type->has_qualifier("static")) {
+    if (field.type->hasQualifier("static")) {
       const char *reasonForError = //
-          field.type->has_qualifier("inline")   ? "must not be 'inline'"
-          : !field.type->has_qualifier("const") ? "must also be 'const'"
-          : !field.exprInit                     ? "must have initializer"
-                                                : nullptr;
+          field.type->hasQualifier("inline")   ? "must not be 'inline'"
+          : !field.type->hasQualifier("const") ? "must also be 'const'"
+          : !field.exprInit                    ? "must have initializer"
+                                               : nullptr;
       if (reasonForError)
         field.name.srcLoc.throwError("field ", Quoted(field.name),
                                      " declared 'static' ", reasonForError);
@@ -1619,7 +1623,7 @@ void StructType::initialize(Emitter &emitter) {
 }
 
 StructType *
-StructType::instantiate(Context &context,
+StructType::getInstance(Context &context,
                         const llvm::SmallVector<Type *> &paramTypes) {
   SMDL_SANITY_CHECK(params.isAbstract());
   SMDL_SANITY_CHECK(params.size() == paramTypes.size());
@@ -1683,20 +1687,21 @@ Value StructType::invoke(Emitter &emitter, const ArgumentList &args,
   if (args.isOnePositional()) {
     if (auto structType{llvm::dyn_cast<StructType>(args[0].value.type)};
         structType && (structType == this || structType->isInstanceOf(this))) {
-      return emitter.toRValue(args[0].value);
+      return emitter.rvalue(args[0].value);
     }
   }
   if (emitter.canResolveArguments(params, args, srcLoc)) {
-    auto resolved{emitter.resolveArguments(params, args, srcLoc)};
+    auto resolvedArgs{emitter.resolveArguments(params, args, srcLoc)};
     auto resultType{this};
     if (resultType->isAbstract()) {
-      resultType = instantiate(emitter.context, resolved.getValueTypes());
+      resultType =
+          getInstance(emitter.context, resolvedArgs.getNonVariadicTypes());
       resultType->isDefaultInstance = args.empty();
       SMDL_SANITY_CHECK(!resultType->isAbstract());
     }
     auto result{Value::zero(resultType)};
     auto i{size_t(0)};
-    for (auto &value : resolved.values)
+    for (auto &value : resolvedArgs.values)
       result = emitter.insert(result, value, i++, srcLoc);
     if (decl.stmtFinalize) {
       SMDL_PRESERVE(emitter.crumb);
@@ -1706,12 +1711,12 @@ Value StructType::invoke(Emitter &emitter, const ArgumentList &args,
         emitter.labelBreak = {};    // Invalidate!
         emitter.labelContinue = {}; // Invalidate!
         emitter.currentModule = decl.srcLoc.module_;
-        auto lv{emitter.toLValue(result)};
+        auto lv{emitter.lvalue(result)};
         for (auto &param : params)
           emitter.declareCrumb(param.name, &decl,
                                emitter.accessField(lv, param.name, srcLoc));
         emitter.emit(decl.stmtFinalize);
-        result = emitter.toRValue(lv);
+        result = emitter.rvalue(lv);
         emitter.createLifetimeEnd(lv);
       });
     }
@@ -1727,13 +1732,14 @@ Value StructType::invoke(Emitter &emitter, const ArgumentList &args,
   }
   if (viableConstructors.size() == 1) {
     auto &constructor{*viableConstructors[0]};
-    auto resolved{emitter.resolveArguments(constructor.params, args, srcLoc)};
+    auto resolvedArgs{
+        emitter.resolveArguments(constructor.params, args, srcLoc)};
     SMDL_PRESERVE(emitter.crumb, constructor.isInvoking);
     emitter.crumb = constructor.params.lastCrumb;
     constructor.isInvoking = true;
     return emitter.createFunctionImplementation(
-        decl.name, !emitter.state, this, constructor.params, resolved.values,
-        srcLoc, [&]() {
+        decl.name, !emitter.state, this, constructor.params,
+        resolvedArgs.values, srcLoc, [&]() {
           emitter.currentModule = decl.srcLoc.module_;
           emitter.emitReturn(emitter.emit(constructor.astConstructor->expr),
                              srcLoc);
@@ -1757,7 +1763,7 @@ bool StructType::hasField(std::string_view name) {
 Value StructType::accessField(Emitter &emitter, Value value,
                               std::string_view name,
                               const SourceLocation &srcLoc) {
-  auto seq{ParameterList::LookupSeq{}};
+  auto seq{ParameterList::LookupSequence{}};
   if (params.getLookupSequence(name, seq)) {
     auto hasName0{value.llvmValue->hasName()};
     auto name0{value.llvmValue->getName().str()};
@@ -1775,7 +1781,7 @@ Value StructType::accessField(Emitter &emitter, Value value,
       name0 += name;
       value.llvmValue->setName(name0);
     }
-    return isConst ? emitter.toRValue(value) : value;
+    return isConst ? emitter.rvalue(value) : value;
   }
   if (auto itr{getInstanceOf().staticFields.find(name)};
       itr != getInstanceOf().staticFields.end())
@@ -1789,10 +1795,10 @@ Value StructType::insert(Emitter &emitter, Value value, Value elem, unsigned i,
                          const SourceLocation &srcLoc) {
   SMDL_SANITY_CHECK(i < params.size());
   if (params[i].type->isVoid())
-    return emitter.toRValue(value);
+    return emitter.rvalue(value);
   else
     return RValue(this, emitter.builder.CreateInsertValue(
-                            emitter.toRValue(value),
+                            emitter.rvalue(value),
                             emitter.invoke(params[i].type, elem, srcLoc), {i}));
 }
 //--}
@@ -1809,7 +1815,7 @@ Value TagType::invoke(Emitter &emitter, const ArgumentList &args,
     if (!emitter.context.isPerfectlyConvertible(value.type, this))
       srcLoc.throwError("cannot construct tag ", Quoted(displayName), " from ",
                         Quoted(value.type->displayName));
-    return emitter.toRValue(value);
+    return emitter.rvalue(value);
   } else {
     srcLoc.throwError("cannot construct tag ", Quoted(displayName), " from ",
                       Quoted(std::string(args)));
@@ -1867,12 +1873,12 @@ Value UnionType::invoke(Emitter &emitter, const ArgumentList &args,
     return result;
   }
   if (args.isOnePositional(this)) {
-    return emitter.toRValue(args[0].value);
+    return emitter.rvalue(args[0].value);
   }
   if (args.isOnePositional()) {
     auto arg{args[0].value};
     if (auto argUnionType{llvm::dyn_cast<UnionType>(arg.type)}) {
-      auto lvArg{emitter.toLValue(arg)};
+      auto lvArg{emitter.lvalue(arg)};
       auto lv{emitter.createAlloca(this, "")};
       emitter.builder.CreateStore(Value::zero(this), lv);
       emitter.builder.CreateMemCpy(
@@ -1881,12 +1887,12 @@ Value UnionType::invoke(Emitter &emitter, const ArgumentList &args,
           std::min(requiredSize, argUnionType->requiredSize));
       if (!arg.isLValue())
         emitter.createLifetimeEnd(lvArg);
-      auto index{emitter.toRValue(emitter.accessIndex(
+      auto index{emitter.rvalue(emitter.accessIndex(
           emitter.context.getComptimeUnionIndexMap(argUnionType, this),
           emitter.accessField(arg, "#idx", srcLoc), srcLoc))};
       emitter.builder.CreateStore(index,
                                   emitter.accessField(lv, "#idx", srcLoc));
-      auto rv{emitter.toRValue(lv)};
+      auto rv{emitter.rvalue(lv)};
       emitter.createLifetimeEnd(lv);
       if (!hasAllCaseTypes(argUnionType)) {
         auto [blockFail, blockPass] =
@@ -1911,10 +1917,10 @@ Value UnionType::invoke(Emitter &emitter, const ArgumentList &args,
       auto lv{emitter.createAlloca(this, "union.lv")};
       emitter.createLifetimeStart(lv);
       emitter.builder.CreateStore(Value::zero(this), lv); // zeroinitializer
-      emitter.builder.CreateStore(emitter.toRValue(arg), lv);
+      emitter.builder.CreateStore(emitter.rvalue(arg), lv);
       emitter.builder.CreateStore(emitter.context.getComptimeInt(i),
                                   emitter.accessField(lv, "#idx", srcLoc));
-      auto rv{emitter.toRValue(lv)};
+      auto rv{emitter.rvalue(lv)};
       emitter.createLifetimeEnd(lv);
       return rv;
     }
@@ -1930,7 +1936,7 @@ Value UnionType::accessField(Emitter &emitter, Value value,
   if (name == "#ptr")
     return RValue(
         emitter.context.getPointerType(emitter.context.getVoidType()),
-        emitter.builder.CreateStructGEP(llvmType, emitter.toLValue(value), 0));
+        emitter.builder.CreateStructGEP(llvmType, emitter.lvalue(value), 0));
   if (name == "#idx")
     return value.isLValue()
                ? LValue(emitter.context.getIntType(),
@@ -1939,8 +1945,8 @@ Value UnionType::accessField(Emitter &emitter, Value value,
                         emitter.builder.CreateExtractValue(value, {1U}));
   if (hasField(name)) {
     if (value.isRValue()) {
-      auto lv{emitter.toLValue(value)};
-      auto rv{emitter.toRValue(accessField(emitter, lv, name, srcLoc))};
+      auto lv{emitter.lvalue(value)};
+      auto rv{emitter.rvalue(accessField(emitter, lv, name, srcLoc))};
       emitter.createLifetimeEnd(lv);
       return rv;
     }

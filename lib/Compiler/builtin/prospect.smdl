@@ -3,7 +3,7 @@
 
 using ::math import *;
 
-export struct PROSPECT_result {
+export struct prospect_result {
   color reflectance = color(0);
 
   color transmittance = color(0);
@@ -1206,7 +1206,7 @@ export static const auto PROSPECT_TABLE_ABSORPTIONS = auto[1051](
 );
 
 @(noinline)
-export PROSPECT_result PROSPECT(
+export prospect_result prospect(
   float num_layers = 1.5,          ///< The number of layers.
   float incident_cone_angle = 0.7, ///< The incident cone angle in radians.
   float dry_matter = 5.0,          ///< The dry matter content in milligrams per square centimeter.
@@ -1291,5 +1291,5 @@ export PROSPECT_result PROSPECT(
       rSub[i] = 1;
     }
   }
-  return PROSPECT_result(reflectance: rA + tA * rSub * t / (1 - rSub * r), transmittance: tA * tSub / (1 - rSub * r));
+  return prospect_result(reflectance: rA + tA * rSub * t / (1 - rSub * r), transmittance: tA * tSub / (1 - rSub * r));
 }

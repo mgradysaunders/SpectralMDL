@@ -232,28 +232,28 @@ private:
   MD5FileHasher mFileHasher{};
 
   /// The images used by textures.
-  std::map<const MD5FileHash *, Image> mImages{};
+  std::map<const MD5FileHash *, Image> mImages;
 
   /// The ptex textures.
-  std::map<const MD5FileHash *, Ptexture> mPtextures{};
+  std::map<const MD5FileHash *, Ptexture> mPtextures;
 
   /// The BSDF measurements.
-  std::map<const MD5FileHash *, BSDFMeasurement> mBSDFMeasurements{};
+  std::map<const MD5FileHash *, BSDFMeasurement> mBSDFMeasurements;
 
   /// The light profiles.
-  std::map<const MD5FileHash *, LightProfile> mLightProfiles{};
+  std::map<const MD5FileHash *, LightProfile> mLightProfiles;
 
   /// The spectrums.
-  std::map<const MD5FileHash *, Spectrum> mSpectrums{};
+  std::map<const MD5FileHash *, Spectrum> mSpectrums;
 
   /// The spectrum libraries.
-  std::map<const MD5FileHash *, SpectrumLibrary> mSpectrumLibraries{};
+  std::map<const MD5FileHash *, SpectrumLibrary> mSpectrumLibraries;
 
   /// The MDL module file names.
-  std::set<std::string> mModuleFileNames{};
+  std::set<std::string> mModuleFileNames;
 
   /// The MDL module directory names.
-  std::set<std::string> mModuleDirNames{};
+  std::set<std::string> mModuleDirNames;
 
   /// The MDL module directory search paths.
   ///
@@ -262,10 +262,10 @@ private:
   /// contain all of the same paths. This is necessary to preserve the
   /// order in which the paths were added.
   ///
-  std::vector<std::string> mModuleDirSearchPaths{};
+  std::vector<std::string> mModuleDirSearchPaths;
 
   /// The MDL modules.
-  std::vector<std::unique_ptr<Module>> mModules{};
+  std::vector<std::unique_ptr<Module>> mModules;
 
   /// The LLVM JIT module.
   std::unique_ptr<llvm::orc::ThreadSafeModule> mLLVMJitModule;
@@ -275,20 +275,20 @@ private:
 
   /// The JIT-compiled color-to-RGB conversion function.
   JIT::Function<void(const State &state, const float *cptr, float3 &rgb)>
-      mJitColorToRGB{"jit_color_to_rgb"};
+      mColorToRGB{"jit_color_to_rgb"};
 
   /// The JIT-compiled RGB-to-color conversion function.
   JIT::Function<void(const State &state, const float3 &rgb, float *cptr)>
-      mJitRGBToColor{"jit_rgb_to_color"};
+      mRGBToColor{"jit_rgb_to_color"};
 
   /// The JIT-compiled materials.
-  std::vector<JIT::Material> mJitMaterials{};
+  std::vector<JIT::Material> mMaterials;
 
   /// The JIT-compiled unit tests.
-  std::vector<JIT::UnitTest> mJitUnitTests{};
+  std::vector<JIT::UnitTest> mUnitTests;
 
   /// The JIT-compiled execs.
-  std::vector<JIT::Function<void()>> mJitExecs{};
+  std::vector<JIT::Function<void()>> mExecs;
 
   friend class Context;
 

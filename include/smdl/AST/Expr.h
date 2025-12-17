@@ -22,22 +22,22 @@ public:
   SourceLocation srcLoc{};
 
   /// The keyword `visit`. This may be empty!
-  std::string_view srcKwVisit{};
+  std::string_view srcKwVisit;
 
   /// The name. This may be empty!
-  Name name{};
+  Name name;
 
   /// The colon `:` after the name. This may be empty!
-  std::string_view srcColonAfterName{};
+  std::string_view srcColonAfterName;
 
   /// The expression.
-  BumpPtr<Expr> expr{};
+  BumpPtr<Expr> expr;
 
   /// The next comma `,`. This may be empty!
-  std::string_view srcComma{};
+  std::string_view srcComma;
 
   /// The complete source region.
-  std::string_view src{};
+  std::string_view src;
 };
 
 /// An argument list.
@@ -74,13 +74,13 @@ public:
   SourceLocation srcLoc{};
 
   /// The parenthesis `(`.
-  std::string_view srcParenL{};
+  std::string_view srcParenL;
 
   /// The args.
-  std::vector<Argument> args{};
+  std::vector<Argument> args;
 
   /// The parenthesis `)`.
-  std::string_view srcParenR{};
+  std::string_view srcParenR;
 };
 
 class SMDL_EXPORT AccessField final
@@ -90,13 +90,13 @@ public:
       : expr(std::move(expr)), srcDot(srcDot), name(std::move(name)) {}
 
   /// The expression.
-  BumpPtr<Expr> expr{};
+  BumpPtr<Expr> expr;
 
   /// The dot `.`.
-  std::string_view srcDot{};
+  std::string_view srcDot;
 
   /// The field name.
-  Name name{};
+  Name name;
 };
 
 class SMDL_EXPORT AccessIndex final
@@ -105,24 +105,24 @@ public:
   class Index final {
   public:
     /// The square bracket `[`.
-    std::string_view srcBrackL{};
+    std::string_view srcBrackL;
 
     /// The expression. This may be null! (`[]`)
-    BumpPtr<Expr> expr{};
+    BumpPtr<Expr> expr;
 
     /// The square bracket `]`.
-    std::string_view srcBrackR{};
+    std::string_view srcBrackR;
   };
 
   explicit AccessIndex(BumpPtr<Expr> expr, std::vector<Index> indexes)
       : expr(std::move(expr)), indexes(std::move(indexes)) {}
 
   /// The expression.
-  BumpPtr<Expr> expr{};
+  BumpPtr<Expr> expr;
 
   /// The indexes. (These are kept together instead of nested recursively for
   /// convenience.)
-  std::vector<Index> indexes{};
+  std::vector<Index> indexes;
 };
 
 inline namespace binary_ops {
@@ -290,25 +290,25 @@ public:
         exprRhs(std::move(exprRhs)) {}
 
   /// The left-hand side expression.
-  BumpPtr<Expr> exprLhs{};
+  BumpPtr<Expr> exprLhs;
 
   /// The source operator.
-  std::string_view srcOp{};
+  std::string_view srcOp;
 
   /// The operator.
   BinaryOp op{};
 
   /// The bracket `[`.
-  std::string_view srcBrackL{};
+  std::string_view srcBrackL;
 
   /// The epsilon expression.
-  BumpPtr<Expr> exprEps{};
+  BumpPtr<Expr> exprEps;
 
   /// The bracket `]`.
-  std::string_view srcBrackR{};
+  std::string_view srcBrackR;
 
   /// The right-hand side expression.
-  BumpPtr<Expr> exprRhs{};
+  BumpPtr<Expr> exprRhs;
 };
 
 /// A call expression.
@@ -318,7 +318,7 @@ public:
       : expr(std::move(expr)), args(std::move(args)) {}
 
   /// The expression.
-  BumpPtr<Expr> expr{};
+  BumpPtr<Expr> expr;
 
   /// The arguments.
   ArgumentList args{};
@@ -331,10 +331,10 @@ public:
   public:
     /// The double colon `::` before the name. This may be empty on
     /// the first name!
-    std::string_view srcDoubleColon{};
+    std::string_view srcDoubleColon;
 
     /// The name.
-    Name name{};
+    Name name;
   };
 
   explicit Identifier(std::vector<Element> elems) : elements(std::move(elems)) {
@@ -367,10 +367,10 @@ public:
   }
 
   /// The elements.
-  std::vector<Element> elements{};
+  std::vector<Element> elements;
 
   /// The element views extracted from the elements for convenience.
-  std::vector<std::string_view> elementViews{};
+  std::vector<std::string_view> elementViews;
 };
 
 /// An intrinsic expression.
@@ -379,7 +379,7 @@ public:
   explicit Intrinsic(std::string_view srcName) : srcName(srcName) {}
 
   /// The intrinsic name (including the leading `#`).
-  std::string_view srcName{};
+  std::string_view srcName;
 };
 
 /// A `let` expression.
@@ -399,22 +399,22 @@ public:
         srcBraceR(srcBraceR), srcKwIn(srcKwIn), expr(std::move(expr)) {}
 
   /// The keyword `let`.
-  std::string_view srcKwLet{};
+  std::string_view srcKwLet;
 
   /// The brace `{`. This may be empty!
-  std::string_view srcBraceL{};
+  std::string_view srcBraceL;
 
   /// The declarations.
   std::vector<BumpPtr<Decl>> decls{};
 
   /// The brace `}`. This may be empty!
-  std::string_view srcBraceR{};
+  std::string_view srcBraceR;
 
   /// The keyword `in`.
-  std::string_view srcKwIn{};
+  std::string_view srcKwIn;
 
   /// The expression.
-  BumpPtr<Expr> expr{};
+  BumpPtr<Expr> expr;
 };
 
 /// A literal bool expression.
@@ -425,7 +425,7 @@ public:
       : srcValue(srcValue), value(value) {}
 
   /// The source of the literal value. (Either `true` or `false`)
-  std::string_view srcValue{};
+  std::string_view srcValue;
 
   /// The literal value.
   bool value{};
@@ -438,7 +438,7 @@ public:
       : srcValue(srcValue), value(value) {}
 
   /// The source of the literal value.
-  std::string_view srcValue{};
+  std::string_view srcValue;
 
   /// The literal value.
   uint64_t value{};
@@ -452,7 +452,7 @@ public:
       : srcValue(srcValue), value(value) {}
 
   /// The source of the literal value.
-  std::string_view srcValue{};
+  std::string_view srcValue;
 
   /// The literal value.
   double value{};
@@ -473,7 +473,7 @@ public:
   /// source strings like `"Hello "/* A comment */"world!"` form just 1 logical
   /// literal string `"Hello world!"`.
   ///
-  std::vector<std::string_view> srcValues{};
+  std::vector<std::string_view> srcValues;
 
   /// The literal value.
   std::string value{};
@@ -488,16 +488,16 @@ public:
         srcParenR(srcParenR) {}
 
   /// The dollar sign `$`. This may be empty!
-  std::string_view srcDollar{};
+  std::string_view srcDollar;
 
   /// The parenthesis `(`.
-  std::string_view srcParenL{};
+  std::string_view srcParenL;
 
   /// The expression.
-  BumpPtr<Expr> expr{};
+  BumpPtr<Expr> expr;
 
   /// The parenthesis `)`.
-  std::string_view srcParenR{};
+  std::string_view srcParenR;
 
   /// Is intended to force compile-time evaluation?
   [[nodiscard]] bool isComptime() const { return !srcDollar.empty(); }
@@ -516,7 +516,7 @@ public:
       : srcKwReturnFrom(srcKwReturnFrom), stmt(std::move(stmt)) {}
 
   /// The keyword `return_from`.
-  std::string_view srcKwReturnFrom{};
+  std::string_view srcKwReturnFrom;
 
   /// The statement. (This should always be a `Compound` statement)
   BumpPtr<Stmt> stmt;
@@ -537,19 +537,19 @@ public:
         exprElse(std::move(exprElse)) {}
 
   /// The condition expression.
-  BumpPtr<Expr> exprCond{};
+  BumpPtr<Expr> exprCond;
 
   /// The question mark `?`.
-  std::string_view srcQuestion{};
+  std::string_view srcQuestion;
 
   /// The then expression.
-  BumpPtr<Expr> exprThen{};
+  BumpPtr<Expr> exprThen;
 
   /// The colon `:`.
-  std::string_view srcColon{};
+  std::string_view srcColon;
 
   /// The else expression.
-  BumpPtr<Expr> exprElse{};
+  BumpPtr<Expr> exprElse;
 };
 
 /// A size name expression (parsed as `<name>` between `[...]`).
@@ -560,13 +560,13 @@ public:
       : srcAngleL(srcAngleL), name(std::move(name)), srcAngleR(srcAngleR) {}
 
   /// The angle bracket `<`.
-  std::string_view srcAngleL{};
+  std::string_view srcAngleL;
 
   /// The name.
-  Name name{};
+  Name name;
 
   /// The angle bracket `>`.
-  std::string_view srcAngleR{};
+  std::string_view srcAngleR;
 };
 
 /// A type expression.
@@ -575,15 +575,15 @@ public:
   explicit Type(std::vector<std::string_view> srcQuals, BumpPtr<Expr> expr)
       : srcQuals(std::move(srcQuals)), expr(std::move(expr)) {}
 
-  [[nodiscard]] bool has_qualifier(std::string_view qual) const {
+  [[nodiscard]] bool hasQualifier(std::string_view qual) const {
     return std::find(srcQuals.begin(), srcQuals.end(), qual) != srcQuals.end();
   }
 
   /// The source qualifiers.
-  std::vector<std::string_view> srcQuals{};
+  std::vector<std::string_view> srcQuals;
 
   /// The expression.
-  BumpPtr<Expr> expr{};
+  BumpPtr<Expr> expr;
 
   /// The MDL type. This is resolved later in the compile.
   ::smdl::Type *type{};
@@ -599,19 +599,19 @@ public:
         srcAngleR(srcAngleR), expr(std::move(expr)) {}
 
   /// The keyword `cast`.
-  std::string_view srcKwCast{};
+  std::string_view srcKwCast;
 
   /// The angle bracket `<`.
-  std::string_view srcAngleL{};
+  std::string_view srcAngleL;
 
   /// The type.
-  BumpPtr<Type> type{};
+  BumpPtr<Type> type;
 
   /// The angle bracket `>`.
-  std::string_view srcAngleR{};
+  std::string_view srcAngleR;
 
   /// The expression. (This should always be a `Parens` expression)
-  BumpPtr<Expr> expr{};
+  BumpPtr<Expr> expr;
 };
 
 inline namespace unary_ops {
@@ -688,13 +688,13 @@ public:
   }
 
   /// The source of the operator.
-  std::string_view srcOp{};
+  std::string_view srcOp;
 
   /// The operator.
   UnaryOp op{};
 
   /// The expression.
-  BumpPtr<Expr> expr{};
+  BumpPtr<Expr> expr;
 };
 
 } // namespace smdl::AST

@@ -15,10 +15,10 @@ namespace smdl::AST {
 class SMDL_EXPORT Annotation final {
 public:
   /// The identifier.
-  BumpPtr<Identifier> identifier{};
+  BumpPtr<Identifier> identifier;
 
   // The arguments.
-  ArgumentList args{};
+  ArgumentList args;
 
   /// The next comma `,`. This may be empty!
   std::string_view srcComma{};
@@ -83,41 +83,41 @@ public:
 
 public:
   /// The source location.
-  SourceLocation srcLoc{};
+  SourceLocation srcLoc;
 
   /// The double bracket `[[`.
-  std::string_view srcDoubleBrackL{};
+  std::string_view srcDoubleBrackL;
 
   /// The annotations.
-  std::vector<Annotation> annos{};
+  std::vector<Annotation> annos;
 
   /// The double bracket `]]`.
-  std::string_view srcDoubleBrackR{};
+  std::string_view srcDoubleBrackR;
 };
 
 /// A parameter.
 class SMDL_EXPORT Parameter final : public NodeSubclass<NodeKind::Parameter> {
 public:
   /// The type.
-  BumpPtr<Type> type{};
+  BumpPtr<Type> type;
 
   /// The name.
   Name name{};
 
   /// The equal `=`. This may be empty!
-  std::string_view srcEqual{};
+  std::string_view srcEqual;
 
   /// The initializer expression. This may be null!
-  BumpPtr<Expr> exprInit{};
+  BumpPtr<Expr> exprInit;
 
   /// The annotations.
-  BumpPtr<AnnotationBlock> annotations{};
+  BumpPtr<AnnotationBlock> annotations;
 
   /// The next comma `,`. This may be empty!
-  std::string_view srcComma{};
+  std::string_view srcComma;
 
   /// The complete source region.
-  std::string_view src{};
+  std::string_view src;
 
   /// Has warning been issued about this parameter yet? Used to prevent
   /// the same warning being logged over and over again.
@@ -151,21 +151,29 @@ public:
 
   /// Has comma `,` after the last parameter?
   [[nodiscard]] bool hasTrailingComma() const {
-    return !params.empty() && !params.back().srcComma.empty();
+    return !params.empty() && !params.back().srcComma.empty() && !hasTrailingEllipsis();
+  }
+
+  /// Has ellipsis `...` after the last parameter?
+  [[nodiscard]] bool hasTrailingEllipsis() const {
+    return !srcEllipsis.empty();
   }
 
 public:
   /// The parenthesis `(`.
-  std::string_view srcParenL{};
+  std::string_view srcParenL;
 
-  /// The source `*` if variant params. This maybe empty!
-  std::string_view srcStar{};
+  /// The star `*` if parameter list for function variant. This may be empty!
+  std::string_view srcStar;
 
   /// The parameters.
-  std::vector<Parameter> params{};
+  std::vector<Parameter> params;
+
+  /// The ellipsis `...` if variadic. This may be empty!
+  std::string_view srcEllipsis;
 
   /// The parenthesis `)`.
-  std::string_view srcParenR{};
+  std::string_view srcParenR;
 };
 
 /// An import path.
@@ -180,14 +188,14 @@ public:
   class Element final {
   public:
     /// The double colon `::` before the name. This may be empty!
-    std::string_view srcDoubleColon{};
+    std::string_view srcDoubleColon;
 
     /// The source name. This may be empty! (In which case, `literalString` must
     /// not be empty!)
-    std::string_view srcName{};
+    std::string_view srcName;
 
     /// The literal string.
-    BumpPtr<LiteralString> literalString{};
+    BumpPtr<LiteralString> literalString;
 
     /// Is literal string and not a simple name?
     [[nodiscard]] bool is_literal_string() const { return literalString; }
@@ -226,10 +234,10 @@ public:
   }
 
   /// The elements.
-  std::vector<Element> elements{};
+  std::vector<Element> elements;
 
   /// The source views extracted from the elements for convenience.
-  std::vector<std::string_view> elementViews{};
+  std::vector<std::string_view> elementViews;
 };
 
 /// An `annotation` declaration.
@@ -249,19 +257,19 @@ public:
         annotations(std::move(annotations)), srcSemicolon(srcSemicolon) {}
 
   /// The keyword `annotation`.
-  std::string_view srcKwAnnotation{};
+  std::string_view srcKwAnnotation;
 
   /// The name.
-  Name name{};
+  Name name;
 
   /// The parameters.
-  ParameterList params{};
+  ParameterList params;
 
   /// The annotations on this annotation.
-  BumpPtr<AnnotationBlock> annotations{};
+  BumpPtr<AnnotationBlock> annotations;
 
   /// The semicolon `;`.
-  std::string_view srcSemicolon{};
+  std::string_view srcSemicolon;
 };
 
 /// An `enum` declaration.
@@ -283,19 +291,19 @@ public:
     Enum *const decl{};
 
     /// The name.
-    Name name{};
+    Name name;
 
     /// The equal `=`. This may be empty!
-    std::string_view srcEqual{};
+    std::string_view srcEqual;
 
     /// The initializer expression. This may be null!
-    BumpPtr<Expr> exprInit{};
+    BumpPtr<Expr> exprInit;
 
     /// The annotations. This may be null!
-    BumpPtr<AnnotationBlock> annotations{};
+    BumpPtr<AnnotationBlock> annotations;
 
     /// The next comma `,`. This may be empty!
-    std::string_view srcComma{};
+    std::string_view srcComma;
 
     /// The LLVM constant value (This is computed later during compilation)
     llvm::ConstantInt *llvmConst{};
@@ -319,25 +327,25 @@ public:
   }
 
   /// The keyword `enum`.
-  std::string_view srcKwEnum{};
+  std::string_view srcKwEnum;
 
   /// The name.
-  Name name{};
+  Name name;
 
   /// The annotations. This may be null!
-  BumpPtr<AnnotationBlock> annotations{};
+  BumpPtr<AnnotationBlock> annotations;
 
   /// The brace `{`.
-  std::string_view srcBraceL{};
+  std::string_view srcBraceL;
 
   /// The declarators.
-  std::vector<Declarator> declarators{};
+  std::vector<Declarator> declarators;
 
   /// The brace `}`.
-  std::string_view srcBraceR{};
+  std::string_view srcBraceR;
 
   /// The semicolon `;`.
-  std::string_view srcSemicolon{};
+  std::string_view srcSemicolon;
 
   /// Has comma `,` after the last declarator?
   [[nodiscard]] bool hasTrailingComma() const {
@@ -358,10 +366,10 @@ public:
       : srcKwExec(srcKwExec), stmt(std::move(stmt)) {}
 
   /// The keyword `exec`.
-  std::string_view srcKwExec{};
+  std::string_view srcKwExec;
 
   /// The statement, must be a compound statement.
-  BumpPtr<Stmt> stmt{};
+  BumpPtr<Stmt> stmt;
 };
 
 /// A function declaration.
@@ -404,31 +412,31 @@ public:
 
 public:
   /// The return type.
-  BumpPtr<Type> returnType{};
+  BumpPtr<Type> returnType;
 
   /// The early annotations between return type and name. This may be null!
-  BumpPtr<AnnotationBlock> earlyAnnotations{};
+  BumpPtr<AnnotationBlock> earlyAnnotations;
 
   /// The name.
-  Name name{};
+  Name name;
 
   /// The parameters.
-  ParameterList params{};
+  ParameterList params;
 
   /// The frequency qualifier `uniform` or `varying`. This may be empty!
-  std::string_view srcFrequency{};
+  std::string_view srcFrequency;
 
   /// The late annotations between signature and definition. This may be null!
-  BumpPtr<AnnotationBlock> lateAnnotations{};
+  BumpPtr<AnnotationBlock> lateAnnotations;
 
   /// The equal `=`. This may be empty!
-  std::string_view srcEqual{};
+  std::string_view srcEqual;
 
   /// The definition. This may be null!
-  BumpPtr<Node> definition{};
+  BumpPtr<Node> definition;
 
   /// The semicolon `;`. This may be empty!
-  std::string_view srcSemicolon{};
+  std::string_view srcSemicolon;
 };
 
 /// An `import` declaration.
@@ -437,10 +445,10 @@ public:
   class ImportPathWrapper final {
   public:
     /// The import path.
-    ImportPath importPath{};
+    ImportPath importPath;
 
     /// The next comma `,`. This may be empty!
-    std::string_view srcComma{};
+    std::string_view srcComma;
   };
 
   explicit Import(std::string_view srcKwImport,
@@ -451,13 +459,13 @@ public:
         srcSemicolon(srcSemicolon) {}
 
   /// The keyword `import`.
-  std::string_view srcKwImport{};
+  std::string_view srcKwImport;
 
   /// The import paths.
-  std::vector<ImportPathWrapper> importPathWrappers{};
+  std::vector<ImportPathWrapper> importPathWrappers;
 
   /// The semicolon `;`.
-  std::string_view srcSemicolon{};
+  std::string_view srcSemicolon;
 
   /// Has comma `,` after the last import path?
   [[nodiscard]] bool hasTrailingComma() const {
@@ -477,19 +485,19 @@ public:
         srcBraceL(srcBraceL), decls(std::move(decls)), srcBraceR(srcBraceR) {}
 
   /// The keyword `namespace`.
-  std::string_view srcKwNamespace{};
+  std::string_view srcKwNamespace;
 
   /// The identifier.
-  BumpPtr<Identifier> identifier{};
+  BumpPtr<Identifier> identifier;
 
   /// The brace `{`.
-  std::string_view srcBraceL{};
+  std::string_view srcBraceL;
 
   /// The declarations.
-  std::vector<BumpPtr<Decl>> decls{};
+  std::vector<BumpPtr<Decl>> decls;
 
   /// The brace `}`.
-  std::string_view srcBraceR{};
+  std::string_view srcBraceR;
 
   /// The first crumb for inside-namespace lookup. This is populated later.
   Crumb *firstCrumb{};
@@ -508,56 +516,56 @@ public:
     [[nodiscard]] bool isDefault() const { return !srcKwDefault.empty(); }
 
     /// The keyword `default`. This may be empty!
-    std::string_view srcKwDefault{};
+    std::string_view srcKwDefault;
 
     /// The tag type. This should resolve to `Identifier`, but it is represented
     /// by a `Type` in order for the compiler to easily resolve the tag type it
     /// represents and store it in the AST using existing mechanisms.
-    BumpPtr<Type> type{};
+    BumpPtr<Type> type;
 
     /// The next comma `,`. This may be empty!
-    std::string_view srcComma{};
+    std::string_view srcComma;
   };
 
   /// A `struct` constructor. This is an extension!
   class Constructor final {
   public:
     /// The name, which must be equivalent to the struct name.
-    Name name{};
+    Name name;
 
     /// The parameters.
-    ParameterList params{};
+    ParameterList params;
 
     /// The source equal `=`.
-    std::string_view srcEqual{};
+    std::string_view srcEqual;
 
     /// The expression.
-    BumpPtr<Expr> expr{};
+    BumpPtr<Expr> expr;
 
     /// The source semicolon `;`.
-    std::string_view srcSemicolon{};
+    std::string_view srcSemicolon;
   };
 
   /// A `struct` field declarator.
   class Field final : public NodeSubclass<NodeKind::Field> {
   public:
     /// The type.
-    BumpPtr<Type> type{};
+    BumpPtr<Type> type;
 
     /// The name.
-    Name name{};
+    Name name;
 
     /// The equal `=`. This may be empty!
-    std::string_view srcEqual{};
+    std::string_view srcEqual;
 
     /// The initializer expression. This may be null!
-    BumpPtr<Expr> exprInit{};
+    BumpPtr<Expr> exprInit;
 
     /// The annotation block. This may be null!
-    BumpPtr<AnnotationBlock> annotations{};
+    BumpPtr<AnnotationBlock> annotations;
 
     /// The semicolon `;`.
-    std::string_view srcSemicolon{};
+    std::string_view srcSemicolon;
   };
 
   explicit Struct(std::string_view srcKwStruct, Name name,
@@ -576,40 +584,40 @@ public:
         srcBraceR(srcBraceR), srcSemicolon(srcSemicolon) {}
 
   /// The keyword `struct`.
-  std::string_view srcKwStruct{};
+  std::string_view srcKwStruct;
 
   /// The name.
-  Name name{};
+  Name name;
 
   /// The colon `:` before the tags. This may be empty!
-  std::string_view srcColonBeforeTags{};
+  std::string_view srcColonBeforeTags;
 
   /// The tags. This may be empty!
-  std::vector<Tag> tags{};
+  std::vector<Tag> tags;
 
   /// The annotations. This may be null!
-  BumpPtr<AnnotationBlock> annotations{};
+  BumpPtr<AnnotationBlock> annotations;
 
   /// The brace `{`.
-  std::string_view srcBraceL{};
+  std::string_view srcBraceL;
 
   /// The constructors. This is an extension and may be empty!
-  std::vector<Constructor> constructors{};
+  std::vector<Constructor> constructors;
 
   /// The fields.
-  std::vector<Field> fields{};
+  std::vector<Field> fields;
 
   /// The keyword `finalize`. This is an extension and may be empty!
-  std::string_view srcKwFinalize{};
+  std::string_view srcKwFinalize;
 
   /// The statement after `finalize`. This is an extension and may be nulL!
-  BumpPtr<Stmt> stmtFinalize{};
+  BumpPtr<Stmt> stmtFinalize;
 
   /// The brace `}`.
-  std::string_view srcBraceR{};
+  std::string_view srcBraceR;
 
   /// The semicolon `;`.
-  std::string_view srcSemicolon{};
+  std::string_view srcSemicolon;
 
   /// Has comma `,` after the last tag?
   [[nodiscard]] bool hasTrailingCommaOnTags() const {
@@ -625,13 +633,13 @@ public:
       : srcKwTag(srcKwTag), name(std::move(name)), srcSemicolon(srcSemicolon) {}
 
   /// The keyword `tag`.
-  std::string_view srcKwTag{};
+  std::string_view srcKwTag;
 
   /// The name.
-  Name name{};
+  Name name;
 
   /// The semicolon `;`.
-  std::string_view srcSemicolon{};
+  std::string_view srcSemicolon;
 };
 
 /// A `typedef` declaration.
@@ -643,16 +651,16 @@ public:
         name(std::move(name)), srcSemicolon(srcSemicolon) {}
 
   /// The keyword `typedef`.
-  std::string_view srcKwTypedef{};
+  std::string_view srcKwTypedef;
 
   /// The type.
-  BumpPtr<Type> type{};
+  BumpPtr<Type> type;
 
   /// The name.
-  Name name{};
+  Name name;
 
   /// The semicolon `;`.
-  std::string_view srcSemicolon{};
+  std::string_view srcSemicolon;
 };
 
 /// A `unit_test` declaration. (This is an extension!)
@@ -664,13 +672,13 @@ public:
         stmt(std::move(stmt)) {}
 
   /// The keyword `unit_test`.
-  std::string_view srcKwUnitTest{};
+  std::string_view srcKwUnitTest;
 
   /// The literal string name.
-  BumpPtr<LiteralString> name{};
+  BumpPtr<LiteralString> name;
 
   /// The body statement.
-  BumpPtr<Stmt> stmt{};
+  BumpPtr<Stmt> stmt;
 };
 
 /// A `using ... = ...;` declaration.
@@ -683,19 +691,19 @@ public:
         importPath(std::move(importPath)), srcSemicolon(srcSemicolon) {}
 
   /// The keyword `using`.
-  std::string_view srcKwUsing{};
+  std::string_view srcKwUsing;
 
   /// The name.
-  Name name{};
+  Name name;
 
   /// The equal `=`.
-  std::string_view srcEqual{};
+  std::string_view srcEqual;
 
   /// The import path.
-  ImportPath importPath{};
+  ImportPath importPath;
 
   /// The semicolon `;`.
-  std::string_view srcSemicolon{};
+  std::string_view srcSemicolon;
 };
 
 /// A `using ... import ...;` declaration.
@@ -705,10 +713,10 @@ public:
   class Name final {
   public:
     /// The name.
-    std::string_view srcName{};
+    std::string_view srcName;
 
     /// The next comma `,`. This may be empty!
-    std::string_view srcComma{};
+    std::string_view srcComma;
   };
 
   explicit UsingImport(std::string_view srcKwUsing, ImportPath importPath,
@@ -723,19 +731,19 @@ public:
   }
 
   /// The keyword `using`.
-  std::string_view srcKwUsing{};
+  std::string_view srcKwUsing;
 
   /// The import path.
-  ImportPath importPath{};
+  ImportPath importPath;
 
   /// The keyword `import`.
-  std::string_view srcKwImport{};
+  std::string_view srcKwImport;
 
   /// The names.
-  std::vector<Name> names{};
+  std::vector<Name> names;
 
   /// The semicolon `;`.
-  std::string_view srcSemicolon{};
+  std::string_view srcSemicolon;
 
   /// Has comma `,` after last import name?
   [[nodiscard]] bool hasTrailingComma() const {
@@ -760,35 +768,35 @@ public:
     class DeclaratorName final {
     public:
       /// The name.
-      Name name{};
+      Name name;
 
       /// The next comma `,`. This may be empty!
       std::string_view srcComma{};
     };
 
     /// The destructure brace `{`. This may be empty!
-    std::string_view srcBraceL{};
+    std::string_view srcBraceL;
 
     /// The name(s).
-    std::vector<DeclaratorName> names{};
+    std::vector<DeclaratorName> names;
 
     /// The destructure brace `}`. This may be empty!
-    std::string_view srcBraceR{};
+    std::string_view srcBraceR;
 
     /// The equal `=`. This may be empty!
-    std::string_view srcEqual{};
+    std::string_view srcEqual;
 
     /// The initializer expression. This may be null!
-    BumpPtr<Expr> exprInit{};
+    BumpPtr<Expr> exprInit;
 
     /// The initializer arguments. This may be null!
-    std::optional<ArgumentList> argsInit{};
+    std::optional<ArgumentList> argsInit;
 
     /// The annotations.
-    BumpPtr<AnnotationBlock> annotations{};
+    BumpPtr<AnnotationBlock> annotations;
 
     /// The next comma `,`. This may be empty!
-    std::string_view srcComma{};
+    std::string_view srcComma;
 
     /// Has warning been issued about this variable yet? Used to prevent
     /// the same warning being logged over and over again.
@@ -805,13 +813,13 @@ public:
   }
 
   /// The type.
-  BumpPtr<Type> type{};
+  BumpPtr<Type> type;
 
   /// The declarators.
-  std::vector<Declarator> declarators{};
+  std::vector<Declarator> declarators;
 
   /// The semicolon `;`.
-  std::string_view srcSemicolon{};
+  std::string_view srcSemicolon;
 
   /// Has comma `,` after the last declarator?
   [[nodiscard]] bool hasTrailingComma() const {
