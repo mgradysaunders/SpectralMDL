@@ -781,6 +781,9 @@ public:
   /// Is function variant?
   [[nodiscard]] bool isVariant() const { return decl.isVariant(); }
 
+  /// Is function variadic?
+  [[nodiscard]] bool isVariadic() const { return decl.isVariadic(); }
+
   /// Has no overloads?
   [[nodiscard]] bool hasNoOverloads() const {
     return !prevOverload && !nextOverload;

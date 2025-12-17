@@ -151,7 +151,8 @@ public:
 
   /// Has comma `,` after the last parameter?
   [[nodiscard]] bool hasTrailingComma() const {
-    return !params.empty() && !params.back().srcComma.empty() && !hasTrailingEllipsis();
+    return !params.empty() && !params.back().srcComma.empty() &&
+           !hasTrailingEllipsis();
   }
 
   /// Has ellipsis `...` after the last parameter?
@@ -405,6 +406,9 @@ public:
 
   /// Is a function variant?
   [[nodiscard]] bool isVariant() const { return params.isVariant(); }
+
+  /// Is variadic?
+  [[nodiscard]] bool isVariadic() const { return params.hasTrailingEllipsis(); }
 
   /// If this is a function variant, get the variant let and call expressions.
   /// Else throw an error.

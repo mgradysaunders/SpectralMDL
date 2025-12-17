@@ -74,6 +74,11 @@ public:
     return getInsertBlock() && getInsertBlock()->getTerminator() != nullptr;
   }
 
+  /// Set the current module from the given source location.
+  void setCurrentModule(const SourceLocation &srcLoc) {
+    currentModule = srcLoc.module_;
+  }
+
 public:
   /// \name Fundamental operations
   /// \{

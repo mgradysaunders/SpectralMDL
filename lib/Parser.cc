@@ -263,7 +263,7 @@ auto Parser::parseParameterList() -> std::optional<AST::ParameterList> {
     }
     auto srcEllipsis{nextDelimiter("...")};
     if (srcEllipsis) {
-      // The last parameter must have a trailing comma if the parameter list 
+      // The last parameter must have a trailing comma if the parameter list
       // features a variadic ellipsis.
       if (!params.params.empty() && params.params.back().srcComma.empty()) {
         reject();
@@ -905,12 +905,9 @@ auto Parser::parseUnaryOp() -> std::optional<ParsedUnaryOp> {
     if (auto srcOp{next(to_string(op))})
       return ParsedUnaryOp{*srcOp, op};
   if (mIsSMDL) {
-    if (auto srcOp{next(to_string(UNOP_ADDR))})
-      return ParsedUnaryOp{*srcOp, UNOP_ADDR};
-    if (auto srcOp{next(to_string(UNOP_DEREF))})
-      return ParsedUnaryOp{*srcOp, UNOP_DEREF};
-    if (auto srcOp{next(to_string(UNOP_MAYBE))})
-      return ParsedUnaryOp{*srcOp, UNOP_MAYBE};
+    for (auto op : std::array{UNOP_ADDR, UNOP_DEREF, UNOP_MAYBE})
+      if (auto srcOp{next(to_string(op))})
+        return ParsedUnaryOp{*srcOp, op};
   }
   return std::nullopt;
 }

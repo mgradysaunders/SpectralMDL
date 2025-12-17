@@ -155,17 +155,16 @@ Value ArithmeticType::invoke(Emitter &emitter, const ArgumentList &args,
     // If constructing bool from optional union, check that it is non-void.
     if (scalar.isBoolean() && value.type->isOptionalUnion())
       return RValue(
-          this,
-          emitter.builder.CreateICmpNE(
-              emitter.rvalue(emitter.accessField(value, "#idx", srcLoc)),
-              emitter.context.getComptimeInt(
-                  int(static_cast<UnionType *>(value.type)->caseTypes.size() -
-                      1))));
+          this, emitter.builder.CreateICmpNE(
+                    emitter.rvalue(emitter.accessField(value, "#idx", srcLoc)),
+                    emitter.context.getComptimeInt(int(
+                        static_cast<UnionType *>(value.type)->caseTypes.size() -
+                        1))));
     // If constructing from another scalar or enum type, cast the
     // underlying LLVM representation.
     if (value.type->isArithmeticScalar() || value.type->isEnum())
-      return RValue(this, llvmEmitCast(emitter.builder, emitter.rvalue(value),
-                                       llvmType));
+      return RValue(
+          this, llvmEmitCast(emitter.builder, emitter.rvalue(value), llvmType));
   } else if (extent.isVector()) {
     auto dim{size_t(extent.getVectorSize())};
     if (args.isOnePositional()) {
@@ -186,8 +185,8 @@ Value ArithmeticType::invoke(Emitter &emitter, const ArgumentList &args,
       // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
       if (value.type->isArithmeticVector() &&
           static_cast<ArithmeticType *>(value.type)->extent == extent)
-        return RValue(this, llvmEmitCast(emitter.builder,
-                                         emitter.rvalue(value), llvmType));
+        return RValue(this, llvmEmitCast(emitter.builder, emitter.rvalue(value),
+                                         llvmType));
       // If constructing from a pointer to the scalar type, load from the
       // pointer. Assume the pointer is only as aligned as the scalar type
       // itself!
@@ -375,8 +374,7 @@ Value ArithmeticType::accessField(Emitter &emitter, Value value,
     if (auto iMask{toIndexSwizzle(name)}) {
       auto result{RValue(
           emitter.context.getArithmeticType(scalar, Extent(iMask->size())),
-          emitter.builder.CreateShuffleVector(emitter.rvalue(value),
-                                              *iMask))};
+          emitter.builder.CreateShuffleVector(emitter.rvalue(value), *iMask))};
       // Set LLVM name for more readable LLVM-IR.
       if (value.llvmValue->hasName()) {
         auto name0{value.llvmValue->getName().str()};
@@ -677,8 +675,8 @@ Value ColorType::invoke(Emitter &emitter, const ArgumentList &args,
     if (value.type->isArithmeticVector() &&
         static_cast<ArithmeticType *>(value.type)->extent.numRows ==
             wavelengthBaseMax)
-      return RValue(this, llvmEmitCast(emitter.builder, emitter.rvalue(value),
-                                       llvmType));
+      return RValue(
+          this, llvmEmitCast(emitter.builder, emitter.rvalue(value), llvmType));
     if (value.type->isPointer() &&
         value.type->getPointeeType() == emitter.context.getFloatType())
       return RValue(this, emitter.builder.CreateAlignedLoad(
@@ -829,8 +827,8 @@ void EnumType::initialize(Emitter &emitter) {
         auto valueName{std::string_view("value")};
         auto value{emitter.resolveIdentifier(valueName, decl.srcLoc)};
         auto blockDefault{emitter.createBlock("switch.default")};
-        auto switchInst{emitter.builder.CreateSwitch(emitter.rvalue(value),
-                                                     blockDefault)};
+        auto switchInst{
+            emitter.builder.CreateSwitch(emitter.rvalue(value), blockDefault)};
         auto switchUniq{llvm::DenseSet<llvm::Value *>{}};
         for (unsigned i = 0; i < decl.declarators.size(); i++) {
           if (auto [itr, inserted] =
@@ -866,8 +864,8 @@ Value EnumType::invoke(Emitter &emitter, const ArgumentList &args,
     if ((value.type->isArithmeticScalar() &&
          value.type->isArithmeticIntegral()) ||
         value.type->isEnum())
-      return RValue(this, llvmEmitCast(emitter.builder, emitter.rvalue(value),
-                                       llvmType));
+      return RValue(
+          this, llvmEmitCast(emitter.builder, emitter.rvalue(value), llvmType));
   }
   srcLoc.throwError("cannot construct ", Quoted(displayName), " from ",
                     Quoted(std::string(args)));
@@ -919,7 +917,11 @@ void FunctionType::initialize(Emitter &emitter) {
                   .astField = nullptr,
                   .builtinDefaultValue = {}});
   // Initialize whether parameter list is variadic.
-  params.isVariadic = decl.params.hasTrailingEllipsis();
+  params.isVariadic = decl.isVariadic();
+  if (decl.hasAttribute("macro") && decl.isVariadic()) {
+    decl.srcLoc.throwError("function ", Quoted(declName),
+                           " declared '@(macro)' must not be variadic");
+  }
   if (decl.hasAttribute("foreign")) {
     if (!params.isConcrete())
       decl.srcLoc.throwError(
@@ -969,7 +971,7 @@ Value FunctionType::invoke(Emitter &emitter, const ArgumentList &args,
     SMDL_PRESERVE(emitter.crumb);
     emitter.crumb = func->params.lastCrumb;
     emitter.handleScope(nullptr, nullptr, [&]() {
-      emitter.currentModule = func->decl.srcLoc.module_;
+      emitter.setCurrentModule(func->decl.srcLoc);
       auto [astLet, astCall] = func->decl.getVariantLetAndCallExpressions();
       // If the function variant has a `let` expression, generate the variable
       // declarations.
@@ -1010,7 +1012,7 @@ Value FunctionType::invoke(Emitter &emitter, const ArgumentList &args,
         func->params, resolvedArgs.values, srcLoc, [&]() {
           if (func->decl.hasAttribute("fastmath"))
             emitter.builder.setFastMathFlags(llvm::FastMathFlags::getFast());
-          emitter.currentModule = func->decl.srcLoc.module_;
+          emitter.setCurrentModule(func->decl.srcLoc);
           emitter.emit(func->decl.definition);
         })};
     --macroRecursionDepth;
@@ -1120,7 +1122,7 @@ FunctionType::getInstance(Emitter &emitter,
           params, decl.srcLoc, [&] {
             if (decl.hasAttribute("fastmath"))
               emitter.builder.setFastMathFlags(llvm::FastMathFlags::getFast());
-            emitter.currentModule = decl.srcLoc.module_;
+            emitter.setCurrentModule(decl.srcLoc);
             emitter.emit(decl.definition);
           });
       static const std::pair<const char *, llvm::Attribute::AttrKind> attrs[] =
@@ -1193,8 +1195,8 @@ void FunctionType::initializeMaterialFunctions(Emitter &emitter) {
           materialInstanceType = materialInstance.type;
           materialInstancePtrType =
               context.getPointerType(materialInstanceType);
-          auto out{emitter.rvalue(
-              emitter.resolveIdentifier("out"sv, decl.srcLoc))};
+          auto out{
+              emitter.rvalue(emitter.resolveIdentifier("out"sv, decl.srcLoc))};
           emitter.builder.CreateStore(materialInstance, out);
         })};
     func->setLinkage(llvm::Function::ExternalLinkage);
@@ -1546,13 +1548,13 @@ Value StringType::accessField(Emitter &emitter, Value value,
       return emitter.context.getComptimeInt(
           int(value.getComptimeString().size()));
     } else {
-      return RValue(emitter.context.getIntType(),
-                    llvmEmitCast(emitter.builder,
-                                 llvm::emitStrLen(
-                                     emitter.rvalue(value), emitter.builder,
-                                     emitter.context.llvmLayout,
-                                     &emitter.context.llvmTargetLibraryInfo),
-                                 emitter.context.getIntType()->llvmType));
+      return RValue(
+          emitter.context.getIntType(),
+          llvmEmitCast(emitter.builder,
+                       llvm::emitStrLen(emitter.rvalue(value), emitter.builder,
+                                        emitter.context.llvmLayout,
+                                        &emitter.context.llvmTargetLibraryInfo),
+                       emitter.context.getIntType()->llvmType));
     }
   }
   srcLoc.throwError("no field ", Quoted(name), " in 'string'");
@@ -1710,7 +1712,7 @@ Value StructType::invoke(Emitter &emitter, const ArgumentList &args,
         emitter.labelReturn = {};   // Invalidate!
         emitter.labelBreak = {};    // Invalidate!
         emitter.labelContinue = {}; // Invalidate!
-        emitter.currentModule = decl.srcLoc.module_;
+        emitter.setCurrentModule(decl.srcLoc);
         auto lv{emitter.lvalue(result)};
         for (auto &param : params)
           emitter.declareCrumb(param.name, &decl,
@@ -1740,7 +1742,7 @@ Value StructType::invoke(Emitter &emitter, const ArgumentList &args,
     return emitter.createFunctionImplementation(
         decl.name, !emitter.state, this, constructor.params,
         resolvedArgs.values, srcLoc, [&]() {
-          emitter.currentModule = decl.srcLoc.module_;
+          emitter.setCurrentModule(decl.srcLoc);
           emitter.emitReturn(emitter.emit(constructor.astConstructor->expr),
                              srcLoc);
         });

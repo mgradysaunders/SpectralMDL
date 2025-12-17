@@ -2415,8 +2415,8 @@ Value Emitter::emitVisit(Value value, const SourceLocation &srcLoc,
     auto visitNameRef{llvm::StringRef(visitName)};
     auto blockUnreachable{createBlock(visitNameRef + ".unreachable")};
     auto blockEnd{createBlock(visitNameRef + ".end")};
-    auto switchInst{builder.CreateSwitch(
-        rvalue(accessField(value, "#idx", {})), blockUnreachable)};
+    auto switchInst{builder.CreateSwitch(rvalue(accessField(value, "#idx", {})),
+                                         blockUnreachable)};
     for (size_t i = 0; i < unionType->caseTypes.size(); i++) {
       auto blockCase{createBlock(concat(visitName, ".case.", i))};
       switchInst->addCase(builder.getInt32(i), blockCase);
@@ -2739,16 +2739,29 @@ Emitter::resolveArguments(const ParameterList &params, const ArgumentList &args,
                         " without default initializer");
     }
   }
-  // At this point, every parameter should have a resolved argument.
+  // At this point, every parameter should either have a resolved argument
+  // or a default initializer.
   auto resolvedArgsCount{size_t(0)};
   for (size_t iArg{}; iArg < args.size(); iArg++) {
     if (resolvedArgs.isResolved(iArg)) {
       resolvedArgsCount++;
     } else {
+      // An argument that did not resolve is appended to the end
+      // as variadic. After this for loop finishes, it should be
+      // true that the number of values is equal to whichever is
+      // greater between the number of arguments and the number 
+      // of parameters.
       resolvedArgs.values.emplace_back(args[iArg]);
     }
   }
-  SMDL_SANITY_CHECK(resolvedArgsCount == params.size());
+  SMDL_SANITY_CHECK(resolvedArgs.values.size() ==
+                    std::max(args.size(), params.size()));
+  // If there are more arguments than parameters, i.e., the parameter list is
+  // variadic, the number of resolved arguments should equal the number of
+  // parameters. If there are fewer arguments than parameters, the number 
+  // of resolved arguments should equal the number of arguments.
+  SMDL_SANITY_CHECK(resolvedArgsCount == std::min(args.size(), params.size()));
+
   if (!dontEmit) {
     SMDL_PRESERVE(crumb);
     crumb = params.lastCrumb;
@@ -2758,7 +2771,7 @@ Emitter::resolveArguments(const ParameterList &params, const ArgumentList &args,
         auto &value{resolvedArgs.values[iParam]};
         if (!value) {
           if (auto expr{param.getASTInitializer()}) {
-            currentModule = expr->srcLoc.module_;
+            setCurrentModule(expr->srcLoc);
             value = emit(expr);
           } else {
             value = *param.builtinDefaultValue;
@@ -2768,10 +2781,15 @@ Emitter::resolveArguments(const ParameterList &params, const ArgumentList &args,
         declareCrumb(param.name, /*node=*/nullptr, value);
       }
       if (params.isVariadic) {
-        for (size_t iArg{}; iArg < args.size(); iArg++)
-          if (!resolvedArgs.argParams[iArg])
-            resolvedArgs.values[iArg] = rvalue(resolvedArgs.values[iArg]);
-        SMDL_SANITY_CHECK(resolvedArgs.values.size() == args.size());
+        for (size_t iArg{}; iArg < args.size(); iArg++) {
+          if (!resolvedArgs.argParams[iArg]) {
+            auto &value{resolvedArgs.values[iArg]};
+            value = rvalue(resolvedArgs.values[iArg]);
+            // The C-ABI always promotes to double?
+            if (value.type == context.getFloatType()) 
+              value = invoke(context.getDoubleType(), value, srcLoc);
+          }
+        }
       }
     });
   }
