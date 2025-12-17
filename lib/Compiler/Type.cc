@@ -1204,29 +1204,29 @@ void FunctionType::initializeMaterialFunctions(Emitter &emitter) {
   }
   {
     // Generate the scatter evaluate function:
-    // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-    // @(pure visible) int "material_name.scatter_evaluate"(
+    // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    // @(pure visible) int "material_name.scatterEvaluate"(
     //     &_material_instance instance,
     //     &float3 wo,
     //     &float3 wi,
-    //     &float pdf_fwd,
-    //     &float pdf_rev,
+    //     &float pdfFwd,
+    //     &float pdfRev,
     //     &float f) {
-    //   return ::df::_scatter_evaluate(
+    //   return ::df::_scatterEvaluate(
     //     instance, wo, wi, pdf_fwd, pdf_rev, f);
     // }
-    // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
     auto funcReturnType{static_cast<Type *>(context.getIntType())};
     auto func{emitter.createFunction(
-        concat(declName, ".scatter_evaluate"), /*isPure=*/true, funcReturnType,
+        concat(declName, ".scatterEvaluate"), /*isPure=*/true, funcReturnType,
         {constParameter(materialInstancePtrType, "instance"),
          constParameter(float3PtrType, "wo"),
          constParameter(float3PtrType, "wi"),
-         constParameter(floatPtrType, "pdf_fwd"),
-         constParameter(floatPtrType, "pdf_rev"),
+         constParameter(floatPtrType, "pdfFwd"),
+         constParameter(floatPtrType, "pdfRev"),
          constParameter(floatPtrType, "f")},
         decl.srcLoc, [&] {
-          auto dfFunc{Crumb::find(context, "_scatter_evaluate"sv, nullptr,
+          auto dfFunc{Crumb::find(context, "_scatterEvaluate"sv, nullptr,
                                   dfModule->mLastCrumb)};
           SMDL_SANITY_CHECK(dfFunc);
           emitter.emitReturn(
@@ -1236,8 +1236,8 @@ void FunctionType::initializeMaterialFunctions(Emitter &emitter) {
                       emitter.resolveIdentifier("instance"sv, decl.srcLoc),
                       emitter.resolveIdentifier("wo"sv, decl.srcLoc),
                       emitter.resolveIdentifier("wi"sv, decl.srcLoc),
-                      emitter.resolveIdentifier("pdf_fwd"sv, decl.srcLoc),
-                      emitter.resolveIdentifier("pdf_rev"sv, decl.srcLoc),
+                      emitter.resolveIdentifier("pdfFwd"sv, decl.srcLoc),
+                      emitter.resolveIdentifier("pdfRev"sv, decl.srcLoc),
                       emitter.resolveIdentifier("f"sv, decl.srcLoc)},
                   decl.srcLoc),
               decl.srcLoc);
@@ -1248,32 +1248,32 @@ void FunctionType::initializeMaterialFunctions(Emitter &emitter) {
   {
     // Generate the scatter sample function:
     // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-    // @(pure visible) int "material_name.scatter_sample"(
+    // @(pure visible) int "material_name.scatterSample"(
     //     &_material_instance instance,
     //     &float4 xi,
     //     &float3 wo,
     //     &float3 wi,
-    //     &float pdf_fwd,
-    //     &float pdf_rev,
+    //     &float pdfFwd,
+    //     &float pdfFev,
     //     &float f,
-    //     &int is_delta) {
-    //   return ::df::_scatter_sample(
-    //     instance, xi, wo, wi, pdf_fwd, pdf_rev, f, is_delta);
+    //     &int isDelta) {
+    //   return ::df::_scatterSample(
+    //     instance, xi, wo, wi, pdf_fwd, pdf_rev, f, isDelta);
     // }
     // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
     auto funcReturnType{static_cast<Type *>(context.getIntType())};
     auto func{emitter.createFunction(
-        concat(declName, ".scatter_sample"), /*isPure=*/true, funcReturnType,
+        concat(declName, ".scatterSample"), /*isPure=*/true, funcReturnType,
         {constParameter(materialInstancePtrType, "instance"),
          constParameter(float4PtrType, "xi"),
          constParameter(float3PtrType, "wo"),
          constParameter(float3PtrType, "wi"),
-         constParameter(floatPtrType, "pdf_fwd"),
-         constParameter(floatPtrType, "pdf_rev"),
+         constParameter(floatPtrType, "pdfFwd"),
+         constParameter(floatPtrType, "pdfRev"),
          constParameter(floatPtrType, "f"),
-         constParameter(intPtrType, "is_delta")},
+         constParameter(intPtrType, "isDelta")},
         decl.srcLoc, [&] {
-          auto dfFunc{Crumb::find(context, "_scatter_sample"sv, nullptr,
+          auto dfFunc{Crumb::find(context, "_scatterSample"sv, nullptr,
                                   dfModule->mLastCrumb)};
           SMDL_SANITY_CHECK(dfFunc);
           emitter.emitReturn(
@@ -1284,10 +1284,10 @@ void FunctionType::initializeMaterialFunctions(Emitter &emitter) {
                       emitter.resolveIdentifier("xi"sv, decl.srcLoc),
                       emitter.resolveIdentifier("wo"sv, decl.srcLoc),
                       emitter.resolveIdentifier("wi"sv, decl.srcLoc),
-                      emitter.resolveIdentifier("pdf_fwd"sv, decl.srcLoc),
-                      emitter.resolveIdentifier("pdf_rev"sv, decl.srcLoc),
+                      emitter.resolveIdentifier("pdfFwd"sv, decl.srcLoc),
+                      emitter.resolveIdentifier("pdfRev"sv, decl.srcLoc),
                       emitter.resolveIdentifier("f"sv, decl.srcLoc),
-                      emitter.resolveIdentifier("is_delta"sv, decl.srcLoc)},
+                      emitter.resolveIdentifier("isDelta"sv, decl.srcLoc)},
                   decl.srcLoc),
               decl.srcLoc);
         })};
