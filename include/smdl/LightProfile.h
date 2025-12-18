@@ -43,6 +43,15 @@ public:
   /// Interpolate.
   [[nodiscard]] float interpolate(float3 wo) const noexcept;
 
+  /// Interpolate directly.
+  ///
+  /// This does not account for angle wrapping or anything fancy, it
+  /// simply interpolates the intensity values by looking up the given
+  /// vertical and horizontal angles in the angle arrays. Out-of-range
+  /// angles return zero.
+  [[nodiscard]] float interpolate(float vertAngle,
+                                  float horzAngle) const noexcept;
+
 public:
   /// The version string.
   std::string version;

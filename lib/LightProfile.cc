@@ -160,34 +160,29 @@ float LightProfile::power() const noexcept {
   return inputWatts;
 }
 
-struct LerpLookup final {
-  int index0{};
-  int index1{};
-  float fraction{};
-};
+constexpr float radToDeg = 180.0f / 3.14159265359f;
 
-[[nodiscard]] static LerpLookup lerpLookup(const std::vector<float> &values,
-                                           float value) {
-  auto itr1{std::lower_bound(values.begin(), values.end(), value)};
-  if (itr1 == values.end()) {
-    return {int(values.size()) - 1, int(values.size()) - 1, 0.0f};
-  }
-  auto itr0{itr1};
-  if (itr0 != values.begin()) {
-    --itr0;
-  }
-  float value0{*itr0};
-  float value1{*itr1};
-  float fraction{(value - value0) / (value1 - value0)};
-  if (!std::isfinite(fraction))
-    fraction = 0;
-  return {int(itr0 - values.begin()), //
-          int(itr1 - values.begin()), //
-          fraction};
+[[nodiscard]]
+static float atan2Degrees(float y, float x) {
+  float theta{radToDeg * std::atan2(y, x)};
+  theta = std::fmax(theta, -180.0f);
+  theta = std::fmin(theta, +180.0f);
+  return theta;
 }
 
-[[nodiscard]] static float lerp(float fraction, float value0, float value1) {
-  return (1 - fraction) * value0 + fraction * value1;
+[[nodiscard]]
+static float atan2DegreesPositive(float y, float x) {
+  // By default, STL atan2 returns a value in radians between
+  // negative and positive pi. The implementation here scales
+  // to a value in degrees between negative and positive 180,
+  // then biases negative values so that the result is between
+  // zero and 360.
+  float theta{radToDeg * std::atan2(y, x)};
+  if (theta < 0.0f)
+    theta += 360.0f;
+  theta = std::fmax(theta, 0.0f);
+  theta = std::fmin(theta, 360.0f);
+  return theta;
 }
 
 float LightProfile::interpolate(float3 wo) const noexcept {
@@ -196,19 +191,6 @@ float LightProfile::interpolate(float3 wo) const noexcept {
       vertAngles.empty()) {
     return 0;
   }
-  auto atan2Positive{[](float y, float x) {
-    // By default, STL atan2 returns a value in radians between
-    // negative and positive pi. The implementation here scales
-    // to a value in degrees between negative and positive 180,
-    // then biases negative values so that the result is between
-    // zero and 360.
-    float theta{180.0f / 3.14159265359f * std::atan2(y, x)};
-    if (theta < 0.0f)
-      theta += 180.0f;
-    theta = std::fmax(theta, 0.0f);
-    theta = std::fmin(theta, 360.0f);
-    return theta;
-  }};
   if (photometryType == 1) {
     // > Type C photometry is normally used for architectural and
     // > roadway luminaires. The polar axis of the photometric web
@@ -241,44 +223,56 @@ float LightProfile::interpolate(float3 wo) const noexcept {
     // > (A luminaire that is bilaterally symmetric about the 90-270
     // > degree photometric plane will have a first value of 90 degrees
     // > and a last value of 270 degrees)
-    float vertAngle{atan2Positive(std::hypot(wo.x, wo.y), wo.z)};
-    if (!(vertAngles.front() <= vertAngle && vertAngle <= vertAngles.back())) {
-      return 0.0f;
-    }
-    if (horzAngles.size() <= 1) {
-      auto lookup{lerpLookup(vertAngles, vertAngle)};
-      return lerp(lookup.fraction, intensityValues[lookup.index0],
-                  intensityValues[lookup.index1]);
-    } else {
-      float horzAngle{[&]() {
-        const int minHorzAngle{int(std::rint(horzAngles.front()))};
-        const int maxHorzAngle{int(std::rint(horzAngles.back()))};
-        if (minHorzAngle == 0 && maxHorzAngle == 90) {
-          return atan2Positive(std::abs(wo.y), std::abs(wo.x));
-        } else if (minHorzAngle == 0 && maxHorzAngle == 180) {
-          return atan2Positive(std::abs(wo.y), wo.x);
-        } else if (minHorzAngle == 90 && maxHorzAngle == 270) {
-          return atan2Positive(std::abs(wo.x), -wo.y);
-        } else if (minHorzAngle == 0 && maxHorzAngle > 180) {
-          return atan2Positive(wo.y, wo.x);
-        } else {
-          SMDL_SANITY_CHECK(
-              false, "Unexpected horizontal angles for Type C photometry!");
-          return 0.0f;
-        }
-      }()};
-      auto vertLookup{lerpLookup(vertAngles, vertAngle)};
-      auto horzLookup{lerpLookup(horzAngles, horzAngle)};
-      auto intensityRow0{&intensityValues[0] +
-                         vertAngles.size() * horzLookup.index0};
-      auto intensityRow1{&intensityValues[0] +
-                         vertAngles.size() * horzLookup.index1};
-      return lerp(horzLookup.fraction,
-                  lerp(vertLookup.fraction, intensityRow0[vertLookup.index0],
-                       intensityRow0[vertLookup.index1]),
-                  lerp(vertLookup.fraction, intensityRow1[vertLookup.index0],
-                       intensityRow1[vertLookup.index1]));
-    }
+    float vertAngle{atan2Degrees(std::hypot(wo.x, wo.y), wo.z)};
+    float horzAngle{[&]() -> float {
+      if (horzAngles.size() <= 1)
+        return 0.0f;
+      //
+      //              +Y (90)
+      //               |
+      //               |
+      // (180) -X -----+----- +X (0)
+      //               |
+      //               |
+      //              -Y (270)
+      //
+      const int minHorzAngle{int(std::rint(horzAngles.front()))};
+      const int maxHorzAngle{int(std::rint(horzAngles.back()))};
+      if (minHorzAngle == 0 && maxHorzAngle == 90) {
+        // | Axis | Vert | Horz |
+        // |------|------|------|
+        // | +/-X |   90 |    0 |
+        // | +/-Y |   90 |   90 |
+        return atan2Degrees(std::abs(wo.y), std::abs(wo.x));
+      } else if (minHorzAngle == 0 && maxHorzAngle == 180) {
+        // | Axis | Vert | Horz |
+        // |------|------|------|
+        // |   +X |   90 |    0 |
+        // |   -X |   90 |  180 |
+        // | +/-Y |   90 |   90 |
+        return atan2Degrees(std::abs(wo.y), +wo.x);
+      } else if (minHorzAngle == 90 && maxHorzAngle == 270) {
+        // | Axis | Vert | Horz |
+        // |------|------|------|
+        // | +/-X |   90 |  180 |
+        // |   +Y |   90 |   90 |
+        // |   -Y |   90 |  270 |
+        return atan2DegreesPositive(wo.y, -std::abs(wo.x));
+      } else if (minHorzAngle == 0 && maxHorzAngle > 180) {
+        // | Axis | Vert | Horz |
+        // |------|------|------|
+        // |   +X |   90 |    0 |
+        // |   -X |   90 |  180 |
+        // |   +Y |   90 |   90 |
+        // |   -Y |   90 |  270 |
+        return atan2DegreesPositive(wo.y, wo.x);
+      } else {
+        SMDL_SANITY_CHECK(
+            false, "Unexpected horizontal angles for Type C photometry!");
+        return 0.0f;
+      }
+    }()};
+    return interpolate(vertAngle, horzAngle);
   } else {
     // > Type B photometry is normally used for adjustable outdoor area
     // > and sports lighting luminaires. The polar axis of the luminaire
@@ -308,19 +302,151 @@ float LightProfile::interpolate(float3 wo) const noexcept {
     // > symmetric about a vertical reference plane, the first horizontal
     // > angle will be -90 degrees, and the last horizontal angle will be
     // > 90 degrees.
+    const int minVertAngle{int(std::rint(vertAngles.front()))};
+    const int minHorzAngle{int(std::rint(horzAngles.front()))};
+    const int maxVertAngle{int(std::rint(vertAngles.back()))};
+    const int maxHorzAngle{int(std::rint(horzAngles.back()))};
 
-    // TODO
+    // From the above documentation:
+    // - The minimum vertical and horizontal angles should be -90 or 0
+    // - The maximum vertical and horizontal angles should be +90
+    SMDL_SANITY_CHECK(minVertAngle == -90 || minVertAngle == 0);
+    SMDL_SANITY_CHECK(minHorzAngle == -90 || minHorzAngle == 0);
+    SMDL_SANITY_CHECK(maxVertAngle == +90);
+    SMDL_SANITY_CHECK(maxHorzAngle == +90);
+
+    // Calculate the vertical and horizontal angles. NOTE: This is currently
+    // not tested and I'm not sure how correct this is! The documentation is
+    // not entirely clear and the statement that "the photometric plane 
+    // coincides with (blank)" is confusing. I assume that "the polar axis 
+    // is (blank)" means to calculate vertical angles with respect to that
+    // axis. Thus, horizontal angles must be calculated from the left over
+    // vector components somehow. At least for now, I assume the "coincides 
+    // with (blank)" remark means to align horizontal angle zero on that 
+    // axis.
+    float vertAngle{};
+    float horzAngle{};
+    if (photometryType == 2) {
+      // Type B
+      // - Polar is minor axis (Y)
+      // - Plane coincides with vertical axis (Z)
+      //
+      //              +X (+90)
+      //               |
+      //               |
+      // (180) -Z -----+----- +Z (0)
+      //               |
+      //               |
+      //              -X (-90)
+      //
+      // | Axis | Vert | Horz |
+      // |------|------|------|
+      // |   +X |   90 |   90 |
+      // |   -X |   90 |  -90 |
+      // |   +Z |   90 |    0 |
+      // |   -Z |   90 |  180 |
+      //
+      vertAngle = atan2Degrees(std::hypot(wo.z, wo.x), wo.y);
+      horzAngle = atan2Degrees(wo.x, wo.z);
+    } else {
+      // Type A
+      // - Polar is major axis (X)
+      // - Plane coincides with vertical axis (Z)
+      //
+      //              +Z (0)
+      //               |
+      //               |
+      // (-90) -Y -----+----- +Y (90)
+      //               |
+      //               |
+      //              -Z (180)
+      //
+      // | Axis | Vert | Horz |
+      // |------|------|------|
+      // |   +Y |   90 |   90 |
+      // |   -Y |   90 |  -90 |
+      // |   +Z |   90 |    0 |
+      // |   -Z |   90 |  180 |
+      //
+      vertAngle = atan2Degrees(std::hypot(wo.y, wo.z), wo.x);
+      horzAngle = atan2Degrees(wo.y, wo.z);
+    }
+    // If laterally symmetric, flip negative horizontal angles
+    // in [-90, 0] over to [0, 90]
+    if (minHorzAngle == 0) {
+      horzAngle = std::abs(horzAngle);
+    }
+    return interpolate(vertAngle, horzAngle);
   }
-  return 0;
+}
+
+struct LerpLookup final {
+  int index0{};
+  int index1{};
+  float fraction{};
+};
+
+[[nodiscard]] static LerpLookup lerpLookup(const std::vector<float> &values,
+                                           float value) {
+  auto itr1{std::lower_bound(values.begin(), values.end(), value)};
+  if (itr1 == values.end()) {
+    return {int(values.size()) - 1, int(values.size()) - 1, 0.0f};
+  }
+  auto itr0{itr1};
+  if (itr0 != values.begin()) {
+    --itr0;
+  }
+  float value0{*itr0};
+  float value1{*itr1};
+  float fraction{(value - value0) / (value1 - value0)};
+  if (!std::isfinite(fraction))
+    fraction = 0;
+  return {int(itr0 - values.begin()), //
+          int(itr1 - values.begin()), //
+          fraction};
+}
+
+[[nodiscard]] static float lerp(float fraction, float value0, float value1) {
+  return (1 - fraction) * value0 + fraction * value1;
+}
+
+float LightProfile::interpolate(float vertAngle,
+                                float horzAngle) const noexcept {
+  if (intensityValues.empty() || vertAngles.empty() ||
+      !(vertAngles.front() <= vertAngle && vertAngle <= vertAngles.back())) {
+    return 0;
+  }
+  if (horzAngles.size() <= 1) {
+    auto vertLookup{lerpLookup(vertAngles, vertAngle)};
+    return lerp(vertLookup.fraction,                //
+                intensityValues[vertLookup.index0], //
+                intensityValues[vertLookup.index1]);
+  } else {
+    if (!(horzAngles.front() <= horzAngle && horzAngle <= horzAngles.back())) {
+      return 0;
+    }
+    auto vertLookup{lerpLookup(vertAngles, vertAngle)};
+    auto horzLookup{lerpLookup(horzAngles, horzAngle)};
+    auto intensityRow0{&intensityValues[0] +
+                       vertAngles.size() * horzLookup.index0};
+    auto intensityRow1{&intensityValues[0] +
+                       vertAngles.size() * horzLookup.index1};
+    return lerp(horzLookup.fraction,
+                lerp(vertLookup.fraction, //
+                     intensityRow0[vertLookup.index0],
+                     intensityRow0[vertLookup.index1]),
+                lerp(vertLookup.fraction, //
+                     intensityRow1[vertLookup.index0],
+                     intensityRow1[vertLookup.index1]));
+  }
 }
 
 extern "C" {
 
-SMDL_EXPORT float smdl_light_profile_interpolate(const void *profile_ptr,
+SMDL_EXPORT float smdl_light_profile_interpolate(const void *profile,
                                                  const float3 &wo) {
-  return profile_ptr
-             ? static_cast<const LightProfile *>(profile_ptr)->interpolate(wo)
-             : 0.0f;
+  return profile ? static_cast<const LightProfile *>(profile)->interpolate(wo)
+                 : 0.0f;
 }
 
 } // extern "C"
