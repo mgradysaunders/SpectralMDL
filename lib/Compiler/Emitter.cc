@@ -1279,21 +1279,6 @@ SMDL_EXPORT void *smdlBumpAllocate(void *state, int size, int align) {
   return allocator->allocate(size, align);
 }
 
-SMDL_EXPORT void *smdlOFileOpen(const char *fname) {
-  auto result{std::fopen(fname, "wb")};
-  if (!result) {
-    SMDL_LOG_WARN("cannot open ", Quoted(fname), ": ",
-                  Quoted(std::strerror(errno)));
-    return nullptr;
-  }
-  return result;
-}
-
-SMDL_EXPORT void smdlOFileClose(void *file) {
-  if (file)
-    std::fclose(static_cast<std::FILE *>(file));
-}
-
 // TODO This is a specific solution to a specific problem of calculating
 // tabulated albedos conveniently and efficiently. There might be a more
 // general way of addressing this in the future.
@@ -1505,7 +1490,7 @@ Value Emitter::emitIntrinsic(std::string_view name, const ArgumentList &args,
         srcLoc.throwError(
             "intrinsic 'albedo_lut' expects 1 compile-time string argument");
       auto lutName{args[0].value.getComptimeString()};
-      auto lutType{context.getKeyword("_albedo_lut")
+      auto lutType{context.getKeyword("_AlbedoLUT")
                        .getComptimeMetaType(context, srcLoc)};
       auto lut{context.getBuiltinAlbedo(lutName)};
       if (!lut)
@@ -1533,6 +1518,43 @@ Value Emitter::emitIntrinsic(std::string_view name, const ArgumentList &args,
       auto value{rvalue(expectOneIntOrIntVector())};
       return RValue(value.type, builder.CreateUnaryIntrinsic(
                                     llvm::Intrinsic::bitreverse, value));
+    }
+    if (name == "bitcast") {
+      if (!(args.size() == 2 &&                          //
+            args[0].value.isComptimeMetaType(context) && //
+            args[1].value.llvmValue != nullptr))
+        srcLoc.throwError("intrinsic 'bitcast' expects 1 type argument and 1 "
+                          "value argument");
+      auto targetType{args[0].value.getComptimeMetaType(context, srcLoc)};
+      if (targetType->isAbstract())
+        srcLoc.throwError(
+            "intrinsic 'bit_cast' expects concrete type argument");
+      auto value{args[1].value};
+      if (context.getSizeOf(targetType) != context.getSizeOf(value.type))
+        srcLoc.throwError("intrinsic 'bitcast' expects source and target type "
+                          "with identical size");
+      // If the alignment is compatible and the value is already an lvalue,
+      // we can just load it into an rvalue after transparently changing the
+      // type.
+      if (context.getAlignOf(targetType) <= context.getAlignOf(value.type) &&
+          value.isLValue())
+        return rvalue(LValue(targetType, value.llvmValue));
+      // Otherwise, we guarantee the value is an lvalue and then create a
+      // temporary alloca to perform the cast. We memcpy the bytes from the
+      // lvalue
+      auto lv{lvalue(value)};
+      auto lvResult{createAlloca(targetType, value.getName() + ".bitcast")};
+      createLifetimeStart(lvResult);
+      builder.CreateMemCpyInline(
+          lvResult, //
+          llvm::Align(context.getAlignOf(targetType)), lv,
+          llvm::Align(context.getAlignOf(value.type)),
+          builder.getInt64(context.getSizeOf(targetType)));
+      auto rvResult{rvalue(lvResult)};
+      createLifetimeEnd(lvResult);
+      if (value.isRValue())
+        createLifetimeEnd(lv);
+      return rvResult;
     }
     if (name == "breakpoint") {
       if (!args.empty())
@@ -1598,6 +1620,17 @@ Value Emitter::emitIntrinsic(std::string_view name, const ArgumentList &args,
     break;
   }
   case 'f': {
+    if (name == "fprint" || name == "fprintln") {
+      if (args.size() < 2)
+        srcLoc.throwError("intrinsic 'fprint' expects 1 file argument and 1 or "
+                          "more printable arguments");
+      auto file{rvalue(args[0].value)};
+      for (size_t i = 1; i < args.size(); i++)
+        emitPrint(file, args[i].value, srcLoc);
+      if (name == "fprintln")
+        emitPrint(file, context.getComptimeString("\n"), srcLoc);
+      return RValue(context.getVoidType(), nullptr);
+    }
     if (name == "free") {
       auto value{expectOne()};
       if (!value.type->isPointer())
@@ -1973,9 +2006,9 @@ Value Emitter::emitIntrinsic(std::string_view name, const ArgumentList &args,
         } else if (type->isArithmeticMatrix()) {
           return static_cast<ArithmeticType *>(type)->extent.numCols;
         } else if (type->isColor()) {
-          return static_cast<ColorType *>(type)->wavelengthBaseMax;
+          return int(static_cast<ColorType *>(type)->wavelengthBaseMax);
         } else if (type->isArray()) {
-          return static_cast<ArrayType *>(type)->size;
+          return int(static_cast<ArrayType *>(type)->size);
         } else {
           return 1;
         }
@@ -1991,34 +2024,6 @@ Value Emitter::emitIntrinsic(std::string_view name, const ArgumentList &args,
           name == "num_rows"
               ? int(static_cast<ArithmeticType *>(type)->extent.numRows)
               : int(static_cast<ArithmeticType *>(type)->extent.numCols));
-    }
-    break;
-  }
-  case 'o': {
-    if (name == "ofile_open") {
-      auto value{rvalue(expectOne())};
-      return RValue(context.getVoidPointerType(),
-                    builder.CreateCall(context.getBuiltinCallee("smdlOFileOpen",
-                                                                &smdlOFileOpen),
-                                       {value.llvmValue}));
-    }
-    if (name == "ofile_close") {
-      auto value{rvalue(expectOne())};
-      builder.CreateCall(
-          context.getBuiltinCallee("smdlOFileClose", &smdlOFileClose),
-          {value.llvmValue});
-      return Value();
-    }
-    if (name == "ofile_print" || name == "ofile_println") {
-      if (args.size() < 2)
-        srcLoc.throwError("intrinsic 'ofile_print' expects 1 file pointer "
-                          "argument and 1 or more printable arguments");
-      auto file{rvalue(args[0].value)};
-      for (size_t i = 1; i < args.size(); i++)
-        emitPrint(file, args[i].value, srcLoc);
-      if (name == "ofile_println")
-        emitPrint(file, context.getComptimeString("\n"), srcLoc);
-      return {};
     }
     break;
   }
@@ -2266,7 +2271,8 @@ Value Emitter::emitIntrinsic(std::string_view name, const ArgumentList &args,
   }
   case 'u': {
     if (name == "unsigned_to_fp") {
-      if (!(args.size() == 2 && args[0].value.type->isArithmeticIntegral() &&
+      if (!(args.size() == 2 &&                           //
+            args[0].value.type->isArithmeticIntegral() && //
             args[1].value.isComptimeMetaType(context))) {
         srcLoc.throwError(
             "intrinsic 'unsigned_to_fp' expects 1 int argument and "
@@ -2645,33 +2651,13 @@ Value Emitter::resolveIdentifier(Span<const std::string_view> names,
     return crumb0->value;
   }
   if (names.size() == 1) {
-    if (!currentModule || currentModule->isSMDLSyntax()) {
+    if (currentModule == nullptr || currentModule->isSMDLSyntax()) {
       if (names[0] == "$state") {
-        if (!state)
-          srcLoc.throwError(
-              "cannot resolve identifier '$state' in pure context");
+        if (state == nullptr)
+          srcLoc.throwError("cannot resolve '$state' in pure context");
         return state;
-      } else if (names[0] == "$scene_data") {
-        return context.getComptimePtr(context.getVoidPointerType(),
-                                      &context.compiler.sceneData);
-      } else if (names[0] == "i8" || names[0] == "char") {
-        return context.getComptimeMetaType(
-            context.getArithmeticType(Scalar::getInt(8)));
-      } else if (names[0] == "i16") {
-        return context.getComptimeMetaType(
-            context.getArithmeticType(Scalar::getInt(16)));
-      } else if (names[0] == "i32") {
-        return context.getComptimeMetaType(
-            context.getArithmeticType(Scalar::getInt(32)));
-      } else if (names[0] == "i64") {
-        return context.getComptimeMetaType(
-            context.getArithmeticType(Scalar::getInt(64)));
-      } else if (names[0] == "size_t") {
-        return context.getComptimeMetaType(
-            context.getArithmeticType(Scalar::getInt(8 * sizeof(size_t))));
-      } else if (names[0] == "void") {
-        return context.getComptimeMetaType(context.getVoidType());
-      } else if (names[0] == "none") {
+      }
+      if (names[0] == "none") {
         return RValue(context.getVoidType(), nullptr);
       }
     }
@@ -2749,7 +2735,7 @@ Emitter::resolveArguments(const ParameterList &params, const ArgumentList &args,
       // An argument that did not resolve is appended to the end
       // as variadic. After this for loop finishes, it should be
       // true that the number of values is equal to whichever is
-      // greater between the number of arguments and the number 
+      // greater between the number of arguments and the number
       // of parameters.
       resolvedArgs.values.emplace_back(args[iArg]);
     }
@@ -2758,7 +2744,7 @@ Emitter::resolveArguments(const ParameterList &params, const ArgumentList &args,
                     std::max(args.size(), params.size()));
   // If there are more arguments than parameters, i.e., the parameter list is
   // variadic, the number of resolved arguments should equal the number of
-  // parameters. If there are fewer arguments than parameters, the number 
+  // parameters. If there are fewer arguments than parameters, the number
   // of resolved arguments should equal the number of arguments.
   SMDL_SANITY_CHECK(resolvedArgsCount == std::min(args.size(), params.size()));
 
@@ -2774,6 +2760,7 @@ Emitter::resolveArguments(const ParameterList &params, const ArgumentList &args,
             setCurrentModule(expr->srcLoc);
             value = emit(expr);
           } else {
+            SMDL_SANITY_CHECK(param.builtinDefaultValue);
             value = *param.builtinDefaultValue;
           }
         }
@@ -2786,7 +2773,7 @@ Emitter::resolveArguments(const ParameterList &params, const ArgumentList &args,
             auto &value{resolvedArgs.values[iArg]};
             value = rvalue(resolvedArgs.values[iArg]);
             // The C-ABI always promotes to double?
-            if (value.type == context.getFloatType()) 
+            if (value.type == context.getFloatType())
               value = invoke(context.getDoubleType(), value, srcLoc);
           }
         }

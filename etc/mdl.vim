@@ -97,7 +97,7 @@ syn match   smdlIntrinsic       "[#][a-zA-Z]\w*" display
 syn keyword smdlModule          namespace exec unit_test
 syn keyword smdlStatement       defer preserve return_from unreachable visit finalize
 syn keyword smdlStructure       tag nextgroup=mdlIdentifier skipwhite skipempty
-syn keyword smdlType            void char size_t i8 i16 i32 i64 f16 f32 f64 complex
+syn keyword smdlType            void char long size_t intptr_t intmax_t int8_t int16_t int32_t int64_t complex
 hi def link smdlModule          Macro
 hi def link smdlConstant        Constant
 hi def link smdlConstName       Constant

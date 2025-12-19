@@ -104,3 +104,19 @@ const SceneData::Getter *SceneData::get(std::string_view name) const {
 }
 
 } // namespace smdl
+
+extern "C" {
+
+SMDL_EXPORT int smdlDataExists(void *sceneData, const char *name) {
+  return static_cast<smdl::SceneData *>(sceneData)->get(name) != nullptr;
+}
+
+SMDL_EXPORT void smdlDataLookup(void *state, void *sceneData, // NOLINT
+                                const char *name, int kind, int size,
+                                void *ptr) {
+  if (auto getter{static_cast<smdl::SceneData *>(sceneData)->get(name)})
+    (*getter)(static_cast<smdl::State *>(state), smdl::SceneData::Kind(kind),
+              size, ptr);
+}
+
+} // extern "C"

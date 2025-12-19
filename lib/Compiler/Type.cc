@@ -1179,7 +1179,7 @@ void FunctionType::initializeMaterialFunctions(Emitter &emitter) {
     // Generate the evaluate function:
     // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
     // @(visible) void "material_name.evaluate"(&auto out) {
-    //   *out = _material_instance(#bump(material_name()));
+    //   *out = _MaterialInstance(#bump(material_name()));
     // }
     // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
     auto funcReturnType{static_cast<Type *>(context.getVoidType())};
@@ -1188,7 +1188,7 @@ void FunctionType::initializeMaterialFunctions(Emitter &emitter) {
         {constParameter(context.getVoidPointerType(), "out")}, decl.srcLoc,
         [&] {
           auto materialInstance{emitter.emitCall(
-              context.getKeyword("_material_instance"),
+              context.getKeyword("_MaterialInstance"),
               emitter.emitIntrinsic("bump", invoke(emitter, {}, decl.srcLoc),
                                     decl.srcLoc),
               decl.srcLoc)};
@@ -1206,7 +1206,7 @@ void FunctionType::initializeMaterialFunctions(Emitter &emitter) {
     // Generate the scatter evaluate function:
     // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
     // @(pure visible) int "material_name.scatterEvaluate"(
-    //     &_material_instance instance,
+    //     &_MaterialInstance instance,
     //     &float3 wo,
     //     &float3 wi,
     //     &float pdfFwd,
@@ -1249,7 +1249,7 @@ void FunctionType::initializeMaterialFunctions(Emitter &emitter) {
     // Generate the scatter sample function:
     // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
     // @(pure visible) int "material_name.scatterSample"(
-    //     &_material_instance instance,
+    //     &_MaterialInstance instance,
     //     &float4 xi,
     //     &float3 wo,
     //     &float3 wi,

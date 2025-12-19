@@ -39,9 +39,9 @@ export enum scatter_mode {
 
 @(pure macro)
 float scatterReflectChance(const scatter_mode mode) {
-  const auto refl_weight(#select((int(mode) & 1) != 0, 1.0, 0.0));
-  const auto tran_weight(#select((int(mode) & 2) != 0, 1.0, 0.0));
-  return refl_weight / (refl_weight + tran_weight);
+  const auto reflWeight(#select((int(mode) & 1) != 0, 1.0, 0.0));
+  const auto tranWeight(#select((int(mode) & 2) != 0, 1.0, 0.0));
+  return reflWeight / (reflWeight + tranWeight);
 }
 
 /// Declare libm `erf`
@@ -224,20 +224,20 @@ export auto schlickFresnel(
 @(pure)
 export auto dielectricFresnel(const float cosThetai, const auto ior) {
   const auto cosThetat = #sqrt(#max(1.0 - ior * ior * (1.0 - cosThetai * cosThetai), 0.0)) * #sign(cosThetai);
-  const auto ior_cos_thetai = ior * cosThetai;
-  const auto ior_cos_thetat = ior * cosThetat;
-  const auto rs = (ior_cos_thetai - cosThetat) / (ior_cos_thetai + cosThetat);
-  const auto rp = (cosThetai - ior_cos_thetat) / (cosThetai + ior_cos_thetat);
+  const auto iorCosThetai = ior * cosThetai;
+  const auto iorCosThetat = ior * cosThetat;
+  const auto rs = (iorCosThetai - cosThetat) / (iorCosThetai + cosThetat);
+  const auto rp = (cosThetai - iorCosThetat) / (cosThetai + iorCosThetat);
   return #min(0.5 * (rs * rs + rp * rp), 1.0);
 }
 
 @(pure)
 export auto conductorFresnel(const float cosThetai, const auto ior) {
   const auto cosThetat = #sqrt(1.0 - ior * ior * (1.0 - cosThetai * cosThetai)) * #sign(cosThetai);
-  const auto ior_cos_thetai = ior * cosThetai;
-  const auto ior_cos_thetat = ior * cosThetat;
-  const auto rs = (ior_cos_thetai - cosThetat) / (ior_cos_thetai + cosThetat);
-  const auto rp = (cosThetai - ior_cos_thetat) / (cosThetai + ior_cos_thetat);
+  const auto iorCosThetai = ior * cosThetai;
+  const auto iorCosThetat = ior * cosThetat;
+  const auto rs = (iorCosThetai - cosThetat) / (iorCosThetai + cosThetat);
+  const auto rp = (cosThetai - iorCosThetat) / (cosThetai + iorCosThetat);
   return #min(0.5 * (#norm(rs) + #norm(rp)), 1.0);
 }
 
@@ -1888,7 +1888,7 @@ auto scatterSample(const &anisotropic_vdf this, inline const &ScatterSampleParam
 
 @(macro)
 export int _scatterEvaluate(
-  const &_material_instance instance,
+  const &_MaterialInstance instance,
   const &float3 woWorld, ///< The outgoing direction in world space
   const &float3 wiWorld, ///< The incoming direction in world space
   const &float pdfFwd,   ///< output: The PDF of sampling `wi` from `wo`
@@ -1901,11 +1901,11 @@ export int _scatterEvaluate(
     wo0: normalize((*woWorld) * instance.tangent_to_world),
     wi0: normalize((*wiWorld) * instance.tangent_to_world),
     normal: normalize(instance.geometry.normal),
-    thin_walled: instance.jit_struct.thin_walled,
+    thin_walled: instance.ptr.thin_walled,
   );
-  auto result = #is_default(instance.jit_struct.backface) || !params.hitBackface         //
-                ? scatterEvaluate(visit &instance.jit_struct.surface.scattering, &params) //
-                : scatterEvaluate(visit &instance.jit_struct.backface.scattering, &params);
+  auto result = #is_default(instance.ptr.backface) || !params.hitBackface         //
+                ? scatterEvaluate(visit &instance.ptr.surface.scattering, &params) //
+                : scatterEvaluate(visit &instance.ptr.backface.scattering, &params);
   visit result in result {
     if (result.isBlack) {
       *pdfFwd = 0.0;
@@ -1928,7 +1928,7 @@ export int _scatterEvaluate(
 
 @(macro)
 export int _scatterSample(
-  const &_material_instance instance,
+  const &_MaterialInstance instance,
   const &float4 xi,      ///< The canonical random sample in `[0,1]^4`
   const &float3 woWorld, ///< The outgoing direction in world space
   const &float3 wiWorld, ///< output: The incoming direction in world space
@@ -1944,11 +1944,11 @@ export int _scatterSample(
     wo0: wo,
     ior: 1.0 / instance.ior,
     normal: normalize(instance.geometry.normal),
-    thin_walled: instance.jit_struct.thin_walled,
+    thin_walled: instance.ptr.thin_walled,
   );
-  auto result = #is_default(instance.jit_struct.backface) || !params.hitBackface       //
-                ? scatterSample(visit &instance.jit_struct.surface.scattering, &params) //
-                : scatterSample(visit &instance.jit_struct.backface.scattering, &params);
+  auto result = #is_default(instance.ptr.backface) || !params.hitBackface       //
+                ? scatterSample(visit &instance.ptr.surface.scattering, &params) //
+                : scatterSample(visit &instance.ptr.backface.scattering, &params);
   visit result in result {
     const auto wi = #select(params.hitBackface, -result.wi, +result.wi);
     if (result.mode == scatter_none || ((wo.z < 0.0) == (wi.z < 0.0)) != (result.mode == scatter_reflect)) {
@@ -1972,7 +1972,7 @@ export int _scatterSample(
 
 @(macro)
 export float _volumeScatterEvaluate(
-  const &_material_instance instance,
+  const &_MaterialInstance instance,
   const &float3 woWorld, ///< The outgoing direction in world space
   const &float3 wiWorld, ///< The incoming direction in world space
 ) {
@@ -1982,19 +1982,19 @@ export float _volumeScatterEvaluate(
     wi0: normalize(*wiWorld),
     hitBackface: false, // Not applicable for volume scattering
   );
-  return scatterEvaluate(visit &instance.jit_struct.volume.scattering, &params).f;
+  return scatterEvaluate(visit &instance.ptr.volume.scattering, &params).f;
 }
 
 @(macro)
 export float _volumeScatterSample(
-  const &_material_instance instance,
+  const &_MaterialInstance instance,
   const &float4 xi,      ///< The canonical random sample in `[0,1]^4`
   const &float3 woWorld, ///< The outgoing direction in world space
   const &float3 wiWorld, ///< output: The incoming direction in world space
 ) {
   auto wo = normalize(*woWorld);
   auto params = ScatterSampleParameters(xi: *xi, wo0: wo, hitBackface: false);
-  auto result = scatterSample(visit &instance.jit_struct.volume.scattering, &params);
+  auto result = scatterSample(visit &instance.ptr.volume.scattering, &params);
   if (result.mode == scatter_none) {
     return 0.0;
   }

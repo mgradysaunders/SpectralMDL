@@ -5,7 +5,7 @@
 
 namespace smdl::builtin {
 
-static const char *anno = R"*(#smdl
+static const char *const anno = R"*(#smdl
 export annotation soft_range(auto min,auto max);
 export annotation hard_range(auto min,auto max);
 export annotation display_name(string name);
@@ -31,7 +31,7 @@ export annotation usage(string hint="");
 export annotation origin(string name="");
 )*";
 
-static const char *api = R"*(#smdl
+static const char *const api = R"*(#smdl
 const int RGB_TO_COLOR_NUM_WAVELENGTHS=32;
 const float RGB_TO_COLOR_MIN_WAVELENGTH=380.0;
 const float RGB_TO_COLOR_MAX_WAVELENGTH=720.0;
@@ -45,17 +45,17 @@ const static auto RGB_TO_COLOR_CURVES=auto[](
   auto[](0.9920977,0.9887643,0.9953904,0.9952932,0.9918145,1.0002584,0.9996848,0.9998812,0.9850401,0.7902985,0.5608220,0.3313346,0.1369241,0.0189149,-0.0000051,-0.0004240,-0.0004193,0.0017473,0.0037999,-0.0005510,-0.0000437,0.0075875,0.0257957,0.0381684,0.0494896,0.0495960,0.0498148,0.0398409,0.0305010,0.0212431,0.0069597,0.0041734),
 );
 @(hot noinline)
-color rgb_to_color_nontrivial(float3 rgb){
+color nontrivialRGBToColor(float3 rgb){
   #assert(bool($state.wavelength_base));
   const int k0(#all(rgb.xx<rgb.yz)?0:rgb.y<rgb.z?1:2);
-  const int k0_plus_1((k0+1)%3);
-  const int k0_plus_2((k0+2)%3);
-  const bool should_swap(rgb[k0_plus_1]>rgb[k0_plus_2]);
-  const int k1(should_swap?k0_plus_2:k0_plus_1);
-  const int k2(should_swap?k0_plus_1:k0_plus_2);
-  const float coeff_w(rgb[k0]);
-  const float coeff_cmy(rgb[k1]-rgb[k0]);
-  const float coeff_rgb(rgb[k2]-rgb[k1]);
+  const int k0Plus1((k0+1)%3);
+  const int k0Plus2((k0+2)%3);
+  const bool shouldSwap(rgb[k0Plus1]>rgb[k0Plus2]);
+  const int k1(shouldSwap?k0Plus2:k0Plus1);
+  const int k2(shouldSwap?k0Plus1:k0Plus2);
+  const float coeffW(rgb[k0]);
+  const float coeffCMY(rgb[k1]-rgb[k0]);
+  const float coeffRGB(rgb[k2]-rgb[k1]);
   color c(0.0);
   color w(color($state.wavelength_base));
   w-=RGB_TO_COLOR_MIN_WAVELENGTH;
@@ -65,7 +65,7 @@ color rgb_to_color_nontrivial(float3 rgb){
     if((0.0<=t)&(t<=RGB_TO_COLOR_NUM_WAVELENGTHS)){
       int j(#min(int(t),RGB_TO_COLOR_NUM_WAVELENGTHS-2));
       t=#min(t-j,1.0);
-      c[i]=#sum(float2(1-t,t)*(coeff_w*float2(&RGB_TO_COLOR_CURVES[0][j])+coeff_cmy*float2(&RGB_TO_COLOR_CURVES[k0+1][j])+coeff_rgb*float2(&RGB_TO_COLOR_CURVES[k2+4][j])));
+      c[i]=#sum(float2(1-t,t)*(coeffW*float2(&RGB_TO_COLOR_CURVES[0][j])+coeffCMY*float2(&RGB_TO_COLOR_CURVES[k0+1][j])+coeffRGB*float2(&RGB_TO_COLOR_CURVES[k2+4][j])));
     }
   }
   return #max(c*0.94,0.0);
@@ -75,7 +75,7 @@ export color _rgb_to_color(const float3 rgb){
   if(#all(rgb.xx==rgb.yz)){
     return color(rgb.x);
   } else {
-    return rgb_to_color_nontrivial(rgb);
+    return nontrivialRGBToColor(rgb);
   }
 }
 @(pure macro)
@@ -161,12 +161,12 @@ export float3 _color_to_rgb(const color c){
   return float3x3(float3(3.240450,-0.969266,0.0556434),float3(-1.537140,1.876010,-0.2040260),float3(-0.498532,0.041556,1.0572300),)*result;
 }
 @(visible noinline)
-void jit_rgb_to_color(const &float3 rgb,const &float cptr){
+void smdlRGBToColor(const &float3 rgb,const &float cptr){
   color c(_rgb_to_color(*rgb));
   #memcpy(cptr,&c,#sizeof(color));
 }
 @(visible noinline)
-void jit_color_to_rgb(const &float cptr,const &float3 rgb){
+void smdlColorToRGB(const &float cptr,const &float3 rgb){
   *rgb=_color_to_rgb(color(cptr));
 }
 export enum intensity_mode{intensity_radiant_exitance,intensity_power,};
@@ -258,6 +258,7 @@ export struct material{
   material_volume volume=material_volume();
   material_geometry geometry=material_geometry();
   hair_bsdf hair=hair_bsdf();
+  float temperature=-1;
 };
 const int MATERIAL_TRANSPORT_IMPORTANCE=(1<<0);
 const int MATERIAL_THIN_WALLED=(1<<1);
@@ -265,21 +266,22 @@ const int MATERIAL_HAS_SURFACE=(1<<2);
 const int MATERIAL_HAS_BACKFACE=(1<<3);
 const int MATERIAL_HAS_VOLUME=(1<<6);
 const int MATERIAL_HAS_HAIR=(1<<7);
-export struct _material_instance{
-  const &material jit_struct;
-  const &material_geometry geometry=&jit_struct.geometry;
-  const float ior=jit_struct.ior;
-  const &color absorption_coefficient=#is_void(jit_struct.volume.absorption_coefficient)?none:&jit_struct.volume.absorption_coefficient;
-  const &color scattering_coefficient=#is_void(jit_struct.volume.scattering_coefficient)?none:&jit_struct.volume.scattering_coefficient;
-  const int wavelength_base_max=$WAVELENGTH_BASE_MAX;
-  const int flags=$state.transport|(jit_struct.thin_walled?MATERIAL_THIN_WALLED:0)|(!#is_default(jit_struct.surface)?MATERIAL_HAS_SURFACE:0)|(!#is_default(jit_struct.backface)?MATERIAL_HAS_BACKFACE:0)|(!#is_default(jit_struct.volume)?MATERIAL_HAS_VOLUME:0)|(!#is_default(jit_struct.hair)?MATERIAL_HAS_HAIR:0);
-  const int df_flags_surface=jit_struct.surface.scattering._flags;
-  const int df_flags_backface=jit_struct.backface.scattering._flags;
-  const float3x3 tangent_to_world=let {
-                                    const auto tangent_to_world_matrix=$state.object_to_world_matrix*$state.tangent_to_object_matrix;
-                                  } in float3x3(tangent_to_world_matrix[0].xyz,tangent_to_world_matrix[1].xyz,tangent_to_world_matrix[2].xyz,);
+export struct _MaterialInstance{
+  &material ptr;
+  &material_geometry geometry=&ptr.geometry;
+  float ior=ptr.ior;
+  float temperature=ptr.temperature;
+  &color absorption_coefficient=#is_void(ptr.volume.absorption_coefficient)?none:&ptr.volume.absorption_coefficient;
+  &color scattering_coefficient=#is_void(ptr.volume.scattering_coefficient)?none:&ptr.volume.scattering_coefficient;
+  int wavelength_base_max=$WAVELENGTH_BASE_MAX;
+  int flags=$state.transport|(ptr.thin_walled?MATERIAL_THIN_WALLED:0)|(!#is_default(ptr.surface)?MATERIAL_HAS_SURFACE:0)|(!#is_default(ptr.backface)?MATERIAL_HAS_BACKFACE:0)|(!#is_default(ptr.volume)?MATERIAL_HAS_VOLUME:0)|(!#is_default(ptr.hair)?MATERIAL_HAS_HAIR:0);
+  int df_flags_surface=ptr.surface.scattering._flags;
+  int df_flags_backface=ptr.backface.scattering._flags;
+  float3x3 tangent_to_world=let {
+                              const auto tangent_to_world_matrix=$state.object_to_world_matrix*$state.tangent_to_object_matrix;
+                            } in float3x3(tangent_to_world_matrix[0].xyz,tangent_to_world_matrix[1].xyz,tangent_to_world_matrix[2].xyz,);
 };
-export struct _albedo_lut{
+export struct _AlbedoLUT{
   const int num_cos_theta=0;
   const int num_roughness=0;
   const &float directional_albedo=none;
@@ -311,49 +313,45 @@ export auto _complex_mul(const complex z,const complex w)=complex(z.a*w.a-z.b*w.
 export auto _complex_div(const complex z,const complex w)=_complex_mul(z,_complex_inv(w));
 @(pure macro)
 export auto _complex_exp(const complex z)=let {
-                                            const auto exp_a=#exp(z.a);
-                                          } in complex(exp_a*#cos(z.b),exp_a*#sin(z.b));
+                                            const auto expa=#exp(z.a);
+                                          } in complex(expa*#cos(z.b),expa*#sin(z.b));
 @(pure macro)
 export auto _complex_log(const complex z)=complex(#log(_complex_abs(z)),#atan2(z.b,z.a));
 @(pure macro)
 export auto _complex_sqrt(const complex z)=let {
-                                             const auto abs_z=_complex_abs(z);
-                                           } in complex(#sqrt(0.5*(abs_z+z.a)),#sqrt(0.5*(abs_z-z.a))*#sign(z.b),);
+                                             const auto absz=_complex_abs(z);
+                                           } in complex(#sqrt(0.5*(absz+z.a)),#sqrt(0.5*(absz-z.a))*#sign(z.b),);
 @(pure)
-export i32 _hash(auto value){
+export int32_t _hash(auto value){
   if$(#is_arithmetic_scalar(value)){
     if$(#is_arithmetic_integral(value)){
       if$(#sizeof(value)<=4){
-        auto h(i32(value)+3266445271);
-        h^=h>>>16,h*=0x85EBCA6B;
-        h^=h>>>13,h*=0xC2B2AE35;
-        h^=h>>>16;
-        return h;
+        auto hash(int32_t(value)+3266445271);
+        hash^=hash>>>16,hash*=0x85EBCA6B;
+        hash^=hash>>>13,hash*=0xC2B2AE35;
+        hash^=hash>>>16;
+        return hash;
       } else {
-        auto h(i64(value)+13898551614298330943);
-        h^=h>>>33,h*=0xFF51AFD7ED558CCD;
-        h^=h>>>33,h*=0xC4CEB9FE1A85EC53;
-        h^=h>>>33;
-        return h;
+        auto hash(int64_t(value)+13898551614298330943);
+        hash^=hash>>>33,hash*=0xFF51AFD7ED558CCD;
+        hash^=hash>>>33,hash*=0xC4CEB9FE1A85EC53;
+        hash^=hash>>>33;
+        return hash;
       }
     } else {
-      auto h(#type_int(8*#sizeof(value))());
-      #memcpy(&h,&value,#sizeof(value));
-      return _hash(h);
+      return _hash(#bitcast(#type_int(8*#sizeof(value)),value));
     }
   } else if$(#is_array(value)|#is_arithmetic_vector(value)|#is_arithmetic_matrix(value)|(#typeof(value)==color)){
-    auto hTotal(_hash(value[0]));
+    auto totalHash(_hash(value[0]));
     for(int i=1;i<#num(value);++i){
-      auto h(_hash(value[i]));
-      h=0x55555555*(h^(h>>>16));
-      h=3423571495*(h^(h>>>16));
-      hTotal=#rotl(hTotal,10)^h;
+      auto hash(_hash(value[i]));
+      hash=0x55555555*(hash^(hash>>>16));
+      hash=3423571495*(hash^(hash>>>16));
+      totalHash=#rotl(totalHash,10)^hash;
     }
-    return hTotal;
+    return totalHash;
   } else if$(#is_pointer(value)){
-    auto h(#type_int(8*#sizeof(value))());
-    #memcpy(&h,&value,#sizeof(value));
-    return _hash(h);
+    return _hash(#bitcast(intptr_t,value));
   } else if$(#is_union(value)){
     visit v in value{
       return _hash(v);
@@ -365,7 +363,7 @@ export i32 _hash(auto value){
 }
 )*";
 
-static const char *debug = R"*(#smdl
+static const char *const debug = R"*(#smdl
 @(pure macro)
 export bool assert(const bool condition,const string reason){
   #assert(condition,reason) if($DEBUG);
@@ -383,7 +381,7 @@ export bool print(const auto a){
 }
 )*";
 
-static const char *df = R"*(#smdl
+static const char *const df = R"*(#smdl
 using ::math import *;
 const float EPSILON=1e-6;
 const float MULTISCATTER_DIFFUSE_CHANCE=0.2;
@@ -408,9 +406,9 @@ export enum scatter_mode{
 };
 @(pure macro)
 float scatterReflectChance(const scatter_mode mode){
-  const auto refl_weight(#select((int(mode)&1)!=0,1.0,0.0));
-  const auto tran_weight(#select((int(mode)&2)!=0,1.0,0.0));
-  return refl_weight/(refl_weight+tran_weight);
+  const auto reflWeight(#select((int(mode)&1)!=0,1.0,0.0));
+  const auto tranWeight(#select((int(mode)&2)!=0,1.0,0.0));
+  return reflWeight/(reflWeight+tranWeight);
 }
 @(pure foreign)
 double erf(double x);
@@ -524,19 +522,19 @@ export auto schlickFresnel(
 @(pure)
 export auto dielectricFresnel(const float cosThetai,const auto ior){
   const auto cosThetat=#sqrt(#max(1.0-ior*ior*(1.0-cosThetai*cosThetai),0.0))*#sign(cosThetai);
-  const auto ior_cos_thetai=ior*cosThetai;
-  const auto ior_cos_thetat=ior*cosThetat;
-  const auto rs=(ior_cos_thetai-cosThetat)/(ior_cos_thetai+cosThetat);
-  const auto rp=(cosThetai-ior_cos_thetat)/(cosThetai+ior_cos_thetat);
+  const auto iorCosThetai=ior*cosThetai;
+  const auto iorCosThetat=ior*cosThetat;
+  const auto rs=(iorCosThetai-cosThetat)/(iorCosThetai+cosThetat);
+  const auto rp=(cosThetai-iorCosThetat)/(cosThetai+iorCosThetat);
   return #min(0.5*(rs*rs+rp*rp),1.0);
 }
 @(pure)
 export auto conductorFresnel(const float cosThetai,const auto ior){
   const auto cosThetat=#sqrt(1.0-ior*ior*(1.0-cosThetai*cosThetai))*#sign(cosThetai);
-  const auto ior_cos_thetai=ior*cosThetai;
-  const auto ior_cos_thetat=ior*cosThetat;
-  const auto rs=(ior_cos_thetai-cosThetat)/(ior_cos_thetai+cosThetat);
-  const auto rp=(cosThetai-ior_cos_thetat)/(cosThetai+ior_cos_thetat);
+  const auto iorCosThetai=ior*cosThetai;
+  const auto iorCosThetat=ior*cosThetat;
+  const auto rs=(iorCosThetai-cosThetat)/(iorCosThetai+cosThetat);
+  const auto rp=(cosThetai-iorCosThetat)/(cosThetai+iorCosThetat);
   return #min(0.5*(#norm(rs)+#norm(rp)),1.0);
 }
 }
@@ -1582,7 +1580,7 @@ auto scatterSample(const &anisotropic_vdf this,inline const &ScatterSampleParame
 }
 @(macro)
 export int _scatterEvaluate(
-  const &_material_instance instance,
+  const &_MaterialInstance instance,
   const &float3 woWorld,
   const &float3 wiWorld,
   const &float pdfFwd,
@@ -1595,9 +1593,9 @@ export int _scatterEvaluate(
     wo0: normalize((*woWorld)*instance.tangent_to_world),
     wi0: normalize((*wiWorld)*instance.tangent_to_world),
     normal: normalize(instance.geometry.normal),
-    thin_walled: instance.jit_struct.thin_walled,
+    thin_walled: instance.ptr.thin_walled,
   );
-  auto result=#is_default(instance.jit_struct.backface)||!params.hitBackface?scatterEvaluate(visit &instance.jit_struct.surface.scattering,&params):scatterEvaluate(visit &instance.jit_struct.backface.scattering,&params);
+  auto result=#is_default(instance.ptr.backface)||!params.hitBackface?scatterEvaluate(visit &instance.ptr.surface.scattering,&params):scatterEvaluate(visit &instance.ptr.backface.scattering,&params);
   visit result in result{
     if(result.isBlack){
       *pdfFwd=0.0;
@@ -1619,7 +1617,7 @@ export int _scatterEvaluate(
 }
 @(macro)
 export int _scatterSample(
-  const &_material_instance instance,
+  const &_MaterialInstance instance,
   const &float4 xi,
   const &float3 woWorld,
   const &float3 wiWorld,
@@ -1635,9 +1633,9 @@ export int _scatterSample(
     wo0: wo,
     ior: 1.0/instance.ior,
     normal: normalize(instance.geometry.normal),
-    thin_walled: instance.jit_struct.thin_walled,
+    thin_walled: instance.ptr.thin_walled,
   );
-  auto result=#is_default(instance.jit_struct.backface)||!params.hitBackface?scatterSample(visit &instance.jit_struct.surface.scattering,&params):scatterSample(visit &instance.jit_struct.backface.scattering,&params);
+  auto result=#is_default(instance.ptr.backface)||!params.hitBackface?scatterSample(visit &instance.ptr.surface.scattering,&params):scatterSample(visit &instance.ptr.backface.scattering,&params);
   visit result in result{
     const auto wi=#select(params.hitBackface,-result.wi,result.wi);
     if(result.mode==scatter_none||((wo.z<0.0)==(wi.z<0.0))!=(result.mode==scatter_reflect)){
@@ -1659,25 +1657,25 @@ export int _scatterSample(
   }
 }
 @(macro)
-export float _volumeScatterEvaluate(const &_material_instance instance,const &float3 woWorld,const &float3 wiWorld,){
+export float _volumeScatterEvaluate(const &_MaterialInstance instance,const &float3 woWorld,const &float3 wiWorld,){
   auto params=ScatterEvaluateParameters(
     isImportance: 0,
     wo0: normalize(*woWorld),
     wi0: normalize(*wiWorld),
     hitBackface: false,
   );
-  return scatterEvaluate(visit &instance.jit_struct.volume.scattering,&params).f;
+  return scatterEvaluate(visit &instance.ptr.volume.scattering,&params).f;
 }
 @(macro)
 export float _volumeScatterSample(
-  const &_material_instance instance,
+  const &_MaterialInstance instance,
   const &float4 xi,
   const &float3 woWorld,
   const &float3 wiWorld,
 ){
   auto wo=normalize(*woWorld);
   auto params=ScatterSampleParameters(xi: *xi,wo0: wo,hitBackface: false);
-  auto result=scatterSample(visit &instance.jit_struct.volume.scattering,&params);
+  auto result=scatterSample(visit &instance.ptr.volume.scattering,&params);
   if(result.mode==scatter_none){
     return 0.0;
   }
@@ -1686,7 +1684,55 @@ export float _volumeScatterSample(
 }
 )*";
 
-static const char *limits = R"*(#smdl
+static const char *const io = R"*(#smdl
+export typedef &void FILE;
+export const auto stdin=cast<FILE>($stdin);
+export const auto stdout=cast<FILE>($stdout);
+export const auto stderr=cast<FILE>($stderr);
+@(pure foreign)
+export FILE fopen(string filename,string mode);
+@(pure foreign)
+export void fclose(FILE file);
+@(pure foreign)
+export void fflush(FILE file);
+@(pure foreign)
+export int feof(FILE file);
+@(pure foreign)
+export int ferror(FILE file);
+@(pure foreign)
+export int fgetc(FILE file);
+@(pure foreign)
+export &char fgets(&char str,int count,FILE file);
+@(pure foreign)
+export int fputc(int ch,FILE file);
+@(pure foreign)
+export int fputs(string str,FILE file);
+@(pure foreign)
+export size_t fread(&void buffer,size_t size,size_t count,FILE file);
+@(pure foreign)
+export size_t fwrite(&void buffer,size_t size,size_t count,FILE file);
+@(pure foreign)
+export int fscanf(FILE file,string format,...);
+@(pure foreign)
+export int fprintf(FILE file,string format,...);
+@(pure foreign)
+export long ftell(FILE file);
+export const int SEEK_SET=$SEEK_SET;
+export const int SEEK_CUR=$SEEK_CUR;
+export const int SEEK_END=$SEEK_END;
+@(pure foreign)
+export int fseek(FILE file,long offset,int origin);
+@(pure foreign)
+export void rewind(FILE file);
+@(pure foreign)
+export void clearerr(FILE file);
+@(pure foreign)
+export void perror(string message="");
+@(pure foreign)
+export FILE tmpfile();
+)*";
+
+static const char *const limits = R"*(#smdl
 export const int INT_MIN=$INT_MIN;
 export const int INT_MAX=$INT_MAX;
 export const float FLOAT_MIN=$FLOAT_MIN;
@@ -1695,546 +1741,32 @@ export const double DOUBLE_MIN=$DOUBLE_MIN;
 export const double DOUBLE_MAX=$DOUBLE_MAX;
 )*";
 
-static const char *math = R"*(#smdl
-export const float PI=$PI;
-export const float TWO_PI=$TWO_PI;
-export const float HALF_PI=$HALF_PI;
-@(macro)
-export auto abs(const auto a)=#abs(a);
-@(macro)
-export auto all(const auto a)=#all(a);
-@(macro)
-export auto any(const auto a)=#any(a);
-@(macro)
-export auto max(const auto a,const auto b)=#max(a,b);
-@(macro)
-export auto min(const auto a,const auto b)=#min(a,b);
-@(macro)
-export auto clamp(const auto a,const auto min,const auto max)=#max(min,#min(a,max));
-@(macro)
-export auto saturate(const auto a)=clamp(a,0.0,1.0);
-@(macro)
-export auto floor(const auto a)=#floor(a);
-@(macro)
-export auto ceil(const auto a)=#ceil(a);
-@(macro)
-export auto round(const auto a)=#round(a);
-@(macro)
-export auto trunc(const auto a)=#trunc(a);
-@(macro)
-export auto frac(const auto a)=a-#floor(a);
-@(macro)
-export auto fmod(const auto a,const auto b)=a%b;
-@(macro)
-export auto modf(const auto a)=auto[2](a0:=#trunc(a),a-a0);
-@(macro)
-export auto isfinite(const auto a)=#isfpclass(a,0b0111111000);
-@(macro)
-export auto isnormal(const auto a)=#isfpclass(a,0b0100001000);
-@(macro)
-export auto isinf(const auto a)=#isfpclass(a,0b1000000100);
-@(macro)
-export auto isnan(const auto a)=#isfpclass(a,0b0000000011);
-@(macro)
-export auto sign(const auto a)=#sign(a);
-@(macro)
-export auto sqrt(const auto a)=#sqrt(a);
-@(macro)
-export auto rsqrt(const auto a)=1.0/#sqrt(a);
-@(macro)
-export auto pow(const auto a,const auto b)=#pow(a,b);
-@(macro)
-export auto cos(const auto a)=#cos(a);
-@(macro)
-export auto sin(const auto a)=#sin(a);
-@(macro)
-export auto tan(const auto a)=#tan(a);
-@(macro)
-export auto acos(const auto a)=#acos(a);
-@(macro)
-export auto asin(const auto a)=#asin(a);
-@(macro)
-export auto atan(const auto a)=#atan(a);
-@(macro)
-export auto atan2(const auto y,const auto x)=#atan2(y,x);
-@(macro)
-export auto cosh(const auto a)=#cosh(a);
-@(macro)
-export auto sinh(const auto a)=#sinh(a);
-@(macro)
-export auto tanh(const auto a)=#tanh(a);
-@(macro)
-export auto sincos(const auto a)=auto[2](#sin(a),#cos(a));
-@(macro)
-export auto radians(const auto a)=a*(PI/180.0);
-@(macro)
-export auto degrees(const auto a)=a*(180.0/PI);
-@(macro)
-export auto exp(const auto a)=#exp(a);
-@(macro)
-export auto exp2(const auto a)=#exp2(a);
-@(macro)
-export auto exp10(const auto a)=#exp10(a);
-@(macro)
-export auto log(const auto a)=#log(a);
-@(macro)
-export auto log2(const auto a)=#log2(a);
-@(macro)
-export auto log10(const auto a)=#log10(a);
-@(macro)
-export auto min_value(const auto a)=#min_value(a);
-@(macro)
-export auto max_value(const auto a)=#max_value(a);
-@(pure)
-export float min_value_wavelength(const color a){
-  int imin=0;
-  float amin=a[0];
-  for(int i=1;i<$WAVELENGTH_BASE_MAX;i++){
-    if(amin>a[i]){
-      amin=a[i];
-      imin=i;
-    }
-  }
-  return $state.wavelength_base[imin];
-}
-@(pure)
-export float max_value_wavelength(const color a){
-  int imax=0;
-  float amax=a[0];
-  for(int i=1;i<$WAVELENGTH_BASE_MAX;i++){
-    if(amax<a[i]){
-      amax=a[i];
-      imax=i;
-    }
-  }
-  return $state.wavelength_base[imax];
-}
-@(macro)
-export auto average(const auto a)=#sum(a)/#num(a);
-@(macro)
-export auto lerp(const auto a,const auto b,const auto l)=(1.0-l)*a+l*b;
-@(macro)
-export auto step(const auto a,const auto b)=#select(b<a,0.0,1.0);
-@(macro)
-export auto smoothstep(const auto a,const auto b,const auto l){
-  const auto t(saturate(l));
-  const auto s(1-t);
-  return s*s*(1+2*t)*a+t*t*(1+2*s)*b;
-}
-@(macro)
-export auto dot(const auto a,const auto b)=#sum(a*b);
-@(macro)
-export auto length(const auto a)=#sqrt(#sum(a*a));
-@(macro)
-export auto normalize(const auto a)=a*(1/length(a));
-@(macro)
-export auto distance(const auto a,const auto b)=length(b-a);
-@(macro)
-export auto cross(const auto a,const auto b)=a.yzx*b.zxy-a.zxy*b.yzx;
-@(macro)
-export auto transpose(const auto a)=#transpose(a);
-@(macro)
-export float luminance(const float3 a)=dot(float3(0.2126,0.7152,0.0722),a);
-@(noinline)
-export float luminance(const color a){
-  float result(0.0);
-  for(int i=0;i<$WAVELENGTH_BASE_MAX;++i){
-    result+=_wyman_y($state.wavelength_base[i])*a[i];
-  }
-  return result/$WAVELENGTH_BASE_MAX;
-}
-@(noinline)
-export color blackbody(const float temperature){
-  const auto t(color($state.wavelength_base)*(temperature/14.387e6));
-  auto res(1+2*t);
-  res=1+3*t*res;
-  res=1+4*t*res;
-  res=1+5*t*res;
-  const auto rcp1(1/t);
-  auto rcp(rcp1/6);
-  for(int k=1;k<10;++k){
-    res+=rcp;
-    rcp*=rcp1/(6+k);
-  }
-  return 5.659994086/res;
-}
-export float eval_at_wavelength(color a,float wavelength){
-  if$($WAVELENGTH_BASE_MAX==1){
-    return a[0];
-  } else {
-    return _polyline_lerp($WAVELENGTH_BASE_MAX,&$state.wavelength_base[0],&a[0],wavelength);
-  }
-}
-)*";
-
-static const char *scene = R"*(#smdl
-@(foreign pure)
-int smdl_data_exists(&void scene_data,string name);
-@(foreign)
-void smdl_data_lookup(&void scene_data,string name,int kind,int size,&void result);
-@(macro)
-auto data_lookup(const string name,auto value){
-  const int kind=#is_arithmetic_integral(value)?0:#is_arithmetic_floating_point(value)?1:2;
-  smdl_data_lookup($scene_data,name,kind,#num(value),cast<&void>(&value));
-  return value;
-}
-@(macro)
-export bool data_isvalid(const string name)=smdl_data_exists($scene_data,name)!=0;
-@(macro)
-export int data_lookup_int(const string name,int default_value=int())=data_lookup(name,default_value);
-@(macro)
-export int2 data_lookup_int2(const string name,int2 default_value=int2())=data_lookup(name,default_value);
-@(macro)
-export int3 data_lookup_int3(const string name,int3 default_value=int3())=data_lookup(name,default_value);
-@(macro)
-export int4 data_lookup_int4(const string name,int4 default_value=int4())=data_lookup(name,default_value);
-@(macro)
-export float data_lookup_float(const string name,float default_value=float())=data_lookup(name,default_value);
-@(macro)
-export float2 data_lookup_float2(const string name,float2 default_value=float2())=data_lookup(name,default_value);
-@(macro)
-export float3 data_lookup_float3(const string name,float3 default_value=float3())=data_lookup(name,default_value);
-@(macro)
-export float4 data_lookup_float4(const string name,float4 default_value=float4())=data_lookup(name,default_value);
-@(macro)
-export color data_lookup_color(const string name,color default_value=color())=data_lookup(name,default_value);
-)*";
-
-static const char *state = R"*(#smdl
-import ::math::*;
-export enum coordinate_space{coordinate_internal=0,coordinate_object=1,coordinate_world=2};
-@(macro)
-export float3 position()=$state.position;
-@(macro)
-export float3 normal()=$state.normal;
-@(macro)
-export float3 geometry_normal()=$state.geometry_normal;
-@(macro)
-export float3 motion()=$state.motion;
-@(macro)
-export int texture_space_max()=$state.texture_space_max;
-@(macro)
-export float3 texture_coordinate(const int i)=$state.texture_coordinate[i];
-@(macro)
-export float3 texture_tangent_u(const int i)=$state.texture_tangent_u[i];
-@(macro)
-export float3 texture_tangent_v(const int i)=$state.texture_tangent_v[i];
-@(macro)
-export float3 geometry_tangent_u(const int i)=$state.geometry_tangent_u[i];
-@(macro)
-export float3 geometry_tangent_v(const int i)=$state.geometry_tangent_v[i];
-@(macro)
-export float3x3 tangent_space(const int i)=float3x3($state.texture_tangent_u[i],$state.texture_tangent_v[i],$state.normal);
-@(macro)
-export float3x3 geometry_tangent_space(const int i)=float3x3($state.geometry_tangent_u[i],$state.geometry_tangent_v[i],$state.geometry_normal);
-@(macro)
-export int object_id()=$state.object_id;
-@(macro)
-export float3 direction()=float3(0.0,0.0,0.0);
-@(macro)
-export float animation_time()=$state.animation_time;
-export const int WAVELENGTH_BASE_MAX=$WAVELENGTH_BASE_MAX;
-@(macro)
-export float wavelength_min()=$state.wavelength_min;
-@(macro)
-export float wavelength_max()=$state.wavelength_max;
-@(macro)
-export float[WAVELENGTH_BASE_MAX] wavelength_base()=$state.wavelength_base;
-@(macro)
-export float meters_per_scene_unit()=$state.meters_per_scene_unit;
-@(macro)
-export float scene_units_per_meter()=1.0/$state.meters_per_scene_unit;
-@(pure macro)
-float4x4 affine_inverse(const float4x4 matrix){
-  return float4x4(
-           float4(matrix[0].x,matrix[1].x,matrix[2].x,0.0),
-           float4(matrix[0].y,matrix[1].y,matrix[2].y,0.0),
-           float4(matrix[0].z,matrix[1].z,matrix[2].z,0.0),
-           float4(-#sum(matrix[0]*matrix[3]),-#sum(matrix[1]*matrix[3]),-#sum(matrix[2]*matrix[3]),1.0),
-         );
-}
-@(macro)
-export float4x4 transform(const coordinate_space from,const coordinate_space to){
-  if(from==to){
-    return float4x4(1.0);
-  } else if((from==coordinate_internal)&(to==coordinate_object)){
-    return $state.tangent_to_object_matrix;
-  } else if((from==coordinate_internal)&(to==coordinate_world)){
-    return $state.object_to_world_matrix*$state.tangent_to_object_matrix;
-  } else if((from==coordinate_object)&(to==coordinate_world)){
-    return $state.object_to_world_matrix;
-  } else if((from==coordinate_object)&(to==coordinate_internal)){
-    return affine_inverse($state.tangent_to_object_matrix);
-  } else if((from==coordinate_world)&(to==coordinate_object)){
-    return affine_inverse($state.object_to_world_matrix);
-  } else if((from==coordinate_world)&(to==coordinate_internal)){
-    return affine_inverse($state.object_to_world_matrix*$state.tangent_to_object_matrix);
-  } else {
-    return float4x4(1.0);
-  }
-}
-@(macro)
-export float3 transform_point(const coordinate_space from,const coordinate_space to,const float3 point){
-  return from==to?point:(transform(from,to)*float4(point,1)).xyz;
-}
-@(macro)
-export float3 transform_vector(const coordinate_space from,const coordinate_space to,const float3 vector){
-  return from==to?vector:(transform(from,to)*float4(vector,0)).xyz;
-}
-@(macro)
-export float3 transform_normal(const coordinate_space from,const coordinate_space to,const float3 normal){
-  return from==to?normal:(float4(normal,0)*transform(to,from)).xyz;
-}
-@(macro)
-export float transform_scale(const coordinate_space from,const coordinate_space to,const float scale){
-  return 1.0*scale;
-}
-)*";
-
-static const char *std = R"*(#smdl
-export using ::debug import *;
-export using ::df import *;
-export using ::limits import *;
-export using ::math import *;
-export using ::scene import *;
-export using ::state import *;
-export using ::tex import *;
-)*";
-
-static const char *tex = R"*(#smdl
-import ::math::lerp;
-export enum gamma_mode{gamma_default=0,gamma_linear=0,gamma_srgb=1};
-@(pure macro)
-auto decode_srgb(const auto texel)=#pow(texel,2.2);
-@(pure macro)
-float4 apply_gamma(const int gamma,const float4 texel)=gamma==int(gamma_srgb)?float4(decode_srgb(texel.rgb),texel.a):texel;
-@(pure macro)
-float3 apply_gamma(const int gamma,const float3 texel)=gamma==int(gamma_srgb)?decode_srgb(texel):texel;
-@(pure macro)
-float2 apply_gamma(const int gamma,const float2 texel)=gamma==int(gamma_srgb)?decode_srgb(texel):texel;
-@(pure macro)
-float apply_gamma(const int gamma,const float texel)=gamma==int(gamma_srgb)?decode_srgb(texel):texel;
-@(pure macro)
-int uv_tile_index(const texture_2d tex,const int2 uv_tile){
-  return -1 if(#any((uv_tile<0)|(uv_tile>=tex.tile_count)));
-  return uv_tile.y*tex.tile_count.x+uv_tile.x;
-}
-@(pure macro)
-export int width(const texture_2d tex,const int2 uv_tile=int2(0)){
-  const auto i(uv_tile_index(tex,uv_tile));
-  return i<0?0:tex.tile_extents[i].x;
-}
-@(pure macro)
-export int width(const texture_3d tex)=0;
-@(pure macro)
-export int width(const texture_cube tex)=0;
-@(pure macro)
-export int height(const texture_2d tex,const int2 uv_tile=int2(0)){
-  const auto i(uv_tile_index(tex,uv_tile));
-  return i<0?0:tex.tile_extents[i].y;
-}
-@(pure macro)
-export int height(const texture_3d tex)=0;
-@(pure macro)
-export int height(const texture_cube tex)=0;
-@(pure macro)
-export bool texture_isvalid(const texture_2d tex)=bool(tex.tile_buffers[0]);
-@(pure macro)
-export bool texture_isvalid(const texture_3d tex)=false;
-@(pure macro)
-export bool texture_isvalid(const texture_cube tex)=false;
-@(pure macro)
-export bool texture_isvalid(const texture_ptex tex)=bool(tex.ptr);
-@(pure)
-auto texel_fetch(const texture_2d tex,const int2 coord,const int2 uv_tile=int2(0)){
-  const auto texel_type(*#typeof(tex.tile_buffers[0]));
-  const auto i(uv_tile_index(tex,uv_tile));
-  return texel_type(0) if(i<0);
-  const auto tile_extent(tex.tile_extents[i]);
-  const auto tile_buffer(tex.tile_buffers[i]);
-  return texel_type(0) if(!tile_buffer|#any((coord<0)|(coord>=tile_extent)));
-  return tile_buffer[coord.y*tile_extent.x+coord.x];
-}
-@(pure macro)
-export float4 texel_float4(const texture_2d tex,const int2 coord,const int2 uv_tile=int2(0)){
-  return apply_gamma(tex.gamma,#unpack_float4(texel_fetch(tex,coord,uv_tile)));
-}
-@(pure macro)
-export float3 texel_float3(const texture_2d tex,const int2 coord,const int2 uv_tile=int2(0)){
-  return apply_gamma(tex.gamma,#unpack_float4(texel_fetch(tex,coord,uv_tile)).xyz);
-}
-@(pure macro)
-export float2 texel_float2(const texture_2d tex,const int2 coord,const int2 uv_tile=int2(0)){
-  return apply_gamma(tex.gamma,#unpack_float4(texel_fetch(tex,coord,uv_tile)).xy);
-}
-@(pure macro)
-export float texel_float(const texture_2d tex,const int2 coord,const int2 uv_tile=int2(0)){
-  return apply_gamma(tex.gamma,#unpack_float4(texel_fetch(tex,coord,uv_tile)).x);
-}
-@(pure macro)
-export color texel_color(const texture_2d tex,const int2 coord,const int2 uv_tile=int2(0)){
-  return color(texel_float3(tex,coord,uv_tile));
-}
-export enum wrap_mode{wrap_clamp=0,wrap_repeat=1,wrap_mirrored_repeat=2,wrap_clip=3};
-@(pure macro)
-auto apply_wrap(const auto wrap,const auto n,auto i){
-  auto rem(i%n);
-  const auto neg(#select(rem<0,1,0));
-  rem+=n*neg;
-  const auto quo(i/n+neg);
-  const auto repeat(rem);
-  const auto mirror(#select((quo&1)==1,n-1-rem,rem));
-  i=#select(wrap==0,i,#select(wrap==1,repeat,mirror));
-  i=#max(0,#min(i,n-1));
-  return i;
-}
-@(pure)
-export float4 lookup_float4(
-  const texture_2d tex,
-  float2 coord,
-  const wrap_mode wrap_u=wrap_repeat,
-  const wrap_mode wrap_v=wrap_repeat,
-  const float2 crop_u=float2(0.0,1.0),
-  const float2 crop_v=float2(0.0,1.0),
-){
-  if((tex.tile_count.x>1)|(tex.tile_count.y>1)){
-    const int2 tile_index(#floor(coord));
-    const auto i(uv_tile_index(tex,tile_index));
-    return float4(0) if(i<0);
-    const auto tile_extent(tex.tile_extents[i]);
-    const auto tile_buffer(tex.tile_buffers[i]);
-    return float4(0) if(!tile_buffer);
-    coord-=tile_index;
-    coord*=tile_extent;
-    coord-=0.5;
-    const int2 ic(#floor(coord));
-    const int2 ic0(#min(ic,tile_extent-1));
-    const int2 ic1(#min(ic+1,tile_extent-1));
-    coord-=ic;
-    return apply_gamma(tex.gamma,math::lerp(math::lerp(#unpack_float4(tile_buffer[ic0.x+tile_extent.x*ic0.y]),#unpack_float4(tile_buffer[ic1.x+tile_extent.x*ic0.y]),coord.x),math::lerp(#unpack_float4(tile_buffer[ic0.x+tile_extent.x*ic1.y]),#unpack_float4(tile_buffer[ic1.x+tile_extent.x*ic1.y]),coord.x),coord.y),);
-  } else {
-    const auto i(uv_tile_index(tex,int2(0)));
-    return float4(0) if(i<0);
-    const auto tile_extent(tex.tile_extents[i]);
-    const auto tile_buffer(tex.tile_buffers[i]);
-    return float4(0) if(!tile_buffer);
-    const auto icrop_u(int2(crop_u*tile_extent));
-    const auto icrop_v(int2(crop_v*tile_extent));
-    const auto icorner0(int2(icrop_u[0],icrop_v[0]));
-    const auto icorner1(int2(icrop_u[1],icrop_v[1]));
-    const auto subextent(icorner1-icorner0);
-    coord*=subextent;
-    coord-=0.5;
-    const int2 wrap(int(wrap_u),int(wrap_v));
-    const int2 ic(#floor(coord));
-    const auto ic0(icorner0+apply_wrap(wrap,subextent,ic));
-    const auto ic1(icorner0+apply_wrap(wrap,subextent,ic+1));
-    coord-=ic;
-    return apply_gamma(tex.gamma,math::lerp(math::lerp(#unpack_float4(tile_buffer[ic0.x+tile_extent.x*ic0.y]),#unpack_float4(tile_buffer[ic1.x+tile_extent.x*ic0.y]),coord.x),math::lerp(#unpack_float4(tile_buffer[ic0.x+tile_extent.x*ic1.y]),#unpack_float4(tile_buffer[ic1.x+tile_extent.x*ic1.y]),coord.x),coord.y),);
-  }
-}
-@(pure macro)
-export float3 lookup_float3(
-  const texture_2d tex,
-  const float2 coord,
-  const wrap_mode wrap_u=wrap_repeat,
-  const wrap_mode wrap_v=wrap_repeat,
-  const float2 crop_u=float2(0.0,1.0),
-  const float2 crop_v=float2(0.0,1.0),
-)=lookup_float4(tex,coord,wrap_u,wrap_v,crop_u,crop_v).xyz;
-@(pure macro)
-export float2 lookup_float2(
-  const texture_2d tex,
-  const float2 coord,
-  const wrap_mode wrap_u=wrap_repeat,
-  const wrap_mode wrap_v=wrap_repeat,
-  const float2 crop_u=float2(0.0,1.0),
-  const float2 crop_v=float2(0.0,1.0),
-)=lookup_float4(tex,coord,wrap_u,wrap_v,crop_u,crop_v).xy;
-@(pure macro)
-export float lookup_float(
-  const texture_2d tex,
-  const float2 coord,
-  const wrap_mode wrap_u=wrap_repeat,
-  const wrap_mode wrap_v=wrap_repeat,
-  const float2 crop_u=float2(0.0,1.0),
-  const float2 crop_v=float2(0.0,1.0),
-)=lookup_float4(tex,coord,wrap_u,wrap_v,crop_u,crop_v).x;
-@(pure macro)
-export color lookup_color(
-  const texture_2d tex,
-  const float2 coord,
-  const wrap_mode wrap_u=wrap_repeat,
-  const wrap_mode wrap_v=wrap_repeat,
-  const float2 crop_u=float2(0.0,1.0),
-  const float2 crop_v=float2(0.0,1.0),
-)=color(lookup_float4(tex,coord,wrap_u,wrap_v,crop_u,crop_v).xyz);
-@(foreign)
-void smdl_ptex_evaluate(
-  &void tex,
-  int gamma,
-  int first,
-  int num,
-  &float result,
-);
-@(macro)
-export float4 lookup_float4(const texture_ptex tex,const int channel=0){
-  float4 result;
-  smdl_ptex_evaluate(tex.ptr,tex.gamma,channel,4,&result[0]);
-  return result;
-}
-@(macro)
-export float3 lookup_float3(const texture_ptex tex,const int channel=0){
-  float3 result;
-  smdl_ptex_evaluate(tex.ptr,tex.gamma,channel,3,&result[0]);
-  return result;
-}
-@(macro)
-export float2 lookup_float2(const texture_ptex tex,const int channel=0){
-  float2 result;
-  smdl_ptex_evaluate(tex.ptr,tex.gamma,channel,2,&result[0]);
-  return result;
-}
-@(macro)
-export float lookup_float(const texture_ptex tex,const int channel=0){
-  float result;
-  smdl_ptex_evaluate(tex.ptr,tex.gamma,channel,1,&result);
-  return result;
-}
-@(macro)
-export color lookup_color(const texture_ptex tex,const int channel=0){
-  float3 result;
-  smdl_ptex_evaluate(tex.ptr,tex.gamma,channel,3,&result[0]);
-  return color(result);
-}
-)*";
-
-static const char *pcg32 = R"*(#smdl
-const i64 PCG32_MULTIPLIER=6364136223846793005;
-const i64 PCG32_DEFAULT_INCREMENT=1442695040888963407;
+static const char *const pcg32 = R"*(#smdl
+const int64_t PCG32_MULTIPLIER=6364136223846793005;
+const int64_t PCG32_DEFAULT_INCREMENT=1442695040888963407;
 export struct pcg32{
-  pcg32(i64 seed)=return_from{
+  pcg32(int64_t seed)=return_from{
     auto pcg(pcg32(state: seed));
     pcg.state=pcg.state+pcg.increment;
     pcg.state=pcg.state*PCG32_MULTIPLIER+pcg.increment;
     return pcg;
   };
-  pcg32(i64 seed,i64 stream)=return_from{
+  pcg32(int64_t seed,int64_t stream)=return_from{
     auto pcg(pcg32(state: seed,increment: (stream<<1)|1));
     pcg.state=pcg.state+pcg.increment;
     pcg.state=pcg.state*PCG32_MULTIPLIER+pcg.increment;
     return pcg;
   };
-  i64 state=0;
-  i64 increment=PCG32_DEFAULT_INCREMENT;
+  int64_t state=0;
+  int64_t increment=PCG32_DEFAULT_INCREMENT;
 };
 @(pure)
-export i32 generate_int(inline const &pcg32 this){
+export int32_t generate_int(inline const &pcg32 this){
   state=state*PCG32_MULTIPLIER+increment;
-  return #rotr(i32(((state>>>18)^state)>>>27),i32(31&(state>>>59)));
+  return #rotr(int32_t(((state>>>18)^state)>>>27),int32_t(31&(state>>>59)));
 }
 @(pure)
-export i32 generate_int(const &pcg32 this,const i32 bound){
+export int32_t generate_int(const &pcg32 this,const int32_t bound){
   if(bound>1){
     const auto xmin((-bound)%bound);
     while(true){
@@ -2255,11 +1787,11 @@ export float3 generate_float3(const &pcg32 this)=float3(generate_float(this),gen
 @(pure)
 export float4 generate_float4(const &pcg32 this)=float4(generate_float(this),generate_float(this),generate_float(this),generate_float(this));
 @(pure)
-export void discard(inline const &pcg32 this,i64 n){
-  i64 aTotal(1);
-  i64 bTotal(0);
-  i64 a(PCG32_MULTIPLIER);
-  i64 b(increment);
+export void discard(inline const &pcg32 this,int64_t n){
+  int64_t aTotal(1);
+  int64_t bTotal(0);
+  int64_t a(PCG32_MULTIPLIER);
+  int64_t b(increment);
   while(n!=0){
     if((n&1)!=0){
       aTotal=aTotal*a;
@@ -2273,7 +1805,7 @@ export void discard(inline const &pcg32 this,i64 n){
 }
 )*";
 
-static const char *prospect = R"*(#smdl
+static const char *const prospect = R"*(#smdl
 using ::math import *;
 export struct prospect_result{
   color reflectance=color(0);
@@ -3413,6 +2945,514 @@ export prospect_result prospect(
 }
 )*";
 
+static const char *const math = R"*(#smdl
+export const float PI=$PI;
+export const float TWO_PI=$TWO_PI;
+export const float HALF_PI=$HALF_PI;
+@(macro)
+export auto abs(const auto a)=#abs(a);
+@(macro)
+export auto all(const auto a)=#all(a);
+@(macro)
+export auto any(const auto a)=#any(a);
+@(macro)
+export auto max(const auto a,const auto b)=#max(a,b);
+@(macro)
+export auto min(const auto a,const auto b)=#min(a,b);
+@(macro)
+export auto clamp(const auto a,const auto min,const auto max)=#max(min,#min(a,max));
+@(macro)
+export auto saturate(const auto a)=clamp(a,0.0,1.0);
+@(macro)
+export auto floor(const auto a)=#floor(a);
+@(macro)
+export auto ceil(const auto a)=#ceil(a);
+@(macro)
+export auto round(const auto a)=#round(a);
+@(macro)
+export auto trunc(const auto a)=#trunc(a);
+@(macro)
+export auto frac(const auto a)=a-#floor(a);
+@(macro)
+export auto fmod(const auto a,const auto b)=a%b;
+@(macro)
+export auto modf(const auto a)=auto[2](a0:=#trunc(a),a-a0);
+@(macro)
+export auto isfinite(const auto a)=#isfpclass(a,0b0111111000);
+@(macro)
+export auto isnormal(const auto a)=#isfpclass(a,0b0100001000);
+@(macro)
+export auto isinf(const auto a)=#isfpclass(a,0b1000000100);
+@(macro)
+export auto isnan(const auto a)=#isfpclass(a,0b0000000011);
+@(macro)
+export auto sign(const auto a)=#sign(a);
+@(macro)
+export auto sqrt(const auto a)=#sqrt(a);
+@(macro)
+export auto rsqrt(const auto a)=1.0/#sqrt(a);
+@(macro)
+export auto pow(const auto a,const auto b)=#pow(a,b);
+@(macro)
+export auto cos(const auto a)=#cos(a);
+@(macro)
+export auto sin(const auto a)=#sin(a);
+@(macro)
+export auto tan(const auto a)=#tan(a);
+@(macro)
+export auto acos(const auto a)=#acos(a);
+@(macro)
+export auto asin(const auto a)=#asin(a);
+@(macro)
+export auto atan(const auto a)=#atan(a);
+@(macro)
+export auto atan2(const auto y,const auto x)=#atan2(y,x);
+@(macro)
+export auto cosh(const auto a)=#cosh(a);
+@(macro)
+export auto sinh(const auto a)=#sinh(a);
+@(macro)
+export auto tanh(const auto a)=#tanh(a);
+@(macro)
+export auto sincos(const auto a)=auto[2](#sin(a),#cos(a));
+@(macro)
+export auto radians(const auto a)=a*(PI/180.0);
+@(macro)
+export auto degrees(const auto a)=a*(180.0/PI);
+@(macro)
+export auto exp(const auto a)=#exp(a);
+@(macro)
+export auto exp2(const auto a)=#exp2(a);
+@(macro)
+export auto exp10(const auto a)=#exp10(a);
+@(macro)
+export auto log(const auto a)=#log(a);
+@(macro)
+export auto log2(const auto a)=#log2(a);
+@(macro)
+export auto log10(const auto a)=#log10(a);
+@(macro)
+export auto min_value(const auto a)=#min_value(a);
+@(macro)
+export auto max_value(const auto a)=#max_value(a);
+@(pure)
+export float min_value_wavelength(const color a){
+  int imin=0;
+  float amin=a[0];
+  for(int i=1;i<$WAVELENGTH_BASE_MAX;i++){
+    if(amin>a[i]){
+      amin=a[i];
+      imin=i;
+    }
+  }
+  return $state.wavelength_base[imin];
+}
+@(pure)
+export float max_value_wavelength(const color a){
+  int imax=0;
+  float amax=a[0];
+  for(int i=1;i<$WAVELENGTH_BASE_MAX;i++){
+    if(amax<a[i]){
+      amax=a[i];
+      imax=i;
+    }
+  }
+  return $state.wavelength_base[imax];
+}
+@(macro)
+export auto average(const auto a)=#sum(a)/#num(a);
+@(macro)
+export auto lerp(const auto a,const auto b,const auto l)=(1.0-l)*a+l*b;
+@(macro)
+export auto step(const auto a,const auto b)=#select(b<a,0.0,1.0);
+@(macro)
+export auto smoothstep(const auto a,const auto b,const auto l){
+  const auto t(saturate(l));
+  const auto s(1-t);
+  return s*s*(1+2*t)*a+t*t*(1+2*s)*b;
+}
+@(macro)
+export auto dot(const auto a,const auto b)=#sum(a*b);
+@(macro)
+export auto length(const auto a)=#sqrt(#sum(a*a));
+@(macro)
+export auto normalize(const auto a)=a*(1/length(a));
+@(macro)
+export auto distance(const auto a,const auto b)=length(b-a);
+@(macro)
+export auto cross(const auto a,const auto b)=a.yzx*b.zxy-a.zxy*b.yzx;
+@(macro)
+export auto transpose(const auto a)=#transpose(a);
+@(macro)
+export float luminance(const float3 a)=dot(float3(0.2126,0.7152,0.0722),a);
+@(noinline)
+export float luminance(const color a){
+  float result(0.0);
+  for(int i=0;i<$WAVELENGTH_BASE_MAX;++i){
+    result+=_wyman_y($state.wavelength_base[i])*a[i];
+  }
+  return result/$WAVELENGTH_BASE_MAX;
+}
+@(noinline)
+export color blackbody(const float temperature){
+  const auto t(color($state.wavelength_base)*(temperature/14.387e6));
+  auto res(1+2*t);
+  res=1+3*t*res;
+  res=1+4*t*res;
+  res=1+5*t*res;
+  const auto rcp1(1/t);
+  auto rcp(rcp1/6);
+  for(int k=1;k<10;++k){
+    res+=rcp;
+    rcp*=rcp1/(6+k);
+  }
+  return 5.659994086/res;
+}
+export float eval_at_wavelength(color a,float wavelength){
+  if$($WAVELENGTH_BASE_MAX==1){
+    return a[0];
+  } else {
+    return _polyline_lerp($WAVELENGTH_BASE_MAX,&$state.wavelength_base[0],&a[0],wavelength);
+  }
+}
+)*";
+
+static const char *const scene = R"*(#smdl
+@(foreign pure)
+int smdlDataExists(&void sceneData,string name);
+@(foreign)
+void smdlDataLookup(&void sceneData,string name,int kind,int size,&void result);
+@(macro)
+auto data_lookup(const string name,auto value){
+  const int kind=#is_arithmetic_integral(value)?0:#is_arithmetic_floating_point(value)?1:2;
+  smdlDataLookup($sceneData,name,kind,#num(value),cast<&void>(&value));
+  return value;
+}
+@(macro)
+export bool data_isvalid(const string name)=smdlDataExists($sceneData,name)!=0;
+@(macro)
+export int data_lookup_int(const string name,int default_value=int())=data_lookup(name,default_value);
+@(macro)
+export int2 data_lookup_int2(const string name,int2 default_value=int2())=data_lookup(name,default_value);
+@(macro)
+export int3 data_lookup_int3(const string name,int3 default_value=int3())=data_lookup(name,default_value);
+@(macro)
+export int4 data_lookup_int4(const string name,int4 default_value=int4())=data_lookup(name,default_value);
+@(macro)
+export float data_lookup_float(const string name,float default_value=float())=data_lookup(name,default_value);
+@(macro)
+export float2 data_lookup_float2(const string name,float2 default_value=float2())=data_lookup(name,default_value);
+@(macro)
+export float3 data_lookup_float3(const string name,float3 default_value=float3())=data_lookup(name,default_value);
+@(macro)
+export float4 data_lookup_float4(const string name,float4 default_value=float4())=data_lookup(name,default_value);
+@(macro)
+export color data_lookup_color(const string name,color default_value=color())=data_lookup(name,default_value);
+)*";
+
+static const char *const state = R"*(#smdl
+import ::math::*;
+export enum coordinate_space{coordinate_internal=0,coordinate_object=1,coordinate_world=2};
+@(macro)
+export float3 position()=$state.position;
+@(macro)
+export float3 normal()=$state.normal;
+@(macro)
+export float3 geometry_normal()=$state.geometry_normal;
+@(macro)
+export float3 motion()=$state.motion;
+@(macro)
+export int texture_space_max()=$state.texture_space_max;
+@(macro)
+export float3 texture_coordinate(const int i)=$state.texture_coordinate[i];
+@(macro)
+export float3 texture_tangent_u(const int i)=$state.texture_tangent_u[i];
+@(macro)
+export float3 texture_tangent_v(const int i)=$state.texture_tangent_v[i];
+@(macro)
+export float3 geometry_tangent_u(const int i)=$state.geometry_tangent_u[i];
+@(macro)
+export float3 geometry_tangent_v(const int i)=$state.geometry_tangent_v[i];
+@(macro)
+export float3x3 tangent_space(const int i)=float3x3($state.texture_tangent_u[i],$state.texture_tangent_v[i],$state.normal);
+@(macro)
+export float3x3 geometry_tangent_space(const int i)=float3x3($state.geometry_tangent_u[i],$state.geometry_tangent_v[i],$state.geometry_normal);
+@(macro)
+export int object_id()=$state.object_id;
+@(macro)
+export float3 direction()=float3(0.0,0.0,0.0);
+@(macro)
+export float animation_time()=$state.animation_time;
+export const int WAVELENGTH_BASE_MAX=$WAVELENGTH_BASE_MAX;
+@(macro)
+export float wavelength_min()=$state.wavelength_min;
+@(macro)
+export float wavelength_max()=$state.wavelength_max;
+@(macro)
+export float[WAVELENGTH_BASE_MAX] wavelength_base()=$state.wavelength_base;
+@(macro)
+export float meters_per_scene_unit()=$state.meters_per_scene_unit;
+@(macro)
+export float scene_units_per_meter()=1.0/$state.meters_per_scene_unit;
+@(pure macro)
+float4x4 affine_inverse(const float4x4 matrix){
+  return float4x4(
+           float4(matrix[0].x,matrix[1].x,matrix[2].x,0.0),
+           float4(matrix[0].y,matrix[1].y,matrix[2].y,0.0),
+           float4(matrix[0].z,matrix[1].z,matrix[2].z,0.0),
+           float4(-#sum(matrix[0]*matrix[3]),-#sum(matrix[1]*matrix[3]),-#sum(matrix[2]*matrix[3]),1.0),
+         );
+}
+@(macro)
+export float4x4 transform(const coordinate_space from,const coordinate_space to){
+  if(from==to){
+    return float4x4(1.0);
+  } else if((from==coordinate_internal)&(to==coordinate_object)){
+    return $state.tangent_to_object_matrix;
+  } else if((from==coordinate_internal)&(to==coordinate_world)){
+    return $state.object_to_world_matrix*$state.tangent_to_object_matrix;
+  } else if((from==coordinate_object)&(to==coordinate_world)){
+    return $state.object_to_world_matrix;
+  } else if((from==coordinate_object)&(to==coordinate_internal)){
+    return affine_inverse($state.tangent_to_object_matrix);
+  } else if((from==coordinate_world)&(to==coordinate_object)){
+    return affine_inverse($state.object_to_world_matrix);
+  } else if((from==coordinate_world)&(to==coordinate_internal)){
+    return affine_inverse($state.object_to_world_matrix*$state.tangent_to_object_matrix);
+  } else {
+    return float4x4(1.0);
+  }
+}
+@(macro)
+export float3 transform_point(const coordinate_space from,const coordinate_space to,const float3 point){
+  return from==to?point:(transform(from,to)*float4(point,1)).xyz;
+}
+@(macro)
+export float3 transform_vector(const coordinate_space from,const coordinate_space to,const float3 vector){
+  return from==to?vector:(transform(from,to)*float4(vector,0)).xyz;
+}
+@(macro)
+export float3 transform_normal(const coordinate_space from,const coordinate_space to,const float3 normal){
+  return from==to?normal:(float4(normal,0)*transform(to,from)).xyz;
+}
+@(macro)
+export float transform_scale(const coordinate_space from,const coordinate_space to,const float scale){
+  return 1.0*scale;
+}
+)*";
+
+static const char *const std = R"*(#smdl
+export using ::debug import *;
+export using ::df import *;
+export using ::limits import *;
+export using ::math import *;
+export using ::scene import *;
+export using ::state import *;
+export using ::tex import *;
+)*";
+
+static const char *const tex = R"*(#smdl
+import ::math::lerp;
+export enum gamma_mode{gamma_default=0,gamma_linear=0,gamma_srgb=1};
+@(pure macro)
+auto decodeSRGB(const auto texel)=#pow(texel,2.2);
+@(pure macro)
+float4 applyGamma(const int gamma,const float4 texel)=gamma==int(gamma_srgb)?float4(decodeSRGB(texel.rgb),texel.a):texel;
+@(pure macro)
+float3 applyGamma(const int gamma,const float3 texel)=gamma==int(gamma_srgb)?decodeSRGB(texel):texel;
+@(pure macro)
+float2 applyGamma(const int gamma,const float2 texel)=gamma==int(gamma_srgb)?decodeSRGB(texel):texel;
+@(pure macro)
+float applyGamma(const int gamma,const float texel)=gamma==int(gamma_srgb)?decodeSRGB(texel):texel;
+@(pure macro)
+int getTileIndex(const texture_2d tex,const int2 uv_tile){
+  return -1 if(#any((uv_tile<0)|(uv_tile>=tex.tile_count)));
+  return uv_tile.y*tex.tile_count.x+uv_tile.x;
+}
+@(pure macro)
+export int width(const texture_2d tex,const int2 uv_tile=int2(0)){
+  const auto i(getTileIndex(tex,uv_tile));
+  return i<0?0:tex.tile_extents[i].x;
+}
+@(pure macro)
+export int width(const texture_3d tex)=0;
+@(pure macro)
+export int width(const texture_cube tex)=0;
+@(pure macro)
+export int height(const texture_2d tex,const int2 uv_tile=int2(0)){
+  const auto i(getTileIndex(tex,uv_tile));
+  return i<0?0:tex.tile_extents[i].y;
+}
+@(pure macro)
+export int height(const texture_3d tex)=0;
+@(pure macro)
+export int height(const texture_cube tex)=0;
+@(pure macro)
+export bool texture_isvalid(const texture_2d tex)=bool(tex.tile_buffers[0]);
+@(pure macro)
+export bool texture_isvalid(const texture_3d tex)=false;
+@(pure macro)
+export bool texture_isvalid(const texture_cube tex)=false;
+@(pure macro)
+export bool texture_isvalid(const texture_ptex tex)=bool(tex.ptr);
+@(pure)
+auto texel_fetch(const texture_2d tex,const int2 coord,const int2 uv_tile=int2(0)){
+  const auto texel_type(*#typeof(tex.tile_buffers[0]));
+  const auto i(getTileIndex(tex,uv_tile));
+  return texel_type(0) if(i<0);
+  const auto tileExtent(tex.tile_extents[i]);
+  const auto tileBuffer(tex.tile_buffers[i]);
+  return texel_type(0) if(!tileBuffer|#any((coord<0)|(coord>=tileExtent)));
+  return tileBuffer[coord.y*tileExtent.x+coord.x];
+}
+@(pure macro)
+export float4 texel_float4(const texture_2d tex,const int2 coord,const int2 uv_tile=int2(0)){
+  return applyGamma(tex.gamma,#unpack_float4(texel_fetch(tex,coord,uv_tile)));
+}
+@(pure macro)
+export float3 texel_float3(const texture_2d tex,const int2 coord,const int2 uv_tile=int2(0)){
+  return applyGamma(tex.gamma,#unpack_float4(texel_fetch(tex,coord,uv_tile)).xyz);
+}
+@(pure macro)
+export float2 texel_float2(const texture_2d tex,const int2 coord,const int2 uv_tile=int2(0)){
+  return applyGamma(tex.gamma,#unpack_float4(texel_fetch(tex,coord,uv_tile)).xy);
+}
+@(pure macro)
+export float texel_float(const texture_2d tex,const int2 coord,const int2 uv_tile=int2(0)){
+  return applyGamma(tex.gamma,#unpack_float4(texel_fetch(tex,coord,uv_tile)).x);
+}
+@(pure macro)
+export color texel_color(const texture_2d tex,const int2 coord,const int2 uv_tile=int2(0)){
+  return color(texel_float3(tex,coord,uv_tile));
+}
+export enum wrap_mode{wrap_clamp=0,wrap_repeat=1,wrap_mirrored_repeat=2,wrap_clip=3};
+@(pure macro)
+auto applyWrap(const auto wrap,const auto n,auto i){
+  auto rem(i%n);
+  const auto neg(#select(rem<0,1,0));
+  rem+=n*neg;
+  const auto quo(i/n+neg);
+  const auto repeat(rem);
+  const auto mirror(#select((quo&1)==1,n-1-rem,rem));
+  i=#select(wrap==0,i,#select(wrap==1,repeat,mirror));
+  i=#max(0,#min(i,n-1));
+  return i;
+}
+@(pure)
+export float4 lookup_float4(
+  const texture_2d tex,
+  float2 coord,
+  const wrap_mode wrap_u=wrap_repeat,
+  const wrap_mode wrap_v=wrap_repeat,
+  const float2 crop_u=float2(0.0,1.0),
+  const float2 crop_v=float2(0.0,1.0),
+){
+  if((tex.tile_count.x>1)|(tex.tile_count.y>1)){
+    const int2 tileIndex(#floor(coord));
+    const auto i(getTileIndex(tex,tileIndex));
+    return float4(0) if(i<0);
+    const auto tileExtent(tex.tile_extents[i]);
+    const auto tileBuffer(tex.tile_buffers[i]);
+    return float4(0) if(!tileBuffer);
+    coord-=tileIndex;
+    coord*=tileExtent;
+    coord-=0.5;
+    const int2 ic(#floor(coord));
+    const int2 ic0(#min(ic,tileExtent-1));
+    const int2 ic1(#min(ic+1,tileExtent-1));
+    coord-=ic;
+    return applyGamma(tex.gamma,math::lerp(math::lerp(#unpack_float4(tileBuffer[ic0.x+tileExtent.x*ic0.y]),#unpack_float4(tileBuffer[ic1.x+tileExtent.x*ic0.y]),coord.x),math::lerp(#unpack_float4(tileBuffer[ic0.x+tileExtent.x*ic1.y]),#unpack_float4(tileBuffer[ic1.x+tileExtent.x*ic1.y]),coord.x),coord.y),);
+  } else {
+    const auto i(getTileIndex(tex,int2(0)));
+    return float4(0) if(i<0);
+    const auto tileExtent(tex.tile_extents[i]);
+    const auto tileBuffer(tex.tile_buffers[i]);
+    return float4(0) if(!tileBuffer);
+    const auto iCropU(int2(crop_u*tileExtent));
+    const auto iCropV(int2(crop_v*tileExtent));
+    const auto iCorner0(int2(iCropU[0],iCropV[0]));
+    const auto iCorner1(int2(iCropU[1],iCropV[1]));
+    const auto subextent(iCorner1-iCorner0);
+    coord*=subextent;
+    coord-=0.5;
+    const int2 wrap(int(wrap_u),int(wrap_v));
+    const int2 ic(#floor(coord));
+    const auto ic0(iCorner0+applyWrap(wrap,subextent,ic));
+    const auto ic1(iCorner0+applyWrap(wrap,subextent,ic+1));
+    coord-=ic;
+    return applyGamma(tex.gamma,math::lerp(math::lerp(#unpack_float4(tileBuffer[ic0.x+tileExtent.x*ic0.y]),#unpack_float4(tileBuffer[ic1.x+tileExtent.x*ic0.y]),coord.x),math::lerp(#unpack_float4(tileBuffer[ic0.x+tileExtent.x*ic1.y]),#unpack_float4(tileBuffer[ic1.x+tileExtent.x*ic1.y]),coord.x),coord.y),);
+  }
+}
+@(pure macro)
+export float3 lookup_float3(
+  const texture_2d tex,
+  const float2 coord,
+  const wrap_mode wrap_u=wrap_repeat,
+  const wrap_mode wrap_v=wrap_repeat,
+  const float2 crop_u=float2(0.0,1.0),
+  const float2 crop_v=float2(0.0,1.0),
+)=lookup_float4(tex,coord,wrap_u,wrap_v,crop_u,crop_v).xyz;
+@(pure macro)
+export float2 lookup_float2(
+  const texture_2d tex,
+  const float2 coord,
+  const wrap_mode wrap_u=wrap_repeat,
+  const wrap_mode wrap_v=wrap_repeat,
+  const float2 crop_u=float2(0.0,1.0),
+  const float2 crop_v=float2(0.0,1.0),
+)=lookup_float4(tex,coord,wrap_u,wrap_v,crop_u,crop_v).xy;
+@(pure macro)
+export float lookup_float(
+  const texture_2d tex,
+  const float2 coord,
+  const wrap_mode wrap_u=wrap_repeat,
+  const wrap_mode wrap_v=wrap_repeat,
+  const float2 crop_u=float2(0.0,1.0),
+  const float2 crop_v=float2(0.0,1.0),
+)=lookup_float4(tex,coord,wrap_u,wrap_v,crop_u,crop_v).x;
+@(pure macro)
+export color lookup_color(
+  const texture_2d tex,
+  const float2 coord,
+  const wrap_mode wrap_u=wrap_repeat,
+  const wrap_mode wrap_v=wrap_repeat,
+  const float2 crop_u=float2(0.0,1.0),
+  const float2 crop_v=float2(0.0,1.0),
+)=color(lookup_float4(tex,coord,wrap_u,wrap_v,crop_u,crop_v).xyz);
+@(foreign)
+void smdlPtexEvaluate(&void tex,int gamma,int first,int num,&float result);
+@(macro)
+export float4 lookup_float4(const texture_ptex tex,const int channel=0){
+  float4 result;
+  smdlPtexEvaluate(tex.ptr,tex.gamma,channel,4,&result[0]);
+  return result;
+}
+@(macro)
+export float3 lookup_float3(const texture_ptex tex,const int channel=0){
+  float3 result;
+  smdlPtexEvaluate(tex.ptr,tex.gamma,channel,3,&result[0]);
+  return result;
+}
+@(macro)
+export float2 lookup_float2(const texture_ptex tex,const int channel=0){
+  float2 result;
+  smdlPtexEvaluate(tex.ptr,tex.gamma,channel,2,&result[0]);
+  return result;
+}
+@(macro)
+export float lookup_float(const texture_ptex tex,const int channel=0){
+  float result;
+  smdlPtexEvaluate(tex.ptr,tex.gamma,channel,1,&result);
+  return result;
+}
+@(macro)
+export color lookup_color(const texture_ptex tex,const int channel=0){
+  float3 result;
+  smdlPtexEvaluate(tex.ptr,tex.gamma,channel,3,&result[0]);
+  return color(result);
+}
+)*";
+
 [[nodiscard]] static const char *get_source_code(std::string_view name) {
   if (name == "anno")
     return anno;
@@ -3422,8 +3462,14 @@ export prospect_result prospect(
     return debug;
   if (name == "df")
     return df;
+  if (name == "io")
+    return io;
   if (name == "limits")
     return limits;
+  if (name == "pcg32")
+    return pcg32;
+  if (name == "prospect")
+    return prospect;
   if (name == "math")
     return math;
   if (name == "scene")
@@ -3434,10 +3480,6 @@ export prospect_result prospect(
     return std;
   if (name == "tex")
     return tex;
-  if (name == "pcg32")
-    return pcg32;
-  if (name == "prospect")
-    return prospect;
   return nullptr;
 }
 #include "builtin/albedo/diffuse_reflection_bsdf.inl"

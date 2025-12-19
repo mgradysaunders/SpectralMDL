@@ -102,12 +102,12 @@ public:
   public:
     /// Is null?
     [[nodiscard]] bool operator!() const noexcept {
-      return jit_struct == nullptr;
+      return ptr == nullptr;
     }
 
     /// Is non-null?
     [[nodiscard]] operator bool() const noexcept {
-      return jit_struct != nullptr;
+      return ptr != nullptr;
     }
 
   public:
@@ -116,7 +116,7 @@ public:
     /// This holds the JIT material structure, which is entirely opaque to the
     /// user over in C++ land. Just ignore this!
     ///
-    const void *jit_struct{};
+    const void *ptr{};
 
     struct material_geometry final {
       /// The displacement vector.
@@ -134,6 +134,9 @@ public:
 
     /// The index of refraction.
     float ior{};
+
+    /// The temperature in Kelvin or -1 if undefined.
+    float temperature{};
 
     /// The volume absorption coefficient if applicable.
     ///

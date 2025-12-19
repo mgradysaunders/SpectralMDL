@@ -71,17 +71,17 @@ const static auto RGB_TO_COLOR_CURVES = auto[](
 /// to mean white instead of `color(1.0)`. 
 ///
 @(hot noinline)
-color rgb_to_color_nontrivial(float3 rgb) {
+color nontrivialRGBToColor(float3 rgb) {
   #assert(bool($state.wavelength_base));
   const int k0(#all(rgb.xx < rgb.yz) ? 0 : rgb.y < rgb.z ? 1 : 2);
-  const int k0_plus_1((k0 + 1) % 3);
-  const int k0_plus_2((k0 + 2) % 3);
-  const bool should_swap(rgb[k0_plus_1] > rgb[k0_plus_2]);
-  const int k1(should_swap ? k0_plus_2 : k0_plus_1);
-  const int k2(should_swap ? k0_plus_1 : k0_plus_2);
-  const float coeff_w(rgb[k0]);
-  const float coeff_cmy(rgb[k1] - rgb[k0]);
-  const float coeff_rgb(rgb[k2] - rgb[k1]);
+  const int k0Plus1((k0 + 1) % 3);
+  const int k0Plus2((k0 + 2) % 3);
+  const bool shouldSwap(rgb[k0Plus1] > rgb[k0Plus2]);
+  const int k1(shouldSwap ? k0Plus2 : k0Plus1);
+  const int k2(shouldSwap ? k0Plus1 : k0Plus2);
+  const float coeffW(rgb[k0]);
+  const float coeffCMY(rgb[k1] - rgb[k0]);
+  const float coeffRGB(rgb[k2] - rgb[k1]);
   color c(0.0);
   color w(color($state.wavelength_base));
   w -= RGB_TO_COLOR_MIN_WAVELENGTH;
@@ -91,9 +91,9 @@ color rgb_to_color_nontrivial(float3 rgb) {
     if ((0.0 <= t) & (t <= RGB_TO_COLOR_NUM_WAVELENGTHS)) {
       int j(#min(int(t), RGB_TO_COLOR_NUM_WAVELENGTHS - 2));
       t = #min(t - j, 1.0);
-      c[i] = #sum(float2(1 - t, t) * (coeff_w * float2(&RGB_TO_COLOR_CURVES[0][j]) +        //
-                                      coeff_cmy * float2(&RGB_TO_COLOR_CURVES[k0 + 1][j]) + //
-                                      coeff_rgb * float2(&RGB_TO_COLOR_CURVES[k2 + 4][j])));
+      c[i] = #sum(float2(1 - t, t) * (coeffW * float2(&RGB_TO_COLOR_CURVES[0][j]) +        //
+                                      coeffCMY * float2(&RGB_TO_COLOR_CURVES[k0 + 1][j]) + //
+                                      coeffRGB * float2(&RGB_TO_COLOR_CURVES[k2 + 4][j])));
     }
   }
   return #max(c * 0.94, 0.0);
@@ -105,7 +105,7 @@ export color _rgb_to_color(const float3 rgb) {
   if (#all(rgb.xx == rgb.yz)) {
     return color(rgb.x);
   } else {
-    return rgb_to_color_nontrivial(rgb);
+    return nontrivialRGBToColor(rgb);
   }
 }
 
@@ -158,7 +158,6 @@ export color _samples_to_color(const int count, const &float wavelengths, const 
   }
   return c;
 }
-
 
 /// The fits of CIE 1931 XYZ by Wyman et al for wavelength in nanometers.
 ///
@@ -219,7 +218,7 @@ export float3 _color_to_rgb(const color c) {
 /// The JIT-visible RGB-to-color function advertised by the `Compiler` 
 /// for convenience.
 @(visible noinline)
-void jit_rgb_to_color(const &float3 rgb, const &float cptr) {
+void smdlRGBToColor(const &float3 rgb, const &float cptr) {
   color c(_rgb_to_color(*rgb));
   #memcpy(cptr, &c, #sizeof(color));
 }
@@ -227,7 +226,7 @@ void jit_rgb_to_color(const &float3 rgb, const &float cptr) {
 /// The JIT-visible color-to-RGB function advertised by the `Compiler` 
 /// for convenience.
 @(visible noinline)
-void jit_color_to_rgb(const &float cptr, const &float3 rgb) {
+void smdlColorToRGB(const &float cptr, const &float3 rgb) {
   *rgb = _color_to_rgb(color(cptr));
 }
 
@@ -363,7 +362,7 @@ export struct spectral_curve {
 
   /// The wavelengths in nanometers.
   const &float wavelengths = none;
-  
+
   /// The amplitudes.
   const &float amplitudes = none;
 };
@@ -446,7 +445,7 @@ export struct material {
   /// The hair Bidirectional Scattering Distribution Function (BSDF).
   hair_bsdf hair = hair_bsdf();
 
-  // TODO float temperature = -1;
+  float temperature = -1;
 };
 
 const int MATERIAL_TRANSPORT_IMPORTANCE = (1 << 0);
@@ -463,51 +462,54 @@ const int MATERIAL_HAS_HAIR = (1 << 7);
 
 /// An instance of a material corresponding to `smdl::JIT::Material::Instance` 
 /// in the C++ API.
-export struct _material_instance {
+export struct _MaterialInstance {
   /// The material deep copied with `#bump()`.
-  const &material jit_struct;
+  &material ptr;
 
   /// The geometry displacement.
-  const &material_geometry geometry = &jit_struct.geometry;
+  &material_geometry geometry = &ptr.geometry;
 
   /// The index of refraction.
-  const float ior = jit_struct.ior;
+  float ior = ptr.ior;
+
+  /// The temperature.
+  float temperature = ptr.temperature;
 
   /// The volume absorption coefficient.
-  const &color absorption_coefficient = #is_void(jit_struct.volume.absorption_coefficient) ? none : &jit_struct.volume.absorption_coefficient;
+  &color absorption_coefficient = #is_void(ptr.volume.absorption_coefficient) ? none : &ptr.volume.absorption_coefficient;
 
   /// The volume scattering coefficient.
-  const &color scattering_coefficient = #is_void(jit_struct.volume.scattering_coefficient) ? none : &jit_struct.volume.scattering_coefficient;
+  &color scattering_coefficient = #is_void(ptr.volume.scattering_coefficient) ? none : &ptr.volume.scattering_coefficient;
 
   /// The wavelength count.
-  const int wavelength_base_max = $WAVELENGTH_BASE_MAX;
+  int wavelength_base_max = $WAVELENGTH_BASE_MAX;
 
   /// The flags.
-  const int flags = $state.transport                                                  //
-                    | (jit_struct.thin_walled ? MATERIAL_THIN_WALLED : 0)             //
-                    | (!#is_default(jit_struct.surface) ? MATERIAL_HAS_SURFACE : 0)   //
-                    | (!#is_default(jit_struct.backface) ? MATERIAL_HAS_BACKFACE : 0) //
-                    | (!#is_default(jit_struct.volume) ? MATERIAL_HAS_VOLUME : 0)     //
-                    | (!#is_default(jit_struct.hair) ? MATERIAL_HAS_HAIR : 0);
+  int flags = $state.transport                                           //
+              | (ptr.thin_walled ? MATERIAL_THIN_WALLED : 0)             //
+              | (!#is_default(ptr.surface) ? MATERIAL_HAS_SURFACE : 0)   //
+              | (!#is_default(ptr.backface) ? MATERIAL_HAS_BACKFACE : 0) //
+              | (!#is_default(ptr.volume) ? MATERIAL_HAS_VOLUME : 0)     //
+              | (!#is_default(ptr.hair) ? MATERIAL_HAS_HAIR : 0);
 
   /// The df flags for the `surface` component.
-  const int df_flags_surface = jit_struct.surface.scattering._flags;
+  int df_flags_surface = ptr.surface.scattering._flags;
 
   /// The df flags for the `backface` component.
-  const int df_flags_backface = jit_struct.backface.scattering._flags;
+  int df_flags_backface = ptr.backface.scattering._flags;
 
   /// The tangent-to-world matrix held by the `State` during construction.
-  const float3x3 tangent_to_world = let {
-                                   const auto tangent_to_world_matrix = $state.object_to_world_matrix * $state.tangent_to_object_matrix;
-                                 } in float3x3(
-                                   tangent_to_world_matrix[0].xyz,
-                                   tangent_to_world_matrix[1].xyz,
-                                   tangent_to_world_matrix[2].xyz,
-                                 );
+  float3x3 tangent_to_world = let {
+                                const auto tangent_to_world_matrix = $state.object_to_world_matrix * $state.tangent_to_object_matrix;
+                              } in float3x3(
+                                tangent_to_world_matrix[0].xyz,
+                                tangent_to_world_matrix[1].xyz,
+                                tangent_to_world_matrix[2].xyz,
+                              );
 };
 
 /// Albedo look-up table (LUT) for energy correction.
-export struct _albedo_lut {
+export struct _AlbedoLUT {
   /// The number of samples of view angle cosine. 
   const int num_cos_theta = 0;
 
@@ -557,8 +559,8 @@ export auto _complex_abs(const complex z) = #sqrt(_complex_norm(z));
 /// Complex inverse.
 @(pure macro)
 export auto _complex_inv(const complex z) = let {
-                                               const auto denom = 1.0 / _complex_norm(z);
-                                             } in complex(z.a * denom, -z.b * denom);
+                                              const auto denom = 1.0 / _complex_norm(z);
+                                            } in complex(z.a * denom, -z.b * denom);
 
 /// Complex addition.
 @(pure macro)
@@ -579,8 +581,8 @@ export auto _complex_div(const complex z, const complex w) = _complex_mul(z, _co
 /// Complex exponential.
 @(pure macro)
 export auto _complex_exp(const complex z) = let {
-                                               const auto exp_a = #exp(z.a);
-                                             } in complex(exp_a * #cos(z.b), exp_a * #sin(z.b));
+                                              const auto a = #exp(z.a);
+                                            } in complex(a * #cos(z.b), a * #sin(z.b));
 
 /// Complex logarithm.
 @(pure macro)
@@ -589,52 +591,46 @@ export auto _complex_log(const complex z) = complex(#log(_complex_abs(z)), #atan
 /// Complex square root.
 @(pure macro)
 export auto _complex_sqrt(const complex z) = let {
-                                                const auto abs_z = _complex_abs(z);
-                                              } in complex(
-                                                #sqrt(0.5 * (abs_z + z.a)),
-                                                #sqrt(0.5 * (abs_z - z.a)) * #sign(z.b),
-                                              );
+                                               const auto absz = _complex_abs(z);
+                                             } in complex(
+                                               #sqrt(0.5 * (absz + z.a)),
+                                               #sqrt(0.5 * (absz - z.a)) * #sign(z.b),
+                                             );
 
-/// A straight-forward hash function for use with procedural algorithms.
+/// A hash function for use with procedural algorithms.
 @(pure)
-export i32 _hash(auto value) {
+export int32_t _hash(auto value) {
   if $(#is_arithmetic_scalar(value)) {
     if $(#is_arithmetic_integral(value)) {
       if $(#sizeof(value) <= 4) {
         // MurmurHash3 finalizer for 32-bits
-        auto h(i32(value) + 3266445271);
-        h ^= h >>> 16, h *= 0x85EBCA6B;
-        h ^= h >>> 13, h *= 0xC2B2AE35;
-        h ^= h >>> 16;
-        return h;
+        auto hash(int32_t(value) + 3266445271);
+        hash ^= hash >>> 16, hash *= 0x85EBCA6B;
+        hash ^= hash >>> 13, hash *= 0xC2B2AE35;
+        hash ^= hash >>> 16;
+        return hash;
       } else {
         // MurmurHash3 finalizer for 64-bits
-        auto h(i64(value) + 13898551614298330943);
-        h ^= h >>> 33, h *= 0xFF51AFD7ED558CCD;
-        h ^= h >>> 33, h *= 0xC4CEB9FE1A85EC53;
-        h ^= h >>> 33;
-        return h;
+        auto hash(int64_t(value) + 13898551614298330943);
+        hash ^= hash >>> 33, hash *= 0xFF51AFD7ED558CCD;
+        hash ^= hash >>> 33, hash *= 0xC4CEB9FE1A85EC53;
+        hash ^= hash >>> 33;
+        return hash;
       }
     } else {
-      // Interpret bit pattern as equivalent-sized integer type
-      auto h(#type_int(8 * #sizeof(value))());
-      #memcpy(&h, &value, #sizeof(value));
-      return _hash(h);
+      return _hash(#bitcast(#type_int(8 * #sizeof(value)), value));
     }
   } else if $(#is_array(value) | #is_arithmetic_vector(value) | #is_arithmetic_matrix(value) | (#typeof(value) == color)) {
-    auto hTotal(_hash(value[0]));
+    auto totalHash(_hash(value[0]));
     for (int i = 1; i < #num(value); ++i) {
-      auto h(_hash(value[i]));
-      h = 0x55555555 * (h ^ (h >>> 16));
-      h = 3423571495 * (h ^ (h >>> 16));
-      hTotal = #rotl(hTotal, 10) ^ h;
+      auto hash(_hash(value[i]));
+      hash = 0x55555555 * (hash ^ (hash >>> 16));
+      hash = 3423571495 * (hash ^ (hash >>> 16));
+      totalHash = #rotl(totalHash, 10) ^ hash;
     }
-    return hTotal;
+    return totalHash;
   } else if $(#is_pointer(value)) {
-    // Interpret bit pattern as equivalent-sized integer type
-    auto h(#type_int(8 * #sizeof(value))());
-    #memcpy(&h, &value, #sizeof(value));
-    return _hash(h);
+    return _hash(#bitcast(intptr_t, value));
   } else if $(#is_union(value)) {
     visit v in value {
       return _hash(v);

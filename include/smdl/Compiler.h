@@ -275,11 +275,11 @@ private:
 
   /// The JIT-compiled color-to-RGB conversion function.
   JIT::Function<void(const State &state, const float *cptr, float3 &rgb)>
-      mColorToRGB{"jit_color_to_rgb"};
+      mColorToRGB{"smdlColorToRGB"};
 
   /// The JIT-compiled RGB-to-color conversion function.
   JIT::Function<void(const State &state, const float3 &rgb, float *cptr)>
-      mRGBToColor{"jit_rgb_to_color"};
+      mRGBToColor{"smdlRGBToColor"};
 
   /// The JIT-compiled materials.
   std::vector<JIT::Material> mMaterials;

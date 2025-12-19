@@ -11,11 +11,11 @@ namespace smdl::builtin {
 
 STR
 
-fnames = ['anno', 'api', 'debug', 'df', 'limits', 'math', 'scene', 'state', 'std', 'tex', 'pcg32', 'prospect']
+fnames = ['anno', 'api', 'debug', 'df', 'io', 'limits', 'pcg32', 'prospect', 'math', 'scene', 'state', 'std', 'tex']
 for fname in fnames 
   text = `smdl format -c --no-comments builtin/#{fname}.smdl`
   text = File.read "builtin/#{fname}.smdl" unless $?.success?
-  f.write "static const char *#{fname} = R\"*(#{text})*\";\n\n"
+  f.write "static const char *const #{fname} = R\"*(#{text})*\";\n\n"
 end
 f.write <<STR
 [[nodiscard]] static const char *get_source_code(std::string_view name) {

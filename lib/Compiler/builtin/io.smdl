@@ -1,0 +1,72 @@
+#smdl
+
+export typedef &void FILE;
+
+export const auto stdin = cast<FILE>($stdin);
+
+export const auto stdout = cast<FILE>($stdout);
+
+export const auto stderr = cast<FILE>($stderr);
+
+@(pure foreign)
+export FILE fopen(string filename, string mode);
+
+@(pure foreign)
+export void fclose(FILE file);
+
+@(pure foreign)
+export void fflush(FILE file);
+
+@(pure foreign)
+export int feof(FILE file);
+
+@(pure foreign)
+export int ferror(FILE file);
+
+@(pure foreign)
+export int fgetc(FILE file);
+
+@(pure foreign)
+export &char fgets(&char str, int count, FILE file);
+
+@(pure foreign)
+export int fputc(int ch, FILE file);
+
+@(pure foreign)
+export int fputs(string str, FILE file);
+
+@(pure foreign)
+export size_t fread(&void buffer, size_t size, size_t count, FILE file);
+
+@(pure foreign)
+export size_t fwrite(&void buffer, size_t size, size_t count, FILE file);
+
+@(pure foreign)
+export int fscanf(FILE file, string format, ...);
+
+@(pure foreign)
+export int fprintf(FILE file, string format, ...);
+
+@(pure foreign)
+export long ftell(FILE file);
+
+export const int SEEK_SET = $SEEK_SET;
+
+export const int SEEK_CUR = $SEEK_CUR;
+
+export const int SEEK_END = $SEEK_END;
+
+@(pure foreign)
+export int fseek(FILE file, long offset, int origin);
+
+@(pure foreign)
+export void rewind(FILE file);
+
+@(pure foreign)
+export void clearerr(FILE file);
+
+@(pure foreign)
+export void perror(string message = "");
+
+@(pure foreign)
+export FILE tmpfile();

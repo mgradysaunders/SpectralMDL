@@ -101,22 +101,21 @@ unit_test "Microfacet distributions" {
   #assert(integrateSmithNormalPDF(df::microfacet::distribution_beckmann(), float2(1.1, 0.7)) ~== [1e-2] 1.0);
 }
 
-struct evaluate_result {
+struct EvaluateResult {
   color f = color(0);
-
   float2 pdf = float2(0);
 };
 
-evaluate_result evaluate(const bsdf scattering, float3 wo, float3 wi) {
+EvaluateResult evaluate(const bsdf scattering, float3 wo, float3 wi) {
   auto mat = material(surface: material_surface(scattering: scattering));
-  auto instance = _material_instance(&mat);
-  float pdf_fwd = 0;
-  float pdf_rev = 0;
+  auto instance = _MaterialInstance(&mat);
+  float pdfFwd = 0;
+  float pdfRev = 0;
   color f = color(0);
-  if (df::_scatterEvaluate(&instance, &wo, &wi, &pdf_fwd, &pdf_rev, cast<&float>(&f)))
-    return evaluate_result(f, float2(pdf_fwd, pdf_rev));
+  if (df::_scatterEvaluate(&instance, &wo, &wi, &pdfFwd, &pdfRev, cast<&float>(&f)))
+    return EvaluateResult(f, float2(pdfFwd, pdfRev));
   else
-    return evaluate_result();
+    return EvaluateResult();
 }
 
 unit_test "Reciprocity" {
@@ -146,7 +145,7 @@ unit_test "Phase" {
   auto wo = math::normalize(float3(-1.0, 0.0, 0.0));
   auto wi = math::normalize(float3(+1.0, -0.0, 0.0));
   auto mat = material(volume: material_volume(scattering: df::anisotropic_vdf(directional_bias: 0.5)));
-  auto instance = _material_instance(&mat);
+  auto instance = _MaterialInstance(&mat);
   #print(df::_volumeScatterEvaluate(&instance, &wo, &wi), "\n");
   #print(df::_volumeScatterEvaluate(&instance, &wo, &wo), "\n");
 }

@@ -317,12 +317,12 @@ float LightProfile::interpolate(float3 wo) const noexcept {
 
     // Calculate the vertical and horizontal angles. NOTE: This is currently
     // not tested and I'm not sure how correct this is! The documentation is
-    // not entirely clear and the statement that "the photometric plane 
-    // coincides with (blank)" is confusing. I assume that "the polar axis 
+    // not entirely clear and the statement that "the photometric plane
+    // coincides with (blank)" is confusing. I assume that "the polar axis
     // is (blank)" means to calculate vertical angles with respect to that
     // axis. Thus, horizontal angles must be calculated from the left over
-    // vector components somehow. At least for now, I assume the "coincides 
-    // with (blank)" remark means to align horizontal angle zero on that 
+    // vector components somehow. At least for now, I assume the "coincides
+    // with (blank)" remark means to align horizontal angle zero on that
     // axis.
     float vertAngle{};
     float horzAngle{};
@@ -441,14 +441,15 @@ float LightProfile::interpolate(float vertAngle,
   }
 }
 
+} // namespace smdl
+
 extern "C" {
 
-SMDL_EXPORT float smdl_light_profile_interpolate(const void *profile,
-                                                 const float3 &wo) {
-  return profile ? static_cast<const LightProfile *>(profile)->interpolate(wo)
-                 : 0.0f;
+SMDL_EXPORT float smdLightProfileInterpolate(const void *profile,
+                                             const smdl::float3 &wo) {
+  return profile
+             ? static_cast<const smdl::LightProfile *>(profile)->interpolate(wo)
+             : 0.0f;
 }
 
 } // extern "C"
-
-} // namespace smdl

@@ -1,5 +1,4 @@
 #include "Context.h"
-
 #include "builtin.h"
 
 namespace smdl {
@@ -44,6 +43,7 @@ Context::Context(Compiler &compiler) : compiler(compiler) {
       {"int3", getComptimeMetaType(getIntType(Extent(3)))},
       {"int4", getComptimeMetaType(getIntType(Extent(4)))},
       {"string", getComptimeMetaType(getStringType())},
+      {"void", getComptimeMetaType(getVoidType())},
       {"$DEBUG", getComptimeBool(compiler.enableDebug)},
       {"$DOUBLE_EPS",
        getComptimeDouble(std::numeric_limits<double>::epsilon())},
@@ -52,17 +52,33 @@ Context::Context(Compiler &compiler) : compiler(compiler) {
       {"$FLOAT_EPS", getComptimeFloat(std::numeric_limits<float>::epsilon())},
       {"$FLOAT_MAX", getComptimeFloat(std::numeric_limits<float>::max())},
       {"$FLOAT_MIN", getComptimeFloat(std::numeric_limits<float>::min())},
-      {"$HALF_PI", getComptimeFloat(0.5f * 3.14159265359f)},
-      {"$INF", getComptimeFloat(std::numeric_limits<float>::infinity())},
       {"$INT_MIN", getComptimeInt(std::numeric_limits<int>::min())},
       {"$INT_MAX", getComptimeInt(std::numeric_limits<int>::max())},
+      {"$INF", getComptimeFloat(std::numeric_limits<float>::infinity())},
       {"$NAN", getComptimeFloat(std::numeric_limits<float>::quiet_NaN())},
       {"$PI", getComptimeFloat(3.14159265359f)},
+      {"$HALF_PI", getComptimeFloat(0.5f * 3.14159265359f)},
+      {"$TWO_PI", getComptimeFloat(2 * 3.14159265359f)},
+      {"$SCENE_DATA",
+       getComptimePtr(getVoidPointerType(), &compiler.sceneData)},
+      {"$WAVELENGTH_BASE_MAX",
+       getComptimeInt(static_cast<int>(compiler.wavelengthBaseMax))},
+      {"char", getComptimeMetaType(getType<char>())},
+      {"int8_t", getComptimeMetaType(getType<int8_t>())},
+      {"int16_t", getComptimeMetaType(getType<int16_t>())},
+      {"int32_t", getComptimeMetaType(getType<int32_t>())},
+      {"int64_t", getComptimeMetaType(getType<int64_t>())},
+      {"intptr_t", getComptimeMetaType(getType<intptr_t>())},
+      {"intmax_t", getComptimeMetaType(getType<intmax_t>())},
+      {"long", getComptimeMetaType(getType<long>())},
+      {"ptrdiff_t", getComptimeMetaType(getType<ptrdiff_t>())},
+      {"size_t", getComptimeMetaType(getType<size_t>())},
+      {"$SEEK_SET", getComptimeInt(int(SEEK_SET))},
+      {"$SEEK_CUR", getComptimeInt(int(SEEK_CUR))},
+      {"$SEEK_END", getComptimeInt(int(SEEK_END))},
       {"$stdin", getComptimePtr(getVoidPointerType(), stdin)},
       {"$stdout", getComptimePtr(getVoidPointerType(), stdout)},
       {"$stderr", getComptimePtr(getVoidPointerType(), stderr)},
-      {"$TWO_PI", getComptimeFloat(2 * 3.14159265359f)},
-      {"$WAVELENGTH_BASE_MAX", getComptimeInt(int(compiler.wavelengthBaseMax))},
   };
 
   // Compile builtin `API` module and use all exports as keywords!

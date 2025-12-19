@@ -9,8 +9,8 @@ unit_test "Type checking" {
   #assert(2.0d <: double);
   #assert("Hi!" <: string);
   #assert(foo <: Foo);
-  #assert(#sizeof(i8) == 1);
-  #assert(#sizeof(i16) == 2);
-  #assert(#sizeof(i32) == 4);
-  #assert(#sizeof(i64) == 8);
+  #assert(#sizeof(int8_t) == 1);
+  #assert(#sizeof(int16_t) == 2);
+  #assert(#sizeof(int32_t) == 4);
+  #assert(#sizeof(int64_t) == 8);
 }

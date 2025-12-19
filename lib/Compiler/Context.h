@@ -52,6 +52,7 @@ public:
     return getBuiltinCallee(name, llvm_get_type<T(U...)>(llvmContext));
   }
 
+  /// Get builtin callee.
   template <typename T, typename... U>
   [[nodiscard]] llvm::FunctionCallee getBuiltinCallee(const char *name,
                                                       T (*value)(U...)) {
@@ -511,16 +512,16 @@ private:
   friend class FunctionType;
 };
 
-template <typename T, typename = void> struct get_type;
+template <typename T, typename = void> struct GetType;
 
-template <> struct get_type<void, void> {
+template <> struct GetType<void, void> {
   [[nodiscard]] static Type *get(Context &context) {
     return context.getVoidType();
   }
 };
 
 template <typename T>
-struct get_type<
+struct GetType<
     T, std::enable_if_t<std::is_arithmetic_v<T> || std::is_enum_v<T>, void>> {
   [[nodiscard]] static Type *get(Context &context) {
     if constexpr (std::is_integral_v<T> || std::is_enum_v<T>)
@@ -530,41 +531,41 @@ struct get_type<
   }
 };
 
-template <typename T> struct get_type<T &, void> {
+template <typename T> struct GetType<T &, void> {
   [[nodiscard]] static Type *get(Context &context) {
-    return context.getPointerType(get_type<std::decay_t<T>>::get(context));
+    return context.getPointerType(GetType<std::decay_t<T>>::get(context));
   }
 };
 
-template <typename T> struct get_type<T *, void> {
+template <typename T> struct GetType<T *, void> {
   [[nodiscard]] static Type *get(Context &context) {
-    return context.getPointerType(get_type<std::decay_t<T>>::get(context));
+    return context.getPointerType(GetType<std::decay_t<T>>::get(context));
   }
 };
 
-template <typename T, size_t M> struct get_type<T[M], void> {
+template <typename T, size_t M> struct GetType<T[M], void> {
   [[nodiscard]] static Type *get(Context &context) {
-    return context.getArrayType(get_type<T>::get(context), M);
+    return context.getArrayType(GetType<T>::get(context), M);
   }
 };
 
-template <typename T, size_t M> struct get_type<Vector<T, M>, void> {
+template <typename T, size_t M> struct GetType<Vector<T, M>, void> {
   [[nodiscard]] static Type *get(Context &context) {
-    return static_cast<ArithmeticType *>(get_type<T>::get(context))
+    return static_cast<ArithmeticType *>(GetType<T>::get(context))
         ->getWithDifferentExtent(context, Extent(M));
   }
 };
 
 template <typename T, size_t N, size_t M>
-struct get_type<Matrix<T, N, M>, void> {
+struct GetType<Matrix<T, N, M>, void> {
   [[nodiscard]] static Type *get(Context &context) {
-    return static_cast<ArithmeticType *>(get_type<T>::get(context))
+    return static_cast<ArithmeticType *>(GetType<T>::get(context))
         ->getWithDifferentExtent(context, Extent(N, M));
   }
 };
 
 template <typename T> inline Type *Context::getType() {
-  return smdl::get_type<T>::get(*this);
+  return smdl::GetType<T>::get(*this);
 }
 
 /// \}

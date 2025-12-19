@@ -129,6 +129,14 @@ public:
     return llvmConstantIntAsPtr<AST::Namespace>(llvmValue);
   }
 
+  /// Get the name of the LLVM value.
+  [[nodiscard]] llvm::StringRef getName() const {
+    return llvmValue ? llvmValue->getName() : "";
+  }
+
+  /// Is completely null?
+  [[nodiscard]] bool operator!() const { return !type; }
+
   /// Implicit conversion to bool.
   [[nodiscard]] operator bool() const { return type && llvmValue; }
 
