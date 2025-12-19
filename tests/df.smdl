@@ -32,12 +32,12 @@ unit_test "Erf inverse" {
 
 @(pure)
 auto runLowDiscrepancyTests(auto xi) {
-  auto xi_av(xi);
+  auto xiAverage(xi);
   for (int i = 0; i < 5000; i++) {
-    xi_av += df::monte_carlo::nextLowDiscrepancy(&xi);
+    xiAverage += df::monte_carlo::nextLowDiscrepancy(&xi);
   }
-  xi_av /= 5000;
-  #assert(#all(xi_av ~== [1e-3] 0.5));
+  xiAverage /= 5000;
+  #assert(#all(xiAverage ~== [1e-3] 0.5));
 }
 
 unit_test "Low discrepancy 2D" {
@@ -54,19 +54,19 @@ unit_test "Low discrepancy 4D" {
 
 unit_test "Cosine-weighted hemisphere sample" {
   auto xi(float2(0.5, 0.7));
-  auto wi_av(float3(0.0));
+  auto wiAverage(float3(0.0));
   for (int i = 0; i < 5000; i++, df::monte_carlo::nextLowDiscrepancy(&xi)) {
-    wi_av += df::monte_carlo::cosineHemisphereSample(xi);
+    wiAverage += df::monte_carlo::cosineHemisphereSample(xi);
   }
-  wi_av /= 5000;
-  #assert(#all(wi_av ~== [1e-3] float3(0.0, 0.0, 0.666)));
+  wiAverage /= 5000;
+  #assert(#all(wiAverage ~== [1e-3] float3(0.0, 0.0, 0.666)));
 }
 
 // Integrate Smith slope PDF by transforming the open square `(-1, 1)^2` 
 // into the entire plane `(-inf, inf)^2`.
 @(pure)
-float integrateSmithSlopePDF(const df::microfacet::distribution distr) {
-  double fsum = 0;
+float integrateSmithSlopePDF(const df::microfacet::Distribution distr) {
+  double fSum = 0;
   const int n = 512;
   for (int ix = 0; ix < n; ix++) {
     const float tx = math::lerp(-0.99999, 0.99999, ix / float(n - 1));
@@ -77,28 +77,28 @@ float integrateSmithSlopePDF(const df::microfacet::distribution distr) {
       const float my = ty / (1 - ty * ty);
       ftmp += 2 * (1 + ty * ty) / #pow(1 - ty * ty, 2) * df::microfacet::smithSlopePDF(distr, float2(mx, my));
     }
-    fsum += 2 * (1 + tx * tx) / #pow(1 - tx * tx, 2) * ftmp / n;
+    fSum += 2 * (1 + tx * tx) / #pow(1 - tx * tx, 2) * ftmp / n;
   }
-  return fsum / n;
+  return fSum / n;
 }
 
 // Integrate Smith normal PDF by cosine-weighted hemisphere sampling.
 @(pure)
-float integrateSmithNormalPDF(const df::microfacet::distribution distr, const float2 alpha) {
-  double fsum = 0;
+float integrateSmithNormalPDF(const df::microfacet::Distribution distr, const float2 alpha) {
+  double fSum = 0;
   const int n = 512 * 512;
   float2 xi = float2(0.228, 0.712);
   for (int i = 0; i < n; i++, df::monte_carlo::nextLowDiscrepancy(&xi)) {
-    fsum += df::microfacet::smithNormalPDF(distr, alpha, df::monte_carlo::cosineHemisphereSample(xi));
+    fSum += df::microfacet::smithNormalPDF(distr, alpha, df::monte_carlo::cosineHemisphereSample(xi));
   }
-  return $PI * fsum / n;
+  return $PI * fSum / n;
 }
 
 unit_test "Microfacet distributions" {
-  #assert(integrateSmithSlopePDF(df::microfacet::distribution_ggx()) ~== [1e-2] 1.0);
-  #assert(integrateSmithSlopePDF(df::microfacet::distribution_beckmann()) ~== [1e-2] 1.0);
-  #assert(integrateSmithNormalPDF(df::microfacet::distribution_ggx(), float2(0.8, 1.2)) ~== [1e-2] 1.0);
-  #assert(integrateSmithNormalPDF(df::microfacet::distribution_beckmann(), float2(1.1, 0.7)) ~== [1e-2] 1.0);
+  #assert(integrateSmithSlopePDF(df::microfacet::DistributionGGX()) ~== [1e-2] 1.0);
+  #assert(integrateSmithSlopePDF(df::microfacet::DistributionBeckmann()) ~== [1e-2] 1.0);
+  #assert(integrateSmithNormalPDF(df::microfacet::DistributionGGX(), float2(0.8, 1.2)) ~== [1e-2] 1.0);
+  #assert(integrateSmithNormalPDF(df::microfacet::DistributionBeckmann(), float2(1.1, 0.7)) ~== [1e-2] 1.0);
 }
 
 struct EvaluateResult {

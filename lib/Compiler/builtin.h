@@ -175,16 +175,16 @@ export tag vdf;
 export tag edf;
 export tag hair_bsdf;
 export struct _default_bsdf:default bsdf{
-  static const int _flags=0;
+  static const int df_flags=0;
 };
 export struct _default_vdf:default vdf{
-  static const int _flags=0;
+  static const int df_flags=0;
 };
 export struct _default_edf:default edf{
-  static const int _flags=0;
+  static const int df_flags=0;
 };
 export struct _default_hair_bsdf:default hair_bsdf{
-  static const int _flags=0;
+  static const int df_flags=0;
 };
 export struct texture_2d{
   texture_2d(const string name,const auto gamma=0)=#load_texture_2d(name,int(gamma));
@@ -275,8 +275,8 @@ export struct _MaterialInstance{
   &color scattering_coefficient=#is_void(ptr.volume.scattering_coefficient)?none:&ptr.volume.scattering_coefficient;
   int wavelength_base_max=$WAVELENGTH_BASE_MAX;
   int flags=$state.transport|(ptr.thin_walled?MATERIAL_THIN_WALLED:0)|(!#is_default(ptr.surface)?MATERIAL_HAS_SURFACE:0)|(!#is_default(ptr.backface)?MATERIAL_HAS_BACKFACE:0)|(!#is_default(ptr.volume)?MATERIAL_HAS_VOLUME:0)|(!#is_default(ptr.hair)?MATERIAL_HAS_HAIR:0);
-  int df_flags_surface=ptr.surface.scattering._flags;
-  int df_flags_backface=ptr.backface.scattering._flags;
+  int df_flags_surface=ptr.surface.scattering.df_flags;
+  int df_flags_backface=ptr.backface.scattering.df_flags;
   float3x3 tangent_to_world=let {
                               const auto tangent_to_world_matrix=$state.object_to_world_matrix*$state.tangent_to_object_matrix;
                             } in float3x3(tangent_to_world_matrix[0].xyz,tangent_to_world_matrix[1].xyz,tangent_to_world_matrix[2].xyz,);
@@ -313,8 +313,8 @@ export auto _complex_mul(const complex z,const complex w)=complex(z.a*w.a-z.b*w.
 export auto _complex_div(const complex z,const complex w)=_complex_mul(z,_complex_inv(w));
 @(pure macro)
 export auto _complex_exp(const complex z)=let {
-                                            const auto expa=#exp(z.a);
-                                          } in complex(expa*#cos(z.b),expa*#sin(z.b));
+                                            const auto a=#exp(z.a);
+                                          } in complex(a*#cos(z.b),a*#sin(z.b));
 @(pure macro)
 export auto _complex_log(const complex z)=complex(#log(_complex_abs(z)),#atan2(z.b,z.a));
 @(pure macro)
@@ -695,7 +695,7 @@ export struct diffuse_reflection_bsdf:bsdf{
   const float roughness=0.0;
   void handle="";
   const $(?(color|float)) multiscatter_tint=none;
-  static const int _flags=DF_REFLECTION|DF_DIFFUSE;
+  static const int df_flags=DF_REFLECTION|DF_DIFFUSE;
 };
 @(pure)
 auto scatterEvaluate(const &diffuse_reflection_bsdf this,inline const &ScatterEvaluateParameters params){
@@ -730,7 +730,7 @@ auto scatterSample(const &diffuse_reflection_bsdf this[[anno::unused()]],inline 
 export struct diffuse_transmission_bsdf:bsdf{
   const $(color|float) tint=1.0;
   void handle="";
-  static const int _flags=DF_TRANSMISSION|DF_DIFFUSE;
+  static const int df_flags=DF_TRANSMISSION|DF_DIFFUSE;
 };
 @(pure)
 auto scatterEvaluate(inline const &diffuse_transmission_bsdf this,inline const &ScatterEvaluateParameters params){
@@ -756,7 +756,7 @@ export struct specular_bsdf:bsdf{
   const $(color|float) tint=1.0;
   const scatter_mode mode=scatter_reflect;
   void handle="";
-  const int _flags=int(mode)|DF_SPECULAR;
+  const int df_flags=int(mode)|DF_SPECULAR;
 };
 @(pure macro)
 auto scatterEvaluate(const &specular_bsdf this[[anno::unused()]],const &ScatterEvaluateParameters params[[anno::unused()]]){
@@ -784,7 +784,7 @@ export struct sheen_bsdf:bsdf{
   const $(?(color|float)) multiscatter_tint=none;
   void multiscatter=none;
   void handle="";
-  static const int _flags=DF_REFLECTION|DF_DIFFUSE;
+  static const int df_flags=DF_REFLECTION|DF_DIFFUSE;
   finalize {
     roughness=saturate(roughness);
   }
@@ -833,7 +833,7 @@ export struct ward_geisler_moroder_bsdf:bsdf{
   $(?(color|float)) multiscatter_tint=none;
   float3 tangent_u=$state.texture_tangent_u[0];
   void handle="";
-  static const int _flags=DF_REFLECTION|DF_GLOSSY;
+  static const int df_flags=DF_REFLECTION|DF_GLOSSY;
   finalize {
     roughness_u=saturate(roughness_u);
     roughness_v=saturate(roughness_v);
@@ -883,28 +883,28 @@ auto scatterSample(const &ward_geisler_moroder_bsdf this,inline const &ScatterSa
   return ScatterSampleResult();
 }
 export namespace microfacet {
-export tag distribution;
-export struct distribution_ggx:default distribution{};
-export struct distribution_beckmann:distribution{};
+export tag Distribution;
+export struct DistributionGGX:default Distribution{};
+export struct DistributionBeckmann:Distribution{};
 @(pure macro)
-export float smithLambda(const distribution_ggx this[[anno::unused()]],const float m){
+export float smithLambda(const DistributionGGX this[[anno::unused()]],const float m){
   return 0.5*(#sign(m)*#sqrt(1+1/(m*m+EPSILON)))-0.5;
 }
 @(pure macro)
-export float smithLambda(const distribution_beckmann this[[anno::unused()]],const float m){
+export float smithLambda(const DistributionBeckmann this[[anno::unused()]],const float m){
   return 0.5*(#exp(-m*m)/m/#sqrt($PI)-float(erfc(m)));
 }
 @(pure macro)
-export float smithSlopePDF(const distribution_ggx this[[anno::unused()]],const float2 m){
+export float smithSlopePDF(const DistributionGGX this[[anno::unused()]],const float2 m){
   return (1/$PI)/#pow(1+#sum(m*m),2);
 }
 @(pure macro)
-export float smithSlopePDF(const distribution_beckmann this[[anno::unused()]],const float2 m){
+export float smithSlopePDF(const DistributionBeckmann this[[anno::unused()]],const float2 m){
   return (1/$PI)*#exp(-#sum(m*m));
 }
 @(pure)
 export float2 smithVisibleSlopeSample(
-  const distribution_ggx this[[anno::unused()]],
+  const DistributionGGX this[[anno::unused()]],
   const float xi0,
   const float xi1,
   float cosThetao,
@@ -930,7 +930,7 @@ export float2 smithVisibleSlopeSample(
 }
 @(pure)
 export float2 smithVisibleSlopeSample(
-  const distribution_beckmann this[[anno::unused()]],
+  const DistributionBeckmann this[[anno::unused()]],
   float xi0,
   float xi1,
   float cosThetao,
@@ -938,7 +938,7 @@ export float2 smithVisibleSlopeSample(
   return #sqrt(-#log(1-xi0+EPSILON))*float2(#cos((phi:=$TWO_PI*xi1)),#sin(phi)) if(cosThetao>1-EPSILON);
   xi0=#max(xi0,EPSILON);
   xi1=#max(xi1,EPSILON);
-  const float SQRT_PI_INV=1/#sqrt($PI);
+  const float invSqrtPi=1/#sqrt($PI);
   const float thetao=#acos(cosThetao);
   const float sinThetao=#sqrt(#max(0,1-cosThetao*cosThetao));
   const float tanThetao=sinThetao/cosThetao;
@@ -946,12 +946,12 @@ export float2 smithVisibleSlopeSample(
   float xmin=-1;
   float xmax=float(erf(cotThetao));
   float x=xmax-(1+xmax)*#pow(1-xi0,1+thetao*(-0.876+thetao*(0.4265-0.0594*thetao)));
-  float norm=1/(1+xmax+SQRT_PI_INV*tanThetao*#exp(-cotThetao*cotThetao));
+  float norm=1/(1+xmax+invSqrtPi*tanThetao*#exp(-cotThetao*cotThetao));
   for(int i=0;i<10;++i){
     if(!(xmin<=x&&x<=xmax))
       x=0.5*(xmin+xmax);
     const float a=monte_carlo::erfInverse(x);
-    const float f=norm*(1+x+SQRT_PI_INV*tanThetao*#exp(-a*a))-xi0;
+    const float f=norm*(1+x+invSqrtPi*tanThetao*#exp(-a*a))-xi0;
     break if(f~==[1e-5]0.0);
     if(f>0)
       xmax=x;
@@ -962,12 +962,12 @@ export float2 smithVisibleSlopeSample(
   return float2(monte_carlo::erfInverse(x),monte_carlo::erfInverse(2*xi1-1),);
 }
 @(pure macro)
-export float smithNormalPDF(const distribution this[[anno::unused()]],const float2 alpha,const float3 wm){
+export float smithNormalPDF(const Distribution this[[anno::unused()]],const float2 alpha,const float3 wm){
   return wm.z>0.0?smithSlopePDF(this,-wm.xy/(wm.z*alpha+EPSILON))/(alpha.x*alpha.y*#pow(wm.z,4)+EPSILON):0.0;
 }
 @(pure)
 export float3 smithVisibleNormalSample(
-  const distribution this,
+  const Distribution this,
   const float xi0,
   const float xi1,
   const float2 alpha,
@@ -981,7 +981,7 @@ export float3 smithVisibleNormalSample(
   const auto m(float2(alpha.x*dot(float2(cosPhi,-sinPhi),m11),alpha.y*dot(float2(sinPhi,cosPhi),m11)));
   return #all(isfinite(m))?normalize(float3(-m,1)):wo.z==0?normalize(wo):float3(0,0,1);
 }
-export struct distribution_blinn:distribution{};
+export struct DistributionBlinn:Distribution{};
 @(pure)
 export void blinnNormalFirstQuadrantSample(
   const float xi0,
@@ -1013,9 +1013,9 @@ export float3 blinnNormalSample(const float xi0,const float xi1,const float2 e,)
   }
   return float3(#sqrt(1-cosTheta*cosTheta+EPSILON)*float2(#cos(phi),#sin(phi)),cosTheta);
 }
-export tag shadowing;
-export struct shadowing_smith:default shadowing{};
-export struct shadowing_vcavities:shadowing{};
+export tag Shadowing;
+export struct ShadowingSmith:default Shadowing{};
+export struct ShadowingVCavities:Shadowing{};
 @(foreign pure)
 double lgamma(double x);
 @(pure)
@@ -1029,9 +1029,9 @@ struct microfacet_bsdf:bsdf{
   $(?(color|float)) multiscatter_tint=none;
   float3 tangent_u=$state.texture_tangent_u[0];
   const scatter_mode mode=scatter_reflect;
-  const microfacet::distribution distribution=microfacet::distribution();
-  const microfacet::shadowing shadowing=microfacet::shadowing();
-  const int _flags=int(mode)|DF_GLOSSY;
+  const microfacet::Distribution distribution=microfacet::Distribution();
+  const microfacet::Shadowing shadowing=microfacet::Shadowing();
+  const int df_flags=int(mode)|DF_GLOSSY;
 };
 @(pure noinline)
 auto scatterEvaluate(const &microfacet_bsdf this,inline const &ScatterEvaluateParameters params){
@@ -1052,7 +1052,7 @@ auto scatterEvaluate(const &microfacet_bsdf this,inline const &ScatterEvaluatePa
   const auto wm(halfDirection(params));
   const auto dotWoWm(#sum(wo*wm));
   const auto dotWiWm(#sum(wi*wm));
-  if$(this.distribution<:microfacet::distribution_blinn){
+  if$(this.distribution<:microfacet::DistributionBlinn){
     const auto e(2/(this.alpha*this.alpha+EPSILON));
     const auto D(#pow(wm.z,(e.x*wm.x*wm.x+e.y*wm.y*wm.y)/(1-wm.z*wm.z+EPSILON))/$TWO_PI);
     const auto norm1(#sqrt(#prod(1+e)));
@@ -1076,14 +1076,14 @@ auto scatterEvaluate(const &microfacet_bsdf this,inline const &ScatterEvaluatePa
     const auto projAreao((1+lambdao)*cosThetao);
     const auto projAreai((1+lambdai)*cosThetai);
     const auto G=return_from{
-      if$(this.shadowing<:microfacet::shadowing_smith){
+      if$(this.shadowing<:microfacet::ShadowingSmith){
         return effectiveMode==scatter_reflect?float(1/(1+lambdao+lambdai)):float(microfacet::beta(1+lambdao,1+lambdai));
       } else {
         return #min(1,2*wm.z*#min(#abs(cosThetao/dotWoWm),#abs(cosThetai/dotWiWm)));
       }
     };
     if(effectiveMode==scatter_reflect){
-      const auto lutName(this.distribution<:microfacet::distribution_ggx?"microfacet_ggx_smith_bsdf":"microfacet_beckmann_smith_bsdf");
+      const auto lutName(this.distribution<:microfacet::DistributionGGX?"microfacet_ggx_smith_bsdf":"microfacet_beckmann_smith_bsdf");
       const auto pdf(D/(4*float2(projAreao,projAreai)+EPSILON));
       const auto f(D*G/(4*cosThetao+EPSILON));
       auto result(ScatterEvaluateResultWithMultiscatter(this,f,pdf,cosThetao,cosThetai,this.roughness0,lutName));
@@ -1121,7 +1121,7 @@ auto scatterSample(const &microfacet_bsdf this,inline const &ScatterSampleParame
     }
   }
   const auto wm=return_from{
-    if$(this.distribution<:microfacet::distribution_blinn){
+    if$(this.distribution<:microfacet::DistributionBlinn){
       return microfacet::blinnNormalSample(xi.x,xi.y,2/(this.alpha*this.alpha+EPSILON));
     } else {
       return microfacet::smithVisibleNormalSample(this.distribution,xi.x,xi.y,this.alpha,wo);
@@ -1149,8 +1149,8 @@ auto makeMicrofacetBSDF(
   const float3 tangent_u=$state.texture_tangent_u[0],
   const scatter_mode mode=scatter_reflect,
   const string handle=""[[anno::unused()]],
-  const microfacet::distribution distribution=microfacet::distribution(),
-  const microfacet::shadowing shadowing=microfacet::shadowing(),
+  const microfacet::Distribution distribution=microfacet::Distribution(),
+  const microfacet::Shadowing shadowing=microfacet::Shadowing(),
 ){
   if((roughness_u>0)|(roughness_v>0)){
     return microfacet_bsdf(
@@ -1166,11 +1166,11 @@ auto makeMicrofacetBSDF(
     return specular_bsdf(tint: tint,mode: mode);
   }
 }
-export auto simple_glossy_bsdf(*)=makeMicrofacetBSDF(distribution: microfacet::distribution_blinn(),shadowing: microfacet::shadowing_vcavities());
-export auto microfacet_ggx_smith_bsdf(*)=makeMicrofacetBSDF(distribution: microfacet::distribution_ggx(),shadowing: microfacet::shadowing_smith());
-export auto microfacet_ggx_vcavities_bsdf(*)=makeMicrofacetBSDF(distribution: microfacet::distribution_ggx(),shadowing: microfacet::shadowing_vcavities());
-export auto microfacet_beckmann_smith_bsdf(*)=makeMicrofacetBSDF(distribution: microfacet::distribution_beckmann(),shadowing: microfacet::shadowing_smith());
-export auto microfacet_beckmann_vcavities_bsdf(*)=makeMicrofacetBSDF(distribution: microfacet::distribution_beckmann(),shadowing: microfacet::shadowing_vcavities());
+export auto simple_glossy_bsdf(*)=makeMicrofacetBSDF(distribution: microfacet::DistributionBlinn(),shadowing: microfacet::ShadowingVCavities());
+export auto microfacet_ggx_smith_bsdf(*)=makeMicrofacetBSDF(distribution: microfacet::DistributionGGX(),shadowing: microfacet::ShadowingSmith());
+export auto microfacet_ggx_vcavities_bsdf(*)=makeMicrofacetBSDF(distribution: microfacet::DistributionGGX(),shadowing: microfacet::ShadowingVCavities());
+export auto microfacet_beckmann_smith_bsdf(*)=makeMicrofacetBSDF(distribution: microfacet::DistributionBeckmann(),shadowing: microfacet::ShadowingSmith());
+export auto microfacet_beckmann_vcavities_bsdf(*)=makeMicrofacetBSDF(distribution: microfacet::DistributionBeckmann(),shadowing: microfacet::ShadowingVCavities());
 export bool bsdf_measurement_isvalid(const bsdf_measurement measurement)=bool(measurement.buffer);
 export struct measured_bsdf:bsdf{
   bsdf_measurement measurement;
@@ -1189,13 +1189,13 @@ auto scatterSample(const &measured_bsdf this[[anno::unused()]],const &ScatterSam
 struct tint1:bsdf,edf,hair_bsdf{
   $(color|float) tint;
   auto base;
-  const int _flags=base._flags;
+  const int df_flags=base.df_flags;
 };
 struct tint2:bsdf{
   $(color|float) reflection_tint;
   $(color|float) transmission_tint;
   bsdf base;
-  const int _flags=base._flags;
+  const int df_flags=base.df_flags;
 };
 @(macro)
 export auto tint(const auto tint,const bsdf base)=tint1(tint,base);
@@ -1249,7 +1249,7 @@ export struct weighted_layer:bsdf{
   bsdf base=bsdf();
   float3 normal=$state.normal;
   float chance=average(weight);
-  const int _flags=layer._flags|base._flags;
+  const int df_flags=layer.df_flags|base.df_flags;
   finalize {
     weight=saturate(weight);
     chance=saturate(chance);
@@ -1278,7 +1278,7 @@ export struct thin_film:bsdf{
   $(color|float) thickness;
   $(color|float) ior;
   bsdf base=bsdf();
-  const int _flags=base._flags;
+  const int df_flags=base.df_flags;
 };
 @(macro)
 auto scatterEvaluate(const &thin_film this,const &ScatterEvaluateParameters params){
@@ -1300,7 +1300,7 @@ export struct fresnel_factor:bsdf{
   $(color|float) ior;
   $(color|float) extinction_coefficient;
   bsdf base=bsdf();
-  const int _flags=base._flags;
+  const int df_flags=base.df_flags;
 };
 @(macro)
 auto scatterEvaluate(const &fresnel_factor this,const &ScatterEvaluateParameters params){
@@ -1323,7 +1323,7 @@ export struct directional_factor:bsdf{
   $(color|float) grazing_tint=1.0;
   float exponent=5.0;
   bsdf base=bsdf();
-  const int _flags=base._flags;
+  const int df_flags=base.df_flags;
 };
 @(macro)
 auto scatterEvaluate(const &directional_factor this,const &ScatterEvaluateParameters params){
@@ -1345,7 +1345,7 @@ auto scatterSample(const &directional_factor this,const &ScatterSampleParameters
 export struct measured_curve_factor:bsdf{
   color[] curve_values;
   bsdf base=bsdf();
-  const int _flags=base._flags;
+  const int df_flags=base.df_flags;
 };
 @(macro)
 auto scatterEvaluate(const &measured_curve_factor this,const &ScatterEvaluateParameters params){
@@ -1366,7 +1366,7 @@ auto scatterSample(const &measured_curve_factor this,const &ScatterSampleParamet
 export struct measured_factor:bsdf{
   texture_2d values;
   bsdf base=bsdf();
-  const int _flags=base._flags;
+  const int df_flags=base.df_flags;
 };
 @(macro)
 auto scatterEvaluate(const &measured_factor this,const &ScatterEvaluateParameters params){
@@ -1392,7 +1392,7 @@ export struct fresnel_layer:bsdf{
   float3 normal=$state.normal;
   const float _averageIOR=average(ior);
   const float _averageWeight=average(weight);
-  const int _flags=layer._flags|base._flags;
+  const int df_flags=layer.df_flags|base.df_flags;
 };
 @(macro)
 auto scatterEvaluate(const &fresnel_layer this,inline const &ScatterEvaluateParameters params){
@@ -1449,11 +1449,11 @@ export struct vdf_component:component{
 };
 struct component_mix:bsdf,edf,vdf{
   component[] components;
-  int _flags=0;
+  int df_flags=0;
 };
 @(macro)
 export auto normalized_mix(component[<N>] components){
-  int _flags(0);
+  int df_flags(0);
   float total_weight(0);
   float total_chance(0);
   for(int i=0;i<N;i++){
@@ -1462,7 +1462,7 @@ export auto normalized_mix(component[<N>] components){
     component.chance=#max(component.chance,0.0);
     total_weight+=component.weight;
     total_chance+=component.chance;
-    _flags|=component.component._flags;
+    df_flags|=component.component.df_flags;
   }
   if(total_weight>1.0)
     total_weight=1.0/total_weight;
@@ -1474,11 +1474,11 @@ export auto normalized_mix(component[<N>] components){
     component.weight*=total_weight;
     component.chance*=total_chance;
   }
-  return component_mix(components,_flags);
+  return component_mix(components,df_flags);
 }
 @(macro)
 export auto clamped_mix(component[<N>] components){
-  int _flags(0);
+  int df_flags(0);
   float total_weight(0);
   float total_chance(0);
   for(int i=0;i<N;i++){
@@ -1488,7 +1488,7 @@ export auto clamped_mix(component[<N>] components){
     if(total_weight+component.weight<1.0){
       total_weight+=component.weight;
       total_chance+=component.chance;
-      _flags|=component.component._flags;
+      df_flags|=component.component.df_flags;
     } else {
       component.weight=1.0-total_weight;
       for(int j=i+1;j<N;j++){
@@ -1502,24 +1502,24 @@ export auto clamped_mix(component[<N>] components){
   for(int i=0;i<N;i++){
     components[i].chance*=total_chance;
   }
-  return component_mix(components,_flags);
+  return component_mix(components,df_flags);
 }
 @(macro)
 export auto unbounded_mix(component[<N>] components){
-  int _flags(0);
+  int df_flags(0);
   float total_chance(0);
   for(int i=0;i<N;i++){
     auto component(&components[i]);
     component.weight=#max(component.weight,0.0);
     component.chance=#max(component.chance,0.0);
     total_chance+=component.chance;
-    _flags|=component._flags;
+    df_flags|=component.df_flags;
   }
   total_chance=1.0/total_chance if(total_chance>0.0);
   for(int i=0;i<N;i++){
     components[i].chance*=total_chance;
   }
-  return component_mix(components,_flags);
+  return component_mix(components,df_flags);
 }
 @(macro)
 auto scatterEvaluate(const &component_mix this,const &ScatterEvaluateParameters params){
@@ -1557,7 +1557,7 @@ auto scatterSample(const &component_mix this,const &ScatterSampleParameters para
 export struct anisotropic_vdf:vdf{
   float directional_bias=0.0;
   void handle="";
-  static const int _flags=0;
+  static const int df_flags=0;
   finalize {
     directional_bias=#max(directional_bias,-0.999);
     directional_bias=#min(directional_bias,0.999);
