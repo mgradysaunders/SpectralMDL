@@ -139,7 +139,8 @@ int main(int argc, char **argv) {
       if (auto error{compiler.runExecs()})
         error->printAndExit();
       if (subTest) {
-        std::array<float, 16> wavelengths{};
+        auto wavelengths{
+            std::vector<float>(size_t(compiler.wavelengthBaseMax))};
         smdl::BumpPtrAllocator allocator{};
         smdl::State state{};
         state.allocator = &allocator;
