@@ -1689,46 +1689,46 @@ export typedef &void FILE;
 export const auto stdin=cast<FILE>($stdin);
 export const auto stdout=cast<FILE>($stdout);
 export const auto stderr=cast<FILE>($stderr);
-@(pure foreign)
+@(foreign pure)
 export FILE fopen(string filename,string mode);
-@(pure foreign)
+@(foreign pure)
 export void fclose(FILE file);
-@(pure foreign)
+@(foreign pure)
 export void fflush(FILE file);
-@(pure foreign)
+@(foreign pure)
 export int feof(FILE file);
-@(pure foreign)
+@(foreign pure)
 export int ferror(FILE file);
-@(pure foreign)
+@(foreign pure)
 export int fgetc(FILE file);
-@(pure foreign)
+@(foreign pure)
 export &char fgets(&char str,int count,FILE file);
-@(pure foreign)
+@(foreign pure)
 export int fputc(int ch,FILE file);
-@(pure foreign)
+@(foreign pure)
 export int fputs(string str,FILE file);
-@(pure foreign)
+@(foreign pure)
 export size_t fread(&void buffer,size_t size,size_t count,FILE file);
-@(pure foreign)
+@(foreign pure)
 export size_t fwrite(&void buffer,size_t size,size_t count,FILE file);
-@(pure foreign)
+@(foreign pure)
 export int fscanf(FILE file,string format,...);
-@(pure foreign)
+@(foreign pure)
 export int fprintf(FILE file,string format,...);
-@(pure foreign)
+@(foreign pure)
 export long ftell(FILE file);
 export const int SEEK_SET=$SEEK_SET;
 export const int SEEK_CUR=$SEEK_CUR;
 export const int SEEK_END=$SEEK_END;
-@(pure foreign)
+@(foreign pure)
 export int fseek(FILE file,long offset,int origin);
-@(pure foreign)
+@(foreign pure)
 export void rewind(FILE file);
-@(pure foreign)
+@(foreign pure)
 export void clearerr(FILE file);
-@(pure foreign)
+@(foreign pure)
 export void perror(string message="");
-@(pure foreign)
+@(foreign pure)
 export FILE tmpfile();
 )*";
 
