@@ -20,7 +20,7 @@ if(SMDL_BUILD_LLVM)
       "git"
       "clone"
       "--depth=1"
-      "--branch=llvmorg-21.1.7"
+      "--branch=llvmorg-22.1.0"
       "https://github.com/llvm/llvm-project"
       "llvm-project"
     WORKING_DIRECTORY "${CMAKE_BINARY_DIR}"

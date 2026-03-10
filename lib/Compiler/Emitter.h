@@ -205,16 +205,14 @@ public:
   /// Create lifetime start intrinsic for optimizing alloca usage.
   void createLifetimeStart(Value value) {
     if (value.isLValue() && llvm::isa<llvm::AllocaInst>(value.llvmValue)) {
-      builder.CreateLifetimeStart(
-          value, builder.getInt64(context.getSizeOf(value.type)));
+      builder.CreateLifetimeStart(value);
     }
   }
 
   /// Create lifetime end intrinsic for optimizing alloca usage.
   void createLifetimeEnd(Value value) {
     if (value.isLValue() && llvm::isa<llvm::AllocaInst>(value.llvmValue)) {
-      builder.CreateLifetimeEnd(
-          value, builder.getInt64(context.getSizeOf(value.type)));
+      builder.CreateLifetimeEnd(value);
     }
   }
 
