@@ -70,6 +70,7 @@ if(UNIX)
       "-Wall"
       "-Wextra"
       "-Wno-unused-parameter"
+      "-fmacro-prefix-map=${PROJECT_SOURCE_DIR}=."
     )
 endif()
 target_compile_options(
