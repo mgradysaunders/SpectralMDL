@@ -205,6 +205,20 @@ public:
   /// instance of `BumpPtrAllocator`.
   void *allocator{};
 
+  /// The opaque host context, which is never interpreted by SpectralMDL.
+  ///
+  /// This is provided so that host applications can associate a `State` with
+  /// whatever context it was constructed from, and recover that context in
+  /// `@(foreign)` functions and `SceneData::Getter` callbacks, both of which
+  /// receive the `State` but are otherwise unable to determine which shading
+  /// point they are being asked about.
+  ///
+  /// \note
+  /// The host is responsible for the lifetime of whatever this points to. It
+  /// must remain valid for at least as long as the `State` that refers to it.
+  ///
+  void *user_data{};
+
   /// The wavelengths in nanometers, must be sorted in increasing order!
   const float *wavelength_base{};
 

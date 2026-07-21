@@ -1453,6 +1453,7 @@ StateType::StateType(Context &context) {
   mFields.push_back(                                                           \
       {context.getType(&State::name), #name, uint64_t(offsetof(State, name))})
   ADD_FIELD(allocator);
+  ADD_FIELD(user_data);
   ADD_FIELD(wavelength_base);
   ADD_FIELD(wavelength_min);
   ADD_FIELD(wavelength_max);

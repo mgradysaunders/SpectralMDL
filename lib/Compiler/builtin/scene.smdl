@@ -10,12 +10,12 @@ void smdlDataLookup(&void sceneData, string name, int kind, int size, &void resu
 auto data_lookup(const string name, auto value) {
   const int kind = #is_arithmetic_integral(value) ? 0 : //
                    #is_arithmetic_floating_point(value) ? 1 : 2;
-  smdlDataLookup($sceneData, name, kind, #num(value), cast<&void>(&value));
+  smdlDataLookup($SCENE_DATA, name, kind, #num(value), cast<&void>(&value));
   return value;
 }
 
 @(macro)
-export bool data_isvalid(const string name) = smdlDataExists($sceneData, name) != 0;
+export bool data_isvalid(const string name) = smdlDataExists($SCENE_DATA, name) != 0;
 
 @(macro)
 export int data_lookup_int(const string name, int default_value = int()) = data_lookup(name, default_value);
