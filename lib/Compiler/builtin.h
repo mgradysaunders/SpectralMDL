@@ -383,6 +383,7 @@ export bool print(const auto a){
 
 static const char *const df = R"*(#smdl
 using ::math import *;
+import ::tex::*;
 const float EPSILON=1e-6;
 const float MULTISCATTER_DIFFUSE_CHANCE=0.2;
 const int DF_REFLECTION=(1<<0);
@@ -612,7 +613,7 @@ struct ScatterSampleParameters{
 struct ScatterSampleResult{
   float3 wi=float3(0.0);
   scatter_mode mode=scatter_none;
-  ?color deltaValue=none;
+  ?color fDelta=none;
 };
 @(pure noinline)
 ?float3x3 recalculateTangentSpace(inline const &ScatterSampleParameters params){
@@ -623,6 +624,12 @@ struct ScatterSampleResult{
 @(pure)
 float3 halfDirection(inline const &ScatterSampleParameters this,inline const &ScatterSampleResult result){
   return normalize(mode==scatter_reflect?specular::reflectionHalfVector(wo,wi):specular::refractionHalfVector(wo,wi,ior));
+}
+@(pure macro)
+float sampleShadingNormalCorrection(inline const &ScatterSampleParameters params,const float3 wiShading,const float3 wiNatural){
+  const auto numer(wo.z*wiNatural.z);
+  const auto denom(wiShading.z*wo0.z);
+  return denom==0?1.0:#abs(numer/denom);
 }
 @(pure macro)
 auto ScatterEvaluateResultWithMultiscatter(
@@ -766,11 +773,17 @@ auto scatterEvaluate(const &specular_bsdf this[[anno::unused()]],const &ScatterE
 auto scatterSample(const &specular_bsdf this,inline const &ScatterSampleParameters params){
   if((tbn:=recalculateTangentSpace(params))){
     if(xi.x<scatterReflectChance(this.mode)){
-      return ScatterSampleResult(wi: (*tbn)*specular::reflect(wo,float3(0,0,1)),mode: scatter_reflect,deltaValue: color(this.tint));
+      const auto wiLocal(specular::reflect(wo,float3(0,0,1)));
+      auto result=ScatterSampleResult(wi: (*tbn)*wiLocal,mode: scatter_reflect,fDelta: color(this.tint));
+      *result.fDelta*=sampleShadingNormalCorrection(params,wiLocal,result.wi) if(isImportance);
+      return result;
     } else {
-      auto result=ScatterSampleResult(wi: (*tbn)*specular::refract(wo,float3(0,0,1),ior),mode: scatter_transmit,deltaValue: color(this.tint));
-      *result.deltaValue*=ior*ior if(!isImportance);
+      const auto wiLocal(specular::refract(wo,float3(0,0,1),ior));
+      auto result=ScatterSampleResult(wi: (*tbn)*wiLocal,mode: scatter_transmit,fDelta: color(this.tint));
       if(isImportance){
+        *result.fDelta*=sampleShadingNormalCorrection(params,wiLocal,result.wi);
+      } else {
+        *result.fDelta*=ior*ior;
       }
       return result;
     }
@@ -1098,6 +1111,7 @@ auto scatterEvaluate(const &microfacet_bsdf this,inline const &ScatterEvaluatePa
       const auto f(D*G*jac[0]*dotWoWm/(cosThetao+EPSILON));
       auto result(ScatterEvaluateResult(f: this.tint*f,pdf: pdf));
       result.f*=shadingNormalCorrection if(isImportance);
+      result.f*=ior*ior if(!isImportance);
       result.f*=1-reflectChance;
       result.pdf*=1-reflectChance;
       return result;
@@ -1227,18 +1241,18 @@ auto scatterEvaluate(const &tint2 this,const &ScatterEvaluateParameters params){
 @(macro)
 auto scatterSample(const &tint1 this,const &ScatterSampleParameters params){
   auto result(scatterSample(visit &this.base,params));
-  if((result.mode!=scatter_none)&bool(result.deltaValue))
-    *result.deltaValue*=this.tint;
+  if((result.mode!=scatter_none)&bool(result.fDelta))
+    *result.fDelta*=this.tint;
   return result;
 }
 @(macro)
 auto scatterSample(const &tint2 this,const &ScatterSampleParameters params){
   auto result(scatterSample(visit &this.base,params));
-  if((result.mode!=scatter_none)&bool(result.deltaValue)){
+  if((result.mode!=scatter_none)&bool(result.fDelta)){
     if(params.mode==scatter_reflect){
-      *result.deltaValue*=this.reflection_tint;
+      *result.fDelta*=this.reflection_tint;
     } else {
-      *result.deltaValue*=this.transmission_tint;
+      *result.fDelta*=this.transmission_tint;
     }
   }
   return result;
@@ -1292,7 +1306,7 @@ auto scatterEvaluate(const &thin_film this,const &ScatterEvaluateParameters para
 @(macro)
 auto scatterSample(const &thin_film this,const &ScatterSampleParameters params){
   auto result(scatterSample(visit &this.base,params));
-  if((result.mode==scatter_reflect)&bool(result.deltaValue)){
+  if((result.mode==scatter_reflect)&bool(result.fDelta)){
   }
   return result;
 }
@@ -1313,8 +1327,8 @@ auto scatterEvaluate(const &fresnel_factor this,const &ScatterEvaluateParameters
 @(macro)
 auto scatterSample(const &fresnel_factor this,const &ScatterSampleParameters params){
   auto result(scatterSample(visit &this.base,params));
-  if((result.mode==scatter_reflect)&bool(result.deltaValue)){
-    *result.deltaValue*=specular::conductorFresnel(#abs(dot(params.wo,halfDirection(params,&result))),1.0/complex(this.ior,this.extinction_coefficient));
+  if((result.mode==scatter_reflect)&bool(result.fDelta)){
+    *result.fDelta*=specular::conductorFresnel(#abs(dot(params.wo,halfDirection(params,&result))),1.0/complex(this.ior,this.extinction_coefficient));
   }
   return result;
 }
@@ -1337,8 +1351,8 @@ auto scatterEvaluate(const &directional_factor this,const &ScatterEvaluateParame
 @(macro)
 auto scatterSample(const &directional_factor this,const &ScatterSampleParameters params){
   auto result(scatterSample(visit &this.base,params));
-  if((result.mode==scatter_reflect)&bool(result.deltaValue)){
-    *result.deltaValue*=specular::schlickFresnel(dot(params.wo,halfDirection(params,&result)),this.normal_tint,this.grazing_tint,this.exponent);
+  if((result.mode==scatter_reflect)&bool(result.fDelta)){
+    *result.fDelta*=specular::schlickFresnel(dot(params.wo,halfDirection(params,&result)),this.normal_tint,this.grazing_tint,this.exponent);
   }
   return result;
 }
@@ -1347,11 +1361,18 @@ export struct measured_curve_factor:bsdf{
   bsdf base=bsdf();
   const int df_flags=base.df_flags;
 };
+@(pure macro)
+color evaluateMeasuredCurve(const &measured_curve_factor this,const float cosAlpha){
+  const auto n(#num(this.curve_values));
+  const auto t(saturate(#acos(saturate(#abs(cosAlpha)))*(2/$PI))*(n-1));
+  const int i(int(t));
+  return saturate(lerp(this.curve_values[i],this.curve_values[#min(i+1,n-1)],t-i));
+}
 @(macro)
 auto scatterEvaluate(const &measured_curve_factor this,const &ScatterEvaluateParameters params){
   auto result(scatterEvaluate(visit &this.base,params));
   if(!result.isBlack&&params.mode==scatter_reflect){
-    return ScatterEvaluateResult(f: result.f,pdf: result.pdf);
+    return ScatterEvaluateResult(f: evaluateMeasuredCurve(this,dot(params.wo,halfDirection(params)))*result.f,pdf: result.pdf);
   } else {
     return result;
   }
@@ -1359,7 +1380,8 @@ auto scatterEvaluate(const &measured_curve_factor this,const &ScatterEvaluatePar
 @(macro)
 auto scatterSample(const &measured_curve_factor this,const &ScatterSampleParameters params){
   auto result(scatterSample(visit &this.base,params));
-  if((result.mode==scatter_reflect)&bool(result.deltaValue)){
+  if((result.mode==scatter_reflect)&bool(result.fDelta)){
+    *result.fDelta*=evaluateMeasuredCurve(this,dot(params.wo,halfDirection(params,&result)));
   }
   return result;
 }
@@ -1368,11 +1390,21 @@ export struct measured_factor:bsdf{
   bsdf base=bsdf();
   const int df_flags=base.df_flags;
 };
+@(pure macro)
+color evaluateMeasuredFactor(const &measured_factor this,const float cosAlpha,const float cosBeta){
+  return saturate(tex::lookup_color(
+                    this.values,
+                    float2(#acos(saturate(#abs(cosAlpha))),#acos(saturate(cosBeta)))*(2/$PI),
+                    tex::wrap_clamp,
+                    tex::wrap_clamp,
+                  ),);
+}
 @(macro)
 auto scatterEvaluate(const &measured_factor this,const &ScatterEvaluateParameters params){
   auto result(scatterEvaluate(visit &this.base,params));
   if(!result.isBlack&&params.mode==scatter_reflect){
-    return ScatterEvaluateResult(f: result.f,pdf: result.pdf);
+    const auto h(halfDirection(params));
+    return ScatterEvaluateResult(f: evaluateMeasuredFactor(this,dot(params.wo,h),h.z)*result.f,pdf: result.pdf);
   } else {
     return result;
   }
@@ -1380,7 +1412,9 @@ auto scatterEvaluate(const &measured_factor this,const &ScatterEvaluateParameter
 @(macro)
 auto scatterSample(const &measured_factor this,const &ScatterSampleParameters params){
   auto result(scatterSample(visit &this.base,params));
-  if((result.mode==scatter_reflect)&bool(result.deltaValue)){
+  if((result.mode==scatter_reflect)&bool(result.fDelta)){
+    const auto h(halfDirection(params,&result));
+    *result.fDelta*=evaluateMeasuredFactor(this,dot(params.wo,h),h.z);
   }
   return result;
 }
@@ -1422,11 +1456,11 @@ auto scatterSample(const &fresnel_layer this,inline const &ScatterSampleParamete
     preserve normal,ior;
     normal=this.normal,ior=1.0/this._averageIOR;
     auto result(scatterSample(visit &this.layer,params));
-    *result.deltaValue*=this.weight*specular::dielectricFresnel(dot(wo,halfDirection(params,&result)),1/this.ior)/chance if(result.deltaValue);
+    *result.fDelta*=this.weight*specular::dielectricFresnel(dot(wo,halfDirection(params,&result)),1/this.ior)/chance if(result.fDelta);
     return result;
   } else {
     auto result(scatterSample(visit &this.base,params));
-    *result.deltaValue*=(1-this.weight*specular::dielectricFresnel(dot(wo,halfDirection(params,&result)),1/this.ior))/(1-chance) if(result.deltaValue);
+    *result.fDelta*=(1-this.weight*specular::dielectricFresnel(dot(wo,halfDirection(params,&result)),1/this.ior))/(1-chance) if(result.fDelta);
     return result;
   }
 }
@@ -1546,8 +1580,8 @@ auto scatterSample(const &component_mix this,const &ScatterSampleParameters para
       } else {
         *xi/=component.chance;
         auto result(scatterSample(visit &component.component,params));
-        if((result.mode!=scatter_none)&bool(result.deltaValue))
-          *result.deltaValue*=component.weight;
+        if((result.mode!=scatter_none)&bool(result.fDelta))
+          *result.fDelta*=component.weight;
         return result;
       }
     }
@@ -1646,10 +1680,10 @@ export int _scatterSample(
       return false;
     }
     *wiWorld=normalize(instance.tangent_to_world*wi);
-    if((*isDelta=bool(result.deltaValue))){
+    if((*isDelta=bool(result.fDelta))){
       *pdfFwd=1.0;
       *pdfRev=1.0;
-      #memcpy(f,&*result.deltaValue,#sizeof(float)*$WAVELENGTH_BASE_MAX);
+      #memcpy(f,&*result.fDelta,#sizeof(float)*$WAVELENGTH_BASE_MAX);
       return true;
     } else {
       return _scatterEvaluate(instance,woWorld,wiWorld,pdfFwd,pdfRev,f);

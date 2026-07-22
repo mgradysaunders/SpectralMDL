@@ -3,6 +3,8 @@
 
 using ::math import *;
 
+import ::tex::*;
+
 /// An arbitrary epsilon for stabilizing scattering calculations.
 const float EPSILON = 1e-6;
 
@@ -406,6 +408,17 @@ float3 halfDirection(inline const &ScatterSampleParameters this, inline const &S
   return normalize(mode == scatter_reflect ? specular::reflectionHalfVector(wo, wi) : specular::refractionHalfVector(wo, wi, ior));
 }
 
+/// Calculate the shading-normal correction factor for a sampled delta direction under
+/// importance transport, consistent with the convention `recalculateTangentSpace`
+/// applies on the evaluate path. Expects the sampled incoming direction both in the
+/// shading tangent space `wiShading` and in the natural tangent space `wiNatural`.
+@(pure macro)
+float sampleShadingNormalCorrection(inline const &ScatterSampleParameters params, const float3 wiShading, const float3 wiNatural) {
+  const auto numer(wo.z * wiNatural.z);
+  const auto denom(wiShading.z * wo0.z);
+  return denom == 0 ? 1.0 : #abs(numer / denom);
+}
+
 @(pure macro)
 auto ScatterEvaluateResultWithMultiscatter(
   const auto this,
@@ -636,12 +649,19 @@ auto scatterEvaluate(const &specular_bsdf this [[anno::unused()]], const &Scatte
 auto scatterSample(const &specular_bsdf this, inline const &ScatterSampleParameters params) {
   if ((tbn := recalculateTangentSpace(params))) {
     if (xi.x < scatterReflectChance(this.mode)) {
-      return ScatterSampleResult(wi: (*tbn) * specular::reflect(wo, float3(0, 0, 1)), mode: scatter_reflect, fDelta: color(this.tint));
+      const auto wiLocal(specular::reflect(wo, float3(0, 0, 1)));
+      auto result = ScatterSampleResult(wi: (*tbn) * wiLocal, mode: scatter_reflect, fDelta: color(this.tint));
+      *result.fDelta *= sampleShadingNormalCorrection(params, wiLocal, result.wi) if (isImportance);
+      return result;
     } else {
-      auto result = ScatterSampleResult(wi: (*tbn) * specular::refract(wo, float3(0, 0, 1), ior), mode: scatter_transmit, fDelta: color(this.tint));
-      *result.fDelta *= ior * ior if (!isImportance);
+      const auto wiLocal(specular::refract(wo, float3(0, 0, 1), ior));
+      auto result = ScatterSampleResult(wi: (*tbn) * wiLocal, mode: scatter_transmit, fDelta: color(this.tint));
       if (isImportance) {
-        // TODO Account for shading normal correction
+        *result.fDelta *= sampleShadingNormalCorrection(params, wiLocal, result.wi);
+      } else {
+        // The `ior * ior` accounts for the solid-angle compression of refracted
+        // radiance, which does not apply to importance.
+        *result.fDelta *= ior * ior;
       }
       return result;
     }
@@ -1148,6 +1168,11 @@ auto scatterEvaluate(const &microfacet_bsdf this, inline const &ScatterEvaluateP
       const auto f(D * G * jac[0] * dotWoWm / (cosThetao + EPSILON));
       auto result(ScatterEvaluateResult(f: this.tint * f, pdf: pdf));
       result.f *= shadingNormalCorrection if (isImportance);
+      // The `ior * ior` accounts for the solid-angle compression of refracted radiance,
+      // which does not apply to importance. This is consistent with the `specular_bsdf`
+      // delta transmission weight, and is required for importance transport to be the
+      // adjoint of radiance transport.
+      result.f *= ior * ior if (!isImportance);
       result.f *= 1 - reflectChance;
       result.pdf *= 1 - reflectChance;
       return result;
@@ -1549,11 +1574,15 @@ auto scatterSample(const &directional_factor this, const &ScatterSampleParameter
 export struct measured_curve_factor: bsdf {
   /// The curve values.
   ///
-  /// > Measured data for the reflection behavior. A 1-d function 
-  /// > measured in the pre-image range from zero to pi/2 with equally 
+  /// > Measured data for the reflection behavior. A 1-d function
+  /// > measured in the pre-image range from zero to pi/2 with equally
   /// > spaced measured reflectance values.
   ///
-  color[] curve_values; // TODO Does the compiler know what size this is? Do we need to add [<N>]?
+  /// \note
+  /// The deferred size is inferred at construction and recovered
+  /// with `#num` in the implementation.
+  ///
+  color[] curve_values;
 
   /// The base BSDF.
   ///
@@ -1565,12 +1594,22 @@ export struct measured_curve_factor: bsdf {
   const int df_flags = base.df_flags;
 };
 
+/// Evaluate the reflectivity of the measured curve at `cosAlpha`, the cosine of the
+/// angle between the outgoing direction and the half vector, linearly interpolating
+/// the equally spaced `curve_values` over `[0, pi/2]`.
+@(pure macro)
+color evaluateMeasuredCurve(const &measured_curve_factor this, const float cosAlpha) {
+  const auto n(#num(this.curve_values));
+  const auto t(saturate(#acos(saturate(#abs(cosAlpha))) * (2 / $PI)) * (n - 1));
+  const int i(int(t));
+  return saturate(lerp(this.curve_values[i], this.curve_values[#min(i + 1, n - 1)], t - i));
+}
+
 @(macro)
 auto scatterEvaluate(const &measured_curve_factor this, const &ScatterEvaluateParameters params) {
   auto result(scatterEvaluate(visit &this.base, params));
   if (!result.isBlack && params.mode == scatter_reflect) {
-    // TODO Evaluate the factor and multiply result.f (leave result.pdf unchanged)
-    return ScatterEvaluateResult(f: result.f, pdf: result.pdf);
+    return ScatterEvaluateResult(f: evaluateMeasuredCurve(this, dot(params.wo, halfDirection(params))) * result.f, pdf: result.pdf);
   } else {
     return result;
   }
@@ -1580,7 +1619,7 @@ auto scatterEvaluate(const &measured_curve_factor this, const &ScatterEvaluatePa
 auto scatterSample(const &measured_curve_factor this, const &ScatterSampleParameters params) {
   auto result(scatterSample(visit &this.base, params));
   if ((result.mode == scatter_reflect) & bool(result.fDelta)) {
-    // TODO Evaluate the factor and multiply result.fDelta
+    *result.fDelta *= evaluateMeasuredCurve(this, dot(params.wo, halfDirection(params, &result)));
   }
   return result;
 }
@@ -1610,12 +1649,27 @@ export struct measured_factor: bsdf {
   const int df_flags = base.df_flags;
 };
 
+/// Evaluate the reflectivity of the measured factor, where `cosAlpha` is the cosine
+/// of the angle between the outgoing direction and the half vector `h`, and `cosBeta`
+/// is the cosine of the angle between `h` and the shading normal.
+@(pure macro)
+color evaluateMeasuredFactor(const &measured_factor this, const float cosAlpha, const float cosBeta) {
+  return saturate(
+    tex::lookup_color(
+      this.values,
+      float2(#acos(saturate(#abs(cosAlpha))), #acos(saturate(cosBeta))) * (2 / $PI),
+      tex::wrap_clamp,
+      tex::wrap_clamp,
+    ),
+  );
+}
+
 @(macro)
 auto scatterEvaluate(const &measured_factor this, const &ScatterEvaluateParameters params) {
   auto result(scatterEvaluate(visit &this.base, params));
   if (!result.isBlack && params.mode == scatter_reflect) {
-    // TODO Evaluate the factor and multiply result.f (leave result.pdf unchanged)
-    return ScatterEvaluateResult(f: result.f, pdf: result.pdf);
+    const auto h(halfDirection(params));
+    return ScatterEvaluateResult(f: evaluateMeasuredFactor(this, dot(params.wo, h), h.z) * result.f, pdf: result.pdf);
   } else {
     return result;
   }
@@ -1625,7 +1679,8 @@ auto scatterEvaluate(const &measured_factor this, const &ScatterEvaluateParamete
 auto scatterSample(const &measured_factor this, const &ScatterSampleParameters params) {
   auto result(scatterSample(visit &this.base, params));
   if ((result.mode == scatter_reflect) & bool(result.fDelta)) {
-    // TODO Evaluate the factor and multiply result.fDelta
+    const auto h(halfDirection(params, &result));
+    *result.fDelta *= evaluateMeasuredFactor(this, dot(params.wo, h), h.z);
   }
   return result;
 }

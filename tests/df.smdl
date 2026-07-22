@@ -2,6 +2,7 @@
 
 import ::df::*;
 import ::math::*;
+import ::tex::*;
 
 unit_test "Specular half vector for reflection" {
   const auto wo = math::normalize(float3(-0.4, 1.2, 1.6));
@@ -106,9 +107,16 @@ struct EvaluateResult {
   float2 pdf = float2(0);
 };
 
-EvaluateResult evaluate(const bsdf scattering, float3 wo, float3 wi) {
-  auto mat = material(surface: material_surface(scattering: scattering));
+EvaluateResult evaluate(
+  const bsdf scattering,
+  float3 wo,
+  float3 wi,
+  const bool isImportance = false,
+  const float3 normal = float3(0, 0, 1),
+) {
+  auto mat = material(surface: material_surface(scattering: scattering), geometry: material_geometry(normal: normal));
   auto instance = _MaterialInstance(&mat);
+  instance.flags |= isImportance ? 1 : 0; // MATERIAL_TRANSPORT_IMPORTANCE
   float pdfFwd = 0;
   float pdfRev = 0;
   color f = color(0);
@@ -116,6 +124,51 @@ EvaluateResult evaluate(const bsdf scattering, float3 wo, float3 wi) {
     return EvaluateResult(f, float2(pdfFwd, pdfRev));
   else
     return EvaluateResult();
+}
+
+struct SampleResult {
+  float3 wi = float3(0);
+  color f = color(0);
+  bool isDelta = false;
+  bool success = false;
+};
+
+SampleResult sample(
+  const bsdf scattering,
+  const float4 xi,
+  float3 wo,
+  const bool isImportance = false,
+  const float3 normal = float3(0, 0, 1),
+) {
+  auto mat = material(surface: material_surface(scattering: scattering), geometry: material_geometry(normal: normal));
+  auto instance = _MaterialInstance(&mat);
+  instance.flags |= isImportance ? 1 : 0; // MATERIAL_TRANSPORT_IMPORTANCE
+  float4 xi1 = xi;
+  float3 wi = float3(0);
+  float pdfFwd = 0;
+  float pdfRev = 0;
+  color f = color(0);
+  int isDelta = 0;
+  const auto success = df::_scatterSample(&instance, &xi1, &wo, &wi, &pdfFwd, &pdfRev, cast<&float>(&f), &isDelta);
+  return SampleResult(wi, f, bool(isDelta), bool(success));
+}
+
+// Check the bidirectional consistency of the given BSDF for the given directions:
+// 1. The forward and reverse PDFs must swap when the directions swap.
+// 2. Importance transport must be the adjoint of radiance transport:
+//    `fImp(wo -> wi) / |cos(wi, ng)| == fRad(wi -> wo) / |cos(wo, ng)|`
+//    where `ng` is the geometric normal, such that the identity must hold whether or
+//    not the shading normal agrees with the geometric normal.
+void checkBidirectionalConsistency(const bsdf scattering, const float3 wo, const float3 wi, const float3 normal = float3(0, 0, 1)) {
+  const auto rad01 = evaluate(scattering, wo, wi, false, normal);
+  const auto rad10 = evaluate(scattering, wi, wo, false, normal);
+  const auto imp01 = evaluate(scattering, wo, wi, true, normal);
+  const auto imp10 = evaluate(scattering, wi, wo, true, normal);
+  #assert(#any(rad01.f > 0.0)); // Else the checks pass vacuously
+  #assert(#all(#abs(rad01.pdf - rad10.pdf.yx) ~== [1e-6] 0.0));
+  #assert(#all(#abs(imp01.pdf - imp10.pdf.yx) ~== [1e-6] 0.0));
+  #assert(#all(#abs(imp01.f * #abs(wo.z) - rad10.f * #abs(wi.z)) ~== [1e-6] 0.0));
+  #assert(#all(#abs(imp10.f * #abs(wi.z) - rad01.f * #abs(wo.z)) ~== [1e-6] 0.0));
 }
 
 unit_test "Reciprocity" {
@@ -138,6 +191,136 @@ unit_test "Reciprocity" {
   const auto result1 = evaluate(f, wi, wo);
   #assert(#all(#abs(result0.pdf - result1.pdf.yx) ~== [1e-6] 0.0));
   #assert(#all(#abs(result0.f / #abs(wi.z) - result1.f / #abs(wo.z)) ~== [1e-6] 0.0));
+}
+
+unit_test "Bidirectional consistency" {
+  const auto wo = math::normalize(float3(-0.3, 0.4, 0.8));
+  const auto wi = math::normalize(float3(+0.5, 0.2, 0.9));
+  const auto wt = math::normalize(float3(+0.5, 0.2, -0.9));
+  const auto ns = math::normalize(float3(0.2, -0.1, 1.0)); // Tilted shading normal
+  const auto ggx = df::microfacet_ggx_smith_bsdf(roughness_u: 0.2, roughness_v: 0.5, tint: 1.0, multiscatter_tint: 1.0);
+  // Elemental reflection lobes.
+  checkBidirectionalConsistency(df::diffuse_reflection_bsdf(tint: 0.8, roughness: 0.7, multiscatter_tint: 0.5), wo, wi);
+  checkBidirectionalConsistency(df::diffuse_reflection_bsdf(tint: 0.8, roughness: 0.7, multiscatter_tint: 0.5), wo, wi, ns);
+  checkBidirectionalConsistency(df::sheen_bsdf(tint: 0.8, roughness: 0.6, multiscatter_tint: 0.7), wo, wi);
+  checkBidirectionalConsistency(df::sheen_bsdf(tint: 0.8, roughness: 0.6, multiscatter_tint: 0.7), wo, wi, ns);
+  checkBidirectionalConsistency(df::ward_geisler_moroder_bsdf(roughness_u: 0.4, roughness_v: 0.8, tint: 1.0, multiscatter_tint: 1.0), wo, wi, ns);
+  checkBidirectionalConsistency(df::simple_glossy_bsdf(roughness_u: 0.3, roughness_v: 0.6, tint: 0.9), wo, wi, ns);
+  checkBidirectionalConsistency(df::microfacet_beckmann_vcavities_bsdf(roughness_u: 0.4, roughness_v: 0.4, tint: 1.0), wo, wi, ns);
+  checkBidirectionalConsistency(ggx, wo, wi);
+  checkBidirectionalConsistency(ggx, wo, wi, ns);
+  // Transmission lobes.
+  checkBidirectionalConsistency(df::diffuse_transmission_bsdf(tint: 0.7), wo, wt, ns);
+  checkBidirectionalConsistency(df::microfacet_ggx_smith_bsdf(roughness_u: 0.3, roughness_v: 0.3, tint: 1.0, mode: df::scatter_transmit), wo, wt);
+  checkBidirectionalConsistency(df::microfacet_ggx_smith_bsdf(roughness_u: 0.3, roughness_v: 0.3, tint: 1.0, mode: df::scatter_transmit), wo, wt, ns);
+  // Modifiers.
+  checkBidirectionalConsistency(df::tint(0.5, ggx), wo, wi, ns);
+  checkBidirectionalConsistency(df::directional_factor(normal_tint: 0.9, grazing_tint: 0.3, base: ggx), wo, wi, ns);
+  checkBidirectionalConsistency(df::fresnel_factor(ior: 1.5, extinction_coefficient: 2.0, base: ggx), wo, wi, ns);
+  checkBidirectionalConsistency(df::measured_curve_factor(curve_values: color[3](color(0.9), color(0.5), color(0.2)), base: ggx), wo, wi, ns);
+  checkBidirectionalConsistency(df::measured_factor(values: texture_2d("4x4.png", tex::gamma_linear), base: ggx), wo, wi, ns);
+  // Layers.
+  const auto composite = df::weighted_layer(
+    weight: 0.5,
+    layer: df::sheen_bsdf(tint: 0.8, roughness: 0.6),
+    base: df::fresnel_layer(
+      ior: 1.4,
+      layer: df::ward_geisler_moroder_bsdf(roughness_u: 0.4, roughness_v: 0.8, tint: 1.0, multiscatter_tint: 1.0),
+      base: df::diffuse_reflection_bsdf(tint: 0.8, roughness: 0.6),
+    ),
+  );
+  checkBidirectionalConsistency(composite, wo, wi);
+  checkBidirectionalConsistency(composite, wo, wi, ns);
+}
+
+unit_test "Specular delta shading normal correction" {
+  const auto ns = math::normalize(float3(0.2, -0.1, 1.0)); // Tilted shading normal
+  const auto wo = math::normalize(float3(0.3, 0.2, 1.5));
+  const auto xi = float4(0.3, 0.4, 0.5, 0.6);
+  // Reflection: radiance transport applies no weight, importance transport applies
+  // the shading normal correction.
+  {
+    const auto bsdfR = df::specular_bsdf(tint: 1.0, mode: df::scatter_reflect);
+    const auto rad = sample(bsdfR, xi, wo, false, ns);
+    const auto imp = sample(bsdfR, xi, wo, true, ns);
+    #assert(rad.success && rad.isDelta);
+    #assert(imp.success && imp.isDelta);
+    #assert(#all(#abs(imp.wi - rad.wi) ~== [1e-6] 0.0));
+    #assert(#all(rad.f ~== [1e-6] color(1.0)));
+    const auto corr = #abs(math::dot(wo, ns) * rad.wi.z) / #abs(math::dot(rad.wi, ns) * wo.z);
+    #assert(#all(imp.f ~== [1e-5] color(corr)));
+    // With the default shading normal the correction must be the identity.
+    const auto impDefault = sample(bsdfR, xi, wo, true);
+    #assert(#all(impDefault.f ~== [1e-6] color(1.0)));
+  }
+  // Transmission: radiance transport applies the solid-angle compression `ior * ior`,
+  // importance transport applies the shading normal correction.
+  {
+    const auto bsdfT = df::specular_bsdf(tint: 1.0, mode: df::scatter_transmit);
+    const auto rad = sample(bsdfT, xi, wo, false, ns);
+    const auto imp = sample(bsdfT, xi, wo, true, ns);
+    #assert(rad.success && rad.isDelta);
+    #assert(imp.success && imp.isDelta);
+    #assert(#all(#abs(imp.wi - rad.wi) ~== [1e-6] 0.0));
+    #assert(rad.wi.z < 0.0);
+    #assert(#all(rad.f ~== [1e-5] color((1.0 / 1.4) * (1.0 / 1.4)))); // Material IOR defaults to 1.4
+    const auto corr = #abs(math::dot(wo, ns) * rad.wi.z) / #abs(math::dot(rad.wi, ns) * wo.z);
+    #assert(#all(imp.f ~== [1e-5] color(corr)));
+  }
+}
+
+unit_test "Measured curve factor" {
+  const auto wo = math::normalize(float3(-0.4, 1.2, 0.9));
+  const auto wi = math::normalize(float3(+0.3, -0.6, 0.7));
+  const auto base = df::diffuse_reflection_bsdf(tint: 0.8, roughness: 0.3);
+  const auto result0 = evaluate(base, wo, wi);
+  #assert(#any(result0.f > 0.0));
+  // A constant single-entry curve scales uniformly.
+  {
+    const auto result1 = evaluate(df::measured_curve_factor(curve_values: color[1](color(0.25)), base: base), wo, wi);
+    #assert(#all(#abs(result1.f - 0.25 * result0.f) ~== [1e-6] 0.0));
+    #assert(#all(#abs(result1.pdf - result0.pdf) ~== [1e-6] 0.0)); // The factor must not affect the PDFs
+  }
+  // An all-ones curve is the identity.
+  {
+    const auto result1 = evaluate(df::measured_curve_factor(curve_values: color[3](color(1.0), color(1.0), color(1.0)), base: base), wo, wi);
+    #assert(#all(#abs(result1.f - result0.f) ~== [1e-6] 0.0));
+  }
+  // A varying curve linearly interpolates over the angle between the outgoing
+  // direction and the half vector in the pre-image range from zero to pi/2.
+  {
+    const auto curve = color[4](color(1.0), color(0.7), color(0.4), color(0.1));
+    const auto result1 = evaluate(df::measured_curve_factor(curve_values: curve, base: base), wo, wi);
+    const auto h = math::normalize(wo + wi);
+    const auto t = math::saturate(math::acos(math::saturate(math::dot(wo, h))) * (2 / $PI)) * 3;
+    const int i = int(t);
+    const auto expected = math::lerp(curve[i], curve[#min(i + 1, 3)], t - i);
+    #assert(#all(#abs(result1.f - expected * result0.f) ~== [1e-5] 0.0));
+  }
+}
+
+unit_test "Measured factor" {
+  const auto values = texture_2d("4x4.png", tex::gamma_linear);
+  const auto wo = math::normalize(float3(-0.4, 1.2, 0.9));
+  const auto wi = math::normalize(float3(+0.3, -0.6, 0.7));
+  const auto base = df::diffuse_reflection_bsdf(tint: 1.0);
+  const auto result0 = evaluate(base, wo, wi);
+  const auto result1 = evaluate(df::measured_factor(values: values, base: base), wo, wi);
+  // The u coordinate is the angle between the outgoing direction and the half
+  // vector, and the v coordinate is the angle between the half vector and the
+  // shading normal, both normalized by pi/2 and clamped.
+  const auto h = math::normalize(wo + wi);
+  const auto expected = math::saturate(
+    tex::lookup_color(
+      values,
+      float2(math::acos(math::saturate(math::dot(wo, h))), math::acos(math::saturate(h.z))) * (2 / $PI),
+      tex::wrap_clamp,
+      tex::wrap_clamp,
+    ),
+  );
+  #assert(#any(expected > 0.0));
+  #assert(#all(#abs(result1.f - expected * result0.f) ~== [1e-6] 0.0));
+  #assert(#all(#abs(result1.pdf - result0.pdf) ~== [1e-6] 0.0)); // The factor must not affect the PDFs
 }
 
 /*
