@@ -5,9 +5,7 @@ namespace smdl {
 
 void Formatter::alignLineComments() {
   auto insertSpacesBeforeComment{[&](auto &comment, size_t numSpaces) {
-    for (size_t i = 0; i < numSpaces; i++) {
-      mOutputSrc.insert(mOutputSrc.begin() + comment.i, ' ');
-    }
+    mOutputSrc.insert(comment.i, numSpaces, ' ');
     for (auto itr{&comment};
          itr < mLineCommentsToAlign.data() + mLineCommentsToAlign.size();
          ++itr) {
@@ -113,13 +111,19 @@ void Formatter::writeDelimNewLine() {
 
 void Formatter::writeComment(llvm::StringRef inSrc) {
   if (!inSrc.empty() && !mOptions.noComments) {
-    // This better be a line comment or a multiline comment!
-    SMDL_SANITY_CHECK((inSrc.starts_with("//") && inSrc.ends_with("\n")) ||
-                      (inSrc.starts_with("/*") && inSrc.ends_with("*/")));
+    // This better be a line comment or a multiline comment! A line comment
+    // only lacks the terminating newline if it ends the file.
+    SMDL_SANITY_CHECK(
+        (inSrc.starts_with("//") && (inSrc.ends_with("\n") || mInputSrc.empty())) ||
+        (inSrc.starts_with("/*") && inSrc.ends_with("*/")));
     if (!mOutputSrc.empty() && lastOutput() != ' ' && lastOutput() != '\n') {
       mOutputSrc += ' ';
     }
-    // Parse format on/off directives
+    bool isNewLine{mOutputSrc.empty() || lastOutput() == '\n'};
+    writeIndentIfNewLine();
+    // Parse format on/off directives. This must happen after
+    // `writeIndentIfNewLine()` so that `FormatOff::outputSrcPos` includes
+    // the indentation of the `// smdl format off` comment itself.
     if (inSrc.starts_with("//") || !inSrc.contains('\n')) {
       auto text{inSrc.starts_with("//")
                     ? inSrc.drop_front(2).trim()
@@ -140,8 +144,6 @@ void Formatter::writeComment(llvm::StringRef inSrc) {
           applyFormatOff(inSrc.data());
       }
     }
-    bool isNewLine{mOutputSrc.empty() || lastOutput() == '\n'};
-    writeIndentIfNewLine();
     // Remember line comments to align later, but only remember if not
     // disabled by `// smdl format off`!
     if (inSrc.starts_with("//") && !isNewLine && !mFormatOff) {
@@ -149,7 +151,11 @@ void Formatter::writeComment(llvm::StringRef inSrc) {
           {mOutputSrc.size(), static_cast<size_t>(currentColumn())});
     }
     mOutputSrc += inSrc;
-    if (!mOptions.compact && consumeInputSpace().count('\n') > 0) {
+    // Always consume the trailing space, or else `writeMoreComments()`
+    // cannot see past it and the next `writeToken()` silently discards
+    // whatever comments remain in the gap!
+    auto numNewLines{consumeInputSpace().count('\n')};
+    if (!mOptions.compact && numNewLines > 0) {
       // Preserve up to 1 extra newline
       mOutputSrc += '\n';
     } else if (inSrc.starts_with("/*")) {
@@ -185,7 +191,9 @@ void Formatter::write(const AST::File &file) {
     write(decl->attributes, decl->srcKwExport, DELIM_SPACE, decl,
           DELIM_NEWLINE);
   }
-  if (!file.srcKwModule.empty()) {
+  if (!file.srcKwModule.empty() && !mOptions.noAnnotations) {
+    // If removing annotations, skip the entire `module [[ ... ]];` because
+    // the parser rejects `module;` without an annotation block!
     write(file.srcKwModule, file.moduleAnnotations,
           file.srcSemicolonAfterModule, DELIM_NEWLINE);
   }
@@ -260,7 +268,9 @@ void Formatter::write(const AST::Struct &decl) {
     write(POP_INDENT);
   }
   write(decl.annotations, DELIM_UNNECESSARY_SPACE, decl.srcBraceL, PUSH_INDENT,
-        INCREMENT_INDENT, decl.fields.empty() ? DELIM_NONE : DELIM_NEWLINE);
+        INCREMENT_INDENT,
+        decl.constructors.empty() && decl.fields.empty() ? DELIM_NONE
+                                                         : DELIM_NEWLINE);
   for (const auto &constructor : decl.constructors) {
     write(constructor.name.srcName, constructor.params, DELIM_UNNECESSARY_SPACE,
           constructor.srcEqual, DELIM_UNNECESSARY_SPACE, constructor.expr,

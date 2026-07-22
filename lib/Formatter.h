@@ -16,6 +16,9 @@ public:
     mOutputSrc.clear();
     mInputSrc = inSrc;
     mIndent = 0;
+    mIndentStack.clear();
+    mLineCommentsToAlign.clear();
+    mFormatOff.reset();
     // Write!
     write(node);
     // If there was a dangling `// smdl format off` that was
@@ -26,9 +29,9 @@ public:
     return mOutputSrc;
   }
 
+private:
   void alignLineComments();
 
-private:
   enum Delim {
     DELIM_NONE,
     DELIM_SPACE,
@@ -53,11 +56,13 @@ private:
   [[nodiscard]] llvm::StringRef consumeInputComment() {
     if (mInputSrc.starts_with("//")) {
       auto pos{mInputSrc.find('\n', 1)};
-      return consumeInput(pos == llvm::StringRef::npos ? pos : pos + 1);
+      return consumeInput(pos == llvm::StringRef::npos ? mInputSrc.size()
+                                                       : pos + 1);
     }
     if (mInputSrc.starts_with("/*")) {
       auto pos{mInputSrc.find("*/", 2)};
-      return consumeInput(pos == llvm::StringRef::npos ? pos : pos + 2);
+      return consumeInput(pos == llvm::StringRef::npos ? mInputSrc.size()
+                                                       : pos + 2);
     }
     return {};
   }
@@ -274,11 +279,12 @@ private:
     } else if (expr.op == AST::BINOP_ELSE) {
       write(expr.exprLhs, DELIM_SPACE, expr.srcOp, DELIM_SPACE, expr.exprRhs);
     } else {
+      write(expr.exprLhs);
+      // Avoid `+++` and `---` when the left operand ends with `++` or `--`
       bool mustHaveSpaceBefore{
           (expr.op == AST::BINOP_ADD && lastOutput() == '+') ||
           (expr.op == AST::BINOP_SUB && lastOutput() == '-')};
-      write(expr.exprLhs,
-            expr.op == AST::BINOP_COMMA ? DELIM_NONE
+      write(expr.op == AST::BINOP_COMMA ? DELIM_NONE
             : mustHaveSpaceBefore       ? DELIM_SPACE
                                         : DELIM_UNNECESSARY_SPACE,
             expr.srcOp, DELIM_UNNECESSARY_SPACE, expr.exprRhs);
@@ -304,8 +310,11 @@ private:
   void write(const AST::LiteralInt &expr) { write(expr.srcValue); }
 
   void write(const AST::LiteralString &expr) {
-    for (const auto &srcValue : expr.srcValues)
-      write(srcValue);
+    for (size_t i = 0; i < expr.srcValues.size(); i++) {
+      if (i > 0)
+        write(DELIM_UNNECESSARY_SPACE);
+      write(expr.srcValues[i]);
+    }
   }
 
   void write(const AST::Parens &expr) {
@@ -496,8 +505,11 @@ private:
   }
 
   template <typename... Ts, typename T> void writeTypeSwitch(T &node) {
-    llvm::TypeSwitch<T *, void>(&node).template Case<Ts...>(
-        [&](auto each) { write(*each); });
+    llvm::TypeSwitch<T *, void>(&node)
+        .template Case<Ts...>([&](auto each) { write(*each); })
+        .Default([](T *) {
+          SMDL_SANITY_CHECK(false, "unhandled AST node in Formatter");
+        });
   }
 
 private:
