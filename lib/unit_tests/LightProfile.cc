@@ -57,6 +57,8 @@ static void checkDistributionConsistency(const smdl::LightProfile &profile) {
     }
   }
   CHECK(pdfIntegral == doctest::Approx(1.0).epsilon(0.02));
+  // The radiometric power is the intensity integrated over the sphere.
+  CHECK(profile.power() == doctest::Approx(intensityIntegral).epsilon(0.02));
   std::mt19937 prng{};
   for (int iter = 0; iter < 100; iter++) {
     float pdf{};

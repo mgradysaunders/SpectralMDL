@@ -185,9 +185,16 @@ void LightProfile::clear() noexcept {
 }
 
 float LightProfile::power() const noexcept {
-  // TODO Actually calculate this instead of relying on
-  //      measured electric power consumption
-  return inputWatts;
+  // The distribution tabulates `sin(theta) * interpolate(...)` at the texel
+  // centers of an equirectangular grid, so the intensity integrated over the
+  // sphere is the midpoint-rule sum of the tabulation times the angular area
+  // per texel.
+  const int nX{distribution.getNumTexelsX()};
+  const int nY{distribution.getNumTexelsY()};
+  if (nX == 0 || nY == 0)
+    return 0;
+  return distribution.unnormalizedSum() * 2.0f * PI * PI /
+         (float(nX) * float(nY));
 }
 
 constexpr float radToDeg = 180.0f / 3.14159265359f;
