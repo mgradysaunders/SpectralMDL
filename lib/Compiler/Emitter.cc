@@ -2018,7 +2018,12 @@ Value Emitter::emitIntrinsic(std::string_view name, const ArgumentList &args,
                                                                       : 3))};
               return invoke(
                   bsdfMeasurementType,
-                  {Argument{"mode",
+                  {Argument{"ptr", context.getComptimePtr(
+                                       context.getVoidPointerType(),
+                                       bsdfMeasurement.buffer
+                                           ? &bsdfMeasurement
+                                           : nullptr)},
+                   Argument{"mode",
                             context.getComptimeInt(
                                 bsdfMeasurement.kind ==
                                         BSDFMeasurement::KIND_REFLECTION

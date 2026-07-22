@@ -171,16 +171,17 @@ void checkBidirectionalConsistency(const bsdf scattering, const float3 wo, const
   #assert(#all(#abs(imp10.f * #abs(wi.z) - rad01.f * #abs(wo.z)) ~== [1e-5] 0.0));
 }
 
-// Check that the transmission PDF integrates over the lower hemisphere to the
-// sampling acceptance rate, which numerically confirms the change-of-variables
-// Jacobian from sampled microsurface normals to incoming directions.
-void checkTransmitPDFIntegral(const bsdf scattering, const float3 wo) {
+// Check that the scattering PDF integrates over the hemisphere selected by
+// `zSign` to the sampling acceptance rate, which numerically confirms the
+// change-of-variables Jacobian from whatever the sampling routine draws
+// internally to incoming directions.
+void checkScatterPDFIntegral(const bsdf scattering, const float3 wo, const float zSign) {
   const int n = 128;
   double pdfIntegral = 0;
   for (int i = 0; i < n; i++) {
     for (int j = 0; j < n; j++) {
       const auto xi = float2((i + 0.5) / n, (j + 0.5) / n);
-      const auto wi = df::monte_carlo::uniformHemisphereSample(xi) * float3(1, 1, -1);
+      const auto wi = df::monte_carlo::uniformHemisphereSample(xi) * float3(1, 1, zSign);
       pdfIntegral += evaluate(scattering, wo, wi).pdf[0];
     }
   }
@@ -295,10 +296,31 @@ unit_test "Bidirectional consistency" {
 
 unit_test "Microfacet transmission PDF" {
   const auto wo = math::normalize(float3(-0.3, 0.4, 0.8));
-  checkTransmitPDFIntegral(df::simple_glossy_bsdf(roughness_u: 0.7, tint: 1.0, mode: df::scatter_transmit), wo);
-  checkTransmitPDFIntegral(df::simple_glossy_bsdf(roughness_u: 0.4, tint: 1.0, mode: df::scatter_transmit), wo);
-  checkTransmitPDFIntegral(df::microfacet_ggx_smith_bsdf(roughness_u: 0.7, tint: 1.0, mode: df::scatter_transmit), wo);
-  checkTransmitPDFIntegral(df::microfacet_ggx_smith_bsdf(roughness_u: 0.4, tint: 1.0, mode: df::scatter_transmit), wo);
+  checkScatterPDFIntegral(df::simple_glossy_bsdf(roughness_u: 0.7, tint: 1.0, mode: df::scatter_transmit), wo, -1.0);
+  checkScatterPDFIntegral(df::simple_glossy_bsdf(roughness_u: 0.4, tint: 1.0, mode: df::scatter_transmit), wo, -1.0);
+  checkScatterPDFIntegral(df::microfacet_ggx_smith_bsdf(roughness_u: 0.7, tint: 1.0, mode: df::scatter_transmit), wo, -1.0);
+  checkScatterPDFIntegral(df::microfacet_ggx_smith_bsdf(roughness_u: 0.4, tint: 1.0, mode: df::scatter_transmit), wo, -1.0);
+}
+
+unit_test "Measured BSDF" {
+  const auto wo = math::normalize(float3(-0.3, 0.4, 0.8));
+  const auto wi = math::normalize(float3(+0.5, 0.2, 0.9));
+  const auto ns = math::normalize(float3(0.2, -0.1, 1.0));
+  const auto m = bsdf_measurement("test.mbsdf");
+  #assert(df::bsdf_measurement_isvalid(m));
+  // The synthetic measurement is reciprocal, so the full bidirectional
+  // consistency harness applies, tilted shading normal included.
+  checkBidirectionalConsistency(df::measured_bsdf(measurement: m), wo, wi);
+  checkBidirectionalConsistency(df::measured_bsdf(measurement: m), wo, wi, ns);
+  // The PDF must integrate over the reflection hemisphere to the sampling
+  // acceptance rate.
+  checkScatterPDFIntegral(df::measured_bsdf(measurement: m), wo, +1.0);
+  // The multiplier scales the scattering function and leaves the PDFs alone.
+  const auto result1 = evaluate(df::measured_bsdf(measurement: m), wo, wi);
+  const auto result2 = evaluate(df::measured_bsdf(measurement: m, multiplier: 2.0), wo, wi);
+  #assert(#any(result1.f > 0.0));
+  #assert(#all(#abs(result2.f - 2.0 * result1.f) ~== [1e-5] 0.0));
+  #assert(#all(#abs(result2.pdf - result1.pdf) ~== [1e-6] 0.0));
 }
 
 unit_test "Specular delta shading normal correction" {

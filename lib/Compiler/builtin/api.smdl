@@ -320,6 +320,9 @@ export struct texture_ptex {
 export struct bsdf_measurement {
   bsdf_measurement(const string name) = #load_bsdf_measurement(name);
 
+  /// The pointer to the `smdl::BSDFMeasurement`.
+  const &void ptr = none;
+
   /// The scatter mode, either `scatter_reflect` or `scatter_transmit`.
   const int mode = 0;
 
@@ -330,7 +333,7 @@ export struct bsdf_measurement {
   const int num_phi = 0;
 
   /// The buffer `smdl::BSDFMeasurement::buffer` which points to a
-  /// table of `num_theta * num_theta * num_phi` values of type `float` 
+  /// table of `num_theta * num_theta * num_phi` values of type `float`
   /// or `float3`.
   const auto buffer = cast<&float>(none);
 };

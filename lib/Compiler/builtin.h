@@ -208,6 +208,7 @@ export struct texture_ptex{
 };
 export struct bsdf_measurement{
   bsdf_measurement(const string name)=#load_bsdf_measurement(name);
+  const &void ptr=none;
   const int mode=0;
   const int num_theta=0;
   const int num_phi=0;
@@ -1195,19 +1196,46 @@ export auto microfacet_ggx_vcavities_bsdf(*)=makeMicrofacetBSDF(distribution: mi
 export auto microfacet_beckmann_smith_bsdf(*)=makeMicrofacetBSDF(distribution: microfacet::DistributionBeckmann(),shadowing: microfacet::ShadowingSmith());
 export auto microfacet_beckmann_vcavities_bsdf(*)=makeMicrofacetBSDF(distribution: microfacet::DistributionBeckmann(),shadowing: microfacet::ShadowingVCavities());
 export bool bsdf_measurement_isvalid(const bsdf_measurement measurement)=bool(measurement.buffer);
+@(pure foreign)
+void smdBSDFMeasurementInterpolate(&void measurement,&float3 wo,&float3 wi,&float3 result);
+@(pure foreign)
+float smdBSDFMeasurementDirectionPDF(&void measurement,&float3 wo,&float3 wi);
+@(pure foreign)
+void smdBSDFMeasurementDirectionSample(&void measurement,&float2 xi,&float3 wo,&float3 wi,&float pdf);
 export struct measured_bsdf:bsdf{
   bsdf_measurement measurement;
   float multiplier=1.0;
   scatter_mode mode=scatter_reflect;
   string handle="";
+  const int df_flags=(int(mode)&measurement.mode)|DF_GLOSSY;
 };
 @(macro)
-auto scatterEvaluate(const &measured_bsdf this[[anno::unused()]],const &ScatterEvaluateParameters params[[anno::unused()]]){
-  return ScatterEvaluateResult(isBlack: true);
+auto scatterEvaluate(const &measured_bsdf this,inline const &ScatterEvaluateParameters params){
+  const auto enabledMode(int(this.mode)&this.measurement.mode);
+  return ScatterEvaluateResult(isBlack: true) if(!bool(this.measurement.ptr)||(int(mode)&enabledMode)==0);
+  return ScatterEvaluateResult(isBlack: true) if(!recalculateTangentSpace(params));
+  auto wiUpper(float3(wi.x,wi.y,#abs(wi.z)));
+  auto f3(float3(0.0));
+  smdBSDFMeasurementInterpolate(this.measurement.ptr,&wo,&wiUpper,&f3);
+  auto result(ScatterEvaluateResult(f: this.multiplier*#abs(wi.z)*color(f3),pdf: float2(smdBSDFMeasurementDirectionPDF(this.measurement.ptr,&wo,&wiUpper),smdBSDFMeasurementDirectionPDF(this.measurement.ptr,&wiUpper,&wo),),));
+  result.f*=shadingNormalCorrection if(isImportance);
+  return result;
 }
 @(macro)
-auto scatterSample(const &measured_bsdf this[[anno::unused()]],const &ScatterSampleParameters params[[anno::unused()]]){
-  return ScatterSampleResult();
+auto scatterSample(const &measured_bsdf this,inline const &ScatterSampleParameters params){
+  const auto enabledMode(int(this.mode)&this.measurement.mode);
+  return ScatterSampleResult() if(!bool(this.measurement.ptr)||enabledMode==0);
+  if((tbn:=recalculateTangentSpace(params))){
+    auto xi2(xi.xy);
+    auto wiLocal(float3(0.0));
+    float pdf=0.0;
+    smdBSDFMeasurementDirectionSample(this.measurement.ptr,&xi2,&wo,&wiLocal,&pdf);
+    return ScatterSampleResult() if(!(pdf>0.0));
+    wiLocal.z=-wiLocal.z if(enabledMode==int(scatter_transmit));
+    return ScatterSampleResult(wi: normalize((*tbn)*wiLocal),mode: enabledMode==int(scatter_transmit)?scatter_transmit:scatter_reflect,);
+  } else {
+    return ScatterSampleResult();
+  }
 }
 struct tint1:bsdf,edf,hair_bsdf{
   $(color|float) tint;

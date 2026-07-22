@@ -289,6 +289,11 @@ public:
   /// The number of pixels in Y.
   [[nodiscard]] int getNumTexelsY() const noexcept { return numTexelsY; }
 
+  /// The unnormalized sum over all values.
+  [[nodiscard]] float unnormalizedSum() const noexcept {
+    return marginal.unnormalizedSum();
+  }
+
   /// The pixel probability mass function (PMF).
   [[nodiscard]] float pixelPMF(int2 i) const noexcept {
     if (0 <= i.y && i.y < numTexelsY)

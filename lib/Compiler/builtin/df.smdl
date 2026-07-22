@@ -1280,26 +1280,77 @@ export auto microfacet_beckmann_vcavities_bsdf(*) = makeMicrofacetBSDF(distribut
 //--{ measured_bsdf
 export bool bsdf_measurement_isvalid(const bsdf_measurement measurement) = bool(measurement.buffer);
 
+/// Declare `smdBSDFMeasurementInterpolate` in `lib/BSDFMeasurement.cc`
+@(pure foreign)
+void smdBSDFMeasurementInterpolate(&void measurement, &float3 wo, &float3 wi, &float3 result);
+
+/// Declare `smdBSDFMeasurementDirectionPDF` in `lib/BSDFMeasurement.cc`
+@(pure foreign)
+float smdBSDFMeasurementDirectionPDF(&void measurement, &float3 wo, &float3 wi);
+
+/// Declare `smdBSDFMeasurementDirectionSample` in `lib/BSDFMeasurement.cc`
+@(pure foreign)
+void smdBSDFMeasurementDirectionSample(&void measurement, &float2 xi, &float3 wo, &float3 wi, &float pdf);
+
 export struct measured_bsdf: bsdf {
+  /// The measurement.
   bsdf_measurement measurement;
 
+  /// The multiplier.
   float multiplier = 1.0;
 
+  /// The scatter mode.
   scatter_mode mode = scatter_reflect;
 
+  /// The handle.
   string handle = "";
+
+  /// The flags.
+  const int df_flags = (int(mode) & measurement.mode) | DF_GLOSSY;
 };
 
 @(macro)
-auto scatterEvaluate(const &measured_bsdf this [[anno::unused()]], const &ScatterEvaluateParameters params [[anno::unused()]]) {
-  // TODO Evaluate the measured BSDF
-  return ScatterEvaluateResult(isBlack: true);
+auto scatterEvaluate(const &measured_bsdf this, inline const &ScatterEvaluateParameters params) {
+  const auto enabledMode(int(this.mode) & this.measurement.mode);
+  return ScatterEvaluateResult(isBlack: true) if (!bool(this.measurement.ptr) || (int(mode) & enabledMode) == 0);
+  return ScatterEvaluateResult(isBlack: true) if (!recalculateTangentSpace(params));
+  // The measurement table is hemisphere-agnostic, so look up with the incoming
+  // direction flipped into the upper hemisphere. This only matters for
+  // transmission, where the incoming direction is below the horizon.
+  auto wiUpper(float3(wi.x, wi.y, #abs(wi.z)));
+  auto f3(float3(0.0));
+  smdBSDFMeasurementInterpolate(this.measurement.ptr, &wo, &wiUpper, &f3);
+  auto result(ScatterEvaluateResult(
+    f: this.multiplier * #abs(wi.z) * color(f3),
+    pdf: float2(
+      smdBSDFMeasurementDirectionPDF(this.measurement.ptr, &wo, &wiUpper),
+      smdBSDFMeasurementDirectionPDF(this.measurement.ptr, &wiUpper, &wo),
+    ),
+  ));
+  result.f *= shadingNormalCorrection if (isImportance);
+  return result;
 }
 
 @(macro)
-auto scatterSample(const &measured_bsdf this [[anno::unused()]], const &ScatterSampleParameters params [[anno::unused()]]) {
-  // TODO Sample the measured BSDF, may require tabulating a PDF in `BSDFMeasurement.{h,cc}`?
-  return ScatterSampleResult();
+auto scatterSample(const &measured_bsdf this, inline const &ScatterSampleParameters params) {
+  const auto enabledMode(int(this.mode) & this.measurement.mode);
+  return ScatterSampleResult() if (!bool(this.measurement.ptr) || enabledMode == 0);
+  if ((tbn := recalculateTangentSpace(params))) {
+    auto xi2(xi.xy);
+    auto wiLocal(float3(0.0));
+    float pdf = 0.0;
+    smdBSDFMeasurementDirectionSample(this.measurement.ptr, &xi2, &wo, &wiLocal, &pdf);
+    return ScatterSampleResult() if (!(pdf > 0.0));
+    // The sampled direction is always in the upper hemisphere, so flip it
+    // below the horizon for transmission measurements.
+    wiLocal.z = -wiLocal.z if (enabledMode == int(scatter_transmit));
+    return ScatterSampleResult(
+             wi: normalize((*tbn) * wiLocal),
+             mode: enabledMode == int(scatter_transmit) ? scatter_transmit : scatter_reflect,
+           );
+  } else {
+    return ScatterSampleResult(); // Reject
+  }
 }
 //--}
 
