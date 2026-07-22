@@ -1453,6 +1453,69 @@ Value Emitter::emitIntrinsic(std::string_view name, const ArgumentList &args,
         context.getVoidPointerType(),
         builder.CreateCall(callee, {arg0.llvmValue, arg1.llvmValue}));
   }};
+  // '#bitreverse', '#ctlz', '#cttz', and '#ctpop' differ only in the LLVM
+  // intrinsic and whether it takes the trailing is-zero-poison flag.
+  {
+    static constexpr struct {
+      std::string_view intrName;
+      llvm::Intrinsic::ID intrID;
+      bool hasIsZeroPoisonFlag;
+    } unaryIntIntrinsics[]{
+        {"bitreverse", llvm::Intrinsic::bitreverse, false},
+        {"ctlz", llvm::Intrinsic::ctlz, true},
+        {"cttz", llvm::Intrinsic::cttz, true},
+        {"ctpop", llvm::Intrinsic::ctpop, false},
+    };
+    for (const auto &[intrName, intrID, hasFlag] : unaryIntIntrinsics) {
+      if (name == intrName) {
+        auto value{rvalue(expectOneIntOrIntVector())};
+        return RValue(value.type,
+                      hasFlag ? builder.CreateBinaryIntrinsic(
+                                    intrID, value,
+                                    context.getComptimeBool(false))
+                              : builder.CreateUnaryIntrinsic(intrID, value));
+      }
+    }
+  }
+  // '#sum', '#prod', '#max_value', and '#min_value' share one vector
+  // reduction implementation.
+  if (name == "sum" || name == "prod" || name == "max_value" ||
+      name == "min_value") {
+    auto value{rvalue(expectOneVectorized())};
+    if (value.type->isArithmeticScalar())
+      return value;
+    // Widen bool vectors before '#sum': add-reducing '<N x i1>' computes
+    // the parity of the lanes, not the count of true lanes.
+    if (name == "sum" && value.type->isArithmeticBoolean())
+      value = invoke(static_cast<ArithmeticType *>(value.type)
+                         ->getWithDifferentScalar(context, Scalar::getInt(32)),
+                     value, srcLoc);
+    auto scalarType{scalarTypeOf(value.type)};
+    if (name == "max_value" || name == "min_value") {
+      auto intrID = name == "max_value"
+                        ? (value.type->isArithmeticBoolean()
+                               ? llvm::Intrinsic::vector_reduce_umax
+                           : value.type->isArithmeticIntegral()
+                               ? llvm::Intrinsic::vector_reduce_smax
+                               : llvm::Intrinsic::vector_reduce_fmax)
+                        : (value.type->isArithmeticBoolean()
+                               ? llvm::Intrinsic::vector_reduce_umin
+                           : value.type->isArithmeticIntegral()
+                               ? llvm::Intrinsic::vector_reduce_smin
+                               : llvm::Intrinsic::vector_reduce_fmin);
+      return RValue(scalarType, builder.CreateUnaryIntrinsic(intrID, value));
+    }
+    if (scalarType->isArithmeticIntegral())
+      return RValue(scalarType, name == "sum" ? builder.CreateAddReduce(value)
+                                              : builder.CreateMulReduce(value));
+    return RValue(
+        scalarType,
+        name == "sum"
+            ? builder.CreateFAddReduce(Value::zero(scalarType), value)
+            : builder.CreateFMulReduce(
+                  invoke(scalarType, context.getComptimeFloat(1), srcLoc),
+                  value));
+  }
   switch (name[0]) {
   default:
     break;
@@ -1563,11 +1626,6 @@ Value Emitter::emitIntrinsic(std::string_view name, const ArgumentList &args,
     break;
   }
   case 'b': {
-    if (name == "bitreverse") {
-      auto value{rvalue(expectOneIntOrIntVector())};
-      return RValue(value.type, builder.CreateUnaryIntrinsic(
-                                    llvm::Intrinsic::bitreverse, value));
-    }
     if (name == "bitcast") {
       if (!(args.size() == 2 &&                          //
             args[0].value.isComptimeMetaType(context) && //
@@ -1634,23 +1692,6 @@ Value Emitter::emitIntrinsic(std::string_view name, const ArgumentList &args,
     break;
   }
   case 'c': {
-    if (name == "ctlz") {
-      auto value{rvalue(expectOneIntOrIntVector())};
-      return RValue(value.type, builder.CreateBinaryIntrinsic(
-                                    llvm::Intrinsic::ctlz, value,
-                                    context.getComptimeBool(false)));
-    }
-    if (name == "cttz") {
-      auto value{rvalue(expectOneIntOrIntVector())};
-      return RValue(value.type, builder.CreateBinaryIntrinsic(
-                                    llvm::Intrinsic::cttz, value,
-                                    context.getComptimeBool(false)));
-    }
-    if (name == "ctpop") {
-      auto value{rvalue(expectOneIntOrIntVector())};
-      return RValue(value.type, builder.CreateUnaryIntrinsic(
-                                    llvm::Intrinsic::ctpop, value));
-    }
     break;
   }
   case 'f': {
@@ -1765,6 +1806,19 @@ Value Emitter::emitIntrinsic(std::string_view name, const ArgumentList &args,
         return std::make_pair(std::string(args[0].value.getComptimeString()),
                               rvalue(args[1].value));
       }};
+      // The '#load_*' resource intrinsics share one locate-or-warn
+      // prologue: a file that cannot be found is a warning, and the
+      // resource type is default-constructed.
+      auto withLocatedFile{[&](const std::string &fileName, Type *resultType,
+                               auto &&buildFromFile) -> Value {
+        auto resolvedFileName{context.locate(fileName)};
+        if (!resolvedFileName) {
+          srcLoc.logWarn(
+              concat("cannot load ", Quoted(fileName), ": file not found"));
+          return invoke(resultType, {}, srcLoc);
+        }
+        return buildFromFile(*resolvedFileName);
+      }};
       if (name == "load_texture_2d") {
         auto texture2DType{context.getTexture2DType()};
         auto [fileName, valueGammaAsInt] = expectOneComptimeStringAndOneInt();
@@ -1840,72 +1894,70 @@ Value Emitter::emitIntrinsic(std::string_view name, const ArgumentList &args,
       }
       if (name == "load_texture_ptex") {
         auto texturePtexType{context.getTexturePtexType()};
-        auto [fileName, valueGammaAsInt] = expectOneComptimeStringAndOneInt();
-        auto resolvedFileName{context.locate(fileName)};
-        if (!resolvedFileName) {
-          srcLoc.logWarn(
-              concat("cannot load ", Quoted(fileName), ": file not found"));
-          return invoke(texturePtexType, {}, srcLoc);
-        }
-        auto &ptexture{
-            context.compiler.loadPtexture(*resolvedFileName, srcLoc)};
-        auto valuePtr{
-            context.getComptimePtr(context.getVoidPointerType(),
-                                   ptexture.texture ? &ptexture : nullptr)};
-        return invoke(
-            texturePtexType,
-            {Argument{"ptr", valuePtr}, Argument{"gamma", valueGammaAsInt}},
-            srcLoc);
+        auto fileNameAndGamma{expectOneComptimeStringAndOneInt()};
+        return withLocatedFile(
+            fileNameAndGamma.first, texturePtexType,
+            [&](const std::string &resolvedFileName) {
+              auto &ptexture{
+                  context.compiler.loadPtexture(resolvedFileName, srcLoc)};
+              auto valuePtr{context.getComptimePtr(
+                  context.getVoidPointerType(),
+                  ptexture.texture ? &ptexture : nullptr)};
+              return invoke(texturePtexType,
+                            {Argument{"ptr", valuePtr},
+                             Argument{"gamma", fileNameAndGamma.second}},
+                            srcLoc);
+            });
       }
       if (name == "load_bsdf_measurement") {
         auto bsdfMeasurementType{context.getBSDFMeasurementType()};
         auto fileName{expectOneComptimeString()};
-        auto resolvedFileName{context.locate(fileName)};
-        if (!resolvedFileName) {
-          srcLoc.logWarn(
-              concat("cannot load ", Quoted(fileName), ": file not found"));
-          return invoke(bsdfMeasurementType, {}, srcLoc);
-        }
-        auto &bsdfMeasurement{
-            context.compiler.loadBSDFMeasurement(*resolvedFileName, srcLoc)};
-        auto bufferPtrType{context.getPointerType(context.getFloatType(
-            bsdfMeasurement.type == BSDFMeasurement::TYPE_FLOAT ? 1 : 3))};
-        return invoke(
-            bsdfMeasurementType,
-            {Argument{"mode", context.getComptimeInt(
-                                  bsdfMeasurement.kind ==
-                                          BSDFMeasurement::KIND_REFLECTION
-                                      ? /* scatter_reflect  */ 1
-                                      : /* scatter_transmit */ 2)},
-             Argument{"num_theta",
-                      context.getComptimeInt(int(bsdfMeasurement.numTheta))},
-             Argument{"num_phi",
-                      context.getComptimeInt(int(bsdfMeasurement.numPhi))},
-             Argument{"buffer", context.getComptimePtr(
-                                    bufferPtrType, bsdfMeasurement.buffer)}},
-            srcLoc);
+        return withLocatedFile(
+            fileName, bsdfMeasurementType,
+            [&](const std::string &resolvedFileName) {
+              auto &bsdfMeasurement{context.compiler.loadBSDFMeasurement(
+                  resolvedFileName, srcLoc)};
+              auto bufferPtrType{context.getPointerType(context.getFloatType(
+                  bsdfMeasurement.type == BSDFMeasurement::TYPE_FLOAT ? 1
+                                                                      : 3))};
+              return invoke(
+                  bsdfMeasurementType,
+                  {Argument{"mode",
+                            context.getComptimeInt(
+                                bsdfMeasurement.kind ==
+                                        BSDFMeasurement::KIND_REFLECTION
+                                    ? /* scatter_reflect  */ 1
+                                    : /* scatter_transmit */ 2)},
+                   Argument{"num_theta", context.getComptimeInt(
+                                             int(bsdfMeasurement.numTheta))},
+                   Argument{"num_phi", context.getComptimeInt(
+                                           int(bsdfMeasurement.numPhi))},
+                   Argument{"buffer",
+                            context.getComptimePtr(bufferPtrType,
+                                                   bsdfMeasurement.buffer)}},
+                  srcLoc);
+            });
       }
       if (name == "load_light_profile") {
         auto lightProfileType{context.getLightProfileType()};
         auto fileName{expectOneComptimeString()};
-        auto resolvedFileName{context.locate(fileName)};
-        if (!resolvedFileName) {
-          srcLoc.logWarn(
-              concat("cannot load ", Quoted(fileName), ": file not found"));
-          return invoke(lightProfileType, {}, srcLoc);
-        }
-        auto &lightProfile{
-            context.compiler.loadLightProfile(*resolvedFileName, srcLoc)};
-        return invoke(
-            lightProfileType,
-            {Argument{"ptr",
-                      context.getComptimePtr(
-                          context.getVoidPointerType(),
-                          lightProfile.isValid() ? &lightProfile : nullptr)},
-             Argument{"max_intensity",
-                      context.getComptimeFloat(lightProfile.maxIntensity())},
-             Argument{"power", context.getComptimeFloat(lightProfile.power())}},
-            srcLoc);
+        return withLocatedFile(
+            fileName, lightProfileType,
+            [&](const std::string &resolvedFileName) {
+              auto &lightProfile{context.compiler.loadLightProfile(
+                  resolvedFileName, srcLoc)};
+              return invoke(
+                  lightProfileType,
+                  {Argument{"ptr", context.getComptimePtr(
+                                       context.getVoidPointerType(),
+                                       lightProfile.isValid() ? &lightProfile
+                                                              : nullptr)},
+                   Argument{"max_intensity", context.getComptimeFloat(
+                                                 lightProfile.maxIntensity())},
+                   Argument{"power",
+                            context.getComptimeFloat(lightProfile.power())}},
+                  srcLoc);
+            });
       }
       if (name == "load_spectral_curve") {
         auto spectralCurveType{context.getSpectralCurveType()};
@@ -1927,39 +1979,39 @@ Value Emitter::emitIntrinsic(std::string_view name, const ArgumentList &args,
                             " expects 1 or 2 arguments");
         }
         auto fileName{std::string(args[0].value.getComptimeString())};
-        auto resolvedFileName{context.locate(fileName)};
-        if (!resolvedFileName) {
-          srcLoc.logWarn(
-              concat("cannot load ", Quoted(fileName), ": file not found"));
-          return invoke(spectralCurveType, {}, srcLoc);
-        }
-        auto spectrumView{SpectrumView{}};
-        if (args.size() == 1) {
-          spectrumView =
-              context.compiler.loadSpectrum(*resolvedFileName, srcLoc);
-        } else if (args[1].value.isComptimeString()) {
-          spectrumView = context.compiler.loadSpectrum(
-              *resolvedFileName, std::string(args[1].value.getComptimeString()),
-              srcLoc);
-        } else if (args[1].value.isComptimeInt()) {
-          spectrumView = context.compiler.loadSpectrum(
-              *resolvedFileName, int(args[1].value.getComptimeInt()), srcLoc);
-        }
-        if (spectrumView.curveValues.empty()) {
-          return invoke(spectralCurveType, {}, srcLoc);
-        }
-        auto floatPtrType{context.getPointerType(context.getFloatType())};
-        return invoke(
-            spectralCurveType,
-            {Argument{"count", context.getComptimeInt(
-                                   int(spectrumView.wavelengths.size()))},
-             Argument{"wavelengths",
-                      context.getComptimePtr(floatPtrType,
-                                             spectrumView.wavelengths.data())},
-             Argument{"amplitudes",
-                      context.getComptimePtr(floatPtrType,
-                                             spectrumView.curveValues.data())}},
-            srcLoc);
+        return withLocatedFile(
+            fileName, spectralCurveType,
+            [&](const std::string &resolvedFileName) -> Value {
+              auto spectrumView{SpectrumView{}};
+              if (args.size() == 1) {
+                spectrumView =
+                    context.compiler.loadSpectrum(resolvedFileName, srcLoc);
+              } else if (args[1].value.isComptimeString()) {
+                spectrumView = context.compiler.loadSpectrum(
+                    resolvedFileName,
+                    std::string(args[1].value.getComptimeString()), srcLoc);
+              } else if (args[1].value.isComptimeInt()) {
+                spectrumView = context.compiler.loadSpectrum(
+                    resolvedFileName, int(args[1].value.getComptimeInt()),
+                    srcLoc);
+              }
+              if (spectrumView.curveValues.empty()) {
+                return invoke(spectralCurveType, {}, srcLoc);
+              }
+              auto floatPtrType{context.getPointerType(context.getFloatType())};
+              return invoke(
+                  spectralCurveType,
+                  {Argument{"count",
+                            context.getComptimeInt(
+                                int(spectrumView.wavelengths.size()))},
+                   Argument{"wavelengths",
+                            context.getComptimePtr(
+                                floatPtrType, spectrumView.wavelengths.data())},
+                   Argument{"amplitudes",
+                            context.getComptimePtr(
+                                floatPtrType, spectrumView.curveValues.data())}},
+                  srcLoc);
+            });
       }
     }
     break;
@@ -2017,24 +2069,6 @@ Value Emitter::emitIntrinsic(std::string_view name, const ArgumentList &args,
                                                 : llvm::Intrinsic::minnum);
       return RValue(type,
                     builder.CreateBinaryIntrinsic(intrID, value0, value1));
-    }
-    if (name == "max_value" || name == "min_value") {
-      auto value{rvalue(expectOneVectorized())};
-      if (value.type->isArithmeticScalar())
-        return value;
-      auto intrID = name == "max_value"
-                        ? (value.type->isArithmeticBoolean()
-                               ? llvm::Intrinsic::vector_reduce_umax
-                           : value.type->isArithmeticIntegral()
-                               ? llvm::Intrinsic::vector_reduce_smax
-                               : llvm::Intrinsic::vector_reduce_fmax)
-                        : (value.type->isArithmeticBoolean()
-                               ? llvm::Intrinsic::vector_reduce_umin
-                           : value.type->isArithmeticIntegral()
-                               ? llvm::Intrinsic::vector_reduce_smin
-                               : llvm::Intrinsic::vector_reduce_fmin);
-      return RValue(scalarTypeOf(value.type),
-                    builder.CreateUnaryIntrinsic(intrID, value));
     }
     break;
   }
@@ -2107,19 +2141,6 @@ Value Emitter::emitIntrinsic(std::string_view name, const ArgumentList &args,
         emitPrint(os, context.getComptimeString("\n"), srcLoc);
       return Value();
     }
-    if (name == "prod") {
-      auto value{rvalue(expectOneVectorized())};
-      if (value.type->isArithmeticScalar())
-        return value;
-      auto scalarType{scalarTypeOf(value.type)};
-      return RValue(
-          scalarType,
-          scalarType->isArithmeticIntegral()
-              ? builder.CreateMulReduce(value)
-              : builder.CreateFMulReduce(
-                    invoke(scalarType, context.getComptimeFloat(1), srcLoc),
-                    value));
-    }
     break;
   }
   case 'r': {
@@ -2147,24 +2168,6 @@ Value Emitter::emitIntrinsic(std::string_view name, const ArgumentList &args,
   case 's': {
     if (name == "sizeof") {
       return context.getComptimeInt(int(context.getSizeOf(expectOneType())));
-    }
-    if (name == "sum") {
-      auto value{rvalue(expectOneVectorized())};
-      if (value.type->isArithmeticScalar())
-        return value;
-      // Widen bool vectors first: add-reducing '<N x i1>' computes the
-      // parity of the lanes, not the count of true lanes.
-      if (value.type->isArithmetic() &&
-          static_cast<ArithmeticType *>(value.type)->scalar.isBoolean())
-        value = invoke(static_cast<ArithmeticType *>(value.type)
-                           ->getWithDifferentScalar(context,
-                                                    Scalar::getInt(32)),
-                       value, srcLoc);
-      auto scalarType{scalarTypeOf(value.type)};
-      return RValue(scalarType, scalarType->isArithmeticIntegral()
-                                    ? builder.CreateAddReduce(value)
-                                    : builder.CreateFAddReduce(
-                                          Value::zero(scalarType), value));
     }
     if (name == "sign") {
       auto value{rvalue(expectOneVectorized())};
