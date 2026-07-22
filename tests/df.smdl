@@ -243,6 +243,9 @@ unit_test "Bidirectional consistency" {
   checkBidirectionalConsistency(df::simple_glossy_bsdf(roughness_u: 0.8, tint: 1.0, mode: df::scatter_transmit), wo, wt2, ns);
   checkBidirectionalConsistency(df::simple_glossy_bsdf(roughness_u: 0.8, tint: 1.0, mode: df::scatter_reflect_transmit), wo, wt2);
   // Modifiers.
+  checkBidirectionalConsistency(df::thin_film(thickness: 300.0, ior: 1.6, base: ggx), wo, wi);
+  checkBidirectionalConsistency(df::thin_film(thickness: 300.0, ior: 1.6, base: ggx), wo, wi, ns);
+  checkBidirectionalConsistency(df::thin_film(thickness: 250.0, ior: color(1.35), base: ggx), wo, wi, ns);
   checkBidirectionalConsistency(df::tint(0.5, ggx), wo, wi, ns);
   checkBidirectionalConsistency(df::directional_factor(normal_tint: 0.9, grazing_tint: 0.3, base: ggx), wo, wi, ns);
   checkBidirectionalConsistency(df::fresnel_factor(ior: 1.5, extinction_coefficient: 2.0, base: ggx), wo, wi, ns);
@@ -386,6 +389,47 @@ unit_test "Measured factor" {
   #assert(#any(expected > 0.0));
   #assert(#all(#abs(result1.f - expected * result0.f) ~== [1e-6] 0.0));
   #assert(#all(#abs(result1.pdf - result0.pdf) ~== [1e-6] 0.0)); // The factor must not affect the PDFs
+}
+
+unit_test "Thin film" {
+  const auto wo = math::normalize(float3(-0.4, 1.2, 0.9));
+  const auto wi = math::normalize(float3(+0.3, -0.6, 0.7));
+  const auto base = df::diffuse_reflection_bsdf(tint: 0.8);
+  const auto result0 = evaluate(base, wo, wi);
+  // Zero thickness is the identity, for both float and color film IOR.
+  {
+    const auto result1 = evaluate(df::thin_film(thickness: 0.0, ior: 1.5, base: base), wo, wi);
+    #assert(#all(#abs(result1.f - result0.f) ~== [1e-5] 0.0));
+    #assert(#all(#abs(result1.pdf - result0.pdf) ~== [1e-6] 0.0)); // The factor must not affect the PDFs
+  }
+  {
+    const auto result1 = evaluate(df::thin_film(thickness: 0.0, ior: color(1.5), base: base), wo, wi);
+    #assert(#all(#abs(result1.f - result0.f) ~== [1e-5] 0.0));
+  }
+  // The same identity holds on the delta sampling path.
+  {
+    const auto r = sample(df::thin_film(thickness: 0.0, ior: 1.5, base: df::specular_bsdf(tint: 1.0)), float4(0.3, 0.4, 0.5, 0.6), wo);
+    #assert(r.success && r.isDelta);
+    #assert(#all(r.f ~== [1e-5] color(1.0)));
+  }
+  // At normal incidence with the default material IOR of 1.4:
+  const auto wz = float3(0, 0, 1);
+  const auto resultz = evaluate(base, wz, wz);
+  const int k = 8;
+  const auto lambda = $state.wavelength_base[k];
+  // A half-wave film is invisible at its design wavelength.
+  {
+    const auto result1 = evaluate(df::thin_film(thickness: lambda / (2 * 1.5), ior: 1.5, base: base), wz, wz);
+    #assert(result1.f[k] ~== [1e-4] resultz.f[k]);
+  }
+  // A quarter-wave film with the ideal anti-reflection IOR `sqrt(1.4)` blacks out
+  // the interface at its design wavelength, but not at distant wavelengths.
+  {
+    const auto arIOR = #sqrt(1.4);
+    const auto result1 = evaluate(df::thin_film(thickness: lambda / (4 * arIOR), ior: arIOR, base: base), wz, wz);
+    #assert(result1.f[k] ~== [1e-4] 0.0);
+    #assert(result1.f[0] > 0.01);
+  }
 }
 
 unit_test "Custom curve layer" {

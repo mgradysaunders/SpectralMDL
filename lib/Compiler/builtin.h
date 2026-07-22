@@ -1304,10 +1304,30 @@ export struct thin_film:bsdf{
   const int df_flags=base.df_flags;
 };
 @(macro)
+auto thinFilmFactor(const auto thickness,const auto filmIOR,const float baseIOR,const float cosTheta1){
+  const auto eta2(filmIOR);
+  const auto eta3(baseIOR);
+  const auto sin2Theta1(#max(1-cosTheta1*cosTheta1,0.0));
+  const auto cosTheta2(#sqrt(#max(1-sin2Theta1/(eta2*eta2),0.0)));
+  const auto cosTheta3(#sqrt(#max(1-sin2Theta1/(eta3*eta3),0.0)));
+  const auto rs12((cosTheta1-eta2*cosTheta2)/(cosTheta1+eta2*cosTheta2));
+  const auto rp12((eta2*cosTheta1-cosTheta2)/(eta2*cosTheta1+cosTheta2));
+  const auto rs23((eta2*cosTheta2-eta3*cosTheta3)/(eta2*cosTheta2+eta3*cosTheta3));
+  const auto rp23((eta3*cosTheta2-eta2*cosTheta3)/(eta3*cosTheta2+eta2*cosTheta3));
+  const auto phi(2.0*$TWO_PI*eta2*cosTheta2*thickness/color($state.wavelength_base));
+  const auto phase(complex(#cos(phi),#sin(phi)));
+  const auto Rs(#norm((rs12+rs23*phase)/(1+rs12*rs23*phase)));
+  const auto Rp(#norm((rp12+rp23*phase)/(1+rp12*rp23*phase)));
+  const auto rs13((cosTheta1-eta3*cosTheta3)/(cosTheta1+eta3*cosTheta3));
+  const auto rp13((eta3*cosTheta1-cosTheta3)/(eta3*cosTheta1+cosTheta3));
+  const float R13(0.5*(rs13*rs13+rp13*rp13));
+  return R13>EPSILON?0.5*(Rs+Rp)/R13:color(1.0);
+}
+@(macro)
 auto scatterEvaluate(const &thin_film this,const &ScatterEvaluateParameters params){
   auto result(scatterEvaluate(visit &this.base,params));
   if(!result.isBlack&&params.mode==scatter_reflect){
-    return ScatterEvaluateResult(f: result.f,pdf: result.pdf);
+    return ScatterEvaluateResult(f: thinFilmFactor(this.thickness,this.ior,1/params.ior,#abs(dot(params.wo,halfDirection(params))))*result.f,pdf: result.pdf,);
   } else {
     return result;
   }
@@ -1316,6 +1336,7 @@ auto scatterEvaluate(const &thin_film this,const &ScatterEvaluateParameters para
 auto scatterSample(const &thin_film this,const &ScatterSampleParameters params){
   auto result(scatterSample(visit &this.base,params));
   if((result.mode==scatter_reflect)&bool(result.fDelta)){
+    *result.fDelta*=thinFilmFactor(this.thickness,this.ior,1/params.ior,#abs(dot(params.wo,halfDirection(params,&result))));
   }
   return result;
 }

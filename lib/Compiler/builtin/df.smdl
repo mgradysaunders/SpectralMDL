@@ -1467,12 +1467,59 @@ export struct thin_film: bsdf {
   const int df_flags = base.df_flags;
 };
 
+/// Evaluate the thin-film interference factor.
+///
+/// This is the ratio of the Airy interference reflectance of the coated interface
+/// (ambient medium, then a film of the given `thickness` in nanometers and `filmIOR`,
+/// then the base medium of the given `baseIOR`, everything relative to the ambient
+/// medium) to the plain Fresnel reflectance of the uncoated interface. The MDL
+/// specification defines `thin_film` as modulating the Fresnel term of the base BSDF,
+/// so the ratio converts an uncoated Fresnel reflectance into the coated one. It
+/// reduces to the identity at zero thickness, consistent with the elimination rules
+/// in the specification's normal form, and may exceed one at wavelengths with
+/// constructive interference.
+///
+/// \note
+/// The cosines through the film and into the base are clamped at zero, so total
+/// internal reflection at a buried interface is handled with the correct magnitude
+/// but without the phase shift of the evanescent case.
+///
+@(macro)
+auto thinFilmFactor(const auto thickness, const auto filmIOR, const float baseIOR, const float cosTheta1) {
+  const auto eta2(filmIOR);
+  const auto eta3(baseIOR);
+  const auto sin2Theta1(#max(1 - cosTheta1 * cosTheta1, 0.0));
+  const auto cosTheta2(#sqrt(#max(1 - sin2Theta1 / (eta2 * eta2), 0.0)));
+  const auto cosTheta3(#sqrt(#max(1 - sin2Theta1 / (eta3 * eta3), 0.0)));
+  // The Fresnel amplitudes at the ambient-to-film (12) and film-to-base (23)
+  // interfaces for both polarizations.
+  const auto rs12((cosTheta1 - eta2 * cosTheta2) / (cosTheta1 + eta2 * cosTheta2));
+  const auto rp12((eta2 * cosTheta1 - cosTheta2) / (eta2 * cosTheta1 + cosTheta2));
+  const auto rs23((eta2 * cosTheta2 - eta3 * cosTheta3) / (eta2 * cosTheta2 + eta3 * cosTheta3));
+  const auto rp23((eta3 * cosTheta2 - eta2 * cosTheta3) / (eta3 * cosTheta2 + eta2 * cosTheta3));
+  // The Airy summation of the coated reflectance, with the spectral round-trip
+  // phase through the film `4 pi n d cos / wavelength`.
+  const auto phi(2.0 * $TWO_PI * eta2 * cosTheta2 * thickness / color($state.wavelength_base));
+  const auto phase(complex(#cos(phi), #sin(phi)));
+  const auto Rs(#norm((rs12 + rs23 * phase) / (1 + rs12 * rs23 * phase)));
+  const auto Rp(#norm((rp12 + rp23 * phase) / (1 + rp12 * rp23 * phase)));
+  // The uncoated reflectance. By the Airy composition identity this is what the
+  // coated reflectance reduces to at zero thickness, and it only depends on the
+  // ambient-to-base contrast, so it is always a scalar.
+  const auto rs13((cosTheta1 - eta3 * cosTheta3) / (cosTheta1 + eta3 * cosTheta3));
+  const auto rp13((eta3 * cosTheta1 - cosTheta3) / (eta3 * cosTheta1 + cosTheta3));
+  const float R13(0.5 * (rs13 * rs13 + rp13 * rp13));
+  return R13 > EPSILON ? 0.5 * (Rs + Rp) / R13 : color(1.0);
+}
+
 @(macro)
 auto scatterEvaluate(const &thin_film this, const &ScatterEvaluateParameters params) {
   auto result(scatterEvaluate(visit &this.base, params));
   if (!result.isBlack && params.mode == scatter_reflect) {
-    // TODO Evaluate thin-film interference factor and layer on top of result.f (leave result.pdf unchanged)
-    return ScatterEvaluateResult(f: result.f, pdf: result.pdf);
+    return ScatterEvaluateResult(
+             f: thinFilmFactor(this.thickness, this.ior, 1 / params.ior, #abs(dot(params.wo, halfDirection(params)))) * result.f,
+             pdf: result.pdf,
+           );
   } else {
     return result;
   }
@@ -1482,7 +1529,7 @@ auto scatterEvaluate(const &thin_film this, const &ScatterEvaluateParameters par
 auto scatterSample(const &thin_film this, const &ScatterSampleParameters params) {
   auto result(scatterSample(visit &this.base, params));
   if ((result.mode == scatter_reflect) & bool(result.fDelta)) {
-    // TODO Evaluate thin-film interference factor and layer on top of result.fDelta (leave result.pdf unchanged)
+    *result.fDelta *= thinFilmFactor(this.thickness, this.ior, 1 / params.ior, #abs(dot(params.wo, halfDirection(params, &result))));
   }
   return result;
 }
