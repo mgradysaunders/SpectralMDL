@@ -391,7 +391,7 @@ struct ScatterSampleResult {
   scatter_mode mode = scatter_none;
 
   /// If sampled from a directional delta distribution, the BSDF evaluation (which is otherwise unevaluable).
-  ?color deltaValue = none;
+  ?color fDelta = none;
 };
 
 @(pure noinline)
@@ -636,10 +636,10 @@ auto scatterEvaluate(const &specular_bsdf this [[anno::unused()]], const &Scatte
 auto scatterSample(const &specular_bsdf this, inline const &ScatterSampleParameters params) {
   if ((tbn := recalculateTangentSpace(params))) {
     if (xi.x < scatterReflectChance(this.mode)) {
-      return ScatterSampleResult(wi: (*tbn) * specular::reflect(wo, float3(0, 0, 1)), mode: scatter_reflect, deltaValue: color(this.tint));
+      return ScatterSampleResult(wi: (*tbn) * specular::reflect(wo, float3(0, 0, 1)), mode: scatter_reflect, fDelta: color(this.tint));
     } else {
-      auto result = ScatterSampleResult(wi: (*tbn) * specular::refract(wo, float3(0, 0, 1), ior), mode: scatter_transmit, deltaValue: color(this.tint));
-      *result.deltaValue *= ior * ior if (!isImportance);
+      auto result = ScatterSampleResult(wi: (*tbn) * specular::refract(wo, float3(0, 0, 1), ior), mode: scatter_transmit, fDelta: color(this.tint));
+      *result.fDelta *= ior * ior if (!isImportance);
       if (isImportance) {
         // TODO Account for shading normal correction
       }
@@ -1111,8 +1111,8 @@ auto scatterEvaluate(const &microfacet_bsdf this, inline const &ScatterEvaluateP
       result.pdf *= reflectChance;
       return result;
     } else {
-      // TODO
       return ScatterEvaluateResult(isBlack: true) if (!((dotWoWm > 0) & (dotWiWm < 0)));
+      // TODO Implement the BTDF for Blinn microfacet distribution (NOTE: transmission never accounts for multiscatter)
     }
   } else {
     const auto D(microfacet::smithNormalPDF(this.distribution, this.alpha, wm));
@@ -1253,13 +1253,13 @@ export struct measured_bsdf: bsdf {
 
 @(macro)
 auto scatterEvaluate(const &measured_bsdf this [[anno::unused()]], const &ScatterEvaluateParameters params [[anno::unused()]]) {
-  // TODO
+  // TODO Evaluate the measured BSDF
   return ScatterEvaluateResult(isBlack: true);
 }
 
 @(macro)
 auto scatterSample(const &measured_bsdf this [[anno::unused()]], const &ScatterSampleParameters params [[anno::unused()]]) {
-  // TODO
+  // TODO Sample the measured BSDF, may require tabulating a PDF in `BSDFMeasurement.{h,cc}`?
   return ScatterSampleResult();
 }
 //--}
@@ -1332,19 +1332,19 @@ auto scatterEvaluate(const &tint2 this, const &ScatterEvaluateParameters params)
 @(macro)
 auto scatterSample(const &tint1 this, const &ScatterSampleParameters params) {
   auto result(scatterSample(visit &this.base, params));
-  if ((result.mode != scatter_none) & bool(result.deltaValue))
-    *result.deltaValue *= this.tint;
+  if ((result.mode != scatter_none) & bool(result.fDelta))
+    *result.fDelta *= this.tint;
   return result;
 }
 
 @(macro)
 auto scatterSample(const &tint2 this, const &ScatterSampleParameters params) {
   auto result(scatterSample(visit &this.base, params));
-  if ((result.mode != scatter_none) & bool(result.deltaValue)) {
+  if ((result.mode != scatter_none) & bool(result.fDelta)) {
     if (params.mode == scatter_reflect) {
-      *result.deltaValue *= this.reflection_tint;
+      *result.fDelta *= this.reflection_tint;
     } else {
-      *result.deltaValue *= this.transmission_tint;
+      *result.fDelta *= this.transmission_tint;
     }
   }
   return result;
@@ -1432,7 +1432,7 @@ export struct thin_film: bsdf {
 auto scatterEvaluate(const &thin_film this, const &ScatterEvaluateParameters params) {
   auto result(scatterEvaluate(visit &this.base, params));
   if (!result.isBlack && params.mode == scatter_reflect) {
-    // TODO
+    // TODO Evaluate thin-film interference factor and layer on top of result.f (leave result.pdf unchanged)
     return ScatterEvaluateResult(f: result.f, pdf: result.pdf);
   } else {
     return result;
@@ -1442,8 +1442,8 @@ auto scatterEvaluate(const &thin_film this, const &ScatterEvaluateParameters par
 @(macro)
 auto scatterSample(const &thin_film this, const &ScatterSampleParameters params) {
   auto result(scatterSample(visit &this.base, params));
-  if ((result.mode == scatter_reflect) & bool(result.deltaValue)) {
-    // TODO
+  if ((result.mode == scatter_reflect) & bool(result.fDelta)) {
+    // TODO Evaluate thin-film interference factor and layer on top of result.fDelta (leave result.pdf unchanged)
   }
   return result;
 }
@@ -1487,8 +1487,8 @@ auto scatterEvaluate(const &fresnel_factor this, const &ScatterEvaluateParameter
 @(macro)
 auto scatterSample(const &fresnel_factor this, const &ScatterSampleParameters params) {
   auto result(scatterSample(visit &this.base, params));
-  if ((result.mode == scatter_reflect) & bool(result.deltaValue)) {
-    *result.deltaValue *= specular::conductorFresnel(#abs(dot(params.wo, halfDirection(params, &result))), 1.0 / complex(this.ior, this.extinction_coefficient));
+  if ((result.mode == scatter_reflect) & bool(result.fDelta)) {
+    *result.fDelta *= specular::conductorFresnel(#abs(dot(params.wo, halfDirection(params, &result))), 1.0 / complex(this.ior, this.extinction_coefficient));
   }
   return result;
 }
@@ -1538,8 +1538,8 @@ auto scatterEvaluate(const &directional_factor this, const &ScatterEvaluateParam
 @(macro)
 auto scatterSample(const &directional_factor this, const &ScatterSampleParameters params) {
   auto result(scatterSample(visit &this.base, params));
-  if ((result.mode == scatter_reflect) & bool(result.deltaValue)) {
-    *result.deltaValue *= specular::schlickFresnel(dot(params.wo, halfDirection(params, &result)), this.normal_tint, this.grazing_tint, this.exponent);
+  if ((result.mode == scatter_reflect) & bool(result.fDelta)) {
+    *result.fDelta *= specular::schlickFresnel(dot(params.wo, halfDirection(params, &result)), this.normal_tint, this.grazing_tint, this.exponent);
   }
   return result;
 }
@@ -1553,7 +1553,7 @@ export struct measured_curve_factor: bsdf {
   /// > measured in the pre-image range from zero to pi/2 with equally 
   /// > spaced measured reflectance values.
   ///
-  color[] curve_values;
+  color[] curve_values; // TODO Does the compiler know what size this is? Do we need to add [<N>]?
 
   /// The base BSDF.
   ///
@@ -1569,7 +1569,7 @@ export struct measured_curve_factor: bsdf {
 auto scatterEvaluate(const &measured_curve_factor this, const &ScatterEvaluateParameters params) {
   auto result(scatterEvaluate(visit &this.base, params));
   if (!result.isBlack && params.mode == scatter_reflect) {
-    // TODO
+    // TODO Evaluate the factor and multiply result.f (leave result.pdf unchanged)
     return ScatterEvaluateResult(f: result.f, pdf: result.pdf);
   } else {
     return result;
@@ -1579,8 +1579,8 @@ auto scatterEvaluate(const &measured_curve_factor this, const &ScatterEvaluatePa
 @(macro)
 auto scatterSample(const &measured_curve_factor this, const &ScatterSampleParameters params) {
   auto result(scatterSample(visit &this.base, params));
-  if ((result.mode == scatter_reflect) & bool(result.deltaValue)) {
-    // TODO
+  if ((result.mode == scatter_reflect) & bool(result.fDelta)) {
+    // TODO Evaluate the factor and multiply result.fDelta
   }
   return result;
 }
@@ -1614,7 +1614,7 @@ export struct measured_factor: bsdf {
 auto scatterEvaluate(const &measured_factor this, const &ScatterEvaluateParameters params) {
   auto result(scatterEvaluate(visit &this.base, params));
   if (!result.isBlack && params.mode == scatter_reflect) {
-    // TODO
+    // TODO Evaluate the factor and multiply result.f (leave result.pdf unchanged)
     return ScatterEvaluateResult(f: result.f, pdf: result.pdf);
   } else {
     return result;
@@ -1624,8 +1624,8 @@ auto scatterEvaluate(const &measured_factor this, const &ScatterEvaluateParamete
 @(macro)
 auto scatterSample(const &measured_factor this, const &ScatterSampleParameters params) {
   auto result(scatterSample(visit &this.base, params));
-  if ((result.mode == scatter_reflect) & bool(result.deltaValue)) {
-    // TODO
+  if ((result.mode == scatter_reflect) & bool(result.fDelta)) {
+    // TODO Evaluate the factor and multiply result.fDelta
   }
   return result;
 }
@@ -1700,11 +1700,11 @@ auto scatterSample(const &fresnel_layer this, inline const &ScatterSampleParamet
     preserve normal, ior;
     normal = this.normal, ior = 1.0 / this._averageIOR; // Assume IOR of 1.4 => relative IOR of 1/1.4
     auto result(scatterSample(visit &this.layer, params));
-    *result.deltaValue *= this.weight * specular::dielectricFresnel(dot(wo, halfDirection(params, &result)), 1 / this.ior) / chance if (result.deltaValue);
+    *result.fDelta *= this.weight * specular::dielectricFresnel(dot(wo, halfDirection(params, &result)), 1 / this.ior) / chance if (result.fDelta);
     return result;
   } else {
     auto result(scatterSample(visit &this.base, params));
-    *result.deltaValue *= (1 - this.weight * specular::dielectricFresnel(dot(wo, halfDirection(params, &result)), 1 / this.ior)) / (1 - chance) if (result.deltaValue);
+    *result.fDelta *= (1 - this.weight * specular::dielectricFresnel(dot(wo, halfDirection(params, &result)), 1 / this.ior)) / (1 - chance) if (result.fDelta);
     return result;
   }
 }
@@ -1844,8 +1844,8 @@ auto scatterSample(const &component_mix this, const &ScatterSampleParameters par
       } else {
         *xi /= component.chance;
         auto result(scatterSample(visit &component.component, params));
-        if ((result.mode != scatter_none) & bool(result.deltaValue))
-          *result.deltaValue *= component.weight;
+        if ((result.mode != scatter_none) & bool(result.fDelta))
+          *result.fDelta *= component.weight;
         return result;
       }
     }
@@ -1959,10 +1959,10 @@ export int _scatterSample(
       return false;
     }
     *wiWorld = normalize(instance.tangent_to_world * wi);
-    if ((*isDelta = bool(result.deltaValue))) {
+    if ((*isDelta = bool(result.fDelta))) {
       *pdfFwd = 1.0;
       *pdfRev = 1.0;
-      #memcpy(f, &*result.deltaValue, #sizeof(float) * $WAVELENGTH_BASE_MAX);
+      #memcpy(f, &*result.fDelta, #sizeof(float) * $WAVELENGTH_BASE_MAX);
       return true;
     } else {
       return _scatterEvaluate(instance, woWorld, wiWorld, pdfFwd, pdfRev, f);

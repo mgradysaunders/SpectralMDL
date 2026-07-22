@@ -46,6 +46,10 @@ public:
 
   void clear() noexcept;
 
+  // TODO float directionPDF(float3 wi) const noexcept;
+
+  // TODO float3 directionSample(float2 xi, float *pdf = {}) const noexcept;
+
 public:
   /// The kind.
   Kind kind{KIND_REFLECTION};

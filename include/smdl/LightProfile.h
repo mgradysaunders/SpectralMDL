@@ -52,6 +52,10 @@ public:
   [[nodiscard]] float interpolate(float vertAngle,
                                   float horzAngle) const noexcept;
 
+  // TODO float directionPDF(float3 wi) const noexcept;
+
+  // TODO float3 directionSample(float2 xi, float *pdf = {}) const noexcept;
+
 public:
   /// The version string.
   std::string version;
