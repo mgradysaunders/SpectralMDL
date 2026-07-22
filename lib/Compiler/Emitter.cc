@@ -23,14 +23,14 @@ Value Emitter::createFunctionImplementation(
   SMDL_SANITY_CHECK(callback != nullptr);
   auto fmf{builder.getFastMathFlags()};
   SMDL_DEFER([&] { builder.setFastMathFlags(fmf); });
-  SMDL_PRESERVE(labelReturn, returns, crumb);
-  if (params.lastCrumb)
-    crumb = params.lastCrumb;
-  labelReturn.crumb = crumb;
+  SMDL_PRESERVE(labelReturn, returns, scope, anchors);
+  if (params.lastScope)
+    restoreResolutionAnchor(params);
+  labelReturn.depth = unwindStack.size();
   labelReturn.block = createBlock(llvm::StringRef(name) + ".return");
   returns.clear();
   handleScope(nullptr, nullptr, [&] {
-    auto crumbsToWarnAboutSize{crumbsToWarnAbout.size()};
+    auto declarationsToWarnAboutSize{declarationsToWarnAbout.size()};
     labelBreak = labelContinue = {}; // Invalidate
     inDefer = false;
     for (size_t i = 0; i < params.size(); ++i)
@@ -39,9 +39,10 @@ Value Emitter::createFunctionImplementation(
     if (!hasTerminator()) {
       recordReturn(RValue(context.getVoidType(), nullptr), srcLoc);
     }
-    for (size_t i = crumbsToWarnAboutSize; i < crumbsToWarnAbout.size(); i++)
-      crumbsToWarnAbout[i]->maybeWarnAboutUnusedValue();
-    crumbsToWarnAbout.resize(crumbsToWarnAboutSize);
+    for (size_t i = declarationsToWarnAboutSize;
+         i < declarationsToWarnAbout.size(); i++)
+      declarationsToWarnAbout[i]->maybeWarnAboutUnusedValue();
+    declarationsToWarnAbout.resize(declarationsToWarnAboutSize);
   });
   llvmMoveBlockToEnd(labelReturn.block);
   builder.SetInsertPoint(labelReturn.block);
@@ -160,14 +161,16 @@ Value Emitter::createAlloca(Type *type, const llvm::Twine &name) {
 void Emitter::declareParameter(const Parameter &param, Value value) {
   value = invoke(param.type, value, param.getSourceLocation());
   value = param.isConst() || value.isVoid() ? value : lvalue(value);
-  crumbsToWarnAbout.push_back(
-      declareCrumb(param.name,
-                   param.astParam   ? static_cast<AST::Node *>(param.astParam)
-                   : param.astField ? static_cast<AST::Node *>(param.astField)
-                                    : nullptr,
-                   value));
+  auto declaration{declare(param.name,
+                          param.astParam
+                              ? static_cast<AST::Node *>(param.astParam)
+                          : param.astField
+                              ? static_cast<AST::Node *>(param.astField)
+                              : nullptr,
+                          value)};
+  declarationsToWarnAbout.push_back(declaration);
   if (param.isInline())
-    declareParameterInline(crumb->value);
+    declareParameterInline(declaration->value);
 }
 
 void Emitter::declareParameterInline(Value value) {
@@ -175,32 +178,54 @@ void Emitter::declareParameterInline(Value value) {
           llvm::dyn_cast<StructType>(value.type->getFirstNonPointerType())}) {
     for (auto &param : structType->params) {
       auto srcLoc{param.getSourceLocation()};
-      declareCrumb(param.name, /*node=*/{},
-                   accessField(value, param.name, srcLoc));
+      auto declaration{declare(param.name, /*node=*/{},
+                              accessField(value, param.name, srcLoc))};
       if (param.isInline())
-        declareParameterInline(crumb->value);
+        declareParameterInline(declaration->value);
     }
   }
 }
 
 void Emitter::rejectSameScopeShadow(Span<const std::string_view> name,
                                     const SourceLocation &srcLoc) {
-  for (auto c{crumb}; c && c != scopeStartCrumb; c = c->prev) {
-    // Imports and using declarations bring in foreign names — declaring
-    // over them is cross-module shadowing, which is allowed. Namespaces
-    // may be re-opened.
-    if (c->isASTImport() || c->isASTUsingImport() || c->isASTUsingAlias() ||
-        llvm::isa_and_present<AST::Namespace>(c->node))
-      continue;
-    if (c->isNamed() && c->name == name) {
-      if (auto prevSrcLoc{c->getSourceLocation()})
-        srcLoc.throwError("redeclaration of ", Quoted(join(name, "::")),
-                          " in the same scope, previously declared at ",
-                          std::string(prevSrcLoc));
-      srcLoc.throwError("redeclaration of ", Quoted(join(name, "::")),
-                        " in the same scope");
+  const auto internedName{context.internName(name)};
+  // Probe the scope index: nearest non-exempt target in the current scope,
+  // continuing through transparent scopes into the first real boundary.
+  auto foundByScope{[&]() -> Declaration * {
+    for (auto s{scope}; s; s = s->parent) {
+      if (auto itr{s->decls.find(internedName.data())}; itr != s->decls.end())
+        for (auto c{itr->second}; c; c = c->prevSameNameInScope)
+          if (!c->isSameScopeShadowExempt())
+            return c;
+      if (!s->transparent)
+        break;
     }
+    return nullptr;
+  }()};
+  if (auto c{foundByScope}) {
+    if (auto prevSrcLoc{c->getSourceLocation()})
+      srcLoc.throwError("redeclaration of ", Quoted(join(name, "::")),
+                        " in the same scope, previously declared at ",
+                        std::string(prevSrcLoc));
+    srcLoc.throwError("redeclaration of ", Quoted(join(name, "::")),
+                      " in the same scope");
   }
+}
+
+Declaration *Emitter::probeName(Span<const std::string_view> name,
+                                llvm::Function *llvmFunc,
+                                Declaration **unusableMatch) {
+  auto seqLimit{std::numeric_limits<uint64_t>::max()};
+  for (auto s{scope}; s; s = s->parent) {
+    for (const auto &[anchorScope, anchorSeq] : anchors)
+      if (s == anchorScope)
+        seqLimit = std::min(seqLimit, anchorSeq);
+    if (auto found{Declaration::resolveInScope(context, name, llvmFunc, s,
+                                         /*ignoreIfNotExported=*/false,
+                                         seqLimit, unusableMatch)})
+      return found;
+  }
+  return nullptr;
 }
 
 void Emitter::declareImport(Span<const std::string_view> importPath, bool isAbs,
@@ -216,38 +241,52 @@ void Emitter::declareImport(Span<const std::string_view> importPath, bool isAbs,
   if (importPath.back() == "*") {
     importPath = importPath.dropBack();
     importPath = importPath.dropFrontWhile(isDots);
-    declareCrumb(importPath, &decl,
+    declare(importPath, &decl,
                  context.getComptimeMetaModule(importedModule));
   } else {
-    auto importedCrumb{Crumb::find(
-        context, importPath.back(), getLLVMFunction(),
-        importedModule->mLastCrumb, nullptr, /*ignoreIfNotExported=*/true)};
-    if (!importedCrumb)
+    auto importedDeclaration{Declaration::findInModule(
+        context, importPath.back(), getLLVMFunction(), importedModule)};
+    if (!importedDeclaration)
       decl.srcLoc.throwError("cannot resolve import identifier ",
                              Quoted(join(importPath, "::")));
-    declareCrumb(importPath.dropFrontWhile(isDots), &decl,
-                 importedCrumb->value);
+    declare(importPath.dropFrontWhile(isDots), &decl,
+                 importedDeclaration->value);
   }
 }
 
-void Emitter::unwind(Crumb *lastCrumb) {
+void Emitter::unwind(size_t depth) {
   SMDL_SANITY_CHECK(!hasTerminator(), "tried to unwind after terminator");
-  for (; crumb && crumb != lastCrumb; crumb = crumb->prev) {
-    if (crumb->isASTDefer()) {
+  SMDL_SANITY_CHECK(depth <= unwindStack.size(), "inconsistent unwind");
+  for (auto i{unwindStack.size()}; i-- > depth;) {
+    // Copy the action: a defer body may push actions of its own, which can
+    // reallocate the stack (its `handleScope` truncates them again, so the
+    // indices below `i` stay meaningful).
+    const auto action{unwindStack[i]};
+    switch (action.kind) {
+    case UnwindAction::Kind::Defer:
       handleScope(nullptr, nullptr, [&] {
         labelReturn = {};   // Invalidate!
         labelBreak = {};    // Invalidate!
         labelContinue = {}; // Invalidate!
         inDefer = true;     // More specific error messages
-        emit(static_cast<AST::Defer *>(crumb->node)->stmt);
+        // The defer body must not see declarations made after the defer
+        // statement — push an anchor at the innermost live scope
+        // ('scope->parent': 'scope' itself is the defer body's own scope,
+        // just pushed by 'handleScope', and stays unfiltered). Pushing
+        // (not replacing) preserves any outer definition-site anchor,
+        // e.g. a defer inside a macro expansion.
+        anchors.push_back({scope->parent, action.seq});
+        emit(action.astDefer->stmt);
       });
-    } else if (crumb->isASTPreserve()) {
-      builder.CreateStore(crumb->valueToPreserve, crumb->value);
-    } else if (crumb->value) {
-      createLifetimeEnd(crumb->value);
+      break;
+    case UnwindAction::Kind::Preserve:
+      builder.CreateStore(action.valueToPreserve, action.value);
+      break;
+    case UnwindAction::Kind::LifetimeEnd:
+      createLifetimeEnd(action.value);
+      break;
     }
   }
-  SMDL_SANITY_CHECK(crumb == lastCrumb, "inconsistent unwind");
 }
 
 Value Emitter::createResult(Type *type, llvm::ArrayRef<Result> results,
@@ -278,7 +317,6 @@ Value Emitter::createResult(Type *type, llvm::ArrayRef<Result> results,
         return false;
     return true;
   }()};
-  auto crumb0{crumb};
   auto phiInst{builder.CreatePHI(isAllIdenticalLValues
                                      ? context.getPointerType(type)->llvmType
                                      : type->llvmType,
@@ -302,7 +340,6 @@ Value Emitter::createResult(Type *type, llvm::ArrayRef<Result> results,
     phiInst->addIncoming(value, block);
   }
   builder.restoreIP(ip);
-  crumb = crumb0;
   return isAllIdenticalLValues ? LValue(type, phiInst) : RValue(type, phiInst);
 }
 
@@ -350,15 +387,13 @@ Value Emitter::emit(AST::UnitTest &decl) {
 }
 
 Value Emitter::emit(AST::UsingImport &decl) {
+  // The local path buffer is safe here: 'declare' interns the name it
+  // ultimately stores.
   auto importPath{decl.importPath.elementViews};
   for (auto &name : decl.names) {
     importPath.push_back(name.srcName);
-    auto importPathPtr{static_cast<std::string_view *>(
-        context.allocator.allocate(sizeof(std::string_view) * importPath.size(),
-                                   alignof(std::string_view)))};
-    std::uninitialized_copy(importPath.begin(), importPath.end(),
-                            importPathPtr);
-    declareImport(Span(importPathPtr, importPath.size()),
+    declareImport(Span<const std::string_view>(importPath.data(),
+                                               importPath.size()),
                   decl.importPath.isAbsolute(), decl);
     importPath.pop_back();
   }
@@ -385,7 +420,12 @@ Value Emitter::emit(AST::Variable &decl) {
     if (declarator.isDestructure() && type != context.getAutoType())
       declarator.srcLoc.throwError(
           "destructure declarator must have 'auto' type");
-    auto crumb0{crumb};
+    const auto depth0{unwindStack.size()};
+    auto scope0{scope};
+    // The initializer's bindings (e.g. ':=') go out of scope below, before
+    // the declared variable itself enters the enclosing scope — hence a
+    // transparent scope whose entries pop with the initializer region.
+    scope = pushScope(/*transparent=*/true);
     auto args{[&]() -> ArgumentList {
       if (declarator.exprInit) {
         return emit(*declarator.exprInit);
@@ -395,7 +435,9 @@ Value Emitter::emit(AST::Variable &decl) {
         return ArgumentList();
       }
     }()};
-    unwind(crumb0);
+    unwind(depth0);
+    unwindStack.resize(depth0);
+    scope = scope0;
     auto value{invoke(type, args, declarator.srcLoc)};
     if (declarator.isDestructure()) {
       if (isStatic)
@@ -416,7 +458,7 @@ Value Emitter::emit(AST::Variable &decl) {
         for (size_t i = 0; i < structType->params.size(); i++) {
           rejectSameScopeShadow(declarator.names[i].name,
                                 declarator.names[i].name.srcLoc);
-          declareCrumb(declarator.names[i].name, &declarator,
+          declare(declarator.names[i].name, &declarator,
                        accessField(value, structType->params[i].name,
                                    declarator.srcLoc));
         }
@@ -424,7 +466,7 @@ Value Emitter::emit(AST::Variable &decl) {
         declarator.srcLoc.throwError("unsupported destructure");
       }
     } else {
-      // NOTE: This must be a reference for `declare_crumb` below
+      // NOTE: This must be a reference for `declare` below
       SMDL_SANITY_CHECK(declarator.names.size() == 1);
       const auto &name{declarator.names[0].name};
       rejectSameScopeShadow(name, name.srcLoc);
@@ -450,9 +492,9 @@ Value Emitter::emit(AST::Variable &decl) {
           value = LValue(value.type, valueAlloca);
         }
       }
-      declareCrumb(name, &declarator, value);
+      auto declaration{declare(name, &declarator, value)};
       if (getLLVMFunction()) {
-        crumbsToWarnAbout.push_back(crumb);
+        declarationsToWarnAbout.push_back(declaration);
       }
     }
   }
@@ -511,7 +553,7 @@ Value Emitter::emit(AST::Binary &expr) {
       expr.srcLoc.throwError(
           "expected lhs of operator ':=' to be an identifier");
     auto rv{rvalue(emit(expr.exprRhs))};
-    declareCrumb(*ident, ident, rv);
+    declare(*ident, ident, rv);
     return rv;
   }
   // Short-circuit logic conditions.
@@ -525,7 +567,8 @@ Value Emitter::emit(AST::Binary &expr) {
         // Contain rhs declarations, matching the runtime two-arm merge:
         // whether ':=' in the rhs is visible afterward must not depend on
         // whether the lhs constant-folded.
-        SMDL_PRESERVE(crumb);
+        SMDL_PRESERVE(scope);
+        scope = pushScope(/*transparent=*/true);
         return invoke(boolType, emit(expr.exprRhs), expr.srcLoc);
       }
       return valueLhs;
@@ -555,7 +598,8 @@ Value Emitter::emit(AST::Binary &expr) {
       if (valueLhsCond.getComptimeInt())
         return valueLhs;
       // Contain rhs declarations, matching the runtime two-arm merge.
-      SMDL_PRESERVE(crumb);
+      SMDL_PRESERVE(scope);
+      scope = pushScope(/*transparent=*/true);
       return emit(expr.exprRhs);
     } else {
       return emitTwoArmMerge(
@@ -609,7 +653,7 @@ Value Emitter::emit(AST::ReturnFrom &expr) {
   builder.CreateBr(blockBegin);
   builder.SetInsertPoint(blockBegin);
   handleScope(blockBegin, blockEnd, [&, blockEnd = blockEnd] {
-    labelReturn = {crumb, blockEnd};
+    labelReturn = {unwindStack.size(), blockEnd};
     labelBreak = {};
     labelContinue = {};
     emit(expr.stmt);
@@ -629,7 +673,8 @@ Value Emitter::emit(AST::Select &expr) {
   if (cond.isComptimeInt()) {
     // Contain arm declarations, matching the runtime two-arm merge. (A ':='
     // in the condition still leaks, in both paths — it dominates the merge.)
-    SMDL_PRESERVE(crumb);
+    SMDL_PRESERVE(scope);
+    scope = pushScope(/*transparent=*/true);
     return emit(cond.getComptimeInt() ? expr.exprThen : expr.exprElse);
   }
   return emitTwoArmMerge(
@@ -647,18 +692,21 @@ Value Emitter::emitTwoArmMerge(Value cond, const char *name,
   // Contain declarations emitted inside either arm (e.g. the ':=' operator):
   // an arm executes only on its own control path, so a binding introduced
   // there must not be visible to the other arm or after the merge — its
-  // value would not dominate those uses.
-  SMDL_PRESERVE(crumb);
-  const auto crumb0{crumb};
+  // value would not dominate those uses. Each arm gets its own transparent
+  // scope: resolution inside arm 1 must not see arm 0's bindings.
+  SMDL_PRESERVE(scope);
+  const auto scope0{scope};
   auto [blockArm0, blockArm1, blockEnd] =
       createBlocks<3>(name, {".then", ".else", ".end"});
   builder.CreateCondBr(cond, blockArm0, blockArm1);
   builder.SetInsertPoint(blockArm0);
+  scope = pushScope(/*transparent=*/true);
   auto value0{emitArm0()};
   auto value0IP{builder.saveIP()};
-  crumb = crumb0;
+  scope = scope0;
   llvmMoveBlockToEnd(blockArm1);
   builder.SetInsertPoint(blockArm1);
+  scope = pushScope(/*transparent=*/true);
   auto value1{emitArm1()};
   auto value1IP{builder.saveIP()};
   auto commonType{context.getCommonType({value0.type, value1.type},
@@ -715,9 +763,9 @@ Value Emitter::emit(AST::DoWhile &stmt) {
 Value Emitter::emit(AST::For &stmt) {
   // The init statement opens its own scope, so 'for (int i = ...' may
   // shadow an 'i' in the enclosing scope.
-  SMDL_PRESERVE(scopeStartCrumb);
-  auto crumb0{crumb};
-  scopeStartCrumb = crumb0;
+  SMDL_PRESERVE(scope);
+  const auto depth0{unwindStack.size()};
+  scope = pushScope(/*transparent=*/false);
   auto [blockCond, blockLoop, blockNext, blockEnd] =
       createBlocks<4>("for", {".cond", ".loop", ".next", ".end"});
   if (stmt.stmtInit)
@@ -741,8 +789,8 @@ Value Emitter::emit(AST::For &stmt) {
   builder.CreateBr(blockCond);
   handleBlockEnd(blockEnd);
   if (!hasTerminator())
-    unwind(crumb0);
-  crumb = crumb0;
+    unwind(depth0);
+  unwindStack.resize(depth0);
   return Value();
 }
 
@@ -813,7 +861,7 @@ Value Emitter::emit(AST::Switch &stmt) {
       invoke(context.getIntType(), emit(stmt.expr), stmt.srcLoc),
       blockDefault)};
   handleScope(nullptr, blockEnd, [&] {
-    labelBreak = {crumb, blockEnd};
+    labelBreak = {unwindStack.size(), blockEnd};
     for (size_t i = 0; i < switchCases.size(); i++) {
       auto &switchCase{switchCases[i]};
       if (switchCase.llvmConst)
@@ -2756,10 +2804,11 @@ Value Emitter::resolveIdentifier(Span<const std::string_view> names,
                                  const SourceLocation &srcLoc,
                                  bool voidByDefault) {
   SMDL_SANITY_CHECK(!names.empty());
-  Crumb *unusableMatch{};
-  auto crumb0{Crumb::find(context, names, getLLVMFunction(), crumb,
-                          /*stopCrumb=*/nullptr,
-                          /*ignoreIfNotExported=*/false, &unusableMatch)};
+  // Interning the lookup makes the full-name comparisons in the scope
+  // index pointer comparisons against interned declaration names.
+  names = context.internName(names);
+  Declaration *unusableMatch{};
+  Declaration *declaration{probeName(names, getLLVMFunction(), &unusableMatch)};
   if (unusableMatch) {
     if (auto prevSrcLoc{unusableMatch->getSourceLocation()})
       srcLoc.throwError("cannot reference run-time value of ",
@@ -2770,8 +2819,8 @@ Value Emitter::resolveIdentifier(Span<const std::string_view> names,
                       Quoted(join(names, "::")),
                       " from a different function");
   }
-  if (crumb0) {
-    return crumb0->value;
+  if (declaration) {
+    return declaration->value;
   }
   if (names.size() == 1) {
     if (currentModule == nullptr || currentModule->isSMDLSyntax()) {
@@ -2872,8 +2921,8 @@ Emitter::resolveArguments(const ParameterList &params, const ArgumentList &args,
   SMDL_SANITY_CHECK(resolvedArgsCount == std::min(args.size(), params.size()));
 
   if (!dontEmit) {
-    SMDL_PRESERVE(crumb);
-    crumb = params.lastCrumb;
+    SMDL_PRESERVE(scope, anchors);
+    restoreResolutionAnchor(params);
     handleScope(nullptr, nullptr, [&] {
       for (size_t iParam{}; iParam < params.size(); iParam++) {
         auto &param{params[iParam]};
@@ -2888,7 +2937,7 @@ Emitter::resolveArguments(const ParameterList &params, const ArgumentList &args,
           }
         }
         value = invoke(param.type, value, param.getSourceLocation());
-        declareCrumb(param.name, /*node=*/nullptr, value);
+        declare(param.name, /*node=*/nullptr, value);
       }
       if (params.isVariadic) {
         for (size_t iArg{}; iArg < args.size(); iArg++) {
@@ -2909,7 +2958,8 @@ Emitter::resolveArguments(const ParameterList &params, const ArgumentList &args,
 Module *Emitter::resolveModule(Span<const std::string_view> importPath,
                                bool isAbs, Module *thisModule) {
   llvm::SmallVector<std::string_view> resolvedImportPath{};
-  resolveImportUsingAliases(crumb, importPath, resolvedImportPath);
+  resolveImportUsingAliases(std::numeric_limits<uint64_t>::max(), importPath,
+                            resolvedImportPath);
   SMDL_SANITY_CHECK(!resolvedImportPath.empty());
 
   auto findModuleInDirectory{[&](std::string dirPath) -> Module * {
@@ -2980,24 +3030,28 @@ Module *Emitter::resolveModule(Span<const std::string_view> importPath,
 }
 
 void Emitter::resolveImportUsingAliases(
-    Crumb *crumbStart, Span<const std::string_view> importPath,
+    uint64_t seqLimit, Span<const std::string_view> importPath,
     llvm::SmallVector<std::string_view> &resolvedImportPath) {
-  for (auto &importPathElem : importPath) {
-    auto crumbItr{crumbStart};
-    for (; crumbItr; crumbItr = crumbItr->prev) {
-      if (auto decl{llvm::dyn_cast_if_present<AST::UsingAlias>(crumbItr->node)};
-          decl && decl->name.srcName == importPathElem) {
-        break;
+  for (const auto &importPathElem : importPath) {
+    AST::UsingAlias *foundAlias{};
+    uint64_t foundAliasSeq{};
+    for (auto s{scope}; s && !foundAlias; s = s->parent) {
+      for (auto itr{s->usingAliases.rbegin()}; itr != s->usingAliases.rend();
+           ++itr) {
+        if (itr->second < seqLimit &&
+            itr->first->name.srcName == importPathElem) {
+          foundAlias = itr->first;
+          foundAliasSeq = itr->second;
+          break;
+        }
       }
     }
-    if (crumbItr) {
-      // Resolve the alias's own path against crumbs declared before it —
-      // starting at the alias itself would recurse forever on
+    if (foundAlias) {
+      // Resolve the alias's own path against the aliases declared before
+      // it — including the alias itself would recurse forever on
       // `using foo = foo::bar;`.
-      resolveImportUsingAliases(
-          crumbItr->prev,
-          static_cast<AST::UsingAlias *>(crumbItr->node)->importPath,
-          resolvedImportPath);
+      resolveImportUsingAliases(foundAliasSeq, foundAlias->importPath,
+                                resolvedImportPath);
     } else {
       resolvedImportPath.push_back(importPathElem);
     }

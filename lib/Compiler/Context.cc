@@ -98,15 +98,21 @@ Context::Context(Compiler &compiler) : compiler(compiler) {
   // - Function `_wyman_y`
   // - Function `_color_to_rgb`
   // - Function `_rgb_to_color`
-  for (auto crumb{getBuiltinModule("api")->mLastCrumb}; crumb;
-       crumb = crumb->prev) {
-    if (crumb->isExported() && crumb->hasSimpleName()) {
-      auto simpleName{llvm::StringRef(crumb->name[0])};
+  auto apiRootScope{getBuiltinModule("api")->mRootScope};
+  auto seedKeyword{[&](Declaration *declaration) {
+    if (declaration->isExported() && declaration->hasSimpleName()) {
+      auto simpleName{llvm::StringRef(declaration->name[0])};
       SMDL_SANITY_CHECK(!mKeywords.contains(simpleName),
                         "keyword collision in builtin 'api' module");
-      mKeywords[simpleName] = crumb->value;
+      mKeywords[simpleName] = declaration->value;
     }
-  }
+  }};
+  for (const auto &entry : apiRootScope->decls)
+    for (auto declaration{entry.second}; declaration;
+         declaration = declaration->prevSameNameInScope)
+      seedKeyword(declaration);
+  for (auto declaration : apiRootScope->imports)
+    seedKeyword(declaration);
   mMaterialType = static_cast<StructType *>(getKeywordAsType("material"));
   mTexture2DType = static_cast<StructType *>(getKeywordAsType("texture_2d"));
   mTexture3DType = static_cast<StructType *>(getKeywordAsType("texture_3d"));
@@ -121,6 +127,33 @@ Context::Context(Compiler &compiler) : compiler(compiler) {
   mSpectralCurveType =
       static_cast<StructType *>(getKeywordAsType("spectral_curve"));
   mComplexType = static_cast<StructType *>(getKeywordAsType("complex"));
+}
+
+Span<const std::string_view>
+Context::internName(Span<const std::string_view> name) {
+  if (name.empty())
+    return {};
+  auto key{llvm::SmallString<64>{}};
+  for (size_t i = 0; i < name.size(); i++) {
+    key += name[i];
+    if (i + 1 < name.size())
+      key += '\0';
+  }
+  auto [itr, inserted] = mInternedNames.try_emplace(key);
+  if (inserted) {
+    auto views{llvm::SmallVector<std::string_view, 4>{}};
+    auto keyChars{itr->getKey()};
+    size_t pos{};
+    for (const auto &elem : name) {
+      views.push_back(std::string_view(keyChars.data() + pos, elem.size()));
+      pos += elem.size() + 1;
+    }
+    auto elems{static_cast<std::string_view *>(allocator.allocate(
+        sizeof(std::string_view) * views.size(), alignof(std::string_view)))};
+    std::uninitialized_copy(views.begin(), views.end(), elems);
+    itr->second = Span<const std::string_view>(elems, views.size());
+  }
+  return itr->second;
 }
 
 Module *Context::getBuiltinModule(llvm::StringRef name) {

@@ -868,15 +868,7 @@ public:
       displayName += '>';
     }
     displayName += ']';
-    sizeNameStrv = this->sizeName;
   }
-
-  // The self-referential 'sizeNameStrv' below makes copies and moves
-  // unsafe. These objects are interned by 'Context' and only ever used by
-  // pointer.
-  InferredSizeArrayType(const InferredSizeArrayType &) = delete;
-
-  InferredSizeArrayType &operator=(const InferredSizeArrayType &) = delete;
 
   /// \name Virtual interface
   /// \{
@@ -896,13 +888,6 @@ public:
   /// The name of the inferred size, e.g., `Size` in the expression
   /// `int[<Size>]`. This may be empty!
   std::string sizeName{};
-
-  /// A stable `std::string_view` of `sizeName`. This must be an object
-  /// with a stable address: `declareCrumb` takes `Span<const
-  /// std::string_view>`, and the single-element `Span` constructor stores
-  /// the address of the object it is given — the `Crumb` name would
-  /// dangle if built from a temporary view.
-  std::string_view sizeNameStrv{};
 };
 
 /// A meta type, essentially a compile-time pointer (represented in LLVM

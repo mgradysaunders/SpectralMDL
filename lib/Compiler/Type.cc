@@ -833,7 +833,7 @@ void EnumType::initialize(Emitter &emitter) {
   auto &context{emitter.context};
   llvmType = context.getIntType()->llvmType;
   emitter.rejectSameScopeShadow(decl.name, decl.srcLoc);
-  emitter.declareCrumb(decl.name, &decl, context.getComptimeMetaType(this));
+  emitter.declare(decl.name, &decl, context.getComptimeMetaType(this));
   auto lastValue{Value()};
   for (auto &declarator : decl.declarators) {
     auto &name{declarator.name};
@@ -850,7 +850,7 @@ void EnumType::initialize(Emitter &emitter) {
       name.srcLoc.throwError("expected ", Quoted(name),
                              " initializer to resolve to compile-time int");
     emitter.rejectSameScopeShadow(name.srcName, name.srcLoc);
-    emitter.declareCrumb(name.srcName, &declarator, RValue(this, value));
+    emitter.declare(name.srcName, &declarator, RValue(this, value));
     declarator.llvmConst = static_cast<llvm::ConstantInt *>(value.llvmValue);
     lastValue = value;
   }
@@ -944,9 +944,9 @@ void FunctionType::initialize(Emitter &emitter) {
       prevOverload->nextOverload = this;
     }
   }
-  // Declare crumb.
-  params.lastCrumb =
-      emitter.declareCrumb(decl.name, &decl, context.getComptimeMetaType(this));
+  // Declare the function name.
+  emitter.declare(decl.name, &decl, context.getComptimeMetaType(this));
+  emitter.captureResolutionAnchor(params);
   // Initialize return type and parameters.
   returnType =
       emitter.emit(decl.returnType).getComptimeMetaType(context, decl.srcLoc);
@@ -1019,8 +1019,8 @@ Value FunctionType::invoke(Emitter &emitter, const ArgumentList &args,
   auto func{resolveOverload(emitter, args, srcLoc)};
   if (func->isVariant()) {
     auto result{Value()};
-    SMDL_PRESERVE(emitter.crumb);
-    emitter.crumb = func->params.lastCrumb;
+    SMDL_PRESERVE(emitter.scope, emitter.anchors);
+    emitter.restoreResolutionAnchor(func->params);
     emitter.handleScope(nullptr, nullptr, [&]() {
       emitter.setCurrentModule(func->decl.srcLoc);
       auto [astLet, astCall] = func->decl.getVariantLetAndCallExpressions();
@@ -1056,8 +1056,8 @@ Value FunctionType::invoke(Emitter &emitter, const ArgumentList &args,
     if (macroRecursionDepth >= 1024)
       srcLoc.throwError("call to ", Quoted(func->declName),
                         " exceeds compile-time recursion limit 1024");
-    SMDL_PRESERVE(emitter.crumb);
-    emitter.crumb = func->params.lastCrumb;
+    SMDL_PRESERVE(emitter.scope, emitter.anchors);
+    emitter.restoreResolutionAnchor(func->params);
     auto result{emitter.createFunctionImplementation(
         func->decl.name, func->isPure() || !emitter.state, func->returnType,
         func->params, resolvedArgs.values, srcLoc, [&]() {
@@ -1373,8 +1373,9 @@ void FunctionType::initializeMaterialFunctions(Emitter &emitter) {
          constParameter(floatPtrType, "pdfRev"),
          constParameter(floatPtrType, "f")},
         decl.srcLoc, [&] {
-          auto dfFunc{Crumb::find(context, "_scatterEvaluate"sv, nullptr,
-                                  dfModule->mLastCrumb)};
+          auto dfFunc{Declaration::findInModule(
+              context, "_scatterEvaluate"sv, nullptr, dfModule,
+              /*ignoreIfNotExported=*/false)};
           SMDL_SANITY_CHECK(dfFunc);
           emitter.emitReturn(
               emitter.emitCall(
@@ -1420,8 +1421,9 @@ void FunctionType::initializeMaterialFunctions(Emitter &emitter) {
          constParameter(floatPtrType, "f"),
          constParameter(intPtrType, "isDelta")},
         decl.srcLoc, [&] {
-          auto dfFunc{Crumb::find(context, "_scatterSample"sv, nullptr,
-                                  dfModule->mLastCrumb)};
+          auto dfFunc{Declaration::findInModule(
+              context, "_scatterSample"sv, nullptr, dfModule,
+              /*ignoreIfNotExported=*/false)};
           SMDL_SANITY_CHECK(dfFunc);
           emitter.emitReturn(
               emitter.emitCall(
@@ -1479,9 +1481,10 @@ Value InferredSizeArrayType::invoke(Emitter &emitter, const ArgumentList &args,
     return emitter.context.getArrayType(elemType, args.size());
   }()};
 
-  if (!sizeNameStrv.empty()) {
-    emitter.declareCrumb(
-        sizeNameStrv, nullptr,
+  if (!sizeName.empty()) {
+    // The temporary view is safe: 'declare' interns the name.
+    emitter.declare(
+        std::string_view(sizeName), nullptr,
         emitter.context.getComptimeInt(int(inferredArrayType->size)));
   }
 
@@ -1505,20 +1508,20 @@ Value MetaType::accessField(Emitter &emitter, Value value,
   } else if (value.isComptimeMetaModule(emitter.context)) {
     // Make exported declarations available
     auto module_{value.getComptimeMetaModule(emitter.context, srcLoc)};
-    if (auto crumb{Crumb::find(emitter.context, name, emitter.getLLVMFunction(),
-                               module_->mLastCrumb, nullptr,
-                               /*ignoreIfNotExported=*/true)})
-      return crumb->value;
+    if (auto declaration{Declaration::findInModule(emitter.context, name,
+                                       emitter.getLLVMFunction(), module_)})
+      return declaration->value;
   } else if (value.isComptimeMetaNamespace(emitter.context)) {
     // Make declarations available. 'export' only gates access from other
     // modules, not from the namespace's own module.
     auto namespace_{value.getComptimeMetaNamespace(emitter.context, srcLoc)};
-    if (auto crumb{Crumb::find(emitter.context, name, emitter.getLLVMFunction(),
-                               namespace_->lastCrumb, namespace_->firstCrumb,
-                               /*ignoreIfNotExported=*/
-                               namespace_->srcLoc.module_ !=
-                                   emitter.currentModule)})
-      return crumb->value;
+    if (auto declaration{Declaration::resolveInScope(
+            emitter.context, name, emitter.getLLVMFunction(),
+            namespace_->scope,
+            /*ignoreIfNotExported=*/
+            namespace_->srcLoc.module_ != emitter.currentModule,
+            std::numeric_limits<uint64_t>::max(), nullptr)})
+      return declaration->value;
   }
   return RValue(emitter.context.getVoidType(), nullptr);
 }
@@ -1568,7 +1571,7 @@ Value PointerType::invoke(Emitter &emitter, const ArgumentList &args,
           // does not actually work. The lifetime would implicitly end before
           // being used in argument conversions and thus leads to undefined
           // behavior, so for now we "leak" these lvalues.
-          // emitter.declare_crumb(/*name=*/{}, /*node=*/{}, value);
+          // emitter.declare(/*name=*/{}, /*node=*/{}, value);
         }
         // Do not worry about pointer cast because in modern LLVM
         // we treat all pointers as opaque anyway.
@@ -1714,9 +1717,14 @@ Value StringType::accessField(Emitter &emitter, Value value,
 //--{ StructType
 void StructType::initialize(Emitter &emitter) {
   emitter.rejectSameScopeShadow(decl.name, decl.srcLoc);
-  params.lastCrumb = emitter.declareCrumb(
-      decl.name, &decl, emitter.context.getComptimeMetaType(this));
-  SMDL_PRESERVE(emitter.crumb);
+  emitter.declare(decl.name, &decl,
+                       emitter.context.getComptimeMetaType(this));
+  emitter.captureResolutionAnchor(params);
+  // The interior declarations (static fields, inferred sizes in field
+  // types) are popped from the chain on exit; the transparent scope pops
+  // their map entries with them.
+  SMDL_PRESERVE(emitter.scope);
+  emitter.scope = emitter.pushScope(/*transparent=*/true);
   // Initialize tags.
   for (auto &tag : decl.tags) {
     emitter.emit(tag.type);
@@ -1757,7 +1765,8 @@ void StructType::initialize(Emitter &emitter) {
       auto value{emitter.invoke(fieldType, emitter.emit(field.exprInit),
                                 field.name.srcLoc)};
       staticFields[field.name.srcName] = value;
-      params.lastCrumb = emitter.declareCrumb(field.name, &field, value);
+      emitter.declare(field.name, &field, value);
+      emitter.captureResolutionAnchor(params);
     } else {
       auto &param{params.emplace_back()};
       param.type = fieldType;
@@ -1856,8 +1865,8 @@ Value StructType::invoke(Emitter &emitter, const ArgumentList &args,
     for (auto &value : resolvedArgs.values)
       result = emitter.insert(result, value, i++, srcLoc);
     if (decl.stmtFinalize) {
-      SMDL_PRESERVE(emitter.crumb);
-      emitter.crumb = params.lastCrumb;
+      SMDL_PRESERVE(emitter.scope, emitter.anchors);
+      emitter.restoreResolutionAnchor(params);
       emitter.handleScope(nullptr, nullptr, [&] {
         emitter.labelReturn = {};   // Invalidate!
         emitter.labelBreak = {};    // Invalidate!
@@ -1865,7 +1874,7 @@ Value StructType::invoke(Emitter &emitter, const ArgumentList &args,
         emitter.setCurrentModule(decl.srcLoc);
         auto lv{emitter.lvalue(result)};
         for (auto &param : params)
-          emitter.declareCrumb(param.name, &decl,
+          emitter.declare(param.name, &decl,
                                emitter.accessField(lv, param.name, srcLoc));
         emitter.emit(decl.stmtFinalize);
         result = emitter.rvalue(lv);
@@ -1886,8 +1895,8 @@ Value StructType::invoke(Emitter &emitter, const ArgumentList &args,
     auto &constructor{*viableConstructors[0]};
     auto resolvedArgs{
         emitter.resolveArguments(constructor.params, args, srcLoc)};
-    SMDL_PRESERVE(emitter.crumb, constructor.isInvoking);
-    emitter.crumb = constructor.params.lastCrumb;
+    SMDL_PRESERVE(emitter.scope, emitter.anchors, constructor.isInvoking);
+    emitter.restoreResolutionAnchor(constructor.params);
     constructor.isInvoking = true;
     return emitter.createFunctionImplementation(
         decl.name, !emitter.state, this, constructor.params,

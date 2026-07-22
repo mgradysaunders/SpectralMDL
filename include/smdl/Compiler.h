@@ -274,7 +274,7 @@ private:
   ///
   /// \note
   /// This is used during the active compiling phase to allocate
-  /// AST nodes, type representations, crumbs, etc. Once `jit_compile()`
+  /// AST nodes, type representations, declarations, etc. Once `jit_compile()`
   /// is called and everything is finalized as JIT-linked native code,
   /// intermediate representations are dropped and the allocator is
   /// reset.

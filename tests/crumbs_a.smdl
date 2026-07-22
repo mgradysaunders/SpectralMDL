@@ -1,6 +1,0 @@
-#smdl
-
-// Companion module for 'crumb_regressions.smdl'. Exports the same name as
-// 'crumbs_b.smdl' so qualified lookups can prove they resolve through the
-// correct module.
-export const int shadowed = 1;

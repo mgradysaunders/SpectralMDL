@@ -5,7 +5,8 @@
 
 namespace smdl {
 
-class Crumb;
+class Declaration;
+class Scope;
 
 } // namespace smdl
 
@@ -503,11 +504,9 @@ public:
   /// The brace `}`.
   std::string_view srcBraceR;
 
-  /// The first crumb for inside-namespace lookup. This is populated later.
-  Crumb *firstCrumb{};
-
-  /// The last crumb for inside-namespace lookup. This is populated later.
-  Crumb *lastCrumb{};
+  /// The scope holding the namespace's interior declarations, for
+  /// qualified-name descent. This is populated later.
+  Scope *scope{};
 };
 
 /// A `struct` declaration.

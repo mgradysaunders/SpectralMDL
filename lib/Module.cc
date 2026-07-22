@@ -66,7 +66,7 @@ std::optional<Error> Module::compile(Context &context) noexcept {
         context.currentModule = this;
         Emitter emitter{context};
         emitter.emit(mRoot);
-        mLastCrumb = emitter.crumb;
+        mRootScope = emitter.scope;
         mCompileStatus = COMPILE_STATUS_FINISHED;
       } catch (const Error &error) {
         mCompileStatus = COMPILE_STATUS_FAILED;
@@ -123,7 +123,7 @@ void Module::reset() noexcept {
   mRoot.reset();
   mCompileStatus = COMPILE_STATUS_NOT_STARTED;
   mCompileErrorMessage.clear();
-  mLastCrumb = nullptr;
+  mRootScope = nullptr;
 }
 
 } // namespace smdl

@@ -1,46 +1,46 @@
 #smdl
 
-import .::crumbs_a::*;
-using .::crumbs_b import *;
-import .::crumbs_c::*;
-// Importing 'crumbs_d' guarantees it compiles before the unit tests below
+import .::decl_a::*;
+using .::decl_b import *;
+import .::decl_c::*;
+// Importing 'decl_d' guarantees it compiles before the unit tests below
 // are emitted — its private 'overload_target(int)' declaration is exactly
 // what the cross-module leak test needs to have happened first.
-import .::crumbs_d::*;
-using .::crumbs_e import *;
+import .::decl_d::*;
+using .::decl_e import *;
 
 // This multi-component universal using-import used to make every unqualified
-// lookup underflow 'name.subspan(crumb->name.size())' into an out-of-bounds
-// span ('package1::foo' has a 2-component crumb name; typical lookup names
-// have 1). It also exercises the transitive re-export inside
+// lookup underflow 'name.subspan(...)' by the 2-component import name
+// 'package1::foo' into an out-of-bounds span (typical lookup names have 1
+// component). It also exercises the transitive re-export inside
 // 'package1/foo.smdl' ('export using ..::package2::bar import message;'),
-// whose crumb the wild span was compared against.
+// whose declaration the wild span was compared against.
 using .::package1::foo import *;
 
-// A universal using-import must not hijack qualified names belonging to other 
-// modules. Before the fix, 'crumbs_a::shadowed' resolved through the newer 
-// 'using .::crumbs_b import *' crumb (the qualifier was ignored entirely) and 
-// evaluated to 2.
-unit_test "Crumbs: qualified names are not hijacked by universal using-import" {
-  #assert(crumbs_a::shadowed == 1);
-  #assert(crumbs_b::shadowed == 2);
+// A universal using-import must not hijack qualified names belonging to other
+// modules. Before the fix, 'decl_a::shadowed' resolved through the newer
+// 'using .::decl_b import *' declaration (the qualifier was ignored entirely)
+// and evaluated to 2.
+unit_test "Declarations: qualified names are not hijacked by universal using-import" {
+  #assert(decl_a::shadowed == 1);
+  #assert(decl_b::shadowed == 2);
   // Unqualified lookup legitimately resolves through the using-import.
   #assert(shadowed == 2);
 }
 
-unit_test "Crumbs: multi-component universal using-import" {
+unit_test "Declarations: multi-component universal using-import" {
   #assert(message == "Hellope");
   #assert(package1::foo::message == "Hellope");
 }
 
-// 'crumbs_d.smdl' declares a private 'overload_target(int)' over the name it
-// imports from 'crumbs_c.smdl'. That declaration must not join crumbs_c's
+// 'decl_d.smdl' declares a private 'overload_target(int)' over the name it
+// imports from 'decl_c.smdl'. That declaration must not join decl_c's
 // overload set: 'int' converts implicitly to '(int | float)' but not vice
 // versa, so the leaked overload would deterministically win both calls here
 // and return 2.
-unit_test "Crumbs: private overloads do not leak across modules" {
-  #assert(crumbs_c::overload_target(5) == 1);
-  #assert(crumbs_c::overload_target(1.5) == 1);
+unit_test "Declarations: private overloads do not leak across modules" {
+  #assert(decl_c::overload_target(5) == 1);
+  #assert(decl_c::overload_target(1.5) == 1);
 }
 
 // ':=' bindings used to leak across two-arm merge arms (select,
@@ -49,28 +49,28 @@ unit_test "Crumbs: private overloads do not leak across modules" {
 // introduced in *conditions* dominate the merge and must keep leaking; this
 // guards that the containment fix did not take those away.
 @(pure noinline)
-int crumb_id(int v) = v;
+int decl_id(int v) = v;
 
-unit_test "Crumbs: temporary let bindings leak from conditions, not arms" {
+unit_test "Declarations: temporary let bindings leak from conditions, not arms" {
   // If-condition binding leaks into the branch and past the statement.
-  if (x := crumb_id(7)) {
+  if (x := decl_id(7)) {
     #assert(x == 7);
   }
   #assert(x == 7);
   // Ternary-condition bindings reach both arms, comptime and runtime alike.
   auto r0 = (y := 2) > 1 ? y : -y;
   #assert(r0 == 2);
-  auto r1 = (z := crumb_id(2)) > 1 ? z : -z;
+  auto r1 = (z := decl_id(2)) > 1 ? z : -z;
   #assert(r1 == 2);
   // Argument bindings reach later operands of the same statement.
-  auto s = crumb_id(w := crumb_id(4)) + w;
+  auto s = decl_id(w := decl_id(4)) + w;
   #assert(s == 8);
 }
 
 // 'export' gates access to namespace members across module
 // boundaries only. Within the declaring module, qualified access works
-// without 'export' (see also 'crumbs_e.smdl' for the cross-module side).
-namespace crumb_ns {
+// without 'export' (see also 'decl_e.smdl' for the cross-module side).
+namespace decl_ns {
   const int hidden = 5;
   export const int shown = 6;
   namespace inner {
@@ -78,20 +78,20 @@ namespace crumb_ns {
   }
 }
 
-unit_test "Crumbs: namespace members visible without export in own module" {
-  #assert(crumb_ns::shown == 6);
-  #assert(crumb_ns::hidden == 5);
-  #assert(crumb_ns::inner::deep == 7);
+unit_test "Declarations: namespace members visible without export in own module" {
+  #assert(decl_ns::shown == 6);
+  #assert(decl_ns::hidden == 5);
+  #assert(decl_ns::inner::deep == 7);
   // Exported members of another module's exported namespace are reachable.
-  #assert(crumb_e_ns::pub == 1);
+  #assert(decl_e_ns::pub == 1);
 }
 
 // same-scope redeclaration is a compile error (verified out of tree
 // since an error aborts the suite); shadowing in nested scopes is legal and
 // guarded here.
-const int crumb_g = 10;
+const int decl_g = 10;
 
-unit_test "Crumbs: shadowing is legal in nested scopes" {
+unit_test "Declarations: shadowing is legal in nested scopes" {
   int x = 1;
   {
     int x = 2;
@@ -109,8 +109,8 @@ unit_test "Crumbs: shadowing is legal in nested scopes" {
   } in x * x;
   #assert(v == 9);
   // Function-body scope may shadow module scope.
-  int crumb_g = 20;
-  #assert(crumb_g == 20);
+  int decl_g = 20;
+  #assert(decl_g == 20);
 }
 
 // each switch case is its own scope. The dispatch may jump directly
@@ -118,10 +118,10 @@ unit_test "Crumbs: shadowing is legal in nested scopes" {
 // declaration is not visible beyond its own case, not even on fallthrough
 // (jump-past-initialization is a compile error). Falling through unwinds 
 // the case scope like any other scope exit.
-unit_test "Crumbs: switch cases are separate scopes" {
+unit_test "Declarations: switch cases are separate scopes" {
   // The same name may be declared in different cases.
   int r = 0;
-  switch (crumb_id(2)) {
+  switch (decl_id(2)) {
   case 1: {
     int v = 10;
     r = v;
@@ -135,7 +135,7 @@ unit_test "Crumbs: switch cases are separate scopes" {
   #assert(r == 20);
   // Fallthrough control flow still works.
   int n = 0;
-  switch (crumb_id(1)) {
+  switch (decl_id(1)) {
   case 1:
     n += 1;
   case 2:
@@ -148,7 +148,7 @@ unit_test "Crumbs: switch cases are separate scopes" {
   // A case-local defer runs when the case falls through (scope exit).
   int count = 0;
   &int p = &count;
-  switch (crumb_id(1)) {
+  switch (decl_id(1)) {
   case 1:
     defer *p += 10;
     #assert(count == 0);
@@ -166,18 +166,46 @@ unit_test "Crumbs: switch cases are separate scopes" {
 // both locations). In-function defaults and escaped construction with
 // explicit arguments remain legal.
 @(pure noinline)
-auto crumb_make() {
+auto decl_make() {
   int k = 5;
-  struct CrumbLocalS {
+  struct DeclLocalS {
     int a = k;
   };
-  return CrumbLocalS();
+  return DeclLocalS();
 }
 
-unit_test "Crumbs: local struct type escapes; defaults bind in-function" {
-  auto s = crumb_make();
+unit_test "Declarations: local struct type escapes; defaults bind in-function" {
+  auto s = decl_make();
   #assert(s.a == 5);
   // Explicit arguments emit no default, so no foreign-local reference.
   auto t = #typeof(s)(a: 7);
   #assert(t.a == 7);
+}
+
+// Declaration-order visibility: lazily emitted bodies — macro expansions,
+// function instances, and default parameter initializers — resolve in
+// their definition-site environment. They see earlier module declarations
+// but not the caller's locals (and not later module declarations, which is
+// a compile error verified out of tree).
+const int decl_mv = 1;
+
+@(pure macro)
+int decl_read_mv_macro() = decl_mv;
+
+@(pure noinline)
+int decl_read_mv_fn() {
+  return decl_mv;
+}
+
+@(pure)
+int decl_read_mv_default(int arg = decl_mv) {
+  return arg;
+}
+
+unit_test "Declarations: lazy bodies resolve in definition scope" {
+  int decl_mv = 999;
+  #assert(decl_read_mv_macro() == 1);
+  #assert(decl_read_mv_fn() == 1);
+  #assert(decl_read_mv_default() == 1);
+  #assert(decl_mv == 999);
 }

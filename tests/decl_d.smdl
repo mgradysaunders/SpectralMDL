@@ -1,9 +1,9 @@
 #smdl
 
-using .::crumbs_c import overload_target;
+using .::decl_c import overload_target;
 
 // A private (non-exported) declaration over the imported name. This must
-// shadow the import, not overload it — overloading would mutate crumbs_c's
+// shadow the import, not overload it — overloading would mutate decl_c's
 // function type and leak this function into every importer's overload
 // resolution.
 @(pure)
@@ -12,10 +12,10 @@ int overload_target(int v) {
   return 2;
 }
 
-unit_test "Crumbs: declaration over import shadows within its own module" {
+unit_test "Declarations: declaration over import shadows within its own module" {
   // The local declaration wins unqualified lookup.
   #assert(overload_target(5) == 2);
   // The imported function remains reachable by its qualified name, and
-  // resolves against crumbs_c's overloads only.
-  #assert(crumbs_c::overload_target(1.5) == 1);
+  // resolves against decl_c's overloads only.
+  #assert(decl_c::overload_target(1.5) == 1);
 }

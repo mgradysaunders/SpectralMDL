@@ -13,7 +13,9 @@ class File;
 
 class Context;
 
-class Crumb;
+class Declaration;
+
+class Scope;
 
 /// \addtogroup Main
 /// \{
@@ -146,15 +148,15 @@ private:
   /// misreported as a cyclic import.
   std::string mCompileErrorMessage{};
 
-  /// The last crumb. This is the starting point to search for exported
-  /// declarations.
-  Crumb *mLastCrumb{};
+  /// The root scope: the starting point for searches of this module's
+  /// top-level declarations (see `Declaration::findInModule`).
+  Scope *mRootScope{};
 
   friend class Compiler;
 
   friend class Context;
 
-  friend class Crumb;
+  friend class Declaration;
 
   friend class Emitter;
 

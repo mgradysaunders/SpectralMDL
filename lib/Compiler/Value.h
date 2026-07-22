@@ -175,23 +175,44 @@ public:
   return Value(Value::Kind::RValue, type, llvmValue);
 }
 
-/// A crumb, the fundamental unit of name resolution and scope.
-class Crumb final {
+/// A declaration, the fundamental unit of name resolution and scope.
+class Declaration final {
 public:
-  /// Find by name starting from the given crumb and walking upwards.
+  /// Resolve the given name through a single import (or import-like)
+  /// declaration: the see-through searches of universal imports, the
+  /// unqualified match of a specific `using` import, and the exact-name
+  /// match of the declaration itself. Returns null if the name does not
+  /// resolve through this
+  /// declaration.
+  [[nodiscard]] static Declaration *
+  findThroughImport(Context &context, Span<const std::string_view> name,
+                    llvm::Function *llvmFunc, Declaration *declaration);
+
+  /// Resolve the given (possibly qualified) name against the contents of a
+  /// single scope, with no parent walk: named declarations newest-first
+  /// descending into namespaces for qualified names, then imports
+  /// newest-first via `findThroughImport`. The name is interned on entry.
+  /// `seqLimit` bounds declaration visibility for re-anchored resolution
+  /// (see `Emitter::anchors`).
   ///
-  /// If `unusableMatch` is non-null, it receives the nearest crumb whose
-  /// name matched but was skipped only because its run-time value lives in
-  /// a different LLVM function than `llvmFunc`. Callers that resolve user
-  /// identifiers should treat a recorded skip as an impossible-capture
-  /// error: lexically the skipped declaration is the match, so binding to
+  /// If `unusableMatch` is non-null, it receives the nearest exact-name
+  /// match skipped only because its run-time value lives in a different
+  /// LLVM function than `llvmFunc`. Callers that resolve user identifiers
+  /// should treat a recorded skip as an impossible-capture error:
+  /// lexically the skipped declaration is the match, so binding to
   /// anything farther away would be silent misbinding.
-  [[nodiscard]] static Crumb *find(Context &context,
-                                   Span<const std::string_view> name,
-                                   llvm::Function *llvmFunc, Crumb *crumb,
-                                   Crumb *stopCrumb = nullptr,
-                                   bool ignoreIfNotExported = false,
-                                   Crumb **unusableMatch = nullptr);
+  [[nodiscard]] static Declaration *
+  resolveInScope(Context &context, Span<const std::string_view> name,
+                 llvm::Function *llvmFunc, Scope *scope,
+                 bool ignoreIfNotExported, uint64_t seqLimit,
+                 Declaration **unusableMatch);
+
+  /// Resolve the given name against a module's root scope (see
+  /// `Module::mRootScope`).
+  [[nodiscard]] static Declaration *
+  findInModule(Context &context, Span<const std::string_view> name,
+               llvm::Function *llvmFunc, Module *module_,
+               bool ignoreIfNotExported = true);
 
   /// Get the source location if applicable.
   [[nodiscard]] SourceLocation getSourceLocation() const {
@@ -229,19 +250,12 @@ public:
     return llvm::isa_and_present<AST::UsingImport>(node);
   }
 
-  /// Is this an AST using alias declaration?
-  [[nodiscard]] bool isASTUsingAlias() const {
-    return llvm::isa_and_present<AST::UsingAlias>(node);
-  }
-
-  /// Is this an AST defer statement?
-  [[nodiscard]] bool isASTDefer() const {
-    return llvm::isa_and_present<AST::Defer>(node);
-  }
-
-  /// Is this an AST preserve statement?
-  [[nodiscard]] bool isASTPreserve() const {
-    return llvm::isa_and_present<AST::Preserve>(node);
+  /// Is exempt from same-scope shadow rejection? Imports bring in foreign
+  /// names: declaring over them is cross-module shadowing, which is
+  /// allowed, and namespaces may be re-opened.
+  [[nodiscard]] bool isSameScopeShadowExempt() const {
+    return isASTImport() || isASTUsingImport() ||
+           llvm::isa_and_present<AST::Namespace>(node);
   }
 
   /// Maybe issue warning about an unused value.
@@ -272,10 +286,10 @@ public:
   }
 
 public:
-  /// The previous crumb.
-  Crumb *prev{};
-
-  /// The name. This may be empty!
+  /// The name, interned by `Context::internName` (see `declare`), so
+  /// the span and its characters are context-owned, never a borrow of
+  /// caller storage, and full-name equality is pointer equality. This may
+  /// be empty!
   Span<const std::string_view> name{};
 
   /// The AST node if applicable.
@@ -284,10 +298,53 @@ public:
   /// The value.
   Value value{};
 
-  /// If this is an AST preserve statement, the value to preserve.
-  Value valueToPreserve{};
+  /// Has this declaration been resolved at least once? Drives the
+  /// unused-value warnings.
+  bool isUsed{};
 
-  uint8_t isUsed{};
+  /// The globally monotonic declaration sequence number (see
+  /// `Context::nextDeclSeq`), used by the scope index to reproduce
+  /// declaration-order visibility for re-anchored resolution.
+  uint64_t seq{};
+
+  /// The previous declaration with the same name in the same scope (e.g.,
+  /// a declaration over an import shadows it but leaves it reachable).
+  Declaration *prevSameNameInScope{};
+};
+
+/// A scope: the unit of the resolution index. Scopes carry all name resolution
+/// (the `Emitter` walks from the current scope outward) and the same-scope
+/// shadow probe.
+class Scope final {
+public:
+  /// The parent scope.
+  Scope *parent{};
+
+  /// Is transparent? A transparent scope holds declarations that the chain
+  /// pops before the enclosing scope ends (two-arm merge arms, variable
+  /// initializers, namespace and struct-initialize interiors). It bounds
+  /// the lifetime of its map entries without acting as a shadow boundary:
+  /// the same-scope probe continues into the parent.
+  bool transparent{};
+
+  /// The named declarations in this scope, keyed by the interned name
+  /// array (see `Context::internName`), newest first through
+  /// `Declaration::prevSameNameInScope`. Import declarations live in `imports`
+  /// instead.
+  llvm::SmallDenseMap<const void *, Declaration *, 4> decls{};
+
+  /// The import declarations in this scope in declaration order. Kept
+  /// separate from `decls` because imports resolve by see-through searches
+  /// (see `Declaration::findThroughImport`) and always precede every other
+  /// declaration in their scope, so probing `decls` first preserves
+  /// newest-first declaration order.
+  llvm::SmallVector<Declaration *, 4> imports{};
+
+  /// The `using` alias declarations in this scope, in declaration order
+  /// with their sequence numbers. Aliases participate only in import-path
+  /// substitution (see `Emitter::resolveImportUsingAliases`), never in
+  /// name resolution.
+  llvm::SmallVector<std::pair<AST::UsingAlias *, uint64_t>, 2> usingAliases{};
 };
 
 /// A parameter.
@@ -404,8 +461,14 @@ public:
   /// Is variadic? i.e., ends with `...`?
   bool isVariadic{};
 
-  /// The last crumb before the parameter list.
-  Crumb *lastCrumb{};
+  /// The scope at the parameter list's declaration site — together with
+  /// `lastSeq` this is the resolution anchor for lazily emitted bodies,
+  /// and it is null iff no anchor was captured. See
+  /// `Emitter::captureResolutionAnchor`/`restoreResolutionAnchor`.
+  Scope *lastScope{};
+
+  /// The declaration sequence visibility limit paired with `lastScope`.
+  uint64_t lastSeq{};
 };
 
 /// An argument.

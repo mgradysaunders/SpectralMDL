@@ -8,6 +8,38 @@ namespace smdl {
 /// \addtogroup Compiler
 /// \{
 
+/// A pending scope-exit action on the `Emitter::unwindStack`. Actions are
+/// replayed newest-first — without popping — on every control path that
+/// leaves their scope (see `Emitter::unwind`), and popped when the scope
+/// itself ends.
+class UnwindAction final {
+public:
+  enum class Kind {
+    /// End the lifetime of an alloca-backed lvalue.
+    LifetimeEnd,
+    /// Emit the body of a `defer` statement.
+    Defer,
+    /// Store `valueToPreserve` back to `value` (a `preserve` statement).
+    Preserve,
+  };
+
+  /// The kind.
+  Kind kind{};
+
+  /// The value: the lvalue to end or to store back to.
+  Value value{};
+
+  /// The saved rvalue for `Preserve`.
+  Value valueToPreserve{};
+
+  /// The AST statement for `Defer`.
+  AST::Defer *astDefer{};
+
+  /// The declaration sequence number for `Defer`: the defer body must not
+  /// see declarations made after the defer statement.
+  uint64_t seq{};
+};
+
 /// An emitter, responsible for the most important code generation!
 class Emitter final {
 public:
@@ -27,8 +59,8 @@ public:
   /// A label representing where to branch to eventually.
   class Label final {
   public:
-    /// The crumb to unwind to.
-    Crumb *crumb{};
+    /// The unwind-stack depth to unwind to.
+    size_t depth{};
 
     /// The block to branch to.
     llvm::BasicBlock *block{};
@@ -42,6 +74,38 @@ public:
     fmf.setNoNaNs(false); // Don't assume no NaNs!
     fmf.setNoInfs(false); // Don't assume no Infs!
     builder.setFastMathFlags(fmf);
+    scope = pushScope(/*transparent=*/false); // The module root scope
+  }
+
+  /// Push a new scope whose parent is the current scope. The caller is
+  /// responsible for restoring `scope` (typically via `SMDL_PRESERVE`).
+  [[nodiscard]] Scope *pushScope(bool transparent) {
+    auto newScope{context.makeScope()};
+    newScope->parent = scope;
+    newScope->transparent = transparent;
+    return newScope;
+  }
+
+  /// Capture the current resolution position into the given parameter
+  /// list, for lazily emitted bodies to re-anchor to (see
+  /// `restoreResolutionAnchor`). The current declaration sequence number
+  /// bounds visibility to what is declared so far.
+  void captureResolutionAnchor(ParameterList &params) {
+    params.lastScope = scope;
+    params.lastSeq = context.currentDeclSeq();
+  }
+
+  /// Restore resolution to a definition-site environment. Declarations in
+  /// the anchor scope and its ancestors are visible only up to the anchor
+  /// sequence number; scopes pushed after re-anchoring are unaffected.
+  /// Replaces any active anchors: resolution switches entirely to the
+  /// definition-site environment, so prior limits are irrelevant. The
+  /// caller is responsible for preserving `scope` and `anchors`.
+  void restoreResolutionAnchor(const ParameterList &params) {
+    scope = params.lastScope;
+    anchors.clear();
+    if (params.lastScope)
+      anchors.push_back({params.lastScope, params.lastSeq});
   }
 
 public:
@@ -203,16 +267,36 @@ public:
     }
   }
 
-  /// Declare crumb.
-  auto declareCrumb(Span<const std::string_view> name, AST::Node *node,
-                    Value value, Value valueToPreserve = {}) {
-    return (crumb = context.allocator.allocate<Crumb>(crumb, name, node, value,
-                                                      valueToPreserve));
+  /// Declare a name. The name is interned by `Context::internName`, so
+  /// callers may pass views of any lifetime — including temporaries.
+  auto declare(Span<const std::string_view> name, AST::Node *node,
+               Value value) {
+    auto declaration{context.allocator.allocate<Declaration>(
+        context.internName(name), node, value)};
+    declaration->seq = context.nextDeclSeq();
+    // Record the declaration in the scope index. Imports resolve by
+    // see-through searches and always precede the other declarations in
+    // their scope, so they are kept in a separate ordered list.
+    if (declaration->isNamed()) {
+      if (declaration->isASTImport() || declaration->isASTUsingImport()) {
+        scope->imports.push_back(declaration);
+      } else {
+        auto &slot{scope->decls[declaration->name.data()]};
+        declaration->prevSameNameInScope = slot;
+        slot = declaration;
+      }
+    }
+    // Alloca-backed lvalues have their lifetimes ended at scope exit.
+    if (value.isLValue() &&
+        llvm::isa_and_present<llvm::AllocaInst>(value.llvmValue))
+      unwindStack.push_back({UnwindAction::Kind::LifetimeEnd, value});
+    return declaration;
   }
 
   /// Throw an error if the given name is already declared in the current
-  /// scope, i.e., between `crumb` and `scopeStartCrumb`. Shadowing is legal
-  /// only across scope boundaries.
+  /// scope (probing the scope index through transparent scopes into the
+  /// first boundary scope). Shadowing is legal only across scope
+  /// boundaries.
   void rejectSameScopeShadow(Span<const std::string_view> name,
                              const SourceLocation &srcLoc);
 
@@ -262,8 +346,11 @@ public:
     return value;
   }
 
-  /// Unwind to the given `lastCrumb`.
-  void unwind(Crumb *lastCrumb);
+  /// Emit the pending unwind actions above the given stack depth,
+  /// newest-first, without popping them — every control path that leaves a
+  /// scope re-emits its actions. The stack itself is truncated when the
+  /// scope ends (see `handleScope`).
+  void unwind(size_t depth);
 
   /// This is the primary mechanism for handling scope.
   ///
@@ -288,27 +375,28 @@ public:
   /// - The implementation _does_ implicitly branch to `blockEnd`, but only if
   ///   the intermediate code generation does not add an explicit terminator
   ///   (i.e., `return`, `break`, or `continue`).
-  /// - The implementation also preserves the crumb, `$state` value, and
+  /// - The implementation also preserves the declaration, `$state` value, and
   ///   all labels. These may be modified by `func` with the expectation that
   ///   they will be restored at the end of the scope.
   ///
   template <typename Func>
   void handleScope(llvm::BasicBlock *blockStart, llvm::BasicBlock *blockEnd,
                    Func &&func) {
-    SMDL_PRESERVE(crumb, scopeStartCrumb, state, labelReturn, labelBreak,
+    SMDL_PRESERVE(scope, anchors, state, labelReturn, labelBreak,
                   labelContinue, inDefer, currentModule);
-    auto crumb0{crumb};
-    scopeStartCrumb = crumb0;
+    const auto depth0{unwindStack.size()};
+    scope = pushScope(/*transparent=*/false);
     if (blockStart) {
       llvmMoveBlockToEnd(blockStart);
       builder.SetInsertPoint(blockStart);
     }
     std::invoke(std::forward<Func>(func));
     if (!hasTerminator()) {
-      unwind(crumb0);
+      unwind(depth0);
       if (blockEnd)
         builder.CreateBr(blockEnd);
     }
+    unwindStack.resize(depth0);
     if (blockEnd && !blockEnd->getTerminator())
       llvmMoveBlockToEnd(blockEnd);
   }
@@ -327,8 +415,8 @@ public:
                        llvm::BasicBlock *blockContinue, Func &&func) {
     SMDL_SANITY_CHECK(hasTerminator());
     handleScope(blockStart, blockAfterBody, [&] {
-      labelBreak = {crumb, blockBreak};
-      labelContinue = {crumb, blockContinue};
+      labelBreak = {unwindStack.size(), blockBreak};
+      labelContinue = {unwindStack.size(), blockContinue};
       inDefer = false;
       std::invoke(std::forward<Func>(func));
     });
@@ -467,12 +555,17 @@ public:
 
   /// Emit namespace declaration.
   Value emit(AST::Namespace &decl) {
-    decl.firstCrumb = declareCrumb(*decl.identifier, &decl,
-                                   context.getComptimeMetaNamespace(&decl));
-    SMDL_PRESERVE(crumb);
+    declare(*decl.identifier, &decl,
+                 context.getComptimeMetaNamespace(&decl));
+    // The interior declarations go out of the enclosing lookup on exit,
+    // but the namespace is not a shadow boundary (members conflict with
+    // same-scope names declared before it) — hence a transparent scope.
+    // The scope is recorded on the AST node for qualified-name descent.
+    SMDL_PRESERVE(scope);
+    scope = pushScope(/*transparent=*/true);
+    decl.scope = scope;
     for (auto &each : decl.decls)
       emit(each);
-    decl.lastCrumb = crumb;
     return Value();
   }
 
@@ -485,7 +578,7 @@ public:
   /// Emit tag declaration.
   Value emit(AST::Tag &decl) {
     rejectSameScopeShadow(decl.name, decl.srcLoc);
-    declareCrumb(decl.name, &decl,
+    declare(decl.name, &decl,
                  context.getComptimeMetaType(context.getTagType(&decl)));
     return Value();
   }
@@ -493,7 +586,7 @@ public:
   /// Emit typedef declaration.
   Value emit(AST::Typedef &decl) {
     rejectSameScopeShadow(decl.name, decl.srcLoc);
-    declareCrumb(decl.name, &decl, emit(decl.type));
+    declare(decl.name, &decl, emit(decl.type));
     return Value();
   }
 
@@ -502,7 +595,7 @@ public:
 
   /// Emit using alias declaration.
   Value emit(AST::UsingAlias &decl) {
-    declareCrumb(/*name=*/{}, &decl, /*value=*/{});
+    scope->usingAliases.push_back({&decl, context.nextDeclSeq()});
     return Value();
   }
 
@@ -550,13 +643,14 @@ public:
   Value emit(AST::Let &expr) {
     // The declarations open their own scope, so they may shadow names in
     // the enclosing scope.
-    SMDL_PRESERVE(scopeStartCrumb);
-    auto crumb0{crumb};
-    scopeStartCrumb = crumb0;
+    SMDL_PRESERVE(scope);
+    const auto depth0{unwindStack.size()};
+    scope = pushScope(/*transparent=*/false);
     for (auto &decl : expr.decls)
       emit(decl);
     auto value{rvalue(emit(expr.expr))};
-    unwind(crumb0);
+    unwind(depth0);
+    unwindStack.resize(depth0);
     return value;
   }
 
@@ -660,7 +754,7 @@ public:
       stmt.srcLoc.throwError(inDefer ? "cannot 'break' from 'defer'"
                                      : "nowhere to 'break'");
     emitLateIf(stmt.lateIf, [&] {
-      unwind(labelBreak.crumb);
+      unwind(labelBreak.depth);
       builder.CreateBr(labelBreak.block);
     });
     return Value();
@@ -676,7 +770,7 @@ public:
       stmt.srcLoc.throwError(inDefer ? "cannot 'continue' from 'defer'"
                                      : "nowhere to 'continue'");
     emitLateIf(stmt.lateIf, [&] {
-      unwind(labelContinue.crumb);
+      unwind(labelContinue.depth);
       builder.CreateBr(labelContinue.block);
     });
     return Value();
@@ -687,7 +781,11 @@ public:
 
   /// Emit defer statement.
   Value emit(AST::Defer &stmt) {
-    declareCrumb(/*name=*/{}, &stmt, /*value=*/{});
+    // The sequence number bounds what the defer body may resolve: nothing
+    // declared after the defer statement (see `unwind`).
+    unwindStack.push_back({UnwindAction::Kind::Defer, /*value=*/{},
+                           /*valueToPreserve=*/{}, &stmt,
+                           context.nextDeclSeq()});
     return Value();
   }
 
@@ -713,7 +811,8 @@ public:
       auto value{emit(expr)};
       if (!value.isLValue())
         stmt.srcLoc.throwError("cannot 'preserve' rvalue");
-      declareCrumb({}, &stmt, value, rvalue(value));
+      unwindStack.push_back(
+          {UnwindAction::Kind::Preserve, value, rvalue(value)});
     }
     return Value();
   }
@@ -748,7 +847,7 @@ public:
   /// Emit visit statement.
   Value emit(AST::Visit &stmt) {
     return emitVisit(emit(stmt.expr), stmt.srcLoc, [&](Value value) {
-      declareCrumb(stmt.name, &stmt, value);
+      declare(stmt.name, &stmt, value);
       if (!value.type->isVoid())
         emit(stmt.stmt);
       return Value();
@@ -849,7 +948,7 @@ public:
   /// `createResult` must see the block that actually branches to
   /// `labelReturn.block`.
   void recordReturn(Value value, const SourceLocation &srcLoc) {
-    unwind(labelReturn.crumb);
+    unwind(labelReturn.depth);
     returns.push_back(Result{value, getInsertBlock(), srcLoc});
     builder.CreateBr(labelReturn.block);
   }
@@ -871,7 +970,7 @@ public:
     for (auto &astParam : astParams)
       params.emplace_back(emitParameter(astParam));
     params.isVariadic = astParams.hasTrailingEllipsis();
-    params.lastCrumb = crumb;
+    captureResolutionAnchor(params);
     return params;
   }
 
@@ -982,9 +1081,12 @@ public:
   [[nodiscard]] Module *resolveModule(Span<const std::string_view> importPath,
                                       bool isAbs, Module *thisModule);
 
-  /// Resolve import using aliases in import path.
+  /// Resolve import using aliases in the import path. Aliases with a
+  /// declaration sequence number at or above `seqLimit` are ignored — an
+  /// alias's own path resolves against the aliases declared before it, so
+  /// `using foo = foo::bar;` cannot recurse.
   void resolveImportUsingAliases(
-      Crumb *crumbStart, Span<const std::string_view> importPath,
+      uint64_t seqLimit, Span<const std::string_view> importPath,
       llvm::SmallVector<std::string_view> &finalImportPath);
 
   /// \}
@@ -993,13 +1095,28 @@ public:
   /// The context.
   Context &context;
 
-  /// The pointer to the last crumb. See `declare_crumb()`.
-  Crumb *crumb{};
+  /// The pending scope-exit actions. See `unwind()` and `UnwindAction`.
+  llvm::SmallVector<UnwindAction, 8> unwindStack{};
 
-  /// The crumb at the start of the current scope. Names declared between
-  /// `crumb` and this boundary are "in the same scope" for the purposes of
-  /// `rejectSameScopeShadow()`. Null at module scope.
-  Crumb *scopeStartCrumb{};
+  /// The current scope. See `pushScope()` and the `Scope` class comment.
+  Scope *scope{};
+
+  /// The active resolution anchors: `(scope, seq)` pairs. During a
+  /// scope-index probe, once the walk reaches an anchor's scope, entries
+  /// from there upward are visible only up to the anchor's sequence number
+  /// (the minimum over all reached anchors). Re-anchoring to a definition
+  /// site replaces the list (`restoreResolutionAnchor`); emitting a defer
+  /// body pushes onto it (the chain is rewound within the same
+  /// environment, so limits stack). Empty when resolution is unrestricted.
+  llvm::SmallVector<std::pair<Scope *, uint64_t>, 2> anchors{};
+
+  /// Probe the scope index for a (possibly qualified) name, walking scopes
+  /// innermost to outermost and resolving each via
+  /// `Declaration::resolveInScope` with the active anchor limits. Includes
+  /// the `unusableMatch` recording (see `Declaration::resolveInScope`).
+  [[nodiscard]] Declaration *probeName(Span<const std::string_view> name,
+                                 llvm::Function *llvmFunc,
+                                 Declaration **unusableMatch);
 
   /// The `$state` value.
   Value state{};
@@ -1026,8 +1143,8 @@ public:
   /// The LLVM-IR builder.
   llvm::IRBuilder<> builder;
 
-  /// The intermediate crumbs to potentially warn about later.
-  llvm::SmallVector<Crumb *> crumbsToWarnAbout{};
+  /// The intermediate declarations to potentially warn about later.
+  llvm::SmallVector<Declaration *> declarationsToWarnAbout{};
 
   Module *currentModule{context.currentModule};
 };

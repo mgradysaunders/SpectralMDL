@@ -1,0 +1,14 @@
+#smdl
+
+// Companion module for 'decl_regressions.smdl'. 'export' gates namespace
+// member access across module boundaries only — 'priv' is reachable from
+// this module but not from importers.
+export namespace decl_e_ns {
+  export const int pub = 1;
+  const int priv = 2;
+}
+
+unit_test "Declarations: unexported namespace member visible in own module" {
+  #assert(decl_e_ns::pub == 1);
+  #assert(decl_e_ns::priv == 2);
+}

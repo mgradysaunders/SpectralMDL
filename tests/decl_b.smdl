@@ -1,0 +1,4 @@
+#smdl
+
+// Companion module for 'decl_regressions.smdl'. See 'decl_a.smdl'.
+export const int shadowed = 2;

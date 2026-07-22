@@ -45,80 +45,132 @@ bool Value::isComptimeMetaNamespace(Context &context) const {
   return isComptime() && type == context.getMetaNamespaceType();
 }
 
-Crumb *Crumb::find(Context &context, Span<const std::string_view> name,
-                   llvm::Function *llvmFunc, Crumb *crumb, Crumb *stopCrumb,
-                   bool ignoreIfNotExported, Crumb **unusableMatch) {
-  if (name.empty()) {
-    return nullptr;
+Declaration *Declaration::findThroughImport(Context &context,
+                                            Span<const std::string_view> name,
+                                            llvm::Function *llvmFunc,
+                                            Declaration *declaration) {
+  // If the declaration value is a `Module` ...
+  if (declaration->value.isComptimeMetaModule(context)) {
+    auto module_{declaration->value.getComptimeMetaModule(
+        context, declaration->getSourceLocation())};
+    // Look inside the module if it is either
+    // 1. A universal import in unqualified form `using foo::bar import *`
+    // 2. A universal import in qualified form `import foo::bar::*`
+    if (declaration->isASTUsingImport() || declaration->isASTImport()) {
+      // Search for qualified names `foo::bar::baz`, but only if the
+      // name actually begins with the imported module name `foo::bar`.
+      // The size check also keeps the `subspan` below in range.
+      if (name.size() > declaration->name.size() &&
+          name.startsWith(declaration->name)) {
+        if (auto subDeclaration{
+                findInModule(context, name.subspan(declaration->name.size()),
+                             llvmFunc, module_)}) {
+          return subDeclaration;
+        }
+      }
+      // Search for unqualified names `baz` if universal unqualified
+      // import `using foo::bar import *`
+      if (declaration->isASTUsingImport())
+        if (auto subDeclaration{
+                findInModule(context, name, llvmFunc, module_)}) {
+          return subDeclaration;
+        }
+    }
+  } else if (declaration->isASTUsingImport() &&
+             declaration->name.back() == name.back() && name.size() == 1) {
+    // The unqualified match of a specific import `using foo import bar`,
+    // whose declaration is named `foo::bar`.
+    return declaration->isUsed = 1, declaration;
   }
-  for (; crumb && crumb != stopCrumb; crumb = crumb->prev) {
-    // If this is not usable, don't consider it — but remember the nearest
-    // name match skipped only because its run-time value lives in a
-    // different LLVM function, so the caller can reject the reference as
-    // an impossible capture. See the declaration comment.
-    if (!crumb->value.isUsableInLLVMFunction(llvmFunc)) {
-      if (unusableMatch && !*unusableMatch && crumb->name == name)
-        *unusableMatch = crumb;
-      continue;
-    }
-    // If this is not exported and we recursed into a module, don't consider it.
-    if (!crumb->isExported() && ignoreIfNotExported)
-      continue;
-    // If the crumb value is a `Module` ...
-    if (crumb->value.isComptimeMetaModule(context)) {
-      auto module_{crumb->value.getComptimeMetaModule(
-          context, crumb->getSourceLocation())};
-      // Look inside the module if it is either
-      // 1. A universal import in unqualified form `using foo::bar import *`
-      // 2. A universal import in qualified form `import foo::bar::*`
-      if (crumb->isASTUsingImport() || crumb->isASTImport()) {
-        // Search for qualified names `foo::bar::baz`, but only if the
-        // name actually begins with the imported module name `foo::bar`.
-        // The size check also keeps the `subspan` below in range.
-        if (name.size() > crumb->name.size() &&
-            name.startsWith(crumb->name)) {
-          if (auto subCrumb{Crumb::find(
-                  context, name.subspan(crumb->name.size()), llvmFunc,
-                  module_->mLastCrumb, nullptr,
-                  /*ignoreIfNotExported=*/true)}) {
-            return subCrumb;
-          }
-        }
-        // Search for unqualified names `baz` if universal unqualified
-        // import `using foo::bar import *`
-        if (crumb->isASTUsingImport())
-          if (auto subCrumb{Crumb::find(context, name, llvmFunc,
-                                        module_->mLastCrumb, nullptr,
-                                        /*ignoreIfNotExported=*/true)}) {
-            return subCrumb;
-          }
-      }
-    } else if (crumb->isASTUsingImport() && crumb->name.back() == name.back() &&
-               name.size() == 1) {
-      return crumb->isUsed = 1, crumb;
-    }
-    // If the crumb value is an `AST::Namespace` ...
-    if (crumb->value.isComptimeMetaNamespace(context)) {
-      auto astNamespace{crumb->value.getComptimeMetaNamespace(
-          context, crumb->getSourceLocation())};
-      if (name.size() > crumb->name.size() && //
-          name.startsWith(crumb->name)) {
-        // Propagate 'ignoreIfNotExported' instead of forcing it: 'export'
-        // gates access across module boundaries (a module recursion above
-        // passes true), not qualified access to a namespace from within
-        // its own module.
-        if (auto subCrumb{Crumb::find(context, name.subspan(crumb->name.size()),
-                                      llvmFunc, astNamespace->lastCrumb, crumb,
-                                      ignoreIfNotExported)}) {
-          return subCrumb;
-        }
-      }
-    }
-    if (crumb->name == name) {
-      return crumb->isUsed = 1, crumb;
-    }
+  // The exact-name match of the declaration itself, e.g. the universal import
+  // `import foo::*` resolving the name `foo`.
+  if ((declaration->name.data() == name.data() &&
+       declaration->name.size() == name.size()) ||
+      declaration->name == name) {
+    return declaration->isUsed = 1, declaration;
   }
   return nullptr;
+}
+
+Declaration *Declaration::resolveInScope(Context &context,
+                             Span<const std::string_view> name,
+                             llvm::Function *llvmFunc, Scope *scope,
+                             bool ignoreIfNotExported, uint64_t seqLimit,
+                             Declaration **unusableMatch) {
+  if (!scope || name.empty())
+    return nullptr;
+  name = context.internName(name);
+  // Gather the candidates for every prefix of the name — an exact-name
+  // match for the full name, a namespace descent for a proper prefix — and
+  // try them newest-first, mirroring the chain walk's declaration order.
+  struct Candidate final {
+    Declaration *declaration{};
+    size_t prefixSize{};
+  };
+  auto candidates{llvm::SmallVector<Candidate, 4>{}};
+  for (size_t k = 1; k <= name.size(); k++) {
+    auto prefix{k == name.size() ? name
+                                 : context.internName(name.subspan(0, k))};
+    if (auto itr{scope->decls.find(prefix.data())}; itr != scope->decls.end())
+      for (auto c{itr->second}; c; c = c->prevSameNameInScope)
+        candidates.push_back({c, k});
+  }
+  if (candidates.size() > 1)
+    std::sort(candidates.begin(), candidates.end(),
+              [](const Candidate &candA, const Candidate &candB) {
+                return candA.declaration->seq > candB.declaration->seq;
+              });
+  for (const auto &[c, prefixSize] : candidates) {
+    if (c->seq > seqLimit)
+      continue;
+    if (ignoreIfNotExported && !c->isExported())
+      continue;
+    if (prefixSize == name.size()) {
+      if (!c->value.isUsableInLLVMFunction(llvmFunc)) {
+        if (unusableMatch && !*unusableMatch)
+          *unusableMatch = c;
+        continue;
+      }
+      return c->isUsed = 1, c;
+    }
+    // Descend into namespaces for proper prefixes, propagating the export
+    // filter: 'export' gates access across module boundaries only.
+    if (c->value.isComptimeMetaNamespace(context)) {
+      auto astNamespace{
+          c->value.getComptimeMetaNamespace(context, c->getSourceLocation())};
+      if (astNamespace->scope)
+        if (auto found{resolveInScope(
+                context, name.subspan(prefixSize), llvmFunc,
+                astNamespace->scope, ignoreIfNotExported,
+                std::numeric_limits<uint64_t>::max(), nullptr)})
+          return found;
+    }
+  }
+  // Then the imports, newest-first. Imports always precede every other
+  // declaration in their scope, so trying them after `decls` preserves the
+  // chain's newest-first order.
+  for (auto itr{scope->imports.rbegin()}; itr != scope->imports.rend();
+       ++itr) {
+    auto importDeclaration{*itr};
+    if (importDeclaration->seq > seqLimit)
+      continue;
+    if (ignoreIfNotExported && !importDeclaration->isExported())
+      continue;
+    if (auto found{
+            findThroughImport(context, name, llvmFunc, importDeclaration)})
+      return found;
+  }
+  return nullptr;
+}
+
+Declaration *Declaration::findInModule(Context &context,
+                                       Span<const std::string_view> name,
+                                       llvm::Function *llvmFunc,
+                                       Module *module_,
+                                       bool ignoreIfNotExported) {
+  return resolveInScope(context, name, llvmFunc, module_->mRootScope,
+                        ignoreIfNotExported,
+                        std::numeric_limits<uint64_t>::max(), nullptr);
 }
 
 bool ParameterList::isAbstract() const {

@@ -70,6 +70,30 @@ public:
     return name.str() + std::to_string(mUniqueNames[name][llvmFunc]++);
   }
 
+  /// Intern the given name. The returned span and the characters it views
+  /// are owned by the context, so the result is safe to store in a
+  /// `Declaration` regardless of where the argument came from, and the
+  /// same name always interns to the same span — full-name equality is
+  /// `data()`/`size()` equality.
+  [[nodiscard]] Span<const std::string_view>
+  internName(Span<const std::string_view> name);
+
+  /// Make a new `Scope`, owned by the context. Scopes must outlive the
+  /// emitter that pushes them: resolution anchors captured in
+  /// `ParameterList::lastScope` are used when other modules lazily emit
+  /// macro expansions, function instances, and default initializers.
+  [[nodiscard]] Scope *makeScope() {
+    mScopes.push_back(std::make_unique<Scope>());
+    return mScopes.back().get();
+  }
+
+  /// Get the next globally monotonic declaration sequence number. See
+  /// `Declaration::seq`.
+  [[nodiscard]] uint64_t nextDeclSeq() { return ++mDeclSeq; }
+
+  /// Get the current (most recently issued) declaration sequence number.
+  [[nodiscard]] uint64_t currentDeclSeq() const { return mDeclSeq; }
+
   /// Get keyword value. Return `Value()` if undefined.
   [[nodiscard]] Value getKeyword(llvm::StringRef name) {
     if (auto itr{mKeywords.find(name)}; itr != mKeywords.end())
@@ -415,6 +439,18 @@ private:
 
   /// The unique name counters. See `get_unique_name()`
   llvm::StringMap<llvm::DenseMap<llvm::Function *, uint64_t>> mUniqueNames;
+
+  /// The interned names. Keyed by the name components joined with `'\0'`
+  /// (identifiers cannot contain `'\0'`, so the encoding is unambiguous);
+  /// the interned views point into the map entry's own key bytes. See
+  /// `internName()`.
+  llvm::StringMap<Span<const std::string_view>> mInternedNames;
+
+  /// The scopes. See `makeScope()`.
+  std::vector<std::unique_ptr<Scope>> mScopes;
+
+  /// The declaration sequence counter. See `nextDeclSeq()`.
+  uint64_t mDeclSeq{};
 
   /// The arithmetic types, e.g., `bool3`, `int`, `float4`, `double2x3`.
   llvm::DenseMap<uint64_t, BumpPtr<ArithmeticType>> mArithmeticTypes;
