@@ -34,6 +34,13 @@ TEST_CASE("Sampling") {
     CHECK(histogram[3] * 1e-5 ==
           doctest::Approx(distr.indexPMF(3)).epsilon(1e-3));
   }
+  SUBCASE("Distribution1D with all-zero values") {
+    auto distr = smdl::Distribution1D(std::vector<float>{0.0f, 0.0f, 0.0f});
+    CHECK(distr.indexPMF(0) == 0.0f);
+    CHECK(distr.indexPMF(1) == 0.0f);
+    CHECK(distr.indexPMF(2) == 0.0f);
+    CHECK(distr.unnormalizedSum() == 0.0f);
+  }
   SUBCASE("Distribution2D") {
     auto distr =
         smdl::Distribution2D(4, 2,

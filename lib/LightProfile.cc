@@ -1,5 +1,8 @@
 #include "smdl/LightProfile.h"
 
+#include <algorithm>
+#include <cmath>
+
 #include "llvm/ADT/StringRef.h"
 
 namespace smdl {
@@ -123,8 +126,34 @@ LightProfile::loadFromFileMemory(std::string file) noexcept {
   })};
   if (error) {
     clear();
+    return error;
   }
-  return error;
+  if (maxIntensity() > 0) {
+    // Rasterize the interpolated intensity onto an equirectangular grid
+    // weighted by the sine of the zenith angle, so that sampling texels by
+    // this tabulation importance samples the intensity with respect to solid
+    // angle. The resolution scales with the angular resolution of the profile,
+    // and a single-texel row suffices in azimuth when the profile is axially
+    // symmetric.
+    const int nY{std::clamp(2 * int(vertAngles.size()), 64, 512)};
+    const int nX{horzAngles.size() <= 1
+                     ? 1
+                     : std::clamp(4 * int(horzAngles.size()), 64, 1024)};
+    auto values{std::vector<float>(size_t(nX) * size_t(nY))};
+    for (int iY = 0; iY < nY; iY++) {
+      const float theta{PI * (float(iY) + 0.5f) / float(nY)};
+      const float sinTheta{std::sin(theta)};
+      const float cosTheta{std::cos(theta)};
+      for (int iX = 0; iX < nX; iX++) {
+        const float phi{2.0f * PI * (float(iX) + 0.5f) / float(nX)};
+        values[size_t(nX) * iY + iX] =
+            sinTheta * interpolate(float3(sinTheta * std::cos(phi),
+                                          sinTheta * std::sin(phi), cosTheta));
+      }
+    }
+    distribution = Distribution2D(nX, nY, values);
+  }
+  return std::nullopt;
 }
 
 std::optional<Error>
@@ -152,6 +181,7 @@ void LightProfile::clear() noexcept {
   vertAngles.clear();
   horzAngles.clear();
   intensityValues.clear();
+  distribution.clear();
 }
 
 float LightProfile::power() const noexcept {
@@ -441,15 +471,53 @@ float LightProfile::interpolate(float vertAngle,
   }
 }
 
+float LightProfile::directionPDF(float3 wi) const noexcept {
+  if (distribution.getNumTexelsX() == 0)
+    return 0;
+  return distribution.directionPDF(wi);
+}
+
+float3 LightProfile::directionSample(float2 xi, float *pdf) const noexcept {
+  if (distribution.getNumTexelsX() == 0) {
+    if (pdf)
+      *pdf = 0;
+    return {};
+  }
+  return distribution.directionSample(xi, /*iPixel=*/nullptr, pdf);
+}
+
 } // namespace smdl
 
 extern "C" {
 
 SMDL_EXPORT float smdLightProfileInterpolate(const void *profile,
                                              const smdl::float3 &wo) {
-  return profile
-             ? static_cast<const smdl::LightProfile *>(profile)->interpolate(wo)
-             : 0.0f;
+  if (!profile)
+    return 0;
+  return static_cast<const smdl::LightProfile *>(profile)->interpolate(wo);
+}
+
+SMDL_EXPORT float smdLightProfileDirectionPDF(const void *profile,
+                                              const smdl::float3 &wi) {
+  if (!profile)
+    return 0;
+  return static_cast<const smdl::LightProfile *>(profile)->directionPDF(wi);
+}
+
+SMDL_EXPORT void smdLightProfileDirectionSample(const void *profile,
+                                                const smdl::float2 &xi,
+                                                smdl::float3 *wi, float *pdf) {
+  if (!profile) {
+    if (wi)
+      *wi = {};
+    if (pdf)
+      *pdf = 0.0f;
+    return;
+  }
+  auto w{static_cast<const smdl::LightProfile *>(profile)->directionSample(
+      xi, pdf)};
+  if (wi)
+    *wi = w;
 }
 
 } // extern "C"

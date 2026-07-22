@@ -9,8 +9,13 @@ Distribution1D::Distribution1D(Span<const float> values) {
     totalSum += std::fmax(static_cast<double>(value), 0.0);
     cmfs.emplace_back(totalSum);
   }
-  for (auto &cmf : cmfs) {
-    cmf /= totalSum;
+  // An all-zero distribution stays all-zero, so every PMF is zero rather
+  // than NaN. This arises legitimately, e.g., as a conditional row of a
+  // `Distribution2D` over a region with no density.
+  if (totalSum > 0) {
+    for (auto &cmf : cmfs) {
+      cmf /= totalSum;
+    }
   }
 }
 

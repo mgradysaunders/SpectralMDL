@@ -4,6 +4,7 @@
 #include <unordered_map>
 
 #include "smdl/Common.h"
+#include "smdl/Support/Sampling.h"
 
 namespace smdl {
 
@@ -52,9 +53,26 @@ public:
   [[nodiscard]] float interpolate(float vertAngle,
                                   float horzAngle) const noexcept;
 
-  // TODO float directionPDF(float3 wi) const noexcept;
+  /// The direction Probability Density Function (PDF), with respect to
+  /// solid angle over the sphere.
+  ///
+  /// This is the exact density of `directionSample()`, which importance
+  /// samples a piecewise-constant tabulation of `interpolate()`, so it is
+  /// approximately proportional to the interpolated intensity.
+  ///
+  [[nodiscard]] float directionPDF(float3 wi) const noexcept;
 
-  // TODO float3 directionSample(float2 xi, float *pdf = {}) const noexcept;
+  /// The direction sampling routine, importance sampling the tabulated
+  /// intensity distribution.
+  ///
+  /// \param[in] xi
+  /// The random sample \f$ \xi \in (0,1)^2 \f$.
+  ///
+  /// \param[out] pdf
+  /// If non-null, receives the associated PDF.
+  ///
+  [[nodiscard]] float3 directionSample(float2 xi,
+                                       float *pdf = {}) const noexcept;
 
 public:
   /// The version string.
@@ -131,6 +149,14 @@ public:
   /// the `multiplier` and `ballastFactor` in the IES file.
   ///
   std::vector<float> intensityValues;
+
+  /// The sampling distribution.
+  ///
+  /// This is built on load by rasterizing `interpolate()` onto an
+  /// equirectangular grid weighted by the sine of the zenith angle, and
+  /// backs `directionPDF()` and `directionSample()`.
+  ///
+  Distribution2D distribution;
 };
 
 /// \}
