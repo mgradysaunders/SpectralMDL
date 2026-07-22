@@ -1,9 +1,6 @@
 #smdl
 
-// Regression tests for compiler bugs found in the 2026-07 Compiler subsystem
-// audit ('Compiler-audit.md'). Each block cites the audit finding it guards.
-
-// C2: string '=='/'!=' compared only strlen(lhs) bytes, so a prefix compared
+// string '=='/'!=' compared only strlen(lhs) bytes, so a prefix compared
 // equal to a longer string (and the comparison was asymmetric).
 unit_test "string comparison is not prefix-based" {
   #assert(!("abc" == "abcdef"));
@@ -14,7 +11,7 @@ unit_test "string comparison is not prefix-based" {
   #assert("" == "");
 }
 
-// H1: 'do { } while ();' never branched into the loop body, so every use
+// 'do { } while ();' never branched into the loop body, so every use
 // failed LLVM-IR verification.
 unit_test "do-while executes" {
   int i = 0;
@@ -26,7 +23,7 @@ unit_test "do-while executes" {
   #assert(j == 1);
 }
 
-// H3: a 'for' with an empty condition made the emitter dereference a null
+// a 'for' with an empty condition made the emitter dereference a null
 // condition expression.
 unit_test "for with empty condition" {
   int j = 0;
@@ -38,7 +35,7 @@ unit_test "for with empty condition" {
   #assert(j == 5);
 }
 
-// H2: 'return' recorded its PHI predecessor block before unwinding 'defer's,
+// 'return' recorded its PHI predecessor block before unwinding 'defer's,
 // so a 'defer' containing control flow broke the PHI wiring.
 int defer_with_branch(bool b) {
   int x = 1;
@@ -55,7 +52,7 @@ unit_test "defer with control flow before return" {
   #assert(defer_with_branch(false) == 1);
 }
 
-// H5: converting a wider union to a narrower one at 'return' emits control
+// converting a wider union to a narrower one at 'return' emits control
 // flow; 'createResult' used to splice it in front of an existing terminator.
 (int | float) narrow_union(bool b) {
   (int | float | string) u = 1;
@@ -75,7 +72,7 @@ unit_test "union narrowing at return under if" {
   #assert(union_as_int(visit v1) == 2);
 }
 
-// M3: bool-typed 'case' constants were passed to the LLVM switch without
+// bool-typed 'case' constants were passed to the LLVM switch without
 // conversion and failed IR verification.
 unit_test "switch case constants convert to int" {
   int k = 0;
@@ -89,7 +86,7 @@ unit_test "switch case constants convert to int" {
   #assert(k == 7);
 }
 
-// H8: constructing an array from a pointer to its element type compared the
+// constructing an array from a pointer to its element type compared the
 // pointer type against the element type instead of the pointee, so the
 // feature never fired.
 unit_test "construct array from pointer to element" {
@@ -99,7 +96,7 @@ unit_test "construct array from pointer to element" {
   #assert(dst[0] == 3.0 && dst[1] == 4.0);
 }
 
-// H6/M7: 'color' arguments to '#isfpclass' and '#atan2' crashed the
+// 'color' arguments to '#isfpclass' and '#atan2' crashed the
 // compiler (invalid downcast / sanity abort).
 unit_test "color arguments to isfpclass and atan2" {
   // 96 = negative zero | positive zero, 256 = positive normal
@@ -109,7 +106,7 @@ unit_test "color arguments to isfpclass and atan2" {
   #assert(c[0] > 0.78 && c[0] < 0.79); // ~pi/4
 }
 
-// M8: '#unpack_float4' computed '1ULL << 64' (shift-by-width UB) for 64-bit
+// '#unpack_float4' computed '1ULL << 64' (shift-by-width UB) for 64-bit
 // texel types, producing an infinite scale factor.
 unit_test "unpack_float4 of 64-bit int" {
   auto u = #unpack_float4(#type_int(64)(3));
@@ -117,7 +114,7 @@ unit_test "unpack_float4 of 64-bit int" {
   #assert(u.w == 1.0);
 }
 
-// C4: execs are now emitted pure, matching the C++ 'JIT::Function<void()>'
+// execs are now emitted pure, matching the C++ 'JIT::Function<void()>'
 // signature — previously the JIT'd exec expected a '$state' pointer the
 // caller never passed.
 exec {
@@ -139,4 +136,26 @@ unit_test "short-circuit logic operators" {
   #assert(r2 && n == 1);
   bool r3 = f || ((n = n + 1) > 1);
   #assert(r3 && n == 2);
+}
+
+// overload ranking never consulted the arguments, so for mutually implicitly
+// convertible parameter types (like 'int'/'float') the earlier overload 
+// silently won - an exact argument-type match lost to a conversion. The 
+// 'float' overload is deliberately declared first: the old ranking picked 
+// it for the integer call below.
+@(pure)
+int overload_rank(float x) {
+  x; // Silence unused parameter warning
+  return 1;
+}
+
+@(pure)
+int overload_rank(int x) {
+  x; // Silence unused parameter warning
+  return 2;
+}
+
+unit_test "exact overload match beats implicit conversion" {
+  #assert(overload_rank(5) == 2);
+  #assert(overload_rank(1.5) == 1);
 }

@@ -97,9 +97,13 @@ Crumb *Crumb::find(Context &context, Span<const std::string_view> name,
           context, crumb->getSourceLocation())};
       if (name.size() > crumb->name.size() && //
           name.startsWith(crumb->name)) {
+        // Propagate 'ignoreIfNotExported' instead of forcing it: 'export'
+        // gates access across module boundaries (a module recursion above
+        // passes true), not qualified access to a namespace from within
+        // its own module.
         if (auto subCrumb{Crumb::find(context, name.subspan(crumb->name.size()),
                                       llvmFunc, astNamespace->lastCrumb, crumb,
-                                      /*ignoreIfNotExported=*/true)}) {
+                                      ignoreIfNotExported)}) {
           return subCrumb;
         }
       }

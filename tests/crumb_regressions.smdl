@@ -7,6 +7,7 @@ import .::crumbs_c::*;
 // are emitted — its private 'overload_target(int)' declaration is exactly
 // what the cross-module leak test needs to have happened first.
 import .::crumbs_d::*;
+using .::crumbs_e import *;
 
 // This multi-component universal using-import used to make every unqualified
 // lookup underflow 'name.subspan(crumb->name.size())' into an out-of-bounds
@@ -40,4 +41,74 @@ unit_test "Crumbs: multi-component universal using-import" {
 unit_test "Crumbs: private overloads do not leak across modules" {
   #assert(crumbs_c::overload_target(5) == 1);
   #assert(crumbs_c::overload_target(1.5) == 1);
+}
+
+// ':=' bindings used to leak across two-arm merge arms (select,
+// '&&'/'||', binary 'else'), where the value cannot dominate the other arm
+// or the merge, the failure mode was a raw LLVM verifier error. Bindings
+// introduced in *conditions* dominate the merge and must keep leaking; this
+// guards that the containment fix did not take those away.
+@(pure noinline)
+int crumb_id(int v) = v;
+
+unit_test "Crumbs: temporary let bindings leak from conditions, not arms" {
+  // If-condition binding leaks into the branch and past the statement.
+  if (x := crumb_id(7)) {
+    #assert(x == 7);
+  }
+  #assert(x == 7);
+  // Ternary-condition bindings reach both arms, comptime and runtime alike.
+  auto r0 = (y := 2) > 1 ? y : -y;
+  #assert(r0 == 2);
+  auto r1 = (z := crumb_id(2)) > 1 ? z : -z;
+  #assert(r1 == 2);
+  // Argument bindings reach later operands of the same statement.
+  auto s = crumb_id(w := crumb_id(4)) + w;
+  #assert(s == 8);
+}
+
+// 'export' gates access to namespace members across module
+// boundaries only. Within the declaring module, qualified access works
+// without 'export' (see also 'crumbs_e.smdl' for the cross-module side).
+namespace crumb_ns {
+  const int hidden = 5;
+  export const int shown = 6;
+  namespace inner {
+    const int deep = 7;
+  }
+}
+
+unit_test "Crumbs: namespace members visible without export in own module" {
+  #assert(crumb_ns::shown == 6);
+  #assert(crumb_ns::hidden == 5);
+  #assert(crumb_ns::inner::deep == 7);
+  // Exported members of another module's exported namespace are reachable.
+  #assert(crumb_e_ns::pub == 1);
+}
+
+// same-scope redeclaration is a compile error (verified out of tree
+// since an error aborts the suite); shadowing in nested scopes is legal and
+// guarded here.
+const int crumb_g = 10;
+
+unit_test "Crumbs: shadowing is legal in nested scopes" {
+  int x = 1;
+  {
+    int x = 2;
+    #assert(x == 2);
+  }
+  #assert(x == 1);
+  // The for-init statement opens its own scope.
+  int i = 5;
+  for (int i = 0; i < 3; i++) {
+  }
+  #assert(i == 5);
+  // 'let' declarations open their own scope.
+  auto v = let {
+    int x = 3;
+  } in x * x;
+  #assert(v == 9);
+  // Function-body scope may shadow module scope.
+  int crumb_g = 20;
+  #assert(crumb_g == 20);
 }

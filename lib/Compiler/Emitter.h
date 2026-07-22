@@ -210,6 +210,12 @@ public:
                                                       valueToPreserve));
   }
 
+  /// Throw an error if the given name is already declared in the current
+  /// scope, i.e., between `crumb` and `scopeStartCrumb`. Shadowing is legal
+  /// only across scope boundaries.
+  void rejectSameScopeShadow(Span<const std::string_view> name,
+                             const SourceLocation &srcLoc);
+
   /// Declare parameter.
   void declareParameter(const Parameter &param, Value value);
 
@@ -289,9 +295,10 @@ public:
   template <typename Func>
   void handleScope(llvm::BasicBlock *blockStart, llvm::BasicBlock *blockEnd,
                    Func &&func) {
-    SMDL_PRESERVE(crumb, state, labelReturn, labelBreak, labelContinue, inDefer,
-                  currentModule);
+    SMDL_PRESERVE(crumb, scopeStartCrumb, state, labelReturn, labelBreak,
+                  labelContinue, inDefer, currentModule);
     auto crumb0{crumb};
+    scopeStartCrumb = crumb0;
     if (blockStart) {
       llvmMoveBlockToEnd(blockStart);
       builder.SetInsertPoint(blockStart);
@@ -477,6 +484,7 @@ public:
 
   /// Emit tag declaration.
   Value emit(AST::Tag &decl) {
+    rejectSameScopeShadow(decl.name, decl.srcLoc);
     declareCrumb(decl.name, &decl,
                  context.getComptimeMetaType(context.getTagType(&decl)));
     return Value();
@@ -484,6 +492,7 @@ public:
 
   /// Emit typedef declaration.
   Value emit(AST::Typedef &decl) {
+    rejectSameScopeShadow(decl.name, decl.srcLoc);
     declareCrumb(decl.name, &decl, emit(decl.type));
     return Value();
   }
@@ -539,7 +548,11 @@ public:
 
   /// Emit let expression.
   Value emit(AST::Let &expr) {
+    // The declarations open their own scope, so they may shadow names in
+    // the enclosing scope.
+    SMDL_PRESERVE(scopeStartCrumb);
     auto crumb0{crumb};
+    scopeStartCrumb = crumb0;
     for (auto &decl : expr.decls)
       emit(decl);
     auto value{rvalue(emit(expr.expr))};
@@ -982,6 +995,11 @@ public:
 
   /// The pointer to the last crumb. See `declare_crumb()`.
   Crumb *crumb{};
+
+  /// The crumb at the start of the current scope. Names declared between
+  /// `crumb` and this boundary are "in the same scope" for the purposes of
+  /// `rejectSameScopeShadow()`. Null at module scope.
+  Crumb *scopeStartCrumb{};
 
   /// The `$state` value.
   Value state{};

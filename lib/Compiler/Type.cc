@@ -832,6 +832,7 @@ Value ComptimeUnionType::invoke(Emitter &emitter, const ArgumentList &args,
 void EnumType::initialize(Emitter &emitter) {
   auto &context{emitter.context};
   llvmType = context.getIntType()->llvmType;
+  emitter.rejectSameScopeShadow(decl.name, decl.srcLoc);
   emitter.declareCrumb(decl.name, &decl, context.getComptimeMetaType(this));
   auto lastValue{Value()};
   for (auto &declarator : decl.declarators) {
@@ -848,6 +849,7 @@ void EnumType::initialize(Emitter &emitter) {
     if (!value.isComptimeInt())
       name.srcLoc.throwError("expected ", Quoted(name),
                              " initializer to resolve to compile-time int");
+    emitter.rejectSameScopeShadow(name.srcName, name.srcLoc);
     emitter.declareCrumb(name.srcName, &declarator, RValue(this, value));
     declarator.llvmConst = static_cast<llvm::ConstantInt *>(value.llvmValue);
     lastValue = value;
@@ -956,6 +958,15 @@ void FunctionType::initialize(Emitter &emitter) {
                   .astParam = &param,
                   .astField = nullptr,
                   .builtinDefaultValue = {}});
+  // Reject duplicate parameter names.
+  {
+    auto uniqueNames{llvm::StringSet<>()};
+    for (auto &param : params)
+      if (!uniqueNames.insert(param.name).second)
+        param.getSourceLocation().throwError("duplicate parameter name ",
+                                             Quoted(param.name),
+                                             " in function ", Quoted(declName));
+  }
   // Initialize whether parameter list is variadic.
   params.isVariadic = decl.isVariadic();
   if (decl.hasAttribute("macro") && decl.isVariadic()) {
@@ -1112,35 +1123,89 @@ FunctionType *FunctionType::resolveOverload(Emitter &emitter,
     srcLoc.throwError("function ", Quoted(declName),
                       " has no overload for arguments ",
                       Quoted(std::string(args)), overloadErrors);
-  // The lambda to determine whether the LHS set of parameter types is
-  // strictly less specific than the RHS set of parameter types. This is true
-  // if each and every RHS parameter type is implicitly convertible to the
-  // corresponding LHS parameter type.
+  // Candidate A beats candidate B by conversion quality if A converts every
+  // argument at least as well as B and at least one argument strictly better
+  // ('CONVERSION_RULE_PERFECT' beats 'CONVERSION_RULE_IMPLICIT'). This is
+  // what makes an exact argument-type match win regardless of declaration
+  // order.
+  auto beatsByConversion{[&](const Overload &overloadA,
+                             const Overload &overloadB) {
+    bool anyBetter{};
+    for (size_t i = 0; i < args.size(); i++) {
+      if (!overloadA.params[i] || !overloadB.params[i])
+        continue; // Unresolved variadic arguments do not participate
+      auto ruleA{emitter.context.getConversionRule(
+          args[i].value.type, overloadA.params[i]->type)};
+      auto ruleB{emitter.context.getConversionRule(
+          args[i].value.type, overloadB.params[i]->type)};
+      if (ruleA < ruleB)
+        return false;
+      if (ruleA > ruleB)
+        anyBetter = true;
+    }
+    return anyBetter;
+  }};
+  // The tiebreaker: the LHS set of parameter types is less specific than the
+  // RHS set if each and every RHS parameter type is implicitly convertible
+  // to the corresponding LHS parameter type. This is what makes a concrete
+  // declaration win over an 'auto' template whose conversion ranks tie.
   auto isLessSpecific{[&](llvm::ArrayRef<const Parameter *> paramsA,
                           llvm::ArrayRef<const Parameter *> paramsB) {
     SMDL_SANITY_CHECK(paramsA.size() == paramsB.size());
-    for (size_t i = 0; i < paramsA.size(); i++)
+    for (size_t i = 0; i < paramsA.size(); i++) {
+      if (!paramsA[i] || !paramsB[i])
+        continue; // Unresolved variadic arguments do not participate
       if (!emitter.context.isImplicitlyConvertible(paramsB[i]->type,
                                                    paramsA[i]->type))
         return false;
+    }
     return true;
   }};
-  // If there is more than 1 matching declaration, remove the less-specific
-  // of the first 2 overloads repeatedly until 1 remains. If neither is less
-  // specific, the declarations are considered to match ambiguously and
-  // overload resolution fails.
-  while (overloads.size() > 1) {
-    auto &paramsA{overloads[0].params};
-    auto &paramsB{overloads[1].params};
-    if (isLessSpecific(paramsA, paramsB)) {
-      overloads.erase(overloads.begin());
-    } else if (isLessSpecific(paramsB, paramsA)) {
-      overloads.erase(overloads.begin() + 1);
-    } else {
-      srcLoc.throwError("function ", Quoted(declName),
-                        " is ambiguous for arguments ",
-                        Quoted(std::string(args)));
+  auto beatsBySpecificity{[&](const Overload &overloadA,
+                              const Overload &overloadB) {
+    return isLessSpecific(overloadB.params, overloadA.params) &&
+           !isLessSpecific(overloadA.params, overloadB.params);
+  }};
+  // Remove every candidate beaten by another candidate, first by conversion
+  // quality, then by specificity among what remains. Both relations are
+  // strict partial orders, so at least one candidate always survives. If
+  // more than one survives, the call is genuinely ambiguous — fail loudly
+  // instead of picking by declaration order.
+  auto filterBeaten{[&](auto &&beats) {
+    auto beaten{llvm::SmallVector<bool>(overloads.size(), false)};
+    for (size_t a = 0; a < overloads.size(); a++)
+      for (size_t b = 0; b < overloads.size(); b++)
+        if (a != b && beats(overloads[a], overloads[b]))
+          beaten[b] = true;
+    size_t keep{};
+    for (size_t i = 0; i < overloads.size(); i++) {
+      if (!beaten[i]) {
+        if (keep != i)
+          overloads[keep] = std::move(overloads[i]);
+        keep++;
+      }
     }
+    overloads.resize(keep);
+  }};
+  filterBeaten(beatsByConversion);
+  filterBeaten(beatsBySpecificity);
+  if (overloads.size() > 1) {
+    auto candidateNotes{std::string{}};
+    for (auto &overload : overloads) {
+      candidateNotes += "\n  ambiguous candidate: ";
+      candidateNotes += overload.func->declName;
+      candidateNotes += '(';
+      for (size_t i = 0; i < overload.func->params.size(); i++) {
+        candidateNotes += overload.func->params[i].type->displayName;
+        if (i + 1 < overload.func->params.size())
+          candidateNotes += ", ";
+      }
+      candidateNotes += ") declared at ";
+      candidateNotes += std::string(overload.func->decl.srcLoc);
+    }
+    srcLoc.throwError("function ", Quoted(declName),
+                      " is ambiguous for arguments ",
+                      Quoted(std::string(args)), candidateNotes);
   }
   return overloads[0].func;
 }
@@ -1445,11 +1510,14 @@ Value MetaType::accessField(Emitter &emitter, Value value,
                                /*ignoreIfNotExported=*/true)})
       return crumb->value;
   } else if (value.isComptimeMetaNamespace(emitter.context)) {
-    // Make exported declarations available
+    // Make declarations available. 'export' only gates access from other
+    // modules, not from the namespace's own module.
     auto namespace_{value.getComptimeMetaNamespace(emitter.context, srcLoc)};
     if (auto crumb{Crumb::find(emitter.context, name, emitter.getLLVMFunction(),
                                namespace_->lastCrumb, namespace_->firstCrumb,
-                               /*ignoreIfNotExported=*/true)})
+                               /*ignoreIfNotExported=*/
+                               namespace_->srcLoc.module_ !=
+                                   emitter.currentModule)})
       return crumb->value;
   }
   return RValue(emitter.context.getVoidType(), nullptr);
@@ -1645,6 +1713,7 @@ Value StringType::accessField(Emitter &emitter, Value value,
 
 //--{ StructType
 void StructType::initialize(Emitter &emitter) {
+  emitter.rejectSameScopeShadow(decl.name, decl.srcLoc);
   params.lastCrumb = emitter.declareCrumb(
       decl.name, &decl, emitter.context.getComptimeMetaType(this));
   SMDL_PRESERVE(emitter.crumb);

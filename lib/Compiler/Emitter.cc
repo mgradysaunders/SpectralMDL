@@ -183,6 +183,26 @@ void Emitter::declareParameterInline(Value value) {
   }
 }
 
+void Emitter::rejectSameScopeShadow(Span<const std::string_view> name,
+                                    const SourceLocation &srcLoc) {
+  for (auto c{crumb}; c && c != scopeStartCrumb; c = c->prev) {
+    // Imports and using declarations bring in foreign names — declaring
+    // over them is cross-module shadowing, which is allowed. Namespaces
+    // may be re-opened.
+    if (c->isASTImport() || c->isASTUsingImport() || c->isASTUsingAlias() ||
+        llvm::isa_and_present<AST::Namespace>(c->node))
+      continue;
+    if (c->isNamed() && c->name == name) {
+      if (auto prevSrcLoc{c->getSourceLocation()})
+        srcLoc.throwError("redeclaration of ", Quoted(join(name, "::")),
+                          " in the same scope, previously declared at ",
+                          std::string(prevSrcLoc));
+      srcLoc.throwError("redeclaration of ", Quoted(join(name, "::")),
+                        " in the same scope");
+    }
+  }
+}
+
 void Emitter::declareImport(Span<const std::string_view> importPath, bool isAbs,
                             AST::Decl &decl) {
   if (importPath.size() < 2)
@@ -394,6 +414,8 @@ Value Emitter::emit(AST::Variable &decl) {
           value = LValue(value.type, valueAlloca);
         }
         for (size_t i = 0; i < structType->params.size(); i++) {
+          rejectSameScopeShadow(declarator.names[i].name,
+                                declarator.names[i].name.srcLoc);
           declareCrumb(declarator.names[i].name, &declarator,
                        accessField(value, structType->params[i].name,
                                    declarator.srcLoc));
@@ -405,6 +427,7 @@ Value Emitter::emit(AST::Variable &decl) {
       // NOTE: This must be a reference for `declare_crumb` below
       SMDL_SANITY_CHECK(declarator.names.size() == 1);
       const auto &name{declarator.names[0].name};
+      rejectSameScopeShadow(name, name.srcLoc);
       if (!value.isVoid()) {
         if (isStatic) {
           if (!value.isComptime())
@@ -498,8 +521,13 @@ Value Emitter::emit(AST::Binary &expr) {
     if (valueLhs.isComptimeInt()) {
       auto valueLhsNow{valueLhs.getComptimeInt()};
       if ((valueLhsNow != 0 && expr.op == BINOP_LOGIC_AND) ||
-          (valueLhsNow == 0 && expr.op == BINOP_LOGIC_OR))
+          (valueLhsNow == 0 && expr.op == BINOP_LOGIC_OR)) {
+        // Contain rhs declarations, matching the runtime two-arm merge:
+        // whether ':=' in the rhs is visible afterward must not depend on
+        // whether the lhs constant-folded.
+        SMDL_PRESERVE(crumb);
         return invoke(boolType, emit(expr.exprRhs), expr.srcLoc);
+      }
       return valueLhs;
     } else {
       // One arm evaluates the right-hand side (converted to bool inside
@@ -524,7 +552,11 @@ Value Emitter::emit(AST::Binary &expr) {
     auto valueLhs{emit(expr.exprLhs)};
     auto valueLhsCond{invoke(context.getBoolType(), valueLhs, expr.srcLoc)};
     if (valueLhsCond.isComptimeInt()) {
-      return valueLhsCond.getComptimeInt() ? valueLhs : emit(expr.exprRhs);
+      if (valueLhsCond.getComptimeInt())
+        return valueLhs;
+      // Contain rhs declarations, matching the runtime two-arm merge.
+      SMDL_PRESERVE(crumb);
+      return emit(expr.exprRhs);
     } else {
       return emitTwoArmMerge(
           valueLhsCond, "else", [&] { return valueLhs; },
@@ -594,8 +626,12 @@ Value Emitter::emit(AST::ReturnFrom &expr) {
 
 Value Emitter::emit(AST::Select &expr) {
   auto cond{invoke(context.getBoolType(), emit(expr.exprCond), expr.srcLoc)};
-  if (cond.isComptimeInt())
+  if (cond.isComptimeInt()) {
+    // Contain arm declarations, matching the runtime two-arm merge. (A ':='
+    // in the condition still leaks, in both paths — it dominates the merge.)
+    SMDL_PRESERVE(crumb);
     return emit(cond.getComptimeInt() ? expr.exprThen : expr.exprElse);
+  }
   return emitTwoArmMerge(
       cond, "select", [&] { return emit(expr.exprThen); },
       expr.exprThen->srcLoc, [&] { return emit(expr.exprElse); },
@@ -608,12 +644,19 @@ Value Emitter::emitTwoArmMerge(Value cond, const char *name,
                                const std::function<Value()> &emitArm1,
                                const SourceLocation &srcLoc1,
                                const SourceLocation &srcLoc) {
+  // Contain declarations emitted inside either arm (e.g. the ':=' operator):
+  // an arm executes only on its own control path, so a binding introduced
+  // there must not be visible to the other arm or after the merge — its
+  // value would not dominate those uses.
+  SMDL_PRESERVE(crumb);
+  const auto crumb0{crumb};
   auto [blockArm0, blockArm1, blockEnd] =
       createBlocks<3>(name, {".then", ".else", ".end"});
   builder.CreateCondBr(cond, blockArm0, blockArm1);
   builder.SetInsertPoint(blockArm0);
   auto value0{emitArm0()};
   auto value0IP{builder.saveIP()};
+  crumb = crumb0;
   llvmMoveBlockToEnd(blockArm1);
   builder.SetInsertPoint(blockArm1);
   auto value1{emitArm1()};
@@ -670,7 +713,11 @@ Value Emitter::emit(AST::DoWhile &stmt) {
 }
 
 Value Emitter::emit(AST::For &stmt) {
+  // The init statement opens its own scope, so 'for (int i = ...' may
+  // shadow an 'i' in the enclosing scope.
+  SMDL_PRESERVE(scopeStartCrumb);
   auto crumb0{crumb};
+  scopeStartCrumb = crumb0;
   auto [blockCond, blockLoop, blockNext, blockEnd] =
       createBlocks<4>("for", {".cond", ".loop", ".next", ".end"});
   if (stmt.stmtInit)

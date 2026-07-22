@@ -1,0 +1,14 @@
+#smdl
+
+// Companion module for 'crumb_regressions.smdl'. 'export' gates namespace
+// member access across module boundaries only — 'priv' is reachable from
+// this module but not from importers.
+export namespace crumb_e_ns {
+  export const int pub = 1;
+  const int priv = 2;
+}
+
+unit_test "Crumbs: unexported namespace member visible in own module" {
+  #assert(crumb_e_ns::pub == 1);
+  #assert(crumb_e_ns::priv == 2);
+}
