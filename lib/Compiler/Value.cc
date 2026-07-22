@@ -47,16 +47,22 @@ bool Value::isComptimeMetaNamespace(Context &context) const {
 
 Crumb *Crumb::find(Context &context, Span<const std::string_view> name,
                    llvm::Function *llvmFunc, Crumb *crumb, Crumb *stopCrumb,
-                   bool ignoreIfNotExported) {
+                   bool ignoreIfNotExported, Crumb **unusableMatch) {
   if (name.empty()) {
     return nullptr;
   }
   for (; crumb && crumb != stopCrumb; crumb = crumb->prev) {
-    // If this is not usable, don't consider it.
+    // If this is not usable, don't consider it — but remember the nearest
+    // name match skipped only because its run-time value lives in a
+    // different LLVM function, so the caller can reject the reference as
+    // an impossible capture. See the declaration comment.
+    if (!crumb->value.isUsableInLLVMFunction(llvmFunc)) {
+      if (unusableMatch && !*unusableMatch && crumb->name == name)
+        *unusableMatch = crumb;
+      continue;
+    }
     // If this is not exported and we recursed into a module, don't consider it.
-    if ( // !crumb->value || //
-        (!crumb->value.isUsableInLLVMFunction(llvmFunc)) ||
-        (!crumb->isExported() && ignoreIfNotExported))
+    if (!crumb->isExported() && ignoreIfNotExported)
       continue;
     // If the crumb value is a `Module` ...
     if (crumb->value.isComptimeMetaModule(context)) {

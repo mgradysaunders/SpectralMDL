@@ -158,3 +158,26 @@ unit_test "Crumbs: switch cases are separate scopes" {
   }
   #assert(count == 10);
 }
+
+// referencing another function's run-time local is an
+// impossible-capture error rather than a silent bind to something farther
+// up the chain (verified out of tree — constructing the escaped type below
+// with its default 'a = k' from another function is a compile error citing
+// both locations). In-function defaults and escaped construction with
+// explicit arguments remain legal.
+@(pure noinline)
+auto crumb_make() {
+  int k = 5;
+  struct CrumbLocalS {
+    int a = k;
+  };
+  return CrumbLocalS();
+}
+
+unit_test "Crumbs: local struct type escapes; defaults bind in-function" {
+  auto s = crumb_make();
+  #assert(s.a == 5);
+  // Explicit arguments emit no default, so no foreign-local reference.
+  auto t = #typeof(s)(a: 7);
+  #assert(t.a == 7);
+}

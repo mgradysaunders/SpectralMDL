@@ -179,11 +179,19 @@ public:
 class Crumb final {
 public:
   /// Find by name starting from the given crumb and walking upwards.
+  ///
+  /// If `unusableMatch` is non-null, it receives the nearest crumb whose
+  /// name matched but was skipped only because its run-time value lives in
+  /// a different LLVM function than `llvmFunc`. Callers that resolve user
+  /// identifiers should treat a recorded skip as an impossible-capture
+  /// error: lexically the skipped declaration is the match, so binding to
+  /// anything farther away would be silent misbinding.
   [[nodiscard]] static Crumb *find(Context &context,
                                    Span<const std::string_view> name,
                                    llvm::Function *llvmFunc, Crumb *crumb,
                                    Crumb *stopCrumb = nullptr,
-                                   bool ignoreIfNotExported = false);
+                                   bool ignoreIfNotExported = false,
+                                   Crumb **unusableMatch = nullptr);
 
   /// Get the source location if applicable.
   [[nodiscard]] SourceLocation getSourceLocation() const {

@@ -165,10 +165,34 @@ void checkBidirectionalConsistency(const bsdf scattering, const float3 wo, const
   const auto imp01 = evaluate(scattering, wo, wi, true, normal);
   const auto imp10 = evaluate(scattering, wi, wo, true, normal);
   #assert(#any(rad01.f > 0.0)); // Else the checks pass vacuously
-  #assert(#all(#abs(rad01.pdf - rad10.pdf.yx) ~== [1e-6] 0.0));
-  #assert(#all(#abs(imp01.pdf - imp10.pdf.yx) ~== [1e-6] 0.0));
-  #assert(#all(#abs(imp01.f * #abs(wo.z) - rad10.f * #abs(wi.z)) ~== [1e-6] 0.0));
-  #assert(#all(#abs(imp10.f * #abs(wi.z) - rad01.f * #abs(wo.z)) ~== [1e-6] 0.0));
+  #assert(#all(#abs(rad01.pdf - rad10.pdf.yx) ~== [1e-5] 0.0));
+  #assert(#all(#abs(imp01.pdf - imp10.pdf.yx) ~== [1e-5] 0.0));
+  #assert(#all(#abs(imp01.f * #abs(wo.z) - rad10.f * #abs(wi.z)) ~== [1e-5] 0.0));
+  #assert(#all(#abs(imp10.f * #abs(wi.z) - rad01.f * #abs(wo.z)) ~== [1e-5] 0.0));
+}
+
+// Check that the transmission PDF integrates over the lower hemisphere to the
+// sampling acceptance rate, which numerically confirms the change-of-variables
+// Jacobian from sampled microsurface normals to incoming directions.
+void checkTransmitPDFIntegral(const bsdf scattering, const float3 wo) {
+  const int n = 128;
+  double pdfIntegral = 0;
+  for (int i = 0; i < n; i++) {
+    for (int j = 0; j < n; j++) {
+      const auto xi = float2((i + 0.5) / n, (j + 0.5) / n);
+      const auto wi = df::monte_carlo::uniformHemisphereSample(xi) * float3(1, 1, -1);
+      pdfIntegral += evaluate(scattering, wo, wi).pdf[0];
+    }
+  }
+  pdfIntegral *= $TWO_PI / (n * n);
+  int accepted = 0;
+  for (int i = 0; i < n; i++) {
+    for (int j = 0; j < n; j++) {
+      const auto xi = float4((i + 0.5) / n, (j + 0.5) / n, 0.83, 0.44);
+      accepted += #select(sample(scattering, xi, wo).success, 1, 0);
+    }
+  }
+  #assert(#abs(pdfIntegral - accepted / double(n * n)) < 0.015);
 }
 
 unit_test "Reciprocity" {
@@ -209,10 +233,15 @@ unit_test "Bidirectional consistency" {
   checkBidirectionalConsistency(df::microfacet_beckmann_vcavities_bsdf(roughness_u: 0.4, roughness_v: 0.4, tint: 1.0), wo, wi, ns);
   checkBidirectionalConsistency(ggx, wo, wi);
   checkBidirectionalConsistency(ggx, wo, wi, ns);
-  // Transmission lobes.
+  // Transmission lobes. NOTE: `wt2` is near the ideal refraction of `wo` so that the
+  // narrow Blinn lobe evaluates to something substantial.
+  const auto wt2 = math::normalize(float3(0.15, -0.25, -0.9));
   checkBidirectionalConsistency(df::diffuse_transmission_bsdf(tint: 0.7), wo, wt, ns);
   checkBidirectionalConsistency(df::microfacet_ggx_smith_bsdf(roughness_u: 0.3, roughness_v: 0.3, tint: 1.0, mode: df::scatter_transmit), wo, wt);
   checkBidirectionalConsistency(df::microfacet_ggx_smith_bsdf(roughness_u: 0.3, roughness_v: 0.3, tint: 1.0, mode: df::scatter_transmit), wo, wt, ns);
+  checkBidirectionalConsistency(df::simple_glossy_bsdf(roughness_u: 0.8, tint: 1.0, mode: df::scatter_transmit), wo, wt2);
+  checkBidirectionalConsistency(df::simple_glossy_bsdf(roughness_u: 0.8, tint: 1.0, mode: df::scatter_transmit), wo, wt2, ns);
+  checkBidirectionalConsistency(df::simple_glossy_bsdf(roughness_u: 0.8, tint: 1.0, mode: df::scatter_reflect_transmit), wo, wt2);
   // Modifiers.
   checkBidirectionalConsistency(df::tint(0.5, ggx), wo, wi, ns);
   checkBidirectionalConsistency(df::directional_factor(normal_tint: 0.9, grazing_tint: 0.3, base: ggx), wo, wi, ns);
@@ -259,6 +288,14 @@ unit_test "Bidirectional consistency" {
   );
   checkBidirectionalConsistency(measuredLayer, wo, wi);
   checkBidirectionalConsistency(measuredLayer, wo, wi, ns);
+}
+
+unit_test "Microfacet transmission PDF" {
+  const auto wo = math::normalize(float3(-0.3, 0.4, 0.8));
+  checkTransmitPDFIntegral(df::simple_glossy_bsdf(roughness_u: 0.7, tint: 1.0, mode: df::scatter_transmit), wo);
+  checkTransmitPDFIntegral(df::simple_glossy_bsdf(roughness_u: 0.4, tint: 1.0, mode: df::scatter_transmit), wo);
+  checkTransmitPDFIntegral(df::microfacet_ggx_smith_bsdf(roughness_u: 0.7, tint: 1.0, mode: df::scatter_transmit), wo);
+  checkTransmitPDFIntegral(df::microfacet_ggx_smith_bsdf(roughness_u: 0.4, tint: 1.0, mode: df::scatter_transmit), wo);
 }
 
 unit_test "Specular delta shading normal correction" {

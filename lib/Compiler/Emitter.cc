@@ -2756,7 +2756,21 @@ Value Emitter::resolveIdentifier(Span<const std::string_view> names,
                                  const SourceLocation &srcLoc,
                                  bool voidByDefault) {
   SMDL_SANITY_CHECK(!names.empty());
-  if (auto crumb0{Crumb::find(context, names, getLLVMFunction(), crumb)}) {
+  Crumb *unusableMatch{};
+  auto crumb0{Crumb::find(context, names, getLLVMFunction(), crumb,
+                          /*stopCrumb=*/nullptr,
+                          /*ignoreIfNotExported=*/false, &unusableMatch)};
+  if (unusableMatch) {
+    if (auto prevSrcLoc{unusableMatch->getSourceLocation()})
+      srcLoc.throwError("cannot reference run-time value of ",
+                        Quoted(join(names, "::")), " declared at ",
+                        std::string(prevSrcLoc),
+                        " from a different function");
+    srcLoc.throwError("cannot reference run-time value of ",
+                      Quoted(join(names, "::")),
+                      " from a different function");
+  }
+  if (crumb0) {
     return crumb0->value;
   }
   if (names.size() == 1) {

@@ -1081,6 +1081,15 @@ auto scatterEvaluate(const &microfacet_bsdf this,inline const &ScatterEvaluatePa
       return result;
     } else {
       return ScatterEvaluateResult(isBlack: true) if(!((dotWoWm>0)&(dotWiWm<0)));
+      const auto jac(float2(specular::refractionHalfVectorJacobian(wo,wi,ior),specular::refractionHalfVectorJacobian(wi,wo,1/ior)));
+      const auto pdf(norm1*D*jac);
+      const auto f(norm2*D*G*jac[0]*dotWoWm/(cosThetao+EPSILON));
+      auto result(ScatterEvaluateResult(f: this.tint*f,pdf: pdf));
+      result.f*=shadingNormalCorrection if(isImportance);
+      result.f*=ior*ior if(!isImportance);
+      result.f*=1-reflectChance;
+      result.pdf*=1-reflectChance;
+      return result;
     }
   } else {
     const auto D(microfacet::smithNormalPDF(this.distribution,this.alpha,wm));
