@@ -2,6 +2,11 @@
 
 import .::crumbs_a::*;
 using .::crumbs_b import *;
+import .::crumbs_c::*;
+// Importing 'crumbs_d' guarantees it compiles before the unit tests below
+// are emitted — its private 'overload_target(int)' declaration is exactly
+// what the cross-module leak test needs to have happened first.
+import .::crumbs_d::*;
 
 // This multi-component universal using-import used to make every unqualified
 // lookup underflow 'name.subspan(crumb->name.size())' into an out-of-bounds
@@ -25,4 +30,14 @@ unit_test "Crumbs: qualified names are not hijacked by universal using-import" {
 unit_test "Crumbs: multi-component universal using-import" {
   #assert(message == "Hellope");
   #assert(package1::foo::message == "Hellope");
+}
+
+// 'crumbs_d.smdl' declares a private 'overload_target(int)' over the name it
+// imports from 'crumbs_c.smdl'. That declaration must not join crumbs_c's
+// overload set: 'int' converts implicitly to '(int | float)' but not vice
+// versa, so the leaked overload would deterministically win both calls here
+// and return 2.
+unit_test "Crumbs: private overloads do not leak across modules" {
+  #assert(crumbs_c::overload_target(5) == 1);
+  #assert(crumbs_c::overload_target(1.5) == 1);
 }

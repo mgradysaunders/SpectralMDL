@@ -231,6 +231,34 @@ unit_test "Bidirectional consistency" {
   );
   checkBidirectionalConsistency(composite, wo, wi);
   checkBidirectionalConsistency(composite, wo, wi, ns);
+  const auto curveLayer = df::custom_curve_layer(
+    normal_reflectivity: 0.2,
+    grazing_reflectivity: 0.9,
+    exponent: 4.0,
+    weight: 0.8,
+    layer: df::sheen_bsdf(tint: 1.0, roughness: 0.4),
+    base: df::diffuse_reflection_bsdf(tint: 0.3),
+  );
+  checkBidirectionalConsistency(curveLayer, wo, wi);
+  checkBidirectionalConsistency(curveLayer, wo, wi, ns);
+  checkBidirectionalConsistency(
+    df::color_custom_curve_layer(
+      normal_reflectivity: color(0.3),
+      grazing_reflectivity: color(0.9),
+      weight: color(0.7),
+      layer: ggx,
+      base: df::diffuse_reflection_bsdf(tint: 0.5),
+    ),
+    wo, wi, ns,
+  );
+  const auto measuredLayer = df::measured_curve_layer(
+    curve_values: color[2](color(0.9), color(0.1)),
+    weight: 0.8,
+    layer: df::sheen_bsdf(tint: 1.0, roughness: 0.4),
+    base: df::diffuse_reflection_bsdf(tint: 0.3),
+  );
+  checkBidirectionalConsistency(measuredLayer, wo, wi);
+  checkBidirectionalConsistency(measuredLayer, wo, wi, ns);
 }
 
 unit_test "Specular delta shading normal correction" {
@@ -321,6 +349,81 @@ unit_test "Measured factor" {
   #assert(#any(expected > 0.0));
   #assert(#all(#abs(result1.f - expected * result0.f) ~== [1e-6] 0.0));
   #assert(#all(#abs(result1.pdf - result0.pdf) ~== [1e-6] 0.0)); // The factor must not affect the PDFs
+}
+
+unit_test "Custom curve layer" {
+  const auto wo = math::normalize(float3(-0.4, 1.2, 0.9));
+  const auto wi = math::normalize(float3(+0.3, -0.6, 0.7));
+  const auto layerB = df::sheen_bsdf(tint: 1.0, roughness: 0.4);
+  const auto baseB = df::diffuse_reflection_bsdf(tint: 0.3);
+  const auto rLayer = evaluate(layerB, wo, wi);
+  const auto rBase = evaluate(baseB, wo, wi);
+  #assert(#any(rLayer.f > 0.0));
+  #assert(#any(rBase.f > 0.0));
+  // Zero weight selects the base.
+  {
+    const auto r = evaluate(df::custom_curve_layer(normal_reflectivity: 0.2, weight: 0.0, layer: layerB, base: baseB), wo, wi);
+    #assert(#all(#abs(r.f - rBase.f) ~== [1e-6] 0.0));
+    #assert(#all(#abs(r.pdf - rBase.pdf) ~== [1e-6] 0.0));
+  }
+  // A unit curve with unit weight selects the layer.
+  {
+    const auto r = evaluate(df::custom_curve_layer(normal_reflectivity: 1.0, grazing_reflectivity: 1.0, weight: 1.0, layer: layerB, base: baseB), wo, wi);
+    #assert(#all(#abs(r.f - rLayer.f) ~== [1e-6] 0.0));
+    #assert(#all(#abs(r.pdf - rLayer.pdf) ~== [1e-6] 0.0));
+  }
+  // Otherwise blend by the Schlick-style curve, evaluated at the half vector for the
+  // scattering function and at the normal cosines for the PDFs.
+  {
+    const auto r = evaluate(df::custom_curve_layer(normal_reflectivity: 0.2, grazing_reflectivity: 0.9, exponent: 4.0, weight: 0.8, layer: layerB, base: baseB), wo, wi);
+    const auto h = math::normalize(wo + wi);
+    const auto fWeight = 0.8 * (0.2 + (0.9 - 0.2) * #pow(#max(1 - #abs(math::dot(wo, h)), 0), 4.0));
+    const auto pWeight = 0.8 * (0.2 + (0.9 - 0.2) * #pow(#max(1 - float2(wo.z, wi.z), 0), 4.0));
+    #assert(#all(#abs(r.f - math::lerp(rBase.f, rLayer.f, fWeight)) ~== [1e-5] 0.0));
+    #assert(#all(#abs(r.pdf - math::lerp(rBase.pdf, rLayer.pdf, pWeight)) ~== [1e-5] 0.0));
+  }
+  // A delta sample from the layer compensates the selection chance exactly when the
+  // weight is uniform and the shading normal is default, so the tint passes through.
+  {
+    const auto r = sample(
+      df::custom_curve_layer(normal_reflectivity: 0.2, grazing_reflectivity: 0.9, weight: 0.8, layer: df::specular_bsdf(tint: 1.0), base: baseB),
+      float4(0.3, 0.4, 0.05, 0.6),
+      wo,
+    );
+    #assert(r.success && r.isDelta);
+    #assert(#all(r.f ~== [1e-5] color(1.0)));
+  }
+}
+
+unit_test "Measured curve layer" {
+  const auto wo = math::normalize(float3(-0.4, 1.2, 0.9));
+  const auto wi = math::normalize(float3(+0.3, -0.6, 0.7));
+  const auto layerB = df::sheen_bsdf(tint: 1.0, roughness: 0.4);
+  const auto baseB = df::diffuse_reflection_bsdf(tint: 0.3);
+  const auto rLayer = evaluate(layerB, wo, wi);
+  const auto rBase = evaluate(baseB, wo, wi);
+  // Zero weight selects the base.
+  {
+    const auto r = evaluate(df::measured_curve_layer(curve_values: color[2](color(0.9), color(0.1)), weight: 0.0, layer: layerB, base: baseB), wo, wi);
+    #assert(#all(#abs(r.f - rBase.f) ~== [1e-6] 0.0));
+    #assert(#all(#abs(r.pdf - rBase.pdf) ~== [1e-6] 0.0));
+  }
+  // A unit curve with unit weight selects the layer.
+  {
+    const auto r = evaluate(df::measured_curve_layer(curve_values: color[1](color(1.0)), weight: 1.0, layer: layerB, base: baseB), wo, wi);
+    #assert(#all(#abs(r.f - rLayer.f) ~== [1e-6] 0.0));
+    #assert(#all(#abs(r.pdf - rLayer.pdf) ~== [1e-6] 0.0));
+  }
+  // Otherwise blend by the interpolated curve, evaluated at the half vector for the
+  // scattering function and at the normal cosines for the PDFs.
+  {
+    const auto r = evaluate(df::measured_curve_layer(curve_values: color[2](color(0.9), color(0.1)), weight: 0.8, layer: layerB, base: baseB), wo, wi);
+    const auto h = math::normalize(wo + wi);
+    const auto fWeight = 0.8 * math::lerp(0.9, 0.1, math::saturate(math::acos(math::saturate(math::dot(wo, h))) * (2 / $PI)));
+    const auto pWeight = 0.8 * math::lerp(float2(0.9), float2(0.1), math::saturate(math::acos(math::saturate(float2(wo.z, wi.z))) * (2 / $PI)));
+    #assert(#all(#abs(r.f - math::lerp(rBase.f, rLayer.f, fWeight)) ~== [1e-5] 0.0));
+    #assert(#all(#abs(r.pdf - math::lerp(rBase.pdf, rLayer.pdf, pWeight)) ~== [1e-5] 0.0));
+  }
 }
 
 /*

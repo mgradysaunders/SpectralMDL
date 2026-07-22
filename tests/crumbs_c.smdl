@@ -1,0 +1,12 @@
+#smdl
+
+// Companion module for 'crumb_regressions.smdl' and 'crumbs_d.smdl'. The
+// union parameter type matters: 'int' converts implicitly to '(int | float)'
+// but not vice versa, so a privately-declared 'overload_target(int)' leaking
+// into this overload set would deterministically win resolution for integer
+// arguments (instead of tying or being rejected).
+@(pure)
+export int overload_target((int | float) v) {
+  v; // Silence unused parameter warning
+  return 1;
+}

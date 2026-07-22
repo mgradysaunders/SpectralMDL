@@ -918,21 +918,29 @@ void FunctionType::initialize(Emitter &emitter) {
     if (!prevType || !prevType->isFunction())
       decl.srcLoc.throwError("function ", Quoted(declName),
                              " shadows non-function");
-    if (static_cast<FunctionType *>(prevType)->isVariant())
-      decl.srcLoc.throwError("function ", Quoted(declName),
-                             " must not overload function variant");
-    if (static_cast<FunctionType *>(prevType)->isForeign())
-      decl.srcLoc.throwError("function ", Quoted(declName),
-                             " must not overload '@(foreign)' function");
-    if (decl.isVariant())
-      decl.srcLoc.throwError("function variant ", Quoted(declName),
-                             " must not overload another function");
-    if (decl.hasAttribute("foreign"))
-      decl.srcLoc.throwError(
-          "function ", Quoted(declName),
-          " declared '@(foreign)' must not overload another function");
-    prevOverload = static_cast<FunctionType *>(prevType);
-    prevOverload->nextOverload = this;
+    // Only overload within a single module. A declaration over a function
+    // imported from another module shadows it instead: linking would mutate
+    // the imported module's interned `FunctionType` and leak this (possibly
+    // non-exported) function into every other importer's overload
+    // resolution.
+    auto prevFunc{static_cast<FunctionType *>(prevType)};
+    if (prevFunc->decl.srcLoc.module_ == decl.srcLoc.module_) {
+      if (prevFunc->isVariant())
+        decl.srcLoc.throwError("function ", Quoted(declName),
+                               " must not overload function variant");
+      if (prevFunc->isForeign())
+        decl.srcLoc.throwError("function ", Quoted(declName),
+                               " must not overload '@(foreign)' function");
+      if (decl.isVariant())
+        decl.srcLoc.throwError("function variant ", Quoted(declName),
+                               " must not overload another function");
+      if (decl.hasAttribute("foreign"))
+        decl.srcLoc.throwError(
+            "function ", Quoted(declName),
+            " declared '@(foreign)' must not overload another function");
+      prevOverload = prevFunc;
+      prevOverload->nextOverload = this;
+    }
   }
   // Declare crumb.
   params.lastCrumb =

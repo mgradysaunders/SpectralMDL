@@ -1362,17 +1362,16 @@ export struct measured_curve_factor:bsdf{
   const int df_flags=base.df_flags;
 };
 @(pure macro)
-color evaluateMeasuredCurve(const &measured_curve_factor this,const float cosAlpha){
-  const auto n(#num(this.curve_values));
-  const auto t(saturate(#acos(saturate(#abs(cosAlpha)))*(2/$PI))*(n-1));
+color evaluateMeasuredCurve(const color[<N>] curve_values,const float cosAlpha){
+  const auto t(saturate(#acos(saturate(#abs(cosAlpha)))*(2/$PI))*(N-1));
   const int i(int(t));
-  return saturate(lerp(this.curve_values[i],this.curve_values[#min(i+1,n-1)],t-i));
+  return saturate(lerp(curve_values[i],curve_values[#min(i+1,N-1)],t-i));
 }
 @(macro)
 auto scatterEvaluate(const &measured_curve_factor this,const &ScatterEvaluateParameters params){
   auto result(scatterEvaluate(visit &this.base,params));
   if(!result.isBlack&&params.mode==scatter_reflect){
-    return ScatterEvaluateResult(f: evaluateMeasuredCurve(this,dot(params.wo,halfDirection(params)))*result.f,pdf: result.pdf);
+    return ScatterEvaluateResult(f: evaluateMeasuredCurve(this.curve_values,dot(params.wo,halfDirection(params)))*result.f,pdf: result.pdf);
   } else {
     return result;
   }
@@ -1381,7 +1380,7 @@ auto scatterEvaluate(const &measured_curve_factor this,const &ScatterEvaluatePar
 auto scatterSample(const &measured_curve_factor this,const &ScatterSampleParameters params){
   auto result(scatterSample(visit &this.base,params));
   if((result.mode==scatter_reflect)&bool(result.fDelta)){
-    *result.fDelta*=evaluateMeasuredCurve(this,dot(params.wo,halfDirection(params,&result)));
+    *result.fDelta*=evaluateMeasuredCurve(this.curve_values,dot(params.wo,halfDirection(params,&result)));
   }
   return result;
 }
@@ -1465,6 +1464,102 @@ auto scatterSample(const &fresnel_layer this,inline const &ScatterSampleParamete
   }
 }
 export typedef fresnel_layer color_fresnel_layer;
+export struct custom_curve_layer:bsdf{
+  $(color|float) normal_reflectivity;
+  $(color|float) grazing_reflectivity=1.0;
+  float exponent=5.0;
+  $(color|float) weight=1.0;
+  bsdf layer=bsdf();
+  bsdf base=bsdf();
+  float3 normal=$state.normal;
+  const float _averageNormalReflectivity=average(normal_reflectivity);
+  const float _averageGrazingReflectivity=average(grazing_reflectivity);
+  const float _averageWeight=average(weight);
+  const int df_flags=layer.df_flags|base.df_flags;
+};
+@(macro)
+auto scatterEvaluate(const &custom_curve_layer this,inline const &ScatterEvaluateParameters params){
+  const auto cosThetao(dot(wo,this.normal)*#sign(this.normal.z));
+  const auto cosThetai(dot(wi,this.normal)*#sign(this.normal.z));
+  if((cosThetao<EPSILON)|((mode==scatter_reflect)&(cosThetai<EPSILON))|((mode==scatter_transmit)&(cosThetai>-EPSILON)))
+    return ScatterEvaluateResult(isBlack: true);
+  const auto result0(scatterEvaluate(visit &this.base,params));
+  const auto result1=return_from{
+    preserve normal;
+    normal=this.normal;
+    return scatterEvaluate(visit &this.layer,params);
+  };
+  if(result0.isBlack&result1.isBlack){
+    return ScatterEvaluateResult(isBlack: true);
+  } else {
+    return ScatterEvaluateResult(f: lerp(result0.f,result1.f,this.weight*specular::schlickFresnel(dot(wo,halfDirection(params)),this.normal_reflectivity,this.grazing_reflectivity,this.exponent),),pdf: lerp(result0.pdf,result1.pdf,this._averageWeight*specular::schlickFresnel(float2(cosThetao,cosThetai),this._averageNormalReflectivity,this._averageGrazingReflectivity,this.exponent),),);
+  }
+}
+@(macro)
+auto scatterSample(const &custom_curve_layer this,inline const &ScatterSampleParameters params){
+  const auto cosTheta(dot(wo,this.normal)*#sign(this.normal.z));
+  if(cosTheta<EPSILON)
+    return ScatterSampleResult();
+  const auto chance(this._averageWeight*specular::schlickFresnel(cosTheta,this._averageNormalReflectivity,this._averageGrazingReflectivity,this.exponent));
+  if(monte_carlo::boolSample(&xi.z,chance)){
+    preserve normal;
+    normal=this.normal;
+    auto result(scatterSample(visit &this.layer,params));
+    *result.fDelta*=this.weight*specular::schlickFresnel(dot(wo,halfDirection(params,&result)),this.normal_reflectivity,this.grazing_reflectivity,this.exponent)/chance if(result.fDelta);
+    return result;
+  } else {
+    auto result(scatterSample(visit &this.base,params));
+    *result.fDelta*=(1-this.weight*specular::schlickFresnel(dot(wo,halfDirection(params,&result)),this.normal_reflectivity,this.grazing_reflectivity,this.exponent))/(1-chance) if(result.fDelta);
+    return result;
+  }
+}
+export typedef custom_curve_layer color_custom_curve_layer;
+export struct measured_curve_layer:bsdf{
+  color[] curve_values;
+  $(color|float) weight=1.0;
+  bsdf layer=bsdf();
+  bsdf base=bsdf();
+  float3 normal=$state.normal;
+  const float _averageWeight=average(weight);
+  const int df_flags=layer.df_flags|base.df_flags;
+};
+@(macro)
+auto scatterEvaluate(const &measured_curve_layer this,inline const &ScatterEvaluateParameters params){
+  const auto cosThetao(dot(wo,this.normal)*#sign(this.normal.z));
+  const auto cosThetai(dot(wi,this.normal)*#sign(this.normal.z));
+  if((cosThetao<EPSILON)|((mode==scatter_reflect)&(cosThetai<EPSILON))|((mode==scatter_transmit)&(cosThetai>-EPSILON)))
+    return ScatterEvaluateResult(isBlack: true);
+  const auto result0(scatterEvaluate(visit &this.base,params));
+  const auto result1=return_from{
+    preserve normal;
+    normal=this.normal;
+    return scatterEvaluate(visit &this.layer,params);
+  };
+  if(result0.isBlack&result1.isBlack){
+    return ScatterEvaluateResult(isBlack: true);
+  } else {
+    return ScatterEvaluateResult(f: lerp(result0.f,result1.f,this.weight*evaluateMeasuredCurve(this.curve_values,dot(wo,halfDirection(params))),),pdf: lerp(result0.pdf,result1.pdf,this._averageWeight*float2(average(evaluateMeasuredCurve(this.curve_values,cosThetao)),average(evaluateMeasuredCurve(this.curve_values,cosThetai)),),),);
+  }
+}
+@(macro)
+auto scatterSample(const &measured_curve_layer this,inline const &ScatterSampleParameters params){
+  const auto cosTheta(dot(wo,this.normal)*#sign(this.normal.z));
+  if(cosTheta<EPSILON)
+    return ScatterSampleResult();
+  const auto chance(this._averageWeight*average(evaluateMeasuredCurve(this.curve_values,cosTheta)));
+  if(monte_carlo::boolSample(&xi.z,chance)){
+    preserve normal;
+    normal=this.normal;
+    auto result(scatterSample(visit &this.layer,params));
+    *result.fDelta*=this.weight*evaluateMeasuredCurve(this.curve_values,dot(wo,halfDirection(params,&result)))/chance if(result.fDelta);
+    return result;
+  } else {
+    auto result(scatterSample(visit &this.base,params));
+    *result.fDelta*=(1-this.weight*evaluateMeasuredCurve(this.curve_values,dot(wo,halfDirection(params,&result))))/(1-chance) if(result.fDelta);
+    return result;
+  }
+}
+export typedef measured_curve_layer color_measured_curve_layer;
 tag component;
 export struct bsdf_component:component{
   float weight=0.0;
