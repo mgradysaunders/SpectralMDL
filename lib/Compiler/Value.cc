@@ -65,14 +65,18 @@ Crumb *Crumb::find(Context &context, Span<const std::string_view> name,
       // Look inside the module if it is either
       // 1. A universal import in unqualified form `using foo::bar import *`
       // 2. A universal import in qualified form `import foo::bar::*`
-      if (crumb->isASTUsingImport() ||
-          (crumb->isASTImport() && name.size() > crumb->name.size() &&
-           name.startsWith(crumb->name))) {
-        // Search for qualified names `foo::bar::baz`
-        if (auto subCrumb{Crumb::find(context, name.subspan(crumb->name.size()),
-                                      llvmFunc, module_->mLastCrumb, nullptr,
-                                      /*ignoreIfNotExported=*/true)}) {
-          return subCrumb;
+      if (crumb->isASTUsingImport() || crumb->isASTImport()) {
+        // Search for qualified names `foo::bar::baz`, but only if the
+        // name actually begins with the imported module name `foo::bar`.
+        // The size check also keeps the `subspan` below in range.
+        if (name.size() > crumb->name.size() &&
+            name.startsWith(crumb->name)) {
+          if (auto subCrumb{Crumb::find(
+                  context, name.subspan(crumb->name.size()), llvmFunc,
+                  module_->mLastCrumb, nullptr,
+                  /*ignoreIfNotExported=*/true)}) {
+            return subCrumb;
+          }
         }
         // Search for unqualified names `baz` if universal unqualified
         // import `using foo::bar import *`

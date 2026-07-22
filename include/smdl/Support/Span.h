@@ -87,9 +87,12 @@ public:
     return subspan(0, count - 1);
   }
 
-  /// Get subspan.
+  /// Get subspan. The start index `i` is clamped to `size()`, so an
+  /// out-of-range request yields an empty span instead of underflowing
+  /// `count - i` into an enormous out-of-bounds span.
   [[nodiscard]] constexpr Span subspan(size_t i,
                                        size_t n = size_t(-1)) const noexcept {
+    i = std::min(i, count);
     return Span(first + i, std::min(count - i, n));
   }
 

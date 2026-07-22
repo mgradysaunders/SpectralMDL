@@ -1,0 +1,28 @@
+#smdl
+
+import .::crumbs_a::*;
+using .::crumbs_b import *;
+
+// This multi-component universal using-import used to make every unqualified
+// lookup underflow 'name.subspan(crumb->name.size())' into an out-of-bounds
+// span ('package1::foo' has a 2-component crumb name; typical lookup names
+// have 1). It also exercises the transitive re-export inside
+// 'package1/foo.smdl' ('export using ..::package2::bar import message;'),
+// whose crumb the wild span was compared against.
+using .::package1::foo import *;
+
+// A universal using-import must not hijack qualified names belonging to other 
+// modules. Before the fix, 'crumbs_a::shadowed' resolved through the newer 
+// 'using .::crumbs_b import *' crumb (the qualifier was ignored entirely) and 
+// evaluated to 2.
+unit_test "Crumbs: qualified names are not hijacked by universal using-import" {
+  #assert(crumbs_a::shadowed == 1);
+  #assert(crumbs_b::shadowed == 2);
+  // Unqualified lookup legitimately resolves through the using-import.
+  #assert(shadowed == 2);
+}
+
+unit_test "Crumbs: multi-component universal using-import" {
+  #assert(message == "Hellope");
+  #assert(package1::foo::message == "Hellope");
+}

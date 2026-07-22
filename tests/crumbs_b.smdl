@@ -1,0 +1,4 @@
+#smdl
+
+// Companion module for 'crumb_regressions.smdl'. See 'crumbs_a.smdl'.
+export const int shadowed = 2;
