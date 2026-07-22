@@ -112,3 +112,49 @@ unit_test "Crumbs: shadowing is legal in nested scopes" {
   int crumb_g = 20;
   #assert(crumb_g == 20);
 }
+
+// each switch case is its own scope. The dispatch may jump directly
+// to any case, past the declarations of the cases before it, so a
+// declaration is not visible beyond its own case, not even on fallthrough
+// (jump-past-initialization is a compile error). Falling through unwinds 
+// the case scope like any other scope exit.
+unit_test "Crumbs: switch cases are separate scopes" {
+  // The same name may be declared in different cases.
+  int r = 0;
+  switch (crumb_id(2)) {
+  case 1: {
+    int v = 10;
+    r = v;
+    break;
+  }
+  case 2:
+    int v = 20;
+    r = v;
+    break;
+  }
+  #assert(r == 20);
+  // Fallthrough control flow still works.
+  int n = 0;
+  switch (crumb_id(1)) {
+  case 1:
+    n += 1;
+  case 2:
+    n += 2;
+    break;
+  default:
+    n += 100;
+  }
+  #assert(n == 3);
+  // A case-local defer runs when the case falls through (scope exit).
+  int count = 0;
+  &int p = &count;
+  switch (crumb_id(1)) {
+  case 1:
+    defer *p += 10;
+    #assert(count == 0);
+  case 2:
+    #assert(count == 10);
+    break;
+  }
+  #assert(count == 10);
+}

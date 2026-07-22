@@ -813,23 +813,24 @@ Value Emitter::emit(AST::Switch &stmt) {
       invoke(context.getIntType(), emit(stmt.expr), stmt.srcLoc),
       blockDefault)};
   handleScope(nullptr, blockEnd, [&] {
-    auto i{size_t(0)};
-    auto crumb0{crumb};
     labelBreak = {crumb, blockEnd};
-    for (auto &[astCase, llvmConst, block] : switchCases) {
-      if (llvmConst)
-        switchInst->addCase(llvmConst, block);
-      builder.SetInsertPoint(block);
-      for (auto &subStmt : astCase->stmts)
-        if (emit(subStmt); hasTerminator())
-          break;
-      if (hasTerminator())
-        crumb = crumb0; // Reset after `return`, `break`, or `continue`
-      if (++i < switchCases.size()) {
-        if (!hasTerminator())
-          builder.CreateBr(switchCases[i].block);
-        llvmMoveBlockToEnd(switchCases[i].block);
-      }
+    for (size_t i = 0; i < switchCases.size(); i++) {
+      auto &switchCase{switchCases[i]};
+      if (switchCase.llvmConst)
+        switchInst->addCase(switchCase.llvmConst, switchCase.block);
+      builder.SetInsertPoint(switchCase.block);
+      // Each case is its own scope: the dispatch may jump directly to any
+      // case, past the declarations of the cases before it, so a
+      // declaration must not be visible beyond its own case — not even on
+      // fallthrough. Falling through unwinds the case scope like any other
+      // scope exit (and `handleScope` emits the fallthrough branch).
+      auto blockNext{i + 1 < switchCases.size() ? switchCases[i + 1].block
+                                                : blockEnd};
+      handleScope(nullptr, blockNext, [&] {
+        for (auto &subStmt : switchCase.astCase->stmts)
+          if (emit(subStmt); hasTerminator())
+            break;
+      });
     }
   });
   handleBlockEnd(blockEnd);
