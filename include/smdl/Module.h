@@ -26,6 +26,7 @@ public:
     COMPILE_STATUS_NOT_STARTED, ///< Not started yet.
     COMPILE_STATUS_IN_PROGRESS, ///< Currently in progress.
     COMPILE_STATUS_FINISHED,    ///< Finished!
+    COMPILE_STATUS_FAILED,      ///< Failed with an error.
   };
 
 public:
@@ -139,6 +140,11 @@ private:
 
   /// The compile status.
   CompileStatus mCompileStatus{COMPILE_STATUS_NOT_STARTED};
+
+  /// If `mCompileStatus` is `COMPILE_STATUS_FAILED`, the original error
+  /// message, rethrown on later references so the failure is not
+  /// misreported as a cyclic import.
+  std::string mCompileErrorMessage{};
 
   /// The last crumb. This is the starting point to search for exported
   /// declarations.

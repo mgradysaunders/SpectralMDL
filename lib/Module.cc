@@ -51,16 +51,33 @@ std::optional<Error> Module::compile(Context &context) noexcept {
   return catchAndReturnError([&] {
     if (mCompileStatus == COMPILE_STATUS_IN_PROGRESS)
       throw Error(concat("detected cyclic import of module ", Quoted(mName)));
+    if (mCompileStatus == COMPILE_STATUS_FAILED)
+      throw Error(mCompileErrorMessage);
     if (mCompileStatus == COMPILE_STATUS_NOT_STARTED) {
+      // On failure, mark FAILED and remember the original error: the
+      // module must not be re-emitted (that would duplicate symbols), and
+      // a later reference must reproduce the original diagnostic instead
+      // of misreporting a cyclic import.
       mCompileStatus = COMPILE_STATUS_IN_PROGRESS;
-      SMDL_PROFILER_ENTRY("Module::compile()",
-                          isBuiltin() ? mName.c_str() : mFileName.c_str());
-      SMDL_PRESERVE(context.currentModule);
-      context.currentModule = this;
-      Emitter emitter{context};
-      emitter.emit(mRoot);
-      mLastCrumb = emitter.crumb;
-      mCompileStatus = COMPILE_STATUS_FINISHED;
+      try {
+        SMDL_PROFILER_ENTRY("Module::compile()",
+                            isBuiltin() ? mName.c_str() : mFileName.c_str());
+        SMDL_PRESERVE(context.currentModule);
+        context.currentModule = this;
+        Emitter emitter{context};
+        emitter.emit(mRoot);
+        mLastCrumb = emitter.crumb;
+        mCompileStatus = COMPILE_STATUS_FINISHED;
+      } catch (const Error &error) {
+        mCompileStatus = COMPILE_STATUS_FAILED;
+        mCompileErrorMessage = error.message;
+        throw;
+      } catch (...) {
+        mCompileStatus = COMPILE_STATUS_FAILED;
+        mCompileErrorMessage =
+            concat("module ", Quoted(mName), " previously failed to compile");
+        throw;
+      }
     }
   });
 }
@@ -105,6 +122,7 @@ bool Module::isSMDLSyntax() const noexcept {
 void Module::reset() noexcept {
   mRoot.reset();
   mCompileStatus = COMPILE_STATUS_NOT_STARTED;
+  mCompileErrorMessage.clear();
   mLastCrumb = nullptr;
 }
 

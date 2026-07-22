@@ -502,22 +502,21 @@ Value Emitter::emit(AST::Binary &expr) {
         return invoke(boolType, emit(expr.exprRhs), expr.srcLoc);
       return valueLhs;
     } else {
-      auto blockLhs{getInsertBlock()};
-      auto [blockRhs, blockEnd] = createBlocks<2>(
-          expr.op == BINOP_LOGIC_AND ? "and" : "or", {".rhs", ".end"});
-      builder.CreateCondBr(valueLhs,
-                           expr.op == BINOP_LOGIC_AND ? blockRhs : blockEnd,
-                           expr.op == BINOP_LOGIC_AND ? blockEnd : blockRhs);
-      builder.SetInsertPoint(blockRhs);
-      auto valueRhs{invoke(boolType, emit(expr.exprRhs), expr.srcLoc)};
-      blockRhs = getInsertBlock();
-      builder.CreateBr(blockEnd);
-      builder.SetInsertPoint(blockEnd);
-      auto phiInst{builder.CreatePHI(boolType->llvmType, 2)};
-      phiInst->addIncoming(context.getComptimeBool(expr.op == BINOP_LOGIC_OR),
-                           blockLhs);
-      phiInst->addIncoming(valueRhs, blockRhs);
-      return RValue(boolType, phiInst);
+      // One arm evaluates the right-hand side (converted to bool inside
+      // its own block, so the PHI type stays bool); the other arm is the
+      // short-circuit constant.
+      auto emitRhs{[&]() -> Value {
+        return invoke(boolType, emit(expr.exprRhs), expr.srcLoc);
+      }};
+      auto emitConstant{[&]() -> Value {
+        return context.getComptimeBool(expr.op == BINOP_LOGIC_OR);
+      }};
+      return expr.op == BINOP_LOGIC_AND
+                 ? emitTwoArmMerge(valueLhs, "and", emitRhs,
+                                   expr.exprRhs->srcLoc, emitConstant,
+                                   expr.srcLoc, expr.srcLoc)
+                 : emitTwoArmMerge(valueLhs, "or", emitConstant, expr.srcLoc,
+                                   emitRhs, expr.exprRhs->srcLoc, expr.srcLoc);
     }
   }
   // Short-circuit else.

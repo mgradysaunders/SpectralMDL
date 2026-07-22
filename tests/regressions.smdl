@@ -123,3 +123,20 @@ unit_test "unpack_float4 of 64-bit int" {
 exec {
   #assert(1 + 1 == 2);
 }
+
+// The short-circuit logic operators are emitted through the shared
+// two-arm-merge helper; guard both the truth table and the guarantee that
+// the right-hand side does not evaluate when the left-hand side decides.
+unit_test "short-circuit logic operators" {
+  int n = 0;
+  bool f = false;
+  bool r0 = f && ((n = n + 1) > 0);
+  #assert(!r0 && n == 0);
+  bool t = true;
+  bool r1 = t || ((n = n + 1) > 0);
+  #assert(r1 && n == 0);
+  bool r2 = t && ((n = n + 1) > 0);
+  #assert(r2 && n == 1);
+  bool r3 = f || ((n = n + 1) > 1);
+  #assert(r3 && n == 2);
+}
