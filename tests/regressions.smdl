@@ -1,0 +1,125 @@
+#smdl
+
+// Regression tests for compiler bugs found in the 2026-07 Compiler subsystem
+// audit ('Compiler-audit.md'). Each block cites the audit finding it guards.
+
+// C2: string '=='/'!=' compared only strlen(lhs) bytes, so a prefix compared
+// equal to a longer string (and the comparison was asymmetric).
+unit_test "string comparison is not prefix-based" {
+  #assert(!("abc" == "abcdef"));
+  #assert(!("abcdef" == "abc"));
+  #assert("abc" == "abc");
+  #assert("abc" != "abcd");
+  #assert(!("" == "x"));
+  #assert("" == "");
+}
+
+// H1: 'do { } while ();' never branched into the loop body, so every use
+// failed LLVM-IR verification.
+unit_test "do-while executes" {
+  int i = 0;
+  do { i++; } while (i < 3);
+  #assert(i == 3);
+  // Loop body must run at least once even if the condition is false.
+  int j = 0;
+  do { j++; } while (false);
+  #assert(j == 1);
+}
+
+// H3: a 'for' with an empty condition made the emitter dereference a null
+// condition expression.
+unit_test "for with empty condition" {
+  int j = 0;
+  for (int n = 0; ; n++) {
+    j++;
+    if (n >= 4)
+      break;
+  }
+  #assert(j == 5);
+}
+
+// H2: 'return' recorded its PHI predecessor block before unwinding 'defer's,
+// so a 'defer' containing control flow broke the PHI wiring.
+int defer_with_branch(bool b) {
+  int x = 1;
+  defer {
+    if (b) {
+      x = 2;
+    }
+  }
+  return x;
+}
+
+unit_test "defer with control flow before return" {
+  #assert(defer_with_branch(true) == 1);
+  #assert(defer_with_branch(false) == 1);
+}
+
+// H5: converting a wider union to a narrower one at 'return' emits control
+// flow; 'createResult' used to splice it in front of an existing terminator.
+(int | float) narrow_union(bool b) {
+  (int | float | string) u = 1;
+  if (b)
+    return u;
+  return 2;
+}
+
+int union_as_int(int x) = x;
+
+unit_test "union narrowing at return under if" {
+  auto v0 = narrow_union(true);
+  auto v1 = narrow_union(false);
+  #assert(#typeof(visit v0) == int);
+  #assert(#typeof(visit v1) == int);
+  #assert(union_as_int(visit v0) == 1);
+  #assert(union_as_int(visit v1) == 2);
+}
+
+// M3: bool-typed 'case' constants were passed to the LLVM switch without
+// conversion and failed IR verification.
+unit_test "switch case constants convert to int" {
+  int k = 0;
+  switch (1) {
+  case true:
+    k = 7;
+    break;
+  default:
+    k = 9;
+  }
+  #assert(k == 7);
+}
+
+// H8: constructing an array from a pointer to its element type compared the
+// pointer type against the element type instead of the pointee, so the
+// feature never fired.
+unit_test "construct array from pointer to element" {
+  float[2] src = float[2](3.0, 4.0);
+  auto p = &src[0];
+  float[2] dst = float[2](p);
+  #assert(dst[0] == 3.0 && dst[1] == 4.0);
+}
+
+// H6/M7: 'color' arguments to '#isfpclass' and '#atan2' crashed the
+// compiler (invalid downcast / sanity abort).
+unit_test "color arguments to isfpclass and atan2" {
+  // 96 = negative zero | positive zero, 256 = positive normal
+  #assert(!#isfpclass(color(0.5), 96)[0]);
+  #assert(#isfpclass(color(0.5), 256)[0]);
+  color c = #atan2(color(1.0), color(1.0));
+  #assert(c[0] > 0.78 && c[0] < 0.79); // ~pi/4
+}
+
+// M8: '#unpack_float4' computed '1ULL << 64' (shift-by-width UB) for 64-bit
+// texel types, producing an infinite scale factor.
+unit_test "unpack_float4 of 64-bit int" {
+  auto u = #unpack_float4(#type_int(64)(3));
+  #assert(u.x >= 0.0 && u.x < 1.0);
+  #assert(u.w == 1.0);
+}
+
+// C4: execs are now emitted pure, matching the C++ 'JIT::Function<void()>'
+// signature — previously the JIT'd exec expected a '$state' pointer the
+// caller never passed.
+exec {
+  #assert(1 + 1 == 2);
+}
