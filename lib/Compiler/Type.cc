@@ -135,13 +135,45 @@ ArithmeticType::ArithmeticType(Context &context, Scalar scalar, Extent extent)
   llvmType = extent.getLLVMType(scalar.getLLVMType(context));
 }
 
+std::optional<Value> Type::invokeTrivialCases(Emitter &emitter,
+                                              const ArgumentList &args) {
+  if (args.empty() || args.isNull())
+    return Value::zero(this);
+  if (args.isOnePositional(this))
+    return emitter.rvalue(args[0].value);
+  return std::nullopt;
+}
+
+/// Materialize `value` as an lvalue temporary, apply `access` to it, load
+/// the result back out as an rvalue, then end the temporary's lifetime.
+template <typename Access>
+static Value accessViaLValue(Emitter &emitter, Value value, Access &&access) {
+  auto lv{emitter.lvalue(value)};
+  auto rv{emitter.rvalue(std::invoke(std::forward<Access>(access), lv))};
+  emitter.createLifetimeEnd(lv);
+  return rv;
+}
+
+/// If `value` is a pointer to `pointeeType`, construct `resultType` by
+/// loading through the pointer. Assume the pointer is only as aligned as
+/// the pointee type itself!
+static std::optional<Value> tryConstructFromPointer(Emitter &emitter,
+                                                    Type *resultType,
+                                                    Type *pointeeType,
+                                                    const Value &value) {
+  if (value.type->isPointer() &&
+      value.type->getPointeeType() == pointeeType)
+    return RValue(resultType,
+                  emitter.builder.CreateAlignedLoad(
+                      resultType->llvmType, emitter.rvalue(value),
+                      llvm::Align(emitter.context.getAlignOf(pointeeType))));
+  return std::nullopt;
+}
+
 Value ArithmeticType::invoke(Emitter &emitter, const ArgumentList &args,
                              const SourceLocation &srcLoc) {
-  if (args.empty() || args.isNull()) {
-    return Value::zero(this);
-  }
-  if (args.isOnePositional(this)) {
-    return emitter.rvalue(args[0].value);
+  if (auto trivial{invokeTrivialCases(emitter, args)}) {
+    return *trivial;
   }
   if (extent.isScalar()) {
     if (!args.isOnePositional())
@@ -188,14 +220,10 @@ Value ArithmeticType::invoke(Emitter &emitter, const ArgumentList &args,
         return RValue(this, llvmEmitCast(emitter.builder, emitter.rvalue(value),
                                          llvmType));
       // If constructing from a pointer to the scalar type, load from the
-      // pointer. Assume the pointer is only as aligned as the scalar type
-      // itself!
-      if (value.type->isPointer() &&
-          value.type->getPointeeType() == getScalarType(emitter.context))
-        return RValue(this, emitter.builder.CreateAlignedLoad(
-                                llvmType, emitter.rvalue(value),
-                                llvm::Align(emitter.context.getAlignOf(
-                                    getScalarType(emitter.context)))));
+      // pointer.
+      if (auto loaded{tryConstructFromPointer(
+              emitter, this, getScalarType(emitter.context), value)})
+        return *loaded;
       // If constructing from color and this is a 3-dimensional vector,
       // delegate to the `_color_to_rgb` function in the `api` module.
       if (value.type == emitter.context.getColorType() && dim == 3)
@@ -394,6 +422,13 @@ Value ArithmeticType::accessIndex(Emitter &emitter, Value value, Value i,
   if (extent.isScalar())
     srcLoc.throwError("scalar ", Quoted(displayName),
                       " has no index access operator");
+  if (i.isComptimeInt()) {
+    const auto iNow{i.getComptimeSignedInt()};
+    const auto count{
+        int64_t(extent.isVector() ? extent.numRows : extent.numCols)};
+    if (!iNow || *iNow < 0 || *iNow >= count)
+      srcLoc.throwError("index out of bounds for ", Quoted(displayName));
+  }
   if (value.isRValue()) {
     if (i.isComptimeInt()) {
       unsigned iNow{i.getComptimeInt()};
@@ -405,10 +440,9 @@ Value ArithmeticType::accessIndex(Emitter &emitter, Value value, Value i,
                       emitter.builder.CreateExtractValue(value, {iNow}));
       }
     } else {
-      auto lv{emitter.lvalue(value)};
-      auto rv{emitter.rvalue(accessIndex(emitter, lv, i, srcLoc))};
-      emitter.createLifetimeEnd(lv);
-      return rv;
+      return accessViaLValue(emitter, value, [&](Value lv) {
+        return accessIndex(emitter, lv, i, srcLoc);
+      });
     }
   } else {
     if (extent.isVector()) {
@@ -529,13 +563,8 @@ Value ArrayType::invoke(Emitter &emitter, const ArgumentList &args,
       return invoke(emitter, llvm::ArrayRef<Value>(elems), srcLoc);
     }
     // If constructing from pointer to element type, load from the pointer.
-    if (auto ptrType{llvm::dyn_cast<PointerType>(value.type)};
-        ptrType && ptrType == elemType) {
-      return RValue(this,
-                    emitter.builder.CreateAlignedLoad(
-                        llvmType, emitter.rvalue(value),
-                        llvm::Align(emitter.context.getAlignOf(elemType))));
-    }
+    if (auto loaded{tryConstructFromPointer(emitter, this, elemType, value)})
+      return *loaded;
   }
   srcLoc.throwError("cannot construct ", Quoted(displayName), " from ",
                     Quoted(std::string(args)));
@@ -548,10 +577,9 @@ Value ArrayType::accessField(Emitter &emitter, Value value,
   SMDL_SANITY_CHECK(!isAbstract());
   if (hasField(name)) {
     if (!value.isLValue()) {
-      auto lv{emitter.lvalue(value)};
-      auto rv{emitter.rvalue(accessField(emitter, lv, name, srcLoc))};
-      emitter.createLifetimeEnd(lv);
-      return rv;
+      return accessViaLValue(emitter, value, [&](Value lv) {
+        return accessField(emitter, lv, name, srcLoc);
+      });
     }
     // The behavior here is to construct an `auto[]` by accessing
     // the field on each of element in the array.
@@ -571,15 +599,19 @@ Value ArrayType::accessField(Emitter &emitter, Value value,
 Value ArrayType::accessIndex(Emitter &emitter, Value value, Value i,
                              const SourceLocation &srcLoc) {
   SMDL_SANITY_CHECK(!isAbstract());
+  if (i.isComptimeInt()) {
+    const auto iNow{i.getComptimeSignedInt()};
+    if (!iNow || *iNow < 0 || *iNow >= int64_t(size))
+      srcLoc.throwError("index out of bounds for ", Quoted(displayName));
+  }
   if (i.isComptimeInt() && value.isRValue()) {
     return RValue(elemType, emitter.builder.CreateExtractValue(
                                 value, {unsigned(i.getComptimeInt())}));
   } else {
     if (!value.isLValue()) {
-      auto lv{emitter.lvalue(value)};
-      auto rv{emitter.rvalue(accessIndex(emitter, lv, i, srcLoc))};
-      emitter.createLifetimeEnd(lv);
-      return rv;
+      return accessViaLValue(emitter, value, [&](Value lv) {
+        return accessIndex(emitter, lv, i, srcLoc);
+      });
     }
     i = emitter.rvalue(i);
     return LValue(elemType, emitter.builder.CreateGEP(
@@ -638,6 +670,9 @@ Value AutoType::invoke(Emitter &emitter, const ArgumentList &args,
       scalar = scalar.getCommon(arithType->scalar);
       extent += arithType->extent.numRows;
     }
+    if (extent > 65535)
+      srcLoc.throwError("cannot concatenate vector with more than 65535 "
+                        "elements");
     return emitter.invoke(emitter.context.getArithmeticType(scalar, extent),
                           args, srcLoc);
   }
@@ -659,11 +694,8 @@ ColorType::ColorType(Context &context) {
 Value ColorType::invoke(Emitter &emitter, const ArgumentList &args,
                         const SourceLocation &srcLoc) {
   auto &context{emitter.context};
-  if (args.empty() || args.isNull()) {
-    return Value::zero(this);
-  }
-  if (args.isOnePositional(this)) {
-    return emitter.rvalue(args[0].value);
+  if (auto trivial{invokeTrivialCases(emitter, args)}) {
+    return *trivial;
   }
   if (args.isOnePositional()) {
     auto value{args[0].value};
@@ -677,11 +709,9 @@ Value ColorType::invoke(Emitter &emitter, const ArgumentList &args,
             wavelengthBaseMax)
       return RValue(
           this, llvmEmitCast(emitter.builder, emitter.rvalue(value), llvmType));
-    if (value.type->isPointer() &&
-        value.type->getPointeeType() == emitter.context.getFloatType())
-      return RValue(this, emitter.builder.CreateAlignedLoad(
-                              llvmType, emitter.rvalue(value),
-                              llvm::Align(alignof(float))));
+    if (auto loaded{tryConstructFromPointer(
+            emitter, this, emitter.context.getFloatType(), value)})
+      return *loaded;
     if (value.type == context.getFloatType(Extent(3)))
       return emitter.emitCall(context.getKeyword("_rgb_to_color"), value,
                               srcLoc);
@@ -731,16 +761,20 @@ Value ColorType::invoke(Emitter &emitter, const ArgumentList &args,
 
 Value ColorType::accessIndex(Emitter &emitter, Value value, Value i,
                              const SourceLocation &srcLoc) {
+  if (i.isComptimeInt()) {
+    const auto iNow{i.getComptimeSignedInt()};
+    if (!iNow || *iNow < 0 || *iNow >= int64_t(wavelengthBaseMax))
+      srcLoc.throwError("index out of bounds for ", Quoted(displayName));
+  }
   if (value.isRValue()) {
     if (i.isComptimeInt()) {
       return RValue(
           getArithmeticScalarType(emitter.context),
           emitter.builder.CreateExtractElement(value, i.getComptimeInt()));
     } else {
-      auto lv{emitter.lvalue(value)};
-      auto rv{emitter.rvalue(accessIndex(emitter, lv, i, srcLoc))};
-      emitter.createLifetimeEnd(lv);
-      return rv;
+      return accessViaLValue(emitter, value, [&](Value lv) {
+        return accessIndex(emitter, lv, i, srcLoc);
+      });
     }
   } else {
     auto scalarType{getArithmeticScalarType(emitter.context)};
@@ -855,10 +889,8 @@ void EnumType::initialize(Emitter &emitter) {
 
 Value EnumType::invoke(Emitter &emitter, const ArgumentList &args,
                        const SourceLocation &srcLoc) {
-  if (args.empty() || args.isNull()) {
-    return Value::zero(this);
-  } else if (args.isOnePositional(this)) {
-    return emitter.rvalue(args[0].value);
+  if (auto trivial{invokeTrivialCases(emitter, args)}) {
+    return *trivial;
   } else if (args.isOnePositional()) {
     auto value{args[0].value};
     if ((value.type->isArithmeticScalar() &&
@@ -1054,6 +1086,7 @@ FunctionType *FunctionType::resolveOverload(Emitter &emitter,
       func = func->nextOverload;
     return func;
   }};
+  auto overloadErrors{std::string{}};
   for (auto func{getLastOverload()}; func; func = func->prevOverload) {
     try {
       SMDL_SANITY_CHECK(!func->isVariant());
@@ -1061,14 +1094,16 @@ FunctionType *FunctionType::resolveOverload(Emitter &emitter,
                                                  /*dontEmit=*/true)};
       overloads.push_back({func, std::move(resolvedArgs.argParams)});
     } catch (const Error &error) {
-      // TODO Log?
+      overloadErrors += "\n  candidate rejected: ";
+      overloadErrors += error.message;
     }
   }
-  // If no matching declarations, fail!
+  // If no matching declarations, fail, including the reason each
+  // candidate was rejected.
   if (overloads.empty())
     srcLoc.throwError("function ", Quoted(declName),
                       " has no overload for arguments ",
-                      Quoted(std::string(args)));
+                      Quoted(std::string(args)), overloadErrors);
   // The lambda to determine whether the LHS set of parameter types is
   // strictly less specific than the RHS set of parameter types. This is true
   // if each and every RHS parameter type is implicitly convertible to the
@@ -1150,6 +1185,44 @@ FunctionType::getInstance(Emitter &emitter,
   return inst;
 }
 
+/// Verify that the C++ `JIT::Material::Instance` layout matches the api
+/// `_MaterialInstance` struct emitted by the compiler. The JIT boundary
+/// reinterprets one as the other, so any drift is silent undefined
+/// behavior at render time — fail the compile loudly instead.
+static void verifyMaterialInstanceLayout(Context &context, Type *type,
+                                         const SourceLocation &srcLoc) {
+  auto llvmStructType{
+      llvm::dyn_cast_if_present<llvm::StructType>(type->llvmType)};
+  if (!llvmStructType)
+    srcLoc.throwError("'_MaterialInstance' is not a struct type");
+  using Instance = JIT::Material::Instance;
+  const std::pair<std::string_view, uint64_t> fields[]{
+      {"ptr", offsetof(Instance, ptr)},
+      {"geometry", offsetof(Instance, geometry)},
+      {"ior", offsetof(Instance, ior)},
+      {"temperature", offsetof(Instance, temperature)},
+      {"absorption_coefficient", offsetof(Instance, absorption_coefficient)},
+      {"scattering_coefficient", offsetof(Instance, scattering_coefficient)},
+      {"wavelength_base_max", offsetof(Instance, wavelength_base_max)},
+      {"flags", offsetof(Instance, flags)},
+      {"df_flags_surface", offsetof(Instance, df_flags_surface)},
+      {"df_flags_backface", offsetof(Instance, df_flags_backface)},
+      {"tangent_to_world_space", offsetof(Instance, tangent_to_world_space)},
+  };
+  const auto numFields{sizeof(fields) / sizeof(fields[0])};
+  auto llvmLayout{context.llvmLayout.getStructLayout(llvmStructType)};
+  if (llvmStructType->getNumElements() != numFields ||
+      uint64_t(llvmLayout->getSizeInBytes()) > sizeof(Instance))
+    srcLoc.throwError("mismatch between C++ 'JIT::Material::Instance' and "
+                      "SMDL '_MaterialInstance' structures");
+  for (size_t i = 0; i < numFields; i++)
+    if (uint64_t(llvmLayout->getElementOffset(i)) != fields[i].second)
+      srcLoc.throwError(
+          concat("mismatch between C++ 'JIT::Material::Instance' and SMDL "
+                 "'_MaterialInstance' structures (field ",
+                 Quoted(fields[i].first), " is misaligned)"));
+}
+
 void FunctionType::initializeMaterialFunctions(Emitter &emitter) {
   using namespace std::literals::string_view_literals;
   SMDL_LOG_DEBUG(std::string(decl.srcLoc), " New material ", Quoted(decl.name));
@@ -1202,6 +1275,7 @@ void FunctionType::initializeMaterialFunctions(Emitter &emitter) {
     func->setLinkage(llvm::Function::ExternalLinkage);
     jitMaterial.evaluate.name = func->getName().str();
   }
+  verifyMaterialInstanceLayout(context, materialInstanceType, decl.srcLoc);
   {
     // Generate the scatter evaluate function:
     // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -1440,6 +1514,8 @@ Value PointerType::accessField(Emitter &emitter, Value value,
 
 Value PointerType::accessIndex(Emitter &emitter, Value value, Value i,
                                const SourceLocation &srcLoc) {
+  if (pointeeType->isVoid())
+    srcLoc.throwError("cannot index into ", Quoted(displayName));
   return LValue(pointeeType, emitter.builder.CreateGEP(
                                  pointeeType->llvmType, emitter.rvalue(value),
                                  {emitter.rvalue(i).llvmValue}));
@@ -1519,13 +1595,9 @@ StringType::StringType(Context &context) {
 
 Value StringType::invoke(Emitter &emitter, const ArgumentList &args,
                          const SourceLocation &srcLoc) {
-  // Construct from nothing or null.
-  if (args.empty() || args.isNull()) {
-    return Value::zero(this);
-  }
-  // Construct from another string.
-  if (args.isOnePositional(this)) {
-    return emitter.rvalue(args[0].value);
+  // Construct from nothing, null, or another string.
+  if (auto trivial{invokeTrivialCases(emitter, args)}) {
+    return *trivial;
   }
   // Construct from enum, call the enum-to-string conversion function.
   if (args.isOnePositional()) {
@@ -1948,10 +2020,9 @@ Value UnionType::accessField(Emitter &emitter, Value value,
                         emitter.builder.CreateExtractValue(value, {1U}));
   if (hasField(name)) {
     if (value.isRValue()) {
-      auto lv{emitter.lvalue(value)};
-      auto rv{emitter.rvalue(accessField(emitter, lv, name, srcLoc))};
-      emitter.createLifetimeEnd(lv);
-      return rv;
+      return accessViaLValue(emitter, value, [&](Value lv) {
+        return accessField(emitter, lv, name, srcLoc);
+      });
     }
     // Access unique optionals unsafely without switching. This mimics
     // pointer semantics. Note that the void type is guaranteed to be

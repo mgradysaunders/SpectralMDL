@@ -27,6 +27,16 @@ else()
   set(RTTI_FLAG "")
 endif()
 
+if(SMDL_SANITIZE)
+  add_compile_options(-fsanitize=${SMDL_SANITIZE} -fno-omit-frame-pointer)
+  add_link_options(-fsanitize=${SMDL_SANITIZE})
+  if(SMDL_SANITIZE MATCHES "undefined")
+    # JIT-compiled functions have no UBSAN signature prologue, so indirect-call
+    # checks on calls into JIT'd code could fault or false-positive.
+    add_compile_options(-fno-sanitize=function)
+  endif()
+endif()
+
 # Include GNUInstallDirs and print them out.
 include(GNUInstallDirs)
 message(STATUS "INSTALL_PREFIX: ${CMAKE_INSTALL_PREFIX}")

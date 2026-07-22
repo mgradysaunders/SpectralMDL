@@ -80,6 +80,17 @@ public:
     return unsigned(-1);
   }
 
+  /// Get value as sign-extended compile-time int, or `std::nullopt` if this
+  /// is not a compile-time int or does not fit in 64 bits. Prefer this over
+  /// `getComptimeInt()` wherever the value must be range-checked: the
+  /// unsigned accessor silently clamps, so e.g. `-1` becomes `4294967295`.
+  [[nodiscard]] std::optional<int64_t> getComptimeSignedInt() const {
+    if (auto llvmConst{llvm::dyn_cast_if_present<llvm::ConstantInt>(llvmValue)})
+      if (llvmConst->getValue().getSignificantBits() <= 64)
+        return llvmConst->getValue().getSExtValue();
+    return std::nullopt;
+  }
+
   /// Get value as compile-time string or the `std::string_view()` on failure.
   [[nodiscard]] std::string_view getComptimeString() const;
 

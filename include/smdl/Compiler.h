@@ -24,12 +24,43 @@ namespace smdl {
 /// If built without Ptex (`-DSMDL_ENABLE_PTEX=OFF`), this
 /// is never populated by the compiler and is passed around as
 /// the nullified default.
-class Ptexture final {
+class SMDL_EXPORT Ptexture final {
+public:
+  Ptexture() = default;
+
+  Ptexture(const Ptexture &) = delete;
+
+  Ptexture(Ptexture &&other) noexcept
+      : texture(std::exchange(other.texture, nullptr)),
+        textureFilter(std::exchange(other.textureFilter, nullptr)),
+        channelCount(std::exchange(other.channelCount, 0)),
+        alphaIndex(std::exchange(other.alphaIndex, -1)) {}
+
+  Ptexture &operator=(const Ptexture &) = delete;
+
+  Ptexture &operator=(Ptexture &&other) noexcept {
+    if (this != &other) {
+      release();
+      texture = std::exchange(other.texture, nullptr);
+      textureFilter = std::exchange(other.textureFilter, nullptr);
+      channelCount = std::exchange(other.channelCount, 0);
+      alphaIndex = std::exchange(other.alphaIndex, -1);
+    }
+    return *this;
+  }
+
+  ~Ptexture() { release(); }
+
+  /// Release the held `PtexTexture` and `PtexFilter` if present.
+  void release() noexcept;
+
 public:
   /// The pointer to the `PtexTexture`.
   void *texture{};
 
-  /// The pointer to the `PtexFilter`.
+  /// The pointer to the `PtexFilter`. May be null: `smdlPtexEvaluate`
+  /// maintains per-thread filters because `PtexFilter::eval` is not
+  /// thread-safe.
   void *textureFilter{};
 
   /// The channel count.
@@ -60,6 +91,17 @@ enum DumpFormat : int {
 };
 
 /// The compiler.
+///
+/// \note
+/// Lifetime contract:
+/// - `compile()` frees the previous JIT, so every function pointer
+///   previously obtained (materials, unit tests, execs, color conversion)
+///   dangles. No thread may be executing JIT-compiled code during
+///   `compile()` or `jitCompile()`.
+/// - JIT-compiled code embeds absolute pointers to host data owned by this
+///   `Compiler` (images, spectra, `sceneData`, ...). The `Compiler` must
+///   outlive all execution of its JIT-compiled code, and object files
+///   emitted by `dump()` are not relocatable into other processes.
 class SMDL_EXPORT Compiler final {
 public:
   Compiler(uint32_t wavelengthBaseMax = 16);
@@ -69,21 +111,24 @@ public:
   ~Compiler();
 
   /// Add MDL module file or directory.
-  [[nodiscard]] std::optional<Error> add(std::string fileOrDirName);
+  [[nodiscard]] std::optional<Error> add(std::string fileOrDirName) noexcept;
 
   /// Compile to LLVM-IR.
-  [[nodiscard]] std::optional<Error> compile(OptLevel optLevel = OPT_LEVEL_O2);
+  [[nodiscard]] std::optional<Error>
+  compile(OptLevel optLevel = OPT_LEVEL_O2) noexcept;
 
   /// Format source code.
   [[nodiscard]] std::optional<Error>
   formatSourceCode(const FormatOptions &formatOptions) noexcept;
 
 private:
-  /// Get the LLVM context.
-  [[nodiscard]] llvm::LLVMContext &getLLVMContext() noexcept;
+  /// Get the LLVM context, or throw an `Error` if there is none (i.e., if
+  /// `compile()` has not run yet or `jitCompile()` already consumed it).
+  [[nodiscard]] llvm::LLVMContext &getLLVMContext();
 
-  /// Get the LLVM module.
-  [[nodiscard]] llvm::Module &getLLVMModule() noexcept;
+  /// Get the LLVM module, or throw an `Error` if there is none (i.e., if
+  /// `compile()` has not run yet or `jitCompile()` already consumed it).
+  [[nodiscard]] llvm::Module &getLLVMModule();
 
   /// Load image.
   [[nodiscard]] const Image &loadImage(const std::string &fileName,
@@ -119,16 +164,24 @@ private:
                             const std::string &curveName,
                             const SourceLocation &srcLoc);
 
+  /// Load ENVI Spectral Library file.
+  [[nodiscard]]
+  const SpectrumLibrary &loadSpectrumLibrary(const std::string &fileName,
+                                             const SourceLocation &srcLoc);
+
 public:
-  /// Dump as LLVM-IR or native assembly.
-  [[nodiscard]] std::string dump(DumpFormat dumpFormat);
+  /// Dump as LLVM-IR or native assembly into `out`. Must be called after
+  /// `compile()` and before `jitCompile()`.
+  [[nodiscard]] std::optional<Error> dump(DumpFormat dumpFormat,
+                                          std::string &out) noexcept;
 
   /// JIT-compile to machine code.
   [[nodiscard]] std::optional<Error> jitCompile() noexcept;
 
 private:
-  /// After JIT-compiling, lookup symbol with the given name.
-  [[nodiscard]] void *jitLookup(std::string_view name) noexcept;
+  /// After JIT-compiling, lookup symbol with the given name, or throw an
+  /// `Error` carrying the underlying ORC failure message.
+  [[nodiscard]] void *jitLookup(std::string_view name);
 
   /// After JIT-compiling, lookup symbol with the given name or throw an error
   /// if it is not present.
@@ -267,11 +320,32 @@ private:
   /// The MDL modules.
   std::vector<std::unique_ptr<Module>> mModules;
 
-  /// The LLVM JIT module.
-  std::unique_ptr<llvm::orc::ThreadSafeModule> mLLVMJitModule;
+  /// Reset all JIT-derived state for a (re)compile: frees the previous
+  /// JIT, clears all resource maps and JIT handle tables, and creates a
+  /// fresh LLVM context, module, and JIT.
+  void resetForRecompile();
+
+  /// The LLVM context for the module being compiled. Consumed (moved into
+  /// the JIT) by `jitCompile()`.
+  std::unique_ptr<llvm::LLVMContext> mLLVMContext;
+
+  /// The LLVM module being compiled. Consumed by `jitCompile()`.
+  std::unique_ptr<llvm::Module> mLLVMModule;
+
+  /// The names and host addresses of the builtin runtime callees
+  /// registered during emission (see `Context::getBuiltinCallee`). These
+  /// are defined as absolute symbols in the JIT so resolution does not
+  /// depend on the host process exporting them (e.g. a statically linked
+  /// host without `--export-dynamic`).
+  std::map<std::string, const void *, std::less<>> mBuiltinCalleeAddresses;
 
   /// The LLVM JIT.
   std::unique_ptr<llvm::orc::LLJIT> mLLVMJit;
+
+  /// Asynchronous errors reported by the LLVM JIT execution session,
+  /// accumulated so they can be surfaced in the `Error` returned by
+  /// `jitCompile()` instead of only going to standard error.
+  std::string mJITSessionErrors;
 
   /// The JIT-compiled color-to-RGB conversion function.
   JIT::Function<void(const State &state, const float *cptr, float3 &rgb)>

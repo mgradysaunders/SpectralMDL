@@ -19,22 +19,28 @@ BuildInfo BuildInfo::get() noexcept {
           SMDL_GIT_COMMIT};
 }
 
-static const NativeTarget nativeTarget{[]() {
-  llvm::InitializeNativeTarget();
-  llvm::InitializeNativeTargetAsmPrinter();
-  std::string name{llvm::sys::getHostCPUName()};
-  std::string triple{llvm::sys::getDefaultTargetTriple()};
-  auto targetError{std::string{}};
-  auto target{llvm::TargetRegistry::lookupTarget(triple, targetError)};
-  if (!target)
-    llvm::report_fatal_error(targetError.c_str());
-  llvm::TargetOptions opts{};
-  return NativeTarget{name, triple,
-                      target->createTargetMachine(llvm::Triple(triple), name,
-                                                  "", opts, llvm::Reloc::PIC_)};
-}()};
-
-const NativeTarget &NativeTarget::get() noexcept { return nativeTarget; }
+const NativeTarget &NativeTarget::get() noexcept {
+  // Lazy magic static: initializing LLVM at static-initialization time
+  // would run before 'main' in every process linking the library and be
+  // exposed to static-init-order hazards.
+  static const NativeTarget nativeTarget{[]() {
+    llvm::InitializeNativeTarget();
+    llvm::InitializeNativeTargetAsmPrinter();
+    std::string name{llvm::sys::getHostCPUName()};
+    std::string triple{llvm::sys::getDefaultTargetTriple()};
+    auto targetError{std::string{}};
+    auto target{
+        llvm::TargetRegistry::lookupTarget(llvm::Triple(triple), targetError)};
+    if (!target)
+      llvm::report_fatal_error(targetError.c_str());
+    llvm::TargetOptions opts{};
+    return NativeTarget{name, triple,
+                        target->createTargetMachine(llvm::Triple(triple), name,
+                                                    "", opts,
+                                                    llvm::Reloc::PIC_)};
+  }()};
+  return nativeTarget;
+}
 
 std::string_view SourceLocation::getModuleName() const {
   return module_ ? module_->getName() : std::string_view();

@@ -121,13 +121,17 @@ int main(int argc, char **argv) {
       error->printAndExit();
     }
     if (subDump) {
+      auto dumped{std::string{}};
+      if (auto error{compiler.dump(dumpFormat, dumped)}) {
+        error->printAndExit();
+      }
       if (outputFilename.getNumOccurrences()) {
         auto ofs{std::ofstream(outputFilename.getValue())};
         if (!ofs.is_open())
           std::exit(EXIT_FAILURE);
-        ofs << compiler.dump(dumpFormat);
+        ofs << dumped;
       } else {
-        std::cout << compiler.dump(dumpFormat);
+        std::cout << dumped;
         std::cout.flush();
       }
     } else if (subList) {

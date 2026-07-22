@@ -59,6 +59,13 @@ public:
   virtual Value invoke(Emitter &emitter, const ArgumentList &args,
                        const SourceLocation &srcLoc);
 
+  /// Handle the trivial `invoke` cases shared by most types: no arguments
+  /// (or null) zero-constructs, and one positional argument of this exact
+  /// type passes through as an rvalue. Returns `std::nullopt` if neither
+  /// case applies.
+  [[nodiscard]] std::optional<Value>
+  invokeTrivialCases(Emitter &emitter, const ArgumentList &args);
+
   /// Has the given field?
   [[nodiscard]] virtual bool hasField(std::string_view name) {
     (void)name;
@@ -515,8 +522,11 @@ private:
   ///
   [[nodiscard]] std::optional<uint32_t> toIndex(char c) const {
     if (!extent.isScalar()) {
-      for (uint16_t i{};
-           i < (extent.isVector() ? extent.numRows : extent.numCols); i++) {
+      // Only the first 4 components are nameable — larger vectors would
+      // read past the "xyzw"/"rgba" literals.
+      const auto count{std::min<uint16_t>(
+          extent.isVector() ? extent.numRows : extent.numCols, 4)};
+      for (uint16_t i{}; i < count; i++) {
         if (c == "xyzw"[i] || (extent.isVector() && c == "rgba"[i])) {
           return i;
         }
@@ -851,14 +861,22 @@ public:
       : elemType(elemType), sizeName(std::move(sizeName)) {
     displayName = elemType->displayName;
     displayName += '[';
-    if (!sizeName.empty()) {
+    // NOTE: Must test the member — the parameter is moved-from here.
+    if (!this->sizeName.empty()) {
       displayName += '<';
-      displayName += sizeName;
+      displayName += this->sizeName;
       displayName += '>';
     }
     displayName += ']';
     sizeNameStrv = this->sizeName;
   }
+
+  // The self-referential 'sizeNameStrv' below makes copies and moves
+  // unsafe. These objects are interned by 'Context' and only ever used by
+  // pointer.
+  InferredSizeArrayType(const InferredSizeArrayType &) = delete;
+
+  InferredSizeArrayType &operator=(const InferredSizeArrayType &) = delete;
 
   /// \name Virtual interface
   /// \{
@@ -879,6 +897,11 @@ public:
   /// `int[<Size>]`. This may be empty!
   std::string sizeName{};
 
+  /// A stable `std::string_view` of `sizeName`. This must be an object
+  /// with a stable address: `declareCrumb` takes `Span<const
+  /// std::string_view>`, and the single-element `Span` constructor stores
+  /// the address of the object it is given — the `Crumb` name would
+  /// dangle if built from a temporary view.
   std::string_view sizeNameStrv{};
 };
 

@@ -6,6 +6,8 @@
 #include "llvm/Support/Format.h"
 #include "llvm/Support/Parallel.h"
 #include <atomic>
+#include <exception>
+#include <mutex>
 
 #if SMDL_HAS_PTEX
 #include "Ptexture.h"
@@ -35,10 +37,7 @@ Value Emitter::createFunctionImplementation(
       declareParameter(params[i], paramValues[i]);
     callback();
     if (!hasTerminator()) {
-      returns.push_back(Result{RValue(context.getVoidType(), nullptr),
-                               getInsertBlock(), srcLoc});
-      unwind(labelReturn.crumb);
-      builder.CreateBr(labelReturn.block);
+      recordReturn(RValue(context.getVoidType(), nullptr), srcLoc);
     }
     for (size_t i = crumbsToWarnAboutSize; i < crumbsToWarnAbout.size(); i++)
       crumbsToWarnAbout[i]->maybeWarnAboutUnusedValue();
@@ -88,11 +87,10 @@ void Emitter::createFunction(llvm::Function *&llvmFunc, std::string_view name,
                               llvmParamTys, params.isVariadic),
       llvm::Function::InternalLinkage, "", context.llvmModule);
 
-  auto lastIP{builder.saveIP()};
+  llvm::IRBuilderBase::InsertPointGuard ipGuard{builder};
   {
-    SMDL_PRESERVE(state, inlines);
+    SMDL_PRESERVE(state);
     state = {}; // Invalidate
-    inlines.clear();
     builder.SetInsertPoint(
         llvm::BasicBlock::Create(context, "entry", llvmFunc));
     auto llvmArg{llvmFunc->arg_begin()};
@@ -143,15 +141,7 @@ void Emitter::createFunction(llvm::Function *&llvmFunc, std::string_view name,
         llvm::verifyFunction(*llvmFunc, &os))
       srcLoc.throwError("function ", Quoted(name),
                         " LLVM-IR verification failed: ", message);
-    // Inline.
-    for (auto &inlineReq : inlines) {
-      auto result{llvmForceInline(inlineReq.value, inlineReq.isRecursive)};
-      if (!result.isSuccess())
-        inlineReq.srcLoc.logWarn(std::string("cannot force inline: ") +
-                                 result.getFailureReason());
-    }
   }
-  builder.restoreIP(lastIP);
 }
 
 Value Emitter::createAlloca(Type *type, const llvm::Twine &name) {
@@ -279,10 +269,15 @@ Value Emitter::createResult(Type *type, llvm::ArrayRef<Result> results,
     auto block{result.block};
     SMDL_SANITY_CHECK(block->getTerminator());
     if (!isAllIdenticalLValues) {
-      builder.restoreIP(
-          llvm::IRBuilderBase::InsertPoint(block, std::prev(block->end())));
+      // The conversion may emit control flow (e.g. union narrowing), so
+      // detach the terminator, convert with the block open, then re-attach
+      // the terminator to whichever block emission ends in.
+      auto terminator{block->getTerminator()};
+      terminator->removeFromParent();
+      builder.SetInsertPoint(block);
       value = invoke(type, value, srcLoc);
       block = getInsertBlock();
+      terminator->insertInto(block, block->end());
     }
     phiInst->addIncoming(value, block);
   }
@@ -305,7 +300,10 @@ Value Emitter::emit(AST::Decl &decl) {
 
 Value Emitter::emit(AST::Exec &decl) {
   auto returnType{context.getVoidType()};
-  auto llvmFunc{createFunction(".exec", /*isPure=*/false, returnType,
+  // Execs must be pure: the C++ side invokes them as 'void()' (see
+  // 'JIT::Function<void()>' in Compiler.h), so a non-pure exec would read
+  // a garbage '$state' pointer from a register that was never passed.
+  auto llvmFunc{createFunction(".exec", /*isPure=*/true, returnType,
                                ParameterList(), decl.srcLoc,
                                [&] { emit(decl.stmt); })};
   llvmFunc->setLinkage(llvm::Function::ExternalLinkage);
@@ -471,10 +469,11 @@ Value Emitter::emit(AST::AccessIndex &expr) {
             type, std::string(sizeName->name.srcName));
       } else {
         auto size{invoke(context.getIntType(), emit(index.expr), expr.srcLoc)};
-        if (!size.isComptimeInt())
-          expr.srcLoc.throwError(
-              "expected array size expression to resolve to compile-time int");
-        type = context.getArrayType(type, size.getComptimeInt());
+        auto sizeNow{size.getComptimeSignedInt()};
+        if (!sizeNow || *sizeNow < 0)
+          expr.srcLoc.throwError("expected array size expression to resolve "
+                                 "to non-negative compile-time int");
+        type = context.getArrayType(type, uint32_t(*sizeNow));
       }
     }
     return context.getComptimeMetaType(type);
@@ -528,33 +527,10 @@ Value Emitter::emit(AST::Binary &expr) {
     if (valueLhsCond.isComptimeInt()) {
       return valueLhsCond.getComptimeInt() ? valueLhs : emit(expr.exprRhs);
     } else {
-      auto [blockLhs, blockRhs, blockEnd] =
-          createBlocks<3>("else", {".lhs", ".rhs", ".end"});
-      builder.CreateCondBr(valueLhsCond, blockLhs, blockRhs);
-      builder.SetInsertPoint(blockLhs);
-      auto valueLhsIP{builder.saveIP()};
-      llvmMoveBlockToEnd(blockRhs);
-      builder.SetInsertPoint(blockRhs);
-      auto valueRhs{emit(expr.exprRhs)};
-      auto valueRhsIP{builder.saveIP()};
-      auto commonType{context.getCommonType({valueLhs.type, valueRhs.type},
-                                            /*defaultToUnion=*/true,
-                                            expr.srcLoc)};
-      builder.restoreIP(valueLhsIP);
-      valueLhs = invoke(commonType, valueLhs, expr.exprLhs->srcLoc);
-      blockLhs = getInsertBlock();
-      builder.CreateBr(blockEnd);
-      builder.restoreIP(valueRhsIP);
-      valueRhs = invoke(commonType, valueRhs, expr.exprRhs->srcLoc);
-      blockRhs = getInsertBlock();
-      builder.CreateBr(blockEnd);
-      // Create PHI instruction.
-      llvmMoveBlockToEnd(blockEnd);
-      builder.SetInsertPoint(blockEnd);
-      auto phiInst{builder.CreatePHI(commonType->llvmType, 2)};
-      phiInst->addIncoming(valueLhs, blockLhs);
-      phiInst->addIncoming(valueRhs, blockRhs);
-      return RValue(commonType, phiInst);
+      return emitTwoArmMerge(
+          valueLhsCond, "else", [&] { return valueLhs; },
+          expr.exprLhs->srcLoc, [&] { return emit(expr.exprRhs); },
+          expr.exprRhs->srcLoc, expr.srcLoc);
     }
   }
   // Default.
@@ -606,6 +582,11 @@ Value Emitter::emit(AST::ReturnFrom &expr) {
     labelBreak = {};
     labelContinue = {};
     emit(expr.stmt);
+    // A fallthrough path would reach 'blockEnd' without a recorded result
+    // and leave the PHI in 'createResult' short one incoming edge.
+    if (!hasTerminator() && !returns.empty())
+      expr.srcLoc.throwError("'return_from' must 'return' on all control "
+                             "paths");
   });
   llvmMoveBlockToEnd(blockEnd);
   builder.SetInsertPoint(blockEnd);
@@ -616,32 +597,44 @@ Value Emitter::emit(AST::Select &expr) {
   auto cond{invoke(context.getBoolType(), emit(expr.exprCond), expr.srcLoc)};
   if (cond.isComptimeInt())
     return emit(cond.getComptimeInt() ? expr.exprThen : expr.exprElse);
-  auto [blockThen, blockElse, blockEnd] =
-      createBlocks<3>("select", {".then", ".else", ".end"});
-  builder.CreateCondBr(cond, blockThen, blockElse);
-  builder.SetInsertPoint(blockThen);
-  auto valueThen{emit(expr.exprThen)};
-  auto valueThenIP{builder.saveIP()};
-  llvmMoveBlockToEnd(blockElse);
-  builder.SetInsertPoint(blockElse);
-  auto valueElse{emit(expr.exprElse)};
-  auto valueElseIP{builder.saveIP()};
-  auto commonType{context.getCommonType({valueThen.type, valueElse.type},
-                                        /*defaultToUnion=*/true, expr.srcLoc)};
-  builder.restoreIP(valueThenIP);
-  valueThen = invoke(commonType, valueThen, expr.exprThen->srcLoc);
-  blockThen = getInsertBlock();
+  return emitTwoArmMerge(
+      cond, "select", [&] { return emit(expr.exprThen); },
+      expr.exprThen->srcLoc, [&] { return emit(expr.exprElse); },
+      expr.exprElse->srcLoc, expr.srcLoc);
+}
+
+Value Emitter::emitTwoArmMerge(Value cond, const char *name,
+                               const std::function<Value()> &emitArm0,
+                               const SourceLocation &srcLoc0,
+                               const std::function<Value()> &emitArm1,
+                               const SourceLocation &srcLoc1,
+                               const SourceLocation &srcLoc) {
+  auto [blockArm0, blockArm1, blockEnd] =
+      createBlocks<3>(name, {".then", ".else", ".end"});
+  builder.CreateCondBr(cond, blockArm0, blockArm1);
+  builder.SetInsertPoint(blockArm0);
+  auto value0{emitArm0()};
+  auto value0IP{builder.saveIP()};
+  llvmMoveBlockToEnd(blockArm1);
+  builder.SetInsertPoint(blockArm1);
+  auto value1{emitArm1()};
+  auto value1IP{builder.saveIP()};
+  auto commonType{context.getCommonType({value0.type, value1.type},
+                                        /*defaultToUnion=*/true, srcLoc)};
+  builder.restoreIP(value0IP);
+  value0 = invoke(commonType, value0, srcLoc0);
+  blockArm0 = getInsertBlock();
   builder.CreateBr(blockEnd);
-  builder.restoreIP(valueElseIP);
-  valueElse = invoke(commonType, valueElse, expr.exprElse->srcLoc);
-  blockElse = getInsertBlock();
+  builder.restoreIP(value1IP);
+  value1 = invoke(commonType, value1, srcLoc1);
+  blockArm1 = getInsertBlock();
   builder.CreateBr(blockEnd);
   // Create PHI instruction.
   llvmMoveBlockToEnd(blockEnd);
   builder.SetInsertPoint(blockEnd);
   auto phiInst{builder.CreatePHI(commonType->llvmType, 2)};
-  phiInst->addIncoming(valueThen, blockThen);
-  phiInst->addIncoming(valueElse, blockElse);
+  phiInst->addIncoming(value0, blockArm0);
+  phiInst->addIncoming(value1, blockArm1);
   return RValue(commonType, phiInst);
 }
 //--}
@@ -666,13 +659,9 @@ Value Emitter::emit(AST::Compound &stmt) {
 Value Emitter::emit(AST::DoWhile &stmt) {
   auto [blockLoop, blockCond, blockEnd] =
       createBlocks<3>("do_while", {".loop", ".cond", ".end"});
-  handleScope(blockLoop, blockCond,
-              [&, blockCond = blockCond, blockEnd = blockEnd] {
-                labelBreak = {crumb, blockEnd};
-                labelContinue = {crumb, blockCond};
-                inDefer = false;
-                emit(stmt.stmt);
-              });
+  builder.CreateBr(blockLoop);
+  handleLoopScope(blockLoop, blockCond, blockEnd, blockCond,
+                  [&] { emit(stmt.stmt); });
   builder.SetInsertPoint(blockCond);
   builder.CreateCondBr(
       invoke(context.getBoolType(), emit(stmt.expr), stmt.expr->srcLoc),
@@ -690,17 +679,16 @@ Value Emitter::emit(AST::For &stmt) {
   builder.CreateBr(blockCond);
   llvmMoveBlockToEnd(blockCond);
   builder.SetInsertPoint(blockCond);
-  builder.CreateCondBr(
-      invoke(context.getBoolType(), emit(stmt.exprCond), stmt.exprCond->srcLoc),
-      blockLoop, blockEnd);
-  handleScope(blockLoop, blockNext,
-              [&, blockNext = blockNext, blockEnd = blockEnd] {
-                labelBreak = {crumb, blockEnd};
-                labelContinue = {crumb, blockNext};
-                inDefer = false;
-                if (stmt.stmtLoop)
-                  emit(stmt.stmtLoop);
-              });
+  if (stmt.exprCond)
+    builder.CreateCondBr(invoke(context.getBoolType(), emit(stmt.exprCond),
+                                stmt.exprCond->srcLoc),
+                         blockLoop, blockEnd);
+  else
+    builder.CreateBr(blockLoop); // Empty condition is always true
+  handleLoopScope(blockLoop, blockNext, blockEnd, blockNext, [&] {
+    if (stmt.stmtLoop)
+      emit(stmt.stmtLoop);
+  });
   builder.SetInsertPoint(blockNext);
   if (stmt.exprNext)
     emit(stmt.exprNext);
@@ -726,7 +714,7 @@ Value Emitter::emit(AST::If &stmt) {
   auto [blockThen, blockElse, blockEnd] =
       createBlocks<3>("if", {".then", ".else", ".end"});
   if (!stmt.stmtElse)
-    blockElse->removeFromParent();
+    blockElse->eraseFromParent();
   builder.CreateCondBr(cond, blockThen, stmt.stmtElse ? blockElse : blockEnd);
   if (stmt.stmtThen)
     handleScope(blockThen, blockEnd, [&] { emit(stmt.stmtThen); });
@@ -747,6 +735,7 @@ Value Emitter::emit(AST::Switch &stmt) {
     llvm::BasicBlock *block{};
   };
   auto switchCases{llvm::SmallVector<SwitchCase>{}};
+  auto seenCaseValues{llvm::SmallDenseSet<int64_t>{}};
   for (auto &astCase : stmt.cases) {
     if (astCase.isDefault()) {
       if (blockDefault)
@@ -755,11 +744,18 @@ Value Emitter::emit(AST::Switch &stmt) {
           &astCase, nullptr, createBlock(switchNameRef + ".default")});
       blockDefault = switchCases.back().block;
     } else {
-      auto value{emit(astCase.expr)};
-      auto llvmConst{llvm::dyn_cast<llvm::ConstantInt>(value.llvmValue)};
+      auto value{rvalue(emit(astCase.expr))};
+      // Convert bool/int-typed constants to 'int' so every case value has
+      // the switch condition's type, which the LLVM switch requires.
+      if (value.type->isArithmeticScalarInt())
+        value = invoke(context.getIntType(), value, astCase.expr->srcLoc);
+      auto llvmConst{
+          llvm::dyn_cast_if_present<llvm::ConstantInt>(value.llvmValue)};
       if (!llvmConst)
         astCase.expr->srcLoc.throwError(
             "expected 'case' expression to resolve to compile-time int");
+      if (!seenCaseValues.insert(llvmConst->getValue().getSExtValue()).second)
+        astCase.expr->srcLoc.throwError("duplicate 'case' value in 'switch'");
       switchCases.push_back(SwitchCase{
           &astCase, llvmConst,
           createBlock(concat(switchName, ".case.", switchCases.size()))});
@@ -802,13 +798,8 @@ Value Emitter::emit(AST::While &stmt) {
   builder.CreateCondBr(
       invoke(context.getBoolType(), emit(stmt.expr), stmt.expr->srcLoc),
       blockLoop, blockEnd);
-  handleScope(blockLoop, blockCond,
-              [&, blockCond = blockCond, blockEnd = blockEnd] {
-                labelBreak = {crumb, blockEnd};
-                labelContinue = {crumb, blockCond};
-                inDefer = false;
-                emit(stmt.stmt);
-              });
+  handleLoopScope(blockLoop, blockCond, blockEnd, blockCond,
+                  [&] { emit(stmt.stmt); });
   handleBlockEnd(blockEnd);
   return Value();
 }
@@ -926,7 +917,6 @@ Value Emitter::emitOp(AST::UnaryOp op, Value value,
   }
   srcLoc.throwError("unimplemented unary operator ", Quoted(to_string(op)),
                     " for type ", Quoted(value.type->displayName));
-  return Value();
 }
 //--}
 
@@ -1137,10 +1127,18 @@ Value Emitter::emitOp(AST::BinaryOp op, Value lhs, Value rhs,
   if (lhs.type->isEnum() && rhs.type->isEnum()) {
     if (auto llvmOp{llvmArithOp(Scalar::Intent::Int, op)};
         llvmOp && lhs.type == rhs.type)
+      // NOTE: The result stays enum-typed even though it need not be a
+      // declared enumerator — flag-mask idioms like '(mode & m) == flag'
+      // depend on this.
       return RValue(lhs.type, builder.CreateBinOp(*llvmOp, lhs, rhs));
-    if (auto llvmOp{llvmCmpOp(Scalar::Intent::Int, op)})
+    if (auto llvmOp{llvmCmpOp(Scalar::Intent::Int, op)}) {
+      if (lhs.type != rhs.type)
+        srcLoc.throwError("cannot compare different enum types ",
+                          Quoted(lhs.type->displayName), " and ",
+                          Quoted(rhs.type->displayName));
       return RValue(context.getBoolType(),
                     builder.CreateCmp(*llvmOp, lhs, rhs));
+    }
   }
   // Colors
   if ((lhs.type->isColor() &&
@@ -1183,10 +1181,14 @@ Value Emitter::emitOp(AST::BinaryOp op, Value lhs, Value rhs,
   // Strings
   if (lhs.type->isString() && rhs.type->isString() &&
       (op == BINOP_CMP_EQ || op == BINOP_CMP_NE)) {
+    // Compare size+1 bytes so the NUL terminator participates — otherwise
+    // a prefix would compare equal to a longer string.
     auto result{llvm::emitStrNCmp(
         lhs, rhs,
-        llvmEmitCast(builder, accessField(lhs, "size", srcLoc),
-                     builder.getInt64Ty()),
+        builder.CreateAdd(llvmEmitCast(builder,
+                                       accessField(lhs, "size", srcLoc),
+                                       builder.getInt64Ty()),
+                          builder.getInt64(1)),
         builder, context.llvmLayout, &context.llvmTargetLibraryInfo)};
     return RValue(context.getBoolType(), op == BINOP_CMP_EQ
                                              ? builder.CreateIsNull(result)
@@ -1194,7 +1196,7 @@ Value Emitter::emitOp(AST::BinaryOp op, Value lhs, Value rhs,
   }
   // Pointers
   if ((op == BINOP_ADD || op == BINOP_SUB) && lhs.type->isPointer() &&
-      rhs.type->isArithmeticIntegral()) {
+      rhs.type->isArithmeticScalarInt()) {
     if (op == BINOP_SUB)
       rhs = emitOp(UNOP_NEG, rhs, srcLoc);
     return RValue(lhs.type,
@@ -1250,7 +1252,6 @@ Value Emitter::emitOp(AST::BinaryOp op, Value lhs, Value rhs,
   srcLoc.throwError("unimplemented binary operator ", Quoted(to_string(op)),
                     " for argument types ", Quoted(lhs.type->displayName),
                     " and ", Quoted(rhs.type->displayName));
-  return Value();
 }
 //--}
 
@@ -1287,26 +1288,45 @@ SMDL_EXPORT void smdlTabulateAlbedo(const char *name, int num_cos_theta,
   SMDL_SANITY_CHECK(num_cos_theta > 1);
   SMDL_SANITY_CHECK(num_roughness > 1);
   SMDL_SANITY_CHECK(func);
-  auto numCalculationsTodo{num_cos_theta * num_roughness};
+  auto numCalculationsTodo{size_t(num_cos_theta) * size_t(num_roughness)};
   auto numCalculationsDone{std::atomic_int(0)};
-  auto directionalAlbedo{std::vector<float>(size_t(numCalculationsTodo), 0.0f)};
+  auto directionalAlbedo{std::vector<float>(numCalculationsTodo, 0.0f)};
+  // The JIT'd function may throw (e.g. '#panic'), and an exception must
+  // not unwind into LLVM's '-fno-exceptions' thread pool. Capture the
+  // first one and rethrow it on the calling thread.
+  auto firstException{std::exception_ptr{}};
+  auto firstExceptionMutex{std::mutex{}};
   llvm::parallelFor(0, num_cos_theta, [&](size_t i) {
-    float cos_theta{float(i) / float(num_cos_theta - 1)};
-    for (int j = 0; j < num_roughness; j++) {
-      float roughness{float(j) / float(num_roughness - 1)};
-      directionalAlbedo[int(i) * num_roughness + j] =
-          reinterpret_cast<float (*)(float, float)>(const_cast<void *>(func))(
-              cos_theta, roughness);
-      llvm::errs() << llvm::format("\rTabulating '%s': %2.1f%%", name,
-                                   float(double(++numCalculationsDone) * 100.0 /
-                                         double(numCalculationsTodo)));
+    try {
+      float cos_theta{float(i) / float(num_cos_theta - 1)};
+      for (int j = 0; j < num_roughness; j++) {
+        float roughness{float(j) / float(num_roughness - 1)};
+        directionalAlbedo[i * size_t(num_roughness) + size_t(j)] =
+            reinterpret_cast<float (*)(float, float)>(const_cast<void *>(func))(
+                cos_theta, roughness);
+        llvm::errs() << llvm::format(
+            "\rTabulating '%s': %2.1f%%", name,
+            float(double(++numCalculationsDone) * 100.0 /
+                  double(numCalculationsTodo)));
+      }
+    } catch (...) {
+      auto lock{std::lock_guard<std::mutex>(firstExceptionMutex)};
+      if (!firstException)
+        firstException = std::current_exception();
     }
   });
+  if (firstException)
+    std::rethrow_exception(firstException);
   llvm::errs() << '\n';
   {
     std::error_code ec{};
     auto outputFileName{std::string(name) + ".inl"};
     auto outputFile{llvm::raw_fd_stream{outputFileName, ec}};
+    if (ec) {
+      llvm::errs() << "cannot open '" << outputFileName
+                   << "' for writing: " << ec.message() << '\n';
+      return;
+    }
     outputFile << llvm::format(
         "static const std::array<float, %d * %d> %s_directional_albedo = {\n",
         num_cos_theta, num_roughness, name);
@@ -1358,6 +1378,30 @@ Value Emitter::emitIntrinsic(std::string_view name, const ArgumentList &args,
                              const SourceLocation &srcLoc) {
   if (args.isAnyNamed())
     srcLoc.throwError("intrinsics expect only unnamed arguments");
+  if (!getLLVMFunction()) {
+    // At module scope there is no function to emit instructions into. Run
+    // the intrinsic in a scratch function so the IRBuilder cannot crash,
+    // then require that everything constant-folded away.
+    auto scratchFunc{llvm::Function::Create(
+        llvm::FunctionType::get(llvm::Type::getVoidTy(context.llvmContext),
+                                /*isVarArg=*/false),
+        llvm::Function::PrivateLinkage, ".module_scope_intrinsic",
+        &context.llvmModule)};
+    auto blockEntry{
+        llvm::BasicBlock::Create(context.llvmContext, "entry", scratchFunc)};
+    auto ip{builder.saveIP()};
+    SMDL_DEFER([&] {
+      builder.restoreIP(ip);
+      scratchFunc->eraseFromParent();
+    });
+    builder.SetInsertPoint(blockEntry);
+    auto value{emitIntrinsic(name, args, srcLoc)};
+    if (scratchFunc->size() > 1 || !blockEntry->empty())
+      srcLoc.throwError("intrinsic ", Quoted(name),
+                        " does not resolve to a compile-time constant and "
+                        "cannot be used at module scope");
+    return value;
+  }
   auto expectOne{[&]() {
     if (args.size() != 1)
       srcLoc.throwError("intrinsic ", Quoted(name), " expects 1 argument");
@@ -1391,27 +1435,32 @@ Value Emitter::emitIntrinsic(std::string_view name, const ArgumentList &args,
     SMDL_SANITY_CHECK(false);
     return nullptr;
   }};
+  // Shared by '#allocate' and '#bump_allocate', which differ only in the
+  // runtime callee.
+  auto emitAllocateCall{[&](llvm::FunctionCallee callee) {
+    if (auto func{llvm::dyn_cast<llvm::Function>(callee.getCallee())})
+      func->setReturnDoesNotAlias();
+    auto arg0{args.size() >= 1 ? args[0].value : context.getComptimeInt(0)};
+    auto arg1{args.size() == 2 ? args[1].value : context.getComptimeInt(1)};
+    if (!(args.size() == 1 || args.size() == 2) ||
+        !arg0.type->isArithmeticScalarInt() ||
+        !arg1.type->isArithmeticScalarInt())
+      srcLoc.throwError("intrinsic ", Quoted(name),
+                        " expects 1 or 2 int arguments");
+    auto intType{context.getIntType()};
+    arg0 = invoke(intType, rvalue(arg0), srcLoc);
+    arg1 = invoke(intType, rvalue(arg1), srcLoc);
+    return RValue(
+        context.getVoidPointerType(),
+        builder.CreateCall(callee, {arg0.llvmValue, arg1.llvmValue}));
+  }};
   switch (name[0]) {
   default:
     break;
   case 'a': {
     if (name == "allocate") {
-      auto callee{context.getBuiltinCallee("smdlAllocate", &smdlAllocate)};
-      if (auto func{llvm::dyn_cast<llvm::Function>(callee.getCallee())})
-        func->setReturnDoesNotAlias();
-      auto arg0{args.size() >= 1 ? args[0].value : context.getComptimeInt(0)};
-      auto arg1{args.size() == 2 ? args[1].value : context.getComptimeInt(1)};
-      if (!(args.size() == 1 || args.size() == 2) ||
-          !arg0.type->isArithmeticScalarInt() ||
-          !arg1.type->isArithmeticScalarInt())
-        srcLoc.throwError("intrinsic ", Quoted(name),
-                          " expects 1 or 2 int arguments");
-      auto intType{context.getIntType()};
-      arg0 = invoke(intType, rvalue(arg0), srcLoc);
-      arg1 = invoke(intType, rvalue(arg1), srcLoc);
-      return RValue(
-          context.getVoidPointerType(),
-          builder.CreateCall(callee, {arg0.llvmValue, arg1.llvmValue}));
+      return emitAllocateCall(
+          context.getBuiltinCallee("smdlAllocate", &smdlAllocate));
     }
     if (name == "alignof") {
       return context.getComptimeInt(int(context.getAlignOf(expectOneType())));
@@ -1479,7 +1528,8 @@ Value Emitter::emitIntrinsic(std::string_view name, const ArgumentList &args,
       auto commonType{context.getCommonType(
           {args[0].value.type, args[1].value.type, context.getFloatType()},
           /*defaultToUnion=*/false, srcLoc)};
-      SMDL_SANITY_CHECK(commonType->isArithmeticFloatingPoint());
+      SMDL_SANITY_CHECK(commonType->isArithmeticFloatingPoint() ||
+                        commonType->isColor());
       auto value0{invoke(commonType, args[0].value, srcLoc)};
       auto value1{invoke(commonType, args[1].value, srcLoc)};
       return RValue(commonType, builder.CreateBinaryIntrinsic(
@@ -1564,23 +1614,8 @@ Value Emitter::emitIntrinsic(std::string_view name, const ArgumentList &args,
       return RValue(context.getVoidType(), nullptr);
     }
     if (name == "bump_allocate") {
-      auto callee{
-          context.getBuiltinCallee("smdlBumpAllocate", &smdlBumpAllocate)};
-      if (auto func{llvm::dyn_cast<llvm::Function>(callee.getCallee())})
-        func->setReturnDoesNotAlias();
-      auto arg0{args.size() >= 1 ? args[0].value : context.getComptimeInt(0)};
-      auto arg1{args.size() == 2 ? args[1].value : context.getComptimeInt(1)};
-      if (!(args.size() == 1 || args.size() == 2) ||
-          !arg0.type->isArithmeticScalarInt() ||
-          !arg1.type->isArithmeticScalarInt())
-        srcLoc.throwError("intrinsic ", Quoted(name),
-                          " expects 1 or 2 int arguments");
-      auto intType{context.getIntType()};
-      arg0 = invoke(intType, rvalue(arg0), srcLoc);
-      arg1 = invoke(intType, rvalue(arg1), srcLoc);
-      return RValue(
-          context.getVoidPointerType(),
-          builder.CreateCall(callee, {arg0.llvmValue, arg1.llvmValue}));
+      return emitAllocateCall(
+          context.getBuiltinCallee("smdlBumpAllocate", &smdlBumpAllocate));
     }
     if (name == "bump") {
       auto value{rvalue(expectOne())};
@@ -1652,9 +1687,12 @@ Value Emitter::emitIntrinsic(std::string_view name, const ArgumentList &args,
             "intrinsic 'isfpclass' expects 1 vectorized floating point "
             "argument and 1 compile-time int argument");
       auto value{rvalue(args[0].value)};
+      auto arithType{value.type->isColor()
+                         ? static_cast<ColorType *>(value.type)
+                               ->getArithmeticVectorType(context)
+                         : static_cast<ArithmeticType *>(value.type)};
       return RValue(
-          static_cast<ArithmeticType *>(value.type)
-              ->getWithDifferentScalar(context, Scalar::getBool()),
+          arithType->getWithDifferentScalar(context, Scalar::getBool()),
           builder.createIsFPClass(value, args[1].value.getComptimeInt()));
     }
     if (startsWith(name, "is_")) {
@@ -1788,13 +1826,17 @@ Value Emitter::emitIntrinsic(std::string_view name, const ArgumentList &args,
       if (name == "load_texture_3d") {
         auto texture3DType{context.getTexture3DType()};
         auto [fileName, valueGammaAsInt] = expectOneComptimeStringAndOneInt();
-        // TODO
+        // TODO Actually load the texture
+        srcLoc.logWarn("intrinsic 'load_texture_3d' is not implemented "
+                       "yet; returning default texture");
         return invoke(texture3DType, {}, srcLoc);
       }
       if (name == "load_texture_cube") {
         auto textureCubeType{context.getTextureCubeType()};
         auto [fileName, valueGammaAsInt] = expectOneComptimeStringAndOneInt();
-        // TODO
+        // TODO Actually load the texture
+        srcLoc.logWarn("intrinsic 'load_texture_cube' is not implemented "
+                       "yet; returning default texture");
         return invoke(textureCubeType, {}, srcLoc);
       }
       if (name == "load_texture_ptex") {
@@ -2111,6 +2153,14 @@ Value Emitter::emitIntrinsic(std::string_view name, const ArgumentList &args,
       auto value{rvalue(expectOneVectorized())};
       if (value.type->isArithmeticScalar())
         return value;
+      // Widen bool vectors first: add-reducing '<N x i1>' computes the
+      // parity of the lanes, not the count of true lanes.
+      if (value.type->isArithmetic() &&
+          static_cast<ArithmeticType *>(value.type)->scalar.isBoolean())
+        value = invoke(static_cast<ArithmeticType *>(value.type)
+                           ->getWithDifferentScalar(context,
+                                                    Scalar::getInt(32)),
+                       value, srcLoc);
       auto scalarType{scalarTypeOf(value.type)};
       return RValue(scalarType, scalarType->isArithmeticIntegral()
                                     ? builder.CreateAddReduce(value)
@@ -2200,17 +2250,22 @@ Value Emitter::emitIntrinsic(std::string_view name, const ArgumentList &args,
     }
     if (name == "type_int") {
       auto value{rvalue(expectOne())};
-      if (!value.isComptimeInt())
-        srcLoc.throwError("intrinsic 'type_int' expects 1 compile-time int");
+      auto numBits{value.getComptimeSignedInt()};
+      if (!numBits || *numBits < 1 || *numBits > 255)
+        srcLoc.throwError("intrinsic 'type_int' expects 1 compile-time int "
+                          "between 1 and 255");
       return context.getComptimeMetaType(context.getArithmeticType(
-          Scalar::getInt(value.getComptimeInt()), Extent(1)));
+          Scalar::getInt(uint8_t(*numBits)), Extent(1)));
     }
     if (name == "type_float") {
       auto value{rvalue(expectOne())};
-      if (!value.isComptimeInt())
-        srcLoc.throwError("intrinsic 'type_float' expects 1 compile-time int");
+      auto numBits{value.getComptimeSignedInt()};
+      if (!numBits || !(*numBits == 16 || *numBits == 32 || *numBits == 64 ||
+                        *numBits == 80 || *numBits == 128))
+        srcLoc.throwError("intrinsic 'type_float' expects 1 compile-time int "
+                          "in {16, 32, 64, 80, 128}");
       return context.getComptimeMetaType(context.getArithmeticType(
-          Scalar::getFP(value.getComptimeInt()), Extent(1)));
+          Scalar::getFP(uint8_t(*numBits)), Extent(1)));
     }
     if (name == "type_vector") {
       auto reportError{[&] {
@@ -2222,11 +2277,12 @@ Value Emitter::emitIntrinsic(std::string_view name, const ArgumentList &args,
             args[1].value.isComptimeInt()))
         reportError();
       auto type{args[0].value.getComptimeMetaType(context, srcLoc)};
-      auto size{args[1].value.getComptimeInt()};
-      if (!type->isArithmeticScalar() || size < 1)
+      auto size{args[1].value.getComptimeSignedInt()};
+      if (!type->isArithmeticScalar() || !size || *size < 1 || *size > 65535)
         reportError();
       return context.getComptimeMetaType(context.getArithmeticType(
-          static_cast<ArithmeticType *>(type)->scalar, Extent(size)));
+          static_cast<ArithmeticType *>(type)->scalar,
+          Extent(uint16_t(*size))));
     }
     if (name == "type_matrix") {
       auto reportError{[&] {
@@ -2239,13 +2295,15 @@ Value Emitter::emitIntrinsic(std::string_view name, const ArgumentList &args,
             args[2].value.isComptimeInt()))
         reportError();
       auto type{args[0].value.getComptimeMetaType(context, srcLoc)};
-      auto numCols{args[1].value.getComptimeInt()};
-      auto numRows{args[2].value.getComptimeInt()};
-      if (!type->isArithmeticScalar() || numCols < 1 || numRows < 1)
+      auto numCols{args[1].value.getComptimeSignedInt()};
+      auto numRows{args[2].value.getComptimeSignedInt()};
+      if (!type->isArithmeticScalar() ||                  //
+          !numCols || *numCols < 1 || *numCols > 65535 || //
+          !numRows || *numRows < 1 || *numRows > 65535)
         reportError();
-      return context.getComptimeMetaType(
-          context.getArithmeticType(static_cast<ArithmeticType *>(type)->scalar,
-                                    Extent(numCols, numRows)));
+      return context.getComptimeMetaType(context.getArithmeticType(
+          static_cast<ArithmeticType *>(type)->scalar,
+          Extent(uint16_t(*numCols), uint16_t(*numRows))));
     }
     if (name == "transpose") {
       if (!(args.size() == 1 && args[0].value.type->isArithmeticMatrix()))
@@ -2302,8 +2360,11 @@ Value Emitter::emitIntrinsic(std::string_view name, const ArgumentList &args,
       if (texelType->isArithmeticIntegral())
         value =
             emitOp(BINOP_MUL, value,
-                   context.getComptimeFloat(
-                       1.0f / float((1ULL << texelType->scalar.numBits) - 1)),
+                   // Compute in double via ldexp: '1ULL << numBits' is
+                   // undefined for 64-bit texel types.
+                   context.getComptimeFloat(float(
+                       1.0 / (std::ldexp(1.0, texelType->scalar.numBits) -
+                              1.0))),
                    srcLoc);
       if (value.type == context.getFloatType(Extent(4))) // Early out?
         return value;
@@ -2378,7 +2439,6 @@ Value Emitter::emitIntrinsic(std::string_view name, const ArgumentList &args,
     }
   }
   srcLoc.throwError("unimplemented intrinsic ", Quoted(name));
-  return Value();
 }
 //--}
 
@@ -2402,7 +2462,6 @@ Value Emitter::emitCall(Value callee, const ArgumentList &args,
     }
   }
   srcLoc.throwError("unimplemented or invalid call");
-  return Value();
 }
 
 Value Emitter::emitVisit(Value value, const SourceLocation &srcLoc,
@@ -2868,8 +2927,12 @@ void Emitter::resolveImportUsingAliases(
       }
     }
     if (crumbItr) {
+      // Resolve the alias's own path against crumbs declared before it —
+      // starting at the alias itself would recurse forever on
+      // `using foo = foo::bar;`.
       resolveImportUsingAliases(
-          crumbItr, static_cast<AST::UsingAlias *>(crumbItr->node)->importPath,
+          crumbItr->prev,
+          static_cast<AST::UsingAlias *>(crumbItr->node)->importPath,
           resolvedImportPath);
     } else {
       resolvedImportPath.push_back(importPathElem);

@@ -6,7 +6,9 @@
 #include <filesystem>
 #include <iostream>
 
+#include "llvm/ExecutionEngine/Orc/AbsoluteSymbols.h"
 #include "llvm/ExecutionEngine/Orc/LLJIT.h"
+#include "llvm/ExecutionEngine/Orc/Mangling.h"
 #include "llvm/ExecutionEngine/Orc/ThreadSafeModule.h"
 #include "llvm/Support/Parallel.h"
 
@@ -22,162 +24,224 @@ namespace smdl {
 Compiler::Compiler(uint32_t wavelengthBaseMax)
     : wavelengthBaseMax(wavelengthBaseMax) {}
 
-Compiler::~Compiler() {
+/// Sort JIT handle records by module filename, then line number.
+template <typename T> static void sortByFileAndLine(std::vector<T> &elems) {
+  std::sort(elems.begin(), elems.end(),
+            [](const auto &lhs, const auto &rhs) {
+              return std::pair(std::string_view(lhs.moduleFileName),
+                               lhs.lineNo) <
+                     std::pair(std::string_view(rhs.moduleFileName),
+                               rhs.lineNo);
+            });
+}
+
+/// Visit `[itrFirst, itrLast)` runs of records that share a module
+/// filename, assuming the records are sorted by `sortByFileAndLine`.
+template <typename Iterator, typename Visitor>
+static void forEachFileGroup(Iterator itr, Iterator itrEnd,
+                             Visitor &&visitor) {
+  while (itr != itrEnd) {
+    auto itrLast{itr};
+    while (itrLast != itrEnd &&
+           itrLast->moduleFileName == itr->moduleFileName)
+      ++itrLast;
+    visitor(itr, itrLast);
+    itr = itrLast;
+  }
+}
+
+Compiler::~Compiler() = default;
+
+void Ptexture::release() noexcept {
 #if SMDL_HAS_PTEX
-  for (auto &[fileHash, ptexture] : mPtextures) {
-    if (ptexture.textureFilter) {
-      static_cast<PtexFilter *>(ptexture.textureFilter)->release();
-      ptexture.textureFilter = nullptr;
-    }
-    if (ptexture.texture) {
-      static_cast<PtexTexture *>(ptexture.texture)->release();
-      ptexture.texture = nullptr;
-    }
+  if (textureFilter) {
+    static_cast<PtexFilter *>(textureFilter)->release();
+  }
+  if (texture) {
+    static_cast<PtexTexture *>(texture)->release();
   }
 #endif // #if SMDL_HAS_PTEX
+  texture = nullptr;
+  textureFilter = nullptr;
+  channelCount = 0;
+  alphaIndex = -1;
 }
 
-std::optional<Error> Compiler::add(std::string fileOrDirName) {
+std::optional<Error> Compiler::add(std::string fileOrDirName) noexcept {
   SMDL_PROFILER_ENTRY("Compiler::add()", fileOrDirName.c_str());
-  auto addFile{[&](std::string fileName) {
-    if (llvm::StringRef(fileName).ends_with_insensitive(".mdr")) {
-      SMDL_LOG_DEBUG("Adding MDL archive ", QuotedPath(fileName));
-      auto archive{Archive{fileName}};
-      for (int i = 0; i < archive.get_file_count(); i++) {
-        if (auto entryPath{joinPaths(fileName, archive.get_file_name(i))};
-            hasExtension(entryPath, ".mdl")) {
-          if (mModuleFileNames.insert(entryPath).second) {
-            SMDL_LOG_DEBUG("Adding MDL file from archive ",
-                           QuotedPath(entryPath));
-            mModules.emplace_back(Module::loadFromFileExtractedFromArchive(
-                entryPath, archive.extract_file(i)));
+  // The filesystem iterators, 'Archive', and 'Module::loadFromFile' all
+  // throw; catch everything so the 'optional<Error>' contract holds.
+  return catchAndReturnError([&] {
+    auto addFile{[&](std::string fileName) {
+      if (llvm::StringRef(fileName).ends_with_insensitive(".mdr")) {
+        SMDL_LOG_DEBUG("Adding MDL archive ", QuotedPath(fileName));
+        auto archive{Archive{fileName}};
+        for (int i = 0; i < archive.get_file_count(); i++) {
+          if (auto entryPath{joinPaths(fileName, archive.get_file_name(i))};
+              hasExtension(entryPath, ".mdl")) {
+            if (mModuleFileNames.count(entryPath) == 0) {
+              SMDL_LOG_DEBUG("Adding MDL file from archive ",
+                             QuotedPath(entryPath));
+              mModules.emplace_back(Module::loadFromFileExtractedFromArchive(
+                  entryPath, archive.extract_file(i)));
+              // Only register the name once the load succeeds, so a failed
+              // file can be retried instead of being silently skipped.
+              mModuleFileNames.insert(entryPath);
+            }
           }
         }
-      }
-    } else {
-      if (mModuleFileNames.insert(fileName).second) {
-        SMDL_LOG_DEBUG("Adding MDL file ", QuotedPath(fileName));
-        mModules.emplace_back(Module::loadFromFile(fileName));
-      }
-    }
-  }};
-  if (auto maybePath{fileLocator.locate(
-          fileOrDirName, {}, FileLocator::REGULAR_FILES | FileLocator::DIRS)}) {
-    auto &path{*maybePath};
-    if (isFile(path)) {
-      addFile(path);
-      return std::nullopt;
-    } else if (isDirectory(path) && mModuleDirNames.insert(path).second) {
-      SMDL_LOG_DEBUG("Adding MDL directory ", QuotedPath(path));
-      mModuleDirSearchPaths.emplace_back(path);
-      for (const auto &entry : std::filesystem::directory_iterator(path)) {
-        if (auto entryPath{makePathCanonical(entry.path().string())};
-            isFile(entryPath) && hasExtension(entryPath, ".mdr")) {
-          addFile(entryPath);
+      } else {
+        if (mModuleFileNames.count(fileName) == 0) {
+          SMDL_LOG_DEBUG("Adding MDL file ", QuotedPath(fileName));
+          mModules.emplace_back(Module::loadFromFile(fileName));
+          mModuleFileNames.insert(fileName);
         }
       }
-      for (const auto &entry :
-           std::filesystem::recursive_directory_iterator(path)) {
-        if (auto entryPath{makePathCanonical(entry.path().string())};
-            isFile(entryPath) && (hasExtension(entryPath, ".mdl") ||
-                                  hasExtension(entryPath, ".smdl"))) {
-          addFile(entryPath);
+    }};
+    if (auto maybePath{fileLocator.locate(
+            fileOrDirName, {},
+            FileLocator::REGULAR_FILES | FileLocator::DIRS)}) {
+      auto &path{*maybePath};
+      if (isFile(path)) {
+        addFile(path);
+        return;
+      } else if (isDirectory(path) && mModuleDirNames.insert(path).second) {
+        SMDL_LOG_DEBUG("Adding MDL directory ", QuotedPath(path));
+        mModuleDirSearchPaths.emplace_back(path);
+        for (const auto &entry : std::filesystem::directory_iterator(path)) {
+          if (auto entryPath{makePathCanonical(entry.path().string())};
+              isFile(entryPath) && hasExtension(entryPath, ".mdr")) {
+            addFile(entryPath);
+          }
         }
+        for (const auto &entry :
+             std::filesystem::recursive_directory_iterator(path)) {
+          if (auto entryPath{makePathCanonical(entry.path().string())};
+              isFile(entryPath) && (hasExtension(entryPath, ".mdl") ||
+                                    hasExtension(entryPath, ".smdl"))) {
+            addFile(entryPath);
+          }
+        }
+        return;
       }
-      return std::nullopt;
     }
-  }
-  return Error(concat("cannot locate ", Quoted(fileOrDirName)));
+    throw Error(concat("cannot locate ", Quoted(fileOrDirName)));
+  });
 }
 
-std::optional<Error> Compiler::compile(OptLevel optLevel) {
+void Compiler::resetForRecompile() {
+  // Free the previous JIT first: this invalidates every function pointer
+  // previously handed out, per the lifetime contract on the class.
+  mLLVMJit.reset();
+  mJITSessionErrors.clear();
+  mImages.clear();
+  mPtextures.clear();
+  mBSDFMeasurements.clear();
+  mLightProfiles.clear();
+  mSpectrums.clear();
+  mSpectrumLibraries.clear();
+  mBuiltinCalleeAddresses.clear();
+  mRGBToColor.func = nullptr;
+  mColorToRGB.func = nullptr;
+  mMaterials.clear();
+  mUnitTests.clear();
+  mExecs.clear();
+  mLLVMContext = std::make_unique<llvm::LLVMContext>();
+  mLLVMModule = std::make_unique<llvm::Module>("MDL", *mLLVMContext);
+  mLLVMModule->setTargetTriple(
+      llvm::Triple(llvm::StringRef(NativeTarget::get().triple)));
+  mLLVMModule->setDataLayout(NativeTarget::get().machine->createDataLayout());
+  // Be explicit that the JIT links against the host process's own symbols:
+  // '@(foreign)' declarations and emitted libcalls (e.g. 'strncmp')
+  // resolve via 'dlsym' on the current process.
+  mLLVMJit = llvmThrowIfError(llvm::orc::LLJITBuilder()
+                                  .setLinkProcessSymbolsByDefault(true)
+                                  .create());
+  mLLVMJit->getExecutionSession().setErrorReporter([this](llvm::Error error) {
+    auto message{llvm::toString(std::move(error))};
+    SMDL_LOG_ERROR("JIT session error: ", message);
+    if (!mJITSessionErrors.empty())
+      mJITSessionErrors += '\n';
+    mJITSessionErrors += message;
+  });
+}
+
+std::optional<Error> Compiler::compile(OptLevel optLevel) noexcept {
   SMDL_PROFILER_ENTRY("Compiler::compile()");
-  {
-    mImages.clear();
-    mPtextures.clear();
-    mBSDFMeasurements.clear();
-    mLightProfiles.clear();
-    mLLVMJit.reset();
-    llvm::ExitOnError exitOnError;
-    auto llvmContext{std::make_unique<llvm::LLVMContext>()};
-    auto llvmModule{std::make_unique<llvm::Module>("MDL", *llvmContext)};
-    llvmModule->setTargetTriple(
-        llvm::Triple(llvm::StringRef(NativeTarget::get().triple)));
-    llvmModule->setDataLayout(NativeTarget::get().machine->createDataLayout());
-    mLLVMJitModule = std::make_unique<llvm::orc::ThreadSafeModule>(
-        std::move(llvmModule), std::move(llvmContext));
-    mLLVMJit = exitOnError(llvm::orc::LLJITBuilder().create());
-    mRGBToColor.func = nullptr;
-    mColorToRGB.func = nullptr;
-    mMaterials.clear();
-    mUnitTests.clear();
-  }
-  auto initializeEntry{profilerEntryBegin("Initialize")};
-  Context context{*this};
-  for (auto &module_ : mModules)
-    module_->reset();
-  profilerEntryEnd(initializeEntry);
-  {
-    SMDL_PROFILER_ENTRY("Parse AST");
+  // The 'Context' constructor and the emit phase can throw; catch
+  // everything so the 'optional<Error>' contract holds instead of exiting
+  // or terminating the host process.
+  return catchAndReturnError([&] {
+    resetForRecompile();
+    auto initializeEntry{profilerEntryBegin("Initialize")};
+    Context context{*this};
     for (auto &module_ : mModules)
-      if (auto error{module_->parse(mAllocator)})
-        return error;
-  }
-  {
-    SMDL_PROFILER_ENTRY("Emit LLVM-IR");
-    for (auto &module_ : mModules)
-      if (auto error{module_->compile(context)})
-        return error;
-  }
-  // Sort JIT materials by filename and line number in case we
-  // want to print them later
-  std::sort(
-      mMaterials.begin(), mMaterials.end(),
-      [](const auto &lhs, const auto &rhs) {
-        return std::pair(std::string_view(lhs.moduleFileName), lhs.lineNo) <
-               std::pair(std::string_view(rhs.moduleFileName), rhs.lineNo);
+      module_->reset();
+    profilerEntryEnd(initializeEntry);
+    {
+      SMDL_PROFILER_ENTRY("Parse AST");
+      for (auto &module_ : mModules)
+        if (auto error{module_->parse(mAllocator)})
+          throw std::move(*error);
+    }
+    {
+      SMDL_PROFILER_ENTRY("Emit LLVM-IR");
+      for (auto &module_ : mModules)
+        if (auto error{module_->compile(context)})
+          throw std::move(*error);
+    }
+    // Sort JIT materials and unit tests by filename and line number in
+    // case we want to print them later.
+    sortByFileAndLine(mMaterials);
+    sortByFileAndLine(mUnitTests);
+    // Finish loading images.
+    if (!mImages.empty()) {
+      SMDL_PROFILER_ENTRY("Load images in parallel");
+      SMDL_LOG_INFO("Loading images ...");
+      auto now{std::chrono::steady_clock::now()};
+      auto imageEntries{
+          std::vector<std::pair<const MD5FileHash *, Image *>>()};
+      imageEntries.reserve(mImages.size());
+      for (auto &[fileHash, image] : mImages)
+        imageEntries.emplace_back(fileHash, &image);
+      llvm::parallelFor(0, imageEntries.size(), [&](size_t i) {
+        auto fileHash{imageEntries[i].first};
+        auto image{imageEntries[i].second};
+        SMDL_PROFILER_ENTRY("Load image",
+                            fileHash->canonicalFileNames[0].c_str());
+        SMDL_LOG_DEBUG("Loading image ",
+                       QuotedPath(fileHash->canonicalFileNames[0]), " ...");
+        // A decode failure must not unwind into LLVM's thread pool (LLVM
+        // is built '-fno-exceptions'); warn and continue with the image's
+        // pre-allocated (zeroed) texels, matching the 'loadImage' policy.
+        if (auto error{catchAndReturnError([&] {
+              image->finishLoad();
+              // NOTE: Images flipped vertically (at least for now) because
+              // it makes the implementation of the tex evaluation functions
+              // more straightforward
+              image->flipVertically();
+            })}) {
+          SMDL_LOG_WARN("cannot load ",
+                        QuotedPath(fileHash->canonicalFileNames[0]), ": ",
+                        error->message);
+        }
       });
-  // Sort JIT unit tests by filename and line number for similar reasons
-  std::sort(
-      mUnitTests.begin(), mUnitTests.end(),
-      [](const auto &lhs, const auto &rhs) {
-        return std::pair(std::string_view(lhs.moduleFileName), lhs.lineNo) <
-               std::pair(std::string_view(rhs.moduleFileName), rhs.lineNo);
-      });
-  // Finish loading images.
-  if (!mImages.empty()) {
-    SMDL_PROFILER_ENTRY("Load images in parallel");
-    SMDL_LOG_INFO("Loading images ...");
-    auto now{std::chrono::steady_clock::now()};
-    llvm::parallelFor(0, mImages.size(), [&](size_t i) {
-      auto &[fileHash, image] = *std::next(mImages.begin(), ptrdiff_t(i));
-      SMDL_PROFILER_ENTRY("Load image",
-                          fileHash->canonicalFileNames[0].c_str());
-      SMDL_LOG_DEBUG("Loading image ",
-                     QuotedPath(fileHash->canonicalFileNames[0]), " ...");
-      image.finishLoad();
-      // NOTE: Images flipped vertically (at least for now) because it
-      // makes the implementation of the tex evaluation functions more
-      // straightforward
-      image.flipVertically();
-    });
-    auto duration{std::chrono::duration_cast<std::chrono::microseconds>(
-                      std::chrono::steady_clock::now() - now)
-                      .count()};
-    SMDL_LOG_INFO("Loading images done. [", std::to_string(duration * 1e-6),
-                  " seconds]");
-  }
-  if (optLevel != OPT_LEVEL_NONE) {
-    SMDL_PROFILER_ENTRY("Optimize LLVM-IR");
-    mLLVMJitModule->withModuleDo([&](llvm::Module &llvmModule) {
+      auto duration{std::chrono::duration_cast<std::chrono::microseconds>(
+                        std::chrono::steady_clock::now() - now)
+                        .count()};
+      SMDL_LOG_INFO("Loading images done. [", std::to_string(duration * 1e-6),
+                    " seconds]");
+    }
+    if (optLevel != OPT_LEVEL_NONE) {
+      SMDL_PROFILER_ENTRY("Optimize LLVM-IR");
       LLVMOptimizer llvmOptimizer{};
       llvmOptimizer.run(
-          llvmModule, optLevel == OPT_LEVEL_O1   ? llvm::OptimizationLevel::O1
-                      : optLevel == OPT_LEVEL_O2 ? llvm::OptimizationLevel::O2
-                                                 : llvm::OptimizationLevel::O3);
-    });
-  }
-  return std::nullopt;
+          *mLLVMModule, optLevel == OPT_LEVEL_O1 ? llvm::OptimizationLevel::O1
+                        : optLevel == OPT_LEVEL_O2
+                            ? llvm::OptimizationLevel::O2
+                            : llvm::OptimizationLevel::O3);
+    }
+  });
 }
 
 std::optional<Error>
@@ -192,152 +256,179 @@ Compiler::formatSourceCode(const FormatOptions &formatOptions) noexcept {
   return std::nullopt;
 }
 
-llvm::LLVMContext &Compiler::getLLVMContext() noexcept {
-  SMDL_SANITY_CHECK(mLLVMJitModule.get() != nullptr);
-  // TODO Unsafe?
-  llvm::LLVMContext *context{};
-  mLLVMJitModule.get()->getContext().withContextDo(
-      [&](auto *C) { context = C; });
-  return *context;
+llvm::LLVMContext &Compiler::getLLVMContext() {
+  if (!mLLVMContext)
+    throw Error("no LLVM context: 'compile()' must be called first (and "
+                "'jitCompile()' consumes it)");
+  return *mLLVMContext;
 }
 
-llvm::Module &Compiler::getLLVMModule() noexcept {
-  SMDL_SANITY_CHECK(mLLVMJitModule.get() != nullptr);
-  return *mLLVMJitModule.get()->getModuleUnlocked();
+llvm::Module &Compiler::getLLVMModule() {
+  if (!mLLVMModule)
+    throw Error("no LLVM module: 'compile()' must be called first (and "
+                "'jitCompile()' consumes it)");
+  return *mLLVMModule;
+}
+
+/// Look up the resource for the given file in `resources`, running `loader`
+/// exactly once per distinct file. A load failure is a warning, not an
+/// error: the resource stays default-constructed and rendering continues.
+template <typename T, typename Loader>
+static T &loadResource(std::map<const MD5FileHash *, T> &resources,
+                       MD5FileHasher &fileHasher, const std::string &fileName,
+                       const SourceLocation &srcLoc, Loader &&loader) {
+  auto [itr, inserted] = resources.try_emplace(fileHasher[fileName]);
+  auto &resource{itr->second};
+  if (inserted) {
+    if (auto error{std::invoke(std::forward<Loader>(loader), resource)}) {
+      srcLoc.logWarn(error->message);
+    }
+  }
+  return resource;
 }
 
 const Image &Compiler::loadImage(const std::string &fileName,
                                  const SourceLocation &srcLoc) {
-  auto [itr, inserted] = mImages.try_emplace(mFileHasher[fileName]);
-  auto &image{itr->second};
-  if (inserted) {
-    SMDL_PROFILER_ENTRY("Compiler::loadImage()", fileName.c_str());
-    if (auto error{image.startLoad(fileName)}) {
-      srcLoc.logWarn(error->message);
-    }
-  }
-  return image;
+  return loadResource(mImages, mFileHasher, fileName, srcLoc,
+                      [&](Image &image) {
+                        SMDL_PROFILER_ENTRY("Compiler::loadImage()",
+                                            fileName.c_str());
+                        return image.startLoad(fileName);
+                      });
 }
 
 const Ptexture &Compiler::loadPtexture(const std::string &fileName,
                                        const SourceLocation &srcLoc) {
-  auto [itr, inserted] = mPtextures.try_emplace(mFileHasher[fileName]);
-  auto &ptexture{itr->second};
-  if (inserted) {
+  return loadResource(
+      mPtextures, mFileHasher, fileName, srcLoc,
+      [&](Ptexture &ptexture) -> std::optional<Error> {
 #if SMDL_HAS_PTEX
-    SMDL_PROFILER_ENTRY("Compiler::loadPtexture()", fileName.c_str());
-    Ptex::String message{};
-    auto texture{PtexTexture::open(fileName.c_str(), message,
-                                   /*premultiply=*/false)};
-    if (!texture) {
-      srcLoc.logWarn(
-          concat("cannot load ", QuotedPath(fileName), ": ", message.c_str()));
-    } else {
-      ptexture.texture = texture;
-      ptexture.textureFilter = PtexFilter::getFilter(
-          texture, PtexFilter::Options(PtexFilter::f_bilinear));
-      ptexture.channelCount = texture->numChannels();
-      ptexture.alphaIndex = texture->alphaChannel();
-    }
+        SMDL_PROFILER_ENTRY("Compiler::loadPtexture()", fileName.c_str());
+        Ptex::String message{};
+        auto texture{PtexTexture::open(fileName.c_str(), message,
+                                       /*premultiply=*/false)};
+        if (!texture)
+          return Error(concat("cannot load ", QuotedPath(fileName), ": ",
+                              message.c_str()));
+        ptexture.texture = texture;
+        // NOTE: No shared 'PtexFilter' — 'PtexFilter::eval' mutates filter
+        // members, so 'smdlPtexEvaluate' maintains per-thread filters.
+        ptexture.channelCount = texture->numChannels();
+        ptexture.alphaIndex = texture->alphaChannel();
+        return std::nullopt;
 #else
-    srcLoc.logWarn(
-        concat("cannot load ", quoted_path(fileName), ": built without ptex!"));
+        return Error(concat("cannot load ", QuotedPath(fileName),
+                            ": built without ptex!"));
 #endif // #if SMDL_HAS_PTEX
-  }
-  return ptexture;
+      });
 }
 
 const BSDFMeasurement &
 Compiler::loadBSDFMeasurement(const std::string &fileName,
                               const SourceLocation &srcLoc) {
-  auto [itr, inserted] = mBSDFMeasurements.try_emplace(mFileHasher[fileName]);
-  auto &bsdfMeasurement{itr->second};
-  if (inserted) {
-    SMDL_PROFILER_ENTRY("Compiler::loadBSDFMeasurement()", fileName.c_str());
-    if (auto error{bsdfMeasurement.loadFromFile(fileName)}) {
-      srcLoc.logWarn(error->message);
-    }
-  }
-  return bsdfMeasurement;
+  return loadResource(mBSDFMeasurements, mFileHasher, fileName, srcLoc,
+                      [&](BSDFMeasurement &bsdfMeasurement) {
+                        SMDL_PROFILER_ENTRY("Compiler::loadBSDFMeasurement()",
+                                            fileName.c_str());
+                        return bsdfMeasurement.loadFromFile(fileName);
+                      });
 }
 
 const LightProfile &Compiler::loadLightProfile(const std::string &fileName,
                                                const SourceLocation &srcLoc) {
-  auto [itr, inserted] = mLightProfiles.try_emplace(mFileHasher[fileName]);
-  auto &lightProfile{itr->second};
-  if (inserted) {
-    SMDL_PROFILER_ENTRY("Compiler::loadLightProfile()", fileName.c_str());
-    if (auto error{lightProfile.loadFromFile(fileName)}) {
-      srcLoc.logWarn(error->message);
-    }
-  }
-  return lightProfile;
+  return loadResource(mLightProfiles, mFileHasher, fileName, srcLoc,
+                      [&](LightProfile &lightProfile) {
+                        SMDL_PROFILER_ENTRY("Compiler::loadLightProfile()",
+                                            fileName.c_str());
+                        return lightProfile.loadFromFile(fileName);
+                      });
 }
 
 SpectrumView Compiler::loadSpectrum(const std::string &fileName,
                                     const SourceLocation &srcLoc) {
-  auto [itr, inserted] = mSpectrums.try_emplace(mFileHasher[fileName]);
-  auto &spectrum{itr->second};
-  if (inserted) {
-    if (auto error{spectrum.loadFromFile(fileName)}) {
-      srcLoc.logWarn(error->message);
-    }
-  }
-  return SpectrumView(spectrum);
+  return SpectrumView(loadResource(mSpectrums, mFileHasher, fileName, srcLoc,
+                                   [&](Spectrum &spectrum) {
+                                     SMDL_PROFILER_ENTRY(
+                                         "Compiler::loadSpectrum()",
+                                         fileName.c_str());
+                                     return spectrum.loadFromFile(fileName);
+                                   }));
 }
 
 SpectrumView Compiler::loadSpectrum(const std::string &fileName, int curveIndex,
                                     const SourceLocation &srcLoc) {
-  auto [itr, inserted] = mSpectrumLibraries.try_emplace(mFileHasher[fileName]);
-  auto &spectrumLibrary{itr->second};
-  if (inserted) {
-    SMDL_PROFILER_ENTRY("Compiler::loadSpectrum()", fileName.c_str());
-    if (auto error{spectrumLibrary.loadFromFile(fileName)}) {
-      srcLoc.logWarn(error->message);
-    }
-  }
-  return spectrumLibrary.getCurveByIndex(curveIndex);
+  return loadSpectrumLibrary(fileName, srcLoc).getCurveByIndex(curveIndex);
 }
 
 SpectrumView Compiler::loadSpectrum(const std::string &fileName,
                                     const std::string &curveName,
                                     const SourceLocation &srcLoc) {
-  auto [itr, inserted] = mSpectrumLibraries.try_emplace(mFileHasher[fileName]);
-  auto &spectrumLibrary{itr->second};
-  if (inserted) {
-    SMDL_PROFILER_ENTRY("Compiler::loadSpectrum()", fileName.c_str());
-    if (auto error{spectrumLibrary.loadFromFile(fileName)}) {
-      srcLoc.logWarn(error->message);
-    }
-  }
-  return spectrumLibrary.getCurveByName(curveName);
+  return loadSpectrumLibrary(fileName, srcLoc).getCurveByName(curveName);
 }
 
-std::string Compiler::dump(DumpFormat dumpFormat) {
-  if (dumpFormat == DUMP_FORMAT_IR) {
-    std::string str{};
-    llvm::raw_string_ostream os{str};
-    os << getLLVMModule();
-    return str;
-  } else {
-    llvm::SmallVector<char> str{};
-    llvm::raw_svector_ostream os{str};
-    llvm::legacy::PassManager passManager{};
-    if (NativeTarget::get().machine->addPassesToEmitFile(
-            passManager, os, nullptr,
-            dumpFormat == DUMP_FORMAT_ASM ? llvm::CodeGenFileType::AssemblyFile
-                                          : llvm::CodeGenFileType::ObjectFile))
-      return "cannot dump";
-    passManager.run(getLLVMModule());
-    return std::string(os.str());
-  }
+const SpectrumLibrary &
+Compiler::loadSpectrumLibrary(const std::string &fileName,
+                              const SourceLocation &srcLoc) {
+  return loadResource(mSpectrumLibraries, mFileHasher, fileName, srcLoc,
+                      [&](SpectrumLibrary &spectrumLibrary) {
+                        SMDL_PROFILER_ENTRY("Compiler::loadSpectrum()",
+                                            fileName.c_str());
+                        return spectrumLibrary.loadFromFile(fileName);
+                      });
+}
+
+std::optional<Error> Compiler::dump(DumpFormat dumpFormat,
+                                    std::string &out) noexcept {
+  return catchAndReturnError([&] {
+    if (dumpFormat == DUMP_FORMAT_IR) {
+      llvm::raw_string_ostream os{out};
+      os << getLLVMModule();
+    } else {
+      llvm::SmallVector<char> str{};
+      llvm::raw_svector_ostream os{str};
+      llvm::legacy::PassManager passManager{};
+      if (NativeTarget::get().machine->addPassesToEmitFile(
+              passManager, os, nullptr,
+              dumpFormat == DUMP_FORMAT_ASM
+                  ? llvm::CodeGenFileType::AssemblyFile
+                  : llvm::CodeGenFileType::ObjectFile))
+        throw Error("cannot emit assembly or object code for the native "
+                    "target");
+      // The codegen passes mutate the IR, so run them on a clone to keep
+      // the module later handed to the JIT pristine.
+      auto clonedModule{llvm::CloneModule(getLLVMModule())};
+      passManager.run(*clonedModule);
+      out = std::string(os.str());
+    }
+  });
 }
 
 std::optional<Error> Compiler::jitCompile() noexcept {
   SMDL_PROFILER_ENTRY("Compiler::jit_compile()");
-  return catchAndReturnError([&] {
-    llvmThrowIfError(mLLVMJit->addIRModule(std::move(*mLLVMJitModule)));
-    mLLVMJitModule.reset();
+  auto error{catchAndReturnError([&] {
+    if (!mLLVMJit || !mLLVMModule || !mLLVMContext)
+      throw Error("nothing to JIT-compile: 'compile()' must be called first");
+    // Define the builtin runtime callees ('smdlPanic', 'smdlBumpAllocate',
+    // ...) as absolute symbols so they resolve even when the host process
+    // does not export its own symbols (e.g. static link without
+    // '--export-dynamic').
+    if (!mBuiltinCalleeAddresses.empty()) {
+      auto mangle{llvm::orc::MangleAndInterner(mLLVMJit->getExecutionSession(),
+                                               mLLVMJit->getDataLayout())};
+      auto symbolMap{llvm::orc::SymbolMap{}};
+      for (const auto &[calleeName, calleeAddr] : mBuiltinCalleeAddresses)
+        symbolMap[mangle(calleeName)] = llvm::orc::ExecutorSymbolDef(
+            llvm::orc::ExecutorAddr::fromPtr(calleeAddr),
+            llvm::JITSymbolFlags::Exported | llvm::JITSymbolFlags::Callable);
+      llvmThrowIfError(mLLVMJit->getMainJITDylib().define(
+          llvm::orc::absoluteSymbols(std::move(symbolMap))));
+    }
+    // Hand the module to the JIT, dropping our handles up front — a failed
+    // call must not leave moved-from state behind for 'dump()' or
+    // 'getLLVMModule()' to trip over.
+    auto llvmJitModule{llvm::orc::ThreadSafeModule(std::move(mLLVMModule),
+                                                   std::move(mLLVMContext))};
+    llvmThrowIfError(mLLVMJit->addIRModule(std::move(llvmJitModule)));
     jitLookupOrThrow(mColorToRGB);
     jitLookupOrThrow(mRGBToColor);
     for (auto &jitMaterial : mMaterials) {
@@ -356,13 +447,19 @@ std::optional<Error> Compiler::jitCompile() noexcept {
       module_->reset();
     }
     mAllocator.reset();
-  });
+  })};
+  if (error && !mJITSessionErrors.empty()) {
+    error->message += "\nJIT session errors:\n";
+    error->message += mJITSessionErrors;
+  }
+  return error;
 }
 
-void *Compiler::jitLookup(std::string_view name) noexcept {
+void *Compiler::jitLookup(std::string_view name) {
   llvm::Expected<llvm::orc::ExecutorAddr> symbol{mLLVMJit->lookup(name)};
   if (!symbol)
-    return nullptr;
+    throw Error(concat("cannot resolve JIT symbol ", Quoted(name), ": ",
+                       llvm::toString(symbol.takeError())));
   return symbol->toPtr<void *>();
 }
 
@@ -423,60 +520,87 @@ void Compiler::convertRGBToColor(const State &state, const float3 &rgb,
 
 std::optional<Error> Compiler::runUnitTests(const State &state) noexcept {
   return catchAndReturnError([&] {
-    for (auto itr0 = mUnitTests.begin(); itr0 != mUnitTests.end();) {
-      auto itr1{itr0};
-      while (itr1 != mUnitTests.end() &&
-             itr1->moduleFileName == itr0->moduleFileName) {
-        ++itr1;
-      }
-      std::cerr << concat("Running tests in ", QuotedPath(itr0->moduleFileName),
-                          ":\n");
-      for (; itr0 != itr1; ++itr0) {
-        std::cerr << concat("  ", Quoted(itr0->testName), " (line ",
-                            itr0->lineNo, ") ... ");
-        try {
-          SMDL_SANITY_CHECK(itr0->test);
-          itr0->test(state);
-          std::cerr << "success\n";
-        } catch (const Error &error) {
-          std::cerr << "failure\n";
-          throw;
-        }
-      }
-      std::cerr << '\n';
-    }
+    forEachFileGroup(
+        mUnitTests.begin(), mUnitTests.end(), [&](auto itr0, auto itr1) {
+          std::cerr << concat("Running tests in ",
+                              QuotedPath(itr0->moduleFileName), ":\n");
+          for (; itr0 != itr1; ++itr0) {
+            std::cerr << concat("  ", Quoted(itr0->testName), " (line ",
+                                itr0->lineNo, ") ... ");
+            try {
+              if (!itr0->test)
+                throw Error(concat("unit test ", Quoted(itr0->testName),
+                                   " has no JIT-compiled function"));
+              itr0->test(state);
+              std::cerr << "success\n";
+            } catch (const Error &error) {
+              std::cerr << "failure\n";
+              throw;
+            }
+          }
+          std::cerr << '\n';
+        });
   });
 }
 
 std::optional<Error> Compiler::runExecs() noexcept {
   return catchAndReturnError([&] {
-    for (auto &jitExec : mExecs)
+    for (auto &jitExec : mExecs) {
+      if (!jitExec.func)
+        throw Error(concat("exec ", Quoted(jitExec.name),
+                           " has no JIT-compiled function: 'jitCompile()' "
+                           "must be called first"));
       jitExec();
+    }
   });
 }
 
 std::string Compiler::printMaterialSummary() const {
   std::string message{};
-  for (auto itr0{mMaterials.begin()}; itr0 != mMaterials.end();) {
-    auto numMaterials{0};
-    auto itr1{itr0};
-    while (itr1 != mMaterials.end() &&
-           itr1->moduleFileName == itr0->moduleFileName) {
-      ++itr1;
-      ++numMaterials;
-    }
-    message += concat(QuotedPath(itr0->moduleFileName), " contains ",
-                      numMaterials, " materials:\n");
-    for (; itr0 != itr1; ++itr0) {
-      message += "  ";
-      message +=
-          concat(Quoted(itr0->materialName), " (line ", itr0->lineNo, ")\n");
-    }
-  }
+  forEachFileGroup(
+      mMaterials.begin(), mMaterials.end(), [&](auto itr0, auto itr1) {
+        message += concat(QuotedPath(itr0->moduleFileName), " contains ",
+                          itr1 - itr0, " materials:\n");
+        for (; itr0 != itr1; ++itr0) {
+          message += "  ";
+          message += concat(Quoted(itr0->materialName), " (line ",
+                            itr0->lineNo, ")\n");
+        }
+      });
   return message;
 }
 
 } // namespace smdl
+
+#if SMDL_HAS_PTEX
+namespace {
+
+/// Per-thread Ptex filters: 'PtexFilter::eval' mutates filter members, so
+/// render threads must not share one filter instance. Each filter holds a
+/// reference on its 'PtexTexture', so a cached filter stays memory-safe
+/// even after the compiler releases the texture on recompile.
+class ThreadLocalPtexFilters final {
+public:
+  ~ThreadLocalPtexFilters() {
+    for (auto &[texture, filter] : mFilters)
+      filter->release();
+  }
+
+  [[nodiscard]] PtexFilter *get(const smdl::Ptexture &ptex) {
+    auto &filter{mFilters[ptex.texture]};
+    if (!filter)
+      filter = PtexFilter::getFilter(
+          static_cast<PtexTexture *>(ptex.texture),
+          PtexFilter::Options(PtexFilter::f_bilinear));
+    return filter;
+  }
+
+private:
+  std::map<const void *, PtexFilter *> mFilters{};
+};
+
+} // namespace
+#endif // #if SMDL_HAS_PTEX
 
 extern "C" {
 
@@ -489,9 +613,10 @@ SMDL_EXPORT void smdlPtexEvaluate(const void *state,
     out[i] = 0.0f;
   }
 #if SMDL_HAS_PTEX
-  if (ptex && first < ptex->channelCount) {
+  if (ptex && ptex->texture && first < ptex->channelCount) {
     num = std::min(num, int(ptex->channelCount - first));
-    static_cast<PtexFilter *>(ptex->textureFilter)
+    thread_local ThreadLocalPtexFilters filters{};
+    filters.get(*ptex)
         ->eval(out, first, num,
                static_cast<const smdl::State *>(state)->ptex_face_id,
                static_cast<const smdl::State *>(state)->ptex_face_uv.x,

@@ -24,19 +24,6 @@ public:
     SourceLocation srcLoc{};
   };
 
-  /// A pending explicit '#inline(...)' request.
-  class Inline final {
-  public:
-    /// The value. This should be some instance of 'llvm::CallBase'.
-    Value value{};
-
-    /// The source location of the '#inline(...)' request.
-    SourceLocation srcLoc{};
-
-    /// Is meant to inline recursively?
-    bool isRecursive{};
-  };
-
   /// A label representing where to branch to eventually.
   class Label final {
   public:
@@ -319,6 +306,27 @@ public:
       llvmMoveBlockToEnd(blockEnd);
   }
 
+  /// Emit a loop-body scope: run `func` in a scope entered from
+  /// `blockStart`, with `break` and `continue` pointed at the given blocks.
+  ///
+  /// \note
+  /// `handleScope` does not emit the entry branch itself, so the caller
+  /// must have already terminated the current block by branching into the
+  /// loop structure — otherwise invalid IR is left behind.
+  template <typename Func>
+  void handleLoopScope(llvm::BasicBlock *blockStart,
+                       llvm::BasicBlock *blockAfterBody,
+                       llvm::BasicBlock *blockBreak,
+                       llvm::BasicBlock *blockContinue, Func &&func) {
+    SMDL_SANITY_CHECK(hasTerminator());
+    handleScope(blockStart, blockAfterBody, [&] {
+      labelBreak = {crumb, blockBreak};
+      labelContinue = {crumb, blockContinue};
+      inDefer = false;
+      std::invoke(std::forward<Func>(func));
+    });
+  }
+
   /// Move the insert point to the beginning of the given block if it has been
   /// branched to. If the block has no predecessors, erase it.
   void handleBlockEnd(llvm::BasicBlock *block) {
@@ -333,6 +341,16 @@ public:
   /// Create result PHI instruction.
   Value createResult(Type *resultType, llvm::ArrayRef<Result> results,
                      const SourceLocation &srcLoc);
+
+  /// Emit a two-arm conditional merge: branch on `cond`, emit each arm,
+  /// convert both to their common type in their own blocks, and join with
+  /// a PHI. This is the shared implementation of `?:` and binary `else`.
+  Value emitTwoArmMerge(Value cond, const char *name,
+                        const std::function<Value()> &emitArm0,
+                        const SourceLocation &srcLoc0,
+                        const std::function<Value()> &emitArm1,
+                        const SourceLocation &srcLoc1,
+                        const SourceLocation &srcLoc);
 
   /// \}
 
@@ -501,7 +519,12 @@ public:
 
   /// Emit call expression.
   Value emit(AST::Call &expr) {
-    return emitCall(emit(expr.expr), emit(expr.args), expr.srcLoc);
+    // Evaluate the callee before the arguments: C++ makes no ordering
+    // guarantee between function arguments, and the emission order here
+    // defines side-effect order in the generated code.
+    auto callee{emit(expr.expr)};
+    auto args{emit(expr.args)};
+    return emitCall(callee, args, expr.srcLoc);
   }
 
   /// Emit identifier expression.
@@ -588,8 +611,9 @@ public:
 
   /// Emit type-cast expression.
   Value emit(AST::TypeCast &expr) {
-    return invoke(emit(expr.type).getComptimeMetaType(context, expr.srcLoc),
-                  emit(expr.expr), expr.srcLoc);
+    auto type{emit(expr.type).getComptimeMetaType(context, expr.srcLoc)};
+    auto value{emit(expr.expr)};
+    return invoke(type, value, expr.srcLoc);
   }
 
   /// Emit unary expression.
@@ -691,9 +715,7 @@ public:
       Value value{};
       if (stmt.expr)
         value = rvalue(emit(stmt.expr));
-      returns.push_back(Result{value, getInsertBlock(), stmt.srcLoc});
-      unwind(labelReturn.crumb);
-      builder.CreateBr(labelReturn.block);
+      recordReturn(value, stmt.srcLoc);
     });
     return Value();
   }
@@ -805,12 +827,24 @@ public:
     emitPrint(file, context.getComptimeString(value), srcLoc);
   }
 
+  /// Record a `return` of the given value: unwind active `defer`s, then
+  /// register the pending `Result` and branch to the return block.
+  ///
+  /// \note
+  /// The unwind must happen before the insert block is captured! The
+  /// `defer` bodies may emit control flow, and the PHI wiring in
+  /// `createResult` must see the block that actually branches to
+  /// `labelReturn.block`.
+  void recordReturn(Value value, const SourceLocation &srcLoc) {
+    unwind(labelReturn.crumb);
+    returns.push_back(Result{value, getInsertBlock(), srcLoc});
+    builder.CreateBr(labelReturn.block);
+  }
+
   void emitReturn(Value value, const SourceLocation &srcLoc) {
     SMDL_SANITY_CHECK(!hasTerminator());
     SMDL_SANITY_CHECK(labelReturn.block);
-    returns.push_back(Result{value, getInsertBlock(), srcLoc});
-    unwind(labelReturn.crumb);
-    builder.CreateBr(labelReturn.block);
+    recordReturn(value, srcLoc);
   }
 
   [[nodiscard]] Parameter emitParameter(AST::Parameter &astParam) {
@@ -926,7 +960,8 @@ public:
                                          const SourceLocation &srcLoc) try {
     auto res{resolveArguments(params, args, srcLoc, /*dontEmit=*/true)};
     return true;
-  } catch (...) {
+  } catch (const Error &) {
+    // Only resolution failures mean "no"; anything else propagates.
     return false;
   }
 
@@ -969,7 +1004,6 @@ public:
   llvm::SmallVector<Result> returns{};
 
   /// The explicit `#inline(...)` requests.
-  llvm::SmallVector<Inline> inlines{};
 
   /// The LLVM-IR builder.
   llvm::IRBuilder<> builder;

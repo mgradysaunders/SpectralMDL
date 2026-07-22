@@ -115,8 +115,14 @@ public:
   [[nodiscard]] const MD5FileHash *operator[](const std::string &fileName);
 
 private:
-  /// The file hashes.
-  std::map<std::string, MD5FileHash> fileHashes{};
+  /// The file hashes, keyed by hash code so identical files at different
+  /// paths deduplicate to one entry. Unreadable files hash to zero and are
+  /// keyed by canonical file name instead (the second pair element, empty
+  /// otherwise).
+  std::map<std::pair<MD5Hash, std::string>, MD5FileHash> fileHashes{};
+
+  /// Canonical file name to entry in `fileHashes`.
+  std::map<std::string, const MD5FileHash *> fileHashesByName{};
 };
 
 /// \}

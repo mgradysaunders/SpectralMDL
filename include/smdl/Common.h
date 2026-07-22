@@ -88,10 +88,10 @@ public:
 
 public:
   /// The CPU name.
-  std::string_view name{};
+  std::string name{};
 
   /// The CPU triple.
-  std::string_view triple{};
+  std::string triple{};
 
   /// The LLVM target machine representation.
   llvm::TargetMachine *machine{};
@@ -122,11 +122,11 @@ public:
   void logError(std::string_view message) const;
 
   /// Throw an `Error`.
-  void throwError(std::string message) const;
+  [[noreturn]] void throwError(std::string message) const;
 
   /// Throw an `Error` using `concat` to concatenate the arguments.
   template <typename T0, typename T1, typename... Ts>
-  void throwError(T0 &&value0, T1 &&value1, Ts &&...values) const {
+  [[noreturn]] void throwError(T0 &&value0, T1 &&value1, Ts &&...values) const {
     throwError(concat(std::forward<T0>(value0), std::forward<T1>(value1),
                       std::forward<Ts>(values)...));
   }

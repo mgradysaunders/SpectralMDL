@@ -52,10 +52,14 @@ public:
     return getBuiltinCallee(name, llvm_get_type<T(U...)>(llvmContext));
   }
 
-  /// Get builtin callee.
+  /// Get builtin callee, and record its host address so the compiler can
+  /// define it as an absolute symbol in the JIT (see
+  /// `Compiler::mBuiltinCalleeAddresses`).
   template <typename T, typename... U>
   [[nodiscard]] llvm::FunctionCallee getBuiltinCallee(const char *name,
                                                       T (*value)(U...)) {
+    compiler.mBuiltinCalleeAddresses[name] =
+        reinterpret_cast<const void *>(value);
     return getBuiltinCallee<T, U...>(name);
   }
 
@@ -317,7 +321,7 @@ public:
       auto str{builder.CreateGlobalString(value, "str", 0, &llvmModule)};
       auto ptr{
           builder.CreateConstInBoundsGEP2_32(str->getValueType(), str, 0, 0)};
-      return RValue(mStringType.get(), ptr);
+      result = RValue(mStringType.get(), ptr);
     }
     return result;
   }
