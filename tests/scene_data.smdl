@@ -1,0 +1,18 @@
+#smdl
+
+import ::scene::*;
+
+// The `scene::data_lookup_*` macros expand to `$SCENE_DATA`, which must match
+// the keyword the compiler registers in `Context.cc`. Because they are
+// `@(macro)`s they are only instantiated where they are used, so a mismatch
+// compiles cleanly and fails here instead --- at the first call site.
+//
+// With no getters registered, every lookup misses and returns its default,
+// which is enough to exercise the identifier.
+unit_test "Scene data lookup falls back to defaults" {
+  #assert(!scene::data_isvalid("smdl_absent"));
+  #assert(scene::data_lookup_int("smdl_absent", 7) == 7);
+  #assert(scene::data_lookup_float("smdl_absent", 2.5) == 2.5);
+  #assert(#all(scene::data_lookup_int2("smdl_absent", int2(3, 4)) == int2(3, 4)));
+  #assert(#all(scene::data_lookup_float3("smdl_absent", float3(1.0, 2.0, 3.0)) == float3(1.0, 2.0, 3.0)));
+}
