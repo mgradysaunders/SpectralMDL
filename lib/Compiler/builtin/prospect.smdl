@@ -1229,14 +1229,26 @@ export prospect_result prospect(
     ior[i] = lerp(PROSPECT_TABLE_IORS[w0], PROSPECT_TABLE_IORS[w1], w);
     k[i] = dot(lerp(PROSPECT_TABLE_ABSORPTIONS[w0], PROSPECT_TABLE_ABSORPTIONS[w1], w), contents);
   }
-  // Big absorptions end up unstable
-  k = #min(k, 50.0);
-  // Fit for τ = (1 - k) * exp(-k) + k * k * exp_E1(k)
-  // - RMSE = 0.0004174834 (for k between 0 and 5)
-  // - RMSE = 0.0003022753 (for k between 0 and 10)
-  // - RMSE = 8.538397e-05 (for k between 0 and 100)
-  // - Maximum error = 0.002083302 (at k = 0.03510315)
-  const auto tau = clamp(#exp(1.770761 * #pow(k, 1.089248) - 3.28915 * k), 0.0, 0.999);
+  // τ = (1 - k) * exp(-k) + k * k * exp_E1(k), the transmittance of the
+  // absorbing water/dry-matter layer. Fit via the clean structure
+  // τ(k) = exp(-k) * h(k), where h(k) = exp(k) * τ(k) is smooth with h(0) = 1
+  // and h(k) -> 2/k as k grows. Approximating h by a rational whose denominator
+  // is one degree higher than the numerator reproduces τ(0) = 1 exactly and the
+  // exact 2 * exp(-k) / k tail, using a single exp and a single divide (no pow).
+  // - RMSE = 7.22e-05 (for k between 0 and 5)
+  // - RMSE = 5.11e-05 (for k between 0 and 10)
+  // - RMSE = 1.62e-05 (for k between 0 and 100)
+  // - Maximum error = 3.89e-04 (at k = 0.0255)
+  // Both cheaper and strictly better than the old exp(a * k^b - c * k) form: this
+  // drops that form's pow, and it fixes a real error -- because the old a * k^b
+  // term eventually outgrows -c * k, it badly overestimated the strong-absorption
+  // tail (τ(19) = 7.3e-9 vs the true 5.1e-10). This rational decays at the
+  // physically correct rate for all k.
+  const auto tau = return_from {
+    const auto num = (1.236150246012 * k + 3.672877420834) * k + 1.0;
+    const auto den = ((0.618075123006 * k + 3.664716300259) * k + 4.621903634050) * k + 1.0;
+    return clamp(#exp(-k) * num / den, 0.0, 0.999);
+  };
   const auto t12 = return_from {
     // Average transmittance
     // Fifth-order fit for α=90 degrees (or α=π/2 radians) for maximum
@@ -1268,14 +1280,18 @@ export prospect_result prospect(
     return saturate(tmp[0] * ior * ior + tmp[1] * ior + tmp[2]);
   };
   const auto rAlpha = 1 - tAlpha;
-  const auto tmp0 = tau * t21 / (1 - #pow(r21 * tau, 2));
+  const auto tau_r21 = tau * r21;
+  const auto tmp0 = tau * t21 / (1 - #pow(tau_r21, 2));
   const auto tA = tAlpha * tmp0;
-  const auto rA = rAlpha + r21 * tau * tA;
+  const auto rA = rAlpha + tau_r21 * tA;
   const auto t = t12 * tmp0;
-  const auto r = r12 + r21 * tau * t;
-  const auto d = #sqrt((1 + (r + t)) * (1 + (r - t)) * (1 - (r + t)) * (1 - (r - t)));
-  const auto a = (1 + d + (r * r - t * t)) / (2 * r);
-  const auto b = (1 + d - (r * r - t * t)) / (2 * t);
+  const auto r = r12 + tau_r21 * t;
+  const auto add_r_t = r + t;
+  const auto sub_r_t = r - t;
+  const auto sub_r2_t2 = r * r - t * t;
+  const auto d = #sqrt((1 + add_r_t) * (1 + sub_r_t) * (1 - add_r_t) * (1 - sub_r_t));
+  const auto a = (1 + d + sub_r2_t2) / (2 * r);
+  const auto b = (1 + d - sub_r2_t2) / (2 * t);
   const auto bNm1 = #pow(b, num_layers - 1);
   const auto tmp1 = #pow(a * bNm1, 2) - 1;
   color tSub = bNm1 * (a * a - 1) / tmp1;
@@ -1291,5 +1307,6 @@ export prospect_result prospect(
       rSub[i] = 1;
     }
   }
-  return prospect_result(reflectance: rA + tA * rSub * t / (1 - rSub * r), transmittance: tA * tSub / (1 - rSub * r));
+  const auto one_minus_rSub_r = 1 - rSub * r;
+  return prospect_result(reflectance: rA + tA * rSub * t / one_minus_rSub_r, transmittance: tA * tSub / one_minus_rSub_r);
 }

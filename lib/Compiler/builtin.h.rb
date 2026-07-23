@@ -11,7 +11,7 @@ namespace smdl::builtin {
 
 STR
 
-fnames = ['anno', 'api', 'debug', 'df', 'io', 'limits', 'pcg32', 'prospect', 'math', 'scene', 'state', 'std', 'tex']
+fnames = ['anno', 'api', 'debug', 'df', 'io', 'limits', 'pcg32', 'prospect', 'marmit', 'math', 'scene', 'state', 'std', 'tex']
 for fname in fnames 
   text = `smdl format -c --no-comments builtin/#{fname}.smdl`
   text = File.read "builtin/#{fname}.smdl" unless $?.success?

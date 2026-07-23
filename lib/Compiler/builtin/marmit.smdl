@@ -1,0 +1,231 @@
+// NOTE: This module is non-standard!
+#smdl
+
+// MARMIT -- a physically based way to layer a film of water over an arbitrary
+// diffuse reflectance spectrum, darkening and spectrally reshaping it the way a
+// wet surface differs from a dry one. It is the reflective, water-on-top analog
+// of the leaf model in `prospect.smdl`, and is built the same way: interpolate
+// tabulated optical constants of water per wavelength, then evaluate a small
+// closed-form radiative-transfer expression using cheap analytic fits in place
+// of the special functions the reference model calls.
+//
+// Unlike the original soil-oriented papers, this module carries NO soil (or any
+// other material) data: the material being wetted is whatever `reflectance` the
+// caller passes in. Only the optical constants of pure water are baked in.
+//
+// References:
+//   Bablet et al. (2018)   -- MARMIT
+//   Dupiau et al. (2022)   -- MARMIT-2
+//   Segelstein (1981)      -- real refractive index of water
+//   Buiteveld/Kou/Wieliczka -- absorption coefficient of water (cm^-1)
+
+using ::math import *;
+
+export struct marmit_result {
+  // Reflectance after wetting: the `wet_fraction`-weighted mix of the wetted
+  // and dry reflectances (this is the model's primary output).
+  color reflectance = color(0);
+
+  // Reflectance of the fully wetted surface (i.e. `wet_fraction` = 1), exposed
+  // as a convenience since it is computed along the way.
+  color reflectance_wet = color(0);
+};
+
+// The absorption table spans 400..2500 nm on a 4 nm grid, decimated 4x from
+// the 1 nm MARMIT reference parameter file (every 4th sample kept verbatim,
+// endpoints included). The curve is smooth at this scale -- reconstructing the
+// 1 nm data by lerp stays within ~5% everywhere, far below visibility on a
+// curve spanning ~6 decades. The refractive index is fit analytically instead
+// (see below), so it needs no table.
+export const float MARMIT_MIN_WAVELENGTH = 400.0;
+
+export const float MARMIT_MAX_WAVELENGTH = 2500.0;
+
+export const int MARMIT_TABLE_SIZE = 526;
+
+// Empirical exponent for the wet/dry areal mixing (generalized power mean),
+// carried over from MARMIT-2.
+export const float MARMIT_MIXING_EXPONENT = 2.27;
+
+// smdl format off
+export static const auto MARMIT_TABLE_ABSORPTIONS = float[526](
+  5.8000000e-05, 6.1000000e-05, 6.5000000e-05, 6.9000000e-05, 7.4000000e-05, 7.9000000e-05, 8.4000000e-05, 8.9000000e-05,
+  9.4000000e-05, 9.9000000e-05, 1.0400000e-04, 1.0800000e-04, 1.1200000e-04, 1.1600000e-04, 1.2000000e-04, 1.2400000e-04,
+  1.2800000e-04, 1.3300000e-04, 1.3800000e-04, 1.4400000e-04, 1.5200000e-04, 1.6200000e-04, 1.7400000e-04, 1.8900000e-04,
+  2.0900000e-04, 2.3800000e-04, 2.7300000e-04, 3.1000000e-04, 3.4900000e-04, 3.8600000e-04, 4.0900000e-04, 4.0900000e-04,
+  4.2300000e-04, 4.4500000e-04, 4.7000000e-04, 4.9500000e-04, 5.2700000e-04, 5.6400000e-04, 6.1100000e-04, 6.4600000e-04,
+  6.7200000e-04, 6.9900000e-04, 7.3400000e-04, 7.8700000e-04, 8.5800000e-04, 9.5200000e-04, 1.0790000e-03, 1.2530000e-03,
+  1.4590000e-03, 1.7000000e-03, 2.2240000e-03, 2.4480000e-03, 2.6530000e-03, 2.7150000e-03, 2.7640000e-03, 2.8100000e-03,
+  2.8680000e-03, 2.9220000e-03, 2.9880000e-03, 3.0380000e-03, 3.1110000e-03, 3.1810000e-03, 3.2630000e-03, 3.3620000e-03,
+  3.5080000e-03, 3.7910000e-03, 4.0190000e-03, 4.0980000e-03, 4.1500000e-03, 4.2230000e-03, 4.3180000e-03, 4.4580000e-03,
+  4.6460000e-03, 4.9030000e-03, 5.2440000e-03, 5.7220000e-03, 6.3030000e-03, 6.9930000e-03, 7.8930000e-03, 9.1090000e-03,
+  1.0724000e-02, 1.2684000e-02, 1.4870000e-02, 1.7872000e-02, 2.2074000e-02, 2.5319000e-02, 2.6723000e-02, 2.7216000e-02,
+  2.7413000e-02, 2.7542000e-02, 2.7710000e-02, 2.7742000e-02, 2.7610000e-02, 2.7482000e-02, 2.7097000e-02, 2.6590000e-02,
+  2.6127000e-02, 2.5129000e-02, 2.4117000e-02, 2.3365000e-02, 2.2462000e-02, 2.2038000e-02, 2.1773000e-02, 2.1976000e-02,
+  2.2484000e-02, 2.3294000e-02, 2.5163000e-02, 2.9139000e-02, 3.4588000e-02, 3.7879000e-02, 3.9494000e-02, 4.0565000e-02,
+  4.1493000e-02, 4.2540000e-02, 4.3601000e-02, 4.4535000e-02, 4.5524000e-02, 4.7052000e-02, 4.8673000e-02, 5.0495000e-02,
+  5.2979000e-02, 5.5279000e-02, 5.7454000e-02, 5.9823000e-02, 6.1850000e-02, 6.4074000e-02, 6.6724000e-02, 6.9885000e-02,
+  7.3579000e-02, 7.7922000e-02, 8.5277000e-02, 9.8192000e-02, 1.1131000e-01, 1.3272200e-01, 1.5573700e-01, 1.8181100e-01,
+  2.1867500e-01, 2.5423600e-01, 3.2735900e-01, 3.9302800e-01, 4.3851400e-01, 4.6629200e-01, 4.7721400e-01, 4.8267900e-01,
+  4.8668900e-01, 4.8213800e-01, 4.7379300e-01, 4.6042800e-01, 4.4337000e-01, 4.2644900e-01, 4.0715000e-01, 3.8675400e-01,
+  3.6402600e-01, 3.4023600e-01, 3.1910700e-01, 2.9567900e-01, 2.7243500e-01, 2.5059400e-01, 2.3313500e-01, 2.1513900e-01,
+  1.9811000e-01, 1.8408300e-01, 1.7146900e-01, 1.6126000e-01, 1.5322000e-01, 1.4750100e-01, 1.4380800e-01, 1.4119500e-01,
+  1.4059300e-01, 1.4255600e-01, 1.4428100e-01, 1.5186300e-01, 1.5795900e-01, 1.6773700e-01, 1.7771800e-01, 1.9062500e-01,
+  2.0308200e-01, 2.1662200e-01, 2.2982100e-01, 2.3533800e-01, 2.5283300e-01, 2.7650100e-01, 3.1638700e-01, 3.7694600e-01,
+  4.7123900e-01, 6.0523700e-01, 7.5354300e-01, 9.2525300e-01, 1.0406530e+00, 1.1310050e+00, 1.1699720e+00, 1.1959870e+00,
+  1.2049940e+00, 1.2229120e+00, 1.2288540e+00, 1.2389430e+00, 1.2523920e+00, 1.2621100e+00, 1.2720560e+00, 1.2818540e+00,
+  1.2714590e+00, 1.2733360e+00, 1.2580150e+00, 1.2470460e+00, 1.2401020e+00, 1.2139320e+00, 1.2045250e+00, 1.1972840e+00,
+  1.1796710e+00, 1.1614070e+00, 1.1552950e+00, 1.1376150e+00, 1.1231070e+00, 1.1067850e+00, 1.1005580e+00, 1.0939300e+00,
+  1.0830470e+00, 1.0797010e+00, 1.0867140e+00, 1.1068530e+00, 1.1210900e+00, 1.1557090e+00, 1.1805360e+00, 1.2157870e+00,
+  1.2668210e+00, 1.3227130e+00, 1.3917400e+00, 1.4891340e+00, 1.5803740e+00, 1.7006750e+00, 1.8304560e+00, 1.9737060e+00,
+  2.1527860e+00, 2.3124210e+00, 2.5396110e+00, 2.7008320e+00, 2.8891430e+00, 3.1456770e+00, 3.3187380e+00, 3.5042680e+00,
+  3.7006000e+00, 3.9267380e+00, 4.2164000e+00, 4.6302240e+00, 5.2599210e+00, 6.2417620e+00, 7.6326970e+00, 9.5910560e+00,
+  1.1835000e+01, 1.4337092e+01, 1.7144000e+01, 1.9800020e+01, 2.2022355e+01, 2.4073000e+01, 2.5709000e+01, 2.7006304e+01,
+  2.8060008e+01, 2.8918000e+01, 2.9555000e+01, 3.0034000e+01, 3.0359419e+01, 3.0519000e+01, 3.0556000e+01, 3.0490000e+01,
+  3.0293000e+01, 2.9980949e+01, 2.9362338e+01, 2.8514000e+01, 2.7542415e+01, 2.6375000e+01, 2.5222233e+01, 2.4132282e+01,
+  2.3066133e+01, 2.1933012e+01, 2.0823237e+01, 1.9721739e+01, 1.8741000e+01, 1.7835821e+01, 1.6884215e+01, 1.6058507e+01,
+  1.5245000e+01, 1.4470595e+01, 1.3813919e+01, 1.3163548e+01, 1.2538260e+01, 1.1927479e+01, 1.1374018e+01, 1.0878000e+01,
+  1.0439821e+01, 1.0004813e+01, 9.6596350e+00, 9.3045000e+00, 8.9773850e+00, 8.6645550e+00, 8.3640000e+00, 8.1044000e+00,
+  7.8340000e+00, 7.6088930e+00, 7.3744320e+00, 7.1639140e+00, 6.9869000e+00, 6.8277800e+00, 6.6951000e+00, 6.5671820e+00,
+  6.4487000e+00, 6.3454000e+00, 6.2144060e+00, 6.1204690e+00, 6.0474820e+00, 5.9726910e+00, 5.9111830e+00, 5.8260780e+00,
+  5.7464000e+00, 5.6836510e+00, 5.6476350e+00, 5.6177000e+00, 5.6033500e+00, 5.5628390e+00, 5.5423000e+00, 5.5332030e+00,
+  5.5235410e+00, 5.5199050e+00, 5.5267000e+00, 5.5195000e+00, 5.5377370e+00, 5.5714110e+00, 5.6293700e+00, 5.6927660e+00,
+  5.7656000e+00, 5.8293760e+00, 5.9296000e+00, 6.0245930e+00, 6.1362000e+00, 6.2554510e+00, 6.3919660e+00, 6.5705000e+00,
+  6.7480000e+00, 6.9544600e+00, 7.1790390e+00, 7.4142690e+00, 7.6690340e+00, 7.8932000e+00, 8.1026000e+00, 8.2639790e+00,
+  8.4301770e+00, 8.5353000e+00, 8.6394790e+00, 8.7376510e+00, 8.7781320e+00, 8.8092000e+00, 8.7894460e+00, 8.7495580e+00,
+  8.7437000e+00, 8.7871540e+00, 8.8108410e+00, 8.8536750e+00, 8.8841700e+00, 8.9513580e+00, 9.1096470e+00, 9.3147980e+00,
+  9.6326410e+00, 1.0052000e+01, 1.0590180e+01, 1.1386157e+01, 1.2350000e+01, 1.3750688e+01, 1.5857862e+01, 1.8527332e+01,
+  2.2495000e+01, 2.7510653e+01, 3.5041339e+01, 4.5301545e+01, 5.7612512e+01, 7.0590473e+01, 8.4686019e+01, 9.7217670e+01,
+  1.0784000e+02, 1.1565000e+02, 1.2152000e+02, 1.2570980e+02, 1.2861104e+02, 1.3031529e+02, 1.3061399e+02, 1.2989000e+02,
+  1.2818284e+02, 1.2559220e+02, 1.2243000e+02, 1.1902677e+02, 1.1491000e+02, 1.1104275e+02, 1.0662000e+02, 1.0231910e+02,
+  9.8313523e+01, 9.4120000e+01, 9.0086628e+01, 8.6110251e+01, 8.2616604e+01, 7.9035126e+01, 7.5574000e+01, 7.2338000e+01,
+  6.9241000e+01, 6.6343000e+01, 6.3582000e+01, 6.1051830e+01, 5.8568710e+01, 5.6316369e+01, 5.3982057e+01, 5.1970000e+01,
+  5.0059288e+01, 4.8061064e+01, 4.6348000e+01, 4.4731418e+01, 4.3017710e+01, 4.1551123e+01, 4.0016479e+01, 3.8682829e+01,
+  3.7261000e+01, 3.5916257e+01, 3.4785835e+01, 3.3626000e+01, 3.2512954e+01, 3.1540194e+01, 3.0521201e+01, 2.9574657e+01,
+  2.8646000e+01, 2.7760000e+01, 2.6920407e+01, 2.6167511e+01, 2.5464866e+01, 2.4848000e+01, 2.4202000e+01, 2.3582000e+01,
+  2.3038782e+01, 2.2517827e+01, 2.2015512e+01, 2.1616000e+01, 2.1228463e+01, 2.0848878e+01, 2.0488372e+01, 2.0174911e+01,
+  1.9869801e+01, 1.9633000e+01, 1.9417337e+01, 1.9231000e+01, 1.9037932e+01, 1.8836293e+01, 1.8656139e+01, 1.8487216e+01,
+  1.8374000e+01, 1.8363136e+01, 1.8336268e+01, 1.8340333e+01, 1.8320000e+01, 1.8277680e+01, 1.8323302e+01, 1.8371147e+01,
+  1.8415835e+01, 1.8509858e+01, 1.8597736e+01, 1.8698134e+01, 1.8876784e+01, 1.9078613e+01, 1.9291386e+01, 1.9507121e+01,
+  1.9804023e+01, 2.0042923e+01, 2.0376000e+01, 2.0713300e+01, 2.1025416e+01, 2.1451624e+01, 2.1831000e+01, 2.2231621e+01,
+  2.2754867e+01, 2.3269000e+01, 2.3768742e+01, 2.4327139e+01, 2.4853047e+01, 2.5487620e+01, 2.6106062e+01, 2.6804898e+01,
+  2.7434668e+01, 2.8194000e+01, 2.9029284e+01, 2.9687549e+01, 3.0537803e+01, 3.1448270e+01, 3.2184578e+01, 3.3108000e+01,
+  3.4043154e+01, 3.4858707e+01, 3.5916810e+01, 3.6973294e+01, 3.8012000e+01, 3.9126244e+01, 4.0236211e+01, 4.1471030e+01,
+  4.2678713e+01, 4.3882047e+01, 4.5131562e+01, 4.6374994e+01, 4.7639201e+01, 4.8943196e+01, 5.0207334e+01, 5.1590000e+01,
+  5.3104000e+01, 5.4618519e+01, 5.6180076e+01, 5.8081098e+01, 5.9762778e+01, 6.1462823e+01, 6.3163436e+01, 6.5386532e+01,
+  6.7247000e+01, 6.9179607e+01, 7.1742606e+01, 7.3814000e+01, 7.5914435e+01, 7.8388923e+01, 8.0458068e+01, 8.2946235e+01,
+  8.5097764e+01, 8.7076983e+01, 8.9447181e+01, 9.2036828e+01, 9.3583811e+01, 9.5303000e+01
+);
+// smdl format on
+
+@(noinline)
+export marmit_result marmit(
+  color reflectance = color(0.3),  ///< The dry reflectance of the underlying material.
+  float water_thickness = 0.01,    ///< The equivalent water-film thickness in centimeters.
+  float wet_fraction = 1.0,        ///< The fraction of the surface covered by water, in [0, 1].
+  float suspension_ior = 1.53,     ///< Real refractive index n_i of particles suspended in the film.
+  float suspension_k = 0.0,        ///< Imaginary refractive index k_i of the suspended particles.
+  float suspension_fraction = 0.0, ///< Volume fraction d_i of suspension in the film; 0 = pure water.
+) {
+  // Optical constants of water at each wavelength: its own n_w and alpha_w. In the
+  // common pure-water case these are the effective medium directly; a suspension,
+  // if any, mixes them into an effective (n, alpha) further below.
+  //
+  // The absorption spans ~6 decades with sharp vibrational bands, so it stays a
+  // table lookup. The refractive index, in contrast, is smooth and low-curvature,
+  // so we skip the table and evaluate it as a polynomial below. `s` is the
+  // wavelength remapped to [-1, 1]; we collect it (and the absorption) per lane in
+  // one contiguous pass, then evaluate n(s) on the whole color at once.
+  color absorption(0);  // alpha_w, absorption coefficient of water in cm^-1
+  color s(0);           // wavelength mapped to [-1, 1] for the index polynomial
+  for (int i = 0; i < $WAVELENGTH_BASE_MAX; i++) {
+    const float frac = saturate(($state.wavelength_base[i] - MARMIT_MIN_WAVELENGTH) / (MARMIT_MAX_WAVELENGTH - MARMIT_MIN_WAVELENGTH));
+    float w = (MARMIT_TABLE_SIZE - 1) * frac;
+    const int w0 = #min(int(#floor(w)), MARMIT_TABLE_SIZE - 2);
+    w -= w0;
+    absorption[i] = lerp(MARMIT_TABLE_ABSORPTIONS[w0], MARMIT_TABLE_ABSORPTIONS[w0 + 1], w);
+    s[i] = 2.0 * frac - 1.0;
+  }
+  // Real refractive index of water (Segelstein), degree-6 polynomial fit in the
+  // remapped wavelength s = 2*(lambda - 400)/2100 - 1. Max abs error 1.2e-3 over
+  // 400..2500 nm -- below the r12 fit's own error, so effectively exact here. This
+  // is pure vectorized Horner (7 FMAs, no gather): the generated code drops the
+  // per-lane table gathers and the 8 KB index table entirely.
+  const auto ior = return_from {
+    auto n = -0.0000601351 * s - 0.0248482921;
+    n = n * s - 0.0005980717;
+    n = n * s + 0.0015633866;
+    n = n * s - 0.0109188837;
+    n = n * s - 0.0244547175;
+    n = n * s + 1.3129684894;
+    return n;
+  };
+  // Effective medium the light travels through. With no suspended particles this is
+  // just water. When a suspension is present (volume fraction d_i > 0), form the
+  // complex permittivities e = (n + i k)^2 of water and of the particles, volume-mix
+  // them (e = d_i e_i + (1 - d_i) e_w, MARMIT-2), and take the principal square root
+  // back to an effective complex index; alpha = 4 pi k / lambda. The particle side
+  // (n_i, k_i) is a pair of scalar constants, so only the water/mix side is per-lane.
+  // With d_i = 0 this reduces exactly to water, so the branch is a skippable add-on.
+  color n = ior;             // effective refractive index
+  color alpha = absorption;  // effective absorption coefficient in cm^-1
+  if (suspension_fraction > 0.0) {
+    const auto d = suspension_fraction;
+    // wavelength in cm, recovered from the normalized s used by the index polynomial
+    const auto lambda = (MARMIT_MIN_WAVELENGTH + 0.5 * (s + 1.0) * (MARMIT_MAX_WAVELENGTH - MARMIT_MIN_WAVELENGTH)) * 1.0e-7;
+    // imaginary index of water from its absorption coefficient: k_w = alpha_w lambda / (4 pi)
+    const auto k_w = absorption * lambda * 0.07957747154594767;
+    const auto ew_re = ior * ior - k_w * k_w;
+    const auto ew_im = 2.0 * ior * k_w;
+    const float ei_re = suspension_ior * suspension_ior - suspension_k * suspension_k;
+    const float ei_im = 2.0 * suspension_ior * suspension_k;
+    const auto e_re = d * ei_re + (1.0 - d) * ew_re;
+    const auto e_im = d * ei_im + (1.0 - d) * ew_im;
+    const auto mag = #sqrt(e_re * e_re + e_im * e_im);
+    n = #sqrt(0.5 * (mag + e_re));
+    // k = Im(sqrt(e)). Since (n + i k)^2 = e gives 2 n k = e_im, take k = e_im/(2n)
+    // rather than sqrt((mag - e_re)/2): the latter cancels catastrophically in
+    // float32 when absorption is weak (e_im small, so mag ~ e_re). Here n ~ 1.3-1.5
+    // and e_im >= 0, so this is stable and positive.
+    const auto k = e_im / (2.0 * n);
+    alpha = 12.566370614359172 * k / lambda;  // 4 pi k / lambda
+  }
+  // Diffuse (hemispherically integrated) Fresnel reflectance of the air->water
+  // interface, r12. The exact expression is a long rational-plus-logarithm form;
+  // this is our cheap fit r12 = v * P(v) / Q(v) with v = (n - 1) / (n + 1), exact
+  // at n = 1 and monotone for all n >= 1. Max abs error ~1.7e-4 (RMSE ~1.1e-4)
+  // over the water index range, using two divides and no log/pow. (1 - r12 equals
+  // PROSPECT's average transmittance tav(90 deg, n).)
+  const auto r12 = return_from {
+    const auto v = (n - 1.0) / (n + 1.0);
+    const auto num = (((-6.087330777978 * v + 5.072538780150) * v - 2.292800947895) * v + 5.106344072818) * v + 0.666666666667;
+    const auto den = (-14.079305083126 * v + 15.544722876889) * v + 1.0;
+    return saturate(v * num / den);
+  };
+  const auto t12 = 1 - r12;
+  // Downward water->air diffuse transmittance and reflectance, via the standard
+  // n^2 relation t21 = (1 - r12) / n^2.
+  const auto t21 = t12 / (n * n);
+  const auto r21 = 1 - t21;
+  // One-way transmittance of the water layer of optical depth x = alpha * L.
+  // tau(x) = (1 - x) exp(-x) + x^2 E1(x); this is our cheap fit tau = exp(-x) P/Q
+  // that reproduces tau(0) = 1 and the exact 2 exp(-x)/x tail with one exp and one
+  // divide (no exponential integral, no pow). Max abs error ~3.9e-4 for all x >= 0.
+  const auto tau = return_from {
+    const auto x = #min(alpha * water_thickness, 50.0);
+    const auto num = (1.236150246012 * x + 3.672877420834) * x + 1.0;
+    const auto den = ((0.618075123006 * x + 3.664716300259) * x + 4.621903634050) * x + 1.0;
+    return saturate(#exp(-x) * num / den);
+  };
+  const auto tau2_reflectance = tau * tau * reflectance;
+  // Reflectance of the fully wetted surface: the dry reflectance seen through the
+  // water film with the interface reflections and the geometric series of internal
+  // bounces summed in closed form.
+  const auto wet = saturate(t12 * t21 * tau2_reflectance / (1 - r21 * tau2_reflectance));
+  // Blend the wetted and dry reflectances over the surface as a generalized power
+  // mean (MARMIT-2's areal mixing). wet_fraction = 1 recovers `wet`, 0 recovers the
+  // dry reflectance.
+  const auto e = 1.0 / MARMIT_MIXING_EXPONENT;
+  const auto mixed = #pow(wet_fraction * #pow(wet, e) + (1.0 - wet_fraction) * #pow(reflectance, e), MARMIT_MIXING_EXPONENT);
+  return marmit_result(reflectance: saturate(mixed), reflectance_wet: wet);
+}
