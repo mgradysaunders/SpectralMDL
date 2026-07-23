@@ -50,6 +50,25 @@ Value Emitter::createFunctionImplementation(
   return createResult(returnType, returns, srcLoc);
 }
 
+bool Emitter::returnsIndirectly(Type *type) {
+  return type && (type->isStruct() || type->isUnion() || type->isArray()) &&
+         context.getSizeOf(type) > 64;
+}
+
+void Emitter::addIndirectReturnAttrs(Type *returnType, llvm::Function *llvmFunc,
+                                     llvm::CallBase *callInst) {
+  auto attrs{llvm::AttrBuilder(context.llvmContext)};
+  attrs.addStructRetAttr(returnType->llvmType);
+  attrs.addAttribute(llvm::Attribute::NoAlias);
+  attrs.addAttribute(llvm::Attribute::NoUndef);
+  attrs.addAlignmentAttr(llvm::Align(context.getAlignOf(returnType)));
+  if (llvmFunc)
+    llvmFunc->addParamAttrs(0, attrs);
+  if (callInst)
+    callInst->setAttributes(callInst->getAttributes().addParamAttributes(
+        context.llvmContext, 0, attrs));
+}
+
 void Emitter::createFunction(llvm::Function *&llvmFunc, std::string_view name,
                              bool isPure, Type *&returnType,
                              llvm::ArrayRef<Type *> paramTypes,
@@ -108,15 +127,68 @@ void Emitter::createFunction(llvm::Function *&llvmFunc, std::string_view name,
     }
     auto result{createFunctionImplementation(name, isPure, returnType, params,
                                              paramValues, srcLoc, callback)};
-    if (!result || result.type->isVoid()) {
-      builder.CreateRetVoid();
-    } else {
-      builder.CreateRet(result);
-    }
     returnType = result.type;
     SMDL_SANITY_CHECK(returnType);
     SMDL_SANITY_CHECK(!returnType->isAbstract());
-    if (returnType->llvmType != llvmFunc->getFunctionType()->getReturnType()) {
+    if (!result || result.type->isVoid()) {
+      builder.CreateRetVoid();
+    } else if (!returnsIndirectly(returnType)) {
+      builder.CreateRet(result);
+    }
+    if (result && !result.type->isVoid() && returnsIndirectly(returnType)) {
+      // Rebuild the function to return indirectly: 'void' return with a
+      // leading 'sret' pointer parameter that the caller provides (see
+      // 'FunctionType::invoke'). The result value stays in memory on both
+      // sides instead of materializing as a large SSA aggregate.
+      auto llvmFunc0{llvmFunc};
+      auto llvmSretParamTys{std::vector<llvm::Type *>{}};
+      llvmSretParamTys.push_back(llvm::PointerType::get(context, 0));
+      llvmSretParamTys.insert(llvmSretParamTys.end(), llvmParamTys.begin(),
+                              llvmParamTys.end());
+      llvmFunc = llvm::Function::Create(
+          llvm::FunctionType::get(llvm::Type::getVoidTy(context.llvmContext),
+                                  llvmSretParamTys, params.isVariadic),
+          llvm::Function::InternalLinkage, "", context.llvmModule);
+      llvmFunc->splice(llvmFunc->begin(), llvmFunc0);
+      auto llvmArg0{llvmFunc0->arg_begin()};
+      auto llvmArg1{llvmFunc->arg_begin()};
+      auto sretArg{&*llvmArg1++};
+      sretArg->setName("sret");
+      while (llvmArg1 != llvmFunc->arg_end()) {
+        llvmArg1->setName(llvmArg0->getName());
+        llvmArg0->replaceAllUsesWith(&*llvmArg1);
+        ++llvmArg0;
+        ++llvmArg1;
+      }
+      addIndirectReturnAttrs(returnType, llvmFunc, nullptr);
+      builder.CreateStore(rvalue(result), sretArg);
+      builder.CreateRetVoid();
+      // Rewrite recursive calls emitted against the by-value placeholder,
+      // giving each call site its own result slot in its entry block.
+      for (auto user : llvm::make_early_inc_range(llvmFunc0->users())) {
+        auto callInst{llvm::dyn_cast<llvm::CallInst>(user)};
+        SMDL_SANITY_CHECK(callInst &&
+                              callInst->getCalledOperand() == llvmFunc0,
+                          "unexpected use of function during 'sret' rebuild");
+        auto blockEntry{&callInst->getFunction()->getEntryBlock()};
+        builder.SetInsertPoint(blockEntry,
+                               blockEntry->getFirstNonPHIOrDbgOrAlloca());
+        auto slot{builder.CreateAlloca(returnType->llvmType)};
+        builder.SetInsertPoint(callInst);
+        auto llvmArgs{llvm::SmallVector<llvm::Value *>{}};
+        llvmArgs.push_back(slot);
+        for (auto &arg : callInst->args())
+          llvmArgs.push_back(arg.get());
+        auto newCall{builder.CreateCall(llvmFunc->getFunctionType(), llvmFunc,
+                                        llvmArgs)};
+        addIndirectReturnAttrs(returnType, nullptr, newCall);
+        callInst->replaceAllUsesWith(
+            builder.CreateLoad(returnType->llvmType, slot));
+        callInst->eraseFromParent();
+      }
+      llvmFunc0->eraseFromParent();
+    } else if (returnType->llvmType !=
+               llvmFunc->getFunctionType()->getReturnType()) {
       auto llvmFunc0{llvmFunc};
       llvmFunc = llvm::Function::Create(
           llvm::FunctionType::get(returnType->llvmType,
@@ -334,7 +406,9 @@ Value Emitter::createResult(Type *type, llvm::ArrayRef<Result> results,
       auto terminator{block->getTerminator()};
       terminator->removeFromParent();
       builder.SetInsertPoint(block);
-      value = invoke(type, value, srcLoc);
+      // The 'rvalue' matters: conversions may come back memory-resident
+      // (see e.g. 'UnionType::invoke'), and the PHI merges values here.
+      value = rvalue(invoke(type, value, srcLoc));
       block = getInsertBlock();
       terminator->insertInto(block, block->end());
     }
@@ -453,7 +527,7 @@ Value Emitter::emit(AST::Variable &decl) {
         if (!isConst) {
           auto valueAlloca{createAlloca(value.type)};
           createLifetimeStart(valueAlloca);
-          builder.CreateStore(value, valueAlloca);
+          createStore(value, valueAlloca);
           value = LValue(value.type, valueAlloca);
         }
         for (size_t i = 0; i < structType->params.size(); i++) {
@@ -489,7 +563,7 @@ Value Emitter::emit(AST::Variable &decl) {
         } else {
           auto valueAlloca{createAlloca(value.type, name.srcName)};
           createLifetimeStart(valueAlloca);
-          builder.CreateStore(value, valueAlloca);
+          createStore(value, valueAlloca);
           value = LValue(value.type, valueAlloca);
         }
       }
@@ -712,21 +786,34 @@ Value Emitter::emitTwoArmMerge(Value cond, const char *name,
   auto value1IP{builder.saveIP()};
   auto commonType{context.getCommonType({value0.type, value1.type},
                                         /*defaultToUnion=*/true, srcLoc)};
+  // If both arms are already lvalues of the common type, merge the
+  // pointers and stay an lvalue — mirroring 'createResult' — so large
+  // values (unions, structs) are not loaded into SSA just to be merged.
+  const bool mergeAsLValues{value0.isLValue() && value1.isLValue() &&
+                            value0.type == commonType &&
+                            value1.type == commonType};
   builder.restoreIP(value0IP);
-  value0 = invoke(commonType, value0, srcLoc0);
+  if (!mergeAsLValues)
+    value0 = rvalue(invoke(commonType, value0, srcLoc0));
   blockArm0 = getInsertBlock();
   builder.CreateBr(blockEnd);
   builder.restoreIP(value1IP);
-  value1 = invoke(commonType, value1, srcLoc1);
+  if (!mergeAsLValues)
+    value1 = rvalue(invoke(commonType, value1, srcLoc1));
   blockArm1 = getInsertBlock();
   builder.CreateBr(blockEnd);
   // Create PHI instruction.
   llvmMoveBlockToEnd(blockEnd);
   builder.SetInsertPoint(blockEnd);
-  auto phiInst{builder.CreatePHI(commonType->llvmType, 2)};
+  auto phiInst{builder.CreatePHI(mergeAsLValues
+                                     ? context.getPointerType(commonType)
+                                           ->llvmType
+                                     : commonType->llvmType,
+                                 2)};
   phiInst->addIncoming(value0, blockArm0);
   phiInst->addIncoming(value1, blockArm1);
-  return RValue(commonType, phiInst);
+  return mergeAsLValues ? LValue(commonType, phiInst)
+                        : RValue(commonType, phiInst);
 }
 //--}
 
@@ -1118,7 +1205,7 @@ Value Emitter::emitOp(AST::BinaryOp op, Value lhs, Value rhs,
       srcLoc.throwError("cannot apply ", Quoted(to_string(op)), " to rvalue");
     if (op != BINOP_EQ)
       rhs = emitOp(op & ~BINOP_EQ, rvalue(lhs), rhs, srcLoc);
-    builder.CreateStore(invoke(lhs.type, rhs, srcLoc), lhs);
+    createStore(invoke(lhs.type, rhs, srcLoc), lhs);
     return lhs;
   }
   lhs = rvalue(lhs);
@@ -1520,7 +1607,7 @@ Value Emitter::emitIntrinsic(std::string_view name, const ArgumentList &args,
     SMDL_SANITY_CHECK(false);
     return nullptr;
   }};
-  // '#allocate' and '#bump_allocate' expect '(size)' or '(size, align)'
+  // '#heap_allocate' and '#bump_allocate' expect '(size)' or '(size, align)'
   // int arguments.
   auto expectSizeAndAlign{[&]() {
     auto arg0{args.size() >= 1 ? args[0].value : context.getComptimeInt(0)};
@@ -1670,10 +1757,6 @@ Value Emitter::emitIntrinsic(std::string_view name, const ArgumentList &args,
   default:
     break;
   case 'a': {
-    if (name == "allocate") {
-      return emitAllocateCall(
-          context.getBuiltinCallee("smdlAllocate", &smdlAllocate));
-    }
     if (name == "alignof") {
       return context.getComptimeInt(int(context.getAlignOf(expectOneType())));
     }
@@ -1825,11 +1908,19 @@ Value Emitter::emitIntrinsic(std::string_view name, const ArgumentList &args,
       return emitBumpAllocate(size, align);
     }
     if (name == "bump") {
-      auto value{rvalue(expectOne())};
+      auto value{expectOne()};
       auto ptr{emitBumpAllocate(
           context.getComptimeInt(int(context.getSizeOf(value.type))),
           context.getComptimeInt(int(context.getAlignOf(value.type))))};
-      builder.CreateStore(value, ptr);
+      if (value.isLValue()) {
+        // Copy directly out of memory (e.g. an 'sret' result slot)
+        // instead of round-tripping the value through an SSA aggregate.
+        builder.CreateMemCpy(ptr, llvm::Align(context.getAlignOf(value.type)),
+                             value, llvm::Align(context.getAlignOf(value.type)),
+                             context.getSizeOf(value.type));
+      } else {
+        builder.CreateStore(rvalue(value), ptr);
+      }
       return RValue(context.getPointerType(value.type), ptr.llvmValue);
     }
     break;
@@ -1860,7 +1951,14 @@ Value Emitter::emitIntrinsic(std::string_view name, const ArgumentList &args,
         emitPrint(file, context.getComptimeString("\n"), srcLoc);
       return RValue(context.getVoidType(), nullptr);
     }
-    if (name == "free") {
+    break;
+  }
+  case 'h': {
+    if (name == "heap_allocate") {
+      return emitAllocateCall(
+          context.getBuiltinCallee("smdlAllocate", &smdlAllocate));
+    }
+    if (name == "heap_free") {
       auto value{expectOne()};
       if (!value.type->isPointer())
         srcLoc.throwError("intrinsic ", Quoted(name),
@@ -2999,7 +3097,10 @@ Emitter::resolveArguments(const ParameterList &params, const ArgumentList &args,
             value = *param.builtinDefaultValue;
           }
         }
-        value = invoke(param.type, value, param.getSourceLocation());
+        // The 'rvalue' matters: conversions may come back memory-resident
+        // (see e.g. 'UnionType::invoke'), and these values are passed
+        // directly as LLVM call arguments by 'FunctionType::invoke'.
+        value = rvalue(invoke(param.type, value, param.getSourceLocation()));
         declare(param.name, /*node=*/nullptr, value);
       }
       if (params.isVariadic) {

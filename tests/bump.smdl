@@ -1,5 +1,11 @@
 #smdl
 
+unit_test "Intrinsics: heap_allocate and heap_free" {
+  auto p = #heap_allocate(64, 16);
+  #assert(bool(p));
+  #heap_free(p);
+}
+
 unit_test "Intrinsics: bump and bump_allocate" {
   auto p0 = #bump_allocate(64, 16);
   auto p1 = #bump_allocate(64, 16);

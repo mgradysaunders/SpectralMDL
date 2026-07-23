@@ -346,6 +346,39 @@ public:
     return value;
   }
 
+  /// Should function instances return values of this type indirectly,
+  /// through a leading 'sret' pointer parameter? Large aggregates
+  /// otherwise travel as first-class SSA values, which both the mid-level
+  /// optimizer and the backend handle poorly (stack round trips, wide
+  /// shuffles). See 'createFunction' for the callee side and
+  /// 'FunctionType::invoke' for the call side, which must agree on this
+  /// predicate.
+  [[nodiscard]] bool returnsIndirectly(Type *type);
+
+  /// Add the 'sret' attributes for an indirect return of the given type
+  /// to parameter 0 of the given function and/or call. Both sides of the
+  /// convention must carry the attributes for the backend to lower the
+  /// call consistently.
+  void addIndirectReturnAttrs(Type *returnType, llvm::Function *llvmFunc,
+                              llvm::CallBase *callInst);
+
+  /// Store the given value into the given pointer destination, copying
+  /// memory-resident (lvalue) values with 'memcpy' instead of loading
+  /// them into SSA registers first. Every store of a `Value` whose kind
+  /// is not locally guaranteed to be an rvalue must go through this:
+  /// `builder.CreateStore(value, ...)` on an lvalue silently stores the
+  /// *pointer*.
+  void createStore(Value value, Value dest) {
+    SMDL_SANITY_CHECK(value && dest);
+    if (value.isLValue()) {
+      builder.CreateMemCpy(dest, llvm::Align(context.getAlignOf(value.type)),
+                           value, llvm::Align(context.getAlignOf(value.type)),
+                           context.getSizeOf(value.type));
+    } else {
+      builder.CreateStore(value, dest);
+    }
+  }
+
   /// Emit the pending unwind actions above the given stack depth,
   /// newest-first, without popping them — every control path that leaves a
   /// scope re-emits its actions. The stack itself is truncated when the

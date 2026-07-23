@@ -226,7 +226,7 @@ syn match smdlComptime display "\$\ze\s*("
 " The generic match is defined first so that the recognized names defined after
 " it take priority.
 syn match smdlIntrinsicUnknown display "#\h\w*"
-syn match smdlIntrinsic display "#\%(abs\|alignof\|all\|allocate\|any\|assert\|atan2\|albedo_lut\)\>"
+syn match smdlIntrinsic display "#\%(abs\|alignof\|all\|any\|assert\|atan2\|albedo_lut\)\>"
 syn match smdlIntrinsic display "#\%(bitcast\|bitreverse\|breakpoint\|bump\|bump_allocate\)\>"
 syn match smdlIntrinsic display "#\%(clock\|ctlz\|ctpop\|cttz\|conj\|imag\|norm\|real\)\>"
 syn match smdlIntrinsic display "#\%(floor\|ceil\|trunc\|round\|sqrt\|pow\|sign\|select\)\>"
@@ -234,7 +234,7 @@ syn match smdlIntrinsic display "#\%(sin\|cos\|tan\|asin\|acos\|atan\|sinh\|cosh
 syn match smdlIntrinsic display "#\%(exp\|exp2\|exp10\|log\|log2\|log10\)\>"
 syn match smdlIntrinsic display "#\%(sum\|prod\|min\|max\|min_value\|max_value\)\>"
 syn match smdlIntrinsic display "#\%(num\|num_rows\|num_cols\|sizeof\|transpose\)\>"
-syn match smdlIntrinsic display "#\%(free\|memcpy\|memset\|isfpclass\|rotl\|rotr\)\>"
+syn match smdlIntrinsic display "#\%(heap_allocate\|heap_free\|memcpy\|memset\|isfpclass\|rotl\|rotr\)\>"
 syn match smdlIntrinsic display "#\%(print\|println\|fprint\|fprintln\|panic\)\>"
 syn match smdlIntrinsic display "#\%(typeof\|typename\|type_int\|type_float\|type_vector\|type_matrix\)\>"
 syn match smdlIntrinsic display "#\%(unpack_float4\|unsigned_to_fp\|tabulate_albedo\)\>"

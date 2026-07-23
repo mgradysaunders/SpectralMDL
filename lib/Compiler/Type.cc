@@ -1043,7 +1043,11 @@ Value FunctionType::invoke(Emitter &emitter, const ArgumentList &args,
       }
       auto callee{emitter.emit(astCall->expr)};
       result = emitter.emitCall(callee, patchedArgs, srcLoc);
-      result = emitter.invoke(decl.returnType->type, result, srcLoc);
+      // Skip the conversion when the type already matches exactly, so
+      // memory-resident (lvalue) results stay in memory instead of being
+      // loaded back into SSA by the pass-through conversion.
+      if (result.type != decl.returnType->type)
+        result = emitter.invoke(decl.returnType->type, result, srcLoc);
     });
     return result;
   }
@@ -1075,14 +1079,29 @@ Value FunctionType::invoke(Emitter &emitter, const ArgumentList &args,
     auto &instance{
         func->getInstance(emitter, resolvedArgs.getNonVariadicTypes())};
     auto llvmArgs{llvm::SmallVector<llvm::Value *>{}};
+    // Indirect ('sret') returns receive a caller-provided result slot as
+    // the leading argument (see 'Emitter::createFunction'), and the call
+    // result is that slot as an lvalue, so the value stays in memory
+    // instead of materializing as a large SSA aggregate. Foreign
+    // functions always return by value.
+    auto sretSlot{Value{}};
+    if (!func->isForeign() && emitter.returnsIndirectly(instance.returnType)) {
+      SMDL_SANITY_CHECK(instance.llvmFunc->getReturnType()->isVoidTy());
+      sretSlot = emitter.createAlloca(instance.returnType, "sret.slot");
+      llvmArgs.push_back(sretSlot.llvmValue);
+    }
     if (!func->isPure())
       llvmArgs.push_back(emitter.state);
     llvmArgs.insert(llvmArgs.end(),              //
                     resolvedArgs.values.begin(), //
                     resolvedArgs.values.end());
-    return RValue(instance.returnType, emitter.builder.CreateCall(
-                                           instance.llvmFunc->getFunctionType(),
-                                           instance.llvmFunc, llvmArgs));
+    auto callInst{emitter.builder.CreateCall(
+        instance.llvmFunc->getFunctionType(), instance.llvmFunc, llvmArgs)};
+    if (sretSlot) {
+      emitter.addIndirectReturnAttrs(instance.returnType, nullptr, callInst);
+      return LValue(instance.returnType, sretSlot.llvmValue);
+    }
+    return RValue(instance.returnType, callInst);
   }
 }
 
@@ -1360,7 +1379,7 @@ void FunctionType::initializeMaterialFunctions(Emitter &emitter) {
               context.getPointerType(materialInstanceType);
           auto out{
               emitter.rvalue(emitter.resolveIdentifier("out"sv, decl.srcLoc))};
-          emitter.builder.CreateStore(materialInstance, out);
+          emitter.createStore(materialInstance, out);
         })};
     func->setLinkage(llvm::Function::ExternalLinkage);
     // '%state' is deliberately not 'noalias': the bump arena written
@@ -1897,10 +1916,35 @@ Value StructType::invoke(Emitter &emitter, const ArgumentList &args,
       resultType->isDefaultInstance = args.empty();
       SMDL_SANITY_CHECK(!resultType->isAbstract());
     }
-    auto result{Value::zero(resultType)};
-    auto i{size_t(0)};
-    for (auto &value : resolvedArgs.values)
-      result = emitter.insert(result, value, i++, srcLoc);
+    auto allComptime{true};
+    for (const auto &value : resolvedArgs.values)
+      allComptime &= value.isComptime();
+    auto result{Value()};
+    if (!allComptime && emitter.getLLVMFunction() &&
+        emitter.returnsIndirectly(resultType)) {
+      // Construct large structs in place: allocate a slot, store the
+      // fields through it, and return it as an lvalue. Building them as
+      // first-class 'insertvalue' chains makes the optimizer juggle
+      // whole-struct SSA values, which lower poorly. Small structs and
+      // compile-time constants keep the by-value construction below so
+      // module scope and constant folding continue to work.
+      auto lv{emitter.createAlloca(resultType, "struct.lv")};
+      auto i{unsigned(0)};
+      for (auto &value : resolvedArgs.values) {
+        if (!value.isVoid())
+          emitter.createStore(
+              value, LValue(value.type,
+                            emitter.builder.CreateStructGEP(
+                                resultType->llvmType, lv, i)));
+        i++;
+      }
+      result = LValue(resultType, lv.llvmValue);
+    } else {
+      result = Value::zero(resultType);
+      auto i{size_t(0)};
+      for (auto &value : resolvedArgs.values)
+        result = emitter.insert(result, value, i++, srcLoc);
+    }
     if (decl.stmtFinalize) {
       SMDL_PRESERVE(emitter.scope, emitter.anchors);
       emitter.restoreResolutionAnchor(params);
@@ -1909,13 +1953,18 @@ Value StructType::invoke(Emitter &emitter, const ArgumentList &args,
         emitter.labelBreak = {};    // Invalidate!
         emitter.labelContinue = {}; // Invalidate!
         emitter.setCurrentModule(decl.srcLoc);
+        const auto inPlace{result.isLValue()};
         auto lv{emitter.lvalue(result)};
         for (auto &param : params)
           emitter.declare(param.name, &decl,
                                emitter.accessField(lv, param.name, srcLoc));
         emitter.emit(decl.stmtFinalize);
-        result = emitter.rvalue(lv);
-        emitter.createLifetimeEnd(lv);
+        if (inPlace) {
+          result = lv;
+        } else {
+          result = emitter.rvalue(lv);
+          emitter.createLifetimeEnd(lv);
+        }
       });
     }
     return result;
@@ -2047,12 +2096,22 @@ UnionType::UnionType(Context &context, llvm::SmallVector<Type *> caseTys)
   }
   displayName += ')';
 
-  // Determine LLVM type.
-  uint64_t numWords{requiredSize / 8};
-  if (requiredSize % 8 != 0)
-    numWords++;
+  // Determine LLVM type. The payload is an array of alignment-carrying
+  // chunks rather than a single wide vector. The chunk vector type
+  // guarantees the alignment of the most-aligned case type even when the
+  // union nests inside other types, while the array bounds how much of
+  // the payload SROA promotes into any one SSA value — a single
+  // union-sized vector otherwise reappears in optimized code as giant
+  // byte shuffles and unmergeable scalar stores.
+  uint64_t chunkSize{std::max<uint64_t>(requiredAlign, 8)};
+  uint64_t numChunks{(requiredSize + chunkSize - 1) / chunkSize};
+  auto i64Type{llvm::Type::getInt64Ty(context)};
   llvmType = llvm::StructType::create(
-      {llvm::FixedVectorType::get(llvm::Type::getInt64Ty(context), numWords),
+      {llvm::ArrayType::get(
+           chunkSize == 8 ? i64Type
+                          : static_cast<llvm::Type *>(llvm::FixedVectorType::get(
+                                i64Type, chunkSize / 8)),
+           numChunks),
        context.getIntType()->llvmType},
       "union_t");
   SMDL_SANITY_CHECK(requiredAlign <= context.getAlignOf(this));
@@ -2090,8 +2149,15 @@ Value UnionType::invoke(Emitter &emitter, const ArgumentList &args,
           emitter.accessField(arg, "#idx", srcLoc), srcLoc))};
       emitter.builder.CreateStore(index,
                                   emitter.accessField(lv, "#idx", srcLoc));
-      auto rv{emitter.rvalue(lv)};
-      emitter.createLifetimeEnd(lv);
+      // Large unions stay memory-resident: return the slot as an lvalue
+      // instead of loading the whole payload into an SSA value.
+      auto result{Value()};
+      if (emitter.returnsIndirectly(this)) {
+        result = lv;
+      } else {
+        result = emitter.rvalue(lv);
+        emitter.createLifetimeEnd(lv);
+      }
       if (!hasAllCaseTypes(argUnionType)) {
         auto [blockFail, blockPass] =
             emitter.createBlocks<2>("union_conversion", {".fail", ".pass"});
@@ -2106,7 +2172,7 @@ Value UnionType::invoke(Emitter &emitter, const ArgumentList &args,
         emitter.builder.CreateBr(blockPass);
         emitter.builder.SetInsertPoint(blockPass);
       }
-      return rv;
+      return result;
     } else {
       if (!hasCaseType(arg.type))
         srcLoc.throwError("cannot construct union ", Quoted(displayName),
@@ -2115,9 +2181,13 @@ Value UnionType::invoke(Emitter &emitter, const ArgumentList &args,
       auto lv{emitter.createAlloca(this, "union.lv")};
       emitter.createLifetimeStart(lv);
       emitter.builder.CreateStore(Value::zero(this), lv); // zeroinitializer
-      emitter.builder.CreateStore(emitter.rvalue(arg), lv);
+      emitter.createStore(arg, LValue(arg.type, lv.llvmValue));
       emitter.builder.CreateStore(emitter.context.getComptimeInt(i),
                                   emitter.accessField(lv, "#idx", srcLoc));
+      // Large unions stay memory-resident: return the slot as an lvalue
+      // instead of loading the whole payload into an SSA value.
+      if (emitter.returnsIndirectly(this))
+        return lv;
       auto rv{emitter.rvalue(lv)};
       emitter.createLifetimeEnd(lv);
       return rv;
