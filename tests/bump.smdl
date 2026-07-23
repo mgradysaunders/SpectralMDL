@@ -1,0 +1,11 @@
+#smdl
+
+unit_test "Intrinsics: bump and bump_allocate" {
+  auto p0 = #bump_allocate(64, 16);
+  auto p1 = #bump_allocate(64, 16);
+  #assert(bool(p0));
+  #assert(bool(p1));
+  #assert(p0 != p1);
+  auto v = #bump(float4(1, 2, 3, 4));
+  #assert(#all(*v == float4(1, 2, 3, 4)));
+}

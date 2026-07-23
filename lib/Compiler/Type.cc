@@ -1321,6 +1321,23 @@ void FunctionType::initializeMaterialFunctions(Emitter &emitter) {
                      .builtinDefaultValue = {},
                      .builtinConst = true};
   }};
+  // The '@(visible)' entry points are called by the renderer through the
+  // C++ 'JIT::Material' API, which passes distinct, sufficiently aligned,
+  // dereferenceable pointers (see 'include/smdl/JIT.h'). LLVM cannot infer
+  // caller-side contracts for externally visible functions, so state them
+  // explicitly.
+  auto markPointerParam{[&](llvm::Function *func, unsigned argIndex,
+                            Type *pointeeType, uint64_t count = 1,
+                            bool noAlias = true) {
+    auto attrs{llvm::AttrBuilder(context.llvmContext)};
+    if (noAlias)
+      attrs.addAttribute(llvm::Attribute::NoAlias);
+    attrs.addAttribute(llvm::Attribute::NonNull);
+    attrs.addAttribute(llvm::Attribute::NoUndef);
+    attrs.addAlignmentAttr(llvm::Align(context.getAlignOf(pointeeType)));
+    attrs.addDereferenceableAttr(count * context.getSizeOf(pointeeType));
+    func->addParamAttrs(argIndex, attrs);
+  }};
   {
     // Generate the evaluate function:
     // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -1346,6 +1363,10 @@ void FunctionType::initializeMaterialFunctions(Emitter &emitter) {
           emitter.builder.CreateStore(materialInstance, out);
         })};
     func->setLinkage(llvm::Function::ExternalLinkage);
+    // '%state' is deliberately not 'noalias': the bump arena written
+    // during evaluation is reachable through 'state.allocator'.
+    markPointerParam(func, 0, context.getStateType(), 1, /*noAlias=*/false);
+    markPointerParam(func, 1, materialInstanceType);
     jitMaterial.evaluate.name = func->getName().str();
   }
   verifyMaterialInstanceLayout(context, materialInstanceType, decl.srcLoc);
@@ -1391,6 +1412,13 @@ void FunctionType::initializeMaterialFunctions(Emitter &emitter) {
               decl.srcLoc);
         })};
     func->setLinkage(llvm::Function::ExternalLinkage);
+    markPointerParam(func, 0, materialInstanceType);
+    markPointerParam(func, 1, context.getFloatType(3)); // wo
+    markPointerParam(func, 2, context.getFloatType(3)); // wi
+    markPointerParam(func, 3, context.getFloatType());  // pdfFwd
+    markPointerParam(func, 4, context.getFloatType());  // pdfRev
+    markPointerParam(func, 5, context.getFloatType(),   // f
+                     context.getColorType()->wavelengthBaseMax);
     jitMaterial.scatterEvaluate.name = func->getName().str();
   }
   {
@@ -1441,6 +1469,15 @@ void FunctionType::initializeMaterialFunctions(Emitter &emitter) {
               decl.srcLoc);
         })};
     func->setLinkage(llvm::Function::ExternalLinkage);
+    markPointerParam(func, 0, materialInstanceType);
+    markPointerParam(func, 1, context.getFloatType(4)); // xi
+    markPointerParam(func, 2, context.getFloatType(3)); // wo
+    markPointerParam(func, 3, context.getFloatType(3)); // wi
+    markPointerParam(func, 4, context.getFloatType());  // pdfFwd
+    markPointerParam(func, 5, context.getFloatType());  // pdfRev
+    markPointerParam(func, 6, context.getFloatType(),   // f
+                     context.getColorType()->wavelengthBaseMax);
+    markPointerParam(func, 7, context.getIntType());    // isDelta
     jitMaterial.scatterSample.name = func->getName().str();
   }
   // TODO _volume_scatter_evaluate

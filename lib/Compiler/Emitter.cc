@@ -3,6 +3,7 @@
 
 #include "smdl/BSDFMeasurement.h"
 #include "smdl/Support/Logger.h"
+#include "llvm/IR/MDBuilder.h"
 #include "llvm/Support/Format.h"
 #include "llvm/Support/Parallel.h"
 #include <atomic>
@@ -1199,23 +1200,12 @@ Value Emitter::emitOp(AST::BinaryOp op, Value lhs, Value rhs,
     if ((op == BINOP_MUL) && lhsType->extent.isVector() &&
         rhsType->extent.isMatrix() &&
         lhsType->extent.numRows == rhsType->extent.numRows) {
-      auto scalar{lhsType->scalar.getCommon(rhsType->scalar)};
-      lhs =
-          invoke(lhsType->getWithDifferentScalar(context, scalar), lhs, srcLoc);
-      rhs =
-          invoke(rhsType->getWithDifferentScalar(context, scalar), rhs, srcLoc);
-      /* auto extentN{rhsType->extent.numRows}; */
-      auto extentP{rhsType->extent.numCols};
-      auto result{
-          Value::zero(context.getArithmeticType(scalar, Extent(extentP)))};
-      // Row-vector times matrix, equivalent to `#transpose(matrix) * vector`
-      for (unsigned j = 0; j < extentP; j++) {
-        auto resColumn{accessIndex(rhs, j, srcLoc)};
-        resColumn = emitOp(BINOP_MUL, lhs, resColumn, srcLoc);
-        resColumn = emitIntrinsic("sum", resColumn, srcLoc);
-        result = insert(result, resColumn, j, srcLoc);
-      }
-      return result;
+      // Row-vector times matrix is 'transpose(matrix) * vector'. Emitting
+      // the transpose (a few shuffles, CSE'd across transforms by the same
+      // matrix) lets the multiply lower to vertical splat-multiply-adds
+      // like Matrix-Vector above, instead of one horizontal '#sum'
+      // reduction per output component.
+      return emitOp(op, emitIntrinsic("transpose", rhs, srcLoc), lhs, srcLoc);
     }
   }
   // Enums
@@ -1530,11 +1520,9 @@ Value Emitter::emitIntrinsic(std::string_view name, const ArgumentList &args,
     SMDL_SANITY_CHECK(false);
     return nullptr;
   }};
-  // Shared by '#allocate' and '#bump_allocate', which differ only in the
-  // runtime callee.
-  auto emitAllocateCall{[&](llvm::FunctionCallee callee) {
-    if (auto func{llvm::dyn_cast<llvm::Function>(callee.getCallee())})
-      func->setReturnDoesNotAlias();
+  // '#allocate' and '#bump_allocate' expect '(size)' or '(size, align)'
+  // int arguments.
+  auto expectSizeAndAlign{[&]() {
     auto arg0{args.size() >= 1 ? args[0].value : context.getComptimeInt(0)};
     auto arg1{args.size() == 2 ? args[1].value : context.getComptimeInt(1)};
     if (!(args.size() == 1 || args.size() == 2) ||
@@ -1543,11 +1531,77 @@ Value Emitter::emitIntrinsic(std::string_view name, const ArgumentList &args,
       srcLoc.throwError("intrinsic ", Quoted(name),
                         " expects 1 or 2 int arguments");
     auto intType{context.getIntType()};
-    arg0 = invoke(intType, rvalue(arg0), srcLoc);
-    arg1 = invoke(intType, rvalue(arg1), srcLoc);
+    return std::pair{invoke(intType, rvalue(arg0), srcLoc),
+                     invoke(intType, rvalue(arg1), srcLoc)};
+  }};
+  auto emitAllocateCall{[&](llvm::FunctionCallee callee) {
+    if (auto func{llvm::dyn_cast<llvm::Function>(callee.getCallee())})
+      func->setReturnDoesNotAlias();
+    auto [size, align] = expectSizeAndAlign();
     return RValue(
         context.getVoidPointerType(),
-        builder.CreateCall(callee, {arg0.llvmValue, arg1.llvmValue}));
+        builder.CreateCall(callee, {size.llvmValue, align.llvmValue}));
+  }};
+  // Shared by '#bump' and '#bump_allocate': bump the allocator fast-path
+  // window inline, deferring to the runtime only when the request does not
+  // fit (which also refills the window).
+  auto emitBumpAllocate{[&](Value size, Value align) {
+    if (!state)
+      srcLoc.throwError("intrinsic ", Quoted(name),
+                        " requires '$state' and cannot be used in '@(pure)' "
+                        "context");
+    static_assert(std::is_standard_layout_v<BumpPtrAllocator>,
+                  "the emitted code offsets into this type with 'offsetof'");
+    auto i8Ty{builder.getInt8Ty()};
+    auto i64Ty{builder.getInt64Ty()};
+    auto ptrTy{llvm::PointerType::get(context.llvmContext, 0)};
+    auto stateLV{LValue(context.getStateType(), rvalue(state))};
+    auto allocPtr{rvalue(accessField(stateLV, "allocator", srcLoc))};
+    auto windowPtrAddr{builder.CreateConstInBoundsGEP1_64(
+        i8Ty, allocPtr, offsetof(BumpPtrAllocator, windowPtr))};
+    auto windowEndAddr{builder.CreateConstInBoundsGEP1_64(
+        i8Ty, allocPtr, offsetof(BumpPtrAllocator, windowEnd))};
+    auto cur{builder.CreateLoad(ptrTy, windowPtrAddr, "bump.cur")};
+    auto end{builder.CreateLoad(ptrTy, windowEndAddr, "bump.end")};
+    auto curI{builder.CreatePtrToInt(cur, i64Ty)};
+    auto endI{builder.CreatePtrToInt(end, i64Ty)};
+    auto mask{builder.CreateSub(builder.CreateSExt(align, i64Ty),
+                                builder.getInt64(1))};
+    auto alignedI{builder.CreateAnd(builder.CreateAdd(curI, mask),
+                                    builder.CreateNot(mask))};
+    auto newI{builder.CreateAdd(alignedI, builder.CreateSExt(size, i64Ty))};
+    // The window serves the request only if the size is positive (the
+    // runtime returns null for non-positive sizes) and the bumped pointer
+    // stays in bounds; an uninitialized null window fails the bounds check
+    // and falls through to the runtime, which refills it.
+    auto ok{builder.CreateAnd(
+        builder.CreateICmpSGT(size, context.getComptimeInt(0)),
+        builder.CreateICmpULE(newI, endI))};
+    auto [blockFast, blockSlow, blockEnd] =
+        createBlocks<3>("bump", {".fast", ".slow", ".end"});
+    builder.CreateCondBr(
+        ok, blockFast, blockSlow,
+        llvm::MDBuilder(context.llvmContext).createBranchWeights(15, 1));
+    builder.SetInsertPoint(blockFast);
+    auto fastResult{builder.CreateInBoundsGEP(
+        i8Ty, cur, builder.CreateSub(alignedI, curI), "bump.result")};
+    builder.CreateStore(
+        builder.CreateInBoundsGEP(i8Ty, cur, builder.CreateSub(newI, curI)),
+        windowPtrAddr);
+    builder.CreateBr(blockEnd);
+    builder.SetInsertPoint(blockSlow);
+    auto callee{
+        context.getBuiltinCallee("smdlBumpAllocate", &smdlBumpAllocate)};
+    if (auto func{llvm::dyn_cast<llvm::Function>(callee.getCallee())})
+      func->setReturnDoesNotAlias();
+    auto slowResult{builder.CreateCall(
+        callee, {rvalue(state).llvmValue, size.llvmValue, align.llvmValue})};
+    builder.CreateBr(blockEnd);
+    builder.SetInsertPoint(blockEnd);
+    auto phiInst{builder.CreatePHI(ptrTy, 2, "bump.ptr")};
+    phiInst->addIncoming(fastResult, blockFast);
+    phiInst->addIncoming(slowResult, blockSlow);
+    return RValue(context.getVoidPointerType(), phiInst);
   }};
   // '#bitreverse', '#ctlz', '#cttz', and '#ctpop' differ only in the LLVM
   // intrinsic and whether it takes the trailing is-zero-poison flag.
@@ -1767,23 +1821,16 @@ Value Emitter::emitIntrinsic(std::string_view name, const ArgumentList &args,
       return RValue(context.getVoidType(), nullptr);
     }
     if (name == "bump_allocate") {
-      return emitAllocateCall(
-          context.getBuiltinCallee("smdlBumpAllocate", &smdlBumpAllocate));
+      auto [size, align] = expectSizeAndAlign();
+      return emitBumpAllocate(size, align);
     }
     if (name == "bump") {
       auto value{rvalue(expectOne())};
-      auto callee{
-          context.getBuiltinCallee("smdlBumpAllocate", &smdlBumpAllocate)};
-      if (auto func{llvm::dyn_cast<llvm::Function>(callee.getCallee())})
-        func->setReturnDoesNotAlias();
-      auto callInst{builder.CreateCall(
-          callee,
-          {state.llvmValue,
-           context.getComptimeInt(int(context.getSizeOf(value.type))).llvmValue,
-           context.getComptimeInt(int(context.getAlignOf(value.type)))
-               .llvmValue})};
-      builder.CreateStore(value, callInst);
-      return RValue(context.getPointerType(value.type), callInst);
+      auto ptr{emitBumpAllocate(
+          context.getComptimeInt(int(context.getSizeOf(value.type))),
+          context.getComptimeInt(int(context.getAlignOf(value.type))))};
+      builder.CreateStore(value, ptr);
+      return RValue(context.getPointerType(value.type), ptr.llvmValue);
     }
     break;
   }
