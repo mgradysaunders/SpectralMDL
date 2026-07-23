@@ -1788,6 +1788,17 @@ Value Emitter::emitIntrinsic(std::string_view name, const ArgumentList &args,
     break;
   }
   case 'c': {
+    if (name == "clock") {
+      if (!args.empty())
+        srcLoc.throwError("intrinsic 'clock' expects no arguments");
+      // Lowers to the CPU cycle counter (RDTSC on x86-64, CNTVCT_EL0 on
+      // AArch64). Units are reference cycles, only meaningful as deltas;
+      // targets without a cycle counter lower this to constant 0.
+      auto int64Type{context.getArithmeticType(Scalar::getInt(64))};
+      return RValue(int64Type, builder.CreateIntrinsic(
+                                   int64Type->llvmType,
+                                   llvm::Intrinsic::readcyclecounter, {}));
+    }
     break;
   }
   case 'f': {

@@ -1,0 +1,10 @@
+#smdl
+
+unit_test "Intrinsics: clock" {
+  const auto t0 = #clock();
+  const auto t1 = #clock();
+  #assert(#typeof(t0) == #type_int(64));
+  // The counter is monotonic, so consecutive reads must not decrease. On
+  // targets without a cycle counter both reads are 0 and this still holds.
+  #assert(t1 >= t0);
+}
