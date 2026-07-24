@@ -2530,6 +2530,10 @@ export static const auto PROSPECT_TABLE_ABSORPTIONS=auto[526](
   auto(0.0000000e+00,0.0000000e+00,0.0000000e+00,0.0000000e+00,9.3580000e+01,3.9170000e+01,9.1024700e+00,4.3201200e+01),
   auto(0.0000000e+00,0.0000000e+00,0.0000000e+00,0.0000000e+00,9.5300000e+01,3.8710000e+01,9.4077800e+00,4.2636600e+01),
 );
+export const float PROSPECT_XANTHOPHYLL_MIN_WAVELENGTH=500.0;
+export const float PROSPECT_XANTHOPHYLL_MAX_WAVELENGTH=564.0;
+export const int PROSPECT_XANTHOPHYLL_TABLE_SIZE=65;
+export static const auto PROSPECT_TABLE_XANTHOPHYLL=float[65](0.0000000e+00,0.0000000e+00,0.0000000e+00,0.0000000e+00,2.3666667e-06,1.4111905e-05,1.5753175e-05,1.6109579e-04,4.3772785e-04,5.7373789e-04,7.1124793e-04,7.5958535e-04,8.1272277e-04,1.0946743e-03,1.3850259e-03,1.5193361e-03,1.6655464e-03,1.8591944e-03,2.0681424e-03,2.3029017e-03,2.5563610e-03,2.7022316e-03,2.8702023e-03,2.9664684e-03,3.0884345e-03,3.1437199e-03,3.2281053e-03,3.2327202e-03,3.2698351e-03,3.2164464e-03,3.1989577e-03,3.0774558e-03,2.9954539e-03,2.8728641e-03,2.7932744e-03,2.6592758e-03,2.5715771e-03,2.4033444e-03,2.2849116e-03,2.1181130e-03,1.9782487e-03,1.8263978e-03,1.6528675e-03,1.5393822e-03,1.4256901e-03,1.3247508e-03,1.2209231e-03,1.1458843e-03,1.0737610e-03,1.0123810e-03,9.5488751e-04,8.9542219e-04,8.2601780e-04,8.4654538e-04,8.1813233e-04,7.2321320e-04,5.1506483e-04,3.3026741e-04,1.7676800e-04,4.4479700e-05,0.0000000e+00,0.0000000e+00,0.0000000e+00,0.0000000e+00,0.0000000e+00);
 @(noinline)
 export prospect_result prospect(
   float num_layers=1.5,
@@ -2539,13 +2543,16 @@ export prospect_result prospect(
   float chlorophylls=30.0,
   float anthocyanins=1.0,
   float carotenoids=1.5,
+  float xanthophyll_cycle=0.0,
   float proteins=0.0,
   float carbons=0.0,
   float browns=0.0,
 ){
   color ior(0);
   color k(0);
-  const auto contents(chlorophylls,carotenoids,anthocyanins,browns,1e-1*water,1e-3*dry_matter,1e-3*proteins,1e-3*carbons);
+  const auto layers=#max(num_layers,1.0);
+  const auto contents=auto(chlorophylls,carotenoids,anthocyanins,browns,1e-1*water,1e-3*dry_matter,1e-3*proteins,1e-3*carbons)/layers;
+  const auto xanthophylls=carotenoids*(1.0-clamp(xanthophyll_cycle,0.0,1.5))/layers;
   for(int i=0;i<$WAVELENGTH_BASE_MAX;i++){
     float w=(PROSPECT_TABLE_SIZE-1)*saturate(($state.wavelength_base[i]-PROSPECT_MIN_WAVELENGTH)/(PROSPECT_MAX_WAVELENGTH-PROSPECT_MIN_WAVELENGTH));
     const int w0=#min(int(#floor(w)),PROSPECT_TABLE_SIZE-2);
@@ -2553,6 +2560,10 @@ export prospect_result prospect(
     w-=w0;
     ior[i]=lerp(PROSPECT_TABLE_IORS[w0],PROSPECT_TABLE_IORS[w1],w);
     k[i]=dot(lerp(PROSPECT_TABLE_ABSORPTIONS[w0],PROSPECT_TABLE_ABSORPTIONS[w1],w),contents);
+    float x=(PROSPECT_XANTHOPHYLL_TABLE_SIZE-1)*saturate(($state.wavelength_base[i]-PROSPECT_XANTHOPHYLL_MIN_WAVELENGTH)/(PROSPECT_XANTHOPHYLL_MAX_WAVELENGTH-PROSPECT_XANTHOPHYLL_MIN_WAVELENGTH));
+    const int x0=#min(int(#floor(x)),PROSPECT_XANTHOPHYLL_TABLE_SIZE-2);
+    x-=x0;
+    k[i]-=xanthophylls*lerp(PROSPECT_TABLE_XANTHOPHYLL[x0],PROSPECT_TABLE_XANTHOPHYLL[x0+1],x);
   }
   const auto tau=return_from{
     const auto num=(1.236150246012*k+3.672877420834)*k+1.0;
@@ -2595,7 +2606,7 @@ export prospect_result prospect(
   const auto d=#sqrt((1+add_r_t)*(1+sub_r_t)*(1-add_r_t)*(1-sub_r_t));
   const auto a=(1+d+sub_r2_t2)/(2*r);
   const auto b=(1+d-sub_r2_t2)/(2*t);
-  const auto bNm1=#pow(b,num_layers-1);
+  const auto bNm1=#pow(b,layers-1);
   const auto tmp1=#pow(a*bNm1,2)-1;
   color tSub=bNm1*(a*a-1)/tmp1;
   color rSub=a*(bNm1*bNm1-1)/tmp1;
@@ -2603,7 +2614,7 @@ export prospect_result prospect(
     const auto ri=r[i];
     const auto ti=t[i];
     if(ri+ti>1){
-      tSub[i]=ti/(ti+(1-ti)*(num_layers-1));
+      tSub[i]=ti/(ti+(1-ti)*(layers-1));
       rSub[i]=1-tSub[i];
     } else if(!isfinite(rSub[i])||!isfinite(tSub[i])){
       tSub[i]=0;
