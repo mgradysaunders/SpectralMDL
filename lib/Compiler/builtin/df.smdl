@@ -1354,6 +1354,353 @@ auto scatterSample(const &measured_bsdf this, inline const &ScatterSampleParamet
 }
 //--}
 
+//--{ hapke_granular_bsdf
+// NOTE: This is non-standard!
+
+// The Gauss-Legendre rule on the phase angle `g` over `[0,pi]` that normalizes the
+// opposition surge and integrates the single-scattering albedo at construction. One
+// row per node, `{weight, cos(g), sin(g), tan(g/2), 2 g/pi - 1}`, with everything the
+// quadrature needs precomputed so the loop makes no trigonometric call and takes no
+// square root or divide. The `sin(g)` column is the spherical measure of the surge
+// normalizer, `tan(g/2)` is the surge argument, and the last column is the abscissa
+// the W density below is evaluated at.
+//
+// 16 nodes cost at most 7.1e-5 relative on the single-scattering albedo across the
+// parameter corners, which is exactly the realized white-sky albedo error because the
+// surge normalizer cancels between that albedo and the phase function. That is some 20
+// times below the error of the Chebyshev fits themselves, and the count is worth
+// choosing carefully because this quadrature runs once per instantiation, unlike in the
+// reference implementation, where it runs once per material.
+//
+// Regenerate with `misc/gen_hapke_smdl_tables.py`.
+// smdl format off
+static const auto HAPKE_QUAD = auto[16](
+  auto(0.0426509835, 0.999861409, 0.0166482032, 0.00832467848, -0.989400935),
+  auto(0.0977876067, 0.996212554, 0.086951409, 0.0435581917, -0.944575023),
+  auto(0.149474641, 0.977808138, 0.209502376, 0.105926541, -0.865631202),
+  auto(0.19576673, 0.927094889, 0.374826716, 0.194503508, -0.755404408),
+  auto(0.23498483, 0.825200872, 0.564839376, 0.309466966, -0.617876244),
+  auto(0.265710439, 0.658971885, 0.752167571, 0.453393802, -0.458016778),
+  auto(0.286832774, 0.428057064, 0.903751708, 0.632854058, -0.281603551),
+  auto(0.297588323, 0.148691866, 0.988883577, 0.860878018, -0.0950125098),
+  auto(0.297588323, -0.148691866, 0.988883577, 1.16160476, 0.0950125098),
+  auto(0.286832774, -0.428057064, 0.903751708, 1.58014314, 0.281603551),
+  auto(0.265710439, -0.658971885, 0.752167571, 2.20558816, 0.458016778),
+  auto(0.23498483, -0.825200872, 0.564839376, 3.23136267, 0.617876244),
+  auto(0.19576673, -0.927094889, 0.374826716, 5.14129545, 0.755404408),
+  auto(0.149474641, -0.977808138, 0.209502376, 9.44050459, 0.865631202),
+  auto(0.0977876067, -0.996212554, 0.086951409, 22.9577942, 0.944575023),
+  auto(0.0426509835, -0.999861409, 0.0166482032, 120.124759, 0.989400935));
+// smdl format on
+
+// The Chebyshev energy normalization. `HAPKE_W_CHEB` holds the tensor coefficients of
+// the W DENSITY (mass per radian of phase angle) on `x = 2 g/pi - 1` and `y = 2 r - 1`,
+// so `density(g, r) = sum_ab W[a][b] T_a(x) T_b(y)` clamped at zero, and
+// `HAPKE_G_CHEB` the same for `G = Fhat/w` on `x = 2 gamma - 1`, giving
+// `EbarK = w (A_ss + w G)`. Both are stored roughness-major -- transposed relative to
+// the reference implementation -- so that collapsing the roughness axis is a handful
+// of vector multiply-adds instead of a Clenshaw recurrence per coefficient.
+//
+// The fits carry 83 constants for an end-to-end albedo error of 1.4e-3, which is below
+// the 2 to 5 percent reproducibility of the source spectra they are used with.
+// smdl format off
+static const auto HAPKE_W_CHEB = auto[5](
+  auto(0.0443692637, -0.0330322166, -0.0414806793, 0.0377322324, -0.0036831791, -0.00503835424, 0.000809641201, 0.000328879959, 2.18482055e-05, -1.60545071e-05, -1.57504064e-05),
+  auto(-0.00594076498, 0.000757196179, 0.0081566095, -0.000627186314, -0.00248094082, -0.000488022104, 0.000297539468, 0.000375439189, -8.86163641e-06, -3.29277167e-05, -3.83729896e-05),
+  auto(-0.000963613192, 0.000466153409, 0.00149075512, -0.000673457031, -0.000758809229, 0.000127478645, 0.000295317848, 0.00011745609, -6.84391571e-05, -5.81575106e-05, -1.47705227e-05),
+  auto(0.000275487885, 6.03421013e-05, -0.000403479982, -0.000190433817, 0.000111667449, 0.000185513524, 6.24427123e-05, -7.37454173e-05, -7.16632707e-05, -2.55167593e-05, 1.67814334e-05),
+  auto(-2.62793436e-05, -3.65689393e-05, 6.2527643e-06, 6.15744651e-05, 6.90324901e-05, -6.91503114e-06, -5.56055434e-05, -4.09210276e-05, 7.60283579e-06, 2.61753306e-05, 1.97457206e-05));
+static const auto HAPKE_G_CHEB = auto[4](
+  auto(0.299680994, -0.25994946, 0.0835171816, -0.0234697031, 0.0061327028, -0.00150566063, 0.00036640673),
+  auto(-0.0526057365, 0.0529757455, -0.0205834026, 0.00702317686, -0.00220447865, 0.000635609701, -0.000179704911),
+  auto(-0.0107799361, 0.00980414131, -0.00314615761, 0.000844617944, -0.00020008313, 4.17196758e-05, -7.49359084e-06),
+  auto(0.00182228246, -0.00183367741, 0.00081867027, -0.000334625137, 0.000123845828, -4.06381678e-05, 1.27990763e-05));
+// smdl format on
+
+/// Evaluate a Chebyshev series by the Clenshaw recurrence, `x` in `[-1,1]`.
+///
+/// \note
+/// Generic in both the coefficients and `x`, so the same routine serves the scalar
+/// density evaluation at construction and the spectral `EbarK` evaluation.
+///
+@(pure)
+auto hapkeChebEval(const auto c, const int n, const auto x) {
+  auto b1(0.0 * x);
+  auto b2(0.0 * x);
+  for (int k = n - 1; k >= 1; k--) {
+    const auto t(2.0 * x * b1 - b2 + c[k]);
+    b2 = b1;
+    b1 = t;
+  }
+  return x * b1 - b2 + c[0];
+}
+
+/// The tangent of the half phase angle, which is the natural argument of the surge.
+@(pure macro)
+float hapkeTanHalfAngle(const float cosG) = #sqrt((1.0 - cosG) / #max(1.0 + cosG, 1e-12));
+
+/// The two-lobe Henyey-Greenstein phase function in Hapke's convention, where the
+/// first lobe peaks at `g = 0`, which is to say at backscatter. The sharpness `b`
+/// narrows both lobes and the weight `c` balances backward against forward.
+@(pure)
+float hapkePhase(const float b, const float c, const float cosG) {
+  const auto numer(1.0 - b * b);
+  const auto back(1.0 - 2.0 * b * cosG + b * b);
+  const auto fwd(1.0 + 2.0 * b * cosG + b * b);
+  return 0.5 * (1.0 + c) * numer / (back * #sqrt(back)) + //
+         0.5 * (1.0 - c) * numer / (fwd * #sqrt(fwd));
+}
+
+/// The shadow-hiding opposition effect (SHOE, Hapke 1986). Near `g = 0` a grain hides
+/// its own shadow, brightening retro-reflection by `B0 / (1 + tan(g/2)/h)`.
+@(pure macro)
+float hapkeSurge(const float B0, const float h, const float tanHalfG) = B0 / (1.0 + tanHalfG / h);
+
+/// The Chandrasekhar H-function in the Hapke (2002) rational-log approximation, whose
+/// error is under 1 percent against the exact integral-equation solution. The product
+/// `H(mu0) H(mu) - 1` is the isotropic approximation of everything scattered more than
+/// once: it grows from 1 on a dark surface toward roughly 3 as `w` approaches 1 at
+/// high cosines, which is where bright surfaces get their flattened limbs.
+@(pure)
+auto hapkeH(const float x, const auto w, const auto r0) {
+  const auto xs(#max(x, 1e-6));
+  return 1.0 / (1.0 - w * xs * (r0 + 0.5 * (1.0 - 2.0 * r0 * xs) * #log(1.0 + 1.0 / xs)));
+}
+
+/// The energy-conserving Hapke BRDF for granular surfaces.
+///
+/// The distribution is a normalized Hapke shape kernel times the prescribed `albedo`,
+/// `f = albedo * K / EbarK`, where `EbarK` is the kernel's own bihemispherical albedo,
+/// so that the realized white-sky albedo equals `albedo` exactly for every setting of
+/// the four directional parameters. They redistribute energy without creating or
+/// destroying it. The kernel itself is
+///
+///     K = w / (4 pi (mu0e + mue)) * [ptilde(g) + H(mu0e) H(mue) - 1] * S
+///
+/// which is the Lommel-Seeliger single-scattering core, the surge-folded two-lobe
+/// Henyey-Greenstein phase function `ptilde`, isotropic multiple scattering built from
+/// the Hapke (2002) H-functions, and the Hapke (1984) macroscopic-roughness shadowing
+/// `S`, assembled in its manifestly reciprocal form.
+///
+/// \note
+/// The `albedo` is not a tint. It is the reflectance the surface actually realizes
+/// under uniform illumination, so it is meaningful to drive it with a measured or
+/// modeled soil spectrum.
+///
+export struct hapke_granular_bsdf: bsdf {
+  /// The albedo, realized exactly as the bihemispherical (white-sky) reflectance.
+  const $(color | float) albedo = 1.0;
+
+  /// The roughness, being the Hapke mean facet slope `theta_bar = 30 degrees * roughness`.
+  float roughness = 0.0;
+
+  /// The porosity. `0` is compacted, with a wide opposition surge, and `1` is fluffy
+  /// fairy-castle structure, with a narrow one.
+  float porosity = 0.5;
+
+  /// The hotspot, being the amplitude `B0` of the shadow-hiding opposition surge.
+  float hotspot = 0.8;
+
+  /// The backscatter. `0` is forward-scattering translucent grains and `1` is rough
+  /// opaque backscatterers, where soils sit high.
+  float backscatter = 0.8;
+
+  /// The single-scattering albedo `w`.
+  auto _ssa = albedo;
+
+  /// The diffusive reflectance `r0`, which is the clamped albedo by construction.
+  auto _diffRefl = albedo;
+
+  /// The albedo per unit kernel, `A / (A_ss + w G)`.
+  auto _scale = albedo;
+
+  /// The Henyey-Greenstein lobe sharpness `b`.
+  float _hgSharpness = 0.0;
+
+  /// The Henyey-Greenstein backward-to-forward weight `c`.
+  float _hgBackWeight = 0.0;
+
+  /// The opposition surge width `h`.
+  float _surgeWidth = 0.0;
+
+  /// The reciprocal of the surge normalization `N_B`.
+  float _invSurgeNorm = 1.0;
+
+  /// The tangent of the mean facet slope, where `0` selects the smooth path.
+  float _tanMeanSlope = 0.0;
+
+  /// The handle.
+  ///
+  /// \note
+  /// This should be a `string` but we `void` it because we have no use for it.
+  ///
+  void handle = "";
+
+  /// The flags.
+  static const int df_flags = DF_REFLECTION | DF_DIFFUSE;
+
+  finalize {
+    roughness = saturate(roughness);
+    porosity = saturate(porosity);
+    hotspot = saturate(hotspot);
+    backscatter = saturate(backscatter);
+    // The phase function follows from the backscatter parameter alone by the empirical
+    // "hockey stick" relation (Hapke 2012, Icarus 221): laboratory data show the two
+    // Henyey-Greenstein shape parameters co-occurring on a 1-dimensional locus, so the
+    // parameter walks `b` from 0.65, for smooth translucent grains with a forward lobe,
+    // down to 0.10, for rough opaque agglomerates with a strong retro lobe, and `c`
+    // follows the locus centroid `c(b) = 3.29 exp(-17.4 b^2) - 0.908`.
+    _hgSharpness = 0.65 + (0.10 - 0.65) * backscatter;
+    _hgBackWeight = 3.29 * #exp(-17.4 * _hgSharpness * _hgSharpness) - 0.908;
+    // The porosity sets the surge width through Hapke (1986), `h = -(3/8) ln(1 - phi)`
+    // for a filling factor `phi`. Compacted soil (parameter 0, `phi = 0.48`, `h ~ 0.25`)
+    // has the WIDE surge and fluffy fairy-castle structure (parameter 1, `phi = 0.10`,
+    // `h ~ 0.04`) the narrow one, which puts the soil-typical `h ~ 0.11` mid-range.
+    _surgeWidth = -0.375 * #log(1.0 - (0.10 + (0.48 - 0.10) * (1.0 - porosity)));
+    const auto meanSlope(($PI / 6) * roughness);
+    _tanMeanSlope = meanSlope < 1e-8 ? 0.0 : #tan(meanSlope);
+    // Collapse the roughness axis of both Chebyshev fits, walking the basis up by the
+    // recurrence `T_k = 2 y T_(k-1) - T_(k-2)`. Each leaves one coefficient vector.
+    const auto y(2.0 * roughness - 1.0);
+    const auto y2(2.0 * y * y - 1.0);
+    const auto y3(2.0 * y * y2 - y);
+    const auto y4(2.0 * y * y3 - y2);
+    const auto wcol(
+      HAPKE_W_CHEB[0] + y * HAPKE_W_CHEB[1] + y2 * HAPKE_W_CHEB[2] + //
+      y3 * HAPKE_W_CHEB[3] + y4 * HAPKE_W_CHEB[4],
+    );
+    const auto gcol(
+      HAPKE_G_CHEB[0] + y * HAPKE_G_CHEB[1] + y2 * HAPKE_G_CHEB[2] + //
+      y3 * HAPKE_G_CHEB[3],
+    );
+    // The surge is made energy-neutral by folding `1 + B_S` into the phase function and
+    // renormalizing over the sphere, `ptilde = p (1 + B_S) / N_B` for
+    // `N_B = 1 + (1/2) integral_0^pi p B_S sin(g) dg`, so that it steepens the retro
+    // peak at the expense of mid phase angles instead of injecting energy. A raw
+    // additive surge would inflate the single-scattering albedo by about `w B0 h / 2`.
+    // That albedo per unit `w`, `A_ss`, integrates `ptilde` against the fitted W density
+    // over the same rule, with no `sin(g)` because the density already carries the
+    // measure. Accumulating it un-normalized and dividing by `N_B` once at the end
+    // folds both integrals into a single pass.
+    float surgeAcc = 0.0;
+    float ssAcc = 0.0;
+    for (int j = 0; j < #num(HAPKE_QUAD); j++) {
+      const auto node(HAPKE_QUAD[j]);
+      const auto weightedPhase(node[0] * hapkePhase(_hgSharpness, _hgBackWeight, node[1]));
+      const auto surge(hapkeSurge(hotspot, _surgeWidth, node[3]));
+      const auto density(#max(hapkeChebEval(wcol, #num(wcol), node[4]), 0.0));
+      surgeAcc += weightedPhase * surge * node[2];
+      ssAcc += weightedPhase * (1.0 + surge) * density;
+    }
+    _invSurgeNorm = 1.0 / (1.0 + 0.5 * surgeAcc);
+    const auto ssAlbedoPerW(ssAcc * _invSurgeNorm);
+    // Bind the spectrum. Prescribing the albedo as the diffusive reflectance `r0` gives
+    // the closed-form inversion `gamma = (1 - A)/(1 + A)` and `w = 1 - gamma^2`, so
+    // bright bands get the physically correct multiple-scattering flattening -- a
+    // wavelength-dependent lobe SHAPE -- while dividing by the kernel's own white-sky
+    // albedo `EbarK = w (A_ss + w G)` makes the realized white-sky albedo equal `A`
+    // exactly. The kernel's own factor of `w` cancels against `EbarK` in closed form,
+    // which is both cheaper and better conditioned at the dark end than carrying the
+    // two separately.
+    const auto A(clamp(albedo, 1e-6, 1.0 - 1e-6));
+    const auto gamma((1.0 - A) / (1.0 + A));
+    _ssa = 1.0 - gamma * gamma;
+    _diffRefl = A;
+    _scale = A / (ssAlbedoPerW + _ssa * hapkeChebEval(gcol, #num(gcol), 2.0 * gamma - 1.0));
+  }
+};
+
+/// Evaluate the Hapke BRDF, without the cosine factor, for directions expressed in the
+/// shading tangent space and understood to be in the upper hemisphere.
+@(pure noinline)
+auto hapkeEvaluateBRDF(const &hapke_granular_bsdf this, const float3 wo, const float3 wi) {
+  const auto mu0(clamp(wi.z, 1e-4, 1.0));
+  const auto mu(clamp(wo.z, 1e-4, 1.0));
+  const auto cosG(clamp(#sum(wi * wo), -1.0, 1.0));
+  // The relative azimuth between the incidence and exit planes, which degenerates to
+  // zero when either direction comes within numerical reach of the pole.
+  const auto sinScale(length(wi.xy) * length(wo.xy));
+  const auto cosPsi(sinScale > 1e-6 ? clamp(#sum(wi.xy * wo.xy) / sinScale, -1.0, 1.0) : 1.0);
+  const auto psi(#acos(cosPsi));
+  const auto surge(hapkeSurge(this.hotspot, this._surgeWidth, hapkeTanHalfAngle(cosG)));
+  const auto phase(hapkePhase(this._hgSharpness, this._hgBackWeight, cosG) * (1.0 + surge) * this._invSurgeNorm);
+  // The geometry factor and the effective cosines that the H-functions see. On a smooth
+  // surface the factor is just the Lommel-Seeliger denominator and `1/(4 pi)`.
+  const auto geom = return_from {
+    return auto(1.0 / (4.0 * $PI * (mu0 + mu)), mu0, mu) if (this._tanMeanSlope == 0.0);
+    // With macroscopic roughness (Hapke 1984), facets with a Gaussian slope distribution
+    // of mean angle `theta_bar` tilt and shadow the surface through the slope
+    // normalization `chi`, the shadowing onset `E1` and depth `E2`, and the azimuth
+    // correlation `f`, all assembled below in the manifestly reciprocal form. The
+    // raw-`mu0` factor of Hapke's published shadowing function `S` cancels the BRDF's
+    // `1/mu0`, which is what makes the swap of incidence and exit exact.
+    const auto tanT(this._tanMeanSlope);
+    const auto cotT(1.0 / tanT);
+    const auto chi(1.0 / #sqrt(1.0 + $PI * tanT * tanT));
+    const auto sin0(#sqrt(#max(1.0 - mu0 * mu0, 0.0)));
+    const auto sine(#sqrt(#max(1.0 - mu * mu, 0.0)));
+    // Both shadowing exponentials want `cot(theta_bar)` times the direction's own
+    // cotangent, so the product is formed once.
+    const auto cotI(cotT * mu0 / #max(sin0, 1e-6));
+    const auto cotE(cotT * mu / #max(sine, 1e-6));
+    const auto E1i(#exp(-(2.0 / $PI) * cotI));
+    const auto E1e(#exp(-(2.0 / $PI) * cotE));
+    const auto E2i(#exp(-(1.0 / $PI) * cotI * cotI));
+    const auto E2e(#exp(-(1.0 / $PI) * cotE * cotE));
+    const auto f(#exp(-2.0 * #tan(#min(0.5 * psi, 1.5707))));
+    const auto etaI(chi * (mu0 + sin0 * tanT * E2i / (2.0 - E1i)));
+    const auto etaE(chi * (mu + sine * tanT * E2e / (2.0 - E1e)));
+    // The direction with the LARGER zenith angle leads in Hapke's two-branch formulas.
+    const bool bigI(mu0 <= mu);
+    const auto E1L(bigI ? E1i : E1e);
+    const auto E1l(bigI ? E1e : E1i);
+    const auto E2L(bigI ? E2i : E2e);
+    const auto E2l(bigI ? E2e : E2i);
+    const auto sinHalfPsi(#sin(0.5 * psi));
+    const auto s2(sinHalfPsi * sinHalfPsi);
+    const auto D(#max(2.0 - E1L - (psi / $PI) * E1l, 1e-6));
+    const auto cosL(#min(mu0, mu));
+    const auto cosl(#max(mu0, mu));
+    const auto sinL(#sqrt(#max(1.0 - cosL * cosL, 0.0)));
+    const auto sinl(#sqrt(#max(1.0 - cosl * cosl, 0.0)));
+    const auto effL(chi * (cosL + sinL * tanT * (E2L - s2 * E2l) / D));
+    const auto effl(chi * (cosl + sinl * tanT * (#cos(psi) * E2L + s2 * E2l) / D));
+    const auto mu0Eff(bigI ? effL : effl);
+    const auto muEff(bigI ? effl : effL);
+    const auto etaMin(bigI ? etaE : etaI); // The eta of the smaller zenith
+    const auto shadow(chi / (1.0 - f + f * chi * cosl / etaMin));
+    const auto factor(mu0Eff * muEff / ((mu0Eff + muEff) * etaI * etaE) * shadow / (4.0 * $PI));
+    return auto(factor, mu0Eff, muEff);
+  };
+  const auto H0(hapkeH(geom[1], this._ssa, this._diffRefl));
+  const auto H1(hapkeH(geom[2], this._ssa, this._diffRefl));
+  // The clamp guards the tiny negative excursions of the approximate H-functions.
+  return this._scale * geom[0] * (phase + #max(H0 * H1 - 1.0, 0.0));
+}
+
+@(pure)
+auto scatterEvaluate(const &hapke_granular_bsdf this, inline const &ScatterEvaluateParameters params) {
+  if (mode == scatter_reflect && recalculateTangentSpace(params)) {
+    const auto cosTheta(#abs(auto(wi.z, wo.z)));
+    const auto pdf(cosTheta / $PI);
+    auto result(ScatterEvaluateResult(f: hapkeEvaluateBRDF(this, wo, wi) * cosTheta[0], pdf: pdf));
+    result.f *= shadingNormalCorrection if (isImportance);
+    return result;
+  } else {
+    return ScatterEvaluateResult(isBlack: true);
+  }
+}
+
+@(pure)
+auto scatterSample(const &hapke_granular_bsdf this [[anno::unused()]], inline const &ScatterSampleParameters params) {
+  if ((tbn := recalculateTangentSpace(params))) {
+    return ScatterSampleResult(wi: (*tbn) * monte_carlo::cosineHemisphereSample(xi.xy), mode: scatter_reflect);
+  } else {
+    return ScatterSampleResult(); // Reject
+  }
+}
+//--}
+
 //--{ tint
 /// A 1-value tint.
 struct tint1: bsdf, edf, hair_bsdf {

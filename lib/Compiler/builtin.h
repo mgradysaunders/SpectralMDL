@@ -1237,6 +1237,158 @@ auto scatterSample(const &measured_bsdf this,inline const &ScatterSampleParamete
     return ScatterSampleResult();
   }
 }
+static const auto HAPKE_QUAD=auto[16](auto(0.0426509835,0.999861409,0.0166482032,0.00832467848,-0.989400935),auto(0.0977876067,0.996212554,0.086951409,0.0435581917,-0.944575023),auto(0.149474641,0.977808138,0.209502376,0.105926541,-0.865631202),auto(0.19576673,0.927094889,0.374826716,0.194503508,-0.755404408),auto(0.23498483,0.825200872,0.564839376,0.309466966,-0.617876244),auto(0.265710439,0.658971885,0.752167571,0.453393802,-0.458016778),auto(0.286832774,0.428057064,0.903751708,0.632854058,-0.281603551),auto(0.297588323,0.148691866,0.988883577,0.860878018,-0.0950125098),auto(0.297588323,-0.148691866,0.988883577,1.16160476,0.0950125098),auto(0.286832774,-0.428057064,0.903751708,1.58014314,0.281603551),auto(0.265710439,-0.658971885,0.752167571,2.20558816,0.458016778),auto(0.23498483,-0.825200872,0.564839376,3.23136267,0.617876244),auto(0.19576673,-0.927094889,0.374826716,5.14129545,0.755404408),auto(0.149474641,-0.977808138,0.209502376,9.44050459,0.865631202),auto(0.0977876067,-0.996212554,0.086951409,22.9577942,0.944575023),auto(0.0426509835,-0.999861409,0.0166482032,120.124759,0.989400935));
+static const auto HAPKE_W_CHEB=auto[5](auto(0.0443692637,-0.0330322166,-0.0414806793,0.0377322324,-0.0036831791,-0.00503835424,0.000809641201,0.000328879959,2.18482055e-05,-1.60545071e-05,-1.57504064e-05),auto(-0.00594076498,0.000757196179,0.0081566095,-0.000627186314,-0.00248094082,-0.000488022104,0.000297539468,0.000375439189,-8.86163641e-06,-3.29277167e-05,-3.83729896e-05),auto(-0.000963613192,0.000466153409,0.00149075512,-0.000673457031,-0.000758809229,0.000127478645,0.000295317848,0.00011745609,-6.84391571e-05,-5.81575106e-05,-1.47705227e-05),auto(0.000275487885,6.03421013e-05,-0.000403479982,-0.000190433817,0.000111667449,0.000185513524,6.24427123e-05,-7.37454173e-05,-7.16632707e-05,-2.55167593e-05,1.67814334e-05),auto(-2.62793436e-05,-3.65689393e-05,6.2527643e-06,6.15744651e-05,6.90324901e-05,-6.91503114e-06,-5.56055434e-05,-4.09210276e-05,7.60283579e-06,2.61753306e-05,1.97457206e-05));
+static const auto HAPKE_G_CHEB=auto[4](auto(0.299680994,-0.25994946,0.0835171816,-0.0234697031,0.0061327028,-0.00150566063,0.00036640673),auto(-0.0526057365,0.0529757455,-0.0205834026,0.00702317686,-0.00220447865,0.000635609701,-0.000179704911),auto(-0.0107799361,0.00980414131,-0.00314615761,0.000844617944,-0.00020008313,4.17196758e-05,-7.49359084e-06),auto(0.00182228246,-0.00183367741,0.00081867027,-0.000334625137,0.000123845828,-4.06381678e-05,1.27990763e-05));
+@(pure)
+auto hapkeChebEval(const auto c,const int n,const auto x){
+  auto b1(0.0*x);
+  auto b2(0.0*x);
+  for(int k=n-1;k>=1;k--){
+    const auto t(2.0*x*b1-b2+c[k]);
+    b2=b1;
+    b1=t;
+  }
+  return x*b1-b2+c[0];
+}
+@(pure macro)
+float hapkeTanHalfAngle(const float cosG)=#sqrt((1.0-cosG)/#max(1.0+cosG,1e-12));
+@(pure)
+float hapkePhase(const float b,const float c,const float cosG){
+  const auto numer(1.0-b*b);
+  const auto back(1.0-2.0*b*cosG+b*b);
+  const auto fwd(1.0+2.0*b*cosG+b*b);
+  return 0.5*(1.0+c)*numer/(back*#sqrt(back))+0.5*(1.0-c)*numer/(fwd*#sqrt(fwd));
+}
+@(pure macro)
+float hapkeSurge(const float B0,const float h,const float tanHalfG)=B0/(1.0+tanHalfG/h);
+@(pure)
+auto hapkeH(const float x,const auto w,const auto r0){
+  const auto xs(#max(x,1e-6));
+  return 1.0/(1.0-w*xs*(r0+0.5*(1.0-2.0*r0*xs)*#log(1.0+1.0/xs)));
+}
+export struct hapke_granular_bsdf:bsdf{
+  const $(color|float) albedo=1.0;
+  float roughness=0.0;
+  float porosity=0.5;
+  float hotspot=0.8;
+  float backscatter=0.8;
+  auto _ssa=albedo;
+  auto _diffRefl=albedo;
+  auto _scale=albedo;
+  float _hgSharpness=0.0;
+  float _hgBackWeight=0.0;
+  float _surgeWidth=0.0;
+  float _invSurgeNorm=1.0;
+  float _tanMeanSlope=0.0;
+  void handle="";
+  static const int df_flags=DF_REFLECTION|DF_DIFFUSE;
+  finalize {
+    roughness=saturate(roughness);
+    porosity=saturate(porosity);
+    hotspot=saturate(hotspot);
+    backscatter=saturate(backscatter);
+    _hgSharpness=0.65+(0.10-0.65)*backscatter;
+    _hgBackWeight=3.29*#exp(-17.4*_hgSharpness*_hgSharpness)-0.908;
+    _surgeWidth=-0.375*#log(1.0-(0.10+(0.48-0.10)*(1.0-porosity)));
+    const auto meanSlope(($PI/6)*roughness);
+    _tanMeanSlope=meanSlope<1e-8?0.0:#tan(meanSlope);
+    const auto y(2.0*roughness-1.0);
+    const auto y2(2.0*y*y-1.0);
+    const auto y3(2.0*y*y2-y);
+    const auto y4(2.0*y*y3-y2);
+    const auto wcol(HAPKE_W_CHEB[0]+y*HAPKE_W_CHEB[1]+y2*HAPKE_W_CHEB[2]+y3*HAPKE_W_CHEB[3]+y4*HAPKE_W_CHEB[4],);
+    const auto gcol(HAPKE_G_CHEB[0]+y*HAPKE_G_CHEB[1]+y2*HAPKE_G_CHEB[2]+y3*HAPKE_G_CHEB[3],);
+    float surgeAcc=0.0;
+    float ssAcc=0.0;
+    for(int j=0;j<#num(HAPKE_QUAD);j++){
+      const auto node(HAPKE_QUAD[j]);
+      const auto weightedPhase(node[0]*hapkePhase(_hgSharpness,_hgBackWeight,node[1]));
+      const auto surge(hapkeSurge(hotspot,_surgeWidth,node[3]));
+      const auto density(#max(hapkeChebEval(wcol,#num(wcol),node[4]),0.0));
+      surgeAcc+=weightedPhase*surge*node[2];
+      ssAcc+=weightedPhase*(1.0+surge)*density;
+    }
+    _invSurgeNorm=1.0/(1.0+0.5*surgeAcc);
+    const auto ssAlbedoPerW(ssAcc*_invSurgeNorm);
+    const auto A(clamp(albedo,1e-6,1.0-1e-6));
+    const auto gamma((1.0-A)/(1.0+A));
+    _ssa=1.0-gamma*gamma;
+    _diffRefl=A;
+    _scale=A/(ssAlbedoPerW+_ssa*hapkeChebEval(gcol,#num(gcol),2.0*gamma-1.0));
+  }
+};
+@(pure noinline)
+auto hapkeEvaluateBRDF(const &hapke_granular_bsdf this,const float3 wo,const float3 wi){
+  const auto mu0(clamp(wi.z,1e-4,1.0));
+  const auto mu(clamp(wo.z,1e-4,1.0));
+  const auto cosG(clamp(#sum(wi*wo),-1.0,1.0));
+  const auto sinScale(length(wi.xy)*length(wo.xy));
+  const auto cosPsi(sinScale>1e-6?clamp(#sum(wi.xy*wo.xy)/sinScale,-1.0,1.0):1.0);
+  const auto psi(#acos(cosPsi));
+  const auto surge(hapkeSurge(this.hotspot,this._surgeWidth,hapkeTanHalfAngle(cosG)));
+  const auto phase(hapkePhase(this._hgSharpness,this._hgBackWeight,cosG)*(1.0+surge)*this._invSurgeNorm);
+  const auto geom=return_from{
+    return auto(1.0/(4.0*$PI*(mu0+mu)),mu0,mu) if(this._tanMeanSlope==0.0);
+    const auto tanT(this._tanMeanSlope);
+    const auto cotT(1.0/tanT);
+    const auto chi(1.0/#sqrt(1.0+$PI*tanT*tanT));
+    const auto sin0(#sqrt(#max(1.0-mu0*mu0,0.0)));
+    const auto sine(#sqrt(#max(1.0-mu*mu,0.0)));
+    const auto cotI(cotT*mu0/#max(sin0,1e-6));
+    const auto cotE(cotT*mu/#max(sine,1e-6));
+    const auto E1i(#exp(-(2.0/$PI)*cotI));
+    const auto E1e(#exp(-(2.0/$PI)*cotE));
+    const auto E2i(#exp(-(1.0/$PI)*cotI*cotI));
+    const auto E2e(#exp(-(1.0/$PI)*cotE*cotE));
+    const auto f(#exp(-2.0*#tan(#min(0.5*psi,1.5707))));
+    const auto etaI(chi*(mu0+sin0*tanT*E2i/(2.0-E1i)));
+    const auto etaE(chi*(mu+sine*tanT*E2e/(2.0-E1e)));
+    const bool bigI(mu0<=mu);
+    const auto E1L(bigI?E1i:E1e);
+    const auto E1l(bigI?E1e:E1i);
+    const auto E2L(bigI?E2i:E2e);
+    const auto E2l(bigI?E2e:E2i);
+    const auto sinHalfPsi(#sin(0.5*psi));
+    const auto s2(sinHalfPsi*sinHalfPsi);
+    const auto D(#max(2.0-E1L-(psi/$PI)*E1l,1e-6));
+    const auto cosL(#min(mu0,mu));
+    const auto cosl(#max(mu0,mu));
+    const auto sinL(#sqrt(#max(1.0-cosL*cosL,0.0)));
+    const auto sinl(#sqrt(#max(1.0-cosl*cosl,0.0)));
+    const auto effL(chi*(cosL+sinL*tanT*(E2L-s2*E2l)/D));
+    const auto effl(chi*(cosl+sinl*tanT*(#cos(psi)*E2L+s2*E2l)/D));
+    const auto mu0Eff(bigI?effL:effl);
+    const auto muEff(bigI?effl:effL);
+    const auto etaMin(bigI?etaE:etaI);
+    const auto shadow(chi/(1.0-f+f*chi*cosl/etaMin));
+    const auto factor(mu0Eff*muEff/((mu0Eff+muEff)*etaI*etaE)*shadow/(4.0*$PI));
+    return auto(factor,mu0Eff,muEff);
+  };
+  const auto H0(hapkeH(geom[1],this._ssa,this._diffRefl));
+  const auto H1(hapkeH(geom[2],this._ssa,this._diffRefl));
+  return this._scale*geom[0]*(phase+#max(H0*H1-1.0,0.0));
+}
+@(pure)
+auto scatterEvaluate(const &hapke_granular_bsdf this,inline const &ScatterEvaluateParameters params){
+  if(mode==scatter_reflect&&recalculateTangentSpace(params)){
+    const auto cosTheta(#abs(auto(wi.z,wo.z)));
+    const auto pdf(cosTheta/$PI);
+    auto result(ScatterEvaluateResult(f: hapkeEvaluateBRDF(this,wo,wi)*cosTheta[0],pdf: pdf));
+    result.f*=shadingNormalCorrection if(isImportance);
+    return result;
+  } else {
+    return ScatterEvaluateResult(isBlack: true);
+  }
+}
+@(pure)
+auto scatterSample(const &hapke_granular_bsdf this[[anno::unused()]],inline const &ScatterSampleParameters params){
+  if((tbn:=recalculateTangentSpace(params))){
+    return ScatterSampleResult(wi: (*tbn)*monte_carlo::cosineHemisphereSample(xi.xy),mode: scatter_reflect);
+  } else {
+    return ScatterSampleResult();
+  }
+}
 struct tint1:bsdf,edf,hair_bsdf{
   $(color|float) tint;
   auto base;
@@ -2556,10 +2708,9 @@ export prospect_result prospect(
   for(int i=0;i<$WAVELENGTH_BASE_MAX;i++){
     float w=(PROSPECT_TABLE_SIZE-1)*saturate(($state.wavelength_base[i]-PROSPECT_MIN_WAVELENGTH)/(PROSPECT_MAX_WAVELENGTH-PROSPECT_MIN_WAVELENGTH));
     const int w0=#min(int(#floor(w)),PROSPECT_TABLE_SIZE-2);
-    const int w1=w0+1;
     w-=w0;
-    ior[i]=lerp(PROSPECT_TABLE_IORS[w0],PROSPECT_TABLE_IORS[w1],w);
-    k[i]=dot(lerp(PROSPECT_TABLE_ABSORPTIONS[w0],PROSPECT_TABLE_ABSORPTIONS[w1],w),contents);
+    ior[i]=lerp(PROSPECT_TABLE_IORS[w0],PROSPECT_TABLE_IORS[w0+1],w);
+    k[i]=dot(lerp(PROSPECT_TABLE_ABSORPTIONS[w0],PROSPECT_TABLE_ABSORPTIONS[w0+1],w),contents);
     float x=(PROSPECT_XANTHOPHYLL_TABLE_SIZE-1)*saturate(($state.wavelength_base[i]-PROSPECT_XANTHOPHYLL_MIN_WAVELENGTH)/(PROSPECT_XANTHOPHYLL_MAX_WAVELENGTH-PROSPECT_XANTHOPHYLL_MIN_WAVELENGTH));
     const int x0=#min(int(#floor(x)),PROSPECT_XANTHOPHYLL_TABLE_SIZE-2);
     x-=x0;

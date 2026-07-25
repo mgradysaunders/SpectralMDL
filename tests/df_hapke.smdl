@@ -1,0 +1,171 @@
+#smdl
+
+import ::df::*;
+import ::math::*;
+
+// The evaluation harness, matching the one in `df.smdl`: wrap the BSDF in a material
+// instance and go through the exported entry point, so the test exercises exactly the
+// path a renderer takes.
+struct EvaluateResult {
+  color f = color(0);
+
+  float2 pdf = float2(0);
+};
+
+EvaluateResult evaluate(const bsdf scattering, float3 wo, float3 wi) {
+  auto mat = material(surface: material_surface(scattering: scattering));
+  auto instance = _MaterialInstance(&mat);
+  float pdfFwd = 0;
+  float pdfRev = 0;
+  color f = color(0);
+  if (df::_scatterEvaluate(&instance, &wo, &wi, &pdfFwd, &pdfRev, cast<&float>(&f)))
+    return EvaluateResult(f, float2(pdfFwd, pdfRev));
+  else
+    return EvaluateResult();
+}
+
+// The directions of an incidence angle `i`, an exit angle `e` and a relative azimuth
+// `psi`, all in radians, matching the convention of the reference implementation.
+float3 outgoing(const float e, const float psi) = float3(#sin(e) * #cos(psi), #sin(e) * #sin(psi), #cos(e));
+
+float3 incoming(const float i) = float3(#sin(i), 0.0, #cos(i));
+
+// The bidirectional reflectance itself, recovered by dividing out the cosine that
+// `ScatterEvaluateResult.f` carries.
+float reflectance(const bsdf scattering, const float i, const float e, const float psi) {
+  const auto wi = incoming(i);
+  return evaluate(scattering, outgoing(e, psi), wi).f[0] / #abs(wi.z);
+}
+
+// Reference values generated from the reference implementation (see
+// `misc/gen_hapke_smdl_tables.py`, whose formula reproduces them to 3e-9). The
+// tolerance is the one the reference self-test uses; it covers this port's move to
+// single precision and its 16-node quadrature, which between them shift the values by
+// no more than 2e-5.
+void checkCase(
+  const float backscatter,
+  const float hotspot,
+  const float porosity,
+  const float roughness,
+  const float albedo,
+  const float i,
+  const float e,
+  const float psi,
+  const float expect,
+) {
+  const auto scattering = df::hapke_granular_bsdf(
+    albedo: color(albedo),
+    roughness: roughness,
+    porosity: porosity,
+    hotspot: hotspot,
+    backscatter: backscatter,
+  );
+  #assert(reflectance(scattering, i, e, psi) / expect ~== [2e-3] 1.0);
+}
+
+unit_test "Hapke reference cross-check" {
+  checkCase(0.8, 0.8, 0.5, 0.0, 0.30, 0.785398163, 0.785398163, 0.0, 0.146580264);
+  checkCase(0.8, 0.8, 0.5, 0.0, 0.30, 0.785398163, 0.0, 0.0, 0.0812804497);
+  checkCase(0.8, 0.8, 0.5, 0.0, 0.30, 0.785398163, 1.13446401, 3.14159265, 0.0796936043);
+  checkCase(0.8, 0.8, 0.5, 1.0, 0.30, 1.04719755, 0.523598776, 2.0, 0.0793029944);
+  checkCase(0.6, 0.7, 0.3, 0.37, 0.40, 0.610865238, 0.959931089, 1.2, 0.119032152);
+  checkCase(0.0, 0.0, 0.5, 0.0, 0.70, 0.523598776, 1.22173048, 3.14159265, 0.220188529);
+  checkCase(1.0, 1.0, 1.0, 0.5, 0.05, 0.174532925, 0.872664626, 1.0, 0.014589348);
+  checkCase(0.8, 0.8, 0.5, 0.0, 0.01, 0.785398163, 0.523598776, 2.5, 0.00211421473);
+}
+
+// The two quantities the constructor exists to produce, checked directly rather than
+// through the BRDF, so that a normalization bug cannot hide behind a shape bug.
+unit_test "Hapke construction internals" {
+  // The surge normalization `N_B`.
+  #assert(1.0 / df::hapke_granular_bsdf(albedo: color(0.3))._invSurgeNorm ~== [1e-5] 1.13476919);
+  // The kernel's own white-sky albedo `EbarK(gamma) = w (A_ss + w G)`, recovered from
+  // the stored scale as `w A / EbarK`. Both end members matter: `gamma = 0` is the
+  // bright limit where the multiple-scattering term dominates, and `gamma = 5/6` the
+  // dark limit that the closed-form cancellation of `w` is there to condition.
+  const auto expect = float[6](1.02853485, 0.710307204, 0.489620136, 0.324594537, 0.194983969, 0.0891621561);
+  for (int k = 0; k < 6; k++) {
+    const auto gamma = k / 6.0;
+    const auto A = math::clamp((1.0 - gamma) / (1.0 + gamma), 1e-6, 1.0 - 1e-6);
+    const auto w = 1.0 - gamma * gamma;
+    #assert(w * A / df::hapke_granular_bsdf(albedo: A)._scale / expect[k] ~== [1e-4] 1.0);
+  }
+}
+
+// The kernel is assembled in its manifestly reciprocal form, and this is the check that
+// catches almost any error in the roughness branch, which is where the two-branch
+// shadowing formulas make it easy to swap an incidence quantity for an exit one.
+unit_test "Hapke reciprocity" {
+  const auto scattering = df::hapke_granular_bsdf(albedo: color(0.4), roughness: 1.0, porosity: 0.5, hotspot: 0.8, backscatter: 0.8);
+  auto xi = float3(0.113, 0.729, 0.381);
+  for (int n = 0; n < 200; n++, df::monte_carlo::nextLowDiscrepancy(&xi)) {
+    const auto wo = outgoing(0.05 + 1.5 * xi.y, $PI * xi.z);
+    const auto wi = incoming(0.05 + 1.5 * xi.x);
+    const auto forward = evaluate(scattering, wo, wi).f[0] / #abs(wi.z);
+    const auto reverse = evaluate(scattering, wi, wo).f[0] / #abs(wo.z);
+    #assert(forward / reverse ~== [1e-4] 1.0);
+  }
+}
+
+// The property the whole normalization exists to guarantee: the bihemispherical
+// (white-sky) albedo equals the prescribed albedo, for every setting of the four
+// directional parameters. Estimated by drawing both directions cosine-weighted, under
+// which `BHR = pi * mean(f_r)`.
+float whiteSkyAlbedo(const bsdf scattering, const int numSamples) {
+  auto xi = float4(0.317, 0.631, 0.208, 0.874);
+  double fSum = 0;
+  for (int n = 0; n < numSamples; n++, df::monte_carlo::nextLowDiscrepancy(&xi)) {
+    const auto wo = df::monte_carlo::cosineHemisphereSample(xi.xy);
+    const auto wi = df::monte_carlo::cosineHemisphereSample(xi.zw);
+    fSum += evaluate(scattering, wo, wi).f[0] / #max(#abs(wi.z), 1e-4);
+  }
+  return $PI * float(fSum / numSamples);
+}
+
+// The budget is the one the reference self-test uses, which is set by the Chebyshev
+// normalization fits rather than by anything this port does.
+void checkWhiteFurnace(
+  const float albedo,
+  const float backscatter,
+  const float hotspot,
+  const float porosity,
+  const float roughness,
+) {
+  const auto scattering = df::hapke_granular_bsdf(
+    albedo: color(albedo),
+    roughness: roughness,
+    porosity: porosity,
+    hotspot: hotspot,
+    backscatter: backscatter,
+  );
+  #assert(whiteSkyAlbedo(scattering, 65536) / albedo ~== [1.2e-2] 1.0);
+}
+
+unit_test "Hapke white furnace" {
+  const auto albedos = float[3](0.01, 0.3, 0.95);
+  for (int k = 0; k < 3; k++) {
+    const auto A = albedos[k];
+    checkWhiteFurnace(A, 0.8, 0.8, 0.5, 0.0); // The defaults
+    // The parameter corners: no surge at all, the widest surge, the narrowest surge
+    // against the strongest roughness, and a fully off-lattice setting.
+    checkWhiteFurnace(A, 0.0, 0.0, 0.5, 0.0);
+    checkWhiteFurnace(A, 1.0, 1.0, 0.0, 0.0);
+    checkWhiteFurnace(A, 0.8, 1.0, 1.0, 1.0);
+    checkWhiteFurnace(A, 0.6, 0.7, 0.3, 0.37);
+  }
+}
+
+// The parameters are normalized, so out-of-range values must clamp rather than produce
+// nonsense, and the spectral instantiation must agree with the scalar one.
+unit_test "Hapke parameter handling" {
+  const auto clamped = df::hapke_granular_bsdf(albedo: color(0.3), roughness: -0.5, porosity: 3.0, hotspot: -1.0, backscatter: 2.0);
+  const auto limit = df::hapke_granular_bsdf(albedo: color(0.3), roughness: 0.0, porosity: 1.0, hotspot: 0.0, backscatter: 1.0);
+  #assert(reflectance(clamped, 0.6, 0.9, 1.1) / reflectance(limit, 0.6, 0.9, 1.1) ~== [1e-6] 1.0);
+
+  // A `float` albedo keeps the whole distribution scalar and must agree with the
+  // equivalent `color`.
+  const auto scalar = df::hapke_granular_bsdf(albedo: 0.3);
+  const auto spectral = df::hapke_granular_bsdf(albedo: color(0.3));
+  #assert(#typeof(scalar._scale) == float);
+  #assert(reflectance(scalar, 0.6, 0.9, 1.1) / reflectance(spectral, 0.6, 0.9, 1.1) ~== [1e-6] 1.0);
+}

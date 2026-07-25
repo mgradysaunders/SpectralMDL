@@ -681,10 +681,9 @@ export prospect_result prospect(
   for (int i = 0; i < $WAVELENGTH_BASE_MAX; i++) {
     float w = (PROSPECT_TABLE_SIZE - 1) * saturate(($state.wavelength_base[i] - PROSPECT_MIN_WAVELENGTH) / (PROSPECT_MAX_WAVELENGTH - PROSPECT_MIN_WAVELENGTH));
     const int w0 = #min(int(#floor(w)), PROSPECT_TABLE_SIZE - 2);
-    const int w1 = w0 + 1;
     w -= w0;
-    ior[i] = lerp(PROSPECT_TABLE_IORS[w0], PROSPECT_TABLE_IORS[w1], w);
-    k[i] = dot(lerp(PROSPECT_TABLE_ABSORPTIONS[w0], PROSPECT_TABLE_ABSORPTIONS[w1], w), contents);
+    ior[i] = lerp(PROSPECT_TABLE_IORS[w0], PROSPECT_TABLE_IORS[w0 + 1], w);
+    k[i] = dot(lerp(PROSPECT_TABLE_ABSORPTIONS[w0], PROSPECT_TABLE_ABSORPTIONS[w0 + 1], w), contents);
     float x = (PROSPECT_XANTHOPHYLL_TABLE_SIZE - 1) * saturate(($state.wavelength_base[i] - PROSPECT_XANTHOPHYLL_MIN_WAVELENGTH) / (PROSPECT_XANTHOPHYLL_MAX_WAVELENGTH - PROSPECT_XANTHOPHYLL_MIN_WAVELENGTH));
     const int x0 = #min(int(#floor(x)), PROSPECT_XANTHOPHYLL_TABLE_SIZE - 2);
     x -= x0;
