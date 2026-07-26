@@ -4,7 +4,7 @@
 
 #include "smdl/Compiler.h"
 #include "smdl/Image.h"
-#include "smdl/Support/Sampling.h"
+#include "smdl/Support/MonteCarlo.h"
 
 class EnvLight final {
 public:

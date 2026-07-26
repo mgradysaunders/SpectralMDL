@@ -1,4 +1,4 @@
-#include "smdl/Support/Sampling.h"
+#include "smdl/Support/MonteCarlo.h"
 
 namespace smdl {
 
@@ -57,6 +57,57 @@ int Distribution1D::indexSample(float xi, float *xiRemap,
     *pmf = float(cmf1 - cmf0);
   }
   return i;
+}
+
+float2 uniformDiskSample(float2 xi) noexcept {
+  xi = xi * 2.0f - float2(1.0f);
+  xi.x = (xi.x == 0.0f) ? std::numeric_limits<float>::epsilon() : xi.x;
+  xi.y = (xi.y == 0.0f) ? std::numeric_limits<float>::epsilon() : xi.y;
+  bool cond = std::abs(xi.x) > std::abs(xi.y);
+  float rad = cond ? xi.x : xi.y;
+  float phi = cond ? (PI / 4.0f) * xi.y / xi.x
+                   : (PI / 2.0f) - (PI / 4.0f) * xi.x / xi.y;
+  return float2(rad * std::cos(phi), rad * std::sin(phi));
+}
+
+float3 uniformConeSample(float cosThetaC, float2 xi) noexcept {
+  float cosTheta{(1.0f - xi.x) * cosThetaC + xi.x};
+  if (cosTheta < -1.0f)
+    cosTheta = -1.0f;
+  if (cosTheta > +1.0f)
+    cosTheta = +1.0f;
+  float sinTheta{std::sqrt(std::max(1.0f - cosTheta * cosTheta, 0.0f))};
+  float phi{2.0f * PI * xi.y};
+  return float3(sinTheta * std::cos(phi), sinTheta * std::sin(phi), cosTheta);
+}
+
+float erfInverse(float y) noexcept {
+  float w = -std::log(
+      std::max(std::numeric_limits<float>::denorm_min(), (1 - y) * (1 + y)));
+  float x = 0;
+  if (w < 5) {
+    w = w - 2.5f;
+    x = w * 2.81022636e-08f + 3.43273939e-7f;
+    x = w * x - 3.52338770e-6f;
+    x = w * x - 4.39150654e-6f;
+    x = w * x + 2.18580870e-4f;
+    x = w * x - 1.25372503e-3f;
+    x = w * x - 4.17768164e-3f;
+    x = w * x + 2.46640727e-1f;
+    x = w * x + 1.50140941f;
+  } else {
+    w = std::sqrt(w) - 3;
+    x = x * -2.00214257e-4f + 1.00950558e-4f;
+    x = w * x + 1.34934322e-3f;
+    x = w * x - 3.67342844e-3f;
+    x = w * x + 5.73950773e-3f;
+    x = w * x - 7.62246130e-3f;
+    x = w * x + 9.43887047e-3f;
+    x = w * x + 1.00167406f;
+    x = w * x + 2.83297682f;
+  }
+  x *= y;
+  return x;
 }
 
 Distribution2D::Distribution2D(int numTexelsX, int numTexelsY,

@@ -12,7 +12,7 @@
 
 #include "smdl/Compiler.h"
 #include "smdl/Support/ColorVector.h"
-#include "smdl/Support/Sampling.h"
+#include "smdl/Support/MonteCarlo.h"
 
 constexpr size_t WAVELENGTH_BASE_MAX = 16;
 constexpr float WAVELENGTH_MIN = 380.0f;

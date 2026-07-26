@@ -8,6 +8,7 @@ namespace smdl {
 /// \addtogroup Main
 /// \{
 
+/// Unpack half-precision to single-precision.
 [[nodiscard]] SMDL_EXPORT float unpackHalf(const void *ptr) noexcept;
 
 /// An image.
@@ -162,6 +163,48 @@ private:
   std::function<void()> mFinishLoad{};
 };
 
+/// Write an 8-bit-per-channel image to the given file name.
+///
+/// \param[in] fileName
+/// The file name, which must end with a recognized extension. The
+/// extension test is case-insensitive:
+/// - `.png` writes PNG,
+/// - `.jpg` or `.jpeg` writes JPEG at quality 90,
+/// - `.bmp` writes BMP,
+/// - `.tga` writes TGA,
+/// - `.pgm` or `.ppm` writes binary PNM.
+///
+/// \param[in] numTexelsX
+/// The number of texels in X, must be positive.
+///
+/// \param[in] numTexelsY
+/// The number of texels in Y, must be positive.
+///
+/// \param[in] numChannels
+/// The number of channels, must be 1, 2, 3, or 4.
+///
+/// \param[in] texels
+/// The texels, understood to be tightly packed 8-bit channels in
+/// row-major order starting from the top-left corner, i.e., channel
+/// `c` of the texel at `(x, y)` is the byte at offset
+/// `numChannels * (x + numTexelsX * y) + c`.
+///
+/// The PNG, JPEG, BMP, and TGA cases are handled by stb_image_write
+/// with the usual channel interpretations: 1 is gray, 2 is gray and
+/// alpha, 3 is RGB, and 4 is RGBA, where formats without alpha drop
+/// the alpha channel. The PGM case writes only the first channel of
+/// each texel, and the PPM case writes the first three channels of
+/// each texel, zero-padding if there are fewer than three.
+///
+/// \note
+/// The requirements on the dimensions, the channel count, and the
+/// texel pointer are enforced by fatal sanity checks, not by
+/// recoverable errors.
+///
+/// \returns
+/// `std::nullopt` if successful, or else an `Error` describing why
+/// the image could not be written.
+///
 [[nodiscard]]
 SMDL_EXPORT std::optional<Error>
 write8bitImage(const std::string &fileName, int numTexelsX, int numTexelsY,

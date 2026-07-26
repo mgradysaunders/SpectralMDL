@@ -4,9 +4,9 @@
 #include <fstream>
 #include <random>
 
-#include "smdl/Support/Sampling.h"
+#include "smdl/Support/MonteCarlo.h"
 
-TEST_CASE("Sampling") {
+TEST_CASE("MonteCarlo") {
   SUBCASE("Distribution1D") {
     auto distr =
         smdl::Distribution1D(std::vector<float>{1.0f, 2.0f, 3.0f, 1.0f});

@@ -4,7 +4,7 @@
 #include <unordered_map>
 
 #include "smdl/Common.h"
-#include "smdl/Support/Sampling.h"
+#include "smdl/Support/MonteCarlo.h"
 
 namespace smdl {
 

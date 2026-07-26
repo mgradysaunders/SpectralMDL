@@ -4,7 +4,7 @@
 #include "vertex.h"
 
 #include "smdl/Support/Logger.h"
-#include "smdl/Support/Sampling.h"
+#include "smdl/Support/MonteCarlo.h"
 #include "smdl/Support/SpectralRenderImage.h"
 
 #include "llvm/Support/Parallel.h"
