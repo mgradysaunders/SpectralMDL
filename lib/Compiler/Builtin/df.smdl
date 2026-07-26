@@ -11,6 +11,45 @@ const float EPSILON = 1e-6;
 /// An arbitrary chance for sampling diffusely in BSDFs with multiple-scattering.
 const float MULTISCATTER_DIFFUSE_CHANCE = 0.2;
 
+//--{ IOR conventions
+// Every user-facing Index Of Refraction (IOR) in this module and in
+// `api.smdl` -- `material.ior`, `fresnel_layer.ior`, `thin_film.ior`,
+// `fresnel_factor.ior` -- is the ABSOLUTE index of the denser medium,
+// measured against an implicit exterior of exactly 1. Plastic is 1.4,
+// never 1/1.4.
+//
+// The scatter parameter structs instead carry the RELATIVE ratio
+// `ior = n(wo side) / n(wi side)` of the current frame. The entry points
+// `_scatterEvaluate` and `_scatterSample` construct it as
+// `1 / instance.ior` (entering), and the `finalize` blocks reciprocate it
+// on backface hits of solid materials, so that `wo` is always in the upper
+// hemisphere and the ratio is always oriented with it. Thin-walled
+// materials never reciprocate: both sides face the exterior, and
+// transmission does not refract.
+//
+// Every primitive in the `specular` namespace -- `refract`,
+// `dielectricFresnel`, `conductorFresnel`, `refractionHalfVector`, and its
+// Jacobian -- takes this relative `n(incident) / n(transmitted)` ratio.
+// A modifier BSDF that carries a user-facing absolute IOR must convert it
+// with `relativeIOR()`; never invert by hand.
+//--}
+
+/// The default absolute index of refraction, matching the default of
+/// `material.ior` in `api.smdl`.
+const float DEFAULT_IOR = 1.4;
+
+/// Convert a user-facing absolute IOR to the relative ratio oriented with
+/// the current frame of the given scatter parameters, honoring the backface
+/// reciprocation applied in the parameter `finalize` blocks.
+@(pure macro)
+auto relativeIOR(const auto params, const auto absoluteIOR) {
+  if (params.hitBackface & !params.thin_walled) {
+    return absoluteIOR;
+  } else {
+    return 1.0 / absoluteIOR;
+  }
+}
+
 const int DF_REFLECTION = (1 << 0);
 
 const int DF_TRANSMISSION = (1 << 1);
@@ -43,7 +82,8 @@ export enum scatter_mode {
 float scatterReflectChance(const scatter_mode mode) {
   const auto reflWeight(#select((int(mode) & 1) != 0, 1.0, 0.0));
   const auto tranWeight(#select((int(mode) & 2) != 0, 1.0, 0.0));
-  return reflWeight / (reflWeight + tranWeight);
+  // The `#max` guards `scatter_none`, which must yield 0 instead of 0/0.
+  return reflWeight / #max(reflWeight + tranWeight, 1.0);
 }
 
 /// Declare libm `erf`
@@ -276,7 +316,7 @@ struct ScatterEvaluateParameters {
   bool thin_walled = false;
 
   /// The relative upper-to-lower index of refraction.
-  float ior = 1 / 1.4;
+  float ior = 1 / DEFAULT_IOR;
 
   /// The normal direction.
   float3 normal = float3(0, 0, 1);
@@ -293,14 +333,17 @@ struct ScatterEvaluateParameters {
   float shadingNormalCorrection = 1;
 
   finalize {
-    // If we hit the backface, flip everything so that `wo` 
+    // If we hit the backface, flip everything so that `wo`
     // is always in the upper hemisphere.
     if (hitBackface) {
       wo0 = -wo0;
       wi0 = -wi0;
       wo = -wo;
       wi = -wi;
-      ior = 1.0 / ior;
+      // Solid materials swap media across the interface. Thin-walled
+      // materials face the exterior on both sides, so the relative
+      // ratio is orientation-independent.
+      ior = 1.0 / ior if (!thin_walled);
     }
   }
 };
@@ -360,7 +403,7 @@ struct ScatterSampleParameters {
   bool thin_walled = false;
 
   /// The active index of refraction.
-  float ior = 1 / 1.4;
+  float ior = 1 / DEFAULT_IOR;
 
   /// The active normal direction.
   float3 normal = float3(0, 0, 1);
@@ -371,16 +414,19 @@ struct ScatterSampleParameters {
   /// The active outgoing direction (expanded in the active tangent space).
   float3 wo = wo0;
 
-  /// The canonical random sample in `[0,1]^4`. 
+  /// The canonical random sample in `[0,1]^4`.
   float4 xi;
 
   finalize {
-    // If we hit the backface, flip everything so that `wo` 
+    // If we hit the backface, flip everything so that `wo`
     // is always in the upper hemisphere.
     if (hitBackface) {
       wo0 = -wo0;
       wo = -wo;
-      ior = 1 / ior;
+      // Solid materials swap media across the interface. Thin-walled
+      // materials face the exterior on both sides, so the relative
+      // ratio is orientation-independent.
+      ior = 1 / ior if (!thin_walled);
     }
   }
 };
@@ -621,8 +667,14 @@ export struct specular_bsdf: bsdf {
 
   /// The scatter mode.
   ///
-  /// > One of three values: `scatter_reflect`, `scatter_transmit`, 
+  /// > One of three values: `scatter_reflect`, `scatter_transmit`,
   /// > or (for both) `scatter_reflect_transmit`.
+  ///
+  /// \note
+  /// With `scatter_reflect_transmit`, the reflect/transmit split is
+  /// weighted by the dielectric Fresnel term for the active IOR, matching
+  /// the reference MDL semantics. Total internal reflection folds entirely
+  /// into reflection.
   ///
   const scatter_mode mode = scatter_reflect;
 
@@ -647,20 +699,32 @@ auto scatterEvaluate(const &specular_bsdf this [[anno::unused()]], const &Scatte
 
 @(pure macro)
 auto scatterSample(const &specular_bsdf this, inline const &ScatterSampleParameters params) {
+  return ScatterSampleResult() if (this.mode == scatter_none);
   if ((tbn := recalculateTangentSpace(params))) {
-    if (xi.x < scatterReflectChance(this.mode)) {
+    // For `scatter_reflect_transmit`, importance-sample the reflect or
+    // transmit choice by the dielectric Fresnel term: the selection chance
+    // cancels against the Fresnel lobe weight exactly, so the delta weights
+    // below stay unchanged, and total internal reflection drives the chance
+    // to 1 so that no samples are wasted on impossible refractions.
+    const auto reflectChance(this.mode == scatter_reflect_transmit    //
+                             ? specular::dielectricFresnel(wo.z, ior) //
+                             : scatterReflectChance(this.mode));
+    if (xi.x < reflectChance) {
       const auto wiLocal(specular::reflect(wo, float3(0, 0, 1)));
       auto result = ScatterSampleResult(wi: (*tbn) * wiLocal, mode: scatter_reflect, fDelta: color(this.tint));
       *result.fDelta *= sampleShadingNormalCorrection(params, wiLocal, result.wi) if (isImportance);
       return result;
     } else {
-      const auto wiLocal(specular::refract(wo, float3(0, 0, 1), ior));
+      // Thin-walled surfaces enclose no volume, so specular transmission
+      // passes straight through with no refraction.
+      const auto wiLocal(thin_walled ? -wo : specular::refract(wo, float3(0, 0, 1), ior));
       auto result = ScatterSampleResult(wi: (*tbn) * wiLocal, mode: scatter_transmit, fDelta: color(this.tint));
       if (isImportance) {
         *result.fDelta *= sampleShadingNormalCorrection(params, wiLocal, result.wi);
-      } else {
+      } else if (!thin_walled) {
         // The `ior * ior` accounts for the solid-angle compression of refracted
-        // radiance, which does not apply to importance.
+        // radiance, which does not apply to importance, and does not apply to
+        // thin-walled transmission because there is no change of medium.
         *result.fDelta *= ior * ior;
       }
       return result;
@@ -1081,7 +1145,9 @@ struct microfacet_bsdf: bsdf {
   /// The tangent direction for orienting anistropic roughness.
   float3 tangent_u = $state.texture_tangent_u[0];
 
-  /// The scatter mode.
+  /// The scatter mode. With `scatter_reflect_transmit`, the reflect and
+  /// transmit lobes are weighted by the dielectric Fresnel term, forming a
+  /// complete rough dielectric in one lobe.
   const scatter_mode mode = scatter_reflect;
 
   /// The microfacet distribution.
@@ -1096,16 +1162,16 @@ struct microfacet_bsdf: bsdf {
 
 @(pure noinline)
 auto scatterEvaluate(const &microfacet_bsdf this, inline const &ScatterEvaluateParameters params) {
-  auto reflectChance(scatterReflectChance(this.mode));
   auto effectiveMode(this.mode & mode);
   preserve tangent_u;
   tangent_u = this.tangent_u;
   return ScatterEvaluateResult(isBlack: true) if (!recalculateTangentSpace(params) || effectiveMode == scatter_none);
-  // If thin walled and the effective mode is to transmit, flip wi into the upper 
+  // If thin walled and the effective mode is to transmit, flip wi into the upper
   // hemisphere and pretend like the effective mode is to reflect.
   preserve wi, mode;
+  bool thinTransmit = false;
   if (thin_walled && effectiveMode == scatter_transmit) {
-    reflectChance = 1 - reflectChance;
+    thinTransmit = true;
     effectiveMode = scatter_reflect;
     mode = scatter_reflect; // Necessary for `halfDirection()` call below
     wi.z = -wi.z;
@@ -1115,6 +1181,26 @@ auto scatterEvaluate(const &microfacet_bsdf this, inline const &ScatterEvaluateP
   const auto wm(halfDirection(params));
   const auto dotWoWm(#sum(wo * wm));
   const auto dotWiWm(#sum(wi * wm));
+  // For `scatter_reflect_transmit`, the reflect and transmit lobes are
+  // weighted by the dielectric Fresnel term at the half vector, so the
+  // combined lobe is a physically-weighted dielectric in one shot. The PDFs
+  // are instead weighted by the Fresnel term at the macro normal (the
+  // reverse lane from the far side for solid transmission), which is the
+  // sampling routine's selection chance exactly -- the chance is deliberately
+  // independent of the sampled microsurface normal so that the reported
+  // densities stay exact for the specular and multiscatter components alike.
+  // At total internal reflection the transmit weight vanishes and reflection
+  // picks up the energy. Single modes keep unit weights.
+  float fWeight = 1.0;
+  float2 pdfWeight = float2(1.0);
+  if (this.mode == scatter_reflect_transmit) {
+    const auto F(specular::dielectricFresnel(dotWoWm, ior));
+    const auto Fo(specular::dielectricFresnel(cosThetao, ior));
+    const auto Fi(specular::dielectricFresnel(cosThetai, effectiveMode == scatter_reflect ? ior : 1 / ior));
+    const bool complement(thinTransmit | (effectiveMode == scatter_transmit));
+    fWeight = complement ? 1 - F : F;
+    pdfWeight = complement ? 1 - float2(Fo, Fi) : float2(Fo, Fi);
+  }
   if $(this.distribution <: microfacet::DistributionBlinn) {
     const auto e(2 / (this.alpha * this.alpha + EPSILON));
     const auto D(#pow(wm.z, (e.x * wm.x * wm.x + e.y * wm.y * wm.y) / (1 - wm.z * wm.z + EPSILON)) / $TWO_PI);
@@ -1127,8 +1213,8 @@ auto scatterEvaluate(const &microfacet_bsdf this, inline const &ScatterEvaluateP
       const auto f(norm2 * D * G / (4 * cosThetao + EPSILON));
       auto result(ScatterEvaluateResultWithMultiscatter(this, f, pdf, cosThetao, cosThetai, this.roughness0, "simple_glossy_bsdf"));
       result.f *= shadingNormalCorrection if (isImportance);
-      result.f *= reflectChance;
-      result.pdf *= reflectChance;
+      result.f *= fWeight;
+      result.pdf *= pdfWeight;
       return result;
     } else {
       return ScatterEvaluateResult(isBlack: true) if (!((dotWoWm > 0) & (dotWiWm < 0)));
@@ -1144,8 +1230,8 @@ auto scatterEvaluate(const &microfacet_bsdf this, inline const &ScatterEvaluateP
       // The `ior * ior` accounts for the solid-angle compression of refracted radiance,
       // which does not apply to importance. (See the corresponding Smith branch below.)
       result.f *= ior * ior if (!isImportance);
-      result.f *= 1 - reflectChance;
-      result.pdf *= 1 - reflectChance;
+      result.f *= fWeight;
+      result.pdf *= pdfWeight;
       return result;
     }
   } else {
@@ -1171,8 +1257,8 @@ auto scatterEvaluate(const &microfacet_bsdf this, inline const &ScatterEvaluateP
       const auto f(D * G / (4 * cosThetao + EPSILON));
       auto result(ScatterEvaluateResultWithMultiscatter(this, f, pdf, cosThetao, cosThetai, this.roughness0, lutName));
       result.f *= shadingNormalCorrection if (isImportance);
-      result.f *= reflectChance;
-      result.pdf *= reflectChance;
+      result.f *= fWeight;
+      result.pdf *= pdfWeight;
       return result;
     } else {
       return ScatterEvaluateResult(isBlack: true) if (!((dotWoWm > 0) & (dotWiWm < 0)));
@@ -1187,8 +1273,8 @@ auto scatterEvaluate(const &microfacet_bsdf this, inline const &ScatterEvaluateP
       // delta transmission weight, and is required for importance transport to be the
       // adjoint of radiance transport.
       result.f *= ior * ior if (!isImportance);
-      result.f *= 1 - reflectChance;
-      result.pdf *= 1 - reflectChance;
+      result.f *= fWeight;
+      result.pdf *= pdfWeight;
       return result;
     }
   }
@@ -1202,10 +1288,17 @@ auto scatterSample(const &microfacet_bsdf this, inline const &ScatterSampleParam
   auto tbn(recalculateTangentSpace(params));
   if (!tbn)
     return ScatterSampleResult();
-  // Decide whether to reflect or transmit. NOTE: This is not Fresnel-weighted, it is either deterministic or 50/50.
-  const auto mode(monte_carlo::boolSample(&xi.z, scatterReflectChance(this.mode)) //
-                  ? scatter_reflect                                               //
-                  : scatter_transmit);
+  // Decide whether to reflect or transmit. For `scatter_reflect_transmit`,
+  // the choice is importance-sampled by the dielectric Fresnel term at the
+  // macro normal -- deliberately independent of the sampled microsurface
+  // normal so that the selection chance matches the PDF weights reported by
+  // `scatterEvaluate` exactly, for the specular and multiscatter components
+  // alike. Total internal reflection drives the chance to 1, so no samples
+  // are wasted on impossible refractions. Single modes are deterministic.
+  const auto reflectChance(this.mode == scatter_reflect_transmit          //
+                           ? specular::dielectricFresnel(#abs(wo.z), ior) //
+                           : scatterReflectChance(this.mode));
+  const auto mode(monte_carlo::boolSample(&xi.z, reflectChance) ? scatter_reflect : scatter_transmit);
   if (mode == scatter_reflect || thin_walled) {
     if (result := ScatterSampleResultWithMultiscatter(this, &xi, *tbn)) {
       if (mode == scatter_transmit)
@@ -1910,12 +2003,27 @@ auto thinFilmFactor(const auto thickness, const auto filmIOR, const float baseIO
   return R13 > EPSILON ? 0.5 * (Rs + Rp) / R13 : color(1.0);
 }
 
+/// The film IOR relative to the incident medium. The user-facing film IOR is
+/// absolute. From inside a solid (a backface hit), the incident medium is the
+/// base itself, whose absolute index equals `params.ior` after the `finalize`
+/// reciprocation because the exterior is 1.
+@(macro)
+auto thinFilmIncidentRelativeIOR(const &thin_film this, const auto params) {
+  if (params.hitBackface & !params.thin_walled) {
+    return this.ior / params.ior;
+  } else {
+    return this.ior;
+  }
+}
+
 @(macro)
 auto scatterEvaluate(const &thin_film this, const &ScatterEvaluateParameters params) {
   auto result(scatterEvaluate(visit &this.base, params));
   if (!result.isBlack && params.mode == scatter_reflect) {
+    // The base IOR `1 / params.ior` is the far-side index relative to the
+    // incident side, which is correct from either side of the interface.
     return ScatterEvaluateResult(
-             f: thinFilmFactor(this.thickness, this.ior, 1 / params.ior, #abs(dot(params.wo, halfDirection(params)))) * result.f,
+             f: thinFilmFactor(this.thickness, thinFilmIncidentRelativeIOR(this, params), 1 / params.ior, #abs(dot(params.wo, halfDirection(params)))) * result.f,
              pdf: result.pdf,
            );
   } else {
@@ -1927,7 +2035,7 @@ auto scatterEvaluate(const &thin_film this, const &ScatterEvaluateParameters par
 auto scatterSample(const &thin_film this, const &ScatterSampleParameters params) {
   auto result(scatterSample(visit &this.base, params));
   if ((result.mode == scatter_reflect) & bool(result.fDelta)) {
-    *result.fDelta *= thinFilmFactor(this.thickness, this.ior, 1 / params.ior, #abs(dot(params.wo, halfDirection(params, &result))));
+    *result.fDelta *= thinFilmFactor(this.thickness, thinFilmIncidentRelativeIOR(this, params), 1 / params.ior, #abs(dot(params.wo, halfDirection(params, &result))));
   }
   return result;
 }
@@ -1961,7 +2069,7 @@ auto scatterEvaluate(const &fresnel_factor this, const &ScatterEvaluateParameter
   auto result(scatterEvaluate(visit &this.base, params));
   if (!result.isBlack && params.mode == scatter_reflect) {
     return ScatterEvaluateResult(
-             f: specular::conductorFresnel(#abs(dot(params.wo, halfDirection(params))), 1.0 / complex(this.ior, this.extinction_coefficient)) * result.f,
+             f: specular::conductorFresnel(#abs(dot(params.wo, halfDirection(params))), relativeIOR(params, complex(this.ior, this.extinction_coefficient))) * result.f,
              pdf: result.pdf,
            );
   }
@@ -1972,7 +2080,7 @@ auto scatterEvaluate(const &fresnel_factor this, const &ScatterEvaluateParameter
 auto scatterSample(const &fresnel_factor this, const &ScatterSampleParameters params) {
   auto result(scatterSample(visit &this.base, params));
   if ((result.mode == scatter_reflect) & bool(result.fDelta)) {
-    *result.fDelta *= specular::conductorFresnel(#abs(dot(params.wo, halfDirection(params, &result))), 1.0 / complex(this.ior, this.extinction_coefficient));
+    *result.fDelta *= specular::conductorFresnel(#abs(dot(params.wo, halfDirection(params, &result))), relativeIOR(params, complex(this.ior, this.extinction_coefficient)));
   }
   return result;
 }
@@ -2147,6 +2255,14 @@ auto scatterSample(const &measured_factor this, const &ScatterSampleParameters p
 //--{ fresnel_layer, color_fresnel_layer
 export struct fresnel_layer: bsdf {
   /// The index of refraction.
+  ///
+  /// \note
+  /// This is the absolute IOR of the layer interface. It both weights the
+  /// layer by the dielectric Fresnel term and, non-standardly, defines the
+  /// refractive interface for the nested `layer` BSDF (overriding the
+  /// material IOR), so that the Fresnel weight and any refraction in the
+  /// layer always agree with each other.
+  ///
   $(color | float) ior;
 
   /// The weight.
@@ -2180,24 +2296,33 @@ auto scatterEvaluate(const &fresnel_layer this, inline const &ScatterEvaluatePar
       | ((mode == scatter_transmit) & (cosThetai > -EPSILON)))
     return ScatterEvaluateResult(isBlack: true);
   const auto result0(scatterEvaluate(visit &this.base, params));
-  const auto result1 = return_from {
-    preserve normal, ior;
-    normal = this.normal, ior = 1.0 / this._averageIOR; // Assume IOR of 1.4 => relative IOR of 1 / 1.4
-    return scatterEvaluate(visit &this.layer, params);
-  };
+  // Evaluate the layer with this layer's interface, and keep the interface
+  // active while weighting, so that the Fresnel term sees the same half
+  // vector the layer itself used.
+  preserve normal, ior;
+  normal = this.normal, ior = relativeIOR(params, this._averageIOR);
+  const auto result1(scatterEvaluate(visit &this.layer, params));
   if (result0.isBlack & result1.isBlack) {
     return ScatterEvaluateResult(isBlack: true);
   } else {
+    // The PDF weight must match the sampling chance below: the exact
+    // dielectric Fresnel term at the averaged IOR. The reverse density
+    // models sampling from the far side, so for transmission it sees the
+    // reciprocal ratio.
+    const auto pdfIOR(relativeIOR(params, this._averageIOR));
     return ScatterEvaluateResult(
              f: lerp(
                result0.f,
                result1.f,
-               this.weight * specular::dielectricFresnel(dot(wo, halfDirection(params)), 1 / this.ior),
+               this.weight * specular::dielectricFresnel(dot(wo, halfDirection(params)), relativeIOR(params, this.ior)),
              ),
              pdf: lerp(
                result0.pdf,
                result1.pdf,
-               this._averageWeight * specular::schlickFresnel(float2(cosThetao, cosThetai), specular::schlickF0(this._averageIOR)),
+               this._averageWeight * float2(
+                 specular::dielectricFresnel(cosThetao, pdfIOR),
+                 specular::dielectricFresnel(cosThetai, mode == scatter_reflect ? pdfIOR : 1 / pdfIOR),
+               ),
              ),
            );
   }
@@ -2208,16 +2333,20 @@ auto scatterSample(const &fresnel_layer this, inline const &ScatterSampleParamet
   const auto cosTheta(dot(wo, this.normal) * #sign(this.normal.z));
   if (cosTheta < EPSILON)
     return ScatterSampleResult();
-  const auto chance(this._averageWeight * specular::schlickFresnel(cosTheta, specular::schlickF0(this._averageIOR)));
+  // The selection chance uses the exact dielectric Fresnel term at the
+  // averaged IOR, so that it stays proportional to the layer weight even at
+  // total internal reflection, where a Schlick approximation would
+  // drastically undersample the layer.
+  const auto chance(this._averageWeight * specular::dielectricFresnel(cosTheta, relativeIOR(params, this._averageIOR)));
   if (monte_carlo::boolSample(&xi.z, chance)) {
     preserve normal, ior;
-    normal = this.normal, ior = 1.0 / this._averageIOR; // Assume IOR of 1.4 => relative IOR of 1/1.4
+    normal = this.normal, ior = relativeIOR(params, this._averageIOR);
     auto result(scatterSample(visit &this.layer, params));
-    *result.fDelta *= this.weight * specular::dielectricFresnel(dot(wo, halfDirection(params, &result)), 1 / this.ior) / chance if (result.fDelta);
+    *result.fDelta *= this.weight * specular::dielectricFresnel(dot(wo, halfDirection(params, &result)), relativeIOR(params, this.ior)) / chance if (result.fDelta);
     return result;
   } else {
     auto result(scatterSample(visit &this.base, params));
-    *result.fDelta *= (1 - this.weight * specular::dielectricFresnel(dot(wo, halfDirection(params, &result)), 1 / this.ior)) / (1 - chance) if (result.fDelta);
+    *result.fDelta *= (1 - this.weight * specular::dielectricFresnel(dot(wo, halfDirection(params, &result)), relativeIOR(params, this.ior))) / (1 - chance) if (result.fDelta);
     return result;
   }
 }
@@ -2226,6 +2355,13 @@ export typedef fresnel_layer color_fresnel_layer;
 //--}
 
 //--{ custom_curve_layer, color_custom_curve_layer
+/// A custom-curve layer.
+///
+/// \note
+/// Unlike `fresnel_layer`, this combinator carries no IOR and does not
+/// define a refractive interface: a nested transmissive `layer` refracts
+/// with the enclosing interface, which is the material IOR by default.
+///
 export struct custom_curve_layer: bsdf {
   /// The reflectivity at normal incidence.
   $(color | float) normal_reflectivity;
@@ -2316,6 +2452,13 @@ export typedef custom_curve_layer color_custom_curve_layer;
 //--}
 
 //--{ measured_curve_layer, color_measured_curve_layer
+/// A measured-curve layer.
+///
+/// \note
+/// Unlike `fresnel_layer`, this combinator carries no IOR and does not
+/// define a refractive interface: a nested transmissive `layer` refracts
+/// with the enclosing interface, which is the material IOR by default.
+///
 export struct measured_curve_layer: bsdf {
   /// The curve values.
   ///
@@ -2666,6 +2809,7 @@ export float _volumeScatterEvaluate(
     wo0: normalize(*woWorld),
     wi0: normalize(*wiWorld),
     hitBackface: false, // Not applicable for volume scattering
+    ior: 1.0,           // Not applicable for volume scattering
   );
   return scatterEvaluate(visit &instance.ptr.volume.scattering, &params).f;
 }
@@ -2678,7 +2822,7 @@ export float _volumeScatterSample(
   const &float3 wiWorld, ///< output: The incoming direction in world space
 ) {
   auto wo = normalize(*woWorld);
-  auto params = ScatterSampleParameters(xi: *xi, wo0: wo, hitBackface: false);
+  auto params = ScatterSampleParameters(xi: *xi, wo0: wo, hitBackface: false, ior: 1.0);
   auto result = scatterSample(visit &instance.ptr.volume.scattering, &params);
   if (result.mode == scatter_none) {
     return 0.0;

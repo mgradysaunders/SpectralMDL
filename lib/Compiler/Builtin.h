@@ -387,6 +387,15 @@ using ::math import *;
 import ::tex::*;
 const float EPSILON=1e-6;
 const float MULTISCATTER_DIFFUSE_CHANCE=0.2;
+const float DEFAULT_IOR=1.4;
+@(pure macro)
+auto relativeIOR(const auto params,const auto absoluteIOR){
+  if(params.hitBackface&!params.thin_walled){
+    return absoluteIOR;
+  } else {
+    return 1.0/absoluteIOR;
+  }
+}
 const int DF_REFLECTION=(1<<0);
 const int DF_TRANSMISSION=(1<<1);
 const int DF_DIFFUSE=(1<<2);
@@ -410,7 +419,7 @@ export enum scatter_mode{
 float scatterReflectChance(const scatter_mode mode){
   const auto reflWeight(#select((int(mode)&1)!=0,1.0,0.0));
   const auto tranWeight(#select((int(mode)&2)!=0,1.0,0.0));
-  return reflWeight/(reflWeight+tranWeight);
+  return reflWeight/#max(reflWeight+tranWeight,1.0);
 }
 @(pure foreign)
 double erf(double x);
@@ -554,7 +563,7 @@ struct ScatterEvaluateParameters{
   scatter_mode mode=(wo0.z<0)==(wi0.z<0)?scatter_reflect:scatter_transmit;
   bool hitBackface=wo0.z<0;
   bool thin_walled=false;
-  float ior=1/1.4;
+  float ior=1/DEFAULT_IOR;
   float3 normal=float3(0,0,1);
   float3 tangent_u=float3(1,0,0);
   float3 wo=wo0;
@@ -566,7 +575,7 @@ struct ScatterEvaluateParameters{
       wi0=-wi0;
       wo=-wo;
       wi=-wi;
-      ior=1.0/ior;
+      ior=1.0/ior if(!thin_walled);
     }
   }
 };
@@ -598,7 +607,7 @@ struct ScatterSampleParameters{
   float3 wo0;
   bool hitBackface=wo0.z<0;
   bool thin_walled=false;
-  float ior=1/1.4;
+  float ior=1/DEFAULT_IOR;
   float3 normal=float3(0,0,1);
   float3 tangent_u=float3(1,0,0);
   float3 wo=wo0;
@@ -607,7 +616,7 @@ struct ScatterSampleParameters{
     if(hitBackface){
       wo0=-wo0;
       wo=-wo;
-      ior=1/ior;
+      ior=1/ior if(!thin_walled);
     }
   }
 };
@@ -772,18 +781,20 @@ auto scatterEvaluate(const &specular_bsdf this[[anno::unused()]],const &ScatterE
 }
 @(pure macro)
 auto scatterSample(const &specular_bsdf this,inline const &ScatterSampleParameters params){
+  return ScatterSampleResult() if(this.mode==scatter_none);
   if((tbn:=recalculateTangentSpace(params))){
-    if(xi.x<scatterReflectChance(this.mode)){
+    const auto reflectChance(this.mode==scatter_reflect_transmit?specular::dielectricFresnel(wo.z,ior):scatterReflectChance(this.mode));
+    if(xi.x<reflectChance){
       const auto wiLocal(specular::reflect(wo,float3(0,0,1)));
       auto result=ScatterSampleResult(wi: (*tbn)*wiLocal,mode: scatter_reflect,fDelta: color(this.tint));
       *result.fDelta*=sampleShadingNormalCorrection(params,wiLocal,result.wi) if(isImportance);
       return result;
     } else {
-      const auto wiLocal(specular::refract(wo,float3(0,0,1),ior));
+      const auto wiLocal(thin_walled?-wo:specular::refract(wo,float3(0,0,1),ior));
       auto result=ScatterSampleResult(wi: (*tbn)*wiLocal,mode: scatter_transmit,fDelta: color(this.tint));
       if(isImportance){
         *result.fDelta*=sampleShadingNormalCorrection(params,wiLocal,result.wi);
-      } else {
+      } else if(!thin_walled){
         *result.fDelta*=ior*ior;
       }
       return result;
@@ -1049,14 +1060,14 @@ struct microfacet_bsdf:bsdf{
 };
 @(pure noinline)
 auto scatterEvaluate(const &microfacet_bsdf this,inline const &ScatterEvaluateParameters params){
-  auto reflectChance(scatterReflectChance(this.mode));
   auto effectiveMode(this.mode&mode);
   preserve tangent_u;
   tangent_u=this.tangent_u;
   return ScatterEvaluateResult(isBlack: true) if(!recalculateTangentSpace(params)||effectiveMode==scatter_none);
   preserve wi,mode;
+  bool thinTransmit=false;
   if(thin_walled&&effectiveMode==scatter_transmit){
-    reflectChance=1-reflectChance;
+    thinTransmit=true;
     effectiveMode=scatter_reflect;
     mode=scatter_reflect;
     wi.z=-wi.z;
@@ -1066,6 +1077,16 @@ auto scatterEvaluate(const &microfacet_bsdf this,inline const &ScatterEvaluatePa
   const auto wm(halfDirection(params));
   const auto dotWoWm(#sum(wo*wm));
   const auto dotWiWm(#sum(wi*wm));
+  float fWeight=1.0;
+  float2 pdfWeight=float2(1.0);
+  if(this.mode==scatter_reflect_transmit){
+    const auto F(specular::dielectricFresnel(dotWoWm,ior));
+    const auto Fo(specular::dielectricFresnel(cosThetao,ior));
+    const auto Fi(specular::dielectricFresnel(cosThetai,effectiveMode==scatter_reflect?ior:1/ior));
+    const bool complement(thinTransmit|(effectiveMode==scatter_transmit));
+    fWeight=complement?1-F:F;
+    pdfWeight=complement?1-float2(Fo,Fi):float2(Fo,Fi);
+  }
   if$(this.distribution<:microfacet::DistributionBlinn){
     const auto e(2/(this.alpha*this.alpha+EPSILON));
     const auto D(#pow(wm.z,(e.x*wm.x*wm.x+e.y*wm.y*wm.y)/(1-wm.z*wm.z+EPSILON))/$TWO_PI);
@@ -1077,8 +1098,8 @@ auto scatterEvaluate(const &microfacet_bsdf this,inline const &ScatterEvaluatePa
       const auto f(norm2*D*G/(4*cosThetao+EPSILON));
       auto result(ScatterEvaluateResultWithMultiscatter(this,f,pdf,cosThetao,cosThetai,this.roughness0,"simple_glossy_bsdf"));
       result.f*=shadingNormalCorrection if(isImportance);
-      result.f*=reflectChance;
-      result.pdf*=reflectChance;
+      result.f*=fWeight;
+      result.pdf*=pdfWeight;
       return result;
     } else {
       return ScatterEvaluateResult(isBlack: true) if(!((dotWoWm>0)&(dotWiWm<0)));
@@ -1088,8 +1109,8 @@ auto scatterEvaluate(const &microfacet_bsdf this,inline const &ScatterEvaluatePa
       auto result(ScatterEvaluateResult(f: this.tint*f,pdf: pdf));
       result.f*=shadingNormalCorrection if(isImportance);
       result.f*=ior*ior if(!isImportance);
-      result.f*=1-reflectChance;
-      result.pdf*=1-reflectChance;
+      result.f*=fWeight;
+      result.pdf*=pdfWeight;
       return result;
     }
   } else {
@@ -1111,8 +1132,8 @@ auto scatterEvaluate(const &microfacet_bsdf this,inline const &ScatterEvaluatePa
       const auto f(D*G/(4*cosThetao+EPSILON));
       auto result(ScatterEvaluateResultWithMultiscatter(this,f,pdf,cosThetao,cosThetai,this.roughness0,lutName));
       result.f*=shadingNormalCorrection if(isImportance);
-      result.f*=reflectChance;
-      result.pdf*=reflectChance;
+      result.f*=fWeight;
+      result.pdf*=pdfWeight;
       return result;
     } else {
       return ScatterEvaluateResult(isBlack: true) if(!((dotWoWm>0)&(dotWiWm<0)));
@@ -1122,8 +1143,8 @@ auto scatterEvaluate(const &microfacet_bsdf this,inline const &ScatterEvaluatePa
       auto result(ScatterEvaluateResult(f: this.tint*f,pdf: pdf));
       result.f*=shadingNormalCorrection if(isImportance);
       result.f*=ior*ior if(!isImportance);
-      result.f*=1-reflectChance;
-      result.pdf*=1-reflectChance;
+      result.f*=fWeight;
+      result.pdf*=pdfWeight;
       return result;
     }
   }
@@ -1136,7 +1157,8 @@ auto scatterSample(const &microfacet_bsdf this,inline const &ScatterSampleParame
   auto tbn(recalculateTangentSpace(params));
   if(!tbn)
     return ScatterSampleResult();
-  const auto mode(monte_carlo::boolSample(&xi.z,scatterReflectChance(this.mode))?scatter_reflect:scatter_transmit);
+  const auto reflectChance(this.mode==scatter_reflect_transmit?specular::dielectricFresnel(#abs(wo.z),ior):scatterReflectChance(this.mode));
+  const auto mode(monte_carlo::boolSample(&xi.z,reflectChance)?scatter_reflect:scatter_transmit);
   if(mode==scatter_reflect||thin_walled){
     if(result:=ScatterSampleResultWithMultiscatter(this,&xi,*tbn)){
       if(mode==scatter_transmit)
@@ -1504,10 +1526,18 @@ auto thinFilmFactor(const auto thickness,const auto filmIOR,const float baseIOR,
   return R13>EPSILON?0.5*(Rs+Rp)/R13:color(1.0);
 }
 @(macro)
+auto thinFilmIncidentRelativeIOR(const &thin_film this,const auto params){
+  if(params.hitBackface&!params.thin_walled){
+    return this.ior/params.ior;
+  } else {
+    return this.ior;
+  }
+}
+@(macro)
 auto scatterEvaluate(const &thin_film this,const &ScatterEvaluateParameters params){
   auto result(scatterEvaluate(visit &this.base,params));
   if(!result.isBlack&&params.mode==scatter_reflect){
-    return ScatterEvaluateResult(f: thinFilmFactor(this.thickness,this.ior,1/params.ior,#abs(dot(params.wo,halfDirection(params))))*result.f,pdf: result.pdf,);
+    return ScatterEvaluateResult(f: thinFilmFactor(this.thickness,thinFilmIncidentRelativeIOR(this,params),1/params.ior,#abs(dot(params.wo,halfDirection(params))))*result.f,pdf: result.pdf,);
   } else {
     return result;
   }
@@ -1516,7 +1546,7 @@ auto scatterEvaluate(const &thin_film this,const &ScatterEvaluateParameters para
 auto scatterSample(const &thin_film this,const &ScatterSampleParameters params){
   auto result(scatterSample(visit &this.base,params));
   if((result.mode==scatter_reflect)&bool(result.fDelta)){
-    *result.fDelta*=thinFilmFactor(this.thickness,this.ior,1/params.ior,#abs(dot(params.wo,halfDirection(params,&result))));
+    *result.fDelta*=thinFilmFactor(this.thickness,thinFilmIncidentRelativeIOR(this,params),1/params.ior,#abs(dot(params.wo,halfDirection(params,&result))));
   }
   return result;
 }
@@ -1530,7 +1560,7 @@ export struct fresnel_factor:bsdf{
 auto scatterEvaluate(const &fresnel_factor this,const &ScatterEvaluateParameters params){
   auto result(scatterEvaluate(visit &this.base,params));
   if(!result.isBlack&&params.mode==scatter_reflect){
-    return ScatterEvaluateResult(f: specular::conductorFresnel(#abs(dot(params.wo,halfDirection(params))),1.0/complex(this.ior,this.extinction_coefficient))*result.f,pdf: result.pdf,);
+    return ScatterEvaluateResult(f: specular::conductorFresnel(#abs(dot(params.wo,halfDirection(params))),relativeIOR(params,complex(this.ior,this.extinction_coefficient)))*result.f,pdf: result.pdf,);
   }
   return result;
 }
@@ -1538,7 +1568,7 @@ auto scatterEvaluate(const &fresnel_factor this,const &ScatterEvaluateParameters
 auto scatterSample(const &fresnel_factor this,const &ScatterSampleParameters params){
   auto result(scatterSample(visit &this.base,params));
   if((result.mode==scatter_reflect)&bool(result.fDelta)){
-    *result.fDelta*=specular::conductorFresnel(#abs(dot(params.wo,halfDirection(params,&result))),1.0/complex(this.ior,this.extinction_coefficient));
+    *result.fDelta*=specular::conductorFresnel(#abs(dot(params.wo,halfDirection(params,&result))),relativeIOR(params,complex(this.ior,this.extinction_coefficient)));
   }
   return result;
 }
@@ -1644,15 +1674,14 @@ auto scatterEvaluate(const &fresnel_layer this,inline const &ScatterEvaluatePara
   if((cosThetao<EPSILON)|((mode==scatter_reflect)&(cosThetai<EPSILON))|((mode==scatter_transmit)&(cosThetai>-EPSILON)))
     return ScatterEvaluateResult(isBlack: true);
   const auto result0(scatterEvaluate(visit &this.base,params));
-  const auto result1=return_from{
-    preserve normal,ior;
-    normal=this.normal,ior=1.0/this._averageIOR;
-    return scatterEvaluate(visit &this.layer,params);
-  };
+  preserve normal,ior;
+  normal=this.normal,ior=relativeIOR(params,this._averageIOR);
+  const auto result1(scatterEvaluate(visit &this.layer,params));
   if(result0.isBlack&result1.isBlack){
     return ScatterEvaluateResult(isBlack: true);
   } else {
-    return ScatterEvaluateResult(f: lerp(result0.f,result1.f,this.weight*specular::dielectricFresnel(dot(wo,halfDirection(params)),1/this.ior),),pdf: lerp(result0.pdf,result1.pdf,this._averageWeight*specular::schlickFresnel(float2(cosThetao,cosThetai),specular::schlickF0(this._averageIOR)),),);
+    const auto pdfIOR(relativeIOR(params,this._averageIOR));
+    return ScatterEvaluateResult(f: lerp(result0.f,result1.f,this.weight*specular::dielectricFresnel(dot(wo,halfDirection(params)),relativeIOR(params,this.ior)),),pdf: lerp(result0.pdf,result1.pdf,this._averageWeight*float2(specular::dielectricFresnel(cosThetao,pdfIOR),specular::dielectricFresnel(cosThetai,mode==scatter_reflect?pdfIOR:1/pdfIOR),),),);
   }
 }
 @(macro)
@@ -1660,16 +1689,16 @@ auto scatterSample(const &fresnel_layer this,inline const &ScatterSampleParamete
   const auto cosTheta(dot(wo,this.normal)*#sign(this.normal.z));
   if(cosTheta<EPSILON)
     return ScatterSampleResult();
-  const auto chance(this._averageWeight*specular::schlickFresnel(cosTheta,specular::schlickF0(this._averageIOR)));
+  const auto chance(this._averageWeight*specular::dielectricFresnel(cosTheta,relativeIOR(params,this._averageIOR)));
   if(monte_carlo::boolSample(&xi.z,chance)){
     preserve normal,ior;
-    normal=this.normal,ior=1.0/this._averageIOR;
+    normal=this.normal,ior=relativeIOR(params,this._averageIOR);
     auto result(scatterSample(visit &this.layer,params));
-    *result.fDelta*=this.weight*specular::dielectricFresnel(dot(wo,halfDirection(params,&result)),1/this.ior)/chance if(result.fDelta);
+    *result.fDelta*=this.weight*specular::dielectricFresnel(dot(wo,halfDirection(params,&result)),relativeIOR(params,this.ior))/chance if(result.fDelta);
     return result;
   } else {
     auto result(scatterSample(visit &this.base,params));
-    *result.fDelta*=(1-this.weight*specular::dielectricFresnel(dot(wo,halfDirection(params,&result)),1/this.ior))/(1-chance) if(result.fDelta);
+    *result.fDelta*=(1-this.weight*specular::dielectricFresnel(dot(wo,halfDirection(params,&result)),relativeIOR(params,this.ior)))/(1-chance) if(result.fDelta);
     return result;
   }
 }
@@ -2002,6 +2031,7 @@ export float _volumeScatterEvaluate(const &_MaterialInstance instance,const &flo
     wo0: normalize(*woWorld),
     wi0: normalize(*wiWorld),
     hitBackface: false,
+    ior: 1.0,
   );
   return scatterEvaluate(visit &instance.ptr.volume.scattering,&params).f;
 }
@@ -2013,7 +2043,7 @@ export float _volumeScatterSample(
   const &float3 wiWorld,
 ){
   auto wo=normalize(*woWorld);
-  auto params=ScatterSampleParameters(xi: *xi,wo0: wo,hitBackface: false);
+  auto params=ScatterSampleParameters(xi: *xi,wo0: wo,hitBackface: false,ior: 1.0);
   auto result=scatterSample(visit &instance.ptr.volume.scattering,&params);
   if(result.mode==scatter_none){
     return 0.0;
