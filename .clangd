@@ -3,7 +3,6 @@ CompileFlags:
 
 Diagnostics:
   ClangTidy:
-    Add: bugprone*
-    Add: modernize*
+    Add: [bugprone*, modernize*]
     Remove: modernize-use-trailing-return-type
   UnusedIncludes: Strict
