@@ -132,6 +132,20 @@ public:
   /// another archive in the same root. A single `.mdr` file may also be
   /// added directly, with its parent directory as the implicit root.
   ///
+  /// MDLE containers (`.mdle`) are added only by passing the `.mdle`
+  /// file explicitly — directory walks never ingest them, mirroring the
+  /// MDL convention that encapsulated materials are addressed
+  /// individually. The container must hold `main.mdl`, which is loaded
+  /// as a module whose qualified name is the content-based
+  /// `::mdle::<md5>` of the container bytes (reported through
+  /// `addedModuleNames` as the caller's handle), so the canonical
+  /// material is `::mdle::<md5>::main`. Identical containers at
+  /// different paths dedupe to one module; distinct containers can
+  /// never collide. Every other entry is extracted to a
+  /// content-addressed cache directory under the system temp directory,
+  /// and the module's resource lookups anchor there, so self-contained
+  /// textures resolve.
+  ///
   /// If two modules under different roots derive the same qualified
   /// name, the module under the earlier root wins for qualified-name
   /// lookup: the later module still loads and compiles, and relative

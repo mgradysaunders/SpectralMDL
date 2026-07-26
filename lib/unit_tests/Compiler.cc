@@ -3,10 +3,12 @@
 #include <algorithm>
 #include <filesystem>
 #include <fstream>
+#include <iterator>
 #include <string>
 #include <vector>
 
 #include "smdl/Compiler.h"
+#include "smdl/Support/MD5Hash.h"
 
 namespace fs = std::filesystem;
 
@@ -24,9 +26,10 @@ static void writeFile(const fs::path &path, std::string_view text) {
 // Add everything, compile, and JIT-compile. Returns the first error
 // message, or the empty string on success.
 static std::string buildAll(smdl::Compiler &compiler,
-                            const std::vector<fs::path> &paths) {
+                            const std::vector<fs::path> &paths,
+                            std::vector<std::string> *names = nullptr) {
   for (const auto &path : paths)
-    if (auto error{compiler.add(path.string())})
+    if (auto error{compiler.add(path.string(), names)})
       return error->message;
   if (auto error{compiler.compile(smdl::OPT_LEVEL_NONE)})
     return error->message;
@@ -444,6 +447,126 @@ TEST_CASE("Compiler MDR archives") {
     auto names{std::vector<std::string>()};
     REQUIRE(!compiler.add((tmpDir / "root").string(), &names));
     CHECK(names == std::vector<std::string>{"::mod"});
+  }
+  fs::remove_all(tmpDir);
+}
+
+TEST_CASE("Compiler MDLE") {
+  auto tmpDir{fs::temp_directory_path() / "smdl-compiler-test"};
+  fs::remove_all(tmpDir);
+  const auto mainModule{"#smdl\nimport ::df::*;\nexport const int m = 1;\n" +
+                        materialDef("main")};
+  SUBCASE("Content-based identity and the 'main' convention") {
+    writeZip(tmpDir / "CoolSteel.mdle", {{"main.mdl", mainModule}});
+    auto expectedName{
+        "::mdle::" +
+        std::string(smdl::MD5Hash::hashFile((tmpDir / "CoolSteel.mdle").string()))};
+    smdl::Compiler compiler{};
+    auto names{std::vector<std::string>()};
+    REQUIRE(buildAll(compiler, {tmpDir / "CoolSteel.mdle"}, &names) == "");
+    REQUIRE(names == std::vector<std::string>{expectedName});
+    auto material{compiler.findMaterial(expectedName + "::main")};
+    REQUIRE(material != nullptr);
+    CHECK(material->qualifiedName == expectedName + "::main");
+    CHECK(material->moduleName == "CoolSteel");
+    CHECK(material->moduleFileName.find("CoolSteel.mdle") !=
+          std::string::npos);
+    // Unique here, so the bare suffix also resolves.
+    CHECK(compiler.findMaterial("main") == material);
+  }
+  SUBCASE("Identical containers dedupe, distinct containers cannot collide") {
+    writeZip(tmpDir / "a" / "one.mdle", {{"main.mdl", mainModule}});
+    writeZip(tmpDir / "b" / "two.mdle", {{"main.mdl", mainModule}});
+    auto otherModule{"#smdl\nimport ::df::*;\nexport const int m = 2;\n" +
+                     materialDef("main")};
+    writeZip(tmpDir / "c" / "three.mdle", {{"main.mdl", otherModule}});
+    smdl::Compiler compiler{};
+    auto names{std::vector<std::string>()};
+    REQUIRE(buildAll(compiler,
+                     {tmpDir / "a" / "one.mdle", tmpDir / "b" / "two.mdle",
+                      tmpDir / "c" / "three.mdle"},
+                     &names) == "");
+    REQUIRE(names.size() == 3);
+    // Identical bytes at different paths report the same handle and
+    // load once; different bytes get a different handle.
+    CHECK(names[0] == names[1]);
+    CHECK(names[0] != names[2]);
+    CHECK(compiler.getMaterials().size() == 2);
+    // The ambiguous bare name is refused, the handles disambiguate.
+    CHECK(compiler.findMaterial("main") == nullptr);
+    CHECK(compiler.findMaterial(names[0] + "::main") != nullptr);
+    CHECK(compiler.findMaterial(names[2] + "::main") != nullptr);
+    // No shadow warnings: nothing is marked shadowed.
+    for (const auto &each : compiler.getMaterials())
+      CHECK(!each.moduleIsShadowed);
+  }
+  SUBCASE("Missing 'main.mdl' is an error") {
+    writeZip(tmpDir / "bad.mdle", {{"other.mdl", "#smdl\n"}});
+    smdl::Compiler compiler{};
+    auto error{compiler.add((tmpDir / "bad.mdle").string())};
+    REQUIRE(error.has_value());
+    CHECK(error->message.find("main.mdl") != std::string::npos);
+  }
+  SUBCASE("Directory walks do not ingest MDLEs") {
+    writeZip(tmpDir / "root" / "loose.mdle", {{"main.mdl", mainModule}});
+    writeFile(tmpDir / "root" / "mod.mdl", "#smdl\nexport const int x = 1;\n");
+    smdl::Compiler compiler{};
+    auto names{std::vector<std::string>()};
+    REQUIRE(!compiler.add((tmpDir / "root").string(), &names));
+    CHECK(names == std::vector<std::string>{"::mod"});
+  }
+  SUBCASE("Container resources extract and anchor resource lookups") {
+    // Generate a tiny PNG with the library's own writer and pack it
+    // beside a 'main.mdl' that references it.
+    const uint8_t texels[12] = {255, 0, 0, 0,  255, 0,
+                                0,   0, 255, 255, 255, 255};
+    fs::create_directories(tmpDir);
+    auto pngPath{(tmpDir / "wood.png").string()};
+    REQUIRE(!smdl::write8bitImage(pngPath, 2, 2, 3, texels));
+    auto pngBytes{std::string()};
+    {
+      auto stream{std::ifstream(pngPath, std::ios::binary)};
+      pngBytes.assign(std::istreambuf_iterator<char>(stream),
+                      std::istreambuf_iterator<char>());
+    }
+    REQUIRE(!pngBytes.empty());
+    writeZip(tmpDir / "Textured.mdle",
+             {{"main.mdl",
+               "#smdl\nimport ::df::*;\nimport ::tex::*;\n" +
+                   materialDef("main") +
+                   "unit_test \"MDLE texture\" {\n"
+                   "  const auto t = texture_2d(\"wood.png\", "
+                   "tex::gamma_linear);\n"
+                   "  #assert(tex::texture_isvalid(t));\n"
+                   "  #assert(tex::width(t) == 2);\n"
+                   "  #assert(tex::height(t) == 2);\n"
+                   "}\n"},
+              {"wood.png", pngBytes}});
+    auto hash{std::string(
+        smdl::MD5Hash::hashFile((tmpDir / "Textured.mdle").string()))};
+    smdl::Compiler compiler{};
+    compiler.enableUnitTests = true;
+    REQUIRE(buildAll(compiler, {tmpDir / "Textured.mdle"}) == "");
+    CHECK(compiler.findMaterial("main") != nullptr);
+    // The resource was extracted to the content-addressed cache.
+    CHECK(fs::is_regular_file(fs::temp_directory_path() /
+                              ("smdl-mdle-" + hash) / "wood.png"));
+    // Run the in-container unit test: it asserts the texture actually
+    // loaded (a resource that failed to resolve would only have
+    // produced a warning and a default texture).
+    auto allocator{smdl::BumpPtrAllocator()};
+    auto wavelengths{std::vector<float>(size_t(compiler.wavelengthBaseMax))};
+    auto state{smdl::State()};
+    state.allocator = &allocator;
+    state.wavelength_min = 380.0f;
+    state.wavelength_max = 720.0f;
+    state.wavelength_base = wavelengths.data();
+    for (uint32_t i = 0; i < compiler.wavelengthBaseMax; i++) {
+      float fac{float(i) / float(compiler.wavelengthBaseMax - 1)};
+      wavelengths[i] =
+          (1 - fac) * state.wavelength_min + fac * state.wavelength_max;
+    }
+    REQUIRE(!compiler.runUnitTests(state));
   }
   fs::remove_all(tmpDir);
 }

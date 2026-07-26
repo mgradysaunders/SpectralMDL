@@ -387,13 +387,14 @@ public:
   }
 
   [[nodiscard]] std::optional<std::string> locate(const std::string &fileName) {
-    return compiler.fileLocator.locate(fileName, currentModule->getFileName());
+    return compiler.fileLocator.locate(fileName,
+                                       currentModule->getResourceAnchor());
   }
 
   [[nodiscard]] std::vector<FileLocator::ImagePath>
   locateImages(const std::string &fileName) {
-    return compiler.fileLocator.locateImages(fileName,
-                                             currentModule->getFileName());
+    return compiler.fileLocator.locateImages(
+        fileName, currentModule->getResourceAnchor());
   }
 
 public:

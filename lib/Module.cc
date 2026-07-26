@@ -79,6 +79,21 @@ Module::loadFromFileExtractedFromArchive(const std::string &archiveFileName,
   return module_;
 }
 
+std::unique_ptr<Module> Module::loadFromMDLE(const std::string &mdleFileName,
+                                             const std::string &file,
+                                             const std::string &qualifiedName,
+                                             const std::string &resourceDirectory) {
+  auto module_{std::make_unique<Module>()};
+  module_->mIsExtractedFromArchive = true;
+  module_->mFileName = joinPaths(mdleFileName, "main.mdl");
+  module_->mName = std::filesystem::path(mdleFileName).stem().string();
+  module_->mSearchRoot = parentPathOf(mdleFileName);
+  module_->mQualifiedName = qualifiedName;
+  module_->mResourceDirectory = resourceDirectory;
+  module_->mSourceCode = file;
+  return module_;
+}
+
 std::optional<Error> Module::parse(BumpPtrAllocator &allocator) noexcept {
   return catchAndReturnError([&] {
     if (!mRoot) {

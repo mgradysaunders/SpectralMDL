@@ -99,6 +99,27 @@ public:
                                    const std::string &file,
                                    const std::string &searchRoot = {});
 
+  /// Load the `main.mdl` module from an MDLE container.
+  ///
+  /// \param[in] mdleFileName
+  /// The file name of the `.mdle` container.
+  ///
+  /// \param[in] file
+  /// The `main.mdl` source extracted from the container.
+  ///
+  /// \param[in] qualifiedName
+  /// The content-based qualified name, e.g., `::mdle::<md5>`.
+  ///
+  /// \param[in] resourceDirectory
+  /// The directory the container resources were extracted to, used as
+  /// the anchor for locating resources referenced by the module (see
+  /// `getResourceAnchor()`).
+  ///
+  [[nodiscard]] static std::unique_ptr<Module>
+  loadFromMDLE(const std::string &mdleFileName, const std::string &file,
+               const std::string &qualifiedName,
+               const std::string &resourceDirectory);
+
 public:
   /// Is a builtin module?
   [[nodiscard]] bool isBuiltin() const noexcept { return mFileName.empty(); }
@@ -143,6 +164,18 @@ public:
   /// unreachable by qualified name. It still compiles, and relative
   /// imports within its own directory tree still resolve to it.
   [[nodiscard]] bool isShadowed() const noexcept { return mIsShadowed; }
+
+  /// Get the path used as the anchor when locating resources referenced
+  /// by this module (textures, spectra, measurements, ...).
+  ///
+  /// This is ordinarily the module file name, so resources resolve
+  /// relative to the containing directory. For modules loaded from MDLE
+  /// containers it is the directory the container resources were
+  /// extracted to.
+  [[nodiscard]] std::string_view getResourceAnchor() const noexcept {
+    return mResourceDirectory.empty() ? std::string_view(mFileName)
+                                      : std::string_view(mResourceDirectory);
+  }
 
   /// Get the source code.
   [[nodiscard]] std::string_view getSourceCode() const noexcept {
@@ -193,6 +226,10 @@ private:
   /// Is shadowed by an equally named module under an earlier search
   /// root? Maintained by `Compiler::add()`.
   bool mIsShadowed{};
+
+  /// The resource anchor directory if it differs from the directory of
+  /// `mFileName`. See `getResourceAnchor()`.
+  std::string mResourceDirectory{};
 
   /// The source code.
   std::string mSourceCode{};

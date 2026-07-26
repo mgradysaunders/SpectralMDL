@@ -174,7 +174,48 @@ Compiler::add(std::string fileOrDirName,
     }};
     auto addFile{[&](const std::string &fileName,
                      const std::string &searchRoot) {
-      if (llvm::StringRef(fileName).ends_with_insensitive(".mdr")) {
+      if (llvm::StringRef(fileName).ends_with_insensitive(".mdle")) {
+        SMDL_LOG_DEBUG("Adding MDLE ", QuotedPath(fileName));
+        // An MDLE is a self-contained encapsulated material. Identity
+        // is content-based: the qualified name is '::mdle::<md5>' of
+        // the container bytes, so identical containers at different
+        // paths dedupe to one module and distinct containers can never
+        // collide.
+        auto qualifiedName{"::mdle::" + std::string(MD5Hash::hashFile(fileName))};
+        if (auto itr{mModulesByQualifiedName.find(qualifiedName)};
+            itr != mModulesByQualifiedName.end()) {
+          if (addedModuleNames) {
+            addedModuleNames->push_back(std::move(qualifiedName));
+          }
+          return;
+        }
+        // Load 'main.mdl' and extract every other entry into a
+        // content-addressed cache directory that serves as the anchor
+        // for the module's resource lookups.
+        auto extractDir{
+            (std::filesystem::temp_directory_path() /
+             ("smdl-mdle-" + qualifiedName.substr(8)))
+                .string()};
+        auto archive{Archive{fileName}};
+        auto mainSource{std::optional<std::string>()};
+        for (int i = 0; i < archive.get_file_count(); i++) {
+          auto entryName{archive.get_file_name(i)};
+          if (entryName == "main.mdl") {
+            mainSource = archive.extract_file(i);
+          } else if (!entryName.empty() && entryName.back() != '/') {
+            auto outPath{std::filesystem::path(extractDir) / entryName};
+            std::filesystem::create_directories(outPath.parent_path());
+            openOrThrow(outPath.string(), std::ios::out | std::ios::binary)
+                << archive.extract_file(i);
+          }
+        }
+        if (!mainSource) {
+          throw Error(concat("MDLE ", QuotedPath(fileName),
+                             " does not contain 'main.mdl'"));
+        }
+        registerModule(Module::loadFromMDLE(fileName, *mainSource,
+                                            qualifiedName, extractDir));
+      } else if (llvm::StringRef(fileName).ends_with_insensitive(".mdr")) {
         SMDL_LOG_DEBUG("Adding MDL archive ", QuotedPath(fileName));
         // Per the MDL specification, the archive file name encodes the
         // enclosed package prefix: 'vendor.metals.mdr' provides
