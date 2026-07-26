@@ -26,14 +26,18 @@ FileLocator::getSearchDirs(std::string_view relativeTo) const {
   if (mSearchPwd) {
     auto ec{std::error_code()};
     if (auto pwd{std::filesystem::current_path(ec)}; !ec) {
-      add(std::move(pwd));
+      add(pwd.string());
     }
   }
   for (const auto &[dir, isRecursive] : mSearchDirs) {
     add(dir);
     if (isRecursive) {
-      for (auto &&entry : std::filesystem::recursive_directory_iterator(dir)) {
-        if (auto subDir{entry.path().string()}; isDirectory(subDir)) {
+      auto ec{std::error_code()};
+      auto itr{std::filesystem::recursive_directory_iterator(
+          dir, std::filesystem::directory_options::skip_permission_denied, ec)};
+      for (; !ec && itr != std::filesystem::recursive_directory_iterator();
+           itr.increment(ec)) {
+        if (auto subDir{itr->path().string()}; isDirectory(subDir)) {
           add(std::move(subDir));
         }
       }
@@ -77,14 +81,16 @@ std::optional<std::string> FileLocator::locate(std::string_view fileName,
 std::vector<FileLocator::ImagePath>
 FileLocator::locateImages(std::string_view fileName,
                           std::string_view relativeTo) const {
-  const auto fileNameStrRef{llvm::StringRef(fileName)};
-  // Look for tile placeholders:
+  const auto pattern{std::filesystem::path(std::string(fileName))};
+  const auto patternName{pattern.filename().string()};
+  const auto patternNameStrRef{llvm::StringRef(patternName)};
+  // Look for tile placeholders in the final path component:
   // - "<UDIM>"
-  // - "<UVTILEO>"
+  // - "<UVTILE0>"
   // - "<UVTILE1>"
-  const bool hasUDIM{fileNameStrRef.contains("<UDIM>")};
-  const bool hasUVTILE0{fileNameStrRef.contains("<UVTILE0>")};
-  const bool hasUVTILE1{fileNameStrRef.contains("<UVTILE1>")};
+  const bool hasUDIM{patternNameStrRef.contains("<UDIM>")};
+  const bool hasUVTILE0{patternNameStrRef.contains("<UVTILE0>")};
+  const bool hasUVTILE1{patternNameStrRef.contains("<UVTILE1>")};
   if (!hasUDIM && !hasUVTILE0 && !hasUVTILE1) {
     // If no tile placeholders, this is an ordinary filename
     // meant to identify just 1 tile.
@@ -92,73 +98,92 @@ FileLocator::locateImages(std::string_view fileName,
     if (!result)
       return {};
     return {ImagePath{0, 0, std::move(*result)}};
-  } else {
-    // Else, split the filename into the substrings before and
-    // after the placeholder. NOTE: No structured bindings here
-    // because we capture in the lambda below and that is not
-    // OK in C++17.
-    auto fileNameBeforeAndAfter =
-        fileNameStrRef.rsplit(hasUDIM      ? "<UDIM>"
-                              : hasUVTILE0 ? "<UVTILE0>"
-                                           : "<UVTILE1>");
-    const auto &fileNameBefore{fileNameBeforeAndAfter.first};
-    const auto &fileNameAfter{fileNameBeforeAndAfter.second};
-    // Try to match the given path and parse the tile indices.
-    auto tryMatch{[&](llvm::StringRef path, uint32_t &tileIndexU,
-                      uint32_t &tileIndexV) -> bool {
-      if (auto pos{path.rfind(fileNameBefore)}; pos != path.npos)
-        path = path.substr(pos + fileNameBefore.size());
-      else
+  }
+  // Else, split the final path component into the substrings before
+  // and after the placeholder. NOTE: No structured bindings here
+  // because we capture in the lambda below and that is not OK
+  // in C++17.
+  auto patternNameBeforeAndAfter =
+      patternNameStrRef.rsplit(hasUDIM      ? "<UDIM>"
+                               : hasUVTILE0 ? "<UVTILE0>"
+                                            : "<UVTILE1>");
+  const auto &patternNameBefore{patternNameBeforeAndAfter.first};
+  const auto &patternNameAfter{patternNameBeforeAndAfter.second};
+  // Try to match the given filename and parse the tile indexes.
+  auto tryMatch{[&](llvm::StringRef name, uint32_t &tileIndexU,
+                    uint32_t &tileIndexV) -> bool {
+    if (!name.consume_front(patternNameBefore))
+      return false;
+    if (hasUDIM) {
+      // "<UDIM>" stands for exactly 4 decimal digits.
+      auto digits{name.take_front(4)};
+      uint32_t num{};
+      if (digits.size() != 4 || digits.consumeInteger(10, num) ||
+          !digits.empty() || num < 1001)
         return false;
-      if (hasUDIM) {
-        uint32_t num{};
-        if (path.consumeInteger(10, num) || num < 1001)
+      name = name.drop_front(4);
+      num -= 1001;
+      tileIndexU = num % 10;
+      tileIndexV = num / 10;
+    } else {
+      if (!name.consume_front("_u") || name.consumeInteger(10, tileIndexU) ||
+          !name.consume_front("_v") || name.consumeInteger(10, tileIndexV))
+        return false;
+      if (hasUVTILE1) {
+        // "<UVTILE1>" is 1-based, so normalize to be 0-based.
+        if (tileIndexU == 0 || tileIndexV == 0)
           return false;
-        num -= 1001;
-        tileIndexU = num % 10;
-        tileIndexV = num / 10;
-        if (tileIndexU >= 10 || tileIndexV >= 10)
-          return false;
-      } else {
-        if (!path.consume_front("_u") || path.consumeInteger(10, tileIndexU) ||
-            !path.consume_front("_v") || path.consumeInteger(10, tileIndexV))
-          return false;
-        if (hasUVTILE1 && (tileIndexU == 0 || tileIndexV == 0))
-          return false;
+        tileIndexU -= 1;
+        tileIndexV -= 1;
       }
-      return path == fileNameAfter;
-    }};
-    // We collect results in an STL to be not to duplicate anything.
-    auto results{std::vector<ImagePath>{}};
-    auto resultsSet{llvm::StringSet()};
-    auto parentPath{std::optional<std::filesystem::path>{}};
+      // Sanity check against absurd allocations downstream.
+      if (tileIndexU >= 1000 || tileIndexV >= 1000)
+        return false;
+    }
+    return name == patternNameAfter;
+  }};
+  // Determine the candidate directories to scan. If the pattern is
+  // absolute, the only candidate is its parent directory. Otherwise,
+  // join each active search directory with the directory portion of
+  // the pattern, if any.
+  auto scanDirs{std::vector<std::string>()};
+  if (pattern.is_absolute()) {
+    scanDirs.push_back(pattern.parent_path().string());
+  } else {
+    auto patternDir{pattern.parent_path().string()};
     for (auto &&dir : getSearchDirs(relativeTo)) {
-      for (auto &&dirEntry : std::filesystem::directory_iterator(dir)) {
-        if (dirEntry.is_regular_file()) {
-          // Only proceed if either we have not yet established the parent
-          // path, or if the parent path is consistent.
-          auto ec{std::error_code{}};
-          auto path{std::filesystem::canonical(dirEntry.path(), ec)};
-          if (ec || (parentPath && *parentPath != path.parent_path()))
-            continue;
-          ImagePath imagePath{};
-          imagePath.path = path.string();
-          if (tryMatch(imagePath.path, imagePath.tileIndexU,
-                       imagePath.tileIndexV)) {
-            // If we have not yet established the parent path, use the
-            // parent path of this image.
-            if (!parentPath)
-              *parentPath = path.parent_path();
-            if (auto [itr, inserted] = resultsSet.insert(imagePath.path);
-                inserted) {
-              results.emplace_back(std::move(imagePath));
-            }
-          }
-        }
+      scanDirs.push_back(joinPaths(dir, patternDir));
+    }
+  }
+  // Scan the candidate directories in order. The first directory that
+  // contains at least 1 match provides all of the results, so that
+  // every tile is guaranteed to reside in the same directory.
+  for (const auto &scanDir : scanDirs) {
+    auto results{std::vector<ImagePath>()};
+    auto ec{std::error_code()};
+    auto itr{std::filesystem::directory_iterator(
+        scanDir, std::filesystem::directory_options::skip_permission_denied,
+        ec)};
+    for (; !ec && itr != std::filesystem::directory_iterator();
+         itr.increment(ec)) {
+      auto entryEc{std::error_code()};
+      ImagePath imagePath{};
+      if (!itr->is_regular_file(entryEc) ||
+          !tryMatch(itr->path().filename().string(), imagePath.tileIndexU,
+                    imagePath.tileIndexV))
+        continue;
+      if (auto path{std::filesystem::canonical(itr->path(), entryEc)};
+          !entryEc) {
+        imagePath.path = path.string();
+        results.emplace_back(std::move(imagePath));
       }
     }
-    return results;
+    if (!results.empty()) {
+      std::sort(results.begin(), results.end());
+      return results;
+    }
   }
+  return {};
 }
 
 } // namespace smdl

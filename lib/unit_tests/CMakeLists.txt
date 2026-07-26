@@ -4,8 +4,9 @@ if(CMAKE_PROJECT_NAME STREQUAL PROJECT_NAME AND BUILD_TESTING)
   target_sources(
     "smdl-doctest"
     PRIVATE 
-      "doctest.cc" 
+      "doctest.cc"
       "BSDFMeasurement.cc"
+      "FileLocator.cc"
       "LightProfile.cc"
       "MD5Hash.cc"
       "Sampling.cc"
