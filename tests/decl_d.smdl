@@ -12,7 +12,7 @@ int overload_target(int v) {
   return 2;
 }
 
-unit_test "Declarations: declaration over import shadows within its own module" {
+unit_test "Declaration over import shadows within its own module" {
   // The local declaration wins unqualified lookup.
   #assert(overload_target(5) == 2);
   // The imported function remains reachable by its qualified name, and

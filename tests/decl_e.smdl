@@ -8,7 +8,7 @@ export namespace decl_e_ns {
   const int priv = 2;
 }
 
-unit_test "Declarations: unexported namespace member visible in own module" {
+unit_test "Unexported namespace member visible in own module" {
   #assert(decl_e_ns::pub == 1);
   #assert(decl_e_ns::priv == 2);
 }

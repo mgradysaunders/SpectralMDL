@@ -1,6 +1,6 @@
 #smdl
 
-unit_test "Intrinsics: clock" {
+unit_test "Monotonic clock" {
   const auto t0 = #clock();
   const auto t1 = #clock();
   #assert(#typeof(t0) == #type_int(64));

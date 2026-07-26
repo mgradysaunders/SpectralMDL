@@ -2,7 +2,7 @@
 
 // string '=='/'!=' compared only strlen(lhs) bytes, so a prefix compared
 // equal to a longer string (and the comparison was asymmetric).
-unit_test "string comparison is not prefix-based" {
+unit_test "String comparison is not prefix-based" {
   #assert(!("abc" == "abcdef"));
   #assert(!("abcdef" == "abc"));
   #assert("abc" == "abc");
@@ -13,7 +13,7 @@ unit_test "string comparison is not prefix-based" {
 
 // 'do { } while ();' never branched into the loop body, so every use
 // failed LLVM-IR verification.
-unit_test "do-while executes" {
+unit_test "Do-while executes" {
   int i = 0;
   do { i++; } while (i < 3);
   #assert(i == 3);
@@ -25,7 +25,7 @@ unit_test "do-while executes" {
 
 // a 'for' with an empty condition made the emitter dereference a null
 // condition expression.
-unit_test "for with empty condition" {
+unit_test "For with empty condition" {
   int j = 0;
   for (int n = 0; ; n++) {
     j++;
@@ -47,7 +47,7 @@ int defer_with_branch(bool b) {
   return x;
 }
 
-unit_test "defer with control flow before return" {
+unit_test "Defer with control flow before return" {
   #assert(defer_with_branch(true) == 1);
   #assert(defer_with_branch(false) == 1);
 }
@@ -63,7 +63,7 @@ unit_test "defer with control flow before return" {
 
 int union_as_int(int x) = x;
 
-unit_test "union narrowing at return under if" {
+unit_test "Union narrowing at return under if" {
   auto v0 = narrow_union(true);
   auto v1 = narrow_union(false);
   #assert(#typeof(visit v0) == int);
@@ -74,7 +74,7 @@ unit_test "union narrowing at return under if" {
 
 // bool-typed 'case' constants were passed to the LLVM switch without
 // conversion and failed IR verification.
-unit_test "switch case constants convert to int" {
+unit_test "Switch case constants convert to int" {
   int k = 0;
   switch (1) {
   case true:
@@ -89,7 +89,7 @@ unit_test "switch case constants convert to int" {
 // constructing an array from a pointer to its element type compared the
 // pointer type against the element type instead of the pointee, so the
 // feature never fired.
-unit_test "construct array from pointer to element" {
+unit_test "Construct array from pointer to element" {
   float[2] src = float[2](3.0, 4.0);
   auto p = &src[0];
   float[2] dst = float[2](p);
@@ -98,7 +98,7 @@ unit_test "construct array from pointer to element" {
 
 // 'color' arguments to '#isfpclass' and '#atan2' crashed the
 // compiler (invalid downcast / sanity abort).
-unit_test "color arguments to isfpclass and atan2" {
+unit_test "Color arguments to isfpclass and atan2" {
   // 96 = negative zero | positive zero, 256 = positive normal
   #assert(!#isfpclass(color(0.5), 96)[0]);
   #assert(#isfpclass(color(0.5), 256)[0]);
@@ -108,7 +108,7 @@ unit_test "color arguments to isfpclass and atan2" {
 
 // '#unpack_float4' computed '1ULL << 64' (shift-by-width UB) for 64-bit
 // texel types, producing an infinite scale factor.
-unit_test "unpack_float4 of 64-bit int" {
+unit_test "Finite unpack_float4 of 64-bit int" {
   auto u = #unpack_float4(#type_int(64)(3));
   #assert(u.x >= 0.0 && u.x < 1.0);
   #assert(u.w == 1.0);
@@ -124,7 +124,7 @@ exec {
 // The short-circuit logic operators are emitted through the shared
 // two-arm-merge helper; guard both the truth table and the guarantee that
 // the right-hand side does not evaluate when the left-hand side decides.
-unit_test "short-circuit logic operators" {
+unit_test "Short-circuit logic operators" {
   int n = 0;
   bool f = false;
   bool r0 = f && ((n = n + 1) > 0);
@@ -155,7 +155,7 @@ int overload_rank(int x) {
   return 2;
 }
 
-unit_test "exact overload match beats implicit conversion" {
+unit_test "Exact overload match beats implicit conversion" {
   #assert(overload_rank(5) == 2);
   #assert(overload_rank(1.5) == 1);
 }

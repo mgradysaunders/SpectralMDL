@@ -21,14 +21,14 @@ using .::package1::foo import *;
 // modules. Before the fix, 'decl_a::shadowed' resolved through the newer
 // 'using .::decl_b import *' declaration (the qualifier was ignored entirely)
 // and evaluated to 2.
-unit_test "Declarations: qualified names are not hijacked by universal using-import" {
+unit_test "Qualified names are not hijacked by universal using-import" {
   #assert(decl_a::shadowed == 1);
   #assert(decl_b::shadowed == 2);
   // Unqualified lookup legitimately resolves through the using-import.
   #assert(shadowed == 2);
 }
 
-unit_test "Declarations: multi-component universal using-import" {
+unit_test "Multi-component universal using-import" {
   #assert(message == "Hellope");
   #assert(package1::foo::message == "Hellope");
 }
@@ -38,7 +38,7 @@ unit_test "Declarations: multi-component universal using-import" {
 // overload set: 'int' converts implicitly to '(int | float)' but not vice
 // versa, so the leaked overload would deterministically win both calls here
 // and return 2.
-unit_test "Declarations: private overloads do not leak across modules" {
+unit_test "Private overloads do not leak across modules" {
   #assert(decl_c::overload_target(5) == 1);
   #assert(decl_c::overload_target(1.5) == 1);
 }
@@ -51,7 +51,7 @@ unit_test "Declarations: private overloads do not leak across modules" {
 @(pure noinline)
 int decl_id(int v) = v;
 
-unit_test "Declarations: temporary let bindings leak from conditions, not arms" {
+unit_test "Temporary let bindings leak from conditions, not arms" {
   // If-condition binding leaks into the branch and past the statement.
   if (x := decl_id(7)) {
     #assert(x == 7);
@@ -78,7 +78,7 @@ namespace decl_ns {
   }
 }
 
-unit_test "Declarations: namespace members visible without export in own module" {
+unit_test "Namespace members visible without export in own module" {
   #assert(decl_ns::shown == 6);
   #assert(decl_ns::hidden == 5);
   #assert(decl_ns::inner::deep == 7);
@@ -91,7 +91,7 @@ unit_test "Declarations: namespace members visible without export in own module"
 // guarded here.
 const int decl_g = 10;
 
-unit_test "Declarations: shadowing is legal in nested scopes" {
+unit_test "Shadowing is legal in nested scopes" {
   int x = 1;
   {
     int x = 2;
@@ -118,7 +118,7 @@ unit_test "Declarations: shadowing is legal in nested scopes" {
 // declaration is not visible beyond its own case, not even on fallthrough
 // (jump-past-initialization is a compile error). Falling through unwinds 
 // the case scope like any other scope exit.
-unit_test "Declarations: switch cases are separate scopes" {
+unit_test "Switch cases are separate scopes" {
   // The same name may be declared in different cases.
   int r = 0;
   switch (decl_id(2)) {
@@ -174,7 +174,7 @@ auto decl_make() {
   return DeclLocalS();
 }
 
-unit_test "Declarations: local struct type escapes; defaults bind in-function" {
+unit_test "Local struct type escapes, defaults bind in-function" {
   auto s = decl_make();
   #assert(s.a == 5);
   // Explicit arguments emit no default, so no foreign-local reference.
@@ -202,7 +202,7 @@ int decl_read_mv_default(int arg = decl_mv) {
   return arg;
 }
 
-unit_test "Declarations: lazy bodies resolve in definition scope" {
+unit_test "Lazy bodies resolve in definition scope" {
   int decl_mv = 999;
   #assert(decl_read_mv_macro() == 1);
   #assert(decl_read_mv_fn() == 1);
