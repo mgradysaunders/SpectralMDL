@@ -47,6 +47,63 @@ static std::string materialDef(std::string_view name) {
   return text;
 }
 
+// CRC-32 (polynomial 0xEDB88320) as required by the ZIP format.
+static uint32_t zipCrc32(std::string_view data) {
+  uint32_t crc{0xFFFFFFFFu};
+  for (auto ch : data) {
+    crc ^= uint8_t(ch);
+    for (int i = 0; i < 8; i++)
+      crc = (crc >> 1) ^ (0xEDB88320u & (0u - (crc & 1u)));
+  }
+  return ~crc;
+}
+
+// Write a minimal ZIP with stored (uncompressed) entries, sufficient
+// for the miniz-based 'Archive' reader to load as an '.mdr'.
+static void
+writeZip(const fs::path &path,
+         const std::vector<std::pair<std::string, std::string>> &entries) {
+  auto out{std::string()};
+  auto putU16{[&](uint32_t value) {
+    out += char(value & 0xFF);
+    out += char((value >> 8) & 0xFF);
+  }};
+  auto putU32{[&](uint32_t value) {
+    putU16(value & 0xFFFF);
+    putU16(value >> 16);
+  }};
+  auto offsets{std::vector<uint32_t>()};
+  for (const auto &[name, data] : entries) {
+    offsets.push_back(uint32_t(out.size()));
+    putU32(0x04034B50u); // Local file header
+    putU16(20), putU16(0), putU16(0), putU16(0), putU16(0);
+    putU32(zipCrc32(data));
+    putU32(uint32_t(data.size())), putU32(uint32_t(data.size()));
+    putU16(uint32_t(name.size())), putU16(0);
+    out += name, out += data;
+  }
+  auto centralOffset{uint32_t(out.size())};
+  for (size_t i = 0; i < entries.size(); i++) {
+    const auto &[name, data]{entries[i]};
+    putU32(0x02014B50u); // Central directory header
+    putU16(20), putU16(20), putU16(0), putU16(0), putU16(0), putU16(0);
+    putU32(zipCrc32(data));
+    putU32(uint32_t(data.size())), putU32(uint32_t(data.size()));
+    putU16(uint32_t(name.size())), putU16(0), putU16(0), putU16(0), putU16(0);
+    putU32(0);
+    putU32(offsets[i]);
+    out += name;
+  }
+  auto centralSize{uint32_t(out.size()) - centralOffset};
+  putU32(0x06054B50u); // End of central directory
+  putU16(0), putU16(0);
+  putU16(uint32_t(entries.size())), putU16(uint32_t(entries.size()));
+  putU32(centralSize), putU32(centralOffset);
+  putU16(0);
+  fs::create_directories(path.parent_path());
+  std::ofstream(path, std::ios::binary) << out;
+}
+
 TEST_CASE("Compiler module resolution") {
   auto tmpDir{fs::temp_directory_path() / "smdl-compiler-test"};
   fs::remove_all(tmpDir);
@@ -271,6 +328,122 @@ TEST_CASE("Compiler module identity") {
     REQUIRE(!compiler.compile(smdl::OPT_LEVEL_NONE));
     REQUIRE(!compiler.jitCompile());
     CHECK(compiler.findMaterial("main_ok") != nullptr);
+  }
+  fs::remove_all(tmpDir);
+}
+
+TEST_CASE("Compiler MDR archives") {
+  auto tmpDir{fs::temp_directory_path() / "smdl-compiler-test"};
+  fs::remove_all(tmpDir);
+  SUBCASE("Archive names encode the package prefix") {
+    writeZip(tmpDir / "root" / "vendor.metals.mdr",
+             {{"vendor/metals.mdl",
+               "#smdl\nexport const int metals_marker = 1;\n"},
+              {"vendor/metals/steel.mdl",
+               "#smdl\nimport ::df::*;\n"
+               "import ..::metals::metals_marker;\n" +
+                   materialDef("brushed")}});
+    // A loose module importing through the archive: absolutely and
+    // weakly.
+    writeFile(tmpDir / "root" / "main.mdl",
+              "#smdl\nimport ::df::*;\n"
+              "import ::vendor::metals::steel::*;\n"
+              "import vendor::metals::metals_marker;\n" +
+                  materialDef("main_ok"));
+    smdl::Compiler compiler{};
+    auto names{std::vector<std::string>()};
+    REQUIRE(!compiler.add((tmpDir / "root").string(), &names));
+    std::sort(names.begin(), names.end());
+    CHECK(names == std::vector<std::string>{"::main", "::vendor::metals",
+                                            "::vendor::metals::steel"});
+    REQUIRE(buildAll(compiler, {tmpDir / "root"}) == "");
+    CHECK(compiler.findMaterial("main_ok") != nullptr);
+    auto material{compiler.findMaterial("brushed")};
+    REQUIRE(material != nullptr);
+    CHECK(material->qualifiedName == "::vendor::metals::steel::brushed");
+    CHECK(material->moduleFileName.find("vendor.metals.mdr") !=
+          std::string::npos);
+  }
+  SUBCASE("Non-conforming archives are rejected") {
+    writeZip(tmpDir / "root" / "vendor.metals.mdr",
+             {{"other/thing.mdl", "#smdl\nexport const int x = 1;\n"}});
+    smdl::Compiler compiler{};
+    auto error{compiler.add((tmpDir / "root").string())};
+    REQUIRE(error.has_value());
+    CHECK(error->message.find("conform") != std::string::npos);
+  }
+  SUBCASE("Empty package prefix components are rejected") {
+    writeZip(tmpDir / "root" / "vendor..metals.mdr",
+             {{"vendor/metals.mdl", "#smdl\n"}});
+    smdl::Compiler compiler{};
+    auto error{compiler.add((tmpDir / "root").string())};
+    REQUIRE(error.has_value());
+    CHECK(error->message.find("empty package prefix") != std::string::npos);
+  }
+  SUBCASE("Loose duplicates of archive contents are errors") {
+    writeZip(tmpDir / "root" / "vendor.metals.mdr",
+             {{"vendor/metals.mdl", "#smdl\nexport const int x = 1;\n"}});
+    writeFile(tmpDir / "root" / "vendor" / "metals" / "extra.mdl",
+              "#smdl\nexport const int y = 1;\n");
+    {
+      smdl::Compiler compiler{};
+      auto error{compiler.add((tmpDir / "root").string())};
+      REQUIRE(error.has_value());
+      CHECK(error->message.find("conflicts with loose") != std::string::npos);
+    }
+    // Loose siblings outside the enclosed package are fine.
+    fs::remove_all(tmpDir / "root" / "vendor" / "metals");
+    writeFile(tmpDir / "root" / "vendor" / "other.mdl",
+              "#smdl\nexport const int y = 1;\n");
+    {
+      smdl::Compiler compiler{};
+      auto names{std::vector<std::string>()};
+      REQUIRE(!compiler.add((tmpDir / "root").string(), &names));
+      std::sort(names.begin(), names.end());
+      CHECK(names == std::vector<std::string>{"::vendor::metals",
+                                              "::vendor::other"});
+    }
+  }
+  SUBCASE("Overlapping archive prefixes are errors") {
+    writeZip(tmpDir / "root" / "a.b.mdr", {{"a/b.mdl", "#smdl\n"}});
+    writeZip(tmpDir / "root" / "a.b.c.mdr", {{"a/b/c.mdl", "#smdl\n"}});
+    {
+      smdl::Compiler compiler{};
+      auto error{compiler.add((tmpDir / "root").string())};
+      REQUIRE(error.has_value());
+      CHECK(error->message.find("overlapping") != std::string::npos);
+    }
+    // Sibling prefixes are fine.
+    fs::remove(tmpDir / "root" / "a.b.c.mdr");
+    writeZip(tmpDir / "root" / "a.c.mdr", {{"a/c.mdl", "#smdl\n"}});
+    {
+      smdl::Compiler compiler{};
+      auto names{std::vector<std::string>()};
+      REQUIRE(!compiler.add((tmpDir / "root").string(), &names));
+      std::sort(names.begin(), names.end());
+      CHECK(names == std::vector<std::string>{"::a::b", "::a::c"});
+    }
+  }
+  SUBCASE("Cross-root archive shadowing") {
+    auto archiveEntry{"#smdl\nimport ::df::*;\n" + materialDef("shared_arch")};
+    writeZip(tmpDir / "root1" / "vendor.metals.mdr",
+             {{"vendor/metals.mdl", archiveEntry}});
+    writeZip(tmpDir / "root2" / "vendor.metals.mdr",
+             {{"vendor/metals.mdl", archiveEntry}});
+    smdl::Compiler compiler{};
+    REQUIRE(buildAll(compiler, {tmpDir / "root1", tmpDir / "root2"}) == "");
+    auto material{compiler.findMaterial("shared_arch")};
+    REQUIRE(material != nullptr);
+    CHECK(material->moduleFileName.find("root1") != std::string::npos);
+    CHECK(compiler.findMaterials("shared_arch").size() == 1);
+  }
+  SUBCASE("Archives below the top level are ignored") {
+    writeZip(tmpDir / "root" / "sub" / "x.y.mdr", {{"x/y.mdl", "#smdl\n"}});
+    writeFile(tmpDir / "root" / "mod.mdl", "#smdl\nexport const int x = 1;\n");
+    smdl::Compiler compiler{};
+    auto names{std::vector<std::string>()};
+    REQUIRE(!compiler.add((tmpDir / "root").string(), &names));
+    CHECK(names == std::vector<std::string>{"::mod"});
   }
   fs::remove_all(tmpDir);
 }

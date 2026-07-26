@@ -8,6 +8,7 @@
 #include "llvm/Support/Parallel.h"
 #include <atomic>
 #include <exception>
+#include <filesystem>
 #include <mutex>
 
 #if SMDL_HAS_PTEX
@@ -3132,10 +3133,28 @@ Module *Emitter::resolveModule(Span<const std::string_view> importPath,
                                       resolvedImportPath.size() - 1)) {
       dirPath = joinPaths(dirPath, resolvedImportDirPath);
     }
+    // NOTE: The lexical comparison is a fallback for modules extracted
+    // from archives: their pseudo file paths route through the '.mdr'
+    // file, so the filesystem-level equivalence check cannot
+    // canonicalize away '.' and '..' components. Trailing separators
+    // are stripped because 'lexically_normal()' of a path ending in
+    // '..' keeps one.
+    auto normalizePath{[](std::string somePath) {
+      auto normal{
+          std::filesystem::path(std::move(somePath)).lexically_normal().string()};
+      while (normal.size() > 1 &&
+             (normal.back() == '/' || normal.back() == '\\')) {
+        normal.pop_back();
+      }
+      return normal;
+    }};
+    auto lexicalDirPath{normalizePath(dirPath)};
     for (auto &otherModule : context.compiler.mModules) {
       if (otherModule.get() != thisModule && !otherModule->isBuiltin() &&
           otherModule->getName() == resolvedImportPath.back() &&
-          isPathEquivalent(dirPath, otherModule->getDirectory())) {
+          (isPathEquivalent(dirPath, otherModule->getDirectory()) ||
+           lexicalDirPath ==
+               normalizePath(std::string(otherModule->getDirectory())))) {
         if (auto error{otherModule->compile(context)}) {
           throw std::move(*error);
         }
@@ -3151,10 +3170,28 @@ Module *Emitter::resolveModule(Span<const std::string_view> importPath,
     return nullptr;
   }};
   auto searchCompilerDirPaths{[&]() -> Module * {
-    if (!thisModule->isBuiltin())
-      for (const auto &dirPath : context.compiler.mModuleDirSearchPaths)
-        if (auto module_{findModuleInDirectory(dirPath)})
-          return module_;
+    if (thisModule->isBuiltin())
+      return nullptr;
+    // Look up by qualified name, so modules extracted from archives
+    // resolve as if the archive were extracted at the top level of its
+    // search root, and so first-root-wins shadowing applies exactly as
+    // it does in the public lookup API. Note the index is populated in
+    // add-order, which makes this equivalent to searching the roots in
+    // the order they were added.
+    auto qualifiedName{std::string()};
+    for (const auto &element : resolvedImportPath) {
+      qualifiedName += "::";
+      qualifiedName += element;
+    }
+    auto &modules{context.compiler.mModulesByQualifiedName};
+    if (auto itr{modules.find(qualifiedName)};
+        itr != modules.end() && itr->second != thisModule) {
+      auto otherModule{itr->second};
+      if (auto error{otherModule->compile(context)}) {
+        throw std::move(*error);
+      }
+      return otherModule;
+    }
     return nullptr;
   }};
   auto searchCompilerBuiltins{[&]() -> Module * {

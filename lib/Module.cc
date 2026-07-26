@@ -60,16 +60,21 @@ std::unique_ptr<Module> Module::loadFromFile(const std::string &fileName,
 }
 
 std::unique_ptr<Module>
-Module::loadFromFileExtractedFromArchive(const std::string &fileName,
+Module::loadFromFileExtractedFromArchive(const std::string &archiveFileName,
+                                         const std::string &entryName,
                                          const std::string &file,
                                          const std::string &searchRoot) {
   auto module_{std::make_unique<Module>()};
   module_->mIsExtractedFromArchive = true;
-  module_->mFileName = fileName;
-  module_->mName = std::filesystem::path(fileName).stem().string();
+  module_->mFileName = joinPaths(archiveFileName, entryName);
+  module_->mName = std::filesystem::path(entryName).stem().string();
   module_->mSearchRoot =
-      searchRoot.empty() ? parentPathOf(fileName) : searchRoot;
-  module_->mQualifiedName = deriveQualifiedName(fileName, module_->mSearchRoot);
+      searchRoot.empty() ? parentPathOf(archiveFileName) : searchRoot;
+  // The entry path encodes the package structure, so derive the
+  // qualified name as if the archive were extracted in place at the
+  // top level of the search root.
+  module_->mQualifiedName =
+      deriveQualifiedName(module_->mFileName, archiveFileName);
   module_->mSourceCode = file;
   return module_;
 }

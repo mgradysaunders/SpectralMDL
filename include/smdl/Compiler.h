@@ -116,10 +116,21 @@ public:
   /// file beneath it is loaded as a module whose qualified name is
   /// derived from its path relative to the root, so
   /// `<root>/vendor/metals/steel.mdl` becomes `::vendor::metals::steel`.
-  /// Top-level `.mdr` archives in the directory are also added, with the
-  /// archive file name acting as an ordinary path component. A single
-  /// file is added with its parent directory as an implicit search root,
-  /// so its qualified name is just `::stem`.
+  /// A single file is added with its parent directory as an implicit
+  /// search root, so its qualified name is just `::stem`.
+  ///
+  /// MDL archives (`.mdr`) at the top level of the root are also added;
+  /// archives deeper in the tree are ignored with a warning. Per the
+  /// MDL specification, the archive file name encodes the enclosed
+  /// package prefix (`vendor.metals.mdr` provides `::vendor::metals`),
+  /// every `.mdl` entry must be the enclosed module
+  /// (`vendor/metals.mdl`) or live under the enclosed package directory
+  /// (`vendor/metals/...`), and entries resolve exactly as if the
+  /// archive were extracted at the root. It is an error for an archive
+  /// to be non-conforming, to duplicate contents that exist as loose
+  /// files in the same root, or to overlap the package prefix of
+  /// another archive in the same root. A single `.mdr` file may also be
+  /// added directly, with its parent directory as the implicit root.
   ///
   /// If two modules under different roots derive the same qualified
   /// name, the module under the earlier root wins for qualified-name

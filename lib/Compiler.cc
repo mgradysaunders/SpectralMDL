@@ -68,6 +68,68 @@ void Ptexture::release() noexcept {
   alphaIndex = -1;
 }
 
+/// Parse the dot-separated package prefix encoded by an MDL archive
+/// file name per the MDL specification, e.g., `vendor.metals.mdr`
+/// encodes `{"vendor", "metals"}`. Throws on empty components.
+[[nodiscard]] static std::vector<std::string>
+parseArchivePackagePrefix(const std::string &fileName) {
+  auto stem{std::filesystem::path(fileName).stem().string()};
+  auto prefix{std::vector<std::string>()};
+  size_t pos{0};
+  while (true) {
+    auto dot{stem.find('.', pos)};
+    auto component{stem.substr(
+        pos, dot == std::string::npos ? std::string::npos : dot - pos)};
+    if (component.empty()) {
+      throw Error(concat("invalid archive name ", QuotedPath(fileName),
+                         ": empty package prefix component"));
+    }
+    prefix.push_back(std::move(component));
+    if (dot == std::string::npos) {
+      return prefix;
+    }
+    pos = dot + 1;
+  }
+}
+
+/// Does the archive entry conform to the package prefix encoded by the
+/// archive file name? A conforming `.mdl` entry is either the enclosed
+/// module itself (`vendor/metals.mdl` for the prefix
+/// `{"vendor", "metals"}`) or anywhere under the enclosed package
+/// directory (`vendor/metals/...`).
+[[nodiscard]] static bool
+isConformingArchiveEntry(const std::vector<std::string> &prefix,
+                         const std::string &entryName) {
+  auto components{std::vector<std::string>()};
+  size_t pos{0};
+  while (true) {
+    auto sep{entryName.find('/', pos)};
+    components.push_back(entryName.substr(
+        pos, sep == std::string::npos ? std::string::npos : sep - pos));
+    if (sep == std::string::npos) {
+      break;
+    }
+    pos = sep + 1;
+  }
+  if (components.size() == prefix.size()) {
+    for (size_t i{0}; i + 1 < prefix.size(); i++) {
+      if (components[i] != prefix[i]) {
+        return false;
+      }
+    }
+    return components.back() == prefix.back() + ".mdl";
+  }
+  if (components.size() > prefix.size()) {
+    for (size_t i{0}; i < prefix.size(); i++) {
+      if (components[i] != prefix[i]) {
+        return false;
+      }
+    }
+    return true;
+  }
+  return false;
+}
+
 /// Is `parent` a lexical ancestor directory of `child`? Assumes both
 /// paths are already canonical. Equal paths do not count.
 [[nodiscard]] static bool isLexicalSubPath(const std::string &parent,
@@ -114,15 +176,44 @@ Compiler::add(std::string fileOrDirName,
                      const std::string &searchRoot) {
       if (llvm::StringRef(fileName).ends_with_insensitive(".mdr")) {
         SMDL_LOG_DEBUG("Adding MDL archive ", QuotedPath(fileName));
+        // Per the MDL specification, the archive file name encodes the
+        // enclosed package prefix: 'vendor.metals.mdr' provides
+        // '::vendor::metals', and every '.mdl' entry must be the
+        // enclosed module ('vendor/metals.mdl') or live under the
+        // enclosed package directory ('vendor/metals/...').
+        auto prefix{parseArchivePackagePrefix(fileName)};
+        {
+          // Duplicating the enclosed contents as loose files in the
+          // same search root is an error.
+          auto loosePath{searchRoot};
+          for (const auto &component : prefix) {
+            loosePath = joinPaths(loosePath, component);
+          }
+          if (isDirectory(loosePath) || isFile(loosePath + ".mdl") ||
+              isFile(loosePath + ".smdl")) {
+            throw Error(concat("archive ", QuotedPath(fileName),
+                               " conflicts with loose contents at ",
+                               QuotedPath(loosePath),
+                               " in the same search root"));
+          }
+        }
         auto archive{Archive{fileName}};
         for (int i = 0; i < archive.get_file_count(); i++) {
-          if (auto entryPath{joinPaths(fileName, archive.get_file_name(i))};
-              hasExtension(entryPath, ".mdl")) {
-            if (mModuleFileNames.count(entryPath) == 0) {
+          if (auto entryName{archive.get_file_name(i)};
+              hasExtension(entryName, ".mdl")) {
+            if (!isConformingArchiveEntry(prefix, entryName)) {
+              throw Error(
+                  concat("archive ", QuotedPath(fileName), " entry ",
+                         Quoted(entryName),
+                         " does not conform to the package prefix encoded "
+                         "by the archive file name"));
+            }
+            if (auto entryPath{joinPaths(fileName, entryName)};
+                mModuleFileNames.count(entryPath) == 0) {
               SMDL_LOG_DEBUG("Adding MDL file from archive ",
                              QuotedPath(entryPath));
               registerModule(Module::loadFromFileExtractedFromArchive(
-                  entryPath, archive.extract_file(i), searchRoot));
+                  fileName, entryName, archive.extract_file(i), searchRoot));
             }
           }
         }
@@ -164,21 +255,56 @@ Compiler::add(std::string fileOrDirName,
                        "qualified names)"));
           }
         }
-        SMDL_LOG_DEBUG("Adding MDL directory ", QuotedPath(path));
-        mModuleDirNames.insert(path);
-        mModuleDirSearchPaths.emplace_back(path);
+        // Collect the top-level archives, sorted so registration order
+        // is deterministic, and reject overlapping package prefixes:
+        // per the MDL specification, 'a.b.mdr' and 'a.b.c.mdr' must not
+        // coexist in the same search root (siblings like 'a.c.mdr' are
+        // fine).
+        auto archivePaths{std::vector<std::string>()};
         for (const auto &entry : std::filesystem::directory_iterator(path)) {
           if (auto entryPath{makePathCanonical(entry.path().string())};
               isFile(entryPath) && hasExtension(entryPath, ".mdr")) {
-            addFile(entryPath, path);
+            archivePaths.push_back(std::move(entryPath));
           }
+        }
+        std::sort(archivePaths.begin(), archivePaths.end());
+        for (size_t i = 0; i < archivePaths.size(); i++) {
+          auto prefixI{parseArchivePackagePrefix(archivePaths[i])};
+          for (size_t j = i + 1; j < archivePaths.size(); j++) {
+            auto prefixJ{parseArchivePackagePrefix(archivePaths[j])};
+            if (auto n{std::min(prefixI.size(), prefixJ.size())};
+                std::equal(prefixI.begin(), prefixI.begin() + n,
+                           prefixJ.begin())) {
+              throw Error(concat(
+                  "archives ", QuotedPath(archivePaths[i]), " and ",
+                  QuotedPath(archivePaths[j]),
+                  " have overlapping package prefixes in the same search "
+                  "root"));
+            }
+          }
+        }
+        SMDL_LOG_DEBUG("Adding MDL directory ", QuotedPath(path));
+        mModuleDirNames.insert(path);
+        mModuleDirSearchPaths.emplace_back(path);
+        for (const auto &archivePath : archivePaths) {
+          addFile(archivePath, path);
         }
         for (const auto &entry :
              std::filesystem::recursive_directory_iterator(path)) {
           if (auto entryPath{makePathCanonical(entry.path().string())};
-              isFile(entryPath) && (hasExtension(entryPath, ".mdl") ||
-                                    hasExtension(entryPath, ".smdl"))) {
-            addFile(entryPath, path);
+              isFile(entryPath)) {
+            if (hasExtension(entryPath, ".mdl") ||
+                hasExtension(entryPath, ".smdl")) {
+              addFile(entryPath, path);
+            } else if (hasExtension(entryPath, ".mdr") &&
+                       !isPathEquivalent(parentPathOf(entryPath), path)) {
+              // Per the MDL specification, archives are only recognized
+              // at the top level of a search root.
+              SMDL_LOG_WARN("ignoring archive ", QuotedPath(entryPath),
+                            " because it is not at the top level of search "
+                            "root ",
+                            QuotedPath(path));
+            }
           }
         }
         return;

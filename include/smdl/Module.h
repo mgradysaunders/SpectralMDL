@@ -74,20 +74,28 @@ public:
 
   /// Load from file extracted from archive.
   ///
-  /// \param[in] fileName
-  /// The semantic file name. This is the file name of the archive itself
-  /// concatenated to the file name within the archive, as if the archive
-  /// were a directory.
+  /// \param[in] archiveFileName
+  /// The file name of the `.mdr` archive.
+  ///
+  /// \param[in] entryName
+  /// The file name within the archive, e.g., `vendor/metals/steel.mdl`.
   ///
   /// \param[in] file
   /// The file extracted and decompressed from the archive.
   ///
   /// \param[in] searchRoot
-  /// The search root, as in `loadFromFile()`. The archive file name acts
-  /// as an ordinary path component of the qualified name.
+  /// The search root, as in `loadFromFile()`. Per the MDL specification
+  /// the archive sits at the top level of the search root and the entry
+  /// paths encode the package structure, so the qualified name is
+  /// derived from `entryName` alone, as if the archive were extracted
+  /// in place: `vendor/metals/steel.mdl` becomes
+  /// `::vendor::metals::steel`. The semantic file name reported by
+  /// `getFileName()` is the archive file name concatenated with the
+  /// entry name, as if the archive were a directory.
   ///
   [[nodiscard]] static std::unique_ptr<Module>
-  loadFromFileExtractedFromArchive(const std::string &fileName,
+  loadFromFileExtractedFromArchive(const std::string &archiveFileName,
+                                   const std::string &entryName,
                                    const std::string &file,
                                    const std::string &searchRoot = {});
 
