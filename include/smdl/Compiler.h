@@ -111,7 +111,37 @@ public:
   ~Compiler();
 
   /// Add MDL module file or directory.
-  [[nodiscard]] std::optional<Error> add(std::string fileOrDirName) noexcept;
+  ///
+  /// A directory is added as a *search root*: every `.mdl` and `.smdl`
+  /// file beneath it is loaded as a module whose qualified name is
+  /// derived from its path relative to the root, so
+  /// `<root>/vendor/metals/steel.mdl` becomes `::vendor::metals::steel`.
+  /// Top-level `.mdr` archives in the directory are also added, with the
+  /// archive file name acting as an ordinary path component. A single
+  /// file is added with its parent directory as an implicit search root,
+  /// so its qualified name is just `::stem`.
+  ///
+  /// If two modules under different roots derive the same qualified
+  /// name, the module under the earlier root wins for qualified-name
+  /// lookup: the later module still loads and compiles, and relative
+  /// imports within its own directory tree still resolve to it, but it
+  /// is marked shadowed and a warning is logged.
+  ///
+  /// Re-adding the same directory is a no-op. Adding a directory nested
+  /// inside, or enclosing, an existing search root is an error, because
+  /// nested roots would give modules ambiguous qualified names.
+  ///
+  /// \param[in] fileOrDirName
+  /// The file or directory name.
+  ///
+  /// \param[out] addedModuleNames
+  /// If non-null, the qualified names of the modules added by this call
+  /// are appended in the order they were loaded. Files skipped because
+  /// they were already added are not reported.
+  ///
+  [[nodiscard]] std::optional<Error>
+  add(std::string fileOrDirName,
+      std::vector<std::string> *addedModuleNames = nullptr) noexcept;
 
   /// Compile to LLVM-IR.
   [[nodiscard]] std::optional<Error>
@@ -193,24 +223,43 @@ private:
   }
 
 public:
-  /// Find JIT-compiled material named `materialName`, or return `nullptr` on
-  /// failure.
+  /// Find the unique JIT-compiled material matching `materialName`.
   ///
-  /// \note
-  /// This assumes that `materialName` is unique across all MDL modules. If
-  /// this is not the case, the implementation logs a warning to report the
-  /// ambiguity and returns the first material found.
+  /// Every material has a qualified name formed from its module's
+  /// qualified name (see `add()`), the enclosing `namespace` names if
+  /// any, and the material name, e.g.,
+  /// `::vendor::metals::steel::brushed`. If `materialName` starts with
+  /// `::`, it must match a qualified name exactly. Otherwise it is
+  /// matched as a suffix on `::` component boundaries, so `"brushed"`
+  /// and `"steel::brushed"` both match the example above, but
+  /// `"shed"` does not.
+  ///
+  /// Materials in shadowed modules are never matched, mirroring the
+  /// rule that a shadowed module is unreachable by qualified name. See
+  /// `Module::isShadowed()`.
+  ///
+  /// \returns
+  /// The unique match. Returns `nullptr` if nothing matches. Also
+  /// returns `nullptr` if more than one material matches, in which
+  /// case an error is logged that lists every candidate; use a longer
+  /// suffix, or `findMaterials()`, to disambiguate.
   ///
   [[nodiscard]]
   const JIT::Material *
   findMaterial(std::string_view materialName) const noexcept;
 
-  /// Find JIT-compiled material named `materialName` in the MDL module named
-  /// `moduleName`, or return `nullptr` on failure.
-  [[nodiscard]]
-  const JIT::Material *
-  findMaterial(std::string_view moduleName,
-               std::string_view materialName) const noexcept;
+  /// Find all JIT-compiled materials matching `materialName`, by the
+  /// same matching rules as `findMaterial()`. This is useful for
+  /// tooling, and for disambiguating the candidates when
+  /// `findMaterial()` reports an ambiguity.
+  [[nodiscard]] std::vector<const JIT::Material *>
+  findMaterials(std::string_view materialName) const;
+
+  /// Get all JIT-compiled materials, including materials in shadowed
+  /// modules.
+  [[nodiscard]] Span<const JIT::Material> getMaterials() const noexcept {
+    return mMaterials;
+  }
 
   /// Run the JIT-compiled color-to-RGB function.
   ///
@@ -302,8 +351,14 @@ private:
   /// The spectrum libraries.
   std::map<const MD5FileHash *, SpectrumLibrary> mSpectrumLibraries;
 
-  /// The MDL module file names.
-  std::set<std::string> mModuleFileNames;
+  /// The MDL modules by canonical file name, used to skip files that
+  /// were already added.
+  std::map<std::string, Module *, std::less<>> mModuleFileNames;
+
+  /// The MDL modules by qualified name, e.g., `::vendor::metals::steel`.
+  /// On collisions across search roots, the module under the earliest
+  /// added root wins and later modules are marked shadowed.
+  std::map<std::string, Module *, std::less<>> mModulesByQualifiedName;
 
   /// The MDL module directory names.
   std::set<std::string> mModuleDirNames;

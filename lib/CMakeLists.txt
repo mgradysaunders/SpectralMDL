@@ -36,6 +36,7 @@ add_library(
     "Support/MacroHelpers.cc"
     "Support/MonteCarlo.cc"
     "Support/Profiler.cc"
+    "Support/QualifiedName.cc"
     "Support/SemanticVersion.cc"
     "Support/SpectralRenderImage.cc"
     "Support/StringHelpers.cc"

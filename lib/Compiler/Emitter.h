@@ -594,7 +594,9 @@ public:
     // but the namespace is not a shadow boundary (members conflict with
     // same-scope names declared before it) — hence a transparent scope.
     // The scope is recorded on the AST node for qualified-name descent.
-    SMDL_PRESERVE(scope);
+    SMDL_PRESERVE(scope, context.currentNamespacePath);
+    for (auto &element : decl.identifier->elements)
+      context.currentNamespacePath.push_back(element.name.srcName);
     scope = pushScope(/*transparent=*/true);
     decl.scope = scope;
     for (auto &each : decl.decls)

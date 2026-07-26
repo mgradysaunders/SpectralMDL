@@ -15,21 +15,49 @@ Module::Module(std::string name, std::string sourceCode)
 
 Module::~Module() {}
 
-std::unique_ptr<Module> Module::loadFromFile(const std::string &fileName) {
+/// Derive the qualified module name, e.g., `::vendor::metals::steel`
+/// for `<searchRoot>/vendor/metals/steel.mdl`. Falls back to the bare
+/// `::stem` if the file name is not lexically under the search root.
+[[nodiscard]] static std::string
+deriveQualifiedName(const std::string &fileName,
+                    const std::string &searchRoot) {
+  auto filePath{std::filesystem::path(fileName)};
+  auto relative{filePath.lexically_relative(searchRoot)};
+  if (relative.empty() || *relative.begin() == "..") {
+    return "::" + filePath.stem().string();
+  }
+  auto name{std::string()};
+  for (auto itr{relative.begin()}; itr != relative.end(); ++itr) {
+    name += "::";
+    name += std::next(itr) == relative.end() ? itr->stem().string()
+                                             : itr->string();
+  }
+  return name;
+}
+
+std::unique_ptr<Module> Module::loadFromFile(const std::string &fileName,
+                                             const std::string &searchRoot) {
   auto module_{std::make_unique<Module>()};
   module_->mFileName = fileName;
   module_->mName = std::filesystem::path(fileName).stem().string();
+  module_->mSearchRoot =
+      searchRoot.empty() ? parentPathOf(fileName) : searchRoot;
+  module_->mQualifiedName = deriveQualifiedName(fileName, module_->mSearchRoot);
   module_->mSourceCode = readOrThrow(fileName);
   return module_;
 }
 
 std::unique_ptr<Module>
 Module::loadFromFileExtractedFromArchive(const std::string &fileName,
-                                         const std::string &file) {
+                                         const std::string &file,
+                                         const std::string &searchRoot) {
   auto module_{std::make_unique<Module>()};
   module_->mIsExtractedFromArchive = true;
   module_->mFileName = fileName;
   module_->mName = std::filesystem::path(fileName).stem().string();
+  module_->mSearchRoot =
+      searchRoot.empty() ? parentPathOf(fileName) : searchRoot;
+  module_->mQualifiedName = deriveQualifiedName(fileName, module_->mSearchRoot);
   module_->mSourceCode = file;
   return module_;
 }
@@ -62,8 +90,12 @@ std::optional<Error> Module::compile(Context &context) noexcept {
       try {
         SMDL_PROFILER_ENTRY("Module::compile()",
                             isBuiltin() ? mName.c_str() : mFileName.c_str());
-        SMDL_PRESERVE(context.currentModule);
+        SMDL_PRESERVE(context.currentModule, context.currentNamespacePath);
         context.currentModule = this;
+        // Always start from an empty namespace path: this module may be
+        // compiled recursively from the middle of another module's
+        // namespace, which must not leak into our material names.
+        context.currentNamespacePath.clear();
         Emitter emitter{context};
         emitter.emit(mRoot);
         mRootScope = emitter.scope;

@@ -3,6 +3,7 @@
 #include "Emitter.h"
 
 #include "smdl/Support/Logger.h"
+#include "smdl/Support/QualifiedName.h"
 
 #include "llvm/IR/DerivedTypes.h"
 #include "llvm/IR/Type.h"
@@ -1324,6 +1325,50 @@ void FunctionType::initializeMaterialFunctions(Emitter &emitter) {
   jitMaterial.moduleFileName = std::string(decl.srcLoc.getModuleFileName());
   jitMaterial.lineNo = decl.srcLoc.lineNo;
   jitMaterial.materialName = std::string(decl.name.srcName);
+  {
+    // Build the qualified material name from the module identity, the
+    // enclosing namespace names, and the material name.
+    auto module_{decl.srcLoc.module_};
+    SMDL_SANITY_CHECK(module_);
+    auto qualifiedName{std::string(module_->getQualifiedName())};
+    if (qualifiedName.empty()) {
+      // Builtin modules have no search root; use the bare name.
+      qualifiedName += "::";
+      qualifiedName += module_->getName();
+    }
+    for (const auto &namespaceName : context.currentNamespacePath) {
+      qualifiedName += "::";
+      qualifiedName += namespaceName;
+    }
+    qualifiedName += "::";
+    qualifiedName += decl.name.srcName;
+    jitMaterial.qualifiedName = qualifiedName;
+    jitMaterial.moduleIsShadowed = module_->isShadowed();
+  }
+  // The JIT symbol base name is the dotted qualified name, plus a
+  // disambiguating ordinal for duplicates, which only arise when the
+  // module is shadowed by an equally named module under an earlier
+  // search root. This keeps the symbols deterministic instead of
+  // relying on LLVM's load-order '.N' uniquing.
+  auto symbolBase{std::string()};
+  for (auto component : splitQualifiedName(jitMaterial.qualifiedName)) {
+    if (!symbolBase.empty()) {
+      symbolBase += '.';
+    }
+    symbolBase += component;
+  }
+  {
+    auto numDuplicates{size_t(0)};
+    for (const auto &other : context.compiler.mMaterials) {
+      if (&other != &jitMaterial &&
+          other.qualifiedName == jitMaterial.qualifiedName) {
+        numDuplicates++;
+      }
+    }
+    if (numDuplicates > 0) {
+      symbolBase += concat(".", numDuplicates);
+    }
+  }
   auto dfModule{context.getBuiltinModule("df")};
   SMDL_SANITY_CHECK(dfModule);
   Type *materialInstanceType{};
@@ -1366,7 +1411,7 @@ void FunctionType::initializeMaterialFunctions(Emitter &emitter) {
     // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
     auto funcReturnType{static_cast<Type *>(context.getVoidType())};
     auto func{emitter.createFunction(
-        concat(declName, ".evaluate"), /*isPure=*/false, funcReturnType,
+        concat(symbolBase, ".evaluate"), /*isPure=*/false, funcReturnType,
         {constParameter(context.getVoidPointerType(), "out")}, decl.srcLoc,
         [&] {
           auto materialInstance{emitter.emitCall(
@@ -1405,7 +1450,8 @@ void FunctionType::initializeMaterialFunctions(Emitter &emitter) {
     // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
     auto funcReturnType{static_cast<Type *>(context.getIntType())};
     auto func{emitter.createFunction(
-        concat(declName, ".scatterEvaluate"), /*isPure=*/true, funcReturnType,
+        concat(symbolBase, ".scatterEvaluate"), /*isPure=*/true,
+        funcReturnType,
         {constParameter(materialInstancePtrType, "instance"),
          constParameter(float3PtrType, "wo"),
          constParameter(float3PtrType, "wi"),
@@ -1458,7 +1504,7 @@ void FunctionType::initializeMaterialFunctions(Emitter &emitter) {
     // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
     auto funcReturnType{static_cast<Type *>(context.getIntType())};
     auto func{emitter.createFunction(
-        concat(declName, ".scatterSample"), /*isPure=*/true, funcReturnType,
+        concat(symbolBase, ".scatterSample"), /*isPure=*/true, funcReturnType,
         {constParameter(materialInstancePtrType, "instance"),
          constParameter(float4PtrType, "xi"),
          constParameter(float3PtrType, "wo"),

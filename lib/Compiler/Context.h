@@ -430,6 +430,12 @@ public:
 
   Module *currentModule{};
 
+  /// The enclosing `namespace` names at the current point of declaration
+  /// emission, maintained by `Emitter::emit(AST::Namespace &)` and reset
+  /// per module by `Module::compile()`. Used to form qualified material
+  /// names.
+  llvm::SmallVector<std::string_view, 4> currentNamespacePath{};
+
 private:
   /// The builtin modules. See `get_builtin_module()`
   llvm::StringMap<BumpPtr<Module>> mBuiltinModules;

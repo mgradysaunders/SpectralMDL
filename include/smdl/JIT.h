@@ -97,6 +97,17 @@ public:
   /// The material name.
   std::string materialName{};
 
+  /// The qualified material name formed from the module's qualified
+  /// name, the enclosing `namespace` names if any, and the material
+  /// name, e.g., `::vendor::metals::steel::brushed`. This is the name
+  /// that `Compiler::findMaterial()` matches against.
+  std::string qualifiedName{};
+
+  /// Is the containing module shadowed by an equally named module under
+  /// an earlier search root? If so, `Compiler::findMaterial()` never
+  /// matches this material. See `Module::isShadowed()`.
+  bool moduleIsShadowed{};
+
   /// An instance of the material.
   struct Instance final {
   public:
@@ -246,6 +257,8 @@ public:
                float3 &wi, float &pdfFwd, float &pdfRev, float *f,
                int &isDelta)>
       scatterSample{};
+
+  // TODO emissionEvaluate?
 };
 
 /// A just-in-time SMDL material pointer and an instance of the material.

@@ -53,12 +53,18 @@ public:
   /// file. This assumes any file path handling or lookup with `FileLocator`
   /// has already occurred.
   ///
+  /// \param[in] searchRoot
+  /// The canonical directory path of the search root the file was found
+  /// under, used to derive the qualified module name. If empty, the parent
+  /// directory of `fileName` is understood to be the search root, so the
+  /// qualified name is just `::stem`.
+  ///
   /// \note
   /// This is not exception-safe, and there are no guarantees about
   /// what it may or may not throw on failure.
   ///
   [[nodiscard]] static std::unique_ptr<Module>
-  loadFromFile(const std::string &fileName);
+  loadFromFile(const std::string &fileName, const std::string &searchRoot = {});
 
   /// Load from file extracted from archive.
   ///
@@ -70,9 +76,14 @@ public:
   /// \param[in] file
   /// The file extracted and decompressed from the archive.
   ///
+  /// \param[in] searchRoot
+  /// The search root, as in `loadFromFile()`. The archive file name acts
+  /// as an ordinary path component of the qualified name.
+  ///
   [[nodiscard]] static std::unique_ptr<Module>
   loadFromFileExtractedFromArchive(const std::string &fileName,
-                                   const std::string &file);
+                                   const std::string &file,
+                                   const std::string &searchRoot = {});
 
 public:
   /// Is a builtin module?
@@ -95,6 +106,28 @@ public:
 
   /// Get the name.
   [[nodiscard]] std::string_view getName() const noexcept { return mName; }
+
+  /// Get the canonical search root directory this module was found under.
+  /// This is empty if the module is builtin.
+  [[nodiscard]] std::string_view getSearchRoot() const noexcept {
+    return mSearchRoot;
+  }
+
+  /// Get the qualified name derived from the path relative to the search
+  /// root, e.g., `::vendor::metals::steel` for
+  /// `<searchRoot>/vendor/metals/steel.mdl`. This is empty if the module
+  /// is builtin.
+  [[nodiscard]] std::string_view getQualifiedName() const noexcept {
+    return mQualifiedName;
+  }
+
+  /// Is shadowed?
+  ///
+  /// This is true if another module with the same qualified name was
+  /// added under an earlier search root, which makes this module
+  /// unreachable by qualified name. It still compiles, and relative
+  /// imports within its own directory tree still resolve to it.
+  [[nodiscard]] bool isShadowed() const noexcept { return mIsShadowed; }
 
   /// Get the source code.
   [[nodiscard]] std::string_view getSourceCode() const noexcept {
@@ -133,6 +166,18 @@ private:
 
   /// The name of the module.
   std::string mName{};
+
+  /// The canonical search root directory. This is empty if the module is
+  /// builtin.
+  std::string mSearchRoot{};
+
+  /// The qualified name, e.g., `::vendor::metals::steel`. This is empty
+  /// if the module is builtin.
+  std::string mQualifiedName{};
+
+  /// Is shadowed by an equally named module under an earlier search
+  /// root? Maintained by `Compiler::add()`.
+  bool mIsShadowed{};
 
   /// The source code.
   std::string mSourceCode{};

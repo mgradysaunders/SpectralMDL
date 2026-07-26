@@ -6,11 +6,13 @@ if(CMAKE_PROJECT_NAME STREQUAL PROJECT_NAME AND BUILD_TESTING)
     PRIVATE 
       "doctest.cc"
       "BSDFMeasurement.cc"
+      "Compiler.cc"
       "FileLocator.cc"
       "Image.cc"
       "LightProfile.cc"
       "MD5Hash.cc"
       "MonteCarlo.cc"
+      "QualifiedName.cc"
     )
   target_link_libraries(
     "smdl-doctest" 

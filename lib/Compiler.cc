@@ -1,6 +1,7 @@
 #include "smdl/Compiler.h"
 #include "smdl/Support/Logger.h"
 #include "smdl/Support/Profiler.h"
+#include "smdl/Support/QualifiedName.h"
 
 #include <chrono>
 #include <filesystem>
@@ -67,12 +68,50 @@ void Ptexture::release() noexcept {
   alphaIndex = -1;
 }
 
-std::optional<Error> Compiler::add(std::string fileOrDirName) noexcept {
+/// Is `parent` a lexical ancestor directory of `child`? Assumes both
+/// paths are already canonical. Equal paths do not count.
+[[nodiscard]] static bool isLexicalSubPath(const std::string &parent,
+                                           const std::string &child) {
+  auto parentPath{std::filesystem::path(parent)};
+  auto childPath{std::filesystem::path(child)};
+  auto [parentItr, childItr] =
+      std::mismatch(parentPath.begin(), parentPath.end(), //
+                    childPath.begin(), childPath.end());
+  return parentItr == parentPath.end() && childItr != childPath.end();
+}
+
+std::optional<Error>
+Compiler::add(std::string fileOrDirName,
+              std::vector<std::string> *addedModuleNames) noexcept {
   SMDL_PROFILER_ENTRY("Compiler::add()", fileOrDirName.c_str());
   // The filesystem iterators, 'Archive', and 'Module::loadFromFile' all
   // throw; catch everything so the 'optional<Error>' contract holds.
   return catchAndReturnError([&] {
-    auto addFile{[&](std::string fileName) {
+    // Register a successfully loaded module: index it by file name and
+    // by qualified name, and report it through 'addedModuleNames'.
+    // NOTE: This runs only after the load succeeds, so a failed file can
+    // be retried instead of being silently skipped.
+    auto registerModule{[&](std::unique_ptr<Module> loadedModule) {
+      auto &module_{*mModules.emplace_back(std::move(loadedModule))};
+      mModuleFileNames.emplace(std::string(module_.getFileName()), &module_);
+      auto qualifiedName{std::string(module_.getQualifiedName())};
+      if (auto [itr, inserted] =
+              mModulesByQualifiedName.try_emplace(qualifiedName, &module_);
+          !inserted) {
+        // The earliest search root wins for qualified-name lookup. The
+        // module still loads and compiles, and relative imports within
+        // its own tree still resolve to it.
+        module_.mIsShadowed = true;
+        SMDL_LOG_WARN("module ", Quoted(qualifiedName), " in ",
+                      QuotedPath(module_.getFileName()), " is shadowed by ",
+                      QuotedPath(itr->second->getFileName()));
+      }
+      if (addedModuleNames) {
+        addedModuleNames->push_back(std::move(qualifiedName));
+      }
+    }};
+    auto addFile{[&](const std::string &fileName,
+                     const std::string &searchRoot) {
       if (llvm::StringRef(fileName).ends_with_insensitive(".mdr")) {
         SMDL_LOG_DEBUG("Adding MDL archive ", QuotedPath(fileName));
         auto archive{Archive{fileName}};
@@ -82,19 +121,23 @@ std::optional<Error> Compiler::add(std::string fileOrDirName) noexcept {
             if (mModuleFileNames.count(entryPath) == 0) {
               SMDL_LOG_DEBUG("Adding MDL file from archive ",
                              QuotedPath(entryPath));
-              mModules.emplace_back(Module::loadFromFileExtractedFromArchive(
-                  entryPath, archive.extract_file(i)));
-              // Only register the name once the load succeeds, so a failed
-              // file can be retried instead of being silently skipped.
-              mModuleFileNames.insert(entryPath);
+              registerModule(Module::loadFromFileExtractedFromArchive(
+                  entryPath, archive.extract_file(i), searchRoot));
             }
           }
         }
       } else {
-        if (mModuleFileNames.count(fileName) == 0) {
+        if (auto itr{mModuleFileNames.find(fileName)};
+            itr == mModuleFileNames.end()) {
           SMDL_LOG_DEBUG("Adding MDL file ", QuotedPath(fileName));
-          mModules.emplace_back(Module::loadFromFile(fileName));
-          mModuleFileNames.insert(fileName);
+          registerModule(Module::loadFromFile(fileName, searchRoot));
+        } else if (itr->second->getSearchRoot() != searchRoot) {
+          // Already added under a different search root: the first
+          // identity wins.
+          SMDL_LOG_WARN("module file ", QuotedPath(fileName),
+                        " was already added as ",
+                        Quoted(itr->second->getQualifiedName()),
+                        "; keeping the existing identity");
         }
       }
     }};
@@ -103,15 +146,31 @@ std::optional<Error> Compiler::add(std::string fileOrDirName) noexcept {
             FileLocator::REGULAR_FILES | FileLocator::DIRS)}) {
       auto &path{*maybePath};
       if (isFile(path)) {
-        addFile(path);
+        addFile(path, parentPathOf(path));
         return;
-      } else if (isDirectory(path) && mModuleDirNames.insert(path).second) {
+      } else if (isDirectory(path)) {
+        if (mModuleDirNames.count(path) != 0) {
+          // Re-adding the same search root is a no-op.
+          return;
+        }
+        for (const auto &dir : mModuleDirSearchPaths) {
+          if (isLexicalSubPath(dir, path) || isLexicalSubPath(path, dir)) {
+            throw Error(
+                concat("cannot add search root ", QuotedPath(path),
+                       ": it is nested inside or encloses existing search "
+                       "root ",
+                       QuotedPath(dir),
+                       " (nested roots would give modules ambiguous "
+                       "qualified names)"));
+          }
+        }
         SMDL_LOG_DEBUG("Adding MDL directory ", QuotedPath(path));
+        mModuleDirNames.insert(path);
         mModuleDirSearchPaths.emplace_back(path);
         for (const auto &entry : std::filesystem::directory_iterator(path)) {
           if (auto entryPath{makePathCanonical(entry.path().string())};
               isFile(entryPath) && hasExtension(entryPath, ".mdr")) {
-            addFile(entryPath);
+            addFile(entryPath, path);
           }
         }
         for (const auto &entry :
@@ -119,7 +178,7 @@ std::optional<Error> Compiler::add(std::string fileOrDirName) noexcept {
           if (auto entryPath{makePathCanonical(entry.path().string())};
               isFile(entryPath) && (hasExtension(entryPath, ".mdl") ||
                                     hasExtension(entryPath, ".smdl"))) {
-            addFile(entryPath);
+            addFile(entryPath, path);
           }
         }
         return;
@@ -465,41 +524,41 @@ void *Compiler::jitLookup(std::string_view name) {
 
 const JIT::Material *
 Compiler::findMaterial(std::string_view materialName) const noexcept try {
-  auto results{llvm::SmallVector<const JIT::Material *>()};
-  for (const auto &jitMaterial : mMaterials) {
-    if (jitMaterial.materialName == materialName) {
-      results.push_back(&jitMaterial);
-    }
-  }
+  auto results{findMaterials(materialName)};
   if (results.empty()) {
     return nullptr;
   }
   if (results.size() > 1) {
     auto message{concat("Material ", Quoted(materialName),
-                        " requested by name is ambiguous with ", results.size(),
-                        " definitions:\n")};
-    for (size_t i = 0; i < results.size(); i++) {
-      message += "  ";
-      message += results[i]->moduleFileName, message += ':';
-      message += std::to_string(results[i]->lineNo), message += '\n';
+                        " is ambiguous with ", results.size(), " matches:")};
+    for (const auto *jitMaterial : results) {
+      message += concat("\n  ", jitMaterial->qualifiedName, " (",
+                        jitMaterial->moduleFileName, ":", jitMaterial->lineNo,
+                        ")");
     }
-    SMDL_LOG_WARN(message);
+    SMDL_LOG_ERROR(message);
+    return nullptr;
   }
   return results.front();
 } catch (...) {
   return nullptr;
 }
 
-const JIT::Material *
-Compiler::findMaterial(std::string_view moduleName,
-                       std::string_view materialName) const noexcept {
+std::vector<const JIT::Material *>
+Compiler::findMaterials(std::string_view materialName) const {
+  auto results{std::vector<const JIT::Material *>()};
+  const bool isAbsolute{materialName.substr(0, 2) == "::"};
   for (const auto &jitMaterial : mMaterials) {
-    if (jitMaterial.moduleName == moduleName &&
-        jitMaterial.materialName == materialName) {
-      return &jitMaterial;
+    if (jitMaterial.moduleIsShadowed) {
+      continue;
+    }
+    if (isAbsolute
+            ? jitMaterial.qualifiedName == materialName
+            : isQualifiedNameSuffix(materialName, jitMaterial.qualifiedName)) {
+      results.push_back(&jitMaterial);
     }
   }
-  return nullptr;
+  return results;
 }
 
 float3 Compiler::convertColorToRGB(const State &state,
