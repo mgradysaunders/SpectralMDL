@@ -2144,7 +2144,7 @@ export void discard(inline const &pcg32 this,int64_t n){
 }
 )*";
 
-static const char *const prospect = R"*(#smdl
+static const char *const models_prospect = R"*(#smdl
 using ::math import *;
 export struct prospect_result{
   color reflectance=color(0);
@@ -2777,7 +2777,7 @@ export prospect_result prospect(
 }
 )*";
 
-static const char *const marmit = R"*(#smdl
+static const char *const models_marmit = R"*(#smdl
 using ::math import *;
 export struct marmit_result{
   color reflectance=color(0);
@@ -3674,10 +3674,10 @@ export color lookup_color(const texture_ptex tex,const int channel=0){
     return limits;
   if (name == "pcg32")
     return pcg32;
-  if (name == "prospect")
-    return prospect;
-  if (name == "marmit")
-    return marmit;
+  if (name == "models::prospect")
+    return models_prospect;
+  if (name == "models::marmit")
+    return models_marmit;
   if (name == "math")
     return math;
   if (name == "scene")
@@ -3690,12 +3690,12 @@ export color lookup_color(const texture_ptex tex,const int channel=0){
     return tex;
   return nullptr;
 }
-#include "builtin/albedo/diffuse_reflection_bsdf.inl"
-#include "builtin/albedo/microfacet_ggx_smith_bsdf.inl"
-#include "builtin/albedo/microfacet_beckmann_smith_bsdf.inl"
-#include "builtin/albedo/sheen_bsdf.inl"
-#include "builtin/albedo/simple_glossy_bsdf.inl"
-#include "builtin/albedo/ward_geisler_moroder_bsdf.inl"
+#include "Builtin/Albedo/diffuse_reflection_bsdf.inl"
+#include "Builtin/Albedo/microfacet_ggx_smith_bsdf.inl"
+#include "Builtin/Albedo/microfacet_beckmann_smith_bsdf.inl"
+#include "Builtin/Albedo/sheen_bsdf.inl"
+#include "Builtin/Albedo/simple_glossy_bsdf.inl"
+#include "Builtin/Albedo/ward_geisler_moroder_bsdf.inl"
 [[nodiscard]] static const AlbedoLUT *get_albedo(std::string_view name) {
   if (name == "diffuse_reflection_bsdf")
     return &diffuse_reflection_bsdf;

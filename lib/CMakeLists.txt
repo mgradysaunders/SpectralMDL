@@ -1,12 +1,12 @@
 add_custom_target(
   builtin_header
-  COMMAND "./builtin.h.rb"
+  COMMAND "./Builtin.h.rb"
   WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/Compiler"
   )
 add_custom_target(
   builtin_albedo
   COMMAND "${CMAKE_BINARY_DIR}/bin/smdl test tabulate.smdl"
-  WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/Compiler/builtin/albedo"
+  WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/Compiler/Builtin/Albedo"
   )
 add_library(
   SpectralMDL 

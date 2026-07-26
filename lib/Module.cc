@@ -1,6 +1,7 @@
 #include "smdl/Module.h"
 #include "smdl/Parser.h"
 #include "smdl/Support/Profiler.h"
+#include "smdl/Support/QualifiedName.h"
 
 #include "Compiler/Emitter.h"
 #include "Formatter.h"
@@ -11,7 +12,18 @@
 namespace smdl {
 
 Module::Module(std::string name, std::string sourceCode)
-    : mName(std::move(name)), mSourceCode(std::move(sourceCode)) {}
+    : mSourceCode(std::move(sourceCode)) {
+  // The name is the builtin lookup key, e.g., `models::prospect`: the
+  // last component is the module name and the components together form
+  // the qualified name.
+  auto components{splitQualifiedName(name)};
+  if (components.empty()) {
+    mName = std::move(name);
+  } else {
+    mQualifiedName = joinQualifiedName(components);
+    mName = std::string(components.back());
+  }
+}
 
 Module::~Module() {}
 

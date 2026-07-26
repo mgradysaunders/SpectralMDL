@@ -3158,9 +3158,17 @@ Module *Emitter::resolveModule(Span<const std::string_view> importPath,
     return nullptr;
   }};
   auto searchCompilerBuiltins{[&]() -> Module * {
-    if (resolvedImportPath.size() == 1)
-      if (auto module_{context.getBuiltinModule(resolvedImportPath[0])})
-        return module_;
+    // Builtin modules may be nested under builtin packages, e.g.,
+    // `::models::prospect`, so the whole path joined with `::` forms
+    // the builtin lookup key.
+    auto key{std::string()};
+    for (const auto &element : resolvedImportPath) {
+      if (!key.empty())
+        key += "::";
+      key += element;
+    }
+    if (auto module_{context.getBuiltinModule(key)})
+      return module_;
     return nullptr;
   }};
 

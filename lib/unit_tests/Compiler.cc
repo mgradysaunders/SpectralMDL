@@ -144,6 +144,43 @@ TEST_CASE("Compiler module resolution") {
       CHECK(buildAll(compiler, {tmpDir / "root"}) == "");
     }
   }
+  SUBCASE("Nested builtin absolute import") {
+    writeFile(tmpDir / "root" / "main.mdl",
+              "#smdl\nimport ::df::*;\nimport ::models::prospect::*;\n"
+              "import ::models::marmit::*;\n" +
+                  materialDef("main_ok"));
+    smdl::Compiler compiler{};
+    CHECK(buildAll(compiler, {tmpDir / "root"}) == "");
+    CHECK(compiler.findMaterial("main_ok") != nullptr);
+  }
+  SUBCASE("Nested builtin priority mirrors single-component rules") {
+    // A disk module at 'models/prospect.mdl' cannot shadow the builtin
+    // '::models::prospect' on an absolute import ...
+    writeFile(tmpDir / "root" / "models" / "prospect.mdl",
+              "#smdl\nexport const int fake_fn = 1;\n");
+    writeFile(tmpDir / "root" / "main.mdl",
+              "#smdl\nimport ::models::prospect::fake_fn;\n");
+    {
+      smdl::Compiler compiler{};
+      auto message{buildAll(compiler, {tmpDir / "root"})};
+      CHECK(message.find("cannot resolve import") != std::string::npos);
+    }
+    // ... but a weak import binds the disk module.
+    writeFile(tmpDir / "root" / "main.mdl",
+              "#smdl\nimport models::prospect::fake_fn;\n");
+    {
+      smdl::Compiler compiler{};
+      CHECK(buildAll(compiler, {tmpDir / "root"}) == "");
+    }
+  }
+  SUBCASE("Weak import falls back to nested builtins") {
+    // No disk 'models/prospect' anywhere, so the weak path reaches the
+    // builtin after the relative and search-root strategies miss.
+    writeFile(tmpDir / "root" / "main.mdl",
+              "#smdl\nimport models::prospect::*;\n");
+    smdl::Compiler compiler{};
+    CHECK(buildAll(compiler, {tmpDir / "root"}) == "");
+  }
   SUBCASE("Using aliases resolve through the same machinery") {
     writeFile(tmpDir / "root" / "target.mdl",
               "#smdl\nexport const int marker = 1;\n");

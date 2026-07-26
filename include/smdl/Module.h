@@ -39,8 +39,14 @@ public:
 
   /// The builtin module constructor.
   ///
-  /// \param[in] name         The name of the module.
-  /// \param[in] sourceCode   The source code.
+  /// \param[in] name
+  /// The builtin lookup key, which may be nested under builtin
+  /// packages, e.g., `models::prospect`. The last component becomes
+  /// the module name and the components together form the qualified
+  /// name, e.g., `::models::prospect`.
+  ///
+  /// \param[in] sourceCode
+  /// The source code.
   ///
   explicit Module(std::string name, std::string sourceCode);
 
@@ -115,8 +121,9 @@ public:
 
   /// Get the qualified name derived from the path relative to the search
   /// root, e.g., `::vendor::metals::steel` for
-  /// `<searchRoot>/vendor/metals/steel.mdl`. This is empty if the module
-  /// is builtin.
+  /// `<searchRoot>/vendor/metals/steel.mdl`. For builtin modules this is
+  /// derived from the builtin lookup key instead, e.g.,
+  /// `::models::prospect`.
   [[nodiscard]] std::string_view getQualifiedName() const noexcept {
     return mQualifiedName;
   }

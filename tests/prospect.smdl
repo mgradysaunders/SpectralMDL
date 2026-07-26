@@ -1,7 +1,8 @@
 #smdl
 
 import ::math::*;
-import ::prospect::*;
+using prospect = ::models::prospect;
+import prospect::*;
 
 // A moderately pigmented green leaf, used by every case below.
 prospect::prospect_result leaf(const float xanthophyll_cycle) = prospect::prospect(
