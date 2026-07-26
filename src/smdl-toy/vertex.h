@@ -26,6 +26,19 @@ public:
   }
 };
 
+/// The index of refraction of the medium surrounding the object being hit,
+/// which the material needs to form the relative IOR across the interface.
+/// On a front-face hit that is the medium the ray currently travels in (the
+/// top of the stack); on a back-face hit the ray travels inside the object
+/// itself, so the surrounding medium is the next stack entry below it.
+[[nodiscard]] inline float ExteriorIOR(const MediumStack *stack,
+                                       const smdl::JIT::MaterialInstance &mat,
+                                       const float3 &wo) noexcept {
+  if (mat.isInterior(wo))
+    stack = stack ? stack->prev : nullptr;
+  return stack ? stack->materialInstance.getIOR() : 1.0f;
+}
+
 class Vertex final {
 public:
   [[nodiscard]]

@@ -14,18 +14,19 @@ const float MULTISCATTER_DIFFUSE_CHANCE = 0.2;
 //--{ IOR conventions
 // Every user-facing Index Of Refraction (IOR) in this module and in
 // `api.smdl` -- `material.ior`, `fresnel_layer.ior`, `thin_film.ior`,
-// `fresnel_factor.ior` -- is the ABSOLUTE index of the denser medium,
-// measured against an implicit exterior of exactly 1. Plastic is 1.4,
-// never 1/1.4.
+// `fresnel_factor.ior` -- is the ABSOLUTE index of the denser medium.
+// Plastic is 1.4, never 1/1.4. The exterior medium defaults to 1 and may
+// be overridden per instance by the host through
+// `_MaterialInstance.exterior_ior` for nested-dielectric tracking.
 //
 // The scatter parameter structs instead carry the RELATIVE ratio
 // `ior = n(wo side) / n(wi side)` of the current frame. The entry points
 // `_scatterEvaluate` and `_scatterSample` construct it as
-// `1 / instance.ior` (entering), and the `finalize` blocks reciprocate it
-// on backface hits of solid materials, so that `wo` is always in the upper
-// hemisphere and the ratio is always oriented with it. Thin-walled
-// materials never reciprocate: both sides face the exterior, and
-// transmission does not refract.
+// `exterior_ior / instance.ior` (entering), and the `finalize` blocks
+// reciprocate it on backface hits of solid materials, so that `wo` is
+// always in the upper hemisphere and the ratio is always oriented with it.
+// Thin-walled materials never reciprocate: both sides face the exterior,
+// and transmission does not refract.
 //
 // Every primitive in the `specular` namespace -- `refract`,
 // `dielectricFresnel`, `conductorFresnel`, `refractionHalfVector`, and its
@@ -40,13 +41,14 @@ const float DEFAULT_IOR = 1.4;
 
 /// Convert a user-facing absolute IOR to the relative ratio oriented with
 /// the current frame of the given scatter parameters, honoring the backface
-/// reciprocation applied in the parameter `finalize` blocks.
+/// reciprocation applied in the parameter `finalize` blocks and the
+/// exterior medium of the instance.
 @(pure macro)
 auto relativeIOR(const auto params, const auto absoluteIOR) {
   if (params.hitBackface & !params.thin_walled) {
-    return absoluteIOR;
+    return absoluteIOR / params.exterior_ior;
   } else {
-    return 1.0 / absoluteIOR;
+    return params.exterior_ior / absoluteIOR;
   }
 }
 
@@ -318,6 +320,11 @@ struct ScatterEvaluateParameters {
   /// The relative upper-to-lower index of refraction.
   float ior = 1 / DEFAULT_IOR;
 
+  /// The absolute index of refraction of the exterior medium, needed by
+  /// modifier BSDFs to convert user-facing absolute IORs into relative
+  /// ratios. \see `relativeIOR()`
+  float exterior_ior = 1.0;
+
   /// The normal direction.
   float3 normal = float3(0, 0, 1);
 
@@ -404,6 +411,11 @@ struct ScatterSampleParameters {
 
   /// The active index of refraction.
   float ior = 1 / DEFAULT_IOR;
+
+  /// The absolute index of refraction of the exterior medium, needed by
+  /// modifier BSDFs to convert user-facing absolute IORs into relative
+  /// ratios. \see `relativeIOR()`
+  float exterior_ior = 1.0;
 
   /// The active normal direction.
   float3 normal = float3(0, 0, 1);
@@ -2004,15 +2016,16 @@ auto thinFilmFactor(const auto thickness, const auto filmIOR, const float baseIO
 }
 
 /// The film IOR relative to the incident medium. The user-facing film IOR is
-/// absolute. From inside a solid (a backface hit), the incident medium is the
-/// base itself, whose absolute index equals `params.ior` after the `finalize`
-/// reciprocation because the exterior is 1.
+/// absolute. From outside, the incident medium is the exterior. From inside
+/// a solid (a backface hit), the incident medium is the base itself, whose
+/// absolute index equals `params.ior * params.exterior_ior` after the
+/// `finalize` reciprocation.
 @(macro)
 auto thinFilmIncidentRelativeIOR(const &thin_film this, const auto params) {
   if (params.hitBackface & !params.thin_walled) {
-    return this.ior / params.ior;
+    return this.ior / (params.ior * params.exterior_ior);
   } else {
-    return this.ior;
+    return this.ior / params.exterior_ior;
   }
 }
 
@@ -2725,7 +2738,8 @@ export int _scatterEvaluate(
 ) {
   auto params = ScatterEvaluateParameters(
     isImportance: (instance.flags & 1) != 0,
-    ior: 1.0 / instance.ior,
+    ior: instance.exterior_ior / instance.ior,
+    exterior_ior: instance.exterior_ior,
     wo0: normalize((*woWorld) * instance.tangent_to_world),
     wi0: normalize((*wiWorld) * instance.tangent_to_world),
     normal: normalize(instance.geometry.normal),
@@ -2770,7 +2784,8 @@ export int _scatterSample(
     isImportance: (instance.flags & 1) != 0,
     xi: *xi,
     wo0: wo,
-    ior: 1.0 / instance.ior,
+    ior: instance.exterior_ior / instance.ior,
+    exterior_ior: instance.exterior_ior,
     normal: normalize(instance.geometry.normal),
     thin_walled: instance.ptr.thin_walled,
   );

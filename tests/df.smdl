@@ -115,10 +115,12 @@ EvaluateResult evaluate(
   const float3 normal = float3(0, 0, 1),
   const bool thin_walled = false,
   const float ior = 1.4,
+  const float exterior_ior = 1.0,
 ) {
   auto mat = material(thin_walled: thin_walled, ior: ior, surface: material_surface(scattering: scattering), geometry: material_geometry(normal: normal));
   auto instance = _MaterialInstance(&mat);
   instance.flags |= isImportance ? 1 : 0; // MATERIAL_TRANSPORT_IMPORTANCE
+  instance.exterior_ior = exterior_ior;
   float pdfFwd = 0;
   float pdfRev = 0;
   color f = color(0);
@@ -143,10 +145,12 @@ SampleResult sample(
   const float3 normal = float3(0, 0, 1),
   const bool thin_walled = false,
   const float ior = 1.4,
+  const float exterior_ior = 1.0,
 ) {
   auto mat = material(thin_walled: thin_walled, ior: ior, surface: material_surface(scattering: scattering), geometry: material_geometry(normal: normal));
   auto instance = _MaterialInstance(&mat);
   instance.flags |= isImportance ? 1 : 0; // MATERIAL_TRANSPORT_IMPORTANCE
+  instance.exterior_ior = exterior_ior;
   float4 xi1 = xi;
   float3 wi = float3(0);
   float pdfFwd = 0;
@@ -434,6 +438,39 @@ unit_test "Fresnel layer defines the layer interface" {
   // vector from both directions.
   const auto wt = math::normalize(float3(0.18, -0.24, -0.95));
   checkBidirectionalConsistency(layered, wo, wt);
+}
+
+unit_test "Nested dielectric exterior IOR" {
+  // A glass interface (IOR 1.5) submerged in water (IOR 4/3) must behave
+  // exactly like an interface with the equivalent relative IOR 1.5/(4/3)
+  // in vacuum: same refraction direction, same radiance compression, same
+  // Fresnel weights.
+  const auto nWater = 4.0 / 3.0;
+  const auto nGlass = 1.5;
+  const auto bsdfT = df::specular_bsdf(tint: 1.0, mode: df::scatter_transmit);
+  const auto xi = float4(0.3, 0.4, 0.5, 0.6);
+  const auto wo = math::normalize(float3(0.6, -0.2, 0.9));
+  const auto r1 = sample(bsdfT, xi, wo, false, float3(0, 0, 1), false, nGlass, nWater);
+  const auto r2 = sample(bsdfT, xi, wo, false, float3(0, 0, 1), false, nGlass / nWater, 1.0);
+  #assert(r1.success && r2.success);
+  #assert(#all(r1.wi ~== [1e-5] r2.wi));
+  #assert(#all(r1.f ~== [1e-5] r2.f));
+  #assert(#all(r1.f ~== [1e-5] color(#pow(nWater / nGlass, 2))));
+  // Exiting back out through the interface restores the direction and
+  // cancels the radiance compression.
+  const auto rOut = sample(bsdfT, xi, r1.wi, false, float3(0, 0, 1), false, nGlass, nWater);
+  #assert(rOut.success);
+  #assert(#all(rOut.wi ~== [1e-5] wo));
+  #assert(#all(r1.f * rOut.f ~== [1e-5] color(1.0)));
+  // Modifiers convert their absolute IOR against the same exterior: a
+  // fresnel_layer in water equals the equivalent relative layer in vacuum.
+  const auto wiR = math::normalize(float3(-0.5, 0.1, 0.8));
+  const auto layerB = df::diffuse_reflection_bsdf(tint: 1.0);
+  const auto e1 = evaluate(df::fresnel_layer(ior: nGlass, layer: layerB), wo, wiR, false, float3(0, 0, 1), false, nGlass, nWater);
+  const auto e2 = evaluate(df::fresnel_layer(ior: nGlass / nWater, layer: layerB), wo, wiR, false, float3(0, 0, 1), false, nGlass / nWater, 1.0);
+  #assert(#any(e1.f > 0.0));
+  #assert(#all(#abs(e1.f - e2.f) ~== [1e-5] 0.0));
+  #assert(#all(#abs(e1.pdf - e2.pdf) ~== [1e-5] 0.0));
 }
 
 unit_test "Fresnel-weighted reflect-transmit decomposition" {

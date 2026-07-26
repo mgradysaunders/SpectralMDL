@@ -118,6 +118,8 @@ uint64_t random_walk(smdl::Compiler &compiler, const Scene &scene,
 
     hit.apply_geometry_to_state(state);
     auto materialInstance{smdl::JIT::MaterialInstance(state, hit.material)};
+    materialInstance.setExteriorIOR(
+        ExteriorIOR(medium, materialInstance, -ray.dir));
     if (float opacity{materialInstance.getCutoutOpacity()};
         opacity < 1 && (opacity == 0 || float(random) > opacity)) {
       MediumStack::Update(medium, allocator, materialInstance, -ray.dir,

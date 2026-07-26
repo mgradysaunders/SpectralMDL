@@ -271,6 +271,7 @@ export struct _MaterialInstance{
   &material ptr;
   &material_geometry geometry=&ptr.geometry;
   float ior=ptr.ior;
+  float exterior_ior=1.0;
   float temperature=ptr.temperature;
   &color absorption_coefficient=#is_void(ptr.volume.absorption_coefficient)?none:&ptr.volume.absorption_coefficient;
   &color scattering_coefficient=#is_void(ptr.volume.scattering_coefficient)?none:&ptr.volume.scattering_coefficient;
@@ -391,9 +392,9 @@ const float DEFAULT_IOR=1.4;
 @(pure macro)
 auto relativeIOR(const auto params,const auto absoluteIOR){
   if(params.hitBackface&!params.thin_walled){
-    return absoluteIOR;
+    return absoluteIOR/params.exterior_ior;
   } else {
-    return 1.0/absoluteIOR;
+    return params.exterior_ior/absoluteIOR;
   }
 }
 const int DF_REFLECTION=(1<<0);
@@ -564,6 +565,7 @@ struct ScatterEvaluateParameters{
   bool hitBackface=wo0.z<0;
   bool thin_walled=false;
   float ior=1/DEFAULT_IOR;
+  float exterior_ior=1.0;
   float3 normal=float3(0,0,1);
   float3 tangent_u=float3(1,0,0);
   float3 wo=wo0;
@@ -608,6 +610,7 @@ struct ScatterSampleParameters{
   bool hitBackface=wo0.z<0;
   bool thin_walled=false;
   float ior=1/DEFAULT_IOR;
+  float exterior_ior=1.0;
   float3 normal=float3(0,0,1);
   float3 tangent_u=float3(1,0,0);
   float3 wo=wo0;
@@ -1528,9 +1531,9 @@ auto thinFilmFactor(const auto thickness,const auto filmIOR,const float baseIOR,
 @(macro)
 auto thinFilmIncidentRelativeIOR(const &thin_film this,const auto params){
   if(params.hitBackface&!params.thin_walled){
-    return this.ior/params.ior;
+    return this.ior/(params.ior*params.exterior_ior);
   } else {
-    return this.ior;
+    return this.ior/params.exterior_ior;
   }
 }
 @(macro)
@@ -1957,7 +1960,8 @@ export int _scatterEvaluate(
 ){
   auto params=ScatterEvaluateParameters(
     isImportance: (instance.flags&1)!=0,
-    ior: 1.0/instance.ior,
+    ior: instance.exterior_ior/instance.ior,
+    exterior_ior: instance.exterior_ior,
     wo0: normalize((*woWorld)*instance.tangent_to_world),
     wi0: normalize((*wiWorld)*instance.tangent_to_world),
     normal: normalize(instance.geometry.normal),
@@ -1999,7 +2003,8 @@ export int _scatterSample(
     isImportance: (instance.flags&1)!=0,
     xi: *xi,
     wo0: wo,
-    ior: 1.0/instance.ior,
+    ior: instance.exterior_ior/instance.ior,
+    exterior_ior: instance.exterior_ior,
     normal: normalize(instance.geometry.normal),
     thin_walled: instance.ptr.thin_walled,
   );

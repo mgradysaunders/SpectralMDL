@@ -146,6 +146,13 @@ public:
     /// The index of refraction.
     float ior{};
 
+    /// The exterior index of refraction, being the absolute index of the
+    /// medium on the front side of the geometry. Initialized to 1 by
+    /// `evaluate` and meant to be overwritten by hosts that track nested
+    /// dielectrics. The relative ratio the scattering calculations refract
+    /// with is `exterior_ior / ior`.
+    float exterior_ior{};
+
     /// The temperature in Kelvin or -1 if undefined.
     float temperature{};
 
@@ -291,6 +298,19 @@ public:
 
   /// The index of refraction.
   [[nodiscard]] float getIOR() const noexcept { return instance.ior; }
+
+  /// The exterior index of refraction, i.e., of the medium surrounding
+  /// the object on the front side of the geometry. Defaults to 1.
+  [[nodiscard]] float getExteriorIOR() const noexcept {
+    return instance.exterior_ior;
+  }
+
+  /// Set the exterior index of refraction. Hosts that track nested
+  /// dielectrics call this after construction and before the scattering
+  /// functions, passing the index of the medium surrounding the object.
+  void setExteriorIOR(float exteriorIOR) noexcept {
+    instance.exterior_ior = exteriorIOR;
+  }
 
   /// The absorption coefficient of the medium, or empty if none.
   [[nodiscard]] Span<const float> getAbsorptionCoefficient() const noexcept {

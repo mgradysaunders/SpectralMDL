@@ -475,6 +475,13 @@ export struct _MaterialInstance {
   /// The index of refraction.
   float ior = ptr.ior;
 
+  /// The exterior index of refraction, being the absolute index of the
+  /// medium on the front side of the geometry. This defaults to 1 and is
+  /// meant to be overwritten between instance evaluation and scattering
+  /// by renderers that track nested dielectrics. The relative ratio the
+  /// scattering calculations refract with is `exterior_ior / ior`.
+  float exterior_ior = 1.0;
+
   /// The temperature.
   float temperature = ptr.temperature;
 
