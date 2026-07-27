@@ -114,7 +114,14 @@ private:
     }
   }
 
-  void writeToken(llvm::StringRef inSrc);
+  void writeToken(llvm::StringRef inSrc) { writeToken(inSrc, inSrc); }
+
+  // Consume `inSrc` from the input but write `outSrc` to the output. This
+  // is how the formatter is allowed to rewrite a token instead of echoing
+  // it verbatim.
+  void writeToken(llvm::StringRef inSrc, llvm::StringRef outSrc);
+
+  void writeMinifiedFloat(const AST::LiteralFloat &expr);
 
   [[nodiscard]] Delim writeStartList(size_t size, bool forceNewLines,
                                      bool alignIndent = true) {
@@ -305,7 +312,15 @@ private:
 
   void write(const AST::LiteralBool &expr) { write(expr.srcValue); }
 
-  void write(const AST::LiteralFloat &expr) { write(expr.srcValue); }
+  void write(const AST::LiteralFloat &expr) {
+    // Only minify the spelling in compact mode! Otherwise preserve
+    // however the author wrote it.
+    if (mOptions.compact) {
+      writeMinifiedFloat(expr);
+    } else {
+      write(expr.srcValue);
+    }
+  }
 
   void write(const AST::LiteralInt &expr) { write(expr.srcValue); }
 

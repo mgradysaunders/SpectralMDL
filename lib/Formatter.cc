@@ -1,6 +1,11 @@
 // vim:foldmethod=marker:foldlevel=0:fmr=--{,--}
 #include "Formatter.h"
 
+#include <cmath>
+#include <cstdio>
+
+#include "llvm/ADT/APFloat.h"
+
 namespace smdl {
 
 void Formatter::alignLineComments() {
@@ -165,16 +170,130 @@ void Formatter::writeComment(llvm::StringRef inSrc) {
   }
 }
 
-void Formatter::writeToken(llvm::StringRef inSrc) {
+void Formatter::writeToken(llvm::StringRef inSrc, llvm::StringRef outSrc) {
   if (!inSrc.empty()) {
     SMDL_SANITY_CHECK(mInputSrc.begin() <= inSrc.begin() &&
                       inSrc.end() <= mInputSrc.end());
     SMDL_SANITY_CHECK(inSrc.count('\n') == 0);
+    SMDL_SANITY_CHECK(outSrc.count('\n') == 0);
     writeDelimNone();
     writeIndentIfNewLine();
     consumeInput(inSrc.begin() + inSrc.size() - mInputSrc.begin());
-    mOutputSrc += inSrc;
+    mOutputSrc += outSrc;
   }
+}
+
+[[nodiscard]] static bool isFloatSuffix(char ch) {
+  return ch == 'j' || ch == 'J' || ch == 'd' || ch == 'D' || //
+         ch == 'f' || ch == 'F';
+}
+
+// Does the spelling parse back to exactly the given value? NOTE: This must use
+// the same conversion as the parser, or else the guarantee is worthless!
+[[nodiscard]] static bool roundTripsTo(llvm::StringRef spelling, double value) {
+  llvm::APFloat parsedValue(llvm::APFloat::IEEEdouble());
+  auto opStatus{parsedValue.convertFromString(
+      spelling, llvm::APFloat::rmNearestTiesToEven)};
+  if (!opStatus) {
+    llvm::consumeError(opStatus.takeError());
+    return false;
+  }
+  return parsedValue.convertToDouble() == value;
+}
+
+// Find the shortest spelling of the floating point literal `srcValue` that
+// still parses to exactly `value`. If there is no shorter spelling, return
+// `srcValue` itself.
+[[nodiscard]] static std::string minifyFloatSpelling(llvm::StringRef srcValue,
+                                                     double value) {
+  // Give up on anything that has no spelling as a literal at all. Infinity
+  // is reachable because the parser only warns about overflow, and negative
+  // values should be unreachable because negation is a unary expression,
+  // but check for both anyway.
+  if (!std::isfinite(value) || std::signbit(value))
+    return srcValue.str();
+  // Split off the type suffix.
+  auto numChars{srcValue.size()};
+  while (numChars > 0 && isFloatSuffix(srcValue[numChars - 1]))
+    numChars--;
+  auto suffix{srcValue.drop_front(numChars)};
+  if (suffix.ends_with("f") || suffix.ends_with("F")) // Drop the default!
+    suffix = suffix.drop_back(1);
+  // Without a suffix, the spelling must contain a decimal point or an
+  // exponent, or else it lexes as an integer literal instead!
+  bool needsFloatMarker{suffix.empty()};
+  // Find the fewest significant digits that round trip, then take the
+  // digits and the decimal exponent of the leading digit.
+  std::string digits{};
+  int exponent{};
+  if (value == 0.0) {
+    digits = "0";
+  } else {
+    char buffer[32]{};
+    for (int precision{1}; precision <= 17; precision++) {
+      std::snprintf(buffer, sizeof(buffer), "%.*e", precision - 1, value);
+      if (roundTripsTo(buffer, value))
+        break;
+    }
+    auto [srcMantissa, srcExponent] = llvm::StringRef(buffer).split('e');
+    srcExponent.consume_front("+"); // Must remove! `getAsInteger()` chokes
+    if (srcExponent.getAsInteger(10, exponent))
+      return srcValue.str(); // Shouldn't happen!
+    // Keep only the digits. Note that `%e` always normalizes to exactly
+    // 1 digit before the decimal point, so throwing the decimal point away
+    // does not lose anything, and doing it this way means it does not
+    // matter what the current locale considers a decimal point to be
+    for (char ch : srcMantissa)
+      if (isDigit(ch))
+        digits += ch;
+    while (digits.size() > 1 && digits.back() == '0')
+      digits.pop_back();
+  }
+  auto numDigits{int(digits.size())};
+  // Spell it in fixed notation. Remember that the lexer requires a literal
+  // to begin with a digit, so `0.5` cannot shrink to `.5`.
+  std::string fixed{};
+  if (exponent >= numDigits - 1) {
+    fixed = digits;
+    fixed.append(exponent - numDigits + 1, '0');
+    if (needsFloatMarker)
+      fixed += '.';
+  } else if (exponent >= 0) {
+    fixed = digits.substr(0, exponent + 1) + '.' + digits.substr(exponent + 1);
+  } else {
+    fixed = "0.";
+    fixed.append(-exponent - 1, '0');
+    fixed += digits;
+  }
+  // Spell it in scientific notation, where the exponent never needs a
+  // plus sign and never needs leading zeros. Consider both putting the
+  // decimal point after the leading digit and omitting it entirely, e.g.,
+  // both `1.024e3` and `1024e0`, because which is shorter depends on how
+  // many digits the exponent takes.
+  std::string sci{
+      numDigits == 1 ? digits : digits.substr(0, 1) + '.' + digits.substr(1)};
+  sci += 'e';
+  sci += std::to_string(exponent);
+  std::string sciNoPoint{digits + 'e' +
+                         std::to_string(exponent - numDigits + 1)};
+  // Take the shortest, preferring fixed notation because it is easier to
+  // read, then put the suffix back.
+  auto result{fixed};
+  if (sci.size() < result.size())
+    result = sci;
+  if (sciNoPoint.size() < result.size())
+    result = sciNoPoint;
+  result += suffix;
+  // Never write anything longer than what the author wrote, and never
+  // write anything that has not been verified to parse back correctly!
+  if (result.size() >= srcValue.size() || !isDigit(result[0]) ||
+      !roundTripsTo(llvm::StringRef(result).drop_back(suffix.size()), value))
+    return srcValue.str();
+  return result;
+}
+
+void Formatter::writeMinifiedFloat(const AST::LiteralFloat &expr) {
+  writeToken(expr.srcValue, minifyFloatSpelling(expr.srcValue, expr.value));
 }
 
 void Formatter::write(const AST::File &file) {
