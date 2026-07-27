@@ -17,8 +17,7 @@ Scene::Scene(const smdl::Compiler &compiler, const std::string &fileName)
 }
 
 Scene::~Scene() {
-  for (auto &mesh : meshes)
-    rtcReleaseScene(mesh->scene), mesh->scene = {};
+  for (auto &mesh : meshes) rtcReleaseScene(mesh->scene), mesh->scene = {};
   rtcReleaseScene(scene), scene = {};
   rtcReleaseDevice(device), device = {};
 }
@@ -37,8 +36,7 @@ void Scene::load(const aiScene &assScene) {
   for (unsigned int i = 0; i < assScene.mNumMaterials; i++) {
     auto name{assScene.mMaterials[i]->GetName()};
     auto material{compiler.findMaterial(name.C_Str())};
-    if (!material)
-      material = compiler.findMaterial("default_material");
+    if (!material) material = compiler.findMaterial("default_material");
     materials.push_back(material);
   }
 }
@@ -102,8 +100,7 @@ void Scene::load(const aiNode &assNode, aiMatrix4x4 xf) {
     rtcSetGeometryInstancedScene(inst, meshes[meshIndex]->scene);
     rtcCommitGeometry(inst);
     auto instID = rtcAttachGeometry(scene, inst);
-    if (meshInstances.size() <= instID)
-      meshInstances.resize(1 + instID);
+    if (meshInstances.size() <= instID) meshInstances.resize(1 + instID);
     meshInstances[instID].objectToWorld =
         float4x4{float4{xf.a1, xf.b1, xf.c1, xf.d1}, //
                  float4{xf.a2, xf.b2, xf.c2, xf.d2}, //

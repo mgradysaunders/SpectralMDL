@@ -10,9 +10,10 @@ bool test_visibility(const Scene &scene, const AnyRandom &random,
   Ray ray{point0, point1 - point0, EPS, 1.0f - EPS};
   while (ray.tmin < ray.tmax) {
     Hit hit{};
-    if (!scene.intersect(ray, hit)) {
-      break;
-    }
+    bool hitSurface{scene.intersect(ray, hit)};
+    // Attenuate over the span actually traveled, which must happen whether or
+    // not there is a hit. `Scene::intersect` narrows `tmax` to the hit
+    // parameter on a hit and leaves it at the end of the segment on a miss.
     if (medium && medium->materialInstance.hasMedium()) {
       Color muA = Color(medium->materialInstance.getAbsorptionCoefficient());
       Color muS = Color(medium->materialInstance.getScatteringCoefficient());
@@ -21,6 +22,9 @@ bool test_visibility(const Scene &scene, const AnyRandom &random,
       for (size_t i = 0; i < WAVELENGTH_BASE_MAX; i++)
         Tr[i] = std::exp(-mu[i] * (ray.tmax - ray.tmin) * d);
       beta *= Tr;
+    }
+    if (!hitSurface) {
+      break;
     }
     smdl::State state{};
     state.allocator = &allocator;
@@ -40,17 +44,23 @@ bool test_visibility(const Scene &scene, const AnyRandom &random,
   return true;
 }
 
+/// The depth after which the walk is terminated by Russian roulette rather
+/// than continued unconditionally.
+static constexpr uint64_t ROULETTE_MIN_DEPTH{4};
+
+/// The largest survival probability Russian roulette will use, so that every
+/// path terminates eventually no matter how bright its throughput is.
+static constexpr float ROULETTE_MAX_SURVIVAL{0.95f};
+
 uint64_t random_walk(smdl::Compiler &compiler, const Scene &scene,
                      const AnyRandom &random, const Color &wavelengths,
                      smdl::BumpPtrAllocator &allocator,
                      smdl::Transport transport, Vertex path0, float wpdfFwd,
                      uint64_t maxDepth, Vertex *path,
-                     const EnvLight &envLight) {
-  if (maxDepth == 0)
-    return 0;
+                     const EnvLight *envLight) {
+  if (maxDepth == 0) return 0;
   path[0] = std::move(path0);
-  if (maxDepth == 1)
-    return 1;
+  if (maxDepth == 1) return 1;
 
   // Default construct a medium stack, assuming we start on
   // the exterior of all materials with interior participating
@@ -69,11 +79,13 @@ uint64_t random_walk(smdl::Compiler &compiler, const Scene &scene,
 
   Color beta{(1.0f / wpdfFwd) * path[0].beta};
   Color f{};
+  float wpdfRev{};
   Ray ray{path[0].point, path[0].wNext, EPS, INF};
   uint64_t depth{1};
   while (depth < maxDepth) {
     auto &vertexPrev{path[depth - 1]};
     auto &vertex{path[depth]};
+    vertex = Vertex{};
 
     auto hit{Hit{}};
     bool hitSurface{scene.intersect(ray, hit)};
@@ -135,11 +147,10 @@ uint64_t random_walk(smdl::Compiler &compiler, const Scene &scene,
     vertex.materialInstance = materialInstance;
     vertex.pdfFwd = vertexPrev.convert_pdf(wpdfFwd, vertex);
 
-    if (depth > 2) {
-      float wpdfRev{};
+    if (depth > 2 || !envLight) {
       if (!materialInstance.scatterSample(float4(random), -vertexPrev.wNext,
-                                           vertex.wNext, wpdfFwd, wpdfRev, f,
-                                           vertex.isDeltaBounce)) {
+                                          vertex.wNext, wpdfFwd, wpdfRev, f,
+                                          vertex.isDeltaBounce)) {
         break;
       }
     } else {
@@ -147,18 +158,20 @@ uint64_t random_walk(smdl::Compiler &compiler, const Scene &scene,
         float3 wi{};
         float Lpdf{};
         float fpdf{};
+        float fpdfRev{};
         Color f{};
       };
       auto doSampleLight{[&] {
         SampleResult result{};
         Color Li{};
-        result.wi = envLight.Li_sample(compiler, state, float2(random),
-                                       result.Lpdf, Li);
+        result.wi = envLight->Li_sample(compiler, state, float2(random),
+                                        result.Lpdf, Li);
         float fpdfFwd{};
         float fpdfRev{};
         if (materialInstance.scatterEvaluate(-vertexPrev.wNext, result.wi,
-                                              fpdfFwd, fpdfRev, result.f)) {
+                                             fpdfFwd, fpdfRev, result.f)) {
           result.fpdf = fpdfFwd;
+          result.fpdfRev = fpdfRev;
         }
         return result;
       }};
@@ -167,47 +180,59 @@ uint64_t random_walk(smdl::Compiler &compiler, const Scene &scene,
         float fpdfFwd{};
         float fpdfRev{};
         if (materialInstance.scatterSample(float4(random), -vertexPrev.wNext,
-                                            result.wi, fpdfFwd, fpdfRev,
-                                            result.f, vertex.isDeltaBounce)) {
+                                           result.wi, fpdfFwd, fpdfRev,
+                                           result.f, vertex.isDeltaBounce)) {
           result.fpdf = fpdfFwd;
-          Color Li = envLight.Li(compiler, state, result.wi, result.Lpdf);
-          return result;
+          result.fpdfRev = fpdfRev;
+          // Only the PDF is wanted here, to weigh this direction against what
+          // light sampling would have produced. The radiance itself is
+          // gathered by the caller.
+          (void)envLight->Li(compiler, state, result.wi, result.Lpdf);
         }
         return result;
       }};
       auto sampleLight = doSampleLight();
       auto sampleBSDF = doSampleBSDF();
-      auto balance{[](float a, float b) {
-        return 1.0f / (1.0f + std::pow(b / a, 2.0f));
-      }};
-      float weightLight = balance(sampleLight.Lpdf, sampleLight.fpdf);
-      float weightBSDF = balance(sampleBSDF.fpdf, sampleBSDF.Lpdf);
-      if (depth > 2)
-        weightBSDF = 1, weightLight = 0;
-      float chanceLight = balance(weightLight, weightBSDF);
+      float weightLight = powerHeuristic(sampleLight.Lpdf, sampleLight.fpdf);
+      float weightBSDF = powerHeuristic(sampleBSDF.fpdf, sampleBSDF.Lpdf);
+      float chanceLight = powerHeuristic(weightLight, weightBSDF);
       if (float(random) < chanceLight) {
         wpdfFwd = chanceLight * sampleLight.Lpdf +
                   (1 - chanceLight) * sampleLight.fpdf;
+        wpdfRev = sampleLight.fpdfRev;
         vertex.wNext = sampleLight.wi;
         f = sampleLight.f;
       } else {
         wpdfFwd =
             (1 - chanceLight) * sampleBSDF.fpdf + chanceLight * sampleBSDF.Lpdf;
+        wpdfRev = sampleBSDF.fpdfRev;
         vertex.wNext = sampleBSDF.wi;
         f = sampleBSDF.f;
       }
     }
     if (vertex.isDeltaBounce) {
-      wpdfFwd = 0;
-      // wpdfRev = 0;
+      // Dirac lobes report unit PDFs by convention and fold the division into
+      // `f`, so neither the mixture PDF above nor any density from the other
+      // sampling strategy applies to them.
+      wpdfFwd = 1;
+      wpdfRev = 1;
     }
     beta *= (1.0f / wpdfFwd) * f;
     if (beta.isAnyNonFinite()) {
       break;
     }
+    // Terminate by Russian roulette instead of by a fixed depth limit, so that
+    // high-albedo transport keeps the energy it is entitled to.
+    if (depth > ROULETTE_MIN_DEPTH) {
+      float survival{std::min(ROULETTE_MAX_SURVIVAL, beta.maxComponent())};
+      if (!(float(random) < survival)) {
+        break;
+      }
+      beta *= 1.0f / survival;
+    }
     MediumStack::Update(medium, allocator, materialInstance, -vertexPrev.wNext,
                         vertex.wNext);
-    // vertexPrev.pdfRev = vertex.convert_pdf(wpdfRev, vertexPrev);
+    vertexPrev.pdfRev = vertex.convert_pdf(wpdfRev, vertexPrev);
     ray = Ray{vertex.point, vertex.wNext, EPS, INF};
   }
   return depth;

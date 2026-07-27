@@ -37,6 +37,18 @@ template <typename... Seeds>
   }
 }
 
+/// The power heuristic with \f$ \beta = 2 \f$ for two sampling strategies.
+///
+/// This is written as \f$ 1/(1+(q/p)^2) \f$ rather than the equivalent
+/// \f$ p^2/(p^2+q^2) \f$ to avoid overflowing on the enormous PDFs that
+/// near-specular lobes produce.
+///
+[[nodiscard]] inline float powerHeuristic(float pdf0, float pdf1) noexcept {
+  if (!(pdf0 > 0)) return 0.0f;
+  float ratio{pdf1 / pdf0};
+  return 1.0f / (1.0f + ratio * ratio);
+}
+
 class AnyRandom final {
 public:
   explicit AnyRandom(std::in_place_t, std::function<float()> gen)

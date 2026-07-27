@@ -34,8 +34,7 @@ public:
 [[nodiscard]] inline float ExteriorIOR(const MediumStack *stack,
                                        const smdl::JIT::MaterialInstance &mat,
                                        const float3 &wo) noexcept {
-  if (mat.isInterior(wo))
-    stack = stack ? stack->prev : nullptr;
+  if (mat.isInterior(wo)) stack = stack ? stack->prev : nullptr;
   return stack ? stack->materialInstance.getIOR() : 1.0f;
 }
 
@@ -61,7 +60,7 @@ public:
                       float &wpdfFwd, float &wpdfRev, Color &f,
                       bool &isDeltaBounce) const {
     return materialInstance.scatterSample(xi, wo, wi, wpdfFwd, wpdfRev, f,
-                                           isDeltaBounce);
+                                          isDeltaBounce);
   }
 
   [[nodiscard]]
@@ -111,8 +110,7 @@ inline float3 Direction(const Vertex &from, const Vertex &to) noexcept {
 
 [[nodiscard]]
 inline float3 DistanceSquared(const Vertex &from, const Vertex &to) noexcept {
-  if (from.isInfiniteLight || to.isInfiniteLight)
-    return 1.0f;
+  if (from.isInfiniteLight || to.isInfiniteLight) return 1.0f;
   return lengthSquared(to.point - from.point);
 }
 
@@ -124,14 +122,18 @@ inline float3 DistanceSquared(const Vertex &from, const Vertex &to) noexcept {
                                    Color &beta);
 
 class EnvLight;
-[[nodiscard]] uint64_t random_walk(smdl::Compiler &compiler, const Scene &scene, const AnyRandom &random,
+
+/// Trace a path, writing up to `maxDepth` vertices into `path` and returning
+/// the number written. Every vertex is cleared before it is filled in, so
+/// `path` does not need to be zero-initialized between calls. The `envLight`
+/// may be null, in which case the walk falls back to pure BSDF sampling.
+[[nodiscard]] uint64_t random_walk(smdl::Compiler &compiler, const Scene &scene,
+                                   const AnyRandom &random,
                                    const Color &wavelengths,
                                    smdl::BumpPtrAllocator &allocator,
                                    smdl::Transport transport, Vertex path0,
                                    float wpdfFwd, uint64_t maxDepth,
-                                   Vertex *path,
-                                   const EnvLight &envLight
-                                   );
+                                   Vertex *path, const EnvLight *envLight);
 
 class Subpath final {
 public:

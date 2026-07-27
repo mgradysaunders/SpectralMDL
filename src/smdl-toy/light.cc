@@ -2,8 +2,7 @@
 
 EnvLight::EnvLight(const std::string &filename, float scaleFactor)
     : scaleFactor(scaleFactor) {
-  if (auto error{image.startLoad(filename)})
-    error->printAndExit();
+  if (auto error{image.startLoad(filename)}) error->printAndExit();
   image.finishLoad();
   auto weights{std::vector<float>{}};
   const int numTexelsX{image.getNumTexelsX()};
@@ -27,7 +26,7 @@ Color EnvLight::Li(smdl::Compiler &compiler, const smdl::State &state,
   pdf = imageDistr.directionPDF(wi, &iPixel);
   if (pdf > 0)
     compiler.convertRGBToColor(state, image.fetch(iPixel.x, iPixel.y),
-                              Li.data());
+                               Li.data());
   return Li * scaleFactor;
 }
 
@@ -37,7 +36,7 @@ float3 EnvLight::Li_sample(smdl::Compiler &compiler, const smdl::State &state,
   float3 wi{imageDistr.directionSample(xi, &iPixel, &pdf)};
   if (pdf > 0.0f) {
     compiler.convertRGBToColor(state, image.fetch(iPixel.x, iPixel.y),
-                              Li.data());
+                               Li.data());
     Li *= scaleFactor;
   } else {
     Li = Color(0.0f);

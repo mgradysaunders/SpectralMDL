@@ -36,6 +36,12 @@ static cl::opt<unsigned> samplesPerPixel{
     "spp", cl::desc("The number of samples per pixel (default: 8)"),
     cl::init(8U), cl::cat(catCamera)};
 
+static cl::opt<float> imageExposure{
+    "exposure",
+    cl::desc("The linear exposure applied before tone mapping "
+             "(default: 1)"),
+    cl::init(1.0f), cl::cat(catCamera)};
+
 static cl::opt<std::string> envLightFile{
     "ibl-filename", cl::desc("The IBL filename"), cl::cat(catCamera)};
 static cl::opt<float> envLightScale{"ibl-scale",
@@ -55,10 +61,8 @@ int main(int argc, char **argv) try {
   for (auto &inputMDLFile : inputMDLFiles)
     if (auto error{compiler.add(std::string(inputMDLFile))})
       error->printAndExit();
-  if (auto error{compiler.compile(smdl::OPT_LEVEL_O2)})
-    error->printAndExit();
-  if (auto error{compiler.jitCompile()})
-    error->printAndExit();
+  if (auto error{compiler.compile(smdl::OPT_LEVEL_O2)}) error->printAndExit();
+  if (auto error{compiler.jitCompile()}) error->printAndExit();
   const auto scene{Scene(compiler, inputSceneFile)};
 
   std::unique_ptr<EnvLight> envLight{};
@@ -81,7 +85,10 @@ int main(int argc, char **argv) try {
   const auto cameraToWorld{smdl::lookAt(cameraFrom, cameraTo, cameraUp)};
   auto renderImage{
       smdl::SpectralRenderImage(WAVELENGTH_BASE_MAX, numPixelsX, numPixelsY)};
-  constexpr int MAX_PATH_LEN = 8;
+  // An upper bound on the path buffer only. Paths are terminated by Russian
+  // roulette in `random_walk` long before this, so it is set high enough that
+  // clipping it is negligible even for high-albedo transport.
+  constexpr int MAX_PATH_LEN = 64;
 #define LIGHT_TRACE 0
   std::atomic<size_t> progress{};
   llvm::parallelFor(0, numPixelsX * numPixelsY, [&](size_t i) {
@@ -131,13 +138,11 @@ int main(int argc, char **argv) try {
         float3 wWorld = normalize(w);
         w = transpose(float3x3(cameraToWorld)) * w;
         w = normalize(w);
-        if (!(w.z < 0.0f))
-          continue;
+        if (!(w.z < 0.0f)) continue;
         float cosTheta{std::abs(w.z)};
         float u{+focalLength / cosTheta * w.x / aspectRatio};
         float v{-focalLength / cosTheta * w.y};
-        if (!(std::abs(u) < 0.5f && std::abs(v) < 0.5f))
-          continue;
+        if (!(std::abs(u) < 0.5f && std::abs(v) < 0.5f)) continue;
         float wpdf = (focalLength * focalLength) /
                      (aspectRatio * cosTheta * cosTheta * cosTheta);
         float fpdfFwd{};
@@ -182,12 +187,13 @@ int main(int argc, char **argv) try {
       path0.wNext = ray.dir;
       path0.pdfFwd = 0;
       path0.pdfRev = 0;
-      Vertex path[MAX_PATH_LEN]{};
       size_t pathLen{random_walk(compiler, scene, random, wavelengths, allocator,
                                  smdl::TRANSPORT_RADIANCE, path0, 1,
-                                 MAX_PATH_LEN, &path[0], *envLight)};
+                                 MAX_PATH_LEN, &path[0], envLight.get())};
       for (size_t depth = 1; depth < pathLen; ++depth) {
-        if (!path[depth].isInfiniteLight) {
+        // The environment is the only light, so with no IBL there is nothing
+        // to gather at a surface vertex.
+        if (!path[depth].isInfiniteLight && envLight) {
 #if 0
           auto wi{normalize(float3(2.5f, 2.0f, 3.0f))};
           auto wo{normalize(path[depth - 1].point - path[depth].point)};
@@ -221,7 +227,7 @@ int main(int argc, char **argv) try {
                       path[depth].point + 2 * scene.boundRadius * wi, f)) {
                 auto L{path[depth].beta * f * Li / (Lipdf * float(spp))};
                 if (!L.isAnyNonFinite()) {
-                  L *= std::pow(Lipdf / (fpdfFwd + Lipdf), 2.0f);
+                  L *= powerHeuristic(Lipdf, fpdfFwd);
                   Lsum += L;
                 }
               }
@@ -244,7 +250,10 @@ int main(int argc, char **argv) try {
                         path[depth].point + 2 * scene.boundRadius * wi, f)) {
                   auto L{path[depth].beta * f * Li / (fpdfFwd * float(spp))};
                   if (!L.isAnyNonFinite()) {
-                    L *= std::pow(fpdfFwd / (fpdfFwd + Lipdf), 2.0f);
+                    // Light sampling can never generate a Dirac direction, so
+                    // there is no competing strategy to weigh against.
+                    L *= isDeltaBounce ? 1.0f
+                                       : powerHeuristic(fpdfFwd, Lipdf);
                     Lsum += L;
                   }
                 }
@@ -268,7 +277,7 @@ int main(int argc, char **argv) try {
     renderImage(x, y).add(Lsum.data());
 #endif
   });
-  auto imageScale{4.0f};
+  auto imageScale{float(imageExposure)};
   auto rgbImage{std::vector<uint8_t>(numPixelsX * numPixelsY * 3)};
   auto rgbImageIndex{0};
   for (size_t y{}; y < numPixelsY; y++) {
@@ -293,8 +302,8 @@ int main(int argc, char **argv) try {
       rgbImage[rgbImageIndex++] = std::round(255.0f * rgb[2]);
     }
   }
-  if (auto error{smdl::write8bitImage("output.png", numPixelsX, numPixelsY,
-                                         3, rgbImage.data())}) {
+  if (auto error{smdl::write8bitImage("output.png", numPixelsX, numPixelsY, 3,
+                                      rgbImage.data())}) {
     error->print();
   }
   return EXIT_SUCCESS;
