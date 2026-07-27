@@ -168,8 +168,7 @@ void Emitter::createFunction(llvm::Function *&llvmFunc, std::string_view name,
       // giving each call site its own result slot in its entry block.
       for (auto user : llvm::make_early_inc_range(llvmFunc0->users())) {
         auto callInst{llvm::dyn_cast<llvm::CallInst>(user)};
-        SMDL_SANITY_CHECK(callInst &&
-                              callInst->getCalledOperand() == llvmFunc0,
+        SMDL_SANITY_CHECK(callInst && callInst->getCalledOperand() == llvmFunc0,
                           "unexpected use of function during 'sret' rebuild");
         auto blockEntry{&callInst->getFunction()->getEntryBlock()};
         builder.SetInsertPoint(blockEntry,
@@ -235,13 +234,12 @@ Value Emitter::createAlloca(Type *type, const llvm::Twine &name) {
 void Emitter::declareParameter(const Parameter &param, Value value) {
   value = invoke(param.type, value, param.getSourceLocation());
   value = param.isConst() || value.isVoid() ? value : lvalue(value);
-  auto declaration{declare(param.name,
-                          param.astParam
-                              ? static_cast<AST::Node *>(param.astParam)
-                          : param.astField
-                              ? static_cast<AST::Node *>(param.astField)
-                              : nullptr,
-                          value)};
+  auto declaration{
+      declare(param.name,
+              param.astParam   ? static_cast<AST::Node *>(param.astParam)
+              : param.astField ? static_cast<AST::Node *>(param.astField)
+                               : nullptr,
+              value)};
   declarationsToWarnAbout.push_back(declaration);
   if (param.isInline())
     declareParameterInline(declaration->value);
@@ -253,7 +251,7 @@ void Emitter::declareParameterInline(Value value) {
     for (auto &param : structType->params) {
       auto srcLoc{param.getSourceLocation()};
       auto declaration{declare(param.name, /*node=*/{},
-                              accessField(value, param.name, srcLoc))};
+                               accessField(value, param.name, srcLoc))};
       if (param.isInline())
         declareParameterInline(declaration->value);
     }
@@ -295,8 +293,8 @@ Declaration *Emitter::probeName(Span<const std::string_view> name,
       if (s == anchorScope)
         seqLimit = std::min(seqLimit, anchorSeq);
     if (auto found{Declaration::resolveInScope(context, name, llvmFunc, s,
-                                         /*ignoreIfNotExported=*/false,
-                                         seqLimit, unusableMatch)})
+                                               /*ignoreIfNotExported=*/false,
+                                               seqLimit, unusableMatch)})
       return found;
   }
   return nullptr;
@@ -315,8 +313,7 @@ void Emitter::declareImport(Span<const std::string_view> importPath, bool isAbs,
   if (importPath.back() == "*") {
     importPath = importPath.dropBack();
     importPath = importPath.dropFrontWhile(isDots);
-    declare(importPath, &decl,
-                 context.getComptimeMetaModule(importedModule));
+    declare(importPath, &decl, context.getComptimeMetaModule(importedModule));
   } else {
     auto importedDeclaration{Declaration::findInModule(
         context, importPath.back(), getLLVMFunction(), importedModule)};
@@ -324,7 +321,7 @@ void Emitter::declareImport(Span<const std::string_view> importPath, bool isAbs,
       decl.srcLoc.throwError("cannot resolve import identifier ",
                              Quoted(join(importPath, "::")));
     declare(importPath.dropFrontWhile(isDots), &decl,
-                 importedDeclaration->value);
+            importedDeclaration->value);
   }
 }
 
@@ -468,9 +465,9 @@ Value Emitter::emit(AST::UsingImport &decl) {
   auto importPath{decl.importPath.elementViews};
   for (auto &name : decl.names) {
     importPath.push_back(name.srcName);
-    declareImport(Span<const std::string_view>(importPath.data(),
-                                               importPath.size()),
-                  decl.importPath.isAbsolute(), decl);
+    declareImport(
+        Span<const std::string_view>(importPath.data(), importPath.size()),
+        decl.importPath.isAbsolute(), decl);
     importPath.pop_back();
   }
   return Value();
@@ -535,8 +532,8 @@ Value Emitter::emit(AST::Variable &decl) {
           rejectSameScopeShadow(declarator.names[i].name,
                                 declarator.names[i].name.srcLoc);
           declare(declarator.names[i].name, &declarator,
-                       accessField(value, structType->params[i].name,
-                                   declarator.srcLoc));
+                  accessField(value, structType->params[i].name,
+                              declarator.srcLoc));
         }
       } else {
         declarator.srcLoc.throwError("unsupported destructure");
@@ -679,9 +676,9 @@ Value Emitter::emit(AST::Binary &expr) {
       return emit(expr.exprRhs);
     } else {
       return emitTwoArmMerge(
-          valueLhsCond, "else", [&] { return valueLhs; },
-          expr.exprLhs->srcLoc, [&] { return emit(expr.exprRhs); },
-          expr.exprRhs->srcLoc, expr.srcLoc);
+          valueLhsCond, "else", [&] { return valueLhs; }, expr.exprLhs->srcLoc,
+          [&] { return emit(expr.exprRhs); }, expr.exprRhs->srcLoc,
+          expr.srcLoc);
     }
   }
   // Default.
@@ -806,11 +803,10 @@ Value Emitter::emitTwoArmMerge(Value cond, const char *name,
   // Create PHI instruction.
   llvmMoveBlockToEnd(blockEnd);
   builder.SetInsertPoint(blockEnd);
-  auto phiInst{builder.CreatePHI(mergeAsLValues
-                                     ? context.getPointerType(commonType)
-                                           ->llvmType
-                                     : commonType->llvmType,
-                                 2)};
+  auto phiInst{builder.CreatePHI(
+      mergeAsLValues ? context.getPointerType(commonType)->llvmType
+                     : commonType->llvmType,
+      2)};
   phiInst->addIncoming(value0, blockArm0);
   phiInst->addIncoming(value1, blockArm1);
   return mergeAsLValues ? LValue(commonType, phiInst)
@@ -1708,10 +1704,10 @@ Value Emitter::emitIntrinsic(std::string_view name, const ArgumentList &args,
       if (name == intrName) {
         auto value{rvalue(expectOneIntOrIntVector())};
         return RValue(value.type,
-                      hasFlag ? builder.CreateBinaryIntrinsic(
-                                    intrID, value,
-                                    context.getComptimeBool(false))
-                              : builder.CreateUnaryIntrinsic(intrID, value));
+                      hasFlag
+                          ? builder.CreateBinaryIntrinsic(
+                                intrID, value, context.getComptimeBool(false))
+                          : builder.CreateUnaryIntrinsic(intrID, value));
       }
     }
   }
@@ -2153,9 +2149,9 @@ Value Emitter::emitIntrinsic(std::string_view name, const ArgumentList &args,
             [&](const std::string &resolvedFileName) {
               auto &ptexture{
                   context.compiler.loadPtexture(resolvedFileName, srcLoc)};
-              auto valuePtr{context.getComptimePtr(
-                  context.getVoidPointerType(),
-                  ptexture.texture ? &ptexture : nullptr)};
+              auto valuePtr{context.getComptimePtr(context.getVoidPointerType(),
+                                                   ptexture.texture ? &ptexture
+                                                                    : nullptr)};
               return invoke(texturePtexType,
                             {Argument{"ptr", valuePtr},
                              Argument{"gamma", fileNameAndGamma.second}},
@@ -2177,15 +2173,13 @@ Value Emitter::emitIntrinsic(std::string_view name, const ArgumentList &args,
                   bsdfMeasurementType,
                   {Argument{"ptr", context.getComptimePtr(
                                        context.getVoidPointerType(),
-                                       bsdfMeasurement.buffer
-                                           ? &bsdfMeasurement
-                                           : nullptr)},
-                   Argument{"mode",
-                            context.getComptimeInt(
-                                bsdfMeasurement.kind ==
-                                        BSDFMeasurement::KIND_REFLECTION
-                                    ? /* scatter_reflect  */ 1
-                                    : /* scatter_transmit */ 2)},
+                                       bsdfMeasurement.buffer ? &bsdfMeasurement
+                                                              : nullptr)},
+                   Argument{"mode", context.getComptimeInt(
+                                        bsdfMeasurement.kind ==
+                                                BSDFMeasurement::KIND_REFLECTION
+                                            ? /* scatter_reflect  */ 1
+                                            : /* scatter_transmit */ 2)},
                    Argument{"num_theta", context.getComptimeInt(
                                              int(bsdfMeasurement.numTheta))},
                    Argument{"num_phi", context.getComptimeInt(
@@ -2202,8 +2196,8 @@ Value Emitter::emitIntrinsic(std::string_view name, const ArgumentList &args,
         return withLocatedFile(
             fileName, lightProfileType,
             [&](const std::string &resolvedFileName) {
-              auto &lightProfile{context.compiler.loadLightProfile(
-                  resolvedFileName, srcLoc)};
+              auto &lightProfile{
+                  context.compiler.loadLightProfile(resolvedFileName, srcLoc)};
               return invoke(
                   lightProfileType,
                   {Argument{"ptr", context.getComptimePtr(
@@ -2259,15 +2253,15 @@ Value Emitter::emitIntrinsic(std::string_view name, const ArgumentList &args,
               auto floatPtrType{context.getPointerType(context.getFloatType())};
               return invoke(
                   spectralCurveType,
-                  {Argument{"count",
-                            context.getComptimeInt(
-                                int(spectrumView.wavelengths.size()))},
+                  {Argument{"count", context.getComptimeInt(
+                                         int(spectrumView.wavelengths.size()))},
                    Argument{"wavelengths",
                             context.getComptimePtr(
                                 floatPtrType, spectrumView.wavelengths.data())},
-                   Argument{"amplitudes",
-                            context.getComptimePtr(
-                                floatPtrType, spectrumView.curveValues.data())}},
+                   Argument{
+                       "amplitudes",
+                       context.getComptimePtr(
+                           floatPtrType, spectrumView.curveValues.data())}},
                   srcLoc);
             });
       }
@@ -2540,9 +2534,9 @@ Value Emitter::emitIntrinsic(std::string_view name, const ArgumentList &args,
       auto size{args[1].value.getComptimeSignedInt()};
       if (!type->isArithmeticScalar() || !size || *size < 1 || *size > 65535)
         reportError();
-      return context.getComptimeMetaType(context.getArithmeticType(
-          static_cast<ArithmeticType *>(type)->scalar,
-          Extent(uint16_t(*size))));
+      return context.getComptimeMetaType(
+          context.getArithmeticType(static_cast<ArithmeticType *>(type)->scalar,
+                                    Extent(uint16_t(*size))));
     }
     if (name == "type_matrix") {
       auto reportError{[&] {
@@ -2618,14 +2612,13 @@ Value Emitter::emitIntrinsic(std::string_view name, const ArgumentList &args,
               ? builder.CreateUIToFP(value.llvmValue, value.type->llvmType)
               : builder.CreateFPCast(value.llvmValue, value.type->llvmType);
       if (texelType->isArithmeticIntegral())
-        value =
-            emitOp(BINOP_MUL, value,
-                   // Compute in double via ldexp: '1ULL << numBits' is
-                   // undefined for 64-bit texel types.
-                   context.getComptimeFloat(float(
-                       1.0 / (std::ldexp(1.0, texelType->scalar.numBits) -
-                              1.0))),
-                   srcLoc);
+        value = emitOp(
+            BINOP_MUL, value,
+            // Compute in double via ldexp: '1ULL << numBits' is
+            // undefined for 64-bit texel types.
+            context.getComptimeFloat(float(
+                1.0 / (std::ldexp(1.0, texelType->scalar.numBits) - 1.0))),
+            srcLoc);
       if (value.type == context.getFloatType(Extent(4))) // Early out?
         return value;
       auto result{Value::zero(context.getFloatType(Extent(4)))};
@@ -2975,11 +2968,9 @@ Value Emitter::resolveIdentifier(Span<const std::string_view> names,
     if (auto prevSrcLoc{unusableMatch->getSourceLocation()})
       srcLoc.throwError("cannot reference run-time value of ",
                         Quoted(join(names, "::")), " declared at ",
-                        std::string(prevSrcLoc),
-                        " from a different function");
+                        std::string(prevSrcLoc), " from a different function");
     srcLoc.throwError("cannot reference run-time value of ",
-                      Quoted(join(names, "::")),
-                      " from a different function");
+                      Quoted(join(names, "::")), " from a different function");
   }
   if (declaration) {
     return declaration->value;
@@ -3140,8 +3131,9 @@ Module *Emitter::resolveModule(Span<const std::string_view> importPath,
     // are stripped because 'lexically_normal()' of a path ending in
     // '..' keeps one.
     auto normalizePath{[](std::string somePath) {
-      auto normal{
-          std::filesystem::path(std::move(somePath)).lexically_normal().string()};
+      auto normal{std::filesystem::path(std::move(somePath))
+                      .lexically_normal()
+                      .string()};
       while (normal.size() > 1 &&
              (normal.back() == '/' || normal.back() == '\\')) {
         normal.pop_back();

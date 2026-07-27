@@ -162,8 +162,7 @@ static std::optional<Value> tryConstructFromPointer(Emitter &emitter,
                                                     Type *resultType,
                                                     Type *pointeeType,
                                                     const Value &value) {
-  if (value.type->isPointer() &&
-      value.type->getPointeeType() == pointeeType)
+  if (value.type->isPointer() && value.type->getPointeeType() == pointeeType)
     return RValue(resultType,
                   emitter.builder.CreateAlignedLoad(
                       resultType->llvmType, emitter.rvalue(value),
@@ -1154,10 +1153,10 @@ FunctionType *FunctionType::resolveOverload(Emitter &emitter,
     for (size_t i = 0; i < args.size(); i++) {
       if (!overloadA.params[i] || !overloadB.params[i])
         continue; // Unresolved variadic arguments do not participate
-      auto ruleA{emitter.context.getConversionRule(
-          args[i].value.type, overloadA.params[i]->type)};
-      auto ruleB{emitter.context.getConversionRule(
-          args[i].value.type, overloadB.params[i]->type)};
+      auto ruleA{emitter.context.getConversionRule(args[i].value.type,
+                                                   overloadA.params[i]->type)};
+      auto ruleB{emitter.context.getConversionRule(args[i].value.type,
+                                                   overloadB.params[i]->type)};
       if (ruleA < ruleB)
         return false;
       if (ruleA > ruleB)
@@ -1181,11 +1180,11 @@ FunctionType *FunctionType::resolveOverload(Emitter &emitter,
     }
     return true;
   }};
-  auto beatsBySpecificity{[&](const Overload &overloadA,
-                              const Overload &overloadB) {
-    return isLessSpecific(overloadB.params, overloadA.params) &&
-           !isLessSpecific(overloadA.params, overloadB.params);
-  }};
+  auto beatsBySpecificity{
+      [&](const Overload &overloadA, const Overload &overloadB) {
+        return isLessSpecific(overloadB.params, overloadA.params) &&
+               !isLessSpecific(overloadA.params, overloadB.params);
+      }};
   // Remove every candidate beaten by another candidate, first by conversion
   // quality, then by specificity among what remains. Both relations are
   // strict partial orders, so at least one candidate always survives. If
@@ -1224,8 +1223,8 @@ FunctionType *FunctionType::resolveOverload(Emitter &emitter,
       candidateNotes += std::string(overload.func->decl.srcLoc);
     }
     srcLoc.throwError("function ", Quoted(declName),
-                      " is ambiguous for arguments ",
-                      Quoted(std::string(args)), candidateNotes);
+                      " is ambiguous for arguments ", Quoted(std::string(args)),
+                      candidateNotes);
   }
   return overloads[0].func;
 }
@@ -1451,8 +1450,7 @@ void FunctionType::initializeMaterialFunctions(Emitter &emitter) {
     // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
     auto funcReturnType{static_cast<Type *>(context.getIntType())};
     auto func{emitter.createFunction(
-        concat(symbolBase, ".scatterEvaluate"), /*isPure=*/true,
-        funcReturnType,
+        concat(symbolBase, ".scatterEvaluate"), /*isPure=*/true, funcReturnType,
         {constParameter(materialInstancePtrType, "instance"),
          constParameter(float3PtrType, "wo"),
          constParameter(float3PtrType, "wi"),
@@ -1460,9 +1458,9 @@ void FunctionType::initializeMaterialFunctions(Emitter &emitter) {
          constParameter(floatPtrType, "pdfRev"),
          constParameter(floatPtrType, "f")},
         decl.srcLoc, [&] {
-          auto dfFunc{Declaration::findInModule(
-              context, "_scatterEvaluate"sv, nullptr, dfModule,
-              /*ignoreIfNotExported=*/false)};
+          auto dfFunc{Declaration::findInModule(context, "_scatterEvaluate"sv,
+                                                nullptr, dfModule,
+                                                /*ignoreIfNotExported=*/false)};
           SMDL_SANITY_CHECK(dfFunc);
           emitter.emitReturn(
               emitter.emitCall(
@@ -1515,9 +1513,9 @@ void FunctionType::initializeMaterialFunctions(Emitter &emitter) {
          constParameter(floatPtrType, "f"),
          constParameter(intPtrType, "isDelta")},
         decl.srcLoc, [&] {
-          auto dfFunc{Declaration::findInModule(
-              context, "_scatterSample"sv, nullptr, dfModule,
-              /*ignoreIfNotExported=*/false)};
+          auto dfFunc{Declaration::findInModule(context, "_scatterSample"sv,
+                                                nullptr, dfModule,
+                                                /*ignoreIfNotExported=*/false)};
           SMDL_SANITY_CHECK(dfFunc);
           emitter.emitReturn(
               emitter.emitCall(
@@ -1543,7 +1541,7 @@ void FunctionType::initializeMaterialFunctions(Emitter &emitter) {
     markPointerParam(func, 5, context.getFloatType());  // pdfRev
     markPointerParam(func, 6, context.getFloatType(),   // f
                      context.getColorType()->wavelengthBaseMax);
-    markPointerParam(func, 7, context.getIntType());    // isDelta
+    markPointerParam(func, 7, context.getIntType()); // isDelta
     jitMaterial.scatterSample.name = func->getName().str();
   }
   // TODO _volume_scatter_evaluate
@@ -1611,16 +1609,15 @@ Value MetaType::accessField(Emitter &emitter, Value value,
   } else if (value.isComptimeMetaModule(emitter.context)) {
     // Make exported declarations available
     auto module_{value.getComptimeMetaModule(emitter.context, srcLoc)};
-    if (auto declaration{Declaration::findInModule(emitter.context, name,
-                                       emitter.getLLVMFunction(), module_)})
+    if (auto declaration{Declaration::findInModule(
+            emitter.context, name, emitter.getLLVMFunction(), module_)})
       return declaration->value;
   } else if (value.isComptimeMetaNamespace(emitter.context)) {
     // Make declarations available. 'export' only gates access from other
     // modules, not from the namespace's own module.
     auto namespace_{value.getComptimeMetaNamespace(emitter.context, srcLoc)};
     if (auto declaration{Declaration::resolveInScope(
-            emitter.context, name, emitter.getLLVMFunction(),
-            namespace_->scope,
+            emitter.context, name, emitter.getLLVMFunction(), namespace_->scope,
             /*ignoreIfNotExported=*/
             namespace_->srcLoc.module_ != emitter.currentModule,
             std::numeric_limits<uint64_t>::max(), nullptr)})
@@ -1820,8 +1817,7 @@ Value StringType::accessField(Emitter &emitter, Value value,
 //--{ StructType
 void StructType::initialize(Emitter &emitter) {
   emitter.rejectSameScopeShadow(decl.name, decl.srcLoc);
-  emitter.declare(decl.name, &decl,
-                       emitter.context.getComptimeMetaType(this));
+  emitter.declare(decl.name, &decl, emitter.context.getComptimeMetaType(this));
   emitter.captureResolutionAnchor(params);
   // The interior declarations (static fields, inferred sizes in field
   // types) are popped from the chain on exit; the transparent scope pops
@@ -1980,9 +1976,8 @@ Value StructType::invoke(Emitter &emitter, const ArgumentList &args,
       for (auto &value : resolvedArgs.values) {
         if (!value.isVoid())
           emitter.createStore(
-              value, LValue(value.type,
-                            emitter.builder.CreateStructGEP(
-                                resultType->llvmType, lv, i)));
+              value, LValue(value.type, emitter.builder.CreateStructGEP(
+                                            resultType->llvmType, lv, i)));
         i++;
       }
       result = LValue(resultType, lv.llvmValue);
@@ -2004,7 +1999,7 @@ Value StructType::invoke(Emitter &emitter, const ArgumentList &args,
         auto lv{emitter.lvalue(result)};
         for (auto &param : params)
           emitter.declare(param.name, &decl,
-                               emitter.accessField(lv, param.name, srcLoc));
+                          emitter.accessField(lv, param.name, srcLoc));
         emitter.emit(decl.stmtFinalize);
         if (inPlace) {
           result = lv;
@@ -2154,11 +2149,11 @@ UnionType::UnionType(Context &context, llvm::SmallVector<Type *> caseTys)
   uint64_t numChunks{(requiredSize + chunkSize - 1) / chunkSize};
   auto i64Type{llvm::Type::getInt64Ty(context)};
   llvmType = llvm::StructType::create(
-      {llvm::ArrayType::get(
-           chunkSize == 8 ? i64Type
-                          : static_cast<llvm::Type *>(llvm::FixedVectorType::get(
-                                i64Type, chunkSize / 8)),
-           numChunks),
+      {llvm::ArrayType::get(chunkSize == 8 ? i64Type
+                                           : static_cast<llvm::Type *>(
+                                                 llvm::FixedVectorType::get(
+                                                     i64Type, chunkSize / 8)),
+                            numChunks),
        context.getIntType()->llvmType},
       "union_t");
   SMDL_SANITY_CHECK(requiredAlign <= context.getAlignOf(this));

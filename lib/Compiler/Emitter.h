@@ -415,8 +415,8 @@ public:
   template <typename Func>
   void handleScope(llvm::BasicBlock *blockStart, llvm::BasicBlock *blockEnd,
                    Func &&func) {
-    SMDL_PRESERVE(scope, anchors, state, labelReturn, labelBreak,
-                  labelContinue, inDefer, currentModule);
+    SMDL_PRESERVE(scope, anchors, state, labelReturn, labelBreak, labelContinue,
+                  inDefer, currentModule);
     const auto depth0{unwindStack.size()};
     scope = pushScope(/*transparent=*/false);
     if (blockStart) {
@@ -588,8 +588,7 @@ public:
 
   /// Emit namespace declaration.
   Value emit(AST::Namespace &decl) {
-    declare(*decl.identifier, &decl,
-                 context.getComptimeMetaNamespace(&decl));
+    declare(*decl.identifier, &decl, context.getComptimeMetaNamespace(&decl));
     // The interior declarations go out of the enclosing lookup on exit,
     // but the namespace is not a shadow boundary (members conflict with
     // same-scope names declared before it) — hence a transparent scope.
@@ -614,7 +613,7 @@ public:
   Value emit(AST::Tag &decl) {
     rejectSameScopeShadow(decl.name, decl.srcLoc);
     declare(decl.name, &decl,
-                 context.getComptimeMetaType(context.getTagType(&decl)));
+            context.getComptimeMetaType(context.getTagType(&decl)));
     return Value();
   }
 
@@ -1150,8 +1149,8 @@ public:
   /// `Declaration::resolveInScope` with the active anchor limits. Includes
   /// the `unusableMatch` recording (see `Declaration::resolveInScope`).
   [[nodiscard]] Declaration *probeName(Span<const std::string_view> name,
-                                 llvm::Function *llvmFunc,
-                                 Declaration **unusableMatch);
+                                       llvm::Function *llvmFunc,
+                                       Declaration **unusableMatch);
 
   /// The `$state` value.
   Value state{};

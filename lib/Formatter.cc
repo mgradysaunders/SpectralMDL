@@ -113,9 +113,9 @@ void Formatter::writeComment(llvm::StringRef inSrc) {
   if (!inSrc.empty() && !mOptions.noComments) {
     // This better be a line comment or a multiline comment! A line comment
     // only lacks the terminating newline if it ends the file.
-    SMDL_SANITY_CHECK(
-        (inSrc.starts_with("//") && (inSrc.ends_with("\n") || mInputSrc.empty())) ||
-        (inSrc.starts_with("/*") && inSrc.ends_with("*/")));
+    SMDL_SANITY_CHECK((inSrc.starts_with("//") &&
+                       (inSrc.ends_with("\n") || mInputSrc.empty())) ||
+                      (inSrc.starts_with("/*") && inSrc.ends_with("*/")));
     if (!mOutputSrc.empty() && lastOutput() != ' ' && lastOutput() != '\n') {
       mOutputSrc += ' ';
     }

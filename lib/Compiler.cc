@@ -27,24 +27,19 @@ Compiler::Compiler(uint32_t wavelengthBaseMax)
 
 /// Sort JIT handle records by module filename, then line number.
 template <typename T> static void sortByFileAndLine(std::vector<T> &elems) {
-  std::sort(elems.begin(), elems.end(),
-            [](const auto &lhs, const auto &rhs) {
-              return std::pair(std::string_view(lhs.moduleFileName),
-                               lhs.lineNo) <
-                     std::pair(std::string_view(rhs.moduleFileName),
-                               rhs.lineNo);
-            });
+  std::sort(elems.begin(), elems.end(), [](const auto &lhs, const auto &rhs) {
+    return std::pair(std::string_view(lhs.moduleFileName), lhs.lineNo) <
+           std::pair(std::string_view(rhs.moduleFileName), rhs.lineNo);
+  });
 }
 
 /// Visit `[itrFirst, itrLast)` runs of records that share a module
 /// filename, assuming the records are sorted by `sortByFileAndLine`.
 template <typename Iterator, typename Visitor>
-static void forEachFileGroup(Iterator itr, Iterator itrEnd,
-                             Visitor &&visitor) {
+static void forEachFileGroup(Iterator itr, Iterator itrEnd, Visitor &&visitor) {
   while (itr != itrEnd) {
     auto itrLast{itr};
-    while (itrLast != itrEnd &&
-           itrLast->moduleFileName == itr->moduleFileName)
+    while (itrLast != itrEnd && itrLast->moduleFileName == itr->moduleFileName)
       ++itrLast;
     visitor(itr, itrLast);
     itr = itrLast;
@@ -78,8 +73,8 @@ parseArchivePackagePrefix(const std::string &fileName) {
   size_t pos{0};
   while (true) {
     auto dot{stem.find('.', pos)};
-    auto component{stem.substr(
-        pos, dot == std::string::npos ? std::string::npos : dot - pos)};
+    auto component{stem.substr(pos, dot == std::string::npos ? std::string::npos
+                                                             : dot - pos)};
     if (component.empty()) {
       throw Error(concat("invalid archive name ", QuotedPath(fileName),
                          ": empty package prefix component"));
@@ -181,7 +176,8 @@ Compiler::add(std::string fileOrDirName,
         // the container bytes, so identical containers at different
         // paths dedupe to one module and distinct containers can never
         // collide.
-        auto qualifiedName{"::mdle::" + std::string(MD5Hash::hashFile(fileName))};
+        auto qualifiedName{"::mdle::" +
+                           std::string(MD5Hash::hashFile(fileName))};
         if (auto itr{mModulesByQualifiedName.find(qualifiedName)};
             itr != mModulesByQualifiedName.end()) {
           if (addedModuleNames) {
@@ -192,10 +188,9 @@ Compiler::add(std::string fileOrDirName,
         // Load 'main.mdl' and extract every other entry into a
         // content-addressed cache directory that serves as the anchor
         // for the module's resource lookups.
-        auto extractDir{
-            (std::filesystem::temp_directory_path() /
-             ("smdl-mdle-" + qualifiedName.substr(8)))
-                .string()};
+        auto extractDir{(std::filesystem::temp_directory_path() /
+                         ("smdl-mdle-" + qualifiedName.substr(8)))
+                            .string()};
         auto archive{Archive{fileName}};
         auto mainSource{std::optional<std::string>()};
         for (int i = 0; i < archive.get_file_count(); i++) {
@@ -273,9 +268,9 @@ Compiler::add(std::string fileOrDirName,
         }
       }
     }};
-    if (auto maybePath{fileLocator.locate(
-            fileOrDirName, {},
-            FileLocator::REGULAR_FILES | FileLocator::DIRS)}) {
+    if (auto maybePath{fileLocator.locate(fileOrDirName, {},
+                                          FileLocator::REGULAR_FILES |
+                                              FileLocator::DIRS)}) {
       auto &path{*maybePath};
       if (isFile(path)) {
         addFile(path, parentPathOf(path));
@@ -313,9 +308,8 @@ Compiler::add(std::string fileOrDirName,
           auto prefixI{parseArchivePackagePrefix(archivePaths[i])};
           for (size_t j = i + 1; j < archivePaths.size(); j++) {
             auto prefixJ{parseArchivePackagePrefix(archivePaths[j])};
-            if (auto n{std::min(prefixI.size(), prefixJ.size())};
-                std::equal(prefixI.begin(), prefixI.begin() + n,
-                           prefixJ.begin())) {
+            if (auto n{std::min(prefixI.size(), prefixJ.size())}; std::equal(
+                    prefixI.begin(), prefixI.begin() + n, prefixJ.begin())) {
               throw Error(concat(
                   "archives ", QuotedPath(archivePaths[i]), " and ",
                   QuotedPath(archivePaths[j]),
@@ -380,9 +374,8 @@ void Compiler::resetForRecompile() {
   // Be explicit that the JIT links against the host process's own symbols:
   // '@(foreign)' declarations and emitted libcalls (e.g. 'strncmp')
   // resolve via 'dlsym' on the current process.
-  mLLVMJit = llvmThrowIfError(llvm::orc::LLJITBuilder()
-                                  .setLinkProcessSymbolsByDefault(true)
-                                  .create());
+  mLLVMJit = llvmThrowIfError(
+      llvm::orc::LLJITBuilder().setLinkProcessSymbolsByDefault(true).create());
   mLLVMJit->getExecutionSession().setErrorReporter([this](llvm::Error error) {
     auto message{llvm::toString(std::move(error))};
     SMDL_LOG_ERROR("JIT session error: ", message);
@@ -425,8 +418,7 @@ std::optional<Error> Compiler::compile(OptLevel optLevel) noexcept {
       SMDL_PROFILER_ENTRY("Load images in parallel");
       SMDL_LOG_INFO("Loading images ...");
       auto now{std::chrono::steady_clock::now()};
-      auto imageEntries{
-          std::vector<std::pair<const MD5FileHash *, Image *>>()};
+      auto imageEntries{std::vector<std::pair<const MD5FileHash *, Image *>>()};
       imageEntries.reserve(mImages.size());
       for (auto &[fileHash, image] : mImages)
         imageEntries.emplace_back(fileHash, &image);
@@ -461,11 +453,11 @@ std::optional<Error> Compiler::compile(OptLevel optLevel) noexcept {
     if (optLevel != OPT_LEVEL_NONE) {
       SMDL_PROFILER_ENTRY("Optimize LLVM-IR");
       LLVMOptimizer llvmOptimizer{};
-      llvmOptimizer.run(
-          *mLLVMModule, optLevel == OPT_LEVEL_O1 ? llvm::OptimizationLevel::O1
-                        : optLevel == OPT_LEVEL_O2
-                            ? llvm::OptimizationLevel::O2
-                            : llvm::OptimizationLevel::O3);
+      llvmOptimizer.run(*mLLVMModule, optLevel == OPT_LEVEL_O1
+                                          ? llvm::OptimizationLevel::O1
+                                      : optLevel == OPT_LEVEL_O2
+                                          ? llvm::OptimizationLevel::O2
+                                          : llvm::OptimizationLevel::O3);
     }
   });
 }
@@ -515,12 +507,11 @@ static T &loadResource(std::map<const MD5FileHash *, T> &resources,
 
 const Image &Compiler::loadImage(const std::string &fileName,
                                  const SourceLocation &srcLoc) {
-  return loadResource(mImages, mFileHasher, fileName, srcLoc,
-                      [&](Image &image) {
-                        SMDL_PROFILER_ENTRY("Compiler::loadImage()",
-                                            fileName.c_str());
-                        return image.startLoad(fileName);
-                      });
+  return loadResource(
+      mImages, mFileHasher, fileName, srcLoc, [&](Image &image) {
+        SMDL_PROFILER_ENTRY("Compiler::loadImage()", fileName.c_str());
+        return image.startLoad(fileName);
+      });
 }
 
 const Ptexture &Compiler::loadPtexture(const std::string &fileName,
@@ -537,7 +528,7 @@ const Ptexture &Compiler::loadPtexture(const std::string &fileName,
           return Error(concat("cannot load ", QuotedPath(fileName), ": ",
                               message.c_str()));
         ptexture.texture = texture;
-        // NOTE: No shared 'PtexFilter' — 'PtexFilter::eval' mutates filter
+        // NOTE: No shared 'PtexFilter': 'PtexFilter::eval' mutates filter
         // members, so 'smdlPtexEvaluate' maintains per-thread filters.
         ptexture.channelCount = texture->numChannels();
         ptexture.alphaIndex = texture->alphaChannel();
@@ -572,13 +563,11 @@ const LightProfile &Compiler::loadLightProfile(const std::string &fileName,
 
 SpectrumView Compiler::loadSpectrum(const std::string &fileName,
                                     const SourceLocation &srcLoc) {
-  return SpectrumView(loadResource(mSpectrums, mFileHasher, fileName, srcLoc,
-                                   [&](Spectrum &spectrum) {
-                                     SMDL_PROFILER_ENTRY(
-                                         "Compiler::loadSpectrum()",
-                                         fileName.c_str());
-                                     return spectrum.loadFromFile(fileName);
-                                   }));
+  return SpectrumView(loadResource(
+      mSpectrums, mFileHasher, fileName, srcLoc, [&](Spectrum &spectrum) {
+        SMDL_PROFILER_ENTRY("Compiler::loadSpectrum()", fileName.c_str());
+        return spectrum.loadFromFile(fileName);
+      }));
 }
 
 SpectrumView Compiler::loadSpectrum(const std::string &fileName, int curveIndex,
@@ -699,9 +688,9 @@ Compiler::findMaterial(std::string_view materialName) const noexcept try {
     auto message{concat("Material ", Quoted(materialName),
                         " is ambiguous with ", results.size(), " matches:")};
     for (const auto *jitMaterial : results) {
-      message += concat("\n  ", jitMaterial->qualifiedName, " (",
-                        jitMaterial->moduleFileName, ":", jitMaterial->lineNo,
-                        ")");
+      message +=
+          concat("\n  ", jitMaterial->qualifiedName, " (",
+                 jitMaterial->moduleFileName, ":", jitMaterial->lineNo, ")");
     }
     SMDL_LOG_ERROR(message);
     return nullptr;
@@ -789,8 +778,8 @@ std::string Compiler::printMaterialSummary() const {
                           itr1 - itr0, " materials:\n");
         for (; itr0 != itr1; ++itr0) {
           message += "  ";
-          message += concat(Quoted(itr0->materialName), " (line ",
-                            itr0->lineNo, ")\n");
+          message += concat(Quoted(itr0->materialName), " (line ", itr0->lineNo,
+                            ")\n");
         }
       });
   return message;
@@ -815,9 +804,9 @@ public:
   [[nodiscard]] PtexFilter *get(const smdl::Ptexture &ptex) {
     auto &filter{mFilters[ptex.texture]};
     if (!filter)
-      filter = PtexFilter::getFilter(
-          static_cast<PtexTexture *>(ptex.texture),
-          PtexFilter::Options(PtexFilter::f_bilinear));
+      filter =
+          PtexFilter::getFilter(static_cast<PtexTexture *>(ptex.texture),
+                                PtexFilter::Options(PtexFilter::f_bilinear));
     return filter;
   }
 
@@ -842,14 +831,13 @@ SMDL_EXPORT void smdlPtexEvaluate(const void *state,
   if (ptex && ptex->texture && first < ptex->channelCount) {
     num = std::min(num, int(ptex->channelCount - first));
     thread_local ThreadLocalPtexFilters filters{};
-    filters.get(*ptex)
-        ->eval(out, first, num,
-               static_cast<const smdl::State *>(state)->ptex_face_id,
-               static_cast<const smdl::State *>(state)->ptex_face_uv.x,
-               static_cast<const smdl::State *>(state)->ptex_face_uv.y,
-               /*uw1=*/0.0f, /*vw1=*/0.0f,
-               /*uw2=*/0.0f, /*vw2=*/0.0f,
-               /*width=*/1.0f, /*blur=*/0.0f);
+    filters.get(*ptex)->eval(
+        out, first, num, static_cast<const smdl::State *>(state)->ptex_face_id,
+        static_cast<const smdl::State *>(state)->ptex_face_uv.x,
+        static_cast<const smdl::State *>(state)->ptex_face_uv.y,
+        /*uw1=*/0.0f, /*vw1=*/0.0f,
+        /*uw2=*/0.0f, /*vw2=*/0.0f,
+        /*width=*/1.0f, /*blur=*/0.0f);
     if (gamma == 1) { // sRGB?
       for (int i = 0; i < num; i++) {
         int channel{first + i};
