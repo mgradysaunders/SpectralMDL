@@ -74,6 +74,44 @@ private:
     return std::nullopt;
   }
 
+  /// The result of `nextKeywordAndLocation()` or `nextDelimiterAndLocation()`:
+  /// the parsed source code and the source location where it begins.
+  struct ParsedToken final {
+    /// The source location.
+    SourceLocation srcLoc{};
+
+    /// The source code.
+    std::string_view src{};
+  };
+
+  /// Skip whitespace and comments, then parse the given keyword, also
+  /// capturing the source location at the start of the keyword. This is the
+  /// common prologue of most declaration and statement parse functions.
+  [[nodiscard]] std::optional<ParsedToken>
+  nextKeywordAndLocation(std::string_view str) {
+    skip();
+    auto srcLoc{mSrcLoc};
+    if (auto srcKw{nextKeyword(str)})
+      return ParsedToken{srcLoc, *srcKw};
+    return std::nullopt;
+  }
+
+  /// Same as `nextKeywordAndLocation()`, but for delimiters.
+  [[nodiscard]] std::optional<ParsedToken>
+  nextDelimiterAndLocation(std::string_view str) {
+    skip();
+    auto srcLoc{mSrcLoc};
+    if (auto src{next(str)})
+      return ParsedToken{srcLoc, *src};
+    return std::nullopt;
+  }
+
+  /// Unwrap an optional source string, defaulting to the empty string.
+  [[nodiscard]] static std::string_view
+  orEmpty(const std::optional<std::string_view> &src) {
+    return src ? *src : std::string_view();
+  }
+
   [[nodiscard]] std::optional<std::string_view> nextWord();
 
   [[nodiscard]] std::optional<std::string_view> nextInteger();
@@ -94,6 +132,54 @@ private:
   void reject() {
     SMDL_SANITY_CHECK(mSrcLocStack.size() >= 1);
     mSrcLoc = mSrcLocStack.back(), mSrcLocStack.pop_back();
+  }
+
+  /// The maximum recursion depth of `parseUnaryExpression()` and
+  /// `parseStatement()`, so pathologically nested inputs fail with a parse
+  /// error instead of overflowing the native stack.
+  static constexpr int MAX_PARSE_DEPTH = 256;
+
+  /// The RAII guard that enforces `MAX_PARSE_DEPTH`.
+  struct ParseDepthGuard final {
+    explicit ParseDepthGuard(Parser &parser) : mParser(parser) {
+      if (mParser.mParseDepth >= MAX_PARSE_DEPTH)
+        mParser.mSrcLoc.throwError("nesting exceeds maximum parse depth");
+      ++mParser.mParseDepth;
+    }
+
+    ~ParseDepthGuard() { --mParser.mParseDepth; }
+
+    Parser &mParser;
+  };
+
+  /// Parse a comma-separated list of items into `items`.
+  ///
+  /// The `parseItem` callback must return an optional-like value of the item
+  /// type, which must have a `srcComma` member. The list is lenient in that
+  /// it terminates without an error at the first item that fails to parse,
+  /// so the caller is responsible for verifying that the relevant closing
+  /// delimiter follows. If `srcCloser` is non-empty, the list also
+  /// terminates if it appears after a comma, e.g., to allow a trailing
+  /// comma before the `]]` that closes an annotation block.
+  template <typename Item, typename ParseItem>
+  void parseCommaSeparated(std::vector<Item> &items, const ParseItem &parseItem,
+                           std::string_view srcCloser = {}) {
+    while (true) {
+      skip();
+      auto item{parseItem()};
+      if (!item)
+        break;
+      items.push_back(std::move(*item));
+      auto srcComma{nextDelimiter(",")};
+      if (!srcComma)
+        break;
+      items.back().srcComma = *srcComma;
+      if (!srcCloser.empty()) {
+        skip();
+        if (startsWith(getRemainingSourceCode(), srcCloser))
+          break;
+      }
+    }
   }
   //--}
 
@@ -198,7 +284,7 @@ private:
       }
       skip();
 
-      // If parsing an approximate comparison operator `==~` or `!=~`, then
+      // If parsing an approximate comparison operator `~==` or `~!=`, then
       // also parse the epsilon in `[ ... ]` after the operator and before
       // the right-hand side expression. This is extended syntax!
       if (op->op == BINOP_APPROX_CMP_EQ || //
@@ -330,6 +416,21 @@ private:
 
   [[nodiscard]] auto parseForStatement() -> BumpPtr<AST::For>;
 
+  /// Parse a `break` or `continue` statement, which are identical except
+  /// for the keyword and the AST node type.
+  template <typename Node>
+  [[nodiscard]] BumpPtr<Node> parseJumpStatement(std::string_view keyword) {
+    auto kw{nextKeywordAndLocation(keyword)};
+    if (!kw)
+      return nullptr;
+    auto lateIf{parseLateIf()};
+    auto srcSemicolon{nextDelimiter(";")};
+    if (!srcSemicolon)
+      kw->srcLoc.throwError("expected ';' after ", Quoted(keyword));
+    return allocate<Node>(kw->srcLoc, std::in_place, kw->src, std::move(lateIf),
+                          *srcSemicolon);
+  }
+
   [[nodiscard]] auto parseBreakStatement() -> BumpPtr<AST::Break>;
 
   [[nodiscard]] auto parseContinueStatement() -> BumpPtr<AST::Continue>;
@@ -354,7 +455,14 @@ private:
 
   SourceLocation mSrcLoc{};
 
+  /// The checkpoint stack for backtracking. NOTE: A thrown parse error may
+  /// leave entries behind. This is fine because each `Parser` is discarded
+  /// after a single call to `parse()`, but do not reuse a `Parser` after
+  /// catching a parse error!
   std::vector<SourceLocation> mSrcLocStack;
+
+  /// The current recursion depth, see `ParseDepthGuard`.
+  int mParseDepth{};
 
   bool mIsSMDL{};
 

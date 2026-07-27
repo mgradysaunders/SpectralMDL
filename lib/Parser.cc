@@ -1,6 +1,9 @@
 // vim:foldmethod=marker:foldlevel=0:fmr=--{,--}
 #include "smdl/Parser.h"
 
+#include <algorithm>
+#include <charconv>
+
 #include "llvm/ADT/APFloat.h"
 #include "llvm/ADT/APInt.h"
 #include "llvm/Support/Casting.h"
@@ -58,7 +61,7 @@ std::optional<std::string_view> Parser::nextKeyword(std::string_view str) {
 std::optional<std::string_view> Parser::nextWord() {
   checkpoint();
   auto i{mSrcLoc.i};
-  if (peek() == '$')
+  if (mIsSMDL && peek() == '$') // The `$` prefix is extended syntax!
     next();
   if (isAlpha(peek()) || peek() == '_') {
     next();
@@ -91,11 +94,12 @@ void Parser::skip() {
         next(1);
       return true;
     } else if (startsWith(getRemainingSourceCode(), "/*")) {
+      auto srcLocComment{mSrcLoc};
       next(2);
       while (!isEOF() && !startsWith(getRemainingSourceCode(), "*/"))
         next(1);
       if (isEOF())
-        mSrcLoc.throwError("unexpected EOF in multiline comment");
+        srcLocComment.throwError("unterminated multiline comment");
       next(2);
       return true;
     } else if (isSpace(peek())) {
@@ -114,37 +118,29 @@ void Parser::skip() {
 auto Parser::parseSimpleName() -> std::optional<AST::Name> {
   auto srcLoc0{checkpoint()};
   if (auto name{nextWord()}) {
-    static const std::string_view keywords[]{
+    // NOTE: These must remain sorted for `std::binary_search`!
+    static constexpr std::string_view keywords[]{
         "break",   "case",   "cast", "const",   "continue", "default",
         "do",      "else",   "enum", "export",  "false",    "for",
         "if",      "import", "let",  "module",  "package",  "return",
         "struct",  "switch", "true", "typedef", "uniform",  "using",
         "varying", "while",
     };
-    for (const auto &keyword : keywords) {
-      if (*name == keyword) {
-        reject();
-        return std::nullopt;
-      }
+    static constexpr std::string_view keywordsSmdlSyntax[]{
+        "defer",  "inline", "namespace",   "return_from",
+        "static", "tag",    "unreachable", "visit",
+    };
+    bool isKeyword{
+        std::binary_search(std::begin(keywords), std::end(keywords), *name) ||
+        (mIsSMDL && std::binary_search(std::begin(keywordsSmdlSyntax),
+                                       std::end(keywordsSmdlSyntax), *name))};
+    if (!isKeyword) {
+      accept();
+      return AST::Name{srcLoc0, *name};
     }
-    if (mIsSMDL) {
-      static const std::string_view keywordsSmdlSyntax[]{
-          "defer",  "inline", "namespace",   "return_from",
-          "static", "tag",    "unreachable", "visit",
-      };
-      for (const auto &keyword : keywordsSmdlSyntax) {
-        if (*name == keyword) {
-          reject();
-          return std::nullopt;
-        }
-      }
-    }
-    accept();
-    return AST::Name{srcLoc0, *name};
-  } else {
-    reject();
-    return std::nullopt;
   }
+  reject();
+  return std::nullopt;
 }
 
 auto Parser::parseIdentifier() -> BumpPtr<AST::Identifier> {
@@ -152,8 +148,8 @@ auto Parser::parseIdentifier() -> BumpPtr<AST::Identifier> {
   auto elements{std::vector<AST::Identifier::Element>{}};
   auto srcDoubleColon{next("::")};
   if (auto name{parseSimpleName()}) {
-    elements.push_back(AST::Identifier::Element{
-        srcDoubleColon ? *srcDoubleColon : std::string_view(), *name});
+    elements.push_back(
+        AST::Identifier::Element{orEmpty(srcDoubleColon), *name});
   } else {
     if (srcDoubleColon) {
       srcLoc0.throwError("expected name after '::'");
@@ -189,8 +185,10 @@ auto Parser::parseType() -> BumpPtr<AST::Type> {
   auto srcQuals{std::vector<std::string_view>()};
   while (true) {
     checkpoint();
-    if (auto srcQual{
-            nextKeyword({"const", "inline", "static", "uniform", "varying"})}) {
+    // The `inline` and `static` qualifiers are extended syntax!
+    if (auto srcQual{mIsSMDL ? nextKeyword({"const", "inline", "static",
+                                            "uniform", "varying"})
+                             : nextKeyword({"const", "uniform", "varying"})}) {
       accept();
       srcQuals.push_back(*srcQual);
     } else {
@@ -250,17 +248,7 @@ auto Parser::parseParameterList() -> std::optional<AST::ParameterList> {
     params.srcStar = *srcStar;
   } else {
     params.params.reserve(4);
-    while (true) {
-      skip();
-      auto param{parseParameter()};
-      if (!param)
-        break;
-      params.params.emplace_back(std::move(*param));
-      auto srcComma{nextDelimiter(",")};
-      if (!srcComma)
-        break;
-      params.params.back().srcComma = *srcComma;
-    }
+    parseCommaSeparated(params.params, [&] { return parseParameter(); });
     auto srcEllipsis{nextDelimiter("...")};
     if (srcEllipsis) {
       // The last parameter must have a trailing comma if the parameter list
@@ -324,17 +312,7 @@ auto Parser::parseArgumentList() -> std::optional<AST::ArgumentList> {
     return std::nullopt;
   }
   args.srcParenL = *srcParenL;
-  while (true) {
-    skip();
-    auto argument{parseArgument()};
-    if (!argument)
-      break;
-    args.args.push_back(std::move(*argument));
-    auto srcComma{nextDelimiter(",")};
-    if (!srcComma)
-      break;
-    args.args.back().srcComma = *srcComma;
-  }
+  parseCommaSeparated(args.args, [&] { return parseArgument(); });
   auto srcParenR{nextDelimiter(")")};
   if (!srcParenR) {
     reject();
@@ -362,30 +340,16 @@ auto Parser::parseAnnotation() -> std::optional<AST::Annotation> {
 }
 
 auto Parser::parseAnnotationBlock() -> BumpPtr<AST::AnnotationBlock> {
-  skip();
-  auto srcLoc0{mSrcLoc};
-  auto srcDoubleBrackL{nextDelimiter("[[")};
-  if (!srcDoubleBrackL)
+  auto brackL{nextDelimiterAndLocation("[[")};
+  if (!brackL)
     return nullptr;
   auto annos{std::vector<AST::Annotation>{}};
-  while (true) {
-    auto anno{parseAnnotation()};
-    if (!anno)
-      break;
-    annos.push_back(std::move(*anno));
-    auto srcComma{nextDelimiter(",")};
-    if (!srcComma)
-      break;
-    annos.back().srcComma = *srcComma;
-    skip();
-    if (startsWith(getRemainingSourceCode(), "]]"))
-      break;
-  }
+  parseCommaSeparated(annos, [&] { return parseAnnotation(); }, "]]");
   auto srcDoubleBrackR{nextDelimiter("]]")};
   if (!srcDoubleBrackR)
-    srcLoc0.throwError("expected ']]' to close annotation block");
-  return allocate<AST::AnnotationBlock>(srcLoc0, std::in_place,
-                                        *srcDoubleBrackL, std::move(annos),
+    mSrcLoc.throwError("expected annotation, ',', or ']]' in annotation block");
+  return allocate<AST::AnnotationBlock>(brackL->srcLoc, std::in_place,
+                                        brackL->src, std::move(annos),
                                         *srcDoubleBrackR);
 }
 
@@ -406,8 +370,7 @@ auto Parser::parseExpressionInParentheses() -> BumpPtr<AST::Expr> {
   if (!srcParenR)
     srcLoc0.throwError("expected closing ')'");
   accept();
-  return allocate<AST::Parens>(srcLoc0, std::in_place,
-                               srcDollar ? *srcDollar : std::string_view(),
+  return allocate<AST::Parens>(srcLoc0, std::in_place, orEmpty(srcDollar),
                                *srcParenL, std::move(expr), *srcParenR);
 }
 
@@ -442,8 +405,10 @@ auto Parser::parseConditionalExpression() -> BumpPtr<AST::Expr> {
       srcLoc0.throwError("expected then clause in conditional expression");
     skip();
     auto srcColon{next(":")};
-    auto exprElse{srcColon ? parseAssignmentExpression()
-                           : BumpPtr<AST::Expr>(nullptr)};
+    if (!srcColon)
+      mSrcLoc.throwError("expected ':' after then clause in conditional "
+                         "expression");
+    auto exprElse{parseAssignmentExpression()};
     if (!exprElse)
       srcLoc0.throwError("expected else clause in conditional expression");
     expr = allocate<AST::Select>(srcLoc0, std::in_place, std::move(expr),
@@ -506,6 +471,7 @@ auto Parser::parseMultiplicativeExpression() -> BumpPtr<AST::Expr> {
 }
 
 auto Parser::parseUnaryExpression() -> BumpPtr<AST::Expr> {
+  ParseDepthGuard depthGuard{*this};
   if (auto expr{parsePostfixExpression()})
     return expr;
   auto parsePrefixExpression{[&]() -> BumpPtr<AST::Expr> {
@@ -599,11 +565,10 @@ auto Parser::parsePostfixExpression() -> BumpPtr<AST::Expr> {
 }
 
 auto Parser::parseLetExpression() -> BumpPtr<AST::Expr> {
-  skip();
-  auto srcLoc0{mSrcLoc};
-  auto srcKwLet{nextKeyword("let")};
-  if (!srcKwLet)
+  auto kwLet{nextKeywordAndLocation("let")};
+  if (!kwLet)
     return nullptr;
+  auto srcLoc0{kwLet->srcLoc};
   auto decls{std::vector<BumpPtr<AST::Decl>>{}};
   auto srcBraceL{std::optional<std::string_view>()};
   auto srcBraceR{std::optional<std::string_view>()};
@@ -631,23 +596,21 @@ auto Parser::parseLetExpression() -> BumpPtr<AST::Expr> {
   auto expr{parseConditionalExpression()};
   if (!expr)
     srcLoc0.throwError("expected expression after 'let ... in'");
-  return allocate<AST::Let>(
-      srcLoc0, std::in_place, *srcKwLet,
-      srcBraceL ? *srcBraceL : std::string_view(), std::move(decls),
-      srcBraceR ? *srcBraceR : std::string_view(), *srcKwIn, std::move(expr));
+  return allocate<AST::Let>(srcLoc0, std::in_place, kwLet->src,
+                            orEmpty(srcBraceL), std::move(decls),
+                            orEmpty(srcBraceR), *srcKwIn, std::move(expr));
 }
 
 auto Parser::parseReturnFromExpression() -> BumpPtr<AST::Expr> {
-  skip();
-  auto srcLoc0{mSrcLoc};
-  auto srcKwReturnFrom{nextKeyword("return_from")};
-  if (!srcKwReturnFrom)
+  auto kwReturnFrom{nextKeywordAndLocation("return_from")};
+  if (!kwReturnFrom)
     return nullptr;
   auto stmt{parseCompoundStatement()};
   if (!stmt)
-    srcLoc0.throwError("expected compound statement after 'return_from'");
-  return allocate<AST::ReturnFrom>(srcLoc0, std::in_place, *srcKwReturnFrom,
-                                   std::move(stmt));
+    kwReturnFrom->srcLoc.throwError(
+        "expected compound statement after 'return_from'");
+  return allocate<AST::ReturnFrom>(kwReturnFrom->srcLoc, std::in_place,
+                                   kwReturnFrom->src, std::move(stmt));
 }
 
 auto Parser::parsePrimaryExpression() -> BumpPtr<AST::Expr> {
@@ -724,12 +687,15 @@ auto Parser::parseLiteralStringExpression() -> BumpPtr<AST::LiteralString> {
     return true;
   }};
   auto srcValues{std::vector<std::string_view>{}};
+  // The start of the current string segment, which advances past `srcLoc0`
+  // when adjacent string literals are concatenated.
+  auto srcLocSeg{srcLoc0};
   while (nextDelimiter("\"")) {
     while (true) {
       if (isEOF())
-        srcLoc0.throwError("unexpected EOF in literal string");
+        srcLocSeg.throwError("unexpected EOF in literal string");
       if (peek() == '\n')
-        srcLoc0.throwError("unexpected EOL in literal string");
+        srcLocSeg.throwError("unexpected EOL in literal string");
       if (peek() == '"')
         break;
       if (char ch{next()}; ch != '\\') {
@@ -751,20 +717,22 @@ auto Parser::parseLiteralStringExpression() -> BumpPtr<AST::LiteralString> {
         } else if (ch == 'v') { // vertical tab
           str += '\v';
         } else if (isDigit8(ch)) { // octal
-          uint8_t byte = uint8_t(octToInt(ch));
+          uint32_t byte{uint32_t(octToInt(ch))};
           for (int i{}; i < 2; i++) {
             ch = next();
             if (!isDigit8(ch))
-              srcLoc0.throwError("expected 3 octal digits after '\\'");
-            byte = (byte << 3) | uint8_t(octToInt(ch));
+              srcLocSeg.throwError("expected 3 octal digits after '\\'");
+            byte = (byte << 3) | uint32_t(octToInt(ch));
           }
-          str += static_cast<char>(byte); // Could overflow?
-        } else if (ch == 'x') {           // hexadecimal
+          if (byte > 255)
+            srcLocSeg.throwError("octal escape sequence out of range");
+          str += static_cast<char>(byte);
+        } else if (ch == 'x') { // hexadecimal
           uint8_t byte{};
           for (int i{}; i < 2; i++) {
             ch = next();
             if (!isDigit16(ch))
-              srcLoc0.throwError("expected 2 hexadecimal digits after '\\x'");
+              srcLocSeg.throwError("expected 2 hexadecimal digits after '\\x'");
             byte = (byte << 4) | uint8_t(hexToInt(ch));
           }
           str += static_cast<char>(byte);
@@ -773,31 +741,31 @@ auto Parser::parseLiteralStringExpression() -> BumpPtr<AST::LiteralString> {
           for (int i{}; i < 4; i++) {
             ch = next();
             if (!isDigit16(ch))
-              srcLoc0.throwError("expected 4 hexadecimal digits after '\\u'");
+              srcLocSeg.throwError("expected 4 hexadecimal digits after '\\u'");
             codepoint = (codepoint << 4) | uint32_t(hexToInt(ch));
           }
           if (!appendCodepointAsUTF8(codepoint))
-            srcLoc0.throwError("UTF-8 encoding of '\\u' sequence failed");
+            srcLocSeg.throwError("UTF-8 encoding of '\\u' sequence failed");
         } else if (ch == 'U') { // unicode 32-bit
           uint32_t codepoint{};
           for (int i{}; i < 8; i++) {
             ch = next();
             if (!isDigit16(ch))
-              srcLoc0.throwError("expected 8 hexadecimal digits after '\\U'");
+              srcLocSeg.throwError("expected 8 hexadecimal digits after '\\U'");
             codepoint = (codepoint << 4) | uint32_t(hexToInt(ch));
           }
           if (!appendCodepointAsUTF8(codepoint))
-            srcLoc0.throwError("UTF-8 encoding of '\\U' sequence failed");
+            srcLocSeg.throwError("UTF-8 encoding of '\\U' sequence failed");
         } else {
           str += ch;
         }
       }
     }
     if (!nextDelimiter("\""))
-      srcLoc0.throwError("expected '\"' to close literal string");
-    srcValues.push_back(getSourceCodeBetween(srcLoc0, mSrcLoc));
+      srcLocSeg.throwError("expected '\"' to close literal string");
+    srcValues.push_back(getSourceCodeBetween(srcLocSeg, mSrcLoc));
     skip();
-    srcLoc0 = mSrcLoc;
+    srcLocSeg = mSrcLoc;
   }
   return allocate<AST::LiteralString>(srcLoc0, std::in_place,
                                       std::move(srcValues), std::move(str));
@@ -837,9 +805,16 @@ auto Parser::parseLiteralNumberExpression() -> BumpPtr<AST::Expr> {
     digitsStr += std::string(digits);
     return llvm::APInt(bits, digits, radix);
   }};
-  if (auto remaining{getRemainingSourceCode()};
-      !startsWith(remaining, "0.") && !startsWith(remaining, "0e") &&
-      !startsWith(remaining, "0E") && next("0")) {
+  // Is the remaining source code `0` followed by any of the given
+  // characters? A `0` followed by `.`, an exponent, or a suffix begins an
+  // ordinary decimal literal, not an octal/binary/hexadecimal literal.
+  auto zeroFollowedByAny{[&](std::string_view chars) {
+    auto remaining{getRemainingSourceCode()};
+    return remaining.size() >= 2 && remaining[0] == '0' &&
+           chars.find(remaining[1]) != std::string_view::npos;
+  }};
+  if (!zeroFollowedByAny(".eEfFdD") && !(mIsSMDL && zeroFollowedByAny("j")) &&
+      next("0")) {
     llvm::APInt value{64, 0};
     std::string digits{};
     if (isDigit8(peek())) {
@@ -851,6 +826,8 @@ auto Parser::parseLiteralNumberExpression() -> BumpPtr<AST::Expr> {
     } else {
       digits = "0";
     }
+    if (isDigit(peek()))
+      mSrcLoc.throwError("invalid digit in integer literal");
     return allocate<AST::LiteralInt>(srcLoc0, std::in_place,
                                      getSourceCodeBetween(srcLoc0, mSrcLoc),
                                      value.getLimitedValue());
@@ -881,16 +858,22 @@ auto Parser::parseLiteralNumberExpression() -> BumpPtr<AST::Expr> {
       isInt = false;
     }
     if (isInt) {
+      auto bits{llvm::APInt::getBitsNeeded(digits, 10)};
+      if (bits > 64)
+        srcLoc0.logWarn("integer literal exceeds 64 bits");
       return allocate<AST::LiteralInt>(
           srcLoc0, std::in_place, getSourceCodeBetween(srcLoc0, mSrcLoc),
-          llvm::APInt(llvm::APInt::getBitsNeeded(digits, 10), digits, 10)
-              .getLimitedValue());
+          llvm::APInt(bits, digits, 10).getLimitedValue());
     } else {
       llvm::APFloat value(llvm::APFloat::IEEEdouble());
       auto opStatus{
           value.convertFromString(digits, llvm::APFloat::rmNearestTiesToEven)};
-      if (!opStatus)
+      if (!opStatus) {
+        llvm::consumeError(opStatus.takeError());
         srcLoc0.throwError("failed to parse floating point literal");
+      }
+      if (*opStatus & llvm::APFloat::opOverflow)
+        srcLoc0.logWarn("floating point literal exceeds range of 'double'");
       return allocate<AST::LiteralFloat>(srcLoc0, std::in_place,
                                          getSourceCodeBetween(srcLoc0, mSrcLoc),
                                          value.convertToDouble());
@@ -980,23 +963,19 @@ auto Parser::parseFile() -> BumpPtr<AST::File> {
       break;
   }
   if (!isEOF())
-    srcLoc0.throwError("expected EOF (apparently failed to parse everything!)");
-  return allocate<AST::File>(
-      srcLoc0, std::in_place,
-      srcKwSmdlSyntax ? *srcKwSmdlSyntax : std::string_view(),
-      std::move(version), std::move(importDecls),
-      srcKwModule ? *srcKwModule : std::string_view(),
-      std::move(moduleAnnotations),
-      srcSemicolonAfterModule ? *srcSemicolonAfterModule : std::string_view(),
-      std::move(globalDecls));
+    mSrcLoc.throwError("unexpected token, expected a declaration");
+  return allocate<AST::File>(srcLoc0, std::in_place, orEmpty(srcKwSmdlSyntax),
+                             std::move(version), std::move(importDecls),
+                             orEmpty(srcKwModule), std::move(moduleAnnotations),
+                             orEmpty(srcSemicolonAfterModule),
+                             std::move(globalDecls));
 }
 
 auto Parser::parseFileVersion() -> std::optional<AST::File::Version> {
-  skip();
-  auto srcLoc0{mSrcLoc};
-  auto srcKwMdl{nextKeyword("mdl")};
-  if (!srcKwMdl)
+  auto kwMdl{nextKeywordAndLocation("mdl")};
+  if (!kwMdl)
     return std::nullopt;
+  auto srcLoc0{kwMdl->srcLoc};
   skip();
   auto srcLoc1{mSrcLoc};
   auto srcMajor{nextInteger()};
@@ -1004,11 +983,20 @@ auto Parser::parseFileVersion() -> std::optional<AST::File::Version> {
   auto srcMinor{nextInteger()};
   if (!srcMajor || !srcDot || !srcMinor)
     srcLoc0.throwError("expected 'X.Y' version after 'mdl'");
+  auto parseVersionNumber{[&](std::string_view srcNumber) {
+    uint32_t number{};
+    if (std::from_chars(srcNumber.data(), srcNumber.data() + srcNumber.size(),
+                        number)
+            .ec != std::errc())
+      srcLoc0.throwError("version number ", Quoted(srcNumber),
+                         " is out of range");
+    return number;
+  }};
   AST::File::Version version{};
-  version.srcKwMdl = *srcKwMdl;
+  version.srcKwMdl = kwMdl->src;
   version.srcVersion = getSourceCode().substr(srcLoc1.i, mSrcLoc.i - srcLoc1.i);
-  version.major = llvm::APInt(32, *srcMajor, 10).getLimitedValue();
-  version.minor = llvm::APInt(32, *srcMinor, 10).getLimitedValue();
+  version.major = parseVersionNumber(*srcMajor);
+  version.minor = parseVersionNumber(*srcMinor);
   auto srcSemicolon{nextDelimiter(";")};
   if (!srcSemicolon)
     srcLoc0.throwError("expected ';' after 'mdl ...'");
@@ -1107,17 +1095,12 @@ auto Parser::parseUsingImport() -> BumpPtr<AST::UsingImport> {
   if (auto srcStar{nextDelimiter("*")}) {
     names.push_back(AST::UsingImport::Name{*srcStar, {}});
   } else {
-    while (true) {
+    parseCommaSeparated(names, [&]() -> std::optional<AST::UsingImport::Name> {
       auto name{parseSimpleName()};
       if (!name)
-        break;
-      // srcLoc0.throwError("expected import name");
-      names.push_back(AST::UsingImport::Name{name->srcName, {}});
-      auto srcComma{nextDelimiter(",")};
-      if (!srcComma)
-        break;
-      names.back().srcComma = *srcComma;
-    }
+        return std::nullopt;
+      return AST::UsingImport::Name{name->srcName, {}};
+    });
   }
   auto srcSemicolon{nextDelimiter(";")};
   if (!srcSemicolon)
@@ -1132,55 +1115,57 @@ auto Parser::parseUsingImport() -> BumpPtr<AST::UsingImport> {
 }
 
 auto Parser::parseImport() -> BumpPtr<AST::Import> {
-  skip();
-  auto srcLoc0{mSrcLoc};
-  auto srcKwImport{nextKeyword("import")};
-  if (!srcKwImport)
+  auto kwImport{nextKeywordAndLocation("import")};
+  if (!kwImport)
     return nullptr;
   auto importPathWrappers{std::vector<AST::Import::ImportPathWrapper>{}};
-  while (true) {
-    auto importPath{parseImportPath()};
-    if (!importPath)
-      break;
-    // srcLoc0.throwError("expected import path");
-    importPathWrappers.push_back(
-        AST::Import::ImportPathWrapper{std::move(*importPath), {}});
-    auto srcComma{nextDelimiter(",")};
-    if (!srcComma)
-      break;
-    importPathWrappers.back().srcComma = *srcComma;
-  }
+  parseCommaSeparated(importPathWrappers,
+                      [&]() -> std::optional<AST::Import::ImportPathWrapper> {
+                        auto importPath{parseImportPath()};
+                        if (!importPath)
+                          return std::nullopt;
+                        return AST::Import::ImportPathWrapper{
+                            std::move(*importPath), {}};
+                      });
   auto srcSemicolon{nextDelimiter(";")};
   if (!srcSemicolon)
-    srcLoc0.throwError("expected ';' after 'import ...'");
-  return allocate<AST::Import>(srcLoc0, std::in_place, *srcKwImport,
+    kwImport->srcLoc.throwError("expected ';' after 'import ...'");
+  return allocate<AST::Import>(kwImport->srcLoc, std::in_place, kwImport->src,
                                std::move(importPathWrappers), *srcSemicolon);
 }
 
 auto Parser::parseAttributes() -> std::optional<AST::Decl::Attributes> {
-  skip();
-  auto srcLoc0{mSrcLoc};
-  auto srcAt{nextDelimiter("@")};
+  auto srcAt{nextDelimiterAndLocation("@")};
   if (!srcAt)
     return std::nullopt;
+  auto srcLoc0{srcAt->srcLoc};
   auto attributes{AST::Function::Attributes{}};
-  attributes.srcAt = *srcAt;
+  attributes.srcAt = srcAt->src;
   auto srcParenL{nextDelimiter("(")};
   if (!srcParenL)
     srcLoc0.throwError("expected '@(...)' syntax for function attributes");
   attributes.srcParenL = *srcParenL;
+  static constexpr std::array<std::string_view, 11> attrNames{
+      "alwaysinline", "cold",    "fastmath", "foreign", "hot",    "macro",
+      "noinline",     "optnone", "optsize",  "pure",    "visible"};
   while (true) {
-    checkpoint();
-    if (auto attr{nextKeyword({"alwaysinline", "cold", "fastmath", "foreign",
-                               "hot", "macro", "noinline", "optnone", "optsize",
-                               "pure", "visible"})}) {
-      accept();
+    auto attr{[&]() -> std::optional<std::string_view> {
+      for (auto attrName : attrNames)
+        if (auto srcAttr{nextKeyword(attrName)})
+          return srcAttr;
+      return std::nullopt;
+    }()};
+    if (attr) {
       attributes.attrs.push_back(*attr);
     } else {
       skip();
-      if (peek() != ')')
-        srcLoc0.throwError("unrecognized attribute");
-      reject();
+      if (peek() != ')') {
+        auto srcLocAttr{mSrcLoc};
+        if (auto word{nextWord()})
+          srcLocAttr.throwError("unrecognized attribute ", Quoted(*word),
+                                ", expected one of ", join(attrNames, ", "));
+        srcLocAttr.throwError("expected attribute name or ')' after '@('");
+      }
       break;
     }
   }
@@ -1231,11 +1216,10 @@ auto Parser::parseGlobalDeclaration() -> BumpPtr<AST::Decl> {
 }
 
 auto Parser::parseAnnotationDeclaration() -> BumpPtr<AST::Decl> {
-  skip();
-  auto srcLoc0{mSrcLoc};
-  auto srcKwAnnotation{nextKeyword("annotation")};
-  if (!srcKwAnnotation)
+  auto kwAnnotation{nextKeywordAndLocation("annotation")};
+  if (!kwAnnotation)
     return nullptr;
+  auto srcLoc0{kwAnnotation->srcLoc};
   auto name{parseSimpleName()};
   if (!name)
     srcLoc0.throwError("expected simple name after 'annotation'");
@@ -1247,9 +1231,9 @@ auto Parser::parseAnnotationDeclaration() -> BumpPtr<AST::Decl> {
   auto srcSemicolon{nextDelimiter(";")};
   if (!srcSemicolon)
     srcLoc0.throwError("expected ';' after 'annotation' declaration");
-  return allocate<AST::AnnotationDecl>(srcLoc0, std::in_place, *srcKwAnnotation,
-                                       std::move(*name), std::move(*params),
-                                       std::move(annotations), *srcSemicolon);
+  return allocate<AST::AnnotationDecl>(
+      srcLoc0, std::in_place, kwAnnotation->src, std::move(*name),
+      std::move(*params), std::move(annotations), *srcSemicolon);
 }
 
 auto Parser::parseTypeDeclaration() -> BumpPtr<AST::Decl> {
@@ -1267,11 +1251,10 @@ auto Parser::parseTypeDeclaration() -> BumpPtr<AST::Decl> {
 }
 
 auto Parser::parseAliasTypeDeclaration() -> BumpPtr<AST::Typedef> {
-  skip();
-  auto srcLoc0{mSrcLoc};
-  auto srcKwTypedef{nextKeyword("typedef")};
-  if (!srcKwTypedef)
+  auto kwTypedef{nextKeywordAndLocation("typedef")};
+  if (!kwTypedef)
     return nullptr;
+  auto srcLoc0{kwTypedef->srcLoc};
   auto type{parseType()};
   if (!type)
     srcLoc0.throwError("expected type after 'typedef'");
@@ -1281,7 +1264,7 @@ auto Parser::parseAliasTypeDeclaration() -> BumpPtr<AST::Typedef> {
   auto srcSemicolon{nextDelimiter(";")};
   if (!srcSemicolon)
     srcLoc0.throwError("expected ';' after 'typedef ...'");
-  return allocate<AST::Typedef>(srcLoc0, std::in_place, *srcKwTypedef,
+  return allocate<AST::Typedef>(srcLoc0, std::in_place, kwTypedef->src,
                                 std::move(type), *name, *srcSemicolon);
 }
 
@@ -1298,24 +1281,19 @@ auto Parser::parseStructTypeDeclaration() -> BumpPtr<AST::Struct> {
   auto tags{std::vector<AST::Struct::Tag>{}};
   auto srcColonBeforeTags{nextDelimiter(":")};
   if (srcColonBeforeTags) {
-    while (true) {
-      skip();
+    parseCommaSeparated(tags, [&]() -> std::optional<AST::Struct::Tag> {
       auto srcLoc1{mSrcLoc};
       auto srcKwDefault{nextKeyword("default")};
       auto tagName{parseIdentifier()};
       if (!tagName)
-        break;
-      auto &tag{tags.emplace_back()};
-      if (srcKwDefault)
-        tag.srcKwDefault = *srcKwDefault;
+        return std::nullopt;
+      auto tag{AST::Struct::Tag{}};
+      tag.srcKwDefault = orEmpty(srcKwDefault);
       tag.type = allocate<AST::Type>(srcLoc1, std::in_place,
                                      std::vector<std::string_view>(),
                                      std::move(tagName));
-      auto srcComma{nextDelimiter(",")};
-      if (!srcComma)
-        break;
-      tag.srcComma = *srcComma;
-    }
+      return std::move(tag);
+    });
   }
   auto annotations{parseAnnotationBlock()};
   auto srcBraceL{nextDelimiter("{")};
@@ -1359,17 +1337,15 @@ auto Parser::parseStructTypeDeclaration() -> BumpPtr<AST::Struct> {
   }
   auto srcBraceR{nextDelimiter("}")};
   if (!srcBraceR)
-    srcLoc0.throwError("expected '}' after 'struct ... { ...'");
+    mSrcLoc.throwError("expected field declarator or '}' in 'struct ...'");
   auto srcSemicolon{nextDelimiter(";")};
   if (!srcSemicolon)
     srcLoc0.throwError("expected ';' after 'struct ... { ... }'");
   accept();
   return allocate<AST::Struct>(
-      srcLoc0, std::in_place, *srcKwStruct, *name,
-      srcColonBeforeTags ? *srcColonBeforeTags : std::string_view(),
+      srcLoc0, std::in_place, *srcKwStruct, *name, orEmpty(srcColonBeforeTags),
       std::move(tags), std::move(annotations), *srcBraceL,
-      std::move(constructors), std::move(fields),
-      srcKwFinalize ? *srcKwFinalize : std::string_view(),
+      std::move(constructors), std::move(fields), orEmpty(srcKwFinalize),
       std::move(stmtFinalize), *srcBraceR, *srcSemicolon);
 }
 
@@ -1438,11 +1414,10 @@ auto Parser::parseStructFieldDeclarator() -> std::optional<AST::Struct::Field> {
 }
 
 auto Parser::parseEnumTypeDeclaration() -> BumpPtr<AST::Enum> {
-  skip();
-  auto srcLoc0{mSrcLoc};
-  auto srcKwEnum{nextKeyword("enum")};
-  if (!srcKwEnum)
+  auto kwEnum{nextKeywordAndLocation("enum")};
+  if (!kwEnum)
     return nullptr;
+  auto srcLoc0{kwEnum->srcLoc};
   auto name{parseSimpleName()};
   if (!name)
     srcLoc0.throwError("expected name after 'enum'");
@@ -1451,23 +1426,14 @@ auto Parser::parseEnumTypeDeclaration() -> BumpPtr<AST::Enum> {
   if (!srcBraceL)
     srcLoc0.throwError("expected '{' after 'enum ...'");
   auto declarators{std::vector<AST::Enum::Declarator>{}};
-  while (true) {
-    auto declarator{parseEnumValueDeclarator()};
-    if (!declarator)
-      break;
-    declarators.push_back(std::move(*declarator));
-    auto srcComma{nextDelimiter(",")};
-    if (!srcComma)
-      break;
-    declarators.back().srcComma = *srcComma;
-  }
+  parseCommaSeparated(declarators, [&] { return parseEnumValueDeclarator(); });
   auto srcBraceR{nextDelimiter("}")};
   if (!srcBraceR)
-    srcLoc0.throwError("expected '}' after 'enum ... { ...'");
+    mSrcLoc.throwError("expected value declarator or '}' in 'enum ...'");
   auto srcSemicolon{nextDelimiter(";")};
   if (!srcSemicolon)
     srcLoc0.throwError("expected ';' after 'enum ...'");
-  return allocate<AST::Enum>(srcLoc0, std::in_place, *srcKwEnum, *name,
+  return allocate<AST::Enum>(srcLoc0, std::in_place, kwEnum->src, *name,
                              std::move(annotations), *srcBraceL,
                              std::move(declarators), *srcBraceR, *srcSemicolon);
 }
@@ -1503,16 +1469,7 @@ auto Parser::parseVariableDeclaration() -> BumpPtr<AST::Variable> {
     return nullptr;
   }
   auto declarators{std::vector<AST::Variable::Declarator>{}};
-  while (true) {
-    auto declarator{parseVariableDeclarator()};
-    if (!declarator)
-      break;
-    declarators.push_back(std::move(*declarator));
-    auto srcComma{nextDelimiter(",")};
-    if (!srcComma)
-      break;
-    declarators.back().srcComma = *srcComma;
-  }
+  parseCommaSeparated(declarators, [&] { return parseVariableDeclarator(); });
   if (declarators.empty()) {
     reject();
     return nullptr;
@@ -1536,17 +1493,14 @@ auto Parser::parseVariableDeclarator()
   } else if (auto srcBraceL{nextDelimiter("{")}; srcBraceL && mIsSMDL) {
     // Parse destructure syntax `{foo, bar, baz}`
     declarator.srcBraceL = *srcBraceL;
-    while (true) {
-      auto name{parseSimpleName()};
-      if (!name)
-        break;
-      declarator.names.push_back(
-          AST::Variable::Declarator::DeclaratorName{*name});
-      auto srcComma{nextDelimiter(",")};
-      if (!srcComma)
-        break;
-      declarator.names.back().srcComma = *srcComma;
-    }
+    parseCommaSeparated(
+        declarator.names,
+        [&]() -> std::optional<AST::Variable::Declarator::DeclaratorName> {
+          auto name{parseSimpleName()};
+          if (!name)
+            return std::nullopt;
+          return AST::Variable::Declarator::DeclaratorName{*name};
+        });
     auto srcBraceR{nextDelimiter("}")};
     if (!srcBraceR) {
       reject();
@@ -1572,7 +1526,6 @@ auto Parser::parseVariableDeclarator()
 }
 
 auto Parser::parseFunctionDeclaration() -> BumpPtr<AST::Function> {
-  checkpoint();
   auto srcLoc0{checkpoint()};
   auto type{parseType()};
   if (!type) {
@@ -1623,65 +1576,59 @@ auto Parser::parseFunctionDeclaration() -> BumpPtr<AST::Function> {
     definition = std::move(def);
   }
   accept();
-  return allocate<AST::Function>(
-      srcLoc0, std::in_place, std::move(type), std::move(earlyAnnotations),
-      *name, std::move(*params),
-      srcFrequency ? *srcFrequency : std::string_view(),
-      std::move(lateAnnotations), srcEqual ? *srcEqual : std::string_view(),
-      std::move(definition), srcSemicolon ? *srcSemicolon : std::string_view());
+  return allocate<AST::Function>(srcLoc0, std::in_place, std::move(type),
+                                 std::move(earlyAnnotations), *name,
+                                 std::move(*params), orEmpty(srcFrequency),
+                                 std::move(lateAnnotations), orEmpty(srcEqual),
+                                 std::move(definition), orEmpty(srcSemicolon));
 }
 
 auto Parser::parseTagDeclaration() -> BumpPtr<AST::Tag> {
-  skip();
-  auto srcLoc0{mSrcLoc};
-  auto srcKwTag{nextKeyword("tag")};
-  if (!srcKwTag)
+  auto kwTag{nextKeywordAndLocation("tag")};
+  if (!kwTag)
     return nullptr;
+  auto srcLoc0{kwTag->srcLoc};
   auto name{parseSimpleName()};
   if (!name)
     srcLoc0.throwError("expected name after 'tag'");
   auto srcSemicolon{nextDelimiter(";")};
   if (!srcSemicolon)
     srcLoc0.throwError("expected ';' after 'tag ...'");
-  return allocate<AST::Tag>(srcLoc0, std::in_place, *srcKwTag, *name,
+  return allocate<AST::Tag>(srcLoc0, std::in_place, kwTag->src, *name,
                             *srcSemicolon);
 }
 
 auto Parser::parseExecDeclaration() -> BumpPtr<AST::Exec> {
-  skip();
-  auto srcLoc0{mSrcLoc};
-  auto srcKwExec{nextKeyword("exec")};
-  if (!srcKwExec)
+  auto kwExec{nextKeywordAndLocation("exec")};
+  if (!kwExec)
     return nullptr;
   auto stmt{parseCompoundStatement()};
   if (!stmt)
-    srcLoc0.throwError("expected compound statement after 'exec'");
-  return allocate<AST::Exec>(srcLoc0, std::in_place, *srcKwExec,
+    kwExec->srcLoc.throwError("expected compound statement after 'exec'");
+  return allocate<AST::Exec>(kwExec->srcLoc, std::in_place, kwExec->src,
                              std::move(stmt));
 }
 
 auto Parser::parseUnitTestDeclaration() -> BumpPtr<AST::UnitTest> {
-  skip();
-  auto srcLoc0{mSrcLoc};
-  auto srcKwUnitTest{nextKeyword("unit_test")};
-  if (!srcKwUnitTest)
+  auto kwUnitTest{nextKeywordAndLocation("unit_test")};
+  if (!kwUnitTest)
     return nullptr;
+  auto srcLoc0{kwUnitTest->srcLoc};
   auto name{parseLiteralStringExpression()};
   if (!name)
     srcLoc0.throwError("expected literal string after 'unit_test'");
   auto stmt{parseCompoundStatement()};
   if (!stmt)
     srcLoc0.throwError("expected compound statement after 'unit_test ...'");
-  return allocate<AST::UnitTest>(srcLoc0, std::in_place, *srcKwUnitTest,
+  return allocate<AST::UnitTest>(srcLoc0, std::in_place, kwUnitTest->src,
                                  std::move(name), std::move(stmt));
 }
 
 auto Parser::parseNamespaceDeclaration() -> BumpPtr<AST::Namespace> {
-  skip();
-  auto srcLoc0{mSrcLoc};
-  auto srcKwNamespace{nextKeyword("namespace")};
-  if (!srcKwNamespace)
+  auto kwNamespace{nextKeywordAndLocation("namespace")};
+  if (!kwNamespace)
     return nullptr;
+  auto srcLoc0{kwNamespace->srcLoc};
   auto identifier{parseIdentifier()};
   if (!identifier)
     srcLoc0.throwError("expected identifier after 'namespace'");
@@ -1700,8 +1647,8 @@ auto Parser::parseNamespaceDeclaration() -> BumpPtr<AST::Namespace> {
   }
   auto srcBraceR{nextDelimiter("}")};
   if (!srcBraceR)
-    srcLoc0.throwError("expected '}' after 'namespace ... { ...'");
-  return allocate<AST::Namespace>(srcLoc0, std::in_place, *srcKwNamespace,
+    mSrcLoc.throwError("expected declaration or '}' in 'namespace ...'");
+  return allocate<AST::Namespace>(srcLoc0, std::in_place, kwNamespace->src,
                                   std::move(identifier), *srcBraceL,
                                   std::move(decls), *srcBraceR);
 }
@@ -1709,6 +1656,7 @@ auto Parser::parseNamespaceDeclaration() -> BumpPtr<AST::Namespace> {
 
 //--{ Parse: Stmt
 auto Parser::parseStatement() -> BumpPtr<AST::Stmt> {
+  ParseDepthGuard depthGuard{*this};
   skip();
   auto srcLoc0{mSrcLoc};
   if (auto stmt{parseCompoundStatement()})
@@ -1758,10 +1706,8 @@ auto Parser::parseStatement() -> BumpPtr<AST::Stmt> {
 }
 
 auto Parser::parseCompoundStatement() -> BumpPtr<AST::Compound> {
-  skip();
-  auto srcLoc0{mSrcLoc};
-  auto srcBraceL{nextDelimiter("{")};
-  if (!srcBraceL)
+  auto braceL{nextDelimiterAndLocation("{")};
+  if (!braceL)
     return nullptr;
   auto stmts{std::vector<BumpPtr<AST::Stmt>>{}};
   while (true) {
@@ -1775,17 +1721,18 @@ auto Parser::parseCompoundStatement() -> BumpPtr<AST::Compound> {
   }
   auto srcBraceR{nextDelimiter("}")};
   if (!srcBraceR)
-    srcLoc0.throwError("expected '}' to close compound statement");
-  return allocate<AST::Compound>(srcLoc0, std::in_place, *srcBraceL,
+    mSrcLoc.throwError("expected statement or '}' in compound statement "
+                       "starting at line ",
+                       braceL->srcLoc.lineNo);
+  return allocate<AST::Compound>(braceL->srcLoc, std::in_place, braceL->src,
                                  std::move(stmts), *srcBraceR);
 }
 
 auto Parser::parseIfStatement() -> BumpPtr<AST::If> {
-  skip();
-  auto srcLoc0{mSrcLoc};
-  auto srcKwIf{nextKeyword("if")};
-  if (!srcKwIf)
+  auto kwIf{nextKeywordAndLocation("if")};
+  if (!kwIf)
     return nullptr;
+  auto srcLoc0{kwIf->srcLoc};
   auto exprCond{parseExpressionInParentheses()};
   if (!exprCond)
     srcLoc0.throwError("expected parenthesized condition after 'if'");
@@ -1796,21 +1743,21 @@ auto Parser::parseIfStatement() -> BumpPtr<AST::If> {
     auto ifFail{parseStatement()};
     if (!ifFail)
       srcLoc0.throwError("expected statement after 'else'");
-    return allocate<AST::If>(srcLoc0, std::in_place, *srcKwIf,
+    return allocate<AST::If>(srcLoc0, std::in_place, kwIf->src,
                              std::move(exprCond), std::move(ifPass), *srcKwElse,
                              std::move(ifFail));
   } else {
-    return allocate<AST::If>(srcLoc0, std::in_place, *srcKwIf,
-                             std::move(exprCond), std::move(ifPass), *srcKwElse,
-                             nullptr);
+    return allocate<AST::If>(srcLoc0, std::in_place, kwIf->src,
+                             std::move(exprCond), std::move(ifPass),
+                             std::string_view(), nullptr);
   }
 }
 
 auto Parser::parseSwitchStatement() -> BumpPtr<AST::Switch> {
-  auto srcLoc0{mSrcLoc};
-  auto srcKwSwitch{nextKeyword("switch")};
-  if (!srcKwSwitch)
+  auto kwSwitch{nextKeywordAndLocation("switch")};
+  if (!kwSwitch)
     return nullptr;
+  auto srcLoc0{kwSwitch->srcLoc};
   auto expr{parseExpressionInParentheses()};
   if (!expr)
     srcLoc0.throwError("expected parenthesized expression after 'switch'");
@@ -1829,8 +1776,8 @@ auto Parser::parseSwitchStatement() -> BumpPtr<AST::Switch> {
   }
   auto srcBraceR{nextDelimiter("}")};
   if (!srcBraceR)
-    srcLoc0.throwError("expected closing '}' after 'switch'");
-  return allocate<AST::Switch>(srcLoc0, std::in_place, *srcKwSwitch,
+    mSrcLoc.throwError("expected 'case', 'default', or '}' in 'switch'");
+  return allocate<AST::Switch>(srcLoc0, std::in_place, kwSwitch->src,
                                std::move(expr), *srcBraceL,
                                std::move(switchCases), *srcBraceR);
 }
@@ -1869,27 +1816,25 @@ auto Parser::parseSwitchCase() -> std::optional<AST::Switch::Case> {
 }
 
 auto Parser::parseWhileStatement() -> BumpPtr<AST::While> {
-  skip();
-  auto srcLoc0{mSrcLoc};
-  auto srcKwWhile{nextKeyword("while")};
-  if (!srcKwWhile)
+  auto kwWhile{nextKeywordAndLocation("while")};
+  if (!kwWhile)
     return nullptr;
+  auto srcLoc0{kwWhile->srcLoc};
   auto expr{parseExpressionInParentheses()};
   if (!expr)
     srcLoc0.throwError("expected parenthesized expression after 'while'");
   auto stmt{parseStatement()};
   if (!stmt)
     srcLoc0.throwError("expected statement after 'while (...)'");
-  return allocate<AST::While>(srcLoc0, std::in_place, *srcKwWhile,
+  return allocate<AST::While>(srcLoc0, std::in_place, kwWhile->src,
                               std::move(expr), std::move(stmt));
 }
 
 auto Parser::parseDoStatement() -> BumpPtr<AST::DoWhile> {
-  skip();
-  auto srcLoc0{mSrcLoc};
-  auto srcKwDo{nextKeyword("do")};
-  if (!srcKwDo)
+  auto kwDo{nextKeywordAndLocation("do")};
+  if (!kwDo)
     return nullptr;
+  auto srcLoc0{kwDo->srcLoc};
   auto stmt{parseStatement()};
   if (!stmt)
     srcLoc0.throwError("expected statement after 'do'");
@@ -1903,17 +1848,16 @@ auto Parser::parseDoStatement() -> BumpPtr<AST::DoWhile> {
   auto srcSemicolon{nextDelimiter(";")};
   if (!srcSemicolon)
     srcLoc0.throwError("expected ';' after 'do ... while (...)'");
-  return allocate<AST::DoWhile>(srcLoc0, std::in_place, *srcKwDo,
+  return allocate<AST::DoWhile>(srcLoc0, std::in_place, kwDo->src,
                                 std::move(stmt), *srcKwWhile, std::move(expr),
                                 *srcSemicolon);
 }
 
 auto Parser::parseForStatement() -> BumpPtr<AST::For> {
-  skip();
-  auto srcLoc0{mSrcLoc};
-  auto srcKwFor{nextKeyword("for")};
-  if (!srcKwFor)
+  auto kwFor{nextKeywordAndLocation("for")};
+  if (!kwFor)
     return nullptr;
+  auto srcLoc0{kwFor->srcLoc};
   auto srcParenL{nextDelimiter("(")};
   if (!srcParenL)
     srcLoc0.throwError("expected '(' after 'for'");
@@ -1943,111 +1887,81 @@ auto Parser::parseForStatement() -> BumpPtr<AST::For> {
   auto stmt{parseStatement()};
   if (!stmt)
     srcLoc0.throwError("expected statement after 'for (...)'");
-  return allocate<AST::For>(srcLoc0, std::in_place, *srcKwFor, *srcParenL,
+  return allocate<AST::For>(srcLoc0, std::in_place, kwFor->src, *srcParenL,
                             std::move(stmtInit), std::move(exprCond),
                             *srcSemicolonAfterCond, std::move(exprIncr),
                             *srcParenR, std::move(stmt));
 }
 
 auto Parser::parseBreakStatement() -> BumpPtr<AST::Break> {
-  skip();
-  auto srcLoc0{mSrcLoc};
-  auto srcKwBreak{nextKeyword("break")};
-  if (!srcKwBreak)
-    return nullptr;
-  auto lateIf{parseLateIf()};
-  auto srcSemicolon{nextDelimiter(";")};
-  if (!srcSemicolon)
-    srcLoc0.throwError("expected ';' after 'break'");
-  return allocate<AST::Break>(srcLoc0, std::in_place, *srcKwBreak,
-                              std::move(lateIf), *srcSemicolon);
+  return parseJumpStatement<AST::Break>("break");
 }
 
 auto Parser::parseContinueStatement() -> BumpPtr<AST::Continue> {
-  skip();
-  auto srcLoc0{mSrcLoc};
-  auto srcKwContinue{nextKeyword("continue")};
-  if (!srcKwContinue)
-    return nullptr;
-  auto lateIf{parseLateIf()};
-  auto srcSemicolon{nextDelimiter(";")};
-  if (!srcSemicolon)
-    srcLoc0.throwError("expected ';' after 'continue'");
-  return allocate<AST::Continue>(srcLoc0, std::in_place, *srcKwContinue,
-                                 std::move(lateIf), *srcSemicolon);
+  return parseJumpStatement<AST::Continue>("continue");
 }
 
 auto Parser::parseReturnStatement() -> BumpPtr<AST::Return> {
-  skip();
-  auto srcLoc0{mSrcLoc};
-  auto srcKwReturn{nextKeyword("return")};
-  if (!srcKwReturn)
+  auto kwReturn{nextKeywordAndLocation("return")};
+  if (!kwReturn)
     return nullptr;
   auto expr{parseExpression()}; // Allow this to be null!
   auto lateIf{parseLateIf()};
   auto srcSemicolon{nextDelimiter(";")};
   if (!srcSemicolon)
-    srcLoc0.throwError("expected ';' after 'return ...'");
-  return allocate<AST::Return>(srcLoc0, std::in_place, *srcKwReturn,
+    kwReturn->srcLoc.throwError("expected ';' after 'return ...'");
+  return allocate<AST::Return>(kwReturn->srcLoc, std::in_place, kwReturn->src,
                                std::move(expr), std::move(lateIf),
                                *srcSemicolon);
 }
 
 auto Parser::parseUnreachableStatement() -> BumpPtr<AST::Unreachable> {
-  skip();
-  auto srcLoc0{mSrcLoc};
-  auto srcKwUnreachable{nextKeyword("unreachable")};
-  if (!srcKwUnreachable)
+  auto kwUnreachable{nextKeywordAndLocation("unreachable")};
+  if (!kwUnreachable)
     return nullptr;
   auto srcSemicolon{nextDelimiter(";")};
   if (!srcSemicolon)
-    srcLoc0.throwError("expected ';' after 'unreachable'");
-  return allocate<AST::Unreachable>(srcLoc0, std::in_place, *srcKwUnreachable,
-                                    *srcSemicolon);
+    kwUnreachable->srcLoc.throwError("expected ';' after 'unreachable'");
+  return allocate<AST::Unreachable>(kwUnreachable->srcLoc, std::in_place,
+                                    kwUnreachable->src, *srcSemicolon);
 }
 
 auto Parser::parsePreserveStatement() -> BumpPtr<AST::Preserve> {
-  auto srcLoc0{mSrcLoc};
-  auto srcKwPreserve{nextKeyword("preserve")};
-  if (!srcKwPreserve)
+  auto kwPreserve{nextKeywordAndLocation("preserve")};
+  if (!kwPreserve)
     return nullptr;
   auto exprs{std::vector<AST::Preserve::ExprWrapper>{}};
-  while (true) {
-    auto expr{parseUnaryExpression()};
-    if (!expr)
-      break;
-    exprs.push_back(AST::Preserve::ExprWrapper{std::move(expr), {}});
-    auto srcComma{nextDelimiter(",")};
-    if (!srcComma)
-      break;
-    exprs.back().srcComma = *srcComma;
-  }
+  parseCommaSeparated(exprs,
+                      [&]() -> std::optional<AST::Preserve::ExprWrapper> {
+                        auto expr{parseUnaryExpression()};
+                        if (!expr)
+                          return std::nullopt;
+                        return AST::Preserve::ExprWrapper{std::move(expr), {}};
+                      });
   auto srcSemicolon{nextDelimiter(";")};
   if (!srcSemicolon)
-    srcLoc0.throwError("expected ';' after 'preserve ...'");
-  return allocate<AST::Preserve>(srcLoc0, std::in_place, *srcKwPreserve,
-                                 std::move(exprs), *srcSemicolon);
+    kwPreserve->srcLoc.throwError("expected ';' after 'preserve ...'");
+  return allocate<AST::Preserve>(kwPreserve->srcLoc, std::in_place,
+                                 kwPreserve->src, std::move(exprs),
+                                 *srcSemicolon);
 }
 
 auto Parser::parseDeferStatement() -> BumpPtr<AST::Defer> {
-  skip();
-  auto srcLoc0{mSrcLoc};
-  auto srcKwDefer{nextKeyword("defer")};
-  if (!srcKwDefer)
+  auto kwDefer{nextKeywordAndLocation("defer")};
+  if (!kwDefer)
     return nullptr;
   auto stmt{parseStatement()};
   if (!stmt)
-    srcLoc0.throwError("expected statement after 'defer'");
-  return allocate<AST::Defer>(srcLoc0, std::in_place, *srcKwDefer,
+    kwDefer->srcLoc.throwError("expected statement after 'defer'");
+  return allocate<AST::Defer>(kwDefer->srcLoc, std::in_place, kwDefer->src,
                               std::move(stmt));
 }
 
 auto Parser::parseVisitStatement() -> BumpPtr<AST::Visit> {
-  skip();
-  auto srcLoc0{mSrcLoc};
-  auto srcKwVisit{nextKeyword("visit")};
-  if (!srcKwVisit)
+  auto kwVisit{nextKeywordAndLocation("visit")};
+  if (!kwVisit)
     return nullptr;
+  auto srcLoc0{kwVisit->srcLoc};
   auto name{parseSimpleName()};
   if (!name)
     srcLoc0.throwError("expected name after 'visit'");
@@ -2060,22 +1974,21 @@ auto Parser::parseVisitStatement() -> BumpPtr<AST::Visit> {
   auto stmt{parseCompoundStatement()};
   if (!stmt)
     srcLoc0.throwError("expected compound statement after 'visit ... in ...'");
-  return allocate<AST::Visit>(srcLoc0, std::in_place, *srcKwVisit, *name,
+  return allocate<AST::Visit>(srcLoc0, std::in_place, kwVisit->src, *name,
                               *srcKwIn, std::move(expr), std::move(stmt));
 }
 
 auto Parser::parseLateIf() -> std::optional<AST::LateIf> {
   if (!mIsSMDL)
     return std::nullopt;
-  skip();
-  auto srcLoc0{mSrcLoc};
-  auto srcKwIf{nextKeyword("if")};
-  if (!srcKwIf)
+  auto kwIf{nextKeywordAndLocation("if")};
+  if (!kwIf)
     return std::nullopt;
   auto expr{parseExpressionInParentheses()};
   if (!expr)
-    srcLoc0.throwError("expected expression in parentheses after '... if'");
-  return AST::LateIf(*srcKwIf, std::move(expr));
+    kwIf->srcLoc.throwError(
+        "expected expression in parentheses after '... if'");
+  return AST::LateIf(kwIf->src, std::move(expr));
 }
 //--}
 
