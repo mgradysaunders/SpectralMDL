@@ -7,6 +7,7 @@ if(CMAKE_PROJECT_NAME STREQUAL PROJECT_NAME AND BUILD_TESTING)
       "doctest.cc"
       "BSDFMeasurement.cc"
       "Compiler.cc"
+      "Doc.cc"
       "FileLocator.cc"
       "Image.cc"
       "LightProfile.cc"

@@ -42,22 +42,32 @@ void Formatter::alignLineComments() {
 }
 
 bool Formatter::nextCommentForcesNewLine() const {
-  if (mOptions.noComments) return false;
   auto inSrc{mInputSrc};
   while (!inSrc.empty()) {
     auto ws{inSrc.take_while(isSpace)};
     inSrc = inSrc.drop_front(ws.size());
     if (inSrc.starts_with("//")) {
-      return true;
-    } else if (inSrc.starts_with("/*")) {
-      if (ws.count('\n') > 0) {
+      auto pos{inSrc.find('\n')};
+      if (keepComment(pos == inSrc.npos ? inSrc : inSrc.take_front(pos))) {
         return true;
       }
+      // Step over the dropped line comment.
+      if (pos == inSrc.npos) break;
+      inSrc = inSrc.drop_front(pos);
+    } else if (inSrc.starts_with("/*")) {
       auto pos{inSrc.find("*/", 2)};
       if (pos == inSrc.npos) break; // Shouldn't happen?
-      inSrc = inSrc.drop_front(pos + 2);
-      if (inSrc.take_while(isSpace).count('\n') > 0) {
-        return true;
+      if (keepComment(inSrc.take_front(pos + 2))) {
+        if (ws.count('\n') > 0) {
+          return true;
+        }
+        inSrc = inSrc.drop_front(pos + 2);
+        if (inSrc.take_while(isSpace).count('\n') > 0) {
+          return true;
+        }
+      } else {
+        // Step over the dropped multiline comment.
+        inSrc = inSrc.drop_front(pos + 2);
       }
     } else {
       break; // Shouldn't happen?
@@ -70,7 +80,7 @@ void Formatter::writeDelimNone() {
   auto numNewLines{consumeInputSpace().count('\n')};
   if (auto comment{consumeInputComment()}; !comment.empty()) {
     // Preserve up to 1 extra newline
-    if (!mOptions.noComments && numNewLines == 1 && lastOutput() != '\n') {
+    if (keepComment(comment) && numNewLines == 1 && lastOutput() != '\n') {
       mOutputSrc += '\n';
     }
     writeComment(comment), writeMoreComments();
@@ -90,7 +100,7 @@ void Formatter::writeDelimNewLine() {
   if (auto numNewLines{consumeInputSpace().count('\n')}; numNewLines <= 1) {
     if (auto comment{consumeInputComment()}; !comment.empty()) {
       // Preserve up to 1 extra newline
-      if (!mOptions.noComments && numNewLines == 1 && lastOutput() != '\n') {
+      if (keepComment(comment) && numNewLines == 1 && lastOutput() != '\n') {
         mOutputSrc += '\n';
       }
       writeComment(comment), writeMoreComments();
@@ -113,7 +123,15 @@ void Formatter::writeDelimNewLine() {
 }
 
 void Formatter::writeComment(llvm::StringRef inSrc) {
-  if (!inSrc.empty() && !mOptions.noComments) {
+  if (!inSrc.empty() && !keepComment(inSrc)) {
+    // Still consume the trailing space, or else `writeMoreComments()`
+    // cannot see past the dropped comment to a doc comment that
+    // follows it in the same gap, and the next `writeToken()` would
+    // silently discard it!
+    (void)consumeInputSpace();
+    return;
+  }
+  if (!inSrc.empty()) {
     // This better be a line comment or a multiline comment! A line comment
     // only lacks the terminating newline if it ends the file.
     SMDL_SANITY_CHECK((inSrc.starts_with("//") &&

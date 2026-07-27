@@ -32,9 +32,17 @@ export annotation origin(string name="");
 )*";
 
 static const char *const api = R"*(#smdl
+
+/// The number of wavelengths in the RGB-to-color curves.
 const int RGB_TO_COLOR_NUM_WAVELENGTHS=32;
+
+/// The minimum wavelength of the RGB-to-color curves in nanometers.
 const float RGB_TO_COLOR_MIN_WAVELENGTH=380.;
+
+/// The maximum wavelength of the RGB-to-color curves in nanometers.
 const float RGB_TO_COLOR_MAX_WAVELENGTH=720.;
+
+/// The RGB-to-color curves.
 const static auto RGB_TO_COLOR_CURVES=auto[](
 auto[](1.0618958,1.061502,1.0614336,1.0622711,1.0622036,1.062506,1.0623939,1.0624707,1.0625048,1.0624366,1.0620694,1.0613167,1.0610334,1.0613868,1.0614215,1.0620337,1.0625497,1.0624317,1.0625249,1.0624278,1.062475,1.0625539,1.0625327,1.0623922,1.0623651,1.0625256,1.0612278,1.0594263,1.0599811,1.0602547,1.0601263,1.0606565),
 auto[](1.0414628,1.0328661,1.0126146,1.0350461,1.0078661,1.042228,1.0442597,1.0535238,1.0180776,1.044273,1.0529362,1.0537034,1.0533901,1.0537783,1.0527093,1.0530449,1.0550555,1.0553674,1.0454307,0.6234895,0.1803807,-76304e-7,-1522e-7,-75102e-7,-21709e-7,6592e-7,0.0122788,-4467e-6,0.0171198,49211e-7,58763e-7,0.0252594),
@@ -43,7 +51,13 @@ auto[](55741e-7,-47983e-7,-52537e-7,-64571e-7,-59694e-7,-21837e-7,0.0167811,0.09
 auto[](0.165756,0.1184644,0.1240829,0.1137127,0.0789924,0.0322056,-0.0107984,0.018052,53407e-7,0.0136549,-59564e-7,-18444e-7,-0.0105719,-29376e-7,-0.0107905,-80224e-7,-22669e-7,702e-5,-81528e-7,0.6077287,0.9883156,0.9939169,1.0039339,0.992345,0.9992653,1.0084622,0.983583,1.0085024,0.9745114,0.9854327,0.9349576,0.9871391),
 auto[](26494e-7,-50175e-7,-0.0125472,-94555e-7,-0.0125261,-79171e-7,-79956e-7,-93559e-7,0.0654686,0.3957288,0.7524402,0.9637648,0.9985443,0.9999298,0.9993908,0.9999437,0.9993912,0.9991124,0.9601958,0.6318628,0.257974,94015e-7,-30798e-7,-4523e-6,-68933e-7,-90352e-7,-85914e-7,-83691e-7,-78686e-7,-84e-7,54301e-7,-27746e-7),
 auto[](0.9920977,0.9887643,0.9953904,0.9952932,0.9918145,1.0002584,0.9996848,0.9998812,0.9850401,0.7902985,0.560822,0.3313346,0.1369241,0.0189149,-51e-7,-424e-6,-4193e-7,17473e-7,37999e-7,-551e-6,-437e-7,75875e-7,0.0257957,0.0381684,0.0494896,0.049596,0.0498148,0.0398409,0.030501,0.0212431,69597e-7,41734e-7),
-);
+); /// The nontrivial RGB-to-color implementation.
+///
+/// This is factored into an internal function because, despite the fact 
+/// that the `color` type is not necessarily RGB, every MDL codebase on
+/// planet Earth assumes that it is, e.g., uses `color(1.0, 1.0, 1.0)` 
+/// to mean white instead of `color(1.0)`. 
+///
 @(hot noinline)
 color nontrivialRGBToColor(float3 rgb){
 #assert(bool($state.wavelength_base));
@@ -70,6 +84,8 @@ c[i]=#sum(float2(1-t,t)*(coeffW*float2(&RGB_TO_COLOR_CURVES[0][j])+coeffCMY*floa
 }
 return #max(c*0.94,0.);
 }
+
+/// Convert RGB to color, used by `color` constructor!
 @(macro)
 export color _rgb_to_color(const float3 rgb){
 if(#all(rgb.xx==rgb.yz)){
@@ -135,6 +151,14 @@ c[i]=_polyline_lerp(count,wavelengths,amplitudes,$state.wavelength_base[i]);
 }
 return c;
 }
+
+/// The fits of CIE 1931 XYZ by Wyman et al for wavelength in nanometers.
+///
+/// \note
+/// The implementation here does not exactly look like the published piecewise 
+/// gaussian equations because is calculating the X, Y, and Z fits in parallel 
+/// by explicitly evaluating the first few terms of the exponential series.
+///
 @(pure)
 export float3 _wyman_xyz(const float w){
 auto x(w-auto(442.,599.8,501.1,568.8,530.9,437.,459.));
@@ -148,6 +172,9 @@ y+=(x*=x1*0.25);
 y=auto(0.362,1.056,-0.065,0.821,0.286,1.217,0.681)*0.01/y;
 return float3(y[0]+y[1]+y[2],y[3]+y[4],y[5]+y[6]);
 }
+
+/// The fit of CIE 1931 Y, without X or Z, by Wyman et al fit 
+/// for wavelength in nanometers.
 @(pure)
 export float _wyman_y(const float w){
 auto x(w-auto(568.8,530.9));
@@ -160,6 +187,8 @@ y+=(x*=x1*0.333333);
 y+=(x*=x1*0.25);
 return #sum(auto(0.821,0.286)*0.01/y);
 }
+
+/// Convert color to RGB, used by `float3` constructor!
 @(hot noinline)
 export float3 _color_to_rgb(const color c){
 float3 result(0.);
@@ -170,104 +199,230 @@ result/=$WAVELENGTH_BASE_MAX;
 result*=$state.wavelength_max-$state.wavelength_min;
 return float3x3(float3(3.24045,-0.969266,0.0556434),float3(-1.53714,1.87601,-0.204026),float3(-0.498532,0.041556,1.05723),)*result;
 }
+
+/// The JIT-visible RGB-to-color function advertised by the `Compiler` 
+/// for convenience.
 @(visible noinline)
 void smdlRGBToColor(const &float3 rgb,const &float cptr){
 color c(_rgb_to_color(*rgb));
 #memcpy(cptr,&c,#sizeof(color));
 }
+
+/// The JIT-visible color-to-RGB function advertised by the `Compiler` 
+/// for convenience.
 @(visible noinline)
 void smdlColorToRGB(const &float cptr,const &float3 rgb){
 *rgb=_color_to_rgb(color(cptr));
 }
-export enum intensity_mode{intensity_radiant_exitance,intensity_power,};
+
+/// The intensity mode enum.
+export enum intensity_mode{intensity_radiant_exitance, ///< Power (watts) per unit area (meters squared).
+intensity_power,                                       ///< Power (watts).
+};
+
+/// The Bidirectional Scattering Distribution Function (BSDF) tag.
 export tag bsdf;
+
+/// The Volume Distribution Function (VDF) tag.
 export tag vdf;
+
+/// The Emission Distribution Function (EDF) tag.
 export tag edf;
+
+/// The hair Bidirectional Scattering Distribution Function (BSDF) tag.
 export tag hair_bsdf;
+
+/// The default BSDF is just an empty struct!
 export struct _default_bsdf:default bsdf{
+/// The flags.
 static const int df_flags=0;
 };
+
+/// The default VDF is just an empty struct!
 export struct _default_vdf:default vdf{
+/// The flags.
 static const int df_flags=0;
 };
+
+/// The default EDF is just an empty struct!
 export struct _default_edf:default edf{
+/// The flags.
 static const int df_flags=0;
 };
+
+/// The default hair BSDF is just an empty struct!
 export struct _default_hair_bsdf:default hair_bsdf{
+/// The flags.
 static const int df_flags=0;
 };
+
+/// The texture 2D structure.
 export struct texture_2d{
 texture_2d(const string name,const auto gamma=0)=#load_texture_2d(name,int(gamma));
+
+/// The tile count.
 const int2 tile_count=int2(1,1);
+
+/// The tile extents.
 const auto tile_extents=int2[](int2(0));
+
+/// The tile buffers.
 const auto tile_buffers=auto[](cast<&float4>(none));
+
+/// The gamma mode.
 const int gamma=0;
 };
+
+/// The texture 3D structure.
 export struct texture_3d{
 texture_3d(const string name,const auto gamma=0)=#load_texture_3d(name,int(gamma));
 const int gamma=0;
 };
+
+/// The texture cube structure.
 export struct texture_cube{
 texture_cube(const string name,const auto gamma=0)=#load_texture_cube(name,int(gamma));
 const int gamma=0;
 };
+
+/// The texture ptex structure.
 export struct texture_ptex{
 texture_ptex(const string name,const auto gamma=0)=#load_texture_ptex(name,int(gamma));
+
+/// The pointer to the `smdl::Ptexture`
 const &void ptr=none;
+
+/// The gamma mode.
 const int gamma=0;
 };
+
+/// The BSDF measurement structure.
 export struct bsdf_measurement{
 bsdf_measurement(const string name)=#load_bsdf_measurement(name);
+
+/// The pointer to the `smdl::BSDFMeasurement`.
 const &void ptr=none;
+
+/// The scatter mode, either `scatter_reflect` or `scatter_transmit`.
 const int mode=0;
+
+/// The number of samples in zenith.
 const int num_theta=0;
+
+/// The number of samples in azimuth.
 const int num_phi=0;
+
+/// The buffer `smdl::BSDFMeasurement::buffer` which points to a
+/// table of `num_theta * num_theta * num_phi` values of type `float`
+/// or `float3`.
 const auto buffer=cast<&float>(none);
 };
+
+/// The light profile structure.
 export struct light_profile{
 light_profile(const string name)=#load_light_profile(name);
+
+/// The pointer to the `smdl::LightProfile`
 const &void ptr=none;
+
+/// The maximum intensity.
 const float max_intensity=0;
+
+/// The power.
 const float power=0;
 };
+
+/// The spectral curve structure.
 export struct spectral_curve{
 spectral_curve(const string name)=#load_spectral_curve(name);
 spectral_curve(const string name,const int curve_index)=#load_spectral_curve(name,curve_index);
 spectral_curve(const string name,const string curve_name)=#load_spectral_curve(name,curve_name);
+
+/// The number of wavelengths and values.
 const int count=0;
+
+/// The wavelengths in nanometers.
 const &float wavelengths=none;
+
+/// The amplitudes.
 const &float amplitudes=none;
 };
 @(macro)
 export color _spectral_curve_to_color(const spectral_curve curve){
 return _samples_to_color(curve.count,curve.wavelengths,curve.amplitudes);
 }
+
+/// The material emission description.
 export struct material_emission{
+/// The Emission Distribution Function (EDF).
 edf emission=edf();
+
+/// The intensity multiplier.
 $(color|float) intensity=1.;
+
+/// The intensity mode.
 intensity_mode mode=intensity_radiant_exitance;
 };
+
+/// The material surface description.
 export struct material_surface{
+/// The Bidirectional Scattering Distribution Function (BSDF).
 bsdf scattering=bsdf();
+
+/// The material emission description.
 material_emission emission=material_emission();
 };
+
+/// The material volume description.
 export struct material_volume{
+/// The Volume Distribution Function (VDF).
 vdf scattering=vdf();
+
+/// The absorption coefficient in units of inverse distance.
 $(?color) absorption_coefficient=none;
+
+/// The scattering coefficient in units of inverse distance.
 $(?color) scattering_coefficient=none;
 };
+
+/// The material geometry description.
 export struct material_geometry{
+/// The displacement.
 float3 displacement=float3();
+
+/// The cutout opacity between 0 (transparent) and 1 (opaque).
 float cutout_opacity=1.;
+
+/// The normal.
 float3 normal=$state.normal;
 };
+
+/// The material description.
 export struct material{
+/// Thin walled?
 bool thin_walled=false;
+
+/// The material surface description.
 material_surface surface=material_surface();
+
+/// If non-default, the backface surface description.
 material_surface backface=material_surface();
+
+/// The index of refraction.
+///
+/// \note
+/// In the MDL specification, IOR is type `color` but for implementation
+/// simplicity this is restricted to being type `float`.
+///
 float ior=1.4;
+
+/// The material volume description.
 material_volume volume=material_volume();
+
+/// The material geometry description.
 material_geometry geometry=material_geometry();
+
+/// The hair Bidirectional Scattering Distribution Function (BSDF).
 hair_bsdf hair=hair_bsdf();
 float temperature=-1;
 };
@@ -279,65 +434,154 @@ const int MATERIAL_HAS_SURFACE_EMISSION=(1<<4);
 const int MATERIAL_HAS_BACKFACE_EMISSION=(1<<5);
 const int MATERIAL_HAS_VOLUME=(1<<6);
 const int MATERIAL_HAS_HAIR=(1<<7);
+
+/// An instance of a material corresponding to `smdl::JIT::Material::Instance` 
+/// in the C++ API.
 export struct _MaterialInstance{
+/// The material deep copied with `#bump()`.
 &material ptr;
+
+/// The geometry displacement.
 &material_geometry geometry=&ptr.geometry;
+
+/// The index of refraction.
 float ior=ptr.ior;
+
+/// The exterior index of refraction, being the absolute index of the
+/// medium on the front side of the geometry. This defaults to 1 and is
+/// meant to be overwritten between instance evaluation and scattering
+/// by renderers that track nested dielectrics. The relative ratio the
+/// scattering calculations refract with is `exterior_ior / ior`.
 float exterior_ior=1.;
+
+/// The temperature.
 float temperature=ptr.temperature;
+
+/// The volume absorption coefficient.
 &color absorption_coefficient=#is_void(ptr.volume.absorption_coefficient)?none:&ptr.volume.absorption_coefficient;
+
+/// The volume scattering coefficient.
 &color scattering_coefficient=#is_void(ptr.volume.scattering_coefficient)?none:&ptr.volume.scattering_coefficient;
+
+/// The `surface` emission intensity, or `none` if the `surface` has no
+/// non-default emission EDF. \see `df::_emissionEvaluate()` for how the
+/// `intensity_mode` units are resolved.
 &color surface_emission_intensity=#is_default(ptr.surface.emission.emission)?none:#bump(color(ptr.surface.emission.intensity));
+
+/// The `backface` emission intensity, or `none` if the `backface` has no
+/// non-default emission EDF.
 &color backface_emission_intensity=#is_default(ptr.backface.emission.emission)?none:#bump(color(ptr.backface.emission.intensity));
+
+/// The wavelength count.
 int wavelength_base_max=$WAVELENGTH_BASE_MAX;
+
+/// The flags.
 int flags=$state.transport|(ptr.thin_walled?MATERIAL_THIN_WALLED:0)|(!#is_default(ptr.surface)?MATERIAL_HAS_SURFACE:0)|(!#is_default(ptr.backface)?MATERIAL_HAS_BACKFACE:0)|(!#is_default(ptr.surface.emission.emission)?MATERIAL_HAS_SURFACE_EMISSION:0)|(!#is_default(ptr.backface.emission.emission)?MATERIAL_HAS_BACKFACE_EMISSION:0)|(!#is_default(ptr.volume)?MATERIAL_HAS_VOLUME:0)|(!#is_default(ptr.hair)?MATERIAL_HAS_HAIR:0);
+
+/// The df flags for the `surface` component.
 int df_flags_surface=ptr.surface.scattering.df_flags;
+
+/// The df flags for the `backface` component.
 int df_flags_backface=ptr.backface.scattering.df_flags;
+
+/// The emission intensity modes: bit 0 is set if the `surface` emission
+/// intensity is `intensity_power` (as opposed to the default
+/// `intensity_radiant_exitance`), and bit 1 likewise for the `backface`.
 int emission_modes=(int(ptr.surface.emission.mode)==int(intensity_power)?1:0)|(int(ptr.backface.emission.mode)==int(intensity_power)?2:0);
+
+/// The tangent-to-world matrix held by the `State` during construction.
 float3x3 tangent_to_world=let {
 const auto tangent_to_world_matrix=$state.object_to_world_matrix*$state.tangent_to_object_matrix;
 } in float3x3(tangent_to_world_matrix[0].xyz,tangent_to_world_matrix[1].xyz,tangent_to_world_matrix[2].xyz,);
 };
+
+/// Albedo look-up table (LUT) for energy correction.
 export struct _AlbedoLUT{
+/// The number of samples of view angle cosine. 
 const int num_cos_theta=0;
+
+/// The number of samples of roughness.
 const int num_roughness=0;
+
+/// The directional albedo.
+///
+/// \note
+/// This must point to `num_cos_theta` rows by `num_roughness` values.
+///
 const &float directional_albedo=none;
+
+/// The average albedo.
+///
+/// \note
+/// This must point to `num_roughness` values.
+///
 const &float average_albedo=none;
 };
+
+/// A complex value.
 export struct complex{
+/// The real coefficient.
 auto a=0.;
+
+/// The imaginary coefficient.
 auto b=0.;
 };
+
+/// Complex negative.
 @(pure macro)
 export auto _complex_neg(const complex z)=complex(-z.a,-z.b);
+
+/// Complex conjugate.
 @(pure macro)
 export auto _complex_conj(const complex z)=complex(z.a,-z.b);
+
+/// Complex norm.
 @(pure macro)
 export auto _complex_norm(const complex z)=z.a*z.a+z.b*z.b;
+
+/// Complex absolute value.
 @(pure macro)
 export auto _complex_abs(const complex z)=#sqrt(_complex_norm(z));
+
+/// Complex inverse.
 @(pure macro)
 export auto _complex_inv(const complex z)=let {
 const auto denom=1./_complex_norm(z);
 } in complex(z.a*denom,-z.b*denom);
+
+/// Complex addition.
 @(pure macro)
 export auto _complex_add(const complex z,const complex w)=complex(z.a+w.a,z.b+w.b);
+
+/// Complex subtraction.
 @(pure macro)
 export auto _complex_sub(const complex z,const complex w)=complex(z.a-w.a,z.b-w.b);
+
+/// Complex multiplication.
 @(pure macro)
 export auto _complex_mul(const complex z,const complex w)=complex(z.a*w.a-z.b*w.b,z.a*w.b+z.b*w.a);
+
+/// Complex division.
 @(pure macro)
 export auto _complex_div(const complex z,const complex w)=_complex_mul(z,_complex_inv(w));
+
+/// Complex exponential.
 @(pure macro)
 export auto _complex_exp(const complex z)=let {
 const auto a=#exp(z.a);
 } in complex(a*#cos(z.b),a*#sin(z.b));
+
+/// Complex logarithm.
 @(pure macro)
 export auto _complex_log(const complex z)=complex(#log(_complex_abs(z)),#atan2(z.b,z.a));
+
+/// Complex square root.
 @(pure macro)
 export auto _complex_sqrt(const complex z)=let {
 const auto absz=_complex_abs(z);
 } in complex(#sqrt(0.5*(absz+z.a)),#sqrt(0.5*(absz-z.a))*#sign(z.b),);
+
+/// A hash function for use with procedural algorithms.
 @(pure)
 export int32_t _hash(auto value){
 if$(#is_arithmetic_scalar(value)){
@@ -401,9 +645,21 @@ return true;
 static const char *const df = R"*(#smdl
 using ::math import *;
 import ::tex::*;
+
+/// An arbitrary epsilon for stabilizing scattering calculations.
 const float EPSILON=1e-6;
+
+/// An arbitrary chance for sampling diffusely in BSDFs with multiple-scattering.
 const float MULTISCATTER_DIFFUSE_CHANCE=0.2;
+
+/// The default absolute index of refraction, matching the default of
+/// `material.ior` in `api.smdl`.
 const float DEFAULT_IOR=1.4;
+
+/// Convert a user-facing absolute IOR to the relative ratio oriented with
+/// the current frame of the given scatter parameters, honoring the backface
+/// reciprocation applied in the parameter `finalize` blocks and the
+/// exterior medium of the instance.
 @(pure macro)
 auto relativeIOR(const auto params,const auto absoluteIOR){
 if(params.hitBackface&!params.thin_walled){
@@ -426,10 +682,10 @@ auto y=normalize(cross(z,x));
 return float3x3(x,y,z);
 }
 export enum scatter_mode{
-scatter_none=0x0,
-scatter_reflect=0x1,
-scatter_transmit=0x2,
-scatter_reflect_transmit=0x3,
+scatter_none=0x0,             ///< None
+scatter_reflect=0x1,          ///< Reflect (same hemisphere)
+scatter_transmit=0x2,         ///< Transmit (opposite hemisphere) 
+scatter_reflect_transmit=0x3, ///< Reflect or transmit 
 };
 @(pure macro)
 float scatterReflectChance(const scatter_mode mode){
@@ -437,17 +693,29 @@ const auto reflWeight(#select((int(mode)&1)!=0,1.,0.));
 const auto tranWeight(#select((int(mode)&2)!=0,1.,0.));
 return reflWeight/#max(reflWeight+tranWeight,1.);
 }
+
+/// Declare libm `erf`
 @(pure foreign)
 double erf(double x);
+
+/// Declare libm `erfc`
 @(pure foreign)
 double erfc(double x);
 export namespace monte_carlo {
+
+/// Next canonical random vector in quasi-random 2-dimensional low discrepancy sequence.
 @(pure macro)
 export float2 nextLowDiscrepancy(const &float2 xi)=(*xi=frac(*xi+float2(0.75487766,0.56984029)));
+
+/// Next canonical random vector in quasi-random 3-dimensional low discrepancy sequence.
 @(pure macro)
 export float3 nextLowDiscrepancy(const &float3 xi)=(*xi=frac(*xi+float3(0.81917251,0.6710436,0.54970047)));
+
+/// Next canonical random vector in quasi-random 4-dimensional low discrepancy sequence.
 @(pure macro)
 export float4 nextLowDiscrepancy(const &float4 xi)=(*xi=frac(*xi+float4(0.85667488,0.73389185,0.62870672,0.53859725)));
+
+/// Bool sample with `chance` probability of returning `true`.
 @(pure macro)
 export bool boolSample(const &float xi,const float chance){
 if(*xi<chance){
@@ -458,12 +726,16 @@ return true;
 return false;
 }
 }
+
+/// Uniform wavelength index sample.
 @(pure macro)
 export int uniformWavelengthIndexSample(const &float xi){
 const int i(#min(int(*xi*=$WAVELENGTH_BASE_MAX),$WAVELENGTH_BASE_MAX-1));
 *xi-=i;
 return i;
 }
+
+/// Uniform disk sample.
 @(pure)
 export float2 uniformDiskSample(float2 xi){
 xi=2*xi-1;
@@ -473,22 +745,30 @@ const float rad(#select(cond,xi.x,xi.y));
 const float phi(#select(cond,($PI/4)*xi.y/xi.x,($PI/2)-($PI/4)*xi.x/xi.y));
 return rad*float2(#cos(phi),#sin(phi));
 }
+
+/// Cosine-weighted hemisphere sample.
 @(pure)
 export float3 cosineHemisphereSample(float2 xi){
 return float3((p:=uniformDiskSample(xi)),#sqrt(#max(1-#sum(p*p),0)));
 }
+
+/// Uniform hemisphere sample.
 @(pure)
 export float3 uniformHemisphereSample(float2 xi){
 const float cosTheta=saturate(xi.x);
 const float sinTheta=#sqrt(1-cosTheta*cosTheta);
 return float3(sinTheta*#cos(phi:=$TWO_PI*xi.y),sinTheta*#sin(phi),cosTheta,);
 }
+
+/// Uniform sphere sample.
 @(pure)
 export float3 uniformSphereSample(float2 xi){
 const float cosTheta=2*saturate(xi.x)-1;
 const float sinTheta=#sqrt(1-cosTheta*cosTheta);
 return float3(sinTheta*#cos(phi:=$TWO_PI*xi.y),sinTheta*#sin(phi),cosTheta,);
 }
+
+/// Erf inverse.
 @(pure)
 export double erfInverse(double y){
 double w=-#log(#max(1e-6d,(1-y)*(1+y)));
@@ -521,8 +801,12 @@ return x;
 }
 }
 export namespace specular {
+
+/// Reflect direction `wi` across normal direction `wm`.
 @(pure)
 export float3 reflect(const float3 wi,const float3 wm)=2*#sum(wi*wm)*wm-wi;
+
+/// Reflect direction `wi` across normal direction `wm` with index of refraction `ior`.
 @(pure)
 export float3 refract(const float3 wi,const float3 wm,const float ior){
 const auto cosThetai(#sum(wi*wm));
@@ -531,8 +815,22 @@ const auto cos2Thetat(#max(1-ior*ior*(1-cos2Thetai),0));
 const auto cosThetat(#sqrt(cos2Thetat)*-#sign(cosThetai));
 return -ior*wi+(ior*cosThetai+cosThetat)*wm;
 }
+
+/// Calculate half vector that reflects direction `wo` to direction `wi`.
+///
+/// \note
+/// - The result is not normalized.
+/// - The result is guaranteed in the upper Z hemisphere.
+///
 @(pure)
 export float3 reflectionHalfVector(const float3 wo,const float3 wi)=(vh:=(wo+wi))*#sign(vh.z);
+
+/// Calculate half vector that refracts direction `wo` to direction `wi` through index-of-refraction `ior`.
+///
+/// \note
+/// - The result is not normalized.
+/// - The result is guaranteed in the upper Z hemisphere.
+///
 @(pure)
 export float3 refractionHalfVector(const float3 wo,const float3 wi,const float ior,)=(vh:=-(ior*wo+wi))*#sign(vh.z);
 @(pure)
@@ -564,7 +862,8 @@ const auto rs=(iorCosThetai-cosThetat)/(iorCosThetai+cosThetat);
 const auto rp=(cosThetai-iorCosThetat)/(cosThetai+iorCosThetat);
 return #min(0.5*(#norm(rs)+#norm(rp)),1.);
 }
-}
+} /// Calculate the orthogonal right-handed tangent space from the 
+/// given normal and tangent vectors.
 @(pure noinline)
 float3x3 calculateTangentSpace(const float3 normal,const float3 tangent_u){
 const auto tw(normalize(normal)*#sign(normal.z));
@@ -573,17 +872,42 @@ const auto tv(normalize(cross(tw,tu)));
 return float3x3(tu,tv,tw);
 }
 struct ScatterEvaluateParameters{
+/// Is transporting importance? i.e., tracing rays from lights to cameras?
 bool isImportance;
+
+/// The reference outgoing direction in the natural tangent space.
 float3 wo0;
+
+/// The reference incoming direction in the natural tangent space.
 float3 wi0;
+
+/// The reference mode. 
 scatter_mode mode=(wo0.z<0)==(wi0.z<0)?scatter_reflect:scatter_transmit;
+
+/// Hit backface?
 bool hitBackface=wo0.z<0;
+
+/// Is thin walled?
 bool thin_walled=false;
+
+/// The relative upper-to-lower index of refraction.
 float ior=1/DEFAULT_IOR;
+
+/// The absolute index of refraction of the exterior medium, needed by
+/// modifier BSDFs to convert user-facing absolute IORs into relative
+/// ratios. \see `relativeIOR()`
 float exterior_ior=1.;
+
+/// The normal direction.
 float3 normal=float3(0,0,1);
+
+/// The tangent direction.
 float3 tangent_u=float3(1,0,0);
+
+/// The outgoing direction.
 float3 wo=wo0;
+
+/// The incoming direction.
 float3 wi=wi0;
 float shadingNormalCorrection=1;
 finalize {
@@ -597,10 +921,25 @@ ior=1./ior if(!thin_walled);
 }
 };
 struct ScatterEvaluateResult{
+/// The Bidirectional Scattering Distribution Function (BSDF) evaluation.
 $(color|float) f=0.;
+
+/// The Probability Density Function (PDF) evaluations.
+/// - `pdf[0]` is the forward density of sampling `wi` given `wo`.
+/// - `pdf[1]` is the reverse density of sampling `wo` given `wi`.
 float2 pdf=float2(0.);
+
+/// Is known to be black by construction? Faster than checking every 
+/// element of `f`!
 bool isBlack=false;
 };
+
+/// Recalculate the effective tangent space.
+///
+/// \return
+/// Returns `true` if the directions are still consistent with the scatter mode 
+/// after applying the effective tangent space.
+///
 @(pure noinline)
 bool recalculateTangentSpace(inline const &ScatterEvaluateParameters params){
 auto tbn(calculateTangentSpace(normal,tangent_u));
@@ -621,14 +960,34 @@ return normalize(mode==scatter_reflect?specular::reflectionHalfVector(wo,wi):spe
 }
 struct ScatterSampleParameters{
 bool isImportance;
+
+/// The primary outgoing direction in the natural geometric tangent space.
 float3 wo0;
+
+/// Hit backface?
 bool hitBackface=wo0.z<0;
+
+/// Is thin walled?
 bool thin_walled=false;
+
+/// The active index of refraction.
 float ior=1/DEFAULT_IOR;
+
+/// The absolute index of refraction of the exterior medium, needed by
+/// modifier BSDFs to convert user-facing absolute IORs into relative
+/// ratios. \see `relativeIOR()`
 float exterior_ior=1.;
+
+/// The active normal direction.
 float3 normal=float3(0,0,1);
+
+/// The active tangent direction.
 float3 tangent_u=float3(1,0,0);
+
+/// The active outgoing direction (expanded in the active tangent space).
 float3 wo=wo0;
+
+/// The canonical random sample in `[0,1]^4`.
 float4 xi;
 finalize {
 if(hitBackface){
@@ -639,8 +998,13 @@ ior=1/ior if(!thin_walled);
 }
 };
 struct ScatterSampleResult{
+/// The sampled incoming direction.
 float3 wi=float3(0.);
+
+/// The sampled scatter mode.
 scatter_mode mode=scatter_none;
+
+/// If sampled from a directional delta distribution, the BSDF evaluation (which is otherwise unevaluable).
 ?color fDelta=none;
 };
 @(pure noinline)
@@ -653,6 +1017,11 @@ return tbn if((wo.z<0)==(wo0.z<0));
 float3 halfDirection(inline const &ScatterSampleParameters this,inline const &ScatterSampleResult result){
 return normalize(mode==scatter_reflect?specular::reflectionHalfVector(wo,wi):specular::refractionHalfVector(wo,wi,ior));
 }
+
+/// Calculate the shading-normal correction factor for a sampled delta direction under
+/// importance transport, consistent with the convention `recalculateTangentSpace`
+/// applies on the evaluate path. Expects the sampled incoming direction both in the
+/// shading tangent space `wiShading` and in the natural tangent space `wiNatural`.
 @(pure macro)
 float sampleShadingNormalCorrection(inline const &ScatterSampleParameters params,const float3 wiShading,const float3 wiNatural){
 const auto numer(wo.z*wiNatural.z);
@@ -710,10 +1079,20 @@ return ScatterSampleResult(wi: tbn*monte_carlo::cosineHemisphereSample(xi.xy),mo
 }
 }
 struct EmissionEvaluateParameters{
+/// The emission direction in the natural tangent space, pointing away
+/// from the surface.
 float3 wi0;
+
+/// Hit backface?
 bool hitBackface=wi0.z<0;
+
+/// The normal direction.
 float3 normal=float3(0,0,1);
+
+/// The tangent direction.
 float3 tangent_u=float3(1,0,0);
+
+/// The emission direction (expanded in the active tangent space).
 float3 wi=wi0;
 finalize {
 if(hitBackface){
@@ -723,19 +1102,42 @@ wi=-wi;
 }
 };
 struct EmissionEvaluateResult{
+/// The Emission Distribution Function (EDF) evaluation, normalized such
+/// that the cosine-weighted integral over the upper hemisphere is 1.
 $(color|float) f=0.;
+
+/// The Probability Density Function (PDF) with respect to solid angle
+/// of sampling `wi`.
 float pdf=0.;
+
+/// Is known to be black by construction? Faster than checking every
+/// element of `f`!
 bool isBlack=false;
 };
 struct EmissionSampleParameters{
+/// The canonical random sample in `[0,1]^4`.
 float4 xi;
+
+/// The normal direction.
 float3 normal=float3(0,0,1);
+
+/// The tangent direction.
 float3 tangent_u=float3(1,0,0);
 };
 struct EmissionSampleResult{
+/// The sampled emission direction in the natural tangent space.
 float3 wi=float3(0.);
+
+/// Is valid?
 bool isValid=false;
 };
+
+/// Recalculate the effective tangent space for emission evaluation.
+///
+/// \return
+/// Returns `true` if `wi` remains in the upper hemisphere after applying
+/// the effective tangent space.
+///
 @(pure noinline)
 bool recalculateTangentSpace(inline const &EmissionEvaluateParameters params){
 auto tbn(calculateTangentSpace(normal,tangent_u));
@@ -767,10 +1169,35 @@ auto emissionSample(const &_default_edf this[[anno::unused()]],const &EmissionSa
 return EmissionSampleResult();
 }
 export struct diffuse_reflection_bsdf:bsdf{
+/// The tint.
+///
+/// > Scaling factor, defined as a color, multiplied by the 
+/// > result of the distribution function.
+///
 const $(color|float) tint=1.;
+
+/// The roughness.
+///
+/// > Oren-Nayar roughness coefficient, simulating view-dependent diffuse 
+/// > reflection. Range: `[0,1]`, with `0` specifying complete view 
+/// > independence.
+///
 const float roughness=0.;
+
+/// The handle.
+///
+/// > Name to provide access to this component for use in an MDL 
+/// > integration.
+///
+/// \note
+/// This should be a `string` but we `void` it because we have no use for it.
+///
 void handle="";
+
+/// The multiscatter tint.
 const $(?(color|float)) multiscatter_tint=none;
+
+/// The flags.
 static const int df_flags=DF_REFLECTION|DF_DIFFUSE;
 };
 @(pure)
@@ -804,8 +1231,24 @@ return ScatterSampleResult();
 }
 }
 export struct diffuse_transmission_bsdf:bsdf{
+/// The tint.
+///
+/// > Scaling factor, defined as a color, multiplied by the 
+/// > result of the distribution function.
+///
 const $(color|float) tint=1.;
+
+/// The handle.
+///
+/// > Name to provide access to this component for use in an MDL 
+/// > integration.
+///
+/// \note
+/// This should be a `string` but we `void` it because we have no use for it.
+///
 void handle="";
+
+/// The flags.
 static const int df_flags=DF_TRANSMISSION|DF_DIFFUSE;
 };
 @(pure)
@@ -829,9 +1272,37 @@ return ScatterSampleResult();
 }
 }
 export struct specular_bsdf:bsdf{
+/// The tint.
+///
+/// > Scaling factor, defined as a color, multiplied by the 
+/// > result of the distribution function.
+///
 const $(color|float) tint=1.;
+
+/// The scatter mode.
+///
+/// > One of three values: `scatter_reflect`, `scatter_transmit`,
+/// > or (for both) `scatter_reflect_transmit`.
+///
+/// \note
+/// With `scatter_reflect_transmit`, the reflect/transmit split is
+/// weighted by the dielectric Fresnel term for the active IOR, matching
+/// the reference MDL semantics. Total internal reflection folds entirely
+/// into reflection.
+///
 const scatter_mode mode=scatter_reflect;
+
+/// The handle.
+///
+/// > Name to provide access to this component for use in an MDL 
+/// > integration.
+///
+/// \note
+/// This should be a `string` but we `void` it because we have no use for it.
+///
 void handle="";
+
+/// The flags.
 const int df_flags=int(mode)|DF_SPECULAR;
 };
 @(pure macro)
@@ -863,11 +1334,45 @@ return ScatterSampleResult();
 }
 }
 export struct sheen_bsdf:bsdf{
+/// The roughness.
+///
+/// > Roughness coefficient. Range: `[0,inf)`, with `0` specifying pure 
+/// > specular reflection.
+///
 float roughness;
+
+/// The tint.
+///
+/// > Scaling factor, defined as a color, multiplied by the result of the 
+/// > distribution function.
+///
 const $(color|float) tint=1.;
+
+/// The multiscatter tint.
+///
+/// > Scaling factor, defined as a color, of the diffuse multiscattering 
+/// > compensation, `color(0.0)` does not add any, `color(1.0)` fully 
+/// > compensates the energy loss.
+///
 const $(?(color|float)) multiscatter_tint=none;
+
+/// The multiscatter lobe.
+///
+/// Currently unused, part of the later MDL spec?
+///
 void multiscatter=none;
+
+/// The handle.
+///
+/// > Name to provide access to this component for use in an MDL 
+/// > integration.
+///
+/// \note
+/// This should be a `string` but we `void` it because we have no use for it.
+///
 void handle="";
+
+/// The flags.
 static const int df_flags=DF_REFLECTION|DF_DIFFUSE;
 finalize {
 roughness=saturate(roughness);
@@ -911,12 +1416,49 @@ return ScatterSampleResult();
 }
 }
 export struct ward_geisler_moroder_bsdf:bsdf{
+/// The roughness in U.
+///
+/// > Roughness coefficient in the U direction. Range: `[0,inf)`, with `0`
+/// > specifying pure specular reflection.
+///
 float roughness_u;
+
+/// The roughness in V.
+///
+/// > Roughness coefficient in the V direction. Range: `[0,inf)`, with `0`
+/// > specifying pure specular reflection.
+///
 float roughness_v=roughness_u;
+
+/// The tint.
+///
+/// > Scaling factor, defined as a color, multiplied by the result of the 
+/// > distribution function.
+///
 $(color|float) tint=1.;
+
+/// The multiscatter tint.
+///
+/// > Scaling factor, defined as a color, of the diffuse multiscattering 
+/// > compensation, `color(0.0)` does not add any, `color(1.0)` fully 
+/// > compensates the energy loss.
+///
 $(?(color|float)) multiscatter_tint=none;
+
+/// The tangent in U.
 float3 tangent_u=$state.texture_tangent_u[0];
+
+/// The handle.
+///
+/// > Name to provide access to this component for use in an MDL 
+/// > integration.
+///
+/// \note
+/// This should be a `string` but we `void` it because we have no use for it.
+///
 void handle="";
+
+/// The flags.
 static const int df_flags=DF_REFLECTION|DF_GLOSSY;
 finalize {
 roughness_u=saturate(roughness_u);
@@ -967,31 +1509,47 @@ return ScatterSampleResult(wi: (*tbn)*wi,mode: scatter_reflect);
 return ScatterSampleResult();
 }
 export namespace microfacet {
+
+/// The tag to identify microfacet distributions.
 export tag Distribution;
+
+/// The GGX (Ground-Glass-X) or Trowbridge-Reitz distribution.
 export struct DistributionGGX:default Distribution{};
+
+/// The Beckmann or Gaussian distribution.
 export struct DistributionBeckmann:Distribution{};
+
+/// The Smith Lambda function for the GGX distribution.
 @(pure macro)
 export float smithLambda(const DistributionGGX this[[anno::unused()]],const float m){
 return 0.5*(#sign(m)*#sqrt(1+1/(m*m+EPSILON)))-0.5;
 }
+
+/// The Smith Lambda function for the Beckmann distribution.
 @(pure macro)
 export float smithLambda(const DistributionBeckmann this[[anno::unused()]],const float m){
 return 0.5*(#exp(-m*m)/m/#sqrt($PI)-float(erfc(m)));
 }
+
+/// The 2-dimensional Smith slope PDF for the GGX distribution.
 @(pure macro)
 export float smithSlopePDF(const DistributionGGX this[[anno::unused()]],const float2 m){
 return (1/$PI)/#pow(1+#sum(m*m),2);
 }
+
+/// The 2-dimensional Smith slope PDF for the Beckmann distribution.
 @(pure macro)
 export float smithSlopePDF(const DistributionBeckmann this[[anno::unused()]],const float2 m){
 return (1/$PI)*#exp(-#sum(m*m));
 }
+
+/// The Smith visible slope sampling function for the GGX distribution.
 @(pure)
 export float2 smithVisibleSlopeSample(
 const DistributionGGX this[[anno::unused()]],
-const float xi0,
-const float xi1,
-float cosThetao,
+const float xi0, ///< A canonical random number in `[0,1]`
+const float xi1, ///< A canonical random number in `[0,1]`
+float cosThetao, ///< The outgoing zenith angle cosine
 ){
 return #sqrt(xi0/(1-xi0+EPSILON))*float2(#cos(phi:=$TWO_PI*xi1),#sin(phi)) if(cosThetao>1-EPSILON);
 cosThetao=#max(cosThetao,-0.9999);
@@ -1012,12 +1570,14 @@ return #sqrt(1+mx*mx)*s*((t*(t*(t*0.27385-0.73369)+0.46341))/(t*(t*(t*0.093073+0
 };
 return float2(mx,my);
 }
+
+/// The Smith visible slope sampling function for the Beckmann distribution.
 @(pure)
 export float2 smithVisibleSlopeSample(
 const DistributionBeckmann this[[anno::unused()]],
-float xi0,
-float xi1,
-float cosThetao,
+float xi0,       ///< A canonical random number in `[0,1]`
+float xi1,       ///< A canonical random number in `[0,1]`
+float cosThetao, ///< The outgoing zenith angle cosine
 ){
 return #sqrt(-#log(1-xi0+EPSILON))*float2(#cos((phi:=$TWO_PI*xi1)),#sin(phi)) if(cosThetao>1-EPSILON);
 xi0=#max(xi0,EPSILON);
@@ -1049,13 +1609,15 @@ return float2(monte_carlo::erfInverse(x),monte_carlo::erfInverse(2*xi1-1),);
 export float smithNormalPDF(const Distribution this[[anno::unused()]],const float2 alpha,const float3 wm){
 return wm.z>0.?smithSlopePDF(this,-wm.xy/(wm.z*alpha+EPSILON))/(alpha.x*alpha.y*#pow(wm.z,4)+EPSILON):0.;
 }
+
+/// The Smith visible normal sampling function.
 @(pure)
 export float3 smithVisibleNormalSample(
 const Distribution this,
-const float xi0,
-const float xi1,
-const float2 alpha,
-const float3 wo,
+const float xi0,    ///< A canonical random number in `[0,1]`
+const float xi1,    ///< A canonical random number in `[0,1]`
+const float2 alpha, ///< The squared roughness 
+const float3 wo,    ///< The outgoing direction
 ){
 const auto w11(normalize(float3(alpha*wo.xy,wo.z)));
 const auto sinTheta(length(w11.xy));
@@ -1065,14 +1627,18 @@ const auto m11(smithVisibleSlopeSample(this,xi0,xi1,w11.z));
 const auto m(float2(alpha.x*dot(float2(cosPhi,-sinPhi),m11),alpha.y*dot(float2(sinPhi,cosPhi),m11)));
 return #all(isfinite(m))?normalize(float3(-m,1)):wo.z==0?normalize(wo):float3(0,0,1);
 }
+
+/// The Blinn distribution.
 export struct DistributionBlinn:Distribution{};
+
+/// The Blinn normal first-quadrant sampling function.
 @(pure)
 export void blinnNormalFirstQuadrantSample(
-const float xi0,
-const float xi1,
-const float2 e,
-&float phi,
-&float cosTheta,
+const float xi0, ///< A canonical random number in `[0,1]`
+const float xi1, ///< A canonical random number in `[0,1]`
+const float2 e,  ///< The exponent
+&float phi,      ///< The output azimuth angle
+&float cosTheta, ///< The output zenith angle cosine
 ){
 if(e.x==e.y){
 *phi=$HALF_PI*xi0;
@@ -1082,8 +1648,13 @@ if(e.x==e.y){
 *cosTheta=#pow(xi1,1/(1+e.x*(cosPhi:=#cos(*phi))*cosPhi+e.y*(sinPhi:=#sin(*phi))*sinPhi));
 }
 }
+
+/// The Blinn normal sampling function.
 @(pure)
-export float3 blinnNormalSample(const float xi0,const float xi1,const float2 e,){
+export float3 blinnNormalSample(const float xi0, ///< A canonical random number in `[0,1]`
+const float xi1,                                 ///< A canonical random number in `[0,1]`
+const float2 e,                                  ///< The exponent
+){
 float phi=0;
 float cosTheta=0;
 if(xi0<0.25){
@@ -1097,24 +1668,60 @@ blinnNormalFirstQuadrantSample(4*(1-xi0),xi1,e,&phi,&cosTheta),phi=$TWO_PI-phi;
 }
 return float3(#sqrt(1-cosTheta*cosTheta+EPSILON)*float2(#cos(phi),#sin(phi)),cosTheta);
 }
+
+/// The tag to identify microfacet shadowing functions.
 export tag Shadowing;
+
+/// The Smith shadowing function. (This is the principled correct solution!)
 export struct ShadowingSmith:default Shadowing{};
+
+/// The V-cavities shadowing function. (This is the older simpler approximation!)
 export struct ShadowingVCavities:Shadowing{};
 @(foreign pure)
 double lgamma(double x);
+
+/// The beta function for Smith shadowing in transmission calculations.
 @(pure)
 export double beta(const double x,const double y)=#exp(lgamma(x)+lgamma(y)-lgamma(x+y));
 }
 struct microfacet_bsdf:bsdf{
+/// The roughness in `[0,1]^2`.
 const float2 roughness;
+
+/// The geometric mean roughness.
 const float roughness0=#sqrt(#prod(roughness));
+
+/// The roughness squared in `[EPSILON,1]^2`. 
+///
+/// \note 
+/// This is the effective roughness parameter that is actually 
+/// used in microfacet equations. It is squared for perceptual linearity,
+/// meaning that adjusting the `roughness` parameter more closely tracks
+/// qualitative changes in the apparent roughness of the BSDF.
+///
 const float2 alpha=clamp(roughness*roughness,EPSILON,1.);
+
+/// The tint.
 $(color|float) tint;
+
+/// The multiscatter tint, or `none` for no multiscatter.
 $(?(color|float)) multiscatter_tint=none;
+
+/// The tangent direction for orienting anistropic roughness.
 float3 tangent_u=$state.texture_tangent_u[0];
+
+/// The scatter mode. With `scatter_reflect_transmit`, the reflect and
+/// transmit lobes are weighted by the dielectric Fresnel term, forming a
+/// complete rough dielectric in one lobe.
 const scatter_mode mode=scatter_reflect;
+
+/// The microfacet distribution.
 const microfacet::Distribution distribution=microfacet::Distribution();
+
+/// The microfacet shadowing technique.
 const microfacet::Shadowing shadowing=microfacet::Shadowing();
+
+/// The flags.
 const int df_flags=int(mode)|DF_GLOSSY;
 };
 @(pure noinline)
@@ -1277,17 +1884,32 @@ export auto microfacet_ggx_vcavities_bsdf(*)=makeMicrofacetBSDF(distribution: mi
 export auto microfacet_beckmann_smith_bsdf(*)=makeMicrofacetBSDF(distribution: microfacet::DistributionBeckmann(),shadowing: microfacet::ShadowingSmith());
 export auto microfacet_beckmann_vcavities_bsdf(*)=makeMicrofacetBSDF(distribution: microfacet::DistributionBeckmann(),shadowing: microfacet::ShadowingVCavities());
 export bool bsdf_measurement_isvalid(const bsdf_measurement measurement)=bool(measurement.buffer);
+
+/// Declare `smdBSDFMeasurementInterpolate` in `lib/BSDFMeasurement.cc`
 @(pure foreign)
 void smdBSDFMeasurementInterpolate(&void measurement,&float3 wo,&float3 wi,&float3 result);
+
+/// Declare `smdBSDFMeasurementDirectionPDF` in `lib/BSDFMeasurement.cc`
 @(pure foreign)
 float smdBSDFMeasurementDirectionPDF(&void measurement,&float3 wo,&float3 wi);
+
+/// Declare `smdBSDFMeasurementDirectionSample` in `lib/BSDFMeasurement.cc`
 @(pure foreign)
 void smdBSDFMeasurementDirectionSample(&void measurement,&float2 xi,&float3 wo,&float3 wi,&float pdf);
 export struct measured_bsdf:bsdf{
+/// The measurement.
 bsdf_measurement measurement;
+
+/// The multiplier.
 float multiplier=1.;
+
+/// The scatter mode.
 scatter_mode mode=scatter_reflect;
+
+/// The handle.
 string handle="";
+
+/// The flags.
 const int df_flags=(int(mode)&measurement.mode)|DF_GLOSSY;
 };
 @(macro)
@@ -1320,7 +1942,12 @@ return ScatterSampleResult();
 }
 static const auto HAPKE_QUAD=auto[16](auto(0.0426509835,0.999861409,0.0166482032,0.00832467848,-0.989400935),auto(0.0977876067,0.996212554,0.086951409,0.0435581917,-0.944575023),auto(0.149474641,0.977808138,0.209502376,0.105926541,-0.865631202),auto(0.19576673,0.927094889,0.374826716,0.194503508,-0.755404408),auto(0.23498483,0.825200872,0.564839376,0.309466966,-0.617876244),auto(0.265710439,0.658971885,0.752167571,0.453393802,-0.458016778),auto(0.286832774,0.428057064,0.903751708,0.632854058,-0.281603551),auto(0.297588323,0.148691866,0.988883577,0.860878018,-0.0950125098),auto(0.297588323,-0.148691866,0.988883577,1.16160476,0.0950125098),auto(0.286832774,-0.428057064,0.903751708,1.58014314,0.281603551),auto(0.265710439,-0.658971885,0.752167571,2.20558816,0.458016778),auto(0.23498483,-0.825200872,0.564839376,3.23136267,0.617876244),auto(0.19576673,-0.927094889,0.374826716,5.14129545,0.755404408),auto(0.149474641,-0.977808138,0.209502376,9.44050459,0.865631202),auto(0.0977876067,-0.996212554,0.086951409,22.9577942,0.944575023),auto(0.0426509835,-0.999861409,0.0166482032,120.124759,0.989400935));
 static const auto HAPKE_W_CHEB=auto[5](auto(0.0443692637,-0.0330322166,-0.0414806793,0.0377322324,-0.0036831791,-0.00503835424,8.09641201e-4,3.28879959e-4,2.18482055e-5,-1.60545071e-5,-1.57504064e-5),auto(-0.00594076498,7.57196179e-4,0.0081566095,-6.27186314e-4,-0.00248094082,-4.88022104e-4,2.97539468e-4,3.75439189e-4,-8.86163641e-6,-3.29277167e-5,-3.83729896e-5),auto(-9.63613192e-4,4.66153409e-4,0.00149075512,-6.73457031e-4,-7.58809229e-4,1.27478645e-4,2.95317848e-4,1.1745609e-4,-6.84391571e-5,-5.81575106e-5,-1.47705227e-5),auto(2.75487885e-4,6.03421013e-5,-4.03479982e-4,-1.90433817e-4,1.11667449e-4,1.85513524e-4,6.24427123e-5,-7.37454173e-5,-7.16632707e-5,-2.55167593e-5,1.67814334e-5),auto(-2.62793436e-5,-3.65689393e-5,6.2527643e-6,6.15744651e-5,6.90324901e-5,-6.91503114e-6,-5.56055434e-5,-4.09210276e-5,7.60283579e-6,2.61753306e-5,1.97457206e-5));
-static const auto HAPKE_G_CHEB=auto[4](auto(0.299680994,-0.25994946,0.0835171816,-0.0234697031,0.0061327028,-0.00150566063,3.6640673e-4),auto(-0.0526057365,0.0529757455,-0.0205834026,0.00702317686,-0.00220447865,6.35609701e-4,-1.79704911e-4),auto(-0.0107799361,0.00980414131,-0.00314615761,8.44617944e-4,-2.0008313e-4,4.17196758e-5,-7.49359084e-6),auto(0.00182228246,-0.00183367741,8.1867027e-4,-3.34625137e-4,1.23845828e-4,-4.06381678e-5,1.27990763e-5));
+static const auto HAPKE_G_CHEB=auto[4](auto(0.299680994,-0.25994946,0.0835171816,-0.0234697031,0.0061327028,-0.00150566063,3.6640673e-4),auto(-0.0526057365,0.0529757455,-0.0205834026,0.00702317686,-0.00220447865,6.35609701e-4,-1.79704911e-4),auto(-0.0107799361,0.00980414131,-0.00314615761,8.44617944e-4,-2.0008313e-4,4.17196758e-5,-7.49359084e-6),auto(0.00182228246,-0.00183367741,8.1867027e-4,-3.34625137e-4,1.23845828e-4,-4.06381678e-5,1.27990763e-5)); /// Evaluate a Chebyshev series by the Clenshaw recurrence, `x` in `[-1,1]`.
+///
+/// \note
+/// Generic in both the coefficients and `x`, so the same routine serves the scalar
+/// density evaluation at construction and the spectral `EbarK` evaluation.
+///
 @(pure)
 auto hapkeChebEval(const auto c,const int n,const auto x){
 auto b1(0.*x);
@@ -1332,8 +1959,14 @@ b1=t;
 }
 return x*b1-b2+c[0];
 }
+
+/// The tangent of the half phase angle, which is the natural argument of the surge.
 @(pure macro)
 float hapkeTanHalfAngle(const float cosG)=#sqrt((1.-cosG)/#max(1.+cosG,1e-12));
+
+/// The two-lobe Henyey-Greenstein phase function in Hapke's convention, where the
+/// first lobe peaks at `g = 0`, which is to say at backscatter. The sharpness `b`
+/// narrows both lobes and the weight `c` balances backward against forward.
 @(pure)
 float hapkePhase(const float b,const float c,const float cosG){
 const auto numer(1.-b*b);
@@ -1341,28 +1974,93 @@ const auto back(1.-2.*b*cosG+b*b);
 const auto fwd(1.+2.*b*cosG+b*b);
 return 0.5*(1.+c)*numer/(back*#sqrt(back))+0.5*(1.-c)*numer/(fwd*#sqrt(fwd));
 }
+
+/// The shadow-hiding opposition effect (SHOE, Hapke 1986). Near `g = 0` a grain hides
+/// its own shadow, brightening retro-reflection by `B0 / (1 + tan(g/2)/h)`.
 @(pure macro)
 float hapkeSurge(const float B0,const float h,const float tanHalfG)=B0/(1.+tanHalfG/h);
+
+/// The Chandrasekhar H-function in the Hapke (2002) rational-log approximation, whose
+/// error is under 1 percent against the exact integral-equation solution. The product
+/// `H(mu0) H(mu) - 1` is the isotropic approximation of everything scattered more than
+/// once: it grows from 1 on a dark surface toward roughly 3 as `w` approaches 1 at
+/// high cosines, which is where bright surfaces get their flattened limbs.
 @(pure)
 auto hapkeH(const float x,const auto w,const auto r0){
 const auto xs(#max(x,1e-6));
 return 1./(1.-w*xs*(r0+0.5*(1.-2.*r0*xs)*#log(1.+1./xs)));
 }
+
+/// The energy-conserving Hapke BRDF for granular surfaces.
+///
+/// The distribution is a normalized Hapke shape kernel times the prescribed `albedo`,
+/// `f = albedo * K / EbarK`, where `EbarK` is the kernel's own bihemispherical albedo,
+/// so that the realized white-sky albedo equals `albedo` exactly for every setting of
+/// the four directional parameters. They redistribute energy without creating or
+/// destroying it. The kernel itself is
+///
+///     K = w / (4 pi (mu0e + mue)) * [ptilde(g) + H(mu0e) H(mue) - 1] * S
+///
+/// which is the Lommel-Seeliger single-scattering core, the surge-folded two-lobe
+/// Henyey-Greenstein phase function `ptilde`, isotropic multiple scattering built from
+/// the Hapke (2002) H-functions, and the Hapke (1984) macroscopic-roughness shadowing
+/// `S`, assembled in its manifestly reciprocal form.
+///
+/// \note
+/// The `albedo` is not a tint. It is the reflectance the surface actually realizes
+/// under uniform illumination, so it is meaningful to drive it with a measured or
+/// modeled soil spectrum.
+///
 export struct hapke_granular_bsdf:bsdf{
+/// The albedo, realized exactly as the bihemispherical (white-sky) reflectance.
 const $(color|float) albedo=1.;
+
+/// The roughness, being the Hapke mean facet slope `theta_bar = 30 degrees * roughness`.
 float roughness=0.;
+
+/// The porosity. `0` is compacted, with a wide opposition surge, and `1` is fluffy
+/// fairy-castle structure, with a narrow one.
 float porosity=0.5;
+
+/// The hotspot, being the amplitude `B0` of the shadow-hiding opposition surge.
 float hotspot=0.8;
+
+/// The backscatter. `0` is forward-scattering translucent grains and `1` is rough
+/// opaque backscatterers, where soils sit high.
 float backscatter=0.8;
+
+/// The single-scattering albedo `w`.
 auto _ssa=albedo;
+
+/// The diffusive reflectance `r0`, which is the clamped albedo by construction.
 auto _diffRefl=albedo;
+
+/// The albedo per unit kernel, `A / (A_ss + w G)`.
 auto _scale=albedo;
+
+/// The Henyey-Greenstein lobe sharpness `b`.
 float _hgSharpness=0.;
+
+/// The Henyey-Greenstein backward-to-forward weight `c`.
 float _hgBackWeight=0.;
+
+/// The opposition surge width `h`.
 float _surgeWidth=0.;
+
+/// The reciprocal of the surge normalization `N_B`.
 float _invSurgeNorm=1.;
+
+/// The tangent of the mean facet slope, where `0` selects the smooth path.
 float _tanMeanSlope=0.;
+
+/// The handle.
+///
+/// \note
+/// This should be a `string` but we `void` it because we have no use for it.
+///
 void handle="";
+
+/// The flags.
 static const int df_flags=DF_REFLECTION|DF_DIFFUSE;
 finalize {
 roughness=saturate(roughness);
@@ -1399,6 +2097,9 @@ _diffRefl=A;
 _scale=A/(ssAlbedoPerW+_ssa*hapkeChebEval(gcol,#num(gcol),2.*gamma-1.));
 }
 };
+
+/// Evaluate the Hapke BRDF, without the cosine factor, for directions expressed in the
+/// shading tangent space and understood to be in the upper hemisphere.
 @(pure noinline)
 auto hapkeEvaluateBRDF(const &hapke_granular_bsdf this,const float3 wo,const float3 wi){
 const auto mu0(clamp(wi.z,1e-4,1.));
@@ -1469,9 +2170,20 @@ return ScatterSampleResult(wi: (*tbn)*monte_carlo::cosineHemisphereSample(xi.xy)
 } else {
 return ScatterSampleResult();
 }
-}
+} /// A diffuse (Lambertian) Emission Distribution Function (EDF), i.e.,
+/// constant radiance over the upper hemisphere.
 export struct diffuse_edf:edf{
+/// The handle.
+///
+/// > Name to provide access to this component for use in an MDL
+/// > integration.
+///
+/// \note
+/// This should be a `string` but we `void` it because we have no use for it.
+///
 void handle="";
+
+/// The flags.
 static const int df_flags=DF_DIFFUSE;
 };
 @(pure)
@@ -1485,17 +2197,67 @@ return EmissionEvaluateResult(isBlack: true);
 @(pure)
 auto emissionSample(const &diffuse_edf this[[anno::unused()]],inline const &EmissionSampleParameters params){
 return EmissionSampleResult(wi: calculateTangentSpace(normal,tangent_u)*monte_carlo::cosineHemisphereSample(xi.xy),isValid: true);
-}
+} /// A spot Emission Distribution Function (EDF), i.e., an exponentiated
+/// cosine falloff restricted to a cone.
+///
+/// The cosine is remapped so that it reaches zero at the boundary of the
+/// cone: with `θ0 = spread / 2` the distribution is proportional to
+/// `((cos(θ) - cos(θ0)) / (1 - cos(θ0)))^exponent` inside the cone and
+/// zero outside of it.
+///
 export struct spot_edf:edf{
+/// The exponent of the cosine falloff.
 float exponent;
+
+/// The spread, being the full angle of the emission cone in radians. The
+/// default of `$PI` corresponds to the full upper hemisphere.
 float spread=$PI;
+
+/// > Boolean that chooses between two interpretations of the EDF: the
+/// > directional distribution applied per point in tangent space, or the
+/// > distribution of the light source as a whole in the global frame.
+///
+/// \note
+/// Only the per-point tangent-space interpretation is supported, so this
+/// is accepted and ignored. The luminaire-as-a-whole interpretation is a
+/// host-side concern, e.g., a delta spot light.
+///
 void global_distribution=true;
+
+/// The global frame.
+///
+/// \note
+/// Only the per-point tangent-space interpretation is supported, so this
+/// is accepted and ignored.
+///
 void global_frame=float3x3(1.);
+
+/// The handle.
+///
+/// > Name to provide access to this component for use in an MDL
+/// > integration.
+///
+/// \note
+/// This should be a `string` but we `void` it because we have no use for it.
+///
 void handle="";
+
+/// The precomputed cosine of the cone half angle.
 const float _cosSpread=#cos(0.5*#min(#max(spread,EPSILON),$PI));
+
+/// The precomputed normalization such that the cosine-weighted integral
+/// over the cone is 1, i.e., with `c0 = _cosSpread` and `k = exponent`:
+/// `∫ ((x - c0)/(1 - c0))^k x 2π dx` over `x` in `[c0, 1]`.
+///
+/// \note
+/// This must clamp `exponent` itself because field initializers run
+/// before the `finalize` block.
+///
 const float _normalization=let {
 const float k=#max(exponent,0.);
 } in 2.*$PI*(1.-_cosSpread)*(_cosSpread/(k+1.)+(1.-_cosSpread)/(k+2.));
+
+/// The flags.
 static const int df_flags=DF_GLOSSY;
 finalize {
 exponent=#max(exponent,0.);
@@ -1520,21 +2282,86 @@ const auto cosTheta(this._cosSpread+(1.-this._cosSpread)*mu);
 const auto sinTheta(#sqrt(#max(1.-cosTheta*cosTheta,0.)));
 const auto phi($TWO_PI*xi.y);
 return EmissionSampleResult(wi: calculateTangentSpace(normal,tangent_u)*float3(sinTheta*#cos(phi),sinTheta*#sin(phi),cosTheta),isValid: true,);
-}
+} /// Declare the light profile interpolation routine implemented in
+/// `lib/LightProfile.cc` and registered as a JIT builtin by
+/// `#load_light_profile` in `lib/Compiler/Emitter.cc`.
 @(pure foreign)
 float smdlLightProfileInterpolate(const &void profile,const &float3 wo);
+
+/// Declare the light profile direction PDF routine, being the exact
+/// solid-angle density over the sphere of the direction sampling routine
+/// in the profile's own coordinate system.
 @(pure foreign)
 float smdlLightProfileDirectionPDF(const &void profile,const &float3 wi);
+
+/// Declare the light profile direction sampling routine.
 @(pure foreign)
 void smdlLightProfileDirectionSample(const &void profile,const &float2 xi,const &float3 wi,const &float pdf);
+
+/// A measured Emission Distribution Function (EDF), i.e., an IES light
+/// profile applied per point in tangent space: the profile's vertical
+/// axis (vertical angle 0) is aligned with the shading normal, and its
+/// horizontal angle 0 is aligned with `tangent_u`.
+///
+/// The EDF value is `multiplier * profile(wi) / max_intensity`, so unlike
+/// `diffuse_edf` and `spot_edf` it is NOT normalized such that the
+/// cosine-weighted hemisphere integral is 1: with `multiplier = 1`, the
+/// `material_emission.intensity` is the radiance emitted in the peak
+/// direction of the profile, and the profile shapes the falloff. Hosts
+/// that need the true emitted power of the profile for light selection
+/// should use `light_profile.power`.
+///
+/// \note
+/// The lower hemisphere of the profile is clipped: a surface cannot emit
+/// below its own horizon. Directions sampled there are rejected, and the
+/// PDF is reported with respect to solid angle over the full sphere, so
+/// evaluation and sampling remain consistent for MIS.
+///
 export struct measured_edf:edf{
+/// The light profile.
 light_profile profile;
+
+/// The multiplier.
 float multiplier=1.;
+
+/// > Boolean that chooses between two interpretations of the EDF: the
+/// > directional distribution applied per point in tangent space, or the
+/// > distribution of the light source as a whole in the global frame.
+///
+/// \note
+/// Only the per-point tangent-space interpretation is supported, so this
+/// is accepted and ignored. The luminaire-as-a-whole interpretation is a
+/// host-side concern, e.g., a delta point light driven directly by the
+/// C++ `smdl::LightProfile` API.
+///
 void global_distribution=true;
+
+/// The global frame.
+///
+/// \note
+/// Only the per-point tangent-space interpretation is supported, so this
+/// is accepted and ignored.
+///
 void global_frame=float3x3(1.);
+
+/// The tangent direction, orienting the horizontal angle of the profile.
 float3 tangent_u=$state.texture_tangent_u[0];
+
+/// The handle.
+///
+/// > Name to provide access to this component for use in an MDL
+/// > integration.
+///
+/// \note
+/// This should be a `string` but we `void` it because we have no use for it.
+///
 void handle="";
+
+/// The precomputed scale, folding the multiplier and the normalization
+/// by the maximum intensity of the profile.
 const float _scale=profile.max_intensity>0.?#max(multiplier,0.)/profile.max_intensity:0.;
+
+/// The flags.
 static const int df_flags=DF_GLOSSY;
 };
 @(pure)
@@ -1561,24 +2388,46 @@ smdlLightProfileDirectionSample(this.profile.ptr,&xiDirection,&w,&pdf);
 if(!((pdf>0.)&(w.z>0.)))
 return EmissionSampleResult();
 return EmissionSampleResult(wi: calculateTangentSpace(normal,this.tangent_u)*w,isValid: true);
-}
+} /// A 1-value tint.
 struct tint1:bsdf,edf,hair_bsdf{
+/// The tint multiplier.
 $(color|float) tint;
+
+/// The base `bsdf`, `edf`, or `hair_bsdf`.
 auto base;
+
+/// The flags.
 const int df_flags=base.df_flags;
 };
+
+/// A 2-value tint.
 struct tint2:bsdf{
+/// The tint multiplier on reflection.
 $(color|float) reflection_tint;
+
+/// The tint multiplier on transmission.
 $(color|float) transmission_tint;
+
+/// The base `bsdf`.
 bsdf base;
+
+/// The flags.
 const int df_flags=base.df_flags;
 };
+
+/// Construct 1-value tint of the given `bsdf`.
 @(macro)
 export auto tint(const auto tint,const bsdf base)=tint1(tint,base);
+
+/// Construct 1-value tint of the given `edf`.
 @(macro)
 export auto tint(const auto tint,const edf base)=tint1(tint,base);
+
+/// Construct 1-value tint of the given `hair_bsdf`.
 @(macro)
 export auto tint(const auto tint,const hair_bsdf base)=tint1(tint,base);
+
+/// Construct 2-value tint of the given `bsdf`.
 @(macro)
 export auto tint(const auto reflection_tint,const auto transmission_tint,const bsdf base)=tint2(reflection_tint,transmission_tint,base);
 @(macro)
@@ -1631,11 +2480,28 @@ if(params.mode==scatter_reflect){
 return result;
 }
 export struct weighted_layer:bsdf{
+/// The weight. 
 $(color|float) weight;
+
+/// The layer BSDF.
 bsdf layer=bsdf();
+
+/// The base BSDF.
 bsdf base=bsdf();
+
+/// The normal to use for the layer.
 float3 normal=$state.normal;
+
+/// The chance of sampling the layer BSDF.
+///
+/// \note
+/// If the weight is a `float`, then the chance is the same
+/// as the weight. However, if the weight is a `color`, we
+/// have to average it down to a single probability.
+///
 float chance=average(weight);
+
+/// The flags.
 const int df_flags=layer.df_flags|base.df_flags;
 finalize {
 weight=saturate(weight);
@@ -1660,13 +2526,44 @@ return scatterSample(visit &this.layer,params);
 return scatterSample(visit &this.base,params);
 }
 }
-export typedef weighted_layer color_weighted_layer;
+
+/// The `color_weighted_layer` is also implemented by the `weighted_layer`.
+export typedef weighted_layer color_weighted_layer; /// A thin film layer.
+///
+/// > Add reflective thin-film interference color to an elemental or
+/// > compound BSDF.
+///
 export struct thin_film:bsdf{
+/// The thickness in nanometers.
 $(color|float) thickness;
+
+/// The index of refraction.
 $(color|float) ior;
+
+/// The base BSDF.
 bsdf base=bsdf();
+
+/// The flags.
 const int df_flags=base.df_flags;
 };
+
+/// Evaluate the thin-film interference factor.
+///
+/// This is the ratio of the Airy interference reflectance of the coated interface
+/// (ambient medium, then a film of the given `thickness` in nanometers and `filmIOR`,
+/// then the base medium of the given `baseIOR`, everything relative to the ambient
+/// medium) to the plain Fresnel reflectance of the uncoated interface. The MDL
+/// specification defines `thin_film` as modulating the Fresnel term of the base BSDF,
+/// so the ratio converts an uncoated Fresnel reflectance into the coated one. It
+/// reduces to the identity at zero thickness, consistent with the elimination rules
+/// in the specification's normal form, and may exceed one at wavelengths with
+/// constructive interference.
+///
+/// \note
+/// The cosines through the film and into the base are clamped at zero, so total
+/// internal reflection at a buried interface is handled with the correct magnitude
+/// but without the phase shift of the evanescent case.
+///
 @(macro)
 auto thinFilmFactor(const auto thickness,const auto filmIOR,const float baseIOR,const float cosTheta1){
 const auto eta2(filmIOR);
@@ -1687,6 +2584,12 @@ const auto rp13((eta3*cosTheta1-cosTheta3)/(eta3*cosTheta1+cosTheta3));
 const float R13(0.5*(rs13*rs13+rp13*rp13));
 return R13>EPSILON?0.5*(Rs+Rp)/R13:color(1.);
 }
+
+/// The film IOR relative to the incident medium. The user-facing film IOR is
+/// absolute. From outside, the incident medium is the exterior. From inside
+/// a solid (a backface hit), the incident medium is the base itself, whose
+/// absolute index equals `params.ior * params.exterior_ior` after the
+/// `finalize` reciprocation.
 @(macro)
 auto thinFilmIncidentRelativeIOR(const &thin_film this,const auto params){
 if(params.hitBackface&!params.thin_walled){
@@ -1711,11 +2614,24 @@ if((result.mode==scatter_reflect)&bool(result.fDelta)){
 *result.fDelta*=thinFilmFactor(this.thickness,thinFilmIncidentRelativeIOR(this,params),1/params.ior,#abs(dot(params.wo,halfDirection(params,&result))));
 }
 return result;
-}
+} /// A fresnel factor.
+///
+/// > Modifier weighting a base BSDF based on the Fresnel reflection 
+/// > equation for a complex number IOR, comprising a real number IOR 
+/// > and an extinction coefficient. This modifier is useful to model
+/// > the reflectance behavior of conductors and semi-conductors.
+///
 export struct fresnel_factor:bsdf{
+/// The index of refraction.
 $(color|float) ior;
+
+/// The extinction coefficient.
 $(color|float) extinction_coefficient;
+
+/// The base BSDF.
 bsdf base=bsdf();
+
+/// The flags.
 const int df_flags=base.df_flags;
 };
 @(macro)
@@ -1735,10 +2651,32 @@ if((result.mode==scatter_reflect)&bool(result.fDelta)){
 return result;
 }
 export struct directional_factor:bsdf{
+/// The normal tint.
+///
+/// > Color scaling factor at the normal.
+///
 $(color|float) normal_tint=1.;
+
+/// The grazing tint.
+/// 
+/// > Color scaling factor at the grazing angle.
+///
 $(color|float) grazing_tint=1.;
+
+/// The exponent.
+///
+/// > Exponent for directional factor. Default value (5.0) is 
+/// > from Schlick's approximation.
+///
 float exponent=5.;
+
+/// The base BSDF.
+///
+/// > Base BSDF to be modified by directional factor.
+///
 bsdf base=bsdf();
+
+/// The flags.
 const int df_flags=base.df_flags;
 };
 @(macro)
@@ -1759,10 +2697,31 @@ if((result.mode==scatter_reflect)&bool(result.fDelta)){
 return result;
 }
 export struct measured_curve_factor:bsdf{
+/// The curve values.
+///
+/// > Measured data for the reflection behavior. A 1-d function
+/// > measured in the pre-image range from zero to pi/2 with equally
+/// > spaced measured reflectance values.
+///
+/// \note
+/// The deferred size is inferred at construction and recovered
+/// with `#num` in the implementation.
+///
 color[] curve_values;
+
+/// The base BSDF.
+///
+/// > Base BSDF to be modified by the measured reflectance curve.
+///
 bsdf base=bsdf();
+
+/// The flags.
 const int df_flags=base.df_flags;
 };
+
+/// Evaluate the reflectivity of a measured curve at `cosAlpha`, the cosine of the
+/// angle between the outgoing direction and the half vector, linearly interpolating
+/// the equally spaced `curve_values` over `[0, pi/2]`.
 @(pure macro)
 color evaluateMeasuredCurve(const color[<N>] curve_values,const float cosAlpha){
 const auto t(saturate(#acos(saturate(#abs(cosAlpha)))*(2/$PI))*(N-1));
@@ -1787,10 +2746,31 @@ if((result.mode==scatter_reflect)&bool(result.fDelta)){
 return result;
 }
 export struct measured_factor:bsdf{
+/// The values.
+///
+/// > Measured data of type color for the reflection behavior. A 2-d 
+/// > function measured in the pre-image range `[0,pi/2]^2` with equally
+/// > spaced reflectance values, where the texture-space u-coordinate 
+/// > corresponds to the angle alpha between the incoming direction and 
+/// > the half-vector h from the microfacet model, and the texture-space
+/// > v-coordinate corresponds to the angle beta between the half-vector 
+/// > h and the shading surface normal.
+///
 texture_2d values;
+
+/// The base BSDF.
+///
+/// > Base BSDF to be modified by the measured reflectance values.
+///
 bsdf base=bsdf();
+
+/// The flags.
 const int df_flags=base.df_flags;
 };
+
+/// Evaluate the reflectivity of the measured factor, where `cosAlpha` is the cosine
+/// of the angle between the outgoing direction and the half vector `h`, and `cosBeta`
+/// is the cosine of the angle between `h` and the shading normal.
 @(pure macro)
 color evaluateMeasuredFactor(const &measured_factor this,const float cosAlpha,const float cosBeta){
 return saturate(tex::lookup_color(
@@ -1820,13 +2800,36 @@ const auto h(halfDirection(params,&result));
 return result;
 }
 export struct fresnel_layer:bsdf{
+/// The index of refraction.
+///
+/// \note
+/// This is the absolute IOR of the layer interface. It both weights the
+/// layer by the dielectric Fresnel term and, non-standardly, defines the
+/// refractive interface for the nested `layer` BSDF (overriding the
+/// material IOR), so that the Fresnel weight and any refraction in the
+/// layer always agree with each other.
+///
 $(color|float) ior;
+
+/// The weight.
 $(color|float) weight=1.;
+
+/// The layer BSDF.
 bsdf layer=bsdf();
+
+/// The base BSDF.
 bsdf base=bsdf();
+
+/// The normal to use for the layer.
 float3 normal=$state.normal;
+
+/// The precomputed average index of refraction.
 const float _averageIOR=average(ior);
+
+/// The precomputed average weight.
 const float _averageWeight=average(weight);
+
+/// The flags.
 const int df_flags=layer.df_flags|base.df_flags;
 };
 @(macro)
@@ -1864,18 +2867,45 @@ auto result(scatterSample(visit &this.base,params));
 return result;
 }
 }
-export typedef fresnel_layer color_fresnel_layer;
+export typedef fresnel_layer color_fresnel_layer; /// A custom-curve layer.
+///
+/// \note
+/// Unlike `fresnel_layer`, this combinator carries no IOR and does not
+/// define a refractive interface: a nested transmissive `layer` refracts
+/// with the enclosing interface, which is the material IOR by default.
+///
 export struct custom_curve_layer:bsdf{
+/// The reflectivity at normal incidence.
 $(color|float) normal_reflectivity;
+
+/// The reflectivity at grazing incidence.
 $(color|float) grazing_reflectivity=1.;
+
+/// The exponent.
 float exponent=5.;
+
+/// The weight.
 $(color|float) weight=1.;
+
+/// The layer BSDF.
 bsdf layer=bsdf();
+
+/// The base BSDF.
 bsdf base=bsdf();
+
+/// The normal to use for the layer.
 float3 normal=$state.normal;
+
+/// The precomputed average normal reflectivity.
 const float _averageNormalReflectivity=average(normal_reflectivity);
+
+/// The precomputed average grazing reflectivity.
 const float _averageGrazingReflectivity=average(grazing_reflectivity);
+
+/// The precomputed average weight.
 const float _averageWeight=average(weight);
+
+/// The flags.
 const int df_flags=layer.df_flags|base.df_flags;
 };
 @(macro)
@@ -1914,14 +2944,38 @@ auto result(scatterSample(visit &this.base,params));
 return result;
 }
 }
-export typedef custom_curve_layer color_custom_curve_layer;
+export typedef custom_curve_layer color_custom_curve_layer; /// A measured-curve layer.
+///
+/// \note
+/// Unlike `fresnel_layer`, this combinator carries no IOR and does not
+/// define a refractive interface: a nested transmissive `layer` refracts
+/// with the enclosing interface, which is the material IOR by default.
+///
 export struct measured_curve_layer:bsdf{
+/// The curve values.
+///
+/// > Measured data for the reflection behavior. A 1-d function
+/// > measured in the pre-image range from zero to pi/2 with equally
+/// > spaced measured reflectance values.
+///
 color[] curve_values;
+
+/// The weight.
 $(color|float) weight=1.;
+
+/// The layer BSDF.
 bsdf layer=bsdf();
+
+/// The base BSDF.
 bsdf base=bsdf();
+
+/// The normal to use for the layer.
 float3 normal=$state.normal;
+
+/// The precomputed average weight.
 const float _averageWeight=average(weight);
+
+/// The flags.
 const int df_flags=layer.df_flags|base.df_flags;
 };
 @(macro)
@@ -2141,11 +3195,11 @@ return ScatterSampleResult(wi: orthonormalBasis(wo)*float3(sinTheta*#cos(phi),si
 @(macro)
 export int _scatterEvaluate(
 const &_MaterialInstance instance,
-const &float3 woWorld,
-const &float3 wiWorld,
-const &float pdfFwd,
-const &float pdfRev,
-const &float f,
+const &float3 woWorld, ///< The outgoing direction in world space
+const &float3 wiWorld, ///< The incoming direction in world space
+const &float pdfFwd,   ///< output: The PDF of sampling `wi` from `wo`
+const &float pdfRev,   ///< output: The PDF of sampling `wo` from `wi`
+const &float f,        ///< output: The scattering function
 ){
 auto params=ScatterEvaluateParameters(
 isImportance: (instance.flags&1)!=0,
@@ -2179,13 +3233,13 @@ return !result.isBlack;
 @(macro)
 export int _scatterSample(
 const &_MaterialInstance instance,
-const &float4 xi,
-const &float3 woWorld,
-const &float3 wiWorld,
-const &float pdfFwd,
-const &float pdfRev,
-const &float f,
-const &int isDelta,
+const &float4 xi,      ///< The canonical random sample in `[0,1]^4`
+const &float3 woWorld, ///< The outgoing direction in world space
+const &float3 wiWorld, ///< output: The incoming direction in world space
+const &float pdfFwd,   ///< output: The PDF of sampling `wi` from `wo`
+const &float pdfRev,   ///< output: The PDF of sampling `wo` from `wi`
+const &float f,        ///< output: The scattering function
+const &int isDelta,    ///< output: Is delta direction?
 ){
 auto wo=normalize((*woWorld)*instance.tangent_to_world);
 auto params=ScatterSampleParameters(
@@ -2219,7 +3273,9 @@ return _scatterEvaluate(instance,woWorld,wiWorld,pdfFwd,pdfRev,f);
 }
 }
 @(macro)
-export float _volumeScatterEvaluate(const &_MaterialInstance instance,const &float3 woWorld,const &float3 wiWorld,){
+export float _volumeScatterEvaluate(const &_MaterialInstance instance,const &float3 woWorld, ///< The outgoing direction in world space
+const &float3 wiWorld,                                                                       ///< The incoming direction in world space
+){
 auto params=ScatterEvaluateParameters(
 isImportance: 0,
 wo0: normalize(*woWorld),
@@ -2232,9 +3288,9 @@ return scatterEvaluate(visit &instance.ptr.volume.scattering,&params).f;
 @(macro)
 export float _volumeScatterSample(
 const &_MaterialInstance instance,
-const &float4 xi,
-const &float3 woWorld,
-const &float3 wiWorld,
+const &float4 xi,      ///< The canonical random sample in `[0,1]^4`
+const &float3 woWorld, ///< The outgoing direction in world space
+const &float3 wiWorld, ///< output: The incoming direction in world space
 ){
 auto wo=normalize(*woWorld);
 auto params=ScatterSampleParameters(
@@ -2251,6 +3307,8 @@ return 0.;
 *wiWorld=normalize(result.wi);
 return _volumeScatterEvaluate(instance,woWorld,wiWorld);
 }
+
+/// Calculate the average emission intensities of the front and back sides.
 @(macro)
 float2 _emissionSideWeights(const &_MaterialInstance instance){
 float frontWeight=0.;
@@ -2269,6 +3327,9 @@ backWeight=frontWeight;
 }
 return float2(frontWeight,backWeight);
 }
+
+/// Evaluate the emission of the given `material_surface` side, weighting
+/// the PDF by the side chance and applying the intensity.
 @(macro)
 int _emissionEvaluateSide(
 const &material_surface side,
@@ -2292,9 +3353,9 @@ return true;
 @(macro)
 export int _emissionEvaluate(
 const &_MaterialInstance instance,
-const &float3 wiWorld,
-const &float pdf,
-const &float Le,
+const &float3 wiWorld, ///< The emission direction in world space
+const &float pdf,      ///< output: The PDF of sampling `wiWorld`
+const &float Le,       ///< output: The emitted radiance
 ){
 *pdf=0.;
 for(int i=0;i<$WAVELENGTH_BASE_MAX;i++)
@@ -2319,10 +3380,10 @@ return _emissionEvaluateSide(&instance.ptr.surface,weights.y/totalWeight,&params
 @(macro)
 export int _emissionSample(
 const &_MaterialInstance instance,
-const &float4 xi,
-const &float3 wiWorld,
-const &float pdf,
-const &float Le,
+const &float4 xi,      ///< The canonical random sample in `[0,1]^4`
+const &float3 wiWorld, ///< output: The emission direction in world space
+const &float pdf,      ///< output: The PDF of sampling `wiWorld`
+const &float Le,       ///< output: The emitted radiance
 ){
 *pdf=0.;
 for(int i=0;i<$WAVELENGTH_BASE_MAX;i++)
@@ -3525,17 +4586,17 @@ export const int PROSPECT_CX_TABLE_SIZE=65;
 export static const auto PROSPECT_CX_TABLE=float[65](0.,0.,0.,0.,2.3666667e-6,1.4111905e-5,1.5753175e-5,1.6109579e-4,4.3772785e-4,5.7373789e-4,7.1124793e-4,7.5958535e-4,8.1272277e-4,0.0010946743,0.0013850259,0.0015193361,0.0016655464,0.0018591944,0.0020681424,0.0023029017,2556361e-9,0.0027022316,0.0028702023,0.0029664684,0.0030884345,0.0031437199,0.0032281053,0.0032327202,0.0032698351,0.0032164464,0.0031989577,0.0030774558,0.0029954539,0.0028728641,0.0027932744,0.0026592758,0.0025715771,0.0024033444,0.0022849116,2118113e-9,0.0019782487,0.0018263978,0.0016528675,0.0015393822,0.0014256901,0.0013247508,0.0012209231,0.0011458843,1073761e-9,1012381e-9,9.5488751e-4,8.9542219e-4,8.260178e-4,8.4654538e-4,8.1813233e-4,7.232132e-4,5.1506483e-4,3.3026741e-4,176768e-9,4.44797e-5,0.,0.,0.,0.,0.);
 @(noinline)
 export prospect_result prospect(
-float num_layers=1.5,
-float incident_cone_angle=0.7,
-float dry_matter=5.,
-float water=0.1,
-float chlorophylls=30.,
-float anthocyanins=1.,
-float carotenoids=1.5,
-float xanthophyll_cycle=0.,
-float proteins=0.,
-float carbons=0.,
-float browns=0.,
+float num_layers=1.5,          ///< The number of layers.
+float incident_cone_angle=0.7, ///< The incident cone angle in radians.
+float dry_matter=5.,           ///< The dry matter content in milligrams per square centimeter.
+float water=0.1,               ///< The water content in millimeters equivalent thickness.
+float chlorophylls=30.,        ///< The chlorophyll content in micrograms per square centimeter.
+float anthocyanins=1.,         ///< The anthocyanin content in micrograms per square centimeter.
+float carotenoids=1.5,         ///< The carotenoid content in micrograms per square centimeter.
+float xanthophyll_cycle=0.,    ///< The xanthophyll de-epoxidation state, 0 for violaxanthin and 1 for zeaxanthin.
+float proteins=0.,             ///< The protein content in milligrams per square centimeter.
+float carbons=0.,              ///< The carbon constituent content in milligrams per square centimeter.
+float browns=0.,               ///< The brown pigment content in arbitrary units.
 ){
 num_layers=#max(num_layers,1.);
 const auto contents=auto(chlorophylls,carotenoids,anthocyanins,browns,0.1*water,1e-3*dry_matter,1e-3*proteins,1e-3*carbons)/num_layers;
@@ -3622,12 +4683,12 @@ export const float MARMIT_MIXING_EXPONENT=2.27;
 export static const auto MARMIT_TABLE_ALPHA=float[264](58e-6,6.4984791e-5,7.3961977e-5,8.3942966e-5,9.3923954e-5,1.0390494e-4,1.1190875e-4,1.1989354e-4,1.2787833e-4,1.378289e-4,1.5169582e-4,1.734981e-4,2.0808745e-4,2.7126996e-4,3.4692395e-4,4.0768821e-4,4.2214829e-4,4.6838403e-4,5.2480989e-4,6.0760456e-4,6.7002281e-4,7.3120532e-4,8.5206084e-4,0.0010678935,0.0014402015,0.0021741901,0.0026327338,0.0027589696,0.0028618251,0.0029807224,3102673e-9,0.0032533346,0.0034902357,0.0039903916,0.0041432776,0.0043053574,0.0046202662,0.0051960266,0.0062190532,0.0077595399,0.010478373,0.014529217,0.021402958,0.026493449,0.027380042,0.027681255,0.027633087,0.027165802,0.026211502,0.024305548,0.022633673,0.021824388,0.022383559,0.024786357,0.033469194,0.039156262,0.041295403,0.043371049,0.045305894,0.048309354,0.052412308,0.056949532,0.061372152,0.066089209,0.07268008,0.083459224,0.10801803,0.14987386,0.20914362,0.30817464,0.42640746,0.47426548,0.48559121,0.47610929,0.44816959,0.41265352,0.37059379,0.32529306,0.27932866,0.23837934,0.20328992,0.17535392,0.15572677,0.14497347,0.14078527,0.14372349,0.15596563,0.1744163,0.19891388,0.22535442,0.24684612,0.30258614,0.43825438,0.70110019,0.99940737,1.1558965,1.2017063,1.2266625,1.2473806,1.2683121,1.2754115,1.2638987,1.2427951,1.2082091,1.1866358,1.1577352,1.1289543,1.1030914,1.0875161,1.0838075,1.1151354,1.1700577,1.2450879,1.362082,1.5408251,1.7737077,2.0738001,2.4385417,2.8046537,3.2404328,3.6110189,4.0831335,4.9678182,6.9821837,10.777019,15.809918,20.957662,24.918992,27.547179,29.242555,30.198566,30.53757,30.391875,29.675172,28.037443,25.813958,23.61745,21.401333,19.255608,17.387155,15.678046,14.165977,12.875868,11.674949,10.679736,9.8499423,9.1589774,8.5319908,7.9861643,7.5072635,7.0878586,6.7712775,6.5171763,6.2906116,6.0902196,5.947433,5.7936615,5.669135,5.6119709,5.5547171,5.529419,5.5225403,5.5265036,5.5934486,5.7201826,5.8667218,6.065756,6.3052816,6.634616,7.0347278,7.504357,7.9664502,8.3214848,8.5709506,8.7513499,8.8025903,8.7476202,8.7948996,8.8635308,9.0019142,9.4151059,10.219798,11.683006,14.391653,19.719141,29.744088,48.905897,74.663711,100.24685,117.30163,126.51509,130.39706,129.42913,124.75055,117.9467,109.89923,101.29867,93.107823,85.246802,78.192875,71.596133,65.692118,60.475897,55.783826,51.541361,47.683278,44.360006,41.224355,38.385488,35.684155,33.401698,31.33872,29.394575,27.600382,26.0366,24.730099,23.484923,22.42997,21.549691,20.788565,20.125026,19.59856,19.200902,18.808893,18.470427,18.359254,18.337472,18.283925,18.377094,18.521219,18.72055,19.104502,19.542117,20.080917,20.747716,21.492014,22.285338,23.318404,24.37713,25.544056,26.859973,28.263872,29.75544,31.504263,33.175559,34.931125,37.040435,39.193771,41.539909,43.948561,46.437483,49.000875,51.653323,54.677894,58.138646,61.514553,65.43605,69.238078,73.853932,78.420393,82.970777,87.095007,92.04271,95.303);
 @(noinline)
 export marmit_result marmit(
-color reflectance=color(0.3),
-float water_thickness=0.01,
-float wet_fraction=1.,
-float suspension_ior=1.53,
-float suspension_k=0.,
-float suspension_fraction=0.,
+color reflectance=color(0.3), ///< The dry reflectance of the underlying material.
+float water_thickness=0.01,   ///< The equivalent water-film thickness in centimeters.
+float wet_fraction=1.,        ///< The fraction of the surface covered by water, in [0, 1].
+float suspension_ior=1.53,    ///< Real refractive index n_i of particles suspended in the film.
+float suspension_k=0.,        ///< Imaginary refractive index k_i of the suspended particles.
+float suspension_fraction=0., ///< Volume fraction d_i of suspension in the film; 0 = pure water.
 ){
 const color s=2.*saturate((color(&$state.wavelength_base[0])-MARMIT_MIN_WAVELENGTH)/(MARMIT_MAX_WAVELENGTH-MARMIT_MIN_WAVELENGTH))-1.;
 color ior=return_from{
@@ -3948,10 +5009,10 @@ auto(0.7459775,1.624409,4.653887,9.709371,-2.808524,1.098035),
 );
 @(noinline)
 export color soil_albedo(
-float humus=0.5,
-float iron=0.5,
-float aridity=0.5,
-float moisture=0.,
+float humus=0.5,   ///< The humus content. 0 = pale quartz/carbonate, 1 = dark topsoil.
+float iron=0.5,    ///< The iron-pigment load. 0 = gray, 1 = maximally pigmented.
+float aridity=0.5, ///< The hematite:goethite balance. 0 = cool/moist goethite-yellow, 1 = hot/dry hematite-red.
+float moisture=0., ///< The moisture darkening. 0 = bone dry, 1 = the darkest wet state the soil reaches.
 ){
 const float h=saturate(humus);
 const float fe=saturate(iron);
@@ -3976,6 +5037,23 @@ result[i]=1./(1.+#exp(-dot(lerp(SOIL_CURVES[t0],SOIL_CURVES[t0+1],t),weights)));
 return result;
 }
 )*";
+
+static const std::string_view all_names[]{
+    "anno",
+    "api",
+    "debug",
+    "df",
+    "limits",
+    "math",
+    "scene",
+    "state",
+    "std",
+    "tex",
+    "extras::io",
+    "extras::pcg32",
+    "models::prospect",
+    "models::marmit",
+};
 
 [[nodiscard]] static const char *get_source_code(std::string_view name) {
   if (name == "anno")

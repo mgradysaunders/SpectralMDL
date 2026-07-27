@@ -16,10 +16,15 @@ STR
 # as '::models::prospect'), and the generated variable replaces '/' with '_'.
 fnames = ['anno', 'api', 'debug', 'df', 'limits', 'math', 'scene', 'state', 'std', 'tex', 'extras/io', 'extras/pcg32', 'models/prospect', 'models/marmit']
 for fname in fnames
-  text = `smdl format -c --no-comments Builtin/#{fname}.smdl`
+  text = `smdl format -c --no-comments --keep-doc-comments Builtin/#{fname}.smdl`
   text = File.read "Builtin/#{fname}.smdl" unless $?.success?
   f.write "static const char *const #{fname.gsub('/', '_')} = R\"*(#{text})*\";\n\n"
 end
+f.write "static const std::string_view all_names[]{\n"
+for fname in fnames
+  f.write "    \"#{fname.gsub('/', '::')}\",\n"
+end
+f.write "};\n\n"
 f.write <<STR
 [[nodiscard]] static const char *get_source_code(std::string_view name) {
 STR

@@ -5,6 +5,7 @@
 #include <set>
 
 #include "smdl/BSDFMeasurement.h"
+#include "smdl/Doc.h"
 #include "smdl/FileLocator.h"
 #include "smdl/Image.h"
 #include "smdl/JIT.h"
@@ -175,6 +176,10 @@ public:
   /// Format source code.
   [[nodiscard]] std::optional<Error>
   formatSourceCode(const FormatOptions &formatOptions) noexcept;
+
+  /// Extract documentation for all added modules into `docs`. This
+  /// parses modules as necessary, but does not require `compile()`.
+  [[nodiscard]] std::optional<Error> extractDocs(DocDatabase &docs) noexcept;
 
 private:
   /// Get the LLVM context, or throw an `Error` if there is none (i.e., if

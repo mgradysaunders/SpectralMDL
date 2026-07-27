@@ -163,6 +163,10 @@ public:
   /// Remove comments from formatted source code.
   bool noComments{};
 
+  /// Keep `///` and `///<` documentation comments even when
+  /// `noComments` is true.
+  bool keepDocComments{};
+
   /// Remove annotations from formatted source code.
   bool noAnnotations{};
 

@@ -88,6 +88,14 @@ private:
     return column;
   }
 
+  /// Keep the given comment in the output? False only when removing
+  /// comments, which may still preserve `///` and `///<` documentation
+  /// comments.
+  [[nodiscard]] bool keepComment(llvm::StringRef inSrc) const {
+    return !mOptions.noComments ||
+           (mOptions.keepDocComments && inSrc.starts_with("///"));
+  }
+
   [[nodiscard]] bool nextCommentForcesNewLine() const;
 
   void writeDelimNone();

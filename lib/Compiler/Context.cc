@@ -1,5 +1,6 @@
 #include "Context.h"
 #include "Builtin.h"
+#include "BuiltinAccess.h"
 
 namespace smdl {
 
@@ -442,5 +443,17 @@ Value Context::getComptimeUnionIndexMap(UnionType *unionTypeA,
   }
   return indexMap;
 }
+
+namespace builtin {
+
+Span<const std::string_view> getAllNames() {
+  return {all_names, std::size(all_names)};
+}
+
+const char *getSourceCode(std::string_view name) {
+  return get_source_code(name);
+}
+
+} // namespace builtin
 
 } // namespace smdl

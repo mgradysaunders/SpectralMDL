@@ -459,6 +459,17 @@ Compiler::formatSourceCode(const FormatOptions &formatOptions) noexcept {
   return std::nullopt;
 }
 
+std::optional<Error> Compiler::extractDocs(DocDatabase &docs) noexcept {
+  SMDL_PROFILER_ENTRY("Compiler::extractDocs()");
+  return catchAndReturnError([&] {
+    for (auto &module_ : mModules) {
+      if (module_->isShadowed()) continue;
+      if (auto error{module_->parse(mAllocator)}) throw std::move(*error);
+      docs.modules.push_back(extractDocModule(*module_));
+    }
+  });
+}
+
 llvm::LLVMContext &Compiler::getLLVMContext() {
   if (!mLLVMContext)
     throw Error("no LLVM context: 'compile()' must be called first (and "

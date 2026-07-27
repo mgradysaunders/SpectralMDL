@@ -13,13 +13,17 @@ static cl::SubCommand subList{"list", "List all materials"};
 static cl::SubCommand subRun{"run", "Run execs"};
 static cl::SubCommand subTest{"test", "Run execs and unit tests"};
 static cl::SubCommand subFormat{"format", "Format source code"};
+static cl::SubCommand subDoc{"doc", "Show documentation"};
 static cl::SubCommandGroup subsWithCompileOptions{&subDump, &subList, &subRun,
                                                   &subTest};
 static cl::SubCommandGroup allSubs{&subDump, &subList, &subRun, &subTest,
-                                   &subFormat};
+                                   &subFormat, &subDoc};
 
+// NOTE: This is `ZeroOrMore` only so that `smdl doc --builtins` works
+// with no inputs; every other subcommand requires at least one input,
+// enforced in `main()`.
 static cl::list<std::string> inputFiles{cl::Positional, cl::desc("<input>"),
-                                        cl::OneOrMore, cl::sub(allSubs),
+                                        cl::ZeroOrMore, cl::sub(allSubs),
                                         cl::cat(optionsCat)};
 
 static cl::opt<unsigned> optLevel{"O",
@@ -49,12 +53,40 @@ static cl::opt<bool> formatInPlace{"i", cl::desc("Format in place"),
 static cl::opt<bool> formatNoComments{"no-comments",
                                       cl::desc("Remove comments"),
                                       cl::sub(subFormat), cl::cat(optionsCat)};
+static cl::opt<bool> formatKeepDocComments{
+    "keep-doc-comments",
+    cl::desc("Keep '///' doc comments despite '--no-comments'"),
+    cl::sub(subFormat), cl::cat(optionsCat)};
 static cl::opt<bool> formatNoAnnotations{
     "no-annotations", cl::desc("Remove annotations"), cl::sub(subFormat),
     cl::cat(optionsCat)};
 static cl::opt<bool> formatCompact{"c",
                                    cl::desc("Format output more compactly"),
                                    cl::sub(subFormat), cl::cat(optionsCat)};
+
+enum DocOutputFormat : int {
+  DOC_FORMAT_TEXT,
+  DOC_FORMAT_JSON,
+  DOC_FORMAT_MD,
+};
+static cl::opt<DocOutputFormat> docFormat{
+    "f", cl::desc("Output format:"), cl::init(DOC_FORMAT_TEXT),
+    cl::values(
+        cl::OptionEnumValue{"text", int(DOC_FORMAT_TEXT),
+                            "Plain text for symbol queries (default); "
+                            "whole-database output falls back to Markdown"},
+        cl::OptionEnumValue{"json", int(DOC_FORMAT_JSON), "JSON database"},
+        cl::OptionEnumValue{"md", int(DOC_FORMAT_MD), "Markdown"}),
+    cl::sub(subDoc), cl::cat(optionsCat)};
+static cl::opt<std::string> docOutputFilename{
+    "output", cl::desc("Output filename (default stdout)"), cl::Optional,
+    cl::sub(subDoc), cl::cat(optionsCat)};
+static cl::opt<bool> docIncludeNonExported{
+    "all", cl::desc("Include declarations not marked 'export'"),
+    cl::sub(subDoc), cl::cat(optionsCat)};
+static cl::opt<bool> docAllBuiltins{"builtins",
+                                    cl::desc("Include all builtin modules"),
+                                    cl::sub(subDoc), cl::cat(optionsCat)};
 
 static cl::OptionCategory catState{"State Options"};
 static cl::opt<unsigned> wavelengthBaseMax{
@@ -92,6 +124,131 @@ static cl::opt<float> ptexFaceV{
     "ptex_face_v", cl::desc("Ptex face coordinate V (default 0)"),
     cl::init(0.0f), cl::sub(subTest), cl::cat(catState)};
 
+/// Run the `doc` subcommand: `queries` holds the `::`-prefixed
+/// positional arguments, everything else was added to the compiler.
+static void runDocSubcommand(smdl::Compiler &compiler,
+                             const std::vector<std::string> &queries) {
+  auto docs{smdl::DocDatabase{}};
+  if (auto error{compiler.extractDocs(docs)}) {
+    error->printAndExit();
+  }
+  // Pull in the builtin modules named by the queries, or all of them.
+  auto loadBuiltin{[&](std::string_view name) {
+    for (const auto &mod : docs.modules)
+      if (mod.name == name)
+        return;
+    if (auto mod{smdl::extractBuiltinDocModule(name)})
+      docs.modules.push_back(std::move(*mod));
+  }};
+  if (docAllBuiltins) {
+    for (const auto &name : smdl::getBuiltinModuleNames())
+      loadBuiltin(name);
+  } else {
+    for (const auto &query : queries) {
+      for (const auto &name : smdl::getBuiltinModuleNames()) {
+        auto prefix{"::" + std::string(name)};
+        if (query == prefix || smdl::startsWith(query, prefix + "::"))
+          loadBuiltin(name);
+      }
+    }
+  }
+  if (docs.modules.empty()) {
+    std::cerr << "nothing to document: pass input files, '::'-prefixed "
+                 "queries, or '--builtins'\n";
+    std::exit(EXIT_FAILURE);
+  }
+  auto result{std::string{}};
+  if (queries.empty() || docFormat != DOC_FORMAT_TEXT) {
+    // Whole-database output. Symbol queries only participate by loading
+    // the builtin modules they name.
+    if (!docIncludeNonExported)
+      docs.removeNonExported();
+    result =
+        docFormat == DOC_FORMAT_JSON ? docs.printJSON() : docs.printMarkdown();
+  } else {
+    // Plain text symbol and module queries.
+    auto appendIndented{[&](std::string_view text, size_t indent) {
+      size_t i{0};
+      while (i < text.size()) {
+        auto j{text.find('\n', i)};
+        if (j == std::string_view::npos)
+          j = text.size();
+        result.append(indent, ' ');
+        result.append(text.substr(i, j - i));
+        result += '\n';
+        i = j + 1;
+      }
+    }};
+    auto printTextEntry{[&](const smdl::DocEntry &entry) {
+      result += entry.qualifiedName + " (" + entry.kind + ", line " +
+                std::to_string(entry.lineNo) + ")\n";
+      appendIndented(entry.signature, 2);
+      if (!entry.docText.empty()) {
+        result += '\n';
+        appendIndented(entry.docText, 2);
+      }
+      auto anyParamDocs{false};
+      for (const auto &param : entry.params)
+        anyParamDocs |= !param.docText.empty();
+      if (anyParamDocs) {
+        result += '\n';
+        for (const auto &param : entry.params) {
+          if (!param.docText.empty()) {
+            appendIndented(param.name + ":", 2);
+            appendIndented(param.docText, 4);
+          }
+        }
+      }
+      if (!entry.members.empty()) {
+        result += '\n';
+        for (const auto &member : entry.members) {
+          appendIndented(member.signature, 2);
+          if (!member.docText.empty())
+            appendIndented(member.docText, 4);
+        }
+      }
+      result += '\n';
+    }};
+    for (const auto &query : queries) {
+      const smdl::DocModule *moduleMatch{};
+      for (const auto &mod : docs.modules)
+        if (mod.qualifiedName == query)
+          moduleMatch = &mod;
+      if (moduleMatch) {
+        result += "module " + moduleMatch->qualifiedName + "\n";
+        if (!moduleMatch->docText.empty()) {
+          result += '\n';
+          appendIndented(moduleMatch->docText, 2);
+        }
+        result += '\n';
+        for (const auto &entry : moduleMatch->entries) {
+          if (!entry.isExported && !docIncludeNonExported)
+            continue;
+          result += "  " + entry.qualifiedName + " (" + entry.kind + ")\n";
+        }
+        result += '\n';
+        continue;
+      }
+      auto found{docs.findSymbol(query)};
+      if (found.empty()) {
+        std::cerr << "no documentation found for '" << query << "'\n";
+        std::exit(EXIT_FAILURE);
+      }
+      for (const auto *entry : found)
+        printTextEntry(*entry);
+    }
+  }
+  if (docOutputFilename.getNumOccurrences()) {
+    auto ofs{std::ofstream(docOutputFilename.getValue())};
+    if (!ofs.is_open())
+      std::exit(EXIT_FAILURE);
+    ofs << result;
+  } else {
+    std::cout << result;
+    std::cout.flush();
+  }
+}
+
 int main(int argc, char **argv) {
   llvm::InitLLVM X(argc, argv);
   smdl::Logger::get().addSink<smdl::LogSinks::print_to_cerr>();
@@ -102,15 +259,27 @@ int main(int argc, char **argv) {
   compiler.enableDebug = enableDebug;
   compiler.enableUnitTests = true;
   compiler.wavelengthBaseMax = wavelengthBaseMax;
+  if (inputFiles.empty() && !subDoc) {
+    std::cerr << "expected at least one input\n";
+    return EXIT_FAILURE;
+  }
+  auto docQueries{std::vector<std::string>{}};
   for (const auto &inputFile : inputFiles) {
+    if (subDoc && smdl::startsWith(inputFile, "::")) {
+      docQueries.push_back(inputFile);
+      continue;
+    }
     if (auto error{compiler.add(std::string(inputFile))}) {
       error->printAndExit();
     }
   }
-  if (subFormat) {
+  if (subDoc) {
+    runDocSubcommand(compiler, docQueries);
+  } else if (subFormat) {
     smdl::FormatOptions options{};
     options.inPlace = formatInPlace;
     options.noComments = formatNoComments;
+    options.keepDocComments = formatKeepDocComments;
     options.noAnnotations = formatNoAnnotations;
     options.compact = formatCompact;
     if (auto error{compiler.formatSourceCode(options)}) {
