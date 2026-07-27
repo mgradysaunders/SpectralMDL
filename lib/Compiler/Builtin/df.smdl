@@ -2845,3 +2845,7 @@ export float _volumeScatterSample(
   *wiWorld = normalize(result.wi);
   return _volumeScatterEvaluate(instance, woWorld, wiWorld);
 }
+
+// TODO _emissionEvaluate
+
+// TODO _emissionSample

@@ -2058,7 +2058,7 @@ export float _volumeScatterSample(
 }
 )*";
 
-static const char *const io = R"*(#smdl
+static const char *const extras_io = R"*(#smdl
 export typedef &void FILE;
 export const auto stdin=cast<FILE>($stdin);
 export const auto stdout=cast<FILE>($stdout);
@@ -2115,7 +2115,7 @@ export const double DOUBLE_MIN=$DOUBLE_MIN;
 export const double DOUBLE_MAX=$DOUBLE_MAX;
 )*";
 
-static const char *const pcg32 = R"*(#smdl
+static const char *const extras_pcg32 = R"*(#smdl
 const int64_t PCG32_MULTIPLIER=6364136223846793005;
 const int64_t PCG32_DEFAULT_INCREMENT=1442695040888963407;
 export struct pcg32{
@@ -3703,12 +3703,12 @@ export color lookup_color(const texture_ptex tex,const int channel=0){
     return debug;
   if (name == "df")
     return df;
-  if (name == "io")
-    return io;
+  if (name == "extras::io")
+    return extras_io;
   if (name == "limits")
     return limits;
-  if (name == "pcg32")
-    return pcg32;
+  if (name == "extras::pcg32")
+    return extras_pcg32;
   if (name == "models::prospect")
     return models_prospect;
   if (name == "models::marmit")
