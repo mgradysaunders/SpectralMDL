@@ -114,6 +114,11 @@ public:
   /// Is a global declaration?
   bool isGlobal{};
 
+  /// The documentation comment (`///` lines) above the declaration. This
+  /// may be empty! The span includes the `///` prefixes; use
+  /// `getDocCommentText()` to convert to readable text.
+  std::string_view srcDocComment{};
+
   /// The attributes. This may be null!
   std::optional<Attributes> attributes{};
 
@@ -242,5 +247,12 @@ public:
 
 /// Convert `StmtKind` to string.
 [[nodiscard]] SMDL_EXPORT std::string_view to_string(StmtKind stmtKind);
+
+/// Convert a raw documentation comment span (`srcDocComment` or
+/// `srcDocCommentTrailing`) to readable text: strips the `///` or `///<`
+/// prefix and at most one following space from each line, trims trailing
+/// whitespace, and preserves blank `///` lines as paragraph breaks.
+[[nodiscard]] SMDL_EXPORT std::string
+getDocCommentText(std::string_view srcDocComment);
 
 } // namespace smdl::AST

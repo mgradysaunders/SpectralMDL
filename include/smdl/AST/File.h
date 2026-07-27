@@ -62,6 +62,11 @@ public:
 
   /// The global declarations.
   std::vector<BumpPtr<Decl>> globalDecls;
+
+  /// The module-level documentation comment: a `///` block appearing
+  /// before the `#smdl` marker or the `mdl X.Y` version. This may be
+  /// empty!
+  std::string_view srcDocComment{};
 };
 
 } // namespace smdl::AST

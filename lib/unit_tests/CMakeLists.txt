@@ -12,6 +12,7 @@ if(CMAKE_PROJECT_NAME STREQUAL PROJECT_NAME AND BUILD_TESTING)
       "LightProfile.cc"
       "MD5Hash.cc"
       "MonteCarlo.cc"
+      "Parser.cc"
       "QualifiedName.cc"
     )
   target_link_libraries(

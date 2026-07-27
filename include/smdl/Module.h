@@ -194,6 +194,11 @@ public:
   /// Is parsed yet?
   [[nodiscard]] bool isParsed() const noexcept { return mRoot; }
 
+  /// Get the AST root node. This is null until `parse()` succeeds!
+  [[nodiscard]] const AST::File *getRoot() const noexcept {
+    return mRoot.get();
+  }
+
   /// Is SMDL syntax? Only known after the module is parsed.
   ///
   /// This is true if the module file begins with the pragma `#smdl`

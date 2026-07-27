@@ -13,11 +13,6 @@
 namespace smdl {
 
 //--{ Basics
-char Parser::peek() const {
-  if (isEOF()) return '\0';
-  return getSourceCode()[mSrcLoc.i];
-}
-
 char Parser::next() {
   if (isEOF()) return '\0';
   auto ch{peek()};
@@ -80,11 +75,49 @@ std::optional<std::string_view> Parser::nextInteger() {
   }
 }
 
+/// Is the source between a documentation comment and what follows it
+/// close enough to attach? I.e., only whitespace with at most one
+/// newline, so that a blank line breaks attachment.
+[[nodiscard]] static bool isDocCommentAdjacent(std::string_view src) {
+  int numNewLines{};
+  for (char ch : src) {
+    if (!isSpace(ch)) return false;
+    if (ch == '\n' && ++numNewLines > 1) return false;
+  }
+  return true;
+}
+
 void Parser::skip() {
   auto skipSome{[&] {
     if (startsWith(getRemainingSourceCode(), "//")) {
+      auto iComment{mSrcLoc.i};
       next(2);
       while (!isEOF() && peek() != '\n') next(1);
+      // A `///` comment (but not a `///<` trailing comment) is a
+      // documentation line: remember it so that declaration parsers can
+      // pick it up with `getDocCommentBefore()`, merging consecutive
+      // lines into one block. Every other comment breaks the pending
+      // block. A rewind by `reject()` may re-scan the block, in which
+      // case `iComment <= mPendingDocCommentEnd` restarts it in place.
+      auto comment{getSourceCode().substr(iComment, mSrcLoc.i - iComment)};
+      if (startsWith(comment, "///<")) {
+        // A `///<` comment is a trailing documentation line for the
+        // item it follows, picked up by
+        // `attachPendingTrailingDocComment()`. It also breaks any
+        // pending leading block.
+        mPendingTrailingDocCommentBegin = iComment;
+        mPendingTrailingDocCommentEnd = mSrcLoc.i;
+        mPendingDocCommentBegin = mPendingDocCommentEnd = 0;
+      } else if (startsWith(comment, "///")) {
+        if (mPendingDocCommentBegin == mPendingDocCommentEnd ||
+            iComment <= mPendingDocCommentEnd ||
+            !isDocCommentAdjacent(getSourceCode().substr(
+                mPendingDocCommentEnd, iComment - mPendingDocCommentEnd)))
+          mPendingDocCommentBegin = iComment;
+        mPendingDocCommentEnd = mSrcLoc.i;
+      } else {
+        mPendingDocCommentBegin = mPendingDocCommentEnd = 0;
+      }
       return true;
     } else if (startsWith(getRemainingSourceCode(), "/*")) {
       auto srcLocComment{mSrcLoc};
@@ -92,6 +125,7 @@ void Parser::skip() {
       while (!isEOF() && !startsWith(getRemainingSourceCode(), "*/")) next(1);
       if (isEOF()) srcLocComment.throwError("unterminated multiline comment");
       next(2);
+      mPendingDocCommentBegin = mPendingDocCommentEnd = 0;
       return true;
     } else if (isSpace(peek())) {
       next(1);
@@ -101,6 +135,23 @@ void Parser::skip() {
     }
   }};
   while (!isEOF() && skipSome()) continue;
+}
+
+std::string_view Parser::getDocCommentBefore(size_t srcIndex) const {
+  if (mPendingDocCommentBegin == mPendingDocCommentEnd ||
+      srcIndex < mPendingDocCommentEnd ||
+      !isDocCommentAdjacent(getSourceCode().substr(
+          mPendingDocCommentEnd, srcIndex - mPendingDocCommentEnd)))
+    return {};
+  return getPendingDocComment();
+}
+
+bool Parser::pendingTrailingDocCommentTrailsCode() const {
+  for (auto i{mPendingTrailingDocCommentBegin};
+       i > 0 && getSourceCode()[i - 1] != '\n'; i--) {
+    if (!isSpace(getSourceCode()[i - 1])) return true;
+  }
+  return false;
 }
 //--}
 
@@ -198,6 +249,9 @@ auto Parser::parseType() -> BumpPtr<AST::Type> {
 
 auto Parser::parseParameter() -> std::optional<AST::Parameter> {
   auto srcLoc0{checkpoint()};
+  // Capture before parsing: comments inside the parameter must not
+  // clobber the pending block first.
+  auto srcDocComment{getDocCommentBefore(srcLoc0.i)};
   auto type{parseType()};
   if (!type) {
     reject();
@@ -210,6 +264,7 @@ auto Parser::parseParameter() -> std::optional<AST::Parameter> {
   }
   auto param{AST::Parameter{}};
   param.srcLoc = srcLoc0;
+  param.srcDocComment = srcDocComment;
   param.type = std::move(type);
   param.name = *name;
   if (auto srcEqual{nextDelimiter("=")}) {
@@ -864,6 +919,9 @@ auto Parser::parseBinaryOp(Span<const AST::BinaryOp> ops)
 //--{ Parse: Decl
 auto Parser::parseFile() -> BumpPtr<AST::File> {
   skip();
+  // Any documentation comment before the `#smdl` marker or the
+  // `mdl X.Y` version is module-level documentation.
+  auto srcDocComment{getPendingDocComment()};
   auto srcLoc0{mSrcLoc};
   auto srcKwSmdlSyntax{nextKeyword("#smdl")};
   if (srcKwSmdlSyntax) mIsSMDL = true;
@@ -901,11 +959,13 @@ auto Parser::parseFile() -> BumpPtr<AST::File> {
     if (isEOF()) break;
   }
   if (!isEOF()) mSrcLoc.throwError("unexpected token, expected a declaration");
-  return allocate<AST::File>(srcLoc0, std::in_place, orEmpty(srcKwSmdlSyntax),
-                             std::move(version), std::move(importDecls),
-                             orEmpty(srcKwModule), std::move(moduleAnnotations),
-                             orEmpty(srcSemicolonAfterModule),
-                             std::move(globalDecls));
+  auto file{allocate<AST::File>(
+      srcLoc0, std::in_place, orEmpty(srcKwSmdlSyntax), std::move(version),
+      std::move(importDecls), orEmpty(srcKwModule),
+      std::move(moduleAnnotations), orEmpty(srcSemicolonAfterModule),
+      std::move(globalDecls))};
+  file->srcDocComment = srcDocComment;
+  return file;
 }
 
 auto Parser::parseFileVersion() -> std::optional<AST::File::Version> {
@@ -1105,6 +1165,9 @@ auto Parser::parseAttributes() -> std::optional<AST::Decl::Attributes> {
 
 auto Parser::parseGlobalDeclaration() -> BumpPtr<AST::Decl> {
   auto srcLoc0{checkpoint()};
+  // Capture before parsing: comments inside the declaration must not
+  // clobber the pending block first.
+  auto srcDocComment{getDocCommentBefore(srcLoc0.i)};
   auto attributes{parseAttributes()};
   auto srcKwExport{nextKeyword("export")};
   auto decl{[&]() -> BumpPtr<AST::Decl> {
@@ -1127,6 +1190,7 @@ auto Parser::parseGlobalDeclaration() -> BumpPtr<AST::Decl> {
     return nullptr;
   }
   decl->isGlobal = true;
+  decl->srcDocComment = srcDocComment;
   if (attributes) decl->attributes = std::move(attributes);
   if (srcKwExport) decl->srcKwExport = *srcKwExport;
   accept();
@@ -1235,6 +1299,7 @@ auto Parser::parseStructTypeDeclaration() -> BumpPtr<AST::Struct> {
     }
     fields.push_back(std::move(*field));
     skip();
+    attachPendingTrailingDocComment(fields);
     if (peek() == '}') break;
   }
   auto srcBraceR{nextDelimiter("}")};
@@ -1285,6 +1350,7 @@ auto Parser::parseStructConstructor()
 
 auto Parser::parseStructFieldDeclarator() -> std::optional<AST::Struct::Field> {
   auto srcLoc0{checkpoint()};
+  auto srcDocComment{getDocCommentBefore(srcLoc0.i)};
   auto field{AST::Struct::Field{}};
   auto type{parseType()};
   if (!type) {
@@ -1292,6 +1358,7 @@ auto Parser::parseStructFieldDeclarator() -> std::optional<AST::Struct::Field> {
     return std::nullopt;
   }
   field.srcLoc = srcLoc0;
+  field.srcDocComment = srcDocComment;
   field.type = std::move(type);
   auto name{parseSimpleName()};
   if (!name) {
@@ -1337,6 +1404,7 @@ auto Parser::parseEnumTypeDeclaration() -> BumpPtr<AST::Enum> {
 auto Parser::parseEnumValueDeclarator()
     -> std::optional<AST::Enum::Declarator> {
   auto srcLoc0{checkpoint()};
+  auto srcDocComment{getDocCommentBefore(srcLoc0.i)};
   auto name{parseSimpleName()};
   if (!name) {
     reject();
@@ -1344,6 +1412,7 @@ auto Parser::parseEnumValueDeclarator()
   }
   auto declarator{AST::Enum::Declarator{}};
   declarator.srcLoc = srcLoc0;
+  declarator.srcDocComment = srcDocComment;
   declarator.name = *name;
   if (auto srcEqual{nextDelimiter("=")}) {
     auto exprInit{parseAssignmentExpression()};
@@ -1372,6 +1441,10 @@ auto Parser::parseVariableDeclaration() -> BumpPtr<AST::Variable> {
   auto srcSemicolon{nextDelimiter(";")};
   if (!srcSemicolon)
     srcLoc0.throwError("expected ';' after variable declaration");
+  // Pick up a trailing documentation comment after the semicolon, e.g.,
+  // `const int X = 0; ///< doc`.
+  skip();
+  attachPendingTrailingDocComment(declarators);
   accept();
   return allocate<AST::Variable>(srcLoc0, std::in_place, std::move(type),
                                  std::move(declarators), *srcSemicolon);
@@ -1382,6 +1455,7 @@ auto Parser::parseVariableDeclarator()
   auto srcLoc0{checkpoint()};
   auto declarator{AST::Variable::Declarator{}};
   declarator.srcLoc = srcLoc0;
+  declarator.srcDocComment = getDocCommentBefore(srcLoc0.i);
   if (auto name{parseSimpleName()}) {
     declarator.names.push_back(
         AST::Variable::Declarator::DeclaratorName{*name});

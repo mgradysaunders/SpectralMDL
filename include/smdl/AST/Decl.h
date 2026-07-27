@@ -120,6 +120,13 @@ public:
   /// The complete source region.
   std::string_view src;
 
+  /// The documentation comment above the parameter. This may be empty!
+  std::string_view srcDocComment{};
+
+  /// The trailing documentation comment (`///<`) after the parameter.
+  /// This may be empty!
+  std::string_view srcDocCommentTrailing{};
+
   /// Has warning been issued about this parameter yet? Used to prevent
   /// the same warning being logged over and over again.
   bool warningIssued{};
@@ -306,6 +313,13 @@ public:
 
     /// The next comma `,`. This may be empty!
     std::string_view srcComma;
+
+    /// The documentation comment above the declarator. This may be empty!
+    std::string_view srcDocComment{};
+
+    /// The trailing documentation comment (`///<`) after the declarator.
+    /// This may be empty!
+    std::string_view srcDocCommentTrailing{};
 
     /// The LLVM constant value (This is computed later during compilation)
     llvm::ConstantInt *llvmConst{};
@@ -569,6 +583,13 @@ public:
 
     /// The semicolon `;`.
     std::string_view srcSemicolon;
+
+    /// The documentation comment above the field. This may be empty!
+    std::string_view srcDocComment{};
+
+    /// The trailing documentation comment (`///<`) after the field.
+    /// This may be empty!
+    std::string_view srcDocCommentTrailing{};
   };
 
   explicit Struct(std::string_view srcKwStruct, Name name,
@@ -800,6 +821,13 @@ public:
 
     /// The next comma `,`. This may be empty!
     std::string_view srcComma;
+
+    /// The documentation comment above the declarator. This may be empty!
+    std::string_view srcDocComment{};
+
+    /// The trailing documentation comment (`///<`) after the declarator.
+    /// This may be empty!
+    std::string_view srcDocCommentTrailing{};
 
     /// Has warning been issued about this variable yet? Used to prevent
     /// the same warning being logged over and over again.

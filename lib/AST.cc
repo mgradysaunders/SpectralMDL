@@ -172,4 +172,31 @@ Function::LetAndCall Function::getVariantLetAndCallExpressions() const {
   return letAndCall;
 }
 
+std::string getDocCommentText(std::string_view srcDocComment) {
+  auto text{std::string{}};
+  while (!srcDocComment.empty()) {
+    auto line{srcDocComment.substr(0, srcDocComment.find('\n'))};
+    srcDocComment.remove_prefix(
+        std::min(line.size() + 1, srcDocComment.size()));
+    while (!line.empty() && isSpace(line.front()))
+      line.remove_prefix(1);
+    if (startsWith(line, "///<")) {
+      line.remove_prefix(4);
+    } else if (startsWith(line, "///")) {
+      line.remove_prefix(3);
+    }
+    if (!line.empty() && line.front() == ' ')
+      line.remove_prefix(1);
+    while (!line.empty() && isSpace(line.back()))
+      line.remove_suffix(1);
+    if (!text.empty())
+      text += '\n';
+    text += line;
+  }
+  while (!text.empty() && isSpace(text.back()))
+    text.pop_back();
+  text.erase(0, text.find_first_not_of("\n"));
+  return text;
+}
+
 } // namespace smdl::AST

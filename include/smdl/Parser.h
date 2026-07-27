@@ -5,6 +5,8 @@
 #include <array>
 #include <functional>
 #include <initializer_list>
+#include <type_traits>
+#include <utility>
 
 #include "smdl/AST.h"
 #include "smdl/Module.h"
@@ -49,7 +51,10 @@ private:
     return getSourceCode().substr(mSrcLoc.i);
   }
 
-  [[nodiscard]] char peek() const;
+  [[nodiscard]] char peek() const {
+    if (isEOF()) return '\0';
+    return getSourceCode()[mSrcLoc.i];
+  }
 
   char next();
 
@@ -115,6 +120,56 @@ private:
 
   void skip();
 
+  /// Get the pending documentation comment block most recently scanned
+  /// by `skip()`. This may be empty!
+  [[nodiscard]] std::string_view getPendingDocComment() const {
+    return getSourceCode().substr(mPendingDocCommentBegin,
+                                  mPendingDocCommentEnd -
+                                      mPendingDocCommentBegin);
+  }
+
+  /// Get the pending documentation comment block if it attaches to the
+  /// given source index, meaning it is separated from it by whitespace
+  /// containing at most one newline. This may be empty!
+  [[nodiscard]] std::string_view getDocCommentBefore(size_t srcIndex) const;
+
+  /// Does the pending trailing documentation comment (`///<`) trail
+  /// source code on its line? If not, it is a stray `///<` on a line of
+  /// its own, which attaches to nothing.
+  [[nodiscard]] bool pendingTrailingDocCommentTrailsCode() const;
+
+  /// The trait to detect item types that can hold a trailing
+  /// documentation comment.
+  template <typename Item, typename = void>
+  struct HasTrailingDocComment : std::false_type {};
+  template <typename Item>
+  struct HasTrailingDocComment<
+      Item, std::void_t<decltype(std::declval<Item &>().srcDocCommentTrailing)>>
+      : std::true_type {};
+
+  /// Attach the pending trailing documentation comment (`///<`) to the
+  /// last item in `items` if it belongs to it: the comment must lie
+  /// strictly between the start of the item and the current scan
+  /// position (so a stale comment left behind by a rejected parse
+  /// further ahead can never attach), and must trail source code on its
+  /// line. Attaching consumes the pending comment; this is safe under
+  /// backtracking because a rewind that re-scans the comment also
+  /// re-records it.
+  template <typename Item>
+  void attachPendingTrailingDocComment(std::vector<Item> &items) {
+    if (mPendingTrailingDocCommentBegin == mPendingTrailingDocCommentEnd ||
+        items.empty())
+      return;
+    if (!(items.back().srcLoc.i < mPendingTrailingDocCommentBegin &&
+          mPendingTrailingDocCommentEnd <= mSrcLoc.i) ||
+        !pendingTrailingDocCommentTrailsCode())
+      return;
+    items.back().srcDocCommentTrailing = getSourceCode().substr(
+        mPendingTrailingDocCommentBegin,
+        mPendingTrailingDocCommentEnd - mPendingTrailingDocCommentBegin);
+    mPendingTrailingDocCommentBegin = mPendingTrailingDocCommentEnd = 0;
+  }
+
   SourceLocation checkpoint() {
     skip();
     mSrcLocStack.push_back(mSrcLoc);
@@ -163,6 +218,8 @@ private:
                            std::string_view srcCloser = {}) {
     while (true) {
       skip();
+      if constexpr (HasTrailingDocComment<Item>::value)
+        attachPendingTrailingDocComment(items);
       auto item{parseItem()};
       if (!item) break;
       items.push_back(std::move(*item));
@@ -174,6 +231,10 @@ private:
         if (startsWith(getRemainingSourceCode(), srcCloser)) break;
       }
     }
+    // Every loop exit is preceded by a `skip()`, so a trailing comment
+    // after the last item has already been scanned.
+    if constexpr (HasTrailingDocComment<Item>::value)
+      attachPendingTrailingDocComment(items);
   }
   //--}
 
@@ -469,6 +530,33 @@ private:
   /// after a single call to `parse()`, but do not reuse a `Parser` after
   /// catching a parse error!
   std::vector<SourceLocation> mSrcLocStack;
+
+  /// The begin index of the pending documentation comment block
+  /// (consecutive `///` lines) most recently scanned by `skip()`. Equal
+  /// to `mPendingDocCommentEnd` if there is none.
+  ///
+  /// NOTE: This is a pure function of how far `skip()` has scanned, so
+  /// the backtracking in `checkpoint()`/`reject()` needs no save and
+  /// restore logic: after a rewind, the next `skip()` over the same
+  /// region recomputes identical state, and a stale block from an
+  /// earlier region fails the whitespace adjacency test in
+  /// `getDocCommentBefore()`.
+  size_t mPendingDocCommentBegin{};
+
+  /// The end index of the pending documentation comment block, see
+  /// `mPendingDocCommentBegin`.
+  size_t mPendingDocCommentEnd{};
+
+  /// The begin index of the pending trailing documentation comment
+  /// (`///<`) most recently scanned by `skip()`. Equal to
+  /// `mPendingTrailingDocCommentEnd` if there is none. The same
+  /// backtracking reasoning as `mPendingDocCommentBegin` applies, plus
+  /// the position guards in `attachPendingTrailingDocComment()`.
+  size_t mPendingTrailingDocCommentBegin{};
+
+  /// The end index of the pending trailing documentation comment, see
+  /// `mPendingTrailingDocCommentBegin`.
+  size_t mPendingTrailingDocCommentEnd{};
 
   /// The current recursion depth, see `ParseDepthGuard`.
   int mParseDepth{};
