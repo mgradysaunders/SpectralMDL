@@ -1136,7 +1136,7 @@ export float2 smithVisibleSlopeSample(
       x = 0.5 * (xmin + xmax);
     const float a = monte_carlo::erfInverse(x);
     const float f = norm * (1 + x + invSqrtPi * tanThetao * #exp(-a * a)) - xi0;
-    break if (f ~== [1e-5] 0.0);
+    break if (f ~== |1e-5| 0.0);
     if (f > 0)
       xmax = x;
     else
@@ -2040,6 +2040,124 @@ auto emissionSample(const &spot_edf this, inline const &EmissionSampleParameters
            wi: calculateTangentSpace(normal, tangent_u) * float3(sinTheta * #cos(phi), sinTheta * #sin(phi), cosTheta),
            isValid: true,
          );
+}
+//--}
+
+//--{ measured_edf
+/// Declare the light profile interpolation routine implemented in
+/// `lib/LightProfile.cc` and registered as a JIT builtin by
+/// `#load_light_profile` in `lib/Compiler/Emitter.cc`.
+@(pure foreign)
+float smdlLightProfileInterpolate(const &void profile, const &float3 wo);
+
+/// Declare the light profile direction PDF routine, being the exact
+/// solid-angle density over the sphere of the direction sampling routine
+/// in the profile's own coordinate system.
+@(pure foreign)
+float smdlLightProfileDirectionPDF(const &void profile, const &float3 wi);
+
+/// Declare the light profile direction sampling routine.
+@(pure foreign)
+void smdlLightProfileDirectionSample(const &void profile, const &float2 xi, const &float3 wi, const &float pdf);
+
+/// A measured Emission Distribution Function (EDF), i.e., an IES light
+/// profile applied per point in tangent space: the profile's vertical
+/// axis (vertical angle 0) is aligned with the shading normal, and its
+/// horizontal angle 0 is aligned with `tangent_u`.
+///
+/// The EDF value is `multiplier * profile(wi) / max_intensity`, so unlike
+/// `diffuse_edf` and `spot_edf` it is NOT normalized such that the
+/// cosine-weighted hemisphere integral is 1: with `multiplier = 1`, the
+/// `material_emission.intensity` is the radiance emitted in the peak
+/// direction of the profile, and the profile shapes the falloff. Hosts
+/// that need the true emitted power of the profile for light selection
+/// should use `light_profile.power`.
+///
+/// \note
+/// The lower hemisphere of the profile is clipped: a surface cannot emit
+/// below its own horizon. Directions sampled there are rejected, and the
+/// PDF is reported with respect to solid angle over the full sphere, so
+/// evaluation and sampling remain consistent for MIS.
+///
+export struct measured_edf: edf {
+  /// The light profile.
+  light_profile profile;
+
+  /// The multiplier.
+  float multiplier = 1.0;
+
+  /// > Boolean that chooses between two interpretations of the EDF: the
+  /// > directional distribution applied per point in tangent space, or the
+  /// > distribution of the light source as a whole in the global frame.
+  ///
+  /// \note
+  /// Only the per-point tangent-space interpretation is supported, so this
+  /// is accepted and ignored. The luminaire-as-a-whole interpretation is a
+  /// host-side concern, e.g., a delta point light driven directly by the
+  /// C++ `smdl::LightProfile` API.
+  ///
+  void global_distribution = true;
+
+  /// The global frame.
+  ///
+  /// \note
+  /// Only the per-point tangent-space interpretation is supported, so this
+  /// is accepted and ignored.
+  ///
+  void global_frame = float3x3(1.0);
+
+  /// The tangent direction, orienting the horizontal angle of the profile.
+  float3 tangent_u = $state.texture_tangent_u[0];
+
+  /// The handle.
+  ///
+  /// > Name to provide access to this component for use in an MDL
+  /// > integration.
+  ///
+  /// \note
+  /// This should be a `string` but we `void` it because we have no use for it.
+  ///
+  void handle = "";
+
+  /// The precomputed scale, folding the multiplier and the normalization
+  /// by the maximum intensity of the profile.
+  const float _scale = profile.max_intensity > 0.0 ? #max(multiplier, 0.0) / profile.max_intensity : 0.0;
+
+  /// The flags.
+  static const int df_flags = DF_GLOSSY;
+};
+
+@(pure)
+auto emissionEvaluate(const &measured_edf this, inline const &EmissionEvaluateParameters params) {
+  preserve tangent_u;
+  tangent_u = this.tangent_u;
+  if ((this._scale > 0.0) && recalculateTangentSpace(params)) {
+    const auto intensity(smdlLightProfileInterpolate(this.profile.ptr, &wi));
+    if (!(intensity > 0.0))
+      return EmissionEvaluateResult(isBlack: true);
+    return EmissionEvaluateResult(
+             f: this._scale * intensity,
+             pdf: smdlLightProfileDirectionPDF(this.profile.ptr, &wi),
+           );
+  } else {
+    return EmissionEvaluateResult(isBlack: true);
+  }
+}
+
+@(pure)
+auto emissionSample(const &measured_edf this, inline const &EmissionSampleParameters params) {
+  if (!(this._scale > 0.0))
+    return EmissionSampleResult();
+  float2 xiDirection(xi.x, xi.y);
+  float3 w(0.0);
+  float pdf(0.0);
+  smdlLightProfileDirectionSample(this.profile.ptr, &xiDirection, &w, &pdf);
+  // Reject dead samples and the lower hemisphere of the profile, which a
+  // surface cannot emit into. The PDF stays the density over the full
+  // sphere, consistent with `emissionEvaluate`.
+  if (!((pdf > 0.0) & (w.z > 0.0)))
+    return EmissionSampleResult();
+  return EmissionSampleResult(wi: calculateTangentSpace(normal, this.tangent_u) * w, isValid: true);
 }
 //--}
 

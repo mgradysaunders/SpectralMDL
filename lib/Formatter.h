@@ -97,7 +97,7 @@ private:
   void writeDelimNewLine();
 
   void writeIndentIfNewLine() {
-    if (lastOutput() == '\n')
+    if (lastOutput() == '\n' && !mOptions.compact)
       for (int i = 0; i < mIndent; i++)
         mOutputSrc += ' ';
   }
@@ -277,12 +277,12 @@ private:
     if (expr.op == AST::BINOP_APPROX_CMP_EQ ||
         expr.op == AST::BINOP_APPROX_CMP_NE) {
       // Format approximate comparison syntax
-      // `lhs ~== [eps] rhs`
-      // `lhs ~!= [eps] rhs`
+      // `lhs ~== |eps| rhs`, `lhs ~== (eps) rhs`
+      // `lhs ~!= |eps| rhs`, `lhs ~!= (eps) rhs`
       write(expr.exprLhs,                        //
             DELIM_UNNECESSARY_SPACE, expr.srcOp, //
-            DELIM_UNNECESSARY_SPACE, expr.srcBrackL, expr.exprEps,
-            expr.srcBrackR, DELIM_UNNECESSARY_SPACE, expr.exprRhs);
+            DELIM_UNNECESSARY_SPACE, expr.srcDelimL, expr.exprEps,
+            expr.srcDelimR, DELIM_UNNECESSARY_SPACE, expr.exprRhs);
     } else if (expr.op == AST::BINOP_ELSE) {
       write(expr.exprLhs, DELIM_SPACE, expr.srcOp, DELIM_SPACE, expr.exprRhs);
     } else {

@@ -60,7 +60,7 @@ void checkCase(
     hotspot: hotspot,
     backscatter: backscatter,
   );
-  #assert(reflectance(scattering, i, e, psi) / expect ~== [2e-3] 1.0);
+  #assert(reflectance(scattering, i, e, psi) ~== (2e-3) expect);
 }
 
 unit_test "Hapke reference cross-check" {
@@ -78,7 +78,7 @@ unit_test "Hapke reference cross-check" {
 // through the BRDF, so that a normalization bug cannot hide behind a shape bug.
 unit_test "Hapke construction internals" {
   // The surge normalization `N_B`.
-  #assert(1.0 / df::hapke_granular_bsdf(albedo: color(0.3))._invSurgeNorm ~== [1e-5] 1.13476919);
+  #assert(1.0 / df::hapke_granular_bsdf(albedo: color(0.3))._invSurgeNorm ~== |1e-5| 1.13476919);
   // The kernel's own white-sky albedo `EbarK(gamma) = w (A_ss + w G)`, recovered from
   // the stored scale as `w A / EbarK`. Both end members matter: `gamma = 0` is the
   // bright limit where the multiple-scattering term dominates, and `gamma = 5/6` the
@@ -88,7 +88,7 @@ unit_test "Hapke construction internals" {
     const auto gamma = k / 6.0;
     const auto A = math::clamp((1.0 - gamma) / (1.0 + gamma), 1e-6, 1.0 - 1e-6);
     const auto w = 1.0 - gamma * gamma;
-    #assert(w * A / df::hapke_granular_bsdf(albedo: A)._scale / expect[k] ~== [1e-4] 1.0);
+    #assert(w * A / df::hapke_granular_bsdf(albedo: A)._scale ~== (1e-4) expect[k]);
   }
 }
 
@@ -103,7 +103,7 @@ unit_test "Hapke reciprocity" {
     const auto wi = incoming(0.05 + 1.5 * xi.x);
     const auto forward = evaluate(scattering, wo, wi).f[0] / #abs(wi.z);
     const auto reverse = evaluate(scattering, wi, wo).f[0] / #abs(wo.z);
-    #assert(forward / reverse ~== [1e-4] 1.0);
+    #assert(forward ~== (1e-4) reverse);
   }
 }
 
@@ -138,7 +138,7 @@ void checkWhiteFurnace(
     hotspot: hotspot,
     backscatter: backscatter,
   );
-  #assert(whiteSkyAlbedo(scattering, 65536) / albedo ~== [1.2e-2] 1.0);
+  #assert(whiteSkyAlbedo(scattering, 65536) ~== (1.2e-2) albedo);
 }
 
 unit_test "Hapke white furnace" {
@@ -160,12 +160,12 @@ unit_test "Hapke white furnace" {
 unit_test "Hapke parameter handling" {
   const auto clamped = df::hapke_granular_bsdf(albedo: color(0.3), roughness: -0.5, porosity: 3.0, hotspot: -1.0, backscatter: 2.0);
   const auto limit = df::hapke_granular_bsdf(albedo: color(0.3), roughness: 0.0, porosity: 1.0, hotspot: 0.0, backscatter: 1.0);
-  #assert(reflectance(clamped, 0.6, 0.9, 1.1) / reflectance(limit, 0.6, 0.9, 1.1) ~== [1e-6] 1.0);
+  #assert(reflectance(clamped, 0.6, 0.9, 1.1) ~== (1e-6) reflectance(limit, 0.6, 0.9, 1.1));
 
   // A `float` albedo keeps the whole distribution scalar and must agree with the
   // equivalent `color`.
   const auto scalar = df::hapke_granular_bsdf(albedo: 0.3);
   const auto spectral = df::hapke_granular_bsdf(albedo: color(0.3));
   #assert(#typeof(scalar._scale) == float);
-  #assert(reflectance(scalar, 0.6, 0.9, 1.1) / reflectance(spectral, 0.6, 0.9, 1.1) ~== [1e-6] 1.0);
+  #assert(reflectance(scalar, 0.6, 0.9, 1.1) ~== (1e-6) reflectance(spectral, 0.6, 0.9, 1.1));
 }

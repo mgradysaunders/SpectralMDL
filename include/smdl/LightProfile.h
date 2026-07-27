@@ -162,3 +162,35 @@ public:
 /// \}
 
 } // namespace smdl
+
+extern "C" {
+
+/// \name Light Profile JIT callees
+///
+/// These wrap `LightProfile` for the `@(pure foreign)` declarations in the
+/// builtin `df` module, which back `df::measured_edf`. The compiler
+/// registers their addresses as absolute JIT symbols when a light profile
+/// is loaded (see `#load_light_profile` in `Emitter.cc`), so they resolve
+/// even when the host process does not export its own dynamic symbols.
+///
+/// \{
+
+/// Interpolate the intensity of the given `smdl::LightProfile` in the
+/// given direction, or return 0 if the profile is null.
+SMDL_EXPORT float smdlLightProfileInterpolate(const void *profile,
+                                              const smdl::float3 &wo);
+
+/// The solid-angle PDF over the sphere of `smdlLightProfileDirectionSample`
+/// sampling the given direction, or 0 if the profile is null.
+SMDL_EXPORT float smdlLightProfileDirectionPDF(const void *profile,
+                                               const smdl::float3 &wi);
+
+/// Importance sample the direction distribution of the given
+/// `smdl::LightProfile`.
+SMDL_EXPORT void smdlLightProfileDirectionSample(const void *profile,
+                                                 const smdl::float2 &xi,
+                                                 smdl::float3 *wi, float *pdf);
+
+/// \}
+
+} // extern "C"

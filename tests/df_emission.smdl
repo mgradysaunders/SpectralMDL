@@ -60,15 +60,15 @@ unit_test "Emission diffuse closed form" {
   for (int i = 0; i < 3; i++) {
     const auto result = evaluate(&mat, directions[i]);
     #assert(result.isNonZero);
-    #assert(result.Le[0] ~== [1e-5] 3.0 / $PI);
-    #assert(result.pdf ~== [1e-5] directions[i].z / $PI);
+    #assert(result.Le[0] ~== |1e-5| 3.0 / $PI);
+    #assert(result.pdf ~== |1e-5| directions[i].z / $PI);
   }
   // A `float` intensity and the equivalent `color` intensity must agree.
   auto matSpectral = diffuseEmitter(color(3.0));
   const auto result0 = evaluate(&mat, directions[1]);
   const auto result1 = evaluate(&matSpectral, directions[1]);
-  #assert(result0.Le[0] ~== [1e-6] result1.Le[0]);
-  #assert(result0.pdf ~== [1e-6] result1.pdf);
+  #assert(result0.Le[0] ~== |1e-6| result1.Le[0]);
+  #assert(result0.pdf ~== |1e-6| result1.pdf);
 }
 
 // Solid materials emit only on the exterior side.
@@ -104,10 +104,10 @@ unit_test "Emission thin-walled mirror" {
   const auto resultBack = evaluate(&mat, wiBack);
   #assert(resultFront.isNonZero);
   #assert(resultBack.isNonZero);
-  #assert(resultFront.Le[0] ~== [1e-5] 3.0 / $PI);
-  #assert(resultBack.Le[0] ~== [1e-5] 3.0 / $PI);
-  #assert(resultFront.pdf ~== [1e-5] 0.5 * wiFront.z / $PI);
-  #assert(resultBack.pdf ~== [1e-5] 0.5 * wiFront.z / $PI);
+  #assert(resultFront.Le[0] ~== |1e-5| 3.0 / $PI);
+  #assert(resultBack.Le[0] ~== |1e-5| 3.0 / $PI);
+  #assert(resultFront.pdf ~== |1e-5| 0.5 * wiFront.z / $PI);
+  #assert(resultBack.pdf ~== |1e-5| 0.5 * wiFront.z / $PI);
 }
 
 // A thin-walled material with a non-default backface emits independently
@@ -125,10 +125,10 @@ unit_test "Emission thin-walled backface override" {
   const auto resultBack = evaluate(&mat, wiBack);
   #assert(resultFront.isNonZero);
   #assert(resultBack.isNonZero);
-  #assert(resultFront.Le[0] ~== [1e-5] 3.0 / $PI);
-  #assert(resultBack.Le[0] ~== [1e-5] 1.0 / $PI);
-  #assert(resultFront.pdf ~== [1e-5] 0.75 * wiFront.z / $PI);
-  #assert(resultBack.pdf ~== [1e-5] 0.25 * wiFront.z / $PI);
+  #assert(resultFront.Le[0] ~== |1e-5| 3.0 / $PI);
+  #assert(resultBack.Le[0] ~== |1e-5| 1.0 / $PI);
+  #assert(resultFront.pdf ~== |1e-5| 0.75 * wiFront.z / $PI);
+  #assert(resultBack.pdf ~== |1e-5| 0.25 * wiFront.z / $PI);
 
   // A backface with scattering but no emission EDF keeps the back side
   // black and the front side chance at 1.
@@ -138,7 +138,7 @@ unit_test "Emission thin-walled backface override" {
     backface: material_surface(scattering: df::diffuse_reflection_bsdf()),
   );
   #assert(!evaluate(&matBackNoEmission, wiBack).isNonZero);
-  #assert(evaluate(&matBackNoEmission, wiFront).pdf ~== [1e-5] wiFront.z / $PI);
+  #assert(evaluate(&matBackNoEmission, wiFront).pdf ~== |1e-5| wiFront.z / $PI);
 }
 
 // The spot EDF with exponent 0 and spread π is the uniform hemisphere:
@@ -151,8 +151,8 @@ unit_test "Emission spot uniform limit" {
   const auto wi = normalize(float3(0.5, 0.0, 0.8));
   const auto result = evaluate(&mat, wi);
   #assert(result.isNonZero);
-  #assert(result.Le[0] ~== [1e-5] 3.0 / $PI);
-  #assert(result.pdf ~== [1e-5] 1.0 / $TWO_PI);
+  #assert(result.Le[0] ~== |1e-5| 3.0 / $PI);
+  #assert(result.pdf ~== |1e-5| 1.0 / $TWO_PI);
 }
 
 // The spot EDF must be normalized such that the cosine-weighted integral
@@ -178,7 +178,7 @@ unit_test "Emission spot normalization" {
       integral += result.Le[0] * cosTheta if (result.isNonZero);
     }
     integral *= $TWO_PI / n;
-    #assert(integral ~== [1e-2] 1.0);
+    #assert(integral ~== |1e-2| 1.0);
   }
 }
 
@@ -202,7 +202,7 @@ float exitanceEstimate(&material mat, const bool bothSides = false) {
 unit_test "Emission exitance furnace" {
   // The diffuse estimator is exact per sample: Le cos / pdf = intensity.
   auto matDiffuse = diffuseEmitter(3.0);
-  #assert(exitanceEstimate(&matDiffuse) ~== [1e-3] 3.0);
+  #assert(exitanceEstimate(&matDiffuse) ~== |1e-3| 3.0);
 
   // The spot estimator has actual variance; the low discrepancy sequence
   // keeps it tight.
@@ -211,7 +211,7 @@ unit_test "Emission exitance furnace" {
       emission: material_emission(emission: df::spot_edf(exponent: 4.0, spread: 1.2), intensity: 3.0),
     ),
   );
-  #assert(exitanceEstimate(&matSpot) ~== [0.05] 3.0);
+  #assert(exitanceEstimate(&matSpot) ~== |0.05| 3.0);
 
   // A two-sided thin-walled emitter radiates the intensity per side, so
   // the full-sphere estimate is twice the intensity.
@@ -219,7 +219,7 @@ unit_test "Emission exitance furnace" {
     thin_walled: true,
     surface: material_surface(emission: material_emission(emission: df::diffuse_edf(), intensity: 3.0)),
   );
-  #assert(exitanceEstimate(&matTwoSided, bothSides: true) ~== [1e-3] 6.0);
+  #assert(exitanceEstimate(&matTwoSided, bothSides: true) ~== |1e-3| 6.0);
 }
 
 // Sampling and evaluation must agree on the PDF and the radiance for the
@@ -239,8 +239,8 @@ unit_test "Emission sample and evaluate agree" {
     if (s.isNonZero) {
       const auto result = evaluate(&mat, s.wi);
       #assert(result.isNonZero);
-      #assert(result.pdf ~== [1e-5] s.pdf);
-      #assert(result.Le[0] ~== [1e-5] s.Le[0]);
+      #assert(result.pdf ~== |1e-5| s.pdf);
+      #assert(result.Le[0] ~== |1e-5| s.Le[0]);
       numBack += int(s.wi.z < 0.0);
     }
   }
@@ -260,8 +260,8 @@ unit_test "Emission tint and mix" {
   const auto wi = normalize(float3(0.5, 0.0, 0.8));
   const auto resultTint = evaluate(&matTint, wi);
   #assert(resultTint.isNonZero);
-  #assert(resultTint.Le[0] ~== [1e-5] 0.5 * 3.0 / $PI);
-  #assert(resultTint.pdf ~== [1e-5] wi.z / $PI);
+  #assert(resultTint.Le[0] ~== |1e-5| 0.5 * 3.0 / $PI);
+  #assert(resultTint.pdf ~== |1e-5| wi.z / $PI);
 
   auto matMix = material(
     surface: material_surface(
@@ -277,9 +277,9 @@ unit_test "Emission tint and mix" {
   const auto resultMix = evaluate(&matMix, wi);
   #assert(resultMix.isNonZero);
   // Both components are constant radiance 1/π, mixed with total weight 0.5.
-  #assert(resultMix.Le[0] ~== [1e-5] 0.5 * 3.0 / $PI);
+  #assert(resultMix.Le[0] ~== |1e-5| 0.5 * 3.0 / $PI);
   // The chances normalize to 1/2 each over the cosine and uniform PDFs.
-  #assert(resultMix.pdf ~== [1e-5] 0.5 * (wi.z / $PI) + 0.5 * (1.0 / $TWO_PI));
+  #assert(resultMix.pdf ~== |1e-5| 0.5 * (wi.z / $PI) + 0.5 * (1.0 / $TWO_PI));
 }
 
 // The material instance must advertise emission through the flags, the
@@ -306,4 +306,115 @@ unit_test "Emission instance metadata" {
   #assert((instanceDefault.flags & MATERIAL_HAS_SURFACE_EMISSION) == 0);
   #assert(instanceDefault.emission_modes == 0);
   #assert(!bool(instanceDefault.surface_emission_intensity));
+}
+
+// The measured EDF applies an IES light profile per point in tangent
+// space: the EDF value is `multiplier * profile(wi) / max_intensity`, so
+// with an isotropic profile it is just the multiplier everywhere on the
+// upper hemisphere, and the sampling PDF is uniform over the sphere.
+unit_test "Emission measured isotropic" {
+  auto mat = material(
+    surface: material_surface(
+      emission: material_emission(
+        emission: df::measured_edf(profile: light_profile("isotropic.ies"), multiplier: 2.0),
+        intensity: 3.0,
+      ),
+    ),
+  );
+  const auto wi = normalize(float3(0.3, -0.2, 0.9));
+  const auto result = evaluate(&mat, wi);
+  #assert(result.isNonZero);
+  #assert(result.Le[0] ~== |1e-4| 6.0);
+  // The PDF is backed by the rasterized sampling distribution, which is
+  // piecewise constant between texel centers, so it is only uniform to
+  // within a few percent.
+  #assert(result.pdf ~== (0.1) (1.0 / (4.0 * $PI)));
+  // The lower hemisphere of the profile is clipped on a solid material.
+  #assert(!evaluate(&mat, normalize(float3(0.3, -0.2, -0.9))).isNonZero);
+}
+
+// The axial profile tabulates radiometric intensities 1.0, 0.8, 0.6,
+// 0.4, 0.2 at vertical angles 0, 45, 90, 135, 180, interpolated linearly
+// in angle, and normalized by the maximum intensity 1.0 at the pole.
+unit_test "Emission measured axial interpolation" {
+  auto mat = material(
+    surface: material_surface(
+      emission: material_emission(emission: df::measured_edf(profile: light_profile("axial.ies")), intensity: 1.0),
+    ),
+  );
+  #assert(evaluate(&mat, float3(0.0, 0.0, 1.0)).Le[0] ~== |1e-4| 1.0);
+  #assert(evaluate(&mat, normalize(float3(1.0, 0.0, 1.0))).Le[0] ~== |1e-4| 0.8);
+  const float theta = $PI / 3.0; // 60 degrees interpolates 45..90
+  #assert(evaluate(&mat, float3(#sin(theta), 0.0, #cos(theta))).Le[0] ~== |1e-3| 0.8 + (0.6 - 0.8) / 3.0);
+}
+
+// The horizontal angle of the profile is oriented by `tangent_u`.
+unit_test "Emission measured tangent frame" {
+  const auto wi = normalize(float3(1.0, 0.0, 1.0)); // vert 45, horz 0 from +X
+  auto mat0 = material(
+    surface: material_surface(
+      emission: material_emission(emission: df::measured_edf(profile: light_profile("quadrant.ies")), intensity: 1.0),
+    ),
+  );
+  auto mat1 = material(
+    surface: material_surface(
+      emission: material_emission(
+        emission: df::measured_edf(profile: light_profile("quadrant.ies"), tangent_u: float3(0.0, 1.0, 0.0)),
+        intensity: 1.0,
+      ),
+    ),
+  );
+  // With the default tangent, `wi` sits at horizontal angle 0 where the
+  // profile tabulates 0.8 at vertical angle 45. Rotating the tangent to
+  // +Y moves it to horizontal angle 90 where the profile tabulates 0.4.
+  #assert(evaluate(&mat0, wi).Le[0] ~== |1e-4| 0.8);
+  #assert(evaluate(&mat1, wi).Le[0] ~== |1e-4| 0.4);
+}
+
+// The sampling-based exitance estimate must agree with an independent
+// quadrature of the evaluate path, which exercises the profile-backed
+// PDF and the lower-hemisphere rejection accounting end-to-end.
+unit_test "Emission measured furnace consistency" {
+  auto mat = material(
+    surface: material_surface(
+      emission: material_emission(emission: df::measured_edf(profile: light_profile("axial.ies")), intensity: 3.0),
+    ),
+  );
+  const int n = 1024;
+  float integral = 0.0;
+  for (int i = 0; i < n; i++) {
+    const float cosTheta = (i + 0.5) / n;
+    const float sinTheta = #sqrt(1.0 - cosTheta * cosTheta);
+    const auto result = evaluate(&mat, float3(sinTheta, 0.0, cosTheta));
+    integral += result.Le[0] * cosTheta if (result.isNonZero);
+  }
+  integral *= $TWO_PI / n;
+  #assert(exitanceEstimate(&mat) ~== (0.02) integral);
+}
+
+// Sampling and evaluation must agree on the PDF and the radiance for the
+// sampled direction, and lower-hemisphere samples must be rejected.
+unit_test "Emission measured sample and evaluate agree" {
+  auto mat = material(
+    surface: material_surface(
+      emission: material_emission(emission: df::measured_edf(profile: light_profile("axial.ies")), intensity: 3.0),
+    ),
+  );
+  float4 xi = float4(0.1, 0.2, 0.3, 0.4);
+  int numValid = 0;
+  for (int i = 0; i < 256; i++, df::monte_carlo::nextLowDiscrepancy(&xi)) {
+    const auto s = sample(&mat, xi);
+    if (s.isNonZero) {
+      #assert(s.wi.z > 0.0);
+      const auto result = evaluate(&mat, s.wi);
+      #assert(result.isNonZero);
+      #assert(result.pdf ~== |1e-5| s.pdf);
+      #assert(result.Le[0] ~== |1e-5| s.Le[0]);
+      numValid++;
+    }
+  }
+  // The axial profile has substantial energy below the horizon, so some
+  // samples must be rejected, and plenty must survive.
+  #assert(numValid > 64);
+  #assert(numValid < 256);
 }

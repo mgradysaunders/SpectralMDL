@@ -1,0 +1,8 @@
+IESNA:LM-63-1995
+[TEST] Synthetic isotropic
+TILT=NONE
+1 1000 1 2 1 1 2 0.1 0.1 0.1
+1.0 1.0 100
+0 180
+0
+683 683

@@ -285,23 +285,40 @@ private:
       skip();
 
       // If parsing an approximate comparison operator `~==` or `~!=`, then
-      // also parse the epsilon in `[ ... ]` after the operator and before
-      // the right-hand side expression. This is extended syntax!
+      // also parse the epsilon after the operator and before the right-hand
+      // side expression: `|EPSILON|` is an absolute tolerance, `(EPSILON)`
+      // is a relative tolerance. This is extended syntax!
       if (op->op == BINOP_APPROX_CMP_EQ || //
           op->op == BINOP_APPROX_CMP_NE) {
-        auto srcBrackL{nextDelimiter("[")};
-        auto exprEps{parseUnaryExpression()};
-        auto srcBrackR{nextDelimiter("]")};
-        if (!srcBrackL || !exprEps || !srcBrackR)
-          srcLoc0.throwError("expected '[EPSILON]' after ", Quoted(op->srcOp));
+        auto srcDelimL{nextDelimiter("|")};
+        auto exprEps{BumpPtr<AST::Expr>{}};
+        auto srcDelimR{std::optional<std::string_view>{}};
+        if (srcDelimL) {
+          exprEps = parseUnaryExpression();
+          srcDelimR = nextDelimiter("|");
+        } else {
+          srcDelimL = nextDelimiter("(");
+          if (srcDelimL) {
+            exprEps = parseExpression();
+            srcDelimR = nextDelimiter(")");
+          } else if (nextDelimiter("[")) {
+            srcLoc0.throwError(
+                "'[EPSILON]' syntax was replaced: use '|EPSILON|' for "
+                "absolute or '(EPSILON)' for relative tolerance after ",
+                Quoted(op->srcOp));
+          }
+        }
+        if (!srcDelimL || !exprEps || !srcDelimR)
+          srcLoc0.throwError("expected '|EPSILON|' or '(EPSILON)' after ",
+                             Quoted(op->srcOp));
         auto exprRhs{parseInner()};
         if (!exprRhs)
-          srcLoc0.throwError("expected '[EPSILON] EXPRESSION' after ",
+          srcLoc0.throwError("expected 'EPSILON EXPRESSION' after ",
                              Quoted(op->srcOp));
         accept();
         exprLhs = allocate<AST::Binary>(
             srcLoc0, std::in_place, std::move(exprLhs), op->srcOp, op->op,
-            *srcBrackL, std::move(exprEps), *srcBrackR, std::move(exprRhs));
+            *srcDelimL, std::move(exprEps), *srcDelimR, std::move(exprRhs));
         continue;
       }
 

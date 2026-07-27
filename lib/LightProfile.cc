@@ -497,23 +497,23 @@ float3 LightProfile::directionSample(float2 xi, float *pdf) const noexcept {
 
 extern "C" {
 
-SMDL_EXPORT float smdLightProfileInterpolate(const void *profile,
-                                             const smdl::float3 &wo) {
+SMDL_EXPORT float smdlLightProfileInterpolate(const void *profile,
+                                              const smdl::float3 &wo) {
   if (!profile)
     return 0;
   return static_cast<const smdl::LightProfile *>(profile)->interpolate(wo);
 }
 
-SMDL_EXPORT float smdLightProfileDirectionPDF(const void *profile,
-                                              const smdl::float3 &wi) {
+SMDL_EXPORT float smdlLightProfileDirectionPDF(const void *profile,
+                                               const smdl::float3 &wi) {
   if (!profile)
     return 0;
   return static_cast<const smdl::LightProfile *>(profile)->directionPDF(wi);
 }
 
-SMDL_EXPORT void smdLightProfileDirectionSample(const void *profile,
-                                                const smdl::float2 &xi,
-                                                smdl::float3 *wi, float *pdf) {
+SMDL_EXPORT void smdlLightProfileDirectionSample(const void *profile,
+                                                 const smdl::float2 &xi,
+                                                 smdl::float3 *wi, float *pdf) {
   if (!profile) {
     if (wi)
       *wi = {};

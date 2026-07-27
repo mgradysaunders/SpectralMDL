@@ -8,8 +8,8 @@ unit_test "Specular half vector for reflection" {
   const auto wo = math::normalize(float3(-0.4, 1.2, 1.6));
   const auto wi = math::normalize(float3(+0.1, -0.7, 0.4));
   const auto wm = math::normalize(df::specular::reflectionHalfVector(wo, wi));
-  #assert(#all(df::specular::reflect(wo, wm) ~== [1e-5] wi));
-  #assert(#all(df::specular::reflect(wi, wm) ~== [1e-5] wo));
+  #assert(#all(df::specular::reflect(wo, wm) ~== |1e-5| wi));
+  #assert(#all(df::specular::reflect(wi, wm) ~== |1e-5| wo));
 }
 
 unit_test "Specular half vector for refraction" {
@@ -17,18 +17,18 @@ unit_test "Specular half vector for refraction" {
   const auto wo = math::normalize(float3(-0.4, 1.2, 1.6));
   const auto wi = math::normalize(float3(+0.1, -0.7, -0.4));
   const auto wm = math::normalize(df::specular::refractionHalfVector(wo, wi, ior));
-  #assert(#all(df::specular::refract(wo, wm, ior) ~== [1e-5] wi));
-  #assert(#all(df::specular::refract(wi, wm, 1 / ior) ~== [1e-5] wo));
+  #assert(#all(df::specular::refract(wo, wm, ior) ~== |1e-5| wi));
+  #assert(#all(df::specular::refract(wi, wm, 1 / ior) ~== |1e-5| wo));
 }
 
 @(pure foreign)
 double erf(double x);
 
 unit_test "Erf inverse" {
-  #assert(df::monte_carlo::erfInverse(erf(-1.1d)) ~== [1e-5d] -1.1d);
-  #assert(df::monte_carlo::erfInverse(erf(-0.3d)) ~== [1e-5d] -0.3d);
-  #assert(df::monte_carlo::erfInverse(erf(+1.2d)) ~== [1e-5d] +1.2d);
-  #assert(df::monte_carlo::erfInverse(erf(+2.7d)) ~== [1e-5d] +2.7d);
+  #assert(df::monte_carlo::erfInverse(erf(-1.1d)) ~== |1e-5d| -1.1d);
+  #assert(df::monte_carlo::erfInverse(erf(-0.3d)) ~== |1e-5d| -0.3d);
+  #assert(df::monte_carlo::erfInverse(erf(+1.2d)) ~== |1e-5d| +1.2d);
+  #assert(df::monte_carlo::erfInverse(erf(+2.7d)) ~== |1e-5d| +2.7d);
 }
 
 @(pure)
@@ -38,7 +38,7 @@ auto runLowDiscrepancyTests(auto xi) {
     xiAverage += df::monte_carlo::nextLowDiscrepancy(&xi);
   }
   xiAverage /= 5000;
-  #assert(#all(xiAverage ~== [1e-3] 0.5));
+  #assert(#all(xiAverage ~== |1e-3| 0.5));
 }
 
 unit_test "Low discrepancy 2D" {
@@ -60,7 +60,7 @@ unit_test "Cosine-weighted hemisphere sample" {
     wiAverage += df::monte_carlo::cosineHemisphereSample(xi);
   }
   wiAverage /= 5000;
-  #assert(#all(wiAverage ~== [1e-3] float3(0.0, 0.0, 0.666)));
+  #assert(#all(wiAverage ~== |1e-3| float3(0.0, 0.0, 0.666)));
 }
 
 // Integrate Smith slope PDF by transforming the open square `(-1, 1)^2` 
@@ -96,10 +96,10 @@ float integrateSmithNormalPDF(const df::microfacet::Distribution distr, const fl
 }
 
 unit_test "Microfacet distributions" {
-  #assert(integrateSmithSlopePDF(df::microfacet::DistributionGGX()) ~== [1e-2] 1.0);
-  #assert(integrateSmithSlopePDF(df::microfacet::DistributionBeckmann()) ~== [1e-2] 1.0);
-  #assert(integrateSmithNormalPDF(df::microfacet::DistributionGGX(), float2(0.8, 1.2)) ~== [1e-2] 1.0);
-  #assert(integrateSmithNormalPDF(df::microfacet::DistributionBeckmann(), float2(1.1, 0.7)) ~== [1e-2] 1.0);
+  #assert(integrateSmithSlopePDF(df::microfacet::DistributionGGX()) ~== |1e-2| 1.0);
+  #assert(integrateSmithSlopePDF(df::microfacet::DistributionBeckmann()) ~== |1e-2| 1.0);
+  #assert(integrateSmithNormalPDF(df::microfacet::DistributionGGX(), float2(0.8, 1.2)) ~== |1e-2| 1.0);
+  #assert(integrateSmithNormalPDF(df::microfacet::DistributionBeckmann(), float2(1.1, 0.7)) ~== |1e-2| 1.0);
 }
 
 struct EvaluateResult {
@@ -173,10 +173,10 @@ void checkBidirectionalConsistency(const bsdf scattering, const float3 wo, const
   const auto imp01 = evaluate(scattering, wo, wi, true, normal);
   const auto imp10 = evaluate(scattering, wi, wo, true, normal);
   #assert(#any(rad01.f > 0.0)); // Else the checks pass vacuously
-  #assert(#all(#abs(rad01.pdf - rad10.pdf.yx) ~== [1e-5] 0.0));
-  #assert(#all(#abs(imp01.pdf - imp10.pdf.yx) ~== [1e-5] 0.0));
-  #assert(#all(#abs(imp01.f * #abs(wo.z) - rad10.f * #abs(wi.z)) ~== [1e-5] 0.0));
-  #assert(#all(#abs(imp10.f * #abs(wi.z) - rad01.f * #abs(wo.z)) ~== [1e-5] 0.0));
+  #assert(#all(rad01.pdf ~== |1e-5| rad10.pdf.yx));
+  #assert(#all(imp01.pdf ~== |1e-5| imp10.pdf.yx));
+  #assert(#all(imp01.f * #abs(wo.z) ~== |1e-5| rad10.f * #abs(wi.z)));
+  #assert(#all(imp10.f * #abs(wi.z) ~== |1e-5| rad01.f * #abs(wo.z)));
 }
 
 // Check that the scattering PDF integrates over the hemisphere selected by
@@ -222,8 +222,8 @@ unit_test "Reciprocity" {
   );
   const auto result0 = evaluate(f, wo, wi);
   const auto result1 = evaluate(f, wi, wo);
-  #assert(#all(#abs(result0.pdf - result1.pdf.yx) ~== [1e-6] 0.0));
-  #assert(#all(#abs(result0.f / #abs(wi.z) - result1.f / #abs(wo.z)) ~== [1e-6] 0.0));
+  #assert(#all(result0.pdf ~== |1e-6| result1.pdf.yx));
+  #assert(#all(result0.f / #abs(wi.z) ~== |1e-6| result1.f / #abs(wo.z)));
 }
 
 unit_test "Bidirectional consistency" {
@@ -329,8 +329,8 @@ unit_test "Measured BSDF" {
   const auto result1 = evaluate(df::measured_bsdf(measurement: m), wo, wi);
   const auto result2 = evaluate(df::measured_bsdf(measurement: m, multiplier: 2.0), wo, wi);
   #assert(#any(result1.f > 0.0));
-  #assert(#all(#abs(result2.f - 2.0 * result1.f) ~== [1e-5] 0.0));
-  #assert(#all(#abs(result2.pdf - result1.pdf) ~== [1e-6] 0.0));
+  #assert(#all(result2.f ~== |1e-5| 2.0 * result1.f));
+  #assert(#all(result2.pdf ~== |1e-6| result1.pdf));
 }
 
 unit_test "Specular delta shading normal correction" {
@@ -345,13 +345,13 @@ unit_test "Specular delta shading normal correction" {
     const auto imp = sample(bsdfR, xi, wo, true, ns);
     #assert(rad.success && rad.isDelta);
     #assert(imp.success && imp.isDelta);
-    #assert(#all(#abs(imp.wi - rad.wi) ~== [1e-6] 0.0));
-    #assert(#all(rad.f ~== [1e-6] color(1.0)));
+    #assert(#all(imp.wi ~== |1e-6| rad.wi));
+    #assert(#all(rad.f ~== |1e-6| color(1.0)));
     const auto corr = #abs(math::dot(wo, ns) * rad.wi.z) / #abs(math::dot(rad.wi, ns) * wo.z);
-    #assert(#all(imp.f ~== [1e-5] color(corr)));
+    #assert(#all(imp.f ~== |1e-5| color(corr)));
     // With the default shading normal the correction must be the identity.
     const auto impDefault = sample(bsdfR, xi, wo, true);
-    #assert(#all(impDefault.f ~== [1e-6] color(1.0)));
+    #assert(#all(impDefault.f ~== |1e-6| color(1.0)));
   }
   // Transmission: radiance transport applies the solid-angle compression `ior * ior`,
   // importance transport applies the shading normal correction.
@@ -361,11 +361,11 @@ unit_test "Specular delta shading normal correction" {
     const auto imp = sample(bsdfT, xi, wo, true, ns);
     #assert(rad.success && rad.isDelta);
     #assert(imp.success && imp.isDelta);
-    #assert(#all(#abs(imp.wi - rad.wi) ~== [1e-6] 0.0));
+    #assert(#all(imp.wi ~== |1e-6| rad.wi));
     #assert(rad.wi.z < 0.0);
-    #assert(#all(rad.f ~== [1e-5] color((1.0 / 1.4) * (1.0 / 1.4)))); // Material IOR defaults to 1.4
+    #assert(#all(rad.f ~== |1e-5| color((1.0 / 1.4) * (1.0 / 1.4)))); // Material IOR defaults to 1.4
     const auto corr = #abs(math::dot(wo, ns) * rad.wi.z) / #abs(math::dot(rad.wi, ns) * wo.z);
-    #assert(#all(imp.f ~== [1e-5] color(corr)));
+    #assert(#all(imp.f ~== |1e-5| color(corr)));
   }
 }
 
@@ -383,8 +383,8 @@ unit_test "Specular transmission round trip" {
   #assert(rIn.wi.z < 0.0);
   const auto rOut = sample(bsdfT, xi, rIn.wi);
   #assert(rOut.success && rOut.isDelta);
-  #assert(#all(rOut.wi ~== [1e-5] wo));
-  #assert(#all(rIn.f * rOut.f ~== [1e-5] color(1.0)));
+  #assert(#all(rOut.wi ~== |1e-5| wo));
+  #assert(#all(rIn.f * rOut.f ~== |1e-5| color(1.0)));
 }
 
 unit_test "Thin-walled specular delta transmission" {
@@ -393,8 +393,8 @@ unit_test "Thin-walled specular delta transmission" {
   const auto wo = math::normalize(float3(0.3, 0.2, 1.5));
   const auto r = sample(df::specular_bsdf(tint: 1.0, mode: df::scatter_transmit), float4(0.8, 0.4, 0.5, 0.6), wo, false, float3(0, 0, 1), true);
   #assert(r.success && r.isDelta);
-  #assert(#all(r.wi ~== [1e-6] -wo));
-  #assert(#all(r.f ~== [1e-6] color(1.0)));
+  #assert(#all(r.wi ~== |1e-6| -wo));
+  #assert(#all(r.f ~== |1e-6| color(1.0)));
 }
 
 unit_test "Fresnel layer backface total internal reflection" {
@@ -408,7 +408,7 @@ unit_test "Fresnel layer backface total internal reflection" {
   // Beyond the critical angle the Fresnel weight is exactly 1, so the
   // layered result equals the bare layer.
   const auto rBack = evaluate(df::fresnel_layer(ior: 1.5, layer: layerB), wo, wi);
-  #assert(#all(#abs(rBack.f - rLayer.f) ~== [1e-5] 0.0));
+  #assert(#all(rBack.f ~== |1e-5| rLayer.f));
   // The mirrored front-face geometry is nowhere near total: the weight is
   // the ordinary dielectric reflectance, well below 1.
   const auto rFront = evaluate(df::fresnel_layer(ior: 1.5, layer: layerB), -wo, -wi);
@@ -430,7 +430,7 @@ unit_test "Fresnel layer defines the layer interface" {
     const auto wi = df::monte_carlo::uniformHemisphereSample(xi2) * float3(1, 1, -1.0);
     const auto rBare = evaluate(layerB, wo, wi, false, float3(0, 0, 1), false, 1.8);
     const auto rLayered = evaluate(layered, wo, wi, false, float3(0, 0, 1), false, 1.8);
-    #assert(#abs(rLayered.pdf[0] - chance * rBare.pdf[0]) ~== [1e-5] 0.0);
+    #assert(rLayered.pdf[0] ~== |1e-5| chance * rBare.pdf[0]);
   }
   // The layered transmission must also satisfy the full bidirectional
   // consistency identities even when the layer interface disagrees with the
@@ -453,15 +453,15 @@ unit_test "Nested dielectric exterior IOR" {
   const auto r1 = sample(bsdfT, xi, wo, false, float3(0, 0, 1), false, nGlass, nWater);
   const auto r2 = sample(bsdfT, xi, wo, false, float3(0, 0, 1), false, nGlass / nWater, 1.0);
   #assert(r1.success && r2.success);
-  #assert(#all(r1.wi ~== [1e-5] r2.wi));
-  #assert(#all(r1.f ~== [1e-5] r2.f));
-  #assert(#all(r1.f ~== [1e-5] color(#pow(nWater / nGlass, 2))));
+  #assert(#all(r1.wi ~== |1e-5| r2.wi));
+  #assert(#all(r1.f ~== |1e-5| r2.f));
+  #assert(#all(r1.f ~== |1e-5| color(#pow(nWater / nGlass, 2))));
   // Exiting back out through the interface restores the direction and
   // cancels the radiance compression.
   const auto rOut = sample(bsdfT, xi, r1.wi, false, float3(0, 0, 1), false, nGlass, nWater);
   #assert(rOut.success);
-  #assert(#all(rOut.wi ~== [1e-5] wo));
-  #assert(#all(r1.f * rOut.f ~== [1e-5] color(1.0)));
+  #assert(#all(rOut.wi ~== |1e-5| wo));
+  #assert(#all(r1.f * rOut.f ~== |1e-5| color(1.0)));
   // Modifiers convert their absolute IOR against the same exterior: a
   // fresnel_layer in water equals the equivalent relative layer in vacuum.
   const auto wiR = math::normalize(float3(-0.5, 0.1, 0.8));
@@ -469,8 +469,8 @@ unit_test "Nested dielectric exterior IOR" {
   const auto e1 = evaluate(df::fresnel_layer(ior: nGlass, layer: layerB), wo, wiR, false, float3(0, 0, 1), false, nGlass, nWater);
   const auto e2 = evaluate(df::fresnel_layer(ior: nGlass / nWater, layer: layerB), wo, wiR, false, float3(0, 0, 1), false, nGlass / nWater, 1.0);
   #assert(#any(e1.f > 0.0));
-  #assert(#all(#abs(e1.f - e2.f) ~== [1e-5] 0.0));
-  #assert(#all(#abs(e1.pdf - e2.pdf) ~== [1e-5] 0.0));
+  #assert(#all(e1.f ~== |1e-5| e2.f));
+  #assert(#all(e1.pdf ~== |1e-5| e2.pdf));
 }
 
 unit_test "Fresnel-weighted reflect-transmit decomposition" {
@@ -495,8 +495,8 @@ unit_test "Fresnel-weighted reflect-transmit decomposition" {
     const auto Fh = df::specular::dielectricFresnel(math::dot(wo, h), eta);
     const auto Fi = df::specular::dielectricFresnel(wiR.z, eta);
     #assert(#any(r1.f > 0.0));
-    #assert(#all(#abs(r2.f - Fh * r1.f) ~== [1e-5] 0.0));
-    #assert(#all(#abs(r2.pdf - float2(Fo, Fi) * r1.pdf) ~== [1e-5] 0.0));
+    #assert(#all(r2.f ~== |1e-5| Fh * r1.f));
+    #assert(#all(r2.pdf ~== |1e-5| float2(Fo, Fi) * r1.pdf));
   }
   // Transmission pair. The reverse PDF lane sees the reciprocal ratio.
   {
@@ -506,8 +506,8 @@ unit_test "Fresnel-weighted reflect-transmit decomposition" {
     const auto Fh = df::specular::dielectricFresnel(math::dot(wo, h), eta);
     const auto Fi = df::specular::dielectricFresnel(-wiT.z, 1 / eta);
     #assert(#any(r1.f > 0.0));
-    #assert(#all(#abs(r2.f - (1 - Fh) * r1.f) ~== [1e-5] 0.0));
-    #assert(#all(#abs(r2.pdf - (1 - float2(Fo, Fi)) * r1.pdf) ~== [1e-5] 0.0));
+    #assert(#all(r2.f ~== |1e-5| (1 - Fh) * r1.f));
+    #assert(#all(r2.pdf ~== |1e-5| (1 - float2(Fo, Fi)) * r1.pdf));
   }
 }
 
@@ -552,13 +552,13 @@ unit_test "Fresnel-weighted specular delta dielectric" {
     const auto r = sample(bRT, float4(0.9 * F, 0.4, 0.5, 0.6), wo);
     #assert(r.success && r.isDelta);
     #assert(r.wi.z > 0.0);
-    #assert(#all(r.f ~== [1e-5] color(1.0)));
+    #assert(#all(r.f ~== |1e-5| color(1.0)));
   }
   {
     const auto r = sample(bRT, float4(F + 0.9 * (1 - F), 0.4, 0.5, 0.6), wo);
     #assert(r.success && r.isDelta);
     #assert(r.wi.z < 0.0);
-    #assert(#all(r.f ~== [1e-5] color((1.0 / 1.4) * (1.0 / 1.4))));
+    #assert(#all(r.f ~== |1e-5| color((1.0 / 1.4) * (1.0 / 1.4))));
   }
   // From inside beyond the critical angle the Fresnel term is 1, so every
   // sample reflects: total internal reflection wastes nothing. (The 50/50
@@ -568,7 +568,7 @@ unit_test "Fresnel-weighted specular delta dielectric" {
     const auto r = sample(bRT, float4((k + 0.5) / 8, 0.4, 0.5, 0.6), woIn);
     #assert(r.success && r.isDelta);
     #assert(r.wi.z < 0.0); // Reflection stays on the incident side
-    #assert(#all(r.f ~== [1e-5] color(1.0)));
+    #assert(#all(r.f ~== |1e-5| color(1.0)));
   }
 }
 
@@ -581,13 +581,13 @@ unit_test "Measured curve factor" {
   // A constant single-entry curve scales uniformly.
   {
     const auto result1 = evaluate(df::measured_curve_factor(curve_values: color[1](color(0.25)), base: base), wo, wi);
-    #assert(#all(#abs(result1.f - 0.25 * result0.f) ~== [1e-6] 0.0));
-    #assert(#all(#abs(result1.pdf - result0.pdf) ~== [1e-6] 0.0)); // The factor must not affect the PDFs
+    #assert(#all(result1.f ~== |1e-6| 0.25 * result0.f));
+    #assert(#all(result1.pdf ~== |1e-6| result0.pdf)); // The factor must not affect the PDFs
   }
   // An all-ones curve is the identity.
   {
     const auto result1 = evaluate(df::measured_curve_factor(curve_values: color[3](color(1.0), color(1.0), color(1.0)), base: base), wo, wi);
-    #assert(#all(#abs(result1.f - result0.f) ~== [1e-6] 0.0));
+    #assert(#all(result1.f ~== |1e-6| result0.f));
   }
   // A varying curve linearly interpolates over the angle between the outgoing
   // direction and the half vector in the pre-image range from zero to pi/2.
@@ -598,7 +598,7 @@ unit_test "Measured curve factor" {
     const auto t = math::saturate(math::acos(math::saturate(math::dot(wo, h))) * (2 / $PI)) * 3;
     const int i = int(t);
     const auto expected = math::lerp(curve[i], curve[#min(i + 1, 3)], t - i);
-    #assert(#all(#abs(result1.f - expected * result0.f) ~== [1e-5] 0.0));
+    #assert(#all(result1.f ~== |1e-5| expected * result0.f));
   }
 }
 
@@ -622,8 +622,8 @@ unit_test "Measured factor" {
     ),
   );
   #assert(#any(expected > 0.0));
-  #assert(#all(#abs(result1.f - expected * result0.f) ~== [1e-6] 0.0));
-  #assert(#all(#abs(result1.pdf - result0.pdf) ~== [1e-6] 0.0)); // The factor must not affect the PDFs
+  #assert(#all(result1.f ~== |1e-6| expected * result0.f));
+  #assert(#all(result1.pdf ~== |1e-6| result0.pdf)); // The factor must not affect the PDFs
 }
 
 unit_test "Thin film" {
@@ -634,18 +634,18 @@ unit_test "Thin film" {
   // Zero thickness is the identity, for both float and color film IOR.
   {
     const auto result1 = evaluate(df::thin_film(thickness: 0.0, ior: 1.5, base: base), wo, wi);
-    #assert(#all(#abs(result1.f - result0.f) ~== [1e-5] 0.0));
-    #assert(#all(#abs(result1.pdf - result0.pdf) ~== [1e-6] 0.0)); // The factor must not affect the PDFs
+    #assert(#all(result1.f ~== |1e-5| result0.f));
+    #assert(#all(result1.pdf ~== |1e-6| result0.pdf)); // The factor must not affect the PDFs
   }
   {
     const auto result1 = evaluate(df::thin_film(thickness: 0.0, ior: color(1.5), base: base), wo, wi);
-    #assert(#all(#abs(result1.f - result0.f) ~== [1e-5] 0.0));
+    #assert(#all(result1.f ~== |1e-5| result0.f));
   }
   // The same identity holds on the delta sampling path.
   {
     const auto r = sample(df::thin_film(thickness: 0.0, ior: 1.5, base: df::specular_bsdf(tint: 1.0)), float4(0.3, 0.4, 0.5, 0.6), wo);
     #assert(r.success && r.isDelta);
-    #assert(#all(r.f ~== [1e-5] color(1.0)));
+    #assert(#all(r.f ~== |1e-5| color(1.0)));
   }
   // At normal incidence with the default material IOR of 1.4:
   const auto wz = float3(0, 0, 1);
@@ -655,14 +655,14 @@ unit_test "Thin film" {
   // A half-wave film is invisible at its design wavelength.
   {
     const auto result1 = evaluate(df::thin_film(thickness: lambda / (2 * 1.5), ior: 1.5, base: base), wz, wz);
-    #assert(result1.f[k] ~== [1e-4] resultz.f[k]);
+    #assert(result1.f[k] ~== |1e-4| resultz.f[k]);
   }
   // A quarter-wave film with the ideal anti-reflection IOR `sqrt(1.4)` blacks out
   // the interface at its design wavelength, but not at distant wavelengths.
   {
     const auto arIOR = #sqrt(1.4);
     const auto result1 = evaluate(df::thin_film(thickness: lambda / (4 * arIOR), ior: arIOR, base: base), wz, wz);
-    #assert(result1.f[k] ~== [1e-4] 0.0);
+    #assert(result1.f[k] ~== |1e-4| 0.0);
     #assert(result1.f[0] > 0.01);
   }
 }
@@ -679,14 +679,14 @@ unit_test "Custom curve layer" {
   // Zero weight selects the base.
   {
     const auto r = evaluate(df::custom_curve_layer(normal_reflectivity: 0.2, weight: 0.0, layer: layerB, base: baseB), wo, wi);
-    #assert(#all(#abs(r.f - rBase.f) ~== [1e-6] 0.0));
-    #assert(#all(#abs(r.pdf - rBase.pdf) ~== [1e-6] 0.0));
+    #assert(#all(r.f ~== |1e-6| rBase.f));
+    #assert(#all(r.pdf ~== |1e-6| rBase.pdf));
   }
   // A unit curve with unit weight selects the layer.
   {
     const auto r = evaluate(df::custom_curve_layer(normal_reflectivity: 1.0, grazing_reflectivity: 1.0, weight: 1.0, layer: layerB, base: baseB), wo, wi);
-    #assert(#all(#abs(r.f - rLayer.f) ~== [1e-6] 0.0));
-    #assert(#all(#abs(r.pdf - rLayer.pdf) ~== [1e-6] 0.0));
+    #assert(#all(r.f ~== |1e-6| rLayer.f));
+    #assert(#all(r.pdf ~== |1e-6| rLayer.pdf));
   }
   // Otherwise blend by the Schlick-style curve, evaluated at the half vector for the
   // scattering function and at the normal cosines for the PDFs.
@@ -695,8 +695,8 @@ unit_test "Custom curve layer" {
     const auto h = math::normalize(wo + wi);
     const auto fWeight = 0.8 * (0.2 + (0.9 - 0.2) * #pow(#max(1 - #abs(math::dot(wo, h)), 0), 4.0));
     const auto pWeight = 0.8 * (0.2 + (0.9 - 0.2) * #pow(#max(1 - float2(wo.z, wi.z), 0), 4.0));
-    #assert(#all(#abs(r.f - math::lerp(rBase.f, rLayer.f, fWeight)) ~== [1e-5] 0.0));
-    #assert(#all(#abs(r.pdf - math::lerp(rBase.pdf, rLayer.pdf, pWeight)) ~== [1e-5] 0.0));
+    #assert(#all(r.f ~== |1e-5| math::lerp(rBase.f, rLayer.f, fWeight)));
+    #assert(#all(r.pdf ~== |1e-5| math::lerp(rBase.pdf, rLayer.pdf, pWeight)));
   }
   // A delta sample from the layer compensates the selection chance exactly when the
   // weight is uniform and the shading normal is default, so the tint passes through.
@@ -707,7 +707,7 @@ unit_test "Custom curve layer" {
       wo,
     );
     #assert(r.success && r.isDelta);
-    #assert(#all(r.f ~== [1e-5] color(1.0)));
+    #assert(#all(r.f ~== |1e-5| color(1.0)));
   }
 }
 
@@ -721,14 +721,14 @@ unit_test "Measured curve layer" {
   // Zero weight selects the base.
   {
     const auto r = evaluate(df::measured_curve_layer(curve_values: color[2](color(0.9), color(0.1)), weight: 0.0, layer: layerB, base: baseB), wo, wi);
-    #assert(#all(#abs(r.f - rBase.f) ~== [1e-6] 0.0));
-    #assert(#all(#abs(r.pdf - rBase.pdf) ~== [1e-6] 0.0));
+    #assert(#all(r.f ~== |1e-6| rBase.f));
+    #assert(#all(r.pdf ~== |1e-6| rBase.pdf));
   }
   // A unit curve with unit weight selects the layer.
   {
     const auto r = evaluate(df::measured_curve_layer(curve_values: color[1](color(1.0)), weight: 1.0, layer: layerB, base: baseB), wo, wi);
-    #assert(#all(#abs(r.f - rLayer.f) ~== [1e-6] 0.0));
-    #assert(#all(#abs(r.pdf - rLayer.pdf) ~== [1e-6] 0.0));
+    #assert(#all(r.f ~== |1e-6| rLayer.f));
+    #assert(#all(r.pdf ~== |1e-6| rLayer.pdf));
   }
   // Otherwise blend by the interpolated curve, evaluated at the half vector for the
   // scattering function and at the normal cosines for the PDFs.
@@ -737,8 +737,8 @@ unit_test "Measured curve layer" {
     const auto h = math::normalize(wo + wi);
     const auto fWeight = 0.8 * math::lerp(0.9, 0.1, math::saturate(math::acos(math::saturate(math::dot(wo, h))) * (2 / $PI)));
     const auto pWeight = 0.8 * math::lerp(float2(0.9), float2(0.1), math::saturate(math::acos(math::saturate(float2(wo.z, wi.z))) * (2 / $PI)));
-    #assert(#all(#abs(r.f - math::lerp(rBase.f, rLayer.f, fWeight)) ~== [1e-5] 0.0));
-    #assert(#all(#abs(r.pdf - math::lerp(rBase.pdf, rLayer.pdf, pWeight)) ~== [1e-5] 0.0));
+    #assert(#all(r.f ~== |1e-5| math::lerp(rBase.f, rLayer.f, fWeight)));
+    #assert(#all(r.pdf ~== |1e-5| math::lerp(rBase.pdf, rLayer.pdf, pWeight)));
   }
 }
 

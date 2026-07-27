@@ -686,11 +686,21 @@ Value Emitter::emit(AST::Binary &expr) {
   if (expr.op == BINOP_APPROX_CMP_EQ || //
       expr.op == BINOP_APPROX_CMP_NE) {
     // Approximate comparison operators
-    // `lhs ~== [eps] rhs`
-    // `lhs ~!= [eps] rhs`
+    // `lhs ~== |eps| rhs` absolute: `#abs(lhs - rhs) <= eps`
+    // `lhs ~== (eps) rhs` relative: `#abs(lhs - rhs) <= eps * #max(#abs(lhs),
+    //                                                             #abs(rhs))`
+    // and `~!=` is the logical negation of `~==`.
     auto res{emitOp(BINOP_SUB, lhs, rhs, expr.srcLoc)};
     res = emitIntrinsic("abs", res, expr.srcLoc);
-    res = emitOp(BINOP_CMP_LT, res, emit(expr.exprEps), expr.srcLoc);
+    auto eps{emit(expr.exprEps)};
+    if (expr.isRelativeEps()) {
+      auto scale{emitIntrinsic("max",
+                               {emitIntrinsic("abs", lhs, expr.srcLoc),
+                                emitIntrinsic("abs", rhs, expr.srcLoc)},
+                               expr.srcLoc)};
+      eps = emitOp(BINOP_MUL, eps, scale, expr.srcLoc);
+    }
+    res = emitOp(BINOP_CMP_LE, res, eps, expr.srcLoc);
     if (expr.op == BINOP_APPROX_CMP_NE)
       res = emitOp(UNOP_LOGIC_NOT, res, expr.srcLoc);
     return res;
@@ -2146,6 +2156,18 @@ Value Emitter::emitIntrinsic(std::string_view name, const ArgumentList &args,
       if (name == "load_light_profile") {
         auto lightProfileType{context.getLightProfileType()};
         auto fileName{expectOneComptimeString()};
+        // Register the light profile runtime callees backing the
+        // '@(pure foreign)' declarations in 'df.smdl' (which implement
+        // 'df::measured_edf'), so they resolve as absolute JIT symbols
+        // even when the host process does not export its own dynamic
+        // symbols. Any 'measured_edf' necessarily loads a light profile
+        // first, so this registration is a safe superset.
+        (void)context.getBuiltinCallee("smdlLightProfileInterpolate",
+                                       &smdlLightProfileInterpolate);
+        (void)context.getBuiltinCallee("smdlLightProfileDirectionPDF",
+                                       &smdlLightProfileDirectionPDF);
+        (void)context.getBuiltinCallee("smdlLightProfileDirectionSample",
+                                       &smdlLightProfileDirectionSample);
         return withLocatedFile(
             fileName, lightProfileType,
             [&](const std::string &resolvedFileName) {

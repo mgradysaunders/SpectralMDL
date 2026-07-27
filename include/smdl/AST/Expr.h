@@ -162,8 +162,8 @@ enum BinaryOp : uint32_t {
   BINOP_LOGIC_OR = BINOP_LOGIC | BINOP_OR,   ///< `||`
   BINOP_COMMA = 18,                          ///< `,`
   BINOP_LET = 19,                            ///< Extended syntax: `:=`
-  BINOP_APPROX_CMP_EQ = 20,                  ///< Extended syntax: `==~`
-  BINOP_APPROX_CMP_NE = 21,                  ///< Extended syntax: `!=~`
+  BINOP_APPROX_CMP_EQ = 20,                  ///< Extended syntax: `~==`
+  BINOP_APPROX_CMP_NE = 21,                  ///< Extended syntax: `~!=`
   BINOP_SUBSET = 22,                         ///< Extended syntax: `<:`
   BINOP_ELSE = 23                            ///< Extended syntax: `else`
 };
@@ -283,11 +283,16 @@ public:
         exprRhs(std::move(exprRhs)) {}
 
   explicit Binary(BumpPtr<Expr> exprLhs, std::string_view srcOp, BinaryOp op,
-                  std::string_view srcBrackL, BumpPtr<Expr> exprEps,
-                  std::string_view srcBrackR, BumpPtr<Expr> exprRhs)
-      : exprLhs(std::move(exprLhs)), srcOp(srcOp), op(op), srcBrackL(srcBrackL),
-        exprEps(std::move(exprEps)), srcBrackR(srcBrackR),
+                  std::string_view srcDelimL, BumpPtr<Expr> exprEps,
+                  std::string_view srcDelimR, BumpPtr<Expr> exprRhs)
+      : exprLhs(std::move(exprLhs)), srcOp(srcOp), op(op), srcDelimL(srcDelimL),
+        exprEps(std::move(exprEps)), srcDelimR(srcDelimR),
         exprRhs(std::move(exprRhs)) {}
+
+  /// Is the epsilon of an approximate comparison a relative tolerance?
+  /// Absolute tolerance is delimited by bars `|eps|`, relative tolerance
+  /// by parentheses `(eps)`.
+  [[nodiscard]] bool isRelativeEps() const { return srcDelimL == "("; }
 
   /// The left-hand side expression.
   BumpPtr<Expr> exprLhs;
@@ -298,14 +303,14 @@ public:
   /// The operator.
   BinaryOp op{};
 
-  /// The bracket `[`.
-  std::string_view srcBrackL;
+  /// The epsilon delimiter `|` or `(`.
+  std::string_view srcDelimL;
 
   /// The epsilon expression.
   BumpPtr<Expr> exprEps;
 
-  /// The bracket `]`.
-  std::string_view srcBrackR;
+  /// The epsilon delimiter `|` or `)`.
+  std::string_view srcDelimR;
 
   /// The right-hand side expression.
   BumpPtr<Expr> exprRhs;

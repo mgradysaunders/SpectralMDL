@@ -60,10 +60,10 @@ unit_test "PROSPECT" {
   // spectral state, whose samples land on the wavelengths tabulated here.
   if ($WAVELENGTH_BASE_MAX == 16 && math::abs($state.wavelength_base[0] - 380.0) < 1e-3 &&
       math::abs($state.wavelength_base[15] - 720.0) < 1e-3) {
-    #assert(zeaxanthin.reflectance[6] ~== [5e-3] 0.080119);   // 516.00 nm
-    #assert(zeaxanthin.reflectance[7] ~== [5e-3] 0.144626);   // 538.67 nm
-    #assert(zeaxanthin.reflectance[10] ~== [5e-3] 0.074349);  // 606.67 nm
-    #assert(zeaxanthin.reflectance[15] ~== [5e-3] 0.306544);  // 720.00 nm
-    #assert(violaxanthin.reflectance[7] ~== [5e-3] 0.150577); // 538.67 nm
+    #assert(zeaxanthin.reflectance[6] ~== |5e-3| 0.080119);   // 516.00 nm
+    #assert(zeaxanthin.reflectance[7] ~== |5e-3| 0.144626);   // 538.67 nm
+    #assert(zeaxanthin.reflectance[10] ~== |5e-3| 0.074349);  // 606.67 nm
+    #assert(zeaxanthin.reflectance[15] ~== |5e-3| 0.306544);  // 720.00 nm
+    #assert(violaxanthin.reflectance[7] ~== |5e-3| 0.150577); // 538.67 nm
   }
 }
