@@ -125,14 +125,10 @@ public:
   struct Instance final {
   public:
     /// Is null?
-    [[nodiscard]] bool operator!() const noexcept {
-      return ptr == nullptr;
-    }
+    [[nodiscard]] bool operator!() const noexcept { return ptr == nullptr; }
 
     /// Is non-null?
-    [[nodiscard]] operator bool() const noexcept {
-      return ptr != nullptr;
-    }
+    [[nodiscard]] operator bool() const noexcept { return ptr != nullptr; }
 
   public:
     /// The JIT struct memory block.
@@ -406,10 +402,9 @@ public:
   /// non-default emission EDF.
   [[nodiscard]]
   Span<const float> getSurfaceEmissionIntensity() const noexcept {
-    return Span<const float>(instance.surface_emission_intensity,
-                             instance.surface_emission_intensity
-                                 ? instance.wavelength_base_max
-                                 : 0);
+    return Span<const float>(
+        instance.surface_emission_intensity,
+        instance.surface_emission_intensity ? instance.wavelength_base_max : 0);
   }
 
   /// The `backface` emission intensity, or empty if the `backface` has no

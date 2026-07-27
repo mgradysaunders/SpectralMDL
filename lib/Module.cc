@@ -41,8 +41,8 @@ deriveQualifiedName(const std::string &fileName,
   auto name{std::string()};
   for (auto itr{relative.begin()}; itr != relative.end(); ++itr) {
     name += "::";
-    name += std::next(itr) == relative.end() ? itr->stem().string()
-                                             : itr->string();
+    name +=
+        std::next(itr) == relative.end() ? itr->stem().string() : itr->string();
   }
   return name;
 }
@@ -59,11 +59,9 @@ std::unique_ptr<Module> Module::loadFromFile(const std::string &fileName,
   return module_;
 }
 
-std::unique_ptr<Module>
-Module::loadFromFileExtractedFromArchive(const std::string &archiveFileName,
-                                         const std::string &entryName,
-                                         const std::string &file,
-                                         const std::string &searchRoot) {
+std::unique_ptr<Module> Module::loadFromFileExtractedFromArchive(
+    const std::string &archiveFileName, const std::string &entryName,
+    const std::string &file, const std::string &searchRoot) {
   auto module_{std::make_unique<Module>()};
   module_->mIsExtractedFromArchive = true;
   module_->mFileName = joinPaths(archiveFileName, entryName);
@@ -79,10 +77,10 @@ Module::loadFromFileExtractedFromArchive(const std::string &archiveFileName,
   return module_;
 }
 
-std::unique_ptr<Module> Module::loadFromMDLE(const std::string &mdleFileName,
-                                             const std::string &file,
-                                             const std::string &qualifiedName,
-                                             const std::string &resourceDirectory) {
+std::unique_ptr<Module>
+Module::loadFromMDLE(const std::string &mdleFileName, const std::string &file,
+                     const std::string &qualifiedName,
+                     const std::string &resourceDirectory) {
   auto module_{std::make_unique<Module>()};
   module_->mIsExtractedFromArchive = true;
   module_->mFileName = joinPaths(mdleFileName, "main.mdl");
@@ -153,8 +151,7 @@ Module::formatSourceCode(const FormatOptions &formatOptions) noexcept {
   }
   if (!isParsed()) {
     auto allocator{BumpPtrAllocator{}};
-    if (auto error{parse(allocator)})
-      return error;
+    if (auto error{parse(allocator)}) return error;
     auto error{formatSourceCode(formatOptions)};
     mRoot = {};
     return error;

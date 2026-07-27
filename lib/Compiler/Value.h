@@ -353,10 +353,8 @@ public:
   /// Get the source location. Returns the empty source location if this
   /// has no associated `astParam` or `astField`.
   [[nodiscard]] auto getSourceLocation() const {
-    if (astParam)
-      return astParam->name.srcLoc;
-    if (astField)
-      return astField->name.srcLoc;
+    if (astParam) return astParam->name.srcLoc;
+    if (astField) return astField->name.srcLoc;
     return SourceLocation();
   }
 
@@ -368,10 +366,8 @@ public:
 
   /// Get the AST type. This may be null!
   [[nodiscard]] AST::Type *getASTType() const {
-    if (astParam)
-      return astParam->type.get();
-    if (astField)
-      return astField->type.get();
+    if (astParam) return astParam->type.get();
+    if (astField) return astField->type.get();
     return nullptr;
   }
 
@@ -384,17 +380,14 @@ public:
 
   /// Is marked with the keyword `inline`?
   [[nodiscard]] bool isInline() const {
-    if (auto astType{getASTType()})
-      return astType->hasQualifier("inline");
+    if (auto astType{getASTType()}) return astType->hasQualifier("inline");
     return false;
   }
 
   /// Get the default AST initializer expression. This may be null!
   [[nodiscard]] AST::Expr *getASTInitializer() const {
-    if (astParam)
-      return astParam->exprInit.get();
-    if (astField)
-      return astField->exprInit.get();
+    if (astParam) return astParam->exprInit.get();
+    if (astField) return astField->exprInit.get();
     return nullptr;
   }
 
@@ -594,8 +587,7 @@ public:
   /// Get index of first argument marked with the keyword `visit`.
   [[nodiscard]] size_t indexOfFirstVisited() const {
     for (size_t i = 0; i < elems.size(); i++) {
-      if (elems[i].isVisited())
-        return i;
+      if (elems[i].isVisited()) return i;
     }
     return size_t(-1);
   }

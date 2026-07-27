@@ -38,8 +38,7 @@ public:
   constexpr ColorVector(float s) : v(s) {}
 #else
   constexpr ColorVector(float s) {
-    for (size_t i = 0; i < N; i++)
-      v[i] = s;
+    for (size_t i = 0; i < N; i++) v[i] = s;
   }
 #endif // #if SMDL_USE_EXT_VECTOR_TYPES
 
@@ -142,68 +141,59 @@ public:
 
   [[nodiscard]] constexpr ColorVector operator-() const noexcept {
     ColorVector result{};
-    for (size_t i = 0; i < N; i++)
-      result.v[i] = -v[i];
+    for (size_t i = 0; i < N; i++) result.v[i] = -v[i];
     return result;
   }
 
   [[nodiscard]]
   constexpr ColorVector operator+(const ColorVector &rhs) const noexcept {
     ColorVector result{};
-    for (size_t i = 0; i < N; i++)
-      result.v[i] = v[i] + rhs.v[i];
+    for (size_t i = 0; i < N; i++) result.v[i] = v[i] + rhs.v[i];
     return result;
   }
 
   [[nodiscard]]
   constexpr ColorVector operator-(const ColorVector &rhs) const noexcept {
     ColorVector result{};
-    for (size_t i = 0; i < N; i++)
-      result.v[i] = v[i] - rhs.v[i];
+    for (size_t i = 0; i < N; i++) result.v[i] = v[i] - rhs.v[i];
     return result;
   }
 
   [[nodiscard]]
   constexpr ColorVector operator*(const ColorVector &rhs) const noexcept {
     ColorVector result{};
-    for (size_t i = 0; i < N; i++)
-      result.v[i] = v[i] * rhs.v[i];
+    for (size_t i = 0; i < N; i++) result.v[i] = v[i] * rhs.v[i];
     return result;
   }
 
   [[nodiscard]]
   constexpr ColorVector operator/(const ColorVector &rhs) const noexcept {
     ColorVector result{};
-    for (size_t i = 0; i < N; i++)
-      result.v[i] = v[i] / rhs.v[i];
+    for (size_t i = 0; i < N; i++) result.v[i] = v[i] / rhs.v[i];
     return result;
   }
 
   [[nodiscard]] constexpr ColorVector operator+(float rhs) const noexcept {
     ColorVector result{};
-    for (size_t i = 0; i < N; i++)
-      result.v[i] = v[i] + rhs;
+    for (size_t i = 0; i < N; i++) result.v[i] = v[i] + rhs;
     return result;
   }
 
   [[nodiscard]] constexpr ColorVector operator-(float rhs) const noexcept {
     ColorVector result{};
-    for (size_t i = 0; i < N; i++)
-      result.v[i] = v[i] - rhs;
+    for (size_t i = 0; i < N; i++) result.v[i] = v[i] - rhs;
     return result;
   }
 
   [[nodiscard]] constexpr ColorVector operator*(float rhs) const noexcept {
     ColorVector result{};
-    for (size_t i = 0; i < N; i++)
-      result.v[i] = v[i] * rhs;
+    for (size_t i = 0; i < N; i++) result.v[i] = v[i] * rhs;
     return result;
   }
 
   [[nodiscard]] constexpr ColorVector operator/(float rhs) const noexcept {
     ColorVector result{};
-    for (size_t i = 0; i < N; i++)
-      result.v[i] = v[i] / rhs;
+    for (size_t i = 0; i < N; i++) result.v[i] = v[i] / rhs;
     return result;
   }
 
@@ -211,8 +201,7 @@ public:
   friend constexpr ColorVector operator+(float lhs,
                                          const ColorVector &rhs) noexcept {
     ColorVector result{};
-    for (size_t i = 0; i < N; i++)
-      result.v[i] = lhs + rhs.v[i];
+    for (size_t i = 0; i < N; i++) result.v[i] = lhs + rhs.v[i];
     return result;
   }
 
@@ -220,8 +209,7 @@ public:
   friend constexpr ColorVector operator-(float lhs,
                                          const ColorVector &rhs) noexcept {
     ColorVector result{};
-    for (size_t i = 0; i < N; i++)
-      result.v[i] = lhs - rhs.v[i];
+    for (size_t i = 0; i < N; i++) result.v[i] = lhs - rhs.v[i];
     return result;
   }
 
@@ -229,8 +217,7 @@ public:
   friend constexpr ColorVector operator*(float lhs,
                                          const ColorVector &rhs) noexcept {
     ColorVector result{};
-    for (size_t i = 0; i < N; i++)
-      result.v[i] = lhs * rhs.v[i];
+    for (size_t i = 0; i < N; i++) result.v[i] = lhs * rhs.v[i];
     return result;
   }
 
@@ -238,8 +225,7 @@ public:
   friend constexpr ColorVector operator/(float lhs,
                                          const ColorVector &rhs) noexcept {
     ColorVector result{};
-    for (size_t i = 0; i < N; i++)
-      result.v[i] = lhs / rhs.v[i];
+    for (size_t i = 0; i < N; i++) result.v[i] = lhs / rhs.v[i];
     return result;
   }
 #endif // #if SMDL_USE_EXT_VECTOR_TYPES
@@ -275,32 +261,28 @@ public:
   ///
   [[nodiscard]] bool isAllZero(float thresh = 0.0f) const noexcept {
     for (size_t i = 0; i < N; i++)
-      if (!(std::abs(v[i]) <= thresh))
-        return false;
+      if (!(std::abs(v[i]) <= thresh)) return false;
     return true;
   }
 
   /// Is any component infinite?
   [[nodiscard]] bool isAnyInf() const noexcept {
     for (size_t i = 0; i < N; i++)
-      if (std::isinf(v[i]))
-        return true;
+      if (std::isinf(v[i])) return true;
     return false;
   }
 
   /// Is any component not-a-number?
   [[nodiscard]] bool isAnyNan() const noexcept {
     for (size_t i = 0; i < N; i++)
-      if (std::isnan(v[i]))
-        return true;
+      if (std::isnan(v[i])) return true;
     return false;
   }
 
   /// Is any component either infinite or not-a-number?
   [[nodiscard]] bool isAnyNonFinite() const noexcept {
     for (size_t i = 0; i < N; i++)
-      if (!std::isfinite(v[i]))
-        return true;
+      if (!std::isfinite(v[i])) return true;
     return false;
   }
 
@@ -323,24 +305,21 @@ public:
   /// Calculate the average.
   [[nodiscard]] float average() const noexcept {
     float result{};
-    for (size_t i = 0; i < N; i++)
-      result += v[i];
+    for (size_t i = 0; i < N; i++) result += v[i];
     return result / N;
   }
 
   /// Find the maximum component.
   [[nodiscard]] float maxComponent() const noexcept {
     float result{v[0]};
-    for (size_t i = 1; i < N; i++)
-      result = std::fmax(result, v[i]);
+    for (size_t i = 1; i < N; i++) result = std::fmax(result, v[i]);
     return result;
   }
 
   /// Find the minimum component.
   [[nodiscard]] float minComponent() const noexcept {
     float result{v[0]};
-    for (size_t i = 1; i < N; i++)
-      result = std::fmin(result, v[i]);
+    for (size_t i = 1; i < N; i++) result = std::fmin(result, v[i]);
     return result;
   }
 

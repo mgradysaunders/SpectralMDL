@@ -171,8 +171,7 @@ static_assert(sizeof(float4) == 4 * sizeof(float));
 template <size_t N>
 [[nodiscard]] inline bool isAnyTrue(Vector<bool, N> v) noexcept {
   for (size_t i = 0; i < N; i++)
-    if (v[i])
-      return true;
+    if (v[i]) return true;
   return false;
 }
 
@@ -180,8 +179,7 @@ template <size_t N>
 template <size_t N>
 [[nodiscard]] inline bool isAllTrue(Vector<bool, N> v) noexcept {
   for (size_t i = 0; i < N; i++)
-    if (!v[i])
-      return false;
+    if (!v[i]) return false;
   return true;
 }
 
@@ -189,8 +187,7 @@ template <size_t N>
 template <typename T, size_t N>
 [[nodiscard]] inline bool isAllFinite(const Vector<T, N> &v) noexcept {
   for (size_t i = 0; i < N; i++)
-    if (!std::isfinite(v[i]))
-      return false;
+    if (!std::isfinite(v[i])) return false;
   return true;
 }
 
@@ -203,8 +200,7 @@ template <typename T, size_t N>
 /// Vector unary `operator-`.
 template <typename T, size_t N>
 [[nodiscard]] constexpr Vector<T, N> operator-(Vector<T, N> v) noexcept {
-  for (size_t i = 0; i < N; i++)
-    v[i] = -v[i];
+  for (size_t i = 0; i < N; i++) v[i] = -v[i];
   return v;
 }
 
@@ -213,8 +209,7 @@ template <typename T, size_t N>
 [[nodiscard]] constexpr Vector<T, N>
 operator+(const Vector<T, N> &v0, const Vector<T, N> &v1) noexcept {
   Vector<T, N> v{};
-  for (size_t i = 0; i < N; i++)
-    v[i] = v0[i] + v1[i];
+  for (size_t i = 0; i < N; i++) v[i] = v0[i] + v1[i];
   return v;
 }
 
@@ -223,8 +218,7 @@ template <typename T, size_t N>
 [[nodiscard]] constexpr Vector<T, N>
 operator-(const Vector<T, N> &v0, const Vector<T, N> &v1) noexcept {
   Vector<T, N> v{};
-  for (size_t i = 0; i < N; i++)
-    v[i] = v0[i] - v1[i];
+  for (size_t i = 0; i < N; i++) v[i] = v0[i] - v1[i];
   return v;
 }
 
@@ -233,8 +227,7 @@ template <typename T, size_t N>
 [[nodiscard]] constexpr Vector<T, N>
 operator*(const T &s0, const Vector<T, N> &v1) noexcept {
   Vector<T, N> v{};
-  for (size_t i = 0; i < N; i++)
-    v[i] = s0 * v1[i];
+  for (size_t i = 0; i < N; i++) v[i] = s0 * v1[i];
   return v;
 }
 
@@ -243,8 +236,7 @@ template <typename T, size_t N>
 [[nodiscard]] constexpr Vector<T, N> operator*(const Vector<T, N> &v0,
                                                const T &s1) noexcept {
   Vector<T, N> v{};
-  for (size_t i = 0; i < N; i++)
-    v[i] = v0[i] * s1;
+  for (size_t i = 0; i < N; i++) v[i] = v0[i] * s1;
   return v;
 }
 
@@ -253,8 +245,7 @@ template <typename T, size_t N>
 [[nodiscard]] constexpr Vector<T, N> operator/(const Vector<T, N> &v0,
                                                const T &s1) noexcept {
   Vector<T, N> v{};
-  for (size_t i = 0; i < N; i++)
-    v[i] = v0[i] / s1;
+  for (size_t i = 0; i < N; i++) v[i] = v0[i] / s1;
   return v;
 }
 
@@ -263,8 +254,7 @@ template <typename T, size_t N>
 [[nodiscard]] constexpr Vector<bool, N>
 operator==(const Vector<T, N> &v0, const Vector<T, N> &v1) noexcept {
   Vector<bool, N> v{};
-  for (size_t i = 0; i < N; i++)
-    v[i] = v0[i] == v1[i];
+  for (size_t i = 0; i < N; i++) v[i] = v0[i] == v1[i];
   return v;
 }
 
@@ -273,8 +263,7 @@ template <typename T, size_t N>
 [[nodiscard]] constexpr Vector<bool, N>
 operator!=(const Vector<T, N> &v0, const Vector<T, N> &v1) noexcept {
   Vector<bool, N> v{};
-  for (size_t i = 0; i < N; i++)
-    v[i] = v0[i] != v1[i];
+  for (size_t i = 0; i < N; i++) v[i] = v0[i] != v1[i];
   return v;
 }
 
@@ -360,8 +349,7 @@ public:
 
   /// The diagonal element constructor.
   constexpr Matrix(T x) {
-    for (size_t i{}; i < std::min(N, M); i++)
-      v[i][i] = x;
+    for (size_t i{}; i < std::min(N, M); i++) v[i][i] = x;
   }
 
   /// The column constructor.
@@ -391,8 +379,7 @@ public:
   /// Get row vector.
   [[nodiscard]] constexpr Vector<T, N> row(size_t i) const noexcept {
     Vector<T, N> u{};
-    for (size_t j = 0; j < N; j++)
-      u[j] = v[j][i];
+    for (size_t j = 0; j < N; j++) u[j] = v[j][i];
     return u;
   }
 
@@ -401,8 +388,7 @@ public:
   operator Matrix<OtherT, OtherN, OtherM>() const noexcept {
     Matrix<OtherT, OtherN, OtherM> matrix{};
     for (size_t j = 0; j < std::min(N, OtherN); ++j)
-      for (size_t i = 0; i < std::min(M, OtherM); ++i)
-        matrix.v[j][i] = v[j][i];
+      for (size_t i = 0; i < std::min(M, OtherM); ++i) matrix.v[j][i] = v[j][i];
     return matrix;
   }
 
@@ -478,8 +464,7 @@ operator*(const Matrix<T, N, M> &m0, const Matrix<T, P, N> &m1) noexcept {
   Matrix<T, P, M> m{};
   for (size_t i = 0; i < M; i++)
     for (size_t j = 0; j < P; j++)
-      for (size_t k = 0; k < N; k++)
-        m[j][i] += m0[k][i] * m1[j][k];
+      for (size_t k = 0; k < N; k++) m[j][i] += m0[k][i] * m1[j][k];
   return m;
 }
 
@@ -489,8 +474,7 @@ template <typename T, size_t N, size_t M>
 operator*(const Matrix<T, N, M> &m0, const Vector<T, N> &v1) noexcept {
   Vector<T, M> v{};
   for (size_t i = 0; i < M; i++)
-    for (size_t k = 0; k < N; k++)
-      v[i] += m0[k][i] * v1[k];
+    for (size_t k = 0; k < N; k++) v[i] += m0[k][i] * v1[k];
   return v;
 }
 
@@ -500,8 +484,7 @@ template <typename T, size_t N, size_t M>
 constexpr Matrix<T, M, N> transpose(const Matrix<T, N, M> &m) noexcept {
   auto mT{Matrix<T, M, N>{}};
   for (size_t i = 0; i < N; i++)
-    for (size_t j = 0; j < M; j++)
-      mT[j][i] = m[i][j];
+    for (size_t j = 0; j < M; j++) mT[j][i] = m[i][j];
   return mT;
 }
 
@@ -539,11 +522,9 @@ constexpr Matrix<T, 4, 4> affineInverse(const Matrix<T, 4, 4> &m) noexcept {
   float3 &x{m[0]};
   float3 &y{m[1]};
   float3 &z{m[2]};
-  if (!tryNormalize(z))
-    z = float3(0, 0, 1);
+  if (!tryNormalize(z)) z = float3(0, 0, 1);
   x = x - dot(x, z) * z;
-  if (!tryNormalize(x))
-    x = perpendicularTo(z);
+  if (!tryNormalize(x)) x = perpendicularTo(z);
   y = normalize(cross(z, x));
   return m;
 }

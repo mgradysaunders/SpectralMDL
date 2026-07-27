@@ -31,8 +31,7 @@ const NativeTarget &NativeTarget::get() noexcept {
     auto targetError{std::string{}};
     auto target{
         llvm::TargetRegistry::lookupTarget(llvm::Triple(triple), targetError)};
-    if (!target)
-      llvm::report_fatal_error(targetError.c_str());
+    if (!target) llvm::report_fatal_error(targetError.c_str());
     llvm::TargetOptions opts{};
     return NativeTarget{name, triple,
                         target->createTargetMachine(llvm::Triple(triple), name,
@@ -52,24 +51,21 @@ std::string_view SourceLocation::getModuleFileName() const {
 
 void SourceLocation::logWarn(std::string_view message) const {
   auto str{std::string(*this)};
-  if (!str.empty())
-    str += ' ';
+  if (!str.empty()) str += ' ';
   str += message;
   SMDL_LOG_WARN(str);
 }
 
 void SourceLocation::logError(std::string_view message) const {
   auto str{std::string(*this)};
-  if (!str.empty())
-    str += ' ';
+  if (!str.empty()) str += ' ';
   str += message;
   SMDL_LOG_ERROR(str);
 }
 
 void SourceLocation::throwError(std::string message) const {
   auto str{std::string(*this)};
-  if (!str.empty())
-    str += ' ';
+  if (!str.empty()) str += ' ';
   str += message;
   throw Error(std::move(str));
 }
@@ -105,15 +101,13 @@ static void gramSchmidtOrthonormalize(const float3 &normal, float3 &tangentU,
 
 void State::finalizeAndApplyInternalSpaceConventions() noexcept {
   // 1. Orthonormalize normal and tangent vectors.
-  if (!tryNormalize(normal))
-    normal = {0, 0, 1};
+  if (!tryNormalize(normal)) normal = {0, 0, 1};
   for (int i = 0; i < texture_space_max; i++)
     gramSchmidtOrthonormalize(normal, texture_tangent_u[i],
                               texture_tangent_v[i]);
 
   // 2. Orthonormalize geometry normal and tangent vectors.
-  if (!tryNormalize(geometry_normal))
-    geometry_normal = normal;
+  if (!tryNormalize(geometry_normal)) geometry_normal = normal;
   for (int i = 0; i < texture_space_max; i++)
     gramSchmidtOrthonormalize(geometry_normal, geometry_tangent_u[i],
                               geometry_tangent_v[i]);
@@ -146,8 +140,7 @@ void State::finalizeAndApplyInternalSpaceConventions() noexcept {
   float3 axisX{object_to_world_matrix[0]};
   float3 axisY{object_to_world_matrix[1]};
   float3 axisZ{object_to_world_matrix[2]};
-  if (!tryNormalize(axisZ))
-    axisZ = {0, 0, 1};
+  if (!tryNormalize(axisZ)) axisZ = {0, 0, 1};
   gramSchmidtOrthonormalize(axisZ, axisX, axisY);
   object_to_world_matrix[0] = float4(axisX, 0.0f);
   object_to_world_matrix[1] = float4(axisY, 0.0f);

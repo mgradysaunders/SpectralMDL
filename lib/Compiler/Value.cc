@@ -17,15 +17,12 @@ bool Value::isComptimeString() const {
 }
 
 std::string_view Value::getComptimeString() const {
-  if (!isComptimeString())
-    return {};
+  if (!isComptimeString()) return {};
   auto globalVar{llvm::dyn_cast_if_present<llvm::GlobalVariable>(llvmValue)};
-  if (!globalVar)
-    return {};
+  if (!globalVar) return {};
   auto dataArray{llvm::dyn_cast_if_present<llvm::ConstantDataArray>(
       globalVar->getInitializer())};
-  if (!dataArray)
-    return {};
+  if (!dataArray) return {};
   return dataArray->getAsCString();
 }
 
@@ -93,12 +90,12 @@ Declaration *Declaration::findThroughImport(Context &context,
 }
 
 Declaration *Declaration::resolveInScope(Context &context,
-                             Span<const std::string_view> name,
-                             llvm::Function *llvmFunc, Scope *scope,
-                             bool ignoreIfNotExported, uint64_t seqLimit,
-                             Declaration **unusableMatch) {
-  if (!scope || name.empty())
-    return nullptr;
+                                         Span<const std::string_view> name,
+                                         llvm::Function *llvmFunc, Scope *scope,
+                                         bool ignoreIfNotExported,
+                                         uint64_t seqLimit,
+                                         Declaration **unusableMatch) {
+  if (!scope || name.empty()) return nullptr;
   name = context.internName(name);
   // Gather the candidates for every prefix of the name — an exact-name
   // match for the full name, a namespace descent for a proper prefix — and
@@ -121,14 +118,11 @@ Declaration *Declaration::resolveInScope(Context &context,
                 return candA.declaration->seq > candB.declaration->seq;
               });
   for (const auto &[c, prefixSize] : candidates) {
-    if (c->seq > seqLimit)
-      continue;
-    if (ignoreIfNotExported && !c->isExported())
-      continue;
+    if (c->seq > seqLimit) continue;
+    if (ignoreIfNotExported && !c->isExported()) continue;
     if (prefixSize == name.size()) {
       if (!c->value.isUsableInLLVMFunction(llvmFunc)) {
-        if (unusableMatch && !*unusableMatch)
-          *unusableMatch = c;
+        if (unusableMatch && !*unusableMatch) *unusableMatch = c;
         continue;
       }
       return c->isUsed = 1, c;
@@ -139,23 +133,20 @@ Declaration *Declaration::resolveInScope(Context &context,
       auto astNamespace{
           c->value.getComptimeMetaNamespace(context, c->getSourceLocation())};
       if (astNamespace->scope)
-        if (auto found{resolveInScope(
-                context, name.subspan(prefixSize), llvmFunc,
-                astNamespace->scope, ignoreIfNotExported,
-                std::numeric_limits<uint64_t>::max(), nullptr)})
+        if (auto found{
+                resolveInScope(context, name.subspan(prefixSize), llvmFunc,
+                               astNamespace->scope, ignoreIfNotExported,
+                               std::numeric_limits<uint64_t>::max(), nullptr)})
           return found;
     }
   }
   // Then the imports, newest-first. Imports always precede every other
   // declaration in their scope, so trying them after `decls` preserves the
   // chain's newest-first order.
-  for (auto itr{scope->imports.rbegin()}; itr != scope->imports.rend();
-       ++itr) {
+  for (auto itr{scope->imports.rbegin()}; itr != scope->imports.rend(); ++itr) {
     auto importDeclaration{*itr};
-    if (importDeclaration->seq > seqLimit)
-      continue;
-    if (ignoreIfNotExported && !importDeclaration->isExported())
-      continue;
+    if (importDeclaration->seq > seqLimit) continue;
+    if (ignoreIfNotExported && !importDeclaration->isExported()) continue;
     if (auto found{
             findThroughImport(context, name, llvmFunc, importDeclaration)})
       return found;
@@ -200,8 +191,7 @@ bool ParameterList::getLookupSequence(std::string_view name,
   unsigned i = 0;
   for (auto &param : *this) {
     seq.push_back({&param, i});
-    if (param.name == name)
-      return true;
+    if (param.name == name) return true;
     if (param.isInline()) {
       if (auto structType{
               llvm::dyn_cast<StructType>(param.type->getFirstNonPointerType())};
@@ -262,8 +252,7 @@ ArgumentList::operator std::string() const {
       str += ": ";
     }
     str += elems[i].value.type->displayName;
-    if (i + 1 < size())
-      str += ", ";
+    if (i + 1 < size()) str += ", ";
   }
   str += ')';
   return str;

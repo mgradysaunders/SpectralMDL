@@ -41,8 +41,8 @@ private:
   ProfilerEntry *entry{};
 };
 
-#define SMDL_PROFILER_ENTRY(...)                                               \
-  const auto SMDL_CAT(__profilerEntry, __LINE__) =                             \
+#define SMDL_PROFILER_ENTRY(...)                   \
+  const auto SMDL_CAT(__profilerEntry, __LINE__) = \
       ::smdl::ProfilerEntryScope(__VA_ARGS__)
 
 /// \}

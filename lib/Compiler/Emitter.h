@@ -104,8 +104,7 @@ public:
   void restoreResolutionAnchor(const ParameterList &params) {
     scope = params.lastScope;
     anchors.clear();
-    if (params.lastScope)
-      anchors.push_back({params.lastScope, params.lastSeq});
+    if (params.lastScope) anchors.push_back({params.lastScope, params.lastSeq});
   }
 
 public:
@@ -426,12 +425,10 @@ public:
     std::invoke(std::forward<Func>(func));
     if (!hasTerminator()) {
       unwind(depth0);
-      if (blockEnd)
-        builder.CreateBr(blockEnd);
+      if (blockEnd) builder.CreateBr(blockEnd);
     }
     unwindStack.resize(depth0);
-    if (blockEnd && !blockEnd->getTerminator())
-      llvmMoveBlockToEnd(blockEnd);
+    if (blockEnd && !blockEnd->getTerminator()) llvmMoveBlockToEnd(blockEnd);
   }
 
   /// Emit a loop-body scope: run `func` in a scope entered from
@@ -523,8 +520,7 @@ public:
     std::vector<Value> elems{};
     for (unsigned i = 0; i < n; i++) {
       auto &elem{elems.emplace_back(accessIndex(value, i, srcLoc))};
-      if (pred)
-        elem = pred(i, elem);
+      if (pred) elem = pred(i, elem);
     }
     return elems;
   }
@@ -546,10 +542,8 @@ public:
 
   /// Emit file.
   Value emit(AST::File &file) {
-    for (auto &decl : file.importDecls)
-      emit(decl);
-    for (auto &decl : file.globalDecls)
-      emit(decl);
+    for (auto &decl : file.importDecls) emit(decl);
+    for (auto &decl : file.globalDecls) emit(decl);
     return Value();
   }
 
@@ -598,8 +592,7 @@ public:
       context.currentNamespacePath.push_back(element.name.srcName);
     scope = pushScope(/*transparent=*/true);
     decl.scope = scope;
-    for (auto &each : decl.decls)
-      emit(each);
+    for (auto &each : decl.decls) emit(each);
     return Value();
   }
 
@@ -680,8 +673,7 @@ public:
     SMDL_PRESERVE(scope);
     const auto depth0{unwindStack.size()};
     scope = pushScope(/*transparent=*/false);
-    for (auto &decl : expr.decls)
-      emit(decl);
+    for (auto &decl : expr.decls) emit(decl);
     auto value{rvalue(emit(expr.expr))};
     unwind(depth0);
     unwindStack.resize(depth0);
@@ -828,8 +820,7 @@ public:
 
   /// Emit expression statement.
   Value emit(AST::ExprStmt &stmt) {
-    if (stmt.expr)
-      emitLateIf(stmt.lateIf, [&] { emit(stmt.expr); });
+    if (stmt.expr) emitLateIf(stmt.lateIf, [&] { emit(stmt.expr); });
     return Value();
   }
 
@@ -843,8 +834,7 @@ public:
   Value emit(AST::Preserve &stmt) {
     for (auto &[expr, srcComma] : stmt.exprWrappers) {
       auto value{emit(expr)};
-      if (!value.isLValue())
-        stmt.srcLoc.throwError("cannot 'preserve' rvalue");
+      if (!value.isLValue()) stmt.srcLoc.throwError("cannot 'preserve' rvalue");
       unwindStack.push_back(
           {UnwindAction::Kind::Preserve, value, rvalue(value)});
     }
@@ -859,8 +849,7 @@ public:
                                      : "nowhere to 'return'");
     emitLateIf(stmt.lateIf, [&] {
       Value value{};
-      if (stmt.expr)
-        value = rvalue(emit(stmt.expr));
+      if (stmt.expr) value = rvalue(emit(stmt.expr));
       recordReturn(value, stmt.srcLoc);
     });
     return Value();
@@ -882,8 +871,7 @@ public:
   Value emit(AST::Visit &stmt) {
     return emitVisit(emit(stmt.expr), stmt.srcLoc, [&](Value value) {
       declare(stmt.name, &stmt, value);
-      if (!value.type->isVoid())
-        emit(stmt.stmt);
+      if (!value.type->isVoid()) emit(stmt.stmt);
       return Value();
     });
   }
@@ -1034,15 +1022,13 @@ public:
 
     [[nodiscard]] llvm::SmallVector<Type *> getNonVariadicTypes() const {
       auto valueTypes{llvm::SmallVector<Type *>(values.size())};
-      for (size_t i = 0; i < values.size(); i++)
-        valueTypes[i] = values[i].type;
+      for (size_t i = 0; i < values.size(); i++) valueTypes[i] = values[i].type;
       // For crappy support of C-style variadic functions, if the
       // parameters have an ellipsis, then the resolveArguments() routine
       // allows for more arguments than parameters, but we use this function
       // for initializing the LLVM function type, which should only depend on
       // the non-variadic value types
-      if (params.isVariadic)
-        valueTypes.resize(params.size());
+      if (params.isVariadic) valueTypes.resize(params.size());
       return valueTypes;
     }
 
@@ -1056,8 +1042,7 @@ public:
           impliedVisitArgs[i].impliedVisit = impliedVisit = true;
         }
       }
-      if (!impliedVisit)
-        return std::nullopt;
+      if (!impliedVisit) return std::nullopt;
       return std::move(impliedVisitArgs);
     }
 

@@ -93,11 +93,9 @@ public:
   /// `getFileName()` is the archive file name concatenated with the
   /// entry name, as if the archive were a directory.
   ///
-  [[nodiscard]] static std::unique_ptr<Module>
-  loadFromFileExtractedFromArchive(const std::string &archiveFileName,
-                                   const std::string &entryName,
-                                   const std::string &file,
-                                   const std::string &searchRoot = {});
+  [[nodiscard]] static std::unique_ptr<Module> loadFromFileExtractedFromArchive(
+      const std::string &archiveFileName, const std::string &entryName,
+      const std::string &file, const std::string &searchRoot = {});
 
   /// Load the `main.mdl` module from an MDLE container.
   ///

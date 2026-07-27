@@ -75,14 +75,11 @@ parseArchivePackagePrefix(const std::string &fileName) {
     auto dot{stem.find('.', pos)};
     auto component{stem.substr(pos, dot == std::string::npos ? std::string::npos
                                                              : dot - pos)};
-    if (component.empty()) {
+    if (component.empty())
       throw Error(concat("invalid archive name ", QuotedPath(fileName),
                          ": empty package prefix component"));
-    }
     prefix.push_back(std::move(component));
-    if (dot == std::string::npos) {
-      return prefix;
-    }
+    if (dot == std::string::npos) return prefix;
     pos = dot + 1;
   }
 }
@@ -101,24 +98,18 @@ isConformingArchiveEntry(const std::vector<std::string> &prefix,
     auto sep{entryName.find('/', pos)};
     components.push_back(entryName.substr(
         pos, sep == std::string::npos ? std::string::npos : sep - pos));
-    if (sep == std::string::npos) {
-      break;
-    }
+    if (sep == std::string::npos) break;
     pos = sep + 1;
   }
   if (components.size() == prefix.size()) {
     for (size_t i{0}; i + 1 < prefix.size(); i++) {
-      if (components[i] != prefix[i]) {
-        return false;
-      }
+      if (components[i] != prefix[i]) return false;
     }
     return components.back() == prefix.back() + ".mdl";
   }
   if (components.size() > prefix.size()) {
     for (size_t i{0}; i < prefix.size(); i++) {
-      if (components[i] != prefix[i]) {
-        return false;
-      }
+      if (components[i] != prefix[i]) return false;
     }
     return true;
   }
@@ -284,11 +275,9 @@ Compiler::add(std::string fileOrDirName,
           if (isLexicalSubPath(dir, path) || isLexicalSubPath(path, dir)) {
             throw Error(
                 concat("cannot add search root ", QuotedPath(path),
-                       ": it is nested inside or encloses existing search "
-                       "root ",
+                       ": nested inside or encloses another search root ",
                        QuotedPath(dir),
-                       " (nested roots would give modules ambiguous "
-                       "qualified names)"));
+                       " (would give modules ambiguous qualified names)"));
           }
         }
         // Collect the top-level archives, sorted so registration order
@@ -311,7 +300,8 @@ Compiler::add(std::string fileOrDirName,
             if (auto n{std::min(prefixI.size(), prefixJ.size())}; std::equal(
                     prefixI.begin(), prefixI.begin() + n, prefixJ.begin())) {
               throw Error(concat(
-                  "archives ", QuotedPath(archivePaths[i]), " and ",
+                  "archives ", //
+                  QuotedPath(archivePaths[i]), " and ",
                   QuotedPath(archivePaths[j]),
                   " have overlapping package prefixes in the same search "
                   "root"));
@@ -379,8 +369,7 @@ void Compiler::resetForRecompile() {
   mLLVMJit->getExecutionSession().setErrorReporter([this](llvm::Error error) {
     auto message{llvm::toString(std::move(error))};
     SMDL_LOG_ERROR("JIT session error: ", message);
-    if (!mJITSessionErrors.empty())
-      mJITSessionErrors += '\n';
+    if (!mJITSessionErrors.empty()) mJITSessionErrors += '\n';
     mJITSessionErrors += message;
   });
 }
@@ -394,20 +383,17 @@ std::optional<Error> Compiler::compile(OptLevel optLevel) noexcept {
     resetForRecompile();
     auto initializeEntry{profilerEntryBegin("Initialize")};
     Context context{*this};
-    for (auto &module_ : mModules)
-      module_->reset();
+    for (auto &module_ : mModules) module_->reset();
     profilerEntryEnd(initializeEntry);
     {
       SMDL_PROFILER_ENTRY("Parse AST");
       for (auto &module_ : mModules)
-        if (auto error{module_->parse(mAllocator)})
-          throw std::move(*error);
+        if (auto error{module_->parse(mAllocator)}) throw std::move(*error);
     }
     {
       SMDL_PROFILER_ENTRY("Emit LLVM-IR");
       for (auto &module_ : mModules)
-        if (auto error{module_->compile(context)})
-          throw std::move(*error);
+        if (auto error{module_->compile(context)}) throw std::move(*error);
     }
     // Sort JIT materials and unit tests by filename and line number in
     // case we want to print them later.
@@ -467,8 +453,7 @@ Compiler::formatSourceCode(const FormatOptions &formatOptions) noexcept {
   SMDL_PROFILER_ENTRY("Compiler::formatSourceCode()");
   for (auto &module_ : mModules) {
     if (!module_->isBuiltin()) {
-      if (auto error{module_->formatSourceCode(formatOptions)})
-        return error;
+      if (auto error{module_->formatSourceCode(formatOptions)}) return error;
     }
   }
   return std::nullopt;
@@ -660,8 +645,8 @@ std::optional<Error> Compiler::jitCompile() noexcept {
       jitLookupOrThrow(jitExec);
     }
     // Deallocate everything we no longer need!
-    for (auto &module_ : mModules) {
-      module_->reset();
+    for (auto &mod : mModules) {
+      mod->reset();
     }
     mAllocator.reset();
   })};
@@ -683,15 +668,14 @@ void *Compiler::jitLookup(std::string_view name) {
 const JIT::Material *
 Compiler::findMaterial(std::string_view materialName) const noexcept try {
   auto results{findMaterials(materialName)};
-  if (results.empty()) {
-    return nullptr;
-  }
+  if (results.empty()) return nullptr;
   if (results.size() > 1) {
     auto message{concat("Material ", Quoted(materialName),
                         " is ambiguous with ", results.size(), " matches:")};
     for (const auto *jitMaterial : results) {
+      message += "\n  ";
       message +=
-          concat("\n  ", jitMaterial->qualifiedName, " (",
+          concat(jitMaterial->qualifiedName, " (";
                  jitMaterial->moduleFileName, ":", jitMaterial->lineNo, ")");
     }
     SMDL_LOG_ERROR(message);
@@ -799,8 +783,7 @@ namespace {
 class ThreadLocalPtexFilters final {
 public:
   ~ThreadLocalPtexFilters() {
-    for (auto &[texture, filter] : mFilters)
-      filter->release();
+    for (auto &[texture, filter] : mFilters) filter->release();
   }
 
   [[nodiscard]] PtexFilter *get(const smdl::Ptexture &ptex) {
@@ -844,6 +827,8 @@ SMDL_EXPORT void smdlPtexEvaluate(const void *state,
       for (int i = 0; i < num; i++) {
         int channel{first + i};
         if (channel != ptex->alphaIndex) {
+          // NOTE: This is the crudest approximation possible to a true sRGB
+          // decoding, worth replacing with the proper equation at some point
           out[i] *= out[i];
         }
       }

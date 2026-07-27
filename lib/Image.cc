@@ -53,8 +53,7 @@ namespace tinyexr {
 [[nodiscard]] static const EXRChannelInfo *FindChannel(const EXRHeader &header,
                                                        std::string_view name) {
   for (int iC = 0; iC < header.num_channels; iC++)
-    if (header.channels[iC].name == name)
-      return &header.channels[iC];
+    if (header.channels[iC].name == name) return &header.channels[iC];
   return nullptr;
 }
 
@@ -123,8 +122,7 @@ float unpackHalf(const void *ptr) noexcept {
   if (exponent == 0) {
     if (mantissa != 0) {
       exponent = 113;
-      while (!(mantissa & 0x0400))
-        exponent--, mantissa <<= 1;
+      while (!(mantissa & 0x0400)) exponent--, mantissa <<= 1;
       f |= (exponent << 23) | ((mantissa & ~0x0400) << 13); // Subnormal
     }
   } else {
@@ -162,8 +160,7 @@ std::optional<Error> Image::startLoad(const std::string &fileName) noexcept {
                   &mNumChannels)) {
       // If the number of channels is 3, i.e., RGB, round it up to 4
       // so all of our alignment assumptions work.
-      if (mNumChannels == 3)
-        mNumChannels = 4;
+      if (mNumChannels == 3) mNumChannels = 4;
       // Determine whether we should load 32-bit float, 16-bit unsigned int, or
       // 8-bit unsigned int.
       if (stbi_is_hdr(fileName.c_str())) {
@@ -306,8 +303,7 @@ std::optional<Error> Image::startLoad(const std::string &fileName) noexcept {
               [&](int iX, int iY, int iC, const void *pixel, size_t pixelSize) {
                 auto i{size_t(iX) + size_t(mNumTexelsX) * size_t(iY)};
                 auto texel{mTexels.get() + size_t(mTexelSize) * i};
-                if (iC == 0)
-                  std::memcpy(texel, pixel, pixelSize);
+                if (iC == 0) std::memcpy(texel, pixel, pixelSize);
               });
         } else {
           // 4-channel RGBA

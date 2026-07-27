@@ -95,8 +95,7 @@ FileLocator::locateImages(std::string_view fileName,
     // If no tile placeholders, this is an ordinary filename
     // meant to identify just 1 tile.
     auto result{locate(fileName, relativeTo)};
-    if (!result)
-      return {};
+    if (!result) return {};
     return {ImagePath{0, 0, std::move(*result)}};
   }
   // Else, split the final path component into the substrings before
@@ -112,8 +111,7 @@ FileLocator::locateImages(std::string_view fileName,
   // Try to match the given filename and parse the tile indexes.
   auto tryMatch{[&](llvm::StringRef name, uint32_t &tileIndexU,
                     uint32_t &tileIndexV) -> bool {
-    if (!name.consume_front(patternNameBefore))
-      return false;
+    if (!name.consume_front(patternNameBefore)) return false;
     if (hasUDIM) {
       // "<UDIM>" stands for exactly 4 decimal digits.
       auto digits{name.take_front(4)};
@@ -131,14 +129,12 @@ FileLocator::locateImages(std::string_view fileName,
         return false;
       if (hasUVTILE1) {
         // "<UVTILE1>" is 1-based, so normalize to be 0-based.
-        if (tileIndexU == 0 || tileIndexV == 0)
-          return false;
+        if (tileIndexU == 0 || tileIndexV == 0) return false;
         tileIndexU -= 1;
         tileIndexV -= 1;
       }
       // Sanity check against absurd allocations downstream.
-      if (tileIndexU >= 1000 || tileIndexV >= 1000)
-        return false;
+      if (tileIndexU >= 1000 || tileIndexV >= 1000) return false;
     }
     return name == patternNameAfter;
   }};

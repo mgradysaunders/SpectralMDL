@@ -61,8 +61,7 @@ Type *Type::getPointeeType() const {
 
 Type *Type::getFirstNonPointerType() const {
   auto type{const_cast<Type *>(this)};
-  while (type->isPointer())
-    type = type->getPointeeType();
+  while (type->isPointer()) type = type->getPointeeType();
   return type;
 }
 
@@ -78,8 +77,7 @@ size_t Type::getFirstNonPointerTypeDepth() const {
 
 Value Type::invoke(Emitter &emitter, const ArgumentList &args,
                    const SourceLocation &srcLoc) {
-  if (args.isOnePositional(this))
-    return emitter.rvalue(args[0].value);
+  if (args.isOnePositional(this)) return emitter.rvalue(args[0].value);
   srcLoc.throwError("type ", Quoted(displayName),
                     " has unimplemented constructor");
   return Value();
@@ -138,10 +136,8 @@ ArithmeticType::ArithmeticType(Context &context, Scalar scalar, Extent extent)
 
 std::optional<Value> Type::invokeTrivialCases(Emitter &emitter,
                                               const ArgumentList &args) {
-  if (args.empty() || args.isNull())
-    return Value::zero(this);
-  if (args.isOnePositional(this))
-    return emitter.rvalue(args[0].value);
+  if (args.empty() || args.isNull()) return Value::zero(this);
+  if (args.isOnePositional(this)) return emitter.rvalue(args[0].value);
   return std::nullopt;
 }
 
@@ -255,17 +251,14 @@ Value ArithmeticType::invoke(Emitter &emitter, const ArgumentList &args,
         auto params{ParameterList{}};
         params.push_back(Parameter{scalarType, "x"});
         params.push_back(Parameter{scalarType, "y"});
-        if (dim >= 3)
-          params.push_back(Parameter{scalarType, "z"});
-        if (dim >= 4)
-          params.push_back(Parameter{scalarType, "w"});
+        if (dim >= 3) params.push_back(Parameter{scalarType, "z"});
+        if (dim >= 4) params.push_back(Parameter{scalarType, "w"});
         values =
             std::move(emitter.resolveArguments(params, args, srcLoc).values);
       } else {
         // Otherwise just add the argument values in order. (We already verifed
         // by now that they have no names!)
-        for (auto &arg : args)
-          values.push_back(arg.value);
+        for (auto &arg : args) values.push_back(arg.value);
       }
       auto result{Value::zero(this)};
       for (size_t i = 0; i < dim; i++)
@@ -369,10 +362,8 @@ Value ArithmeticType::invoke(Emitter &emitter, const ArgumentList &args,
 
 bool ArithmeticType::hasField(std::string_view name) {
   if (!extent.isScalar()) {
-    if (name.size() == 1)
-      return toIndex(name[0]).has_value();
-    if (extent.isVector())
-      return toIndexSwizzle(name).has_value();
+    if (name.size() == 1) return toIndex(name[0]).has_value();
+    if (extent.isVector()) return toIndexSwizzle(name).has_value();
   }
   return false;
 }
@@ -1090,8 +1081,7 @@ Value FunctionType::invoke(Emitter &emitter, const ArgumentList &args,
       sretSlot = emitter.createAlloca(instance.returnType, "sret.slot");
       llvmArgs.push_back(sretSlot.llvmValue);
     }
-    if (!func->isPure())
-      llvmArgs.push_back(emitter.state);
+    if (!func->isPure()) llvmArgs.push_back(emitter.state);
     llvmArgs.insert(llvmArgs.end(),              //
                     resolvedArgs.values.begin(), //
                     resolvedArgs.values.end());
@@ -1120,8 +1110,7 @@ FunctionType *FunctionType::resolveOverload(Emitter &emitter,
   auto overloads{std::vector<Overload>{}};
   auto getLastOverload{[&]() {
     auto func{this};
-    while (func->nextOverload)
-      func = func->nextOverload;
+    while (func->nextOverload) func = func->nextOverload;
     return func;
   }};
   auto overloadErrors{std::string{}};
@@ -1157,10 +1146,8 @@ FunctionType *FunctionType::resolveOverload(Emitter &emitter,
                                                    overloadA.params[i]->type)};
       auto ruleB{emitter.context.getConversionRule(args[i].value.type,
                                                    overloadB.params[i]->type)};
-      if (ruleA < ruleB)
-        return false;
-      if (ruleA > ruleB)
-        anyBetter = true;
+      if (ruleA < ruleB) return false;
+      if (ruleA > ruleB) anyBetter = true;
     }
     return anyBetter;
   }};
@@ -1194,13 +1181,11 @@ FunctionType *FunctionType::resolveOverload(Emitter &emitter,
     auto beaten{llvm::SmallVector<bool>(overloads.size(), false)};
     for (size_t a = 0; a < overloads.size(); a++)
       for (size_t b = 0; b < overloads.size(); b++)
-        if (a != b && beats(overloads[a], overloads[b]))
-          beaten[b] = true;
+        if (a != b && beats(overloads[a], overloads[b])) beaten[b] = true;
     size_t keep{};
     for (size_t i = 0; i < overloads.size(); i++) {
       if (!beaten[i]) {
-        if (keep != i)
-          overloads[keep] = std::move(overloads[i]);
+        if (keep != i) overloads[keep] = std::move(overloads[i]);
         keep++;
       }
     }
@@ -1216,8 +1201,7 @@ FunctionType *FunctionType::resolveOverload(Emitter &emitter,
       candidateNotes += '(';
       for (size_t i = 0; i < overload.func->params.size(); i++) {
         candidateNotes += overload.func->params[i].type->displayName;
-        if (i + 1 < overload.func->params.size())
-          candidateNotes += ", ";
+        if (i + 1 < overload.func->params.size()) candidateNotes += ", ";
       }
       candidateNotes += ") declared at ";
       candidateNotes += std::string(overload.func->decl.srcLoc);
@@ -1260,8 +1244,7 @@ FunctionType::getInstance(Emitter &emitter,
            {"optsize", llvm::Attribute::OptimizeForSize},
            {"optnone", llvm::Attribute::OptimizeNone}};
       for (auto [attrName, attrID] : attrs)
-        if (decl.hasAttribute(attrName))
-          inst.llvmFunc->addFnAttr(attrID);
+        if (decl.hasAttribute(attrName)) inst.llvmFunc->addFnAttr(attrID);
       if (decl.hasAttribute("visible"))
         inst.llvmFunc->setLinkage(llvm::Function::ExternalLinkage);
     }
@@ -1399,8 +1382,7 @@ void FunctionType::initializeMaterialFunctions(Emitter &emitter) {
                             Type *pointeeType, uint64_t count = 1,
                             bool noAlias = true) {
     auto attrs{llvm::AttrBuilder(context.llvmContext)};
-    if (noAlias)
-      attrs.addAttribute(llvm::Attribute::NoAlias);
+    if (noAlias) attrs.addAttribute(llvm::Attribute::NoAlias);
     attrs.addAttribute(llvm::Attribute::NonNull);
     attrs.addAttribute(llvm::Attribute::NoUndef);
     attrs.addAlignmentAttr(llvm::Align(context.getAlignOf(pointeeType)));
@@ -1569,9 +1551,9 @@ void FunctionType::initializeMaterialFunctions(Emitter &emitter) {
          constParameter(floatPtrType, "pdf"),
          constParameter(floatPtrType, "Le")},
         decl.srcLoc, [&] {
-          auto dfFunc{Declaration::findInModule(
-              context, "_emissionEvaluate"sv, nullptr, dfModule,
-              /*ignoreIfNotExported=*/false)};
+          auto dfFunc{Declaration::findInModule(context, "_emissionEvaluate"sv,
+                                                nullptr, dfModule,
+                                                /*ignoreIfNotExported=*/false)};
           SMDL_SANITY_CHECK(dfFunc);
           emitter.emitReturn(
               emitter.emitCall(
@@ -1613,9 +1595,9 @@ void FunctionType::initializeMaterialFunctions(Emitter &emitter) {
          constParameter(floatPtrType, "pdf"),
          constParameter(floatPtrType, "Le")},
         decl.srcLoc, [&] {
-          auto dfFunc{Declaration::findInModule(
-              context, "_emissionSample"sv, nullptr, dfModule,
-              /*ignoreIfNotExported=*/false)};
+          auto dfFunc{Declaration::findInModule(context, "_emissionSample"sv,
+                                                nullptr, dfModule,
+                                                /*ignoreIfNotExported=*/false)};
           SMDL_SANITY_CHECK(dfFunc);
           emitter.emitReturn(
               emitter.emitCall(
@@ -1798,8 +1780,8 @@ Value PointerType::accessIndex(Emitter &emitter, Value value, Value i,
 //--{ StateType
 StateType::StateType(Context &context) {
   displayName = "state";
-#define ADD_FIELD(name)                                                        \
-  mFields.push_back(                                                           \
+#define ADD_FIELD(name) \
+  mFields.push_back(    \
       {context.getType(&State::name), #name, uint64_t(offsetof(State, name))})
   ADD_FIELD(allocator);
   ADD_FIELD(user_data);
@@ -1922,8 +1904,7 @@ void StructType::initialize(Emitter &emitter) {
   for (auto &tag : decl.tags) {
     emitter.emit(tag.type);
     auto tagType{llvm::dyn_cast<TagType>(tag.type->type)};
-    if (!tagType)
-      decl.srcLoc.throwError("unknown tag");
+    if (!tagType) decl.srcLoc.throwError("unknown tag");
     if (tag.isDefault()) {
       if (tagType->defaultType)
         decl.srcLoc.throwError("tag ", Quoted(tagType->displayName),
@@ -2002,8 +1983,7 @@ bool StructType::isAbstract() {
   // If in `initialize()` we failed to construct the LLVM type
   // because at least one parameter type had no LLVM type, then
   // this type is definitely abstract!
-  if (!llvmType)
-    return true;
+  if (!llvmType) return true;
   // If at least one parameter type is abstract, then this type
   // is also abstract. However, we have to be careful here.
   for (auto &param : params) {
@@ -2227,8 +2207,7 @@ UnionType::UnionType(Context &context, llvm::SmallVector<Type *> caseTys)
   displayName += '(';
   for (size_t i = 0; i < caseTypeNames.size(); i++) {
     displayName += caseTypeNames[i].str();
-    if (i + 1 < caseTypeNames.size())
-      displayName += " | ";
+    if (i + 1 < caseTypeNames.size()) displayName += " | ";
   }
   displayName += ')';
 
@@ -2278,8 +2257,7 @@ Value UnionType::invoke(Emitter &emitter, const ArgumentList &args,
           lv, llvm::Align(emitter.context.getAlignOf(this)), //
           lvArg, llvm::Align(emitter.context.getAlignOf(argUnionType)),
           std::min(requiredSize, argUnionType->requiredSize));
-      if (!arg.isLValue())
-        emitter.createLifetimeEnd(lvArg);
+      if (!arg.isLValue()) emitter.createLifetimeEnd(lvArg);
       auto index{emitter.rvalue(emitter.accessIndex(
           emitter.context.getComptimeUnionIndexMap(argUnionType, this),
           emitter.accessField(arg, "#idx", srcLoc), srcLoc))};
@@ -2322,8 +2300,7 @@ Value UnionType::invoke(Emitter &emitter, const ArgumentList &args,
                                   emitter.accessField(lv, "#idx", srcLoc));
       // Large unions stay memory-resident: return the slot as an lvalue
       // instead of loading the whole payload into an SSA value.
-      if (emitter.returnsIndirectly(this))
-        return lv;
+      if (emitter.returnsIndirectly(this)) return lv;
       auto rv{emitter.rvalue(lv)};
       emitter.createLifetimeEnd(lv);
       return rv;

@@ -25,8 +25,7 @@ Value Emitter::createFunctionImplementation(
   auto fmf{builder.getFastMathFlags()};
   SMDL_DEFER([&] { builder.setFastMathFlags(fmf); });
   SMDL_PRESERVE(labelReturn, returns, scope, anchors);
-  if (params.lastScope)
-    restoreResolutionAnchor(params);
+  if (params.lastScope) restoreResolutionAnchor(params);
   labelReturn.depth = unwindStack.size();
   labelReturn.block = createBlock(llvm::StringRef(name) + ".return");
   returns.clear();
@@ -62,8 +61,7 @@ void Emitter::addIndirectReturnAttrs(Type *returnType, llvm::Function *llvmFunc,
   attrs.addAttribute(llvm::Attribute::NoAlias);
   attrs.addAttribute(llvm::Attribute::NoUndef);
   attrs.addAlignmentAttr(llvm::Align(context.getAlignOf(returnType)));
-  if (llvmFunc)
-    llvmFunc->addParamAttrs(0, attrs);
+  if (llvmFunc) llvmFunc->addParamAttrs(0, attrs);
   if (callInst)
     callInst->setAttributes(callInst->getAttributes().addParamAttributes(
         context.llvmContext, 0, attrs));
@@ -77,8 +75,7 @@ void Emitter::createFunction(llvm::Function *&llvmFunc, std::string_view name,
                              const std::function<void()> &callback) {
   SMDL_SANITY_CHECK(returnType && params.size() == paramTypes.size());
   auto llvmParamTys{std::vector<llvm::Type *>{}};
-  if (!isPure)
-    llvmParamTys.push_back(llvm::PointerType::get(context, 0));
+  if (!isPure) llvmParamTys.push_back(llvm::PointerType::get(context, 0));
   for (const auto &paramType : paramTypes) {
     SMDL_SANITY_CHECK(paramType);
     SMDL_SANITY_CHECK(paramType->llvmType);
@@ -176,8 +173,7 @@ void Emitter::createFunction(llvm::Function *&llvmFunc, std::string_view name,
         builder.SetInsertPoint(callInst);
         auto llvmArgs{llvm::SmallVector<llvm::Value *>{}};
         llvmArgs.push_back(slot);
-        for (auto &arg : callInst->args())
-          llvmArgs.push_back(arg.get());
+        for (auto &arg : callInst->args()) llvmArgs.push_back(arg.get());
         auto newCall{builder.CreateCall(llvmFunc->getFunctionType(), llvmFunc,
                                         llvmArgs)};
         addIndirectReturnAttrs(returnType, nullptr, newCall);
@@ -240,8 +236,7 @@ void Emitter::declareParameter(const Parameter &param, Value value) {
                                : nullptr,
               value)};
   declarationsToWarnAbout.push_back(declaration);
-  if (param.isInline())
-    declareParameterInline(declaration->value);
+  if (param.isInline()) declareParameterInline(declaration->value);
 }
 
 void Emitter::declareParameterInline(Value value) {
@@ -251,8 +246,7 @@ void Emitter::declareParameterInline(Value value) {
       auto srcLoc{param.getSourceLocation()};
       auto declaration{declare(param.name, /*node=*/{},
                                accessField(value, param.name, srcLoc))};
-      if (param.isInline())
-        declareParameterInline(declaration->value);
+      if (param.isInline()) declareParameterInline(declaration->value);
     }
   }
 }
@@ -266,10 +260,8 @@ void Emitter::rejectSameScopeShadow(Span<const std::string_view> name,
     for (auto s{scope}; s; s = s->parent) {
       if (auto itr{s->decls.find(internedName.data())}; itr != s->decls.end())
         for (auto c{itr->second}; c; c = c->prevSameNameInScope)
-          if (!c->isSameScopeShadowExempt())
-            return c;
-      if (!s->transparent)
-        break;
+          if (!c->isSameScopeShadowExempt()) return c;
+      if (!s->transparent) break;
     }
     return nullptr;
   }()};
@@ -289,8 +281,7 @@ Declaration *Emitter::probeName(Span<const std::string_view> name,
   auto seqLimit{std::numeric_limits<uint64_t>::max()};
   for (auto s{scope}; s; s = s->parent) {
     for (const auto &[anchorScope, anchorSeq] : anchors)
-      if (s == anchorScope)
-        seqLimit = std::min(seqLimit, anchorSeq);
+      if (s == anchorScope) seqLimit = std::min(seqLimit, anchorSeq);
     if (auto found{Declaration::resolveInScope(context, name, llvmFunc, s,
                                                /*ignoreIfNotExported=*/false,
                                                seqLimit, unusableMatch)})
@@ -587,8 +578,7 @@ Value Emitter::emit(AST::AccessIndex &expr) {
   auto value{emit(expr.expr)};
   if (!value.isComptimeMetaType(context)) {
     for (auto &index : expr.indexes) {
-      if (!index.expr)
-        expr.srcLoc.throwError("expected non-empty '[]'");
+      if (!index.expr) expr.srcLoc.throwError("expected non-empty '[]'");
       value = accessIndex(
           value, invoke(context.getIntType(), emit(index.expr), expr.srcLoc),
           expr.srcLoc);
@@ -667,8 +657,7 @@ Value Emitter::emit(AST::Binary &expr) {
     auto valueLhs{emit(expr.exprLhs)};
     auto valueLhsCond{invoke(context.getBoolType(), valueLhs, expr.srcLoc)};
     if (valueLhsCond.isComptimeInt()) {
-      if (valueLhsCond.getComptimeInt())
-        return valueLhs;
+      if (valueLhsCond.getComptimeInt()) return valueLhs;
       // Contain rhs declarations, matching the runtime two-arm merge.
       SMDL_PRESERVE(scope);
       scope = pushScope(/*transparent=*/true);
@@ -800,13 +789,11 @@ Value Emitter::emitTwoArmMerge(Value cond, const char *name,
                             value0.type == commonType &&
                             value1.type == commonType};
   builder.restoreIP(value0IP);
-  if (!mergeAsLValues)
-    value0 = rvalue(invoke(commonType, value0, srcLoc0));
+  if (!mergeAsLValues) value0 = rvalue(invoke(commonType, value0, srcLoc0));
   blockArm0 = getInsertBlock();
   builder.CreateBr(blockEnd);
   builder.restoreIP(value1IP);
-  if (!mergeAsLValues)
-    value1 = rvalue(invoke(commonType, value1, srcLoc1));
+  if (!mergeAsLValues) value1 = rvalue(invoke(commonType, value1, srcLoc1));
   blockArm1 = getInsertBlock();
   builder.CreateBr(blockEnd);
   // Create PHI instruction.
@@ -834,8 +821,7 @@ Value Emitter::emit(AST::Stmt &stmt) {
 Value Emitter::emit(AST::Compound &stmt) {
   handleScope(nullptr, nullptr, [&] {
     for (auto &subStmt : stmt.stmts)
-      if (emit(subStmt); hasTerminator())
-        break;
+      if (emit(subStmt); hasTerminator()) break;
   });
   return Value();
 }
@@ -862,8 +848,7 @@ Value Emitter::emit(AST::For &stmt) {
   scope = pushScope(/*transparent=*/false);
   auto [blockCond, blockLoop, blockNext, blockEnd] =
       createBlocks<4>("for", {".cond", ".loop", ".next", ".end"});
-  if (stmt.stmtInit)
-    emit(stmt.stmtInit);
+  if (stmt.stmtInit) emit(stmt.stmtInit);
   builder.CreateBr(blockCond);
   llvmMoveBlockToEnd(blockCond);
   builder.SetInsertPoint(blockCond);
@@ -874,16 +859,13 @@ Value Emitter::emit(AST::For &stmt) {
   else
     builder.CreateBr(blockLoop); // Empty condition is always true
   handleLoopScope(blockLoop, blockNext, blockEnd, blockNext, [&] {
-    if (stmt.stmtLoop)
-      emit(stmt.stmtLoop);
+    if (stmt.stmtLoop) emit(stmt.stmtLoop);
   });
   builder.SetInsertPoint(blockNext);
-  if (stmt.exprNext)
-    emit(stmt.exprNext);
+  if (stmt.exprNext) emit(stmt.exprNext);
   builder.CreateBr(blockCond);
   handleBlockEnd(blockEnd);
-  if (!hasTerminator())
-    unwind(depth0);
+  if (!hasTerminator()) unwind(depth0);
   unwindStack.resize(depth0);
   return Value();
 }
@@ -901,8 +883,7 @@ Value Emitter::emit(AST::If &stmt) {
   }
   auto [blockThen, blockElse, blockEnd] =
       createBlocks<3>("if", {".then", ".else", ".end"});
-  if (!stmt.stmtElse)
-    blockElse->eraseFromParent();
+  if (!stmt.stmtElse) blockElse->eraseFromParent();
   builder.CreateCondBr(cond, blockThen, stmt.stmtElse ? blockElse : blockEnd);
   if (stmt.stmtThen)
     handleScope(blockThen, blockEnd, [&] { emit(stmt.stmtThen); });
@@ -949,8 +930,7 @@ Value Emitter::emit(AST::Switch &stmt) {
           createBlock(concat(switchName, ".case.", switchCases.size()))});
     }
   }
-  if (!blockDefault)
-    blockDefault = blockEnd;
+  if (!blockDefault) blockDefault = blockEnd;
   auto switchInst{builder.CreateSwitch(
       invoke(context.getIntType(), emit(stmt.expr), stmt.srcLoc),
       blockDefault)};
@@ -970,8 +950,7 @@ Value Emitter::emit(AST::Switch &stmt) {
                                                 : blockEnd};
       handleScope(nullptr, blockNext, [&] {
         for (auto &subStmt : switchCase.astCase->stmts)
-          if (emit(subStmt); hasTerminator())
-            break;
+          if (emit(subStmt); hasTerminator()) break;
       });
     }
   });
@@ -1011,8 +990,7 @@ Value Emitter::emitOp(AST::UnaryOp op, Value value,
       break;
     // Union with `void`, e.g., `?int`
     case UNOP_MAYBE:
-      if (type->isVoid())
-        srcLoc.throwError("cannot optionalize 'void'");
+      if (type->isVoid()) srcLoc.throwError("cannot optionalize 'void'");
       if (type->isAbstract())
         srcLoc.throwError("cannot optionalize abstract type ",
                           Quoted(type->displayName));
@@ -1070,8 +1048,7 @@ Value Emitter::emitOp(AST::UnaryOp op, Value value,
     }
     // Unary logic not, e.g., `!value`
     if (op == UNOP_LOGIC_NOT) {
-      if (value.isVoid())
-        return context.getComptimeBool(true);
+      if (value.isVoid()) return context.getComptimeBool(true);
       if (value.type->isArithmetic() || value.type->isColor() ||
           value.type->isPointer() || value.type->isEnum())
         return emitOp(BINOP_CMP_EQ, value, Value::zero(value.type), srcLoc);
@@ -1081,8 +1058,7 @@ Value Emitter::emitOp(AST::UnaryOp op, Value value,
     }
     // Unary address, e.g., `&value`
     if (op == UNOP_ADDR) {
-      if (!value.isLValue())
-        srcLoc.throwError("cannot take address of rvalue");
+      if (!value.isLValue()) srcLoc.throwError("cannot take address of rvalue");
       return RValue(context.getPointerType(value.type), value);
     }
     // Unary dereference, e.g., `*value`
@@ -1204,13 +1180,11 @@ llvmCmpOp(Scalar::Intent intent, AST::BinaryOp op, bool isSigned = true) {
 //--{ emitOp (AST::BinaryOp)
 Value Emitter::emitOp(AST::BinaryOp op, Value lhs, Value rhs,
                       const SourceLocation &srcLoc) {
-  if (op == BINOP_COMMA)
-    return rhs;
+  if (op == BINOP_COMMA) return rhs;
   if ((op & BINOP_EQ) == BINOP_EQ) {
     if (!lhs.isLValue())
       srcLoc.throwError("cannot apply ", Quoted(to_string(op)), " to rvalue");
-    if (op != BINOP_EQ)
-      rhs = emitOp(op & ~BINOP_EQ, rvalue(lhs), rhs, srcLoc);
+    if (op != BINOP_EQ) rhs = emitOp(op & ~BINOP_EQ, rvalue(lhs), rhs, srcLoc);
     createStore(invoke(lhs.type, rhs, srcLoc), lhs);
     return lhs;
   }
@@ -1375,8 +1349,7 @@ Value Emitter::emitOp(AST::BinaryOp op, Value lhs, Value rhs,
   // Pointers
   if ((op == BINOP_ADD || op == BINOP_SUB) && lhs.type->isPointer() &&
       rhs.type->isArithmeticScalarInt()) {
-    if (op == BINOP_SUB)
-      rhs = emitOp(UNOP_NEG, rhs, srcLoc);
+    if (op == BINOP_SUB) rhs = emitOp(UNOP_NEG, rhs, srcLoc);
     return RValue(lhs.type,
                   builder.CreateGEP(lhs.type->getPointeeType()->llvmType, lhs,
                                     {rhs.llvmValue}));
@@ -1437,11 +1410,9 @@ extern "C" {
 
 SMDL_EXPORT void *smdlAllocate(int size, int align) {
   SMDL_SANITY_CHECK(align > 0);
-  if (!(size > 0))
-    return nullptr;
+  if (!(size > 0)) return nullptr;
   auto ptr{std::aligned_alloc(align, size)};
-  if (!ptr)
-    throw std::bad_alloc();
+  if (!ptr) throw std::bad_alloc();
   std::memset(ptr, 0x0, size);
   return ptr;
 }
@@ -1450,8 +1421,7 @@ SMDL_EXPORT void smdlFree(void *ptr) { std::free(ptr); }
 
 SMDL_EXPORT void *smdlBumpAllocate(void *state, int size, int align) {
   SMDL_SANITY_CHECK(state != nullptr && align > 0);
-  if (size <= 0)
-    return nullptr;
+  if (size <= 0) return nullptr;
   auto allocator{
       static_cast<BumpPtrAllocator *>(static_cast<State *>(state)->allocator)};
   SMDL_SANITY_CHECK(allocator != nullptr, "allocator cannot be null!");
@@ -1489,12 +1459,10 @@ SMDL_EXPORT void smdlTabulateAlbedo(const char *name, int num_cos_theta,
       }
     } catch (...) {
       auto lock{std::lock_guard<std::mutex>(firstExceptionMutex)};
-      if (!firstException)
-        firstException = std::current_exception();
+      if (!firstException) firstException = std::current_exception();
     }
   });
-  if (firstException)
-    std::rethrow_exception(firstException);
+  if (firstException) std::rethrow_exception(firstException);
   llvm::errs() << '\n';
   {
     std::error_code ec{};
@@ -1645,10 +1613,10 @@ Value Emitter::emitIntrinsic(std::string_view name, const ArgumentList &args,
         context.getBuiltinCallee("smdlBumpAllocate", &smdlBumpAllocate)};
     if (auto func{llvm::dyn_cast<llvm::Function>(callee.getCallee())})
       func->setReturnDoesNotAlias();
-    return RValue(context.getVoidPointerType(),
-                  builder.CreateCall(callee,
-                                     {rvalue(state).llvmValue, size.llvmValue,
-                                      align.llvmValue}));
+    return RValue(
+        context.getVoidPointerType(),
+        builder.CreateCall(callee, {rvalue(state).llvmValue, size.llvmValue,
+                                    align.llvmValue}));
   }};
   // '#bitreverse', '#ctlz', '#cttz', and '#ctpop' differ only in the LLVM
   // intrinsic and whether it takes the trailing is-zero-poison flag.
@@ -1679,8 +1647,7 @@ Value Emitter::emitIntrinsic(std::string_view name, const ArgumentList &args,
   if (name == "sum" || name == "prod" || name == "max_value" ||
       name == "min_value") {
     auto value{rvalue(expectOneVectorized())};
-    if (value.type->isArithmeticScalar())
-      return value;
+    if (value.type->isArithmeticScalar()) return value;
     // Widen bool vectors before '#sum': add-reducing '<N x i1>' computes
     // the parity of the lanes, not the count of true lanes.
     if (name == "sum" && value.type->isArithmeticBoolean())
@@ -1742,8 +1709,7 @@ Value Emitter::emitIntrinsic(std::string_view name, const ArgumentList &args,
       value = invoke(static_cast<ArithmeticType *>(value.type)
                          ->getWithDifferentScalar(context, Scalar::getBool()),
                      value, srcLoc);
-      if (value.type->isArithmeticScalar())
-        return value;
+      if (value.type->isArithmeticScalar()) return value;
       return RValue(context.getBoolType(),
                     builder.CreateUnaryIntrinsic(
                         name == "any" ? llvm::Intrinsic::vector_reduce_or
@@ -1852,8 +1818,7 @@ Value Emitter::emitIntrinsic(std::string_view name, const ArgumentList &args,
           builder.getInt64(context.getSizeOf(targetType)));
       auto rvResult{rvalue(lvResult)};
       createLifetimeEnd(lvResult);
-      if (value.isRValue())
-        createLifetimeEnd(lv);
+      if (value.isRValue()) createLifetimeEnd(lv);
       return rvResult;
     }
     if (name == "breakpoint") {
@@ -2345,10 +2310,8 @@ Value Emitter::emitIntrinsic(std::string_view name, const ArgumentList &args,
       auto value1{rvalue(args[1].value)};
       if (value1.isComptimeInt()) {
         auto power{value1.getComptimeInt()};
-        if (power == 1)
-          return value0;
-        if (power == 2)
-          return emitOp(BINOP_MUL, value0, value0, srcLoc);
+        if (power == 1) return value0;
+        if (power == 2) return emitOp(BINOP_MUL, value0, value0, srcLoc);
       }
       auto resultType{context.getCommonType(
           {value0.type, value1.type, context.getFloatType()},
@@ -2362,8 +2325,7 @@ Value Emitter::emitIntrinsic(std::string_view name, const ArgumentList &args,
     }
     if (name == "print" || name == "println") {
       auto os{context.getComptimePtr(context.getVoidPointerType(), stderr)};
-      for (auto &arg : args)
-        emitPrint(os, arg.value, srcLoc);
+      for (auto &arg : args) emitPrint(os, arg.value, srcLoc);
       if (name == "println")
         emitPrint(os, context.getComptimeString("\n"), srcLoc);
       return Value();
@@ -3137,8 +3099,7 @@ Module *Emitter::resolveModule(Span<const std::string_view> importPath,
     return nullptr;
   }};
   auto searchCompilerDirPaths{[&]() -> Module * {
-    if (thisModule->isBuiltin())
-      return nullptr;
+    if (thisModule->isBuiltin()) return nullptr;
     // Look up by qualified name, so modules extracted from archives
     // resolve as if the archive were extracted at the top level of its
     // search root, and so first-root-wins shadowing applies exactly as
@@ -3167,12 +3128,10 @@ Module *Emitter::resolveModule(Span<const std::string_view> importPath,
     // the builtin lookup key.
     auto key{std::string()};
     for (const auto &element : resolvedImportPath) {
-      if (!key.empty())
-        key += "::";
+      if (!key.empty()) key += "::";
       key += element;
     }
-    if (auto module_{context.getBuiltinModule(key)})
-      return module_;
+    if (auto module_{context.getBuiltinModule(key)}) return module_;
     return nullptr;
   }};
 
@@ -3181,25 +3140,20 @@ Module *Emitter::resolveModule(Span<const std::string_view> importPath,
     // prioritize compiler builtins first and compiler dir paths
     // second. This guarantees that `::df` always gets the builtin
     // df module for example.
-    if (auto module_{searchCompilerBuiltins()})
-      return module_;
-    if (auto module_{searchCompilerDirPaths()})
-      return module_;
+    if (auto module_{searchCompilerBuiltins()}) return module_;
+    if (auto module_{searchCompilerDirPaths()}) return module_;
   } else {
     // If the import path is relative, meaning it does NOT starts with `::`,
     // prioritize modules relative to the current module first.
-    if (auto module_{searchRelativeToCurrentModule()})
-      return module_;
+    if (auto module_{searchRelativeToCurrentModule()}) return module_;
     // If the import path is not explicitly relative, meaning it does
     // not start with `.` or `..`, also search the compiler dir paths
     // first and then lastly default to compiler builtins.
     if (bool isExplicitlyRelative{importPath[0] == "." ||
                                   importPath[0] == ".."};
         !isExplicitlyRelative) {
-      if (auto module_{searchCompilerDirPaths()})
-        return module_;
-      if (auto module_{searchCompilerBuiltins()})
-        return module_;
+      if (auto module_{searchCompilerDirPaths()}) return module_;
+      if (auto module_{searchCompilerBuiltins()}) return module_;
     }
   }
   return nullptr;

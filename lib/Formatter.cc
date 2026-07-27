@@ -42,8 +42,7 @@ void Formatter::alignLineComments() {
 }
 
 bool Formatter::nextCommentForcesNewLine() const {
-  if (mOptions.noComments)
-    return false;
+  if (mOptions.noComments) return false;
   auto inSrc{mInputSrc};
   while (!inSrc.empty()) {
     auto ws{inSrc.take_while(isSpace)};
@@ -55,8 +54,7 @@ bool Formatter::nextCommentForcesNewLine() const {
         return true;
       }
       auto pos{inSrc.find("*/", 2)};
-      if (pos == inSrc.npos)
-        break; // Shouldn't happen?
+      if (pos == inSrc.npos) break; // Shouldn't happen?
       inSrc = inSrc.drop_front(pos + 2);
       if (inSrc.take_while(isSpace).count('\n') > 0) {
         return true;
@@ -145,8 +143,7 @@ void Formatter::writeComment(llvm::StringRef inSrc) {
       if (tokens.size() == 3 && tokens[0] == "smdl" && tokens[1] == "format") {
         if (tokens[2] == "off" && !mFormatOff)
           mFormatOff = FormatOff{inSrc.data(), mOutputSrc.size()};
-        if (tokens[2] == "on" && mFormatOff)
-          applyFormatOff(inSrc.data());
+        if (tokens[2] == "on" && mFormatOff) applyFormatOff(inSrc.data());
       }
     }
     // Remember line comments to align later, but only remember if not
@@ -210,12 +207,10 @@ void Formatter::writeToken(llvm::StringRef inSrc, llvm::StringRef outSrc) {
   // is reachable because the parser only warns about overflow, and negative
   // values should be unreachable because negation is a unary expression,
   // but check for both anyway.
-  if (!std::isfinite(value) || std::signbit(value))
-    return srcValue.str();
+  if (!std::isfinite(value) || std::signbit(value)) return srcValue.str();
   // Split off the type suffix.
   auto numChars{srcValue.size()};
-  while (numChars > 0 && isFloatSuffix(srcValue[numChars - 1]))
-    numChars--;
+  while (numChars > 0 && isFloatSuffix(srcValue[numChars - 1])) numChars--;
   auto suffix{srcValue.drop_front(numChars)};
   if (suffix.ends_with("f") || suffix.ends_with("F")) // Drop the default!
     suffix = suffix.drop_back(1);
@@ -232,8 +227,7 @@ void Formatter::writeToken(llvm::StringRef inSrc, llvm::StringRef outSrc) {
     char buffer[32]{};
     for (int precision{1}; precision <= 17; precision++) {
       std::snprintf(buffer, sizeof(buffer), "%.*e", precision - 1, value);
-      if (roundTripsTo(buffer, value))
-        break;
+      if (roundTripsTo(buffer, value)) break;
     }
     auto [srcMantissa, srcExponent] = llvm::StringRef(buffer).split('e');
     srcExponent.consume_front("+"); // Must remove! `getAsInteger()` chokes
@@ -244,10 +238,8 @@ void Formatter::writeToken(llvm::StringRef inSrc, llvm::StringRef outSrc) {
     // does not lose anything, and doing it this way means it does not
     // matter what the current locale considers a decimal point to be
     for (char ch : srcMantissa)
-      if (isDigit(ch))
-        digits += ch;
-    while (digits.size() > 1 && digits.back() == '0')
-      digits.pop_back();
+      if (isDigit(ch)) digits += ch;
+    while (digits.size() > 1 && digits.back() == '0') digits.pop_back();
   }
   auto numDigits{int(digits.size())};
   // Spell it in fixed notation. Remember that the lexer requires a literal
@@ -256,8 +248,7 @@ void Formatter::writeToken(llvm::StringRef inSrc, llvm::StringRef outSrc) {
   if (exponent >= numDigits - 1) {
     fixed = digits;
     fixed.append(exponent - numDigits + 1, '0');
-    if (needsFloatMarker)
-      fixed += '.';
+    if (needsFloatMarker) fixed += '.';
   } else if (exponent >= 0) {
     fixed = digits.substr(0, exponent + 1) + '.' + digits.substr(exponent + 1);
   } else {
@@ -279,10 +270,8 @@ void Formatter::writeToken(llvm::StringRef inSrc, llvm::StringRef outSrc) {
   // Take the shortest, preferring fixed notation because it is easier to
   // read, then put the suffix back.
   auto result{fixed};
-  if (sci.size() < result.size())
-    result = sci;
-  if (sciNoPoint.size() < result.size())
-    result = sciNoPoint;
+  if (sci.size() < result.size()) result = sci;
+  if (sciNoPoint.size() < result.size()) result = sciNoPoint;
   result += suffix;
   // Never write anything longer than what the author wrote, and never
   // write anything that has not been verified to parse back correctly!
@@ -337,20 +326,17 @@ void Formatter::write(const AST::Enum &decl) {
         PUSH_INDENT);
   auto delim{writeStartList(decl.declarators.size(), decl.hasTrailingComma())};
   for (const auto &each : decl.declarators) {
-    if (!mOptions.noAnnotations && each.annotations)
-      write(DELIM_NEWLINE);
+    if (!mOptions.noAnnotations && each.annotations) write(DELIM_NEWLINE);
     write(each.name);
     if (each.exprInit) {
       write(DELIM_UNNECESSARY_SPACE, each.srcEqual, DELIM_UNNECESSARY_SPACE,
             PUSH_INDENT);
-      if (delim == DELIM_NEWLINE)
-        write(ALIGN_INDENT);
+      if (delim == DELIM_NEWLINE) write(ALIGN_INDENT);
       write(each.exprInit, POP_INDENT);
     }
     write(each.annotations, each.srcComma,
           each.srcComma.empty() ? DELIM_NONE : delim);
-    if (!mOptions.noAnnotations && each.annotations)
-      write(DELIM_NEWLINE);
+    if (!mOptions.noAnnotations && each.annotations) write(DELIM_NEWLINE);
   }
   write(delim, POP_INDENT, decl.srcBraceR, decl.srcSemicolon);
 }
@@ -361,8 +347,7 @@ void Formatter::write(const AST::Function &decl) {
         decl.params);
   if (!decl.srcFrequency.empty())
     write(DELIM_UNNECESSARY_SPACE, decl.srcFrequency);
-  if (decl.lateAnnotations)
-    write(decl.lateAnnotations);
+  if (decl.lateAnnotations) write(decl.lateAnnotations);
   if (!decl.srcEqual.empty()) {
     write(PUSH_INDENT, INCREMENT_INDENT, DELIM_UNNECESSARY_SPACE, decl.srcEqual,
           DELIM_UNNECESSARY_SPACE, PUSH_INDENT, ALIGN_INDENT, decl.definition,
@@ -418,20 +403,17 @@ void Formatter::write(const AST::Variable &decl) {
   for (const auto &each : decl.declarators) {
     if (!mOptions.noAnnotations && each.annotations && moreThanOne)
       write(DELIM_NEWLINE);
-    if (!each.srcBraceL.empty())
-      write(DELIM_UNNECESSARY_SPACE);
+    if (!each.srcBraceL.empty()) write(DELIM_UNNECESSARY_SPACE);
     write(each.srcBraceL);
     for (const auto &[name, srcComma] : each.names) {
       write(name, srcComma);
-      if (!srcComma.empty())
-        write(DELIM_UNNECESSARY_SPACE);
+      if (!srcComma.empty()) write(DELIM_UNNECESSARY_SPACE);
     }
     write(each.srcBraceR);
     if (each.exprInit) {
       write(DELIM_UNNECESSARY_SPACE, each.srcEqual, DELIM_UNNECESSARY_SPACE,
             PUSH_INDENT);
-      if (delim == DELIM_NEWLINE)
-        write(ALIGN_INDENT);
+      if (delim == DELIM_NEWLINE) write(ALIGN_INDENT);
       write(each.exprInit, POP_INDENT);
     } else if (each.argsInit) {
       write(each.argsInit);
@@ -458,8 +440,7 @@ void Formatter::write(const AST::Let &expr) {
   write(expr.srcKwLet, DELIM_SPACE);
   if (!expr.srcBraceL.empty()) {
     write(expr.srcBraceL, DELIM_NEWLINE, PUSH_INDENT, INCREMENT_INDENT);
-    for (const auto &decl : expr.decls)
-      write(decl, DELIM_NEWLINE);
+    for (const auto &decl : expr.decls) write(decl, DELIM_NEWLINE);
     write(POP_INDENT, expr.srcBraceR);
   } else {
     SMDL_SANITY_CHECK(expr.decls.size() == 1);
@@ -516,15 +497,13 @@ void Formatter::write(const AST::Switch &stmt) {
         DELIM_UNNECESSARY_SPACE, stmt.srcBraceL, DELIM_NEWLINE);
   for (const auto &each : stmt.cases) {
     write(each.srcKwCaseOrDefault);
-    if (!each.isDefault())
-      write(DELIM_SPACE, each.expr);
+    if (!each.isDefault()) write(DELIM_SPACE, each.expr);
     write(each.srcColon);
     if (each.stmts.size() == 1 && !nextCommentForcesNewLine()) {
       write(DELIM_SPACE, each.stmts.front(), DELIM_NEWLINE);
     } else {
       write(PUSH_INDENT, INCREMENT_INDENT, DELIM_NEWLINE);
-      for (const auto &subStmt : each.stmts)
-        write(subStmt, DELIM_NEWLINE);
+      for (const auto &subStmt : each.stmts) write(subStmt, DELIM_NEWLINE);
       write(POP_INDENT);
     }
   }
@@ -548,10 +527,8 @@ void Formatter::write(const AST::ArgumentList &args) {
   write(args.srcParenL, PUSH_INDENT);
   auto delim{writeStartList(args.size(), args.hasTrailingComma())};
   for (const auto &arg : args) {
-    if (arg.isVisited())
-      write(arg.srcKwVisit, DELIM_SPACE);
-    if (arg.isNamed())
-      write(arg.name, arg.srcColonAfterName, DELIM_SPACE);
+    if (arg.isVisited()) write(arg.srcKwVisit, DELIM_SPACE);
+    if (arg.isNamed()) write(arg.name, arg.srcColonAfterName, DELIM_SPACE);
     write(arg.expr, arg.srcComma, arg.srcComma.empty() ? DELIM_NONE : delim);
   }
   write(POP_INDENT, args.srcParenR);

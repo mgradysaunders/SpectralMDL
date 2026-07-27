@@ -69,8 +69,7 @@ private:
   [[nodiscard]] std::optional<std::string_view>
   nextKeyword(std::initializer_list<std::string_view> strs) {
     for (auto str : strs)
-      if (auto result{nextKeyword(str)})
-        return result;
+      if (auto result{nextKeyword(str)}) return result;
     return std::nullopt;
   }
 
@@ -91,8 +90,7 @@ private:
   nextKeywordAndLocation(std::string_view str) {
     skip();
     auto srcLoc{mSrcLoc};
-    if (auto srcKw{nextKeyword(str)})
-      return ParsedToken{srcLoc, *srcKw};
+    if (auto srcKw{nextKeyword(str)}) return ParsedToken{srcLoc, *srcKw};
     return std::nullopt;
   }
 
@@ -101,8 +99,7 @@ private:
   nextDelimiterAndLocation(std::string_view str) {
     skip();
     auto srcLoc{mSrcLoc};
-    if (auto src{next(str)})
-      return ParsedToken{srcLoc, *src};
+    if (auto src{next(str)}) return ParsedToken{srcLoc, *src};
     return std::nullopt;
   }
 
@@ -167,17 +164,14 @@ private:
     while (true) {
       skip();
       auto item{parseItem()};
-      if (!item)
-        break;
+      if (!item) break;
       items.push_back(std::move(*item));
       auto srcComma{nextDelimiter(",")};
-      if (!srcComma)
-        break;
+      if (!srcComma) break;
       items.back().srcComma = *srcComma;
       if (!srcCloser.empty()) {
         skip();
-        if (startsWith(getRemainingSourceCode(), srcCloser))
-          break;
+        if (startsWith(getRemainingSourceCode(), srcCloser)) break;
       }
     }
   }
@@ -341,8 +335,7 @@ private:
                                                  const Func &parseInner)
       -> BumpPtr<AST::Expr> {
     auto exprLhs{parseInner()};
-    if (!exprLhs)
-      return nullptr;
+    if (!exprLhs) return nullptr;
     auto srcLoc0{checkpoint()};
     auto op{parseBinaryOp(ops)};
     if (!op) {
@@ -438,8 +431,7 @@ private:
   template <typename Node>
   [[nodiscard]] BumpPtr<Node> parseJumpStatement(std::string_view keyword) {
     auto kw{nextKeywordAndLocation(keyword)};
-    if (!kw)
-      return nullptr;
+    if (!kw) return nullptr;
     auto lateIf{parseLateIf()};
     auto srcSemicolon{nextDelimiter(";")};
     if (!srcSemicolon)

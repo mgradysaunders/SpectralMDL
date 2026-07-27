@@ -14,8 +14,7 @@ namespace smdl {
 static std::vector<size_t> sort_order(const std::vector<float> &wavelengths) {
   std::vector<size_t> order{};
   order.reserve(wavelengths.size());
-  for (size_t i = 0; i < wavelengths.size(); i++)
-    order.push_back(i);
+  for (size_t i = 0; i < wavelengths.size(); i++) order.push_back(i);
   std::sort(order.begin(), order.end(), [&](size_t i, size_t j) {
     return wavelengths[i] < wavelengths[j];
   });
@@ -25,8 +24,7 @@ static std::vector<size_t> sort_order(const std::vector<float> &wavelengths) {
 void apply_sort_order(const std::vector<size_t> &order, Span<float> values) {
   SMDL_SANITY_CHECK(order.size() == values.size());
   std::vector<float> tmpValues{values.begin(), values.end()};
-  for (size_t i = 0; i < order.size(); i++)
-    values[i] = tmpValues[order[i]];
+  for (size_t i = 0; i < order.size(); i++) values[i] = tmpValues[order[i]];
 }
 
 /// Wavelength units.
@@ -69,8 +67,7 @@ Spectrum::loadFromFile(const std::string &fileName) noexcept {
     bool hasUnitsYet{false};
     while (std::getline(file, line)) {
       auto lineRef{llvm::StringRef(line).trim()};
-      if (lineRef.empty() || lineRef[0] == '#')
-        continue;
+      if (lineRef.empty() || lineRef[0] == '#') continue;
       if (!hasUnitsYet) {
         hasUnitsYet = true;
         if (lineRef.equals_insensitive("angstroms")) {
@@ -282,9 +279,9 @@ SpectrumLibrary::loadFromFile(const std::string &fileName) noexcept {
     auto order{sort_order(mWavelengths)};
     apply_sort_order(order, mWavelengths);
     for (size_t i = 0; i < mNumCurves; i++)
-      apply_sort_order(order,
-                       Span<float>(mCurveValues.data() + mWavelengths.size() * i,
-                                   mWavelengths.size()));
+      apply_sort_order(
+          order, Span<float>(mCurveValues.data() + mWavelengths.size() * i,
+                             mWavelengths.size()));
   });
 }
 

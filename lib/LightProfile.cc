@@ -13,8 +13,7 @@ LightProfile::loadFromFileMemory(std::string file) noexcept {
   std::replace(file.begin(), file.end(), ',', ' ');
   auto error{catchAndReturnError([&] {
     auto text{llvm::StringRef(file).trim()};
-    if (!text.starts_with("IESNA"))
-      throw Error("not an IES file");
+    if (!text.starts_with("IESNA")) throw Error("not an IES file");
     // Parse version
     {
       auto [line, remainder] = text.split('\n');
@@ -30,8 +29,7 @@ LightProfile::loadFromFileMemory(std::string file) noexcept {
       auto [line, remainder] = text.ltrim().split('\n');
       auto brackL{line.find('[')};
       auto brackR{line.find(']')};
-      if (!(brackL < brackR && brackR < line.size()))
-        break;
+      if (!(brackL < brackR && brackR < line.size())) break;
       auto key{line.substr(brackL + 1, brackR - brackL - 1).trim()};
       auto val{line.substr(brackR + 1).trim()};
       properties[std::string(key)] = std::string(val);
@@ -57,8 +55,7 @@ LightProfile::loadFromFileMemory(std::string file) noexcept {
     // Parse tilt
     {
       auto [line, remainder] = text.ltrim().split('\n');
-      if (!line.consume_front("TILT="))
-        throw Error("expected 'TILT='");
+      if (!line.consume_front("TILT=")) throw Error("expected 'TILT='");
       auto tiltKind{std::string(line.trim())};
       if (tiltKind != "NONE" && tiltKind != "INCLUDE")
         throw Error(concat("unsupported tilt ", Quoted(tiltKind)));
@@ -191,8 +188,7 @@ float LightProfile::power() const noexcept {
   // per texel.
   const int nX{distribution.getNumTexelsX()};
   const int nY{distribution.getNumTexelsY()};
-  if (nX == 0 || nY == 0)
-    return 0;
+  if (nX == 0 || nY == 0) return 0;
   return distribution.unnormalizedSum() * 2.0f * PI * PI /
          (float(nX) * float(nY));
 }
@@ -215,8 +211,7 @@ static float atan2DegreesPositive(float y, float x) {
   // then biases negative values so that the result is between
   // zero and 360.
   float theta{radToDeg * std::atan2(y, x)};
-  if (theta < 0.0f)
-    theta += 360.0f;
+  if (theta < 0.0f) theta += 360.0f;
   theta = std::fmax(theta, 0.0f);
   theta = std::fmin(theta, 360.0f);
   return theta;
@@ -262,8 +257,7 @@ float LightProfile::interpolate(float3 wo) const noexcept {
     // > and a last value of 270 degrees)
     float vertAngle{atan2Degrees(std::hypot(wo.x, wo.y), wo.z)};
     float horzAngle{[&]() -> float {
-      if (horzAngles.size() <= 1)
-        return 0.0f;
+      if (horzAngles.size() <= 1) return 0.0f;
       //
       //              +Y (90)
       //               |
@@ -436,8 +430,7 @@ struct LerpLookup final {
   float value0{*itr0};
   float value1{*itr1};
   float fraction{(value - value0) / (value1 - value0)};
-  if (!std::isfinite(fraction))
-    fraction = 0;
+  if (!std::isfinite(fraction)) fraction = 0;
   return {int(itr0 - values.begin()), //
           int(itr1 - values.begin()), //
           fraction};
@@ -479,15 +472,13 @@ float LightProfile::interpolate(float vertAngle,
 }
 
 float LightProfile::directionPDF(float3 wi) const noexcept {
-  if (distribution.getNumTexelsX() == 0)
-    return 0;
+  if (distribution.getNumTexelsX() == 0) return 0;
   return distribution.directionPDF(wi);
 }
 
 float3 LightProfile::directionSample(float2 xi, float *pdf) const noexcept {
   if (distribution.getNumTexelsX() == 0) {
-    if (pdf)
-      *pdf = 0;
+    if (pdf) *pdf = 0;
     return {};
   }
   return distribution.directionSample(xi, /*iPixel=*/nullptr, pdf);
@@ -499,15 +490,13 @@ extern "C" {
 
 SMDL_EXPORT float smdlLightProfileInterpolate(const void *profile,
                                               const smdl::float3 &wo) {
-  if (!profile)
-    return 0;
+  if (!profile) return 0;
   return static_cast<const smdl::LightProfile *>(profile)->interpolate(wo);
 }
 
 SMDL_EXPORT float smdlLightProfileDirectionPDF(const void *profile,
                                                const smdl::float3 &wi) {
-  if (!profile)
-    return 0;
+  if (!profile) return 0;
   return static_cast<const smdl::LightProfile *>(profile)->directionPDF(wi);
 }
 
@@ -515,16 +504,13 @@ SMDL_EXPORT void smdlLightProfileDirectionSample(const void *profile,
                                                  const smdl::float2 &xi,
                                                  smdl::float3 *wi, float *pdf) {
   if (!profile) {
-    if (wi)
-      *wi = {};
-    if (pdf)
-      *pdf = 0.0f;
+    if (wi) *wi = {};
+    if (pdf) *pdf = 0.0f;
     return;
   }
   auto w{static_cast<const smdl::LightProfile *>(profile)->directionSample(
       xi, pdf)};
-  if (wi)
-    *wi = w;
+  if (wi) *wi = w;
 }
 
 } // extern "C"

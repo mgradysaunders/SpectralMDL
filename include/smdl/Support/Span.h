@@ -103,11 +103,9 @@ public:
 
   /// Starts with the given sequence of values?
   [[nodiscard]] constexpr bool startsWith(Span other) const {
-    if (count < other.count)
-      return false;
+    if (count < other.count) return false;
     for (size_t i = 0; i < other.count; i++)
-      if (operator[](i) != other[i])
-        return false;
+      if (operator[](i) != other[i]) return false;
     return true;
   }
 
@@ -118,11 +116,9 @@ public:
 
   /// All equal?
   [[nodiscard]] constexpr bool operator==(const Span &other) const {
-    if (count != other.count)
-      return false;
+    if (count != other.count) return false;
     for (size_t i = 0; i < count; i++)
-      if (first[i] != other.first[i])
-        return false;
+      if (first[i] != other.first[i]) return false;
     return true;
   }
 

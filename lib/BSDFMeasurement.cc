@@ -20,8 +20,7 @@ BSDFMeasurement::loadFromFileMemory(const std::string &file) noexcept {
     }
     auto dataBlockOffset{[&]() -> size_t {
       kind = KIND_REFLECTION;
-      if (auto i{mem.find("MBSDF_DATA=\n")}; i < mem.size())
-        return i;
+      if (auto i{mem.find("MBSDF_DATA=\n")}; i < mem.size()) return i;
       if (auto i{mem.find("MBSDF_DATA_REFLECTION=\n")}; i < mem.size())
         return i;
       kind = KIND_TRANSMISSION;
@@ -120,8 +119,7 @@ BSDFMeasurement::loadFromFileMemory(const std::string &file) noexcept {
 
 float3 BSDFMeasurement::fetch(int iThetao, int iThetai,
                               int iPhi) const noexcept {
-  if (!buffer || numTheta == 0 || numPhi == 0)
-    return {};
+  if (!buffer || numTheta == 0 || numPhi == 0) return {};
   iThetao = std::clamp(iThetao, 0, int(numTheta) - 1);
   iThetai = std::clamp(iThetai, 0, int(numTheta) - 1);
   iPhi = std::clamp(iPhi, 0, int(numPhi) - 1);
@@ -151,8 +149,7 @@ struct CellLookup final {
 
 float3 BSDFMeasurement::interpolate(float thetao, float thetai,
                                     float phi) const noexcept {
-  if (!buffer || numTheta == 0 || numPhi == 0)
-    return {};
+  if (!buffer || numTheta == 0 || numPhi == 0) return {};
   const auto o{
       cellLookup(thetao * (2.0f / PI) * float(numTheta), int(numTheta))};
   const auto i{
@@ -178,35 +175,29 @@ float3 BSDFMeasurement::interpolate(float thetao, float thetai,
 [[nodiscard]] static float azimuthDifference(const float3 &wo,
                                              const float3 &wi) noexcept {
   float phi{std::atan2(wi.y, wi.x) - std::atan2(wo.y, wo.x)};
-  if (phi < -PI)
-    phi += 2.0f * PI;
-  if (phi > +PI)
-    phi -= 2.0f * PI;
+  if (phi < -PI) phi += 2.0f * PI;
+  if (phi > +PI) phi -= 2.0f * PI;
   return std::abs(phi);
 }
 
 float3 BSDFMeasurement::interpolate(float3 wo, float3 wi) const noexcept {
   wo = normalize(wo);
   wi = normalize(wi);
-  if (!std::isfinite(wo.x + wo.y + wo.z + wi.x + wi.y + wi.z))
-    return {};
+  if (!std::isfinite(wo.x + wo.y + wo.z + wi.x + wi.y + wi.z)) return {};
   return interpolate(std::acos(std::clamp(std::abs(wo.z), 0.0f, 1.0f)),
                      std::acos(std::clamp(std::abs(wi.z), 0.0f, 1.0f)),
                      azimuthDifference(wo, wi));
 }
 
 float BSDFMeasurement::directionPDF(float3 wo, float3 wi) const noexcept {
-  if (distributions.empty())
-    return 0;
+  if (distributions.empty()) return 0;
   wo = normalize(wo);
   wi = normalize(wi);
-  if (!std::isfinite(wo.x + wo.y + wo.z + wi.x + wi.y + wi.z))
-    return 0;
+  if (!std::isfinite(wo.x + wo.y + wo.z + wi.x + wi.y + wi.z)) return 0;
   const float cosThetai{std::clamp(std::abs(wi.z), 0.0f, 1.0f)};
   const float sinThetai{std::sqrt(std::max(1.0f - cosThetai * cosThetai, //
                                            0.0f))};
-  if (!(sinThetai > 0))
-    return 0;
+  if (!(sinThetai > 0)) return 0;
   const int nTheta{int(numTheta)};
   const int nPhi{int(numPhi)};
   const float thetao{std::acos(std::clamp(std::abs(wo.z), 0.0f, 1.0f))};
@@ -227,13 +218,10 @@ float BSDFMeasurement::directionPDF(float3 wo, float3 wi) const noexcept {
 
 float3 BSDFMeasurement::directionSample(float2 xi, float3 wo,
                                         float *pdf) const noexcept {
-  if (pdf)
-    *pdf = 0;
-  if (distributions.empty())
-    return {};
+  if (pdf) *pdf = 0;
+  if (distributions.empty()) return {};
   wo = normalize(wo);
-  if (!std::isfinite(wo.x + wo.y + wo.z))
-    return {};
+  if (!std::isfinite(wo.x + wo.y + wo.z)) return {};
   const int nTheta{int(numTheta)};
   const int nPhi{int(numPhi)};
   const float thetao{std::acos(std::clamp(std::abs(wo.z), 0.0f, 1.0f))};
@@ -241,8 +229,7 @@ float3 BSDFMeasurement::directionSample(float2 xi, float3 wo,
       std::clamp(int(thetao * (2.0f / PI) * float(nTheta)), 0, nTheta - 1)};
   float pmf{};
   const auto i{distributions[iThetao].pixelSample(xi, &xi, &pmf)};
-  if (!(pmf > 0))
-    return {};
+  if (!(pmf > 0)) return {};
   // Split the remapped azimuth sample into a mirror sign and a within-cell
   // offset, because the table only spans azimuth differences in `[0, pi]`.
   float phiSign{+1.0f};
@@ -257,12 +244,10 @@ float3 BSDFMeasurement::directionSample(float2 xi, float3 wo,
   const float thetai{(float(i.y) + xi.y) * dTheta};
   const float sinThetai{std::sin(thetai)};
   const float cosThetai{std::cos(thetai)};
-  if (!(sinThetai > 0))
-    return {};
+  if (!(sinThetai > 0)) return {};
   const float phi{std::atan2(wo.y, wo.x) +
                   phiSign * (float(i.x) + xi.x) * dPhi};
-  if (pdf)
-    *pdf = pmf / (2.0f * dTheta * dPhi * sinThetai);
+  if (pdf) *pdf = pmf / (2.0f * dTheta * dPhi * sinThetai);
   return float3(sinThetai * std::cos(phi), sinThetai * std::sin(phi),
                 cosThetai);
 }
@@ -319,16 +304,13 @@ SMDL_EXPORT void smdBSDFMeasurementDirectionSample(const void *measurement,
                                                    smdl::float3 *wi,
                                                    float *pdf) {
   if (!measurement) {
-    if (wi)
-      *wi = {};
-    if (pdf)
-      *pdf = 0.0f;
+    if (wi) *wi = {};
+    if (pdf) *pdf = 0.0f;
     return;
   }
   auto w{static_cast<const smdl::BSDFMeasurement *>(measurement)
              ->directionSample(xi, wo, pdf)};
-  if (wi)
-    *wi = w;
+  if (wi) *wi = w;
 }
 
 } // extern "C"

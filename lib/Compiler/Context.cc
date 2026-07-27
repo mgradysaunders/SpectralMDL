@@ -111,8 +111,7 @@ Context::Context(Compiler &compiler) : compiler(compiler) {
     for (auto declaration{entry.second}; declaration;
          declaration = declaration->prevSameNameInScope)
       seedKeyword(declaration);
-  for (auto declaration : apiRootScope->imports)
-    seedKeyword(declaration);
+  for (auto declaration : apiRootScope->imports) seedKeyword(declaration);
   mMaterialType = static_cast<StructType *>(getKeywordAsType("material"));
   mTexture2DType = static_cast<StructType *>(getKeywordAsType("texture_2d"));
   mTexture3DType = static_cast<StructType *>(getKeywordAsType("texture_3d"));
@@ -131,13 +130,11 @@ Context::Context(Compiler &compiler) : compiler(compiler) {
 
 Span<const std::string_view>
 Context::internName(Span<const std::string_view> name) {
-  if (name.empty())
-    return {};
+  if (name.empty()) return {};
   auto key{llvm::SmallString<64>{}};
   for (size_t i = 0; i < name.size(); i++) {
     key += name[i];
-    if (i + 1 < name.size())
-      key += '\0';
+    if (i + 1 < name.size()) key += '\0';
   }
   auto [itr, inserted] = mInternedNames.try_emplace(key);
   if (inserted) {
@@ -185,15 +182,13 @@ Type *Context::getArithmeticType(Scalar scalar, Extent extent) {
   key |= uint64_t(extent.numCols) << 16;
   key |= uint64_t(extent.numRows);
   auto &type{mArithmeticTypes[key]};
-  if (!type)
-    type = allocator.allocate<ArithmeticType>(*this, scalar, extent);
+  if (!type) type = allocator.allocate<ArithmeticType>(*this, scalar, extent);
   return type.get();
 }
 
 ArrayType *Context::getArrayType(Type *elemType, uint32_t size) {
   auto &type{mArrayTypes[std::pair(elemType, size)]};
-  if (!type)
-    type = allocator.allocate<ArrayType>(*this, elemType, size);
+  if (!type) type = allocator.allocate<ArrayType>(*this, elemType, size);
   return type.get();
 }
 
@@ -208,29 +203,25 @@ InferredSizeArrayType *Context::getInferredSizeArrayType(Type *elemType,
 
 PointerType *Context::getPointerType(Type *pointeeType) {
   auto &type{mPointerTypes[pointeeType]};
-  if (!type)
-    type = allocator.allocate<PointerType>(*this, pointeeType);
+  if (!type) type = allocator.allocate<PointerType>(*this, pointeeType);
   return type.get();
 }
 
 EnumType *Context::getEnumType(AST::Enum *decl) {
   auto &type{mASTTypes[decl]};
-  if (!type)
-    type = allocator.allocate<EnumType>(*decl);
+  if (!type) type = allocator.allocate<EnumType>(*decl);
   return static_cast<EnumType *>(type.get());
 }
 
 FunctionType *Context::getFunctionType(AST::Function *decl) {
   auto &type{mASTTypes[decl]};
-  if (!type)
-    type = allocator.allocate<FunctionType>(*decl);
+  if (!type) type = allocator.allocate<FunctionType>(*decl);
   return static_cast<FunctionType *>(type.get());
 }
 
 StructType *Context::getStructType(AST::Struct *decl) {
   auto &type{mASTTypes[decl]};
-  if (!type)
-    type = allocator.allocate<StructType>(*decl);
+  if (!type) type = allocator.allocate<StructType>(*decl);
   return static_cast<StructType *>(type.get());
 }
 
@@ -243,32 +234,25 @@ TagType *Context::getTagType(AST::Tag *decl) {
 
 Type *Context::getUnionType(llvm::ArrayRef<Type *> types) {
   auto caseTypes{UnionType::canonicalizeTypes(types)};
-  if (caseTypes.size() == 1)
-    return caseTypes[0];
+  if (caseTypes.size() == 1) return caseTypes[0];
   auto &type{mUnionTypes[caseTypes]};
-  if (!type)
-    type = allocator.allocate<UnionType>(*this, std::move(caseTypes));
+  if (!type) type = allocator.allocate<UnionType>(*this, std::move(caseTypes));
   return type.get();
 }
 
 ComptimeUnionType *Context::getComptimeUnionType(UnionType *unionType) {
   auto &type{mComptimeUnionTypes[unionType]};
-  if (!type)
-    type = allocator.allocate<ComptimeUnionType>(unionType);
+  if (!type) type = allocator.allocate<ComptimeUnionType>(unionType);
   return type.get();
 }
 
 Type *Context::getCommonType(llvm::ArrayRef<Type *> types, bool defaultToUnion,
                              const SourceLocation &srcLoc) {
-  if (types.empty())
-    return getVoidType();
-  if (types.size() == 1)
-    return types[0];
+  if (types.empty()) return getVoidType();
+  if (types.size() == 1) return types[0];
   auto getCommonTypeOfPair{[&](Type *typeA, Type *typeB) -> Type * {
-    if (typeA == getAutoType() || !typeA)
-      return typeB;
-    if (typeB == getAutoType() || !typeB || typeA == typeB)
-      return typeA;
+    if (typeA == getAutoType() || !typeA) return typeB;
+    if (typeB == getAutoType() || !typeB || typeA == typeB) return typeA;
     if (typeA->isArithmetic() && typeB->isArithmetic()) {
       auto arithTypeA{static_cast<ArithmeticType *>(typeA)};
       auto arithTypeB{static_cast<ArithmeticType *>(typeB)};
@@ -296,10 +280,8 @@ ConversionRule Context::getConversionRule(Type *typeA, Type *typeB) {
   if (typeA == typeB || typeB == getAutoType()) {
     return CONVERSION_RULE_PERFECT;
   }
-  if (typeA->isAbstract())
-    return CONVERSION_RULE_EXPLICIT;
-  if (typeA->isVoid())
-    return CONVERSION_RULE_IMPLICIT;
+  if (typeA->isAbstract()) return CONVERSION_RULE_EXPLICIT;
+  if (typeA->isVoid()) return CONVERSION_RULE_IMPLICIT;
   // If the source and destination types are both arithmetic ...
   if (typeA->isArithmetic() && typeB->isArithmetic()) {
     // If the source and destination extents are equivalent, conversion is
@@ -336,8 +318,7 @@ ConversionRule Context::getConversionRule(Type *typeA, Type *typeB) {
     // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
     if (typeB->isPointer()) {
       // ... unless the destination type is `&void`
-      if (typeB == getVoidPointerType())
-        return CONVERSION_RULE_IMPLICIT;
+      if (typeB == getVoidPointerType()) return CONVERSION_RULE_IMPLICIT;
       // ... unless the destination type is a pointer to `auto`, in which case
       // conversion is perfect as long as the underlying pointee type conversion
       // is perfect.
@@ -384,8 +365,7 @@ ConversionRule Context::getConversionRule(Type *typeA, Type *typeB) {
     } else {
       // If the source type is not a union and the destination type has the
       // source as a case type, conversion is implicit.
-      if (unionTypeB->hasCaseType(typeA))
-        return CONVERSION_RULE_IMPLICIT;
+      if (unionTypeB->hasCaseType(typeA)) return CONVERSION_RULE_IMPLICIT;
     }
   }
   // If the destination type is a compile-time union and the source type

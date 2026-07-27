@@ -404,10 +404,8 @@ public:
   /// - If `is_matrix()`, returns array type of column vector types
   ///   of `llvmType`.
   [[nodiscard]] llvm::Type *getLLVMType(llvm::Type *llvmType) const {
-    if (numRows > 1)
-      llvmType = llvm::FixedVectorType::get(llvmType, numRows);
-    if (numCols > 1)
-      llvmType = llvm::ArrayType::get(llvmType, numCols);
+    if (numRows > 1) llvmType = llvm::FixedVectorType::get(llvmType, numRows);
+    if (numCols > 1) llvmType = llvm::ArrayType::get(llvmType, numCols);
     return llvmType;
   }
 
@@ -542,8 +540,7 @@ private:
       llvm::SmallVector<int> swizzle{};
       for (char c : name) {
         auto i{toIndex(c)};
-        if (!i)
-          return std::nullopt;
+        if (!i) return std::nullopt;
         swizzle.push_back(static_cast<int>(*i));
       }
       return swizzle;
@@ -961,8 +958,7 @@ public:
 
   [[nodiscard]] bool hasField(std::string_view name) final {
     for (auto &field : mFields)
-      if (field.name == name)
-        return true;
+      if (field.name == name) return true;
     return false;
   }
 
@@ -1168,8 +1164,7 @@ public:
 
   [[nodiscard]] bool hasField(std::string_view name) final {
     for (auto caseType : caseTypes)
-      if (!(caseType->isVoid() || caseType->hasField(name)))
-        return false;
+      if (!(caseType->isVoid() || caseType->hasField(name))) return false;
     return true;
   }
 
@@ -1183,8 +1178,7 @@ public:
   /// Get the index of the given case type.
   [[nodiscard]] int getCaseTypeIndex(Type *type) const {
     for (int i = 0; i < int(caseTypes.size()); i++)
-      if (caseTypes[i] == type)
-        return i;
+      if (caseTypes[i] == type) return i;
     return -1;
   }
 
@@ -1197,8 +1191,7 @@ public:
   /// Has all case types of the given union type?
   [[nodiscard]] bool hasAllCaseTypes(UnionType *unionType) const {
     for (auto caseType : unionType->caseTypes)
-      if (!hasCaseType(caseType))
-        return false;
+      if (!hasCaseType(caseType)) return false;
     return true;
   }
 

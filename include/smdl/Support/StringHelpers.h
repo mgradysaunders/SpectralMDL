@@ -49,8 +49,7 @@ inline void doConcat(std::string &str, T &&value, Ts &&...values) {
   } else {
     str += value;
   }
-  if constexpr (sizeof...(Ts) > 0)
-    doConcat(str, std::forward<Ts>(values)...);
+  if constexpr (sizeof...(Ts) > 0) doConcat(str, std::forward<Ts>(values)...);
 }
 
 } // namespace detail
@@ -119,19 +118,15 @@ template <typename T, typename... Ts>
 
 /// Convert ASCII octal character to runtime int.
 [[nodiscard]] constexpr int octToInt(int ch) noexcept {
-  if ('0' <= ch && ch <= '7')
-    return ch - '0';
+  if ('0' <= ch && ch <= '7') return ch - '0';
   return 0;
 }
 
 /// Convert ASCII hexadecimal character to runtime int.
 [[nodiscard]] constexpr int hexToInt(int ch) noexcept {
-  if ('0' <= ch && ch <= '9')
-    return ch - '0';
-  if ('a' <= ch && ch <= 'f')
-    return ch - 'a' + 10;
-  if ('A' <= ch && ch <= 'F')
-    return ch - 'A' + 10;
+  if ('0' <= ch && ch <= '9') return ch - '0';
+  if ('a' <= ch && ch <= 'f') return ch - 'a' + 10;
+  if ('A' <= ch && ch <= 'F') return ch - 'A' + 10;
   return 0;
 }
 
@@ -148,8 +143,7 @@ template <typename T, typename... Ts>
   str.reserve(128);
   for (size_t i = 0; i < strs.size(); i++) {
     str += strs[i];
-    if (i + 1 < strs.size())
-      str += delim;
+    if (i + 1 < strs.size()) str += delim;
   }
   return str;
 }

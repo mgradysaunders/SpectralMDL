@@ -43,8 +43,7 @@ void llvmThrowIfError(llvm::Error error);
 
 template <typename T>
 [[nodiscard]] inline T llvmThrowIfError(llvm::Expected<T> valueOrError) {
-  if (!valueOrError)
-    llvmThrowIfError(valueOrError.takeError());
+  if (!valueOrError) llvmThrowIfError(valueOrError.takeError());
   return std::move(*valueOrError);
 }
 
@@ -240,16 +239,14 @@ public:
   /// Is the given predicate true for any element? Returns false if empty.
   template <typename Pred> [[nodiscard]] bool isAnyTrue(Pred &&pred) const {
     for (auto &elem : elems)
-      if (std::invoke(pred, elem))
-        return true;
+      if (std::invoke(pred, elem)) return true;
     return false;
   }
 
   /// Is the given predicate true for all elements? Returns true if empty.
   template <typename Pred> [[nodiscard]] bool isAllTrue(Pred &&pred) const {
     for (auto &elem : elems)
-      if (!std::invoke(pred, elem))
-        return false;
+      if (!std::invoke(pred, elem)) return false;
     return true;
   }
 
@@ -259,8 +256,7 @@ public:
   [[nodiscard]] auto transform(Pred &&pred) const {
     auto results{std::vector<U>(size_t(elems.size()))};
     auto resultItr{results.begin()};
-    for (auto &elem : elems)
-      *resultItr++ = std::invoke(pred, elem);
+    for (auto &elem : elems) *resultItr++ = std::invoke(pred, elem);
     return results;
   }
 

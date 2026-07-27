@@ -78,23 +78,23 @@ private:
 };
 
 /// Log a message with `LOG_LEVEL_DEBUG`.
-#define SMDL_LOG_DEBUG(...)                                                    \
-  ::smdl::Logger::get().logMessage(::smdl::LOG_LEVEL_DEBUG,                    \
+#define SMDL_LOG_DEBUG(...)                                 \
+  ::smdl::Logger::get().logMessage(::smdl::LOG_LEVEL_DEBUG, \
                                    ::smdl::concat(__VA_ARGS__))
 
 /// Log a message with `LOG_LEVEL_INFO`.
-#define SMDL_LOG_INFO(...)                                                     \
-  ::smdl::Logger::get().logMessage(::smdl::LOG_LEVEL_INFO,                     \
+#define SMDL_LOG_INFO(...)                                 \
+  ::smdl::Logger::get().logMessage(::smdl::LOG_LEVEL_INFO, \
                                    ::smdl::concat(__VA_ARGS__))
 
 /// Log a message with `LOG_LEVEL_WARN`.
-#define SMDL_LOG_WARN(...)                                                     \
-  ::smdl::Logger::get().logMessage(::smdl::LOG_LEVEL_WARN,                     \
+#define SMDL_LOG_WARN(...)                                 \
+  ::smdl::Logger::get().logMessage(::smdl::LOG_LEVEL_WARN, \
                                    ::smdl::concat(__VA_ARGS__))
 
 /// Log a message with `LOG_LEVEL_ERROR`.
-#define SMDL_LOG_ERROR(...)                                                    \
-  ::smdl::Logger::get().logMessage(::smdl::LOG_LEVEL_ERROR,                    \
+#define SMDL_LOG_ERROR(...)                                 \
+  ::smdl::Logger::get().logMessage(::smdl::LOG_LEVEL_ERROR, \
                                    ::smdl::concat(__VA_ARGS__))
 
 /// The default log-sinks for convenience.

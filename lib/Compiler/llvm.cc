@@ -11,20 +11,17 @@ void llvmThrowIfError(llvm::Error error) {
                                       errorInfo.log(os);
                                       numErrors++;
                                     }));
-  if (numErrors > 0)
-    throw Error(std::move(message));
+  if (numErrors > 0) throw Error(std::move(message));
 }
 
 llvm::Value *llvmEmitCast(llvm::IRBuilderBase &builder, llvm::Value *value,
                           llvm::Type *dstType) {
   auto srcType{value->getType()};
-  if (srcType == dstType)
-    return value;
+  if (srcType == dstType) return value;
   bool isSrcFP{srcType->isFPOrFPVectorTy()};
   bool isDstFP{dstType->isFPOrFPVectorTy()};
   // float => float
-  if (isSrcFP && isDstFP)
-    return builder.CreateFPCast(value, dstType);
+  if (isSrcFP && isDstFP) return builder.CreateFPCast(value, dstType);
   bool isSrcInt{srcType->isIntOrIntVectorTy()};
   bool isDstInt{dstType->isIntOrIntVectorTy()};
   bool isSrcBool{isSrcInt && srcType->getScalarSizeInBits() == 1};
@@ -36,14 +33,12 @@ llvm::Value *llvmEmitCast(llvm::IRBuilderBase &builder, llvm::Value *value,
   if (isSrcInt && isDstBool)
     return builder.CreateICmpNE(value, llvm::Constant::getNullValue(srcType));
   // bool => float
-  if (isSrcBool && isDstFP)
-    return builder.CreateUIToFP(value, dstType);
+  if (isSrcBool && isDstFP) return builder.CreateUIToFP(value, dstType);
   // float => bool
   if (isSrcFP && isDstBool)
     return builder.CreateFCmpONE(value, llvm::Constant::getNullValue(srcType));
   // int => float
-  if (isSrcInt && isDstFP)
-    return builder.CreateSIToFP(value, dstType);
+  if (isSrcInt && isDstFP) return builder.CreateSIToFP(value, dstType);
   // float => int
   if (isSrcFP && isDstInt) {
     if (srcType->getScalarSizeInBits() != dstType->getScalarSizeInBits()) {
@@ -79,8 +74,7 @@ llvm::Value *llvmEmitLdexp(llvm::IRBuilderBase &builder, llvm::Value *lhs,
 
 llvm::InlineResult llvmForceInline(llvm::Value *value, bool isRecursive) {
   auto call{llvm::dyn_cast_if_present<llvm::CallBase>(value)};
-  if (!call)
-    return llvm::InlineResult::failure("expected 'llvm::CallBase'");
+  if (!call) return llvm::InlineResult::failure("expected 'llvm::CallBase'");
   auto resultInfo{llvm::InlineFunctionInfo{}};
   auto result{llvm::InlineFunction(*call, resultInfo)};
   if (result.isSuccess() && isRecursive) {
