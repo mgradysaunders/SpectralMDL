@@ -3,7 +3,6 @@
 
 #include "smdl/BSDFMeasurement.h"
 #include "smdl/Support/Logger.h"
-#include "llvm/IR/MDBuilder.h"
 #include "llvm/Support/Format.h"
 #include "llvm/Support/Parallel.h"
 #include <atomic>
@@ -1626,66 +1625,20 @@ Value Emitter::emitIntrinsic(std::string_view name, const ArgumentList &args,
         context.getVoidPointerType(),
         builder.CreateCall(callee, {size.llvmValue, align.llvmValue}));
   }};
-  // Shared by '#bump' and '#bump_allocate': bump the allocator fast-path
-  // window inline, deferring to the runtime only when the request does not
-  // fit (which also refills the window).
+  // Shared by '#bump' and '#bump_allocate'.
   auto emitBumpAllocate{[&](Value size, Value align) {
     if (!state)
       srcLoc.throwError("intrinsic ", Quoted(name),
                         " requires '$state' and cannot be used in '@(pure)' "
                         "context");
-    static_assert(std::is_standard_layout_v<BumpPtrAllocator>,
-                  "the emitted code offsets into this type with 'offsetof'");
-    auto i8Ty{builder.getInt8Ty()};
-    auto i64Ty{builder.getInt64Ty()};
-    auto ptrTy{llvm::PointerType::get(context.llvmContext, 0)};
-    auto stateLV{LValue(context.getStateType(), rvalue(state))};
-    auto allocPtr{rvalue(accessField(stateLV, "allocator", srcLoc))};
-    auto windowPtrAddr{builder.CreateConstInBoundsGEP1_64(
-        i8Ty, allocPtr, offsetof(BumpPtrAllocator, windowPtr))};
-    auto windowEndAddr{builder.CreateConstInBoundsGEP1_64(
-        i8Ty, allocPtr, offsetof(BumpPtrAllocator, windowEnd))};
-    auto cur{builder.CreateLoad(ptrTy, windowPtrAddr, "bump.cur")};
-    auto end{builder.CreateLoad(ptrTy, windowEndAddr, "bump.end")};
-    auto curI{builder.CreatePtrToInt(cur, i64Ty)};
-    auto endI{builder.CreatePtrToInt(end, i64Ty)};
-    auto mask{builder.CreateSub(builder.CreateSExt(align, i64Ty),
-                                builder.getInt64(1))};
-    auto alignedI{builder.CreateAnd(builder.CreateAdd(curI, mask),
-                                    builder.CreateNot(mask))};
-    auto newI{builder.CreateAdd(alignedI, builder.CreateSExt(size, i64Ty))};
-    // The window serves the request only if the size is positive (the
-    // runtime returns null for non-positive sizes) and the bumped pointer
-    // stays in bounds; an uninitialized null window fails the bounds check
-    // and falls through to the runtime, which refills it.
-    auto ok{builder.CreateAnd(
-        builder.CreateICmpSGT(size, context.getComptimeInt(0)),
-        builder.CreateICmpULE(newI, endI))};
-    auto [blockFast, blockSlow, blockEnd] =
-        createBlocks<3>("bump", {".fast", ".slow", ".end"});
-    builder.CreateCondBr(
-        ok, blockFast, blockSlow,
-        llvm::MDBuilder(context.llvmContext).createBranchWeights(15, 1));
-    builder.SetInsertPoint(blockFast);
-    auto fastResult{builder.CreateInBoundsGEP(
-        i8Ty, cur, builder.CreateSub(alignedI, curI), "bump.result")};
-    builder.CreateStore(
-        builder.CreateInBoundsGEP(i8Ty, cur, builder.CreateSub(newI, curI)),
-        windowPtrAddr);
-    builder.CreateBr(blockEnd);
-    builder.SetInsertPoint(blockSlow);
     auto callee{
         context.getBuiltinCallee("smdlBumpAllocate", &smdlBumpAllocate)};
     if (auto func{llvm::dyn_cast<llvm::Function>(callee.getCallee())})
       func->setReturnDoesNotAlias();
-    auto slowResult{builder.CreateCall(
-        callee, {rvalue(state).llvmValue, size.llvmValue, align.llvmValue})};
-    builder.CreateBr(blockEnd);
-    builder.SetInsertPoint(blockEnd);
-    auto phiInst{builder.CreatePHI(ptrTy, 2, "bump.ptr")};
-    phiInst->addIncoming(fastResult, blockFast);
-    phiInst->addIncoming(slowResult, blockSlow);
-    return RValue(context.getVoidPointerType(), phiInst);
+    return RValue(context.getVoidPointerType(),
+                  builder.CreateCall(callee,
+                                     {rvalue(state).llvmValue, size.llvmValue,
+                                      align.llvmValue}));
   }};
   // '#bitreverse', '#ctlz', '#cttz', and '#ctpop' differ only in the LLVM
   // intrinsic and whether it takes the trailing is-zero-poison flag.

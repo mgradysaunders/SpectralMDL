@@ -124,19 +124,8 @@ public:
   /// Get the number of bytes allocated.
   [[nodiscard]] size_t getBytesAllocated() const noexcept;
 
-public:
-  /// The current position of the fast-path window. Small allocations are
-  /// carved from `[windowPtr, windowEnd)` by bumping `windowPtr`;
-  /// JIT-compiled code does this inline (see the `#bump` intrinsic in the
-  /// compiler `Emitter`), so the offsets of these two fields are part of
-  /// the JIT ABI.
-  void *windowPtr{};
-
-  /// The end of the fast-path window.
-  void *windowEnd{};
-
-  /// The pointer to the `llvm::BumpPtrAllocator`, which provides the
-  /// window memory and serves large allocations directly.
+private:
+  /// The pointer to the `llvm::BumpPtrAllocator`.
   void *mPtr{};
 };
 
