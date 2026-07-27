@@ -1,6 +1,46 @@
 // NOTE: This module is non-standard!
 #smdl
 
+// PROSPECT -- a physically based way to turn a leaf's biochemistry into its
+// optics: given the pigment, water, and dry-matter contents per unit leaf area,
+// it predicts the hemispherical reflectance and transmittance of a single leaf
+// over 400..2500 nm. It is the transmissive, light-through-the-leaf analog of
+// the water-film model in `marmit.smdl`, and is built the same way: interpolate
+// tabulated optical constants per wavelength, then evaluate a small closed-form
+// radiative-transfer expression using cheap analytic fits in place of the
+// special functions the reference model calls.
+//
+// The leaf is idealized as a stack of `num_layers` identical absorbing plates.
+// Every constituent enters through a single absorption coefficient
+// k = sum_j K_j(lambda) C_j -- the tabulated specific absorption of each
+// constituent weighted by how much of it there is -- which fixes the layer
+// transmittance tau; the tabulated refractive index fixes the interface
+// reflectances; and the stack of plates is then summed in closed form rather
+// than iterated. `num_layers` need not be an integer: it is the model's
+// structure parameter, standing in for internal air-cell scattering, and the
+// closed form interpolates smoothly through fractional values. Light arrives
+// within a cone of half-angle `incident_cone_angle` (the classic PROSPECT value
+// is 40 degrees, hence the 0.7 radian default); every interior surface instead
+// sees diffuse light and uses the hemispherical average.
+//
+// The constituent set spans the PROSPECT lineage: chlorophylls, water, and dry
+// matter from the classic model, carotenoids and brown pigment from PROSPECT-5,
+// anthocyanins from PROSPECT-D, and the split of dry matter into proteins and
+// carbon-based constituents from PROSPECT-PRO. That last split is an
+// alternative to the lumped `dry_matter`, not an addition to it -- pass one or
+// the other, or the dry matter is counted twice. The `xanthophyll_cycle`
+// parameter is the Fluspect-CX extension, which reshapes (but does not resize)
+// the carotenoid pool; see the table comment further down.
+//
+// References:
+//   Allen et al. (1969, 1970) -- compact and generalized plate models
+//   Stokes (1862)             -- closed form for a stack of plates
+//   Jacquemoud & Baret (1990) -- PROSPECT
+//   Féret et al. (2008)       -- PROSPECT-5 (carotenoids, brown pigment)
+//   Féret et al. (2017)       -- PROSPECT-D (anthocyanins)
+//   Féret et al. (2021)       -- PROSPECT-PRO (proteins, carbon constituents)
+//   Vilfan et al. (2018)      -- Fluspect-CX (xanthophyll cycle)
+
 using ::math import *;
 
 export struct prospect_result {
