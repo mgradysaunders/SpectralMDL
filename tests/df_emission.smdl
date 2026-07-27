@@ -1,0 +1,309 @@
+#smdl
+
+import ::df::*;
+using ::math import *;
+
+// The evaluation harness, matching the one in `df_hapke.smdl`: wrap the
+// material in a material instance and go through the exported entry
+// points, so the tests exercise exactly the path a renderer takes.
+struct EmissionResult {
+  color Le = color(0);
+
+  float pdf = 0;
+
+  bool isNonZero = false;
+};
+
+EmissionResult evaluate(&material mat, const float3 wi) {
+  auto instance = _MaterialInstance(mat);
+  float pdf = 0;
+  color Le = color(0);
+  float3 wiCopy = wi;
+  const bool isNonZero = bool(df::_emissionEvaluate(&instance, &wiCopy, &pdf, cast<&float>(&Le)));
+  return EmissionResult(Le, pdf, isNonZero);
+}
+
+struct EmissionSample {
+  float3 wi = float3(0);
+
+  color Le = color(0);
+
+  float pdf = 0;
+
+  bool isNonZero = false;
+};
+
+EmissionSample sample(&material mat, const float4 xi) {
+  auto instance = _MaterialInstance(mat);
+  float4 xiCopy = xi;
+  float3 wi = float3(0);
+  float pdf = 0;
+  color Le = color(0);
+  const bool isNonZero = bool(df::_emissionSample(&instance, &xiCopy, &wi, &pdf, cast<&float>(&Le)));
+  return EmissionSample(wi, Le, pdf, isNonZero);
+}
+
+material diffuseEmitter(const auto intensity) = material(
+  surface: material_surface(emission: material_emission(emission: df::diffuse_edf(), intensity: intensity)),
+);
+
+// The diffuse EDF is constant radiance `intensity / π` with
+// cosine-weighted sampling, so both the value and the PDF have closed
+// forms everywhere on the upper hemisphere.
+unit_test "Emission diffuse closed form" {
+  auto mat = diffuseEmitter(3.0);
+  const auto directions = float3[](
+    float3(0.0, 0.0, 1.0),
+    normalize(float3(0.5, 0.0, 0.8)),
+    normalize(float3(-0.3, 0.7, 0.1)),
+  );
+  for (int i = 0; i < 3; i++) {
+    const auto result = evaluate(&mat, directions[i]);
+    #assert(result.isNonZero);
+    #assert(result.Le[0] ~== [1e-5] 3.0 / $PI);
+    #assert(result.pdf ~== [1e-5] directions[i].z / $PI);
+  }
+  // A `float` intensity and the equivalent `color` intensity must agree.
+  auto matSpectral = diffuseEmitter(color(3.0));
+  const auto result0 = evaluate(&mat, directions[1]);
+  const auto result1 = evaluate(&matSpectral, directions[1]);
+  #assert(result0.Le[0] ~== [1e-6] result1.Le[0]);
+  #assert(result0.pdf ~== [1e-6] result1.pdf);
+}
+
+// Solid materials emit only on the exterior side.
+unit_test "Emission solid backface is black" {
+  auto mat = diffuseEmitter(3.0);
+  const auto result = evaluate(&mat, normalize(float3(0.2, 0.1, -0.9)));
+  #assert(!result.isNonZero);
+  #assert(result.pdf == 0.0);
+  #assert(result.Le[0] == 0.0);
+}
+
+// The default `edf()` means no emission, even with a nonzero intensity.
+unit_test "Emission default is black" {
+  auto mat0 = material();
+  auto mat1 = material(surface: material_surface(emission: material_emission(intensity: 100.0)));
+  #assert(!evaluate(&mat0, float3(0.0, 0.0, 1.0)).isNonZero);
+  #assert(!evaluate(&mat1, float3(0.0, 0.0, 1.0)).isNonZero);
+  #assert(!sample(&mat0, float4(0.3, 0.4, 0.5, 0.6)).isNonZero);
+  #assert(!sample(&mat1, float4(0.3, 0.4, 0.5, 0.6)).isNonZero);
+}
+
+// A thin-walled material with a default backface mirrors the surface
+// emission on the back side. Both sides emit, so the side-selection
+// chance of 1/2 must show up in the PDF on both sides.
+unit_test "Emission thin-walled mirror" {
+  auto mat = material(
+    thin_walled: true,
+    surface: material_surface(emission: material_emission(emission: df::diffuse_edf(), intensity: 3.0)),
+  );
+  const auto wiFront = normalize(float3(0.5, 0.0, 0.8));
+  const auto wiBack = normalize(float3(0.5, 0.0, -0.8));
+  const auto resultFront = evaluate(&mat, wiFront);
+  const auto resultBack = evaluate(&mat, wiBack);
+  #assert(resultFront.isNonZero);
+  #assert(resultBack.isNonZero);
+  #assert(resultFront.Le[0] ~== [1e-5] 3.0 / $PI);
+  #assert(resultBack.Le[0] ~== [1e-5] 3.0 / $PI);
+  #assert(resultFront.pdf ~== [1e-5] 0.5 * wiFront.z / $PI);
+  #assert(resultBack.pdf ~== [1e-5] 0.5 * wiFront.z / $PI);
+}
+
+// A thin-walled material with a non-default backface emits independently
+// on each side, and the side-selection chance is proportional to the
+// average intensity of each side.
+unit_test "Emission thin-walled backface override" {
+  auto mat = material(
+    thin_walled: true,
+    surface: material_surface(emission: material_emission(emission: df::diffuse_edf(), intensity: 3.0)),
+    backface: material_surface(emission: material_emission(emission: df::diffuse_edf(), intensity: 1.0)),
+  );
+  const auto wiFront = normalize(float3(0.5, 0.0, 0.8));
+  const auto wiBack = normalize(float3(0.5, 0.0, -0.8));
+  const auto resultFront = evaluate(&mat, wiFront);
+  const auto resultBack = evaluate(&mat, wiBack);
+  #assert(resultFront.isNonZero);
+  #assert(resultBack.isNonZero);
+  #assert(resultFront.Le[0] ~== [1e-5] 3.0 / $PI);
+  #assert(resultBack.Le[0] ~== [1e-5] 1.0 / $PI);
+  #assert(resultFront.pdf ~== [1e-5] 0.75 * wiFront.z / $PI);
+  #assert(resultBack.pdf ~== [1e-5] 0.25 * wiFront.z / $PI);
+
+  // A backface with scattering but no emission EDF keeps the back side
+  // black and the front side chance at 1.
+  auto matBackNoEmission = material(
+    thin_walled: true,
+    surface: material_surface(emission: material_emission(emission: df::diffuse_edf(), intensity: 3.0)),
+    backface: material_surface(scattering: df::diffuse_reflection_bsdf()),
+  );
+  #assert(!evaluate(&matBackNoEmission, wiBack).isNonZero);
+  #assert(evaluate(&matBackNoEmission, wiFront).pdf ~== [1e-5] wiFront.z / $PI);
+}
+
+// The spot EDF with exponent 0 and spread π is the uniform hemisphere:
+// the same constant radiance as the diffuse EDF, but with uniform rather
+// than cosine-weighted sampling.
+unit_test "Emission spot uniform limit" {
+  auto mat = material(
+    surface: material_surface(emission: material_emission(emission: df::spot_edf(exponent: 0.0), intensity: 3.0)),
+  );
+  const auto wi = normalize(float3(0.5, 0.0, 0.8));
+  const auto result = evaluate(&mat, wi);
+  #assert(result.isNonZero);
+  #assert(result.Le[0] ~== [1e-5] 3.0 / $PI);
+  #assert(result.pdf ~== [1e-5] 1.0 / $TWO_PI);
+}
+
+// The spot EDF must be normalized such that the cosine-weighted integral
+// over the hemisphere is the intensity.
+unit_test "Emission spot normalization" {
+  const auto exponents = float[](0.0, 1.0, 4.0, 32.0);
+  const auto spreads = float[]($PI, 2.0, 1.2, 0.7);
+  for (int k = 0; k < 4; k++) {
+    auto mat = material(
+      surface: material_surface(
+        emission: material_emission(
+          emission: df::spot_edf(exponent: exponents[k], spread: spreads[k]),
+          intensity: 1.0,
+        ),
+      ),
+    );
+    const int n = 2048;
+    float integral = 0.0;
+    for (int i = 0; i < n; i++) {
+      const float cosTheta = (i + 0.5) / n;
+      const float sinTheta = #sqrt(1.0 - cosTheta * cosTheta);
+      const auto result = evaluate(&mat, float3(sinTheta, 0.0, cosTheta));
+      integral += result.Le[0] * cosTheta if (result.isNonZero);
+    }
+    integral *= $TWO_PI / n;
+    #assert(integral ~== [1e-2] 1.0);
+  }
+}
+
+// Estimating the radiant exitance by sampling must reproduce the
+// intensity, which exercises the consistency of the sampled directions
+// and the reported PDF end-to-end.
+float exitanceEstimate(&material mat, const bool bothSides = false) {
+  const int n = 4096;
+  float estimate = 0.0;
+  float4 xi = float4(0.1, 0.2, 0.3, 0.4);
+  for (int i = 0; i < n; i++, df::monte_carlo::nextLowDiscrepancy(&xi)) {
+    const auto s = sample(mat, xi);
+    if (s.isNonZero) {
+      #assert(bothSides | (s.wi.z > 0.0));
+      estimate += s.Le[0] * #abs(s.wi.z) / s.pdf;
+    }
+  }
+  return estimate / n;
+}
+
+unit_test "Emission exitance furnace" {
+  // The diffuse estimator is exact per sample: Le cos / pdf = intensity.
+  auto matDiffuse = diffuseEmitter(3.0);
+  #assert(exitanceEstimate(&matDiffuse) ~== [1e-3] 3.0);
+
+  // The spot estimator has actual variance; the low discrepancy sequence
+  // keeps it tight.
+  auto matSpot = material(
+    surface: material_surface(
+      emission: material_emission(emission: df::spot_edf(exponent: 4.0, spread: 1.2), intensity: 3.0),
+    ),
+  );
+  #assert(exitanceEstimate(&matSpot) ~== [0.05] 3.0);
+
+  // A two-sided thin-walled emitter radiates the intensity per side, so
+  // the full-sphere estimate is twice the intensity.
+  auto matTwoSided = material(
+    thin_walled: true,
+    surface: material_surface(emission: material_emission(emission: df::diffuse_edf(), intensity: 3.0)),
+  );
+  #assert(exitanceEstimate(&matTwoSided, bothSides: true) ~== [1e-3] 6.0);
+}
+
+// Sampling and evaluation must agree on the PDF and the radiance for the
+// sampled direction, including on the back side of thin-walled materials.
+unit_test "Emission sample and evaluate agree" {
+  auto mat = material(
+    thin_walled: true,
+    surface: material_surface(
+      emission: material_emission(emission: df::spot_edf(exponent: 2.0, spread: 2.0), intensity: 3.0),
+    ),
+    backface: material_surface(emission: material_emission(emission: df::diffuse_edf(), intensity: 1.0)),
+  );
+  float4 xi = float4(0.1, 0.2, 0.3, 0.4);
+  int numBack = 0;
+  for (int i = 0; i < 256; i++, df::monte_carlo::nextLowDiscrepancy(&xi)) {
+    const auto s = sample(&mat, xi);
+    if (s.isNonZero) {
+      const auto result = evaluate(&mat, s.wi);
+      #assert(result.isNonZero);
+      #assert(result.pdf ~== [1e-5] s.pdf);
+      #assert(result.Le[0] ~== [1e-5] s.Le[0]);
+      numBack += int(s.wi.z < 0.0);
+    }
+  }
+  // The backface intensity is 1 against the surface intensity 3, so
+  // roughly a quarter of the samples must land on the back side.
+  #assert(numBack > 0);
+}
+
+// `tint` scales the radiance without touching the PDF, and the mixes
+// combine EDF components by weight.
+unit_test "Emission tint and mix" {
+  auto matTint = material(
+    surface: material_surface(
+      emission: material_emission(emission: df::tint(0.5, df::diffuse_edf()), intensity: 3.0),
+    ),
+  );
+  const auto wi = normalize(float3(0.5, 0.0, 0.8));
+  const auto resultTint = evaluate(&matTint, wi);
+  #assert(resultTint.isNonZero);
+  #assert(resultTint.Le[0] ~== [1e-5] 0.5 * 3.0 / $PI);
+  #assert(resultTint.pdf ~== [1e-5] wi.z / $PI);
+
+  auto matMix = material(
+    surface: material_surface(
+      emission: material_emission(
+        emission: df::normalized_mix(df::edf_component[](
+          df::edf_component(0.25, df::diffuse_edf()),
+          df::edf_component(0.25, df::spot_edf(exponent: 0.0)),
+        )),
+        intensity: 3.0,
+      ),
+    ),
+  );
+  const auto resultMix = evaluate(&matMix, wi);
+  #assert(resultMix.isNonZero);
+  // Both components are constant radiance 1/π, mixed with total weight 0.5.
+  #assert(resultMix.Le[0] ~== [1e-5] 0.5 * 3.0 / $PI);
+  // The chances normalize to 1/2 each over the cosine and uniform PDFs.
+  #assert(resultMix.pdf ~== [1e-5] 0.5 * (wi.z / $PI) + 0.5 * (1.0 / $TWO_PI));
+}
+
+// The material instance must advertise emission through the flags, the
+// intensity pointers, and the intensity modes.
+unit_test "Emission instance metadata" {
+  const int MATERIAL_HAS_SURFACE_EMISSION = (1 << 4);
+  const int MATERIAL_HAS_BACKFACE_EMISSION = (1 << 5);
+  auto mat = material(
+    surface: material_surface(
+      emission: material_emission(emission: df::diffuse_edf(), intensity: 5.0, mode: intensity_power),
+    ),
+  );
+  auto instance = _MaterialInstance(&mat);
+  #assert((instance.flags & MATERIAL_HAS_SURFACE_EMISSION) != 0);
+  #assert((instance.flags & MATERIAL_HAS_BACKFACE_EMISSION) == 0);
+  #assert(instance.emission_modes == 1);
+  #assert(bool(instance.surface_emission_intensity));
+  #assert(!bool(instance.backface_emission_intensity));
+  const color intensity = *instance.surface_emission_intensity;
+  #assert(intensity[0] == 5.0);
+
+  auto matDefault = material();
+  auto instanceDefault = _MaterialInstance(&matDefault);
+  #assert((instanceDefault.flags & MATERIAL_HAS_SURFACE_EMISSION) == 0);
+  #assert(instanceDefault.emission_modes == 0);
+  #assert(!bool(instanceDefault.surface_emission_intensity));
+}

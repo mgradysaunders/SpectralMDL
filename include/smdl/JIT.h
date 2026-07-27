@@ -54,6 +54,19 @@ static constexpr int MATERIAL_HAS_SURFACE = (1 << 2);
 /// Indicates that the material has a non-default `backface` initializer.
 static constexpr int MATERIAL_HAS_BACKFACE = (1 << 3);
 
+/// Indicates that the material has a non-default emission EDF in the
+/// `surface` initializer.
+static constexpr int MATERIAL_HAS_SURFACE_EMISSION = (1 << 4);
+
+/// Indicates that the material has a non-default emission EDF in the
+/// `backface` initializer.
+///
+/// \note
+/// The back side only actually emits if the material is also thin-walled,
+/// which may only be knowable at runtime. See `Material::emissionEvaluate`.
+///
+static constexpr int MATERIAL_HAS_BACKFACE_EMISSION = (1 << 5);
+
 /// Indicates that the material has a non-default `volume` initializer.
 static constexpr int MATERIAL_HAS_VOLUME = (1 << 6);
 
@@ -170,6 +183,22 @@ public:
     ///
     const float *scattering_coefficient{};
 
+    /// The `surface` emission intensity, or null if the `surface` has no
+    /// non-default emission EDF.
+    ///
+    /// \note
+    /// If non-null, this necessarily points to `wavelength_base_max` values.
+    ///
+    const float *surface_emission_intensity{};
+
+    /// The `backface` emission intensity, or null if the `backface` has no
+    /// non-default emission EDF.
+    ///
+    /// \note
+    /// If non-null, this necessarily points to `wavelength_base_max` values.
+    ///
+    const float *backface_emission_intensity{};
+
     /// The wavelength count.
     int wavelength_base_max{};
 
@@ -181,6 +210,11 @@ public:
 
     /// The df flags for the material `backface` component.
     int df_flags_backface{};
+
+    /// The emission intensity modes: bit 0 is set if the `surface` emission
+    /// intensity is `intensity_power` (as opposed to the default
+    /// `intensity_radiant_exitance`), and bit 1 likewise for the `backface`.
+    int emission_modes{};
 
     /// The tangent-to-world space matrix present when constructing the
     /// instance.
@@ -265,7 +299,64 @@ public:
                int &isDelta)>
       scatterSample{};
 
-  // TODO emissionEvaluate?
+  /// The emission evaluate function.
+  ///
+  /// \param[in] instance
+  /// The instance obtained from the `evaluate` function.
+  ///
+  /// \param[in] wi
+  /// The emission direction in world space, pointing away from the
+  /// surface.
+  ///
+  /// \param[out] pdf
+  /// The solid-angle PDF of `emissionSample` sampling `wi`.
+  ///
+  /// \param[out] Le
+  /// The emitted radiance spectrum. This must be non-null!
+  ///
+  /// \return
+  /// Returns `true` if the result is non-zero.
+  ///
+  /// \note
+  /// The radiance is `material_emission.intensity` times the normalized
+  /// EDF, which is the physical radiance when the intensity mode is
+  /// `intensity_radiant_exitance`. When the mode is `intensity_power`
+  /// (see `Instance::emission_modes`), the host must additionally divide
+  /// by the total emitting surface area.
+  ///
+  /// \note
+  /// Solid materials emit only on the exterior side of the geometry.
+  /// Thin-walled materials emit `surface.emission` on the front side and
+  /// `backface.emission`, if the backface is non-default, on the back
+  /// side, else `surface.emission` mirrored.
+  ///
+  Function<int(const Instance &instance, const float3 &wi, float &pdf,
+               float *Le)>
+      emissionEvaluate{};
+
+  /// The emission sample function.
+  ///
+  /// \param[in] instance
+  /// The instance obtained from the `evaluate` function.
+  ///
+  /// \param[in] xi
+  /// The canonical random sample in \f$ [0,1]^4 \f$.
+  ///
+  /// \param[out] wi
+  /// The emission direction in world space.
+  ///
+  /// \param[out] pdf
+  /// The solid-angle PDF of sampling `wi`.
+  ///
+  /// \param[out] Le
+  /// The emitted radiance spectrum. This must be non-null!
+  ///
+  /// \return
+  /// Returns `true` if the result is non-zero.
+  ///
+  Function<int(const Instance &instance, const float4 &xi, float3 &wi,
+               float &pdf, float *Le)>
+      emissionSample{};
 };
 
 /// A just-in-time SMDL material pointer and an instance of the material.
@@ -294,6 +385,54 @@ public:
   [[nodiscard]] bool hasMedium() const noexcept {
     return (instance.absorption_coefficient != nullptr ||
             instance.scattering_coefficient != nullptr);
+  }
+
+  /// Has a non-default emission EDF in the `surface` initializer?
+  [[nodiscard]] bool hasSurfaceEmission() const noexcept {
+    return (instance.flags & MATERIAL_HAS_SURFACE_EMISSION) != 0;
+  }
+
+  /// Has a non-default emission EDF in the `backface` initializer?
+  [[nodiscard]] bool hasBackfaceEmission() const noexcept {
+    return (instance.flags & MATERIAL_HAS_BACKFACE_EMISSION) != 0;
+  }
+
+  /// Has a non-default emission EDF at all?
+  [[nodiscard]] bool hasEmission() const noexcept {
+    return hasSurfaceEmission() || hasBackfaceEmission();
+  }
+
+  /// The `surface` emission intensity, or empty if the `surface` has no
+  /// non-default emission EDF.
+  [[nodiscard]]
+  Span<const float> getSurfaceEmissionIntensity() const noexcept {
+    return Span<const float>(instance.surface_emission_intensity,
+                             instance.surface_emission_intensity
+                                 ? instance.wavelength_base_max
+                                 : 0);
+  }
+
+  /// The `backface` emission intensity, or empty if the `backface` has no
+  /// non-default emission EDF.
+  [[nodiscard]]
+  Span<const float> getBackfaceEmissionIntensity() const noexcept {
+    return Span<const float>(instance.backface_emission_intensity,
+                             instance.backface_emission_intensity
+                                 ? instance.wavelength_base_max
+                                 : 0);
+  }
+
+  /// Is the `surface` emission intensity in units of power (watts) as
+  /// opposed to radiant exitance (watts per square meter)? If so, the host
+  /// must divide emitted radiance by the total emitting surface area.
+  [[nodiscard]] bool isSurfaceEmissionPower() const noexcept {
+    return (instance.emission_modes & 1) != 0;
+  }
+
+  /// Is the `backface` emission intensity in units of power (watts) as
+  /// opposed to radiant exitance (watts per square meter)?
+  [[nodiscard]] bool isBackfaceEmissionPower() const noexcept {
+    return (instance.emission_modes & 2) != 0;
   }
 
   /// The index of refraction.
@@ -412,6 +551,56 @@ public:
                                            f.data(), isDeltaInt)};
     isDelta = isDeltaInt;
     return isNonZero;
+  }
+
+  /// The emission evaluate function.
+  ///
+  /// \param[in] wi
+  /// The emission direction in world space, pointing away from the
+  /// surface.
+  ///
+  /// \param[out] pdf
+  /// The solid-angle PDF of `emissionSample` sampling `wi`.
+  ///
+  /// \param[out] Le
+  /// The emitted radiance spectrum. This must be non-null!
+  ///
+  /// \return
+  /// Returns `true` if the result is non-zero.
+  ///
+  /// \note
+  /// See `Material::emissionEvaluate` for the unit conventions and for
+  /// which side of the geometry emits.
+  ///
+  [[nodiscard]] bool emissionEvaluate(const float3 &wi, float &pdf,
+                                      Span<float> Le) const {
+    SMDL_SANITY_CHECK(material && instance);
+    SMDL_SANITY_CHECK(Le.size() == size_t(instance.wavelength_base_max));
+    return material->emissionEvaluate(instance, wi, pdf, Le.data());
+  }
+
+  /// The emission sample function.
+  ///
+  /// \param[in] xi
+  /// The canonical random sample in \f$ [0,1]^4 \f$.
+  ///
+  /// \param[out] wi
+  /// The emission direction in world space.
+  ///
+  /// \param[out] pdf
+  /// The solid-angle PDF of sampling `wi`.
+  ///
+  /// \param[out] Le
+  /// The emitted radiance spectrum. This must be non-null!
+  ///
+  /// \return
+  /// Returns `true` if the result is non-zero.
+  ///
+  [[nodiscard]] bool emissionSample(const float4 &xi, float3 &wi, float &pdf,
+                                    Span<float> Le) const {
+    SMDL_SANITY_CHECK(material && instance);
+    SMDL_SANITY_CHECK(Le.size() == size_t(instance.wavelength_base_max));
+    return material->emissionSample(instance, xi, wi, pdf, Le.data());
   }
 
 public:

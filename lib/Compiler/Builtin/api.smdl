@@ -459,6 +459,10 @@ const int MATERIAL_HAS_SURFACE = (1 << 2);
 
 const int MATERIAL_HAS_BACKFACE = (1 << 3);
 
+const int MATERIAL_HAS_SURFACE_EMISSION = (1 << 4);
+
+const int MATERIAL_HAS_BACKFACE_EMISSION = (1 << 5);
+
 const int MATERIAL_HAS_VOLUME = (1 << 6);
 
 const int MATERIAL_HAS_HAIR = (1 << 7);
@@ -491,15 +495,26 @@ export struct _MaterialInstance {
   /// The volume scattering coefficient.
   &color scattering_coefficient = #is_void(ptr.volume.scattering_coefficient) ? none : &ptr.volume.scattering_coefficient;
 
+  /// The `surface` emission intensity, or `none` if the `surface` has no
+  /// non-default emission EDF. \see `df::_emissionEvaluate()` for how the
+  /// `intensity_mode` units are resolved.
+  &color surface_emission_intensity = #is_default(ptr.surface.emission.emission) ? none : #bump(color(ptr.surface.emission.intensity));
+
+  /// The `backface` emission intensity, or `none` if the `backface` has no
+  /// non-default emission EDF.
+  &color backface_emission_intensity = #is_default(ptr.backface.emission.emission) ? none : #bump(color(ptr.backface.emission.intensity));
+
   /// The wavelength count.
   int wavelength_base_max = $WAVELENGTH_BASE_MAX;
 
   /// The flags.
-  int flags = $state.transport                                           //
-              | (ptr.thin_walled ? MATERIAL_THIN_WALLED : 0)             //
-              | (!#is_default(ptr.surface) ? MATERIAL_HAS_SURFACE : 0)   //
-              | (!#is_default(ptr.backface) ? MATERIAL_HAS_BACKFACE : 0) //
-              | (!#is_default(ptr.volume) ? MATERIAL_HAS_VOLUME : 0)     //
+  int flags = $state.transport                                                                    //
+              | (ptr.thin_walled ? MATERIAL_THIN_WALLED : 0)                                      //
+              | (!#is_default(ptr.surface) ? MATERIAL_HAS_SURFACE : 0)                            //
+              | (!#is_default(ptr.backface) ? MATERIAL_HAS_BACKFACE : 0)                          //
+              | (!#is_default(ptr.surface.emission.emission) ? MATERIAL_HAS_SURFACE_EMISSION : 0) //
+              | (!#is_default(ptr.backface.emission.emission) ? MATERIAL_HAS_BACKFACE_EMISSION : 0) //
+              | (!#is_default(ptr.volume) ? MATERIAL_HAS_VOLUME : 0)                              //
               | (!#is_default(ptr.hair) ? MATERIAL_HAS_HAIR : 0);
 
   /// The df flags for the `surface` component.
@@ -507,6 +522,12 @@ export struct _MaterialInstance {
 
   /// The df flags for the `backface` component.
   int df_flags_backface = ptr.backface.scattering.df_flags;
+
+  /// The emission intensity modes: bit 0 is set if the `surface` emission
+  /// intensity is `intensity_power` (as opposed to the default
+  /// `intensity_radiant_exitance`), and bit 1 likewise for the `backface`.
+  int emission_modes = (int(ptr.surface.emission.mode) == int(intensity_power) ? 1 : 0) //
+                       | (int(ptr.backface.emission.mode) == int(intensity_power) ? 2 : 0);
 
   /// The tangent-to-world matrix held by the `State` during construction.
   float3x3 tangent_to_world = let {

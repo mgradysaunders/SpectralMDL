@@ -530,6 +530,94 @@ auto ScatterEvaluateResultWithMultiscatter(
   }
 }
 
+//--{ Emission infrastructure
+// Emission is a function of one direction: the Emission Distribution
+// Function (EDF) at a shading point describes emitted radiance over the
+// outgoing direction `wi` (pointing away from the surface). There is no
+// reverse PDF and there are no Dirac delta EDFs, so the result structs are
+// simpler than their scattering counterparts.
+//
+// The EDF value `f` is normalized such that the cosine-weighted integral
+// over the upper hemisphere is 1, so that `intensity * f` is the emitted
+// radiance when `material_emission.mode` is `intensity_radiant_exitance`.
+// The entry points `_emissionEvaluate` and `_emissionSample` apply the
+// intensity; when the mode is `intensity_power`, the host is responsible
+// for dividing by the total emitting surface area, which is unknowable
+// here.
+struct EmissionEvaluateParameters {
+  /// The emission direction in the natural tangent space, pointing away
+  /// from the surface.
+  float3 wi0;
+
+  /// Hit backface?
+  bool hitBackface = wi0.z < 0;
+
+  /// The normal direction.
+  float3 normal = float3(0, 0, 1);
+
+  /// The tangent direction.
+  float3 tangent_u = float3(1, 0, 0);
+
+  /// The emission direction (expanded in the active tangent space).
+  float3 wi = wi0;
+
+  finalize {
+    // If evaluating the backface, flip everything so that `wi`
+    // is always in the upper hemisphere.
+    if (hitBackface) {
+      wi0 = -wi0;
+      wi = -wi;
+    }
+  }
+};
+
+struct EmissionEvaluateResult {
+  /// The Emission Distribution Function (EDF) evaluation, normalized such
+  /// that the cosine-weighted integral over the upper hemisphere is 1.
+  $(color | float) f = 0.0;
+
+  /// The Probability Density Function (PDF) with respect to solid angle
+  /// of sampling `wi`.
+  float pdf = 0.0;
+
+  /// Is known to be black by construction? Faster than checking every
+  /// element of `f`!
+  bool isBlack = false;
+};
+
+struct EmissionSampleParameters {
+  /// The canonical random sample in `[0,1]^4`.
+  float4 xi;
+
+  /// The normal direction.
+  float3 normal = float3(0, 0, 1);
+
+  /// The tangent direction.
+  float3 tangent_u = float3(1, 0, 0);
+};
+
+struct EmissionSampleResult {
+  /// The sampled emission direction in the natural tangent space.
+  float3 wi = float3(0.0);
+
+  /// Is valid?
+  bool isValid = false;
+};
+
+/// Recalculate the effective tangent space for emission evaluation.
+///
+/// \return
+/// Returns `true` if `wi` remains in the upper hemisphere after applying
+/// the effective tangent space.
+///
+@(pure noinline)
+bool recalculateTangentSpace(inline const &EmissionEvaluateParameters params) {
+  auto tbn(calculateTangentSpace(normal, tangent_u));
+  wi = normalize(wi0 * tbn);
+  return wi.z > 0;
+}
+//--}
+
 //--{ _default_bsdf
 @(pure macro)
 auto scatterEvaluate(const &_default_bsdf this [[anno::unused()]], const &ScatterEvaluateParameters params [[anno::unused()]]) {
@@ -551,6 +639,21 @@ auto scatterEvaluate(const &_default_vdf this [[anno::unused()]], const &Scatter
 @(macro)
 auto scatterSample(const &_default_vdf this [[anno::unused()]], const &ScatterSampleParameters params [[anno::unused()]]) {
   return ScatterSampleResult();
+}
+//--}
+
+//--{ _default_edf
+// The default `edf()` means no emission, consistent with `bsdf()` meaning
+// black. Emission is enabled by constructing a distribution node, e.g.,
+// `material_emission(emission: diffuse_edf(), intensity: ...)`.
+@(pure macro)
+auto emissionEvaluate(const &_default_edf this [[anno::unused()]], const &EmissionEvaluateParameters params [[anno::unused()]]) {
+  return EmissionEvaluateResult(isBlack: true);
+}
+
+@(pure macro)
+auto emissionSample(const &_default_edf this [[anno::unused()]], const &EmissionSampleParameters params [[anno::unused()]]) {
+  return EmissionSampleResult();
 }
 //--}
 
@@ -1806,6 +1909,140 @@ auto scatterSample(const &hapke_granular_bsdf this [[anno::unused()]], inline co
 }
 //--}
 
+//--{ diffuse_edf
+/// A diffuse (Lambertian) Emission Distribution Function (EDF), i.e.,
+/// constant radiance over the upper hemisphere.
+export struct diffuse_edf: edf {
+  /// The handle.
+  ///
+  /// > Name to provide access to this component for use in an MDL
+  /// > integration.
+  ///
+  /// \note
+  /// This should be a `string` but we `void` it because we have no use for it.
+  ///
+  void handle = "";
+
+  /// The flags.
+  static const int df_flags = DF_DIFFUSE;
+};
+
+@(pure)
+auto emissionEvaluate(const &diffuse_edf this [[anno::unused()]], inline const &EmissionEvaluateParameters params) {
+  if (recalculateTangentSpace(params)) {
+    return EmissionEvaluateResult(f: 1.0 / $PI, pdf: wi.z / $PI);
+  } else {
+    return EmissionEvaluateResult(isBlack: true);
+  }
+}
+
+@(pure)
+auto emissionSample(const &diffuse_edf this [[anno::unused()]], inline const &EmissionSampleParameters params) {
+  return EmissionSampleResult(wi: calculateTangentSpace(normal, tangent_u) * monte_carlo::cosineHemisphereSample(xi.xy), isValid: true);
+}
+//--}
+
+//--{ spot_edf
+/// A spot Emission Distribution Function (EDF), i.e., an exponentiated
+/// cosine falloff restricted to a cone.
+///
+/// The cosine is remapped so that it reaches zero at the boundary of the
+/// cone: with `θ0 = spread / 2` the distribution is proportional to
+/// `((cos(θ) - cos(θ0)) / (1 - cos(θ0)))^exponent` inside the cone and
+/// zero outside of it.
+///
+export struct spot_edf: edf {
+  /// The exponent of the cosine falloff.
+  float exponent;
+
+  /// The spread, being the full angle of the emission cone in radians. The
+  /// default of `$PI` corresponds to the full upper hemisphere.
+  float spread = $PI;
+
+  /// > Boolean that chooses between two interpretations of the EDF: the
+  /// > directional distribution applied per point in tangent space, or the
+  /// > distribution of the light source as a whole in the global frame.
+  ///
+  /// \note
+  /// Only the per-point tangent-space interpretation is supported, so this
+  /// is accepted and ignored. The luminaire-as-a-whole interpretation is a
+  /// host-side concern, e.g., a delta spot light.
+  ///
+  void global_distribution = true;
+
+  /// The global frame.
+  ///
+  /// \note
+  /// Only the per-point tangent-space interpretation is supported, so this
+  /// is accepted and ignored.
+  ///
+  void global_frame = float3x3(1.0);
+
+  /// The handle.
+  ///
+  /// > Name to provide access to this component for use in an MDL
+  /// > integration.
+  ///
+  /// \note
+  /// This should be a `string` but we `void` it because we have no use for it.
+  ///
+  void handle = "";
+
+  /// The precomputed cosine of the cone half angle.
+  const float _cosSpread = #cos(0.5 * #min(#max(spread, EPSILON), $PI));
+
+  /// The precomputed normalization such that the cosine-weighted integral
+  /// over the cone is 1, i.e., with `c0 = _cosSpread` and `k = exponent`:
+  /// `∫ ((x - c0)/(1 - c0))^k x 2π dx` over `x` in `[c0, 1]`.
+  ///
+  /// \note
+  /// This must clamp `exponent` itself because field initializers run
+  /// before the `finalize` block.
+  ///
+  const float _normalization = let {
+                                 const float k = #max(exponent, 0.0);
+                               } in 2.0 * $PI * (1.0 - _cosSpread) * (_cosSpread / (k + 1.0) + (1.0 - _cosSpread) / (k + 2.0));
+
+  /// The flags.
+  static const int df_flags = DF_GLOSSY;
+
+  finalize {
+    exponent = #max(exponent, 0.0);
+  }
+};
+
+@(pure)
+auto emissionEvaluate(const &spot_edf this, inline const &EmissionEvaluateParameters params) {
+  if (recalculateTangentSpace(params)) {
+    const auto mu((wi.z - this._cosSpread) / (1.0 - this._cosSpread));
+    if (!(mu > 0.0))
+      return EmissionEvaluateResult(isBlack: true);
+    const auto muPowK(#pow(mu, this.exponent));
+    return EmissionEvaluateResult(
+             f: muPowK / this._normalization,
+             pdf: (this.exponent + 1.0) * muPowK / (2.0 * $PI * (1.0 - this._cosSpread)),
+           );
+  } else {
+    return EmissionEvaluateResult(isBlack: true);
+  }
+}
+
+@(pure)
+auto emissionSample(const &spot_edf this, inline const &EmissionSampleParameters params) {
+  // Sample `mu` proportional to `mu^exponent`, which is a good, though not
+  // perfect, importance sample of the cosine-weighted distribution. The
+  // PDF reported by `emissionEvaluate` matches this sampling exactly.
+  const auto mu(#pow(xi.x, 1.0 / (this.exponent + 1.0)));
+  const auto cosTheta(this._cosSpread + (1.0 - this._cosSpread) * mu);
+  const auto sinTheta(#sqrt(#max(1.0 - cosTheta * cosTheta, 0.0)));
+  const auto phi($TWO_PI * xi.y);
+  return EmissionSampleResult(
+           wi: calculateTangentSpace(normal, tangent_u) * float3(sinTheta * #cos(phi), sinTheta * #sin(phi), cosTheta),
+           isValid: true,
+         );
+}
+//--}
+
 //--{ tint
 /// A 1-value tint.
 struct tint1: bsdf, edf, hair_bsdf {
@@ -1869,6 +2106,19 @@ auto scatterEvaluate(const &tint2 this, const &ScatterEvaluateParameters params)
     }
   }
   return result;
+}
+
+@(macro)
+auto emissionEvaluate(const &tint1 this, const &EmissionEvaluateParameters params) {
+  auto result(emissionEvaluate(visit &this.base, params));
+  if (!result.isBlack)
+    result.f *= this.tint;
+  return result;
+}
+
+@(macro)
+auto emissionSample(const &tint1 this, const &EmissionSampleParameters params) {
+  return emissionSample(visit &this.base, params);
 }
 
 @(macro)
@@ -2693,6 +2943,38 @@ auto scatterSample(const &component_mix this, const &ScatterSampleParameters par
   }
   return ScatterSampleResult();
 }
+
+@(macro)
+auto emissionEvaluate(const &component_mix this, const &EmissionEvaluateParameters params) {
+  auto result(EmissionEvaluateResult(f: color(0), isBlack: true));
+  for (int i = 0; i < #num(this.components); i++) {
+    visit component in this.components[i] { // In general this is a union!
+      auto component_result(emissionEvaluate(visit &component.component, params));
+      if (!component_result.isBlack) {
+        result.pdf += component.chance * component_result.pdf;
+        result.f += component.weight * component_result.f;
+        result.isBlack = false;
+      }
+    }
+  }
+  return result;
+}
+
+@(macro)
+auto emissionSample(const &component_mix this, const &EmissionSampleParameters params) {
+  const auto xi(&params.xi.z);
+  for (int i = 0; i < #num(this.components); i++) {
+    visit component in this.components[i] { // In general this is a union!
+      if (!(*xi < component.chance)) {
+        *xi -= component.chance;
+      } else {
+        *xi /= component.chance;
+        return emissionSample(visit &component.component, params);
+      }
+    }
+  }
+  return EmissionSampleResult();
+}
 //--}
 
 export struct anisotropic_vdf: vdf {
@@ -2846,6 +3128,131 @@ export float _volumeScatterSample(
   return _volumeScatterEvaluate(instance, woWorld, wiWorld);
 }
 
-// TODO _emissionEvaluate
+//--{ Emission entry points
+// Which side emits:
+// - Solid materials emit only on the exterior side; a backface hit
+//   returns black. (Scattering must handle backface hits of solids for
+//   refraction exit; emission has no analogous need, and the interior of
+//   a closed solid is the volume's business.)
+// - Thin-walled materials emit `surface.emission` on the front side, and
+//   on the back side `backface.emission` when `backface` is non-default,
+//   else `surface.emission` mirrored.
+//
+// `_emissionSample` chooses the emitting side with chance proportional to
+// each side's average intensity, and `_emissionEvaluate` folds the same
+// chance into the reported PDF, so the two always agree for MIS.
 
-// TODO _emissionSample
+/// Calculate the average emission intensities of the front and back sides.
+@(macro)
+float2 _emissionSideWeights(const &_MaterialInstance instance) {
+  float frontWeight = 0.0;
+  float backWeight = 0.0;
+  if $(!#is_default(instance.ptr.surface.emission.emission)) {
+    frontWeight = #max(average(instance.ptr.surface.emission.intensity), 0.0);
+  }
+  if (instance.ptr.thin_walled) {
+    if $(!#is_default(instance.ptr.backface)) {
+      if $(!#is_default(instance.ptr.backface.emission.emission)) {
+        backWeight = #max(average(instance.ptr.backface.emission.intensity), 0.0);
+      }
+    } else {
+      backWeight = frontWeight;
+    }
+  }
+  return float2(frontWeight, backWeight);
+}
+
+/// Evaluate the emission of the given `material_surface` side, weighting
+/// the PDF by the side chance and applying the intensity.
+@(macro)
+int _emissionEvaluateSide(
+  const &material_surface side,
+  const float chance,
+  const &EmissionEvaluateParameters params,
+  const &float pdf,
+  const &float Le,
+) {
+  if (!(chance > 0.0))
+    return false;
+  auto result = emissionEvaluate(visit &side.emission.emission, params);
+  visit result in result {
+    if (result.isBlack)
+      return false;
+    *pdf = chance * result.pdf;
+    color LeResult(color(side.emission.intensity) * result.f);
+    #memcpy(Le, &LeResult, #sizeof(float) * $WAVELENGTH_BASE_MAX);
+    return true;
+  }
+}
+
+@(macro)
+export int _emissionEvaluate(
+  const &_MaterialInstance instance,
+  const &float3 wiWorld, ///< The emission direction in world space
+  const &float pdf,      ///< output: The PDF of sampling `wiWorld`
+  const &float Le,       ///< output: The emitted radiance
+) {
+  *pdf = 0.0;
+  for (int i = 0; i < $WAVELENGTH_BASE_MAX; i++)
+    Le[i] = 0.0;
+  const auto weights = _emissionSideWeights(instance);
+  const auto totalWeight = weights.x + weights.y;
+  if (!(totalWeight > 0.0))
+    return false;
+  auto params = EmissionEvaluateParameters(
+    wi0: normalize((*wiWorld) * instance.tangent_to_world),
+    normal: normalize(instance.geometry.normal),
+  );
+  if (!params.hitBackface) {
+    return _emissionEvaluateSide(&instance.ptr.surface, weights.x / totalWeight, &params, pdf, Le);
+  } else {
+    if (!instance.ptr.thin_walled)
+      return false;
+    if $(!#is_default(instance.ptr.backface)) {
+      return _emissionEvaluateSide(&instance.ptr.backface, weights.y / totalWeight, &params, pdf, Le);
+    } else {
+      return _emissionEvaluateSide(&instance.ptr.surface, weights.y / totalWeight, &params, pdf, Le);
+    }
+  }
+}
+
+@(macro)
+export int _emissionSample(
+  const &_MaterialInstance instance,
+  const &float4 xi,      ///< The canonical random sample in `[0,1]^4`
+  const &float3 wiWorld, ///< output: The emission direction in world space
+  const &float pdf,      ///< output: The PDF of sampling `wiWorld`
+  const &float Le,       ///< output: The emitted radiance
+) {
+  *pdf = 0.0;
+  for (int i = 0; i < $WAVELENGTH_BASE_MAX; i++)
+    Le[i] = 0.0;
+  const auto weights = _emissionSideWeights(instance);
+  const auto totalWeight = weights.x + weights.y;
+  if (!(totalWeight > 0.0))
+    return false;
+  auto params = EmissionSampleParameters(
+    xi: *xi,
+    normal: normalize(instance.geometry.normal),
+  );
+  const bool sampleFront = monte_carlo::boolSample(&params.xi.w, weights.x / totalWeight);
+  auto result = return_from {
+    if (sampleFront) {
+      return emissionSample(visit &instance.ptr.surface.emission.emission, &params);
+    } else if $(!#is_default(instance.ptr.backface)) {
+      return emissionSample(visit &instance.ptr.backface.emission.emission, &params);
+    } else {
+      return emissionSample(visit &instance.ptr.surface.emission.emission, &params);
+    }
+  };
+  visit result in result {
+    // Reject directions at or below the geometric horizon: `_emissionEvaluate`
+    // would attribute them to the other side and disagree on the PDF.
+    if (!result.isValid || !(result.wi.z > 0.0))
+      return false;
+    const auto wiNatural = sampleFront ? result.wi : -result.wi;
+    *wiWorld = normalize(instance.tangent_to_world * wiNatural);
+    return _emissionEvaluate(instance, wiWorld, pdf, Le);
+  }
+}
+//--}

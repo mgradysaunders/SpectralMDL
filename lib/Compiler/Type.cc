@@ -1296,10 +1296,15 @@ static void verifyMaterialInstanceLayout(Context &context, Type *type,
       {"temperature", offsetof(Instance, temperature)},
       {"absorption_coefficient", offsetof(Instance, absorption_coefficient)},
       {"scattering_coefficient", offsetof(Instance, scattering_coefficient)},
+      {"surface_emission_intensity",
+       offsetof(Instance, surface_emission_intensity)},
+      {"backface_emission_intensity",
+       offsetof(Instance, backface_emission_intensity)},
       {"wavelength_base_max", offsetof(Instance, wavelength_base_max)},
       {"flags", offsetof(Instance, flags)},
       {"df_flags_surface", offsetof(Instance, df_flags_surface)},
       {"df_flags_backface", offsetof(Instance, df_flags_backface)},
+      {"emission_modes", offsetof(Instance, emission_modes)},
       {"tangent_to_world_space", offsetof(Instance, tangent_to_world_space)},
   };
   const auto numFields{sizeof(fields) / sizeof(fields[0])};
@@ -1543,6 +1548,95 @@ void FunctionType::initializeMaterialFunctions(Emitter &emitter) {
                      context.getColorType()->wavelengthBaseMax);
     markPointerParam(func, 7, context.getIntType()); // isDelta
     jitMaterial.scatterSample.name = func->getName().str();
+  }
+  {
+    // Generate the emission evaluate function:
+    // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    // @(pure visible) int "material_name.emissionEvaluate"(
+    //     &_MaterialInstance instance,
+    //     &float3 wi,
+    //     &float pdf,
+    //     &float Le) {
+    //   return ::df::_emissionEvaluate(instance, wi, pdf, Le);
+    // }
+    // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    auto funcReturnType{static_cast<Type *>(context.getIntType())};
+    auto func{emitter.createFunction(
+        concat(symbolBase, ".emissionEvaluate"), /*isPure=*/true,
+        funcReturnType,
+        {constParameter(materialInstancePtrType, "instance"),
+         constParameter(float3PtrType, "wi"),
+         constParameter(floatPtrType, "pdf"),
+         constParameter(floatPtrType, "Le")},
+        decl.srcLoc, [&] {
+          auto dfFunc{Declaration::findInModule(
+              context, "_emissionEvaluate"sv, nullptr, dfModule,
+              /*ignoreIfNotExported=*/false)};
+          SMDL_SANITY_CHECK(dfFunc);
+          emitter.emitReturn(
+              emitter.emitCall(
+                  dfFunc->value,
+                  llvm::ArrayRef<Value>{
+                      emitter.resolveIdentifier("instance"sv, decl.srcLoc),
+                      emitter.resolveIdentifier("wi"sv, decl.srcLoc),
+                      emitter.resolveIdentifier("pdf"sv, decl.srcLoc),
+                      emitter.resolveIdentifier("Le"sv, decl.srcLoc)},
+                  decl.srcLoc),
+              decl.srcLoc);
+        })};
+    func->setLinkage(llvm::Function::ExternalLinkage);
+    markPointerParam(func, 0, materialInstanceType);
+    markPointerParam(func, 1, context.getFloatType(3)); // wi
+    markPointerParam(func, 2, context.getFloatType());  // pdf
+    markPointerParam(func, 3, context.getFloatType(),   // Le
+                     context.getColorType()->wavelengthBaseMax);
+    jitMaterial.emissionEvaluate.name = func->getName().str();
+  }
+  {
+    // Generate the emission sample function:
+    // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    // @(pure visible) int "material_name.emissionSample"(
+    //     &_MaterialInstance instance,
+    //     &float4 xi,
+    //     &float3 wi,
+    //     &float pdf,
+    //     &float Le) {
+    //   return ::df::_emissionSample(instance, xi, wi, pdf, Le);
+    // }
+    // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    auto funcReturnType{static_cast<Type *>(context.getIntType())};
+    auto func{emitter.createFunction(
+        concat(symbolBase, ".emissionSample"), /*isPure=*/true, funcReturnType,
+        {constParameter(materialInstancePtrType, "instance"),
+         constParameter(float4PtrType, "xi"),
+         constParameter(float3PtrType, "wi"),
+         constParameter(floatPtrType, "pdf"),
+         constParameter(floatPtrType, "Le")},
+        decl.srcLoc, [&] {
+          auto dfFunc{Declaration::findInModule(
+              context, "_emissionSample"sv, nullptr, dfModule,
+              /*ignoreIfNotExported=*/false)};
+          SMDL_SANITY_CHECK(dfFunc);
+          emitter.emitReturn(
+              emitter.emitCall(
+                  dfFunc->value,
+                  llvm::ArrayRef<Value>{
+                      emitter.resolveIdentifier("instance"sv, decl.srcLoc),
+                      emitter.resolveIdentifier("xi"sv, decl.srcLoc),
+                      emitter.resolveIdentifier("wi"sv, decl.srcLoc),
+                      emitter.resolveIdentifier("pdf"sv, decl.srcLoc),
+                      emitter.resolveIdentifier("Le"sv, decl.srcLoc)},
+                  decl.srcLoc),
+              decl.srcLoc);
+        })};
+    func->setLinkage(llvm::Function::ExternalLinkage);
+    markPointerParam(func, 0, materialInstanceType);
+    markPointerParam(func, 1, context.getFloatType(4)); // xi
+    markPointerParam(func, 2, context.getFloatType(3)); // wi
+    markPointerParam(func, 3, context.getFloatType());  // pdf
+    markPointerParam(func, 4, context.getFloatType(),   // Le
+                     context.getColorType()->wavelengthBaseMax);
+    jitMaterial.emissionSample.name = func->getName().str();
   }
   // TODO _volume_scatter_evaluate
   // TODO _volume_scatter_sample
