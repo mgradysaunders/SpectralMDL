@@ -330,12 +330,12 @@ void Emitter::unwind(size_t depth) {
         labelBreak = {};    // Invalidate!
         labelContinue = {}; // Invalidate!
         inDefer = true;     // More specific error messages
-        // The defer body must not see declarations made after the defer
-        // statement — push an anchor at the innermost live scope
-        // ('scope->parent': 'scope' itself is the defer body's own scope,
-        // just pushed by 'handleScope', and stays unfiltered). Pushing
-        // (not replacing) preserves any outer definition-site anchor,
-        // e.g. a defer inside a macro expansion.
+        // The body must not see declarations made after the defer
+        // statement, so push an anchor at the innermost live scope
+        // ('scope->parent': 'scope' itself is the defer body's own
+        // scope, just pushed by 'handleScope', and stays unfiltered).
+        // Pushing (not replacing) preserves any outer definition-site
+        // anchor, e.g. a defer inside a macro expansion.
         anchors.push_back({scope->parent, action.seq});
         emit(action.astDefer->stmt);
       });
@@ -368,9 +368,7 @@ Value Emitter::createResult(Type *type, llvm::ArrayRef<Result> results,
     type = resultType;
     SMDL_SANITY_CHECK(!type->isAbstract());
   }
-  if (type->isVoid()) {
-    return RValue(type, nullptr);
-  }
+  if (type->isVoid()) return RValue(type, nullptr);
   bool isAllIdenticalLValues{[&]() {
     for (auto &result : results)
       if (!(result.value.isLValue() &&
@@ -412,10 +410,10 @@ Value Emitter::emit(AST::Node &node) {
 
 //--{ Emit: Decl
 Value Emitter::emit(AST::Decl &decl) {
-  return emitTypeSwitch< //
-      AST::AnnotationDecl, AST::Enum, AST::Exec, AST::Function, AST::Import,
-      AST::Namespace, AST::Struct, AST::Tag, AST::Typedef, AST::UnitTest,
-      AST::UsingAlias, AST::UsingImport, AST::Variable>(decl);
+  return emitTypeSwitch<AST::AnnotationDecl, AST::Enum, AST::Exec,
+                        AST::Function, AST::Import, AST::Namespace, AST::Struct,
+                        AST::Tag, AST::Typedef, AST::UnitTest, AST::UsingAlias,
+                        AST::UsingImport, AST::Variable>(decl);
 }
 
 Value Emitter::emit(AST::Exec &decl) {
@@ -556,9 +554,7 @@ Value Emitter::emit(AST::Variable &decl) {
         }
       }
       auto declaration{declare(name, &declarator, value)};
-      if (getLLVMFunction()) {
-        declarationsToWarnAbout.push_back(declaration);
-      }
+      if (getLLVMFunction()) declarationsToWarnAbout.push_back(declaration);
     }
   }
   return Value();
@@ -567,11 +563,12 @@ Value Emitter::emit(AST::Variable &decl) {
 
 //--{ Emit: Expr
 Value Emitter::emit(AST::Expr &expr) {
-  return emitTypeSwitch< //
-      AST::AccessField, AST::AccessIndex, AST::Binary, AST::Call,
-      AST::Identifier, AST::Intrinsic, AST::Let, AST::LiteralBool,
-      AST::LiteralFloat, AST::LiteralInt, AST::LiteralString, AST::Parens,
-      AST::ReturnFrom, AST::Select, AST::Type, AST::TypeCast, AST::Unary>(expr);
+  return emitTypeSwitch<AST::AccessField, AST::AccessIndex, AST::Binary,
+                        AST::Call, AST::Identifier, AST::Intrinsic, AST::Let,
+                        AST::LiteralBool, AST::LiteralFloat, AST::LiteralInt,
+                        AST::LiteralString, AST::Parens, AST::ReturnFrom,
+                        AST::Select, AST::Type, AST::TypeCast, //
+                        AST::Unary>(expr);
 }
 
 Value Emitter::emit(AST::AccessIndex &expr) {
@@ -675,10 +672,9 @@ Value Emitter::emit(AST::Binary &expr) {
   if (expr.op == BINOP_APPROX_CMP_EQ || //
       expr.op == BINOP_APPROX_CMP_NE) {
     // Approximate comparison operators
-    // `lhs ~== |eps| rhs` absolute: `#abs(lhs - rhs) <= eps`
-    // `lhs ~== (eps) rhs` relative: `#abs(lhs - rhs) <= eps * #max(#abs(lhs),
-    //                                                             #abs(rhs))`
-    // and `~!=` is the logical negation of `~==`.
+    // lhs ~== |eps| rhs: #abs(lhs - rhs) <= eps
+    // lhs ~== (eps) rhs: #abs(lhs - rhs) <= eps * #max(#abs(lhs), #abs(rhs))
+    // and ~!= is the logical negation of ~==.
     auto res{emitOp(BINOP_SUB, lhs, rhs, expr.srcLoc)};
     res = emitIntrinsic("abs", res, expr.srcLoc);
     auto eps{emit(expr.exprEps)};
@@ -812,10 +808,10 @@ Value Emitter::emitTwoArmMerge(Value cond, const char *name,
 
 //--{ Emit: Stmt
 Value Emitter::emit(AST::Stmt &stmt) {
-  return emitTypeSwitch< //
-      AST::Break, AST::Compound, AST::Continue, AST::DeclStmt, AST::Defer,
-      AST::DoWhile, AST::ExprStmt, AST::For, AST::If, AST::Preserve,
-      AST::Return, AST::Switch, AST::Unreachable, AST::Visit, AST::While>(stmt);
+  return emitTypeSwitch<AST::Break, AST::Compound, AST::Continue, AST::DeclStmt,
+                        AST::Defer, AST::DoWhile, AST::ExprStmt, AST::For,
+                        AST::If, AST::Preserve, AST::Return, AST::Switch,
+                        AST::Unreachable, AST::Visit, AST::While>(stmt);
 }
 
 Value Emitter::emit(AST::Compound &stmt) {
@@ -3084,9 +3080,7 @@ Module *Emitter::resolveModule(Span<const std::string_view> importPath,
           (isPathEquivalent(dirPath, otherModule->getDirectory()) ||
            lexicalDirPath ==
                normalizePath(std::string(otherModule->getDirectory())))) {
-        if (auto error{otherModule->compile(context)}) {
-          throw std::move(*error);
-        }
+        if (auto error{otherModule->compile(context)}) throw std::move(*error);
         return otherModule.get();
       }
     }
@@ -3094,8 +3088,8 @@ Module *Emitter::resolveModule(Span<const std::string_view> importPath,
   }};
   auto searchRelativeToCurrentModule{[&]() -> Module * {
     if (!thisModule->isBuiltin())
-      if (auto module_{findModuleInDirectory(thisModule->getDirectory())})
-        return module_;
+      if (auto mod{findModuleInDirectory(thisModule->getDirectory())})
+        return mod;
     return nullptr;
   }};
   auto searchCompilerDirPaths{[&]() -> Module * {
@@ -3131,7 +3125,7 @@ Module *Emitter::resolveModule(Span<const std::string_view> importPath,
       if (!key.empty()) key += "::";
       key += element;
     }
-    if (auto module_{context.getBuiltinModule(key)}) return module_;
+    if (auto mod{context.getBuiltinModule(key)}) return mod;
     return nullptr;
   }};
 
@@ -3140,20 +3134,20 @@ Module *Emitter::resolveModule(Span<const std::string_view> importPath,
     // prioritize compiler builtins first and compiler dir paths
     // second. This guarantees that `::df` always gets the builtin
     // df module for example.
-    if (auto module_{searchCompilerBuiltins()}) return module_;
-    if (auto module_{searchCompilerDirPaths()}) return module_;
+    if (auto mod{searchCompilerBuiltins()}) return mod;
+    if (auto mod{searchCompilerDirPaths()}) return mod;
   } else {
     // If the import path is relative, meaning it does NOT starts with `::`,
     // prioritize modules relative to the current module first.
-    if (auto module_{searchRelativeToCurrentModule()}) return module_;
+    if (auto mod{searchRelativeToCurrentModule()}) return mod;
     // If the import path is not explicitly relative, meaning it does
     // not start with `.` or `..`, also search the compiler dir paths
     // first and then lastly default to compiler builtins.
     if (bool isExplicitlyRelative{importPath[0] == "." ||
                                   importPath[0] == ".."};
         !isExplicitlyRelative) {
-      if (auto module_{searchCompilerDirPaths()}) return module_;
-      if (auto module_{searchCompilerBuiltins()}) return module_;
+      if (auto mod{searchCompilerDirPaths()}) return mod;
+      if (auto mod{searchCompilerBuiltins()}) return mod;
     }
   }
   return nullptr;

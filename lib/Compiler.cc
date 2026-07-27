@@ -675,7 +675,7 @@ Compiler::findMaterial(std::string_view materialName) const noexcept try {
     for (const auto *jitMaterial : results) {
       message += "\n  ";
       message +=
-          concat(jitMaterial->qualifiedName, " (";
+          concat(jitMaterial->qualifiedName, " (",
                  jitMaterial->moduleFileName, ":", jitMaterial->lineNo, ")");
     }
     SMDL_LOG_ERROR(message);
