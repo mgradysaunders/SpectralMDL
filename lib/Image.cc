@@ -477,4 +477,33 @@ std::optional<Error> write8bitImage(const std::string &fileName, int numTexelsX,
   return std::nullopt;
 }
 
+std::optional<Error> writeFloatImage(const std::string &fileName,
+                                     int numTexelsX, int numTexelsY,
+                                     int numChannels, const float *ptr) {
+  SMDL_SANITY_CHECK(0 < numTexelsX);
+  SMDL_SANITY_CHECK(0 < numTexelsY);
+  SMDL_SANITY_CHECK(numChannels == 1 || numChannels == 3 || numChannels == 4);
+  SMDL_SANITY_CHECK(ptr);
+  if (hasExtension(fileName, ".exr")) {
+    const char *message{};
+    if (SaveEXR(ptr, numTexelsX, numTexelsY, numChannels, /*save_as_fp16=*/0,
+                fileName.c_str(), &message) != TINYEXR_SUCCESS) {
+      auto error{Error(concat("cannot write ", QuotedPath(fileName), ": ",
+                              message ? message : "unknown error"))};
+      FreeEXRErrorMessage(message);
+      return error;
+    }
+    return std::nullopt;
+  } else if (hasExtension(fileName, ".hdr")) {
+    if (stbi_write_hdr(fileName.c_str(), numTexelsX, numTexelsY, numChannels,
+                       ptr) == 0) {
+      return Error(concat("cannot write ", QuotedPath(fileName)));
+    }
+    return std::nullopt;
+  } else {
+    return Error(concat("cannot write ", QuotedPath(fileName),
+                        ": unrecognized extension"));
+  }
+}
+
 } // namespace smdl

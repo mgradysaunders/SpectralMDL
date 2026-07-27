@@ -210,6 +210,55 @@ SMDL_EXPORT std::optional<Error>
 write8bitImage(const std::string &fileName, int numTexelsX, int numTexelsY,
                int numChannels, const void *texels);
 
+/// Write a single-precision floating point image to the given file name.
+///
+/// Unlike `write8bitImage()`, this preserves the full range of the values
+/// it is given. It is the way to record physical radiance instead of a
+/// display-referred approximation of it, so that the result can be
+/// compared, denoised, or re-exposed after the fact.
+///
+/// \param[in] fileName
+/// The file name, which must end with a recognized extension. The
+/// extension test is case-insensitive:
+/// - `.exr` writes OpenEXR with 32-bit channels and ZIP compression,
+/// - `.hdr` writes Radiance RGBE.
+///
+/// \param[in] numTexelsX
+/// The number of texels in X, must be positive.
+///
+/// \param[in] numTexelsY
+/// The number of texels in Y, must be positive.
+///
+/// \param[in] numChannels
+/// The number of channels, must be 1, 3, or 4. Note that 2 is not
+/// allowed here even though `write8bitImage()` allows it, because
+/// neither format has a sensible interpretation for it.
+///
+/// \param[in] texels
+/// The texels, understood to be tightly packed single-precision
+/// channels in row-major order starting from the top-left corner,
+/// i.e., channel `c` of the texel at `(x, y)` is the float at index
+/// `numChannels * (x + numTexelsX * y) + c`.
+///
+/// The channel interpretation is 1 for gray, 3 for RGB, and 4 for
+/// RGBA. The Radiance case is lossy, as RGBE shares one exponent
+/// between the color channels and drops alpha entirely; prefer
+/// OpenEXR unless something downstream requires Radiance.
+///
+/// \note
+/// The requirements on the dimensions, the channel count, and the
+/// texel pointer are enforced by fatal sanity checks, not by
+/// recoverable errors.
+///
+/// \returns
+/// `std::nullopt` if successful, or else an `Error` describing why
+/// the image could not be written.
+///
+[[nodiscard]]
+SMDL_EXPORT std::optional<Error>
+writeFloatImage(const std::string &fileName, int numTexelsX, int numTexelsY,
+                int numChannels, const float *texels);
+
 /// \}
 
 } // namespace smdl

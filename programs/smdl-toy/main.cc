@@ -36,11 +36,25 @@ static cl::opt<unsigned> samplesPerPixel{
     "spp", cl::desc("The number of samples per pixel (default: 8)"),
     cl::init(8U), cl::cat(catCamera)};
 
+static cl::OptionCategory catOutput{"Output Options"};
+static cl::opt<std::string> outputFile{
+    "output", cl::desc("The tone mapped image filename (default: output.png)"),
+    cl::init(std::string("output.png")), cl::cat(catOutput)};
+static cl::opt<std::string> outputFloatFile{
+    "output-float",
+    cl::desc("Also write the linear radiance to this '.exr' or '.hdr' file, "
+             "with no exposure or gamma applied"),
+    cl::cat(catOutput)};
+static cl::opt<std::string> outputSpectralFile{
+    "output-spectral",
+    cl::desc("Also write every wavelength band to this ENVI file, alongside "
+             "which a '.hdr' header is written"),
+    cl::cat(catOutput)};
 static cl::opt<float> imageExposure{
     "exposure",
     cl::desc("The linear exposure applied before tone mapping "
              "(default: 1)"),
-    cl::init(1.0f), cl::cat(catCamera)};
+    cl::init(1.0f), cl::cat(catOutput)};
 
 static cl::opt<std::string> envLightFile{
     "ibl-filename", cl::desc("The IBL filename"), cl::cat(catCamera)};
@@ -51,7 +65,7 @@ static cl::opt<float> envLightScale{"ibl-scale",
 int main(int argc, char **argv) try {
   llvm::InitLLVM X(argc, argv);
   smdl::Logger::get().addSink<smdl::LogSinks::print_to_cerr>();
-  cl::HideUnrelatedOptions({&catCamera});
+  cl::HideUnrelatedOptions({&catCamera, &catOutput});
   cl::ParseCommandLineOptions(argc, argv, "SpectralMDL toy renderer");
 
   auto compiler{smdl::Compiler{}};
@@ -277,9 +291,11 @@ int main(int argc, char **argv) try {
     renderImage(x, y).add(Lsum.data());
 #endif
   });
-  auto imageScale{float(imageExposure)};
-  auto rgbImage{std::vector<uint8_t>(numPixelsX * numPixelsY * 3)};
-  auto rgbImageIndex{0};
+  // Resolve the spectral buffer to linear RGB once. This is the radiance the
+  // renderer actually estimated, so it is what gets written to the floating
+  // point file. The exposure and gamma below are display transforms applied
+  // only on the way to an 8-bit file.
+  auto rgbImage{std::vector<float>(numPixelsX * numPixelsY * 3)};
   for (size_t y{}; y < numPixelsY; y++) {
     for (size_t x{}; x < numPixelsX; x++) {
       auto color{Color()};
@@ -291,20 +307,35 @@ int main(int argc, char **argv) try {
       state.wavelength_min = WAVELENGTH_MIN;
       state.wavelength_max = WAVELENGTH_MAX;
       auto rgb{compiler.convertColorToRGB(state, color.data())};
-      rgb[0] *= imageScale;
-      rgb[1] *= imageScale;
-      rgb[2] *= imageScale;
-      rgb[0] = std::pow(std::fmin(std::fmax(0.0f, rgb[0]), 1.0f), 1.0f / 2.2f);
-      rgb[1] = std::pow(std::fmin(std::fmax(0.0f, rgb[1]), 1.0f), 1.0f / 2.2f);
-      rgb[2] = std::pow(std::fmin(std::fmax(0.0f, rgb[2]), 1.0f), 1.0f / 2.2f);
-      rgbImage[rgbImageIndex++] = std::round(255.0f * rgb[0]);
-      rgbImage[rgbImageIndex++] = std::round(255.0f * rgb[1]);
-      rgbImage[rgbImageIndex++] = std::round(255.0f * rgb[2]);
+      auto texel{&rgbImage[3 * (x + numPixelsX * y)]};
+      texel[0] = rgb[0];
+      texel[1] = rgb[1];
+      texel[2] = rgb[2];
     }
   }
-  if (auto error{smdl::write8bitImage("output.png", numPixelsX, numPixelsY, 3,
-                                      rgbImage.data())}) {
-    error->print();
+  if (!std::string(outputFloatFile).empty()) {
+    if (auto error{smdl::writeFloatImage(std::string(outputFloatFile),
+                                         numPixelsX, numPixelsY, 3,
+                                         rgbImage.data())}) {
+      error->print();
+    }
+  }
+  if (!std::string(outputSpectralFile).empty()) {
+    renderImage.writeENVIFile(
+        smdl::Span<const float>(wavelengths.data(), WAVELENGTH_BASE_MAX),
+        std::string(outputSpectralFile));
+  }
+  {
+    auto imageScale{float(imageExposure)};
+    auto ldrImage{std::vector<uint8_t>(rgbImage.size())};
+    for (size_t i{}; i < rgbImage.size(); i++) {
+      auto value{std::fmin(std::fmax(0.0f, imageScale * rgbImage[i]), 1.0f)};
+      ldrImage[i] = uint8_t(std::round(255.0f * std::pow(value, 1.0f / 2.2f)));
+    }
+    if (auto error{smdl::write8bitImage(std::string(outputFile), numPixelsX,
+                                        numPixelsY, 3, ldrImage.data())}) {
+      error->print();
+    }
   }
   return EXIT_SUCCESS;
 } catch (const smdl::Error &error) {
