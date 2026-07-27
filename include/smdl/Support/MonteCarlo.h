@@ -13,32 +13,32 @@ namespace smdl {
 /// \addtogroup Support
 /// \{
 
-/// \brief A data-driven distribution in 1 dimension.
+/// A data-driven distribution in 1 dimension.
 class SMDL_EXPORT Distribution1D final {
 public:
-  /// \brief Default constructor.
+  /// Default constructor.
   Distribution1D() = default;
 
-  /// \brief Constructor.
+  /// Constructor.
   Distribution1D(Span<const float> values);
 
 public:
-  /// \brief Clear.
+  /// Clear.
   void clear() noexcept {
     totalSum = 0;
     cmfs.clear();
   }
 
-  /// \brief The number of indexes.
+  /// The number of indexes.
   [[nodiscard]] int size() const noexcept { return int(cmfs.size()) - 1; }
 
-  /// \brief The index probability mass function (PMF).
+  /// The index probability mass function (PMF).
   [[nodiscard]] float indexPMF(int i) const noexcept;
 
-  /// \brief The index cumulative mass function (CMF).
+  /// The index cumulative mass function (CMF).
   [[nodiscard]] float indexCMF(int i) const noexcept;
 
-  /// \brief The index sampling routine.
+  /// The index sampling routine.
   ///
   /// \param[in]  xi       The random sample \f$ \xi \in (0,1) \f$.
   /// \param[out] xiRemap  If non-null, receives the remapped random sample.
@@ -47,7 +47,7 @@ public:
   [[nodiscard]] int indexSample(float xi, float *xiRemap = {},
                                 float *pmf = {}) const noexcept;
 
-  /// \brief The unnormalized sum.
+  /// The unnormalized sum.
   [[nodiscard]] float unnormalizedSum() const noexcept {
     return static_cast<float>(totalSum);
   }
@@ -61,7 +61,7 @@ private:
 /// \name Functions (sampling)
 /// \{
 
-/// \brief Generate canonical random sample in \f$ (0,1) \f$.
+/// Generate canonical random sample in \f$ (0,1) \f$.
 template <typename G> [[nodiscard]] inline float generateCanonical(G &g) {
   float xi{std::generate_canonical<float, 32>(g)};
   xi = std::fmax(xi, std::numeric_limits<float>::denorm_min());      // > 0.0f
@@ -69,24 +69,24 @@ template <typename G> [[nodiscard]] inline float generateCanonical(G &g) {
   return xi;
 }
 
-/// \brief Generate canonical random sample in \f$ (0,1)^2 \f$.
+/// Generate canonical random sample in \f$ (0,1)^2 \f$.
 template <typename G> [[nodiscard]] inline float2 generateCanonical2(G &g) {
   return {generateCanonical(g), generateCanonical(g)};
 }
 
-/// \brief Generate canonical random sample in \f$ (0,1)^3 \f$.
+/// Generate canonical random sample in \f$ (0,1)^3 \f$.
 template <typename G> [[nodiscard]] inline float3 generateCanonical3(G &g) {
   return {generateCanonical(g), generateCanonical(g), generateCanonical(g)};
 }
 
-/// \brief Generate canonical random sample in \f$ (0,1)^4 \f$.
+/// Generate canonical random sample in \f$ (0,1)^4 \f$.
 template <typename G> [[nodiscard]] inline float4 generateCanonical4(G &g) {
   return {generateCanonical(g), generateCanonical(g), generateCanonical(g),
           generateCanonical(g)};
 }
 
-/// \brief Advance the given quasi-random sample according to a 2-D low
-///        discrepancy sequence.
+/// Advance the given quasi-random sample according to a 2-D low
+/// discrepancy sequence.
 [[nodiscard]] inline float2 advanceLowDiscrepancy2(float2 &xi) {
   xi = xi + float2(0.7548776662466927f, 0.5698402909980532f);
   xi.x -= std::floor(xi.x);
@@ -94,8 +94,8 @@ template <typename G> [[nodiscard]] inline float4 generateCanonical4(G &g) {
   return xi;
 }
 
-/// \brief Advance the given quasi-random sample according to a 3-D low
-///        discrepancy sequence.
+/// Advance the given quasi-random sample according to a 3-D low
+/// discrepancy sequence.
 [[nodiscard]] inline float3 advanceLowDiscrepancy3(float3 &xi) {
   xi = xi + float3(0.8191725133961644f, 0.671043606703789f, //
                    0.5497004779019701f);
@@ -105,8 +105,8 @@ template <typename G> [[nodiscard]] inline float4 generateCanonical4(G &g) {
   return xi;
 }
 
-/// \brief Advance the given quasi-random sample according to a 4-D low
-///        discrepancy sequence.
+/// Advance the given quasi-random sample according to a 4-D low
+/// discrepancy sequence.
 [[nodiscard]] inline float4 advanceLowDiscrepancy4(float4 &xi) {
   xi = xi + float4(0.8566748838545029f, 0.733891856627126f, 0.6287067210378086f,
                    0.53859725722361f);
@@ -117,7 +117,7 @@ template <typename G> [[nodiscard]] inline float4 generateCanonical4(G &g) {
   return xi;
 }
 
-/// \brief Uniform disk PDF.
+/// Uniform disk PDF.
 ///
 /// \f[ p(\mathbf{X}) = \frac{1}{\pi r^2} \f]
 ///
@@ -125,15 +125,15 @@ template <typename G> [[nodiscard]] inline float4 generateCanonical4(G &g) {
   return 1.0f / (PI * r * r);
 }
 
-/// \brief Uniform disk sample using concentric mapping to better preserve
-///        stratification.
+/// Uniform disk sample using concentric mapping to better preserve
+/// stratification.
 ///
 /// \param[in] xi
 /// The random sample \f$ \xi \in (0,1)^2 \f$.
 ///
 [[nodiscard]] SMDL_EXPORT float2 uniformDiskSample(float2 xi) noexcept;
 
-/// \brief Cosine-weighted hemisphere direction PDF.
+/// Cosine-weighted hemisphere direction PDF.
 ///
 /// \f[
 ///   p(\omega) = \frac{\max(\omega\cdot\hat{z}, 0)}{\pi}
@@ -146,7 +146,7 @@ template <typename G> [[nodiscard]] inline float4 generateCanonical4(G &g) {
   return std::max(cosTheta, 0.0f) / PI;
 }
 
-/// \brief Cosine-weighted hemisphere direction sample.
+/// Cosine-weighted hemisphere direction sample.
 ///
 /// \param[in] xi
 /// The random sample \f$ \xi \in (0,1)^2 \f$.
@@ -157,7 +157,7 @@ template <typename G> [[nodiscard]] inline float4 generateCanonical4(G &g) {
   return float3(sinTheta.x, sinTheta.y, cosTheta);
 }
 
-/// \brief Uniform sphere direction PDF.
+/// Uniform sphere direction PDF.
 ///
 /// \f[
 ///   p(\omega) = \frac{1}{4\pi}
@@ -165,7 +165,7 @@ template <typename G> [[nodiscard]] inline float4 generateCanonical4(G &g) {
 ///
 [[nodiscard]] inline float uniformSpherePDF() noexcept { return 0.25f / PI; }
 
-/// \brief Uniform sphere direction sample.
+/// Uniform sphere direction sample.
 ///
 /// \param[in] xi
 /// The random sample \f$ \xi \in (0,1)^2 \f$.
@@ -177,7 +177,7 @@ template <typename G> [[nodiscard]] inline float4 generateCanonical4(G &g) {
   return float3(sinTheta * std::cos(phi), sinTheta * std::sin(phi), cosTheta);
 }
 
-/// \brief Uniform cone direction PDF.
+/// Uniform cone direction PDF.
 ///
 /// \f[
 ///   p(\omega) = \frac{1}{2\pi(1 - \cos\theta_C)}
@@ -190,7 +190,7 @@ template <typename G> [[nodiscard]] inline float4 generateCanonical4(G &g) {
   return 0.5f / (PI * (1.0f - cosThetaC));
 }
 
-/// \brief Uniform cone direction sample.
+/// Uniform cone direction sample.
 ///
 /// \param[in] cosThetaC
 /// The cosine of the cone angle \f$ \theta_C \f$.
@@ -201,34 +201,34 @@ template <typename G> [[nodiscard]] inline float4 generateCanonical4(G &g) {
 [[nodiscard]] SMDL_EXPORT float3 uniformConeSample(float cosThetaC,
                                                    float2 xi) noexcept;
 
-/// \brief The error function inverse, necessary to sample the standard normal
-///        distribution.
+/// The error function inverse, necessary to sample the standard normal
+/// distribution.
 [[nodiscard]] SMDL_EXPORT float erfInverse(float y) noexcept;
 
-/// \brief The standard normal distribution PDF.
+/// The standard normal distribution PDF.
 [[nodiscard]] inline float standardNormalPDF(float x) noexcept {
   return /*1/sqrt(2pi)=*/0.398942280401f * std::exp(-0.5f * x * x);
 }
 
-/// \brief The standard normal distribution CDF.
+/// The standard normal distribution CDF.
 [[nodiscard]] inline float standardNormalCDF(float x) noexcept {
   return 0.5f * (1 + std::erf(/*1/sqrt(2)=*/0.707106781187f * x));
 }
 
-/// \brief The standard normal distribution sample.
+/// The standard normal distribution sample.
 [[nodiscard]] inline float standardNormalSample(float xi) noexcept {
   return /*sqrt(2)=*/1.41421356237f * erfInverse(2 * xi - 1);
 }
 
 /// \}
 
-/// \brief A data-driven distribution in 2 dimensions.
+/// A data-driven distribution in 2 dimensions.
 class SMDL_EXPORT Distribution2D final {
 public:
-  /// \brief Default constructor.
+  /// Default constructor.
   Distribution2D() = default;
 
-  /// \brief Constructor.
+  /// Constructor.
   ///
   /// \param[in] numTexelsX  The number of texels in X.
   /// \param[in] numTexelsY  The number of texels in Y.
@@ -238,7 +238,7 @@ public:
                           Span<const float> values);
 
 public:
-  /// \brief Clear.
+  /// Clear.
   void clear() noexcept {
     numTexelsX = 0;
     numTexelsY = 0;
@@ -246,25 +246,25 @@ public:
     marginal.clear();
   }
 
-  /// \brief The number of pixels in X.
+  /// The number of pixels in X.
   [[nodiscard]] int getNumTexelsX() const noexcept { return numTexelsX; }
 
-  /// \brief The number of pixels in Y.
+  /// The number of pixels in Y.
   [[nodiscard]] int getNumTexelsY() const noexcept { return numTexelsY; }
 
-  /// \brief The unnormalized sum over all values.
+  /// The unnormalized sum over all values.
   [[nodiscard]] float unnormalizedSum() const noexcept {
     return marginal.unnormalizedSum();
   }
 
-  /// \brief The pixel probability mass function (PMF).
+  /// The pixel probability mass function (PMF).
   [[nodiscard]] float pixelPMF(int2 i) const noexcept {
     if (0 <= i.y && i.y < numTexelsY)
       return marginal.indexPMF(i.y) * conditionals[i.y].indexPMF(i.x);
     return 0.0f;
   }
 
-  /// \brief The pixel sampling routine.
+  /// The pixel sampling routine.
   ///
   /// \param[in]  xi       The random sample \f$ \xi \in (0,1)^2 \f$.
   /// \param[out] xiRemap  If non-null, receives the remapped random sample.
@@ -273,14 +273,14 @@ public:
   [[nodiscard]] int2 pixelSample(float2 xi, float2 *xiRemap = {},
                                  float *pmf = {}) const noexcept;
 
-  /// \brief The direction PDF.
+  /// The direction PDF.
   ///
   /// \param[in]  wi      The incident direction \f$ \omega_i \f$.
   /// \param[out] iPixel  If non-null, receives the associated pixel index.
   ///
   [[nodiscard]] float directionPDF(float3 wi, int2 *iPixel = {}) const noexcept;
 
-  /// \brief The direction sampling routine.
+  /// The direction sampling routine.
   ///
   /// \param[in]  xi      The random sample \f$ \xi \in (0,1)^2 \f$.
   /// \param[out] iPixel  If non-null, receives the associated pixel index.
