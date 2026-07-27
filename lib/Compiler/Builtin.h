@@ -2227,7 +2227,13 @@ const &float3 woWorld,
 const &float3 wiWorld,
 ){
 auto wo=normalize(*woWorld);
-auto params=ScatterSampleParameters(xi: *xi,wo0: wo,hitBackface: false,ior: 1.);
+auto params=ScatterSampleParameters(
+isImportance: false,
+xi: *xi,
+wo0: wo,
+hitBackface: false,
+ior: 1.,
+);
 auto result=scatterSample(visit &instance.ptr.volume.scattering,&params);
 if(result.mode==scatter_none){
 return 0.;

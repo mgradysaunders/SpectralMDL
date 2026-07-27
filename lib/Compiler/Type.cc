@@ -1620,8 +1620,86 @@ void FunctionType::initializeMaterialFunctions(Emitter &emitter) {
                      context.getColorType()->wavelengthBaseMax);
     jitMaterial.emissionSample.name = func->getName().str();
   }
-  // TODO _volume_scatter_evaluate
-  // TODO _volume_scatter_sample
+  {
+    // Generate the volume scatter evaluate function:
+    // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    // @(pure visible) float "material_name.volumeScatterEvaluate"(
+    //     &_MaterialInstance instance,
+    //     &float3 wo,
+    //     &float3 wi) {
+    //   return ::df::_volumeScatterEvaluate(instance, wo, wi);
+    // }
+    // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    auto funcReturnType{static_cast<Type *>(context.getFloatType())};
+    auto func{emitter.createFunction(
+        concat(symbolBase, ".volumeScatterEvaluate"), /*isPure=*/true,
+        funcReturnType,
+        {constParameter(materialInstancePtrType, "instance"),
+         constParameter(float3PtrType, "wo"),
+         constParameter(float3PtrType, "wi")},
+        decl.srcLoc, [&] {
+          auto dfFunc{Declaration::findInModule(
+              context, "_volumeScatterEvaluate"sv, nullptr, dfModule,
+              /*ignoreIfNotExported=*/false)};
+          SMDL_SANITY_CHECK(dfFunc);
+          emitter.emitReturn(
+              emitter.emitCall(
+                  dfFunc->value,
+                  llvm::ArrayRef<Value>{
+                      emitter.resolveIdentifier("instance"sv, decl.srcLoc),
+                      emitter.resolveIdentifier("wo"sv, decl.srcLoc),
+                      emitter.resolveIdentifier("wi"sv, decl.srcLoc)},
+                  decl.srcLoc),
+              decl.srcLoc);
+        })};
+    func->setLinkage(llvm::Function::ExternalLinkage);
+    markPointerParam(func, 0, materialInstanceType);
+    markPointerParam(func, 1, context.getFloatType(3)); // wo
+    markPointerParam(func, 2, context.getFloatType(3)); // wi
+    jitMaterial.volumeScatterEvaluate.name = func->getName().str();
+  }
+  {
+    // Generate the volume scatter sample function:
+    // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    // @(pure visible) float "material_name.volumeScatterSample"(
+    //     &_MaterialInstance instance,
+    //     &float4 xi,
+    //     &float3 wo,
+    //     &float3 wi) {
+    //   return ::df::_volumeScatterSample(instance, xi, wo, wi);
+    // }
+    // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    auto funcReturnType{static_cast<Type *>(context.getFloatType())};
+    auto func{emitter.createFunction(
+        concat(symbolBase, ".volumeScatterSample"), /*isPure=*/true,
+        funcReturnType,
+        {constParameter(materialInstancePtrType, "instance"),
+         constParameter(float4PtrType, "xi"),
+         constParameter(float3PtrType, "wo"),
+         constParameter(float3PtrType, "wi")},
+        decl.srcLoc, [&] {
+          auto dfFunc{Declaration::findInModule(
+              context, "_volumeScatterSample"sv, nullptr, dfModule,
+              /*ignoreIfNotExported=*/false)};
+          SMDL_SANITY_CHECK(dfFunc);
+          emitter.emitReturn(
+              emitter.emitCall(
+                  dfFunc->value,
+                  llvm::ArrayRef<Value>{
+                      emitter.resolveIdentifier("instance"sv, decl.srcLoc),
+                      emitter.resolveIdentifier("xi"sv, decl.srcLoc),
+                      emitter.resolveIdentifier("wo"sv, decl.srcLoc),
+                      emitter.resolveIdentifier("wi"sv, decl.srcLoc)},
+                  decl.srcLoc),
+              decl.srcLoc);
+        })};
+    func->setLinkage(llvm::Function::ExternalLinkage);
+    markPointerParam(func, 0, materialInstanceType);
+    markPointerParam(func, 1, context.getFloatType(4)); // xi
+    markPointerParam(func, 2, context.getFloatType(3)); // wo
+    markPointerParam(func, 3, context.getFloatType(3)); // wi
+    jitMaterial.volumeScatterSample.name = func->getName().str();
+  }
 }
 //--}
 

@@ -353,6 +353,48 @@ public:
   Function<int(const Instance &instance, const float4 &xi, float3 &wi,
                float &pdf, float *Le)>
       emissionSample{};
+
+  /// The volume scatter evaluate function.
+  ///
+  /// \param[in] instance
+  /// The instance obtained from the `evaluate` function.
+  ///
+  /// \param[in] wo
+  /// The outgoing direction in world space.
+  ///
+  /// \param[in] wi
+  /// The incoming direction in world space.
+  ///
+  /// \return
+  /// Returns the phase function, which is normalized over the sphere and
+  /// so is also the solid-angle PDF of `volumeScatterSample`. Returns zero
+  /// if the material has no volume scattering.
+  ///
+  Function<float(const Instance &instance, const float3 &wo, const float3 &wi)>
+      volumeScatterEvaluate{};
+
+  /// The volume scatter sample function.
+  ///
+  /// \param[in] instance
+  /// The instance obtained from the `evaluate` function.
+  ///
+  /// \param[in] xi
+  /// The canonical random sample in \f$ [0,1]^4 \f$.
+  ///
+  /// \param[in] wo
+  /// The outgoing direction in world space.
+  ///
+  /// \param[out] wi
+  /// The incoming direction in world space.
+  ///
+  /// \return
+  /// Returns the phase function at `wi`, which is also the solid-angle
+  /// PDF of having sampled it, so the implied throughput weight is
+  /// always 1. Returns zero if the material has no volume scattering.
+  ///
+  Function<float(const Instance &instance, const float4 &xi, const float3 &wo,
+                 float3 &wi)>
+      volumeScatterSample{};
 };
 
 /// A just-in-time SMDL material pointer and an instance of the material.
@@ -596,6 +638,46 @@ public:
     SMDL_SANITY_CHECK(material && instance);
     SMDL_SANITY_CHECK(Le.size() == size_t(instance.wavelength_base_max));
     return material->emissionSample(instance, xi, wi, pdf, Le.data());
+  }
+
+  /// The volume scatter evaluate function.
+  ///
+  /// \param[in] wo
+  /// The outgoing direction in world space.
+  ///
+  /// \param[in] wi
+  /// The incoming direction in world space.
+  ///
+  /// \return
+  /// Returns the phase function, which is normalized over the sphere and
+  /// so is also the solid-angle PDF of `volumeScatterSample`.
+  ///
+  [[nodiscard]] float volumeScatterEvaluate(const float3 &wo,
+                                            const float3 &wi) const {
+    SMDL_SANITY_CHECK(material && instance);
+    return material->volumeScatterEvaluate(instance, wo, wi);
+  }
+
+  /// The volume scatter sample function.
+  ///
+  /// \param[in] xi
+  /// The canonical random sample in \f$ [0,1]^4 \f$.
+  ///
+  /// \param[in] wo
+  /// The outgoing direction in world space.
+  ///
+  /// \param[out] wi
+  /// The incoming direction in world space.
+  ///
+  /// \return
+  /// Returns the phase function at `wi`, which is also the solid-angle
+  /// PDF of having sampled it, so the implied throughput weight is
+  /// always 1.
+  ///
+  [[nodiscard]] float volumeScatterSample(const float4 &xi, const float3 &wo,
+                                          float3 &wi) const {
+    SMDL_SANITY_CHECK(material && instance);
+    return material->volumeScatterSample(instance, xi, wo, wi);
   }
 
 public:

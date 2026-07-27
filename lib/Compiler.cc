@@ -637,6 +637,8 @@ std::optional<Error> Compiler::jitCompile() noexcept {
       jitLookupOrThrow(jitMaterial.scatterSample);
       jitLookupOrThrow(jitMaterial.emissionEvaluate);
       jitLookupOrThrow(jitMaterial.emissionSample);
+      jitLookupOrThrow(jitMaterial.volumeScatterEvaluate);
+      jitLookupOrThrow(jitMaterial.volumeScatterSample);
     }
     for (auto &jitUnitTest : mUnitTests) {
       jitLookupOrThrow(jitUnitTest.test);

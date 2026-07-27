@@ -3237,7 +3237,13 @@ export float _volumeScatterSample(
   const &float3 wiWorld, ///< output: The incoming direction in world space
 ) {
   auto wo = normalize(*woWorld);
-  auto params = ScatterSampleParameters(xi: *xi, wo0: wo, hitBackface: false, ior: 1.0);
+  auto params = ScatterSampleParameters(
+    isImportance: false, // Not applicable for volume scattering
+    xi: *xi,
+    wo0: wo,
+    hitBackface: false, // Not applicable for volume scattering
+    ior: 1.0,           // Not applicable for volume scattering
+  );
   auto result = scatterSample(visit &instance.ptr.volume.scattering, &params);
   if (result.mode == scatter_none) {
     return 0.0;
