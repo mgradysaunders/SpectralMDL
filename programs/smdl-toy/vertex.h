@@ -44,12 +44,13 @@ public:
   bool scatter_evaluate(const float3 &wo, const float3 &wi, float &pdfFwd,
                         float &pdfRev, Color &f) const {
     if (isVolume) {
-      // TODO
-      float phase = smdl::uniformSpherePDF();
+      // The phase function is reciprocal (it depends only on the angle
+      // between the directions), so it is its own reverse PDF.
+      float phase{materialInstance.volumeScatterEvaluate(wo, wi)};
       pdfFwd = phase;
       pdfRev = phase;
-      f = phase;
-      return true;
+      f = Color(phase);
+      return phase > 0;
     } else {
       return materialInstance.scatterEvaluate(wo, wi, pdfFwd, pdfRev, f);
     }
@@ -59,8 +60,17 @@ public:
   bool scatter_sample(const float4 &xi, const float3 &wo, float3 &wi,
                       float &wpdfFwd, float &wpdfRev, Color &f,
                       bool &isDeltaBounce) const {
-    return materialInstance.scatterSample(xi, wo, wi, wpdfFwd, wpdfRev, f,
-                                          isDeltaBounce);
+    if (isVolume) {
+      float phase{materialInstance.volumeScatterSample(xi, wo, wi)};
+      wpdfFwd = phase;
+      wpdfRev = phase;
+      f = Color(phase);
+      isDeltaBounce = false;
+      return phase > 0;
+    } else {
+      return materialInstance.scatterSample(xi, wo, wi, wpdfFwd, wpdfRev, f,
+                                            isDeltaBounce);
+    }
   }
 
   [[nodiscard]]
@@ -90,6 +100,10 @@ public:
 
   smdl::JIT::MaterialInstance materialInstance{};
 
+  /// The index in `Scene::meshInstances` of the surface this vertex sits
+  /// on, so emissive hits can be matched back to their `AreaLight`.
+  uint32_t meshInstanceIndex{INVALID_INDEX};
+
   float3 wNext{};
 
   float pdfFwd{QUIET_NAN};
@@ -114,26 +128,39 @@ inline float3 DistanceSquared(const Vertex &from, const Vertex &to) noexcept {
   return lengthSquared(to.point - from.point);
 }
 
-[[nodiscard]] bool test_visibility(const Scene &scene, const AnyRandom &random,
-                                   const Color &wavelengths,
-                                   smdl::BumpPtrAllocator &allocator,
-                                   const MediumStack *medium,
-                                   const float3 &point0, const float3 &point1,
-                                   Color &beta);
+[[nodiscard]] bool
+test_visibility(const Scene &scene, Sampler &sampler, const Color &wavelengths,
+                smdl::BumpPtrAllocator &allocator, const MediumStack *medium,
+                const float3 &point0, const float3 &point1, Color &beta);
+
+/// Trace the given ray to its nearest real surface hit, passing through
+/// cutouts stochastically and accumulating medium transmittance into `beta`
+/// the same way `test_visibility` does. On a hit, fills in `hit` and the
+/// material instance constructed at it and returns `true`; returns `false`
+/// if the ray escapes the scene. The ray direction must be normalized so
+/// the transmittance distances are metric.
+[[nodiscard]] bool trace_nearest(const Scene &scene, Sampler &sampler,
+                                 const Color &wavelengths,
+                                 smdl::BumpPtrAllocator &allocator,
+                                 const MediumStack *medium, Ray ray, Hit &hit,
+                                 smdl::JIT::MaterialInstance &materialInstance,
+                                 Color &beta);
 
 class EnvLight;
 
+class LightSampler;
+
 /// Trace a path, writing up to `maxDepth` vertices into `path` and returning
 /// the number written. Every vertex is cleared before it is filled in, so
-/// `path` does not need to be zero-initialized between calls. The `envLight`
-/// may be null, in which case the walk falls back to pure BSDF sampling.
+/// `path` does not need to be zero-initialized between calls. The `lights`
+/// may be null or have no environment, in which case the walk falls back to
+/// pure BSDF sampling.
 [[nodiscard]] uint64_t random_walk(smdl::Compiler &compiler, const Scene &scene,
-                                   const AnyRandom &random,
-                                   const Color &wavelengths,
+                                   Sampler &sampler, const Color &wavelengths,
                                    smdl::BumpPtrAllocator &allocator,
                                    smdl::Transport transport, Vertex path0,
                                    float wpdfFwd, uint64_t maxDepth,
-                                   Vertex *path, const EnvLight *envLight);
+                                   Vertex *path, const LightSampler *lights);
 
 class Subpath final {
 public:

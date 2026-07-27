@@ -8,7 +8,6 @@
 #include "embree4/rtcore_geometry.h"
 #include "embree4/rtcore_ray.h"
 #include "embree4/rtcore_scene.h"
-#include "pcg_random.hpp"
 
 #include "smdl/Compiler.h"
 #include "smdl/Support/ColorVector.h"
@@ -25,17 +24,6 @@ using smdl::PI;
 using namespace smdl::vector_type_aliases;
 using namespace smdl::matrix_type_aliases;
 using Color = smdl::ColorVector<WAVELENGTH_BASE_MAX>;
-using RNG = pcg32_k1024;
-
-template <typename... Seeds>
-[[nodiscard]] inline RNG make_RNG(Seeds... seeds) noexcept {
-  if constexpr (sizeof...(Seeds) == 1) {
-    return RNG{seeds...};
-  } else {
-    using SeedT = std::common_type_t<Seeds...>;
-    return RNG{std::seed_seq{static_cast<SeedT>(seeds)...}};
-  }
-}
 
 /// The power heuristic with \f$ \beta = 2 \f$ for two sampling strategies.
 ///
@@ -49,31 +37,113 @@ template <typename... Seeds>
   return 1.0f / (1.0f + ratio * ratio);
 }
 
-class AnyRandom final {
+/// A hash-based Owen-scrambled Sobol sampler after Burley, "Practical
+/// Hash-Based Owen Scrambling," JCGT 9(4) 2020.
+///
+/// Each (pixel, sample) pair yields a deterministic low-discrepancy point
+/// sequence consumed two dimensions at a time. Every 2D pair reuses the
+/// first two Sobol dimensions with an independently hashed index shuffle
+/// and per-dimension Owen scramble, which keeps each pair's stratification
+/// while decorrelating the pairs from one another, so the sequence
+/// extends to arbitrarily many dimensions with no direction-number tables
+/// beyond the second dimension's.
+class Sampler final {
 public:
-  explicit AnyRandom(std::in_place_t, std::function<float()> gen)
-      : gen(std::move(gen)) {}
+  Sampler() = default;
 
-  explicit AnyRandom(RNG &rng)
-      : gen([&rng]() { return smdl::generateCanonical(rng); }) {}
+  /// Begin the sample `sampleIndex` of the pixel `pixelIndex`, resetting
+  /// the dimension counter.
+  void startPixelSample(uint32_t pixelIndex, uint32_t sampleIndex) noexcept {
+    pixelHash = hash(pixelIndex);
+    this->sampleIndex = sampleIndex;
+    dimension = 0;
+  }
 
-  [[nodiscard]] operator float() const { return gen(); }
+  [[nodiscard]] operator float() { return next(); }
 
-  [[nodiscard]] operator float2() const { return {gen(), gen()}; }
+  [[nodiscard]] operator float2() { return {next(), next()}; }
 
-  [[nodiscard]] operator float3() const { return {gen(), gen(), gen()}; }
+  [[nodiscard]] operator float3() { return {next(), next(), next()}; }
 
-  [[nodiscard]] operator float4() const { return {gen(), gen(), gen(), gen()}; }
+  [[nodiscard]] operator float4() { return {next(), next(), next(), next()}; }
 
-  [[nodiscard]] int index(int n) const {
-    int i{int(std::floor(n * gen()))};
+  [[nodiscard]] int index(int n) {
+    int i{int(std::floor(n * next()))};
     i = std::min(i, n - 1);
     i = std::max(i, 0);
     return i;
   }
 
 private:
-  std::function<float()> gen{};
+  /// The next canonical sample in `(0,1)`, advancing the dimension.
+  [[nodiscard]] float next() noexcept {
+    uint32_t pair{dimension >> 1};
+    uint32_t component{dimension & 1};
+    ++dimension;
+    uint32_t seed{hash(pixelHash ^ (0x9E3779B9U * pair))};
+    uint32_t shuffledIndex{nestedUniformScramble(sampleIndex, seed)};
+    uint32_t X{component == 0 ? reverseBits(shuffledIndex)
+                              : sobolDim1(shuffledIndex)};
+    X = nestedUniformScramble(X, hash(seed ^ (0x55555555U + component)));
+    float xi{float(X) * 0x1p-32f};
+    xi = std::fmax(xi, std::numeric_limits<float>::denorm_min());      // > 0
+    xi = std::fmin(xi, 1 - std::numeric_limits<float>::epsilon() / 2); // < 1
+    return xi;
+  }
+
+  /// Murmur3-style finalizer.
+  [[nodiscard]] static uint32_t hash(uint32_t x) noexcept {
+    x ^= x >> 16;
+    x *= 0x85EBCA6BU;
+    x ^= x >> 13;
+    x *= 0xC2B2AE35U;
+    x ^= x >> 16;
+    return x;
+  }
+
+  [[nodiscard]] static uint32_t reverseBits(uint32_t x) noexcept {
+    x = (x << 16) | (x >> 16);
+    x = ((x & 0x00FF00FFU) << 8) | ((x & 0xFF00FF00U) >> 8);
+    x = ((x & 0x0F0F0F0FU) << 4) | ((x & 0xF0F0F0F0U) >> 4);
+    x = ((x & 0x33333333U) << 2) | ((x & 0xCCCCCCCCU) >> 2);
+    x = ((x & 0x55555555U) << 1) | ((x & 0xAAAAAAAAU) >> 1);
+    return x;
+  }
+
+  /// The hash-based Owen scramble: reverse so the high (most significant)
+  /// bits sit low, run the Laine-Karras permutation, which only lets each
+  /// bit affect bits above it, and reverse back.
+  [[nodiscard]] static uint32_t nestedUniformScramble(uint32_t x,
+                                                      uint32_t seed) noexcept {
+    x = reverseBits(x);
+    x += seed;
+    x ^= x * 0x6C50B47CU;
+    x ^= x * 0xB82F1E52U;
+    x ^= x * 0xC7AFE638U;
+    x ^= x * 0x8D22F6E6U;
+    return reverseBits(x);
+  }
+
+  /// The second Sobol dimension. (The first is just `reverseBits`.)
+  [[nodiscard]] static uint32_t sobolDim1(uint32_t index) noexcept {
+    static constexpr uint32_t directions[32] = {
+        0x80000000U, 0xC0000000U, 0xA0000000U, 0xF0000000U, //
+        0x88000000U, 0xCC000000U, 0xAA000000U, 0xFF000000U, //
+        0x80800000U, 0xC0C00000U, 0xA0A00000U, 0xF0F00000U, //
+        0x88880000U, 0xCCCC0000U, 0xAAAA0000U, 0xFFFF0000U, //
+        0x80008000U, 0xC000C000U, 0xA000A000U, 0xF000F000U, //
+        0x88008800U, 0xCC00CC00U, 0xAA00AA00U, 0xFF00FF00U, //
+        0x80808080U, 0xC0C0C0C0U, 0xA0A0A0A0U, 0xF0F0F0F0U, //
+        0x88888888U, 0xCCCCCCCCU, 0xAAAAAAAAU, 0xFFFFFFFFU};
+    uint32_t X{};
+    for (int bit = 0; index; index >>= 1, bit++)
+      if (index & 1) X ^= directions[bit];
+    return X;
+  }
+
+  uint32_t pixelHash{};
+  uint32_t sampleIndex{};
+  uint32_t dimension{};
 };
 
 class Ray final {

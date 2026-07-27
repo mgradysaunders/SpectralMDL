@@ -1,7 +1,7 @@
 #include "vertex.h"
 #include "light.h"
 
-bool test_visibility(const Scene &scene, const AnyRandom &random,
+bool test_visibility(const Scene &scene, Sampler &sampler,
                      const Color &wavelengths,
                      smdl::BumpPtrAllocator &allocator, //
                      const MediumStack *medium, const float3 &point0,
@@ -34,7 +34,7 @@ bool test_visibility(const Scene &scene, const AnyRandom &random,
     hit.apply_geometry_to_state(state);
     smdl::JIT::MaterialInstance materialInstance{state, hit.material};
     if (float opacity{materialInstance.getCutoutOpacity()};
-        opacity == 1 || float(random) < opacity) {
+        opacity == 1 || float(sampler) < opacity) {
       return false; // Blocks visibility!
     }
     MediumStack::Update(medium, allocator, materialInstance, -ray.dir, ray.dir);
@@ -42,6 +42,45 @@ bool test_visibility(const Scene &scene, const AnyRandom &random,
     ray.tmax = 1.0f - EPS;
   }
   return true;
+}
+
+bool trace_nearest(const Scene &scene, Sampler &sampler,
+                   const Color &wavelengths,
+                   smdl::BumpPtrAllocator &allocator, //
+                   const MediumStack *medium, Ray ray, Hit &hit,
+                   smdl::JIT::MaterialInstance &materialInstance, Color &beta) {
+  while (true) {
+    bool hitSurface{scene.intersect(ray, hit)};
+    // Attenuate over the span actually traveled, whether or not there is a
+    // hit. On a miss the span extends to infinity, so clamp the distance:
+    // wavelengths with zero extinction keep transmittance 1 instead of
+    // producing 0 × ∞.
+    if (medium && medium->materialInstance.hasMedium()) {
+      Color muA = Color(medium->materialInstance.getAbsorptionCoefficient());
+      Color muS = Color(medium->materialInstance.getScatteringCoefficient());
+      Color mu = muA + muS;
+      float d{std::min(ray.tmax - ray.tmin, std::numeric_limits<float>::max())};
+      for (size_t i = 0; i < WAVELENGTH_BASE_MAX; i++)
+        beta[i] *= std::exp(-mu[i] * d);
+    }
+    if (!hitSurface) {
+      return false;
+    }
+    smdl::State state{};
+    state.allocator = &allocator;
+    state.wavelength_base = wavelengths.data();
+    state.wavelength_min = WAVELENGTH_MIN;
+    state.wavelength_max = WAVELENGTH_MAX;
+    hit.apply_geometry_to_state(state);
+    materialInstance = smdl::JIT::MaterialInstance(state, hit.material);
+    if (float opacity{materialInstance.getCutoutOpacity()};
+        opacity == 1 || float(sampler) < opacity) {
+      return true; // A real hit!
+    }
+    MediumStack::Update(medium, allocator, materialInstance, -ray.dir, ray.dir);
+    ray.tmin = smdl::incrementFloat(ray.tmax + EPS);
+    ray.tmax = INF;
+  }
 }
 
 /// The depth after which the walk is terminated by Russian roulette rather
@@ -53,11 +92,12 @@ static constexpr uint64_t ROULETTE_MIN_DEPTH{4};
 static constexpr float ROULETTE_MAX_SURVIVAL{0.95f};
 
 uint64_t random_walk(smdl::Compiler &compiler, const Scene &scene,
-                     const AnyRandom &random, const Color &wavelengths,
+                     Sampler &sampler, const Color &wavelengths,
                      smdl::BumpPtrAllocator &allocator,
                      smdl::Transport transport, Vertex path0, float wpdfFwd,
                      uint64_t maxDepth, Vertex *path,
-                     const EnvLight *envLight) {
+                     const LightSampler *lights) {
+  const EnvLight *envLight{lights ? lights->env() : nullptr};
   if (maxDepth == 0) return 0;
   path[0] = std::move(path0);
   if (maxDepth == 1) return 1;
@@ -94,7 +134,7 @@ uint64_t random_walk(smdl::Compiler &compiler, const Scene &scene,
       Color muS = Color(medium->materialInstance.getScatteringCoefficient());
       Color mu = muA + muS;
       float t =
-          -std::log1p(-float(random)) / mu[random.index(WAVELENGTH_BASE_MAX)];
+          -std::log1p(-float(sampler)) / mu[sampler.index(WAVELENGTH_BASE_MAX)];
       t = std::min(t, ray.tmax);
       Color Tr{};
       for (size_t i = 0; i < WAVELENGTH_BASE_MAX; i++)
@@ -108,8 +148,19 @@ uint64_t random_walk(smdl::Compiler &compiler, const Scene &scene,
         vertex.medium = medium;
         vertex.materialInstance = medium->materialInstance;
         vertex.pdfFwd = vertexPrev.convert_pdf(wpdfFwd, vertex);
-        vertex.wNext = smdl::uniformSphereSample(float2(random));
         vertex.isVolume = true;
+        // Sample the material's own phase function. It returns the phase
+        // value, which is also the solid-angle PDF of having sampled it,
+        // so the throughput weight is exactly 1 and `beta` is unchanged.
+        float phase{medium->materialInstance.volumeScatterSample(
+            float4(sampler), -ray.dir, vertex.wNext)};
+        if (!(phase > 0)) {
+          break;
+        }
+        wpdfFwd = phase;
+        wpdfRev = phase;
+        vertexPrev.pdfRev = vertex.convert_pdf(wpdfRev, vertexPrev);
+        ray = Ray{vertex.point, vertex.wNext, EPS, INF};
         continue;
       } else {
         beta *= Tr / Tr.average();
@@ -133,7 +184,7 @@ uint64_t random_walk(smdl::Compiler &compiler, const Scene &scene,
     materialInstance.setExteriorIOR(
         ExteriorIOR(medium, materialInstance, -ray.dir));
     if (float opacity{materialInstance.getCutoutOpacity()};
-        opacity < 1 && (opacity == 0 || float(random) > opacity)) {
+        opacity < 1 && (opacity == 0 || float(sampler) > opacity)) {
       MediumStack::Update(medium, allocator, materialInstance, -ray.dir,
                           ray.dir);
       ray = Ray{hit.point, ray.dir, EPS, INF};
@@ -145,10 +196,11 @@ uint64_t random_walk(smdl::Compiler &compiler, const Scene &scene,
     vertex.beta = beta;
     vertex.medium = medium;
     vertex.materialInstance = materialInstance;
+    vertex.meshInstanceIndex = hit.meshInstanceIndex;
     vertex.pdfFwd = vertexPrev.convert_pdf(wpdfFwd, vertex);
 
     if (depth > 2 || !envLight) {
-      if (!materialInstance.scatterSample(float4(random), -vertexPrev.wNext,
+      if (!materialInstance.scatterSample(float4(sampler), -vertexPrev.wNext,
                                           vertex.wNext, wpdfFwd, wpdfRev, f,
                                           vertex.isDeltaBounce)) {
         break;
@@ -164,7 +216,7 @@ uint64_t random_walk(smdl::Compiler &compiler, const Scene &scene,
       auto doSampleLight{[&] {
         SampleResult result{};
         Color Li{};
-        result.wi = envLight->Li_sample(compiler, state, float2(random),
+        result.wi = envLight->Li_sample(compiler, state, float2(sampler),
                                         result.Lpdf, Li);
         float fpdfFwd{};
         float fpdfRev{};
@@ -179,7 +231,7 @@ uint64_t random_walk(smdl::Compiler &compiler, const Scene &scene,
         SampleResult result{};
         float fpdfFwd{};
         float fpdfRev{};
-        if (materialInstance.scatterSample(float4(random), -vertexPrev.wNext,
+        if (materialInstance.scatterSample(float4(sampler), -vertexPrev.wNext,
                                            result.wi, fpdfFwd, fpdfRev,
                                            result.f, vertex.isDeltaBounce)) {
           result.fpdf = fpdfFwd;
@@ -196,7 +248,7 @@ uint64_t random_walk(smdl::Compiler &compiler, const Scene &scene,
       float weightLight = powerHeuristic(sampleLight.Lpdf, sampleLight.fpdf);
       float weightBSDF = powerHeuristic(sampleBSDF.fpdf, sampleBSDF.Lpdf);
       float chanceLight = powerHeuristic(weightLight, weightBSDF);
-      if (float(random) < chanceLight) {
+      if (float(sampler) < chanceLight) {
         wpdfFwd = chanceLight * sampleLight.Lpdf +
                   (1 - chanceLight) * sampleLight.fpdf;
         wpdfRev = sampleLight.fpdfRev;
@@ -225,7 +277,7 @@ uint64_t random_walk(smdl::Compiler &compiler, const Scene &scene,
     // high-albedo transport keeps the energy it is entitled to.
     if (depth > ROULETTE_MIN_DEPTH) {
       float survival{std::min(ROULETTE_MAX_SURVIVAL, beta.maxComponent())};
-      if (!(float(random) < survival)) {
+      if (!(float(sampler) < survival)) {
         break;
       }
       beta *= 1.0f / survival;
