@@ -81,8 +81,10 @@ static cl::opt<DocOutputFormat> docFormat{
 static cl::opt<std::string> docOutputFilename{
     "output", cl::desc("Output filename (default stdout)"), cl::Optional,
     cl::sub(subDoc), cl::cat(optionsCat)};
-static cl::opt<bool> docIncludeNonExported{
-    "all", cl::desc("Include declarations not marked 'export'"),
+static cl::opt<bool> docIncludeHidden{
+    "all",
+    cl::desc("Include hidden declarations, i.e., declarations not marked "
+             "'export' or named with a leading underscore"),
     cl::sub(subDoc), cl::cat(optionsCat)};
 static cl::opt<bool> docAllBuiltins{"builtins",
                                     cl::desc("Include all builtin modules"),
@@ -161,8 +163,8 @@ static void runDocSubcommand(smdl::Compiler &compiler,
   if (queries.empty() || docFormat != DOC_FORMAT_TEXT) {
     // Whole-database output. Symbol queries only participate by loading
     // the builtin modules they name.
-    if (!docIncludeNonExported)
-      docs.removeNonExported();
+    if (!docIncludeHidden)
+      docs.removeHidden();
     result =
         docFormat == DOC_FORMAT_JSON ? docs.printJSON() : docs.printMarkdown();
   } else {
@@ -222,7 +224,7 @@ static void runDocSubcommand(smdl::Compiler &compiler,
         }
         result += '\n';
         for (const auto &entry : moduleMatch->entries) {
-          if (!entry.isExported && !docIncludeNonExported)
+          if (entry.isHidden() && !docIncludeHidden)
             continue;
           result += "  " + entry.qualifiedName + " (" + entry.kind + ")\n";
         }

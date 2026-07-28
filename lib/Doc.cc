@@ -392,12 +392,16 @@ DocDatabase::findSymbol(std::string_view symbolName) const {
   return found;
 }
 
-void DocDatabase::removeNonExported() {
+void DocDatabase::removeHidden() {
   auto filter{[](auto &&self, std::vector<DocEntry> &entries) -> void {
-    for (auto &entry : entries)
-      if (entry.kind == "namespace") self(self, entry.members);
+    for (auto &entry : entries) self(self, entry.members);
     entries.erase(std::remove_if(entries.begin(), entries.end(),
                                  [](const DocEntry &entry) {
+                                   if (startsWith(entry.name, "_"))
+                                     return true;
+                                   // Namespaces cannot be exported, so
+                                   // keep them while they still have
+                                   // visible members.
                                    return !entry.isExported &&
                                           (entry.kind != "namespace" ||
                                            entry.members.empty());

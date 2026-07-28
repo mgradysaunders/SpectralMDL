@@ -135,7 +135,7 @@ export const int X = 0 [[ anno::description("The described constant.") ]];
 )")};
     CHECK(entryNamed(mod, "X").docText == "The described constant.");
   }
-  SUBCASE("findSymbol and removeNonExported") {
+  SUBCASE("findSymbol and removeHidden") {
     auto docs{DocDatabase{}};
     docs.modules.push_back(extractFromSource(R"(#smdl
 /// The exported function.
@@ -143,6 +143,15 @@ export int f(int a) = a;
 
 /// The internal function.
 int g(int a) = a;
+
+/// The exported-but-underscored function.
+export int _hideMe(int a) = a;
+
+/// The exported struct with an underscored field.
+export struct s {
+  int visible = 0;
+  int _invisible = 0;
+};
 
 namespace ns {
   export int h(int a) = a;
@@ -155,22 +164,34 @@ namespace ns {
     CHECK(docs.findSymbol("test::f").size() == 1);
     CHECK(docs.findSymbol("::other::f").empty());
     CHECK(docs.findSymbol("ns::h").size() == 1);
+    CHECK(docs.findSymbol("_hideMe").size() == 1);
     CHECK(docs.findSymbol("nope").empty());
+    CHECK(entryNamed(docs.modules[0], "_hideMe").isHidden());
+    CHECK(!entryNamed(docs.modules[0], "f").isHidden());
+    CHECK(entryNamed(docs.modules[0], "g").isHidden());
 
-    docs.removeNonExported();
+    docs.removeHidden();
     CHECK(docs.findSymbol("f").size() == 1);
     CHECK(docs.findSymbol("g").empty());
+    CHECK(docs.findSymbol("_hideMe").empty());
     CHECK(docs.findSymbol("ns::h").size() == 1);
+    CHECK(docs.findSymbol("s::visible").size() == 1);
+    CHECK(docs.findSymbol("s::_invisible").empty());
   }
-  SUBCASE("removeNonExported drops empty namespaces") {
+  SUBCASE("removeHidden drops empty namespaces") {
     auto docs{DocDatabase{}};
     docs.modules.push_back(extractFromSource(R"(#smdl
 namespace ns {
   int internal(int a) = a;
 }
+namespace _detail {
+  export int hidden(int a) = a;
+}
 )"));
-    docs.removeNonExported();
+    docs.removeHidden();
     CHECK(docs.findSymbol("ns").empty());
+    CHECK(docs.findSymbol("_detail").empty());
+    CHECK(docs.findSymbol("hidden").empty());
   }
   SUBCASE("printJSON escaping") {
     auto docs{DocDatabase{}};

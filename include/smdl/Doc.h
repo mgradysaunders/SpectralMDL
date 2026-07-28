@@ -65,6 +65,13 @@ public:
   /// The members if this is a struct (fields), enum (enumerators), or
   /// namespace (nested declarations). This may be empty!
   std::vector<DocEntry> members{};
+
+  /// Is hidden from documentation by default? True if not marked with
+  /// the keyword `export` or if the name begins with an underscore,
+  /// e.g., `_hideMe`.
+  [[nodiscard]] bool isHidden() const {
+    return !isExported || (!name.empty() && name.front() == '_');
+  }
 };
 
 /// The documentation extracted from one module.
@@ -101,10 +108,12 @@ public:
   [[nodiscard]] std::vector<const DocEntry *>
   findSymbol(std::string_view symbolName) const;
 
-  /// Remove declarations that are not marked with the keyword `export`,
-  /// keeping the members of whatever remains. Namespaces are filtered
-  /// recursively and removed when they end up empty.
-  void removeNonExported();
+  /// Remove hidden declarations: those not marked with the keyword
+  /// `export` and those whose names begin with an underscore, e.g.,
+  /// `_hideMe`. Underscore names are also filtered out of the members
+  /// of whatever remains. Namespaces are filtered recursively and
+  /// removed when they end up empty.
+  void removeHidden();
 
   /// Print as JSON.
   [[nodiscard]] std::string printJSON() const;
