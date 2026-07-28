@@ -14,24 +14,38 @@ namespace smdl {
 //--{ Extraction
 namespace {
 
+/// If a comment or a `[[ ... ]]` annotation block begins at index `i`,
+/// advance past it. Otherwise return `i` unchanged. These are the spans
+/// the normalizer drops outright, as opposed to whitespace, which it
+/// collapses.
+[[nodiscard]] size_t skipDropped(std::string_view src, size_t i) {
+  auto remaining{src.substr(i)};
+  auto skipPast{[&](std::string_view close) {
+    auto j{src.find(close, i + 2)};
+    return j == std::string_view::npos ? src.size() : j + close.size();
+  }};
+  if (startsWith(remaining, "//")) {
+    // Stop at the newline rather than past it: it is whitespace, which
+    // the caller still has to account for.
+    auto j{src.find('\n', i + 2)};
+    return j == std::string_view::npos ? src.size() : j;
+  }
+  if (startsWith(remaining, "/*")) return skipPast("*/");
+  if (startsWith(remaining, "[[")) return skipPast("]]");
+  return i;
+}
+
 /// Advance past everything the normalizer drops: whitespace, comments,
 /// and `[[ ... ]]` annotation blocks.
 [[nodiscard]] size_t skipIgnorable(std::string_view src, size_t i) {
   while (i < src.size()) {
-    auto remaining{src.substr(i)};
     if (isSpace(src[i])) {
       i++;
-    } else if (startsWith(remaining, "//")) {
-      while (i < src.size() && src[i] != '\n') i++;
-    } else if (startsWith(remaining, "/*")) {
-      auto close{src.find("*/", i + 2)};
-      i = close == std::string_view::npos ? src.size() : close + 2;
-    } else if (startsWith(remaining, "[[")) {
-      auto close{src.find("]]", i + 2)};
-      i = close == std::string_view::npos ? src.size() : close + 2;
-    } else {
-      break;
+      continue;
     }
+    auto j{skipDropped(src, i)};
+    if (j == i) break;
+    i = j;
   }
   return i;
 }
@@ -77,17 +91,8 @@ namespace {
   }};
   size_t i{};
   while (i < src.size()) {
-    auto remaining{src.substr(i)};
-    if (startsWith(remaining, "//")) {
-      while (i < src.size() && src[i] != '\n') i++;
-      addSpace();
-    } else if (startsWith(remaining, "/*")) {
-      auto close{src.find("*/", i + 2)};
-      i = close == std::string_view::npos ? src.size() : close + 2;
-      addSpace();
-    } else if (startsWith(remaining, "[[")) {
-      auto close{src.find("]]", i + 2)};
-      i = close == std::string_view::npos ? src.size() : close + 2;
+    if (auto j{skipDropped(src, i)}; j != i) {
+      i = j;
       addSpace();
     } else if (isSpace(src[i])) {
       i++;
@@ -191,6 +196,15 @@ private:
     return mSource.substr(i0, i1 - i0);
   }
 
+  /// Slice from `i0` up to the separating comma if there is one, else up
+  /// to the token that terminates the enclosing declaration. This is the
+  /// shape of every comma-separated declarator and parameter.
+  [[nodiscard]] std::string_view sliceUntil(size_t i0,
+                                            std::string_view srcComma,
+                                            std::string_view srcEnd) const {
+    return slice(i0, beginOf(!srcComma.empty() ? srcComma : srcEnd));
+  }
+
   /// The signature prefix from the attributes and the `export` keyword,
   /// which precede the declaration's own source location.
   [[nodiscard]] static std::string declPrefix(const AST::Decl &decl) {
@@ -233,6 +247,42 @@ private:
     return entry;
   }
 
+  /// Make an entry for a member of an enum or a struct. Members are not
+  /// `AST::Decl`s, so they carry no `export` of their own and their
+  /// qualified names are formed differently, but everything else about
+  /// them is the same: `node` is an `AST::Enum::Declarator` or an
+  /// `AST::Struct::Field`, and `srcEnd` is where its signature stops.
+  template <typename Node>
+  [[nodiscard]] DocEntry makeMember(const DocEntry &parent, const char *kind,
+                                    std::string qualifiedName, const Node &node,
+                                    std::string_view srcEnd) const {
+    auto member{DocEntry{}};
+    member.kind = kind;
+    member.name = std::string(node.name.srcName);
+    member.qualifiedName = std::move(qualifiedName);
+    member.isExported = parent.isExported;
+    member.lineNo = node.srcLoc.lineNo;
+    setSignature(member, {}, slice(node.srcLoc.i, beginOf(srcEnd)),
+                 node.name.srcName);
+    member.docText = docTextOf(node.srcDocComment, node.srcDocCommentTrailing,
+                               node.annotations.get());
+    return member;
+  }
+
+  /// Extract a declaration whose entire signature runs from its own
+  /// source location to its semicolon, i.e., `AST::Tag` and
+  /// `AST::Typedef`.
+  template <typename Decl>
+  void extractSimpleDecl(const AST::Decl &decl, const char *kind,
+                         std::vector<DocEntry> &out) {
+    const auto &d{static_cast<const Decl &>(decl)};
+    auto entry{makeEntry(decl, kind, d.name.srcName)};
+    setSignature(entry, declPrefix(decl),
+                 slice(decl.srcLoc.i, beginOf(d.srcSemicolon)), d.name.srcName);
+    entry.docText = docTextOf(decl.srcDocComment, {}, nullptr);
+    out.push_back(std::move(entry));
+  }
+
   void extractDecl(const AST::Decl &decl, std::vector<DocEntry> &out) {
     switch (decl.declKind) {
     case AST::DeclKind::AnnotationDecl:
@@ -251,26 +301,12 @@ private:
     case AST::DeclKind::Struct:
       extractStruct(static_cast<const AST::Struct &>(decl), out);
       break;
-    case AST::DeclKind::Tag: {
-      const auto &d{static_cast<const AST::Tag &>(decl)};
-      auto entry{makeEntry(decl, "tag", d.name.srcName)};
-      setSignature(entry, declPrefix(decl),
-                   slice(decl.srcLoc.i, beginOf(d.srcSemicolon)),
-                   d.name.srcName);
-      entry.docText = docTextOf(decl.srcDocComment, {}, nullptr);
-      out.push_back(std::move(entry));
+    case AST::DeclKind::Tag:
+      extractSimpleDecl<AST::Tag>(decl, "tag", out);
       break;
-    }
-    case AST::DeclKind::Typedef: {
-      const auto &d{static_cast<const AST::Typedef &>(decl)};
-      auto entry{makeEntry(decl, "typedef", d.name.srcName)};
-      setSignature(entry, declPrefix(decl),
-                   slice(decl.srcLoc.i, beginOf(d.srcSemicolon)),
-                   d.name.srcName);
-      entry.docText = docTextOf(decl.srcDocComment, {}, nullptr);
-      out.push_back(std::move(entry));
+    case AST::DeclKind::Typedef:
+      extractSimpleDecl<AST::Typedef>(decl, "typedef", out);
       break;
-    }
     case AST::DeclKind::Variable:
       extractVariable(static_cast<const AST::Variable &>(decl), out);
       break;
@@ -299,23 +335,11 @@ private:
                  decl.name.srcName);
     entry.docText = docTextOf(decl.srcDocComment, {}, decl.annotations.get());
     for (const auto &declarator : decl.declarators) {
-      auto member{DocEntry{}};
-      member.kind = "enumerator";
-      member.name = std::string(declarator.name.srcName);
       // NOTE: Enum values are injected into the enclosing scope, so the
       // qualified name does not include the enum name.
-      member.qualifiedName = qualify(member.name);
-      member.isExported = entry.isExported;
-      member.lineNo = declarator.srcLoc.lineNo;
-      setSignature(member, {},
-                   slice(declarator.srcLoc.i, !declarator.srcComma.empty()
-                                                  ? beginOf(declarator.srcComma)
-                                                  : beginOf(decl.srcBraceR)),
-                   declarator.name.srcName);
-      member.docText =
-          docTextOf(declarator.srcDocComment, declarator.srcDocCommentTrailing,
-                    declarator.annotations.get());
-      entry.members.push_back(std::move(member));
+      entry.members.push_back(makeMember(
+          entry, "enumerator", qualify(declarator.name.srcName), declarator,
+          !declarator.srcComma.empty() ? declarator.srcComma : decl.srcBraceR));
     }
     out.push_back(std::move(entry));
   }
@@ -360,19 +384,10 @@ private:
                  decl.name.srcName);
     entry.docText = docTextOf(decl.srcDocComment, {}, decl.annotations.get());
     for (const auto &field : decl.fields) {
-      auto member{DocEntry{}};
-      member.kind = "field";
-      member.name = std::string(field.name.srcName);
-      member.qualifiedName = entry.qualifiedName + "::" + member.name;
-      member.isExported = entry.isExported;
-      member.lineNo = field.srcLoc.lineNo;
-      setSignature(member, {},
-                   slice(field.srcLoc.i, beginOf(field.srcSemicolon)),
-                   field.name.srcName);
-      member.docText =
-          docTextOf(field.srcDocComment, field.srcDocCommentTrailing,
-                    field.annotations.get());
-      entry.members.push_back(std::move(member));
+      entry.members.push_back(makeMember(
+          entry, "field",
+          entry.qualifiedName + "::" + std::string(field.name.srcName), field,
+          field.srcSemicolon));
     }
     out.push_back(std::move(entry));
   }
@@ -394,10 +409,8 @@ private:
       }
       auto entry{makeEntry(decl, "variable", name)};
       entry.lineNo = declarator.srcLoc.lineNo;
-      auto declaratorSrc{
-          slice(declarator.srcLoc.i, !declarator.srcComma.empty()
-                                         ? beginOf(declarator.srcComma)
-                                         : beginOf(decl.srcSemicolon))};
+      auto declaratorSrc{sliceUntil(declarator.srcLoc.i, declarator.srcComma,
+                                    decl.srcSemicolon)};
       // NOTE: The type and the declarator are not contiguous in the
       // source, so this is the one signature built by concatenation.
       // The name span must be rebased onto the concatenated string.
@@ -428,9 +441,8 @@ private:
       docParam.name = std::string(param.name.srcName);
       // NOTE: `Parameter::src` is never populated, so slice from the
       // parameter start to its comma or the closing parenthesis.
-      docParam.signature = normalizeSignature(slice(
-          param.srcLoc.i, !param.srcComma.empty() ? beginOf(param.srcComma)
-                                                  : beginOf(params.srcParenR)));
+      docParam.signature = normalizeSignature(
+          sliceUntil(param.srcLoc.i, param.srcComma, params.srcParenR));
       docParam.docText =
           docTextOf(param.srcDocComment, param.srcDocCommentTrailing,
                     param.annotations.get());
