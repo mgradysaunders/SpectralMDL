@@ -18,7 +18,11 @@ void SpectralRenderImage::resize(size_t nBands, size_t nPixelsX,
   mNumBands = nBands;
   mNumPixelsX = nPixelsX;
   mNumPixelsY = nPixelsY;
-  mBuf.reset(new uint8_t[getImageSizeInBytes()]);
+  // Value-initialize so every accumulator starts at zero. A plain `new
+  // uint8_t[n]` is uninitialized, which happens to be zero for a fresh
+  // mmap-backed allocation but is dirty when the allocator reuses heap
+  // memory — e.g. the second `resize()` of an iterative render loop.
+  mBuf.reset(new uint8_t[getImageSizeInBytes()]());
 }
 
 SpectralRenderImage::PixelRef
