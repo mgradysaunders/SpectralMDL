@@ -715,6 +715,11 @@ static const char *const df = R"*(/// The distribution functions, following the 
 /// elemental BSDFs, EDFs, and VDFs, the modifier and layering
 /// combinators, and the mixers, plus the internal scattering and
 /// emission entry points the compiler exposes to renderers.
+///
+/// NOTE: The `handle` of every distribution function here should be a
+/// `string` by the specification, but we `void` it because we have no
+/// use for it.
+///
 #smdl
 using ::math import *;
 import ::tex::*;
@@ -1276,9 +1281,6 @@ const float roughness=0.;
 /// > Name to provide access to this component for use in an MDL
 /// > integration.
 ///
-/// NOTE: This should be a `string` but we `void` it because we have no
-/// use for it.
-///
 void handle="";
 
 /// The multiscatter tint.
@@ -1331,9 +1333,6 @@ const $(color|float) tint=1.;
 /// > Name to provide access to this component for use in an MDL
 /// > integration.
 ///
-/// NOTE: This should be a `string` but we `void` it because we have no
-/// use for it.
-///
 void handle="";
 
 /// The flags.
@@ -1384,9 +1383,6 @@ const scatter_mode mode=scatter_reflect;
 ///
 /// > Name to provide access to this component for use in an MDL
 /// > integration.
-///
-/// NOTE: This should be a `string` but we `void` it because we have no
-/// use for it.
 ///
 void handle="";
 
@@ -1455,9 +1451,6 @@ void multiscatter=none;
 ///
 /// > Name to provide access to this component for use in an MDL
 /// > integration.
-///
-/// NOTE: This should be a `string` but we `void` it because we have no
-/// use for it.
 ///
 void handle="";
 
@@ -1542,9 +1535,6 @@ float3 tangent_u=$state.texture_tangent_u[0];
 ///
 /// > Name to provide access to this component for use in an MDL
 /// > integration.
-///
-/// NOTE: This should be a `string` but we `void` it because we have no
-/// use for it.
 ///
 void handle="";
 
@@ -2165,10 +2155,6 @@ float _invSurgeNorm=1.;
 float _tanMeanSlope=0.;
 
 /// The handle.
-///
-/// NOTE: This should be a `string` but we `void` it because we have no
-/// use for it.
-///
 void handle="";
 
 /// The flags.
@@ -2289,9 +2275,6 @@ export struct diffuse_edf:edf{
 /// > Name to provide access to this component for use in an MDL
 /// > integration.
 ///
-/// NOTE: This should be a `string` but we `void` it because we have no
-/// use for it.
-///
 void handle="";
 
 /// The flags.
@@ -2345,9 +2328,6 @@ void global_frame=float3x3(1.);
 ///
 /// > Name to provide access to this component for use in an MDL
 /// > integration.
-///
-/// NOTE: This should be a `string` but we `void` it because we have no
-/// use for it.
 ///
 void handle="";
 
@@ -2456,9 +2436,6 @@ float3 tangent_u=$state.texture_tangent_u[0];
 ///
 /// > Name to provide access to this component for use in an MDL
 /// > integration.
-///
-/// NOTE: This should be a `string` but we `void` it because we have no
-/// use for it.
 ///
 void handle="";
 
@@ -3299,8 +3276,7 @@ export struct anisotropic_vdf:vdf{
 /// scattering, `0` is isotropic, and positive is forward scattering.
 float directional_bias=0.;
 
-/// The handle. NOTE: This should be a `string` but we `void` it because
-/// we have no use for it.
+/// The handle.
 void handle="";
 
 /// The flags.
