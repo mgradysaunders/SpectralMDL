@@ -129,6 +129,94 @@ namespace inner {
     CHECK(inner.members[0].qualifiedName == "::test::inner::nested");
     CHECK(inner.members[0].docText == "The nested function.");
   }
+  SUBCASE("signature re-expansion") {
+    // Minified sources, which is how the builtins are embedded, drop the
+    // spacing around initializers and separators.
+    auto mod{extractFromSource(R"(#smdl
+export struct s {
+  const int2 count=int2(1,1);
+  float weight=0.;
+  float3 v=float3(1.,2.,3.);
+};
+export int f(int a=1,int b=2) = a + b;
+export int g(
+  int a, ///< The a.
+  int b, ///< The b.
+) = a + b;
+export const int X=-1;
+)")};
+    const auto &s{entryNamed(mod, "s")};
+    REQUIRE(s.members.size() == 3);
+    CHECK(s.members[0].signature == "const int2 count = int2(1, 1)");
+    CHECK(s.members[1].signature == "float weight = 0.");
+    CHECK(s.members[2].signature == "float3 v = float3(1., 2., 3.)");
+    CHECK(entryNamed(mod, "f").signature ==
+          "export int f(int a = 1, int b = 2)");
+    // The trailing comma is dropped even though a `///<` comment sits
+    // between it and the closing parenthesis.
+    CHECK(entryNamed(mod, "g").signature == "export int g(int a, int b)");
+    CHECK(entryNamed(mod, "X").signature == "export const int X = -1");
+  }
+  SUBCASE("signature leaves compound operators alone") {
+    // Only the `=` that introduces an initializer is spaced apart; a `=`
+    // belonging to an operator inside the initializer expression is not.
+    auto mod{extractFromSource(R"(#smdl
+export struct s {
+  bool a=(1==2);
+  bool b=(1!=2);
+  bool c=(1<=2);
+  bool d=(1>=2);
+};
+)")};
+    const auto &s{entryNamed(mod, "s")};
+    REQUIRE(s.members.size() == 4);
+    CHECK(s.members[0].signature == "bool a = (1==2)");
+    CHECK(s.members[1].signature == "bool b = (1!=2)");
+    CHECK(s.members[2].signature == "bool c = (1<=2)");
+    CHECK(s.members[3].signature == "bool d = (1>=2)");
+  }
+  SUBCASE("nameOffset locates the declared name") {
+    auto mod{extractFromSource(R"(#smdl
+/// The function.
+@(pure macro)
+export float helper(float x) = x;
+
+export struct thing {
+  float value = 0.0;
+};
+
+export enum mode { mode_a = 0 };
+
+export typedef float3 vector3;
+
+export tag my_tag;
+
+export const int COUNT = 4;
+
+namespace ns {
+  export int inner(int a) = a;
+}
+)")};
+    // Every entry must point at its own name inside its own signature.
+    auto check{[](const DocEntry &entry) {
+      REQUIRE(entry.nameOffset != DocEntry::NO_NAME_OFFSET);
+      REQUIRE(entry.nameOffset + entry.name.size() <= entry.signature.size());
+      CHECK(entry.signature.substr(entry.nameOffset, entry.name.size()) ==
+            entry.name);
+    }};
+    auto walk{[&](auto &&self, const std::vector<DocEntry> &entries) -> void {
+      for (const auto &entry : entries) {
+        check(entry);
+        self(self, entry.members);
+      }
+    }};
+    walk(walk, mod.entries);
+    // Spot check that it is not merely matching the first occurrence: the
+    // name of `helper` follows the attributes and the return type.
+    const auto &helper{entryNamed(mod, "helper")};
+    CHECK(helper.signature == "@(pure macro) export float helper(float x)");
+    CHECK(helper.nameOffset == helper.signature.find("helper("));
+  }
   SUBCASE("anno::description fallback") {
     auto mod{extractFromSource(R"(mdl 1.7;
 export const int X = 0 [[ anno::description("The described constant.") ]];

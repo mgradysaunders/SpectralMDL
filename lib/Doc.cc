@@ -14,12 +14,60 @@ namespace smdl {
 //--{ Extraction
 namespace {
 
+/// Advance past everything the normalizer drops: whitespace, comments,
+/// and `[[ ... ]]` annotation blocks.
+[[nodiscard]] size_t skipIgnorable(std::string_view src, size_t i) {
+  while (i < src.size()) {
+    auto remaining{src.substr(i)};
+    if (isSpace(src[i])) {
+      i++;
+    } else if (startsWith(remaining, "//")) {
+      while (i < src.size() && src[i] != '\n') i++;
+    } else if (startsWith(remaining, "/*")) {
+      auto close{src.find("*/", i + 2)};
+      i = close == std::string_view::npos ? src.size() : close + 2;
+    } else if (startsWith(remaining, "[[")) {
+      auto close{src.find("]]", i + 2)};
+      i = close == std::string_view::npos ? src.size() : close + 2;
+    } else {
+      break;
+    }
+  }
+  return i;
+}
+
+/// Is the `=` at index `i` part of a multi-character operator, e.g.,
+/// `==`, `!=`, `<=`, or `:=`? Such an `=` belongs to an expression inside
+/// an initializer and must not be spaced apart, unlike the `=` that
+/// introduces the initializer itself.
+[[nodiscard]] bool isCompoundOperatorEquals(std::string_view src, size_t i) {
+  static constexpr std::string_view OperatorChars{"!<>=~:+-*/%&|^"};
+  return (i > 0 && OperatorChars.find(src[i - 1]) != std::string_view::npos) ||
+         (i + 1 < src.size() && src[i + 1] == '=');
+}
+
 /// Normalize a raw signature slice: strip comments and `[[ ... ]]`
-/// annotation blocks, collapse whitespace runs to single spaces, and
-/// tidy spacing around punctuation.
-[[nodiscard]] std::string normalizeSignature(std::string_view src) {
+/// annotation blocks, collapse whitespace runs to single spaces, and tidy
+/// spacing around punctuation.
+///
+/// NOTE: This also re-expands the spacing that minification removes, so
+/// that the embedded builtins read like the sources they came from:
+/// initializers are spaced as `x = 1` and separators as `a, b`, and a
+/// trailing comma before a closing bracket is dropped.
+///
+/// If `srcName` points into `src`, `nameOffset` receives the offset at
+/// which it lands in the result, which survives normalization because
+/// identifiers are copied verbatim.
+[[nodiscard]] std::string normalizeSignature(std::string_view src,
+                                             std::string_view srcName = {},
+                                             uint32_t *nameOffset = nullptr) {
   auto result{std::string{}};
   result.reserve(src.size());
+  auto nameBegin{std::string_view::npos};
+  if (!srcName.empty() && !src.empty() && srcName.data() >= src.data() &&
+      srcName.data() + srcName.size() <= src.data() + src.size()) {
+    nameBegin = size_t(srcName.data() - src.data());
+  }
   auto lastWasSpace{true}; // Also trims leading whitespace
   auto addSpace{[&] {
     if (!lastWasSpace) {
@@ -45,12 +93,31 @@ namespace {
       i++;
       addSpace();
     } else {
-      if ((src[i] == ',' || src[i] == ')') && !result.empty() &&
-          result.back() == ' ') {
-        result.pop_back();
+      const auto ch{src[i]};
+      // Drop a trailing comma before a closing bracket, which minified
+      // sources keep but which reads as a missing argument. NOTE: The
+      // lookahead must skip comments too: with `--keep-doc-comments`, a
+      // trailing `///<` sits between the last comma and the `)`.
+      if (ch == ',') {
+        auto j{skipIgnorable(src, i + 1)};
+        if (j < src.size() &&
+            (src[j] == ')' || src[j] == ']' || src[j] == '}')) {
+          i = j;
+          continue;
+        }
       }
-      result += src[i++];
+      if ((ch == ',' || ch == ')') && !result.empty() && result.back() == ' ')
+        result.pop_back();
+      const auto spaceAround{ch == '=' && !isCompoundOperatorEquals(src, i)};
+      if (spaceAround) addSpace();
+      if (i == nameBegin && nameOffset) *nameOffset = uint32_t(result.size());
+      result += ch;
       lastWasSpace = false;
+      if (spaceAround || ch == ',') {
+        result += ' ';
+        lastWasSpace = true;
+      }
+      i++;
     }
   }
   while (!result.empty() && result.back() == ' ') result.pop_back();
@@ -144,6 +211,17 @@ private:
     return mQualifiedNamePrefix + "::" + std::string(name);
   }
 
+  /// Set `entry.signature` from the given prefix and source slice, and
+  /// record where the declared name landed in it.
+  static void setSignature(DocEntry &entry, std::string_view prefix,
+                           std::string_view src, std::string_view srcName) {
+    auto offset{DocEntry::NO_NAME_OFFSET};
+    entry.signature =
+        std::string(prefix) + normalizeSignature(src, srcName, &offset);
+    if (offset != DocEntry::NO_NAME_OFFSET)
+      entry.nameOffset = uint32_t(prefix.size()) + offset;
+  }
+
   [[nodiscard]] DocEntry makeEntry(const AST::Decl &decl, const char *kind,
                                    std::string_view name) const {
     auto entry{DocEntry{}};
@@ -176,9 +254,9 @@ private:
     case AST::DeclKind::Tag: {
       const auto &d{static_cast<const AST::Tag &>(decl)};
       auto entry{makeEntry(decl, "tag", d.name.srcName)};
-      entry.signature =
-          declPrefix(decl) +
-          normalizeSignature(slice(decl.srcLoc.i, beginOf(d.srcSemicolon)));
+      setSignature(entry, declPrefix(decl),
+                   slice(decl.srcLoc.i, beginOf(d.srcSemicolon)),
+                   d.name.srcName);
       entry.docText = docTextOf(decl.srcDocComment, {}, nullptr);
       out.push_back(std::move(entry));
       break;
@@ -186,9 +264,9 @@ private:
     case AST::DeclKind::Typedef: {
       const auto &d{static_cast<const AST::Typedef &>(decl)};
       auto entry{makeEntry(decl, "typedef", d.name.srcName)};
-      entry.signature =
-          declPrefix(decl) +
-          normalizeSignature(slice(decl.srcLoc.i, beginOf(d.srcSemicolon)));
+      setSignature(entry, declPrefix(decl),
+                   slice(decl.srcLoc.i, beginOf(d.srcSemicolon)),
+                   d.name.srcName);
       entry.docText = docTextOf(decl.srcDocComment, {}, nullptr);
       out.push_back(std::move(entry));
       break;
@@ -206,9 +284,9 @@ private:
   void extractAnnotationDecl(const AST::AnnotationDecl &decl,
                              std::vector<DocEntry> &out) {
     auto entry{makeEntry(decl, "annotation", decl.name.srcName)};
-    entry.signature =
-        declPrefix(decl) +
-        normalizeSignature(slice(decl.srcLoc.i, endOf(decl.params.srcParenR)));
+    setSignature(entry, declPrefix(decl),
+                 slice(decl.srcLoc.i, endOf(decl.params.srcParenR)),
+                 decl.name.srcName);
     entry.docText = docTextOf(decl.srcDocComment, {}, decl.annotations.get());
     extractParams(decl.params, entry.params);
     out.push_back(std::move(entry));
@@ -216,9 +294,9 @@ private:
 
   void extractEnum(const AST::Enum &decl, std::vector<DocEntry> &out) {
     auto entry{makeEntry(decl, "enum", decl.name.srcName)};
-    entry.signature =
-        declPrefix(decl) +
-        normalizeSignature(slice(decl.srcLoc.i, endOf(decl.name.srcName)));
+    setSignature(entry, declPrefix(decl),
+                 slice(decl.srcLoc.i, endOf(decl.name.srcName)),
+                 decl.name.srcName);
     entry.docText = docTextOf(decl.srcDocComment, {}, decl.annotations.get());
     for (const auto &declarator : decl.declarators) {
       auto member{DocEntry{}};
@@ -229,10 +307,11 @@ private:
       member.qualifiedName = qualify(member.name);
       member.isExported = entry.isExported;
       member.lineNo = declarator.srcLoc.lineNo;
-      member.signature = normalizeSignature(
-          slice(declarator.srcLoc.i, !declarator.srcComma.empty()
-                                         ? beginOf(declarator.srcComma)
-                                         : beginOf(decl.srcBraceR)));
+      setSignature(member, {},
+                   slice(declarator.srcLoc.i, !declarator.srcComma.empty()
+                                                  ? beginOf(declarator.srcComma)
+                                                  : beginOf(decl.srcBraceR)),
+                   declarator.name.srcName);
       member.docText =
           docTextOf(declarator.srcDocComment, declarator.srcDocCommentTrailing,
                     declarator.annotations.get());
@@ -243,11 +322,11 @@ private:
 
   void extractFunction(const AST::Function &decl, std::vector<DocEntry> &out) {
     auto entry{makeEntry(decl, "function", decl.name.srcName)};
-    entry.signature = declPrefix(decl) +
-                      normalizeSignature(slice(
-                          decl.srcLoc.i, !decl.srcFrequency.empty()
-                                             ? endOf(decl.srcFrequency)
-                                             : endOf(decl.params.srcParenR)));
+    setSignature(entry, declPrefix(decl),
+                 slice(decl.srcLoc.i, !decl.srcFrequency.empty()
+                                          ? endOf(decl.srcFrequency)
+                                          : endOf(decl.params.srcParenR)),
+                 decl.name.srcName);
     entry.docText =
         docTextOf(decl.srcDocComment, {},
                   decl.lateAnnotations ? decl.lateAnnotations.get()
@@ -265,6 +344,7 @@ private:
     }
     auto entry{makeEntry(decl, "namespace", name)};
     entry.signature = "namespace " + name;
+    entry.nameOffset = uint32_t(entry.signature.size() - name.size());
     entry.docText = docTextOf(decl.srcDocComment, {}, nullptr);
     auto prevPrefix{mQualifiedNamePrefix};
     mQualifiedNamePrefix = entry.qualifiedName;
@@ -275,9 +355,9 @@ private:
 
   void extractStruct(const AST::Struct &decl, std::vector<DocEntry> &out) {
     auto entry{makeEntry(decl, "struct", decl.name.srcName)};
-    entry.signature =
-        declPrefix(decl) +
-        normalizeSignature(slice(decl.srcLoc.i, endOf(decl.name.srcName)));
+    setSignature(entry, declPrefix(decl),
+                 slice(decl.srcLoc.i, endOf(decl.name.srcName)),
+                 decl.name.srcName);
     entry.docText = docTextOf(decl.srcDocComment, {}, decl.annotations.get());
     for (const auto &field : decl.fields) {
       auto member{DocEntry{}};
@@ -286,8 +366,9 @@ private:
       member.qualifiedName = entry.qualifiedName + "::" + member.name;
       member.isExported = entry.isExported;
       member.lineNo = field.srcLoc.lineNo;
-      member.signature = normalizeSignature(
-          slice(field.srcLoc.i, beginOf(field.srcSemicolon)));
+      setSignature(member, {},
+                   slice(field.srcLoc.i, beginOf(field.srcSemicolon)),
+                   field.name.srcName);
       member.docText =
           docTextOf(field.srcDocComment, field.srcDocCommentTrailing,
                     field.annotations.get());
@@ -317,9 +398,20 @@ private:
           slice(declarator.srcLoc.i, !declarator.srcComma.empty()
                                          ? beginOf(declarator.srcComma)
                                          : beginOf(decl.srcSemicolon))};
-      entry.signature =
-          declPrefix(decl) + normalizeSignature(std::string(typeSrc) + " " +
-                                                std::string(declaratorSrc));
+      // NOTE: The type and the declarator are not contiguous in the
+      // source, so this is the one signature built by concatenation.
+      // The name span must be rebased onto the concatenated string.
+      auto signatureSrc{std::string(typeSrc) + " " +
+                        std::string(declaratorSrc)};
+      auto srcName{std::string_view{}};
+      if (!declarator.isDestructure() && !declarator.names.empty()) {
+        srcName = std::string_view(
+            signatureSrc.data() + typeSrc.size() + 1 +
+                size_t(declarator.names[0].name.srcName.data() -
+                       declaratorSrc.data()),
+            declarator.names[0].name.srcName.size());
+      }
+      setSignature(entry, declPrefix(decl), signatureSrc, srcName);
       entry.docText =
           docTextOf(declarator.srcDocComment, declarator.srcDocCommentTrailing,
                     declarator.annotations.get());
@@ -397,8 +489,7 @@ void DocDatabase::removeHidden() {
     for (auto &entry : entries) self(self, entry.members);
     entries.erase(std::remove_if(entries.begin(), entries.end(),
                                  [](const DocEntry &entry) {
-                                   if (startsWith(entry.name, "_"))
-                                     return true;
+                                   if (startsWith(entry.name, "_")) return true;
                                    // Namespaces cannot be exported, so
                                    // keep them while they still have
                                    // visible members.
@@ -468,6 +559,12 @@ static void printJSONEntry(std::string &out, const DocEntry &entry, int depth) {
   printJSONIndent(out, depth + 1);
   out += "\"lineNo\": " + std::to_string(entry.lineNo) + ",\n";
   field("signature", entry.signature);
+  printJSONIndent(out, depth + 1);
+  out += "\"nameOffset\": ";
+  out += entry.nameOffset == DocEntry::NO_NAME_OFFSET
+             ? std::string("null")
+             : std::to_string(entry.nameOffset);
+  out += ",\n";
   field("docText", entry.docText);
   printJSONIndent(out, depth + 1);
   out += "\"params\": [";

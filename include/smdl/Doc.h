@@ -31,6 +31,9 @@ public:
 /// A documented declaration in a `DocModule`.
 class SMDL_EXPORT DocEntry final {
 public:
+  /// The value of `nameOffset` meaning the name was not located.
+  static constexpr uint32_t NO_NAME_OFFSET = ~0U;
+
   /// The declaration kind: `"annotation"`, `"enum"`, `"enumerator"`,
   /// `"field"`, `"function"`, `"namespace"`, `"struct"`, `"tag"`,
   /// `"typedef"`, or `"variable"`.
@@ -50,8 +53,14 @@ public:
   uint32_t lineNo{};
 
   /// The signature, with whitespace normalized and comments and
-  /// annotations stripped.
+  /// annotations stripped. This is always a single line.
   std::string signature{};
+
+  /// The offset of `name` within `signature`, for highlighting the
+  /// declared name. This is `NO_NAME_OFFSET` if the name does not appear
+  /// in the signature, e.g., for a destructuring variable declarator,
+  /// whose `name` is the synthesized list `{a, b}`.
+  uint32_t nameOffset{NO_NAME_OFFSET};
 
   /// The documentation text, from the `///` block above the
   /// declaration, else the trailing `///<` comment, else the
