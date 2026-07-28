@@ -1,4 +1,5 @@
 #include "vertex.h"
+#include "guiding.h"
 #include "light.h"
 
 bool test_visibility(const Scene &scene, Sampler &sampler,
@@ -91,13 +92,19 @@ static constexpr uint64_t ROULETTE_MIN_DEPTH{4};
 /// path terminates eventually no matter how bright its throughput is.
 static constexpr float ROULETTE_MAX_SURVIVAL{0.95f};
 
+/// The probability of drawing the bounce direction from the BSDF rather
+/// than the SD-tree when guiding is active (the one-sample-MIS mixture
+/// weight, α in the paper).
+static constexpr float GUIDE_BSDF_FRACTION{0.5f};
+
 uint64_t random_walk(smdl::Compiler &compiler, const Scene &scene,
                      Sampler &sampler, const Color &wavelengths,
                      smdl::BumpPtrAllocator &allocator,
                      smdl::Transport transport, Vertex path0, float wpdfFwd,
                      uint64_t maxDepth, Vertex *path,
-                     const LightSampler *lights) {
+                     const LightSampler *lights, const Guiding *guiding) {
   const EnvLight *envLight{lights ? lights->env() : nullptr};
+  const STree *guideTree{guiding ? guiding->tree : nullptr};
   if (maxDepth == 0) return 0;
   path[0] = std::move(path0);
   if (maxDepth == 1) return 1;
@@ -159,6 +166,7 @@ uint64_t random_walk(smdl::Compiler &compiler, const Scene &scene,
         }
         wpdfFwd = phase;
         wpdfRev = phase;
+        vertex.pdfWNext = phase;
         vertexPrev.pdfRev = vertex.convert_pdf(wpdfRev, vertexPrev);
         ray = Ray{vertex.point, vertex.wNext, EPS, INF};
         continue;
@@ -199,7 +207,53 @@ uint64_t random_walk(smdl::Compiler &compiler, const Scene &scene,
     vertex.meshInstanceIndex = hit.meshInstanceIndex;
     vertex.pdfFwd = vertexPrev.convert_pdf(wpdfFwd, vertex);
 
-    if (depth > 2 || !envLight) {
+    // With guiding active, non-delta surface bounces one-sample-MIS the
+    // SD-tree against the BSDF. Materials whose scattering is purely a
+    // Dirac delta bypass guiding entirely — the tree cannot produce their
+    // directions and evaluating the BSDF at a guided direction would
+    // always be zero.
+    const DTree *dtree{};
+    if (guideTree) {
+      int dfFlags{materialInstance.instance.df_flags_surface |
+                  materialInstance.instance.df_flags_backface};
+      if ((dfFlags & (smdl::JIT::DF_DIFFUSE | smdl::JIT::DF_GLOSSY)) != 0)
+        dtree = &guideTree->samplingAt(vertex.point);
+    }
+    if (dtree) {
+      const float3 wo{-vertexPrev.wNext};
+      if (float(sampler) < GUIDE_BSDF_FRACTION) {
+        if (!materialInstance.scatterSample(float4(sampler), wo, vertex.wNext,
+                                            wpdfFwd, wpdfRev, f,
+                                            vertex.isDeltaBounce)) {
+          break;
+        }
+        if (vertex.isDeltaBounce) {
+          // The delta lobe folds its density into `f` (unit PDF by
+          // convention), and the tree cannot compete with it, so the only
+          // density left is the discrete chance of having chosen BSDF
+          // sampling at all.
+          wpdfFwd = GUIDE_BSDF_FRACTION;
+          wpdfRev = GUIDE_BSDF_FRACTION;
+        } else {
+          wpdfFwd = GUIDE_BSDF_FRACTION * wpdfFwd +
+                    (1.0f - GUIDE_BSDF_FRACTION) * dtree->pdf(vertex.wNext);
+        }
+      } else {
+        float guidePDF{};
+        float3 wi{dtree->sampleDirection(sampler, guidePDF)};
+        float fpdfFwd{};
+        float fpdfRev{};
+        if (!(guidePDF > 0) ||
+            !materialInstance.scatterEvaluate(wo, wi, fpdfFwd, fpdfRev, f)) {
+          break;
+        }
+        vertex.wNext = wi;
+        vertex.isDeltaBounce = false;
+        wpdfFwd = GUIDE_BSDF_FRACTION * fpdfFwd +
+                  (1.0f - GUIDE_BSDF_FRACTION) * guidePDF;
+        wpdfRev = fpdfRev;
+      }
+    } else if (depth > 2 || !envLight) {
       if (!materialInstance.scatterSample(float4(sampler), -vertexPrev.wNext,
                                           vertex.wNext, wpdfFwd, wpdfRev, f,
                                           vertex.isDeltaBounce)) {
@@ -262,13 +316,15 @@ uint64_t random_walk(smdl::Compiler &compiler, const Scene &scene,
         f = sampleBSDF.f;
       }
     }
-    if (vertex.isDeltaBounce) {
+    if (vertex.isDeltaBounce && !dtree) {
       // Dirac lobes report unit PDFs by convention and fold the division into
       // `f`, so neither the mixture PDF above nor any density from the other
-      // sampling strategy applies to them.
+      // sampling strategy applies to them. (The guided branch has already
+      // accounted for its own selection probability.)
       wpdfFwd = 1;
       wpdfRev = 1;
     }
+    vertex.pdfWNext = wpdfFwd;
     beta *= (1.0f / wpdfFwd) * f;
     if (beta.isAnyNonFinite()) {
       break;
@@ -276,11 +332,27 @@ uint64_t random_walk(smdl::Compiler &compiler, const Scene &scene,
     // Terminate by Russian roulette instead of by a fixed depth limit, so that
     // high-albedo transport keeps the energy it is entitled to.
     if (depth > ROULETTE_MIN_DEPTH) {
-      float survival{std::min(ROULETTE_MAX_SURVIVAL, beta.maxComponent())};
-      if (!(float(sampler) < survival)) {
-        break;
+      float survival{};
+      float meanRadiance{};
+      if (dtree && guiding->pixelEstimate > 0 &&
+          (meanRadiance = dtree->meanRadiance()) > 0) {
+        // Adjoint-driven Russian roulette (Vorba & Křivánek, SIGGRAPH
+        // 2016; roulette only, no splitting): survive in proportion to the
+        // expected pixel contribution of continuing the walk, which is the
+        // throughput times the SD-tree's cached mean incident radiance,
+        // relative to the pixel's estimate from the previous pass.
+        survival = beta.average() * meanRadiance / guiding->pixelEstimate;
+        survival = std::min(survival, 1.0f);
+        survival = std::max(survival, 0.05f);
+      } else {
+        survival = std::min(ROULETTE_MAX_SURVIVAL, beta.maxComponent());
       }
-      beta *= 1.0f / survival;
+      if (survival < 1.0f) {
+        if (!(float(sampler) < survival)) {
+          break;
+        }
+        beta *= 1.0f / survival;
+      }
     }
     MediumStack::Update(medium, allocator, materialInstance, -vertexPrev.wNext,
                         vertex.wNext);

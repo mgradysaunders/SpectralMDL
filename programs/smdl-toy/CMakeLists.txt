@@ -1,6 +1,7 @@
 smdl_add_program(
   "smdl-toy"
   SOURCES
+    "guiding.cc"
     "light.cc"
     "main.cc"
     "raytracing.cc"

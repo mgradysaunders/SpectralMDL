@@ -106,6 +106,11 @@ public:
 
   float3 wNext{};
 
+  /// The solid-angle density that sampled `wNext` — the full mixture
+  /// density when path guiding participated — for recording radiance
+  /// estimates into the SD-tree.
+  float pdfWNext{};
+
   float pdfFwd{QUIET_NAN};
 
   float pdfRev{QUIET_NAN};
@@ -150,17 +155,23 @@ class EnvLight;
 
 class LightSampler;
 
+struct Guiding;
+
 /// Trace a path, writing up to `maxDepth` vertices into `path` and returning
 /// the number written. Every vertex is cleared before it is filled in, so
 /// `path` does not need to be zero-initialized between calls. The `lights`
 /// may be null or have no environment, in which case the walk falls back to
-/// pure BSDF sampling.
+/// pure BSDF sampling. The `guiding` may be null or have a null tree, in
+/// which case direction sampling and Russian roulette behave as before;
+/// with a tree, non-delta surface bounces one-sample-MIS the SD-tree
+/// against the BSDF and roulette becomes adjoint-driven.
 [[nodiscard]] uint64_t random_walk(smdl::Compiler &compiler, const Scene &scene,
                                    Sampler &sampler, const Color &wavelengths,
                                    smdl::BumpPtrAllocator &allocator,
                                    smdl::Transport transport, Vertex path0,
                                    float wpdfFwd, uint64_t maxDepth,
-                                   Vertex *path, const LightSampler *lights);
+                                   Vertex *path, const LightSampler *lights,
+                                   const Guiding *guiding);
 
 class Subpath final {
 public:
