@@ -20,6 +20,7 @@ static cl::SubCommand subFormat{"format", "Format source code"};
 static cl::SubCommand subDoc{"doc", "Show documentation"};
 static cl::SubCommandGroup subsWithCompileOptions{&subDump, &subList, &subRun,
                                                   &subTest};
+static cl::SubCommandGroup subsWithOutputFile{&subDump, &subDoc};
 static cl::SubCommandGroup allSubs{&subDump, &subList,   &subRun,
                                    &subTest, &subFormat, &subDoc};
 
@@ -50,7 +51,7 @@ static cl::opt<smdl::DumpFormat> dumpFormat{
     cl::sub(subDump), cl::cat(optionsCat)};
 static cl::opt<std::string> outputFilename{
     "output", cl::desc("Output filename (default stdout)"), cl::Optional,
-    cl::sub(subDump), cl::cat(optionsCat)};
+    cl::sub(subsWithOutputFile), cl::cat(optionsCat)};
 
 static cl::opt<bool> formatInPlace{"i", cl::desc("Format in place"),
                                    cl::sub(subFormat), cl::cat(optionsCat)};
@@ -85,9 +86,6 @@ static cl::opt<DocOutputFormat> docFormat{
         cl::OptionEnumValue{"md", int(DOC_FORMAT_MD), "Markdown"}),
     cl::sub(subDoc),
     cl::cat(optionsCat)};
-static cl::opt<std::string> docOutputFilename{
-    "output", cl::desc("Output filename (default stdout)"), cl::Optional,
-    cl::sub(subDoc), cl::cat(optionsCat)};
 static cl::opt<bool> docIncludeHidden{
     "all",
     cl::desc("Include hidden declarations, i.e., declarations not marked "
@@ -148,6 +146,184 @@ static constexpr auto docColorName{llvm::HighlightColor::Tag};
 static constexpr auto docColorSignature{llvm::HighlightColor::Attribute};
 static constexpr auto docColorMetadata{llvm::HighlightColor::Note};
 
+/// The `doc` subcommand's plain text printer, for symbol and module
+/// queries. The Markdown and JSON printers live in the library, but this
+/// one colors as it goes, which a `std::string` cannot carry.
+///
+/// NOTE: All coloring must go through `WithColor`, which is what detects
+/// the terminal. On POSIX, `raw_ostream::changeColor()` writes escape
+/// codes whether or not the stream is a terminal, so calling it directly
+/// would corrupt piped and redirected output.
+class DocTextPrinter final {
+public:
+  DocTextPrinter(llvm::raw_ostream &os, llvm::ColorMode colorMode,
+                 bool includeHidden)
+      : mOS(os), mColorMode(colorMode), mIncludeHidden(includeHidden) {}
+
+  /// Print a module as its documentation text plus a listing of the
+  /// declarations in it.
+  void printModule(const smdl::DocModule &mod) {
+    mOS << "module ";
+    emit(mod.qualifiedName, docColorName);
+    mOS << '\n';
+    if (!mod.docText.empty()) {
+      mOS << '\n';
+      emitIndented(mod.docText, 2, std::nullopt);
+    }
+    mOS << '\n';
+    for (const auto &entry : mod.entries) {
+      if (isHidden(entry)) continue;
+      mOS.indent(2);
+      emit(entry.qualifiedName, docColorName);
+      emit(" (" + entry.kind + ")", docColorMetadata);
+      mOS << '\n';
+    }
+    mOS << '\n';
+  }
+
+  /// Print one declaration in full: signature, documentation text,
+  /// documented parameters, and visible members.
+  void printEntry(const smdl::DocEntry &entry) {
+    emit(entry.qualifiedName, docColorName);
+    emit(" (" + entry.kind + ", line " + std::to_string(entry.lineNo) + ")",
+         docColorMetadata);
+    mOS << '\n';
+    emitSignature(entry, 2);
+    if (!entry.docText.empty()) {
+      mOS << '\n';
+      emitIndented(entry.docText, 2, std::nullopt);
+    }
+    printParams(entry);
+    printMembers(entry);
+    mOS << '\n';
+  }
+
+private:
+  [[nodiscard]] bool isHidden(const smdl::DocEntry &entry) const {
+    return entry.isHidden() && !mIncludeHidden;
+  }
+
+  void emit(std::string_view text, std::optional<llvm::HighlightColor> color) {
+    if (text.empty()) return; // Do not wrap nothing in escape codes
+    auto str{llvm::StringRef(text.data(), text.size())};
+    if (color) {
+      llvm::WithColor(mOS, *color, mColorMode) << str;
+    } else {
+      mOS << str;
+    }
+  }
+
+  /// Emit indented text line by line. The indentation and the newlines
+  /// stay outside the colored span so that no escape code lands on a
+  /// blank line or stretches across the width of the terminal.
+  void emitIndented(std::string_view text, size_t indent,
+                    std::optional<llvm::HighlightColor> color) {
+    size_t i{0};
+    while (i < text.size()) {
+      auto j{text.find('\n', i)};
+      if (j == std::string_view::npos) j = text.size();
+      // Leave blank lines truly blank instead of indenting them.
+      if (j > i) {
+        mOS.indent(indent);
+        emit(text.substr(i, j - i), color);
+      }
+      mOS << '\n';
+      i = j + 1;
+    }
+  }
+
+  /// Signatures are always a single line, so the declared name inside one
+  /// can be split out and colored to give the eye something to land on.
+  void emitSignature(const smdl::DocEntry &item, size_t indent) {
+    mOS.indent(indent);
+    // NOTE: `nameOffset` is `NO_NAME_OFFSET` when the name does not
+    // appear in the signature, which fails the bounds test below and
+    // falls through to the unsplit signature.
+    const auto begin{size_t(item.nameOffset)};
+    const auto end{begin + item.name.size()};
+    if (end <= item.signature.size()) {
+      emit(std::string_view(item.signature).substr(0, begin),
+           docColorSignature);
+      emit(std::string_view(item.signature).substr(begin, item.name.size()),
+           docColorName);
+      emit(std::string_view(item.signature).substr(end), docColorSignature);
+    } else {
+      emit(item.signature, docColorSignature);
+    }
+    mOS << '\n';
+  }
+
+  /// Print the documented parameters, skipping the undocumented ones,
+  /// which the signature already shows.
+  void printParams(const smdl::DocEntry &entry) {
+    auto anyParamDocs{false};
+    for (const auto &param : entry.params)
+      anyParamDocs |= !param.docText.empty();
+    if (!anyParamDocs) return;
+    mOS << '\n';
+    auto afterDocText{false};
+    for (const auto &param : entry.params) {
+      if (param.docText.empty()) continue;
+      if (afterDocText) mOS << '\n';
+      emitIndented(param.name + ":", 2, docColorName);
+      emitIndented(param.docText, 4, std::nullopt);
+      afterDocText = true;
+    }
+  }
+
+  /// Print the visible members. NOTE: A member whose documentation text
+  /// ends the previous member is separated from it by a blank line, so
+  /// that multi-line texts do not run into the next signature.
+  void printMembers(const smdl::DocEntry &entry) {
+    auto anyMembers{false};
+    auto afterDocText{false};
+    for (const auto &member : entry.members) {
+      if (isHidden(member)) continue;
+      if (!anyMembers) {
+        mOS << '\n';
+        anyMembers = true;
+      } else if (afterDocText) {
+        mOS << '\n';
+      }
+      emitSignature(member, 2);
+      if (!member.docText.empty())
+        emitIndented(member.docText, 4, std::nullopt);
+      afterDocText = !member.docText.empty();
+    }
+  }
+
+  llvm::raw_ostream &mOS;
+
+  llvm::ColorMode mColorMode;
+
+  bool mIncludeHidden;
+};
+
+/// Add the builtin modules named by the queries, or all of them, to the
+/// database. A module already added from an input file wins, so that
+/// documenting a local copy of a builtin shows the local copy.
+static void loadBuiltinDocModules(smdl::DocDatabase &docs,
+                                  const std::vector<std::string> &queries) {
+  const auto builtinNames{smdl::getBuiltinModuleNames()};
+  auto loadBuiltin{[&](std::string_view name) {
+    for (const auto &mod : docs.modules)
+      if (mod.name == name) return;
+    if (auto mod{smdl::extractBuiltinDocModule(name)})
+      docs.modules.push_back(std::move(*mod));
+  }};
+  if (docAllBuiltins) {
+    for (const auto &name : builtinNames) loadBuiltin(name);
+    return;
+  }
+  for (const auto &query : queries) {
+    for (const auto &name : builtinNames) {
+      auto prefix{"::" + std::string(name)};
+      if (query == prefix || smdl::startsWith(query, prefix + "::"))
+        loadBuiltin(name);
+    }
+  }
+}
+
 /// Run the `doc` subcommand: `queries` holds the `::`-prefixed
 /// positional arguments, everything else was added to the compiler.
 static void runDocSubcommand(smdl::Compiler &compiler,
@@ -156,24 +332,7 @@ static void runDocSubcommand(smdl::Compiler &compiler,
   if (auto error{compiler.extractDocs(docs)}) {
     error->printAndExit();
   }
-  // Pull in the builtin modules named by the queries, or all of them.
-  auto loadBuiltin{[&](std::string_view name) {
-    for (const auto &mod : docs.modules)
-      if (mod.name == name) return;
-    if (auto mod{smdl::extractBuiltinDocModule(name)})
-      docs.modules.push_back(std::move(*mod));
-  }};
-  if (docAllBuiltins) {
-    for (const auto &name : smdl::getBuiltinModuleNames()) loadBuiltin(name);
-  } else {
-    for (const auto &query : queries) {
-      for (const auto &name : smdl::getBuiltinModuleNames()) {
-        auto prefix{"::" + std::string(name)};
-        if (query == prefix || smdl::startsWith(query, prefix + "::"))
-          loadBuiltin(name);
-      }
-    }
-  }
+  loadBuiltinDocModules(docs, queries);
   if (docs.modules.empty()) {
     std::cerr << "nothing to document: pass input files, '::'-prefixed "
                  "queries, or '--builtins'\n";
@@ -183,10 +342,10 @@ static void runDocSubcommand(smdl::Compiler &compiler,
   // which a `std::string` cannot carry.
   auto errorCode{std::error_code{}};
   auto outputFile{std::optional<llvm::raw_fd_ostream>{}};
-  if (docOutputFilename.getNumOccurrences()) {
-    outputFile.emplace(docOutputFilename.getValue(), errorCode);
+  if (outputFilename.getNumOccurrences()) {
+    outputFile.emplace(outputFilename.getValue(), errorCode);
     if (errorCode) {
-      std::cerr << "cannot open '" << docOutputFilename.getValue()
+      std::cerr << "cannot open '" << outputFilename.getValue()
                 << "': " << errorCode.message() << '\n';
       std::exit(EXIT_FAILURE);
     }
@@ -209,122 +368,13 @@ static void runDocSubcommand(smdl::Compiler &compiler,
     os << (docFormat == DOC_FORMAT_JSON ? docs.printJSON()
                                         : docs.printMarkdown());
   } else {
-    // Plain text symbol and module queries.
-    //
-    // NOTE: All coloring must go through `WithColor`, which is what
-    // detects the terminal. On POSIX, `raw_ostream::changeColor()` writes
-    // escape codes whether or not the stream is a terminal, so calling it
-    // directly would corrupt piped and redirected output.
-    auto emit{
-        [&](std::string_view text, std::optional<llvm::HighlightColor> color) {
-          if (text.empty()) return; // Do not wrap nothing in escape codes
-          auto str{llvm::StringRef(text.data(), text.size())};
-          if (color) {
-            llvm::WithColor(os, *color, colorMode) << str;
-          } else {
-            os << str;
-          }
-        }};
-    // Emit indented text line by line. The indentation and the newlines
-    // stay outside the colored span so that no escape code lands on a
-    // blank line or stretches across the width of the terminal.
-    auto emitIndented{[&](std::string_view text, size_t indent,
-                          std::optional<llvm::HighlightColor> color) {
-      size_t i{0};
-      while (i < text.size()) {
-        auto j{text.find('\n', i)};
-        if (j == std::string_view::npos) j = text.size();
-        // Leave blank lines truly blank instead of indenting them.
-        if (j > i) {
-          os.indent(indent);
-          emit(text.substr(i, j - i), color);
-        }
-        os << '\n';
-        i = j + 1;
-      }
-    }};
-    // Signatures are always a single line, so the declared name inside one
-    // can be split out and colored to give the eye something to land on.
-    auto emitSignature{[&](const smdl::DocEntry &item, size_t indent) {
-      os.indent(indent);
-      const auto begin{size_t(item.nameOffset)};
-      const auto end{begin + item.name.size()};
-      if (end <= item.signature.size()) {
-        emit(std::string_view(item.signature).substr(0, begin),
-             docColorSignature);
-        emit(std::string_view(item.signature).substr(begin, item.name.size()),
-             docColorName);
-        emit(std::string_view(item.signature).substr(end), docColorSignature);
-      } else {
-        emit(item.signature, docColorSignature);
-      }
-      os << '\n';
-    }};
-    auto printTextEntry{[&](const smdl::DocEntry &entry) {
-      emit(entry.qualifiedName, docColorName);
-      emit(" (" + entry.kind + ", line " + std::to_string(entry.lineNo) + ")",
-           docColorMetadata);
-      os << '\n';
-      emitSignature(entry, 2);
-      if (!entry.docText.empty()) {
-        os << '\n';
-        emitIndented(entry.docText, 2, std::nullopt);
-      }
-      // NOTE: A field whose documentation text ends the previous field is
-      // separated from it by a blank line, so that multi-line texts do not
-      // run into the next signature.
-      auto anyParamDocs{false};
-      for (const auto &param : entry.params)
-        anyParamDocs |= !param.docText.empty();
-      if (anyParamDocs) {
-        os << '\n';
-        auto afterDocText{false};
-        for (const auto &param : entry.params) {
-          if (param.docText.empty()) continue;
-          if (afterDocText) os << '\n';
-          emitIndented(param.name + ":", 2, docColorName);
-          emitIndented(param.docText, 4, std::nullopt);
-          afterDocText = true;
-        }
-      }
-      auto anyMembers{false};
-      auto afterDocText{false};
-      for (const auto &member : entry.members) {
-        if (member.isHidden() && !docIncludeHidden) continue;
-        if (!anyMembers) {
-          os << '\n';
-          anyMembers = true;
-        } else if (afterDocText) {
-          os << '\n';
-        }
-        emitSignature(member, 2);
-        if (!member.docText.empty())
-          emitIndented(member.docText, 4, std::nullopt);
-        afterDocText = !member.docText.empty();
-      }
-      os << '\n';
-    }};
+    auto printer{DocTextPrinter(os, colorMode, docIncludeHidden)};
     for (const auto &query : queries) {
       const smdl::DocModule *moduleMatch{};
       for (const auto &mod : docs.modules)
         if (mod.qualifiedName == query) moduleMatch = &mod;
       if (moduleMatch) {
-        os << "module ";
-        emit(moduleMatch->qualifiedName, docColorName);
-        os << '\n';
-        if (!moduleMatch->docText.empty()) {
-          os << '\n';
-          emitIndented(moduleMatch->docText, 2, std::nullopt);
-        }
-        os << '\n';
-        for (const auto &entry : moduleMatch->entries) {
-          if (entry.isHidden() && !docIncludeHidden) continue;
-          os.indent(2);
-          emit(entry.qualifiedName, docColorName);
-          emit(" (" + entry.kind + ")", docColorMetadata);
-          os << '\n';
-        }
-        os << '\n';
+        printer.printModule(*moduleMatch);
         continue;
       }
       auto found{docs.findSymbol(query)};
@@ -332,7 +382,7 @@ static void runDocSubcommand(smdl::Compiler &compiler,
         std::cerr << "no documentation found for '" << query << "'\n";
         std::exit(EXIT_FAILURE);
       }
-      for (const auto *entry : found) printTextEntry(*entry);
+      for (const auto *entry : found) printer.printEntry(*entry);
     }
   }
   os.flush();
