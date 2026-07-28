@@ -75,11 +75,18 @@ public:
   /// namespace (nested declarations). This may be empty!
   std::vector<DocEntry> members{};
 
-  /// Is hidden from documentation by default? True if not marked with
-  /// the keyword `export` or if the name begins with an underscore,
-  /// e.g., `_hideMe`.
+  /// Is hidden from documentation by default? True if the name begins
+  /// with an underscore, e.g., `_hideMe`, or if the declaration is not
+  /// marked with the keyword `export`.
+  ///
+  /// A namespace is the exception: it is a container rather than API
+  /// surface of its own, so it is hidden only once nothing inside it is
+  /// visible. Test it after filtering `members`, which is the order
+  /// `DocDatabase::removeHidden()` works in.
   [[nodiscard]] bool isHidden() const {
-    return !isExported || (!name.empty() && name.front() == '_');
+    if (!name.empty() && name.front() == '_') return true;
+    if (kind == "namespace") return members.empty();
+    return !isExported;
   }
 };
 
