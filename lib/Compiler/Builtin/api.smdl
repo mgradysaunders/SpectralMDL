@@ -69,10 +69,10 @@ const static auto RGB_TO_COLOR_CURVES = auto[](
 
 /// The nontrivial RGB-to-color implementation.
 ///
-/// This is factored into an internal function because, despite the fact 
+/// This is factored into an internal function because, despite the fact
 /// that the `color` type is not necessarily RGB, every MDL codebase on
-/// planet Earth assumes that it is, e.g., uses `color(1.0, 1.0, 1.0)` 
-/// to mean white instead of `color(1.0)`. 
+/// planet Earth assumes that it is, e.g., uses `color(1.0, 1.0, 1.0)`
+/// to mean white instead of `color(1.0)`.
 ///
 @(hot noinline)
 color nontrivialRGBToColor(float3 rgb) {
@@ -200,7 +200,7 @@ export float3 _wyman_xyz(const float w) {
   return float3(y[0] + y[1] + y[2], y[3] + y[4], y[5] + y[6]);
 }
 
-/// The fit of CIE 1931 Y, without X or Z, by Wyman et al fit 
+/// The fit of CIE 1931 Y, without X or Z, by Wyman et al fit
 /// for wavelength in nanometers.
 @(pure)
 export float _wyman_y(const float w) {
@@ -231,7 +231,7 @@ export float3 _color_to_rgb(const color c) {
          ) * result;
 }
 
-/// The JIT-visible RGB-to-color function advertised by the `Compiler` 
+/// The JIT-visible RGB-to-color function advertised by the `Compiler`
 /// for convenience.
 @(visible noinline)
 void smdlRGBToColor(const &float3 rgb, const &float cptr) {
@@ -239,7 +239,7 @@ void smdlRGBToColor(const &float3 rgb, const &float cptr) {
   #memcpy(cptr, &c, #sizeof(color));
 }
 
-/// The JIT-visible color-to-RGB function advertised by the `Compiler` 
+/// The JIT-visible color-to-RGB function advertised by the `Compiler`
 /// for convenience.
 @(visible noinline)
 void smdlColorToRGB(const &float cptr, const &float3 rgb) {
@@ -487,7 +487,7 @@ const int MATERIAL_HAS_VOLUME = (1 << 6);
 
 const int MATERIAL_HAS_HAIR = (1 << 7);
 
-/// An instance of a material corresponding to `smdl::JIT::Material::Instance` 
+/// An instance of a material corresponding to `smdl::JIT::Material::Instance`
 /// in the C++ API.
 export struct _MaterialInstance {
   /// The material deep copied with `#bump()`.
@@ -561,7 +561,7 @@ export struct _MaterialInstance {
 
 /// Albedo look-up table (LUT) for energy correction.
 export struct _AlbedoLUT {
-  /// The number of samples of view angle cosine. 
+  /// The number of samples of view angle cosine.
   const int num_cos_theta = 0;
 
   /// The number of samples of roughness.

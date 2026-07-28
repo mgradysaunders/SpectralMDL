@@ -81,8 +81,8 @@ float3x3 orthonormalBasis(float3 z) {
 export enum scatter_mode {
   scatter_none = 0x0,             ///< None
   scatter_reflect = 0x1,          ///< Reflect (same hemisphere)
-  scatter_transmit = 0x2,         ///< Transmit (opposite hemisphere) 
-  scatter_reflect_transmit = 0x3, ///< Reflect or transmit 
+  scatter_transmit = 0x2,         ///< Transmit (opposite hemisphere)
+  scatter_reflect_transmit = 0x3, ///< Reflect or transmit
 };
 
 @(pure macro)
@@ -305,7 +305,7 @@ export auto conductorFresnel(const float cosThetai, const auto ior) {
 }
 //--}
 
-/// Calculate the orthogonal right-handed tangent space from the 
+/// Calculate the orthogonal right-handed tangent space from the
 /// given normal and tangent vectors.
 @(pure noinline)
 float3x3 calculateTangentSpace(const float3 normal, const float3 tangent_u) {
@@ -325,7 +325,7 @@ struct ScatterEvaluateParameters {
   /// The reference incoming direction in the natural tangent space.
   float3 wi0;
 
-  /// The reference mode. 
+  /// The reference mode.
   scatter_mode mode = (wo0.z < 0) == (wi0.z < 0) ? scatter_reflect : scatter_transmit;
 
   /// Hit backface?
@@ -381,7 +381,7 @@ struct ScatterEvaluateResult {
   /// - `pdf[1]` is the reverse density of sampling `wo` given `wi`.
   float2 pdf = float2(0.0);
 
-  /// Is known to be black by construction? Faster than checking every 
+  /// Is known to be black by construction? Faster than checking every
   /// element of `f`!
   bool isBlack = false;
 };
@@ -674,22 +674,22 @@ auto emissionSample(const &_default_edf this [[anno::unused()]], const &Emission
 export struct diffuse_reflection_bsdf: bsdf {
   /// The tint.
   ///
-  /// > Scaling factor, defined as a color, multiplied by the 
+  /// > Scaling factor, defined as a color, multiplied by the
   /// > result of the distribution function.
   ///
   const $(color | float) tint = 1.0;
 
   /// The roughness.
   ///
-  /// > Oren-Nayar roughness coefficient, simulating view-dependent diffuse 
-  /// > reflection. Range: `[0,1]`, with `0` specifying complete view 
+  /// > Oren-Nayar roughness coefficient, simulating view-dependent diffuse
+  /// > reflection. Range: `[0,1]`, with `0` specifying complete view
   /// > independence.
   ///
   const float roughness = 0.0;
 
   /// The handle.
   ///
-  /// > Name to provide access to this component for use in an MDL 
+  /// > Name to provide access to this component for use in an MDL
   /// > integration.
   ///
   /// NOTE: This should be a `string` but we `void` it because we have no
@@ -744,14 +744,14 @@ auto scatterSample(const &diffuse_reflection_bsdf this [[anno::unused()]], inlin
 export struct diffuse_transmission_bsdf: bsdf {
   /// The tint.
   ///
-  /// > Scaling factor, defined as a color, multiplied by the 
+  /// > Scaling factor, defined as a color, multiplied by the
   /// > result of the distribution function.
   ///
   const $(color | float) tint = 1.0;
 
   /// The handle.
   ///
-  /// > Name to provide access to this component for use in an MDL 
+  /// > Name to provide access to this component for use in an MDL
   /// > integration.
   ///
   /// NOTE: This should be a `string` but we `void` it because we have no
@@ -792,7 +792,7 @@ auto scatterSample(inline const &diffuse_transmission_bsdf this, inline const &S
 export struct specular_bsdf: bsdf {
   /// The tint.
   ///
-  /// > Scaling factor, defined as a color, multiplied by the 
+  /// > Scaling factor, defined as a color, multiplied by the
   /// > result of the distribution function.
   ///
   const $(color | float) tint = 1.0;
@@ -811,7 +811,7 @@ export struct specular_bsdf: bsdf {
 
   /// The handle.
   ///
-  /// > Name to provide access to this component for use in an MDL 
+  /// > Name to provide access to this component for use in an MDL
   /// > integration.
   ///
   /// NOTE: This should be a `string` but we `void` it because we have no
@@ -872,22 +872,22 @@ auto scatterSample(const &specular_bsdf this, inline const &ScatterSampleParamet
 export struct sheen_bsdf: bsdf {
   /// The roughness.
   ///
-  /// > Roughness coefficient. Range: `[0,inf)`, with `0` specifying pure 
+  /// > Roughness coefficient. Range: `[0,inf)`, with `0` specifying pure
   /// > specular reflection.
   ///
   float roughness;
 
   /// The tint.
   ///
-  /// > Scaling factor, defined as a color, multiplied by the result of the 
-  /// > distribution function.
+  /// > Scaling factor, defined as a color, multiplied by the
+  /// > result of the distribution function.
   ///
   const $(color | float) tint = 1.0;
 
   /// The multiscatter tint.
   ///
-  /// > Scaling factor, defined as a color, of the diffuse multiscattering 
-  /// > compensation, `color(0.0)` does not add any, `color(1.0)` fully 
+  /// > Scaling factor, defined as a color, of the diffuse multiscattering
+  /// > compensation, `color(0.0)` does not add any, `color(1.0)` fully
   /// > compensates the energy loss.
   ///
   const $(?(color | float)) multiscatter_tint = none;
@@ -900,7 +900,7 @@ export struct sheen_bsdf: bsdf {
 
   /// The handle.
   ///
-  /// > Name to provide access to this component for use in an MDL 
+  /// > Name to provide access to this component for use in an MDL
   /// > integration.
   ///
   /// NOTE: This should be a `string` but we `void` it because we have no
@@ -982,15 +982,15 @@ export struct ward_geisler_moroder_bsdf: bsdf {
 
   /// The tint.
   ///
-  /// > Scaling factor, defined as a color, multiplied by the result of the 
-  /// > distribution function.
+  /// > Scaling factor, defined as a color, multiplied by the
+  /// > result of the distribution function.
   ///
   $(color | float) tint = 1.0;
 
   /// The multiscatter tint.
   ///
-  /// > Scaling factor, defined as a color, of the diffuse multiscattering 
-  /// > compensation, `color(0.0)` does not add any, `color(1.0)` fully 
+  /// > Scaling factor, defined as a color, of the diffuse multiscattering
+  /// > compensation, `color(0.0)` does not add any, `color(1.0)` fully
   /// > compensates the energy loss.
   ///
   $(?(color | float)) multiscatter_tint = none;
@@ -1000,7 +1000,7 @@ export struct ward_geisler_moroder_bsdf: bsdf {
 
   /// The handle.
   ///
-  /// > Name to provide access to this component for use in an MDL 
+  /// > Name to provide access to this component for use in an MDL
   /// > integration.
   ///
   /// NOTE: This should be a `string` but we `void` it because we have no
@@ -1185,7 +1185,7 @@ export float3 smithVisibleNormalSample(
   const Distribution this,
   const float xi0,    ///< A canonical random number in `[0,1]`
   const float xi1,    ///< A canonical random number in `[0,1]`
-  const float2 alpha, ///< The squared roughness 
+  const float2 alpha, ///< The squared roughness
   const float3 wo,    ///< The outgoing direction
 ) {
   const auto w11(normalize(float3(alpha * wo.xy, wo.z)));
@@ -2455,8 +2455,8 @@ auto scatterSample(const &thin_film this, const &ScatterSampleParameters params)
 
 /// A fresnel factor.
 ///
-/// > Modifier weighting a base BSDF based on the Fresnel reflection 
-/// > equation for a complex number IOR, comprising a real number IOR 
+/// > Modifier weighting a base BSDF based on the Fresnel reflection
+/// > equation for a complex number IOR, comprising a real number IOR
 /// > and an extinction coefficient. This modifier is useful to model
 /// > the reflectance behavior of conductors and semi-conductors.
 ///
@@ -2507,14 +2507,14 @@ export struct directional_factor: bsdf {
   $(color | float) normal_tint = 1.0;
 
   /// The grazing tint.
-  /// 
+  ///
   /// > Color scaling factor at the grazing angle.
   ///
   $(color | float) grazing_tint = 1.0;
 
   /// The exponent.
   ///
-  /// > Exponent for directional factor. Default value (5.0) is 
+  /// > Exponent for directional factor. Default value (5.0) is
   /// > from Schlick's approximation.
   ///
   float exponent = 5.0;
@@ -2610,12 +2610,12 @@ auto scatterSample(const &measured_curve_factor this, const &ScatterSampleParame
 export struct measured_factor: bsdf {
   /// The values.
   ///
-  /// > Measured data of type color for the reflection behavior. A 2-d 
+  /// > Measured data of type color for the reflection behavior. A 2-d
   /// > function measured in the pre-image range `[0,pi/2]^2` with equally
-  /// > spaced reflectance values, where the texture-space u-coordinate 
-  /// > corresponds to the angle alpha between the incoming direction and 
+  /// > spaced reflectance values, where the texture-space u-coordinate
+  /// > corresponds to the angle alpha between the incoming direction and
   /// > the half-vector h from the microfacet model, and the texture-space
-  /// > v-coordinate corresponds to the angle beta between the half-vector 
+  /// > v-coordinate corresponds to the angle beta between the half-vector
   /// > h and the shading surface normal.
   ///
   texture_2d values;
