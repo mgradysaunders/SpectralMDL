@@ -516,118 +516,147 @@ void DocDatabase::removeHidden() {
 //--}
 
 //--{ Print: JSON
-static void printJSONString(std::string &out, std::string_view str) {
-  out += '"';
-  for (char ch : str) {
-    switch (ch) {
-    case '"':
-      out += "\\\"";
-      break;
-    case '\\':
-      out += "\\\\";
-      break;
-    case '\n':
-      out += "\\n";
-      break;
-    case '\t':
-      out += "\\t";
-      break;
-    case '\r':
-      out += "\\r";
-      break;
-    default:
-      if (uint8_t(ch) < 0x20) {
-        char buf[8]{};
-        std::snprintf(buf, sizeof(buf), "\\u%04X", unsigned(uint8_t(ch)));
-        out += buf;
-      } else {
-        out += ch;
-      }
-      break;
+namespace {
+
+/// The JSON printer. Just enough of a writer to emit the database, with
+/// the escaping, the indentation, and the key punctuation in one place
+/// instead of spelled out at every field.
+class JSONWriter final {
+public:
+  explicit JSONWriter(std::string &out) : mOut(out) {}
+
+  void writeEntry(const DocEntry &entry, int depth) {
+    mOut += "{\n";
+    writeField(depth + 1, "kind", entry.kind);
+    writeField(depth + 1, "name", entry.name);
+    writeField(depth + 1, "qualifiedName", entry.qualifiedName);
+    writeRawField(depth + 1, "isExported", entry.isExported ? "true" : "false");
+    writeRawField(depth + 1, "lineNo", std::to_string(entry.lineNo));
+    writeField(depth + 1, "signature", entry.signature);
+    writeRawField(depth + 1, "nameOffset",
+                  entry.nameOffset == DocEntry::NO_NAME_OFFSET
+                      ? std::string("null")
+                      : std::to_string(entry.nameOffset));
+    writeField(depth + 1, "docText", entry.docText);
+    // Parameters are small enough to stay on one line each.
+    writeKey(depth + 1, "params");
+    mOut += '[';
+    for (size_t i = 0; i < entry.params.size(); i++) {
+      const auto &param{entry.params[i]};
+      mOut += i > 0 ? ", {" : "{";
+      writeInlineField("name", param.name), mOut += ", ";
+      writeInlineField("signature", param.signature), mOut += ", ";
+      writeInlineField("docText", param.docText);
+      mOut += '}';
     }
+    mOut += "],\n";
+    writeKey(depth + 1, "members");
+    mOut += '[';
+    for (size_t i = 0; i < entry.members.size(); i++) {
+      if (i > 0) mOut += ", ";
+      writeEntry(entry.members[i], depth + 1);
+    }
+    mOut += "]\n";
+    writeIndent(depth);
+    mOut += '}';
   }
-  out += '"';
-}
 
-static void printJSONIndent(std::string &out, int depth) {
-  out.append(size_t(2 * depth), ' ');
-}
+  void writeModule(const DocModule &mod) {
+    writeIndent(2);
+    mOut += "{\n";
+    writeField(3, "name", mod.name);
+    writeField(3, "qualifiedName", mod.qualifiedName);
+    writeField(3, "fileName", mod.fileName);
+    writeField(3, "docText", mod.docText);
+    writeKey(3, "entries");
+    mOut += "[\n";
+    for (size_t i = 0; i < mod.entries.size(); i++) {
+      writeIndent(4);
+      writeEntry(mod.entries[i], 4);
+      if (i + 1 < mod.entries.size()) mOut += ',';
+      mOut += '\n';
+    }
+    writeIndent(3);
+    mOut += "]\n";
+    writeIndent(2);
+    mOut += '}';
+  }
 
-static void printJSONEntry(std::string &out, const DocEntry &entry, int depth) {
-  auto field{[&](const char *key, std::string_view value, bool comma = true) {
-    printJSONIndent(out, depth + 1);
-    out += '"', out += key, out += "\": ";
-    printJSONString(out, value);
-    if (comma) out += ',';
-    out += '\n';
-  }};
-  out += "{\n";
-  field("kind", entry.kind);
-  field("name", entry.name);
-  field("qualifiedName", entry.qualifiedName);
-  printJSONIndent(out, depth + 1);
-  out += "\"isExported\": ", out += entry.isExported ? "true" : "false",
-      out += ",\n";
-  printJSONIndent(out, depth + 1);
-  out += "\"lineNo\": " + std::to_string(entry.lineNo) + ",\n";
-  field("signature", entry.signature);
-  printJSONIndent(out, depth + 1);
-  out += "\"nameOffset\": ";
-  out += entry.nameOffset == DocEntry::NO_NAME_OFFSET
-             ? std::string("null")
-             : std::to_string(entry.nameOffset);
-  out += ",\n";
-  field("docText", entry.docText);
-  printJSONIndent(out, depth + 1);
-  out += "\"params\": [";
-  for (size_t i = 0; i < entry.params.size(); i++) {
-    out += i > 0 ? ", {" : "{";
-    out += "\"name\": ", printJSONString(out, entry.params[i].name);
-    out += ", \"signature\": ", printJSONString(out, entry.params[i].signature);
-    out += ", \"docText\": ", printJSONString(out, entry.params[i].docText);
-    out += '}';
+private:
+  void writeIndent(int depth) { mOut.append(size_t(2 * depth), ' '); }
+
+  /// Write the indented `"key": ` that opens a field, leaving the value
+  /// to the caller.
+  void writeKey(int depth, const char *key) {
+    writeIndent(depth);
+    mOut += '"', mOut += key, mOut += "\": ";
   }
-  out += "],\n";
-  printJSONIndent(out, depth + 1);
-  out += "\"members\": [";
-  for (size_t i = 0; i < entry.members.size(); i++) {
-    if (i > 0) out += ", ";
-    printJSONEntry(out, entry.members[i], depth + 1);
+
+  /// Write `"key": "value",` on a line of its own.
+  void writeField(int depth, const char *key, std::string_view value) {
+    writeKey(depth, key);
+    writeString(value);
+    mOut += ",\n";
   }
-  out += "]\n";
-  printJSONIndent(out, depth);
-  out += '}';
-}
+
+  /// Write `"key": value,` on a line of its own, where the value is
+  /// already JSON: a number, a boolean, or `null`.
+  void writeRawField(int depth, const char *key, std::string_view value) {
+    writeKey(depth, key);
+    mOut += value;
+    mOut += ",\n";
+  }
+
+  /// Write `"key": "value"` with no indentation and no newline.
+  void writeInlineField(const char *key, std::string_view value) {
+    mOut += '"', mOut += key, mOut += "\": ";
+    writeString(value);
+  }
+
+  void writeString(std::string_view str) {
+    mOut += '"';
+    for (char ch : str) {
+      switch (ch) {
+      case '"':
+        mOut += "\\\"";
+        break;
+      case '\\':
+        mOut += "\\\\";
+        break;
+      case '\n':
+        mOut += "\\n";
+        break;
+      case '\t':
+        mOut += "\\t";
+        break;
+      case '\r':
+        mOut += "\\r";
+        break;
+      default:
+        if (uint8_t(ch) < 0x20) {
+          char buf[8]{};
+          std::snprintf(buf, sizeof(buf), "\\u%04X", unsigned(uint8_t(ch)));
+          mOut += buf;
+        } else {
+          mOut += ch;
+        }
+        break;
+      }
+    }
+    mOut += '"';
+  }
+
+  std::string &mOut;
+};
+
+} // namespace
 
 std::string DocDatabase::printJSON() const {
   auto out{std::string{}};
+  auto json{JSONWriter(out)};
   out += "{\n  \"modules\": [\n";
   for (size_t i = 0; i < modules.size(); i++) {
-    const auto &mod{modules[i]};
-    printJSONIndent(out, 2);
-    out += "{\n";
-    auto field{[&](const char *key, std::string_view value) {
-      printJSONIndent(out, 3);
-      out += '"', out += key, out += "\": ";
-      printJSONString(out, value);
-      out += ",\n";
-    }};
-    field("name", mod.name);
-    field("qualifiedName", mod.qualifiedName);
-    field("fileName", mod.fileName);
-    field("docText", mod.docText);
-    printJSONIndent(out, 3);
-    out += "\"entries\": [\n";
-    for (size_t j = 0; j < mod.entries.size(); j++) {
-      printJSONIndent(out, 4);
-      printJSONEntry(out, mod.entries[j], 4);
-      if (j + 1 < mod.entries.size()) out += ',';
-      out += '\n';
-    }
-    printJSONIndent(out, 3);
-    out += "]\n";
-    printJSONIndent(out, 2);
-    out += '}';
+    json.writeModule(modules[i]);
     if (i + 1 < modules.size()) out += ',';
     out += '\n';
   }
@@ -637,6 +666,22 @@ std::string DocDatabase::printJSON() const {
 //--}
 
 //--{ Print: Markdown
+
+/// Is this the kind of member that documents inline as a bullet rather
+/// than as a section of its own, i.e., a struct field or an enumerator?
+[[nodiscard]] static bool isMarkdownBullet(const DocEntry &member) {
+  return member.kind == "field" || member.kind == "enumerator";
+}
+
+/// Write a `- \`signature\` — documentation` bullet, for a `DocParam` or
+/// an inline `DocEntry` member, both of which document this way.
+template <typename Item>
+static void printMarkdownBullet(std::string &out, const Item &item) {
+  out += "- `" + item.signature + "`";
+  if (!item.docText.empty()) out += " — " + item.docText;
+  out += '\n';
+}
+
 static void printMarkdownEntry(std::string &out, const DocEntry &entry,
                                int level) {
   out.append(size_t(std::min(level, 6)), '#');
@@ -645,24 +690,17 @@ static void printMarkdownEntry(std::string &out, const DocEntry &entry,
   out += "```smdl\n" + entry.signature + "\n```\n\n";
   if (!entry.docText.empty()) out += entry.docText + "\n\n";
   if (!entry.params.empty()) {
-    for (const auto &param : entry.params) {
-      out += "- `" + param.signature + "`";
-      if (!param.docText.empty()) out += " — " + param.docText;
-      out += '\n';
-    }
+    for (const auto &param : entry.params) printMarkdownBullet(out, param);
     out += '\n';
   }
   for (const auto &member : entry.members) {
-    if (member.kind == "field" || member.kind == "enumerator") {
-      out += "- `" + member.signature + "`";
-      if (!member.docText.empty()) out += " — " + member.docText;
-      out += '\n';
+    if (isMarkdownBullet(member)) {
+      printMarkdownBullet(out, member);
     } else {
       printMarkdownEntry(out, member, level + 1);
     }
   }
-  if (!entry.members.empty() && (entry.members.front().kind == "field" ||
-                                 entry.members.front().kind == "enumerator"))
+  if (!entry.members.empty() && isMarkdownBullet(entry.members.front()))
     out += '\n';
 }
 
