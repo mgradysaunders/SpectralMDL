@@ -201,13 +201,17 @@ static void runDocSubcommand(smdl::Compiler &compiler,
           }
         }
       }
-      if (!entry.members.empty()) {
-        result += '\n';
-        for (const auto &member : entry.members) {
-          appendIndented(member.signature, 2);
-          if (!member.docText.empty())
-            appendIndented(member.docText, 4);
+      auto anyMembers{false};
+      for (const auto &member : entry.members) {
+        if (member.isHidden() && !docIncludeHidden)
+          continue;
+        if (!anyMembers) {
+          result += '\n';
+          anyMembers = true;
         }
+        appendIndented(member.signature, 2);
+        if (!member.docText.empty())
+          appendIndented(member.docText, 4);
       }
       result += '\n';
     }};
