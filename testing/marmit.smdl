@@ -1,0 +1,242 @@
+#smdl
+
+import ::math::*;
+using marmit = ::models::marmit;
+import marmit::*;
+
+// Every case below wets the same mid-gray substrate, so the results stay
+// directly comparable.
+const float DRY = 0.3;
+
+// A film of pure water over that substrate.
+marmit::marmit_result film(const float water_thickness, const float wet_fraction) = marmit::marmit(
+  reflectance: color(DRY), water_thickness: water_thickness, wet_fraction: wet_fraction);
+
+// A load of non-absorbing mineral grains suspended in a film of zero thickness.
+// Taking the thickness to zero makes the layer perfectly transmissive, which
+// isolates what the suspension does to the *index* of the film from what it does
+// to its absorption.
+marmit::marmit_result grains(const float suspension_fraction) = marmit::marmit(
+  reflectance: color(DRY), water_thickness: 0.0, suspension_fraction: suspension_fraction);
+
+// A fixed load of suspended particles of varying absorptivity, in a film thick
+// enough for that absorption to register.
+marmit::marmit_result murky(const float suspension_k) = marmit::marmit(
+  reflectance: color(DRY), water_thickness: 0.01, suspension_fraction: 0.3,
+  suspension_k: suspension_k);
+
+unit_test "MARMIT" {
+  const auto dry = film(0.01, 0.0);
+  const auto full = film(0.01, 1.0);
+  for (int i = 0; i < $WAVELENGTH_BASE_MAX; i++) {
+    // The areal mix is a power mean between the wetted and dry reflectances, so
+    // its end members must reproduce the two inputs exactly -- up to the round
+    // trip through the two `pow`s, which is what the tolerance admits.
+    #assert(dry.reflectance[i] ~== |1e-6| DRY);
+    #assert(full.reflectance[i] ~== |1e-6| full.reflectance_wet[i]);
+    // The wetted reflectance describes the film, not how much of the surface it
+    // covers, so it must not move with `wet_fraction` at all.
+    #assert(dry.reflectance_wet[i] == full.reflectance_wet[i]);
+    // Wetting always darkens: even a vanishingly thin film loses light to the
+    // air/water interface and to the internal bounces underneath it.
+    #assert(full.reflectance_wet[i] > 0.0);
+    #assert(full.reflectance_wet[i] < DRY);
+  }
+
+  // Raising the covered fraction walks the surface monotonically from dry to
+  // fully wetted, and never leaves that interval.
+  for (int j = 1; j <= 4; j++) {
+    const auto less = film(0.01, 0.25 * (j - 1));
+    const auto more = film(0.01, 0.25 * j);
+    for (int i = 0; i < $WAVELENGTH_BASE_MAX; i++) {
+      #assert(more.reflectance[i] < less.reflectance[i]);
+      #assert(more.reflectance[i] >= full.reflectance_wet[i] - 1e-6);
+      #assert(more.reflectance[i] <= DRY);
+    }
+  }
+
+  // The layer transmittance falls monotonically with optical depth, so a thicker
+  // film is never a brighter one. Only the extremes are compared *strictly*: once
+  // a lane sits inside a water absorption band the transmittance has already
+  // bottomed out at zero, and two thicknesses that both extinguish it completely
+  // are equal, not ordered.
+  const auto thickness = float[5](0.0, 0.1, 1.0, 10.0, 100.0);
+  const auto bare = film(0.0, 1.0);
+  const auto flooded = film(100.0, 1.0);
+  for (int i = 0; i < $WAVELENGTH_BASE_MAX; i++) {
+    #assert(flooded.reflectance_wet[i] < bare.reflectance_wet[i]);
+  }
+  for (int j = 1; j < 5; j++) {
+    const auto thin = film(thickness[j - 1], 1.0);
+    const auto thick = film(thickness[j], 1.0);
+    for (int i = 0; i < $WAVELENGTH_BASE_MAX; i++) {
+      #assert(thick.reflectance_wet[i] <= thin.reflectance_wet[i]);
+    }
+  }
+
+  // Deep enough water swallows the substrate at every wavelength, including the
+  // 400..500 nm window where liquid water is most nearly transparent.
+  const auto deep = film(1.0e6, 1.0);
+  for (int i = 0; i < $WAVELENGTH_BASE_MAX; i++) {
+    #assert(deep.reflectance_wet[i] < 1e-5);
+    #assert(deep.reflectance_wet[i] >= 0.0);
+  }
+
+  // Both continuous inputs are clamped to their documented domains, so nothing
+  // outside them can extrapolate. This matters more than it looks: an unclamped
+  // negative thickness overflows exp(-x) and reads as a fully opaque layer, and an
+  // unclamped fraction above 1 drives the power mean's base negative and returns
+  // the NaN as a fully white surface.
+  const auto negative = film(-1.0, 1.0);
+  const auto beyond = film(0.01, 4.0);
+  const auto behind = film(0.01, -3.0);
+  for (int i = 0; i < $WAVELENGTH_BASE_MAX; i++) {
+    #assert(negative.reflectance_wet[i] == bare.reflectance_wet[i]);
+    #assert(beyond.reflectance[i] == full.reflectance[i]);
+    #assert(behind.reflectance[i] == dry.reflectance[i]);
+  }
+
+  // Degenerate substrates stay in range: nothing reflects off black, and a
+  // perfect white reflector still loses light to the film.
+  const auto black = marmit::marmit(reflectance: color(0.0), water_thickness: 0.01);
+  const auto white = marmit::marmit(reflectance: color(1.0), water_thickness: 0.01);
+  for (int i = 0; i < $WAVELENGTH_BASE_MAX; i++) {
+    #assert(black.reflectance[i] == 0.0);
+    #assert(black.reflectance_wet[i] == 0.0);
+    #assert(white.reflectance_wet[i] > 0.0);
+    #assert(white.reflectance_wet[i] < 1.0);
+    #assert(white.reflectance[i] <= 1.0);
+  }
+
+  // A zero volume fraction takes the no-suspension path, which must land on
+  // exactly the pure-water result.
+  const auto clear = marmit::marmit(
+    reflectance: color(DRY), water_thickness: 0.01, suspension_fraction: 0.0);
+  const auto unladen = grains(0.0);
+  for (int i = 0; i < $WAVELENGTH_BASE_MAX; i++) {
+    #assert(clear.reflectance_wet[i] == full.reflectance_wet[i]);
+    #assert(unladen.reflectance_wet[i] == bare.reflectance_wet[i]);
+  }
+
+  // Suspended particles with a higher index than water (the 1.53 default, a
+  // mineral grain) raise the effective index of the film, so the top interface
+  // reflects more and the substrate sees less: the surface darkens as the load
+  // rises. Note that this is only the *index* half of the story, which is why
+  // the film here has no thickness -- in a real film inside a water absorption
+  // band the trend inverts, because adding mineral displaces the water that was
+  // doing the absorbing.
+  for (int j = 1; j <= 4; j++) {
+    const auto dilute = grains(0.2 * (j - 1));
+    const auto dense = grains(0.2 * j);
+    for (int i = 0; i < $WAVELENGTH_BASE_MAX; i++) {
+      #assert(dense.reflectance_wet[i] < dilute.reflectance_wet[i]);
+    }
+  }
+
+  // Making those particles absorbing darkens the film at every wavelength, on
+  // top of however much the water around them already absorbs.
+  for (int j = 1; j <= 4; j++) {
+    const auto clearer = murky(0.0002 * (j - 1));
+    const auto murkier = murky(0.0002 * j);
+    for (int i = 0; i < $WAVELENGTH_BASE_MAX; i++) {
+      #assert(murkier.reflectance_wet[i] < clearer.reflectance_wet[i]);
+    }
+  }
+
+  // Particles with a *lower* index than water -- air bubbles, n_i = 1 -- pull the
+  // effective index back toward air and brighten the film instead.
+  const auto bubbles = marmit::marmit(
+    reflectance: color(DRY), water_thickness: 0.01, suspension_ior: 1.0, suspension_fraction: 0.5);
+  for (int i = 0; i < $WAVELENGTH_BASE_MAX; i++) {
+    #assert(bubbles.reflectance_wet[i] > full.reflectance_wet[i]);
+  }
+
+  // Absolute reflectance against the canonical MARMIT-2 implementation (Dupiau
+  // et al. 2022, 'MARMIT2_function.py') driven by the 1 nm Segelstein and
+  // Buiteveld/Kou/Wieliczka tables it ships with, sampled at the wavelengths of
+  // the spectral state each block guards on. The tolerances admit the polynomial
+  // and rational fits this module evaluates in place of the reference's log and
+  // E1, plus its decimated absorption table; measured deviations top out around
+  // 4e-4 for a thin film and 9e-4 once the film is optically thick.
+  //
+  // Note that lane 0 of the default state sits at 380 nm, below the 400 nm floor
+  // of the optical constants, so these also pin the clamp there.
+  if ($WAVELENGTH_BASE_MAX == 16 && math::abs($state.wavelength_base[0] - 380.0) < 1e-3 &&
+      math::abs($state.wavelength_base[15] - 720.0) < 1e-3) {
+    // A thin film (0.01 cm), fully wetted and 40% wetted. Water is almost
+    // transparent across the visible, so these isolate the diffuse Fresnel terms
+    // and the areal mixing from the layer transmittance.
+    const auto REF_THIN = float[16](
+      0.167245, 0.167337, 0.168069, 0.168705,
+      0.169267, 0.169765, 0.170214, 0.170620,
+      0.170990, 0.171329, 0.171632, 0.171924,
+      0.172191, 0.172427, 0.172636, 0.172794);
+    const auto REF_THIN_PARTIAL = float[16](
+      0.241713, 0.241758, 0.242118, 0.242430,
+      0.242705, 0.242948, 0.243168, 0.243366,
+      0.243546, 0.243711, 0.243859, 0.244001,
+      0.244131, 0.244246, 0.244348, 0.244424);
+    // The same pair under a 10 m column of water. Absurd as a wet surface, but it
+    // is the only way to sweep the layer transmittance across optical depths 0.06
+    // to 10 within the visible, and it drives the wet and dry ends of the areal
+    // mix far enough apart to pin the mixing exponent as well.
+    const auto REF_COLUMN = float[16](
+      0.130110, 0.129302, 0.116755, 0.106154,
+      0.097465, 0.078992, 0.041932, 0.030891,
+      0.017332, 0.005746, 0.000118, 0.000054,
+      0.000020, 0.000003, 0.000000, 0.000000);
+    const auto REF_COLUMN_PARTIAL = float[16](
+      0.222614, 0.222177, 0.215250, 0.209168,
+      0.204004, 0.192366, 0.164828, 0.154695,
+      0.139602, 0.120885, 0.098654, 0.097302,
+      0.096158, 0.094971, 0.094350, 0.094087);
+    // A 20% mineral suspension, to pin the effective-medium branch.
+    const auto REF_SILT = float[16](
+      0.157936, 0.158003, 0.158532, 0.158991,
+      0.159396, 0.159755, 0.160078, 0.160369,
+      0.160634, 0.160877, 0.161094, 0.161303,
+      0.161494, 0.161662, 0.161812, 0.161923);
+    const auto thin_partial = film(0.01, 0.4);
+    const auto column = film(1000.0, 1.0);
+    const auto column_partial = film(1000.0, 0.4);
+    const auto silt = marmit::marmit(
+      reflectance: color(DRY), water_thickness: 0.01, suspension_fraction: 0.2);
+    for (int i = 0; i < 16; i++) {
+      #assert(full.reflectance[i] ~== |1e-3| REF_THIN[i]);
+      #assert(thin_partial.reflectance[i] ~== |1e-3| REF_THIN_PARTIAL[i]);
+      #assert(column.reflectance[i] ~== |1.5e-3| REF_COLUMN[i]);
+      #assert(column_partial.reflectance[i] ~== |1.5e-3| REF_COLUMN_PARTIAL[i]);
+      #assert(silt.reflectance[i] ~== |1e-3| REF_SILT[i]);
+    }
+  }
+
+  // The same comparison in the shortwave infrared, where the vibrational bands of
+  // water are what actually shape a wet soil spectrum and where the absorption
+  // table therefore carries the model. The default spectral state never reaches
+  // this far, so run it explicitly with
+  //
+  //   smdl test -wavelength_min 900 -wavelength_max 2400 testing/marmit.smdl
+  //
+  if ($WAVELENGTH_BASE_MAX == 16 && math::abs($state.wavelength_base[0] - 900.0) < 1e-3 &&
+      math::abs($state.wavelength_base[15] - 2400.0) < 1e-3) {
+    // Lanes land every 100 nm, straddling the 1450, 1940 and 2200 nm bands.
+    const auto REF_SWIR = float[16](
+      0.173553, 0.171352, 0.173554, 0.165775,
+      0.165900, 0.089671, 0.082094, 0.132298,
+      0.140701, 0.124521, 0.008193, 0.018007,
+      0.064663, 0.090223, 0.074375, 0.035991);
+    // A brighter substrate under a thicker film, which pushes the bands into
+    // total extinction and the windows between them into the sensitive part of
+    // the transmittance fit.
+    const auto REF_SWIR_BRIGHT = float[16](
+      0.508954, 0.463154, 0.492619, 0.373221,
+      0.369515, 0.025884, 0.018128, 0.122856,
+      0.158062, 0.092086, 0.000002, 0.000039,
+      0.006414, 0.023064, 0.010359, 0.000550);
+    const auto bright = marmit::marmit(reflectance: color(0.7), water_thickness: 0.05);
+    for (int i = 0; i < 16; i++) {
+      #assert(full.reflectance[i] ~== |1.2e-3| REF_SWIR[i]);
+      #assert(bright.reflectance[i] ~== |2e-3| REF_SWIR_BRIGHT[i]);
+    }
+  }
+}
