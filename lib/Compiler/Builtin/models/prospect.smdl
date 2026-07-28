@@ -62,7 +62,7 @@ export const float PROSPECT_MAX_WAVELENGTH = 2500.0;
 export const int PROSPECT_TABLE_SIZE = 526;
 
 // smdl format off
-export static const auto PROSPECT_TABLE_IORS = float[526](
+export static const auto PROSPECT_TABLE_IOR = float[526](
   1.5115000e+00, 1.5115000e+00, 1.5095000e+00, 1.5071000e+00, 1.5050000e+00, 1.5032000e+00, 1.5019000e+00, 1.5008000e+00,
   1.4997000e+00, 1.4988000e+00, 1.4980000e+00, 1.4969000e+00, 1.4959000e+00, 1.4951000e+00, 1.4943000e+00, 1.4937000e+00,
   1.4931000e+00, 1.4925000e+00, 1.4920000e+00, 1.4915000e+00, 1.4910000e+00, 1.4904000e+00, 1.4899000e+00, 1.4893000e+00,
@@ -131,7 +131,7 @@ export static const auto PROSPECT_TABLE_IORS = float[526](
   1.2710000e+00, 1.2713000e+00, 1.2717000e+00, 1.2722000e+00, 1.2728000e+00, 1.2736000e+00);
 // smdl format on
 
-export static const auto PROSPECT_TABLE_ABSORPTIONS = auto[526](
+export static const auto PROSPECT_TABLE_ABS = auto[526](
   auto(6.4881500e-02, 1.6734000e-01, 6.6674700e-02, 5.2720000e-01, 5.8000000e-05, 1.0970000e+02, 0.0000000e+00, 1.2793000e+02),
   auto(7.0900000e-02, 1.6761300e-01, 5.8277000e-02, 5.2320000e-01, 6.1000000e-05, 8.7130000e+01, 0.0000000e+00, 1.0160900e+02),
   auto(7.1223100e-02, 1.6723900e-01, 5.3115800e-02, 5.1920000e-01, 6.5000000e-05, 7.0130000e+01, 0.0000000e+00, 8.1784400e+01),
@@ -668,19 +668,19 @@ export static const auto PROSPECT_TABLE_ABSORPTIONS = auto[526](
 // a 500..564 nm window. At 65 entries there is nothing to gain by decimating to
 // the 4 nm grid the tables above use, and 1 nm keeps the narrow band exact.
 //
-// The carotenoid column of PROSPECT_TABLE_ABSORPTIONS is bit-for-bit the
+// The carotenoid column of PROSPECT_TABLE_ABS is bit-for-bit the
 // zeaxanthin end member, so this difference is *subtracted* to relax toward
 // violaxanthin, and the un-subtracted table is the fully de-epoxidized state.
 // The window is padded with zeros at both ends, which is what lets the
 // saturate() clamp in the lookup extend the table with zeros for free.
-export const float PROSPECT_XANTHOPHYLL_MIN_WAVELENGTH = 500.0;
+export const float PROSPECT_CX_MIN_WAVELENGTH = 500.0;
 
-export const float PROSPECT_XANTHOPHYLL_MAX_WAVELENGTH = 564.0;
+export const float PROSPECT_CX_MAX_WAVELENGTH = 564.0;
 
-export const int PROSPECT_XANTHOPHYLL_TABLE_SIZE = 65;
+export const int PROSPECT_CX_TABLE_SIZE = 65;
 
 // smdl format off
-export static const auto PROSPECT_TABLE_XANTHOPHYLL = float[65](
+export static const auto PROSPECT_CX_TABLE = float[65](
   0.0000000e+00, 0.0000000e+00, 0.0000000e+00, 0.0000000e+00, 2.3666667e-06, 1.4111905e-05, 1.5753175e-05, 1.6109579e-04,
   4.3772785e-04, 5.7373789e-04, 7.1124793e-04, 7.5958535e-04, 8.1272277e-04, 1.0946743e-03, 1.3850259e-03, 1.5193361e-03,
   1.6655464e-03, 1.8591944e-03, 2.0681424e-03, 2.3029017e-03, 2.5563610e-03, 2.7022316e-03, 2.8702023e-03, 2.9664684e-03,
@@ -706,28 +706,23 @@ export prospect_result prospect(
   float carbons = 0.0,             ///< The carbon constituent content in milligrams per square centimeter.
   float browns = 0.0,              ///< The brown pigment content in arbitrary units.
 ) {
-  color ior(0);
-  color k(0);
-  // The plate model below stacks `layers` copies of one absorbing layer, so the
-  // whole-leaf contents have to be spread over the layers for the stack to
+  // The plate model below stacks `num_layers` copies of one absorbing layer, so 
+  // the whole-leaf contents have to be spread over the layers for the stack to
   // absorb what the caller asked for. Fewer than one layer is meaningless, and
   // would divide by zero at zero.
-  const auto layers = #max(num_layers, 1.0);
-  const auto contents = auto(chlorophylls, carotenoids, anthocyanins, browns, 1e-1 * water, 1e-3 * dry_matter, 1e-3 * proteins, 1e-3 * carbons) / layers;
+  num_layers = #max(num_layers, 1.0);
+  const auto contents = auto(chlorophylls, carotenoids, anthocyanins, browns, 1e-1 * water, 1e-3 * dry_matter, 1e-3 * proteins, 1e-3 * carbons) / num_layers;
   // How much violaxanthin to relax back out of the tabulated zeaxanthin. The
   // upper bound of 1.5 is the extrapolation range Vilfan et al. calibrate over;
   // the lower bound of 0 is what keeps the carotenoid absorption non-negative.
-  const auto xanthophylls = carotenoids * (1.0 - clamp(xanthophyll_cycle, 0.0, 1.5)) / layers;
+  const auto xanthophylls = carotenoids * (1.0 - clamp(xanthophyll_cycle, 0.0, 1.5)) / num_layers;
+  color ior(0);
+  color k(0);
   for (int i = 0; i < $WAVELENGTH_BASE_MAX; i++) {
-    float w = (PROSPECT_TABLE_SIZE - 1) * saturate(($state.wavelength_base[i] - PROSPECT_MIN_WAVELENGTH) / (PROSPECT_MAX_WAVELENGTH - PROSPECT_MIN_WAVELENGTH));
-    const int w0 = #min(int(#floor(w)), PROSPECT_TABLE_SIZE - 2);
-    w -= w0;
-    ior[i] = lerp(PROSPECT_TABLE_IORS[w0], PROSPECT_TABLE_IORS[w0 + 1], w);
-    k[i] = dot(lerp(PROSPECT_TABLE_ABSORPTIONS[w0], PROSPECT_TABLE_ABSORPTIONS[w0 + 1], w), contents);
-    float x = (PROSPECT_XANTHOPHYLL_TABLE_SIZE - 1) * saturate(($state.wavelength_base[i] - PROSPECT_XANTHOPHYLL_MIN_WAVELENGTH) / (PROSPECT_XANTHOPHYLL_MAX_WAVELENGTH - PROSPECT_XANTHOPHYLL_MIN_WAVELENGTH));
-    const int x0 = #min(int(#floor(x)), PROSPECT_XANTHOPHYLL_TABLE_SIZE - 2);
-    x -= x0;
-    k[i] -= xanthophylls * lerp(PROSPECT_TABLE_XANTHOPHYLL[x0], PROSPECT_TABLE_XANTHOPHYLL[x0 + 1], x);
+    const auto {w0, w} = _uniform_lerp_index_and_fraction(PROSPECT_TABLE_SIZE, PROSPECT_MIN_WAVELENGTH, PROSPECT_MAX_WAVELENGTH, $state.wavelength_base[i]);
+    const auto {x0, x} = _uniform_lerp_index_and_fraction(PROSPECT_CX_TABLE_SIZE, PROSPECT_CX_MIN_WAVELENGTH, PROSPECT_CX_MAX_WAVELENGTH, $state.wavelength_base[i]);
+    ior[i] = lerp(PROSPECT_TABLE_IOR[w0], PROSPECT_TABLE_IOR[w0 + 1], w);
+    k[i] = dot(lerp(PROSPECT_TABLE_ABS[w0], PROSPECT_TABLE_ABS[w0 + 1], w), contents) - xanthophylls * lerp(PROSPECT_CX_TABLE[x0], PROSPECT_CX_TABLE[x0 + 1], x);
   }
   // τ = (1 - k) * exp(-k) + k * k * exp_E1(k), the transmittance of the
   // absorbing water/dry-matter layer. Fit via the clean structure
@@ -792,7 +787,7 @@ export prospect_result prospect(
   const auto d = #sqrt((1 + add_r_t) * (1 + sub_r_t) * (1 - add_r_t) * (1 - sub_r_t));
   const auto a = (1 + d + sub_r2_t2) / (2 * r);
   const auto b = (1 + d - sub_r2_t2) / (2 * t);
-  const auto bNm1 = #pow(b, layers - 1);
+  const auto bNm1 = #pow(b, num_layers - 1);
   const auto tmp1 = #pow(a * bNm1, 2) - 1;
   color tSub = bNm1 * (a * a - 1) / tmp1;
   color rSub = a * (bNm1 * bNm1 - 1) / tmp1;
@@ -800,7 +795,7 @@ export prospect_result prospect(
     const auto ri = r[i];
     const auto ti = t[i];
     if (ri + ti > 1) {
-      tSub[i] = ti / (ti + (1 - ti) * (layers - 1));
+      tSub[i] = ti / (ti + (1 - ti) * (num_layers - 1));
       rSub[i] = 1 - tSub[i];
     } else if (!isfinite(rSub[i]) || !isfinite(tSub[i])) {
       tSub[i] = 0;

@@ -52,7 +52,7 @@ export const int MARMIT_TABLE_SIZE = 264;
 export const float MARMIT_MIXING_EXPONENT = 2.27;
 
 // smdl format off
-export static const auto MARMIT_TABLE_ABSORPTIONS = float[264](
+export static const auto MARMIT_TABLE_ABS = float[264](
   5.8000000e-05, 6.4984791e-05, 7.3961977e-05, 8.3942966e-05, 9.3923954e-05, 1.0390494e-04, 1.1190875e-04, 1.1989354e-04,
   1.2787833e-04, 1.3782890e-04, 1.5169582e-04, 1.7349810e-04, 2.0808745e-04, 2.7126996e-04, 3.4692395e-04, 4.0768821e-04,
   4.2214829e-04, 4.6838403e-04, 5.2480989e-04, 6.0760456e-04, 6.7002281e-04, 7.3120532e-04, 8.5206084e-04, 1.0678935e-03,
@@ -108,15 +108,12 @@ export marmit_result marmit(
   // wavelength remapped to [-1, 1]; we collect it (and the absorption) per lane in
   // one contiguous pass, then evaluate n(s) on the whole color at once.
   color absorption(0);  // alpha_w, absorption coefficient of water in cm^-1
-  color s(0);           // wavelength mapped to [-1, 1] for the index polynomial
   for (int i = 0; i < $WAVELENGTH_BASE_MAX; i++) {
-    const float frac = saturate(($state.wavelength_base[i] - MARMIT_MIN_WAVELENGTH) / (MARMIT_MAX_WAVELENGTH - MARMIT_MIN_WAVELENGTH));
-    float w = (MARMIT_TABLE_SIZE - 1) * frac;
-    const int w0 = #min(int(#floor(w)), MARMIT_TABLE_SIZE - 2);
-    w -= w0;
-    absorption[i] = lerp(MARMIT_TABLE_ABSORPTIONS[w0], MARMIT_TABLE_ABSORPTIONS[w0 + 1], w);
-    s[i] = 2.0 * frac - 1.0;
+    const auto {w0, w} = _uniform_lerp_index_and_fraction(MARMIT_TABLE_SIZE, MARMIT_MIN_WAVELENGTH, MARMIT_MAX_WAVELENGTH, $state.wavelength_base[i]);
+    absorption[i] = lerp(MARMIT_TABLE_ABS[w0], MARMIT_TABLE_ABS[w0 + 1], w);
   }
+  // wavelength mapped to [-1, 1] for the index polynomial
+  const auto s = 2.0 * saturate((color(&$state.wavelength_base[0]) - MARMIT_MIN_WAVELENGTH) / (MARMIT_MAX_WAVELENGTH - MARMIT_MIN_WAVELENGTH)) - 1.0;
   // Real refractive index of water (Segelstein), degree-6 polynomial fit in the
   // remapped wavelength s = 2*(lambda - 400)/2100 - 1. Max abs error 1.2e-3 over
   // 400..2500 nm -- below the r12 fit's own error, so effectively exact here. This

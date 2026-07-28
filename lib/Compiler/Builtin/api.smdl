@@ -109,6 +109,18 @@ export color _rgb_to_color(const float3 rgb) {
   }
 }
 
+export struct _UniformLerp {
+  int i;
+  float t;
+};
+
+@(pure macro)
+export auto _uniform_lerp_index_and_fraction(const int count, const float xmin, const float xmax, const float x) {
+  const float t = (count - 1) * #max(0.0, #min((x - xmin) / (xmax - xmin), 1.0));
+  const int i = #min(int(#floor(t)), count - 2);
+  return _UniformLerp(i, t - i);
+}
+
 @(pure macro)
 export int _lower_bound(int count, const &float xs, const float x) {
   int first = 0;
@@ -126,7 +138,7 @@ export int _lower_bound(int count, const &float xs, const float x) {
 }
 
 @(pure)
-export float _polyline_lerp(int count, const &float xs, const &float ys, const float x) {
+export float _polyline_lerp(const int count, const &float xs, const &float ys, const float x) {
   if (count <= 0) {
     return 0.0;
   } else if (count == 1) {

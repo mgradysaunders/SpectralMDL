@@ -21,8 +21,8 @@ unit_test "PROSPECT" {
     // The two carotenoid end members are identical outside 504..560 nm, so the
     // cycle must not perturb anything beyond its window -- in particular none
     // of the near or short-wave infrared.
-    if (wavelength < prospect::PROSPECT_XANTHOPHYLL_MIN_WAVELENGTH ||
-        wavelength > prospect::PROSPECT_XANTHOPHYLL_MAX_WAVELENGTH) {
+    if (wavelength < prospect::PROSPECT_CX_MIN_WAVELENGTH ||
+        wavelength > prospect::PROSPECT_CX_MAX_WAVELENGTH) {
       #assert(violaxanthin.reflectance[i] == zeaxanthin.reflectance[i]);
       #assert(violaxanthin.transmittance[i] == zeaxanthin.transmittance[i]);
     }
