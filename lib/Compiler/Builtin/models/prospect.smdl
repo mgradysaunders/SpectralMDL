@@ -41,14 +41,18 @@
 
 using ::math import *;
 
+/// The result of the PROSPECT model, being the hemispherical reflectance
+/// and transmittance of a single leaf.
 export struct prospect_result {
-  color reflectance = color(0);
+  color reflectance = color(0); ///< The hemispherical reflectance.
 
-  color transmittance = color(0);
+  color transmittance = color(0); ///< The hemispherical transmittance.
 };
 
+/// The minimum wavelength of the PROSPECT tables in nanometers.
 export const float PROSPECT_MIN_WAVELENGTH = 400.0;
 
+/// The maximum wavelength of the PROSPECT tables in nanometers.
 export const float PROSPECT_MAX_WAVELENGTH = 2500.0;
 
 // The tables span 400..2500 nm on a 4 nm grid, decimated 2x from the 2 nm
@@ -57,9 +61,11 @@ export const float PROSPECT_MAX_WAVELENGTH = 2500.0;
 // smooth at this scale: reconstructing the 2 nm data by lerp costs at most
 // 4.1e-3 absolute reflectance in the assembled model (RMSE ~2e-4), which is
 // within one 8-bit quantum.
+/// The number of entries in the PROSPECT tables.
 export const int PROSPECT_TABLE_SIZE = 526;
 
 // smdl format off
+/// The tabulated refractive index of leaf material.
 export static const auto PROSPECT_TABLE_IOR = float[526](
   1.5115000e+00, 1.5115000e+00, 1.5095000e+00, 1.5071000e+00, 1.5050000e+00, 1.5032000e+00, 1.5019000e+00, 1.5008000e+00,
   1.4997000e+00, 1.4988000e+00, 1.4980000e+00, 1.4969000e+00, 1.4959000e+00, 1.4951000e+00, 1.4943000e+00, 1.4937000e+00,
@@ -129,6 +135,9 @@ export static const auto PROSPECT_TABLE_IOR = float[526](
   1.2710000e+00, 1.2713000e+00, 1.2717000e+00, 1.2722000e+00, 1.2728000e+00, 1.2736000e+00);
 // smdl format on
 
+/// The tabulated specific absorption coefficients, one column per
+/// constituent in the order chlorophylls, carotenoids, anthocyanins, brown
+/// pigment, water, dry matter, proteins, and carbon constituents.
 export static const auto PROSPECT_TABLE_K = auto[526](
   auto(6.4881500e-02, 1.6734000e-01, 6.6674700e-02, 5.2720000e-01, 5.8000000e-05, 1.0970000e+02, 0.0000000e+00, 1.2793000e+02),
   auto(7.0900000e-02, 1.6761300e-01, 5.8277000e-02, 5.2320000e-01, 6.1000000e-05, 8.7130000e+01, 0.0000000e+00, 1.0160900e+02),
@@ -671,13 +680,18 @@ export static const auto PROSPECT_TABLE_K = auto[526](
 // violaxanthin, and the un-subtracted table is the fully de-epoxidized state.
 // The window is padded with zeros at both ends, which is what lets the
 // saturate() clamp in the lookup extend the table with zeros for free.
+/// The minimum wavelength of the xanthophyll cycle table in nanometers.
 export const float PROSPECT_CX_MIN_WAVELENGTH = 500.0;
 
+/// The maximum wavelength of the xanthophyll cycle table in nanometers.
 export const float PROSPECT_CX_MAX_WAVELENGTH = 564.0;
 
+/// The number of entries in the xanthophyll cycle table.
 export const int PROSPECT_CX_TABLE_SIZE = 65;
 
 // smdl format off
+/// The tabulated xanthophyll cycle difference, being the zeaxanthin minus
+/// violaxanthin specific absorption.
 export static const auto PROSPECT_CX_TABLE = float[65](
   0.0000000e+00, 0.0000000e+00, 0.0000000e+00, 0.0000000e+00, 2.3666667e-06, 1.4111905e-05, 1.5753175e-05, 1.6109579e-04,
   4.3772785e-04, 5.7373789e-04, 7.1124793e-04, 7.5958535e-04, 8.1272277e-04, 1.0946743e-03, 1.3850259e-03, 1.5193361e-03,
@@ -690,6 +704,8 @@ export static const auto PROSPECT_CX_TABLE = float[65](
   0.0000000e+00);
 // smdl format on
 
+/// Evaluate the PROSPECT model for the given leaf biochemistry, returning
+/// the hemispherical reflectance and transmittance of a single leaf.
 @(noinline)
 export prospect_result prospect(
   float num_layers = 1.5,          ///< The number of layers.
@@ -722,12 +738,13 @@ export prospect_result prospect(
     ior[i] = lerp(PROSPECT_TABLE_IOR[w0], PROSPECT_TABLE_IOR[w0 + 1], w);
     k[i] = dot(lerp(PROSPECT_TABLE_K[w0], PROSPECT_TABLE_K[w0 + 1], w), contents) - xanthophylls * lerp(PROSPECT_CX_TABLE[x0], PROSPECT_CX_TABLE[x0 + 1], x);
   }
-  // τ = (1 - k) * exp(-k) + k * k * exp_E1(k), the transmittance of the
+  // tau = (1 - k) * exp(-k) + k * k * exp_E1(k), the transmittance of the
   // absorbing water/dry-matter layer. Fit via the clean structure
-  // τ(k) = exp(-k) * h(k), where h(k) = exp(k) * τ(k) is smooth with h(0) = 1
-  // and h(k) -> 2/k as k grows. Approximating h by a rational whose denominator
-  // is one degree higher than the numerator reproduces τ(0) = 1 exactly and the
-  // exact 2 * exp(-k) / k tail, using a single exp and a single divide (no pow).
+  // tau(k) = exp(-k) * h(k), where h(k) = exp(k) * tau(k) is smooth with
+  // h(0) = 1 and h(k) -> 2/k as k grows. Approximating h by a rational whose
+  // denominator is one degree higher than the numerator reproduces tau(0) = 1
+  // exactly and the exact 2 * exp(-k) / k tail, using a single exp and a
+  // single divide (no pow).
   // - RMSE = 7.22e-05 (for k between 0 and 5)
   // - RMSE = 5.11e-05 (for k between 0 and 10)
   // - RMSE = 1.62e-05 (for k between 0 and 100)
@@ -735,7 +752,7 @@ export prospect_result prospect(
   // Both cheaper and strictly better than the old exp(a * k^b - c * k) form: this
   // drops that form's pow, and it fixes a real error -- because the old a * k^b
   // term eventually outgrows -c * k, it badly overestimated the strong-absorption
-  // tail (τ(19) = 7.3e-9 vs the true 5.1e-10). This rational decays at the
+  // tail (tau(19) = 7.3e-9 vs the true 5.1e-10). This rational decays at the
   // physically correct rate for all k.
   const auto tau = return_from {
     const auto num = (1.236150246012 * k + 3.672877420834) * k + 1.0;
@@ -744,9 +761,10 @@ export prospect_result prospect(
   };
   const auto t12 = return_from {
     // Average transmittance
-    // Fifth-order fit for α=90 degrees (or α=π/2 radians) for maximum
-    // efficiency. This was obtained by NumPy's polyfit function for the domain
-    // in question (1.2 to 1.6 η), with RMSE on the order of 1e-7 to 1e-8.
+    // Fifth-order fit for a cone angle of 90 degrees (pi/2 radians) for
+    // maximum efficiency. This was obtained by NumPy's polyfit function for
+    // the domain in question (refractive index 1.2 to 1.6), with RMSE on the
+    // order of 1e-7 to 1e-8.
     auto tmp(-0.17369388 * ior + 1.31899730);
     tmp = tmp * ior - 4.02936997;
     tmp = tmp * ior + 6.21265658;
@@ -758,8 +776,8 @@ export prospect_result prospect(
   const auto t21 = t12 / (ior * ior);
   const auto r21 = 1 - t21;
   const auto tAlpha = return_from {
-    // η between 1.2 and 1.6
-    // α between π/18 and π/2 (10 degrees and 90 degrees)
+    // Refractive index between 1.2 and 1.6
+    // Cone angle between pi/18 and pi/2 (10 degrees and 90 degrees)
     // RMSE = 8.8315121-05
     auto tmp(+5.9796905e-01, -1.9041080e+00, +1.6576156e+00);
     tmp = tmp * incident_cone_angle + auto(-4.1001221e+00, +1.2956352e+01, -1.1049849e+01);

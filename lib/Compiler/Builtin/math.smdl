@@ -1,140 +1,191 @@
+/// Elementary math functions, following the MDL specification. Most of
+/// these are generic and componentwise: they accept scalars, vectors,
+/// matrices, and `color` where sensible, applying the operation to each
+/// component.
 #smdl
 
+/// The constant `pi`.
 export const float PI = $PI;
 
+/// The constant `2 * pi`.
 export const float TWO_PI = $TWO_PI;
 
+/// The constant `pi / 2`.
 export const float HALF_PI = $HALF_PI;
 
+/// The absolute value.
 @(macro)
 export auto abs(const auto a) = #abs(a);
 
+/// Is every component true?
 @(macro)
 export auto all(const auto a) = #all(a);
 
+/// Is any component true?
 @(macro)
 export auto any(const auto a) = #any(a);
 
+/// The maximum of `a` and `b`.
 @(macro)
 export auto max(const auto a, const auto b) = #max(a, b);
 
+/// The minimum of `a` and `b`.
 @(macro)
 export auto min(const auto a, const auto b) = #min(a, b);
 
+/// The value `a` clamped to the range `[min, max]`.
 @(macro)
 export auto clamp(const auto a, const auto min, const auto max) = #max(min, #min(a, max));
 
+/// The value `a` clamped to the range `[0, 1]`.
 @(macro)
 export auto saturate(const auto a) = clamp(a, 0.0, 1.0);
 
+/// The value rounded down toward negative infinity.
 @(macro)
 export auto floor(const auto a) = #floor(a);
 
+/// The value rounded up toward positive infinity.
 @(macro)
 export auto ceil(const auto a) = #ceil(a);
 
+/// The value rounded to the nearest integer.
 @(macro)
 export auto round(const auto a) = #round(a);
 
+/// The value rounded toward zero.
 @(macro)
 export auto trunc(const auto a) = #trunc(a);
 
+/// The fractional part, `a - floor(a)`.
 @(macro)
 export auto frac(const auto a) = a - #floor(a);
 
+/// The remainder of `a` divided by `b`.
 @(macro)
 export auto fmod(const auto a, const auto b) = a % b;
 
+/// The integral and fractional parts as an array of two, `[trunc(a), a - trunc(a)]`.
 @(macro)
 export auto modf(const auto a) = auto[2](a0 := #trunc(a), a - a0);
 
+/// Is neither infinite nor NaN?
 @(macro)
 export auto isfinite(const auto a) = #isfpclass(a, 0b0111111000);
 
+/// Is a normalized floating-point number, i.e., finite and neither zero nor subnormal?
 @(macro)
 export auto isnormal(const auto a) = #isfpclass(a, 0b0100001000);
 
+/// Is positive or negative infinity?
 @(macro)
 export auto isinf(const auto a) = #isfpclass(a, 0b1000000100);
 
+/// Is NaN?
 @(macro)
 export auto isnan(const auto a) = #isfpclass(a, 0b0000000011);
 
+/// The sign of the value.
 @(macro)
 export auto sign(const auto a) = #sign(a);
 
+/// The square root.
 @(macro)
 export auto sqrt(const auto a) = #sqrt(a);
 
+/// The reciprocal of the square root.
 @(macro)
 export auto rsqrt(const auto a) = 1.0 / #sqrt(a);
 
+/// The power `a` raised to `b`.
 @(macro)
 export auto pow(const auto a, const auto b) = #pow(a, b);
 
+/// The cosine of an angle in radians.
 @(macro)
 export auto cos(const auto a) = #cos(a);
 
+/// The sine of an angle in radians.
 @(macro)
 export auto sin(const auto a) = #sin(a);
 
+/// The tangent of an angle in radians.
 @(macro)
 export auto tan(const auto a) = #tan(a);
 
+/// The arccosine in radians.
 @(macro)
 export auto acos(const auto a) = #acos(a);
 
+/// The arcsine in radians.
 @(macro)
 export auto asin(const auto a) = #asin(a);
 
+/// The arctangent in radians.
 @(macro)
 export auto atan(const auto a) = #atan(a);
 
+/// The arctangent of `y / x` in radians, using the signs to select the quadrant.
 @(macro)
 export auto atan2(const auto y, const auto x) = #atan2(y, x);
 
+/// The hyperbolic cosine.
 @(macro)
 export auto cosh(const auto a) = #cosh(a);
 
+/// The hyperbolic sine.
 @(macro)
 export auto sinh(const auto a) = #sinh(a);
 
+/// The hyperbolic tangent.
 @(macro)
 export auto tanh(const auto a) = #tanh(a);
 
+/// The sine and cosine of an angle in radians as an array of two, `[sin(a), cos(a)]`.
 @(macro)
 export auto sincos(const auto a) = auto[2](#sin(a), #cos(a));
 
+/// Converts degrees to radians.
 @(macro)
 export auto radians(const auto a) = a * (PI / 180.0);
 
+/// Converts radians to degrees.
 @(macro)
 export auto degrees(const auto a) = a * (180.0 / PI);
 
+/// The natural exponential `e^a`.
 @(macro)
 export auto exp(const auto a) = #exp(a);
 
+/// The base-2 exponential `2^a`.
 @(macro)
 export auto exp2(const auto a) = #exp2(a);
 
+/// The base-10 exponential `10^a`.
 @(macro)
 export auto exp10(const auto a) = #exp10(a);
 
+/// The natural logarithm.
 @(macro)
 export auto log(const auto a) = #log(a);
 
+/// The base-2 logarithm.
 @(macro)
 export auto log2(const auto a) = #log2(a);
 
+/// The base-10 logarithm.
 @(macro)
 export auto log10(const auto a) = #log10(a);
 
+/// The smallest component of the value.
 @(macro)
 export auto min_value(const auto a) = #min_value(a);
 
+/// The largest component of the value.
 @(macro)
 export auto max_value(const auto a) = #max_value(a);
 
+/// The wavelength in nanometers at which the color attains its smallest component.
 @(pure)
 export float min_value_wavelength(const color a) {
   int imin = 0;
@@ -148,6 +199,7 @@ export float min_value_wavelength(const color a) {
   return $state.wavelength_base[imin];
 }
 
+/// The wavelength in nanometers at which the color attains its largest component.
 @(pure)
 export float max_value_wavelength(const color a) {
   int imax = 0;
@@ -161,15 +213,19 @@ export float max_value_wavelength(const color a) {
   return $state.wavelength_base[imax];
 }
 
+/// The average of all components of the value.
 @(macro)
 export auto average(const auto a) = #sum(a) / #num(a);
 
+/// The linear interpolation from `a` to `b` by factor `l`.
 @(macro)
 export auto lerp(const auto a, const auto b, const auto l) = (1.0 - l) * a + l * b;
 
+/// The step function, `0` where `b < a` and `1` elsewhere.
 @(macro)
 export auto step(const auto a, const auto b) = #select(b < a, 0.0, 1.0);
 
+/// The smooth Hermite interpolation from `a` to `b` by factor `l` clamped to `[0, 1]`.
 @(macro)
 export auto smoothstep(const auto a, const auto b, const auto l) {
   const auto t(saturate(l));
@@ -177,27 +233,35 @@ export auto smoothstep(const auto a, const auto b, const auto l) {
   return s * s * (1 + 2 * t) * a + t * t * (1 + 2 * s) * b;
 }
 
+/// The dot product.
 @(macro)
 export auto dot(const auto a, const auto b) = #sum(a * b);
 
+/// The Euclidean length.
 @(macro)
 export auto length(const auto a) = #sqrt(#sum(a * a));
 
+/// The vector scaled to unit length.
 @(macro)
 export auto normalize(const auto a) = a * (1 / length(a));
 
+/// The Euclidean distance between `a` and `b`.
 @(macro)
 export auto distance(const auto a, const auto b) = length(b - a);
 
+/// The cross product.
 @(macro)
 export auto cross(const auto a, const auto b) = a.yzx * b.zxy - a.zxy * b.yzx;
 
+/// The matrix transpose.
 @(macro)
 export auto transpose(const auto a) = #transpose(a);
 
+/// The luminance of the RGB value, using the Rec. 709 coefficients.
 @(macro)
 export float luminance(const float3 a) = dot(float3(0.2126, 0.7152, 0.0722), a);
 
+/// The luminance of the spectral color, weighted by the CIE Y curve.
 @(noinline)
 export float luminance(const color a) {
   float result(0.0);
@@ -207,19 +271,18 @@ export float luminance(const color a) {
   return result / $WAVELENGTH_BASE_MAX;
 }
 
-// This implementation is a series expansion of the calculation below, which
-// is around 2x faster if using 16 wavelengths. For more wavelengths, the 
-// performance difference only becomes more exaggerated.
-//
-// ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-// const auto t(color($state.wavelength_base) * temperature);
-// const auto numer(#pow(2897.7719e3 / t, 5));
-// const auto denom(#exp(14.387773e6 / t) - 1.0);
-// return 142.3251316 * numer / denom;
-// ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-//
+/// The blackbody emission spectrum for the given temperature in kelvin.
 @(noinline)
 export color blackbody(const float temperature) {
+  // This is a series expansion of the calculation below, which
+  // is around 2x faster if using 16 wavelengths. For more wavelengths, 
+  // the performance difference only becomes more exaggerated.
+  // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+  // const auto t(color($state.wavelength_base) * temperature);
+  // const auto numer(#pow(2897.7719e3 / t, 5));
+  // const auto denom(#exp(14.387773e6 / t) - 1.0);
+  // return 142.3251316 * numer / denom;
+  // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
   const auto t(color($state.wavelength_base) * (temperature / 14.387e6));
   auto res(1 + 2 * t);
   res = 1 + 3 * t * res;
@@ -234,6 +297,7 @@ export color blackbody(const float temperature) {
   return 5.659994086 / res;
 }
 
+/// The color evaluated at the given wavelength in nanometers by piecewise-linear interpolation.
 export float eval_at_wavelength(color a, float wavelength) {
   if $($WAVELENGTH_BASE_MAX == 1) {
     return a[0];

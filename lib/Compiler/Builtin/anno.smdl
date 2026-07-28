@@ -1,47 +1,74 @@
+/// The standard annotations, following the MDL specification. These carry
+/// metadata for tools and user interfaces and do not affect compilation.
 #smdl
 
+/// The recommended range for the annotated value. Values outside remain valid.
 export annotation soft_range(auto min, auto max);
 
+/// The required range for the annotated value. Values outside are invalid.
 export annotation hard_range(auto min, auto max);
 
+/// The human-readable name to display instead of the identifier.
 export annotation display_name(string name);
 
+/// The group to organize the annotated item under in a user interface.
 export annotation in_group(string group);
 
+/// The group and subgroup to organize the annotated item under in a user interface.
 export annotation in_group(string group, string subgroup);
 
+/// The group, subgroup, and sub-subgroup to organize the annotated item under in a user interface.
 export annotation in_group(string group, string subgroup, string subsubgroup);
 
+/// The relative position of the annotated item in a user interface.
 export annotation ui_order(int order);
 
+/// The condition, as an MDL expression over sibling parameters, under which
+/// the annotated parameter is enabled in a user interface.
 export annotation enable_if(string condition);
 
+/// Hides the annotated item from user interfaces.
 export annotation hidden();
 
+/// The human-readable description. This is also understood by `smdl doc`
+/// as a fallback for declarations without `///` documentation comments.
 export annotation description(string description);
 
+/// The thumbnail image to preview the annotated item in a user interface.
 export annotation thumbnail(string name);
 
+/// The author.
 export annotation author(string name);
 
+/// A contributor.
 export annotation contributor(string name);
 
+/// The copyright notice.
 export annotation copyright_notice(string copyright);
 
+/// The creation date and notes.
 export annotation created(int year, int month, int day, string notes);
 
+/// The last modification date and notes.
 export annotation modified(int year, int month, int day, string notes);
 
+/// The version of the annotated module.
 export annotation version(int major, int minor, int patch, string prerelease = "");
 
+/// The version of another module that the annotated module depends on.
 export annotation dependency(string module_name, int major, int minor, int patch, string prerelease = "");
 
+/// The keywords for search and categorization.
 export annotation key_words(string[] words);
 
+/// Marks the annotated item as intentionally unused.
 export annotation unused(string description = "");
 
+/// Marks the annotated item as deprecated.
 export annotation deprecated(string description = "");
 
+/// The hint describing the intended usage of the annotated item, e.g., `"color"` or `"normal"`.
 export annotation usage(string hint = "");
 
+/// The qualified name of the entity the annotated item originates from.
 export annotation origin(string name = "");

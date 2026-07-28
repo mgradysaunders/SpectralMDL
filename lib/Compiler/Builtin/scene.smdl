@@ -1,3 +1,7 @@
+/// Scene data lookup, following the MDL specification. Values are looked
+/// up by name in renderer-provided scene data, e.g., per-vertex or
+/// per-object attributes, falling back to the given default when the name
+/// is unavailable.
 #smdl
 
 @(foreign pure)
@@ -14,32 +18,42 @@ auto data_lookup(const string name, auto value) {
   return value;
 }
 
+/// Is scene data with the given name available?
 @(macro)
 export bool data_isvalid(const string name) = smdlDataExists($SCENE_DATA, name) != 0;
 
+/// Returns the named scene data as `int`, else `default_value`.
 @(macro)
 export int data_lookup_int(const string name, int default_value = int()) = data_lookup(name, default_value);
 
+/// Returns the named scene data as `int2`, else `default_value`.
 @(macro)
 export int2 data_lookup_int2(const string name, int2 default_value = int2()) = data_lookup(name, default_value);
 
+/// Returns the named scene data as `int3`, else `default_value`.
 @(macro)
 export int3 data_lookup_int3(const string name, int3 default_value = int3()) = data_lookup(name, default_value);
 
+/// Returns the named scene data as `int4`, else `default_value`.
 @(macro)
 export int4 data_lookup_int4(const string name, int4 default_value = int4()) = data_lookup(name, default_value);
 
+/// Returns the named scene data as `float`, else `default_value`.
 @(macro)
 export float data_lookup_float(const string name, float default_value = float()) = data_lookup(name, default_value);
 
+/// Returns the named scene data as `float2`, else `default_value`.
 @(macro)
 export float2 data_lookup_float2(const string name, float2 default_value = float2()) = data_lookup(name, default_value);
 
+/// Returns the named scene data as `float3`, else `default_value`.
 @(macro)
 export float3 data_lookup_float3(const string name, float3 default_value = float3()) = data_lookup(name, default_value);
 
+/// Returns the named scene data as `float4`, else `default_value`.
 @(macro)
 export float4 data_lookup_float4(const string name, float4 default_value = float4()) = data_lookup(name, default_value);
 
+/// Returns the named scene data as `color`, else `default_value`.
 @(macro)
 export color data_lookup_color(const string name, color default_value = color()) = data_lookup(name, default_value);

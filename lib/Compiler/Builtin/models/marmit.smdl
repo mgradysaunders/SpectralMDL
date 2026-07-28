@@ -15,13 +15,15 @@
 
 using ::math import *;
 
+/// The result of the MARMIT model, being the reflectance of the wetted
+/// surface.
 export struct marmit_result {
-  // Reflectance after wetting: the `wet_fraction`-weighted mix of the wetted
-  // and dry reflectances (this is the model's primary output).
+  /// Reflectance after wetting: the `wet_fraction`-weighted mix of the wetted
+  /// and dry reflectances (this is the model's primary output).
   color reflectance = color(0);
 
-  // Reflectance of the fully wetted surface (i.e. `wet_fraction` = 1), exposed
-  // as a convenience since it is computed along the way.
+  /// Reflectance of the fully wetted surface (i.e. `wet_fraction` = 1), exposed
+  /// as a convenience since it is computed along the way.
   color reflectance_wet = color(0);
 };
 
@@ -38,14 +40,20 @@ export struct marmit_result {
 // reflectance, so very bright surfaces see a bit more). See
 // misc/plot_marmit_downsample.py for the analysis. The refractive index is fit
 // analytically instead (see below), so it needs no table.
+/// The minimum wavelength of the MARMIT table in nanometers.
 export const float MARMIT_MIN_WAVELENGTH = 400.0;
+/// The maximum wavelength of the MARMIT table in nanometers.
 export const float MARMIT_MAX_WAVELENGTH = 2500.0;
+/// The number of entries in the MARMIT table.
 export const int MARMIT_TABLE_SIZE = 264;
 // Empirical exponent for the wet/dry areal mixing (generalized power mean),
 // carried over from MARMIT-2.
+/// The exponent of the generalized power mean that mixes the wet and dry
+/// reflectances.
 export const float MARMIT_MIXING_EXPONENT = 2.27;
 
 // smdl format off
+/// The tabulated absorption coefficient of water in inverse centimeters.
 export static const auto MARMIT_TABLE_ALPHA = float[264](
   5.8000000e-05, 6.4984791e-05, 7.3961977e-05, 8.3942966e-05, 9.3923954e-05, 1.0390494e-04, 1.1190875e-04, 1.1989354e-04,
   1.2787833e-04, 1.3782890e-04, 1.5169582e-04, 1.7349810e-04, 2.0808745e-04, 2.7126996e-04, 3.4692395e-04, 4.0768821e-04,
@@ -83,6 +91,8 @@ export static const auto MARMIT_TABLE_ALPHA = float[264](
 );
 // smdl format on
 
+/// Evaluate the MARMIT model, layering a film of water of the given
+/// thickness over the given dry reflectance spectrum.
 @(noinline)
 export marmit_result marmit(
   color reflectance = color(0.3),  ///< The dry reflectance of the underlying material.
@@ -209,13 +219,16 @@ export marmit_result marmit(
 // (0, 1). Max reflectance error vs. the full-resolution model is ~5e-3.
 // ---------------------------------------------------------------------------
 
+/// The minimum wavelength of the soil albedo table in nanometers.
 export const float SOIL_MIN_WAVELENGTH = 400.0;
+/// The maximum wavelength of the soil albedo table in nanometers.
 export const float SOIL_MAX_WAVELENGTH = 2298.0;
+/// The number of knots in the soil albedo table.
 export const int SOIL_TABLE_SIZE = 261;
 
-// The 6 spectral component curves in logit space at each of the 261 knots:
-// constant, lightness, chroma, yellow-red, water, and water-squared terms.
 // smdl format off
+/// The 6 spectral component curves in logit space at each of the 261 knots:
+/// constant, lightness, chroma, yellow-red, water, and water-squared terms.
 export static const auto SOIL_CURVES = auto[261](
   auto(-0.9151818, 2.283778, -13.49007, -4.426793, -1.551209, 0.814577),
   auto(-0.7850408, 2.382168, -12.47427, -0.805078, -1.536577, 0.790004),
@@ -481,6 +494,8 @@ export static const auto SOIL_CURVES = auto[261](
 );
 // smdl format on
 
+/// Evaluate the empirical soil albedo model, mapping four normalized
+/// pedogenic parameters to a dry-state reflectance spectrum.
 @(noinline)
 export color soil_albedo(
   float humus = 0.5,    ///< The humus content. 0 = pale quartz/carbonate, 1 = dark topsoil.

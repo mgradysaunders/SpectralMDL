@@ -1,3 +1,5 @@
+/// The catch-all standard module, re-exporting the entire public API of
+/// the other standard modules for convenience.
 #smdl
 
 export using ::debug import *;

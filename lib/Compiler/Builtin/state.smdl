@@ -1,68 +1,97 @@
+/// The renderer state in the current shading context, following the MDL
+/// specification. Unless documented otherwise, positions, normals, and
+/// tangents are in internal space, which SMDL takes to be tangent space.
 #smdl
 
 import ::math::*;
 
-export enum coordinate_space { coordinate_internal = 0, coordinate_object = 1, coordinate_world = 2 };
+/// The coordinate space, used by the `transform*` functions.
+export enum coordinate_space {
+  coordinate_internal = 0, ///< The internal space, which SMDL takes to be tangent space.
+  coordinate_object = 1,   ///< The object space.
+  coordinate_world = 2,    ///< The world space.
+};
 
+/// The position of the shading point.
 @(macro)
 export float3 position() = $state.position;
 
+/// The shading normal, possibly perturbed by bump or normal mapping.
 @(macro)
 export float3 normal() = $state.normal;
 
+/// The true geometric surface normal.
 @(macro)
 export float3 geometry_normal() = $state.geometry_normal;
 
+/// The motion vector of the shading point.
 @(macro)
 export float3 motion() = $state.motion;
 
+/// The number of available texture spaces.
 @(macro)
 export int texture_space_max() = $state.texture_space_max;
 
+/// The texture coordinates of texture space `i`.
 @(macro)
 export float3 texture_coordinate(const int i) = $state.texture_coordinate[i];
 
+/// The tangent in the direction of increasing U in texture space `i`.
 @(macro)
 export float3 texture_tangent_u(const int i) = $state.texture_tangent_u[i];
 
+/// The tangent in the direction of increasing V in texture space `i`.
 @(macro)
 export float3 texture_tangent_v(const int i) = $state.texture_tangent_v[i];
 
+/// The geometric tangent in the direction of increasing U in texture space `i`.
 @(macro)
 export float3 geometry_tangent_u(const int i) = $state.geometry_tangent_u[i];
 
+/// The geometric tangent in the direction of increasing V in texture space `i`.
 @(macro)
 export float3 geometry_tangent_v(const int i) = $state.geometry_tangent_v[i];
 
+/// The shading tangent space of texture space `i` as the matrix of tangent U, tangent V, and normal.
 @(macro)
 export float3x3 tangent_space(const int i) = float3x3($state.texture_tangent_u[i], $state.texture_tangent_v[i], $state.normal);
 
+/// The geometric tangent space of texture space `i` as the matrix of tangent U, tangent V, and normal.
 @(macro)
 export float3x3 geometry_tangent_space(const int i) = float3x3($state.geometry_tangent_u[i], $state.geometry_tangent_v[i], $state.geometry_normal);
 
+/// The object ID provided by the renderer.
 @(macro)
 export int object_id() = $state.object_id;
 
+/// The lookup direction in environment lookups. NOTE: Not implemented yet, always zero.
 @(macro)
 export float3 direction() = /* $state.direction */ float3(0.0, 0.0, 0.0);
 
+/// The animation time of the current sample.
 @(macro)
 export float animation_time() = $state.animation_time;
 
+/// The compile-time number of wavelengths in spectral calculations.
 export const int WAVELENGTH_BASE_MAX = $WAVELENGTH_BASE_MAX;
 
+/// The minimum supported wavelength in nanometers.
 @(macro)
 export float wavelength_min() = $state.wavelength_min;
 
+/// The maximum supported wavelength in nanometers.
 @(macro)
 export float wavelength_max() = $state.wavelength_max;
 
+/// The wavelengths in nanometers that spectral `color` values are sampled at.
 @(macro)
 export float[WAVELENGTH_BASE_MAX] wavelength_base() = $state.wavelength_base;
 
+/// The conversion factor from scene units to meters.
 @(macro)
 export float meters_per_scene_unit() = $state.meters_per_scene_unit;
 
+/// The conversion factor from meters to scene units.
 @(macro)
 export float scene_units_per_meter() = 1.0 / $state.meters_per_scene_unit;
 
@@ -76,6 +105,7 @@ float4x4 affine_inverse(const float4x4 matrix) {
          );
 }
 
+/// The affine transform matrix from coordinate space `from` to coordinate space `to`.
 @(macro)
 export float4x4 transform(const coordinate_space from, const coordinate_space to) {
   if (from == to) {
@@ -98,21 +128,25 @@ export float4x4 transform(const coordinate_space from, const coordinate_space to
   }
 }
 
+/// Transforms a point from coordinate space `from` to coordinate space `to`.
 @(macro)
 export float3 transform_point(const coordinate_space from, const coordinate_space to, const float3 point) {
   return from == to ? point : (transform(from, to) * float4(point, 1)).xyz;
 }
 
+/// Transforms a vector from coordinate space `from` to coordinate space `to`.
 @(macro)
 export float3 transform_vector(const coordinate_space from, const coordinate_space to, const float3 vector) {
   return from == to ? vector : (transform(from, to) * float4(vector, 0)).xyz;
 }
 
+/// Transforms a normal from coordinate space `from` to coordinate space `to`, using the inverse transpose.
 @(macro)
 export float3 transform_normal(const coordinate_space from, const coordinate_space to, const float3 normal) {
   return from == to ? normal : (float4(normal, 0) * transform(to, from)).xyz;
 }
 
+/// Transforms a scalar distance from coordinate space `from` to coordinate space `to`. NOTE: Not implemented yet, returns `scale` unchanged.
 @(macro)
 export float transform_scale(const coordinate_space from, const coordinate_space to, const float scale) {
   // TODO

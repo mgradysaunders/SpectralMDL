@@ -1,4 +1,8 @@
 // vim:foldmethod=marker:foldlevel=0:fmr=--{,--}
+/// The distribution functions, following the MDL specification: the
+/// elemental BSDFs, EDFs, and VDFs, the modifier and layering
+/// combinators, and the mixers, plus the internal scattering and
+/// emission entry points the compiler exposes to renderers.
 #smdl
 
 using ::math import *;
@@ -73,6 +77,7 @@ float3x3 orthonormalBasis(float3 z) {
   return float3x3(x, y, z);
 }
 
+/// The scatter mode, describing the hemispheres a BSDF scatters into.
 export enum scatter_mode {
   scatter_none = 0x0,             ///< None
   scatter_reflect = 0x1,          ///< Reflect (same hemisphere)
@@ -97,6 +102,8 @@ double erf(double x);
 double erfc(double x);
 
 //--{ monte_carlo
+/// The Monte Carlo utilities: low-discrepancy sequences and the canonical
+/// sampling routines shared by the distribution implementations.
 export namespace monte_carlo {
 
 /// Next canonical random vector in quasi-random 2-dimensional low discrepancy sequence.
@@ -209,6 +216,8 @@ export double erfInverse(double y) {
 //--}
 
 //--{ specular
+/// The specular utilities: reflection and refraction geometry and the
+/// Fresnel equations, all in terms of relative IORs.
 export namespace specular {
 
 /// Reflect direction `wi` across normal direction `wm`.
@@ -227,18 +236,16 @@ export float3 refract(const float3 wi, const float3 wm, const float ior) {
 
 /// Calculate half vector that reflects direction `wo` to direction `wi`.
 ///
-/// \note
-/// - The result is not normalized.
-/// - The result is guaranteed in the upper Z hemisphere.
+/// NOTE: The result is not normalized, and is guaranteed to be in the
+/// upper Z hemisphere.
 ///
 @(pure)
 export float3 reflectionHalfVector(const float3 wo, const float3 wi) = (vh := (wo + wi)) * #sign(vh.z);
 
 /// Calculate half vector that refracts direction `wo` to direction `wi` through index-of-refraction `ior`.
 ///
-/// \note
-/// - The result is not normalized.
-/// - The result is guaranteed in the upper Z hemisphere.
+/// NOTE: The result is not normalized, and is guaranteed to be in the
+/// upper Z hemisphere.
 ///
 @(pure)
 export float3 refractionHalfVector(
@@ -247,6 +254,9 @@ export float3 refractionHalfVector(
   const float ior,
 ) = (vh := -(ior * wo + wi)) * #sign(vh.z);
 
+/// Calculate the Jacobian of `refractionHalfVector` with respect to `wi`,
+/// which converts microsurface normal densities into incoming direction
+/// densities.
 @(pure)
 export auto refractionHalfVectorJacobian(
   const float3 wo,
@@ -254,9 +264,12 @@ export auto refractionHalfVectorJacobian(
   const float ior,
 ) = #abs(#sum(wi * (vh := refractionHalfVector(wo, wi, ior)))) / ((vh2 := #sum(vh * vh)) * #sqrt(vh2));
 
+/// The Schlick reflectance at normal incidence for the given relative IOR.
 @(pure macro)
 export auto schlickF0(const auto ior) = #pow((ior - 1) / (ior + 1), 2);
 
+/// The Schlick approximation of Fresnel reflectance, interpolating from
+/// `F0` at normal incidence to `F90` at grazing incidence.
 @(pure macro)
 export auto schlickFresnel(
   const auto cosTheta,
@@ -265,6 +278,8 @@ export auto schlickFresnel(
   const float exponent = 5,
 ) = F0 + (F90 - F0) * #pow(#max(1 - #abs(cosTheta), 0), exponent);
 
+/// The exact unpolarized Fresnel reflectance of a dielectric interface
+/// with the given relative IOR, folding total internal reflection to 1.
 @(pure)
 export auto dielectricFresnel(const float cosThetai, const auto ior) {
   const auto cosThetat = #sqrt(#max(1.0 - ior * ior * (1.0 - cosThetai * cosThetai), 0.0)) * #sign(cosThetai);
@@ -275,6 +290,8 @@ export auto dielectricFresnel(const float cosThetai, const auto ior) {
   return #min(0.5 * (rs * rs + rp * rp), 1.0);
 }
 
+/// The exact unpolarized Fresnel reflectance of a conductor interface
+/// with the given complex relative IOR.
 @(pure)
 export auto conductorFresnel(const float cosThetai, const auto ior) {
   const auto cosThetat = #sqrt(1.0 - ior * ior * (1.0 - cosThetai * cosThetai)) * #sign(cosThetai);
@@ -322,7 +339,7 @@ struct ScatterEvaluateParameters {
 
   /// The absolute index of refraction of the exterior medium, needed by
   /// modifier BSDFs to convert user-facing absolute IORs into relative
-  /// ratios. \see `relativeIOR()`
+  /// ratios. See `relativeIOR()`.
   float exterior_ior = 1.0;
 
   /// The normal direction.
@@ -369,12 +386,9 @@ struct ScatterEvaluateResult {
   bool isBlack = false;
 };
 
-/// Recalculate the effective tangent space.
-///
-/// \return
-/// Returns `true` if the directions are still consistent with the scatter mode 
-/// after applying the effective tangent space.
-///
+/// Recalculate the effective tangent space. Returns `true` if the
+/// directions are still consistent with the scatter mode after applying
+/// the effective tangent space.
 @(pure noinline)
 bool recalculateTangentSpace(inline const &ScatterEvaluateParameters params) {
   auto tbn(calculateTangentSpace(normal, tangent_u));
@@ -414,7 +428,7 @@ struct ScatterSampleParameters {
 
   /// The absolute index of refraction of the exterior medium, needed by
   /// modifier BSDFs to convert user-facing absolute IORs into relative
-  /// ratios. \see `relativeIOR()`
+  /// ratios. See `relativeIOR()`.
   float exterior_ior = 1.0;
 
   /// The active normal direction.
@@ -605,11 +619,8 @@ struct EmissionSampleResult {
 };
 
 /// Recalculate the effective tangent space for emission evaluation.
-///
-/// \return
 /// Returns `true` if `wi` remains in the upper hemisphere after applying
 /// the effective tangent space.
-///
 @(pure noinline)
 bool recalculateTangentSpace(inline const &EmissionEvaluateParameters params) {
   auto tbn(calculateTangentSpace(normal, tangent_u));
@@ -658,6 +669,8 @@ auto emissionSample(const &_default_edf this [[anno::unused()]], const &Emission
 //--}
 
 //--{ diffuse_reflection_bsdf
+/// The diffuse reflection BSDF, being Lambertian reflection with optional
+/// Oren-Nayar roughness.
 export struct diffuse_reflection_bsdf: bsdf {
   /// The tint.
   ///
@@ -679,8 +692,8 @@ export struct diffuse_reflection_bsdf: bsdf {
   /// > Name to provide access to this component for use in an MDL 
   /// > integration.
   ///
-  /// \note
-  /// This should be a `string` but we `void` it because we have no use for it.
+  /// NOTE: This should be a `string` but we `void` it because we have no
+  /// use for it.
   ///
   void handle = "";
 
@@ -726,6 +739,8 @@ auto scatterSample(const &diffuse_reflection_bsdf this [[anno::unused()]], inlin
 //--}
 
 //--{ diffuse_transmission_bsdf
+/// The diffuse transmission BSDF, being Lambertian transmission through
+/// the surface.
 export struct diffuse_transmission_bsdf: bsdf {
   /// The tint.
   ///
@@ -739,8 +754,8 @@ export struct diffuse_transmission_bsdf: bsdf {
   /// > Name to provide access to this component for use in an MDL 
   /// > integration.
   ///
-  /// \note
-  /// This should be a `string` but we `void` it because we have no use for it.
+  /// NOTE: This should be a `string` but we `void` it because we have no
+  /// use for it.
   ///
   void handle = "";
 
@@ -772,6 +787,8 @@ auto scatterSample(inline const &diffuse_transmission_bsdf this, inline const &S
 //--}
 
 //--{ specular_bsdf
+/// The specular BSDF, being perfect mirror reflection and/or refractive
+/// transmission as a directional delta distribution.
 export struct specular_bsdf: bsdf {
   /// The tint.
   ///
@@ -785,8 +802,7 @@ export struct specular_bsdf: bsdf {
   /// > One of three values: `scatter_reflect`, `scatter_transmit`,
   /// > or (for both) `scatter_reflect_transmit`.
   ///
-  /// \note
-  /// With `scatter_reflect_transmit`, the reflect/transmit split is
+  /// NOTE: With `scatter_reflect_transmit`, the reflect/transmit split is
   /// weighted by the dielectric Fresnel term for the active IOR, matching
   /// the reference MDL semantics. Total internal reflection folds entirely
   /// into reflection.
@@ -798,8 +814,8 @@ export struct specular_bsdf: bsdf {
   /// > Name to provide access to this component for use in an MDL 
   /// > integration.
   ///
-  /// \note
-  /// This should be a `string` but we `void` it because we have no use for it.
+  /// NOTE: This should be a `string` but we `void` it because we have no
+  /// use for it.
   ///
   void handle = "";
 
@@ -851,6 +867,8 @@ auto scatterSample(const &specular_bsdf this, inline const &ScatterSampleParamet
 //--}
 
 //--{ sheen_bsdf
+/// The sheen BSDF for fabric-like grazing highlights, using the
+/// microfibre distribution and fitted shadowing of Conty and Kulla.
 export struct sheen_bsdf: bsdf {
   /// The roughness.
   ///
@@ -885,8 +903,8 @@ export struct sheen_bsdf: bsdf {
   /// > Name to provide access to this component for use in an MDL 
   /// > integration.
   ///
-  /// \note
-  /// This should be a `string` but we `void` it because we have no use for it.
+  /// NOTE: This should be a `string` but we `void` it because we have no
+  /// use for it.
   ///
   void handle = "";
 
@@ -944,7 +962,9 @@ auto scatterSample(const &sheen_bsdf this [[anno::unused()]], inline const &Scat
 }
 //--}
 
-//--{ ward_geisler_moroder_bsdf 
+//--{ ward_geisler_moroder_bsdf
+/// The anisotropic glossy reflection of the Ward BSDF in the
+/// bounded-albedo Geisler-Moroder variant.
 export struct ward_geisler_moroder_bsdf: bsdf {
   /// The roughness in U.
   ///
@@ -983,8 +1003,8 @@ export struct ward_geisler_moroder_bsdf: bsdf {
   /// > Name to provide access to this component for use in an MDL 
   /// > integration.
   ///
-  /// \note
-  /// This should be a `string` but we `void` it because we have no use for it.
+  /// NOTE: This should be a `string` but we `void` it because we have no
+  /// use for it.
   ///
   void handle = "";
 
@@ -1047,6 +1067,9 @@ auto scatterSample(const &ward_geisler_moroder_bsdf this, inline const &ScatterS
 //--}
 
 //--{ microfacet
+/// The microfacet utilities: the distributions (GGX, Beckmann, Blinn),
+/// their slope and normal sampling routines, and the shadowing
+/// techniques, shared by all of the `microfacet_*_bsdf` variants.
 export namespace microfacet {
 
 /// The tag to identify microfacet distributions.
@@ -1149,7 +1172,8 @@ export float2 smithVisibleSlopeSample(
          );
 }
 
-// The Smith normal PDF.
+/// The Smith normal PDF, being the slope PDF mapped onto normals for the
+/// given squared roughness `alpha`.
 @(pure macro)
 export float smithNormalPDF(const Distribution this [[anno::unused()]], const float2 alpha, const float3 wm) {
   return wm.z > 0.0 ? smithSlopePDF(this, -wm.xy / (wm.z * alpha + EPSILON)) / (alpha.x * alpha.y * #pow(wm.z, 4) + EPSILON) : 0.0;
@@ -1241,10 +1265,9 @@ struct microfacet_bsdf: bsdf {
   /// The geometric mean roughness.
   const float roughness0 = #sqrt(#prod(roughness));
 
-  /// The roughness squared in `[EPSILON,1]^2`. 
+  /// The roughness squared in `[EPSILON,1]^2`.
   ///
-  /// \note 
-  /// This is the effective roughness parameter that is actually 
+  /// NOTE: This is the effective roughness parameter that is actually
   /// used in microfacet equations. It is squared for perceptual linearity,
   /// meaning that adjusting the `roughness` parameter more closely tracks
   /// qualitative changes in the apparent roughness of the BSDF.
@@ -1475,17 +1498,28 @@ auto makeMicrofacetBSDF(
 }
 //--}
 
+/// The simple glossy BSDF, being a Blinn microfacet BSDF with V-cavities
+/// shadowing, degenerating to `specular_bsdf` at zero roughness.
 export auto simple_glossy_bsdf(*) = makeMicrofacetBSDF(distribution: microfacet::DistributionBlinn(), shadowing: microfacet::ShadowingVCavities());
 
+/// The GGX microfacet BSDF with Smith shadowing, degenerating to
+/// `specular_bsdf` at zero roughness.
 export auto microfacet_ggx_smith_bsdf(*) = makeMicrofacetBSDF(distribution: microfacet::DistributionGGX(), shadowing: microfacet::ShadowingSmith());
 
+/// The GGX microfacet BSDF with V-cavities shadowing, degenerating to
+/// `specular_bsdf` at zero roughness.
 export auto microfacet_ggx_vcavities_bsdf(*) = makeMicrofacetBSDF(distribution: microfacet::DistributionGGX(), shadowing: microfacet::ShadowingVCavities());
 
+/// The Beckmann microfacet BSDF with Smith shadowing, degenerating to
+/// `specular_bsdf` at zero roughness.
 export auto microfacet_beckmann_smith_bsdf(*) = makeMicrofacetBSDF(distribution: microfacet::DistributionBeckmann(), shadowing: microfacet::ShadowingSmith());
 
+/// The Beckmann microfacet BSDF with V-cavities shadowing, degenerating to
+/// `specular_bsdf` at zero roughness.
 export auto microfacet_beckmann_vcavities_bsdf(*) = makeMicrofacetBSDF(distribution: microfacet::DistributionBeckmann(), shadowing: microfacet::ShadowingVCavities());
 
 //--{ measured_bsdf
+/// Is the BSDF measurement valid, i.e., backed by loaded measurement data?
 export bool bsdf_measurement_isvalid(const bsdf_measurement measurement) = bool(measurement.buffer);
 
 /// Declare `smdBSDFMeasurementInterpolate` in `lib/BSDFMeasurement.cc`
@@ -1500,6 +1534,8 @@ float smdBSDFMeasurementDirectionPDF(&void measurement, &float3 wo, &float3 wi);
 @(pure foreign)
 void smdBSDFMeasurementDirectionSample(&void measurement, &float2 xi, &float3 wo, &float3 wi, &float pdf);
 
+/// The measured BSDF, evaluating and importance sampling a loaded
+/// `bsdf_measurement`.
 export struct measured_bsdf: bsdf {
   /// The measurement.
   bsdf_measurement measurement;
@@ -1627,9 +1663,9 @@ static const auto HAPKE_G_CHEB = auto[4](
 
 /// Evaluate a Chebyshev series by the Clenshaw recurrence, `x` in `[-1,1]`.
 ///
-/// \note
-/// Generic in both the coefficients and `x`, so the same routine serves the scalar
-/// density evaluation at construction and the spectral `EbarK` evaluation.
+/// NOTE: Generic in both the coefficients and `x`, so the same routine serves
+/// the scalar density evaluation at construction and the spectral `EbarK`
+/// evaluation.
 ///
 @(pure)
 auto hapkeChebEval(const auto c, const int n, const auto x) {
@@ -1690,10 +1726,9 @@ auto hapkeH(const float x, const auto w, const auto r0) {
 /// the Hapke (2002) H-functions, and the Hapke (1984) macroscopic-roughness shadowing
 /// `S`, assembled in its manifestly reciprocal form.
 ///
-/// \note
-/// The `albedo` is not a tint. It is the reflectance the surface actually realizes
-/// under uniform illumination, so it is meaningful to drive it with a measured or
-/// modeled soil spectrum.
+/// NOTE: The `albedo` is not a tint. It is the reflectance the surface
+/// actually realizes under uniform illumination, so it is meaningful to
+/// drive it with a measured or modeled soil spectrum.
 ///
 export struct hapke_granular_bsdf: bsdf {
   /// The albedo, realized exactly as the bihemispherical (white-sky) reflectance.
@@ -1739,8 +1774,8 @@ export struct hapke_granular_bsdf: bsdf {
 
   /// The handle.
   ///
-  /// \note
-  /// This should be a `string` but we `void` it because we have no use for it.
+  /// NOTE: This should be a `string` but we `void` it because we have no
+  /// use for it.
   ///
   void handle = "";
 
@@ -1918,8 +1953,8 @@ export struct diffuse_edf: edf {
   /// > Name to provide access to this component for use in an MDL
   /// > integration.
   ///
-  /// \note
-  /// This should be a `string` but we `void` it because we have no use for it.
+  /// NOTE: This should be a `string` but we `void` it because we have no
+  /// use for it.
   ///
   void handle = "";
 
@@ -1947,9 +1982,9 @@ auto emissionSample(const &diffuse_edf this [[anno::unused()]], inline const &Em
 /// cosine falloff restricted to a cone.
 ///
 /// The cosine is remapped so that it reaches zero at the boundary of the
-/// cone: with `θ0 = spread / 2` the distribution is proportional to
-/// `((cos(θ) - cos(θ0)) / (1 - cos(θ0)))^exponent` inside the cone and
-/// zero outside of it.
+/// cone: with `theta0 = spread / 2` the distribution is proportional to
+/// `((cos(theta) - cos(theta0)) / (1 - cos(theta0)))^exponent` inside the
+/// cone and zero outside of it.
 ///
 export struct spot_edf: edf {
   /// The exponent of the cosine falloff.
@@ -1963,18 +1998,16 @@ export struct spot_edf: edf {
   /// > directional distribution applied per point in tangent space, or the
   /// > distribution of the light source as a whole in the global frame.
   ///
-  /// \note
-  /// Only the per-point tangent-space interpretation is supported, so this
-  /// is accepted and ignored. The luminaire-as-a-whole interpretation is a
-  /// host-side concern, e.g., a delta spot light.
+  /// NOTE: Only the per-point tangent-space interpretation is supported, so
+  /// this is accepted and ignored. The luminaire-as-a-whole interpretation
+  /// is a host-side concern, e.g., a delta spot light.
   ///
   void global_distribution = true;
 
   /// The global frame.
   ///
-  /// \note
-  /// Only the per-point tangent-space interpretation is supported, so this
-  /// is accepted and ignored.
+  /// NOTE: Only the per-point tangent-space interpretation is supported, so
+  /// this is accepted and ignored.
   ///
   void global_frame = float3x3(1.0);
 
@@ -1983,8 +2016,8 @@ export struct spot_edf: edf {
   /// > Name to provide access to this component for use in an MDL
   /// > integration.
   ///
-  /// \note
-  /// This should be a `string` but we `void` it because we have no use for it.
+  /// NOTE: This should be a `string` but we `void` it because we have no
+  /// use for it.
   ///
   void handle = "";
 
@@ -1992,11 +2025,10 @@ export struct spot_edf: edf {
   const float _cosSpread = #cos(0.5 * #min(#max(spread, EPSILON), $PI));
 
   /// The precomputed normalization such that the cosine-weighted integral
-  /// over the cone is 1, i.e., with `c0 = _cosSpread` and `k = exponent`:
-  /// `∫ ((x - c0)/(1 - c0))^k x 2π dx` over `x` in `[c0, 1]`.
+  /// over the cone is 1, i.e., with `c0 = _cosSpread` and `k = exponent`,
+  /// the integral of `((x - c0)/(1 - c0))^k x 2 pi dx` over `x` in `[c0, 1]`.
   ///
-  /// \note
-  /// This must clamp `exponent` itself because field initializers run
+  /// NOTE: This must clamp `exponent` itself because field initializers run
   /// before the `finalize` block.
   ///
   const float _normalization = let {
@@ -2073,11 +2105,10 @@ void smdlLightProfileDirectionSample(const &void profile, const &float2 xi, cons
 /// that need the true emitted power of the profile for light selection
 /// should use `light_profile.power`.
 ///
-/// \note
-/// The lower hemisphere of the profile is clipped: a surface cannot emit
-/// below its own horizon. Directions sampled there are rejected, and the
-/// PDF is reported with respect to solid angle over the full sphere, so
-/// evaluation and sampling remain consistent for MIS.
+/// NOTE: The lower hemisphere of the profile is clipped: a surface cannot
+/// emit below its own horizon. Directions sampled there are rejected, and
+/// the PDF is reported with respect to solid angle over the full sphere,
+/// so evaluation and sampling remain consistent for MIS.
 ///
 export struct measured_edf: edf {
   /// The light profile.
@@ -2090,19 +2121,17 @@ export struct measured_edf: edf {
   /// > directional distribution applied per point in tangent space, or the
   /// > distribution of the light source as a whole in the global frame.
   ///
-  /// \note
-  /// Only the per-point tangent-space interpretation is supported, so this
-  /// is accepted and ignored. The luminaire-as-a-whole interpretation is a
-  /// host-side concern, e.g., a delta point light driven directly by the
-  /// C++ `smdl::LightProfile` API.
+  /// NOTE: Only the per-point tangent-space interpretation is supported, so
+  /// this is accepted and ignored. The luminaire-as-a-whole interpretation
+  /// is a host-side concern, e.g., a delta point light driven directly by
+  /// the C++ `smdl::LightProfile` API.
   ///
   void global_distribution = true;
 
   /// The global frame.
   ///
-  /// \note
-  /// Only the per-point tangent-space interpretation is supported, so this
-  /// is accepted and ignored.
+  /// NOTE: Only the per-point tangent-space interpretation is supported, so
+  /// this is accepted and ignored.
   ///
   void global_frame = float3x3(1.0);
 
@@ -2114,8 +2143,8 @@ export struct measured_edf: edf {
   /// > Name to provide access to this component for use in an MDL
   /// > integration.
   ///
-  /// \note
-  /// This should be a `string` but we `void` it because we have no use for it.
+  /// NOTE: This should be a `string` but we `void` it because we have no
+  /// use for it.
   ///
   void handle = "";
 
@@ -2262,8 +2291,10 @@ auto scatterSample(const &tint2 this, const &ScatterSampleParameters params) {
 //--}
 
 //--{ weighted_layer, color_weighted_layer
+/// The weighted layer, blending the `layer` BSDF over the `base` BSDF by
+/// the given `weight`, with the layer evaluated using its own `normal`.
 export struct weighted_layer: bsdf {
-  /// The weight. 
+  /// The weight.
   $(color | float) weight;
 
   /// The layer BSDF.
@@ -2277,8 +2308,7 @@ export struct weighted_layer: bsdf {
 
   /// The chance of sampling the layer BSDF.
   ///
-  /// \note
-  /// If the weight is a `float`, then the chance is the same
+  /// NOTE: If the weight is a `float`, then the chance is the same
   /// as the weight. However, if the weight is a `color`, we
   /// have to average it down to a single probability.
   ///
@@ -2350,10 +2380,9 @@ export struct thin_film: bsdf {
 /// in the specification's normal form, and may exceed one at wavelengths with
 /// constructive interference.
 ///
-/// \note
-/// The cosines through the film and into the base are clamped at zero, so total
-/// internal reflection at a buried interface is handled with the correct magnitude
-/// but without the phase shift of the evanescent case.
+/// NOTE: The cosines through the film and into the base are clamped at zero,
+/// so total internal reflection at a buried interface is handled with the
+/// correct magnitude but without the phase shift of the evanescent case.
 ///
 @(macro)
 auto thinFilmFactor(const auto thickness, const auto filmIOR, const float baseIOR, const float cosTheta1) {
@@ -2468,6 +2497,8 @@ auto scatterSample(const &fresnel_factor this, const &ScatterSampleParameters pa
 //--}
 
 //--{ directional_factor
+/// The directional factor, modulating the base BSDF by a Schlick-style
+/// curve from `normal_tint` to `grazing_tint`.
 export struct directional_factor: bsdf {
   /// The normal tint.
   ///
@@ -2519,6 +2550,8 @@ auto scatterSample(const &directional_factor this, const &ScatterSampleParameter
 //--}
 
 //--{ measured_curve_factor
+/// The measured curve factor, modulating the base BSDF by a measured
+/// reflectance curve over the half-vector angle.
 export struct measured_curve_factor: bsdf {
   /// The curve values.
   ///
@@ -2526,8 +2559,7 @@ export struct measured_curve_factor: bsdf {
   /// > measured in the pre-image range from zero to pi/2 with equally
   /// > spaced measured reflectance values.
   ///
-  /// \note
-  /// The deferred size is inferred at construction and recovered
+  /// NOTE: The deferred size is inferred at construction and recovered
   /// with `#num` in the implementation.
   ///
   color[] curve_values;
@@ -2573,6 +2605,8 @@ auto scatterSample(const &measured_curve_factor this, const &ScatterSampleParame
 //--}
 
 //--{ measured_factor
+/// The measured factor, modulating the base BSDF by a 2-dimensional
+/// measured reflectance texture over the half-vector angles.
 export struct measured_factor: bsdf {
   /// The values.
   ///
@@ -2634,13 +2668,14 @@ auto scatterSample(const &measured_factor this, const &ScatterSampleParameters p
 //--}
 
 //--{ fresnel_layer, color_fresnel_layer
+/// The Fresnel layer, blending the `layer` BSDF over the `base` BSDF by
+/// the exact dielectric Fresnel term of the given `ior`.
 export struct fresnel_layer: bsdf {
   /// The index of refraction.
   ///
-  /// \note
-  /// This is the absolute IOR of the layer interface. It both weights the
-  /// layer by the dielectric Fresnel term and, non-standardly, defines the
-  /// refractive interface for the nested `layer` BSDF (overriding the
+  /// NOTE: This is the absolute IOR of the layer interface. It both weights
+  /// the layer by the dielectric Fresnel term and, non-standardly, defines
+  /// the refractive interface for the nested `layer` BSDF (overriding the
   /// material IOR), so that the Fresnel weight and any refraction in the
   /// layer always agree with each other.
   ///
@@ -2732,16 +2767,17 @@ auto scatterSample(const &fresnel_layer this, inline const &ScatterSampleParamet
   }
 }
 
+/// The `color_fresnel_layer` is also implemented by the `fresnel_layer`.
 export typedef fresnel_layer color_fresnel_layer;
 //--}
 
 //--{ custom_curve_layer, color_custom_curve_layer
 /// A custom-curve layer.
 ///
-/// \note
-/// Unlike `fresnel_layer`, this combinator carries no IOR and does not
-/// define a refractive interface: a nested transmissive `layer` refracts
-/// with the enclosing interface, which is the material IOR by default.
+/// NOTE: Unlike `fresnel_layer`, this combinator carries no IOR and does
+/// not define a refractive interface: a nested transmissive `layer`
+/// refracts with the enclosing interface, which is the material IOR by
+/// default.
 ///
 export struct custom_curve_layer: bsdf {
   /// The reflectivity at normal incidence.
@@ -2829,16 +2865,17 @@ auto scatterSample(const &custom_curve_layer this, inline const &ScatterSamplePa
   }
 }
 
+/// The `color_custom_curve_layer` is also implemented by the `custom_curve_layer`.
 export typedef custom_curve_layer color_custom_curve_layer;
 //--}
 
 //--{ measured_curve_layer, color_measured_curve_layer
 /// A measured-curve layer.
 ///
-/// \note
-/// Unlike `fresnel_layer`, this combinator carries no IOR and does not
-/// define a refractive interface: a nested transmissive `layer` refracts
-/// with the enclosing interface, which is the material IOR by default.
+/// NOTE: Unlike `fresnel_layer`, this combinator carries no IOR and does
+/// not define a refractive interface: a nested transmissive `layer`
+/// refracts with the enclosing interface, which is the material IOR by
+/// default.
 ///
 export struct measured_curve_layer: bsdf {
   /// The curve values.
@@ -2922,26 +2959,30 @@ auto scatterSample(const &measured_curve_layer this, inline const &ScatterSample
   }
 }
 
+/// The `color_measured_curve_layer` is also implemented by the `measured_curve_layer`.
 export typedef measured_curve_layer color_measured_curve_layer;
 //--}
 
 //--{ normalized_mix, clamped_mix, unbounded_mix
 tag component;
 
+/// The weighted BSDF component for use with the mixers.
 export struct bsdf_component: component {
-  float weight = 0.0;
-  bsdf component = bsdf();
-  float chance = weight; // NOTE: Non-standard!
+  float weight = 0.0;      ///< The weight.
+  bsdf component = bsdf(); ///< The component BSDF.
+  float chance = weight;   ///< The sampling chance. NOTE: This is non-standard!
 };
+/// The weighted EDF component for use with the mixers.
 export struct edf_component: component {
-  float weight = 0.0;
-  edf component = edf();
-  float chance = weight; // NOTE: Non-standard!
+  float weight = 0.0;    ///< The weight.
+  edf component = edf(); ///< The component EDF.
+  float chance = weight; ///< The sampling chance. NOTE: This is non-standard!
 };
+/// The weighted VDF component for use with the mixers.
 export struct vdf_component: component {
-  float weight = 0.0;
-  vdf component = vdf();
-  float chance = weight; // NOTE: Non-standard!
+  float weight = 0.0;    ///< The weight.
+  vdf component = vdf(); ///< The component VDF.
+  float chance = weight; ///< The sampling chance. NOTE: This is non-standard!
 };
 
 struct component_mix: bsdf, edf, vdf {
@@ -2950,6 +2991,8 @@ struct component_mix: bsdf, edf, vdf {
   int df_flags = 0;
 };
 
+/// Constructs a mixture of the given components, normalizing the weights
+/// when they sum to more than 1.
 @(macro)
 export auto normalized_mix(component[<N>] components) {
   int df_flags(0);
@@ -2976,6 +3019,8 @@ export auto normalized_mix(component[<N>] components) {
   return component_mix(components, df_flags);
 }
 
+/// Constructs a mixture of the given components, clamping the running
+/// weight sum at 1 in declaration order.
 @(macro)
 export auto clamped_mix(component[<N>] components) {
   int df_flags(0);
@@ -3009,6 +3054,8 @@ export auto clamped_mix(component[<N>] components) {
   return component_mix(components, df_flags);
 }
 
+/// Constructs a mixture of the given components without normalizing or
+/// clamping the weights.
 @(macro)
 export auto unbounded_mix(component[<N>] components) {
   int df_flags(0);
@@ -3095,11 +3142,18 @@ auto emissionSample(const &component_mix this, const &EmissionSampleParameters p
 }
 //--}
 
+/// The anisotropic VDF, being the Henyey-Greenstein phase function with
+/// the given directional bias.
 export struct anisotropic_vdf: vdf {
+  /// The directional bias `g` in `(-1, 1)`: negative is backward
+  /// scattering, `0` is isotropic, and positive is forward scattering.
   float directional_bias = 0.0;
 
+  /// The handle. NOTE: This should be a `string` but we `void` it because
+  /// we have no use for it.
   void handle = "";
 
+  /// The flags.
   static const int df_flags = 0;
 
   finalize {

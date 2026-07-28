@@ -1,13 +1,21 @@
+/// Numeric limits of the builtin arithmetic types, following the MDL
+/// specification.
 #smdl
 
+/// The most negative value of type `int`.
 export const int INT_MIN = $INT_MIN;
 
+/// The largest value of type `int`.
 export const int INT_MAX = $INT_MAX;
 
+/// The smallest positive normalized value of type `float`.
 export const float FLOAT_MIN = $FLOAT_MIN;
 
+/// The largest finite value of type `float`.
 export const float FLOAT_MAX = $FLOAT_MAX;
 
+/// The smallest positive normalized value of type `double`.
 export const double DOUBLE_MIN = $DOUBLE_MIN;
 
+/// The largest finite value of type `double`.
 export const double DOUBLE_MAX = $DOUBLE_MAX;

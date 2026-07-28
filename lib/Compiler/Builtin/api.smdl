@@ -1,3 +1,7 @@
+/// The API module, which implements the types and functions the MDL
+/// specification treats as intrinsic: the resource types, the material
+/// model structures, and the spectral color conversions, plus internal
+/// helpers shared by the other builtin modules.
 #smdl
 
 /// The number of wavelengths in the RGB-to-color curves.
@@ -173,10 +177,10 @@ export color _samples_to_color(const int count, const &float wavelengths, const 
 
 /// The fits of CIE 1931 XYZ by Wyman et al for wavelength in nanometers.
 ///
-/// \note
-/// The implementation here does not exactly look like the published piecewise 
-/// gaussian equations because is calculating the X, Y, and Z fits in parallel 
-/// by explicitly evaluating the first few terms of the exponential series.
+/// NOTE: The implementation here does not exactly look like the published
+/// piecewise gaussian equations because it is calculating the X, Y, and Z
+/// fits in parallel by explicitly evaluating the first few terms of the
+/// exponential series.
 ///
 @(pure)
 export float3 _wyman_xyz(const float w) {
@@ -306,6 +310,7 @@ export struct texture_3d {
   texture_3d(const string name, const auto gamma = 0) = #load_texture_3d(name, int(gamma));
 
   // TODO
+  /// The gamma mode.
   const int gamma = 0;
 };
 
@@ -314,6 +319,7 @@ export struct texture_cube {
   texture_cube(const string name, const auto gamma = 0) = #load_texture_cube(name, int(gamma));
 
   // TODO
+  /// The gamma mode.
   const int gamma = 0;
 };
 
@@ -445,9 +451,8 @@ export struct material {
 
   /// The index of refraction.
   ///
-  /// \note
-  /// In the MDL specification, IOR is type `color` but for implementation
-  /// simplicity this is restricted to being type `float`.
+  /// NOTE: In the MDL specification, IOR is type `color` but for
+  /// implementation simplicity this is restricted to being type `float`.
   ///
   float ior = 1.4;
 
@@ -460,6 +465,9 @@ export struct material {
   /// The hair Bidirectional Scattering Distribution Function (BSDF).
   hair_bsdf hair = hair_bsdf();
 
+  /// The temperature in kelvin for renderers that support blackbody
+  /// emission, where a negative value means unset. NOTE: This is
+  /// non-standard!
   float temperature = -1;
 };
 
@@ -508,7 +516,7 @@ export struct _MaterialInstance {
   &color scattering_coefficient = #is_void(ptr.volume.scattering_coefficient) ? none : &ptr.volume.scattering_coefficient;
 
   /// The `surface` emission intensity, or `none` if the `surface` has no
-  /// non-default emission EDF. \see `df::_emissionEvaluate()` for how the
+  /// non-default emission EDF. See `df::_emissionEvaluate()` for how the
   /// `intensity_mode` units are resolved.
   &color surface_emission_intensity = #is_default(ptr.surface.emission.emission) ? none : #bump(color(ptr.surface.emission.intensity));
 
@@ -561,15 +569,14 @@ export struct _AlbedoLUT {
 
   /// The directional albedo.
   ///
-  /// \note
-  /// This must point to `num_cos_theta` rows by `num_roughness` values.
+  /// NOTE: This must point to `num_cos_theta` rows by `num_roughness`
+  /// values.
   ///
   const &float directional_albedo = none;
 
   /// The average albedo.
   ///
-  /// \note
-  /// This must point to `num_roughness` values.
+  /// NOTE: This must point to `num_roughness` values.
   ///
   const &float average_albedo = none;
 };

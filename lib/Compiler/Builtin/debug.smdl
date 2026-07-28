@@ -1,15 +1,21 @@
+/// Debugging functions, following the MDL specification. These only do
+/// anything when the compiler is in debug mode, and they always return
+/// `true` so they may be chained into boolean expressions.
 #smdl
 
+/// Asserts that `condition` holds, reporting `reason` if it does not.
 @(pure macro) export bool assert(const bool condition, const string reason) {
   #assert(condition, reason) if ($DEBUG);
   return true;
 }
 
+/// Breaks into the debugger.
 @(pure macro) export bool breakpoint() {
   #breakpoint() if ($DEBUG);
   return true;
 }
 
+/// Prints the given value to the console.
 @(pure macro) export bool print(const auto a) {
   #print(a) if ($DEBUG);
   return true;

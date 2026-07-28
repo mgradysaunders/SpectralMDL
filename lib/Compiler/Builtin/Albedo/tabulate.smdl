@@ -1,4 +1,13 @@
 // vim:foldmethod=marker:foldlevel=0:fmr=--{,--}
+/// The offline generator of the directional albedo tables in this
+/// directory, which the multiscatter compensation in `df.smdl` looks up
+/// through `#albedo_lut`. Each BSDF is numerically integrated over a 64 by
+/// 64 grid of view angle cosine and roughness, and the `exec` block at the
+/// bottom writes the results out as the `.inl` files.
+///
+/// NOTE: This module is not embedded in the compiler and is not built
+/// with the others. Run it by hand with `smdl` when a BSDF changes in a
+/// way that invalidates its table.
 #smdl
 
 import ::df::*;

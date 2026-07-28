@@ -1,72 +1,100 @@
+/// File input and output, mirroring the C standard library `stdio.h`
+/// API. NOTE: This module is non-standard!
 #smdl
 
+/// The opaque file stream handle, analogous to `FILE *` in C.
 export typedef &void FILE;
 
+/// The standard input stream.
 export const auto stdin = cast<FILE>($stdin);
 
+/// The standard output stream.
 export const auto stdout = cast<FILE>($stdout);
 
+/// The standard error stream.
 export const auto stderr = cast<FILE>($stderr);
 
+/// Opens the file named `filename` with the given C-style `mode`, e.g., `"r"` or `"wb"`.
 @(foreign pure)
 export FILE fopen(string filename, string mode);
 
+/// Closes the file stream.
 @(foreign pure)
 export void fclose(FILE file);
 
+/// Flushes buffered output to the file stream.
 @(foreign pure)
 export void fflush(FILE file);
 
+/// Returns nonzero if the end-of-file indicator is set.
 @(foreign pure)
 export int feof(FILE file);
 
+/// Returns nonzero if the error indicator is set.
 @(foreign pure)
 export int ferror(FILE file);
 
+/// Reads the next character, or `-1` (EOF) on end of file or error.
 @(foreign pure)
 export int fgetc(FILE file);
 
+/// Reads a line of at most `count - 1` characters into `str`.
 @(foreign pure)
 export &char fgets(&char str, int count, FILE file);
 
+/// Writes the character `ch`.
 @(foreign pure)
 export int fputc(int ch, FILE file);
 
+/// Writes the string `str`.
 @(foreign pure)
 export int fputs(string str, FILE file);
 
+/// Reads `count` elements of `size` bytes each into `buffer`, returning the number of elements read.
 @(foreign pure)
 export size_t fread(&void buffer, size_t size, size_t count, FILE file);
 
+/// Writes `count` elements of `size` bytes each from `buffer`, returning the number of elements written.
 @(foreign pure)
 export size_t fwrite(&void buffer, size_t size, size_t count, FILE file);
 
+/// Reads formatted input, as in C `fscanf`.
 @(foreign pure)
 export int fscanf(FILE file, string format, ...);
 
+/// Writes formatted output, as in C `fprintf`.
 @(foreign pure)
 export int fprintf(FILE file, string format, ...);
 
+/// The current file position indicator.
 @(foreign pure)
 export long ftell(FILE file);
 
+/// The `fseek` origin at the beginning of the file.
 export const int SEEK_SET = $SEEK_SET;
 
+/// The `fseek` origin at the current position.
 export const int SEEK_CUR = $SEEK_CUR;
 
+/// The `fseek` origin at the end of the file.
 export const int SEEK_END = $SEEK_END;
 
+/// Moves the file position indicator by `offset` from `origin`, one of `SEEK_SET`, `SEEK_CUR`, or `SEEK_END`.
 @(foreign pure)
 export int fseek(FILE file, long offset, int origin);
 
+/// Resets the file position indicator to the beginning of the file.
 @(foreign pure)
 export void rewind(FILE file);
 
+/// Clears the end-of-file and error indicators.
 @(foreign pure)
 export void clearerr(FILE file);
 
+/// Prints the given message followed by a description of the last error to standard error.
 @(foreign pure)
 export void perror(string message = "");
 
+/// Opens a temporary file that is automatically removed when closed.
 @(foreign pure)
 export FILE tmpfile();

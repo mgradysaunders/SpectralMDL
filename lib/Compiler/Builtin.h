@@ -5,33 +5,87 @@
 
 namespace smdl::builtin {
 
-static const char *const anno = R"*(#smdl
+static const char *const anno = R"*(/// The standard annotations, following the MDL specification. These carry
+/// metadata for tools and user interfaces and do not affect compilation.
+#smdl
+
+/// The recommended range for the annotated value. Values outside remain valid.
 export annotation soft_range(auto min,auto max);
+
+/// The required range for the annotated value. Values outside are invalid.
 export annotation hard_range(auto min,auto max);
+
+/// The human-readable name to display instead of the identifier.
 export annotation display_name(string name);
+
+/// The group to organize the annotated item under in a user interface.
 export annotation in_group(string group);
+
+/// The group and subgroup to organize the annotated item under in a user interface.
 export annotation in_group(string group,string subgroup);
+
+/// The group, subgroup, and sub-subgroup to organize the annotated item under in a user interface.
 export annotation in_group(string group,string subgroup,string subsubgroup);
+
+/// The relative position of the annotated item in a user interface.
 export annotation ui_order(int order);
+
+/// The condition, as an MDL expression over sibling parameters, under which
+/// the annotated parameter is enabled in a user interface.
 export annotation enable_if(string condition);
+
+/// Hides the annotated item from user interfaces.
 export annotation hidden();
+
+/// The human-readable description. This is also understood by `smdl doc`
+/// as a fallback for declarations without `///` documentation comments.
 export annotation description(string description);
+
+/// The thumbnail image to preview the annotated item in a user interface.
 export annotation thumbnail(string name);
+
+/// The author.
 export annotation author(string name);
+
+/// A contributor.
 export annotation contributor(string name);
+
+/// The copyright notice.
 export annotation copyright_notice(string copyright);
+
+/// The creation date and notes.
 export annotation created(int year,int month,int day,string notes);
+
+/// The last modification date and notes.
 export annotation modified(int year,int month,int day,string notes);
+
+/// The version of the annotated module.
 export annotation version(int major,int minor,int patch,string prerelease="");
+
+/// The version of another module that the annotated module depends on.
 export annotation dependency(string module_name,int major,int minor,int patch,string prerelease="");
+
+/// The keywords for search and categorization.
 export annotation key_words(string[] words);
+
+/// Marks the annotated item as intentionally unused.
 export annotation unused(string description="");
+
+/// Marks the annotated item as deprecated.
 export annotation deprecated(string description="");
+
+/// The hint describing the intended usage of the annotated item, e.g., `"color"` or `"normal"`.
 export annotation usage(string hint="");
+
+/// The qualified name of the entity the annotated item originates from.
 export annotation origin(string name="");
 )*";
 
-static const char *const api = R"*(#smdl
+static const char *const api = R"*(/// The API module, which implements the types and functions the MDL
+/// specification treats as intrinsic: the resource types, the material
+/// model structures, and the spectral color conversions, plus internal
+/// helpers shared by the other builtin modules.
+#smdl
 
 /// The number of wavelengths in the RGB-to-color curves.
 const int RGB_TO_COLOR_NUM_WAVELENGTHS=32;
@@ -154,10 +208,10 @@ return c;
 
 /// The fits of CIE 1931 XYZ by Wyman et al for wavelength in nanometers.
 ///
-/// \note
-/// The implementation here does not exactly look like the published piecewise 
-/// gaussian equations because is calculating the X, Y, and Z fits in parallel 
-/// by explicitly evaluating the first few terms of the exponential series.
+/// NOTE: The implementation here does not exactly look like the published
+/// piecewise gaussian equations because it is calculating the X, Y, and Z
+/// fits in parallel by explicitly evaluating the first few terms of the
+/// exponential series.
 ///
 @(pure)
 export float3 _wyman_xyz(const float w){
@@ -276,12 +330,16 @@ const int gamma=0;
 /// The texture 3D structure.
 export struct texture_3d{
 texture_3d(const string name,const auto gamma=0)=#load_texture_3d(name,int(gamma));
+
+/// The gamma mode.
 const int gamma=0;
 };
 
 /// The texture cube structure.
 export struct texture_cube{
 texture_cube(const string name,const auto gamma=0)=#load_texture_cube(name,int(gamma));
+
+/// The gamma mode.
 const int gamma=0;
 };
 
@@ -410,9 +468,8 @@ material_surface backface=material_surface();
 
 /// The index of refraction.
 ///
-/// \note
-/// In the MDL specification, IOR is type `color` but for implementation
-/// simplicity this is restricted to being type `float`.
+/// NOTE: In the MDL specification, IOR is type `color` but for
+/// implementation simplicity this is restricted to being type `float`.
 ///
 float ior=1.4;
 
@@ -424,6 +481,10 @@ material_geometry geometry=material_geometry();
 
 /// The hair Bidirectional Scattering Distribution Function (BSDF).
 hair_bsdf hair=hair_bsdf();
+
+/// The temperature in kelvin for renderers that support blackbody
+/// emission, where a negative value means unset. NOTE: This is
+/// non-standard!
 float temperature=-1;
 };
 const int MATERIAL_TRANSPORT_IMPORTANCE=(1<<0);
@@ -464,7 +525,7 @@ float temperature=ptr.temperature;
 &color scattering_coefficient=#is_void(ptr.volume.scattering_coefficient)?none:&ptr.volume.scattering_coefficient;
 
 /// The `surface` emission intensity, or `none` if the `surface` has no
-/// non-default emission EDF. \see `df::_emissionEvaluate()` for how the
+/// non-default emission EDF. See `df::_emissionEvaluate()` for how the
 /// `intensity_mode` units are resolved.
 &color surface_emission_intensity=#is_default(ptr.surface.emission.emission)?none:#bump(color(ptr.surface.emission.intensity));
 
@@ -505,15 +566,14 @@ const int num_roughness=0;
 
 /// The directional albedo.
 ///
-/// \note
-/// This must point to `num_cos_theta` rows by `num_roughness` values.
+/// NOTE: This must point to `num_cos_theta` rows by `num_roughness`
+/// values.
 ///
 const &float directional_albedo=none;
 
 /// The average albedo.
 ///
-/// \note
-/// This must point to `num_roughness` values.
+/// NOTE: This must point to `num_roughness` values.
 ///
 const &float average_albedo=none;
 };
@@ -624,17 +684,26 @@ return 0;
 }
 )*";
 
-static const char *const debug = R"*(#smdl
+static const char *const debug = R"*(/// Debugging functions, following the MDL specification. These only do
+/// anything when the compiler is in debug mode, and they always return
+/// `true` so they may be chained into boolean expressions.
+#smdl
+
+/// Asserts that `condition` holds, reporting `reason` if it does not.
 @(pure macro)
 export bool assert(const bool condition,const string reason){
 #assert(condition,reason) if($DEBUG);
 return true;
 }
+
+/// Breaks into the debugger.
 @(pure macro)
 export bool breakpoint(){
 #breakpoint() if($DEBUG);
 return true;
 }
+
+/// Prints the given value to the console.
 @(pure macro)
 export bool print(const auto a){
 #print(a) if($DEBUG);
@@ -642,7 +711,11 @@ return true;
 }
 )*";
 
-static const char *const df = R"*(#smdl
+static const char *const df = R"*(/// The distribution functions, following the MDL specification: the
+/// elemental BSDFs, EDFs, and VDFs, the modifier and layering
+/// combinators, and the mixers, plus the internal scattering and
+/// emission entry points the compiler exposes to renderers.
+#smdl
 using ::math import *;
 import ::tex::*;
 
@@ -681,6 +754,8 @@ x=normalize(x-dot(x,z)*z);
 auto y=normalize(cross(z,x));
 return float3x3(x,y,z);
 }
+
+/// The scatter mode, describing the hemispheres a BSDF scatters into.
 export enum scatter_mode{
 scatter_none=0x0,             ///< None
 scatter_reflect=0x1,          ///< Reflect (same hemisphere)
@@ -701,6 +776,9 @@ double erf(double x);
 /// Declare libm `erfc`
 @(pure foreign)
 double erfc(double x);
+
+/// The Monte Carlo utilities: low-discrepancy sequences and the canonical
+/// sampling routines shared by the distribution implementations.
 export namespace monte_carlo {
 
 /// Next canonical random vector in quasi-random 2-dimensional low discrepancy sequence.
@@ -799,7 +877,8 @@ x-=(erf(x)-y)/(1.1283791671d*#exp(-x*x));
 x-=(erf(x)-y)/(1.1283791671d*#exp(-x*x));
 return x;
 }
-}
+} /// The specular utilities: reflection and refraction geometry and the
+/// Fresnel equations, all in terms of relative IORs.
 export namespace specular {
 
 /// Reflect direction `wi` across normal direction `wm`.
@@ -818,25 +897,32 @@ return -ior*wi+(ior*cosThetai+cosThetat)*wm;
 
 /// Calculate half vector that reflects direction `wo` to direction `wi`.
 ///
-/// \note
-/// - The result is not normalized.
-/// - The result is guaranteed in the upper Z hemisphere.
+/// NOTE: The result is not normalized, and is guaranteed to be in the
+/// upper Z hemisphere.
 ///
 @(pure)
 export float3 reflectionHalfVector(const float3 wo,const float3 wi)=(vh:=(wo+wi))*#sign(vh.z);
 
 /// Calculate half vector that refracts direction `wo` to direction `wi` through index-of-refraction `ior`.
 ///
-/// \note
-/// - The result is not normalized.
-/// - The result is guaranteed in the upper Z hemisphere.
+/// NOTE: The result is not normalized, and is guaranteed to be in the
+/// upper Z hemisphere.
 ///
 @(pure)
 export float3 refractionHalfVector(const float3 wo,const float3 wi,const float ior,)=(vh:=-(ior*wo+wi))*#sign(vh.z);
+
+/// Calculate the Jacobian of `refractionHalfVector` with respect to `wi`,
+/// which converts microsurface normal densities into incoming direction
+/// densities.
 @(pure)
 export auto refractionHalfVectorJacobian(const float3 wo,const float3 wi,const float ior,)=#abs(#sum(wi*(vh:=refractionHalfVector(wo,wi,ior))))/((vh2:=#sum(vh*vh))*#sqrt(vh2));
+
+/// The Schlick reflectance at normal incidence for the given relative IOR.
 @(pure macro)
 export auto schlickF0(const auto ior)=#pow((ior-1)/(ior+1),2);
+
+/// The Schlick approximation of Fresnel reflectance, interpolating from
+/// `F0` at normal incidence to `F90` at grazing incidence.
 @(pure macro)
 export auto schlickFresnel(
 const auto cosTheta,
@@ -844,6 +930,9 @@ const auto F0,
 const auto F90=1.,
 const float exponent=5,
 )=F0+(F90-F0)*#pow(#max(1-#abs(cosTheta),0),exponent);
+
+/// The exact unpolarized Fresnel reflectance of a dielectric interface
+/// with the given relative IOR, folding total internal reflection to 1.
 @(pure)
 export auto dielectricFresnel(const float cosThetai,const auto ior){
 const auto cosThetat=#sqrt(#max(1.-ior*ior*(1.-cosThetai*cosThetai),0.))*#sign(cosThetai);
@@ -853,6 +942,9 @@ const auto rs=(iorCosThetai-cosThetat)/(iorCosThetai+cosThetat);
 const auto rp=(cosThetai-iorCosThetat)/(cosThetai+iorCosThetat);
 return #min(0.5*(rs*rs+rp*rp),1.);
 }
+
+/// The exact unpolarized Fresnel reflectance of a conductor interface
+/// with the given complex relative IOR.
 @(pure)
 export auto conductorFresnel(const float cosThetai,const auto ior){
 const auto cosThetat=#sqrt(1.-ior*ior*(1.-cosThetai*cosThetai))*#sign(cosThetai);
@@ -895,7 +987,7 @@ float ior=1/DEFAULT_IOR;
 
 /// The absolute index of refraction of the exterior medium, needed by
 /// modifier BSDFs to convert user-facing absolute IORs into relative
-/// ratios. \see `relativeIOR()`
+/// ratios. See `relativeIOR()`.
 float exterior_ior=1.;
 
 /// The normal direction.
@@ -934,12 +1026,9 @@ float2 pdf=float2(0.);
 bool isBlack=false;
 };
 
-/// Recalculate the effective tangent space.
-///
-/// \return
-/// Returns `true` if the directions are still consistent with the scatter mode 
-/// after applying the effective tangent space.
-///
+/// Recalculate the effective tangent space. Returns `true` if the
+/// directions are still consistent with the scatter mode after applying
+/// the effective tangent space.
 @(pure noinline)
 bool recalculateTangentSpace(inline const &ScatterEvaluateParameters params){
 auto tbn(calculateTangentSpace(normal,tangent_u));
@@ -975,7 +1064,7 @@ float ior=1/DEFAULT_IOR;
 
 /// The absolute index of refraction of the exterior medium, needed by
 /// modifier BSDFs to convert user-facing absolute IORs into relative
-/// ratios. \see `relativeIOR()`
+/// ratios. See `relativeIOR()`.
 float exterior_ior=1.;
 
 /// The active normal direction.
@@ -1133,11 +1222,8 @@ bool isValid=false;
 };
 
 /// Recalculate the effective tangent space for emission evaluation.
-///
-/// \return
 /// Returns `true` if `wi` remains in the upper hemisphere after applying
 /// the effective tangent space.
-///
 @(pure noinline)
 bool recalculateTangentSpace(inline const &EmissionEvaluateParameters params){
 auto tbn(calculateTangentSpace(normal,tangent_u));
@@ -1167,7 +1253,8 @@ return EmissionEvaluateResult(isBlack: true);
 @(pure macro)
 auto emissionSample(const &_default_edf this[[anno::unused()]],const &EmissionSampleParameters params[[anno::unused()]]){
 return EmissionSampleResult();
-}
+} /// The diffuse reflection BSDF, being Lambertian reflection with optional
+/// Oren-Nayar roughness.
 export struct diffuse_reflection_bsdf:bsdf{
 /// The tint.
 ///
@@ -1189,8 +1276,8 @@ const float roughness=0.;
 /// > Name to provide access to this component for use in an MDL 
 /// > integration.
 ///
-/// \note
-/// This should be a `string` but we `void` it because we have no use for it.
+/// NOTE: This should be a `string` but we `void` it because we have no
+/// use for it.
 ///
 void handle="";
 
@@ -1229,7 +1316,8 @@ return ScatterSampleResult(wi: (*tbn)*monte_carlo::cosineHemisphereSample(xi.xy)
 } else {
 return ScatterSampleResult();
 }
-}
+} /// The diffuse transmission BSDF, being Lambertian transmission through
+/// the surface.
 export struct diffuse_transmission_bsdf:bsdf{
 /// The tint.
 ///
@@ -1243,8 +1331,8 @@ const $(color|float) tint=1.;
 /// > Name to provide access to this component for use in an MDL 
 /// > integration.
 ///
-/// \note
-/// This should be a `string` but we `void` it because we have no use for it.
+/// NOTE: This should be a `string` but we `void` it because we have no
+/// use for it.
 ///
 void handle="";
 
@@ -1270,7 +1358,8 @@ return ScatterSampleResult(wi: (*tbn)*-monte_carlo::cosineHemisphereSample(xi.xy
 } else {
 return ScatterSampleResult();
 }
-}
+} /// The specular BSDF, being perfect mirror reflection and/or refractive
+/// transmission as a directional delta distribution.
 export struct specular_bsdf:bsdf{
 /// The tint.
 ///
@@ -1284,8 +1373,7 @@ const $(color|float) tint=1.;
 /// > One of three values: `scatter_reflect`, `scatter_transmit`,
 /// > or (for both) `scatter_reflect_transmit`.
 ///
-/// \note
-/// With `scatter_reflect_transmit`, the reflect/transmit split is
+/// NOTE: With `scatter_reflect_transmit`, the reflect/transmit split is
 /// weighted by the dielectric Fresnel term for the active IOR, matching
 /// the reference MDL semantics. Total internal reflection folds entirely
 /// into reflection.
@@ -1297,8 +1385,8 @@ const scatter_mode mode=scatter_reflect;
 /// > Name to provide access to this component for use in an MDL 
 /// > integration.
 ///
-/// \note
-/// This should be a `string` but we `void` it because we have no use for it.
+/// NOTE: This should be a `string` but we `void` it because we have no
+/// use for it.
 ///
 void handle="";
 
@@ -1332,7 +1420,8 @@ return result;
 } else {
 return ScatterSampleResult();
 }
-}
+} /// The sheen BSDF for fabric-like grazing highlights, using the
+/// microfibre distribution and fitted shadowing of Conty and Kulla.
 export struct sheen_bsdf:bsdf{
 /// The roughness.
 ///
@@ -1367,8 +1456,8 @@ void multiscatter=none;
 /// > Name to provide access to this component for use in an MDL 
 /// > integration.
 ///
-/// \note
-/// This should be a `string` but we `void` it because we have no use for it.
+/// NOTE: This should be a `string` but we `void` it because we have no
+/// use for it.
 ///
 void handle="";
 
@@ -1414,7 +1503,8 @@ return ScatterSampleResult(wi: (*tbn)*monte_carlo::cosineHemisphereSample(xi.xy)
 } else {
 return ScatterSampleResult();
 }
-}
+} /// The anisotropic glossy reflection of the Ward BSDF in the
+/// bounded-albedo Geisler-Moroder variant.
 export struct ward_geisler_moroder_bsdf:bsdf{
 /// The roughness in U.
 ///
@@ -1453,8 +1543,8 @@ float3 tangent_u=$state.texture_tangent_u[0];
 /// > Name to provide access to this component for use in an MDL 
 /// > integration.
 ///
-/// \note
-/// This should be a `string` but we `void` it because we have no use for it.
+/// NOTE: This should be a `string` but we `void` it because we have no
+/// use for it.
 ///
 void handle="";
 
@@ -1507,7 +1597,9 @@ return ScatterSampleResult(wi: (*tbn)*wi,mode: scatter_reflect);
 }
 }
 return ScatterSampleResult();
-}
+} /// The microfacet utilities: the distributions (GGX, Beckmann, Blinn),
+/// their slope and normal sampling routines, and the shadowing
+/// techniques, shared by all of the `microfacet_*_bsdf` variants.
 export namespace microfacet {
 
 /// The tag to identify microfacet distributions.
@@ -1605,6 +1697,9 @@ x-=f/(norm*(1-a*tanThetao));
 }
 return float2(monte_carlo::erfInverse(x),monte_carlo::erfInverse(2*xi1-1),);
 }
+
+/// The Smith normal PDF, being the slope PDF mapped onto normals for the
+/// given squared roughness `alpha`.
 @(pure macro)
 export float smithNormalPDF(const Distribution this[[anno::unused()]],const float2 alpha,const float3 wm){
 return wm.z>0.?smithSlopePDF(this,-wm.xy/(wm.z*alpha+EPSILON))/(alpha.x*alpha.y*#pow(wm.z,4)+EPSILON):0.;
@@ -1691,10 +1786,9 @@ const float2 roughness;
 /// The geometric mean roughness.
 const float roughness0=#sqrt(#prod(roughness));
 
-/// The roughness squared in `[EPSILON,1]^2`. 
+/// The roughness squared in `[EPSILON,1]^2`.
 ///
-/// \note 
-/// This is the effective roughness parameter that is actually 
+/// NOTE: This is the effective roughness parameter that is actually
 /// used in microfacet equations. It is squared for perceptual linearity,
 /// meaning that adjusting the `roughness` parameter more closely tracks
 /// qualitative changes in the apparent roughness of the BSDF.
@@ -1877,12 +1971,27 @@ shadowing: shadowing,
 } else {
 return specular_bsdf(tint: tint,mode: mode);
 }
-}
+} /// The simple glossy BSDF, being a Blinn microfacet BSDF with V-cavities
+/// shadowing, degenerating to `specular_bsdf` at zero roughness.
 export auto simple_glossy_bsdf(*)=makeMicrofacetBSDF(distribution: microfacet::DistributionBlinn(),shadowing: microfacet::ShadowingVCavities());
+
+/// The GGX microfacet BSDF with Smith shadowing, degenerating to
+/// `specular_bsdf` at zero roughness.
 export auto microfacet_ggx_smith_bsdf(*)=makeMicrofacetBSDF(distribution: microfacet::DistributionGGX(),shadowing: microfacet::ShadowingSmith());
+
+/// The GGX microfacet BSDF with V-cavities shadowing, degenerating to
+/// `specular_bsdf` at zero roughness.
 export auto microfacet_ggx_vcavities_bsdf(*)=makeMicrofacetBSDF(distribution: microfacet::DistributionGGX(),shadowing: microfacet::ShadowingVCavities());
+
+/// The Beckmann microfacet BSDF with Smith shadowing, degenerating to
+/// `specular_bsdf` at zero roughness.
 export auto microfacet_beckmann_smith_bsdf(*)=makeMicrofacetBSDF(distribution: microfacet::DistributionBeckmann(),shadowing: microfacet::ShadowingSmith());
+
+/// The Beckmann microfacet BSDF with V-cavities shadowing, degenerating to
+/// `specular_bsdf` at zero roughness.
 export auto microfacet_beckmann_vcavities_bsdf(*)=makeMicrofacetBSDF(distribution: microfacet::DistributionBeckmann(),shadowing: microfacet::ShadowingVCavities());
+
+/// Is the BSDF measurement valid, i.e., backed by loaded measurement data?
 export bool bsdf_measurement_isvalid(const bsdf_measurement measurement)=bool(measurement.buffer);
 
 /// Declare `smdBSDFMeasurementInterpolate` in `lib/BSDFMeasurement.cc`
@@ -1896,6 +2005,9 @@ float smdBSDFMeasurementDirectionPDF(&void measurement,&float3 wo,&float3 wi);
 /// Declare `smdBSDFMeasurementDirectionSample` in `lib/BSDFMeasurement.cc`
 @(pure foreign)
 void smdBSDFMeasurementDirectionSample(&void measurement,&float2 xi,&float3 wo,&float3 wi,&float pdf);
+
+/// The measured BSDF, evaluating and importance sampling a loaded
+/// `bsdf_measurement`.
 export struct measured_bsdf:bsdf{
 /// The measurement.
 bsdf_measurement measurement;
@@ -1944,9 +2056,9 @@ static const auto HAPKE_QUAD=auto[16](auto(0.0426509835,0.999861409,0.0166482032
 static const auto HAPKE_W_CHEB=auto[5](auto(0.0443692637,-0.0330322166,-0.0414806793,0.0377322324,-0.0036831791,-0.00503835424,8.09641201e-4,3.28879959e-4,2.18482055e-5,-1.60545071e-5,-1.57504064e-5),auto(-0.00594076498,7.57196179e-4,0.0081566095,-6.27186314e-4,-0.00248094082,-4.88022104e-4,2.97539468e-4,3.75439189e-4,-8.86163641e-6,-3.29277167e-5,-3.83729896e-5),auto(-9.63613192e-4,4.66153409e-4,0.00149075512,-6.73457031e-4,-7.58809229e-4,1.27478645e-4,2.95317848e-4,1.1745609e-4,-6.84391571e-5,-5.81575106e-5,-1.47705227e-5),auto(2.75487885e-4,6.03421013e-5,-4.03479982e-4,-1.90433817e-4,1.11667449e-4,1.85513524e-4,6.24427123e-5,-7.37454173e-5,-7.16632707e-5,-2.55167593e-5,1.67814334e-5),auto(-2.62793436e-5,-3.65689393e-5,6.2527643e-6,6.15744651e-5,6.90324901e-5,-6.91503114e-6,-5.56055434e-5,-4.09210276e-5,7.60283579e-6,2.61753306e-5,1.97457206e-5));
 static const auto HAPKE_G_CHEB=auto[4](auto(0.299680994,-0.25994946,0.0835171816,-0.0234697031,0.0061327028,-0.00150566063,3.6640673e-4),auto(-0.0526057365,0.0529757455,-0.0205834026,0.00702317686,-0.00220447865,6.35609701e-4,-1.79704911e-4),auto(-0.0107799361,0.00980414131,-0.00314615761,8.44617944e-4,-2.0008313e-4,4.17196758e-5,-7.49359084e-6),auto(0.00182228246,-0.00183367741,8.1867027e-4,-3.34625137e-4,1.23845828e-4,-4.06381678e-5,1.27990763e-5)); /// Evaluate a Chebyshev series by the Clenshaw recurrence, `x` in `[-1,1]`.
 ///
-/// \note
-/// Generic in both the coefficients and `x`, so the same routine serves the scalar
-/// density evaluation at construction and the spectral `EbarK` evaluation.
+/// NOTE: Generic in both the coefficients and `x`, so the same routine serves
+/// the scalar density evaluation at construction and the spectral `EbarK`
+/// evaluation.
 ///
 @(pure)
 auto hapkeChebEval(const auto c,const int n,const auto x){
@@ -2006,10 +2118,9 @@ return 1./(1.-w*xs*(r0+0.5*(1.-2.*r0*xs)*#log(1.+1./xs)));
 /// the Hapke (2002) H-functions, and the Hapke (1984) macroscopic-roughness shadowing
 /// `S`, assembled in its manifestly reciprocal form.
 ///
-/// \note
-/// The `albedo` is not a tint. It is the reflectance the surface actually realizes
-/// under uniform illumination, so it is meaningful to drive it with a measured or
-/// modeled soil spectrum.
+/// NOTE: The `albedo` is not a tint. It is the reflectance the surface
+/// actually realizes under uniform illumination, so it is meaningful to
+/// drive it with a measured or modeled soil spectrum.
 ///
 export struct hapke_granular_bsdf:bsdf{
 /// The albedo, realized exactly as the bihemispherical (white-sky) reflectance.
@@ -2055,8 +2166,8 @@ float _tanMeanSlope=0.;
 
 /// The handle.
 ///
-/// \note
-/// This should be a `string` but we `void` it because we have no use for it.
+/// NOTE: This should be a `string` but we `void` it because we have no
+/// use for it.
 ///
 void handle="";
 
@@ -2178,8 +2289,8 @@ export struct diffuse_edf:edf{
 /// > Name to provide access to this component for use in an MDL
 /// > integration.
 ///
-/// \note
-/// This should be a `string` but we `void` it because we have no use for it.
+/// NOTE: This should be a `string` but we `void` it because we have no
+/// use for it.
 ///
 void handle="";
 
@@ -2201,9 +2312,9 @@ return EmissionSampleResult(wi: calculateTangentSpace(normal,tangent_u)*monte_ca
 /// cosine falloff restricted to a cone.
 ///
 /// The cosine is remapped so that it reaches zero at the boundary of the
-/// cone: with `θ0 = spread / 2` the distribution is proportional to
-/// `((cos(θ) - cos(θ0)) / (1 - cos(θ0)))^exponent` inside the cone and
-/// zero outside of it.
+/// cone: with `theta0 = spread / 2` the distribution is proportional to
+/// `((cos(theta) - cos(theta0)) / (1 - cos(theta0)))^exponent` inside the
+/// cone and zero outside of it.
 ///
 export struct spot_edf:edf{
 /// The exponent of the cosine falloff.
@@ -2217,18 +2328,16 @@ float spread=$PI;
 /// > directional distribution applied per point in tangent space, or the
 /// > distribution of the light source as a whole in the global frame.
 ///
-/// \note
-/// Only the per-point tangent-space interpretation is supported, so this
-/// is accepted and ignored. The luminaire-as-a-whole interpretation is a
-/// host-side concern, e.g., a delta spot light.
+/// NOTE: Only the per-point tangent-space interpretation is supported, so
+/// this is accepted and ignored. The luminaire-as-a-whole interpretation
+/// is a host-side concern, e.g., a delta spot light.
 ///
 void global_distribution=true;
 
 /// The global frame.
 ///
-/// \note
-/// Only the per-point tangent-space interpretation is supported, so this
-/// is accepted and ignored.
+/// NOTE: Only the per-point tangent-space interpretation is supported, so
+/// this is accepted and ignored.
 ///
 void global_frame=float3x3(1.);
 
@@ -2237,8 +2346,8 @@ void global_frame=float3x3(1.);
 /// > Name to provide access to this component for use in an MDL
 /// > integration.
 ///
-/// \note
-/// This should be a `string` but we `void` it because we have no use for it.
+/// NOTE: This should be a `string` but we `void` it because we have no
+/// use for it.
 ///
 void handle="";
 
@@ -2246,11 +2355,10 @@ void handle="";
 const float _cosSpread=#cos(0.5*#min(#max(spread,EPSILON),$PI));
 
 /// The precomputed normalization such that the cosine-weighted integral
-/// over the cone is 1, i.e., with `c0 = _cosSpread` and `k = exponent`:
-/// `∫ ((x - c0)/(1 - c0))^k x 2π dx` over `x` in `[c0, 1]`.
+/// over the cone is 1, i.e., with `c0 = _cosSpread` and `k = exponent`,
+/// the integral of `((x - c0)/(1 - c0))^k x 2 pi dx` over `x` in `[c0, 1]`.
 ///
-/// \note
-/// This must clamp `exponent` itself because field initializers run
+/// NOTE: This must clamp `exponent` itself because field initializers run
 /// before the `finalize` block.
 ///
 const float _normalization=let {
@@ -2311,11 +2419,10 @@ void smdlLightProfileDirectionSample(const &void profile,const &float2 xi,const 
 /// that need the true emitted power of the profile for light selection
 /// should use `light_profile.power`.
 ///
-/// \note
-/// The lower hemisphere of the profile is clipped: a surface cannot emit
-/// below its own horizon. Directions sampled there are rejected, and the
-/// PDF is reported with respect to solid angle over the full sphere, so
-/// evaluation and sampling remain consistent for MIS.
+/// NOTE: The lower hemisphere of the profile is clipped: a surface cannot
+/// emit below its own horizon. Directions sampled there are rejected, and
+/// the PDF is reported with respect to solid angle over the full sphere,
+/// so evaluation and sampling remain consistent for MIS.
 ///
 export struct measured_edf:edf{
 /// The light profile.
@@ -2328,19 +2435,17 @@ float multiplier=1.;
 /// > directional distribution applied per point in tangent space, or the
 /// > distribution of the light source as a whole in the global frame.
 ///
-/// \note
-/// Only the per-point tangent-space interpretation is supported, so this
-/// is accepted and ignored. The luminaire-as-a-whole interpretation is a
-/// host-side concern, e.g., a delta point light driven directly by the
-/// C++ `smdl::LightProfile` API.
+/// NOTE: Only the per-point tangent-space interpretation is supported, so
+/// this is accepted and ignored. The luminaire-as-a-whole interpretation
+/// is a host-side concern, e.g., a delta point light driven directly by
+/// the C++ `smdl::LightProfile` API.
 ///
 void global_distribution=true;
 
 /// The global frame.
 ///
-/// \note
-/// Only the per-point tangent-space interpretation is supported, so this
-/// is accepted and ignored.
+/// NOTE: Only the per-point tangent-space interpretation is supported, so
+/// this is accepted and ignored.
 ///
 void global_frame=float3x3(1.);
 
@@ -2352,8 +2457,8 @@ float3 tangent_u=$state.texture_tangent_u[0];
 /// > Name to provide access to this component for use in an MDL
 /// > integration.
 ///
-/// \note
-/// This should be a `string` but we `void` it because we have no use for it.
+/// NOTE: This should be a `string` but we `void` it because we have no
+/// use for it.
 ///
 void handle="";
 
@@ -2478,9 +2583,10 @@ if(params.mode==scatter_reflect){
 }
 }
 return result;
-}
+} /// The weighted layer, blending the `layer` BSDF over the `base` BSDF by
+/// the given `weight`, with the layer evaluated using its own `normal`.
 export struct weighted_layer:bsdf{
-/// The weight. 
+/// The weight.
 $(color|float) weight;
 
 /// The layer BSDF.
@@ -2494,8 +2600,7 @@ float3 normal=$state.normal;
 
 /// The chance of sampling the layer BSDF.
 ///
-/// \note
-/// If the weight is a `float`, then the chance is the same
+/// NOTE: If the weight is a `float`, then the chance is the same
 /// as the weight. However, if the weight is a `color`, we
 /// have to average it down to a single probability.
 ///
@@ -2559,10 +2664,9 @@ const int df_flags=base.df_flags;
 /// in the specification's normal form, and may exceed one at wavelengths with
 /// constructive interference.
 ///
-/// \note
-/// The cosines through the film and into the base are clamped at zero, so total
-/// internal reflection at a buried interface is handled with the correct magnitude
-/// but without the phase shift of the evanescent case.
+/// NOTE: The cosines through the film and into the base are clamped at zero,
+/// so total internal reflection at a buried interface is handled with the
+/// correct magnitude but without the phase shift of the evanescent case.
 ///
 @(macro)
 auto thinFilmFactor(const auto thickness,const auto filmIOR,const float baseIOR,const float cosTheta1){
@@ -2649,7 +2753,8 @@ if((result.mode==scatter_reflect)&bool(result.fDelta)){
 *result.fDelta*=specular::conductorFresnel(#abs(dot(params.wo,halfDirection(params,&result))),relativeIOR(params,complex(this.ior,this.extinction_coefficient)));
 }
 return result;
-}
+} /// The directional factor, modulating the base BSDF by a Schlick-style
+/// curve from `normal_tint` to `grazing_tint`.
 export struct directional_factor:bsdf{
 /// The normal tint.
 ///
@@ -2695,7 +2800,8 @@ if((result.mode==scatter_reflect)&bool(result.fDelta)){
 *result.fDelta*=specular::schlickFresnel(dot(params.wo,halfDirection(params,&result)),this.normal_tint,this.grazing_tint,this.exponent);
 }
 return result;
-}
+} /// The measured curve factor, modulating the base BSDF by a measured
+/// reflectance curve over the half-vector angle.
 export struct measured_curve_factor:bsdf{
 /// The curve values.
 ///
@@ -2703,8 +2809,7 @@ export struct measured_curve_factor:bsdf{
 /// > measured in the pre-image range from zero to pi/2 with equally
 /// > spaced measured reflectance values.
 ///
-/// \note
-/// The deferred size is inferred at construction and recovered
+/// NOTE: The deferred size is inferred at construction and recovered
 /// with `#num` in the implementation.
 ///
 color[] curve_values;
@@ -2744,7 +2849,8 @@ if((result.mode==scatter_reflect)&bool(result.fDelta)){
 *result.fDelta*=evaluateMeasuredCurve(this.curve_values,dot(params.wo,halfDirection(params,&result)));
 }
 return result;
-}
+} /// The measured factor, modulating the base BSDF by a 2-dimensional
+/// measured reflectance texture over the half-vector angles.
 export struct measured_factor:bsdf{
 /// The values.
 ///
@@ -2798,14 +2904,14 @@ const auto h(halfDirection(params,&result));
 *result.fDelta*=evaluateMeasuredFactor(this,dot(params.wo,h),h.z);
 }
 return result;
-}
+} /// The Fresnel layer, blending the `layer` BSDF over the `base` BSDF by
+/// the exact dielectric Fresnel term of the given `ior`.
 export struct fresnel_layer:bsdf{
 /// The index of refraction.
 ///
-/// \note
-/// This is the absolute IOR of the layer interface. It both weights the
-/// layer by the dielectric Fresnel term and, non-standardly, defines the
-/// refractive interface for the nested `layer` BSDF (overriding the
+/// NOTE: This is the absolute IOR of the layer interface. It both weights
+/// the layer by the dielectric Fresnel term and, non-standardly, defines
+/// the refractive interface for the nested `layer` BSDF (overriding the
 /// material IOR), so that the Fresnel weight and any refraction in the
 /// layer always agree with each other.
 ///
@@ -2867,12 +2973,14 @@ auto result(scatterSample(visit &this.base,params));
 return result;
 }
 }
+
+/// The `color_fresnel_layer` is also implemented by the `fresnel_layer`.
 export typedef fresnel_layer color_fresnel_layer; /// A custom-curve layer.
 ///
-/// \note
-/// Unlike `fresnel_layer`, this combinator carries no IOR and does not
-/// define a refractive interface: a nested transmissive `layer` refracts
-/// with the enclosing interface, which is the material IOR by default.
+/// NOTE: Unlike `fresnel_layer`, this combinator carries no IOR and does
+/// not define a refractive interface: a nested transmissive `layer`
+/// refracts with the enclosing interface, which is the material IOR by
+/// default.
 ///
 export struct custom_curve_layer:bsdf{
 /// The reflectivity at normal incidence.
@@ -2944,12 +3052,14 @@ auto result(scatterSample(visit &this.base,params));
 return result;
 }
 }
+
+/// The `color_custom_curve_layer` is also implemented by the `custom_curve_layer`.
 export typedef custom_curve_layer color_custom_curve_layer; /// A measured-curve layer.
 ///
-/// \note
-/// Unlike `fresnel_layer`, this combinator carries no IOR and does not
-/// define a refractive interface: a nested transmissive `layer` refracts
-/// with the enclosing interface, which is the material IOR by default.
+/// NOTE: Unlike `fresnel_layer`, this combinator carries no IOR and does
+/// not define a refractive interface: a nested transmissive `layer`
+/// refracts with the enclosing interface, which is the material IOR by
+/// default.
 ///
 export struct measured_curve_layer:bsdf{
 /// The curve values.
@@ -3014,27 +3124,36 @@ auto result(scatterSample(visit &this.base,params));
 return result;
 }
 }
+
+/// The `color_measured_curve_layer` is also implemented by the `measured_curve_layer`.
 export typedef measured_curve_layer color_measured_curve_layer;
 tag component;
+
+/// The weighted BSDF component for use with the mixers.
 export struct bsdf_component:component{
-float weight=0.;
-bsdf component=bsdf();
-float chance=weight;
+float weight=0.;       ///< The weight.
+bsdf component=bsdf(); ///< The component BSDF.
+float chance=weight;   ///< The sampling chance. NOTE: This is non-standard!
 };
+/// The weighted EDF component for use with the mixers.
 export struct edf_component:component{
-float weight=0.;
-edf component=edf();
-float chance=weight;
+float weight=0.;     ///< The weight.
+edf component=edf(); ///< The component EDF.
+float chance=weight; ///< The sampling chance. NOTE: This is non-standard!
 };
+/// The weighted VDF component for use with the mixers.
 export struct vdf_component:component{
-float weight=0.;
-vdf component=vdf();
-float chance=weight;
+float weight=0.;     ///< The weight.
+vdf component=vdf(); ///< The component VDF.
+float chance=weight; ///< The sampling chance. NOTE: This is non-standard!
 };
 struct component_mix:bsdf,edf,vdf{
 component[] components;
 int df_flags=0;
 };
+
+/// Constructs a mixture of the given components, normalizing the weights
+/// when they sum to more than 1.
 @(macro)
 export auto normalized_mix(component[<N>] components){
 int df_flags(0);
@@ -3060,6 +3179,9 @@ component.chance*=total_chance;
 }
 return component_mix(components,df_flags);
 }
+
+/// Constructs a mixture of the given components, clamping the running
+/// weight sum at 1 in declaration order.
 @(macro)
 export auto clamped_mix(component[<N>] components){
 int df_flags(0);
@@ -3088,6 +3210,9 @@ components[i].chance*=total_chance;
 }
 return component_mix(components,df_flags);
 }
+
+/// Constructs a mixture of the given components without normalizing or
+/// clamping the weights.
 @(macro)
 export auto unbounded_mix(component[<N>] components){
 int df_flags(0);
@@ -3167,10 +3292,18 @@ return emissionSample(visit &component.component,params);
 }
 }
 return EmissionSampleResult();
-}
+} /// The anisotropic VDF, being the Henyey-Greenstein phase function with
+/// the given directional bias.
 export struct anisotropic_vdf:vdf{
+/// The directional bias `g` in `(-1, 1)`: negative is backward
+/// scattering, `0` is isotropic, and positive is forward scattering.
 float directional_bias=0.;
+
+/// The handle. NOTE: This should be a `string` but we `void` it because
+/// we have no use for it.
 void handle="";
+
+/// The flags.
 static const int df_flags=0;
 finalize {
 directional_bias=#max(directional_bias,-0.999);
@@ -3413,105 +3546,217 @@ return _emissionEvaluate(instance,wiWorld,pdf,Le);
 }
 )*";
 
-static const char *const limits = R"*(#smdl
+static const char *const limits = R"*(/// Numeric limits of the builtin arithmetic types, following the MDL
+/// specification.
+#smdl
+
+/// The most negative value of type `int`.
 export const int INT_MIN=$INT_MIN;
+
+/// The largest value of type `int`.
 export const int INT_MAX=$INT_MAX;
+
+/// The smallest positive normalized value of type `float`.
 export const float FLOAT_MIN=$FLOAT_MIN;
+
+/// The largest finite value of type `float`.
 export const float FLOAT_MAX=$FLOAT_MAX;
+
+/// The smallest positive normalized value of type `double`.
 export const double DOUBLE_MIN=$DOUBLE_MIN;
+
+/// The largest finite value of type `double`.
 export const double DOUBLE_MAX=$DOUBLE_MAX;
 )*";
 
-static const char *const math = R"*(#smdl
+static const char *const math = R"*(/// Elementary math functions, following the MDL specification. Most of
+/// these are generic and componentwise: they accept scalars, vectors,
+/// matrices, and `color` where sensible, applying the operation to each
+/// component.
+#smdl
+
+/// The constant `pi`.
 export const float PI=$PI;
+
+/// The constant `2 * pi`.
 export const float TWO_PI=$TWO_PI;
+
+/// The constant `pi / 2`.
 export const float HALF_PI=$HALF_PI;
+
+/// The absolute value.
 @(macro)
 export auto abs(const auto a)=#abs(a);
+
+/// Is every component true?
 @(macro)
 export auto all(const auto a)=#all(a);
+
+/// Is any component true?
 @(macro)
 export auto any(const auto a)=#any(a);
+
+/// The maximum of `a` and `b`.
 @(macro)
 export auto max(const auto a,const auto b)=#max(a,b);
+
+/// The minimum of `a` and `b`.
 @(macro)
 export auto min(const auto a,const auto b)=#min(a,b);
+
+/// The value `a` clamped to the range `[min, max]`.
 @(macro)
 export auto clamp(const auto a,const auto min,const auto max)=#max(min,#min(a,max));
+
+/// The value `a` clamped to the range `[0, 1]`.
 @(macro)
 export auto saturate(const auto a)=clamp(a,0.,1.);
+
+/// The value rounded down toward negative infinity.
 @(macro)
 export auto floor(const auto a)=#floor(a);
+
+/// The value rounded up toward positive infinity.
 @(macro)
 export auto ceil(const auto a)=#ceil(a);
+
+/// The value rounded to the nearest integer.
 @(macro)
 export auto round(const auto a)=#round(a);
+
+/// The value rounded toward zero.
 @(macro)
 export auto trunc(const auto a)=#trunc(a);
+
+/// The fractional part, `a - floor(a)`.
 @(macro)
 export auto frac(const auto a)=a-#floor(a);
+
+/// The remainder of `a` divided by `b`.
 @(macro)
 export auto fmod(const auto a,const auto b)=a%b;
+
+/// The integral and fractional parts as an array of two, `[trunc(a), a - trunc(a)]`.
 @(macro)
 export auto modf(const auto a)=auto[2](a0:=#trunc(a),a-a0);
+
+/// Is neither infinite nor NaN?
 @(macro)
 export auto isfinite(const auto a)=#isfpclass(a,0b0111111000);
+
+/// Is a normalized floating-point number, i.e., finite and neither zero nor subnormal?
 @(macro)
 export auto isnormal(const auto a)=#isfpclass(a,0b0100001000);
+
+/// Is positive or negative infinity?
 @(macro)
 export auto isinf(const auto a)=#isfpclass(a,0b1000000100);
+
+/// Is NaN?
 @(macro)
 export auto isnan(const auto a)=#isfpclass(a,0b0000000011);
+
+/// The sign of the value.
 @(macro)
 export auto sign(const auto a)=#sign(a);
+
+/// The square root.
 @(macro)
 export auto sqrt(const auto a)=#sqrt(a);
+
+/// The reciprocal of the square root.
 @(macro)
 export auto rsqrt(const auto a)=1./#sqrt(a);
+
+/// The power `a` raised to `b`.
 @(macro)
 export auto pow(const auto a,const auto b)=#pow(a,b);
+
+/// The cosine of an angle in radians.
 @(macro)
 export auto cos(const auto a)=#cos(a);
+
+/// The sine of an angle in radians.
 @(macro)
 export auto sin(const auto a)=#sin(a);
+
+/// The tangent of an angle in radians.
 @(macro)
 export auto tan(const auto a)=#tan(a);
+
+/// The arccosine in radians.
 @(macro)
 export auto acos(const auto a)=#acos(a);
+
+/// The arcsine in radians.
 @(macro)
 export auto asin(const auto a)=#asin(a);
+
+/// The arctangent in radians.
 @(macro)
 export auto atan(const auto a)=#atan(a);
+
+/// The arctangent of `y / x` in radians, using the signs to select the quadrant.
 @(macro)
 export auto atan2(const auto y,const auto x)=#atan2(y,x);
+
+/// The hyperbolic cosine.
 @(macro)
 export auto cosh(const auto a)=#cosh(a);
+
+/// The hyperbolic sine.
 @(macro)
 export auto sinh(const auto a)=#sinh(a);
+
+/// The hyperbolic tangent.
 @(macro)
 export auto tanh(const auto a)=#tanh(a);
+
+/// The sine and cosine of an angle in radians as an array of two, `[sin(a), cos(a)]`.
 @(macro)
 export auto sincos(const auto a)=auto[2](#sin(a),#cos(a));
+
+/// Converts degrees to radians.
 @(macro)
 export auto radians(const auto a)=a*(PI/180.);
+
+/// Converts radians to degrees.
 @(macro)
 export auto degrees(const auto a)=a*(180./PI);
+
+/// The natural exponential `e^a`.
 @(macro)
 export auto exp(const auto a)=#exp(a);
+
+/// The base-2 exponential `2^a`.
 @(macro)
 export auto exp2(const auto a)=#exp2(a);
+
+/// The base-10 exponential `10^a`.
 @(macro)
 export auto exp10(const auto a)=#exp10(a);
+
+/// The natural logarithm.
 @(macro)
 export auto log(const auto a)=#log(a);
+
+/// The base-2 logarithm.
 @(macro)
 export auto log2(const auto a)=#log2(a);
+
+/// The base-10 logarithm.
 @(macro)
 export auto log10(const auto a)=#log10(a);
+
+/// The smallest component of the value.
 @(macro)
 export auto min_value(const auto a)=#min_value(a);
+
+/// The largest component of the value.
 @(macro)
 export auto max_value(const auto a)=#max_value(a);
+
+/// The wavelength in nanometers at which the color attains its smallest component.
 @(pure)
 export float min_value_wavelength(const color a){
 int imin=0;
@@ -3524,6 +3769,8 @@ imin=i;
 }
 return $state.wavelength_base[imin];
 }
+
+/// The wavelength in nanometers at which the color attains its largest component.
 @(pure)
 export float max_value_wavelength(const color a){
 int imax=0;
@@ -3536,32 +3783,56 @@ imax=i;
 }
 return $state.wavelength_base[imax];
 }
+
+/// The average of all components of the value.
 @(macro)
 export auto average(const auto a)=#sum(a)/#num(a);
+
+/// The linear interpolation from `a` to `b` by factor `l`.
 @(macro)
 export auto lerp(const auto a,const auto b,const auto l)=(1.-l)*a+l*b;
+
+/// The step function, `0` where `b < a` and `1` elsewhere.
 @(macro)
 export auto step(const auto a,const auto b)=#select(b<a,0.,1.);
+
+/// The smooth Hermite interpolation from `a` to `b` by factor `l` clamped to `[0, 1]`.
 @(macro)
 export auto smoothstep(const auto a,const auto b,const auto l){
 const auto t(saturate(l));
 const auto s(1-t);
 return s*s*(1+2*t)*a+t*t*(1+2*s)*b;
 }
+
+/// The dot product.
 @(macro)
 export auto dot(const auto a,const auto b)=#sum(a*b);
+
+/// The Euclidean length.
 @(macro)
 export auto length(const auto a)=#sqrt(#sum(a*a));
+
+/// The vector scaled to unit length.
 @(macro)
 export auto normalize(const auto a)=a*(1/length(a));
+
+/// The Euclidean distance between `a` and `b`.
 @(macro)
 export auto distance(const auto a,const auto b)=length(b-a);
+
+/// The cross product.
 @(macro)
 export auto cross(const auto a,const auto b)=a.yzx*b.zxy-a.zxy*b.yzx;
+
+/// The matrix transpose.
 @(macro)
 export auto transpose(const auto a)=#transpose(a);
+
+/// The luminance of the RGB value, using the Rec. 709 coefficients.
 @(macro)
 export float luminance(const float3 a)=dot(float3(0.2126,0.7152,0.0722),a);
+
+/// The luminance of the spectral color, weighted by the CIE Y curve.
 @(noinline)
 export float luminance(const color a){
 float result(0.);
@@ -3570,6 +3841,8 @@ result+=_wyman_y($state.wavelength_base[i])*a[i];
 }
 return result/$WAVELENGTH_BASE_MAX;
 }
+
+/// The blackbody emission spectrum for the given temperature in kelvin.
 @(noinline)
 export color blackbody(const float temperature){
 const auto t(color($state.wavelength_base)*(temperature/14387e3));
@@ -3585,6 +3858,8 @@ rcp*=rcp1/(6+k);
 }
 return 5.659994086/res;
 }
+
+/// The color evaluated at the given wavelength in nanometers by piecewise-linear interpolation.
 export float eval_at_wavelength(color a,float wavelength){
 if$($WAVELENGTH_BASE_MAX==1){
 return a[0];
@@ -3594,7 +3869,11 @@ return _polyline_lerp($WAVELENGTH_BASE_MAX,&$state.wavelength_base[0],&a[0],wave
 }
 )*";
 
-static const char *const scene = R"*(#smdl
+static const char *const scene = R"*(/// Scene data lookup, following the MDL specification. Values are looked
+/// up by name in renderer-provided scene data, e.g., per-vertex or
+/// per-object attributes, falling back to the given default when the name
+/// is unavailable.
+#smdl
 @(foreign pure)
 int smdlDataExists(&void sceneData,string name);
 @(foreign)
@@ -3605,70 +3884,140 @@ const int kind=#is_arithmetic_integral(value)?0:#is_arithmetic_floating_point(va
 smdlDataLookup($SCENE_DATA,name,kind,#num(value),cast<&void>(&value));
 return value;
 }
+
+/// Is scene data with the given name available?
 @(macro)
 export bool data_isvalid(const string name)=smdlDataExists($SCENE_DATA,name)!=0;
+
+/// Returns the named scene data as `int`, else `default_value`.
 @(macro)
 export int data_lookup_int(const string name,int default_value=int())=data_lookup(name,default_value);
+
+/// Returns the named scene data as `int2`, else `default_value`.
 @(macro)
 export int2 data_lookup_int2(const string name,int2 default_value=int2())=data_lookup(name,default_value);
+
+/// Returns the named scene data as `int3`, else `default_value`.
 @(macro)
 export int3 data_lookup_int3(const string name,int3 default_value=int3())=data_lookup(name,default_value);
+
+/// Returns the named scene data as `int4`, else `default_value`.
 @(macro)
 export int4 data_lookup_int4(const string name,int4 default_value=int4())=data_lookup(name,default_value);
+
+/// Returns the named scene data as `float`, else `default_value`.
 @(macro)
 export float data_lookup_float(const string name,float default_value=float())=data_lookup(name,default_value);
+
+/// Returns the named scene data as `float2`, else `default_value`.
 @(macro)
 export float2 data_lookup_float2(const string name,float2 default_value=float2())=data_lookup(name,default_value);
+
+/// Returns the named scene data as `float3`, else `default_value`.
 @(macro)
 export float3 data_lookup_float3(const string name,float3 default_value=float3())=data_lookup(name,default_value);
+
+/// Returns the named scene data as `float4`, else `default_value`.
 @(macro)
 export float4 data_lookup_float4(const string name,float4 default_value=float4())=data_lookup(name,default_value);
+
+/// Returns the named scene data as `color`, else `default_value`.
 @(macro)
 export color data_lookup_color(const string name,color default_value=color())=data_lookup(name,default_value);
 )*";
 
-static const char *const state = R"*(#smdl
+static const char *const state = R"*(/// The renderer state in the current shading context, following the MDL
+/// specification. Unless documented otherwise, positions, normals, and
+/// tangents are in internal space, which SMDL takes to be tangent space.
+#smdl
 import ::math::*;
-export enum coordinate_space{coordinate_internal=0,coordinate_object=1,coordinate_world=2};
+
+/// The coordinate space, used by the `transform*` functions.
+export enum coordinate_space{coordinate_internal=0, ///< The internal space, which SMDL takes to be tangent space.
+coordinate_object=1,                                ///< The object space.
+coordinate_world=2,                                 ///< The world space.
+};
+
+/// The position of the shading point.
 @(macro)
 export float3 position()=$state.position;
+
+/// The shading normal, possibly perturbed by bump or normal mapping.
 @(macro)
 export float3 normal()=$state.normal;
+
+/// The true geometric surface normal.
 @(macro)
 export float3 geometry_normal()=$state.geometry_normal;
+
+/// The motion vector of the shading point.
 @(macro)
 export float3 motion()=$state.motion;
+
+/// The number of available texture spaces.
 @(macro)
 export int texture_space_max()=$state.texture_space_max;
+
+/// The texture coordinates of texture space `i`.
 @(macro)
 export float3 texture_coordinate(const int i)=$state.texture_coordinate[i];
+
+/// The tangent in the direction of increasing U in texture space `i`.
 @(macro)
 export float3 texture_tangent_u(const int i)=$state.texture_tangent_u[i];
+
+/// The tangent in the direction of increasing V in texture space `i`.
 @(macro)
 export float3 texture_tangent_v(const int i)=$state.texture_tangent_v[i];
+
+/// The geometric tangent in the direction of increasing U in texture space `i`.
 @(macro)
 export float3 geometry_tangent_u(const int i)=$state.geometry_tangent_u[i];
+
+/// The geometric tangent in the direction of increasing V in texture space `i`.
 @(macro)
 export float3 geometry_tangent_v(const int i)=$state.geometry_tangent_v[i];
+
+/// The shading tangent space of texture space `i` as the matrix of tangent U, tangent V, and normal.
 @(macro)
 export float3x3 tangent_space(const int i)=float3x3($state.texture_tangent_u[i],$state.texture_tangent_v[i],$state.normal);
+
+/// The geometric tangent space of texture space `i` as the matrix of tangent U, tangent V, and normal.
 @(macro)
 export float3x3 geometry_tangent_space(const int i)=float3x3($state.geometry_tangent_u[i],$state.geometry_tangent_v[i],$state.geometry_normal);
+
+/// The object ID provided by the renderer.
 @(macro)
 export int object_id()=$state.object_id;
+
+/// The lookup direction in environment lookups. NOTE: Not implemented yet, always zero.
 @(macro)
 export float3 direction()=float3(0.,0.,0.);
+
+/// The animation time of the current sample.
 @(macro)
 export float animation_time()=$state.animation_time;
+
+/// The compile-time number of wavelengths in spectral calculations.
 export const int WAVELENGTH_BASE_MAX=$WAVELENGTH_BASE_MAX;
+
+/// The minimum supported wavelength in nanometers.
 @(macro)
 export float wavelength_min()=$state.wavelength_min;
+
+/// The maximum supported wavelength in nanometers.
 @(macro)
 export float wavelength_max()=$state.wavelength_max;
+
+/// The wavelengths in nanometers that spectral `color` values are sampled at.
 @(macro)
 export float[WAVELENGTH_BASE_MAX] wavelength_base()=$state.wavelength_base;
+
+/// The conversion factor from scene units to meters.
 @(macro)
 export float meters_per_scene_unit()=$state.meters_per_scene_unit;
+
+/// The conversion factor from meters to scene units.
 @(macro)
 export float scene_units_per_meter()=1./$state.meters_per_scene_unit;
 @(pure macro)
@@ -3680,6 +4029,8 @@ float4(matrix[0].z,matrix[1].z,matrix[2].z,0.),
 float4(-#sum(matrix[0]*matrix[3]),-#sum(matrix[1]*matrix[3]),-#sum(matrix[2]*matrix[3]),1.),
 );
 }
+
+/// The affine transform matrix from coordinate space `from` to coordinate space `to`.
 @(macro)
 export float4x4 transform(const coordinate_space from,const coordinate_space to){
 if(from==to){
@@ -3700,25 +4051,35 @@ return affine_inverse($state.object_to_world_matrix*$state.tangent_to_object_mat
 return float4x4(1.);
 }
 }
+
+/// Transforms a point from coordinate space `from` to coordinate space `to`.
 @(macro)
 export float3 transform_point(const coordinate_space from,const coordinate_space to,const float3 point){
 return from==to?point:(transform(from,to)*float4(point,1)).xyz;
 }
+
+/// Transforms a vector from coordinate space `from` to coordinate space `to`.
 @(macro)
 export float3 transform_vector(const coordinate_space from,const coordinate_space to,const float3 vector){
 return from==to?vector:(transform(from,to)*float4(vector,0)).xyz;
 }
+
+/// Transforms a normal from coordinate space `from` to coordinate space `to`, using the inverse transpose.
 @(macro)
 export float3 transform_normal(const coordinate_space from,const coordinate_space to,const float3 normal){
 return from==to?normal:(float4(normal,0)*transform(to,from)).xyz;
 }
+
+/// Transforms a scalar distance from coordinate space `from` to coordinate space `to`. NOTE: Not implemented yet, returns `scale` unchanged.
 @(macro)
 export float transform_scale(const coordinate_space from,const coordinate_space to,const float scale){
 return 1.*scale;
 }
 )*";
 
-static const char *const std = R"*(#smdl
+static const char *const std = R"*(/// The catch-all standard module, re-exporting the entire public API of
+/// the other standard modules for convenience.
+#smdl
 export using ::debug import *;
 export using ::df import *;
 export using ::limits import *;
@@ -3728,9 +4089,16 @@ export using ::state import *;
 export using ::tex import *;
 )*";
 
-static const char *const tex = R"*(#smdl
+static const char *const tex = R"*(/// Texture lookup functions, following the MDL specification, plus
+/// non-standard support for Ptex textures.
+#smdl
 import ::math::lerp;
-export enum gamma_mode{gamma_default=0,gamma_linear=0,gamma_srgb=1};
+
+/// The gamma mode, describing how texel values convert to linear space.
+export enum gamma_mode{gamma_default=0, ///< The default, treated the same as `gamma_linear`.
+gamma_linear=0,                         ///< Linear, no conversion.
+gamma_srgb=1,                           ///< The sRGB decoding to linear.
+};
 @(pure macro)
 auto decodeSRGB(const auto texel)=#pow(texel,2.2);
 @(pure macro)
@@ -3746,30 +4114,38 @@ int getTileIndex(const texture_2d tex,const int2 uv_tile){
 return -1 if(#any((uv_tile<0)|(uv_tile>=tex.tile_count)));
 return uv_tile.y*tex.tile_count.x+uv_tile.x;
 }
+
+/// The width in texels, of the given uv-tile for uv-tilesets.
 @(pure macro)
 export int width(const texture_2d tex,const int2 uv_tile=int2(0)){
 const auto i(getTileIndex(tex,uv_tile));
 return i<0?0:tex.tile_extents[i].x;
 }
+
+/// The width in texels. NOTE: Not implemented yet, always zero.
 @(pure macro)
-export int width(const texture_3d tex)=0;
+export int width(const texture_3d tex)=0; /// The width in texels. NOTE: Not implemented yet, always zero.
 @(pure macro)
-export int width(const texture_cube tex)=0;
+export int width(const texture_cube tex)=0; /// The height in texels, of the given uv-tile for uv-tilesets.
 @(pure macro)
 export int height(const texture_2d tex,const int2 uv_tile=int2(0)){
 const auto i(getTileIndex(tex,uv_tile));
 return i<0?0:tex.tile_extents[i].y;
 }
+
+/// The height in texels. NOTE: Not implemented yet, always zero.
 @(pure macro)
-export int height(const texture_3d tex)=0;
+export int height(const texture_3d tex)=0; /// The height in texels. NOTE: Not implemented yet, always zero.
 @(pure macro)
-export int height(const texture_cube tex)=0;
+export int height(const texture_cube tex)=0; /// Is the texture valid, i.e., backed by loaded image data?
 @(pure macro)
 export bool texture_isvalid(const texture_2d tex)=bool(tex.tile_buffers[0]);
+
+/// Is the texture valid? NOTE: Not implemented yet, always false.
 @(pure macro)
-export bool texture_isvalid(const texture_3d tex)=false;
+export bool texture_isvalid(const texture_3d tex)=false; /// Is the texture valid? NOTE: Not implemented yet, always false.
 @(pure macro)
-export bool texture_isvalid(const texture_cube tex)=false;
+export bool texture_isvalid(const texture_cube tex)=false; /// Is the texture valid, i.e., backed by a loaded Ptex file?
 @(pure macro)
 export bool texture_isvalid(const texture_ptex tex)=bool(tex.ptr);
 @(pure)
@@ -3782,27 +4158,44 @@ const auto tileBuffer(tex.tile_buffers[i]);
 return texel_type(0) if(!tileBuffer|#any((coord<0)|(coord>=tileExtent)));
 return tileBuffer[coord.y*tileExtent.x+coord.x];
 }
+
+/// The texel at integer `coord` as `float4`, with gamma applied but no filtering or wrapping.
 @(pure macro)
 export float4 texel_float4(const texture_2d tex,const int2 coord,const int2 uv_tile=int2(0)){
 return applyGamma(tex.gamma,#unpack_float4(texel_fetch(tex,coord,uv_tile)));
 }
+
+/// The texel at integer `coord` as `float3`, with gamma applied but no filtering or wrapping.
 @(pure macro)
 export float3 texel_float3(const texture_2d tex,const int2 coord,const int2 uv_tile=int2(0)){
 return applyGamma(tex.gamma,#unpack_float4(texel_fetch(tex,coord,uv_tile)).xyz);
 }
+
+/// The texel at integer `coord` as `float2`, with gamma applied but no filtering or wrapping.
 @(pure macro)
 export float2 texel_float2(const texture_2d tex,const int2 coord,const int2 uv_tile=int2(0)){
 return applyGamma(tex.gamma,#unpack_float4(texel_fetch(tex,coord,uv_tile)).xy);
 }
+
+/// The texel at integer `coord` as `float`, with gamma applied but no filtering or wrapping.
 @(pure macro)
 export float texel_float(const texture_2d tex,const int2 coord,const int2 uv_tile=int2(0)){
 return applyGamma(tex.gamma,#unpack_float4(texel_fetch(tex,coord,uv_tile)).x);
 }
+
+/// The texel at integer `coord` as `color`, with gamma applied but no filtering or wrapping.
 @(pure macro)
 export color texel_color(const texture_2d tex,const int2 coord,const int2 uv_tile=int2(0)){
 return color(texel_float3(tex,coord,uv_tile));
 }
-export enum wrap_mode{wrap_clamp=0,wrap_repeat=1,wrap_mirrored_repeat=2,wrap_clip=3};
+
+/// The wrap mode, describing how out-of-range texture coordinates are handled.
+export enum wrap_mode{
+wrap_clamp=0,           ///< Clamp to the edge.
+wrap_repeat=1,          ///< Repeat, keeping only the fractional part.
+wrap_mirrored_repeat=2, ///< Repeat, mirroring on every other repetition.
+wrap_clip=3,            ///< Clip, so lookups outside `[0, 1)` return zero.
+};
 @(pure macro)
 auto applyWrap(const auto wrap,const auto n,auto i){
 auto rem(i%n);
@@ -3815,6 +4208,9 @@ i=#select(wrap==0,i,#select(wrap==1,repeat,mirror));
 i=#max(0,#min(i,n-1));
 return i;
 }
+
+/// The bilinearly filtered lookup at `coord` as `float4`, honoring the wrap
+/// modes and crop windows, which are ignored for uv-tilesets.
 @(pure)
 export float4 lookup_float4(
 const texture_2d tex,
@@ -3860,6 +4256,9 @@ coord-=ic;
 return applyGamma(tex.gamma,math::lerp(math::lerp(#unpack_float4(tileBuffer[ic0.x+tileExtent.x*ic0.y]),#unpack_float4(tileBuffer[ic1.x+tileExtent.x*ic0.y]),coord.x),math::lerp(#unpack_float4(tileBuffer[ic0.x+tileExtent.x*ic1.y]),#unpack_float4(tileBuffer[ic1.x+tileExtent.x*ic1.y]),coord.x),coord.y),);
 }
 }
+
+/// The bilinearly filtered lookup at `coord` as `float3`, honoring the wrap
+/// modes and crop windows, which are ignored for uv-tilesets.
 @(pure macro)
 export float3 lookup_float3(
 const texture_2d tex,
@@ -3869,6 +4268,9 @@ const wrap_mode wrap_v=wrap_repeat,
 const float2 crop_u=float2(0.,1.),
 const float2 crop_v=float2(0.,1.),
 )=lookup_float4(tex,coord,wrap_u,wrap_v,crop_u,crop_v).xyz;
+
+/// The bilinearly filtered lookup at `coord` as `float2`, honoring the wrap
+/// modes and crop windows, which are ignored for uv-tilesets.
 @(pure macro)
 export float2 lookup_float2(
 const texture_2d tex,
@@ -3878,6 +4280,9 @@ const wrap_mode wrap_v=wrap_repeat,
 const float2 crop_u=float2(0.,1.),
 const float2 crop_v=float2(0.,1.),
 )=lookup_float4(tex,coord,wrap_u,wrap_v,crop_u,crop_v).xy;
+
+/// The bilinearly filtered lookup at `coord` as `float`, honoring the wrap
+/// modes and crop windows, which are ignored for uv-tilesets.
 @(pure macro)
 export float lookup_float(
 const texture_2d tex,
@@ -3887,6 +4292,9 @@ const wrap_mode wrap_v=wrap_repeat,
 const float2 crop_u=float2(0.,1.),
 const float2 crop_v=float2(0.,1.),
 )=lookup_float4(tex,coord,wrap_u,wrap_v,crop_u,crop_v).x;
+
+/// The bilinearly filtered lookup at `coord` as `color`, honoring the wrap
+/// modes and crop windows, which are ignored for uv-tilesets.
 @(pure macro)
 export color lookup_color(
 const texture_2d tex,
@@ -3898,30 +4306,40 @@ const float2 crop_v=float2(0.,1.),
 )=color(lookup_float4(tex,coord,wrap_u,wrap_v,crop_u,crop_v).xyz);
 @(foreign)
 void smdlPtexEvaluate(&void tex,int gamma,int first,int num,&float result);
+
+/// The Ptex lookup of four channels starting at `channel` as `float4`. NOTE: This is non-standard!
 @(macro)
 export float4 lookup_float4(const texture_ptex tex,const int channel=0){
 float4 result;
 smdlPtexEvaluate(tex.ptr,tex.gamma,channel,4,&result[0]);
 return result;
 }
+
+/// The Ptex lookup of three channels starting at `channel` as `float3`. NOTE: This is non-standard!
 @(macro)
 export float3 lookup_float3(const texture_ptex tex,const int channel=0){
 float3 result;
 smdlPtexEvaluate(tex.ptr,tex.gamma,channel,3,&result[0]);
 return result;
 }
+
+/// The Ptex lookup of two channels starting at `channel` as `float2`. NOTE: This is non-standard!
 @(macro)
 export float2 lookup_float2(const texture_ptex tex,const int channel=0){
 float2 result;
 smdlPtexEvaluate(tex.ptr,tex.gamma,channel,2,&result[0]);
 return result;
 }
+
+/// The Ptex lookup of one channel at `channel` as `float`. NOTE: This is non-standard!
 @(macro)
 export float lookup_float(const texture_ptex tex,const int channel=0){
 float result;
 smdlPtexEvaluate(tex.ptr,tex.gamma,channel,1,&result);
 return result;
 }
+
+/// The Ptex lookup of three channels starting at `channel` as `color`. NOTE: This is non-standard!
 @(macro)
 export color lookup_color(const texture_ptex tex,const int channel=0){
 float3 result;
@@ -3930,57 +4348,116 @@ return color(result);
 }
 )*";
 
-static const char *const extras_io = R"*(#smdl
+static const char *const extras_io = R"*(/// File input and output, mirroring the C standard library `stdio.h`
+/// API. NOTE: This module is non-standard!
+#smdl
+
+/// The opaque file stream handle, analogous to `FILE *` in C.
 export typedef &void FILE;
+
+/// The standard input stream.
 export const auto stdin=cast<FILE>($stdin);
+
+/// The standard output stream.
 export const auto stdout=cast<FILE>($stdout);
+
+/// The standard error stream.
 export const auto stderr=cast<FILE>($stderr);
+
+/// Opens the file named `filename` with the given C-style `mode`, e.g., `"r"` or `"wb"`.
 @(foreign pure)
 export FILE fopen(string filename,string mode);
+
+/// Closes the file stream.
 @(foreign pure)
 export void fclose(FILE file);
+
+/// Flushes buffered output to the file stream.
 @(foreign pure)
 export void fflush(FILE file);
+
+/// Returns nonzero if the end-of-file indicator is set.
 @(foreign pure)
 export int feof(FILE file);
+
+/// Returns nonzero if the error indicator is set.
 @(foreign pure)
 export int ferror(FILE file);
+
+/// Reads the next character, or `-1` (EOF) on end of file or error.
 @(foreign pure)
 export int fgetc(FILE file);
+
+/// Reads a line of at most `count - 1` characters into `str`.
 @(foreign pure)
 export &char fgets(&char str,int count,FILE file);
+
+/// Writes the character `ch`.
 @(foreign pure)
 export int fputc(int ch,FILE file);
+
+/// Writes the string `str`.
 @(foreign pure)
 export int fputs(string str,FILE file);
+
+/// Reads `count` elements of `size` bytes each into `buffer`, returning the number of elements read.
 @(foreign pure)
 export size_t fread(&void buffer,size_t size,size_t count,FILE file);
+
+/// Writes `count` elements of `size` bytes each from `buffer`, returning the number of elements written.
 @(foreign pure)
 export size_t fwrite(&void buffer,size_t size,size_t count,FILE file);
+
+/// Reads formatted input, as in C `fscanf`.
 @(foreign pure)
 export int fscanf(FILE file,string format,...);
+
+/// Writes formatted output, as in C `fprintf`.
 @(foreign pure)
 export int fprintf(FILE file,string format,...);
+
+/// The current file position indicator.
 @(foreign pure)
 export long ftell(FILE file);
+
+/// The `fseek` origin at the beginning of the file.
 export const int SEEK_SET=$SEEK_SET;
+
+/// The `fseek` origin at the current position.
 export const int SEEK_CUR=$SEEK_CUR;
+
+/// The `fseek` origin at the end of the file.
 export const int SEEK_END=$SEEK_END;
+
+/// Moves the file position indicator by `offset` from `origin`, one of `SEEK_SET`, `SEEK_CUR`, or `SEEK_END`.
 @(foreign pure)
 export int fseek(FILE file,long offset,int origin);
+
+/// Resets the file position indicator to the beginning of the file.
 @(foreign pure)
 export void rewind(FILE file);
+
+/// Clears the end-of-file and error indicators.
 @(foreign pure)
 export void clearerr(FILE file);
+
+/// Prints the given message followed by a description of the last error to standard error.
 @(foreign pure)
 export void perror(string message="");
+
+/// Opens a temporary file that is automatically removed when closed.
 @(foreign pure)
 export FILE tmpfile();
 )*";
 
-static const char *const extras_pcg32 = R"*(#smdl
+static const char *const extras_pcg32 = R"*(/// The PCG32 pseudo-random number generator by Melissa O'Neill, being the
+/// 32-bit output variant of the permuted congruential generator family.
+/// NOTE: This module is non-standard!
+#smdl
 const int64_t PCG32_MULTIPLIER=6364136223846793005;
 const int64_t PCG32_DEFAULT_INCREMENT=1442695040888963407;
+
+/// The PCG32 generator, constructible from a seed and optionally a stream selector.
 export struct pcg32{
 pcg32(int64_t seed)=return_from{
 auto pcg(pcg32(state: seed));
@@ -3994,14 +4471,18 @@ pcg.state=pcg.state+pcg.increment;
 pcg.state=pcg.state*PCG32_MULTIPLIER+pcg.increment;
 return pcg;
 };
-int64_t state=0;
-int64_t increment=PCG32_DEFAULT_INCREMENT;
+int64_t state=0;                           ///< The state of the linear congruential generator.
+int64_t increment=PCG32_DEFAULT_INCREMENT; ///< The stream-selecting increment, which must be odd.
 };
+
+/// Generates the next 32-bit integer.
 @(pure)
 export int32_t generate_int(inline const &pcg32 this){
 state=state*PCG32_MULTIPLIER+increment;
 return #rotr(int32_t(((state>>>18)^state)>>>27),int32_t(31&(state>>>59)));
 }
+
+/// Generates a uniform integer in `[0, bound)` by rejection sampling.
 @(pure)
 export int32_t generate_int(const &pcg32 this,const int32_t bound){
 if(bound>1){
@@ -4013,16 +4494,26 @@ return x%bound if(x>=xmin);
 }
 return 0;
 }
+
+/// Generates a uniform `float` in `[0, 1)`.
 @(pure)
 export float generate_float(const &pcg32 this){
 return #min(float(#unsigned_to_fp(generate_int(this),double)/4294967296d),1.-$FLOAT_EPS/2);
 }
+
+/// Generates a uniform `float2` in `[0, 1)^2`.
 @(pure)
 export float2 generate_float2(const &pcg32 this)=float2(generate_float(this),generate_float(this));
+
+/// Generates a uniform `float3` in `[0, 1)^3`.
 @(pure)
 export float3 generate_float3(const &pcg32 this)=float3(generate_float(this),generate_float(this),generate_float(this));
+
+/// Generates a uniform `float4` in `[0, 1)^4`.
 @(pure)
 export float4 generate_float4(const &pcg32 this)=float4(generate_float(this),generate_float(this),generate_float(this),generate_float(this));
+
+/// Advances the generator by `n` steps in logarithmic time, as if calling `generate_int(this)` `n` times.
 @(pure)
 export void discard(inline const &pcg32 this,int64_t n){
 int64_t aTotal(1);
@@ -4042,16 +4533,68 @@ state=state*aTotal+bTotal;
 }
 )*";
 
-static const char *const models_prospect = R"*(#smdl
+static const char *const models_prospect = R"*(/// PROSPECT -- a physically based way to turn a leaf's biochemistry into its
+/// optics: given the pigment, water, and dry-matter contents per unit leaf area,
+/// it predicts the hemispherical reflectance and transmittance of a single leaf
+/// over 400..2500 nm. It is the transmissive, light-through-the-leaf analog of
+/// the water-film model in `marmit.smdl`, and is built the same way: interpolate
+/// tabulated optical constants per wavelength, then evaluate a small closed-form
+/// radiative-transfer expression using cheap analytic fits in place of the
+/// special functions the reference model calls.
+///
+/// The leaf is idealized as a stack of `num_layers` identical absorbing plates.
+/// Every constituent enters through a single absorption coefficient
+/// k = sum_j K_j(lambda) C_j -- the tabulated specific absorption of each
+/// constituent weighted by how much of it there is -- which fixes the layer
+/// transmittance tau; the tabulated refractive index fixes the interface
+/// reflectances; and the stack of plates is then summed in closed form rather
+/// than iterated. `num_layers` need not be an integer: it is the model's
+/// structure parameter, standing in for internal air-cell scattering, and the
+/// closed form interpolates smoothly through fractional values. Light arrives
+/// within a cone of half-angle `incident_cone_angle` (the classic PROSPECT value
+/// is 40 degrees, hence the 0.7 radian default); every interior surface instead
+/// sees diffuse light and uses the hemispherical average.
+///
+/// The constituent set spans the PROSPECT lineage: chlorophylls, water, and dry
+/// matter from the classic model, carotenoids and brown pigment from PROSPECT-5,
+/// anthocyanins from PROSPECT-D, and the split of dry matter into proteins and
+/// carbon-based constituents from PROSPECT-PRO. That last split is an
+//// alternative to the lumped `dry_matter`, not an addition to it -- pass one or
+/// the other, or the dry matter is counted twice. The `xanthophyll_cycle`
+/// parameter is the Fluspect-CX extension, which reshapes (but does not resize)
+/// the carotenoid pool; see the table comment further down.
+///
+/// References:
+///   Allen et al. (1969, 1970) -- compact and generalized plate models
+///   Stokes (1862)             -- closed form for a stack of plates
+///   Jacquemoud & Baret (1990) -- PROSPECT
+///   Féret et al. (2008)       -- PROSPECT-5 (carotenoids, brown pigment)
+///   Féret et al. (2017)       -- PROSPECT-D (anthocyanins)
+///   Féret et al. (2021)       -- PROSPECT-PRO (proteins, carbon constituents)
+///   Vilfan et al. (2018)      -- Fluspect-CX (xanthophyll cycle)
+#smdl
 using ::math import *;
+
+/// The result of the PROSPECT model, being the hemispherical reflectance
+/// and transmittance of a single leaf.
 export struct prospect_result{
-color reflectance=color(0);
-color transmittance=color(0);
+color reflectance=color(0);   ///< The hemispherical reflectance.
+color transmittance=color(0); ///< The hemispherical transmittance.
 };
+
+/// The minimum wavelength of the PROSPECT tables in nanometers.
 export const float PROSPECT_MIN_WAVELENGTH=4e2;
+
+/// The maximum wavelength of the PROSPECT tables in nanometers.
 export const float PROSPECT_MAX_WAVELENGTH=25e2;
+
+/// The number of entries in the PROSPECT tables.
 export const int PROSPECT_TABLE_SIZE=526;
-export static const auto PROSPECT_TABLE_IOR=float[526](1.5115,1.5115,1.5095,1.5071,1.505,1.5032,1.5019,1.5008,1.4997,1.4988,1.498,1.4969,1.4959,1.4951,1.4943,1.4937,1.4931,1.4925,1.492,1.4915,1.491,1.4904,1.4899,1.4893,1.4887,1.488,1.4873,1.4865,1.4856,1.4846,1.4836,1.4825,1.4813,1.4801,1.4788,1.4774,1.476,1.4746,1.4732,1.4717,1.4701,1.4685,1.467,1.4654,1.4639,1.4624,1.4609,1.4595,1.4582,1.457,1.4559,1.4548,1.4538,1.4528,1.4519,1.451,1.4502,1.4495,1.4489,1.4484,1.448,1.4477,1.4474,1.4472,1.447,1.4468,1.4467,1.4465,1.4463,1.4461,1.4458,1.4456,1.4453,1.445,1.4447,1.4444,1.444,1.4435,1.443,1.4423,1.4417,1.4409,1.4402,1.4394,1.4387,1.438,1.4374,1.4368,1.4363,1.4357,1.4352,1.4348,1.4345,1.4342,1.4341,1.434,1.434,1.4341,1.4342,1.4343,1.4345,1.4347,1.4347,1.4347,1.4347,1.4347,1.4347,1.4348,1.4348,1.4348,1.4348,1.4348,1.4347,1.4347,1.4347,1.4346,1.4345,1.4345,1.4345,1.4344,1.4342,1.4341,1.434,1.4339,1.4338,1.4337,1.4335,1.4334,1.4333,1.4332,1.4331,1.4329,1.4328,1.4326,1.4324,1.4322,1.432,1.4319,1.4317,1.4316,1.4314,1.4312,1.4309,1.4307,1.4304,1.4302,1.4299,1.4296,1.4293,1.429,1.4287,1.4284,1.4281,1.4277,1.4273,1.427,1.4266,1.4263,1.4259,1.4255,1.4251,1.4247,1.4242,1.4238,1.4234,1.423,1.4225,1.422,1.4216,1.4212,1.4207,1.4202,1.4197,1.4193,1.4188,1.4183,1.4178,1.4173,1.4169,1.4164,1.4159,1.4155,1.415,1.4146,1.4142,1.4137,1.4132,1.4128,1.4124,1.4119,1.4115,1.411,1.4106,1.4102,1.4098,1.4094,1.4089,1.4085,1.4081,1.4077,1.4073,1.4069,1.4065,1.4061,1.4057,1.4052,1.4048,1.4044,1.404,1.4035,1.4031,1.4027,1.4023,1.4019,1.4014,1.401,1.4006,1.4001,1.3997,1.3993,1.3989,1.3984,1.398,1.3976,1.3972,1.3968,1.3964,1.396,1.3956,1.3952,1.3947,1.3943,1.3939,1.3935,1.3931,1.3927,1.3923,1.3919,1.3915,1.3911,1.3907,1.3903,1.3899,1.3895,1.389,1.3886,1.3882,1.3877,1.3873,1.3869,1.3865,1.386,1.3855,1.3851,1.3846,1.3841,1.3836,1.3831,1.3826,1.3821,1.3816,1.381,1.3805,1.38,1.3794,1.3788,1.3782,1.3776,1.377,1.3764,1.3758,1.3752,1.3745,1.3739,1.3732,1.3726,1.372,1.3713,1.3706,1.3699,1.3693,1.3687,1.3681,1.3675,1.3668,1.3661,1.3655,1.3648,1.3641,1.3634,1.3628,1.3622,1.3615,1.3608,1.3601,1.3595,1.3589,1.3582,1.3576,1.3569,1.3563,1.3557,1.355,1.3544,1.3537,1.3531,1.3525,1.3518,1.3512,1.3505,1.3499,1.3493,1.3487,1.3481,1.3475,1.3469,1.3463,1.3456,1.345,1.3445,1.3439,1.3433,1.3428,1.3422,1.3417,1.3411,1.3406,1.3401,1.3396,1.3391,1.3386,1.338,1.3376,1.3372,1.3367,1.3363,1.3358,1.3354,1.335,1.3346,1.3342,1.3338,1.3334,1.333,1.3326,1.3322,1.3319,1.3316,1.3312,1.3308,1.3305,1.3302,1.3299,1.3295,1.3292,1.3289,1.3286,1.3283,1.3279,1.3276,1.3273,1.327,1.3267,1.3264,1.3261,1.3259,1.3256,1.3253,1.325,1.3247,1.3245,1.3242,1.3239,1.3236,1.3233,1.3231,1.3229,1.3226,1.3224,1.3221,1.3218,1.3216,1.3213,1.321,1.3207,1.3204,1.3202,1.3199,1.3197,1.3194,1.3191,1.3189,1.3186,1.3183,1.318,1.3177,1.3174,1.3171,1.3167,1.3164,1.3161,1.3158,1.3154,1.315,1.3147,1.3144,1.314,1.3136,1.3132,1.3128,1.3124,1.312,1.3116,1.3112,1.3107,1.3103,1.3098,1.3094,1.309,1.3085,1.308,1.3075,1.307,1.3066,1.3061,1.3057,1.3052,1.3047,1.3043,1.3038,1.3033,1.3028,1.3023,1.3019,1.3014,1.3009,1.3004,1.2999,1.2995,1.299,1.2985,1.298,1.2975,1.297,1.2965,1.296,1.2956,1.2951,1.2947,1.2942,1.2937,1.2932,1.2927,1.2922,1.2917,1.2912,1.2907,1.2902,1.2898,1.2893,1.2888,1.2883,1.2878,1.2874,1.287,1.2865,1.2861,1.2856,1.2852,1.2847,1.2843,1.2839,1.2834,1.283,1.2826,1.2822,1.2817,1.2813,1.2809,1.2805,1.2801,1.2798,1.2795,1.2791,1.2788,1.2786,1.2784,1.278,1.2776,1.2773,1.2769,1.2765,1.2761,1.2757,1.2754,1.2751,1.2748,1.2745,1.2742,1.2739,1.2737,1.2735,1.2732,1.273,1.2727,1.2725,1.2723,1.2721,1.2719,1.2717,1.2715,1.2713,1.2712,1.2711,1.271,1.2709,1.2708,1.2708,1.2708,1.2708,1.271,1.2713,1.2717,1.2722,1.2728,1.2736);
+
+/// The tabulated refractive index of leaf material.
+export static const auto PROSPECT_TABLE_IOR=float[526](1.5115,1.5115,1.5095,1.5071,1.505,1.5032,1.5019,1.5008,1.4997,1.4988,1.498,1.4969,1.4959,1.4951,1.4943,1.4937,1.4931,1.4925,1.492,1.4915,1.491,1.4904,1.4899,1.4893,1.4887,1.488,1.4873,1.4865,1.4856,1.4846,1.4836,1.4825,1.4813,1.4801,1.4788,1.4774,1.476,1.4746,1.4732,1.4717,1.4701,1.4685,1.467,1.4654,1.4639,1.4624,1.4609,1.4595,1.4582,1.457,1.4559,1.4548,1.4538,1.4528,1.4519,1.451,1.4502,1.4495,1.4489,1.4484,1.448,1.4477,1.4474,1.4472,1.447,1.4468,1.4467,1.4465,1.4463,1.4461,1.4458,1.4456,1.4453,1.445,1.4447,1.4444,1.444,1.4435,1.443,1.4423,1.4417,1.4409,1.4402,1.4394,1.4387,1.438,1.4374,1.4368,1.4363,1.4357,1.4352,1.4348,1.4345,1.4342,1.4341,1.434,1.434,1.4341,1.4342,1.4343,1.4345,1.4347,1.4347,1.4347,1.4347,1.4347,1.4347,1.4348,1.4348,1.4348,1.4348,1.4348,1.4347,1.4347,1.4347,1.4346,1.4345,1.4345,1.4345,1.4344,1.4342,1.4341,1.434,1.4339,1.4338,1.4337,1.4335,1.4334,1.4333,1.4332,1.4331,1.4329,1.4328,1.4326,1.4324,1.4322,1.432,1.4319,1.4317,1.4316,1.4314,1.4312,1.4309,1.4307,1.4304,1.4302,1.4299,1.4296,1.4293,1.429,1.4287,1.4284,1.4281,1.4277,1.4273,1.427,1.4266,1.4263,1.4259,1.4255,1.4251,1.4247,1.4242,1.4238,1.4234,1.423,1.4225,1.422,1.4216,1.4212,1.4207,1.4202,1.4197,1.4193,1.4188,1.4183,1.4178,1.4173,1.4169,1.4164,1.4159,1.4155,1.415,1.4146,1.4142,1.4137,1.4132,1.4128,1.4124,1.4119,1.4115,1.411,1.4106,1.4102,1.4098,1.4094,1.4089,1.4085,1.4081,1.4077,1.4073,1.4069,1.4065,1.4061,1.4057,1.4052,1.4048,1.4044,1.404,1.4035,1.4031,1.4027,1.4023,1.4019,1.4014,1.401,1.4006,1.4001,1.3997,1.3993,1.3989,1.3984,1.398,1.3976,1.3972,1.3968,1.3964,1.396,1.3956,1.3952,1.3947,1.3943,1.3939,1.3935,1.3931,1.3927,1.3923,1.3919,1.3915,1.3911,1.3907,1.3903,1.3899,1.3895,1.389,1.3886,1.3882,1.3877,1.3873,1.3869,1.3865,1.386,1.3855,1.3851,1.3846,1.3841,1.3836,1.3831,1.3826,1.3821,1.3816,1.381,1.3805,1.38,1.3794,1.3788,1.3782,1.3776,1.377,1.3764,1.3758,1.3752,1.3745,1.3739,1.3732,1.3726,1.372,1.3713,1.3706,1.3699,1.3693,1.3687,1.3681,1.3675,1.3668,1.3661,1.3655,1.3648,1.3641,1.3634,1.3628,1.3622,1.3615,1.3608,1.3601,1.3595,1.3589,1.3582,1.3576,1.3569,1.3563,1.3557,1.355,1.3544,1.3537,1.3531,1.3525,1.3518,1.3512,1.3505,1.3499,1.3493,1.3487,1.3481,1.3475,1.3469,1.3463,1.3456,1.345,1.3445,1.3439,1.3433,1.3428,1.3422,1.3417,1.3411,1.3406,1.3401,1.3396,1.3391,1.3386,1.338,1.3376,1.3372,1.3367,1.3363,1.3358,1.3354,1.335,1.3346,1.3342,1.3338,1.3334,1.333,1.3326,1.3322,1.3319,1.3316,1.3312,1.3308,1.3305,1.3302,1.3299,1.3295,1.3292,1.3289,1.3286,1.3283,1.3279,1.3276,1.3273,1.327,1.3267,1.3264,1.3261,1.3259,1.3256,1.3253,1.325,1.3247,1.3245,1.3242,1.3239,1.3236,1.3233,1.3231,1.3229,1.3226,1.3224,1.3221,1.3218,1.3216,1.3213,1.321,1.3207,1.3204,1.3202,1.3199,1.3197,1.3194,1.3191,1.3189,1.3186,1.3183,1.318,1.3177,1.3174,1.3171,1.3167,1.3164,1.3161,1.3158,1.3154,1.315,1.3147,1.3144,1.314,1.3136,1.3132,1.3128,1.3124,1.312,1.3116,1.3112,1.3107,1.3103,1.3098,1.3094,1.309,1.3085,1.308,1.3075,1.307,1.3066,1.3061,1.3057,1.3052,1.3047,1.3043,1.3038,1.3033,1.3028,1.3023,1.3019,1.3014,1.3009,1.3004,1.2999,1.2995,1.299,1.2985,1.298,1.2975,1.297,1.2965,1.296,1.2956,1.2951,1.2947,1.2942,1.2937,1.2932,1.2927,1.2922,1.2917,1.2912,1.2907,1.2902,1.2898,1.2893,1.2888,1.2883,1.2878,1.2874,1.287,1.2865,1.2861,1.2856,1.2852,1.2847,1.2843,1.2839,1.2834,1.283,1.2826,1.2822,1.2817,1.2813,1.2809,1.2805,1.2801,1.2798,1.2795,1.2791,1.2788,1.2786,1.2784,1.278,1.2776,1.2773,1.2769,1.2765,1.2761,1.2757,1.2754,1.2751,1.2748,1.2745,1.2742,1.2739,1.2737,1.2735,1.2732,1.273,1.2727,1.2725,1.2723,1.2721,1.2719,1.2717,1.2715,1.2713,1.2712,1.2711,1.271,1.2709,1.2708,1.2708,1.2708,1.2708,1.271,1.2713,1.2717,1.2722,1.2728,1.2736); /// The tabulated specific absorption coefficients, one column per
+/// constituent in the order chlorophylls, carotenoids, anthocyanins, brown
+/// pigment, water, dry matter, proteins, and carbon constituents.
 export static const auto PROSPECT_TABLE_K=auto[526](
 auto(0.0648815,0.16734,0.0666747,0.5272,58e-6,109.7,0.,127.93),
 auto(0.0709,0.167613,0.058277,0.5232,61e-6,87.13,0.,101.609),
@@ -4580,10 +5123,20 @@ auto(0.,0.,0.,0.,92.04,39.58,9.53686,43.4282),
 auto(0.,0.,0.,0.,93.58,39.17,9.10247,43.2012),
 auto(0.,0.,0.,0.,95.3,38.71,9.40778,42.6366),
 );
+
+/// The minimum wavelength of the xanthophyll cycle table in nanometers.
 export const float PROSPECT_CX_MIN_WAVELENGTH=5e2;
+
+/// The maximum wavelength of the xanthophyll cycle table in nanometers.
 export const float PROSPECT_CX_MAX_WAVELENGTH=564.;
+
+/// The number of entries in the xanthophyll cycle table.
 export const int PROSPECT_CX_TABLE_SIZE=65;
-export static const auto PROSPECT_CX_TABLE=float[65](0.,0.,0.,0.,2.3666667e-6,1.4111905e-5,1.5753175e-5,1.6109579e-4,4.3772785e-4,5.7373789e-4,7.1124793e-4,7.5958535e-4,8.1272277e-4,0.0010946743,0.0013850259,0.0015193361,0.0016655464,0.0018591944,0.0020681424,0.0023029017,2556361e-9,0.0027022316,0.0028702023,0.0029664684,0.0030884345,0.0031437199,0.0032281053,0.0032327202,0.0032698351,0.0032164464,0.0031989577,0.0030774558,0.0029954539,0.0028728641,0.0027932744,0.0026592758,0.0025715771,0.0024033444,0.0022849116,2118113e-9,0.0019782487,0.0018263978,0.0016528675,0.0015393822,0.0014256901,0.0013247508,0.0012209231,0.0011458843,1073761e-9,1012381e-9,9.5488751e-4,8.9542219e-4,8.260178e-4,8.4654538e-4,8.1813233e-4,7.232132e-4,5.1506483e-4,3.3026741e-4,176768e-9,4.44797e-5,0.,0.,0.,0.,0.);
+
+/// The tabulated xanthophyll cycle difference, being the zeaxanthin minus
+/// violaxanthin specific absorption.
+export static const auto PROSPECT_CX_TABLE=float[65](0.,0.,0.,0.,2.3666667e-6,1.4111905e-5,1.5753175e-5,1.6109579e-4,4.3772785e-4,5.7373789e-4,7.1124793e-4,7.5958535e-4,8.1272277e-4,0.0010946743,0.0013850259,0.0015193361,0.0016655464,0.0018591944,0.0020681424,0.0023029017,2556361e-9,0.0027022316,0.0028702023,0.0029664684,0.0030884345,0.0031437199,0.0032281053,0.0032327202,0.0032698351,0.0032164464,0.0031989577,0.0030774558,0.0029954539,0.0028728641,0.0027932744,0.0026592758,0.0025715771,0.0024033444,0.0022849116,2118113e-9,0.0019782487,0.0018263978,0.0016528675,0.0015393822,0.0014256901,0.0013247508,0.0012209231,0.0011458843,1073761e-9,1012381e-9,9.5488751e-4,8.9542219e-4,8.260178e-4,8.4654538e-4,8.1813233e-4,7.232132e-4,5.1506483e-4,3.3026741e-4,176768e-9,4.44797e-5,0.,0.,0.,0.,0.); /// Evaluate the PROSPECT model for the given leaf biochemistry, returning
+/// the hemispherical reflectance and transmittance of a single leaf.
 @(noinline)
 export prospect_result prospect(
 float num_layers=1.5,          ///< The number of layers.
@@ -4670,22 +5223,51 @@ return prospect_result(reflectance: rA+tA*rSub*t/one_minus_rSub_r,transmittance:
 }
 )*";
 
-static const char *const models_marmit = R"*(#smdl
+static const char *const models_marmit = R"*(/// MARMIT -- a physically based way to layer a film of water over an arbitrary
+/// diffuse reflectance spectrum, darkening and spectrally reshaping it the way a
+/// wet surface differs from a dry one. It is the reflective, water-on-top analog
+/// of the leaf model in `prospect.smdl`, and is built the same way: interpolate
+/// tabulated optical constants of water per wavelength, then evaluate a small
+/// closed-form radiative-transfer expression using cheap analytic fits in place
+/// of the special functions the reference model calls.
+///
+/// References:
+///   Bablet et al. (2018)   -- MARMIT
+///   Dupiau et al. (2022)   -- MARMIT-2
+///   Segelstein (1981)      -- real refractive index of water
+///   Buiteveld/Kou/Wieliczka -- absorption coefficient of water (cm^-1)
+#smdl
 using ::math import *;
+
+/// The result of the MARMIT model, being the reflectance of the wetted
+/// surface.
 export struct marmit_result{
+/// Reflectance after wetting: the `wet_fraction`-weighted mix of the wetted
+/// and dry reflectances (this is the model's primary output).
 color reflectance=color(0);
+
+/// Reflectance of the fully wetted surface (i.e. `wet_fraction` = 1), exposed
+/// as a convenience since it is computed along the way.
 color reflectance_wet=color(0);
 };
+
+/// The minimum wavelength of the MARMIT table in nanometers.
 export const float MARMIT_MIN_WAVELENGTH=4e2;
+/// The maximum wavelength of the MARMIT table in nanometers.
 export const float MARMIT_MAX_WAVELENGTH=25e2;
-export const int MARMIT_TABLE_SIZE=264;
+/// The number of entries in the MARMIT table.
+export const int MARMIT_TABLE_SIZE=264; /// The exponent of the generalized power mean that mixes the wet and dry
+/// reflectances.
 export const float MARMIT_MIXING_EXPONENT=2.27;
-export static const auto MARMIT_TABLE_ALPHA=float[264](58e-6,6.4984791e-5,7.3961977e-5,8.3942966e-5,9.3923954e-5,1.0390494e-4,1.1190875e-4,1.1989354e-4,1.2787833e-4,1.378289e-4,1.5169582e-4,1.734981e-4,2.0808745e-4,2.7126996e-4,3.4692395e-4,4.0768821e-4,4.2214829e-4,4.6838403e-4,5.2480989e-4,6.0760456e-4,6.7002281e-4,7.3120532e-4,8.5206084e-4,0.0010678935,0.0014402015,0.0021741901,0.0026327338,0.0027589696,0.0028618251,0.0029807224,3102673e-9,0.0032533346,0.0034902357,0.0039903916,0.0041432776,0.0043053574,0.0046202662,0.0051960266,0.0062190532,0.0077595399,0.010478373,0.014529217,0.021402958,0.026493449,0.027380042,0.027681255,0.027633087,0.027165802,0.026211502,0.024305548,0.022633673,0.021824388,0.022383559,0.024786357,0.033469194,0.039156262,0.041295403,0.043371049,0.045305894,0.048309354,0.052412308,0.056949532,0.061372152,0.066089209,0.07268008,0.083459224,0.10801803,0.14987386,0.20914362,0.30817464,0.42640746,0.47426548,0.48559121,0.47610929,0.44816959,0.41265352,0.37059379,0.32529306,0.27932866,0.23837934,0.20328992,0.17535392,0.15572677,0.14497347,0.14078527,0.14372349,0.15596563,0.1744163,0.19891388,0.22535442,0.24684612,0.30258614,0.43825438,0.70110019,0.99940737,1.1558965,1.2017063,1.2266625,1.2473806,1.2683121,1.2754115,1.2638987,1.2427951,1.2082091,1.1866358,1.1577352,1.1289543,1.1030914,1.0875161,1.0838075,1.1151354,1.1700577,1.2450879,1.362082,1.5408251,1.7737077,2.0738001,2.4385417,2.8046537,3.2404328,3.6110189,4.0831335,4.9678182,6.9821837,10.777019,15.809918,20.957662,24.918992,27.547179,29.242555,30.198566,30.53757,30.391875,29.675172,28.037443,25.813958,23.61745,21.401333,19.255608,17.387155,15.678046,14.165977,12.875868,11.674949,10.679736,9.8499423,9.1589774,8.5319908,7.9861643,7.5072635,7.0878586,6.7712775,6.5171763,6.2906116,6.0902196,5.947433,5.7936615,5.669135,5.6119709,5.5547171,5.529419,5.5225403,5.5265036,5.5934486,5.7201826,5.8667218,6.065756,6.3052816,6.634616,7.0347278,7.504357,7.9664502,8.3214848,8.5709506,8.7513499,8.8025903,8.7476202,8.7948996,8.8635308,9.0019142,9.4151059,10.219798,11.683006,14.391653,19.719141,29.744088,48.905897,74.663711,100.24685,117.30163,126.51509,130.39706,129.42913,124.75055,117.9467,109.89923,101.29867,93.107823,85.246802,78.192875,71.596133,65.692118,60.475897,55.783826,51.541361,47.683278,44.360006,41.224355,38.385488,35.684155,33.401698,31.33872,29.394575,27.600382,26.0366,24.730099,23.484923,22.42997,21.549691,20.788565,20.125026,19.59856,19.200902,18.808893,18.470427,18.359254,18.337472,18.283925,18.377094,18.521219,18.72055,19.104502,19.542117,20.080917,20.747716,21.492014,22.285338,23.318404,24.37713,25.544056,26.859973,28.263872,29.75544,31.504263,33.175559,34.931125,37.040435,39.193771,41.539909,43.948561,46.437483,49.000875,51.653323,54.677894,58.138646,61.514553,65.43605,69.238078,73.853932,78.420393,82.970777,87.095007,92.04271,95.303);
+
+/// The tabulated absorption coefficient of water in inverse centimeters.
+export static const auto MARMIT_TABLE_ALPHA=float[264](58e-6,6.4984791e-5,7.3961977e-5,8.3942966e-5,9.3923954e-5,1.0390494e-4,1.1190875e-4,1.1989354e-4,1.2787833e-4,1.378289e-4,1.5169582e-4,1.734981e-4,2.0808745e-4,2.7126996e-4,3.4692395e-4,4.0768821e-4,4.2214829e-4,4.6838403e-4,5.2480989e-4,6.0760456e-4,6.7002281e-4,7.3120532e-4,8.5206084e-4,0.0010678935,0.0014402015,0.0021741901,0.0026327338,0.0027589696,0.0028618251,0.0029807224,3102673e-9,0.0032533346,0.0034902357,0.0039903916,0.0041432776,0.0043053574,0.0046202662,0.0051960266,0.0062190532,0.0077595399,0.010478373,0.014529217,0.021402958,0.026493449,0.027380042,0.027681255,0.027633087,0.027165802,0.026211502,0.024305548,0.022633673,0.021824388,0.022383559,0.024786357,0.033469194,0.039156262,0.041295403,0.043371049,0.045305894,0.048309354,0.052412308,0.056949532,0.061372152,0.066089209,0.07268008,0.083459224,0.10801803,0.14987386,0.20914362,0.30817464,0.42640746,0.47426548,0.48559121,0.47610929,0.44816959,0.41265352,0.37059379,0.32529306,0.27932866,0.23837934,0.20328992,0.17535392,0.15572677,0.14497347,0.14078527,0.14372349,0.15596563,0.1744163,0.19891388,0.22535442,0.24684612,0.30258614,0.43825438,0.70110019,0.99940737,1.1558965,1.2017063,1.2266625,1.2473806,1.2683121,1.2754115,1.2638987,1.2427951,1.2082091,1.1866358,1.1577352,1.1289543,1.1030914,1.0875161,1.0838075,1.1151354,1.1700577,1.2450879,1.362082,1.5408251,1.7737077,2.0738001,2.4385417,2.8046537,3.2404328,3.6110189,4.0831335,4.9678182,6.9821837,10.777019,15.809918,20.957662,24.918992,27.547179,29.242555,30.198566,30.53757,30.391875,29.675172,28.037443,25.813958,23.61745,21.401333,19.255608,17.387155,15.678046,14.165977,12.875868,11.674949,10.679736,9.8499423,9.1589774,8.5319908,7.9861643,7.5072635,7.0878586,6.7712775,6.5171763,6.2906116,6.0902196,5.947433,5.7936615,5.669135,5.6119709,5.5547171,5.529419,5.5225403,5.5265036,5.5934486,5.7201826,5.8667218,6.065756,6.3052816,6.634616,7.0347278,7.504357,7.9664502,8.3214848,8.5709506,8.7513499,8.8025903,8.7476202,8.7948996,8.8635308,9.0019142,9.4151059,10.219798,11.683006,14.391653,19.719141,29.744088,48.905897,74.663711,100.24685,117.30163,126.51509,130.39706,129.42913,124.75055,117.9467,109.89923,101.29867,93.107823,85.246802,78.192875,71.596133,65.692118,60.475897,55.783826,51.541361,47.683278,44.360006,41.224355,38.385488,35.684155,33.401698,31.33872,29.394575,27.600382,26.0366,24.730099,23.484923,22.42997,21.549691,20.788565,20.125026,19.59856,19.200902,18.808893,18.470427,18.359254,18.337472,18.283925,18.377094,18.521219,18.72055,19.104502,19.542117,20.080917,20.747716,21.492014,22.285338,23.318404,24.37713,25.544056,26.859973,28.263872,29.75544,31.504263,33.175559,34.931125,37.040435,39.193771,41.539909,43.948561,46.437483,49.000875,51.653323,54.677894,58.138646,61.514553,65.43605,69.238078,73.853932,78.420393,82.970777,87.095007,92.04271,95.303); /// Evaluate the MARMIT model, layering a film of water of the given
+/// thickness over the given dry reflectance spectrum.
 @(noinline)
 export marmit_result marmit(
 color reflectance=color(0.3), ///< The dry reflectance of the underlying material.
-float water_thickness=0.01,   ///< The equivalent water-film thickness in centimeters.
-float wet_fraction=1.,        ///< The fraction of the surface covered by water, in [0, 1].
+float water_thickness=0.01,   ///< The equivalent water-film thickness in centimeters, clamped to be non-negative.
+float wet_fraction=1.,        ///< The fraction of the surface covered by water, clamped to [0, 1].
 float suspension_ior=1.53,    ///< Real refractive index n_i of particles suspended in the film.
 float suspension_k=0.,        ///< Imaginary refractive index k_i of the suspended particles.
 float suspension_fraction=0., ///< Volume fraction d_i of suspension in the film; 0 = pure water.
@@ -4741,9 +5323,16 @@ const auto e=1./MARMIT_MIXING_EXPONENT;
 const auto mixed=#pow(f*#pow(wet,e)+(1.-f)*#pow(reflectance,e),MARMIT_MIXING_EXPONENT);
 return marmit_result(reflectance: saturate(mixed),reflectance_wet: wet);
 }
+
+/// The minimum wavelength of the soil albedo table in nanometers.
 export const float SOIL_MIN_WAVELENGTH=4e2;
+/// The maximum wavelength of the soil albedo table in nanometers.
 export const float SOIL_MAX_WAVELENGTH=2298.;
+/// The number of knots in the soil albedo table.
 export const int SOIL_TABLE_SIZE=261;
+
+/// The 6 spectral component curves in logit space at each of the 261 knots:
+/// constant, lightness, chroma, yellow-red, water, and water-squared terms.
 export static const auto SOIL_CURVES=auto[261](
 auto(-0.9151818,2.283778,-13.49007,-4.426793,-1.551209,0.814577),
 auto(-0.7850408,2.382168,-12.47427,-0.805078,-1.536577,0.790004),
@@ -5006,7 +5595,8 @@ auto(0.7792578,1.635717,4.792817,9.491983,-2.755607,1.079045),
 auto(0.7685891,1.630584,4.747445,9.486741,-2.771483,1.084703),
 auto(0.7544413,1.622808,4.731509,9.668162,-2.787866,1.090443),
 auto(0.7459775,1.624409,4.653887,9.709371,-2.808524,1.098035),
-);
+); /// Evaluate the empirical soil albedo model, mapping four normalized
+/// pedogenic parameters to a dry-state reflectance spectrum.
 @(noinline)
 export color soil_albedo(
 float humus=0.5,   ///< The humus content. 0 = pale quartz/carbonate, 1 = dark topsoil.

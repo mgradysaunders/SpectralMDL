@@ -1,10 +1,13 @@
-// NOTE: This module is non-standard!
+/// The PCG32 pseudo-random number generator by Melissa O'Neill, being the
+/// 32-bit output variant of the permuted congruential generator family.
+/// NOTE: This module is non-standard!
 #smdl
 
 const int64_t PCG32_MULTIPLIER = 6364136223846793005;
 
 const int64_t PCG32_DEFAULT_INCREMENT = 1442695040888963407;
 
+/// The PCG32 generator, constructible from a seed and optionally a stream selector.
 export struct pcg32 {
   pcg32(int64_t seed) = return_from {
     auto pcg(pcg32(state: seed));
@@ -20,17 +23,19 @@ export struct pcg32 {
     return pcg;
   };
 
-  int64_t state = 0;
+  int64_t state = 0; ///< The state of the linear congruential generator.
 
-  int64_t increment = PCG32_DEFAULT_INCREMENT;
+  int64_t increment = PCG32_DEFAULT_INCREMENT; ///< The stream-selecting increment, which must be odd.
 };
 
+/// Generates the next 32-bit integer.
 @(pure)
 export int32_t generate_int(inline const &pcg32 this) {
   state = state * PCG32_MULTIPLIER + increment;
   return #rotr(int32_t(((state >>> 18) ^ state) >>> 27), int32_t(31 & (state >>> 59)));
 }
 
+/// Generates a uniform integer in `[0, bound)` by rejection sampling.
 @(pure)
 export int32_t generate_int(const &pcg32 this, const int32_t bound) {
   if (bound > 1) {
@@ -43,20 +48,25 @@ export int32_t generate_int(const &pcg32 this, const int32_t bound) {
   return 0;
 }
 
+/// Generates a uniform `float` in `[0, 1)`.
 @(pure)
 export float generate_float(const &pcg32 this) {
   return #min(float(#unsigned_to_fp(generate_int(this), double) / 4294967296.0d), 1.0 - $FLOAT_EPS / 2);
 }
 
+/// Generates a uniform `float2` in `[0, 1)^2`.
 @(pure)
 export float2 generate_float2(const &pcg32 this) = float2(generate_float(this), generate_float(this));
 
+/// Generates a uniform `float3` in `[0, 1)^3`.
 @(pure)
 export float3 generate_float3(const &pcg32 this) = float3(generate_float(this), generate_float(this), generate_float(this));
 
+/// Generates a uniform `float4` in `[0, 1)^4`.
 @(pure)
 export float4 generate_float4(const &pcg32 this) = float4(generate_float(this), generate_float(this), generate_float(this), generate_float(this));
 
+/// Advances the generator by `n` steps in logarithmic time, as if calling `generate_int(this)` `n` times.
 @(pure)
 export void discard(inline const &pcg32 this, int64_t n) {
   // Fast power by squaring.
