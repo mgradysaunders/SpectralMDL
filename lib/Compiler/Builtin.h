@@ -1277,10 +1277,6 @@ const $(color|float) tint=1.;
 const float roughness=0.;
 
 /// The handle.
-///
-/// > Name to provide access to this component for use in an MDL
-/// > integration.
-///
 void handle="";
 
 /// The multiscatter tint.
@@ -1329,10 +1325,6 @@ export struct diffuse_transmission_bsdf:bsdf{
 const $(color|float) tint=1.;
 
 /// The handle.
-///
-/// > Name to provide access to this component for use in an MDL
-/// > integration.
-///
 void handle="";
 
 /// The flags.
@@ -1380,10 +1372,6 @@ const $(color|float) tint=1.;
 const scatter_mode mode=scatter_reflect;
 
 /// The handle.
-///
-/// > Name to provide access to this component for use in an MDL
-/// > integration.
-///
 void handle="";
 
 /// The flags.
@@ -1448,10 +1436,6 @@ const $(?(color|float)) multiscatter_tint=none;
 void multiscatter=none;
 
 /// The handle.
-///
-/// > Name to provide access to this component for use in an MDL
-/// > integration.
-///
 void handle="";
 
 /// The flags.
@@ -1532,10 +1516,6 @@ $(?(color|float)) multiscatter_tint=none;
 float3 tangent_u=$state.texture_tangent_u[0];
 
 /// The handle.
-///
-/// > Name to provide access to this component for use in an MDL
-/// > integration.
-///
 void handle="";
 
 /// The flags.
@@ -2271,10 +2251,6 @@ return ScatterSampleResult();
 /// constant radiance over the upper hemisphere.
 export struct diffuse_edf:edf{
 /// The handle.
-///
-/// > Name to provide access to this component for use in an MDL
-/// > integration.
-///
 void handle="";
 
 /// The flags.
@@ -2325,10 +2301,6 @@ void global_distribution=true;
 void global_frame=float3x3(1.);
 
 /// The handle.
-///
-/// > Name to provide access to this component for use in an MDL
-/// > integration.
-///
 void handle="";
 
 /// The precomputed cosine of the cone half angle.
@@ -2433,10 +2405,6 @@ void global_frame=float3x3(1.);
 float3 tangent_u=$state.texture_tangent_u[0];
 
 /// The handle.
-///
-/// > Name to provide access to this component for use in an MDL
-/// > integration.
-///
 void handle="";
 
 /// The precomputed scale, folding the multiplier and the normalization
