@@ -711,7 +711,7 @@ export prospect_result prospect(
   float num_layers = 1.5,          ///< The number of layers.
   float incident_cone_angle = 0.7, ///< The incident cone angle in radians.
   float dry_matter = 5.0,          ///< The dry matter content in milligrams per square centimeter.
-  float water = 0.1,               ///< The water content in millimeters equivalent thickness.
+  float water = 0.01,              ///< The water content in centimeters equivalent thickness.
   float chlorophylls = 30.0,       ///< The chlorophyll content in micrograms per square centimeter.
   float anthocyanins = 1.0,        ///< The anthocyanin content in micrograms per square centimeter.
   float carotenoids = 1.5,         ///< The carotenoid content in micrograms per square centimeter.
@@ -725,7 +725,7 @@ export prospect_result prospect(
   // absorb what the caller asked for. Fewer than one layer is meaningless, and
   // would divide by zero at zero.
   num_layers = #max(num_layers, 1.0);
-  const auto contents = auto(chlorophylls, carotenoids, anthocyanins, browns, 1e-1 * water, 1e-3 * dry_matter, 1e-3 * proteins, 1e-3 * carbons) / num_layers;
+  const auto contents = auto(chlorophylls, carotenoids, anthocyanins, browns, water, 1e-3 * dry_matter, 1e-3 * proteins, 1e-3 * carbons) / num_layers;
   // How much violaxanthin to relax back out of the tabulated zeaxanthin. The
   // upper bound of 1.5 is the extrapolation range Vilfan et al. calibrate over;
   // the lower bound of 0 is what keeps the carotenoid absorption non-negative.
@@ -749,11 +749,6 @@ export prospect_result prospect(
   // - RMSE = 5.11e-05 (for k between 0 and 10)
   // - RMSE = 1.62e-05 (for k between 0 and 100)
   // - Maximum error = 3.89e-04 (at k = 0.0255)
-  // Both cheaper and strictly better than the old exp(a * k^b - c * k) form: this
-  // drops that form's pow, and it fixes a real error -- because the old a * k^b
-  // term eventually outgrows -c * k, it badly overestimated the strong-absorption
-  // tail (tau(19) = 7.3e-9 vs the true 5.1e-10). This rational decays at the
-  // physically correct rate for all k.
   const auto tau = return_from {
     const auto num = (1.236150246012 * k + 3.672877420834) * k + 1.0;
     const auto den = ((0.618075123006 * k + 3.664716300259) * k + 4.621903634050) * k + 1.0;

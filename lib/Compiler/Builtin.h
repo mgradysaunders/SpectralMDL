@@ -5086,7 +5086,7 @@ export prospect_result prospect(
 float num_layers=1.5,          ///< The number of layers.
 float incident_cone_angle=0.7, ///< The incident cone angle in radians.
 float dry_matter=5.,           ///< The dry matter content in milligrams per square centimeter.
-float water=0.1,               ///< The water content in millimeters equivalent thickness.
+float water=0.01,              ///< The water content in centimeters equivalent thickness.
 float chlorophylls=30.,        ///< The chlorophyll content in micrograms per square centimeter.
 float anthocyanins=1.,         ///< The anthocyanin content in micrograms per square centimeter.
 float carotenoids=1.5,         ///< The carotenoid content in micrograms per square centimeter.
@@ -5096,7 +5096,7 @@ float carbons=0.,              ///< The carbon constituent content in milligrams
 float browns=0.,               ///< The brown pigment content in arbitrary units.
 ){
 num_layers=#max(num_layers,1.);
-const auto contents=auto(chlorophylls,carotenoids,anthocyanins,browns,0.1*water,1e-3*dry_matter,1e-3*proteins,1e-3*carbons)/num_layers;
+const auto contents=auto(chlorophylls,carotenoids,anthocyanins,browns,water,1e-3*dry_matter,1e-3*proteins,1e-3*carbons)/num_layers;
 const auto xanthophylls=carotenoids*(1.-clamp(xanthophyll_cycle,0.,1.5))/num_layers;
 color ior(0);
 color k(0);

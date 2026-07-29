@@ -21,6 +21,7 @@ static cl::SubCommand subDoc{"doc", "Show documentation"};
 static cl::SubCommandGroup subsWithCompileOptions{&subDump, &subList, &subRun,
                                                   &subTest};
 static cl::SubCommandGroup subsWithOutputFile{&subDump, &subDoc};
+static cl::SubCommandGroup subsWithColor{&subTest, &subDoc};
 static cl::SubCommandGroup allSubs{&subDump, &subList,   &subRun,
                                    &subTest, &subFormat, &subDoc};
 
@@ -52,6 +53,23 @@ static cl::opt<smdl::DumpFormat> dumpFormat{
 static cl::opt<std::string> outputFilename{
     "output", cl::desc("Output filename (default stdout)"), cl::Optional,
     cl::sub(subsWithOutputFile), cl::cat(optionsCat)};
+
+// NOTE: LLVM registers a `--color` of its own on the top-level
+// subcommand, in a hidden category that `HideUnrelatedOptions` filters
+// out, so it never appears in any `--help`. It is nonetheless accepted
+// everywhere, because an option a subcommand does not recognize falls
+// back to the top-level lookup (`CommandLine.cpp`, `LookupLongOption`).
+// That is why `smdlc list --color` is quietly tolerated and does
+// nothing.
+//
+// This option shadows it for `doc` and `test`, since the subcommand is
+// searched first, and drives the coloring explicitly, which keeps the
+// behavior independent of that LLVM-internal option. Keep it scoped to
+// subcommands: registering a `--color` at the top level would land in
+// the same option map as LLVM's, and `cl` aborts on a duplicate name.
+static cl::opt<cl::boolOrDefault> colorOption{
+    "color", cl::desc("Colorize the output (default autodetect)"),
+    cl::init(cl::BOU_UNSET), cl::sub(subsWithColor), cl::cat(optionsCat)};
 
 static cl::opt<bool> formatInPlace{"i", cl::desc("Format in place"),
                                    cl::sub(subFormat), cl::cat(optionsCat)};
@@ -94,13 +112,6 @@ static cl::opt<bool> docIncludeHidden{
 static cl::opt<bool> docAllBuiltins{"builtins",
                                     cl::desc("Include all builtin modules"),
                                     cl::sub(subDoc), cl::cat(optionsCat)};
-// NOTE: LLVM registers a `--color` of its own, but only on the top-level
-// subcommand, so it never appears in `smdl doc --help`. This shadows it
-// for the `doc` subcommand and drives `WithColor` explicitly, which also
-// keeps the behavior independent of that LLVM-internal option.
-static cl::opt<cl::boolOrDefault> docColor{
-    "color", cl::desc("Colorize the text output (default autodetect)"),
-    cl::init(cl::BOU_UNSET), cl::sub(subDoc), cl::cat(optionsCat)};
 
 static cl::OptionCategory catState{"State Options"};
 static cl::opt<unsigned> wavelengthBaseMax{
@@ -358,8 +369,8 @@ static void runDocSubcommand(smdl::Compiler &compiler,
   // `WithColor` detect the terminal itself.
   const auto colorMode{
       outputFile || docFormat != DOC_FORMAT_TEXT ? llvm::ColorMode::Disable
-      : docColor.getValue() == cl::BOU_TRUE      ? llvm::ColorMode::Enable
-      : docColor.getValue() == cl::BOU_FALSE     ? llvm::ColorMode::Disable
+      : colorOption.getValue() == cl::BOU_TRUE   ? llvm::ColorMode::Enable
+      : colorOption.getValue() == cl::BOU_FALSE  ? llvm::ColorMode::Disable
                                                  : llvm::ColorMode::Auto};
   if (queries.empty() || docFormat != DOC_FORMAT_TEXT) {
     // Whole-database output. Symbol queries only participate by loading
@@ -398,6 +409,10 @@ int main(int argc, char **argv) {
   compiler.enableDebug = enableDebug;
   compiler.enableUnitTests = true;
   compiler.wavelengthBaseMax = wavelengthBaseMax;
+  compiler.colorMode =
+      colorOption.getValue() == cl::BOU_TRUE    ? smdl::COLOR_MODE_ALWAYS
+      : colorOption.getValue() == cl::BOU_FALSE ? smdl::COLOR_MODE_NEVER
+                                                : smdl::COLOR_MODE_AUTO;
   if (inputFiles.empty() && !subDoc) {
     std::cerr << "expected at least one input\n";
     return EXIT_FAILURE;

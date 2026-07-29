@@ -5,13 +5,14 @@
 
 #include <chrono>
 #include <filesystem>
-#include <iostream>
 
 #include "llvm/ExecutionEngine/Orc/AbsoluteSymbols.h"
 #include "llvm/ExecutionEngine/Orc/LLJIT.h"
 #include "llvm/ExecutionEngine/Orc/Mangling.h"
 #include "llvm/ExecutionEngine/Orc/ThreadSafeModule.h"
 #include "llvm/Support/Parallel.h"
+#include "llvm/Support/WithColor.h"
+#include "llvm/Support/raw_ostream.h"
 
 #include "Archive.h"
 #include "Compiler/Context.h"
@@ -688,8 +689,8 @@ Compiler::findMaterial(std::string_view materialName) const noexcept try {
     for (const auto *jitMaterial : results) {
       message += "\n  ";
       message +=
-          concat(jitMaterial->qualifiedName, " (",
-                 jitMaterial->moduleFileName, ":", jitMaterial->lineNo, ")");
+          concat(jitMaterial->qualifiedName, " (", jitMaterial->moduleFileName,
+                 ":", jitMaterial->lineNo, ")");
     }
     SMDL_LOG_ERROR(message);
     return nullptr;
@@ -732,27 +733,58 @@ void Compiler::convertRGBToColor(const State &state, const float3 &rgb,
   mRGBToColor(state, rgb, color);
 }
 
+/// The color scheme of the unit test results, sharing the vocabulary of
+/// the `doc` subcommand's text printer: identity in blue, the name being
+/// reported in cyan, and metadata in grey, plus green and red for the
+/// results themselves.
+static constexpr auto testColorFile{llvm::HighlightColor::Tag};
+static constexpr auto testColorName{llvm::HighlightColor::Attribute};
+static constexpr auto testColorMetadata{llvm::HighlightColor::Note};
+static constexpr auto testColorSuccess{llvm::HighlightColor::String};
+static constexpr auto testColorFailure{llvm::HighlightColor::Error};
+
 std::optional<Error> Compiler::runUnitTests(const State &state) noexcept {
   return catchAndReturnError([&] {
+    // NOTE: Print through `llvm::errs()` rather than `std::cerr` so that
+    // `WithColor` can colorize. It detects the terminal itself, so piped
+    // and redirected output stays plain text. Both streams write to file
+    // descriptor 2 unbuffered, so this stays correctly interleaved with
+    // the logger, which still prints through `std::cerr`.
+    //
+    // NOTE: Each colored span opens and closes before the test runs, so
+    // that a test that crashes cannot leave the terminal colored.
+    auto &os{llvm::errs()};
+    const auto llvmColorMode{
+        colorMode == COLOR_MODE_ALWAYS  ? llvm::ColorMode::Enable
+        : colorMode == COLOR_MODE_NEVER ? llvm::ColorMode::Disable
+                                        : llvm::ColorMode::Auto};
     forEachFileGroup(
         mUnitTests.begin(), mUnitTests.end(), [&](auto itr0, auto itr1) {
-          std::cerr << concat("Running tests in ",
-                              QuotedPath(itr0->moduleFileName), ":\n");
+          os << "Running tests in ";
+          llvm::WithColor(os, testColorFile, llvmColorMode)
+              << concat(QuotedPath(itr0->moduleFileName));
+          os << ":\n";
           for (; itr0 != itr1; ++itr0) {
-            std::cerr << concat("  ", Quoted(itr0->testName), " (line ",
-                                itr0->lineNo, ") ... ");
+            os << "  ";
+            llvm::WithColor(os, testColorName, llvmColorMode)
+                << concat(Quoted(itr0->testName));
+            llvm::WithColor(os, testColorMetadata, llvmColorMode)
+                << concat(" (line ", itr0->lineNo, ")");
+            os << " ... ";
             try {
               if (!itr0->test)
                 throw Error(concat("unit test ", Quoted(itr0->testName),
                                    " has no JIT-compiled function"));
               itr0->test(state);
-              std::cerr << "success\n";
-            } catch (const Error &error) {
-              std::cerr << "failure\n";
+              llvm::WithColor(os, testColorSuccess, llvmColorMode) << "success";
+              os << '\n';
+            } catch (const Error &) {
+              llvm::WithColor(os, testColorFailure, llvmColorMode) << "failure";
+              os << '\n';
               throw;
             }
           }
-          std::cerr << '\n';
+          os << '\n';
         });
   });
 }

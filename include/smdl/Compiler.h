@@ -91,6 +91,13 @@ enum DumpFormat : int {
   DUMP_FORMAT_OBJ  ///< Native object code.
 };
 
+/// The color mode for `Compiler::runUnitTests()`.
+enum ColorMode : int {
+  COLOR_MODE_AUTO,   ///< Colorize only if standard error is a terminal.
+  COLOR_MODE_ALWAYS, ///< Colorize even if standard error is redirected.
+  COLOR_MODE_NEVER   ///< Never colorize.
+};
+
 /// The compiler.
 ///
 /// \note
@@ -323,7 +330,9 @@ public:
   void convertRGBToColor(const State &state, const float3 &rgb,
                          float *color) const noexcept;
 
-  /// Run JIT-compiled unit tests and print results to standard error.
+  /// Run JIT-compiled unit tests and print results to standard error,
+  /// colorized according to `colorMode`. Stops at the first failure,
+  /// which is what the returned `Error` describes.
   [[nodiscard]] std::optional<Error> runUnitTests(const State &state) noexcept;
 
   /// Run JIT-compiled execs.
@@ -341,6 +350,9 @@ public:
 
   /// Enable unit tests?
   bool enableUnitTests{false};
+
+  /// Colorize the unit test results printed by `runUnitTests()`?
+  ColorMode colorMode{COLOR_MODE_AUTO};
 
   /// The number of wavelengths per MDL `color`.
   uint32_t wavelengthBaseMax{16};
