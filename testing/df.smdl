@@ -496,7 +496,16 @@ unit_test "Fresnel-weighted reflect-transmit decomposition" {
     const auto Fi = df::specular::dielectricFresnel(wiR.z, eta);
     #assert(#any(r1.f > 0.0));
     #assert(#all(r2.f ~== |1e-5| Fh * r1.f));
-    #assert(#all(r2.pdf ~== |1e-5| float2(Fo, Fi) * r1.pdf));
+    // The pure reflect lobe reports bounded-VNDF densities (Eto and
+    // Tokuyoshi 2023) while the reflect-transmit lobe samples the full
+    // spherical cap, so undo the bound before comparing the PDFs.
+    const auto alpha = float2(0.5 * 0.5);
+    const auto kO = df::microfacet::ggxBoundedCapFactor(alpha, wo);
+    const auto kI = df::microfacet::ggxBoundedCapFactor(alpha, wiR);
+    const auto tO = math::length(float3(alpha.x * wo.x, alpha.y * wo.y, wo.z));
+    const auto tI = math::length(float3(alpha.x * wiR.x, alpha.y * wiR.y, wiR.z));
+    const auto unbound = float2((kO * wo.z + tO) / (wo.z + tO), (kI * wiR.z + tI) / (wiR.z + tI));
+    #assert(#all(r2.pdf ~== |1e-5| float2(Fo, Fi) * r1.pdf * unbound));
   }
   // Transmission pair. The reverse PDF lane sees the reciprocal ratio.
   {
@@ -539,6 +548,66 @@ unit_test "Fresnel-weighted dielectric white furnace" {
   #assert((0.80 < Eout) & (Eout < 1.01));
   const auto Ein = furnaceIntegral(bRT, math::normalize(float3(0.8, 0.1, -0.6)));
   #assert((0.70 < Ein) & (Ein < 1.01));
+}
+
+unit_test "EON diffuse white furnace" {
+  // The energy-preserving Oren-Nayar model must integrate to the
+  // single-scattering albedo 1 at unit tint, for any roughness and any
+  // view direction.
+  for (int k = 0; k < 3; k++) {
+    const auto r = float(0.25 + 0.375 * k);
+    const auto b = df::diffuse_reflection_bsdf(tint: 1.0, roughness: r);
+    const auto E0 = furnaceIntegral(b, math::normalize(float3(0.1, 0.2, 0.97)));
+    const auto E1 = furnaceIntegral(b, math::normalize(float3(0.8, 0.1, 0.35)));
+    #assert((0.97 < E0) & (E0 < 1.03));
+    #assert((0.97 < E1) & (E1 < 1.03));
+  }
+}
+
+unit_test "EON CLTC sampling PDF" {
+  // The CLTC + uniform mixture density reported by evaluation must match
+  // the sampling routine, including at grazing views where the CLTC lobe
+  // leans below the horizon.
+  const auto wo = math::normalize(float3(-0.3, 0.4, 0.8));
+  const auto woG = math::normalize(float3(0.8, 0.1, 0.15));
+  checkScatterPDFIntegral(df::diffuse_reflection_bsdf(tint: 0.8, roughness: 0.5), wo, 1.0);
+  checkScatterPDFIntegral(df::diffuse_reflection_bsdf(tint: 0.8, roughness: 1.0), wo, 1.0);
+  checkScatterPDFIntegral(df::diffuse_reflection_bsdf(tint: 0.8, roughness: 1.0), woG, 1.0);
+}
+
+unit_test "Bounded VNDF sampling PDF" {
+  // The tightened densities reported for reflection-only GGX lobes must
+  // match the bounded spherical-cap sampling routine.
+  const auto wo = math::normalize(float3(-0.3, 0.4, 0.8));
+  const auto woG = math::normalize(float3(0.8, 0.1, 0.2));
+  checkScatterPDFIntegral(df::microfacet_ggx_smith_bsdf(roughness_u: 0.2, tint: 1.0), wo, 1.0);
+  checkScatterPDFIntegral(df::microfacet_ggx_smith_bsdf(roughness_u: 0.9, tint: 1.0), wo, 1.0);
+  checkScatterPDFIntegral(df::microfacet_ggx_smith_bsdf(roughness_u: 0.9, roughness_v: 0.3, tint: 1.0), woG, 1.0);
+  checkScatterPDFIntegral(df::microfacet_ggx_vcavities_bsdf(roughness_u: 0.7, tint: 1.0), wo, 1.0);
+}
+
+unit_test "LTC sheen energy and sampling PDF" {
+  const auto wo = math::normalize(float3(-0.3, 0.4, 0.8));
+  const auto woG = math::normalize(float3(0.8, 0.1, 0.2));
+  // The sheen lobe reflects at most the tabulated directional albedo, so
+  // at unit tint the furnace integral must stay bounded by 1.
+  for (int k = 0; k < 3; k++) {
+    const auto r = float(0.2 + 0.4 * k);
+    const auto b = df::sheen_bsdf(tint: 1.0, roughness: r);
+    const auto E0 = furnaceIntegral(b, wo);
+    const auto E1 = furnaceIntegral(b, woG);
+    #assert((0.0 <= E0) & (E0 < 1.02));
+    #assert((0.0 <= E1) & (E1 < 1.02));
+  }
+  // With full multiscatter compensation the total stays near or below 1.
+  const auto EMS = furnaceIntegral(df::sheen_bsdf(tint: 1.0, roughness: 0.6, multiscatter_tint: 1.0), wo);
+  #assert((0.2 < EMS) & (EMS < 1.05));
+  // The LTC sampling densities must match the sampling routine, including
+  // the cosine fallback where the fit degenerates and the multiscatter
+  // sampling chance.
+  checkScatterPDFIntegral(df::sheen_bsdf(tint: 1.0, roughness: 0.3), wo, 1.0);
+  checkScatterPDFIntegral(df::sheen_bsdf(tint: 1.0, roughness: 0.8), woG, 1.0);
+  checkScatterPDFIntegral(df::sheen_bsdf(tint: 1.0, roughness: 0.6, multiscatter_tint: 0.8), wo, 1.0);
 }
 
 unit_test "Fresnel-weighted specular delta dielectric" {

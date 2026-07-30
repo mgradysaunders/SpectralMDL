@@ -16,6 +16,7 @@ import ::math::*;
 const float EPSILON = 1e-6;
 
 //--{ diffuse_reflection_bsdf
+/*
 @(pure) float integrateDiffuseReflectionBSDF(float cosTheta, float roughness) {
   const int numSamples = 1048576;
   const float3 wo = float3(#sqrt(1 - cosTheta * cosTheta), 0, cosTheta);
@@ -30,9 +31,11 @@ const float EPSILON = 1e-6;
   const float B = 0.45 * sigma2 / (sigma2 + 0.09);
   return A + (fSum / numSamples) * B;
 }
+*/
 //--}
 
 //--{ sheen_bsdf
+/*
 @(pure) float sheenLambdaL(const auto fit, const float mu) {
   return fit[0] / (1.0 + fit[1] * #pow(mu, fit[2])) + fit[3] * mu + fit[4];
 }
@@ -64,6 +67,7 @@ const float EPSILON = 1e-6;
   }
   return (2 + 1 / alpha) * (fSum / numSamples) / (4 * wo.z);
 }
+*/
 //--}
 
 //--{ simple_glossy_bsdf
@@ -143,8 +147,8 @@ const float EPSILON = 1e-6;
 //--}
 
 exec {
-  #tabulate_albedo("diffuse_reflection_bsdf", 64, 64, integrateDiffuseReflectionBSDF);
-  #tabulate_albedo("sheen_bsdf", 64, 64, integrateSheenBSDF);
+  /* #tabulate_albedo("diffuse_reflection_bsdf", 64, 64, integrateDiffuseReflectionBSDF); */
+  /* #tabulate_albedo("sheen_bsdf", 64, 64, integrateSheenBSDF); */
   #tabulate_albedo("simple_glossy_bsdf", 64, 64, integrateSimpleGlossyBSDF);
   #tabulate_albedo("microfacet_ggx_smith_bsdf", 64, 64, integrateMicrofacetGGXSmithBSDF);
   #tabulate_albedo("microfacet_beckmann_smith_bsdf", 64, 64, integrateMicrofacetBeckmannSmithBSDF);
