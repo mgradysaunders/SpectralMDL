@@ -2,7 +2,7 @@
 #pragma once
 
 #include "smdl/Export.h"
-#include "smdl/Support/MacroHelpers.h"
+#include "smdl/Support/Macros.h"
 
 namespace smdl {
 

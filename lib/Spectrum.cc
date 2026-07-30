@@ -1,6 +1,6 @@
 #include "smdl/Spectrum.h"
 #include "smdl/Support/Filesystem.h"
-#include "smdl/Support/MacroHelpers.h"
+#include "smdl/Support/Macros.h"
 #include "smdl/Support/StringHelpers.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/StringRef.h"

@@ -1,0 +1,43 @@
+#smdl
+
+@(foreign pure)
+void smdlKelvinToChromaticity(float kelvin, &float2 xy);
+
+@(foreign pure)
+void smdlEvalIlluminantD(int numWavelens, &float wavelens, &float illuminant, &float2 xy);
+
+@(foreign pure)
+void smdlEvalIlluminantF(int numWavelens, &float wavelens, &float illuminant, int number);
+
+@(macro)
+export color illuminant_D(float2 xy) {
+  color illuminant = color(0);
+  smdlEvalIlluminantD($WAVELENGTH_BASE_MAX, &$state.wavelength_base[0], cast<&float>(&illuminant), &xy);
+  return illuminant;
+}
+
+@(macro)
+export color illuminant_D(const float kelvin) {
+  float2 xy;
+  smdlKelvinToChromaticity(kelvin, &xy);
+  return illuminant_D(xy);
+}
+
+@(macro) 
+export color illuminant_D50() = illuminant_D(5003.0);
+
+@(macro) 
+export color illuminant_D55() = illuminant_D(5503.0);
+
+@(macro) 
+export color illuminant_D65() = illuminant_D(6504.0);
+
+@(macro) 
+export color illuminant_D75() = illuminant_D(7504.0);
+
+@(macro)
+export color illuminant_F(const int number = 1) {
+  color illuminant = color(0);
+  smdlEvalIlluminantF($WAVELENGTH_BASE_MAX, &$state.wavelength_base[0], cast<&float>(&illuminant), number);
+  return illuminant;
+}

@@ -1,4 +1,4 @@
-#include "smdl/Support/MacroHelpers.h"
+#include "smdl/Support/Macros.h"
 
 #include <string>
 
@@ -9,7 +9,7 @@ namespace smdl {
 namespace detail {
 
 void sanityCheckFailed(const char *condition, const char *file, int line,
-                         const char *more) {
+                       const char *more) {
   std::string message{"Sanity check failed! "};
   message += condition, message += '\n';
   message += "  File = ", message += file, message += '\n';

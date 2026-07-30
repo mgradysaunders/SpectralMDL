@@ -7,7 +7,7 @@
 #include <memory>
 
 #include "smdl/Export.h"
-#include "smdl/Support/MacroHelpers.h"
+#include "smdl/Support/Macros.h"
 #include "smdl/Support/Span.h"
 
 namespace smdl {

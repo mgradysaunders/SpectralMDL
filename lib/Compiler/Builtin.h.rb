@@ -14,7 +14,12 @@ STR
 # Each entry is the path under 'Builtin/' without the '.smdl' extension.
 # The lookup key replaces '/' with '::' (so 'models/prospect' is addressed
 # as '::models::prospect'), and the generated variable replaces '/' with '_'.
-fnames = ['anno', 'api', 'debug', 'df', 'limits', 'math', 'scene', 'state', 'std', 'tex', 'extras/io', 'extras/pcg32', 'models/prospect', 'models/marmit']
+fnames = ['api', 'anno', 'debug', 'df', 'limits', 'math', 'scene', 'state', 'std', 'tex', 
+          'extras/io', 
+          'extras/pcg32',
+          'models/illuminant',
+          'models/prospect', 
+          'models/marmit']
 for fname in fnames
   text = `smdlc format -c --no-comments --keep-doc-comments Builtin/#{fname}.smdl`
   text = File.read "Builtin/#{fname}.smdl" unless $?.success?

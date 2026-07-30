@@ -22,7 +22,7 @@
 #include "smdl/Support/BumpPtrAllocator.h"
 #include "smdl/Support/Error.h"
 #include "smdl/Support/Filesystem.h"
-#include "smdl/Support/MacroHelpers.h"
+#include "smdl/Support/Macros.h"
 #include "smdl/Support/Span.h"
 #include "smdl/Support/StringHelpers.h"
 #include "smdl/Support/VectorMath.h"

@@ -5,82 +5,6 @@
 
 namespace smdl::builtin {
 
-static const char *const anno = R"*(/// The standard annotations, following the MDL specification. These carry
-/// metadata for tools and user interfaces and do not affect compilation.
-#smdl
-
-/// The recommended range for the annotated value. Values outside remain valid.
-export annotation soft_range(auto min,auto max);
-
-/// The required range for the annotated value. Values outside are invalid.
-export annotation hard_range(auto min,auto max);
-
-/// The human-readable name to display instead of the identifier.
-export annotation display_name(string name);
-
-/// The group to organize the annotated item under in a user interface.
-export annotation in_group(string group);
-
-/// The group and subgroup to organize the annotated item under in a user interface.
-export annotation in_group(string group,string subgroup);
-
-/// The group, subgroup, and sub-subgroup to organize the annotated item under in a user interface.
-export annotation in_group(string group,string subgroup,string subsubgroup);
-
-/// The relative position of the annotated item in a user interface.
-export annotation ui_order(int order);
-
-/// The condition, as an MDL expression over sibling parameters, under which
-/// the annotated parameter is enabled in a user interface.
-export annotation enable_if(string condition);
-
-/// Hides the annotated item from user interfaces.
-export annotation hidden();
-
-/// The human-readable description. This is also understood by `smdl doc`
-/// as a fallback for declarations without `///` documentation comments.
-export annotation description(string description);
-
-/// The thumbnail image to preview the annotated item in a user interface.
-export annotation thumbnail(string name);
-
-/// The author.
-export annotation author(string name);
-
-/// A contributor.
-export annotation contributor(string name);
-
-/// The copyright notice.
-export annotation copyright_notice(string copyright);
-
-/// The creation date and notes.
-export annotation created(int year,int month,int day,string notes);
-
-/// The last modification date and notes.
-export annotation modified(int year,int month,int day,string notes);
-
-/// The version of the annotated module.
-export annotation version(int major,int minor,int patch,string prerelease="");
-
-/// The version of another module that the annotated module depends on.
-export annotation dependency(string module_name,int major,int minor,int patch,string prerelease="");
-
-/// The keywords for search and categorization.
-export annotation key_words(string[] words);
-
-/// Marks the annotated item as intentionally unused.
-export annotation unused(string description="");
-
-/// Marks the annotated item as deprecated.
-export annotation deprecated(string description="");
-
-/// The hint describing the intended usage of the annotated item, e.g., `"color"` or `"normal"`.
-export annotation usage(string hint="");
-
-/// The qualified name of the entity the annotated item originates from.
-export annotation origin(string name="");
-)*";
-
 static const char *const api = R"*(/// The API module, which implements the types and functions the MDL
 /// specification treats as intrinsic: the resource types, the material
 /// model structures, and the spectral color conversions, plus internal
@@ -682,6 +606,82 @@ return _hash(v);
 return 0;
 }
 }
+)*";
+
+static const char *const anno = R"*(/// The standard annotations, following the MDL specification. These carry
+/// metadata for tools and user interfaces and do not affect compilation.
+#smdl
+
+/// The recommended range for the annotated value. Values outside remain valid.
+export annotation soft_range(auto min,auto max);
+
+/// The required range for the annotated value. Values outside are invalid.
+export annotation hard_range(auto min,auto max);
+
+/// The human-readable name to display instead of the identifier.
+export annotation display_name(string name);
+
+/// The group to organize the annotated item under in a user interface.
+export annotation in_group(string group);
+
+/// The group and subgroup to organize the annotated item under in a user interface.
+export annotation in_group(string group,string subgroup);
+
+/// The group, subgroup, and sub-subgroup to organize the annotated item under in a user interface.
+export annotation in_group(string group,string subgroup,string subsubgroup);
+
+/// The relative position of the annotated item in a user interface.
+export annotation ui_order(int order);
+
+/// The condition, as an MDL expression over sibling parameters, under which
+/// the annotated parameter is enabled in a user interface.
+export annotation enable_if(string condition);
+
+/// Hides the annotated item from user interfaces.
+export annotation hidden();
+
+/// The human-readable description. This is also understood by `smdl doc`
+/// as a fallback for declarations without `///` documentation comments.
+export annotation description(string description);
+
+/// The thumbnail image to preview the annotated item in a user interface.
+export annotation thumbnail(string name);
+
+/// The author.
+export annotation author(string name);
+
+/// A contributor.
+export annotation contributor(string name);
+
+/// The copyright notice.
+export annotation copyright_notice(string copyright);
+
+/// The creation date and notes.
+export annotation created(int year,int month,int day,string notes);
+
+/// The last modification date and notes.
+export annotation modified(int year,int month,int day,string notes);
+
+/// The version of the annotated module.
+export annotation version(int major,int minor,int patch,string prerelease="");
+
+/// The version of another module that the annotated module depends on.
+export annotation dependency(string module_name,int major,int minor,int patch,string prerelease="");
+
+/// The keywords for search and categorization.
+export annotation key_words(string[] words);
+
+/// Marks the annotated item as intentionally unused.
+export annotation unused(string description="");
+
+/// Marks the annotated item as deprecated.
+export annotation deprecated(string description="");
+
+/// The hint describing the intended usage of the annotated item, e.g., `"color"` or `"normal"`.
+export annotation usage(string hint="");
+
+/// The qualified name of the entity the annotated item originates from.
+export annotation origin(string name="");
 )*";
 
 static const char *const debug = R"*(/// Debugging functions, following the MDL specification. These only do
@@ -4477,6 +4477,41 @@ state=state*aTotal+bTotal;
 }
 )*";
 
+static const char *const models_illuminant = R"*(#smdl
+@(foreign pure)
+void smdlKelvinToChromaticity(float kelvin,&float2 xy);
+@(foreign pure)
+void smdlEvalIlluminantD(int numWavelens,&float wavelens,&float illuminant,&float2 xy);
+@(foreign pure)
+void smdlEvalIlluminantF(int numWavelens,&float wavelens,&float illuminant,int number);
+@(macro)
+export color illuminant_D(float2 xy){
+color illuminant=color(0);
+smdlEvalIlluminantD($WAVELENGTH_BASE_MAX,&$state.wavelength_base[0],cast<&float>(&illuminant),&xy);
+return illuminant;
+}
+@(macro)
+export color illuminant_D(const float kelvin){
+float2 xy;
+smdlKelvinToChromaticity(kelvin,&xy);
+return illuminant_D(xy);
+}
+@(macro)
+export color illuminant_D50()=illuminant_D(5003.);
+@(macro)
+export color illuminant_D55()=illuminant_D(5503.);
+@(macro)
+export color illuminant_D65()=illuminant_D(6504.);
+@(macro)
+export color illuminant_D75()=illuminant_D(7504.);
+@(macro)
+export color illuminant_F(const int number=1){
+color illuminant=color(0);
+smdlEvalIlluminantF($WAVELENGTH_BASE_MAX,&$state.wavelength_base[0],cast<&float>(&illuminant),number);
+return illuminant;
+}
+)*";
+
 static const char *const models_prospect = R"*(/// PROSPECT -- a physically based way to turn a leaf's biochemistry into its
 /// optics: given the pigment, water, and dry-matter contents per unit leaf area,
 /// it predicts the hemispherical reflectance and transmittance of a single leaf
@@ -5573,8 +5608,8 @@ return result;
 )*";
 
 static const std::string_view all_names[]{
-    "anno",
     "api",
+    "anno",
     "debug",
     "df",
     "limits",
@@ -5585,15 +5620,16 @@ static const std::string_view all_names[]{
     "tex",
     "extras::io",
     "extras::pcg32",
+    "models::illuminant",
     "models::prospect",
     "models::marmit",
 };
 
 [[nodiscard]] static const char *get_source_code(std::string_view name) {
-  if (name == "anno")
-    return anno;
   if (name == "api")
     return api;
+  if (name == "anno")
+    return anno;
   if (name == "debug")
     return debug;
   if (name == "df")
@@ -5614,6 +5650,8 @@ static const std::string_view all_names[]{
     return extras_io;
   if (name == "extras::pcg32")
     return extras_pcg32;
+  if (name == "models::illuminant")
+    return models_illuminant;
   if (name == "models::prospect")
     return models_prospect;
   if (name == "models::marmit")
