@@ -2,7 +2,21 @@
 #include "Builtin.h"
 #include "BuiltinAccess.h"
 
+#include "../thirdparty/miniz.h"
+
 namespace smdl {
+
+[[nodiscard]] static std::string
+decompressSourceCode(const builtin::CompressedSourceCode &sourceCode) {
+  auto result{std::string(sourceCode.uncompressedSize, '\0')};
+  auto resultSize{mz_ulong(sourceCode.uncompressedSize)};
+  if (mz_uncompress(reinterpret_cast<unsigned char *>(result.data()),
+                    &resultSize, sourceCode.compressed,
+                    mz_ulong(sourceCode.compressedSize)) != MZ_OK ||
+      resultSize != sourceCode.uncompressedSize)
+    throw Error("cannot decompress builtin module source code");
+  return result;
+}
 
 Context::Context(Compiler &compiler) : compiler(compiler) {
   // Initialize keywords.
@@ -161,7 +175,8 @@ Module *Context::getBuiltinModule(llvm::StringRef name) {
   }
   auto &mod{mBuiltinModules[name]};
   if (!mod) {
-    mod = allocator.allocate<Module>(name.str(), sourceCode);
+    mod = allocator.allocate<Module>(name.str(),
+                                     decompressSourceCode(*sourceCode));
     if (auto error{mod->parse(allocator)}) {
       throw std::move(*error);
     }
@@ -450,8 +465,9 @@ Span<const std::string_view> getAllNames() {
   return {all_names, std::size(all_names)};
 }
 
-const char *getSourceCode(std::string_view name) {
-  return get_source_code(name);
+std::string getSourceCode(std::string_view name) {
+  const auto *sourceCode{get_source_code(name)};
+  return sourceCode ? decompressSourceCode(*sourceCode) : std::string();
 }
 
 } // namespace builtin

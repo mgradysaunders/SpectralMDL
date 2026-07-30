@@ -1,0 +1,83 @@
+#smdl
+
+using ::models::illuminant import *;
+
+// Sum over the wavelength basis, for asserting an illuminant is or is not
+// identically black at the current state wavelengths.
+float total(const color c) {
+  float sum = 0.0;
+  for (int i = 0; i < $WAVELENGTH_BASE_MAX; i++)
+    sum += c[i];
+  return sum;
+}
+
+unit_test "Illuminant D" {
+  // The named standard illuminants must match their color temperatures.
+  const color d65 = illuminant_D65();
+  const color d65K = illuminant_D(6504.0);
+  const color d50 = illuminant_D50();
+  const color d50K = illuminant_D(5003.0);
+  for (int i = 0; i < $WAVELENGTH_BASE_MAX; i++) {
+    #assert(d65[i] >= 0.0);
+    #assert(d65[i] == d65K[i]);
+    #assert(d50[i] == d50K[i]);
+  }
+  #assert(total(d65) > 0.0);
+
+  // The daylight locus is clamped to 4000K..25000K.
+  const color dLo = illuminant_D(1000.0);
+  const color dLoClamp = illuminant_D(4000.0);
+  const color dHi = illuminant_D(1.0e+6);
+  const color dHiClamp = illuminant_D(25000.0);
+  for (int i = 0; i < $WAVELENGTH_BASE_MAX; i++) {
+    #assert(dLo[i] == dLoClamp[i]);
+    #assert(dHi[i] == dHiClamp[i]);
+  }
+}
+
+unit_test "Illuminant F" {
+  // Valid lamp numbers are non-black, and out-of-range numbers are black.
+  #assert(total(illuminant_F(1)) > 0.0);
+  #assert(total(illuminant_F(2)) > 0.0);
+  #assert(total(illuminant_F(12)) > 0.0);
+  #assert(total(illuminant_F(0)) == 0.0);
+  #assert(total(illuminant_F(13)) == 0.0);
+}
+
+unit_test "Illuminant HP" {
+  // Valid lamp numbers are non-black, and out-of-range numbers are black.
+  #assert(total(illuminant_HP(1)) > 0.0);
+  #assert(total(illuminant_HP(5)) > 0.0);
+  #assert(total(illuminant_HP(0)) == 0.0);
+  #assert(total(illuminant_HP(6)) == 0.0);
+}
+
+unit_test "Illuminant LED" {
+  // Valid lamp numbers are non-black, and out-of-range numbers are black.
+  // In particular the B and V subsets must NOT leak into the neighboring
+  // tables: B6 must be black rather than BH1, and V3 must be black rather
+  // than reading past the end.
+  #assert(total(illuminant_LED_B(1)) > 0.0);
+  #assert(total(illuminant_LED_B(5)) > 0.0);
+  #assert(total(illuminant_LED_B(0)) == 0.0);
+  #assert(total(illuminant_LED_B(6)) == 0.0);
+  #assert(total(illuminant_LED_V(1)) > 0.0);
+  #assert(total(illuminant_LED_V(2)) > 0.0);
+  #assert(total(illuminant_LED_V(0)) == 0.0);
+  #assert(total(illuminant_LED_V(3)) == 0.0);
+  #assert(total(illuminant_LED_BH1()) > 0.0);
+  #assert(total(illuminant_LED_RGB1()) > 0.0);
+
+  // The V subset maps onto its own tables: V1 must differ from B1 and BH1.
+  const color v1 = illuminant_LED_V(1);
+  const color b1 = illuminant_LED_B(1);
+  const color bh1 = illuminant_LED_BH1();
+  float diffB = 0.0;
+  float diffBH = 0.0;
+  for (int i = 0; i < $WAVELENGTH_BASE_MAX; i++) {
+    diffB += #abs(v1[i] - b1[i]);
+    diffBH += #abs(v1[i] - bh1[i]);
+  }
+  #assert(diffB > 0.0);
+  #assert(diffBH > 0.0);
+}

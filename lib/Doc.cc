@@ -472,10 +472,10 @@ std::vector<std::string_view> getBuiltinModuleNames() {
 }
 
 std::optional<DocModule> extractBuiltinDocModule(std::string_view name) {
-  const auto *sourceCode{builtin::getSourceCode(name)};
-  if (!sourceCode) return std::nullopt;
+  auto sourceCode{builtin::getSourceCode(name)};
+  if (sourceCode.empty()) return std::nullopt;
   auto allocator{BumpPtrAllocator{}};
-  auto module_{Module(std::string(name), std::string(sourceCode))};
+  auto module_{Module(std::string(name), std::move(sourceCode))};
   if (auto error{module_.parse(allocator)}) return std::nullopt;
   return extractDocModule(module_);
 }

@@ -120,50 +120,6 @@ public:
 
   /// Add MDL module file or directory.
   ///
-  /// A directory is added as a *search root*: every `.mdl` and `.smdl`
-  /// file beneath it is loaded as a module whose qualified name is
-  /// derived from its path relative to the root, so
-  /// `<root>/vendor/metals/steel.mdl` becomes `::vendor::metals::steel`.
-  /// A single file is added with its parent directory as an implicit
-  /// search root, so its qualified name is just `::stem`.
-  ///
-  /// MDL archives (`.mdr`) at the top level of the root are also added;
-  /// archives deeper in the tree are ignored with a warning. Per the
-  /// MDL specification, the archive file name encodes the enclosed
-  /// package prefix (`vendor.metals.mdr` provides `::vendor::metals`),
-  /// every `.mdl` entry must be the enclosed module
-  /// (`vendor/metals.mdl`) or live under the enclosed package directory
-  /// (`vendor/metals/...`), and entries resolve exactly as if the
-  /// archive were extracted at the root. It is an error for an archive
-  /// to be non-conforming, to duplicate contents that exist as loose
-  /// files in the same root, or to overlap the package prefix of
-  /// another archive in the same root. A single `.mdr` file may also be
-  /// added directly, with its parent directory as the implicit root.
-  ///
-  /// MDLE containers (`.mdle`) are added only by passing the `.mdle`
-  /// file explicitly — directory walks never ingest them, mirroring the
-  /// MDL convention that encapsulated materials are addressed
-  /// individually. The container must hold `main.mdl`, which is loaded
-  /// as a module whose qualified name is the content-based
-  /// `::mdle::<md5>` of the container bytes (reported through
-  /// `addedModuleNames` as the caller's handle), so the canonical
-  /// material is `::mdle::<md5>::main`. Identical containers at
-  /// different paths dedupe to one module; distinct containers can
-  /// never collide. Every other entry is extracted to a
-  /// content-addressed cache directory under the system temp directory,
-  /// and the module's resource lookups anchor there, so self-contained
-  /// textures resolve.
-  ///
-  /// If two modules under different roots derive the same qualified
-  /// name, the module under the earlier root wins for qualified-name
-  /// lookup: the later module still loads and compiles, and relative
-  /// imports within its own directory tree still resolve to it, but it
-  /// is marked shadowed and a warning is logged.
-  ///
-  /// Re-adding the same directory is a no-op. Adding a directory nested
-  /// inside, or enclosing, an existing search root is an error, because
-  /// nested roots would give modules ambiguous qualified names.
-  ///
   /// \param[in] fileOrDirName
   /// The file or directory name.
   ///
@@ -171,6 +127,46 @@ public:
   /// If non-null, the qualified names of the modules added by this call
   /// are appended in the order they were loaded. Files skipped because
   /// they were already added are not reported.
+  ///
+  /// A directory is added as a *search root*: every `.mdl` and `.smdl`
+  /// file beneath it is loaded as a module whose qualified name is
+  /// derived from its relative path, so `<root>/vendor/metals/steel.mdl`
+  /// becomes `::vendor::metals::steel`. A single file is added with its
+  /// parent directory as an implicit search root, so its qualified name
+  /// is just `::stem`. Re-adding the same directory is a no-op. Adding a
+  /// directory nested inside, or enclosing, an existing search root is an
+  /// error, because nested roots would give modules ambiguous qualified
+  /// names.
+  ///
+  /// If two modules under different roots derive the same qualified
+  /// name, the module under the earlier root wins for qualified-name
+  /// lookup: the later module still loads and compiles, and relative
+  /// imports within its own directory tree still resolve to it, but it
+  /// is marked shadowed and a warning is logged.
+  ///
+  /// MDL archives (`.mdr`) at the top level of each root are also added;
+  /// archives deeper in the tree are ignored with a warning. Per the
+  /// MDL specification, the archive file name encodes the enclosed
+  /// package prefix (`vendor.metals.mdr` provides `::vendor::metals`),
+  /// every `.mdl` entry must be the enclosed module (`vendor/metals.mdl`)
+  /// or live under the enclosed package directory (`vendor/metals/...`),
+  /// and entries resolve as if the archive were extracted at the root. It
+  /// is an error for an archive to be non-conforming, to duplicate existing
+  /// loose files in the same root, or to overlap the package prefix of
+  /// archive in the same root. A single `.mdr` file may also be added
+  /// directly, with its parent directory as the implicit root.
+  ///
+  /// MDLE containers (`.mdle`) are added only by passing the `.mdle`
+  /// file explicitly. Directory walks never ingest them, mirroring the
+  /// MDL convention that encapsulated materials are addressed individually.
+  /// The container must hold `main.mdl`, which is loaded as a module whose
+  /// qualified name is the content-based `::mdle::<md5>` of the container
+  /// bytes (reported through `addedModuleNames`), so the canonical material
+  /// is `::mdle::<md5>::main`. Identical containers at different paths dedup
+  /// to one module; distinct containers can never collide. Every other entry
+  /// is extracted to a content-addressed cache directory under the system
+  /// temp directory, and the module's resource lookups anchor there, so
+  /// self-contained textures resolve.
   ///
   [[nodiscard]] std::optional<Error>
   add(std::string fileOrDirName,
@@ -206,35 +202,32 @@ private:
                                              const SourceLocation &srcLoc);
 
   /// Load BSDF measurement.
-  [[nodiscard]]
-  const BSDFMeasurement &loadBSDFMeasurement(const std::string &fileName,
-                                             const SourceLocation &srcLoc);
+  [[nodiscard]] const BSDFMeasurement &
+  loadBSDFMeasurement(const std::string &fileName,
+                      const SourceLocation &srcLoc);
 
   /// Load light profile.
-  [[nodiscard]]
-  const LightProfile &loadLightProfile(const std::string &fileName,
-                                       const SourceLocation &srcLoc);
+  [[nodiscard]] const LightProfile &
+  loadLightProfile(const std::string &fileName, const SourceLocation &srcLoc);
 
   /// Load spectrum from TXT file.
-  [[nodiscard]]
-  SpectrumView loadSpectrum(const std::string &fileName,
-                            const SourceLocation &srcLoc);
+  [[nodiscard]] SpectrumView loadSpectrum(const std::string &fileName,
+                                          const SourceLocation &srcLoc);
 
   /// Load spectrum from ENVI Spectral Library file.
-  [[nodiscard]]
-  SpectrumView loadSpectrum(const std::string &fileName, int curveIndex,
-                            const SourceLocation &srcLoc);
+  [[nodiscard]] SpectrumView loadSpectrum(const std::string &fileName,
+                                          int curveIndex,
+                                          const SourceLocation &srcLoc);
 
   /// Load spectrum from ENVI Spectral Library file.
-  [[nodiscard]]
-  SpectrumView loadSpectrum(const std::string &fileName,
-                            const std::string &curveName,
-                            const SourceLocation &srcLoc);
+  [[nodiscard]] SpectrumView loadSpectrum(const std::string &fileName,
+                                          const std::string &curveName,
+                                          const SourceLocation &srcLoc);
 
   /// Load ENVI Spectral Library file.
-  [[nodiscard]]
-  const SpectrumLibrary &loadSpectrumLibrary(const std::string &fileName,
-                                             const SourceLocation &srcLoc);
+  [[nodiscard]] const SpectrumLibrary &
+  loadSpectrumLibrary(const std::string &fileName,
+                      const SourceLocation &srcLoc);
 
 public:
   /// Dump as LLVM-IR or native assembly into `out`. Must be called after
@@ -264,25 +257,24 @@ public:
   ///
   /// Every material has a qualified name formed from its module's
   /// qualified name (see `add()`), the enclosing `namespace` names if
-  /// any, and the material name, e.g.,
-  /// `::vendor::metals::steel::brushed`. If `materialName` starts with
-  /// `::`, it must match a qualified name exactly. Otherwise it is
-  /// matched as a suffix on `::` component boundaries, so `"brushed"`
-  /// and `"steel::brushed"` both match the example above, but
-  /// `"shed"` does not.
+  /// any, and the material name, e.g., `::vendor::metals::steel::brushed`.
+  /// If `materialName` starts with `::`, it must match a qualified name
+  /// exactly. Otherwise it is matched as a suffix on `::` component
+  /// boundaries, so `"brushed"` and `"steel::brushed"` both match the
+  /// example above, but `"shed"` does not.
   ///
   /// Materials in shadowed modules are never matched, mirroring the
   /// rule that a shadowed module is unreachable by qualified name. See
   /// `Module::isShadowed()`.
   ///
   /// \returns
-  /// The unique match. Returns `nullptr` if nothing matches. Also
+  /// The unique match, or `nullptr` if nothing matches. Also
   /// returns `nullptr` if more than one material matches, in which
-  /// case an error is logged that lists every candidate; use a longer
-  /// suffix, or `findMaterials()`, to disambiguate.
+  /// case an error is logged that lists every candidate. Use a longer
+  /// suffix to disambiguate, or use `findMaterials()` to get all
+  /// candidates.
   ///
-  [[nodiscard]]
-  const JIT::Material *
+  [[nodiscard]] const JIT::Material *
   findMaterial(std::string_view materialName) const noexcept;
 
   /// Find all JIT-compiled materials matching `materialName`, by the
@@ -309,9 +301,8 @@ public:
   /// \param[in] color
   /// The pointer to the color spectrum.
   ///
-  [[nodiscard]]
-  float3 convertColorToRGB(const State &state,
-                           const float *color) const noexcept;
+  [[nodiscard]] float3 convertColorToRGB(const State &state,
+                                         const float *color) const noexcept;
 
   /// Run the JIT-compiled RGB-to-color function.
   ///
@@ -373,6 +364,14 @@ private:
   BumpPtrAllocator mAllocator{};
 
   /// The MD5 file hasher.
+  ///
+  /// \note
+  /// The resource tables below keyed on `const MD5FileHash *` use `std::map`
+  /// intentionally because it never invalidates references or iterators: while
+  /// `std::unordered_map` could potentially be faster, it also invalidates all
+  /// references/iterators on rehash. If we decide to switch over to it, we will
+  /// have to wrap the resources with `std::unique_ptr` to keep them stable.
+  ///
   MD5FileHasher mFileHasher{};
 
   /// The images used by textures.
@@ -395,12 +394,12 @@ private:
 
   /// The MDL modules by canonical file name, used to skip files that
   /// were already added.
-  std::map<std::string, Module *, std::less<>> mModuleFileNames;
+  std::map<std::string, Module *> mModuleFileNames;
 
   /// The MDL modules by qualified name, e.g., `::vendor::metals::steel`.
   /// On collisions across search roots, the module under the earliest
   /// added root wins and later modules are marked shadowed.
-  std::map<std::string, Module *, std::less<>> mModulesByQualifiedName;
+  std::map<std::string, Module *> mModulesByQualifiedName;
 
   /// The MDL module directory names.
   std::set<std::string> mModuleDirNames;

@@ -20,10 +20,41 @@ const float EPSILON = 1e-6;
 /// An arbitrary chance for sampling diffusely in BSDFs with multiple-scattering.
 const float MULTISCATTER_DIFFUSE_CHANCE = 0.2;
 
-// Every user-facing Index Of Refraction (IOR) is the ABSOLUTE index of 
-// the denser medium. Plastic is 1.4, never 1/1.4. The exterior medium 
-// defaults to 1 and may be overridden per instance by the host through
-// `_MaterialInstance.exterior_ior` for nested-dielectric tracking.
+const int DF_REFLECTION = (1 << 0);
+
+const int DF_TRANSMISSION = (1 << 1);
+
+const int DF_DIFFUSE = (1 << 2);
+
+const int DF_GLOSSY = (1 << 3);
+
+const int DF_SPECULAR = (1 << 4);
+
+@(pure macro)
+float3x3 orthonormalBasis(float3 z) {
+  z = normalize(z);
+  auto x = z.z < -0.9999            //
+           ? float3(0.0, -1.0, 0.0) //
+           : float3(-z.x / (z.z + 1.0) + 1.0, -z.y / (z.z + 1.0), -1.0);
+  x = normalize(x - dot(x, z) * z);
+  auto y = normalize(cross(z, x));
+  return float3x3(x, y, z);
+}
+
+/// Calculate the orthogonal right-handed tangent space from the
+/// given normal and tangent vectors.
+@(pure noinline)
+float3x3 calculateTangentSpace(const float3 normal, const float3 tangent_u) {
+  const auto tw(normalize(normal) * #sign(normal.z));
+  const auto tu(normalize(tangent_u - dot(tangent_u, tw) * tw));
+  const auto tv(normalize(cross(tw, tu)));
+  return float3x3(tu, tv, tw);
+}
+
+// Every user-facing IOR is the ABSOLUTE index of the denser medium. Plastic 
+// is 1.4, never 1/1.4. The exterior medium defaults to 1 and may be overridden
+// per instance by the host through `_MaterialInstance.exterior_ior` for nested
+// dielectric tracking.
 //
 // The scatter parameter structs instead carry the RELATIVE ratio
 // `ior = n(wo) / n(wt)` of the current frame. The entry points
@@ -53,27 +84,6 @@ auto relativeIOR(const auto params, const auto absoluteIOR) {
   } else {
     return params.exterior_ior / absoluteIOR;
   }
-}
-
-const int DF_REFLECTION = (1 << 0);
-
-const int DF_TRANSMISSION = (1 << 1);
-
-const int DF_DIFFUSE = (1 << 2);
-
-const int DF_GLOSSY = (1 << 3);
-
-const int DF_SPECULAR = (1 << 4);
-
-@(macro)
-float3x3 orthonormalBasis(float3 z) {
-  z = normalize(z);
-  auto x = z.z < -0.9999            //
-           ? float3(0.0, -1.0, 0.0) //
-           : float3(-z.x / (z.z + 1.0) + 1.0, -z.y / (z.z + 1.0), -1.0);
-  x = normalize(x - dot(x, z) * z);
-  auto y = normalize(cross(z, x));
-  return float3x3(x, y, z);
 }
 
 /// The scatter mode, describing the hemispheres a BSDF scatters into.
@@ -304,16 +314,7 @@ export auto conductorFresnel(const float cosThetai, const auto ior) {
 }
 //--}
 
-/// Calculate the orthogonal right-handed tangent space from the
-/// given normal and tangent vectors.
-@(pure noinline)
-float3x3 calculateTangentSpace(const float3 normal, const float3 tangent_u) {
-  const auto tw(normalize(normal) * #sign(normal.z));
-  const auto tu(normalize(tangent_u - dot(tangent_u, tw) * tw));
-  const auto tv(normalize(cross(tw, tu)));
-  return float3x3(tu, tv, tw);
-}
-
+//--{ scattering infrastructure
 struct ScatterEvaluateParameters {
   /// Is transporting importance? i.e., tracing rays from lights to cameras?
   bool isImportance;
@@ -542,8 +543,9 @@ auto ScatterEvaluateResultWithMultiscatter(
     }
   }
 }
+//--}
 
-//--{ Emission infrastructure
+//--{ emission infrastructure
 // Emission is a function of one direction: the Emission Distribution
 // Function (EDF) at a shading point describes emitted radiance over the
 // outgoing direction `wi` (pointing away from the surface). There is no
@@ -949,6 +951,86 @@ auto scatterSample(const &specular_bsdf this, inline const &ScatterSampleParamet
       }
       return result;
     }
+  } else {
+    return ScatterSampleResult(); // Reject
+  }
+}
+//--}
+
+//--{ measured_bsdf
+/// Is the BSDF measurement valid, i.e., backed by loaded measurement data?
+export bool bsdf_measurement_isvalid(const bsdf_measurement measurement) = bool(measurement.buffer);
+
+/// Declare `smdBSDFMeasurementInterpolate` in `lib/BSDFMeasurement.cc`
+@(pure foreign)
+void smdBSDFMeasurementInterpolate(&void measurement, &float3 wo, &float3 wi, &float3 result);
+
+/// Declare `smdBSDFMeasurementDirectionPDF` in `lib/BSDFMeasurement.cc`
+@(pure foreign)
+float smdBSDFMeasurementDirectionPDF(&void measurement, &float3 wo, &float3 wi);
+
+/// Declare `smdBSDFMeasurementDirectionSample` in `lib/BSDFMeasurement.cc`
+@(pure foreign)
+void smdBSDFMeasurementDirectionSample(&void measurement, &float2 xi, &float3 wo, &float3 wi, &float pdf);
+
+/// The measured BSDF, evaluating and importance sampling a loaded
+/// `bsdf_measurement`.
+export struct measured_bsdf: bsdf {
+  /// The measurement.
+  bsdf_measurement measurement;
+
+  /// The multiplier.
+  float multiplier = 1.0;
+
+  /// The scatter mode.
+  scatter_mode mode = scatter_reflect;
+
+  /// The handle.
+  string handle = "";
+
+  /// The flags.
+  const int df_flags = (int(mode) & measurement.mode) | DF_GLOSSY;
+};
+
+@(macro)
+auto scatterEvaluate(const &measured_bsdf this, inline const &ScatterEvaluateParameters params) {
+  const auto enabledMode(int(this.mode) & this.measurement.mode);
+  return ScatterEvaluateResult(isBlack: true) if (!bool(this.measurement.ptr) || (int(mode) & enabledMode) == 0);
+  return ScatterEvaluateResult(isBlack: true) if (!recalculateTangentSpace(params));
+  // The measurement table is hemisphere-agnostic, so look up with the incoming
+  // direction flipped into the upper hemisphere. This only matters for
+  // transmission, where the incoming direction is below the horizon.
+  auto wiUpper(float3(wi.x, wi.y, #abs(wi.z)));
+  auto f3(float3(0.0));
+  smdBSDFMeasurementInterpolate(this.measurement.ptr, &wo, &wiUpper, &f3);
+  auto result(ScatterEvaluateResult(
+    f: this.multiplier * #abs(wi.z) * color(f3),
+    pdf: float2(
+      smdBSDFMeasurementDirectionPDF(this.measurement.ptr, &wo, &wiUpper),
+      smdBSDFMeasurementDirectionPDF(this.measurement.ptr, &wiUpper, &wo),
+    ),
+  ));
+  result.f *= shadingNormalCorrection if (isImportance);
+  return result;
+}
+
+@(macro)
+auto scatterSample(const &measured_bsdf this, inline const &ScatterSampleParameters params) {
+  const auto enabledMode(int(this.mode) & this.measurement.mode);
+  return ScatterSampleResult() if (!bool(this.measurement.ptr) || enabledMode == 0);
+  if ((tbn := recalculateTangentSpace(params))) {
+    auto xi2(xi.xy);
+    auto wiLocal(float3(0.0));
+    float pdf = 0.0;
+    smdBSDFMeasurementDirectionSample(this.measurement.ptr, &xi2, &wo, &wiLocal, &pdf);
+    return ScatterSampleResult() if (!(pdf > 0.0));
+    // The sampled direction is always in the upper hemisphere, so flip it
+    // below the horizon for transmission measurements.
+    wiLocal.z = -wiLocal.z if (enabledMode == int(scatter_transmit));
+    return ScatterSampleResult(
+             wi: normalize((*tbn) * wiLocal),
+             mode: enabledMode == int(scatter_transmit) ? scatter_transmit : scatter_reflect,
+           );
   } else {
     return ScatterSampleResult(); // Reject
   }
@@ -2086,7 +2168,6 @@ auto makeMicrofacetBSDF(
     return specular_bsdf(tint: tint, mode: mode);
   }
 }
-//--}
 
 /// The simple glossy BSDF, being a Blinn microfacet BSDF with V-cavities
 /// shadowing, degenerating to `specular_bsdf` at zero roughness.
@@ -2107,88 +2188,332 @@ export auto microfacet_beckmann_smith_bsdf(*) = makeMicrofacetBSDF(distribution:
 /// The Beckmann microfacet BSDF with V-cavities shadowing, degenerating to
 /// `specular_bsdf` at zero roughness.
 export auto microfacet_beckmann_vcavities_bsdf(*) = makeMicrofacetBSDF(distribution: microfacet::DistributionBeckmann(), shadowing: microfacet::ShadowingVCavities());
+//--}
 
-//--{ measured_bsdf
-/// Is the BSDF measurement valid, i.e., backed by loaded measurement data?
-export bool bsdf_measurement_isvalid(const bsdf_measurement measurement) = bool(measurement.buffer);
+//--{ micrograin
+// NOTE: This is non-standard!
+//
+// The micrograin BSDF for porous and dusty layers, implementing "A
+// Fully-correlated Anisotropic Micrograin BSDF Model" by Lucas, Ribardiere,
+// Pacanowski, and Barla, ACM Transactions on Graphics 43(4), 2024, with the
+// closed-form coupled-diffuse approximation of their SIGGRAPH Asia 2023
+// paper for the diffuse micrograin component. Equation references below are
+// to the 2024 paper. The microsurface is a random distribution of opaque
+// half-ellipsoidal micrograins resting on an arbitrary base BSDF: light
+// either scatters at the micrograin surface -- a generalized
+// Trowbridge-Reitz lobe with a geometrical attenuation factor derived from
+// exact spherical-cap shadow areas -- or reaches the base BSDF through the
+// visible pores between micrograins.
+export namespace micrograin {
 
-/// Declare `smdBSDFMeasurementInterpolate` in `lib/BSDFMeasurement.cc`
-@(pure foreign)
-void smdBSDFMeasurementInterpolate(&void measurement, &float3 wo, &float3 wi, &float3 result);
+/// Clamp the filling factor away from the degenerate limits of the
+/// logarithms it feeds.
+@(pure macro)
+export float clampFillingFactor(const float tau0) = clamp(tau0, 1.0e-4, 0.999);
 
-/// Declare `smdBSDFMeasurementDirectionPDF` in `lib/BSDFMeasurement.cc`
-@(pure foreign)
-float smdBSDFMeasurementDirectionPDF(&void measurement, &float3 wo, &float3 wi);
+/// The micrograin Normal Distribution Function for filling factor `tau0`
+/// and lateral inverse-stretching `beta`, a generalization of the
+/// anisotropic Trowbridge-Reitz (GGX) distribution [Eqs. 10-12].
+/// Normalized such that the cosine-weighted hemisphere integral is 1.
+@(pure)
+export float normalPDF(const float tau0, const float2 beta, const float3 wm) {
+  return 0.0 if (!(wm.z > EPSILON));
+  const float cosTheta2(wm.z * wm.z);
+  const float t2((wm.x * wm.x / (beta.x * beta.x) + wm.y * wm.y / (beta.y * beta.y)) / cosTheta2);
+  return -#log(1 - tau0) * #pow(1 - tau0, t2 / (1 + t2)) / (tau0 * $PI * (1 + t2) * (1 + t2) * beta.x * beta.y * cosTheta2 * cosTheta2);
+}
 
-/// Declare `smdBSDFMeasurementDirectionSample` in `lib/BSDFMeasurement.cc`
-@(pure foreign)
-void smdBSDFMeasurementDirectionSample(&void measurement, &float2 xi, &float3 wo, &float3 wi, &float pdf);
+/// Sample the micrograin NDF proportional to `normalPDF(wm) * wm.z` by
+/// closed-form CDF inversion [Eqs. 13-15].
+@(pure)
+export float3 normalSample(const float tau0, const float2 beta, const float xi0, const float xi1) {
+  const float phi($TWO_PI * xi1);
+  const float2 e(normalize(float2(beta.x * #cos(phi), beta.y * #sin(phi))));
+  const float g(e.x * e.x / (beta.x * beta.x) + e.y * e.y / (beta.y * beta.y));
+  const float lnXi(#log(1 - saturate(xi0) * tau0));
+  const float tan2(-lnXi / ((lnXi - #log(1 - tau0)) * g + EPSILON));
+  const float cosTheta(1 / #sqrt(1 + tan2));
+  return float3(#sqrt(#max(1 - cosTheta * cosTheta, 0.0)) * e, cosTheta);
+}
 
-/// The measured BSDF, evaluating and importance sampling a loaded
-/// `bsdf_measurement`.
-export struct measured_bsdf: bsdf {
-  /// The measurement.
-  bsdf_measurement measurement;
+/// The area of the shadow cast by a unit spherical micrograin onto the
+/// plane at height `h`, from the direction with zenith cosine `cosThetai`
+/// [Appendix A]. Zero when the spherical cap above `h` is fully visible,
+/// i.e., when `tan(thetam) * tan(thetai) <= 1` with `cos(thetam) = h`.
+@(pure)
+export float shadowArea(float cosThetai, const float h) {
+  const float cosThetam(saturate(h));
+  const float sinThetam(#sqrt(#max(1 - cosThetam * cosThetam, 0.0)));
+  cosThetai = clamp(cosThetai, EPSILON, 1.0);
+  const float sinThetai(#sqrt(#max(1 - cosThetai * cosThetai, 0.0)));
+  return 0.0 if (!(sinThetam * sinThetai > cosThetam * cosThetai));
+  const float cosPhiq(-(cosThetam * cosThetai) / (sinThetam * sinThetai));
+  const float phiq(#acos(clamp(cosPhiq, -1.0, 1.0)));
+  const float ex(sinThetai / cosThetai * cosThetam);
+  const float sigmat(#abs(ex * sinThetam * #sin(phiq)));
+  const float sigmac(($PI - phiq) * sinThetam * sinThetam);
+  const float sigmae(#acos(clamp(-(sinThetam * cosPhiq - ex) * cosThetai, -1.0, 1.0)) / cosThetai);
+  return #max(sigmae - sigmac - sigmat, 0.0);
+}
 
-  /// The multiplier.
-  float multiplier = 1.0;
+/// Transform a direction into the space where micrograins are unit
+/// spheres [Sec. 4.2].
+@(pure macro)
+export float3 betaTransform(const float2 beta, const float3 w) = normalize(float3(beta * w.xy, w.z));
 
-  /// The scatter mode.
-  scatter_mode mode = scatter_reflect;
+/// Transform a microfacet normal into the space where micrograins are
+/// unit spheres, i.e., by the inverse-transpose of `betaTransform`.
+@(pure macro)
+export float3 betaTransformNormal(const float2 beta, const float3 wm) = normalize(float3(wm.xy / beta, wm.z));
 
-  /// The handle.
-  string handle = "";
+/// The area of the overlap between the shadows cast by a unit spherical
+/// micrograin above height `h` from two directions [after Appendix B],
+/// which accounts for the directional correlation responsible for
+/// retro-reflection on porous layers. Directions are in the transformed
+/// space of `betaTransform`.
+///
+/// Each shadow crescent is star-shaped about the cap center: along the ray
+/// at a given azimuth it spans from the cap circle out to its shadow
+/// ellipse, over the azimuthal arc between its silhouette points. The
+/// overlap area therefore reduces to a 1-dimensional integral of the
+/// radial extents over the intersection of the two arcs, evaluated here by
+/// midpoint quadrature with error below a percent. This trades the
+/// intricate case analysis of the paper's closed form for robustness.
+@(pure)
+export float shadowOverlapArea(const float3 wiT, const float3 woT, const float h) {
+  const float sigmasi(shadowArea(wiT.z, h));
+  const float sigmaso(shadowArea(woT.z, h));
+  return 0.0 if (!(sigmasi > 0) || !(sigmaso > 0));
+  // Aligned directions cast coincident shadows.
+  const float sigmasMin(#min(sigmasi, sigmaso));
+  return sigmasMin if (!(length(cross(wiT, woT)) > 1.0e-6));
+  const float cosThetam(saturate(h));
+  const float sinThetam(#sqrt(#max(1 - cosThetam * cosThetam, 0.0)));
+  const float rc2(sinThetam * sinThetam);
+  // The azimuthal arc of each shadow on the cap circle is centered on the
+  // anti-azimuth of its direction with half-width pi - phiq [Appendix A].
+  const float sinThetai(length(wiT.xy));
+  const float sinThetao(length(woT.xy));
+  const float2 ddi(wiT.xy / sinThetai);
+  const float2 ddo(woT.xy / sinThetao);
+  const float halfi($PI - #acos(clamp(-(cosThetam * wiT.z) / (sinThetam * sinThetai), -1.0, 1.0)));
+  const float halfo($PI - #acos(clamp(-(cosThetam * woT.z) / (sinThetam * sinThetao), -1.0, 1.0)));
+  const float delta(#atan2(ddi.x * ddo.y - ddi.y * ddo.x, ddi.x * ddo.x + ddi.y * ddo.y));
+  const float alphai(#atan2(-ddi.y, -ddi.x));
+  // Shadow ellipse constants: with the ellipse center at distance `ex`
+  // along the azimuth and the transform that turns it into the unit
+  // circle, the radial exit of the ray at azimuth `phi` solves a
+  // quadratic with these coefficients.
+  const float exi(sinThetai / wiT.z * cosThetam);
+  const float exo(sinThetao / woT.z * cosThetam);
+  const float ci(sinThetai * sinThetai * cosThetam * cosThetam - 1);
+  const float co(sinThetao * sinThetao * cosThetam * cosThetam - 1);
+  float total = 0;
+  // The two arcs may intersect in up to two components on the circle.
+  for (int component = 0; component < 2; component++) {
+    const float d0(component == 0 ? delta : delta - #sign(delta) * $TWO_PI);
+    const float lo(#max(-halfi, d0 - halfo));
+    const float hi(#min(+halfi, d0 + halfo));
+    continue if (!(hi > lo));
+    const int n = 16;
+    float acc = 0;
+    for (int k = 0; k < n; k++) {
+      const float phi(alphai + lo + (hi - lo) * ((k + 0.5) / n));
+      const float2 u(float2(#cos(phi), #sin(phi)));
+      // Radial exit through the shadow ellipse of each direction.
+      const float dui(#sum(ddi * u));
+      const float duo(#sum(ddo * u));
+      const float ai2(wiT.z * wiT.z * dui * dui + (crossi := ddi.x * u.y - ddi.y * u.x) * crossi);
+      const float ao2(woT.z * woT.z * duo * duo + (crosso := ddo.x * u.y - ddo.y * u.x) * crosso);
+      const float bi(-2 * wiT.z * dui * wiT.z * exi);
+      const float bo(-2 * woT.z * duo * woT.z * exo);
+      const float ri((-bi + #sqrt(#max(bi * bi - 4 * ai2 * ci, 0.0))) / (2 * ai2 + EPSILON));
+      const float ro((-bo + #sqrt(#max(bo * bo - 4 * ao2 * co, 0.0))) / (2 * ao2 + EPSILON));
+      const float r(#min(ri, ro));
+      acc += #max(r * r - rc2, 0.0);
+    }
+    total += 0.5 * acc * (hi - lo) / n;
+  }
+  return #min(total, sigmasMin);
+}
+
+/// The distant term of the fully-correlated bidirectional GAF [Eq. 19],
+/// taking directions and the microfacet height already in the transformed
+/// space of `betaTransform`.
+@(pure)
+export float distantGAF(const float tau0, const float3 wiT, const float3 woT, const float hT) {
+  return #exp(#log(1 - tau0) / $PI * (shadowArea(wiT.z, hT) + shadowArea(woT.z, hT) - shadowOverlapArea(wiT, woT, hT)));
+}
+
+/// The unidirectional distant GAF at pore level, which has the simple
+/// closed form of Appendix C.
+@(pure macro)
+export float distantGAF1AtSurface(const float tau0, const float cosThetaT) {
+  return #pow(1 - tau0, 0.5 * (1 / #max(cosThetaT, EPSILON) - 1));
+}
+
+/// The chance that a light path from the direction with the given
+/// transformed zenith cosine reaches the base surface through visible
+/// pores, used to importance-sample the base component [Eq. 26].
+@(pure)
+export float baseChance(const float tau0, const float cosThetaT) {
+  const float g((1 - tau0) * distantGAF1AtSurface(tau0, cosThetaT));
+  return g / (tau0 + g);
+}
+
+} // namespace micrograin
+
+/// The micrograin layering BSDF for porous and dusty layers, e.g., dust
+/// deposition, rust, powder, and dirt. This is an extension beyond the MDL
+/// specification, implementing Lucas et al, "A Fully-correlated
+/// Anisotropic Micrograin BSDF Model" (2024), with the closed-form
+/// coupled-diffuse approximation of their 2023 paper.
+///
+/// A random distribution of opaque half-ellipsoidal micrograins covers the
+/// fraction `filling_factor` of the base surface: light either scatters at
+/// the micrograin surface, or passes through the visible pores to the
+/// `base` BSDF, with the balance controlled by exact spherical-cap shadow
+/// areas so that grazing configurations show characteristically more
+/// micrograin and less base. The equivalent GGX roughness of the grain
+/// distribution is approximately
+/// `sqrt(filling_factor / -log(1 - filling_factor)) * beta` [Eq. 28].
+export struct micrograin_layer: bsdf {
+  /// The filling factor, being the fraction of the base surface covered
+  /// by micrograins when viewed at normal incidence. Range `(0,1)`,
+  /// clamped away from both limits.
+  float filling_factor;
+
+  /// The lateral inverse-stretching factor of the micrograins along the
+  /// tangent direction. Micrograins are hemispheres at 1; larger values
+  /// make them proportionally narrower and the appearance rougher.
+  float beta_u = 1.0;
+
+  /// The lateral inverse-stretching factor along the bitangent, equal to
+  /// `beta_u` by default for isotropic micrograins.
+  float beta_v = beta_u;
+
+  /// The diffuse albedo of the micrograin material.
+  $(color | float) grain_diffuse_reflectance = 0.0;
+
+  /// The absolute index of refraction of the micrograin material.
+  $(color | float) grain_ior = 1.5;
+
+  /// The extinction coefficient of the micrograin material, or `none` for
+  /// dielectric micrograins. Set from measured conductor data, e.g.,
+  /// `::models::metal_ior`, for metallic dust.
+  $(?(color | float)) grain_extinction = none;
+
+  /// The tangent direction for orienting anisotropic micrograins.
+  float3 tangent_u = $state.texture_tangent_u[0];
+
+  /// The base BSDF visible through the pores.
+  bsdf base = bsdf();
 
   /// The flags.
-  const int df_flags = (int(mode) & measurement.mode) | DF_GLOSSY;
+  const int df_flags = DF_REFLECTION | DF_GLOSSY | base.df_flags;
+
+  finalize {
+    filling_factor = micrograin::clampFillingFactor(filling_factor);
+    beta_u = #max(beta_u, EPSILON);
+    beta_v = #max(beta_v, EPSILON);
+    tangent_u = normalize(tangent_u);
+  }
 };
 
-@(macro)
-auto scatterEvaluate(const &measured_bsdf this, inline const &ScatterEvaluateParameters params) {
-  const auto enabledMode(int(this.mode) & this.measurement.mode);
-  return ScatterEvaluateResult(isBlack: true) if (!bool(this.measurement.ptr) || (int(mode) & enabledMode) == 0);
-  return ScatterEvaluateResult(isBlack: true) if (!recalculateTangentSpace(params));
-  // The measurement table is hemisphere-agnostic, so look up with the incoming
-  // direction flipped into the upper hemisphere. This only matters for
-  // transmission, where the incoming direction is below the horizon.
-  auto wiUpper(float3(wi.x, wi.y, #abs(wi.z)));
-  auto f3(float3(0.0));
-  smdBSDFMeasurementInterpolate(this.measurement.ptr, &wo, &wiUpper, &f3);
-  auto result(ScatterEvaluateResult(
-    f: this.multiplier * #abs(wi.z) * color(f3),
-    pdf: float2(
-      smdBSDFMeasurementDirectionPDF(this.measurement.ptr, &wo, &wiUpper),
-      smdBSDFMeasurementDirectionPDF(this.measurement.ptr, &wiUpper, &wo),
-    ),
-  ));
-  result.f *= shadingNormalCorrection if (isImportance);
-  return result;
+/// The Fresnel term of the micrograin material: dielectric when
+/// `grain_extinction` is `none`, else conductor.
+@(pure macro)
+auto micrograinFresnel(const auto this, const auto params, const float cosTheta) {
+  if (#typeof(this.grain_extinction) == void) {
+    return specular::dielectricFresnel(cosTheta, average(relativeIOR(params, this.grain_ior)));
+  } else {
+    return specular::conductorFresnel(cosTheta, relativeIOR(params, complex(this.grain_ior, this.grain_extinction)));
+  }
 }
 
 @(macro)
-auto scatterSample(const &measured_bsdf this, inline const &ScatterSampleParameters params) {
-  const auto enabledMode(int(this.mode) & this.measurement.mode);
-  return ScatterSampleResult() if (!bool(this.measurement.ptr) || enabledMode == 0);
-  if ((tbn := recalculateTangentSpace(params))) {
-    auto xi2(xi.xy);
-    auto wiLocal(float3(0.0));
-    float pdf = 0.0;
-    smdBSDFMeasurementDirectionSample(this.measurement.ptr, &xi2, &wo, &wiLocal, &pdf);
-    return ScatterSampleResult() if (!(pdf > 0.0));
-    // The sampled direction is always in the upper hemisphere, so flip it
-    // below the horizon for transmission measurements.
-    wiLocal.z = -wiLocal.z if (enabledMode == int(scatter_transmit));
-    return ScatterSampleResult(
-             wi: normalize((*tbn) * wiLocal),
-             mode: enabledMode == int(scatter_transmit) ? scatter_transmit : scatter_reflect,
-           );
+auto scatterEvaluate(const &micrograin_layer this, inline const &ScatterEvaluateParameters params) {
+  const auto resultBase(scatterEvaluate(visit &this.base, params));
+  preserve wo, wi, tangent_u;
+  tangent_u = this.tangent_u;
+  return resultBase if (!recalculateTangentSpace(params));
+  const float tau0(this.filling_factor);
+  const float2 beta(float2(this.beta_u, this.beta_v));
+  const float cosThetao(#abs(wo.z));
+  const float cosThetai(#abs(wi.z));
+  const auto woT(micrograin::betaTransform(beta, float3(wo.xy, cosThetao)));
+  const auto wiT(micrograin::betaTransform(beta, float3(wi.xy, cosThetai)));
+  // Pore visibility weighting the base component [Eq. 23 / App. C].
+  const float Vp((1 - tau0) * micrograin::distantGAF(tau0, wiT, woT, 0.0));
+  const float2 pBase(micrograin::baseChance(tau0, woT.z), micrograin::baseChance(tau0, wiT.z));
+  if (mode == scatter_reflect) {
+    const auto wm(normalize(wo + wi));
+    const auto dotWoWm(#abs(#sum(wo * wm)));
+    const auto Fh(micrograinFresnel(this, params, dotWoWm));
+    const auto Fo(micrograinFresnel(this, params, cosThetao));
+    const auto Fi(micrograinFresnel(this, params, cosThetai));
+    const float D(micrograin::normalPDF(tau0, beta, wm));
+    const float hT(micrograin::betaTransformNormal(beta, wm).z);
+    const float Gdist(micrograin::distantGAF(tau0, wiT, woT, hT));
+    // Coupled diffuse + specular micrograin components [Eq. 22, with the
+    // 2023 closed-form coupled-diffuse approximation].
+    const auto Kd(this.grain_diffuse_reflectance);
+    auto fGrain(tau0 * (cosThetai / $PI * Kd * (1 - Fo) * (1 - Fi) + D * Gdist * Fh / (4 * cosThetao + EPSILON)));
+    fGrain *= shadingNormalCorrection if (isImportance);
+    // Sampling densities: base through pores, else diffuse-or-specular
+    // micrograin by the relative albedo chance [Eqs. 26-27].
+    const float avgKd(average(Kd));
+    const float2 avgF(average(Fo), average(Fi));
+    const float2 pDiffuse(avgKd / (avgKd + avgF + EPSILON));
+    const float pdfSpec(D * wm.z / (4 * dotWoWm + EPSILON));
+    const float2 pdfGrain(pDiffuse * float2(cosThetai, cosThetao) / $PI + (1 - pDiffuse) * pdfSpec);
+    return ScatterEvaluateResult(
+             f: fGrain + Vp * resultBase.f,
+             pdf: pBase * resultBase.pdf + (1 - pBase) * pdfGrain);
   } else {
-    return ScatterSampleResult(); // Reject
+    // Transmission passes through the pores only. The grain layer is
+    // treated as symmetric front-to-back.
+    return ScatterEvaluateResult(f: Vp * resultBase.f, pdf: pBase * resultBase.pdf, isBlack: resultBase.isBlack);
+  }
+}
+
+@(macro)
+auto scatterSample(const &micrograin_layer this, inline const &ScatterSampleParameters params) {
+  preserve tangent_u;
+  tangent_u = this.tangent_u;
+  const auto tbn(recalculateTangentSpace(params));
+  return ScatterSampleResult() if (!tbn);
+  const float tau0(this.filling_factor);
+  const float2 beta(this.beta_u, this.beta_v);
+  const float chanceBase(micrograin::baseChance(tau0, micrograin::betaTransform(beta, wo).z));
+  if (monte_carlo::boolSample(&xi.z, chanceBase)) {
+    auto result(scatterSample(visit &this.base, params));
+    if (result.fDelta) {
+      // Reweight sampled delta lobes by pore visibility over the
+      // selection chance, mirroring `custom_curve_layer`.
+      const auto wiLocal(result.wi * (*tbn));
+      const auto woT(micrograin::betaTransform(beta, float3(wo.xy, #abs(wo.z))));
+      const auto wiT(micrograin::betaTransform(beta, float3(wiLocal.xy, #abs(wiLocal.z))));
+      *result.fDelta *= (1 - tau0) * micrograin::distantGAF(tau0, wiT, woT, 0.0) / chanceBase;
+    }
+    return result;
+  } else {
+    const float avgF(average(micrograinFresnel(this, params, #abs(wo.z))));
+    const float avgKd(average(this.grain_diffuse_reflectance));
+    const float chanceDiffuse(avgKd / (avgKd + avgF + EPSILON));
+    if (monte_carlo::boolSample(&xi.w, chanceDiffuse)) {
+      return ScatterSampleResult(wi: (*tbn) * monte_carlo::cosineHemisphereSample(xi.xy), mode: scatter_reflect);
+    } else {
+      const auto wm(micrograin::normalSample(tau0, beta, xi.x, xi.y));
+      const auto wiLocal(specular::reflect(wo, wm));
+      return ScatterSampleResult() if (!(wiLocal.z > 0));
+      return ScatterSampleResult(wi: (*tbn) * wiLocal, mode: scatter_reflect);
+    }
   }
 }
 //--}
 
-//--{ hapke_granular_bsdf
+//--{ hapke_bsdf
 // NOTE: This is non-standard!
 
 // The Gauss-Legendre rule on the phase angle `g` over `[0,pi]` that normalizes the
@@ -2239,11 +2564,21 @@ static const auto HAPKE_QUAD = auto[16](
 // the 2 to 5 percent reproducibility of the source spectra they are used with.
 // smdl format off
 static const auto HAPKE_W_CHEB = auto[5](
-  auto(0.0443692637, -0.0330322166, -0.0414806793, 0.0377322324, -0.0036831791, -0.00503835424, 0.000809641201, 0.000328879959, 2.18482055e-05, -1.60545071e-05, -1.57504064e-05),
-  auto(-0.00594076498, 0.000757196179, 0.0081566095, -0.000627186314, -0.00248094082, -0.000488022104, 0.000297539468, 0.000375439189, -8.86163641e-06, -3.29277167e-05, -3.83729896e-05),
-  auto(-0.000963613192, 0.000466153409, 0.00149075512, -0.000673457031, -0.000758809229, 0.000127478645, 0.000295317848, 0.00011745609, -6.84391571e-05, -5.81575106e-05, -1.47705227e-05),
-  auto(0.000275487885, 6.03421013e-05, -0.000403479982, -0.000190433817, 0.000111667449, 0.000185513524, 6.24427123e-05, -7.37454173e-05, -7.16632707e-05, -2.55167593e-05, 1.67814334e-05),
-  auto(-2.62793436e-05, -3.65689393e-05, 6.2527643e-06, 6.15744651e-05, 6.90324901e-05, -6.91503114e-06, -5.56055434e-05, -4.09210276e-05, 7.60283579e-06, 2.61753306e-05, 1.97457206e-05));
+  auto(0.0443692637, -0.0330322166, -0.0414806793, 0.0377322324, 
+       -0.0036831791, -0.00503835424, 0.000809641201, 0.000328879959, 
+       2.18482055e-05, -1.60545071e-05, -1.57504064e-05),
+  auto(-0.00594076498, 0.000757196179, 0.0081566095, -0.000627186314, 
+       -0.00248094082, -0.000488022104, 0.000297539468, 0.000375439189, 
+       -8.86163641e-06, -3.29277167e-05, -3.83729896e-05),
+  auto(-0.000963613192, 0.000466153409, 0.00149075512, -0.000673457031, 
+       -0.000758809229, 0.000127478645, 0.000295317848, 0.00011745609, 
+       -6.84391571e-05, -5.81575106e-05, -1.47705227e-05),
+  auto(0.000275487885, 6.03421013e-05, -0.000403479982, -0.000190433817, 
+       0.000111667449, 0.000185513524, 6.24427123e-05, -7.37454173e-05, 
+       -7.16632707e-05, -2.55167593e-05, 1.67814334e-05),
+  auto(-2.62793436e-05, -3.65689393e-05, 6.2527643e-06, 6.15744651e-05,
+       6.90324901e-05, -6.91503114e-06, -5.56055434e-05, -4.09210276e-05,
+       7.60283579e-06, 2.61753306e-05, 1.97457206e-05));
 static const auto HAPKE_G_CHEB = auto[4](
   auto(0.299680994, -0.25994946, 0.0835171816, -0.0234697031, 0.0061327028, -0.00150566063, 0.00036640673),
   auto(-0.0526057365, 0.0529757455, -0.0205834026, 0.00702317686, -0.00220447865, 0.000635609701, -0.000179704911),
@@ -2256,7 +2591,6 @@ static const auto HAPKE_G_CHEB = auto[4](
 /// NOTE: Generic in both the coefficients and `x`, so the same routine serves
 /// the scalar density evaluation at construction and the spectral `EbarK`
 /// evaluation.
-///
 @(pure)
 auto hapkeChebEval(const auto c, const int n, const auto x) {
   auto b1(0.0 * x);
@@ -2320,7 +2654,7 @@ auto hapkeH(const float x, const auto w, const auto r0) {
 /// actually realizes under uniform illumination, so it is meaningful to
 /// drive it with a measured or modeled soil spectrum.
 ///
-export struct hapke_granular_bsdf: bsdf {
+export struct hapke_bsdf: bsdf {
   /// The albedo, realized exactly as the bihemispherical (white-sky) reflectance.
   const $(color | float) albedo = 1.0;
 
@@ -2442,7 +2776,7 @@ export struct hapke_granular_bsdf: bsdf {
 /// Evaluate the Hapke BRDF, without the cosine factor, for directions expressed in the
 /// shading tangent space and understood to be in the upper hemisphere.
 @(pure noinline)
-auto hapkeEvaluateBRDF(const &hapke_granular_bsdf this, const float3 wo, const float3 wi) {
+auto hapkeEvaluateBRDF(const &hapke_bsdf this, const float3 wo, const float3 wi) {
   const auto mu0(clamp(wi.z, 1e-4, 1.0));
   const auto mu(clamp(wo.z, 1e-4, 1.0));
   const auto cosG(clamp(#sum(wi * wo), -1.0, 1.0));
@@ -2508,7 +2842,7 @@ auto hapkeEvaluateBRDF(const &hapke_granular_bsdf this, const float3 wo, const f
 }
 
 @(pure)
-auto scatterEvaluate(const &hapke_granular_bsdf this, inline const &ScatterEvaluateParameters params) {
+auto scatterEvaluate(const &hapke_bsdf this, inline const &ScatterEvaluateParameters params) {
   if (mode == scatter_reflect && recalculateTangentSpace(params)) {
     const auto cosTheta(#abs(auto(wi.z, wo.z)));
     const auto pdf(cosTheta / $PI);
@@ -2521,7 +2855,7 @@ auto scatterEvaluate(const &hapke_granular_bsdf this, inline const &ScatterEvalu
 }
 
 @(pure)
-auto scatterSample(const &hapke_granular_bsdf this [[anno::unused()]], inline const &ScatterSampleParameters params) {
+auto scatterSample(const &hapke_bsdf this [[anno::unused()]], inline const &ScatterSampleParameters params) {
   if ((tbn := recalculateTangentSpace(params))) {
     return ScatterSampleResult(wi: (*tbn) * monte_carlo::cosineHemisphereSample(xi.xy), mode: scatter_reflect);
   } else {
@@ -2913,7 +3247,6 @@ export typedef weighted_layer color_weighted_layer;
 //--}
 
 //--{ thin_film
-
 /// A thin film layer.
 ///
 /// > Add reflective thin-film interference color to an elemental or
@@ -3017,7 +3350,6 @@ auto scatterSample(const &thin_film this, const &ScatterSampleParameters params)
 //--}
 
 //--{ fresnel_factor
-
 /// A fresnel factor.
 ///
 /// > Modifier weighting a base BSDF based on the Fresnel reflection
@@ -3707,6 +4039,7 @@ auto emissionSample(const &component_mix this, const &EmissionSampleParameters p
 }
 //--}
 
+//--{ anisotropic_vdf
 /// The anisotropic VDF, being the Henyey-Greenstein phase function with
 /// the given directional bias.
 export struct anisotropic_vdf: vdf {
@@ -3744,6 +4077,7 @@ auto scatterSample(const &anisotropic_vdf this, inline const &ScatterSampleParam
   const auto phi = 2.0 * $PI * xi.y;
   return ScatterSampleResult(wi: orthonormalBasis(wo) * float3(sinTheta * #cos(phi), sinTheta * #sin(phi), cosTheta), mode: scatter_reflect_transmit);
 }
+//--}
 
 @(macro)
 export int _scatterEvaluate(
@@ -3763,7 +4097,7 @@ export int _scatterEvaluate(
     normal: normalize(instance.geometry.normal),
     thin_walled: instance.ptr.thin_walled,
   );
-  auto result = #is_default(instance.ptr.backface) || !params.hitBackface         //
+  auto result = #is_default(instance.ptr.backface) || !params.hitBackface          //
                 ? scatterEvaluate(visit &instance.ptr.surface.scattering, &params) //
                 : scatterEvaluate(visit &instance.ptr.backface.scattering, &params);
   visit result in result {

@@ -1,5962 +1,3551 @@
 #pragma once
 
 #include <array>
+#include <cstddef>
 #include <string_view>
 
 namespace smdl::builtin {
 
-static const char *const api = R"*(/// The API module, which implements the types and functions the MDL
-/// specification treats as intrinsic: the resource types, the material
-/// model structures, and the spectral color conversions, plus internal
-/// helpers shared by the other builtin modules.
-#smdl
-
-/// The number of wavelengths in the RGB-to-color curves.
-const int RGB_TO_COLOR_NUM_WAVELENGTHS=32;
-
-/// The minimum wavelength of the RGB-to-color curves in nanometers.
-const float RGB_TO_COLOR_MIN_WAVELENGTH=380.;
-
-/// The maximum wavelength of the RGB-to-color curves in nanometers.
-const float RGB_TO_COLOR_MAX_WAVELENGTH=720.;
-
-/// The RGB-to-color curves.
-const static auto RGB_TO_COLOR_CURVES=auto[](
-auto[](1.0618958,1.061502,1.0614336,1.0622711,1.0622036,1.062506,1.0623939,1.0624707,1.0625048,1.0624366,1.0620694,1.0613167,1.0610334,1.0613868,1.0614215,1.0620337,1.0625497,1.0624317,1.0625249,1.0624278,1.062475,1.0625539,1.0625327,1.0623922,1.0623651,1.0625256,1.0612278,1.0594263,1.0599811,1.0602547,1.0601263,1.0606565),
-auto[](1.0414628,1.0328661,1.0126146,1.0350461,1.0078661,1.042228,1.0442597,1.0535238,1.0180776,1.044273,1.0529362,1.0537034,1.0533901,1.0537783,1.0527093,1.0530449,1.0550555,1.0553674,1.0454307,0.6234895,0.1803807,-76304e-7,-1522e-7,-75102e-7,-21709e-7,6592e-7,0.0122788,-4467e-6,0.0171198,49211e-7,58763e-7,0.0252594),
-auto[](0.9942214,0.9898694,0.9829366,0.9962787,1.0198956,1.0166396,1.0220913,0.9965166,1.0097766,1.0215422,0.6403195,25012e-7,6534e-6,28334e-7,-0.,-90592e-7,33937e-7,-30639e-7,0.2220394,0.6314114,0.9748099,0.9720956,1.017377,0.9987519,0.9470173,0.8525862,0.948978,0.9475188,0.9959894,0.8630135,0.8915099,0.8486649),
-auto[](55741e-7,-47983e-7,-52537e-7,-64571e-7,-59694e-7,-21837e-7,0.0167811,0.0960964,0.2121736,0.3616913,0.5396101,0.7440881,0.9220957,1.0460304,1.0513825,1.0511992,1.051053,1.0517397,1.0516043,1.0511944,1.051159,1.0516613,1.0514039,1.0515941,1.051146,1.0515124,1.0508871,1.0508924,1.0477493,1.0493273,1.0435964,1.0392281),
-auto[](0.165756,0.1184644,0.1240829,0.1137127,0.0789924,0.0322056,-0.0107984,0.018052,53407e-7,0.0136549,-59564e-7,-18444e-7,-0.0105719,-29376e-7,-0.0107905,-80224e-7,-22669e-7,702e-5,-81528e-7,0.6077287,0.9883156,0.9939169,1.0039339,0.992345,0.9992653,1.0084622,0.983583,1.0085024,0.9745114,0.9854327,0.9349576,0.9871391),
-auto[](26494e-7,-50175e-7,-0.0125472,-94555e-7,-0.0125261,-79171e-7,-79956e-7,-93559e-7,0.0654686,0.3957288,0.7524402,0.9637648,0.9985443,0.9999298,0.9993908,0.9999437,0.9993912,0.9991124,0.9601958,0.6318628,0.257974,94015e-7,-30798e-7,-4523e-6,-68933e-7,-90352e-7,-85914e-7,-83691e-7,-78686e-7,-84e-7,54301e-7,-27746e-7),
-auto[](0.9920977,0.9887643,0.9953904,0.9952932,0.9918145,1.0002584,0.9996848,0.9998812,0.9850401,0.7902985,0.560822,0.3313346,0.1369241,0.0189149,-51e-7,-424e-6,-4193e-7,17473e-7,37999e-7,-551e-6,-437e-7,75875e-7,0.0257957,0.0381684,0.0494896,0.049596,0.0498148,0.0398409,0.030501,0.0212431,69597e-7,41734e-7),
-); /// The nontrivial RGB-to-color implementation.
-///
-/// This is factored into an internal function because, despite the fact
-/// that the `color` type is not necessarily RGB, every MDL codebase on
-/// planet Earth assumes that it is, e.g., uses `color(1.0, 1.0, 1.0)`
-/// to mean white instead of `color(1.0)`.
-///
-@(hot noinline)
-color nontrivialRGBToColor(float3 rgb){
-#assert(bool($state.wavelength_base));
-const int k0(#all(rgb.xx<rgb.yz)?0:rgb.y<rgb.z?1:2);
-const int k0Plus1((k0+1)%3);
-const int k0Plus2((k0+2)%3);
-const bool shouldSwap(rgb[k0Plus1]>rgb[k0Plus2]);
-const int k1(shouldSwap?k0Plus2:k0Plus1);
-const int k2(shouldSwap?k0Plus1:k0Plus2);
-const float coeffW(rgb[k0]);
-const float coeffCMY(rgb[k1]-rgb[k0]);
-const float coeffRGB(rgb[k2]-rgb[k1]);
-color c(0.);
-color w(color($state.wavelength_base));
-w-=RGB_TO_COLOR_MIN_WAVELENGTH;
-w*=RGB_TO_COLOR_NUM_WAVELENGTHS/(RGB_TO_COLOR_MAX_WAVELENGTH-RGB_TO_COLOR_MIN_WAVELENGTH);
-for(int i=0;i<$WAVELENGTH_BASE_MAX;i++){
-auto t(w[i]);
-if((0.<=t)&(t<=RGB_TO_COLOR_NUM_WAVELENGTHS)){
-int j(#min(int(t),RGB_TO_COLOR_NUM_WAVELENGTHS-2));
-t=#min(t-j,1.);
-c[i]=#sum(float2(1-t,t)*(coeffW*float2(&RGB_TO_COLOR_CURVES[0][j])+coeffCMY*float2(&RGB_TO_COLOR_CURVES[k0+1][j])+coeffRGB*float2(&RGB_TO_COLOR_CURVES[k2+4][j])));
-}
-}
-return #max(c*0.94,0.);
-}
-
-/// Convert RGB to color, used by `color` constructor!
-@(macro)
-export color _rgb_to_color(const float3 rgb){
-if(#all(rgb.xx==rgb.yz)){
-return color(rgb.x);
-} else {
-return nontrivialRGBToColor(rgb);
-}
-}
-export struct _UniformLerp{
-int i;
-float t;
-};
-@(pure macro)
-export auto _uniform_lerp_index_and_fraction(const int count,const float xmin,const float xmax,const float x){
-const float t=(count-1)*#max(0.,#min((x-xmin)/(xmax-xmin),1.));
-const int i=#min(int(#floor(t)),count-2);
-return _UniformLerp(i,t-i);
-}
-@(pure macro)
-export int _lower_bound(int count,const &float xs,const float x){
-int first=0;
-while(count>0){
-const int step=count/2;
-const int i=first+step;
-if(xs[i]<x){
-first=i+1;
-count=count-step+1;
-} else {
-count=step;
-}
-}
-return first;
-}
-@(pure)
-export float _polyline_lerp(const int count,const &float xs,const &float ys,const float x){
-if(count<=0){
-return 0.;
-} else if(count==1){
-return ys[0];
-} else {
-int i=_lower_bound(count,xs,x)-1;
-i=#min(i,count-2);
-i=#max(i,0);
-const auto x0=xs[i];
-const auto x1=xs[i+1];
-float t=(x-x0)/(x1-x0);
-t=#max(t,0.);
-t=#min(t,1.);
-return (1-t)*ys[i]+t*ys[i+1];
-}
-}
-@(noinline)
-export color _samples_to_color(const int count,const &float wavelengths,const &float amplitudes){
-auto c=color(0.);
-if(count>0){
-if(count==1){
-c=color(amplitudes[0]);
-} else {
-for(int i=0;i<$WAVELENGTH_BASE_MAX;i++){
-c[i]=_polyline_lerp(count,wavelengths,amplitudes,$state.wavelength_base[i]);
-}
-}
-}
-return c;
-}
-
-/// The fits of CIE 1931 XYZ by Wyman et al for wavelength in nanometers.
-///
-/// NOTE: The implementation here does not exactly look like the published
-/// piecewise gaussian equations because it is calculating the X, Y, and Z
-/// fits in parallel by explicitly evaluating the first few terms of the
-/// exponential series.
-///
-@(pure)
-export float3 _wyman_xyz(const float w){
-auto x(w-auto(442.,599.8,501.1,568.8,530.9,437.,459.));
-x*=#select(x<0,auto(0.0624,0.0264,0.049,0.0213,0.0613,0.0845,0.0385),auto(0.0374,0.0323,0.0382,0.0247,0.0322,0.0278,0.0725),);
-x*=0.5*x;
-const auto x1(x);
-auto y(1+x);
-y+=(x*=x1*0.5);
-y+=(x*=x1*0.333333);
-y+=(x*=x1*0.25);
-y=auto(0.362,1.056,-0.065,0.821,0.286,1.217,0.681)*0.01/y;
-return float3(y[0]+y[1]+y[2],y[3]+y[4],y[5]+y[6]);
-}
-
-/// The fit of CIE 1931 Y, without X or Z, by Wyman et al fit
-/// for wavelength in nanometers.
-@(pure)
-export float _wyman_y(const float w){
-auto x(w-auto(568.8,530.9));
-x*=#select(x<0,auto(0.0213,0.0613),auto(0.0247,0.0322));
-x*=0.5*x;
-const auto x1(x);
-auto y(1+x);
-y+=(x*=x1*0.5);
-y+=(x*=x1*0.333333);
-y+=(x*=x1*0.25);
-return #sum(auto(0.821,0.286)*0.01/y);
-}
-
-/// Convert color to RGB, used by `float3` constructor!
-@(hot noinline)
-export float3 _color_to_rgb(const color c){
-float3 result(0.);
-for(int i=0;i<$WAVELENGTH_BASE_MAX;++i){
-result+=_wyman_xyz($state.wavelength_base[i])*c[i];
-}
-result/=$WAVELENGTH_BASE_MAX;
-result*=$state.wavelength_max-$state.wavelength_min;
-return float3x3(float3(3.24045,-0.969266,0.0556434),float3(-1.53714,1.87601,-0.204026),float3(-0.498532,0.041556,1.05723),)*result;
-}
-
-/// The JIT-visible RGB-to-color function advertised by the `Compiler`
-/// for convenience.
-@(visible noinline)
-void smdlRGBToColor(const &float3 rgb,const &float cptr){
-color c(_rgb_to_color(*rgb));
-#memcpy(cptr,&c,#sizeof(color));
-}
-
-/// The JIT-visible color-to-RGB function advertised by the `Compiler`
-/// for convenience.
-@(visible noinline)
-void smdlColorToRGB(const &float cptr,const &float3 rgb){
-*rgb=_color_to_rgb(color(cptr));
-}
-
-/// The intensity mode enum.
-export enum intensity_mode{intensity_radiant_exitance, ///< Power (watts) per unit area (meters squared).
-intensity_power,                                       ///< Power (watts).
-};
-
-/// The Bidirectional Scattering Distribution Function (BSDF) tag.
-export tag bsdf;
-
-/// The Volume Distribution Function (VDF) tag.
-export tag vdf;
-
-/// The Emission Distribution Function (EDF) tag.
-export tag edf;
-
-/// The hair Bidirectional Scattering Distribution Function (BSDF) tag.
-export tag hair_bsdf;
-
-/// The default BSDF is just an empty struct!
-export struct _default_bsdf:default bsdf{
-/// The flags.
-static const int df_flags=0;
-};
-
-/// The default VDF is just an empty struct!
-export struct _default_vdf:default vdf{
-/// The flags.
-static const int df_flags=0;
-};
-
-/// The default EDF is just an empty struct!
-export struct _default_edf:default edf{
-/// The flags.
-static const int df_flags=0;
-};
-
-/// The default hair BSDF is just an empty struct!
-export struct _default_hair_bsdf:default hair_bsdf{
-/// The flags.
-static const int df_flags=0;
-};
-
-/// The texture 2D structure.
-export struct texture_2d{
-texture_2d(const string name,const auto gamma=0)=#load_texture_2d(name,int(gamma));
-
-/// The tile count.
-const int2 tile_count=int2(1,1);
-
-/// The tile extents.
-const auto tile_extents=int2[](int2(0));
-
-/// The tile buffers.
-const auto tile_buffers=auto[](cast<&float4>(none));
-
-/// The gamma mode.
-const int gamma=0;
-};
-
-/// The texture 3D structure.
-export struct texture_3d{
-texture_3d(const string name,const auto gamma=0)=#load_texture_3d(name,int(gamma));
-
-/// The gamma mode.
-const int gamma=0;
-};
-
-/// The texture cube structure.
-export struct texture_cube{
-texture_cube(const string name,const auto gamma=0)=#load_texture_cube(name,int(gamma));
-
-/// The gamma mode.
-const int gamma=0;
-};
-
-/// The texture ptex structure.
-export struct texture_ptex{
-texture_ptex(const string name,const auto gamma=0)=#load_texture_ptex(name,int(gamma));
-
-/// The pointer to the `smdl::Ptexture`
-const &void ptr=none;
-
-/// The gamma mode.
-const int gamma=0;
-};
-
-/// The BSDF measurement structure.
-export struct bsdf_measurement{
-bsdf_measurement(const string name)=#load_bsdf_measurement(name);
-
-/// The pointer to the `smdl::BSDFMeasurement`.
-const &void ptr=none;
-
-/// The scatter mode, either `scatter_reflect` or `scatter_transmit`.
-const int mode=0;
-
-/// The number of samples in zenith.
-const int num_theta=0;
-
-/// The number of samples in azimuth.
-const int num_phi=0;
-
-/// The buffer `smdl::BSDFMeasurement::buffer` which points to a
-/// table of `num_theta * num_theta * num_phi` values of type `float`
-/// or `float3`.
-const auto buffer=cast<&float>(none);
-};
-
-/// The light profile structure.
-export struct light_profile{
-light_profile(const string name)=#load_light_profile(name);
-
-/// The pointer to the `smdl::LightProfile`
-const &void ptr=none;
-
-/// The maximum intensity.
-const float max_intensity=0;
-
-/// The power.
-const float power=0;
-};
-
-/// The spectral curve structure.
-export struct spectral_curve{
-spectral_curve(const string name)=#load_spectral_curve(name);
-spectral_curve(const string name,const int curve_index)=#load_spectral_curve(name,curve_index);
-spectral_curve(const string name,const string curve_name)=#load_spectral_curve(name,curve_name);
-
-/// The number of wavelengths and values.
-const int count=0;
-
-/// The wavelengths in nanometers.
-const &float wavelengths=none;
-
-/// The amplitudes.
-const &float amplitudes=none;
-};
-@(macro)
-export color _spectral_curve_to_color(const spectral_curve curve){
-return _samples_to_color(curve.count,curve.wavelengths,curve.amplitudes);
-}
-
-/// The material emission description.
-export struct material_emission{
-/// The Emission Distribution Function (EDF).
-edf emission=edf();
-
-/// The intensity multiplier.
-$(color|float) intensity=1.;
-
-/// The intensity mode.
-intensity_mode mode=intensity_radiant_exitance;
-};
-
-/// The material surface description.
-export struct material_surface{
-/// The Bidirectional Scattering Distribution Function (BSDF).
-bsdf scattering=bsdf();
-
-/// The material emission description.
-material_emission emission=material_emission();
-};
-
-/// The material volume description.
-export struct material_volume{
-/// The Volume Distribution Function (VDF).
-vdf scattering=vdf();
-
-/// The absorption coefficient in units of inverse distance.
-$(?color) absorption_coefficient=none;
-
-/// The scattering coefficient in units of inverse distance.
-$(?color) scattering_coefficient=none;
-};
-
-/// The material geometry description.
-export struct material_geometry{
-/// The displacement.
-float3 displacement=float3();
-
-/// The cutout opacity between 0 (transparent) and 1 (opaque).
-float cutout_opacity=1.;
-
-/// The normal.
-float3 normal=$state.normal;
-};
-
-/// The material description.
-export struct material{
-/// Thin walled?
-bool thin_walled=false;
-
-/// The material surface description.
-material_surface surface=material_surface();
-
-/// If non-default, the backface surface description.
-material_surface backface=material_surface();
-
-/// The index of refraction.
-///
-/// NOTE: In the MDL specification, IOR is type `color` but for
-/// implementation simplicity this is restricted to being type `float`.
-///
-float ior=1.4;
-
-/// The material volume description.
-material_volume volume=material_volume();
-
-/// The material geometry description.
-material_geometry geometry=material_geometry();
-
-/// The hair Bidirectional Scattering Distribution Function (BSDF).
-hair_bsdf hair=hair_bsdf();
-
-/// The temperature in kelvin for renderers that support blackbody
-/// emission, where a negative value means unset. NOTE: This is
-/// non-standard!
-float temperature=-1;
-};
-const int MATERIAL_TRANSPORT_IMPORTANCE=(1<<0);
-const int MATERIAL_THIN_WALLED=(1<<1);
-const int MATERIAL_HAS_SURFACE=(1<<2);
-const int MATERIAL_HAS_BACKFACE=(1<<3);
-const int MATERIAL_HAS_SURFACE_EMISSION=(1<<4);
-const int MATERIAL_HAS_BACKFACE_EMISSION=(1<<5);
-const int MATERIAL_HAS_VOLUME=(1<<6);
-const int MATERIAL_HAS_HAIR=(1<<7);
-
-/// An instance of a material corresponding to `smdl::JIT::Material::Instance`
-/// in the C++ API.
-export struct _MaterialInstance{
-/// The material deep copied with `#bump()`.
-&material ptr;
-
-/// The geometry displacement.
-&material_geometry geometry=&ptr.geometry;
-
-/// The index of refraction.
-float ior=ptr.ior;
-
-/// The exterior index of refraction, being the absolute index of the
-/// medium on the front side of the geometry. This defaults to 1 and is
-/// meant to be overwritten between instance evaluation and scattering
-/// by renderers that track nested dielectrics. The relative ratio the
-/// scattering calculations refract with is `exterior_ior / ior`.
-float exterior_ior=1.;
-
-/// The temperature.
-float temperature=ptr.temperature;
-
-/// The volume absorption coefficient.
-&color absorption_coefficient=#is_void(ptr.volume.absorption_coefficient)?none:&ptr.volume.absorption_coefficient;
-
-/// The volume scattering coefficient.
-&color scattering_coefficient=#is_void(ptr.volume.scattering_coefficient)?none:&ptr.volume.scattering_coefficient;
-
-/// The `surface` emission intensity, or `none` if the `surface` has no
-/// non-default emission EDF. See `df::_emissionEvaluate()` for how the
-/// `intensity_mode` units are resolved.
-&color surface_emission_intensity=#is_default(ptr.surface.emission.emission)?none:#bump(color(ptr.surface.emission.intensity));
-
-/// The `backface` emission intensity, or `none` if the `backface` has no
-/// non-default emission EDF.
-&color backface_emission_intensity=#is_default(ptr.backface.emission.emission)?none:#bump(color(ptr.backface.emission.intensity));
-
-/// The wavelength count.
-int wavelength_base_max=$WAVELENGTH_BASE_MAX;
-
-/// The flags.
-int flags=$state.transport|(ptr.thin_walled?MATERIAL_THIN_WALLED:0)|(!#is_default(ptr.surface)?MATERIAL_HAS_SURFACE:0)|(!#is_default(ptr.backface)?MATERIAL_HAS_BACKFACE:0)|(!#is_default(ptr.surface.emission.emission)?MATERIAL_HAS_SURFACE_EMISSION:0)|(!#is_default(ptr.backface.emission.emission)?MATERIAL_HAS_BACKFACE_EMISSION:0)|(!#is_default(ptr.volume)?MATERIAL_HAS_VOLUME:0)|(!#is_default(ptr.hair)?MATERIAL_HAS_HAIR:0);
-
-/// The df flags for the `surface` component.
-int df_flags_surface=ptr.surface.scattering.df_flags;
-
-/// The df flags for the `backface` component.
-int df_flags_backface=ptr.backface.scattering.df_flags;
-
-/// The emission intensity modes: bit 0 is set if the `surface` emission
-/// intensity is `intensity_power` (as opposed to the default
-/// `intensity_radiant_exitance`), and bit 1 likewise for the `backface`.
-int emission_modes=(int(ptr.surface.emission.mode)==int(intensity_power)?1:0)|(int(ptr.backface.emission.mode)==int(intensity_power)?2:0);
-
-/// The tangent-to-world matrix held by the `State` during construction.
-float3x3 tangent_to_world=let {
-const auto tangent_to_world_matrix=$state.object_to_world_matrix*$state.tangent_to_object_matrix;
-} in float3x3(tangent_to_world_matrix[0].xyz,tangent_to_world_matrix[1].xyz,tangent_to_world_matrix[2].xyz,);
-};
-
-/// Albedo look-up table (LUT) for energy correction.
-export struct _AlbedoLUT{
-/// The number of samples of view angle cosine.
-const int num_cos_theta=0;
-
-/// The number of samples of roughness.
-const int num_roughness=0;
-
-/// The directional albedo.
-///
-/// NOTE: This must point to `num_cos_theta` rows by `num_roughness`
-/// values.
-///
-const &float directional_albedo=none;
-
-/// The average albedo.
-///
-/// NOTE: This must point to `num_roughness` values.
-///
-const &float average_albedo=none;
-};
-
-/// A complex value.
-export struct complex{
-/// The real coefficient.
-auto a=0.;
-
-/// The imaginary coefficient.
-auto b=0.;
-};
-
-/// Complex negative.
-@(pure macro)
-export auto _complex_neg(const complex z)=complex(-z.a,-z.b);
-
-/// Complex conjugate.
-@(pure macro)
-export auto _complex_conj(const complex z)=complex(z.a,-z.b);
-
-/// Complex norm.
-@(pure macro)
-export auto _complex_norm(const complex z)=z.a*z.a+z.b*z.b;
-
-/// Complex absolute value.
-@(pure macro)
-export auto _complex_abs(const complex z)=#sqrt(_complex_norm(z));
-
-/// Complex inverse.
-@(pure macro)
-export auto _complex_inv(const complex z)=let {
-const auto denom=1./_complex_norm(z);
-} in complex(z.a*denom,-z.b*denom);
-
-/// Complex addition.
-@(pure macro)
-export auto _complex_add(const complex z,const complex w)=complex(z.a+w.a,z.b+w.b);
-
-/// Complex subtraction.
-@(pure macro)
-export auto _complex_sub(const complex z,const complex w)=complex(z.a-w.a,z.b-w.b);
-
-/// Complex multiplication.
-@(pure macro)
-export auto _complex_mul(const complex z,const complex w)=complex(z.a*w.a-z.b*w.b,z.a*w.b+z.b*w.a);
-
-/// Complex division.
-@(pure macro)
-export auto _complex_div(const complex z,const complex w)=_complex_mul(z,_complex_inv(w));
-
-/// Complex exponential.
-@(pure macro)
-export auto _complex_exp(const complex z)=let {
-const auto a=#exp(z.a);
-} in complex(a*#cos(z.b),a*#sin(z.b));
-
-/// Complex logarithm.
-@(pure macro)
-export auto _complex_log(const complex z)=complex(#log(_complex_abs(z)),#atan2(z.b,z.a));
-
-/// Complex square root.
-@(pure macro)
-export auto _complex_sqrt(const complex z)=let {
-const auto absz=_complex_abs(z);
-} in complex(#sqrt(0.5*(absz+z.a)),#sqrt(0.5*(absz-z.a))*#sign(z.b),);
-
-/// A hash function for use with procedural algorithms.
-@(pure)
-export int32_t _hash(auto value){
-if$(#is_arithmetic_scalar(value)){
-if$(#is_arithmetic_integral(value)){
-if$(#sizeof(value)<=4){
-auto hash(int32_t(value)+3266445271);
-hash^=hash>>>16,hash*=0x85EBCA6B;
-hash^=hash>>>13,hash*=0xC2B2AE35;
-hash^=hash>>>16;
-return hash;
-} else {
-auto hash(int64_t(value)+13898551614298330943);
-hash^=hash>>>33,hash*=0xFF51AFD7ED558CCD;
-hash^=hash>>>33,hash*=0xC4CEB9FE1A85EC53;
-hash^=hash>>>33;
-return hash;
-}
-} else {
-return _hash(#bitcast(#type_int(8*#sizeof(value)),value));
-}
-} else if$(#is_array(value)|#is_arithmetic_vector(value)|#is_arithmetic_matrix(value)|(#typeof(value)==color)){
-auto totalHash(_hash(value[0]));
-for(int i=1;i<#num(value);++i){
-auto hash(_hash(value[i]));
-hash=0x55555555*(hash^(hash>>>16));
-hash=3423571495*(hash^(hash>>>16));
-totalHash=#rotl(totalHash,10)^hash;
-}
-return totalHash;
-} else if$(#is_pointer(value)){
-return _hash(#bitcast(intptr_t,value));
-} else if$(#is_union(value)){
-visit v in value{
-return _hash(v);
-}
-} else {
-#panic("Unimplemented hash");
-return 0;
-}
-}
-)*";
-
-static const char *const anno = R"*(/// The standard annotations, following the MDL specification. These carry
-/// metadata for tools and user interfaces and do not affect compilation.
-#smdl
-
-/// The recommended range for the annotated value. Values outside remain valid.
-export annotation soft_range(auto min,auto max);
-
-/// The required range for the annotated value. Values outside are invalid.
-export annotation hard_range(auto min,auto max);
-
-/// The human-readable name to display instead of the identifier.
-export annotation display_name(string name);
-
-/// The group to organize the annotated item under in a user interface.
-export annotation in_group(string group);
-
-/// The group and subgroup to organize the annotated item under in a user interface.
-export annotation in_group(string group,string subgroup);
-
-/// The group, subgroup, and sub-subgroup to organize the annotated item under in a user interface.
-export annotation in_group(string group,string subgroup,string subsubgroup);
-
-/// The relative position of the annotated item in a user interface.
-export annotation ui_order(int order);
-
-/// The condition, as an MDL expression over sibling parameters, under which
-/// the annotated parameter is enabled in a user interface.
-export annotation enable_if(string condition);
-
-/// Hides the annotated item from user interfaces.
-export annotation hidden();
-
-/// The human-readable description. This is also understood by `smdl doc`
-/// as a fallback for declarations without `///` documentation comments.
-export annotation description(string description);
-
-/// The thumbnail image to preview the annotated item in a user interface.
-export annotation thumbnail(string name);
-
-/// The author.
-export annotation author(string name);
-
-/// A contributor.
-export annotation contributor(string name);
-
-/// The copyright notice.
-export annotation copyright_notice(string copyright);
-
-/// The creation date and notes.
-export annotation created(int year,int month,int day,string notes);
-
-/// The last modification date and notes.
-export annotation modified(int year,int month,int day,string notes);
-
-/// The version of the annotated module.
-export annotation version(int major,int minor,int patch,string prerelease="");
-
-/// The version of another module that the annotated module depends on.
-export annotation dependency(string module_name,int major,int minor,int patch,string prerelease="");
-
-/// The keywords for search and categorization.
-export annotation key_words(string[] words);
-
-/// Marks the annotated item as intentionally unused.
-export annotation unused(string description="");
-
-/// Marks the annotated item as deprecated.
-export annotation deprecated(string description="");
-
-/// The hint describing the intended usage of the annotated item, e.g., `"color"` or `"normal"`.
-export annotation usage(string hint="");
-
-/// The qualified name of the entity the annotated item originates from.
-export annotation origin(string name="");
-)*";
-
-static const char *const debug = R"*(/// Debugging functions, following the MDL specification. These only do
-/// anything when the compiler is in debug mode, and they always return
-/// `true` so they may be chained into boolean expressions.
-#smdl
-
-/// Asserts that `condition` holds, reporting `reason` if it does not.
-@(pure macro)
-export bool assert(const bool condition,const string reason){
-#assert(condition,reason) if($DEBUG);
-return true;
-}
-
-/// Breaks into the debugger.
-@(pure macro)
-export bool breakpoint(){
-#breakpoint() if($DEBUG);
-return true;
-}
-
-/// Prints the given value to the console.
-@(pure macro)
-export bool print(const auto a){
-#print(a) if($DEBUG);
-return true;
-}
-)*";
-
-static const char *const df = R"*(/// The distribution functions, following the MDL specification: the
-/// elemental BSDFs, EDFs, and VDFs, the modifier and layering
-/// combinators, and the mixers, plus the internal scattering and
-/// emission entry points the compiler exposes to renderers.
-///
-/// NOTE: The `handle` of every distribution function here should be a
-/// `string` by the specification, but we `void` it because we have no
-/// use for it.
-///
-#smdl
-using ::math import *;
-import ::tex::*;
-
-/// An arbitrary epsilon for stabilizing scattering calculations.
-const float EPSILON=1e-6;
-
-/// An arbitrary chance for sampling diffusely in BSDFs with multiple-scattering.
-const float MULTISCATTER_DIFFUSE_CHANCE=0.2;
-
-/// The default absolute index of refraction, matching the default of
-/// `material.ior` in `api.smdl`.
-const float DEFAULT_IOR=1.4;
-
-/// Convert a user-facing absolute IOR to the relative ratio oriented with
-/// the current frame of the given scatter parameters, honoring the backface
-/// reciprocation applied in the parameter `finalize` blocks and the
-/// exterior medium of the instance.
-@(pure macro)
-auto relativeIOR(const auto params,const auto absoluteIOR){
-if(params.hitBackface&!params.thin_walled){
-return absoluteIOR/params.exterior_ior;
-} else {
-return params.exterior_ior/absoluteIOR;
-}
-}
-const int DF_REFLECTION=(1<<0);
-const int DF_TRANSMISSION=(1<<1);
-const int DF_DIFFUSE=(1<<2);
-const int DF_GLOSSY=(1<<3);
-const int DF_SPECULAR=(1<<4);
-@(macro)
-float3x3 orthonormalBasis(float3 z){
-z=normalize(z);
-auto x=z.z<-0.9999?float3(0.,-1.,0.):float3(-z.x/(z.z+1.)+1.,-z.y/(z.z+1.),-1.);
-x=normalize(x-dot(x,z)*z);
-auto y=normalize(cross(z,x));
-return float3x3(x,y,z);
-}
-
-/// The scatter mode, describing the hemispheres a BSDF scatters into.
-export enum scatter_mode{
-scatter_none=0x0,             ///< None
-scatter_reflect=0x1,          ///< Reflect (same hemisphere)
-scatter_transmit=0x2,         ///< Transmit (opposite hemisphere)
-scatter_reflect_transmit=0x3, ///< Reflect or transmit
-};
-@(pure macro)
-float scatterReflectChance(const scatter_mode mode){
-const auto reflWeight(#select((int(mode)&1)!=0,1.,0.));
-const auto tranWeight(#select((int(mode)&2)!=0,1.,0.));
-return reflWeight/#max(reflWeight+tranWeight,1.);
-}
-
-/// Declare libm `erf`
-@(pure foreign)
-double erf(double x);
-
-/// Declare libm `erfc`
-@(pure foreign)
-double erfc(double x);
-
-/// The Monte Carlo utilities: low-discrepancy sequences and the canonical
-/// sampling routines shared by the distribution implementations.
-export namespace monte_carlo {
-
-/// Next canonical random vector in quasi-random 2-dimensional low discrepancy sequence.
-@(pure macro)
-export float2 nextLowDiscrepancy(const &float2 xi)=(*xi=frac(*xi+float2(0.75487766,0.56984029)));
-
-/// Next canonical random vector in quasi-random 3-dimensional low discrepancy sequence.
-@(pure macro)
-export float3 nextLowDiscrepancy(const &float3 xi)=(*xi=frac(*xi+float3(0.81917251,0.6710436,0.54970047)));
-
-/// Next canonical random vector in quasi-random 4-dimensional low discrepancy sequence.
-@(pure macro)
-export float4 nextLowDiscrepancy(const &float4 xi)=(*xi=frac(*xi+float4(0.85667488,0.73389185,0.62870672,0.53859725)));
-
-/// Bool sample with `chance` probability of returning `true`.
-@(pure macro)
-export bool boolSample(const &float xi,const float chance){
-if(*xi<chance){
-*xi=(*xi/chance);
-return true;
-} else {
-*xi=(*xi-chance)/(1-chance);
-return false;
-}
-}
-
-/// Uniform wavelength index sample.
-@(pure macro)
-export int uniformWavelengthIndexSample(const &float xi){
-const int i(#min(int(*xi*=$WAVELENGTH_BASE_MAX),$WAVELENGTH_BASE_MAX-1));
-*xi-=i;
-return i;
-}
-
-/// Uniform disk sample.
-@(pure)
-export float2 uniformDiskSample(float2 xi){
-xi=2*xi-1;
-xi=#select(xi==0,EPSILON,xi);
-const bool cond((absxi:=#abs(xi),absxi.x>absxi.y));
-const float rad(#select(cond,xi.x,xi.y));
-const float phi(#select(cond,($PI/4)*xi.y/xi.x,($PI/2)-($PI/4)*xi.x/xi.y));
-return rad*float2(#cos(phi),#sin(phi));
-}
-
-/// Cosine-weighted hemisphere sample.
-@(pure)
-export float3 cosineHemisphereSample(float2 xi){
-return float3((p:=uniformDiskSample(xi)),#sqrt(#max(1-#sum(p*p),0)));
-}
-
-/// Uniform hemisphere sample.
-@(pure)
-export float3 uniformHemisphereSample(float2 xi){
-const float cosTheta=saturate(xi.x);
-const float sinTheta=#sqrt(1-cosTheta*cosTheta);
-return float3(sinTheta*#cos(phi:=$TWO_PI*xi.y),sinTheta*#sin(phi),cosTheta,);
-}
-
-/// Uniform sphere sample.
-@(pure)
-export float3 uniformSphereSample(float2 xi){
-const float cosTheta=2*saturate(xi.x)-1;
-const float sinTheta=#sqrt(1-cosTheta*cosTheta);
-return float3(sinTheta*#cos(phi:=$TWO_PI*xi.y),sinTheta*#sin(phi),cosTheta,);
-}
-
-/// Erf inverse.
-@(pure)
-export double erfInverse(double y){
-double w=-#log(#max(1e-6d,(1-y)*(1+y)));
-double x=0;
-if(w<5){
-w=w-2.5d;
-x=w*2.81022636e-8d+3.43273939e-7d;
-x=w*x-3.5233877e-6d;
-x=w*x-4.39150654e-6d;
-x=w*x+2.1858087e-4d;
-x=w*x-1.25372503e-3d;
-x=w*x-4.17768164e-3d;
-x=w*x+0.246640727d;
-x=w*x+1.50140941d;
-} else {
-w=#sqrt(w)-3;
-x=x*-2.00214257e-4d+1.00950558e-4d;
-x=w*x+1.34934322e-3d;
-x=w*x-3.67342844e-3d;
-x=w*x+5.73950773e-3d;
-x=w*x-0.0076224613d;
-x=w*x+9.43887047e-3d;
-x=w*x+1.00167406d;
-x=w*x+2.83297682d;
-}
-x*=y;
-x-=(erf(x)-y)/(1.1283791671d*#exp(-x*x));
-x-=(erf(x)-y)/(1.1283791671d*#exp(-x*x));
-return x;
-}
-} /// The specular utilities: reflection and refraction geometry and the
-/// Fresnel equations, all in terms of relative IORs.
-export namespace specular {
-
-/// Reflect direction `wi` across normal direction `wm`.
-@(pure)
-export float3 reflect(const float3 wi,const float3 wm)=2*#sum(wi*wm)*wm-wi;
-
-/// Reflect direction `wi` across normal direction `wm` with index of refraction `ior`.
-@(pure)
-export float3 refract(const float3 wi,const float3 wm,const float ior){
-const auto cosThetai(#sum(wi*wm));
-const auto cos2Thetai(#min(cosThetai*cosThetai,1));
-const auto cos2Thetat(#max(1-ior*ior*(1-cos2Thetai),0));
-const auto cosThetat(#sqrt(cos2Thetat)*-#sign(cosThetai));
-return -ior*wi+(ior*cosThetai+cosThetat)*wm;
-}
-
-/// Calculate half vector that reflects direction `wo` to direction `wi`.
-///
-/// NOTE: The result is not normalized, and is guaranteed to be in the
-/// upper Z hemisphere.
-///
-@(pure)
-export float3 reflectionHalfVector(const float3 wo,const float3 wi)=(vh:=(wo+wi))*#sign(vh.z);
-
-/// Calculate half vector that refracts direction `wo` to direction `wi` through index-of-refraction `ior`.
-///
-/// NOTE: The result is not normalized, and is guaranteed to be in the
-/// upper Z hemisphere.
-///
-@(pure)
-export float3 refractionHalfVector(const float3 wo,const float3 wi,const float ior,)=(vh:=-(ior*wo+wi))*#sign(vh.z);
-
-/// Calculate the Jacobian of `refractionHalfVector` with respect to `wi`,
-/// which converts microsurface normal densities into incoming direction
-/// densities.
-@(pure)
-export auto refractionHalfVectorJacobian(const float3 wo,const float3 wi,const float ior,)=#abs(#sum(wi*(vh:=refractionHalfVector(wo,wi,ior))))/((vh2:=#sum(vh*vh))*#sqrt(vh2));
-
-/// The Schlick reflectance at normal incidence for the given relative IOR.
-@(pure macro)
-export auto schlickF0(const auto ior)=#pow((ior-1)/(ior+1),2);
-
-/// The Schlick approximation of Fresnel reflectance, interpolating from
-/// `F0` at normal incidence to `F90` at grazing incidence.
-@(pure macro)
-export auto schlickFresnel(
-const auto cosTheta,
-const auto F0,
-const auto F90=1.,
-const float exponent=5,
-)=F0+(F90-F0)*#pow(#max(1-#abs(cosTheta),0),exponent);
-
-/// The exact unpolarized Fresnel reflectance of a dielectric interface
-/// with the given relative IOR, folding total internal reflection to 1.
-@(pure)
-export auto dielectricFresnel(const float cosThetai,const auto ior){
-const auto cosThetat=#sqrt(#max(1.-ior*ior*(1.-cosThetai*cosThetai),0.))*#sign(cosThetai);
-const auto iorCosThetai=ior*cosThetai;
-const auto iorCosThetat=ior*cosThetat;
-const auto rs=(iorCosThetai-cosThetat)/(iorCosThetai+cosThetat);
-const auto rp=(cosThetai-iorCosThetat)/(cosThetai+iorCosThetat);
-return #min(0.5*(rs*rs+rp*rp),1.);
-}
-
-/// The exact unpolarized Fresnel reflectance of a conductor interface
-/// with the given complex relative IOR.
-@(pure)
-export auto conductorFresnel(const float cosThetai,const auto ior){
-const auto cosThetat=#sqrt(1.-ior*ior*(1.-cosThetai*cosThetai))*#sign(cosThetai);
-const auto iorCosThetai=ior*cosThetai;
-const auto iorCosThetat=ior*cosThetat;
-const auto rs=(iorCosThetai-cosThetat)/(iorCosThetai+cosThetat);
-const auto rp=(cosThetai-iorCosThetat)/(cosThetai+iorCosThetat);
-return #min(0.5*(#norm(rs)+#norm(rp)),1.);
-}
-} /// Calculate the orthogonal right-handed tangent space from the
-/// given normal and tangent vectors.
-@(pure noinline)
-float3x3 calculateTangentSpace(const float3 normal,const float3 tangent_u){
-const auto tw(normalize(normal)*#sign(normal.z));
-const auto tu(normalize(tangent_u-dot(tangent_u,tw)*tw));
-const auto tv(normalize(cross(tw,tu)));
-return float3x3(tu,tv,tw);
-}
-struct ScatterEvaluateParameters{
-/// Is transporting importance? i.e., tracing rays from lights to cameras?
-bool isImportance;
-
-/// The reference outgoing direction in the natural tangent space.
-float3 wo0;
-
-/// The reference incoming direction in the natural tangent space.
-float3 wi0;
-
-/// The reference mode.
-scatter_mode mode=(wo0.z<0)==(wi0.z<0)?scatter_reflect:scatter_transmit;
-
-/// Hit backface?
-bool hitBackface=wo0.z<0;
-
-/// Is thin walled?
-bool thin_walled=false;
-
-/// The relative upper-to-lower index of refraction.
-float ior=1/DEFAULT_IOR;
-
-/// The absolute index of refraction of the exterior medium, needed by
-/// modifier BSDFs to convert user-facing absolute IORs into relative
-/// ratios. See `relativeIOR()`.
-float exterior_ior=1.;
-
-/// The normal direction.
-float3 normal=float3(0,0,1);
-
-/// The tangent direction.
-float3 tangent_u=float3(1,0,0);
-
-/// The outgoing direction.
-float3 wo=wo0;
-
-/// The incoming direction.
-float3 wi=wi0;
-float shadingNormalCorrection=1;
-finalize {
-if(hitBackface){
-wo0=-wo0;
-wi0=-wi0;
-wo=-wo;
-wi=-wi;
-ior=1./ior if(!thin_walled);
-}
-}
-};
-struct ScatterEvaluateResult{
-/// The Bidirectional Scattering Distribution Function (BSDF) evaluation.
-$(color|float) f=0.;
-
-/// The Probability Density Function (PDF) evaluations.
-/// - `pdf[0]` is the forward density of sampling `wi` given `wo`.
-/// - `pdf[1]` is the reverse density of sampling `wo` given `wi`.
-float2 pdf=float2(0.);
-
-/// Is known to be black by construction? Faster than checking every
-/// element of `f`!
-bool isBlack=false;
-};
-
-/// Recalculate the effective tangent space. Returns `true` if the
-/// directions are still consistent with the scatter mode after applying
-/// the effective tangent space.
-@(pure noinline)
-bool recalculateTangentSpace(inline const &ScatterEvaluateParameters params){
-auto tbn(calculateTangentSpace(normal,tangent_u));
-wo=normalize(wo0*tbn);
-wi=normalize(wi0*tbn);
-if(isImportance){
-const auto numer=wo.z*wi0.z;
-const auto denom=wi.z*wo0.z;
-shadingNormalCorrection=(denom==0?1:#abs(numer/denom));
-} else {
-shadingNormalCorrection=1;
-}
-return ((wo.z<0)==(wo0.z<0))&((wi.z<0)==(wi0.z<0));
-}
-@(pure)
-float3 halfDirection(inline const &ScatterEvaluateParameters params){
-return normalize(mode==scatter_reflect?specular::reflectionHalfVector(wo,wi):specular::refractionHalfVector(wo,wi,ior));
-}
-struct ScatterSampleParameters{
-bool isImportance;
-
-/// The primary outgoing direction in the natural geometric tangent space.
-float3 wo0;
-
-/// Hit backface?
-bool hitBackface=wo0.z<0;
-
-/// Is thin walled?
-bool thin_walled=false;
-
-/// The active index of refraction.
-float ior=1/DEFAULT_IOR;
-
-/// The absolute index of refraction of the exterior medium, needed by
-/// modifier BSDFs to convert user-facing absolute IORs into relative
-/// ratios. See `relativeIOR()`.
-float exterior_ior=1.;
-
-/// The active normal direction.
-float3 normal=float3(0,0,1);
-
-/// The active tangent direction.
-float3 tangent_u=float3(1,0,0);
-
-/// The active outgoing direction (expanded in the active tangent space).
-float3 wo=wo0;
-
-/// The canonical random sample in `[0,1]^4`.
-float4 xi;
-finalize {
-if(hitBackface){
-wo0=-wo0;
-wo=-wo;
-ior=1/ior if(!thin_walled);
-}
-}
-};
-struct ScatterSampleResult{
-/// The sampled incoming direction.
-float3 wi=float3(0.);
-
-/// The sampled scatter mode.
-scatter_mode mode=scatter_none;
-
-/// If sampled from a directional delta distribution, the BSDF evaluation (which is otherwise unevaluable).
-?color fDelta=none;
-};
-@(pure noinline)
-?float3x3 recalculateTangentSpace(inline const &ScatterSampleParameters params){
-auto tbn(calculateTangentSpace(normal,tangent_u));
-wo=wo0*tbn;
-return tbn if((wo.z<0)==(wo0.z<0));
-}
-@(pure)
-float3 halfDirection(inline const &ScatterSampleParameters this,inline const &ScatterSampleResult result){
-return normalize(mode==scatter_reflect?specular::reflectionHalfVector(wo,wi):specular::refractionHalfVector(wo,wi,ior));
-}
-
-/// Calculate the shading-normal correction factor for a sampled delta direction under
-/// importance transport, consistent with the convention `recalculateTangentSpace`
-/// applies on the evaluate path. Expects the sampled incoming direction both in the
-/// shading tangent space `wiShading` and in the natural tangent space `wiNatural`.
-@(pure macro)
-float sampleShadingNormalCorrection(inline const &ScatterSampleParameters params,const float3 wiShading,const float3 wiNatural){
-const auto numer(wo.z*wiNatural.z);
-const auto denom(wiShading.z*wo0.z);
-return denom==0?1.:#abs(numer/denom);
-}
-@(pure macro)
-auto ScatterEvaluateResultWithMultiscatter(
-const auto this,
-const auto f,
-const float2 pdf,
-float cosThetao[[anno::unused()]],
-float cosThetai[[anno::unused()]],
-const float roughness[[anno::unused()]],
-const string lutName[[anno::unused()]],
-){
-if(#typeof(this.multiscatter_tint)==void||(#typeof(this.multiscatter_tint)==float&&this.multiscatter_tint==0.)){
-return ScatterEvaluateResult(f: this.tint*f,pdf: pdf);
-} else {
-cosThetao=#abs(cosThetao);
-cosThetai=#abs(cosThetai);
-const auto lut(#albedo_lut(lutName));
-float t((lut.num_roughness-1)*saturate(roughness));
-const int j(#min(int(#floor(t)),lut.num_roughness-2));
-t=t-j;
-const float Ewo=return_from{
-float s((lut.num_cos_theta-1)*#min(cosThetao,1));
-const int i(#min(int(#floor(s)),lut.num_cos_theta-2));
-const &float ptr0(&lut.directional_albedo[lut.num_roughness*(i+0)+j]);
-const &float ptr1(&lut.directional_albedo[lut.num_roughness*(i+1)+j]);
-s=s-i;
-return #min(1.,lerp(lerp(ptr0[0],ptr0[1],t),lerp(ptr1[0],ptr1[1],t),s));
-};
-const float Ewi=return_from{
-float s((lut.num_cos_theta-1)*#min(cosThetai,1));
-const int i(#min(int(#floor(s)),lut.num_cos_theta-2));
-const &float ptr0(&lut.directional_albedo[lut.num_roughness*(i+0)+j]);
-const &float ptr1(&lut.directional_albedo[lut.num_roughness*(i+1)+j]);
-s=s-i;
-return #min(1.,lerp(lerp(ptr0[0],ptr0[1],t),lerp(ptr1[0],ptr1[1],t),s));
-};
-const float Eav=#min(1.,lerp(lut.average_albedo[j],lut.average_albedo[j+1],t));
-const auto ms_f=cosThetai/$PI*(1-Ewo)*(1-Ewi)/(1-Eav+1e-6);
-const auto ms_pdf=auto(cosThetai,cosThetao)/$PI;
-return ScatterEvaluateResult(f: this.tint*(f+this.multiscatter_tint*ms_f),pdf: lerp(pdf,ms_pdf,MULTISCATTER_DIFFUSE_CHANCE));
-}
-}
-@(pure macro)
-?ScatterSampleResult ScatterSampleResultWithMultiscatter(const auto this,const &float4 xi[[anno::unused()]],const float3x3 tbn[[anno::unused()]]){
-if(#typeof(this.multiscatter_tint)==void||(#typeof(this.multiscatter_tint)==float&&this.multiscatter_tint==0.)){
-} else {
-if(monte_carlo::boolSample(&xi.w,MULTISCATTER_DIFFUSE_CHANCE)){
-return ScatterSampleResult(wi: tbn*monte_carlo::cosineHemisphereSample(xi.xy),mode: scatter_reflect);
-}
-}
-}
-struct EmissionEvaluateParameters{
-/// The emission direction in the natural tangent space, pointing away
-/// from the surface.
-float3 wi0;
-
-/// Hit backface?
-bool hitBackface=wi0.z<0;
-
-/// The normal direction.
-float3 normal=float3(0,0,1);
-
-/// The tangent direction.
-float3 tangent_u=float3(1,0,0);
-
-/// The emission direction (expanded in the active tangent space).
-float3 wi=wi0;
-finalize {
-if(hitBackface){
-wi0=-wi0;
-wi=-wi;
-}
-}
-};
-struct EmissionEvaluateResult{
-/// The Emission Distribution Function (EDF) evaluation, normalized such
-/// that the cosine-weighted integral over the upper hemisphere is 1.
-$(color|float) f=0.;
-
-/// The Probability Density Function (PDF) with respect to solid angle
-/// of sampling `wi`.
-float pdf=0.;
-
-/// Is known to be black by construction? Faster than checking every
-/// element of `f`!
-bool isBlack=false;
-};
-struct EmissionSampleParameters{
-/// The canonical random sample in `[0,1]^4`.
-float4 xi;
-
-/// The normal direction.
-float3 normal=float3(0,0,1);
-
-/// The tangent direction.
-float3 tangent_u=float3(1,0,0);
-};
-struct EmissionSampleResult{
-/// The sampled emission direction in the natural tangent space.
-float3 wi=float3(0.);
-
-/// Is valid?
-bool isValid=false;
-};
-
-/// Recalculate the effective tangent space for emission evaluation.
-/// Returns `true` if `wi` remains in the upper hemisphere after applying
-/// the effective tangent space.
-@(pure noinline)
-bool recalculateTangentSpace(inline const &EmissionEvaluateParameters params){
-auto tbn(calculateTangentSpace(normal,tangent_u));
-wi=normalize(wi0*tbn);
-return wi.z>0;
-}
-@(pure macro)
-auto scatterEvaluate(const &_default_bsdf this[[anno::unused()]],const &ScatterEvaluateParameters params[[anno::unused()]]){
-return ScatterEvaluateResult(isBlack: true);
-}
-@(pure macro)
-auto scatterSample(const &_default_bsdf this[[anno::unused()]],const &ScatterSampleParameters params[[anno::unused()]]){
-return ScatterSampleResult();
-}
-@(macro)
-auto scatterEvaluate(const &_default_vdf this[[anno::unused()]],const &ScatterEvaluateParameters params[[anno::unused()]]){
-return ScatterEvaluateResult(isBlack: true);
-}
-@(macro)
-auto scatterSample(const &_default_vdf this[[anno::unused()]],const &ScatterSampleParameters params[[anno::unused()]]){
-return ScatterSampleResult();
-}
-@(pure macro)
-auto emissionEvaluate(const &_default_edf this[[anno::unused()]],const &EmissionEvaluateParameters params[[anno::unused()]]){
-return EmissionEvaluateResult(isBlack: true);
-}
-@(pure macro)
-auto emissionSample(const &_default_edf this[[anno::unused()]],const &EmissionSampleParameters params[[anno::unused()]]){
-return EmissionSampleResult();
-}
-const float EON_CONSTANT1=0.5-2./(3.*$PI);
-const float EON_CONSTANT2=2./3.-28./(15.*$PI);
-
-/// The directional albedo of the FON single-scattering lobe at unit
-/// single-scattering albedo, using the rational fit from the EON paper
-/// (error below 0.1% over the whole angular range).
-@(pure)
-float eonDirectionalAlbedo(const float mu,const float r){
-const float mucomp(1-saturate(mu));
-const float GoverPi(mucomp*(0.0571085289+mucomp*(0.491881867+mucomp*(-0.332181442+mucomp*0.0714429953))));
-return (1+r*GoverPi)/(1+EON_CONSTANT1*r);
-}
-
-/// The LTC matrix coefficients `(a, b, c, d)` for CLTC sampling of the
-/// EON model, fit as functions of the view cosine and roughness.
-@(pure)
-float4 eonLTCCoeffs(const float mu,const float r){
-return float4(
-r*(-0.303392+(-0.518982+0.111709*mu)*mu+(-0.276266+0.335918*mu)*r)+1,
-r*(-1.16407+1.15859*mu+(0.150815-0.150105*mu)*r)/(mu*mu*mu-1.43545),
-r*(0.20013+(-0.506373+0.261777*mu)*mu)+1,
-r*(0.540852+(-1.01625+0.475392*mu)*mu)/(-1.0743+(0.0725628+mu)*mu),
-);
-}
-
-/// The azimuthal frame `(cos(phi), sin(phi))` of the given direction, or
-/// `(1, 0)` at the pole.
-@(pure macro)
-float2 azimuthFrame(const float3 w){
-const float len(length(w.xy));
-return len>EPSILON?w.xy/len:float2(1,0);
-}
-
-/// The density over `wi` of CLTC sampling for the EON model. Both
-/// directions are in the local shading frame with `wo.z > 0`.
-@(pure)
-float eonCLTCPdf(const float3 wo,const float3 wi,const float r){
-const float4 co(eonLTCCoeffs(wo.z,r));
-const float2 e(azimuthFrame(wo));
-const float3 wiStd(e.x*wi.x+e.y*wi.y,-e.y*wi.x+e.x*wi.y,wi.z);
-const float3 wh(co.z*(wiStd.x-co.y*wiStd.z),(co.x-co.y*co.w)*wiStd.y,-co.z*(co.w*wiStd.x-co.x*wiStd.z));
-const float detM(co.z*(co.x-co.y*co.w));
-const float len2(#sum(wh*wh));
-return detM*detM/(len2*len2+EPSILON)*#max(wh.z,0.)/($PI*0.5*(1+1/#sqrt(1+co.w*co.w)));
-}
-
-/// Sample the CLTC lobe for the EON model. Returns the sampled incoming
-/// direction in the local shading frame, guaranteed to be in the upper
-/// hemisphere by the clipped construction.
-@(pure)
-float3 eonCLTCSample(const float3 wo,const float r,const float xi0,const float xi1){
-const float4 co(eonLTCCoeffs(wo.z,r));
-const float rad(#sqrt(xi0));
-const float phi($TWO_PI*xi1);
-const float y(rad*#sin(phi));
-const float x(-lerp(#sqrt(#max(1-y*y,0.)),rad*#cos(phi),0.5*(1+1/#sqrt(1+co.w*co.w))));
-const float3 wh(x,y,#sqrt(#max(1-x*x-y*y,0.)));
-const float3 wiLTC(normalize(float3(co.x*wh.x+co.y*wh.z,co.z*wh.y,co.w*wh.x+wh.z)));
-const float2 e(azimuthFrame(wo));
-return float3(e.x*wiLTC.x-e.y*wiLTC.y,e.y*wiLTC.x+e.x*wiLTC.y,wiLTC.z);
-}
-
-/// The probability of choosing the uniform hemisphere lobe over the CLTC
-/// lobe when sampling the EON model, by one-sample MIS.
-@(pure macro)
-float eonUniformLobeChance(const float mu,const float r){
-return #pow(#max(r,0.),0.1)*(0.162925+mu*(-0.372058+(0.538233-0.290822*mu)*mu));
-}
-
-/// The diffuse reflection BSDF, being Lambertian reflection with optional
-/// roughness, in which case it is the energy-preserving Oren-Nayar (EON)
-/// model of Portsmouth, Kutz, and Hill.
-export struct diffuse_reflection_bsdf:bsdf{
-/// The tint.
-///
-/// > Scaling factor, defined as a color, multiplied by the
-/// > result of the distribution function.
-///
-const $(color|float) tint=1.;
-
-/// The roughness.
-///
-/// > Oren-Nayar roughness coefficient, simulating view-dependent diffuse
-/// > reflection. Range: `[0,1]`, with `0` specifying complete view
-/// > independence.
-///
-const float roughness=0.;
-
-/// The handle.
-void handle="";
-
-/// The multiscatter tint.
-///
-/// NOTE: The EON multiple-scattering lobe is part of the model and is
-/// applied at full strength by default (`none`), which is what makes the
-/// model energy preserving. Setting an explicit value scales the
-/// multiple-scattering lobe for artistic control.
-const $(?(color|float)) multiscatter_tint=none;
-
-/// The flags.
-static const int df_flags=DF_REFLECTION|DF_DIFFUSE;
-};
-@(pure)
-auto scatterEvaluate(const &diffuse_reflection_bsdf this,inline const &ScatterEvaluateParameters params){
-if(mode==scatter_reflect&&recalculateTangentSpace(params)){
-const auto cosTheta(#abs(auto(wi.z,wo.z)));
-if(this.roughness==0){
-const auto pdf(cosTheta/$PI);
-auto result(ScatterEvaluateResult(f: this.tint*pdf[0],pdf: pdf));
-result.f*=shadingNormalCorrection if(isImportance);
-return result;
-} else {
-const float r(this.roughness);
-const float AF(1/(1+EON_CONSTANT1*r));
-const float s(#sum(wo.xy*wi.xy));
-const float sOverT(s>0?s/(#max_value(cosTheta)+EPSILON):s);
-const float fSS(cosTheta[0]/$PI*AF*(1+r*sOverT));
-const float EFo(eonDirectionalAlbedo(cosTheta[1],r));
-const float EFi(eonDirectionalAlbedo(cosTheta[0],r));
-const float avgEF(AF*(1+EON_CONSTANT2*r));
-const auto rho(this.tint);
-const auto rhoMS(rho*rho*avgEF/(1-rho*(1-avgEF)+EPSILON));
-const float msShape(cosTheta[0]/$PI*#max(1-EFo,EPSILON)*#max(1-EFi,EPSILON)/#max(1-avgEF,EPSILON));
-const float2 chanceU(float2(eonUniformLobeChance(cosTheta[1],r),eonUniformLobeChance(cosTheta[0],r)));
-const float2 pdf(chanceU/$TWO_PI+(1-chanceU)*float2(eonCLTCPdf(wo,wi,r),eonCLTCPdf(wi,wo,r)));
-if(#typeof(this.multiscatter_tint)==void){
-auto result(ScatterEvaluateResult(f: rho*fSS+rhoMS*msShape,pdf: pdf));
-result.f*=shadingNormalCorrection if(isImportance);
-return result;
-} else {
-auto result(ScatterEvaluateResult(f: rho*fSS+this.multiscatter_tint*(rhoMS*msShape),pdf: pdf));
-result.f*=shadingNormalCorrection if(isImportance);
-return result;
-}
-}
-} else {
-return ScatterEvaluateResult(isBlack: true);
-}
-}
-@(pure)
-auto scatterSample(const &diffuse_reflection_bsdf this,inline const &ScatterSampleParameters params){
-if((tbn:=recalculateTangentSpace(params))){
-if(this.roughness>0){
-if(monte_carlo::boolSample(&xi.z,eonUniformLobeChance(wo.z,this.roughness))){
-return ScatterSampleResult(wi: (*tbn)*monte_carlo::uniformHemisphereSample(xi.xy),mode: scatter_reflect);
-} else {
-return ScatterSampleResult(wi: (*tbn)*eonCLTCSample(wo,this.roughness,xi.x,xi.y),mode: scatter_reflect);
-}
-}
-return ScatterSampleResult(wi: (*tbn)*monte_carlo::cosineHemisphereSample(xi.xy),mode: scatter_reflect);
-} else {
-return ScatterSampleResult();
-}
-} /// The diffuse transmission BSDF, being Lambertian transmission through
-/// the surface.
-export struct diffuse_transmission_bsdf:bsdf{
-/// The tint.
-///
-/// > Scaling factor, defined as a color, multiplied by the
-/// > result of the distribution function.
-///
-const $(color|float) tint=1.;
-
-/// The handle.
-void handle="";
-
-/// The flags.
-static const int df_flags=DF_TRANSMISSION|DF_DIFFUSE;
-};
-@(pure)
-auto scatterEvaluate(inline const &diffuse_transmission_bsdf this,inline const &ScatterEvaluateParameters params){
-if(mode==scatter_transmit&&recalculateTangentSpace(params)){
-const auto cosTheta(#abs(auto(wi.z,wo.z)));
-const auto pdf(cosTheta/$PI);
-auto result(ScatterEvaluateResult(f: tint*pdf[0],pdf: pdf));
-result.f*=shadingNormalCorrection if(isImportance);
-return result;
-} else {
-return ScatterEvaluateResult(isBlack: true);
-}
-}
-@(pure)
-auto scatterSample(inline const &diffuse_transmission_bsdf this,inline const &ScatterSampleParameters params){
-if((tbn:=recalculateTangentSpace(params))){
-return ScatterSampleResult(wi: (*tbn)*-monte_carlo::cosineHemisphereSample(xi.xy),mode: scatter_transmit);
-} else {
-return ScatterSampleResult();
-}
-} /// The specular BSDF, being perfect mirror reflection and/or refractive
-/// transmission as a directional delta distribution.
-export struct specular_bsdf:bsdf{
-/// The tint.
-///
-/// > Scaling factor, defined as a color, multiplied by the
-/// > result of the distribution function.
-///
-const $(color|float) tint=1.;
-
-/// The scatter mode.
-///
-/// > One of three values: `scatter_reflect`, `scatter_transmit`,
-/// > or (for both) `scatter_reflect_transmit`.
-///
-/// NOTE: With `scatter_reflect_transmit`, the reflect/transmit split is
-/// weighted by the dielectric Fresnel term for the active IOR, matching
-/// the reference MDL semantics. Total internal reflection folds entirely
-/// into reflection.
-///
-const scatter_mode mode=scatter_reflect;
-
-/// The handle.
-void handle="";
-
-/// The flags.
-const int df_flags=int(mode)|DF_SPECULAR;
-};
-@(pure macro)
-auto scatterEvaluate(const &specular_bsdf this[[anno::unused()]],const &ScatterEvaluateParameters params[[anno::unused()]]){
-return ScatterEvaluateResult(isBlack: true);
-}
-@(pure macro)
-auto scatterSample(const &specular_bsdf this,inline const &ScatterSampleParameters params){
-return ScatterSampleResult() if(this.mode==scatter_none);
-if((tbn:=recalculateTangentSpace(params))){
-const auto reflectChance(this.mode==scatter_reflect_transmit?specular::dielectricFresnel(wo.z,ior):scatterReflectChance(this.mode));
-if(xi.x<reflectChance){
-const auto wiLocal(specular::reflect(wo,float3(0,0,1)));
-auto result=ScatterSampleResult(wi: (*tbn)*wiLocal,mode: scatter_reflect,fDelta: color(this.tint));
-*result.fDelta*=sampleShadingNormalCorrection(params,wiLocal,result.wi) if(isImportance);
-return result;
-} else {
-const auto wiLocal(thin_walled?-wo:specular::refract(wo,float3(0,0,1),ior));
-auto result=ScatterSampleResult(wi: (*tbn)*wiLocal,mode: scatter_transmit,fDelta: color(this.tint));
-if(isImportance){
-*result.fDelta*=sampleShadingNormalCorrection(params,wiLocal,result.wi);
-} else if(!thin_walled){
-*result.fDelta*=ior*ior;
-}
-return result;
-}
-} else {
-return ScatterSampleResult();
-}
-} /// The 32x32 LTC fit of the volumetric sheen layer of Zeltner, Burley, and
-/// Chiang, indexed by roughness (rows) and view cosine (columns), with three
-/// entries `(aInv, bInv, R)`: the inverse transform coefficients and the
-/// directional albedo. Data from the authors' supplemental code
-/// (https://github.com/tizian/ltc-sheen, Apache-2.0).
-static const auto SHEEN_LTC_TABLE=float3[32][32](float3[32](float3(0.01415,6e-4,1e-5),float3(0.,0.,0.),float3(0.,0.,0.),float3(0.,0.,0.),float3(0.,0.,0.),float3(0.,0.,0.),float3(0.,0.,0.),float3(0.,0.,0.),float3(0.,0.,0.),float3(0.,0.,0.),float3(0.,0.,0.),float3(0.,0.,0.),float3(0.,0.,0.),float3(0.,0.,0.),float3(0.,0.,0.),float3(0.,0.,0.),float3(0.,0.,0.),float3(0.,0.,0.),float3(0.,0.,0.),float3(0.,0.,0.),float3(0.,0.,0.),float3(0.,0.,0.),float3(0.,0.,0.),float3(0.,0.,0.),float3(0.,0.,0.),float3(0.,0.,0.),float3(0.,0.,0.),float3(0.,0.,0.),float3(0.,0.,0.),float3(0.,0.,0.),float3(0.,0.,0.),float3(0.,0.,0.)),float3[32](float3(0.01941,-232e-5,0.05839),float3(0.01741,-581e-5,71e-5),float3(0.0461,-769e-5,7e-5),float3(0.10367,-74e-4,2e-5),float3(0.06244,-0.02445,0.),float3(0.23927,-242e-5,0.),float3(0.,0.,0.),float3(0.,0.,0.),float3(0.,0.,0.),float3(0.,0.,0.),float3(0.,0.,0.),float3(0.,0.,0.),float3(0.,0.,0.),float3(0.,0.,0.),float3(0.,0.,0.),float3(0.,0.,0.),float3(0.,0.,0.),float3(0.,0.,0.),float3(0.,0.,0.),float3(0.,0.,0.),float3(0.,0.,0.),float3(0.,0.,0.),float3(0.,0.,0.),float3(0.,0.,0.),float3(0.,0.,0.),float3(0.,0.,0.),float3(0.,0.,0.),float3(0.,0.,0.),float3(0.,0.,0.),float3(0.,0.,0.),float3(0.,0.,0.),float3(0.,0.,0.)),float3[32](float3(0.01927,-0.01424,0.38834),float3(0.01895,-218e-5,0.09768),float3(0.03002,-194e-5,0.01072),float3(0.03912,-384e-5,15e-4),float3(0.04938,-668e-5,39e-5),float3(0.05239,-0.01107,12e-5),float3(0.06018,-746e-5,6e-5),float3(0.0652,-0.01591,3e-5),float3(0.08253,-0.01052,2e-5),float3(0.21093,-0.01495,2e-5),float3(0.12785,-0.0153,1e-5),float3(0.1903,-0.01428,1e-5),float3(0.15254,-0.01276,0.),float3(0.16585,-0.02071,0.),float3(0.,0.,0.),float3(0.,0.,0.),float3(0.,0.,0.),float3(0.,0.,0.),float3(0.,0.,0.),float3(0.,0.,0.),float3(0.,0.,0.),float3(0.,0.,0.),float3(0.,0.,0.),float3(0.,0.,0.),float3(0.,0.,0.),float3(0.,0.,0.),float3(0.,0.,0.),float3(0.,0.,0.),float3(0.,0.,0.),float3(0.,0.,0.),float3(0.,0.,0.),float3(0.,0.,0.)),float3[32](float3(0.03084,-0.04909,0.55348),float3(0.03764,-71e-4,0.29827),float3(0.03952,-236e-5,0.11755),float3(0.04092,-201e-5,0.03677),float3(0.04433,-298e-5,983e-5),float3(0.05014,-546e-5,288e-5),float3(0.0557,-834e-5,101e-5),float3(0.06215,-0.01121,46e-5),float3(0.0666,-0.01294,23e-5),float3(0.07902,-0.01692,14e-5),float3(0.10099,-0.01639,1e-4),float3(0.10794,-0.01738,6e-5),float3(0.10632,-0.02032,4e-5),float3(0.12623,-0.01947,3e-5),float3(0.13931,-0.02354,2e-5),float3(0.15353,-0.0291,2e-5),float3(0.16109,-0.02565,1e-5),float3(0.14583,-0.02903,1e-5),float3(0.27891,-0.03066,1e-5),float3(0.22622,-0.03044,1e-5),float3(0.18932,-0.04045,1e-5),float3(0.20219,-0.03226,0.),float3(0.30269,-0.03443,0.),float3(0.38379,-0.03023,0.),float3(0.39038,-0.0361,0.),float3(0.4631,-0.02022,0.),float3(0.44663,-0.0259,0.),float3(0.,0.,0.),float3(0.,0.,0.),float3(0.,0.,0.),float3(0.,0.,0.),float3(0.,0.,0.)),float3[32](float3(0.04118,-0.10668,0.63273),float3(0.05152,-0.02772,0.42999),float3(0.05724,-717e-5,0.24931),float3(0.05863,-421e-5,0.1304),float3(0.05952,-351e-5,0.0591),float3(0.06149,-399e-5,0.0243),float3(0.06448,-522e-5,981e-5),float3(0.07004,-676e-5,433e-5),float3(0.07774,-866e-5,2e-3),float3(0.08632,-0.01099,105e-5),float3(0.09629,-0.01332,62e-5),float3(0.10592,-0.0159,39e-5),float3(0.10718,-0.01724,24e-5),float3(0.12207,-0.02041,18e-5),float3(0.13413,-0.02237,13e-5),float3(0.13702,-0.02503,9e-5),float3(0.15294,-0.02664,8e-5),float3(0.15121,-0.02803,6e-5),float3(0.17652,-0.03188,5e-5),float3(0.19532,-0.03147,4e-5),float3(0.20831,-0.03346,3e-5),float3(0.19762,-0.03476,2e-5),float3(0.24202,-0.03464,2e-5),float3(0.32995,-0.03125,2e-5),float3(0.30857,-0.03303,2e-5),float3(0.39596,-0.03009,2e-5),float3(0.38346,-0.03198,1e-5),float3(0.42503,-0.02518,1e-5),float3(0.41592,-0.03195,1e-5),float3(0.42512,-0.01668,1e-5),float3(0.36714,-0.02978,1e-5),float3(0.46502,-394e-5,1e-5)),float3[32](float3(0.05088,-0.16006,0.67021),float3(0.06485,-0.05552,0.50797),float3(0.07697,-0.01274,0.34475),float3(0.08334,-932e-5,0.22264),float3(0.08654,-582e-5,0.133),float3(0.0895,-507e-5,0.07375),float3(0.09263,-531e-5,0.03867),float3(0.09711,-616e-5,0.02006),float3(0.10113,-792e-5,0.01032),float3(0.10913,-949e-5,57e-4),float3(0.11586,-0.01167,324e-5),float3(0.12425,-0.01421,197e-5),float3(0.12986,-0.01635,122e-5),float3(0.1353,-0.01858,8e-4),float3(0.15037,-0.02237,59e-5),float3(0.15165,-0.0245,4e-4),float3(0.15858,-0.02714,3e-4),float3(0.1666,-0.03145,22e-5),float3(0.18051,-0.03321,18e-5),float3(0.18022,-0.03295,13e-5),float3(0.19896,-0.03492,12e-5),float3(0.21095,-0.03365,9e-5),float3(0.21862,-0.03733,8e-5),float3(0.23861,-0.0393,7e-5),float3(0.25384,-0.03879,6e-5),float3(0.27394,-0.0358,5e-5),float3(0.28563,-0.04089,4e-5),float3(0.2916,-0.03604,3e-5),float3(0.293,-0.03863,3e-5),float3(0.33458,-0.03575,2e-5),float3(0.36514,-0.02621,2e-5),float3(0.38746,124e-5,2e-5)),float3[32](float3(0.06054,-0.18133,0.68765),float3(0.0771,-0.08871,0.55387),float3(0.09569,-0.028,0.41042),float3(0.10917,-0.01456,0.29613),float3(0.11813,-0.01052,0.20481),float3(0.12469,-904e-5,0.13463),float3(0.12958,-864e-5,0.08432),float3(0.13406,-898e-5,0.05135),float3(0.13801,-0.01019,0.03073),float3(0.14324,-0.0111,0.01861),float3(0.14801,-0.01354,0.01132),float3(0.15359,-0.01614,706e-5),float3(0.15945,-0.01922,454e-5),float3(0.16688,-0.02116,304e-5),float3(0.17552,-0.02363,212e-5),float3(0.17956,-0.02606,145e-5),float3(0.18275,-0.02887,102e-5),float3(0.19293,-0.0327,78e-5),float3(0.20081,-0.03492,59e-5),float3(0.20817,-0.03607,46e-5),float3(0.21658,-0.03714,36e-5),float3(0.22866,-0.03827,3e-4),float3(0.23912,-0.03832,25e-5),float3(0.24736,-0.03918,2e-4),float3(0.26573,-0.04071,17e-5),float3(0.26821,-0.04382,13e-5),float3(0.28767,-0.0386,12e-5),float3(0.30592,-0.0369,1e-4),float3(0.31228,-0.04032,8e-5),float3(0.35297,-0.03136,8e-5),float3(0.3557,-0.02365,6e-5),float3(0.37077,-281e-5,6e-5)),float3[32](float3(0.07075,-0.18042,0.69478),float3(0.08974,-0.10806,0.58263),float3(0.11306,-0.04959,0.45689),float3(0.13241,-0.02418,0.35318),float3(0.14704,-0.01632,0.26617),float3(0.15763,-0.01333,0.19342),float3(0.16591,-0.01204,0.1365),float3(0.17258,-0.01177,0.09391),float3(0.17781,-0.01198,0.06299),float3(0.18234,-0.01284,0.04183),float3(0.187,-0.01408,0.02782),float3(0.19101,-0.01571,0.01845),float3(0.19657,-0.01794,0.01259),float3(0.20165,-0.02041,864e-5),float3(0.20731,-0.02235,604e-5),float3(0.2115,-0.02516,421e-5),float3(0.21692,-0.02822,303e-5),float3(0.22536,-0.03168,228e-5),float3(0.23235,-0.03631,172e-5),float3(0.2372,-0.0384,129e-5),float3(0.24295,-0.04024,99e-5),float3(0.25154,-0.04645,79e-5),float3(0.262,-0.04435,66e-5),float3(0.26907,-0.04644,52e-5),float3(0.2804,-0.04369,44e-5),float3(0.28922,-0.05007,34e-5),float3(0.30452,-0.04809,29e-5),float3(0.31567,-0.04719,24e-5),float3(0.33294,-0.04179,21e-5),float3(0.35084,-0.03537,19e-5),float3(0.37226,-0.02633,17e-5),float3(0.37956,196e-5,13e-5)),float3[32](float3(0.08222,-0.17531,0.69794),float3(0.10394,-0.13135,0.601),float3(0.13034,-0.08092,0.49085),float3(0.15361,-0.04065,0.39802),float3(0.17244,-0.02431,0.31773),float3(0.1862,-0.01864,0.24683),float3(0.19671,-0.0162,0.18787),float3(0.20509,-0.01498,0.13964),float3(0.21199,-0.0146,0.1022),float3(0.21726,-0.01487,0.07319),float3(0.22245,-0.01549,0.05252),float3(0.22702,-0.01665,0.03747),float3(0.23174,-0.01802,0.02685),float3(0.23571,-0.01985,0.01915),float3(0.23966,-0.02185,0.01375),float3(0.24384,-0.02424,996e-5),float3(0.24877,-0.02636,733e-5),float3(0.25548,-0.02871,552e-5),float3(0.26047,-0.03133,415e-5),float3(0.26863,-0.03455,322e-5),float3(0.27404,-0.03705,247e-5),float3(0.28088,-0.03931,194e-5),float3(0.2901,-0.04546,157e-5),float3(0.29704,-0.04797,126e-5),float3(0.30559,-0.0499,102e-5),float3(0.31519,-0.04903,82e-5),float3(0.32721,-0.04842,69e-5),float3(0.33828,-0.04495,59e-5),float3(0.35424,-0.0431,48e-5),float3(0.36868,-0.03925,42e-5),float3(0.3857,-0.02709,37e-5),float3(0.39707,103e-5,3e-4)),float3[32](float3(0.09597,-0.17397,0.69862),float3(0.11972,-0.15003,0.61474),float3(0.14796,-0.10394,0.51662),float3(0.1735,-0.06278,0.43321),float3(0.19481,-0.03698,0.35989),float3(0.21136,-0.02667,0.29352),float3(0.22369,-0.02186,0.23483),float3(0.2333,-0.01962,0.18491),float3(0.24109,-0.01854,0.14298),float3(0.24787,-0.0181,0.1096),float3(0.25359,-0.01829,0.08309),float3(0.25878,-0.01882,0.06268),float3(0.2632,-0.0199,0.04689),float3(0.26831,-0.02103,0.03539),float3(0.27305,-0.02243,0.02666),float3(0.2781,-0.02425,0.02015),float3(0.28206,-0.02611,0.01519),float3(0.28734,-0.02809,0.0116),float3(0.29228,-0.03045,888e-5),float3(0.29719,-0.03211,683e-5),float3(0.30256,-0.03413,531e-5),float3(0.30857,-0.03666,417e-5),float3(0.31652,-0.03882,334e-5),float3(0.32438,-0.0415,27e-4),float3(0.33291,-0.04323,22e-4),float3(0.34012,-0.04376,178e-5),float3(0.35087,-0.0459,148e-5),float3(0.36243,-0.04591,123e-5),float3(0.37467,-0.04202,101e-5),float3(0.38986,-0.03859,87e-5),float3(0.40394,-0.03046,73e-5),float3(0.41719,25e-5,61e-5)),float3[32](float3(0.11173,-0.17686,0.6984),float3(0.13694,-0.16229,0.62456),float3(0.16797,-0.12071,0.5378),float3(0.19358,-0.08778,0.46227),float3(0.21571,-0.05746,0.39486),float3(0.23427,-0.03882,0.33234),float3(0.249,-0.03044,0.27724),float3(0.26011,-0.0262,0.22722),float3(0.26884,-0.02412,0.18345),float3(0.27668,-0.0229,0.14737),float3(0.28326,-0.02247,0.11687),float3(0.28928,-0.02235,0.09223),float3(0.29445,-0.02283,0.07219),float3(0.29932,-0.02349,0.05639),float3(0.30454,-0.02444,0.04424),float3(0.30943,-0.02562,0.0346),float3(0.31431,-0.02725,0.02709),float3(0.31861,-0.02859,0.02113),float3(0.32326,-0.03047,0.01656),float3(0.32881,-0.03199,0.01309),float3(0.33479,-0.03417,0.01041),float3(0.34094,-0.03618,831e-5),float3(0.34705,-0.03771,665e-5),float3(0.35341,-0.0392,534e-5),float3(0.36079,-0.0407,434e-5),float3(0.36863,-0.04138,355e-5),float3(0.37512,-0.04066,288e-5),float3(0.38607,-0.04125,241e-5),float3(0.39611,-0.03916,2e-3),float3(0.41085,-0.03764,17e-4),float3(0.42341,-0.02956,142e-5),float3(0.43959,2e-4,123e-5)),float3[32](float3(0.12869,-0.17952,0.69766),float3(0.15653,-0.16921,0.63215),float3(0.18847,-0.13634,0.55391),float3(0.21397,-0.10854,0.48615),float3(0.23632,-0.08164,0.42355),float3(0.25652,-0.05663,0.36707),float3(0.27273,-0.04256,0.31348),float3(0.28564,-0.03522,0.26549),float3(0.29568,-0.03124,0.22185),float3(0.30413,-0.02895,0.18403),float3(0.31142,-0.0276,0.15141),float3(0.31801,-0.02688,0.1238),float3(0.32424,-0.02653,0.10104),float3(0.32941,-0.02669,0.08149),float3(0.33479,-0.02714,0.06598),float3(0.33933,-0.02784,0.05291),float3(0.34444,-0.02878,0.04275),float3(0.34892,-0.02988,0.03428),float3(0.35415,-0.03136,0.02771),float3(0.35873,-0.03261,0.02222),float3(0.36457,-0.03429,0.01807),float3(0.36975,-0.03567,0.01456),float3(0.37684,-0.03742,0.01195),float3(0.38258,-0.03792,969e-5),float3(0.39038,-0.03954,798e-5),float3(0.39755,-0.04002,653e-5),float3(0.40428,-0.04014,534e-5),float3(0.41192,-0.03889,441e-5),float3(0.42141,-0.03739,368e-5),float3(0.43074,-0.03386,307e-5),float3(0.44659,-0.0281,264e-5),float3(0.46013,13e-5,224e-5)),float3[32](float3(0.14693,-0.17953,0.69641),float3(0.17828,-0.17294,0.63746),float3(0.20991,-0.14837,0.56861),float3(0.23513,-0.12458,0.50592),float3(0.25809,-0.10127,0.44888),float3(0.2785,-0.07912,0.39646),float3(0.29576,-0.05884,0.34628),float3(0.30999,-0.04715,0.30001),float3(0.32128,-0.04041,0.25727),float3(0.33053,-0.03637,0.21872),float3(0.33854,-0.03401,0.1853),float3(0.34549,-0.03244,0.15569),float3(0.35212,-0.03165,0.13073),float3(0.35806,-0.03113,0.10901),float3(0.36371,-0.03104,0.09059),float3(0.36901,-0.03134,0.07509),float3(0.37416,-0.03173,0.06205),float3(0.37907,-0.03225,0.05112),float3(0.38378,-0.03304,0.04199),float3(0.38887,-0.03406,0.03458),float3(0.39366,-0.03515,0.02839),float3(0.39953,-0.03594,0.02356),float3(0.40534,-0.03728,0.01946),float3(0.41134,-0.03825,0.01604),float3(0.41832,-0.0391,0.01337),float3(0.42583,-0.0396,0.01115),float3(0.43323,-0.0395,925e-5),float3(0.44084,-0.03877,766e-5),float3(0.44897,-0.03647,639e-5),float3(0.45832,-0.03283,536e-5),float3(0.47095,-0.02659,456e-5),float3(0.4834,-2e-5,39e-4)),float3[32](float3(0.16755,-0.17802,0.69548),float3(0.20139,-0.17499,0.64297),float3(0.23191,-0.15708,0.57917),float3(0.25781,-0.13619,0.52314),float3(0.28103,-0.11601,0.47074),float3(0.30124,-0.09763,0.42115),float3(0.31874,-0.07926,0.37424),float3(0.33379,-0.06262,0.33015),float3(0.34648,-0.05277,0.29017),float3(0.35662,-0.04616,0.25188),float3(0.36536,-0.04217,0.21825),float3(0.37289,-0.03952,0.18762),float3(0.37956,-0.03771,0.16043),float3(0.38585,-0.03664,0.13705),float3(0.39167,-0.03576,0.11638),float3(0.39736,-0.03561,0.09898),float3(0.40272,-0.03531,0.0836),float3(0.40787,-0.03537,0.0705),float3(0.41311,-0.03577,0.05948),float3(0.41811,-0.03606,0.04991),float3(0.42324,-0.03657,0.04182),float3(0.42871,-0.03725,0.03523),float3(0.43459,-0.0379,0.02974),float3(0.44015,-0.0383,0.02485),float3(0.44634,-0.0385,0.02085),float3(0.45322,-0.03897,0.01764),float3(0.46073,-0.03886,0.01489),float3(0.46815,-0.03764,0.01243),float3(0.47699,-0.03576,0.01052),float3(0.48579,-0.03199,882e-5),float3(0.49728,-0.02678,762e-5),float3(0.50776,-3e-5,638e-5)),float3[32](float3(0.19101,-0.1757,0.69518),float3(0.22471,-0.1763,0.64677),float3(0.25559,-0.16233,0.58896),float3(0.28173,-0.14459,0.53726),float3(0.30495,-0.12739,0.48924),float3(0.32541,-0.11162,0.44375),float3(0.34337,-0.09667,0.40045),float3(0.35848,-0.08188,0.35844),float3(0.37152,-0.06821,0.31901),float3(0.38267,-0.05887,0.28296),float3(0.39205,-0.0524,0.24905),float3(0.40013,-0.04793,0.21813),float3(0.40731,-0.04499,0.19041),float3(0.41385,-0.043,0.16557),float3(0.41996,-0.04151,0.1436),float3(0.42572,-0.04033,0.12396),float3(0.43136,-0.03975,0.10719),float3(0.43675,-0.03947,0.0924),float3(0.4421,-0.03943,0.07951),float3(0.44729,-0.03917,0.06811),float3(0.45254,-0.03889,0.05809),float3(0.45786,-0.03887,0.0496),float3(0.46336,-0.03909,0.04242),float3(0.46904,-0.03903,0.03607),float3(0.47514,-0.03922,0.03098),float3(0.48162,-0.03917,0.0265),float3(0.48829,-0.03827,0.02249),float3(0.49548,-0.03702,0.01911),float3(0.50339,-0.03465,0.0163),float3(0.51184,-0.03118,0.01385),float3(0.5215,-0.02485,0.01187),float3(0.53151,-21e-5,0.01004)),float3[32](float3(0.21608,-0.17314,0.69404),float3(0.2491,-0.17599,0.65077),float3(0.28069,-0.16514,0.59738),float3(0.30724,-0.15021,0.55038),float3(0.33032,-0.13557,0.50616),float3(0.35096,-0.12161,0.46415),float3(0.36879,-0.10876,0.4226),float3(0.38457,-0.09665,0.38393),float3(0.39755,-0.08454,0.34548),float3(0.40917,-0.07412,0.3109),float3(0.41915,-0.06463,0.27757),float3(0.4279,-0.05848,0.24745),float3(0.43555,-0.05371,0.21932),float3(0.44253,-0.05046,0.194),float3(0.44886,-0.04821,0.17119),float3(0.45491,-0.04588,0.15001),float3(0.46058,-0.04438,0.13153),float3(0.4659,-0.04412,0.11577),float3(0.47137,-0.04304,0.10099),float3(0.4767,-0.04215,0.08803),float3(0.48207,-0.04161,0.07655),float3(0.4873,-0.04144,0.06667),float3(0.49275,-0.04059,0.05763),float3(0.49832,-0.04032,0.05),float3(0.50411,-0.03974,0.04326),float3(0.51004,-0.03905,0.03745),float3(0.51646,-0.038,0.03233),float3(0.5232,-0.03639,0.02793),float3(0.53028,-0.03436,0.0241),float3(0.53801,-0.03031,0.0207),float3(0.54612,-0.02493,0.01799),float3(0.5554,4e-5,0.01521)),float3[32](float3(0.24162,-0.17052,0.69373),float3(0.27454,-0.17439,0.6537),float3(0.30746,-0.16579,0.60556),float3(0.33408,-0.15358,0.56229),float3(0.35697,-0.14112,0.52099),float3(0.37775,-0.12867,0.4822),float3(0.39587,-0.11735,0.44396),float3(0.41165,-0.107,0.40686),float3(0.42539,-0.09729,0.37145),float3(0.43716,-0.08817,0.33754),float3(0.44735,-0.07945,0.30538),float3(0.45639,-0.07137,0.27528),float3(0.46453,-0.0639,0.24688),float3(0.47188,-0.05902,0.22137),float3(0.4784,-0.05627,0.19867),float3(0.48473,-0.05274,0.17677),float3(0.4906,-0.05014,0.15718),float3(0.49627,-0.04809,0.13948),float3(0.50156,-0.04704,0.12389),float3(0.50672,-0.04617,0.10988),float3(0.51205,-0.04471,0.09688),float3(0.5172,-0.04402,0.0856),float3(0.52258,-0.04284,0.07528),float3(0.52812,-0.0414,0.06603),float3(0.53331,-0.04084,0.05819),float3(0.53939,-0.03922,0.05082),float3(0.54508,-0.03852,0.04467),float3(0.5511,-0.03648,0.03901),float3(0.55773,-0.03362,0.03404),float3(0.56432,-0.02977,0.02969),float3(0.57204,-0.02257,0.02565),float3(0.58012,13e-5,0.02208)),float3[32](float3(0.26781,-0.16726,0.69374),float3(0.30184,-0.1713,0.65782),float3(0.33546,-0.16494,0.613),float3(0.36236,-0.15479,0.5735),float3(0.38543,-0.14389,0.5356),float3(0.40587,-0.13313,0.49892),float3(0.42394,-0.12315,0.46321),float3(0.4398,-0.11396,0.4281),float3(0.45355,-0.10555,0.39357),float3(0.466,-0.09751,0.36179),float3(0.47658,-0.08994,0.33055),float3(0.48605,-0.08303,0.30167),float3(0.49437,-0.07661,0.27438),float3(0.50188,-0.07012,0.24851),float3(0.50886,-0.06435,0.22461),float3(0.51521,-0.06079,0.20331),float3(0.52114,-0.05751,0.18338),float3(0.52686,-0.0549,0.16512),float3(0.53234,-0.05237,0.14824),float3(0.5376,-0.05016,0.13281),float3(0.54305,-0.04763,0.1185),float3(0.54802,-0.04636,0.10604),float3(0.55334,-0.04452,0.09447),float3(0.5585,-0.04311,0.08417),float3(0.5635,-0.04186,0.07499),float3(0.56858,-0.04059,0.06675),float3(0.57426,-0.03828,0.05906),float3(0.57961,-0.03642,0.0524),float3(0.58579,-0.03293,0.04618),float3(0.59207,-0.02837,0.04061),float3(0.59839,-0.02183,0.03571),float3(0.60588,14e-5,0.03099)),float3[32](float3(0.29552,-0.16307,0.69478),float3(0.33034,-0.16735,0.66097),float3(0.36464,-0.16269,0.6201),float3(0.39162,-0.15439,0.58318),float3(0.41468,-0.14491,0.54812),float3(0.43479,-0.13568,0.51374),float3(0.45273,-0.12677,0.48033),float3(0.46884,-0.11827,0.44784),float3(0.48278,-0.11077,0.41543),float3(0.49535,-0.10366,0.38456),float3(0.50635,-0.09707,0.35481),float3(0.51611,-0.09088,0.32656),float3(0.52482,-0.08505,0.29983),float3(0.53261,-0.0792,0.27402),float3(0.53981,-0.07391,0.25049),float3(0.54631,-0.06982,0.22916),float3(0.55239,-0.06584,0.20899),float3(0.55818,-0.06111,0.18974),float3(0.56348,-0.05885,0.17283),float3(0.56875,-0.0556,0.15672),float3(0.57406,-0.05216,0.14161),float3(0.57898,-0.04974,0.12804),float3(0.58395,-0.04738,0.11552),float3(0.5889,-0.04525,0.10412),float3(0.59356,-0.04361,0.09392),float3(0.59866,-0.04122,0.08435),float3(0.60366,-0.03869,0.07566),float3(0.60857,-0.03626,0.06785),float3(0.61392,-0.03267,0.06058),float3(0.61896,-0.02853,0.05418),float3(0.62446,-0.02146,0.04812),float3(0.63114,13e-5,0.04224)),float3[32](float3(0.32493,-0.158,0.69636),float3(0.36044,-0.16239,0.66479),float3(0.395,-0.15918,0.62662),float3(0.42214,-0.15229,0.59208),float3(0.44504,-0.14422,0.55948),float3(0.46513,-0.13589,0.52832),float3(0.4826,-0.12801,0.49686),float3(0.49819,-0.12058,0.46577),float3(0.5122,-0.11368,0.4355),float3(0.52491,-0.10715,0.4064),float3(0.53607,-0.10121,0.37791),float3(0.54604,-0.09561,0.35063),float3(0.55497,-0.09044,0.3244),float3(0.56304,-0.08553,0.29963),float3(0.57042,-0.08073,0.27592),float3(0.57716,-0.07643,0.2543),float3(0.58338,-0.07244,0.23411),float3(0.58922,-0.06816,0.21474),float3(0.59463,-0.06506,0.19748),float3(0.59983,-0.06156,0.18085),float3(0.6051,-0.05721,0.16496),float3(0.60997,-0.05394,0.15071),float3(0.61473,-0.05071,0.13745),float3(0.61957,-0.04764,0.12513),float3(0.62409,-0.04512,0.11401),float3(0.62852,-0.04243,0.10365),float3(0.63251,-0.04049,0.09444),float3(0.6375,-0.03634,0.08526),float3(0.64231,-0.03217,0.07697),float3(0.64613,-0.02798,0.06969),float3(0.65086,-0.02084,0.06274),float3(0.65651,-2e-5,0.05589)),float3[32](float3(0.35603,-0.15221,0.69769),float3(0.39159,-0.15659,0.66832),float3(0.42682,-0.15414,0.63306),float3(0.4544,-0.14815,0.60175),float3(0.47706,-0.14135,0.57114),float3(0.49652,-0.1343,0.5413),float3(0.5137,-0.1272,0.51227),float3(0.52869,-0.12066,0.48316),float3(0.54234,-0.11418,0.4552),float3(0.55442,-0.10835,0.42705),float3(0.56541,-0.10297,0.39979),float3(0.5752,-0.0981,0.37306),float3(0.58426,-0.09325,0.34799),float3(0.59238,-0.08885,0.32368),float3(0.59985,-0.08462,0.30051),float3(0.60666,-0.08047,0.27914),float3(0.61307,-0.07647,0.25902),float3(0.6189,-0.07278,0.24017),float3(0.62438,-0.06918,0.22242),float3(0.62953,-0.06581,0.20569),float3(0.63458,-0.06234,0.1895),float3(0.63958,-0.05873,0.17436),float3(0.64422,-0.05531,0.16053),float3(0.64882,-0.05182,0.14758),float3(0.65331,-0.04822,0.13555),float3(0.65733,-0.04527,0.12469),float3(0.6615,-0.0416,0.11431),float3(0.66582,-0.03748,0.10458),float3(0.6699,-0.0327,0.09545),float3(0.67332,-0.02788,0.08731),float3(0.67675,-0.02071,0.07957),float3(0.68186,2e-5,0.07179)),float3[32](float3(0.38874,-0.14547,0.6999),float3(0.42458,-0.14938,0.67322),float3(0.46012,-0.14757,0.63986),float3(0.48761,-0.14257,0.61072),float3(0.51008,-0.13671,0.5821),float3(0.52938,-0.13046,0.55452),float3(0.54611,-0.12415,0.52757),float3(0.5605,-0.11845,0.49993),float3(0.57333,-0.11284,0.47308),float3(0.5847,-0.10773,0.44623),float3(0.59503,-0.10264,0.42075),float3(0.60417,-0.09831,0.39479),float3(0.61278,-0.09386,0.37078),float3(0.62064,-0.08976,0.34736),float3(0.62794,-0.08593,0.32486),float3(0.63473,-0.08203,0.30393),float3(0.64102,-0.07852,0.28339),float3(0.64684,-0.07474,0.26497),float3(0.65232,-0.07134,0.2468),float3(0.6575,-0.06788,0.23017),float3(0.66247,-0.06462,0.21383),float3(0.6673,-0.06134,0.19836),float3(0.67176,-0.05808,0.18437),float3(0.6759,-0.05475,0.17126),float3(0.6804,-0.05106,0.15847),float3(0.68408,-0.04764,0.1473),float3(0.68813,-0.04367,0.13611),float3(0.69178,-0.03955,0.12594),float3(0.69592,-0.03412,0.11582),float3(0.69962,-0.02813,0.10669),float3(0.70287,-0.02016,0.09818),float3(0.70573,6e-5,0.09005)),float3[32](float3(0.42286,-0.13764,0.70253),float3(0.45893,-0.14091,0.67808),float3(0.4945,-0.13944,0.64711),float3(0.52171,-0.13527,0.61953),float3(0.54404,-0.13016,0.59306),float3(0.56282,-0.12479,0.5671),float3(0.57891,-0.11949,0.54128),float3(0.5929,-0.11426,0.51588),float3(0.60505,-0.10951,0.48993),float3(0.61587,-0.1047,0.46536),float3(0.62546,-0.10029,0.44072),float3(0.63399,-0.09638,0.41598),float3(0.64186,-0.09229,0.39289),float3(0.64911,-0.0888,0.36972),float3(0.65567,-0.08519,0.34812),float3(0.66186,-0.08157,0.32779),float3(0.66775,-0.07846,0.30734),float3(0.67323,-0.07504,0.28886),float3(0.67844,-0.07174,0.27113),float3(0.68333,-0.06833,0.25452),float3(0.68809,-0.06521,0.23828),float3(0.69262,-0.06204,0.22301),float3(0.69697,-0.05878,0.20869),float3(0.70127,-0.05553,0.19491),float3(0.70529,-0.05205,0.18216),float3(0.70896,-0.04825,0.17048),float3(0.71278,-0.04429,0.15888),float3(0.71635,-0.03988,0.14822),float3(0.71997,-0.03495,0.13785),float3(0.72323,-0.029,0.12826),float3(0.72673,-0.02079,0.11891),float3(0.72944,4e-5,0.11016)),float3[32](float3(0.45873,-0.12835,0.70614),float3(0.49433,-0.131,0.68304),float3(0.52949,-0.12981,0.654),float3(0.55633,-0.12616,0.6285),float3(0.57809,-0.12174,0.60424),float3(0.59634,-0.11714,0.57985),float3(0.6118,-0.11273,0.55495),float3(0.62517,-0.10827,0.53092),float3(0.63669,-0.10407,0.50671),float3(0.64685,-0.09994,0.48305),float3(0.65584,-0.09624,0.45902),float3(0.66376,-0.09244,0.43645),float3(0.67113,-0.08921,0.41315),float3(0.67765,-0.08575,0.39173),float3(0.6837,-0.08256,0.37068),float3(0.6893,-0.07941,0.35059),float3(0.69443,-0.07619,0.33162),float3(0.69947,-0.07326,0.31286),float3(0.70415,-0.07019,0.29534),float3(0.70855,-0.06708,0.27878),float3(0.71287,-0.06409,0.26263),float3(0.71661,-0.0608,0.24796),float3(0.72066,-0.05775,0.23332),float3(0.72451,-0.05456,0.21962),float3(0.72821,-0.05117,0.20663),float3(0.73152,-0.04735,0.19465),float3(0.73501,-0.04351,0.18279),float3(0.73849,-0.03929,0.1716),float3(0.7416,-0.03433,0.16118),float3(0.74481,-0.02845,0.15104),float3(0.74776,-0.02023,0.14164),float3(0.75105,6e-5,0.13208)),float3[32](float3(0.49554,-0.11754,0.70978),float3(0.53027,-0.11957,0.68862),float3(0.56475,-0.11844,0.66139),float3(0.59075,-0.11545,0.63717),float3(0.6117,-0.11182,0.61414),float3(0.62919,-0.10788,0.59143),float3(0.64398,-0.1041,0.56846),float3(0.65664,-0.10044,0.54542),float3(0.66758,-0.09697,0.52211),float3(0.677,-0.09338,0.49989),float3(0.68535,-0.09011,0.47731),float3(0.69283,-0.08701,0.45504),float3(0.69943,-0.08398,0.43352),float3(0.70556,-0.08119,0.41218),float3(0.711,-0.07822,0.39227),float3(0.71624,-0.07555,0.37245),float3(0.72083,-0.07263,0.35421),float3(0.72523,-0.06975,0.33639),float3(0.72925,-0.06691,0.31941),float3(0.73339,-0.06419,0.30275),float3(0.73715,-0.0613,0.28712),float3(0.7407,-0.05852,0.27199),float3(0.74402,-0.05539,0.25799),float3(0.74744,-0.05231,0.24427),float3(0.75049,-0.04891,0.23147),float3(0.75399,-0.04558,0.21879),float3(0.75685,-0.04169,0.20716),float3(0.75973,-0.03736,0.19611),float3(0.76249,-0.03256,0.18534),float3(0.76538,-0.02662,0.17518),float3(0.76785,-0.01865,0.16553),float3(0.77115,5e-5,0.15588)),float3[32](float3(0.53272,-0.10493,0.71478),float3(0.5661,-0.10643,0.69461),float3(0.59929,-0.10534,0.66938),float3(0.62423,-0.10298,0.64618),float3(0.6443,-0.10006,0.62412),float3(0.66087,-0.09686,0.60285),float3(0.6749,-0.09377,0.58132),float3(0.68693,-0.09079,0.5591),float3(0.69725,-0.08792,0.53711),float3(0.70612,-0.08524,0.51494),float3(0.71373,-0.08232,0.49425),float3(0.72045,-0.0797,0.47333),float3(0.72654,-0.07708,0.4529),float3(0.73215,-0.07461,0.43265),float3(0.73731,-0.07219,0.41291),float3(0.74188,-0.06976,0.3941),float3(0.74597,-0.06728,0.37624),float3(0.74997,-0.0649,0.35873),float3(0.75337,-0.0623,0.34249),float3(0.75709,-0.05978,0.32632),float3(0.7606,-0.0572,0.31088),float3(0.76378,-0.05462,0.29607),float3(0.76659,-0.0518,0.2823),float3(0.76955,-0.04891,0.26889),float3(0.7723,-0.04571,0.25622),float3(0.77514,-0.04252,0.24377),float3(0.77793,-0.03908,0.23184),float3(0.78043,-0.03509,0.22064),float3(0.78282,-0.03041,0.21005),float3(0.78468,-0.02457,0.20018),float3(0.78754,-0.01737,0.19021),float3(0.78995,6e-5,0.18089)),float3[32](float3(0.56932,-0.09075,0.71955),float3(0.60103,-0.09168,0.7007),float3(0.63267,-0.09087,0.67652),float3(0.65651,-0.08897,0.65469),float3(0.67543,-0.08664,0.63411),float3(0.69104,-0.0842,0.61379),float3(0.70419,-0.08174,0.59365),float3(0.7155,-0.07948,0.57227),float3(0.72506,-0.0771,0.55184),float3(0.73326,-0.07491,0.53105),float3(0.74047,-0.07278,0.51035),float3(0.74675,-0.07074,0.49002),float3(0.7523,-0.06867,0.47031),float3(0.75728,-0.06656,0.45135),float3(0.76209,-0.06453,0.4325),float3(0.76616,-0.06249,0.41451),float3(0.7699,-0.06046,0.39705),float3(0.77334,-0.05835,0.38038),float3(0.7765,-0.05612,0.36453),float3(0.77934,-0.0539,0.34929),float3(0.78214,-0.05159,0.33447),float3(0.78495,-0.04919,0.32031),float3(0.78732,-0.0466,0.30694),float3(0.7898,-0.04409,0.29376),float3(0.79245,-0.04133,0.28119),float3(0.79502,-0.03835,0.26903),float3(0.79706,-0.035,0.25765),float3(0.79938,-0.03151,0.24642),float3(0.80116,-0.02721,0.23605),float3(0.80364,-0.02228,0.2258),float3(0.80529,-0.01553,0.2163),float3(0.80743,8e-5,0.20694)),float3[32](float3(0.60446,-0.07481,0.72541),float3(0.63433,-0.0754,0.70789),float3(0.66433,-0.07476,0.68481),float3(0.68668,-0.07333,0.66418),float3(0.70457,-0.07166,0.64427),float3(0.71943,-0.06986,0.6248),float3(0.73164,-0.06808,0.6053),float3(0.742,-0.06634,0.58563),float3(0.75088,-0.06465,0.56577),float3(0.75865,-0.06301,0.54574),float3(0.76531,-0.0614,0.52594),float3(0.77096,-0.05975,0.50704),float3(0.77604,-0.05817,0.48812),float3(0.78047,-0.05654,0.46984),float3(0.78462,-0.05499,0.45179),float3(0.78846,-0.05337,0.4344),float3(0.79171,-0.05168,0.41775),float3(0.79502,-0.04998,0.40149),float3(0.79763,-0.04815,0.38649),float3(0.80039,-0.04639,0.37146),float3(0.80272,-0.04448,0.35737),float3(0.80522,-0.04252,0.34354),float3(0.80755,-0.04044,0.3302),float3(0.80954,-0.03811,0.31798),float3(0.81129,-0.03571,0.30606),float3(0.81256,-0.03305,0.29475),float3(0.81479,-0.03031,0.2833),float3(0.81667,-0.02709,0.27265),float3(0.81865,-0.0235,0.26226),float3(0.82066,-0.01932,0.25205),float3(0.82209,-0.01368,0.24262),float3(0.82367,2e-5,0.23366)),float3[32](float3(0.63783,-0.05754,0.7311),float3(0.6658,-0.05784,0.7145),float3(0.69379,-0.05736,0.69314),float3(0.71493,-0.05642,0.67318),float3(0.73184,-0.05529,0.65409),float3(0.74566,-0.0541,0.63543),float3(0.75715,-0.0529,0.61665),float3(0.76684,-0.05171,0.59776),float3(0.77502,-0.05055,0.57875),float3(0.78192,-0.04938,0.56005),float3(0.78802,-0.04824,0.54142),float3(0.79346,-0.04716,0.52249),float3(0.79805,-0.04606,0.50438),float3(0.80183,-0.0448,0.48754),float3(0.80557,-0.04364,0.4704),float3(0.809,-0.04245,0.45369),float3(0.81218,-0.04128,0.43725),float3(0.81485,-0.03999,0.42211),float3(0.81744,-0.03873,0.40702),float3(0.81962,-0.03727,0.39305),float3(0.82179,-0.0358,0.37945),float3(0.82385,-0.03429,0.3662),float3(0.82598,-0.03268,0.35338),float3(0.82778,-0.03089,0.34141),float3(0.8291,-0.02898,0.33004),float3(0.83055,-0.02688,0.31907),float3(0.83184,-0.02463,0.30846),float3(0.83322,-0.02206,0.29842),float3(0.83509,-0.01925,0.28818),float3(0.83626,-0.01574,0.27866),float3(0.83803,-0.01128,0.26919),float3(0.83936,-1e-5,0.26038)),float3[32](float3(0.66881,-0.03902,0.7375),float3(0.69495,-0.03917,0.72144),float3(0.72127,-0.0389,0.70116),float3(0.74089,-0.03836,0.68204),float3(0.75676,-0.03768,0.66379),float3(0.76971,-0.03701,0.64562),float3(0.78031,-0.03631,0.62792),float3(0.78909,-0.03559,0.61014),float3(0.79688,-0.03488,0.59193),float3(0.80339,-0.03421,0.57344),float3(0.80909,-0.03354,0.55536),float3(0.81375,-0.03284,0.53793),float3(0.81807,-0.03212,0.52063),float3(0.82174,-0.0314,0.50374),float3(0.82535,-0.03066,0.48732),float3(0.82861,-0.02992,0.47141),float3(0.83083,-0.02915,0.45633),float3(0.8332,-0.02828,0.44181),float3(0.83559,-0.02745,0.4273),float3(0.83745,-0.02649,0.41385),float3(0.84005,-0.02553,0.40059),float3(0.8407,-0.0244,0.38881),float3(0.84245,-0.02332,0.37643),float3(0.84401,-0.0221,0.36506),float3(0.84503,-0.02076,0.35431),float3(0.84665,-0.0194,0.34339),float3(0.84777,-0.01782,0.33324),float3(0.84905,-0.01601,0.32345),float3(0.84999,-0.0139,0.31425),float3(0.85072,-0.01143,0.30523),float3(0.85236,-812e-5,0.29632),float3(0.85341,2e-5,0.28782)),float3[32](float3(0.6974,-0.01972,0.74339),float3(0.72178,-0.0198,0.72804),float3(0.7463,-0.01969,0.70892),float3(0.76475,-0.01946,0.69082),float3(0.77931,-0.01916,0.67367),float3(0.79173,-0.01888,0.65573),float3(0.80171,-0.0186,0.63826),float3(0.81003,-0.01833,0.6209),float3(0.81725,-0.01802,0.60355),float3(0.82283,-0.01768,0.58677),float3(0.82781,-0.01737,0.56971),float3(0.83251,-0.01712,0.55229),float3(0.83628,-0.01681,0.53567),float3(0.83983,-0.01645,0.5197),float3(0.84284,-0.0161,0.50407),float3(0.84559,-0.01577,0.48879),float3(0.8479,-0.01538,0.47446),float3(0.85013,-0.01498,0.46044),float3(0.85214,-0.01455,0.4471),float3(0.85384,-0.01407,0.43403),float3(0.85537,-0.01356,0.42174),float3(0.85665,-0.01304,0.41005),float3(0.8586,-0.01251,0.39844),float3(0.85961,-0.01189,0.38755),float3(0.86039,-0.01119,0.37756),float3(0.86098,-0.0104,0.36805),float3(0.86192,-953e-5,0.35846),float3(0.86278,-857e-5,0.34911),float3(0.86425,-751e-5,0.33962),float3(0.86491,-614e-5,0.33144),float3(0.86581,-433e-5,0.323),float3(0.86677,2e-5,0.31508)),float3[32](float3(0.72363,0.,0.74973),float3(0.74617,-2e-5,0.73527),float3(0.76908,0.,0.71668),float3(0.78618,-2e-5,0.69953),float3(0.79981,-3e-5,0.68291),float3(0.8111,-1e-5,0.66623),float3(0.8206,-1e-5,0.6494),float3(0.82853,-4e-5,0.63212),float3(0.83504,-2e-5,0.61545),float3(0.84058,-3e-5,0.59849),float3(0.84521,-5e-5,0.58226),float3(0.84932,-2e-5,0.56605),float3(0.85275,-0.,0.55034),float3(0.85605,-1e-5,0.53461),float3(0.85877,-1e-5,0.51974),float3(0.86129,-1e-5,0.50561),float3(0.8632,-5e-5,0.49191),float3(0.86521,-4e-5,0.47875),float3(0.86654,-2e-5,0.46632),float3(0.86846,-2e-5,0.45401),float3(0.86997,-1e-5,0.44209),float3(0.87153,3e-5,0.43044),float3(0.87288,2e-5,0.42005),float3(0.87352,3e-5,0.4099),float3(0.87465,4e-5,0.39997),float3(0.87549,3e-5,0.39069),float3(0.87626,6e-5,0.38171),float3(0.87676,4e-5,0.37342),float3(0.87714,6e-5,0.36523),float3(0.87859,6e-5,0.35675),float3(0.87952,9e-5,0.34897),float3(0.87958,3e-5,0.34187)));
-
-/// The cosine-weighted average of the `R` column of `SHEEN_LTC_TABLE` per
-/// roughness row, for multiscatter energy compensation.
-static const auto SHEEN_LTC_AVERAGE_R=float[32](0.,0.,26e-5,149e-5,379e-5,706e-5,0.01137,0.01684,0.02359,0.03168,0.04118,0.05208,0.06438,0.07798,0.09297,0.10917,0.12663,0.14516,0.16462,0.18485,0.20591,0.22761,0.24971,0.27224,0.2948,0.31728,0.33982,0.36221,0.38402,0.40553,0.42656,0.44686); /// Bilinearly interpolate the sheen LTC table by roughness and view
-/// cosine, returning `(aInv, bInv, R)`.
-@(pure)
-float3 sheenLTCFetch(const float roughness,const float mu){
-float rowF(saturate(roughness)*31);
-float colF(saturate(mu)*31);
-const int ri(#min(int(rowF),30));
-const int ci(#min(int(colF),30));
-rowF-=ri;
-colF-=ci;
-return lerp(lerp(SHEEN_LTC_TABLE[ri+0][ci+0],SHEEN_LTC_TABLE[ri+0][ci+1],colF),lerp(SHEEN_LTC_TABLE[ri+1][ci+0],SHEEN_LTC_TABLE[ri+1][ci+1],colF),rowF);
-}
-
-/// Evaluate the sheen LTC lobe: the normalized density over `wiStd` given
-/// the coefficients fetched for the view direction, with `wiStd` rotated
-/// into the frame where the view lies in the xz-plane. Includes the cosine
-/// of the incoming direction by construction.
-@(pure)
-float sheenLTCEval(const float3 wiStd,const float aInv,const float bInv){
-const float3 wiOrig(float3(aInv*wiStd.x+bInv*wiStd.z,aInv*wiStd.y,wiStd.z));
-const float len2(#sum(wiOrig*wiOrig));
-return #max(wiOrig.z,0.)/$PI*(aInv*aInv)/(len2*len2+EPSILON);
-}
-
-/// The sheen BSDF for fabric-like grazing highlights, using the
-/// multiple-scattering LTC sheen of Zeltner, Burley, and Chiang.
-export struct sheen_bsdf:bsdf{
-/// The roughness.
-///
-/// > Roughness coefficient. Range: `[0,inf)`, with `0` specifying pure
-/// > specular reflection.
-///
-float roughness;
-
-/// The tint.
-///
-/// > Scaling factor, defined as a color, multiplied by the
-/// > result of the distribution function.
-///
-const $(color|float) tint=1.;
-
-/// The multiscatter tint.
-///
-/// > Scaling factor, defined as a color, of the diffuse multiscattering
-/// > compensation, `color(0.0)` does not add any, `color(1.0)` fully
-/// > compensates the energy loss.
-///
-const $(?(color|float)) multiscatter_tint=none;
-
-/// The multiscatter lobe.
-///
-/// Currently unused, part of the later MDL spec?
-///
-void multiscatter=none;
-
-/// The handle.
-void handle="";
-
-/// The flags.
-static const int df_flags=DF_REFLECTION|DF_DIFFUSE;
-finalize {
-roughness=saturate(roughness);
-}
-};
-@(pure)
-auto scatterEvaluate(const &sheen_bsdf this,inline const &ScatterEvaluateParameters params){
-if(mode==scatter_reflect&&recalculateTangentSpace(params)){
-const auto cosThetao(#abs(wo.z));
-const auto cosThetai(#abs(wi.z));
-const auto coO(sheenLTCFetch(this.roughness,cosThetao));
-const auto coI(sheenLTCFetch(this.roughness,cosThetai));
-const float2 eo(azimuthFrame(wo));
-const float2 ei(azimuthFrame(wi));
-const float3 wiStd(eo.x*wi.x+eo.y*wi.y,-eo.y*wi.x+eo.x*wi.y,wi.z);
-const float3 woStd(ei.x*wo.x+ei.y*wo.y,-ei.y*wo.x+ei.x*wo.y,wo.z);
-const float DfromO(sheenLTCEval(wiStd,coO.x,coO.y));
-const float DfromI(sheenLTCEval(woStd,coI.x,coI.y));
-const float f(0.5*(coO.z*DfromO+coI.z*DfromI*cosThetai/(cosThetao+EPSILON)));
-const float2 pdf(float2(coO.x>EPSILON?DfromO:cosThetai/$PI,coI.x>EPSILON?DfromI:cosThetao/$PI));
-if(#typeof(this.multiscatter_tint)==void||(#typeof(this.multiscatter_tint)==float&&this.multiscatter_tint==0.)){
-auto result(ScatterEvaluateResult(f: this.tint*f,pdf: pdf));
-result.f*=shadingNormalCorrection if(isImportance);
-return result;
-} else {
-float rowF(saturate(this.roughness)*31);
-const int ri(#min(int(rowF),30));
-rowF-=ri;
-const float avgR(lerp(SHEEN_LTC_AVERAGE_R[ri],SHEEN_LTC_AVERAGE_R[ri+1],rowF));
-const auto msF(cosThetai/$PI*#max(1-coO.z,0.)*#max(1-coI.z,0.)/#max(1-avgR,1e-4));
-const auto msPdf(float2(cosThetai,cosThetao)/$PI);
-auto result(ScatterEvaluateResult(f: this.tint*(f+this.multiscatter_tint*msF),pdf: lerp(pdf,msPdf,MULTISCATTER_DIFFUSE_CHANCE)));
-result.f*=shadingNormalCorrection if(isImportance);
-return result;
-}
-} else {
-return ScatterEvaluateResult(isBlack: true);
-}
-}
-@(pure)
-auto scatterSample(const &sheen_bsdf this,inline const &ScatterSampleParameters params){
-if((tbn:=recalculateTangentSpace(params))){
-if(result:=ScatterSampleResultWithMultiscatter(this,&xi,*tbn)){
-return *result;
-}
-const auto co(sheenLTCFetch(this.roughness,wo.z));
-if(co.x>EPSILON){
-const float3 wiOrig(monte_carlo::cosineHemisphereSample(xi.xy));
-const float3 wiStd(normalize(float3((wiOrig.x-wiOrig.z*co.y)/co.x,wiOrig.y/co.x,wiOrig.z)));
-const float2 e(azimuthFrame(wo));
-const float3 wiLocal(float3(e.x*wiStd.x-e.y*wiStd.y,e.y*wiStd.x+e.x*wiStd.y,wiStd.z));
-return ScatterSampleResult(wi: (*tbn)*wiLocal,mode: scatter_reflect);
-}
-return ScatterSampleResult(wi: (*tbn)*monte_carlo::cosineHemisphereSample(xi.xy),mode: scatter_reflect);
-} else {
-return ScatterSampleResult();
-}
-} /// The anisotropic glossy reflection of the Ward BSDF in the
-/// bounded-albedo Geisler-Moroder variant.
-export struct ward_geisler_moroder_bsdf:bsdf{
-/// The roughness in U.
-///
-/// > Roughness coefficient in the U direction. Range: `[0,inf)`, with `0`
-/// > specifying pure specular reflection.
-///
-float roughness_u;
-
-/// The roughness in V.
-///
-/// > Roughness coefficient in the V direction. Range: `[0,inf)`, with `0`
-/// > specifying pure specular reflection.
-///
-float roughness_v=roughness_u;
-
-/// The tint.
-///
-/// > Scaling factor, defined as a color, multiplied by the
-/// > result of the distribution function.
-///
-$(color|float) tint=1.;
-
-/// The multiscatter tint.
-///
-/// > Scaling factor, defined as a color, of the diffuse multiscattering
-/// > compensation, `color(0.0)` does not add any, `color(1.0)` fully
-/// > compensates the energy loss.
-///
-$(?(color|float)) multiscatter_tint=none;
-
-/// The tangent in U.
-float3 tangent_u=$state.texture_tangent_u[0];
-
-/// The handle.
-void handle="";
-
-/// The flags.
-static const int df_flags=DF_REFLECTION|DF_GLOSSY;
-finalize {
-roughness_u=saturate(roughness_u);
-roughness_v=saturate(roughness_v);
-}
-};
-@(pure noinline)
-auto scatterEvaluate(const &ward_geisler_moroder_bsdf this,inline const &ScatterEvaluateParameters params){
-preserve tangent_u;
-tangent_u=this.tangent_u;
-if(mode==scatter_reflect&&recalculateTangentSpace(params)){
-const auto cosThetao(#abs(wo.z));
-const auto cosThetai(#abs(wi.z));
-const auto roughness(this.roughness_u,this.roughness_v);
-const auto roughness0(#sqrt(#prod(roughness)));
-const auto alpha(#max(1e-3,roughness*roughness));
-const auto f0(#sum((h:=wo+wi)*h)/($PI*alpha.x*alpha.y*#pow(h.z,4))*#exp(-#sum((g:=h.xy/(h.z*alpha))*g)));
-const auto f(f0*cosThetai);
-const auto pdf(float2(f0*(cosThetao+cosThetai)/2));
-auto result(ScatterEvaluateResultWithMultiscatter(this,f,pdf,cosThetao,cosThetai,roughness0,"ward_geisler_moroder_bsdf"));
-result.f*=shadingNormalCorrection if(isImportance);
-return result;
-} else {
-return ScatterEvaluateResult(isBlack: true);
-}
-}
-@(pure noinline)
-auto scatterSample(const &ward_geisler_moroder_bsdf this,inline const &ScatterSampleParameters params){
-preserve tangent_u;
-tangent_u=this.tangent_u;
-if((tbn:=recalculateTangentSpace(params))){
-if(result:=ScatterSampleResultWithMultiscatter(this,xi,*tbn)){
-return *result;
-} else {
-const auto roughness(this.roughness_u,this.roughness_v);
-const auto alpha(#max(1e-3,roughness*roughness));
-const auto phi(#atan2(alpha.y*#sin(t:=$TWO_PI*xi.x),alpha.x*#cos(t)));
-const auto cosPhi(#cos(phi));
-const auto sinPhi(#sin(phi));
-const auto theta(#atan(#sqrt(-#log(1-xi.y)/(#pow(cosPhi/alpha.x,2)+#pow(sinPhi/alpha.y,2)))));
-const auto wm(float3(#sin(theta)*float2(cosPhi,sinPhi),#cos(theta)));
-const auto wi(normalize(specular::reflect(wo,wm)));
-if(wi.z>0){
-return ScatterSampleResult(wi: (*tbn)*wi,mode: scatter_reflect);
-}
-}
-}
-return ScatterSampleResult();
-} /// The microfacet utilities: the distributions (GGX, Beckmann, Blinn),
-/// their slope and normal sampling routines, and the shadowing
-/// techniques, shared by all of the `microfacet_*_bsdf` variants.
-export namespace microfacet {
-
-/// The tag to identify microfacet distributions.
-export tag Distribution;
-
-/// The GGX (Ground-Glass-X) or Trowbridge-Reitz distribution.
-export struct DistributionGGX:default Distribution{};
-
-/// The Beckmann or Gaussian distribution.
-export struct DistributionBeckmann:Distribution{};
-
-/// The Smith Lambda function for the GGX distribution.
-@(pure macro)
-export float smithLambda(const DistributionGGX this[[anno::unused()]],const float m){
-return 0.5*(#sign(m)*#sqrt(1+1/(m*m+EPSILON)))-0.5;
-}
-
-/// The Smith Lambda function for the Beckmann distribution.
-@(pure macro)
-export float smithLambda(const DistributionBeckmann this[[anno::unused()]],const float m){
-return 0.5*(#exp(-m*m)/m/#sqrt($PI)-float(erfc(m)));
-}
-
-/// The 2-dimensional Smith slope PDF for the GGX distribution.
-@(pure macro)
-export float smithSlopePDF(const DistributionGGX this[[anno::unused()]],const float2 m){
-return (1/$PI)/#pow(1+#sum(m*m),2);
-}
-
-/// The 2-dimensional Smith slope PDF for the Beckmann distribution.
-@(pure macro)
-export float smithSlopePDF(const DistributionBeckmann this[[anno::unused()]],const float2 m){
-return (1/$PI)*#exp(-#sum(m*m));
-}
-
-/// The Smith visible slope sampling function for the GGX distribution.
-@(pure)
-export float2 smithVisibleSlopeSample(
-const DistributionGGX this[[anno::unused()]],
-const float xi0, ///< A canonical random number in `[0,1]`
-const float xi1, ///< A canonical random number in `[0,1]`
-float cosThetao, ///< The outgoing zenith angle cosine
-){
-return #sqrt(xi0/(1-xi0+EPSILON))*float2(#cos(phi:=$TWO_PI*xi1),#sin(phi)) if(cosThetao>1-EPSILON);
-cosThetao=#max(cosThetao,-0.9999);
-const auto mx=return_from{
-const auto sinThetao(#sqrt(1-cosThetao*cosThetao));
-const auto tanThetao(sinThetao/cosThetao);
-const auto mu(xi0*(1+1/cosThetao)-1);
-const auto nu(1/(1-mu*mu));
-const auto D(#sqrt(#max(nu*(mu*mu-(1-nu)*tanThetao*tanThetao),0)));
-const auto mx0(-nu*tanThetao-D);
-const auto mx1(-nu*tanThetao+D);
-return #select((mu<0)|(mx1*sinThetao>cosThetao),mx0,mx1);
-};
-const auto my=return_from{
-const auto s(#select(xi1>0.5,1.,-1.));
-const auto t(#min(s*(2*xi1-1),1));
-return #sqrt(1+mx*mx)*s*((t*(t*(t*0.27385-0.73369)+0.46341))/(t*(t*(t*0.093073+0.30942)-1.)+0.597999));
-};
-return float2(mx,my);
-}
-
-/// The Smith visible slope sampling function for the Beckmann distribution.
-@(pure)
-export float2 smithVisibleSlopeSample(
-const DistributionBeckmann this[[anno::unused()]],
-float xi0,       ///< A canonical random number in `[0,1]`
-float xi1,       ///< A canonical random number in `[0,1]`
-float cosThetao, ///< The outgoing zenith angle cosine
-){
-return #sqrt(-#log(1-xi0+EPSILON))*float2(#cos((phi:=$TWO_PI*xi1)),#sin(phi)) if(cosThetao>1-EPSILON);
-xi0=#max(xi0,EPSILON);
-xi1=#max(xi1,EPSILON);
-const float invSqrtPi=1/#sqrt($PI);
-const float thetao=#acos(cosThetao);
-const float sinThetao=#sqrt(#max(0,1-cosThetao*cosThetao));
-const float tanThetao=sinThetao/cosThetao;
-const float cotThetao=1/tanThetao;
-float xmin=-1;
-float xmax=float(erf(cotThetao));
-float x=xmax-(1+xmax)*#pow(1-xi0,1+thetao*(-0.876+thetao*(0.4265-0.0594*thetao)));
-float norm=1/(1+xmax+invSqrtPi*tanThetao*#exp(-cotThetao*cotThetao));
-for(int i=0;i<10;++i){
-if(!(xmin<=x&&x<=xmax))
-x=0.5*(xmin+xmax);
-const float a=monte_carlo::erfInverse(x);
-const float f=norm*(1+x+invSqrtPi*tanThetao*#exp(-a*a))-xi0;
-break if(f~==|1e-5|0.);
-if(f>0)
-xmax=x;
-else
-xmin=x;
-x-=f/(norm*(1-a*tanThetao));
-}
-return float2(monte_carlo::erfInverse(x),monte_carlo::erfInverse(2*xi1-1),);
-}
-
-/// The Smith normal PDF, being the slope PDF mapped onto normals for the
-/// given squared roughness `alpha`.
-@(pure macro)
-export float smithNormalPDF(const Distribution this[[anno::unused()]],const float2 alpha,const float3 wm){
-return wm.z>0.?smithSlopePDF(this,-wm.xy/(wm.z*alpha+EPSILON))/(alpha.x*alpha.y*#pow(wm.z,4)+EPSILON):0.;
-}
-
-/// The Smith visible normal sampling function.
-@(pure)
-export float3 smithVisibleNormalSample(
-const Distribution this,
-const float xi0,    ///< A canonical random number in `[0,1]`
-const float xi1,    ///< A canonical random number in `[0,1]`
-const float2 alpha, ///< The squared roughness
-const float3 wo,    ///< The outgoing direction
-){
-const auto w11(normalize(float3(alpha*wo.xy,wo.z)));
-const auto sinTheta(length(w11.xy));
-const auto cosPhi(w11.x/sinTheta);
-const auto sinPhi(w11.y/sinTheta);
-const auto m11(smithVisibleSlopeSample(this,xi0,xi1,w11.z));
-const auto m(float2(alpha.x*dot(float2(cosPhi,-sinPhi),m11),alpha.y*dot(float2(sinPhi,cosPhi),m11)));
-return #all(isfinite(m))?normalize(float3(-m,1)):wo.z==0?normalize(wo):float3(0,0,1);
-}
-
-/// The bounded spherical-cap factor for GGX visible-normal sampling of
-/// reflection-only lobes, after Eto and Tokuyoshi, "Bounded VNDF Sampling
-/// for Smith-GGX Reflections", SIGGRAPH Asia 2023 Technical Communications.
-/// Shrinks the spherical cap of Dupuy and Benyoub to exclude microsurface
-/// normals whose reflection vectors would fall below the horizon. The
-/// anisotropic bound uses the paper's conservative loosening with the
-/// minimum roughness.
-@(pure)
-export float ggxBoundedCapFactor(const float2 alpha,const float3 wo){
-const float a(saturate(#min(alpha.x,alpha.y)));
-const float s(1+length(wo.xy));
-const float a2(a*a);
-const float s2(s*s);
-return (1-a2)*s2/(s2+a2*wo.z*wo.z);
-}
-
-/// The GGX visible normal sampling function through a bounded spherical
-/// cap, valid for reflection-only lobes. Equivalent to the standard
-/// visible-normal distribution up to the tightened cap, whose density
-/// correction is folded into the PDFs reported by `scatterEvaluate`.
-@(pure)
-export float3 ggxBoundedVisibleNormalSample(
-const float xi0,    ///< A canonical random number in `[0,1]`
-const float xi1,    ///< A canonical random number in `[0,1]`
-const float2 alpha, ///< The squared roughness
-const float3 wo,    ///< The outgoing direction
-){
-const float3 woStd(normalize(float3(alpha*wo.xy,wo.z)));
-const float b((wo.z>0?ggxBoundedCapFactor(alpha,wo):1.)*woStd.z);
-const float z((1-xi1)*(1+b)-b);
-const float sinTheta(#sqrt(saturate(1-z*z)));
-const float phi($TWO_PI*xi0);
-const float3 mStd(woStd+float3(sinTheta*#cos(phi),sinTheta*#sin(phi),z));
-return normalize(float3(alpha*mStd.xy,mStd.z));
-}
-
-/// The Blinn distribution.
-export struct DistributionBlinn:Distribution{};
-
-/// The Blinn normal first-quadrant sampling function.
-@(pure)
-export void blinnNormalFirstQuadrantSample(
-const float xi0, ///< A canonical random number in `[0,1]`
-const float xi1, ///< A canonical random number in `[0,1]`
-const float2 e,  ///< The exponent
-&float phi,      ///< The output azimuth angle
-&float cosTheta, ///< The output zenith angle cosine
-){
-if(e.x==e.y){
-*phi=$HALF_PI*xi0;
-*cosTheta=#pow(xi1,1/(1+e.x));
-} else {
-*phi=#atan(#sqrt((1+e.x)/(1+e.y))*#tan($HALF_PI*xi0));
-*cosTheta=#pow(xi1,1/(1+e.x*(cosPhi:=#cos(*phi))*cosPhi+e.y*(sinPhi:=#sin(*phi))*sinPhi));
-}
-}
-
-/// The Blinn normal sampling function.
-@(pure)
-export float3 blinnNormalSample(const float xi0, ///< A canonical random number in `[0,1]`
-const float xi1,                                 ///< A canonical random number in `[0,1]`
-const float2 e,                                  ///< The exponent
-){
-float phi=0;
-float cosTheta=0;
-if(xi0<0.25){
-blinnNormalFirstQuadrantSample(4*xi0,xi1,e,&phi,&cosTheta);
-} else if(xi0<0.5){
-blinnNormalFirstQuadrantSample(4*(0.5-xi0),xi1,e,&phi,&cosTheta),phi=$PI-phi;
-} else if(xi0<0.75){
-blinnNormalFirstQuadrantSample(4*(xi0-0.5),xi1,e,&phi,&cosTheta),phi+=$PI;
-} else {
-blinnNormalFirstQuadrantSample(4*(1-xi0),xi1,e,&phi,&cosTheta),phi=$TWO_PI-phi;
-}
-return float3(#sqrt(1-cosTheta*cosTheta+EPSILON)*float2(#cos(phi),#sin(phi)),cosTheta);
-}
-
-/// The tag to identify microfacet shadowing functions.
-export tag Shadowing;
-
-/// The Smith shadowing function. (This is the principled correct solution!)
-export struct ShadowingSmith:default Shadowing{};
-
-/// The V-cavities shadowing function. (This is the older simpler approximation!)
-export struct ShadowingVCavities:Shadowing{};
-@(foreign pure)
-double lgamma(double x);
-
-/// The beta function for Smith shadowing in transmission calculations.
-@(pure)
-export double beta(const double x,const double y)=#exp(lgamma(x)+lgamma(y)-lgamma(x+y));
-}
-struct microfacet_bsdf:bsdf{
-/// The roughness in `[0,1]^2`.
-const float2 roughness;
-
-/// The geometric mean roughness.
-const float roughness0=#sqrt(#prod(roughness));
-
-/// The roughness squared in `[EPSILON,1]^2`.
-///
-/// NOTE: This is the effective roughness parameter that is actually
-/// used in microfacet equations. It is squared for perceptual linearity,
-/// meaning that adjusting the `roughness` parameter more closely tracks
-/// qualitative changes in the apparent roughness of the BSDF.
-///
-const float2 alpha=clamp(roughness*roughness,EPSILON,1.);
-
-/// The tint.
-$(color|float) tint;
-
-/// The multiscatter tint, or `none` for no multiscatter.
-$(?(color|float)) multiscatter_tint=none;
-
-/// The tangent direction for orienting anistropic roughness.
-float3 tangent_u=$state.texture_tangent_u[0];
-
-/// The scatter mode. With `scatter_reflect_transmit`, the reflect and
-/// transmit lobes are weighted by the dielectric Fresnel term, forming a
-/// complete rough dielectric in one lobe.
-const scatter_mode mode=scatter_reflect;
-
-/// The microfacet distribution.
-const microfacet::Distribution distribution=microfacet::Distribution();
-
-/// The microfacet shadowing technique.
-const microfacet::Shadowing shadowing=microfacet::Shadowing();
-
-/// The flags.
-const int df_flags=int(mode)|DF_GLOSSY;
-};
-@(pure noinline)
-auto scatterEvaluate(const &microfacet_bsdf this,inline const &ScatterEvaluateParameters params){
-auto effectiveMode(this.mode&mode);
-preserve tangent_u;
-tangent_u=this.tangent_u;
-return ScatterEvaluateResult(isBlack: true) if(!recalculateTangentSpace(params)||effectiveMode==scatter_none);
-preserve wi,mode;
-bool thinTransmit=false;
-if(thin_walled&&effectiveMode==scatter_transmit){
-thinTransmit=true;
-effectiveMode=scatter_reflect;
-mode=scatter_reflect;
-wi.z=-wi.z;
-}
-const auto cosThetao(#abs(wo.z));
-const auto cosThetai(#abs(wi.z));
-const auto wm(halfDirection(params));
-const auto dotWoWm(#sum(wo*wm));
-const auto dotWiWm(#sum(wi*wm));
-float fWeight=1.;
-float2 pdfWeight=float2(1.);
-if(this.mode==scatter_reflect_transmit){
-const auto F(specular::dielectricFresnel(dotWoWm,ior));
-const auto Fo(specular::dielectricFresnel(cosThetao,ior));
-const auto Fi(specular::dielectricFresnel(cosThetai,effectiveMode==scatter_reflect?ior:1/ior));
-const bool complement(thinTransmit|(effectiveMode==scatter_transmit));
-fWeight=complement?1-F:F;
-pdfWeight=complement?1-float2(Fo,Fi):float2(Fo,Fi);
-}
-if$(this.distribution<:microfacet::DistributionBlinn){
-const auto e(2/(this.alpha*this.alpha+EPSILON));
-const auto D(#pow(wm.z,(e.x*wm.x*wm.x+e.y*wm.y*wm.y)/(1-wm.z*wm.z+EPSILON))/$TWO_PI);
-const auto norm1(#sqrt(#prod(1+e)));
-const auto norm2(#sqrt(#prod(2+e)));
-const auto G(#min(1,2*wm.z*#min(#abs(cosThetao/dotWoWm),#abs(cosThetai/dotWiWm))));
-if(effectiveMode==scatter_reflect){
-const auto pdf(norm1*D/(4*float2(dotWoWm,dotWiWm)+EPSILON));
-const auto f(norm2*D*G/(4*cosThetao+EPSILON));
-auto result(ScatterEvaluateResultWithMultiscatter(this,f,pdf,cosThetao,cosThetai,this.roughness0,"simple_glossy_bsdf"));
-result.f*=shadingNormalCorrection if(isImportance);
-result.f*=fWeight;
-result.pdf*=pdfWeight;
-return result;
-} else {
-return ScatterEvaluateResult(isBlack: true) if(!((dotWoWm>0)&(dotWiWm<0)));
-const auto jac(float2(specular::refractionHalfVectorJacobian(wo,wi,ior),specular::refractionHalfVectorJacobian(wi,wo,1/ior)));
-const auto pdf(norm1*D*jac);
-const auto f(norm2*D*G*jac[0]*dotWoWm/(cosThetao+EPSILON));
-auto result(ScatterEvaluateResult(f: this.tint*f,pdf: pdf));
-result.f*=shadingNormalCorrection if(isImportance);
-result.f*=ior*ior if(!isImportance);
-result.f*=fWeight;
-result.pdf*=pdfWeight;
-return result;
-}
-} else {
-const auto D(microfacet::smithNormalPDF(this.distribution,this.alpha,wm));
-const auto lambdao(microfacet::smithLambda(this.distribution,cosThetao/length(this.alpha*wo.xy)));
-const auto lambdai(microfacet::smithLambda(this.distribution,cosThetai/length(this.alpha*wi.xy)));
-const auto projAreao((1+lambdao)*cosThetao);
-const auto projAreai((1+lambdai)*cosThetai);
-const auto G=return_from{
-if$(this.shadowing<:microfacet::ShadowingSmith){
-return effectiveMode==scatter_reflect?float(1/(1+lambdao+lambdai)):float(microfacet::beta(1+lambdao,1+lambdai));
-} else {
-return #min(1,2*wm.z*#min(#abs(cosThetao/dotWoWm),#abs(cosThetai/dotWiWm)));
-}
-};
-if(effectiveMode==scatter_reflect){
-const auto lutName(this.distribution<:microfacet::DistributionGGX?"microfacet_ggx_smith_bsdf":"microfacet_beckmann_smith_bsdf");
-auto pdf(D/(4*float2(projAreao,projAreai)+EPSILON));
-if$(this.distribution<:microfacet::DistributionGGX){
-if(this.mode==scatter_reflect){
-const float2 k(float2(microfacet::ggxBoundedCapFactor(this.alpha,wo),microfacet::ggxBoundedCapFactor(this.alpha,wi)));
-pdf=D/(4*float2(projAreao,projAreai)+2*(k-1)*float2(cosThetao,cosThetai)+EPSILON);
-}
-}
-const auto f(D*G/(4*cosThetao+EPSILON));
-auto result(ScatterEvaluateResultWithMultiscatter(this,f,pdf,cosThetao,cosThetai,this.roughness0,lutName));
-result.f*=shadingNormalCorrection if(isImportance);
-result.f*=fWeight;
-result.pdf*=pdfWeight;
-return result;
-} else {
-return ScatterEvaluateResult(isBlack: true) if(!((dotWoWm>0)&(dotWiWm<0)));
-const auto jac(float2(specular::refractionHalfVectorJacobian(wo,wi,ior),specular::refractionHalfVectorJacobian(wi,wo,1/ior)));
-const auto pdf(D*jac*float2(dotWoWm,-dotWiWm)/(float2(projAreao,projAreai)+EPSILON));
-const auto f(D*G*jac[0]*dotWoWm/(cosThetao+EPSILON));
-auto result(ScatterEvaluateResult(f: this.tint*f,pdf: pdf));
-result.f*=shadingNormalCorrection if(isImportance);
-result.f*=ior*ior if(!isImportance);
-result.f*=fWeight;
-result.pdf*=pdfWeight;
-return result;
-}
-}
-return ScatterEvaluateResult(isBlack: true);
-}
-@(pure noinline)
-auto scatterSample(const &microfacet_bsdf this,inline const &ScatterSampleParameters params){
-preserve tangent_u;
-tangent_u=this.tangent_u;
-auto tbn(recalculateTangentSpace(params));
-if(!tbn)
-return ScatterSampleResult();
-const auto reflectChance(this.mode==scatter_reflect_transmit?specular::dielectricFresnel(#abs(wo.z),ior):scatterReflectChance(this.mode));
-const auto mode(monte_carlo::boolSample(&xi.z,reflectChance)?scatter_reflect:scatter_transmit);
-if(mode==scatter_reflect||thin_walled){
-if(result:=ScatterSampleResultWithMultiscatter(this,&xi,*tbn)){
-if(mode==scatter_transmit)
-return ScatterSampleResult(wi: result.wi*float3(1,1,-1),mode: mode);
-return *result;
-}
-}
-const auto wm=return_from{
-if$(this.distribution<:microfacet::DistributionBlinn){
-return microfacet::blinnNormalSample(xi.x,xi.y,2/(this.alpha*this.alpha+EPSILON));
-} else {
-if$(this.distribution<:microfacet::DistributionGGX){
-if(this.mode==scatter_reflect)
-return microfacet::ggxBoundedVisibleNormalSample(xi.x,xi.y,this.alpha,wo);
-}
-return microfacet::smithVisibleNormalSample(this.distribution,xi.x,xi.y,this.alpha,wo);
-}
-};
-const auto wi=return_from{
-if(mode==scatter_reflect){
-return specular::reflect(wo,wm);
-} else {
-if(thin_walled){
-return specular::reflect(wo,wm)*float3(1,1,-1);
-} else {
-return specular::refract(wo,wm,ior);
-}
-}
-};
-return ScatterSampleResult(wi: normalize((*tbn)*wi),mode: mode);
-}
-@(macro)
-auto makeMicrofacetBSDF(
-const float roughness_u,
-const float roughness_v=roughness_u,
-const $(color|float) tint=1.,
-const $(?(color|float)) multiscatter_tint=none,
-const float3 tangent_u=$state.texture_tangent_u[0],
-const scatter_mode mode=scatter_reflect,
-const string handle=""[[anno::unused()]],
-const microfacet::Distribution distribution=microfacet::Distribution(),
-const microfacet::Shadowing shadowing=microfacet::Shadowing(),
-){
-if((roughness_u>0)|(roughness_v>0)){
-return microfacet_bsdf(
-roughness: float2(roughness_u,roughness_v),
-tint: tint,
-multiscatter_tint: multiscatter_tint,
-tangent_u: normalize(tangent_u),
-mode: mode,
-distribution: distribution,
-shadowing: shadowing,
-);
-} else {
-return specular_bsdf(tint: tint,mode: mode);
-}
-} /// The simple glossy BSDF, being a Blinn microfacet BSDF with V-cavities
-/// shadowing, degenerating to `specular_bsdf` at zero roughness.
-export auto simple_glossy_bsdf(*)=makeMicrofacetBSDF(distribution: microfacet::DistributionBlinn(),shadowing: microfacet::ShadowingVCavities());
-
-/// The GGX microfacet BSDF with Smith shadowing, degenerating to
-/// `specular_bsdf` at zero roughness.
-export auto microfacet_ggx_smith_bsdf(*)=makeMicrofacetBSDF(distribution: microfacet::DistributionGGX(),shadowing: microfacet::ShadowingSmith());
-
-/// The GGX microfacet BSDF with V-cavities shadowing, degenerating to
-/// `specular_bsdf` at zero roughness.
-export auto microfacet_ggx_vcavities_bsdf(*)=makeMicrofacetBSDF(distribution: microfacet::DistributionGGX(),shadowing: microfacet::ShadowingVCavities());
-
-/// The Beckmann microfacet BSDF with Smith shadowing, degenerating to
-/// `specular_bsdf` at zero roughness.
-export auto microfacet_beckmann_smith_bsdf(*)=makeMicrofacetBSDF(distribution: microfacet::DistributionBeckmann(),shadowing: microfacet::ShadowingSmith());
-
-/// The Beckmann microfacet BSDF with V-cavities shadowing, degenerating to
-/// `specular_bsdf` at zero roughness.
-export auto microfacet_beckmann_vcavities_bsdf(*)=makeMicrofacetBSDF(distribution: microfacet::DistributionBeckmann(),shadowing: microfacet::ShadowingVCavities());
-
-/// Is the BSDF measurement valid, i.e., backed by loaded measurement data?
-export bool bsdf_measurement_isvalid(const bsdf_measurement measurement)=bool(measurement.buffer);
-
-/// Declare `smdBSDFMeasurementInterpolate` in `lib/BSDFMeasurement.cc`
-@(pure foreign)
-void smdBSDFMeasurementInterpolate(&void measurement,&float3 wo,&float3 wi,&float3 result);
-
-/// Declare `smdBSDFMeasurementDirectionPDF` in `lib/BSDFMeasurement.cc`
-@(pure foreign)
-float smdBSDFMeasurementDirectionPDF(&void measurement,&float3 wo,&float3 wi);
-
-/// Declare `smdBSDFMeasurementDirectionSample` in `lib/BSDFMeasurement.cc`
-@(pure foreign)
-void smdBSDFMeasurementDirectionSample(&void measurement,&float2 xi,&float3 wo,&float3 wi,&float pdf);
-
-/// The measured BSDF, evaluating and importance sampling a loaded
-/// `bsdf_measurement`.
-export struct measured_bsdf:bsdf{
-/// The measurement.
-bsdf_measurement measurement;
-
-/// The multiplier.
-float multiplier=1.;
-
-/// The scatter mode.
-scatter_mode mode=scatter_reflect;
-
-/// The handle.
-string handle="";
-
-/// The flags.
-const int df_flags=(int(mode)&measurement.mode)|DF_GLOSSY;
-};
-@(macro)
-auto scatterEvaluate(const &measured_bsdf this,inline const &ScatterEvaluateParameters params){
-const auto enabledMode(int(this.mode)&this.measurement.mode);
-return ScatterEvaluateResult(isBlack: true) if(!bool(this.measurement.ptr)||(int(mode)&enabledMode)==0);
-return ScatterEvaluateResult(isBlack: true) if(!recalculateTangentSpace(params));
-auto wiUpper(float3(wi.x,wi.y,#abs(wi.z)));
-auto f3(float3(0.));
-smdBSDFMeasurementInterpolate(this.measurement.ptr,&wo,&wiUpper,&f3);
-auto result(ScatterEvaluateResult(f: this.multiplier*#abs(wi.z)*color(f3),pdf: float2(smdBSDFMeasurementDirectionPDF(this.measurement.ptr,&wo,&wiUpper),smdBSDFMeasurementDirectionPDF(this.measurement.ptr,&wiUpper,&wo),),));
-result.f*=shadingNormalCorrection if(isImportance);
-return result;
-}
-@(macro)
-auto scatterSample(const &measured_bsdf this,inline const &ScatterSampleParameters params){
-const auto enabledMode(int(this.mode)&this.measurement.mode);
-return ScatterSampleResult() if(!bool(this.measurement.ptr)||enabledMode==0);
-if((tbn:=recalculateTangentSpace(params))){
-auto xi2(xi.xy);
-auto wiLocal(float3(0.));
-float pdf=0.;
-smdBSDFMeasurementDirectionSample(this.measurement.ptr,&xi2,&wo,&wiLocal,&pdf);
-return ScatterSampleResult() if(!(pdf>0.));
-wiLocal.z=-wiLocal.z if(enabledMode==int(scatter_transmit));
-return ScatterSampleResult(wi: normalize((*tbn)*wiLocal),mode: enabledMode==int(scatter_transmit)?scatter_transmit:scatter_reflect,);
-} else {
-return ScatterSampleResult();
-}
-}
-static const auto HAPKE_QUAD=auto[16](auto(0.0426509835,0.999861409,0.0166482032,0.00832467848,-0.989400935),auto(0.0977876067,0.996212554,0.086951409,0.0435581917,-0.944575023),auto(0.149474641,0.977808138,0.209502376,0.105926541,-0.865631202),auto(0.19576673,0.927094889,0.374826716,0.194503508,-0.755404408),auto(0.23498483,0.825200872,0.564839376,0.309466966,-0.617876244),auto(0.265710439,0.658971885,0.752167571,0.453393802,-0.458016778),auto(0.286832774,0.428057064,0.903751708,0.632854058,-0.281603551),auto(0.297588323,0.148691866,0.988883577,0.860878018,-0.0950125098),auto(0.297588323,-0.148691866,0.988883577,1.16160476,0.0950125098),auto(0.286832774,-0.428057064,0.903751708,1.58014314,0.281603551),auto(0.265710439,-0.658971885,0.752167571,2.20558816,0.458016778),auto(0.23498483,-0.825200872,0.564839376,3.23136267,0.617876244),auto(0.19576673,-0.927094889,0.374826716,5.14129545,0.755404408),auto(0.149474641,-0.977808138,0.209502376,9.44050459,0.865631202),auto(0.0977876067,-0.996212554,0.086951409,22.9577942,0.944575023),auto(0.0426509835,-0.999861409,0.0166482032,120.124759,0.989400935));
-static const auto HAPKE_W_CHEB=auto[5](auto(0.0443692637,-0.0330322166,-0.0414806793,0.0377322324,-0.0036831791,-0.00503835424,8.09641201e-4,3.28879959e-4,2.18482055e-5,-1.60545071e-5,-1.57504064e-5),auto(-0.00594076498,7.57196179e-4,0.0081566095,-6.27186314e-4,-0.00248094082,-4.88022104e-4,2.97539468e-4,3.75439189e-4,-8.86163641e-6,-3.29277167e-5,-3.83729896e-5),auto(-9.63613192e-4,4.66153409e-4,0.00149075512,-6.73457031e-4,-7.58809229e-4,1.27478645e-4,2.95317848e-4,1.1745609e-4,-6.84391571e-5,-5.81575106e-5,-1.47705227e-5),auto(2.75487885e-4,6.03421013e-5,-4.03479982e-4,-1.90433817e-4,1.11667449e-4,1.85513524e-4,6.24427123e-5,-7.37454173e-5,-7.16632707e-5,-2.55167593e-5,1.67814334e-5),auto(-2.62793436e-5,-3.65689393e-5,6.2527643e-6,6.15744651e-5,6.90324901e-5,-6.91503114e-6,-5.56055434e-5,-4.09210276e-5,7.60283579e-6,2.61753306e-5,1.97457206e-5));
-static const auto HAPKE_G_CHEB=auto[4](auto(0.299680994,-0.25994946,0.0835171816,-0.0234697031,0.0061327028,-0.00150566063,3.6640673e-4),auto(-0.0526057365,0.0529757455,-0.0205834026,0.00702317686,-0.00220447865,6.35609701e-4,-1.79704911e-4),auto(-0.0107799361,0.00980414131,-0.00314615761,8.44617944e-4,-2.0008313e-4,4.17196758e-5,-7.49359084e-6),auto(0.00182228246,-0.00183367741,8.1867027e-4,-3.34625137e-4,1.23845828e-4,-4.06381678e-5,1.27990763e-5)); /// Evaluate a Chebyshev series by the Clenshaw recurrence, `x` in `[-1,1]`.
-///
-/// NOTE: Generic in both the coefficients and `x`, so the same routine serves
-/// the scalar density evaluation at construction and the spectral `EbarK`
-/// evaluation.
-///
-@(pure)
-auto hapkeChebEval(const auto c,const int n,const auto x){
-auto b1(0.*x);
-auto b2(0.*x);
-for(int k=n-1;k>=1;k--){
-const auto t(2.*x*b1-b2+c[k]);
-b2=b1;
-b1=t;
-}
-return x*b1-b2+c[0];
-}
-
-/// The tangent of the half phase angle, which is the natural argument of the surge.
-@(pure macro)
-float hapkeTanHalfAngle(const float cosG)=#sqrt((1.-cosG)/#max(1.+cosG,1e-12));
-
-/// The two-lobe Henyey-Greenstein phase function in Hapke's convention, where the
-/// first lobe peaks at `g = 0`, which is to say at backscatter. The sharpness `b`
-/// narrows both lobes and the weight `c` balances backward against forward.
-@(pure)
-float hapkePhase(const float b,const float c,const float cosG){
-const auto numer(1.-b*b);
-const auto back(1.-2.*b*cosG+b*b);
-const auto fwd(1.+2.*b*cosG+b*b);
-return 0.5*(1.+c)*numer/(back*#sqrt(back))+0.5*(1.-c)*numer/(fwd*#sqrt(fwd));
-}
-
-/// The shadow-hiding opposition effect (SHOE, Hapke 1986). Near `g = 0` a grain hides
-/// its own shadow, brightening retro-reflection by `B0 / (1 + tan(g/2)/h)`.
-@(pure macro)
-float hapkeSurge(const float B0,const float h,const float tanHalfG)=B0/(1.+tanHalfG/h);
-
-/// The Chandrasekhar H-function in the Hapke (2002) rational-log approximation, whose
-/// error is under 1 percent against the exact integral-equation solution. The product
-/// `H(mu0) H(mu) - 1` is the isotropic approximation of everything scattered more than
-/// once: it grows from 1 on a dark surface toward roughly 3 as `w` approaches 1 at
-/// high cosines, which is where bright surfaces get their flattened limbs.
-@(pure)
-auto hapkeH(const float x,const auto w,const auto r0){
-const auto xs(#max(x,1e-6));
-return 1./(1.-w*xs*(r0+0.5*(1.-2.*r0*xs)*#log(1.+1./xs)));
-}
-
-/// The energy-conserving Hapke BRDF for granular surfaces.
-///
-/// The distribution is a normalized Hapke shape kernel times the prescribed `albedo`,
-/// `f = albedo * K / EbarK`, where `EbarK` is the kernel's own bihemispherical albedo,
-/// so that the realized white-sky albedo equals `albedo` exactly for every setting of
-/// the four directional parameters. They redistribute energy without creating or
-/// destroying it. The kernel itself is
-///
-///     K = w / (4 pi (mu0e + mue)) * [ptilde(g) + H(mu0e) H(mue) - 1] * S
-///
-/// which is the Lommel-Seeliger single-scattering core, the surge-folded two-lobe
-/// Henyey-Greenstein phase function `ptilde`, isotropic multiple scattering built from
-/// the Hapke (2002) H-functions, and the Hapke (1984) macroscopic-roughness shadowing
-/// `S`, assembled in its manifestly reciprocal form.
-///
-/// NOTE: The `albedo` is not a tint. It is the reflectance the surface
-/// actually realizes under uniform illumination, so it is meaningful to
-/// drive it with a measured or modeled soil spectrum.
-///
-export struct hapke_granular_bsdf:bsdf{
-/// The albedo, realized exactly as the bihemispherical (white-sky) reflectance.
-const $(color|float) albedo=1.;
-
-/// The roughness, being the Hapke mean facet slope `theta_bar = 30 degrees * roughness`.
-float roughness=0.;
-
-/// The porosity. `0` is compacted, with a wide opposition surge, and `1` is fluffy
-/// fairy-castle structure, with a narrow one.
-float porosity=0.5;
-
-/// The hotspot, being the amplitude `B0` of the shadow-hiding opposition surge.
-float hotspot=0.8;
-
-/// The backscatter. `0` is forward-scattering translucent grains and `1` is rough
-/// opaque backscatterers, where soils sit high.
-float backscatter=0.8;
-
-/// The single-scattering albedo `w`.
-auto _ssa=albedo;
-
-/// The diffusive reflectance `r0`, which is the clamped albedo by construction.
-auto _diffRefl=albedo;
-
-/// The albedo per unit kernel, `A / (A_ss + w G)`.
-auto _scale=albedo;
-
-/// The Henyey-Greenstein lobe sharpness `b`.
-float _hgSharpness=0.;
-
-/// The Henyey-Greenstein backward-to-forward weight `c`.
-float _hgBackWeight=0.;
-
-/// The opposition surge width `h`.
-float _surgeWidth=0.;
-
-/// The reciprocal of the surge normalization `N_B`.
-float _invSurgeNorm=1.;
-
-/// The tangent of the mean facet slope, where `0` selects the smooth path.
-float _tanMeanSlope=0.;
-
-/// The handle.
-void handle="";
-
-/// The flags.
-static const int df_flags=DF_REFLECTION|DF_DIFFUSE;
-finalize {
-roughness=saturate(roughness);
-porosity=saturate(porosity);
-hotspot=saturate(hotspot);
-backscatter=saturate(backscatter);
-_hgSharpness=0.65+(0.1-0.65)*backscatter;
-_hgBackWeight=3.29*#exp(-17.4*_hgSharpness*_hgSharpness)-0.908;
-_surgeWidth=-0.375*#log(1.-(0.1+(0.48-0.1)*(1.-porosity)));
-const auto meanSlope(($PI/6)*roughness);
-_tanMeanSlope=meanSlope<1e-8?0.:#tan(meanSlope);
-const auto y(2.*roughness-1.);
-const auto y2(2.*y*y-1.);
-const auto y3(2.*y*y2-y);
-const auto y4(2.*y*y3-y2);
-const auto wcol(HAPKE_W_CHEB[0]+y*HAPKE_W_CHEB[1]+y2*HAPKE_W_CHEB[2]+y3*HAPKE_W_CHEB[3]+y4*HAPKE_W_CHEB[4],);
-const auto gcol(HAPKE_G_CHEB[0]+y*HAPKE_G_CHEB[1]+y2*HAPKE_G_CHEB[2]+y3*HAPKE_G_CHEB[3],);
-float surgeAcc=0.;
-float ssAcc=0.;
-for(int j=0;j<#num(HAPKE_QUAD);j++){
-const auto node(HAPKE_QUAD[j]);
-const auto weightedPhase(node[0]*hapkePhase(_hgSharpness,_hgBackWeight,node[1]));
-const auto surge(hapkeSurge(hotspot,_surgeWidth,node[3]));
-const auto density(#max(hapkeChebEval(wcol,#num(wcol),node[4]),0.));
-surgeAcc+=weightedPhase*surge*node[2];
-ssAcc+=weightedPhase*(1.+surge)*density;
-}
-_invSurgeNorm=1./(1.+0.5*surgeAcc);
-const auto ssAlbedoPerW(ssAcc*_invSurgeNorm);
-const auto A(clamp(albedo,1e-6,1.-1e-6));
-const auto gamma((1.-A)/(1.+A));
-_ssa=1.-gamma*gamma;
-_diffRefl=A;
-_scale=A/(ssAlbedoPerW+_ssa*hapkeChebEval(gcol,#num(gcol),2.*gamma-1.));
-}
-};
-
-/// Evaluate the Hapke BRDF, without the cosine factor, for directions expressed in the
-/// shading tangent space and understood to be in the upper hemisphere.
-@(pure noinline)
-auto hapkeEvaluateBRDF(const &hapke_granular_bsdf this,const float3 wo,const float3 wi){
-const auto mu0(clamp(wi.z,1e-4,1.));
-const auto mu(clamp(wo.z,1e-4,1.));
-const auto cosG(clamp(#sum(wi*wo),-1.,1.));
-const auto sinScale(length(wi.xy)*length(wo.xy));
-const auto cosPsi(sinScale>1e-6?clamp(#sum(wi.xy*wo.xy)/sinScale,-1.,1.):1.);
-const auto psi(#acos(cosPsi));
-const auto surge(hapkeSurge(this.hotspot,this._surgeWidth,hapkeTanHalfAngle(cosG)));
-const auto phase(hapkePhase(this._hgSharpness,this._hgBackWeight,cosG)*(1.+surge)*this._invSurgeNorm);
-const auto geom=return_from{
-return auto(1./(4.*$PI*(mu0+mu)),mu0,mu) if(this._tanMeanSlope==0.);
-const auto tanT(this._tanMeanSlope);
-const auto cotT(1./tanT);
-const auto chi(1./#sqrt(1.+$PI*tanT*tanT));
-const auto sin0(#sqrt(#max(1.-mu0*mu0,0.)));
-const auto sine(#sqrt(#max(1.-mu*mu,0.)));
-const auto cotI(cotT*mu0/#max(sin0,1e-6));
-const auto cotE(cotT*mu/#max(sine,1e-6));
-const auto E1i(#exp(-(2./$PI)*cotI));
-const auto E1e(#exp(-(2./$PI)*cotE));
-const auto E2i(#exp(-(1./$PI)*cotI*cotI));
-const auto E2e(#exp(-(1./$PI)*cotE*cotE));
-const auto f(#exp(-2.*#tan(#min(0.5*psi,1.5707))));
-const auto etaI(chi*(mu0+sin0*tanT*E2i/(2.-E1i)));
-const auto etaE(chi*(mu+sine*tanT*E2e/(2.-E1e)));
-const bool bigI(mu0<=mu);
-const auto E1L(bigI?E1i:E1e);
-const auto E1l(bigI?E1e:E1i);
-const auto E2L(bigI?E2i:E2e);
-const auto E2l(bigI?E2e:E2i);
-const auto sinHalfPsi(#sin(0.5*psi));
-const auto s2(sinHalfPsi*sinHalfPsi);
-const auto D(#max(2.-E1L-(psi/$PI)*E1l,1e-6));
-const auto cosL(#min(mu0,mu));
-const auto cosl(#max(mu0,mu));
-const auto sinL(#sqrt(#max(1.-cosL*cosL,0.)));
-const auto sinl(#sqrt(#max(1.-cosl*cosl,0.)));
-const auto effL(chi*(cosL+sinL*tanT*(E2L-s2*E2l)/D));
-const auto effl(chi*(cosl+sinl*tanT*(#cos(psi)*E2L+s2*E2l)/D));
-const auto mu0Eff(bigI?effL:effl);
-const auto muEff(bigI?effl:effL);
-const auto etaMin(bigI?etaE:etaI);
-const auto shadow(chi/(1.-f+f*chi*cosl/etaMin));
-const auto factor(mu0Eff*muEff/((mu0Eff+muEff)*etaI*etaE)*shadow/(4.*$PI));
-return auto(factor,mu0Eff,muEff);
-};
-const auto H0(hapkeH(geom[1],this._ssa,this._diffRefl));
-const auto H1(hapkeH(geom[2],this._ssa,this._diffRefl));
-return this._scale*geom[0]*(phase+#max(H0*H1-1.,0.));
-}
-@(pure)
-auto scatterEvaluate(const &hapke_granular_bsdf this,inline const &ScatterEvaluateParameters params){
-if(mode==scatter_reflect&&recalculateTangentSpace(params)){
-const auto cosTheta(#abs(auto(wi.z,wo.z)));
-const auto pdf(cosTheta/$PI);
-auto result(ScatterEvaluateResult(f: hapkeEvaluateBRDF(this,wo,wi)*cosTheta[0],pdf: pdf));
-result.f*=shadingNormalCorrection if(isImportance);
-return result;
-} else {
-return ScatterEvaluateResult(isBlack: true);
-}
-}
-@(pure)
-auto scatterSample(const &hapke_granular_bsdf this[[anno::unused()]],inline const &ScatterSampleParameters params){
-if((tbn:=recalculateTangentSpace(params))){
-return ScatterSampleResult(wi: (*tbn)*monte_carlo::cosineHemisphereSample(xi.xy),mode: scatter_reflect);
-} else {
-return ScatterSampleResult();
-}
-} /// A diffuse (Lambertian) Emission Distribution Function (EDF), i.e.,
-/// constant radiance over the upper hemisphere.
-export struct diffuse_edf:edf{
-/// The handle.
-void handle="";
-
-/// The flags.
-static const int df_flags=DF_DIFFUSE;
-};
-@(pure)
-auto emissionEvaluate(const &diffuse_edf this[[anno::unused()]],inline const &EmissionEvaluateParameters params){
-if(recalculateTangentSpace(params)){
-return EmissionEvaluateResult(f: 1./$PI,pdf: wi.z/$PI);
-} else {
-return EmissionEvaluateResult(isBlack: true);
-}
-}
-@(pure)
-auto emissionSample(const &diffuse_edf this[[anno::unused()]],inline const &EmissionSampleParameters params){
-return EmissionSampleResult(wi: calculateTangentSpace(normal,tangent_u)*monte_carlo::cosineHemisphereSample(xi.xy),isValid: true);
-} /// A spot Emission Distribution Function (EDF), i.e., an exponentiated
-/// cosine falloff restricted to a cone.
-///
-/// The cosine is remapped so that it reaches zero at the boundary of the
-/// cone: with `theta0 = spread / 2` the distribution is proportional to
-/// `((cos(theta) - cos(theta0)) / (1 - cos(theta0)))^exponent` inside the
-/// cone and zero outside of it.
-///
-export struct spot_edf:edf{
-/// The exponent of the cosine falloff.
-float exponent;
-
-/// The spread, being the full angle of the emission cone in radians. The
-/// default of `$PI` corresponds to the full upper hemisphere.
-float spread=$PI;
-
-/// > Boolean that chooses between two interpretations of the EDF: the
-/// > directional distribution applied per point in tangent space, or the
-/// > distribution of the light source as a whole in the global frame.
-///
-/// NOTE: Only the per-point tangent-space interpretation is supported, so
-/// this is accepted and ignored. The luminaire-as-a-whole interpretation
-/// is a host-side concern, e.g., a delta spot light.
-///
-void global_distribution=true;
-
-/// The global frame.
-///
-/// NOTE: Only the per-point tangent-space interpretation is supported, so
-/// this is accepted and ignored.
-///
-void global_frame=float3x3(1.);
-
-/// The handle.
-void handle="";
-
-/// The precomputed cosine of the cone half angle.
-const float _cosSpread=#cos(0.5*#min(#max(spread,EPSILON),$PI));
-
-/// The precomputed normalization such that the cosine-weighted integral
-/// over the cone is 1, i.e., with `c0 = _cosSpread` and `k = exponent`,
-/// the integral of `((x - c0)/(1 - c0))^k x 2 pi dx` over `x` in `[c0, 1]`.
-///
-/// NOTE: This must clamp `exponent` itself because field initializers run
-/// before the `finalize` block.
-///
-const float _normalization=let {
-const float k=#max(exponent,0.);
-} in 2.*$PI*(1.-_cosSpread)*(_cosSpread/(k+1.)+(1.-_cosSpread)/(k+2.));
-
-/// The flags.
-static const int df_flags=DF_GLOSSY;
-finalize {
-exponent=#max(exponent,0.);
-}
-};
-@(pure)
-auto emissionEvaluate(const &spot_edf this,inline const &EmissionEvaluateParameters params){
-if(recalculateTangentSpace(params)){
-const auto mu((wi.z-this._cosSpread)/(1.-this._cosSpread));
-if(!(mu>0.))
-return EmissionEvaluateResult(isBlack: true);
-const auto muPowK(#pow(mu,this.exponent));
-return EmissionEvaluateResult(f: muPowK/this._normalization,pdf: (this.exponent+1.)*muPowK/(2.*$PI*(1.-this._cosSpread)),);
-} else {
-return EmissionEvaluateResult(isBlack: true);
-}
-}
-@(pure)
-auto emissionSample(const &spot_edf this,inline const &EmissionSampleParameters params){
-const auto mu(#pow(xi.x,1./(this.exponent+1.)));
-const auto cosTheta(this._cosSpread+(1.-this._cosSpread)*mu);
-const auto sinTheta(#sqrt(#max(1.-cosTheta*cosTheta,0.)));
-const auto phi($TWO_PI*xi.y);
-return EmissionSampleResult(wi: calculateTangentSpace(normal,tangent_u)*float3(sinTheta*#cos(phi),sinTheta*#sin(phi),cosTheta),isValid: true,);
-} /// Declare the light profile interpolation routine implemented in
-/// `lib/LightProfile.cc` and registered as a JIT builtin by
-/// `#load_light_profile` in `lib/Compiler/Emitter.cc`.
-@(pure foreign)
-float smdlLightProfileInterpolate(const &void profile,const &float3 wo);
-
-/// Declare the light profile direction PDF routine, being the exact
-/// solid-angle density over the sphere of the direction sampling routine
-/// in the profile's own coordinate system.
-@(pure foreign)
-float smdlLightProfileDirectionPDF(const &void profile,const &float3 wi);
-
-/// Declare the light profile direction sampling routine.
-@(pure foreign)
-void smdlLightProfileDirectionSample(const &void profile,const &float2 xi,const &float3 wi,const &float pdf);
-
-/// A measured Emission Distribution Function (EDF), i.e., an IES light
-/// profile applied per point in tangent space: the profile's vertical
-/// axis (vertical angle 0) is aligned with the shading normal, and its
-/// horizontal angle 0 is aligned with `tangent_u`.
-///
-/// The EDF value is `multiplier * profile(wi) / max_intensity`, so unlike
-/// `diffuse_edf` and `spot_edf` it is NOT normalized such that the
-/// cosine-weighted hemisphere integral is 1: with `multiplier = 1`, the
-/// `material_emission.intensity` is the radiance emitted in the peak
-/// direction of the profile, and the profile shapes the falloff. Hosts
-/// that need the true emitted power of the profile for light selection
-/// should use `light_profile.power`.
-///
-/// NOTE: The lower hemisphere of the profile is clipped: a surface cannot
-/// emit below its own horizon. Directions sampled there are rejected, and
-/// the PDF is reported with respect to solid angle over the full sphere,
-/// so evaluation and sampling remain consistent for MIS.
-///
-export struct measured_edf:edf{
-/// The light profile.
-light_profile profile;
-
-/// The multiplier.
-float multiplier=1.;
-
-/// > Boolean that chooses between two interpretations of the EDF: the
-/// > directional distribution applied per point in tangent space, or the
-/// > distribution of the light source as a whole in the global frame.
-///
-/// NOTE: Only the per-point tangent-space interpretation is supported, so
-/// this is accepted and ignored. The luminaire-as-a-whole interpretation
-/// is a host-side concern, e.g., a delta point light driven directly by
-/// the C++ `smdl::LightProfile` API.
-///
-void global_distribution=true;
-
-/// The global frame.
-///
-/// NOTE: Only the per-point tangent-space interpretation is supported, so
-/// this is accepted and ignored.
-///
-void global_frame=float3x3(1.);
-
-/// The tangent direction, orienting the horizontal angle of the profile.
-float3 tangent_u=$state.texture_tangent_u[0];
-
-/// The handle.
-void handle="";
-
-/// The precomputed scale, folding the multiplier and the normalization
-/// by the maximum intensity of the profile.
-const float _scale=profile.max_intensity>0.?#max(multiplier,0.)/profile.max_intensity:0.;
-
-/// The flags.
-static const int df_flags=DF_GLOSSY;
-};
-@(pure)
-auto emissionEvaluate(const &measured_edf this,inline const &EmissionEvaluateParameters params){
-preserve tangent_u;
-tangent_u=this.tangent_u;
-if((this._scale>0.)&&recalculateTangentSpace(params)){
-const auto intensity(smdlLightProfileInterpolate(this.profile.ptr,&wi));
-if(!(intensity>0.))
-return EmissionEvaluateResult(isBlack: true);
-return EmissionEvaluateResult(f: this._scale*intensity,pdf: smdlLightProfileDirectionPDF(this.profile.ptr,&wi),);
-} else {
-return EmissionEvaluateResult(isBlack: true);
-}
-}
-@(pure)
-auto emissionSample(const &measured_edf this,inline const &EmissionSampleParameters params){
-if(!(this._scale>0.))
-return EmissionSampleResult();
-float2 xiDirection(xi.x,xi.y);
-float3 w(0.);
-float pdf(0.);
-smdlLightProfileDirectionSample(this.profile.ptr,&xiDirection,&w,&pdf);
-if(!((pdf>0.)&(w.z>0.)))
-return EmissionSampleResult();
-return EmissionSampleResult(wi: calculateTangentSpace(normal,this.tangent_u)*w,isValid: true);
-} /// A 1-value tint.
-struct tint1:bsdf,edf,hair_bsdf{
-/// The tint multiplier.
-$(color|float) tint;
-
-/// The base `bsdf`, `edf`, or `hair_bsdf`.
-auto base;
-
-/// The flags.
-const int df_flags=base.df_flags;
-};
-
-/// A 2-value tint.
-struct tint2:bsdf{
-/// The tint multiplier on reflection.
-$(color|float) reflection_tint;
-
-/// The tint multiplier on transmission.
-$(color|float) transmission_tint;
-
-/// The base `bsdf`.
-bsdf base;
-
-/// The flags.
-const int df_flags=base.df_flags;
-};
-
-/// Construct 1-value tint of the given `bsdf`.
-@(macro)
-export auto tint(const auto tint,const bsdf base)=tint1(tint,base);
-
-/// Construct 1-value tint of the given `edf`.
-@(macro)
-export auto tint(const auto tint,const edf base)=tint1(tint,base);
-
-/// Construct 1-value tint of the given `hair_bsdf`.
-@(macro)
-export auto tint(const auto tint,const hair_bsdf base)=tint1(tint,base);
-
-/// Construct 2-value tint of the given `bsdf`.
-@(macro)
-export auto tint(const auto reflection_tint,const auto transmission_tint,const bsdf base)=tint2(reflection_tint,transmission_tint,base);
-@(macro)
-auto scatterEvaluate(const &tint1 this,const &ScatterEvaluateParameters params){
-auto result(scatterEvaluate(visit &this.base,params));
-if(!result.isBlack)
-result.f*=this.tint;
-return result;
-}
-@(macro)
-auto scatterEvaluate(const &tint2 this,const &ScatterEvaluateParameters params){
-auto result(scatterEvaluate(visit &this.base,params));
-if(!result.isBlack){
-if(params.mode==scatter_reflect){
-result.f*=this.reflection_tint;
-} else {
-result.f*=this.transmission_tint;
-}
-}
-return result;
-}
-@(macro)
-auto emissionEvaluate(const &tint1 this,const &EmissionEvaluateParameters params){
-auto result(emissionEvaluate(visit &this.base,params));
-if(!result.isBlack)
-result.f*=this.tint;
-return result;
-}
-@(macro)
-auto emissionSample(const &tint1 this,const &EmissionSampleParameters params){
-return emissionSample(visit &this.base,params);
-}
-@(macro)
-auto scatterSample(const &tint1 this,const &ScatterSampleParameters params){
-auto result(scatterSample(visit &this.base,params));
-if((result.mode!=scatter_none)&bool(result.fDelta))
-*result.fDelta*=this.tint;
-return result;
-}
-@(macro)
-auto scatterSample(const &tint2 this,const &ScatterSampleParameters params){
-auto result(scatterSample(visit &this.base,params));
-if((result.mode!=scatter_none)&bool(result.fDelta)){
-if(params.mode==scatter_reflect){
-*result.fDelta*=this.reflection_tint;
-} else {
-*result.fDelta*=this.transmission_tint;
-}
-}
-return result;
-} /// The weighted layer, blending the `layer` BSDF over the `base` BSDF by
-/// the given `weight`, with the layer evaluated using its own `normal`.
-export struct weighted_layer:bsdf{
-/// The weight.
-$(color|float) weight;
-
-/// The layer BSDF.
-bsdf layer=bsdf();
-
-/// The base BSDF.
-bsdf base=bsdf();
-
-/// The normal to use for the layer.
-float3 normal=$state.normal;
-
-/// The chance of sampling the layer BSDF.
-///
-/// NOTE: If the weight is a `float`, then the chance is the same
-/// as the weight. However, if the weight is a `color`, we
-/// have to average it down to a single probability.
-///
-float chance=average(weight);
-
-/// The flags.
-const int df_flags=layer.df_flags|base.df_flags;
-finalize {
-weight=saturate(weight);
-chance=saturate(chance);
-}
-};
-@(macro)
-auto scatterEvaluate(const &weighted_layer this,inline const &ScatterEvaluateParameters params){
-auto result0(scatterEvaluate(visit &this.base,params));
-preserve normal;
-normal=this.normal;
-auto result1(scatterEvaluate(visit &this.layer,params));
-return ScatterEvaluateResult(f: lerp(result0.f,result1.f,this.weight),pdf: lerp(result0.pdf,result1.pdf,this.chance),isBlack: result0.isBlack&result1.isBlack);
-}
-@(macro)
-auto scatterSample(const &weighted_layer this,inline const &ScatterSampleParameters params){
-if(monte_carlo::boolSample(&xi.w,this.chance)){
-preserve normal;
-normal=this.normal;
-return scatterSample(visit &this.layer,params);
-} else {
-return scatterSample(visit &this.base,params);
-}
-}
-
-/// The `color_weighted_layer` is also implemented by the `weighted_layer`.
-export typedef weighted_layer color_weighted_layer; /// A thin film layer.
-///
-/// > Add reflective thin-film interference color to an elemental or
-/// > compound BSDF.
-///
-export struct thin_film:bsdf{
-/// The thickness in nanometers.
-$(color|float) thickness;
-
-/// The index of refraction.
-$(color|float) ior;
-
-/// The base BSDF.
-bsdf base=bsdf();
-
-/// The flags.
-const int df_flags=base.df_flags;
-};
-
-/// Evaluate the thin-film interference factor.
-///
-/// This is the ratio of the Airy interference reflectance of the coated interface
-/// (ambient medium, then a film of the given `thickness` in nanometers and `filmIOR`,
-/// then the base medium of the given `baseIOR`, everything relative to the ambient
-/// medium) to the plain Fresnel reflectance of the uncoated interface. The MDL
-/// specification defines `thin_film` as modulating the Fresnel term of the base BSDF,
-/// so the ratio converts an uncoated Fresnel reflectance into the coated one. It
-/// reduces to the identity at zero thickness, consistent with the elimination rules
-/// in the specification's normal form, and may exceed one at wavelengths with
-/// constructive interference.
-///
-/// NOTE: The cosines through the film and into the base are clamped at zero,
-/// so total internal reflection at a buried interface is handled with the
-/// correct magnitude but without the phase shift of the evanescent case.
-///
-@(macro)
-auto thinFilmFactor(const auto thickness,const auto filmIOR,const float baseIOR,const float cosTheta1){
-const auto eta2(filmIOR);
-const auto eta3(baseIOR);
-const auto sin2Theta1(#max(1-cosTheta1*cosTheta1,0.));
-const auto cosTheta2(#sqrt(#max(1-sin2Theta1/(eta2*eta2),0.)));
-const auto cosTheta3(#sqrt(#max(1-sin2Theta1/(eta3*eta3),0.)));
-const auto rs12((cosTheta1-eta2*cosTheta2)/(cosTheta1+eta2*cosTheta2));
-const auto rp12((eta2*cosTheta1-cosTheta2)/(eta2*cosTheta1+cosTheta2));
-const auto rs23((eta2*cosTheta2-eta3*cosTheta3)/(eta2*cosTheta2+eta3*cosTheta3));
-const auto rp23((eta3*cosTheta2-eta2*cosTheta3)/(eta3*cosTheta2+eta2*cosTheta3));
-const auto phi(2.*$TWO_PI*eta2*cosTheta2*thickness/color($state.wavelength_base));
-const auto phase(complex(#cos(phi),#sin(phi)));
-const auto Rs(#norm((rs12+rs23*phase)/(1+rs12*rs23*phase)));
-const auto Rp(#norm((rp12+rp23*phase)/(1+rp12*rp23*phase)));
-const auto rs13((cosTheta1-eta3*cosTheta3)/(cosTheta1+eta3*cosTheta3));
-const auto rp13((eta3*cosTheta1-cosTheta3)/(eta3*cosTheta1+cosTheta3));
-const float R13(0.5*(rs13*rs13+rp13*rp13));
-return R13>EPSILON?0.5*(Rs+Rp)/R13:color(1.);
-}
-
-/// The film IOR relative to the incident medium. The user-facing film IOR is
-/// absolute. From outside, the incident medium is the exterior. From inside
-/// a solid (a backface hit), the incident medium is the base itself, whose
-/// absolute index equals `params.ior * params.exterior_ior` after the
-/// `finalize` reciprocation.
-@(macro)
-auto thinFilmIncidentRelativeIOR(const &thin_film this,const auto params){
-if(params.hitBackface&!params.thin_walled){
-return this.ior/(params.ior*params.exterior_ior);
-} else {
-return this.ior/params.exterior_ior;
-}
-}
-@(macro)
-auto scatterEvaluate(const &thin_film this,const &ScatterEvaluateParameters params){
-auto result(scatterEvaluate(visit &this.base,params));
-if(!result.isBlack&&params.mode==scatter_reflect){
-return ScatterEvaluateResult(f: thinFilmFactor(this.thickness,thinFilmIncidentRelativeIOR(this,params),1/params.ior,#abs(dot(params.wo,halfDirection(params))))*result.f,pdf: result.pdf,);
-} else {
-return result;
-}
-}
-@(macro)
-auto scatterSample(const &thin_film this,const &ScatterSampleParameters params){
-auto result(scatterSample(visit &this.base,params));
-if((result.mode==scatter_reflect)&bool(result.fDelta)){
-*result.fDelta*=thinFilmFactor(this.thickness,thinFilmIncidentRelativeIOR(this,params),1/params.ior,#abs(dot(params.wo,halfDirection(params,&result))));
-}
-return result;
-} /// A fresnel factor.
-///
-/// > Modifier weighting a base BSDF based on the Fresnel reflection
-/// > equation for a complex number IOR, comprising a real number IOR
-/// > and an extinction coefficient. This modifier is useful to model
-/// > the reflectance behavior of conductors and semi-conductors.
-///
-export struct fresnel_factor:bsdf{
-/// The index of refraction.
-$(color|float) ior;
-
-/// The extinction coefficient.
-$(color|float) extinction_coefficient;
-
-/// The base BSDF.
-bsdf base=bsdf();
-
-/// The flags.
-const int df_flags=base.df_flags;
-};
-@(macro)
-auto scatterEvaluate(const &fresnel_factor this,const &ScatterEvaluateParameters params){
-auto result(scatterEvaluate(visit &this.base,params));
-if(!result.isBlack&&params.mode==scatter_reflect){
-return ScatterEvaluateResult(f: specular::conductorFresnel(#abs(dot(params.wo,halfDirection(params))),relativeIOR(params,complex(this.ior,this.extinction_coefficient)))*result.f,pdf: result.pdf,);
-}
-return result;
-}
-@(macro)
-auto scatterSample(const &fresnel_factor this,const &ScatterSampleParameters params){
-auto result(scatterSample(visit &this.base,params));
-if((result.mode==scatter_reflect)&bool(result.fDelta)){
-*result.fDelta*=specular::conductorFresnel(#abs(dot(params.wo,halfDirection(params,&result))),relativeIOR(params,complex(this.ior,this.extinction_coefficient)));
-}
-return result;
-} /// The directional factor, modulating the base BSDF by a Schlick-style
-/// curve from `normal_tint` to `grazing_tint`.
-export struct directional_factor:bsdf{
-/// The normal tint.
-///
-/// > Color scaling factor at the normal.
-///
-$(color|float) normal_tint=1.;
-
-/// The grazing tint.
-///
-/// > Color scaling factor at the grazing angle.
-///
-$(color|float) grazing_tint=1.;
-
-/// The exponent.
-///
-/// > Exponent for directional factor. Default value (5.0) is
-/// > from Schlick's approximation.
-///
-float exponent=5.;
-
-/// The base BSDF.
-///
-/// > Base BSDF to be modified by directional factor.
-///
-bsdf base=bsdf();
-
-/// The flags.
-const int df_flags=base.df_flags;
-};
-@(macro)
-auto scatterEvaluate(const &directional_factor this,const &ScatterEvaluateParameters params){
-auto result(scatterEvaluate(visit &this.base,params));
-if(!result.isBlack&&params.mode==scatter_reflect){
-return ScatterEvaluateResult(f: specular::schlickFresnel(dot(params.wo,halfDirection(params)),this.normal_tint,this.grazing_tint,this.exponent)*result.f,pdf: result.pdf);
-} else {
-return result;
-}
-}
-@(macro)
-auto scatterSample(const &directional_factor this,const &ScatterSampleParameters params){
-auto result(scatterSample(visit &this.base,params));
-if((result.mode==scatter_reflect)&bool(result.fDelta)){
-*result.fDelta*=specular::schlickFresnel(dot(params.wo,halfDirection(params,&result)),this.normal_tint,this.grazing_tint,this.exponent);
-}
-return result;
-} /// The measured curve factor, modulating the base BSDF by a measured
-/// reflectance curve over the half-vector angle.
-export struct measured_curve_factor:bsdf{
-/// The curve values.
-///
-/// > Measured data for the reflection behavior. A 1-d function
-/// > measured in the pre-image range from zero to pi/2 with equally
-/// > spaced measured reflectance values.
-///
-/// NOTE: The deferred size is inferred at construction and recovered
-/// with `#num` in the implementation.
-///
-color[] curve_values;
-
-/// The base BSDF.
-///
-/// > Base BSDF to be modified by the measured reflectance curve.
-///
-bsdf base=bsdf();
-
-/// The flags.
-const int df_flags=base.df_flags;
-};
-
-/// Evaluate the reflectivity of a measured curve at `cosAlpha`, the cosine of the
-/// angle between the outgoing direction and the half vector, linearly interpolating
-/// the equally spaced `curve_values` over `[0, pi/2]`.
-@(pure macro)
-color evaluateMeasuredCurve(const color[<N>] curve_values,const float cosAlpha){
-const auto t(saturate(#acos(saturate(#abs(cosAlpha)))*(2/$PI))*(N-1));
-const int i(int(t));
-return saturate(lerp(curve_values[i],curve_values[#min(i+1,N-1)],t-i));
-}
-@(macro)
-auto scatterEvaluate(const &measured_curve_factor this,const &ScatterEvaluateParameters params){
-auto result(scatterEvaluate(visit &this.base,params));
-if(!result.isBlack&&params.mode==scatter_reflect){
-return ScatterEvaluateResult(f: evaluateMeasuredCurve(this.curve_values,dot(params.wo,halfDirection(params)))*result.f,pdf: result.pdf);
-} else {
-return result;
-}
-}
-@(macro)
-auto scatterSample(const &measured_curve_factor this,const &ScatterSampleParameters params){
-auto result(scatterSample(visit &this.base,params));
-if((result.mode==scatter_reflect)&bool(result.fDelta)){
-*result.fDelta*=evaluateMeasuredCurve(this.curve_values,dot(params.wo,halfDirection(params,&result)));
-}
-return result;
-} /// The measured factor, modulating the base BSDF by a 2-dimensional
-/// measured reflectance texture over the half-vector angles.
-export struct measured_factor:bsdf{
-/// The values.
-///
-/// > Measured data of type color for the reflection behavior. A 2-d
-/// > function measured in the pre-image range `[0,pi/2]^2` with equally
-/// > spaced reflectance values, where the texture-space u-coordinate
-/// > corresponds to the angle alpha between the incoming direction and
-/// > the half-vector h from the microfacet model, and the texture-space
-/// > v-coordinate corresponds to the angle beta between the half-vector
-/// > h and the shading surface normal.
-///
-texture_2d values;
-
-/// The base BSDF.
-///
-/// > Base BSDF to be modified by the measured reflectance values.
-///
-bsdf base=bsdf();
-
-/// The flags.
-const int df_flags=base.df_flags;
-};
-
-/// Evaluate the reflectivity of the measured factor, where `cosAlpha` is the cosine
-/// of the angle between the outgoing direction and the half vector `h`, and `cosBeta`
-/// is the cosine of the angle between `h` and the shading normal.
-@(pure macro)
-color evaluateMeasuredFactor(const &measured_factor this,const float cosAlpha,const float cosBeta){
-return saturate(tex::lookup_color(
-this.values,
-float2(#acos(saturate(#abs(cosAlpha))),#acos(saturate(cosBeta)))*(2/$PI),
-tex::wrap_clamp,
-tex::wrap_clamp,
-),);
-}
-@(macro)
-auto scatterEvaluate(const &measured_factor this,const &ScatterEvaluateParameters params){
-auto result(scatterEvaluate(visit &this.base,params));
-if(!result.isBlack&&params.mode==scatter_reflect){
-const auto h(halfDirection(params));
-return ScatterEvaluateResult(f: evaluateMeasuredFactor(this,dot(params.wo,h),h.z)*result.f,pdf: result.pdf);
-} else {
-return result;
-}
-}
-@(macro)
-auto scatterSample(const &measured_factor this,const &ScatterSampleParameters params){
-auto result(scatterSample(visit &this.base,params));
-if((result.mode==scatter_reflect)&bool(result.fDelta)){
-const auto h(halfDirection(params,&result));
-*result.fDelta*=evaluateMeasuredFactor(this,dot(params.wo,h),h.z);
-}
-return result;
-} /// The Fresnel layer, blending the `layer` BSDF over the `base` BSDF by
-/// the exact dielectric Fresnel term of the given `ior`.
-export struct fresnel_layer:bsdf{
-/// The index of refraction.
-///
-/// NOTE: This is the absolute IOR of the layer interface. It both weights
-/// the layer by the dielectric Fresnel term and, non-standardly, defines
-/// the refractive interface for the nested `layer` BSDF (overriding the
-/// material IOR), so that the Fresnel weight and any refraction in the
-/// layer always agree with each other.
-///
-$(color|float) ior;
-
-/// The weight.
-$(color|float) weight=1.;
-
-/// The layer BSDF.
-bsdf layer=bsdf();
-
-/// The base BSDF.
-bsdf base=bsdf();
-
-/// The normal to use for the layer.
-float3 normal=$state.normal;
-
-/// The precomputed average index of refraction.
-const float _averageIOR=average(ior);
-
-/// The precomputed average weight.
-const float _averageWeight=average(weight);
-
-/// The flags.
-const int df_flags=layer.df_flags|base.df_flags;
-};
-@(macro)
-auto scatterEvaluate(const &fresnel_layer this,inline const &ScatterEvaluateParameters params){
-const auto cosThetao(dot(wo,this.normal)*#sign(this.normal.z));
-const auto cosThetai(dot(wi,this.normal)*#sign(this.normal.z));
-if((cosThetao<EPSILON)|((mode==scatter_reflect)&(cosThetai<EPSILON))|((mode==scatter_transmit)&(cosThetai>-EPSILON)))
-return ScatterEvaluateResult(isBlack: true);
-const auto result0(scatterEvaluate(visit &this.base,params));
-preserve normal,ior;
-normal=this.normal,ior=relativeIOR(params,this._averageIOR);
-const auto result1(scatterEvaluate(visit &this.layer,params));
-if(result0.isBlack&result1.isBlack){
-return ScatterEvaluateResult(isBlack: true);
-} else {
-const auto pdfIOR(relativeIOR(params,this._averageIOR));
-return ScatterEvaluateResult(f: lerp(result0.f,result1.f,this.weight*specular::dielectricFresnel(dot(wo,halfDirection(params)),relativeIOR(params,this.ior)),),pdf: lerp(result0.pdf,result1.pdf,this._averageWeight*float2(specular::dielectricFresnel(cosThetao,pdfIOR),specular::dielectricFresnel(cosThetai,mode==scatter_reflect?pdfIOR:1/pdfIOR),),),);
-}
-}
-@(macro)
-auto scatterSample(const &fresnel_layer this,inline const &ScatterSampleParameters params){
-const auto cosTheta(dot(wo,this.normal)*#sign(this.normal.z));
-if(cosTheta<EPSILON)
-return ScatterSampleResult();
-const auto chance(this._averageWeight*specular::dielectricFresnel(cosTheta,relativeIOR(params,this._averageIOR)));
-if(monte_carlo::boolSample(&xi.z,chance)){
-preserve normal,ior;
-normal=this.normal,ior=relativeIOR(params,this._averageIOR);
-auto result(scatterSample(visit &this.layer,params));
-*result.fDelta*=this.weight*specular::dielectricFresnel(dot(wo,halfDirection(params,&result)),relativeIOR(params,this.ior))/chance if(result.fDelta);
-return result;
-} else {
-auto result(scatterSample(visit &this.base,params));
-*result.fDelta*=(1-this.weight*specular::dielectricFresnel(dot(wo,halfDirection(params,&result)),relativeIOR(params,this.ior)))/(1-chance) if(result.fDelta);
-return result;
-}
-}
-
-/// The `color_fresnel_layer` is also implemented by the `fresnel_layer`.
-export typedef fresnel_layer color_fresnel_layer; /// A custom-curve layer.
-///
-/// NOTE: Unlike `fresnel_layer`, this combinator carries no IOR and does
-/// not define a refractive interface: a nested transmissive `layer`
-/// refracts with the enclosing interface, which is the material IOR by
-/// default.
-///
-export struct custom_curve_layer:bsdf{
-/// The reflectivity at normal incidence.
-$(color|float) normal_reflectivity;
-
-/// The reflectivity at grazing incidence.
-$(color|float) grazing_reflectivity=1.;
-
-/// The exponent.
-float exponent=5.;
-
-/// The weight.
-$(color|float) weight=1.;
-
-/// The layer BSDF.
-bsdf layer=bsdf();
-
-/// The base BSDF.
-bsdf base=bsdf();
-
-/// The normal to use for the layer.
-float3 normal=$state.normal;
-
-/// The precomputed average normal reflectivity.
-const float _averageNormalReflectivity=average(normal_reflectivity);
-
-/// The precomputed average grazing reflectivity.
-const float _averageGrazingReflectivity=average(grazing_reflectivity);
-
-/// The precomputed average weight.
-const float _averageWeight=average(weight);
-
-/// The flags.
-const int df_flags=layer.df_flags|base.df_flags;
-};
-@(macro)
-auto scatterEvaluate(const &custom_curve_layer this,inline const &ScatterEvaluateParameters params){
-const auto cosThetao(dot(wo,this.normal)*#sign(this.normal.z));
-const auto cosThetai(dot(wi,this.normal)*#sign(this.normal.z));
-if((cosThetao<EPSILON)|((mode==scatter_reflect)&(cosThetai<EPSILON))|((mode==scatter_transmit)&(cosThetai>-EPSILON)))
-return ScatterEvaluateResult(isBlack: true);
-const auto result0(scatterEvaluate(visit &this.base,params));
-const auto result1=return_from{
-preserve normal;
-normal=this.normal;
-return scatterEvaluate(visit &this.layer,params);
-};
-if(result0.isBlack&result1.isBlack){
-return ScatterEvaluateResult(isBlack: true);
-} else {
-return ScatterEvaluateResult(f: lerp(result0.f,result1.f,this.weight*specular::schlickFresnel(dot(wo,halfDirection(params)),this.normal_reflectivity,this.grazing_reflectivity,this.exponent),),pdf: lerp(result0.pdf,result1.pdf,this._averageWeight*specular::schlickFresnel(float2(cosThetao,cosThetai),this._averageNormalReflectivity,this._averageGrazingReflectivity,this.exponent),),);
-}
-}
-@(macro)
-auto scatterSample(const &custom_curve_layer this,inline const &ScatterSampleParameters params){
-const auto cosTheta(dot(wo,this.normal)*#sign(this.normal.z));
-if(cosTheta<EPSILON)
-return ScatterSampleResult();
-const auto chance(this._averageWeight*specular::schlickFresnel(cosTheta,this._averageNormalReflectivity,this._averageGrazingReflectivity,this.exponent));
-if(monte_carlo::boolSample(&xi.z,chance)){
-preserve normal;
-normal=this.normal;
-auto result(scatterSample(visit &this.layer,params));
-*result.fDelta*=this.weight*specular::schlickFresnel(dot(wo,halfDirection(params,&result)),this.normal_reflectivity,this.grazing_reflectivity,this.exponent)/chance if(result.fDelta);
-return result;
-} else {
-auto result(scatterSample(visit &this.base,params));
-*result.fDelta*=(1-this.weight*specular::schlickFresnel(dot(wo,halfDirection(params,&result)),this.normal_reflectivity,this.grazing_reflectivity,this.exponent))/(1-chance) if(result.fDelta);
-return result;
-}
-}
-
-/// The `color_custom_curve_layer` is also implemented by the `custom_curve_layer`.
-export typedef custom_curve_layer color_custom_curve_layer; /// A measured-curve layer.
-///
-/// NOTE: Unlike `fresnel_layer`, this combinator carries no IOR and does
-/// not define a refractive interface: a nested transmissive `layer`
-/// refracts with the enclosing interface, which is the material IOR by
-/// default.
-///
-export struct measured_curve_layer:bsdf{
-/// The curve values.
-///
-/// > Measured data for the reflection behavior. A 1-d function
-/// > measured in the pre-image range from zero to pi/2 with equally
-/// > spaced measured reflectance values.
-///
-color[] curve_values;
-
-/// The weight.
-$(color|float) weight=1.;
-
-/// The layer BSDF.
-bsdf layer=bsdf();
-
-/// The base BSDF.
-bsdf base=bsdf();
-
-/// The normal to use for the layer.
-float3 normal=$state.normal;
-
-/// The precomputed average weight.
-const float _averageWeight=average(weight);
-
-/// The flags.
-const int df_flags=layer.df_flags|base.df_flags;
-};
-@(macro)
-auto scatterEvaluate(const &measured_curve_layer this,inline const &ScatterEvaluateParameters params){
-const auto cosThetao(dot(wo,this.normal)*#sign(this.normal.z));
-const auto cosThetai(dot(wi,this.normal)*#sign(this.normal.z));
-if((cosThetao<EPSILON)|((mode==scatter_reflect)&(cosThetai<EPSILON))|((mode==scatter_transmit)&(cosThetai>-EPSILON)))
-return ScatterEvaluateResult(isBlack: true);
-const auto result0(scatterEvaluate(visit &this.base,params));
-const auto result1=return_from{
-preserve normal;
-normal=this.normal;
-return scatterEvaluate(visit &this.layer,params);
-};
-if(result0.isBlack&result1.isBlack){
-return ScatterEvaluateResult(isBlack: true);
-} else {
-return ScatterEvaluateResult(f: lerp(result0.f,result1.f,this.weight*evaluateMeasuredCurve(this.curve_values,dot(wo,halfDirection(params))),),pdf: lerp(result0.pdf,result1.pdf,this._averageWeight*float2(average(evaluateMeasuredCurve(this.curve_values,cosThetao)),average(evaluateMeasuredCurve(this.curve_values,cosThetai)),),),);
-}
-}
-@(macro)
-auto scatterSample(const &measured_curve_layer this,inline const &ScatterSampleParameters params){
-const auto cosTheta(dot(wo,this.normal)*#sign(this.normal.z));
-if(cosTheta<EPSILON)
-return ScatterSampleResult();
-const auto chance(this._averageWeight*average(evaluateMeasuredCurve(this.curve_values,cosTheta)));
-if(monte_carlo::boolSample(&xi.z,chance)){
-preserve normal;
-normal=this.normal;
-auto result(scatterSample(visit &this.layer,params));
-*result.fDelta*=this.weight*evaluateMeasuredCurve(this.curve_values,dot(wo,halfDirection(params,&result)))/chance if(result.fDelta);
-return result;
-} else {
-auto result(scatterSample(visit &this.base,params));
-*result.fDelta*=(1-this.weight*evaluateMeasuredCurve(this.curve_values,dot(wo,halfDirection(params,&result))))/(1-chance) if(result.fDelta);
-return result;
-}
-}
-
-/// The `color_measured_curve_layer` is also implemented by the `measured_curve_layer`.
-export typedef measured_curve_layer color_measured_curve_layer;
-tag component;
-
-/// The weighted BSDF component for use with the mixers.
-export struct bsdf_component:component{
-float weight=0.;       ///< The weight.
-bsdf component=bsdf(); ///< The component BSDF.
-float chance=weight;   ///< The sampling chance. NOTE: This is non-standard!
-};
-/// The weighted EDF component for use with the mixers.
-export struct edf_component:component{
-float weight=0.;     ///< The weight.
-edf component=edf(); ///< The component EDF.
-float chance=weight; ///< The sampling chance. NOTE: This is non-standard!
-};
-/// The weighted VDF component for use with the mixers.
-export struct vdf_component:component{
-float weight=0.;     ///< The weight.
-vdf component=vdf(); ///< The component VDF.
-float chance=weight; ///< The sampling chance. NOTE: This is non-standard!
-};
-struct component_mix:bsdf,edf,vdf{
-component[] components;
-int df_flags=0;
-};
-
-/// Constructs a mixture of the given components, normalizing the weights
-/// when they sum to more than 1.
-@(macro)
-export auto normalized_mix(component[<N>] components){
-int df_flags(0);
-float total_weight(0);
-float total_chance(0);
-for(int i=0;i<N;i++){
-auto component(&components[i]);
-component.weight=#max(component.weight,0.);
-component.chance=#max(component.chance,0.);
-total_weight+=component.weight;
-total_chance+=component.chance;
-df_flags|=component.component.df_flags;
-}
-if(total_weight>1.)
-total_weight=1./total_weight;
-else
-total_weight=1.;
-total_chance=1./total_chance if(total_chance>0.);
-for(int i=0;i<N;i++){
-auto component(&components[i]);
-component.weight*=total_weight;
-component.chance*=total_chance;
-}
-return component_mix(components,df_flags);
-}
-
-/// Constructs a mixture of the given components, clamping the running
-/// weight sum at 1 in declaration order.
-@(macro)
-export auto clamped_mix(component[<N>] components){
-int df_flags(0);
-float total_weight(0);
-float total_chance(0);
-for(int i=0;i<N;i++){
-auto component(&components[i]);
-component.weight=#max(component.weight,0.);
-component.chance=#max(component.chance,0.);
-if(total_weight+component.weight<1.){
-total_weight+=component.weight;
-total_chance+=component.chance;
-df_flags|=component.component.df_flags;
-} else {
-component.weight=1.-total_weight;
-for(int j=i+1;j<N;j++){
-components[j].weight=0;
-components[j].chance=0;
-}
-break;
-}
-}
-total_chance=1./total_chance if(total_chance>0.);
-for(int i=0;i<N;i++){
-components[i].chance*=total_chance;
-}
-return component_mix(components,df_flags);
-}
-
-/// Constructs a mixture of the given components without normalizing or
-/// clamping the weights.
-@(macro)
-export auto unbounded_mix(component[<N>] components){
-int df_flags(0);
-float total_chance(0);
-for(int i=0;i<N;i++){
-auto component(&components[i]);
-component.weight=#max(component.weight,0.);
-component.chance=#max(component.chance,0.);
-total_chance+=component.chance;
-df_flags|=component.df_flags;
-}
-total_chance=1./total_chance if(total_chance>0.);
-for(int i=0;i<N;i++){
-components[i].chance*=total_chance;
-}
-return component_mix(components,df_flags);
-}
-@(macro)
-auto scatterEvaluate(const &component_mix this,const &ScatterEvaluateParameters params){
-auto result(ScatterEvaluateResult(f: color(0),isBlack: true));
-for(int i=0;i<#num(this.components);i++){
-visit component in this.components[i]{
-auto component_result(scatterEvaluate(visit &component.component,params));
-if(!component_result.isBlack){
-result.pdf+=component.chance*component_result.pdf;
-result.f+=component.weight*component_result.f;
-result.isBlack=false;
-}
-}
-}
-return result;
-}
-@(macro)
-auto scatterSample(const &component_mix this,const &ScatterSampleParameters params){
-const auto xi(&params.xi.z);
-for(int i=0;i<#num(this.components);i++){
-visit component in this.components[i]{
-if(!(*xi<component.chance)){
-*xi-=component.chance;
-} else {
-*xi/=component.chance;
-auto result(scatterSample(visit &component.component,params));
-if((result.mode!=scatter_none)&bool(result.fDelta))
-*result.fDelta*=component.weight;
-return result;
-}
-}
-}
-return ScatterSampleResult();
-}
-@(macro)
-auto emissionEvaluate(const &component_mix this,const &EmissionEvaluateParameters params){
-auto result(EmissionEvaluateResult(f: color(0),isBlack: true));
-for(int i=0;i<#num(this.components);i++){
-visit component in this.components[i]{
-auto component_result(emissionEvaluate(visit &component.component,params));
-if(!component_result.isBlack){
-result.pdf+=component.chance*component_result.pdf;
-result.f+=component.weight*component_result.f;
-result.isBlack=false;
-}
-}
-}
-return result;
-}
-@(macro)
-auto emissionSample(const &component_mix this,const &EmissionSampleParameters params){
-const auto xi(&params.xi.z);
-for(int i=0;i<#num(this.components);i++){
-visit component in this.components[i]{
-if(!(*xi<component.chance)){
-*xi-=component.chance;
-} else {
-*xi/=component.chance;
-return emissionSample(visit &component.component,params);
-}
-}
-}
-return EmissionSampleResult();
-} /// The anisotropic VDF, being the Henyey-Greenstein phase function with
-/// the given directional bias.
-export struct anisotropic_vdf:vdf{
-/// The directional bias `g` in `(-1, 1)`: negative is backward
-/// scattering, `0` is isotropic, and positive is forward scattering.
-float directional_bias=0.;
-
-/// The handle.
-void handle="";
-
-/// The flags.
-static const int df_flags=0;
-finalize {
-directional_bias=#max(directional_bias,-0.999);
-directional_bias=#min(directional_bias,0.999);
-}
-};
-@(macro)
-auto scatterEvaluate(const &anisotropic_vdf this,inline const &ScatterEvaluateParameters params){
-const auto cosTheta=dot(wo,wi);
-const auto g=this.directional_bias;
-const auto p=(1.-g*g)/(4.*$PI*(denom:=1.+g*g+2.*g*cosTheta)*#sqrt(denom));
-return ScatterEvaluateResult(f: p,pdf: float2(p));
-}
-@(macro)
-auto scatterSample(const &anisotropic_vdf this,inline const &ScatterSampleParameters params){
-const auto g=this.directional_bias;
-const auto cosTheta=#abs(g)<1e-3?1.-2.*xi.x:-(1.+g*g-#pow((1.-g*g)/(1.+g*(1.-2.*xi.x)),2))/(2.*g);
-const auto sinTheta=#sqrt(#max(0.,1.-cosTheta*cosTheta));
-const auto phi=2.*$PI*xi.y;
-return ScatterSampleResult(wi: orthonormalBasis(wo)*float3(sinTheta*#cos(phi),sinTheta*#sin(phi),cosTheta),mode: scatter_reflect_transmit);
-}
-@(macro)
-export int _scatterEvaluate(
-const &_MaterialInstance instance,
-const &float3 woWorld, ///< The outgoing direction in world space
-const &float3 wiWorld, ///< The incoming direction in world space
-const &float pdfFwd,   ///< output: The PDF of sampling `wi` from `wo`
-const &float pdfRev,   ///< output: The PDF of sampling `wo` from `wi`
-const &float f,        ///< output: The scattering function
-){
-auto params=ScatterEvaluateParameters(
-isImportance: (instance.flags&1)!=0,
-ior: instance.exterior_ior/instance.ior,
-exterior_ior: instance.exterior_ior,
-wo0: normalize((*woWorld)*instance.tangent_to_world),
-wi0: normalize((*wiWorld)*instance.tangent_to_world),
-normal: normalize(instance.geometry.normal),
-thin_walled: instance.ptr.thin_walled,
-);
-auto result=#is_default(instance.ptr.backface)||!params.hitBackface?scatterEvaluate(visit &instance.ptr.surface.scattering,&params):scatterEvaluate(visit &instance.ptr.backface.scattering,&params);
-visit result in result{
-if(result.isBlack){
-*pdfFwd=0.;
-*pdfRev=0.;
-for(int i=0;i<$WAVELENGTH_BASE_MAX;i++)
-f[i]=0.;
-} else {
-*pdfFwd=result.pdf[0];
-*pdfRev=result.pdf[1];
-if(#typeof(result.f)==float){
-for(int i=0;i<$WAVELENGTH_BASE_MAX;i++)
-f[i]=result.f;
-} else {
-#memcpy(f,&result.f,#sizeof(float)*$WAVELENGTH_BASE_MAX);
-}
-}
-return !result.isBlack;
-}
-}
-@(macro)
-export int _scatterSample(
-const &_MaterialInstance instance,
-const &float4 xi,      ///< The canonical random sample in `[0,1]^4`
-const &float3 woWorld, ///< The outgoing direction in world space
-const &float3 wiWorld, ///< output: The incoming direction in world space
-const &float pdfFwd,   ///< output: The PDF of sampling `wi` from `wo`
-const &float pdfRev,   ///< output: The PDF of sampling `wo` from `wi`
-const &float f,        ///< output: The scattering function
-const &int isDelta,    ///< output: Is delta direction?
-){
-auto wo=normalize((*woWorld)*instance.tangent_to_world);
-auto params=ScatterSampleParameters(
-isImportance: (instance.flags&1)!=0,
-xi: *xi,
-wo0: wo,
-ior: instance.exterior_ior/instance.ior,
-exterior_ior: instance.exterior_ior,
-normal: normalize(instance.geometry.normal),
-thin_walled: instance.ptr.thin_walled,
-);
-auto result=#is_default(instance.ptr.backface)||!params.hitBackface?scatterSample(visit &instance.ptr.surface.scattering,&params):scatterSample(visit &instance.ptr.backface.scattering,&params);
-visit result in result{
-const auto wi=#select(params.hitBackface,-result.wi,result.wi);
-if(result.mode==scatter_none||((wo.z<0.)==(wi.z<0.))!=(result.mode==scatter_reflect)){
-*pdfFwd=0.;
-*pdfRev=0.;
-for(int i=0;i<$WAVELENGTH_BASE_MAX;i++)
-f[i]=0.;
-return false;
-}
-*wiWorld=normalize(instance.tangent_to_world*wi);
-if((*isDelta=bool(result.fDelta))){
-*pdfFwd=1.;
-*pdfRev=1.;
-#memcpy(f,&*result.fDelta,#sizeof(float)*$WAVELENGTH_BASE_MAX);
-return true;
-} else {
-return _scatterEvaluate(instance,woWorld,wiWorld,pdfFwd,pdfRev,f);
-}
-}
-}
-@(macro)
-export float _volumeScatterEvaluate(const &_MaterialInstance instance,const &float3 woWorld, ///< The outgoing direction in world space
-const &float3 wiWorld,                                                                       ///< The incoming direction in world space
-){
-auto params=ScatterEvaluateParameters(
-isImportance: 0,
-wo0: normalize(*woWorld),
-wi0: normalize(*wiWorld),
-hitBackface: false,
-ior: 1.,
-);
-return scatterEvaluate(visit &instance.ptr.volume.scattering,&params).f;
-}
-@(macro)
-export float _volumeScatterSample(
-const &_MaterialInstance instance,
-const &float4 xi,      ///< The canonical random sample in `[0,1]^4`
-const &float3 woWorld, ///< The outgoing direction in world space
-const &float3 wiWorld, ///< output: The incoming direction in world space
-){
-auto wo=normalize(*woWorld);
-auto params=ScatterSampleParameters(
-isImportance: false,
-xi: *xi,
-wo0: wo,
-hitBackface: false,
-ior: 1.,
-);
-auto result=scatterSample(visit &instance.ptr.volume.scattering,&params);
-if(result.mode==scatter_none){
-return 0.;
-}
-*wiWorld=normalize(result.wi);
-return _volumeScatterEvaluate(instance,woWorld,wiWorld);
-}
-
-/// Calculate the average emission intensities of the front and back sides.
-@(macro)
-float2 _emissionSideWeights(const &_MaterialInstance instance){
-float frontWeight=0.;
-float backWeight=0.;
-if$(!#is_default(instance.ptr.surface.emission.emission)){
-frontWeight=#max(average(instance.ptr.surface.emission.intensity),0.);
-}
-if(instance.ptr.thin_walled){
-if$(!#is_default(instance.ptr.backface)){
-if$(!#is_default(instance.ptr.backface.emission.emission)){
-backWeight=#max(average(instance.ptr.backface.emission.intensity),0.);
-}
-} else {
-backWeight=frontWeight;
-}
-}
-return float2(frontWeight,backWeight);
-}
-
-/// Evaluate the emission of the given `material_surface` side, weighting
-/// the PDF by the side chance and applying the intensity.
-@(macro)
-int _emissionEvaluateSide(
-const &material_surface side,
-const float chance,
-const &EmissionEvaluateParameters params,
-const &float pdf,
-const &float Le,
-){
-if(!(chance>0.))
-return false;
-auto result=emissionEvaluate(visit &side.emission.emission,params);
-visit result in result{
-if(result.isBlack)
-return false;
-*pdf=chance*result.pdf;
-color LeResult(color(side.emission.intensity)*result.f);
-#memcpy(Le,&LeResult,#sizeof(float)*$WAVELENGTH_BASE_MAX);
-return true;
-}
-}
-@(macro)
-export int _emissionEvaluate(
-const &_MaterialInstance instance,
-const &float3 wiWorld, ///< The emission direction in world space
-const &float pdf,      ///< output: The PDF of sampling `wiWorld`
-const &float Le,       ///< output: The emitted radiance
-){
-*pdf=0.;
-for(int i=0;i<$WAVELENGTH_BASE_MAX;i++)
-Le[i]=0.;
-const auto weights=_emissionSideWeights(instance);
-const auto totalWeight=weights.x+weights.y;
-if(!(totalWeight>0.))
-return false;
-auto params=EmissionEvaluateParameters(wi0: normalize((*wiWorld)*instance.tangent_to_world),normal: normalize(instance.geometry.normal),);
-if(!params.hitBackface){
-return _emissionEvaluateSide(&instance.ptr.surface,weights.x/totalWeight,&params,pdf,Le);
-} else {
-if(!instance.ptr.thin_walled)
-return false;
-if$(!#is_default(instance.ptr.backface)){
-return _emissionEvaluateSide(&instance.ptr.backface,weights.y/totalWeight,&params,pdf,Le);
-} else {
-return _emissionEvaluateSide(&instance.ptr.surface,weights.y/totalWeight,&params,pdf,Le);
-}
-}
-}
-@(macro)
-export int _emissionSample(
-const &_MaterialInstance instance,
-const &float4 xi,      ///< The canonical random sample in `[0,1]^4`
-const &float3 wiWorld, ///< output: The emission direction in world space
-const &float pdf,      ///< output: The PDF of sampling `wiWorld`
-const &float Le,       ///< output: The emitted radiance
-){
-*pdf=0.;
-for(int i=0;i<$WAVELENGTH_BASE_MAX;i++)
-Le[i]=0.;
-const auto weights=_emissionSideWeights(instance);
-const auto totalWeight=weights.x+weights.y;
-if(!(totalWeight>0.))
-return false;
-auto params=EmissionSampleParameters(xi: *xi,normal: normalize(instance.geometry.normal),);
-const bool sampleFront=monte_carlo::boolSample(&params.xi.w,weights.x/totalWeight);
-auto result=return_from{
-if(sampleFront){
-return emissionSample(visit &instance.ptr.surface.emission.emission,&params);
-} else if$(!#is_default(instance.ptr.backface)){
-return emissionSample(visit &instance.ptr.backface.emission.emission,&params);
-} else {
-return emissionSample(visit &instance.ptr.surface.emission.emission,&params);
-}
-};
-visit result in result{
-if(!result.isValid||!(result.wi.z>0.))
-return false;
-const auto wiNatural=sampleFront?result.wi:-result.wi;
-*wiWorld=normalize(instance.tangent_to_world*wiNatural);
-return _emissionEvaluate(instance,wiWorld,pdf,Le);
-}
-}
-)*";
-
-static const char *const limits = R"*(/// Numeric limits of the builtin arithmetic types, following the MDL
-/// specification.
-#smdl
-
-/// The most negative value of type `int`.
-export const int INT_MIN=$INT_MIN;
-
-/// The largest value of type `int`.
-export const int INT_MAX=$INT_MAX;
-
-/// The smallest positive normalized value of type `float`.
-export const float FLOAT_MIN=$FLOAT_MIN;
-
-/// The largest finite value of type `float`.
-export const float FLOAT_MAX=$FLOAT_MAX;
-
-/// The smallest positive normalized value of type `double`.
-export const double DOUBLE_MIN=$DOUBLE_MIN;
-
-/// The largest finite value of type `double`.
-export const double DOUBLE_MAX=$DOUBLE_MAX;
-)*";
-
-static const char *const math = R"*(/// Elementary math functions, following the MDL specification. Most of
-/// these are generic and componentwise: they accept scalars, vectors,
-/// matrices, and `color` where sensible, applying the operation to each
-/// component.
-#smdl
-
-/// The constant `pi`.
-export const float PI=$PI;
-
-/// The constant `2 * pi`.
-export const float TWO_PI=$TWO_PI;
-
-/// The constant `pi / 2`.
-export const float HALF_PI=$HALF_PI;
-
-/// The absolute value.
-@(macro)
-export auto abs(const auto a)=#abs(a);
-
-/// Is every component true?
-@(macro)
-export auto all(const auto a)=#all(a);
-
-/// Is any component true?
-@(macro)
-export auto any(const auto a)=#any(a);
-
-/// The maximum of `a` and `b`.
-@(macro)
-export auto max(const auto a,const auto b)=#max(a,b);
-
-/// The minimum of `a` and `b`.
-@(macro)
-export auto min(const auto a,const auto b)=#min(a,b);
-
-/// The value `a` clamped to the range `[min, max]`.
-@(macro)
-export auto clamp(const auto a,const auto min,const auto max)=#max(min,#min(a,max));
-
-/// The value `a` clamped to the range `[0, 1]`.
-@(macro)
-export auto saturate(const auto a)=clamp(a,0.,1.);
-
-/// The value rounded down toward negative infinity.
-@(macro)
-export auto floor(const auto a)=#floor(a);
-
-/// The value rounded up toward positive infinity.
-@(macro)
-export auto ceil(const auto a)=#ceil(a);
-
-/// The value rounded to the nearest integer.
-@(macro)
-export auto round(const auto a)=#round(a);
-
-/// The value rounded toward zero.
-@(macro)
-export auto trunc(const auto a)=#trunc(a);
-
-/// The fractional part, `a - floor(a)`.
-@(macro)
-export auto frac(const auto a)=a-#floor(a);
-
-/// The remainder of `a` divided by `b`.
-@(macro)
-export auto fmod(const auto a,const auto b)=a%b;
-
-/// The integral and fractional parts as an array of two, `[trunc(a), a - trunc(a)]`.
-@(macro)
-export auto modf(const auto a)=auto[2](a0:=#trunc(a),a-a0);
-
-/// Is neither infinite nor NaN?
-@(macro)
-export auto isfinite(const auto a)=#isfpclass(a,0b0111111000);
-
-/// Is a normalized floating-point number, i.e., finite and neither zero nor subnormal?
-@(macro)
-export auto isnormal(const auto a)=#isfpclass(a,0b0100001000);
-
-/// Is positive or negative infinity?
-@(macro)
-export auto isinf(const auto a)=#isfpclass(a,0b1000000100);
-
-/// Is NaN?
-@(macro)
-export auto isnan(const auto a)=#isfpclass(a,0b0000000011);
-
-/// The sign of the value.
-@(macro)
-export auto sign(const auto a)=#sign(a);
-
-/// The square root.
-@(macro)
-export auto sqrt(const auto a)=#sqrt(a);
-
-/// The reciprocal of the square root.
-@(macro)
-export auto rsqrt(const auto a)=1./#sqrt(a);
-
-/// The power `a` raised to `b`.
-@(macro)
-export auto pow(const auto a,const auto b)=#pow(a,b);
-
-/// The cosine of an angle in radians.
-@(macro)
-export auto cos(const auto a)=#cos(a);
-
-/// The sine of an angle in radians.
-@(macro)
-export auto sin(const auto a)=#sin(a);
-
-/// The tangent of an angle in radians.
-@(macro)
-export auto tan(const auto a)=#tan(a);
-
-/// The arccosine in radians.
-@(macro)
-export auto acos(const auto a)=#acos(a);
-
-/// The arcsine in radians.
-@(macro)
-export auto asin(const auto a)=#asin(a);
-
-/// The arctangent in radians.
-@(macro)
-export auto atan(const auto a)=#atan(a);
-
-/// The arctangent of `y / x` in radians, using the signs to select the quadrant.
-@(macro)
-export auto atan2(const auto y,const auto x)=#atan2(y,x);
-
-/// The hyperbolic cosine.
-@(macro)
-export auto cosh(const auto a)=#cosh(a);
-
-/// The hyperbolic sine.
-@(macro)
-export auto sinh(const auto a)=#sinh(a);
-
-/// The hyperbolic tangent.
-@(macro)
-export auto tanh(const auto a)=#tanh(a);
-
-/// The sine and cosine of an angle in radians as an array of two, `[sin(a), cos(a)]`.
-@(macro)
-export auto sincos(const auto a)=auto[2](#sin(a),#cos(a));
-
-/// Converts degrees to radians.
-@(macro)
-export auto radians(const auto a)=a*(PI/180.);
-
-/// Converts radians to degrees.
-@(macro)
-export auto degrees(const auto a)=a*(180./PI);
-
-/// The natural exponential `e^a`.
-@(macro)
-export auto exp(const auto a)=#exp(a);
-
-/// The base-2 exponential `2^a`.
-@(macro)
-export auto exp2(const auto a)=#exp2(a);
-
-/// The base-10 exponential `10^a`.
-@(macro)
-export auto exp10(const auto a)=#exp10(a);
-
-/// The natural logarithm.
-@(macro)
-export auto log(const auto a)=#log(a);
-
-/// The base-2 logarithm.
-@(macro)
-export auto log2(const auto a)=#log2(a);
-
-/// The base-10 logarithm.
-@(macro)
-export auto log10(const auto a)=#log10(a);
-
-/// The smallest component of the value.
-@(macro)
-export auto min_value(const auto a)=#min_value(a);
-
-/// The largest component of the value.
-@(macro)
-export auto max_value(const auto a)=#max_value(a);
-
-/// The wavelength in nanometers at which the color attains its smallest component.
-@(pure)
-export float min_value_wavelength(const color a){
-int imin=0;
-float amin=a[0];
-for(int i=1;i<$WAVELENGTH_BASE_MAX;i++){
-if(amin>a[i]){
-amin=a[i];
-imin=i;
-}
-}
-return $state.wavelength_base[imin];
-}
-
-/// The wavelength in nanometers at which the color attains its largest component.
-@(pure)
-export float max_value_wavelength(const color a){
-int imax=0;
-float amax=a[0];
-for(int i=1;i<$WAVELENGTH_BASE_MAX;i++){
-if(amax<a[i]){
-amax=a[i];
-imax=i;
-}
-}
-return $state.wavelength_base[imax];
-}
-
-/// The average of all components of the value.
-@(macro)
-export auto average(const auto a)=#sum(a)/#num(a);
-
-/// The linear interpolation from `a` to `b` by factor `l`.
-@(macro)
-export auto lerp(const auto a,const auto b,const auto l)=(1.-l)*a+l*b;
-
-/// The step function, `0` where `b < a` and `1` elsewhere.
-@(macro)
-export auto step(const auto a,const auto b)=#select(b<a,0.,1.);
-
-/// The smooth Hermite interpolation from `a` to `b` by factor `l` clamped to `[0, 1]`.
-@(macro)
-export auto smoothstep(const auto a,const auto b,const auto l){
-const auto t(saturate(l));
-const auto s(1-t);
-return s*s*(1+2*t)*a+t*t*(1+2*s)*b;
-}
-
-/// The dot product.
-@(macro)
-export auto dot(const auto a,const auto b)=#sum(a*b);
-
-/// The Euclidean length.
-@(macro)
-export auto length(const auto a)=#sqrt(#sum(a*a));
-
-/// The vector scaled to unit length.
-@(macro)
-export auto normalize(const auto a)=a*(1/length(a));
-
-/// The Euclidean distance between `a` and `b`.
-@(macro)
-export auto distance(const auto a,const auto b)=length(b-a);
-
-/// The cross product.
-@(macro)
-export auto cross(const auto a,const auto b)=a.yzx*b.zxy-a.zxy*b.yzx;
-
-/// The matrix transpose.
-@(macro)
-export auto transpose(const auto a)=#transpose(a);
-
-/// The luminance of the RGB value, using the Rec. 709 coefficients.
-@(macro)
-export float luminance(const float3 a)=dot(float3(0.2126,0.7152,0.0722),a);
-
-/// The luminance of the spectral color, weighted by the CIE Y curve.
-@(noinline)
-export float luminance(const color a){
-float result(0.);
-for(int i=0;i<$WAVELENGTH_BASE_MAX;++i){
-result+=_wyman_y($state.wavelength_base[i])*a[i];
-}
-return result/$WAVELENGTH_BASE_MAX;
-}
-
-/// The blackbody emission spectrum for the given temperature in kelvin.
-@(noinline)
-export color blackbody(const float temperature){
-const auto t(color($state.wavelength_base)*(temperature/14387e3));
-auto res(1+2*t);
-res=1+3*t*res;
-res=1+4*t*res;
-res=1+5*t*res;
-const auto rcp1(1/t);
-auto rcp(rcp1/6);
-for(int k=1;k<10;++k){
-res+=rcp;
-rcp*=rcp1/(6+k);
-}
-return 5.659994086/res;
-}
-
-/// The color evaluated at the given wavelength in nanometers by piecewise-linear interpolation.
-export float eval_at_wavelength(color a,float wavelength){
-if$($WAVELENGTH_BASE_MAX==1){
-return a[0];
-} else {
-return _polyline_lerp($WAVELENGTH_BASE_MAX,&$state.wavelength_base[0],&a[0],wavelength);
-}
-}
-)*";
-
-static const char *const scene = R"*(/// Scene data lookup, following the MDL specification. Values are looked
-/// up by name in renderer-provided scene data, e.g., per-vertex or
-/// per-object attributes, falling back to the given default when the name
-/// is unavailable.
-#smdl
-@(foreign pure)
-int smdlDataExists(&void sceneData,string name);
-@(foreign)
-void smdlDataLookup(&void sceneData,string name,int kind,int size,&void result);
-@(macro)
-auto data_lookup(const string name,auto value){
-const int kind=#is_arithmetic_integral(value)?0:#is_arithmetic_floating_point(value)?1:2;
-smdlDataLookup($SCENE_DATA,name,kind,#num(value),cast<&void>(&value));
-return value;
-}
-
-/// Is scene data with the given name available?
-@(macro)
-export bool data_isvalid(const string name)=smdlDataExists($SCENE_DATA,name)!=0;
-
-/// Returns the named scene data as `int`, else `default_value`.
-@(macro)
-export int data_lookup_int(const string name,int default_value=int())=data_lookup(name,default_value);
-
-/// Returns the named scene data as `int2`, else `default_value`.
-@(macro)
-export int2 data_lookup_int2(const string name,int2 default_value=int2())=data_lookup(name,default_value);
-
-/// Returns the named scene data as `int3`, else `default_value`.
-@(macro)
-export int3 data_lookup_int3(const string name,int3 default_value=int3())=data_lookup(name,default_value);
-
-/// Returns the named scene data as `int4`, else `default_value`.
-@(macro)
-export int4 data_lookup_int4(const string name,int4 default_value=int4())=data_lookup(name,default_value);
-
-/// Returns the named scene data as `float`, else `default_value`.
-@(macro)
-export float data_lookup_float(const string name,float default_value=float())=data_lookup(name,default_value);
-
-/// Returns the named scene data as `float2`, else `default_value`.
-@(macro)
-export float2 data_lookup_float2(const string name,float2 default_value=float2())=data_lookup(name,default_value);
-
-/// Returns the named scene data as `float3`, else `default_value`.
-@(macro)
-export float3 data_lookup_float3(const string name,float3 default_value=float3())=data_lookup(name,default_value);
-
-/// Returns the named scene data as `float4`, else `default_value`.
-@(macro)
-export float4 data_lookup_float4(const string name,float4 default_value=float4())=data_lookup(name,default_value);
-
-/// Returns the named scene data as `color`, else `default_value`.
-@(macro)
-export color data_lookup_color(const string name,color default_value=color())=data_lookup(name,default_value);
-)*";
-
-static const char *const state = R"*(/// The renderer state in the current shading context, following the MDL
-/// specification. Unless documented otherwise, positions, normals, and
-/// tangents are in internal space, which SMDL takes to be tangent space.
-#smdl
-import ::math::*;
-
-/// The coordinate space, used by the `transform*` functions.
-export enum coordinate_space{coordinate_internal=0, ///< The internal space, which SMDL takes to be tangent space.
-coordinate_object=1,                                ///< The object space.
-coordinate_world=2,                                 ///< The world space.
-};
-
-/// The position of the shading point.
-@(macro)
-export float3 position()=$state.position;
-
-/// The shading normal, possibly perturbed by bump or normal mapping.
-@(macro)
-export float3 normal()=$state.normal;
-
-/// The true geometric surface normal.
-@(macro)
-export float3 geometry_normal()=$state.geometry_normal;
-
-/// The motion vector of the shading point.
-@(macro)
-export float3 motion()=$state.motion;
-
-/// The number of available texture spaces.
-@(macro)
-export int texture_space_max()=$state.texture_space_max;
-
-/// The texture coordinates of texture space `i`.
-@(macro)
-export float3 texture_coordinate(const int i)=$state.texture_coordinate[i];
-
-/// The tangent in the direction of increasing U in texture space `i`.
-@(macro)
-export float3 texture_tangent_u(const int i)=$state.texture_tangent_u[i];
-
-/// The tangent in the direction of increasing V in texture space `i`.
-@(macro)
-export float3 texture_tangent_v(const int i)=$state.texture_tangent_v[i];
-
-/// The geometric tangent in the direction of increasing U in texture space `i`.
-@(macro)
-export float3 geometry_tangent_u(const int i)=$state.geometry_tangent_u[i];
-
-/// The geometric tangent in the direction of increasing V in texture space `i`.
-@(macro)
-export float3 geometry_tangent_v(const int i)=$state.geometry_tangent_v[i];
-
-/// The shading tangent space of texture space `i` as the matrix of tangent U, tangent V, and normal.
-@(macro)
-export float3x3 tangent_space(const int i)=float3x3($state.texture_tangent_u[i],$state.texture_tangent_v[i],$state.normal);
-
-/// The geometric tangent space of texture space `i` as the matrix of tangent U, tangent V, and normal.
-@(macro)
-export float3x3 geometry_tangent_space(const int i)=float3x3($state.geometry_tangent_u[i],$state.geometry_tangent_v[i],$state.geometry_normal);
-
-/// The object ID provided by the renderer.
-@(macro)
-export int object_id()=$state.object_id;
-
-/// The lookup direction in environment lookups. NOTE: Not implemented yet, always zero.
-@(macro)
-export float3 direction()=float3(0.,0.,0.);
-
-/// The animation time of the current sample.
-@(macro)
-export float animation_time()=$state.animation_time;
-
-/// The compile-time number of wavelengths in spectral calculations.
-export const int WAVELENGTH_BASE_MAX=$WAVELENGTH_BASE_MAX;
-
-/// The minimum supported wavelength in nanometers.
-@(macro)
-export float wavelength_min()=$state.wavelength_min;
-
-/// The maximum supported wavelength in nanometers.
-@(macro)
-export float wavelength_max()=$state.wavelength_max;
-
-/// The wavelengths in nanometers that spectral `color` values are sampled at.
-@(macro)
-export float[WAVELENGTH_BASE_MAX] wavelength_base()=$state.wavelength_base;
-
-/// The conversion factor from scene units to meters.
-@(macro)
-export float meters_per_scene_unit()=$state.meters_per_scene_unit;
-
-/// The conversion factor from meters to scene units.
-@(macro)
-export float scene_units_per_meter()=1./$state.meters_per_scene_unit;
-@(pure macro)
-float4x4 affine_inverse(const float4x4 matrix){
-return float4x4(
-float4(matrix[0].x,matrix[1].x,matrix[2].x,0.),
-float4(matrix[0].y,matrix[1].y,matrix[2].y,0.),
-float4(matrix[0].z,matrix[1].z,matrix[2].z,0.),
-float4(-#sum(matrix[0]*matrix[3]),-#sum(matrix[1]*matrix[3]),-#sum(matrix[2]*matrix[3]),1.),
-);
-}
-
-/// The affine transform matrix from coordinate space `from` to coordinate space `to`.
-@(macro)
-export float4x4 transform(const coordinate_space from,const coordinate_space to){
-if(from==to){
-return float4x4(1.);
-} else if((from==coordinate_internal)&(to==coordinate_object)){
-return $state.tangent_to_object_matrix;
-} else if((from==coordinate_internal)&(to==coordinate_world)){
-return $state.object_to_world_matrix*$state.tangent_to_object_matrix;
-} else if((from==coordinate_object)&(to==coordinate_world)){
-return $state.object_to_world_matrix;
-} else if((from==coordinate_object)&(to==coordinate_internal)){
-return affine_inverse($state.tangent_to_object_matrix);
-} else if((from==coordinate_world)&(to==coordinate_object)){
-return affine_inverse($state.object_to_world_matrix);
-} else if((from==coordinate_world)&(to==coordinate_internal)){
-return affine_inverse($state.object_to_world_matrix*$state.tangent_to_object_matrix);
-} else {
-return float4x4(1.);
-}
-}
-
-/// Transforms a point from coordinate space `from` to coordinate space `to`.
-@(macro)
-export float3 transform_point(const coordinate_space from,const coordinate_space to,const float3 point){
-return from==to?point:(transform(from,to)*float4(point,1)).xyz;
-}
-
-/// Transforms a vector from coordinate space `from` to coordinate space `to`.
-@(macro)
-export float3 transform_vector(const coordinate_space from,const coordinate_space to,const float3 vector){
-return from==to?vector:(transform(from,to)*float4(vector,0)).xyz;
-}
-
-/// Transforms a normal from coordinate space `from` to coordinate space `to`, using the inverse transpose.
-@(macro)
-export float3 transform_normal(const coordinate_space from,const coordinate_space to,const float3 normal){
-return from==to?normal:(float4(normal,0)*transform(to,from)).xyz;
-}
-
-/// Transforms a scalar distance from coordinate space `from` to coordinate space `to`. NOTE: Not implemented yet, returns `scale` unchanged.
-@(macro)
-export float transform_scale(const coordinate_space from,const coordinate_space to,const float scale){
-return 1.*scale;
-}
-)*";
-
-static const char *const std = R"*(/// The catch-all standard module, re-exporting the entire public API of
-/// the other standard modules for convenience.
-#smdl
-export using ::debug import *;
-export using ::df import *;
-export using ::limits import *;
-export using ::math import *;
-export using ::scene import *;
-export using ::state import *;
-export using ::tex import *;
-)*";
-
-static const char *const tex = R"*(/// Texture lookup functions, following the MDL specification, plus
-/// non-standard support for Ptex textures.
-#smdl
-import ::math::lerp;
-
-/// The gamma mode, describing how texel values convert to linear space.
-export enum gamma_mode{gamma_default=0, ///< The default, treated the same as `gamma_linear`.
-gamma_linear=0,                         ///< Linear, no conversion.
-gamma_srgb=1,                           ///< The sRGB decoding to linear.
-};
-@(pure macro)
-auto decodeSRGB(const auto texel)=#pow(texel,2.2);
-@(pure macro)
-float4 applyGamma(const int gamma,const float4 texel)=gamma==int(gamma_srgb)?float4(decodeSRGB(texel.rgb),texel.a):texel;
-@(pure macro)
-float3 applyGamma(const int gamma,const float3 texel)=gamma==int(gamma_srgb)?decodeSRGB(texel):texel;
-@(pure macro)
-float2 applyGamma(const int gamma,const float2 texel)=gamma==int(gamma_srgb)?decodeSRGB(texel):texel;
-@(pure macro)
-float applyGamma(const int gamma,const float texel)=gamma==int(gamma_srgb)?decodeSRGB(texel):texel;
-@(pure macro)
-int getTileIndex(const texture_2d tex,const int2 uv_tile){
-return -1 if(#any((uv_tile<0)|(uv_tile>=tex.tile_count)));
-return uv_tile.y*tex.tile_count.x+uv_tile.x;
-}
-
-/// The width in texels, of the given uv-tile for uv-tilesets.
-@(pure macro)
-export int width(const texture_2d tex,const int2 uv_tile=int2(0)){
-const auto i(getTileIndex(tex,uv_tile));
-return i<0?0:tex.tile_extents[i].x;
-}
-
-/// The width in texels. NOTE: Not implemented yet, always zero.
-@(pure macro)
-export int width(const texture_3d tex)=0; /// The width in texels. NOTE: Not implemented yet, always zero.
-@(pure macro)
-export int width(const texture_cube tex)=0; /// The height in texels, of the given uv-tile for uv-tilesets.
-@(pure macro)
-export int height(const texture_2d tex,const int2 uv_tile=int2(0)){
-const auto i(getTileIndex(tex,uv_tile));
-return i<0?0:tex.tile_extents[i].y;
-}
-
-/// The height in texels. NOTE: Not implemented yet, always zero.
-@(pure macro)
-export int height(const texture_3d tex)=0; /// The height in texels. NOTE: Not implemented yet, always zero.
-@(pure macro)
-export int height(const texture_cube tex)=0; /// Is the texture valid, i.e., backed by loaded image data?
-@(pure macro)
-export bool texture_isvalid(const texture_2d tex)=bool(tex.tile_buffers[0]);
-
-/// Is the texture valid? NOTE: Not implemented yet, always false.
-@(pure macro)
-export bool texture_isvalid(const texture_3d tex)=false; /// Is the texture valid? NOTE: Not implemented yet, always false.
-@(pure macro)
-export bool texture_isvalid(const texture_cube tex)=false; /// Is the texture valid, i.e., backed by a loaded Ptex file?
-@(pure macro)
-export bool texture_isvalid(const texture_ptex tex)=bool(tex.ptr);
-@(pure)
-auto texel_fetch(const texture_2d tex,const int2 coord,const int2 uv_tile=int2(0)){
-const auto texel_type(*#typeof(tex.tile_buffers[0]));
-const auto i(getTileIndex(tex,uv_tile));
-return texel_type(0) if(i<0);
-const auto tileExtent(tex.tile_extents[i]);
-const auto tileBuffer(tex.tile_buffers[i]);
-return texel_type(0) if(!tileBuffer|#any((coord<0)|(coord>=tileExtent)));
-return tileBuffer[coord.y*tileExtent.x+coord.x];
-}
-
-/// The texel at integer `coord` as `float4`, with gamma applied but no filtering or wrapping.
-@(pure macro)
-export float4 texel_float4(const texture_2d tex,const int2 coord,const int2 uv_tile=int2(0)){
-return applyGamma(tex.gamma,#unpack_float4(texel_fetch(tex,coord,uv_tile)));
-}
-
-/// The texel at integer `coord` as `float3`, with gamma applied but no filtering or wrapping.
-@(pure macro)
-export float3 texel_float3(const texture_2d tex,const int2 coord,const int2 uv_tile=int2(0)){
-return applyGamma(tex.gamma,#unpack_float4(texel_fetch(tex,coord,uv_tile)).xyz);
-}
-
-/// The texel at integer `coord` as `float2`, with gamma applied but no filtering or wrapping.
-@(pure macro)
-export float2 texel_float2(const texture_2d tex,const int2 coord,const int2 uv_tile=int2(0)){
-return applyGamma(tex.gamma,#unpack_float4(texel_fetch(tex,coord,uv_tile)).xy);
-}
-
-/// The texel at integer `coord` as `float`, with gamma applied but no filtering or wrapping.
-@(pure macro)
-export float texel_float(const texture_2d tex,const int2 coord,const int2 uv_tile=int2(0)){
-return applyGamma(tex.gamma,#unpack_float4(texel_fetch(tex,coord,uv_tile)).x);
-}
-
-/// The texel at integer `coord` as `color`, with gamma applied but no filtering or wrapping.
-@(pure macro)
-export color texel_color(const texture_2d tex,const int2 coord,const int2 uv_tile=int2(0)){
-return color(texel_float3(tex,coord,uv_tile));
-}
-
-/// The wrap mode, describing how out-of-range texture coordinates are handled.
-export enum wrap_mode{
-wrap_clamp=0,           ///< Clamp to the edge.
-wrap_repeat=1,          ///< Repeat, keeping only the fractional part.
-wrap_mirrored_repeat=2, ///< Repeat, mirroring on every other repetition.
-wrap_clip=3,            ///< Clip, so lookups outside `[0, 1)` return zero.
-};
-@(pure macro)
-auto applyWrap(const auto wrap,const auto n,auto i){
-auto rem(i%n);
-const auto neg(#select(rem<0,1,0));
-rem+=n*neg;
-const auto quo(i/n+neg);
-const auto repeat(rem);
-const auto mirror(#select((quo&1)==1,n-1-rem,rem));
-i=#select(wrap==0,i,#select(wrap==1,repeat,mirror));
-i=#max(0,#min(i,n-1));
-return i;
-}
-
-/// The bilinearly filtered lookup at `coord` as `float4`, honoring the wrap
-/// modes and crop windows, which are ignored for uv-tilesets.
-@(pure)
-export float4 lookup_float4(
-const texture_2d tex,
-float2 coord,
-const wrap_mode wrap_u=wrap_repeat,
-const wrap_mode wrap_v=wrap_repeat,
-const float2 crop_u=float2(0.,1.),
-const float2 crop_v=float2(0.,1.),
-){
-if((tex.tile_count.x>1)|(tex.tile_count.y>1)){
-const int2 tileIndex(#floor(coord));
-const auto i(getTileIndex(tex,tileIndex));
-return float4(0) if(i<0);
-const auto tileExtent(tex.tile_extents[i]);
-const auto tileBuffer(tex.tile_buffers[i]);
-return float4(0) if(!tileBuffer);
-coord-=tileIndex;
-coord*=tileExtent;
-coord-=0.5;
-const int2 ic(#floor(coord));
-const int2 ic0(#min(ic,tileExtent-1));
-const int2 ic1(#min(ic+1,tileExtent-1));
-coord-=ic;
-return applyGamma(tex.gamma,math::lerp(math::lerp(#unpack_float4(tileBuffer[ic0.x+tileExtent.x*ic0.y]),#unpack_float4(tileBuffer[ic1.x+tileExtent.x*ic0.y]),coord.x),math::lerp(#unpack_float4(tileBuffer[ic0.x+tileExtent.x*ic1.y]),#unpack_float4(tileBuffer[ic1.x+tileExtent.x*ic1.y]),coord.x),coord.y),);
-} else {
-const auto i(getTileIndex(tex,int2(0)));
-return float4(0) if(i<0);
-const auto tileExtent(tex.tile_extents[i]);
-const auto tileBuffer(tex.tile_buffers[i]);
-return float4(0) if(!tileBuffer);
-const auto iCropU(int2(crop_u*tileExtent));
-const auto iCropV(int2(crop_v*tileExtent));
-const auto iCorner0(int2(iCropU[0],iCropV[0]));
-const auto iCorner1(int2(iCropU[1],iCropV[1]));
-const auto subextent(iCorner1-iCorner0);
-coord*=subextent;
-coord-=0.5;
-const int2 wrap(int(wrap_u),int(wrap_v));
-const int2 ic(#floor(coord));
-const auto ic0(iCorner0+applyWrap(wrap,subextent,ic));
-const auto ic1(iCorner0+applyWrap(wrap,subextent,ic+1));
-coord-=ic;
-return applyGamma(tex.gamma,math::lerp(math::lerp(#unpack_float4(tileBuffer[ic0.x+tileExtent.x*ic0.y]),#unpack_float4(tileBuffer[ic1.x+tileExtent.x*ic0.y]),coord.x),math::lerp(#unpack_float4(tileBuffer[ic0.x+tileExtent.x*ic1.y]),#unpack_float4(tileBuffer[ic1.x+tileExtent.x*ic1.y]),coord.x),coord.y),);
-}
-}
-
-/// The bilinearly filtered lookup at `coord` as `float3`, honoring the wrap
-/// modes and crop windows, which are ignored for uv-tilesets.
-@(pure macro)
-export float3 lookup_float3(
-const texture_2d tex,
-const float2 coord,
-const wrap_mode wrap_u=wrap_repeat,
-const wrap_mode wrap_v=wrap_repeat,
-const float2 crop_u=float2(0.,1.),
-const float2 crop_v=float2(0.,1.),
-)=lookup_float4(tex,coord,wrap_u,wrap_v,crop_u,crop_v).xyz;
-
-/// The bilinearly filtered lookup at `coord` as `float2`, honoring the wrap
-/// modes and crop windows, which are ignored for uv-tilesets.
-@(pure macro)
-export float2 lookup_float2(
-const texture_2d tex,
-const float2 coord,
-const wrap_mode wrap_u=wrap_repeat,
-const wrap_mode wrap_v=wrap_repeat,
-const float2 crop_u=float2(0.,1.),
-const float2 crop_v=float2(0.,1.),
-)=lookup_float4(tex,coord,wrap_u,wrap_v,crop_u,crop_v).xy;
-
-/// The bilinearly filtered lookup at `coord` as `float`, honoring the wrap
-/// modes and crop windows, which are ignored for uv-tilesets.
-@(pure macro)
-export float lookup_float(
-const texture_2d tex,
-const float2 coord,
-const wrap_mode wrap_u=wrap_repeat,
-const wrap_mode wrap_v=wrap_repeat,
-const float2 crop_u=float2(0.,1.),
-const float2 crop_v=float2(0.,1.),
-)=lookup_float4(tex,coord,wrap_u,wrap_v,crop_u,crop_v).x;
-
-/// The bilinearly filtered lookup at `coord` as `color`, honoring the wrap
-/// modes and crop windows, which are ignored for uv-tilesets.
-@(pure macro)
-export color lookup_color(
-const texture_2d tex,
-const float2 coord,
-const wrap_mode wrap_u=wrap_repeat,
-const wrap_mode wrap_v=wrap_repeat,
-const float2 crop_u=float2(0.,1.),
-const float2 crop_v=float2(0.,1.),
-)=color(lookup_float4(tex,coord,wrap_u,wrap_v,crop_u,crop_v).xyz);
-@(foreign)
-void smdlPtexEvaluate(&void tex,int gamma,int first,int num,&float result);
-
-/// The Ptex lookup of four channels starting at `channel` as `float4`. NOTE: This is non-standard!
-@(macro)
-export float4 lookup_float4(const texture_ptex tex,const int channel=0){
-float4 result;
-smdlPtexEvaluate(tex.ptr,tex.gamma,channel,4,&result[0]);
-return result;
-}
-
-/// The Ptex lookup of three channels starting at `channel` as `float3`. NOTE: This is non-standard!
-@(macro)
-export float3 lookup_float3(const texture_ptex tex,const int channel=0){
-float3 result;
-smdlPtexEvaluate(tex.ptr,tex.gamma,channel,3,&result[0]);
-return result;
-}
-
-/// The Ptex lookup of two channels starting at `channel` as `float2`. NOTE: This is non-standard!
-@(macro)
-export float2 lookup_float2(const texture_ptex tex,const int channel=0){
-float2 result;
-smdlPtexEvaluate(tex.ptr,tex.gamma,channel,2,&result[0]);
-return result;
-}
-
-/// The Ptex lookup of one channel at `channel` as `float`. NOTE: This is non-standard!
-@(macro)
-export float lookup_float(const texture_ptex tex,const int channel=0){
-float result;
-smdlPtexEvaluate(tex.ptr,tex.gamma,channel,1,&result);
-return result;
-}
-
-/// The Ptex lookup of three channels starting at `channel` as `color`. NOTE: This is non-standard!
-@(macro)
-export color lookup_color(const texture_ptex tex,const int channel=0){
-float3 result;
-smdlPtexEvaluate(tex.ptr,tex.gamma,channel,3,&result[0]);
-return color(result);
-}
-)*";
-
-static const char *const extras_io = R"*(/// File input and output, mirroring the C standard library `stdio.h`
-/// API. NOTE: This module is non-standard!
-#smdl
-
-/// The opaque file stream handle, analogous to `FILE *` in C.
-export typedef &void FILE;
-
-/// The standard input stream.
-export const auto stdin=cast<FILE>($stdin);
-
-/// The standard output stream.
-export const auto stdout=cast<FILE>($stdout);
-
-/// The standard error stream.
-export const auto stderr=cast<FILE>($stderr);
-
-/// Opens the file named `filename` with the given C-style `mode`, e.g., `"r"` or `"wb"`.
-@(foreign pure)
-export FILE fopen(string filename,string mode);
-
-/// Closes the file stream.
-@(foreign pure)
-export void fclose(FILE file);
-
-/// Flushes buffered output to the file stream.
-@(foreign pure)
-export void fflush(FILE file);
-
-/// Returns nonzero if the end-of-file indicator is set.
-@(foreign pure)
-export int feof(FILE file);
-
-/// Returns nonzero if the error indicator is set.
-@(foreign pure)
-export int ferror(FILE file);
-
-/// Reads the next character, or `-1` (EOF) on end of file or error.
-@(foreign pure)
-export int fgetc(FILE file);
-
-/// Reads a line of at most `count - 1` characters into `str`.
-@(foreign pure)
-export &char fgets(&char str,int count,FILE file);
-
-/// Writes the character `ch`.
-@(foreign pure)
-export int fputc(int ch,FILE file);
-
-/// Writes the string `str`.
-@(foreign pure)
-export int fputs(string str,FILE file);
-
-/// Reads `count` elements of `size` bytes each into `buffer`, returning the number of elements read.
-@(foreign pure)
-export size_t fread(&void buffer,size_t size,size_t count,FILE file);
-
-/// Writes `count` elements of `size` bytes each from `buffer`, returning the number of elements written.
-@(foreign pure)
-export size_t fwrite(&void buffer,size_t size,size_t count,FILE file);
-
-/// Reads formatted input, as in C `fscanf`.
-@(foreign pure)
-export int fscanf(FILE file,string format,...);
-
-/// Writes formatted output, as in C `fprintf`.
-@(foreign pure)
-export int fprintf(FILE file,string format,...);
-
-/// The current file position indicator.
-@(foreign pure)
-export long ftell(FILE file);
-
-/// The `fseek` origin at the beginning of the file.
-export const int SEEK_SET=$SEEK_SET;
-
-/// The `fseek` origin at the current position.
-export const int SEEK_CUR=$SEEK_CUR;
-
-/// The `fseek` origin at the end of the file.
-export const int SEEK_END=$SEEK_END;
-
-/// Moves the file position indicator by `offset` from `origin`, one of `SEEK_SET`, `SEEK_CUR`, or `SEEK_END`.
-@(foreign pure)
-export int fseek(FILE file,long offset,int origin);
-
-/// Resets the file position indicator to the beginning of the file.
-@(foreign pure)
-export void rewind(FILE file);
-
-/// Clears the end-of-file and error indicators.
-@(foreign pure)
-export void clearerr(FILE file);
-
-/// Prints the given message followed by a description of the last error to standard error.
-@(foreign pure)
-export void perror(string message="");
-
-/// Opens a temporary file that is automatically removed when closed.
-@(foreign pure)
-export FILE tmpfile();
-)*";
-
-static const char *const extras_pcg32 = R"*(/// The PCG32 pseudo-random number generator by Melissa O'Neill, being the
-/// 32-bit output variant of the permuted congruential generator family.
-/// NOTE: This module is non-standard!
-#smdl
-const int64_t PCG32_MULTIPLIER=6364136223846793005;
-const int64_t PCG32_DEFAULT_INCREMENT=1442695040888963407;
-
-/// The PCG32 generator, constructible from a seed and optionally a stream selector.
-export struct pcg32{
-pcg32(int64_t seed)=return_from{
-auto pcg(pcg32(state: seed));
-pcg.state=pcg.state+pcg.increment;
-pcg.state=pcg.state*PCG32_MULTIPLIER+pcg.increment;
-return pcg;
-};
-pcg32(int64_t seed,int64_t stream)=return_from{
-auto pcg(pcg32(state: seed,increment: (stream<<1)|1));
-pcg.state=pcg.state+pcg.increment;
-pcg.state=pcg.state*PCG32_MULTIPLIER+pcg.increment;
-return pcg;
-};
-int64_t state=0;                           ///< The state of the linear congruential generator.
-int64_t increment=PCG32_DEFAULT_INCREMENT; ///< The stream-selecting increment, which must be odd.
-};
-
-/// Generates the next 32-bit integer.
-@(pure)
-export int32_t generate_int(inline const &pcg32 this){
-state=state*PCG32_MULTIPLIER+increment;
-return #rotr(int32_t(((state>>>18)^state)>>>27),int32_t(31&(state>>>59)));
-}
-
-/// Generates a uniform integer in `[0, bound)` by rejection sampling.
-@(pure)
-export int32_t generate_int(const &pcg32 this,const int32_t bound){
-if(bound>1){
-const auto xmin((-bound)%bound);
-while(true){
-const auto x(generate_int(this));
-return x%bound if(x>=xmin);
-}
-}
-return 0;
-}
-
-/// Generates a uniform `float` in `[0, 1)`.
-@(pure)
-export float generate_float(const &pcg32 this){
-return #min(float(#unsigned_to_fp(generate_int(this),double)/4294967296d),1.-$FLOAT_EPS/2);
-}
-
-/// Generates a uniform `float2` in `[0, 1)^2`.
-@(pure)
-export float2 generate_float2(const &pcg32 this)=float2(generate_float(this),generate_float(this));
-
-/// Generates a uniform `float3` in `[0, 1)^3`.
-@(pure)
-export float3 generate_float3(const &pcg32 this)=float3(generate_float(this),generate_float(this),generate_float(this));
-
-/// Generates a uniform `float4` in `[0, 1)^4`.
-@(pure)
-export float4 generate_float4(const &pcg32 this)=float4(generate_float(this),generate_float(this),generate_float(this),generate_float(this));
-
-/// Advances the generator by `n` steps in logarithmic time, as if calling `generate_int(this)` `n` times.
-@(pure)
-export void discard(inline const &pcg32 this,int64_t n){
-int64_t aTotal(1);
-int64_t bTotal(0);
-int64_t a(PCG32_MULTIPLIER);
-int64_t b(increment);
-while(n!=0){
-if((n&1)!=0){
-aTotal=aTotal*a;
-bTotal=bTotal*a+b;
-}
-b*=a+1;
-a*=a;
-n>>>=1;
-}
-state=state*aTotal+bTotal;
-}
-)*";
-
-static const char *const models_illuminant = R"*(/// CIE standard illuminants as spectral `color` values evaluated at the
-/// current wavelengths in `$state.wavelength_base`: the daylight D series,
-/// reconstructed for any chromaticity on the daylight locus from the CIE
-/// S0/S1/S2 components tabulated over 300..830nm, plus the lamp series
-/// tabulated over 380..780nm -- the fluorescent F series F1 through F12,
-/// the high-pressure discharge HP series HP1 through HP5, and the LED
-/// series. Wavelengths outside the tables evaluate to zero.
-///
-/// Every illuminant here is a relative spectral power distribution
-/// normalized so that illuminant D is 1 at 560nm, with the lamp series
-/// scaled consistently, so multiply by whatever radiant intensity the
-/// scene calls for.
-///
-/// References:
-///   CIE 15:2004 (Colorimetry) -- daylight components, F and HP tables
-///   CIE 15:2018 (Colorimetry) -- LED tables
-#smdl
-@(foreign pure)
-void smdlKelvinToChromaticity(float kelvin,&float2 xy);
-@(foreign pure)
-void smdlEvalIlluminantD(int numWavelens,&float wavelens,&float illuminant,&float2 xy);
-@(foreign pure)
-void smdlEvalIlluminantF(int numWavelens,&float wavelens,&float illuminant,int number);
-@(foreign pure)
-void smdlEvalIlluminantHP(int numWavelens,&float wavelens,&float illuminant,int number);
-@(foreign pure)
-void smdlEvalIlluminantLED(int numWavelens,&float wavelens,&float illuminant,int number);
-
-/// Evaluate CIE standard illuminant D for the given CIE 1931 chromaticity,
-/// which is meant to lie on the daylight locus, e.g., as computed by the
-/// color-temperature overload below. Prefer the named standard illuminants
-/// `illuminant_D50()` through `illuminant_D75()` where they apply.
-@(macro)
-export color illuminant_D(float2 xy){
-color illuminant=color(0);
-smdlEvalIlluminantD($WAVELENGTH_BASE_MAX,&$state.wavelength_base[0],cast<&float>(&illuminant),&xy);
-return illuminant;
-}
-
-/// Evaluate CIE standard illuminant D for the given correlated color
-/// temperature in Kelvin. The daylight locus is only defined from 4000K to
-/// 25000K, so the temperature is clamped to this range.
-@(macro)
-export color illuminant_D(const float kelvin){
-float2 xy;
-smdlKelvinToChromaticity(kelvin,&xy);
-return illuminant_D(xy);
-}
-
-/// CIE standard illuminant D50 (5003K), the warm daylight reference of the
-/// printing industry.
-@(macro)
-export color illuminant_D50()=illuminant_D(5003.);
-
-/// CIE standard illuminant D55 (5503K), mid-morning or mid-afternoon
-/// daylight.
-@(macro)
-export color illuminant_D55()=illuminant_D(5503.);
-
-/// CIE standard illuminant D65 (6504K), average noon daylight and the
-/// reference white of sRGB.
-@(macro)
-export color illuminant_D65()=illuminant_D(6504.);
-
-/// CIE standard illuminant D75 (7504K), overcast north-sky daylight.
-@(macro)
-export color illuminant_D75()=illuminant_D(7504.);
-
-/// Evaluate CIE standard fluorescent illuminant F1 through F12 as selected
-/// by `number`, which is out-of-range-safe: anything other than 1 through 12
-/// evaluates to black. F1..F6 are standard halophosphate lamps, F7..F9 are
-/// broadband full-spectrum lamps (F7 approximates D65 and F8 approximates
-/// D50), and F10..F12 are narrowband triphosphor lamps (F11 is the common
-/// commercial TL84). F2 -- cool white -- is the usual representative of the
-/// series.
-@(macro)
-export color illuminant_F(const int number=1){
-color illuminant=color(0);
-smdlEvalIlluminantF($WAVELENGTH_BASE_MAX,&$state.wavelength_base[0],cast<&float>(&illuminant),number);
-return illuminant;
-}
-
-/// Evaluate CIE standard high-pressure discharge lamp illuminant HP1
-/// through HP5 as selected by `number`, which is out-of-range-safe:
-/// anything other than 1 through 5 evaluates to black. HP1 (1959K) is a
-/// standard high-pressure sodium lamp dominated by the sodium doublet
-/// near 589nm, HP2 (2506K) is a colour-corrected high-pressure sodium
-/// lamp, and HP3 through HP5 (3144K, 4002K, 4039K) are high-pressure
-/// metal halide lamps.
-@(macro)
-export color illuminant_HP(const int number=1){
-color illuminant=color(0);
-smdlEvalIlluminantHP($WAVELENGTH_BASE_MAX,&$state.wavelength_base[0],cast<&float>(&illuminant),number);
-return illuminant;
-}
-
-/// Evaluate CIE standard LED illuminant B1 through B5 -- the blue-pumped
-/// phosphor LED lamps in order of increasing color temperature: B1
-/// (2733K), B2 (2998K), B3 (4103K), B4 (5109K), and B5 (6598K) -- as
-/// selected by `number`, which is out-of-range-safe: anything other than
-/// 1 through 5 evaluates to black.
-@(macro)
-export color illuminant_LED_B(const int number=1){
-color illuminant=color(0);
-smdlEvalIlluminantLED($WAVELENGTH_BASE_MAX,&$state.wavelength_base[0],cast<&float>(&illuminant),(1<=number&&number<=5)?number:0);
-return illuminant;
-}
-
-/// Evaluate CIE standard LED illuminant V1 (2724K) or V2 (4070K) -- the
-/// violet-pumped phosphor LED lamps -- as selected by `number`, which is
-/// out-of-range-safe: anything other than 1 or 2 evaluates to black.
-@(macro)
-export color illuminant_LED_V(const int number=1){
-color illuminant=color(0);
-smdlEvalIlluminantLED($WAVELENGTH_BASE_MAX,&$state.wavelength_base[0],cast<&float>(&illuminant),(1<=number&&number<=2)?number+7:0);
-return illuminant;
-}
-
-/// CIE standard LED illuminant BH1 (2851K), a hybrid lamp mixing a
-/// blue-pumped phosphor LED with a red emitter.
-@(macro)
-export color illuminant_LED_BH1(){
-color illuminant=color(0);
-smdlEvalIlluminantLED($WAVELENGTH_BASE_MAX,&$state.wavelength_base[0],cast<&float>(&illuminant),6);
-return illuminant;
-}
-
-/// CIE standard LED illuminant RGB1 (2840K), a tri-band lamp mixing red,
-/// green, and blue emitters.
-@(macro)
-export color illuminant_LED_RGB1(){
-color illuminant=color(0);
-smdlEvalIlluminantLED($WAVELENGTH_BASE_MAX,&$state.wavelength_base[0],cast<&float>(&illuminant),7);
-return illuminant;
-}
-)*";
-
-static const char *const models_prospect = R"*(/// PROSPECT: a physically based way to turn a leaf's biochemistry into its
-/// optics. Given the pigment, water, and dry-matter contents per unit leaf area,
-/// it predicts the hemispherical reflectance and transmittance of a single leaf
-/// over 400..2500 nm. It is the transmissive, light-through-the-leaf analog of
-/// the water-film model in `marmit.smdl`, and is built the same way: interpolate
-/// tabulated optical constants per wavelength, then evaluate a small closed-form
-/// radiative-transfer expression using cheap analytic fits in place of the
-/// special functions the reference model calls.
-///
-/// The leaf is idealized as a stack of `num_layers` identical absorbing plates.
-/// Every constituent enters through a single absorption coefficient
-/// k = sum_j K_j(lambda) C_j -- the tabulated specific absorption of each
-/// constituent weighted by how much of it there is -- which fixes the layer
-/// transmittance tau; the tabulated refractive index fixes the interface
-/// reflectances; and the stack of plates is then summed in closed form rather
-/// than iterated. `num_layers` need not be an integer: it is the model's
-/// structure parameter, standing in for internal air-cell scattering, and the
-/// closed form interpolates smoothly through fractional values. Light arrives
-/// within a cone of half-angle `incident_cone_angle` (the classic PROSPECT value
-/// is 40 degrees, hence the 0.7 radian default); every interior surface instead
-/// sees diffuse light and uses the hemispherical average.
-///
-/// The constituent set spans the PROSPECT lineage: chlorophylls, water, and dry
-/// matter from the classic model, carotenoids and brown pigment from PROSPECT-5,
-/// anthocyanins from PROSPECT-D, and the split of dry matter into proteins and
-/// carbon-based constituents from PROSPECT-PRO. That last split is an
-//// alternative to the lumped `dry_matter`, not an addition to it -- pass one or
-/// the other, or the dry matter is counted twice. The `xanthophyll_cycle`
-/// parameter is the Fluspect-CX extension, which reshapes (but does not resize)
-/// the carotenoid pool; see the table comment further down.
-///
-/// References:
-///   Allen et al. (1969, 1970) -- compact and generalized plate models
-///   Stokes (1862)             -- closed form for a stack of plates
-///   Jacquemoud & Baret (1990) -- PROSPECT
-///   Féret et al. (2008)       -- PROSPECT-5 (carotenoids, brown pigment)
-///   Féret et al. (2017)       -- PROSPECT-D (anthocyanins)
-///   Féret et al. (2021)       -- PROSPECT-PRO (proteins, carbon constituents)
-///   Vilfan et al. (2018)      -- Fluspect-CX (xanthophyll cycle)
-#smdl
-using ::math import *;
-
-/// The result of the PROSPECT model, being the hemispherical reflectance
-/// and transmittance of a single leaf.
-export struct prospect_result{
-color reflectance=color(0);   ///< The hemispherical reflectance.
-color transmittance=color(0); ///< The hemispherical transmittance.
-};
-
-/// The minimum wavelength of the PROSPECT tables in nanometers.
-export const float PROSPECT_MIN_WAVELENGTH=4e2;
-
-/// The maximum wavelength of the PROSPECT tables in nanometers.
-export const float PROSPECT_MAX_WAVELENGTH=25e2;
-
-/// The number of entries in the PROSPECT tables.
-export const int PROSPECT_TABLE_SIZE=526;
-
-/// The tabulated refractive index of leaf material.
-export static const auto PROSPECT_TABLE_IOR=float[526](1.5115,1.5115,1.5095,1.5071,1.505,1.5032,1.5019,1.5008,1.4997,1.4988,1.498,1.4969,1.4959,1.4951,1.4943,1.4937,1.4931,1.4925,1.492,1.4915,1.491,1.4904,1.4899,1.4893,1.4887,1.488,1.4873,1.4865,1.4856,1.4846,1.4836,1.4825,1.4813,1.4801,1.4788,1.4774,1.476,1.4746,1.4732,1.4717,1.4701,1.4685,1.467,1.4654,1.4639,1.4624,1.4609,1.4595,1.4582,1.457,1.4559,1.4548,1.4538,1.4528,1.4519,1.451,1.4502,1.4495,1.4489,1.4484,1.448,1.4477,1.4474,1.4472,1.447,1.4468,1.4467,1.4465,1.4463,1.4461,1.4458,1.4456,1.4453,1.445,1.4447,1.4444,1.444,1.4435,1.443,1.4423,1.4417,1.4409,1.4402,1.4394,1.4387,1.438,1.4374,1.4368,1.4363,1.4357,1.4352,1.4348,1.4345,1.4342,1.4341,1.434,1.434,1.4341,1.4342,1.4343,1.4345,1.4347,1.4347,1.4347,1.4347,1.4347,1.4347,1.4348,1.4348,1.4348,1.4348,1.4348,1.4347,1.4347,1.4347,1.4346,1.4345,1.4345,1.4345,1.4344,1.4342,1.4341,1.434,1.4339,1.4338,1.4337,1.4335,1.4334,1.4333,1.4332,1.4331,1.4329,1.4328,1.4326,1.4324,1.4322,1.432,1.4319,1.4317,1.4316,1.4314,1.4312,1.4309,1.4307,1.4304,1.4302,1.4299,1.4296,1.4293,1.429,1.4287,1.4284,1.4281,1.4277,1.4273,1.427,1.4266,1.4263,1.4259,1.4255,1.4251,1.4247,1.4242,1.4238,1.4234,1.423,1.4225,1.422,1.4216,1.4212,1.4207,1.4202,1.4197,1.4193,1.4188,1.4183,1.4178,1.4173,1.4169,1.4164,1.4159,1.4155,1.415,1.4146,1.4142,1.4137,1.4132,1.4128,1.4124,1.4119,1.4115,1.411,1.4106,1.4102,1.4098,1.4094,1.4089,1.4085,1.4081,1.4077,1.4073,1.4069,1.4065,1.4061,1.4057,1.4052,1.4048,1.4044,1.404,1.4035,1.4031,1.4027,1.4023,1.4019,1.4014,1.401,1.4006,1.4001,1.3997,1.3993,1.3989,1.3984,1.398,1.3976,1.3972,1.3968,1.3964,1.396,1.3956,1.3952,1.3947,1.3943,1.3939,1.3935,1.3931,1.3927,1.3923,1.3919,1.3915,1.3911,1.3907,1.3903,1.3899,1.3895,1.389,1.3886,1.3882,1.3877,1.3873,1.3869,1.3865,1.386,1.3855,1.3851,1.3846,1.3841,1.3836,1.3831,1.3826,1.3821,1.3816,1.381,1.3805,1.38,1.3794,1.3788,1.3782,1.3776,1.377,1.3764,1.3758,1.3752,1.3745,1.3739,1.3732,1.3726,1.372,1.3713,1.3706,1.3699,1.3693,1.3687,1.3681,1.3675,1.3668,1.3661,1.3655,1.3648,1.3641,1.3634,1.3628,1.3622,1.3615,1.3608,1.3601,1.3595,1.3589,1.3582,1.3576,1.3569,1.3563,1.3557,1.355,1.3544,1.3537,1.3531,1.3525,1.3518,1.3512,1.3505,1.3499,1.3493,1.3487,1.3481,1.3475,1.3469,1.3463,1.3456,1.345,1.3445,1.3439,1.3433,1.3428,1.3422,1.3417,1.3411,1.3406,1.3401,1.3396,1.3391,1.3386,1.338,1.3376,1.3372,1.3367,1.3363,1.3358,1.3354,1.335,1.3346,1.3342,1.3338,1.3334,1.333,1.3326,1.3322,1.3319,1.3316,1.3312,1.3308,1.3305,1.3302,1.3299,1.3295,1.3292,1.3289,1.3286,1.3283,1.3279,1.3276,1.3273,1.327,1.3267,1.3264,1.3261,1.3259,1.3256,1.3253,1.325,1.3247,1.3245,1.3242,1.3239,1.3236,1.3233,1.3231,1.3229,1.3226,1.3224,1.3221,1.3218,1.3216,1.3213,1.321,1.3207,1.3204,1.3202,1.3199,1.3197,1.3194,1.3191,1.3189,1.3186,1.3183,1.318,1.3177,1.3174,1.3171,1.3167,1.3164,1.3161,1.3158,1.3154,1.315,1.3147,1.3144,1.314,1.3136,1.3132,1.3128,1.3124,1.312,1.3116,1.3112,1.3107,1.3103,1.3098,1.3094,1.309,1.3085,1.308,1.3075,1.307,1.3066,1.3061,1.3057,1.3052,1.3047,1.3043,1.3038,1.3033,1.3028,1.3023,1.3019,1.3014,1.3009,1.3004,1.2999,1.2995,1.299,1.2985,1.298,1.2975,1.297,1.2965,1.296,1.2956,1.2951,1.2947,1.2942,1.2937,1.2932,1.2927,1.2922,1.2917,1.2912,1.2907,1.2902,1.2898,1.2893,1.2888,1.2883,1.2878,1.2874,1.287,1.2865,1.2861,1.2856,1.2852,1.2847,1.2843,1.2839,1.2834,1.283,1.2826,1.2822,1.2817,1.2813,1.2809,1.2805,1.2801,1.2798,1.2795,1.2791,1.2788,1.2786,1.2784,1.278,1.2776,1.2773,1.2769,1.2765,1.2761,1.2757,1.2754,1.2751,1.2748,1.2745,1.2742,1.2739,1.2737,1.2735,1.2732,1.273,1.2727,1.2725,1.2723,1.2721,1.2719,1.2717,1.2715,1.2713,1.2712,1.2711,1.271,1.2709,1.2708,1.2708,1.2708,1.2708,1.271,1.2713,1.2717,1.2722,1.2728,1.2736); /// The tabulated specific absorption coefficients, one column per
-/// constituent in the order chlorophylls, carotenoids, anthocyanins, brown
-/// pigment, water, dry matter, proteins, and carbon constituents.
-export static const auto PROSPECT_TABLE_K=auto[526](
-auto(0.0648815,0.16734,0.0666747,0.5272,58e-6,109.7,0.,127.93),
-auto(0.0709,0.167613,0.058277,0.5232,61e-6,87.13,0.,101.609),
-auto(0.0712231,0.167239,0.0531158,0.5192,65e-6,70.13,0.,81.7844),
-auto(0.0720185,0.165446,0.0493873,0.5152,69e-6,56.16,0.,65.4928),
-auto(0.0707629,0.166288,0.0468987,0.5112,74e-6,44.63,0.,52.0467),
-auto(0.0698193,0.167164,0.0454286,0.5072,79e-6,35.67,0.,41.5977),
-auto(0.0704727,0.168599,0.0442495,0.5032,84e-6,28.32,0.,33.0263),
-auto(0.0716223,0.167725,0.0438046,0.4992,89e-6,22.76,0.,26.5423),
-auto(0.0736521,0.167905,0.0439588,0.4948,94e-6,17.85,0.,20.8164),
-auto(0.0746911,0.168177,0.0442768,0.49,99e-6,13.92,0.,16.2333),
-auto(0.0737942,0.169569,0.0447865,0.4852,104e-6,10.96,0.,12.7814),
-auto(0.0691047,0.169905,0.0454154,0.4805,108e-6,8.947,0.,10.4338),
-auto(0.0626681,0.169345,0.045994,0.4757,112e-6,7.268,0.,8.47581),
-auto(0.0547324,0.164464,0.046953,0.4708,116e-6,6.222,0.,7.25599),
-auto(0.048139,0.158224,0.0478138,0.4658,12e-5,5.37,0.,6.2624),
-auto(0.0438733,0.151672,0.0488393,0.4608,124e-6,4.575,0.,5.33528),
-auto(0.0417743,0.145076,0.0498409,0.4566,128e-6,4.006,0.,4.67173),
-auto(0.0403017,0.139191,0.0511498,0.4525,133e-6,3.671,0.,4.28106),
-auto(0.039292,0.13548,0.0528197,0.4484,138e-6,3.282,0.,3.82741),
-auto(0.0382599,0.134169,0.0549398,0.4442,144e-6,2.983,0.,3.47872),
-auto(0.0367757,0.133271,0.0571515,0.4401,152e-6,2.803,0.,3.26881),
-auto(0.0345829,0.130422,0.0594778,0.435,162e-6,2.702,0.,3.15102),
-auto(0.0315189,0.124566,0.0618094,0.4298,174e-6,2.613,0.,3.04723),
-auto(0.0276921,0.11652,0.0639703,0.4247,189e-6,2.536,0.,2.95744),
-auto(0.0234283,0.10793,0.0659096,0.4195,209e-6,2.471,0.,2.88164),
-auto(0.0190485,0.0990044,0.0677709,0.4144,238e-6,2.417,0.,2.81866),
-auto(0.0149343,0.0898536,0.0691402,0.4109,273e-6,2.374,0.,2.76852),
-auto(0.0112959,0.0805884,0.0700735,0.4074,31e-5,2.341,0.,2.73003),
-auto(82461e-7,0.0713191,0.0708719,0.4038,349e-6,2.318,0.,2.70321),
-auto(586805e-8,0.0621564,0.0713896,0.4,386e-6,2.304,0.,2.68688),
-auto(433379e-8,0.0532106,0.0716821,0.3962,409e-6,2.3,0.,2.68222),
-auto(365252e-8,0.0445924,0.0718641,0.3924,409e-6,2.3,0.,2.68222),
-auto(376967e-8,0.0364122,0.0722403,0.3886,423e-6,2.3,0.,2.68222),
-auto(448428e-8,0.0287806,0.0724758,0.3824,445e-6,2.3,0.,2.68222),
-auto(556455e-8,0.0218079,0.0725061,0.3739,47e-5,2.3,0.,2.68222),
-auto(67864e-7,0.0156048,0.0720633,0.3654,495e-6,2.3,0.,2.68222),
-auto(794833e-8,0.0102818,0.0710671,0.3597,527e-6,2.3,0.,2.68222),
-auto(890368e-8,594925e-8,0.0693554,0.354,564e-6,2.3,0.,2.68222),
-auto(968213e-8,271778e-8,0.0667326,0.3489,611e-6,2.3,0.,2.68222),
-auto(0.0103855,697863e-9,0.0633575,0.3445,646e-6,2.3,0.,2.68222),
-auto(0.011048,213163e-18,0.0596515,0.3401,672e-6,2.3,0.,2.68222),
-auto(0.0118272,0.,0.0555431,0.333,699e-6,2.3,0.,2.68222),
-auto(0.012933,0.,0.0509,0.3258,734e-6,2.3,0.,2.68222),
-auto(0.0143014,0.,0.0461743,0.3182,787e-6,2.3,0.,2.68222),
-auto(0.0156935,0.,0.0417338,0.31,858e-6,2.3,0.,2.68222),
-auto(0.0169452,0.,0.037412,0.3019,952e-6,2.3,0.,2.68222),
-auto(0.0180658,0.,0.0328458,0.294,1079e-6,2.3,0.,2.68222),
-auto(0.0190186,0.,0.0286652,0.2861,1253e-6,2.3,0.,2.68222),
-auto(0.0197663,0.,0.0251335,0.2784,1459e-6,2.3,0.,2.68222),
-auto(0.0203266,0.,0.0219176,0.271,17e-4,2.3,0.,2.68222),
-auto(0.020854,0.,0.0187401,0.2636,2224e-6,2.3,0.,2.68222),
-auto(0.0215458,0.,0.015987,0.2566,2448e-6,2.3,0.,2.68222),
-auto(0.0225525,0.,0.0138003,0.2497,2653e-6,2.3,0.,2.68222),
-auto(0.0238419,0.,0.0118837,0.2431,2715e-6,2.3,0.,2.68222),
-auto(0.0252691,0.,0.0100219,0.2366,2764e-6,2.3,0.,2.68222),
-auto(0.0265303,0.,841103e-8,0.2302,281e-5,2.3,0.,2.68222),
-auto(0.0273792,0.,705665e-8,0.2244,2868e-6,2.3,0.,2.68222),
-auto(0.0278211,0.,590444e-8,0.2185,2922e-6,2.3,0.,2.68222),
-auto(0.0281944,0.,493362e-8,0.2129,2988e-6,2.3,0.,2.68222),
-auto(0.0291814,0.,412341e-8,0.2074,3038e-6,2.3,0.,2.68222),
-auto(0.0312475,0.,345303e-8,0.202,3111e-6,2.3,0.,2.68222),
-auto(0.0342546,0.,29017e-7,0.1968,3181e-6,2.3,0.,2.68222),
-auto(0.037588,0.,244865e-8,0.1916,3263e-6,2.3,0.,2.68222),
-auto(0.0402217,0.,207308e-8,0.1865,3362e-6,2.3,0.,2.68222),
-auto(0.04288,0.,175422e-8,0.1816,3508e-6,2.3,0.,2.68222),
-auto(0.0474949,0.,147128e-8,0.1768,3791e-6,2.3,0.,2.68222),
-auto(0.0546996,0.,12035e-7,0.1717,4019e-6,2.3,0.,2.68222),
-auto(0.06275,0.,930077e-9,0.1666,4098e-6,2.3,0.,2.68222),
-auto(0.0686749,0.,638835e-9,0.1613,415e-5,2.3,0.,2.68222),
-auto(0.0714015,0.,390303e-9,0.1559,4223e-6,2.3,0.,2.68222),
-auto(0.0689206,0.,201097e-9,0.1504,4318e-6,2.3,0.,2.68222),
-auto(0.0568583,0.,7.31016e-5,0.1451,4458e-6,2.3,0.,2.68222),
-auto(0.0408585,0.,8.20091e-6,0.1397,4646e-6,2.3,0.,2.68222),
-auto(0.0275021,0.,0.,0.1345,4903e-6,2.3,0.,2.68222),
-auto(0.0181733,0.,0.,0.1295,5244e-6,2.3,0.,2.68222),
-auto(0.0122406,0.,0.,0.1245,5722e-6,2.3,0.,2.68222),
-auto(858695e-8,0.,0.,0.12,6303e-6,2.3,0.,2.68222),
-auto(62803e-7,0.,0.,0.1156,6993e-6,2.3,0.,2.68222),
-auto(469652e-8,0.,0.,0.1111,7893e-6,2.3,0.,2.68222),
-auto(35302e-7,0.,0.,0.1067,9109e-6,2.3,0.,2.68222),
-auto(26434e-7,0.,0.,0.1024,0.01072,2.3,0.,2.68222),
-auto(196361e-8,0.,0.,0.09829,0.01268,2.3,0.,2.68222),
-auto(144677e-8,0.,0.,0.09422,0.01487,2.3,0.,2.68222),
-auto(105907e-8,0.,0.,0.09022,0.01787,2.3,0.,2.68222),
-auto(772889e-9,0.,0.,0.08631,0.02207,2.3,0.,2.68222),
-auto(567642e-9,0.,0.,0.08239,0.02532,2.3,0.,2.68222),
-auto(425665e-9,0.,0.,0.07901,0.02672,2.3,0.,2.68222),
-auto(331411e-9,0.,0.,0.07562,0.02722,2.3,0.,2.68222),
-auto(26796e-8,0.,0.,0.07245,0.02741,2.3,0.,2.68222),
-auto(208636e-9,0.,0.,0.06949,0.02754,2.3,0.,2.68222),
-auto(153058e-9,0.,0.,0.06653,0.02771,2.3,0.,2.68222),
-auto(103187e-9,0.,0.,0.06385,0.02774,2.3,0.,2.68222),
-auto(6.09847e-5,0.,0.,0.06117,0.02761,2.3,0.,2.68222),
-auto(2.84118e-5,0.,0.,0.05843,0.02748,2.3,0.,2.68222),
-auto(7.42983e-6,0.,0.,0.05564,0.0271,2.3,0.,2.68222),
-auto(105249e-18,0.,0.,0.05284,0.02659,2.3,0.,2.68222),
-auto(0.,0.,0.,0.0505,0.02613,2.3,0.,2.68222),
-auto(0.,0.,0.,0.04816,0.02513,2.3,0.,2.68222),
-auto(0.,0.,0.,0.04594,0.02412,2.3,0.,2.68222),
-auto(0.,0.,0.,0.04385,0.02337,2.3,0.,2.68222),
-auto(0.,0.,0.,0.04176,0.02246,2.3,0.,2.68222),
-auto(0.,0.,0.,0.03985,0.02204,2.3,0.,2.68222),
-auto(0.,0.,0.,0.03793,0.02177,2.3,0.,2.68222),
-auto(0.,0.,0.,0.03615,0.02198,2.3,0.,2.68222),
-auto(0.,0.,0.,0.03451,0.02248,2.3,0.,2.68222),
-auto(0.,0.,0.,0.03286,0.02329,2.3,0.,2.68222),
-auto(0.,0.,0.,0.03139,0.02516,2.3,0.,2.68222),
-auto(0.,0.,0.,0.02991,0.02914,2.3,0.,2.68222),
-auto(0.,0.,0.,0.02852,0.03459,2.3,0.,2.68222),
-auto(0.,0.,0.,0.0272,0.03788,2.3,0.,2.68222),
-auto(0.,0.,0.,0.02589,0.03949,2.3,0.,2.68222),
-auto(0.,0.,0.,0.02469,0.04057,2.3,0.,2.68222),
-auto(0.,0.,0.,0.0235,0.04149,2.3,0.,2.68222),
-auto(0.,0.,0.,0.02238,0.04254,2.3,0.,2.68222),
-auto(0.,0.,0.,0.02133,0.0436,2.3,0.,2.68222),
-auto(0.,0.,0.,0.02029,0.04454,2.3,0.,2.68222),
-auto(0.,0.,0.,0.01938,0.04552,2.3,0.,2.68222),
-auto(0.,0.,0.,0.01847,0.04705,2.3,0.,2.68222),
-auto(0.,0.,0.,0.01762,0.04867,2.3,0.,2.68222),
-auto(0.,0.,0.,0.01683,0.0505,2.3,0.,2.68222),
-auto(0.,0.,0.,0.01604,0.05298,2.3,0.,2.68222),
-auto(0.,0.,0.,0.01533,0.05528,2.3,0.,2.68222),
-auto(0.,0.,0.,0.01463,0.05745,2.3,0.,2.68222),
-auto(0.,0.,0.,0.014,0.05982,2.3,0.,2.68222),
-auto(0.,0.,0.,0.01343,0.06185,2.3,0.,2.68222),
-auto(0.,0.,0.,0.01286,0.06407,2.3,0.,2.68222),
-auto(0.,0.,0.,0.01245,0.06672,2.3,0.,2.68222),
-auto(0.,0.,0.,0.01205,0.06989,2.3,0.,2.68222),
-auto(0.,0.,0.,0.01165,0.07358,2.3,0.,2.68222),
-auto(0.,0.,0.,0.01125,0.07792,2.3,0.,2.68222),
-auto(0.,0.,0.,0.01086,0.08528,2.3,0.,2.68222),
-auto(0.,0.,0.,0.01047,0.09819,2.3,0.,2.68222),
-auto(0.,0.,0.,0.01008,0.1113,2.3,0.,2.68222),
-auto(0.,0.,0.,9691e-6,0.1327,2.3,0.,2.68222),
-auto(0.,0.,0.,9309e-6,0.1557,2.3,0.,2.68222),
-auto(0.,0.,0.,8931e-6,0.1818,2.3,0.,2.68222),
-auto(0.,0.,0.,8557e-6,0.2187,2.3,0.,2.68222),
-auto(0.,0.,0.,8187e-6,0.2542,2.3,0.,2.68222),
-auto(0.,0.,0.,7822e-6,0.3274,2.3,0.,2.68222),
-auto(0.,0.,0.,7462e-6,0.393,2.3,0.,2.68222),
-auto(0.,0.,0.,7107e-6,0.4385,2.3,0.,2.68222),
-auto(0.,0.,0.,6758e-6,0.4663,2.3,0.,2.68222),
-auto(0.,0.,0.,6414e-6,0.4772,2.3,0.,2.68222),
-auto(0.,0.,0.,6076e-6,0.4827,2.3,0.,2.68222),
-auto(0.,0.,0.,5745e-6,0.4867,2.3,0.,2.68222),
-auto(0.,0.,0.,5419e-6,0.4821,2.3,0.,2.68222),
-auto(0.,0.,0.,5101e-6,0.4738,2.3,0.,2.68222),
-auto(0.,0.,0.,479e-5,0.4604,2.3,0.,2.68222),
-auto(0.,0.,0.,4486e-6,0.4434,2.3,0.,2.68222),
-auto(0.,0.,0.,419e-5,0.4265,2.3,0.,2.68222),
-auto(0.,0.,0.,3901e-6,0.4072,2.3,0.,2.68222),
-auto(0.,0.,0.,362e-5,0.3868,2.3,0.,2.68222),
-auto(0.,0.,0.,3348e-6,0.364,2.3,0.,2.68222),
-auto(0.,0.,0.,3085e-6,0.3402,2.3,0.,2.68222),
-auto(0.,0.,0.,283e-5,0.3191,2.3,0.,2.68222),
-auto(0.,0.,0.,2585e-6,0.2957,2.3,0.,2.68222),
-auto(0.,0.,0.,2348e-6,0.2724,2.3,0.,2.68222),
-auto(0.,0.,0.,2122e-6,0.2506,2.3,0.,2.68222),
-auto(0.,0.,0.,1905e-6,0.2331,2.3,0.,2.68222),
-auto(0.,0.,0.,1699e-6,0.2151,2.3,0.,2.68222),
-auto(0.,0.,0.,1503e-6,0.1981,2.3,0.,2.68222),
-auto(0.,0.,0.,1318e-6,0.1841,2.3,0.,2.68222),
-auto(0.,0.,0.,1144e-6,0.1715,2.3,0.,2.68222),
-auto(0.,0.,0.,9811e-7,0.1613,2.3,0.,2.68222),
-auto(0.,0.,0.,8297e-7,0.1532,2.3,0.,2.68222),
-auto(0.,0.,0.,6901e-7,0.1475,2.3,0.,2.68222),
-auto(0.,0.,0.,5626e-7,0.1438,2.3,0.,2.68222),
-auto(0.,0.,0.,4473e-7,0.1412,2.3,0.,2.68222),
-auto(0.,0.,0.,3446e-7,0.1406,2.3,0.,2.68222),
-auto(0.,0.,0.,2548e-7,0.1426,2.3,0.,2.68222),
-auto(0.,0.,0.,178e-6,0.1443,2.3,0.,2.68222),
-auto(0.,0.,0.,1146e-7,0.1519,2.3,0.,2.68222),
-auto(0.,0.,0.,6488e-8,0.158,2.3,0.,2.68222),
-auto(0.,0.,0.,2901e-8,0.1677,2.3,0.,2.68222),
-auto(0.,0.,0.,7297e-9,0.1777,2.3,0.,2.68222),
-auto(0.,0.,0.,0.,0.1906,2.3,0.,2.68222),
-auto(0.,0.,0.,0.,0.2031,2.3,0.,2.68222),
-auto(0.,0.,0.,0.,0.2166,2.3,0.,2.68222),
-auto(0.,0.,0.,0.,0.2298,2.3,0.,2.68222),
-auto(0.,0.,0.,0.,0.2353,2.3,0.,2.68222),
-auto(0.,0.,0.,0.,0.2528,2.3,0.,2.68222),
-auto(0.,0.,0.,0.,0.2765,2.3,0.,2.68222),
-auto(0.,0.,0.,0.,0.3164,2.3,0.,2.68222),
-auto(0.,0.,0.,0.,0.377,2.3,0.,2.68222),
-auto(0.,0.,0.,0.,0.4712,2.3,0.,2.68222),
-auto(0.,0.,0.,0.,0.6052,2.3,0.,2.68222),
-auto(0.,0.,0.,0.,0.7535,2.3,0.,2.68222),
-auto(0.,0.,0.,0.,0.9253,2.3,0.,2.68222),
-auto(0.,0.,0.,0.,1.041,2.3,0.,2.68222),
-auto(0.,0.,0.,0.,1.131,2.3,0.,2.68222),
-auto(0.,0.,0.,0.,1.17,2.3,0.,2.68222),
-auto(0.,0.,0.,0.,1.196,2.3,0.,2.68222),
-auto(0.,0.,0.,0.,1.205,2.3,0.,2.68222),
-auto(0.,0.,0.,0.,1.223,2.3,0.,2.68222),
-auto(0.,0.,0.,0.,1.229,2.3,0.,2.68222),
-auto(0.,0.,0.,0.,1.239,2.3,0.,2.68222),
-auto(0.,0.,0.,0.,1.252,2.3,0.,2.68222),
-auto(0.,0.,0.,0.,1.262,2.3,0.,2.68222),
-auto(0.,0.,0.,0.,1.272,2.3,0.,2.68222),
-auto(0.,0.,0.,0.,1.282,2.3,0.,2.68212),
-auto(0.,0.,0.,0.,1.272,2.3,0.,2.68226),
-auto(0.,0.,0.,0.,1.273,2.302,0.,2.68474),
-auto(0.,0.,0.,0.,1.258,2.308,0.,2.69144),
-auto(0.,0.,0.,0.,1.247,2.317,0.,2.70236),
-auto(0.,0.,0.,0.,1.24,2.33,0.,2.71746),
-auto(0.,0.,0.,0.,1.214,2.346,0.,2.73571),
-auto(0.,0.,0.,0.,1.205,2.364,0.,2.75674),
-auto(0.,0.,0.,0.,1.197,2.384,0.,2.78031),
-auto(0.,0.,0.,0.,1.18,2.406,0.,2.80584),
-auto(0.,0.,0.,0.,1.161,2.43,0.,2.8335),
-auto(0.,0.,0.,0.,1.155,2.454,0.,2.86221),
-auto(0.,0.,0.,0.,1.138,2.48,0.,2.89187),
-auto(0.,0.,0.,0.,1.123,2.506,0.,2.92211),
-auto(0.,0.,0.,0.,1.107,2.532,0.,2.95253),
-auto(0.,0.,0.,0.,1.101,2.558,0.,2.98273),
-auto(0.,0.,0.,0.,1.094,2.583,0.,3.01206),
-auto(0.,0.,0.,0.,1.083,2.607,0.,3.04047),
-auto(0.,0.,0.,0.,1.08,2.631,0.,3.06775),
-auto(0.,0.,0.,0.,1.087,2.652,0.,3.09296),
-auto(0.,0.,0.,0.,1.107,2.672,0.,3.11582),
-auto(0.,0.,0.,0.,1.121,2.689,0.,3.13623),
-auto(0.,0.,0.,0.,1.156,2.704,0.,3.15339),
-auto(0.,0.,0.,0.,1.181,2.716,0.,3.16752),
-auto(0.,0.,0.,0.,1.216,2.725,0.,3.17768),
-auto(0.,0.,0.,0.,1.267,2.73,0.,3.1836),
-auto(0.,0.,0.,0.,1.323,2.721,0.,3.18255),
-auto(0.,0.,0.,0.,1.392,2.712,0.,3.16275),
-auto(0.,0.,0.,0.,1.489,2.688,0.,3.1349),
-auto(0.,0.,0.,0.,1.58,2.675,0.,3.12013),
-auto(0.,0.,0.,0.,1.701,2.668,0.,3.11512),
-auto(0.,0.,0.,0.,1.831,2.683,0.,3.12085),
-auto(0.,0.,0.,0.,1.974,2.683,0.,3.11915),
-auto(0.,0.,0.,0.,2.153,2.67,0.,3.10923),
-auto(0.,0.,0.,0.,2.312,2.665,0.,3.11253),
-auto(0.,0.,0.,0.,2.54,2.684,0.,3.1366),
-auto(0.,0.,0.,0.,2.701,2.717,0.,3.17295),
-auto(0.,0.,0.,0.,2.889,2.751,0.,3.2124),
-auto(0.,0.,0.,0.,3.146,2.818,0.,3.28504),
-auto(0.,0.,0.,0.,3.319,2.899,0.,3.38543),
-auto(0.,0.,0.,0.,3.504,2.966,0.,3.44515),
-auto(0.,0.,0.,0.,3.701,2.887,0.,3.40379),
-auto(0.,0.,0.,0.,3.927,2.888,0.,3.35152),
-auto(0.,0.,0.,0.,4.216,2.884,0.,3.38799),
-auto(0.,0.,0.,0.,4.63,3.014,0.,3.51342),
-auto(0.,0.,0.,0.,5.26,3.128,0.,3.61467),
-auto(0.,0.,0.,0.,6.242,2.979,0.,3.50632),
-auto(0.,0.,0.,0.,7.633,2.95,0.,3.45359),
-auto(0.,0.,0.,0.,9.591,3.066,0.,3.56422),
-auto(0.,0.,0.,0.,11.84,3.088,0.,3.60295),
-auto(0.,0.,0.,0.,14.34,3.065,0.,3.58432),
-auto(0.,0.,0.,0.,17.14,3.094,0.,3.59995),
-auto(0.,0.,0.,0.,19.8,3.158,0.,3.6519),
-auto(0.,0.,0.,0.,22.02,3.298,0.,3.75156),
-auto(0.,0.,0.,0.,24.07,3.534,0.,3.9537),
-auto(0.,0.,0.,0.,25.71,3.775,0.,4.25534),
-auto(0.,0.,0.,0.,27.01,4.071,0.,4.60753),
-auto(0.,0.,0.,0.,28.06,4.395,0.,4.97148),
-auto(0.,0.,0.,0.,28.92,4.708,0.,5.31983),
-auto(0.,0.,0.,0.,29.56,4.974,0.,5.61258),
-auto(0.,0.,0.,0.,30.03,5.179,303526e-9,5.85297),
-auto(0.,0.,0.,0.,30.36,5.358,549947e-9,6.05498),
-auto(0.,0.,0.,0.,30.52,5.481,109932e-8,6.19815),
-auto(0.,0.,0.,0.,30.56,5.56,220629e-8,6.27819),
-auto(0.,0.,0.,0.,30.49,5.611,406198e-8,6.35304),
-auto(0.,0.,0.,0.,30.29,5.682,726769e-8,6.41164),
-auto(0.,0.,0.,0.,29.98,5.711,0.0131454,6.44665),
-auto(0.,0.,0.,0.,29.36,5.732,0.0237766,6.47553),
-auto(0.,0.,0.,0.,28.51,5.745,0.0430059,6.49495),
-auto(0.,0.,0.,0.,27.54,5.78,0.0739295,6.52761),
-auto(0.,0.,0.,0.,26.38,5.808,0.130811,6.56391),
-auto(0.,0.,0.,0.,25.22,5.827,0.298639,6.59205),
-auto(0.,0.,0.,0.,24.13,5.908,0.627666,6.61461),
-auto(0.,0.,0.,0.,23.07,5.963,1.12027,6.59753),
-auto(0.,0.,0.,0.,21.93,5.994,1.70467,6.5506),
-auto(0.,0.,0.,0.,20.82,6.008,2.31366,6.49531),
-auto(0.,0.,0.,0.,19.72,6.027,2.8537,6.4351),
-auto(0.,0.,0.,0.,18.74,5.989,3.27219,6.35797),
-auto(0.,0.,0.,0.,17.84,5.971,3.61635,6.27194),
-auto(0.,0.,0.,0.,16.88,5.939,3.90538,6.2089),
-auto(0.,0.,0.,0.,16.06,5.909,4.16951,6.1375),
-auto(0.,0.,0.,0.,15.25,5.876,4.36809,6.06044),
-auto(0.,0.,0.,0.,14.47,5.818,4.52887,5.98525),
-auto(0.,0.,0.,0.,13.81,5.776,4.6639,5.93112),
-auto(0.,0.,0.,0.,13.16,5.762,4.76514,5.8975),
-auto(0.,0.,0.,0.,12.54,5.737,4.85234,5.86936),
-auto(0.,0.,0.,0.,11.93,5.751,4.91212,5.85597),
-auto(0.,0.,0.,0.,11.37,5.744,4.92315,5.85411),
-auto(0.,0.,0.,0.,10.88,5.735,4.86824,5.85096),
-auto(0.,0.,0.,0.,10.44,5.731,4.76213,5.85092),
-auto(0.,0.,0.,0.,10.01,5.697,4.6515,5.84456),
-auto(0.,0.,0.,0.,9.66,5.713,4.57691,5.86442),
-auto(0.,0.,0.,0.,9.305,5.743,4.57541,5.89816),
-auto(0.,0.,0.,0.,8.977,5.746,4.62615,5.89437),
-auto(0.,0.,0.,0.,8.665,5.749,4.71216,5.87427),
-auto(0.,0.,0.,0.,8.364,5.739,4.81858,5.86845),
-auto(0.,0.,0.,0.,8.104,5.745,4.88995,5.85471),
-auto(0.,0.,0.,0.,7.834,5.725,4.96921,5.81696),
-auto(0.,0.,0.,0.,7.609,5.699,5.04323,5.78532),
-auto(0.,0.,0.,0.,7.374,5.659,5.11082,5.72122),
-auto(0.,0.,0.,0.,7.164,5.591,5.1564,5.63411),
-auto(0.,0.,0.,0.,6.987,5.517,5.17732,5.56157),
-auto(0.,0.,0.,0.,6.828,5.45,5.1857,5.48889),
-auto(0.,0.,0.,0.,6.695,5.391,5.16731,5.42529),
-auto(0.,0.,0.,0.,6.567,5.347,5.17217,5.36675),
-auto(0.,0.,0.,0.,6.449,5.292,5.21432,5.30806),
-auto(0.,0.,0.,0.,6.345,5.253,5.27026,5.25246),
-auto(0.,0.,0.,0.,6.214,5.211,5.32569,5.19995),
-auto(0.,0.,0.,0.,6.121,5.193,5.33813,5.16916),
-auto(0.,0.,0.,0.,6.048,5.178,5.2871,5.15184),
-auto(0.,0.,0.,0.,5.973,5.139,5.18651,5.13261),
-auto(0.,0.,0.,0.,5.911,5.126,5.08302,5.11967),
-auto(0.,0.,0.,0.,5.826,5.109,5.01101,5.12287),
-auto(0.,0.,0.,0.,5.746,5.136,4.98846,5.14571),
-auto(0.,0.,0.,0.,5.684,5.193,5.02959,5.20895),
-auto(0.,0.,0.,0.,5.648,5.273,5.12541,5.29959),
-auto(0.,0.,0.,0.,5.618,5.389,5.29257,5.40251),
-auto(0.,0.,0.,0.,5.603,5.522,5.55426,5.54336),
-auto(0.,0.,0.,0.,5.563,5.698,5.91269,5.63139),
-auto(0.,0.,0.,0.,5.542,5.689,6.34912,5.64415),
-auto(0.,0.,0.,0.,5.533,5.847,6.8895,5.68829),
-auto(0.,0.,0.,0.,5.524,6.022,7.50841,5.82776),
-auto(0.,0.,0.,0.,5.52,6.214,8.19964,5.96479),
-auto(0.,0.,0.,0.,5.527,6.426,8.88458,6.10872),
-auto(0.,0.,0.,0.,5.52,6.616,9.48432,6.24813),
-auto(0.,0.,0.,0.,5.538,6.807,9.94215,6.40315),
-auto(0.,0.,0.,0.,5.571,7.006,10.1962,6.58958),
-auto(0.,0.,0.,0.,5.629,7.164,10.2646,6.75924),
-auto(0.,0.,0.,0.,5.693,7.315,10.2194,6.92359),
-auto(0.,0.,0.,0.,5.766,7.44,10.1317,7.0929),
-auto(0.,0.,0.,0.,5.829,7.557,10.0314,7.2364),
-auto(0.,0.,0.,0.,5.93,7.653,10.015,7.34774),
-auto(0.,0.,0.,0.,6.025,7.708,10.0882,7.41423),
-auto(0.,0.,0.,0.,6.136,7.712,10.2009,7.39082),
-auto(0.,0.,0.,0.,6.256,7.644,10.3189,7.28796),
-auto(0.,0.,0.,0.,6.392,7.517,10.3702,7.14735),
-auto(0.,0.,0.,0.,6.571,7.408,10.3367,7.02316),
-auto(0.,0.,0.,0.,6.748,7.332,10.1975,6.96917),
-auto(0.,0.,0.,0.,6.955,7.295,9.97984,6.95724),
-auto(0.,0.,0.,0.,7.179,7.292,9.67446,6.96817),
-auto(0.,0.,0.,0.,7.414,7.25,9.30796,6.99022),
-auto(0.,0.,0.,0.,7.669,7.186,8.87563,6.97201),
-auto(0.,0.,0.,0.,7.893,7.101,8.35916,6.92653),
-auto(0.,0.,0.,0.,8.103,6.974,7.85857,6.84446),
-auto(0.,0.,0.,0.,8.264,6.793,7.39955,6.73443),
-auto(0.,0.,0.,0.,8.43,6.661,7.01506,6.60605),
-auto(0.,0.,0.,0.,8.535,6.522,6.73116,6.49947),
-auto(0.,0.,0.,0.,8.64,6.479,6.56433,6.47637),
-auto(0.,0.,0.,0.,8.738,6.461,6.45478,6.46263),
-auto(0.,0.,0.,0.,8.778,6.421,6.36996,6.41271),
-auto(0.,0.,0.,0.,8.809,6.372,6.32755,6.36405),
-auto(0.,0.,0.,0.,8.789,6.314,6.28577,6.31039),
-auto(0.,0.,0.,0.,8.75,6.258,6.21246,6.25738),
-auto(0.,0.,0.,0.,8.744,6.231,6.08071,6.23487),
-auto(0.,0.,0.,0.,8.787,6.192,5.89702,6.22362),
-auto(0.,0.,0.,0.,8.811,6.143,5.70087,6.19283),
-auto(0.,0.,0.,0.,8.854,6.063,5.54385,6.15209),
-auto(0.,0.,0.,0.,8.884,6.044,5.43082,6.10582),
-auto(0.,0.,0.,0.,8.951,5.997,5.32864,6.06286),
-auto(0.,0.,0.,0.,9.11,5.927,5.1829,6.02462),
-auto(0.,0.,0.,0.,9.315,5.832,4.9598,5.93713),
-auto(0.,0.,0.,0.,9.633,5.681,4.70948,5.8377),
-auto(0.,0.,0.,0.,10.05,5.62,4.48954,5.76387),
-auto(0.,0.,0.,0.,10.59,5.552,4.38469,5.71407),
-auto(0.,0.,0.,0.,11.39,5.507,4.32436,5.66843),
-auto(0.,0.,0.,0.,12.35,5.462,4.25741,5.6068),
-auto(0.,0.,0.,0.,13.75,5.44,4.12869,5.60891),
-auto(0.,0.,0.,0.,15.86,5.461,3.9605,5.65705),
-auto(0.,0.,0.,0.,18.53,5.379,3.69271,5.56746),
-auto(0.,0.,0.,0.,22.5,5.171,3.4007,5.38897),
-auto(0.,0.,0.,0.,27.51,5.129,3.27977,5.37907),
-auto(0.,0.,0.,0.,35.04,5.185,3.3293,5.43135),
-auto(0.,0.,0.,0.,45.3,5.204,3.55002,5.42507),
-auto(0.,0.,0.,0.,57.61,5.318,4.05638,5.48679),
-auto(0.,0.,0.,0.,70.59,5.561,4.88562,5.65152),
-auto(0.,0.,0.,0.,84.69,5.83,5.91277,5.8295),
-auto(0.,0.,0.,0.,97.22,6.193,7.14743,6.0818),
-auto(0.,0.,0.,0.,107.8,6.71,8.55623,6.45977),
-auto(0.,0.,0.,0.,115.7,7.238,10.0272,6.88663),
-auto(0.,0.,0.,0.,121.5,7.767,11.4299,7.28121),
-auto(0.,0.,0.,0.,125.7,8.15,12.7522,7.5415),
-auto(0.,0.,0.,0.,128.6,8.449,13.9491,7.72955),
-auto(0.,0.,0.,0.,130.3,8.723,14.9812,7.90318),
-auto(0.,0.,0.,0.,130.6,8.909,15.8291,7.99546),
-auto(0.,0.,0.,0.,129.9,8.983,16.4912,8.02305),
-auto(0.,0.,0.,0.,128.2,9.028,16.9765,8.00624),
-auto(0.,0.,0.,0.,125.6,9.041,17.2755,7.97102),
-auto(0.,0.,0.,0.,122.4,9.021,17.4097,7.92829),
-auto(0.,0.,0.,0.,119.,8.974,17.4339,7.87612),
-auto(0.,0.,0.,0.,114.9,8.923,17.3868,7.82318),
-auto(0.,0.,0.,0.,111.,8.88,17.3744,7.77419),
-auto(0.,0.,0.,0.,106.6,8.861,17.4546,7.75655),
-auto(0.,0.,0.,0.,102.3,8.872,17.6234,7.72684),
-auto(0.,0.,0.,0.,98.31,8.855,17.8157,7.67752),
-auto(0.,0.,0.,0.,94.12,8.843,17.9609,7.63958),
-auto(0.,0.,0.,0.,90.09,8.807,17.9924,7.61338),
-auto(0.,0.,0.,0.,86.11,8.795,17.8408,7.60046),
-auto(0.,0.,0.,0.,82.62,8.76,17.5334,7.61447),
-auto(0.,0.,0.,0.,79.04,8.79,17.1249,7.70102),
-auto(0.,0.,0.,0.,75.57,8.874,16.6593,7.86106),
-auto(0.,0.,0.,0.,72.34,8.98,16.143,8.03346),
-auto(0.,0.,0.,0.,69.24,9.076,15.5935,8.21959),
-auto(0.,0.,0.,0.,66.34,9.214,15.0623,8.45456),
-auto(0.,0.,0.,0.,63.58,9.406,14.5349,8.73991),
-auto(0.,0.,0.,0.,61.05,9.638,14.0161,9.06018),
-auto(0.,0.,0.,0.,58.57,9.953,13.552,9.47408),
-auto(0.,0.,0.,0.,56.32,10.39,13.1796,10.0208),
-auto(0.,0.,0.,0.,53.98,10.91,12.9215,10.6452),
-auto(0.,0.,0.,0.,51.97,11.5,12.8216,11.3263),
-auto(0.,0.,0.,0.,50.06,12.17,12.9535,12.0623),
-auto(0.,0.,0.,0.,48.06,12.87,13.3353,12.8295),
-auto(0.,0.,0.,0.,46.35,13.64,13.9478,13.6119),
-auto(0.,0.,0.,0.,44.73,14.41,14.6843,14.3894),
-auto(0.,0.,0.,0.,43.02,15.17,15.3629,15.1457),
-auto(0.,0.,0.,0.,41.55,15.91,15.7512,15.9015),
-auto(0.,0.,0.,0.,40.02,16.53,15.6389,16.6272),
-auto(0.,0.,0.,0.,38.68,16.98,14.9077,17.2489),
-auto(0.,0.,0.,0.,37.26,17.34,13.593,17.8086),
-auto(0.,0.,0.,0.,35.92,17.61,11.8869,18.3492),
-auto(0.,0.,0.,0.,34.79,17.83,10.0197,18.8492),
-auto(0.,0.,0.,0.,33.63,17.99,8.24628,19.2801),
-auto(0.,0.,0.,0.,32.51,18.2,6.78593,19.6873),
-auto(0.,0.,0.,0.,31.54,18.41,5.74043,20.0655),
-auto(0.,0.,0.,0.,30.52,18.61,5.04929,20.3717),
-auto(0.,0.,0.,0.,29.58,18.81,4.65259,20.6393),
-auto(0.,0.,0.,0.,28.65,19.03,4.53793,20.8987),
-auto(0.,0.,0.,0.,27.76,19.21,4.58587,21.1193),
-auto(0.,0.,0.,0.,26.92,19.35,4.74852,21.2408),
-auto(0.,0.,0.,0.,26.17,19.47,4.99758,21.3364),
-auto(0.,0.,0.,0.,25.47,19.6,5.34313,21.4373),
-auto(0.,0.,0.,0.,24.85,19.66,5.74656,21.4802),
-auto(0.,0.,0.,0.,24.2,19.74,6.29018,21.4794),
-auto(0.,0.,0.,0.,23.58,19.79,7.09956,21.4476),
-auto(0.,0.,0.,0.,23.04,19.86,8.19877,21.3772),
-auto(0.,0.,0.,0.,22.52,19.93,9.59991,21.2665),
-auto(0.,0.,0.,0.,22.02,20.01,11.2883,21.1509),
-auto(0.,0.,0.,0.,21.62,20.13,13.2128,21.0269),
-auto(0.,0.,0.,0.,21.23,20.22,15.2766,20.856),
-auto(0.,0.,0.,0.,20.85,20.27,17.4315,20.6355),
-auto(0.,0.,0.,0.,20.49,20.29,19.6117,20.3777),
-auto(0.,0.,0.,0.,20.18,20.26,21.7351,20.1036),
-auto(0.,0.,0.,0.,19.87,20.3,23.7127,19.8538),
-auto(0.,0.,0.,0.,19.63,20.26,25.4622,19.5861),
-auto(0.,0.,0.,0.,19.42,20.16,26.8911,19.2967),
-auto(0.,0.,0.,0.,19.23,20.07,28.013,19.0236),
-auto(0.,0.,0.,0.,19.04,19.91,28.8497,18.7425),
-auto(0.,0.,0.,0.,18.84,19.69,29.4396,18.4349),
-auto(0.,0.,0.,0.,18.66,19.47,29.8071,18.1275),
-auto(0.,0.,0.,0.,18.49,19.22,29.968,17.8349),
-auto(0.,0.,0.,0.,18.37,18.99,29.9523,17.5581),
-auto(0.,0.,0.,0.,18.36,18.74,29.7495,17.3099),
-auto(0.,0.,0.,0.,18.34,18.52,29.4331,17.0954),
-auto(0.,0.,0.,0.,18.34,18.29,29.0374,16.9015),
-auto(0.,0.,0.,0.,18.32,18.07,28.5067,16.718),
-auto(0.,0.,0.,0.,18.28,17.87,27.8164,16.5692),
-auto(0.,0.,0.,0.,18.32,17.73,26.9985,16.5103),
-auto(0.,0.,0.,0.,18.37,17.63,26.0844,16.5436),
-auto(0.,0.,0.,0.,18.42,17.64,25.1682,16.665),
-auto(0.,0.,0.,0.,18.51,17.79,24.4037,16.9416),
-auto(0.,0.,0.,0.,18.6,18.14,23.8924,17.3954),
-auto(0.,0.,0.,0.,18.7,18.66,23.6643,17.9946),
-auto(0.,0.,0.,0.,18.88,19.31,23.8102,18.7387),
-auto(0.,0.,0.,0.,19.08,20.17,24.3313,19.6376),
-auto(0.,0.,0.,0.,19.29,21.14,25.1664,20.6065),
-auto(0.,0.,0.,0.,19.51,22.1,26.257,21.5852),
-auto(0.,0.,0.,0.,19.8,23.13,27.4994,22.5561),
-auto(0.,0.,0.,0.,20.04,24.1,28.7525,23.4914),
-auto(0.,0.,0.,0.,20.38,24.99,29.9477,24.3425),
-auto(0.,0.,0.,0.,20.71,25.83,31.0753,25.16),
-auto(0.,0.,0.,0.,21.03,26.57,32.2007,25.8581),
-auto(0.,0.,0.,0.,21.45,27.18,33.3143,26.3754),
-auto(0.,0.,0.,0.,21.83,27.63,34.3259,26.7972),
-auto(0.,0.,0.,0.,22.23,28.21,35.1974,27.278),
-auto(0.,0.,0.,0.,22.76,28.78,35.7704,27.9029),
-auto(0.,0.,0.,0.,23.27,29.37,35.914,28.5003),
-auto(0.,0.,0.,0.,23.77,29.82,35.5173,29.0737),
-auto(0.,0.,0.,0.,24.33,30.28,34.7121,29.7123),
-auto(0.,0.,0.,0.,24.85,30.66,33.5865,30.2837),
-auto(0.,0.,0.,0.,25.49,30.75,32.3172,30.5666),
-auto(0.,0.,0.,0.,26.11,30.58,31.1485,30.5249),
-auto(0.,0.,0.,0.,26.81,30.29,30.2351,30.2976),
-auto(0.,0.,0.,0.,27.44,30.,29.5615,30.0827),
-auto(0.,0.,0.,0.,28.19,29.84,29.0514,29.9223),
-auto(0.,0.,0.,0.,29.03,29.76,28.6825,29.8922),
-auto(0.,0.,0.,0.,29.69,29.85,28.3525,30.0507),
-auto(0.,0.,0.,0.,30.54,30.05,28.0993,30.2912),
-auto(0.,0.,0.,0.,31.45,30.22,27.9583,30.511),
-auto(0.,0.,0.,0.,32.19,30.29,27.9656,30.5979),
-auto(0.,0.,0.,0.,33.11,30.19,28.0175,30.4603),
-auto(0.,0.,0.,0.,34.04,29.93,28.0124,30.2005),
-auto(0.,0.,0.,0.,34.86,29.66,27.8386,29.8724),
-auto(0.,0.,0.,0.,35.92,29.26,27.3552,29.5282),
-auto(0.,0.,0.,0.,36.97,28.9,26.5842,29.2098),
-auto(0.,0.,0.,0.,38.01,28.7,25.675,29.0592),
-auto(0.,0.,0.,0.,39.13,28.5,24.7125,28.997),
-auto(0.,0.,0.,0.,40.24,28.23,23.7765,28.8485),
-auto(0.,0.,0.,0.,41.47,28.03,23.0024,28.7236),
-auto(0.,0.,0.,0.,42.68,27.91,22.3542,28.63),
-auto(0.,0.,0.,0.,43.88,27.81,21.8366,28.592),
-auto(0.,0.,0.,0.,45.13,27.83,21.4172,28.6603),
-auto(0.,0.,0.,0.,46.38,27.82,20.978,28.6962),
-auto(0.,0.,0.,0.,47.64,27.83,20.5492,28.7546),
-auto(0.,0.,0.,0.,48.94,27.99,20.154,29.0181),
-auto(0.,0.,0.,0.,50.21,28.19,19.7901,29.2372),
-auto(0.,0.,0.,0.,51.59,28.31,19.3635,29.461),
-auto(0.,0.,0.,0.,53.1,28.59,18.956,29.8355),
-auto(0.,0.,0.,0.,54.62,28.98,18.5346,30.3426),
-auto(0.,0.,0.,0.,56.18,29.44,18.0037,30.9519),
-auto(0.,0.,0.,0.,58.08,30.02,17.5762,31.6193),
-auto(0.,0.,0.,0.,59.76,30.64,17.3588,32.3972),
-auto(0.,0.,0.,0.,61.46,31.32,17.2226,33.1766),
-auto(0.,0.,0.,0.,63.16,32.04,17.1238,33.9162),
-auto(0.,0.,0.,0.,65.39,32.82,17.0604,34.9059),
-auto(0.,0.,0.,0.,67.25,33.84,16.9942,36.0321),
-auto(0.,0.,0.,0.,69.18,34.72,16.8851,37.0634),
-auto(0.,0.,0.,0.,71.74,35.61,16.8694,38.049),
-auto(0.,0.,0.,0.,73.81,36.36,16.7079,38.9106),
-auto(0.,0.,0.,0.,75.91,36.99,16.0877,39.7258),
-auto(0.,0.,0.,0.,78.39,37.92,15.2978,40.6479),
-auto(0.,0.,0.,0.,80.46,38.33,14.5149,41.6124),
-auto(0.,0.,0.,0.,82.95,38.84,13.5784,42.0867),
-auto(0.,0.,0.,0.,85.1,39.,12.5924,42.3023),
-auto(0.,0.,0.,0.,87.08,39.16,11.6269,42.7821),
-auto(0.,0.,0.,0.,89.45,39.51,10.4637,43.3112),
-auto(0.,0.,0.,0.,92.04,39.58,9.53686,43.4282),
-auto(0.,0.,0.,0.,93.58,39.17,9.10247,43.2012),
-auto(0.,0.,0.,0.,95.3,38.71,9.40778,42.6366),
-);
-
-/// The minimum wavelength of the xanthophyll cycle table in nanometers.
-export const float PROSPECT_CX_MIN_WAVELENGTH=5e2;
-
-/// The maximum wavelength of the xanthophyll cycle table in nanometers.
-export const float PROSPECT_CX_MAX_WAVELENGTH=564.;
-
-/// The number of entries in the xanthophyll cycle table.
-export const int PROSPECT_CX_TABLE_SIZE=65;
-
-/// The tabulated xanthophyll cycle difference, being the zeaxanthin minus
-/// violaxanthin specific absorption.
-export static const auto PROSPECT_CX_TABLE=float[65](0.,0.,0.,0.,2.3666667e-6,1.4111905e-5,1.5753175e-5,1.6109579e-4,4.3772785e-4,5.7373789e-4,7.1124793e-4,7.5958535e-4,8.1272277e-4,0.0010946743,0.0013850259,0.0015193361,0.0016655464,0.0018591944,0.0020681424,0.0023029017,2556361e-9,0.0027022316,0.0028702023,0.0029664684,0.0030884345,0.0031437199,0.0032281053,0.0032327202,0.0032698351,0.0032164464,0.0031989577,0.0030774558,0.0029954539,0.0028728641,0.0027932744,0.0026592758,0.0025715771,0.0024033444,0.0022849116,2118113e-9,0.0019782487,0.0018263978,0.0016528675,0.0015393822,0.0014256901,0.0013247508,0.0012209231,0.0011458843,1073761e-9,1012381e-9,9.5488751e-4,8.9542219e-4,8.260178e-4,8.4654538e-4,8.1813233e-4,7.232132e-4,5.1506483e-4,3.3026741e-4,176768e-9,4.44797e-5,0.,0.,0.,0.,0.); /// Evaluate the PROSPECT model for the given leaf biochemistry, returning
-/// the hemispherical reflectance and transmittance of a single leaf.
-@(noinline)
-export prospect_result prospect(
-float num_layers=1.5,          ///< The number of layers.
-float incident_cone_angle=0.7, ///< The incident cone angle in radians.
-float dry_matter=5.,           ///< The dry matter content in milligrams per square centimeter.
-float water=0.01,              ///< The water content in centimeters equivalent thickness.
-float chlorophylls=30.,        ///< The chlorophyll content in micrograms per square centimeter.
-float anthocyanins=1.,         ///< The anthocyanin content in micrograms per square centimeter.
-float carotenoids=1.5,         ///< The carotenoid content in micrograms per square centimeter.
-float xanthophyll_cycle=0.,    ///< The xanthophyll de-epoxidation state, 0 for violaxanthin and 1 for zeaxanthin.
-float proteins=0.,             ///< The protein content in milligrams per square centimeter.
-float carbons=0.,              ///< The carbon constituent content in milligrams per square centimeter.
-float browns=0.,               ///< The brown pigment content in arbitrary units.
-){
-num_layers=#max(num_layers,1.);
-const auto contents=auto(chlorophylls,carotenoids,anthocyanins,browns,water,1e-3*dry_matter,1e-3*proteins,1e-3*carbons)/num_layers;
-const auto xanthophylls=carotenoids*(1.-clamp(xanthophyll_cycle,0.,1.5))/num_layers;
-color ior(0);
-color k(0);
-for(int i=0;i<$WAVELENGTH_BASE_MAX;i++){
-const auto {w0,w}=_uniform_lerp_index_and_fraction(PROSPECT_TABLE_SIZE,PROSPECT_MIN_WAVELENGTH,PROSPECT_MAX_WAVELENGTH,$state.wavelength_base[i]);
-const auto {x0,x}=_uniform_lerp_index_and_fraction(PROSPECT_CX_TABLE_SIZE,PROSPECT_CX_MIN_WAVELENGTH,PROSPECT_CX_MAX_WAVELENGTH,$state.wavelength_base[i]);
-ior[i]=lerp(PROSPECT_TABLE_IOR[w0],PROSPECT_TABLE_IOR[w0+1],w);
-k[i]=dot(lerp(PROSPECT_TABLE_K[w0],PROSPECT_TABLE_K[w0+1],w),contents)-xanthophylls*lerp(PROSPECT_CX_TABLE[x0],PROSPECT_CX_TABLE[x0+1],x);
-}
-const auto tau=return_from{
-const auto num=(1.236150246012*k+3.672877420834)*k+1.;
-const auto den=((0.618075123006*k+3.664716300259)*k+4.62190363405)*k+1.;
-return clamp(#exp(-k)*num/den,0.,0.999);
-};
-const auto t12=return_from{
-auto tmp(-0.17369388*ior+1.3189973);
-tmp=tmp*ior-4.02936997;
-tmp=tmp*ior+6.21265658;
-tmp=tmp*ior-4.99648418;
-tmp=tmp*ior+2.66515836;
-return saturate(tmp);
-};
-const auto r12=1-t12;
-const auto t21=t12/(ior*ior);
-const auto r21=1-t21;
-const auto tAlpha=return_from{
-auto tmp(0.59796905,-1.904108,1.6576156);
-tmp=tmp*incident_cone_angle+auto(-4.1001221,12.956352,-11.049849);
-tmp=tmp*incident_cone_angle+auto(11.477769,-36.044872,30.242981);
-tmp=tmp*incident_cone_angle+auto(-17.172335,53.666636,-44.411331);
-tmp=tmp*incident_cone_angle+auto(15.069425,-46.911094,38.28977);
-tmp=tmp*incident_cone_angle+auto(-7.8923812,24.474973,-19.667279);
-tmp=tmp*incident_cone_angle+auto(2.4020134,-7.4210148,5.8397553);
-tmp=tmp*incident_cone_angle+auto(-0.38620638,1.187749,-0.90387653);
-tmp=tmp*incident_cone_angle+auto(-0.048754145,0.016941738,1.0405082);
-return saturate(tmp[0]*ior*ior+tmp[1]*ior+tmp[2]);
-};
-const auto rAlpha=1-tAlpha;
-const auto tau_r21=tau*r21;
-const auto tmp0=tau*t21/(1-#pow(tau_r21,2));
-const auto tA=tAlpha*tmp0;
-const auto rA=rAlpha+tau_r21*tA;
-const auto t=t12*tmp0;
-const auto r=r12+tau_r21*t;
-const auto add_r_t=r+t;
-const auto sub_r_t=r-t;
-const auto sub_r2_t2=r*r-t*t;
-const auto d=#sqrt((1+add_r_t)*(1+sub_r_t)*(1-add_r_t)*(1-sub_r_t));
-const auto a=(1+d+sub_r2_t2)/(2*r);
-const auto b=(1+d-sub_r2_t2)/(2*t);
-const auto bNm1=#pow(b,num_layers-1);
-const auto tmp1=#pow(a*bNm1,2)-1;
-color tSub=bNm1*(a*a-1)/tmp1;
-color rSub=a*(bNm1*bNm1-1)/tmp1;
-for(int i=0;i<$WAVELENGTH_BASE_MAX;i++){
-const auto ri=r[i];
-const auto ti=t[i];
-if(ri+ti>1){
-tSub[i]=ti/(ti+(1-ti)*(num_layers-1));
-rSub[i]=1-tSub[i];
-} else if(!isfinite(rSub[i])||!isfinite(tSub[i])){
-tSub[i]=0;
-rSub[i]=1;
-}
-}
-const auto one_minus_rSub_r=1-rSub*r;
-return prospect_result(reflectance: rA+tA*rSub*t/one_minus_rSub_r,transmittance: tA*tSub/one_minus_rSub_r);
-}
-)*";
-
-static const char *const models_marmit = R"*(/// MARMIT -- a physically based way to layer a film of water over an arbitrary
-/// diffuse reflectance spectrum, darkening and spectrally reshaping it the way a
-/// wet surface differs from a dry one. It is the reflective, water-on-top analog
-/// of the leaf model in `prospect.smdl`, and is built the same way: interpolate
-/// tabulated optical constants of water per wavelength, then evaluate a small
-/// closed-form radiative-transfer expression using cheap analytic fits in place
-/// of the special functions the reference model calls.
-///
-/// References:
-///   Bablet et al. (2018)   -- MARMIT
-///   Dupiau et al. (2022)   -- MARMIT-2
-///   Segelstein (1981)      -- real refractive index of water
-///   Buiteveld/Kou/Wieliczka -- absorption coefficient of water (cm^-1)
-#smdl
-using ::math import *;
-
-/// The result of the MARMIT model, being the reflectance of the wetted
-/// surface.
-export struct marmit_result{
-/// Reflectance after wetting: the `wet_fraction`-weighted mix of the wetted
-/// and dry reflectances (this is the model's primary output).
-color reflectance=color(0);
-
-/// Reflectance of the fully wetted surface (i.e. `wet_fraction` = 1), exposed
-/// as a convenience since it is computed along the way.
-color reflectance_wet=color(0);
-};
-
-/// The minimum wavelength of the MARMIT table in nanometers.
-export const float MARMIT_MIN_WAVELENGTH=4e2;
-/// The maximum wavelength of the MARMIT table in nanometers.
-export const float MARMIT_MAX_WAVELENGTH=25e2;
-/// The number of entries in the MARMIT table.
-export const int MARMIT_TABLE_SIZE=264; /// The exponent of the generalized power mean that mixes the wet and dry
-/// reflectances.
-export const float MARMIT_MIXING_EXPONENT=2.27;
-
-/// The tabulated absorption coefficient of water in inverse centimeters.
-export static const auto MARMIT_TABLE_ALPHA=float[264](58e-6,6.4984791e-5,7.3961977e-5,8.3942966e-5,9.3923954e-5,1.0390494e-4,1.1190875e-4,1.1989354e-4,1.2787833e-4,1.378289e-4,1.5169582e-4,1.734981e-4,2.0808745e-4,2.7126996e-4,3.4692395e-4,4.0768821e-4,4.2214829e-4,4.6838403e-4,5.2480989e-4,6.0760456e-4,6.7002281e-4,7.3120532e-4,8.5206084e-4,0.0010678935,0.0014402015,0.0021741901,0.0026327338,0.0027589696,0.0028618251,0.0029807224,3102673e-9,0.0032533346,0.0034902357,0.0039903916,0.0041432776,0.0043053574,0.0046202662,0.0051960266,0.0062190532,0.0077595399,0.010478373,0.014529217,0.021402958,0.026493449,0.027380042,0.027681255,0.027633087,0.027165802,0.026211502,0.024305548,0.022633673,0.021824388,0.022383559,0.024786357,0.033469194,0.039156262,0.041295403,0.043371049,0.045305894,0.048309354,0.052412308,0.056949532,0.061372152,0.066089209,0.07268008,0.083459224,0.10801803,0.14987386,0.20914362,0.30817464,0.42640746,0.47426548,0.48559121,0.47610929,0.44816959,0.41265352,0.37059379,0.32529306,0.27932866,0.23837934,0.20328992,0.17535392,0.15572677,0.14497347,0.14078527,0.14372349,0.15596563,0.1744163,0.19891388,0.22535442,0.24684612,0.30258614,0.43825438,0.70110019,0.99940737,1.1558965,1.2017063,1.2266625,1.2473806,1.2683121,1.2754115,1.2638987,1.2427951,1.2082091,1.1866358,1.1577352,1.1289543,1.1030914,1.0875161,1.0838075,1.1151354,1.1700577,1.2450879,1.362082,1.5408251,1.7737077,2.0738001,2.4385417,2.8046537,3.2404328,3.6110189,4.0831335,4.9678182,6.9821837,10.777019,15.809918,20.957662,24.918992,27.547179,29.242555,30.198566,30.53757,30.391875,29.675172,28.037443,25.813958,23.61745,21.401333,19.255608,17.387155,15.678046,14.165977,12.875868,11.674949,10.679736,9.8499423,9.1589774,8.5319908,7.9861643,7.5072635,7.0878586,6.7712775,6.5171763,6.2906116,6.0902196,5.947433,5.7936615,5.669135,5.6119709,5.5547171,5.529419,5.5225403,5.5265036,5.5934486,5.7201826,5.8667218,6.065756,6.3052816,6.634616,7.0347278,7.504357,7.9664502,8.3214848,8.5709506,8.7513499,8.8025903,8.7476202,8.7948996,8.8635308,9.0019142,9.4151059,10.219798,11.683006,14.391653,19.719141,29.744088,48.905897,74.663711,100.24685,117.30163,126.51509,130.39706,129.42913,124.75055,117.9467,109.89923,101.29867,93.107823,85.246802,78.192875,71.596133,65.692118,60.475897,55.783826,51.541361,47.683278,44.360006,41.224355,38.385488,35.684155,33.401698,31.33872,29.394575,27.600382,26.0366,24.730099,23.484923,22.42997,21.549691,20.788565,20.125026,19.59856,19.200902,18.808893,18.470427,18.359254,18.337472,18.283925,18.377094,18.521219,18.72055,19.104502,19.542117,20.080917,20.747716,21.492014,22.285338,23.318404,24.37713,25.544056,26.859973,28.263872,29.75544,31.504263,33.175559,34.931125,37.040435,39.193771,41.539909,43.948561,46.437483,49.000875,51.653323,54.677894,58.138646,61.514553,65.43605,69.238078,73.853932,78.420393,82.970777,87.095007,92.04271,95.303); /// Evaluate the MARMIT model, layering a film of water of the given
-/// thickness over the given dry reflectance spectrum.
-@(noinline)
-export marmit_result marmit(
-color reflectance=color(0.3), ///< The dry reflectance of the underlying material.
-float water_thickness=0.01,   ///< The equivalent water-film thickness in centimeters, clamped to be non-negative.
-float wet_fraction=1.,        ///< The fraction of the surface covered by water, clamped to [0, 1].
-float suspension_ior=1.53,    ///< Real refractive index n_i of particles suspended in the film.
-float suspension_k=0.,        ///< Imaginary refractive index k_i of the suspended particles.
-float suspension_fraction=0., ///< Volume fraction d_i of suspension in the film; 0 = pure water.
-){
-const color s=2.*saturate((color(&$state.wavelength_base[0])-MARMIT_MIN_WAVELENGTH)/(MARMIT_MAX_WAVELENGTH-MARMIT_MIN_WAVELENGTH))-1.;
-color ior=return_from{
-color ior=-6.01351e-5*s-0.0248482921;
-ior=ior*s-5.980717e-4;
-ior=ior*s+0.0015633866;
-ior=ior*s-0.0109188837;
-ior=ior*s-0.0244547175;
-ior=ior*s+1.3129684894;
-return ior;
-};
-color alpha(0);
-for(int i=0;i<$WAVELENGTH_BASE_MAX;i++){
-const auto {w0,w}=_uniform_lerp_index_and_fraction(MARMIT_TABLE_SIZE,MARMIT_MIN_WAVELENGTH,MARMIT_MAX_WAVELENGTH,$state.wavelength_base[i]);
-alpha[i]=lerp(MARMIT_TABLE_ALPHA[w0],MARMIT_TABLE_ALPHA[w0+1],w);
-}
-if(suspension_fraction>0.){
-const auto d=suspension_fraction;
-const auto lambda=(MARMIT_MIN_WAVELENGTH+0.5*(s+1.)*(MARMIT_MAX_WAVELENGTH-MARMIT_MIN_WAVELENGTH))*1e-7;
-const auto k_w=alpha*lambda*0.07957747154594767;
-const auto ew_re=ior*ior-k_w*k_w;
-const auto ew_im=2.*ior*k_w;
-const float ei_re=suspension_ior*suspension_ior-suspension_k*suspension_k;
-const float ei_im=2.*suspension_ior*suspension_k;
-const auto e_re=d*ei_re+(1.-d)*ew_re;
-const auto e_im=d*ei_im+(1.-d)*ew_im;
-const auto mag=#sqrt(e_re*e_re+e_im*e_im);
-ior=#sqrt(0.5*(mag+e_re));
-alpha=12.566370614359172*0.5*e_im/ior/lambda;
-}
-const auto r12=return_from{
-const auto v=(ior-1.)/(ior+1.);
-const auto num=(((-6.087330777978*v+5.07253878015)*v-2.292800947895)*v+5.106344072818)*v+0.666666666667;
-const auto den=(-14.079305083126*v+15.544722876889)*v+1.;
-return saturate(v*num/den);
-};
-const auto t12=1-r12;
-const auto t21=t12/(ior*ior);
-const auto r21=1-t21;
-const auto tau=return_from{
-const auto x=#max(#min(alpha*water_thickness,50.),0.);
-const auto num=(1.236150246012*x+3.672877420834)*x+1.;
-const auto den=((0.618075123006*x+3.664716300259)*x+4.62190363405)*x+1.;
-return saturate(#exp(-x)*num/den);
-};
-const auto tau2_reflectance=tau*tau*reflectance;
-const auto wet=saturate(t12*t21*tau2_reflectance/(1-r21*tau2_reflectance));
-const auto f=saturate(wet_fraction);
-const auto e=1./MARMIT_MIXING_EXPONENT;
-const auto mixed=#pow(f*#pow(wet,e)+(1.-f)*#pow(reflectance,e),MARMIT_MIXING_EXPONENT);
-return marmit_result(reflectance: saturate(mixed),reflectance_wet: wet);
-}
-
-/// The minimum wavelength of the soil albedo table in nanometers.
-export const float SOIL_MIN_WAVELENGTH=4e2;
-/// The maximum wavelength of the soil albedo table in nanometers.
-export const float SOIL_MAX_WAVELENGTH=2298.;
-/// The number of knots in the soil albedo table.
-export const int SOIL_TABLE_SIZE=261;
-
-/// The 6 spectral component curves in logit space at each of the 261 knots:
-/// constant, lightness, chroma, yellow-red, water, and water-squared terms.
-export static const auto SOIL_CURVES=auto[261](
-auto(-0.9151818,2.283778,-13.49007,-4.426793,-1.551209,0.814577),
-auto(-0.7850408,2.382168,-12.47427,-0.805078,-1.536577,0.790004),
-auto(-0.711167,2.401793,-11.53958,3.003254,-1.544359,0.7903268),
-auto(-0.6307067,2.424772,-10.61618,6.254494,-1.559712,0.7957837),
-auto(-0.5293845,2.47108,-9.666577,9.064483,-1.568295,0.7951231),
-auto(-0.4272342,2.515677,-8.83361,11.32061,-1.588384,0.7997233),
-auto(-0.3389463,2.553098,-8.171594,12.66647,-1.603,0.8024464),
-auto(-0.2641774,2.592648,-7.734584,12.91788,-1.615885,0.8052612),
-auto(-0.2038002,2.62935,-7.511543,12.56061,-1.634227,0.8115278),
-auto(-0.1538948,2.661665,-7.377611,12.13367,-1.650354,0.8173005),
-auto(-0.1100589,2.687321,-7.235088,11.9409,-1.659466,0.8199032),
-auto(-0.06440248,2.707992,-6.971191,12.11937,-1.664921,0.8201567),
-auto(-9157672e-9,2.729442,-6.539579,12.77451,-1.671097,0.8202849),
-auto(0.05567357,2.753561,-5.947066,13.77311,-1.676495,0.8202885),
-auto(0.1243609,2.777657,-5.290834,14.93138,-1.682931,0.8213536),
-auto(0.1931956,2.80034,-4.593732,16.24571,-1.685853,0.8202112),
-auto(0.26207,2.823601,-3.896951,17.50369,-1.686915,0.8179418),
-auto(0.3289154,2.844188,-3.210456,18.57238,-1.688772,0.8165839),
-auto(0.3953706,2.864766,-2.511113,19.36731,-1.690196,0.8156624),
-auto(0.4639461,2.888989,-1.781895,19.70381,-1.689949,0.8139852),
-auto(0.5354471,2.919157,-1.045868,19.35622,-1.68829,0.8118492),
-auto(0.6088107,2.954526,-0.3307201,18.2204,-1.686703,0.8102459),
-auto(0.682543,2.994094,0.3526001,16.43386,-1.684881,0.8087685),
-auto(0.7531942,3.03387,0.9893881,14.27339,-1.683497,0.8071628),
-auto(0.8172792,3.070379,1.552804,12.04023,-1.6826,0.8052986),
-auto(0.875023,3.103361,2.036196,9.915022,-1.682795,0.8039127),
-auto(0.9277053,3.134143,2.448965,8.027644,-1.684348,0.8034778),
-auto(0.9707498,3.156911,2.78983,6.550345,-1.685705,0.8030112),
-auto(1.005055,3.17205,3.058204,5.469606,-1.686161,0.8019293),
-auto(1.033974,3.182702,3.289677,4.608479,-1.686624,0.8009482),
-auto(1.060697,3.191295,3.495767,3.921636,-1.687846,0.8003531),
-auto(1.086048,3.198903,3.679302,3.345579,-1.689045,0.7996181),
-auto(1.111642,3.206352,3.829945,2.803375,-1.690115,0.7988123),
-auto(1.135911,3.211201,3.963732,2.330015,-1.691838,0.7982304),
-auto(1.157946,3.211518,4.088785,1.948732,-1.692922,0.7971265),
-auto(1.179393,3.211009,4.217649,1.606013,-1.693149,0.7955015),
-auto(1.201084,3.210497,4.340768,1.266403,-1.693375,0.7939022),
-auto(1.222036,3.208874,4.463207,0.9126484,-1.694084,0.7926506),
-auto(1.242339,3.2065,4.589447,0.5713673,-1.694318,0.7912023),
-auto(1.262691,3.204462,4.72209,0.2535055,-1.693896,0.7894044),
-auto(1.2832,3.202975,4.856764,-0.05937947,-1.693452,0.7876107),
-auto(1.303256,3.201243,4.9949,-0.3283114,-1.693686,0.7862567),
-auto(1.322445,3.198659,5.141041,-0.5208041,-1.693932,0.7848732),
-auto(1.340483,3.194819,5.2879,-0.6608467,-1.693877,0.7832721),
-auto(1.357297,3.189634,5.424268,-0.7595797,-1.693676,0.7815585),
-auto(1.372691,3.182988,5.549252,-0.8101767,-1.693525,0.7798879),
-auto(1.38727,3.175837,5.661009,-0.8180354,-1.693373,0.7782625),
-auto(1.401151,3.168462,5.752506,-0.7893489,-1.693595,0.7769536),
-auto(1.41377,3.160426,5.821635,-0.7039582,-1.693845,0.775718),
-auto(1.424672,3.151264,5.869364,-0.5670439,-1.693777,0.7743149),
-auto(1.434252,3.141482,5.8976,-0.393035,-1.69379,0.7728767),
-auto(1.442752,3.131628,5.914393,-0.2000732,-1.69415,0.7715868),
-auto(1.449916,3.121558,5.916482,-4931163e-9,-1.695017,0.7705945),
-auto(1.455739,3.111372,5.904179,0.1928357,-1.696067,0.7697467),
-auto(1.46001,3.100912,5.876646,0.3801837,-1.696868,0.7688117),
-auto(1.463347,3.090812,5.833174,0.5259147,-1.697594,0.7678747),
-auto(1.465786,3.080691,5.775986,0.6450709,-1.698703,0.7671648),
-auto(1.467288,3.070301,5.708103,0.7498011,-1.700172,0.7666672),
-auto(1.467426,3.059026,5.631748,0.8321612,-1.701797,0.7662086),
-auto(1.46651,3.047107,5.550948,0.8963911,-1.703489,0.7657196),
-auto(1.465147,3.035176,5.465855,0.9404374,-1.70506,0.7652171),
-auto(1.464106,3.024424,5.37403,0.9325192,-1.706523,0.7647793),
-auto(1.463025,3.014028,5.280285,0.897839,-1.708433,0.7646808),
-auto(1.46178,3.003607,5.191277,0.867356,-1.7108,0.7648726),
-auto(1.460891,2.993649,5.110038,0.8426526,-1.71287,0.7648363),
-auto(1.460507,2.984311,5.034524,0.7929246,-1.714588,0.7645914),
-auto(1.460248,2.974925,4.959947,0.7130314,-1.716354,0.7643846),
-auto(1.46001,2.965373,4.891171,0.6190625,-1.717949,0.7641781),
-auto(1.460589,2.956498,4.838689,0.5378992,-1.719504,0.7639442),
-auto(1.462032,2.948211,4.808182,0.462024,-1.72081,0.7634809),
-auto(1.463497,2.93973,4.788946,0.3696248,-1.72208,0.7629441),
-auto(1.464162,2.930228,4.775207,0.2503054,-1.723848,0.7627158),
-auto(1.464865,2.920359,4.781424,0.1228078,-1.727045,0.7630331),
-auto(1.465316,2.909525,4.816746,0.01791617,-1.731032,0.7634438),
-auto(1.464353,2.896053,4.871728,-0.07559254,-1.736669,0.7642999),
-auto(1.460863,2.878946,4.946042,-0.1813301,-1.744046,0.7653614),
-auto(1.455852,2.859951,5.038731,-0.2536596,-1.751624,0.7663319),
-auto(1.452961,2.844304,5.11355,-0.2840609,-1.757096,0.7668397),
-auto(1.454024,2.834318,5.144387,-0.3674996,-1.760376,0.7672764),
-auto(1.456539,2.826885,5.147148,-0.4749115,-1.761648,0.7673888),
-auto(1.459763,2.820617,5.140437,-0.5461433,-1.763469,0.7681572),
-auto(1.46532,2.817353,5.140063,-0.5746147,-1.764108,0.7683857),
-auto(1.471753,2.816864,5.174792,-0.5331267,-1.761899,0.767257),
-auto(1.478046,2.81717,5.211176,-0.4520493,-1.759031,0.7663818),
-auto(1.485114,2.817938,5.213331,-0.4599377,-1.758017,0.7665509),
-auto(1.492226,2.818455,5.191352,-0.5153157,-1.756016,0.7662815),
-auto(1.498295,2.817497,5.173855,-0.5069894,-1.754152,0.7659634),
-auto(1.503537,2.815942,5.159364,-0.4609303,-1.752881,0.7661798),
-auto(1.508144,2.813593,5.154572,-0.4255018,-1.751137,0.7658383),
-auto(1.511876,2.809826,5.157527,-0.3735715,-1.749301,0.7651133),
-auto(1.515334,2.805164,5.175236,-0.304516,-1.748672,0.7649018),
-auto(1.51821,2.799417,5.200896,-0.2292289,-1.748886,0.7651114),
-auto(1.521423,2.79339,5.232192,-0.1518506,-1.749847,0.7654355),
-auto(1.523932,2.78617,5.275841,-0.03826191,-1.751033,0.7657966),
-auto(1.525845,2.778266,5.329178,0.08061486,-1.752496,0.7662997),
-auto(1.526827,2.769073,5.38763,0.1999053,-1.754706,0.7669116),
-auto(1.526819,2.758386,5.453147,0.3462227,-1.757497,0.7676471),
-auto(1.525958,2.746508,5.524169,0.5422224,-1.760505,0.7683451),
-auto(1.524847,2.734143,5.598205,0.7573369,-1.764269,0.7693521),
-auto(1.522348,2.719715,5.687076,0.9565574,-1.769362,0.7705151),
-auto(1.515535,2.698654,5.824516,1.191041,-1.779031,0.772755),
-auto(1.501578,2.666548,6.034357,1.505577,-1.795419,0.7763787),
-auto(1.482583,2.627149,6.283827,1.882215,-1.816111,0.7809732),
-auto(1.465352,2.591375,6.49938,2.236955,-1.833959,0.7848683),
-auto(1.454335,2.565724,6.638111,2.563542,-1.844739,0.7873179),
-auto(1.449005,2.548949,6.713505,2.850522,-1.849383,0.7883358),
-auto(1.446533,2.536561,6.759821,3.109434,-1.851511,0.7887095),
-auto(1.444869,2.5256,6.793192,3.338288,-1.853422,0.7890029),
-auto(1.443775,2.515495,6.825941,3.542049,-1.855649,0.7893918),
-auto(1.44351,2.506677,6.855321,3.726272,-1.857338,0.7896429),
-auto(1.443974,2.499158,6.872754,3.907879,-1.857703,0.7894396),
-auto(1.44587,2.493922,6.880793,4.062723,-1.857231,0.7890011),
-auto(1.448416,2.489869,6.884453,4.2015,-1.856215,0.7883998),
-auto(1.450439,2.485405,6.882706,4.342693,-1.855088,0.7878545),
-auto(1.452318,2.481093,6.875985,4.47024,-1.853788,0.787225),
-auto(1.454841,2.477786,6.86891,4.584654,-1.852993,0.7868916),
-auto(1.457285,2.474497,6.861032,4.695634,-1.852233,0.7865203),
-auto(1.459039,2.470449,6.854436,4.812594,-1.851455,0.7860628),
-auto(1.459481,2.464758,6.851899,4.948432,-1.851029,0.7856679),
-auto(1.458692,2.457234,6.857134,5.112715,-1.852024,0.7857204),
-auto(1.456609,2.448044,6.868737,5.283012,-1.854726,0.786239),
-auto(1.452486,2.436602,6.887944,5.461747,-1.858732,0.7869926),
-auto(1.446,2.422216,6.919619,5.655106,-1.864327,0.7880607),
-auto(1.43836,2.405832,6.967322,5.844761,-1.872523,0.7899293),
-auto(1.429728,2.387569,7.028271,6.023344,-1.883984,0.7929213),
-auto(1.418921,2.366015,7.10488,6.207524,-1.898867,0.7970837),
-auto(1.405012,2.34024,7.200481,6.434186,-1.91746,0.8023438),
-auto(1.388319,2.310936,7.31233,6.719343,-1.939355,0.8084536),
-auto(1.370546,2.280662,7.42838,7.023726,-1.963485,0.8151855),
-auto(1.352772,2.251242,7.531004,7.321993,-1.987644,0.8219637),
-auto(1.335592,2.223958,7.596335,7.619175,-2.010268,0.8284344),
-auto(1.318956,2.198507,7.631135,7.901733,-2.031912,0.8347437),
-auto(1.300707,2.171336,7.675601,8.164066,-2.057166,0.8422913),
-auto(1.275967,2.137303,7.733169,8.449005,-2.094932,0.8540319),
-auto(1.237829,2.090657,7.780321,8.807313,-2.161638,0.8758602),
-auto(1.183334,2.03087,7.811075,9.246156,-2.271073,0.9132556),
-auto(1.117757,1.966537,7.819188,9.725477,-2.420157,0.9663186),
-auto(1.05308,1.912507,7.776255,10.08484,-2.580222,1.025323),
-auto(1.001056,1.876051,7.698883,10.488,-2.718991,1.077804),
-auto(0.9722544,1.85169,7.703128,11.21053,-2.827625,1.11964),
-auto(0.9672355,1.834181,7.850521,12.1505,-2.913722,1.153155),
-auto(0.9706617,1.819838,8.009032,13.00699,-2.97912,1.1786),
-auto(0.9692203,1.805263,8.074962,13.76545,-3.022729,1.195381),
-auto(0.9664544,1.793051,8.090596,14.34402,-3.048827,1.205121),
-auto(0.969351,1.78998,8.102828,14.61958,-3.061816,1.209449),
-auto(0.9766952,1.793651,8.119941,14.66112,-3.061545,1.208412),
-auto(0.9855105,1.798729,8.140231,14.54079,-3.044306,1.200599),
-auto(0.9954505,1.803303,8.16037,14.36316,-3.009596,1.185808),
-auto(1.006046,1.807334,8.176933,14.21363,-2.962472,1.166245),
-auto(1.016784,1.81159,8.186724,14.08082,-2.908803,1.144446),
-auto(1.028947,1.818234,8.190795,13.90455,-2.852579,1.121877),
-auto(1.042465,1.826988,8.188459,13.70851,-2.796342,1.099501),
-auto(1.054954,1.834969,8.176219,13.54918,-2.741066,1.077794),
-auto(1.065955,1.841942,8.155699,13.38509,-2.687242,1.056924),
-auto(1.076034,1.848704,8.130314,13.20855,-2.635708,1.037217),
-auto(1.085067,1.854828,8.098246,13.05797,-2.5873,1.018991),
-auto(1.093691,1.8611,8.055872,12.93993,-2.542354,1.002292),
-auto(1.103578,1.869735,8.010327,12.78865,-2.500946,0.9869907),
-auto(1.11479,1.880402,7.972116,12.56268,-2.462834,0.9728733),
-auto(1.126019,1.891188,7.938168,12.30377,-2.428251,0.9601111),
-auto(1.136175,1.900868,7.900056,12.06867,-2.397254,0.9488196),
-auto(1.144843,1.908863,7.856043,11.89077,-2.369772,0.9389373),
-auto(1.152327,1.915434,7.815161,11.75489,-2.345576,0.9303168),
-auto(1.159049,1.921212,7.776633,11.63077,-2.324044,0.9226224),
-auto(1.165245,1.926542,7.739017,11.50614,-2.304824,0.9157219),
-auto(1.170829,1.931048,7.700141,11.38885,-2.288198,0.9097681),
-auto(1.175677,1.934817,7.660108,11.27579,-2.273674,0.9046025),
-auto(1.179713,1.93773,7.61923,11.17786,-2.260736,0.8999892),
-auto(1.183181,1.939995,7.580654,11.09427,-2.249436,0.8959923),
-auto(1.186129,1.941676,7.542206,11.02146,-2.23956,0.8924673),
-auto(1.188638,1.943083,7.505574,10.94099,-2.231006,0.8894432),
-auto(1.191134,1.944762,7.470481,10.84663,-2.223799,0.8869496),
-auto(1.193195,1.946088,7.439166,10.75598,-2.2179,0.8849111),
-auto(1.194471,1.946792,7.410442,10.66694,-2.212779,0.8830473),
-auto(1.194552,1.946357,7.381351,10.57935,-2.208764,0.8816141),
-auto(1.19378,1.944829,7.349298,10.51631,-2.206306,0.8808204),
-auto(1.191958,1.941605,7.32017,10.4839,-2.205597,0.8806395),
-auto(1.188687,1.93645,7.2969,10.46342,-2.20623,0.8808269),
-auto(1.184131,1.929704,7.279645,10.45959,-2.208765,0.8817592),
-auto(1.178672,1.92204,7.262741,10.47767,-2.213337,0.8834597),
-auto(1.171689,1.913072,7.247627,10.51923,-2.219599,0.8856322),
-auto(1.162746,1.902102,7.237786,10.60801,-2.228295,0.8886932),
-auto(1.152671,1.889548,7.242041,10.73635,-2.240307,0.8930278),
-auto(1.141951,1.875702,7.256368,10.87796,-2.255988,0.89868),
-auto(1.130928,1.861276,7.274232,11.02611,-2.274972,0.90539),
-auto(1.121605,1.84927,7.296228,11.14638,-2.296984,0.9130588),
-auto(1.114348,1.840144,7.326384,11.20315,-2.320552,0.9211711),
-auto(1.108128,1.831987,7.351123,11.23454,-2.34418,0.9294926),
-auto(1.102182,1.823518,7.368574,11.27778,-2.365227,0.937083),
-auto(1.098343,1.818064,7.359896,11.27648,-2.379852,0.9422834),
-auto(1.097013,1.815682,7.330415,11.20999,-2.388014,0.9449906),
-auto(1.096722,1.81428,7.304751,11.14139,-2.391478,0.9460472),
-auto(1.096576,1.812402,7.280331,11.0806,-2.3928,0.9465954),
-auto(1.094976,1.80773,7.252409,11.02742,-2.39402,0.9472784),
-auto(1.093799,1.804108,7.239388,10.98546,-2.396265,0.9482824),
-auto(1.091834,1.800554,7.210868,10.92829,-2.400678,0.9496868),
-auto(1.087457,1.794388,7.144293,10.78745,-2.410853,0.953233),
-auto(1.080758,1.785541,7.077229,10.73619,-2.431505,0.9606972),
-auto(1.072565,1.77579,7.064251,10.94505,-2.469178,0.9745515),
-auto(1.060285,1.76409,7.07072,11.27762,-2.532281,0.9979203),
-auto(1.040582,1.748333,7.082612,11.85151,-2.635295,1.036331),
-auto(1.009679,1.730013,7.032708,12.84579,-2.799297,1.098805),
-auto(0.9659397,1.711865,6.90101,14.04508,-3.039568,1.193924),
-auto(0.9067375,1.696368,6.679914,15.31782,-3.346034,1.320534),
-auto(0.8313722,1.688121,6.345857,16.45522,-3.671541,1.461434),
-auto(0.7399556,1.678724,5.895899,17.20813,-3.952715,1.589111),
-auto(0.6529989,1.666224,5.438233,17.3052,-4.144138,1.680632),
-auto(0.5885108,1.645985,5.142361,17.41146,-4.254957,1.735491),
-auto(0.555857,1.627397,5.056991,17.76982,-4.324936,1.770271),
-auto(0.5415461,1.608725,5.084904,18.36137,-4.365726,1.789287),
-auto(0.5412635,1.597178,5.132031,18.7075,-4.379921,1.794936),
-auto(0.5516561,1.593406,5.204692,18.77208,-4.366875,1.78758),
-auto(0.569859,1.593919,5.283598,18.49183,-4.338261,1.773291),
-auto(0.5928456,1.596731,5.356656,18.11543,-4.298944,1.753163),
-auto(0.6152951,1.597959,5.429453,17.71499,-4.250752,1.729336),
-auto(0.6352867,1.597429,5.494174,17.33104,-4.190242,1.700376),
-auto(0.655876,1.597761,5.543916,16.85631,-4.125736,1.669942),
-auto(0.6796214,1.60124,5.596467,16.43944,-4.062548,1.640719),
-auto(0.7066568,1.608527,5.655932,15.87048,-3.999505,1.611317),
-auto(0.7360771,1.618737,5.726564,15.28016,-3.934664,1.580604),
-auto(0.7627474,1.626352,5.79563,14.80498,-3.870591,1.549853),
-auto(0.7835282,1.630388,5.82516,14.40151,-3.807412,1.521679),
-auto(0.801762,1.634277,5.85066,13.97652,-3.744506,1.493892),
-auto(0.8169483,1.635699,5.874354,13.65573,-3.682124,1.467024),
-auto(0.8311113,1.638271,5.8805,13.28168,-3.621186,1.440899),
-auto(0.8418513,1.639659,5.850949,12.81035,-3.560506,1.415102),
-auto(0.8513431,1.6414,5.826125,12.2828,-3.500807,1.388541),
-auto(0.8611639,1.644465,5.807126,11.79906,-3.443135,1.363415),
-auto(0.8711503,1.648399,5.786364,11.39136,-3.386427,1.339383),
-auto(0.8778338,1.648433,5.770034,11.07808,-3.330598,1.31691),
-auto(0.8843499,1.648844,5.754794,10.7696,-3.27638,1.294492),
-auto(0.8911554,1.650143,5.730013,10.38287,-3.225518,1.273276),
-auto(0.8977678,1.652946,5.661777,9.957204,-3.176067,1.252869),
-auto(0.9040429,1.65577,5.593498,9.561231,-3.128881,1.23369),
-auto(0.9088211,1.656907,5.541014,9.155375,-3.082221,1.214735),
-auto(0.9128085,1.655734,5.507279,8.797057,-3.03993,1.197842),
-auto(0.9171685,1.654606,5.457231,8.556242,-3.004173,1.184089),
-auto(0.9197558,1.653782,5.413213,8.492203,-2.96922,1.170043),
-auto(0.9193677,1.655189,5.362508,8.49759,-2.933797,1.155355),
-auto(0.9141371,1.658041,5.265819,8.488946,-2.896807,1.140178),
-auto(0.9024309,1.659337,5.131184,8.441141,-2.858515,1.124489),
-auto(0.8859531,1.658196,4.980843,8.373348,-2.819287,1.107351),
-auto(0.8679229,1.656327,4.85027,8.241505,-2.784427,1.092405),
-auto(0.8478266,1.652984,4.73271,8.070289,-2.753096,1.079643),
-auto(0.8239002,1.648382,4.602087,7.793358,-2.722216,1.066949),
-auto(0.7973245,1.642644,4.428226,7.511592,-2.693339,1.054843),
-auto(0.7751088,1.644148,4.243428,7.281522,-2.666147,1.04343),
-auto(0.7634545,1.648665,4.15917,6.9982,-2.64904,1.036296),
-auto(0.7678985,1.649358,4.333288,6.973814,-2.649686,1.037527),
-auto(0.7860472,1.648512,4.651645,7.402009,-2.664951,1.044222),
-auto(0.808223,1.656774,4.882949,7.968898,-2.678621,1.048766),
-auto(0.8186658,1.663424,4.958608,8.350281,-2.686561,1.05125),
-auto(0.8157203,1.661578,4.947163,8.666169,-2.693006,1.054449),
-auto(0.8069019,1.655573,4.913877,8.915213,-2.699829,1.057612),
-auto(0.7990204,1.650569,4.883731,9.11409,-2.708561,1.060795),
-auto(0.7917028,1.64413,4.88013,9.397324,-2.722386,1.066543),
-auto(0.7869081,1.640037,4.854711,9.570004,-2.739885,1.073439),
-auto(0.7792578,1.635717,4.792817,9.491983,-2.755607,1.079045),
-auto(0.7685891,1.630584,4.747445,9.486741,-2.771483,1.084703),
-auto(0.7544413,1.622808,4.731509,9.668162,-2.787866,1.090443),
-auto(0.7459775,1.624409,4.653887,9.709371,-2.808524,1.098035),
-); /// Evaluate the empirical soil albedo model, mapping four normalized
-/// pedogenic parameters to a dry-state reflectance spectrum.
-@(noinline)
-export color soil_albedo(
-float humus=0.5,   ///< The humus content. 0 = pale quartz/carbonate, 1 = dark topsoil.
-float iron=0.5,    ///< The iron-pigment load. 0 = gray, 1 = maximally pigmented.
-float aridity=0.5, ///< The hematite:goethite balance. 0 = cool/moist goethite-yellow, 1 = hot/dry hematite-red.
-float moisture=0., ///< The moisture darkening. 0 = bone dry, 1 = the darkest wet state the soil reaches.
-){
-const float h=saturate(humus);
-const float fe=saturate(iron);
-const float ar=saturate(aridity);
-const float m=saturate(moisture);
-const float lightness=1.-h;
-const float chroma=#pow(fe,#exp(0.45*(h-0.5)-0.55*(ar-0.5)));
-const float redness=ar;
-const float l=lerp(-1.138774,-0.2968323,lightness);
-const float c=lerp(-0.04893016,0.0518981,chroma);
-const float r=redness<=0.5?0.014666*(1.-2.*redness):-0.02271506*(2.*redness-1.);
-const float warp=((3.89536*m-6.037163)*m+3.081546)*m+0.06025699;
-const float wet=1.04202*(warp*m);
-const auto weights=auto(1.,l,c,r,wet,wet*wet);
-color result(0);
-for(int i=0;i<$WAVELENGTH_BASE_MAX;i++){
-float t=(SOIL_TABLE_SIZE-1)*saturate(($state.wavelength_base[i]-SOIL_MIN_WAVELENGTH)/(SOIL_MAX_WAVELENGTH-SOIL_MIN_WAVELENGTH));
-const int t0=#min(int(#floor(t)),SOIL_TABLE_SIZE-2);
-t-=t0;
-result[i]=1./(1.+#exp(-dot(lerp(SOIL_CURVES[t0],SOIL_CURVES[t0+1],t),weights)));
-}
-return result;
-}
-)*";
-
-static const char *const models_metal_ior = R"*(/// Complex refractive indices of common metals -- the wavelength-dependent
-/// n + ik that conductor Fresnel terms expect -- interpolated per wavelength
-/// from published measurements. Each metal is backed by a table extracted from
-/// the refractiveindex.info database and embedded in the support library (see
-/// `lib/Support/MetalIOR.cc` for the citations and the processing applied);
-/// `metal_ior()` linearly interpolates the table of the selected metal at the
-/// current wavelengths in `$state.wavelength_base`.
-///
-/// Coverage varies by source: every metal covers at least 380nm to 2200nm,
-/// and the ultraviolet and infrared ends differ, so the tabulated range of
-/// each metal is noted in the `Metal` enumeration. Wavelengths outside a
-/// metal's range clamp to the nearest table entry. Cobalt and lithium are
-/// each stitched from two sources with the tail ratio-corrected for
-/// continuity at the seam, and tin below 730nm is a Drude-Lorentz
-/// extrapolation, so treat the visible appearance of tin as approximate.
-#smdl
-@(foreign pure)
-void smdlEvalMetalIOR(int metal,int numWavelens,&float wavelens,&float iorN,&float iorK);
-
-/// The metals with builtin complex IOR tables.
-export enum Metal{
-Ag=0, ///< Silver, 270..14000nm (Yang et al 2015).
-Al,   ///< Aluminum, 0.124..14000nm (Rakic 1995).
-Au,   ///< Gold, 300..14000nm (Olmon et al 2012).
-Co,   ///< Cobalt, 188..2480nm (Johnson & Christy 1974 + Werner et al 2009).
-Cu,   ///< Copper, 210..14000nm (Querry 1985).
-CuZn, ///< Brass of 70% copper and 30% zinc, 210..14000nm (Querry 1985).
-Fe,   ///< Iron, 210..14000nm (Querry 1985).
-Hg,   ///< Liquid mercury, 63.6..6199nm (Inagaki et al 1981).
-Li,   ///< Lithium, 326..8266nm (Mathewson & Myers 1971 + Rasigni 1977).
-Mg,   ///< Magnesium, 0.0248..14000nm (Hagemann et al 1975).
-Na,   ///< Sodium, 313..2238nm (Smith 1969).
-Ni,   ///< Nickel, 248..6199nm (Rakic et al 1998).
-Pb,   ///< Lead, 17.6..2480nm (Werner et al 2009).
-Pt,   ///< Platinum, 248..12398nm (Rakic et al 1998).
-Sn,   ///< Tin, 380..12000nm (Golovashkin & Motulevich 1964, Drude-Lorentz below 730nm).
-Ti,   ///< Titanium, 248..14000nm (Rakic et al 1998).
-Zn,   ///< Zinc, 17.6..2480nm (Werner et al 2009).
-};
-
-/// Evaluate the complex IOR of the given metal at the current wavelengths.
-///
-/// The result is a `complex` with `color` coefficients: `.a` is the real
-/// index of refraction n and `.b` is the extinction coefficient k, ready to
-/// be passed along to `df::fresnel_factor(ior: ..., extinction_coefficient:
-/// ...)` to model a conductor.
-@(macro)
-export auto metal_ior(const Metal metal){
-auto ior=complex(color(0),color(0));
-const &float iorN=cast<&float>(&ior.a);
-const &float iorK=cast<&float>(&ior.b);
-smdlEvalMetalIOR(cast<int>(metal),$WAVELENGTH_BASE_MAX,&$state.wavelength_base[0],iorN,iorK);
-return ior;
-}
-)*";
+/// The zlib-deflated source code of a builtin module, decompressed
+/// with miniz in `Context.cc` when the module is first loaded.
+struct CompressedSourceCode final {
+  const unsigned char *compressed{};
+  size_t compressedSize{};
+  size_t uncompressedSize{};
+};
+
+static const unsigned char api_compressed[]{
+    120,218,181,60,107,119,219,70,174,223,253,43,216,117,111,14,105,83,10,223,15,199,108,174,
+    227,56,91,239,205,163,39,78,186,237,230,100,41,74,26,217,108,40,81,75,82,182,100,55,
+    255,253,2,152,225,83,15,171,217,54,155,70,195,25,0,3,96,0,12,48,28,238,211,167,
+    79,165,15,55,76,58,251,233,82,154,166,227,69,194,84,233,238,38,30,221,72,241,116,158,
+    176,41,155,21,185,84,0,64,177,154,179,92,138,102,99,105,178,152,141,138,56,157,241,254,
+    55,47,95,31,60,5,34,249,156,141,226,73,60,138,112,72,42,50,22,1,98,148,75,241,
+    172,200,226,89,30,143,78,8,60,99,121,186,200,70,130,158,74,125,211,168,96,89,28,37,
+    68,7,152,96,137,148,23,217,98,84,44,50,4,193,57,17,12,103,40,178,40,145,70,105,
+    146,102,240,239,236,150,101,57,50,162,74,243,100,65,83,177,108,38,232,220,176,100,14,195,
+    82,126,19,101,108,44,13,87,68,35,133,127,50,105,184,136,147,34,158,9,129,243,254,193,
+    97,62,29,39,7,132,135,202,152,45,166,67,0,75,39,210,93,116,203,18,54,187,46,110,
+    144,60,145,120,255,247,23,189,34,237,9,38,22,217,45,18,0,102,242,2,25,192,225,240,
+    195,187,240,252,221,235,119,239,195,183,31,223,132,255,60,251,249,226,245,197,219,191,127,248,
+    241,42,48,141,103,245,44,211,120,22,79,23,211,198,28,56,227,150,41,112,246,89,52,75,
+    167,12,100,172,38,156,36,105,212,153,242,205,229,219,198,148,129,233,105,253,230,156,209,242,
+    175,152,243,236,151,230,156,174,209,154,115,135,194,242,2,204,101,36,69,139,34,109,83,60,
+    255,248,254,231,139,171,0,7,62,125,150,15,196,175,222,215,28,221,243,109,79,165,150,173,
+    25,188,97,153,166,67,45,195,112,117,93,180,180,178,207,214,68,195,244,77,159,183,44,87,
+    115,203,65,203,19,125,166,35,224,52,199,183,56,97,83,119,56,156,174,153,102,217,231,57,
+    98,126,203,208,109,129,97,154,37,61,203,119,75,122,122,217,103,88,229,188,134,91,206,230,
+    10,84,219,46,153,178,77,195,45,25,53,12,209,114,108,189,36,98,115,246,116,67,16,177,
+    125,203,112,76,222,242,61,33,183,6,28,112,42,154,46,70,29,205,177,29,91,81,27,90,
+    180,116,203,49,136,136,105,120,142,67,168,0,14,189,212,7,74,225,125,154,91,142,90,134,
+    193,17,44,203,176,185,136,182,105,27,38,245,233,158,230,186,142,24,117,57,75,134,111,58,
+    6,7,115,53,174,59,219,52,125,77,23,125,174,39,224,92,205,231,45,19,176,73,21,182,
+    13,127,109,222,50,29,151,112,45,219,50,97,205,180,62,232,196,2,19,128,22,204,10,214,
+    237,170,61,215,1,84,214,131,150,110,27,6,53,92,91,215,120,203,208,97,2,108,57,182,
+    79,61,26,138,10,42,244,212,158,101,57,46,235,57,212,5,134,227,123,170,229,27,186,142,
+    80,182,7,84,5,56,234,222,183,106,5,106,125,31,84,111,232,22,12,250,158,239,161,185,
+    96,11,69,70,98,190,239,0,125,210,17,208,244,249,186,233,142,99,250,212,2,211,244,117,
+    147,195,217,58,55,58,205,7,5,242,81,221,6,218,40,168,165,153,58,8,10,38,170,27,
+    92,0,211,66,110,13,207,52,185,184,90,95,237,249,154,144,11,148,107,186,212,109,106,48,
+    21,231,221,64,63,32,246,28,83,183,116,206,178,107,121,154,239,83,11,88,17,236,185,176,
+    36,196,147,7,186,163,65,112,18,232,133,150,7,242,123,142,65,125,158,15,198,71,131,182,
+    238,81,203,183,65,70,164,235,193,50,232,38,174,140,231,131,111,210,12,158,5,6,100,249,
+    181,238,108,219,181,72,193,61,203,245,61,210,112,15,200,11,206,29,203,118,249,168,237,131,
+    86,197,2,122,124,20,87,201,113,209,208,161,229,59,240,23,103,53,116,88,97,19,213,110,
+    58,186,195,21,11,46,5,30,139,112,174,101,105,158,135,45,31,213,110,211,162,88,142,6,
+    6,67,246,5,222,108,112,75,131,229,247,185,189,234,96,138,188,225,154,194,210,117,71,179,
+    204,18,204,18,168,186,237,139,65,8,10,188,5,75,38,250,192,96,116,1,198,157,10,186,
+    116,131,99,2,71,174,46,90,62,239,179,92,215,226,110,0,63,194,133,44,211,70,17,209,
+    33,129,121,79,111,26,160,238,216,174,141,66,235,186,103,57,22,42,2,168,107,96,130,212,
+    103,186,186,65,10,115,61,31,103,208,208,209,13,13,48,122,168,69,13,84,79,157,224,66,
+    182,161,130,93,105,149,134,33,226,128,23,130,254,109,71,248,148,103,89,165,185,1,42,44,
+    16,12,131,169,187,78,221,233,130,21,170,61,15,76,91,172,153,225,56,100,129,46,122,33,
+    14,129,103,122,124,10,7,98,133,225,145,173,121,158,169,219,220,99,76,31,22,143,60,1,
+    204,216,36,251,243,193,211,109,106,248,134,195,151,68,3,97,201,57,192,116,108,79,116,193,
+    54,32,204,218,22,6,238,65,176,32,249,125,211,130,53,167,25,64,229,48,71,173,67,3,
+    204,146,51,11,254,229,218,149,44,24,63,13,112,43,11,66,80,163,19,130,35,68,21,95,
+    23,230,233,130,217,115,249,125,211,182,133,179,65,156,181,28,143,76,17,102,53,200,61,92,
+    8,254,150,70,44,59,160,50,139,187,12,48,104,241,8,0,178,249,188,15,84,160,137,150,
+    111,153,110,217,167,27,188,165,235,92,74,136,235,184,1,146,67,123,24,196,193,5,108,23,
+    132,87,125,75,211,109,17,0,96,129,185,147,65,136,198,152,209,115,60,80,43,103,24,226,
+    59,15,141,158,237,235,92,5,158,9,158,195,5,131,221,141,11,230,209,16,134,93,62,98,
+    128,137,226,72,59,14,26,24,185,248,90,130,116,92,38,112,63,205,226,45,176,19,206,191,
+    238,233,22,57,154,6,225,212,227,163,190,227,9,125,0,54,151,19,22,211,226,142,235,107,
+    160,24,92,126,219,1,179,198,65,211,212,33,240,145,209,3,187,134,165,115,11,6,25,208,
+    94,69,80,49,40,68,246,44,221,39,105,117,215,114,169,97,194,138,249,124,185,17,20,65,
+    120,84,113,33,210,219,85,160,119,49,68,160,183,120,186,195,93,196,194,152,231,240,150,93,
+    54,64,24,143,192,192,143,52,159,90,224,204,196,16,196,35,216,249,85,7,128,137,190,5,
+    81,196,226,106,83,158,73,85,134,153,98,90,124,11,73,111,59,61,170,146,110,74,163,251,
+    152,67,137,60,42,134,116,44,151,38,209,168,72,49,159,133,84,51,133,204,184,202,121,171,
+    172,92,26,178,81,180,200,33,141,31,179,124,30,23,140,178,59,196,35,66,197,13,36,111,
+    216,51,160,9,7,148,135,35,229,89,90,72,51,54,98,121,30,101,113,178,66,182,84,137,
+    65,134,189,194,20,31,178,237,49,27,70,57,100,208,51,162,51,79,162,25,43,164,139,40,
+    131,20,50,202,243,197,148,229,156,120,12,127,33,35,103,253,235,190,42,1,35,185,152,10,
+    243,14,85,42,255,81,6,156,157,84,154,50,16,3,74,14,224,20,234,132,130,69,99,76,
+    73,107,28,101,192,213,240,191,242,13,178,152,198,179,36,158,49,229,128,43,172,86,36,48,
+    252,33,61,39,44,74,81,77,41,187,30,42,15,7,135,192,29,203,10,121,152,166,137,252,
+    61,102,156,172,95,167,191,33,10,165,40,207,26,25,252,23,77,62,140,146,68,6,244,254,
+    114,121,138,63,171,123,229,185,118,66,45,122,190,127,174,159,24,29,164,159,160,4,209,101,
+    249,139,118,172,43,255,99,110,24,52,104,208,104,14,34,79,80,161,164,139,100,124,117,23,
+    205,113,202,79,130,210,231,31,234,7,227,115,155,156,46,215,56,207,5,200,137,192,107,67,
+    26,235,144,186,128,172,249,231,25,253,40,101,147,201,63,5,11,159,55,13,158,191,249,149,
+    15,235,159,123,59,192,96,33,56,152,33,192,116,14,70,233,63,4,141,234,225,78,230,139,
+    188,125,81,238,122,193,142,226,6,198,143,130,93,245,214,83,121,71,153,210,219,65,25,166,
+    158,0,99,168,194,56,208,158,197,167,223,215,99,225,139,179,171,11,164,245,44,62,62,6,
+    251,162,226,165,144,239,62,197,40,102,60,145,65,196,211,160,80,158,200,197,233,78,238,20,
+    64,198,25,126,147,15,161,20,196,201,228,66,81,119,97,244,12,84,74,17,16,124,209,251,
+    13,226,41,42,19,102,14,14,193,3,185,221,27,178,222,43,212,66,57,146,249,138,30,137,
+    222,39,27,10,172,79,218,231,79,191,125,86,142,203,229,221,9,139,150,221,0,7,144,221,
+    224,198,177,69,224,200,243,87,248,95,198,160,160,159,73,135,80,131,202,163,35,204,33,85,
+    50,134,175,188,84,60,167,122,158,42,75,12,11,100,26,20,64,168,120,47,195,21,89,27,
+    158,13,164,217,119,16,18,166,209,40,75,149,3,182,156,167,89,33,14,6,66,48,186,176,
+    72,67,110,92,13,243,44,35,2,172,81,195,193,131,64,120,56,140,8,22,57,38,13,35,
+    127,18,75,32,240,85,163,27,67,14,82,230,98,10,94,56,151,82,248,113,22,131,41,77,
+    95,179,108,206,151,59,6,219,34,103,41,0,254,25,200,48,95,100,88,152,55,5,33,155,
+    10,23,28,53,76,0,55,140,103,99,182,12,163,217,56,156,100,17,69,122,185,246,243,81,
+    186,152,21,106,211,19,151,96,34,157,142,104,217,238,0,121,155,207,69,32,19,153,158,174,
+    28,209,26,65,117,65,134,38,47,123,72,77,121,42,35,13,222,70,203,107,69,154,56,168,
+    140,248,16,232,129,70,10,69,81,57,65,140,52,66,119,77,117,200,177,90,244,98,210,218,
+    70,37,32,217,48,73,239,88,22,14,129,206,88,238,74,250,68,8,146,175,201,133,144,147,
+    56,203,11,112,222,3,216,91,18,198,101,251,65,171,132,70,16,216,109,230,1,13,60,53,
+    218,194,16,242,49,142,147,75,47,115,240,177,83,164,204,169,198,199,58,194,3,34,71,239,
+    33,36,246,85,182,194,7,57,129,134,241,19,122,45,113,37,43,103,61,156,167,201,10,119,
+    55,90,242,45,235,219,149,90,60,175,54,104,97,194,165,62,13,180,218,182,241,104,70,112,
+    89,142,7,129,94,143,175,114,8,10,13,65,184,62,90,235,192,185,1,6,150,74,15,100,
+    46,151,190,177,218,216,5,22,20,171,90,101,36,100,210,75,45,32,85,182,59,117,234,132,
+    224,82,121,70,128,54,167,161,197,233,248,203,99,30,16,44,120,196,40,35,32,143,127,130,
+    113,12,123,202,209,10,201,31,23,244,75,20,191,146,178,235,180,161,29,42,242,8,19,174,
+    188,27,46,182,232,188,113,26,216,30,64,42,113,177,128,140,171,220,16,70,1,167,71,252,
+    150,138,38,243,107,107,189,132,171,41,124,162,93,181,210,255,222,251,16,109,3,107,22,132,
+    50,52,217,174,231,81,55,111,187,124,27,251,218,52,218,81,21,163,49,117,157,196,69,142,
+    25,218,249,229,133,4,89,182,46,253,242,235,191,48,66,255,115,53,133,68,14,114,66,76,
+    70,113,119,175,143,24,59,231,136,101,82,251,246,221,135,139,19,162,217,78,123,165,27,6,
+    193,96,156,50,158,149,178,37,196,59,200,72,33,170,124,145,146,248,11,207,104,231,139,97,
+    18,231,55,108,204,211,209,24,82,215,187,24,52,118,13,201,111,30,35,39,255,89,68,252,
+    152,90,100,196,60,51,149,70,81,50,90,36,48,52,187,38,66,191,168,210,175,252,144,249,
+    95,68,138,228,3,142,231,81,6,155,4,75,80,54,48,154,36,30,197,200,5,187,141,146,
+    69,141,77,14,45,77,216,157,4,178,77,115,113,154,74,132,208,210,102,32,19,38,249,144,
+    129,198,44,47,19,217,117,215,55,165,240,14,245,23,46,87,247,205,45,75,186,43,13,106,
+    41,223,245,176,33,91,150,209,87,109,223,239,123,42,148,28,125,93,181,29,15,219,38,236,
+    168,42,20,53,125,213,178,125,138,206,203,35,72,11,96,13,70,133,188,60,213,84,194,214,
+    232,240,145,10,21,71,212,55,188,106,49,169,128,229,63,30,213,221,80,4,217,74,133,101,
+    186,226,24,193,228,67,6,161,89,174,56,91,160,39,58,26,210,92,3,208,248,244,80,189,
+    29,45,59,206,46,227,158,74,237,149,172,31,227,195,234,24,252,253,40,88,234,144,20,216,
+    157,103,147,254,116,58,13,130,10,4,107,229,57,35,63,220,112,232,0,202,192,90,204,240,
+    240,228,197,208,233,212,193,131,109,13,235,197,167,171,42,98,112,205,203,43,240,184,227,213,
+    39,29,255,49,62,171,171,79,38,182,44,108,217,216,114,62,43,93,7,104,217,63,88,207,
+    93,92,64,154,93,72,191,72,96,248,255,82,215,220,33,230,197,215,110,183,216,188,37,112,
+    179,88,61,98,20,13,27,216,177,242,245,42,215,235,90,47,161,242,215,175,89,153,2,98,
+    178,42,24,168,150,170,92,158,245,140,144,199,106,254,138,160,145,17,242,229,91,75,9,219,
+    85,98,199,201,136,20,70,123,200,215,132,74,69,97,130,123,187,72,18,89,190,72,10,30,
+    185,247,136,190,199,199,49,237,158,136,116,28,52,220,120,123,124,61,26,209,30,248,85,96,
+    61,13,54,18,22,163,71,193,58,33,204,195,54,244,198,179,142,109,47,77,81,11,203,102,
+    223,176,52,112,235,30,30,33,249,6,157,83,107,182,237,88,166,165,168,2,166,167,247,109,
+    211,213,241,200,209,115,29,77,71,96,67,179,32,82,212,32,90,223,242,61,155,14,117,52,
+    75,183,249,225,177,237,26,96,81,202,17,103,184,229,44,255,184,252,208,187,141,243,120,152,
+    116,94,4,85,231,21,209,24,23,57,206,235,151,116,131,243,116,58,135,156,45,27,84,94,
+    67,47,251,102,49,155,141,24,58,74,73,177,94,231,219,52,30,75,248,22,175,145,147,55,
+    183,104,202,253,219,155,246,104,94,100,148,14,242,194,180,93,54,28,97,66,15,6,112,56,
+    101,211,209,28,220,15,128,213,39,35,245,48,143,239,89,58,225,149,171,162,108,149,149,198,
+    81,90,44,103,254,42,89,73,204,15,41,22,220,107,146,169,107,210,131,172,40,85,208,117,
+    2,82,21,234,162,45,13,158,44,205,242,184,88,209,43,89,137,205,22,211,126,233,78,248,
+    80,3,132,8,240,80,63,102,209,24,54,224,34,100,203,184,136,64,10,21,143,189,78,165,
+    159,48,133,148,228,187,168,40,114,69,154,67,27,10,28,8,49,25,139,36,153,7,65,41,
+    135,77,59,99,99,165,127,80,147,155,35,158,42,237,247,103,125,166,62,86,89,149,84,47,
+    226,113,156,49,90,13,8,204,87,35,0,129,173,25,54,243,151,49,4,145,120,184,160,117,
+    122,85,46,152,252,226,234,229,43,69,42,162,235,74,118,104,75,195,124,60,105,16,253,57,
+    77,22,83,182,141,196,207,155,40,220,182,8,92,76,227,28,223,100,111,35,113,177,137,4,
+    107,145,184,137,226,236,79,146,14,73,133,29,17,199,108,18,129,111,75,136,129,89,212,111,
+    11,220,29,96,131,155,206,193,66,120,252,253,174,91,251,10,36,162,117,82,82,192,135,135,
+    122,51,77,162,107,216,251,196,139,224,58,251,30,79,66,26,194,2,238,235,6,62,126,254,
+    6,54,110,27,92,220,254,25,76,92,124,3,19,172,193,4,251,51,152,224,11,255,45,203,
+    82,173,243,73,147,86,248,223,45,80,193,150,120,111,67,50,94,214,151,56,250,29,14,4,
+    76,104,140,31,14,234,182,92,222,9,32,139,157,69,83,166,54,146,144,235,104,58,141,160,
+    144,13,14,33,160,141,195,6,26,65,226,193,3,129,96,20,171,153,137,41,20,67,17,212,
+    184,162,97,80,119,200,139,48,124,150,117,85,95,195,2,250,120,247,165,223,76,132,8,79,
+    12,16,230,167,207,50,17,208,214,103,29,46,38,147,198,173,137,26,95,12,148,119,27,70,
+    81,94,156,242,40,109,253,0,117,234,140,181,104,145,76,20,129,155,151,76,132,50,54,107,
+    222,220,67,243,102,67,243,230,183,105,222,220,169,249,111,224,123,180,24,178,199,57,71,168,
+    154,119,124,250,38,238,9,241,207,229,127,14,141,199,249,71,168,154,127,124,250,38,254,9,
+    113,7,255,243,148,222,12,97,214,76,105,6,166,11,39,39,63,9,244,129,144,233,9,165,
+    18,176,247,7,104,120,223,38,62,133,158,41,139,114,160,139,37,252,118,21,96,96,9,27,
+    144,15,7,221,158,117,85,148,114,175,65,210,224,163,2,35,115,111,106,172,65,255,49,193,
+    115,190,103,146,232,170,196,98,186,47,54,16,189,97,198,38,88,84,13,176,204,171,58,139,
+    44,154,229,211,184,38,142,170,66,124,212,212,134,59,101,226,204,9,203,191,123,200,243,138,
+    155,38,30,128,133,48,103,17,61,142,28,221,199,211,197,58,246,252,38,110,225,242,120,179,
+    69,33,39,39,124,120,32,46,253,145,22,115,84,98,196,223,207,69,152,122,226,251,184,138,
+    49,233,72,234,182,97,202,129,132,231,34,140,31,128,224,43,69,94,158,241,172,22,181,37,
+    170,181,86,60,228,115,7,141,16,40,34,96,219,194,146,248,250,166,144,230,89,58,193,192,
+    186,213,188,8,44,20,96,15,7,173,199,237,134,213,6,219,207,170,94,35,206,79,28,229,
+    81,87,42,175,220,85,9,109,251,34,29,12,135,213,80,107,225,40,239,109,3,83,87,215,
+    1,235,123,145,120,183,110,187,126,74,184,144,224,30,14,218,207,219,53,212,129,19,42,122,
+    12,91,109,156,164,34,4,127,129,177,131,166,218,4,219,155,190,232,225,184,143,112,173,54,
+    160,158,61,118,219,19,15,4,185,73,55,29,140,39,13,205,85,234,220,16,93,191,47,185,
+    126,118,220,181,144,250,76,182,131,83,15,8,20,122,95,180,241,157,87,91,220,238,121,118,
+    123,148,107,171,62,242,223,112,10,142,0,125,113,2,78,237,214,209,55,245,52,206,188,91,
+    117,99,121,155,23,114,80,81,212,0,200,40,139,231,252,70,67,219,38,75,224,176,4,126,
+    248,67,53,17,144,27,79,170,137,2,120,144,155,43,219,40,97,33,187,141,129,95,116,168,
+    239,121,205,251,59,233,88,169,129,2,189,255,108,91,249,219,172,71,169,28,166,248,190,189,
+    228,109,123,104,165,18,8,187,147,104,196,246,210,136,128,125,248,239,74,215,62,237,177,229,
+    182,6,208,1,62,183,180,244,200,130,173,45,81,173,239,181,33,89,217,34,248,45,175,144,
+    247,145,155,131,62,252,129,226,186,127,112,219,22,241,182,35,97,52,204,211,140,102,229,55,
+    20,226,81,140,137,10,184,43,158,64,208,158,21,211,101,114,224,16,166,137,232,228,229,123,
+    249,57,63,228,105,160,135,13,244,45,153,3,69,163,111,152,164,70,223,48,201,70,157,94,
+    51,140,52,217,106,47,173,150,192,181,94,129,137,121,2,6,134,105,64,191,60,251,108,118,
+    6,226,204,175,169,201,17,108,219,139,66,74,231,209,8,93,99,200,138,59,198,102,146,38,
+    201,148,5,205,163,12,16,21,10,158,186,36,3,216,127,22,76,17,212,5,114,40,144,219,
+    238,54,75,179,105,148,84,124,240,199,242,228,147,63,109,81,195,30,210,151,66,195,90,220,
+    225,59,157,241,243,3,186,121,83,64,79,200,123,130,73,148,228,108,111,159,237,122,105,9,
+    21,116,7,42,237,93,78,240,226,64,79,84,218,252,195,135,97,52,250,210,196,126,100,142,
+    18,124,251,36,60,112,193,6,138,214,6,201,170,184,41,208,125,229,118,57,43,63,221,104,
+    127,182,161,74,151,239,222,227,49,2,207,224,196,149,11,240,57,60,151,36,252,206,139,186,
+    28,159,99,50,133,66,220,80,203,24,250,233,168,96,99,76,154,134,140,94,148,53,18,66,
+    206,11,55,136,56,205,192,10,172,125,3,70,39,68,8,152,160,211,189,57,182,109,118,150,
+    53,247,168,224,130,181,161,22,221,111,63,109,235,31,84,135,44,68,37,168,30,91,19,20,
+    108,58,103,89,68,133,37,152,237,23,150,220,194,15,30,15,131,135,141,89,134,135,165,116,
+    221,46,95,204,201,228,135,224,182,95,134,233,120,197,223,61,138,128,140,31,243,224,203,212,
+    72,154,177,107,88,51,216,252,41,169,161,91,119,57,68,166,156,21,253,234,69,44,173,32,
+    225,163,169,98,140,26,71,217,248,187,242,173,124,205,82,128,239,253,191,54,175,76,188,57,
+    251,112,241,254,242,236,117,248,225,253,217,219,171,159,222,189,255,16,94,190,193,159,179,183,
+    231,23,129,172,159,158,106,202,102,248,31,233,230,213,235,215,23,47,9,76,223,12,246,227,
+    217,85,120,245,241,253,171,51,65,205,216,14,246,226,236,252,255,42,56,243,81,114,225,197,
+    155,203,171,171,203,119,111,9,222,122,156,110,27,193,222,142,240,243,187,215,31,223,112,54,
+    156,237,80,63,158,93,190,39,24,183,92,255,179,25,221,132,196,29,2,253,56,170,173,120,
+    148,102,224,95,243,116,54,38,183,74,203,130,228,31,151,31,78,78,222,8,168,147,147,75,
+    129,205,171,47,241,221,210,249,241,49,126,229,213,141,145,97,137,86,34,61,108,10,177,108,
+    14,115,207,99,112,106,124,213,41,13,14,135,139,233,92,198,171,153,79,42,40,168,125,154,
+    39,8,149,195,181,246,153,39,59,92,238,9,80,232,151,79,143,69,180,58,130,32,22,252,
+    54,16,240,136,46,139,241,58,237,58,166,90,198,36,145,23,36,139,162,49,67,249,238,126,
+    202,198,49,212,108,41,87,221,36,75,241,92,35,30,179,242,107,169,146,203,62,247,26,17,
+    213,169,112,214,105,247,19,126,132,110,86,240,64,40,165,176,249,223,101,49,4,137,89,181,
+    113,86,235,92,94,43,192,151,68,128,94,103,3,68,102,184,234,186,61,108,183,163,47,224,
+    212,57,6,218,113,76,239,122,33,236,230,125,82,64,198,18,238,236,25,146,172,164,106,166,
+    40,229,45,8,188,32,33,180,195,215,22,196,25,148,10,12,81,137,79,81,203,131,82,227,
+    205,161,246,22,222,136,15,253,13,33,3,151,169,241,220,64,20,225,124,115,150,6,38,195,
+    75,156,45,89,216,97,156,135,88,122,203,72,159,83,234,111,6,85,158,99,50,117,242,228,
+    81,192,117,214,54,231,118,21,107,91,114,183,77,172,109,6,221,192,218,102,192,6,107,3,
+    177,249,15,234,188,189,170,71,84,58,114,65,154,3,41,158,136,163,139,18,252,38,194,123,
+    53,85,152,175,94,70,148,84,160,176,234,75,87,12,80,198,147,147,147,42,183,191,224,22,
+    10,251,235,128,246,161,155,244,174,50,172,65,187,58,26,136,148,23,178,65,250,224,51,185,
+    101,227,90,89,156,143,138,110,227,244,3,21,38,216,33,157,9,208,126,9,90,53,132,190,
+    120,20,226,37,235,70,248,138,116,235,108,116,80,38,82,251,170,174,134,223,71,119,165,160,
+    37,214,62,146,150,176,123,139,186,142,176,89,214,198,117,19,241,30,4,55,160,206,157,4,
+    188,79,176,229,14,66,247,61,16,221,172,164,247,62,34,55,231,121,63,108,40,191,19,95,
+    141,148,250,249,166,61,254,68,83,126,151,191,219,178,208,202,243,77,27,244,102,148,82,1,
+    29,156,114,147,222,57,207,38,45,239,76,13,118,179,240,40,185,181,204,97,51,61,238,249,
+    29,92,158,68,108,70,192,212,177,3,142,217,196,137,214,180,0,200,51,105,193,200,105,219,
+    145,96,148,78,249,21,53,190,174,229,43,189,178,172,8,154,42,171,227,81,191,132,219,57,
+    73,237,51,219,102,169,202,153,150,46,119,207,179,238,175,116,18,147,159,72,195,184,128,50,
+    20,54,47,200,104,215,99,94,137,39,18,162,18,23,247,186,206,69,131,129,36,131,143,167,
+    144,84,231,188,132,41,234,119,173,221,88,215,61,245,25,40,252,34,33,242,162,211,85,69,
+    186,146,184,174,19,174,137,42,46,144,8,1,93,158,222,104,165,56,174,4,120,220,36,119,
+    184,85,158,235,100,26,37,234,186,73,238,194,53,218,150,2,50,92,195,50,225,173,149,187,
+    52,75,198,152,0,102,241,18,63,165,175,239,171,92,161,215,15,164,241,66,236,134,226,238,
+    85,157,147,153,75,179,164,132,7,138,68,41,72,96,81,30,90,175,66,59,16,33,159,171,
+    140,42,233,240,55,72,104,186,163,71,101,204,169,145,5,32,31,199,107,179,113,227,238,211,
+    150,73,62,105,159,251,203,213,189,186,109,88,223,61,108,240,225,198,81,215,89,50,100,227,
+    148,46,168,246,22,115,241,210,68,126,253,241,131,66,107,207,102,44,187,94,241,228,125,180,
+    233,156,34,228,4,0,225,97,199,43,31,104,222,198,236,14,44,236,154,222,106,231,241,140,
+    117,95,254,64,239,94,175,143,48,37,78,23,215,55,144,64,230,93,26,213,64,139,70,179,
+    212,141,136,221,245,139,188,224,78,83,188,128,64,111,77,168,60,105,241,52,128,57,239,114,
+    186,187,215,154,135,151,41,229,97,59,18,109,157,130,55,102,14,249,204,107,7,232,144,89,
+    71,215,236,15,242,85,207,191,125,110,65,185,61,111,181,236,20,218,18,168,28,8,191,187,
+    170,98,176,94,210,140,81,9,215,200,31,201,21,96,173,90,7,207,211,232,58,158,69,217,
+    106,3,232,144,64,203,249,207,197,236,101,105,223,223,245,49,137,224,38,4,224,234,226,35,
+    71,191,87,2,209,148,123,247,253,72,133,127,134,74,103,10,192,248,109,113,141,190,183,207,
+    28,8,189,125,146,109,115,224,41,223,126,34,0,224,58,121,32,123,4,255,29,3,101,248,
+    29,118,136,87,165,158,88,170,61,166,1,148,245,89,14,243,255,100,133,220,102,229,94,233,
+    138,34,14,122,247,154,6,96,215,167,89,139,151,99,54,75,167,80,111,61,237,78,45,98,
+    94,67,185,71,4,75,42,230,205,46,119,209,120,28,243,48,180,143,22,198,227,46,123,106,
+    251,249,174,181,180,199,119,176,188,48,53,252,174,173,112,190,24,22,85,1,191,199,220,0,
+    255,135,230,238,137,185,123,27,230,46,223,0,141,162,189,167,7,148,63,52,253,17,76,79,
+    90,135,233,85,254,60,60,230,207,81,151,157,113,140,247,58,247,100,4,128,31,103,164,197,
+    246,189,218,178,175,187,53,11,109,124,156,176,23,11,208,185,135,149,70,193,33,2,222,147,
+    188,45,187,140,142,14,97,31,144,209,237,85,104,195,222,69,237,46,91,73,122,29,101,113,
+    113,179,95,32,0,232,237,97,230,16,71,91,206,12,126,170,30,70,176,173,27,56,55,174,
+    208,218,252,252,254,41,236,83,105,177,159,133,98,52,216,67,47,195,252,62,232,240,210,81,
+    16,15,44,120,249,94,70,232,99,226,78,237,244,246,168,23,213,119,205,245,167,86,103,134,
+    88,154,222,212,55,141,49,239,192,111,94,232,72,103,158,165,35,6,25,27,109,221,215,41,
+    41,120,253,131,3,216,27,77,35,132,108,4,41,209,245,124,30,44,233,155,165,239,101,44,
+    62,248,218,176,34,30,133,144,167,39,81,38,115,136,205,32,152,111,94,195,164,29,32,113,
+    131,154,119,158,6,86,249,49,3,77,43,152,16,163,199,166,225,56,150,101,27,46,30,11,
+    35,192,191,3,252,247,135,31,126,208,29,21,91,71,129,182,244,236,139,23,231,103,206,139,
+    46,132,89,65,156,27,47,140,179,11,211,94,163,81,221,151,199,158,198,87,87,45,134,28,
+    171,102,72,55,61,223,179,109,29,255,223,127,124,207,52,53,223,50,187,172,153,245,196,175,
+    94,217,250,217,171,151,238,197,75,219,246,206,207,95,110,135,60,183,206,47,94,248,175,46,
+    244,51,16,231,220,54,215,32,187,172,174,125,151,202,215,237,16,138,15,188,80,35,31,226,
+    91,23,92,3,217,59,106,235,92,81,197,111,131,74,189,124,89,180,18,112,191,119,214,243,
+    150,225,55,22,91,6,121,114,92,14,242,217,171,25,131,64,220,151,47,63,151,78,139,40,
+    249,17,217,229,76,19,20,126,248,214,250,228,66,127,22,159,30,66,166,38,136,136,47,45,
+    234,165,105,226,198,132,139,29,160,75,91,252,57,146,73,135,114,181,220,21,140,105,25,166,
+    237,234,150,191,25,166,226,47,56,204,210,34,145,171,103,85,215,148,127,151,11,32,244,94,
+    13,62,235,42,83,220,30,170,237,127,243,74,1,16,212,110,97,209,88,150,54,157,197,12,
+    223,173,87,84,112,231,40,164,91,140,30,212,215,161,123,171,180,172,227,112,30,205,226,145,
+    252,183,143,179,234,229,29,20,182,8,249,183,250,139,28,141,127,242,247,255,239,195,76,95,
+};
+static const CompressedSourceCode api{api_compressed, sizeof(api_compressed), 19982};
+
+static const unsigned char anno_compressed[]{
+    120,218,197,86,203,142,219,54,20,221,207,87,92,184,155,41,160,120,62,160,232,162,64,23,
+    93,36,187,32,155,34,176,175,73,74,98,134,34,21,146,26,71,249,250,30,146,146,171,120,
+    232,193,36,1,90,192,128,197,199,189,231,240,62,14,249,240,240,64,239,123,69,33,178,149,
+    236,37,177,181,46,114,212,206,134,134,90,103,140,59,107,219,81,196,158,119,127,190,165,48,
+    42,161,91,45,242,142,125,50,13,138,4,123,63,223,61,192,213,160,34,75,142,12,75,79,
+    209,57,19,224,80,210,20,148,39,109,163,242,45,11,85,230,164,35,32,17,183,173,18,145,
+    132,27,70,109,138,215,187,95,194,32,205,93,118,152,184,121,133,213,65,89,169,36,121,182,
+    157,42,222,177,178,144,197,252,19,155,73,237,233,67,250,11,228,166,24,180,76,150,3,107,
+    155,22,181,220,223,169,47,163,243,113,115,66,10,174,141,135,236,242,158,167,232,104,208,182,
+    41,31,252,229,215,223,182,12,62,79,218,127,55,60,123,133,83,223,68,239,17,239,215,160,
+    247,211,192,246,141,87,136,236,201,40,178,60,40,196,150,164,14,163,225,25,8,33,98,141,
+    92,155,73,1,216,70,164,72,249,26,230,98,116,72,78,238,67,244,41,183,233,123,139,215,
+    121,55,141,9,193,249,142,173,254,170,174,14,171,163,26,104,66,58,82,78,137,175,178,91,
+    67,213,246,144,157,174,136,121,240,28,50,149,69,152,78,255,17,126,179,12,86,196,103,124,
+    154,203,82,179,82,123,243,255,209,219,140,107,140,189,74,221,243,164,104,116,65,103,175,75,
+    61,92,17,123,37,165,73,31,156,199,17,238,177,139,242,215,22,76,56,43,51,8,2,147,
+    186,57,75,3,156,120,21,66,134,126,130,255,160,79,38,17,30,217,163,192,128,5,65,41,
+    97,57,247,90,244,217,217,183,4,47,59,73,7,82,54,85,187,124,45,225,178,253,160,219,
+    53,136,23,142,43,241,191,208,25,161,22,146,214,187,225,90,162,170,253,170,37,122,235,254,
+    133,214,4,128,240,122,92,181,17,167,192,143,77,112,229,224,1,138,40,233,52,211,49,9,
+    28,20,80,28,179,167,20,67,106,217,152,19,139,199,172,46,82,9,131,96,100,25,166,179,
+    142,61,36,133,142,216,123,76,86,19,196,112,225,84,148,49,86,249,110,216,172,65,217,76,
+    109,143,17,113,142,147,101,109,72,15,220,101,117,65,46,159,180,58,255,68,9,93,156,222,
+    210,25,104,93,239,170,42,85,86,106,118,127,164,188,98,250,4,157,172,154,110,150,111,225,
+    10,55,206,94,119,125,76,23,144,174,147,191,236,57,148,61,255,86,213,50,255,141,67,20,
+    64,137,56,130,148,165,2,70,245,26,202,91,149,204,109,53,43,246,77,250,24,192,185,207,
+    95,146,231,181,207,179,139,45,138,225,144,182,202,203,245,251,10,184,178,253,199,240,208,195,
+    161,170,35,112,58,153,106,212,22,147,140,54,240,39,183,192,105,187,124,141,28,69,191,2,
+    162,194,32,90,138,131,250,125,183,187,1,204,112,221,163,208,10,36,120,112,172,146,65,97,
+    143,120,32,224,234,181,245,78,72,171,202,138,121,205,99,49,203,215,96,243,115,108,31,213,
+    124,134,64,134,220,183,1,33,22,125,206,9,114,164,58,231,245,215,229,81,243,156,21,44,
+    15,217,116,33,245,247,71,202,195,213,251,59,246,143,85,193,130,94,164,206,179,201,11,84,
+    99,134,186,160,29,171,111,140,178,82,105,255,205,41,94,194,65,228,240,252,74,83,55,226,
+    186,172,190,140,144,165,50,215,91,94,62,173,47,202,124,138,244,172,155,66,146,157,234,141,
+    213,144,218,119,251,134,142,59,225,140,243,187,35,174,35,12,144,164,129,205,238,88,61,116,
+    242,182,50,74,184,87,84,62,79,120,146,165,182,40,111,169,5,54,197,51,206,181,56,32,
+    139,157,182,24,135,124,87,212,32,203,150,173,226,20,204,127,0,87,35,18,52,
+};
+static const CompressedSourceCode anno{anno_compressed, sizeof(anno_compressed), 2912};
+
+static const unsigned char debug_compressed[]{
+    120,218,133,81,189,78,195,48,16,222,253,20,39,193,144,74,85,243,0,93,160,42,98,1,
+    137,1,246,184,241,37,177,112,124,145,207,105,137,16,239,206,93,18,1,83,25,115,254,254,
+    83,150,37,28,241,52,182,173,143,45,52,99,172,179,167,200,91,104,40,4,186,232,49,119,
+    8,207,199,39,224,1,107,223,248,218,42,98,7,175,29,50,2,197,48,129,35,83,138,142,
+    141,83,238,148,113,233,48,206,180,154,250,193,7,76,224,25,124,4,167,70,208,147,195,173,
+    128,157,66,38,176,225,98,39,134,132,121,76,113,214,169,114,26,177,2,166,5,208,219,9,
+    78,162,213,89,31,209,137,78,38,56,17,5,180,17,240,99,72,200,172,145,119,230,134,123,
+    23,204,44,113,207,140,41,179,8,216,12,85,77,209,121,77,93,65,71,193,73,187,132,3,
+    165,172,89,171,132,150,245,197,55,224,179,84,65,134,72,121,103,238,138,97,76,40,238,117,
+    162,141,17,35,33,204,190,96,103,241,66,84,121,189,252,24,108,151,35,231,164,218,139,244,
+    230,211,220,252,82,86,220,250,36,174,197,237,241,225,240,246,184,217,155,101,2,208,246,123,
+    243,181,20,57,8,240,157,151,210,186,232,60,97,139,233,90,190,147,114,6,18,78,161,222,
+    127,63,255,245,123,145,224,243,110,8,173,63,203,111,60,219,48,34,172,238,218,78,134,191,
+    102,62,168,192,186,141,29,133,103,53,195,114,181,87,253,191,1,41,92,224,182,
+};
+static const CompressedSourceCode debug{debug_compressed, sizeof(debug_compressed), 651};
+
+static const unsigned char df_compressed[]{
+    120,218,236,189,249,127,219,86,150,39,250,187,254,10,84,185,158,7,164,64,10,251,34,135,
+    113,59,94,18,207,36,78,94,236,170,244,116,62,25,137,18,33,9,21,146,80,184,88,146,
+    147,188,191,253,157,237,2,56,151,164,22,199,85,53,51,221,213,29,89,2,46,46,238,114,
+    150,239,217,46,14,14,14,156,119,23,165,51,169,150,171,69,117,178,94,85,245,220,57,91,
+    207,79,241,151,165,231,156,213,211,105,125,85,205,207,157,21,180,250,230,197,215,206,242,178,
+    60,173,206,170,211,49,182,56,196,203,123,7,208,73,57,45,103,229,124,53,158,58,95,188,
+    125,241,10,158,124,73,63,199,243,137,243,55,250,13,159,159,213,19,120,180,92,208,229,233,
+    248,166,92,64,207,244,248,105,61,59,169,230,227,85,189,144,135,168,121,117,93,226,223,151,
+    211,245,146,46,84,243,85,185,152,195,59,150,240,250,21,61,141,141,121,0,179,106,185,196,
+    209,195,40,22,55,206,101,13,141,249,41,232,251,178,154,194,91,203,235,203,122,89,194,197,
+    218,89,148,243,73,185,128,222,135,248,48,117,240,230,219,119,47,15,105,49,142,47,160,211,
+    105,121,236,212,103,78,249,190,132,222,182,46,143,115,1,61,56,203,139,122,61,157,56,39,
+    165,51,166,110,142,177,229,252,252,216,57,185,161,183,171,245,242,28,232,195,185,130,87,188,
+    175,171,201,177,83,173,224,193,211,241,122,89,226,197,139,241,251,210,153,215,212,13,94,58,
+    171,23,208,130,71,248,104,57,155,76,247,214,75,156,242,225,225,108,188,186,112,170,217,101,
+    189,88,57,253,39,123,242,219,225,225,170,188,62,60,132,11,212,197,179,185,51,94,156,84,
+    171,197,24,102,80,94,46,171,41,14,30,250,92,174,198,39,213,180,250,128,125,117,86,242,
+    116,60,61,93,79,105,156,176,44,167,240,115,229,156,77,235,241,202,121,249,221,219,215,95,
+    127,251,102,20,148,131,116,91,231,167,176,96,167,60,222,229,120,118,57,197,222,96,167,207,
+    96,18,211,27,216,53,166,9,231,170,130,81,207,214,211,85,117,57,45,7,237,155,245,203,
+    190,249,235,215,239,94,191,125,254,236,221,187,151,223,31,189,120,253,234,213,95,223,190,60,
+    122,254,213,179,55,207,95,142,252,97,248,68,26,195,246,58,47,94,29,125,255,242,213,215,
+    47,159,191,123,13,163,115,131,207,62,243,123,214,253,119,223,63,123,243,246,155,215,111,223,
+    154,22,129,221,66,94,65,55,67,251,230,151,95,127,251,246,237,255,164,123,145,125,239,237,
+    119,47,159,255,245,235,103,223,211,221,24,238,254,155,123,185,6,138,152,141,79,23,117,111,
+    143,102,19,93,71,14,108,205,69,61,175,23,179,241,244,139,241,178,90,186,124,199,249,208,
+    251,117,239,195,136,111,84,31,74,247,3,116,49,94,3,113,94,143,62,12,63,124,54,240,
+    135,5,252,239,41,183,118,253,161,55,8,134,158,63,236,29,202,149,193,135,225,245,129,11,
+    77,247,131,97,15,254,243,224,194,77,115,1,91,67,135,215,157,23,92,15,38,245,202,189,
+    246,62,244,250,205,187,110,58,247,97,216,203,165,251,193,187,238,193,221,69,185,90,47,230,
+    142,153,5,60,118,227,225,83,191,243,254,63,23,98,41,137,200,105,138,231,53,178,230,162,
+    58,191,88,13,144,131,74,224,226,241,252,28,248,17,152,96,140,244,177,168,103,141,192,56,
+    175,222,151,115,135,95,206,28,47,109,223,151,167,40,6,134,102,57,231,192,201,64,81,101,
+    103,69,13,165,150,239,248,153,183,216,189,219,33,162,72,58,246,212,53,121,195,209,26,22,
+    158,111,208,18,172,174,220,118,13,248,183,94,255,209,178,58,159,203,95,195,15,189,102,239,
+    249,137,117,231,137,166,87,90,221,230,47,111,117,213,235,195,127,214,147,239,93,123,189,87,
+    87,222,106,221,219,182,228,43,232,228,61,246,211,172,58,137,234,242,108,12,60,228,140,79,
+    150,245,116,189,66,169,56,41,175,81,86,45,202,179,197,248,148,229,12,72,136,211,11,35,
+    183,205,35,245,25,139,40,184,9,140,7,19,171,234,197,49,242,231,241,248,178,26,162,132,
+    57,214,188,248,226,229,171,103,192,142,71,175,191,253,126,20,12,99,225,253,231,245,28,164,
+    34,140,0,165,212,98,112,54,62,37,65,108,198,3,141,81,196,226,139,23,37,202,19,144,
+    106,11,20,43,64,38,21,172,13,208,5,74,2,234,138,228,243,122,177,192,141,135,193,207,
+    74,156,7,94,100,242,16,25,225,92,142,241,222,138,180,1,241,146,153,217,201,248,244,103,
+    120,63,147,212,2,36,237,229,162,102,81,235,140,47,65,16,193,187,96,122,216,178,233,194,
+    57,62,3,77,131,27,0,50,122,90,159,254,188,52,10,135,245,200,53,174,13,72,178,89,
+    57,169,214,51,51,158,10,22,5,133,220,208,226,114,218,85,51,77,152,185,219,217,108,122,
+    229,210,235,92,49,107,4,13,129,6,171,51,151,155,12,47,170,213,23,50,147,199,127,146,
+    107,43,216,190,163,171,241,116,90,78,160,173,208,70,167,131,3,105,103,6,124,4,255,1,
+    161,128,38,6,213,209,60,176,165,209,65,167,19,164,172,14,109,153,245,6,69,93,122,64,
+    54,203,83,208,122,102,173,47,80,197,94,162,210,131,21,35,145,110,218,47,81,36,214,195,
+    61,84,176,64,23,229,28,214,77,110,29,97,87,191,238,153,191,230,245,188,28,249,215,190,
+    231,116,255,7,175,255,204,121,3,183,154,118,64,202,83,144,3,208,52,240,172,118,223,243,
+    45,199,93,34,185,180,131,234,53,15,131,82,154,47,103,21,62,29,122,250,225,119,114,203,
+    113,235,75,0,3,213,106,123,15,242,250,110,79,145,167,95,15,20,98,238,238,253,190,85,
+    246,155,37,144,39,158,147,146,20,250,232,174,14,173,182,22,73,248,254,31,74,148,164,238,
+    35,208,161,240,180,235,194,18,187,212,242,113,208,251,211,200,247,88,25,88,226,5,70,180,
+    251,185,80,63,39,20,210,190,235,224,209,108,124,237,182,127,239,183,221,121,164,76,132,82,
+    94,148,167,211,49,76,118,90,157,204,156,227,114,113,118,108,166,15,8,0,154,207,123,123,
+    147,122,125,50,45,29,184,231,202,175,215,189,39,59,158,62,189,237,241,211,141,231,145,78,
+    191,169,65,140,128,14,90,76,107,7,64,217,180,90,85,229,242,208,1,168,58,0,168,118,
+    186,40,47,97,173,111,156,101,249,203,186,132,69,111,56,28,52,7,80,32,128,177,41,117,
+    213,128,149,69,13,189,204,161,221,242,2,134,54,49,216,77,193,62,0,89,130,113,5,33,
+    9,181,207,129,12,89,191,205,112,84,71,167,52,170,95,121,176,111,128,241,218,151,130,24,
+    156,79,64,7,178,138,67,201,244,203,26,16,193,64,46,135,48,120,120,1,162,88,104,11,
+    147,113,182,77,198,150,64,50,12,34,185,208,153,195,11,191,174,175,94,180,15,10,197,61,
+    150,6,215,85,111,228,246,175,171,17,234,10,252,101,159,111,0,192,200,146,56,207,178,52,
+    5,250,72,210,34,143,253,176,32,189,244,240,153,68,127,120,38,209,93,51,137,118,205,4,
+    161,82,30,20,65,22,38,1,204,36,205,2,63,142,104,78,113,145,249,126,156,125,228,156,
+    226,63,60,167,248,174,57,197,187,230,20,227,156,146,52,205,226,60,135,153,100,81,148,23,
+    65,158,224,244,194,60,243,211,44,196,249,69,121,82,192,172,219,249,125,81,215,83,38,242,
+    146,193,247,49,35,245,99,7,212,228,9,25,1,171,27,70,14,40,10,144,19,142,87,139,
+    117,121,188,99,22,39,216,31,254,120,75,125,170,177,195,208,187,104,75,108,2,214,114,48,
+    143,207,154,191,113,118,120,229,64,174,52,130,8,223,220,81,96,166,221,64,218,29,184,193,
+    192,126,228,108,12,109,59,58,236,175,243,10,100,200,204,185,2,75,106,90,206,207,209,74,
+    34,116,196,139,176,99,90,136,231,215,252,228,15,205,131,175,241,185,237,243,108,100,53,62,
+    88,185,143,102,213,156,164,44,12,182,63,250,203,15,207,254,246,242,235,151,111,190,124,247,
+    213,209,23,207,192,116,249,230,217,191,247,188,109,87,7,1,110,20,206,112,84,53,51,170,
+    158,216,115,1,42,251,217,26,191,205,244,50,120,32,171,159,101,196,45,179,255,186,7,235,
+    24,226,91,130,39,248,171,209,11,240,43,40,3,177,236,60,104,104,20,9,109,50,252,58,
+    113,93,0,10,215,213,225,232,17,252,11,237,123,30,253,61,188,254,156,255,189,105,149,15,
+    175,204,98,60,105,212,14,118,224,97,99,111,91,203,203,139,74,183,116,255,242,221,235,131,
+    184,215,199,198,7,244,24,93,9,123,131,206,157,235,3,211,151,81,93,227,73,95,164,215,
+    163,211,122,233,66,183,61,15,144,251,156,126,235,24,43,160,233,231,229,224,138,84,25,136,
+    247,86,229,223,186,176,96,104,208,131,95,53,205,183,172,174,2,237,174,123,121,56,218,220,
+    13,104,136,227,250,101,1,106,25,85,108,48,120,180,92,207,220,203,254,101,207,243,123,157,
+    129,154,61,191,247,0,229,93,183,142,80,113,101,189,4,253,185,26,143,150,99,24,54,152,
+    1,46,174,171,181,59,48,103,110,196,67,6,182,147,167,250,230,23,219,88,113,205,35,125,
+    179,15,135,163,191,188,251,225,219,163,239,94,211,150,246,188,182,129,217,30,207,116,230,109,
+    206,255,33,115,127,251,160,121,135,125,61,115,228,138,255,61,230,254,114,113,6,2,5,12,
+    171,229,230,140,91,60,244,154,91,24,84,116,3,243,148,95,175,70,131,71,211,250,92,40,
+    172,28,164,192,85,193,224,166,215,119,131,253,27,34,50,131,164,70,254,19,148,202,87,159,
+    37,240,244,213,232,106,16,14,147,9,186,10,174,250,33,168,78,63,12,211,40,45,7,249,
+    100,63,26,198,81,152,69,69,84,148,131,76,154,92,15,162,97,18,130,6,202,50,124,137,
+    185,24,15,163,34,72,252,52,137,59,87,247,195,33,168,169,220,207,161,105,220,52,13,134,
+    97,18,129,162,242,163,114,16,117,58,8,0,124,228,65,26,119,174,238,251,195,48,78,211,
+    216,207,194,230,253,251,193,48,241,131,216,47,226,96,210,209,23,87,178,101,87,189,65,132,
+    45,175,251,48,47,223,15,131,56,76,232,245,240,156,239,23,137,159,36,121,103,52,112,53,
+    138,139,8,230,25,118,71,19,1,112,136,226,48,143,213,104,18,80,189,208,67,150,169,145,
+    251,208,111,150,134,48,208,160,109,90,192,210,229,160,155,227,172,219,1,14,33,0,53,238,
+    119,151,40,143,194,2,102,30,226,108,246,174,251,163,27,184,53,24,185,8,158,129,64,111,
+    80,243,13,131,48,143,178,2,30,13,38,253,71,64,21,238,224,186,79,126,154,251,183,20,
+    170,189,38,125,233,52,38,223,101,137,190,148,69,23,71,139,249,67,86,52,0,231,214,175,
+    224,156,151,53,24,209,139,27,101,50,191,2,139,112,94,78,29,128,64,99,241,27,131,217,
+    74,134,119,185,152,45,25,96,136,35,0,108,206,109,208,185,25,133,224,102,99,101,77,170,
+    133,12,228,248,170,58,118,198,228,50,49,94,163,238,205,217,241,46,49,33,147,209,238,161,
+    171,74,187,134,174,102,61,16,13,36,149,175,170,62,252,5,255,13,174,170,39,31,61,26,
+    198,91,91,92,51,206,49,58,93,110,25,44,182,187,107,176,10,105,65,127,218,122,52,194,
+    5,117,108,51,33,109,40,66,147,208,180,65,248,210,60,210,136,185,202,11,118,61,211,104,
+    49,120,115,31,255,99,49,41,29,146,74,123,178,109,60,104,148,34,135,182,29,245,250,3,
+    118,180,53,111,237,16,42,117,127,85,237,187,248,111,211,96,191,233,13,247,104,139,63,242,
+    98,60,61,51,24,126,117,129,176,132,119,111,169,118,168,62,70,31,149,222,208,109,177,0,
+    32,109,244,156,85,184,205,43,167,241,221,77,56,74,1,151,207,215,99,48,16,86,37,122,
+    59,107,12,3,176,191,137,157,248,151,151,229,194,249,143,142,58,231,87,220,74,168,48,154,
+    175,96,10,127,163,25,88,132,80,91,132,128,214,194,251,139,195,145,123,85,239,195,31,198,
+    109,249,254,98,248,193,216,0,183,47,12,18,219,221,11,3,205,193,66,62,23,122,30,212,
+    103,131,77,122,254,87,47,157,12,231,254,75,103,243,144,39,107,57,32,122,187,207,130,162,
+    139,224,191,143,79,235,147,106,60,71,38,63,222,54,12,145,4,176,24,151,40,66,96,162,
+    184,162,30,117,117,117,81,157,94,32,214,70,119,234,210,153,85,40,80,214,11,116,3,54,
+    82,5,45,78,148,202,228,98,131,31,167,245,140,195,43,178,65,212,81,211,106,67,174,24,
+    119,210,198,184,204,192,63,98,153,200,30,48,162,133,214,108,235,250,67,95,240,56,74,39,
+    248,223,129,11,13,67,176,37,240,177,247,23,253,247,23,180,184,40,14,224,122,175,235,220,
+    121,123,122,49,173,78,127,54,252,64,161,165,177,33,32,92,129,106,82,154,112,83,235,42,
+    238,106,152,29,118,30,173,197,146,123,127,229,119,61,181,56,200,209,163,203,250,202,197,205,
+    7,195,236,0,255,221,15,122,94,184,109,100,227,75,176,159,175,171,25,59,154,97,231,141,
+    6,236,12,217,227,104,229,101,141,195,130,13,195,224,7,123,223,95,249,199,91,231,131,164,
+    241,170,224,155,231,139,49,133,231,154,187,247,153,18,15,194,221,38,122,189,238,197,87,190,
+    254,179,240,71,193,208,83,48,24,187,159,151,243,213,40,241,246,122,163,87,254,190,11,173,
+    6,175,124,216,51,92,37,99,197,32,33,52,184,24,228,190,103,158,235,174,90,121,13,164,
+    1,104,29,151,98,129,2,96,219,114,225,42,142,129,170,201,38,92,84,167,188,122,141,107,
+    159,120,104,251,102,83,144,122,66,78,234,122,69,11,42,65,226,14,138,129,89,6,219,89,
+    163,125,163,89,190,109,102,67,229,89,196,178,85,223,174,70,93,27,111,216,81,143,195,193,
+    22,5,219,35,63,108,223,86,128,74,117,194,227,207,205,157,145,210,131,187,154,173,84,179,
+    149,106,182,88,142,220,110,143,131,86,151,30,168,27,29,37,171,59,184,28,181,35,29,116,
+    223,10,29,180,42,90,221,104,244,57,1,13,127,152,244,221,197,178,191,88,238,47,46,251,
+    11,48,128,187,158,229,7,146,11,186,14,214,226,172,187,133,90,48,1,96,10,56,108,155,
+    136,208,212,208,116,248,233,136,225,30,116,240,159,146,6,30,161,252,3,74,232,237,203,111,
+    151,189,134,22,126,223,91,174,22,176,15,32,112,41,76,242,242,253,120,10,166,69,249,93,
+    19,6,252,149,246,249,245,146,99,48,184,129,36,45,41,15,2,233,227,169,83,13,203,161,
+    135,183,41,56,185,24,223,44,57,254,60,69,31,16,229,128,156,66,95,139,241,242,233,30,
+    121,188,170,229,235,230,233,142,240,2,154,3,236,65,20,183,94,157,215,74,245,154,208,226,
+    156,60,10,83,29,237,30,238,53,42,213,223,218,223,166,42,191,103,127,213,246,254,48,198,
+    51,220,219,8,44,33,54,244,135,31,62,243,123,35,248,181,226,95,159,90,129,174,67,59,
+    116,38,111,248,10,19,84,36,48,41,235,212,9,85,142,164,103,105,140,187,113,1,83,224,
+    152,165,52,239,68,49,71,226,173,237,140,93,248,145,192,222,96,85,15,166,245,85,185,216,
+    102,53,201,236,145,200,71,193,65,39,44,221,233,238,182,128,184,9,227,90,209,93,207,153,
+    3,250,164,128,15,117,211,36,40,113,194,10,75,4,138,117,239,138,116,11,46,51,83,225,
+    56,52,226,130,229,208,121,91,150,136,9,219,216,112,239,216,204,163,27,143,5,229,219,153,
+    133,109,77,54,251,206,55,70,38,198,225,249,94,208,213,178,134,88,54,31,108,82,18,204,
+    179,1,60,235,119,159,221,36,237,14,245,142,52,1,111,146,109,135,50,71,68,156,226,73,
+    187,24,163,86,126,67,195,126,94,47,164,245,40,128,6,18,128,119,40,58,208,161,40,244,
+    71,213,254,104,64,175,132,190,224,55,236,16,6,1,151,240,202,136,140,114,94,180,3,220,
+    71,120,254,79,221,72,57,139,143,223,159,236,144,32,223,147,77,242,107,51,155,47,170,102,
+    26,176,232,111,219,100,168,23,221,208,223,43,147,241,229,34,93,244,156,146,123,163,185,255,
+    5,100,222,180,94,252,70,147,238,57,103,35,191,187,155,223,117,226,44,47,8,164,223,116,
+    122,251,78,119,198,201,104,206,192,57,190,156,156,253,232,255,116,140,70,18,82,45,32,221,
+    171,241,98,34,48,159,34,54,77,232,146,236,51,214,115,104,188,169,46,130,182,139,69,73,
+    126,195,29,93,212,109,23,149,161,209,208,129,46,70,77,112,176,215,114,249,207,243,250,106,
+    46,38,219,201,20,182,14,227,165,164,33,112,201,97,34,79,157,87,227,37,230,17,128,153,
+    9,234,247,162,60,253,25,223,67,185,116,221,108,65,50,154,206,142,255,100,36,240,23,216,
+    153,17,19,191,55,206,151,83,101,113,149,103,103,184,97,239,75,75,62,66,67,84,49,75,
+    9,97,1,101,52,198,100,179,199,75,7,35,207,203,85,53,165,16,199,18,54,25,59,104,
+    240,66,55,255,193,25,159,225,175,152,70,114,99,210,20,111,123,255,102,190,18,205,106,81,
+    110,207,86,226,70,142,132,150,118,42,58,73,224,0,198,224,0,255,9,192,132,173,253,73,
+    194,83,155,227,212,35,190,105,179,141,128,167,250,240,120,143,216,168,115,185,50,151,129,149,
+    186,74,80,195,154,249,26,148,37,136,130,225,135,62,41,17,5,9,128,168,234,25,240,62,
+    222,172,233,230,46,230,119,185,233,200,127,26,28,146,245,64,253,30,208,85,138,131,24,111,
+    238,45,210,227,119,3,38,92,23,199,35,154,77,148,92,239,49,92,173,108,125,71,98,193,
+    0,62,145,86,232,14,121,97,8,227,225,219,33,99,104,23,146,148,237,200,82,172,79,141,
+    99,243,240,112,171,123,135,108,228,222,161,106,117,171,37,253,100,3,28,113,228,163,11,141,
+    110,195,51,151,11,48,91,23,55,247,64,51,226,234,5,83,236,46,92,243,143,69,9,99,
+    102,182,255,212,160,64,214,224,99,177,193,88,203,171,143,129,8,210,197,22,178,113,193,128,
+    226,108,79,33,160,241,22,233,216,219,13,40,54,242,47,36,97,1,211,18,127,132,137,252,
+    244,191,98,179,66,152,31,113,111,244,32,152,129,137,227,1,80,129,249,201,6,10,60,168,
+    201,29,240,167,73,64,233,46,157,121,180,171,92,182,1,245,110,142,156,97,150,179,230,105,
+    50,94,198,78,23,174,76,202,233,106,172,146,148,56,205,158,82,243,90,88,225,184,236,103,
+    4,36,80,195,237,197,85,5,18,118,61,231,6,39,83,220,155,167,132,97,156,179,23,216,
+    227,136,7,208,38,181,181,26,237,105,147,130,251,32,181,102,139,168,63,170,212,68,149,181,
+    153,35,39,115,220,221,109,234,224,227,4,255,198,128,129,110,150,222,45,77,153,92,196,229,
+    253,175,213,14,91,156,212,162,76,7,34,63,78,27,117,234,0,219,160,251,4,93,169,227,
+    134,212,12,93,153,70,107,172,149,160,110,91,3,187,53,188,189,173,72,138,68,228,156,3,
+    4,59,104,229,152,186,228,52,93,32,77,22,30,66,182,152,175,187,186,24,58,47,175,47,
+    41,116,179,186,149,5,157,147,154,130,109,13,224,147,9,91,249,231,0,110,223,242,141,99,
+    14,65,220,98,110,99,227,55,124,99,35,27,74,236,27,26,206,219,237,56,229,65,124,96,
+    187,220,165,79,251,178,12,103,11,46,115,5,151,73,11,138,85,216,240,204,109,250,53,40,
+    173,245,202,180,160,108,184,137,202,90,14,82,57,207,91,13,171,31,96,251,191,193,2,15,
+    33,116,229,139,38,30,234,94,56,83,62,103,178,55,188,61,237,107,171,127,252,113,60,159,
+    215,135,135,235,57,40,219,137,219,251,233,39,187,73,181,173,137,74,75,194,208,213,188,92,
+    46,119,55,228,154,29,7,244,247,27,216,154,109,237,56,145,237,209,234,230,178,172,207,92,
+    156,202,112,214,153,232,209,10,52,62,8,30,44,235,249,237,183,187,219,209,200,30,63,222,
+    126,31,118,98,216,107,133,200,214,149,118,207,14,105,65,135,248,64,255,204,131,181,59,196,
+    5,236,98,232,102,17,71,202,81,95,19,117,24,135,162,186,101,121,30,97,61,220,71,227,
+    233,73,57,169,143,240,119,89,31,148,51,188,180,43,23,175,13,129,92,142,154,85,30,4,
+    189,54,199,166,185,218,83,213,51,127,111,147,230,30,65,79,32,196,86,189,158,183,217,21,
+    5,134,86,163,213,224,239,58,75,231,37,40,1,94,157,35,212,139,191,26,150,108,135,3,
+    51,58,90,225,148,112,56,42,196,93,119,3,219,86,6,159,12,102,217,25,76,219,81,216,
+    62,38,169,128,151,171,133,239,62,198,150,29,181,124,196,11,246,227,198,108,250,110,181,239,
+    247,246,255,254,211,150,110,130,135,117,19,72,55,203,209,114,80,105,231,106,48,244,166,229,
+    226,210,165,31,56,192,31,253,159,60,250,55,248,201,91,245,60,115,61,144,235,129,92,167,
+    29,250,221,94,230,234,163,151,185,250,175,101,190,247,50,143,223,143,116,167,48,152,49,88,
+    24,227,243,210,140,239,239,63,121,219,174,238,83,175,154,107,103,203,163,179,81,179,13,7,
+    127,249,238,53,38,104,0,203,244,248,223,138,82,105,225,165,251,152,37,182,241,44,122,125,
+    240,119,183,27,239,48,146,3,123,123,242,0,193,228,158,237,111,151,113,125,28,101,143,197,
+    22,175,21,8,127,126,187,119,75,5,96,79,80,187,86,72,79,183,97,177,45,215,54,212,
+    147,173,157,236,100,236,45,154,160,171,148,1,7,3,244,220,108,244,175,80,22,141,212,135,
+    55,119,10,17,14,15,59,249,218,143,175,171,225,213,237,203,107,107,157,238,242,1,132,56,
+    196,9,247,85,255,59,114,100,49,187,242,166,231,33,238,61,116,44,220,107,76,47,99,121,
+    189,148,218,221,93,113,30,10,11,154,250,222,251,133,75,60,174,0,38,203,252,106,204,134,
+    188,169,63,116,36,199,98,75,72,229,46,87,70,213,117,101,252,171,220,245,91,150,226,161,
+    70,184,241,212,223,102,74,183,238,119,113,187,107,115,217,222,52,219,98,54,247,119,185,210,
+    95,106,231,183,215,201,16,130,13,58,53,245,129,136,50,200,158,208,41,220,24,240,61,199,
+    93,175,223,151,156,6,194,25,67,157,204,105,176,119,131,79,224,159,183,211,119,150,245,180,
+    154,128,253,112,62,101,91,195,118,198,27,111,14,202,209,230,93,255,76,175,185,181,63,155,
+    254,193,143,246,188,252,43,168,126,215,132,118,57,104,30,40,39,110,245,222,192,174,1,125,
+    86,147,38,68,252,55,252,235,35,3,20,100,100,183,167,20,116,66,72,220,137,29,188,160,
+    192,206,162,156,141,171,249,210,76,97,131,198,255,153,49,138,221,82,250,143,249,115,182,71,
+    35,68,13,161,47,255,115,127,135,13,186,212,0,196,212,233,28,73,189,243,209,201,114,114,
+    70,138,125,167,30,191,211,211,191,85,185,223,138,127,132,33,15,169,158,169,119,251,200,117,
+    125,209,71,140,123,135,71,225,30,163,86,138,93,134,249,144,181,125,255,191,201,210,222,127,
+    85,223,255,107,22,117,99,239,75,139,143,54,6,90,222,57,208,59,89,241,182,177,110,87,
+    220,247,163,219,82,201,224,63,48,242,143,88,227,109,242,159,23,89,25,83,223,190,57,122,
+    254,237,155,183,239,158,189,121,23,128,2,78,6,225,240,192,141,134,125,176,92,172,58,167,
+    110,211,112,4,205,162,225,32,204,161,117,144,152,230,237,169,11,29,191,59,27,95,38,122,
+    244,234,219,55,88,53,116,174,142,52,113,166,245,9,101,173,174,231,213,138,93,146,27,77,
+    184,27,207,225,67,93,40,72,63,150,55,156,85,171,22,173,194,48,97,117,46,197,5,235,
+    150,139,5,40,146,147,18,43,80,253,97,240,255,180,8,232,234,162,6,237,13,178,149,42,
+    41,22,40,100,123,67,237,253,118,202,122,254,162,157,202,51,26,130,202,114,155,173,85,198,
+    239,194,42,164,154,173,49,155,14,236,199,198,197,51,91,219,213,125,95,226,136,190,171,92,
+    110,219,7,133,234,39,89,224,231,73,152,23,251,237,197,184,8,242,60,200,211,172,185,54,
+    240,135,81,20,6,121,16,199,161,185,8,15,103,248,119,81,36,81,175,123,76,134,27,236,
+    47,250,242,42,180,104,247,213,206,247,23,58,171,240,235,119,207,241,76,140,69,117,13,234,
+    12,212,99,117,138,71,81,128,190,117,199,158,115,226,57,167,158,51,233,29,147,142,126,142,
+    109,27,72,87,183,105,4,184,17,104,207,76,61,218,160,241,178,61,41,201,16,195,251,170,
+    188,18,172,202,165,51,198,157,96,237,67,140,27,1,239,121,142,99,89,222,181,1,221,122,
+    179,216,221,91,240,74,249,81,84,132,251,248,107,18,228,69,30,238,3,53,4,65,230,23,
+    125,216,18,248,143,110,133,89,26,166,233,62,46,108,2,235,77,183,22,189,253,192,163,94,
+    130,97,128,181,85,251,240,111,146,39,5,61,4,189,36,126,30,36,3,250,37,240,19,121,
+    230,0,246,179,79,255,15,143,197,81,18,39,61,234,4,222,225,251,65,196,3,241,211,40,
+    139,176,104,43,13,178,44,147,129,152,215,97,9,54,82,193,62,190,216,15,210,48,129,150,
+    113,150,192,52,76,203,3,186,149,197,17,142,195,207,194,36,13,243,125,185,231,237,233,45,
+    29,127,168,102,107,192,202,83,57,57,228,216,109,106,64,157,166,6,244,88,31,40,210,176,
+    177,231,212,204,79,199,128,52,29,191,71,89,215,116,78,72,189,89,39,44,254,105,121,225,
+    43,124,155,149,54,111,113,201,180,156,187,92,70,236,94,161,25,220,82,45,92,253,92,138,
+    110,159,226,173,3,184,112,40,73,54,1,3,222,238,81,47,146,172,131,28,78,120,16,38,
+    163,201,211,36,193,55,180,57,116,190,168,229,112,21,43,237,69,48,228,180,70,196,111,34,
+    36,188,116,92,28,142,81,4,231,115,199,63,222,34,52,240,173,223,77,206,30,84,45,96,
+    201,142,24,24,195,85,100,143,47,244,22,150,248,8,157,210,85,43,125,85,91,45,40,70,
+    178,154,184,229,240,186,15,248,240,122,191,28,222,224,47,55,222,64,126,195,75,215,124,9,
+    1,228,198,227,23,48,143,225,135,190,75,253,12,175,7,240,23,62,135,127,124,232,121,120,
+    83,174,193,143,171,158,220,129,238,249,41,188,216,239,60,122,221,60,106,9,194,73,185,250,
+    198,109,158,233,118,105,53,4,34,8,165,162,226,162,127,117,209,235,134,102,86,223,244,241,
+    199,1,18,84,216,199,31,251,66,64,232,113,29,95,195,35,176,138,96,180,28,96,169,116,
+    159,146,107,131,253,224,64,210,143,247,105,180,252,210,150,186,88,135,18,61,16,61,145,186,
+    218,66,75,198,44,217,22,127,211,52,118,11,121,121,187,42,125,216,158,161,126,58,54,141,
+    28,190,113,58,173,224,238,68,153,200,67,59,150,43,148,169,224,200,86,226,116,22,234,175,
+    235,202,183,254,14,62,138,88,165,230,29,87,26,186,220,86,230,222,150,2,7,214,221,27,
+    23,235,215,187,229,234,106,68,238,128,252,162,170,108,252,166,127,67,69,3,30,61,217,136,
+    187,91,247,124,11,241,227,89,94,170,223,235,254,117,211,247,38,175,193,26,116,78,173,18,
+    43,153,233,254,2,88,141,153,7,137,144,72,29,126,187,241,152,69,240,46,222,232,221,143,
+    197,117,89,53,115,48,188,27,24,135,217,26,127,191,241,218,223,13,151,243,117,254,247,131,
+    150,160,214,57,23,167,23,117,221,160,173,245,102,177,61,177,65,131,167,144,178,168,39,186,
+    124,117,129,7,82,25,185,171,248,196,67,154,173,231,128,238,152,173,190,121,253,118,123,204,
+    24,8,74,74,220,191,134,46,213,137,64,119,41,255,182,238,102,129,219,4,255,5,61,84,
+    169,160,70,11,80,164,160,152,9,20,100,161,159,228,168,60,147,40,15,163,8,17,64,225,
+    231,97,163,96,45,5,195,135,244,117,75,101,48,121,4,230,83,226,36,191,30,207,78,202,
+    197,10,203,219,58,45,72,89,212,151,140,32,57,183,201,160,28,44,122,50,85,109,99,232,
+    183,90,153,252,211,114,94,46,206,111,6,151,139,114,89,46,222,99,231,223,46,202,249,224,
+    205,248,6,160,170,11,43,217,51,185,86,229,20,119,234,187,122,177,90,206,106,160,16,207,
+    249,31,235,213,7,46,26,252,170,154,78,155,234,97,113,11,201,28,142,218,17,146,253,124,
+    136,63,90,247,16,186,202,219,34,197,207,209,96,99,253,73,9,16,120,214,213,25,96,182,
+    9,130,58,172,43,153,226,53,57,170,176,106,14,4,146,103,165,176,81,128,197,214,179,33,
+    249,85,188,149,150,7,146,156,246,42,187,171,3,18,219,1,118,150,167,185,223,133,174,136,
+    113,102,107,41,46,67,216,57,152,148,151,120,170,229,188,89,146,102,184,102,97,64,158,163,
+    81,112,40,238,189,99,79,20,191,127,44,199,84,222,208,57,144,84,46,179,98,48,43,125,
+    96,246,28,247,126,90,118,231,102,69,216,181,115,149,143,209,28,238,97,156,67,254,24,253,
+    249,207,157,6,221,96,134,181,67,109,25,41,113,217,230,161,145,204,148,21,25,142,205,94,
+    48,249,112,121,105,39,187,100,130,224,238,108,61,157,34,205,240,177,48,176,161,230,84,60,
+    247,24,19,158,142,1,53,54,121,82,87,232,118,158,141,127,46,151,205,182,115,215,76,198,
+    78,75,198,152,208,183,226,48,195,28,171,230,166,176,59,43,244,26,174,41,155,120,218,237,
+    97,215,36,40,251,6,216,108,185,170,78,81,221,173,22,245,116,216,16,207,83,69,62,61,
+    103,51,2,212,73,24,195,5,59,155,142,207,129,148,150,120,80,213,169,211,6,96,39,103,
+    71,116,107,164,142,205,252,173,61,2,179,147,243,117,187,19,104,7,203,221,146,37,117,155,
+    207,144,2,86,91,178,163,30,63,222,229,151,148,71,183,23,94,185,148,209,64,17,76,196,
+    126,30,234,109,82,64,149,132,216,90,106,29,249,186,139,75,2,184,220,205,1,59,0,164,
+    126,150,124,13,247,136,119,114,226,126,155,141,65,90,13,155,13,207,250,163,29,57,205,142,
+    157,120,221,57,154,13,31,85,25,29,29,166,179,102,99,225,135,103,175,220,96,155,85,108,
+    159,245,34,176,19,180,57,35,231,141,179,122,150,223,130,62,124,231,46,63,247,159,46,15,
+    72,3,29,17,121,183,133,159,13,30,61,180,7,113,246,246,109,211,12,214,133,98,209,207,
+    94,245,201,116,231,126,237,183,189,124,69,176,107,155,143,66,186,9,126,218,68,97,47,95,
+    85,119,60,229,111,121,106,252,254,252,229,43,151,199,163,124,65,221,101,98,2,184,168,221,
+    102,147,55,110,125,243,214,133,159,125,252,143,186,196,240,58,254,1,255,208,223,237,2,89,
+    3,152,45,223,94,140,47,203,141,37,18,84,6,107,225,105,168,143,215,170,230,218,129,92,
+    163,151,120,219,223,17,202,65,92,127,149,163,113,220,29,16,164,187,184,222,237,109,120,41,
+    237,215,16,239,240,171,14,4,243,238,55,39,118,253,181,215,111,95,111,76,73,206,91,228,
+    215,53,215,42,224,87,233,254,190,33,116,19,118,184,139,75,113,75,128,32,247,105,199,250,
+    178,246,255,48,86,125,208,144,118,228,72,184,106,168,189,79,62,86,58,8,70,159,23,122,
+    95,199,251,239,91,21,133,118,11,63,92,77,236,78,20,198,244,222,213,201,28,143,26,184,
+    93,39,112,91,45,26,63,247,123,119,230,69,124,216,78,245,100,245,89,130,246,30,89,18,
+    46,69,177,116,162,196,174,179,186,238,202,148,216,190,67,187,94,169,45,98,96,38,61,248,
+    206,153,108,183,230,102,124,196,252,62,50,17,228,30,211,235,233,35,139,140,213,34,197,170,
+    28,80,221,97,183,168,54,114,140,73,19,38,109,242,64,182,91,20,221,103,255,79,179,41,
+    238,196,222,247,65,137,221,195,211,31,132,19,53,115,239,92,207,79,5,24,77,213,242,167,
+    70,140,159,2,26,254,19,80,225,167,20,221,127,124,231,62,141,12,191,159,252,25,124,180,
+    0,50,36,243,113,18,168,57,174,172,43,117,46,203,5,102,93,56,179,138,34,116,250,16,
+    181,3,190,178,224,188,44,150,64,93,209,68,50,226,246,226,30,91,76,153,65,252,159,38,
+    154,116,29,84,199,227,49,151,211,223,23,101,201,22,244,242,208,57,182,52,198,177,215,94,
+    50,123,40,167,41,125,142,103,114,187,104,76,99,57,72,111,227,209,182,189,237,102,248,129,
+    188,32,59,155,123,82,65,77,151,15,204,101,88,255,41,249,183,248,200,17,147,152,214,28,
+    29,221,156,100,99,142,47,193,195,240,26,31,187,228,231,209,249,53,230,172,254,70,47,181,
+    135,58,208,23,87,202,217,120,14,66,122,57,116,222,237,60,225,6,207,192,89,226,183,79,
+    128,132,166,156,46,38,53,136,141,243,167,179,71,187,139,207,164,253,71,104,146,45,42,164,
+    57,122,252,183,206,231,50,158,108,30,151,126,155,175,65,81,249,255,65,201,60,155,227,126,
+    168,184,188,77,28,57,6,227,106,69,136,158,32,182,156,238,45,104,173,83,231,219,131,234,
+    183,116,111,115,70,167,126,109,243,28,37,66,206,88,149,118,184,245,28,252,166,123,49,245,
+    80,74,127,166,70,160,7,119,85,125,141,145,37,119,163,100,14,49,174,202,55,236,105,221,
+    60,186,67,135,72,199,219,1,170,199,37,145,135,44,35,59,62,0,60,185,217,232,112,106,
+    2,138,252,214,130,48,41,245,50,111,147,103,175,170,222,131,221,63,106,57,58,5,173,79,
+    7,87,245,102,173,224,198,242,152,74,193,63,188,68,134,10,110,91,163,205,51,5,62,209,
+    170,53,171,98,87,245,110,190,65,142,95,234,28,28,208,49,128,31,166,251,95,47,219,2,
+    219,89,57,6,251,129,51,114,41,75,212,147,51,135,48,127,156,21,1,44,59,166,100,119,
+    91,78,198,171,241,83,125,158,58,200,135,163,78,147,163,106,73,221,137,32,177,111,119,123,
+    235,141,176,7,183,115,101,120,178,62,3,221,97,127,107,225,120,57,155,224,160,191,105,91,
+    190,110,78,167,43,249,19,48,211,234,228,192,106,51,60,221,242,109,6,210,3,183,246,231,
+    62,166,54,157,97,121,143,219,160,236,227,54,89,224,113,115,124,35,149,205,222,61,232,198,
+    193,247,221,139,87,15,27,181,248,50,111,237,241,190,227,126,200,64,153,146,62,201,10,91,
+    125,238,28,45,30,127,125,235,130,75,157,96,27,134,225,46,38,130,102,77,106,50,127,92,
+    173,91,243,219,68,63,199,66,218,156,65,99,147,232,177,141,84,205,11,182,33,213,46,241,
+    238,221,70,236,118,220,8,145,234,194,36,219,183,87,110,195,154,31,3,123,164,52,244,97,
+    192,167,243,209,149,238,252,26,44,196,159,21,19,36,116,15,16,164,22,240,35,173,230,142,
+    242,40,231,88,247,63,249,6,134,67,35,109,117,177,20,25,217,99,126,242,16,148,68,34,
+    153,4,211,70,103,151,171,69,239,183,223,58,171,211,25,73,15,195,49,15,127,209,93,16,
+    71,20,221,85,245,87,204,53,49,217,11,24,233,240,40,63,136,108,127,74,18,106,218,158,
+    69,110,91,10,128,229,127,183,10,187,109,147,244,30,35,223,201,59,129,235,162,7,69,146,
+    90,98,238,183,163,235,179,118,133,174,216,143,32,254,244,59,36,218,157,131,235,121,31,215,
+    131,153,218,85,221,243,224,255,62,149,67,250,30,249,220,247,229,133,221,192,250,83,114,194,
+    38,44,191,149,244,59,239,99,114,127,8,84,231,143,3,86,161,120,52,26,202,102,36,168,
+    72,86,151,32,221,173,75,182,239,50,188,203,16,11,227,175,199,172,57,238,92,2,172,230,
+    252,156,71,34,143,14,63,96,13,153,252,138,109,212,74,224,210,111,120,102,110,127,17,194,
+    211,54,41,73,3,85,227,236,185,251,29,79,237,43,135,182,1,240,113,14,162,40,188,142,
+    66,74,58,198,76,97,147,28,92,79,215,114,164,210,242,162,44,231,252,9,84,188,251,31,
+    128,84,231,192,78,206,23,235,197,180,188,241,154,175,154,62,191,168,128,24,60,62,189,136,
+    65,101,155,13,226,46,234,171,101,143,148,116,55,239,24,253,47,235,217,124,217,243,204,113,
+    28,139,82,190,109,55,135,151,151,148,244,252,122,254,30,144,42,253,252,190,119,124,40,223,
+    184,227,51,226,104,45,40,53,74,165,74,119,143,252,223,76,135,31,58,47,0,218,182,89,
+    235,64,155,23,245,98,249,223,156,229,250,242,178,249,56,236,41,108,5,167,177,95,172,86,
+    151,203,195,131,131,115,24,226,250,100,120,90,207,14,86,213,7,152,237,193,116,117,58,160,
+    245,241,156,103,192,2,23,37,126,199,161,103,185,170,249,12,138,175,94,190,124,115,4,171,
+    124,244,238,217,23,95,191,148,2,174,31,163,240,39,252,207,109,255,108,153,195,15,226,32,
+    241,210,114,16,123,65,57,72,122,94,251,121,77,250,255,255,186,240,159,250,130,185,98,19,
+    77,17,7,222,32,140,66,32,25,15,203,25,242,168,232,60,236,7,25,222,79,114,36,41,
+    47,179,8,203,143,83,184,153,165,5,221,212,247,2,63,74,51,184,25,35,65,134,214,115,
+    105,24,199,30,126,93,4,254,77,244,112,195,168,8,225,185,48,150,17,253,215,70,254,223,
+    71,114,184,193,36,176,194,24,218,69,121,30,197,138,230,242,34,1,10,8,114,161,73,252,
+    132,76,247,126,228,251,161,55,0,202,149,251,129,159,133,234,126,17,192,253,40,167,251,65,
+    2,4,168,104,182,136,114,111,144,166,212,59,126,254,71,81,102,2,244,199,131,131,94,189,
+    96,131,112,97,112,72,212,41,62,156,218,55,147,144,31,77,138,192,139,172,155,121,152,68,
+    124,23,222,97,51,68,24,248,133,220,141,97,238,214,221,32,204,242,68,122,142,108,225,30,
+    20,190,121,50,204,55,110,38,97,194,140,6,125,164,122,147,130,52,145,94,67,63,11,254,
+    139,92,63,33,133,71,126,206,171,30,23,126,129,57,236,73,20,107,10,206,82,104,128,226,
+    20,25,32,44,242,48,211,4,140,148,20,70,41,19,120,16,100,137,22,187,126,129,247,253,
+    64,24,0,36,173,122,62,142,35,160,9,232,22,239,23,185,77,138,248,141,41,144,233,76,
+    196,97,158,219,183,19,96,79,96,73,226,30,63,216,16,221,129,208,98,16,6,94,188,193,
+    3,105,42,244,86,128,216,183,223,156,21,190,176,72,10,51,8,98,91,101,248,133,48,95,
+    10,92,24,104,198,5,126,44,132,150,51,224,224,212,126,54,141,66,161,102,248,197,238,57,
+    76,67,225,146,34,206,108,222,12,162,34,10,248,217,40,217,80,86,192,115,194,185,33,176,
+    181,125,51,5,206,229,155,73,154,108,176,95,12,234,84,30,245,55,56,23,184,186,224,215,
+    70,176,108,27,119,97,200,161,220,141,55,32,29,136,72,153,110,236,199,27,239,13,253,48,
+    224,81,69,208,141,166,220,200,15,83,185,7,100,98,221,195,239,107,201,59,67,251,30,204,
+    32,231,123,169,37,45,226,212,44,159,31,134,214,173,56,77,101,5,146,226,159,205,134,113,
+    16,208,136,129,54,82,252,184,104,138,95,124,83,148,30,136,196,14,51,250,206,40,214,98,
+    42,244,147,100,33,241,105,198,140,22,130,238,8,212,253,28,103,23,135,194,136,1,108,149,
+    186,77,124,28,37,134,79,65,47,40,94,1,97,15,183,139,66,110,135,177,26,93,26,199,
+    48,252,36,12,153,139,109,70,196,47,190,130,30,203,136,139,129,225,237,219,89,6,183,243,
+    148,153,188,28,168,174,115,195,44,1,114,28,104,36,235,225,34,13,133,17,35,104,152,218,
+    68,15,19,105,52,221,134,10,5,62,229,101,7,62,133,213,11,55,88,17,212,141,80,11,
+    64,203,32,183,121,49,14,132,96,194,8,20,240,6,171,102,34,65,240,35,123,94,177,161,
+    238,68,68,132,41,8,88,187,235,4,37,22,221,205,225,89,91,128,100,70,125,71,65,158,
+    123,137,173,101,147,200,220,5,1,18,219,252,150,11,7,68,81,156,110,136,23,192,47,242,
+    108,12,74,216,86,253,113,232,155,187,233,134,240,137,176,58,88,222,27,110,0,3,208,51,
+    73,38,239,133,25,217,119,139,164,72,133,155,65,72,217,119,115,28,42,247,92,108,0,135,
+    152,150,151,215,57,216,188,27,24,2,128,103,147,45,207,6,70,202,167,27,207,130,174,10,
+    100,143,138,108,179,231,52,193,213,136,24,219,209,205,29,204,157,248,57,51,119,234,251,41,
+    125,13,25,132,158,102,31,129,55,73,146,208,71,132,65,127,40,45,9,118,75,102,176,17,
+    225,208,56,206,52,100,131,221,244,6,133,177,141,66,144,165,177,230,34,4,87,73,30,26,
+    238,215,60,134,27,7,47,21,230,206,34,221,121,17,162,232,72,162,70,135,231,169,26,93,
+    145,5,64,82,105,144,26,225,0,211,84,92,22,32,159,100,69,216,128,224,40,84,247,11,
+    188,95,196,36,92,232,51,145,221,187,1,72,46,209,226,96,165,69,155,76,10,155,104,80,
+    37,48,105,97,27,119,128,45,82,163,169,97,159,66,91,66,24,149,137,223,200,68,62,84,
+    47,7,210,202,90,22,79,54,152,24,144,169,24,135,9,114,154,126,22,59,100,145,13,100,
+    20,89,119,13,250,0,38,5,102,177,7,149,131,192,23,110,9,183,72,158,220,55,10,55,
+    68,162,222,224,226,220,112,83,140,216,101,11,130,23,70,141,96,248,133,125,55,55,34,32,
+    3,104,102,189,57,132,189,151,129,129,21,96,45,53,152,13,2,38,163,28,148,115,106,99,
+    136,72,36,94,148,108,8,173,48,79,68,249,198,64,141,27,66,171,8,100,62,169,31,219,
+    50,43,20,115,36,66,5,103,221,3,174,144,61,136,146,108,83,38,165,137,225,111,128,138,
+    155,82,7,108,39,88,188,88,180,210,78,246,78,125,54,92,130,28,216,10,217,59,7,249,
+    172,245,27,47,89,158,147,241,2,16,59,215,252,147,8,204,9,81,245,199,129,31,219,236,
+    97,140,208,36,37,12,158,6,145,226,144,60,232,216,107,40,227,227,60,208,44,130,47,40,
+    252,216,112,63,192,32,205,34,184,74,121,106,172,212,60,214,12,26,197,32,183,6,121,97,
+    172,220,4,152,70,221,207,253,64,6,16,20,36,33,124,133,94,2,232,79,240,112,16,144,
+    4,0,42,82,247,155,14,16,213,82,59,61,2,0,182,6,110,195,150,101,190,173,17,147,
+    34,22,33,80,0,103,196,137,45,36,64,186,11,47,130,20,241,34,223,190,159,37,6,94,
+    69,64,69,161,205,50,65,6,123,36,148,2,75,1,27,97,51,100,152,137,32,128,77,6,
+    148,98,63,95,52,84,26,102,94,102,51,149,239,231,65,203,175,182,148,1,149,45,4,0,
+    228,159,109,216,49,33,90,199,194,176,40,103,236,219,97,110,36,13,12,210,22,67,33,59,
+    32,232,46,160,134,208,102,203,56,139,228,225,2,116,107,104,61,156,38,153,97,90,160,236,
+    192,22,7,105,46,32,38,134,87,111,72,169,16,216,36,51,156,187,33,164,162,6,184,69,
+    233,134,125,5,0,35,204,229,197,48,106,107,57,35,128,86,210,113,0,163,223,184,43,56,
+    36,68,225,103,45,22,64,182,12,61,122,236,67,76,111,97,122,104,152,48,211,3,183,34,
+    211,131,177,150,107,157,154,177,84,240,115,82,250,160,123,53,211,1,2,79,197,242,38,123,
+    3,152,59,47,20,87,133,177,96,192,56,64,193,0,138,42,200,21,215,100,126,108,52,27,
+    241,125,154,6,153,226,138,76,132,42,8,38,148,76,65,17,105,209,146,38,98,214,5,32,
+    51,72,50,164,154,236,67,33,45,176,235,51,242,111,69,202,46,128,171,66,185,1,34,51,
+    178,185,149,89,2,140,17,25,175,78,78,156,13,115,81,203,144,27,217,230,211,243,96,105,
+    170,17,22,129,145,12,73,38,162,35,214,156,149,202,126,6,104,115,211,139,146,66,113,79,
+    163,163,17,196,179,144,83,247,51,99,18,130,73,237,165,182,104,0,129,145,24,116,153,122,
+    108,63,105,238,19,58,13,115,144,60,145,111,83,57,40,69,163,232,1,97,2,221,218,10,
+    21,223,202,116,30,33,15,217,202,58,202,12,127,130,101,29,22,27,136,92,84,121,12,84,
+    226,21,246,109,176,26,197,187,147,130,124,204,236,219,162,232,193,184,134,137,219,114,35,45,
+    196,248,129,103,99,47,177,199,149,11,237,197,200,159,177,189,104,121,33,0,37,241,161,151,
+    40,182,153,59,22,113,11,130,31,224,190,53,174,40,72,68,50,196,25,232,19,27,241,1,
+    36,18,32,17,195,158,123,246,142,68,137,113,105,1,195,128,44,182,59,207,208,207,192,162,
+    28,152,194,22,90,17,73,122,160,42,2,245,209,45,18,0,182,155,230,0,186,35,10,72,
+    2,0,1,234,168,2,15,51,0,49,132,106,51,245,21,235,0,169,240,48,115,116,145,225,
+    73,76,96,34,105,157,39,80,11,180,47,62,31,21,0,251,52,119,54,161,9,26,65,4,
+    236,168,121,75,54,24,126,33,231,93,156,106,222,43,82,65,38,65,138,35,0,94,84,192,
+    36,132,221,43,140,171,55,39,241,80,40,179,2,120,195,120,193,98,148,113,248,213,122,117,
+    59,147,165,6,5,159,177,101,17,40,222,12,67,163,182,147,152,128,67,18,38,170,135,48,
+    107,188,112,41,219,30,89,172,134,8,115,22,249,2,139,67,2,36,205,53,255,36,102,142,
+    69,206,214,71,17,232,6,133,232,71,64,190,220,64,155,63,176,184,185,89,102,226,49,155,
+    81,96,110,153,33,168,212,203,108,247,70,152,36,177,96,15,196,127,201,6,39,129,200,105,
+    212,85,228,197,65,178,161,70,69,138,3,152,77,192,0,178,159,207,98,97,69,208,94,128,
+    84,227,108,131,83,5,251,144,239,144,99,17,10,63,139,132,5,212,4,148,159,216,143,23,
+    70,203,196,96,148,130,8,74,55,20,181,64,179,152,252,51,225,6,47,7,230,54,152,233,
+    249,134,211,32,51,24,33,7,61,154,218,204,10,192,65,20,61,6,27,108,100,4,96,49,
+    52,82,40,240,98,91,211,195,194,153,137,131,137,24,111,224,123,3,4,50,160,242,200,150,
+    3,48,109,4,114,17,133,94,16,126,236,16,3,160,188,51,22,3,240,8,137,1,224,58,
+    165,231,11,150,224,96,75,250,100,30,128,222,142,181,26,103,107,141,5,6,30,36,150,234,
+    30,50,209,16,41,40,71,20,20,104,19,42,54,142,13,124,76,11,6,10,133,66,18,192,
+    166,145,17,121,105,70,22,68,100,177,89,100,44,16,16,21,216,32,138,149,164,8,17,63,
+    48,19,137,164,136,21,14,0,132,98,36,69,78,0,30,108,241,34,215,64,210,40,250,60,
+    32,73,81,164,218,114,52,248,62,15,73,16,228,145,175,166,144,128,108,146,6,121,200,64,
+    67,69,218,194,198,77,88,208,243,177,6,83,208,216,104,249,128,118,1,149,67,161,173,83,
+    95,244,124,72,190,102,92,171,84,187,192,13,26,11,197,203,161,229,72,30,250,102,145,197,
+    200,73,180,176,203,51,17,248,97,78,161,22,116,104,40,70,51,160,22,213,163,151,219,193,
+    14,96,196,198,83,14,47,72,237,88,73,132,126,125,145,19,96,15,178,187,102,187,7,14,
+    125,15,241,134,230,11,26,175,34,46,113,180,161,180,81,16,138,218,5,49,99,185,105,80,
+    41,27,176,31,70,228,208,80,183,99,95,236,140,56,202,64,202,100,249,166,210,22,149,15,
+    132,16,108,178,50,110,138,220,6,25,102,71,107,64,43,24,196,128,46,202,141,80,80,148,
+    27,39,16,112,125,225,229,214,212,99,191,113,77,0,225,128,8,183,125,136,4,67,18,178,
+    9,110,113,244,225,193,127,17,203,130,148,216,8,216,81,113,58,112,25,35,130,52,36,42,
+    135,89,37,202,83,150,102,34,76,36,206,9,0,70,33,254,34,18,60,14,42,135,68,1,
+    116,164,212,97,96,180,93,146,145,70,134,121,229,138,200,192,0,200,218,77,166,125,83,17,
+    237,48,46,218,72,14,82,61,128,12,173,172,130,192,184,76,200,209,152,105,149,15,118,182,
+    81,150,1,75,138,40,214,218,42,21,161,204,75,0,210,47,82,51,0,51,52,53,124,152,
+    81,68,49,213,160,4,160,101,222,226,117,114,79,134,74,86,21,113,108,56,57,39,78,6,
+    21,163,24,177,48,1,41,152,58,163,142,84,201,2,228,191,38,231,131,141,150,88,173,2,
+    200,166,216,184,156,105,25,208,33,174,88,41,54,210,38,19,97,145,41,113,22,5,198,141,
+    22,230,100,252,161,95,34,82,204,102,150,33,242,105,25,208,138,81,175,8,115,35,244,69,
+    226,5,90,98,2,255,154,0,25,208,47,187,93,227,64,179,164,33,250,20,236,203,124,67,
+    94,196,153,72,196,8,29,88,128,191,108,150,141,98,227,10,12,65,220,216,226,34,245,229,
+    253,49,58,45,54,111,27,84,3,194,42,247,192,42,183,57,218,120,230,99,140,56,110,132,
+    126,163,60,53,230,9,69,27,98,123,244,69,26,152,209,5,169,29,85,138,241,32,84,153,
+    27,64,227,192,18,102,113,104,166,22,146,53,96,67,135,24,227,21,228,13,49,162,104,135,
+    64,8,115,214,171,232,63,98,47,65,166,148,10,24,58,236,125,70,43,50,224,184,95,160,
+    29,75,57,131,67,144,29,81,204,206,67,173,121,131,72,68,134,207,154,23,248,221,194,183,
+    70,51,230,1,89,1,48,185,68,227,83,35,247,19,12,128,82,216,195,87,28,151,133,198,
+    205,19,146,3,18,112,170,202,17,64,231,173,177,184,66,118,68,0,156,87,28,151,24,36,
+    22,80,30,77,136,88,91,115,156,9,165,97,44,130,0,134,175,248,33,128,77,16,142,34,
+    75,35,9,52,49,7,198,131,136,18,8,27,132,81,174,149,87,104,92,189,9,185,66,144,
+    29,116,244,202,108,121,154,50,2,9,226,237,252,68,238,124,202,161,81,16,39,2,120,45,
+    115,200,216,213,145,132,133,102,184,216,216,107,57,73,111,88,207,76,115,92,110,124,9,5,
+    77,2,88,55,204,53,222,13,146,214,179,197,209,96,245,10,128,73,198,207,72,161,111,144,
+    129,74,62,71,105,108,64,64,204,64,11,22,46,83,13,10,241,100,70,73,202,98,67,235,
+    40,96,24,99,94,103,228,249,66,215,143,230,204,176,241,71,194,116,138,13,76,223,70,231,
+    11,160,216,172,200,55,144,119,98,124,26,160,203,97,187,108,101,29,55,206,63,216,136,13,
+    193,19,195,120,26,28,131,174,137,141,152,95,96,228,22,64,118,47,74,115,155,185,125,49,
+    41,35,116,76,70,190,13,22,226,52,49,238,250,192,11,109,127,82,12,26,50,98,207,1,
+    160,160,248,22,225,16,167,69,100,132,3,25,6,96,92,107,231,154,24,63,96,70,147,97,
+    144,34,204,81,246,121,193,152,11,240,82,132,123,5,92,166,252,234,192,233,204,86,192,117,
+    73,78,129,197,164,8,53,172,102,220,30,96,100,17,133,67,12,184,83,163,94,222,139,172,
+    32,117,142,14,0,13,90,147,140,245,84,146,231,28,153,76,53,201,194,24,11,227,203,33,
+    47,134,239,43,63,8,8,188,102,59,99,36,217,48,201,20,166,137,0,152,71,198,67,70,
+    214,75,144,171,36,58,216,38,81,215,136,50,73,120,36,74,118,196,137,1,53,33,169,243,
+    32,73,210,66,59,140,141,19,60,72,37,57,66,57,82,128,173,124,227,196,11,88,122,20,
+    122,18,48,50,163,141,201,145,10,247,149,23,18,216,202,55,13,72,142,251,89,162,213,117,
+    22,155,24,23,130,72,50,112,124,203,49,37,10,47,10,67,137,194,4,161,149,17,147,155,
+    8,187,184,90,149,47,22,216,33,55,188,79,46,105,116,40,168,189,42,34,19,42,72,2,
+    134,45,58,197,54,194,243,191,165,1,59,91,129,194,82,197,155,73,100,132,3,5,179,48,
+    137,41,213,204,105,26,228,60,139,32,85,114,24,221,195,161,209,219,12,107,20,62,4,21,
+    36,121,74,64,138,44,125,2,205,189,81,104,238,39,94,97,7,52,226,216,111,67,148,153,
+    151,217,94,79,160,127,19,59,72,65,241,166,118,198,8,102,73,153,200,107,142,70,150,253,
+    124,102,98,171,33,74,9,16,157,214,253,28,167,31,154,124,206,93,94,5,48,4,88,6,
+    130,12,240,25,56,36,90,229,194,186,8,178,136,9,254,165,32,206,45,199,152,200,134,36,
+    35,207,122,2,28,172,26,36,98,208,130,38,161,160,93,2,143,40,168,159,7,156,87,1,
+    8,156,216,10,230,150,105,20,28,136,78,45,50,2,14,113,168,247,2,148,178,72,82,80,
+    4,4,28,50,11,71,71,38,137,43,101,115,2,40,87,247,16,167,226,59,75,194,140,61,
+    23,190,154,5,144,159,113,98,167,1,121,46,146,64,9,176,40,53,254,119,24,157,72,143,
+    208,242,7,231,133,33,24,241,130,42,247,75,212,196,254,8,7,83,26,135,202,126,2,241,
+    99,192,100,154,114,20,37,211,172,91,4,38,210,149,48,122,9,82,141,78,138,38,204,150,
+    176,218,46,114,133,45,98,52,36,140,79,59,96,255,136,230,59,227,94,33,159,55,197,167,
+    180,78,140,12,26,78,56,144,3,252,155,107,182,51,13,82,150,13,64,86,129,134,196,161,
+    177,22,146,76,2,57,161,106,144,27,17,40,54,15,136,85,133,185,163,88,244,38,110,58,
+    39,213,196,154,53,13,184,97,179,45,140,115,75,239,54,162,67,28,48,250,126,18,153,164,
+    136,188,96,228,146,41,111,53,104,102,3,142,242,156,101,71,172,156,68,113,154,7,29,171,
+    128,98,73,106,167,227,44,21,101,38,27,73,17,119,197,222,137,49,186,208,42,203,109,119,
+    103,92,100,198,120,77,65,88,103,118,186,90,226,103,168,78,9,60,0,137,220,2,30,76,
+    92,44,200,18,246,58,38,42,54,136,198,179,220,39,214,4,173,157,105,238,23,175,109,144,
+    134,20,26,4,245,173,61,114,185,241,101,196,49,89,168,64,87,97,170,33,59,75,186,0,
+    19,59,200,240,40,52,115,135,9,227,44,144,208,196,220,113,28,89,112,55,146,228,154,130,
+    221,146,128,247,98,109,97,230,194,253,121,144,179,99,51,143,213,43,50,147,21,73,161,102,
+    148,56,150,94,206,67,225,188,36,167,8,68,152,135,106,154,96,186,138,145,155,176,97,18,
+    23,154,113,240,171,10,198,251,29,177,248,80,134,122,220,132,15,99,22,196,48,2,133,226,
+    208,188,21,56,75,200,33,77,18,165,207,128,78,82,227,85,35,233,18,107,206,70,56,100,
+    66,221,17,27,54,106,6,113,20,52,33,250,140,192,139,159,41,119,7,244,103,16,125,193,
+    174,4,189,79,113,28,26,67,153,29,159,32,239,212,4,226,44,52,2,146,29,9,192,38,
+    170,65,147,185,79,128,155,22,91,97,27,48,57,26,239,27,199,129,98,61,133,52,106,166,
+    192,158,81,80,19,138,173,0,61,197,166,1,123,111,83,101,181,196,153,201,228,137,138,144,
+    29,50,190,22,160,121,144,134,106,18,97,170,245,114,110,38,153,135,124,63,84,230,95,92,
+    152,40,14,165,117,114,28,41,80,172,27,69,198,223,146,10,178,233,18,10,160,53,131,60,
+    130,128,161,81,164,228,87,98,178,213,81,238,49,178,81,142,175,4,67,41,88,107,210,100,
+    209,249,187,224,67,8,42,74,44,135,136,108,213,180,136,125,203,203,103,164,7,163,7,20,
+    60,58,102,36,142,11,74,145,130,151,131,134,210,176,62,99,117,16,36,126,200,73,77,190,
+    110,16,249,12,148,2,74,184,160,175,146,40,119,119,4,248,151,195,30,48,90,130,23,96,
+    253,88,30,162,76,108,147,156,132,109,28,106,1,148,27,83,182,224,216,32,168,141,34,218,
+    106,72,230,113,194,182,137,6,81,113,147,89,149,177,179,18,192,123,161,121,83,182,4,196,
+    103,196,222,80,205,188,161,72,123,18,84,20,229,136,53,24,77,100,4,73,68,208,33,12,
+    10,149,215,4,188,39,128,58,241,57,130,90,104,214,204,133,113,98,150,111,65,22,104,222,
+    78,98,227,117,79,216,237,145,104,235,10,116,94,98,2,104,17,135,112,3,101,28,53,198,
+    108,44,254,90,192,139,154,179,2,17,210,49,91,21,84,249,160,117,162,241,188,179,205,144,
+    231,202,115,3,35,111,28,117,140,109,178,52,209,172,103,188,75,1,59,91,211,84,165,151,
+    198,133,201,173,2,235,130,197,75,166,56,43,46,242,166,192,128,242,96,124,173,82,227,198,
+    17,152,177,89,20,41,58,74,2,191,21,46,38,198,172,122,8,82,147,126,204,78,153,80,
+    101,207,2,202,49,137,74,17,227,154,76,145,97,18,249,38,174,19,139,211,70,41,136,164,
+    201,158,3,150,97,159,141,146,109,9,32,91,241,10,197,164,130,48,211,165,187,3,64,99,
+    177,215,20,152,129,24,217,37,21,98,145,129,65,230,139,55,50,82,102,110,152,137,223,27,
+    140,138,136,197,130,178,189,208,49,146,138,84,32,8,7,196,165,125,67,81,44,114,39,137,
+    216,223,128,129,14,13,215,197,91,9,155,66,153,206,161,166,38,128,216,146,87,21,230,140,
+    9,114,237,191,42,18,6,186,1,69,69,9,84,20,150,129,201,233,62,88,19,135,44,158,
+    230,150,58,21,41,93,100,228,255,194,156,57,205,178,153,216,225,121,78,138,2,48,74,162,
+    121,210,132,99,179,34,102,135,70,162,36,95,140,209,4,110,16,176,191,34,75,148,75,4,
+    115,113,152,226,153,96,48,45,35,215,44,39,1,251,164,240,57,200,18,104,27,56,19,77,
+    2,203,75,33,146,66,39,100,199,121,44,44,149,112,186,56,128,64,205,212,133,184,51,168,
+    188,138,108,68,133,30,65,61,75,148,40,230,80,101,16,105,115,1,158,19,155,136,114,208,
+    216,221,170,104,210,79,179,198,46,203,216,99,162,38,153,4,6,120,197,49,39,118,21,169,
+    213,192,116,16,179,190,205,21,169,37,161,241,50,198,146,88,102,173,50,252,101,2,8,226,
+    174,77,125,205,150,145,1,110,190,184,107,115,37,91,129,80,140,66,23,76,145,248,202,226,
+    73,226,196,207,141,65,18,114,152,72,237,67,146,52,54,85,204,146,67,163,83,80,140,198,
+    32,137,76,24,73,169,233,36,141,77,164,170,96,179,13,208,171,26,99,22,138,236,130,229,
+    224,6,137,194,53,128,196,2,73,189,100,80,227,231,187,164,67,106,252,1,105,22,166,34,
+    29,44,115,63,23,233,64,62,48,144,1,185,118,195,37,70,58,196,236,174,212,17,45,48,
+    52,248,118,18,147,240,72,178,200,74,199,136,197,224,136,114,54,56,108,215,146,112,62,236,
+    27,121,27,192,70,214,6,168,201,183,10,35,210,68,113,170,243,36,64,82,176,112,10,216,
+    117,4,132,163,97,108,36,62,23,44,195,32,95,103,164,181,189,56,199,0,86,144,173,1,
+    132,109,41,66,19,156,45,104,254,232,184,212,138,46,21,146,207,35,66,177,176,162,150,166,
+    139,69,215,102,41,169,74,224,222,200,98,59,145,12,153,79,226,19,161,162,6,161,6,48,
+    164,113,196,133,32,177,242,8,99,25,25,211,36,133,231,208,145,20,169,58,49,184,45,72,
+    58,225,105,6,121,164,199,128,249,72,220,128,130,167,136,16,21,87,68,38,227,51,9,73,
+    252,129,145,173,236,141,36,202,26,225,67,144,39,210,251,0,100,96,36,3,219,174,129,142,
+    21,1,134,243,141,104,137,56,235,76,187,16,147,36,146,17,196,49,243,101,17,199,154,47,
+    27,139,140,51,53,242,88,57,149,146,84,36,124,204,217,48,62,250,216,212,125,83,217,97,
+    16,9,32,22,53,196,44,14,155,156,235,156,221,45,170,36,6,212,103,218,136,6,150,45,
+    122,141,90,63,66,200,58,31,182,81,237,66,209,148,166,177,235,31,195,164,106,21,1,20,
+    53,41,61,146,240,162,66,69,8,12,115,174,107,21,123,169,216,37,25,10,73,142,7,131,
+    198,207,182,228,58,71,38,149,17,200,153,51,29,83,191,208,65,165,56,53,137,15,41,39,
+    62,104,51,189,48,200,36,97,224,145,228,58,213,25,68,56,7,16,1,34,146,91,24,136,
+    64,81,93,108,162,115,96,110,80,1,101,18,104,233,5,148,32,254,12,16,116,12,44,252,
+    72,3,97,201,92,8,130,92,66,33,153,202,222,0,50,206,68,126,248,220,3,142,86,155,
+    136,145,8,16,244,163,179,133,146,106,165,40,132,69,201,101,20,207,211,164,31,152,160,117,
+    225,179,195,35,76,45,173,7,163,96,17,146,16,86,13,139,34,215,90,45,20,194,202,40,
+    169,20,147,3,53,119,22,146,54,144,177,127,61,4,124,92,104,180,41,106,49,45,114,6,
+    31,133,178,219,146,230,216,1,16,119,228,50,65,121,167,185,75,138,42,83,174,246,8,114,
+    237,232,3,246,50,78,221,156,44,93,208,244,122,18,96,249,153,122,56,14,246,166,42,224,
+    3,236,101,240,75,200,34,4,77,11,213,32,47,132,65,25,243,7,152,174,172,248,43,50,
+    121,211,25,155,69,65,162,28,121,232,14,19,187,42,100,167,74,172,165,28,232,134,212,228,
+    63,7,146,25,175,27,152,178,11,120,48,148,162,154,68,241,95,19,108,201,57,224,156,37,
+    42,55,32,237,228,107,145,66,6,72,165,4,33,232,87,19,232,12,57,84,139,60,173,26,
+    152,58,176,48,167,8,35,136,108,197,86,120,182,137,201,125,141,217,235,171,217,42,197,184,
+    123,11,31,192,2,223,229,114,136,200,56,33,22,206,57,150,169,220,88,88,184,101,36,0,
+    155,22,105,156,233,208,18,179,14,126,31,149,4,132,206,129,132,55,7,226,111,224,188,33,
+    20,128,74,66,0,24,139,69,66,208,122,39,182,135,59,53,177,80,48,77,56,222,145,107,
+    91,60,15,197,31,145,115,184,163,176,76,7,224,156,66,146,179,18,78,190,210,166,114,18,
+    72,66,120,16,165,156,167,153,104,255,142,113,186,248,28,9,5,34,214,122,81,50,90,48,
+    22,75,0,35,203,10,173,24,83,1,123,5,71,9,34,20,40,138,243,98,9,94,21,156,
+    189,133,241,78,205,120,210,65,158,16,61,128,244,208,29,100,190,100,89,228,126,198,14,15,
+    29,47,134,9,139,117,148,165,228,44,12,181,8,76,16,44,240,125,14,181,98,34,141,154,
+    67,83,24,144,230,28,175,177,178,97,97,215,36,47,40,77,124,246,136,100,218,244,64,137,
+    39,226,133,165,67,174,227,0,169,41,157,76,50,246,153,164,218,219,8,186,73,86,41,225,
+    124,219,32,241,181,102,12,26,243,137,179,240,2,203,33,144,6,69,98,234,19,56,224,19,
+    38,10,235,2,95,249,70,124,136,87,37,86,10,47,13,115,83,0,193,217,166,168,50,212,
+    43,162,48,49,214,9,231,168,1,134,137,85,131,172,41,27,137,217,60,82,94,13,128,21,
+    166,206,155,227,94,84,67,172,26,164,38,229,38,147,210,29,109,91,192,250,11,208,11,197,
+    64,2,163,80,13,1,76,141,64,130,153,36,171,243,93,8,2,100,165,132,18,129,123,165,
+    86,66,71,224,139,64,194,17,73,154,176,120,176,152,19,139,201,4,33,176,71,19,64,71,
+    170,61,97,194,254,121,32,197,22,153,14,204,102,172,51,64,87,16,70,1,52,164,194,157,
+    64,36,130,114,34,218,17,120,143,118,223,70,146,153,73,199,47,32,175,103,218,218,76,141,
+    112,32,221,31,3,130,81,106,51,22,88,12,111,37,9,23,91,10,7,198,31,138,183,147,
+    29,27,161,14,225,193,194,72,56,5,141,65,50,79,138,76,219,130,66,82,69,206,210,67,
+    47,16,40,107,193,164,69,68,42,13,17,83,161,33,165,240,110,206,106,25,128,124,106,115,
+    158,241,167,114,180,214,247,19,13,41,77,81,115,206,73,139,64,89,106,141,83,76,172,48,
+    226,131,26,160,135,195,210,88,34,62,50,118,168,234,112,111,218,228,32,167,172,39,176,130,
+    68,117,16,154,12,5,64,39,132,111,124,157,235,145,54,21,193,105,72,140,131,39,56,169,
+    251,69,98,192,9,137,64,244,133,105,198,138,77,105,19,135,98,3,16,56,138,249,49,150,
+    192,13,2,66,80,32,78,180,90,78,26,207,67,78,170,10,93,228,106,12,73,22,153,108,
+    103,118,240,96,1,111,183,65,26,24,3,133,195,201,177,178,225,82,152,187,41,225,38,199,
+    67,224,235,68,143,180,9,99,114,172,163,72,180,124,203,34,227,118,200,56,15,13,150,66,
+    189,32,51,33,37,201,83,198,152,145,218,39,252,164,188,103,36,67,134,134,242,14,201,144,
+    75,138,64,0,12,204,182,133,246,46,135,178,93,1,157,133,69,99,11,67,43,221,138,249,
+    38,150,72,40,32,220,84,187,151,83,73,146,98,23,73,106,157,193,133,254,223,92,18,33,
+    56,233,58,15,181,69,92,68,114,159,125,244,192,170,154,117,99,65,237,176,77,36,123,96,
+    211,18,109,79,178,65,139,17,32,98,109,152,163,86,187,82,94,17,72,145,36,232,31,5,
+    110,18,147,4,234,103,68,147,128,218,84,104,61,41,228,8,12,144,13,146,227,233,103,90,
+    39,198,18,233,40,114,46,21,43,52,252,74,3,49,110,64,58,228,156,170,225,103,26,42,
+    250,146,227,9,104,62,101,241,161,249,34,52,103,30,229,9,153,172,0,62,212,70,164,145,
+    81,171,121,40,238,15,29,175,73,227,64,12,251,140,253,105,0,208,84,250,17,168,44,113,
+    124,102,49,193,122,152,172,214,105,141,47,62,227,44,43,116,173,106,198,146,120,14,211,117,
+    24,89,226,37,13,165,20,43,101,9,23,6,145,178,76,192,206,55,216,131,133,71,161,243,
+    48,128,128,154,116,56,202,186,129,29,87,174,91,224,27,137,24,197,28,172,205,2,173,182,
+    77,89,37,80,37,155,62,121,172,25,75,60,236,13,244,136,149,11,31,140,88,19,175,142,
+    200,38,192,236,30,197,186,69,144,53,217,151,9,99,23,21,115,74,139,166,240,186,137,8,
+    41,63,31,112,104,106,42,94,37,25,46,85,210,41,195,252,86,145,14,36,159,80,35,229,
+    170,1,214,141,155,211,66,10,208,34,59,164,67,140,197,235,204,122,60,91,232,90,71,175,
+    0,115,136,211,208,39,115,22,54,86,155,5,114,46,0,58,176,9,54,196,89,96,185,187,
+    36,79,34,98,81,139,216,78,177,86,44,213,117,65,196,147,1,226,214,122,21,176,92,40,
+    220,207,126,205,52,179,109,81,73,131,40,8,201,129,26,15,45,87,78,33,192,128,204,188,
+    4,214,59,215,120,86,196,7,200,233,128,19,45,52,223,4,198,51,202,90,55,198,148,39,
+    197,153,198,49,235,251,100,59,193,148,50,109,229,69,162,15,192,28,224,35,40,116,106,115,
+    74,142,176,1,215,90,80,212,164,8,115,205,153,69,96,206,184,32,191,5,0,60,245,134,
+    196,84,244,230,9,37,155,69,182,161,153,154,55,0,124,35,116,19,102,90,64,165,18,24,
+    2,225,192,149,45,96,161,196,90,105,73,226,95,150,80,72,34,132,161,104,222,204,37,253,
+    58,11,88,122,100,186,230,2,32,167,168,93,252,141,141,27,37,232,129,185,124,227,250,32,
+    24,27,162,123,79,177,134,41,169,78,185,158,62,68,9,163,26,152,131,124,18,78,1,7,
+    104,109,241,78,32,145,151,132,77,52,36,154,64,243,142,36,42,36,161,207,153,242,161,2,
+    154,153,111,140,254,152,51,44,3,48,234,20,247,53,162,62,230,20,112,164,55,221,192,184,
+    169,34,78,67,15,172,32,92,22,24,11,42,138,57,91,63,210,158,137,44,52,123,193,47,
+    0,14,81,67,12,141,24,13,217,9,13,138,81,79,18,107,120,76,72,51,0,123,56,221,
+    37,32,76,190,59,188,130,80,115,134,39,149,89,46,117,177,250,73,60,228,250,216,51,60,
+    132,75,96,59,163,230,52,209,158,228,52,50,78,67,98,126,180,219,52,111,75,250,116,200,
+    36,149,250,58,193,49,41,82,131,250,185,104,32,1,91,75,155,146,114,238,27,102,81,49,
+    182,208,112,20,204,64,83,222,65,242,41,137,252,66,243,110,42,134,7,213,217,112,228,45,
+    176,148,166,56,29,57,44,1,150,137,175,209,102,34,90,21,228,58,53,176,65,121,106,60,
+    246,5,27,245,49,86,17,104,173,39,74,39,231,42,22,76,55,212,13,50,57,131,33,79,
+    50,14,173,4,150,218,146,192,71,46,21,38,176,143,138,177,68,204,99,204,85,60,31,42,
+    189,58,45,98,41,200,202,56,153,21,16,118,106,41,45,209,236,89,196,169,168,24,96,86,
+    108,99,74,43,50,62,195,6,13,137,88,243,85,98,192,3,169,118,224,162,204,226,171,220,
+    128,7,10,154,130,44,80,222,21,224,171,212,196,94,36,91,164,208,108,225,139,249,148,100,
+    180,74,88,117,171,248,14,192,176,184,54,228,36,32,44,199,85,13,204,137,43,73,192,201,
+    174,208,163,26,66,100,18,230,98,246,212,99,122,182,226,92,88,89,83,198,41,225,159,80,
+    201,225,44,202,227,38,42,90,48,130,81,147,104,210,216,99,78,87,67,10,87,247,77,177,
+    114,200,96,56,72,116,33,14,64,187,204,184,29,232,96,71,116,238,170,6,240,64,98,208,
+    67,16,237,142,104,2,39,37,134,249,18,70,15,133,218,49,204,204,144,100,130,130,77,131,
+    92,215,110,39,105,156,53,200,157,248,27,125,174,138,191,205,49,48,65,66,179,193,58,128,
+    76,243,183,188,129,109,65,144,78,218,34,14,11,113,42,250,12,73,19,176,152,53,40,54,
+    81,75,174,142,72,0,1,166,218,9,35,161,21,159,125,126,48,14,109,17,3,228,20,100,
+    159,146,223,0,93,48,218,152,19,203,32,98,221,95,232,226,113,144,30,38,104,225,7,156,
+    6,110,25,131,69,40,14,185,60,99,199,105,146,248,177,197,123,210,32,42,164,128,93,233,
+    213,140,252,252,172,252,137,247,0,33,105,162,17,112,145,177,189,140,241,248,76,51,150,228,
+    38,103,18,185,69,78,209,156,37,67,204,66,46,113,131,53,210,10,39,17,133,149,114,18,
+    101,20,233,146,80,208,72,114,202,28,136,91,201,52,85,89,60,104,194,9,54,136,89,2,
+    249,186,184,43,195,100,85,99,59,16,60,201,20,2,202,98,223,32,3,54,126,50,93,189,
+    145,81,30,132,248,29,10,174,147,177,26,100,113,19,120,37,116,2,250,93,45,19,134,122,
+    4,25,112,236,7,15,136,84,13,12,14,132,45,204,165,210,70,189,34,49,186,4,120,146,
+    163,199,22,247,99,158,160,169,173,98,239,173,54,63,178,180,41,48,14,197,123,107,137,89,
+    0,175,38,67,154,143,26,200,116,102,115,150,54,39,76,231,92,172,3,10,76,201,184,12,
+    79,236,73,68,62,36,8,166,183,203,135,36,146,164,250,192,231,196,42,80,209,90,62,136,
+    188,14,124,118,118,131,150,177,98,172,6,186,83,217,11,249,85,34,43,190,18,26,187,156,
+    40,63,181,194,184,169,168,45,96,94,62,25,50,140,45,88,108,202,226,11,169,40,247,53,
+    2,73,51,89,206,34,162,152,100,146,235,131,211,224,41,209,156,5,67,173,68,31,236,138,
+    56,93,52,51,7,12,49,81,81,227,77,147,125,150,115,134,116,18,196,202,94,196,36,39,
+    99,214,71,124,142,77,28,90,204,23,155,132,169,140,157,27,42,240,154,133,169,164,15,103,
+    172,88,1,116,107,141,99,18,99,179,152,19,69,163,208,210,89,38,5,27,11,189,89,124,
+    104,56,25,155,180,137,84,124,23,22,239,198,114,134,7,38,45,145,249,130,100,170,26,24,
+    192,155,146,9,71,101,150,154,113,4,191,164,164,178,162,88,39,15,103,73,38,134,67,82,
+    100,18,215,213,154,61,53,1,205,76,242,80,53,34,79,77,105,87,34,126,137,66,231,63,
+    103,169,73,227,76,216,45,154,43,255,80,150,22,166,164,82,56,31,52,157,26,96,22,26,
+    135,35,231,169,98,226,158,186,111,242,171,97,111,57,241,36,82,177,175,44,203,204,1,119,
+    5,131,155,40,80,209,115,64,202,177,41,29,99,116,20,234,240,23,22,59,54,135,72,115,
+    174,172,175,112,42,218,125,185,57,108,147,193,141,175,37,67,158,37,205,169,219,156,23,167,
+    207,89,5,75,188,104,145,67,238,239,140,87,36,169,57,33,128,244,59,89,60,218,67,235,
+    75,109,148,95,4,20,235,203,124,181,31,105,100,234,14,10,159,50,222,83,60,178,119,51,
+    118,66,6,51,31,27,147,88,46,222,44,49,74,147,139,138,82,43,146,6,106,200,4,243,
+    248,0,58,224,195,194,2,180,133,40,213,140,83,184,117,136,9,212,81,147,199,200,5,98,
+    150,86,13,19,33,202,76,142,173,180,118,52,50,71,20,100,146,147,1,100,155,104,141,102,
+    48,55,123,243,1,184,69,186,129,113,35,99,101,25,31,129,165,44,143,172,209,202,146,12,
+    154,249,10,122,0,95,73,106,45,208,63,69,93,172,147,41,129,143,141,197,30,147,57,13,
+    178,67,223,79,5,174,146,94,162,68,147,68,235,43,209,136,169,47,231,105,232,168,12,96,
+    33,147,237,196,6,104,148,235,60,248,198,242,73,82,78,49,199,129,168,251,133,233,32,98,
+    199,72,161,165,95,30,154,124,172,32,97,203,70,39,51,1,91,152,84,134,130,129,71,104,
+    45,18,200,42,147,47,197,142,147,84,11,240,38,87,66,204,22,80,37,74,167,23,230,144,
+    174,152,207,55,13,115,157,132,158,21,137,223,156,33,73,118,75,90,168,84,75,144,251,166,
+    124,54,97,224,162,9,177,40,76,65,56,151,192,132,113,170,32,108,142,39,229,152,227,52,
+    24,184,164,106,23,114,76,163,146,52,200,144,195,66,42,222,145,55,78,147,64,2,223,186,
+    54,35,7,242,227,163,110,217,102,42,118,101,57,96,22,131,161,121,242,23,100,88,228,164,
+    157,220,145,241,66,177,201,145,105,52,157,54,247,99,82,69,0,231,85,10,16,80,186,72,
+    185,140,207,108,76,211,216,114,158,154,178,7,180,39,61,14,72,105,52,108,224,54,30,69,
+    197,160,34,215,54,160,44,86,202,62,106,43,126,149,73,10,64,42,7,78,224,201,188,26,
+    69,26,101,202,117,46,137,149,6,1,230,134,144,124,26,249,156,171,149,100,54,196,19,59,
+    152,125,34,150,7,26,96,128,120,176,18,6,227,9,200,7,221,192,36,66,36,156,163,29,
+    231,218,155,152,229,70,242,96,212,148,92,162,133,165,141,98,113,212,37,92,181,5,92,175,
+    165,103,158,203,70,147,106,167,4,51,213,65,17,152,131,118,88,1,196,65,166,225,126,195,
+    20,104,80,81,182,135,62,79,34,43,204,225,156,18,177,142,242,84,53,200,125,95,44,138,
+    152,243,196,49,85,61,85,13,194,38,69,58,230,242,56,125,150,14,146,125,216,213,218,64,
+    156,202,191,149,251,237,81,11,177,164,172,106,198,43,154,202,174,64,78,24,84,142,97,184,
+    26,54,5,145,1,11,23,229,29,135,125,49,197,179,145,36,172,233,147,203,243,160,57,166,
+    134,171,31,48,232,163,238,167,105,231,152,54,58,141,36,213,29,24,114,11,69,248,232,50,
+    161,188,241,170,96,237,13,137,31,93,88,15,54,165,57,187,140,243,118,0,180,43,47,0,
+    96,41,24,130,57,89,29,44,195,93,222,72,68,105,145,201,157,37,238,143,2,59,46,43,
+    183,41,204,103,149,30,96,194,181,128,56,54,158,224,66,160,161,182,228,88,1,89,179,206,
+    207,116,154,36,254,41,140,145,240,1,83,73,236,107,27,49,49,46,166,152,143,155,209,249,
+    59,160,80,3,83,14,73,207,227,177,139,90,95,154,23,4,12,10,138,76,43,139,204,144,
+    125,226,39,156,102,145,107,190,200,205,233,28,18,208,77,82,27,230,53,233,189,57,27,28,
+    160,147,21,115,23,230,107,0,113,198,17,25,171,84,15,72,212,36,16,115,45,115,226,235,
+    52,106,208,39,178,79,204,55,113,158,89,108,97,206,8,70,79,39,227,14,125,191,48,185,
+    59,20,206,77,34,5,221,114,244,94,152,212,63,246,119,100,161,69,243,166,96,188,96,233,
+    99,185,100,16,177,53,167,20,16,108,1,9,168,72,50,40,154,67,218,67,78,6,137,44,
+    162,14,12,91,37,108,209,20,177,190,111,170,82,229,28,152,40,181,104,62,17,84,0,32,
+    79,14,31,214,107,24,102,38,142,232,231,12,92,244,137,60,185,57,15,46,204,249,80,194,
+    200,215,139,136,217,241,221,19,123,176,118,87,73,175,134,152,67,174,190,195,79,21,41,206,
+    142,76,193,55,218,18,252,113,34,141,27,162,230,252,210,130,66,33,120,102,150,154,4,101,
+    86,202,233,194,28,18,202,83,253,138,220,124,178,138,183,18,160,141,194,62,88,114,8,61,
+    72,77,102,152,34,248,219,33,28,210,230,192,46,174,234,177,190,178,0,160,195,156,202,207,
+    21,170,0,117,180,202,9,131,230,232,182,130,160,69,96,121,94,125,115,144,65,206,226,3,
+    68,159,118,156,166,153,57,200,128,63,50,147,90,38,3,152,199,166,132,159,52,55,96,213,
+    212,210,171,38,169,44,229,120,74,152,21,186,65,225,27,178,227,60,174,192,215,34,172,48,
+    7,177,71,177,241,119,22,26,138,181,101,180,92,88,154,105,205,11,204,103,94,193,103,197,
+    99,160,76,171,156,38,53,142,179,41,146,72,23,228,229,120,228,145,73,141,147,34,52,13,
+    7,67,115,168,44,87,207,226,71,32,98,205,28,38,64,102,146,189,178,72,115,79,115,188,
+    91,193,103,251,102,22,115,68,126,243,181,37,206,5,197,72,147,69,219,230,84,105,18,33,
+    120,64,131,38,109,115,8,81,22,75,186,152,126,62,51,135,224,165,98,216,232,106,227,60,
+    246,205,121,151,12,137,241,239,66,55,200,204,25,120,252,229,59,61,128,216,88,5,97,68,
+    106,21,35,244,106,4,120,158,131,112,39,151,203,36,26,25,196,205,103,91,124,118,202,36,
+    58,139,9,152,61,53,103,250,115,245,174,206,6,201,227,44,51,39,127,203,81,134,145,242,
+    218,228,88,203,47,135,7,19,57,99,101,138,94,3,115,54,81,192,0,43,208,158,171,28,
+    128,167,28,42,26,196,44,129,244,145,22,121,66,53,77,121,96,192,65,161,221,58,57,29,
+    145,103,110,230,88,47,181,67,56,20,230,20,227,130,28,64,153,53,87,224,125,115,252,41,
+    9,211,204,202,103,207,76,210,44,232,5,150,13,186,54,42,51,129,12,58,143,135,160,133,
+    174,101,67,51,212,28,147,204,145,78,128,32,153,5,120,205,119,82,136,113,241,28,3,205,
+    184,6,17,115,209,76,26,233,160,111,30,248,70,148,114,116,29,77,115,173,243,204,119,92,
+    228,200,27,95,231,79,231,161,137,51,4,44,190,192,206,80,134,71,222,28,209,42,254,31,
+    44,54,213,76,99,146,106,49,237,134,68,135,46,79,69,125,32,203,156,230,129,212,160,105,
+    157,100,146,143,131,148,216,46,9,84,2,82,78,197,136,242,157,10,70,30,90,167,197,134,
+    109,131,68,170,80,180,135,61,55,104,56,72,56,26,3,64,32,213,36,25,68,221,35,185,
+    49,39,60,214,36,41,254,130,32,78,184,64,86,175,65,243,141,150,128,227,197,96,216,248,
+    154,166,19,241,101,98,41,13,159,234,163,165,95,210,240,37,87,132,199,150,163,46,111,62,
+    216,19,114,161,92,145,91,67,52,197,79,24,247,39,217,162,63,26,152,167,126,243,101,75,
+    118,105,0,172,76,117,3,65,39,124,218,22,224,118,61,130,148,64,102,145,72,225,2,158,
+    27,162,159,167,20,136,60,145,47,30,69,177,62,203,1,44,49,164,197,204,124,13,13,152,
+    81,163,163,148,82,249,83,83,61,21,69,90,85,231,148,124,58,224,47,157,177,224,81,119,
+    49,228,38,82,33,10,146,157,1,204,140,62,70,66,223,141,203,226,66,123,156,169,172,214,
+    228,94,103,152,188,164,21,57,89,246,30,7,157,181,147,20,15,251,52,15,166,133,206,118,
+    202,10,42,15,146,97,167,185,246,163,231,88,207,99,176,78,154,234,28,68,62,254,216,220,
+    212,49,130,156,234,79,6,178,90,88,150,105,195,180,184,29,82,144,88,66,154,78,48,144,
+    33,1,42,213,70,114,76,245,140,18,237,73,114,203,246,139,201,143,43,61,3,221,90,116,
+    42,7,11,200,241,21,22,145,163,238,144,233,128,24,79,53,19,209,145,239,230,110,160,235,
+    155,96,133,209,40,54,119,209,243,167,238,226,144,100,192,232,178,211,55,105,58,178,80,177,
+    101,59,1,225,36,237,66,225,231,10,53,81,146,203,194,220,77,116,197,65,158,82,8,67,
+    6,21,199,150,240,205,240,115,173,178,198,120,208,131,154,15,104,155,220,208,43,60,168,23,
+    17,105,175,121,82,23,243,227,7,148,18,147,198,131,166,142,18,133,25,214,143,26,6,41,
+    124,109,66,101,8,204,197,83,31,129,106,8,244,77,0,12,166,219,76,127,210,4,54,6,
+    228,159,121,50,181,244,117,134,167,237,154,155,137,46,218,204,233,140,214,194,72,132,220,26,
+    45,166,133,155,209,198,120,50,75,175,247,100,111,207,124,106,158,191,250,62,184,42,171,243,
+    139,85,57,113,198,239,203,197,248,188,52,31,157,63,254,254,216,225,15,194,227,149,99,235,
+    147,233,199,206,101,185,160,174,218,207,202,47,234,43,207,57,171,23,206,108,61,93,85,75,
+    254,216,189,83,206,203,197,249,13,116,53,187,44,231,203,49,126,251,253,246,79,178,63,251,
+    219,203,239,159,125,249,242,232,123,254,44,59,201,23,254,22,101,200,95,184,224,143,174,69,
+    25,127,23,219,55,73,153,1,31,93,128,122,208,156,243,199,31,118,98,111,23,127,175,146,
+    147,208,184,118,132,79,23,241,51,169,37,41,184,70,129,191,93,69,249,83,92,202,27,39,
+    156,177,46,249,181,96,225,229,236,115,77,56,46,21,102,92,248,28,23,28,135,202,66,62,
+    150,137,67,20,81,32,241,185,136,107,19,65,93,51,182,204,249,140,128,216,23,44,27,74,
+    56,32,198,18,174,39,14,46,237,23,213,20,118,104,188,152,222,56,213,28,214,242,178,158,
+    142,87,37,237,14,125,231,222,129,229,114,86,227,147,105,233,156,220,116,54,98,60,159,56,
+    239,171,242,138,246,135,183,217,115,22,229,106,189,152,87,243,115,231,216,29,191,158,191,247,
+    156,19,250,249,125,239,120,184,247,111,238,229,122,81,246,246,152,120,184,119,232,252,85,185,
+    58,189,112,121,151,232,86,251,18,175,123,117,182,238,253,186,103,26,92,189,114,97,155,215,
+    11,24,170,219,52,239,245,1,40,63,145,54,64,86,157,54,240,48,223,228,30,97,166,206,
+    162,114,31,205,170,185,11,191,187,216,97,207,139,252,158,106,113,218,105,129,221,153,22,216,
+    122,48,90,84,216,118,10,191,157,194,111,60,115,103,10,11,232,210,15,139,150,127,92,84,
+    251,254,79,63,158,226,79,111,231,189,224,39,143,95,180,171,139,224,150,46,2,221,5,205,
+    233,201,222,239,204,140,47,223,143,167,235,205,141,157,214,39,229,33,93,155,215,139,217,120,
+    90,125,0,38,157,0,15,85,171,27,167,6,102,117,142,175,170,183,171,201,177,115,94,189,
+    47,231,212,213,138,248,186,60,59,171,78,171,114,190,90,58,103,184,131,240,28,178,37,222,
+    68,178,112,38,213,162,60,69,70,244,156,171,106,117,209,244,179,168,129,45,203,9,245,4,
+    11,91,211,19,103,139,241,172,116,174,46,202,69,217,246,48,173,202,37,52,161,11,215,31,
+    6,151,211,241,188,28,58,175,231,167,211,245,4,238,172,26,241,66,125,137,68,169,230,32,
+    4,144,0,155,247,35,217,210,158,46,214,167,44,24,20,33,54,116,136,43,212,37,195,200,
+    161,17,43,26,36,154,238,94,64,242,6,178,180,30,251,118,81,157,27,184,130,143,244,169,
+    167,225,245,254,73,251,199,7,175,115,231,198,147,139,45,1,114,255,211,114,30,186,143,150,
+    235,153,203,189,246,249,31,162,66,166,184,71,179,241,181,220,132,62,253,97,239,224,47,223,
+    189,238,243,107,241,71,239,192,197,78,250,248,99,255,229,119,111,95,127,253,237,155,150,44,
+    222,53,212,240,197,219,23,175,104,7,207,198,39,139,234,116,48,173,126,46,157,243,197,248,
+    3,46,230,5,136,239,41,138,240,165,231,172,151,120,5,214,154,58,32,49,124,57,45,7,
+    34,138,241,30,18,22,119,10,155,242,31,229,116,5,210,217,115,190,88,47,166,229,141,71,
+    130,227,249,69,53,158,159,15,247,202,235,203,122,1,91,64,123,195,207,28,157,44,39,103,
+    135,248,227,215,102,132,13,135,15,241,18,93,254,220,249,190,17,69,29,98,28,58,223,67,
+    199,64,210,199,63,250,94,53,63,235,29,27,242,243,143,157,229,101,121,90,157,221,224,16,
+    145,0,164,31,188,186,158,142,23,32,188,206,166,165,144,8,190,198,18,70,29,173,182,2,
+    194,237,14,229,237,41,112,14,244,122,54,62,93,213,48,213,73,121,6,100,9,218,14,196,
+    36,10,34,188,38,11,85,193,101,32,72,179,124,159,195,91,151,112,199,144,239,164,130,181,
+    168,78,214,68,184,103,235,121,103,56,76,22,127,113,169,191,223,104,112,61,26,201,40,24,
+    118,198,166,244,226,199,12,180,25,201,217,217,122,169,251,131,71,165,163,174,166,245,156,99,
+    122,20,191,250,210,59,118,38,53,48,231,188,6,102,153,64,199,243,155,230,118,64,183,207,
+    214,211,233,141,221,139,176,179,168,241,105,109,118,218,204,249,169,154,117,79,13,234,136,214,
+    96,94,207,203,93,171,128,66,174,93,133,231,235,197,2,40,5,244,221,122,14,19,156,120,
+    206,229,120,209,108,0,42,191,133,243,205,139,175,137,46,158,210,83,239,235,106,162,122,180,
+    223,118,1,52,61,133,87,80,67,254,99,244,231,63,119,26,156,77,199,231,75,11,145,160,
+    134,153,156,29,209,173,209,139,87,71,223,191,124,245,245,203,231,239,94,127,251,230,55,248,
+    235,197,235,87,175,254,250,246,37,104,179,106,78,98,217,249,117,175,33,197,209,22,221,135,
+    44,253,251,147,70,182,17,222,145,225,26,217,47,210,237,113,203,103,48,229,106,9,124,130,
+    16,64,134,245,248,173,126,232,187,49,202,102,184,176,196,117,26,207,150,32,238,170,51,119,
+    86,79,202,209,200,108,129,176,206,227,199,32,115,199,83,100,167,85,249,14,25,113,190,122,
+    123,57,62,45,93,121,180,17,149,52,60,144,222,176,56,171,113,237,62,26,159,44,221,171,
+    186,43,255,84,139,74,90,84,91,90,124,235,106,36,129,83,26,118,33,132,188,100,227,193,
+    215,247,123,176,178,100,114,232,148,181,11,98,113,182,94,93,188,194,181,129,129,111,54,169,
+    172,38,118,47,162,93,220,178,30,94,131,80,7,221,0,191,221,224,111,55,222,192,252,74,
+    23,175,249,34,205,221,238,162,166,46,42,108,83,99,235,10,159,171,169,11,249,149,46,94,
+    243,69,90,96,173,95,94,156,45,234,89,187,130,164,3,141,218,251,118,120,77,63,111,122,
+    219,30,122,109,61,84,243,67,175,233,161,215,155,15,157,97,254,80,223,197,14,63,244,249,
+    181,251,216,80,254,120,221,111,214,251,192,109,246,172,81,88,27,11,124,57,57,99,13,27,
+    82,151,215,159,75,203,167,220,245,97,219,27,168,67,30,151,110,242,186,105,82,99,19,124,
+    1,144,245,163,213,205,101,89,159,49,45,108,72,153,222,104,132,44,254,219,111,119,183,163,
+    177,61,126,188,253,254,104,132,95,188,255,149,153,148,21,128,107,177,221,247,124,245,236,144,
+    88,116,136,79,245,207,60,152,245,33,78,157,245,63,182,24,158,245,71,203,139,241,4,68,
+    243,27,66,112,207,235,133,1,62,48,159,106,249,122,134,42,118,60,63,45,91,204,192,143,
+    130,196,112,202,233,18,37,203,54,88,173,217,225,222,240,185,11,142,59,192,233,253,249,247,
+    54,46,110,108,48,0,175,93,64,219,189,142,112,150,122,215,204,59,91,190,114,213,14,247,
+    9,6,5,3,34,47,68,65,237,133,215,2,139,228,2,142,132,191,155,106,119,249,93,151,
+    164,164,239,142,248,32,42,121,242,208,61,115,207,246,183,211,64,31,230,208,227,13,165,117,
+    129,223,60,26,131,247,205,95,191,126,247,250,237,243,103,239,222,189,252,222,232,129,163,231,
+    95,61,123,243,252,101,239,83,109,124,187,245,114,103,251,84,170,229,23,211,241,233,207,48,
+    161,197,186,100,21,179,85,195,188,29,207,0,3,62,72,191,240,35,59,180,139,187,58,153,
+    31,142,238,82,38,220,150,231,116,56,82,253,242,248,127,0,228,247,77,103,225,137,166,189,
+    199,215,149,215,135,23,224,243,50,251,126,187,48,74,69,220,174,33,140,194,130,65,156,214,
+    173,124,217,97,15,204,106,48,175,143,78,193,210,174,15,15,217,112,249,170,156,85,203,75,
+    180,122,100,1,175,65,86,223,236,208,20,141,129,102,44,11,131,250,175,7,6,254,131,12,
+    5,193,123,128,131,241,228,218,141,250,235,195,166,32,45,239,208,101,248,250,175,107,216,8,
+    243,218,146,52,18,217,51,131,146,244,20,91,48,237,239,160,115,154,54,202,178,209,180,214,
+    221,41,152,203,161,227,210,174,244,229,125,30,66,140,67,199,130,24,68,132,247,235,231,254,
+    11,190,251,85,219,185,68,189,145,217,194,49,80,111,60,175,150,245,106,81,95,2,208,59,
+    71,36,123,211,49,44,12,202,252,97,188,152,176,197,197,246,45,1,197,147,122,61,159,148,
+    147,193,120,122,82,78,106,231,203,178,90,130,100,24,124,83,47,96,116,11,231,253,120,1,
+    70,211,202,54,154,174,160,171,163,115,110,123,52,227,182,183,218,80,248,202,191,222,105,72,
+    25,195,251,175,173,33,125,155,109,213,177,165,58,22,214,189,109,171,163,117,7,44,171,145,
+    254,237,222,35,253,219,63,103,164,239,71,219,71,253,47,177,9,255,115,89,131,31,97,7,
+    174,88,111,8,205,139,64,147,139,71,235,209,95,208,34,43,135,171,242,26,216,187,60,106,
+    110,252,232,255,244,143,53,239,190,252,250,219,183,111,255,231,118,235,14,198,181,105,223,29,
+    173,9,91,181,84,184,165,201,123,109,4,194,178,179,230,189,221,26,220,41,64,62,210,56,
+    188,4,234,45,23,239,203,118,153,159,236,181,43,206,200,168,189,243,191,145,41,217,44,164,
+    165,231,143,214,158,117,225,253,142,7,125,247,209,242,151,197,202,125,116,9,171,216,177,205,
+    173,23,141,167,151,23,99,151,241,104,57,136,188,166,97,191,243,136,122,226,204,103,39,160,
+    123,113,56,186,170,247,193,154,236,95,244,14,92,4,190,212,25,168,91,254,247,166,255,232,
+    178,190,114,47,0,243,2,192,237,63,2,93,225,14,248,209,243,195,209,5,40,187,3,188,
+    201,173,161,193,185,61,54,128,192,126,107,138,233,123,29,155,11,26,117,172,180,182,253,65,
+    216,187,15,70,222,14,204,200,190,105,17,119,107,129,183,43,228,123,127,222,73,175,127,254,
+    212,86,209,71,66,227,29,124,167,49,242,199,112,221,110,200,252,96,158,251,135,2,236,219,
+    240,181,89,219,79,193,119,15,231,163,203,11,100,127,88,138,208,109,248,5,112,161,11,179,
+    251,203,187,31,190,61,2,126,66,68,216,243,12,87,61,2,26,116,87,189,77,89,242,29,
+    246,132,55,161,75,235,46,116,72,119,177,227,205,187,43,164,104,30,132,72,139,193,163,105,
+    125,14,150,41,188,25,192,187,75,12,204,111,56,144,97,120,97,111,159,46,115,215,114,249,
+    6,46,247,236,161,93,205,12,78,231,137,225,219,122,253,214,172,133,199,61,238,165,231,241,
+    228,168,133,221,75,213,49,55,12,52,58,60,20,217,12,226,213,187,154,245,196,244,65,73,
+    250,185,223,251,245,222,232,254,22,96,255,251,237,224,158,16,121,3,109,170,211,69,13,208,
+    165,92,57,0,141,166,213,170,42,151,135,27,128,105,233,184,95,126,249,239,158,243,69,121,
+    250,243,108,60,7,120,242,5,112,214,188,231,153,80,86,181,112,150,211,250,178,164,184,4,
+    79,218,89,226,75,17,25,1,29,1,170,40,151,28,181,224,208,217,120,82,95,25,232,179,
+    42,79,47,230,213,47,107,108,1,119,22,12,228,198,211,105,19,224,110,71,121,212,39,254,
+    62,54,64,126,217,32,249,57,240,243,18,25,175,59,167,95,187,32,230,220,129,77,169,38,
+    192,160,128,89,187,173,212,84,155,14,241,129,23,157,59,29,168,2,139,1,43,178,64,83,
+    99,240,229,116,188,92,14,254,189,231,212,11,231,221,162,190,58,89,84,147,243,114,240,125,
+    89,173,62,168,158,109,155,163,219,55,116,120,8,192,113,140,128,181,123,253,215,223,59,111,
+    53,171,143,111,250,114,188,94,46,97,1,238,253,6,243,240,225,206,238,223,206,16,220,127,
+    61,158,157,76,198,13,66,110,194,145,56,101,253,46,145,211,179,49,172,99,207,188,89,162,
+    129,216,21,247,36,162,218,154,44,201,231,31,127,132,241,128,85,201,17,4,183,247,211,79,
+    58,84,221,114,3,57,61,129,21,207,231,238,12,244,49,49,124,176,31,28,184,179,254,172,
+    227,221,28,64,59,21,148,187,125,74,205,122,126,162,121,53,253,125,204,228,8,99,192,116,
+    122,7,179,3,158,32,122,202,6,212,218,45,23,103,167,46,203,138,206,236,194,193,164,154,
+    97,148,185,6,248,43,115,101,46,252,78,162,144,31,183,113,111,177,15,232,226,163,183,46,
+    236,78,207,13,200,231,119,64,162,55,216,39,24,133,243,4,185,251,17,179,249,200,61,187,
+    101,74,15,216,181,109,243,234,162,67,156,86,111,11,1,190,175,150,21,166,126,240,116,26,
+    185,120,111,30,211,51,10,121,74,127,227,78,105,102,130,138,246,30,180,97,202,181,124,93,
+    249,30,42,133,207,156,103,206,233,24,236,191,10,64,141,179,0,129,93,207,156,249,122,118,
+    2,150,47,152,127,232,10,8,126,58,182,30,13,30,242,168,73,44,49,248,148,31,197,197,
+    2,53,113,94,227,194,124,40,231,184,108,0,166,166,77,118,66,187,240,204,29,48,224,3,
+    82,247,126,43,0,140,134,54,144,162,139,71,2,208,212,13,150,112,200,217,40,35,248,60,
+    24,180,17,253,230,234,136,16,81,59,76,144,45,5,158,30,169,221,221,215,35,30,212,17,
+    6,67,126,181,240,139,177,165,88,92,13,154,190,250,187,162,105,128,102,228,153,230,233,131,
+    182,173,126,243,26,87,160,79,82,176,109,50,8,116,171,249,26,168,20,94,61,91,247,103,
+    107,235,101,47,140,153,133,243,156,175,251,46,53,26,64,235,249,186,215,111,134,210,254,214,
+    243,124,27,225,204,174,125,23,154,183,109,6,47,236,6,129,110,176,255,162,147,116,177,44,
+    9,8,193,155,63,243,123,191,185,208,184,223,76,252,243,118,86,30,188,6,254,195,185,253,
+    174,123,191,217,189,252,174,233,29,182,254,115,16,177,94,48,244,6,193,208,94,113,14,191,
+    44,251,110,136,52,2,235,231,5,221,180,16,209,52,179,235,254,236,186,215,135,102,238,170,
+    207,255,143,233,99,81,158,12,168,84,61,45,122,251,244,73,144,24,158,62,232,180,241,11,
+    60,73,110,159,190,84,28,135,61,28,192,62,213,181,33,41,241,124,228,85,66,186,179,107,
+    111,118,243,71,100,200,173,2,242,15,8,146,187,196,228,94,71,142,240,255,30,42,18,72,
+    142,124,220,163,127,88,154,180,214,195,46,113,178,41,79,238,39,80,160,71,22,37,184,50,
+    221,203,129,185,28,120,93,241,211,202,213,106,254,254,45,140,237,187,106,20,116,16,129,110,
+    179,18,89,53,198,33,110,138,10,209,128,134,167,70,29,142,135,229,187,93,34,201,11,12,
+    227,142,182,136,36,221,244,180,94,73,211,224,160,121,204,36,18,94,3,155,141,6,65,251,
+    231,248,122,212,96,27,183,121,180,215,100,30,94,143,176,13,136,163,125,252,183,199,30,25,
+    218,32,47,216,231,105,247,221,1,229,235,54,127,114,110,38,215,118,199,253,149,244,216,116,
+    137,118,201,8,229,33,117,185,223,172,111,71,216,177,50,111,134,211,215,3,171,23,24,168,
+    117,170,145,255,164,250,44,240,159,236,239,87,108,220,255,201,197,249,125,54,186,126,252,248,
+    250,51,26,120,175,183,119,61,34,100,135,119,120,14,86,48,119,164,66,43,176,12,175,231,
+    239,203,197,178,116,237,150,103,35,28,57,202,250,219,6,61,238,131,1,138,235,243,100,239,
+    100,81,142,127,70,146,60,251,255,70,163,223,48,43,251,55,127,200,118,230,25,24,153,123,
+    180,250,215,79,246,208,139,176,71,59,3,127,92,15,70,103,7,174,188,9,122,107,229,126,
+    55,90,100,196,212,206,161,123,187,110,53,2,118,155,116,19,147,17,16,154,231,156,148,146,
+    26,215,129,127,179,241,229,37,152,133,53,166,58,114,219,165,145,120,212,19,229,85,58,203,
+    95,214,100,61,182,177,143,99,50,242,143,239,6,136,236,224,218,142,16,239,133,12,233,69,
+    158,14,249,117,208,226,213,12,237,251,225,83,141,70,201,209,51,128,123,232,81,196,38,236,
+    82,108,69,208,129,187,213,51,137,77,189,184,215,180,59,244,135,183,168,12,219,30,111,163,
+    31,219,180,66,164,180,2,175,203,110,181,192,142,182,77,40,249,32,33,190,129,38,63,246,
+    105,179,13,173,22,216,32,9,59,247,167,125,153,82,26,77,20,108,79,187,200,175,130,96,
+    51,134,76,47,165,60,33,73,15,218,244,101,17,43,97,14,233,249,234,194,133,78,84,132,
+    186,235,14,163,123,7,230,137,173,62,49,108,114,179,163,201,12,198,183,75,171,139,91,209,
+    247,112,141,177,19,219,119,63,51,142,105,67,116,147,122,229,106,175,215,192,184,189,102,88,
+    211,100,136,178,211,142,239,123,220,156,155,117,1,213,120,58,117,171,229,89,5,42,185,68,
+    139,246,233,198,98,14,102,8,193,14,113,29,71,35,191,115,255,170,238,29,154,146,9,15,
+    182,94,203,17,137,251,58,20,152,70,130,25,156,142,47,37,40,71,162,2,45,33,225,136,
+    129,205,17,245,25,23,72,52,81,203,65,61,159,222,80,202,35,122,173,206,48,238,247,18,
+    125,165,243,137,243,174,254,121,125,83,47,97,142,206,159,191,144,151,254,237,13,200,168,183,
+    210,27,117,133,111,36,46,28,224,123,191,111,58,94,254,217,115,222,190,254,242,203,239,159,
+    125,247,149,243,108,89,141,29,60,136,210,121,71,46,48,36,243,231,245,108,182,198,95,197,
+    25,133,157,189,189,88,84,243,159,57,158,215,204,207,193,249,213,103,206,139,245,229,250,134,
+    70,246,69,57,191,169,215,39,232,229,42,175,41,191,155,157,92,203,245,2,253,92,212,149,
+    17,158,87,23,245,178,236,198,212,223,151,184,82,112,163,94,79,39,176,110,211,41,8,226,
+    105,125,69,47,189,168,23,213,7,140,8,191,19,121,219,141,207,211,202,59,32,21,121,128,
+    151,227,203,114,241,223,150,228,117,47,23,239,97,30,239,75,88,73,120,29,149,52,80,4,
+    185,201,123,6,58,152,173,103,221,212,228,109,34,201,57,63,191,150,165,126,62,190,124,69,
+    123,234,222,41,125,107,157,66,226,140,219,172,44,2,253,198,45,44,68,108,39,117,128,9,
+    17,236,27,134,173,55,51,74,156,49,240,73,127,108,63,4,28,208,95,182,4,143,170,52,
+    4,203,33,60,112,151,225,254,56,68,41,241,161,47,57,132,191,107,143,226,93,242,26,150,
+    141,22,202,25,111,82,59,23,144,140,47,61,231,61,112,11,87,17,108,37,231,161,243,242,
+    151,117,5,141,48,160,43,133,3,75,208,245,147,241,130,203,9,44,30,81,113,243,245,165,
+    121,100,69,165,72,24,231,166,151,50,57,73,201,131,20,179,180,177,34,212,213,83,28,110,
+    83,170,0,202,111,9,227,195,45,102,111,239,177,21,87,61,222,165,156,90,82,184,69,67,
+    253,223,173,136,84,222,234,67,148,145,84,91,184,20,217,253,220,127,186,141,173,120,220,40,
+    107,193,86,237,211,59,54,242,93,63,184,132,196,131,30,98,210,147,222,224,100,135,193,33,
+    30,134,134,237,130,193,135,254,230,120,48,156,212,218,85,190,157,56,53,195,89,210,56,246,
+    101,134,166,251,126,19,58,242,218,75,198,36,243,186,185,82,59,22,105,70,121,86,55,222,
+    172,201,173,234,112,36,69,56,238,239,94,199,214,187,125,235,220,153,176,212,89,181,88,174,
+    6,64,15,19,32,165,213,61,112,25,165,76,156,96,23,76,236,175,176,131,255,87,158,223,
+    73,249,255,20,111,158,206,130,243,58,20,140,99,159,131,144,217,123,220,108,179,215,177,238,
+    133,200,47,215,32,72,57,117,142,45,116,211,220,24,153,222,70,243,29,246,60,24,55,229,
+    240,122,52,42,65,148,255,186,215,135,215,141,254,242,213,179,175,95,9,89,61,217,107,140,
+    220,17,97,104,156,40,25,131,240,84,175,155,165,70,143,118,67,139,210,134,219,222,96,66,
+    0,222,235,118,142,207,223,210,125,95,208,211,225,136,40,182,79,46,131,62,95,195,46,251,
+    130,154,224,62,146,175,220,23,164,37,33,189,237,164,116,111,76,223,161,30,21,66,255,52,
+    244,114,215,255,254,0,61,221,171,107,69,111,77,129,35,238,163,255,196,114,17,225,21,32,
+    21,152,241,103,120,90,23,52,190,131,177,226,190,129,204,165,247,24,137,248,177,233,170,37,
+    154,166,195,123,245,135,57,252,104,168,247,182,247,234,17,233,126,247,122,0,255,110,190,33,
+    187,223,43,160,49,70,195,110,121,197,62,190,163,67,246,119,247,25,220,57,104,150,226,50,
+    112,229,50,136,54,220,224,13,191,52,86,172,237,190,239,58,216,188,238,162,223,43,168,219,
+    196,152,27,222,208,161,221,183,230,254,70,8,116,243,201,161,227,190,3,227,9,145,12,65,
+    92,128,227,167,88,175,55,49,48,199,89,214,83,146,250,127,234,89,74,162,121,13,245,221,
+    4,121,155,203,74,77,252,13,140,150,247,20,131,191,123,16,136,168,22,160,106,113,119,22,
+    206,248,242,114,81,95,87,179,241,237,131,248,219,115,233,255,80,13,224,223,92,192,139,101,
+    117,62,119,88,118,76,192,140,0,225,58,61,31,207,102,99,87,254,186,238,150,164,159,192,
+    86,104,231,179,189,118,152,80,10,244,3,198,232,18,99,122,142,73,146,225,141,176,164,148,
+    188,2,123,21,193,100,94,234,169,63,111,122,35,242,118,201,200,174,123,251,242,219,77,111,
+    96,174,237,223,176,204,148,185,119,114,7,238,74,232,101,33,244,191,66,0,159,74,14,109,
+    171,94,60,47,235,89,9,202,254,212,153,149,227,121,215,130,217,90,132,237,143,118,36,181,
+    109,77,217,53,96,145,198,36,236,97,70,102,50,79,223,124,251,238,229,161,211,165,136,242,
+    236,12,161,226,251,110,79,151,38,207,9,90,160,79,121,233,0,204,91,143,77,190,40,250,
+    178,240,45,29,190,41,225,221,188,73,206,107,122,192,12,6,55,25,76,187,211,242,18,59,
+    112,184,224,29,224,62,39,129,224,42,176,223,14,77,163,201,223,215,203,149,113,227,29,55,
+    195,57,238,140,103,6,20,231,156,78,193,110,0,211,4,40,229,244,231,37,117,4,111,155,
+    86,43,54,27,79,47,48,161,170,169,95,6,34,31,99,213,97,103,126,146,33,130,89,224,
+    221,98,199,46,8,31,157,78,65,132,185,91,242,154,188,102,105,135,189,141,36,228,45,89,
+    193,183,165,4,123,152,149,113,140,137,179,199,180,82,243,90,181,25,254,145,188,219,182,10,
+    27,123,6,91,28,165,29,44,46,90,225,98,132,119,232,239,35,243,115,205,100,48,175,104,
+    232,252,64,137,222,86,118,209,145,48,244,234,216,163,85,151,203,232,124,224,68,30,185,205,
+    150,166,3,123,229,52,103,86,112,106,54,76,133,162,114,200,55,175,22,229,114,94,78,29,
+    120,193,140,78,163,160,138,243,177,88,143,40,214,86,66,201,221,167,128,20,96,145,164,26,
+    149,55,219,140,18,71,78,195,183,211,96,187,251,182,61,235,199,116,213,222,62,84,96,94,
+    53,30,237,106,229,246,182,191,169,21,138,77,170,211,182,23,54,34,185,125,96,180,245,190,
+    122,143,164,77,111,201,151,198,162,50,92,142,94,55,87,250,161,137,205,150,248,252,200,116,
+    102,122,67,35,159,190,129,65,73,209,31,252,246,152,198,248,228,129,233,151,15,72,43,69,
+    240,244,167,59,178,52,127,251,77,141,174,205,164,70,150,236,14,78,50,239,158,236,157,212,
+    245,20,87,99,254,78,168,126,116,54,6,36,69,232,18,47,31,93,129,148,45,39,143,31,
+    239,232,216,48,11,172,142,234,5,135,252,100,79,63,180,65,207,219,169,28,147,8,71,3,
+    252,185,81,131,245,199,19,187,175,102,238,197,120,122,246,194,200,162,38,191,85,181,154,212,
+    171,31,234,31,102,114,218,66,221,191,154,109,105,80,53,13,42,105,32,129,174,31,72,90,
+    80,241,69,91,161,42,23,5,28,6,18,200,106,200,103,35,233,189,187,178,157,23,191,234,
+    164,96,182,242,68,132,144,43,227,246,170,122,97,13,248,85,125,235,131,109,232,121,203,163,
+    213,189,30,173,188,29,36,34,19,122,10,61,31,6,7,170,127,162,62,150,146,51,160,101,
+    183,75,66,191,185,119,145,28,174,184,44,107,219,199,211,96,240,234,240,21,144,250,100,235,
+    61,89,255,87,181,247,170,18,71,188,249,11,169,173,58,251,11,239,73,87,82,126,118,184,
+    75,84,114,254,168,218,160,210,13,15,184,11,246,206,180,191,182,241,48,59,131,165,9,134,
+    113,65,221,76,126,144,81,13,191,240,15,180,220,7,20,93,195,31,157,224,154,216,43,86,
+    206,12,40,162,64,149,32,128,13,111,71,116,176,81,168,26,133,155,141,190,100,63,115,224,
+    133,244,226,62,253,69,236,213,22,77,11,221,129,169,211,189,94,29,8,155,244,76,126,240,
+    237,20,162,23,18,43,12,104,22,253,23,7,96,183,201,86,25,10,55,61,239,88,84,126,
+    52,236,191,232,127,137,15,111,41,34,255,7,84,38,232,12,117,223,251,51,155,53,71,92,
+    250,247,71,235,18,204,51,66,214,205,37,24,77,127,212,80,251,39,169,96,32,85,227,154,
+    181,254,220,239,61,118,101,189,63,219,72,158,250,251,248,180,9,154,117,147,195,1,10,227,
+    84,190,2,97,251,55,10,202,252,247,241,105,125,82,141,231,148,49,94,145,156,241,238,251,
+    68,229,193,67,34,59,54,235,80,132,74,250,48,148,157,84,128,55,1,41,246,101,78,91,
+    207,21,120,242,175,40,194,55,207,192,220,250,240,31,45,253,39,219,251,173,53,22,47,220,
+    174,56,179,242,6,54,132,159,215,10,48,111,67,13,78,41,137,184,222,236,80,178,139,55,
+    123,107,101,134,4,165,58,162,82,226,83,219,94,81,125,196,43,170,109,175,168,182,188,2,
+    36,223,223,159,45,74,152,7,198,202,120,74,189,254,142,148,69,211,184,106,27,87,189,93,
+    85,82,95,234,204,190,70,187,52,200,88,171,22,237,101,105,211,46,238,80,172,156,129,68,
+    110,90,25,125,51,48,81,113,106,245,200,61,209,52,245,218,89,108,41,114,254,20,162,95,
+    10,17,31,40,254,167,235,213,27,44,66,127,128,54,254,242,203,127,127,250,231,14,210,63,
+    63,191,62,34,82,97,209,123,216,189,119,34,137,128,221,6,70,0,160,76,233,234,156,134,
+    62,188,102,243,149,222,121,32,104,128,97,178,163,127,55,248,211,65,178,208,249,217,136,216,
+    110,159,219,226,94,93,102,197,148,211,7,52,175,104,171,96,238,163,59,231,30,246,221,159,
+    7,65,183,148,200,214,133,61,117,188,216,239,90,40,255,75,149,178,208,213,127,233,225,79,
+    175,135,73,3,219,64,109,96,4,193,129,123,79,118,178,105,229,63,171,234,126,104,205,233,
+    3,42,78,239,239,14,249,84,117,166,156,167,126,50,119,239,170,51,37,69,241,39,44,15,
+    188,163,250,175,91,53,202,82,243,249,5,174,250,125,108,234,167,183,25,180,173,115,129,152,
+    227,80,58,249,126,251,75,236,228,51,116,10,169,228,81,180,113,101,245,31,95,87,96,228,
+    169,209,246,158,90,99,60,220,48,115,119,23,198,255,246,91,199,69,243,9,78,192,217,120,
+    79,51,134,187,10,58,133,168,175,170,190,196,201,2,15,143,193,54,167,169,136,111,108,243,
+    132,157,223,181,111,102,7,92,122,152,49,46,111,81,144,103,35,110,140,165,189,30,86,217,
+    122,247,49,215,27,225,253,15,80,245,219,198,123,123,122,80,59,118,173,238,59,209,202,13,
+    180,188,173,159,77,232,124,91,207,191,91,85,193,246,94,185,187,144,140,12,105,87,233,176,
+    90,93,87,19,244,29,143,90,196,182,169,100,55,244,26,63,72,124,45,53,198,119,158,68,
+    212,102,221,52,85,203,22,89,163,232,149,148,108,150,1,227,159,203,111,154,13,192,160,142,
+    187,61,156,118,180,246,118,220,80,39,203,120,183,158,247,233,61,240,100,76,79,39,38,221,
+    43,192,226,221,55,70,209,52,92,209,233,175,205,1,41,187,11,247,254,104,172,194,251,99,
+    33,8,79,146,110,186,167,171,124,142,101,92,157,189,128,191,183,137,21,82,157,110,123,16,
+    203,161,41,43,232,110,93,247,192,2,111,15,55,225,144,3,109,123,27,187,115,184,185,97,
+    94,171,81,187,132,216,92,132,46,91,74,244,246,186,75,118,168,22,208,219,107,86,226,176,
+    93,20,152,252,110,158,225,233,117,70,108,209,124,247,212,96,242,115,153,35,174,144,224,77,
+    253,195,88,18,125,58,97,36,58,234,138,242,103,219,60,1,234,169,29,150,51,41,207,241,
+    196,159,49,7,95,107,231,88,13,234,216,193,236,189,114,81,119,227,133,18,130,151,12,115,
+    219,239,230,246,123,163,45,108,169,23,236,86,197,2,164,210,89,194,173,212,212,164,37,184,
+    42,32,142,73,177,91,231,111,229,26,108,76,155,122,120,224,212,119,154,191,127,104,5,96,
+    10,247,152,63,205,231,158,115,223,150,35,242,143,88,128,247,230,53,255,172,69,216,65,4,
+    77,225,225,191,130,18,182,56,59,254,24,67,72,127,31,71,19,183,47,197,63,131,48,154,
+    245,248,132,212,241,128,53,209,36,178,253,224,143,243,197,184,154,155,131,63,158,99,234,7,
+    31,142,95,77,59,199,180,57,227,171,241,141,131,0,140,179,18,204,34,149,206,180,130,117,
+    55,121,37,212,199,180,62,199,60,151,139,217,210,169,64,249,151,229,100,121,107,61,25,165,
+    155,188,226,215,109,214,42,0,108,88,251,61,201,73,193,223,233,24,85,143,170,203,55,210,
+    7,120,46,12,61,117,217,213,171,110,234,149,53,183,99,236,246,88,234,52,38,124,24,55,
+    60,95,113,33,222,0,122,193,115,56,233,251,18,232,209,60,246,64,217,240,252,65,71,142,
+    59,39,44,110,148,122,108,156,111,130,199,194,244,116,141,192,143,47,127,89,14,157,192,31,
+    4,225,79,92,190,242,166,253,40,194,114,125,122,193,41,66,171,45,223,53,185,104,14,150,
+    164,175,104,156,211,168,151,78,176,163,42,100,110,213,236,181,235,171,75,243,112,146,187,43,
+    243,252,33,59,139,168,66,111,195,153,162,147,71,67,183,9,35,218,117,178,161,235,54,225,
+    199,3,23,95,9,127,240,63,189,253,38,20,41,119,110,248,206,77,175,215,20,211,134,173,
+    149,103,138,145,137,82,76,225,43,77,107,21,162,171,122,21,82,145,57,92,232,211,87,10,
+    232,138,249,167,251,230,155,198,83,24,246,187,239,17,0,194,128,157,118,162,75,109,32,79,
+    46,97,187,97,157,249,40,14,68,17,237,82,195,210,57,125,42,103,60,118,78,164,212,3,
+    147,184,38,3,204,224,113,158,211,105,156,72,104,29,90,136,6,65,242,211,174,204,228,249,
+    174,164,228,187,55,146,242,150,173,100,100,171,232,71,23,23,4,155,231,182,90,165,1,161,
+    217,186,54,9,85,150,178,205,69,181,169,227,156,130,207,229,150,125,199,48,116,185,101,215,
+    173,207,83,204,255,189,114,101,207,155,90,9,76,181,237,19,5,108,86,100,135,238,0,159,
+    57,112,93,252,71,145,75,175,127,190,127,7,17,187,166,156,28,8,6,250,234,148,73,168,
+    76,221,230,232,103,43,93,23,143,129,238,245,203,29,9,185,227,69,57,54,73,121,44,205,
+    157,211,49,230,43,220,128,144,89,207,65,128,182,5,108,29,162,171,165,48,136,250,161,111,
+    148,160,82,186,32,193,224,28,95,128,136,106,101,117,147,12,71,90,79,170,1,88,148,224,
+    177,152,226,190,102,249,247,227,179,203,203,114,62,169,174,157,103,63,13,157,255,64,37,119,
+    117,81,206,183,84,210,141,79,234,247,37,190,138,202,149,240,64,77,83,9,197,249,141,213,
+    176,28,122,252,240,49,166,255,83,117,57,241,66,243,87,213,115,62,27,57,193,177,156,146,
+    218,156,11,6,173,70,206,197,142,138,38,89,37,116,230,186,122,159,42,69,218,23,22,97,
+    155,86,179,182,188,230,162,183,163,14,103,182,125,75,103,205,158,206,104,83,59,199,159,84,
+    162,160,218,177,168,84,201,109,47,169,182,191,164,106,35,124,230,37,150,224,109,70,217,28,
+    254,81,125,190,57,196,106,11,57,127,119,81,253,226,14,220,109,141,15,182,117,187,165,242,
+    232,23,87,206,78,48,211,197,62,241,160,16,156,168,221,190,188,110,122,173,14,54,39,56,
+    219,88,153,243,217,120,197,94,209,242,186,223,14,200,136,146,95,54,107,14,241,145,83,215,
+    149,244,255,95,122,253,205,105,108,125,77,169,230,49,232,204,94,230,52,40,175,59,193,214,
+    102,134,7,221,248,107,247,99,56,220,235,128,7,196,255,172,60,58,69,192,112,59,122,56,
+    73,230,143,59,60,217,84,248,49,34,227,143,17,181,140,206,73,161,40,7,216,112,37,101,
+    191,116,126,124,91,158,14,157,120,24,254,116,27,178,138,72,1,52,239,117,239,82,242,189,
+    209,70,221,23,182,234,95,81,105,28,39,184,109,76,165,3,173,165,198,230,62,83,226,100,
+    234,70,188,97,213,48,11,12,73,123,53,216,139,220,194,151,88,43,137,95,106,83,211,57,
+    126,192,212,25,81,185,119,163,156,205,21,224,195,6,168,49,193,152,46,230,236,10,111,252,
+    108,213,20,228,34,180,188,42,141,196,36,81,181,220,41,209,165,166,183,145,234,44,83,91,
+    41,46,66,252,170,110,9,6,246,158,203,171,27,65,253,197,79,44,112,175,46,42,192,138,
+    227,211,211,122,77,159,199,146,243,109,154,39,81,110,99,148,137,75,10,208,143,126,9,221,
+    81,1,45,180,149,122,110,192,173,131,238,193,225,115,7,214,180,94,47,1,20,223,192,134,
+    12,157,23,237,64,198,4,59,185,186,213,44,180,124,98,139,119,126,219,150,153,108,252,151,
+    227,211,139,70,225,193,88,78,233,188,228,37,150,214,46,6,112,29,79,175,128,229,88,11,
+    240,133,133,197,22,229,226,208,25,79,107,201,147,95,252,255,237,125,249,115,219,70,210,232,
+    239,254,43,144,47,91,94,128,4,41,2,60,37,89,78,201,241,249,226,100,243,98,111,242,
+    170,82,94,145,20,33,9,17,69,232,227,161,35,201,254,239,175,175,185,112,80,164,172,36,
+    78,118,157,138,77,0,51,61,51,61,61,61,61,61,125,140,88,158,66,3,122,137,104,161,
+    92,227,8,203,208,170,217,6,9,68,58,63,158,146,95,28,57,193,44,213,193,143,160,36,
+    112,38,184,92,36,33,39,32,35,243,121,6,6,136,27,205,143,245,196,82,181,116,122,150,
+    173,146,37,156,127,46,179,20,163,42,106,79,111,69,7,68,27,75,164,109,116,21,1,212,
+    78,86,199,232,241,157,65,95,35,39,116,155,22,221,173,67,196,124,52,73,225,77,114,179,
+    164,92,103,186,75,148,44,111,225,134,117,71,250,128,14,194,18,74,228,226,14,79,6,243,
+    68,137,155,23,233,132,58,233,177,7,37,170,92,121,199,77,230,115,32,18,246,90,31,177,
+    171,2,230,178,34,23,9,152,81,73,119,166,114,166,33,197,46,17,143,11,140,90,57,154,
+    222,46,82,237,78,160,125,216,73,178,37,219,116,246,168,206,198,171,197,114,141,163,58,227,
+    255,31,140,51,218,211,115,73,0,222,231,157,212,223,175,221,229,137,239,46,82,223,18,18,
+    0,70,243,231,240,172,116,231,88,100,78,201,76,151,44,108,185,4,22,213,181,191,170,167,
+    236,105,171,28,230,215,104,186,66,81,178,184,86,40,229,45,184,186,32,131,23,235,33,12,
+    61,128,166,196,239,67,232,73,16,60,133,131,110,175,74,40,125,104,49,198,186,26,56,142,
+    253,77,54,81,37,197,40,151,127,64,115,209,231,223,68,117,211,145,1,74,138,197,222,100,
+    146,10,132,29,35,125,20,202,100,82,93,151,201,71,110,66,131,235,148,132,1,119,119,55,
+    67,39,106,168,144,118,170,196,24,132,154,173,135,154,85,65,205,42,161,78,146,169,10,201,
+    27,251,48,126,12,31,50,201,154,183,13,252,125,75,191,111,66,243,254,166,110,222,23,67,
+    43,224,245,153,14,50,204,16,66,250,231,166,40,147,165,150,80,70,232,168,20,200,146,27,
+    59,178,30,13,178,178,236,177,5,214,224,180,86,66,116,141,168,64,211,166,21,131,184,202,
+    170,114,172,203,150,163,41,185,171,74,148,41,52,190,38,135,86,120,169,127,63,137,205,239,
+    122,61,199,44,38,45,223,84,58,104,125,65,51,178,71,127,55,56,120,42,253,14,106,121,
+    187,103,57,134,102,188,178,26,68,117,225,164,69,63,10,17,193,206,36,101,145,42,85,183,
+    75,45,211,217,42,97,38,112,150,62,157,102,110,42,208,217,65,212,83,227,133,141,221,30,
+    237,57,60,156,63,153,237,159,23,70,133,39,120,166,135,250,52,171,3,216,6,128,173,249,
+    254,57,6,210,11,118,102,133,181,183,242,215,248,145,230,137,118,149,178,39,2,208,86,109,
+    85,252,154,169,175,89,241,235,40,141,153,25,243,34,172,1,44,252,191,206,124,47,221,59,
+    96,98,95,233,37,176,106,162,8,78,31,243,160,178,152,185,53,175,60,0,147,225,255,2,
+    42,67,80,153,6,149,57,160,242,44,99,156,250,141,216,234,17,255,130,85,146,47,151,81,
+    57,221,28,255,130,21,146,103,159,169,239,55,198,105,221,98,189,227,180,54,78,27,157,26,
+    32,160,118,44,167,186,29,63,198,231,42,221,195,60,67,40,153,3,37,171,141,51,132,146,
+    161,114,202,130,146,85,67,97,202,155,99,40,123,178,92,58,62,174,115,20,189,121,109,222,
+    0,70,175,14,40,180,152,234,20,127,13,202,212,132,104,118,102,214,61,63,65,162,114,161,
+    222,189,92,85,6,106,53,49,62,3,250,167,41,193,128,20,3,13,37,119,162,91,91,106,
+    11,164,175,14,95,162,206,171,233,69,187,34,197,46,71,231,78,20,143,133,142,129,109,29,
+    52,68,66,30,77,97,215,158,220,110,47,132,150,138,34,210,125,232,210,90,173,218,38,66,
+    201,123,43,92,34,122,223,218,10,39,78,148,90,148,79,222,7,245,162,40,242,62,104,20,
+    37,36,17,16,240,107,46,4,7,156,46,108,236,170,9,65,44,35,99,64,57,116,154,92,
+    37,211,80,14,11,103,35,137,145,68,183,152,150,110,146,37,56,64,157,62,101,124,185,86,
+    133,111,112,23,29,46,223,113,248,164,181,88,212,114,140,141,42,75,113,75,145,0,163,29,
+    39,166,236,123,29,247,177,17,229,6,126,76,22,78,226,75,235,81,206,88,144,73,65,196,
+    173,210,130,225,43,43,183,176,161,156,156,126,12,240,125,124,38,129,154,198,40,249,74,108,
+    40,29,90,72,116,94,172,135,203,232,32,75,62,194,120,190,208,230,121,141,133,209,28,19,
+    20,189,237,48,245,199,189,10,109,47,149,22,59,176,141,209,233,170,90,181,94,188,116,142,
+    4,144,170,108,36,212,83,86,152,215,79,115,137,166,172,211,42,29,9,113,177,234,36,190,
+    114,86,196,21,59,1,185,255,86,78,141,112,48,105,158,194,217,30,223,17,162,38,9,28,
+    233,83,206,219,51,135,151,33,212,188,158,96,186,94,170,154,206,213,41,4,221,175,103,124,
+    10,34,253,248,56,185,205,132,29,124,253,252,173,172,114,76,169,36,241,191,66,47,85,30,
+    88,148,18,120,5,167,21,47,65,78,17,122,255,115,232,189,204,113,35,2,112,104,221,215,
+    124,109,70,71,131,66,235,241,233,255,120,126,220,138,59,65,104,72,199,210,224,139,251,237,
+    10,163,27,52,84,194,34,39,186,128,240,194,116,206,161,203,232,172,100,14,194,135,42,182,
+    135,115,41,4,85,178,203,209,255,174,18,18,62,27,124,54,205,210,137,163,5,198,152,97,
+    168,38,209,167,52,101,80,235,13,229,134,235,136,111,184,134,138,29,219,36,188,39,235,36,
+    73,241,148,170,12,110,0,225,75,157,111,219,154,108,169,68,94,219,151,163,5,7,47,227,
+    37,192,169,179,89,147,64,75,192,179,116,211,67,108,114,40,150,26,26,127,227,209,148,22,
+    44,74,64,243,12,77,176,80,61,146,220,140,142,151,185,128,116,214,1,29,79,212,112,244,
+    206,120,153,171,36,209,0,226,36,61,197,147,16,237,22,139,51,84,40,156,141,16,19,0,
+    102,177,68,72,211,91,242,158,47,168,91,240,178,15,157,226,177,143,77,14,138,98,98,125,
+    161,65,65,193,111,158,42,50,13,219,211,133,116,170,167,60,145,88,1,67,218,187,221,153,
+    240,118,188,6,109,6,94,195,115,191,4,168,26,167,235,69,225,9,131,15,249,248,73,166,
+    235,71,180,176,114,161,25,220,91,77,59,46,168,166,139,18,50,96,26,146,181,48,190,117,
+    200,139,180,247,152,21,29,149,49,150,126,239,24,227,135,28,39,146,240,204,27,98,112,220,
+    96,24,202,6,2,188,14,203,235,11,227,113,6,179,206,215,196,77,229,184,234,12,221,210,
+    168,173,185,123,21,4,202,16,28,125,162,210,8,137,4,145,11,2,208,180,150,53,107,173,
+    204,189,41,146,187,23,237,67,187,243,83,202,118,55,93,137,141,16,94,207,35,204,11,231,
+    114,15,40,105,54,154,207,179,107,12,33,34,156,8,67,173,2,189,33,61,19,189,224,234,
+    22,238,13,211,121,180,114,115,163,221,61,66,163,224,26,167,50,152,144,162,76,76,181,61,
+    2,3,198,11,69,79,5,72,65,254,107,24,153,133,30,167,51,87,7,92,117,223,22,219,
+    132,103,113,2,192,2,126,61,36,233,121,58,154,22,66,60,48,41,74,125,101,151,135,120,
+    56,104,217,35,30,141,41,216,11,42,175,38,201,13,54,96,76,255,183,111,46,205,230,128,
+    208,174,5,31,182,135,84,46,247,237,4,125,213,144,115,161,39,100,57,235,136,9,54,238,
+    188,119,176,123,16,21,95,0,243,89,205,41,130,205,108,178,162,137,154,140,48,220,22,237,
+    109,60,45,123,123,104,179,54,93,192,191,128,229,41,246,117,72,145,26,60,122,158,2,112,
+    220,3,203,98,91,240,224,204,80,238,19,218,162,122,242,183,143,110,65,44,130,246,64,197,
+    218,109,118,79,108,190,249,136,44,250,177,228,1,25,181,108,22,101,161,34,43,221,175,196,
+    132,85,41,39,71,157,203,45,14,204,240,246,246,74,108,71,114,108,117,255,145,172,66,62,
+    68,209,111,43,128,184,172,10,243,241,202,250,104,144,86,102,17,41,166,202,122,200,118,124,
+    142,53,212,183,103,211,26,114,88,166,157,60,1,208,189,42,19,105,200,118,147,154,240,242,
+    162,184,49,58,34,32,198,93,222,74,255,148,46,66,219,135,134,92,32,74,37,72,54,82,
+    117,50,77,231,187,38,9,169,203,172,166,171,157,246,195,17,240,187,209,105,226,243,13,196,
+    85,242,230,31,223,137,43,70,104,181,162,28,126,170,237,171,53,26,10,45,148,64,102,143,
+    252,27,223,109,33,44,31,86,160,19,170,217,136,93,23,231,195,218,140,239,25,232,195,241,
+    45,65,75,240,103,176,12,252,124,155,184,6,1,30,117,27,215,73,104,124,88,76,160,13,
+    114,178,218,38,22,136,105,112,147,136,31,5,179,138,85,139,209,90,88,112,133,107,54,165,
+    96,226,254,243,18,52,191,175,170,116,220,165,209,55,114,119,254,213,225,55,178,247,190,205,
+    41,220,171,80,186,207,83,55,124,20,250,211,138,232,159,207,74,182,49,160,212,6,84,84,
+    158,125,127,105,78,99,54,68,75,243,64,231,49,117,192,111,53,139,9,232,137,60,156,238,
+    152,19,34,87,38,85,116,184,182,8,233,192,215,120,251,228,66,120,95,248,118,80,105,204,
+    3,89,17,195,4,167,194,14,100,146,139,238,113,230,23,153,20,173,26,89,172,202,193,183,
+    16,79,100,125,181,170,236,48,47,211,13,43,22,236,28,158,59,24,54,182,92,132,61,185,
+    10,46,168,121,215,80,137,92,63,171,154,5,99,184,87,72,1,254,38,36,113,246,62,55,
+    200,175,38,54,111,43,145,197,148,195,226,201,43,44,193,86,112,185,44,246,95,77,48,86,
+    225,75,212,18,195,63,105,80,127,94,163,30,213,94,158,85,120,207,162,22,158,224,109,227,
+    198,232,40,112,175,78,161,231,106,75,248,106,82,32,116,40,240,82,127,135,174,233,237,227,
+    101,90,92,20,207,121,216,62,65,221,225,127,234,8,161,74,49,122,57,57,121,7,27,138,
+    255,156,76,19,113,144,66,123,21,21,40,174,14,35,80,53,150,119,73,78,45,58,68,172,
+    214,1,151,170,108,80,147,6,131,59,226,48,157,236,201,60,213,191,191,172,25,246,220,84,
+    62,164,248,96,191,135,183,212,14,62,80,35,84,57,216,212,7,24,64,110,220,78,168,221,
+    64,173,247,242,110,221,190,89,226,14,186,217,174,249,80,254,160,182,24,180,145,87,232,58,
+    103,80,79,185,140,126,196,102,88,181,11,230,118,56,98,216,119,178,251,59,118,166,235,44,
+    176,88,253,58,95,81,211,94,160,226,143,137,143,179,59,145,107,68,17,237,20,218,60,121,
+    78,23,103,238,54,146,190,205,0,245,190,113,224,100,47,183,143,219,182,45,9,225,35,246,
+    109,234,153,1,39,207,2,179,230,12,170,118,176,237,30,190,99,80,107,221,167,84,228,166,
+    213,236,209,112,191,245,155,88,41,2,202,152,236,29,219,68,41,249,109,196,88,239,32,173,
+    235,208,129,21,108,156,179,213,1,202,250,248,215,90,113,99,57,168,222,6,213,185,93,75,
+    130,210,128,56,83,220,221,149,159,170,222,224,181,127,106,129,170,152,138,43,211,211,110,192,
+    63,12,129,177,9,201,166,41,108,169,210,29,121,108,157,108,240,212,227,215,135,223,126,245,
+    226,232,255,254,243,240,249,1,62,255,24,245,62,248,248,195,111,53,91,152,254,169,181,59,
+    104,119,217,159,98,208,139,58,173,93,248,221,138,122,189,206,32,110,181,241,134,176,213,26,
+    180,227,78,175,63,232,12,40,171,223,96,183,211,106,237,182,187,176,39,11,152,221,126,127,
+    208,239,181,122,125,2,211,139,163,184,219,69,23,141,214,160,183,219,85,32,59,237,110,119,
+    16,237,70,125,2,210,233,116,251,221,86,220,214,64,162,206,110,167,223,233,117,34,132,1,
+    240,90,131,168,61,128,223,113,107,23,203,245,123,240,59,106,117,119,161,199,80,6,19,89,
+    245,186,189,118,20,183,98,3,98,183,219,239,245,250,109,132,16,247,91,187,157,193,0,91,
+    110,247,97,40,189,126,68,16,118,59,221,86,187,219,162,145,244,161,151,173,78,167,53,208,
+    16,226,118,103,23,134,137,16,6,113,55,134,145,247,17,3,93,64,70,123,151,251,128,137,
+    233,122,189,221,94,15,33,244,34,28,120,220,233,24,8,189,110,63,130,177,98,195,189,238,
+    96,183,31,13,6,136,221,126,55,142,122,125,248,6,191,59,221,54,64,27,180,98,4,209,
+    233,14,0,219,48,96,3,98,208,3,132,247,251,136,193,78,60,104,117,251,173,30,57,188,
+    180,218,253,110,212,111,33,86,122,237,120,0,157,239,210,56,226,65,212,131,65,117,35,3,
+    98,183,223,29,0,16,28,72,212,129,89,136,6,61,236,252,238,0,254,180,187,125,156,168,
+    65,15,70,7,109,19,8,68,50,204,26,208,66,9,140,70,21,144,168,25,245,160,233,14,
+    33,166,12,132,30,73,163,106,40,81,19,199,223,105,71,248,186,100,32,26,157,141,42,124,
+    198,64,34,64,89,3,154,223,18,108,170,41,109,84,205,105,27,202,68,237,94,76,228,91,
+    156,81,77,85,141,42,178,234,2,122,162,120,183,219,225,142,229,137,202,80,118,163,138,180,
+    119,155,80,163,219,234,116,119,195,50,194,182,22,88,163,106,133,197,113,19,58,218,223,237,
+    224,224,138,203,203,90,234,141,202,181,14,141,54,163,184,211,167,110,152,117,14,204,165,138,
+    173,252,112,244,229,235,23,207,152,177,116,45,190,210,105,247,96,165,182,169,191,173,118,27,
+    128,195,116,209,146,105,117,128,150,96,36,187,72,155,64,6,125,248,4,236,133,62,181,218,
+    64,47,81,127,55,226,39,88,169,208,223,14,124,28,0,10,0,129,113,139,124,191,96,194,
+    6,131,254,238,110,119,23,159,226,102,52,192,254,119,187,73,163,139,198,86,189,22,204,68,
+    171,31,201,35,34,162,3,100,7,143,130,13,6,14,163,235,247,128,54,194,62,20,137,118,
+    97,226,119,217,177,12,40,36,234,246,122,48,57,97,163,215,140,129,226,96,58,58,248,141,
+    42,198,208,125,168,59,128,213,219,105,14,96,21,199,64,160,220,17,88,49,109,224,14,3,
+    238,100,191,11,116,27,13,8,106,99,0,211,26,245,218,48,136,164,1,120,128,33,0,45,
+    1,241,244,169,151,237,230,160,221,143,1,227,61,171,151,187,176,202,123,81,59,218,141,17,
+    66,167,217,235,69,221,54,204,153,234,37,208,85,11,168,45,138,177,155,253,54,204,120,171,
+    77,248,105,192,136,160,99,187,113,76,101,35,24,67,167,63,232,117,186,210,203,46,224,24,
+    80,198,223,162,126,167,219,99,160,0,102,128,93,238,10,238,186,77,64,4,172,211,86,79,
+    80,217,233,247,91,221,56,238,155,78,198,56,74,96,35,3,130,221,131,9,237,0,58,162,
+    54,85,232,224,35,204,211,128,6,0,245,119,97,37,183,7,81,95,90,6,138,232,119,58,
+    210,199,1,140,164,221,141,59,12,7,22,32,32,62,102,56,125,92,107,192,245,251,234,17,
+    42,2,91,105,49,238,226,38,212,4,86,176,75,95,97,250,251,3,224,39,109,123,190,227,
+    102,47,6,130,3,162,20,108,195,10,27,236,182,185,6,52,214,141,129,18,218,56,49,189,
+    38,140,184,211,233,117,35,254,4,140,42,6,52,51,62,224,49,2,154,140,144,24,122,136,
+    30,64,28,44,67,106,138,70,187,11,99,7,80,248,216,7,50,140,145,75,238,98,217,24,
+    249,10,112,125,198,36,32,2,198,211,143,233,105,221,234,122,101,173,174,142,94,93,49,48,
+    0,152,221,93,162,199,184,11,63,128,230,136,23,180,129,167,70,200,8,145,80,129,241,245,
+    118,145,36,136,88,128,144,0,99,49,51,251,22,12,3,41,188,215,6,50,133,213,15,203,
+    17,70,223,177,150,71,55,134,161,245,219,61,228,104,240,0,132,13,61,238,50,92,216,117,
+    128,12,99,106,178,5,48,129,154,122,131,158,44,142,24,214,62,208,26,226,174,141,116,213,
+    231,37,11,147,223,135,223,157,221,40,114,27,138,90,192,179,118,129,206,9,218,238,0,217,
+    3,208,188,176,131,168,3,52,223,135,143,3,96,144,184,66,59,188,14,99,248,8,195,69,
+    58,195,149,17,225,250,133,221,74,200,163,3,76,107,183,53,192,89,50,252,15,54,186,56,
+    142,7,32,200,8,10,6,237,54,108,20,29,132,13,43,28,198,65,100,9,196,1,120,139,
+    129,22,133,74,227,246,0,54,149,152,86,11,206,113,15,8,24,72,140,231,17,168,10,214,
+    96,175,205,243,72,70,18,234,136,237,141,188,47,207,146,241,237,226,44,185,242,224,184,138,
+    110,198,226,220,240,229,52,153,45,206,70,215,112,6,56,94,205,231,120,149,26,122,195,155,
+    33,135,175,111,68,152,216,35,31,183,254,21,250,155,114,56,111,186,79,101,119,80,125,219,
+    197,70,23,0,35,228,11,114,202,120,75,247,145,75,60,89,211,113,121,161,239,245,65,120,
+    4,209,85,165,159,82,102,227,168,181,33,213,234,140,239,155,233,89,238,56,81,220,93,226,
+    181,229,240,197,120,52,255,138,157,197,76,61,99,189,66,212,123,54,186,60,79,112,244,136,
+    12,251,30,226,56,180,140,27,237,11,137,27,117,230,28,71,48,89,181,27,165,181,26,199,
+    234,209,24,62,206,26,209,254,249,211,3,248,171,209,112,143,152,75,224,71,181,155,218,56,
+    106,140,227,250,241,143,231,31,240,130,39,62,24,71,240,79,116,176,180,78,95,166,16,222,
+    122,253,187,120,207,38,247,55,104,125,225,93,158,177,205,251,233,52,81,150,83,146,65,96,
+    70,54,216,232,31,112,186,186,176,170,45,86,243,211,36,127,77,163,140,137,1,55,239,71,
+    20,244,236,16,65,250,57,189,246,171,224,64,165,209,105,54,232,153,205,160,162,102,29,159,
+    208,253,57,138,29,55,148,229,117,214,192,248,238,222,235,100,118,155,220,54,94,205,19,152,
+    217,101,2,180,194,93,215,121,39,224,205,107,108,159,211,205,93,225,221,33,26,205,176,139,
+    142,182,34,193,108,38,20,48,222,187,76,70,231,116,69,62,60,245,14,188,214,208,30,126,
+    6,36,118,235,145,141,210,241,185,138,218,207,65,58,206,70,243,75,78,39,58,102,74,225,
+    59,243,133,152,2,112,176,123,161,172,107,241,118,57,30,42,171,144,5,65,188,30,205,39,
+    222,232,20,47,49,233,114,27,159,13,153,89,184,252,22,135,232,32,113,236,94,108,133,5,
+    4,255,226,230,252,190,72,230,136,235,113,109,236,158,245,176,27,248,1,136,106,140,90,208,
+    87,245,66,145,147,235,9,78,76,190,132,118,31,64,43,54,152,183,160,70,173,236,248,8,
+    178,198,211,139,63,3,202,110,93,163,153,214,101,0,166,20,129,95,57,67,55,54,135,105,
+    156,165,19,74,195,120,169,236,168,36,112,167,231,191,123,253,143,23,33,79,178,23,129,144,
+    23,52,189,111,18,88,235,50,129,232,40,67,183,145,0,65,24,2,121,239,95,207,4,116,
+    232,141,231,156,170,14,27,40,56,4,97,230,185,103,45,111,199,243,35,175,78,158,156,167,
+    59,113,176,115,22,12,215,80,251,59,92,13,206,12,61,115,173,215,206,194,156,195,46,46,
+    14,88,7,207,48,101,125,179,174,94,64,51,22,213,163,22,108,50,135,185,63,7,114,243,
+    94,55,108,34,71,194,98,28,248,32,240,199,129,199,230,65,163,41,26,223,184,214,89,146,
+    139,143,25,26,57,196,0,113,99,64,172,185,23,41,159,24,77,135,148,53,132,172,148,148,
+    211,78,67,165,255,208,25,109,120,13,96,140,107,224,161,124,183,251,218,191,88,181,2,15,
+    255,9,188,6,122,188,10,255,48,119,246,5,139,177,228,42,153,223,46,201,46,68,22,87,
+    50,225,28,32,75,24,56,187,26,205,208,138,43,69,91,40,92,92,100,166,16,161,207,214,
+    200,155,140,230,231,198,86,49,163,197,68,215,247,211,91,175,237,141,96,101,94,15,185,77,
+    182,111,140,148,217,215,25,76,190,24,63,46,172,213,206,28,130,73,67,193,93,120,167,201,
+    82,44,219,78,166,216,69,76,111,56,77,47,198,139,178,253,224,181,155,65,203,230,254,215,
+    246,195,188,229,174,207,155,5,219,63,223,132,202,31,70,86,87,212,68,234,104,92,215,110,
+    22,53,127,222,210,43,9,22,227,188,5,47,131,26,219,221,54,235,80,18,30,115,75,9,
+    55,212,83,180,6,164,180,155,136,103,166,152,103,223,137,53,35,76,239,12,85,60,122,188,
+    102,79,86,230,206,142,1,152,9,155,52,17,80,228,199,230,157,39,115,50,11,72,47,84,
+    198,79,244,119,131,170,80,110,200,86,55,98,59,53,60,129,69,42,118,56,53,239,43,88,
+    102,188,219,42,14,45,155,175,162,30,6,252,119,94,190,227,84,91,53,145,143,54,131,97,
+    184,202,102,142,115,144,72,23,97,110,151,73,99,113,126,171,90,36,19,163,133,238,18,19,
+    58,208,11,226,130,168,17,196,136,229,210,74,255,74,166,101,217,106,238,248,24,234,132,53,
+    236,19,119,139,158,111,10,83,10,233,100,8,136,94,120,199,208,27,134,40,86,56,9,230,
+    103,185,165,116,72,75,94,72,130,61,224,82,9,108,197,233,66,207,1,254,249,10,240,117,
+    141,220,168,227,93,166,30,174,178,4,216,210,197,42,33,107,186,31,47,151,233,116,146,248,
+    167,1,188,164,53,152,240,34,76,104,21,126,128,34,239,52,56,103,95,127,155,93,92,36,
+    211,198,187,36,153,166,167,148,53,10,119,234,134,44,68,54,59,156,39,161,217,235,27,146,
+    176,83,109,197,4,242,206,237,120,200,29,132,249,181,140,119,48,50,23,26,11,91,141,141,
+    87,233,148,205,144,52,222,29,238,102,152,223,34,212,27,171,148,128,77,160,19,48,83,94,
+    28,99,11,13,43,109,146,138,19,195,212,247,14,35,155,44,22,201,197,120,202,89,142,112,
+    107,184,24,205,210,19,152,150,41,206,228,113,10,28,3,169,11,117,232,197,212,74,137,33,
+    30,64,228,44,67,99,108,74,14,36,153,145,172,28,56,98,175,173,205,16,217,194,83,82,
+    45,41,34,85,140,120,5,93,64,131,244,116,58,93,93,164,51,225,219,11,116,225,68,176,
+    146,74,233,100,165,13,228,38,115,204,134,4,95,201,226,116,100,140,183,50,206,215,131,227,
+    91,100,233,84,228,218,149,140,197,53,183,36,174,85,150,3,75,150,150,89,74,106,165,136,
+    57,125,126,41,250,122,169,5,246,240,155,229,193,246,24,186,107,52,104,50,48,89,86,157,
+    60,193,148,77,75,210,230,80,250,247,33,197,80,56,2,78,1,139,163,221,194,88,61,64,
+    128,11,32,118,147,86,74,217,4,234,55,174,197,30,218,113,227,201,160,233,13,91,52,149,
+    104,70,131,6,181,147,80,97,244,26,228,7,91,254,160,85,192,196,55,228,253,237,100,186,
+    58,57,97,75,216,147,81,58,7,78,59,2,42,74,4,187,43,92,62,2,139,165,67,76,
+    83,164,250,165,58,128,30,41,86,191,206,178,229,226,50,91,218,72,160,124,142,75,76,221,
+    12,114,201,208,141,164,81,34,38,137,96,46,98,7,131,131,70,6,142,229,155,37,206,202,
+    248,69,254,180,25,0,249,12,76,87,36,30,40,211,82,51,120,66,44,111,210,108,198,109,
+    65,37,139,120,102,232,72,131,232,77,188,164,125,87,91,106,154,178,185,190,21,249,144,240,
+    110,216,206,155,188,215,30,45,22,163,3,126,91,48,242,164,84,103,214,250,27,206,93,145,
+    158,44,219,197,124,151,225,130,188,103,159,7,85,27,8,14,163,212,22,27,146,122,151,188,
+    106,151,194,190,225,120,123,136,108,250,16,122,7,188,248,218,123,21,152,254,194,18,73,138,
+    128,138,204,147,78,36,206,217,66,33,236,232,236,244,157,122,239,82,114,17,138,58,91,52,
+    150,89,67,166,213,58,131,88,16,159,65,65,201,235,226,128,204,83,19,46,5,12,95,114,
+    102,42,211,251,31,240,181,91,213,98,160,246,65,81,11,14,44,252,13,191,57,122,102,96,
+    165,179,43,146,159,209,192,194,101,10,185,163,106,158,17,104,161,1,72,120,65,86,121,226,
+    236,115,145,225,41,12,221,99,116,35,0,234,107,168,254,14,235,185,93,230,184,154,205,71,
+    148,82,87,7,217,44,26,122,58,42,172,245,246,158,207,223,188,124,249,207,119,47,28,19,
+    79,195,136,180,91,179,201,249,183,255,72,243,3,253,85,189,129,143,106,25,27,135,104,126,
+    129,135,127,107,37,233,207,214,75,40,146,163,157,94,183,142,42,123,186,109,8,106,86,81,
+    42,105,209,4,106,112,107,228,221,213,136,250,205,78,205,134,227,60,4,168,111,111,193,42,
+    182,201,162,129,247,7,93,37,160,54,176,73,108,183,51,192,187,150,128,196,88,61,194,124,
+    220,103,53,81,20,245,100,167,23,212,108,76,185,83,169,203,62,1,217,121,240,69,171,185,
+    71,169,120,245,107,23,242,45,170,79,52,176,134,21,185,134,63,199,248,253,182,118,91,252,
+    210,150,47,113,227,54,247,165,35,95,218,141,219,56,119,147,10,187,158,111,223,34,252,216,
+    250,80,191,173,57,111,34,120,19,187,175,98,120,213,118,95,181,225,85,199,125,213,249,16,
+    186,173,157,154,214,94,21,90,123,85,108,237,85,177,181,87,170,181,80,59,33,211,140,30,
+    162,103,110,83,191,90,232,103,209,88,253,116,208,218,255,233,201,231,112,186,247,205,93,108,
+    176,255,147,229,185,43,57,146,64,86,53,37,126,252,233,67,14,97,18,246,141,21,30,88,
+    26,99,213,91,58,16,155,234,66,135,90,67,42,29,125,200,145,18,117,223,183,206,232,106,
+    131,181,72,149,171,182,243,85,69,119,200,71,51,87,223,135,19,27,210,112,241,87,192,0,
+    58,31,2,177,103,84,56,171,31,56,3,170,209,251,26,21,142,63,64,177,69,73,25,60,
+    204,81,185,160,38,29,192,35,93,158,71,146,210,0,79,131,170,169,220,168,23,135,180,217,
+    124,155,204,127,240,169,153,154,3,193,45,125,40,238,254,34,244,209,245,13,172,78,55,54,
+    3,147,24,165,83,197,165,123,24,80,23,14,177,0,237,199,240,142,190,214,232,111,120,169,
+    55,208,67,44,65,59,224,225,142,111,247,172,142,21,107,46,102,79,53,102,79,9,179,176,
+    180,8,32,46,72,199,28,93,43,161,141,156,136,199,218,80,31,188,76,52,65,237,46,132,
+    199,60,203,237,22,56,27,28,83,37,221,169,82,13,138,177,159,222,122,216,197,22,229,30,
+    18,212,23,203,44,35,215,199,177,142,12,179,186,68,81,192,56,220,52,43,146,7,208,64,
+    85,183,177,175,202,98,204,72,225,182,21,187,246,188,205,187,230,186,75,10,142,124,50,125,
+    104,33,204,145,35,163,102,158,161,174,84,153,172,178,12,234,246,164,148,78,196,103,133,118,
+    112,233,43,157,189,195,25,53,145,49,208,70,165,166,3,96,56,241,47,20,244,111,23,20,
+    63,129,42,82,224,143,47,156,214,160,142,36,45,218,81,165,84,227,123,121,110,124,185,72,
+    85,112,43,130,123,215,162,39,195,32,181,242,233,193,94,254,101,250,234,197,171,66,82,14,
+    98,64,22,47,98,56,54,67,82,111,44,174,68,144,236,69,205,101,170,23,35,38,17,118,
+    163,193,139,46,136,110,121,112,229,119,154,28,227,17,102,190,126,177,10,130,240,2,141,228,
+    86,100,120,195,208,157,13,242,160,149,67,30,124,125,95,82,48,63,95,203,247,216,26,22,
+    206,125,57,75,241,131,196,11,108,214,177,47,88,138,254,42,210,73,203,137,208,210,108,64,
+    103,107,23,228,254,28,20,11,39,133,194,80,182,164,40,244,238,141,143,93,68,80,59,18,
+    156,108,214,10,75,88,22,148,122,161,138,234,146,73,89,201,23,17,16,21,73,59,176,161,
+    163,125,43,6,71,91,190,41,148,74,74,74,189,200,151,138,53,172,200,130,85,10,48,78,
+    74,138,190,40,131,122,34,5,129,41,146,144,67,1,11,112,23,128,245,128,102,38,253,86,
+    191,96,35,8,7,101,64,213,89,202,244,130,88,226,217,130,30,238,192,8,26,48,234,146,
+    42,47,84,21,172,145,168,26,137,212,176,211,26,82,214,201,113,122,250,6,225,63,57,184,
+    88,229,209,245,214,199,175,95,64,59,123,88,51,247,117,170,190,38,123,216,147,28,102,84,
+    221,24,234,198,249,186,177,170,27,67,221,56,45,16,19,46,103,228,57,20,233,67,176,148,
+    39,57,138,3,36,5,107,230,103,33,169,36,210,13,13,253,109,195,7,48,60,77,208,251,
+    114,138,91,188,229,169,145,133,89,248,60,101,128,165,159,161,19,111,115,171,0,1,226,213,
+    203,219,242,69,51,45,22,159,98,241,105,73,241,228,228,228,45,79,45,194,195,201,125,203,
+    147,235,3,178,27,139,24,38,121,26,236,60,47,214,154,234,90,83,172,53,149,90,28,79,
+    5,16,6,21,1,92,69,125,24,232,139,147,19,158,45,236,193,30,2,204,23,177,75,76,
+    177,196,219,2,85,98,216,41,46,2,20,186,135,148,157,67,6,233,68,176,167,164,54,63,
+    169,159,212,176,215,216,233,29,174,158,95,80,236,79,199,253,171,81,31,118,124,121,172,211,
+    99,80,195,102,240,175,23,65,141,225,43,14,108,233,233,137,55,139,148,193,181,67,174,189,
+    159,203,244,241,186,229,203,77,1,242,121,16,87,213,110,180,24,201,47,37,54,229,122,250,
+    58,114,42,198,235,43,74,183,164,8,110,165,53,170,6,194,180,79,251,88,157,136,229,117,
+    171,246,58,194,61,182,37,194,149,115,165,81,225,21,150,151,86,182,246,7,171,114,201,121,
+    252,248,46,195,245,95,202,210,19,179,79,14,205,0,73,64,98,40,92,72,168,165,202,211,
+    218,221,48,197,85,81,100,163,33,147,31,154,9,157,137,57,61,62,62,1,214,71,39,56,
+    83,30,10,197,41,116,29,20,114,19,88,146,77,100,75,103,5,204,248,177,28,207,246,14,
+    238,154,191,63,196,46,122,125,226,43,21,248,227,80,59,137,251,152,11,51,153,47,211,209,
+    44,240,94,64,163,20,150,163,60,210,186,255,226,249,203,64,226,122,74,148,140,25,7,164,
+    161,232,134,168,128,212,113,13,139,199,4,87,23,175,44,214,19,160,164,196,214,197,63,136,
+    126,74,107,164,116,178,119,33,145,68,70,152,95,230,86,119,54,35,147,23,57,64,21,148,
+    114,247,26,151,9,203,195,51,171,146,197,36,94,114,184,228,101,69,231,103,188,2,192,157,
+    139,70,97,196,93,53,247,198,71,245,186,201,245,179,176,24,202,17,197,154,84,227,5,187,
+    213,106,73,23,223,143,166,233,196,12,94,136,31,15,70,219,16,59,199,172,225,0,63,169,
+    142,51,163,143,219,211,105,118,130,49,16,16,12,222,169,112,76,208,99,186,254,176,47,152,
+    165,2,222,38,36,23,24,100,98,162,47,114,211,165,142,76,68,137,40,228,110,119,140,153,
+    188,70,243,91,59,146,40,194,221,147,8,219,116,51,212,242,14,96,68,24,57,203,219,241,
+    226,161,68,71,114,239,178,115,241,236,249,122,208,247,117,132,110,188,63,213,15,173,32,96,
+    131,16,247,93,240,47,133,3,52,108,91,224,125,145,221,39,210,26,80,231,179,213,146,190,
+    66,167,211,101,217,69,28,226,191,184,242,21,116,165,255,118,241,171,84,219,170,148,125,137,
+    66,131,119,226,163,172,166,83,182,239,82,192,20,153,115,87,211,153,176,44,43,206,171,138,
+    187,129,241,197,96,137,13,57,184,46,198,212,157,168,0,56,12,183,200,218,68,81,72,221,
+    56,128,186,210,183,167,222,51,56,46,160,22,159,230,248,248,44,203,48,204,142,14,40,124,
+    157,113,248,87,168,183,148,104,55,210,91,160,189,61,141,220,167,94,62,6,152,158,89,32,
+    162,105,10,100,132,29,226,144,176,168,165,177,117,57,20,26,195,134,228,198,36,194,198,56,
+    106,208,34,91,205,81,245,131,118,15,215,103,208,109,165,240,57,157,102,99,188,32,198,21,
+    157,191,33,254,199,108,202,22,144,208,129,6,119,64,90,111,176,38,201,29,31,197,3,6,
+    244,1,41,224,205,227,34,147,219,111,9,12,117,124,156,92,226,242,65,66,74,79,97,229,
+    39,19,54,25,224,75,98,64,66,99,180,104,140,26,170,123,54,104,182,124,194,206,159,101,
+    11,104,29,233,239,24,237,105,230,51,21,173,106,196,17,58,121,245,211,160,121,56,180,211,
+    240,40,143,156,204,97,200,53,44,50,251,99,17,81,232,42,245,227,128,245,100,55,109,159,
+    148,70,155,239,162,208,21,188,3,94,45,41,0,10,45,52,189,236,102,98,38,73,11,168,
+    233,120,145,29,65,217,119,76,231,116,24,194,131,38,167,118,38,93,3,47,68,229,74,22,
+    202,177,161,180,81,247,138,108,125,90,20,101,155,165,227,49,155,142,98,118,20,197,165,37,
+    235,0,242,67,211,207,33,223,226,158,195,75,205,190,66,109,117,97,135,106,6,126,120,131,
+    44,175,133,202,94,254,17,252,235,220,187,241,98,180,69,153,220,12,185,105,109,215,123,220,
+    10,189,18,195,94,138,115,118,177,90,72,30,28,111,104,113,77,182,121,25,131,80,128,178,
+    215,73,154,76,113,112,41,108,42,120,109,6,187,229,124,197,148,60,230,32,211,216,197,161,
+    186,85,27,122,227,105,118,124,206,237,57,147,226,224,242,96,154,44,115,222,135,231,28,14,
+    69,117,68,130,68,226,40,98,209,174,193,249,209,160,44,168,249,230,97,199,63,175,3,109,
+    213,115,69,240,117,220,12,130,45,5,51,14,13,227,220,20,170,94,149,246,113,99,1,78,
+    109,41,101,167,180,7,147,213,92,29,51,29,192,26,124,234,180,17,3,136,202,191,148,212,
+    180,112,214,126,138,135,207,45,101,54,167,217,111,179,235,175,124,138,172,120,33,222,198,10,
+    101,214,81,184,90,154,100,0,59,220,65,135,110,88,194,244,29,144,56,243,53,169,226,91,
+    180,82,24,95,248,155,75,164,155,76,112,181,240,233,206,28,161,143,28,66,81,195,92,24,
+    113,81,133,197,71,239,220,168,235,101,152,168,229,85,130,42,252,113,81,109,85,146,85,38,
+    175,131,183,83,247,52,111,139,243,123,111,33,90,28,165,85,231,172,100,63,230,149,10,25,
+    108,18,221,184,2,117,168,37,234,231,9,176,58,97,87,18,171,115,158,157,164,122,147,206,
+    84,138,2,241,94,208,49,29,137,183,179,48,58,77,199,59,111,177,238,183,92,181,121,124,
+    204,172,123,158,156,194,166,76,214,178,36,156,252,159,55,239,217,126,14,109,63,36,48,223,
+    231,48,156,201,17,53,125,36,77,51,147,70,168,95,194,150,3,47,230,59,128,53,50,2,
+    58,62,54,198,205,200,102,97,139,85,230,205,139,139,201,212,238,197,27,221,127,77,136,180,
+    165,74,35,114,89,245,88,223,94,41,126,88,141,17,19,239,235,219,231,47,21,70,108,217,
+    149,108,207,196,202,19,112,221,96,49,86,185,118,232,221,79,210,132,201,166,109,160,82,100,
+    82,50,245,102,208,18,237,95,236,84,169,15,98,96,122,156,101,243,9,26,223,1,176,91,
+    192,240,197,166,72,209,41,35,76,230,177,181,88,73,183,193,74,190,255,197,78,81,83,149,
+    125,114,185,70,101,183,98,239,38,45,244,211,121,65,250,45,233,248,161,49,56,220,242,216,
+    248,230,197,59,30,42,7,148,149,225,222,45,183,239,229,38,236,10,117,52,42,195,200,232,
+    6,68,12,95,189,146,131,78,43,32,217,17,26,67,171,109,29,153,83,221,240,10,15,96,
+    153,114,201,158,2,103,217,60,253,25,142,211,6,70,1,196,80,51,141,161,123,152,125,129,
+    145,228,48,186,34,133,53,19,35,215,20,198,83,83,189,6,134,132,231,72,96,120,71,200,
+    6,136,126,217,157,105,5,220,251,92,194,137,90,154,6,17,213,20,167,31,138,53,40,136,
+    85,182,37,182,35,42,90,7,241,187,179,232,169,83,179,213,89,204,86,21,154,216,166,42,
+    164,219,145,218,131,154,166,231,218,222,85,233,186,18,98,39,19,189,184,146,209,185,68,30,
+    156,187,249,60,20,253,105,75,94,69,6,100,78,206,80,213,41,215,123,13,199,23,229,216,
+    133,33,58,147,100,34,193,176,87,166,201,75,138,87,233,130,167,251,126,57,203,37,226,222,
+    33,119,252,217,10,228,76,148,56,135,14,139,108,18,152,97,153,217,239,148,26,176,16,153,
+    107,11,77,72,167,41,170,48,246,128,37,235,200,163,168,36,98,74,199,158,74,38,18,229,
+    143,34,212,230,164,156,225,56,202,19,206,171,66,161,60,231,201,79,9,27,166,2,182,180,
+    156,142,188,146,244,38,124,100,226,137,196,211,57,250,200,224,46,139,172,82,157,248,21,139,
+    164,211,58,247,95,155,205,219,174,113,48,27,134,219,36,23,232,69,131,12,0,119,155,25,
+    199,223,252,250,205,187,50,253,133,98,6,69,29,134,195,213,154,143,28,116,171,215,118,142,
+    75,77,137,74,137,96,222,24,219,192,255,234,17,62,73,61,2,247,147,71,77,246,233,51,
+    65,48,140,69,4,19,114,14,173,215,129,167,193,118,181,183,103,111,88,67,239,240,219,55,
+    127,93,5,68,33,188,105,104,197,54,37,71,204,252,222,227,114,152,123,199,57,221,74,243,
+    65,151,133,104,41,53,157,168,126,89,155,131,98,215,206,49,73,133,85,166,178,176,17,95,
+    172,46,60,189,73,20,6,225,28,211,217,44,76,125,115,246,69,56,22,126,33,183,228,170,
+    121,138,52,84,90,120,207,49,232,221,230,216,189,233,105,218,102,112,247,61,81,111,23,212,
+    139,110,213,204,5,46,30,147,183,188,33,213,232,241,215,9,241,212,134,222,255,150,243,240,
+    49,71,63,164,227,185,61,29,91,159,210,239,60,122,219,247,211,186,37,62,117,175,149,176,
+    75,187,252,219,31,184,55,165,129,181,55,165,159,229,39,53,88,123,132,85,118,184,40,157,
+    107,28,248,38,116,211,190,226,10,215,62,233,135,180,160,206,143,119,29,10,138,152,180,154,
+    1,180,134,143,89,230,167,142,251,240,155,200,208,191,198,184,78,120,58,191,171,239,31,119,
+    58,119,86,68,80,187,174,188,190,138,26,44,120,147,39,214,35,145,73,240,33,34,191,166,
+    16,38,44,60,131,109,238,200,245,114,194,18,142,196,145,243,83,194,239,249,128,209,67,202,
+    143,30,122,195,132,254,193,48,219,26,178,114,248,24,83,28,180,13,2,69,231,2,66,255,
+    91,31,174,226,170,1,197,123,107,135,224,81,218,67,229,203,92,24,144,249,116,148,27,91,
+    9,28,114,255,81,82,127,1,53,214,199,163,106,60,89,1,180,63,6,33,95,42,7,29,
+    103,166,117,198,2,146,52,84,131,58,68,163,157,175,30,139,59,209,162,225,89,206,182,186,
+    131,193,1,81,140,79,223,232,197,54,173,39,247,106,60,121,144,182,109,2,220,182,7,186,
+    238,166,253,136,31,102,6,114,164,104,187,71,23,104,171,124,166,98,63,15,163,88,81,134,
+    176,81,184,107,26,185,109,129,189,137,49,83,73,20,201,77,66,90,115,48,106,50,19,82,
+    1,70,45,179,33,102,124,180,168,242,118,65,155,15,37,254,227,134,66,27,29,151,104,86,
+    69,95,206,141,182,192,153,172,173,220,69,75,145,241,252,187,36,228,100,14,79,85,98,93,
+    113,206,55,17,228,108,76,21,32,255,14,179,94,46,158,84,143,229,78,19,148,28,192,170,
+    33,236,111,22,1,183,114,33,85,247,227,190,193,88,85,168,85,164,178,207,52,149,97,74,
+    129,224,49,90,38,231,162,181,6,133,72,167,91,47,181,226,80,227,79,115,168,155,44,194,
+    82,108,84,47,197,114,228,109,182,32,117,122,45,173,148,164,232,200,161,55,158,98,250,53,
+    57,107,14,233,37,39,83,50,106,43,43,195,146,173,71,144,93,135,1,14,173,220,75,28,
+    119,217,164,10,94,45,56,220,2,107,221,134,44,94,14,243,6,120,170,99,165,153,135,248,
+    99,65,12,226,215,78,238,27,108,26,123,42,162,15,189,40,38,15,209,201,71,214,166,24,
+    145,116,68,64,48,116,59,46,249,174,9,164,86,7,112,25,165,11,224,167,253,66,222,56,
+    216,168,181,102,111,153,235,167,171,55,121,115,98,7,45,34,197,207,144,154,98,181,48,171,
+    174,4,170,40,128,49,16,23,171,225,23,86,93,212,220,94,99,84,141,208,75,75,96,18,
+    30,113,214,184,234,217,8,15,198,153,39,177,124,81,211,61,193,217,34,203,49,118,10,71,
+    37,194,120,52,78,167,232,183,79,189,182,3,249,30,168,40,192,220,202,102,153,90,24,149,
+    234,113,77,130,22,6,106,60,108,117,35,210,184,254,192,207,230,166,126,131,221,218,37,188,
+    123,90,85,91,108,165,117,175,228,26,138,114,132,158,168,172,122,103,1,143,214,2,231,53,
+    93,21,104,188,168,1,152,38,243,75,97,92,173,230,73,40,77,192,47,130,38,72,102,141,
+    128,83,20,163,181,171,194,248,155,138,11,234,243,97,220,91,106,179,125,172,106,216,49,221,
+    55,96,242,27,207,207,218,131,255,250,0,210,246,0,108,85,209,186,89,81,121,99,42,55,
+    17,103,54,74,18,206,108,180,251,48,59,215,107,137,215,237,145,139,147,33,223,146,45,50,
+    231,34,91,116,130,195,92,89,205,119,49,1,207,36,57,201,49,94,175,172,129,125,57,232,
+    99,180,40,76,173,118,161,152,160,226,93,79,189,195,201,68,31,42,144,149,64,201,6,149,
+    36,61,239,73,66,65,8,25,56,49,21,144,122,184,167,104,235,52,23,32,148,181,114,53,
+    155,88,156,209,221,36,16,236,17,130,205,159,195,207,210,227,115,10,218,0,29,156,141,102,
+    153,4,8,42,156,155,85,57,139,61,149,36,13,43,212,75,157,28,114,155,237,30,91,31,
+    179,29,159,218,10,4,178,151,139,125,243,201,26,114,190,8,132,190,171,51,225,97,58,191,
+    117,171,218,113,57,180,105,221,72,153,179,153,24,57,254,232,98,76,249,205,46,146,73,186,
+    186,144,109,103,196,243,238,158,56,53,58,135,46,222,249,222,20,43,188,249,199,119,198,186,
+    109,102,114,3,50,236,252,1,22,190,80,5,59,54,153,202,185,164,76,94,165,119,156,66,
+    143,160,4,234,211,229,20,175,204,84,150,172,146,241,174,102,249,17,243,61,76,105,170,79,
+    52,192,197,32,101,52,76,166,186,33,110,177,32,205,161,206,76,109,229,101,73,185,52,129,
+    88,209,177,212,252,80,88,196,57,197,211,52,253,41,235,51,244,49,179,103,9,205,183,189,
+    55,60,240,121,50,89,29,235,60,152,30,102,75,92,162,186,31,182,99,178,120,214,19,19,
+    218,55,136,90,66,75,48,89,226,76,108,96,86,83,21,167,111,166,35,113,106,36,252,125,
+    161,164,32,140,143,196,55,198,23,35,204,164,121,156,112,159,176,205,107,216,252,217,251,120,
+    65,141,24,103,12,10,235,114,149,56,148,88,118,191,43,1,225,156,28,112,68,112,116,227,
+    163,48,65,120,197,75,89,29,68,134,199,107,208,140,233,163,185,49,188,83,180,226,10,82,
+    222,222,241,106,158,218,179,143,43,135,175,100,140,129,130,244,157,156,133,96,168,167,51,14,
+    254,51,94,45,29,223,118,14,180,181,56,75,79,180,26,6,36,94,24,2,197,235,57,198,
+    21,78,195,116,55,56,164,164,151,48,44,201,36,231,38,80,147,25,179,29,228,120,5,57,
+    193,11,101,145,148,166,86,139,220,27,8,120,19,251,2,163,224,205,215,246,5,82,193,60,
+    44,102,88,98,26,166,45,195,34,109,26,22,57,137,163,28,155,180,216,49,43,107,24,104,
+    59,62,126,69,79,190,56,40,117,41,230,250,237,181,245,219,88,191,93,86,127,190,136,98,
+    95,59,153,69,13,106,76,119,42,216,49,159,234,185,79,57,56,151,8,199,41,98,48,128,
+    112,220,79,245,74,56,139,184,157,131,19,55,104,4,122,164,121,96,113,61,247,61,223,51,
+    129,216,118,33,198,121,136,109,23,98,92,9,17,205,249,208,134,82,44,250,220,206,212,52,
+    65,238,208,78,232,203,9,199,44,245,35,210,238,149,121,233,171,156,120,198,136,79,219,238,
+    229,202,127,183,240,63,71,254,2,199,107,152,192,58,98,173,70,48,208,108,181,142,239,106,
+    214,187,124,229,75,93,249,18,43,95,186,149,47,177,242,101,85,101,128,221,206,17,140,59,
+    55,14,193,172,155,150,40,63,45,134,96,10,51,98,8,166,157,207,135,242,29,192,161,0,
+    147,216,179,26,254,133,67,128,95,240,151,37,203,67,177,167,98,207,254,5,21,255,110,81,
+    255,238,50,216,129,247,123,60,81,81,211,13,67,73,108,20,214,121,97,39,149,52,187,106,
+    163,231,173,16,78,186,243,6,240,70,74,23,171,106,114,80,68,157,103,181,9,251,85,118,
+    161,220,106,194,50,96,74,38,193,204,218,115,144,158,164,10,187,233,48,48,177,145,241,71,
+    20,49,139,216,241,89,10,199,141,117,224,104,3,96,171,117,59,172,106,46,1,172,138,51,
+    41,234,23,104,30,141,192,248,65,117,136,82,167,122,163,147,101,98,204,72,44,203,118,29,
+    72,75,5,159,46,227,226,111,164,147,223,89,105,33,149,102,74,137,12,21,153,49,29,253,
+    16,12,251,153,160,224,241,103,242,142,0,92,143,48,115,181,81,20,210,233,0,58,190,227,
+    155,161,213,74,6,86,114,218,208,85,75,138,111,145,148,178,116,92,191,171,122,251,241,227,
+    59,85,219,235,15,189,185,61,152,181,104,122,247,93,55,183,86,86,164,32,140,118,204,28,
+    112,142,164,73,182,84,243,114,157,133,232,177,98,174,140,181,15,110,160,181,120,124,174,150,
+    39,60,69,151,204,154,209,134,110,166,15,93,55,59,191,173,78,180,56,19,21,106,209,18,
+    45,230,31,53,29,161,168,36,2,137,220,91,170,52,61,244,78,68,56,207,159,189,158,122,
+    95,103,19,144,148,129,131,240,113,153,194,37,90,137,141,241,215,132,238,114,173,115,130,145,
+    73,5,136,142,239,140,10,198,145,39,155,39,70,13,31,3,100,20,245,232,221,60,93,48,
+    124,12,10,106,125,21,40,40,39,147,87,104,89,170,234,166,56,1,169,238,98,0,234,69,
+    194,225,76,57,92,169,64,201,199,79,29,39,103,163,171,148,147,162,235,180,184,124,188,91,
+    36,23,105,195,188,43,59,173,11,226,36,85,93,238,200,190,253,177,187,98,108,249,74,166,
+    216,145,85,236,55,61,190,111,196,58,93,108,252,121,249,231,154,68,201,155,179,193,59,83,
+    41,235,36,202,229,211,121,39,35,189,215,125,210,221,83,244,137,50,209,143,159,19,139,23,
+    62,192,220,236,175,187,130,178,173,126,85,108,184,156,82,197,226,161,183,192,242,222,29,159,
+    77,97,71,104,44,150,183,83,57,160,175,80,61,75,1,233,229,66,137,46,191,134,200,208,
+    48,211,249,207,152,34,147,222,20,3,61,232,214,203,25,147,186,245,33,219,31,195,235,191,
+    36,213,37,218,141,145,104,204,20,34,254,161,92,133,75,231,184,145,213,57,55,184,170,116,
+    114,171,118,84,29,113,132,45,105,206,30,186,219,158,114,40,179,219,122,161,60,220,157,208,
+    124,122,90,154,222,115,241,65,103,155,19,191,219,36,167,14,169,77,216,151,169,249,251,194,
+    77,48,96,95,16,105,135,202,110,179,156,11,155,14,61,211,243,206,49,254,100,199,34,101,
+    118,73,255,168,230,239,201,195,139,196,243,87,224,227,11,158,67,197,49,54,97,224,161,117,
+    21,34,214,63,146,253,83,147,95,206,25,180,146,93,127,188,216,187,217,172,124,242,172,123,
+    235,105,48,60,123,251,233,88,203,161,181,115,153,176,217,141,152,180,170,36,10,106,35,68,
+    50,16,109,78,128,35,105,92,37,204,215,152,145,85,120,179,80,197,114,38,205,48,137,45,
+    45,28,137,92,245,124,50,90,142,244,149,189,157,95,70,36,218,38,217,173,78,116,170,4,
+    169,175,71,174,61,20,147,6,176,180,83,212,222,207,78,101,199,97,21,59,28,229,211,157,
+    152,245,198,164,113,152,222,10,16,114,112,152,24,88,54,50,242,93,54,42,240,73,114,146,
+    204,177,248,2,239,188,241,90,103,38,47,202,114,102,161,211,192,85,162,208,205,126,100,24,
+    184,117,168,122,174,175,2,45,126,76,91,197,143,31,24,123,71,220,149,143,97,201,75,155,
+    86,10,83,254,160,236,185,120,67,166,111,27,197,207,97,148,39,91,204,42,117,156,45,14,
+    167,151,103,35,182,158,112,35,75,176,234,136,76,27,180,235,18,134,95,95,45,79,51,164,
+    113,227,55,167,28,47,40,10,5,147,110,232,225,13,244,104,62,189,181,125,138,37,209,5,
+    105,190,152,36,20,49,12,109,156,171,200,13,63,182,66,34,162,15,133,228,70,124,81,170,
+    108,104,20,85,127,137,48,132,235,241,92,62,249,230,169,59,157,249,123,1,26,125,62,137,
+    153,54,151,224,40,174,214,227,152,98,186,114,37,16,177,253,152,162,59,193,143,111,26,145,
+    209,88,146,67,22,122,39,248,182,147,191,6,67,182,2,118,167,126,76,63,132,206,51,133,
+    232,72,235,81,136,96,63,132,203,70,26,4,27,155,87,150,242,135,63,239,62,92,62,201,
+    108,145,96,79,236,70,231,170,223,112,151,221,24,237,159,232,70,251,112,120,182,206,74,155,
+    109,163,155,109,160,113,99,146,94,160,23,14,10,50,114,191,93,194,91,197,223,108,205,134,
+    186,168,220,81,75,247,210,187,118,81,228,150,183,151,202,120,227,142,61,21,6,161,142,7,
+    202,5,253,174,61,21,217,32,113,193,127,197,195,53,219,105,113,23,181,242,10,42,172,136,
+    115,225,170,97,130,9,104,219,146,66,244,44,230,253,35,100,118,206,14,0,103,218,236,162,
+    176,3,88,42,50,27,227,103,44,19,208,86,136,89,223,57,65,6,41,213,140,131,181,211,
+    59,1,116,101,245,177,186,119,152,43,222,233,156,213,182,0,58,51,73,52,197,183,94,249,
+    63,219,231,82,229,166,24,79,188,223,112,227,183,105,233,119,219,249,151,101,107,77,114,147,
+    104,1,64,231,159,33,17,128,35,55,157,184,136,222,82,4,192,140,44,146,144,8,128,62,
+    131,137,26,42,111,221,130,172,145,107,4,106,22,38,77,77,214,38,130,128,99,63,240,56,
+    183,188,11,97,236,181,28,144,127,137,125,54,59,148,222,191,129,84,246,246,166,89,118,190,
+    186,60,226,59,197,71,196,38,101,213,137,75,220,93,194,67,152,251,174,218,51,98,69,248,
+    136,90,186,158,143,160,29,180,232,40,121,193,142,133,91,10,6,159,186,72,96,9,99,103,
+    126,249,78,190,191,181,220,96,93,160,228,247,176,32,60,107,254,252,187,200,6,159,188,84,
+    112,39,234,205,230,190,127,167,8,113,39,202,215,138,7,234,70,232,163,45,241,57,97,232,
+    36,165,40,27,152,195,185,204,38,77,108,236,240,218,187,89,113,79,83,102,121,95,122,77,
+    83,18,96,78,152,158,190,137,71,179,1,21,135,129,236,74,45,147,187,55,75,206,211,203,
+    183,102,38,107,52,23,148,237,165,106,56,192,54,67,224,149,179,6,70,250,157,140,230,147,
+    233,109,168,76,245,52,36,213,89,109,121,134,187,161,146,92,160,32,218,211,57,40,246,17,
+    199,243,84,225,159,165,47,9,190,130,99,9,66,39,199,165,234,145,152,212,243,229,219,173,
+    133,35,59,167,9,15,107,52,189,30,221,46,188,17,230,202,19,41,103,116,124,230,101,24,
+    105,164,84,149,235,94,126,173,245,128,112,53,189,159,156,19,132,29,225,64,59,24,148,209,
+    149,19,157,64,74,2,242,181,111,1,155,54,172,133,171,240,84,6,74,18,107,61,188,167,
+    194,182,87,128,31,227,105,80,98,52,151,145,174,16,184,142,165,5,12,48,94,218,233,204,
+    183,94,97,96,246,82,163,187,148,235,167,27,213,71,198,171,27,126,162,66,107,254,234,251,
+    21,108,88,23,78,117,225,98,105,241,98,114,138,63,109,232,242,193,118,129,216,29,63,215,
+    143,117,201,8,105,29,22,29,0,240,253,65,201,77,25,199,23,48,196,91,214,159,237,188,
+    56,40,20,228,122,87,138,109,35,213,171,221,222,13,210,143,163,216,100,68,15,228,89,82,
+    51,170,111,195,236,109,237,119,245,237,67,85,47,145,65,128,196,184,169,203,138,203,24,106,
+    34,215,174,235,150,166,252,144,241,21,132,155,148,78,195,210,197,241,5,195,216,139,118,20,
+    48,250,111,99,169,107,83,118,178,81,24,74,29,85,114,11,94,146,154,188,14,122,113,223,
+    17,241,223,73,101,132,71,70,191,108,38,54,65,106,184,17,169,114,47,215,121,255,252,28,
+    86,58,254,60,192,218,223,76,184,205,47,249,82,87,207,143,91,53,214,101,209,218,213,179,
+    163,156,11,79,114,194,115,117,150,140,123,9,240,249,33,250,81,227,119,28,37,154,8,55,
+    100,222,55,25,106,137,15,150,179,250,214,187,96,185,69,11,30,88,238,58,46,129,174,252,
+    175,142,87,139,101,118,209,224,235,141,156,11,22,203,226,255,164,72,134,249,22,67,142,164,
+    5,194,210,24,213,77,32,195,193,82,152,167,9,58,119,144,164,142,2,236,36,19,1,26,
+    211,106,179,64,77,214,102,69,73,26,67,236,137,16,109,220,143,175,244,161,69,93,0,98,
+    189,133,229,116,50,59,158,102,236,10,172,0,229,82,3,219,2,183,58,223,72,20,252,50,
+    243,50,198,134,168,163,203,206,46,142,158,8,99,23,178,40,43,182,197,232,136,82,110,172,
+    97,215,115,146,235,186,224,148,53,70,53,60,117,255,106,215,172,178,202,88,103,43,241,87,
+    19,254,5,172,141,150,114,137,157,83,247,124,103,163,79,73,239,37,115,117,215,217,64,77,
+    216,221,237,190,226,146,165,13,151,77,234,159,250,84,82,92,71,255,61,154,124,154,71,147,
+    226,65,194,205,85,121,15,191,229,187,79,32,68,72,191,225,25,228,129,143,18,37,86,52,
+    155,89,49,217,235,217,53,159,41,126,209,102,52,247,62,107,84,118,88,14,33,230,160,161,
+    169,46,112,1,21,121,163,251,189,132,135,21,59,191,249,97,99,43,46,241,103,62,113,228,
+    230,67,31,55,30,24,249,31,117,48,185,51,78,196,131,159,53,54,95,86,21,86,105,247,
+    90,94,159,220,97,228,143,65,195,3,156,86,138,203,119,253,145,165,164,124,225,220,82,194,
+    18,170,26,83,39,24,117,81,244,223,51,76,169,173,99,217,41,230,47,97,234,120,135,229,
+    225,95,237,128,243,73,203,251,101,52,247,95,137,255,191,18,255,159,75,226,223,198,156,111,
+    141,31,218,71,222,21,168,85,188,105,111,52,177,66,211,247,173,155,6,219,94,20,108,185,
+    226,255,124,210,251,125,81,25,252,57,196,240,7,160,117,203,102,245,19,17,170,31,118,80,
+    15,32,34,151,173,146,245,66,114,105,141,130,152,92,186,250,170,155,196,172,4,167,28,10,
+    45,151,87,86,199,238,36,147,21,93,130,196,22,20,95,180,152,122,145,222,80,244,51,87,
+    214,68,225,231,72,215,218,211,191,126,17,221,179,72,91,173,230,190,199,127,160,221,39,142,
+    120,70,130,148,174,167,164,41,83,206,116,137,5,47,39,64,164,4,235,180,225,234,152,152,
+    92,164,153,51,40,178,173,124,62,195,61,169,128,136,23,247,193,67,178,21,26,10,72,72,
+    28,28,36,149,40,120,81,137,129,135,27,255,247,247,25,255,213,199,141,255,202,25,255,85,
+    229,248,191,127,248,241,171,139,31,213,198,17,12,208,164,24,184,194,83,147,254,134,135,13,
+    245,27,132,99,71,142,110,149,196,182,199,168,168,0,142,77,235,109,147,57,3,37,212,153,
+    87,148,153,158,109,193,118,45,1,238,110,189,197,234,130,3,43,144,109,250,104,230,69,21,
+    81,217,77,22,49,28,137,111,250,206,110,61,186,97,140,22,99,245,223,111,233,84,19,20,
+    240,76,162,53,22,94,203,134,73,175,179,185,79,94,59,48,246,244,201,55,251,105,189,174,
+    44,47,117,51,254,99,211,226,143,233,7,218,124,229,89,120,54,167,68,205,191,229,212,168,
+    230,173,204,118,174,44,191,229,178,118,175,235,7,121,120,234,59,215,176,191,243,155,253,71,
+    250,4,100,127,211,191,172,19,17,238,237,118,99,79,163,102,224,180,14,103,203,29,251,121,
+    255,17,238,120,249,34,110,143,76,29,179,145,218,207,79,57,21,200,131,96,28,228,0,167,
+    119,121,92,168,239,10,51,218,220,212,89,35,190,69,195,10,59,38,72,212,118,75,128,236,
+    178,21,253,207,87,179,153,114,122,19,91,72,36,126,160,192,8,213,10,19,202,175,200,209,
+    77,178,249,4,207,212,165,235,64,194,249,253,103,45,130,28,105,214,243,16,159,0,173,254,
+    242,251,45,21,99,18,150,27,46,38,149,117,104,80,161,241,167,131,180,30,237,255,4,136,
+    252,137,16,105,33,238,167,15,170,118,107,63,247,94,16,131,44,248,209,120,158,140,206,89,
+    24,123,168,5,230,204,222,31,180,72,116,160,72,123,187,16,119,29,103,249,200,246,81,177,
+    42,86,179,49,6,195,253,216,117,241,137,239,2,219,145,174,205,219,63,97,146,217,236,222,
+    221,6,245,49,206,42,149,138,20,118,222,105,89,49,185,73,21,83,192,4,58,142,203,201,
+    203,144,149,96,135,15,120,70,172,75,37,150,156,131,181,60,17,29,173,119,163,41,97,69,
+    57,135,154,60,36,71,231,164,252,86,138,68,83,43,212,131,98,251,58,203,71,145,129,22,
+    43,152,226,210,228,193,9,156,255,18,230,82,247,11,43,116,231,68,111,164,112,185,73,125,
+    229,87,132,90,137,223,98,18,41,207,88,237,38,125,146,199,43,249,211,222,164,141,146,85,
+    106,210,83,220,164,59,37,223,239,84,29,220,73,12,31,157,101,164,184,107,150,104,3,254,
+    125,135,34,106,211,156,54,213,147,189,109,110,155,234,204,125,127,248,186,174,74,187,243,215,
+    93,216,229,73,127,238,158,236,191,242,210,94,155,190,104,13,41,228,80,94,149,189,208,120,
+    202,141,102,233,34,91,206,179,203,244,24,213,10,118,118,250,215,201,236,54,185,109,188,154,
+    39,9,160,19,94,75,100,110,237,125,174,227,145,27,73,205,142,36,53,78,71,5,5,137,
+    213,220,209,213,228,100,239,202,190,142,205,87,246,134,167,20,115,101,232,55,162,208,139,130,
+    225,158,55,75,78,57,208,110,186,160,216,182,215,163,57,123,143,11,239,130,190,135,222,176,
+    69,186,69,221,18,123,18,95,102,128,60,169,10,52,128,53,173,90,74,159,98,7,60,194,
+    62,28,56,9,88,239,204,56,123,103,134,214,150,147,124,165,208,26,201,116,249,183,97,163,
+    213,220,221,221,133,121,43,41,159,206,138,229,85,241,205,51,181,228,230,229,225,238,44,15,
+    68,199,124,157,186,55,14,167,172,133,207,119,221,13,121,125,224,195,9,233,180,118,26,236,
+    248,157,102,237,111,223,190,169,249,147,100,150,93,236,129,76,90,135,247,245,184,89,59,213,
+    17,160,241,110,4,3,156,83,145,77,60,105,46,249,130,74,238,155,46,131,77,211,166,108,
+    142,172,141,88,212,38,168,208,232,36,87,240,211,224,73,148,52,218,95,0,118,0,3,152,
+    51,117,175,225,51,74,26,159,95,102,215,190,193,27,189,245,77,193,32,8,99,212,232,35,
+    230,10,225,233,165,9,19,38,190,213,12,161,170,106,220,96,186,16,237,252,32,230,249,193,
+    212,173,251,235,182,123,204,141,10,252,224,44,227,3,220,179,209,34,93,0,125,4,124,235,
+    215,246,85,47,106,38,194,185,121,165,66,157,155,75,38,242,254,217,243,114,183,209,230,158,
+    217,153,81,97,69,184,30,143,242,235,64,198,243,248,232,107,177,50,121,51,91,168,100,17,
+    252,35,84,69,84,94,218,236,135,108,62,157,132,70,231,90,18,219,0,184,215,53,150,98,
+    107,142,60,132,52,15,161,36,60,198,26,8,232,88,246,242,26,234,139,42,25,218,191,92,
+    45,57,228,213,183,232,220,108,165,198,26,94,167,67,9,234,120,157,13,11,96,190,75,174,
+    54,4,147,105,48,105,14,204,73,232,217,183,27,54,24,195,103,141,169,140,18,201,120,73,
+    28,84,178,23,255,81,186,120,115,129,51,135,179,176,231,249,106,66,154,196,81,31,71,193,
+    103,7,173,240,81,154,205,247,244,92,57,49,184,119,244,91,140,174,249,200,254,84,81,35,
+    124,116,157,181,246,140,14,217,247,107,50,219,65,77,87,80,249,123,151,217,17,77,80,0,
+    181,210,124,173,116,131,90,92,193,174,168,75,159,38,152,246,101,126,171,110,127,195,71,86,
+    240,114,171,243,151,203,185,29,214,60,124,228,186,71,29,124,158,46,142,196,84,202,119,42,
+    169,248,240,193,175,191,126,86,12,153,254,69,197,33,211,1,33,17,81,154,214,14,44,18,
+    87,176,183,73,125,213,133,50,0,251,34,131,241,48,112,45,240,175,95,140,13,133,37,229,
+    214,120,61,208,150,93,99,162,166,223,174,196,247,183,31,14,191,127,241,246,197,55,175,222,
+    191,62,122,118,248,238,197,209,215,135,255,143,4,190,71,39,32,206,81,5,35,157,9,68,
+    35,24,83,6,122,5,220,122,29,125,32,33,252,115,188,153,204,204,29,105,112,112,192,6,
+    87,191,108,215,11,35,88,235,190,124,126,145,92,28,95,222,250,39,234,106,182,121,130,201,
+    31,126,198,230,184,141,90,25,208,192,201,90,152,11,167,145,51,115,40,97,144,178,243,109,
+    203,30,59,32,120,135,185,171,206,227,17,28,44,211,99,244,78,1,201,9,88,8,113,149,
+    132,36,188,31,91,97,244,225,95,157,225,111,204,99,109,158,244,159,196,107,165,46,145,223,
+    130,142,238,97,161,238,155,133,55,193,47,6,31,95,104,30,125,157,29,108,201,12,247,203,
+    152,123,94,28,218,144,181,223,128,204,0,146,133,112,101,16,38,31,152,217,127,250,12,216,
+    61,255,109,203,126,215,212,190,31,243,181,100,191,235,20,228,69,242,34,45,73,185,17,54,
+    132,221,92,167,161,254,101,187,221,231,2,204,160,226,233,215,95,125,144,7,155,63,63,105,
+    53,129,121,130,188,200,63,129,18,214,7,165,121,72,254,47,204,82,43,49,212,62,126,80,
+    66,33,121,202,175,169,17,250,53,89,106,7,101,154,52,171,187,145,213,93,252,109,49,122,
+    87,221,182,33,187,87,105,73,230,171,164,104,25,88,16,124,53,255,86,188,86,113,76,97,
+    120,194,176,78,180,106,33,191,91,136,9,238,85,54,93,93,36,239,202,143,151,107,182,141,
+    223,140,225,63,204,159,45,68,243,251,10,180,173,130,184,169,25,108,65,164,212,18,101,248,
+    200,90,103,123,76,170,194,23,163,38,177,159,245,166,169,14,23,224,185,43,227,1,36,129,
+    108,52,229,255,201,130,66,233,54,169,39,241,94,91,161,76,104,113,235,187,107,218,237,93,
+    231,110,254,95,61,243,235,185,180,49,80,38,121,185,140,67,218,12,95,49,159,114,38,81,
+    197,130,172,43,226,209,20,189,132,36,72,161,114,5,80,218,81,242,24,153,161,118,47,89,
+    168,139,99,144,155,102,28,61,10,183,56,15,115,99,217,151,193,172,243,241,142,180,130,21,
+    190,179,193,235,226,110,158,21,40,123,46,106,228,7,109,212,245,72,165,17,60,62,183,94,
+    166,39,127,243,63,171,220,255,213,246,173,58,162,127,224,14,97,195,39,125,140,142,214,180,
+    22,132,66,199,109,192,183,193,100,171,83,37,170,80,186,172,117,61,212,18,202,198,37,203,
+    7,99,161,165,122,44,69,16,197,193,232,45,205,130,104,97,202,57,239,136,110,207,250,28,
+    154,90,134,190,156,24,152,154,172,220,240,110,202,253,232,72,240,61,244,56,69,155,78,80,
+    164,85,225,223,114,216,89,138,64,9,69,84,78,113,10,101,118,121,57,189,85,10,118,61,
+    52,139,48,233,236,149,191,3,66,234,212,156,53,223,15,238,134,227,15,35,166,0,143,54,
+    189,29,11,11,103,148,220,155,183,0,44,144,155,14,115,235,31,228,4,37,155,245,84,93,
+    99,97,103,139,244,17,222,227,188,159,107,28,37,168,3,185,209,178,239,177,56,202,231,91,
+    165,127,228,251,61,183,23,134,196,180,188,21,24,49,12,198,254,88,85,191,151,4,86,117,
+    194,46,160,232,30,58,200,130,6,81,19,239,198,167,218,176,226,28,89,114,170,165,198,134,
+    5,210,168,58,137,66,95,150,104,74,59,31,77,82,236,253,35,17,122,183,18,202,223,38,
+    74,42,183,79,29,204,170,15,74,249,183,102,211,78,21,50,58,17,110,161,140,131,110,234,
+    234,215,45,95,161,250,86,169,74,10,151,141,188,122,85,249,247,210,3,110,115,10,149,27,
+    223,226,137,203,236,203,229,76,164,244,236,24,106,124,236,88,227,87,146,0,158,0,194,183,
+    142,151,17,182,93,185,159,228,80,182,249,230,178,69,199,85,53,221,243,219,13,123,254,17,
+    200,185,171,137,187,23,250,31,44,34,87,10,184,255,229,25,191,55,207,40,72,255,74,206,
+    223,146,9,112,95,81,191,32,4,240,18,5,157,131,74,159,43,99,9,113,93,190,232,115,
+    7,8,199,33,18,6,107,53,98,22,108,185,145,194,102,82,174,117,220,144,53,186,53,191,
+    216,160,249,106,193,180,216,254,131,15,11,239,224,215,72,53,70,35,255,61,76,248,228,215,
+    95,63,51,39,167,230,207,101,4,229,104,223,190,161,24,224,211,3,107,102,190,208,245,247,
+    140,254,109,127,91,37,150,0,182,14,111,5,121,197,156,219,140,202,200,48,195,255,15,187,
+    206,1,58,
+};
+static const CompressedSourceCode df{df_compressed, sizeof(df_compressed), 157068};
+
+static const unsigned char limits_compressed[]{
+    120,218,157,143,205,106,195,64,12,132,239,126,10,65,123,44,241,3,132,30,92,210,66,192,
+    113,46,41,228,214,108,108,217,17,104,87,102,87,78,127,158,190,107,199,196,37,237,33,233,
+    109,24,13,159,102,210,52,133,162,179,232,169,4,38,75,26,64,106,208,3,194,190,35,86,
+    114,96,60,233,193,162,198,128,126,182,24,30,160,22,102,121,39,215,12,185,213,34,79,210,
+    72,9,45,150,84,83,105,148,196,205,146,187,96,43,78,134,203,38,166,172,4,5,135,77,
+    188,30,17,142,134,59,28,30,69,34,236,200,233,110,150,224,71,43,94,161,20,23,163,209,
+    130,101,177,121,91,45,139,199,251,81,204,39,28,27,223,96,140,221,0,202,182,35,40,219,
+    254,0,5,107,152,123,82,43,129,134,110,78,124,244,232,11,171,75,122,205,98,126,241,7,
+    19,94,242,117,54,150,61,203,63,234,214,228,72,241,118,110,223,253,44,255,217,190,146,110,
+    207,120,249,230,228,194,98,253,250,148,63,159,6,76,250,234,5,87,177,251,17,147,158,39,
+    223,201,226,213,141,
+};
+static const CompressedSourceCode limits{limits_compressed, sizeof(limits_compressed), 635};
+
+static const unsigned char math_compressed[]{
+    120,218,165,89,255,111,219,54,22,255,61,127,5,129,246,6,199,145,109,201,109,211,118,137,
+    239,174,219,114,107,128,182,43,182,226,118,135,32,103,211,50,109,19,145,72,141,164,98,187,
+    67,255,247,123,143,148,108,73,22,149,228,46,5,106,243,145,252,188,47,124,223,72,143,70,
+    35,114,149,176,148,9,67,213,142,164,212,172,201,50,23,177,225,82,232,128,44,101,146,200,
+    13,23,43,98,214,140,124,252,233,3,209,25,139,249,146,199,20,87,12,201,71,169,13,145,
+    203,147,17,224,192,18,205,8,85,140,172,152,96,138,199,132,138,5,137,101,154,73,1,248,
+    27,174,217,247,184,104,71,104,28,179,204,16,29,211,132,42,96,115,207,98,35,225,139,133,
+    1,25,96,47,3,50,110,159,197,50,145,106,70,54,107,6,192,154,9,205,231,9,131,185,
+    44,75,118,165,96,50,99,202,10,68,140,36,140,198,107,11,180,231,60,60,121,166,211,69,
+    114,98,169,95,96,125,12,202,25,42,12,153,101,124,54,60,97,219,76,42,227,168,100,153,
+    72,106,200,231,235,201,243,207,215,23,109,91,198,164,79,124,219,190,252,254,203,20,183,186,
+    207,139,118,142,100,68,198,237,219,223,191,251,240,15,187,191,248,82,1,160,115,45,147,220,
+    48,114,79,147,156,13,79,254,222,75,105,172,228,105,9,67,115,80,29,22,245,28,158,27,
+    158,78,158,33,137,158,22,64,215,154,176,123,6,231,188,55,13,49,42,103,127,243,160,37,
+    201,17,26,144,170,104,84,60,22,75,236,142,176,128,180,199,66,21,83,186,229,105,158,130,
+    59,145,25,157,185,211,159,207,60,170,194,226,26,96,80,25,204,1,29,231,105,48,175,225,
+    115,241,4,124,46,186,241,97,190,129,111,79,198,66,199,9,77,51,182,64,111,68,247,84,
+    84,172,96,226,6,246,4,40,248,173,143,169,221,231,101,139,219,171,67,186,45,244,196,137,
+    66,32,36,62,73,166,48,32,145,87,30,77,77,14,129,197,26,71,231,196,164,65,56,12,
+    162,225,49,55,37,115,177,0,78,11,185,193,128,220,80,181,32,130,173,32,64,239,25,225,
+    98,9,199,96,118,30,142,16,7,82,53,61,197,17,169,159,83,158,149,124,50,169,249,99,
+    248,196,140,31,57,183,165,117,112,41,44,39,24,164,56,216,199,133,97,43,166,60,12,236,
+    166,38,7,71,236,100,97,181,248,202,148,244,224,66,140,137,184,137,235,136,53,220,165,162,
+    54,137,211,132,100,84,153,0,124,128,12,72,105,73,223,129,227,174,6,56,29,180,217,95,
+    177,148,114,16,89,149,209,180,224,247,28,53,152,239,58,130,106,153,202,69,87,84,209,191,
+    204,43,60,172,129,21,40,128,145,218,208,7,82,15,102,31,168,54,138,238,80,6,179,145,
+    160,227,77,105,9,40,16,160,110,57,242,58,56,200,179,108,234,11,159,55,227,219,30,13,
+    191,63,24,54,160,3,26,86,242,158,96,28,92,65,149,94,6,78,33,21,249,68,63,121,
+    178,31,215,110,89,243,220,128,158,65,48,105,141,193,52,15,35,251,23,134,85,78,20,161,
+    83,154,240,175,96,92,91,37,160,232,13,50,9,198,33,34,79,231,76,5,132,15,217,16,
+    106,181,147,4,141,85,138,135,126,100,69,211,249,220,193,120,5,116,211,15,9,8,178,133,
+    13,1,247,17,7,108,142,162,220,203,14,22,116,243,178,172,44,179,10,175,46,11,11,42,
+    30,144,190,248,139,162,170,35,107,190,18,214,127,214,221,165,21,215,53,241,45,173,22,22,
+    250,143,28,251,31,37,165,241,225,252,161,204,17,14,210,26,225,21,243,76,73,232,143,74,
+    217,30,70,86,45,208,209,112,212,130,158,201,13,56,7,70,173,162,208,148,217,204,230,15,
+    90,88,221,89,9,113,190,81,9,99,240,9,193,80,116,12,81,177,74,208,35,128,217,130,
+    83,161,125,25,89,30,245,46,72,170,155,247,201,168,154,183,156,90,227,208,12,150,66,97,
+    158,6,108,142,221,13,73,53,96,170,226,194,18,15,194,209,22,245,233,145,254,0,248,72,
+    184,22,189,233,145,226,0,87,234,254,48,98,139,194,180,77,227,138,53,103,59,104,117,183,
+    179,10,120,64,114,93,54,237,24,61,26,93,79,179,4,250,127,75,3,39,95,64,103,98,
+    58,132,24,87,165,216,85,157,113,91,136,52,238,237,130,109,85,170,245,14,238,7,115,153,
+    192,141,196,157,135,223,5,215,45,62,184,174,235,88,65,235,192,130,169,117,139,231,249,177,
+    10,187,249,221,109,221,226,111,235,150,248,112,151,174,142,80,241,148,78,231,30,1,113,94,
+    231,239,9,185,56,246,213,178,104,22,193,21,20,161,91,202,246,163,20,112,237,128,162,189,
+    128,130,206,152,61,245,110,119,43,102,155,108,250,189,207,215,163,232,77,56,60,66,46,117,
+    131,133,5,19,15,114,49,123,140,140,176,163,207,215,85,123,10,219,255,38,4,247,227,13,
+    135,195,247,25,251,15,245,217,6,190,55,15,9,73,181,51,154,83,205,6,227,58,228,184,
+    19,114,220,130,57,110,1,141,194,58,106,20,118,194,70,97,11,46,16,105,155,5,18,185,
+    162,10,154,138,212,131,7,243,77,52,36,181,105,254,8,168,113,11,150,71,227,71,160,29,
+    43,234,136,245,208,129,238,39,193,182,254,112,157,125,68,87,0,151,174,169,157,111,114,56,
+    76,212,184,36,84,173,158,206,132,110,61,76,246,19,53,38,27,122,15,25,85,172,204,26,
+    131,30,250,34,153,50,195,20,4,189,33,155,53,143,215,150,163,125,87,1,146,129,62,94,
+    19,14,33,116,108,2,20,40,203,21,219,203,227,158,41,246,202,77,15,172,10,217,10,212,
+    211,63,79,176,65,229,176,114,18,94,156,184,109,20,71,244,38,188,5,2,220,39,236,130,
+    73,116,193,47,159,255,254,238,159,87,31,174,62,253,252,229,253,244,135,119,191,93,77,63,
+    190,251,215,5,63,59,67,148,101,15,183,253,149,222,240,91,24,22,16,28,32,44,54,191,
+    56,249,6,255,20,3,47,21,228,185,54,112,89,29,30,132,154,162,151,220,224,202,91,92,
+    248,127,91,232,232,248,124,6,42,15,230,97,3,209,109,213,64,48,250,95,12,68,183,151,
+    123,3,89,8,103,32,248,250,72,3,209,109,221,64,176,64,209,149,43,32,73,114,208,87,
+    63,198,95,139,205,71,213,47,79,193,79,71,207,132,253,172,6,5,199,43,181,189,238,169,
+    76,38,238,33,111,169,100,106,91,84,215,155,226,189,114,73,241,149,144,204,18,95,82,75,
+    96,191,191,85,173,14,146,211,73,47,26,14,146,211,62,61,75,250,213,75,167,54,44,219,
+    191,128,66,89,12,203,167,199,217,156,92,146,242,217,40,154,17,150,104,102,103,124,117,18,
+    128,58,251,102,215,246,244,230,151,45,15,41,58,133,62,127,77,222,51,149,226,157,238,9,
+    166,169,190,243,60,244,186,99,153,116,203,89,55,218,159,39,149,161,233,237,159,135,18,172,
+    244,149,41,221,139,6,6,72,133,219,233,190,134,242,122,54,238,27,180,183,233,27,55,210,
+    167,104,249,138,215,45,164,33,112,235,89,228,177,175,13,130,21,221,54,69,223,234,215,238,
+    34,87,121,156,240,5,131,134,199,185,188,215,119,42,65,90,191,153,21,168,180,254,176,102,
+    159,172,237,19,182,51,118,14,247,221,110,22,251,139,124,75,239,49,42,248,215,153,28,100,
+    95,112,124,62,142,161,238,49,179,97,76,60,226,5,179,220,210,101,176,130,235,124,80,11,
+    72,128,210,250,129,147,176,107,58,223,114,134,187,175,219,254,124,248,117,187,27,80,252,31,
+    190,3,165,246,222,107,20,223,18,3,13,191,206,164,102,222,23,175,98,254,248,213,171,156,
+    168,167,147,28,242,189,181,85,145,171,126,253,249,7,151,175,170,183,143,95,89,60,36,175,
+    195,183,144,219,216,114,201,99,142,217,237,88,2,151,152,247,144,189,202,107,253,11,20,2,
+    29,210,141,122,225,112,28,141,207,33,150,95,71,175,198,240,17,190,30,143,79,131,110,209,
+    240,215,20,131,253,149,45,11,1,217,48,190,90,27,247,140,134,243,63,94,95,145,127,147,
+    56,87,247,214,58,66,114,129,217,242,1,241,14,53,198,205,43,166,243,196,244,108,215,124,
+    40,44,161,175,176,156,157,113,216,234,54,157,77,166,155,93,74,197,116,215,243,21,143,91,
+    8,106,91,112,246,101,198,109,29,181,130,87,227,125,158,208,248,110,46,23,59,194,82,174,
+    53,230,54,103,144,60,37,32,167,181,192,138,223,131,183,27,150,218,159,120,160,212,98,197,
+    190,99,201,61,23,173,22,113,186,239,145,171,7,86,69,105,166,50,187,205,163,226,105,191,
+    87,217,57,138,94,190,120,243,154,189,192,64,117,87,21,184,76,184,228,134,9,79,79,162,
+    179,23,144,225,224,91,57,124,89,31,190,42,135,21,1,84,156,69,144,4,204,30,51,206,
+    122,72,27,157,87,142,236,14,122,129,187,203,40,132,3,186,115,7,116,54,129,69,128,27,
+    103,253,137,93,222,59,135,169,202,73,188,26,158,191,122,251,246,237,203,240,205,249,200,242,
+    252,86,125,164,65,75,49,140,12,138,46,71,77,197,224,222,14,9,28,51,227,44,102,248,
+    107,222,160,173,114,15,235,190,137,248,83,106,234,141,144,117,207,192,45,56,76,216,110,230,
+    121,175,205,109,38,147,200,106,108,149,114,29,210,55,91,129,201,158,58,5,1,118,40,208,
+    212,182,1,109,40,193,119,30,31,14,111,131,239,16,53,168,8,227,26,167,255,2,176,148,
+    172,15,
+};
+static const CompressedSourceCode math{math_compressed, sizeof(math_compressed), 7456};
+
+static const unsigned char scene_compressed[]{
+    120,218,173,147,65,143,218,48,16,133,239,249,21,83,81,85,68,74,97,155,228,180,148,110,
+    87,133,67,165,109,15,221,170,87,48,201,0,46,198,142,108,7,104,171,254,247,218,78,150,
+    13,73,182,34,82,110,100,252,60,254,222,188,97,60,30,195,99,130,28,33,37,154,0,19,
+    98,151,103,1,172,5,99,226,72,249,6,244,22,225,203,236,1,84,134,9,93,211,132,104,
+    42,248,8,126,16,150,163,2,34,209,221,193,212,27,155,78,121,6,171,95,192,201,30,129,
+    114,144,200,83,148,40,223,102,82,28,104,138,41,168,243,75,1,224,104,51,10,32,51,199,
+    7,148,26,79,32,164,235,97,43,98,245,19,19,13,68,107,73,87,185,70,101,136,8,99,
+    150,103,69,146,29,104,225,184,54,244,128,28,82,92,147,156,105,56,110,205,135,45,219,247,
+    93,43,170,32,231,228,64,40,35,43,134,35,111,160,246,41,243,62,14,215,66,34,221,112,
+    200,114,137,190,71,185,6,123,48,51,88,243,19,85,90,13,223,28,4,45,105,109,53,80,
+    134,195,188,109,27,251,147,231,6,190,87,232,202,203,15,110,120,255,187,28,216,183,118,148,
+    167,238,135,162,191,49,40,212,18,149,177,224,122,239,73,34,133,239,145,220,152,180,147,90,
+    20,153,12,19,193,149,185,83,105,230,36,7,27,132,255,199,43,142,159,250,79,7,84,45,
+    136,164,122,187,71,77,147,133,169,227,70,18,54,44,228,119,55,183,53,193,154,9,147,44,
+    223,44,50,97,180,79,178,119,183,225,196,171,217,123,253,248,105,254,117,190,152,221,127,191,
+    15,28,134,243,51,224,249,190,188,21,36,68,233,247,206,215,7,51,12,87,51,206,36,234,
+    92,242,130,119,226,253,245,92,66,159,85,101,39,224,104,112,42,193,186,61,58,199,119,247,
+    60,27,60,101,66,106,88,9,193,138,17,81,101,218,210,180,57,35,127,90,75,182,78,239,
+    191,154,222,76,10,150,111,14,80,157,87,168,186,174,64,20,44,205,96,150,102,111,153,66,
+    88,150,75,183,112,118,150,163,6,155,13,162,146,158,13,160,37,65,167,170,118,154,90,157,
+    239,79,171,193,59,229,133,202,239,64,28,118,65,14,235,204,97,59,116,216,164,14,251,197,
+    142,186,96,71,117,236,168,29,59,106,98,71,253,98,199,93,176,227,58,118,220,142,29,55,
+    177,227,30,177,221,95,255,106,110,167,190,0,119,149,22,242,82,121,129,94,104,123,102,15,
+    187,193,135,77,250,240,37,252,176,141,63,236,219,64,212,205,64,212,52,16,189,100,32,106,
+    51,16,245,109,32,238,102,32,110,26,136,95,50,16,183,25,232,115,253,19,193,132,188,154,
+    223,169,47,240,93,165,133,190,84,94,192,23,218,107,216,255,1,147,75,105,25,
+};
+static const CompressedSourceCode scene{scene_compressed, sizeof(scene_compressed), 2456};
+
+static const unsigned char state_compressed[]{
+    120,218,189,88,223,111,219,54,16,126,247,95,65,160,197,32,27,170,19,39,125,114,103,172,
+    25,26,108,3,218,244,161,109,54,160,8,100,90,166,99,174,18,41,144,148,99,167,200,255,
+    190,227,15,137,148,45,217,169,147,46,200,131,76,222,125,119,247,241,238,120,210,201,201,9,
+    250,188,36,72,16,54,39,130,8,36,21,86,4,81,134,20,172,166,165,128,13,133,228,18,
+    207,41,187,69,41,103,138,172,85,140,22,60,203,248,157,94,210,98,31,222,189,239,157,0,
+    144,44,72,74,23,52,197,138,114,54,68,95,88,70,164,68,115,158,150,57,160,144,57,226,
+    32,45,238,168,36,49,42,184,164,90,76,198,136,113,145,227,12,30,48,155,27,28,133,217,
+    45,40,72,132,133,113,133,130,178,96,56,3,3,56,5,221,187,37,77,151,232,19,152,5,
+    209,111,68,34,197,209,140,84,106,86,106,216,123,33,243,121,214,163,121,193,133,66,227,113,
+    142,213,114,60,30,188,233,25,19,58,230,148,115,1,97,233,120,29,112,41,193,201,217,198,
+    4,53,85,2,51,185,0,223,6,83,180,40,89,106,188,29,246,200,218,0,18,86,230,1,
+    66,98,16,190,7,11,149,211,147,211,24,129,197,95,141,201,227,34,9,80,249,236,95,146,
+    170,201,40,70,7,254,106,147,86,163,5,234,142,139,108,62,57,59,136,228,161,140,70,133,
+    244,16,48,89,29,38,226,11,195,93,149,47,5,135,128,135,189,183,81,142,83,193,251,21,
+    119,139,140,99,117,94,107,69,253,201,75,147,118,195,106,37,128,174,160,108,146,152,188,145,
+    116,150,109,80,65,132,42,197,204,30,216,172,204,11,196,133,147,66,57,46,10,80,234,180,
+    108,197,188,93,251,59,176,170,68,73,208,45,225,57,81,130,166,72,150,98,1,65,59,189,
+    78,88,167,176,73,182,241,183,54,2,67,57,55,188,173,224,136,192,253,31,162,207,170,122,
+    35,246,119,128,13,25,58,35,6,20,175,48,205,240,44,131,192,160,124,75,225,18,94,238,
+    98,131,193,74,198,166,116,146,227,181,183,177,179,21,114,230,160,125,138,73,19,80,104,17,
+    77,233,180,51,160,10,220,3,68,208,112,164,117,138,238,248,224,197,190,210,155,208,15,87,
+    60,174,135,205,169,32,105,149,156,148,165,130,96,169,201,253,98,4,126,216,57,135,158,148,
+    123,125,171,165,142,114,237,250,105,174,173,30,229,218,170,233,154,79,246,159,195,95,93,2,
+    251,9,220,21,123,162,155,215,79,116,115,245,56,55,183,216,172,42,184,209,200,91,171,1,
+    97,105,252,135,235,73,208,181,17,113,58,95,226,250,241,218,220,141,7,218,207,250,188,146,
+    183,229,217,116,188,146,137,246,100,106,188,39,85,226,70,171,236,239,61,146,255,41,218,157,
+    67,120,68,216,173,249,21,239,59,213,184,189,135,135,12,184,43,246,175,119,168,16,124,69,
+    231,126,136,168,198,170,246,70,107,245,18,58,247,13,182,94,10,224,51,206,191,149,69,144,
+    225,144,209,132,173,168,224,76,207,85,110,95,14,209,213,199,207,151,99,116,197,1,61,47,
+    50,226,134,174,13,129,129,13,103,119,120,35,209,61,17,188,51,247,107,3,81,197,91,116,
+    58,140,205,127,24,45,102,52,55,19,30,82,52,39,213,157,85,143,138,88,155,238,176,225,
+    117,19,173,235,195,110,174,55,102,180,188,160,25,121,101,76,249,11,237,14,175,72,70,216,
+    173,90,74,205,134,30,60,97,92,203,80,138,179,180,204,112,115,84,243,9,241,247,197,245,
+    229,251,203,171,63,62,255,153,252,126,241,233,50,249,112,241,207,228,101,203,98,120,65,83,
+    112,13,70,61,89,22,26,12,248,244,182,181,105,134,153,206,11,34,100,87,204,94,62,1,
+    48,31,115,115,61,52,137,215,207,104,50,188,190,155,235,129,201,45,62,189,5,56,91,172,
+    60,191,211,148,103,92,76,209,10,103,37,177,243,185,61,240,57,194,93,147,202,215,22,130,
+    111,66,23,103,88,146,86,31,245,70,35,23,216,10,92,210,153,7,211,152,158,151,22,130,
+    3,77,41,97,4,149,140,42,51,62,239,103,198,238,38,48,60,38,70,47,209,122,193,12,
+    213,182,125,216,133,138,43,30,58,211,229,130,7,182,134,140,50,184,48,26,158,236,247,226,
+    109,84,232,102,234,48,13,216,235,245,107,132,23,11,202,244,251,134,246,172,106,127,245,174,
+    237,180,253,239,61,65,160,21,179,122,35,114,0,145,21,248,122,122,51,92,199,238,121,20,
+    60,159,233,103,104,0,241,174,252,38,144,223,4,242,155,14,249,251,64,254,62,144,191,111,
+    200,191,122,33,203,220,107,13,220,211,249,77,63,110,108,141,186,183,206,26,91,35,13,14,
+    13,236,33,104,97,134,50,84,191,225,85,247,145,57,204,237,215,66,52,213,203,83,125,186,
+    187,91,138,119,205,18,154,252,218,128,59,149,237,247,69,99,48,238,216,83,28,78,141,46,
+    34,45,51,153,152,95,219,103,56,210,141,249,1,145,76,194,171,229,34,114,162,45,47,161,
+    253,95,34,197,27,59,246,162,233,123,208,234,238,119,87,159,226,78,36,177,220,28,107,199,
+    188,51,238,154,113,216,96,197,8,56,35,131,39,57,225,66,122,154,11,199,153,168,227,247,
+    86,182,202,242,64,100,7,206,209,134,112,248,16,219,141,182,71,122,156,201,71,71,122,220,
+    9,123,167,186,178,189,174,227,170,182,224,26,178,111,202,207,90,190,231,190,120,19,131,126,
+    92,9,199,65,59,62,183,110,6,117,236,42,251,55,179,62,142,124,187,48,160,80,242,3,
+    215,20,141,64,60,234,247,135,235,205,253,155,86,10,220,39,132,159,197,129,133,127,14,18,
+    44,82,11,11,118,99,31,13,86,34,62,221,199,131,251,4,116,20,15,250,11,96,245,81,
+    211,165,179,165,160,224,146,60,130,36,247,221,231,25,72,114,47,25,187,36,217,141,113,228,
+    24,113,159,197,78,251,3,207,26,96,105,241,125,36,73,24,148,177,128,137,31,170,145,57,
+    215,126,60,107,246,189,112,88,191,37,154,106,83,100,10,35,81,186,212,53,63,239,26,139,
+    60,139,70,227,233,36,154,32,137,167,112,52,28,152,21,205,200,127,103,134,36,164,
+};
+static const CompressedSourceCode state{state_compressed, sizeof(state_compressed), 5879};
+
+static const unsigned char std_compressed[]{
+    120,218,125,204,49,14,194,48,12,133,225,189,167,176,196,134,40,217,203,196,200,198,192,5,
+    210,196,105,44,37,78,149,56,168,199,167,133,5,129,210,197,131,191,167,95,41,5,15,143,
+    96,180,24,223,235,16,160,136,102,171,179,133,152,108,13,120,130,140,61,46,115,202,66,60,
+    129,172,91,100,161,140,48,215,49,144,129,235,253,6,201,117,106,13,109,152,214,147,127,35,
+    5,92,202,96,18,63,145,9,217,224,185,59,148,104,67,247,9,67,45,91,123,24,44,142,
+    117,2,138,239,231,241,242,199,174,109,129,34,73,105,123,212,226,219,90,12,50,238,176,104,
+    217,97,193,229,11,95,158,220,118,25,
+};
+static const CompressedSourceCode std{std_compressed, sizeof(std_compressed), 339};
+
+static const unsigned char tex_compressed[]{
+    120,218,237,90,109,111,227,54,18,254,238,95,193,34,232,66,74,104,197,146,123,95,146,117,
+    247,208,222,162,40,208,235,21,189,220,245,195,98,145,208,18,101,19,43,145,42,69,249,165,
+    237,254,247,14,95,36,75,182,156,216,174,155,166,104,131,0,166,169,225,188,60,51,228,12,
+    71,190,190,190,70,119,116,165,42,73,81,38,196,135,170,64,105,197,99,197,4,47,49,74,
+    69,150,137,37,227,51,164,230,20,253,251,95,223,160,178,160,49,75,89,76,52,5,70,69,
+    86,149,131,107,224,193,5,31,150,138,240,132,200,4,149,85,81,8,169,96,185,68,223,41,
+    186,66,202,74,40,131,193,69,153,39,217,128,229,230,249,205,77,78,212,252,230,38,163,178,
+    184,29,24,62,119,32,103,70,242,156,160,92,36,20,163,132,150,177,100,83,173,194,92,44,
+    53,35,154,161,5,201,42,90,162,88,240,5,5,54,74,160,140,113,74,36,104,71,98,26,
+    12,232,202,176,167,188,202,45,179,123,205,236,103,59,76,104,74,170,76,77,70,24,129,192,
+    215,70,162,155,195,72,73,74,20,77,140,185,37,201,41,34,37,122,176,235,172,136,135,96,
+    208,254,170,185,236,251,51,220,191,49,100,24,240,113,234,150,128,91,205,163,148,179,233,36,
+    220,207,1,109,52,44,191,255,234,11,80,51,22,137,241,70,109,113,48,248,120,59,248,167,
+    87,104,247,229,36,150,194,31,144,10,158,26,74,250,95,88,228,129,216,82,33,51,107,208,
+    243,39,23,133,88,122,102,140,163,32,242,183,25,164,153,32,234,51,68,138,34,91,127,165,
+    245,116,44,24,87,22,77,108,191,59,58,199,212,60,153,76,128,200,219,24,231,191,177,68,
+    94,75,31,67,31,232,135,216,14,137,127,99,6,189,122,140,15,212,99,252,132,30,219,10,
+    60,38,51,58,80,102,116,70,153,7,138,60,143,68,195,154,170,59,150,209,175,121,66,87,
+    78,162,219,165,247,81,162,135,184,81,35,66,213,226,94,1,177,255,243,64,82,32,225,104,
+    24,34,150,122,23,132,175,61,207,61,124,61,242,127,169,199,159,79,128,65,160,71,247,177,
+    168,184,242,125,136,50,183,212,145,4,235,203,46,77,176,186,170,31,173,110,7,31,55,199,
+    193,146,37,106,14,122,88,219,225,84,18,169,217,159,51,182,160,154,221,80,175,49,103,141,
+    27,151,84,193,73,211,53,217,29,9,218,114,195,239,80,147,53,196,145,55,242,193,244,214,
+    70,98,94,7,62,189,180,134,104,99,40,123,61,122,51,186,105,140,4,73,148,171,242,29,
+    123,255,184,125,1,250,246,63,119,111,111,208,183,2,52,201,139,140,230,176,12,142,164,53,
+    133,243,137,100,75,178,46,209,79,84,138,35,45,28,27,11,253,201,232,22,61,175,224,184,
+    154,210,29,209,115,202,102,115,117,70,167,90,134,127,168,87,215,29,175,110,91,120,6,116,
+    123,109,236,241,235,115,137,222,241,236,215,165,241,161,123,174,211,52,75,48,98,1,13,48,
+    154,146,248,3,200,156,174,161,204,32,9,140,88,78,102,144,121,137,34,111,250,229,78,133,
+    200,26,89,172,52,220,122,29,236,79,52,169,215,248,100,90,165,41,36,218,119,163,247,190,
+    171,42,250,20,123,115,0,42,41,201,74,26,156,172,94,237,27,195,102,63,68,207,160,201,
+    198,85,79,232,178,235,46,82,59,204,84,114,41,0,124,186,191,10,87,12,182,60,86,40,
+    217,84,32,174,120,49,81,123,159,82,21,63,125,76,199,66,200,228,224,29,110,57,171,117,
+    65,189,203,11,253,33,210,222,176,1,141,142,61,23,90,172,71,190,78,142,112,80,116,217,
+    232,5,111,205,113,225,245,28,31,187,180,95,24,125,118,245,51,180,251,164,126,178,89,249,
+    139,77,207,6,33,147,156,205,8,82,115,163,71,59,45,111,214,189,51,116,58,63,55,132,
+    144,155,237,228,234,125,231,144,179,229,56,49,208,211,25,149,232,193,144,61,152,178,217,150,
+    126,15,24,178,2,164,25,91,212,235,42,135,233,184,170,148,46,137,33,154,20,149,186,162,
+    133,131,126,41,225,41,140,247,68,121,187,220,188,119,101,229,25,162,195,153,223,42,191,52,
+    224,182,240,186,168,56,92,40,62,212,210,218,113,105,5,105,238,77,40,248,71,66,51,62,
+    47,52,227,54,52,227,151,5,77,176,90,255,116,44,60,209,121,225,137,218,240,68,47,14,
+    158,99,209,57,47,56,109,108,94,26,52,71,32,19,139,76,200,179,33,99,184,57,100,204,
+    248,140,200,88,126,157,13,219,99,124,247,154,0,218,246,55,69,68,165,134,34,29,74,194,
+    103,155,108,110,88,49,78,20,45,17,129,239,115,194,147,140,38,221,230,136,230,105,123,35,
+    3,51,140,51,146,23,221,158,134,233,64,124,169,231,117,215,65,215,11,52,153,65,37,98,
+    232,37,45,40,81,157,22,134,161,255,222,204,99,244,129,210,194,128,205,179,181,89,155,74,
+    98,122,75,36,67,5,145,202,177,201,153,148,66,210,164,230,23,225,46,27,251,220,50,66,
+    116,65,229,26,9,224,38,145,166,87,76,153,150,138,51,128,21,147,49,70,187,6,176,2,
+    163,82,184,30,87,169,49,43,89,66,209,195,59,176,54,244,31,144,115,140,173,131,251,155,
+    42,38,156,127,0,49,237,158,138,22,139,91,223,57,182,53,3,248,218,12,36,205,61,246,
+    41,239,166,119,78,103,222,69,73,51,26,43,15,8,94,143,112,136,71,54,25,231,87,19,
+    126,9,207,59,244,63,86,194,99,215,252,10,230,187,140,44,96,154,71,119,222,34,214,200,
+    240,128,193,171,208,159,128,167,248,48,28,2,57,214,75,96,13,155,212,52,218,144,9,248,
+    158,225,238,76,136,173,16,108,121,186,69,57,89,121,35,124,145,51,238,49,205,179,125,67,
+    234,132,237,148,217,78,21,4,128,221,124,176,25,93,163,17,118,113,111,189,48,23,220,122,
+    91,185,176,55,204,116,152,66,40,243,4,129,71,10,216,227,60,17,75,184,56,46,231,44,
+    158,155,16,103,51,174,163,104,223,173,113,187,146,176,90,212,231,208,160,119,115,215,13,33,
+    187,49,29,77,179,107,236,168,154,180,246,194,30,154,69,31,77,205,27,204,1,38,46,49,
+    141,2,28,6,126,31,201,98,155,4,66,12,42,62,111,187,141,242,121,8,181,222,214,228,
+    26,38,155,82,216,28,77,170,169,103,47,128,173,57,220,192,196,167,43,223,102,93,203,227,
+    14,194,103,172,123,59,18,91,53,175,225,6,118,12,39,141,158,110,230,178,85,247,54,68,
+    163,224,31,183,109,80,88,188,7,13,247,116,228,217,136,143,241,134,153,141,253,14,89,88,
+    147,93,133,61,132,70,50,139,111,31,205,146,155,198,184,215,26,110,231,206,77,205,14,186,
+    65,145,222,174,216,47,245,212,250,189,143,31,91,20,238,91,228,202,125,31,159,46,61,60,
+    69,122,216,149,238,174,34,62,214,185,16,81,184,186,162,167,90,54,117,174,125,177,225,185,
+    81,254,75,216,214,255,243,140,194,246,16,184,108,223,205,118,105,255,223,162,93,60,70,43,
+    36,167,114,100,169,173,20,184,213,98,203,163,231,126,107,233,195,14,125,216,208,135,219,244,
+    101,53,181,0,121,245,202,97,45,210,111,118,91,67,180,119,179,233,19,81,139,244,236,41,
+    234,227,102,188,216,217,81,143,30,82,176,45,107,249,87,155,28,109,18,115,163,5,102,241,
+    206,178,240,160,101,87,127,111,219,223,182,109,127,67,53,48,254,253,170,129,254,43,116,187,
+    38,24,239,171,9,186,169,249,69,86,6,147,110,113,179,185,91,88,189,236,199,2,91,1,
+    246,99,97,110,233,183,39,251,42,122,94,95,69,29,95,69,127,65,95,157,238,170,231,245,
+    84,199,81,127,61,63,157,228,166,186,147,241,60,110,178,157,14,103,158,109,77,252,137,221,
+    100,13,56,245,0,52,47,35,0,54,10,16,250,131,133,96,9,210,63,89,209,47,63,222,
+    234,223,157,16,69,189,87,102,218,21,155,238,37,189,30,165,76,150,202,140,120,149,227,87,
+    54,250,37,45,171,76,249,173,48,48,47,82,156,223,69,10,62,170,36,138,231,132,115,168,
+    111,81,169,136,84,218,227,38,34,236,108,231,126,92,191,205,187,155,179,18,193,127,251,151,
+    55,159,128,238,189,93,243,46,26,253,47,101,54,141,171,90,155,201,8,238,140,142,131,53,
+    227,118,176,3,134,123,137,131,55,69,144,91,141,63,195,175,236,42,251,38,206,213,77,53,
+    163,143,123,1,81,115,73,233,193,136,140,79,65,100,59,211,31,143,200,248,20,68,198,167,
+    34,178,20,7,227,17,157,130,199,118,54,61,30,143,232,20,60,162,19,241,16,188,137,143,
+    61,40,156,2,66,55,81,29,15,193,41,8,132,53,2,191,203,6,177,105,228,56,40,122,
+    146,193,31,186,59,172,10,13,72,31,7,191,2,183,108,63,221,
+};
+static const CompressedSourceCode tex{tex_compressed, sizeof(tex_compressed), 10419};
+
+static const unsigned char extras_io_compressed[]{
+    120,218,157,86,93,111,219,54,20,125,247,175,184,115,139,66,25,100,7,123,221,150,98,133,
+    231,0,197,182,166,104,51,244,177,164,165,43,139,152,68,106,36,21,215,253,245,189,151,20,
+    109,215,142,229,164,79,166,41,242,156,115,191,121,125,125,13,183,170,65,80,186,235,61,72,
+    93,130,233,61,45,115,104,149,181,198,42,189,6,95,35,44,192,121,250,42,109,9,141,90,
+    89,105,183,32,156,47,149,153,215,98,114,77,40,111,222,191,157,195,187,187,251,229,175,112,
+    95,43,7,173,41,123,198,117,160,141,158,165,203,63,77,94,184,182,108,38,225,202,61,225,
+    154,78,254,223,35,84,172,193,121,139,178,133,154,142,54,152,147,24,217,152,181,233,29,120,
+    3,226,246,237,223,75,248,89,144,80,88,204,39,248,165,51,214,131,223,118,88,98,5,175,
+    30,140,42,129,143,252,182,135,222,9,142,182,69,244,221,213,194,104,71,6,247,132,205,118,
+    232,155,66,58,255,59,67,188,206,94,134,157,171,199,176,162,119,198,193,232,204,49,26,109,
+    61,10,135,236,227,113,52,58,114,140,70,91,9,237,174,67,237,66,132,130,11,181,108,177,
+    4,193,107,94,10,216,40,95,135,207,107,245,128,228,58,138,196,150,206,9,10,15,138,28,
+    112,190,158,231,32,166,118,42,128,132,136,233,102,53,21,243,201,31,89,101,44,170,181,134,
+    174,183,120,149,132,133,24,84,134,40,51,146,204,169,145,136,242,225,63,195,38,105,139,198,
+    56,60,208,150,172,60,3,30,66,88,21,124,41,139,68,116,41,97,221,54,189,171,9,108,
+    213,87,21,90,220,197,129,92,244,60,252,138,129,78,241,63,160,239,173,14,185,250,21,173,
+    1,85,5,92,212,229,204,84,179,42,86,72,169,10,233,201,75,148,211,14,253,89,34,165,
+    61,84,104,170,167,179,132,36,120,38,62,223,121,140,65,150,209,229,26,191,80,38,213,210,
+    202,194,163,205,67,116,103,191,8,200,150,119,183,87,96,52,219,6,166,138,174,163,143,1,
+    112,156,115,141,190,56,71,41,169,45,104,100,64,233,41,11,40,127,69,97,122,186,53,3,
+    34,221,233,112,140,100,184,117,216,243,105,246,138,143,7,58,151,197,53,29,207,89,66,128,
+    204,79,36,124,178,202,15,153,182,99,34,254,90,140,219,67,9,84,100,1,182,30,197,28,
+    114,123,92,116,66,116,169,52,88,243,25,103,69,215,8,192,6,91,212,222,177,219,132,83,
+    95,169,94,87,91,102,69,89,212,131,167,98,198,83,169,218,144,60,169,31,235,190,93,145,
+    145,116,113,7,66,217,95,158,149,199,232,159,73,33,31,202,98,187,140,200,249,240,133,127,
+    210,122,220,205,79,83,95,89,211,62,71,253,134,192,61,234,139,6,240,57,252,81,11,162,
+    251,9,191,149,68,54,76,6,154,52,46,140,21,234,155,174,144,186,186,16,228,112,102,95,
+    7,169,245,69,212,124,62,159,31,249,107,79,151,70,235,158,175,163,171,254,18,97,60,244,
+    20,70,158,45,69,111,45,242,53,46,236,206,56,229,21,85,251,174,187,156,165,106,12,67,
+    122,108,154,211,26,103,92,114,14,226,127,60,38,212,154,212,83,153,115,36,87,72,127,66,
+    92,77,181,107,197,71,147,140,141,248,184,92,254,245,249,227,242,254,230,101,90,93,132,78,
+    134,36,27,206,161,46,254,253,48,160,210,234,34,234,208,246,46,73,93,190,251,115,0,165,
+    213,0,250,143,121,56,156,103,167,190,165,252,7,97,42,226,165,242,136,5,16,201,169,0,
+    76,236,142,34,153,79,91,34,137,22,177,61,39,186,75,249,71,86,29,36,67,136,91,36,
+    13,61,50,50,238,51,158,246,199,69,15,51,244,76,36,199,166,169,197,13,193,156,166,203,
+    162,65,105,221,201,4,229,215,229,209,172,115,227,4,5,3,209,149,83,138,247,92,19,238,
+    224,101,211,162,115,114,77,170,77,211,152,13,21,27,197,66,66,137,174,176,170,11,22,15,
+    102,53,244,150,26,100,132,7,214,225,75,108,92,77,23,135,110,122,234,68,194,155,233,244,
+    251,183,152,4,143,45,93,226,39,114,48,219,215,148,122,52,211,249,65,71,245,74,134,55,
+    205,150,124,215,82,58,149,176,169,73,124,120,245,148,227,239,46,223,118,12,151,17,219,55,
+    255,205,249,44,
+};
+static const CompressedSourceCode extras_io{extras_io_compressed, sizeof(extras_io_compressed), 2998};
+
+static const unsigned char extras_pcg32_compressed[]{
+    120,218,189,86,219,110,227,54,16,125,215,87,112,145,54,149,18,217,214,45,142,29,69,70,
+    131,173,119,17,32,55,108,221,167,2,107,83,18,109,179,144,72,129,162,82,7,217,252,251,
+    14,69,91,113,108,107,27,180,64,253,66,114,52,151,115,14,71,35,247,122,61,52,89,18,
+    244,240,241,179,239,161,162,36,85,202,59,2,179,148,231,136,85,121,76,4,90,16,70,4,
+    150,92,160,248,9,221,146,140,150,37,70,247,191,220,17,154,101,54,138,9,101,11,36,151,
+    196,232,65,42,223,235,196,84,34,94,201,162,146,232,17,11,138,25,28,231,202,1,21,68,
+    228,149,36,41,74,56,91,136,138,48,73,113,182,149,126,142,115,154,61,117,235,68,119,247,
+    147,241,5,32,163,37,202,121,90,101,4,193,142,113,214,41,37,128,195,34,253,96,28,149,
+    121,154,25,144,171,148,136,50,217,15,166,82,211,152,222,254,113,51,185,126,184,185,30,127,
+    137,250,126,63,112,253,190,231,249,131,160,127,62,244,29,231,44,60,24,243,219,248,211,21,
+    132,77,175,239,62,126,25,223,142,239,38,145,27,4,94,127,120,230,4,206,96,48,24,246,
+    253,192,57,15,141,26,220,171,96,13,120,27,213,73,69,149,72,26,3,218,185,0,1,49,
+    42,9,208,5,192,136,23,146,114,134,179,236,73,89,165,32,56,135,135,25,73,32,182,107,
+    144,85,193,133,68,58,30,21,201,194,247,158,141,122,49,55,40,85,38,43,18,68,86,130,
+    77,85,246,103,3,87,146,43,103,83,123,130,50,146,92,104,71,43,84,225,221,218,20,53,
+    187,83,181,163,44,17,36,7,241,15,186,156,236,42,184,27,163,17,168,178,161,241,18,30,
+    0,105,55,135,154,229,187,49,219,77,145,11,100,234,216,203,75,215,250,230,254,127,100,94,
+    145,171,52,78,136,218,127,208,6,151,117,31,212,190,155,14,207,40,35,88,180,244,119,183,
+    201,223,32,136,90,122,47,220,206,175,148,232,232,94,81,175,90,19,108,163,191,151,52,89,
+    162,188,130,102,142,1,67,154,118,21,139,186,69,63,235,170,164,172,113,49,178,146,155,119,
+    19,64,144,5,1,52,191,154,69,37,136,181,105,62,176,3,20,185,193,75,166,96,128,139,
+    85,148,116,111,163,227,250,206,32,33,45,173,103,67,139,212,162,243,190,198,71,130,75,97,
+    174,139,152,166,190,249,209,104,228,14,172,175,245,222,130,131,119,110,217,27,23,223,61,110,
+    156,206,134,150,234,130,151,93,110,24,85,140,206,185,200,55,172,96,69,179,63,29,24,75,
+    188,98,169,53,83,35,75,144,191,148,116,156,161,18,231,5,240,89,188,143,251,30,105,187,
+    153,27,181,179,46,241,108,208,185,89,111,71,46,28,180,75,221,229,171,156,50,211,236,104,
+    183,159,245,18,26,112,103,25,49,225,69,39,59,222,230,155,226,181,200,86,163,222,74,199,
+    35,168,181,26,69,42,115,45,199,203,230,185,243,67,113,102,243,140,99,57,107,196,113,173,
+    217,158,4,181,203,171,0,245,209,60,116,239,155,251,84,236,180,215,81,197,74,186,96,36,
+    157,74,62,157,23,7,136,216,41,175,96,42,90,189,192,27,6,195,254,185,55,236,167,150,
+    237,118,59,63,125,186,185,191,154,76,199,15,191,247,60,235,29,28,188,109,18,95,189,22,
+    26,222,14,15,239,0,145,104,253,100,135,177,134,123,200,104,133,255,4,206,127,3,206,111,
+    1,231,239,128,243,91,193,249,239,7,247,47,17,7,111,16,7,45,136,131,29,196,65,43,
+    226,224,63,34,254,33,141,171,244,17,179,100,61,209,222,252,41,153,177,25,204,73,82,148,
+    138,77,198,23,240,183,67,46,115,154,32,73,115,98,35,12,246,57,74,224,227,171,230,231,
+    108,191,61,103,117,6,229,92,238,41,240,200,105,138,82,90,38,240,159,163,117,28,54,223,
+    60,166,230,193,122,143,39,92,226,204,116,173,215,15,75,172,77,206,150,9,155,187,195,115,
+    219,223,108,6,105,51,58,216,135,200,209,83,199,100,199,174,165,79,186,86,164,151,19,28,
+    26,186,82,20,175,13,167,177,122,185,226,147,8,159,186,161,129,97,13,13,6,131,53,114,
+    149,125,123,148,235,20,167,58,80,61,252,14,227,83,95,203,
+};
+static const CompressedSourceCode extras_pcg32{extras_pcg32_compressed, sizeof(extras_pcg32_compressed), 2594};
+
+static const unsigned char models_illuminant_compressed[]{
+    120,218,213,88,109,111,219,54,16,254,158,95,65,96,69,32,99,178,35,217,86,108,167,205,
+    182,58,137,235,34,221,16,52,65,58,96,24,98,90,162,109,162,146,40,144,84,28,119,216,
+    127,223,29,41,89,114,227,52,78,90,172,219,39,91,22,249,220,241,185,231,94,232,131,131,
+    3,114,242,246,140,40,77,211,136,202,136,240,56,206,19,158,210,84,43,66,21,81,25,11,
+    181,164,49,153,132,34,22,114,66,110,105,156,51,69,24,126,82,205,34,66,53,209,11,182,
+    119,0,64,97,46,37,75,53,89,210,91,22,179,116,174,23,138,240,148,76,94,0,186,102,
+    173,234,231,155,41,85,108,114,132,27,73,68,87,49,159,47,52,57,37,138,73,206,148,107,
+    176,36,11,69,170,180,204,67,52,50,19,146,208,116,69,194,133,20,9,213,60,228,122,69,
+    68,186,9,16,139,48,87,100,6,43,204,239,112,44,131,116,233,29,92,250,7,151,109,18,
+    138,36,19,41,195,147,105,58,205,99,227,190,184,101,146,116,60,175,213,234,119,188,52,113,
+    73,22,3,8,238,143,105,146,21,46,25,156,207,247,244,97,79,175,15,123,72,179,105,54,
+    204,226,92,72,166,66,164,96,84,236,36,35,31,222,73,145,207,23,240,181,109,207,134,139,
+    23,224,114,51,131,229,42,151,112,6,174,194,5,149,115,70,198,23,229,206,241,69,181,117,
+    124,17,184,64,64,100,182,190,59,59,53,48,118,93,139,124,168,209,45,114,173,120,196,204,
+    58,112,56,174,133,138,104,65,62,49,41,90,184,217,0,156,193,57,86,181,136,147,5,3,
+    95,56,4,30,232,135,163,242,91,86,9,32,19,75,56,53,56,170,37,159,230,154,139,212,
+    96,164,66,38,52,230,159,128,22,37,192,44,200,161,6,120,138,104,62,106,36,56,52,236,
+    46,185,94,108,101,87,133,52,6,12,12,58,152,0,10,227,149,139,136,73,30,107,158,197,
+    43,50,93,145,37,160,51,228,94,210,136,35,60,79,97,165,66,45,148,18,68,246,25,1,
+    172,88,161,104,170,179,190,103,51,56,92,26,50,117,100,158,137,145,189,31,28,181,61,175,
+    75,156,19,84,55,79,152,150,171,6,198,115,45,170,74,52,46,4,21,67,0,17,178,204,
+    126,142,227,247,239,227,64,172,202,213,63,168,36,138,247,126,113,192,45,198,231,41,201,32,
+    240,141,189,91,193,129,57,120,115,206,226,91,158,94,137,147,154,196,157,89,44,128,187,143,
+    230,149,187,111,158,218,228,110,213,120,249,48,206,25,132,251,237,58,2,167,14,112,68,210,
+    60,41,68,162,10,148,50,71,215,207,85,208,158,101,103,244,12,59,197,142,41,147,187,219,
+    25,95,252,75,134,32,112,95,107,169,200,177,34,251,30,168,178,144,34,88,220,48,37,230,
+    144,111,169,149,211,160,227,111,212,58,91,55,150,11,30,46,48,163,18,134,59,33,159,99,
+    206,182,151,65,151,176,214,188,229,98,9,71,5,231,88,182,166,85,154,152,98,222,212,44,
+    201,152,164,26,43,16,214,52,56,13,172,98,177,88,182,200,133,196,132,49,200,41,77,48,
+    187,183,116,8,131,53,169,126,184,57,13,60,167,49,89,151,173,141,87,189,0,95,45,77,
+    141,1,216,21,161,25,228,117,11,2,146,208,80,138,198,30,187,203,132,212,214,55,82,223,
+    233,84,130,252,107,239,243,215,199,230,7,199,3,194,183,201,255,197,135,215,215,103,239,206,
+    126,123,115,53,190,25,190,190,60,187,249,245,245,239,238,254,246,142,244,135,247,167,27,82,
+    165,95,217,192,254,228,236,87,102,26,238,190,201,7,201,128,174,180,102,255,229,222,223,207,
+    140,116,40,164,41,179,166,236,193,25,108,111,168,197,4,122,167,173,10,45,114,117,191,209,
+    129,14,68,10,133,49,98,51,158,98,143,196,198,215,245,60,239,28,148,97,176,218,1,62,
+    185,182,48,179,77,104,208,5,150,96,216,167,241,45,60,75,154,206,217,78,225,48,157,153,
+    212,107,19,196,101,29,35,27,135,173,229,172,44,100,219,153,4,100,243,162,224,243,65,26,
+    3,143,56,112,178,206,121,195,53,231,90,82,153,84,228,200,178,208,19,49,91,235,61,147,
+    144,153,60,157,3,165,81,14,29,108,39,217,161,150,143,55,220,67,171,173,50,179,31,246,
+    47,0,255,2,235,95,194,163,102,34,100,138,182,1,30,31,233,76,51,153,138,162,127,150,
+    126,239,228,80,112,207,161,96,23,135,14,193,161,195,192,235,162,67,160,120,73,97,206,64,
+    7,42,210,138,209,162,152,188,74,2,161,222,104,67,163,122,255,102,184,139,131,135,247,28,
+    68,179,143,59,216,3,7,123,133,131,88,136,48,9,113,178,208,139,166,250,184,122,18,71,
+    189,123,46,244,234,46,108,79,210,250,228,86,243,107,115,118,51,227,48,148,11,28,72,13,
+    22,212,211,137,45,246,19,183,170,205,48,129,53,197,172,105,178,169,169,232,140,29,225,228,
+    10,25,134,10,0,142,177,2,208,148,84,208,126,219,160,149,99,154,194,132,156,198,52,252,
+    216,2,171,173,214,232,144,80,72,216,181,175,11,26,139,108,33,84,134,195,144,25,163,112,
+    50,233,193,194,1,46,180,158,73,168,228,83,12,234,44,143,227,166,157,225,242,196,174,38,
+    206,168,135,181,87,138,59,158,24,131,40,16,92,60,234,111,252,110,160,32,11,26,118,244,
+    28,249,48,240,26,30,36,246,4,41,197,210,152,128,121,208,250,3,145,40,13,248,62,82,
+    129,201,9,221,39,41,164,142,95,33,182,28,134,201,171,119,253,110,3,206,215,198,25,41,
+    20,34,46,180,6,79,197,190,92,229,176,78,50,28,145,33,44,118,24,173,101,116,49,252,
+    62,174,136,81,81,174,170,214,124,236,63,181,141,140,190,97,27,89,143,7,79,237,36,15,
+    221,24,204,36,93,83,45,220,27,138,91,198,250,238,80,151,238,206,178,53,32,95,150,110,
+    176,85,181,120,113,113,252,65,48,56,111,152,203,132,141,215,246,99,40,17,241,66,152,36,
+    18,120,130,106,82,41,95,70,34,135,1,90,219,235,6,163,146,4,253,1,222,37,198,23,
+    109,226,64,143,59,44,236,152,216,231,178,105,250,170,57,234,54,91,6,6,237,185,197,52,
+    223,217,96,202,233,248,221,46,244,76,104,164,109,243,209,193,99,160,228,55,192,12,10,140,
+    249,160,81,72,72,188,113,25,233,239,160,71,152,96,191,94,144,0,242,31,80,36,94,110,
+    106,194,27,86,194,24,6,229,165,120,26,231,172,153,229,56,105,216,78,92,150,10,220,108,
+    203,5,140,57,66,70,160,46,72,111,158,134,146,81,133,138,179,132,212,134,150,35,176,96,
+    48,156,118,175,99,186,235,16,5,48,24,244,205,247,14,113,186,190,237,186,67,184,209,5,
+    190,55,56,47,74,215,208,52,64,92,135,110,209,226,198,249,212,132,216,150,12,6,233,145,
+    132,120,92,19,192,197,205,240,27,200,2,47,45,223,78,23,142,255,234,216,122,178,191,111,
+    63,95,29,7,141,159,237,215,35,239,235,5,115,237,99,40,219,208,246,113,54,186,134,96,
+    118,189,158,103,131,84,214,249,91,46,32,247,11,5,109,83,143,9,232,35,193,52,72,59,
+    55,102,128,111,63,63,142,215,255,139,56,182,203,56,254,216,123,36,146,95,204,248,49,70,
+    176,31,248,38,209,200,98,53,149,112,153,54,197,60,225,119,72,172,45,254,181,34,176,25,
+    66,243,119,16,254,219,20,17,150,112,13,131,241,174,217,50,246,157,239,203,234,225,179,89,
+    131,97,218,208,214,245,44,109,48,64,53,205,36,85,39,14,40,177,151,254,185,100,44,181,
+    101,12,105,44,121,82,59,18,133,198,190,51,83,189,135,152,250,7,130,15,154,43,
+};
+static const CompressedSourceCode models_illuminant{models_illuminant_compressed, sizeof(models_illuminant_compressed), 5757};
+
+static const unsigned char models_prospect_compressed[]{
+    120,218,181,125,253,114,35,201,145,223,255,251,20,112,232,194,71,206,128,152,250,254,216,61,
+    58,188,210,237,157,101,201,186,11,73,113,86,120,99,131,139,33,49,51,184,37,1,10,0,
+    119,118,78,167,7,242,115,248,197,252,251,101,86,147,0,167,139,192,109,216,27,18,123,186,
+    145,149,149,149,149,223,85,93,253,230,205,155,201,63,255,254,159,254,240,207,223,252,234,143,
+    95,78,230,147,251,15,159,182,203,235,249,237,237,167,201,219,249,118,113,51,249,56,255,52,
+    217,173,39,187,135,205,10,63,223,46,230,239,254,118,59,121,187,92,95,127,88,220,45,183,
+    187,205,167,201,114,133,223,151,187,237,23,111,128,107,125,191,91,94,111,103,147,127,92,254,
+    184,88,77,118,31,22,147,251,229,251,187,197,106,55,5,166,221,98,51,157,204,87,55,147,
+    155,205,167,139,187,249,14,247,147,235,245,106,135,159,183,147,123,220,60,172,150,59,233,99,
+    50,223,44,230,83,193,136,39,247,155,197,205,242,26,48,196,39,253,222,127,88,108,72,230,
+    100,179,120,119,187,184,222,205,87,215,11,193,188,219,204,87,219,187,229,78,159,172,129,104,
+    178,93,174,222,223,46,4,173,146,248,35,122,10,198,204,102,46,26,51,89,221,205,38,191,
+    222,77,150,138,189,181,223,110,65,255,116,114,187,124,255,97,119,177,251,176,89,63,188,255,
+    128,235,226,66,137,91,205,111,215,239,129,93,240,177,153,140,237,226,221,242,246,110,114,183,
+    190,89,220,130,41,147,239,239,230,27,80,50,219,222,221,220,126,175,227,70,39,111,31,150,
+    183,59,105,179,157,223,177,225,167,47,201,193,197,230,126,125,11,36,138,113,254,246,129,55,
+    55,202,78,12,19,92,218,98,72,141,77,31,231,63,46,110,23,171,247,187,15,83,98,90,
+    77,22,63,206,111,31,208,128,163,189,195,228,77,174,111,215,152,188,139,119,235,205,157,96,
+    220,204,111,150,243,29,198,116,33,3,124,7,36,139,159,192,86,140,115,189,154,60,144,69,
+    19,204,232,252,94,198,246,9,157,78,222,97,74,57,140,251,219,185,114,18,61,9,174,237,
+    253,226,122,9,154,222,61,172,174,119,104,174,140,195,68,44,54,11,50,93,25,64,25,218,
+    206,216,64,26,253,241,131,206,0,89,176,188,89,204,111,151,255,134,225,205,183,164,120,55,
+    191,254,129,29,124,191,122,184,187,186,157,127,90,108,182,223,19,104,165,99,159,191,221,174,
+    55,111,73,225,61,153,162,72,39,223,96,22,63,41,95,150,187,7,192,78,22,228,34,137,
+    145,217,122,154,120,105,127,79,74,1,190,120,247,110,121,189,4,168,32,249,97,114,57,217,
+    162,211,127,157,252,230,234,95,207,110,231,119,111,111,230,231,147,95,225,254,226,66,197,225,
+    113,38,100,212,104,187,143,14,52,47,230,215,31,4,213,62,37,31,23,148,27,52,122,251,
+    105,242,97,253,113,114,247,112,253,129,192,75,153,248,205,130,76,64,7,31,63,44,241,252,
+    221,242,167,133,178,80,134,174,2,112,32,197,187,249,195,87,207,168,1,183,55,243,107,78,
+    40,166,232,102,241,211,30,22,17,166,119,152,51,157,248,39,253,216,126,165,26,66,209,27,
+    88,174,28,109,194,191,34,47,238,128,29,179,174,2,52,161,0,65,120,72,117,147,245,249,
+    10,195,88,108,72,197,236,112,198,86,11,52,88,173,119,147,183,84,69,161,227,253,98,243,
+    37,71,221,148,75,36,227,111,213,80,192,116,60,92,195,170,192,64,204,55,208,4,177,13,
+    148,241,27,206,52,40,64,215,58,150,21,101,96,185,185,184,94,64,176,183,215,98,54,0,
+    51,29,70,163,236,223,163,119,79,157,182,208,135,245,122,247,1,230,108,144,11,101,220,154,
+    88,169,53,144,167,201,111,57,93,48,57,27,240,83,169,251,184,220,125,88,210,224,97,90,
+    69,248,63,204,111,223,93,204,69,158,190,95,174,174,69,58,175,248,227,149,60,252,126,114,
+    198,1,94,223,206,161,81,215,143,22,85,123,80,51,182,133,205,153,220,44,222,111,22,139,
+    237,20,86,76,102,22,109,204,44,171,122,174,240,235,187,249,195,237,238,252,43,40,244,66,
+    45,43,134,10,62,108,31,100,70,241,96,187,91,204,111,148,129,192,51,185,89,190,123,247,
+    176,93,168,161,18,134,224,110,204,78,194,98,108,230,239,23,135,10,185,47,179,219,5,254,
+    127,63,111,218,252,56,128,219,229,106,129,118,95,194,58,220,174,55,107,184,7,168,245,115,
+    91,46,8,155,61,127,183,89,223,77,246,121,33,147,62,133,61,216,172,97,232,215,203,155,
+    173,52,123,187,89,127,92,13,206,65,91,13,157,94,68,181,252,176,119,31,214,215,159,230,
+    43,12,251,25,196,223,79,159,100,249,254,22,18,134,41,2,33,3,17,226,146,238,217,33,
+    155,2,82,101,100,190,121,187,94,93,168,95,219,27,251,115,228,248,199,12,252,153,195,21,
+    205,183,187,214,193,146,120,136,6,116,221,138,84,138,246,209,53,82,117,31,238,238,129,244,
+    123,208,112,165,52,192,226,83,23,48,171,243,155,155,165,152,11,113,147,84,252,123,112,102,
+    34,130,181,121,244,32,107,234,216,20,79,228,110,127,44,91,208,250,176,162,214,239,62,46,
+    175,23,51,153,186,239,127,18,238,200,124,92,93,127,186,134,8,10,170,71,101,26,116,238,
+    31,110,31,104,186,118,23,191,250,19,76,62,102,128,22,127,218,108,15,28,192,135,249,61,
+    4,230,236,237,195,110,114,179,198,191,72,52,30,195,60,159,63,210,246,52,119,147,251,245,
+    250,246,43,202,222,96,144,110,41,70,119,58,137,15,27,14,2,120,62,174,158,4,237,247,
+    131,99,216,126,41,247,147,201,215,183,183,244,89,96,206,237,108,114,102,107,170,211,137,173,
+    217,156,147,55,64,118,15,5,149,233,125,191,88,65,106,213,85,136,165,82,97,218,54,60,
+    127,216,173,127,32,237,182,36,119,62,217,255,143,120,246,12,2,77,201,252,185,209,107,72,
+    254,251,252,250,207,15,139,187,245,195,205,228,63,79,126,137,176,99,71,146,170,18,51,136,
+    68,131,253,135,255,243,191,249,251,64,185,51,166,156,63,245,248,36,190,147,179,61,105,159,
+    30,138,250,121,15,151,205,99,184,254,126,114,182,175,6,221,214,206,142,181,198,63,38,103,
+    131,30,76,155,2,28,136,254,128,240,95,150,183,239,230,171,125,114,134,161,1,223,190,12,
+    157,237,9,222,68,4,239,252,139,95,48,196,249,66,163,136,47,191,132,220,126,152,44,239,
+    238,215,155,221,228,213,87,95,60,90,27,72,21,140,91,139,36,158,44,76,179,15,111,23,
+    108,253,98,128,215,140,194,177,32,111,246,5,66,27,118,174,46,134,118,64,168,191,82,2,
+    254,242,197,245,26,166,108,31,241,165,60,57,51,48,188,147,9,58,249,59,161,183,75,199,
+    172,97,56,32,99,15,71,7,195,1,248,236,139,191,238,177,230,110,185,90,222,61,220,237,
+    5,118,159,177,73,84,77,2,178,213,124,181,22,21,223,62,142,84,102,116,242,238,118,13,
+    155,53,180,184,250,31,191,254,221,213,255,252,250,95,190,249,237,55,191,251,199,63,254,183,
+    203,176,112,251,61,206,127,250,255,208,227,215,127,218,239,209,197,131,46,17,43,188,133,117,
+    96,208,180,218,109,150,138,122,164,199,103,125,192,150,63,245,240,199,175,127,249,219,111,174,
+    254,240,235,255,245,205,101,116,105,15,249,11,161,17,58,148,200,243,142,62,11,129,235,158,
+    124,204,25,232,106,55,243,7,152,231,103,253,252,250,159,126,127,41,67,252,22,157,125,119,
+    102,103,209,218,56,125,186,152,170,151,108,229,162,55,222,201,197,86,185,152,130,75,168,53,
+    203,165,232,157,254,77,85,46,177,93,172,92,130,151,139,87,120,175,15,93,212,139,252,181,
+    122,163,191,152,192,75,169,85,47,210,184,148,172,23,249,155,245,89,146,86,37,38,185,4,
+    189,120,189,40,250,98,21,210,8,230,172,205,115,150,14,178,0,102,109,150,101,132,33,91,
+    233,38,43,124,42,130,36,201,179,20,165,85,242,66,86,114,122,103,228,46,10,207,66,44,
+    130,36,10,124,84,30,196,32,125,70,175,23,167,23,171,191,73,47,209,72,171,160,56,48,
+    96,189,4,189,200,223,156,245,162,207,178,194,235,179,164,16,169,221,41,142,228,245,34,248,
+    65,150,94,146,94,244,55,5,108,72,130,34,214,191,94,127,82,48,167,23,101,75,208,209,
+    6,37,216,87,129,247,58,51,58,62,175,36,122,165,202,43,29,94,25,226,163,54,211,49,
+    121,165,192,135,246,208,234,101,255,175,61,0,240,7,173,242,201,151,114,252,50,218,46,29,
+    244,119,120,9,93,210,85,58,124,227,134,74,188,87,142,250,1,68,71,162,2,231,85,27,
+    188,211,118,42,30,222,105,231,42,99,222,41,164,254,85,201,241,58,33,222,42,160,85,64,
+    171,32,58,75,222,40,136,106,147,215,57,115,170,84,174,38,189,120,189,200,95,157,71,167,
+    130,231,138,208,229,84,242,156,42,156,211,155,164,141,117,114,157,138,185,139,81,47,218,76,
+    153,232,148,67,78,185,225,116,252,42,81,78,245,83,135,230,116,24,78,233,119,74,184,83,
+    138,173,90,25,171,164,90,213,96,91,244,46,235,157,82,103,213,246,216,36,221,88,165,203,
+    42,93,106,95,172,78,170,85,178,172,206,142,85,198,90,101,189,85,158,91,101,179,109,237,
+    100,80,214,104,107,165,203,168,193,51,170,4,70,181,214,168,193,48,202,60,163,204,51,74,
+    158,81,242,140,170,168,81,221,52,170,26,70,85,195,168,64,26,149,47,157,56,163,194,99,
+    84,78,140,78,129,81,38,170,61,198,69,33,21,66,169,52,114,231,213,70,227,226,229,34,
+    84,226,18,244,34,127,197,12,226,226,228,146,244,97,82,8,253,41,182,139,66,4,197,24,
+    20,163,87,140,66,164,87,211,238,171,83,16,167,32,86,65,172,130,88,5,49,10,98,4,
+    68,77,61,46,81,47,242,183,36,189,72,175,69,88,233,213,240,251,146,20,36,41,188,2,
+    70,189,17,1,244,234,12,112,209,59,175,119,74,94,113,122,231,244,206,234,157,222,24,69,
+    194,63,89,102,214,171,207,192,69,232,200,202,45,165,38,43,151,114,84,8,229,79,22,27,
+    225,179,50,70,221,138,207,218,165,242,56,139,79,242,89,38,202,39,29,123,210,25,74,162,
+    132,184,8,57,41,11,174,164,147,146,146,62,212,129,166,160,15,117,132,73,116,203,39,167,
+    15,69,173,124,82,150,39,163,15,85,34,212,85,249,168,92,86,143,5,3,45,180,68,229,
+    107,20,205,246,81,100,211,107,119,81,100,210,71,175,207,148,147,209,233,111,182,232,69,113,
+    41,15,131,142,43,232,184,130,142,43,232,184,130,142,43,104,119,234,173,188,250,39,53,177,
+    62,180,139,114,49,120,133,208,209,169,209,240,234,147,188,42,167,15,202,77,85,2,223,36,
+    215,87,189,83,9,209,105,245,58,212,54,23,94,252,166,87,71,5,59,173,32,226,233,213,
+    106,123,117,4,94,141,189,31,144,40,187,149,44,181,214,94,205,180,87,3,237,213,50,123,
+    53,201,222,235,20,120,101,141,218,98,175,182,24,151,168,23,125,168,243,226,148,100,39,118,
+    206,187,172,15,149,116,53,198,94,149,204,165,118,9,122,145,1,171,77,198,69,225,163,194,
+    107,55,170,190,46,180,59,237,84,217,236,84,77,156,14,203,233,28,59,167,191,233,32,157,
+    211,126,84,119,156,78,188,154,111,92,180,157,254,164,10,238,140,194,235,136,173,142,88,77,
+    58,46,65,47,210,192,234,192,173,14,92,13,188,87,252,86,213,205,102,133,207,10,175,3,
+    87,107,143,139,62,212,9,180,58,129,42,254,86,71,108,85,128,173,254,213,145,170,233,247,
+    106,250,189,154,254,54,99,86,199,100,219,157,142,198,170,185,82,211,239,213,244,171,183,245,
+    106,249,219,60,27,149,111,109,100,196,93,122,53,248,94,13,190,87,131,15,223,172,119,106,
+    76,141,10,151,81,254,27,165,74,77,189,87,83,239,213,212,123,211,58,21,238,66,142,170,
+    94,162,94,228,111,209,155,34,127,179,222,100,249,155,244,38,201,223,216,46,86,46,65,33,
+    68,42,156,198,235,184,232,157,211,59,167,119,86,239,172,222,25,189,147,89,134,4,23,189,
+    120,185,20,189,43,122,151,245,78,166,82,35,14,167,102,28,23,161,65,163,121,92,20,151,
+    82,84,130,182,22,57,197,69,91,235,51,167,240,74,87,81,186,52,236,119,197,40,188,209,
+    14,196,54,64,151,138,94,162,94,244,161,82,153,69,250,112,9,122,145,191,89,159,137,214,
+    65,5,171,94,180,181,210,156,101,82,113,209,102,202,204,28,180,121,80,72,229,169,186,5,
+    92,180,129,215,223,124,251,77,254,42,159,179,211,159,92,123,168,40,173,182,214,65,102,171,
+    32,58,214,172,83,145,109,131,148,191,58,254,108,74,255,98,15,112,180,190,21,149,83,8,
+    159,52,253,127,150,146,142,173,29,236,45,69,108,167,82,12,188,94,223,62,220,173,184,192,
+    243,217,130,66,75,148,215,155,27,174,152,29,84,98,15,42,77,251,165,162,86,119,210,170,
+    224,179,53,184,167,242,226,116,242,84,30,98,105,101,164,68,116,122,190,252,155,75,62,213,
+    100,249,11,254,243,204,204,12,188,111,1,251,205,12,102,8,210,200,39,41,101,8,171,153,
+    69,48,110,26,203,226,2,98,99,234,140,143,166,214,229,89,245,231,211,199,246,156,25,105,
+    156,192,121,220,195,15,103,109,12,89,72,150,141,75,158,201,111,192,98,103,200,51,247,91,
+    91,71,235,44,8,104,187,137,0,166,10,198,15,24,44,28,73,138,196,144,77,195,80,236,
+    12,34,29,246,49,176,22,166,244,195,179,39,98,128,167,102,120,69,12,208,189,84,137,33,
+    38,0,16,67,138,76,213,203,193,8,114,114,58,8,68,29,69,48,36,168,190,140,130,102,
+    51,7,98,8,97,150,132,134,232,8,144,247,48,164,90,24,213,203,40,104,198,137,33,6,
+    122,62,195,242,3,48,8,13,62,206,146,48,49,216,89,172,57,31,208,16,168,46,196,80,
+    98,21,62,32,99,101,34,109,180,102,81,132,6,87,224,129,136,193,251,153,65,218,114,192,
+    73,196,74,141,6,170,28,49,32,10,20,142,32,130,1,6,161,193,185,89,22,62,184,52,
+    3,137,7,24,16,144,185,54,23,213,52,12,53,10,71,66,133,13,168,66,131,205,51,225,
+    247,212,153,25,66,206,131,185,64,28,100,21,67,177,34,5,28,69,78,138,97,90,133,2,
+    235,103,85,198,96,211,12,14,250,144,130,76,139,205,246,149,17,156,180,207,180,170,134,197,
+    17,232,178,81,18,204,172,38,149,70,136,131,13,7,83,97,77,80,70,214,97,16,49,208,
+    141,18,5,205,167,17,129,46,179,26,84,160,141,36,185,251,40,144,22,22,29,69,101,16,
+    39,40,106,21,12,98,31,173,19,153,156,57,25,24,80,225,113,177,123,24,34,139,48,65,
+    48,64,36,85,30,48,34,47,24,104,173,108,34,6,140,223,9,39,128,42,162,135,61,12,
+    44,247,136,72,66,157,156,34,192,64,189,48,50,49,52,0,9,113,26,17,123,139,76,131,
+    20,183,207,5,150,50,188,8,67,164,98,73,123,248,45,145,209,32,81,180,83,153,158,197,
+    44,115,25,25,36,30,104,5,130,210,28,4,69,128,8,55,189,42,65,180,29,1,46,38,
+    193,21,69,193,60,141,66,13,225,70,254,186,143,194,192,203,203,92,48,117,178,162,220,214,
+    178,190,70,20,116,11,222,139,94,176,165,162,128,191,51,105,15,5,82,47,17,22,235,89,
+    125,34,2,64,84,226,212,186,146,47,138,0,94,83,212,98,6,235,19,246,167,2,201,145,
+    234,147,245,146,86,203,236,84,175,52,4,186,178,160,154,53,171,197,43,10,112,58,187,125,
+    20,80,168,168,195,240,46,235,48,224,177,196,104,6,9,211,163,83,20,197,52,20,144,140,
+    3,129,240,44,168,41,21,38,200,156,155,8,249,203,66,5,93,103,106,24,178,105,227,0,
+    126,115,64,4,30,20,193,224,132,251,148,83,91,140,74,165,4,71,185,141,67,237,48,80,
+    208,164,236,79,7,61,190,234,55,76,165,208,144,144,44,11,201,90,230,104,22,98,22,189,
+    90,136,89,141,249,192,214,58,38,46,34,19,38,139,44,153,20,171,17,85,12,22,182,202,
+    153,134,33,232,124,130,35,207,44,132,173,16,68,81,41,104,39,171,3,196,145,179,58,145,
+    192,200,214,233,148,58,22,67,26,14,68,210,251,50,1,9,242,34,153,6,70,90,105,165,
+    218,7,97,93,128,167,154,194,211,43,14,22,241,4,7,108,80,220,103,39,116,152,149,93,
+    226,128,199,42,66,71,54,134,97,140,97,157,35,76,189,165,134,57,166,101,13,5,130,212,
+    71,118,22,23,232,219,196,196,33,228,104,210,13,221,102,96,67,12,80,85,100,140,141,10,
+    91,26,10,88,242,71,177,136,37,161,239,197,133,136,117,114,54,170,161,0,182,162,28,157,
+    34,219,107,8,76,27,70,66,155,71,37,101,253,141,142,69,245,2,152,69,15,233,8,138,
+    76,51,82,71,55,13,195,148,248,1,3,108,206,128,129,6,159,178,171,62,15,70,206,53,
+    18,74,10,138,1,15,94,198,0,153,74,185,97,96,10,175,194,141,184,43,136,96,73,241,
+    3,110,166,143,129,122,76,75,34,24,24,85,183,81,56,26,85,193,64,26,66,236,99,136,
+    224,92,28,24,137,68,14,178,169,24,34,51,21,163,21,140,144,219,116,142,32,72,112,49,
+    161,77,38,166,193,168,165,65,96,145,196,134,122,214,203,225,138,251,20,192,107,21,154,50,
+    105,7,189,45,86,49,96,70,68,17,60,188,61,194,134,220,199,80,42,184,39,92,128,93,
+    168,238,81,44,170,143,226,186,152,200,199,20,250,8,42,39,93,72,96,236,155,7,134,34,
+    148,99,82,111,88,176,168,8,199,108,31,131,144,46,197,167,84,193,16,224,170,106,35,188,
+    250,8,169,100,164,144,94,198,96,201,61,80,98,137,64,217,16,145,167,89,197,0,99,9,
+    119,116,4,67,113,226,177,164,41,70,47,225,33,11,20,169,214,151,91,34,193,243,67,67,
+    49,40,222,65,132,16,213,190,220,44,72,46,170,237,160,213,234,245,160,179,8,219,74,126,
+    185,105,228,4,13,77,225,252,196,65,131,224,18,203,203,13,83,13,113,24,36,140,148,229,
+    191,37,51,174,241,8,123,160,31,162,23,210,18,233,164,220,56,38,240,38,31,225,79,53,
+    86,66,82,213,180,164,78,64,179,85,23,253,145,182,57,165,129,185,46,90,47,195,214,244,
+    18,118,227,197,182,14,116,166,199,126,97,42,37,154,144,124,13,236,13,47,53,44,113,152,
+    24,139,68,219,80,18,16,245,50,138,117,47,79,42,204,105,120,100,147,141,26,204,59,58,
+    78,7,131,243,114,83,196,98,110,152,84,24,99,35,134,12,177,120,70,204,124,132,77,142,
+    117,218,58,180,181,8,185,164,95,202,48,147,220,151,219,34,47,19,55,162,70,132,156,98,
+    91,79,154,115,58,50,92,16,166,177,7,250,135,22,171,246,59,150,231,96,140,250,150,79,
+    162,2,56,17,141,66,13,248,211,44,15,248,139,137,41,233,8,171,50,140,142,144,140,48,
+    32,48,144,146,182,204,199,88,94,121,185,45,226,56,241,255,48,173,222,39,55,180,69,152,
+    132,112,230,72,191,213,22,85,89,104,14,28,116,107,43,110,219,248,151,219,178,56,166,49,
+    47,130,50,255,200,42,112,10,121,231,203,230,17,209,79,12,26,26,65,149,178,122,12,203,
+    133,6,88,139,35,77,179,230,81,34,126,3,147,161,10,136,93,93,122,89,166,16,215,184,
+    22,10,33,62,49,205,178,91,102,69,202,183,151,218,106,62,11,69,67,174,231,134,150,236,
+    53,154,151,217,20,50,82,62,145,100,139,96,110,112,208,150,185,28,228,229,229,193,130,73,
+    117,200,207,140,143,141,79,44,201,112,157,231,197,166,201,233,220,84,4,91,57,171,11,66,
+    90,158,24,133,188,76,48,66,163,172,4,39,4,29,236,85,219,34,26,14,212,188,23,84,
+    32,35,118,180,42,18,112,195,166,121,62,203,101,111,112,205,31,233,182,58,205,127,28,148,
+    182,14,36,71,68,108,208,250,151,73,142,8,74,53,233,200,172,200,50,41,140,154,112,89,
+    70,60,71,38,8,198,81,243,240,2,233,53,58,37,146,106,129,205,199,220,52,184,108,92,
+    179,53,154,27,69,168,161,57,226,3,138,205,131,131,149,68,4,17,127,116,225,136,119,101,
+    36,152,246,26,161,167,152,95,178,13,24,86,170,77,67,134,70,152,211,151,136,75,174,240,
+    231,252,212,2,158,153,241,194,75,113,39,2,215,33,246,29,26,193,150,229,242,82,35,15,
+    139,225,14,58,66,132,55,173,246,165,16,217,165,224,195,97,27,13,179,45,43,67,227,109,
+    96,84,124,178,251,196,65,252,37,129,4,67,161,130,157,86,220,60,145,15,91,181,108,211,
+    114,217,170,211,10,1,154,121,214,202,180,86,185,219,42,103,152,150,170,210,222,90,33,102,
+    148,44,200,113,197,164,19,170,39,120,50,119,216,170,149,253,16,129,244,184,17,156,58,166,
+    189,86,185,26,237,43,117,121,232,189,13,52,232,251,173,98,146,113,73,93,184,55,91,185,
+    166,3,102,100,167,53,32,22,22,122,141,56,246,116,208,85,82,235,105,164,148,222,97,60,
+    132,137,74,190,223,42,73,145,8,173,178,237,78,23,204,74,62,108,229,75,163,48,247,250,
+    74,20,32,205,129,158,154,89,113,43,70,106,255,157,129,205,24,79,148,131,102,177,132,70,
+    99,232,9,98,150,146,132,87,139,244,24,202,107,126,235,94,24,25,172,73,109,89,195,208,
+    202,105,110,142,0,167,118,141,204,30,184,86,252,28,173,254,113,232,80,164,36,44,241,236,
+    41,224,177,42,45,12,215,79,0,31,102,133,123,103,78,0,215,176,24,218,19,210,9,224,
+    190,54,236,92,151,60,1,188,213,107,28,203,178,39,128,39,27,91,180,94,78,1,167,199,
+    82,218,79,2,215,202,56,56,227,78,153,84,111,7,11,97,79,225,140,171,90,140,65,144,
+    120,10,103,100,125,78,199,112,10,49,154,155,26,217,76,113,2,116,148,154,29,102,43,156,
+    132,60,180,162,55,215,86,79,0,247,90,156,182,167,33,119,94,235,60,46,158,196,23,43,
+    190,30,98,124,18,211,141,107,229,250,147,144,219,218,104,65,170,117,10,120,9,186,152,128,
+    20,229,20,240,156,90,201,59,157,194,70,155,138,31,140,199,41,208,82,140,131,101,58,73,
+    53,96,228,21,57,247,75,158,0,30,146,130,115,177,245,20,112,45,176,148,147,184,216,170,
+    166,73,242,179,227,224,77,75,83,48,39,113,177,185,201,212,247,200,135,224,106,170,19,119,
+    114,157,0,110,101,17,136,5,218,147,216,104,117,5,44,51,181,61,1,220,232,80,203,137,
+    147,164,43,76,134,171,126,39,129,155,162,225,229,81,47,83,211,83,28,239,142,114,29,73,
+    82,109,208,241,184,193,64,96,59,224,102,125,242,24,52,48,42,52,210,249,227,184,109,25,
+    160,145,104,30,131,206,69,227,127,22,232,242,81,115,145,67,26,160,235,81,6,102,107,26,
+    33,226,126,143,64,167,172,73,22,23,197,210,81,220,9,134,182,65,231,227,50,158,76,78,
+    13,186,28,159,74,234,251,0,125,220,104,197,96,235,35,110,123,20,26,169,229,64,183,63,
+    58,241,129,85,196,168,235,132,71,231,134,197,140,134,154,219,134,143,65,219,1,53,194,185,
+    99,192,72,197,7,170,205,113,110,75,33,68,106,204,37,29,29,162,247,161,77,187,79,71,
+    137,230,126,168,6,204,21,166,35,208,142,81,175,208,193,37,161,99,192,113,64,141,84,250,
+    232,164,187,71,170,17,131,28,37,219,217,65,199,184,12,114,12,218,86,51,80,194,109,220,
+    199,160,91,37,158,182,33,30,135,142,166,101,2,8,38,143,67,183,162,9,173,84,56,14,
+    221,86,111,165,188,116,84,164,208,125,91,179,179,39,36,8,200,183,135,18,95,63,53,125,
+    82,119,17,87,129,102,121,241,152,74,38,151,6,232,19,84,50,100,63,64,31,79,61,124,
+    8,143,184,143,207,60,236,117,25,160,221,113,57,201,195,228,240,173,138,227,147,51,16,18,
+    143,59,74,238,67,106,69,198,227,46,222,9,183,75,219,237,114,212,41,184,199,186,92,62,
+    37,253,17,81,53,233,36,64,103,142,235,139,2,218,116,34,198,147,2,75,81,213,232,79,
+    3,60,41,172,17,195,146,226,73,128,178,89,245,36,192,19,249,205,26,243,73,128,201,196,
+    211,0,115,244,167,141,165,186,147,216,104,153,104,157,4,103,253,137,112,249,52,176,154,78,
+    130,115,167,164,47,132,115,254,68,184,122,26,156,63,17,238,164,137,179,220,202,116,26,92,
+    62,17,238,89,114,100,79,197,151,122,112,194,63,221,168,67,200,144,67,111,196,162,118,166,
+    237,254,224,30,149,30,100,16,89,24,118,188,100,164,246,189,222,69,239,26,149,217,34,56,
+    238,192,105,241,163,45,87,205,144,55,101,251,162,220,164,97,167,76,76,189,241,112,227,149,
+    227,171,40,13,178,192,246,117,32,57,240,86,247,231,182,168,88,122,40,165,244,24,218,120,
+    138,247,177,3,23,73,100,136,173,235,146,156,235,117,45,254,52,52,158,151,138,204,164,3,
+    40,122,16,7,34,43,48,246,80,74,2,28,189,27,118,69,193,98,244,32,57,156,24,91,
+    239,200,203,115,7,146,59,183,0,57,236,57,99,62,220,153,73,83,72,39,210,137,97,87,
+    23,178,207,30,36,1,165,8,79,64,110,91,235,1,114,64,186,254,79,200,234,106,122,105,
+    232,186,133,144,187,210,184,31,177,199,78,43,218,80,27,36,34,242,30,147,162,238,116,11,
+    195,78,55,239,107,79,140,172,72,121,106,144,200,215,122,202,43,165,65,221,247,74,200,156,
+    83,233,153,151,44,250,208,0,75,79,209,188,136,71,118,118,0,116,177,195,77,47,53,134,
+    108,7,30,113,13,115,28,50,72,173,35,233,154,44,121,20,58,3,23,195,145,242,48,26,
+    103,108,135,151,89,4,46,165,242,56,63,61,243,86,188,206,143,127,196,89,58,84,86,201,
+    201,159,32,145,201,140,66,58,78,157,208,217,0,33,71,126,28,208,139,119,79,105,24,144,
+    237,104,16,52,66,251,14,143,82,148,198,225,116,224,217,14,125,35,198,235,16,89,132,233,
+    57,182,137,132,253,31,181,69,192,33,133,119,221,187,37,91,74,163,233,64,122,9,103,75,
+    109,178,238,75,12,126,28,50,74,14,93,83,147,224,16,226,56,47,125,27,80,41,109,64,
+    129,37,251,113,200,42,229,132,50,72,145,231,46,247,49,200,208,180,162,12,220,244,37,215,
+    58,14,153,188,24,161,6,24,33,153,163,40,35,212,71,132,167,245,157,236,193,70,248,39,
+    192,52,115,82,7,170,185,14,140,72,126,20,101,158,113,151,29,173,106,27,56,226,182,81,
+    34,235,44,34,165,166,93,107,204,140,41,116,124,62,164,61,16,114,96,81,50,29,233,176,
+    1,46,82,112,182,222,185,184,53,142,51,67,62,196,86,14,60,170,181,131,179,206,138,152,
+    181,161,115,36,63,163,146,233,102,220,116,34,111,54,169,4,96,34,199,165,61,204,96,134,
+    209,165,111,125,215,232,71,185,238,34,52,130,152,212,114,4,110,43,247,163,50,236,50,102,
+    155,123,183,135,141,215,240,47,29,149,44,224,14,0,124,109,56,107,182,161,116,32,97,9,
+    195,44,107,192,19,169,38,101,28,39,230,50,9,170,160,144,9,6,97,20,167,231,226,9,
+    0,44,228,200,27,31,157,172,178,198,89,137,200,233,58,13,124,98,223,96,127,12,181,6,
+    201,252,146,236,250,238,245,0,63,24,103,242,66,167,169,213,203,158,128,36,197,138,216,107,
+    192,30,232,197,224,180,93,85,120,151,203,248,60,123,121,247,129,99,4,195,77,178,181,104,
+    3,238,37,8,157,6,78,26,112,7,34,220,85,106,61,4,123,176,151,250,128,157,144,33,
+    206,189,213,58,191,101,160,148,120,108,66,138,157,6,194,164,236,117,57,156,47,3,243,117,
+    132,144,99,87,8,96,63,209,160,189,14,225,141,137,228,42,247,8,197,142,124,113,199,234,
+    44,235,70,88,110,227,143,128,143,92,107,30,133,79,124,87,25,243,170,165,114,196,204,24,
+    11,224,147,175,182,35,233,142,179,86,228,165,25,168,16,15,179,0,124,69,52,219,81,33,
+    75,57,170,130,31,30,58,201,128,105,191,198,241,123,170,28,224,229,117,90,56,75,244,67,
+    244,61,37,129,215,20,244,242,34,101,230,235,65,4,143,227,49,29,95,156,113,148,73,9,
+    216,248,10,167,48,31,90,109,59,6,37,11,184,218,125,190,184,156,248,214,192,56,112,193,
+    36,145,18,120,61,47,175,219,85,145,181,60,174,46,124,153,71,192,197,110,36,155,124,20,
+    89,182,117,60,96,79,240,38,4,247,196,94,13,207,2,1,184,41,181,3,109,146,48,189,
+    66,217,249,78,15,231,212,250,78,120,132,41,229,43,45,37,139,185,73,124,229,145,8,76,
+    39,105,10,16,87,130,195,95,7,8,22,61,39,135,141,224,124,20,220,3,146,2,41,216,
+    19,197,133,195,176,157,112,137,97,28,161,147,24,52,152,112,50,169,212,14,229,174,9,59,
+    102,38,208,52,121,129,78,181,19,91,54,97,97,72,2,27,104,121,88,4,45,90,236,76,
+    17,223,176,23,221,11,4,119,124,25,152,224,161,147,174,24,157,34,190,202,0,98,18,183,
+    207,19,220,116,66,124,150,238,5,220,202,72,157,168,9,193,93,7,220,144,141,137,187,204,
+    102,178,175,27,208,60,145,101,220,101,39,225,34,247,224,205,98,230,246,86,242,37,140,7,
+    23,149,47,19,203,64,21,28,35,20,166,23,59,138,28,222,38,43,95,100,70,93,82,90,
+    106,24,247,141,69,194,79,130,83,24,17,173,203,4,151,28,92,7,156,25,49,249,66,112,
+    8,89,20,243,132,200,52,142,131,91,19,154,129,12,12,57,107,155,164,241,172,27,90,39,
+    50,194,132,5,115,42,239,229,80,148,211,248,36,101,190,53,41,92,231,95,152,95,39,242,
+    3,83,208,9,169,188,216,0,238,153,129,235,180,166,56,233,203,186,14,184,149,161,70,153,
+    30,121,15,5,109,125,71,190,210,172,138,166,69,155,197,47,211,135,208,25,218,216,9,4,
+    139,35,231,184,237,15,73,84,204,226,106,203,184,193,128,65,22,190,121,165,36,81,40,35,
+    143,98,113,29,240,152,136,207,7,37,197,9,73,176,166,227,106,74,135,72,134,240,141,178,
+    200,2,137,80,14,87,51,110,165,147,156,224,64,163,68,102,187,108,92,146,59,23,58,224,
+    78,140,4,55,68,71,57,177,64,152,223,139,18,147,36,204,4,240,242,242,93,17,189,131,
+    0,216,14,118,190,87,193,65,242,175,43,89,167,202,142,215,85,104,207,5,157,88,57,110,
+    21,22,112,30,170,208,1,23,162,173,140,208,20,214,182,40,55,117,60,182,167,215,37,160,
+    21,153,228,43,31,218,216,149,14,56,53,148,221,75,200,87,138,222,133,78,65,42,74,246,
+    55,48,198,200,107,90,81,92,76,236,128,11,99,156,14,216,169,209,224,9,2,181,3,110,
+    9,206,163,89,68,18,84,32,185,183,168,3,46,225,103,148,96,35,198,32,3,71,182,55,
+    110,217,169,7,94,244,84,156,36,248,41,90,203,13,76,29,240,224,100,192,226,163,67,21,
+    71,0,243,104,59,67,229,94,18,154,91,6,0,165,136,170,164,82,92,15,185,11,18,53,
+    32,138,68,250,85,212,154,242,16,128,30,120,147,225,66,169,21,35,128,191,185,139,92,162,
+    16,199,55,105,139,188,133,2,137,54,7,47,78,126,134,28,225,5,140,124,96,138,37,9,
+    98,25,175,106,112,156,68,87,16,129,33,178,13,206,50,38,225,185,65,61,182,64,27,178,
+    188,134,106,101,63,62,177,71,176,167,116,166,20,209,181,218,60,203,215,73,2,131,175,204,
+    119,223,58,224,16,196,172,71,112,112,21,167,146,169,240,194,61,249,98,36,157,233,83,73,
+    11,43,186,89,234,107,61,69,34,41,114,60,141,108,116,11,124,21,216,167,158,82,147,16,
+    238,16,21,47,28,73,21,79,128,235,216,11,71,0,121,219,152,59,91,152,75,200,121,81,
+    190,99,141,60,201,150,163,23,140,236,39,39,118,68,203,174,99,235,34,193,147,14,83,78,
+    60,201,180,74,181,103,73,171,8,161,149,113,122,190,228,202,116,58,251,142,105,212,9,13,
+    74,187,156,108,147,153,165,244,76,35,55,162,230,153,28,67,198,249,207,20,23,238,164,233,
+    56,164,26,201,25,38,36,149,245,137,34,19,26,243,248,252,103,73,61,179,56,13,132,51,
+    57,136,184,84,190,223,62,14,30,116,18,163,132,51,96,8,161,185,159,186,227,215,147,200,
+    98,17,53,202,180,30,0,231,145,6,157,168,65,68,128,6,183,240,165,66,43,216,249,242,
+    79,47,38,81,124,164,136,111,11,136,221,8,33,116,226,41,30,189,3,110,170,188,87,178,
+    9,119,62,132,14,246,64,228,60,202,137,181,4,214,209,113,135,112,189,19,31,69,175,9,
+    160,19,164,214,106,202,83,67,47,88,147,4,54,75,82,151,120,106,18,239,82,47,180,203,
+    98,48,120,74,96,226,34,65,214,187,131,3,18,14,192,21,192,17,220,203,187,42,204,174,
+    221,184,67,194,196,72,38,226,37,9,243,46,11,95,160,164,189,145,102,53,231,150,35,112,
+    96,122,150,59,51,238,3,0,46,25,151,24,80,214,38,229,88,128,152,125,233,64,7,65,
+    235,73,58,34,151,108,229,46,148,30,99,74,150,90,134,211,244,197,136,225,133,133,113,157,
+    145,74,214,141,200,136,134,204,152,161,113,233,240,177,72,153,193,136,207,139,178,225,10,224,
+    209,153,206,72,139,168,154,145,124,35,120,35,57,176,53,157,21,5,132,247,18,181,240,220,
+    183,40,199,72,105,95,248,199,120,242,32,33,12,107,163,140,120,156,228,142,224,102,47,211,
+    208,100,193,51,189,67,168,160,57,109,30,247,71,85,42,148,116,181,146,34,153,42,1,71,
+    241,57,247,50,36,113,204,68,29,224,133,36,206,79,190,244,160,37,190,225,62,216,32,135,
+    189,85,73,152,130,233,230,130,2,110,152,126,121,23,164,140,147,16,49,249,78,98,234,73,
+    75,16,98,32,85,18,3,64,73,75,39,233,205,2,205,60,147,187,63,37,120,65,224,101,
+    59,233,122,73,130,155,149,131,154,116,208,49,143,107,133,165,1,144,243,42,88,56,64,190,
+    35,1,44,151,26,83,167,54,42,249,130,84,37,130,145,82,140,71,196,147,123,181,38,141,
+    64,181,228,161,105,33,122,26,231,161,103,6,165,201,8,107,226,78,226,204,128,24,109,148,
+    240,0,76,18,127,178,248,27,163,145,208,24,25,201,56,238,8,139,46,225,191,20,37,12,
+    236,185,228,62,37,141,135,81,121,152,253,100,37,107,228,235,41,81,178,234,113,149,64,154,
+    43,197,79,175,209,165,140,179,116,74,219,53,207,196,214,90,117,25,33,139,185,54,200,100,
+    199,229,16,30,130,150,153,158,37,130,14,49,184,135,135,212,236,139,33,100,84,66,21,141,
+    46,156,152,198,82,82,234,136,161,157,73,48,194,131,206,218,209,157,12,23,108,103,13,151,
+    101,108,122,175,40,231,187,68,13,96,59,65,49,228,116,70,231,201,212,142,39,203,240,228,
+    93,244,4,166,116,202,64,8,40,104,23,121,26,21,179,17,30,239,51,171,124,167,166,7,
+    46,103,197,240,248,41,225,53,177,195,53,118,150,221,89,137,37,56,15,244,162,123,3,246,
+    194,200,197,116,105,103,84,33,231,163,209,79,167,72,112,147,198,67,17,242,133,1,52,247,
+    161,216,60,19,71,148,89,185,51,227,165,26,40,81,16,236,2,30,76,229,148,193,152,143,
+    7,163,72,247,180,166,18,4,154,199,191,102,214,226,58,5,50,50,143,224,228,99,214,93,
+    151,0,119,61,62,98,218,197,1,8,48,125,24,230,8,214,104,156,18,147,132,233,242,98,
+    122,166,63,151,208,52,166,206,148,26,39,83,90,120,14,34,244,143,213,55,74,64,26,207,
+    141,107,145,23,244,103,114,202,38,72,182,145,108,225,90,249,184,171,160,41,36,120,144,129,
+    214,36,145,113,242,157,236,162,114,91,184,132,12,89,192,121,128,6,109,130,239,248,243,68,
+    183,5,113,172,74,12,67,94,22,123,76,39,68,115,116,43,133,39,56,1,58,122,175,200,
+    195,120,16,149,41,42,130,92,86,175,92,168,146,16,116,196,37,51,143,18,54,6,10,99,
+    138,98,55,48,7,227,213,145,204,205,37,34,234,132,102,196,0,201,229,17,147,163,49,119,
+    229,190,21,144,67,194,89,104,242,20,116,228,82,227,73,84,98,50,12,112,38,163,0,55,
+    180,70,133,114,48,94,101,76,92,182,99,98,201,4,48,112,149,172,74,72,88,199,29,87,
+    178,116,208,116,234,133,224,134,91,80,42,235,204,227,162,27,11,249,82,185,230,70,3,67,
+    71,93,121,214,182,25,135,102,132,40,89,139,152,35,203,4,192,234,81,6,163,224,94,24,
+    104,102,60,187,143,123,80,52,203,76,97,92,24,35,23,231,105,66,197,50,22,57,173,82,
+    206,202,28,207,163,249,122,5,1,153,118,113,129,213,75,51,211,217,152,17,74,3,231,89,
+    134,158,231,65,121,237,101,220,191,4,174,42,16,144,121,52,13,47,207,24,228,18,194,184,
+    82,135,192,61,23,44,218,91,254,77,162,79,140,120,198,23,26,2,207,55,227,228,147,118,
+    214,244,156,24,96,86,141,70,193,193,146,72,0,242,81,42,235,210,184,154,113,167,17,140,
+    96,79,140,73,44,11,52,60,177,51,113,89,104,148,237,30,46,70,45,180,72,76,149,211,
+    144,51,11,24,227,11,126,60,25,76,12,157,112,134,138,68,221,54,227,129,171,103,208,42,
+    134,203,202,194,181,156,8,92,88,13,26,167,37,52,125,46,173,12,64,129,160,121,234,128,
+    123,46,237,139,37,162,198,5,57,86,183,202,9,146,163,224,142,161,148,165,91,74,172,47,
+    147,116,104,74,25,223,197,228,45,215,61,0,29,116,109,144,135,127,58,57,20,42,246,87,
+    90,1,46,33,146,1,197,149,224,8,187,115,111,145,184,200,216,172,44,53,240,40,88,128,
+    195,244,246,150,40,121,146,101,229,122,49,141,0,211,88,46,180,213,210,11,26,105,140,104,
+    100,8,142,236,56,115,21,15,210,235,59,235,147,156,165,58,147,85,149,44,135,209,57,238,
+    198,27,215,107,128,83,112,105,40,152,96,84,30,101,228,228,116,222,208,89,205,12,2,46,
+    43,215,140,69,9,29,252,56,219,29,215,152,4,58,105,113,149,43,209,242,105,0,215,1,
+    23,202,179,36,142,60,3,70,160,243,184,226,57,49,166,4,175,82,185,170,13,121,24,47,
+    27,114,157,52,200,150,135,36,117,67,158,110,237,228,88,105,215,139,235,133,24,76,78,149,
+    45,20,86,216,216,91,167,150,45,18,78,214,156,108,59,122,149,147,20,199,51,76,252,148,
+    4,220,138,169,118,220,166,130,103,198,165,30,184,19,25,113,98,44,184,38,44,18,19,187,
+    139,182,81,160,179,6,72,54,170,56,142,11,187,147,85,127,39,75,249,156,42,190,107,45,
+    194,62,30,81,147,232,34,224,194,238,236,249,94,5,143,10,232,44,33,86,90,105,226,227,
+    12,100,235,68,122,74,28,143,50,216,191,31,144,75,54,40,115,16,75,234,173,55,7,101,
+    99,162,32,23,57,232,188,242,156,221,220,1,87,54,114,171,96,225,246,3,209,66,215,165,
+    92,5,134,51,47,118,43,235,154,181,235,229,141,69,192,19,143,133,225,151,26,146,24,156,
+    222,206,57,174,242,53,189,3,184,212,71,240,204,246,118,228,21,78,18,7,224,100,19,69,
+    42,106,89,187,200,189,16,91,133,150,26,53,246,141,7,103,63,30,130,167,182,30,239,168,
+    126,26,227,121,83,187,216,197,152,70,167,35,245,18,253,26,228,26,47,130,203,121,57,114,
+    136,148,120,168,142,199,179,114,112,40,254,234,36,69,30,91,97,153,238,149,14,180,83,86,
+    100,26,202,34,181,114,22,226,58,139,194,138,60,211,195,211,80,202,137,205,0,183,198,191,
+    192,199,44,66,201,148,52,40,246,208,145,152,66,113,36,120,160,244,242,116,59,113,214,169,
+    91,104,16,198,193,126,193,242,113,27,157,240,37,216,30,114,153,35,238,150,246,16,117,39,
+    217,143,239,51,61,55,25,3,116,74,45,39,168,161,135,187,136,41,229,206,75,110,63,48,
+    50,3,185,87,10,170,178,129,215,200,123,1,129,7,174,171,243,245,185,167,72,156,122,43,
+    164,147,45,100,15,223,143,72,189,93,105,52,41,8,6,201,115,46,123,49,41,47,157,253,
+    180,220,194,230,184,253,146,211,207,42,173,88,238,216,217,43,195,29,65,178,195,134,162,149,
+    121,120,22,218,34,249,13,29,104,238,208,14,131,22,241,139,48,28,110,199,0,0,156,7,
+    70,72,209,3,241,6,119,169,233,112,59,22,221,136,76,97,120,8,101,28,11,71,108,218,
+    209,80,250,181,200,17,194,244,122,238,234,12,210,216,231,241,217,119,220,68,75,112,110,150,
+    12,122,54,189,99,189,188,235,235,104,23,153,231,48,200,179,178,173,150,105,123,233,64,103,
+    57,223,23,97,180,231,54,21,35,208,213,140,103,235,142,133,46,217,199,149,37,130,164,16,
+    80,173,199,53,142,62,66,13,162,35,116,228,103,70,104,52,114,103,27,33,165,79,182,161,
+    21,137,55,101,107,119,229,245,133,120,132,149,146,68,54,70,57,153,138,141,187,155,20,3,
+    55,243,177,216,232,229,165,7,167,123,234,58,91,125,37,69,38,0,143,217,130,180,107,95,
+    60,42,164,3,94,108,219,66,231,229,29,169,118,215,137,95,100,169,206,15,123,18,173,224,
+    54,101,124,79,136,99,132,35,108,20,139,110,184,43,136,34,236,92,111,151,163,17,62,235,
+    196,38,126,200,137,141,235,248,98,144,27,156,28,195,140,162,159,164,240,114,44,65,111,163,
+    99,12,10,32,110,151,31,70,145,129,142,23,108,188,200,186,151,96,135,114,197,55,15,188,
+    156,111,221,201,3,108,109,92,36,52,67,76,66,215,206,158,100,223,230,136,236,97,8,144,
+    165,171,144,198,197,17,50,101,148,115,94,193,157,12,4,234,26,59,224,136,46,157,196,187,
+    244,70,94,239,74,103,197,78,19,42,0,56,1,247,81,29,106,116,227,235,12,158,133,55,
+    217,187,42,134,163,4,109,107,58,187,69,73,174,168,41,229,152,59,244,69,16,58,201,87,
+    21,11,10,189,164,142,100,158,73,192,126,198,171,216,193,200,187,61,69,140,6,245,53,69,
+    13,144,198,183,233,7,43,49,78,17,17,67,16,110,180,113,238,132,93,129,155,234,101,42,
+    197,9,120,121,75,31,50,233,59,201,119,41,234,248,213,232,37,17,224,206,40,67,108,126,
+    66,131,243,64,125,38,234,206,228,7,217,233,73,112,137,49,43,236,29,161,235,248,74,77,
+    80,183,175,200,41,241,213,169,147,25,119,185,129,199,122,203,48,37,246,230,177,223,156,31,
+    59,110,255,35,215,243,155,86,75,198,99,196,206,57,159,123,213,151,40,242,237,37,30,246,
+    220,43,201,72,173,179,169,198,171,63,140,146,206,75,26,5,153,237,100,11,49,72,230,162,
+    229,52,46,149,4,209,55,56,197,212,169,50,49,91,168,178,205,128,21,99,122,1,195,5,
+    179,218,41,97,33,178,240,90,244,200,220,136,199,195,14,145,147,140,231,186,81,44,22,237,
+    185,6,67,60,185,144,134,186,227,231,18,63,30,71,124,26,3,58,126,95,133,6,33,167,
+    94,181,78,78,61,148,52,128,101,73,47,206,183,218,113,1,72,220,13,70,240,34,216,185,
+    29,148,6,161,154,78,233,80,150,222,129,175,104,56,204,227,228,161,225,251,231,46,63,43,
+    76,90,245,113,78,247,182,210,91,176,151,241,93,243,217,50,152,231,49,254,86,192,83,13,
+    98,17,198,93,81,150,45,167,62,73,26,128,56,129,231,18,3,186,246,42,170,82,189,162,
+    57,146,98,148,97,42,237,185,245,119,188,210,156,139,48,38,75,93,130,91,153,160,72,129,
+    115,54,110,162,139,145,89,42,244,236,44,146,242,204,160,64,25,24,55,162,69,94,200,240,
+    154,125,193,167,243,160,87,216,16,83,198,115,192,2,27,64,98,101,43,172,28,26,45,111,
+    72,142,47,27,103,145,198,58,211,234,101,226,38,169,192,183,9,199,167,168,84,113,92,18,
+    190,114,179,106,226,38,91,63,235,237,220,173,34,88,190,106,73,56,250,196,243,167,61,191,
+    2,55,14,46,229,14,18,195,26,47,79,230,19,236,206,116,176,115,53,16,92,201,86,234,
+    205,220,71,64,203,170,111,41,157,159,244,197,208,207,190,207,218,190,210,251,31,248,142,231,
+    175,254,244,252,227,161,241,196,143,135,254,63,234,252,240,59,162,49,133,217,41,223,17,237,
+    116,254,210,247,68,209,217,222,39,69,83,28,253,162,232,231,120,249,217,109,253,168,241,254,
+    135,107,255,109,49,23,80,144,131,233,121,208,47,12,255,184,92,223,62,62,30,249,16,204,
+    41,95,87,25,168,108,31,35,77,241,187,231,175,191,37,254,39,7,211,200,55,248,244,184,
+    13,249,30,41,242,25,68,75,122,147,44,178,125,30,191,194,5,120,150,208,50,207,7,105,
+    59,203,125,46,242,75,230,219,115,80,114,175,55,17,145,92,244,2,38,117,14,231,178,28,
+    170,12,99,207,243,72,67,210,227,172,13,79,50,142,198,233,153,247,134,7,50,120,47,167,
+    163,227,6,169,116,108,159,169,224,183,84,106,59,152,23,49,133,73,197,6,215,110,160,208,
+    60,246,22,129,79,212,211,41,21,23,119,198,114,111,150,222,148,204,179,192,180,75,87,145,
+    148,234,187,124,112,81,166,148,208,62,167,193,157,110,62,91,253,206,9,108,51,191,250,160,
+    7,31,226,198,99,16,242,114,53,111,82,45,94,207,150,163,9,127,252,154,134,225,171,69,
+    53,234,39,70,128,58,231,160,47,221,178,83,36,239,209,215,129,28,215,206,178,39,161,149,
+    231,13,181,209,36,216,169,60,180,225,247,28,114,110,96,129,235,88,3,152,43,72,100,89,
+    8,179,8,34,236,112,40,58,203,238,197,133,146,27,207,28,191,164,80,26,55,17,105,234,
+    171,155,228,179,175,190,232,97,154,198,242,28,203,118,110,37,166,131,199,16,155,214,198,57,
+    190,59,217,126,177,129,95,36,96,121,31,147,174,124,182,134,126,82,254,9,163,198,79,200,
+    70,171,83,94,121,176,175,173,122,227,146,145,19,58,248,111,126,229,53,250,118,3,218,249,
+    49,52,21,25,199,239,155,57,21,44,238,219,10,69,126,240,180,216,16,23,65,12,239,157,
+    147,156,77,25,88,251,173,7,39,71,234,255,218,167,148,190,249,113,126,251,192,111,127,127,
+    254,213,104,249,176,55,31,191,95,254,184,88,233,87,126,223,46,215,215,242,221,229,221,230,
+    211,116,178,89,236,30,54,43,40,232,227,183,204,187,95,117,62,233,203,210,255,245,108,181,
+    94,174,110,151,171,197,249,160,183,207,62,47,253,120,127,246,133,26,54,152,171,171,219,249,
+    39,216,189,75,174,171,61,125,164,252,241,51,209,79,6,77,225,102,173,229,114,117,189,188,
+    129,141,187,130,77,88,92,205,73,198,37,178,218,233,83,203,1,130,86,131,3,120,175,166,
+    118,51,191,89,98,28,3,158,167,143,210,95,198,217,30,1,79,120,246,62,55,15,76,187,
+    246,201,169,187,229,237,237,242,253,102,126,183,229,71,169,38,219,63,63,204,55,139,201,53,
+    126,93,138,33,31,240,203,71,165,46,165,136,126,240,21,246,39,252,2,177,143,250,9,201,
+    118,178,248,243,195,18,115,204,95,96,36,175,127,88,45,182,143,164,239,127,235,234,146,89,
+    244,103,168,247,32,14,105,191,222,172,79,160,125,255,139,89,152,159,233,231,180,239,65,252,
+    156,14,246,190,207,117,56,255,79,35,120,132,248,57,248,247,156,211,149,56,167,203,198,165,
+    71,252,251,238,235,102,113,177,184,95,255,180,188,153,203,71,200,232,115,224,194,140,40,210,
+    129,167,162,50,88,121,252,228,213,134,46,135,47,134,93,154,217,116,124,190,27,196,207,17,
+    38,253,0,217,231,184,15,248,245,236,19,101,63,167,31,249,56,218,72,55,79,253,8,196,
+    240,233,180,253,46,208,255,18,134,2,58,243,176,90,242,251,104,231,127,249,98,79,203,127,
+    129,240,232,236,233,30,126,23,129,219,158,91,111,152,182,242,177,180,179,131,175,185,237,127,
+    204,237,224,91,110,74,237,84,63,223,6,3,234,95,61,41,181,222,63,126,198,77,238,26,
+    23,207,223,60,209,113,64,195,158,76,108,47,247,122,125,117,102,103,23,215,183,243,187,251,
+    179,207,4,171,157,28,112,254,28,41,232,159,44,215,155,51,115,62,220,253,32,255,134,240,
+    156,49,216,90,94,154,175,150,127,247,55,79,1,221,213,47,191,254,195,55,12,242,190,90,
+    190,126,13,222,237,209,245,151,143,102,250,241,175,151,87,96,44,154,163,151,197,230,254,74,
+    62,227,14,251,119,115,165,95,118,95,175,206,70,62,8,63,237,124,248,126,218,249,60,253,
+    244,111,68,250,103,79,65,236,213,219,249,118,241,237,242,187,195,233,250,203,79,102,250,211,
+    127,132,164,131,152,114,218,15,170,167,253,144,247,69,218,192,107,252,227,146,116,156,125,254,
+    193,250,111,63,154,239,166,163,143,95,219,239,166,31,209,254,7,182,190,89,239,206,198,48,
+    252,102,172,253,111,30,91,79,7,225,61,191,216,23,161,87,135,168,6,14,124,251,211,62,
+    174,189,167,68,246,19,72,249,235,62,163,119,243,135,75,245,215,96,234,250,238,64,46,32,
+    113,151,103,92,78,77,8,40,92,64,24,226,94,253,240,154,223,245,66,4,150,131,51,5,
+    9,53,158,216,217,193,220,193,55,94,158,33,86,230,151,172,184,103,195,27,147,180,29,210,
+    88,155,60,35,179,202,118,44,143,88,126,34,199,115,215,117,67,164,196,76,84,29,126,1,
+    119,127,118,241,195,249,43,144,242,6,120,219,217,78,181,114,24,7,157,238,172,59,28,135,
+    62,5,142,11,174,189,240,251,197,165,188,194,44,190,214,111,185,214,236,129,3,191,95,226,
+    255,124,126,17,248,90,18,247,141,231,131,231,175,101,3,119,138,41,150,231,240,124,159,166,
+    4,123,248,252,181,156,136,97,99,241,233,113,48,219,57,46,16,173,51,192,124,70,249,6,
+    148,219,11,208,127,56,30,103,47,241,236,205,25,80,18,237,161,122,108,240,43,218,56,123,
+    216,230,235,219,251,15,243,14,27,180,206,155,248,245,188,11,59,171,38,88,249,192,102,138,
+    8,70,99,218,231,197,231,1,208,107,49,154,24,177,149,168,86,119,53,33,93,136,14,184,
+    172,126,66,174,158,130,130,251,68,115,230,55,74,47,188,236,25,47,186,76,224,120,178,184,
+    61,137,8,86,151,178,227,151,106,34,37,42,241,195,49,23,129,59,144,172,247,39,161,144,
+    205,103,21,97,59,218,37,190,36,103,180,224,227,10,55,198,158,66,3,95,217,96,228,238,
+    100,49,50,7,190,151,119,33,91,55,144,221,157,196,8,158,163,196,243,95,194,244,130,199,
+    170,91,30,229,47,123,128,171,188,172,127,10,17,114,42,38,191,102,85,228,76,157,204,87,
+    96,241,16,250,84,114,58,25,135,193,20,196,96,53,131,227,7,140,108,22,132,60,173,154,
+    239,9,141,202,240,183,230,187,87,77,46,95,243,214,126,247,248,79,247,221,231,2,174,98,
+    9,121,149,127,124,245,204,252,92,81,152,113,125,181,121,46,206,119,247,70,126,128,156,191,
+    57,179,23,191,184,95,127,60,107,13,166,238,252,252,153,236,95,42,250,87,108,246,172,255,
+    75,37,225,117,107,252,106,247,245,97,91,106,218,72,187,75,168,230,83,155,131,223,230,55,
+    55,87,155,171,221,37,6,125,240,124,251,240,86,159,95,140,60,119,87,59,24,169,87,248,
+    237,25,182,155,203,95,108,255,188,217,157,157,217,215,13,241,57,98,130,215,13,25,255,125,
+    177,247,252,98,120,126,200,129,57,108,245,235,155,215,143,61,157,191,57,115,175,158,217,141,
+    183,2,115,113,8,179,123,6,243,187,59,123,41,188,126,59,125,138,57,46,236,249,243,201,
+    105,80,243,87,108,129,9,185,176,67,40,178,251,195,195,219,75,62,125,133,95,231,104,250,
+    134,224,195,175,27,254,58,127,117,38,0,252,243,4,240,115,162,151,205,242,146,174,249,144,
+    186,229,229,78,158,45,223,157,109,150,175,119,203,255,98,209,136,100,209,13,239,150,111,206,
+    118,203,215,224,228,110,9,134,30,12,146,2,223,192,240,179,254,11,2,61,89,220,110,145,
+    229,189,59,251,79,203,237,187,37,2,208,197,89,3,59,255,247,127,127,122,214,26,156,239,
+    117,102,246,16,210,247,30,120,95,234,163,84,173,174,8,115,181,65,159,252,199,171,205,163,
+    218,61,75,116,207,246,114,231,47,33,217,175,119,95,191,146,22,187,55,207,113,77,15,210,
+    234,47,161,33,175,72,211,103,112,18,17,252,95,120,22,173,112,
+};
+static const CompressedSourceCode models_prospect{models_prospect_compressed, sizeof(models_prospect_compressed), 38034};
+
+static const unsigned char models_marmit_compressed[]{
+    120,218,173,125,107,147,99,199,145,221,247,249,21,136,224,134,221,221,4,48,245,126,144,106,
+    219,148,205,216,101,88,210,110,72,178,86,97,6,61,194,116,163,103,16,236,151,208,104,14,
+    71,10,253,119,159,115,242,162,187,110,115,184,214,110,152,193,25,94,0,55,171,178,178,242,
+    157,89,197,215,175,95,47,126,253,213,111,127,253,205,239,23,171,213,98,179,184,127,255,241,
+    97,119,177,185,190,254,184,120,187,121,216,94,46,62,108,62,46,14,119,139,235,205,199,237,
+    30,191,95,237,174,111,22,119,87,248,250,128,207,119,63,240,203,219,197,102,255,118,119,216,
+    111,246,31,95,189,198,120,151,187,171,171,199,135,237,98,191,189,186,222,94,28,54,183,23,
+    219,197,195,61,158,246,143,55,203,197,229,102,255,253,246,118,119,251,14,128,151,211,247,154,
+    111,191,125,120,191,185,231,15,187,195,226,240,126,171,169,55,26,241,195,246,176,120,120,220,
+    95,109,48,18,71,223,238,31,22,87,251,187,27,32,116,185,255,184,184,187,221,174,23,223,
+    28,22,187,7,193,77,243,238,126,216,46,13,207,213,221,237,234,112,119,143,9,55,215,119,
+    239,52,34,150,192,87,175,183,155,171,197,205,221,229,246,122,177,187,93,252,233,126,127,39,
+    132,214,15,55,151,215,127,90,10,67,12,250,246,113,119,109,40,61,108,110,132,215,23,120,
+    29,3,223,223,93,99,124,13,120,216,188,125,228,135,203,197,221,253,129,20,92,92,220,221,
+    62,96,241,135,135,103,122,221,227,207,135,205,15,219,235,237,237,187,195,251,37,135,188,93,
+    108,127,216,92,63,226,103,44,230,225,6,148,208,112,23,215,119,160,254,234,234,110,127,179,
+    216,111,46,119,27,46,103,5,74,221,62,96,245,139,237,143,247,32,215,195,238,238,118,241,
+    248,64,146,93,188,223,110,108,129,31,49,59,182,9,211,98,69,247,215,32,217,184,96,46,
+    111,7,228,174,30,111,65,33,96,120,164,216,118,191,229,62,25,45,200,0,15,107,194,9,
+    246,183,199,159,31,190,208,231,197,226,151,155,183,215,216,19,252,187,185,94,47,78,130,243,
+    237,20,95,131,133,140,153,166,215,254,199,227,253,110,243,56,188,22,194,236,181,85,152,94,
+    252,221,246,221,246,250,225,176,5,202,39,190,55,207,183,236,197,253,22,216,2,191,253,70,
+    59,138,69,93,110,127,124,162,232,17,157,199,221,97,11,178,94,190,254,159,119,143,175,255,
+    117,183,189,222,93,252,229,251,141,88,250,237,195,221,254,158,75,197,134,108,175,174,118,23,
+    187,237,237,225,121,75,78,46,110,254,207,202,159,190,250,140,91,254,202,136,249,197,23,55,
+    155,195,251,197,238,230,254,110,127,88,156,125,249,74,211,252,94,132,122,120,188,62,28,137,
+    57,9,142,104,182,92,188,221,18,118,96,64,49,254,244,42,56,24,188,161,113,38,70,94,
+    191,194,38,114,252,7,200,197,197,97,113,179,217,223,236,14,111,108,134,191,30,233,254,52,
+    206,230,138,216,114,24,204,242,133,198,252,19,62,189,49,194,220,221,254,105,245,97,187,123,
+    247,158,12,120,179,251,241,19,211,146,151,41,44,3,114,15,139,147,195,123,240,247,36,55,
+    90,199,127,126,88,220,239,119,64,6,98,245,120,184,127,60,156,174,95,93,220,93,223,237,
+    71,192,115,125,115,226,78,39,210,252,246,167,11,190,122,164,76,219,252,79,178,123,178,91,
+    67,82,231,120,47,206,23,254,116,73,142,38,199,27,170,15,144,5,136,207,15,208,19,226,
+    74,236,10,254,222,73,194,47,238,110,128,21,6,133,44,79,244,134,64,126,2,201,55,152,
+    102,64,244,111,195,54,222,236,110,119,55,143,55,131,44,190,216,210,3,249,155,2,116,187,
+    185,189,187,217,130,244,15,79,251,37,185,94,92,93,223,109,14,211,235,111,126,253,205,111,
+    222,252,235,87,127,248,250,87,95,255,230,31,127,255,79,231,105,27,190,124,158,107,243,227,
+    255,223,185,190,250,227,56,87,200,227,100,183,143,55,111,169,151,175,22,96,242,253,110,43,
+    37,240,114,174,23,163,67,147,29,199,254,253,87,191,252,213,215,111,126,247,205,255,254,250,
+    60,148,244,229,226,56,44,223,191,157,196,134,163,189,219,222,110,161,180,119,127,193,54,220,
+    223,125,192,140,55,219,13,39,2,154,224,190,237,195,145,249,142,92,39,4,71,206,251,183,
+    169,249,199,111,126,243,143,111,190,254,227,191,252,243,111,190,254,205,239,207,195,58,212,97,
+    243,158,53,237,255,75,182,177,246,29,152,104,15,91,116,129,31,118,47,136,11,237,76,93,
+    105,24,108,30,97,229,102,100,248,234,87,255,242,79,95,157,11,179,111,65,141,239,78,114,
+    219,174,202,178,172,83,111,169,118,191,93,229,101,93,199,94,124,175,149,31,26,62,164,208,
+    75,225,135,142,15,33,246,156,248,193,175,93,236,46,117,124,72,248,224,125,119,173,230,233,
+    67,111,61,230,233,151,80,91,109,49,218,135,88,91,104,221,158,179,47,61,183,96,31,106,
+    4,10,158,207,97,237,26,134,74,217,62,84,31,74,239,133,31,226,58,21,33,192,15,105,
+    237,106,105,45,120,251,16,130,79,45,116,251,80,90,108,201,105,202,188,14,169,185,110,115,
+    22,194,184,148,139,125,168,14,202,219,38,197,162,125,112,57,10,155,182,206,193,21,215,180,
+    0,183,118,206,187,82,185,34,251,144,146,131,113,176,15,193,215,132,149,123,251,80,98,168,
+    49,54,251,80,115,235,165,23,251,208,138,111,33,79,175,245,230,106,8,88,143,7,72,5,
+    154,93,223,199,144,99,140,201,32,64,14,23,98,174,246,161,119,252,241,246,75,242,9,211,
+    212,233,67,4,210,185,26,154,169,192,26,149,18,244,33,251,94,248,73,31,74,0,146,88,
+    157,62,212,154,123,198,144,252,224,93,194,230,212,168,231,148,67,199,130,248,12,106,2,207,
+    172,165,128,81,122,76,73,239,99,125,13,19,5,123,46,205,135,156,167,231,24,177,107,246,
+    236,75,110,206,222,193,204,62,79,207,68,54,39,27,19,180,138,197,230,13,32,77,138,109,
+    250,62,182,152,179,205,5,212,202,68,2,210,165,251,174,117,130,18,185,4,91,102,242,192,
+    18,91,173,231,24,43,214,35,216,148,49,87,179,247,83,139,142,236,200,231,28,0,1,68,
+    245,92,122,234,19,81,138,143,53,248,108,207,216,250,30,156,198,169,161,96,189,122,189,197,
+    148,59,183,205,173,61,56,212,55,205,234,193,182,160,9,201,12,16,108,141,240,194,12,96,
+    140,194,119,19,200,231,170,118,53,85,124,48,2,164,134,69,250,224,245,109,241,174,7,78,
+    151,82,163,76,232,17,108,143,157,213,96,213,229,30,43,191,5,139,132,30,157,102,171,61,
+    130,173,244,8,154,225,83,18,14,248,178,119,130,249,10,248,104,143,57,99,33,181,10,223,
+    212,33,107,246,232,106,203,193,30,177,252,40,210,225,221,94,114,209,218,106,74,222,158,32,
+    64,222,182,40,128,75,115,18,7,132,84,90,42,222,22,28,50,120,92,11,142,224,244,36,
+    41,168,206,123,8,12,135,237,189,99,186,88,169,29,50,37,131,26,4,98,84,29,38,192,
+    19,56,181,4,125,151,200,98,133,79,16,99,146,136,42,36,39,176,145,190,139,13,4,215,
+    123,160,64,214,175,174,145,244,28,25,244,136,96,90,206,81,43,169,135,39,208,3,232,240,
+    201,69,238,16,53,23,52,149,47,94,79,152,172,102,41,176,236,201,36,120,130,94,0,184,
+    230,200,120,181,83,111,21,206,66,165,149,156,4,25,26,11,171,129,44,81,95,73,40,60,
+    158,176,108,96,202,239,26,164,49,99,185,17,131,128,51,67,195,83,1,53,124,235,84,93,
+    88,89,132,62,73,235,14,205,2,254,135,54,234,208,101,141,4,2,221,106,37,213,124,198,
+    48,189,251,182,12,32,96,174,20,237,0,16,175,29,14,21,200,84,15,244,66,39,53,50,
+    36,49,106,171,50,184,2,79,152,30,194,131,7,8,12,22,204,215,10,214,93,1,218,32,
+    69,216,220,184,12,152,194,71,10,122,32,126,208,186,203,224,215,201,1,59,144,12,227,230,
+    12,105,88,122,232,199,86,177,113,196,9,24,99,113,75,159,214,144,243,78,66,97,185,208,
+    118,5,239,121,252,10,155,208,185,138,82,193,105,5,86,163,37,108,126,136,120,242,216,249,
+    90,165,97,163,135,82,107,80,188,29,124,83,128,10,150,67,113,139,180,64,160,122,195,128,
+    212,209,208,255,80,88,120,2,230,30,90,6,79,161,67,94,61,127,117,80,146,208,115,208,
+    242,29,194,5,148,243,26,130,80,10,120,5,120,66,99,68,61,192,56,85,200,115,94,103,
+    81,204,243,41,116,40,110,61,4,41,16,62,149,236,34,7,203,212,119,141,79,149,97,64,
+    224,19,88,11,26,162,113,210,146,107,230,236,80,49,48,31,124,42,80,79,120,0,226,16,
+    45,24,60,45,38,81,119,97,125,165,36,106,64,152,82,218,40,136,63,86,15,116,50,152,
+    188,173,177,33,144,187,142,39,104,204,12,53,207,239,160,18,130,32,106,79,216,107,190,71,
+    77,72,189,213,105,129,192,197,1,79,9,44,11,213,64,90,131,10,181,27,253,161,237,156,
+    118,135,22,35,107,23,43,33,60,25,0,155,238,32,198,169,173,59,245,35,240,131,181,44,
+    208,155,224,104,103,18,141,61,230,118,59,74,62,148,16,232,158,65,59,47,62,170,28,25,
+    195,192,37,240,252,53,1,127,151,13,162,167,66,230,197,118,131,59,241,163,131,252,96,111,
+    235,178,71,136,30,236,62,150,150,53,3,150,86,27,24,53,144,43,43,100,10,254,6,246,
+    174,96,167,96,127,72,99,106,69,161,151,177,5,16,81,238,0,101,207,71,72,109,170,92,
+    36,169,156,176,200,226,184,220,68,21,2,130,67,4,64,103,8,33,22,25,49,94,75,100,
+    218,24,201,210,5,4,138,16,101,112,114,32,45,224,217,100,138,5,134,131,137,133,12,98,
+    177,216,255,66,25,171,32,34,118,5,66,129,29,227,114,66,224,162,129,81,32,30,48,236,
+    158,66,89,27,132,45,243,9,134,16,198,142,196,206,20,64,201,142,35,123,46,61,183,182,
+    193,125,224,83,170,48,158,149,79,17,198,132,234,6,79,16,197,170,247,66,131,190,206,250,
+    14,26,160,235,215,28,160,3,59,159,192,139,36,53,164,200,137,161,56,87,2,189,42,231,
+    135,69,234,246,132,193,96,128,37,198,176,98,208,119,64,61,180,76,191,4,203,137,30,158,
+    81,226,18,49,133,151,2,128,54,135,45,228,234,91,198,10,35,213,3,245,172,81,169,66,
+    102,232,170,144,161,241,45,105,9,203,66,19,29,161,138,162,199,194,151,17,140,79,45,135,
+    39,96,215,57,50,119,132,78,6,88,39,69,240,6,104,130,239,224,104,98,177,45,46,19,
+    249,152,106,152,251,10,46,141,32,113,6,43,214,74,163,157,193,29,176,169,80,50,133,110,
+    98,202,89,220,1,227,234,160,9,58,13,158,163,144,69,96,28,97,6,201,78,9,166,15,
+    52,110,97,221,169,150,235,178,1,41,8,153,3,3,66,69,131,234,126,217,51,248,58,158,
+    90,16,240,245,49,71,241,211,176,87,153,33,165,115,94,38,135,166,88,1,81,251,173,165,
+    72,222,239,46,190,191,221,62,60,88,222,232,233,199,151,97,233,83,178,104,253,234,191,157,
+    220,222,237,110,175,119,183,219,211,163,215,62,139,147,167,79,39,63,31,162,174,35,130,75,
+    204,254,11,197,14,47,103,154,112,124,188,189,220,238,175,63,114,21,55,196,125,183,185,94,
+    191,178,152,68,107,121,243,132,250,57,125,191,229,98,241,60,228,246,207,143,59,80,135,129,
+    135,37,155,68,133,231,181,34,8,25,130,143,229,226,226,122,115,115,143,224,5,225,198,91,
+    4,108,119,183,171,219,237,59,165,119,158,166,28,194,227,115,191,94,46,166,127,158,166,60,
+    254,248,148,212,153,194,235,11,210,21,67,191,253,104,168,204,38,251,214,45,23,254,187,227,
+    28,15,143,32,242,45,19,72,111,118,119,251,115,242,223,242,105,142,223,126,50,231,130,55,
+    57,225,253,102,143,168,233,26,49,158,141,113,137,225,167,32,147,43,255,196,4,223,131,104,
+    243,69,124,115,179,121,183,187,221,216,102,204,103,249,222,102,177,101,29,199,127,154,243,19,
+    163,63,81,138,147,104,244,63,220,93,63,222,12,84,186,180,33,159,97,70,124,191,92,184,
+    197,249,226,254,113,191,53,154,173,95,157,254,245,149,133,132,198,83,15,136,63,207,30,54,
+    135,199,61,126,62,57,49,182,250,79,255,192,224,113,187,126,14,234,223,48,93,250,173,251,
+    238,116,245,201,156,192,233,235,147,79,198,239,63,243,246,233,202,175,191,156,152,154,251,179,
+    223,98,126,174,245,238,230,175,195,215,43,40,97,152,109,134,162,103,15,43,133,1,141,145,
+    93,240,95,190,226,239,248,131,239,97,240,161,2,60,98,212,52,124,253,185,226,51,56,175,
+    80,30,101,124,93,145,14,188,160,6,7,235,197,247,33,37,57,5,121,28,199,51,28,236,
+    176,30,208,70,95,190,50,76,137,157,82,46,134,235,230,250,254,253,70,89,152,43,16,143,
+    9,135,221,185,251,114,247,139,127,120,94,242,155,95,126,245,187,175,73,156,47,119,159,127,
+    254,180,5,138,202,255,250,193,45,63,252,237,252,205,227,237,142,249,208,55,215,219,253,253,
+    27,113,203,155,205,237,229,19,3,156,252,36,137,177,252,36,113,151,159,220,136,229,207,236,
+    232,238,59,96,45,252,241,120,206,169,79,126,154,37,248,246,131,251,110,249,201,175,63,247,
+    223,45,63,48,251,244,106,119,117,242,9,174,253,47,110,61,95,236,229,249,39,222,250,114,
+    124,3,34,253,246,114,115,126,242,201,197,97,87,243,217,9,55,229,244,236,223,199,113,103,
+    224,162,58,155,232,251,55,31,206,181,242,51,155,242,140,49,30,92,107,24,77,159,17,223,
+    193,243,154,3,108,63,64,45,139,43,240,103,5,240,51,252,121,249,198,238,134,2,197,151,
+    134,31,77,170,183,59,194,207,85,211,217,252,227,106,212,43,227,111,223,255,100,40,155,232,
+    231,71,251,126,142,25,167,190,60,19,10,159,159,248,245,234,242,244,76,235,121,241,22,70,
+    213,91,187,155,225,173,221,205,236,45,104,183,243,207,30,254,188,63,156,112,212,51,254,245,
+    57,33,207,248,215,169,201,142,253,174,221,194,235,159,243,157,211,35,167,157,35,72,200,244,
+    52,225,186,195,81,128,175,18,206,248,38,193,95,3,248,181,237,7,185,106,152,117,239,195,
+    75,61,241,244,219,15,231,39,36,30,184,226,53,31,200,30,51,140,111,31,111,206,79,78,
+    78,168,79,16,161,71,250,4,189,182,179,31,62,207,12,235,51,252,27,4,241,249,244,236,
+    135,21,252,35,248,162,240,214,18,188,15,126,131,87,60,226,82,248,69,21,14,126,227,55,
+    8,103,158,255,153,179,200,229,246,246,252,100,229,153,144,66,108,158,25,219,133,2,16,47,
+    215,170,6,184,185,5,254,31,71,161,6,156,180,201,147,250,253,225,12,152,190,198,32,167,
+    147,118,121,26,248,128,213,251,21,104,48,255,54,248,115,252,162,69,147,231,230,171,222,227,
+    87,191,58,80,91,142,48,155,199,159,165,227,143,231,159,221,108,126,60,249,236,102,119,123,
+    98,162,241,194,63,88,102,8,52,66,248,79,144,23,94,55,60,114,56,163,169,56,31,206,
+    126,252,28,65,36,72,6,113,10,204,151,156,226,27,83,250,115,98,129,71,138,103,220,205,
+    92,140,43,6,87,32,130,5,31,17,5,17,14,206,32,147,86,17,219,224,242,113,160,151,
+    180,251,12,14,212,201,234,199,211,159,39,225,230,49,188,25,93,40,124,113,198,63,195,119,
+    51,0,38,216,159,134,7,153,207,64,202,179,151,163,188,62,193,182,124,226,251,211,57,137,
+    174,158,71,26,253,159,249,75,91,56,42,175,63,157,37,158,11,224,238,199,237,229,249,103,
+    247,119,31,78,174,206,244,31,140,185,220,158,74,100,175,78,237,171,1,23,252,180,252,244,
+    176,167,79,116,156,249,157,35,240,23,207,36,214,188,167,203,23,69,136,47,72,40,217,128,
+    191,163,0,241,112,183,187,134,189,124,187,189,188,251,187,43,3,191,251,231,111,126,245,31,
+    172,65,252,199,167,123,81,134,64,248,186,254,84,29,226,251,219,187,195,83,21,226,39,179,
+    125,162,20,161,209,103,133,8,63,36,255,203,83,197,88,133,32,171,74,92,60,238,127,176,
+    82,199,245,221,187,29,188,195,123,122,195,180,2,155,139,167,149,98,28,67,198,106,152,199,
+    234,44,2,24,150,205,36,187,139,139,247,16,248,205,114,241,113,123,125,125,247,97,5,95,
+    122,121,244,164,89,200,48,255,254,225,207,143,27,122,217,120,190,249,183,138,9,90,200,127,
+    255,95,191,253,195,215,191,59,231,23,223,2,131,239,78,94,241,241,4,206,84,247,217,55,
+    166,171,24,201,34,148,91,174,60,2,232,206,24,108,149,152,9,133,130,196,119,235,12,193,
+    87,126,181,33,182,171,245,116,249,52,66,109,8,51,29,71,64,64,238,11,71,8,202,155,
+    98,4,188,14,237,170,81,225,218,151,172,124,102,197,232,46,141,35,120,239,11,51,112,136,
+    248,109,58,5,162,153,9,56,229,216,147,224,19,141,144,193,199,80,218,48,0,116,16,140,
+    148,70,8,8,165,3,94,167,186,42,202,253,0,60,117,27,33,247,170,212,39,221,7,172,
+    118,24,129,57,218,198,76,26,48,247,88,204,170,211,120,16,95,68,189,37,49,254,229,0,
+    5,94,109,182,1,160,7,253,48,0,150,27,98,66,248,205,228,11,243,182,171,182,110,145,
+    185,15,44,38,6,152,80,13,208,88,230,208,0,29,239,199,97,0,56,192,61,33,88,199,
+    0,57,186,222,56,128,135,135,195,148,66,32,50,169,114,132,162,20,118,163,15,92,70,26,
+    134,146,60,211,116,0,239,120,6,120,101,129,38,55,129,195,118,55,109,2,52,127,107,89,
+    35,100,48,66,24,71,112,76,137,114,5,37,176,112,130,1,178,247,202,195,210,15,152,86,
+    0,221,30,148,127,110,248,45,212,113,23,124,230,18,200,8,5,180,47,26,1,44,85,152,
+    168,10,107,207,226,129,70,200,206,50,251,205,51,101,147,199,17,188,99,138,139,35,192,254,
+    7,207,17,66,204,76,127,129,138,61,129,1,53,0,8,85,52,0,139,44,227,26,184,85,
+    140,62,88,132,130,105,239,224,132,178,198,166,251,110,56,48,209,161,33,74,234,202,228,55,
+    150,133,202,51,39,64,28,224,78,6,214,119,48,68,232,204,154,99,8,114,35,147,202,248,
+    174,166,108,132,0,159,244,106,67,132,150,250,113,8,86,41,48,34,19,137,120,59,71,38,
+    81,86,74,118,58,32,13,225,170,53,250,105,4,96,145,143,35,180,252,60,130,15,204,155,
+    8,5,208,15,35,97,128,208,105,158,153,36,236,209,71,219,76,112,99,180,85,32,252,138,
+    101,24,0,223,119,38,136,176,207,14,80,16,101,214,35,98,88,250,194,20,121,53,4,90,
+    110,57,78,8,248,103,102,32,55,5,167,148,56,124,5,135,119,227,154,133,49,230,208,153,
+    37,141,197,246,161,149,174,154,26,54,178,39,223,158,193,89,208,0,231,112,128,132,31,26,
+    7,8,76,129,21,165,199,192,249,19,254,141,194,202,1,74,110,113,32,33,200,77,183,147,
+    3,128,239,65,183,21,229,10,255,40,55,202,42,148,45,160,59,223,141,19,224,168,134,244,
+    60,0,36,9,76,194,252,62,2,200,222,132,47,179,246,93,217,184,10,86,159,40,208,123,
+    50,173,22,123,203,3,5,84,49,169,28,160,123,50,5,223,198,2,148,49,7,6,185,132,
+    48,45,33,24,188,103,210,241,25,190,128,105,189,104,216,17,164,132,178,148,136,59,38,167,
+    149,54,12,46,77,52,172,38,209,30,124,155,7,18,20,149,100,8,79,190,167,188,68,12,
+    195,154,133,103,74,142,245,43,193,39,204,35,121,166,203,58,240,80,101,186,30,220,27,89,
+    137,83,149,143,21,94,190,12,22,98,205,115,218,195,152,140,139,17,154,151,48,236,33,54,
+    53,212,46,120,96,168,138,74,206,112,185,165,79,160,240,67,156,88,176,76,218,164,183,129,
+    1,91,205,124,131,105,100,41,193,192,52,45,247,170,211,226,184,35,241,88,15,18,120,236,
+    62,212,103,240,30,106,117,89,240,145,197,83,234,229,164,10,84,83,225,50,77,196,75,81,
+    165,185,198,28,126,29,144,103,62,49,49,119,12,165,4,38,229,252,136,19,26,43,17,25,
+    252,11,69,111,236,143,73,12,220,13,236,239,89,138,101,222,150,105,211,224,248,95,104,37,
+    110,88,102,53,27,154,112,218,57,214,163,8,237,59,228,112,128,6,109,43,75,223,30,235,
+    115,164,32,196,129,38,33,145,43,82,61,10,79,81,97,82,65,76,27,39,199,4,157,85,
+    40,240,29,173,13,205,49,149,18,30,160,179,74,156,102,175,45,25,229,161,77,159,45,17,
+    203,99,197,37,173,28,251,237,72,66,154,112,161,129,117,231,227,236,29,204,108,118,8,86,
+    114,0,167,41,22,215,192,100,177,26,7,201,15,224,192,44,85,18,99,205,71,185,243,6,
+    14,134,10,195,218,61,227,68,79,112,16,212,241,161,23,233,157,64,238,103,9,94,224,190,
+    89,177,177,67,193,60,187,2,170,1,66,108,13,28,126,137,202,110,172,43,45,169,253,105,
+    18,12,28,177,159,153,113,118,26,228,1,28,43,237,209,192,29,211,216,120,160,146,93,210,
+    110,66,145,25,203,66,55,38,243,35,192,11,126,0,7,194,216,159,165,233,170,206,253,66,
+    32,83,41,241,80,136,133,21,39,3,39,21,8,30,59,59,201,158,193,33,212,81,200,19,
+    105,54,53,64,11,81,143,210,203,162,77,54,166,133,56,79,46,0,139,87,101,128,79,129,
+    82,41,210,179,206,200,98,184,170,190,80,215,42,188,27,116,244,70,58,208,119,164,60,84,
+    54,43,28,132,134,107,16,0,143,48,86,30,27,171,191,100,103,67,190,73,97,50,103,143,
+    247,6,240,22,109,215,67,175,156,188,101,154,39,106,45,171,100,79,222,71,7,15,137,244,
+    141,37,240,250,12,31,233,167,217,226,105,189,88,38,165,102,93,201,24,192,224,77,107,143,
+    165,217,244,37,12,102,151,30,18,147,122,198,181,176,239,144,52,159,176,9,126,41,223,204,
+    53,61,106,128,30,109,126,177,195,48,64,98,211,128,6,72,77,85,194,192,50,48,157,67,
+    10,93,57,162,223,204,5,101,49,42,12,108,15,115,29,76,232,64,159,40,73,199,118,208,
+    153,165,38,165,241,63,14,80,170,45,128,37,241,129,119,98,157,200,15,161,135,80,176,34,
+    9,123,0,90,173,164,219,125,125,194,32,7,113,15,69,167,246,97,128,6,125,43,149,147,
+    89,82,102,45,84,60,44,248,38,151,233,200,125,81,240,208,188,97,64,32,81,36,133,0,
+    43,252,129,133,80,204,228,100,120,216,9,147,204,8,18,1,115,97,43,12,122,28,216,47,
+    121,56,107,130,103,213,136,229,83,106,155,44,120,71,111,60,28,73,104,154,163,130,45,219,
+    0,30,64,228,32,141,75,102,87,249,21,212,18,11,97,171,93,138,199,249,171,109,65,77,
+    148,195,97,0,120,150,82,56,216,121,40,68,14,208,171,217,77,232,175,120,228,95,53,85,
+    84,102,44,70,254,129,159,86,13,56,210,140,177,186,12,179,193,88,130,142,45,162,153,163,
+    234,72,166,183,224,88,183,50,98,159,58,155,117,0,31,184,177,130,47,196,98,149,88,48,
+    43,234,248,209,0,80,25,134,62,228,34,141,244,135,110,149,244,210,75,169,68,31,42,214,
+    11,91,150,77,99,158,246,191,48,80,1,60,116,124,154,173,64,182,157,6,211,65,180,185,
+    122,248,61,82,241,145,157,43,241,8,78,15,132,224,80,188,126,6,30,217,34,18,89,95,
+    111,6,31,163,87,151,17,216,0,196,152,224,107,150,47,1,226,65,69,205,224,17,18,145,
+    0,144,53,50,114,230,6,119,9,43,107,225,117,114,189,123,51,119,5,240,164,207,8,143,
+    45,105,147,183,224,4,15,60,236,93,88,98,103,46,111,197,26,229,241,85,229,228,194,12,
+    158,92,71,83,219,157,216,175,16,125,89,119,68,2,108,89,17,188,175,221,200,199,238,142,
+    145,123,17,112,144,124,142,241,91,85,223,0,237,42,193,33,208,253,56,189,196,128,224,96,
+    222,62,3,207,222,200,23,51,100,85,150,30,242,77,94,161,162,140,53,25,124,86,35,15,
+    192,97,88,252,8,14,109,37,236,161,198,2,153,31,16,90,60,212,85,246,125,66,30,96,
+    70,60,120,43,163,199,128,205,115,65,126,6,123,184,154,148,23,254,43,223,164,67,87,153,
+    251,10,53,22,39,240,2,119,111,4,71,120,103,177,114,209,218,233,57,72,200,26,3,17,
+    57,12,138,106,5,11,61,51,91,184,107,93,110,46,133,85,138,215,179,180,78,96,182,62,
+    133,9,58,180,58,129,199,50,195,156,241,61,193,129,156,231,182,211,187,10,147,125,235,208,
+    9,6,14,207,121,154,158,188,56,131,183,112,13,210,192,58,58,204,70,238,93,86,15,70,
+    207,69,179,27,204,50,102,99,219,4,245,83,94,74,13,192,217,185,67,171,131,197,176,91,
+    132,225,127,119,108,79,18,120,53,47,191,50,72,110,126,142,190,226,77,4,75,244,23,1,
+    15,199,90,44,130,241,212,179,35,120,72,189,77,31,25,17,142,240,236,222,34,60,116,5,
+    150,159,232,135,179,55,200,233,167,96,216,131,83,189,65,179,175,113,182,237,116,51,0,29,
+    187,144,71,144,222,77,228,33,232,164,139,160,195,180,115,140,70,95,240,92,209,220,145,61,
+    145,4,135,10,148,187,1,189,31,93,158,38,143,45,77,240,84,122,51,248,198,70,8,120,
+    149,142,137,21,78,239,147,53,203,97,188,41,107,3,163,52,121,138,224,209,24,103,243,195,
+    239,100,136,214,93,207,218,58,132,113,214,53,71,41,133,200,74,229,32,84,115,102,178,153,
+    157,143,115,4,224,186,210,177,132,82,204,218,60,236,84,144,205,117,53,91,179,133,70,128,
+    174,152,182,15,190,104,159,51,175,82,38,173,138,112,137,29,45,108,117,100,46,1,33,29,
+    21,17,7,72,201,165,73,110,17,133,164,153,210,70,212,199,1,192,117,217,216,183,41,184,
+    148,219,4,79,196,248,55,123,115,214,161,118,64,131,17,3,196,61,22,102,98,109,138,16,
+    160,253,179,140,102,104,201,21,83,155,149,205,67,134,0,2,174,62,170,221,204,124,5,225,
+    163,28,59,250,61,137,225,26,205,30,251,178,38,4,10,66,48,27,160,50,252,25,7,192,
+    154,186,66,245,194,204,14,7,128,184,137,136,9,240,222,92,238,202,134,45,99,131,138,32,
+    112,220,133,220,171,209,144,73,42,105,15,41,60,217,237,196,202,79,180,1,216,206,105,150,
+    7,94,122,152,243,129,72,232,43,183,83,240,236,16,36,124,229,0,198,6,212,144,147,229,
+    138,8,188,6,120,86,114,133,0,60,23,57,14,208,251,140,60,57,64,100,97,102,26,128,
+    61,116,19,9,230,240,234,109,19,2,194,31,130,232,205,113,192,238,192,145,55,252,217,168,
+    229,167,45,108,51,199,165,101,186,167,130,135,115,163,1,98,52,30,0,113,232,175,216,0,
+    109,178,252,176,52,121,38,198,136,70,130,33,0,215,40,155,254,141,230,250,101,15,33,201,
+    211,0,136,64,38,38,8,109,140,59,160,121,24,232,9,3,42,4,82,32,54,227,34,24,
+    156,222,44,125,201,142,74,115,190,201,151,113,96,2,102,212,162,242,53,204,23,210,248,227,
+    191,147,239,5,129,160,251,100,3,132,54,105,34,236,116,111,227,0,16,125,163,1,84,129,
+    54,49,167,92,181,4,182,41,194,1,153,228,0,190,141,97,128,93,28,236,0,126,128,191,
+    162,32,177,91,243,29,86,157,45,5,28,153,12,155,216,16,187,225,12,3,14,53,27,0,
+    123,45,12,28,132,205,184,0,214,210,252,63,104,32,111,114,0,149,53,249,15,169,187,113,
+    23,17,45,6,133,249,176,30,198,5,206,49,212,161,32,50,92,156,82,64,9,188,95,142,
+    243,143,154,0,6,157,253,142,28,128,65,24,224,225,117,24,19,50,18,205,110,154,159,77,
+    247,6,207,214,181,17,94,145,9,243,12,38,69,108,38,183,248,133,141,106,133,25,72,163,
+    160,155,140,56,98,138,82,198,1,178,37,160,229,217,147,130,49,48,109,171,62,102,86,96,
+    219,164,138,66,58,170,18,54,183,141,3,48,159,194,1,16,158,87,238,33,244,200,212,10,
+    220,217,74,62,241,80,157,92,24,230,69,202,28,220,43,229,200,173,149,7,4,214,213,98,
+    33,249,129,73,95,211,100,105,114,192,232,197,248,25,254,234,73,5,141,16,214,42,0,10,
+    48,80,50,165,9,224,147,45,164,191,144,39,53,128,93,29,225,19,73,27,152,181,102,198,
+    135,45,157,45,216,187,240,172,167,156,35,77,192,164,134,24,73,205,224,67,180,196,175,239,
+    213,154,73,225,171,74,105,194,184,231,60,121,112,140,73,194,228,191,251,217,252,240,251,35,
+    233,95,24,129,42,126,9,98,59,158,141,240,83,252,89,235,81,139,64,13,207,182,223,129,
+    223,45,245,173,118,113,182,37,170,153,148,63,229,60,169,144,158,147,183,240,165,192,187,24,
+    117,88,195,238,71,165,222,43,147,19,133,241,56,119,211,175,91,11,193,132,7,250,17,60,
+    171,224,211,245,89,240,155,172,239,156,185,127,31,213,121,11,195,17,85,212,1,221,44,244,
+    71,56,96,109,234,12,157,203,40,187,176,65,81,43,7,153,106,72,234,141,109,94,73,179,
+    76,191,75,62,16,236,27,195,27,69,254,112,204,251,44,116,114,78,224,108,189,33,238,240,
+    220,178,190,129,216,228,48,129,3,31,241,125,3,34,51,55,132,200,171,236,1,115,11,83,
+    90,168,170,41,203,12,133,122,138,218,182,198,189,178,165,55,246,225,142,224,88,13,217,54,
+    7,53,248,86,102,190,149,236,2,253,172,230,209,50,107,22,150,244,224,81,142,17,56,178,
+    81,89,53,27,166,226,11,246,28,10,148,115,99,217,60,151,32,112,250,134,6,206,182,236,
+    25,120,22,149,92,97,122,143,205,152,57,10,115,184,216,161,218,194,243,116,188,4,208,116,
+    95,102,208,93,5,27,134,158,153,44,195,12,64,102,254,9,242,219,234,52,121,157,2,46,
+    208,54,206,34,22,184,212,170,120,1,169,192,102,244,214,216,204,192,148,25,231,142,19,116,
+    48,118,229,202,253,232,188,65,216,228,188,97,207,72,63,130,99,68,130,135,41,75,215,114,
+    9,22,44,99,203,122,159,185,12,138,230,9,12,247,69,100,99,166,179,40,97,6,241,156,
+    230,86,221,70,12,131,215,102,145,114,136,170,56,38,4,136,61,106,225,236,192,101,194,172,
+    78,62,115,163,251,61,65,135,89,154,35,19,115,213,233,106,85,187,57,253,117,175,116,89,
+    42,121,2,134,102,52,162,241,183,145,104,32,72,179,42,31,15,85,8,90,238,105,98,100,
+    95,142,204,6,85,50,129,195,129,152,73,10,15,245,8,220,37,177,122,99,85,178,200,247,
+    37,231,76,188,154,178,209,13,177,126,152,187,90,88,50,193,11,123,165,5,46,167,134,126,
+    43,226,167,137,97,188,11,198,110,25,108,53,243,53,177,83,148,114,174,34,38,129,67,212,
+    204,233,12,245,184,107,10,59,4,142,192,99,238,41,90,77,9,123,15,236,141,114,85,169,
+    38,40,27,231,167,217,83,13,199,12,93,156,59,186,180,64,60,47,129,97,140,223,16,85,
+    89,78,156,14,155,65,43,71,43,104,196,78,51,110,21,44,204,128,154,239,187,231,121,53,
+    234,232,156,189,153,86,184,126,49,88,110,14,230,110,76,45,194,31,142,130,70,172,22,117,
+    236,2,62,108,80,138,35,241,36,142,160,225,19,134,73,78,230,217,120,200,28,99,10,86,
+    167,225,129,117,54,252,135,198,206,98,168,104,108,179,85,18,200,225,237,41,104,245,35,56,
+    54,72,142,5,151,237,121,208,1,182,160,169,174,236,104,139,5,221,91,179,164,78,71,144,
+    30,71,212,97,237,188,146,223,114,243,43,189,18,178,0,43,56,24,89,11,239,190,78,153,
+    124,108,234,24,31,193,79,143,178,200,145,98,82,236,192,27,155,238,105,226,240,170,128,225,
+    117,100,171,97,192,123,24,211,121,60,130,36,162,35,148,227,41,148,10,74,48,235,206,245,
+    51,89,41,104,70,164,86,193,163,143,51,166,51,225,187,177,153,28,81,144,15,137,208,112,
+    6,128,59,145,128,95,100,34,222,155,42,49,170,63,50,205,63,128,243,64,152,192,131,234,
+    248,149,7,6,162,206,137,208,19,98,21,33,176,191,51,40,153,5,69,13,114,12,172,26,
+    89,168,35,238,60,25,227,120,34,163,68,198,85,60,154,1,39,156,17,9,11,74,76,115,
+    40,63,196,131,36,179,92,180,171,74,74,32,32,136,34,92,145,243,189,108,107,184,150,206,
+    202,137,14,178,99,85,100,112,101,31,183,28,74,184,171,153,0,182,148,158,51,11,233,145,
+    158,76,59,218,58,130,195,212,137,213,169,2,103,33,97,224,129,73,110,155,235,60,118,66,
+    240,230,104,22,120,168,0,182,83,200,195,148,23,75,178,240,20,142,27,108,185,111,209,28,
+    97,167,195,121,149,165,69,30,119,226,129,161,226,179,112,15,204,113,41,187,228,35,143,251,
+    140,229,27,230,101,89,46,41,58,203,68,112,54,209,2,28,18,146,232,135,80,12,233,173,
+    16,28,177,144,31,179,104,78,7,86,200,147,193,232,14,79,133,199,5,61,157,80,21,48,
+    96,237,192,168,129,231,170,28,34,228,177,2,193,67,151,172,240,50,115,9,231,138,100,239,
+    108,223,37,52,69,102,69,223,12,226,169,67,92,149,81,219,88,176,227,153,30,30,229,106,
+    60,99,202,153,65,213,160,186,127,240,114,94,25,161,86,59,112,230,193,110,35,48,98,2,
+    74,1,157,28,72,21,103,150,231,97,53,255,108,27,70,207,72,104,43,34,203,179,90,33,
+    195,33,66,131,221,34,207,250,240,20,8,107,229,76,169,65,145,9,156,5,23,157,52,27,
+    203,156,29,10,25,22,130,176,236,167,224,73,32,22,30,139,96,25,35,100,150,190,65,175,
+    26,186,28,201,28,159,211,79,206,206,25,105,213,106,67,36,139,96,102,38,29,120,22,136,
+    173,12,2,79,205,92,65,120,195,62,204,192,123,180,115,109,160,42,241,246,84,109,141,192,
+    144,178,172,178,187,99,121,79,71,243,192,177,99,151,66,103,4,160,227,118,60,126,165,185,
+    65,86,58,63,4,135,167,25,38,112,46,66,39,246,210,216,33,0,193,228,73,38,129,55,
+    174,174,49,238,167,183,1,112,136,4,221,23,162,158,162,29,12,132,216,244,113,118,86,197,
+    5,206,170,162,142,80,121,230,56,180,240,194,188,18,161,225,233,117,57,224,48,44,99,194,
+    19,187,162,227,108,18,168,200,179,105,158,142,125,84,105,219,199,34,110,97,6,173,106,203,
+    88,105,29,116,27,162,240,218,196,106,30,97,50,129,25,84,170,181,130,199,152,131,128,225,
+    187,104,95,17,22,167,49,225,8,10,51,61,73,224,22,108,234,206,118,100,110,56,107,170,
+    226,53,24,97,181,139,176,154,208,234,160,153,28,171,36,90,117,160,108,104,110,232,237,46,
+    118,113,141,157,37,140,64,217,100,67,33,233,172,54,140,210,9,39,53,25,155,119,233,35,
+    44,91,39,141,232,175,242,208,33,161,153,137,46,38,98,48,208,99,93,57,119,19,146,164,
+    198,128,198,83,157,228,110,64,199,198,3,99,43,245,221,4,155,27,63,133,17,154,41,40,
+    205,157,224,129,107,221,150,158,245,170,119,218,186,121,244,87,250,195,241,104,238,184,110,6,
+    208,162,26,220,183,32,17,131,143,159,212,15,227,172,184,70,197,82,73,113,39,29,49,192,
+    130,61,165,51,26,59,137,26,219,107,120,206,201,43,109,218,181,213,112,214,237,28,40,79,
+    135,247,81,153,186,200,176,140,176,136,152,212,61,64,119,79,231,31,225,103,20,97,157,89,
+    129,87,156,72,175,101,244,60,188,79,218,70,240,2,101,177,82,77,241,20,163,26,162,84,
+    29,164,47,23,154,206,241,210,205,168,99,74,195,135,162,35,161,202,73,55,157,155,140,204,
+    113,17,28,180,59,234,226,233,144,121,199,203,126,116,209,121,112,78,199,92,97,114,88,244,
+    161,237,115,82,176,176,13,236,27,33,56,66,136,160,204,120,103,31,200,24,31,120,186,248,
+    81,224,141,73,82,234,68,72,77,164,70,69,52,96,179,131,178,214,129,195,186,48,172,221,
+    88,137,15,162,19,219,53,24,132,85,249,8,214,206,86,179,138,137,193,26,10,68,57,242,
+    194,88,79,131,96,57,213,221,59,207,194,5,179,36,37,106,118,118,235,217,236,60,103,43,
+    228,3,226,165,145,219,60,28,111,169,29,214,200,229,126,32,248,100,250,141,157,129,76,134,
+    8,28,138,81,174,46,251,115,194,104,130,61,184,80,10,23,193,32,155,33,170,10,79,201,
+    122,241,26,211,164,52,162,36,24,77,112,71,52,93,102,61,16,85,29,124,4,135,179,38,
+    247,163,176,53,64,198,168,170,133,130,54,152,249,89,129,179,136,49,239,66,224,49,61,130,
+    215,26,205,229,9,90,185,87,200,66,96,56,184,81,206,71,135,230,238,115,243,79,11,38,
+    207,14,226,79,207,9,254,27,153,155,146,160,166,74,128,167,158,38,240,204,147,155,35,120,
+    241,182,114,132,119,149,174,15,147,47,84,193,94,55,4,216,236,145,222,21,161,89,179,157,
+    65,55,122,37,132,134,31,96,231,123,149,57,241,42,131,153,37,12,116,4,5,206,254,132,
+    49,13,1,79,195,75,71,176,111,193,92,206,42,119,215,211,203,42,166,150,225,17,86,229,
+    113,49,23,124,168,145,99,213,180,38,112,118,79,17,156,231,97,139,142,87,195,159,148,184,
+    5,43,169,66,107,246,185,180,116,181,107,9,152,201,99,0,99,235,169,202,116,12,160,39,
+    3,134,87,107,224,96,158,217,202,59,88,57,24,184,157,1,142,76,133,10,117,108,120,52,
+    142,97,143,149,252,93,166,98,210,108,246,88,141,110,60,247,68,232,132,64,162,9,26,142,
+    158,55,232,18,39,186,241,244,123,154,209,173,231,54,109,154,211,117,30,65,204,78,191,41,
+    26,209,29,155,87,13,184,196,49,1,194,61,107,198,172,112,38,24,98,208,52,120,181,192,
+    165,48,77,172,208,72,243,150,81,76,96,9,162,104,134,24,73,190,125,128,237,73,114,247,
+    96,148,114,127,90,116,182,69,195,49,30,183,187,42,25,75,240,96,208,37,212,36,146,193,
+    209,52,253,164,84,186,225,205,187,24,70,221,10,247,187,137,83,61,219,226,8,78,166,169,
+    70,51,10,140,192,201,224,2,71,116,62,54,219,120,206,85,164,222,224,31,10,60,74,186,
+    188,122,239,156,145,60,76,253,186,204,250,246,25,171,194,91,19,187,52,94,53,208,52,123,
+    112,134,60,36,115,218,111,120,246,170,167,53,150,216,234,168,222,96,66,229,121,53,150,118,
+    52,59,240,43,218,112,24,252,110,98,70,158,181,10,244,172,215,0,235,237,193,140,18,248,
+    177,136,236,48,96,193,100,148,70,78,234,37,117,211,204,112,126,199,61,11,98,17,101,212,
+    66,181,237,14,230,39,67,186,163,201,8,56,160,153,98,228,149,26,109,102,208,152,36,37,
+    52,47,69,17,167,21,118,36,83,179,65,133,103,83,203,46,171,206,192,147,221,117,38,100,
+    108,45,16,56,36,85,193,9,68,196,155,110,131,51,148,77,45,179,229,83,208,16,239,49,
+    7,224,117,109,136,156,159,200,230,46,64,179,5,207,38,175,234,61,167,69,202,214,95,12,
+    137,114,99,150,18,14,67,148,61,99,55,76,17,234,32,111,47,6,173,142,103,64,87,118,
+    113,202,28,6,154,229,17,188,58,111,224,236,226,38,56,84,0,47,168,144,107,108,170,13,
+    182,193,121,179,166,9,158,192,232,246,49,198,16,238,30,22,155,208,208,31,217,27,217,189,
+    201,104,100,151,133,86,206,34,228,88,34,3,52,237,36,161,131,57,18,129,110,175,192,153,
+    220,55,232,48,193,66,242,102,136,167,94,39,95,87,214,36,192,52,242,116,63,153,165,154,
+    132,199,158,156,173,154,55,25,204,128,165,108,9,172,242,27,165,132,77,160,82,232,45,167,
+    105,102,248,50,214,233,0,223,108,230,244,177,81,79,78,159,227,53,48,4,247,242,69,8,
+    78,217,146,7,227,120,213,142,192,213,157,50,122,125,53,41,24,133,31,26,165,208,193,115,
+    161,43,32,100,251,137,184,141,120,169,9,153,247,186,140,238,147,227,105,163,166,232,6,115,
+    51,168,3,1,66,232,147,136,122,155,60,122,171,39,116,117,77,142,52,135,99,36,87,187,
+    202,98,87,246,134,7,83,232,61,77,49,33,47,168,49,212,129,76,30,75,114,8,48,130,
+    218,14,193,89,78,208,149,74,202,56,181,136,232,64,55,168,154,214,17,27,206,210,132,142,
+    153,42,69,86,137,193,188,46,199,96,179,189,92,47,102,178,39,95,57,116,187,147,169,204,
+    234,234,142,188,214,117,191,146,35,203,242,134,138,32,183,154,85,230,201,251,96,111,123,175,
+    138,17,192,179,99,52,11,246,137,250,5,146,75,7,183,48,101,226,20,150,241,14,2,11,
+    10,233,0,232,206,21,38,143,199,72,26,91,25,229,116,150,46,125,86,216,61,170,27,88,
+    242,58,130,86,10,10,99,154,98,1,106,138,56,128,243,138,20,19,19,182,39,5,230,185,
+    120,4,129,60,80,88,107,15,2,47,60,183,73,229,169,234,242,0,14,31,15,17,10,121,
+    157,221,73,106,163,129,118,102,130,212,51,115,214,152,58,65,148,149,149,235,228,97,138,209,
+    5,128,218,103,218,87,38,133,23,211,8,156,23,219,208,233,172,186,248,131,109,240,224,64,
+    47,23,167,208,144,142,13,223,141,153,87,253,146,148,141,102,33,59,232,0,7,125,9,185,
+    78,137,135,73,186,177,116,100,196,53,128,103,91,39,43,56,81,53,92,70,80,93,208,136,
+    77,213,73,70,135,151,137,60,242,36,175,92,26,160,161,137,146,110,183,129,237,2,227,18,
+    28,10,222,217,101,19,188,233,72,224,172,207,20,139,247,67,171,51,112,221,194,194,123,57,
+    42,57,26,184,71,234,115,221,65,193,236,17,161,201,51,222,164,177,143,135,5,192,249,170,
+    188,120,93,162,226,138,138,167,188,182,75,208,236,94,177,201,75,19,103,84,166,172,6,104,
+    44,46,119,3,238,83,227,37,53,179,174,206,160,254,16,176,74,160,118,3,79,152,145,13,
+    11,209,177,0,38,8,217,120,145,217,91,95,236,160,128,157,62,33,213,89,2,87,154,132,
+    45,39,113,216,114,79,33,50,212,107,87,223,40,20,12,235,24,36,187,231,45,45,218,52,
+    166,106,9,14,229,51,174,156,50,216,20,151,2,28,128,4,103,249,56,137,99,24,59,136,
+    101,224,98,40,38,70,16,17,235,8,206,72,212,112,231,49,23,245,124,234,206,47,207,212,
+    188,220,190,196,91,70,170,246,28,78,104,79,227,9,1,184,9,65,119,27,241,32,102,82,
+    193,179,232,66,22,102,135,185,222,149,106,57,57,25,83,186,234,135,4,10,147,86,38,195,
+    224,24,22,218,149,75,103,74,146,87,16,209,237,150,172,48,131,32,113,134,103,238,235,40,
+    106,136,64,228,0,21,63,21,1,192,90,185,72,208,97,156,44,1,3,118,40,69,247,190,
+    49,37,63,74,42,189,175,42,220,131,218,196,121,137,15,111,160,242,236,128,98,39,21,143,
+    140,176,69,82,123,131,47,242,176,107,181,145,238,82,19,136,27,213,44,203,32,88,89,47,
+    248,37,217,14,156,56,248,146,186,190,9,30,79,29,86,206,54,140,98,192,137,93,110,153,
+    201,62,59,90,211,217,152,71,224,154,82,86,222,137,101,199,241,88,6,47,235,98,159,48,
+    161,149,252,32,177,146,146,7,145,4,172,82,49,112,16,184,35,234,74,116,97,174,224,236,
+    16,10,75,164,65,183,18,81,253,42,9,162,208,158,192,188,15,71,115,39,215,198,156,23,
+    188,109,168,24,3,238,214,228,204,180,75,210,185,34,246,74,42,89,152,139,155,80,231,85,
+    65,35,234,188,118,72,238,122,73,222,234,211,133,55,185,120,134,178,65,83,103,71,163,185,
+    84,144,155,211,32,102,76,157,96,82,193,178,224,74,104,199,230,121,133,243,116,117,8,142,
+    104,206,75,139,240,4,175,207,227,105,14,222,8,39,204,25,144,16,115,222,243,86,228,186,
+    129,227,163,192,121,253,139,82,6,145,62,70,28,193,121,155,160,113,113,155,174,124,170,58,
+    151,68,39,166,54,51,74,240,199,164,54,214,204,181,143,184,179,56,208,13,119,22,41,213,
+    217,156,106,87,84,90,121,93,31,79,23,85,11,92,217,35,55,219,111,54,64,41,53,84,
+    178,179,182,130,201,172,122,54,214,178,171,145,208,112,213,189,192,161,158,70,9,231,213,87,
+    69,145,29,141,75,42,214,150,93,117,44,176,171,190,70,112,240,163,101,183,2,213,201,152,
+    229,228,21,59,10,199,139,122,0,236,154,170,206,108,60,20,46,147,165,132,14,77,167,114,
+    224,154,197,57,112,83,79,33,129,217,209,33,245,226,233,159,242,82,174,172,163,24,108,215,
+    101,77,141,208,112,62,227,232,8,96,92,39,23,70,108,45,253,226,120,164,71,119,84,65,
+    52,235,228,9,116,165,57,59,252,198,49,189,171,240,204,160,83,113,214,14,162,98,114,131,
+    189,40,212,135,74,208,66,89,10,188,145,215,71,240,94,115,54,186,177,28,66,112,88,36,
+    207,60,111,178,148,185,50,180,221,50,242,149,183,34,206,160,163,37,96,88,30,108,100,183,
+    8,61,232,154,160,171,197,165,108,132,239,211,221,116,113,150,207,167,67,110,170,45,235,220,
+    0,20,26,158,188,234,55,214,96,185,82,207,161,137,138,231,161,211,241,232,144,46,61,180,
+    61,227,28,178,165,60,221,165,242,143,103,22,73,25,94,58,114,202,240,242,96,210,200,173,
+    188,169,113,154,157,7,158,18,175,61,97,38,142,55,68,197,104,113,74,211,77,90,186,224,
+    14,155,54,19,84,248,146,19,199,240,106,74,157,196,128,175,0,232,144,142,165,12,108,149,
+    9,26,226,200,52,58,127,45,89,239,144,177,107,227,17,20,50,180,178,166,213,5,75,218,
+    85,30,47,181,4,49,236,205,40,166,136,13,120,0,212,164,188,169,40,238,130,21,161,216,
+    21,149,45,191,108,53,92,186,200,204,223,12,90,157,61,41,74,218,177,71,39,233,252,11,
+    20,83,80,18,138,153,118,121,205,76,211,75,17,57,22,242,71,163,192,214,168,102,74,130,
+    7,0,216,137,192,35,1,10,90,16,180,5,3,47,106,40,164,143,29,103,208,133,225,167,
+    77,222,138,142,207,120,222,88,65,247,183,91,74,191,152,63,69,127,59,244,50,130,242,104,
+    152,129,118,46,146,238,74,12,170,241,98,73,205,146,141,69,193,141,165,182,243,120,84,141,
+    85,126,171,51,20,118,18,138,106,236,96,99,42,134,183,142,78,121,117,30,245,84,225,43,
+    177,8,62,90,51,144,40,218,126,87,29,26,226,137,194,212,117,11,29,143,46,10,154,213,
+    120,131,230,169,128,209,156,113,177,34,26,173,97,82,255,116,43,146,148,8,190,105,22,106,
+    180,201,191,99,253,104,100,23,230,77,77,173,23,181,47,177,15,129,189,214,128,38,161,75,
+    159,118,76,183,211,113,199,102,21,36,30,20,176,4,55,196,52,171,129,153,55,78,242,30,
+    47,166,100,131,85,58,11,233,111,27,94,203,88,65,162,217,9,110,82,205,172,204,115,233,
+    145,62,96,103,158,194,232,198,162,136,161,94,88,101,25,161,61,57,122,98,23,53,15,55,
+    170,117,222,17,71,62,156,88,53,182,137,85,243,140,91,160,165,93,51,83,74,159,78,82,
+    150,120,163,94,231,61,127,172,115,19,60,246,38,190,128,140,166,241,116,106,133,140,90,89,
+    129,185,66,79,112,124,195,76,113,167,203,203,115,134,146,179,92,164,97,128,184,75,35,234,
+    60,119,43,199,168,48,61,35,41,101,63,10,107,188,236,111,52,13,83,217,197,171,122,8,
+    164,218,141,200,115,27,204,141,96,155,182,26,191,163,46,252,227,153,245,230,45,58,101,215,
+    141,149,129,58,139,112,3,56,211,112,22,226,65,117,233,144,28,116,116,107,68,190,50,95,
+    96,250,141,78,101,178,248,210,201,172,124,234,10,182,237,205,253,110,175,91,230,199,43,21,
+    166,27,217,110,54,247,186,70,255,234,238,113,191,184,189,219,223,216,77,205,186,246,224,30,
+    239,189,219,222,238,46,120,167,214,198,46,121,224,237,96,186,72,127,165,43,144,254,254,171,
+    216,166,11,178,128,193,27,195,224,100,186,158,235,253,227,205,35,175,74,203,179,155,210,244,
+    45,111,72,56,108,111,15,107,187,119,107,115,189,93,240,62,133,195,95,94,95,108,246,111,
+    239,110,129,192,114,225,241,19,255,63,1,192,236,158,195,31,175,253,218,237,117,207,87,94,
+    206,174,67,227,183,171,251,221,187,27,222,5,129,247,46,109,236,119,251,205,71,27,74,215,
+    95,232,255,49,48,189,181,189,60,142,184,217,239,46,119,135,143,54,232,51,166,219,155,205,
+    97,119,216,126,241,238,110,123,120,143,135,197,219,205,53,233,97,35,95,220,221,93,191,190,
+    185,219,61,28,22,199,23,86,118,101,132,205,247,254,238,240,154,55,205,29,135,225,69,18,
+    199,9,5,246,184,223,62,95,87,166,11,58,166,111,159,255,239,8,54,19,8,162,75,235,
+    108,92,238,188,94,120,56,216,255,18,225,112,228,7,113,193,158,215,93,240,142,180,167,27,
+    165,166,221,120,190,90,69,91,112,58,191,42,233,106,251,252,59,73,249,226,231,205,254,249,
+    231,137,90,47,222,184,121,126,225,184,142,23,111,60,93,177,113,238,215,171,247,243,223,236,
+    206,141,233,178,150,237,82,183,212,48,11,126,118,242,158,93,216,167,252,11,31,54,123,125,
+    58,125,49,50,40,171,113,55,251,23,51,218,85,93,43,38,125,121,197,142,218,145,59,175,
+    194,140,203,39,108,94,140,117,49,193,232,26,100,182,75,235,68,5,253,32,104,44,67,243,
+    229,236,231,211,252,191,32,3,253,87,221,11,13,253,125,198,107,102,194,250,108,250,241,244,
+    11,221,157,198,228,137,195,111,207,63,172,134,107,152,142,183,13,238,239,207,79,78,120,234,
+    63,199,114,118,195,11,153,34,13,195,233,217,205,231,244,57,153,173,224,179,83,162,140,129,
+    212,139,1,182,135,115,85,187,93,56,59,225,104,103,55,167,47,238,236,225,234,31,206,167,
+    156,215,242,122,121,177,220,47,121,61,14,254,156,217,69,53,199,203,20,117,211,205,191,235,
+    214,54,67,226,112,126,242,226,22,151,149,63,29,238,208,251,217,171,214,86,159,184,201,230,
+    244,245,201,39,46,156,249,228,155,79,43,37,174,7,119,174,107,154,240,124,242,25,240,194,
+    18,14,167,167,203,151,136,5,0,29,86,231,7,199,139,126,184,96,94,243,230,215,175,65,
+    155,207,237,198,164,203,187,195,137,24,99,184,208,229,219,131,251,110,57,255,204,155,222,14,
+    167,203,137,190,98,212,191,29,239,14,178,145,249,197,255,5,40,32,55,49,
+};
+static const CompressedSourceCode models_marmit{models_marmit_compressed, sizeof(models_marmit_compressed), 25968};
+
+static const unsigned char models_metal_ior_compressed[]{
+    120,218,133,86,219,114,219,54,16,125,215,87,236,76,83,87,154,210,180,46,142,37,57,151,
+    169,227,58,151,198,118,92,219,211,180,233,116,76,136,132,36,140,65,64,5,64,217,74,38,
+    255,222,3,128,146,232,169,155,190,145,224,238,217,221,179,135,187,216,219,219,163,99,93,46,
+    36,191,39,195,167,134,229,78,44,57,9,85,136,156,91,210,83,202,117,89,106,69,37,119,
+    76,90,218,221,37,55,231,116,199,150,92,114,53,115,243,221,130,47,184,42,184,114,173,61,
+    96,41,250,145,196,45,108,152,131,167,42,170,220,105,67,175,13,183,138,75,114,220,148,150,
+    248,253,130,231,206,67,9,133,147,133,150,204,241,130,22,220,52,112,3,218,212,232,146,22,
+    213,68,10,59,135,69,201,153,173,12,47,17,204,166,116,194,242,121,76,139,132,165,9,203,
+    111,97,50,89,17,35,199,38,146,35,140,243,229,224,208,195,4,60,159,250,182,74,20,201,
+    239,83,161,166,154,10,6,31,102,57,49,85,16,47,39,188,40,224,39,84,240,176,213,98,
+    161,141,35,41,38,134,153,21,181,45,231,1,46,195,201,222,85,252,186,119,230,51,121,247,
+    225,50,205,243,140,166,40,218,187,230,194,49,39,180,178,1,216,159,44,140,6,177,86,168,
+    25,177,197,66,10,94,116,158,69,176,80,202,141,208,166,221,201,16,75,113,102,228,170,73,
+    145,13,0,177,56,52,38,164,6,182,66,137,145,7,144,142,211,0,151,87,198,128,167,6,
+    163,214,215,147,61,177,200,136,167,219,227,27,95,119,150,122,167,224,120,172,151,220,176,25,
+    167,37,51,2,49,193,168,213,149,201,249,33,113,124,89,213,161,114,111,102,125,68,137,174,
+    56,26,140,186,170,36,167,169,223,239,226,41,9,88,235,162,43,137,86,44,133,150,220,133,
+    51,112,14,38,145,54,148,99,169,16,211,41,55,9,194,172,11,172,162,34,12,83,51,95,
+    106,192,226,15,218,173,180,219,54,40,11,220,103,64,171,74,228,238,9,79,233,99,163,112,
+    93,57,43,10,116,55,32,5,144,31,108,13,159,75,86,46,124,226,30,201,147,206,81,77,
+    173,32,229,204,42,5,35,19,38,99,226,82,184,185,168,74,130,213,54,41,235,132,203,231,
+    181,206,200,221,233,154,48,75,119,48,175,107,18,146,66,102,187,185,70,99,162,44,181,137,
+    173,210,202,9,85,9,183,170,27,136,182,178,50,137,236,161,196,9,151,250,142,134,3,79,
+    48,74,103,244,179,169,10,190,123,170,125,131,63,199,60,188,214,131,74,80,123,100,210,240,
+    26,108,41,172,240,213,64,110,168,142,169,60,170,7,192,204,250,67,163,239,69,233,53,209,
+    250,206,150,133,108,253,212,70,98,92,204,20,254,60,195,59,173,165,22,5,249,47,39,75,
+    38,215,42,111,67,151,145,200,196,63,129,248,154,111,155,236,76,165,102,27,225,109,222,33,
+    236,243,198,243,123,200,62,164,126,141,20,235,225,18,232,154,84,66,250,228,242,122,42,33,
+    88,108,135,77,91,152,28,254,71,244,125,166,144,201,151,214,209,236,69,55,33,0,61,167,
+    43,33,151,94,71,253,97,55,77,123,251,93,175,67,106,255,129,46,147,215,157,164,126,183,
+    247,180,147,182,142,100,66,20,93,142,100,85,130,122,144,221,77,123,253,253,134,219,37,187,
+    21,57,245,198,227,224,81,109,60,222,104,89,36,52,232,54,67,124,144,126,66,110,98,244,
+    225,113,172,55,30,81,62,9,245,70,163,52,237,239,135,255,164,253,139,158,43,11,167,29,
+    58,158,27,97,209,250,222,120,184,143,225,249,145,27,133,65,184,6,235,142,61,88,213,0,
+    67,23,125,141,189,102,2,191,86,220,24,15,49,122,26,204,63,169,154,146,87,134,217,48,
+    197,135,221,239,193,168,247,13,178,26,224,245,179,80,249,183,129,94,243,77,220,119,198,235,
+    234,91,198,111,103,27,227,83,241,119,37,252,76,50,152,66,171,132,14,6,233,65,154,30,
+    128,76,239,246,78,177,25,200,173,75,132,119,15,222,167,162,225,29,254,49,144,220,135,215,
+    168,127,112,224,189,206,24,180,124,23,41,59,91,249,209,3,194,122,32,236,146,89,104,85,
+    248,215,33,128,206,182,105,156,177,153,226,86,196,238,118,193,124,35,247,183,152,112,37,83,
+    106,147,197,208,215,112,206,54,206,87,186,136,73,244,6,232,90,127,48,242,94,87,165,87,
+    104,111,124,224,187,114,190,77,249,92,96,249,64,85,33,198,186,206,168,160,53,254,120,4,
+    151,139,201,182,74,206,160,163,222,208,51,179,22,197,99,189,191,112,27,151,11,255,123,7,
+    177,198,90,250,131,241,232,63,2,93,169,141,215,181,192,51,166,179,119,168,139,135,134,245,
+    146,217,249,173,8,108,106,87,73,190,20,121,168,108,63,121,56,94,154,211,7,192,215,162,
+    1,236,152,18,219,116,30,254,57,15,210,249,180,77,231,83,80,221,255,215,253,181,30,15,
+    126,232,84,152,78,113,157,54,102,66,189,1,103,88,228,234,193,250,123,108,245,109,215,219,
+    117,184,2,88,108,164,56,75,179,26,51,139,211,7,175,82,155,12,145,248,116,42,114,225,
+    175,26,135,148,165,44,243,230,241,254,192,100,64,10,215,7,159,198,250,70,1,109,170,240,
+    119,101,233,100,99,142,201,140,138,195,199,6,38,221,38,30,168,88,97,241,4,176,9,110,
+    6,248,85,177,21,152,212,24,88,216,71,89,49,61,60,156,198,155,211,205,148,249,139,84,
+    27,131,243,144,210,52,77,26,184,55,13,220,195,0,6,3,92,33,0,81,234,2,183,46,
+    182,189,137,165,152,238,37,203,141,238,172,103,41,171,188,221,230,234,1,75,172,191,48,91,
+    227,105,231,75,43,152,224,227,139,154,170,118,224,168,221,237,36,235,7,204,242,232,216,152,
+    245,47,114,92,11,158,199,131,151,237,29,28,165,236,17,187,247,143,216,77,96,247,175,133,
+    19,204,176,107,94,182,99,94,201,147,143,71,191,157,156,158,156,191,185,126,123,243,234,232,
+    234,228,230,236,232,247,100,231,241,251,205,159,221,191,146,176,128,234,205,99,184,171,140,242,
+    241,159,181,190,182,254,1,59,172,128,155,
+};
+static const CompressedSourceCode models_metal_ior{models_metal_ior_compressed, sizeof(models_metal_ior_compressed), 2821};
 
 static const std::string_view all_names[]{
     "api",
@@ -5977,39 +3566,39 @@ static const std::string_view all_names[]{
     "models::metal_ior",
 };
 
-[[nodiscard]] static const char *get_source_code(std::string_view name) {
+[[nodiscard]] static const CompressedSourceCode *get_source_code(std::string_view name) {
   if (name == "api")
-    return api;
+    return &api;
   if (name == "anno")
-    return anno;
+    return &anno;
   if (name == "debug")
-    return debug;
+    return &debug;
   if (name == "df")
-    return df;
+    return &df;
   if (name == "limits")
-    return limits;
+    return &limits;
   if (name == "math")
-    return math;
+    return &math;
   if (name == "scene")
-    return scene;
+    return &scene;
   if (name == "state")
-    return state;
+    return &state;
   if (name == "std")
-    return std;
+    return &std;
   if (name == "tex")
-    return tex;
+    return &tex;
   if (name == "extras::io")
-    return extras_io;
+    return &extras_io;
   if (name == "extras::pcg32")
-    return extras_pcg32;
+    return &extras_pcg32;
   if (name == "models::illuminant")
-    return models_illuminant;
+    return &models_illuminant;
   if (name == "models::prospect")
-    return models_prospect;
+    return &models_prospect;
   if (name == "models::marmit")
-    return models_marmit;
+    return &models_marmit;
   if (name == "models::metal_ior")
-    return models_metal_ior;
+    return &models_metal_ior;
   return nullptr;
 }
 #include "Builtin/Albedo/microfacet_ggx_smith_bsdf.inl"

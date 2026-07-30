@@ -14,67 +14,6 @@ namespace smdl {
 /// \addtogroup Support
 /// \{
 
-/// A quoted string for use with `concat`.
-class SMDL_EXPORT Quoted final {
-public:
-  constexpr Quoted(std::string_view str) : str(str) {}
-
-  void appendTo(std::string &result);
-
-public:
-  std::string_view str{};
-};
-
-/// A quoted path string for use with `concat`.
-class SMDL_EXPORT QuotedPath final {
-public:
-  constexpr QuotedPath(std::string_view str) : str(str) {}
-
-  void appendTo(std::string &result);
-
-public:
-  std::string_view str{};
-};
-
-namespace detail {
-
-template <typename T, typename... Ts>
-inline void doConcat(std::string &str, T &&value, Ts &&...values) {
-  using DecayT = std::decay_t<T>;
-  if constexpr (std::is_arithmetic_v<DecayT>) {
-    str += std::to_string(value);
-  } else if constexpr (std::is_same_v<DecayT, Quoted> ||
-                       std::is_same_v<DecayT, QuotedPath>) {
-    value.appendTo(str);
-  } else {
-    str += value;
-  }
-  if constexpr (sizeof...(Ts) > 0) doConcat(str, std::forward<Ts>(values)...);
-}
-
-} // namespace detail
-
-/// \name Functions (strings)
-/// \{
-
-/// Concatenate the given values into a string.
-template <typename T, typename... Ts>
-[[nodiscard]] inline auto concat(T &&value0, Ts &&...values) {
-  if constexpr (sizeof...(Ts) == 0 &&
-                std::is_same_v<std::decay_t<T>, std::string>) {
-    return value0;
-  } else if constexpr (sizeof...(Ts) == 0 &&
-                       std::is_constructible_v<std::string_view,
-                                               std::decay_t<T>>) {
-    return std::string_view(value0);
-  } else {
-    std::string str{};
-    str.reserve(128);
-    detail::doConcat(str, std::forward<T>(value0), std::forward<Ts>(values)...);
-    return str;
-  }
-}
-
 /// Is ASCII alphabetic character?
 [[nodiscard]] constexpr bool isAlpha(char ch) noexcept {
   return (static_cast<int>('A' <= ch) & static_cast<int>(ch <= 'Z')) |
@@ -129,6 +68,64 @@ template <typename T, typename... Ts>
   if ('A' <= ch && ch <= 'F') return ch - 'A' + 10;
   return 0;
 }
+
+/// A quoted string for use with `concat`.
+class SMDL_EXPORT Quoted final {
+public:
+  constexpr Quoted(std::string_view str) : str(str) {}
+  void appendTo(std::string &result);
+public:
+  std::string_view str{};
+};
+
+/// A quoted path string for use with `concat`.
+class SMDL_EXPORT QuotedPath final {
+public:
+  constexpr QuotedPath(std::string_view str) : str(str) {}
+  void appendTo(std::string &result);
+public:
+  std::string_view str{};
+};
+
+namespace detail {
+
+template <typename T, typename... Ts>
+inline void doConcat(std::string &str, T &&value, Ts &&...values) {
+  using DecayT = std::decay_t<T>;
+  if constexpr (std::is_arithmetic_v<DecayT>) {
+    str += std::to_string(value);
+  } else if constexpr (std::is_same_v<DecayT, Quoted> ||
+                       std::is_same_v<DecayT, QuotedPath>) {
+    value.appendTo(str);
+  } else {
+    str += value;
+  }
+  if constexpr (sizeof...(Ts) > 0) doConcat(str, std::forward<Ts>(values)...);
+}
+
+} // namespace detail
+
+/// \name Functions (strings)
+/// \{
+
+/// Concatenate the given values into a string.
+template <typename T, typename... Ts>
+[[nodiscard]] inline auto concat(T &&value0, Ts &&...values) {
+  if constexpr (sizeof...(Ts) == 0 &&
+                std::is_same_v<std::decay_t<T>, std::string>) {
+    return value0;
+  } else if constexpr (sizeof...(Ts) == 0 &&
+                       std::is_constructible_v<std::string_view,
+                                               std::decay_t<T>>) {
+    return std::string_view(value0);
+  } else {
+    std::string str{};
+    str.reserve(128);
+    detail::doConcat(str, std::forward<T>(value0), std::forward<Ts>(values)...);
+    return str;
+  }
+}
+
 
 /// Determine if `str0` starts with `str1`.
 [[nodiscard]] constexpr bool startsWith(std::string_view str0,
