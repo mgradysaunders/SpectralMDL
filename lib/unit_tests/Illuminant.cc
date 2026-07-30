@@ -31,6 +31,18 @@ static float evalIlluminantF(int number, float wavelen) {
   return illum;
 }
 
+static float evalIlluminantHP(int number, float wavelen) {
+  float illum{};
+  smdl::smdlEvalIlluminantHP(1, &wavelen, &illum, number);
+  return illum;
+}
+
+static float evalIlluminantLED(int number, float wavelen) {
+  float illum{};
+  smdl::smdlEvalIlluminantLED(1, &wavelen, &illum, number);
+  return illum;
+}
+
 /// Integrate the given spectral power distribution against the CIE 1931
 /// color matching functions and return the resulting chromaticity.
 template <typename Spd> static smdl::float2 integrateChromaticity(Spd &&spd) {
@@ -175,6 +187,95 @@ TEST_CASE("Illuminant") {
             doctest::Approx(EXPECTED_XY[number - 1][0]).epsilon(2e-3));
       CHECK(integratedXY[1] ==
             doctest::Approx(EXPECTED_XY[number - 1][1]).epsilon(2e-3));
+    }
+  }
+  SUBCASE("smdlEvalIlluminantHP") {
+    // Null arguments must not crash.
+    smdl::smdlEvalIlluminantHP(1, nullptr, nullptr, 1);
+
+    // An out-of-range number must fill with zeros.
+    for (int number : {-1, 0, 6}) {
+      float illum[3] = {7.0f, 7.0f, 7.0f};
+      const float wavelens[3] = {450.0f, 550.0f, 650.0f};
+      smdl::smdlEvalIlluminantHP(3, wavelens, illum, number);
+      CHECK(illum[0] == 0.0f);
+      CHECK(illum[1] == 0.0f);
+      CHECK(illum[2] == 0.0f);
+    }
+
+    // Spot check published values at exact table wavelengths, including
+    // the sodium peak of HP1 at 595nm.
+    CHECK(evalIlluminantHP(1, 380.0f) == doctest::Approx(0.0190f));
+    CHECK(evalIlluminantHP(1, 560.0f) == doctest::Approx(0.2078f));
+    CHECK(evalIlluminantHP(1, 595.0f) == doctest::Approx(3.3484f));
+    CHECK(evalIlluminantHP(1, 600.0f) == doctest::Approx(1.8940f));
+
+    // The evaluation must interpolate linearly between table entries.
+    CHECK(evalIlluminantHP(1, 597.5f) ==
+          doctest::Approx(0.5f * (3.3484f + 1.8940f)));
+
+    // Wavelengths outside the table must evaluate to zero.
+    CHECK(evalIlluminantHP(1, 300.0f) == 0.0f);
+    CHECK(evalIlluminantHP(1, 800.0f) == 0.0f);
+
+    // Integrating against the color matching functions must recover the
+    // published chromaticities from CIE 15:2004.
+    static const smdl::float2 EXPECTED_XY[5] = {{0.5330f, 0.4150f},
+                                                {0.4778f, 0.4158f},
+                                                {0.4302f, 0.4075f},
+                                                {0.3812f, 0.3797f},
+                                                {0.3776f, 0.3713f}};
+    for (int number = 1; number <= 5; number++) {
+      auto integratedXY = integrateChromaticity(
+          [&](float wavelen) { return evalIlluminantHP(number, wavelen); });
+      CHECK(integratedXY[0] ==
+            doctest::Approx(EXPECTED_XY[number - 1][0]).epsilon(3e-3));
+      CHECK(integratedXY[1] ==
+            doctest::Approx(EXPECTED_XY[number - 1][1]).epsilon(3e-3));
+    }
+  }
+  SUBCASE("smdlEvalIlluminantLED") {
+    // Null arguments must not crash.
+    smdl::smdlEvalIlluminantLED(1, nullptr, nullptr, 1);
+
+    // An out-of-range number must fill with zeros.
+    for (int number : {-1, 0, 10}) {
+      float illum[3] = {7.0f, 7.0f, 7.0f};
+      const float wavelens[3] = {450.0f, 550.0f, 650.0f};
+      smdl::smdlEvalIlluminantLED(3, wavelens, illum, number);
+      CHECK(illum[0] == 0.0f);
+      CHECK(illum[1] == 0.0f);
+      CHECK(illum[2] == 0.0f);
+    }
+
+    // Spot check published values at exact table wavelengths: the blue
+    // pump of LED-B1 and LED-B5 and the red emitter of LED-RGB1.
+    CHECK(evalIlluminantLED(1, 380.0f) == 0.0f);
+    CHECK(evalIlluminantLED(1, 455.0f) == doctest::Approx(0.0757f));
+    CHECK(evalIlluminantLED(1, 560.0f) == doctest::Approx(0.1423f));
+    CHECK(evalIlluminantLED(5, 450.0f) == doctest::Approx(0.3234f));
+    CHECK(evalIlluminantLED(7, 560.0f) == doctest::Approx(0.0860f));
+    CHECK(evalIlluminantLED(7, 630.0f) == doctest::Approx(0.5110f));
+    CHECK(evalIlluminantLED(9, 560.0f) == doctest::Approx(0.1335f));
+
+    // Wavelengths outside the table must evaluate to zero.
+    CHECK(evalIlluminantLED(1, 300.0f) == 0.0f);
+    CHECK(evalIlluminantLED(1, 800.0f) == 0.0f);
+
+    // Integrating against the color matching functions must recover the
+    // published chromaticities from CIE 15:2018, in the canonical order
+    // LED-B1..B5, LED-BH1, LED-RGB1, LED-V1, LED-V2.
+    static const smdl::float2 EXPECTED_XY[9] = {
+        {0.4560f, 0.4078f}, {0.4357f, 0.4012f}, {0.3756f, 0.3723f},
+        {0.3422f, 0.3502f}, {0.3118f, 0.3236f}, {0.4474f, 0.4066f},
+        {0.4557f, 0.4211f}, {0.4548f, 0.4044f}, {0.3781f, 0.3775f}};
+    for (int number = 1; number <= 9; number++) {
+      auto integratedXY = integrateChromaticity(
+          [&](float wavelen) { return evalIlluminantLED(number, wavelen); });
+      CHECK(integratedXY[0] ==
+            doctest::Approx(EXPECTED_XY[number - 1][0]).epsilon(3e-3));
+      CHECK(integratedXY[1] ==
+            doctest::Approx(EXPECTED_XY[number - 1][1]).epsilon(3e-3));
     }
   }
 }

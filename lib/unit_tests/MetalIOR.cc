@@ -123,9 +123,9 @@ TEST_CASE("MetalIOR") {
       float wavelen{};
       smdl::float2 expectedIOR{};
     } static const SPOTS[] = {
-        {smdl::Metal::Ag, 659.5f, {0.05f, 4.483f}},         // Johnson & Christy
-        {smdl::Metal::Au, 659.5f, {0.14f, 3.697f}},         // Johnson & Christy
-        {smdl::Metal::Cu, 659.5f, {0.22f, 3.747f}},         // Johnson & Christy
+        {smdl::Metal::Ag, 649.9f, {0.06061f, 4.283f}},      // Yang
+        {smdl::Metal::Au, 650.0f, {0.1546f, 3.647f}},       // Olmon
+        {smdl::Metal::Cu, 650.0f, {0.326f, 3.4f}},          // Querry
         {smdl::Metal::CuZn, 10000.0f, {16.878f, 51.601f}}}; // Querry
     for (const auto &spot : SPOTS) {
       auto ior = evalMetalIOR(spot.metal, spot.wavelen);
@@ -139,5 +139,16 @@ TEST_CASE("MetalIOR") {
     CHECK(reflectance(evalMetalIOR(smdl::Metal::Ag, 550.0f)) > 0.9f);
     CHECK(reflectance(evalMetalIOR(smdl::Metal::Au, 650.0f)) > 0.9f);
     CHECK(reflectance(evalMetalIOR(smdl::Metal::Au, 450.0f)) < 0.5f);
+
+    // The tin table below 730nm is a Drude-Lorentz extrapolation with
+    // roughly 0.1 uncertainty in reflectance, so only pin down that it
+    // stays a plausible silvery metal through the visible range.
+    for (float wavelen : {380.0f, 550.0f, 700.0f}) {
+      auto ior = evalMetalIOR(smdl::Metal::Sn, wavelen);
+      CHECK(ior[0] > 0.0f);
+      CHECK(ior[1] > ior[0]);
+      CHECK(reflectance(ior) > 0.65f);
+      CHECK(reflectance(ior) < 0.9f);
+    }
   }
 }

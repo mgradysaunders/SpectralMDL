@@ -37,9 +37,8 @@ export struct marmit_result {
 // relative error this grid leaves in the strong bands is swallowed there (tau is
 // 0 either way). End to end, the wet reflectance stays within one 8-bit quantum
 // of a far finer table for typical substrates (it scales with the dry
-// reflectance, so very bright surfaces see a bit more). See
-// misc/plot_marmit_downsample.py for the analysis. The refractive index is fit
-// analytically instead (see below), so it needs no table.
+// reflectance, so very bright surfaces see a bit more). The refractive index is 
+// fit analytically instead (see below), so it needs no table.
 /// The minimum wavelength of the MARMIT table in nanometers.
 export const float MARMIT_MIN_WAVELENGTH = 400.0;
 /// The maximum wavelength of the MARMIT table in nanometers.

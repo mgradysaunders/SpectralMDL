@@ -4477,43 +4477,145 @@ state=state*aTotal+bTotal;
 }
 )*";
 
-static const char *const models_illuminant = R"*(#smdl
+static const char *const models_illuminant = R"*(/// CIE standard illuminants as spectral `color` values evaluated at the
+/// current wavelengths in `$state.wavelength_base`: the daylight D series,
+/// reconstructed for any chromaticity on the daylight locus from the CIE
+/// S0/S1/S2 components tabulated over 300..830nm, plus the lamp series
+/// tabulated over 380..780nm -- the fluorescent F series F1 through F12,
+/// the high-pressure discharge HP series HP1 through HP5, and the LED
+/// series. Wavelengths outside the tables evaluate to zero.
+///
+/// Every illuminant here is a relative spectral power distribution
+/// normalized so that illuminant D is 1 at 560nm, with the lamp series
+/// scaled consistently, so multiply by whatever radiant intensity the
+/// scene calls for.
+///
+/// References:
+///   CIE 15:2004 (Colorimetry) -- daylight components, F and HP tables
+///   CIE 15:2018 (Colorimetry) -- LED tables
+#smdl
 @(foreign pure)
 void smdlKelvinToChromaticity(float kelvin,&float2 xy);
 @(foreign pure)
 void smdlEvalIlluminantD(int numWavelens,&float wavelens,&float illuminant,&float2 xy);
 @(foreign pure)
 void smdlEvalIlluminantF(int numWavelens,&float wavelens,&float illuminant,int number);
+@(foreign pure)
+void smdlEvalIlluminantHP(int numWavelens,&float wavelens,&float illuminant,int number);
+@(foreign pure)
+void smdlEvalIlluminantLED(int numWavelens,&float wavelens,&float illuminant,int number);
+
+/// Evaluate CIE standard illuminant D for the given CIE 1931 chromaticity,
+/// which is meant to lie on the daylight locus, e.g., as computed by the
+/// color-temperature overload below. Prefer the named standard illuminants
+/// `illuminant_D50()` through `illuminant_D75()` where they apply.
 @(macro)
 export color illuminant_D(float2 xy){
 color illuminant=color(0);
 smdlEvalIlluminantD($WAVELENGTH_BASE_MAX,&$state.wavelength_base[0],cast<&float>(&illuminant),&xy);
 return illuminant;
 }
+
+/// Evaluate CIE standard illuminant D for the given correlated color
+/// temperature in Kelvin. The daylight locus is only defined from 4000K to
+/// 25000K, so the temperature is clamped to this range.
 @(macro)
 export color illuminant_D(const float kelvin){
 float2 xy;
 smdlKelvinToChromaticity(kelvin,&xy);
 return illuminant_D(xy);
 }
+
+/// CIE standard illuminant D50 (5003K), the warm daylight reference of the
+/// printing industry.
 @(macro)
 export color illuminant_D50()=illuminant_D(5003.);
+
+/// CIE standard illuminant D55 (5503K), mid-morning or mid-afternoon
+/// daylight.
 @(macro)
 export color illuminant_D55()=illuminant_D(5503.);
+
+/// CIE standard illuminant D65 (6504K), average noon daylight and the
+/// reference white of sRGB.
 @(macro)
 export color illuminant_D65()=illuminant_D(6504.);
+
+/// CIE standard illuminant D75 (7504K), overcast north-sky daylight.
 @(macro)
 export color illuminant_D75()=illuminant_D(7504.);
+
+/// Evaluate CIE standard fluorescent illuminant F1 through F12 as selected
+/// by `number`, which is out-of-range-safe: anything other than 1 through 12
+/// evaluates to black. F1..F6 are standard halophosphate lamps, F7..F9 are
+/// broadband full-spectrum lamps (F7 approximates D65 and F8 approximates
+/// D50), and F10..F12 are narrowband triphosphor lamps (F11 is the common
+/// commercial TL84). F2 -- cool white -- is the usual representative of the
+/// series.
 @(macro)
 export color illuminant_F(const int number=1){
 color illuminant=color(0);
 smdlEvalIlluminantF($WAVELENGTH_BASE_MAX,&$state.wavelength_base[0],cast<&float>(&illuminant),number);
 return illuminant;
 }
+
+/// Evaluate CIE standard high-pressure discharge lamp illuminant HP1
+/// through HP5 as selected by `number`, which is out-of-range-safe:
+/// anything other than 1 through 5 evaluates to black. HP1 (1959K) is a
+/// standard high-pressure sodium lamp dominated by the sodium doublet
+/// near 589nm, HP2 (2506K) is a colour-corrected high-pressure sodium
+/// lamp, and HP3 through HP5 (3144K, 4002K, 4039K) are high-pressure
+/// metal halide lamps.
+@(macro)
+export color illuminant_HP(const int number=1){
+color illuminant=color(0);
+smdlEvalIlluminantHP($WAVELENGTH_BASE_MAX,&$state.wavelength_base[0],cast<&float>(&illuminant),number);
+return illuminant;
+}
+
+/// Evaluate CIE standard LED illuminant B1 through B5 -- the blue-pumped
+/// phosphor LED lamps in order of increasing color temperature: B1
+/// (2733K), B2 (2998K), B3 (4103K), B4 (5109K), and B5 (6598K) -- as
+/// selected by `number`, which is out-of-range-safe: anything other than
+/// 1 through 5 evaluates to black.
+@(macro)
+export color illuminant_LED_B(const int number=1){
+color illuminant=color(0);
+smdlEvalIlluminantLED($WAVELENGTH_BASE_MAX,&$state.wavelength_base[0],cast<&float>(&illuminant),(1<=number&&number<=5)?number:0);
+return illuminant;
+}
+
+/// Evaluate CIE standard LED illuminant V1 (2724K) or V2 (4070K) -- the
+/// violet-pumped phosphor LED lamps -- as selected by `number`, which is
+/// out-of-range-safe: anything other than 1 or 2 evaluates to black.
+@(macro)
+export color illuminant_LED_V(const int number=1){
+color illuminant=color(0);
+smdlEvalIlluminantLED($WAVELENGTH_BASE_MAX,&$state.wavelength_base[0],cast<&float>(&illuminant),(1<=number&&number<=2)?number+7:0);
+return illuminant;
+}
+
+/// CIE standard LED illuminant BH1 (2851K), a hybrid lamp mixing a
+/// blue-pumped phosphor LED with a red emitter.
+@(macro)
+export color illuminant_LED_BH1(){
+color illuminant=color(0);
+smdlEvalIlluminantLED($WAVELENGTH_BASE_MAX,&$state.wavelength_base[0],cast<&float>(&illuminant),6);
+return illuminant;
+}
+
+/// CIE standard LED illuminant RGB1 (2840K), a tri-band lamp mixing red,
+/// green, and blue emitters.
+@(macro)
+export color illuminant_LED_RGB1(){
+color illuminant=color(0);
+smdlEvalIlluminantLED($WAVELENGTH_BASE_MAX,&$state.wavelength_base[0],cast<&float>(&illuminant),7);
+return illuminant;
+}
 )*";
 
-static const char *const models_prospect = R"*(/// PROSPECT -- a physically based way to turn a leaf's biochemistry into its
-/// optics: given the pigment, water, and dry-matter contents per unit leaf area,
+static const char *const models_prospect = R"*(/// PROSPECT: a physically based way to turn a leaf's biochemistry into its
+/// optics. Given the pigment, water, and dry-matter contents per unit leaf area,
 /// it predicts the hemispherical reflectance and transmittance of a single leaf
 /// over 400..2500 nm. It is the transmissive, light-through-the-leaf analog of
 /// the water-film model in `marmit.smdl`, and is built the same way: interpolate
@@ -5607,6 +5709,62 @@ return result;
 }
 )*";
 
+static const char *const models_metal_ior = R"*(/// Complex refractive indices of common metals -- the wavelength-dependent
+/// n + ik that conductor Fresnel terms expect -- interpolated per wavelength
+/// from published measurements. Each metal is backed by a table extracted from
+/// the refractiveindex.info database and embedded in the support library (see
+/// `lib/Support/MetalIOR.cc` for the citations and the processing applied);
+/// `metal_ior()` linearly interpolates the table of the selected metal at the
+/// current wavelengths in `$state.wavelength_base`.
+///
+/// Coverage varies by source: every metal covers at least 380nm to 2200nm,
+/// and the ultraviolet and infrared ends differ, so the tabulated range of
+/// each metal is noted in the `Metal` enumeration. Wavelengths outside a
+/// metal's range clamp to the nearest table entry. Cobalt and lithium are
+/// each stitched from two sources with the tail ratio-corrected for
+/// continuity at the seam, and tin below 730nm is a Drude-Lorentz
+/// extrapolation, so treat the visible appearance of tin as approximate.
+#smdl
+@(foreign pure)
+void smdlEvalMetalIOR(int metal,int numWavelens,&float wavelens,&float iorN,&float iorK);
+
+/// The metals with builtin complex IOR tables.
+export enum Metal{
+Ag=0, ///< Silver, 270..14000nm (Yang et al 2015).
+Al,   ///< Aluminum, 0.124..14000nm (Rakic 1995).
+Au,   ///< Gold, 300..14000nm (Olmon et al 2012).
+Co,   ///< Cobalt, 188..2480nm (Johnson & Christy 1974 + Werner et al 2009).
+Cu,   ///< Copper, 210..14000nm (Querry 1985).
+CuZn, ///< Brass of 70% copper and 30% zinc, 210..14000nm (Querry 1985).
+Fe,   ///< Iron, 210..14000nm (Querry 1985).
+Hg,   ///< Liquid mercury, 63.6..6199nm (Inagaki et al 1981).
+Li,   ///< Lithium, 326..8266nm (Mathewson & Myers 1971 + Rasigni 1977).
+Mg,   ///< Magnesium, 0.0248..14000nm (Hagemann et al 1975).
+Na,   ///< Sodium, 313..2238nm (Smith 1969).
+Ni,   ///< Nickel, 248..6199nm (Rakic et al 1998).
+Pb,   ///< Lead, 17.6..2480nm (Werner et al 2009).
+Pt,   ///< Platinum, 248..12398nm (Rakic et al 1998).
+Sn,   ///< Tin, 380..12000nm (Golovashkin & Motulevich 1964, Drude-Lorentz below 730nm).
+Ti,   ///< Titanium, 248..14000nm (Rakic et al 1998).
+Zn,   ///< Zinc, 17.6..2480nm (Werner et al 2009).
+};
+
+/// Evaluate the complex IOR of the given metal at the current wavelengths.
+///
+/// The result is a `complex` with `color` coefficients: `.a` is the real
+/// index of refraction n and `.b` is the extinction coefficient k, ready to
+/// be passed along to `df::fresnel_factor(ior: ..., extinction_coefficient:
+/// ...)` to model a conductor.
+@(macro)
+export auto metal_ior(const Metal metal){
+auto ior=complex(color(0),color(0));
+const &float iorN=cast<&float>(&ior.a);
+const &float iorK=cast<&float>(&ior.b);
+smdlEvalMetalIOR(cast<int>(metal),$WAVELENGTH_BASE_MAX,&$state.wavelength_base[0],iorN,iorK);
+return ior;
+}
+)*";
+
 static const std::string_view all_names[]{
     "api",
     "anno",
@@ -5623,6 +5781,7 @@ static const std::string_view all_names[]{
     "models::illuminant",
     "models::prospect",
     "models::marmit",
+    "models::metal_ior",
 };
 
 [[nodiscard]] static const char *get_source_code(std::string_view name) {
@@ -5656,6 +5815,8 @@ static const std::string_view all_names[]{
     return models_prospect;
   if (name == "models::marmit")
     return models_marmit;
+  if (name == "models::metal_ior")
+    return models_metal_ior;
   return nullptr;
 }
 #include "Builtin/Albedo/diffuse_reflection_bsdf.inl"

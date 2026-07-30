@@ -19,7 +19,8 @@ fnames = ['api', 'anno', 'debug', 'df', 'limits', 'math', 'scene', 'state', 'std
           'extras/pcg32',
           'models/illuminant',
           'models/prospect', 
-          'models/marmit']
+          'models/marmit',
+          'models/metal_ior']
 for fname in fnames
   text = `smdlc format -c --no-comments --keep-doc-comments Builtin/#{fname}.smdl`
   text = File.read "Builtin/#{fname}.smdl" unless $?.success?

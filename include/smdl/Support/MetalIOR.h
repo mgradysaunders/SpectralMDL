@@ -56,7 +56,7 @@ extern "C" {
 ///
 /// Returns 1 on success. If `metal` is invalid, zeroes out `metalIOR` and
 /// returns 0. The returned table points to static storage, so it is valid
-/// forever and must not be freed. See `MetalIORs.h` in the library
+/// forever and must not be freed. See `MetalIOR.cc` in the library
 /// implementation for the data sources.
 SMDL_EXPORT int smdlFindMetalIOR(Metal metal, MetalIOR *metalIOR);
 

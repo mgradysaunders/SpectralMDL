@@ -1,0 +1,55 @@
+/// Complex refractive indices of common metals -- the wavelength-dependent
+/// n + ik that conductor Fresnel terms expect -- interpolated per wavelength
+/// from published measurements. Each metal is backed by a table extracted from
+/// the refractiveindex.info database and embedded in the support library (see
+/// `lib/Support/MetalIOR.cc` for the citations and the processing applied);
+/// `metal_ior()` linearly interpolates the table of the selected metal at the
+/// current wavelengths in `$state.wavelength_base`.
+///
+/// Coverage varies by source: every metal covers at least 380nm to 2200nm,
+/// and the ultraviolet and infrared ends differ, so the tabulated range of
+/// each metal is noted in the `Metal` enumeration. Wavelengths outside a
+/// metal's range clamp to the nearest table entry. Cobalt and lithium are
+/// each stitched from two sources with the tail ratio-corrected for
+/// continuity at the seam, and tin below 730nm is a Drude-Lorentz
+/// extrapolation, so treat the visible appearance of tin as approximate.
+#smdl
+
+@(foreign pure)
+void smdlEvalMetalIOR(int metal, int numWavelens, &float wavelens, &float iorN, &float iorK);
+
+/// The metals with builtin complex IOR tables.
+export enum Metal {
+  Ag = 0, ///< Silver, 270..14000nm (Yang et al 2015).
+  Al,     ///< Aluminum, 0.124..14000nm (Rakic 1995).
+  Au,     ///< Gold, 300..14000nm (Olmon et al 2012).
+  Co,     ///< Cobalt, 188..2480nm (Johnson & Christy 1974 + Werner et al 2009).
+  Cu,     ///< Copper, 210..14000nm (Querry 1985).
+  CuZn,   ///< Brass of 70% copper and 30% zinc, 210..14000nm (Querry 1985).
+  Fe,     ///< Iron, 210..14000nm (Querry 1985).
+  Hg,     ///< Liquid mercury, 63.6..6199nm (Inagaki et al 1981).
+  Li,     ///< Lithium, 326..8266nm (Mathewson & Myers 1971 + Rasigni 1977).
+  Mg,     ///< Magnesium, 0.0248..14000nm (Hagemann et al 1975).
+  Na,     ///< Sodium, 313..2238nm (Smith 1969).
+  Ni,     ///< Nickel, 248..6199nm (Rakic et al 1998).
+  Pb,     ///< Lead, 17.6..2480nm (Werner et al 2009).
+  Pt,     ///< Platinum, 248..12398nm (Rakic et al 1998).
+  Sn,     ///< Tin, 380..12000nm (Golovashkin & Motulevich 1964, Drude-Lorentz below 730nm).
+  Ti,     ///< Titanium, 248..14000nm (Rakic et al 1998).
+  Zn,     ///< Zinc, 17.6..2480nm (Werner et al 2009).
+};
+
+/// Evaluate the complex IOR of the given metal at the current wavelengths.
+///
+/// The result is a `complex` with `color` coefficients: `.a` is the real
+/// index of refraction n and `.b` is the extinction coefficient k, ready to
+/// be passed along to `df::fresnel_factor(ior: ..., extinction_coefficient:
+/// ...)` to model a conductor.
+@(macro)
+export auto metal_ior(const Metal metal) {
+  auto ior = complex(color(0), color(0));
+  const &float iorN = cast<&float>(&ior.a); // Real
+  const &float iorK = cast<&float>(&ior.b); // Imaginary
+  smdlEvalMetalIOR(cast<int>(metal), $WAVELENGTH_BASE_MAX, &$state.wavelength_base[0], iorN, iorK);
+  return ior;
+}

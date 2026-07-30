@@ -13,48 +13,57 @@ namespace {
 //   https://github.com/polyanskiy/refractiveindex.info-database
 //
 // Each table is processed as follows:
-// 1. Convert the wavelengths from micrometers to nanometers.
-// 2. Truncate the wavelength domain to at most 14000nm, since we never
+// 1. If the metal is stitched from two sources, append the tail source
+//    beyond the base source's last wavelength, with n and k
+//    ratio-corrected for continuity at the seam; the correction decays
+//    linearly in wavelength and vanishes at the end of the table.
+// 2. Convert the wavelengths from micrometers to nanometers.
+// 3. Truncate the wavelength domain to at most 14000nm, since we never
 //    need anything beyond LWIR. If the source data extends further, the
 //    truncated table ends with an entry interpolated at exactly 14000nm.
-// 3. Downsample by dropping entries as long as linear interpolation of the
+// 4. Downsample by dropping entries as long as linear interpolation of the
 //    downsampled table stays within 0.5% relative error in n and k (with an
 //    absolute floor of 0.01) and within 0.001 absolute error in the
 //    normal-incidence Fresnel reflectance, as measured against linear
 //    interpolation of the full-resolution table.
 
-// P. B. Johnson and R. W. Christy, "Optical constants of the noble
-// metals", Phys. Rev. B 6, 4370-4379 (1972)
+// H. U. Yang, J. D'Archangel, M. L. Sundheimer, E. Tucker,
+// G. D. Boreman, and M. B. Raschke, "Optical dielectric function of
+// silver", Phys. Rev. B 91, 235137 (2015)
 //
-// https://refractiveindex.info/?shelf=main&book=Ag&page=Johnson
+// https://refractiveindex.info/?shelf=main&book=Ag&page=Yang
 //
-// Evaporated silver film at room temperature.
+// Template-stripped silver.
 //
-// Downsampled from 49 entries covering 187.9nm to 1937nm.
-static constexpr int METAL_IOR_AG_SIZE = 43;
-static constexpr MetalIORTableEntry METAL_IOR_AG[43] = {
-    {187.9f, {1.07f, 1.212f}},  {191.6f, {1.1f, 1.232f}},
-    {195.3f, {1.12f, 1.255f}},  {203.3f, {1.15f, 1.296f}},
-    {207.3f, {1.18f, 1.312f}},  {216.4f, {1.22f, 1.336f}},
-    {221.4f, {1.25f, 1.342f}},  {226.2f, {1.26f, 1.344f}},
-    {231.3f, {1.28f, 1.357f}},  {237.1f, {1.28f, 1.367f}},
-    {249.0f, {1.31f, 1.389f}},  {255.1f, {1.33f, 1.393f}},
-    {261.6f, {1.35f, 1.387f}},  {268.9f, {1.38f, 1.372f}},
-    {276.1f, {1.41f, 1.331f}},  {284.4f, {1.41f, 1.264f}},
-    {292.4f, {1.39f, 1.161f}},  {300.9f, {1.34f, 0.964f}},
-    {310.7f, {1.13f, 0.616f}},  {320.4f, {0.81f, 0.392f}},
-    {331.5f, {0.17f, 0.829f}},  {342.5f, {0.14f, 1.142f}},
-    {354.2f, {0.1f, 1.419f}},   {367.9f, {0.07f, 1.657f}},
-    {381.5f, {0.05f, 1.864f}},  {413.3f, {0.05f, 2.275f}},
-    {430.5f, {0.04f, 2.462f}},  {450.9f, {0.04f, 2.657f}},
-    {471.4f, {0.05f, 2.869f}},  {520.9f, {0.05f, 3.324f}},
-    {548.6f, {0.06f, 3.586f}},  {582.1f, {0.05f, 3.858f}},
-    {616.8f, {0.06f, 4.152f}},  {659.5f, {0.05f, 4.483f}},
-    {704.5f, {0.04f, 4.838f}},  {756.0f, {0.03f, 5.242f}},
-    {821.1f, {0.04f, 5.727f}},  {892.0f, {0.04f, 6.312f}},
-    {1088.0f, {0.04f, 7.795f}}, {1216.0f, {0.09f, 8.828f}},
-    {1393.0f, {0.13f, 10.1f}},  {1610.0f, {0.15f, 11.85f}},
-    {1937.0f, {0.24f, 14.08f}}};
+// Downsampled from 499 entries covering 270nm to 14000nm.
+static constexpr int METAL_IOR_AG_SIZE = 51;
+static constexpr MetalIORTableEntry METAL_IOR_AG[51] = {
+    {270.0f, {1.364f, 1.318f}},   {280.0f, {1.477f, 1.24f}},
+    {290.0f, {1.531f, 1.168f}},   {300.0f, {1.609f, 0.9126f}},
+    {310.0f, {1.373f, 0.5192f}},  {320.0f, {0.8191f, 0.3334f}},
+    {330.0f, {0.2207f, 0.6779f}}, {340.0f, {0.1109f, 1.084f}},
+    {350.0f, {0.08443f, 1.341f}}, {360.0f, {0.07339f, 1.536f}},
+    {369.9f, {0.06727f, 1.699f}}, {379.9f, {0.06325f, 1.841f}},
+    {389.9f, {0.06035f, 1.971f}}, {409.9f, {0.05647f, 2.203f}},
+    {429.9f, {0.05411f, 2.413f}}, {449.9f, {0.05271f, 2.609f}},
+    {489.9f, {0.05175f, 2.974f}}, {539.9f, {0.05282f, 3.401f}},
+    {579.9f, {0.05493f, 3.728f}}, {629.9f, {0.05876f, 4.126f}},
+    {679.9f, {0.06368f, 4.516f}}, {739.9f, {0.0708f, 4.975f}},
+    {809.9f, {0.08057f, 5.503f}}, {889.9f, {0.09345f, 6.1f}},
+    {989.9f, {0.1119f, 6.838f}},  {1110.0f, {0.1373f, 7.718f}},
+    {1250.0f, {0.1711f, 8.736f}}, {1359.0f, {0.2004f, 9.524f}},
+    {1460.0f, {0.23f, 10.25f}},   {1577.0f, {0.267f, 11.1f}},
+    {1720.0f, {0.3162f, 12.13f}}, {1868.0f, {0.3716f, 13.18f}},
+    {2084.0f, {0.461f, 14.73f}},  {2323.0f, {0.5712f, 16.44f}},
+    {2624.0f, {0.7269f, 18.58f}}, {2830.0f, {0.8444f, 20.04f}},
+    {3057.0f, {0.9838f, 21.65f}}, {3273.0f, {1.126f, 23.18f}},
+    {3561.0f, {1.331f, 25.21f}},  {3904.0f, {1.597f, 27.63f}},
+    {4379.0f, {2.004f, 30.96f}},  {4985.0f, {2.588f, 35.2f}},
+    {5635.0f, {3.294f, 39.71f}},  {6114.0f, {3.865f, 43.01f}},
+    {6546.0f, {4.418f, 45.98f}},  {7200.0f, {5.32f, 50.44f}},
+    {8001.0f, {6.526f, 55.84f}},  {9001.0f, {8.186f, 62.5f}},
+    {10130.0f, {10.25f, 69.86f}}, {12000.0f, {14.1f, 81.8f}},
+    {14000.0f, {18.711f, 94.03f}}};
 
 // A. D. Rakic, "Algorithm for the determination of intrinsic optical
 // constants of metal films: application to aluminum", Appl. Opt. 34,
@@ -129,51 +138,68 @@ static constexpr MetalIORTableEntry METAL_IOR_AL[121] = {
     {10332.0f, {26.216f, 88.197f}},     {12399.0f, {33.519f, 101.28f}},
     {14000.0f, {39.1523f, 110.187f}}};
 
-// P. B. Johnson and R. W. Christy, "Optical constants of the noble
-// metals", Phys. Rev. B 6, 4370-4379 (1972)
+// R. L. Olmon, B. Slovick, T. W. Johnson, D. Shelton, S.-H. Oh,
+// G. D. Boreman, and M. B. Raschke, "Optical dielectric function of
+// gold", Phys. Rev. B 86, 235147 (2012)
 //
-// https://refractiveindex.info/?shelf=main&book=Au&page=Johnson
+// https://refractiveindex.info/?shelf=main&book=Au&page=Olmon-ev
 //
-// Evaporated gold film at room temperature.
+// Evaporated gold film.
 //
-// Downsampled from 49 entries covering 187.9nm to 1937nm.
-static constexpr int METAL_IOR_AU_SIZE = 45;
-static constexpr MetalIORTableEntry METAL_IOR_AU[45] = {
-    {187.9f, {1.28f, 1.188f}},  {191.6f, {1.32f, 1.203f}},
-    {195.3f, {1.34f, 1.226f}},  {203.3f, {1.33f, 1.277f}},
-    {207.3f, {1.3f, 1.304f}},   {211.9f, {1.3f, 1.35f}},
-    {221.4f, {1.3f, 1.427f}},   {226.2f, {1.31f, 1.46f}},
-    {231.3f, {1.3f, 1.497f}},   {237.1f, {1.32f, 1.536f}},
-    {249.0f, {1.33f, 1.631f}},  {255.1f, {1.33f, 1.688f}},
-    {261.6f, {1.35f, 1.749f}},  {268.9f, {1.38f, 1.803f}},
-    {276.1f, {1.43f, 1.847f}},  {284.4f, {1.47f, 1.869f}},
-    {292.4f, {1.49f, 1.878f}},  {300.9f, {1.53f, 1.889f}},
-    {320.4f, {1.54f, 1.898f}},  {331.5f, {1.48f, 1.883f}},
-    {342.5f, {1.48f, 1.871f}},  {354.2f, {1.5f, 1.866f}},
-    {367.9f, {1.48f, 1.895f}},  {381.5f, {1.46f, 1.933f}},
-    {397.4f, {1.47f, 1.952f}},  {413.3f, {1.46f, 1.958f}},
-    {430.5f, {1.45f, 1.948f}},  {450.9f, {1.38f, 1.914f}},
-    {471.4f, {1.31f, 1.849f}},  {495.9f, {1.04f, 1.833f}},
-    {520.9f, {0.62f, 2.081f}},  {548.6f, {0.43f, 2.455f}},
-    {582.1f, {0.29f, 2.863f}},  {616.8f, {0.21f, 3.272f}},
-    {659.5f, {0.14f, 3.697f}},  {704.5f, {0.13f, 4.103f}},
-    {756.0f, {0.14f, 4.542f}},  {821.1f, {0.16f, 5.083f}},
-    {892.0f, {0.17f, 5.663f}},  {984.0f, {0.22f, 6.35f}},
-    {1088.0f, {0.27f, 7.15f}},  {1216.0f, {0.35f, 8.145f}},
-    {1393.0f, {0.43f, 9.519f}}, {1610.0f, {0.56f, 11.21f}},
-    {1937.0f, {0.92f, 13.78f}}};
+// Downsampled from 428 entries covering 300nm to 14000nm.
+static constexpr int METAL_IOR_AU_SIZE = 64;
+static constexpr MetalIORTableEntry METAL_IOR_AU[64] = {
+    {300.0f, {1.596f, 1.888f}},   {310.0f, {1.649f, 1.895f}},
+    {320.0f, {1.685f, 1.881f}},   {330.0f, {1.701f, 1.858f}},
+    {340.0f, {1.695f, 1.835f}},   {350.0f, {1.671f, 1.821f}},
+    {360.0f, {1.637f, 1.825f}},   {380.0f, {1.588f, 1.877f}},
+    {390.0f, {1.585f, 1.904f}},   {400.0f, {1.588f, 1.915f}},
+    {420.0f, {1.567f, 1.898f}},   {440.0f, {1.505f, 1.877f}},
+    {450.0f, {1.472f, 1.855f}},   {460.0f, {1.422f, 1.812f}},
+    {470.0f, {1.333f, 1.758f}},   {480.0f, {1.193f, 1.716f}},
+    {490.0f, {1.011f, 1.72f}},    {500.0f, {0.8197f, 1.787f}},
+    {510.0f, {0.6527f, 1.908f}},  {520.0f, {0.5263f, 2.058f}},
+    {530.0f, {0.4363f, 2.213f}},  {540.0f, {0.3724f, 2.364f}},
+    {550.0f, {0.3256f, 2.507f}},  {560.0f, {0.2899f, 2.641f}},
+    {570.0f, {0.2617f, 2.769f}},  {580.0f, {0.2388f, 2.891f}},
+    {590.0f, {0.2199f, 3.009f}},  {600.0f, {0.2041f, 3.122f}},
+    {620.0f, {0.1794f, 3.34f}},   {640.0f, {0.1616f, 3.547f}},
+    {660.0f, {0.1487f, 3.746f}},  {680.0f, {0.1394f, 3.938f}},
+    {700.0f, {0.1328f, 4.126f}},  {720.0f, {0.1284f, 4.308f}},
+    {750.0f, {0.1248f, 4.575f}},  {770.0f, {0.1239f, 4.749f}},
+    {820.0f, {0.1256f, 5.172f}},  {860.0f, {0.1298f, 5.501f}},
+    {920.0f, {0.1393f, 5.985f}},  {990.0f, {0.1536f, 6.535f}},
+    {1060.0f, {0.1705f, 7.075f}}, {1150.0f, {0.1949f, 7.759f}},
+    {1350.0f, {0.2551f, 9.214f}}, {1560.0f, {0.326f, 10.69f}},
+    {1730.0f, {0.3885f, 11.84f}}, {1930.0f, {0.4715f, 13.19f}},
+    {2000.0f, {0.5031f, 13.65f}}, {2168.0f, {0.589f, 14.84f}},
+    {2340.0f, {0.6837f, 16.06f}}, {2542.0f, {0.8037f, 17.47f}},
+    {2782.0f, {0.9589f, 19.15f}}, {3029.0f, {1.132f, 20.86f}},
+    {3324.0f, {1.358f, 22.91f}},  {3683.0f, {1.659f, 25.38f}},
+    {4155.0f, {2.098f, 28.6f}},   {4801.0f, {2.776f, 32.97f}},
+    {5227.0f, {3.27f, 35.82f}},   {5736.0f, {3.906f, 39.2f}},
+    {6354.0f, {4.745f, 43.26f}},  {7045.0f, {5.76f, 47.72f}},
+    {7904.0f, {7.13f, 53.17f}},   {9259.0f, {9.502f, 61.52f}},
+    {10990.0f, {12.83f, 71.71f}}, {14000.0f, {19.182f, 88.286f}}};
 
 // P. B. Johnson and R. W. Christy, "Optical constants of transition
 // metals: Ti, V, Cr, Mn, Fe, Co, Ni, and Pd", Phys. Rev. B 9,
-// 5056-5070 (1974)
+// 5056-5070 (1974), stitched with the DFT dataset of W. S. M. Werner,
+// K. Glantschnig, and C. Ambrosch-Draxl, "Optical constants and
+// inelastic electron-scattering data for 17 elemental metals",
+// J. Phys. Chem. Ref. Data 38, 1013-1092 (2009)
 //
 // https://refractiveindex.info/?shelf=main&book=Co&page=Johnson
 //
-// Evaporated cobalt film at room temperature.
+// https://refractiveindex.info/?shelf=main&book=Co&page=Werner-DFT
+// Evaporated cobalt film at room temperature up to 1937nm, extended
+// beyond with DFT-calculated values that are ratio-corrected for
+// continuity at the seam, the correction decaying to zero at the end
+// of the table.
 //
-// Downsampled from 49 entries covering 188nm to 1937nm.
-static constexpr int METAL_IOR_CO_SIZE = 31;
-static constexpr MetalIORTableEntry METAL_IOR_CO[31] = {
+// Downsampled from 50 entries covering 188nm to 2479.68nm.
+static constexpr int METAL_IOR_CO_SIZE = 32;
+static constexpr MetalIORTableEntry METAL_IOR_CO[32] = {
     {188.0f, {1.16f, 1.59f}},  {192.0f, {1.21f, 1.63f}},
     {195.0f, {1.26f, 1.67f}},  {203.0f, {1.32f, 1.75f}},
     {207.0f, {1.36f, 1.78f}},  {212.0f, {1.38f, 1.82f}},
@@ -189,41 +215,56 @@ static constexpr MetalIORTableEntry METAL_IOR_CO[31] = {
     {821.0f, {2.53f, 4.88f}},  {892.0f, {2.65f, 5.16f}},
     {1088.0f, {2.94f, 5.88f}}, {1216.0f, {3.17f, 6.31f}},
     {1393.0f, {3.42f, 6.77f}}, {1610.0f, {3.61f, 7.26f}},
-    {1937.0f, {3.87f, 7.79f}}};
+    {1937.0f, {3.87f, 7.79f}}, {2479.684f, {2.4035f, 10.6648f}}};
 
-// P. B. Johnson and R. W. Christy, "Optical constants of the noble
-// metals", Phys. Rev. B 6, 4370-4379 (1972)
+// M. R. Querry, "Optical constants", Contractor Report
+// CRDC-CR-85034 (1985)
 //
-// https://refractiveindex.info/?shelf=main&book=Cu&page=Johnson
+// https://refractiveindex.info/?shelf=main&book=Cu&page=Querry
 //
-// Evaporated copper film at room temperature.
+// Copper ingot.
 //
-// Downsampled from 49 entries covering 187.9nm to 1937nm.
-static constexpr int METAL_IOR_CU_SIZE = 46;
-static constexpr MetalIORTableEntry METAL_IOR_CU[46] = {
-    {187.9f, {0.94f, 1.337f}},  {191.6f, {0.95f, 1.388f}},
-    {195.3f, {0.97f, 1.44f}},   {203.3f, {0.99f, 1.55f}},
-    {207.3f, {1.01f, 1.599f}},  {211.9f, {1.04f, 1.651f}},
-    {216.4f, {1.08f, 1.699f}},  {221.4f, {1.13f, 1.737f}},
-    {231.3f, {1.23f, 1.792f}},  {237.1f, {1.28f, 1.802f}},
-    {242.6f, {1.34f, 1.799f}},  {249.0f, {1.37f, 1.783f}},
-    {255.1f, {1.41f, 1.741f}},  {261.6f, {1.41f, 1.691f}},
-    {268.9f, {1.45f, 1.668f}},  {276.1f, {1.46f, 1.646f}},
-    {284.4f, {1.45f, 1.633f}},  {292.4f, {1.42f, 1.633f}},
-    {310.7f, {1.38f, 1.729f}},  {320.4f, {1.38f, 1.783f}},
-    {331.5f, {1.34f, 1.821f}},  {342.5f, {1.36f, 1.864f}},
-    {354.2f, {1.37f, 1.916f}},  {367.9f, {1.36f, 1.975f}},
-    {381.5f, {1.33f, 2.045f}},  {397.4f, {1.32f, 2.116f}},
-    {413.3f, {1.28f, 2.207f}},  {430.5f, {1.25f, 2.305f}},
-    {450.9f, {1.24f, 2.397f}},  {471.4f, {1.25f, 2.483f}},
-    {495.9f, {1.22f, 2.564f}},  {520.9f, {1.18f, 2.608f}},
-    {548.6f, {1.02f, 2.577f}},  {582.1f, {0.7f, 2.704f}},
-    {616.8f, {0.3f, 3.205f}},   {659.5f, {0.22f, 3.747f}},
-    {704.5f, {0.21f, 4.205f}},  {756.0f, {0.24f, 4.665f}},
-    {821.1f, {0.26f, 5.18f}},   {892.0f, {0.3f, 5.768f}},
-    {984.0f, {0.32f, 6.421f}},  {1088.0f, {0.36f, 7.217f}},
-    {1216.0f, {0.48f, 8.245f}}, {1393.0f, {0.6f, 9.439f}},
-    {1610.0f, {0.76f, 11.12f}}, {1937.0f, {1.09f, 13.43f}}};
+// Downsampled from 558 entries covering 210nm to 14000nm.
+static constexpr int METAL_IOR_CU_SIZE = 75;
+static constexpr MetalIORTableEntry METAL_IOR_CU[75] = {
+    {210.0f, {1.243f, 1.376f}},      {220.0f, {1.315f, 1.439f}},
+    {230.0f, {1.404f, 1.49f}},       {240.0f, {1.497f, 1.5f}},
+    {250.0f, {1.567f, 1.474f}},      {260.0f, {1.6f, 1.431f}},
+    {270.0f, {1.598f, 1.391f}},      {280.0f, {1.569f, 1.365f}},
+    {290.0f, {1.522f, 1.36f}},       {300.0f, {1.47f, 1.38f}},
+    {320.0f, {1.4f, 1.467f}},        {360.0f, {1.316f, 1.637f}},
+    {440.0f, {1.18f, 1.998f}},       {460.0f, {1.155f, 2.083f}},
+    {480.0f, {1.126f, 2.154f}},      {500.0f, {1.093f, 2.215f}},
+    {510.0f, {1.073f, 2.235f}},      {520.0f, {1.046f, 2.244f}},
+    {530.0f, {1.002f, 2.242f}},      {540.0f, {0.93f, 2.238f}},
+    {550.0f, {0.825f, 2.248f}},      {560.0f, {0.696f, 2.293f}},
+    {570.0f, {0.565f, 2.382f}},      {580.0f, {0.454f, 2.51f}},
+    {590.0f, {0.376f, 2.661f}},      {600.0f, {0.334f, 2.815f}},
+    {610.0f, {0.317f, 2.957f}},      {620.0f, {0.314f, 3.083f}},
+    {640.0f, {0.321f, 3.302f}},      {670.0f, {0.332f, 3.583f}},
+    {780.0f, {0.371f, 4.474f}},      {820.0f, {0.397f, 4.772f}},
+    {860.0f, {0.421f, 5.049f}},      {910.0f, {0.437f, 5.387f}},
+    {970.0f, {0.445f, 5.795f}},      {1000.0f, {0.459f, 6.0f}},
+    {1009.7f, {0.463f, 6.128f}},     {1010.0f, {0.462f, 6.064f}},
+    {1040.0f, {0.462f, 6.263f}},     {1080.0f, {0.47f, 6.538f}},
+    {1130.0f, {0.496f, 6.87f}},      {1180.0f, {0.505f, 7.201f}},
+    {1220.0f, {0.526f, 7.464f}},     {1250.0f, {0.532f, 7.662f}},
+    {1370.0f, {0.589f, 8.429f}},     {1460.0f, {0.604f, 9.004f}},
+    {1520.0f, {0.636f, 9.392f}},     {1570.0f, {0.648f, 9.71f}},
+    {1650.0f, {0.695f, 10.215f}},    {1680.0f, {0.707f, 10.394f}},
+    {1730.0f, {0.718f, 10.694f}},    {1840.0f, {0.722f, 11.389f}},
+    {1880.0f, {0.742f, 11.642f}},    {1920.0f, {0.742f, 11.897f}},
+    {2020.0f, {0.77f, 12.55f}},      {2200.0f, {0.857f, 13.708f}},
+    {2420.0f, {0.983f, 15.097f}},    {2480.0f, {1.011f, 15.475f}},
+    {2898.6f, {1.299f, 18.053f}},    {3436.4f, {1.597f, 21.304f}},
+    {3846.2f, {1.859f, 23.8f}},      {4149.4f, {2.092f, 25.641f}},
+    {4651.2f, {2.544f, 28.597f}},    {4902.0f, {2.748f, 30.01f}},
+    {5076.1f, {2.87f, 30.991f}},     {5102.0f, {2.853f, 30.846f}},
+    {5128.2f, {2.905f, 31.286f}},    {5181.3f, {2.943f, 31.584f}},
+    {5952.4f, {3.399f, 36.039f}},    {6369.4f, {3.715f, 38.496f}},
+    {7299.3f, {4.591f, 43.949f}},    {9090.9f, {6.321f, 53.764f}},
+    {10000.0f, {7.264f, 58.695f}},   {12500.0f, {9.995f, 71.482f}},
+    {14000.0f, {11.2895f, 78.7113f}}};
 
 // M. R. Querry, "Optical constants", Contractor Report
 // CRDC-CR-85034 (1985)
@@ -271,37 +312,37 @@ static constexpr MetalIORTableEntry METAL_IOR_CUZN[70] = {
     {9009.0f, {15.051f, 47.453f}},  {9615.4f, {16.137f, 49.997f}},
     {11236.0f, {19.385f, 56.509f}}, {14000.0f, {24.8204f, 66.5375f}}};
 
-// P. B. Johnson and R. W. Christy, "Optical constants of transition
-// metals: Ti, V, Cr, Mn, Fe, Co, Ni, and Pd", Phys. Rev. B 9,
-// 5056-5070 (1974)
+// M. R. Querry, "Optical constants", Contractor Report
+// CRDC-CR-85034 (1985)
 //
-// https://refractiveindex.info/?shelf=main&book=Fe&page=Johnson
+// https://refractiveindex.info/?shelf=main&book=Fe&page=Querry
 //
-// Evaporated iron film at room temperature.
-//
-// Downsampled from 49 entries covering 188nm to 1937nm.
-static constexpr int METAL_IOR_FE_SIZE = 39;
-static constexpr MetalIORTableEntry METAL_IOR_FE[39] = {
-    {188.0f, {1.29f, 1.35f}},  {192.0f, {1.35f, 1.37f}},
-    {195.0f, {1.42f, 1.39f}},  {199.0f, {1.45f, 1.4f}},
-    {203.0f, {1.47f, 1.4f}},   {207.0f, {1.49f, 1.41f}},
-    {212.0f, {1.47f, 1.43f}},  {216.0f, {1.47f, 1.44f}},
-    {221.0f, {1.47f, 1.47f}},  {226.0f, {1.47f, 1.49f}},
-    {237.0f, {1.48f, 1.57f}},  {243.0f, {1.5f, 1.61f}},
-    {249.0f, {1.51f, 1.66f}},  {276.0f, {1.62f, 1.84f}},
-    {284.0f, {1.64f, 1.88f}},  {292.0f, {1.65f, 1.94f}},
-    {311.0f, {1.69f, 2.06f}},  {320.0f, {1.74f, 2.12f}},
-    {332.0f, {1.78f, 2.19f}},  {342.0f, {1.85f, 2.27f}},
-    {354.0f, {1.93f, 2.35f}},  {381.0f, {2.12f, 2.5f}},
-    {413.0f, {2.35f, 2.65f}},  {431.0f, {2.48f, 2.71f}},
-    {451.0f, {2.59f, 2.77f}},  {496.0f, {2.74f, 2.88f}},
-    {521.0f, {2.86f, 2.91f}},  {549.0f, {2.95f, 2.93f}},
-    {582.0f, {2.94f, 2.99f}},  {617.0f, {2.88f, 3.05f}},
-    {659.0f, {2.92f, 3.1f}},   {704.0f, {2.86f, 3.19f}},
-    {756.0f, {2.87f, 3.28f}},  {821.0f, {2.94f, 3.39f}},
-    {892.0f, {2.96f, 3.56f}},  {984.0f, {2.92f, 3.79f}},
-    {1393.0f, {3.09f, 4.83f}}, {1610.0f, {3.11f, 5.39f}},
-    {1937.0f, {3.17f, 6.12f}}};
+// Downsampled from 558 entries covering 210nm to 14000nm.
+static constexpr int METAL_IOR_FE_SIZE = 45;
+static constexpr MetalIORTableEntry METAL_IOR_FE[45] = {
+    {210.0f, {1.141f, 1.305f}},      {220.0f, {1.125f, 1.347f}},
+    {240.0f, {1.104f, 1.48f}},       {250.0f, {1.109f, 1.553f}},
+    {280.0f, {1.134f, 1.757f}},      {310.0f, {1.164f, 1.976f}},
+    {320.0f, {1.179f, 2.061f}},      {330.0f, {1.207f, 2.141f}},
+    {350.0f, {1.262f, 2.295f}},      {370.0f, {1.339f, 2.454f}},
+    {380.0f, {1.39f, 2.526f}},       {390.0f, {1.442f, 2.588f}},
+    {430.0f, {1.631f, 2.806f}},      {450.0f, {1.736f, 2.906f}},
+    {470.0f, {1.846f, 2.989f}},      {500.0f, {1.996f, 3.067f}},
+    {540.0f, {2.156f, 3.153f}},      {570.0f, {2.252f, 3.21f}},
+    {610.0f, {2.35f, 3.277f}},       {730.0f, {2.564f, 3.527f}},
+    {810.0f, {2.657f, 3.714f}},      {870.0f, {2.729f, 3.879f}},
+    {990.0f, {2.863f, 4.164f}},      {1200.0f, {3.022f, 4.699f}},
+    {1210.0f, {3.018f, 4.743f}},     {1310.0f, {3.114f, 5.008f}},
+    {1600.0f, {3.294f, 5.784f}},     {1990.0f, {3.494f, 6.855f}},
+    {2010.0f, {3.483f, 6.927f}},     {2180.0f, {3.606f, 7.39f}},
+    {2470.0f, {3.744f, 8.183f}},     {2551.0f, {3.829f, 8.385f}},
+    {2747.3f, {3.882f, 8.874f}},     {3012.0f, {4.0f, 9.558f}},
+    {3649.6f, {4.142f, 11.147f}},    {3831.4f, {4.141f, 11.652f}},
+    {4201.7f, {4.207f, 12.642f}},    {4784.7f, {4.221f, 14.213f}},
+    {5494.5f, {4.255f, 16.236f}},    {6711.4f, {4.383f, 19.814f}},
+    {7462.7f, {4.606f, 22.065f}},    {8695.7f, {5.084f, 25.534f}},
+    {10000.0f, {5.362f, 29.175f}},   {12195.1f, {5.951f, 35.486f}},
+    {14000.0f, {6.65444f, 40.7054f}}};
 
 // T. Inagaki, E. T. Arakawa, and M. W. Williams, "Optical properties
 // of liquid mercury", Phys. Rev. B 23, 5246-5262 (1981)
@@ -343,15 +384,21 @@ static constexpr MetalIORTableEntry METAL_IOR_HG[55] = {
     {6199.21f, {13.9816f, 14.2652f}}};
 
 // A. G. Mathewson and H. P. Myers, "Absolute values of the optical
-// constants of some pure metals", Phys. Scr. 4, 291-292 (1971)
+// constants of some pure metals", Phys. Scr. 4, 291-292 (1971),
+// stitched with M. Rasigni and G. Rasigni, "Optical constants of
+// lithium deposits as determined from the Kramers-Kronig analysis",
+// J. Opt. Soc. Am. 67, 54-59 (1977)
 //
 // https://refractiveindex.info/?shelf=main&book=Li&page=Mathewson-298K
 //
-// Lithium film at 298K.
+// https://refractiveindex.info/?shelf=main&book=Li&page=Rasigni
+// Lithium film at 298K up to 1771nm, extended beyond with the Rasigni
+// values ratio-corrected for continuity at the seam, the correction
+// decaying to zero at the end of the table.
 //
-// Downsampled from 63 entries covering 326.3nm to 1771.2nm.
-static constexpr int METAL_IOR_LI_SIZE = 30;
-static constexpr MetalIORTableEntry METAL_IOR_LI[30] = {
+// Downsampled from 65 entries covering 326.3nm to 8266nm.
+static constexpr int METAL_IOR_LI_SIZE = 32;
+static constexpr MetalIORTableEntry METAL_IOR_LI[32] = {
     {326.27f, {0.34301f, 1.38479f}},  {330.62f, {0.3382f, 1.41929f}},
     {339.68f, {0.33051f, 1.45232f}},  {344.4f, {0.32328f, 1.48476f}},
     {354.24f, {0.31649f, 1.51663f}},  {370.1f, {0.29531f, 1.60848f}},
@@ -366,7 +413,8 @@ static constexpr MetalIORTableEntry METAL_IOR_LI[30] = {
     {1033.2f, {0.22874f, 5.26805f}},  {1127.13f, {0.26222f, 5.85395f}},
     {1180.8f, {0.27055f, 6.15412f}},  {1377.6f, {0.33455f, 7.30835f}},
     {1458.64f, {0.35887f, 7.84403f}}, {1549.8f, {0.39382f, 8.41755f}},
-    {1653.12f, {0.44518f, 8.95143f}}, {1771.2f, {0.48911f, 9.60933f}}};
+    {1653.12f, {0.44518f, 8.95143f}}, {1771.2f, {0.48911f, 9.60933f}},
+    {2755.0f, {0.580739f, 14.4257f}}, {8266.0f, {0.366f, 38.0f}}};
 
 // H.-J. Hagemann, W. Gudat, and C. Kunz, "Optical constants from the
 // far infrared to the x-ray region: Mg, Al, Cu, Ag, Au, Bi, C, and
@@ -454,38 +502,33 @@ static constexpr MetalIORTableEntry METAL_IOR_NA[22] = {
     {1839.528f, {0.175119f, 8.09448f}}, {1980.578f, {0.206644f, 8.80015f}},
     {2119.388f, {0.240865f, 9.45135f}}, {2237.982f, {0.262406f, 9.96739f}}};
 
-// P. B. Johnson and R. W. Christy, "Optical constants of transition
-// metals: Ti, V, Cr, Mn, Fe, Co, Ni, and Pd", Phys. Rev. B 9,
-// 5056-5070 (1974)
+// A. D. Rakic, A. B. Djurisic, J. M. Elazar, and M. L. Majewski,
+// "Optical properties of metallic films for vertical-cavity
+// optoelectronic devices", Appl. Opt. 37, 5271-5283 (1998)
 //
-// https://refractiveindex.info/?shelf=main&book=Ni&page=Johnson
+// https://refractiveindex.info/?shelf=main&book=Ni&page=Rakic-BB
 //
-// Evaporated nickel film at room temperature.
+// Brendel-Bormann model fit of experimental data from several
+// sources.
 //
-// Downsampled from 49 entries covering 188nm to 1937nm.
-static constexpr int METAL_IOR_NI_SIZE = 41;
-static constexpr MetalIORTableEntry METAL_IOR_NI[41] = {
-    {188.0f, {1.26f, 1.6f}},   {192.0f, {1.29f, 1.64f}},
-    {199.0f, {1.28f, 1.75f}},  {207.0f, {1.29f, 1.89f}},
-    {216.0f, {1.34f, 2.02f}},  {221.0f, {1.38f, 2.09f}},
-    {226.0f, {1.43f, 2.15f}},  {231.0f, {1.49f, 2.2f}},
-    {237.0f, {1.57f, 2.25f}},  {243.0f, {1.65f, 2.29f}},
-    {249.0f, {1.73f, 2.31f}},  {255.0f, {1.82f, 2.32f}},
-    {269.0f, {1.96f, 2.29f}},  {276.0f, {2.01f, 2.26f}},
-    {292.0f, {2.03f, 2.2f}},   {301.0f, {2.02f, 2.18f}},
-    {311.0f, {2.01f, 2.18f}},  {320.0f, {1.93f, 2.19f}},
-    {332.0f, {1.84f, 2.22f}},  {342.0f, {1.78f, 2.26f}},
-    {368.0f, {1.7f, 2.4f}},    {381.0f, {1.72f, 2.48f}},
-    {397.0f, {1.72f, 2.57f}},  {413.0f, {1.7f, 2.69f}},
-    {431.0f, {1.71f, 2.82f}},  {451.0f, {1.73f, 2.95f}},
-    {471.0f, {1.78f, 3.09f}},  {496.0f, {1.82f, 3.25f}},
-    {521.0f, {1.85f, 3.42f}},  {549.0f, {1.92f, 3.61f}},
-    {582.0f, {1.96f, 3.8f}},   {617.0f, {1.99f, 4.02f}},
-    {659.0f, {1.99f, 4.26f}},  {704.0f, {2.06f, 4.5f}},
-    {756.0f, {2.13f, 4.73f}},  {892.0f, {2.4f, 5.23f}},
-    {984.0f, {2.48f, 5.55f}},  {1088.0f, {2.65f, 5.93f}},
-    {1393.0f, {2.96f, 7.08f}}, {1610.0f, {3.14f, 7.96f}},
-    {1937.0f, {3.47f, 9.09f}}};
+// Downsampled from 200 entries covering 248nm to 6199.2nm.
+static constexpr int METAL_IOR_NI_SIZE = 30;
+static constexpr MetalIORTableEntry METAL_IOR_NI[30] = {
+    {247.97f, {1.4724f, 2.0065f}}, {260.3f, {1.5737f, 2.0373f}},
+    {273.24f, {1.6585f, 2.0378f}}, {282.22f, {1.6987f, 2.0275f}},
+    {296.26f, {1.7299f, 2.0088f}}, {306.0f, {1.7321f, 2.0015f}},
+    {316.06f, {1.7221f, 2.0032f}}, {326.45f, {1.7034f, 2.0167f}},
+    {337.18f, {1.6796f, 2.0433f}}, {353.95f, {1.6424f, 2.1077f}},
+    {383.77f, {1.5977f, 2.2695f}}, {416.09f, {1.5908f, 2.4747f}},
+    {443.9f, {1.6133f, 2.6545f}},  {473.58f, {1.657f, 2.8401f}},
+    {505.23f, {1.7179f, 3.0277f}}, {547.79f, {1.8127f, 3.2625f}},
+    {603.62f, {1.9466f, 3.5434f}}, {675.98f, {2.1215f, 3.871f}},
+    {807.62f, {2.4182f, 4.3934f}}, {949.42f, {2.6938f, 4.8905f}},
+    {1063.2f, {2.8825f, 5.2611f}}, {1210.1f, {3.0884f, 5.7178f}},
+    {1377.3f, {3.2795f, 6.222f}},  {1542.4f, {3.4316f, 6.7133f}},
+    {1727.3f, {3.5677f, 7.2628f}}, {1966.0f, {3.7024f, 7.9776f}},
+    {2505.8f, {3.896f, 9.6381f}},  {3694.4f, {4.103f, 13.514f}},
+    {5023.6f, {4.3106f, 18.083f}}, {6199.2f, {4.5788f, 22.225f}}};
 
 // W. S. M. Werner, K. Glantschnig, and C. Ambrosch-Draxl, "Optical
 // constants and inelastic electron-scattering data for 17 elemental
@@ -592,54 +635,59 @@ static constexpr MetalIORTableEntry METAL_IOR_PT[45] = {
 //
 // https://refractiveindex.info/?shelf=main&book=Sn&page=Golovashkin-293K
 //
-// Tin at 293K.
+// Tin at 293K. The data starts at 730nm, so the visible range down to
+// 380nm is synthesized from a Drude-Lorentz model fit to the data and
+// the literature value at 632.8nm, ratio-corrected for continuity at 
+// the seam. Expect roughly +-0.1 uncertainty in visible reflectance 
+// until measured data replaces it.
 //
-// Downsampled from 23 entries covering 730nm to 12000nm.
-static constexpr int METAL_IOR_SN_SIZE = 21;
-static constexpr MetalIORTableEntry METAL_IOR_SN[21] = {
-    {730.0f, {2.16f, 6.35f}},  {800.0f, {2.38f, 6.68f}},
-    {900.0f, {2.94f, 7.28f}},  {1000.0f, {3.46f, 7.4f}},
-    {1100.0f, {3.68f, 7.5f}},  {1150.0f, {3.75f, 7.58f}},
-    {1200.0f, {3.74f, 7.68f}}, {1300.0f, {3.65f, 7.92f}},
-    {1400.0f, {3.46f, 8.26f}}, {1500.0f, {3.29f, 8.72f}},
-    {1700.0f, {3.12f, 9.92f}}, {2000.0f, {3.09f, 11.8f}},
-    {2500.0f, {3.62f, 14.8f}}, {3000.0f, {4.4f, 17.8f}},
-    {4000.0f, {6.18f, 23.2f}}, {5000.0f, {8.49f, 28.5f}},
-    {6000.0f, {11.0f, 33.1f}}, {7000.0f, {13.8f, 37.1f}},
-    {9000.0f, {19.3f, 43.8f}}, {11000.0f, {24.8f, 49.0f}},
-    {12000.0f, {27.8f, 51.6f}}};
+// Downsampled from 58 entries covering 380nm to 12000nm.
+static constexpr int METAL_IOR_SN_SIZE = 26;
+static constexpr MetalIORTableEntry METAL_IOR_SN[26] = {
+    {380.0f, {0.95519f, 3.17202f}}, {420.0f, {1.09038f, 3.61438f}},
+    {470.0f, {1.26858f, 4.13264f}}, {540.0f, {1.5241f, 4.80285f}},
+    {650.0f, {1.91051f, 5.74242f}}, {730.0f, {2.16f, 6.35f}},
+    {800.0f, {2.38f, 6.68f}},       {900.0f, {2.94f, 7.28f}},
+    {1000.0f, {3.46f, 7.4f}},       {1100.0f, {3.68f, 7.5f}},
+    {1150.0f, {3.75f, 7.58f}},      {1200.0f, {3.74f, 7.68f}},
+    {1300.0f, {3.65f, 7.92f}},      {1400.0f, {3.46f, 8.26f}},
+    {1500.0f, {3.29f, 8.72f}},      {1700.0f, {3.12f, 9.92f}},
+    {2000.0f, {3.09f, 11.8f}},      {2500.0f, {3.62f, 14.8f}},
+    {3000.0f, {4.4f, 17.8f}},       {4000.0f, {6.18f, 23.2f}},
+    {5000.0f, {8.49f, 28.5f}},      {6000.0f, {11.0f, 33.1f}},
+    {7000.0f, {13.8f, 37.1f}},      {9000.0f, {19.3f, 43.8f}},
+    {11000.0f, {24.8f, 49.0f}},     {12000.0f, {27.8f, 51.6f}}};
 
-// P. B. Johnson and R. W. Christy, "Optical constants of transition
-// metals: Ti, V, Cr, Mn, Fe, Co, Ni, and Pd", Phys. Rev. B 9,
-// 5056-5070 (1974)
+// A. D. Rakic, A. B. Djurisic, J. M. Elazar, and M. L. Majewski,
+// "Optical properties of metallic films for vertical-cavity
+// optoelectronic devices", Appl. Opt. 37, 5271-5283 (1998)
 //
-// https://refractiveindex.info/?shelf=main&book=Ti&page=Johnson
+// https://refractiveindex.info/?shelf=main&book=Ti&page=Rakic-LD
 //
-// Evaporated titanium film at room temperature.
+// Lorentz-Drude model fit of experimental data from several
+// sources.
 //
-// Downsampled from 49 entries covering 188nm to 1937nm.
-static constexpr int METAL_IOR_TI_SIZE = 40;
-static constexpr MetalIORTableEntry METAL_IOR_TI[40] = {
-    {188.0f, {1.1f, 1.62f}},   {192.0f, {1.16f, 1.64f}},
-    {195.0f, {1.22f, 1.66f}},  {203.0f, {1.27f, 1.69f}},
-    {207.0f, {1.31f, 1.69f}},  {221.0f, {1.32f, 1.66f}},
-    {226.0f, {1.32f, 1.66f}},  {231.0f, {1.31f, 1.68f}},
-    {237.0f, {1.3f, 1.72f}},   {243.0f, {1.28f, 1.77f}},
-    {249.0f, {1.27f, 1.83f}},  {255.0f, {1.26f, 1.91f}},
-    {269.0f, {1.27f, 2.07f}},  {276.0f, {1.3f, 2.17f}},
-    {284.0f, {1.35f, 2.26f}},  {292.0f, {1.4f, 2.36f}},
-    {311.0f, {1.5f, 2.57f}},   {320.0f, {1.55f, 2.66f}},
-    {332.0f, {1.61f, 2.74f}},  {342.0f, {1.72f, 2.82f}},
-    {354.0f, {1.82f, 2.87f}},  {397.0f, {2.08f, 2.95f}},
-    {431.0f, {2.21f, 3.01f}},  {451.0f, {2.27f, 3.04f}},
-    {471.0f, {2.32f, 3.1f}},   {496.0f, {2.36f, 3.19f}},
-    {549.0f, {2.54f, 3.43f}},  {582.0f, {2.6f, 3.58f}},
-    {617.0f, {2.67f, 3.72f}},  {659.0f, {2.76f, 3.84f}},
-    {704.0f, {2.86f, 3.96f}},  {756.0f, {3.0f, 4.01f}},
-    {821.0f, {3.21f, 4.01f}},  {892.0f, {3.29f, 3.96f}},
-    {984.0f, {3.35f, 3.97f}},  {1088.0f, {3.5f, 4.02f}},
-    {1216.0f, {3.62f, 4.15f}}, {1393.0f, {3.67f, 4.37f}},
-    {1610.0f, {3.69f, 4.7f}},  {1937.0f, {3.51f, 5.19f}}};
+// Downsampled from 836 entries covering 248nm to 14000nm.
+static constexpr int METAL_IOR_TI_SIZE = 36;
+static constexpr MetalIORTableEntry METAL_IOR_TI[36] = {
+    {247.97f, {0.44635f, 1.5069f}}, {260.25f, {0.48257f, 1.6049f}},
+    {274.46f, {0.52738f, 1.715f}},  {288.05f, {0.57313f, 1.8172f}},
+    {305.25f, {0.63517f, 1.9426f}}, {325.04f, {0.71246f, 2.0812f}},
+    {344.45f, {0.79459f, 2.211f}},  {366.79f, {0.89705f, 2.3516f}},
+    {388.69f, {1.0054f, 2.4787f}},  {413.9f, {1.138f, 2.6089f}},
+    {440.74f, {1.284f, 2.7252f}},   {487.82f, {1.5295f, 2.8731f}},
+    {534.74f, {1.7332f, 2.973f}},   {586.17f, {1.9093f, 3.0701f}},
+    {658.26f, {2.1174f, 3.2157f}},  {806.41f, {2.5123f, 3.5074f}},
+    {959.66f, {2.8796f, 3.7511f}},  {1098.7f, {3.1642f, 3.9324f}},
+    {1239.8f, {3.4087f, 4.0946f}},  {1412.7f, {3.6582f, 4.2779f}},
+    {1601.8f, {3.8809f, 4.4693f}},  {1833.9f, {4.0974f, 4.6996f}},
+    {2079.5f, {4.2713f, 4.9446f}},  {2369.4f, {4.4171f, 5.2434f}},
+    {2686.6f, {4.5173f, 5.5912f}},  {3136.0f, {4.5816f, 6.1367f}},
+    {3642.9f, {4.5907f, 6.8404f}},  {4150.7f, {4.582f, 7.6387f}},
+    {5134.2f, {4.644f, 9.3837f}},   {5793.6f, {4.7896f, 10.632f}},
+    {6506.2f, {5.046f, 11.998f}},   {7521.4f, {5.5654f, 13.915f}},
+    {8864.7f, {6.4639f, 16.332f}},  {10652.0f, {7.9011f, 19.282f}},
+    {12195.0f, {9.2691f, 21.583f}}, {14000.0f, {10.9373f, 24.0075f}}};
 
 // W. S. M. Werner, K. Glantschnig, and C. Ambrosch-Draxl, "Optical
 // constants and inelastic electron-scattering data for 17 elemental

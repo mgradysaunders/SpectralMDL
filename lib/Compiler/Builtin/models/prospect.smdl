@@ -1,5 +1,5 @@
-/// PROSPECT -- a physically based way to turn a leaf's biochemistry into its
-/// optics: given the pigment, water, and dry-matter contents per unit leaf area,
+/// PROSPECT: a physically based way to turn a leaf's biochemistry into its
+/// optics. Given the pigment, water, and dry-matter contents per unit leaf area,
 /// it predicts the hemispherical reflectance and transmittance of a single leaf
 /// over 400..2500 nm. It is the transmissive, light-through-the-leaf analog of
 /// the water-film model in `marmit.smdl`, and is built the same way: interpolate

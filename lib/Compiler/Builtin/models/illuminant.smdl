@@ -1,3 +1,19 @@
+/// CIE standard illuminants as spectral `color` values evaluated at the
+/// current wavelengths in `$state.wavelength_base`: the daylight D series,
+/// reconstructed for any chromaticity on the daylight locus from the CIE
+/// S0/S1/S2 components tabulated over 300..830nm, plus the lamp series
+/// tabulated over 380..780nm -- the fluorescent F series F1 through F12,
+/// the high-pressure discharge HP series HP1 through HP5, and the LED
+/// series. Wavelengths outside the tables evaluate to zero.
+///
+/// Every illuminant here is a relative spectral power distribution
+/// normalized so that illuminant D is 1 at 560nm, with the lamp series
+/// scaled consistently, so multiply by whatever radiant intensity the
+/// scene calls for.
+///
+/// References:
+///   CIE 15:2004 (Colorimetry) -- daylight components, F and HP tables
+///   CIE 15:2018 (Colorimetry) -- LED tables
 #smdl
 
 @(foreign pure)
@@ -9,6 +25,16 @@ void smdlEvalIlluminantD(int numWavelens, &float wavelens, &float illuminant, &f
 @(foreign pure)
 void smdlEvalIlluminantF(int numWavelens, &float wavelens, &float illuminant, int number);
 
+@(foreign pure)
+void smdlEvalIlluminantHP(int numWavelens, &float wavelens, &float illuminant, int number);
+
+@(foreign pure)
+void smdlEvalIlluminantLED(int numWavelens, &float wavelens, &float illuminant, int number);
+
+/// Evaluate CIE standard illuminant D for the given CIE 1931 chromaticity,
+/// which is meant to lie on the daylight locus, e.g., as computed by the
+/// color-temperature overload below. Prefer the named standard illuminants
+/// `illuminant_D50()` through `illuminant_D75()` where they apply.
 @(macro)
 export color illuminant_D(float2 xy) {
   color illuminant = color(0);
@@ -16,6 +42,9 @@ export color illuminant_D(float2 xy) {
   return illuminant;
 }
 
+/// Evaluate CIE standard illuminant D for the given correlated color
+/// temperature in Kelvin. The daylight locus is only defined from 4000K to
+/// 25000K, so the temperature is clamped to this range.
 @(macro)
 export color illuminant_D(const float kelvin) {
   float2 xy;
@@ -23,21 +52,91 @@ export color illuminant_D(const float kelvin) {
   return illuminant_D(xy);
 }
 
-@(macro) 
+/// CIE standard illuminant D50 (5003K), the warm daylight reference of the
+/// printing industry.
+@(macro)
 export color illuminant_D50() = illuminant_D(5003.0);
 
-@(macro) 
+/// CIE standard illuminant D55 (5503K), mid-morning or mid-afternoon
+/// daylight.
+@(macro)
 export color illuminant_D55() = illuminant_D(5503.0);
 
-@(macro) 
+/// CIE standard illuminant D65 (6504K), average noon daylight and the
+/// reference white of sRGB.
+@(macro)
 export color illuminant_D65() = illuminant_D(6504.0);
 
-@(macro) 
+/// CIE standard illuminant D75 (7504K), overcast north-sky daylight.
+@(macro)
 export color illuminant_D75() = illuminant_D(7504.0);
 
+/// Evaluate CIE standard fluorescent illuminant F1 through F12 as selected
+/// by `number`, which is out-of-range-safe: anything other than 1 through 12
+/// evaluates to black. F1..F6 are standard halophosphate lamps, F7..F9 are
+/// broadband full-spectrum lamps (F7 approximates D65 and F8 approximates
+/// D50), and F10..F12 are narrowband triphosphor lamps (F11 is the common
+/// commercial TL84). F2 -- cool white -- is the usual representative of the
+/// series.
 @(macro)
 export color illuminant_F(const int number = 1) {
   color illuminant = color(0);
   smdlEvalIlluminantF($WAVELENGTH_BASE_MAX, &$state.wavelength_base[0], cast<&float>(&illuminant), number);
+  return illuminant;
+}
+
+/// Evaluate CIE standard high-pressure discharge lamp illuminant HP1
+/// through HP5 as selected by `number`, which is out-of-range-safe:
+/// anything other than 1 through 5 evaluates to black. HP1 (1959K) is a
+/// standard high-pressure sodium lamp dominated by the sodium doublet
+/// near 589nm, HP2 (2506K) is a colour-corrected high-pressure sodium
+/// lamp, and HP3 through HP5 (3144K, 4002K, 4039K) are high-pressure
+/// metal halide lamps.
+@(macro)
+export color illuminant_HP(const int number = 1) {
+  color illuminant = color(0);
+  smdlEvalIlluminantHP($WAVELENGTH_BASE_MAX, &$state.wavelength_base[0], cast<&float>(&illuminant), number);
+  return illuminant;
+}
+
+/// Evaluate CIE standard LED illuminant B1 through B5 -- the blue-pumped
+/// phosphor LED lamps in order of increasing color temperature: B1
+/// (2733K), B2 (2998K), B3 (4103K), B4 (5109K), and B5 (6598K) -- as
+/// selected by `number`, which is out-of-range-safe: anything other than
+/// 1 through 5 evaluates to black.
+@(macro)
+export color illuminant_LED_B(const int number = 1) {
+  color illuminant = color(0);
+  smdlEvalIlluminantLED($WAVELENGTH_BASE_MAX, &$state.wavelength_base[0], cast<&float>(&illuminant),
+                        (1 <= number && number <= 5) ? number : 0);
+  return illuminant;
+}
+
+/// Evaluate CIE standard LED illuminant V1 (2724K) or V2 (4070K) -- the
+/// violet-pumped phosphor LED lamps -- as selected by `number`, which is
+/// out-of-range-safe: anything other than 1 or 2 evaluates to black.
+@(macro)
+export color illuminant_LED_V(const int number = 1) {
+  color illuminant = color(0);
+  smdlEvalIlluminantLED($WAVELENGTH_BASE_MAX, &$state.wavelength_base[0], cast<&float>(&illuminant),
+                        (1 <= number && number <= 2) ? number + 7 : 0);
+  return illuminant;
+}
+
+/// CIE standard LED illuminant BH1 (2851K), a hybrid lamp mixing a
+/// blue-pumped phosphor LED with a red emitter.
+@(macro)
+export color illuminant_LED_BH1() {
+  color illuminant = color(0);
+  smdlEvalIlluminantLED($WAVELENGTH_BASE_MAX, &$state.wavelength_base[0], cast<&float>(&illuminant), 6);
+  return illuminant;
+}
+
+/// CIE standard LED illuminant RGB1 (2840K), a tri-band lamp mixing red,
+/// green, and blue emitters.
+@(macro)
+export color illuminant_LED_RGB1() {
+  color illuminant = color(0);
+  smdlEvalIlluminantLED($WAVELENGTH_BASE_MAX, &$state.wavelength_base[0], cast<&float>(&illuminant), 7);
   return illuminant;
 }

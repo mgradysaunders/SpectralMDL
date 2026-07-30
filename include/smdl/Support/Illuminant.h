@@ -48,6 +48,40 @@ SMDL_EXPORT void smdlEvalIlluminantD(int numWavelens, const float *wavelens,
 ///
 SMDL_EXPORT void smdlEvalIlluminantF(int numWavelens, const float *wavelens,
                                      float *illum, int number = 1);
+
+/// Evaluate CIE standard high-pressure discharge lamp illuminant HP1
+/// through HP5, as indicated by `number` being 1 through 5. 
+///
+/// HP1 is a standard high-pressure sodium lamp, HP2 is a colour-corrected
+/// high-pressure sodium lamp, and HP3 through HP5 are high-pressure metal
+/// halide lamps.
+///
+/// The evaluation linearly interpolates the tables from CIE 15:2004, which
+/// are tabulated in 5nm steps between 380nm and 780nm. The wavelengths in
+/// `wavelens` must be in nanometers, and wavelengths outside the table
+/// evaluate to zero. The resulting relative spectral power in `illum` is
+/// scaled by 1/100 to be consistent with the illuminant D normalization. If
+/// `number` is out of range, `illum` is filled with zeros.
+SMDL_EXPORT void smdlEvalIlluminantHP(int numWavelens, const float *wavelens,
+                                      float *illum, int number = 1);
+
+/// Evaluate CIE standard LED lamp illuminant, as indicated by `number`
+/// being 1 through 9.
+///
+/// In order:
+/// - LED-B1 to B5 (blue-pumped phosphor LEDs of increasing color temperature),
+/// - LED-BH1 (hybrid blue-pumped phosphor LED plus red emitter),
+/// - LED-RGB1 (tri-band red, green, and blue emitters),
+/// - LED-V1 to V2 (violet-pumped phosphor LEDs).
+///
+/// The evaluation linearly interpolates the tables from CIE 15:2018, which
+/// are tabulated in 5nm steps between 380nm and 780nm. The wavelengths in
+/// `wavelens` must be in nanometers, and wavelengths outside the table
+/// evaluate to zero. The resulting relative spectral power in `illum` is
+/// scaled by 1/100 to be consistent with the illuminant D normalization. If
+/// `number` is out of range, `illum` is filled with zeros.
+SMDL_EXPORT void smdlEvalIlluminantLED(int numWavelens, const float *wavelens,
+                                       float *illum, int number = 1);
 }
 
 /// \}
