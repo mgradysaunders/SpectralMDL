@@ -36,6 +36,7 @@ add_library(
     "Support/Logger.cc"
     "Support/MD5Hash.cc"
     "Support/Macros.cc"
+    "Support/MetalIOR.cc"
     "Support/MonteCarlo.cc"
     "Support/Profiler.cc"
     "Support/QualifiedName.cc"

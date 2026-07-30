@@ -13,6 +13,7 @@ if(CMAKE_PROJECT_NAME STREQUAL PROJECT_NAME AND BUILD_TESTING)
       "Image.cc"
       "LightProfile.cc"
       "MD5Hash.cc"
+      "MetalIOR.cc"
       "MonteCarlo.cc"
       "Parser.cc"
       "QualifiedName.cc"
