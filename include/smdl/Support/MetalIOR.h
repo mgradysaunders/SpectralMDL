@@ -6,7 +6,7 @@
 
 namespace smdl {
 
-/// \addtogroup Support
+/// \addtogroup support
 /// \{
 
 /// The metals with builtin complex IOR tables.

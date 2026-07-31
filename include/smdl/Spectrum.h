@@ -9,7 +9,7 @@
 
 namespace smdl {
 
-/// \addtogroup Main
+/// \addtogroup scene
 /// \{
 
 /// A spectrum view.

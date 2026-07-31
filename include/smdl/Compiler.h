@@ -17,7 +17,7 @@
 
 namespace smdl {
 
-/// \addtogroup Support
+/// \addtogroup scene
 /// \{
 
 /// An opaque Ptex texture.
@@ -73,7 +73,7 @@ public:
 
 /// \}
 
-/// \addtogroup Main
+/// \addtogroup compiler
 /// \{
 
 /// The optimization level.

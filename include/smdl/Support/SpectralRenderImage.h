@@ -12,7 +12,7 @@
 
 namespace smdl {
 
-/// \addtogroup Support
+/// \addtogroup support
 /// \{
 
 /// A spectral render image helper.

@@ -5,6 +5,9 @@
 
 namespace smdl::AST {
 
+/// \addtogroup ast
+/// \{
+
 /// A fully parsed file.
 class SMDL_EXPORT File final : public NodeSubclass<NodeKind::File> {
 public:
@@ -68,5 +71,7 @@ public:
   /// empty!
   std::string_view srcDocComment{};
 };
+
+/// \}
 
 } // namespace smdl::AST

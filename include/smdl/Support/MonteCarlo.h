@@ -10,7 +10,7 @@
 
 namespace smdl {
 
-/// \addtogroup Support
+/// \addtogroup support
 /// \{
 
 /// A data-driven distribution in 1 dimension.

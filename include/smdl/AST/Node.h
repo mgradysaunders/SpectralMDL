@@ -6,6 +6,36 @@
 /// Abstract-syntax-tree interfaces.
 namespace smdl::AST {
 
+/// \defgroup ast_decl Declarations
+/// \ingroup ast
+///
+/// The `Decl` node subclasses, one per `DeclKind`: everything that may
+/// appear at module or namespace scope, plus the nested pieces they are
+/// built from.
+///
+/// \{
+/// \}
+
+/// \defgroup ast_expr Expressions
+/// \ingroup ast
+///
+/// The `Expr` node subclasses, one per `ExprKind`, together with the
+/// unary and binary operator enums.
+///
+/// \{
+/// \}
+
+/// \defgroup ast_stmt Statements
+/// \ingroup ast
+///
+/// The `Stmt` node subclasses, one per `StmtKind`.
+///
+/// \{
+/// \}
+
+/// \addtogroup ast
+/// \{
+
 /// The representation of a simple name in the AST.
 class SMDL_EXPORT Name final {
 public:
@@ -254,5 +284,7 @@ public:
 /// whitespace, and preserves blank `///` lines as paragraph breaks.
 [[nodiscard]] SMDL_EXPORT std::string
 getDocCommentText(std::string_view srcDocComment);
+
+/// \}
 
 } // namespace smdl::AST

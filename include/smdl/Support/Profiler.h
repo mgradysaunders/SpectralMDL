@@ -6,7 +6,7 @@
 
 namespace smdl {
 
-/// \addtogroup Support
+/// \addtogroup support
 /// \{
 
 /// \name Functions (profiler)

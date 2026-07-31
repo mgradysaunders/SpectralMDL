@@ -5,7 +5,7 @@
 
 namespace smdl {
 
-/// \addtogroup Main
+/// \addtogroup scene
 /// \{
 
 /// Unpack half-precision to single-precision.

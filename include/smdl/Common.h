@@ -50,11 +50,53 @@ class LLJIT;
 /// The top-level SMDL namespace.
 namespace smdl {
 
-/// \defgroup Support Support
+/// \defgroup compiler Compiler
+///
+/// Everything involved in turning MDL source code into executable native
+/// code: the `Compiler` front end, the `Module` and `Parser` layers beneath
+/// it, the `JIT` interface that the resulting materials are called through,
+/// and the documentation extractor.
+///
+/// The usual entry point is `Compiler`. Add search paths and modules to it,
+/// compile, then look up materials and invoke them through the types in
+/// the `smdl::JIT` namespace.
+///
 /// \{
 /// \}
 
-/// \defgroup Main Main
+/// \defgroup scene Scene
+///
+/// The resource and runtime types a renderer hands to, or receives from,
+/// compiled MDL materials: images and textures, spectra, measured BSDFs and
+/// light profiles, scene data lookups, file resolution, and the shading
+/// `State` that material functions read from.
+///
+/// \{
+/// \}
+
+/// \defgroup ast Abstract Syntax Tree
+///
+/// The parsed representation of an MDL module, produced by `Parser` and
+/// consumed by the compiler.
+///
+/// Nodes derive from `Node` and are discriminated by a kind enum, so they
+/// are traversed with `llvm::isa`, `llvm::dyn_cast`, and `llvm::cast`.
+/// The three node categories each have their own subgroup.
+///
+/// \{
+/// \}
+
+/// \defgroup support Support
+///
+/// Standalone utility types and functions used throughout the library and
+/// usable independently of it: vector and matrix math, color and spectral
+/// containers, Monte Carlo sampling, string and filesystem helpers,
+/// logging, hashing, and allocation.
+///
+/// \{
+/// \}
+
+/// \addtogroup compiler
 /// \{
 
 /// The SMDL build information.
@@ -99,7 +141,7 @@ public:
 
 /// \}
 
-/// \addtogroup Main
+/// \addtogroup compiler
 /// \{
 
 class Compiler;
@@ -173,6 +215,11 @@ public:
   /// Want compact?
   bool compact{};
 };
+
+/// \}
+
+/// \addtogroup scene
+/// \{
 
 /// The transport mode.
 enum Transport : int {

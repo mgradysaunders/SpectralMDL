@@ -8,7 +8,7 @@
 
 namespace smdl {
 
-/// \addtogroup Main
+/// \addtogroup scene
 /// \{
 
 /// A BSDF measurement (`.mbsdf`).

@@ -5,6 +5,9 @@
 
 namespace smdl::AST {
 
+/// \addtogroup ast_stmt
+/// \{
+
 /// A late if condition attached to some statements.
 class SMDL_EXPORT LateIf final {
 public:
@@ -354,5 +357,7 @@ public:
   /// The body statement.
   BumpPtr<Stmt> stmt;
 };
+
+/// \}
 
 } // namespace smdl::AST

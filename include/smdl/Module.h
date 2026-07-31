@@ -19,7 +19,7 @@ class Declaration;
 class Scope;
 #endif // #if !SMDL_DOXYGEN
 
-/// \addtogroup Main
+/// \addtogroup compiler
 /// \{
 
 /// An MDL module.

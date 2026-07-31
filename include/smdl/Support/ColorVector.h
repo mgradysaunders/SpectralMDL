@@ -14,7 +14,7 @@
 
 namespace smdl {
 
-/// \addtogroup Support
+/// \addtogroup support
 /// \{
 
 /// A color vector to parallelize math operations.

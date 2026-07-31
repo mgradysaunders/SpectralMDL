@@ -12,6 +12,9 @@ class Scope;
 
 namespace smdl::AST {
 
+/// \addtogroup ast_decl
+/// \{
+
 /// An annotation.
 class SMDL_EXPORT Annotation final {
 public:
@@ -857,5 +860,7 @@ public:
     return !declarators.empty() && !declarators.back().srcComma.empty();
   }
 };
+
+/// \}
 
 } // namespace smdl::AST

@@ -5,7 +5,7 @@
 
 namespace smdl {
 
-/// \addtogroup Main
+/// \addtogroup scene
 /// \{
 
 /// The scene data.

@@ -8,13 +8,13 @@
 
 namespace smdl {
 
-/// \addtogroup Support
+/// \addtogroup support
 /// \{
 
 /// The constant `PI`.
 constexpr float PI = 3.141592653589793f;
 
-/// \name Functions (math)
+/// \name Functions (scalar math)
 /// \{
 
 [[nodiscard]] inline float finiteOrZero(float x) noexcept {
@@ -164,7 +164,7 @@ static_assert(sizeof(float4) == 4 * sizeof(float));
 
 } // namespace vector_type_aliases
 
-/// \name Functions (math)
+/// \name Functions (vector math)
 /// \{
 
 /// Is any element true?
@@ -454,7 +454,7 @@ using double4x4 = Matrix<double, 4, 4>;
 
 } // namespace matrix_type_aliases
 
-/// \name Functions (math)
+/// \name Functions (matrix math)
 /// \{
 
 /// Matrix-Matrix `operator*`.

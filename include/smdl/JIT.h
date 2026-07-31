@@ -7,7 +7,7 @@ namespace smdl {
 
 class Compiler;
 
-/// \addtogroup Main
+/// \addtogroup compiler
 /// \{
 
 /// Just-in-time interfaces.

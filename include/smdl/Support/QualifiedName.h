@@ -10,7 +10,7 @@
 
 namespace smdl {
 
-/// \addtogroup Support
+/// \addtogroup support
 /// \{
 
 /// Split a qualified name into its `::`-delimited components.

@@ -11,7 +11,7 @@ namespace smdl {
 
 class Module;
 
-/// \addtogroup Main
+/// \addtogroup compiler
 /// \{
 
 /// A documented parameter in a `DocEntry`.

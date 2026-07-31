@@ -8,7 +8,7 @@
 
 namespace smdl {
 
-/// \addtogroup Main
+/// \addtogroup scene
 /// \{
 
 /// An IES light profile.
@@ -163,6 +163,9 @@ public:
 
 } // namespace smdl
 
+/// \addtogroup scene
+/// \{
+
 extern "C" {
 
 /// \name Light Profile JIT callees
@@ -194,3 +197,5 @@ SMDL_EXPORT void smdlLightProfileDirectionSample(const void *profile,
 /// \}
 
 } // extern "C"
+
+/// \}

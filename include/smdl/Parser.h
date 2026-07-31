@@ -13,7 +13,7 @@
 
 namespace smdl {
 
-/// \addtogroup Main
+/// \addtogroup compiler
 /// \{
 
 /// The parser.

@@ -10,7 +10,7 @@
 
 namespace smdl {
 
-/// \addtogroup Support
+/// \addtogroup support
 /// \{
 
 /// A bump pointer allocated by `BumpPtrAllocator` that does not need to be

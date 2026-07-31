@@ -5,6 +5,9 @@
 
 namespace smdl::AST {
 
+/// \addtogroup ast_expr
+/// \{
+
 /// An argument.
 class SMDL_EXPORT Argument final {
 public:
@@ -701,5 +704,7 @@ public:
   /// The expression.
   BumpPtr<Expr> expr;
 };
+
+/// \}
 
 } // namespace smdl::AST

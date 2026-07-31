@@ -11,7 +11,7 @@
 
 namespace smdl {
 
-/// \addtogroup Support
+/// \addtogroup support
 /// \{
 
 /// Is ASCII alphabetic character?

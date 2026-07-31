@@ -9,7 +9,7 @@
 
 namespace smdl {
 
-/// \addtogroup Support
+/// \addtogroup support
 /// \{
 
 /// Expand the correct sanity check macro.

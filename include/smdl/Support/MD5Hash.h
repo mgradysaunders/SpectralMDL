@@ -11,7 +11,7 @@
 
 namespace smdl {
 
-/// \addtogroup Support
+/// \addtogroup support
 /// \{
 
 /// A 128-bit MD5 hash.
