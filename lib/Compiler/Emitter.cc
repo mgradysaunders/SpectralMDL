@@ -1940,20 +1940,7 @@ Value Emitter::emitIntrinsic(std::string_view name, const ArgumentList &args,
       } else if (name == "is_void") {
         result = type->isVoid();
       } else if (name == "is_default") {
-        if (auto structType{llvm::dyn_cast<StructType>(type)}) {
-          if (!structType->instanceOf) {
-            // The struct is considered 'default' if it is
-            // the default type for its first tag.
-            result = structType->tags.size() >= 1 &&
-                     structType->tags[0]->defaultType == structType;
-          } else {
-            // The struct is considered 'default' if it is
-            // the default instantiation of an abstract struct.
-            result = structType->isDefaultInstance;
-          }
-        } else {
-          result = false;
-        }
+        result = type->isDefault();
       }
       if (result) {
         return context.getComptimeBool(*result);

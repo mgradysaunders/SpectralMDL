@@ -27,17 +27,23 @@ bool test_visibility(const Scene &scene, Sampler &sampler,
     if (!hitSurface) {
       break;
     }
+    // A statically opaque material blocks without any material work.
+    if (hit.material->isNeverTransparent()) {
+      return false;
+    }
     smdl::State state{};
     state.allocator = &allocator;
     state.wavelength_base = wavelengths.data();
     state.wavelength_min = WAVELENGTH_MIN;
     state.wavelength_max = WAVELENGTH_MAX;
     hit.apply_geometry_to_state(state);
-    smdl::JIT::MaterialInstance materialInstance{state, hit.material};
-    if (float opacity{materialInstance.getCutoutOpacity()};
+    if (float opacity{hit.material->evaluateOpacity(state)};
         opacity == 1 || float(sampler) < opacity) {
       return false; // Blocks visibility!
     }
+    // Only an actual pass-through needs the full instance, to keep the
+    // medium stack current across the cutout.
+    smdl::JIT::MaterialInstance materialInstance{state, hit.material};
     MediumStack::Update(medium, allocator, materialInstance, -ray.dir, ray.dir);
     ray.tmin = smdl::incrementFloat(ray.tmax + EPS);
     ray.tmax = 1.0f - EPS;

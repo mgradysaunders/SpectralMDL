@@ -176,6 +176,13 @@ public:
   /// Is instance of `UnionType` where `void` is an alternative?
   [[nodiscard]] bool isOptionalUnion() const;
 
+  /// Is "default" in the sense of the `#is_default` intrinsic? True for
+  /// a struct type that is either the default type for its first tag or
+  /// the default instantiation of an abstract struct. This is the single
+  /// definition shared by the intrinsic and the static material flags
+  /// (see `FunctionType::initializeMaterialFunctions`).
+  [[nodiscard]] bool isDefault() const;
+
   /// Is instance of `UnionType` or multi-level `PointerType`
   /// to instance of `UnionType`?
   [[nodiscard]] bool isUnionOrPointerToUnion() const {

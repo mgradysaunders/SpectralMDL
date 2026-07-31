@@ -340,6 +340,62 @@ Compiler::add(std::string fileOrDirName,
   });
 }
 
+/// Derive the value-dependent static material flags after optimization.
+///
+/// `FunctionType::initializeMaterialFunctions` fills the type-level
+/// (`#is_default`-derived) bits of `staticFlags`/`staticFlagsKnown` at
+/// emit time and also emits, per material, the `.evaluateOpacity` entry
+/// point and a `.thinWalledProbe` scaffolding function. After the
+/// optimizer runs, a body that reduces to returning a constant proves the
+/// corresponding flag bit for every possible instance, so it is marked
+/// known here; a body that stays runtime (or an unoptimized module) just
+/// leaves the bit unknown, which hosts must treat conservatively.
+static void deriveStaticMaterialFlags(llvm::Module &llvmModule,
+                                      std::vector<JIT::Material> &materials) {
+  // If every 'ret' in the named function returns one identical constant,
+  // return it, else null.
+  auto foldedReturnValue{[&](std::string_view name) -> const llvm::Constant * {
+    auto func{llvmModule.getFunction(name)};
+    if (!func || func->isDeclaration()) return nullptr;
+    const llvm::Constant *uniqueConst{};
+    for (auto &block : *func) {
+      if (auto ret{llvm::dyn_cast<llvm::ReturnInst>(block.getTerminator())}) {
+        auto retConst{
+            llvm::dyn_cast_if_present<llvm::Constant>(ret->getReturnValue())};
+        if (!retConst || (uniqueConst && uniqueConst != retConst))
+          return nullptr;
+        uniqueConst = retConst;
+      }
+    }
+    return uniqueConst;
+  }};
+  for (auto &jitMaterial : materials) {
+    // Recover the symbol base from the evaluate-opacity entry point name,
+    // '<symbolBase>.evaluateOpacity'.
+    auto symbolBase{std::string_view(jitMaterial.evaluateOpacity.name)};
+    SMDL_SANITY_CHECK(
+        llvm::StringRef(symbolBase).ends_with(".evaluateOpacity"));
+    symbolBase.remove_suffix(std::string_view(".evaluateOpacity").size());
+    if (auto opacity{llvm::dyn_cast_if_present<llvm::ConstantFP>(
+            foldedReturnValue(jitMaterial.evaluateOpacity.name))}) {
+      jitMaterial.staticFlagsKnown |= JIT::MATERIAL_HAS_CUTOUT;
+      if (opacity->getValueAPF().convertToFloat() < 1.0f)
+        jitMaterial.staticFlags |= JIT::MATERIAL_HAS_CUTOUT;
+    }
+    auto thinWalledProbeName{concat(symbolBase, ".thinWalledProbe")};
+    if (auto thinWalled{llvm::dyn_cast_if_present<llvm::ConstantInt>(
+            foldedReturnValue(thinWalledProbeName))}) {
+      jitMaterial.staticFlagsKnown |= JIT::MATERIAL_THIN_WALLED;
+      if (!thinWalled->isZero())
+        jitMaterial.staticFlags |= JIT::MATERIAL_THIN_WALLED;
+    }
+    // The probe is compile-time scaffolding, not a host entry point;
+    // erase it so it is never JIT-compiled.
+    if (auto probeFunc{llvmModule.getFunction(thinWalledProbeName)})
+      probeFunc->eraseFromParent();
+  }
+}
+
 void Compiler::resetForRecompile() {
   // Free the previous JIT first: this invalidates every function pointer
   // previously handed out, per the lifetime contract on the class.
@@ -446,6 +502,7 @@ std::optional<Error> Compiler::compile(OptLevel optLevel) noexcept {
                                           ? llvm::OptimizationLevel::O2
                                           : llvm::OptimizationLevel::O3);
     }
+    deriveStaticMaterialFlags(*mLLVMModule, mMaterials);
   });
 }
 
@@ -645,6 +702,7 @@ std::optional<Error> Compiler::jitCompile() noexcept {
     jitLookupOrThrow(mRGBToColor);
     for (auto &jitMaterial : mMaterials) {
       jitLookupOrThrow(jitMaterial.evaluate);
+      jitLookupOrThrow(jitMaterial.evaluateOpacity);
       jitLookupOrThrow(jitMaterial.scatterEvaluate);
       jitLookupOrThrow(jitMaterial.scatterSample);
       jitLookupOrThrow(jitMaterial.emissionEvaluate);
@@ -802,6 +860,24 @@ std::optional<Error> Compiler::runExecs() noexcept {
 }
 
 std::string Compiler::printMaterialSummary() const {
+  // Summarize the statically known, shadow-relevant flags: the cutout
+  // opacity status ('opaque' proven, 'cutout' proven, 'cutout?' only
+  // knowable at runtime), plus 'volume' and 'emissive' when present.
+  auto printStaticFlags{[](const JIT::Material &jitMaterial) {
+    auto flags{std::string()};
+    if (jitMaterial.isNeverTransparent())
+      flags += " [opaque";
+    else if ((jitMaterial.staticFlagsKnown & JIT::MATERIAL_HAS_CUTOUT) != 0)
+      flags += " [cutout";
+    else
+      flags += " [cutout?";
+    if (jitMaterial.hasVolume()) flags += ", volume";
+    if ((jitMaterial.staticFlags & (JIT::MATERIAL_HAS_SURFACE_EMISSION |
+                                    JIT::MATERIAL_HAS_BACKFACE_EMISSION)) != 0)
+      flags += ", emissive";
+    flags += ']';
+    return flags;
+  }};
   std::string message{};
   forEachFileGroup(
       mMaterials.begin(), mMaterials.end(), [&](auto itr0, auto itr1) {
@@ -810,7 +886,7 @@ std::string Compiler::printMaterialSummary() const {
         for (; itr0 != itr1; ++itr0) {
           message += "  ";
           message += concat(Quoted(itr0->materialName), " (line ", itr0->lineNo,
-                            ")\n");
+                            ")", printStaticFlags(*itr0), "\n");
         }
       });
   return message;

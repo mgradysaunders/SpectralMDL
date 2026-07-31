@@ -487,6 +487,8 @@ const int MATERIAL_HAS_VOLUME = (1 << 6);
 
 const int MATERIAL_HAS_HAIR = (1 << 7);
 
+const int MATERIAL_HAS_CUTOUT = (1 << 8);
+
 /// An instance of a material corresponding to `smdl::JIT::Material::Instance`
 /// in the C++ API.
 export struct _MaterialInstance {
@@ -535,7 +537,8 @@ export struct _MaterialInstance {
               | (!#is_default(ptr.surface.emission.emission) ? MATERIAL_HAS_SURFACE_EMISSION : 0) //
               | (!#is_default(ptr.backface.emission.emission) ? MATERIAL_HAS_BACKFACE_EMISSION : 0) //
               | (!#is_default(ptr.volume) ? MATERIAL_HAS_VOLUME : 0)                              //
-              | (!#is_default(ptr.hair) ? MATERIAL_HAS_HAIR : 0);
+              | (!#is_default(ptr.hair) ? MATERIAL_HAS_HAIR : 0)                                  //
+              | (ptr.geometry.cutout_opacity < 1.0 ? MATERIAL_HAS_CUTOUT : 0);
 
   /// The df flags for the `surface` component.
   int df_flags_surface = ptr.surface.scattering.df_flags;

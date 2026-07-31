@@ -73,6 +73,14 @@ static constexpr int MATERIAL_HAS_VOLUME = (1 << 6);
 /// Indicates that the material has a non-default `hair` initializer.
 static constexpr int MATERIAL_HAS_HAIR = (1 << 7);
 
+/// Indicates that the material has a cutout opacity less than one.
+///
+/// \note
+/// These constants are mirrored by hand in the builtin `api.smdl`
+/// (`_MaterialInstance.flags`); a new flag must be added in both places.
+///
+static constexpr int MATERIAL_HAS_CUTOUT = (1 << 8);
+
 /// \}
 
 /// \name Distribution Function (DF) Flags
@@ -120,6 +128,47 @@ public:
   /// an earlier search root? If so, `Compiler::findMaterial()` never
   /// matches this material. See `Module::isShadowed()`.
   bool moduleIsShadowed{};
+
+  /// The values of the flag bits that are compile-time constants for
+  /// every possible instance of this material. This is a subset of
+  /// `staticFlagsKnown`; for every instance,
+  /// `(instance.flags & staticFlagsKnown) == staticFlags`.
+  int staticFlags{};
+
+  /// The mask of flag bits whose values are compile-time constants.
+  ///
+  /// The `MATERIAL_HAS_*` bits derived from `#is_default` are always
+  /// known. `MATERIAL_THIN_WALLED` and `MATERIAL_HAS_CUTOUT` are known
+  /// iff their initializers constant-fold after optimization, so they
+  /// degrade to unknown at `OPT_LEVEL_NONE`; an unknown bit must be
+  /// treated conservatively (e.g., possibly transparent).
+  /// `MATERIAL_TRANSPORT_IMPORTANCE` is never known because it mirrors
+  /// the `State::transport` the instance is evaluated with.
+  ///
+  /// \note
+  /// Like the entry points themselves, static flags describe the
+  /// material with its parameters bound to their defaults.
+  ///
+  int staticFlagsKnown{};
+
+  /// Provably opaque: the cutout opacity is the compile-time constant 1.
+  [[nodiscard]] bool isNeverTransparent() const noexcept {
+    return (staticFlagsKnown & MATERIAL_HAS_CUTOUT) != 0 &&
+           (staticFlags & MATERIAL_HAS_CUTOUT) == 0;
+  }
+
+  /// Has a non-default `volume` initializer? Always statically known.
+  [[nodiscard]] bool hasVolume() const noexcept {
+    return (staticFlags & MATERIAL_HAS_VOLUME) != 0;
+  }
+
+  /// Do shadow rays need no material work at all? True if the material
+  /// is provably opaque and has no volume, in which case an occlusion
+  /// hit is fully blocking and the material never needs to be
+  /// constructed for shadow or transmission rays.
+  [[nodiscard]] bool isShadowTrivial() const noexcept {
+    return isNeverTransparent() && !hasVolume();
+  }
 
   /// An instance of the material.
   struct Instance final {
@@ -238,6 +287,20 @@ public:
   /// dropped.
   ///
   Function<void(State &state, Instance &instance)> evaluate{};
+
+  /// The evaluate opacity function.
+  ///
+  /// \param[in] state
+  /// The state.
+  ///
+  /// \return
+  /// Returns `geometry.cutout_opacity` and evaluates nothing else: no
+  /// instance is constructed and no allocation happens, so
+  /// `state.allocator` may be null. This is the cheap path for shadow
+  /// and transmission rays against materials that are not
+  /// `isShadowTrivial()`.
+  ///
+  Function<float(State &state)> evaluateOpacity{};
 
   /// The scatter evaluate function.
   ///

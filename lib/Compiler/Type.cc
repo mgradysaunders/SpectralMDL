@@ -54,6 +54,22 @@ bool Type::isOptionalUnion() const {
          static_cast<const UnionType *>(this)->caseTypes.back()->isVoid();
 }
 
+bool Type::isDefault() const {
+  if (auto structType{llvm::dyn_cast<StructType>(this)}) {
+    if (!structType->instanceOf) {
+      // The struct is considered 'default' if it is the default type for
+      // its first tag.
+      return structType->tags.size() >= 1 &&
+             structType->tags[0]->defaultType == structType;
+    } else {
+      // The struct is considered 'default' if it is the default
+      // instantiation of an abstract struct.
+      return structType->isDefaultInstance;
+    }
+  }
+  return false;
+}
+
 Type *Type::getPointeeType() const {
   return isPointer() ? static_cast<const PointerType *>(this)->pointeeType
                      : nullptr;
@@ -1360,6 +1376,7 @@ void FunctionType::initializeMaterialFunctions(Emitter &emitter) {
   }
   auto dfModule{context.getBuiltinModule("df")};
   SMDL_SANITY_CHECK(dfModule);
+  Type *materialType{};
   Type *materialInstanceType{};
   Type *materialInstancePtrType{};
   Type *float4PtrType{context.getPointerType(context.getFloatType(4))};
@@ -1402,10 +1419,11 @@ void FunctionType::initializeMaterialFunctions(Emitter &emitter) {
         concat(symbolBase, ".evaluate"), /*isPure=*/false, funcReturnType,
         {constParameter(context.getVoidPointerType(), "out")}, decl.srcLoc,
         [&] {
+          auto materialValue{invoke(emitter, {}, decl.srcLoc)};
+          materialType = materialValue.type;
           auto materialInstance{emitter.emitCall(
               context.getKeyword("_MaterialInstance"),
-              emitter.emitIntrinsic("bump", invoke(emitter, {}, decl.srcLoc),
-                                    decl.srcLoc),
+              emitter.emitIntrinsic("bump", materialValue, decl.srcLoc),
               decl.srcLoc)};
           materialInstanceType = materialInstance.type;
           materialInstancePtrType =
@@ -1700,6 +1718,88 @@ void FunctionType::initializeMaterialFunctions(Emitter &emitter) {
     markPointerParam(func, 2, context.getFloatType(3)); // wo
     markPointerParam(func, 3, context.getFloatType(3)); // wi
     jitMaterial.volumeScatterSample.name = func->getName().str();
+  }
+  {
+    // Generate the evaluate opacity function:
+    // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    // @(visible) float "material_name.evaluateOpacity"() {
+    //   return material_name().geometry.cutout_opacity;
+    // }
+    // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    // This evaluates only the cutout opacity: no '_MaterialInstance' and
+    // no '#bump', so 'state.allocator' may be null and everything not
+    // feeding the opacity is dead-code eliminated. After optimization,
+    // 'deriveStaticMaterialFlags' in 'Compiler.cc' also inspects whether
+    // the body folded to a constant to derive the static
+    // 'MATERIAL_HAS_CUTOUT' flag.
+    auto funcReturnType{static_cast<Type *>(context.getFloatType())};
+    auto func{emitter.createFunction(
+        concat(symbolBase, ".evaluateOpacity"), /*isPure=*/false,
+        funcReturnType, {}, decl.srcLoc, [&] {
+          emitter.emitReturn(
+              emitter.accessField(
+                  emitter.accessField(invoke(emitter, {}, decl.srcLoc),
+                                      "geometry"sv, decl.srcLoc),
+                  "cutout_opacity"sv, decl.srcLoc),
+              decl.srcLoc);
+        })};
+    func->setLinkage(llvm::Function::ExternalLinkage);
+    markPointerParam(func, 0, context.getStateType(), 1, /*noAlias=*/false);
+    jitMaterial.evaluateOpacity.name = func->getName().str();
+  }
+  {
+    // Generate the thin-walled probe, compile-time scaffolding that
+    // 'deriveStaticMaterialFlags' in 'Compiler.cc' inspects for a
+    // constant 'thin_walled' and then erases; it is never a host entry
+    // point.
+    auto funcReturnType{static_cast<Type *>(context.getIntType())};
+    auto func{emitter.createFunction(
+        concat(symbolBase, ".thinWalledProbe"), /*isPure=*/false,
+        funcReturnType, {}, decl.srcLoc, [&] {
+          emitter.emitReturn(
+              emitter.accessField(invoke(emitter, {}, decl.srcLoc),
+                                  "thin_walled"sv, decl.srcLoc),
+              decl.srcLoc);
+        })};
+    func->setLinkage(llvm::Function::ExternalLinkage);
+  }
+  {
+    // Compute the structural static flags, which are type-level facts:
+    // 'Type::isDefault()' is the same definition the '#is_default'
+    // intrinsic uses in the api '_MaterialInstance.flags' initializer,
+    // so the invariant '(instance.flags & staticFlagsKnown) ==
+    // staticFlags' holds by construction. The value-dependent bits
+    // ('MATERIAL_THIN_WALLED', 'MATERIAL_HAS_CUTOUT') are filled in
+    // later by 'deriveStaticMaterialFlags' in 'Compiler.cc'.
+    auto fieldTypeAtPath{
+        [&](std::initializer_list<std::string_view> path) -> Type * {
+          Type *type{materialType};
+          for (auto name : path) {
+            auto structType{llvm::dyn_cast_if_present<StructType>(type)};
+            SMDL_SANITY_CHECK(structType);
+            auto seq{ParameterList::LookupSequence{}};
+            SMDL_SANITY_CHECK(structType->params.getLookupSequence(name, seq) &&
+                                  !seq.empty(),
+                              "cannot resolve material field");
+            type = seq.back().first->type;
+          }
+          return type;
+        }};
+    auto addStaticFlag{
+        [&](int flag, std::initializer_list<std::string_view> path) {
+          jitMaterial.staticFlagsKnown |= flag;
+          if (!fieldTypeAtPath(path)->isDefault()) {
+            jitMaterial.staticFlags |= flag;
+          }
+        }};
+    addStaticFlag(JIT::MATERIAL_HAS_SURFACE, {"surface"});
+    addStaticFlag(JIT::MATERIAL_HAS_BACKFACE, {"backface"});
+    addStaticFlag(JIT::MATERIAL_HAS_SURFACE_EMISSION,
+                  {"surface", "emission", "emission"});
+    addStaticFlag(JIT::MATERIAL_HAS_BACKFACE_EMISSION,
+                  {"backface", "emission", "emission"});
+    addStaticFlag(JIT::MATERIAL_HAS_VOLUME, {"volume"});
+    addStaticFlag(JIT::MATERIAL_HAS_HAIR, {"hair"});
   }
 }
 //--}
