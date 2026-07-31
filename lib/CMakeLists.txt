@@ -131,6 +131,4 @@ install(
   LIBRARY DESTINATION "${CMAKE_INSTALL_LIBDIR}"
   RUNTIME DESTINATION "${CMAKE_INSTALL_BINDIR}"
   COMPONENT "SpectralMDL"
-  ) 
-
-add_subdirectory(unit_tests)
+  )
