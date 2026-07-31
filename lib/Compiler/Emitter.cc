@@ -16,12 +16,50 @@
 
 namespace smdl {
 
+/// Fold the result PHI of an inline expansion whose incoming values are all
+/// the same constant.
+///
+/// `createResult` always merges through a PHI, even for a lone `return`, and
+/// leaves collapsing it to the optimizer. That is fine inside a function, but
+/// an expansion at module scope has to come out as a constant here and now,
+/// with no optimizer to run and no function to keep the PHI in.
+static llvm::Value *foldConstantPHI(llvm::Value *llvmValue) {
+  auto phiInst{llvm::dyn_cast_if_present<llvm::PHINode>(llvmValue)};
+  if (!phiInst || phiInst->getNumIncomingValues() == 0) return llvmValue;
+  auto llvmConst{llvm::dyn_cast<llvm::Constant>(phiInst->getIncomingValue(0))};
+  if (!llvmConst) return llvmValue;
+  for (unsigned i = 1; i < phiInst->getNumIncomingValues(); i++)
+    if (phiInst->getIncomingValue(i) != llvmConst) return llvmValue;
+  return llvmConst;
+}
+
 Value Emitter::createFunctionImplementation(
     std::string_view name, bool isPure, Type *returnType,
     const ParameterList &params, llvm::ArrayRef<Value> paramValues,
     const SourceLocation &srcLoc, const std::function<void()> &callback) {
   SMDL_SANITY_CHECK(params.size() == paramValues.size());
   SMDL_SANITY_CHECK(callback != nullptr);
+  // Inline expansion needs an LLVM function to hold its blocks, but module
+  // scope has none: an initializer there is emitted with no insert point at
+  // all, on the understanding that it folds away entirely. So expand into a
+  // scratch function and discard it below, once the result has been checked
+  // to be a compile-time constant and therefore not to refer into it.
+  auto scratchFunc{static_cast<llvm::Function *>(nullptr)};
+  if (!getLLVMFunction()) {
+    scratchFunc = llvm::Function::Create(
+        llvm::FunctionType::get(llvm::Type::getVoidTy(context.llvmContext),
+                                /*isVarArg=*/false),
+        llvm::Function::PrivateLinkage, ".module_scope_call",
+        &context.llvmModule);
+    builder.SetInsertPoint(
+        llvm::BasicBlock::Create(context.llvmContext, "entry", scratchFunc));
+  }
+  SMDL_DEFER([&] {
+    if (scratchFunc) {
+      builder.ClearInsertionPoint();
+      scratchFunc->eraseFromParent();
+    }
+  });
   auto fmf{builder.getFastMathFlags()};
   SMDL_DEFER([&] { builder.setFastMathFlags(fmf); });
   SMDL_PRESERVE(labelReturn, returns, scope, anchors);
@@ -46,7 +84,16 @@ Value Emitter::createFunctionImplementation(
   });
   llvmMoveBlockToEnd(labelReturn.block);
   builder.SetInsertPoint(labelReturn.block);
-  return createResult(returnType, returns, srcLoc);
+  auto result{createResult(returnType, returns, srcLoc)};
+  if (scratchFunc && result) {
+    if (result.isRValue())
+      result = RValue(result.type, foldConstantPHI(result.llvmValue));
+    if (!result.isComptime())
+      srcLoc.throwError("call to ", Quoted(name),
+                        " does not resolve to a compile-time constant and "
+                        "cannot be used at module scope");
+  }
+  return result;
 }
 
 bool Emitter::returnsIndirectly(Type *type) {

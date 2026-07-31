@@ -1,5 +1,7 @@
 #smdl
 
+import ::tex::*;
+
 // string '=='/'!=' compared only strlen(lhs) bytes, so a prefix compared
 // equal to a longer string (and the comparison was asymmetric).
 unit_test "String comparison is not prefix-based" {
@@ -15,11 +17,15 @@ unit_test "String comparison is not prefix-based" {
 // failed LLVM-IR verification.
 unit_test "Do-while executes" {
   int i = 0;
-  do { i++; } while (i < 3);
+  do {
+    i++;
+  } while (i < 3);
   #assert(i == 3);
   // Loop body must run at least once even if the condition is false.
   int j = 0;
-  do { j++; } while (false);
+  do {
+    j++;
+  } while (false);
   #assert(j == 1);
 }
 
@@ -80,8 +86,7 @@ unit_test "Switch case constants convert to int" {
   case true:
     k = 7;
     break;
-  default:
-    k = 9;
+  default: k = 9;
   }
   #assert(k == 7);
 }
@@ -158,4 +163,58 @@ int overload_rank(int x) {
 unit_test "Exact overload match beats implicit conversion" {
   #assert(overload_rank(5) == 2);
   #assert(overload_rank(1.5) == 1);
+}
+
+// Inline expansion at module scope crashed the compiler. An initializer there
+// is emitted with no LLVM insert point, on the understanding that it folds
+// away, but a macro call or a struct constructor with a declared constructor
+// goes through 'createFunctionImplementation', which needs a function to hold
+// its blocks and hit an 'SMDL_SANITY_CHECK' when it tried to move the return
+// block into a null one. This bit every module-scope 'texture_2d(...)', which
+// is the natural way to declare a texture shared between materials.
+//
+// The expansion now happens in a scratch function that is discarded once the
+// result is confirmed to be a compile-time constant, so what must hold is that
+// the body folds away completely. A body that needs memory to do its work, such
+// as a 'return_from' that mutates a local, still does not, and is reported as an
+// error rather than crashing.
+@(pure macro)
+int module_scope_macro(const int x) = x + 1;
+
+@(pure macro)
+int module_scope_macro_branching(const int x) {
+  if (x > 0) {
+    return x;
+  } else {
+    return -x;
+  }
+}
+
+// NOTE: Two parameters, so that this cannot be confused with the field-wise
+// constructor and the declared one is genuinely the overload selected.
+struct module_scope_ctor {
+  module_scope_ctor(const int x, const int y) = module_scope_ctor(value: x * y);
+
+  int value = 0;
+};
+
+const auto MODULE_SCOPE_MACRO = module_scope_macro(1);
+const auto MODULE_SCOPE_BRANCHING = module_scope_macro_branching(-3);
+const auto MODULE_SCOPE_CTOR = module_scope_ctor(6, 7);
+const auto MODULE_SCOPE_TEXTURE = texture_2d("4x4.png", tex::gamma_linear);
+
+unit_test "Inline expansion at module scope" {
+  #assert(MODULE_SCOPE_MACRO == 2);
+  #assert(MODULE_SCOPE_BRANCHING == 3);
+  #assert(MODULE_SCOPE_CTOR.value == 42);
+
+  // The texture must be genuinely loaded, not merely constructed without
+  // crashing, and must behave the same as one built inside a function.
+  #assert(tex::texture_isvalid(MODULE_SCOPE_TEXTURE));
+  #assert(tex::width(MODULE_SCOPE_TEXTURE) == 4);
+  #assert(tex::height(MODULE_SCOPE_TEXTURE) == 4);
+  const auto local(texture_2d("4x4.png", tex::gamma_linear));
+  for (int x = 0; x < 4; x++)
+    for (int y = 0; y < 4; y++)
+      #assert(#all(tex::texel_float4(MODULE_SCOPE_TEXTURE, int2(x, y)) ~== |1e-6| tex::texel_float4(local, int2(x, y))));
 }

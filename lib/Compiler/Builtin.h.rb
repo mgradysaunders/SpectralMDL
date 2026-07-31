@@ -26,6 +26,7 @@ STR
 # The lookup key replaces '/' with '::' (so 'models/prospect' is addressed
 # as '::models::prospect'), and the generated variable replaces '/' with '_'.
 fnames = ['api', 'anno', 'debug', 'df', 'limits', 'math', 'scene', 'state', 'std', 'tex',
+          'extras/hextile',
           'extras/io',
           'extras/noise',
           'extras/pcg32',
