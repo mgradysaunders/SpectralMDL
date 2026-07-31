@@ -11,11 +11,13 @@ class File;
 
 } // namespace AST
 
+#if !SMDL_DOXYGEN
 class Context;
 
 class Declaration;
 
 class Scope;
+#endif // #if !SMDL_DOXYGEN
 
 /// \addtogroup Main
 /// \{

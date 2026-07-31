@@ -11,6 +11,9 @@ namespace smdl {
 
 extern "C" {
 
+/// \name Illuminant JIT callees
+/// \{
+
 /// Convert correlated color temperature to CIE 1931 chromaticity.
 ///
 /// This evaluates the daylight locus defined in CIE 15, which is only valid
@@ -50,7 +53,7 @@ SMDL_EXPORT void smdlEvalIlluminantF(int numWavelens, const float *wavelens,
                                      float *illum, int number = 1);
 
 /// Evaluate CIE standard high-pressure discharge lamp illuminant HP1
-/// through HP5, as indicated by `number` being 1 through 5. 
+/// through HP5, as indicated by `number` being 1 through 5.
 ///
 /// HP1 is a standard high-pressure sodium lamp, HP2 is a colour-corrected
 /// high-pressure sodium lamp, and HP3 through HP5 are high-pressure metal
@@ -82,6 +85,8 @@ SMDL_EXPORT void smdlEvalIlluminantHP(int numWavelens, const float *wavelens,
 /// `number` is out of range, `illum` is filled with zeros.
 SMDL_EXPORT void smdlEvalIlluminantLED(int numWavelens, const float *wavelens,
                                        float *illum, int number = 1);
+
+/// \}
 }
 
 /// \}

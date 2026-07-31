@@ -74,6 +74,7 @@ class SMDL_EXPORT Quoted final {
 public:
   constexpr Quoted(std::string_view str) : str(str) {}
   void appendTo(std::string &result);
+
 public:
   std::string_view str{};
 };
@@ -83,6 +84,7 @@ class SMDL_EXPORT QuotedPath final {
 public:
   constexpr QuotedPath(std::string_view str) : str(str) {}
   void appendTo(std::string &result);
+
 public:
   std::string_view str{};
 };
@@ -125,7 +127,6 @@ template <typename T, typename... Ts>
     return str;
   }
 }
-
 
 /// Determine if `str0` starts with `str1`.
 [[nodiscard]] constexpr bool startsWith(std::string_view str0,

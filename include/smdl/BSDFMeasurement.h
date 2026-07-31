@@ -14,10 +14,13 @@ namespace smdl {
 /// A BSDF measurement (`.mbsdf`).
 class SMDL_EXPORT BSDFMeasurement final {
 public:
+  // TODO One-line brief doc
   enum Kind { KIND_REFLECTION, KIND_TRANSMISSION };
 
+  // TODO One-line brief doc
   enum Type { TYPE_FLOAT, TYPE_FLOAT3 };
 
+  // TODO One-line brief doc
   [[nodiscard]] static constexpr size_t size_of(Type type) noexcept {
     switch (type) {
     case TYPE_FLOAT:
@@ -38,13 +41,14 @@ public:
   ~BSDFMeasurement() { clear(); }
 
   /// Load from file memory.
-  [[nodiscard]]
-  std::optional<Error> loadFromFileMemory(const std::string &file) noexcept;
+  [[nodiscard]] std::optional<Error>
+  loadFromFileMemory(const std::string &file) noexcept;
 
   /// Load from file.
-  [[nodiscard]]
-  std::optional<Error> loadFromFile(const std::string &fileName) noexcept;
+  [[nodiscard]] std::optional<Error>
+  loadFromFile(const std::string &fileName) noexcept;
 
+  /// Clear.
   void clear() noexcept;
 
   /// The raw table fetch, always widened to `float3`.
@@ -116,8 +120,8 @@ public:
   /// `float` or `float3`.
   void *buffer{};
 
-  /// The meta-data.
-  std::unordered_map<std::string, std::string> metaData;
+  /// The metadata.
+  std::unordered_map<std::string, std::string> metadata;
 
   /// The sampling distributions, one per outgoing zenith angle cell.
   ///

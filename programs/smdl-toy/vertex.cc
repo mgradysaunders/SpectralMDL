@@ -28,7 +28,7 @@ bool test_visibility(const Scene &scene, Sampler &sampler,
       break;
     }
     // A statically opaque material blocks without any material work.
-    if (hit.material->isNeverTransparent()) {
+    if (hit.material->isAlwaysOpaque()) {
       return false;
     }
     smdl::State state{};

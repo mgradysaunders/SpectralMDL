@@ -15,12 +15,12 @@ namespace smdl {
 class SMDL_EXPORT LightProfile final {
 public:
   /// Load from file memory.
-  [[nodiscard]]
-  std::optional<Error> loadFromFileMemory(std::string file) noexcept;
+  [[nodiscard]] std::optional<Error>
+  loadFromFileMemory(std::string file) noexcept;
 
   /// Load from file.
-  [[nodiscard]]
-  std::optional<Error> loadFromFile(const std::string &fileName) noexcept;
+  [[nodiscard]] std::optional<Error>
+  loadFromFile(const std::string &fileName) noexcept;
 
   /// Clear.
   void clear() noexcept;

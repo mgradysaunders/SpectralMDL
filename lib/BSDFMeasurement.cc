@@ -54,7 +54,7 @@ BSDFMeasurement::loadFromFileMemory(const std::string &file) noexcept {
           .split(mdLines, '\n', /*MaxSplit=*/-1, /*KeepEmpty=*/false);
       for (auto mdLine : mdLines) {
         auto kv{mdLine.split('=')};
-        metaData[std::string(kv.first)] = unquote(kv.second);
+        metadata[std::string(kv.first)] = unquote(kv.second);
       }
     }
     mem = mem.substr(dataBlockOffset);
@@ -271,7 +271,7 @@ void BSDFMeasurement::clear() noexcept {
   numTheta = 0;
   numPhi = 0;
   buffer = nullptr;
-  metaData.clear();
+  metadata.clear();
   distributions.clear();
 }
 
