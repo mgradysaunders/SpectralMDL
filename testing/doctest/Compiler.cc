@@ -745,7 +745,7 @@ TEST_CASE("Compiler static material flags") {
     auto matDefault{get("mat_default")};
     CHECK(matDefault->staticFlagsKnown == allBits);
     CHECK(matDefault->staticFlags == 0);
-    CHECK(matDefault->isNeverTransparent());
+    CHECK(matDefault->isAlwaysOpaque());
     CHECK(matDefault->isShadowTrivial());
     auto matPlastic{get("mat_plastic")};
     CHECK(matPlastic->staticFlagsKnown == allBits);
@@ -754,17 +754,17 @@ TEST_CASE("Compiler static material flags") {
     auto matCutoutConst{get("mat_cutout_const")};
     CHECK((matCutoutConst->staticFlagsKnown & MATERIAL_HAS_CUTOUT) != 0);
     CHECK((matCutoutConst->staticFlags & MATERIAL_HAS_CUTOUT) != 0);
-    CHECK(!matCutoutConst->isNeverTransparent());
+    CHECK(!matCutoutConst->isAlwaysOpaque());
     CHECK(!matCutoutConst->isShadowTrivial());
     auto matCutoutFolds{get("mat_cutout_folds")};
-    CHECK(matCutoutFolds->isNeverTransparent());
+    CHECK(matCutoutFolds->isAlwaysOpaque());
     CHECK(matCutoutFolds->isShadowTrivial());
     auto matThin{get("mat_thin")};
     CHECK((matThin->staticFlagsKnown & MATERIAL_THIN_WALLED) != 0);
     CHECK((matThin->staticFlags & MATERIAL_THIN_WALLED) != 0);
     auto matVolume{get("mat_volume")};
     CHECK(matVolume->hasVolume());
-    CHECK(matVolume->isNeverTransparent());
+    CHECK(matVolume->isAlwaysOpaque());
     CHECK(!matVolume->isShadowTrivial());
     auto matEmissive{get("mat_emissive")};
     CHECK((matEmissive->staticFlags & MATERIAL_HAS_SURFACE_EMISSION) != 0);
@@ -774,7 +774,7 @@ TEST_CASE("Compiler static material flags") {
     auto matCutoutRuntime{get("mat_cutout_runtime")};
     CHECK(matCutoutRuntime->staticFlagsKnown ==
           (allBits & ~MATERIAL_HAS_CUTOUT));
-    CHECK(!matCutoutRuntime->isNeverTransparent());
+    CHECK(!matCutoutRuntime->isAlwaysOpaque());
     CHECK(!matCutoutRuntime->isShadowTrivial());
     auto matThinRuntime{get("mat_thin_runtime")};
     CHECK(matThinRuntime->staticFlagsKnown ==

@@ -152,7 +152,7 @@ public:
   int staticFlagsKnown{};
 
   /// Provably opaque: the cutout opacity is the compile-time constant 1.
-  [[nodiscard]] bool isNeverTransparent() const noexcept {
+  [[nodiscard]] bool isAlwaysOpaque() const noexcept {
     return (staticFlagsKnown & MATERIAL_HAS_CUTOUT) != 0 &&
            (staticFlags & MATERIAL_HAS_CUTOUT) == 0;
   }
@@ -167,7 +167,7 @@ public:
   /// hit is fully blocking and the material never needs to be
   /// constructed for shadow or transmission rays.
   [[nodiscard]] bool isShadowTrivial() const noexcept {
-    return isNeverTransparent() && !hasVolume();
+    return isAlwaysOpaque() && !hasVolume();
   }
 
   /// An instance of the material.

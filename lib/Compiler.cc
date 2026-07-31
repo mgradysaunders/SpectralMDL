@@ -865,7 +865,7 @@ std::string Compiler::printMaterialSummary() const {
   // knowable at runtime), plus 'volume' and 'emissive' when present.
   auto printStaticFlags{[](const JIT::Material &jitMaterial) {
     auto flags{std::string()};
-    if (jitMaterial.isNeverTransparent())
+    if (jitMaterial.isAlwaysOpaque())
       flags += " [opaque";
     else if ((jitMaterial.staticFlagsKnown & JIT::MATERIAL_HAS_CUTOUT) != 0)
       flags += " [cutout";
