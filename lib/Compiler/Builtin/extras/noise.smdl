@@ -1,0 +1,406 @@
+// NOTE: This module is non-standard!
+/// The atomic procedural noise primitives: an integer hash, gradient
+/// (simplex) noise with analytic derivatives, and Worley cellular noise.
+///
+/// This module is deliberately small. It provides only the primitives that
+/// are awkward to write correctly (hash avalanche, lattice construction,
+/// falloff normalization, closed-form derivatives) and stops short of the
+/// composition layer. Fractal summation, ridging, domain warping, and range
+/// remapping are a few lines each on top of these and are entirely a matter
+/// of taste, so they belong in the material rather than here.
+///
+/// Every function is seeded explicitly. There is no global state, so an
+/// arbitrary number of statistically independent fields may be evaluated at
+/// the same position simply by varying `seed`.
+///
+/// The noise functions return values in `[-1, 1]` with an approximately
+/// symmetric, roughly Gaussian distribution. The relevant statistic for
+/// layering is the variance, NOT the range: the range of a sum of octaves is
+/// its worst case and is essentially never approached, which is why dividing
+/// a fractal sum by the sum of its amplitudes always yields a washed out
+/// result. Divide by the square root of the sum of the SQUARED amplitudes
+/// instead, and the sum retains the variance of a single octave.
+///
+/// Measured variances are given with each function. Applying a saturating
+/// remap such as `math::smoothstep` or a soft clip afterwards is the caller's
+/// decision, not this module's.
+///
+/// References:
+///   Perlin (2002)                 -- Improving Noise
+///   Gustavson (2005)              -- Simplex noise demystified
+///   McEwan, Gustavson, et al.     -- Efficient computation of noise (2012)
+///   Worley (1996)                 -- A cellular texture basis function
+///   Jarzynski and Olano (2020)    -- Hash functions for GPU rendering
+#smdl
+
+//--{ Hashing
+
+/// The LCG multiplier shared by the vector hashes.
+const int HASH_MULTIPLIER = 1664525;
+
+/// The LCG increment shared by the vector hashes.
+const int HASH_INCREMENT = 1013904223;
+
+/// The scale that maps the top 24 bits of a hash into `[0, 1)`.
+const float HASH_TO_FLOAT = 1.0 / 16777216.0;
+
+/// The hash of an `int` as an `int`, being the PCG-RXS-M-XS output permutation.
+///
+/// This is a bijection, so distinct keys always produce distinct results.
+@(pure)
+export int hash(int key) {
+  key = key * 747796405 + -1403630843; // 2891336453 as unsigned
+  key = ((key >>> ((key >>> 28) + 4)) ^ key) * 277803737;
+  return (key >>> 22) ^ key;
+}
+
+/// The hash of an `int2` as an `int2`, being the PCG2D construction.
+@(pure)
+export int2 hash(int2 key) {
+  key = key * HASH_MULTIPLIER + HASH_INCREMENT;
+  key.x += key.y * HASH_MULTIPLIER;
+  key.y += key.x * HASH_MULTIPLIER;
+  key ^= key >>> 16;
+  key.x += key.y * HASH_MULTIPLIER;
+  key.y += key.x * HASH_MULTIPLIER;
+  return key ^ (key >>> 16);
+}
+
+/// The hash of an `int3` as an `int3`, being the PCG3D construction.
+@(pure)
+export int3 hash(int3 key) {
+  key = key * HASH_MULTIPLIER + HASH_INCREMENT;
+  key.x += key.y * key.z;
+  key.y += key.z * key.x;
+  key.z += key.x * key.y;
+  key ^= key >>> 16;
+  key.x += key.y * key.z;
+  key.y += key.z * key.x;
+  key.z += key.x * key.y;
+  return key;
+}
+
+/// The hash of an `int4` as an `int4`, being the PCG4D construction.
+@(pure)
+export int4 hash(int4 key) {
+  key = key * HASH_MULTIPLIER + HASH_INCREMENT;
+  key.x += key.y * key.w;
+  key.y += key.z * key.x;
+  key.z += key.x * key.y;
+  key.w += key.y * key.z;
+  key ^= key >>> 16;
+  key.x += key.y * key.w;
+  key.y += key.z * key.x;
+  key.z += key.x * key.y;
+  key.w += key.y * key.z;
+  return key;
+}
+
+/// The hash of an `int` as a uniform `float` in `[0, 1)`.
+@(pure macro)
+export float hash_float(const int key) = float(hash(key) >>> 8) * HASH_TO_FLOAT;
+
+/// The hash of an `int2` as a uniform `float2` in `[0, 1)^2`.
+@(pure macro)
+export float2 hash_float2(const int2 key) = float2(hash(key) >>> 8) * HASH_TO_FLOAT;
+
+/// The hash of an `int3` as a uniform `float3` in `[0, 1)^3`.
+@(pure macro)
+export float3 hash_float3(const int3 key) = float3(hash(key) >>> 8) * HASH_TO_FLOAT;
+
+/// The hash of an `int4` as a uniform `float4` in `[0, 1)^4`.
+@(pure macro)
+export float4 hash_float4(const int4 key) = float4(hash(key) >>> 8) * HASH_TO_FLOAT;
+
+//--}
+
+//--{ Simplex noise
+
+/// The 2D skew factor, `(sqrt(3) - 1) / 2`.
+const float SIMPLEX_SKEW_2D = 0.3660254037844386;
+
+/// The 2D unskew factor, `(3 - sqrt(3)) / 6`.
+const float SIMPLEX_UNSKEW_2D = 0.2113248654051871;
+
+/// The 3D skew factor, `1 / 3`.
+const float SIMPLEX_SKEW_3D = 0.3333333333333333;
+
+/// The 3D unskew factor, `1 / 6`.
+const float SIMPLEX_UNSKEW_3D = 0.1666666666666667;
+
+/// The squared radius of the kernel support.
+///
+/// The kernel is `(RADIUS2 - |x|^2)^4`, which vanishes to second order at the
+/// support boundary and so leaves the noise twice differentiable provided the
+/// radius is chosen soundly. Soundness is bracketed from both sides:
+///
+///   * Below the largest squared distance from a position to the nearest of
+///     the corners the evaluation visits, the kernels can all vanish at once
+///     and leave the field identically zero in small dead zones. Measured
+///     over the lattice, that lower bound is 0.222 in 2D and 0.311 in 3D.
+///
+///   * Above the smallest squared distance from a position to a lattice point
+///     the evaluation does NOT visit, a corner that should have contributed
+///     is silently dropped, which puts a step in both the value and the
+///     derivative. Measured over the lattice, that upper bound is 0.5 in both
+///     2D and 3D.
+///
+/// So 0.5 is sound in either dimension and is the largest sound choice, which
+/// also makes it the highest contrast one. NOTE: the value 0.6 often quoted
+/// for 3D is above the upper bound and does put steps of order 0.008 into the
+/// field; it trades the derivative for a little more contrast, which is not a
+/// trade this module is willing to make.
+const float SIMPLEX_RADIUS2 = 0.5;
+
+/// The 2D normalization, calibrated so that the largest magnitude observed
+/// over 32 million samples maps exactly to 1.
+const float SIMPLEX_SCALE_2D = 99.204;
+
+/// The 3D normalization, calibrated the same way as `SIMPLEX_SCALE_2D`. It is
+/// larger because the sound kernel radius covers proportionally less of a 3D
+/// cell than of a 2D one, so the raw sum is correspondingly smaller.
+const float SIMPLEX_SCALE_3D = 108.730;
+
+/// The 16 evenly spaced unit gradients of the 2D lattice.
+static const auto SIMPLEX_GRADIENT_2D(float2[](
+    float2(+1.00000000, +0.00000000), float2(+0.92387953, +0.38268343), //
+    float2(+0.70710678, +0.70710678), float2(+0.38268343, +0.92387953), //
+    float2(+0.00000000, +1.00000000), float2(-0.38268343, +0.92387953), //
+    float2(-0.70710678, +0.70710678), float2(-0.92387953, +0.38268343), //
+    float2(-1.00000000, +0.00000000), float2(-0.92387953, -0.38268343), //
+    float2(-0.70710678, -0.70710678), float2(-0.38268343, -0.92387953), //
+    float2(+0.00000000, -1.00000000), float2(+0.38268343, -0.92387953), //
+    float2(+0.70710678, -0.70710678), float2(+0.92387953, -0.38268343)));
+
+/// The unit gradients of the 3D lattice, being the 12 cube edge midpoints
+/// padded to 16 by Perlin's symmetry preserving choice of repeats.
+static const auto SIMPLEX_GRADIENT_3D(float3[](
+    float3(+0.70710678, +0.70710678, +0.00000000), //
+    float3(-0.70710678, +0.70710678, +0.00000000), //
+    float3(+0.70710678, -0.70710678, +0.00000000), //
+    float3(-0.70710678, -0.70710678, +0.00000000), //
+    float3(+0.70710678, +0.00000000, +0.70710678), //
+    float3(-0.70710678, +0.00000000, +0.70710678), //
+    float3(+0.70710678, +0.00000000, -0.70710678), //
+    float3(-0.70710678, +0.00000000, -0.70710678), //
+    float3(+0.00000000, +0.70710678, +0.70710678), //
+    float3(+0.00000000, -0.70710678, +0.70710678), //
+    float3(+0.00000000, +0.70710678, -0.70710678), //
+    float3(+0.00000000, -0.70710678, -0.70710678), //
+    float3(+0.70710678, +0.70710678, +0.00000000), //
+    float3(+0.00000000, -0.70710678, +0.70710678), //
+    float3(-0.70710678, +0.70710678, +0.00000000), //
+    float3(+0.00000000, -0.70710678, -0.70710678)));
+
+/// A 2D noise value paired with its analytic derivative.
+export struct noise_deriv_2d {
+  float value = 0.0; ///< The noise value in `[-1, 1]`.
+
+  float2 deriv = float2(0.0); ///< The derivative of `value` with respect to the position.
+};
+
+/// A 3D noise value paired with its analytic derivative.
+export struct noise_deriv_3d {
+  float value = 0.0; ///< The noise value in `[-1, 1]`.
+
+  float3 deriv = float3(0.0); ///< The derivative of `value` with respect to the position.
+};
+
+/// Accumulates the contribution of one 2D simplex corner.
+///
+/// With kernel `t = r^2 - |x|^2` and gradient `g`, the corner contributes
+/// `t^4 (g . x)`. Since the corner is piecewise constant in the position, the
+/// offset `x` differentiates to the identity and the chain rule gives
+/// `t^4 g - 8 t^3 (g . x) x` exactly.
+@(pure)
+void accumulate2D(const int2 corner, const float2 offset, const int seed, //
+                  const &float value, const &float2 deriv) {
+  const auto t(SIMPLEX_RADIUS2 - #sum(offset * offset));
+  if (t > 0.0) {
+    const auto g(SIMPLEX_GRADIENT_2D[hash(int3(corner.x, corner.y, seed)).x & 15]);
+    const auto gDotX(#sum(g * offset));
+    const auto t2(t * t);
+    *value += t2 * t2 * gDotX;
+    *deriv += t2 * t2 * g - (8.0 * t2 * t * gDotX) * offset;
+  }
+}
+
+/// Accumulates the contribution of one 3D simplex corner.
+@(pure)
+void accumulate3D(const int3 corner, const float3 offset, const int seed, //
+                  const &float value, const &float3 deriv) {
+  const auto t(SIMPLEX_RADIUS2 - #sum(offset * offset));
+  if (t > 0.0) {
+    const auto g(SIMPLEX_GRADIENT_3D[hash(int4(corner.x, corner.y, corner.z, seed)).x & 15]);
+    const auto gDotX(#sum(g * offset));
+    const auto t2(t * t);
+    *value += t2 * t2 * gDotX;
+    *deriv += t2 * t2 * g - (8.0 * t2 * t * gDotX) * offset;
+  }
+}
+
+/// The 2D simplex noise at `position` with its analytic derivative.
+///
+/// The value is in `[-1, 1]` with mean 0 and variance 0.2905. The value and
+/// the derivative are both continuous everywhere; the derivative is exact
+/// rather than a difference, so it costs only a few extra operations and
+/// carries no step size to choose.
+@(pure noinline)
+export noise_deriv_2d simplex_noise_deriv(const float2 position, const int seed = 0) {
+  // Skew into the lattice, find the containing cell, then unskew the cell
+  // origin back to obtain the offset to the first corner.
+  const auto cell(int2(#floor(position + SIMPLEX_SKEW_2D * #sum(position))));
+  const auto offset0(position - (float2(cell) - SIMPLEX_UNSKEW_2D * float(#sum(cell))));
+  // The cell is a rhombus split into two triangles by the diagonal; the
+  // larger coordinate identifies which of the two contains the position.
+  const auto step(offset0.x > offset0.y ? int2(1, 0) : int2(0, 1));
+  const auto offset1(offset0 - float2(step) + SIMPLEX_UNSKEW_2D);
+  const auto offset2(offset0 - 1.0 + 2.0 * SIMPLEX_UNSKEW_2D);
+  auto value(0.0);
+  auto deriv(float2(0.0));
+  accumulate2D(cell, offset0, seed, &value, &deriv);
+  accumulate2D(cell + step, offset1, seed, &value, &deriv);
+  accumulate2D(cell + 1, offset2, seed, &value, &deriv);
+  return noise_deriv_2d(value: SIMPLEX_SCALE_2D * value, deriv: SIMPLEX_SCALE_2D * deriv);
+}
+
+/// The 3D simplex noise at `position` with its analytic derivative.
+///
+/// The value is in `[-1, 1]` with mean 0 and variance 0.1539. As in 2D, the
+/// value and the derivative are both continuous everywhere and the derivative
+/// is exact.
+@(pure noinline)
+export noise_deriv_3d simplex_noise_deriv(const float3 position, const int seed = 0) {
+  const auto cell(int3(#floor(position + SIMPLEX_SKEW_3D * #sum(position))));
+  const auto offset0(position - (float3(cell) - SIMPLEX_UNSKEW_3D * float(#sum(cell))));
+  // The cell is a rhombohedron split into six tetrahedra by the ordering of
+  // the coordinates. Ranking the coordinates against their own rotation
+  // yields the two intermediate corners without any branching.
+  const auto ge(#select(offset0 >= offset0.yzx, float3(1.0), float3(0.0)));
+  const auto lt(1.0 - ge);
+  const auto rank1(#min(ge, lt.zxy));
+  const auto rank2(#max(ge, lt.zxy));
+  // The ranking is degenerate exactly when all three coordinates are equal,
+  // which makes every comparison agree so that `rank1` selects no axis at all
+  // and `rank2` selects all three. The position is then a vertex shared by all
+  // six tetrahedra and any one of them is correct, so take the first. Skipping
+  // this puts spikes of nearly half the output range along the main diagonal,
+  // which includes the lattice points themselves.
+  const auto degenerate(#sum(rank1) != 1.0);
+  const auto step1(degenerate ? float3(1.0, 0.0, 0.0) : rank1);
+  const auto step2(degenerate ? float3(1.0, 1.0, 0.0) : rank2);
+  const auto offset1(offset0 - step1 + SIMPLEX_UNSKEW_3D);
+  const auto offset2(offset0 - step2 + 2.0 * SIMPLEX_UNSKEW_3D);
+  const auto offset3(offset0 - 1.0 + 3.0 * SIMPLEX_UNSKEW_3D);
+  auto value(0.0);
+  auto deriv(float3(0.0));
+  accumulate3D(cell, offset0, seed, &value, &deriv);
+  accumulate3D(cell + int3(step1), offset1, seed, &value, &deriv);
+  accumulate3D(cell + int3(step2), offset2, seed, &value, &deriv);
+  accumulate3D(cell + 1, offset3, seed, &value, &deriv);
+  return noise_deriv_3d(value: SIMPLEX_SCALE_3D * value, deriv: SIMPLEX_SCALE_3D * deriv);
+}
+
+/// The 2D simplex noise at `position`, discarding the derivative.
+@(pure macro)
+export float simplex_noise(const float2 position, const int seed = 0) = simplex_noise_deriv(position, seed).value;
+
+/// The 3D simplex noise at `position`, discarding the derivative.
+@(pure macro)
+export float simplex_noise(const float3 position, const int seed = 0) = simplex_noise_deriv(position, seed).value;
+
+//--}
+
+//--{ Worley noise
+
+/// A 2D Worley cellular noise result.
+export struct worley_2d {
+  float f1 = 0.0; ///< The distance to the nearest feature point.
+
+  float f2 = 0.0; ///< The distance to the second nearest feature point.
+
+  float2 offset1 = float2(0.0); ///< The vector from the position to the nearest feature point.
+
+  int id1 = 0; ///< The hash identifying the cell of the nearest feature point.
+};
+
+/// A 3D Worley cellular noise result.
+export struct worley_3d {
+  float f1 = 0.0; ///< The distance to the nearest feature point.
+
+  float f2 = 0.0; ///< The distance to the second nearest feature point.
+
+  float3 offset1 = float3(0.0); ///< The vector from the position to the nearest feature point.
+
+  int id1 = 0; ///< The hash identifying the cell of the nearest feature point.
+};
+
+/// The 2D Worley cellular noise at `position`.
+///
+/// Each lattice cell holds one feature point, displaced from the cell center
+/// by `jitter`: 0 is a regular grid and 1 lets the point fall anywhere in the
+/// cell. `f1` is then the distance to the nearest such point, `f2` the
+/// distance to the second nearest, and `f2 - f1` the familiar cell border
+/// pattern. The derivative of `f1` is `-offset1 / f1` wherever `f1 > 0`,
+/// which is a unit vector, so bump mapping needs no extra evaluation.
+///
+/// Only the surrounding 3 by 3 cells are searched. This is exact for
+/// `jitter` up to about 0.65, above which a nearer point can occasionally
+/// hide in a cell that was not visited.
+@(pure noinline)
+export worley_2d worley_noise(const float2 position, const int seed = 0, const float jitter = 1.0) {
+  const auto cell(int2(#floor(position)));
+  const auto frac(position - float2(cell));
+  auto result(worley_2d(f1: $INF, f2: $INF));
+  for (int j = -1; j <= 1; j++) {
+    for (int i = -1; i <= 1; i++) {
+      const auto neighbor(cell + int2(i, j));
+      const auto point(hash(int3(neighbor.x, neighbor.y, seed)));
+      const auto center(float2(i, j) + 0.5 + jitter * (float2(point.xy >>> 8) * HASH_TO_FLOAT - 0.5));
+      const auto offset(center - frac);
+      const auto dist(#sqrt(#sum(offset * offset)));
+      if (dist < result.f1) {
+        result.f2 = result.f1;
+        result.f1 = dist;
+        result.offset1 = offset;
+        result.id1 = point.z;
+      } else if (dist < result.f2) {
+        result.f2 = dist;
+      }
+    }
+  }
+  return result;
+}
+
+/// The 3D Worley cellular noise at `position`.
+///
+/// See the 2D overload. Only the surrounding 3 by 3 by 3 cells are searched,
+/// which is exact for `jitter` up to about 0.46.
+@(pure noinline)
+export worley_3d worley_noise(const float3 position, const int seed = 0, const float jitter = 1.0) {
+  const auto cell(int3(#floor(position)));
+  const auto frac(position - float3(cell));
+  auto result(worley_3d(f1: $INF, f2: $INF));
+  for (int k = -1; k <= 1; k++) {
+    for (int j = -1; j <= 1; j++) {
+      for (int i = -1; i <= 1; i++) {
+        const auto neighbor(cell + int3(i, j, k));
+        const auto point(hash(int4(neighbor.x, neighbor.y, neighbor.z, seed)));
+        const auto center(float3(i, j, k) + 0.5 + jitter * (float3(point.xyz >>> 8) * HASH_TO_FLOAT - 0.5));
+        const auto offset(center - frac);
+        const auto dist(#sqrt(#sum(offset * offset)));
+        if (dist < result.f1) {
+          result.f2 = result.f1;
+          result.f1 = dist;
+          result.offset1 = offset;
+          result.id1 = point.w;
+        } else if (dist < result.f2) {
+          result.f2 = dist;
+        }
+      }
+    }
+  }
+  return result;
+}
+
+//--}

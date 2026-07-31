@@ -27,6 +27,7 @@ STR
 # as '::models::prospect'), and the generated variable replaces '/' with '_'.
 fnames = ['api', 'anno', 'debug', 'df', 'limits', 'math', 'scene', 'state', 'std', 'tex',
           'extras/io',
+          'extras/noise',
           'extras/pcg32',
           'models/illuminant',
           'models/prospect',
