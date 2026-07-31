@@ -267,7 +267,7 @@ public:
   /// rule that a shadowed module is unreachable by qualified name. See
   /// `Module::isShadowed()`.
   ///
-  /// \returns
+  /// \return
   /// The unique match, or `nullptr` if nothing matches. Also
   /// returns `nullptr` if more than one material matches, in which
   /// case an error is logged that lists every candidate. Use a longer

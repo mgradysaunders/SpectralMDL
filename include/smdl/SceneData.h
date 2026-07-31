@@ -64,6 +64,9 @@ public:
 
   /// Associate the given name with a `color`.
   ///
+  /// \param[in] name
+  /// The name to associate.
+  ///
   /// \param[in] getter
   /// The getter to calculate the color which must generally depend on
   /// the wavelengths in the `State`.

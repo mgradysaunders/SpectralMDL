@@ -95,7 +95,7 @@ public:
   /// \param[out] pdf
   /// If non-null, receives the associated PDF.
   ///
-  /// \returns
+  /// \return
   /// The sampled incoming direction, always in the upper hemisphere. The
   /// caller is responsible for flipping it below the horizon for
   /// `KIND_TRANSMISSION` measurements.

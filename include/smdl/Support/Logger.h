@@ -31,7 +31,7 @@ public:
   /// Write.
   virtual void logMessage(LogLevel level, std::string_view message) {}
 
-  /// Flush the file or stream if appliable.
+  /// Flush the file or stream if applicable.
   virtual void flush() {}
 
   /// Close the file or stream if applicable.

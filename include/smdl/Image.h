@@ -201,7 +201,7 @@ private:
 /// texel pointer are enforced by fatal sanity checks, not by
 /// recoverable errors.
 ///
-/// \returns
+/// \return
 /// `std::nullopt` if successful, or else an `Error` describing why
 /// the image could not be written.
 ///
@@ -250,7 +250,7 @@ write8bitImage(const std::string &fileName, int numTexelsX, int numTexelsY,
 /// texel pointer are enforced by fatal sanity checks, not by
 /// recoverable errors.
 ///
-/// \returns
+/// \return
 /// `std::nullopt` if successful, or else an `Error` describing why
 /// the image could not be written.
 ///

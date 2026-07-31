@@ -26,7 +26,7 @@ public:
   /// \param[in] isRecursive
   /// Search recursively?
   ///
-  /// \returns
+  /// \return
   /// Returns true if successful, and false if the given `dir`
   /// did not resolve to a valid path.
   ///
@@ -45,7 +45,7 @@ public:
   /// directory path to search relative to. This is useful for
   /// resolving files included by other files.
   ///
-  /// \returns
+  /// \return
   /// A vector of valid canonical directory paths, in the order
   /// in which the directories were initially added, with redundant
   /// paths removed.
@@ -53,6 +53,8 @@ public:
   [[nodiscard]] std::vector<std::string>
   getSearchDirs(std::string_view relativeTo = {}) const;
 
+  /// The bitwise-or of the flags that select which kinds of paths
+  /// `locate()` is allowed to return.
   typedef uint32_t LocateFlags;
 
   /// Flag to consider paths to regular files.
@@ -71,7 +73,11 @@ public:
   /// directory path to search relative to. This is useful for
   /// resolving files included by other files.
   ///
-  /// \returns
+  /// \param[in] flags
+  /// The bitwise-or of `REGULAR_FILES` and `DIRS` selecting which kinds
+  /// of paths may be returned.
+  ///
+  /// \return
   /// The canonical path of the located file, or `std::nullopt` if
   /// not found.
   ///
@@ -155,7 +161,7 @@ public:
   /// less than `1000` in each axis after normalization, or else the
   /// file is ignored. Negative tile indexes are not supported.
   ///
-  /// \returns
+  /// \return
   /// The canonical paths and parsed tile indexes of all matched
   /// images, sorted by tile index in U, then tile index in V, then
   /// by path. If nothing matches, the vector is empty.

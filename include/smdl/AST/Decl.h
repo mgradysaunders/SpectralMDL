@@ -18,7 +18,7 @@ public:
   /// The identifier.
   BumpPtr<Identifier> identifier;
 
-  // The arguments.
+  /// The arguments.
   ArgumentList args;
 
   /// The next comma `,`. This may be empty!
@@ -324,7 +324,7 @@ public:
     /// The LLVM constant value (This is computed later during compilation)
     llvm::ConstantInt *llvmConst{};
 
-    /// Has warning been issued about this parameter yet? Used to prevent
+    /// Has warning been issued about this declarator yet? Used to prevent
     /// the same warning being logged over and over again.
     bool warningIssued{};
   };
@@ -459,7 +459,7 @@ public:
 };
 
 /// An `import` declaration.
-class Import final : public DeclSubclass<DeclKind::Import> {
+class SMDL_EXPORT Import final : public DeclSubclass<DeclKind::Import> {
 public:
   class ImportPathWrapper final {
   public:
@@ -634,7 +634,7 @@ public:
   /// The keyword `finalize`. This is an extension and may be empty!
   std::string_view srcKwFinalize;
 
-  /// The statement after `finalize`. This is an extension and may be nulL!
+  /// The statement after `finalize`. This is an extension and may be null!
   BumpPtr<Stmt> stmtFinalize;
 
   /// The brace `}`.

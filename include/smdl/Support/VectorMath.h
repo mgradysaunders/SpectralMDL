@@ -258,7 +258,7 @@ operator==(const Vector<T, N> &v0, const Vector<T, N> &v1) noexcept {
   return v;
 }
 
-/// Vector-Vector `operator==`.
+/// Vector-Vector `operator!=`.
 template <typename T, size_t N>
 [[nodiscard]] constexpr Vector<bool, N>
 operator!=(const Vector<T, N> &v0, const Vector<T, N> &v1) noexcept {
@@ -371,7 +371,7 @@ public:
     return v[j];
   }
 
-  // Get column vector.
+  /// Get column vector.
   [[nodiscard]] constexpr Vector<T, M> col(size_t j) const noexcept {
     return v[j];
   }
@@ -517,7 +517,7 @@ constexpr Matrix<T, 4, 4> affineInverse(const Matrix<T, 4, 4> &m) noexcept {
   return float3x3(x, y, z);
 }
 
-/// Calculate orthornormal coordinate system with Gram-Schmidt process.
+/// Calculate orthonormal coordinate system with Gram-Schmidt process.
 [[nodiscard]] inline float3x3 orthonormalize(float3x3 m) noexcept {
   float3 &x{m[0]};
   float3 &y{m[1]};

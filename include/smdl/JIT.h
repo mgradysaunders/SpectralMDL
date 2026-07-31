@@ -39,8 +39,8 @@ public:
   function_pointer func{};
 };
 
-// \name Material Flags
-// \{
+/// \name Material Flags
+/// \{
 
 /// Indicates that the material is transporting importance.
 static constexpr int MATERIAL_TRANSPORT_IMPORTANCE = (1 << 0);

@@ -277,19 +277,19 @@ public:
   /// The texture coordinates.
   float3 texture_coordinate[TEXTURE_SPACE_MAX]{};
 
-  // The texture tangent U vector(s) in object space.
+  /// The texture tangent U vector(s) in object space.
   float3 texture_tangent_u[TEXTURE_SPACE_MAX] = {
       float3{1, 0, 0}, float3{1, 0, 0}, float3{1, 0, 0}, float3{1, 0, 0}};
 
-  // The texture tangent V vector(s) in object space.
+  /// The texture tangent V vector(s) in object space.
   float3 texture_tangent_v[TEXTURE_SPACE_MAX] = {
       float3{0, 1, 0}, float3{0, 1, 0}, float3{0, 1, 0}, float3{0, 1, 0}};
 
-  // The geometry tangent U vector(s) in object space.
+  /// The geometry tangent U vector(s) in object space.
   float3 geometry_tangent_u[TEXTURE_SPACE_MAX] = {
       float3{1, 0, 0}, float3{1, 0, 0}, float3{1, 0, 0}, float3{1, 0, 0}};
 
-  // The geometry tangent V vector(s) in object space.
+  /// The geometry tangent V vector(s) in object space.
   float3 geometry_tangent_v[TEXTURE_SPACE_MAX] = {
       float3{0, 1, 0}, float3{0, 1, 0}, float3{0, 1, 0}, float3{0, 1, 0}};
 
