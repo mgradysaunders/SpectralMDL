@@ -45,7 +45,7 @@ public:
 
   [[nodiscard]] bool isSMDLSyntax() const { return !srcKwSmdlSyntax.empty(); }
 
-  /// The source keyword `#smdl_syntax`. This may be empty!
+  /// The source keyword `#smdl`. This may be empty!
   std::string_view srcKwSmdlSyntax;
 
   /// The version. This may be nullopt!
