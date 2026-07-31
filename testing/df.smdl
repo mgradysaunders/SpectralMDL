@@ -307,7 +307,7 @@ unit_test "Bidirectional consistency" {
   checkBidirectionalConsistency(
     df::micrograin_layer(
       filling_factor: 0.3,
-      grain_diffuse_reflectance: color(0.6, 0.4, 0.2),
+      grain_diffuse_albedo: color(0.6, 0.4, 0.2),
       grain_ior: 1.6,
       base: df::diffuse_reflection_bsdf(tint: 0.5, roughness: 0.4),
     ),
@@ -316,7 +316,7 @@ unit_test "Bidirectional consistency" {
   checkBidirectionalConsistency(
     df::micrograin_layer(
       filling_factor: 0.4,
-      grain_diffuse_reflectance: 0.3,
+      grain_diffuse_albedo: 0.3,
       base: df::diffuse_transmission_bsdf(tint: 0.7),
     ),
     wo, wt,
@@ -788,6 +788,23 @@ unit_test "Micrograin retro-reflection" {
   #assert(#all(fRetro > fOff));
 }
 
+unit_test "Micrograin grazing brightening" {
+  // The signature dusty-layer behavior: toward grazing the visible grain
+  // fraction tends to 1 while the base is masked away, so a diffuse-grain
+  // layer on a black base must brighten -- never darken to a rim outline
+  // -- as the view goes to grazing [2024 paper Eqs. 21 and 25, Fig. 8].
+  const auto m = df::micrograin_layer(
+    filling_factor: 0.3,
+    grain_diffuse_albedo: 0.8,
+    grain_ior: 1.4,
+    base: bsdf());
+  const auto E0 = furnaceIntegral(m, math::normalize(float3(0.2, 0.1, 0.97)));
+  const auto E1 = furnaceIntegral(m, math::normalize(float3(0.85, 0.1, 0.15)));
+  #assert((0.0 < E0) & (E0 < 1.02));
+  #assert((0.0 < E1) & (E1 < 1.02));
+  #assert(E1 > 1.5 * E0);
+}
+
 unit_test "Micrograin layer" {
   const auto wo = math::normalize(float3(-0.3, 0.4, 0.8));
   const auto wi = math::normalize(float3(+0.5, 0.2, 0.9));
@@ -821,12 +838,16 @@ unit_test "Micrograin layer" {
   // diffuse-vs-specular selection chances are explored in proportion.
   checkScatterPDFIntegralStochastic(df::micrograin_layer(filling_factor: 0.3, base: baseD), wo, 1.0);
   checkScatterPDFIntegralStochastic(df::micrograin_layer(filling_factor: 0.7, beta_u: 2.0, grain_ior: 1.0152, grain_extinction: 6.6273, base: baseD), wo, 1.0);
-  checkScatterPDFIntegralStochastic(df::micrograin_layer(filling_factor: 0.5, beta_u: 0.5, grain_diffuse_reflectance: 0.6, base: baseD), woG, 1.0);
-  checkScatterPDFIntegralStochastic(df::micrograin_layer(filling_factor: 0.9, beta_u: 3.0, grain_diffuse_reflectance: color(0.5, 0.3, 0.1), grain_ior: 1.5, base: bsdf()), wo, 1.0);
+  checkScatterPDFIntegralStochastic(df::micrograin_layer(filling_factor: 0.5, beta_u: 0.5, grain_diffuse_albedo: 0.6, base: baseD), woG, 1.0);
+  checkScatterPDFIntegralStochastic(df::micrograin_layer(filling_factor: 0.9, beta_u: 3.0, grain_diffuse_albedo: color(0.5, 0.3, 0.1), grain_ior: 1.5, base: bsdf()), wo, 1.0);
   checkScatterPDFIntegralStochastic(df::micrograin_layer(filling_factor: 0.4, beta_u: 2.5, beta_v: 0.4, grain_ior: 1.0152, grain_extinction: 6.6273, base: baseD), woG, 1.0);
   // Anisotropic grains stay within the single-scattering energy bound.
   const auto EAniso = furnaceIntegral(df::micrograin_layer(filling_factor: 0.5, beta_u: 2.5, beta_v: 0.4, grain_ior: 1.0152, grain_extinction: 6.6273, base: bsdf()), wo);
   #assert((0.0 < EAniso) & (EAniso < 1.02));
+  // Unit-albedo diffuse grains at a grazing view are the worst case for
+  // the visible-grain-fraction weighting of the coupled diffuse term.
+  const auto EDiff = furnaceIntegral(df::micrograin_layer(filling_factor: 0.6, grain_diffuse_albedo: 1.0, grain_ior: 1.0, base: bsdf()), woG);
+  #assert((0.0 < EDiff) & (EDiff < 1.02));
 }
 
 unit_test "Fresnel-weighted specular delta dielectric" {
@@ -1029,14 +1050,3 @@ unit_test "Measured curve layer" {
     #assert(#all(r.pdf ~== |1e-5| math::lerp(rBase.pdf, rLayer.pdf, pWeight)));
   }
 }
-
-/*
-unit_test "Phase" {
-  auto wo = math::normalize(float3(-1.0, 0.0, 0.0));
-  auto wi = math::normalize(float3(+1.0, -0.0, 0.0));
-  auto mat = material(volume: material_volume(scattering: df::anisotropic_vdf(directional_bias: 0.5)));
-  auto instance = _MaterialInstance(&mat);
-  #print(df::_volumeScatterEvaluate(&instance, &wo, &wi), "\n");
-  #print(df::_volumeScatterEvaluate(&instance, &wo, &wo), "\n");
-}
- */

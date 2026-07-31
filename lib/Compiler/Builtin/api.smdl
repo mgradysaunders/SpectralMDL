@@ -549,6 +549,12 @@ export struct _MaterialInstance {
   int emission_modes = (int(ptr.surface.emission.mode) == int(intensity_power) ? 1 : 0) //
                        | (int(ptr.backface.emission.mode) == int(intensity_power) ? 2 : 0);
 
+  /// The random seed held by the `State` during construction, which seeds
+  /// the generator for stochastically evaluated BSDFs. The scattering
+  /// entry points are pure and take no `State`, so the seed must be
+  /// captured here at instance evaluation time.
+  int seed = $state.seed;
+
   /// The tangent-to-world matrix held by the `State` during construction.
   float3x3 tangent_to_world = let {
                                 const auto tangent_to_world_matrix = $state.object_to_world_matrix * $state.tangent_to_object_matrix;

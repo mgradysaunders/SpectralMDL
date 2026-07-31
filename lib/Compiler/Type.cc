@@ -1288,6 +1288,7 @@ static void verifyMaterialInstanceLayout(Context &context, Type *type,
       {"df_flags_surface", offsetof(Instance, df_flags_surface)},
       {"df_flags_backface", offsetof(Instance, df_flags_backface)},
       {"emission_modes", offsetof(Instance, emission_modes)},
+      {"seed", offsetof(Instance, seed)},
       {"tangent_to_world_space", offsetof(Instance, tangent_to_world_space)},
   };
   const auto numFields{sizeof(fields) / sizeof(fields[0])};
@@ -1885,6 +1886,7 @@ StateType::StateType(Context &context) {
   ADD_FIELD(tangent_to_object_matrix);
   ADD_FIELD(object_to_world_matrix);
   ADD_FIELD(transport);
+  ADD_FIELD(seed);
 #undef ADD_FIELD
   auto llvmTypes{llvm::SmallVector<llvm::Type *>{}};
   for (auto &field : mFields) {

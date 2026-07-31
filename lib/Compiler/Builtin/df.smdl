@@ -11,14 +11,24 @@
 #smdl
 
 using ::math import *;
-
+using ::extras::pcg32 import *;
 import ::tex::*;
 
-/// An arbitrary epsilon for stabilizing scattering calculations.
-const float EPSILON = 1e-6;
+/// The scatter mode, describing the hemispheres a BSDF scatters into.
+export enum scatter_mode {
+  scatter_none = 0x0,             ///< None
+  scatter_reflect = 0x1,          ///< Reflect (same hemisphere)
+  scatter_transmit = 0x2,         ///< Transmit (opposite hemisphere)
+  scatter_reflect_transmit = 0x3, ///< Reflect or transmit
+};
 
-/// An arbitrary chance for sampling diffusely in BSDFs with multiple-scattering.
-const float MULTISCATTER_DIFFUSE_CHANCE = 0.2;
+@(pure macro)
+float scatterReflectChance(const scatter_mode mode) {
+  const auto reflWeight(#select((int(mode) & 1) != 0, 1.0, 0.0));
+  const auto tranWeight(#select((int(mode) & 2) != 0, 1.0, 0.0));
+  // The `#max` guards `scatter_none`, which must yield 0 instead of 0/0.
+  return reflWeight / #max(reflWeight + tranWeight, 1.0);
+}
 
 const int DF_REFLECTION = (1 << 0);
 
@@ -30,26 +40,43 @@ const int DF_GLOSSY = (1 << 3);
 
 const int DF_SPECULAR = (1 << 4);
 
-@(pure macro)
-float3x3 orthonormalBasis(float3 z) {
-  z = normalize(z);
-  auto x = z.z < -0.9999            //
-           ? float3(0.0, -1.0, 0.0) //
-           : float3(-z.x / (z.z + 1.0) + 1.0, -z.y / (z.z + 1.0), -1.0);
-  x = normalize(x - dot(x, z) * z);
-  auto y = normalize(cross(z, x));
-  return float3x3(x, y, z);
-}
+// An arbitrary chance for sampling diffusely in BSDFs with multiple-scattering.
+const float MULTISCATTER_DIFFUSE_CHANCE = 0.2;
 
-/// Calculate the orthogonal right-handed tangent space from the
-/// given normal and tangent vectors.
-@(pure noinline)
-float3x3 calculateTangentSpace(const float3 normal, const float3 tangent_u) {
-  const auto tw(normalize(normal) * #sign(normal.z));
-  const auto tu(normalize(tangent_u - dot(tangent_u, tw) * tw));
-  const auto tv(normalize(cross(tw, tu)));
-  return float3x3(tu, tv, tw);
-}
+// The threshold on the average energy deficit `1 - E_avg` below which the
+// Kulla-Conty style multiple-scattering compensation lobes are dropped
+// outright: the lobe redistributes less than this fraction of the
+// reflected energy, and evaluating its `0 * 0 / 0` shape with a floored
+// denominator would only distort it.
+const float MULTISCATTER_MIN_DEFICIT = 1e-4;
+
+// The cosine threshold below which a direction is treated as lying
+// numerically in the surface plane. Configurations beyond this boundary
+// are culled outright: the value and every reported density zeroed
+// together through the `isBlack` convention. The threshold sits far 
+// above the roughly 1e-7 directional noise of normalized `float`
+// vectors, and the culled ring carries cosine-weighted throughput 
+// of order `MIN_COS_THETA` squared, about 1e-10 of the hemisphere.
+const float MIN_COS_THETA = 1e-5;
+
+// The floor for one-sample selection chances between live lobes. Clamping
+// a chance into `[MIN_CHANCE, 1 - MIN_CHANCE]` keeps the estimator unbiased
+// while putting a hard `1/MIN_CHANCE` bound on the throughput of rarely
+// selected lobes. The cost is bounded sampling waste on lobes whose true 
+// weight is below the floor.
+const float MIN_CHANCE = 0.01;
+
+// Clamp a one-sample selection chance between two lobes into
+// `[MIN_CHANCE, 1 - MIN_CHANCE]` when it is strictly interior, and
+// preserve the exact endpoints: a chance of exactly 0 or 1 arises from
+// structurally saturated parameters (zero or unit weight and curve),
+// where the unselected lobe carries no weight and the combinator must
+// degenerate to the selected lobe exactly. Callers whose unselected
+// lobe stays live at a saturated chance (the microfacet dielectric at
+// total internal reflection) must clamp the relevant endpoint
+// themselves.
+@(pure macro)
+auto clampChance(const auto chance) = #select((chance > 0.0) & (chance < 1.0), clamp(chance, MIN_CHANCE, 1.0 - MIN_CHANCE), saturate(chance));
 
 // Every user-facing IOR is the ABSOLUTE index of the denser medium. Plastic 
 // is 1.4, never 1/1.4. The exterior medium defaults to 1 and may be overridden
@@ -68,15 +95,12 @@ float3x3 calculateTangentSpace(const float3 normal, const float3 tangent_u) {
 // Every primitive in the `specular` namespace takes this relative incident
 // to transmitted ratio. A modifier BSDF that carries a user-facing absolute 
 // IOR must convert it with `relativeIOR()`; never invert by hand.
-
-/// The default absolute index of refraction, matching the default of
-/// `material.ior` in `api.smdl`.
 const float DEFAULT_IOR = 1.4;
 
-/// Convert a user-facing absolute IOR to the relative ratio oriented with
-/// the current frame of the given scatter parameters, honoring the backface
-/// reciprocation applied in the parameter `finalize` blocks and the
-/// exterior medium of the instance.
+// Convert a user-facing absolute IOR to the relative ratio oriented with
+// the current frame of the given scatter parameters, honoring the backface
+// reciprocation applied in the parameter `finalize` blocks and the
+// exterior medium of the instance.
 @(pure macro)
 auto relativeIOR(const auto params, const auto absoluteIOR) {
   if (params.hitBackface & !params.thin_walled) {
@@ -86,20 +110,25 @@ auto relativeIOR(const auto params, const auto absoluteIOR) {
   }
 }
 
-/// The scatter mode, describing the hemispheres a BSDF scatters into.
-export enum scatter_mode {
-  scatter_none = 0x0,             ///< None
-  scatter_reflect = 0x1,          ///< Reflect (same hemisphere)
-  scatter_transmit = 0x2,         ///< Transmit (opposite hemisphere)
-  scatter_reflect_transmit = 0x3, ///< Reflect or transmit
-};
-
 @(pure macro)
-float scatterReflectChance(const scatter_mode mode) {
-  const auto reflWeight(#select((int(mode) & 1) != 0, 1.0, 0.0));
-  const auto tranWeight(#select((int(mode) & 2) != 0, 1.0, 0.0));
-  // The `#max` guards `scatter_none`, which must yield 0 instead of 0/0.
-  return reflWeight / #max(reflWeight + tranWeight, 1.0);
+float3x3 orthonormalBasis(float3 z) {
+  z = normalize(z);
+  auto x = z.z < -0.9999            //
+           ? float3(0.0, -1.0, 0.0) //
+           : float3(-z.x / (z.z + 1.0) + 1.0, -z.y / (z.z + 1.0), -1.0);
+  x = normalize(x - dot(x, z) * z);
+  auto y = normalize(cross(z, x));
+  return float3x3(x, y, z);
+}
+
+// Calculate the orthogonal right-handed tangent space from the
+// given normal and tangent vectors.
+@(pure noinline)
+float3x3 calculateTangentSpace(const float3 normal, const float3 tangent_u) {
+  const auto tw(normalize(normal) * #sign(normal.z));
+  const auto tu(normalize(tangent_u - dot(tangent_u, tw) * tw));
+  const auto tv(normalize(cross(tw, tu)));
+  return float3x3(tu, tv, tw);
 }
 
 /// Declare libm `erf`
@@ -151,7 +180,7 @@ export int uniformWavelengthIndexSample(const &float xi) {
 @(pure)
 export float2 uniformDiskSample(float2 xi) {
   xi = 2 * xi - 1;
-  xi = #select(xi == 0, EPSILON, xi);
+  xi = #select(xi == 0, 1e-6, xi);
   const bool cond((absxi := #abs(xi), absxi.x > absxi.y));
   const float rad(#select(cond, xi.x, xi.y));
   const float phi(#select(cond, ($PI / 4) * xi.y / xi.x, ($PI / 2) - ($PI / 4) * xi.x / xi.y));
@@ -315,9 +344,24 @@ export auto conductorFresnel(const float cosThetai, const auto ior) {
 //--}
 
 //--{ scattering infrastructure
+/// Hash a direction pair into a `pcg32` stream selector. Symmetric under
+/// swapping the two directions and invariant under jointly negating them,
+/// so stochastic BSDF evaluations remain exactly reciprocal and agree
+/// across radiance and importance transport, while distinct direction
+/// pairs at the same shading point draw decorrelated streams.
+@(pure)
+int64_t directionPairHash(const float3 wa, const float3 wb) {
+  const auto ws(#abs(wa + wb));
+  return int64_t(ws.x * 2097152.0) ^ (int64_t(ws.y * 2097152.0) << 21) ^ (int64_t(ws.z * 2097152.0) << 42);
+}
+
 struct ScatterEvaluateParameters {
   /// Is transporting importance? i.e., tracing rays from lights to cameras?
   bool isImportance;
+
+  /// The pseudo-random number generator for stochastically evaluated BSDF
+  /// components, e.g., the diffuse micrograin term.
+  pcg32 rng = pcg32();
 
   /// The reference outgoing direction in the natural tangent space.
   float3 wo0;
@@ -527,7 +571,8 @@ auto ScatterEvaluateResultWithMultiscatter(
       return #min(1.0, lerp(lerp(ptr0[0], ptr0[1], t), lerp(ptr1[0], ptr1[1], t), s));
     };
     const float Eav = #min(1.0, lerp(lut.average_albedo[j], lut.average_albedo[j + 1], t));
-    const auto ms_f = cosThetai / $PI * (1 - Ewo) * (1 - Ewi) / (1 - Eav + 1e-6);
+    const auto msDeficit = 1 - Eav;
+    const auto ms_f = msDeficit > MULTISCATTER_MIN_DEFICIT ? cosThetai / $PI * (1 - Ewo) * (1 - Ewi) / msDeficit : 0.0;
     const auto ms_pdf = auto(cosThetai, cosThetao) / $PI;
     return ScatterEvaluateResult(f: this.tint * (f + this.multiscatter_tint * ms_f), pdf: lerp(pdf, ms_pdf, MULTISCATTER_DIFFUSE_CHANCE));
   }
@@ -709,7 +754,7 @@ float4 eonLTCCoeffs(const float mu, const float r) {
 @(pure macro)
 float2 azimuthFrame(const float3 w) {
   const float len(length(w.xy));
-  return len > EPSILON ? w.xy / len : float2(1, 0);
+  return len > 0.0 ? w.xy / len : float2(1, 0);
 }
 
 /// The density over `wi` of CLTC sampling for the EON model. Both
@@ -721,8 +766,8 @@ float eonCLTCPdf(const float3 wo, const float3 wi, const float r) {
   const float3 wiStd(e.x * wi.x + e.y * wi.y, -e.y * wi.x + e.x * wi.y, wi.z);
   const float3 wh(co.z * (wiStd.x - co.y * wiStd.z), (co.x - co.y * co.w) * wiStd.y, -co.z * (co.w * wiStd.x - co.x * wiStd.z));
   const float detM(co.z * (co.x - co.y * co.w));
-  const float len2(#sum(wh * wh));
-  return detM * detM / (len2 * len2 + EPSILON) * #max(wh.z, 0.0) / ($PI * 0.5 * (1 + 1 / #sqrt(1 + co.w * co.w)));
+  const float len4((len2 := #sum(wh * wh)) * len2);
+  return len4 > 0.0 ? detM * detM / len4 * #max(wh.z, 0.0) / ($PI * 0.5 * (1 + 1 / #sqrt(1 + co.w * co.w))) : 0.0;
 }
 
 /// Sample the CLTC lobe for the EON model. Returns the sampled incoming
@@ -786,6 +831,8 @@ export struct diffuse_reflection_bsdf: bsdf {
 auto scatterEvaluate(const &diffuse_reflection_bsdf this, inline const &ScatterEvaluateParameters params) {
   if (mode == scatter_reflect && recalculateTangentSpace(params)) {
     const auto cosTheta(#abs(auto(wi.z, wo.z)));
+    // Horizon cull: zero the value and the densities together.
+    return ScatterEvaluateResult(isBlack: true) if (!(#min_value(cosTheta) > MIN_COS_THETA));
     if (this.roughness == 0) {
       const auto pdf(cosTheta / $PI);
       auto result(ScatterEvaluateResult(f: this.tint * pdf[0], pdf: pdf));
@@ -796,15 +843,26 @@ auto scatterEvaluate(const &diffuse_reflection_bsdf this, inline const &ScatterE
       const float r(this.roughness);
       const float AF(1 / (1 + EON_CONSTANT1 * r));
       const float s(#sum(wo.xy * wi.xy));
-      const float sOverT(s > 0 ? s / (#max_value(cosTheta) + EPSILON) : s);
+      const float sOverT(s > 0 ? s / #max_value(cosTheta) : s);
       const float fSS(cosTheta[0] / $PI * AF * (1 + r * sOverT));
-      // The EON analytical multiple-scattering compensation lobe.
+      // The EON analytical multiple-scattering compensation lobe. The
+      // geometric series for the multiple-scattering albedo is only
+      // meaningful for single-scattering albedo at most 1, so the tint is
+      // saturated entering it, which bounds the series denominator below
+      // by `avgEF` with no epsilon. When the average deficit is below
+      // `MULTISCATTER_MIN_DEFICIT` (roughness under about 5e-4), the lobe
+      // carries less than that fraction of the energy and is dropped
+      // outright.
       const float EFo(eonDirectionalAlbedo(cosTheta[1], r));
       const float EFi(eonDirectionalAlbedo(cosTheta[0], r));
       const float avgEF(AF * (1 + EON_CONSTANT2 * r));
+      const float msDeficit(1 - avgEF);
       const auto rho(this.tint);
-      const auto rhoMS(rho * rho * avgEF / (1 - rho * (1 - avgEF) + EPSILON));
-      const float msShape(cosTheta[0] / $PI * #max(1 - EFo, EPSILON) * #max(1 - EFi, EPSILON) / #max(1 - avgEF, EPSILON));
+      const auto rhoS(#min(rho, 1.0));
+      const auto rhoMS(rhoS * rhoS * avgEF / (1 - rhoS * msDeficit));
+      const float msShape(msDeficit > MULTISCATTER_MIN_DEFICIT
+                          ? cosTheta[0] / $PI * #max(1 - EFo, 0.0) * #max(1 - EFi, 0.0) / msDeficit
+                          : 0.0);
       // The CLTC + uniform mixture densities, forward and reverse.
       const float2 chanceU(float2(eonUniformLobeChance(cosTheta[1], r), eonUniformLobeChance(cosTheta[0], r)));
       const float2 pdf(chanceU / $TWO_PI + (1 - chanceU) * float2(eonCLTCPdf(wo, wi, r), eonCLTCPdf(wi, wo, r)));
@@ -1464,15 +1522,32 @@ float3 sheenLTCFetch(const float roughness, const float mu) {
               lerp(SHEEN_LTC_TABLE[ri + 1][ci + 0], SHEEN_LTC_TABLE[ri + 1][ci + 1], colF), rowF);
 }
 
+/// The threshold on the inverse LTC transform coefficient `aInv` below
+/// which the sheen fit is treated as degenerate (the low-roughness table
+/// rows contain exact zeros). Sampling and the reported densities both
+/// fall back to cosine-hemisphere sampling below it, so the threshold
+/// must be shared exactly between `scatterEvaluate` and `scatterSample`.
+const float SHEEN_LTC_AINV_MIN = 1e-6;
+
+/// Evaluate the sheen LTC lobe shape: `sheenLTCEval` with its leading
+/// clamped-cosine factor divided back out exactly, for callers that apply
+/// a cosine of their own. The transformed length can only vanish together
+/// with the numerator (a degenerate zero-albedo fit), so the division is
+/// guarded by an exact branch rather than an epsilon.
+@(pure)
+float sheenLTCEvalShape(const float3 wiStd, const float aInv, const float bInv) {
+  const float3 wiOrig(float3(aInv * wiStd.x + bInv * wiStd.z, aInv * wiStd.y, wiStd.z));
+  const float len4((len2 := #sum(wiOrig * wiOrig)) * len2);
+  return len4 > 0.0 ? (1 / $PI) * (aInv * aInv) / len4 : 0.0;
+}
+
 /// Evaluate the sheen LTC lobe: the normalized density over `wiStd` given
 /// the coefficients fetched for the view direction, with `wiStd` rotated
 /// into the frame where the view lies in the xz-plane. Includes the cosine
 /// of the incoming direction by construction.
 @(pure)
 float sheenLTCEval(const float3 wiStd, const float aInv, const float bInv) {
-  const float3 wiOrig(float3(aInv * wiStd.x + bInv * wiStd.z, aInv * wiStd.y, wiStd.z));
-  const float len2(#sum(wiOrig * wiOrig));
-  return #max(wiOrig.z, 0.0) / $PI * (aInv * aInv) / (len2 * len2 + EPSILON);
+  return #max(wiStd.z, 0.0) * sheenLTCEvalShape(wiStd, aInv, bInv);
 }
 
 /// The sheen BSDF for fabric-like grazing highlights, using the
@@ -1532,13 +1607,18 @@ auto scatterEvaluate(const &sheen_bsdf this, inline const &ScatterEvaluateParame
     const float3 wiStd(eo.x * wi.x + eo.y * wi.y, -eo.y * wi.x + eo.x * wi.y, wi.z);
     const float3 woStd(ei.x * wo.x + ei.y * wo.y, -ei.y * wo.x + ei.x * wo.y, wo.z);
     const float DfromO(sheenLTCEval(wiStd, coO.x, coO.y));
-    const float DfromI(sheenLTCEval(woStd, coI.x, coI.y));
-    const float f(0.5 * (coO.z * DfromO + coI.z * DfromI * cosThetai / (cosThetao + EPSILON)));
+    // The lobe evaluated from the reverse view enters `f` with the
+    // reciprocity factor `cosThetai / cosThetao`, and its own evaluation
+    // carries a leading factor of exactly `cosThetao`, so the division
+    // cancels exactly: evaluate the shape without the cosine and apply
+    // `cosThetai` directly.
+    const float shapeFromI(sheenLTCEvalShape(woStd, coI.x, coI.y));
+    const float f(0.5 * (coO.z * DfromO + coI.z * cosThetai * shapeFromI));
     // The sampling densities match `scatterSample`: the LTC lobe of the
     // respective view, falling back to cosine sampling where the fit
     // degenerates at low roughness.
-    const float2 pdf(float2(coO.x > EPSILON ? DfromO : cosThetai / $PI,
-                            coI.x > EPSILON ? DfromI : cosThetao / $PI));
+    const float2 pdf(float2(coO.x > SHEEN_LTC_AINV_MIN ? DfromO : cosThetai / $PI,
+                            coI.x > SHEEN_LTC_AINV_MIN ? cosThetao * shapeFromI : cosThetao / $PI));
     if (#typeof(this.multiscatter_tint) == void || (#typeof(this.multiscatter_tint) == float && this.multiscatter_tint == 0.0)) {
       auto result(ScatterEvaluateResult(f: this.tint * f, pdf: pdf));
       result.f *= shadingNormalCorrection if (isImportance);
@@ -1551,7 +1631,10 @@ auto scatterEvaluate(const &sheen_bsdf this, inline const &ScatterEvaluateParame
       const int ri(#min(int(rowF), 30));
       rowF -= ri;
       const float avgR(lerp(SHEEN_LTC_AVERAGE_R[ri], SHEEN_LTC_AVERAGE_R[ri + 1], rowF));
-      const auto msF(cosThetai / $PI * #max(1 - coO.z, 0.0) * #max(1 - coI.z, 0.0) / #max(1 - avgR, 1e-4));
+      // The cosine-averaged albedo tops out at about 0.447 in the table,
+      // so the energy deficit is bounded well away from zero and the
+      // division needs no floor.
+      const auto msF(cosThetai / $PI * #max(1 - coO.z, 0.0) * #max(1 - coI.z, 0.0) / (1 - avgR));
       const auto msPdf(float2(cosThetai, cosThetao) / $PI);
       auto result(ScatterEvaluateResult(
         f: this.tint * (f + this.multiscatter_tint * msF),
@@ -1571,7 +1654,7 @@ auto scatterSample(const &sheen_bsdf this, inline const &ScatterSampleParameters
       return *result;
     }
     const auto co(sheenLTCFetch(this.roughness, wo.z));
-    if (co.x > EPSILON) {
+    if (co.x > SHEEN_LTC_AINV_MIN) {
       // Perfect importance sampling of the LTC lobe: draw from the clamped
       // cosine and apply the (inverse of the) inverse transform.
       const float3 wiOrig(monte_carlo::cosineHemisphereSample(xi.xy));
@@ -1588,6 +1671,13 @@ auto scatterSample(const &sheen_bsdf this, inline const &ScatterSampleParameters
 //--}
 
 //--{ ward_geisler_moroder_bsdf
+/// The floor on the squared roughness of `ward_geisler_moroder_bsdf`.
+/// The Ward Gaussian has no cancelled closed forms that stay conditioned
+/// at microfacet-scale roughness, so its floor is much larger than
+/// `MIN_ALPHA`, and must be shared exactly between `scatterEvaluate` and
+/// `scatterSample`.
+const float WARD_MIN_ALPHA = 0.001;
+
 /// The anisotropic glossy reflection of the Ward BSDF in the
 /// bounded-albedo Geisler-Moroder variant.
 export struct ward_geisler_moroder_bsdf: bsdf {
@@ -1643,9 +1733,15 @@ auto scatterEvaluate(const &ward_geisler_moroder_bsdf this, inline const &Scatte
   if (mode == scatter_reflect && recalculateTangentSpace(params)) {
     const auto cosThetao(#abs(wo.z));
     const auto cosThetai(#abs(wi.z));
+    // Horizon cull. This one is load-bearing: at double-grazing retro
+    // configurations the half-vector height underflows, `h.z^4` rounds
+    // to zero, and the Gaussian times the reciprocal becomes `0 * inf`,
+    // i.e., NaN in both the value and the densities. The cull bounds
+    // `h.z` at `2 * MIN_COS_THETA`, which keeps the denominator normal.
+    return ScatterEvaluateResult(isBlack: true) if (!((cosThetao > MIN_COS_THETA) & (cosThetai > MIN_COS_THETA)));
     const auto roughness(this.roughness_u, this.roughness_v);
     const auto roughness0(#sqrt(#prod(roughness)));
-    const auto alpha(#max(0.001, roughness * roughness));
+    const auto alpha(#max(WARD_MIN_ALPHA, roughness * roughness));
     const auto f0(#sum((h := wo + wi) * h) / ($PI * alpha.x * alpha.y * #pow(h.z, 4)) * #exp(-#sum((g := h.xy / (h.z * alpha)) * g)));
     const auto f(f0 * cosThetai);
     const auto pdf(float2(f0 * (cosThetao + cosThetai) / 2));
@@ -1668,7 +1764,7 @@ auto scatterSample(const &ward_geisler_moroder_bsdf this, inline const &ScatterS
     } else {
       // Sample specular.
       const auto roughness(this.roughness_u, this.roughness_v);
-      const auto alpha(#max(0.001, roughness * roughness));
+      const auto alpha(#max(WARD_MIN_ALPHA, roughness * roughness));
       const auto phi(#atan2(alpha.y * #sin(t := $TWO_PI * xi.x), alpha.x * #cos(t)));
       const auto cosPhi(#cos(phi));
       const auto sinPhi(#sin(phi));
@@ -1702,7 +1798,7 @@ export struct DistributionBeckmann: Distribution {};
 /// The Smith Lambda function for the GGX distribution.
 @(pure macro)
 export float smithLambda(const DistributionGGX this [[anno::unused()]], const float m) {
-  return 0.5 * (#sign(m) * #sqrt(1 + 1 / (m * m + EPSILON))) - 0.5;
+  return 1 / (2 * m * (#sqrt(m * m + 1) + m));
 }
 
 /// The Smith Lambda function for the Beckmann distribution.
@@ -1731,7 +1827,7 @@ export float2 smithVisibleSlopeSample(
   const float xi1, ///< A canonical random number in `[0,1]`
   float cosThetao, ///< The outgoing zenith angle cosine
 ) {
-  return #sqrt(xi0 / (1 - xi0 + EPSILON)) * float2(#cos(phi := $TWO_PI * xi1), #sin(phi)) if (cosThetao > 1 - EPSILON);
+  return #sqrt(xi0 / (1 - xi0 + 1e-6)) * float2(#cos(phi := $TWO_PI * xi1), #sin(phi)) if (cosThetao > 1 - 1e-6);
   cosThetao = #max(cosThetao, -0.9999);
   const auto mx = return_from {
     const auto sinThetao(#sqrt(1 - cosThetao * cosThetao));
@@ -1759,9 +1855,9 @@ export float2 smithVisibleSlopeSample(
   float xi1,       ///< A canonical random number in `[0,1]`
   float cosThetao, ///< The outgoing zenith angle cosine
 ) {
-  return #sqrt(-#log(1 - xi0 + EPSILON)) * float2(#cos((phi := $TWO_PI * xi1)), #sin(phi)) if (cosThetao > 1 - EPSILON);
-  xi0 = #max(xi0, EPSILON);
-  xi1 = #max(xi1, EPSILON);
+  return #sqrt(-#log(1 - xi0 + 1e-6)) * float2(#cos((phi := $TWO_PI * xi1)), #sin(phi)) if (cosThetao > 1 - 1e-6);
+  xi0 = #max(xi0, 1e-6);
+  xi1 = #max(xi1, 1e-6);
   // Implementation follows PBRT-v3
   const float invSqrtPi = 1 / #sqrt($PI);
   const float thetao = #acos(cosThetao);
@@ -1790,11 +1886,49 @@ export float2 smithVisibleSlopeSample(
          );
 }
 
-/// The Smith normal PDF, being the slope PDF mapped onto normals for the
-/// given squared roughness `alpha`.
+/// The Smith normal PDF for the GGX distribution with squared roughness
+/// `alpha`. Because `alpha <= 1` the sum in the denominator is at least 
+/// 1 for unit `wm`, so the division is unconditionally well-behaved: no 
+/// epsilon, and the correct nonzero density survives all the way to 
+/// horizon-grazing normals, where the slope-space form degrades.
 @(pure macro)
-export float smithNormalPDF(const Distribution this [[anno::unused()]], const float2 alpha, const float3 wm) {
-  return wm.z > 0.0 ? smithSlopePDF(this, -wm.xy / (wm.z * alpha + EPSILON)) / (alpha.x * alpha.y * #pow(wm.z, 4) + EPSILON) : 0.0;
+export float smithNormalPDF(const DistributionGGX this [[anno::unused()]], const float2 alpha, const float3 wm) {
+  return wm.z > 0.0 ? 1 / ($PI * alpha.x * alpha.y * #pow(#sum((m := wm.xy / alpha) * m) + wm.z * wm.z, 2)) : 0.0;
+}
+
+/// The Smith normal PDF for the Beckmann distribution with squared
+/// roughness `alpha`, being the slope PDF mapped onto normals. The
+/// Gaussian vanishes faster than the `cos^4` pole grows, so once the
+/// squared slope is large enough to underflow the exponential the density
+/// is zero outright; in the surviving region `wm.z` is bounded well away
+/// from zero and the division needs no guard.
+@(pure macro)
+export float smithNormalPDF(const DistributionBeckmann this [[anno::unused()]], const float2 alpha, const float3 wm) {
+  return 0.0 if (!(wm.z > 0.0));
+  const float m2(#sum((m := wm.xy / alpha) * m) / (wm.z * wm.z));
+  return m2 < 87.0 ? #exp(-m2) / ($PI * alpha.x * alpha.y * #pow(wm.z, 4)) : 0.0;
+}
+
+/// The Smith projected area `(1 + Lambda) cos(theta)` of the direction
+/// `w` for the GGX distribution, in the exact cancelled form that reaches 
+/// the correct finite grazing limit.
+@(pure macro)
+export float smithProjectedArea(const DistributionGGX this [[anno::unused()]], const float2 alpha, const float3 w) {
+  const float cosTheta(#abs(w.z));
+  return 0.5 * (cosTheta + length(float3(alpha * w.xy, cosTheta)));
+}
+
+/// The Smith projected area `(1 + Lambda) cos(theta)` of the direction
+/// `w` for the Beckmann distribution, expanded so the lateral term is
+/// scaled by `t = |alpha w.xy|` rather than divided by `cos(theta)`,
+/// which reaches the correct finite grazing limit.
+@(pure macro)
+export float smithProjectedArea(const DistributionBeckmann this [[anno::unused()]], const float2 alpha, const float3 w) {
+  const float cosTheta(#abs(w.z));
+  const float t(length(alpha * w.xy));
+  return cosTheta if (!(t > 0.0));
+  const float m(cosTheta / t);
+  return cosTheta * (1 - 0.5 * float(erfc(m))) + t * #exp(-m * m) * (0.5 / #sqrt($PI));
 }
 
 /// The Smith visible normal sampling function.
@@ -1891,7 +2025,7 @@ export float3 blinnNormalSample(
   } else {
     blinnNormalFirstQuadrantSample(4 * (1 - xi0), xi1, e, &phi, &cosTheta), phi = $TWO_PI - phi;
   }
-  return float3(#sqrt(1 - cosTheta * cosTheta + EPSILON) * float2(#cos(phi), #sin(phi)), cosTheta);
+  return float3(#sqrt(#max(1 - cosTheta * cosTheta, 0.0)) * float2(#cos(phi), #sin(phi)), cosTheta);
 }
 
 /// The tag to identify microfacet shadowing functions.
@@ -1912,6 +2046,21 @@ export double beta(const double x, const double y) = #exp(lgamma(x) + lgamma(y) 
 
 } // namespace microfacet
 
+/// The floor on the squared roughness `alpha` of `microfacet_bsdf`, an
+/// effective roughness floor of 1e-3. Exactly zero roughness is handled
+/// by `makeMicrofacetBSDF` degenerating to `specular_bsdf`; anything in
+/// between is clamped here, once, at construction, so that no downstream
+/// expression needs an epsilon of its own.
+const float MIN_ALPHA = 1e-6;
+
+/// The cap on the Blinn exponent `2 / alpha^2`, reached at roughness
+/// about 0.03. Beyond it `pow(cos, e)` cannot resolve the lobe against
+/// the spacing of float cosines near 1, so sharper Blinn lobes render
+/// identically (and should degenerate to `specular_bsdf` instead). The
+/// cap must be shared exactly between `scatterEvaluate` and the normal
+/// sampling in `scatterSample`.
+const float MAX_BLINN_EXPONENT = 2.0e6;
+
 struct microfacet_bsdf: bsdf {
   /// The roughness in `[0,1]^2`.
   const float2 roughness;
@@ -1919,14 +2068,14 @@ struct microfacet_bsdf: bsdf {
   /// The geometric mean roughness.
   const float roughness0 = #sqrt(#prod(roughness));
 
-  /// The roughness squared in `[EPSILON,1]^2`.
+  /// The roughness squared in `[MIN_ALPHA,1]^2`.
   ///
   /// NOTE: This is the effective roughness parameter that is actually
   /// used in microfacet equations. It is squared for perceptual linearity,
   /// meaning that adjusting the `roughness` parameter more closely tracks
   /// qualitative changes in the apparent roughness of the BSDF.
   ///
-  const float2 alpha = clamp(roughness * roughness, EPSILON, 1.0);
+  const float2 alpha = clamp(roughness * roughness, MIN_ALPHA, 1.0);
 
   /// The tint.
   $(color | float) tint;
@@ -1970,6 +2119,10 @@ auto scatterEvaluate(const &microfacet_bsdf this, inline const &ScatterEvaluateP
   }
   const auto cosThetao(#abs(wo.z));
   const auto cosThetai(#abs(wi.z));
+  // Horizon cull: below the threshold the `1/cos` factors are dominated
+  // by the directional noise of normalized vectors (and can overflow),
+  // so zero the result and the densities together.
+  return ScatterEvaluateResult(isBlack: true) if (!((cosThetao > MIN_COS_THETA) & (cosThetai > MIN_COS_THETA)));
   const auto wm(halfDirection(params));
   const auto dotWoWm(#sum(wo * wm));
   const auto dotWiWm(#sum(wi * wm));
@@ -1987,22 +2140,37 @@ auto scatterEvaluate(const &microfacet_bsdf this, inline const &ScatterEvaluateP
   float2 pdfWeight = float2(1.0);
   if (this.mode == scatter_reflect_transmit) {
     const auto F(specular::dielectricFresnel(dotWoWm, ior));
-    const auto Fo(specular::dielectricFresnel(cosThetao, ior));
-    const auto Fi(specular::dielectricFresnel(cosThetai, effectiveMode == scatter_reflect ? ior : 1 / ior));
+    // The PDF weights are the (clamped) sampling selection chances; the
+    // physical weight `F` at the half vector stays exact. Unlike the
+    // layer combinators, the unit endpoint is clamped as well: the
+    // Fresnel term saturates to exactly 1 at total internal reflection
+    // while microfacet refraction remains feasible, so the transmit lobe
+    // must keep a live density. See MIN_CHANCE.
+    const auto Fo(#min(clampChance(specular::dielectricFresnel(cosThetao, ior)), 1.0 - MIN_CHANCE));
+    const auto Fi(#min(clampChance(specular::dielectricFresnel(cosThetai, effectiveMode == scatter_reflect ? ior : 1 / ior)), 1.0 - MIN_CHANCE));
     const bool complement(thinTransmit | (effectiveMode == scatter_transmit));
     fWeight = complement ? 1 - F : F;
     pdfWeight = complement ? 1 - float2(Fo, Fi) : float2(Fo, Fi);
   }
   if $(this.distribution <: microfacet::DistributionBlinn) {
-    const auto e(2 / (this.alpha * this.alpha + EPSILON));
-    const auto D(#pow(wm.z, (e.x * wm.x * wm.x + e.y * wm.y * wm.y) / (1 - wm.z * wm.z + EPSILON)) / $TWO_PI);
+    const auto e(#min(2 / (this.alpha * this.alpha), MAX_BLINN_EXPONENT));
+    // The exponent denominator `1 - wm.z^2` is exactly `|wm.xy|^2` for
+    // unit `wm`, which is better conditioned near the pole; the pole
+    // itself is the removable `0/0` limit `wm.z^e -> 1`.
+    const auto sin2Theta(#sum(wm.xy * wm.xy));
+    const auto D((sin2Theta > 0.0 ? #pow(wm.z, (e.x * wm.x * wm.x + e.y * wm.y * wm.y) / sin2Theta) : 1.0) / $TWO_PI);
     const auto norm1(#sqrt(#prod(1 + e)));
     const auto norm2(#sqrt(#prod(2 + e)));
     const auto G(#min(1, 2 * wm.z * #min(#abs(cosThetao / dotWoWm), //
                                          #abs(cosThetai / dotWiWm))));
     if (effectiveMode == scatter_reflect) {
-      const auto pdf(norm1 * D / (4 * float2(dotWoWm, dotWiWm) + EPSILON));
-      const auto f(norm2 * D * G / (4 * cosThetao + EPSILON));
+      // Reflection requires the outgoing and incoming directions above the
+      // microsurface normal; rounding at double-grazing configurations can
+      // produce nonpositive projections, which would flip the sign of the
+      // densities below rather than merely inflate them.
+      return ScatterEvaluateResult(isBlack: true) if (!((dotWoWm > 0) & (dotWiWm > 0)));
+      const auto pdf(norm1 * D / (4 * float2(dotWoWm, dotWiWm)));
+      const auto f(norm2 * D * G / (4 * cosThetao));
       auto result(ScatterEvaluateResultWithMultiscatter(this, f, pdf, cosThetao, cosThetai, this.roughness0, "simple_glossy_bsdf"));
       result.f *= shadingNormalCorrection if (isImportance);
       result.f *= fWeight;
@@ -2016,7 +2184,7 @@ auto scatterEvaluate(const &microfacet_bsdf this, inline const &ScatterEvaluateP
       const auto jac(float2(specular::refractionHalfVectorJacobian(wo, wi, ior), //
                             specular::refractionHalfVectorJacobian(wi, wo, 1 / ior)));
       const auto pdf(norm1 * D * jac);
-      const auto f(norm2 * D * G * jac[0] * dotWoWm / (cosThetao + EPSILON));
+      const auto f(norm2 * D * G * jac[0] * dotWoWm / cosThetao);
       auto result(ScatterEvaluateResult(f: this.tint * f, pdf: pdf));
       result.f *= shadingNormalCorrection if (isImportance);
       // The `ior * ior` accounts for the solid-angle compression of refracted radiance,
@@ -2028,15 +2196,20 @@ auto scatterEvaluate(const &microfacet_bsdf this, inline const &ScatterEvaluateP
     }
   } else {
     const auto D(microfacet::smithNormalPDF(this.distribution, this.alpha, wm));
-    const auto lambdao(microfacet::smithLambda(this.distribution, cosThetao / length(this.alpha * wo.xy)));
-    const auto lambdai(microfacet::smithLambda(this.distribution, cosThetai / length(this.alpha * wi.xy)));
-    const auto projAreao((1 + lambdao) * cosThetao);
-    const auto projAreai((1 + lambdai) * cosThetai);
+    const auto projAreao(microfacet::smithProjectedArea(this.distribution, this.alpha, wo));
+    const auto projAreai(microfacet::smithProjectedArea(this.distribution, this.alpha, wi));
     const auto G = return_from {
       if $(this.shadowing <: microfacet::ShadowingSmith) {
-        return effectiveMode == scatter_reflect     //
-               ? float(1 / (1 + lambdao + lambdai)) //
-               : float(microfacet::beta(1 + lambdao, 1 + lambdai));
+        const auto lambdao(microfacet::smithLambda(this.distribution, cosThetao / length(this.alpha * wo.xy)));
+        const auto lambdai(microfacet::smithLambda(this.distribution, cosThetai / length(this.alpha * wi.xy)));
+        if (effectiveMode == scatter_reflect) {
+          return float(1 / (1 + lambdao + lambdai));
+        } else {
+          // Lambda overflows to infinity for directions numerically at
+          // the horizon, where the shadowing correctly vanishes but
+          // `beta` must not be handed the infinities.
+          return isfinite(lambdao + lambdai) ? float(microfacet::beta(1 + lambdao, 1 + lambdai)) : 0.0;
+        }
       } else {
         // V-cavities
         return #min(1, 2 * wm.z * #min(#abs(cosThetao / dotWoWm), //
@@ -2045,7 +2218,7 @@ auto scatterEvaluate(const &microfacet_bsdf this, inline const &ScatterEvaluateP
     };
     if (effectiveMode == scatter_reflect) {
       const auto lutName(this.distribution <: microfacet::DistributionGGX ? "microfacet_ggx_smith_bsdf" : "microfacet_beckmann_smith_bsdf");
-      auto pdf(D / (4 * float2(projAreao, projAreai) + EPSILON));
+      auto pdf(D / (4 * float2(projAreao, projAreai)));
       if $(this.distribution <: microfacet::DistributionGGX) {
         // Bounded VNDF sampling (Eto and Tokuyoshi 2023): for reflection-only
         // GGX lobes, `scatterSample` draws visible normals from a tightened
@@ -2053,12 +2226,15 @@ auto scatterEvaluate(const &microfacet_bsdf this, inline const &ScatterEvaluateP
         // GGX identity `4 * (1 + lambda) * cosTheta = 2 * (cosTheta + t)`
         // folds the bound `k` into the projected-area denominators.
         if (this.mode == scatter_reflect) {
+          // With the closed-form projected area this denominator is
+          // exactly `2 (|(alpha xy, cos)| + k cos) > 0`, so it needs no
+          // epsilon.
           const float2 k(float2(microfacet::ggxBoundedCapFactor(this.alpha, wo),
                                 microfacet::ggxBoundedCapFactor(this.alpha, wi)));
-          pdf = D / (4 * float2(projAreao, projAreai) + 2 * (k - 1) * float2(cosThetao, cosThetai) + EPSILON);
+          pdf = D / (4 * float2(projAreao, projAreai) + 2 * (k - 1) * float2(cosThetao, cosThetai));
         }
       }
-      const auto f(D * G / (4 * cosThetao + EPSILON));
+      const auto f(D * G / (4 * cosThetao));
       auto result(ScatterEvaluateResultWithMultiscatter(this, f, pdf, cosThetao, cosThetai, this.roughness0, lutName));
       result.f *= shadingNormalCorrection if (isImportance);
       result.f *= fWeight;
@@ -2068,8 +2244,8 @@ auto scatterEvaluate(const &microfacet_bsdf this, inline const &ScatterEvaluateP
       return ScatterEvaluateResult(isBlack: true) if (!((dotWoWm > 0) & (dotWiWm < 0)));
       const auto jac(float2(specular::refractionHalfVectorJacobian(wo, wi, ior), //
                             specular::refractionHalfVectorJacobian(wi, wo, 1 / ior)));
-      const auto pdf(D * jac * float2(dotWoWm, -dotWiWm) / (float2(projAreao, projAreai) + EPSILON));
-      const auto f(D * G * jac[0] * dotWoWm / (cosThetao + EPSILON));
+      const auto pdf(D * jac * float2(dotWoWm, -dotWiWm) / float2(projAreao, projAreai));
+      const auto f(D * G * jac[0] * dotWoWm / cosThetao);
       auto result(ScatterEvaluateResult(f: this.tint * f, pdf: pdf));
       result.f *= shadingNormalCorrection if (isImportance);
       // The `ior * ior` accounts for the solid-angle compression of refracted radiance,
@@ -2097,10 +2273,12 @@ auto scatterSample(const &microfacet_bsdf this, inline const &ScatterSampleParam
   // macro normal -- deliberately independent of the sampled microsurface
   // normal so that the selection chance matches the PDF weights reported by
   // `scatterEvaluate` exactly, for the specular and multiscatter components
-  // alike. Total internal reflection drives the chance to 1, so no samples
-  // are wasted on impossible refractions. Single modes are deterministic.
-  const auto reflectChance(this.mode == scatter_reflect_transmit          //
-                           ? specular::dielectricFresnel(#abs(wo.z), ior) //
+  // alike. The chance is clamped into the defensive `MIN_CHANCE` bounds,
+  // matching the clamped PDF weights, so that neither lobe's throughput
+  // ratio is unbounded near unit relative IOR or total internal
+  // reflection. Single modes are deterministic.
+  const auto reflectChance(this.mode == scatter_reflect_transmit                                            //
+                           ? #min(clampChance(specular::dielectricFresnel(#abs(wo.z), ior)), 1.0 - MIN_CHANCE) //
                            : scatterReflectChance(this.mode));
   const auto mode(monte_carlo::boolSample(&xi.z, reflectChance) ? scatter_reflect : scatter_transmit);
   if (mode == scatter_reflect || thin_walled) {
@@ -2116,7 +2294,7 @@ auto scatterSample(const &microfacet_bsdf this, inline const &ScatterSampleParam
   // sampling routine.
   const auto wm = return_from {
     if $(this.distribution <: microfacet::DistributionBlinn) {
-      return microfacet::blinnNormalSample(xi.x, xi.y, 2 / (this.alpha * this.alpha + EPSILON));
+      return microfacet::blinnNormalSample(xi.x, xi.y, #min(2 / (this.alpha * this.alpha), MAX_BLINN_EXPONENT));
     } else {
       if $(this.distribution <: microfacet::DistributionGGX) {
         // Bounded VNDF sampling (Eto and Tokuyoshi 2023), valid because a
@@ -2192,18 +2370,14 @@ export auto microfacet_beckmann_vcavities_bsdf(*) = makeMicrofacetBSDF(distribut
 
 //--{ micrograin
 // NOTE: This is non-standard!
-//
+
 // The micrograin BSDF for porous and dusty layers, implementing "A
 // Fully-correlated Anisotropic Micrograin BSDF Model" by Lucas, Ribardiere,
-// Pacanowski, and Barla, ACM Transactions on Graphics 43(4), 2024, with the
-// closed-form coupled-diffuse approximation of their SIGGRAPH Asia 2023
-// paper for the diffuse micrograin component. Equation references below are
-// to the 2024 paper. The microsurface is a random distribution of opaque
-// half-ellipsoidal micrograins resting on an arbitrary base BSDF: light
-// either scatters at the micrograin surface -- a generalized
-// Trowbridge-Reitz lobe with a geometrical attenuation factor derived from
-// exact spherical-cap shadow areas -- or reaches the base BSDF through the
-// visible pores between micrograins.
+// Pacanowski, and Barla, ACM Transactions on Graphics 43(4), 2024. The
+// diffuse micrograin component is the visibility integral of Eq. 21, which
+// has no closed form: following the paper, it is estimated stochastically
+// (one NDF-distributed normal per evaluation, drawn from the seeded
+// generator on the parameter struct).
 export namespace micrograin {
 
 /// Clamp the filling factor away from the degenerate limits of the
@@ -2213,11 +2387,10 @@ export float clampFillingFactor(const float tau0) = clamp(tau0, 1.0e-4, 0.999);
 
 /// The micrograin Normal Distribution Function for filling factor `tau0`
 /// and lateral inverse-stretching `beta`, a generalization of the
-/// anisotropic Trowbridge-Reitz (GGX) distribution [Eqs. 10-12].
-/// Normalized such that the cosine-weighted hemisphere integral is 1.
+/// anisotropic Trowbridge-Reitz (GGX) distribution.
 @(pure)
 export float normalPDF(const float tau0, const float2 beta, const float3 wm) {
-  return 0.0 if (!(wm.z > EPSILON));
+  return 0.0 if (!(wm.z > MIN_COS_THETA));
   const float cosTheta2(wm.z * wm.z);
   const float t2((wm.x * wm.x / (beta.x * beta.x) + wm.y * wm.y / (beta.y * beta.y)) / cosTheta2);
   return -#log(1 - tau0) * #pow(1 - tau0, t2 / (1 + t2)) / (tau0 * $PI * (1 + t2) * (1 + t2) * beta.x * beta.y * cosTheta2 * cosTheta2);
@@ -2230,21 +2403,21 @@ export float3 normalSample(const float tau0, const float2 beta, const float xi0,
   const float phi($TWO_PI * xi1);
   const float2 e(normalize(float2(beta.x * #cos(phi), beta.y * #sin(phi))));
   const float g(e.x * e.x / (beta.x * beta.x) + e.y * e.y / (beta.y * beta.y));
-  const float lnXi(#log(1 - saturate(xi0) * tau0));
-  const float tan2(-lnXi / ((lnXi - #log(1 - tau0)) * g + EPSILON));
-  const float cosTheta(1 / #sqrt(1 + tan2));
+  const float num(1 - saturate(xi0) * tau0);
+  const float den(#log(num / (1 - tau0)) * g);
+  const float cosTheta(den > 0.0 ? 1 / #sqrt(1 + (-#log(num) / den)) : 0.0);
   return float3(#sqrt(#max(1 - cosTheta * cosTheta, 0.0)) * e, cosTheta);
 }
 
 /// The area of the shadow cast by a unit spherical micrograin onto the
-/// plane at height `h`, from the direction with zenith cosine `cosThetai`
-/// [Appendix A]. Zero when the spherical cap above `h` is fully visible,
-/// i.e., when `tan(thetam) * tan(thetai) <= 1` with `cos(thetam) = h`.
+/// plane at height `h`, from the direction with zenith cosine `cosThetai`.
+/// Zero when the spherical cap above `h` is fully visible, i.e., when
+/// `tan(thetam) * tan(thetai) <= 1` with `cos(thetam) = h`.
 @(pure)
 export float shadowArea(float cosThetai, const float h) {
   const float cosThetam(saturate(h));
   const float sinThetam(#sqrt(#max(1 - cosThetam * cosThetam, 0.0)));
-  cosThetai = clamp(cosThetai, EPSILON, 1.0);
+  cosThetai = clamp(cosThetai, MIN_COS_THETA, 1.0);
   const float sinThetai(#sqrt(#max(1 - cosThetai * cosThetai, 0.0)));
   return 0.0 if (!(sinThetam * sinThetai > cosThetam * cosThetai));
   const float cosPhiq(-(cosThetam * cosThetai) / (sinThetam * sinThetai));
@@ -2257,7 +2430,7 @@ export float shadowArea(float cosThetai, const float h) {
 }
 
 /// Transform a direction into the space where micrograins are unit
-/// spheres [Sec. 4.2].
+/// spheres.
 @(pure macro)
 export float3 betaTransform(const float2 beta, const float3 w) = normalize(float3(beta * w.xy, w.z));
 
@@ -2267,10 +2440,9 @@ export float3 betaTransform(const float2 beta, const float3 w) = normalize(float
 export float3 betaTransformNormal(const float2 beta, const float3 wm) = normalize(float3(wm.xy / beta, wm.z));
 
 /// The area of the overlap between the shadows cast by a unit spherical
-/// micrograin above height `h` from two directions [after Appendix B],
-/// which accounts for the directional correlation responsible for
-/// retro-reflection on porous layers. Directions are in the transformed
-/// space of `betaTransform`.
+/// micrograin above height `h` from two directions, which accounts for 
+/// the directional correlation responsible for retro-reflection on porous 
+/// layers. Directions are in the transformed space of `betaTransform`.
 ///
 /// Each shadow crescent is star-shaped about the cap center: along the ray
 /// at a given azimuth it spans from the cap circle out to its shadow
@@ -2327,8 +2499,8 @@ export float shadowOverlapArea(const float3 wiT, const float3 woT, const float h
       const float ao2(woT.z * woT.z * duo * duo + (crosso := ddo.x * u.y - ddo.y * u.x) * crosso);
       const float bi(-2 * wiT.z * dui * wiT.z * exi);
       const float bo(-2 * woT.z * duo * woT.z * exo);
-      const float ri((-bi + #sqrt(#max(bi * bi - 4 * ai2 * ci, 0.0))) / (2 * ai2 + EPSILON));
-      const float ro((-bo + #sqrt(#max(bo * bo - 4 * ao2 * co, 0.0))) / (2 * ao2 + EPSILON));
+      const float ri((-bi + #sqrt(#max(bi * bi - 4 * ai2 * ci, 0.0))) / (2 * ai2 + 1e-6));
+      const float ro((-bo + #sqrt(#max(bo * bo - 4 * ao2 * co, 0.0))) / (2 * ao2 + 1e-6));
       const float r(#min(ri, ro));
       acc += #max(r * r - rc2, 0.0);
     }
@@ -2337,7 +2509,7 @@ export float shadowOverlapArea(const float3 wiT, const float3 woT, const float h
   return #min(total, sigmasMin);
 }
 
-/// The distant term of the fully-correlated bidirectional GAF [Eq. 19],
+/// The distant term of the fully-correlated bidirectional GAF,
 /// taking directions and the microfacet height already in the transformed
 /// space of `betaTransform`.
 @(pure)
@@ -2345,16 +2517,15 @@ export float distantGAF(const float tau0, const float3 wiT, const float3 woT, co
   return #exp(#log(1 - tau0) / $PI * (shadowArea(wiT.z, hT) + shadowArea(woT.z, hT) - shadowOverlapArea(wiT, woT, hT)));
 }
 
-/// The unidirectional distant GAF at pore level, which has the simple
-/// closed form of Appendix C.
+/// The unidirectional distant GAF at pore level.
 @(pure macro)
 export float distantGAF1AtSurface(const float tau0, const float cosThetaT) {
-  return #pow(1 - tau0, 0.5 * (1 / #max(cosThetaT, EPSILON) - 1));
+  return #pow(1 - tau0, 0.5 * (1 / #max(cosThetaT, 0.0) - 1));
 }
 
 /// The chance that a light path from the direction with the given
 /// transformed zenith cosine reaches the base surface through visible
-/// pores, used to importance-sample the base component [Eq. 26].
+/// pores, used to importance-sample the base component.
 @(pure)
 export float baseChance(const float tau0, const float cosThetaT) {
   const float g((1 - tau0) * distantGAF1AtSurface(tau0, cosThetaT));
@@ -2393,7 +2564,7 @@ export struct micrograin_layer: bsdf {
   float beta_v = beta_u;
 
   /// The diffuse albedo of the micrograin material.
-  $(color | float) grain_diffuse_reflectance = 0.0;
+  $(color | float) grain_diffuse_albedo = 0.0;
 
   /// The absolute index of refraction of the micrograin material.
   $(color | float) grain_ior = 1.5;
@@ -2403,19 +2574,22 @@ export struct micrograin_layer: bsdf {
   /// `::models::metal_ior`, for metallic dust.
   $(?(color | float)) grain_extinction = none;
 
-  /// The tangent direction for orienting anisotropic micrograins.
-  float3 tangent_u = $state.texture_tangent_u[0];
-
   /// The base BSDF visible through the pores.
   bsdf base = bsdf();
+
+  /// The normal to use for the layer.
+  float3 normal = $state.normal;
+
+  /// The tangent direction for orienting anisotropic micrograins.
+  float3 tangent_u = $state.texture_tangent_u[0];
 
   /// The flags.
   const int df_flags = DF_REFLECTION | DF_GLOSSY | base.df_flags;
 
   finalize {
     filling_factor = micrograin::clampFillingFactor(filling_factor);
-    beta_u = #max(beta_u, EPSILON);
-    beta_v = #max(beta_v, EPSILON);
+    beta_u = #max(beta_u, 1e-5);
+    beta_v = #max(beta_v, 1e-5);
     tangent_u = normalize(tangent_u);
   }
 };
@@ -2434,13 +2608,18 @@ auto micrograinFresnel(const auto this, const auto params, const float cosTheta)
 @(macro)
 auto scatterEvaluate(const &micrograin_layer this, inline const &ScatterEvaluateParameters params) {
   const auto resultBase(scatterEvaluate(visit &this.base, params));
-  preserve wo, wi, tangent_u;
+  preserve wo, wi, tangent_u, normal;
   tangent_u = this.tangent_u;
+  normal = this.normal;
   return resultBase if (!recalculateTangentSpace(params));
   const float tau0(this.filling_factor);
-  const float2 beta(float2(this.beta_u, this.beta_v));
+  const float2 beta(this.beta_u, this.beta_v);
   const float cosThetao(#abs(wo.z));
   const float cosThetai(#abs(wi.z));
+  // Horizon cull: the distant GAF drives every component to zero at
+  // grazing anyway, so zero the value and the densities together before
+  // the `1/cos` factors below lose meaning.
+  return ScatterEvaluateResult(isBlack: true) if (!((cosThetao > MIN_COS_THETA) & (cosThetai > MIN_COS_THETA)));
   const auto woT(micrograin::betaTransform(beta, float3(wo.xy, cosThetao)));
   const auto wiT(micrograin::betaTransform(beta, float3(wi.xy, cosThetai)));
   // Pore visibility weighting the base component [Eq. 23 / App. C].
@@ -2455,17 +2634,42 @@ auto scatterEvaluate(const &micrograin_layer this, inline const &ScatterEvaluate
     const float D(micrograin::normalPDF(tau0, beta, wm));
     const float hT(micrograin::betaTransformNormal(beta, wm).z);
     const float Gdist(micrograin::distantGAF(tau0, wiT, woT, hT));
-    // Coupled diffuse + specular micrograin components [Eq. 22, with the
-    // 2023 closed-form coupled-diffuse approximation].
-    const auto Kd(this.grain_diffuse_reflectance);
-    auto fGrain(tau0 * (cosThetai / $PI * Kd * (1 - Fo) * (1 - Fi) + D * Gdist * Fh / (4 * cosThetao + EPSILON)));
+    // Specular micrograin component [Eq. 22] plus the diffuse visibility
+    // integral [Eq. 21], which has no closed form. By default it is
+    // estimated stochastically with a single micrograin normal drawn
+    // proportional to `D(m) m.z` from the parameter generator, as the
+    // paper itself evaluates it: the estimate is unbiased, and because
+    // the generator stream depends only on the seed and the symmetric
+    // direction-pair hash -- never on the order or transport sense of the
+    // directions -- the evaluation remains exactly reciprocal. The
+    // foreshortening and per-normal GAF concentrate the response in the
+    // visible, doubly-lit part of the grain, which brightens toward
+    // grazing as pores close up, instead of a flat Lambertian wash.
+    const auto Kd(this.grain_diffuse_albedo);
+    auto fDiffuse((1 - Fh) * (1 - Fh) * Kd * 0.0);
+    if (average(Kd) > 0) {
+      const auto uD(generate_float2(&rng));
+      const auto wmD(micrograin::normalSample(tau0, beta, uD.x, uD.y));
+      const float dotWoWmD(#sum(wo * wmD));
+      const float dotWiWmD(#sum(wi * wmD));
+      if ((dotWoWmD > 0.0) & (dotWiWmD > 0.0)) {
+        const float GD(micrograin::distantGAF(tau0, wiT, woT, micrograin::betaTransformNormal(beta, wmD).z));
+        fDiffuse = tau0 * Kd / $PI * (dotWoWmD * dotWiWmD / wmD.z * GD) *
+                   ((1 - micrograinFresnel(this, params, dotWoWmD)) * (1 - micrograinFresnel(this, params, dotWiWmD))) / cosThetao;
+      }
+    }
+    auto fGrain(fDiffuse + tau0 * D * Gdist * Fh / (4 * cosThetao));
     fGrain *= shadingNormalCorrection if (isImportance);
     // Sampling densities: base through pores, else diffuse-or-specular
-    // micrograin by the relative albedo chance [Eqs. 26-27].
+    // micrograin by the relative albedo chance [Eqs. 26-27]. The chance
+    // is an exact guarded branch so it stays identical to the selection
+    // chance in `scatterSample`, and the half-vector Jacobian division
+    // is guarded against the rounding corner where the projection of a
+    // valid half vector collapses to zero.
     const float avgKd(average(Kd));
     const float2 avgF(average(Fo), average(Fi));
-    const float2 pDiffuse(avgKd / (avgKd + avgF + EPSILON));
-    const float pdfSpec(D * wm.z / (4 * dotWoWm + EPSILON));
+    const float2 pDiffuse(#select((t := avgKd + avgF) > 0.0, avgKd / t, float2(0.0)));
+    const float pdfSpec(dotWoWm > 0.0 ? D * wm.z / (4 * dotWoWm) : 0.0);
     const float2 pdfGrain(pDiffuse * float2(cosThetai, cosThetao) / $PI + (1 - pDiffuse) * pdfSpec);
     return ScatterEvaluateResult(
              f: fGrain + Vp * resultBase.f,
@@ -2479,8 +2683,9 @@ auto scatterEvaluate(const &micrograin_layer this, inline const &ScatterEvaluate
 
 @(macro)
 auto scatterSample(const &micrograin_layer this, inline const &ScatterSampleParameters params) {
-  preserve tangent_u;
+  preserve tangent_u, normal;
   tangent_u = this.tangent_u;
+  normal = this.normal;
   const auto tbn(recalculateTangentSpace(params));
   return ScatterSampleResult() if (!tbn);
   const float tau0(this.filling_factor);
@@ -2490,7 +2695,11 @@ auto scatterSample(const &micrograin_layer this, inline const &ScatterSamplePara
     auto result(scatterSample(visit &this.base, params));
     if (result.fDelta) {
       // Reweight sampled delta lobes by pore visibility over the
-      // selection chance, mirroring `custom_curve_layer`.
+      // selection chance, mirroring `custom_curve_layer`. The ratio is
+      // intrinsically bounded: the bidirectional GAF is at most the
+      // unidirectional pore visibility that defines `chanceBase`, so the
+      // quotient never exceeds `tau0 + g`, i.e., never exceeds 1, and no
+      // defensive chance floor is needed.
       const auto wiLocal(result.wi * (*tbn));
       const auto woT(micrograin::betaTransform(beta, float3(wo.xy, #abs(wo.z))));
       const auto wiT(micrograin::betaTransform(beta, float3(wiLocal.xy, #abs(wiLocal.z))));
@@ -2499,8 +2708,10 @@ auto scatterSample(const &micrograin_layer this, inline const &ScatterSamplePara
     return result;
   } else {
     const float avgF(average(micrograinFresnel(this, params, #abs(wo.z))));
-    const float avgKd(average(this.grain_diffuse_reflectance));
-    const float chanceDiffuse(avgKd / (avgKd + avgF + EPSILON));
+    const float avgKd(average(this.grain_diffuse_albedo));
+    // The exact guarded branch matches the `pDiffuse` weights reported
+    // by `scatterEvaluate`.
+    const float chanceDiffuse((t := avgKd + avgF) > 0.0 ? avgKd / t : 0.0);
     if (monte_carlo::boolSample(&xi.w, chanceDiffuse)) {
       return ScatterSampleResult(wi: (*tbn) * monte_carlo::cosineHemisphereSample(xi.xy), mode: scatter_reflect);
     } else {
@@ -2928,24 +3139,19 @@ export struct spot_edf: edf {
   void handle = "";
 
   /// The precomputed cosine of the cone half angle.
-  const float _cosSpread = #cos(0.5 * #min(#max(spread, EPSILON), $PI));
+  const float _cosSpread = #cos(0.5 * #min(#max(spread, 1e-6), $PI));
 
   /// The precomputed normalization such that the cosine-weighted integral
   /// over the cone is 1, i.e., with `c0 = _cosSpread` and `k = exponent`,
   /// the integral of `((x - c0)/(1 - c0))^k x 2 pi dx` over `x` in `[c0, 1]`.
-  ///
-  /// NOTE: This must clamp `exponent` itself because field initializers run
-  /// before the `finalize` block.
-  ///
-  const float _normalization = let {
-                                 const float k = #max(exponent, 0.0);
-                               } in 2.0 * $PI * (1.0 - _cosSpread) * (_cosSpread / (k + 1.0) + (1.0 - _cosSpread) / (k + 2.0));
+  float _normalization = 0.0;
 
   /// The flags.
   static const int df_flags = DF_GLOSSY;
 
   finalize {
     exponent = #max(exponent, 0.0);
+    _normalization = 2.0 * $PI * (1.0 - _cosSpread) * (_cosSpread / (exponent + 1.0) + (1.0 - _cosSpread) / (exponent + 2.0));
   }
 };
 
@@ -3236,9 +3442,16 @@ auto scatterSample(const &weighted_layer this, inline const &ScatterSampleParame
   if (monte_carlo::boolSample(&xi.w, this.chance)) {
     preserve normal;
     normal = this.normal;
-    return scatterSample(visit &this.layer, params);
+    auto result(scatterSample(visit &this.layer, params));
+    // Delta lobes fold their weight into `fDelta`, and the scalar
+    // selection chance cannot represent a color weight, so reweight by
+    // the exact ratio (identically 1 for float weights).
+    *result.fDelta *= this.weight / this.chance if (result.fDelta);
+    return result;
   } else {
-    return scatterSample(visit &this.base, params);
+    auto result(scatterSample(visit &this.base, params));
+    *result.fDelta *= (1 - this.weight) / (1 - this.chance) if (result.fDelta);
+    return result;
   }
 }
 
@@ -3265,6 +3478,11 @@ export struct thin_film: bsdf {
   /// The flags.
   const int df_flags = base.df_flags;
 };
+
+/// The maximum amplification `thinFilmFactor` may apply to the base BSDF,
+/// bounding the model singularity on nearly index-matched substrates. See
+/// the note at the end of `thinFilmFactor`.
+const float THIN_FILM_FACTOR_MAX = 100.0;
 
 /// Evaluate the thin-film interference factor.
 ///
@@ -3307,7 +3525,17 @@ auto thinFilmFactor(const auto thickness, const auto filmIOR, const float baseIO
   const auto rs13((cosTheta1 - eta3 * cosTheta3) / (cosTheta1 + eta3 * cosTheta3));
   const auto rp13((eta3 * cosTheta1 - cosTheta3) / (eta3 * cosTheta1 + cosTheta3));
   const float R13(0.5 * (rs13 * rs13 + rp13 * rp13));
-  return R13 > EPSILON ? 0.5 * (Rs + Rp) / R13 : color(1.0);
+  // The ratio has a genuine singularity as the ambient-to-base contrast
+  // vanishes: a film on a nearly index-matched substrate reflects where
+  // the bare interface does not, which a multiplicative modulation of the
+  // base cannot express. When the base BSDF carries the matching Fresnel
+  // the large ratio is exactly right and cancels, but on a base without
+  // one it multiplies `f` unboundedly with no compensating density, so
+  // cap the amplification at a documented maximum. Ordinary
+  // configurations sit far below the cap and stay exact, including
+  // antireflective (below 1) factors, and zero thickness still yields
+  // exactly 1 because the Airy identity makes the ratio itself 1.
+  return R13 > 0.0 ? #min(0.5 * (Rs + Rp) / R13, THIN_FILM_FACTOR_MAX) : color(1.0);
 }
 
 /// The film IOR relative to the incident medium. The user-facing film IOR is
@@ -3594,19 +3822,26 @@ export struct fresnel_layer: bsdf {
   const float _averageIOR = average(ior);
 
   /// The precomputed average weight.
-  const float _averageWeight = average(weight);
+  float _averageWeight = 1.0;
 
   /// The flags.
   const int df_flags = layer.df_flags | base.df_flags;
+
+  finalize {
+    // The specification restricts the weight to [0,1]; enforcing it here
+    // keeps the lerped values and densities nonnegative.
+    weight = saturate(weight);
+    _averageWeight = average(weight);
+  }
 };
 
 @(macro)
 auto scatterEvaluate(const &fresnel_layer this, inline const &ScatterEvaluateParameters params) {
   const auto cosThetao(dot(wo, this.normal) * #sign(this.normal.z));
   const auto cosThetai(dot(wi, this.normal) * #sign(this.normal.z));
-  if ((cosThetao < EPSILON)                                 //
-      | ((mode == scatter_reflect) & (cosThetai < EPSILON)) //
-      | ((mode == scatter_transmit) & (cosThetai > -EPSILON)))
+  if ((cosThetao < MIN_COS_THETA)                                 //
+      | ((mode == scatter_reflect) & (cosThetai < MIN_COS_THETA)) //
+      | ((mode == scatter_transmit) & (cosThetai > -MIN_COS_THETA)))
     return ScatterEvaluateResult(isBlack: true);
   const auto result0(scatterEvaluate(visit &this.base, params));
   // Evaluate the layer with this layer's interface, and keep the interface
@@ -3632,10 +3867,10 @@ auto scatterEvaluate(const &fresnel_layer this, inline const &ScatterEvaluatePar
              pdf: lerp(
                result0.pdf,
                result1.pdf,
-               this._averageWeight * float2(
+               clampChance(this._averageWeight * float2(
                  specular::dielectricFresnel(cosThetao, pdfIOR),
                  specular::dielectricFresnel(cosThetai, mode == scatter_reflect ? pdfIOR : 1 / pdfIOR),
-               ),
+               )),
              ),
            );
   }
@@ -3644,13 +3879,13 @@ auto scatterEvaluate(const &fresnel_layer this, inline const &ScatterEvaluatePar
 @(macro)
 auto scatterSample(const &fresnel_layer this, inline const &ScatterSampleParameters params) {
   const auto cosTheta(dot(wo, this.normal) * #sign(this.normal.z));
-  if (cosTheta < EPSILON)
+  if (cosTheta < MIN_COS_THETA)
     return ScatterSampleResult();
   // The selection chance uses the exact dielectric Fresnel term at the
   // averaged IOR, so that it stays proportional to the layer weight even at
   // total internal reflection, where a Schlick approximation would
   // drastically undersample the layer.
-  const auto chance(this._averageWeight * specular::dielectricFresnel(cosTheta, relativeIOR(params, this._averageIOR)));
+  const auto chance(clampChance(this._averageWeight * specular::dielectricFresnel(cosTheta, relativeIOR(params, this._averageIOR))));
   if (monte_carlo::boolSample(&xi.z, chance)) {
     preserve normal, ior;
     normal = this.normal, ior = relativeIOR(params, this._averageIOR);
@@ -3699,25 +3934,37 @@ export struct custom_curve_layer: bsdf {
   float3 normal = $state.normal;
 
   /// The precomputed average normal reflectivity.
-  const float _averageNormalReflectivity = average(normal_reflectivity);
+  float _averageNormalReflectivity = 0.0;
 
   /// The precomputed average grazing reflectivity.
-  const float _averageGrazingReflectivity = average(grazing_reflectivity);
+  float _averageGrazingReflectivity = 0.0;
 
   /// The precomputed average weight.
-  const float _averageWeight = average(weight);
+  float _averageWeight = 1.0;
 
   /// The flags.
   const int df_flags = layer.df_flags | base.df_flags;
+
+  finalize {
+    // The specification restricts the reflectivities and the weight to
+    // [0,1]; enforcing it here keeps the lerped values and densities
+    // nonnegative.
+    normal_reflectivity = saturate(normal_reflectivity);
+    grazing_reflectivity = saturate(grazing_reflectivity);
+    weight = saturate(weight);
+    _averageNormalReflectivity = average(normal_reflectivity);
+    _averageGrazingReflectivity = average(grazing_reflectivity);
+    _averageWeight = average(weight);
+  }
 };
 
 @(macro)
 auto scatterEvaluate(const &custom_curve_layer this, inline const &ScatterEvaluateParameters params) {
   const auto cosThetao(dot(wo, this.normal) * #sign(this.normal.z));
   const auto cosThetai(dot(wi, this.normal) * #sign(this.normal.z));
-  if ((cosThetao < EPSILON)                                 //
-      | ((mode == scatter_reflect) & (cosThetai < EPSILON)) //
-      | ((mode == scatter_transmit) & (cosThetai > -EPSILON)))
+  if ((cosThetao < MIN_COS_THETA)                                 //
+      | ((mode == scatter_reflect) & (cosThetai < MIN_COS_THETA)) //
+      | ((mode == scatter_transmit) & (cosThetai > -MIN_COS_THETA)))
     return ScatterEvaluateResult(isBlack: true);
   const auto result0(scatterEvaluate(visit &this.base, params));
   const auto result1 = return_from {
@@ -3737,7 +3984,7 @@ auto scatterEvaluate(const &custom_curve_layer this, inline const &ScatterEvalua
              pdf: lerp(
                result0.pdf,
                result1.pdf,
-               this._averageWeight * specular::schlickFresnel(float2(cosThetao, cosThetai), this._averageNormalReflectivity, this._averageGrazingReflectivity, this.exponent),
+               clampChance(this._averageWeight * specular::schlickFresnel(float2(cosThetao, cosThetai), this._averageNormalReflectivity, this._averageGrazingReflectivity, this.exponent)),
              ),
            );
   }
@@ -3746,9 +3993,9 @@ auto scatterEvaluate(const &custom_curve_layer this, inline const &ScatterEvalua
 @(macro)
 auto scatterSample(const &custom_curve_layer this, inline const &ScatterSampleParameters params) {
   const auto cosTheta(dot(wo, this.normal) * #sign(this.normal.z));
-  if (cosTheta < EPSILON)
+  if (cosTheta < MIN_COS_THETA)
     return ScatterSampleResult();
-  const auto chance(this._averageWeight * specular::schlickFresnel(cosTheta, this._averageNormalReflectivity, this._averageGrazingReflectivity, this.exponent));
+  const auto chance(clampChance(this._averageWeight * specular::schlickFresnel(cosTheta, this._averageNormalReflectivity, this._averageGrazingReflectivity, this.exponent)));
   if (monte_carlo::boolSample(&xi.z, chance)) {
     preserve normal;
     normal = this.normal;
@@ -3796,19 +4043,27 @@ export struct measured_curve_layer: bsdf {
   float3 normal = $state.normal;
 
   /// The precomputed average weight.
-  const float _averageWeight = average(weight);
+  float _averageWeight = 1.0;
 
   /// The flags.
   const int df_flags = layer.df_flags | base.df_flags;
+
+  finalize {
+    // The specification restricts the weight to [0,1]; enforcing it here
+    // keeps the lerped values and densities nonnegative. (The curve
+    // values are saturated at lookup by `evaluateMeasuredCurve`.)
+    weight = saturate(weight);
+    _averageWeight = average(weight);
+  }
 };
 
 @(macro)
 auto scatterEvaluate(const &measured_curve_layer this, inline const &ScatterEvaluateParameters params) {
   const auto cosThetao(dot(wo, this.normal) * #sign(this.normal.z));
   const auto cosThetai(dot(wi, this.normal) * #sign(this.normal.z));
-  if ((cosThetao < EPSILON)                                 //
-      | ((mode == scatter_reflect) & (cosThetai < EPSILON)) //
-      | ((mode == scatter_transmit) & (cosThetai > -EPSILON)))
+  if ((cosThetao < MIN_COS_THETA)                                 //
+      | ((mode == scatter_reflect) & (cosThetai < MIN_COS_THETA)) //
+      | ((mode == scatter_transmit) & (cosThetai > -MIN_COS_THETA)))
     return ScatterEvaluateResult(isBlack: true);
   const auto result0(scatterEvaluate(visit &this.base, params));
   const auto result1 = return_from {
@@ -3828,10 +4083,10 @@ auto scatterEvaluate(const &measured_curve_layer this, inline const &ScatterEval
              pdf: lerp(
                result0.pdf,
                result1.pdf,
-               this._averageWeight * float2(
+               clampChance(this._averageWeight * float2(
                  average(evaluateMeasuredCurve(this.curve_values, cosThetao)),
                  average(evaluateMeasuredCurve(this.curve_values, cosThetai)),
-               ),
+               )),
              ),
            );
   }
@@ -3840,9 +4095,9 @@ auto scatterEvaluate(const &measured_curve_layer this, inline const &ScatterEval
 @(macro)
 auto scatterSample(const &measured_curve_layer this, inline const &ScatterSampleParameters params) {
   const auto cosTheta(dot(wo, this.normal) * #sign(this.normal.z));
-  if (cosTheta < EPSILON)
+  if (cosTheta < MIN_COS_THETA)
     return ScatterSampleResult();
-  const auto chance(this._averageWeight * average(evaluateMeasuredCurve(this.curve_values, cosTheta)));
+  const auto chance(clampChance(this._averageWeight * average(evaluateMeasuredCurve(this.curve_values, cosTheta))));
   if (monte_carlo::boolSample(&xi.z, chance)) {
     preserve normal;
     normal = this.normal;
@@ -3976,11 +4231,16 @@ auto scatterEvaluate(const &component_mix this, const &ScatterEvaluateParameters
   auto result(ScatterEvaluateResult(f: color(0), isBlack: true));
   for (int i = 0; i < #num(this.components); i++) {
     visit component in this.components[i] { // In general this is a union!
-      auto component_result(scatterEvaluate(visit &component.component, params));
-      if (!component_result.isBlack) {
-        result.pdf += component.chance * component_result.pdf;
-        result.f += component.weight * component_result.f;
-        result.isBlack = false;
+      // A component with zero weight and zero chance must not clear
+      // `isBlack`: reporting a live result whose value and densities are
+      // all zero invites `0/0` in the renderer's throughput division.
+      if ((component.weight > 0.0) | (component.chance > 0.0)) {
+        auto component_result(scatterEvaluate(visit &component.component, params));
+        if (!component_result.isBlack) {
+          result.pdf += component.chance * component_result.pdf;
+          result.f += component.weight * component_result.f;
+          result.isBlack = false;
+        }
       }
     }
   }
@@ -3997,8 +4257,11 @@ auto scatterSample(const &component_mix this, const &ScatterSampleParameters par
       } else {
         *xi /= component.chance;
         auto result(scatterSample(visit &component.component, params));
+        // Delta lobes report unit PDFs, so the discrete selection chance
+        // must be divided out here, exactly as the layer combinators
+        // divide their delta reweights by the selection chance.
         if ((result.mode != scatter_none) & bool(result.fDelta))
-          *result.fDelta *= component.weight;
+          *result.fDelta *= component.weight / component.chance;
         return result;
       }
     }
@@ -4011,11 +4274,15 @@ auto emissionEvaluate(const &component_mix this, const &EmissionEvaluateParamete
   auto result(EmissionEvaluateResult(f: color(0), isBlack: true));
   for (int i = 0; i < #num(this.components); i++) {
     visit component in this.components[i] { // In general this is a union!
-      auto component_result(emissionEvaluate(visit &component.component, params));
-      if (!component_result.isBlack) {
-        result.pdf += component.chance * component_result.pdf;
-        result.f += component.weight * component_result.f;
-        result.isBlack = false;
+      // See the matching note in `scatterEvaluate`: zero-weight
+      // zero-chance components must not clear `isBlack`.
+      if ((component.weight > 0.0) | (component.chance > 0.0)) {
+        auto component_result(emissionEvaluate(visit &component.component, params));
+        if (!component_result.isBlack) {
+          result.pdf += component.chance * component_result.pdf;
+          result.f += component.weight * component_result.f;
+          result.isBlack = false;
+        }
       }
     }
   }
@@ -4088,12 +4355,15 @@ export int _scatterEvaluate(
   const &float pdfRev,   ///< output: The PDF of sampling `wo` from `wi`
   const &float f,        ///< output: The scattering function
 ) {
+  const auto wo0(normalize((*woWorld) * instance.tangent_to_world));
+  const auto wi0(normalize((*wiWorld) * instance.tangent_to_world));
   auto params = ScatterEvaluateParameters(
     isImportance: (instance.flags & 1) != 0,
+    rng: pcg32(instance.seed, directionPairHash(wo0, wi0)),
     ior: instance.exterior_ior / instance.ior,
     exterior_ior: instance.exterior_ior,
-    wo0: normalize((*woWorld) * instance.tangent_to_world),
-    wi0: normalize((*wiWorld) * instance.tangent_to_world),
+    wo0: wo0,
+    wi0: wi0,
     normal: normalize(instance.geometry.normal),
     thin_walled: instance.ptr.thin_walled,
   );

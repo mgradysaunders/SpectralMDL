@@ -212,6 +212,11 @@ public:
     /// `intensity_radiant_exitance`), and bit 1 likewise for the `backface`.
     int emission_modes{};
 
+    /// The random seed captured from `State::seed` when constructing the
+    /// instance, which seeds the generator for stochastically evaluated
+    /// BSDFs.
+    int seed{};
+
     /// The tangent-to-world space matrix present when constructing the
     /// instance.
     float3x3 tangent_to_world_space{};

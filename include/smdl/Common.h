@@ -321,6 +321,16 @@ public:
   /// - `TRANSPORT_IMPORTANCE` means tracing paths from lights to cameras.
   ///
   Transport transport{TRANSPORT_RADIANCE};
+
+  /// The per-evaluation random seed.
+  ///
+  /// \note
+  /// This seeds the generator used by stochastically evaluated BSDFs,
+  /// e.g., the diffuse component of `df::micrograin_layer`. Such
+  /// evaluations are unbiased in expectation; renderers should vary the
+  /// seed per path vertex (or per pixel sample) to decorrelate them.
+  /// Leaving it constant keeps evaluations deterministic.
+  int seed{};
 };
 
 /// An albedo look-up table (LUT) for energy compensation in lossy BSDFs.

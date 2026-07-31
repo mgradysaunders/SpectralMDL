@@ -188,6 +188,10 @@ uint64_t random_walk(smdl::Compiler &compiler, const Scene &scene,
     }
 
     hit.apply_geometry_to_state(state);
+    // Reseed the stochastic-evaluation generator at every vertex, so
+    // stochastically evaluated BSDFs decorrelate across bounces, samples,
+    // and pixels while staying deterministic for a given sampler state.
+    state.seed = int(float(sampler) * 0x1p24f);
     auto materialInstance{smdl::JIT::MaterialInstance(state, hit.material)};
     materialInstance.setExteriorIOR(
         ExteriorIOR(medium, materialInstance, -ray.dir));
