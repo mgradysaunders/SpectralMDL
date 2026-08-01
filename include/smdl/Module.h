@@ -177,6 +177,14 @@ public:
                                       : std::string_view(mResourceDirectory);
   }
 
+  /// Get the search directories declared by `#search_dir` at the top of
+  /// the file, expanded and canonicalized after `parse()` succeeds. These
+  /// take priority over the search directories of the `FileLocator` when
+  /// locating resources referenced by this module.
+  [[nodiscard]] const std::vector<std::string> &getSearchDirs() const noexcept {
+    return mSearchDirs;
+  }
+
   /// Get the source code.
   [[nodiscard]] std::string_view getSourceCode() const noexcept {
     return mSourceCode;
@@ -211,6 +219,10 @@ public:
   void reset() noexcept;
 
 private:
+  /// Compute `mSearchDirs` from the `#search_dir` declarations in the
+  /// parsed AST. Called by `parse()`.
+  void computeSearchDirs();
+
   /// Is extracted from an archive?
   bool mIsExtractedFromArchive{};
 
@@ -235,6 +247,10 @@ private:
   /// The resource anchor directory if it differs from the directory of
   /// `mFileName`. See `getResourceAnchor()`.
   std::string mResourceDirectory{};
+
+  /// The expanded canonical `#search_dir` directories, populated by
+  /// `parse()`. See `getSearchDirs()`.
+  std::vector<std::string> mSearchDirs{};
 
   /// The source code.
   std::string mSourceCode{};

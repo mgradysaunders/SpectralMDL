@@ -666,7 +666,11 @@ auto Parser::parseLiteralExpression() -> BumpPtr<AST::Expr> {
     skip();
     auto srcLoc0{mSrcLoc};
     if (next("#")) {
-      if (!nextWord()) srcLoc0.throwError("expected intrinsic name after '#'");
+      auto word{nextWord()};
+      if (!word) srcLoc0.throwError("expected intrinsic name after '#'");
+      if (*word == "search_dir")
+        srcLoc0.throwError("'#search_dir' is only allowed at the top of the "
+                           "file immediately after '#smdl'");
       return allocate<AST::Intrinsic>(
           srcLoc0, std::in_place,
           getSourceCode().substr(srcLoc0.i, mSrcLoc.i - srcLoc0.i));
@@ -925,6 +929,7 @@ auto Parser::parseFile() -> BumpPtr<AST::File> {
   auto srcLoc0{mSrcLoc};
   auto srcKwSmdlSyntax{nextKeyword("#smdl")};
   if (srcKwSmdlSyntax) mIsSMDL = true;
+  auto searchDirs{parseFileSearchDirs()};
   auto version{parseFileVersion()};
   if (!version && !mIsSMDL) srcLoc0.throwError("expected MDL version");
   auto importDecls{std::vector<BumpPtr<AST::Decl>>{}};
@@ -958,14 +963,38 @@ auto Parser::parseFile() -> BumpPtr<AST::File> {
     skip();
     if (isEOF()) break;
   }
-  if (!isEOF()) mSrcLoc.throwError("unexpected token, expected a declaration");
+  if (!isEOF()) {
+    if (startsWith(getRemainingSourceCode(), "#search_dir"))
+      mSrcLoc.throwError("'#search_dir' is only allowed at the top of the "
+                         "file immediately after '#smdl'");
+    mSrcLoc.throwError("unexpected token, expected a declaration");
+  }
   auto file{allocate<AST::File>(
-      srcLoc0, std::in_place, orEmpty(srcKwSmdlSyntax), std::move(version),
-      std::move(importDecls), orEmpty(srcKwModule),
+      srcLoc0, std::in_place, orEmpty(srcKwSmdlSyntax), std::move(searchDirs),
+      std::move(version), std::move(importDecls), orEmpty(srcKwModule),
       std::move(moduleAnnotations), orEmpty(srcSemicolonAfterModule),
       std::move(globalDecls))};
   file->srcDocComment = srcDocComment;
   return file;
+}
+
+auto Parser::parseFileSearchDirs() -> std::vector<AST::File::SearchDir> {
+  auto searchDirs{std::vector<AST::File::SearchDir>{}};
+  while (true) {
+    skip();
+    auto srcLoc0{mSrcLoc};
+    auto srcKwSearchDir{nextKeyword("#search_dir")};
+    if (!srcKwSearchDir) break;
+    if (!mIsSMDL)
+      srcLoc0.throwError("'#search_dir' requires the file to begin with "
+                         "'#smdl'");
+    auto path{parseLiteralStringExpression()};
+    if (!path)
+      srcLoc0.throwError("expected literal string path after '#search_dir'");
+    searchDirs.push_back(
+        AST::File::SearchDir{*srcKwSearchDir, std::move(path)});
+  }
+  return searchDirs;
 }
 
 auto Parser::parseFileVersion() -> std::optional<AST::File::Version> {

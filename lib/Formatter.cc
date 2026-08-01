@@ -308,6 +308,9 @@ void Formatter::write(const AST::File &file) {
   if (file.isSMDLSyntax()) {
     write(file.srcKwSmdlSyntax, DELIM_NEWLINE);
   }
+  for (const auto &searchDir : file.searchDirs) {
+    write(searchDir.srcKwSearchDir, DELIM_SPACE, searchDir.path, DELIM_NEWLINE);
+  }
   if (file.version) {
     auto &version{*file.version};
     write(version.srcKwMdl, DELIM_SPACE, version.srcVersion,

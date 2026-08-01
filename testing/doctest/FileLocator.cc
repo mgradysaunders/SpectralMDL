@@ -2,6 +2,8 @@
 
 #include <filesystem>
 #include <fstream>
+#include <string>
+#include <vector>
 
 #include "smdl/FileLocator.h"
 
@@ -105,6 +107,35 @@ TEST_CASE("FileLocator") {
     CHECK(images[0].tileIndexU == 1);
     CHECK(images[0].tileIndexV == 0);
     CHECK(fs::path(images[0].path).filename() == "tex_1002.png");
+  }
+  SUBCASE("Priority dirs outrank everything") {
+    fs::create_directories(tmpDir / "dirP");
+    touch(tmpDir / "dirP" / "plain.png");
+    touch(tmpDir / "dirP" / "tex_1005.png");
+    auto priorityDirs{std::vector<std::string>{(tmpDir / "dirP").string()}};
+    // Without priority dirs, 'plain.png' resolves in 'dirA', even more so
+    // with 'dirA' as the relative-to anchor. With priority dirs, 'dirP'
+    // must win over both.
+    auto located{locator.locate("plain.png")};
+    REQUIRE(located);
+    CHECK(fs::path(*located).parent_path().filename() == "dirA");
+    located = locator.locate("plain.png", (tmpDir / "dirA").string(),
+                             smdl::FileLocator::REGULAR_FILES, priorityDirs);
+    REQUIRE(located);
+    CHECK(fs::path(*located).parent_path().filename() == "dirP");
+    // The first directory that matches a tile pattern provides all of
+    // the results, so the priority dir must eclipse the tiles in 'dirA'.
+    auto images{locator.locateImages("tex_<UDIM>.png",
+                                     (tmpDir / "dirA").string(),
+                                     priorityDirs)};
+    REQUIRE(images.size() == 1);
+    CHECK(fs::path(images[0].path).filename() == "tex_1005.png");
+    // A priority dir must not disable the regular search dirs: a file
+    // that only exists in 'dirB' must still resolve.
+    located = locator.locate("tex_1002.png", {},
+                             smdl::FileLocator::REGULAR_FILES, priorityDirs);
+    REQUIRE(located);
+    CHECK(fs::path(*located).parent_path().filename() == "dirB");
   }
   fs::remove_all(tmpDir);
 }

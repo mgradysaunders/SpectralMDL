@@ -420,6 +420,8 @@ private:
   //--{ Parse: Decls
   [[nodiscard]] auto parseFile() -> BumpPtr<AST::File>;
 
+  [[nodiscard]] auto parseFileSearchDirs() -> std::vector<AST::File::SearchDir>;
+
   [[nodiscard]] auto parseFileVersion() -> std::optional<AST::File::Version>;
 
   [[nodiscard]] auto parseImportPath() -> std::optional<AST::ImportPath>;

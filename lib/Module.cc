@@ -98,8 +98,33 @@ std::optional<Error> Module::parse(BumpPtrAllocator &allocator) noexcept {
       SMDL_PROFILER_ENTRY("Module::parse()",
                           isBuiltin() ? mName.c_str() : mFileName.c_str());
       mRoot = Parser(allocator, *this).parse();
+      computeSearchDirs();
     }
   });
+}
+
+void Module::computeSearchDirs() {
+  mSearchDirs.clear();
+  for (const auto &searchDir : mRoot->searchDirs) {
+    const auto &srcLoc{searchDir.path->srcLoc};
+    if (searchDir.path->value.empty())
+      srcLoc.throwError("'#search_dir' path must not be empty");
+    auto dir{std::string()};
+    try {
+      dir = expandPathVariables(searchDir.path->value);
+    } catch (const Error &error) {
+      srcLoc.throwError(error.message);
+    }
+    // NOTE: 'makePathCanonical' expands a leading tilde, which must not
+    // be mistaken for a path relative to the module directory.
+    if (dir[0] != '~' && std::filesystem::path(dir).is_relative())
+      dir = joinPaths(getDirectory(), dir);
+    dir = makePathCanonical(std::move(dir));
+    if (!isDirectory(dir))
+      srcLoc.logWarn(concat("'#search_dir' path ", QuotedPath(dir),
+                            " is not an existing directory"));
+    mSearchDirs.push_back(std::move(dir));
+  }
 }
 
 std::optional<Error> Module::compile(Context &context) noexcept {
@@ -182,6 +207,7 @@ bool Module::isSMDLSyntax() const noexcept {
 
 void Module::reset() noexcept {
   mRoot.reset();
+  mSearchDirs.clear();
   mCompileStatus = COMPILE_STATUS_NOT_STARTED;
   mCompileErrorMessage.clear();
   mRootScope = nullptr;

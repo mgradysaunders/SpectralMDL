@@ -55,6 +55,52 @@ std::string joinPaths(std::string_view path0, std::string_view path1) {
   return (std::filesystem::path(path0) / std::filesystem::path(path1)).string();
 }
 
+std::string expandPathVariables(std::string_view path) {
+  auto isNameStart{[](char ch) {
+    return ch == '_' || (ch >= 'A' && ch <= 'Z') || (ch >= 'a' && ch <= 'z');
+  }};
+  auto isNameContinue{[&](char ch) {
+    return isNameStart(ch) || (ch >= '0' && ch <= '9');
+  }};
+  const auto fullPath{path};
+  auto result{std::string()};
+  result.reserve(path.size());
+  while (!path.empty()) {
+    if (path[0] != '$') {
+      result += path[0];
+      path.remove_prefix(1);
+      continue;
+    }
+    auto name{std::string_view()};
+    auto lenConsumed{size_t(0)};
+    if (path.size() > 1 && path[1] == '{') {
+      if (auto pos{path.find('}', 2)}; pos != std::string_view::npos) {
+        name = path.substr(2, pos - 2);
+        lenConsumed = pos + 1;
+      }
+    } else if (path.size() > 1 && isNameStart(path[1])) {
+      auto pos{size_t(2)};
+      while (pos < path.size() && isNameContinue(path[pos])) {
+        pos++;
+      }
+      name = path.substr(1, pos - 1);
+      lenConsumed = pos;
+    }
+    if (name.empty()) {
+      result += path[0];
+      path.remove_prefix(1);
+      continue;
+    }
+    auto value{std::getenv(std::string(name).c_str())};
+    if (!value)
+      throw Error(concat("undefined environment variable ", Quoted(name),
+                         " in path ", Quoted(fullPath)));
+    result += value;
+    path.remove_prefix(lenConsumed);
+  }
+  return result;
+}
+
 std::string makePathCanonical(std::string path) noexcept try {
   if (!path.empty() && path[0] == '~') {
     llvm::SmallString<128> pathTmp{};

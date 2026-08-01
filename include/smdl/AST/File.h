@@ -30,15 +30,31 @@ public:
     std::string_view srcSemicolon;
   };
 
+  /// A `#search_dir "..."` declaration, e.g., `#search_dir "../textures/"`.
+  ///
+  /// This is only allowed in SMDL syntax immediately after `#smdl`, and
+  /// adds a resource search directory that takes priority over the search
+  /// directories of the `FileLocator` for this file only.
+  class SearchDir final {
+  public:
+    /// The keyword `#search_dir`.
+    std::string_view srcKwSearchDir;
+
+    /// The literal string directory path.
+    BumpPtr<LiteralString> path;
+  };
+
   explicit File(std::string_view srcKwSmdlSyntax,
+                std::vector<SearchDir> searchDirs,
                 std::optional<Version> version,
                 std::vector<BumpPtr<Decl>> importDecls,
                 std::string_view srcKwModule,
                 BumpPtr<AnnotationBlock> moduleAnnotations,
                 std::string_view srcSemicolonAfterModule,
                 std::vector<BumpPtr<Decl>> globalDecls)
-      : srcKwSmdlSyntax(srcKwSmdlSyntax), version(version),
-        importDecls(std::move(importDecls)), srcKwModule(srcKwModule),
+      : srcKwSmdlSyntax(srcKwSmdlSyntax), searchDirs(std::move(searchDirs)),
+        version(version), importDecls(std::move(importDecls)),
+        srcKwModule(srcKwModule),
         moduleAnnotations(std::move(moduleAnnotations)),
         srcSemicolonAfterModule(srcSemicolonAfterModule),
         globalDecls(std::move(globalDecls)) {}
@@ -47,6 +63,9 @@ public:
 
   /// The source keyword `#smdl`. This may be empty!
   std::string_view srcKwSmdlSyntax;
+
+  /// The `#search_dir` declarations after `#smdl`. This may be empty!
+  std::vector<SearchDir> searchDirs;
 
   /// The version. This may be nullopt!
   std::optional<Version> version;

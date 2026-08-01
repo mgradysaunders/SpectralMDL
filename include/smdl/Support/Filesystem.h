@@ -43,6 +43,18 @@ SMDL_EXPORT bool isParentPathOf(const std::string &path0,
 [[nodiscard]] SMDL_EXPORT std::string joinPaths(std::string_view path0,
                                                 std::string_view path1);
 
+/// Expand environment variables of the form `$VAR` or `${VAR}`.
+///
+/// \note
+/// A `$` not followed by a valid variable name is preserved verbatim.
+/// Tilde expansion is not performed here, as `makePathCanonical()`
+/// already handles it.
+///
+/// \throw Error if a referenced environment variable is undefined.
+///
+[[nodiscard]] SMDL_EXPORT std::string
+expandPathVariables(std::string_view path);
+
 /// Make path canonical.
 ///
 /// \note

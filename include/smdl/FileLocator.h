@@ -45,13 +45,19 @@ public:
   /// directory path to search relative to. This is useful for
   /// resolving files included by other files.
   ///
+  /// \param[in] priorityDirs
+  /// If not empty, directory paths searched before everything else,
+  /// in order. This is used for the `#search_dir` declarations of the
+  /// module a resource is referenced by.
+  ///
   /// \return
   /// A vector of valid canonical directory paths, in the order
   /// in which the directories were initially added, with redundant
   /// paths removed.
   ///
   [[nodiscard]] std::vector<std::string>
-  getSearchDirs(std::string_view relativeTo = {}) const;
+  getSearchDirs(std::string_view relativeTo = {},
+                Span<const std::string> priorityDirs = {}) const;
 
   /// The bitwise-or of the flags that select which kinds of paths
   /// `locate()` is allowed to return.
@@ -77,13 +83,18 @@ public:
   /// The bitwise-or of `REGULAR_FILES` and `DIRS` selecting which kinds
   /// of paths may be returned.
   ///
+  /// \param[in] priorityDirs
+  /// If not empty, directory paths searched before everything else,
+  /// in order. See `getSearchDirs()`.
+  ///
   /// \return
   /// The canonical path of the located file, or `std::nullopt` if
   /// not found.
   ///
   [[nodiscard]] std::optional<std::string>
   locate(std::string_view fileName, std::string_view relativeTo = {},
-         LocateFlags flags = REGULAR_FILES) const;
+         LocateFlags flags = REGULAR_FILES,
+         Span<const std::string> priorityDirs = {}) const;
 
   /// An image path with parsed tile indexes in U and V.
   class SMDL_EXPORT ImagePath final {
@@ -167,8 +178,8 @@ public:
   /// by path. If nothing matches, the vector is empty.
   ///
   [[nodiscard]] std::vector<ImagePath>
-  locateImages(std::string_view fileName,
-               std::string_view relativeTo = {}) const;
+  locateImages(std::string_view fileName, std::string_view relativeTo = {},
+               Span<const std::string> priorityDirs = {}) const;
 
 private:
   /// Always search the present working directory?

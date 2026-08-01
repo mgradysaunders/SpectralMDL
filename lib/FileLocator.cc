@@ -7,7 +7,8 @@
 namespace smdl {
 
 std::vector<std::string>
-FileLocator::getSearchDirs(std::string_view relativeTo) const {
+FileLocator::getSearchDirs(std::string_view relativeTo,
+                           Span<const std::string> priorityDirs) const {
   auto results{std::vector<std::string>()};
   auto resultsSet{llvm::StringSet()};
   auto add{[&](std::string dir) {
@@ -15,6 +16,9 @@ FileLocator::getSearchDirs(std::string_view relativeTo) const {
       results.push_back(std::move(dir));
     }
   }};
+  for (const auto &dir : priorityDirs) {
+    add(makePathCanonical(dir));
+  }
   if (!relativeTo.empty()) {
     auto fileOrDir{makePathCanonical(std::string(relativeTo))};
     if (isDirectory(fileOrDir)) {
@@ -46,9 +50,10 @@ FileLocator::getSearchDirs(std::string_view relativeTo) const {
   return results;
 }
 
-std::optional<std::string> FileLocator::locate(std::string_view fileName,
-                                               std::string_view relativeTo,
-                                               LocateFlags flags) const {
+std::optional<std::string>
+FileLocator::locate(std::string_view fileName, std::string_view relativeTo,
+                    LocateFlags flags,
+                    Span<const std::string> priorityDirs) const {
   auto result{std::string()};
   auto accept{[&](std::filesystem::path attempt) {
     try {
@@ -69,7 +74,7 @@ std::optional<std::string> FileLocator::locate(std::string_view fileName,
     return result;
   }
   if (fname.is_relative()) {
-    for (auto &&dir : getSearchDirs(relativeTo)) {
+    for (auto &&dir : getSearchDirs(relativeTo, priorityDirs)) {
       if (accept(std::filesystem::path(dir) / fname)) {
         return result;
       }
@@ -80,7 +85,8 @@ std::optional<std::string> FileLocator::locate(std::string_view fileName,
 
 std::vector<FileLocator::ImagePath>
 FileLocator::locateImages(std::string_view fileName,
-                          std::string_view relativeTo) const {
+                          std::string_view relativeTo,
+                          Span<const std::string> priorityDirs) const {
   const auto pattern{std::filesystem::path(std::string(fileName))};
   const auto patternName{pattern.filename().string()};
   const auto patternNameStrRef{llvm::StringRef(patternName)};
@@ -94,7 +100,7 @@ FileLocator::locateImages(std::string_view fileName,
   if (!hasUDIM && !hasUVTILE0 && !hasUVTILE1) {
     // If no tile placeholders, this is an ordinary filename
     // meant to identify just 1 tile.
-    auto result{locate(fileName, relativeTo)};
+    auto result{locate(fileName, relativeTo, REGULAR_FILES, priorityDirs)};
     if (!result) return {};
     return {ImagePath{0, 0, std::move(*result)}};
   }
@@ -147,7 +153,7 @@ FileLocator::locateImages(std::string_view fileName,
     scanDirs.push_back(pattern.parent_path().string());
   } else {
     auto patternDir{pattern.parent_path().string()};
-    for (auto &&dir : getSearchDirs(relativeTo)) {
+    for (auto &&dir : getSearchDirs(relativeTo, priorityDirs)) {
       scanDirs.push_back(joinPaths(dir, patternDir));
     }
   }

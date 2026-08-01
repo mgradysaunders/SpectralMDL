@@ -13,6 +13,7 @@ target_sources(
     "FileLocator.cc"
     "Image.cc"
     "LightProfile.cc"
+    "Module.cc"
     "Parser.cc"
     "Support/Illuminant.cc"
     "Support/MD5Hash.cc"
