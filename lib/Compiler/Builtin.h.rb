@@ -26,14 +26,14 @@ STR
 # The lookup key replaces '/' with '::' (so 'models/prospect' is addressed
 # as '::models::prospect'), and the generated variable replaces '/' with '_'.
 fnames = ['api', 'anno', 'debug', 'df', 'limits', 'math', 'scene', 'state', 'std', 'tex',
-          'extras/hextile',
           'extras/io',
-          'extras/noise',
           'extras/pcg32',
+          'models/hex_tile',
           'models/illuminant',
-          'models/prospect',
           'models/marmit',
-          'models/metal_ior']
+          'models/metal_ior',
+          'models/noise',
+          'models/prospect']
 for fname in fnames
   text = `smdlc format -c --no-comments --keep-doc-comments Builtin/#{fname}.smdl`
   text = File.read "Builtin/#{fname}.smdl" unless $?.success?

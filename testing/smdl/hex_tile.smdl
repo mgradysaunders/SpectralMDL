@@ -1,9 +1,9 @@
 #smdl
 
-using hextile = ::extras::hextile;
-using noise = ::extras::noise;
+using hex_tile = ::models::hex_tile;
+using noise = ::models::noise;
 
-import hextile::*;
+import hex_tile::*;
 import noise::*;
 import ::math::*;
 import ::tex::*;
@@ -53,7 +53,7 @@ unit_test "Hex tiling matches the published lattice" {
   for (int i = 0; i < 20000; i++) {
     const auto st(samplePoint(i, 40.0));
     const auto a(referenceTriangleGrid(st));
-    const auto b(hextile::hex_tiling_at(st));
+    const auto b(hex_tile::hex_tiling_at(st));
     for (int k = 0; k < 3; k++) {
       #assert(#all(a.v[k] == b.tiles[k].id), "tile ids must match the published lattice");
       worstWeight = #max(worstWeight, #abs(a.w[k] - b.tiles[k].weight));
@@ -64,17 +64,17 @@ unit_test "Hex tiling matches the published lattice" {
 
 unit_test "Hex tiling weights are a partition of unity" {
   for (int i = 0; i < 20000; i++) {
-    const auto tiling(hextile::hex_tiling_at(samplePoint(i, 200.0), 0.5));
+    const auto tiling(hex_tile::hex_tiling_at(samplePoint(i, 200.0), 0.5));
     const auto raw(float3(tiling.tiles[0].weight, tiling.tiles[1].weight, tiling.tiles[2].weight));
     #assert(#all(raw >= -1e-5), "barycentric weights must be non-negative");
     #assert(#abs(#sum(raw) - 1.0) < 1e-4, "barycentric weights must sum to one");
 
     // The same must hold after every stage of weight shaping, including the
     // degenerate settings that drive the weights toward zero.
-    const auto w0(hextile::hex_weights(tiling));
-    const auto w1(hextile::hex_modulate(w0, float3(0.3, 0.6, 0.9)));
-    const auto w2(hextile::hex_contrast(w1, 0.75));
-    const auto w3(hextile::hex_contrast(hextile::hex_modulate(w0, float3(0.0), 1.0), 0.999));
+    const auto w0(hex_tile::hex_weights(tiling));
+    const auto w1(hex_tile::hex_modulate(w0, float3(0.3, 0.6, 0.9)));
+    const auto w2(hex_tile::hex_contrast(w1, 0.75));
+    const auto w3(hex_tile::hex_contrast(hex_tile::hex_modulate(w0, float3(0.0), 1.0), 0.999));
     #assert(#all(w0 >= 0.0) && #abs(#sum(w0) - 1.0) < 1e-4, "hex_weights must be normalized");
     #assert(#all(w1 >= 0.0) && #abs(#sum(w1) - 1.0) < 1e-4, "hex_modulate must be normalized");
     #assert(#all(w2 >= 0.0) && #abs(#sum(w2) - 1.0) < 1e-4, "hex_contrast must be normalized");
@@ -83,7 +83,7 @@ unit_test "Hex tiling weights are a partition of unity" {
 
   // A contrast of exactly 0.5 is the identity.
   const auto w(float3(0.2, 0.3, 0.5));
-  #assert(#all(hextile::hex_contrast(w, 0.5) == w), "contrast 0.5 must be the identity");
+  #assert(#all(hex_tile::hex_contrast(w, 0.5) == w), "contrast 0.5 must be the identity");
 }
 
 // A literal transcription of Listing 8 of Mikkelsen (2022), the S-curve ramp
@@ -99,26 +99,26 @@ float3 referenceGain3(const float3 x, const float r) {
 
 unit_test "Hex tiling contrast ramp matches the published curve" {
   for (int i = 0; i < 8192; i++) {
-    const auto w(hextile::hex_weights(hextile::hex_tiling_at(samplePoint(i, 20.0))));
+    const auto w(hex_tile::hex_weights(hex_tile::hex_tiling_at(samplePoint(i, 20.0))));
     for (int j = 1; j <= 3; j++) {
       // Sample r on either side of 0.5, where the curve reverses.
       const auto r(0.25 * float(j));
-      #assert(#all(hextile::hex_contrast(w, r) ~== |1e-5| referenceGain3(w, r)), "hex_contrast must match the published Gain3");
+      #assert(#all(hex_tile::hex_contrast(w, r) ~== |1e-5| referenceGain3(w, r)), "hex_contrast must match the published Gain3");
     }
   }
 
   // The curve is an S about 0.5: below 0.5 is pushed down, above is pushed up.
   // Getting the sign of the upper branch wrong still normalizes, so check the
   // shape rather than only the sum.
-  const auto sharpened(hextile::hex_contrast(float3(0.2, 0.3, 0.5), 0.75));
+  const auto sharpened(hex_tile::hex_contrast(float3(0.2, 0.3, 0.5), 0.75));
   #assert(sharpened.x < 0.2 && sharpened.z > 0.5, "contrast above 0.5 must sharpen");
-  const auto softened(hextile::hex_contrast(float3(0.2, 0.3, 0.5), 0.25));
+  const auto softened(hex_tile::hex_contrast(float3(0.2, 0.3, 0.5), 0.25));
   #assert(softened.x > 0.2 && softened.z < 0.5, "contrast below 0.5 must soften");
 }
 
 unit_test "Hex tiling covers each position with three distinct tiles" {
   for (int i = 0; i < 20000; i++) {
-    const auto tiling(hextile::hex_tiling_at(samplePoint(i, 200.0)));
+    const auto tiling(hex_tile::hex_tiling_at(samplePoint(i, 200.0)));
     const auto id0(tiling.tiles[0].id), id1(tiling.tiles[1].id), id2(tiling.tiles[2].id);
     #assert(!#all(id0 == id1) && !#all(id1 == id2) && !#all(id0 == id2), "the three tiles must be distinct");
   }
@@ -131,7 +131,7 @@ unit_test "Hex tiling gives a tile full weight at its own center" {
   for (int j = -6; j <= 6; j++) {
     for (int i = -6; i <= 6; i++) {
       const auto id(int2(i, j));
-      const auto tiling(hextile::hex_tiling_at(referenceMakeCenST(id)));
+      const auto tiling(hex_tile::hex_tiling_at(referenceMakeCenST(id)));
       float best = 0.0;
       for (int k = 0; k < 3; k++)
         if (#all(tiling.tiles[k].id == id))
@@ -148,11 +148,11 @@ unit_test "Hex tiling gives a tile full weight at its own center" {
 @(pure)
 void checkOffsetBound(const float range) {
   for (int i = 0; i < 20000; i++) {
-    const auto tiling(hextile::hex_tiling_at(samplePoint(i, range), 1.0));
+    const auto tiling(hex_tile::hex_tiling_at(samplePoint(i, range), 1.0));
     for (int k = 0; k < 3; k++) {
       const auto id(tiling.tiles[k].id);
       const auto offset(tiling.tiles[k].coord - noise::hash_float3(int3(id.x, id.y, 0)).xy);
-      #assert(#sqrt(#sum(offset * offset)) < hextile::HEX_TILE_RADIUS + 1e-5, "the lookup offset must stay inside the tile");
+      #assert(#sqrt(#sum(offset * offset)) < hex_tile::HEX_TILE_RADIUS + 1e-5, "the lookup offset must stay inside the tile");
     }
   }
 }
@@ -174,14 +174,14 @@ float3 fakeTexture(const float2 c) {
 
 @(pure)
 float3 blendedAt(const float2 st, const float rotate, const float contrast) {
-  const auto tiling(hextile::hex_tiling_at(st, rotate));
+  const auto tiling(hex_tile::hex_tiling_at(st, rotate));
   const auto value0(fakeTexture(tiling.tiles[0].coord));
   const auto value1(fakeTexture(tiling.tiles[1].coord));
   const auto value2(fakeTexture(tiling.tiles[2].coord));
-  auto w(hextile::hex_weights(tiling));
-  w = hextile::hex_modulate(w, hextile::hex_metric_luminance(value0, value1, value2));
-  w = hextile::hex_contrast(w, contrast);
-  return hextile::hex_blend(w, value0, value1, value2);
+  auto w(hex_tile::hex_weights(tiling));
+  w = hex_tile::hex_modulate(w, hex_tile::hex_metric_luminance(value0, value1, value2));
+  w = hex_tile::hex_contrast(w, contrast);
+  return hex_tile::hex_blend(w, value0, value1, value2);
 }
 
 // A seam would appear as a jump in the blended result far larger than the local
@@ -209,21 +209,21 @@ unit_test "Hex tiling blends continuously" {
 unit_test "Hex tiling blends generically" {
   // The blend must work for anything arithmetic, not only texture lookups.
   const auto w(float3(0.25, 0.25, 0.5));
-  #assert(#abs(hextile::hex_blend(w, 1.0, 2.0, 3.0) - 2.25) < 1e-6, "scalar blend");
-  #assert(#abs(hextile::hex_blend(w, float3(1.0), float3(2.0), float3(3.0)).y - 2.25) < 1e-6, "vector blend");
-  #assert(#abs(hextile::hex_blend(w, color(1.0), color(2.0), color(3.0))[0] - 2.25) < 1e-6, "color blend");
+  #assert(#abs(hex_tile::hex_blend(w, 1.0, 2.0, 3.0) - 2.25) < 1e-6, "scalar blend");
+  #assert(#abs(hex_tile::hex_blend(w, float3(1.0), float3(2.0), float3(3.0)).y - 2.25) < 1e-6, "vector blend");
+  #assert(#abs(hex_tile::hex_blend(w, color(1.0), color(2.0), color(3.0))[0] - 2.25) < 1e-6, "color blend");
 
   // With equal weights the variance-preserving blend scales the deviation from
   // the mean by sqrt(3), since sum(w * w) is 1/3.
   const auto u(float3(1.0 / 3.0));
-  const auto vp(hextile::hex_blend_variance_preserving(u, 1.0, 1.0, 1.0, 0.0));
+  const auto vp(hex_tile::hex_blend_variance_preserving(u, 1.0, 1.0, 1.0, 0.0));
   #assert(#abs(vp - #sqrt(3.0)) < 1e-5, "variance-preserving blend must rescale by 1/sqrt(sum(w * w))");
 
   // A single tile carrying all the weight must be reproduced exactly, with or
   // without variance preservation.
   const auto one(float3(0.0, 1.0, 0.0));
-  #assert(#abs(hextile::hex_blend(one, 1.0, 2.0, 3.0) - 2.0) < 1e-6, "degenerate blend");
-  #assert(#abs(hextile::hex_blend_variance_preserving(one, 1.0, 2.0, 3.0, 0.5) - 2.0) < 1e-5, "variance preservation must be exact when one tile dominates");
+  #assert(#abs(hex_tile::hex_blend(one, 1.0, 2.0, 3.0) - 2.0) < 1e-6, "degenerate blend");
+  #assert(#abs(hex_tile::hex_blend_variance_preserving(one, 1.0, 2.0, 3.0, 0.5) - 2.0) < 1e-5, "variance preservation must be exact when one tile dominates");
 }
 
 unit_test "Hex tiling stochastic selection is unbiased" {
@@ -233,9 +233,9 @@ unit_test "Hex tiling stochastic selection is unbiased" {
   auto rng(noise::hash(12345));
   for (int trial = 0; trial < 8; trial++) {
     const auto st((noise::hash_float2(int2(trial * 977 + 3, trial * 613 + 11)) - 0.5) * 20.0);
-    const auto tiling(hextile::hex_tiling_at(st, 1.0));
-    const auto w(hextile::hex_contrast(hextile::hex_weights(tiling), 0.75));
-    const auto reference(hextile::hex_blend(w,                                  //
+    const auto tiling(hex_tile::hex_tiling_at(st, 1.0));
+    const auto w(hex_tile::hex_contrast(hex_tile::hex_weights(tiling), 0.75));
+    const auto reference(hex_tile::hex_blend(w,                                  //
                                             fakeTexture(tiling.tiles[0].coord), //
                                             fakeTexture(tiling.tiles[1].coord), //
                                             fakeTexture(tiling.tiles[2].coord)));
@@ -243,15 +243,15 @@ unit_test "Hex tiling stochastic selection is unbiased" {
     const int n = 200000;
     for (int i = 0; i < n; i++) {
       rng = noise::hash(rng);
-      sum += fakeTexture(tiling.tiles[hextile::hex_select(w, noise::hash_float(rng))].coord);
+      sum += fakeTexture(tiling.tiles[hex_tile::hex_select(w, noise::hash_float(rng))].coord);
     }
     #assert(#max_value(#abs(sum / float(n) - reference)) < 5e-3, "stochastic selection must be unbiased");
   }
 
   // The selection must stay in range even for a degenerate weight vector.
-  #assert(hextile::hex_select(float3(1.0, 0.0, 0.0), 0.0) == 0);
-  #assert(hextile::hex_select(float3(0.0, 1.0, 0.0), 0.5) == 1);
-  #assert(hextile::hex_select(float3(0.0, 0.0, 1.0), 0.999) == 2);
+  #assert(hex_tile::hex_select(float3(1.0, 0.0, 0.0), 0.0) == 0);
+  #assert(hex_tile::hex_select(float3(0.0, 1.0, 0.0), 0.5) == 1);
+  #assert(hex_tile::hex_select(float3(0.0, 0.0, 1.0), 0.999) == 2);
 }
 
 unit_test "Hex tiling variance preservation restores contrast" {
@@ -261,13 +261,13 @@ unit_test "Hex tiling variance preservation restores contrast" {
   double plainVar = 0.0d, preservedVar = 0.0d, sourceVar = 0.0d;
   const int n = 200000;
   for (int i = 0; i < n; i++) {
-    const auto tiling(hextile::hex_tiling_at((noise::hash_float2(int2(i + 77, i * 7919 + 5)) - 0.5) * 60.0, 1.0));
-    const auto w(hextile::hex_weights(tiling));
+    const auto tiling(hex_tile::hex_tiling_at((noise::hash_float2(int2(i + 77, i * 7919 + 5)) - 0.5) * 60.0, 1.0));
+    const auto w(hex_tile::hex_weights(tiling));
     const auto value0(fakeTexture(tiling.tiles[0].coord));
     const auto value1(fakeTexture(tiling.tiles[1].coord));
     const auto value2(fakeTexture(tiling.tiles[2].coord));
-    const auto plain(hextile::hex_blend(w, value0, value1, value2));
-    const auto preserved(hextile::hex_blend_variance_preserving(w, value0, value1, value2, mean));
+    const auto plain(hex_tile::hex_blend(w, value0, value1, value2));
+    const auto preserved(hex_tile::hex_blend_variance_preserving(w, value0, value1, value2, mean));
     plainVar += double((plain.x - 0.5) * (plain.x - 0.5));
     preservedVar += double((preserved.x - 0.5) * (preserved.x - 0.5));
     sourceVar += double((value0.x - 0.5) * (value0.x - 0.5));
@@ -280,16 +280,16 @@ unit_test "Hex tiling variance preservation restores contrast" {
 unit_test "Hex tiling rotation round trips directional data" {
   for (int i = 0; i < 4096; i++) {
     const auto id(int2(i % 64 - 32, i / 64 - 32));
-    const auto rotation(hextile::hex_rotation(id, 1.0));
+    const auto rotation(hex_tile::hex_rotation(id, 1.0));
     #assert(#abs(#sum(rotation * rotation) - 1.0) < 1e-5, "the rotation must be a unit complex number");
     // Rotating a direction forward and then inverting must be the identity.
     const auto d(noise::hash_float2(int2(i, i + 1)) - 0.5);
     const auto forward(float2(rotation.x * d.x - rotation.y * d.y, rotation.y * d.x + rotation.x * d.y));
-    #assert(#max_value(#abs(hextile::hex_rotate_inverse(rotation, forward) - d)) < 1e-5, "hex_rotate_inverse must undo the tile rotation");
+    #assert(#max_value(#abs(hex_tile::hex_rotate_inverse(rotation, forward) - d)) < 1e-5, "hex_rotate_inverse must undo the tile rotation");
   }
 
   // Zero rotation strength must leave the tiling unrotated.
-  #assert(#max_value(#abs(hextile::hex_rotation(int2(3, 5), 0.0) - float2(1.0, 0.0))) < 1e-6);
+  #assert(#max_value(#abs(hex_tile::hex_rotation(int2(3, 5), 0.0) - float2(1.0, 0.0))) < 1e-6);
 }
 
 unit_test "Hex tiling seeds decorrelate independent tilings" {
@@ -297,8 +297,8 @@ unit_test "Hex tiling seeds decorrelate independent tilings" {
   int same = 0;
   for (int i = 0; i < 4096; i++) {
     const auto st(samplePoint(i, 20.0));
-    const auto a(hextile::hex_tiling_at(st, 0.0, 0));
-    const auto b(hextile::hex_tiling_at(st, 0.0, 1));
+    const auto a(hex_tile::hex_tiling_at(st, 0.0, 0));
+    const auto b(hex_tile::hex_tiling_at(st, 0.0, 1));
     for (int k = 0; k < 3; k++) {
       #assert(#all(a.tiles[k].id == b.tiles[k].id), "the seed must not move the lattice");
       #assert(#abs(a.tiles[k].weight - b.tiles[k].weight) < 1e-6, "the seed must not move the weights");
@@ -317,32 +317,32 @@ void runTextureTests(const texture_2d t) {
   #assert(tex::texture_isvalid(t));
   for (int i = 0; i < 2048; i++) {
     const auto st(samplePoint(i, 20.0));
-    const auto samples(hextile::hex_lookup(t, st));
+    const auto samples(hex_tile::hex_lookup(t, st));
     #assert(#all(samples.weights >= 0.0), "lookup weights must be non-negative");
     #assert(#abs(#sum(samples.weights) - 1.0) < 1e-4, "lookup weights must sum to one");
 
     // Every accessor must agree with the blend of the three samples.
-    const auto blended(hextile::hex_blend(samples));
-    #assert(#all(hextile::hex_blend(samples.weights, samples.values[0], samples.values[1], samples.values[2]) //
+    const auto blended(hex_tile::hex_blend(samples));
+    #assert(#all(hex_tile::hex_blend(samples.weights, samples.values[0], samples.values[1], samples.values[2]) //
                  ~== |1e-6| blended), "hex_blend overloads must agree");
 
     // The stochastic selection must always return one of the three samples.
-    const auto picked(hextile::hex_select(samples, noise::hash_float(i)));
+    const auto picked(hex_tile::hex_select(samples, noise::hash_float(i)));
     #assert(#all(picked ~== |1e-6| samples.values[0]) || #all(picked ~== |1e-6| samples.values[1]) || #all(picked ~== |1e-6| samples.values[2]), "hex_select must return a sampled value");
 
     // The single-lookup stochastic form must likewise land on a real texel,
     // and in particular must never blend.
-    const auto stochastic(hextile::hex_lookup_float4_stochastic(t, st, noise::hash_float(i + 7)));
+    const auto stochastic(hex_tile::hex_lookup_float4_stochastic(t, st, noise::hash_float(i + 7)));
     #assert(#all(stochastic >= -1e-5) && #all(stochastic <= 1.0 + 1e-5), "stochastic lookup must stay in range");
   }
 
   // The convenience family must be consistent with 'hex_lookup_float4'.
   for (int i = 0; i < 256; i++) {
     const auto st(samplePoint(i, 20.0));
-    const auto value(hextile::hex_lookup_float4(t, st));
-    #assert(#all(hextile::hex_lookup_float3(t, st) ~== |1e-6| value.xyz), "hex_lookup_float3");
-    #assert(#all(hextile::hex_lookup_float2(t, st) ~== |1e-6| value.xy), "hex_lookup_float2");
-    #assert(hextile::hex_lookup_float(t, st) ~== |1e-6| value.x, "hex_lookup_float");
+    const auto value(hex_tile::hex_lookup_float4(t, st));
+    #assert(#all(hex_tile::hex_lookup_float3(t, st) ~== |1e-6| value.xyz), "hex_lookup_float3");
+    #assert(#all(hex_tile::hex_lookup_float2(t, st) ~== |1e-6| value.xy), "hex_lookup_float2");
+    #assert(hex_tile::hex_lookup_float(t, st) ~== |1e-6| value.x, "hex_lookup_float");
   }
 }
 

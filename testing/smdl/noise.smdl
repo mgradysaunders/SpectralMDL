@@ -1,6 +1,6 @@
 #smdl
 
-using noise = ::extras::noise;
+using noise = ::models::noise;
 
 import noise::*;
 import ::math::*;
