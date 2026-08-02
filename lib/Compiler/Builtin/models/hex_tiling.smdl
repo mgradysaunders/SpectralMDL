@@ -3,50 +3,38 @@
 /// the UV plane with randomly offset and rotated hexagonal tiles and blending
 /// between the three that overlap at each point.
 ///
-/// This is the method of Mikkelsen (2022), which is an adaptation of the
-/// by-example noise algorithm of Heitz and Neyret (2018). The original method
-/// preserves the histogram of the source by way of a precomputation step that
-/// replaces the source with a transform and an inverse transform texture, both
-/// of which must then be sampled instead of the source. Mikkelsen omits the
-/// histogram preservation and recovers most of the quality with a blending
-/// weight that is modulated by the image content itself, which means the
-/// source texture is sampled directly and nothing has to be precomputed. There
-/// are no lookup tables here and no cooperation required from the renderer.
+/// This is the method of Mikkelsen (2022), adapted from the by-example noise
+/// of Heitz and Neyret (2018). Where the original preserves the histogram of
+/// the source through precomputed transform and inverse-transform textures,
+/// Mikkelsen modulates the blending weights by the image content instead, so
+/// the source is sampled directly: no lookup tables, no precomputation, and
+/// no cooperation required from the renderer.
 ///
 /// The module is layered so that the lattice, the weights, and the blend are
-/// independent. Only the last layer knows anything about textures, so the
-/// weights are equally usable to blend procedurally computed values:
+/// independent, and only the last layer knows anything about textures:
 ///
-///   1. `hex_tiling_at()` builds the lattice and yields the three overlapping
-///      tiles, each with an integer id, a lookup coordinate, and a barycentric
-///      weight.
-///   2. `hex_weights()`, `hex_modulate()`, and `hex_contrast()` shape those
-///      barycentric weights into blending weights.
+///   1. `hex_tiling_at()` builds the lattice: three overlapping tiles, each
+///      with an id, a lookup coordinate, and the rotation applied to it, plus
+///      ready-to-use blending weights.
+///   2. `hex_modulate()` and `hex_contrast()` shape those weights.
 ///   3. `hex_blend()`, `hex_blend_variance_preserving()`, and `hex_select()`
 ///      combine three values of any type using those weights.
 ///   4. `hex_lookup()` and the `hex_lookup_*()` family apply all of the above
-///      to a `texture_2d`.
+///      to a `texture_2d`, and `hex_lookup_normal()` reads a tangent-space
+///      normal map correctly through the per-tile rotation.
 ///
-/// Unlike the real-time formulation, no mip-mapping or screen-space derivative
-/// is required or used. Under minification the result will alias, and it is
-/// the renderer's per-pixel Monte Carlo sampling that resolves it. This
-/// converges to the correct answer without any prefiltering.
+/// No mip-mapping or screen-space derivative is required or used: under
+/// minification the result aliases, and the renderer's per-pixel Monte Carlo
+/// sampling resolves it to the correct answer without prefiltering.
 ///
-/// The lattice differs from the published implementation in two ways, both of
-/// which are matters of numerical conditioning rather than of the method:
-///
-///   * The lookup coordinate is derived from the fractional part of the skewed
-///     coordinate rather than by subtracting the tile center from the position.
-///     The published form subtracts two large and nearly equal quantities, so
-///     it loses the entire result to cancellation once the coordinate is large:
-///     measured against a double-precision reference, its error reaches 0.43 by
-///     a magnitude of 1000, which is larger than `HEX_TILE_RADIUS` itself.
-///
-///   * The skew and the floor are evaluated in double precision, which keeps
-///     the tile ids consistent between neighboring shading points no matter how
-///     large the coordinate is.
-///
-/// Together these hold the lookup coordinate to float epsilon at any magnitude,
+/// The lattice departs from the published implementation twice, both times
+/// for numerical conditioning rather than method: the lookup coordinate is
+/// derived from the fractional part of the skewed coordinate instead of by
+/// subtracting the tile center from the position, which cancels
+/// catastrophically at large coordinates (error 0.43 by magnitude 1000,
+/// larger than `HEX_TILE_RADIUS` itself), and the skew and floor are
+/// evaluated in double so the tile ids stay consistent at any magnitude.
+/// Together these hold the lookup coordinate to float epsilon everywhere,
 /// which is what the separate reduced-world-space variant of the published
 /// implementation exists to achieve.
 ///
@@ -65,11 +53,10 @@ import ::tex::*;
 
 //--{ Lattice
 
-/// The distance between adjacent hex tile centers, `1 / (2 sqrt(3))`.
-///
-/// This is also the largest distance from a position to any of the three tile
-/// centers whose hexagons cover it, and so bounds the lookup coordinate that
-/// `hex_tiling_at()` produces relative to the random per-tile offset.
+/// The distance between adjacent hex tile centers, `1 / (2 sqrt(3))`. This is
+/// also the largest distance from a position to any of its three covering
+/// tile centers, and so bounds the lookup coordinate that `hex_tiling_at()`
+/// produces relative to the random per-tile offset.
 export const float HEX_TILE_RADIUS = 0.28867513459481287;
 
 /// The scale and skew that carry the UV plane onto the triangle lattice.
@@ -77,21 +64,33 @@ const double HEX_SKEW_X = 3.4641016151377544; // 2 sqrt(3)
 
 /// One hexagonal tile covering a shading position.
 export struct hex_tile {
-  /// The integer lattice id, which identifies the tile uniquely and is
-  /// suitable for seeding any further per-tile randomization.
+  /// The lattice id, which identifies the tile uniquely and is suitable for
+  /// seeding further per-tile randomization.
   int2 id = int2(0);
 
   /// The coordinate at which to look up the source for this tile.
   float2 coord = float2(0.0);
 
-  /// The barycentric weight of this tile, in `[0, 1]`.
-  float weight = 0.0;
+  /// The random rotation applied to the lookup coordinate, as `[cos, sin]`.
+  /// Directional values looked up from this tile, such as tangent-space
+  /// normals, must come back through its inverse: see `hex_rotate_inverse()`
+  /// and `hex_lookup_normal()`.
+  float2 rotation = float2(1.0, 0.0);
 };
 
 /// The three hex tiles overlapping a shading position.
 export struct hex_tiling {
-  /// The tiles, whose weights are non-negative and sum to one.
+  /// The tiles.
   hex_tile[3] tiles = hex_tile[3](hex_tile(), hex_tile(), hex_tile());
+
+  /// The blending weights, which are non-negative and sum to one.
+  ///
+  /// These are the barycentric weights of the position among the three tile
+  /// centers, sharpened by exponent 7 and normalized: a plain barycentric
+  /// blend ghosts badly, and sharpening narrows the transition to a hexagonal
+  /// mask, which is Burley's (2019) observation; 7 is the published choice.
+  /// Shape these further with `hex_modulate()` and `hex_contrast()`.
+  float3 weights = float3(1.0 / 3.0);
 };
 
 /// The inverse of the skew, carrying the triangle lattice back to the UV plane.
@@ -109,15 +108,15 @@ float3 hexNormalize(const float3 w) {
 /// The hex tiling covering `coord`.
 ///
 /// Each tile is assigned a uniformly random offset, so the source is sampled
-/// at an unrelated location per tile and the repetition of the source is
-/// broken up. The `rotate` parameter additionally applies a random rotation
-/// per tile, as a fraction of `+/-pi`, which matters when the source has
-/// recognizable elements with a distinct orientation; zero disables it. The
-/// `seed` decorrelates independent tilings of the same surface.
+/// at an unrelated location per tile and its repetition is broken up. The
+/// `rotate` parameter additionally applies a random per-tile rotation, as a
+/// fraction of `+/-pi`, which matters when the source has oriented features;
+/// zero disables it. The `seed` decorrelates independent tilings of the same
+/// surface.
 ///
-/// NOTE: If `rotate` is non-zero and the value looked up is directional, such
-/// as a tangent-space normal or a flow vector, it must be counter-rotated
-/// after the lookup. See `hex_rotate_inverse()`.
+/// NOTE: If `rotate` is non-zero, directional values such as tangent-space
+/// normals must be counter-rotated after lookup: use `hex_rotate_inverse()`
+/// with `tiles[k].rotation`, or `hex_lookup_normal()` for a normal map.
 @(pure noinline)
 export hex_tiling hex_tiling_at(const float2 coord, const float rotate = 0.0, const int seed = 0) {
   // Skew into the triangle lattice and split the containing rhombus into the
@@ -136,37 +135,32 @@ export hex_tiling hex_tiling_at(const float2 coord, const float rotate = 0.0, co
   const auto deltas(float2[3](float2(float(i), float(i)),     //
                               float2(float(i), float(1 - i)), //
                               float2(float(1 - i), float(i))));
-  const auto weights(float3(-fz * s2, s - f.y * s2, s - f.x * s2));
+  const auto barycentric(#max(float3(0.0), float3(-fz * s2, s - f.y * s2, s - f.x * s2)));
   auto result(hex_tiling());
   for (int k = 0; k < 3; k++) {
     // The offset from this tile's center comes straight out of the fractional
     // part, so it is bounded by HEX_TILE_RADIUS and never suffers the
     // cancellation that subtracting the center from the position would.
     auto offset(hexUnskew(f - deltas[k]));
+    auto rotation(float2(1.0, 0.0));
     const auto h(noise::hash_float3(int3(ids[k].x, ids[k].y, seed)));
     if (rotate != 0.0) {
       const auto angle((2.0 * h.z - 1.0) * ($PI * rotate));
-      const auto cs(#cos(angle));
-      const auto sn(#sin(angle));
-      offset = float2(cs * offset.x - sn * offset.y, sn * offset.x + cs * offset.y);
+      rotation = float2(#cos(angle), #sin(angle));
+      offset = float2(rotation.x * offset.x - rotation.y * offset.y, //
+                      rotation.y * offset.x + rotation.x * offset.y);
     }
-    result.tiles[k] = hex_tile(id: ids[k], coord: offset + h.xy, weight: weights[k]);
+    result.tiles[k] = hex_tile(id: ids[k], coord: offset + h.xy, rotation: rotation);
   }
+  const auto b2(barycentric * barycentric);
+  result.weights = hexNormalize(b2 * b2 * b2 * barycentric);
   return result;
 }
 
-/// The rotation applied to tile `id` by `hex_tiling_at()`, as `[cos, sin]`.
-@(pure macro)
-export float2 hex_rotation(const int2 id, const float rotate = 0.0, const int seed = 0) {
-  const auto angle((2.0 * noise::hash_float3(int3(id.x, id.y, seed)).z - 1.0) * ($PI * rotate));
-  return float2(#cos(angle), #sin(angle));
-}
-
-/// Undoes the per-tile rotation on a directional value looked up from a tile.
-///
-/// The lookup coordinate is rotated by `R`, so the pattern seen on the surface
-/// is the source rotated by the inverse, and a direction read out of the source
-/// must be brought back by the transpose of `R`.
+/// Undoes the per-tile rotation on a directional value looked up from a tile:
+/// the lookup coordinate is rotated by `R`, so the pattern on the surface is
+/// the source rotated by the inverse, and a direction read from the source
+/// comes back through the transpose of `R`.
 @(pure macro)
 export float2 hex_rotate_inverse(const float2 rotation, const float2 direction) {
   return float2(rotation.x * direction.x + rotation.y * direction.y, //
@@ -177,32 +171,16 @@ export float2 hex_rotate_inverse(const float2 rotation, const float2 direction) 
 
 //--{ Weights
 
-/// The blending weights of a tiling: the barycentric weights sharpened by
-/// `exponent` and normalized.
-///
-/// A plain barycentric blend of three tiles ghosts badly, because all three
-/// contribute meaningfully over most of each triangle. Raising the weights to
-/// a power narrows the transition until it resembles a hexagonal mask, which
-/// is Burley's (2019) observation. The default of 7 is the published choice.
-@(pure)
-export float3 hex_weights(const hex_tiling this, const float exponent = 7.0) {
-  const auto w(float3(this.tiles[0].weight, this.tiles[1].weight, this.tiles[2].weight));
-  return hexNormalize(#pow(#max(float3(0.0), w), exponent));
-}
-
 /// Modulates blending weights by a per-tile significance metric, renormalizing
 /// afterward.
 ///
-/// This is the substitute for histogram preservation. Rather than blending the
-/// tiles blind, each weight is scaled by a measure of how much the value
-/// sampled from that tile matters, so the transition is diffused by the
-/// content instead of cutting straight across it. What the metric measures is
-/// up to the caller: luminance is the usual choice for color, and the
-/// steepness of the implied slope is the published choice for normal maps.
-///
-/// The `strength` is the extent to which the metric is allowed to matter, so
-/// that the effective factor is `1 - strength + strength * metric`. Zero
-/// ignores the metric entirely.
+/// This is the substitute for histogram preservation: each weight is scaled
+/// by how much its sampled value matters, so the transition is diffused by
+/// the content instead of cutting straight across it. The metric is the
+/// caller's choice: luminance is usual for color, implied slope steepness the
+/// published choice for normal maps. The `strength` is the extent to which
+/// the metric matters, so that the effective factor is
+/// `1 - strength + strength * metric`; zero ignores it entirely.
 @(pure)
 export float3 hex_modulate(const float3 w, const float3 metric, const float strength = 0.6) {
   return hexNormalize(w * (1.0 - strength + strength * #max(float3(0.0), metric)));
@@ -210,12 +188,11 @@ export float3 hex_modulate(const float3 w, const float3 metric, const float stre
 
 /// Applies Perlin's S-curve ramp to blending weights, renormalizing afterward.
 ///
-/// Omitting histogram preservation costs contrast in the transition between
-/// tiles, and pushing the weights toward zero and one wins some of it back at
-/// the cost of making the hexagonal boundaries more apparent. A `contrast` of
-/// 0.5 is exactly the identity; above 0.5 sharpens and below 0.5 softens. The
-/// published recommendation is 0.65 to 0.75 for color and 0.5, i.e. disabled,
-/// for normal maps.
+/// Pushing the weights toward zero and one wins back some of the contrast
+/// that omitting histogram preservation costs, at the price of more apparent
+/// hexagonal boundaries. A `contrast` of 0.5 is exactly the identity; above
+/// sharpens, below softens. The published recommendation is 0.65 to 0.75 for
+/// color and 0.5, i.e. disabled, for normal maps.
 @(pure)
 export float3 hex_contrast(const float3 w, const float contrast = 0.5) {
   return w if (contrast == 0.5);
@@ -255,13 +232,12 @@ export auto hex_blend(const float3 w, const auto value0, const auto value1, cons
 /// the source about a known `mean`.
 ///
 /// A weighted average of independent samples has `sum(w * w)` times the
-/// variance of the source, which is always less than one, and that shortfall
-/// is exactly the loss of contrast that histogram preservation exists to
-/// avoid. Dividing the deviation from the mean by the square root of that
-/// factor restores the variance exactly while leaving the mean alone.
-///
-/// This needs the mean of the source, which is the one thing it cannot work
-/// out for itself. For a texture, that is the average of all of its texels.
+/// variance of the source, and that shortfall is exactly the contrast loss
+/// that histogram preservation exists to avoid, so the deviation from the
+/// mean is divided by the square root of that factor: the variance is
+/// restored exactly and the mean is untouched. The `mean` is the one thing
+/// this cannot work out for itself; for a texture it is the average of all
+/// texels.
 @(pure macro)
 export auto hex_blend_variance_preserving(
   const float3 w,
@@ -277,18 +253,17 @@ export auto hex_blend_variance_preserving(
 /// The index of one tile chosen stochastically, with probability equal to its
 /// weight, given a canonical random number `xi` in `[0, 1)`.
 ///
-/// Averaged over many samples this reproduces `hex_blend()` exactly, so with a
-/// Monte Carlo renderer it is an unbiased substitute that needs only one
-/// lookup rather than three. Each sample is then a value that genuinely occurs
-/// in the source, which matters when the result feeds something non-linear:
-/// blending three roughness values or three normals and then shading is not
-/// the same as shading each and averaging, and the stochastic form gets the
-/// latter.
+/// Averaged over many samples this reproduces `hex_blend()` exactly, so with
+/// a Monte Carlo renderer it is an unbiased substitute that needs one lookup
+/// rather than three, and every sample is a value that genuinely occurs in
+/// the source. That matters when the result feeds something non-linear:
+/// shading a blend of three roughnesses or normals is not the same as shading
+/// each and averaging.
 ///
-/// NOTE: This does not recover contrast by itself. In the limit it converges
-/// to the same weighted mean. What it does is let `hex_contrast()` be pushed
-/// much harder, because a sharp weight ramp is dithered by the sampler instead
-/// of showing up as a hexagonal seam.
+/// NOTE: This does not recover contrast; it converges to the same weighted
+/// mean. What it does is let `hex_contrast()` be pushed much harder, because
+/// a sharp weight ramp is dithered by the sampler instead of showing up as a
+/// hexagonal seam.
 @(pure)
 export int hex_select(const float3 w, const float xi) {
   return 0 if (xi < w.x);
@@ -309,32 +284,27 @@ export struct hex_samples {
   float3 weights = float3(1.0 / 3.0);
 };
 
-/// Looks up `tex` once per hex tile and works out the blending weights,
-/// leaving the blend itself to the caller.
+/// Looks up `tex` once per hex tile and shapes the blending weights, leaving
+/// the blend itself to the caller: take the result to `hex_blend()` for the
+/// published method, to `hex_blend_variance_preserving()` to recover the lost
+/// contrast, or to `hex_select()` to resolve it stochastically.
 ///
-/// This is the seam between the tiling and the blending. Take the result to
-/// `hex_blend()` for the published method, to
-/// `hex_blend_variance_preserving()` to recover the lost contrast, or to
-/// `hex_select()` to resolve it stochastically instead.
-///
-/// The wrap mode is necessarily `wrap_repeat`, as the whole construction
-/// assumes the source tiles.
+/// Taking the tiling rather than building one is what lets several maps share
+/// it, which is the usual shape of a material: build it once with
+/// `hex_tiling_at()`, then look up each map against it. The wrap mode is
+/// necessarily `wrap_repeat`, as the whole construction assumes the source
+/// tiles.
 @(pure)
 export hex_samples hex_lookup(
   const texture_2d tex,
-  const float2 coord,
-  const float rotate = 1.0,    ///< The random per-tile rotation, as a fraction of `+/-pi`.
+  const hex_tiling tiling,     ///< The tiling, from `hex_tiling_at()`.
   const float contrast = 0.75, ///< The S-curve ramp on the weights. See `hex_contrast()`.
-  const float exponent = 7.0,  ///< The sharpening of the weights. See `hex_weights()`.
   const float strength = 0.6,  ///< The extent of the luminance modulation. See `hex_modulate()`.
-  const int seed = 0,          ///< The seed decorrelating independent tilings.
 ) {
-  const auto tiling(hex_tiling_at(coord, rotate, seed));
   const auto value0(tex::lookup_float4(tex, tiling.tiles[0].coord));
   const auto value1(tex::lookup_float4(tex, tiling.tiles[1].coord));
   const auto value2(tex::lookup_float4(tex, tiling.tiles[2].coord));
-  auto weights(hex_weights(tiling, exponent));
-  weights = hex_modulate(weights, hex_metric_luminance(value0.xyz, value1.xyz, value2.xyz), strength);
+  auto weights(hex_modulate(tiling.weights, hex_metric_luminance(value0.xyz, value1.xyz, value2.xyz), strength));
   weights = hex_contrast(weights, contrast);
   return hex_samples(values: float4[3](value0, value1, value2), weights: weights);
 }
@@ -355,16 +325,19 @@ export float4 hex_blend_variance_preserving(const hex_samples this, const float4
 export float4 hex_select(const hex_samples this, const float xi) = this.values[hex_select(this.weights, xi)];
 
 /// The hex tiled lookup at `coord` as `float4`.
+///
+/// The `hex_lookup_*()` family builds the tiling, looks up, and blends in one
+/// call. To tile several maps consistently, use `hex_tiling_at()` and
+/// `hex_lookup()` instead.
 @(pure macro)
 export float4 hex_lookup_float4(
   const texture_2d tex,
   const float2 coord,
   const float rotate = 1.0,
   const float contrast = 0.75,
-  const float exponent = 7.0,
   const float strength = 0.6,
   const int seed = 0,
-) = hex_blend(hex_lookup(tex, coord, rotate, contrast, exponent, strength, seed));
+) = hex_blend(hex_lookup(tex, hex_tiling_at(coord, rotate, seed), contrast, strength));
 
 /// The hex tiled lookup at `coord` as `float3`.
 @(pure macro)
@@ -373,10 +346,9 @@ export float3 hex_lookup_float3(
   const float2 coord,
   const float rotate = 1.0,
   const float contrast = 0.75,
-  const float exponent = 7.0,
   const float strength = 0.6,
   const int seed = 0,
-) = hex_lookup_float4(tex, coord, rotate, contrast, exponent, strength, seed).xyz;
+) = hex_lookup_float4(tex, coord, rotate, contrast, strength, seed).xyz;
 
 /// The hex tiled lookup at `coord` as `float2`.
 @(pure macro)
@@ -385,10 +357,9 @@ export float2 hex_lookup_float2(
   const float2 coord,
   const float rotate = 1.0,
   const float contrast = 0.75,
-  const float exponent = 7.0,
   const float strength = 0.6,
   const int seed = 0,
-) = hex_lookup_float4(tex, coord, rotate, contrast, exponent, strength, seed).xy;
+) = hex_lookup_float4(tex, coord, rotate, contrast, strength, seed).xy;
 
 /// The hex tiled lookup at `coord` as `float`.
 @(pure macro)
@@ -397,10 +368,9 @@ export float hex_lookup_float(
   const float2 coord,
   const float rotate = 1.0,
   const float contrast = 0.75,
-  const float exponent = 7.0,
   const float strength = 0.6,
   const int seed = 0,
-) = hex_lookup_float4(tex, coord, rotate, contrast, exponent, strength, seed).x;
+) = hex_lookup_float4(tex, coord, rotate, contrast, strength, seed).x;
 
 /// The hex tiled lookup at `coord` as `color`.
 @(pure macro)
@@ -409,18 +379,16 @@ export color hex_lookup_color(
   const float2 coord,
   const float rotate = 1.0,
   const float contrast = 0.75,
-  const float exponent = 7.0,
   const float strength = 0.6,
   const int seed = 0,
-) = color(hex_lookup_float4(tex, coord, rotate, contrast, exponent, strength, seed).xyz);
+) = color(hex_lookup_float4(tex, coord, rotate, contrast, strength, seed).xyz);
 
 /// The hex tiled lookup at `coord` as `float4`, resolved stochastically with
 /// a single texture lookup given a canonical random number `xi` in `[0, 1)`.
 ///
-/// NOTE: The luminance modulation of `hex_modulate()` is unavailable here,
-/// because it is a function of the values sampled from all three tiles and
-/// this only ever samples one of them. Compensating with a higher `contrast`
-/// is reasonable, since the sampler dithers the transition either way.
+/// NOTE: The modulation of `hex_modulate()` needs the values from all three
+/// tiles and is unavailable here. Compensating with a higher `contrast` is
+/// reasonable, since the sampler dithers the transition either way.
 @(pure)
 export float4 hex_lookup_float4_stochastic(
   const texture_2d tex,
@@ -428,12 +396,10 @@ export float4 hex_lookup_float4_stochastic(
   const float xi,
   const float rotate = 1.0,
   const float contrast = 0.75,
-  const float exponent = 7.0,
   const int seed = 0,
 ) {
   const auto tiling(hex_tiling_at(coord, rotate, seed));
-  const auto weights(hex_contrast(hex_weights(tiling, exponent), contrast));
-  return tex::lookup_float4(tex, tiling.tiles[hex_select(weights, xi)].coord);
+  return tex::lookup_float4(tex, tiling.tiles[hex_select(hex_contrast(tiling.weights, contrast), xi)].coord);
 }
 
 /// The hex tiled lookup at `coord` as `color`, resolved stochastically.
@@ -445,8 +411,33 @@ export color hex_lookup_color_stochastic(
   const float xi,
   const float rotate = 1.0,
   const float contrast = 0.75,
-  const float exponent = 7.0,
   const int seed = 0,
-) = color(hex_lookup_float4_stochastic(tex, coord, xi, rotate, contrast, exponent, seed).xyz);
+) = color(hex_lookup_float4_stochastic(tex, coord, xi, rotate, contrast, seed).xyz);
+
+/// Looks up a tangent-space normal from one tile, decoded from the usual
+/// `0.5 * normal + 0.5` encoding, counter-rotated, and renormalized.
+///
+/// The XY components come back through the inverse of the per-tile rotation;
+/// without this the shading normals swim against the visible pattern whenever
+/// `rotate` is non-zero. The intended use is stochastic: pick one tile with
+/// `hex_select()`, so every sample is a normal that genuinely occurs in the
+/// source, and reuse the weights modulated by the map that drives the visible
+/// blend, which keeps the normal statistics consistent with it:
+///
+///     const auto tiling(hex_tiling_at(coord, rotate, seed));
+///     const auto samples(hex_lookup(gray_tex, tiling));
+///     const auto normal(hex_lookup_normal(
+///         normal_tex, tiling.tiles[hex_select(samples.weights, xi)]));
+///
+/// NOTE: The blended color and the per-sample normal decorrelate slightly in
+/// the transition bands (three tiles mixed versus one chosen), though both
+/// converge to blends under the same weights. If per-sample alignment across
+/// maps matters, select the tile once and read every map from it, at the cost
+/// of more variance in the color.
+@(pure)
+export float3 hex_lookup_normal(const texture_2d tex, const hex_tile tile) {
+  const auto n(2.0 * tex::lookup_float3(tex, tile.coord) - 1.0);
+  return math::normalize(float3(hex_rotate_inverse(tile.rotation, n.xy), n.z));
+}
 
 //--}

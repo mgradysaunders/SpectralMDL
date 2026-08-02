@@ -1,0 +1,288 @@
+#smdl
+
+import ::math::*;
+using empirical = ::models::empirical;
+import empirical::*;
+
+// The asphalt/brick model with all three parameters spelled out, so each case
+// below reads as a point in the parameter box.
+color paving(const float brightness, const float iron, const float binder) = empirical::asphalt_brick_albedo(
+  brightness: brightness, iron: iron, binder: binder);
+
+unit_test "ASPHALT_BRICK" {
+  // Every corner of the parameter box stays strictly inside (0, 1): the
+  // logistic link admits neither endpoint exactly.
+  for (int c = 0; c < 8; c++) {
+    const auto corner = paving(
+      (c & 1) != 0 ? 1.0 : 0.0, (c & 2) != 0 ? 1.0 : 0.0, (c & 4) != 0 ? 1.0 : 0.0);
+    for (int i = 0; i < $WAVELENGTH_BASE_MAX; i++) {
+      #assert(corner[i] > 0.0);
+      #assert(corner[i] < 1.0);
+    }
+  }
+
+  // All three parameters clamp to [0, 1], so nothing outside the box can
+  // extrapolate through the fit.
+  const auto lo = paving(0.0, 0.0, 0.0);
+  const auto hi = paving(1.0, 1.0, 1.0);
+  const auto below = paving(-1.0, -0.5, -2.0);
+  const auto above = paving(3.0, 1.5, 2.0);
+  for (int i = 0; i < $WAVELENGTH_BASE_MAX; i++) {
+    #assert(below[i] == lo[i]);
+    #assert(above[i] == hi[i]);
+  }
+
+  // Reflectance rises strictly with brightness. Binder is held at zero here
+  // because its cap depends on brightness: with binder in play, brightening a
+  // binder-rich material also strips its (spectrally strong) binder terms, and
+  // the net movement is legitimately not monotone.
+  for (int j = 1; j <= 4; j++) {
+    const auto darker = paving(0.25 * (j - 1), 0.5, 0.0);
+    const auto brighter = paving(0.25 * j, 0.5, 0.0);
+    for (int i = 0; i < $WAVELENGTH_BASE_MAX; i++) {
+      #assert(brighter[i] > darker[i]);
+    }
+  }
+
+  // Absolute reflectance against the C++ reference implementation
+  // ('urban_asphalt_brick.cpp', exported by cppexport.py from the fitted
+  // Python model), evaluated at the exact wavelengths of the spectral state
+  // each block guards on. The port repeats the same float arithmetic, so the
+  // tolerance only admits association differences in the interpolation and
+  // the 7-term dot product.
+  //
+  // Note that lane 0 of the default state sits at 380 nm, below the 400 nm
+  // floor of the table, so these also pin the clamp there.
+  if ($WAVELENGTH_BASE_MAX == 16 && math::abs($state.wavelength_base[0] - 380.0) < 1e-3 &&
+      math::abs($state.wavelength_base[15] - 720.0) < 1e-3) {
+    // The dark and bright end members of the box, ...
+    const auto REF_DARK = float[16](
+      0.071288, 0.071964, 0.076495, 0.074473,
+      0.073828, 0.074056, 0.074521, 0.074551,
+      0.074353, 0.074750, 0.075121, 0.075310,
+      0.075701, 0.076211, 0.076537, 0.076693);
+    const auto REF_BRIGHT = float[16](
+      0.165922, 0.167188, 0.177191, 0.182007,
+      0.186156, 0.192083, 0.200980, 0.218789,
+      0.269126, 0.353240, 0.417441, 0.445120,
+      0.459532, 0.473045, 0.487944, 0.501717);
+    // ... a dark iron- and binder-heavy interior point (both binder half-axes
+    // have been exercised once the cap is applied), ...
+    const auto REF_IRON = float[16](
+      0.025022, 0.024903, 0.024250, 0.025217,
+      0.026050, 0.026980, 0.028685, 0.031862,
+      0.039114, 0.051263, 0.061692, 0.067092,
+      0.070562, 0.074068, 0.078039, 0.082057);
+    // ... a pale low-binder point where the brightness cap bites, ...
+    const auto REF_PALE = float[16](
+      0.214257, 0.216504, 0.236337, 0.256619,
+      0.272818, 0.287811, 0.309960, 0.337208,
+      0.367201, 0.396079, 0.412970, 0.419497,
+      0.422453, 0.424381, 0.425842, 0.426550);
+    // ... and the defaults, called with no arguments to pin those too.
+    const auto REF_MID = float[16](
+      0.085604, 0.085701, 0.088106, 0.098188,
+      0.106070, 0.113168, 0.125469, 0.143468,
+      0.167883, 0.195835, 0.214381, 0.221831,
+      0.224994, 0.227289, 0.229606, 0.231467);
+    const auto iron_heavy = paving(0.25, 0.8, 0.7);
+    const auto pale = paving(0.7, 0.3, 0.15);
+    const auto mid = empirical::asphalt_brick_albedo();
+    for (int i = 0; i < 16; i++) {
+      #assert(lo[i] ~== |1e-4| REF_DARK[i]);
+      #assert(hi[i] ~== |1e-4| REF_BRIGHT[i]);
+      #assert(iron_heavy[i] ~== |1e-4| REF_IRON[i]);
+      #assert(pale[i] ~== |1e-4| REF_PALE[i]);
+      #assert(mid[i] ~== |1e-4| REF_MID[i]);
+    }
+  }
+
+  // The same comparison in the shortwave infrared, which covers most of the
+  // 400..2438 nm table. The default spectral state never reaches this far, so
+  // run it explicitly with
+  //
+  //   smdl test -wavelength_min 900 -wavelength_max 2400 testing/smdl/empirical.smdl
+  //
+  if ($WAVELENGTH_BASE_MAX == 16 && math::abs($state.wavelength_base[0] - 900.0) < 1e-3 &&
+      math::abs($state.wavelength_base[15] - 2400.0) < 1e-3) {
+    const auto REF_SWIR_DARK = float[16](
+      0.075776, 0.071684, 0.067059, 0.063425,
+      0.060686, 0.057913, 0.056837, 0.054999,
+      0.053343, 0.051876, 0.050915, 0.049491,
+      0.048741, 0.045974, 0.045422, 0.043688);
+    const auto REF_SWIR_BRIGHT = float[16](
+      0.490236, 0.516737, 0.532828, 0.539548,
+      0.543099, 0.536249, 0.547399, 0.565459,
+      0.577925, 0.582131, 0.533328, 0.531054,
+      0.570480, 0.561273, 0.556986, 0.514182);
+    const auto REF_SWIR_IRON = float[16](
+      0.092723, 0.104916, 0.114374, 0.121464,
+      0.128212, 0.132137, 0.137848, 0.146496,
+      0.152141, 0.158289, 0.153047, 0.158770,
+      0.155991, 0.161509, 0.145214, 0.142962);
+    const auto REF_SWIR_PALE = float[16](
+      0.394971, 0.387106, 0.380518, 0.376722,
+      0.375458, 0.365622, 0.365856, 0.373130,
+      0.373549, 0.369262, 0.328423, 0.322351,
+      0.339603, 0.325829, 0.311541, 0.279277);
+    const auto REF_SWIR_MID = float[16](
+      0.217760, 0.220728, 0.222292, 0.223624,
+      0.226001, 0.223947, 0.227436, 0.234700,
+      0.237980, 0.239168, 0.217743, 0.218491,
+      0.230164, 0.225789, 0.214114, 0.198617);
+    const auto iron_heavy = paving(0.25, 0.8, 0.7);
+    const auto pale = paving(0.7, 0.3, 0.15);
+    const auto mid = empirical::asphalt_brick_albedo();
+    for (int i = 0; i < 16; i++) {
+      #assert(lo[i] ~== |1e-4| REF_SWIR_DARK[i]);
+      #assert(hi[i] ~== |1e-4| REF_SWIR_BRIGHT[i]);
+      #assert(iron_heavy[i] ~== |1e-4| REF_SWIR_IRON[i]);
+      #assert(pale[i] ~== |1e-4| REF_SWIR_PALE[i]);
+      #assert(mid[i] ~== |1e-4| REF_SWIR_MID[i]);
+    }
+  }
+}
+
+// The soil model with all four parameters spelled out, likewise.
+color soil(const float humus, const float iron, const float aridity, const float moisture) = empirical::soil_albedo(
+  humus: humus, iron: iron, aridity: aridity, moisture: moisture);
+
+unit_test "SOIL" {
+  // Every corner of the parameter box stays strictly inside (0, 1): the
+  // logistic link admits neither endpoint exactly.
+  for (int c = 0; c < 16; c++) {
+    const auto corner = soil(
+      (c & 1) != 0 ? 1.0 : 0.0, (c & 2) != 0 ? 1.0 : 0.0,
+      (c & 4) != 0 ? 1.0 : 0.0, (c & 8) != 0 ? 1.0 : 0.0);
+    for (int i = 0; i < $WAVELENGTH_BASE_MAX; i++) {
+      #assert(corner[i] > 0.0);
+      #assert(corner[i] < 1.0);
+    }
+  }
+
+  // All four parameters clamp to [0, 1], so nothing outside the box can
+  // extrapolate through the fit.
+  const auto lo = soil(0.0, 0.0, 0.0, 0.0);
+  const auto hi = soil(1.0, 1.0, 1.0, 1.0);
+  const auto below = soil(-1.0, -0.5, -2.0, -1.0);
+  const auto above = soil(3.0, 1.5, 2.0, 4.0);
+  for (int i = 0; i < $WAVELENGTH_BASE_MAX; i++) {
+    #assert(below[i] == lo[i]);
+    #assert(above[i] == hi[i]);
+  }
+
+  // Humus darkens strictly. Iron is held at zero so the chroma channel (whose
+  // exponent also moves with humus) is pinned at zero and only the lightness
+  // term is in play.
+  for (int j = 1; j <= 4; j++) {
+    const auto paler = soil(0.25 * (j - 1), 0.0, 0.5, 0.0);
+    const auto darker = soil(0.25 * j, 0.0, 0.5, 0.0);
+    for (int i = 0; i < $WAVELENGTH_BASE_MAX; i++) {
+      #assert(darker[i] < paler[i]);
+    }
+  }
+
+  // Full moisture darkens relative to bone dry at every wavelength. Only the
+  // endpoints are compared: near full moisture the water-squared term can
+  // locally brighten a step at the blue end, so the path between them is
+  // legitimately not monotone per lane.
+  const auto dry = empirical::soil_albedo();
+  const auto wet = soil(0.5, 0.5, 0.5, 1.0);
+  for (int i = 0; i < $WAVELENGTH_BASE_MAX; i++) {
+    #assert(wet[i] < dry[i]);
+  }
+
+  // Golden spectra pinned from this implementation as built. Unlike the
+  // asphalt/brick model there is no standalone reference implementation
+  // in-tree to compare against, so these are regression values, not external
+  // truth: they freeze the tables, the pedogenic->color conversion, and the
+  // logistic link against accidental edits (a sign flip in the link, say,
+  // inverts every one of them).
+  //
+  // Note that lane 0 of the default state sits at 380 nm, below the 400 nm
+  // floor of the table, so these also pin the clamp there.
+  if ($WAVELENGTH_BASE_MAX == 16 && math::abs($state.wavelength_base[0] - 380.0) < 1e-3 &&
+      math::abs($state.wavelength_base[15] - 720.0) < 1e-3) {
+    // The pale and fully-developed corners of the box, ...
+    const auto REF_PALE = float[16](
+      0.269348, 0.276915, 0.331688, 0.381048,
+      0.404428, 0.430948, 0.466611, 0.495606,
+      0.504291, 0.499684, 0.498657, 0.502224,
+      0.509630, 0.517664, 0.525266, 0.533021);
+    const auto REF_DARK_WET = float[16](
+      0.007788, 0.007724, 0.007886, 0.008695,
+      0.009357, 0.010289, 0.011798, 0.014155,
+      0.018913, 0.025512, 0.030935, 0.034926,
+      0.038721, 0.042957, 0.047619, 0.052281);
+    // ... an arid iron-rich hematite red, ...
+    const auto REF_RED = float[16](
+      0.064553, 0.065425, 0.072106, 0.086522,
+      0.100225, 0.114227, 0.133794, 0.160967,
+      0.212945, 0.280077, 0.329922, 0.362199,
+      0.389531, 0.415833, 0.441922, 0.465169);
+    // ... the defaults at full moisture, ...
+    const auto REF_MOIST = float[16](
+      0.035352, 0.035974, 0.042289, 0.049188,
+      0.052413, 0.057589, 0.066260, 0.076577,
+      0.087918, 0.097599, 0.104578, 0.110192,
+      0.116156, 0.122761, 0.129695, 0.136633);
+    // ... and the defaults, called with no arguments to pin those too.
+    const auto REF_MID = float[16](
+      0.070797, 0.072278, 0.086726, 0.103713,
+      0.113251, 0.125642, 0.144756, 0.166219,
+      0.188195, 0.206993, 0.220870, 0.232158,
+      0.244204, 0.257157, 0.270322, 0.283413);
+    const auto red = soil(0.3, 0.9, 1.0, 0.0);
+    for (int i = 0; i < 16; i++) {
+      #assert(lo[i] ~== |1e-4| REF_PALE[i]);
+      #assert(hi[i] ~== |1e-4| REF_DARK_WET[i]);
+      #assert(red[i] ~== |1e-4| REF_RED[i]);
+      #assert(wet[i] ~== |1e-4| REF_MOIST[i]);
+      #assert(dry[i] ~== |1e-4| REF_MID[i]);
+    }
+  }
+
+  // The same pin in the shortwave infrared. Lanes 14 and 15 sit at 2300 and
+  // 2400 nm, both above the 2298 nm ceiling of the table, so they pin the
+  // clamp at the top end (and must be exactly equal). Run explicitly with
+  //
+  //   smdl test -wavelength_min 900 -wavelength_max 2400 testing/smdl/empirical.smdl
+  //
+  if ($WAVELENGTH_BASE_MAX == 16 && math::abs($state.wavelength_base[0] - 900.0) < 1e-3 &&
+      math::abs($state.wavelength_base[15] - 2400.0) < 1e-3) {
+    const auto REF_SWIR_PALE = float[16](
+      0.588132, 0.592829, 0.609703, 0.603799,
+      0.614913, 0.563004, 0.573947, 0.595117,
+      0.600696, 0.590183, 0.544147, 0.550325,
+      0.569234, 0.544566, 0.544503, 0.544503);
+    const auto REF_SWIR_DARK_WET = float[16](
+      0.067544, 0.078954, 0.088012, 0.098428,
+      0.102913, 0.074187, 0.065511, 0.091857,
+      0.098200, 0.090543, 0.023084, 0.028491,
+      0.055527, 0.063550, 0.056404, 0.056404);
+    const auto REF_SWIR_RED = float[16](
+      0.510965, 0.542182, 0.561459, 0.571855,
+      0.573430, 0.530495, 0.522465, 0.548240,
+      0.552843, 0.543620, 0.411330, 0.440922,
+      0.506588, 0.472487, 0.460430, 0.460430);
+    const auto REF_SWIR_MOIST = float[16](
+      0.166038, 0.175984, 0.191001, 0.194585,
+      0.202152, 0.132187, 0.120269, 0.166800,
+      0.177320, 0.159872, 0.050434, 0.057791,
+      0.099662, 0.114373, 0.104574, 0.104574);
+    const auto REF_SWIR_MID = float[16](
+      0.342811, 0.367874, 0.390332, 0.415287,
+      0.431214, 0.423645, 0.435590, 0.448862,
+      0.452590, 0.451695, 0.378951, 0.398058,
+      0.431267, 0.399533, 0.398164, 0.398164);
+    const auto red = soil(0.3, 0.9, 1.0, 0.0);
+    #assert(lo[14] == lo[15]);
+    for (int i = 0; i < 16; i++) {
+      #assert(lo[i] ~== |1e-4| REF_SWIR_PALE[i]);
+      #assert(hi[i] ~== |1e-4| REF_SWIR_DARK_WET[i]);
+      #assert(red[i] ~== |1e-4| REF_SWIR_RED[i]);
+      #assert(wet[i] ~== |1e-4| REF_SWIR_MOIST[i]);
+      #assert(dry[i] ~== |1e-4| REF_SWIR_MID[i]);
+    }
+  }
+}

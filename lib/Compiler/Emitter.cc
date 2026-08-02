@@ -3206,7 +3206,7 @@ void Emitter::resolveImportUsingAliases(
     }
     if (foundAlias) {
       // Resolve the alias's own path against the aliases declared before
-      // it — including the alias itself would recurse forever on
+      // it, including the alias itself would recurse forever on
       // `using foo = foo::bar;`.
       resolveImportUsingAliases(foundAliasSeq, foundAlias->importPath,
                                 resolvedImportPath);
