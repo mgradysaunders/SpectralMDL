@@ -96,7 +96,24 @@ def srgb_hex(lin):
     return "#%02x%02x%02x" % tuple(v)
 
 
+def hex_color(s):
+    """argparse type: '#rrggbb' or the 3-digit short form -> linear RGB."""
+    t = s.lstrip("#")
+    if len(t) == 3:
+        t = "".join(c * 2 for c in t)
+    if len(t) != 6 or any(c not in "0123456789abcdefABCDEF" for c in t):
+        raise argparse.ArgumentTypeError(f"not an sRGB hex color: {s!r}")
+    return srgb_to_linear(np.array([int(t[i:i + 2], 16) for i in (0, 2, 4)]) / 255.0)
+
+
 # preprocessing
+
+def row_chunks(arr):
+    """Iterate over row blocks of an image array, bounding peak working memory."""
+    rows = max(1, (1 << 22) // max(arr.shape[1], 1))
+    for y0 in range(0, len(arr), rows):
+        yield arr[y0:y0 + rows]
+
 
 def add_noise(lin, sigma, rng):
     """Perturb each linear channel independently, in place, clamped to [0,1].
@@ -105,30 +122,130 @@ def add_noise(lin, sigma, rng):
     chromaticity plane into banded streaks. Dithering with a little noise
     spreads those bands back into a smooth distribution, so the fit sees the
     underlying chromaticity sweep rather than the codec's staircase.
-
-    Works in row chunks so peak memory stays bounded on large textures.
     """
-    rows = max(1, (1 << 22) // max(lin.shape[1], 1))
-    for y0 in range(0, len(lin), rows):
-        chunk = lin[y0:y0 + rows]
+    for chunk in row_chunks(lin):
         chunk += rng.standard_normal(chunk.shape, dtype=np.float32) * sigma
         np.clip(chunk, 0.0, 1.0, out=chunk)
     return lin
 
 
+def stretch_contrast(lin, pct, rng):
+    """Map the luminance percentile range onto [0,1] in place, clamped.
+
+    One gain and offset shared by all three channels, so an overall color cast
+    survives -- per-channel endpoints would white balance it away, and for an
+    albedo map that cast is usually the material, not an artifact. Subtracting
+    the black point does lift chroma along with contrast, which is the point:
+    a hazy, low-contrast scan spreads back out in a* b* as well as in L*.
+
+    Returns the linear endpoints it mapped from, or None if they are too close
+    together to divide by, in which case the image is left untouched.
+    """
+    n = min(1 << 20, lin.shape[0] * lin.shape[1])
+    y = lin.reshape(-1, 3)[rng.integers(0, lin.shape[0] * lin.shape[1], n)] @ M_RGB2XYZ[1]
+    lo, hi = (float(v) for v in np.percentile(y, [pct, 100.0 - pct]))
+    if hi - lo < 1e-6:
+        return None
+    for chunk in row_chunks(lin):
+        chunk -= lo
+        chunk /= hi - lo
+        np.clip(chunk, 0.0, 1.0, out=chunk)
+    return lo, hi
+
+
+# interactive
+
+def pick_seeds(lin, k, radius):
+    """Collect up to k seed colors by clicking on the image. Blocks on a window.
+
+    Samples the preprocessed linear image rather than the source file, so what
+    is picked is what the fit will see. Each click averages the (2*radius+1)^2
+    neighborhood at full resolution, because a single pixel of a lossy texture
+    is as likely to be DCT ringing as it is to be the material.
+
+    Left click samples, right click undoes, enter closes. Returns linear RGB
+    triples in pick order, possibly empty if the window is closed with none.
+    """
+    import matplotlib
+    if matplotlib.get_backend().lower().startswith("agg"):
+        raise RuntimeError(f"--pick needs an interactive matplotlib backend, "
+                           f"got {matplotlib.get_backend()!r}")
+    import matplotlib.pyplot as plt
+    from matplotlib import patheffects
+    outline = [patheffects.withStroke(linewidth=2.5, foreground="k")]
+
+    # Decimate for display only; clicks map back through `step` to full res.
+    step = max(1, min(lin.shape[:2]) // 900)
+    seeds, marks = [], []
+
+    fig, ax = plt.subplots(figsize=(10, 8))
+    ax.imshow(np.clip(linear_to_srgb(lin[::step, ::step]), 0, 1), interpolation="nearest")
+    ax.set_xticks([]); ax.set_yticks([])
+
+    def retitle():
+        ax.set_title(f"[{len(seeds)}/{k}]  left click: sample   "
+                     f"right click: undo   enter: done")
+        fig.canvas.draw_idle()
+
+    def sample_at(x, y):
+        cy, cx = int(round(y)) * step, int(round(x)) * step
+        y0, y1 = max(cy - radius, 0), min(cy + radius + 1, lin.shape[0])
+        x0, x1 = max(cx - radius, 0), min(cx + radius + 1, lin.shape[1])
+        return lin[y0:y1, x0:x1].reshape(-1, 3).mean(axis=0).astype(np.float64)
+
+    def on_click(ev):
+        if ev.inaxes is not ax or ev.xdata is None:
+            return
+        if ev.button == 3 and seeds:
+            seeds.pop()
+            for artist in marks.pop():
+                artist.remove()
+        elif ev.button == 1 and len(seeds) < k:
+            c = sample_at(ev.xdata, ev.ydata)
+            seeds.append(c)
+            print(f"    seed {len(seeds)}: {srgb_hex(c)}")
+            marks.append([
+                ax.scatter([ev.xdata], [ev.ydata], s=300, zorder=5, linewidths=2,
+                           c=[np.clip(linear_to_srgb(c), 0, 1)], edgecolors="k"),
+                ax.annotate(str(len(seeds)), (ev.xdata, ev.ydata), zorder=6,
+                            color="w", ha="center", va="center", fontsize=8,
+                            path_effects=outline)])
+        else:
+            return
+        retitle()
+
+    def on_key(ev):
+        if ev.key in ("enter", "escape"):
+            plt.close(fig)
+
+    fig.canvas.mpl_connect("button_press_event", on_click)
+    fig.canvas.mpl_connect("key_press_event", on_key)
+    retitle()
+    fig.tight_layout()
+    plt.show()
+    return seeds
+
+
 # clustering
 
-def fit_centers(sample, k, l_weight, seed):
+def fit_centers(sample, k, l_weight, seed, seeds=None):
     """GMM with full covariance, fitted in the weighted metric.
 
     Centers come back as responsibility-weighted means of the *unweighted*
     samples, so every class has a meaningful L* even when l_weight is 0 and the
     lightness axis carries no weight in the fit itself.
+
+    Optional `seeds` (in the same space as `sample`) initialize the component
+    means, so the fit refines the classes that were pointed at instead of
+    searching from k-means restarts. Restarts are pointless once the init is
+    explicit -- they would all start from the same place -- so n_init drops to 1.
     """
     from sklearn.mixture import GaussianMixture
 
     weighted = sample * weight_scale(l_weight)
-    gmm = GaussianMixture(n_components=k, covariance_type="full", n_init=4,
+    gmm = GaussianMixture(n_components=k, covariance_type="full",
+                          n_init=1 if seeds is not None else 4,
+                          means_init=None if seeds is None else seeds * weight_scale(l_weight),
                           random_state=seed, reg_covar=1e-4)
     resp = gmm.fit(weighted).predict_proba(weighted)
     mass = resp.sum(axis=0)
@@ -212,6 +329,25 @@ def main():
     p.add_argument("-o", "--output", type=Path, help="output RGBA PNG (default: <image>_cls.png)")
     p.add_argument("-k", "--classes", type=int, default=4, help="max classes, 1-4 (default 4)")
     p.add_argument("--space", choices=sorted(SPACES), default="cielab")
+    p.add_argument("--seed-color", nargs="+", type=hex_color, metavar="HEX",
+                   help="seed the class centers with explicit sRGB colors, '#rrggbb' or "
+                        "'#rgb', up to 4. The count overrides --classes: naming the "
+                        "colors is also naming how many there are. The fit refines the "
+                        "centers from these unless --lock-seeds is given, and seeded "
+                        "centers are never merged by --min-separation.")
+    p.add_argument("--pick", action="store_true",
+                   help="pick the seed colors interactively, as with an eyedropper: "
+                        "opens a window on the preprocessed image where left click "
+                        "samples, right click undoes, and enter closes. Prints the "
+                        "equivalent --seed-color line so the session can be replayed "
+                        "headlessly. Needs an interactive matplotlib backend.")
+    p.add_argument("--pick-radius", type=int, default=2, metavar="R",
+                   help="eyedropper sample size for --pick: the mean over a (2R+1)^2 "
+                        "neighborhood at full resolution (default 2, i.e. 5x5). Single "
+                        "pixels are as likely to be compression ringing as material.")
+    p.add_argument("--lock-seeds", action="store_true",
+                   help="use the seed colors verbatim as class centers, skipping the "
+                        "mixture fit entirely")
     p.add_argument("--l-weight", type=float, default=0.25,
                    help="weight on the lightness axis when clustering (default 0.25). "
                         "This is the main knob: it encodes whether lightness variation "
@@ -231,6 +367,13 @@ def main():
                         "lossy compression leaves behind; 0.002-0.01 is a usual range. "
                         "Note the sigma is in linear reflectance, so it perturbs dark "
                         "pixels more in perceptual terms than bright ones.")
+    p.add_argument("--stretch", nargs="?", type=float, const=1.0, default=None, metavar="PCT",
+                   help="contrast-stretch the linear image so the PCT to (100-PCT) "
+                        "luminance percentile range spans [0,1] (PCT defaults to 1 when "
+                        "the flag is given, off otherwise). One gain and offset shared by "
+                        "all three channels, so a genuine color cast survives; chroma "
+                        "widens along with the tonal range, which pushes hazy or "
+                        "low-contrast scans further apart in a* b*.")
     p.add_argument("--samples", type=int, default=300_000, help="pixels sampled to fit centers")
     p.add_argument("--bits", type=int, choices=(8, 16), default=8)
     p.add_argument("--lightness-range", nargs=2, type=float, metavar=("LO", "HI"),
@@ -243,6 +386,16 @@ def main():
         p.error("--classes must be between 1 and 4")
     if args.noise < 0:
         p.error("--noise must be non-negative")
+    if args.stretch is not None and not 0 <= args.stretch < 50:
+        p.error("--stretch percentile must be in [0, 50)")
+    if args.seed_color and args.pick:
+        p.error("--seed-color and --pick are mutually exclusive")
+    if args.seed_color and len(args.seed_color) > 4:
+        p.error("at most 4 --seed-color values")
+    if args.lock_seeds and not (args.seed_color or args.pick):
+        p.error("--lock-seeds requires --seed-color or --pick")
+    if args.pick_radius < 0:
+        p.error("--pick-radius must be non-negative")
 
     to_lab, from_lab = SPACES[args.space]
     out_path = args.output or args.image.with_name(args.image.stem + "_cls.png")
@@ -256,24 +409,62 @@ def main():
     lin = srgb_to_linear(np.asarray(img, dtype=np.float32) / 255.0).astype(np.float32)
 
     rng = np.random.default_rng(args.seed)
+    # Dither before stretching, so the sigma stays in source-linear units and is
+    # amplified by exactly the same gain as the banding it is meant to smear.
     if args.noise > 0:
         add_noise(lin, args.noise, rng)
         print(f"  dithered with sigma {args.noise:g} (linear)")
+
+    stretch = None
+    if args.stretch is not None:
+        stretch = stretch_contrast(lin, args.stretch, rng)
+        if stretch:
+            print(f"  stretched linear [{stretch[0]:.4f}, {stretch[1]:.4f}] -> [0, 1] "
+                  f"({args.stretch:g}/{100 - args.stretch:g} pct luminance)")
+        else:
+            print("  stretch skipped: luminance percentile range is degenerate")
+
+    seed_lin = list(args.seed_color) if args.seed_color else []
+    if args.pick:
+        seed_lin = pick_seeds(lin, args.classes, args.pick_radius)
+        if seed_lin:
+            print("  replay with: --seed-color " + " ".join(srgb_hex(c) for c in seed_lin))
+        else:
+            print("  nothing picked, falling back to an unseeded fit")
+    if seed_lin:
+        args.classes = len(seed_lin)
 
     flat = lin.reshape(-1, 3)
     n = min(args.samples, len(flat))
     sample = to_lab(flat[rng.choice(len(flat), n, replace=False)].astype(np.float64))
 
-    centers, weights = fit_centers(sample, args.classes, args.l_weight, args.seed)
-    if args.classes > 1:
-        centers, weights = merge_close(centers, weights, args.min_separation, args.l_weight)
+    seeds_lab = to_lab(np.asarray(seed_lin, dtype=np.float64)) if seed_lin else None
+    if seeds_lab is not None and args.lock_seeds:
+        centers = seeds_lab
+        weights = np.full(len(centers), 1.0 / len(centers))
+        print(f"  {len(centers)} seed colors locked, no fit")
+    else:
+        centers, weights = fit_centers(sample, args.classes, args.l_weight, args.seed, seeds_lab)
+        # Merging seeded centers would collapse classes named apart on purpose.
+        if args.classes > 1 and seeds_lab is None:
+            centers, weights = merge_close(centers, weights, args.min_separation, args.l_weight)
     k = len(centers)
-    print(f"  {args.classes} requested -> {k} classes after merging at dE {args.min_separation}")
+    if seeds_lab is None:
+        print(f"  {args.classes} requested -> {k} classes after merging at dE {args.min_separation}")
+    elif k < len(seeds_lab):
+        # A seeded component can still lose all its responsibility to a neighbor.
+        print(f"  {len(seeds_lab)} seeded -> {k} classes, {len(seeds_lab) - k} collapsed "
+              f"into others during the fit (--lock-seeds keeps them as picked)")
+    else:
+        print(f"  {k} seeded classes, merging disabled")
 
     if k > 1:
         d = pairwise(centers, args.l_weight)
         np.fill_diagonal(d, np.inf)
         sep = d.min()
+        if seeds_lab is not None and sep < args.min_separation:
+            print(f"  warning: centers are closer than --min-separation "
+                  f"({sep:.2f} < {args.min_separation}), kept as seeded")
         print(f"  pairwise center separations (dE): min {sep:.2f}")
         for row in np.where(np.isinf(d), 0.0, d):
             print("    " + "  ".join(f"{v:6.2f}" for v in row))
@@ -345,6 +536,10 @@ def main():
         "l_weight": args.l_weight,
         "min_separation": args.min_separation,
         "noise": args.noise,
+        "stretch_percentile": args.stretch,
+        "stretch_range": list(stretch) if stretch else None,
+        "seed_colors": [srgb_hex(c) for c in seed_lin] if seed_lin else None,
+        "seed_colors_locked": bool(args.lock_seeds) if seed_lin else None,
         "mean_mixture_residual_dE": float(resid.mean()),
         "class": [
             {
@@ -367,10 +562,10 @@ def main():
               f"L*={lab[0]:6.2f} a*={lab[1]:+6.2f} b*={lab[2]:+6.2f}")
 
     if args.diagnostics:
-        write_diagnostics(out_path, img, out, sample, centers, shares, args, full_scale)
+        write_diagnostics(out_path, lin, out, sample, centers, shares, args, seeds_lab)
 
 
-def write_diagnostics(out_path, img, out, sample, centers, shares, args, full_scale):
+def write_diagnostics(out_path, lin, out, sample, centers, shares, args, seeds_lab):
     import matplotlib
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
@@ -379,14 +574,18 @@ def write_diagnostics(out_path, img, out, sample, centers, shares, args, full_sc
     _, from_lab = SPACES[args.space]
     cols = np.clip(linear_to_srgb(np.clip(from_lab(centers), 0, None)), 0, 1)
 
-    thumb = np.asarray(img.resize((512, 512), Image.LANCZOS))
+    # Show what clustering actually saw, i.e. after dithering and stretching.
+    step = max(1, min(lin.shape[:2]) // 512)
+    thumb = np.clip(linear_to_srgb(lin[::step, ::step]) * 255, 0, 255).astype(np.uint8)
+    thumb = np.asarray(Image.fromarray(thumb, "RGB").resize((512, 512), Image.LANCZOS))
     disp = out if out.dtype == np.uint8 else (out >> 8).astype(np.uint8)
     small = np.asarray(Image.fromarray(disp, "RGBA").resize((512, 512), Image.LANCZOS))
     u = small[..., :3].astype(np.float64) / 255.0
     u = np.concatenate([u, np.clip(1.0 - u.sum(axis=-1, keepdims=True), 0, 1)], axis=-1)
 
     fig, ax = plt.subplots(2, 4, figsize=(17, 9))
-    ax[0, 0].imshow(thumb); ax[0, 0].set_title("albedo")
+    ax[0, 0].imshow(thumb)
+    ax[0, 0].set_title("albedo" + (" (stretched)" if args.stretch is not None else ""))
     for i in range(4):
         a = ax[0, 1 + i] if i < 3 else ax[1, 0]
         a.imshow(u[..., i], cmap="magma", vmin=0, vmax=1)
@@ -395,13 +594,19 @@ def write_diagnostics(out_path, img, out, sample, centers, shares, args, full_sc
     ax[1, 1].imshow(small[..., 3], cmap="gray"); ax[1, 1].set_title("A: lightness")
 
     # False-color composite: memberships blended with each class's own color.
-    comp = np.einsum("...k,kc->...c", u[..., :k], cols)
-    ax[1, 2].imshow(np.clip(comp, 0, 1)); ax[1, 2].set_title("class composite")
+    #comp = np.einsum("...k,kc->...c", u[..., :k], cols)
+    #ax[1, 2].imshow(np.clip(comp, 0, 1)); ax[1, 2].set_title("class composite")
+    ax[1, 2].imshow(np.clip(u[...,:3], 0, 1)); ax[1, 2].set_title("class composite")
 
     ax[1, 3].scatter(sample[::37, 1], sample[::37, 2], s=1, alpha=0.05,
                      c=np.clip(linear_to_srgb(np.clip(from_lab(sample[::37]), 0, None)), 0, 1))
     ax[1, 3].scatter(centers[:, 1], centers[:, 2], s=260, c=cols,
                      edgecolors="k", linewidths=2, zorder=5)
+    # Seeds against fitted centers: how far the fit drifted from what was picked.
+    if seeds_lab is not None:
+        ax[1, 3].scatter(seeds_lab[:, 1], seeds_lab[:, 2], s=150, marker="x",
+                         c="k", linewidths=2, zorder=6, label="seeds")
+        ax[1, 3].legend(loc="best", fontsize=8)
     ax[1, 3].set_xlabel("a*"); ax[1, 3].set_ylabel("b*")
     ax[1, 3].set_title("chromaticity + centers"); ax[1, 3].set_aspect("equal")
 
