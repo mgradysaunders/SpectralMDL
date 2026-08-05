@@ -730,14 +730,15 @@ export prospect_result prospect(
   // upper bound of 1.5 is the extrapolation range Vilfan et al. calibrate over;
   // the lower bound of 0 is what keeps the carotenoid absorption non-negative.
   const auto xanthophylls = carotenoids * (1.0 - clamp(xanthophyll_cycle, 0.0, 1.5)) / num_layers;
-  color ior(0);
-  color k(0);
-  for (int i = 0; i < $WAVELENGTH_BASE_MAX; i++) {
-    const auto {w0, w} = _uniform_lerp_index_and_fraction(PROSPECT_TABLE_SIZE, PROSPECT_MIN_WAVELENGTH, PROSPECT_MAX_WAVELENGTH, $state.wavelength_base[i]);
-    const auto {x0, x} = _uniform_lerp_index_and_fraction(PROSPECT_CX_TABLE_SIZE, PROSPECT_CX_MIN_WAVELENGTH, PROSPECT_CX_MAX_WAVELENGTH, $state.wavelength_base[i]);
-    ior[i] = lerp(PROSPECT_TABLE_IOR[w0], PROSPECT_TABLE_IOR[w0 + 1], w);
-    k[i] = dot(lerp(PROSPECT_TABLE_K[w0], PROSPECT_TABLE_K[w0 + 1], w), contents) - xanthophylls * lerp(PROSPECT_CX_TABLE[x0], PROSPECT_CX_TABLE[x0 + 1], x);
-  }
+  const color ior = _spectral_map(\(const float wavelength) {
+    const auto {w0, w} = _uniform_lerp_index_and_fraction(PROSPECT_TABLE_SIZE, PROSPECT_MIN_WAVELENGTH, PROSPECT_MAX_WAVELENGTH, wavelength);
+    return lerp(PROSPECT_TABLE_IOR[w0], PROSPECT_TABLE_IOR[w0 + 1], w);
+  });
+  const color k = _spectral_map(\(const float wavelength) {
+    const auto {w0, w} = _uniform_lerp_index_and_fraction(PROSPECT_TABLE_SIZE, PROSPECT_MIN_WAVELENGTH, PROSPECT_MAX_WAVELENGTH, wavelength);
+    const auto {x0, x} = _uniform_lerp_index_and_fraction(PROSPECT_CX_TABLE_SIZE, PROSPECT_CX_MIN_WAVELENGTH, PROSPECT_CX_MAX_WAVELENGTH, wavelength);
+    return dot(lerp(PROSPECT_TABLE_K[w0], PROSPECT_TABLE_K[w0 + 1], w), contents) - xanthophylls * lerp(PROSPECT_CX_TABLE[x0], PROSPECT_CX_TABLE[x0 + 1], x);
+  });
   // tau = (1 - k) * exp(-k) + k * k * exp_E1(k), the transmittance of the
   // absorbing water/dry-matter layer. Fit via the clean structure
   // tau(k) = exp(-k) * h(k), where h(k) = exp(k) * tau(k) is smooth with

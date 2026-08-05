@@ -125,16 +125,11 @@ export marmit_result marmit(
     ior = ior * s + 1.3129684894;
     return ior;
   };
-  color alpha(0); // alpha_w, absorption coefficient of water in cm^-1
-  for (int i = 0; i < $WAVELENGTH_BASE_MAX; i++) {
-    const auto {w0, w} = _uniform_lerp_index_and_fraction(
-      MARMIT_TABLE_SIZE,
-      MARMIT_MIN_WAVELENGTH,
-      MARMIT_MAX_WAVELENGTH,
-      $state.wavelength_base[i],
-    );
-    alpha[i] = lerp(MARMIT_TABLE_ALPHA[w0], MARMIT_TABLE_ALPHA[w0 + 1], w);
-  }
+  // alpha_w, absorption coefficient of water in cm^-1
+  color alpha = _spectral_map(\(const float wavelength) {
+    const auto {w0, w} = _uniform_lerp_index_and_fraction(MARMIT_TABLE_SIZE, MARMIT_MIN_WAVELENGTH, MARMIT_MAX_WAVELENGTH, wavelength);
+    return lerp(MARMIT_TABLE_ALPHA[w0], MARMIT_TABLE_ALPHA[w0 + 1], w);
+  });
   // Effective medium the light travels through. With no suspended particles this is
   // just water. When a suspension is present (volume fraction d_i > 0), form the
   // complex permittivities e = (n + i k)^2 of water and of the particles, volume-mix

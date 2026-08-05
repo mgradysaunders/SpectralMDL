@@ -326,17 +326,10 @@ export color soil_albedo(
   // constant rate as moisture rises.
   const float w = 1.04202 * (((3.89536 * m - 6.037163) * m + 3.081546) * m + 0.06025699) * m;
   const auto weights = auto(1.0, l, c, r, w, w * w);
-  color result(0);
-  for (int i = 0; i < $WAVELENGTH_BASE_MAX; i++) {
-    const auto {t0, t} = _uniform_lerp_index_and_fraction(
-      SOIL_TABLE_SIZE,
-      SOIL_MIN_WAVELENGTH,
-      SOIL_MAX_WAVELENGTH,
-      $state.wavelength_base[i],
-    );
-    result[i] = logit(dot(lerp(SOIL_CURVES[t0], SOIL_CURVES[t0 + 1], t), weights));
-  }
-  return result;
+  return _spectral_map(\(const float wavelength) {
+    const auto {t0, t} = _uniform_lerp_index_and_fraction(SOIL_TABLE_SIZE, SOIL_MIN_WAVELENGTH, SOIL_MAX_WAVELENGTH, wavelength);
+    return logit(dot(lerp(SOIL_CURVES[t0], SOIL_CURVES[t0 + 1], t), weights));
+  });
 }
 
 /// The minimum wavelength of the asphalt/brick albedo table in nanometers.
@@ -478,15 +471,8 @@ export color asphalt_brick_albedo(
   const float bp = #max(2.0 * w - 1.0, 0.0);
   const float bm = #max(1.0 - 2.0 * w, 0.0);
   const auto weights = auto(1.0, b, fe, bp, bm, fe * fe, bp * bp);
-  color result(0);
-  for (int i = 0; i < $WAVELENGTH_BASE_MAX; i++) {
-    const auto {t0, t} = _uniform_lerp_index_and_fraction(
-      ASPHALT_BRICK_TABLE_SIZE,
-      ASPHALT_BRICK_MIN_WAVELENGTH,
-      ASPHALT_BRICK_MAX_WAVELENGTH,
-      $state.wavelength_base[i],
-    );
-    result[i] = logit(dot(lerp(ASPHALT_BRICK_CURVES[t0], ASPHALT_BRICK_CURVES[t0 + 1], t), weights));
-  }
-  return result;
+  return _spectral_map(\(const float wavelength) {
+    const auto {t0, t} = _uniform_lerp_index_and_fraction(ASPHALT_BRICK_TABLE_SIZE, ASPHALT_BRICK_MIN_WAVELENGTH, ASPHALT_BRICK_MAX_WAVELENGTH, wavelength);
+    return logit(dot(lerp(ASPHALT_BRICK_CURVES[t0], ASPHALT_BRICK_CURVES[t0 + 1], t), weights));
+  });
 }
