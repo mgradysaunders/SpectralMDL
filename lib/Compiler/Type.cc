@@ -10,6 +10,43 @@
 
 namespace smdl {
 
+//--{ Diagnostic helpers
+/// Render a candidate signature like `Foo(int a, float b)` for a diagnostic
+/// note. Shared by every "which candidate was this?" note so that overloads
+/// and struct constructors describe themselves the same way.
+static std::string toSignatureString(std::string_view name,
+                                     const ParameterList &params) {
+  auto str{std::string(name)};
+  str += '(';
+  for (size_t i = 0; i < params.size(); i++) {
+    str += params[i].type->displayName;
+    if (!params[i].name.empty()) {
+      str += ' ';
+      str += params[i].name;
+    }
+    if (i + 1 < params.size()) str += ", ";
+  }
+  if (params.isVariadic) str += params.empty() ? "..." : ", ...";
+  str += ')';
+  return str;
+}
+
+/// Drop the leading source location that `throwError` prepends to a message
+/// thrown at `srcLoc`. Every candidate is probed against the same call site,
+/// so repeating it on every note only obscures the candidate's own location.
+/// This is a no-op if the message does not begin with that prefix.
+static std::string dropSourceLocation(std::string message,
+                                      const SourceLocation &srcLoc) {
+  auto prefix{std::string(srcLoc)};
+  if (!prefix.empty()) {
+    prefix += ' ';
+    if (llvm::StringRef(message).starts_with(prefix))
+      message.erase(0, prefix.size());
+  }
+  return message;
+}
+//--}
+
 //--{ Type
 bool Type::isArithmeticBoolean() const {
   return isArithmetic() &&
@@ -164,8 +201,8 @@ std::optional<Value> Type::invokeTrivialCases(Emitter &emitter,
 /// aggregate several times costs one copy rather than one copy per access.
 template <typename Access>
 static Value accessViaLValue(Emitter &emitter, Value value, Access &&access) {
-  return emitter.rvalue(std::invoke(std::forward<Access>(access),
-                                    emitter.spillToMemory(value)));
+  return emitter.rvalue(
+      std::invoke(std::forward<Access>(access), emitter.spillToMemory(value)));
 }
 
 /// If `value` is a pointer to `pointeeType`, construct `resultType` by
@@ -1232,13 +1269,9 @@ FunctionType *FunctionType::resolveOverload(Emitter &emitter,
     auto candidateNotes{std::string{}};
     for (auto &overload : overloads) {
       candidateNotes += "\n  ambiguous candidate: ";
-      candidateNotes += overload.func->declName;
-      candidateNotes += '(';
-      for (size_t i = 0; i < overload.func->params.size(); i++) {
-        candidateNotes += overload.func->params[i].type->displayName;
-        if (i + 1 < overload.func->params.size()) candidateNotes += ", ";
-      }
-      candidateNotes += ") declared at ";
+      candidateNotes +=
+          toSignatureString(overload.func->declName, overload.func->params);
+      candidateNotes += " declared at ";
       candidateNotes += std::string(overload.func->decl.srcLoc);
     }
     srcLoc.throwError("function ", Quoted(declName),
@@ -1265,7 +1298,8 @@ FunctionType::getInstance(Emitter &emitter,
       SMDL_SANITY_CHECK(decl.definition);
       emitter.createFunction(
           inst.llvmFunc, decl.name, isPure(), inst.returnType, paramTypes,
-          params, decl.srcLoc, [&] {
+          params, decl.srcLoc,
+          [&] {
             if (decl.hasAttribute("fastmath"))
               emitter.builder.setFastMathFlags(llvm::FastMathFlags::getFast());
             emitter.setCurrentModule(decl.srcLoc);
@@ -1869,14 +1903,13 @@ Value InferredSizeArrayType::invoke(Emitter &emitter, const ArgumentList &args,
       const auto existingSize{existing->value.getComptimeSignedInt()};
       if (!existingSize)
         srcLoc.throwError("inferred array size name ", Quoted(sizeName),
-                          " conflicts with a declaration of ",
-                          Quoted(sizeName), " in the same scope");
+                          " conflicts with a declaration of ", Quoted(sizeName),
+                          " in the same scope");
       if (*existingSize != size)
-        srcLoc.throwError("inferred array size ", Quoted(sizeName), " = ",
-                          std::to_string(size), " conflicts with ",
-                          Quoted(sizeName), " = ",
-                          std::to_string(*existingSize),
-                          " already bound in the same scope");
+        srcLoc.throwError(
+            "inferred array size ", Quoted(sizeName), " = ",
+            std::to_string(size), " conflicts with ", Quoted(sizeName), " = ",
+            std::to_string(*existingSize), " already bound in the same scope");
     } else {
       // The temporary view is safe: 'declare' interns the name.
       emitter.declare(std::string_view(sizeName), nullptr,
@@ -2244,7 +2277,26 @@ Value StructType::invoke(Emitter &emitter, const ArgumentList &args,
       return emitter.rvalue(args[0].value);
     }
   }
-  if (emitter.canResolveArguments(params, args, srcLoc)) {
+  // Why each candidate was rejected, so that a failure to construct can say
+  // why instead of only that it failed. Mirrors the candidate notes in
+  // 'FunctionType::resolveOverload'.
+  auto candidateNotes{std::string{}};
+  auto addCandidateNote{
+      [&](std::string_view kind, const ParameterList &candidateParams,
+          const SourceLocation &declSrcLoc, std::string_view reason) {
+        candidateNotes += "\n  candidate rejected: ";
+        candidateNotes += kind;
+        candidateNotes += ' ';
+        candidateNotes += toSignatureString(displayName, candidateParams);
+        if (declSrcLoc) {
+          candidateNotes += " declared at ";
+          candidateNotes += std::string(declSrcLoc);
+        }
+        candidateNotes += ": ";
+        candidateNotes += reason;
+      }};
+  auto whyNot{std::string{}};
+  if (emitter.canResolveArguments(params, args, srcLoc, &whyNot)) {
     auto resolvedArgs{emitter.resolveArguments(params, args, srcLoc)};
     auto resultType{this};
     if (resultType->isAbstract()) {
@@ -2305,12 +2357,25 @@ Value StructType::invoke(Emitter &emitter, const ArgumentList &args,
     }
     return result;
   }
+  addCandidateNote("field-wise", params, decl.name.srcLoc,
+                   dropSourceLocation(std::move(whyNot), srcLoc));
   // TODO Overload resolution?
   auto viableConstructors{llvm::SmallVector<Constructor *>{}};
   for (auto &constructor : getInstanceOf().constructors) {
-    if (!constructor.isInvoking &&
-        emitter.canResolveArguments(constructor.params, args, srcLoc)) {
+    const auto declSrcLoc{constructor.astConstructor->name.srcLoc};
+    if (constructor.isInvoking) {
+      addCandidateNote("constructor", constructor.params, declSrcLoc,
+                       "constructor is already being invoked (a constructor "
+                       "must not construct its own type)");
+      continue;
+    }
+    whyNot.clear();
+    if (emitter.canResolveArguments(constructor.params, args, srcLoc,
+                                    &whyNot)) {
       viableConstructors.push_back(&constructor);
+    } else {
+      addCandidateNote("constructor", constructor.params, declSrcLoc,
+                       dropSourceLocation(std::move(whyNot), srcLoc));
     }
   }
   if (viableConstructors.size() == 1) {
@@ -2328,12 +2393,18 @@ Value StructType::invoke(Emitter &emitter, const ArgumentList &args,
                              srcLoc);
         });
   } else if (viableConstructors.size() > 1) {
+    auto ambiguousNotes{std::string{}};
+    for (auto constructor : viableConstructors) {
+      ambiguousNotes += "\n  ambiguous candidate: constructor ";
+      ambiguousNotes += toSignatureString(displayName, constructor->params);
+      ambiguousNotes += " declared at ";
+      ambiguousNotes += std::string(constructor->astConstructor->name.srcLoc);
+    }
     srcLoc.throwError("cannot construct ", Quoted(displayName), " from ",
-                      Quoted(std::string(args)), ": ",
-                      viableConstructors.size(), " ambiguous overloads");
+                      Quoted(std::string(args)), ambiguousNotes);
   }
   srcLoc.throwError("cannot construct ", Quoted(displayName), " from ",
-                    Quoted(std::string(args)));
+                    Quoted(std::string(args)), candidateNotes);
   return Value();
 }
 

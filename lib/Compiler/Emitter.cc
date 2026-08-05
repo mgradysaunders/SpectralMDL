@@ -565,6 +565,11 @@ Value Emitter::createResult(Type *type, llvm::ArrayRef<Result> results,
     auto block{result.block};
     SMDL_SANITY_CHECK(block->getTerminator());
     if (!isAllIdenticalLValues) {
+      // Blame the 'return' that produced this value rather than the merge:
+      // the conversion below is what rejects a return of the wrong type,
+      // and 'srcLoc' here is typically the function declaration. Results
+      // with no statement behind them (see 'emitVisit') fall back to it.
+      const auto &valueSrcLoc{result.srcLoc ? result.srcLoc : srcLoc};
       // The conversion may emit control flow (e.g. union narrowing), so
       // detach the terminator, convert with the block open, then re-attach
       // the terminator to whichever block emission ends in.
@@ -573,7 +578,7 @@ Value Emitter::createResult(Type *type, llvm::ArrayRef<Result> results,
       builder.SetInsertPoint(block);
       // The 'rvalue' matters: conversions may come back memory-resident
       // (see e.g. 'UnionType::invoke'), and the PHI merges values here.
-      value = rvalue(invoke(type, value, srcLoc));
+      value = rvalue(invoke(type, value, valueSrcLoc));
       block = getInsertBlock();
       terminator->insertInto(block, block->end());
     }

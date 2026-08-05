@@ -1170,13 +1170,20 @@ public:
   /// This simply wraps `resolveArguments()` with a `try` block and returns
   /// false if an error is thrown.
   ///
+  /// If `whyNot` is non-null, it receives the message of the rejecting
+  /// error, so that a caller trying several candidates can report why each
+  /// one failed instead of only that they all did (see
+  /// `StructType::invoke`). It is left untouched on success.
+  ///
   [[nodiscard]] bool canResolveArguments(const ParameterList &params,
                                          const ArgumentList &args,
-                                         const SourceLocation &srcLoc) try {
+                                         const SourceLocation &srcLoc,
+                                         std::string *whyNot = nullptr) try {
     auto res{resolveArguments(params, args, srcLoc, /*dontEmit=*/true)};
     return true;
-  } catch (const Error &) {
+  } catch (const Error &error) {
     // Only resolution failures mean "no"; anything else propagates.
+    if (whyNot) *whyNot = error.message;
     return false;
   }
 
