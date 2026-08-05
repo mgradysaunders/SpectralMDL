@@ -742,6 +742,19 @@ public:
     return context.getComptimeMetaIntrinsic(&expr);
   }
 
+  /// Emit lambda expression.
+  ///
+  /// Each evaluation allocates a fresh `FunctionType` rather than interning
+  /// through `Context::getFunctionType()`: a lambda inside a macro body is
+  /// re-emitted at every expansion of that macro, and the resolution anchor
+  /// captured by `initializeLambda()` must be re-captured against the scope
+  /// of the current expansion.
+  Value emit(AST::Lambda &expr) {
+    auto *funcType{context.getLambdaFunctionType(expr.func.get())};
+    funcType->initializeLambda(*this);
+    return context.getComptimeMetaType(funcType);
+  }
+
   /// Emit let expression.
   Value emit(AST::Let &expr) {
     // The declarations open their own scope, so they may shadow names in

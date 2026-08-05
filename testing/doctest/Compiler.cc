@@ -865,6 +865,72 @@ TEST_CASE("Compiler inferred-size array deduction") {
   fs::remove_all(tmpDir);
 }
 
+TEST_CASE("Compiler lambda expressions") {
+  auto tmpDir{fs::temp_directory_path() / "smdl-lambda-test"};
+  fs::remove_all(tmpDir);
+  // Compile a single module and return the first error message, or the
+  // empty string on success. The positive behavior of lambdas is covered
+  // by 'testing/smdl/lambda.smdl'; these subcases pin the error paths.
+  auto build{[&](std::string_view text) {
+    writeFile(tmpDir / "root" / "main.mdl", std::string("#smdl\n") += text);
+    smdl::Compiler compiler{};
+    // Some subcases place the erroring code inside a 'unit_test' body,
+    // which is only compiled when unit tests are enabled.
+    compiler.enableUnitTests = true;
+    return buildAll(compiler, {tmpDir / "root"});
+  }};
+  SUBCASE("Function values must not pass through non-macro parameters") {
+    auto message{build("@(pure)\n"
+                       "float apply(const auto f, const float x) = f(x);\n"
+                       "export const float bad = "
+                       "apply(\\(const float x) = x, 1.0);\n")};
+    CHECK(message.find("compile-time only") != std::string::npos);
+  }
+  SUBCASE("A variable holding a function must be 'const'") {
+    auto message{build("unit_test \"t\" {\n"
+                       "  auto f = \\(const float x) = x;\n"
+                       "  #assert(f(1.0) == 1.0);\n"
+                       "}\n")};
+    CHECK(message.find("must be declared 'const'") != std::string::npos);
+  }
+  SUBCASE("A variable holding a function must not be 'static'") {
+    auto message{build("static const auto f = \\(const float x) = x;\n"
+                       "unit_test \"t\" { #assert(f(1.0) == 1.0); }\n")};
+    CHECK(message.find("without 'static'") != std::string::npos);
+  }
+  SUBCASE("Lambda must not be a function variant") {
+    auto message{build("const auto f = \\(*) = 1.0;\n")};
+    CHECK(message.find("must not be a function variant") != std::string::npos);
+  }
+  SUBCASE("Lambda must not be variadic") {
+    auto message{build("const auto f = \\(const float x,...) = x;\n")};
+    CHECK(message.find("must not be variadic") != std::string::npos);
+  }
+  SUBCASE("Lambda requires a parameter list") {
+    auto message{build("const auto f = \\;\n")};
+    CHECK(message.find("expected parameter list") != std::string::npos);
+  }
+  SUBCASE("Lambda requires a body") {
+    auto message{build("const auto f = \\(const float x);\n")};
+    CHECK(message.find("expected '=' or compound statement") !=
+          std::string::npos);
+  }
+  SUBCASE("Lambda parameter names must be unique") {
+    auto message{
+        build("const auto f = \\(const float x, const float x) = x;\n")};
+    CHECK(message.find("duplicate parameter name") != std::string::npos);
+  }
+  SUBCASE("Mutual recursion through a lambda hits the recursion limit") {
+    auto message{
+        build("@(pure macro)\n"
+              "float rec(const auto f, const float x) = f(f, x);\n"
+              "export const float bad = "
+              "rec(\\(const auto g, const float x) = rec(g, x), 1.0);\n")};
+    CHECK(message.find("recursion limit") != std::string::npos);
+  }
+  fs::remove_all(tmpDir);
+}
+
 TEST_CASE("Compiler indirect aggregate parameters") {
   auto tmpDir{fs::temp_directory_path() / "smdl-aggregate-abi-test"};
   fs::remove_all(tmpDir);

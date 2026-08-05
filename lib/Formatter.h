@@ -316,6 +316,8 @@ private:
 
   void write(const AST::Intrinsic &expr) { write(expr.srcName); }
 
+  void write(const AST::Lambda &expr);
+
   void write(const AST::Let &expr);
 
   void write(const AST::LiteralBool &expr) { write(expr.srcValue); }

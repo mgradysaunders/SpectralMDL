@@ -1059,6 +1059,39 @@ void FunctionType::initialize(Emitter &emitter) {
   }
 }
 
+void FunctionType::initializeLambda(Emitter &emitter) {
+  auto &context{emitter.context};
+  // Unlike `initialize()`: no overload discovery and no name declaration,
+  // because a lambda is anonymous. The resolution anchor is the lambda
+  // expression itself, so the body resolves names visible at the point the
+  // lambda is written.
+  emitter.captureResolutionAnchor(params);
+  // Initialize return type and parameters. There is no return type syntax
+  // for lambdas (`decl.returnType` is null); the return type is always
+  // implicitly `auto`, inferred at each expansion.
+  returnType = context.getAutoType();
+  for (auto &param : decl.params)
+    params.push_back(
+        Parameter{.type = emitter.emit(param.type)
+                              .getComptimeMetaType(context, param.name.srcLoc),
+                  .name = param.name,
+                  .astParam = &param,
+                  .astField = nullptr,
+                  .builtinDefaultValue = {}});
+  // Reject duplicate parameter names.
+  {
+    auto uniqueNames{llvm::StringSet<>()};
+    for (auto &param : params)
+      if (!uniqueNames.insert(param.name).second)
+        param.getSourceLocation().throwError(
+            "duplicate parameter name ", Quoted(param.name), " in lambda");
+  }
+  // The parser already rejects `...` in lambdas; belt and braces because
+  // macros must not be variadic.
+  if (decl.isVariadic())
+    decl.srcLoc.throwError("lambda must not be variadic");
+}
+
 Value FunctionType::invoke(Emitter &emitter, const ArgumentList &args,
                            const SourceLocation &srcLoc) {
   auto func{resolveOverload(emitter, args, srcLoc)};
@@ -1110,7 +1143,7 @@ Value FunctionType::invoke(Emitter &emitter, const ArgumentList &args,
     SMDL_PRESERVE(emitter.scope, emitter.anchors);
     emitter.restoreResolutionAnchor(func->params);
     auto result{emitter.createFunctionImplementation(
-        func->decl.name, func->isPure() || !emitter.state, func->returnType,
+        func->declName, func->isPure() || !emitter.state, func->returnType,
         func->params, resolvedArgs.values, srcLoc, [&]() {
           if (func->decl.hasAttribute("fastmath"))
             emitter.builder.setFastMathFlags(llvm::FastMathFlags::getFast());

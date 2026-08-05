@@ -390,6 +390,28 @@ public:
   std::string_view srcName;
 };
 
+class Function;
+
+/// A lambda expression. This is extended syntax!
+///
+/// ~~~~~~~~~~~~~~~~~~~~~~~~~~
+/// \(const float x) = x * x
+/// ~~~~~~~~~~~~~~~~~~~~~~~~~~
+class SMDL_EXPORT Lambda final : public ExprSubclass<ExprKind::Lambda> {
+public:
+  explicit Lambda(std::string_view srcBackslash, BumpPtr<Function> func);
+
+  ~Lambda() override;
+
+  /// The backslash `\`.
+  std::string_view srcBackslash;
+
+  /// The anonymous function: the `name` is empty, the `returnType` is null
+  /// (implicitly `auto`), there are no annotations, no frequency qualifier,
+  /// and no semicolon.
+  BumpPtr<Function> func;
+};
+
 /// A `let` expression.
 ///
 /// ~~~~~~~~~~~~~~~~

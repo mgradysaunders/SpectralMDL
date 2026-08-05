@@ -513,6 +513,11 @@ auto Parser::parseMultiplicativeExpression() -> BumpPtr<AST::Expr> {
 
 auto Parser::parseUnaryExpression() -> BumpPtr<AST::Expr> {
   ParseDepthGuard depthGuard{*this};
+  // Lambdas, introduced unambiguously by a backslash. This is extended
+  // syntax!
+  if (mIsSMDL) {
+    if (auto expr{parseLambdaExpression()}) return expr;
+  }
   if (auto expr{parsePostfixExpression()}) return expr;
   auto parsePrefixExpression{[&]() -> BumpPtr<AST::Expr> {
     auto srcLoc0{checkpoint()};
@@ -634,6 +639,48 @@ auto Parser::parseReturnFromExpression() -> BumpPtr<AST::Expr> {
         "expected compound statement after 'return_from'");
   return allocate<AST::ReturnFrom>(kwReturnFrom->srcLoc, std::in_place,
                                    kwReturnFrom->src, std::move(stmt));
+}
+
+auto Parser::parseLambdaExpression() -> BumpPtr<AST::Expr> {
+  auto backslash{nextDelimiterAndLocation("\\")};
+  if (!backslash) return nullptr;
+  // The backslash unambiguously introduces a lambda, so everything from
+  // here on is a committed parse. There is no return type syntax; the
+  // return type is always implicitly `auto`.
+  auto srcLoc0{backslash->srcLoc};
+  auto params{parseParameterList()};
+  if (!params) srcLoc0.throwError("expected parameter list after '\\'");
+  if (params->isVariant())
+    srcLoc0.throwError("lambda must not be a function variant");
+  if (params->hasTrailingEllipsis())
+    srcLoc0.throwError("lambda must not be variadic");
+  auto srcEqual{std::optional<std::string_view>()};
+  auto definition{BumpPtr<AST::Node>{}};
+  if (srcEqual = nextDelimiter("="); srcEqual) {
+    skip();
+    auto srcLoc1{mSrcLoc};
+    // The body is an assignment expression, not a full expression: the
+    // comma operator must not swallow subsequent arguments when the lambda
+    // appears in an argument list.
+    auto def{parseAssignmentExpression()};
+    if (!def) srcLoc0.throwError("expected lambda expression after '='");
+    definition =
+        allocate<AST::Return>(srcLoc1, std::in_place, std::string_view(),
+                              std::move(def), std::nullopt, std::string_view());
+  } else {
+    auto def{parseCompoundStatement()};
+    if (!def)
+      srcLoc0.throwError("expected '=' or compound statement after lambda "
+                         "parameter list");
+    definition = std::move(def);
+  }
+  auto func{allocate<AST::Function>(
+      srcLoc0, std::in_place, BumpPtr<AST::Type>{},
+      BumpPtr<AST::AnnotationBlock>{}, AST::Name{}, std::move(*params),
+      std::string_view(), BumpPtr<AST::AnnotationBlock>{}, orEmpty(srcEqual),
+      std::move(definition), std::string_view())};
+  return allocate<AST::Lambda>(srcLoc0, std::in_place, backslash->src,
+                               std::move(func));
 }
 
 auto Parser::parsePrimaryExpression() -> BumpPtr<AST::Expr> {

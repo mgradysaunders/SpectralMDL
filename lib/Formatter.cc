@@ -451,10 +451,25 @@ void Formatter::write(const AST::Variable &decl) {
 //--{ Write: Exprs
 void Formatter::write(const AST::Expr &expr) {
   writeTypeSwitch<AST::AccessField, AST::AccessIndex, AST::Binary, AST::Call,
-                  AST::Identifier, AST::Intrinsic, AST::Let, AST::LiteralBool,
-                  AST::LiteralFloat, AST::LiteralInt, AST::LiteralString,
-                  AST::Parens, AST::ReturnFrom, AST::Select, AST::SizeName,
-                  AST::Type, AST::TypeCast, AST::Unary>(expr);
+                  AST::Identifier, AST::Intrinsic, AST::Lambda, AST::Let,
+                  AST::LiteralBool, AST::LiteralFloat, AST::LiteralInt,
+                  AST::LiteralString, AST::Parens, AST::ReturnFrom, AST::Select,
+                  AST::SizeName, AST::Type, AST::TypeCast, AST::Unary>(expr);
+}
+
+void Formatter::write(const AST::Lambda &expr) {
+  // This mirrors `write(const AST::Function &)` minus the name,
+  // annotations, frequency qualifier, semicolon, and return type, which
+  // is implicitly `auto`.
+  const auto &decl{*expr.func};
+  write(expr.srcBackslash, decl.params);
+  if (!decl.srcEqual.empty()) {
+    write(PUSH_INDENT, INCREMENT_INDENT, DELIM_UNNECESSARY_SPACE, decl.srcEqual,
+          DELIM_UNNECESSARY_SPACE, PUSH_INDENT, ALIGN_INDENT, decl.definition,
+          POP_INDENT, POP_INDENT);
+  } else {
+    write(DELIM_UNNECESSARY_SPACE, decl.definition);
+  }
 }
 
 void Formatter::write(const AST::Let &expr) {

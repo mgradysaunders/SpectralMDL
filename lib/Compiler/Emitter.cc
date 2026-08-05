@@ -70,8 +70,8 @@ Value Emitter::createFunctionImplementation(
   labelReturn.depth = unwindStack.size();
   labelReturn.block = createBlock(llvm::StringRef(name) + ".return");
   returns.clear();
+  auto declarationsToWarnAboutSize{declarationsToWarnAbout.size()};
   handleScope(nullptr, nullptr, [&] {
-    auto declarationsToWarnAboutSize{declarationsToWarnAbout.size()};
     labelBreak = labelContinue = {}; // Invalidate
     inDefer = false;
     for (size_t i = 0; i < params.size(); ++i)
@@ -80,14 +80,27 @@ Value Emitter::createFunctionImplementation(
     if (!hasTerminator()) {
       recordReturn(RValue(context.getVoidType(), nullptr), srcLoc);
     }
-    for (size_t i = declarationsToWarnAboutSize;
-         i < declarationsToWarnAbout.size(); i++)
-      declarationsToWarnAbout[i]->maybeWarnAboutUnusedValue();
-    declarationsToWarnAbout.resize(declarationsToWarnAboutSize);
   });
   llvmMoveBlockToEnd(labelReturn.block);
   builder.SetInsertPoint(labelReturn.block);
   auto result{createResult(returnType, returns, srcLoc)};
+  // If the result is a lambda, its body has not been emitted yet and may
+  // still legitimately use this expansion's parameters and locals when it
+  // is called later. Leave the unused-value warnings in the list for the
+  // enclosing expansion to flush: by then the lambda has either been
+  // called, marking its captures as used, or is itself unused.
+  const bool resultIsLambda{[&]() {
+    if (!result.isComptimeMetaType(context)) return false;
+    auto *type{llvm::dyn_cast<FunctionType>(
+        result.getComptimeMetaType(context, srcLoc))};
+    return type && type->isLambda;
+  }()};
+  if (!resultIsLambda) {
+    for (size_t i = declarationsToWarnAboutSize;
+         i < declarationsToWarnAbout.size(); i++)
+      declarationsToWarnAbout[i]->maybeWarnAboutUnusedValue();
+    declarationsToWarnAbout.resize(declarationsToWarnAboutSize);
+  }
   if (scratchFunc && result) {
     if (result.isRValue())
       result = RValue(result.type, foldConstantPHI(result.llvmValue));
@@ -548,6 +561,13 @@ Value Emitter::createResult(Type *type, llvm::ArrayRef<Result> results,
     SMDL_SANITY_CHECK(!type->isAbstract());
   }
   if (type->isVoid()) return RValue(type, nullptr);
+  // A single compile-time constant result passes through unchanged: the
+  // PHI below would needlessly demote it to a run-time value, and
+  // compile-time-only values like function handles must survive being
+  // returned from macros and 'return_from' blocks.
+  if (results.size() == 1 && results[0].value.isComptime() &&
+      results[0].value.type == type)
+    return results[0].value;
   bool isAllIdenticalLValues{[&]() {
     for (auto &result : results)
       if (!(result.value.isLValue() &&
@@ -715,6 +735,17 @@ Value Emitter::emit(AST::Variable &decl) {
       SMDL_SANITY_CHECK(declarator.names.size() == 1);
       const auto &name{declarator.names[0].name};
       rejectSameScopeShadow(name, name.srcLoc);
+      // A function value is a compile-time constant handle. Storing it in
+      // memory (a 'static' global or a mutable alloca) loses the
+      // compile-time-ness that calling it requires, so fail here at the
+      // declaration instead of confusingly at the call.
+      if (value.isComptimeMetaType(context) &&
+          value.getComptimeMetaType(context, declarator.srcLoc)->isFunction() &&
+          (isStatic || !isConst))
+        declarator.srcLoc.throwError(
+            "variable ", Quoted(name.srcName),
+            " holding a function must be declared 'const'",
+            isStatic ? " without 'static'" : "");
       if (!value.isVoid()) {
         if (isStatic) {
           if (!value.isComptime())
@@ -748,10 +779,10 @@ Value Emitter::emit(AST::Variable &decl) {
 //--{ Emit: Expr
 Value Emitter::emit(AST::Expr &expr) {
   return emitTypeSwitch<AST::AccessField, AST::AccessIndex, AST::Binary,
-                        AST::Call, AST::Identifier, AST::Intrinsic, AST::Let,
-                        AST::LiteralBool, AST::LiteralFloat, AST::LiteralInt,
-                        AST::LiteralString, AST::Parens, AST::ReturnFrom,
-                        AST::Select, AST::Type, AST::TypeCast, //
+                        AST::Call, AST::Identifier, AST::Intrinsic, AST::Lambda,
+                        AST::Let, AST::LiteralBool, AST::LiteralFloat,
+                        AST::LiteralInt, AST::LiteralString, AST::Parens,
+                        AST::ReturnFrom, AST::Select, AST::Type, AST::TypeCast,
                         AST::Unary>(expr);
 }
 
@@ -2817,6 +2848,14 @@ Value Emitter::emitCall(Value callee, const ArgumentList &args,
           callee.getComptimeMetaIntrinsic(context, srcLoc)->srcName.substr(1),
           args, srcLoc);
     }
+    // A meta-type value that is not a compile-time constant: a function or
+    // type handle that was smuggled through a parameter of a non-macro
+    // function or loaded back out of a mutable variable.
+    if (callee.type == context.getMetaTypeType())
+      srcLoc.throwError(
+          "function and type values are compile-time only; they can only be "
+          "called through 'const' bindings and parameters of '@(macro)' "
+          "functions");
   }
   srcLoc.throwError("unimplemented or invalid call");
 }

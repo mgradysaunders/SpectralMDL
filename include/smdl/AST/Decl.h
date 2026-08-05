@@ -433,7 +433,8 @@ public:
   [[nodiscard]] LetAndCall getVariantLetAndCallExpressions() const;
 
 public:
-  /// The return type.
+  /// The return type. This may be null for lambdas, meaning
+  /// implicitly `auto`!
   BumpPtr<Type> returnType;
 
   /// The early annotations between return type and name. This may be null!

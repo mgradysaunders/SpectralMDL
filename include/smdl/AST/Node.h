@@ -190,6 +190,7 @@ enum class ExprKind : uint8_t {
   Call,
   Identifier,
   Intrinsic,
+  Lambda,
   Let,
   LiteralBool,
   LiteralFloat,

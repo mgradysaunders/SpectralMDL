@@ -73,6 +73,8 @@ std::string_view to_string(ExprKind exprKind) {
     return "Identifier";
   case ExprKind::Intrinsic:
     return "Intrinsic";
+  case ExprKind::Lambda:
+    return "Lambda";
   case ExprKind::Let:
     return "Let";
   case ExprKind::LiteralBool:
@@ -140,6 +142,13 @@ std::string_view to_string(StmtKind stmtKind) {
   }
   return {};
 }
+
+// The constructor and destructor are defined out-of-line because `Function`
+// is incomplete in `Expr.h` and `BumpPtr<Function>` invokes the destructor.
+Lambda::Lambda(std::string_view srcBackslash, BumpPtr<Function> func)
+    : srcBackslash(srcBackslash), func(std::move(func)) {}
+
+Lambda::~Lambda() = default;
 
 Function::LetAndCall Function::getVariantLetAndCallExpressions() const {
   if (!(isVariant() && definition && llvm::isa<Return>(definition.get())))

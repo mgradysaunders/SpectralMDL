@@ -209,6 +209,12 @@ public:
   /// Get function type.
   [[nodiscard]] FunctionType *getFunctionType(AST::Function *decl);
 
+  /// Get a fresh lambda function type. Unlike `getFunctionType()`, this is
+  /// deliberately NOT interned by declaration: a lambda inside a macro body
+  /// is re-emitted at every expansion, and each evaluation must re-capture
+  /// its resolution anchor. See `Emitter::emit(AST::Lambda &)`.
+  [[nodiscard]] FunctionType *getLambdaFunctionType(AST::Function *decl);
+
   /// Get state type.
   [[nodiscard]] StateType *getStateType() { return mStateType.get(); }
 
@@ -518,6 +524,11 @@ private:
 
   /// The AST associated types.
   llvm::DenseMap<AST::Decl *, BumpPtr<Type>> mASTTypes;
+
+  /// The lambda function types, one per evaluation of each lambda
+  /// expression. This is a flat keep-alive list rather than a map keyed on
+  /// the declaration, see `getLambdaFunctionType()`.
+  std::vector<BumpPtr<Type>> mLambdaTypes;
 
   /// The compile-time union types.
   llvm::DenseMap<UnionType *, BumpPtr<ComptimeUnionType>> mComptimeUnionTypes;

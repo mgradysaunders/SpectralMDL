@@ -1,0 +1,138 @@
+#smdl
+
+@(pure macro)
+float apply(const auto f, const float x) = f(x);
+
+@(pure macro)
+float apply_twice(const auto f, const float x) = f(f(x));
+
+@(pure macro)
+auto apply_any(const auto f, const auto x) = f(x);
+
+// A lambda is a compile-time function handle, so it binds to `const`
+// variables at module scope and passes through `@(macro)` parameters
+// exactly like a named function.
+const auto SQ = \(const float x) = x * x;
+
+unit_test "Lambda at module scope" {
+  #assert(SQ(3.0) == 9.0);
+  #assert(apply(SQ, 4.0) == 16.0);
+  #assert(apply_twice(SQ, 2.0) == 16.0);
+}
+
+unit_test "Lambda as inline argument" {
+  #assert(apply(\(const float x) = x + 1.0, 2.0) == 3.0);
+}
+
+// Parameters may be generic and defaulted; the return type is always
+// implicitly `auto`, inferred per expansion.
+unit_test "Lambda with generic and defaulted parameters" {
+  const auto scale = \(const auto a, const auto b = 1.0) = a * b;
+  #assert(apply_any(scale, 3.0) == 3.0);
+  const auto twice = \(const auto a) = 2 * a;
+  #assert(apply_any(twice, 3) == 6);
+  #assert(#all(apply_any(twice, float3(1.0, 2.0, 3.0)) == float3(2.0, 4.0, 6.0)));
+}
+
+unit_test "Lambda with compound body" {
+  const auto step = \(const float x) {
+    if (x < 0.0) {
+      return 0.0;
+    }
+    return 1.0;
+  };
+  #assert(apply(step, +0.5) == 1.0);
+  #assert(apply(step, -0.5) == 0.0);
+}
+
+unit_test "Lambda with no parameters" {
+  const auto answer = \() = 42;
+  #assert(answer() == 42);
+}
+
+unit_test "Lambda nesting" {
+  const auto outer = \(const float x) = apply(\(const float y) = 2.0 * y, x);
+  const auto pick = true ? \(const float x) = x : \(const float x) = -x;
+  #assert(apply(outer, 2.0) == 4.0);
+  #assert(apply(pick, 5.0) == 5.0);
+}
+
+// The body resolves names visible at the point the lambda is written.
+// Because every call inline-expands into the same generated function,
+// the lambda sees the live variable — including mutation between calls
+// (capture by aliasing), and writes through it.
+unit_test "Lambda captures enclosing locals by aliasing" {
+  const float scale = 3.0;
+  #assert(apply(\(const float x) = scale * x, 2.0) == 6.0);
+
+  float bias = 1.0;
+  const auto add_bias = \(const float x) = x + bias;
+  #assert(apply(add_bias, 1.0) == 2.0);
+  bias = 10.0;
+  #assert(apply(add_bias, 1.0) == 11.0);
+
+  float sum = 0.0;
+  const auto accumulate = \(const float x) {
+    sum += x;
+    return sum;
+  };
+  #assert(apply(accumulate, 1.0) == 1.0);
+  #assert(apply(accumulate, 2.0) == 3.0);
+  #assert(sum == 3.0);
+}
+
+// A lambda inside a macro body is re-anchored at every expansion of the
+// macro, so each call site sees its own captured values. This is the
+// regression test for the rule that lambda `FunctionType`s must never be
+// interned by AST declaration.
+@(pure macro)
+float scaled_increment(const float scale, const float x) {
+  const auto f = \(const float y) = scale * y + 1.0;
+  return f(x);
+}
+
+unit_test "Lambda re-anchors per macro expansion" {
+  #assert(scaled_increment(2.0, 3.0) == 7.0);
+  #assert(scaled_increment(10.0, 3.0) == 31.0);
+}
+
+@(pure macro)
+float apply_indirect(const auto f, const float x) = apply(f, x);
+
+unit_test "Lambda through nested macros" {
+  const float k = 5.0;
+  #assert(apply_indirect(\(const float x) = x - k, 8.0) == 3.0);
+}
+
+// A lambda has no purity attribute: it is as pure as its body. Touching
+// `$state` is fine in a non-pure context.
+@(macro)
+float apply_statey(const auto f) = f();
+
+unit_test "Lambda reads $state in non-pure context" {
+  const auto get_wavelength = \() = $state.wavelength_base[0];
+  #assert(apply_statey(get_wavelength) > 0.0);
+}
+
+@(pure macro)
+float remap(const float x, const auto f = \(const float t) = t) = f(x);
+
+unit_test "Lambda as default argument" {
+  #assert(remap(7.0) == 7.0);
+  #assert(remap(7.0, \(const float t) = -t) == -7.0);
+}
+
+// Lambdas survive being returned from macros and `return_from` blocks,
+// which is what makes combinator factories work. The factory parameter
+// is captured by the lambda and read at the later call.
+@(pure macro)
+auto make_offsetter(const float offset) = \(const float x) = x + offset;
+
+unit_test "Lambda returned from macro and return_from" {
+  const auto f = make_offsetter(4.0);
+  #assert(f(1.0) == 5.0);
+  const auto g = return_from {
+    return \(const float x) = 2.0 * x;
+  };
+  #assert(g(3.0) == 6.0);
+}

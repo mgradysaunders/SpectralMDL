@@ -235,6 +235,13 @@ FunctionType *Context::getFunctionType(AST::Function *decl) {
   return static_cast<FunctionType *>(type.get());
 }
 
+FunctionType *Context::getLambdaFunctionType(AST::Function *decl) {
+  auto type{allocator.allocate<FunctionType>(*decl, /*isLambda=*/true)};
+  auto *result{type.get()};
+  mLambdaTypes.push_back(std::move(type));
+  return result;
+}
+
 StructType *Context::getStructType(AST::Struct *decl) {
   auto &type{mASTTypes[decl]};
   if (!type) type = allocator.allocate<StructType>(*decl);

@@ -736,11 +736,19 @@ public:
 ///
 class FunctionType final : public TypeSubclass<TypeKind::Function> {
 public:
-  explicit FunctionType(AST::Function &decl) : decl(decl) {
-    displayName = std::string(decl.name.srcName);
+  explicit FunctionType(AST::Function &decl, bool isLambda = false)
+      : decl(decl), declName(isLambda ? std::string_view("(lambda)")
+                                      : std::string_view(decl.name.srcName)),
+        isLambda(isLambda) {
+    displayName = std::string(declName);
   }
 
   void initialize(Emitter &emitter);
+
+  /// Initialize as a lambda: `initialize()` minus the overload chain,
+  /// the name declaration, and the `@(foreign)`/`@(visible)`/material
+  /// handling, none of which apply to an anonymous function expression.
+  void initializeLambda(Emitter &emitter);
 
 public:
   /// \name Virtual interface
@@ -784,9 +792,10 @@ public:
   /// Is marked with the attribute `@(pure)`?
   [[nodiscard]] bool isPure() const { return decl.hasAttribute("pure"); }
 
-  /// Is marked with the attribute `@(macro)`?
+  /// Is marked with the attribute `@(macro)`? Materials and lambdas are
+  /// implicitly macros.
   [[nodiscard]] bool isMacro() const {
-    return decl.hasAttribute("macro") || isMaterial;
+    return decl.hasAttribute("macro") || isMaterial || isLambda;
   }
 
   /// Is marked with the attribute `@(foreign)`?
@@ -842,8 +851,8 @@ public:
   /// The AST declaration.
   AST::Function &decl;
 
-  /// The AST declaration name.
-  const std::string_view declName{decl.name.srcName};
+  /// The AST declaration name, or `"(lambda)"` if this is a lambda.
+  const std::string_view declName;
 
   /// The prev overload by declaration order.
   FunctionType *prevOverload{};
@@ -865,6 +874,10 @@ public:
   size_t macroRecursionDepth{};
 
   bool isMaterial{};
+
+  /// Is a lambda expression? Lambdas are anonymous, have no overload
+  /// chain, are never declared into any scope, and are implicitly macros.
+  const bool isLambda{};
 
 private:
   void initializeMaterialFunctions(Emitter &emitter);

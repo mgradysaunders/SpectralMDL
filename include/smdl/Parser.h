@@ -292,6 +292,8 @@ private:
 
   [[nodiscard]] auto parsePostfixExpression() -> BumpPtr<AST::Expr>;
 
+  [[nodiscard]] auto parseLambdaExpression() -> BumpPtr<AST::Expr>;
+
   [[nodiscard]] auto parseLetExpression() -> BumpPtr<AST::Expr>;
 
   [[nodiscard]] auto parseReturnFromExpression() -> BumpPtr<AST::Expr>;
