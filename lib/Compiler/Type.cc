@@ -157,14 +157,15 @@ std::optional<Value> Type::invokeTrivialCases(Emitter &emitter,
   return std::nullopt;
 }
 
-/// Materialize `value` as an lvalue temporary, apply `access` to it, load
-/// the result back out as an rvalue, then end the temporary's lifetime.
+/// Materialize `value` in memory, apply `access` to it, and load the result
+/// back out as an rvalue.
+///
+/// The slot is cached per value by `spillToMemory()`, so indexing the same
+/// aggregate several times costs one copy rather than one copy per access.
 template <typename Access>
 static Value accessViaLValue(Emitter &emitter, Value value, Access &&access) {
-  auto lv{emitter.lvalue(value)};
-  auto rv{emitter.rvalue(std::invoke(std::forward<Access>(access), lv))};
-  emitter.createLifetimeEnd(lv);
-  return rv;
+  return emitter.rvalue(std::invoke(std::forward<Access>(access),
+                                    emitter.spillToMemory(value)));
 }
 
 /// If `value` is a pointer to `pointeeType`, construct `resultType` by

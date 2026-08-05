@@ -58,6 +58,9 @@ Value Emitter::createFunctionImplementation(
     if (scratchFunc) {
       builder.ClearInsertionPoint();
       scratchFunc->eraseFromParent();
+      // Any slot allocated in the scratch function dies with it, and a
+      // later function could be allocated at the same address.
+      spillSlots.clear();
     }
   });
   auto fmf{builder.getFastMathFlags()};
@@ -196,7 +199,12 @@ void Emitter::createFunction(llvm::Function *&llvmFunc, std::string_view name,
 
   llvm::IRBuilderBase::InsertPointGuard ipGuard{builder};
   {
-    SMDL_PRESERVE(state);
+    // Spill slots belong to the function being emitted. Emitting this body
+    // may recurse into another function's body (an instantiation triggered
+    // from inside it), so the map is saved and restored rather than merely
+    // cleared, and no slot can outlive the function it was allocated in.
+    SMDL_PRESERVE(state, spillSlots);
+    spillSlots.clear();
     state = {}; // Invalidate
     builder.SetInsertPoint(
         llvm::BasicBlock::Create(context, "entry", llvmFunc));
@@ -333,6 +341,55 @@ Value Emitter::createAlloca(Type *type, const llvm::Twine &name) {
   auto value{LValue(type, builder.CreateAlloca(type->llvmType, nullptr, name))};
   builder.restoreIP(ip);
   return value;
+}
+
+Value Emitter::spillToMemory(Value value) {
+  if (!value || value.isLValue() || value.isVoid()) return value;
+  auto llvmFunc{getLLVMFunction()};
+  // With no function there is nowhere to put the slot. This is module scope,
+  // where the initializer has to fold to a constant anyway.
+  if (!llvmFunc) return lvalue(value);
+  const auto key{std::pair(value.llvmValue, value.type)};
+  if (auto itr{spillSlots.find(key)}; itr != spillSlots.end())
+    return itr->second;
+  auto slot{createAlloca(value.type, value.llvmValue->hasName()
+                                         ? value.llvmValue->getName() + ".spill"
+                                         : "spill")};
+  // Emit the copy immediately after the definition of the value, not here at
+  // the point of access. The alloca is already in the entry block, so it
+  // dominates everything; placing the store at the definition makes the slot
+  // valid wherever the value itself is, which is what lets a later access --
+  // in another block, or on a later iteration of a loop -- reuse it.
+  {
+    llvm::IRBuilderBase::InsertPointGuard ipGuard{builder};
+    if (auto inst{llvm::dyn_cast<llvm::Instruction>(value.llvmValue)}) {
+      // A PHI must keep every PHI in its block contiguous at the top, so
+      // insert past them rather than directly after the node.
+      if (llvm::isa<llvm::PHINode>(inst)) {
+        builder.SetInsertPoint(inst->getParent(),
+                               inst->getParent()->getFirstInsertionPt());
+      } else {
+        SMDL_SANITY_CHECK(!inst->isTerminator(),
+                          "cannot spill the result of a terminator");
+        // The value is very often the last instruction emitted so far, in a
+        // block that has no terminator yet, in which case there is no 'next'
+        // to insert before and the store simply appends.
+        if (auto llvmNext{inst->getNextNode()}) {
+          builder.SetInsertPoint(llvmNext);
+        } else {
+          builder.SetInsertPoint(inst->getParent());
+        }
+      }
+    } else {
+      // An argument or a constant is available from the top of the function.
+      auto blockEntry{&llvmFunc->getEntryBlock()};
+      builder.SetInsertPoint(blockEntry,
+                             blockEntry->getFirstNonPHIOrDbgOrAlloca());
+    }
+    builder.CreateStore(value, slot);
+  }
+  spillSlots[key] = slot;
+  return slot;
 }
 
 void Emitter::declareParameter(const Parameter &param, Value value) {

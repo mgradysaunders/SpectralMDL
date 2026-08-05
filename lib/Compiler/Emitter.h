@@ -333,6 +333,27 @@ public:
   void declareImport(Span<const std::string_view> importPath, bool isAbs,
                      AST::Decl &decl);
 
+  /// Spill an rvalue to memory so that it can be addressed, reusing one slot
+  /// per value instead of copying per access.
+  ///
+  /// Indexing an aggregate at a run-time index has to go through memory:
+  /// there is no dynamic `extractvalue` (the indices are instruction syntax,
+  /// not operands), and while `extractelement` does take a dynamic index, the
+  /// backend expands it to a whole-vector spill plus an indexed load *after*
+  /// the loop analyses run, so it re-spills every iteration. A pointer plus
+  /// `getelementptr` is the representation that actually lowers well.
+  ///
+  /// The copy is emitted immediately after the definition of `value` rather
+  /// than at the point of access, so the slot dominates every point at which
+  /// `value` itself is available and can be reused by every later access,
+  /// including from inside a loop whose aggregate is loop-invariant. Slots
+  /// deliberately carry no lifetime markers: the `llvm.lifetime.end` that a
+  /// per-access temporary needs is exactly what stops LLVM from merging the
+  /// redundant copies, so the slot simply lives as long as the function.
+  ///
+  /// Returns `value` unchanged if it is already an lvalue.
+  [[nodiscard]] Value spillToMemory(Value value);
+
   /// Guarantee that the given value is an lvalue.
   ///
   /// - If the value is already an lvalue, return it.
@@ -1227,6 +1248,16 @@ public:
 
   /// The intermediate declarations to potentially warn about later.
   llvm::SmallVector<Declaration *> declarationsToWarnAbout{};
+
+  /// The memory slots holding spilled rvalues, keyed by the LLVM value and
+  /// the SMDL type (the same LLVM constant may stand for more than one).
+  /// See `spillToMemory()`.
+  ///
+  /// The map is cleared whenever emission of an LLVM function finishes (see
+  /// `createFunction`), which both bounds its size and, more importantly,
+  /// keeps an erased function's address from being matched by a later
+  /// function allocated at the same address.
+  llvm::DenseMap<std::pair<llvm::Value *, Type *>, Value> spillSlots{};
 
   Module *currentModule{context.currentModule};
 };
