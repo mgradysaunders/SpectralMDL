@@ -1838,10 +1838,30 @@ Value InferredSizeArrayType::invoke(Emitter &emitter, const ArgumentList &args,
   }()};
 
   if (!sizeName.empty()) {
-    // The temporary view is safe: 'declare' interns the name.
-    emitter.declare(
-        std::string_view(sizeName), nullptr,
-        emitter.context.getComptimeInt(int(inferredArrayType->size)));
+    const auto size{int64_t(inferredArrayType->size)};
+    // The same scope may already bind the size name: a previous parameter
+    // in `(const float[<N>] a, const auto[<N>] b)` binds `N` for its own
+    // argument first. A binding that agrees is shared; a binding that
+    // disagrees is a hard error, never a silent rebind, because the body
+    // indexes every array with whichever binding survived.
+    if (auto existing{
+            emitter.findSameScopeDeclaration(std::string_view(sizeName))}) {
+      const auto existingSize{existing->value.getComptimeSignedInt()};
+      if (!existingSize)
+        srcLoc.throwError("inferred array size name ", Quoted(sizeName),
+                          " conflicts with a declaration of ",
+                          Quoted(sizeName), " in the same scope");
+      if (*existingSize != size)
+        srcLoc.throwError("inferred array size ", Quoted(sizeName), " = ",
+                          std::to_string(size), " conflicts with ",
+                          Quoted(sizeName), " = ",
+                          std::to_string(*existingSize),
+                          " already bound in the same scope");
+    } else {
+      // The temporary view is safe: 'declare' interns the name.
+      emitter.declare(std::string_view(sizeName), nullptr,
+                      emitter.context.getComptimeInt(int(size)));
+    }
   }
 
   // Delegate.

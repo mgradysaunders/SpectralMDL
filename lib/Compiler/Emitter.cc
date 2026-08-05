@@ -298,21 +298,23 @@ void Emitter::declareParameterInline(Value value) {
   }
 }
 
-void Emitter::rejectSameScopeShadow(Span<const std::string_view> name,
-                                    const SourceLocation &srcLoc) {
+Declaration *
+Emitter::findSameScopeDeclaration(Span<const std::string_view> name) {
   const auto internedName{context.internName(name)};
   // Probe the scope index: nearest non-exempt target in the current scope,
   // continuing through transparent scopes into the first real boundary.
-  auto foundByScope{[&]() -> Declaration * {
-    for (auto s{scope}; s; s = s->parent) {
-      if (auto itr{s->decls.find(internedName.data())}; itr != s->decls.end())
-        for (auto c{itr->second}; c; c = c->prevSameNameInScope)
-          if (!c->isSameScopeShadowExempt()) return c;
-      if (!s->transparent) break;
-    }
-    return nullptr;
-  }()};
-  if (auto c{foundByScope}) {
+  for (auto s{scope}; s; s = s->parent) {
+    if (auto itr{s->decls.find(internedName.data())}; itr != s->decls.end())
+      for (auto c{itr->second}; c; c = c->prevSameNameInScope)
+        if (!c->isSameScopeShadowExempt()) return c;
+    if (!s->transparent) break;
+  }
+  return nullptr;
+}
+
+void Emitter::rejectSameScopeShadow(Span<const std::string_view> name,
+                                    const SourceLocation &srcLoc) {
+  if (auto c{findSameScopeDeclaration(name)}) {
     if (auto prevSrcLoc{c->getSourceLocation()})
       srcLoc.throwError("redeclaration of ", Quoted(join(name, "::")),
                         " in the same scope, previously declared at ",
@@ -2979,6 +2981,13 @@ Emitter::resolveArguments(const ParameterList &params, const ArgumentList &args,
   }
   // The primary resolution logic.
   ResolvedArguments resolvedArgs{params, args};
+  // The named array sizes deduced so far across the argument list, so that
+  // `(const float[<N>] a, const auto[<N>] b)` rejects arguments of
+  // different sizes instead of silently rebinding `N` (see
+  // `InferredSizeArrayType::invoke`). This runs during overload probing,
+  // so a size-inconsistent candidate is rejected like any other
+  // conversion failure.
+  auto deducedSizes{llvm::SmallVector<std::pair<std::string_view, uint32_t>, 2>{}};
   for (size_t iParam{}; iParam < params.size(); iParam++) {
     auto &param{params[iParam]};
     auto arg{[&]() -> const Argument * {
@@ -3012,6 +3021,35 @@ Emitter::resolveArguments(const ParameterList &params, const ArgumentList &args,
                           " is not implicitly convertible to type ",
                           Quoted(param.type->displayName), " of parameter ",
                           Quoted(param.name));
+      // Deduce named array sizes, descending through nested arrays.
+      auto paramType{param.type};
+      auto argType{arg->value.type};
+      while (true) {
+        auto inferredType{llvm::dyn_cast<InferredSizeArrayType>(paramType)};
+        auto arrayType{llvm::dyn_cast<ArrayType>(argType)};
+        if (!inferredType || !arrayType) break;
+        if (!inferredType->sizeName.empty()) {
+          auto deduced{[&]() -> std::pair<std::string_view, uint32_t> * {
+            for (auto &entry : deducedSizes)
+              if (entry.first == inferredType->sizeName) return &entry;
+            return nullptr;
+          }()};
+          if (!deduced) {
+            deducedSizes.push_back({inferredType->sizeName, arrayType->size});
+          } else if (deduced->second != arrayType->size) {
+            srcLoc.throwError(
+                "argument type ", Quoted(arg->value.type->displayName),
+                " of parameter ", Quoted(param.name),
+                " deduces array size ", Quoted(inferredType->sizeName), " = ",
+                std::to_string(arrayType->size),
+                " but an earlier argument deduced ",
+                Quoted(inferredType->sizeName), " = ",
+                std::to_string(deduced->second));
+          }
+        }
+        paramType = inferredType->elemType;
+        argType = arrayType->elemType;
+      }
     } else if (!param.getASTInitializer() && !param.builtinDefaultValue) {
       srcLoc.throwError("missing argument for parameter ", Quoted(param.name),
                         " without default initializer");

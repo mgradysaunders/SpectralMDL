@@ -292,6 +292,15 @@ public:
     return declaration;
   }
 
+  /// Find the nearest non-exempt declaration of the given name within the
+  /// current same-scope region: the current scope and, through transparent
+  /// scopes, the first boundary scope. Returns null if there is none. This
+  /// is the probe behind `rejectSameScopeShadow()`, also used to keep
+  /// inferred array size names consistent (see
+  /// `InferredSizeArrayType::invoke()`).
+  [[nodiscard]] Declaration *
+  findSameScopeDeclaration(Span<const std::string_view> name);
+
   /// Throw an error if the given name is already declared in the current
   /// scope (probing the scope index through transparent scopes into the
   /// first boundary scope). Shadowing is legal only across scope

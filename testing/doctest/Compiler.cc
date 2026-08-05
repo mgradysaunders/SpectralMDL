@@ -812,3 +812,55 @@ TEST_CASE("Compiler static material flags") {
   }
   fs::remove_all(tmpDir);
 }
+
+TEST_CASE("Compiler inferred-size array deduction") {
+  auto tmpDir{fs::temp_directory_path() / "smdl-inferred-size-test"};
+  fs::remove_all(tmpDir);
+  // A macro whose two parameters share the size name 'N'.
+  static const char *sharedN{
+      "#smdl\n"
+      "@(pure macro)\n"
+      "int sharedN(const float[<N>] a, const float[<N>] b) = N;\n"};
+  SUBCASE("Consistent sizes across a shared size name compile") {
+    writeFile(tmpDir / "root" / "main.mdl",
+              std::string(sharedN) +
+                  "export const int ok = sharedN(float[2](1.0, 2.0), "
+                  "float[2](3.0, 4.0));\n");
+    smdl::Compiler compiler{};
+    CHECK(buildAll(compiler, {tmpDir / "root"}) == "");
+  }
+  SUBCASE("Mismatched sizes are rejected at overload resolution") {
+    writeFile(tmpDir / "root" / "main.mdl",
+              std::string(sharedN) +
+                  "export const int bad = sharedN(float[2](1.0, 2.0), "
+                  "float[3](3.0, 4.0, 5.0));\n");
+    smdl::Compiler compiler{};
+    auto message{buildAll(compiler, {tmpDir / "root"})};
+    CHECK(message.find("deduces array size") != std::string::npos);
+  }
+  SUBCASE("A local size name must not silently rebind") {
+    writeFile(tmpDir / "root" / "main.mdl",
+              "#smdl\n"
+              "@(pure macro)\n"
+              "int localRebind() {\n"
+              "  const float[<N>] a(1.0, 2.0);\n"
+              "  const float[<N>] b(1.0, 2.0, 3.0);\n"
+              "  return N + int(a[0] + b[0]);\n"
+              "}\n"
+              "export const int bad = localRebind();\n");
+    smdl::Compiler compiler{};
+    auto message{buildAll(compiler, {tmpDir / "root"})};
+    CHECK(message.find("conflicts with") != std::string::npos);
+  }
+  SUBCASE("A size name must not silently shadow a same-scope parameter") {
+    writeFile(tmpDir / "root" / "main.mdl",
+              "#smdl\n"
+              "@(pure macro)\n"
+              "int collide(const int N, const float[<N>] w) = N + int(w[0]);\n"
+              "export const int bad = collide(7, float[3](0.0, 0.0, 0.0));\n");
+    smdl::Compiler compiler{};
+    auto message{buildAll(compiler, {tmpDir / "root"})};
+    CHECK(message.find("conflicts with") != std::string::npos);
+  }
+  fs::remove_all(tmpDir);
+}
