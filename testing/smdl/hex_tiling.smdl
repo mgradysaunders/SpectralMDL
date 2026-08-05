@@ -263,6 +263,31 @@ unit_test "Hex tiling stochastic selection is unbiased" {
   #assert(hex_tiling::hex_select(float3(0.0, 0.0, 1.0), 0.999) == 2);
 }
 
+unit_test "Hex tiling lambda combinators" {
+  // 'hex_lookup_with' and 'hex_select_with' hex tile an arbitrary per-tile
+  // computation given as a lambda, here a procedural source with a
+  // captured local.
+  const float scale = 0.5;
+  for (int i = 0; i < 2048; i++) {
+    const auto st(samplePoint(i, 20.0));
+    const auto tiling(hex_tiling::hex_tiling_at(st, 1.0));
+    const auto values(hex_tiling::hex_lookup_with(tiling, \(const hex_tiling::hex_tile tile) = scale * fakeTexture(tile.coord)));
+    for (int k = 0; k < 3; k++) {
+      #assert(#all(values[k] ~== |1e-6| scale * fakeTexture(tiling.tiles[k].coord)), "hex_lookup_with must evaluate the lambda per tile");
+    }
+
+    // The array blend overload must agree with the unpacked overload.
+    const auto w(hex_tiling::hex_contrast(tiling.weights, 0.75));
+    #assert(#all(hex_tiling::hex_blend(w, values) ~== |1e-6| hex_tiling::hex_blend(w, values[0], values[1], values[2])), "hex_blend array overload must agree");
+
+    // The stochastic combinator must agree with selecting by hand at its
+    // default contrast.
+    const auto xi(noise::hash_float(i));
+    const auto picked(hex_tiling::hex_select_with(tiling, xi, \(const hex_tiling::hex_tile tile) = fakeTexture(tile.coord)));
+    #assert(#all(picked ~== |1e-6| fakeTexture(tiling.tiles[hex_tiling::hex_select(w, xi)].coord)), "hex_select_with must agree with hex_select");
+  }
+}
+
 unit_test "Hex tiling variance preservation restores contrast" {
   // The plain blend must be under-dispersed relative to the source, and the
   // variance-preserving blend must recover essentially all of the shortfall.

@@ -2,12 +2,15 @@
 /// The atomic procedural noise primitives: an integer hash, gradient
 /// (simplex) noise with analytic derivatives, and Worley cellular noise.
 ///
-/// This module is deliberately small. It provides only the primitives that
-/// are awkward to write correctly (hash avalanche, lattice construction,
-/// falloff normalization, closed-form derivatives) and stops short of the
-/// composition layer. Fractal summation, ridging, domain warping, and range
-/// remapping are a few lines each on top of these and are entirely a matter
-/// of taste, so they belong in the material rather than here.
+/// This module is deliberately small. It provides the primitives that are
+/// awkward to write correctly (hash avalanche, lattice construction,
+/// falloff normalization, closed-form derivatives), and of the composition
+/// layer only its taste-neutral skeleton: `fractal_noise()` and
+/// `fractal_noise_deriv()` own the octave progression and the
+/// variance-correct normalization — the parts with a right answer — and
+/// take the per-octave field as a lambda. Ridging, domain warping, and
+/// range remapping are one expression each inside that lambda and remain
+/// entirely a matter of taste, so they still belong in the material.
 ///
 /// Every function is seeded explicitly. There is no global state, so an
 /// arbitrary number of statistically independent fields may be evaluated at
@@ -401,6 +404,84 @@ export worley_3d worley_noise(const float3 position, const int seed = 0, const f
     }
   }
   return result;
+}
+
+//--}
+
+//--{ Fractal composition
+
+/// The fractal (fBm) sum of `octaves` evaluations of the per-octave field
+/// `f`, which receives the scaled position and the octave index and is
+/// typically a seeded noise primitive:
+///
+///     const auto n(noise::fractal_noise(uv, 5, \(const float2 p, const int octave) =
+///         noise::simplex_noise(p, seed: octave)));
+///
+/// The skeleton owns only the parts with a right answer: the position and
+/// amplitude progressions, and the normalization by the square root of the
+/// sum of squared amplitudes, which preserves the variance of a single
+/// octave (see the module comment). Everything else stays in the lambda:
+/// ridging is a remap such as `1 - 2 * #abs(...)` around the primitive,
+/// domain warping is an offset added to the position, and the field may
+/// return any arithmetic type, in which case it fractals componentwise.
+///
+/// NOTE: `octaves` below 1 behaves as 1: the first octave is always
+/// evaluated. The variance statement assumes roughly zero-mean octaves; a
+/// ridged field shifts the mean, which the normalization scales along with
+/// everything else.
+@(pure macro)
+export auto fractal_noise(
+  const auto position,
+  const int octaves,
+  const auto f,
+  const float gain = 0.5,       ///< The amplitude falloff per octave.
+  const float lacunarity = 2.0, ///< The frequency growth per octave.
+) {
+  auto p(position);
+  auto amplitude(1.0);
+  auto sum(f(p, 0));
+  auto sumSquares(1.0);
+  for (int octave = 1; octave < octaves; octave++) {
+    p *= lacunarity;
+    amplitude *= gain;
+    sum += amplitude * f(p, octave);
+    sumSquares += amplitude * amplitude;
+  }
+  return sum / #sqrt(sumSquares);
+}
+
+/// The fractal (fBm) sum of noise-with-derivative octaves, for `f`
+/// returning `noise_deriv_2d` or `noise_deriv_3d`. Identical to
+/// `fractal_noise()` on the value; the derivative additionally carries the
+/// chain-rule factor of the position scaling per octave, so it stays the
+/// exact derivative of the returned value with respect to the original
+/// position.
+@(pure macro)
+export auto fractal_noise_deriv(
+  const auto position,
+  const int octaves,
+  const auto f,
+  const float gain = 0.5,       ///< The amplitude falloff per octave.
+  const float lacunarity = 2.0, ///< The frequency growth per octave.
+) {
+  auto p(position);
+  auto amplitude(1.0);
+  auto frequency(1.0);
+  auto sum(f(p, 0));
+  auto sumSquares(1.0);
+  for (int octave = 1; octave < octaves; octave++) {
+    p *= lacunarity;
+    frequency *= lacunarity;
+    amplitude *= gain;
+    const auto n(f(p, octave));
+    sum.value += amplitude * n.value;
+    sum.deriv += amplitude * frequency * n.deriv;
+    sumSquares += amplitude * amplitude;
+  }
+  const auto norm(1.0 / #sqrt(sumSquares));
+  sum.value *= norm;
+  sum.deriv *= norm;
+  return sum;
 }
 
 //--}

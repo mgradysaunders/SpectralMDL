@@ -1324,14 +1324,21 @@ FunctionType::getInstance(Emitter &emitter,
     inst.isCompiling = true;
     inst.returnType = returnType;
     if (isForeign()) {
-      emitter.createFunction(inst.llvmFunc, decl.name, isPure(),
+      emitter.createFunction(inst.llvmFunc, declName, isPure(),
                              inst.returnType, paramTypes, params, decl.srcLoc,
                              nullptr);
     } else {
       SMDL_SANITY_CHECK(decl.definition);
+      // A lambda instance is always compiled pure: lambdas ordinarily
+      // macro-expand, and materialization exists to hand the compiled
+      // function across an ABI with no state channel (see the
+      // 'tabulate_albedo' intrinsic). A lambda body that references
+      // '$state' fails with the usual pure-context error, and a lambda
+      // body that captures run-time locals fails with the usual
+      // cross-function reference error.
       emitter.createFunction(
-          inst.llvmFunc, decl.name, isPure(), inst.returnType, paramTypes,
-          params, decl.srcLoc,
+          inst.llvmFunc, declName, isPure() || isLambda, inst.returnType,
+          paramTypes, params, decl.srcLoc,
           [&] {
             if (decl.hasAttribute("fastmath"))
               emitter.builder.setFastMathFlags(llvm::FastMathFlags::getFast());

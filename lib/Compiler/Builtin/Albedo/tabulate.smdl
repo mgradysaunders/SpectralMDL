@@ -15,21 +15,33 @@ import ::math::*;
 
 const float EPSILON = 1e-6;
 
-//--{ diffuse_reflection_bsdf
-/*
-@(pure) float integrateDiffuseReflectionBSDF(float cosTheta, float roughness) {
-  const int numSamples = 1048576;
-  const float3 wo = float3(#sqrt(1 - cosTheta * cosTheta), 0, cosTheta);
+//--{ Integration skeleton
+/// The average of `sample(xi)` over `numSamples` points of a
+/// low-discrepancy sequence, returned as a `double` so the caller controls
+/// the final rounding of any scaling applied on top.
+@(pure macro)
+double integrateAlbedo(const int numSamples, const auto sample) {
   float2 xi = float2(0.713, 0.489);
   double fSum = 0;
   for (int i = 0; i < numSamples; i++, df::monte_carlo::nextLowDiscrepancy(&xi)) {
-    const float3 wi = math::normalize(df::monte_carlo::cosineHemisphereSample(xi));
-    fSum += #max(#sum(wo.xy * wi.xy), 0) / (#max(wo.z, wi.z) + EPSILON);
+    fSum += sample(xi);
   }
+  return fSum / numSamples;
+}
+//--}
+
+//--{ diffuse_reflection_bsdf
+/*
+@(pure) float integrateDiffuseReflectionBSDF(float cosTheta, float roughness) {
+  const float3 wo = float3(#sqrt(1 - cosTheta * cosTheta), 0, cosTheta);
+  const auto mean = integrateAlbedo(1048576, \(const float2 xi) {
+    const float3 wi = math::normalize(df::monte_carlo::cosineHemisphereSample(xi));
+    return #max(#sum(wo.xy * wi.xy), 0) / (#max(wo.z, wi.z) + EPSILON);
+  });
   const float sigma2 = 2.0 * roughness * roughness;
   const float A = 1.00 - sigma2 / (2.0 * sigma2 + 0.66);
   const float B = 0.45 * sigma2 / (sigma2 + 0.09);
-  return A + (fSum / numSamples) * B;
+  return A + mean * B;
 }
 */
 //--}
@@ -45,7 +57,6 @@ const float EPSILON = 1e-6;
 }
 
 @(pure) float integrateSheenBSDF(float cosTheta, float roughness) {
-  const int numSamples = 1048576;
   cosTheta = #max(cosTheta, 0.00001);
   cosTheta = #min(cosTheta, 1);
   const float sinTheta = #sqrt(1 - cosTheta * cosTheta);
@@ -56,93 +67,68 @@ const float EPSILON = 1e-6;
     auto(25.3245, 3.32435, 0.16801, -1.27393, -4.85967),
     #pow(1 - #pow(roughness, 2), 2),
   );
-  float2 xi = float2(0.713, 0.489);
-  double fSum = 0;
-  for (int i = 0; i < numSamples; i++, df::monte_carlo::nextLowDiscrepancy(&xi)) {
+  const auto mean = integrateAlbedo(1048576, \(const float2 xi) {
     const float3 wi(df::monte_carlo::uniformHemisphereSample(xi));
     const float3 wm(math::normalize(wo + wi));
     const float cosThetam(wm.z);
     const float sinThetam(#sqrt(1 - cosThetam * cosThetam));
-    fSum += #pow(sinThetam, 1 / alpha) / (1 + sheenLambda(fit, wo.z) + sheenLambda(fit, wi.z));
-  }
-  return (2 + 1 / alpha) * (fSum / numSamples) / (4 * wo.z);
+    return #pow(sinThetam, 1 / alpha) / (1 + sheenLambda(fit, wo.z) + sheenLambda(fit, wi.z));
+  });
+  return (2 + 1 / alpha) * mean / (4 * wo.z);
 }
 */
 //--}
 
 //--{ simple_glossy_bsdf
 @(pure) float integrateSimpleGlossyBSDF(float cosTheta, float roughness) {
-  const int numSamples = 1024 * 512;
   cosTheta = #max(cosTheta, 0.0001);
   cosTheta = #min(cosTheta, 0.9999);
   const float3 wo = float3(#sqrt(1 - cosTheta * cosTheta), 0, cosTheta);
   const float alpha(roughness * roughness);
   const float e(2 / (alpha * alpha + EPSILON));
-  float2 xi = float2(0.713, 0.489);
-  double fSum = 0;
-  for (int i = 0; i < numSamples; i++, df::monte_carlo::nextLowDiscrepancy(&xi)) {
+  return integrateAlbedo(1024 * 512, \(const float2 xi) {
     const float3 wm = math::normalize(df::microfacet::blinnNormalSample(xi.x, xi.y, float2(e)));
     const float3 wi = math::normalize(df::specular::reflect(wo, wm));
     const float dotWoWm = math::dot(wo, wm);
-    if (wi.z > 0 && dotWoWm > 0) {
-      fSum += (2 + e) / (1 + e) * #min(1, 2 * wm.z * #min(wo.z, wi.z) / dotWoWm) * dotWoWm;
-    }
-  }
-  return fSum / numSamples / wo.z;
+    return wi.z > 0 && dotWoWm > 0 ? (2 + e) / (1 + e) * #min(1, 2 * wm.z * #min(wo.z, wi.z) / dotWoWm) * dotWoWm : 0.0;
+  }) / wo.z;
 }
 //--}
 
 //--{ microfacet_ggx_smith_bsdf, microfacet_beckmann_smith_bsdf
-@(pure) float integrateMicrofacetSmith(const df::microfacet::distribution distribution, float cosTheta, float roughness) {
-  const int numSamples = 1024 * 512;
+@(pure) float integrateMicrofacetSmith(const df::microfacet::Distribution distribution, float cosTheta, float roughness) {
   cosTheta = #max(cosTheta, 0.0001);
   cosTheta = #min(cosTheta, 0.9999);
   const float3 wo = float3(#sqrt(1 - cosTheta * cosTheta), 0, cosTheta);
-  float2 xi = float2(0.713, 0.489);
-  float2 alpha = float2(#max(roughness * roughness, 1e-6));
-  double fSum = 0;
-  for (int i = 0; i < numSamples; i++, df::monte_carlo::nextLowDiscrepancy(&xi)) {
-    float3 wm = math::normalize(df::microfacet::smithVisibleNormalSample(distribution, xi.x, xi.y, alpha, wo));
-    float3 wi = math::normalize(df::specular::reflect(wo, wm));
+  const float2 alpha = float2(#max(roughness * roughness, 1e-6));
+  return integrateAlbedo(1024 * 512, \(const float2 xi) {
+    const float3 wm = math::normalize(df::microfacet::smithVisibleNormalSample(distribution, xi.x, xi.y, alpha, wo));
+    const float3 wi = math::normalize(df::specular::reflect(wo, wm));
     if (wi.z > 0) {
-      float lambdao = df::microfacet::smithLambda(distribution, #abs(wo.z) / (math::length(alpha * wo.xy)));
-      float lambdai = df::microfacet::smithLambda(distribution, #abs(wi.z) / (math::length(alpha * wi.xy)));
-      fSum += (1 + lambdao) / (1 + lambdao + lambdai);
+      const float lambdao = df::microfacet::smithLambda(distribution, #abs(wo.z) / (math::length(alpha * wo.xy)));
+      const float lambdai = df::microfacet::smithLambda(distribution, #abs(wi.z) / (math::length(alpha * wi.xy)));
+      return (1 + lambdao) / (1 + lambdao + lambdai);
     }
-  }
-  return fSum / numSamples;
-}
-
-@(pure) float integrateMicrofacetGGXSmithBSDF(float cosTheta, float roughness) {
-  return integrateMicrofacetSmith(df::microfacet::distribution_ggx(), cosTheta, roughness);
-}
-
-@(pure) float integrateMicrofacetBeckmannSmithBSDF(float cosTheta, float roughness) {
-  return integrateMicrofacetSmith(df::microfacet::distribution_beckmann(), cosTheta, roughness);
+    return 0.0;
+  });
 }
 //--}
 
 //--{ ward_geisler_moroder_bsdf
 @(pure) float integrateWardGeislerMoroderBSDF(float cosTheta, float roughness) {
-  const int numSamples = 1024 * 512;
   cosTheta = #max(cosTheta, 0.0001);
   cosTheta = #min(cosTheta, 0.9999);
   const float3 wo = float3(#sqrt(1 - cosTheta * cosTheta), 0, cosTheta);
   const float alpha(#max(0.001, roughness * roughness));
-  float2 xi = float2(0.713, 0.489);
-  double fSum = 0;
-  for (int i = 0; i < numSamples; i++, df::monte_carlo::nextLowDiscrepancy(&xi)) {
+  return integrateAlbedo(1024 * 512, \(const float2 xi) {
     const auto phi(#atan2(alpha * #sin(t := $TWO_PI * xi.x), alpha * #cos(t)));
     const auto cosPhi(#cos(phi));
     const auto sinPhi(#sin(phi));
     const auto theta(#atan(#sqrt(-#log(1 - xi.y) / (#pow(cosPhi / alpha, 2) + #pow(sinPhi / alpha, 2)))));
     const auto wm(float3(#sin(theta) * float2(cosPhi, sinPhi), #cos(theta)));
     const auto wi(math::normalize(df::specular::reflect(wo, wm)));
-    if (wi.z > 0) {
-      fSum += 2 * wi.z / (wo.z + wi.z);
-    }
-  }
-  return fSum / numSamples;
+    return wi.z > 0 ? 2 * wi.z / (wo.z + wi.z) : 0.0;
+  });
 }
 //--}
 
@@ -150,7 +136,11 @@ exec {
   /* #tabulate_albedo("diffuse_reflection_bsdf", 64, 64, integrateDiffuseReflectionBSDF); */
   /* #tabulate_albedo("sheen_bsdf", 64, 64, integrateSheenBSDF); */
   #tabulate_albedo("simple_glossy_bsdf", 64, 64, integrateSimpleGlossyBSDF);
-  #tabulate_albedo("microfacet_ggx_smith_bsdf", 64, 64, integrateMicrofacetGGXSmithBSDF);
-  #tabulate_albedo("microfacet_beckmann_smith_bsdf", 64, 64, integrateMicrofacetBeckmannSmithBSDF);
+  #tabulate_albedo(
+    "microfacet_ggx_smith_bsdf", 64, 64,
+    \(const float cosTheta, const float roughness) = integrateMicrofacetSmith(df::microfacet::DistributionGGX(), cosTheta, roughness));
+  #tabulate_albedo(
+    "microfacet_beckmann_smith_bsdf", 64, 64,
+    \(const float cosTheta, const float roughness) = integrateMicrofacetSmith(df::microfacet::DistributionBeckmann(), cosTheta, roughness));
   #tabulate_albedo("ward_geisler_moroder_bsdf", 64, 64, integrateWardGeislerMoroderBSDF);
 }

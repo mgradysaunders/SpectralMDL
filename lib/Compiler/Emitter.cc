@@ -2608,20 +2608,27 @@ Value Emitter::emitIntrinsic(std::string_view name, const ArgumentList &args,
                           "and 1 function argument");
       auto funcType{llvm::dyn_cast<FunctionType>(
           args[3].value.getComptimeMetaType(context, srcLoc))};
-      if (!(funcType &&               //
-            funcType->isPure() &&     //
-            !funcType->isMacro() &&   //
-            !funcType->isVariant() && //
-            funcType->hasNoOverloads() &&
-            funcType->returnType == context.getFloatType() &&
+      // Named functions must be declared '@(pure) float(float, float)'.
+      // Lambdas declare neither purity nor a return type, so accept two
+      // 'float' parameters and let materialization validate the rest: the
+      // instance is compiled pure (see 'FunctionType::getInstance') and
+      // the inferred return type is checked below.
+      if (!(funcType && !funcType->isVariant() && funcType->hasNoOverloads() &&
             funcType->params.size() == 2 &&
             funcType->params[0].type == context.getFloatType() &&
-            funcType->params[1].type == context.getFloatType())) {
+            funcType->params[1].type == context.getFloatType() &&
+            (funcType->isLambda ||
+             (funcType->isPure() && !funcType->isMacro() &&
+              funcType->returnType == context.getFloatType())))) {
         srcLoc.throwError("intrinsic 'tabulate_albedo' function argument must "
-                          "have signature '@(pure) float(float, float)'");
+                          "have signature '@(pure) float(float, float)' or be "
+                          "a lambda with two 'float' parameters");
       }
       auto &funcInst{funcType->getInstance(
           *this, {context.getFloatType(), context.getFloatType()})};
+      if (funcInst.returnType != context.getFloatType())
+        srcLoc.throwError("intrinsic 'tabulate_albedo' function argument must "
+                          "return 'float'");
       auto callee{
           context.getBuiltinCallee("smdlTabulateAlbedo", &smdlTabulateAlbedo)};
       auto callInst{

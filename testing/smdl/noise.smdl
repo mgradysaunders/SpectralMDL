@@ -165,6 +165,60 @@ unit_test "Noise fbm normalization" {
   #assert(math::abs(sumSq / n - 0.2905) < 0.02, "fbm normalized by RMS amplitude did not preserve octave variance");
 }
 
+unit_test "Noise fractal combinators" {
+  // One octave is the bare field: the normalization is exactly 1.
+  for (int i = 0; i < 512; i++) {
+    const auto p(samplePoint(i).xy);
+    #assert(noise::fractal_noise(p, 1, \(const float2 q, const int octave) = noise::simplex_noise(q, octave)) //
+            == noise::simplex_noise(p, 0), "one octave must be the bare field");
+  }
+
+  // The combinator must reproduce the hand-written recipe of the
+  // "Noise fbm normalization" test above, and the derivative version must
+  // agree on the value while summing the chain-rule derivative.
+  for (int i = 0; i < 4096; i++) {
+    const auto p(samplePoint(i).xy);
+    const auto value(noise::fractal_noise(p, 5, \(const float2 q, const int octave) = noise::simplex_noise(q, octave)));
+    const auto d(noise::fractal_noise_deriv(p, 5, \(const float2 q, const int octave) = noise::simplex_noise_deriv(q, octave)));
+    auto q(p);
+    float f(0.0), a(1.0), freq(1.0), norm(0.0);
+    auto deriv(float2(0.0));
+    for (int k = 0; k < 5; k++) {
+      const auto nk(noise::simplex_noise_deriv(q, k));
+      f += a * nk.value;
+      deriv += a * freq * nk.deriv;
+      norm += a * a;
+      q *= 2.0, freq *= 2.0, a *= 0.5;
+    }
+    f /= #sqrt(norm);
+    deriv /= #sqrt(norm);
+    #assert(math::abs(value - f) < 1e-6, "fractal_noise must match the hand-written recipe");
+    #assert(math::abs(d.value - f) < 1e-6, "fractal_noise_deriv must agree on the value");
+    #assert(math::length(d.deriv - deriv) < 1e-5, "fractal_noise_deriv must sum the chain-rule derivative");
+  }
+
+  // The field type is generic: a vector-valued field fractals
+  // componentwise, matching independent scalar fractals per channel.
+  for (int i = 0; i < 512; i++) {
+    const auto p(samplePoint(i).xy);
+    const auto v(noise::fractal_noise(p, 3, \(const float2 q, const int octave) //
+                                      = float2(noise::simplex_noise(q, octave), noise::simplex_noise(q, octave + 8))));
+    #assert(math::abs(v.x - noise::fractal_noise(p, 3, \(const float2 q, const int octave) = noise::simplex_noise(q, octave))) < 1e-6, //
+            "vector fractal channel 0");
+    #assert(math::abs(v.y - noise::fractal_noise(p, 3, \(const float2 q, const int octave) = noise::simplex_noise(q, octave + 8))) < 1e-6, //
+            "vector fractal channel 1");
+  }
+
+  // Ridging is a lambda, not an API: each ridged octave lies in [-1, 1],
+  // so the normalized sum is bounded by the amplitude sum over the RMS.
+  for (int i = 0; i < 512; i++) {
+    const auto p(samplePoint(i).xy);
+    const auto r(noise::fractal_noise(p, 4, \(const float2 q, const int octave) //
+                                      = 1.0 - 2.0 * #abs(noise::simplex_noise(q, octave))));
+    #assert(math::abs(r) < 1.875 / #sqrt(1.328125) + 1e-4, "ridged fractal must respect the normalized bound");
+  }
+}
+
 unit_test "Noise worley" {
   const int n = 200'000;
   for (int i = 0; i < n; i++) {

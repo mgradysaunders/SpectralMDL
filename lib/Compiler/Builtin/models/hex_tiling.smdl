@@ -19,8 +19,10 @@
 ///   2. `hex_modulate()` and `hex_contrast()` shape those weights.
 ///   3. `hex_blend()`, `hex_blend_variance_preserving()`, and `hex_select()`
 ///      combine three values of any type using those weights.
-///   4. `hex_lookup()` and the `hex_lookup_*()` family apply all of the above
-///      to a `texture_2d`, and `hex_lookup_normal()` reads a tangent-space
+///   4. `hex_lookup_with()` and `hex_select_with()` apply all of the above
+///      to any per-tile computation, given as a lambda over the `hex_tile`.
+///      `hex_lookup()` and the `hex_lookup_*()` family specialize them to a
+///      `texture_2d`, and `hex_lookup_normal()` reads a tangent-space
 ///      normal map correctly through the per-tile rotation.
 ///
 /// No mip-mapping or screen-space derivative is required or used: under
@@ -228,6 +230,11 @@ export auto hex_blend(const float3 w, const auto value0, const auto value1, cons
   return w.x * value0 + w.y * value1 + w.z * value2;
 }
 
+/// The weighted blend of three values as an array, as `hex_lookup_with()`
+/// produces them.
+@(pure macro)
+export auto hex_blend(const float3 w, const auto[<N>] values) = hex_blend(w, values[0], values[1], values[2]);
+
 /// The weighted blend of three values, rescaled to preserve the variance of
 /// the source about a known `mean`.
 ///
@@ -284,6 +291,23 @@ export struct hex_samples {
   float3 weights = float3(1.0 / 3.0);
 };
 
+/// The values of `f` at each of the three tiles: the general form of the
+/// lookup layer, hex tiling any per-tile computation rather than only a
+/// `texture_2d`. The lambda receives the `hex_tile`, so it may read one or
+/// several maps consistently at `tile.coord`, synthesize a procedural
+/// source decorrelated by `tile.id`, or counter-rotate directional values
+/// through `tile.rotation`. Shape `tiling.weights` with `hex_modulate()`
+/// and `hex_contrast()` as usual, then combine with `hex_blend()` or
+/// resolve stochastically by indexing with `hex_select()`:
+///
+///     const auto tiling(hex_tiling_at(coord));
+///     const auto values(hex_lookup_with(tiling, \(const hex_tile tile) =
+///         my_pattern(tile.coord, seed: tile.id)));
+///     const auto value(hex_blend(hex_contrast(tiling.weights), values));
+///
+@(macro)
+export auto hex_lookup_with(const hex_tiling tiling, const auto f) = auto[3](f(tiling.tiles[0]), f(tiling.tiles[1]), f(tiling.tiles[2]));
+
 /// Looks up `tex` once per hex tile and shapes the blending weights, leaving
 /// the blend itself to the caller: take the result to `hex_blend()` for the
 /// published method, to `hex_blend_variance_preserving()` to recover the lost
@@ -301,12 +325,10 @@ export hex_samples hex_lookup(
   const float contrast = 0.75, ///< The S-curve ramp on the weights. See `hex_contrast()`.
   const float strength = 0.6,  ///< The extent of the luminance modulation. See `hex_modulate()`.
 ) {
-  const auto value0(tex::lookup_float4(tex, tiling.tiles[0].coord));
-  const auto value1(tex::lookup_float4(tex, tiling.tiles[1].coord));
-  const auto value2(tex::lookup_float4(tex, tiling.tiles[2].coord));
-  auto weights(hex_modulate(tiling.weights, hex_metric_luminance(value0.xyz, value1.xyz, value2.xyz), strength));
+  const auto values(hex_lookup_with(tiling, \(const hex_tile tile) = tex::lookup_float4(tex, tile.coord)));
+  auto weights(hex_modulate(tiling.weights, hex_metric_luminance(values[0].xyz, values[1].xyz, values[2].xyz), strength));
   weights = hex_contrast(weights, contrast);
-  return hex_samples(values: float4[3](value0, value1, value2), weights: weights);
+  return hex_samples(values: values, weights: weights);
 }
 
 /// The blend of the three tile samples.
@@ -383,12 +405,20 @@ export color hex_lookup_color(
   const int seed = 0,
 ) = color(hex_lookup_float4(tex, coord, rotate, contrast, strength, seed).xyz);
 
-/// The hex tiled lookup at `coord` as `float4`, resolved stochastically with
-/// a single texture lookup given a canonical random number `xi` in `[0, 1)`.
+/// Evaluates `f` at one tile chosen stochastically by the canonical random
+/// number `xi` in `[0, 1)`, with the weights sharpened by `contrast`: the
+/// general form of the stochastic lookups, costing a single evaluation of
+/// `f` however the source is computed.
 ///
 /// NOTE: The modulation of `hex_modulate()` needs the values from all three
 /// tiles and is unavailable here. Compensating with a higher `contrast` is
 /// reasonable, since the sampler dithers the transition either way.
+@(macro)
+export auto hex_select_with(const hex_tiling tiling, const float xi, const auto f, const float contrast = 0.75) = f(tiling.tiles[hex_select(hex_contrast(tiling.weights, contrast), xi)]);
+
+/// The hex tiled lookup at `coord` as `float4`, resolved stochastically with
+/// a single texture lookup given a canonical random number `xi` in `[0, 1)`.
+/// See `hex_select_with()`.
 @(pure)
 export float4 hex_lookup_float4_stochastic(
   const texture_2d tex,
@@ -397,10 +427,7 @@ export float4 hex_lookup_float4_stochastic(
   const float rotate = 1.0,
   const float contrast = 0.75,
   const int seed = 0,
-) {
-  const auto tiling(hex_tiling_at(coord, rotate, seed));
-  return tex::lookup_float4(tex, tiling.tiles[hex_select(hex_contrast(tiling.weights, contrast), xi)].coord);
-}
+) = hex_select_with(hex_tiling_at(coord, rotate, seed), xi, \(const hex_tile tile) = tex::lookup_float4(tex, tile.coord), contrast);
 
 /// The hex tiled lookup at `coord` as `color`, resolved stochastically.
 /// See `hex_lookup_float4_stochastic()`.
