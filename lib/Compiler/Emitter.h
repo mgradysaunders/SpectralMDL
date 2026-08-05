@@ -196,11 +196,18 @@ public:
   /// \param[in] callback
   /// The callback to populate the LLVM function body.
   ///
+  /// \param[in] useIndirectParams
+  /// Use the indirect ('byval' pointer) convention for parameters selected
+  /// by `passesIndirectly()`? Defaults to off, which keeps every caller
+  /// that does not opt in — notably the '@(visible)' material entry points
+  /// and '@(foreign)' declarations — on the by-value convention.
+  ///
   void createFunction(llvm::Function *&llvmFunc, std::string_view name,
                       bool isPure, Type *&returnType,
                       llvm::ArrayRef<Type *> paramTypes,
                       const ParameterList &params, const SourceLocation &srcLoc,
-                      const std::function<void()> &callback);
+                      const std::function<void()> &callback,
+                      bool useIndirectParams = false);
 
   [[nodiscard]]
   llvm::Function *createFunction(std::string_view name, bool isPure,
@@ -268,8 +275,16 @@ public:
 
   /// Declare a name. The name is interned by `Context::internName`, so
   /// callers may pass views of any lifetime — including temporaries.
-  auto declare(Span<const std::string_view> name, AST::Node *node,
-               Value value) {
+  ///
+  /// `ownsStorage` says whether this declaration is what keeps an
+  /// alloca-backed value alive, and so should end its lifetime when the
+  /// scope exits. Pass false when the value's storage outlives the scope or
+  /// belongs to someone else: `resolveArguments()` binds argument values
+  /// that the call it is preparing consumes *after* the binding scope ends,
+  /// and the storage may be the caller's own variable rather than a
+  /// temporary.
+  auto declare(Span<const std::string_view> name, AST::Node *node, Value value,
+               bool ownsStorage = true) {
     auto declaration{context.allocator.allocate<Declaration>(
         context.internName(name), node, value)};
     declaration->seq = context.nextDeclSeq();
@@ -286,7 +301,7 @@ public:
       }
     }
     // Alloca-backed lvalues have their lifetimes ended at scope exit.
-    if (value.isLValue() &&
+    if (ownsStorage && value.isLValue() &&
         llvm::isa_and_present<llvm::AllocaInst>(value.llvmValue))
       unwindStack.push_back({UnwindAction::Kind::LifetimeEnd, value});
     return declaration;
@@ -354,14 +369,36 @@ public:
     return value;
   }
 
+  /// Is this an aggregate large enough to move through memory rather than
+  /// as a first-class LLVM value? Large aggregates otherwise travel as SSA
+  /// values, which both the mid-level optimizer and the backend handle
+  /// poorly (stack round trips, wide shuffles). This backs both the
+  /// indirect return and indirect parameter conventions.
+  ///
+  /// This must remain a pure function of the type: callers and callees
+  /// compute it independently and must always agree.
+  [[nodiscard]] bool isIndirectAggregate(Type *type);
+
   /// Should function instances return values of this type indirectly,
-  /// through a leading 'sret' pointer parameter? Large aggregates
-  /// otherwise travel as first-class SSA values, which both the mid-level
-  /// optimizer and the backend handle poorly (stack round trips, wide
-  /// shuffles). See 'createFunction' for the callee side and
+  /// through a leading 'sret' pointer parameter? See 'createFunction' for
+  /// the callee side and 'FunctionType::invoke' for the call side, which
+  /// must agree on this predicate.
+  [[nodiscard]] bool returnsIndirectly(Type *type) {
+    return isIndirectAggregate(type);
+  }
+
+  /// Should function instances receive parameters of this type indirectly,
+  /// as a 'byval' pointer? See 'createFunction' for the callee side and
   /// 'FunctionType::invoke' for the call side, which must agree on this
   /// predicate.
-  [[nodiscard]] bool returnsIndirectly(Type *type);
+  ///
+  /// \note
+  /// This applies only to real functions with internal linkage. Macros
+  /// inline and have no ABI at all; '@(foreign)' must match the C ABI
+  /// exactly; '@(visible)' is called across the JIT boundary.
+  [[nodiscard]] bool passesIndirectly(Type *type) {
+    return isIndirectAggregate(type);
+  }
 
   /// Add the 'sret' attributes for an indirect return of the given type
   /// to parameter 0 of the given function and/or call. Both sides of the
@@ -369,6 +406,15 @@ public:
   /// call consistently.
   void addIndirectReturnAttrs(Type *returnType, llvm::Function *llvmFunc,
                               llvm::CallBase *callInst);
+
+  /// Add the 'byval' attributes for an indirect parameter of the given type
+  /// to parameter `i` of the given function and/or call. Both sides of the
+  /// convention must carry the attributes for the backend to lower the call
+  /// consistently, and 'byval' is what preserves by-value semantics for
+  /// mutable parameters (see the definition).
+  void addIndirectParamAttrs(Type *paramType, unsigned i,
+                             llvm::Function *llvmFunc,
+                             llvm::CallBase *callInst);
 
   /// Store the given value into the given pointer destination, copying
   /// memory-resident (lvalue) values with 'memcpy' instead of loading
@@ -1085,10 +1131,18 @@ public:
   /// do not actually emit the code for converting the arguments
   /// into the types and order of the parameters.
   ///
-  [[nodiscard]] ResolvedArguments resolveArguments(const ParameterList &params,
-                                                   const ArgumentList &args,
-                                                   const SourceLocation &srcLoc,
-                                                   bool dontEmit = false);
+  /// \param[in] passAggregatesIndirectly
+  /// Leave resolved values for parameters selected by `passesIndirectly()`
+  /// memory-resident (lvalues) instead of loading them into SSA registers?
+  /// Set by `FunctionType::invoke()` when emitting a real call that uses
+  /// the indirect parameter convention, so that the pointer reaches the
+  /// call rather than the loaded aggregate. Macros and struct construction
+  /// leave this off: they want plain values.
+  ///
+  [[nodiscard]] ResolvedArguments
+  resolveArguments(const ParameterList &params, const ArgumentList &args,
+                   const SourceLocation &srcLoc, bool dontEmit = false,
+                   bool passAggregatesIndirectly = false);
 
   /// Can resolve arguments?
   ///

@@ -16,13 +16,13 @@
 
 namespace smdl {
 
-/// Fold the result PHI of an inline expansion whose incoming values are all
-/// the same constant.
-///
-/// `createResult` always merges through a PHI, even for a lone `return`, and
-/// leaves collapsing it to the optimizer. That is fine inside a function, but
-/// an expansion at module scope has to come out as a constant here and now,
-/// with no optimizer to run and no function to keep the PHI in.
+// Fold the result PHI of an inline expansion whose incoming values are all
+// the same constant.
+//
+// `createResult` always merges through a PHI, even for a lone `return`, and
+// leaves collapsing it to the optimizer. That is fine inside a function, but
+// an expansion at module scope has to come out as a constant here and now,
+// with no optimizer to run and no function to keep the PHI in.
 static llvm::Value *foldConstantPHI(llvm::Value *llvmValue) {
   auto phiInst{llvm::dyn_cast_if_present<llvm::PHINode>(llvmValue)};
   if (!phiInst || phiInst->getNumIncomingValues() == 0) return llvmValue;
@@ -96,9 +96,35 @@ Value Emitter::createFunctionImplementation(
   return result;
 }
 
-bool Emitter::returnsIndirectly(Type *type) {
+// Is this an aggregate large enough to move through memory rather than as a
+// first-class LLVM value? Shared by the indirect return ('sret') and
+// indirect parameter ('byval') conventions so the two cannot drift apart.
+//
+// NOTE: The threshold is 'greater than', not 'at least'. At
+// '$WAVELENGTH_BASE_MAX' of 16 a 'color' and a 'float[16]' are both exactly
+// 64 bytes, and the spectral inner loops are full of them: moving those to
+// memory would cost far more than the aggregate traffic it saves.
+bool Emitter::isIndirectAggregate(Type *type) {
   return type && (type->isStruct() || type->isUnion() || type->isArray()) &&
          context.getSizeOf(type) > 64;
+}
+
+void Emitter::addIndirectParamAttrs(Type *paramType, unsigned i,
+                                    llvm::Function *llvmFunc,
+                                    llvm::CallBase *callInst) {
+  // 'byval' is what makes the convention safe: it states that the pointer is
+  // transport and the callee's copy is private, which is exactly SMDL's
+  // by-value parameter semantics. Without it a callee that writes to a
+  // mutable parameter would write through to the caller's memory, because
+  // the parameter binds directly to the incoming pointer (see
+  // 'createFunction') and 'lvalue()' returns an existing lvalue untouched.
+  auto attrs{llvm::AttrBuilder(context.llvmContext)};
+  attrs.addByValAttr(paramType->llvmType);
+  attrs.addAlignmentAttr(llvm::Align(context.getAlignOf(paramType)));
+  if (llvmFunc) llvmFunc->addParamAttrs(i, attrs);
+  if (callInst)
+    callInst->setAttributes(callInst->getAttributes().addParamAttributes(
+        context.llvmContext, i, attrs));
 }
 
 void Emitter::addIndirectReturnAttrs(Type *returnType, llvm::Function *llvmFunc,
@@ -119,14 +145,28 @@ void Emitter::createFunction(llvm::Function *&llvmFunc, std::string_view name,
                              llvm::ArrayRef<Type *> paramTypes,
                              const ParameterList &params,
                              const SourceLocation &srcLoc,
-                             const std::function<void()> &callback) {
+                             const std::function<void()> &callback,
+                             bool useIndirectParams) {
   SMDL_SANITY_CHECK(returnType && params.size() == paramTypes.size());
+  SMDL_SANITY_CHECK(!useIndirectParams || callback,
+                    "'@(foreign)' must not use the indirect parameter "
+                    "convention: it has to match the C ABI exactly");
   auto llvmParamTys{std::vector<llvm::Type *>{}};
   if (!isPure) llvmParamTys.push_back(llvm::PointerType::get(context, 0));
+  // The parameters that travel as 'byval' pointers, as (LLVM parameter
+  // index, type) pairs. Recorded once so that the signature built here, the
+  // parameter binding below, and the 'sret' rebuild all agree: the rebuild
+  // creates a fresh function and does not inherit parameter attributes.
+  auto indirectParams{llvm::SmallVector<std::pair<unsigned, Type *>, 4>{}};
   for (const auto &paramType : paramTypes) {
     SMDL_SANITY_CHECK(paramType);
     SMDL_SANITY_CHECK(paramType->llvmType);
-    llvmParamTys.push_back(paramType->llvmType);
+    if (useIndirectParams && passesIndirectly(paramType)) {
+      indirectParams.push_back({unsigned(llvmParamTys.size()), paramType});
+      llvmParamTys.push_back(llvm::PointerType::get(context, 0));
+    } else {
+      llvmParamTys.push_back(paramType->llvmType);
+    }
   }
   // Interpret null callback as foreign.
   if (!callback) {
@@ -151,6 +191,8 @@ void Emitter::createFunction(llvm::Function *&llvmFunc, std::string_view name,
                                   : context.llvmIncompleteReturnTy,
                               llvmParamTys, params.isVariadic),
       llvm::Function::InternalLinkage, "", context.llvmModule);
+  for (auto [i, paramType] : indirectParams)
+    addIndirectParamAttrs(paramType, i, llvmFunc, nullptr);
 
   llvm::IRBuilderBase::InsertPointGuard ipGuard{builder};
   {
@@ -165,9 +207,23 @@ void Emitter::createFunction(llvm::Function *&llvmFunc, std::string_view name,
           RValue(context.getPointerType(context.getStateType()), &*llvmArg++);
     }
     auto paramValues{llvm::SmallVector<Value>()};
+    auto indirectItr{indirectParams.begin()};
     for (size_t i = 0; i < params.size(); i++) {
       llvmArg->setName(params[i].name);
-      paramValues.push_back(RValue(paramTypes[i], &*llvmArg++));
+      auto llvmParam{&*llvmArg++};
+      // An indirect parameter arrives as a 'byval' pointer to storage the
+      // callee owns privately, which is exactly what an lvalue is. Binding
+      // it directly is the whole point of the convention: the parameter's
+      // storage *is* the incoming pointer, so the re-spill that a by-value
+      // aggregate needs before it can be indexed at runtime disappears
+      // rather than being replaced by a different copy.
+      if (indirectItr != indirectParams.end() &&
+          indirectItr->first == llvmParam->getArgNo()) {
+        paramValues.push_back(LValue(paramTypes[i], llvmParam));
+        ++indirectItr;
+      } else {
+        paramValues.push_back(RValue(paramTypes[i], llvmParam));
+      }
     }
     auto result{createFunctionImplementation(name, isPure, returnType, params,
                                              paramValues, srcLoc, callback)};
@@ -205,6 +261,10 @@ void Emitter::createFunction(llvm::Function *&llvmFunc, std::string_view name,
         ++llvmArg1;
       }
       addIndirectReturnAttrs(returnType, llvmFunc, nullptr);
+      // The rebuilt function does not inherit parameter attributes, and
+      // every index shifts by one for the leading 'sret' slot.
+      for (auto [i, paramType] : indirectParams)
+        addIndirectParamAttrs(paramType, i + 1, llvmFunc, nullptr);
       builder.CreateStore(rvalue(result), sretArg);
       builder.CreateRetVoid();
       // Rewrite recursive calls emitted against the by-value placeholder,
@@ -224,6 +284,8 @@ void Emitter::createFunction(llvm::Function *&llvmFunc, std::string_view name,
         auto newCall{builder.CreateCall(llvmFunc->getFunctionType(), llvmFunc,
                                         llvmArgs)};
         addIndirectReturnAttrs(returnType, nullptr, newCall);
+        for (auto [i, paramType] : indirectParams)
+          addIndirectParamAttrs(paramType, i + 1, nullptr, newCall);
         callInst->replaceAllUsesWith(
             builder.CreateLoad(returnType->llvmType, slot));
         callInst->eraseFromParent();
@@ -274,7 +336,18 @@ Value Emitter::createAlloca(Type *type, const llvm::Twine &name) {
 }
 
 void Emitter::declareParameter(const Parameter &param, Value value) {
-  value = invoke(param.type, value, param.getSourceLocation());
+  // Skip the conversion when the type already matches exactly. It is an
+  // identity that nonetheless loads a memory-resident value back into SSA
+  // (see 'ArrayType::invoke'), which would undo the indirect parameter
+  // binding in 'createFunction' one line after it was established.
+  if (value.type != param.type)
+    value = invoke(param.type, value, param.getSourceLocation());
+  // NOTE: 'lvalue()' returns an existing lvalue untouched, so a mutable
+  // indirect parameter does NOT get a fresh copy here. That is correct
+  // only because 'byval' guarantees the incoming pointer already denotes
+  // the callee's private copy. If that attribute ever stops being applied
+  // to every indirect parameter, mutable parameters silently start writing
+  // through to the caller.
   value = param.isConst() || value.isVoid() ? value : lvalue(value);
   auto declaration{
       declare(param.name,
@@ -2968,7 +3041,8 @@ Value Emitter::resolveIdentifier(Span<const std::string_view> names,
 
 Emitter::ResolvedArguments
 Emitter::resolveArguments(const ParameterList &params, const ArgumentList &args,
-                          const SourceLocation &srcLoc, bool dontEmit) {
+                          const SourceLocation &srcLoc, bool dontEmit,
+                          bool passAggregatesIndirectly) {
   // Obvious case: If there are more arguments than parameters, resolution
   // fails.
   if (args.size() > params.size() && !params.isVariadic) {
@@ -3094,11 +3168,42 @@ Emitter::resolveArguments(const ParameterList &params, const ArgumentList &args,
             value = *param.builtinDefaultValue;
           }
         }
-        // The 'rvalue' matters: conversions may come back memory-resident
-        // (see e.g. 'UnionType::invoke'), and these values are passed
-        // directly as LLVM call arguments by 'FunctionType::invoke'.
-        value = rvalue(invoke(param.type, value, param.getSourceLocation()));
-        declare(param.name, /*node=*/nullptr, value);
+        // Skip a same-type conversion, which is an identity that would
+        // nonetheless load a memory-resident value into SSA (see
+        // 'ArrayType::invoke'): exactly the traffic the indirect
+        // convention exists to avoid. The 'rvalue'/'lvalue' below supplies
+        // whichever form is actually wanted either way.
+        if (value.type != param.type)
+          value = invoke(param.type, value, param.getSourceLocation());
+        // An indirect parameter is passed as a pointer, so its value must
+        // reach the call memory-resident. Everything else must reach it as
+        // an rvalue: conversions may come back memory-resident (see e.g.
+        // 'UnionType::invoke'), and these values are passed directly as
+        // LLVM call arguments by 'FunctionType::invoke'.
+        //
+        // NOTE: The predicate is applied to the *converted value's* type,
+        // not to 'param.type'. A declared parameter type may be abstract
+        // ('auto', 'float[<N>]'), and it is the concrete resolved type that
+        // the callee is instantiated with (see 'getNonVariadicTypes'), so
+        // testing the declared type would disagree with the callee for
+        // exactly the generic functions that pass big arrays around.
+        //
+        // The 'getLLVMFunction()' guard is for module scope, where there is
+        // no function to allocate the argument slot in. A call cannot be
+        // emitted there either (it needs an insert point), so the compile
+        // fails regardless and both sides agree to skip the convention;
+        // this only keeps the failure the one module scope already
+        // produces rather than an alloca sanity check from here.
+        const auto indirect{passAggregatesIndirectly && getLLVMFunction() &&
+                            passesIndirectly(value.type)};
+        // 'lvalue()' passes an existing lvalue through, so an argument that
+        // is already memory-resident is passed without a copy; 'byval'
+        // makes that safe by giving the callee its own copy regardless.
+        value = indirect ? lvalue(value) : rvalue(value);
+        // NOT this scope's storage to end: the call these values feed is
+        // emitted after this scope closes, and an indirect argument may be
+        // the caller's own variable passed through without a copy.
+        declare(param.name, /*node=*/nullptr, value, /*ownsStorage=*/false);
       }
       if (params.isVariadic) {
         for (size_t iArg{}; iArg < args.size(); iArg++) {

@@ -792,6 +792,19 @@ public:
   /// Is marked with the attribute `@(foreign)`?
   [[nodiscard]] bool isForeign() const { return decl.hasAttribute("foreign"); }
 
+  /// Does this function use the indirect ('byval' pointer) convention for
+  /// large aggregate parameters? Both the callee signature
+  /// (`FunctionType::getInstance`) and every call site
+  /// (`FunctionType::invoke`) must agree, so this is the single place the
+  /// question is answered.
+  ///
+  /// Macros inline and have no ABI at all. `@(foreign)` has to match the C
+  /// ABI exactly. `@(visible)` has external linkage and is called across
+  /// the JIT boundary, where the host matches the signature by hand.
+  [[nodiscard]] bool usesIndirectParams() const {
+    return !isMacro() && !isForeign() && !decl.hasAttribute("visible");
+  }
+
   /// Is function variant?
   [[nodiscard]] bool isVariant() const { return decl.isVariant(); }
 

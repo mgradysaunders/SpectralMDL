@@ -1058,7 +1058,9 @@ Value FunctionType::invoke(Emitter &emitter, const ArgumentList &args,
     });
     return result;
   }
-  auto resolvedArgs{emitter.resolveArguments(func->params, args, srcLoc)};
+  auto resolvedArgs{emitter.resolveArguments(
+      func->params, args, srcLoc, /*dontEmit=*/false,
+      /*passAggregatesIndirectly=*/func->usesIndirectParams())};
   if (auto impliedVisitArgs{resolvedArgs.getImpliedVisitArguments()})
     return emitter.emitCall(emitter.context.getComptimeMetaType(this),
                             *impliedVisitArgs, srcLoc);
@@ -1098,11 +1100,27 @@ Value FunctionType::invoke(Emitter &emitter, const ArgumentList &args,
       llvmArgs.push_back(sretSlot.llvmValue);
     }
     if (!func->isPure()) llvmArgs.push_back(emitter.state);
-    llvmArgs.insert(llvmArgs.end(),              //
-                    resolvedArgs.values.begin(), //
-                    resolvedArgs.values.end());
+    // Indirect ('byval') parameters are passed as pointers to the value
+    // rather than as first-class aggregates. The indices are recorded while
+    // building the argument list, which is what keeps them in step with the
+    // callee: 'Emitter::createFunction' records its own the same way, and
+    // the two must agree for the backend to lower the call consistently.
+    auto indirectParams{llvm::SmallVector<std::pair<unsigned, Type *>, 4>{}};
+    for (size_t i = 0; i < resolvedArgs.values.size(); i++) {
+      const auto &value{resolvedArgs.values[i]};
+      if (func->usesIndirectParams() && i < func->params.size() &&
+          emitter.getLLVMFunction() && emitter.passesIndirectly(value.type)) {
+        SMDL_SANITY_CHECK(value.isLValue(),
+                          "indirect parameter must reach the call "
+                          "memory-resident (see 'resolveArguments')");
+        indirectParams.push_back({unsigned(llvmArgs.size()), value.type});
+      }
+      llvmArgs.push_back(value);
+    }
     auto callInst{emitter.builder.CreateCall(
         instance.llvmFunc->getFunctionType(), instance.llvmFunc, llvmArgs)};
+    for (auto [i, paramType] : indirectParams)
+      emitter.addIndirectParamAttrs(paramType, i, nullptr, callInst);
     if (sretSlot) {
       emitter.addIndirectReturnAttrs(instance.returnType, nullptr, callInst);
       return LValue(instance.returnType, sretSlot.llvmValue);
@@ -1251,7 +1269,8 @@ FunctionType::getInstance(Emitter &emitter,
               emitter.builder.setFastMathFlags(llvm::FastMathFlags::getFast());
             emitter.setCurrentModule(decl.srcLoc);
             emitter.emit(decl.definition);
-          });
+          },
+          usesIndirectParams());
       static const std::pair<const char *, llvm::Attribute::AttrKind> attrs[] =
           {{"alwaysinline", llvm::Attribute::AlwaysInline},
            {"noinline", llvm::Attribute::NoInline},

@@ -864,3 +864,47 @@ TEST_CASE("Compiler inferred-size array deduction") {
   }
   fs::remove_all(tmpDir);
 }
+
+TEST_CASE("Compiler indirect aggregate parameters") {
+  auto tmpDir{fs::temp_directory_path() / "smdl-aggregate-abi-test"};
+  fs::remove_all(tmpDir);
+  // Dump LLVM-IR for a module. Returns the empty string on failure.
+  auto dumpIR{[&](std::string_view text) {
+    writeFile(tmpDir / "root" / "main.mdl", text);
+    smdl::Compiler compiler{};
+    if (compiler.add((tmpDir / "root").string())) return std::string();
+    if (compiler.compile(smdl::OPT_LEVEL_NONE)) return std::string();
+    auto out{std::string()};
+    if (compiler.dump(smdl::DUMP_FORMAT_IR, out)) return std::string();
+    return out;
+  }};
+  SUBCASE("Large aggregates pass as 'byval' pointers") {
+    // 'float[24]' is 96 bytes, over the 64-byte threshold.
+    auto ir{dumpIR("#smdl\n"
+                   "@(pure noinline)\n"
+                   "float f(const float[24] w) = w[0];\n"
+                   "@(pure visible)\n"
+                   "export float use(const float x) = f(float[24]());\n")};
+    CHECK(ir.find("byval([24 x float])") != std::string::npos);
+  }
+  SUBCASE("Aggregates at the threshold still pass by value") {
+    // 'float[16]' is exactly 64 bytes. The threshold is deliberately
+    // 'greater than': a 'color' is the same size and lives in the hot path.
+    auto ir{dumpIR("#smdl\n"
+                   "@(pure noinline)\n"
+                   "float f(const float[16] w) = w[0];\n"
+                   "@(pure visible)\n"
+                   "export float use(const float x) = f(float[16]());\n")};
+    CHECK(ir.find("byval") == std::string::npos);
+    CHECK(ir.find("[16 x float] %w") != std::string::npos);
+  }
+  SUBCASE("'@(visible)' keeps the by-value convention") {
+    // External linkage: the host matches this signature by hand, so it must
+    // not silently change.
+    auto ir{dumpIR("#smdl\n"
+                   "@(pure visible noinline)\n"
+                   "export float f(const float[24] w) = w[0];\n")};
+    CHECK(ir.find("byval") == std::string::npos);
+  }
+  fs::remove_all(tmpDir);
+}

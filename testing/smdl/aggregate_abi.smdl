@@ -1,0 +1,144 @@
+#smdl
+
+// Aggregates above the size threshold pass to real functions through a
+// 'byval' pointer rather than as first-class LLVM values (see
+// 'Emitter::passesIndirectly'). These tests pin the *semantics* of that
+// convention, which must be indistinguishable from passing by value.
+
+struct bigStruct {
+  float4 a = float4(0.0);
+  float4 b = float4(0.0);
+  float4 c = float4(0.0);
+  float4 d = float4(0.0);
+  float4 e = float4(0.0);
+};
+
+// '@(noinline)' matters throughout: an inlined callee has no ABI to test.
+
+@(pure noinline)
+float sumArray(const float[24] w) {
+  float s(0.0);
+  for (int i = 0; i < 24; i++)
+    s += w[i];
+  return s;
+}
+
+// A mutable large parameter. SMDL parameters are by-value, so writing to
+// one must not be visible to the caller. This is the single most important
+// test here: the callee binds its parameter directly to the incoming
+// pointer, and only 'byval' makes that private.
+@(pure noinline)
+float clobberArray(float[24] w) {
+  for (int i = 0; i < 24; i++)
+    w[i] = -1.0;
+  return w[0];
+}
+
+@(pure noinline)
+float sumStruct(const bigStruct v) = #sum(v.a) + #sum(v.b) + #sum(v.c) + #sum(v.d) + #sum(v.e);
+
+@(pure noinline)
+bigStruct clobberStruct(bigStruct v) {
+  v.a = float4(-1.0);
+  return v;
+}
+
+// Generic parameters: the declared type is abstract, so the convention must
+// be decided from the concrete resolved type that the instance is compiled
+// with, not from the declaration.
+@(pure noinline)
+float sumGeneric(const auto w) {
+  float s(0.0);
+  for (int i = 0; i < #num(w); i++)
+    s += w[i];
+  return s;
+}
+
+@(pure noinline)
+float sumInferred(const float[<N>] w) {
+  float s(0.0);
+  for (int i = 0; i < N; i++)
+    s += w[i];
+  return s;
+}
+
+// Both conventions at once: a large parameter and a large return value, so
+// the 'byval' parameter attributes have to survive the 'sret' rebuild.
+@(pure noinline)
+float[24] scaleArray(const float[24] w, const float k) {
+  auto r(w);
+  for (int i = 0; i < 24; i++)
+    r[i] *= k;
+  return r;
+}
+
+// Two large parameters, to pin the parameter indices.
+@(pure noinline)
+float dotArray(const float[24] a, const float[24] b) {
+  float s(0.0);
+  for (int i = 0; i < 24; i++)
+    s += a[i] * b[i];
+  return s;
+}
+
+// Just under the threshold: 'float[16]' is exactly 64 bytes and must keep
+// travelling by value, as must 'color'.
+@(pure noinline)
+float sumSmallArray(const float[16] w) {
+  float s(0.0);
+  for (int i = 0; i < 16; i++)
+    s += w[i];
+  return s;
+}
+
+@(pure macro)
+auto rampArray() {
+  auto w(float[24]());
+  for (int i = 0; i < 24; i++)
+    w[i] = float(i);
+  return w;
+}
+
+unit_test "Aggregate ABI passes values correctly" {
+  const auto w(rampArray());
+  #assert(sumArray(w) == 276.0); // 0 + 1 + ... + 23
+  #assert(dotArray(w, w) == 4324.0);
+  #assert(sumGeneric(w) == 276.0, "generic parameter must agree with the callee");
+  #assert(sumInferred(w) == 276.0, "inferred-size parameter must agree with the callee");
+  const auto scaled(scaleArray(w, 2.0));
+  #assert(scaled[23] == 46.0, "indirect parameter and indirect return must compose");
+  auto small(float[16]());
+  for (int i = 0; i < 16; i++)
+    small[i] = 1.0;
+  #assert(sumSmallArray(small) == 16.0, "sub-threshold arrays must still pass by value");
+  const auto v(bigStruct(a: float4(1.0), b: float4(2.0), c: float4(3.0), d: float4(4.0), e: float4(5.0)));
+  #assert(sumStruct(v) == 60.0);
+}
+
+unit_test "Aggregate ABI preserves by-value semantics" {
+  // The callee writes to its parameter; the caller must not see it.
+  auto w(rampArray());
+  #assert(clobberArray(w) == -1.0, "callee must see its own write");
+  #assert(sumArray(w) == 276.0, "callee must not write through to the caller");
+  #assert(w[5] == 5.0, "callee must not write through to the caller");
+  auto v(bigStruct(a: float4(1.0), b: float4(2.0), c: float4(3.0), d: float4(4.0), e: float4(5.0)));
+  const auto v2(clobberStruct(v));
+  #assert(#all(v2.a == float4(-1.0)), "callee must see its own write");
+  #assert(#all(v.a == float4(1.0)), "callee must not write through to the caller");
+  // The same value passed to two parameters must not alias.
+  #assert(dotArray(w, w) == 4324.0, "one value in two indirect parameters must not alias");
+}
+
+unit_test "Aggregate ABI passes temporaries and defaults" {
+  // An argument built at the call site is memory-resident already; one that
+  // comes from a default initializer is materialized during resolution.
+  #assert(sumArray(rampArray()) == 276.0, "temporary argument must survive to the call");
+  #assert(sumInferred(float[20](1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, //
+                                1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0)) == 20.0);
+  // Repeated calls must not share a slot in a way that corrupts either.
+  const auto a(rampArray());
+  auto total(0.0);
+  for (int i = 0; i < 4; i++)
+    total += sumArray(a);
+  #assert(total == 1104.0, "repeated indirect calls must not interfere");
+}
