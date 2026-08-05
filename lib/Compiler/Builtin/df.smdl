@@ -535,6 +535,18 @@ float sampleShadingNormalCorrection(inline const &ScatterSampleParameters params
   return denom == 0 ? 1.0 : #abs(numer / denom);
 }
 
+// Bilinear fetch of the directional albedo from a `#albedo_lut` table at
+// the roughness column interpolation fixed by `(j, t)`.
+@(pure macro)
+float fetchDirectionalAlbedo(const auto lut, const float cosTheta, const int j, const float t) {
+  float s((lut.num_cos_theta - 1) * #min(cosTheta, 1));
+  const int i(#min(int(#floor(s)), lut.num_cos_theta - 2));
+  const &float ptr0(&lut.directional_albedo[lut.num_roughness * (i + 0) + j]);
+  const &float ptr1(&lut.directional_albedo[lut.num_roughness * (i + 1) + j]);
+  s = s - i;
+  return #min(1.0, lerp(lerp(ptr0[0], ptr0[1], t), lerp(ptr1[0], ptr1[1], t), s));
+}
+
 @(pure macro)
 auto ScatterEvaluateResultWithMultiscatter(
   const auto this,
@@ -554,22 +566,8 @@ auto ScatterEvaluateResultWithMultiscatter(
     float t((lut.num_roughness - 1) * saturate(roughness));
     const int j(#min(int(#floor(t)), lut.num_roughness - 2));
     t = t - j;
-    const float Ewo = return_from {
-      float s((lut.num_cos_theta - 1) * #min(cosThetao, 1));
-      const int i(#min(int(#floor(s)), lut.num_cos_theta - 2));
-      const &float ptr0(&lut.directional_albedo[lut.num_roughness * (i + 0) + j]);
-      const &float ptr1(&lut.directional_albedo[lut.num_roughness * (i + 1) + j]);
-      s = s - i;
-      return #min(1.0, lerp(lerp(ptr0[0], ptr0[1], t), lerp(ptr1[0], ptr1[1], t), s));
-    };
-    const float Ewi = return_from {
-      float s((lut.num_cos_theta - 1) * #min(cosThetai, 1));
-      const int i(#min(int(#floor(s)), lut.num_cos_theta - 2));
-      const &float ptr0(&lut.directional_albedo[lut.num_roughness * (i + 0) + j]);
-      const &float ptr1(&lut.directional_albedo[lut.num_roughness * (i + 1) + j]);
-      s = s - i;
-      return #min(1.0, lerp(lerp(ptr0[0], ptr0[1], t), lerp(ptr1[0], ptr1[1], t), s));
-    };
+    const float Ewo(fetchDirectionalAlbedo(lut, cosThetao, j, t));
+    const float Ewi(fetchDirectionalAlbedo(lut, cosThetai, j, t));
     const float Eav = #min(1.0, lerp(lut.average_albedo[j], lut.average_albedo[j + 1], t));
     const auto msDeficit = 1 - Eav;
     const auto ms_f = msDeficit > MULTISCATTER_MIN_DEFICIT ? cosThetai / $PI * (1 - Ewo) * (1 - Ewi) / msDeficit : 0.0;
@@ -3459,6 +3457,29 @@ auto scatterSample(const &weighted_layer this, inline const &ScatterSampleParame
 export typedef weighted_layer color_weighted_layer;
 //--}
 
+// The shared implementation of the `*_factor` modifiers: evaluate the base
+// BSDF, then multiply the reflection throughput by `factor`, a lambda over
+// the half direction. The PDF is untouched, so the modulation is pure
+// throughput and needs no matching change to any sampling density.
+@(macro)
+auto factorScatterEvaluate(const auto this, const &ScatterEvaluateParameters params, const auto factor) {
+  auto result(scatterEvaluate(visit &this.base, params));
+  if (!result.isBlack && params.mode == scatter_reflect) {
+    return ScatterEvaluateResult(f: factor(halfDirection(params)) * result.f, pdf: result.pdf);
+  } else {
+    return result;
+  }
+}
+
+@(macro)
+auto factorScatterSample(const auto this, const &ScatterSampleParameters params, const auto factor) {
+  auto result(scatterSample(visit &this.base, params));
+  if ((result.mode == scatter_reflect) & bool(result.fDelta)) {
+    *result.fDelta *= factor(halfDirection(params, &result));
+  }
+  return result;
+}
+
 //--{ thin_film
 /// A thin film layer.
 ///
@@ -3552,29 +3573,21 @@ auto thinFilmIncidentRelativeIOR(const &thin_film this, const auto params) {
   }
 }
 
+// The base IOR `1 / params.ior` is the far-side index relative to the
+// incident side, which is correct from either side of the interface.
 @(macro)
-auto scatterEvaluate(const &thin_film this, const &ScatterEvaluateParameters params) {
-  auto result(scatterEvaluate(visit &this.base, params));
-  if (!result.isBlack && params.mode == scatter_reflect) {
-    // The base IOR `1 / params.ior` is the far-side index relative to the
-    // incident side, which is correct from either side of the interface.
-    return ScatterEvaluateResult(
-             f: thinFilmFactor(this.thickness, thinFilmIncidentRelativeIOR(this, params), 1 / params.ior, #abs(dot(params.wo, halfDirection(params)))) * result.f,
-             pdf: result.pdf,
-           );
-  } else {
-    return result;
-  }
-}
+auto scatterEvaluate(const &thin_film this, const &ScatterEvaluateParameters params) =
+  factorScatterEvaluate(
+    this, params,
+    \(const float3 h) = thinFilmFactor(this.thickness, thinFilmIncidentRelativeIOR(this, params), 1 / params.ior, #abs(dot(params.wo, h))),
+  );
 
 @(macro)
-auto scatterSample(const &thin_film this, const &ScatterSampleParameters params) {
-  auto result(scatterSample(visit &this.base, params));
-  if ((result.mode == scatter_reflect) & bool(result.fDelta)) {
-    *result.fDelta *= thinFilmFactor(this.thickness, thinFilmIncidentRelativeIOR(this, params), 1 / params.ior, #abs(dot(params.wo, halfDirection(params, &result))));
-  }
-  return result;
-}
+auto scatterSample(const &thin_film this, const &ScatterSampleParameters params) =
+  factorScatterSample(
+    this, params,
+    \(const float3 h) = thinFilmFactor(this.thickness, thinFilmIncidentRelativeIOR(this, params), 1 / params.ior, #abs(dot(params.wo, h))),
+  );
 //--}
 
 //--{ fresnel_factor
@@ -3600,25 +3613,18 @@ export struct fresnel_factor: bsdf {
 };
 
 @(macro)
-auto scatterEvaluate(const &fresnel_factor this, const &ScatterEvaluateParameters params) {
-  auto result(scatterEvaluate(visit &this.base, params));
-  if (!result.isBlack && params.mode == scatter_reflect) {
-    return ScatterEvaluateResult(
-             f: specular::conductorFresnel(#abs(dot(params.wo, halfDirection(params))), relativeIOR(params, complex(this.ior, this.extinction_coefficient))) * result.f,
-             pdf: result.pdf,
-           );
-  }
-  return result;
-}
+auto scatterEvaluate(const &fresnel_factor this, const &ScatterEvaluateParameters params) =
+  factorScatterEvaluate(
+    this, params,
+    \(const float3 h) = specular::conductorFresnel(#abs(dot(params.wo, h)), relativeIOR(params, complex(this.ior, this.extinction_coefficient))),
+  );
 
 @(macro)
-auto scatterSample(const &fresnel_factor this, const &ScatterSampleParameters params) {
-  auto result(scatterSample(visit &this.base, params));
-  if ((result.mode == scatter_reflect) & bool(result.fDelta)) {
-    *result.fDelta *= specular::conductorFresnel(#abs(dot(params.wo, halfDirection(params, &result))), relativeIOR(params, complex(this.ior, this.extinction_coefficient)));
-  }
-  return result;
-}
+auto scatterSample(const &fresnel_factor this, const &ScatterSampleParameters params) =
+  factorScatterSample(
+    this, params,
+    \(const float3 h) = specular::conductorFresnel(#abs(dot(params.wo, h)), relativeIOR(params, complex(this.ior, this.extinction_coefficient))),
+  );
 //--}
 
 //--{ directional_factor
@@ -3655,23 +3661,18 @@ export struct directional_factor: bsdf {
 };
 
 @(macro)
-auto scatterEvaluate(const &directional_factor this, const &ScatterEvaluateParameters params) {
-  auto result(scatterEvaluate(visit &this.base, params));
-  if (!result.isBlack && params.mode == scatter_reflect) {
-    return ScatterEvaluateResult(f: specular::schlickFresnel(dot(params.wo, halfDirection(params)), this.normal_tint, this.grazing_tint, this.exponent) * result.f, pdf: result.pdf);
-  } else {
-    return result;
-  }
-}
+auto scatterEvaluate(const &directional_factor this, const &ScatterEvaluateParameters params) =
+  factorScatterEvaluate(
+    this, params,
+    \(const float3 h) = specular::schlickFresnel(dot(params.wo, h), this.normal_tint, this.grazing_tint, this.exponent),
+  );
 
 @(macro)
-auto scatterSample(const &directional_factor this, const &ScatterSampleParameters params) {
-  auto result(scatterSample(visit &this.base, params));
-  if ((result.mode == scatter_reflect) & bool(result.fDelta)) {
-    *result.fDelta *= specular::schlickFresnel(dot(params.wo, halfDirection(params, &result)), this.normal_tint, this.grazing_tint, this.exponent);
-  }
-  return result;
-}
+auto scatterSample(const &directional_factor this, const &ScatterSampleParameters params) =
+  factorScatterSample(
+    this, params,
+    \(const float3 h) = specular::schlickFresnel(dot(params.wo, h), this.normal_tint, this.grazing_tint, this.exponent),
+  );
 //--}
 
 //--{ measured_curve_factor
@@ -3710,23 +3711,18 @@ color evaluateMeasuredCurve(const color[<N>] curve_values, const float cosAlpha)
 }
 
 @(macro)
-auto scatterEvaluate(const &measured_curve_factor this, const &ScatterEvaluateParameters params) {
-  auto result(scatterEvaluate(visit &this.base, params));
-  if (!result.isBlack && params.mode == scatter_reflect) {
-    return ScatterEvaluateResult(f: evaluateMeasuredCurve(this.curve_values, dot(params.wo, halfDirection(params))) * result.f, pdf: result.pdf);
-  } else {
-    return result;
-  }
-}
+auto scatterEvaluate(const &measured_curve_factor this, const &ScatterEvaluateParameters params) =
+  factorScatterEvaluate(
+    this, params,
+    \(const float3 h) = evaluateMeasuredCurve(this.curve_values, dot(params.wo, h)),
+  );
 
 @(macro)
-auto scatterSample(const &measured_curve_factor this, const &ScatterSampleParameters params) {
-  auto result(scatterSample(visit &this.base, params));
-  if ((result.mode == scatter_reflect) & bool(result.fDelta)) {
-    *result.fDelta *= evaluateMeasuredCurve(this.curve_values, dot(params.wo, halfDirection(params, &result)));
-  }
-  return result;
-}
+auto scatterSample(const &measured_curve_factor this, const &ScatterSampleParameters params) =
+  factorScatterSample(
+    this, params,
+    \(const float3 h) = evaluateMeasuredCurve(this.curve_values, dot(params.wo, h)),
+  );
 //--}
 
 //--{ measured_factor
@@ -3771,26 +3767,85 @@ color evaluateMeasuredFactor(const &measured_factor this, const float cosAlpha, 
 }
 
 @(macro)
-auto scatterEvaluate(const &measured_factor this, const &ScatterEvaluateParameters params) {
-  auto result(scatterEvaluate(visit &this.base, params));
-  if (!result.isBlack && params.mode == scatter_reflect) {
-    const auto h(halfDirection(params));
-    return ScatterEvaluateResult(f: evaluateMeasuredFactor(this, dot(params.wo, h), h.z) * result.f, pdf: result.pdf);
+auto scatterEvaluate(const &measured_factor this, const &ScatterEvaluateParameters params) =
+  factorScatterEvaluate(
+    this, params,
+    \(const float3 h) = evaluateMeasuredFactor(this, dot(params.wo, h), h.z),
+  );
+
+@(macro)
+auto scatterSample(const &measured_factor this, const &ScatterSampleParameters params) =
+  factorScatterSample(
+    this, params,
+    \(const float3 h) = evaluateMeasuredFactor(this, dot(params.wo, h), h.z),
+  );
+//--}
+
+// The shared implementation of the curve-weighted `*_layer` combinators:
+// blend the `layer` BSDF over the `base` BSDF by a directional curve. The
+// combinators differ only in the curve itself, passed as three lambdas:
+//
+//   - `layerIOR()` is the relative IOR of the layer interface,
+//     active while the layer evaluates AND while the curve weights it, so
+//     the curve sees the same half vector the layer itself used. The
+//     combinators that define no interface pass the identity `\() = ior`.
+//   - `curve(...)` is the exact (possibly color) curve at the half
+//     direction, used to weight the throughput.
+//   - `curveChance(...)` is the scalar stand-in for `curve` at the given
+//     cosines, used to weight the densities.
+//
+// The correctness invariant this skeleton enforces structurally, instead
+// of by parallel maintenance of six function bodies: the PDF weight in
+// `layerScatterEvaluate` and the selection chance in `layerScatterSample`
+// are BOTH `clampChance(this._averageWeight * curveChance(...))`, and the
+// two delta reweights in `layerScatterSample` are the exact `curve` over
+// that same chance.
+@(macro)
+auto layerScatterEvaluate(const auto this, inline const &ScatterEvaluateParameters params, const auto layerIOR, const auto curve, const auto curveChance) {
+  const auto cosThetao(dot(wo, this.normal) * #sign(this.normal.z));
+  const auto cosThetai(dot(wi, this.normal) * #sign(this.normal.z));
+  if ((cosThetao < MIN_COS_THETA)                                 //
+      | ((mode == scatter_reflect) & (cosThetai < MIN_COS_THETA)) //
+      | ((mode == scatter_transmit) & (cosThetai > -MIN_COS_THETA)))
+    return ScatterEvaluateResult(isBlack: true);
+  const auto result0(scatterEvaluate(visit &this.base, params));
+  // Evaluate the layer with this layer's interface, and keep the interface
+  // active while weighting, so that the curve sees the same half
+  // vector the layer itself used.
+  preserve normal, ior;
+  normal = this.normal, ior = layerIOR();
+  const auto result1(scatterEvaluate(visit &this.layer, params));
+  if (result0.isBlack & result1.isBlack) {
+    return ScatterEvaluateResult(isBlack: true);
   } else {
-    return result;
+    return ScatterEvaluateResult(
+             f: lerp(result0.f, result1.f, this.weight * curve(halfDirection(params))),
+             pdf: lerp(result0.pdf, result1.pdf, clampChance(this._averageWeight * curveChance(cosThetao, cosThetai))),
+           );
   }
 }
 
 @(macro)
-auto scatterSample(const &measured_factor this, const &ScatterSampleParameters params) {
-  auto result(scatterSample(visit &this.base, params));
-  if ((result.mode == scatter_reflect) & bool(result.fDelta)) {
-    const auto h(halfDirection(params, &result));
-    *result.fDelta *= evaluateMeasuredFactor(this, dot(params.wo, h), h.z);
+auto layerScatterSample(const auto this, inline const &ScatterSampleParameters params, const auto layerIOR, const auto curve, const auto curveChance) {
+  const auto cosTheta(dot(wo, this.normal) * #sign(this.normal.z));
+  if (cosTheta < MIN_COS_THETA)
+    return ScatterSampleResult();
+  const auto chance(clampChance(this._averageWeight * curveChance(cosTheta)));
+  if (monte_carlo::boolSample(&xi.z, chance)) {
+    preserve normal, ior;
+    normal = this.normal, ior = layerIOR();
+    auto result(scatterSample(visit &this.layer, params));
+    // Delta lobes fold their weight into `fDelta`, and the scalar
+    // selection chance cannot represent the exact color curve, so
+    // reweight by the exact ratio.
+    *result.fDelta *= this.weight * curve(halfDirection(params, &result)) / chance if (result.fDelta);
+    return result;
+  } else {
+    auto result(scatterSample(visit &this.base, params));
+    *result.fDelta *= (1 - this.weight * curve(halfDirection(params, &result))) / (1 - chance) if (result.fDelta);
+    return result;
   }
-  return result;
 }
-//--}
 
 //--{ fresnel_layer, color_fresnel_layer
 /// The Fresnel layer, blending the `layer` BSDF over the `base` BSDF by
@@ -3836,68 +3891,32 @@ export struct fresnel_layer: bsdf {
 };
 
 @(macro)
-auto scatterEvaluate(const &fresnel_layer this, inline const &ScatterEvaluateParameters params) {
-  const auto cosThetao(dot(wo, this.normal) * #sign(this.normal.z));
-  const auto cosThetai(dot(wi, this.normal) * #sign(this.normal.z));
-  if ((cosThetao < MIN_COS_THETA)                                 //
-      | ((mode == scatter_reflect) & (cosThetai < MIN_COS_THETA)) //
-      | ((mode == scatter_transmit) & (cosThetai > -MIN_COS_THETA)))
-    return ScatterEvaluateResult(isBlack: true);
-  const auto result0(scatterEvaluate(visit &this.base, params));
-  // Evaluate the layer with this layer's interface, and keep the interface
-  // active while weighting, so that the Fresnel term sees the same half
-  // vector the layer itself used.
-  preserve normal, ior;
-  normal = this.normal, ior = relativeIOR(params, this._averageIOR);
-  const auto result1(scatterEvaluate(visit &this.layer, params));
-  if (result0.isBlack & result1.isBlack) {
-    return ScatterEvaluateResult(isBlack: true);
-  } else {
-    // The PDF weight must match the sampling chance below: the exact
-    // dielectric Fresnel term at the averaged IOR. The reverse density
-    // models sampling from the far side, so for transmission it sees the
-    // reciprocal ratio.
-    const auto pdfIOR(relativeIOR(params, this._averageIOR));
-    return ScatterEvaluateResult(
-             f: lerp(
-               result0.f,
-               result1.f,
-               this.weight * specular::dielectricFresnel(dot(wo, halfDirection(params)), relativeIOR(params, this.ior)),
-             ),
-             pdf: lerp(
-               result0.pdf,
-               result1.pdf,
-               clampChance(this._averageWeight * float2(
-                 specular::dielectricFresnel(cosThetao, pdfIOR),
-                 specular::dielectricFresnel(cosThetai, mode == scatter_reflect ? pdfIOR : 1 / pdfIOR),
-               )),
-             ),
-           );
-  }
-}
+auto scatterEvaluate(const &fresnel_layer this, inline const &ScatterEvaluateParameters params) =
+  layerScatterEvaluate(
+    this, params,
+    \() = relativeIOR(params, this._averageIOR),
+    \(const float3 h) = specular::dielectricFresnel(dot(wo, h), relativeIOR(params, this.ior)),
+    \(const float co, const float ci) {
+      // The scalar stand-in is the exact dielectric Fresnel term at the
+      // averaged IOR. The reverse density models sampling from the far
+      // side, so for transmission it sees the reciprocal ratio.
+      const auto pdfIOR(relativeIOR(params, this._averageIOR));
+      return float2(specular::dielectricFresnel(co, pdfIOR), specular::dielectricFresnel(ci, mode == scatter_reflect ? pdfIOR : 1 / pdfIOR));
+    },
+  );
 
 @(macro)
-auto scatterSample(const &fresnel_layer this, inline const &ScatterSampleParameters params) {
-  const auto cosTheta(dot(wo, this.normal) * #sign(this.normal.z));
-  if (cosTheta < MIN_COS_THETA)
-    return ScatterSampleResult();
-  // The selection chance uses the exact dielectric Fresnel term at the
-  // averaged IOR, so that it stays proportional to the layer weight even at
-  // total internal reflection, where a Schlick approximation would
-  // drastically undersample the layer.
-  const auto chance(clampChance(this._averageWeight * specular::dielectricFresnel(cosTheta, relativeIOR(params, this._averageIOR))));
-  if (monte_carlo::boolSample(&xi.z, chance)) {
-    preserve normal, ior;
-    normal = this.normal, ior = relativeIOR(params, this._averageIOR);
-    auto result(scatterSample(visit &this.layer, params));
-    *result.fDelta *= this.weight * specular::dielectricFresnel(dot(wo, halfDirection(params, &result)), relativeIOR(params, this.ior)) / chance if (result.fDelta);
-    return result;
-  } else {
-    auto result(scatterSample(visit &this.base, params));
-    *result.fDelta *= (1 - this.weight * specular::dielectricFresnel(dot(wo, halfDirection(params, &result)), relativeIOR(params, this.ior))) / (1 - chance) if (result.fDelta);
-    return result;
-  }
-}
+auto scatterSample(const &fresnel_layer this, inline const &ScatterSampleParameters params) =
+  layerScatterSample(
+    this, params,
+    \() = relativeIOR(params, this._averageIOR),
+    \(const float3 h) = specular::dielectricFresnel(dot(wo, h), relativeIOR(params, this.ior)),
+    // The selection chance uses the exact dielectric Fresnel term at the
+    // averaged IOR, so that it stays proportional to the layer weight even
+    // at total internal reflection, where a Schlick approximation would
+    // drastically undersample the layer.
+    \(const float cosTheta) = specular::dielectricFresnel(cosTheta, relativeIOR(params, this._averageIOR)),
+  );
 
 /// The `color_fresnel_layer` is also implemented by the `fresnel_layer`.
 export typedef fresnel_layer color_fresnel_layer;
@@ -3959,55 +3978,22 @@ export struct custom_curve_layer: bsdf {
 };
 
 @(macro)
-auto scatterEvaluate(const &custom_curve_layer this, inline const &ScatterEvaluateParameters params) {
-  const auto cosThetao(dot(wo, this.normal) * #sign(this.normal.z));
-  const auto cosThetai(dot(wi, this.normal) * #sign(this.normal.z));
-  if ((cosThetao < MIN_COS_THETA)                                 //
-      | ((mode == scatter_reflect) & (cosThetai < MIN_COS_THETA)) //
-      | ((mode == scatter_transmit) & (cosThetai > -MIN_COS_THETA)))
-    return ScatterEvaluateResult(isBlack: true);
-  const auto result0(scatterEvaluate(visit &this.base, params));
-  const auto result1 = return_from {
-    preserve normal;
-    normal = this.normal;
-    return scatterEvaluate(visit &this.layer, params);
-  };
-  if (result0.isBlack & result1.isBlack) {
-    return ScatterEvaluateResult(isBlack: true);
-  } else {
-    return ScatterEvaluateResult(
-             f: lerp(
-               result0.f,
-               result1.f,
-               this.weight * specular::schlickFresnel(dot(wo, halfDirection(params)), this.normal_reflectivity, this.grazing_reflectivity, this.exponent),
-             ),
-             pdf: lerp(
-               result0.pdf,
-               result1.pdf,
-               clampChance(this._averageWeight * specular::schlickFresnel(float2(cosThetao, cosThetai), this._averageNormalReflectivity, this._averageGrazingReflectivity, this.exponent)),
-             ),
-           );
-  }
-}
+auto scatterEvaluate(const &custom_curve_layer this, inline const &ScatterEvaluateParameters params) =
+  layerScatterEvaluate(
+    this, params,
+    \() = ior,
+    \(const float3 h) = specular::schlickFresnel(dot(wo, h), this.normal_reflectivity, this.grazing_reflectivity, this.exponent),
+    \(const float co, const float ci) = specular::schlickFresnel(float2(co, ci), this._averageNormalReflectivity, this._averageGrazingReflectivity, this.exponent),
+  );
 
 @(macro)
-auto scatterSample(const &custom_curve_layer this, inline const &ScatterSampleParameters params) {
-  const auto cosTheta(dot(wo, this.normal) * #sign(this.normal.z));
-  if (cosTheta < MIN_COS_THETA)
-    return ScatterSampleResult();
-  const auto chance(clampChance(this._averageWeight * specular::schlickFresnel(cosTheta, this._averageNormalReflectivity, this._averageGrazingReflectivity, this.exponent)));
-  if (monte_carlo::boolSample(&xi.z, chance)) {
-    preserve normal;
-    normal = this.normal;
-    auto result(scatterSample(visit &this.layer, params));
-    *result.fDelta *= this.weight * specular::schlickFresnel(dot(wo, halfDirection(params, &result)), this.normal_reflectivity, this.grazing_reflectivity, this.exponent) / chance if (result.fDelta);
-    return result;
-  } else {
-    auto result(scatterSample(visit &this.base, params));
-    *result.fDelta *= (1 - this.weight * specular::schlickFresnel(dot(wo, halfDirection(params, &result)), this.normal_reflectivity, this.grazing_reflectivity, this.exponent)) / (1 - chance) if (result.fDelta);
-    return result;
-  }
-}
+auto scatterSample(const &custom_curve_layer this, inline const &ScatterSampleParameters params) =
+  layerScatterSample(
+    this, params,
+    \() = ior,
+    \(const float3 h) = specular::schlickFresnel(dot(wo, h), this.normal_reflectivity, this.grazing_reflectivity, this.exponent),
+    \(const float cosTheta) = specular::schlickFresnel(cosTheta, this._averageNormalReflectivity, this._averageGrazingReflectivity, this.exponent),
+  );
 
 /// The `color_custom_curve_layer` is also implemented by the `custom_curve_layer`.
 export typedef custom_curve_layer color_custom_curve_layer;
@@ -4058,58 +4044,22 @@ export struct measured_curve_layer: bsdf {
 };
 
 @(macro)
-auto scatterEvaluate(const &measured_curve_layer this, inline const &ScatterEvaluateParameters params) {
-  const auto cosThetao(dot(wo, this.normal) * #sign(this.normal.z));
-  const auto cosThetai(dot(wi, this.normal) * #sign(this.normal.z));
-  if ((cosThetao < MIN_COS_THETA)                                 //
-      | ((mode == scatter_reflect) & (cosThetai < MIN_COS_THETA)) //
-      | ((mode == scatter_transmit) & (cosThetai > -MIN_COS_THETA)))
-    return ScatterEvaluateResult(isBlack: true);
-  const auto result0(scatterEvaluate(visit &this.base, params));
-  const auto result1 = return_from {
-    preserve normal;
-    normal = this.normal;
-    return scatterEvaluate(visit &this.layer, params);
-  };
-  if (result0.isBlack & result1.isBlack) {
-    return ScatterEvaluateResult(isBlack: true);
-  } else {
-    return ScatterEvaluateResult(
-             f: lerp(
-               result0.f,
-               result1.f,
-               this.weight * evaluateMeasuredCurve(this.curve_values, dot(wo, halfDirection(params))),
-             ),
-             pdf: lerp(
-               result0.pdf,
-               result1.pdf,
-               clampChance(this._averageWeight * float2(
-                 average(evaluateMeasuredCurve(this.curve_values, cosThetao)),
-                 average(evaluateMeasuredCurve(this.curve_values, cosThetai)),
-               )),
-             ),
-           );
-  }
-}
+auto scatterEvaluate(const &measured_curve_layer this, inline const &ScatterEvaluateParameters params) =
+  layerScatterEvaluate(
+    this, params,
+    \() = ior,
+    \(const float3 h) = evaluateMeasuredCurve(this.curve_values, dot(wo, h)),
+    \(const float co, const float ci) = float2(average(evaluateMeasuredCurve(this.curve_values, co)), average(evaluateMeasuredCurve(this.curve_values, ci))),
+  );
 
 @(macro)
-auto scatterSample(const &measured_curve_layer this, inline const &ScatterSampleParameters params) {
-  const auto cosTheta(dot(wo, this.normal) * #sign(this.normal.z));
-  if (cosTheta < MIN_COS_THETA)
-    return ScatterSampleResult();
-  const auto chance(clampChance(this._averageWeight * average(evaluateMeasuredCurve(this.curve_values, cosTheta))));
-  if (monte_carlo::boolSample(&xi.z, chance)) {
-    preserve normal;
-    normal = this.normal;
-    auto result(scatterSample(visit &this.layer, params));
-    *result.fDelta *= this.weight * evaluateMeasuredCurve(this.curve_values, dot(wo, halfDirection(params, &result))) / chance if (result.fDelta);
-    return result;
-  } else {
-    auto result(scatterSample(visit &this.base, params));
-    *result.fDelta *= (1 - this.weight * evaluateMeasuredCurve(this.curve_values, dot(wo, halfDirection(params, &result)))) / (1 - chance) if (result.fDelta);
-    return result;
-  }
-}
+auto scatterSample(const &measured_curve_layer this, inline const &ScatterSampleParameters params) =
+  layerScatterSample(
+    this, params,
+    \() = ior,
+    \(const float3 h) = evaluateMeasuredCurve(this.curve_values, dot(wo, h)),
+    \(const float cosTheta) = average(evaluateMeasuredCurve(this.curve_values, cosTheta)),
+  );
 
 /// The `color_measured_curve_layer` is also implemented by the `measured_curve_layer`.
 export typedef measured_curve_layer color_measured_curve_layer;
