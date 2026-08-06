@@ -73,8 +73,7 @@ private:
 
   [[nodiscard]] char lastOutput(int i) const {
     auto outputSrcSize{int(mOutputSrc.size())};
-    if (i += outputSrcSize; 0 <= i && i < outputSrcSize)
-      return mOutputSrc[i];
+    if (i += outputSrcSize; 0 <= i && i < outputSrcSize) return mOutputSrc[i];
     return '\0';
   }
 
@@ -106,8 +105,7 @@ private:
 
   void writeIndentIfNewLine() {
     if (lastOutput() == '\n' && !mOptions.compact)
-      for (int i = 0; i < mIndent; i++)
-        mOutputSrc += ' ';
+      for (int i = 0; i < mIndent; i++) mOutputSrc += ' ';
   }
 
   void writeComment(llvm::StringRef inSrc);
@@ -133,14 +131,12 @@ private:
 
   [[nodiscard]] Delim writeStartList(size_t size, bool forceNewLines,
                                      bool alignIndent = true) {
-    if (mOptions.compact && size < 4)
-      forceNewLines = false;
+    if (mOptions.compact && size < 4) forceNewLines = false;
     bool initialNewLine{forceNewLines || nextCommentForcesNewLine()};
     if (initialNewLine) {
       write(INCREMENT_INDENT, DELIM_NEWLINE);
     } else {
-      if (alignIndent)
-        write(ALIGN_INDENT);
+      if (alignIndent) write(ALIGN_INDENT);
       write(DELIM_NONE);
     }
     return forceNewLines ? DELIM_NEWLINE : DELIM_UNNECESSARY_SPACE;
@@ -177,8 +173,7 @@ private:
       mIndent += 2;
       break;
     case ALIGN_INDENT:
-      if (lastOutput() != '\n')
-        mIndent = currentColumn();
+      if (lastOutput() != '\n') mIndent = currentColumn();
       break;
     case PUSH_INDENT:
       mIndentStack.push_back(mIndent);
@@ -336,8 +331,7 @@ private:
 
   void write(const AST::LiteralString &expr) {
     for (size_t i = 0; i < expr.srcValues.size(); i++) {
-      if (i > 0)
-        write(DELIM_UNNECESSARY_SPACE);
+      if (i > 0) write(DELIM_UNNECESSARY_SPACE);
       write(expr.srcValues[i]);
     }
   }
@@ -366,8 +360,7 @@ private:
   }
 
   void write(const AST::Type &expr) {
-    for (const auto &srcQual : expr.srcQuals)
-      write(srcQual, DELIM_SPACE);
+    for (const auto &srcQual : expr.srcQuals) write(srcQual, DELIM_SPACE);
     write(expr.expr);
   }
 
@@ -453,8 +446,7 @@ private:
     write(PUSH_INDENT);
     if (!stmt.srcKwReturn.empty()) {
       write(stmt.srcKwReturn);
-      if (stmt.expr || stmt.lateIf)
-        write(DELIM_SPACE);
+      if (stmt.expr || stmt.lateIf) write(DELIM_SPACE);
     }
     write(ALIGN_INDENT);
     if (stmt.expr) {
@@ -488,8 +480,7 @@ private:
     write(attributes.srcAt, attributes.srcParenL, PUSH_INDENT, ALIGN_INDENT);
     for (size_t i = 0; i < attributes.attrs.size(); i++) {
       write(attributes.attrs[i]);
-      if (i + 1 < attributes.attrs.size())
-        write(DELIM_SPACE);
+      if (i + 1 < attributes.attrs.size()) write(DELIM_SPACE);
     }
     write(attributes.srcParenR, POP_INDENT, DELIM_NEWLINE);
   }
@@ -512,21 +503,18 @@ private:
   }
 
   template <typename T> void write(const BumpPtr<T> &ptr) {
-    if (ptr)
-      write(*ptr);
+    if (ptr) write(*ptr);
   }
 
   template <typename T> void write(const std::optional<T> &opt) {
-    if (opt)
-      write(*opt);
+    if (opt) write(*opt);
   }
 
   template <typename T0, typename T1, typename... Ts>
   void write(const T0 &arg0, const T1 &arg1, const Ts &...args) {
     write(arg0);
     write(arg1);
-    if constexpr (sizeof...(args) > 0)
-      (write(args), ...);
+    if constexpr (sizeof...(args) > 0) (write(args), ...);
   }
 
   template <typename... Ts, typename T> void writeTypeSwitch(T &node) {
