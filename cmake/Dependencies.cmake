@@ -2,6 +2,28 @@ include_guard(GLOBAL)
 
 set(CMAKE_POSITION_INDEPENDENT_CODE ON CACHE BOOL "" FORCE)
 
+# The native architecture must always be enabled!
+if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|amd64|AMD64|i[3-6]86|X86)$"
+    AND NOT SMDL_ENABLE_LLVM_X86)
+  message(FATAL_ERROR
+    "SMDL_ENABLE_LLVM_X86=OFF, but the native architecture "
+    "(${CMAKE_SYSTEM_PROCESSOR}) requires it")
+endif()
+if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(aarch64|arm64|ARM64|armv?.*)$"
+    AND NOT SMDL_ENABLE_LLVM_ARM)
+  message(FATAL_ERROR
+    "SMDL_ENABLE_LLVM_ARM=OFF, but the native architecture "
+    "(${CMAKE_SYSTEM_PROCESSOR}) requires it")
+endif()
+
+set(SMDL_LLVM_ARCHS "XCore")
+if(SMDL_ENABLE_LLVM_X86)
+  list(APPEND SMDL_LLVM_ARCHS "X86")
+endif()
+if(SMDL_ENABLE_LLVM_ARM)
+  list(APPEND SMDL_LLVM_ARCHS "AArch64" "ARM")
+endif()
+
 # If SMDL_BUILD_LLVM=ON, then we'll build all the LLVM libraries
 # we need to compile the rest of SMDL. NOTE: This will take a 
 # little while!
@@ -36,7 +58,7 @@ if(SMDL_BUILD_LLVM)
   set(LLVM_ENABLE_ZSTD OFF CACHE INTERNAL "" FORCE)
   set(LLVM_INCLUDE_BENCHMARKS OFF CACHE INTERNAL "" FORCE)
   set(LLVM_INSTALL_TOOLCHAIN_ONLY ON CACHE INTERNAL "" FORCE)
-  set(LLVM_TARGETS_TO_BUILD "AArch64;ARM;X86;XCore" CACHE INTERNAL "" FORCE)
+  set(LLVM_TARGETS_TO_BUILD "${SMDL_LLVM_ARCHS}" CACHE INTERNAL "" FORCE)
   add_subdirectory(
     "${CMAKE_BINARY_DIR}/llvm-project/llvm" 
     "${CMAKE_BINARY_DIR}/llvm-project-build"
@@ -51,14 +73,21 @@ else()
 endif()
 message(STATUS "LLVM_INCLUDE_DIR: ${LLVM_INCLUDE_DIR}")
 set(
-  SMDL_LLVM_TARGETS 
+  SMDL_LLVM_TARGETS
   "LLVMTarget"
-  "LLVMAArch64CodeGen"
-  "LLVMARMCodeGen"
-  "LLVMXCoreCodeGen" 
-  "LLVMX86CodeGen"
   "LLVMOrcJIT"
   )
+foreach(SMDL_LLVM_ARCH ${SMDL_LLVM_ARCHS})
+  list(APPEND SMDL_LLVM_TARGETS "LLVM${SMDL_LLVM_ARCH}CodeGen")
+endforeach()
+foreach(SMDL_LLVM_TARGET ${SMDL_LLVM_TARGETS})
+  if(NOT TARGET ${SMDL_LLVM_TARGET})
+    message(FATAL_ERROR
+      "LLVM library target '${SMDL_LLVM_TARGET}' does not exist. If your "
+      "LLVM was built without this architecture, disable the corresponding "
+      "SMDL_ENABLE_LLVM_* option.")
+  endif()
+endforeach()
 
 include(FetchContent)
 set(FETCHCONTENT_QUIET FALSE)
