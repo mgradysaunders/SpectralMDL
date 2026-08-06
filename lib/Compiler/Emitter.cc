@@ -939,9 +939,14 @@ Value Emitter::emit(AST::ReturnFrom &expr) {
     labelBreak = {};
     labelContinue = {};
     emit(expr.stmt);
+    // With no recorded results the expression would silently evaluate to
+    // 'none', which is more likely a mistake than an intent.
+    if (returns.empty())
+      expr.srcLoc.throwError("'return_from' must contain at least one "
+                             "reachable 'return' statement");
     // A fallthrough path would reach 'blockEnd' without a recorded result
     // and leave the PHI in 'createResult' short one incoming edge.
-    if (!hasTerminator() && !returns.empty())
+    if (!hasTerminator())
       expr.srcLoc.throwError("'return_from' must 'return' on all control "
                              "paths");
   });
