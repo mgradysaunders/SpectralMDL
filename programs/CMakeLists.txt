@@ -42,13 +42,15 @@ macro(smdl_add_program BIN_NAME)
         "${CMAKE_SOURCE_DIR}/programs/common"
         "${CMAKE_SOURCE_DIR}/programs/common/pcg-cpp"
       )
-    install(
-      TARGETS "${BIN_NAME}"
-      EXPORT "${PROJECT_NAME}_Targets"
-      ARCHIVE DESTINATION "${CMAKE_INSTALL_LIBDIR}"
-      LIBRARY DESTINATION "${CMAKE_INSTALL_LIBDIR}"
-      RUNTIME DESTINATION "${CMAKE_INSTALL_BINDIR}"
-      )
+    if(SMDL_INSTALL)
+      install(
+        TARGETS "${BIN_NAME}"
+        EXPORT "${PROJECT_NAME}_Targets"
+        ARCHIVE DESTINATION "${CMAKE_INSTALL_LIBDIR}"
+        LIBRARY DESTINATION "${CMAKE_INSTALL_LIBDIR}"
+        RUNTIME DESTINATION "${CMAKE_INSTALL_BINDIR}"
+        )
+    endif()
   else()
     message(WARNING "Skipping program \"${BIN_NAME}\" due to missing targets: ${MissingTargets}")
   endif()

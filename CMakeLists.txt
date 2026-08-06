@@ -37,50 +37,59 @@ if(SMDL_SANITIZE)
   endif()
 endif()
 
-# Include GNUInstallDirs and print them out.
+# Include GNUInstallDirs unconditionally: the directory variables it defines are
+# baked into the targets' INSTALL_INTERFACE regardless of whether SMDL itself
+# generates any install rules.
 include(GNUInstallDirs)
-message(STATUS "INSTALL_PREFIX: ${CMAKE_INSTALL_PREFIX}")
-message(STATUS "INSTALL_INCLUDEDIR: ${CMAKE_INSTALL_INCLUDEDIR}")
-message(STATUS "INSTALL_LIBDIR: ${CMAKE_INSTALL_LIBDIR}")
-message(STATUS "INSTALL_BINDIR: ${CMAKE_INSTALL_BINDIR}")
 
-# Install.
-include(CMakePackageConfigHelpers)
-write_basic_package_version_file(
-  "${PROJECT_NAME}ConfigVersion.cmake"
-  VERSION "${PROJECT_VERSION}"
-  COMPATIBILITY "ExactVersion"
-)
-set(INCLUDE_DIR include)
-configure_package_config_file(
-  "${PROJECT_SOURCE_DIR}/cmake/${PROJECT_NAME}Config.cmake.in"
-  "${PROJECT_BINARY_DIR}/${PROJECT_NAME}Config.cmake"
-  PATH_VARS INCLUDE_DIR
-  INSTALL_DESTINATION "${CMAKE_INSTALL_DATAROOTDIR}/${PROJECT_NAME}/cmake"
-)
-install(
-  FILES
+# Install. Everything below is conditional on SMDL_INSTALL, which defaults OFF
+# when SMDL is a subproject. The install rules in 'lib' and 'programs' are
+# guarded by the same option, and must stay in agreement with the
+# install(EXPORT) here: a target added to the export set by install(TARGETS)
+# without a matching install(EXPORT) is an error at generate time.
+if(SMDL_INSTALL)
+  message(STATUS "INSTALL_PREFIX: ${CMAKE_INSTALL_PREFIX}")
+  message(STATUS "INSTALL_INCLUDEDIR: ${CMAKE_INSTALL_INCLUDEDIR}")
+  message(STATUS "INSTALL_LIBDIR: ${CMAKE_INSTALL_LIBDIR}")
+  message(STATUS "INSTALL_BINDIR: ${CMAKE_INSTALL_BINDIR}")
+
+  include(CMakePackageConfigHelpers)
+  write_basic_package_version_file(
+    "${PROJECT_NAME}ConfigVersion.cmake"
+    VERSION "${PROJECT_VERSION}"
+    COMPATIBILITY "ExactVersion"
+  )
+  set(INCLUDE_DIR include)
+  configure_package_config_file(
+    "${PROJECT_SOURCE_DIR}/cmake/${PROJECT_NAME}Config.cmake.in"
     "${PROJECT_BINARY_DIR}/${PROJECT_NAME}Config.cmake"
-    "${PROJECT_BINARY_DIR}/${PROJECT_NAME}ConfigVersion.cmake"
-  DESTINATION
-    "${CMAKE_INSTALL_DATAROOTDIR}/${PROJECT_NAME}/cmake"
-)
+    PATH_VARS INCLUDE_DIR
+    INSTALL_DESTINATION "${CMAKE_INSTALL_DATAROOTDIR}/${PROJECT_NAME}/cmake"
+  )
+  install(
+    FILES
+      "${PROJECT_BINARY_DIR}/${PROJECT_NAME}Config.cmake"
+      "${PROJECT_BINARY_DIR}/${PROJECT_NAME}ConfigVersion.cmake"
+    DESTINATION
+      "${CMAKE_INSTALL_DATAROOTDIR}/${PROJECT_NAME}/cmake"
+  )
 
-# Install the include directory, containing all of the header files for the project.
-install(
-  DIRECTORY "${PROJECT_SOURCE_DIR}/include/"
-  DESTINATION "include"
-)
+  # Install the include directory, containing all of the header files for the project.
+  install(
+    DIRECTORY "${PROJECT_SOURCE_DIR}/include/"
+    DESTINATION "include"
+  )
 
-# Install the targets. Note: At this point in the CMake execution, no targets have actually been
-# defined yet. By the time CMake has descended into all of the lib directories the targets will 
-# all be populated.
-install(
-  EXPORT      "${PROJECT_NAME}_Targets"
-  FILE        "${PROJECT_NAME}Targets.cmake"
-  NAMESPACE   "${PROJECT_NAME}::"
-  DESTINATION "${CMAKE_INSTALL_DATAROOTDIR}/${PROJECT_NAME}/cmake"
-)
+  # Install the targets. Note: At this point in the CMake execution, no targets have actually been
+  # defined yet. By the time CMake has descended into all of the lib directories the targets will
+  # all be populated.
+  install(
+    EXPORT      "${PROJECT_NAME}_Targets"
+    FILE        "${PROJECT_NAME}Targets.cmake"
+    NAMESPACE   "${PROJECT_NAME}::"
+    DESTINATION "${CMAKE_INSTALL_DATAROOTDIR}/${PROJECT_NAME}/cmake"
+  )
+endif()
 
 add_subdirectory(lib)
 add_subdirectory(programs)

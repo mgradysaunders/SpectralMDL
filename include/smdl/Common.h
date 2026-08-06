@@ -115,10 +115,10 @@ public:
   /// The patch version number.
   uint32_t patch{};
 
-  /// The git branch name.
+  /// The git branch name, or "unknown" if it was unavailable at build time.
   const char *gitBranch{};
 
-  /// The git commit hash.
+  /// The git commit hash, or "unknown" if it was unavailable at build time.
   const char *gitCommit{};
 };
 

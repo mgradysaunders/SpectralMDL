@@ -120,15 +120,17 @@ generate_export_header(
   EXPORT_MACRO_NAME "SMDL_EXPORT"
   EXPORT_FILE_NAME "${PROJECT_BINARY_DIR}/include/smdl/Export.h"
   )
-install(
-  FILES "${PROJECT_BINARY_DIR}/include/smdl/Export.h"
-  DESTINATION "include/smdl"
-  )
-install(
-  TARGETS "SpectralMDL"
-  EXPORT "${PROJECT_NAME}_Targets"
-  ARCHIVE DESTINATION "${CMAKE_INSTALL_LIBDIR}"
-  LIBRARY DESTINATION "${CMAKE_INSTALL_LIBDIR}"
-  RUNTIME DESTINATION "${CMAKE_INSTALL_BINDIR}"
-  COMPONENT "SpectralMDL"
-  )
+if(SMDL_INSTALL)
+  install(
+    FILES "${PROJECT_BINARY_DIR}/include/smdl/Export.h"
+    DESTINATION "include/smdl"
+    )
+  install(
+    TARGETS "SpectralMDL"
+    EXPORT "${PROJECT_NAME}_Targets"
+    ARCHIVE DESTINATION "${CMAKE_INSTALL_LIBDIR}"
+    LIBRARY DESTINATION "${CMAKE_INSTALL_LIBDIR}"
+    RUNTIME DESTINATION "${CMAKE_INSTALL_BINDIR}"
+    COMPONENT "SpectralMDL"
+    )
+endif()
