@@ -974,3 +974,69 @@ TEST_CASE("Compiler indirect aggregate parameters") {
   }
   fs::remove_all(tmpDir);
 }
+
+TEST_CASE("Compiler inline call-site arguments") {
+  auto tmpDir{fs::temp_directory_path() / "smdl-inline-args-test"};
+  fs::remove_all(tmpDir);
+  // Compile a single module and return the first error message, or the
+  // empty string on success. The positive behavior of call-site 'inline'
+  // is covered by 'testing/smdl/inline_args.smdl'; these subcases pin the
+  // error paths.
+  auto build{[&](std::string_view text) {
+    writeFile(tmpDir / "root" / "main.mdl", std::string("#smdl\n") += text);
+    smdl::Compiler compiler{};
+    compiler.enableUnitTests = true;
+    return buildAll(compiler, {tmpDir / "root"});
+  }};
+  static const char *sum2{"float sum2(const float a, const float b) = a + b;\n"};
+  SUBCASE("A scalar does not expand") {
+    auto message{build(std::string(sum2) +
+                       "export const float bad = sum2(inline 1.0, 2.0);\n")};
+    CHECK(message.find("cannot expand 'inline' argument") != std::string::npos);
+  }
+  SUBCASE("A color does not expand") {
+    auto message{build(std::string(sum2) +
+                       "unit_test \"t\" {\n"
+                       "  const color c = color(0.5);\n"
+                       "  #assert(sum2(inline c) == 1.0);\n"
+                       "}\n")};
+    CHECK(message.find("cannot expand 'inline' argument") != std::string::npos);
+  }
+  SUBCASE("A pointer does not expand, with a dereference hint") {
+    auto message{build("struct P { float a = 1.0; };\n"
+                       "float f(const float a) = a;\n"
+                       "unit_test \"t\" {\n"
+                       "  auto p = P();\n"
+                       "  auto q = &p;\n"
+                       "  #assert(f(inline q) == 1.0);\n"
+                       "}\n")};
+    CHECK(message.find("dereference it first") != std::string::npos);
+  }
+  SUBCASE("'visit inline' is rejected at parse") {
+    auto message{build(std::string(sum2) +
+                       "export const float bad = "
+                       "sum2(visit inline auto(1.0, 2.0));\n")};
+    CHECK(message.find("cannot combine 'visit' and 'inline'") !=
+          std::string::npos);
+  }
+  SUBCASE("An inlined argument must not be named") {
+    auto message{build(std::string(sum2) +
+                       "export const float bad = "
+                       "sum2(inline a: auto(1.0, 2.0));\n")};
+    CHECK(message.find("must not be named") != std::string::npos);
+  }
+  SUBCASE("A struct field colliding with a named argument is ambiguous") {
+    auto message{build(std::string(sum2) +
+                       "struct S { float a = 1.0; float b = 2.0; };\n"
+                       "export const float bad = sum2(a: 3.0, inline S());\n")};
+    CHECK(message.find("ambiguous name") != std::string::npos);
+  }
+  SUBCASE("A positional argument after an inlined struct is rejected") {
+    auto message{build(std::string(sum2) +
+                       "struct S { float a = 1.0; };\n"
+                       "export const float bad = sum2(inline S(), 2.0);\n")};
+    CHECK(message.find("unnamed arguments must appear before named") !=
+          std::string::npos);
+  }
+  fs::remove_all(tmpDir);
+}

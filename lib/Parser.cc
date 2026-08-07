@@ -322,6 +322,12 @@ auto Parser::parseArgument() -> std::optional<AST::Argument> {
     if (auto srcKwVisit{nextKeyword("visit")}) {
       argument.srcKwVisit = *srcKwVisit;
     }
+    if (auto srcKwInline{nextKeyword("inline")}) {
+      argument.srcKwInline = *srcKwInline;
+      if (!argument.srcKwVisit.empty())
+        srcLoc0.throwError(
+            "cannot combine 'visit' and 'inline' on an argument");
+    }
   }
   argument.name = [&]() -> AST::Name {
     checkpoint();

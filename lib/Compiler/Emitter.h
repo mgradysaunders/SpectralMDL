@@ -971,12 +971,24 @@ public:
   /// Emit argument list.
   ArgumentList emit(AST::ArgumentList &astArgs) {
     ArgumentList args{};
-    for (auto &astArg : astArgs)
-      args.push_back(Argument{astArg.name.srcName, emit(astArg.expr), &astArg});
+    for (auto &astArg : astArgs) {
+      if (astArg.isInlined())
+        expandInlineArgument(args, astArg);
+      else
+        args.push_back(
+            Argument{astArg.name.srcName, emit(astArg.expr), &astArg});
+    }
     args.astArgs = &astArgs;
     args.validateNames();
     return args;
   }
+
+  /// Emit an argument marked `inline` and expand it into `args`: one
+  /// positional argument per element for vectors and arrays, one named
+  /// argument per field for structs. The expression is emitted exactly
+  /// once. `validateNames()` afterwards catches name collisions and
+  /// positional-after-named ordering introduced by the expansion.
+  void expandInlineArgument(ArgumentList &args, AST::Argument &astArg);
 
   /// Emit pointer if non-null.
   template <typename T> Value emit(T *ptr) {

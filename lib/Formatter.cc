@@ -564,6 +564,7 @@ void Formatter::write(const AST::ArgumentList &args) {
   auto delim{writeStartList(args.size(), args.hasTrailingComma())};
   for (const auto &arg : args) {
     if (arg.isVisited()) write(arg.srcKwVisit, DELIM_SPACE);
+    if (arg.isInlined()) write(arg.srcKwInline, DELIM_SPACE);
     if (arg.isNamed()) write(arg.name, arg.srcColonAfterName, DELIM_SPACE);
     write(arg.expr, arg.srcComma, arg.srcComma.empty() ? DELIM_NONE : delim);
   }

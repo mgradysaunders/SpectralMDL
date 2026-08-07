@@ -2842,6 +2842,36 @@ Value Emitter::emitIntrinsic(std::string_view name, const ArgumentList &args,
 }
 //--}
 
+void Emitter::expandInlineArgument(ArgumentList &args, AST::Argument &astArg) {
+  const auto &srcLoc{astArg.srcLoc};
+  if (astArg.isNamed())
+    srcLoc.throwError("argument marked 'inline' must not be named");
+  auto value{emit(astArg.expr)};
+  auto *type{value.type};
+  if (type->isArithmeticVector()) {
+    const auto count{
+        unsigned(static_cast<ArithmeticType *>(type)->extent.getVectorSize())};
+    for (unsigned i = 0; i < count; i++)
+      args.push_back(Argument{{}, accessIndex(value, i, srcLoc), &astArg});
+  } else if (type->isArray() && !type->isAbstract()) {
+    const auto count{static_cast<ArrayType *>(type)->size};
+    for (unsigned i = 0; i < count; i++)
+      args.push_back(Argument{{}, accessIndex(value, i, srcLoc), &astArg});
+  } else if (type->isStruct() && !type->isAbstract()) {
+    for (auto &param : static_cast<StructType *>(type)->params)
+      args.push_back(
+          Argument{param.name, accessField(value, param.name, srcLoc), &astArg});
+  } else if (type->isPointer()) {
+    srcLoc.throwError("cannot expand 'inline' argument of pointer type ",
+                      Quoted(type->displayName),
+                      "; dereference it first");
+  } else {
+    srcLoc.throwError("cannot expand 'inline' argument of type ",
+                      Quoted(type->displayName),
+                      "; expected a vector, array, or concrete struct");
+  }
+}
+
 Value Emitter::emitCall(Value callee, const ArgumentList &args,
                         const SourceLocation &srcLoc) {
   if (args.isAnyVisited()) {

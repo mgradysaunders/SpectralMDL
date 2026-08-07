@@ -20,12 +20,20 @@ public:
   /// Is marked with the keyword `visit`?
   [[nodiscard]] bool isVisited() const { return !srcKwVisit.empty(); }
 
+  /// Is marked with the keyword `inline`?
+  [[nodiscard]] bool isInlined() const { return !srcKwInline.empty(); }
+
 public:
   /// The source location.
   SourceLocation srcLoc{};
 
   /// The keyword `visit`. This may be empty!
   std::string_view srcKwVisit;
+
+  /// The keyword `inline`, requesting that the argument expand into the
+  /// argument list: positionally for vectors and arrays, as one named
+  /// argument per field for structs. This may be empty!
+  std::string_view srcKwInline;
 
   /// The name. This may be empty!
   Name name;
