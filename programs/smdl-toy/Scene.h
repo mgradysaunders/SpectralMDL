@@ -793,6 +793,13 @@ public:
   /// geometry at all.
   void preCommitBounds(float3 &lower, float3 &upper) const;
 
+  /// The deduped names of materials some instance actually shades with,
+  /// in first-interned order: exactly the names `resolveMaterials()`
+  /// will demand, so what a host passes to
+  /// `smdl::Compiler::setDesiredMaterials()` before compiling. Call
+  /// between the last `add()` and `commit()`.
+  [[nodiscard]] std::vector<std::string> usedMaterialNames() const;
+
   /// Finish the scene: resolve every material name that an instantiated
   /// mesh uses, run the deferred per-mesh work (subdivision, displacement,
   /// and the Embree BVHs of meshes that asked for either), and build the
@@ -848,6 +855,12 @@ private:
   /// The index of `name` in `materials`, appending it if this is the first
   /// file to mention it.
   [[nodiscard]] uint32_t internMaterial(std::string name);
+
+  /// Whether each entry of `materials` is shaded with by some instance,
+  /// via `materialIndexOf()`. Shared by `usedMaterialNames()` and
+  /// `resolveMaterials()` so the desired set and the demanded set
+  /// cannot drift.
+  [[nodiscard]] std::vector<bool> computeUsedMaterials() const;
 
   /// Resolve every material name some instance actually shades with,
   /// instance-level overrides included; the body of what `commit()`

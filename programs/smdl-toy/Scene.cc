@@ -893,6 +893,21 @@ void Scene::commit(const Color &wavelengths) {
                  ", ", boundCenter.z, ") radius ", boundRadius);
 }
 
+std::vector<bool> Scene::computeUsedMaterials() const {
+  auto isUsed{std::vector<bool>(materials.size(), false)};
+  for (const auto &meshInstance : meshInstances)
+    isUsed[materialIndexOf(meshInstance)] = true;
+  return isUsed;
+}
+
+std::vector<std::string> Scene::usedMaterialNames() const {
+  const auto isUsed{computeUsedMaterials()};
+  auto names{std::vector<std::string>()};
+  for (size_t i = 0; i < materialNames.size(); i++)
+    if (isUsed[i]) names.push_back(materialNames[i]);
+  return names;
+}
+
 void Scene::resolveMaterials() {
   const smdl::JIT::Material *fallback{};
   if (!fallbackMaterialName.empty()) {
@@ -902,17 +917,18 @@ void Scene::resolveMaterials() {
                                      smdl::Quoted(fallbackMaterialName)));
   }
   // Only a material some instance actually shades with can ever be hit,
-  // so only those have to resolve. Scene files routinely declare
-  // materials nothing uses, and a mesh whose every instance overrides
-  // its material away leaves the mesh's own name legitimately
-  // unresolved.
-  auto isUsed{std::vector<bool>(materials.size(), false)};
-  for (const auto &meshInstance : meshInstances)
-    isUsed[materialIndexOf(meshInstance)] = true;
+  // so only those resolve; the rest stay null. Scene files routinely
+  // declare materials nothing uses, and a mesh whose every instance
+  // overrides its material away leaves the mesh's own name legitimately
+  // unresolved. Unused names are not even looked up: under the
+  // desired-material filter they may name a deliberately skipped
+  // material, which `findMaterial()` reports as a loud error.
+  const auto isUsed{computeUsedMaterials()};
   auto unresolved{std::vector<std::string>()};
   for (size_t i = 0; i < materials.size(); i++) {
+    if (!isUsed[i]) continue;
     materials[i] = compiler.findMaterial(materialNames[i]);
-    if (!materials[i] && isUsed[i]) {
+    if (!materials[i]) {
       // `findMaterial()` also returns null when more than one material
       // matches, having logged the candidates itself.
       if (fallback) {

@@ -93,6 +93,13 @@ static cl::opt<std::string> optMaterialFallback{
              "Lambertian, and what a\n  scene given no <input mdl> at all "
              "falls back to"),
     cl::cat(catScene)};
+static cl::opt<bool> optAllMaterials{
+    "all-materials",
+    cl::desc("Compile every material in the given MDL modules, not just the "
+             "ones the scene\nbinds\n"
+             "* a skipped material's body is never emitted, so this is how "
+             "errors inside an\n  unused material get diagnosed"),
+    cl::init(false), cl::cat(catScene)};
 //--}
 //--{ CLI: Sampling Options
 static cl::OptionCategory catSampling{"Sampling Options"};
@@ -1074,18 +1081,16 @@ int main(int argc, char **argv) try {
   compiler.enableDebug = false;
   compiler.enableMipMaps = !optNoMipMaps;
   compiler.enableUnitTests = false;
-  // The built-in stand-in, always available and always compiled: a scene
-  // whose materials have not been written yet still renders, and a name
-  // that does not resolve has somewhere to fall back to. It is added even
-  // when MDL modules are given, so that '-material-fallback default' works
+  // The built-in stand-in, always available: a scene whose materials
+  // have not been written yet still renders, and a name that does not
+  // resolve has somewhere to fall back to. It is added even when MDL
+  // modules are given, so that '-material-fallback default' works
   // alongside them.
   auto defaultModule{DefaultMaterialModule()};
   if (auto error{compiler.add(defaultModule.fileName())}) error->printAndExit();
   for (auto &inputMDLFile : optInputMDLFiles)
     if (auto error{compiler.add(std::string(inputMDLFile))})
       error->printAndExit();
-  if (auto error{compiler.compile(smdl::OPT_LEVEL_O2)}) error->printAndExit();
-  if (auto error{compiler.jitCompile()}) error->printAndExit();
   if (optListObjects) {
     if (optJSON) {
       printObjectTableJSON(layout);
@@ -1095,7 +1100,15 @@ int main(int argc, char **argv) try {
     if (profiling) smdl::profilerFinalize(profileFileName.c_str());
     return EXIT_SUCCESS;
   } else if (optListMaterials) {
-    const auto *compilerOrNull{optInputMDLFiles.empty() ? nullptr : &compiler};
+    // The table reports how every name resolves, so it must see the
+    // unfiltered material list; and it never calls JIT'd code, so
+    // compile() alone is enough.
+    const smdl::Compiler *compilerOrNull{};
+    if (!optInputMDLFiles.empty()) {
+      if (auto error{compiler.compile(smdl::OPT_LEVEL_O2)})
+        error->printAndExit();
+      compilerOrNull = &compiler;
+    }
     if (optJSON) {
       printMaterialTableJSON(compilerOrNull, layout);
     } else {
@@ -1159,6 +1172,25 @@ int main(int argc, char **argv) try {
     SMDL_LOG_INFO("Ground plane: z = ", z, ", half extent ", halfExtent,
                   ", material ", smdl::Quoted(groundMaterial));
   }
+  // The imports above interned every name the scene can shade with, so
+  // narrow the compile to those materials; the fallback and the exterior
+  // medium are looked up by name later, so they join the list. With no
+  // MDL modules there is only the built-in default module, nothing worth
+  // filtering, and the unshaded-scene workflow would warn for every name.
+  if (!optAllMaterials && !optInputMDLFiles.empty()) {
+    auto desiredMaterials{scene.usedMaterialNames()};
+    if (!fallbackMaterial.empty()) desiredMaterials.push_back(fallbackMaterial);
+    if (!layout.exteriorMediumName.empty())
+      desiredMaterials.push_back(layout.exteriorMediumName);
+    // The empty name (an unnamed primitive or groom) can only ever
+    // resolve through the fallback.
+    desiredMaterials.erase(std::remove(desiredMaterials.begin(),
+                                       desiredMaterials.end(), std::string()),
+                           desiredMaterials.end());
+    compiler.setDesiredMaterials(std::move(desiredMaterials));
+  }
+  if (auto error{compiler.compile(smdl::OPT_LEVEL_O2)}) error->printAndExit();
+  if (auto error{compiler.jitCompile()}) error->printAndExit();
   {
     SMDL_PROFILER_ENTRY("Scene::commit()");
     scene.commit(wavelengths);
@@ -1176,7 +1208,7 @@ int main(int argc, char **argv) try {
     if (optFrameAzimuth.getNumOccurrences() > 0) {
       framingOptions.azimuthInDegrees = float(optFrameAzimuth);
     } else if (layout.frontAzimuth) {
-      framingOptions.azimuthInDegrees = *layout.frontAzimuth;
+      framingOptions.azimuthInDegrees = layout.frontAzimuth;
       SMDL_LOG_INFO("Framing: locked to the manifest's front azimuth ",
                     *layout.frontAzimuth, " degrees");
     }
@@ -1406,68 +1438,69 @@ int main(int argc, char **argv) try {
       const size_t chunkBase{passDone};
       const auto chunkStart{std::chrono::steady_clock::now()};
       llvm::parallelFor(0, numPixelsX * numPixelsY, [&](size_t i) {
-      // Constructed per pixel deliberately: hoisting this to a
-      // thread_local measures as pure noise (the few malloc/free pairs
-      // per pixel amortize across worker threads and malloc's own thread
-      // cache), so the simpler lifetime wins.
-      auto allocator{smdl::BumpPtrAllocator()};
-      auto sampler{Sampler()};
-      // Training records for `trainGuiding()`, constructed only on
-      // the pre-final guiding passes that fill them: at a runtime
-      // band count this is 128 sized vectors rather than one flat
-      // memset, too much to pay per pixel of a non-guiding render.
-      std::optional<std::array<GuideRecord, MAX_PATH_LEN>> guideRecords{};
-      if (recordPass) guideRecords.emplace();
-      auto y{i / numPixelsX};
-      auto x{i % numPixelsX};
-      Color Lsum{};
-      PassCombiner::PixelHalves halves{};
-      Guiding guiding{};
-      guiding.tree = sdtree.get();
-      guiding.pixelEstimate =
-          combiner && optGuideADRRS ? combiner->pixelEstimate(i) : 0.0f;
-      guiding.bsdfFraction =
-          std::min(std::max(float(optGuideBSDFFraction), 0.0f), 1.0f);
-      guiding.bsdfFractionFixed = optGuideBSDFFraction.getNumOccurrences() > 0;
-      for (size_t s = 0; s < chunk; s++) {
-        sampler.startPixelSample(
-            uint32_t(i), uint32_t(sampleIndexBase + sppDone + chunkBase + s));
-        Color Lsample{};
-        const auto cameraSample{camera->sample(x, y, sampler)};
-        // A fully vignetted sample contributes nothing, so skip the
-        // walk but let it still count in the average below, keeping the
-        // darkening unbiased.
-        uint64_t numRecords{0};
-        if (cameraSample.weight > 0) {
-          Lsample = tracePath(
-              compiler, scene, sampler, wavelengths, allocator,
-              cameraSample.ray, cameraSample.weight, cameraSample.coneAngle,
-              exteriorMedium, MAX_PATH_LEN, lights, &guiding,
-              recordPass ? guideRecords->data() : nullptr, numRecords);
-        }
-        // Train the SD-tree on the records the walk retained.
-        if (recordPass && numRecords > 0)
-          trainGuiding(*sdtree, sampler, guideRecords->data(), numRecords);
-        Lsum += Lsample;
-        if (combiner) {
-          // Split the samples into two half images so the combination can
-          // cross-weight each half by the other's variance estimate.
-          float value{Lsample.average()};
-          if ((chunkBase + s) % 2 == 0) {
-            halves.halfA += Lsample;
-            halves.squaresA += value * value;
-          } else {
-            halves.halfB += Lsample;
-            halves.squaresB += value * value;
+        // Constructed per pixel deliberately: hoisting this to a
+        // thread_local measures as pure noise (the few malloc/free pairs
+        // per pixel amortize across worker threads and malloc's own thread
+        // cache), so the simpler lifetime wins.
+        auto allocator{smdl::BumpPtrAllocator()};
+        auto sampler{Sampler()};
+        // Training records for `trainGuiding()`, constructed only on
+        // the pre-final guiding passes that fill them: at a runtime
+        // band count this is 128 sized vectors rather than one flat
+        // memset, too much to pay per pixel of a non-guiding render.
+        std::optional<std::array<GuideRecord, MAX_PATH_LEN>> guideRecords{};
+        if (recordPass) guideRecords.emplace();
+        auto y{i / numPixelsX};
+        auto x{i % numPixelsX};
+        Color Lsum{};
+        PassCombiner::PixelHalves halves{};
+        Guiding guiding{};
+        guiding.tree = sdtree.get();
+        guiding.pixelEstimate =
+            combiner && optGuideADRRS ? combiner->pixelEstimate(i) : 0.0f;
+        guiding.bsdfFraction =
+            std::min(std::max(float(optGuideBSDFFraction), 0.0f), 1.0f);
+        guiding.bsdfFractionFixed =
+            optGuideBSDFFraction.getNumOccurrences() > 0;
+        for (size_t s = 0; s < chunk; s++) {
+          sampler.startPixelSample(
+              uint32_t(i), uint32_t(sampleIndexBase + sppDone + chunkBase + s));
+          Color Lsample{};
+          const auto cameraSample{camera->sample(x, y, sampler)};
+          // A fully vignetted sample contributes nothing, so skip the
+          // walk but let it still count in the average below, keeping the
+          // darkening unbiased.
+          uint64_t numRecords{0};
+          if (cameraSample.weight > 0) {
+            Lsample = tracePath(
+                compiler, scene, sampler, wavelengths, allocator,
+                cameraSample.ray, cameraSample.weight, cameraSample.coneAngle,
+                exteriorMedium, MAX_PATH_LEN, lights, &guiding,
+                recordPass ? guideRecords->data() : nullptr, numRecords);
           }
+          // Train the SD-tree on the records the walk retained.
+          if (recordPass && numRecords > 0)
+            trainGuiding(*sdtree, sampler, guideRecords->data(), numRecords);
+          Lsum += Lsample;
+          if (combiner) {
+            // Split the samples into two half images so the combination can
+            // cross-weight each half by the other's variance estimate.
+            float value{Lsample.average()};
+            if ((chunkBase + s) % 2 == 0) {
+              halves.halfA += Lsample;
+              halves.squaresA += value * value;
+            } else {
+              halves.halfB += Lsample;
+              halves.squaresB += value * value;
+            }
+          }
+          allocator.reset();
         }
-        allocator.reset();
-      }
-      if (combiner) combiner->deposit(i, halves);
-      renderImage(x, y).addSamples(chunk, Lsum.data());
-      // Counted where the work is finished rather than where it starts,
-      // which at thumbnail sizes is a whole pool's worth of pixels.
-      progress.advance(chunk);
+        if (combiner) combiner->deposit(i, halves);
+        renderImage(x, y).addSamples(chunk, Lsum.data());
+        // Counted where the work is finished rather than where it starts,
+        // which at thumbnail sizes is a whole pool's worth of pixels.
+        progress.advance(chunk);
       });
       passDone += chunk;
       if (chunked) {
@@ -1475,14 +1508,13 @@ int main(int argc, char **argv) try {
         // and never more than quadruple it at once: the first chunk is
         // one sample, and a scene that is cheap at one sample and dear at
         // sixty-four should not overshoot the whole way there.
-        const double seconds{
-            std::chrono::duration<double>(std::chrono::steady_clock::now() -
-                                          chunkStart)
-                .count()};
+        const double seconds{std::chrono::duration<double>(
+                                 std::chrono::steady_clock::now() - chunkStart)
+                                 .count()};
         const double perSample{seconds / double(chunk)};
-        const size_t wanted{perSample > 0.0
-                                ? size_t(std::max(previewEvery / perSample, 1.0))
-                                : thisPass};
+        const size_t wanted{
+            perSample > 0.0 ? size_t(std::max(previewEvery / perSample, 1.0))
+                            : thisPass};
         chunkSpp = std::max<size_t>(1, std::min(wanted, chunk * 4));
         checkpoint();
       }
