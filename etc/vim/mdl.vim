@@ -12,7 +12,7 @@
 " Install (drop-in, single file):
 "
 "   mkdir -p ~/.vim/syntax ~/.vim/ftdetect
-"   cp etc/mdl.vim ~/.vim/syntax/mdl.vim
+"   cp mdl.vim ~/.vim/syntax/mdl.vim
 "   echo 'au BufRead,BufNewFile *.mdl,*.smdl setf mdl' > ~/.vim/ftdetect/mdl.vim
 "
 " Options:
