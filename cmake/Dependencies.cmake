@@ -2,6 +2,30 @@ include_guard(GLOBAL)
 
 set(CMAKE_POSITION_INDEPENDENT_CODE ON CACHE BOOL "" FORCE)
 
+# The optional dependencies are fetched with two 'FetchContent_Declare'
+# arguments that older CMake does not have: OVERRIDE_FIND_PACKAGE (3.24), which
+# is how Ptex's own 'find_package(libdeflate)' resolves to the copy built here,
+# and EXCLUDE_FROM_ALL (3.28), which keeps the subprojects' tools, test
+# binaries, and install rules out of this build. Nothing else in SpectralMDL
+# needs either, so the higher floor is a condition of asking for a fetch rather
+# than of configuring at all.
+if(CMAKE_VERSION VERSION_LESS "3.28")
+  set(FetchingOptions)
+  foreach(Opt SMDL_ENABLE_NANOVDB SMDL_ENABLE_PTEX SMDL_TOY)
+    if(${Opt})
+      list(APPEND FetchingOptions "-D${Opt}=OFF")
+    endif()
+  endforeach()
+  if(FetchingOptions)
+    list(JOIN FetchingOptions " " FetchingOptions)
+    message(FATAL_ERROR
+      "This is CMake ${CMAKE_VERSION}, and fetching the optional dependencies "
+      "needs CMake 3.28 or newer. Configure with ${FetchingOptions} to build "
+      "SpectralMDL and the 'smdl' program alone, which need only CMake "
+      "${CMAKE_MINIMUM_REQUIRED_VERSION}.")
+  endif()
+endif()
+
 # Work out the one code generation backend to link. This has to happen before
 # the SMDL_BUILD_LLVM branch below, which needs the answer in order to tell
 # LLVM what to build.

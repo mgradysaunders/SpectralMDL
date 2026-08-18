@@ -35,8 +35,10 @@ TEST_CASE("Module search dirs") {
   auto tmpDir{fs::temp_directory_path() / "smdl-module-test"};
   fs::remove_all(tmpDir);
   fs::create_directories(tmpDir / "data");
-  auto module_{std::unique_ptr<smdl::Module>()};
+  // The allocator owns the AST, so it must outlive the module it is
+  // parsed into: declare it first so it is destroyed last.
   auto allocator{smdl::BumpPtrAllocator{}};
+  auto module_{std::unique_ptr<smdl::Module>()};
   SUBCASE("Relative and absolute paths expand and canonicalize in order") {
     CHECK(parseModule(tmpDir / "mod.smdl",
                       "#smdl\n"
