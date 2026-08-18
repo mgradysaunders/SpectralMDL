@@ -23,6 +23,7 @@
 #include "smdl/Support/Error.h"
 #include "smdl/Support/Filesystem.h"
 #include "smdl/Support/Macros.h"
+#include "smdl/Support/RNG.h"
 #include "smdl/Support/Span.h"
 #include "smdl/Support/StringHelpers.h"
 #include "smdl/Support/VectorMath.h"
@@ -105,6 +106,9 @@ public:
   /// Get.
   [[nodiscard]] static BuildInfo get() noexcept;
 
+  /// Summarize as a human-readable multi-line string.
+  [[nodiscard]] std::string toString() const;
+
 public:
   /// The major version number.
   uint32_t major{};
@@ -120,6 +124,39 @@ public:
 
   /// The git commit hash, or "unknown" if it was unavailable at build time.
   const char *gitCommit{};
+
+  /// The LLVM version linked into the library. Never null.
+  const char *llvmVersion{};
+
+  /// The compile date and time, from `__DATE__` and `__TIME__`. Never null.
+  /// This tracks the translation unit that defines `get()`, so an
+  /// incremental rebuild of other code does not refresh it.
+  const char *buildDate{};
+
+  /// Was the library built with RTTI?
+  bool hasRTTI{};
+
+  /// The version of the vendored miniz. Never null.
+  const char *withMiniz{};
+
+  /// The version of the vendored stb_image. Never null.
+  const char *withSTBImage{};
+
+  /// The version of the vendored stb_image_write. Never null.
+  const char *withSTBImageWrite{};
+
+  /// The version of the vendored stb_image_resize2. Never null.
+  const char *withSTBImageResize{};
+
+  /// The version of the vendored tinyexr. Never null.
+  const char *withTinyEXR{};
+
+  /// The pinned Ptex release tag, or null if built without Ptex.
+  const char *withPtex{};
+
+  /// The pinned OpenVDB release tag providing NanoVDB, or null if built
+  /// without NanoVDB.
+  const char *withNanoVDB{};
 };
 
 /// The LLVM native target.
@@ -267,7 +304,6 @@ public:
   /// \note
   /// The host is responsible for the lifetime of whatever this points to. It
   /// must remain valid for at least as long as the `State` that refers to it.
-  ///
   void *user_data{};
 
   /// The wavelengths in nanometers, must be sorted in increasing order!
@@ -278,6 +314,14 @@ public:
 
   /// The maximum wavelength in nanometers.
   float wavelength_max{};
+
+  /// If non-null, this necessarily points to `wavelengthBaseMax`
+  /// per-band quadrature weights in nanometers: the effective width of
+  /// each band, for integrating spectral quantities over a non-uniform
+  /// wavelength grid. Null means the uniform default of
+  /// `(wavelength_max - wavelength_min) / wavelengthBaseMax` per band,
+  /// which is what color-to-RGB conversion has always assumed.
+  const float *wavelength_weight{};
 
   /// The meters per scene unit.
   float meters_per_scene_unit{1.0f};
@@ -297,14 +341,16 @@ public:
   /// The position or ray intersection point in object space.
   float3 position{};
 
-#if 0
-  /// The direction in the context of an environment lookup.
+  /// The normalized direction of propagation of the ray that produced this
+  /// evaluation, pointing toward the shading point, in object space (internal
+  /// space after `finalizeAndApplyInternalSpaceConventions()`). In the
+  /// context of an environment lookup, the lookup direction.
   ///
   /// \note
-  /// Not sure exactly how this fits yet.
-  ///
+  /// Zero if the renderer does not provide it, in which case
+  /// direction-dependent material effects must be skipped. Populating this
+  /// at surface hits is non-standard.
   float3 direction{};
-#endif
 
   /// The motion vector in object space.
   float3 motion{};
@@ -359,6 +405,20 @@ public:
   /// The object-to-world matrix.
   float4x4 object_to_world_matrix{float4x4(1.0f)};
 
+  /// The random number generator for stochastic evaluation.
+  ///
+  /// \note
+  /// The contract: the renderer initializes this randomly per evaluation,
+  /// e.g., `state.rng = RNG(seed)` or `RNG(seed, stream)`, and the
+  /// implementation may draw from it (advancing it) at will during
+  /// evaluation. The material instance captures a draw to seed the
+  /// generator used by stochastically evaluated BSDFs, e.g., the diffuse
+  /// component of `df::micrograin_layer`. Such evaluations are unbiased
+  /// in expectation; renderers should vary the seed per path vertex (or
+  /// per pixel sample) to decorrelate them. A fixed initial generator
+  /// keeps evaluations deterministic.
+  RNG rng{};
+
   /// The transport mode.
   ///
   /// \note
@@ -366,18 +426,43 @@ public:
   /// bidirectional methods.
   /// - `TRANSPORT_RADIANCE` means tracing paths from cameras to lights,
   /// - `TRANSPORT_IMPORTANCE` means tracing paths from lights to cameras.
-  ///
   Transport transport{TRANSPORT_RADIANCE};
 
-  /// The per-evaluation random seed.
+  /// The number of path segments traversed to reach this shading point, so
+  /// 1 at a primary hit. Zero means "not provided", which consumers must treat
+  /// exactly like 1, i.e., highest fidelity.
   ///
-  /// \note
-  /// This seeds the generator used by stochastically evaluated BSDFs,
-  /// e.g., the diffuse component of `df::micrograin_layer`. Such
-  /// evaluations are unbiased in expectation; renderers should vary the
-  /// seed per path vertex (or per pixel sample) to decorrelate them.
-  /// Leaving it constant keeps evaluations deterministic.
-  int seed{};
+  /// NOTE: This is non-standard!
+  int scattering_order{};
+
+  /// The accumulated distance in scene units traveled by the path to reach
+  /// this shading point. Zero conventionally means "not provided" and implies 
+  /// highest fidelity.
+  ///
+  /// \note This is non-standard!
+  float travel_distance{};
+
+  /// The pixel ray cone spread angle in radians, using the small-angle
+  /// convention that the cone width grows by `cone_angle` per unit
+  /// distance. Zero means "no cone", i.e., level-of-detail off.
+  ///
+  /// \note This is non-standard!
+  float cone_angle{};
+
+  /// The pixel ray cone width in scene units at the shading point. Zero means
+  /// "no footprint", i.e., level-of-detail off.
+  ///
+  /// \note This is non-standard!
+  float cone_width{};
+
+  /// The UV texture density of each texture space: UV area per world-space
+  /// area of the underlying geometry, so `cone_width * sqrt(texture_density)`
+  /// is a UV-space filter width. Zero means "unknown", i.e., no filtering.
+  /// Renderers must guard the defining division against degenerate geometry: 
+  /// a degenerate triangle must produce 0, never infinity.
+  ///
+  /// \note This is non-standard!
+  float texture_density[TEXTURE_SPACE_MAX]{};
 };
 
 /// An albedo look-up table (LUT) for energy compensation in lossy BSDFs.

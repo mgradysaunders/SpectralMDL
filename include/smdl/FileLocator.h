@@ -61,7 +61,7 @@ public:
 
   /// The bitwise-or of the flags that select which kinds of paths
   /// `locate()` is allowed to return.
-  typedef uint32_t LocateFlags;
+  using LocateFlags = uint32_t;
 
   /// Flag to consider paths to regular files.
   static constexpr LocateFlags REGULAR_FILES = 0x1;

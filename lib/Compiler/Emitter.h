@@ -2,6 +2,7 @@
 #pragma once
 
 #include "Context.h"
+#include "Intrinsics.h"
 
 namespace smdl {
 
@@ -9,7 +10,7 @@ namespace smdl {
 /// \{
 
 /// A pending scope-exit action on the `Emitter::unwindStack`. Actions are
-/// replayed newest-first — without popping — on every control path that
+/// replayed newest-first (without popping) on every control path that
 /// leaves their scope (see `Emitter::unwind`), and popped when the scope
 /// itself ends.
 class UnwindAction final {
@@ -199,8 +200,8 @@ public:
   /// \param[in] useIndirectParams
   /// Use the indirect ('byval' pointer) convention for parameters selected
   /// by `passesIndirectly()`? Defaults to off, which keeps every caller
-  /// that does not opt in — notably the '@(visible)' material entry points
-  /// and '@(foreign)' declarations — on the by-value convention.
+  /// that does not opt in (notably the '@(visible)' material entry points
+  /// and '@(foreign)' declarations) on the by-value convention.
   ///
   void createFunction(llvm::Function *&llvmFunc, std::string_view name,
                       bool isPure, Type *&returnType,
@@ -274,7 +275,7 @@ public:
   }
 
   /// Declare a name. The name is interned by `Context::internName`, so
-  /// callers may pass views of any lifetime — including temporaries.
+  /// callers may pass views of any lifetime, including temporaries.
   ///
   /// `ownsStorage` says whether this declaration is what keeps an
   /// alloca-backed value alive, and so should end its lifetime when the
@@ -455,7 +456,7 @@ public:
   }
 
   /// Emit the pending unwind actions above the given stack depth,
-  /// newest-first, without popping them — every control path that leaves a
+  /// newest-first, without popping them: every control path that leaves a
   /// scope re-emits its actions. The stack itself is truncated when the
   /// scope ends (see `handleScope`).
   void unwind(size_t depth);
@@ -513,7 +514,7 @@ public:
   /// \note
   /// `handleScope` does not emit the entry branch itself, so the caller
   /// must have already terminated the current block by branching into the
-  /// loop structure — otherwise invalid IR is left behind.
+  /// loop structure; otherwise invalid IR is left behind.
   template <typename Func>
   void handleLoopScope(llvm::BasicBlock *blockStart,
                        llvm::BasicBlock *blockAfterBody,
@@ -661,7 +662,7 @@ public:
     declare(*decl.identifier, &decl, context.getComptimeMetaNamespace(&decl));
     // The interior declarations go out of the enclosing lookup on exit,
     // but the namespace is not a shadow boundary (members conflict with
-    // same-scope names declared before it) — hence a transparent scope.
+    // same-scope names declared before it), hence a transparent scope.
     // The scope is recorded on the AST node for qualified-name descent.
     SMDL_PRESERVE(scope, context.currentNamespacePath);
     for (auto &element : decl.identifier->elements)
@@ -739,6 +740,10 @@ public:
 
   /// Emit intrinsic expression.
   Value emit(AST::Intrinsic &expr) {
+    // Resolve here and discard the result, so that a misspelled name is
+    // rejected at the reference. Waiting for the call site would let an
+    // intrinsic that is named but never called pass silently.
+    resolveIntrinsic(expr.srcName.substr(1), expr.srcLoc);
     return context.getComptimeMetaIntrinsic(&expr);
   }
 
@@ -848,15 +853,22 @@ public:
   void emitLateIf(std::optional<AST::LateIf> &lateIf, Func &&func) {
     if (!lateIf) {
       std::invoke(std::forward<Func>(func));
-    } else {
-      auto [blockThen, blockElse] =
-          createBlocks<2>("late_if", {".then", ".else"});
-      builder.CreateCondBr(invoke(context.getBoolType(), emit(lateIf->expr),
-                                  lateIf->expr->srcLoc),
-                           blockThen, blockElse);
-      handleScope(blockThen, blockElse, std::forward<Func>(func));
-      builder.SetInsertPoint(blockElse);
+      return;
     }
+    auto cond{invoke(context.getBoolType(), emit(lateIf->expr),
+                     lateIf->expr->srcLoc)};
+    if (cond.isComptimeInt()) {
+      // Fold like `emit(AST::If &)`, so statements following a
+      // comptime-taken `return`/`break`/`continue` are never emitted.
+      if (cond.getComptimeInt())
+        handleScope(nullptr, nullptr, std::forward<Func>(func));
+      return;
+    }
+    auto [blockThen, blockElse] =
+        createBlocks<2>("late_if", {".then", ".else"});
+    builder.CreateCondBr(cond, blockThen, blockElse);
+    handleScope(blockThen, blockElse, std::forward<Func>(func));
+    builder.SetInsertPoint(blockElse);
   }
 
   /// Emit statement.
@@ -959,7 +971,12 @@ public:
   /// Emit visit statement.
   Value emit(AST::Visit &stmt) {
     return emitVisit(emit(stmt.expr), stmt.srcLoc, [&](Value value) {
-      declare(stmt.name, &stmt, value);
+      // The binding is a view of the visited expression's storage, never
+      // the owner: in the non-union case `value` passes through verbatim
+      // and can be the visited variable's own alloca, and owning it here
+      // would end that variable's lifetime at the end of the case scope,
+      // poisoning every later use.
+      declare(stmt.name, &stmt, value, /*ownsStorage=*/false);
       if (!value.type->isVoid()) emit(stmt.stmt);
       return Value();
     });
@@ -1038,9 +1055,28 @@ public:
     return result;
   }
 
-  /// Emit intrinsic.
+  /// Look up the intrinsic named `name`, which must not include the leading
+  /// `#`. Throws if there is no such intrinsic, suggesting a similar name
+  /// when there is one.
+  ///
+  /// \note
+  /// Not `[[nodiscard]]`: emitting a `#name` expression calls this purely to
+  /// reject a misspelling and has no use for the identifier itself.
+  IntrinsicID resolveIntrinsic(std::string_view name,
+                               const SourceLocation &srcLoc);
+
+  /// Emit intrinsic, resolving `name` through the registry in
+  /// `Intrinsics.def`. Throws if there is no such intrinsic.
   Value emitIntrinsic(std::string_view name, const ArgumentList &args,
                       const SourceLocation &srcLoc);
+
+  /// Emit intrinsic.
+  Value emitIntrinsic(IntrinsicID intrinsicID, const ArgumentList &args,
+                      const SourceLocation &srcLoc);
+
+  /// Emit one of the `#load...` intrinsics. Only called by `emitIntrinsic()`.
+  Value emitIntrinsicLoad(IntrinsicID intrinsicID, const ArgumentList &args,
+                          const SourceLocation &srcLoc);
 
   /// Emit call.
   Value emitCall(Value callee, const ArgumentList &args,
@@ -1217,7 +1253,7 @@ public:
                                       bool isAbs, Module *thisModule);
 
   /// Resolve import using aliases in the import path. Aliases with a
-  /// declaration sequence number at or above `seqLimit` are ignored — an
+  /// declaration sequence number at or above `seqLimit` are ignored: an
   /// alias's own path resolves against the aliases declared before it, so
   /// `using foo = foo::bar;` cannot recurse.
   void resolveImportUsingAliases(

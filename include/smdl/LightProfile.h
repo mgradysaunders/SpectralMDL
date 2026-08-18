@@ -173,7 +173,7 @@ extern "C" {
 /// These wrap `LightProfile` for the `@(pure foreign)` declarations in the
 /// builtin `df` module, which back `df::measured_edf`. The compiler
 /// registers their addresses as absolute JIT symbols when a light profile
-/// is loaded (see `#load_light_profile` in `Emitter.cc`), so they resolve
+/// is loaded (see `#loadLightProfile` in `Emitter.cc`), so they resolve
 /// even when the host process does not export its own dynamic symbols.
 ///
 /// \{

@@ -124,6 +124,16 @@ public:
 
 } // namespace LogSinks
 
+/// The label prefix for the given log level, as printed by the default
+/// log sinks above, with or without ANSI color codes. Empty for
+/// `LOG_LEVEL_INFO`, which is unlabeled.
+///
+/// This is public so that a program with its own sink (a progress bar
+/// that must erase and redraw itself around each message, say) prints
+/// the same labels as the default sinks without redefining them.
+[[nodiscard]] SMDL_EXPORT std::string_view logLevelLabel(LogLevel level,
+                                                         bool withColors);
+
 /// Use `<unistd.h>` on POSIX to test if cerr routes to a terminal.
 [[nodiscard]] SMDL_EXPORT bool cerrSupportsANSIColors();
 

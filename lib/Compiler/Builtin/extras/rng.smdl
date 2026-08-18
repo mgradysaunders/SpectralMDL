@@ -1,0 +1,106 @@
+// NOTE: This module is non-standard!
+/// Pseudo-random number generation.
+#smdl
+
+const int64_t RNG_MULTIPLIER = 6364136223846793005;
+
+const int64_t RNG_DEFAULT_INCREMENT = 1442695040888963407;
+
+/// The pseudo-random number generator.
+///
+/// Construct with `make_rng()` to seed properly. Constructing the fields
+/// directly, e.g., `rng_t(state: ...)`, injects raw generator state and is
+/// meant for tests and for restoring a saved generator.
+///
+/// The implementation is the PCG32 generator by Melissa O'Neill, being the
+/// 32-bit output variant of the permuted congruential generator family,
+/// bit-exact with the reference implementation and with `smdl::RNG` in the
+/// C++ API. The specific generator is an implementation detail: rely only
+/// on the draws being uniform and deterministic for a fixed initial state.
+export struct rng_t {
+  int64_t state = 0; ///< The state of the linear congruential generator.
+
+  int64_t increment = RNG_DEFAULT_INCREMENT; ///< The stream-selecting increment, which must be odd.
+};
+
+/// Seeds a generator on the default stream.
+@(pure)
+export rng_t make_rng(const int64_t seed) {
+  auto rng(rng_t());
+  rng.state = seed + rng.increment;
+  rng.state = rng.state * RNG_MULTIPLIER + rng.increment;
+  return rng;
+}
+
+/// Seeds a generator on the stream selected by `stream`, such that distinct
+/// stream selectors yield statistically independent output sequences.
+@(pure)
+export rng_t make_rng(const int64_t seed, const int64_t stream) {
+  auto rng(rng_t(increment: (stream << 1) | 1));
+  rng.state = seed + rng.increment;
+  rng.state = rng.state * RNG_MULTIPLIER + rng.increment;
+  return rng;
+}
+
+/// Generates the next 32-bit integer.
+@(pure)
+export int32_t generate_int(inline const &rng_t this) {
+  const auto state0(state);
+  state = state0 * RNG_MULTIPLIER + increment;
+  return #rotr(int32_t(((state0 >>> 18) ^ state0) >>> 27), int32_t(state0 >>> 59));
+}
+
+/// Generates a uniform integer in `[0, bound)` by rejection sampling.
+@(pure)
+export int32_t generate_int(const &rng_t this, const int32_t bound) {
+  if (bound > 1) {
+    // Work in 64-bit arithmetic so that the threshold remainder and the
+    // comparison below are effectively unsigned: zero-extend each 32-bit
+    // draw into [0, 2^32) instead of reinterpreting it as signed.
+    const auto bound64(int64_t(bound));
+    const auto xmin((int64_t(1) << 32) % bound64);
+    while (true) {
+      const auto x((int64_t(generate_int(this)) << 32) >>> 32);
+      return int32_t(x % bound64) if (x >= xmin);
+    }
+  }
+  return 0;
+}
+
+/// Generates a uniform `float` in `[0, 1)`.
+@(pure)
+export float generate_float(const &rng_t this) {
+  return #min(float(#uitofp(generate_int(this), double) / 4294967296.0d), 1.0 - $FLOAT_EPS / 2);
+}
+
+/// Generates a uniform `float2` in `[0, 1)^2`.
+@(pure)
+export float2 generate_float2(const &rng_t this) = float2(generate_float(this), generate_float(this));
+
+/// Generates a uniform `float3` in `[0, 1)^3`.
+@(pure)
+export float3 generate_float3(const &rng_t this) = float3(generate_float(this), generate_float(this), generate_float(this));
+
+/// Generates a uniform `float4` in `[0, 1)^4`.
+@(pure)
+export float4 generate_float4(const &rng_t this) = float4(generate_float(this), generate_float(this), generate_float(this), generate_float(this));
+
+/// Advances the generator by `n` steps in logarithmic time, as if calling `generate_int(this)` `n` times.
+@(pure)
+export void discard(inline const &rng_t this, int64_t n) {
+  // Fast power by squaring.
+  int64_t aTotal(1);
+  int64_t bTotal(0);
+  int64_t a(RNG_MULTIPLIER);
+  int64_t b(increment);
+  while (n != 0) {
+    if ((n & 1) != 0) {
+      aTotal = aTotal * a;
+      bTotal = bTotal * a + b;
+    }
+    b *= a + 1;
+    a *= a;
+    n >>>= 1;
+  }
+  state = state * aTotal + bTotal;
+}

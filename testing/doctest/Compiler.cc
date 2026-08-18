@@ -1,6 +1,7 @@
 #include "doctest.h"
 
 #include <algorithm>
+#include <cmath>
 #include <filesystem>
 #include <fstream>
 #include <iterator>
@@ -8,6 +9,7 @@
 #include <vector>
 
 #include "smdl/Compiler.h"
+#include "smdl/Support/Logger.h"
 #include "smdl/Support/MD5Hash.h"
 
 namespace fs = std::filesystem;
@@ -694,6 +696,71 @@ TEST_CASE("Compiler findMaterial") {
   fs::remove_all(tmpDir);
 }
 
+TEST_CASE("Compiler desired materials") {
+  auto tmpDir{fs::temp_directory_path() / "smdl-desired-materials-test"};
+  fs::remove_all(tmpDir);
+  writeFile(tmpDir / "root" / "mats.mdl", "#smdl\nimport ::df::*;\n" +
+                                              materialDef("wanted") +
+                                              materialDef("unwanted"));
+  SUBCASE("Filter compiles only the desired materials") {
+    smdl::Compiler compiler{};
+    compiler.setDesiredMaterials({"wanted"});
+    REQUIRE(buildAll(compiler, {tmpDir / "root"}) == "");
+    REQUIRE(compiler.getMaterials().size() == 1);
+    CHECK(compiler.getMaterials()[0].qualifiedName == "::mats::wanted");
+    CHECK(compiler.findMaterial("wanted") != nullptr);
+    // The skipped material is unreachable, and remembered by qualified
+    // name so 'findMaterial' can log the exclusion.
+    CHECK(compiler.findMaterial("unwanted") == nullptr);
+    REQUIRE(compiler.getSkippedMaterialNames().size() == 1);
+    CHECK(compiler.getSkippedMaterialNames()[0] == "::mats::unwanted");
+    // Names that match nothing anywhere only warn; the build succeeds.
+  }
+  SUBCASE("Skipped materials emit no entry points at all") {
+    smdl::Compiler compiler{};
+    compiler.setDesiredMaterials({"wanted"});
+    REQUIRE(!compiler.add((tmpDir / "root").string()));
+    REQUIRE(!compiler.compile(smdl::OPT_LEVEL_NONE));
+    auto ir{std::string()};
+    REQUIRE(!compiler.dump(smdl::DUMP_FORMAT_IR, ir));
+    CHECK(ir.find("mats.wanted.evaluate") != std::string::npos);
+    CHECK(ir.find("mats.unwanted") == std::string::npos);
+  }
+  SUBCASE("Matching rules mirror findMaterial") {
+    // Absolute names must match exactly; '::wanted' matches nothing, so
+    // everything is skipped.
+    smdl::Compiler compiler{};
+    compiler.setDesiredMaterials({"::mats::wanted", "::unwanted"});
+    REQUIRE(buildAll(compiler, {tmpDir / "root"}) == "");
+    REQUIRE(compiler.getMaterials().size() == 1);
+    CHECK(compiler.getMaterials()[0].qualifiedName == "::mats::wanted");
+    CHECK(compiler.getSkippedMaterialNames().size() == 1);
+  }
+  SUBCASE("A kept material may instantiate a skipped one") {
+    writeFile(tmpDir / "root2" / "variants.mdl",
+              "#smdl\nimport ::df::*;\n" + materialDef("base") +
+                  "material derived() = base();\n");
+    smdl::Compiler compiler{};
+    compiler.setDesiredMaterials({"derived"});
+    REQUIRE(buildAll(compiler, {tmpDir / "root2"}) == "");
+    REQUIRE(compiler.getMaterials().size() == 1);
+    CHECK(compiler.findMaterial("derived") != nullptr);
+    CHECK(compiler.getSkippedMaterialNames().size() == 1);
+  }
+  SUBCASE("Clearing the filter restores everything on recompile") {
+    smdl::Compiler compiler{};
+    compiler.setDesiredMaterials({"wanted"});
+    REQUIRE(buildAll(compiler, {tmpDir / "root"}) == "");
+    REQUIRE(compiler.getMaterials().size() == 1);
+    compiler.setDesiredMaterials({});
+    REQUIRE(!compiler.compile(smdl::OPT_LEVEL_NONE));
+    REQUIRE(!compiler.jitCompile());
+    CHECK(compiler.getMaterials().size() == 2);
+    CHECK(compiler.getSkippedMaterialNames().empty());
+  }
+  fs::remove_all(tmpDir);
+}
+
 TEST_CASE("Compiler static material flags") {
   using namespace smdl::JIT;
   auto tmpDir{fs::temp_directory_path() / "smdl-compiler-test"};
@@ -733,14 +800,20 @@ TEST_CASE("Compiler static material flags") {
     REQUIRE(material != nullptr);
     return material;
   }};
-  // The six '#is_default'-derived structural bits are always known, and
-  // at -O2 the constant-foldable value bits are too.
+  // The six '#isDefault'-derived structural bits are always known, and
+  // at -O2 the constant-foldable value bits are too, including the
+  // heterogeneous-volume bit (every material here has a constant, or
+  // no, volume, so the '.volumeEvaluate' body folds away from the
+  // state and homogeneity is proven) and the displacement bit (every
+  // material here has a constant, in fact default, displacement, so
+  // the '.displacementProbe' body folds to the zero vector).
   constexpr int structuralBits{MATERIAL_HAS_SURFACE | MATERIAL_HAS_BACKFACE |
                                MATERIAL_HAS_SURFACE_EMISSION |
                                MATERIAL_HAS_BACKFACE_EMISSION |
                                MATERIAL_HAS_VOLUME | MATERIAL_HAS_HAIR};
-  constexpr int allBits{structuralBits | MATERIAL_THIN_WALLED |
-                        MATERIAL_HAS_CUTOUT};
+  constexpr int allBits{
+      structuralBits | MATERIAL_THIN_WALLED | MATERIAL_HAS_CUTOUT |
+      MATERIAL_HAS_HETEROGENEOUS_VOLUME | MATERIAL_HAS_DISPLACEMENT};
   SUBCASE("Structural and constant-foldable bits are known") {
     auto matDefault{get("mat_default")};
     CHECK(matDefault->staticFlagsKnown == allBits);
@@ -764,6 +837,7 @@ TEST_CASE("Compiler static material flags") {
     CHECK((matThin->staticFlags & MATERIAL_THIN_WALLED) != 0);
     auto matVolume{get("mat_volume")};
     CHECK(matVolume->hasVolume());
+    CHECK(matVolume->hasHomogeneousVolume());
     CHECK(matVolume->isAlwaysOpaque());
     CHECK(!matVolume->isShadowTrivial());
     auto matEmissive{get("mat_emissive")};
@@ -809,6 +883,362 @@ TEST_CASE("Compiler static material flags") {
     }
     CHECK(get("mat_default")->evaluateOpacity(stateNoAlloc) == 1.0f);
     CHECK(get("mat_cutout_const")->evaluateOpacity(stateNoAlloc) == 0.5f);
+  }
+  fs::remove_all(tmpDir);
+}
+
+TEST_CASE("Compiler volume evaluate") {
+  using namespace smdl::JIT;
+  auto tmpDir{fs::temp_directory_path() / "smdl-volume-evaluate-test"};
+  fs::remove_all(tmpDir);
+  // A 32x8x4 Mitsuba volume holding the linear field
+  // 'value = x + 10*y + 100*z', so trilinear filtering reproduces it
+  // exactly and the maximum is 31 + 70 + 300 = 401.
+  {
+    fs::create_directories(tmpDir / "root");
+    std::ofstream file((tmpDir / "root" / "linear.vol").string(),
+                       std::ios::binary);
+    file.write("VOL", 3);
+    const char version{3};
+    file.write(&version, 1);
+    const int32_t header[5] = {1, 32, 8, 4, 1};
+    file.write(reinterpret_cast<const char *>(header), sizeof(header));
+    const float bound[6] = {0.0f, 0.0f, 0.0f, 1.0f, 1.0f, 1.0f};
+    file.write(reinterpret_cast<const char *>(bound), sizeof(bound));
+    for (int z = 0; z < 4; z++)
+      for (int y = 0; y < 8; y++)
+        for (int x = 0; x < 32; x++) {
+          const float value{float(x) + 10.0f * float(y) + 100.0f * float(z)};
+          file.write(reinterpret_cast<const char *>(&value), sizeof(value));
+        }
+  }
+  writeFile(tmpDir / "root" / "vols.mdl",
+            "#smdl\n"
+            "import ::df::*;\n"
+            "import ::state::*;\n"
+            "import ::tex::*;\n"
+            "export material vol_homog() = material(\n"
+            "  ior: 1.0,\n"
+            "  volume: material_volume(\n"
+            "    scattering: df::anisotropic_vdf(),\n"
+            "    absorption_coefficient: color(0.5),\n"
+            "    scattering_coefficient: color(2.0),\n"
+            "    max_scattering_coefficient: color(2.0)));\n"
+            "export material vol_hetero() = material(\n"
+            "  ior: 1.0,\n"
+            "  volume: material_volume(\n"
+            "    scattering: df::anisotropic_vdf(),\n"
+            "    scattering_coefficient: 4.0 *\n"
+            "      tex::lookup_float(texture_3d(\"linear.vol\"),\n"
+            "                        state::position()) * color(1.0),\n"
+            "    max_scattering_coefficient: 4.0 *\n"
+            "      tex::max_value(texture_3d(\"linear.vol\")) * color(1.0)));\n"
+            "export material vol_none() = material();\n"
+            "export material vol_fire() = material(\n"
+            "  ior: 1.0,\n"
+            "  volume: material_volume(\n"
+            "    scattering: df::anisotropic_vdf(),\n"
+            "    absorption_coefficient: 2.0 *\n"
+            "      tex::lookup_float(texture_3d(\"linear.vol\"),\n"
+            "                        state::position()) * color(1.0),\n"
+            "    emission_intensity: 0.25 *\n"
+            "      tex::lookup_float(texture_3d(\"linear.vol\"),\n"
+            "                        state::position()) * color(1.0),\n"
+            "    max_absorption_coefficient: 2.0 *\n"
+            "      tex::max_value(texture_3d(\"linear.vol\")) * color(1.0)));\n"
+            "export material vol_hinted() = material(\n"
+            "  ior: 1.0,\n"
+            "  volume: material_volume(\n"
+            "    scattering: df::anisotropic_vdf(),\n"
+            "    scattering_coefficient: 4.0 *\n"
+            "      tex::lookup_float(texture_3d(\"linear.vol\"),\n"
+            "                        state::position()) * color(1.0),\n"
+            "    max_scattering_coefficient: 4.0 *\n"
+            "      tex::max_value(texture_3d(\"linear.vol\")) * color(1.0),\n"
+            "    density: texture_3d(\"linear.vol\"),\n"
+            "    density_bound_min: float3(0.0),\n"
+            "    density_bound_max: float3(1.0)));\n");
+  smdl::Compiler compiler{};
+  REQUIRE(!compiler.add((tmpDir / "root").string()));
+  REQUIRE(!compiler.compile(smdl::OPT_LEVEL_O2));
+  REQUIRE(!compiler.jitCompile());
+  auto get{[&](std::string_view name) {
+    auto material{compiler.findMaterial(name)};
+    REQUIRE(material != nullptr);
+    return material;
+  }};
+  const auto N{size_t(compiler.wavelengthBaseMax)};
+  auto sigmaA{std::vector<float>(N)};
+  auto sigmaS{std::vector<float>(N)};
+  auto emission{std::vector<float>(N)};
+  // 'volumeEvaluate' is allocation-free, so the partial state carries
+  // no allocator: only the object-space position identifies the query.
+  auto state{smdl::State()};
+  SUBCASE("Homogeneous coefficients are position-independent") {
+    auto material{get("vol_homog")};
+    CHECK(material->hasVolume());
+    CHECK(material->hasHomogeneousVolume());
+    material->volumeEvaluate(state, sigmaA.data(), sigmaS.data(),
+                             emission.data());
+    for (size_t i = 0; i < N; i++) {
+      CHECK(sigmaA[i] == 0.5f);
+      CHECK(sigmaS[i] == 2.0f);
+    }
+  }
+  SUBCASE("Heterogeneous coefficients follow the position") {
+    auto material{get("vol_hetero")};
+    CHECK(material->hasVolume());
+    CHECK(!material->hasHomogeneousVolume());
+    // The center of voxel (3, 4, 2) has the exactly representable
+    // texture coordinate below, where the field is 243.
+    state.position = smdl::float3(3.5f / 32.0f, 4.5f / 8.0f, 2.5f / 4.0f);
+    material->volumeEvaluate(state, sigmaA.data(), sigmaS.data(),
+                             emission.data());
+    for (size_t i = 0; i < N; i++) {
+      CHECK(sigmaA[i] == 0.0f);
+      CHECK(sigmaS[i] == 4.0f * 243.0f);
+    }
+    // The center of voxel (0, 0, 0), where the field is 0.
+    state.position = smdl::float3(0.5f / 32.0f, 0.5f / 8.0f, 0.5f / 4.0f);
+    material->volumeEvaluate(state, sigmaA.data(), sigmaS.data(),
+                             emission.data());
+    for (size_t i = 0; i < N; i++) CHECK(sigmaS[i] == 0.0f);
+  }
+  SUBCASE("Emission follows the position and absent emission is zero") {
+    auto material{get("vol_fire")};
+    CHECK(material->hasVolume());
+    // The center of voxel (3, 4, 2), where the linear field is 243:
+    // emission is 0.25 times the field, absorption 2 times it.
+    state.position = smdl::float3(3.5f / 32.0f, 4.5f / 8.0f, 2.5f / 4.0f);
+    material->volumeEvaluate(state, sigmaA.data(), sigmaS.data(),
+                             emission.data());
+    for (size_t i = 0; i < N; i++) {
+      CHECK(sigmaA[i] == 2.0f * 243.0f);
+      CHECK(sigmaS[i] == 0.0f);
+      CHECK(emission[i] == 0.25f * 243.0f);
+    }
+    // A material that declares no emission resolves it to zero.
+    auto hetero{get("vol_hetero")};
+    state.position = smdl::float3(3.5f / 32.0f, 4.5f / 8.0f, 2.5f / 4.0f);
+    hetero->volumeEvaluate(state, sigmaA.data(), sigmaS.data(),
+                           emission.data());
+    for (size_t i = 0; i < N; i++) CHECK(emission[i] == 0.0f);
+  }
+  SUBCASE("No volume evaluates to zero and proves homogeneous") {
+    auto material{get("vol_none")};
+    CHECK(!material->hasVolume());
+    CHECK(material->hasHomogeneousVolume());
+    material->volumeEvaluate(state, sigmaA.data(), sigmaS.data(),
+                             emission.data());
+    for (size_t i = 0; i < N; i++) {
+      CHECK(sigmaA[i] == 0.0f);
+      CHECK(sigmaS[i] == 0.0f);
+    }
+  }
+  SUBCASE("Instances expose the density acceleration hint") {
+    auto allocator{smdl::BumpPtrAllocator()};
+    auto wavelengths{std::vector<float>(N)};
+    auto fullState{smdl::State()};
+    fullState.allocator = &allocator;
+    fullState.wavelength_min = 380.0f;
+    fullState.wavelength_max = 720.0f;
+    fullState.wavelength_base = wavelengths.data();
+    for (size_t i = 0; i < N; i++) {
+      float fac{float(i) / float(N - 1)};
+      wavelengths[i] =
+          (1 - fac) * fullState.wavelength_min + fac * fullState.wavelength_max;
+    }
+    // A material with the complete hint exposes the grid resource and
+    // both corners of the bound box through the instance.
+    auto hinted{smdl::JIT::MaterialInstance(fullState, get("vol_hinted"))};
+    const auto *grid{hinted.getVolumeDensityGrid()};
+    REQUIRE(grid != nullptr);
+    CHECK(grid->isValid());
+    CHECK(grid->getExtent().x == 32);
+    CHECK(grid->getExtent().y == 8);
+    CHECK(grid->getExtent().z == 4);
+    CHECK(grid->getMaxValue() == 401.0f);
+    REQUIRE(hinted.getVolumeDensityBoundMin() != nullptr);
+    REQUIRE(hinted.getVolumeDensityBoundMax() != nullptr);
+    CHECK(hinted.getVolumeDensityBoundMin()->x == 0.0f);
+    CHECK(hinted.getVolumeDensityBoundMax()->x == 1.0f);
+    CHECK(hinted.getVolumeDensityBoundMax()->z == 1.0f);
+    // The per-brick bounds behind the hint: the grid is 32x8x4, so two
+    // bricks in x, and the linear field peaks in the upper brick.
+    CHECK(grid->getBrickCount().x == 2);
+    CHECK(grid->getBrickMaxValue(1, 0, 0) == 401.0f);
+    // A material without the hint reports null pointers.
+    auto unhinted{smdl::JIT::MaterialInstance(fullState, get("vol_hetero"))};
+    CHECK(unhinted.getVolumeDensityGrid() == nullptr);
+    CHECK(unhinted.getVolumeDensityBoundMin() == nullptr);
+    CHECK(unhinted.getVolumeDensityBoundMax() == nullptr);
+  }
+  SUBCASE("Instances expose the declared majorants") {
+    auto allocator{smdl::BumpPtrAllocator()};
+    auto wavelengths{std::vector<float>(N)};
+    auto fullState{smdl::State()};
+    fullState.allocator = &allocator;
+    fullState.wavelength_min = 380.0f;
+    fullState.wavelength_max = 720.0f;
+    fullState.wavelength_base = wavelengths.data();
+    for (size_t i = 0; i < N; i++) {
+      float fac{float(i) / float(N - 1)};
+      wavelengths[i] =
+          (1 - fac) * fullState.wavelength_min + fac * fullState.wavelength_max;
+    }
+    auto homog{smdl::JIT::MaterialInstance(fullState, get("vol_homog"))};
+    REQUIRE(homog.getMaxScatteringCoefficient().size() == N);
+    CHECK(homog.getMaxAbsorptionCoefficient().empty());
+    for (size_t i = 0; i < N; i++)
+      CHECK(homog.getMaxScatteringCoefficient()[i] == 2.0f);
+    // The heterogeneous majorant is exact through 'tex::max_value'.
+    auto hetero{smdl::JIT::MaterialInstance(fullState, get("vol_hetero"))};
+    REQUIRE(hetero.getMaxScatteringCoefficient().size() == N);
+    for (size_t i = 0; i < N; i++)
+      CHECK(hetero.getMaxScatteringCoefficient()[i] == 4.0f * 401.0f);
+  }
+  fs::remove_all(tmpDir);
+}
+
+TEST_CASE("Compiler displacement evaluate") {
+  using namespace smdl::JIT;
+  auto tmpDir{fs::temp_directory_path() / "smdl-displacement-test"};
+  fs::remove_all(tmpDir);
+  writeFile(tmpDir / "root" / "disp.mdl",
+            "#smdl\n"
+            "import ::state::*;\n"
+            "export material disp_none() = material();\n"
+            "export material disp_const() = material(\n"
+            "  geometry: material_geometry(\n"
+            "    displacement: float3(0.0, 0.0, 0.25)));\n"
+            "export material disp_state() = material(\n"
+            "  geometry: material_geometry(\n"
+            "    displacement: state::texture_coordinate(0).x *\n"
+            "      float3(0.0, 0.0, 1.0)));\n");
+  smdl::Compiler compiler{};
+  REQUIRE(!compiler.add((tmpDir / "root").string()));
+  REQUIRE(!compiler.compile(smdl::OPT_LEVEL_O2));
+  REQUIRE(!compiler.jitCompile());
+  auto get{[&](std::string_view name) {
+    auto material{compiler.findMaterial(name)};
+    REQUIRE(material != nullptr);
+    return material;
+  }};
+  // 'displacementEvaluate' is allocation-free, so the partial state
+  // carries no allocator, exactly as with 'volumeEvaluate'.
+  auto state{smdl::State()};
+  auto displacement{smdl::float3()};
+  SUBCASE("The default material is provably undisplaced") {
+    auto material{get("disp_none")};
+    CHECK(material->hasZeroDisplacement());
+    CHECK((material->staticFlagsKnown & MATERIAL_HAS_DISPLACEMENT) != 0);
+    CHECK((material->staticFlags & MATERIAL_HAS_DISPLACEMENT) == 0);
+    material->displacementEvaluate(state, displacement);
+    CHECK(displacement.x == 0.0f);
+    CHECK(displacement.y == 0.0f);
+    CHECK(displacement.z == 0.0f);
+  }
+  SUBCASE("A constant displacement is provably non-zero") {
+    auto material{get("disp_const")};
+    CHECK(!material->hasZeroDisplacement());
+    CHECK((material->staticFlagsKnown & MATERIAL_HAS_DISPLACEMENT) != 0);
+    CHECK((material->staticFlags & MATERIAL_HAS_DISPLACEMENT) != 0);
+    material->displacementEvaluate(state, displacement);
+    CHECK(displacement.x == 0.0f);
+    CHECK(displacement.y == 0.0f);
+    CHECK(displacement.z == 0.25f);
+  }
+  SUBCASE("A state-dependent displacement is unknown, not proven zero") {
+    auto material{get("disp_state")};
+    CHECK(!material->hasZeroDisplacement());
+    CHECK((material->staticFlagsKnown & MATERIAL_HAS_DISPLACEMENT) == 0);
+    state.texture_coordinate[0] = smdl::float3(2.5f, 0.0f, 0.0f);
+    material->displacementEvaluate(state, displacement);
+    CHECK(displacement.x == 0.0f);
+    CHECK(displacement.y == 0.0f);
+    CHECK(displacement.z == 2.5f);
+  }
+  fs::remove_all(tmpDir);
+}
+
+TEST_CASE("Compiler hair scattering") {
+  using namespace smdl::JIT;
+  auto tmpDir{fs::temp_directory_path() / "smdl-hair-test"};
+  fs::remove_all(tmpDir);
+  writeFile(tmpDir / "root" / "hair.mdl",
+            "#smdl\n"
+            "import ::df::*;\n"
+            "export material hair_brown() = material(\n"
+            "  hair: df::chiang_hair_bsdf(\n"
+            "    roughness_R: float2(0.3, 0.4),\n"
+            "    absorption_coefficient: color(0.4)));\n"
+            "export material hair_none() = material();\n");
+  smdl::Compiler compiler{};
+  REQUIRE(!compiler.add((tmpDir / "root").string()));
+  REQUIRE(!compiler.compile(smdl::OPT_LEVEL_O2));
+  REQUIRE(!compiler.jitCompile());
+  auto get{[&](std::string_view name) {
+    auto material{compiler.findMaterial(name)};
+    REQUIRE(material != nullptr);
+    return material;
+  }};
+  auto allocator{smdl::BumpPtrAllocator()};
+  auto wavelengths{std::vector<float>(size_t(compiler.wavelengthBaseMax))};
+  auto state{smdl::State()};
+  state.allocator = &allocator;
+  state.wavelength_min = 380.0f;
+  state.wavelength_max = 720.0f;
+  state.wavelength_base = wavelengths.data();
+  for (uint32_t i = 0; i < compiler.wavelengthBaseMax; i++) {
+    float fac{float(i) / float(compiler.wavelengthBaseMax - 1)};
+    wavelengths[i] =
+        (1 - fac) * state.wavelength_min + fac * state.wavelength_max;
+  }
+  // The default state's tangent-to-world is identity, so the directions
+  // below are written directly in the hair frame: X is the fiber tangent
+  // and Z is the cross-section normal.
+  auto wo{smdl::float3(0.0f, 0.6f, 0.8f)};
+  auto wi{smdl::float3(0.6f, -0.64f, -0.48f)};
+  auto f{std::vector<float>(size_t(compiler.wavelengthBaseMax))};
+  auto fSpan{smdl::Span<float>(f.data(), f.size())};
+  float pdfFwd{};
+  float pdfRev{};
+  SUBCASE("A hair material evaluates and samples through the entry points") {
+    auto material{get("hair_brown")};
+    CHECK(material->hasHair());
+    CHECK((material->staticFlagsKnown & MATERIAL_HAS_HAIR) != 0);
+    CHECK((material->staticFlags & MATERIAL_HAS_HAIR) != 0);
+    auto materialInstance{smdl::JIT::MaterialInstance(state, material)};
+    CHECK(materialInstance.hasHair());
+    CHECK(materialInstance.hairScatterEvaluate(wo, wi, pdfFwd, pdfRev, fSpan));
+    CHECK(pdfFwd > 0.0f);
+    CHECK(pdfRev > 0.0f);
+    for (float fValue : f) {
+      CHECK(fValue > 0.0f);
+      CHECK(std::isfinite(fValue));
+    }
+    auto xi{smdl::float4(0.3f, 0.4f, 0.5f, 0.6f)};
+    auto wiSampled{smdl::float3()};
+    CHECK(materialInstance.hairScatterSample(xi, wo, wiSampled, pdfFwd, pdfRev,
+                                             fSpan));
+    CHECK(pdfFwd > 0.0f);
+    float lengthSquared{wiSampled.x * wiSampled.x + wiSampled.y * wiSampled.y +
+                        wiSampled.z * wiSampled.z};
+    CHECK(lengthSquared == doctest::Approx(1.0f).epsilon(1e-3));
+  }
+  SUBCASE("The default hair BSDF is safe to call and reports black") {
+    auto material{get("hair_none")};
+    CHECK(!material->hasHair());
+    CHECK((material->staticFlagsKnown & MATERIAL_HAS_HAIR) != 0);
+    CHECK((material->staticFlags & MATERIAL_HAS_HAIR) == 0);
+    auto materialInstance{smdl::JIT::MaterialInstance(state, material)};
+    CHECK(!materialInstance.hasHair());
+    CHECK(!materialInstance.hairScatterEvaluate(wo, wi, pdfFwd, pdfRev, fSpan));
+    CHECK(pdfFwd == 0.0f);
+    CHECK(pdfRev == 0.0f);
+    for (float fValue : f) {
+      CHECK(fValue == 0.0f);
+    }
   }
   fs::remove_all(tmpDir);
 }
@@ -988,18 +1418,18 @@ TEST_CASE("Compiler inline call-site arguments") {
     compiler.enableUnitTests = true;
     return buildAll(compiler, {tmpDir / "root"});
   }};
-  static const char *sum2{"float sum2(const float a, const float b) = a + b;\n"};
+  static const char *sum2{
+      "float sum2(const float a, const float b) = a + b;\n"};
   SUBCASE("A scalar does not expand") {
     auto message{build(std::string(sum2) +
                        "export const float bad = sum2(inline 1.0, 2.0);\n")};
     CHECK(message.find("cannot expand 'inline' argument") != std::string::npos);
   }
   SUBCASE("A color does not expand") {
-    auto message{build(std::string(sum2) +
-                       "unit_test \"t\" {\n"
-                       "  const color c = color(0.5);\n"
-                       "  #assert(sum2(inline c) == 1.0);\n"
-                       "}\n")};
+    auto message{build(std::string(sum2) + "unit_test \"t\" {\n"
+                                           "  const color c = color(0.5);\n"
+                                           "  #assert(sum2(inline c) == 1.0);\n"
+                                           "}\n")};
     CHECK(message.find("cannot expand 'inline' argument") != std::string::npos);
   }
   SUBCASE("A pointer does not expand, with a dereference hint") {
@@ -1037,6 +1467,293 @@ TEST_CASE("Compiler inline call-site arguments") {
                        "export const float bad = sum2(inline S(), 2.0);\n")};
     CHECK(message.find("unnamed arguments must appear before named") !=
           std::string::npos);
+  }
+  fs::remove_all(tmpDir);
+}
+
+// Counts warnings mentioning a substring, so a test can assert how many
+// times a diagnostic was raised rather than merely that it was.
+class WarningCounter final : public smdl::LogSink {
+public:
+  WarningCounter(std::string needle) : needle(std::move(needle)) {}
+
+  void logMessage(smdl::LogLevel level, std::string_view message) override {
+    if (level == smdl::LOG_LEVEL_WARN &&
+        message.find(needle) != std::string_view::npos)
+      count++;
+  }
+
+  std::string needle{};
+  int count{};
+};
+
+TEST_CASE("Compiler missing resource warnings") {
+  auto tmpDir{fs::temp_directory_path() / "smdl-missing-resource-test"};
+  fs::remove_all(tmpDir);
+  // A missing texture is a warning, not an error, and the texture reads
+  // black -- so the interesting question is how many times it is reported.
+  // A material body is emitted three times ('evaluate', 'evaluateOpacity'
+  // and 'thinWalledProbe' in 'Type.cc'), and the not-found path cannot be
+  // memoized by file hash the way an actual load failure is, so without
+  // 'Compiler::logResourceWarningOnce' it would be reported three times.
+  auto materialUsing{[](std::string_view fileName) {
+    auto text{std::string("#smdl\nimport ::df::*;\nimport ::tex::*;\n"
+                          "export material M() = let {\n  auto t = "
+                          "texture_2d(\"")};
+    text += fileName;
+    text += "\", tex::gamma_srgb);\n"
+            "  auto c = ::tex::lookup_float3(t, float2(0.5));\n"
+            "} in material(surface: material_surface(\n"
+            "  scattering: df::diffuse_reflection_bsdf(tint: color(c))));\n";
+    return text;
+  }};
+  SUBCASE("A missing texture is reported exactly once per file") {
+    writeFile(tmpDir / "main.mdl", materialUsing("nowhere.png"));
+    auto &sink{smdl::Logger::get().addSink<WarningCounter>("nowhere.png")};
+    smdl::Compiler compiler{};
+    CHECK(buildAll(compiler, {tmpDir / "main.mdl"}).empty());
+    CHECK(sink.count == 1);
+    // The memo is per compile, not per Compiler: recompiling has to report
+    // the same missing file again rather than swallow it.
+    REQUIRE(!compiler.compile(smdl::OPT_LEVEL_NONE));
+    CHECK(sink.count == 2);
+    smdl::Logger::get().reset();
+  }
+  SUBCASE("Distinct missing textures are each reported") {
+    auto text{materialUsing("gone_a.png")};
+    text += "export material N() = let {\n"
+            "  auto t = texture_2d(\"gone_b.png\", tex::gamma_srgb);\n"
+            "  auto c = ::tex::lookup_float3(t, float2(0.5));\n"
+            "} in material(surface: material_surface(\n"
+            "  scattering: df::diffuse_reflection_bsdf(tint: color(c))));\n";
+    writeFile(tmpDir / "main.mdl", text);
+    auto &sinkA{smdl::Logger::get().addSink<WarningCounter>("gone_a.png")};
+    auto &sinkB{smdl::Logger::get().addSink<WarningCounter>("gone_b.png")};
+    smdl::Compiler compiler{};
+    CHECK(buildAll(compiler, {tmpDir / "main.mdl"}).empty());
+    CHECK(sinkA.count == 1);
+    CHECK(sinkB.count == 1);
+    smdl::Logger::get().reset();
+  }
+  fs::remove_all(tmpDir);
+}
+
+TEST_CASE("Compiler enableMipMaps") {
+  auto tmpDir{fs::temp_directory_path() / "smdl-compiler-mipmap-test"};
+  fs::remove_all(tmpDir);
+  // A 4x4 image, whose chain is 4x4 -> 2x2 -> 1x1, so a texture that
+  // reads the chain bakes 3 levels and one that does not bakes 1. The
+  // level count is the thing to pin: it is what keeps JIT code from
+  // walking mip levels that were never generated.
+  const uint8_t texels[16] = {0,   16,  32,  48,  //
+                              64,  80,  96,  112, //
+                              128, 144, 160, 176, //
+                              192, 208, 224, 240};
+  fs::create_directories(tmpDir);
+  REQUIRE(
+      !smdl::write8bitImage((tmpDir / "mip.png").string(), 4, 4, 1, texels));
+  // Build and run a module asserting the baked level count of a texture
+  // that asked for mip filtering. Whether the '#assert' folds at compile
+  // time or runs in the JIT, a mismatch comes back as a message here.
+  auto checkNumLevels{[&](bool enableMipMaps, int numLevels) {
+    writeFile(tmpDir / "mips.smdl",
+              "#smdl\nimport ::tex::*;\n"
+              "unit_test \"Baked level count\" {\n"
+              "  const auto t = texture_2d(\"mip.png\", tex::gamma_linear, "
+              "use_mipmap: true);\n"
+              "  #assert(t.num_levels == " +
+                  std::to_string(numLevels) + ");\n}\n");
+    smdl::Compiler compiler{};
+    compiler.enableMipMaps = enableMipMaps;
+    compiler.enableUnitTests = true;
+    if (auto message{buildAll(compiler, {tmpDir / "mips.smdl"})};
+        !message.empty())
+      return message;
+    auto allocator{smdl::BumpPtrAllocator()};
+    auto wavelengths{std::vector<float>(size_t(compiler.wavelengthBaseMax))};
+    auto state{smdl::State()};
+    state.allocator = &allocator;
+    state.wavelength_min = 380.0f;
+    state.wavelength_max = 720.0f;
+    state.wavelength_base = wavelengths.data();
+    for (uint32_t i = 0; i < compiler.wavelengthBaseMax; i++) {
+      float fac{float(i) / float(compiler.wavelengthBaseMax - 1)};
+      wavelengths[i] =
+          (1 - fac) * state.wavelength_min + fac * state.wavelength_max;
+    }
+    if (auto error{compiler.runUnitTests(state)}) return error->message;
+    return std::string();
+  }};
+  SUBCASE("The default honors 'use_mipmap: true'") {
+    CHECK(checkNumLevels(true, 3) == "");
+  }
+  SUBCASE("Disabling bakes one level despite 'use_mipmap: true'") {
+    CHECK(checkNumLevels(false, 1) == "");
+    // And the request really was refused, rather than the check above
+    // passing for some unrelated reason.
+    CHECK(checkNumLevels(false, 3) != "");
+  }
+  fs::remove_all(tmpDir);
+}
+
+// Collects log messages mentioning a substring at any level, for
+// asserting on diagnostics that are not warnings.
+class MessageCollector final : public smdl::LogSink {
+public:
+  MessageCollector(std::string needle) : needle(std::move(needle)) {}
+
+  void logMessage(smdl::LogLevel, std::string_view message) override {
+    if (message.find(needle) != std::string_view::npos)
+      messages.emplace_back(message);
+  }
+
+  std::string needle{};
+  std::vector<std::string> messages{};
+};
+
+TEST_CASE("Compiler unused image dropping") {
+  auto tmpDir{fs::temp_directory_path() / "smdl-unused-image-test"};
+  fs::remove_all(tmpDir);
+  fs::create_directories(tmpDir);
+  // Distinct texels, or the two files would content-hash to one image.
+  const uint8_t texelsLive[4] = {32, 64, 96, 128};
+  const uint8_t texelsDead[4] = {1, 2, 3, 4};
+  REQUIRE(!smdl::write8bitImage((tmpDir / "live.png").string(), 2, 2, 1,
+                                texelsLive));
+  REQUIRE(!smdl::write8bitImage((tmpDir / "dead.png").string(), 2, 2, 1,
+                                texelsDead));
+  // 'live.png' is sampled, so its texel pointer must survive into the
+  // optimized module; 'dead.png' contributes only its extent, which is
+  // baked by the probe, so optimization erases every read and the
+  // decode can be skipped. The unit test pins the extent staying valid
+  // after the drop: a comptime-false '#assert' is a compile error.
+  writeFile(tmpDir / "main.smdl",
+            "#smdl\nimport ::df::*;\nimport ::tex::*;\n"
+            "export material M() = let {\n"
+            "  auto tLive = texture_2d(\"live.png\", tex::gamma_srgb);\n"
+            "  auto tDead = texture_2d(\"dead.png\", tex::gamma_srgb);\n"
+            "  auto c = ::tex::lookup_float3(tLive, float2(0.5));\n"
+            "  auto s = float(::tex::width(tDead)) / 4.0;\n"
+            "} in material(surface: material_surface(\n"
+            "  scattering: df::diffuse_reflection_bsdf(tint: color(s * c))));"
+            "\n"
+            "unit_test \"Extent survives the drop\" {\n"
+            "  #assert(tex::width(texture_2d(\"dead.png\")) == 2);\n"
+            "}\n");
+  auto build{[&](smdl::OptLevel optLevel) {
+    smdl::Compiler compiler{};
+    compiler.enableUnitTests = true;
+    if (auto error{compiler.add((tmpDir / "main.smdl").string())})
+      return error->message;
+    if (auto error{compiler.compile(optLevel)}) return error->message;
+    if (auto error{compiler.jitCompile()}) return error->message;
+    return std::string();
+  }};
+  SUBCASE("An unread image is dropped at O2 and a sampled one is kept") {
+    auto &dropped{
+        smdl::Logger::get().addSink<MessageCollector>("Dropping image")};
+    CHECK(build(smdl::OPT_LEVEL_O2) == "");
+    REQUIRE(dropped.messages.size() == 1);
+    CHECK(dropped.messages[0].find("dead.png") != std::string::npos);
+    smdl::Logger::get().reset();
+  }
+  SUBCASE("Nothing is provably unused at OPT_LEVEL_NONE") {
+    auto &dropped{
+        smdl::Logger::get().addSink<MessageCollector>("Dropping image")};
+    CHECK(build(smdl::OPT_LEVEL_NONE) == "");
+    CHECK(dropped.messages.empty());
+    smdl::Logger::get().reset();
+  }
+  fs::remove_all(tmpDir);
+}
+
+TEST_CASE("Compiler wavelengthBaseMax") {
+  auto tmpDir{fs::temp_directory_path() / "smdl-compiler-wavelength-test"};
+  fs::remove_all(tmpDir);
+  // One module whose in-JIT unit test exercises the spectral machinery
+  // that is easiest to get wrong away from the default 16-band grid:
+  // comparisons over 'color' (at 1 band the compare result is a scalar
+  // bool rather than a bool vector), '#any'/'#all' reductions of those
+  // results, and RGB-to-color construction.
+  writeFile(tmpDir / "spectral.smdl",
+            "#smdl\nimport ::df::*;\n" + materialDef("main") +
+                "unit_test \"Spectral basics\" {\n"
+                "  const color c = color(float3(0.8, 0.5, 0.2));\n"
+                "  #assert(#all(c >= 0.0));\n"
+                "  #assert(#any(color(0.5) > 0.0));\n"
+                "  #assert(#all(color(0.5) == 0.5));\n"
+                "  #assert(!#any(color(0.0) > 0.0));\n"
+                "}\n");
+  for (uint32_t numBands : {1u, 4u, 64u}) {
+    CAPTURE(numBands);
+    smdl::Compiler compiler{numBands};
+    compiler.enableUnitTests = true;
+    REQUIRE(compiler.wavelengthBaseMax == numBands);
+    REQUIRE(buildAll(compiler, {tmpDir / "spectral.smdl"}) == "");
+    REQUIRE(compiler.findMaterial("main") != nullptr);
+    // An endpoint-inclusive uniform grid over the visible; a single band
+    // sits at the midpoint.
+    auto allocator{smdl::BumpPtrAllocator()};
+    auto wavelengths{std::vector<float>(size_t(numBands))};
+    auto state{smdl::State()};
+    state.allocator = &allocator;
+    state.wavelength_min = 380.0f;
+    state.wavelength_max = 720.0f;
+    state.wavelength_base = wavelengths.data();
+    for (uint32_t i = 0; i < numBands; i++) {
+      float fac{numBands > 1 ? float(i) / float(numBands - 1) : 0.5f};
+      wavelengths[i] =
+          (1 - fac) * state.wavelength_min + fac * state.wavelength_max;
+    }
+    REQUIRE(!compiler.runUnitTests(state));
+    // The gray fast path of RGB-to-color is exact at any band count.
+    auto colorBuf{std::vector<float>(size_t(numBands), -1.0f)};
+    compiler.convertRGBToColor(state, smdl::float3(0.5f, 0.5f, 0.5f),
+                               colorBuf.data());
+    for (float band : colorBuf) CHECK(band == 0.5f);
+    // A colored value upsamples to a finite non-negative spectrum.
+    compiler.convertRGBToColor(state, smdl::float3(0.8f, 0.5f, 0.2f),
+                               colorBuf.data());
+    for (float band : colorBuf) {
+      CHECK(band >= 0.0f);
+      CHECK(std::isfinite(band));
+    }
+    // Black converts to black exactly, at any band count.
+    std::fill(colorBuf.begin(), colorBuf.end(), 0.0f);
+    auto rgbOfBlack{compiler.convertColorToRGB(state, colorBuf.data())};
+    CHECK(rgbOfBlack[0] == 0.0f);
+    CHECK(rgbOfBlack[1] == 0.0f);
+    CHECK(rgbOfBlack[2] == 0.0f);
+    // A positive spectrum converts to finite RGB at any band count; the
+    // CIE quadrature only resolves an approximately-gray round trip once
+    // the grid samples the visible densely (see the 64-band check below).
+    std::fill(colorBuf.begin(), colorBuf.end(), 0.5f);
+    auto rgbOfGray{compiler.convertColorToRGB(state, colorBuf.data())};
+    for (int i = 0; i < 3; i++) CHECK(std::isfinite(rgbOfGray[i]));
+    if (numBands == 64) {
+      for (int i = 0; i < 3; i++) {
+        CHECK(rgbOfGray[i] > 0.3f);
+        CHECK(rgbOfGray[i] < 0.8f);
+      }
+    }
+    // Explicit per-band quadrature weights. Uniform weights of
+    // `(max - min) / N` reproduce the null-weight result up to
+    // summation order, and scaling every weight scales the result
+    // linearly.
+    auto weights{std::vector<float>(
+        size_t(numBands),
+        (state.wavelength_max - state.wavelength_min) / float(numBands))};
+    state.wavelength_weight = weights.data();
+    auto rgbWeighted{compiler.convertColorToRGB(state, colorBuf.data())};
+    for (int i = 0; i < 3; i++)
+      CHECK(rgbWeighted[i] ==
+            doctest::Approx(rgbOfGray[i]).epsilon(1e-4).scale(1.0));
+    for (auto &weight : weights) weight *= 2.0f;
+    auto rgbDoubled{compiler.convertColorToRGB(state, colorBuf.data())};
+    for (int i = 0; i < 3; i++)
+      CHECK(rgbDoubled[i] ==
+            doctest::Approx(2.0f * rgbWeighted[i]).epsilon(1e-5).scale(1.0));
+    state.wavelength_weight = nullptr;
   }
   fs::remove_all(tmpDir);
 }

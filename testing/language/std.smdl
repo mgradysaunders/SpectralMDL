@@ -1,0 +1,14 @@
+#smdl
+
+import ::std::*;
+
+// `::std` re-exports the entire public API of the standard modules,
+// including the annotations of `::anno` since the spec makes std
+// re-export eight modules, not seven.
+export const int STD_ANNO_PROBE = 1 [[std::hidden()]];
+
+unit_test "std re-exports anno and the standard modules" {
+  #assert(STD_ANNO_PROBE == 1);
+  #assert(std::PI ~== |1e-6| $PI);
+  #assert(std::data_lookup_uniform_int("smdl_absent", 3) == 3);
+}

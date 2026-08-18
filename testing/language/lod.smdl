@@ -1,0 +1,68 @@
+#smdl
+
+import ::math::*;
+import ::tex::*;
+using lod = ::extras::lod;
+import lod::*;
+
+// The footprint-driven helpers under the all-zero LOD state, where
+// everything must be the identity regardless of `uv_scale`; then with a
+// populated state, where `uv_scale` must scale the footprint linearly and
+// shift the mip level by exactly one per doubling.
+
+unit_test "LOD zero-state identity ignores uv_scale" {
+  const auto tex = texture_2d("4x4.png", tex::gamma_linear);
+  #assert(lod::filter_width() == 0.0);
+  #assert(lod::filter_width(uv_scale: 4.0) == 0.0);
+  #assert(lod::filter_width_texels(tex, uv_scale: 4.0) == 0.0);
+  #assert(lod::mip_level(tex, uv_scale: 4.0) == 0.0);
+  #assert(lod::detail_fade(0.002, 0.01, uv_scale: 4.0) == 1.0);
+  #assert(lod::detail_fade_texels(tex, uv_scale: 4.0) == 1.0);
+}
+
+unit_test "Filter width scales with uv_scale" {
+  $state.cone_width = 0.01;
+  $state.texture_density[0] = 4.0; // sqrt => 2 UV units per world unit
+  #assert(math::abs(lod::filter_width() - 0.02) < 1e-7);
+  #assert(math::abs(lod::filter_width(uv_scale: 2.0) - 0.04) < 1e-7);
+  #assert(math::abs(lod::filter_width(uv_scale: 0.5) - 0.01) < 1e-7);
+  // Mirrored UVs: the sign of the multiplier is irrelevant.
+  #assert(math::abs(lod::filter_width(uv_scale: -2.0) - 0.04) < 1e-7);
+  // Anisotropic scale: the larger axis wins (conservative).
+  #assert(math::abs(lod::filter_width(uv_scale: float2(0.5, 2.0)) - 0.04) < 1e-7);
+  // The scale rides the per-space density.
+  $state.texture_density[1] = 16.0;
+  #assert(math::abs(lod::filter_width(1, uv_scale: 2.0) - 0.08) < 1e-7);
+}
+
+unit_test "Mip level shifts one level per UV doubling" {
+  const auto tex = texture_2d("4x4.png", tex::gamma_linear);
+  // The level is computed from half the footprint width, so full
+  // resolution deliberately holds until the footprint exceeds two
+  // texels. A footprint of 0.5 UV over the 4-texel extent sits exactly
+  // at that threshold, and each doubling of the UV multiplier shrinks
+  // the effective texels by half, raising the level by exactly 1.
+  $state.cone_width = 0.5;
+  $state.texture_density[0] = 1.0;
+  #assert(math::abs(lod::mip_level(tex) - 0.0) < 1e-6);
+  #assert(math::abs(lod::mip_level(tex, uv_scale: 2.0) - 1.0) < 1e-6);
+  #assert(math::abs(lod::mip_level(tex, uv_scale: 4.0) - 2.0) < 1e-6);
+  // And scaling down can never go sharper than full resolution.
+  #assert(math::abs(lod::mip_level(tex, uv_scale: 0.25) - 0.0) < 1e-6);
+  // A one-texel footprint stays at full resolution: erring sharp lets
+  // the Monte Carlo sampling resolve the detail.
+  $state.cone_width = 0.25;
+  #assert(math::abs(lod::mip_level(tex, uv_scale: 2.0) - 0.0) < 1e-6);
+}
+
+unit_test "Detail fade thresholds live in scaled UV units" {
+  $state.cone_width = 0.01;
+  $state.texture_density[0] = 1.0;
+  // Footprint 0.01 UV: below the start, no fade.
+  #assert(lod::detail_fade(0.02, 0.04) == 1.0);
+  // Tiled 4x the features are 4x smaller, so the same thresholds retire
+  // the detail: the scaled footprint 0.04 is at the end.
+  #assert(math::abs(lod::detail_fade(0.02, 0.04, uv_scale: 4.0) - 0.0) < 1e-6);
+  // Halfway through the window the smoothstep is exactly one half.
+  #assert(math::abs(lod::detail_fade(0.02, 0.04, uv_scale: 3.0) - 0.5) < 1e-6);
+}

@@ -1,0 +1,206 @@
+#smdl
+
+import ::tex::*;
+
+void run_4x4_tests(texture_2d t) {
+  #assert(tex::texture_isvalid(t));
+  #assert(tex::width(t) == 4);
+  #assert(tex::height(t) == 4);
+
+  // 4x4.png:
+  // R channel is 0, 64, 128, 255 along X
+  // G channel is 0, 64, 128, 255 along Y
+  // B channel is 0
+  // A channel is 255
+  //
+  //            [64, 255, 0, 255]      [255, 255, 0, 255]
+  //                  |                   |
+  // 4 +---------+----|----+---------+----|----+ 
+  //   |         |    |    |         |    |    |
+  //   |    *    |    *    |    *    |    *    |
+  //   |         |         |         |         |
+  // 3 +---------+---------+---------+---------+
+  //   |         |         |         |         |
+  //   |    *    |    *    |    *    |    *    |
+  //   |         |         |         |         |
+  // 2 +---------+---------+---------+---------+
+  //   |         |         |         |         |
+  //   |    *    |    *    |    *    |    *----|----[255, 64, 0, 255]
+  //   |         |         |         |         |
+  // 1 +---------+---------+---------+---------+
+  //   |         |         |         |         |
+  //   |    *    |    *    |    *    |    *    |
+  //   |    |    |         |         |         |
+  // 0 +----|----+---------+---------+---------+
+  //   0    |    1         2         3         4
+  //        |
+  //    [0, 0, 0, 255]
+  //
+  // (X=0, Y=0) => (U=0, V=0) is the LOWER LEFT
+  // (X=4, Y=4) => (U=1, V=1) is the TOP RIGHT
+  const auto incr = int[4](0, 64, 128, 255);
+  for (int x = 0; x < 4; x++)
+    for (int y = 0; y < 4; y++) {
+      #assert(#all(tex::texel_float4(t, int2(x, y)) ~== |1e-5| float4(incr[x], incr[y], 0.0, 255.0) / 255.0));
+    }
+
+  // Test linear interpolation.
+  #assert(#all(tex::lookup_float4(t, float2(0.25, 0.5)) ~== |1e-5| float4(32.0, 96.0, 0.0, 255.0) / 255.0));
+  #assert(#all(tex::lookup_float4(t, float2(0.5, 0.75)) ~== |1e-5| float4(96.0, 191.5, 0.0, 255.0) / 255.0));
+
+  // The lookup wrap mode is 'wrap_repeat' by default. So evaluating at 0 or 1 will interpolate between
+  // the opposite borders of the image.
+  #assert(#all(tex::lookup_float4(t, float2(0.0, 0.0)) ~== |1e-5| float4(127.5, 127.5, 0.0, 255.0) / 255.0));
+  #assert(#all(tex::lookup_float4(t, float2(1.0, 1.0)) ~== |1e-5| float4(127.5, 127.5, 0.0, 255.0) / 255.0));
+  #assert(#all(tex::lookup_float4(t, float2(1.0, 1.0), wrap_u: tex::wrap_clamp) ~== |1e-5| float4(255.0, 127.5, 0.0, 255.0) / 255.0));
+  #assert(#all(tex::lookup_float4(t, float2(1.0, 0.0), wrap_v: tex::wrap_clamp) ~== |1e-5| float4(127.5, 0.0, 0.0, 255.0) / 255.0));
+
+  // Test cropping. Setting 'crop_u: float2(0.0, 0.75)' and 'crop_v: float2(0.25, 1.0)' should restrict to the 3x3 region
+  // between (X=0, Y=1) and (X=3, Y=4). Then interpolating at (2/3, 1/3) should line up with the center of the uncropped
+  // image.
+  #assert(#all(tex::lookup_float4(
+                 t,
+                 float2(2.0, 1.0) / 3.0,
+                 crop_u: float2(0.0, 0.75),
+                 crop_v: float2(0.25, 1.0),
+               ) ~== |1e-5| float4(96.0, 96.0, 0.0, 255.0) / 255.0));
+
+  // Test the mip chain: 4x4 -> 2x2 -> 1x1. The callers below must
+  // construct with 'use_mipmap: true', since mip filtering is opt in.
+  #assert(t.num_levels == 3);
+
+  // At 'lod: 0.0' the trilinear lookup must reproduce the unfiltered
+  // lookup exactly.
+  #assert(#all(tex::lookup_float4_lod(t, float2(0.25, 0.5), lod: 0.0) == tex::lookup_float4(t, float2(0.25, 0.5))));
+  #assert(#all(tex::lookup_float4_lod(t, float2(0.9, 0.1), lod: 0.0) == tex::lookup_float4(t, float2(0.9, 0.1))));
+
+  // Level 1 is the 2x2 box average: its (0, 0) texel averages R over
+  // X in {0, 1} and G over Y in {0, 1}, both (0 + 64) / 2 = 32. The
+  // tolerance covers 8-bit quantization of the stored levels.
+  #assert(#all(tex::lookup_float4_lod(t, float2(0.25, 0.25), lod: 1.0) ~== |4e-3| float4(32.0, 32.0, 0.0, 255.0) / 255.0));
+
+  // The last level is the global average, (0 + 64 + 128 + 255) / 4 =
+  // 111.75, and the lod clamps to it.
+  #assert(#all(tex::lookup_float4_lod(t, float2(0.7, 0.3), lod: 2.0) ~== |4e-3| float4(111.75, 111.75, 0.0, 255.0) / 255.0));
+  #assert(#all(tex::lookup_float4_lod(t, float2(0.7, 0.3), lod: 10.0) ~== |4e-3| float4(111.75, 111.75, 0.0, 255.0) / 255.0));
+
+  // A fractional lod blends the straddling levels, here halfway
+  // between 32 and 111.75.
+  #assert(#all(tex::lookup_float4_lod(t, float2(0.25, 0.25), lod: 1.5) ~== |8e-3| float4(71.875, 71.875, 0.0, 255.0) / 255.0));
+
+  // The scalar wrapper takes the first channel.
+  #assert(tex::lookup_float_lod(t, float2(0.25, 0.25), lod: 1.0) ~== |4e-3| 32.0 / 255.0);
+}
+
+unit_test "Texture 2D tests (4x4.png)" {
+  run_4x4_tests(texture_2d("4x4.png", tex::gamma_linear, use_mipmap: true));
+}
+
+unit_test "Texture 2D tests (4x4.exr)" {
+  run_4x4_tests(texture_2d("4x4.exr", tex::gamma_linear, use_mipmap: true));
+}
+
+unit_test "Wrap clip" {
+  const auto t = texture_2d("4x4.png", tex::gamma_linear);
+  // Lookups outside [0, 1) on a clipped axis return zero -- including at
+  // exactly 1.0, which the repeat mode would wrap to the opposite border.
+  #assert(#all(tex::lookup_float4(t, float2(+1.5, 0.5), wrap_u: tex::wrap_clip) == float4(0.0)));
+  #assert(#all(tex::lookup_float4(t, float2(-0.5, 0.5), wrap_u: tex::wrap_clip) == float4(0.0)));
+  #assert(#all(tex::lookup_float4(t, float2(1.0, 0.5), wrap_u: tex::wrap_clip) == float4(0.0)));
+  #assert(#all(tex::lookup_float4(t, float2(0.5, +1.5), wrap_v: tex::wrap_clip) == float4(0.0)));
+  #assert(#all(tex::lookup_float4(t, float2(0.5, -0.5), wrap_v: tex::wrap_clip) == float4(0.0)));
+  // The unclipped axis still wraps independently.
+  #assert(#any(tex::lookup_float4(t, float2(1.5, 0.5), wrap_v: tex::wrap_clip) != float4(0.0)));
+  // Inside [0, 1), clip matches the default lookup.
+  #assert(#all(tex::lookup_float4(t, float2(0.25, 0.5), wrap_u: tex::wrap_clip, wrap_v: tex::wrap_clip) //
+               ~== |1e-5| tex::lookup_float4(t, float2(0.25, 0.5))));
+  // The LOD path clips identically.
+  #assert(#all(tex::lookup_float4_lod(t, float2(1.5, 0.5), lod: 0.0, wrap_u: tex::wrap_clip) == float4(0.0)));
+}
+
+unit_test "Texture 2D mip filtering is opt in" {
+  const auto t = texture_2d("4x4.png", tex::gamma_linear);
+  const auto tMips = texture_2d("4x4.png", tex::gamma_linear, use_mipmap: true);
+  // The default reads level 0 only. The same file referenced both ways
+  // shares one decoded image, exactly as an sRGB and a linear reference
+  // do: the level count is a property of the texture. The opt-out
+  // deliberately comes first here, since the chain must appear for a
+  // reference the compiler has not seen yet.
+  #assert(t.num_levels == 1);
+  #assert(tMips.num_levels == 3);
+  // Level 0 must be untouched by the opt-out.
+  #assert(tex::width(t) == 4);
+  #assert(tex::height(t) == 4);
+  #assert(#all(tex::texel_float4(t, int2(1, 2)) == tex::texel_float4(tMips, int2(1, 2))));
+  #assert(#all(tex::lookup_float4(t, float2(0.25, 0.5)) == tex::lookup_float4(tMips, float2(0.25, 0.5))));
+  // Every lod must clamp to level 0.
+  #assert(#all(tex::lookup_float4_lod(t, float2(0.25, 0.5), lod: 2.0) == tex::lookup_float4(t, float2(0.25, 0.5))));
+  #assert(#all(tex::lookup_float4_lod(t, float2(0.7, 0.3), lod: 10.0) == tex::lookup_float4(t, float2(0.7, 0.3))));
+  // 'use_mipmap' works as a named argument with the gamma defaulted.
+  const auto t2 = texture_2d("4x4.png", use_mipmap: true);
+  #assert(t2.num_levels == 3);
+}
+
+unit_test "sRGB decode is the piecewise IEC curve" {
+  const auto tRaw = texture_2d("4x4.png", tex::gamma_linear);
+  const auto tDec = texture_2d("4x4.png", tex::gamma_srgb);
+  for (int y = 0; y < 4; y++) {
+    for (int x = 0; x < 4; x++) {
+      const auto raw = tex::texel_float4(tRaw, int2(x, y));
+      const auto dec = tex::texel_float4(tDec, int2(x, y));
+      const auto expected = #select(raw.xyz <= 0.04045, raw.xyz * (1.0 / 12.92), #pow((raw.xyz + 0.055) * (1.0 / 1.055), 2.4));
+      #assert(#all(dec.xyz ~== |1e-6| expected));
+      #assert(dec.w == raw.w); // Alpha is never decoded.
+    }
+  }
+  // The old gamma-2.2 approximation must NOT match away from the
+  // endpoints: 64/255 decodes to ~0.0513 piecewise but ~0.0477 by the
+  // power curve, so this pins the piecewise behavior specifically.
+  const auto mid = tex::texel_float4(tDec, int2(1, 0)).x;
+  #assert(mid ~== |1e-4| 0.05126);
+}
+
+unit_test "Frame parameters accepted and ignored" {
+  const auto t = texture_2d("4x4.png", tex::gamma_linear);
+  #assert(tex::width(t, int2(0), 2.0) == 4);
+  #assert(tex::height(t, int2(0), 2.0) == 4);
+  #assert(tex::first_frame(t) == 0);
+  #assert(tex::last_frame(t) == 0);
+  #assert(#all(tex::texel_float4(t, int2(1, 1), int2(0), 2.0) == tex::texel_float4(t, int2(1, 1))));
+  #assert(#all(tex::lookup_float4(t, float2(0.4, 0.6), frame: 2.0) == tex::lookup_float4(t, float2(0.4, 0.6))));
+  #assert(#all(tex::lookup_float3(t, float2(0.4, 0.6), frame: 2.0) == tex::lookup_float3(t, float2(0.4, 0.6))));
+  #assert(tex::lookup_float(t, float2(0.4, 0.6), frame: 2.0) == tex::lookup_float(t, float2(0.4, 0.6)));
+}
+
+unit_test "Texture 3D and cube stubs" {
+  // A default 'texture_3d' is an invalid texture: it reports invalid
+  // and every lookup and texel fetch returns zero, so standard MDL
+  // that references a missing volume resolves rather than failing at
+  // compile time. The cube type remains an honest stub.
+  const auto t3 = texture_3d();
+  #assert(!tex::texture_isvalid(t3));
+  #assert(tex::width(t3) == 0);
+  #assert(tex::height(t3) == 0);
+  #assert(tex::depth(t3) == 0);
+  #assert(tex::first_frame(t3) == 0);
+  #assert(tex::last_frame(t3) == 0);
+  #assert(#all(tex::lookup_float4(t3, float3(0.5)) == float4(0.0)));
+  #assert(#all(tex::lookup_float3(t3, float3(0.5)) == float3(0.0)));
+  #assert(#all(tex::lookup_float2(t3, float3(0.5)) == float2(0.0)));
+  #assert(tex::lookup_float(t3, float3(0.5)) == 0.0);
+  #assert(#all(tex::lookup_color(t3, float3(0.5)) == color(0.0)));
+  #assert(#all(tex::texel_float4(t3, int3(0)) == float4(0.0)));
+  #assert(#all(tex::texel_float3(t3, int3(0)) == float3(0.0)));
+  #assert(#all(tex::texel_float2(t3, int3(0)) == float2(0.0)));
+  #assert(tex::texel_float(t3, int3(0)) == 0.0);
+  #assert(#all(tex::texel_color(t3, int3(0)) == color(0.0)));
+  const auto tc = texture_cube();
+  #assert(!tex::texture_isvalid(tc));
+  #assert(tex::width(tc) == 0);
+  #assert(tex::height(tc) == 0);
+  #assert(#all(tex::lookup_float4(tc, float3(0.5)) == float4(0.0)));
+  #assert(#all(tex::lookup_float3(tc, float3(0.5)) == float3(0.0)));
+  #assert(#all(tex::lookup_float2(tc, float3(0.5)) == float2(0.0)));
+  #assert(tex::lookup_float(tc, float3(0.5)) == 0.0);
+  #assert(#all(tex::lookup_color(tc, float3(0.5)) == color(0.0)));
+}

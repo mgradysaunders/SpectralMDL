@@ -64,6 +64,15 @@ expandPathVariables(std::string_view path);
 [[nodiscard]] SMDL_EXPORT std::string
 makePathCanonical(std::string path) noexcept;
 
+/// Make path absolute.
+///
+/// \note
+/// This does not throw. If the implementation fails for any reason, the input
+/// path is returned unchanged.
+///
+[[nodiscard]] SMDL_EXPORT std::string
+makePathAbsolute(std::string path) noexcept;
+
 /// Make path relative to working directory.
 ///
 /// \note
@@ -72,6 +81,16 @@ makePathCanonical(std::string path) noexcept;
 ///
 [[nodiscard]] SMDL_EXPORT std::string
 makePathRelative(std::string path) noexcept;
+
+/// Convert to the best path for printing: relative path, absolute path, or
+/// the input path unchanged, whichever is shortest.
+///
+/// \note
+/// This does not throw. If the implementation fails for any reason, the input
+/// path is returned unchanged.
+///
+[[nodiscard]] SMDL_EXPORT std::string
+bestPathForPrinting(std::string path) noexcept;
 
 /// Determine parent path.
 ///

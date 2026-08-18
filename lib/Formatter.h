@@ -521,7 +521,7 @@ private:
     llvm::TypeSwitch<T *, void>(&node)
         .template Case<Ts...>([&](auto each) { write(*each); })
         .Default([](T *) {
-          SMDL_SANITY_CHECK(false, "unhandled AST node in Formatter");
+          SMDL_SANITY_CHECK_MSG(false, "unhandled AST node in Formatter");
         });
   }
 

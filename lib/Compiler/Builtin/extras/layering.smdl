@@ -1,0 +1,230 @@
+// NOTE: This module is non-standard!
+/// Layering, which blends several independently tiled materials across a
+/// surface according to arbitrary driving fields: painted coverage maps,
+/// terrain slope, altitude, noise, or anything else the material cares to
+/// compute.
+///
+/// This is the companion of `::extras::hex` and sits one level above
+/// it: hex tiling hides the repetition within one source texture, while this
+/// module decides which of several sources covers the shading point. The two
+/// compose without touching: build one hex tiling per layer, look up each
+/// layer's maps through it, and use this module to shape and resolve the
+/// blend among the layers. The driving fields themselves are unique over the
+/// surface and do not repeat, so they take plain `tex::lookup_*()` and need
+/// no hex machinery at all.
+///
+/// The vocabulary deliberately mirrors the weights layer of the hex module,
+/// generalized from the three tiles fixed by its lattice to any number of
+/// layers fixed by the caller:
+///
+///   1. `layer_slope()`, `layer_altitude()`, `layer_mask()`, and
+///      `layer_band()` build raw coverage weights from the shading state.
+///   2. `layer_normalize()`, `layer_modulate()`, `layer_contrast()`, and
+///      `layer_compete()` shape them.
+///   3. `layer_blend()` and `layer_select()` combine or choose values using
+///      them, and `layer_select_remap()` additionally returns a reusable
+///      random number so a layer choice can chain into a hex tile choice.
+///
+/// The deterministic path evaluates every layer and costs N of everything.
+/// The stochastic path is the one to prefer under Monte Carlo: choose the
+/// layer with `layer_select_remap()`, then resolve that one layer's hex
+/// tiling with the remapped random number, for a single texture lookup per
+/// map per sample however many layers there are. As with `hex_select()`, the
+/// average over samples reproduces the weighted blend exactly, and every
+/// sample is a value that genuinely occurs in some source, which is the
+/// correct thing when the value feeds a non-linearity such as a roughness or
+/// a normal.
+///
+/// There is deliberately no variance-preserving blend here: layer
+/// transitions are localized bands where softness is the intent, unlike the
+/// hex lattice where every point is a three-way transition, and each layer's
+/// own contrast is already restored inside its hex lookup.
+///
+/// NOTE: The size-generic functions require their array arguments to have
+/// the same size, which is the number of layers.
+///
+/// References:
+///   Mishkinis (2013): Advanced Terrain Texture Splatting
+///   Pharr, Jakob, Humphreys (2023): Physically Based Rendering, 4th ed.
+#smdl
+
+import ::math::*;
+import ::state::*;
+
+//--{ Masks
+
+/// The slope of the shading normal in radians relative to `up`, which must
+/// be unit length: `0` on flat ground, `pi / 2` on a vertical wall, beyond
+/// `pi / 2` on an overhang.
+@(macro)
+export float layer_slope(const float3 up = float3(0.0, 0.0, 1.0)) {
+  const auto normal(math::normalize(state::transform_normal(state::coordinate_internal, state::coordinate_world, state::normal())));
+  return #acos(math::clamp(math::dot(normal, up), -1.0, 1.0));
+}
+
+/// The world-space height of the shading position along `up`, which must be
+/// unit length.
+@(macro)
+export float layer_altitude(const float3 up = float3(0.0, 0.0, 1.0)) = //
+  math::dot(state::transform_point(state::coordinate_internal, state::coordinate_world, state::position()), up);
+
+/// The smooth mask that rises from zero to one as `x` crosses from `edge0`
+/// to `edge1`, and holds at one thereafter. Reversing the edges yields the
+/// falling mask. This is `math::smoothstep()` with the value first, in the
+/// reading order the rest of the `layer_*` family uses.
+@(pure macro)
+export float layer_mask(const float x, const float edge0, const float edge1) = //
+  math::smoothstep(edge0, edge1, x);
+
+/// The smooth band mask that rises from zero to one over `rise` and falls
+/// back to zero over `fall`, for carving coverage out of a scalar field:
+/// snow between two altitudes, grass below a slope angle, and so on.
+@(pure macro)
+export float layer_band(const float x, const float2 rise, const float2 fall) = //
+  layer_mask(x, rise.x, rise.y) * layer_mask(x, fall.y, fall.x);
+
+//--}
+
+//--{ Weights
+
+/// Normalizes blending weights to be non-negative and sum to one, falling
+/// back to a uniform split if they have all been driven to zero.
+@(pure macro)
+export auto layer_normalize(float[<N>] w) {
+  float sum(0.0);
+  for (int i = 0; i < N; i++) {
+    w[i] = #max(w[i], 0.0);
+    sum += w[i];
+  }
+  if (sum > 1e-20) {
+    const auto invSum(1.0 / sum);
+    for (int i = 0; i < N; i++)
+      w[i] *= invSum;
+  } else {
+    for (int i = 0; i < N; i++)
+      w[i] = 1.0 / N;
+  }
+  return w;
+}
+
+/// Modulates blending weights by a per-layer significance metric,
+/// renormalizing afterward.
+///
+/// This is `hex_modulate()` generalized to N layers: each weight is scaled
+/// by how much its layer matters at this position, so the transition is
+/// diffused by the content instead of cutting straight across it. The
+/// `strength` is the extent to which the metric matters, so that the
+/// effective factor is `1 - strength + strength * metric`; zero ignores it
+/// entirely.
+@(pure macro)
+export auto layer_modulate(float[<N>] w, const float[<N>] metric, const float strength = 0.6) {
+  for (int i = 0; i < N; i++)
+    w[i] *= 1.0 - strength + strength * #max(metric[i], 0.0);
+  return layer_normalize(w);
+}
+
+/// Applies Perlin's S-curve ramp to blending weights, renormalizing
+/// afterward: `hex_contrast()` generalized to N layers. A `contrast` of 0.5
+/// is exactly the identity; above sharpens the transitions, below softens
+/// them.
+@(pure macro)
+export auto layer_contrast(float[<N>] w, const float contrast = 0.5) {
+  return w if (contrast == 0.5);
+  const auto k(#log(#max(1e-4, 1.0 - contrast)) / #log(0.5));
+  for (int i = 0; i < N; i++) {
+    const auto s(w[i] < 0.5 ? 0.0 : 2.0);
+    const auto m(2.0 * (1.0 - s));
+    w[i] = 0.5 * s + 0.25 * m * #pow(#max(0.0, s + w[i] * m), k);
+  }
+  return layer_normalize(w);
+}
+
+/// Resolves blending weights by height competition, renormalizing
+/// afterward.
+///
+/// This is the height-based blending of terrain splatting: each layer bids
+/// its weighted height `w * height`, and only the layers within `transition`
+/// of the highest bid survive, so at a boundary the taller features of one
+/// layer break through the other and the transition follows the texture
+/// content instead of the smooth driving mask. It is the hard-edged cousin
+/// of `layer_modulate()`: modulation diffuses a transition by content, while
+/// competition carves it. The natural `height` for a layer is its height or
+/// displacement map read through its own hex tiling.
+///
+/// The bid is the product of weight and height rather than the published
+/// sum, so a layer with zero coverage can never appear no matter how tall
+/// its texture, and the small floor keeps the plain weights in charge
+/// wherever the heights tie or vanish. As `transition` grows the result
+/// approaches the unresolved weights; toward zero it approaches
+/// winner-take-all.
+@(pure macro)
+export auto layer_compete(float[<N>] w, const float[<N>] height, const float transition = 0.2) {
+  float peak(0.0);
+  for (int i = 0; i < N; i++)
+    peak = #max(peak, w[i] * #max(height[i], 0.0));
+  const auto t(#max(transition, 1e-4));
+  for (int i = 0; i < N; i++)
+    w[i] *= #max(w[i] * #max(height[i], 0.0) - peak + t, 0.0) + 1e-6 * t;
+  return layer_normalize(w);
+}
+
+//--}
+
+//--{ Blending
+
+/// The weighted blend of N values of any type.
+@(pure macro)
+export auto layer_blend(const float[<N>] w, const auto[<N>] values) {
+  auto result(w[0] * values[0]);
+  for (int i = 1; i < N; i++)
+    result += w[i] * values[i];
+  return result;
+}
+
+/// The index of one layer chosen stochastically, with probability equal to
+/// its weight, given a canonical random number `xi` in `[0, 1)` and weights
+/// that sum to one, as every function above produces.
+///
+/// Averaged over many samples this reproduces `layer_blend()` exactly; see
+/// `hex_select()` for why that is the preferable way to resolve values that
+/// feed non-linearities, and `layer_select_remap()` for the form that chains
+/// into a further choice.
+@(pure macro)
+export int layer_select(const float[<N>] w, const float xi) {
+  float c(0.0);
+  for (int i = 0; i < N - 1; i++) {
+    c += w[i];
+    return i if (xi < c);
+  }
+  return N - 1;
+}
+
+/// A stochastic layer choice: the chosen index together with the random
+/// number remapped to be uniform again, so that one canonical random number
+/// can drive a chain of choices.
+export struct layer_choice {
+  /// The index of the chosen layer.
+  int index = 0;
+
+  /// The remapped random number, uniform on `[0, 1)` conditioned on the
+  /// choice, ready to drive `hex_select()` within the chosen layer.
+  float xi = 0.0;
+};
+
+/// The stochastic layer choice at `xi`, with remapping: conditioned on
+/// landing in the chosen layer's interval, the leftover fraction of `xi` is
+/// uniform on `[0, 1)` again, so it is safe to reuse for a further choice such
+/// as the hex tile within the chosen layer, and one random number buys the
+/// whole chain. The reuse correlates the two choices slightly, which the
+/// decorrelated per-layer lattices render harmless.
+@(pure macro)
+export layer_choice layer_select_remap(const float[<N>] w, const float xi) {
+  float c(0.0);
+  for (int i = 0; i < N - 1; i++) {
+    return layer_choice(index: i, xi: #min((xi - c) / w[i], 0.99999994)) if (xi < c + w[i]);
+    c += w[i];
+  }
+  return layer_choice(index: N - 1, xi: #min((xi - c) / #max(1.0 - c, 1e-20), 0.99999994));
+}
+
+//--}

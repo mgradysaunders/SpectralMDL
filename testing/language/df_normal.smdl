@@ -1,0 +1,194 @@
+#smdl
+
+import ::df::*;
+import ::math::*;
+
+// Regression tests for the shading normal bend in `df.smdl`.
+//
+// A tangent-space normal map (or an interpolated vertex normal on a coarse
+// mesh) routinely tips the shading normal far enough that the shading frame
+// puts a direction behind the surface while the geometry has it in front.
+// Rejecting outright painted a hard black contour along the locus where the
+// shading cosine changes sign. `bendShadingNormal()` flattens the shading
+// normal back toward the geometric normal by the least amount that keeps
+// both directions on the geometric side of the shading horizon, so the
+// evaluation stays finite, positive, and continuous through the contour.
+
+// A unit normal tilted about 64 degrees off the geometric normal, which is
+// strong but well within what a normal map can encode. Spelled out rather
+// than normalized because a module-scope initializer must fold to a
+// constant.
+const auto TILTED = float3(0.9, 0.0, 0.435889894);
+
+struct EvaluateResult {
+  color f = color(0);
+  float2 pdf = float2(0);
+  bool success = false;
+};
+
+EvaluateResult evaluate(
+  const bsdf scattering,
+  const float3 normal,
+  float3 wo,
+  float3 wi,
+  const bool isImportance = false,
+) {
+  auto mat = material(
+    ior: 1.4,
+    surface: material_surface(scattering: scattering),
+    geometry: material_geometry(normal: normal),
+  );
+  auto instance = _MaterialInstance(&mat);
+  instance.flags |= isImportance ? 1 : 0; // MATERIAL_TRANSPORT_IMPORTANCE
+  instance.exterior_ior = 1.0;
+  float pdfFwd = 0;
+  float pdfRev = 0;
+  color f = color(0);
+  if (df::_scatterEvaluate(&instance, &wo, &wi, &pdfFwd, &pdfRev, cast<&float>(&f)))
+    return EvaluateResult(f, float2(pdfFwd, pdfRev), true);
+  else
+    return EvaluateResult();
+}
+
+// The Lambertian value, which is the effective shading cosine over pi and so
+// reads the bent normal back out directly.
+float diffuseAt(const float3 normal, const float3 wo, const float3 wi) {
+  const auto result = evaluate(df::diffuse_reflection_bsdf(tint: 1.0), normal, wo, wi);
+  #assert(result.success);
+  return math::average(result.f);
+}
+
+unit_test "Shading normal bend leaves usable normals alone" {
+  // Both directions clear the shading horizon by a comfortable margin, so
+  // the bend must be the exact identity and the Lambertian value must be
+  // the unbent shading cosine over pi.
+  const auto wo = math::normalize(float3(0.3, 0.1, 1.0));
+  const auto wi = float3(0.0, 0.0, 1.0);
+  #assert(diffuseAt(TILTED, wo, wi) ~== (1e-5) float(TILTED.z / $PI));
+}
+
+unit_test "Shading normal bend recovers a view below the shading horizon" {
+  // The outgoing direction is in front of the geometry and behind the
+  // shading normal, which is exactly the configuration that used to
+  // evaluate to black.
+  const auto wo = float3(-0.9, 0.0, 0.436);
+  const auto wi = float3(0.0, 0.0, 1.0);
+  #assert(math::dot(TILTED, wo) < 0.0); // Else the test is vacuous
+  const auto result = evaluate(df::diffuse_reflection_bsdf(tint: 1.0), TILTED, wo, wi);
+  #assert(result.success);
+  #assert(#all(result.f > 0.0));
+  #assert(#all(result.pdf > 0.0));
+}
+
+unit_test "Shading normal bend recovers a transmitted direction" {
+  // The mirror case on the transmission side: the incoming direction is
+  // below the geometric surface and above the shading normal.
+  const auto wo = float3(0.0, 0.0, 1.0);
+  const auto wi = float3(0.9, 0.0, -0.436);
+  #assert(math::dot(TILTED, wi) > 0.0); // Else the test is vacuous
+  const auto result = evaluate(df::diffuse_transmission_bsdf(tint: 1.0), TILTED, wo, wi);
+  #assert(result.success);
+  #assert(#all(result.f > 0.0));
+  #assert(#all(result.pdf > 0.0));
+}
+
+unit_test "Shading normal bend is continuous through the horizon" {
+  // A sweep of the outgoing direction away from the shading normal, through
+  // the contour at about 26 degrees where the shading cosine changes sign.
+  // The bend engages gradually before the contour and grows past it, so the
+  // sequence must be strictly increasing with no collapse anywhere.
+  const auto wi = float3(0.0, 0.0, 1.0);
+  const auto f20 = diffuseAt(TILTED, float3(-0.34202, 0.0, 0.93969), wi);
+  const auto f24 = diffuseAt(TILTED, float3(-0.40674, 0.0, 0.91355), wi);
+  const auto f26 = diffuseAt(TILTED, float3(-0.43837, 0.0, 0.89879), wi);
+  const auto f28 = diffuseAt(TILTED, float3(-0.46947, 0.0, 0.88295), wi);
+  const auto f32 = diffuseAt(TILTED, float3(-0.52992, 0.0, 0.84805), wi);
+  const auto f40 = diffuseAt(TILTED, float3(-0.64279, 0.0, 0.76604), wi);
+  // Nothing goes black, and in particular nothing goes black at 26 degrees
+  // and beyond, where the old horizon rejection took over.
+  #assert(f20 > 0.13);
+  #assert((f20 < f24) & (f24 < f26) & (f26 < f28) & (f28 < f32) & (f32 < f40));
+  // The steps stay small, i.e., the bend ramps in rather than snapping.
+  #assert(f24 - f20 < 0.05);
+  #assert(f26 - f24 < 0.05);
+  #assert(f28 - f26 < 0.05);
+  #assert(f32 - f28 < 0.05);
+  #assert(f40 - f32 < 0.05);
+  // Far enough below the shading horizon, the bend is still nowhere near
+  // fully flattened, i.e., it takes the least correction that works.
+  #assert(f40 < float(1 / $PI));
+}
+
+unit_test "Shading normal bend stays reciprocal" {
+  // The bend takes the maximum over both directions, so it is symmetric
+  // under swapping them and the usual bidirectional identities survive it.
+  // A bend driven by the outgoing direction alone would bend the two
+  // orderings differently and break every one of these.
+  const auto wo = float3(-0.9, 0.0, 0.436);
+  const auto wi = math::normalize(float3(0.2, -0.1, 1.0));
+  const auto scattering = df::microfacet_ggx_smith_bsdf(roughness_u: 0.3, tint: 1.0);
+  #assert(math::dot(TILTED, wo) < 0.0); // Else the bend never engages
+  const auto rad01 = evaluate(scattering, TILTED, wo, wi, false);
+  const auto rad10 = evaluate(scattering, TILTED, wi, wo, false);
+  const auto imp01 = evaluate(scattering, TILTED, wo, wi, true);
+  const auto imp10 = evaluate(scattering, TILTED, wi, wo, true);
+  #assert(rad01.success & rad10.success & imp01.success & imp10.success);
+  #assert(#any(rad01.f > 0.0)); // Else the checks pass vacuously
+  #assert(#all(rad01.pdf ~== (1e-4) rad10.pdf.yx));
+  #assert(#all(imp01.pdf ~== (1e-4) imp10.pdf.yx));
+  // The value is cosine weighted by the incoming direction, so reciprocity
+  // reads out through the shading normal correction factor that importance
+  // transport carries.
+  #assert(#all(imp01.f * #abs(wo.z) ~== (1e-4) rad10.f * #abs(wi.z)));
+  #assert(#all(imp10.f * #abs(wi.z) ~== (1e-4) rad01.f * #abs(wo.z)));
+}
+
+unit_test "Shading normal bend covers a layer's own normal" {
+  // The `*_layer` combinators carry their own `normal`, and they test the
+  // horizon themselves before the nested BSDFs ever build a tangent space.
+  // That test has to bend too, or the combinator paints the black contour
+  // one level above the bend. This is the shape every material built from
+  // decoded PBR maps has, since the normal map arrives on the layer.
+  const auto wo = float3(-0.9, 0.0, 0.436);
+  const auto wi = float3(0.0, 0.0, 1.0);
+  #assert(math::dot(TILTED, wo) < 0.0); // Else the test is vacuous
+  const auto layered = df::fresnel_layer(
+    ior: 1.5,
+    layer: df::microfacet_ggx_smith_bsdf(roughness_u: 0.5, multiscatter_tint: 1.0),
+    base: df::diffuse_reflection_bsdf(tint: 1.0),
+    normal: TILTED);
+  const auto result = evaluate(layered, TILTED, wo, wi);
+  #assert(result.success);
+  #assert(#all(result.f > 0.0));
+  #assert(#all(result.pdf > 0.0));
+  // Nesting a layer under a layer, which is what a foliage material does,
+  // must not reintroduce it either.
+  const auto nested = df::weighted_layer(weight: 0.7, layer: layered, base: df::diffuse_transmission_bsdf(tint: 1.0), normal: TILTED);
+  const auto nestedResult = evaluate(nested, TILTED, wo, wi);
+  #assert(nestedResult.success);
+  #assert(#all(nestedResult.f > 0.0));
+}
+
+unit_test "Shading normal bend recovers sampling below the shading horizon" {
+  // The sampling path knows only `wo`, so it bends for `wo` alone; the
+  // evaluation that follows it bends for the sampled direction too. Neither
+  // may reject.
+  auto mat = material(
+    ior: 1.4,
+    surface: material_surface(scattering: df::diffuse_reflection_bsdf(tint: 1.0)),
+    geometry: material_geometry(normal: TILTED),
+  );
+  auto instance = _MaterialInstance(&mat);
+  instance.exterior_ior = 1.0;
+  float4 xi = float4(0.3, 0.7, 0.5, 0.5);
+  float3 wo = float3(-0.9, 0.0, 0.436);
+  float3 wi = float3(0.0);
+  float pdfFwd = 0;
+  float pdfRev = 0;
+  color f = color(0);
+  int isDelta = 0;
+  #assert(bool(df::_scatterSample(&instance, &xi, &wo, &wi, &pdfFwd, &pdfRev, cast<&float>(&f), &isDelta)));
+  #assert(wi.z > 0.0); // Reflection, in the natural tangent space
+  #assert(#all(f > 0.0));
+  #assert(pdfFwd > 0.0);
+}

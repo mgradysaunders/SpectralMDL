@@ -290,8 +290,8 @@ hi def link mdlFormatDirective  PreProc
 hi def link mdlDocTag           Special
 hi def link mdlLineComment      Comment
 hi def link mdlComment          Comment
-hi def link mdlDocLineComment   SpecialComment
-hi def link mdlDocComment       SpecialComment
+hi def link mdlDocLineComment   Comment
+hi def link mdlDocComment       Comment
 
 hi def link mdlBoolean          Boolean
 hi def link mdlNumber           Number

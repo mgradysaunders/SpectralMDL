@@ -73,7 +73,7 @@ public:
   /// Intern the given name. The returned span and the characters it views
   /// are owned by the context, so the result is safe to store in a
   /// `Declaration` regardless of where the argument came from, and the
-  /// same name always interns to the same span — full-name equality is
+  /// same name always interns to the same span: full-name equality is
   /// `data()`/`size()` equality.
   [[nodiscard]] Span<const std::string_view>
   internName(Span<const std::string_view> name);
@@ -198,8 +198,7 @@ public:
   /// Get pointer type with the given depth, where depth is the number of
   /// pointers to add.
   [[nodiscard]] Type *getPointerType(Type *pointeeType, size_t depth) {
-    while (depth-- > 0)
-      pointeeType = getPointerType(pointeeType);
+    while (depth-- > 0) pointeeType = getPointerType(pointeeType);
     return pointeeType;
   }
 
@@ -297,10 +296,19 @@ public:
   }
 
   /// Get compile-time `int` constant.
+  ///
+  /// \note
+  /// The `isSigned` flag matters: without it, a negative `value`
+  /// widened to `uint64_t` no longer fits in 32 bits, and the `APInt`
+  /// constructor (whose fits-check is an assert, compiled out in
+  /// release LLVM) skips `clearUnusedBits()` and produces an
+  /// unnormalized constant that prints correctly but compares unequal
+  /// to the real constant during compile-time folding.
   [[nodiscard]] Value getComptimeInt(int value) {
     return RValue(getIntType(),
                   llvm::ConstantInt::get(getIntType()->llvmType,
-                                         llvm::APInt(sizeof(int) * 8, value)));
+                                         llvm::APInt(sizeof(int) * 8, value,
+                                                     /*isSigned=*/true)));
   }
 
   /// Get compile-time `float` constant.
@@ -322,9 +330,11 @@ public:
     static_assert(std::is_arithmetic_v<T>);
     auto type{getArithmeticType(Scalar::get<T>())};
     if constexpr (std::is_integral_v<T>) {
-      return RValue(type,
-                    llvm::ConstantInt::get(type->llvmType,
-                                           llvm::APInt(sizeof(T) * 8, value)));
+      // See the signedness note on 'getComptimeInt()'.
+      return RValue(type, llvm::ConstantInt::get(
+                              type->llvmType,
+                              llvm::APInt(sizeof(T) * 8, value,
+                                          /*isSigned=*/std::is_signed_v<T>)));
     } else {
       return RValue(
           type, llvm::ConstantFP::get(type->llvmType, llvm::APFloat(value)));
@@ -393,17 +403,27 @@ public:
   }
 
   [[nodiscard]] std::optional<std::string> locate(const std::string &fileName) {
-    return compiler.fileLocator.locate(fileName,
-                                       currentModule->getResourceAnchor(),
-                                       FileLocator::REGULAR_FILES,
-                                       currentModule->getSearchDirs());
+    return compiler.fileLocator.locate(
+        fileName, currentModule->getResourceAnchor(),
+        FileLocator::REGULAR_FILES, currentModule->getSearchDirs());
+  }
+
+  /// Same as `locate()`, but also accepts directories. Used by
+  /// `#loadPBRMaps`, whose argument may name the pack directory
+  /// rather than the `.pbr` manifest inside it.
+  [[nodiscard]] std::optional<std::string>
+  locateDirOrFile(const std::string &fileName) {
+    return compiler.fileLocator.locate(
+        fileName, currentModule->getResourceAnchor(),
+        FileLocator::REGULAR_FILES | FileLocator::DIRS,
+        currentModule->getSearchDirs());
   }
 
   [[nodiscard]] std::vector<FileLocator::ImagePath>
   locateImages(const std::string &fileName) {
-    return compiler.fileLocator.locateImages(
-        fileName, currentModule->getResourceAnchor(),
-        currentModule->getSearchDirs());
+    return compiler.fileLocator.locateImages(fileName,
+                                             currentModule->getResourceAnchor(),
+                                             currentModule->getSearchDirs());
   }
 
 public:
@@ -622,6 +642,16 @@ struct GetType<Matrix<T, N, M>, void> {
   [[nodiscard]] static Type *get(Context &context) {
     return static_cast<ArithmeticType *>(GetType<T>::get(context))
         ->getWithDifferentExtent(context, Extent(N, M));
+  }
+};
+
+template <> struct GetType<RNG, void> {
+  [[nodiscard]] static Type *get(Context &context) {
+    // The builtin 'rng_t' struct compiles from source after 'StateType'
+    // is constructed, so 'State::rng' is mirrored structurally as
+    // 'int64_t[2]'; the startup offset check in 'StateType' proves the
+    // layouts agree. Only the builtin '_random_*' primitives access it.
+    return context.getArrayType(GetType<int64_t>::get(context), 2);
   }
 };
 

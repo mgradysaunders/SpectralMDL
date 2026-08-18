@@ -1,0 +1,19 @@
+schema_version = "1.0.0"
+
+id = "smdl_layout"
+version = "0.4.0"
+name = "SpectralMDL Layout"
+tagline = "Arrange prepared assets and export a .layout scene"
+maintainer = "SpectralMDL"
+type = "add-on"
+
+license = ["SPDX:MIT"]
+
+# 5.0 is where the essentials 'Scatter on Surface' node group arrived, which
+# is what the scatter operator adds.
+blender_version_min = "5.0.0"
+
+# Reading '.asset' manifests and their proxies, and writing the layout,
+# is the whole of what this touches.
+[permissions]
+files = "Read asset manifests and proxies, write the exported layout"

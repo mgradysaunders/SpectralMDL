@@ -1,0 +1,104 @@
+/// Tests for `df::fog_vdf`, the approximate Mie phase function of
+/// Jendersie and d'Eon. The golden values here were produced by an
+/// independent Python transcription of the paper's fits and the
+/// analytic Draine CDF inversion, validated against brute-force
+/// numerical CDF inversion to an error below 2e-4 over the fitted
+/// parameter domain.
+#smdl
+
+import ::df::*;
+
+unit_test "Fog VDF fitted parameters" {
+  // One diameter per fit range, hitting all four piecewise branches.
+  const auto small = df::fog_vdf(particle_size: 0.05);
+  #assert(small.fit_g_hg ~== |1e-5| 0.034500);
+  #assert(small.fit_g_d ~== |1e-5| 0.025661);
+  #assert(small.fit_alpha == 250.0);
+  #assert(small.fit_w_d ~== |1e-5| 0.252181);
+  const auto mid1 = df::fog_vdf(particle_size: 0.8);
+  #assert(mid1.fit_g_hg ~== |1e-5| 0.854880);
+  #assert(mid1.fit_g_d ~== |1e-5| 0.635765);
+  #assert(mid1.fit_alpha == 250.0);
+  #assert(mid1.fit_w_d ~== |1e-5| 0.329837);
+  const auto mid2 = df::fog_vdf(particle_size: 3.0);
+  #assert(mid2.fit_g_hg ~== |1e-5| 0.945945);
+  #assert(mid2.fit_g_d ~== |1e-5| 0.421973);
+  #assert(mid2.fit_alpha ~== |1e-4| 14.34051);
+  #assert(mid2.fit_w_d ~== |1e-5| 0.380939);
+  const auto large = df::fog_vdf(particle_size: 8.0);
+  #assert(large.fit_g_hg ~== |1e-5| 0.984469);
+  #assert(large.fit_g_d ~== |1e-5| 0.541064);
+  #assert(large.fit_alpha ~== |1e-4| 20.32569);
+  #assert(large.fit_w_d ~== |1e-5| 0.473642);
+  // The diameter clamps into the fitted domain.
+  const auto clamped = df::fog_vdf(particle_size: 75.0);
+  const auto atMax = df::fog_vdf(particle_size: 50.0);
+  #assert(clamped.fit_g_hg == atMax.fit_g_hg);
+  #assert(clamped.fit_w_d == atMax.fit_w_d);
+  // The fitted fields cannot be forced from the outside: `finalize`
+  // overwrites them.
+  const auto forced = df::fog_vdf(particle_size: 8.0, fit_g_hg: 0.123);
+  #assert(forced.fit_g_hg == large.fit_g_hg);
+}
+
+unit_test "Fog VDF phase goldens" {
+  // The deflection-cosine phase values, against the independent
+  // Python evaluation.
+  const auto d005 = df::fog_vdf(particle_size: 0.05);
+  #assert(df::_fogPhase(d005, -0.9) ~== |1e-6| 0.099333763);
+  #assert(df::_fogPhase(d005, 0.0) ~== |1e-6| 0.059570036);
+  #assert(df::_fogPhase(d005, 0.9) ~== |1e-6| 0.11714347);
+  const auto d08 = df::fog_vdf(particle_size: 0.8);
+  #assert(df::_fogPhase(d08, -0.9) ~== |1e-7| 0.0075843035);
+  #assert(df::_fogPhase(d08, 0.5) ~== |1e-6| 0.027228639);
+  #assert(df::_fogPhase(d08, 0.999) ~== |1e-3| 4.7049151);
+  const auto d3 = df::fog_vdf(particle_size: 3.0);
+  #assert(df::_fogPhase(d3, -0.3) ~== |1e-7| 0.0057958627);
+  #assert(df::_fogPhase(d3, 0.9) ~== |1e-5| 0.21670597);
+  #assert(df::_fogPhase(d3, 0.999) ~== |1e-2| 15.778123);
+  const auto d8 = df::fog_vdf(particle_size: 8.0);
+  #assert(df::_fogPhase(d8, -0.9) ~== |1e-7| 0.011796226);
+  #assert(df::_fogPhase(d8, 0.0) ~== |1e-7| 0.0020117001);
+  #assert(df::_fogPhase(d8, 0.5) ~== |1e-6| 0.022505575);
+  #assert(df::_fogPhase(d8, 0.9) ~== |1e-5| 0.23496871);
+  const auto d20 = df::fog_vdf(particle_size: 20.0);
+  #assert(df::_fogPhase(d20, -0.3) ~== |1e-7| 0.0025116324);
+  #assert(df::_fogPhase(d20, 0.9) ~== |1e-5| 0.24239888);
+}
+
+unit_test "Fog VDF sampling goldens" {
+  // The analytic CDF inversions, against the independent Python
+  // implementation that was validated by brute-force CDF inversion.
+  // Draine at (g, alpha) of the fitted parameters per diameter.
+  #assert(df::_fogDraineSample(0.54106367, 20.325685, 0.1) ~== |1e-5| 0.35738498);
+  #assert(df::_fogDraineSample(0.54106367, 20.325685, 0.5) ~== |1e-5| 0.87946407);
+  #assert(df::_fogDraineSample(0.54106367, 20.325685, 0.9) ~== |1e-5| 0.98376952);
+  #assert(df::_fogDraineSample(0.42197278, 14.340509, 0.25) ~== |1e-5| 0.5857715);
+  #assert(df::_fogDraineSample(0.63576461, 250.0, 0.7) ~== |1e-5| 0.96125226);
+  // The near-isotropic Cardano branch.
+  #assert(df::_fogDraineSample(0.0025661182, 250.0, 0.5) ~== |1e-5| 0.0);
+  // Henyey-Greenstein.
+  #assert(df::_fogHgSample(0.98446929, 0.1) ~== |1e-5| 0.98943122);
+  #assert(df::_fogHgSample(0.98446929, 0.5) ~== |1e-5| 0.99964007);
+  #assert(df::_fogHgSample(0.85487959, 0.7) ~== |1e-5| 0.98878436);
+  #assert(df::_fogHgSample(0.0345, 0.5) ~== |1e-5| 0.051729468);
+}
+
+unit_test "Fog VDF normalization" {
+  // Midpoint quadrature of the phase function over the sphere. The
+  // diameters here keep the forward peak broad enough for a uniform
+  // grid to resolve; sharper diameters are covered by the goldens.
+  const int N = 4096;
+  const auto d005 = df::fog_vdf(particle_size: 0.05);
+  const auto d08 = df::fog_vdf(particle_size: 0.8);
+  float sum005 = 0.0;
+  float sum08 = 0.0;
+  for (int i = 0; i < N; i++) {
+    const auto u = -1.0 + (i + 0.5) * (2.0 / N);
+    sum005 += df::_fogPhase(d005, u);
+    sum08 += df::_fogPhase(d08, u);
+  }
+  const auto twoPiDu = 2.0 * $PI * (2.0 / N);
+  #assert(sum005 * twoPiDu ~== |1e-3| 1.0);
+  #assert(sum08 * twoPiDu ~== |1e-2| 1.0);
+}

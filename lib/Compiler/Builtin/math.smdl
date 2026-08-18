@@ -69,21 +69,29 @@ export auto fmod(const auto a, const auto b) = a % b;
 @(macro)
 export auto modf(const auto a) = auto[2](a0 := #trunc(a), a - a0);
 
+/// The bits of the `int` reinterpreted as a `float`.
+@(pure macro)
+export float int_bits_to_float(const int a) = #bitCast(float, a);
+
+/// The bits of the `float` reinterpreted as an `int`.
+@(pure macro)
+export int float_bits_to_int(const float a) = #bitCast(int, a);
+
 /// Is neither infinite nor NaN?
 @(macro)
-export auto isfinite(const auto a) = #isfpclass(a, 0b0111111000);
+export auto isfinite(const auto a) = #testFPClass(a, 0b0111111000);
 
 /// Is a normalized floating-point number, i.e., finite and neither zero nor subnormal?
 @(macro)
-export auto isnormal(const auto a) = #isfpclass(a, 0b0100001000);
+export auto isnormal(const auto a) = #testFPClass(a, 0b0100001000);
 
 /// Is positive or negative infinity?
 @(macro)
-export auto isinf(const auto a) = #isfpclass(a, 0b1000000100);
+export auto isinf(const auto a) = #testFPClass(a, 0b1000000100);
 
 /// Is NaN?
 @(macro)
-export auto isnan(const auto a) = #isfpclass(a, 0b0000000011);
+export auto isnan(const auto a) = #testFPClass(a, 0b0000000011);
 
 /// The sign of the value.
 @(macro)
@@ -179,11 +187,11 @@ export auto log10(const auto a) = #log10(a);
 
 /// The smallest component of the value.
 @(macro)
-export auto min_value(const auto a) = #min_value(a);
+export auto min_value(const auto a) = #minValue(a);
 
 /// The largest component of the value.
 @(macro)
-export auto max_value(const auto a) = #max_value(a);
+export auto max_value(const auto a) = #maxValue(a);
 
 /// The wavelength in nanometers at which the color attains its smallest component.
 @(pure)
@@ -225,12 +233,19 @@ export auto lerp(const auto a, const auto b, const auto l) = (1.0 - l) * a + l *
 @(macro)
 export auto step(const auto a, const auto b) = #select(b < a, 0.0, 1.0);
 
-/// The smooth Hermite interpolation from `a` to `b` by factor `l` clamped to `[0, 1]`.
+/// The smooth Hermite step, `0` where `l <= a`, `1` where `l >= b`, and an
+/// S-curve in between. The edges are `a` and `b` and the value is `l`, which
+/// is the argument order of `step(a, b)` with the value last.
+///
+/// Reversing the edges so that `a > b` yields the falling ramp, and coincident
+/// edges degrade to a hard step at `a`. The specification says nothing about
+/// either case, so both are extensions; the floor on the denominator that
+/// defines the second one also keeps the quotient finite.
 @(macro)
 export auto smoothstep(const auto a, const auto b, const auto l) {
-  const auto t(saturate(l));
-  const auto s(1 - t);
-  return s * s * (1 + 2 * t) * a + t * t * (1 + 2 * s) * b;
+  const auto d(b - a);
+  const auto t(saturate((l - a) / (#sign(d) * #max(#abs(d), 1e-20))));
+  return t * t * (3.0 - 2.0 * t);
 }
 
 /// The dot product.
@@ -264,20 +279,35 @@ export float luminance(const float3 a) = dot(float3(0.2126, 0.7152, 0.0722), a);
 /// The luminance of the spectral color, weighted by the CIE Y curve.
 @(noinline)
 export float luminance(const color a) =
-    _spectral_fold(0.0, a, \(const float sum, const float w, const float amp) = sum + _wyman_y(w) * amp) / $WAVELENGTH_BASE_MAX;
+    _spectralFold(0.0, a, \(const float sum, const float w, const float amp) = sum + _wymanY(w) * amp) / $WAVELENGTH_BASE_MAX;
+
+/// The emission `color` of the spectrum given by `wavelengths` in
+/// nanometers paired with linear `amplitudes`.
+///
+/// NOTE: The specification distinguishes emission spectra from
+/// reflectance spectra so that RGB implementations can normalize them
+/// differently. SpectralMDL is natively spectral, so this simply
+/// resamples the spectrum onto the active wavelength basis by
+/// piecewise-linear interpolation, exactly like the `color` constructor.
+///
+@(macro)
+export color emission_color(const float[<N>] wavelengths, const float[<N>] amplitudes) {
+  auto ws(wavelengths);
+  auto as(amplitudes);
+  return _samplesToColor(N, &ws[0], &as[0]);
+}
+
+/// The emission `color` of the given `color`. SpectralMDL is natively
+/// spectral, so this is the identity; see the note on the two-argument
+/// overload.
+@(pure macro)
+export color emission_color(const color value) = value;
 
 /// The blackbody emission spectrum for the given temperature in kelvin.
 @(noinline)
 export color blackbody(const float temperature) {
-  // This is a series expansion of the calculation below, which
-  // is around 2x faster if using 16 wavelengths. For more wavelengths, 
-  // the performance difference only becomes more exaggerated.
-  // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-  // const auto t(color($state.wavelength_base) * temperature);
-  // const auto numer(#pow(2897.7719e3 / t, 5));
-  // const auto denom(#exp(14.387773e6 / t) - 1.0);
-  // return 142.3251316 * numer / denom;
-  // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+  // A series expansion of Planck's law, avoiding the `#pow` and `#exp` of
+  // the direct form.
   const auto t(color($state.wavelength_base) * (temperature / 14.387e6));
   auto res(1 + 2 * t);
   res = 1 + 3 * t * res;
@@ -297,6 +327,6 @@ export float eval_at_wavelength(color a, float wavelength) {
   if $($WAVELENGTH_BASE_MAX == 1) {
     return a[0];
   } else {
-    return _polyline_lerp($WAVELENGTH_BASE_MAX, &$state.wavelength_base[0], &a[0], wavelength);
+    return _polylineLerp($WAVELENGTH_BASE_MAX, &$state.wavelength_base[0], &a[0], wavelength);
   }
 }

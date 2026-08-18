@@ -1,12 +1,31 @@
 smdl_add_program(
   "smdl-toy"
   SOURCES
-    "guiding.cc"
-    "light.cc"
+    "Asset.cc"
+    "Camera.cc"
+    "Curves.cc"
+    "CurvesFile.cc"
+    "Framing.cc"
+    "Guiding.cc"
+    "Layout.cc"
+    "LayoutDiagnostics.cc"
+    "LayoutParser.cc"
+    "LayoutTables.cc"
+    "Light.cc"
     "main.cc"
-    "raytracing.cc"
-    "vertex.cc"
+    "Medium.cc"
+    "PathTracing.cc"
+    "PlacesFile.cc"
+    "Primitive.cc"
+    "Progress.cc"
+    "Scene.cc"
+    "Subdivide.cc"
+    "Tonemap.cc"
   DEPENDS
     "embree"
     "assimp"
+    "osd_static_cpu"
+  MORE_INCLUDES
+    # OpenSubdiv's static library does not export its include directory.
+    "${opensubdiv_SOURCE_DIR}"
   )

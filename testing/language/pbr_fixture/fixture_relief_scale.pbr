@@ -1,0 +1,17 @@
+# The same fixture as 'fixture.pbr', spelling the relief scale directly
+# instead of as a physical extent and relief: 'relief_scale: 0.25' is
+# exactly '0.5 / 2.0', so both manifests must decode identically. This
+# is the bespoke-asset case, where there is no meaningful physical
+# extent to divide by.
+#
+# NOTE: Two manifests in one directory is fine only because every test
+# loads them by explicit file path. Loading the directory itself would
+# hit the exactly-one-manifest rule of 'PBRMaps::resolveFileName'.
+name: Horizon Fixture (relief_scale)
+relief_scale: 0.25
+height:
+  file: horizon_4x4.png
+  channel: r
+horizon:
+  file: horizon_4x4.png
+  max_slope: 4

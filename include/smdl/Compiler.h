@@ -2,7 +2,9 @@
 #pragma once
 
 #include <map>
+#include <memory>
 #include <set>
+#include <unordered_map>
 
 #include "smdl/BSDFMeasurement.h"
 #include "smdl/Doc.h"
@@ -14,6 +16,8 @@
 #include "smdl/SceneData.h"
 #include "smdl/Spectrum.h"
 #include "smdl/Support/MD5Hash.h"
+#include "smdl/Support/PBRMaps.h"
+#include "smdl/VoxelGrid.h"
 
 namespace smdl {
 
@@ -172,6 +176,33 @@ public:
   add(std::string fileOrDirName,
       std::vector<std::string> *addedModuleNames = nullptr) noexcept;
 
+  /// Set the desired material names, which restricts the next
+  /// `compile()` to the named materials.
+  ///
+  /// By default every material in every added module is compiled. A host
+  /// that knows exactly which materials it will look up can pass their
+  /// names here before `compile()`: every material whose qualified name
+  /// matches none of the names (by the matching rules of
+  /// `findMaterial()`) is skipped, so its JIT entry points are never
+  /// emitted, optimized, or JIT-compiled, and resources only it
+  /// references (textures, spectra, ...) are never loaded. This can save
+  /// substantial compile time and memory when the added modules define
+  /// many more materials than a render uses.
+  ///
+  /// A skipped material still exists as an ordinary function, so other
+  /// materials that instantiate it compile unaffected, and unit tests
+  /// and execs are unaffected entirely. The skipped material itself is
+  /// absent from `getMaterials()` and unreachable by `findMaterial()`,
+  /// which logs the exclusion when asked for it (see
+  /// `getSkippedMaterialNames()`). Desired names that match no material
+  /// at all are warned about during `compile()`. Note that a skipped
+  /// material's body is never emitted, so errors inside it may go
+  /// undiagnosed. Passing an empty vector restores the default of
+  /// compiling every material.
+  void setDesiredMaterials(std::vector<std::string> materialNames) noexcept {
+    mDesiredMaterialNames = std::move(materialNames);
+  }
+
   /// Compile to LLVM-IR.
   [[nodiscard]] std::optional<Error>
   compile(OptLevel optLevel = OPT_LEVEL_O2) noexcept;
@@ -193,9 +224,48 @@ private:
   /// `compile()` has not run yet or `jitCompile()` already consumed it).
   [[nodiscard]] llvm::Module &getLLVMModule();
 
+  /// Warn about the resource `fileName`, at most once per distinct file
+  /// name per `compile()`.
+  ///
+  /// This is for diagnostics raised while emitting a `#load_*` intrinsic,
+  /// which is not once per mention in the source: a material body is
+  /// emitted three times (once each for the `evaluate`, `evaluateOpacity`
+  /// and `thinWalledProbe` functions that `Type.cc` generates), so a
+  /// `texture_2d("missing.png")` in a material would otherwise report the
+  /// same warning three times over.
+  ///
+  /// The `load*()` functions below need no such thing: they memoize by file
+  /// hash, so a resource that is found but fails to load already reports
+  /// exactly once. A file that is never found has no hash to key on, which
+  /// is how it slips past that memo.
+  ///
+  /// Deduplication is by file name alone, deliberately. The source location
+  /// cannot help: all three reports carry the same one, the builtin
+  /// `texture_2d` constructor in `api.smdl`, not the call site in the
+  /// user's module.
+  ///
+  void logResourceWarningOnce(const SourceLocation &srcLoc,
+                              const std::string &fileName,
+                              std::string_view message);
+
   /// Load image.
+  ///
+  /// If `withMipLevels` is true, this reference asks for a mip chain
+  /// (see `Image::requestMipLevels()`). The request is shared with every
+  /// other reference to the same file, so an image is mipped if anything
+  /// ever asks: passing false means only that this reference does not
+  /// need the chain, never that the image will not have one.
+  ///
+  /// Whether to *read* the chain is a property of the referencing
+  /// `texture_2d`, which bakes its own level count, exactly as it bakes
+  /// its own gamma. Both readings share one decoded image.
+  ///
+  /// All of that is subject to `enableMipMaps`: with it false, the
+  /// request is refused rather than shared, and the image is laid out
+  /// for level 0 alone.
   [[nodiscard]] const Image &loadImage(const std::string &fileName,
-                                       const SourceLocation &srcLoc);
+                                       const SourceLocation &srcLoc,
+                                       bool withMipLevels = true);
 
   /// Load ptex texture.
   [[nodiscard]] const Ptexture &loadPtexture(const std::string &fileName,
@@ -209,6 +279,16 @@ private:
   /// Load light profile.
   [[nodiscard]] const LightProfile &
   loadLightProfile(const std::string &fileName, const SourceLocation &srcLoc);
+
+  /// Load voxel grid.
+  ///
+  /// `gridName` selects a named grid within the file (see
+  /// `VoxelGrid::loadFromFile()`). The cache is keyed by content hash
+  /// *and* the grid name, so two references to different grids of the
+  /// same file are two separate `VoxelGrid`s.
+  [[nodiscard]] const VoxelGrid &loadVoxelGrid(const std::string &fileName,
+                                               const std::string &gridName,
+                                               const SourceLocation &srcLoc);
 
   /// Load spectrum from TXT file.
   [[nodiscard]] SpectrumView loadSpectrum(const std::string &fileName,
@@ -228,6 +308,16 @@ private:
   [[nodiscard]] const SpectrumLibrary &
   loadSpectrumLibrary(const std::string &fileName,
                       const SourceLocation &srcLoc);
+
+  /// Load texture pack manifest from `.pbr` file.
+  ///
+  /// Unlike the other resource loaders, a manifest that fails to parse
+  /// is an error, not a warning: the failed entry is discarded and the
+  /// `Error` is thrown for the caller to report. The manifest is a
+  /// contract, so a schema violation must not silently void the pack.
+  ///
+  [[nodiscard]] const PBRMaps &loadPBRMaps(const std::string &fileName,
+                                           const SourceLocation &srcLoc);
 
 public:
   /// Dump as LLVM-IR or native assembly into `out`. Must be called after
@@ -284,6 +374,24 @@ public:
   [[nodiscard]] std::vector<const JIT::Material *>
   findMaterials(std::string_view materialName) const;
 
+  /// Match `materialName` against a material's qualified name by the
+  /// rules of `findMaterial()`: a name starting with `::` matches the
+  /// qualified name exactly, anything else matches as a suffix on `::`
+  /// component boundaries. This is the one predicate shared by
+  /// `findMaterial()`, `findMaterials()`, and the desired-material
+  /// filter of `setDesiredMaterials()`.
+  [[nodiscard]] static bool
+  matchesMaterialName(std::string_view materialName,
+                      std::string_view qualifiedName) noexcept;
+
+  /// Get the qualified names of the materials the last `compile()`
+  /// skipped because they matched no desired material name. Empty
+  /// unless `setDesiredMaterials()` is active.
+  [[nodiscard]] Span<const std::string>
+  getSkippedMaterialNames() const noexcept {
+    return mSkippedMaterialNames;
+  }
+
   /// Get all JIT-compiled materials, including materials in shadowed
   /// modules.
   [[nodiscard]] Span<const JIT::Material> getMaterials() const noexcept {
@@ -339,6 +447,20 @@ public:
   /// Enable debugging?
   bool enableDebug{false};
 
+  /// Enable mip maps?
+  ///
+  /// When false, no image loaded by this compiler lays out or generates
+  /// a mip chain, and every texture bakes a level count of 1, so
+  /// `use_mipmap: true` in SMDL source is accepted and quietly ignored.
+  /// This is a debugging and profiling switch: it takes the chain
+  /// allocation and the box filtering out of the load and pins every
+  /// lod-aware lookup to level 0.
+  ///
+  /// This is read while `compile()` loads images, so set it beforehand.
+  /// Changing it between compiles is fine: every `compile()` reloads
+  /// every image from scratch and decides again.
+  bool enableMipMaps{true};
+
   /// Enable unit tests?
   bool enableUnitTests{false};
 
@@ -366,31 +488,62 @@ private:
   /// The MD5 file hasher.
   ///
   /// \note
-  /// The resource tables below keyed on `const MD5FileHash *` use `std::map`
-  /// intentionally because it never invalidates references or iterators: while
-  /// `std::unordered_map` could potentially be faster, it also invalidates all
-  /// references/iterators on rehash. If we decide to switch over to it, we will
-  /// have to wrap the resources with `std::unique_ptr` to keep them stable.
+  /// The resource tables below are keyed on the stable `const MD5FileHash *`
+  /// pointers this hasher hands out, and hold their resources through
+  /// `std::unique_ptr` so that rehashing never moves them: JIT-compiled code
+  /// bakes absolute pointers into resource internals, so resource addresses
+  /// must be stable for the lifetime of the compile.
   ///
   MD5FileHasher mFileHasher{};
 
-  /// The images used by textures.
-  std::map<const MD5FileHash *, Image> mImages;
+  /// The file names already reported by `logResourceWarningOnce()`. Not
+  /// keyed on `MD5FileHash` like the resource tables below, because the
+  /// usual reason to warn is that the file does not exist, and a file that
+  /// does not exist has nothing to hash.
+  std::set<std::string, std::less<>> mWarnedResourceFileNames;
+
+  /// The images used by textures, keyed by content hash alone: one
+  /// decoded image per file, however its references differ in gamma or
+  /// in whether they read mip levels.
+  std::unordered_map<const MD5FileHash *, std::unique_ptr<Image>> mImages;
 
   /// The ptex textures.
-  std::map<const MD5FileHash *, Ptexture> mPtextures;
+  std::unordered_map<const MD5FileHash *, std::unique_ptr<Ptexture>> mPtextures;
 
   /// The BSDF measurements.
-  std::map<const MD5FileHash *, BSDFMeasurement> mBSDFMeasurements;
+  std::unordered_map<const MD5FileHash *, std::unique_ptr<BSDFMeasurement>>
+      mBSDFMeasurements;
 
   /// The light profiles.
-  std::map<const MD5FileHash *, LightProfile> mLightProfiles;
+  std::unordered_map<const MD5FileHash *, std::unique_ptr<LightProfile>>
+      mLightProfiles;
+
+  /// The hasher for the voxel grid key.
+  struct VoxelGridKeyHash final {
+    [[nodiscard]] size_t operator()(
+        const std::pair<const MD5FileHash *, std::string> &key) const noexcept {
+      auto hash{std::hash<const MD5FileHash *>()(key.first)};
+      hash ^= std::hash<std::string>()(key.second) + 0x9E3779B97F4A7C15ULL +
+              (hash << 6) + (hash >> 2);
+      return hash;
+    }
+  };
+
+  /// The voxel grids used by 3D textures, keyed by content hash and the
+  /// grid name of `loadVoxelGrid()`.
+  std::unordered_map<std::pair<const MD5FileHash *, std::string>,
+                     std::unique_ptr<VoxelGrid>, VoxelGridKeyHash>
+      mVoxelGrids;
 
   /// The spectrums.
-  std::map<const MD5FileHash *, Spectrum> mSpectrums;
+  std::unordered_map<const MD5FileHash *, std::unique_ptr<Spectrum>> mSpectrums;
 
   /// The spectrum libraries.
-  std::map<const MD5FileHash *, SpectrumLibrary> mSpectrumLibraries;
+  std::unordered_map<const MD5FileHash *, std::unique_ptr<SpectrumLibrary>>
+      mSpectrumLibraries;
+
+  /// The texture pack manifests.
+  std::unordered_map<const MD5FileHash *, std::unique_ptr<PBRMaps>> mPBRMaps;
 
   /// The MDL modules by canonical file name, used to skip files that
   /// were already added.
@@ -421,6 +574,11 @@ private:
   /// fresh LLVM context, module, and JIT.
   void resetForRecompile();
 
+  /// Drop every image the optimized module provably never reads, so
+  /// `compile()` can skip decoding it and release its texel
+  /// reservation. Returns the number of images dropped.
+  size_t dropUnusedImages();
+
   /// The LLVM context for the module being compiled. Consumed (moved into
   /// the JIT) by `jitCompile()`.
   std::unique_ptr<llvm::LLVMContext> mLLVMContext;
@@ -450,6 +608,15 @@ private:
   /// The JIT-compiled RGB-to-color conversion function.
   JIT::Function<void(const State &state, const float3 &rgb, float *cptr)>
       mRGBToColor{"smdlRGBToColor"};
+
+  /// The desired material names (see `setDesiredMaterials()`). When
+  /// non-empty, `compile()` skips every material whose qualified name
+  /// matches none of these.
+  std::vector<std::string> mDesiredMaterialNames;
+
+  /// The qualified names of the materials skipped by the last
+  /// `compile()` because they matched no desired material name.
+  std::vector<std::string> mSkippedMaterialNames;
 
   /// The JIT-compiled materials.
   std::vector<JIT::Material> mMaterials;

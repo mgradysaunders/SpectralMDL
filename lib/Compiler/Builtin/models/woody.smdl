@@ -1,0 +1,330 @@
+/// The woody albedo model: a single parametric reflectance spectrum fitted to
+/// bark, branches, stems, and sawn timber. The corpus is small (34 spectra
+/// over 18 taxa) and the five parameters below are what that much data
+/// honestly supports. Tabulated logit-space component curves are combined
+/// linearly per wavelength with weights derived from five normalized [0, 1]
+/// parameters, and the logistic link maps the result back to a reflectance, so
+/// every output is strictly inside (0, 1) by construction. Every parameter is
+/// saturated to [0, 1] at entry, by the fit warp.
+///
+/// Starting points for 13 familiar surfaces ship as the `WOODY_PRESET_*`
+/// constants at the end of this module: barks named by their tree, the
+/// chaparral by its community, the timber by its product. Each is a
+/// 5-component vector in the parameter order below, to be expanded with
+/// call-site `inline`.
+///
+/// Eleven of the thirteen are one real measured spectrum at its own fitted
+/// coordinates, reconstructing that measurement within 4.90 dE. That bound is
+/// not this model's accuracy but the material's own: two pieces of bark off
+/// the same trunk disagree by 4.90 dE. Where taxa sit closer together than
+/// that floor, as the dark conifer barks do, one preset stands for the group
+/// at its medoid and says so.
+///
+/// The last two are marked `DERIVED`: a named preset with a single axis moved,
+/// reaching where an air-dry, uniformly tinted corpus cannot.
+/// `WEATHERED_GREY` is the sawn beam with `tannin` at 0, which is silvered
+/// barn board; since the pigment curve is confined to the visible, it is the
+/// measured timber unchanged across the whole SWIR. `RAIN_SOAKED` drives
+/// `water`, whose curve is borrowed from the regolith model's wetting series,
+/// past anything a bark corpus ever measured.
+#smdl
+
+using ::math import *;
+
+// The logistic link, mapping a logit-space value back to (0, 1). The rails
+// are float32 housekeeping, not a modeling choice: past |z| ~ 17 the true
+// value would round to exactly 1.0, handing an infinity to any caller that
+// takes -log(1 - R). The wood parameter box only reaches |z| ~ 9, so the
+// rails are dormant here; they are kept so the strict (0, 1) guarantee is
+// structural rather than an accident of the current tables.
+@(pure macro)
+auto link(const auto z) = #min(#max(1.0 / (1.0 + #exp(-z)), 1.0e-7), 0.9999999);
+
+/// The minimum wavelength of the woody albedo table in nanometers.
+export const float WOODY_MIN_WAVELENGTH = 400.0;
+/// The maximum wavelength of the woody albedo table in nanometers.
+export const float WOODY_MAX_WAVELENGTH = 2500.0;
+/// The number of entries in the woody albedo table.
+export const int WOODY_TABLE_SIZE = 124;
+
+// smdl format off
+/// The 6 spectral component curves in logit space at each of the 124 entries:
+/// constant, lightness, chroma, fibre, green, and water terms.
+export static const auto WOODY_TABLE_CURVES = auto[124](
+  auto(-4.0439451, 0.0532888234, -0.0466647219, 0.524729874, 0.215547582, -0.847533591),
+  auto(-4.12716775, 0.0548831251, -0.0366788264, 0.347177337, 0.095079385, -0.860042003),
+  auto(-4.15607755, 0.0551996694, -0.0264811347, 0.244371221, 0.0098660538, -0.890064466),
+  auto(-4.16120467, 0.0554420091, -0.0199056612, 0.201596822, -0.0368324821, -0.914082891),
+  auto(-4.15281649, 0.0554683383, -0.0151164514, 0.175093627, -0.0837347037, -0.911403445),
+  auto(-4.12822515, 0.0552404815, -0.0108563675, 0.154996136, -0.120213721, -0.925464448),
+  auto(-4.10819022, 0.055214645, -0.00701223062, 0.131496936, -0.0692232859, -0.9528179),
+  auto(-4.08575269, 0.0549635317, -0.00296473519, 0.0933715577, 0.1008827, -0.965139653),
+  auto(-4.06106472, 0.0544735311, 0.00203516844, 0.0726876505, 0.211456843, -0.969408388),
+  auto(-4.04864449, 0.0541927591, 0.00768456862, 0.087384088, 0.21864734, -0.972152182),
+  auto(-4.04835342, 0.0541158939, 0.0135866108, 0.123012634, 0.128215707, -0.973595069),
+  auto(-4.04443242, 0.0539313704, 0.0196603503, 0.167720528, 0.0251414342, -0.969112862),
+  auto(-4.03652672, 0.0536650223, 0.025755075, 0.220427342, -0.0569518732, -0.959104573),
+  auto(-4.02404458, 0.0533384484, 0.0317184135, 0.280494159, -0.127899997, -0.956551731),
+  auto(-4.00668414, 0.0529771578, 0.0374058773, 0.346810702, -0.209680594, -0.955787107),
+  auto(-3.98446515, 0.0526004653, 0.0427302468, 0.418313833, -0.359748555, -0.954360984),
+  auto(-3.96028444, 0.0522087161, 0.0479487278, 0.492389502, -0.481767982, -0.951951353),
+  auto(-3.93752504, 0.0517986178, 0.0533787203, 0.566184951, -0.225093627, -0.948985369),
+  auto(-3.91512084, 0.0513986161, 0.0587939302, 0.639115668, 0.42617672, -0.947372637),
+  auto(-3.88864367, 0.0510601351, 0.063561842, 0.712365576, 0.780120809, -0.947117411),
+  auto(-3.85474034, 0.0508286105, 0.0671735646, 0.786479633, 0.914020641, -0.947268642),
+  auto(-3.81280756, 0.050728193, 0.0694639394, 0.860691147, 0.977569548, -0.947024769),
+  auto(-3.76557537, 0.0507889193, 0.0705373388, 0.932716378, 1.01530859, -0.946289979),
+  auto(-3.72027697, 0.051003912, 0.0710759539, 0.997908948, 1.0418604, -0.945841022),
+  auto(-3.67489337, 0.0512590377, 0.0714103043, 1.05591925, 1.06006981, -0.945972779),
+  auto(-3.62769045, 0.0515297247, 0.0715045121, 1.10519087, 1.06663869, -0.946882285),
+  auto(-3.5821716, 0.0519264794, 0.0711293833, 1.14704032, 1.06596413, -0.947762183),
+  auto(-3.53688984, 0.0524566032, 0.0700646896, 1.1814942, 1.06238189, -0.94889198),
+  auto(-3.49367323, 0.0531346912, 0.0682608907, 1.20856574, 1.07417854, -0.949490499),
+  auto(-3.4477814, 0.0538515348, 0.0656949382, 1.22991951, 1.10571719, -0.949814652),
+  auto(-3.39559046, 0.054537384, 0.0623588419, 1.25221208, 1.13524475, -0.949445055),
+  auto(-3.35015173, 0.0553933156, 0.0589078529, 1.27107288, 1.15752698, -0.950058323),
+  auto(-3.30573093, 0.0563271159, 0.0551698929, 1.28911474, 1.17939671, -0.955097383),
+  auto(-3.24128538, 0.0568810632, 0.0507199822, 1.3160549, 1.19338168, -0.961379402),
+  auto(-3.15758135, 0.057043763, 0.0456179951, 1.35765456, 1.20470391, -0.965338024),
+  auto(-3.10149275, 0.0576993415, 0.0413616487, 1.39864427, 1.22379221, -0.960788878),
+  auto(-3.05883961, 0.0586778535, 0.0375906748, 1.4430964, 1.24270306, -0.956627799),
+  auto(-3.02619987, 0.0597691501, 0.0339996634, 1.45929479, 1.25472491, -0.954258479),
+  auto(-2.99918897, 0.060973111, 0.0303127138, 1.47843879, 1.2755212, -0.952733986),
+  auto(-2.98299757, 0.0624240196, 0.0265585807, 1.50570553, 1.30410868, -0.952313783),
+  auto(-2.95502591, 0.0635332329, 0.0233220938, 1.53317194, 1.30656854, -0.952363848),
+  auto(-2.92040325, 0.0644197404, 0.0201750845, 1.55796711, 1.3063528, -0.953528038),
+  auto(-2.85856975, 0.0645297916, 0.0168919194, 1.59236147, 1.3040848, -0.952911138),
+  auto(-2.75963494, 0.0635630588, 0.0134523355, 1.65291233, 1.30475213, -0.953620916),
+  auto(-2.65767997, 0.0623526486, 0.010374319, 1.71424535, 1.30507268, -0.96328422),
+  auto(-2.55413245, 0.0609919935, 0.00776936567, 1.77585588, 1.29389334, -0.97295767),
+  auto(-2.43974151, 0.0593792305, 0.0056583563, 1.83248349, 1.26727867, -0.981643832),
+  auto(-2.35767843, 0.0584660451, 0.00395384725, 1.8990783, 1.25382419, -0.98970372),
+  auto(-2.33827528, 0.0591163315, 0.00262283969, 1.97825779, 1.26953206, -0.993919036),
+  auto(-2.35357724, 0.0607212477, 0.00163427255, 2.0497494, 1.29485527, -0.994139657),
+  auto(-2.37002121, 0.0623276104, 0.000903931712, 2.11516919, 1.27030973, -0.992910681),
+  auto(-2.36103593, 0.063201306, 0.000370324934, 2.17237583, 1.23553121, -0.992951767),
+  auto(-2.35269779, 0.0640348094, 6.86721815e-05, 2.22148999, 1.19826072, -0.995360906),
+  auto(-2.33352043, 0.0644970293, 0.0, 2.27665967, 1.14835615, -1.0018362),
+  auto(-2.27021416, 0.063472293, 0.0, 2.3160745, 1.11018567, -1.01097415),
+  auto(-2.18330943, 0.0611951095, 0.0, 2.33311483, 1.09834861, -1.02987159),
+  auto(-2.1306199, 0.0593007, 0.0, 2.34022129, 1.08317344, -1.07765147),
+  auto(-2.06640099, 0.057742565, 0.0, 2.34076493, 1.06472961, -1.18424192),
+  auto(-1.99531224, 0.0563413795, 0.0, 2.33774089, 1.04581246, -1.43047724),
+  auto(-2.0103475, 0.0549196258, 0.0, 2.33407582, 1.02926904, -1.66260218),
+  auto(-2.07451523, 0.053308154, 0.0, 2.33262577, 1.0176717, -1.68299802),
+  auto(-2.06415796, 0.0514718882, 0.0, 2.3342464, 1.0110046, -1.60370328),
+  auto(-1.97148563, 0.0495055051, 0.0, 2.33790738, 1.00664291, -1.58774183),
+  auto(-1.86045877, 0.0475031701, 0.0, 2.34257939, 1.00198553, -1.55237595),
+  auto(-1.74151954, 0.0455607991, 0.0, 2.34722306, 0.994364053, -1.50355005),
+  auto(-1.62599835, 0.0437703388, 0.0, 2.35081772, 0.981271147, -1.45580537),
+  auto(-1.5267878, 0.0422335353, 0.0, 2.35227067, 0.959855695, -1.41237949),
+  auto(-1.45292272, 0.0410381394, 0.0, 2.3506058, 0.92772898, -1.37412246),
+  auto(-1.40221062, 0.0402832134, 0.0, 2.34474805, 0.882138387, -1.33601927),
+  auto(-1.36352084, 0.0398090039, 0.0, 2.33449698, 0.829018078, -1.30085782),
+  auto(-1.32687977, 0.0395979882, 0.0, 2.31864388, 0.772599016, -1.27206717),
+  auto(-1.32193446, 0.0403035594, 0.0, 2.30190554, 0.727481251, -1.24903884),
+  auto(-1.36642576, 0.0418582626, 0.0, 2.30202788, 0.731536871, -1.23208327),
+  auto(-1.37807453, 0.0421917456, 0.0, 2.27275797, 0.727366812, -1.22087821),
+  auto(-1.40368123, 0.042305724, 0.0, 2.27556449, 0.706043385, -1.2157838),
+  auto(-1.43697923, 0.0428281363, 0.0, 2.34036666, 0.680573437, -1.2171612),
+  auto(-1.39182045, 0.041485504, 0.0, 2.33143508, 0.65200214, -1.22518674),
+  auto(-1.34482569, 0.039914371, 0.0, 2.2953617, 0.626498997, -1.24293643),
+  auto(-1.36931245, 0.0403665696, 0.0, 2.29014871, 0.611295777, -1.27258958),
+  auto(-1.36764688, 0.0408619213, 0.0, 2.31392155, 0.609170416, -1.3088619),
+  auto(-1.36870788, 0.0412002441, 0.0, 2.35307797, 0.617201292, -1.34583032),
+  auto(-1.35594764, 0.0413687023, 0.0, 2.38063813, 0.62848638, -1.3779625),
+  auto(-1.34319076, 0.0414108335, 0.0, 2.38477676, 0.636749413, -1.39496285),
+  auto(-1.3262522, 0.0414042246, 0.0, 2.39123023, 0.639568289, -1.40844344),
+  auto(-1.34758834, 0.0421693964, 0.0, 2.41146275, 0.637441755, -1.41106383),
+  auto(-1.37397182, 0.0427231649, 0.0, 2.43158848, 0.634310991, -1.43968722),
+  auto(-1.38933643, 0.0427428701, 0.0, 2.44482001, 0.632381331, -1.57898463),
+  auto(-1.39467004, 0.0423891393, 0.0, 2.45215599, 0.631741727, -1.94045193),
+  auto(-1.3906655, 0.0418146949, 0.0, 2.45443209, 0.632524437, -2.42236589),
+  auto(-1.37848805, 0.0411820697, 0.0, 2.45273535, 0.634787408, -2.61426654),
+  auto(-1.35888678, 0.0406482476, 0.0, 2.4479418, 0.638659447, -2.57999572),
+  auto(-1.33578991, 0.0402863935, 0.0, 2.44211351, 0.643507914, -2.51089213),
+  auto(-1.31681273, 0.0400607168, 0.0, 2.43864847, 0.647796578, -2.42717535),
+  auto(-1.31001259, 0.0399286953, 0.0, 2.44112619, 0.649891918, -2.33200302),
+  auto(-1.32287952, 0.0398455927, 0.0, 2.45285659, 0.648266346, -2.22980729),
+  auto(-1.3641824, 0.0397686461, 0.0, 2.47774716, 0.641148211, -2.13483801),
+  auto(-1.44010881, 0.0396773552, 0.0, 2.51769673, 0.62845783, -2.05257218),
+  auto(-1.52340754, 0.0396032233, 0.0, 2.55838173, 0.613923594, -1.98228406),
+  auto(-1.58734945, 0.0395107538, 0.0, 2.57981015, 0.598541442, -1.91816022),
+  auto(-1.62535671, 0.0393603398, 0.0, 2.56922429, 0.583030847, -1.85825222),
+  auto(-1.63651345, 0.0391111189, 0.0, 2.54193759, 0.568107106, -1.80641627),
+  auto(-1.62251798, 0.0388048444, 0.0, 2.50788329, 0.553816948, -1.77534837),
+  auto(-1.59835665, 0.0385761968, 0.0, 2.46997019, 0.539448319, -1.7601543),
+  auto(-1.57497131, 0.0385634664, 0.0, 2.41968701, 0.52424405, -1.75348341),
+  auto(-1.56510498, 0.0388950755, 0.0, 2.37267571, 0.507651397, -1.74828115),
+  auto(-1.54689864, 0.0389281513, 0.0, 2.33834823, 0.491883367, -1.73734379),
+  auto(-1.50084922, 0.0381431783, 0.0, 2.31181207, 0.460672612, -1.71381389),
+  auto(-1.43581374, 0.0362092017, 0.0, 2.31643768, 0.423563215, -1.67780458),
+  auto(-1.42146421, 0.0339709644, 0.0, 2.34256925, 0.374728155, -1.64376568),
+  auto(-1.49073061, 0.0329820982, 0.0, 2.37047161, 0.337770929, -1.62719426),
+  auto(-1.53410835, 0.032669228, 0.0, 2.35860606, 0.306576369, -1.643775),
+  auto(-1.53605792, 0.032460036, 0.0, 2.3208425, 0.275067641, -1.68659362),
+  auto(-1.51875131, 0.0318246443, 0.0, 2.35187972, 0.237651985, -1.71627552),
+  auto(-1.44506503, 0.0307959658, 0.0, 2.39452236, 0.19585339, -1.77132667),
+  auto(-1.38667697, 0.0296914972, 0.0, 2.37710596, 0.154790427, -1.82120635),
+  auto(-1.31082456, 0.0288379541, 0.0, 2.38285953, 0.119664371, -1.87247403),
+  auto(-1.27465171, 0.0285558862, 0.0, 2.38421007, 0.0955900735, -1.93376198),
+  auto(-1.27188581, 0.0289136947, 0.0, 2.37775206, 0.0864048642, -2.01326013),
+  auto(-1.29314238, 0.029256165, 0.0, 2.38930989, 0.0995723117, -2.07960915),
+  auto(-1.35203279, 0.0295226918, 0.0, 2.42143753, 0.135090057, -2.12321306),
+  auto(-1.42348069, 0.0295800366, 0.0, 2.45675625, 0.175173616, -2.16020786),
+  auto(-1.49296697, 0.0294606901, 0.0, 2.49266626, 0.223048381, -2.19089996),
+  auto(-1.56344448, 0.0296717152, 0.0, 2.51851658, 0.263266293, -2.20090796),
+  auto(-1.61052913, 0.0303272477, -0.0, 2.52846913, 0.292694201, -2.2044279),
+);
+// smdl format on
+
+// The five monotone parameter warps, endpoint-constrained cubic fits to the
+// 65-entry warp tables of the C++ reference: u(0) = 0 and u(1) = 1 exactly,
+// strictly increasing on [0, 1], within 9.4e-4 of the tables everywhere,
+// which is inside the fit's own downsampling noise.
+static const auto WARP_BASE = float2(0.09271134, -0.4264215);
+static const auto WARP_TANNIN = float2(-0.10436588, -0.04969672);
+static const auto WARP_FIBRE = float2(0.063141525, -0.085354604);
+static const auto WARP_EPIPHYTE = float2(-0.008220836, -0.0137877185);
+static const auto WARP_WATER = float2(-0.09495192, -0.22414328);
+
+// Warp a parameter onto its fit coordinate. The saturate is what implements
+// the parameter box: the endpoint-constrained polynomial extrapolates
+// instead of clamping on its own.
+@(pure macro)
+float warp(const float p, const float2 c) {
+  const float x = saturate(p);
+  return x + x * (1.0 - x) * (c[0] + c[1] * x);
+}
+
+/// Evaluate the woody albedo model, mapping five normalized parameters to a
+/// reflectance spectrum.
+///
+/// The 6 component curves in `WOODY_TABLE_CURVES` are interpolated onto
+/// `$state.wavelength_base` and combined with weights derived from the
+/// parameters, each passing through a monotone cubic warp and an affine map
+/// onto its fit coordinate. The logistic link keeps every output strictly in
+/// (0, 1) at every point of the parameter box. RMSE ~1e-3 against the
+/// full-resolution fit.
+///
+/// Valid from 400nm to 2500nm; wavelengths outside clamp to the nearest end.
+///
+/// The parameters may also be kept in a 5-component vector in the order below
+/// and expanded into the call with the call-site `inline` keyword, which is
+/// the idiom for barycentric preset mixing.
+///
+@(noinline)
+export color woody_albedo(
+  const float base = 0.5,     ///< The overall lightness of the wood. 0 = darkest, 1 = brightest.
+  const float tannin = 0.5,   ///< The tannin pigmentation. 0 = neutral gray, 1 = the most saturated warm brown. Inert past ~1.3um.
+  const float fibre = 0.5,    ///< The exposed-fibre axis. Brightens at every wavelength.
+  const float epiphyte = 0.5, ///< The green epiphytic cover (algae, moss, lichen).
+  const float water = 0.0,    ///< The moisture darkening. 0 = bone dry, 1 = the darkest saturated state in the corpus.
+) {
+  // Parameter to logit-space weights: each parameter passes through its
+  // monotone warp (which saturates to the box) and an affine map. Assembly is
+  // linear, so combining the component curves at the entries and interpolating
+  // equals interpolating then combining.
+  const float wLightness = 31.3152562 + warp(base, WARP_BASE) * 44.9022237;
+  const float wChroma = warp(tannin, WARP_TANNIN) * 24.5823726;
+  const float wFibre = -0.307246553 + warp(fibre, WARP_FIBRE) * 0.540344935;
+  const float wGreen = warp(epiphyte, WARP_EPIPHYTE) * 0.422861915;
+  const float wWater = warp(water, WARP_WATER) * 1.28826562;
+  const auto weights = auto(1.0, wLightness, wChroma, wFibre, wGreen, wWater);
+  return _spectralInit(\(const float wavelength) {
+    const auto {t0, t} = _uniformLerpIndexAndFraction(WOODY_TABLE_SIZE, WOODY_MIN_WAVELENGTH, WOODY_MAX_WAVELENGTH, wavelength);
+    return link(dot(lerp(WOODY_TABLE_CURVES[t0], WOODY_TABLE_CURVES[t0 + 1], t), weights));
+  });
+}
+
+// BEGIN GENERATED PRESETS
+// 11 measured specimens at their own fitted coordinates,
+// in the parameter order of `woody_albedo`, plus 2 derived
+// vectors marked as such. Every measured preset reconstructs its
+// own spectrum within 4.90 dE -- this corpus's replicate
+// floor, which is how much two pieces of one trunk disagree.
+// Quoted reflectance ranges are over 400-700 nm.
+// smdl format off
+
+// ---- bark and branches ---------------------------------------------------
+
+/// Pale smooth periderm of paper birch (ECOSTRESS, Betula papyrifera, bark,
+/// header records lichen and moss). sRGB D65 #c2bdb3, pale warm grey;
+/// 42-58% VIS.
+export const auto WOODY_PRESET_BIRCH_BARK = auto(
+  1.0, 0.282, 0.733, 0.39, 0.116);
+
+/// Fibrous incense-cedar bark (ECOSTRESS, Calocedrus decurrens, bark). sRGB
+/// D65 #8d7966, warm brown; 11-35% VIS.
+export const auto WOODY_PRESET_CEDAR_BARK = auto(
+  0.483, 0.587, 1.0, 0.298, 0.277);
+
+/// Plated ponderosa pine bark (ECOSTRESS, Pinus ponderosa, bark). sRGB D65
+/// #777068, warm grey; 13-22% VIS.
+export const auto WOODY_PRESET_PONDEROSA_BARK = auto(
+  0.386, 0.235, 0.868, 0.235, 0.225);
+
+/// Dark furrowed conifer bark (ECOSTRESS, Pinus lambertiana, bark). sRGB
+/// D65 #61554b, dark greyish warm brown; 6-16% VIS. Medoid of 8 spectra
+/// over 4 taxa; also stands for Abies concolor, Pinus strobus, Pinus
+/// coulteri, all within the corpus's 4.90 dE replicate floor of it.
+export const auto WOODY_PRESET_PINE_BARK = auto(
+  0.134, 0.387, 0.858, 0.192, 0.311);
+
+/// Lichened red-oak bark (ECOSTRESS, Quercus rubra, bark, header records
+/// lichen and moss). sRGB D65 #615c4f, dark greyish olive brown; 6-14% VIS.
+export const auto WOODY_PRESET_OAK_BARK = auto(
+  0.169, 0.335, 0.059, 0.615, 0.207);
+
+/// Moss-covered red-maple bark, the corpus's epiphyte maximum (ECOSTRESS,
+/// Acer rubrum, bark, header records lichen and moss). sRGB D65 #665f4e,
+/// dark greyish olive brown; 7-18% VIS.
+export const auto WOODY_PRESET_MOSSY_BARK = auto(
+  0.187, 0.435, 0.378, 1.0, 0.235);
+
+/// Dry chaparral shrub branch (ECOSTRESS, Salvia leucophylla, branches).
+/// sRGB D65 #74695c, greyish yellow-brown; 8-20% VIS. Medoid of 7 spectra
+/// over 3 taxa; also stands for Adenostoma fasciculatum, Ceanothus
+/// megacarpus, all within the corpus's 4.90 dE replicate floor of it.
+export const auto WOODY_PRESET_CHAPARRAL_BRANCH = auto(
+  0.299, 0.387, 0.367, 0.009, 0.185);
+
+// ---- stems and sawn timber -----------------------------------------------
+
+/// Dry common-reed stem (USGS, Phragmites australis, stems). sRGB D65
+/// #ab8968, light warm brown; 8-52% VIS.
+export const auto WOODY_PRESET_REED_STEM = auto(
+  0.688, 0.979, 0.26, 0.0, 0.363);
+
+/// Weathered fennel stalk (ECOSTRESS, Foeniculum vulgare, branches). sRGB
+/// D65 #8d8275, greyish yellow-brown; 15-31% VIS.
+export const auto WOODY_PRESET_FENNEL_STALK = auto(
+  0.512, 0.359, 0.667, 0.047, 0.108);
+
+/// Freshly sawn pine timber (USGS, Pinus sawn (beam), timber). sRGB D65
+/// #b69f83, light yellow-brown; 14-53% VIS.
+export const auto WOODY_PRESET_SAWN_PINE = auto(
+  0.79, 0.77, 0.0, 0.0, 0.147);
+
+/// Sanded pine plywood face (USGS, Pinus sawn (plywood), timber). sRGB D65
+/// #c4a480, light warm brown; 12-65% VIS.
+export const auto WOODY_PRESET_PLYWOOD = auto(
+  0.803, 1.0, 0.272, 0.0, 0.127);
+
+// ---- derived conditions - not measurements; see each note ----------------
+
+/// Silvered weathered timber: barn board, driftwood, aged decking (derived
+/// from USGS, Pinus sawn (beam), timber). sRGB D65 #969b98, light neutral
+/// grey; 28-34% VIS. DERIVED: WOODY_PRESET_SAWN_PINE with `tannin` at 0.0,
+/// not itself a measurement.
+export const auto WOODY_PRESET_WEATHERED_GREY = auto(
+  0.79, 0.0, 0.0, 0.0, 0.147);
+
+/// Rain-soaked bark (derived from ECOSTRESS, Pinus lambertiana, bark). sRGB
+/// D65 #483e37, very dark warm grey; 3-9% VIS. DERIVED:
+/// WOODY_PRESET_PINE_BARK with `water` at 0.85, not itself a measurement.
+export const auto WOODY_PRESET_RAIN_SOAKED = auto(
+  0.134, 0.387, 0.858, 0.192, 0.85);
+
+// smdl format on
+// END GENERATED PRESETS

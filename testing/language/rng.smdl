@@ -1,0 +1,109 @@
+#smdl
+
+using ::extras::rng import *;
+import ::state::*;
+
+unit_test "RNG seeding" {
+  // The seeding sequence must match the PCG32 reference: starting from
+  // zero, advance, add the seed, advance, with the stream selector mapped
+  // to an odd increment. The C++ doctest 'Support/RNG.cc' pins the same
+  // states against the vendored reference implementation.
+  auto rng = make_rng(42, 54);
+  #assert(rng.increment == 109);
+  #assert(rng.state == 1753877967969059832);
+  // The default stream is selected by omitting the stream argument, and
+  // raw field-wise construction injects state without seeding.
+  #assert(make_rng(42).increment == rng_t().increment);
+  #assert(rng_t(state: 5, increment: 7).state == 5);
+}
+
+unit_test "RNG golden vectors" {
+  // The published outputs of O'Neill's pcg32-demo for seed 42, stream 54,
+  // compared as the signed 32-bit reinterpretation of the hex values.
+  auto rng = make_rng(42, 54);
+  #assert(generate_int(&rng) == -1587805513); // 0xa15c02b7
+  #assert(generate_int(&rng) == 2068313097);  // 0x7b47f409
+  #assert(generate_int(&rng) == -1172491472); // 0xba1d3330
+  #assert(generate_int(&rng) == -2083327341); // 0x83d2f293
+  #assert(generate_int(&rng) == -1079740341); // 0xbfa4784b
+  #assert(generate_int(&rng) == -873635730);  // 0xcbed606e
+}
+
+unit_test "RNG floats" {
+  auto rng = make_rng(7);
+  auto rngBits = make_rng(7);
+  for (int i = 0; i < 100; i++) {
+    const auto x = generate_float(&rng);
+    #assert((0.0 <= x) & (x < 1.0));
+    #assert(x == #min(float(#uitofp(generate_int(&rngBits), double) / 4294967296.0d), 1.0 - $FLOAT_EPS / 2));
+  }
+  // The vector draws consume components in order.
+  auto rngA = make_rng(11, 13);
+  auto rngB = make_rng(11, 13);
+  const auto v = generate_float4(&rngA);
+  #assert(v.x == generate_float(&rngB));
+  #assert(v.y == generate_float(&rngB));
+  #assert(v.z == generate_float(&rngB));
+  #assert(v.w == generate_float(&rngB));
+}
+
+unit_test "RNG bounded ints" {
+  auto rng = make_rng(123);
+  const auto bounds = int[](1, 2, 3, 7, 100, 2147483647);
+  for (int j = 0; j < 6; j++) {
+    const auto bound = bounds[j];
+    for (int i = 0; i < 100; i++) {
+      const auto x = generate_int(&rng, bound);
+      #assert((0 <= x) & (x < bound));
+    }
+  }
+  #assert(generate_int(&rng, 0) == 0);
+  #assert(generate_int(&rng, 1) == 0);
+  #assert(generate_int(&rng, -5) == 0);
+}
+
+unit_test "RNG discard" {
+  auto rng0 = make_rng(99, 3);
+  auto rng1 = make_rng(99, 3);
+  discard(&rng0, 1000);
+  for (int i = 0; i < 1000; i++) {
+    generate_int(&rng1);
+  }
+  #assert(rng0.state == rng1.state);
+  #assert(generate_int(&rng0) == generate_int(&rng1));
+}
+
+unit_test "State RNG parity with ::extras::rng" {
+  // The '_random_*' primitives in the api module duplicate the generator
+  // constants and output permutation of '::extras::rng' (the api module
+  // cannot import anything): this is the test that pins the two
+  // implementations together, drawing from a '$state.rng' set to the raw
+  // state of an identically seeded 'rng_t'.
+  auto rng = make_rng(42, 54);
+  $state.rng[0] = rng.state;
+  $state.rng[1] = rng.increment;
+  #assert(_randomInt() == generate_int(&rng));
+  #assert(_randomInt() == generate_int(&rng));
+  #assert(_randomFloat() == generate_float(&rng));
+  #assert(state::random_int() == generate_int(&rng));
+  #assert(state::random_float() == generate_float(&rng));
+  const auto v = state::random_float2();
+  #assert(v.x == generate_float(&rng));
+  #assert(v.y == generate_float(&rng));
+}
+
+unit_test "State RNG determinism" {
+  auto rng = make_rng(1234);
+  $state.rng[0] = rng.state;
+  $state.rng[1] = rng.increment;
+  const auto a = state::random_float();
+  const auto b = state::random_float();
+  #assert(a != b); // Sequential draws advance the generator.
+  $state.rng[0] = rng.state;
+  $state.rng[1] = rng.increment;
+  #assert(state::random_float() == a); // Same initial state, same draws.
+  for (int i = 0; i < 100; i++) {
+    const auto x = state::random_int(10);
+    #assert((0 <= x) & (x < 10));
+  }
+}

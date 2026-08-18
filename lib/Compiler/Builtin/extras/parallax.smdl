@@ -1,0 +1,282 @@
+// NOTE: This module is non-standard!
+/// Parallax occlusion mapping (POM) at material evaluation time, against
+/// the non-standard `state::direction()` contract: the ray direction the
+/// renderer populated is marched through a height field to find the UV
+/// coordinate the viewer actually sees, buying relief detail that would
+/// otherwise take heavy subdivision and displacement.
+///
+/// The march core `parallax_offset_with()` is a macro over a height
+/// *lambda* `float2 -> float`, so procedural height fields are first-class
+/// and textures are just the `parallax_uv()` specialization via
+/// `tex::lookup_float`. Heights follow the convention **1 = un-displaced
+/// surface, 0 = deepest**, and are clamped to `[0, 1]` when sampled.
+///
+/// Everything reduces to the identity (no offset, the unperturbed shading
+/// normal) whenever the ray direction is unavailable or unusable:
+/// - `state::direction()` zero (the renderer does not populate it),
+/// - importance transport (light tracing must not see camera-direction
+///   detail; this is the reciprocity guard, folded into `view_vector()`),
+/// - backface incidence (`view_vector().z <= 0`),
+/// - non-positive `scale` (which is also how a faded-out effect reads).
+///
+/// Grazing incidence is deliberately not culled: the march divides by
+/// `#max(view.z, PARALLAX_MIN_VIEW_Z)`, so toward the horizon the offset
+/// saturates at the `PARALLAX_MAX_SLOPE` cap instead of snapping back to
+/// the identity along a visible band.
+///
+/// The intended use computes the offset UV once with `parallax_uv()` and
+/// feeds every downstream lookup, with the matching bump normal from
+/// `perturbed_normal()` and a level-of-detail fade from `::extras::lod`.
+///
+/// Limitations, by construction: silhouettes do not change; backfaces are
+/// not offset; and per-light shadow marching is architecturally out of
+/// reach, since light directions are unknown at evaluation time and the
+/// scattering entry points are stateless. First-order self-shadowing is
+/// available anyway: `horizon_slopes_with()` compresses the height field's
+/// directional occlusion into four slopes at the offset UV, and
+/// `df::horizon_shadow_factor` applies them to the incoming direction
+/// inside the BSDF, where next-event estimation and BSDF sampling see them
+/// consistently.
+///
+/// References:
+///   Tatarchuk (2006): Practical Parallax Occlusion Mapping
+///   McGuire and McGuire (2005): Steep Parallax Mapping
+#smdl
+
+import ::math::*;
+import ::state::*;
+import ::tex::*;
+
+/// The floor on the tangent-frame view Z the march divides by. Grazing
+/// views compute their slope as if `view.z` were at least this, so the
+/// offset saturates continuously toward the horizon (the
+/// `PARALLAX_MAX_SLOPE` cap binds first) rather than cutting out at a
+/// threshold. Only `view.z <= 0` (the exact zero of an unpopulated
+/// `state::direction()`, the transport guard, and backface hits) is
+/// the identity.
+export const float PARALLAX_MIN_VIEW_Z = 0.05;
+
+/// The cap on the parallax slope `|view.xy| / view.z`, bounding the total
+/// UV offset by `PARALLAX_MAX_SLOPE * scale` no matter how oblique the view.
+export const float PARALLAX_MAX_SLOPE = 8.0;
+
+/// The unit view vector (from the shading point toward the viewer) in
+/// the shading tangent frame of texture space `space`, as consumed by the
+/// march. Exactly zero for "off" when `state::direction()` is unpopulated
+/// and under importance transport, so light paths never see camera-direction
+/// detail.
+@(macro)
+export float3 view_vector(const int space = 0) {
+  return float3(0.0) if ($state.transport != 0);
+  return -$state.direction * state::tangent_space(space);
+}
+
+/// The parallax-adjusted UV coordinate for the height lambda `height_at`
+/// (`float2 -> float`, heights clamped to `[0, 1]`, 1 = un-displaced
+/// surface), viewed along the tangent-frame `view` as produced by
+/// `view_vector()`, with the relief depth `scale` in UV units.
+///
+/// The march samples between `min_steps` (normal incidence) and
+/// `max_steps` (grazing) depth layers, then refines the crossing with
+/// `1 + refine_steps` false-position (secant) iterations, which is exact
+/// for constant and linear height fields and tightens the crossing when
+/// the field bends within one layer. The within-layer residue is what
+/// shows as banding on steep relief, where each layer sweeps a long UV
+/// distance. Identity when `view.z <= 0` or `scale <= 0`; grazing views
+/// divide by `#max(view.z, PARALLAX_MIN_VIEW_Z)` and so saturate at the
+/// slope cap instead of cutting out.
+///
+/// `jitter` in `[0, 1)` shifts the interior sampling layers down by that
+/// fraction of one layer (the entry at 0 and the final layer at 1 stay
+/// anchored, so the crossing is always bracketed). It is exactly zero
+/// cost and a no-op on fields where the secant is already exact; fed
+/// per-sample randomness in a Monte Carlo renderer, it decorrelates the
+/// layer grid across samples, turning any residual banding into noise
+/// that averages out.
+@(pure macro)
+// Non-positive scale (and the other guard conditions) is the documented off
+// switch, and that comptime instantiation folds the body away, leaving every
+// parameter past the guard unused there. The `[[anno::unused()]]` markers
+// quiet that warning; all of these parameters are used on the live path.
+export float2 parallax_offset_with(
+  const auto height_at [[anno::unused()]],
+  const float2 coord,
+  const float3 view,
+  const float scale,
+  const int min_steps = 8 [[anno::unused()]],
+  const int max_steps = 32 [[anno::unused()]],
+  const float jitter = 0.0 [[anno::unused()]],
+  const int refine_steps = 2 [[anno::unused()]],
+) {
+  return coord if (!(view.z > 0.0) | !(scale > 0.0));
+  // Clamping the divisor (rather than culling grazing views) keeps the
+  // offset continuous at the grazing band: it saturates at the slope cap
+  // instead of snapping back to the identity, and the slope stays finite
+  // for arbitrarily small positive view.z.
+  auto slope(view.xy / #max(view.z, PARALLAX_MIN_VIEW_Z));
+  const auto slope_len(math::length(slope));
+  slope *= PARALLAX_MAX_SLOPE / slope_len if (slope_len > PARALLAX_MAX_SLOPE);
+  slope *= scale; // Always multiplies l, so fold into slope
+  // The signed clearance `f = layer - depth` is negative strictly above
+  // the surface. At the entry layer 0, a non-negative clearance means the
+  // surface is at its reference level and there is nothing to march.
+  float f0(-(1.0 - math::saturate(height_at(coord))));
+  return coord if (f0 >= 0.0);
+  const int n(#max(1, int(math::lerp(float(max_steps), float(min_steps), math::saturate(view.z)))));
+  float l0(0.0);
+  float l1(0.0);
+  float f1(f0);
+  // March until the ray dips below the surface. Because heights clamp to
+  // [0, 1], the clearance at the last layer `l = 1` is never negative, so
+  // the crossing is always bracketed.
+  const float xi(math::saturate(jitter));
+  for (int i = 1; i <= n; i++) {
+    l0 = l1;
+    f0 = f1;
+    l1 = i == n ? 1.0 : (float(i) - xi) / n;
+    f1 = l1 - (1.0 - math::saturate(height_at(coord - slope * l1)));
+    break if (f1 >= 0.0);
+  }
+  // False-position refinement over the bracket `f0 < 0 <= f1`: the secant
+  // estimate, then `refine_steps` passes that evaluate the clearance there
+  // and shrink whichever side of the bracket it falls on.
+  float l(math::lerp(l0, l1, #min(-f0 / #max(f1 - f0, $FLOAT_MIN), 1.0)));
+  for (int r = 0; r < refine_steps; r++) {
+    const float f(l - (1.0 - math::saturate(height_at(coord - slope * l))));
+    if (f >= 0.0) {
+      l1 = l;
+      f1 = f;
+    } else {
+      l0 = l;
+      f0 = f;
+    }
+    l = math::lerp(l0, l1, #min(-f0 / #max(f1 - f0, $FLOAT_MIN), 1.0));
+  }
+  return coord - slope * l;
+}
+
+/// The four horizon slopes of the height lambda at `coord` (pass the
+/// *offset* UV from `parallax_offset_with()`) toward +U, -U, +V, -V,
+/// as consumed by `df::horizon_shadow_factor` for first-order relief
+/// self-shadowing. Each is the steepest blocker slope
+/// `scale * (height - height(coord)) / distance` found by sampling the
+/// axis geometrically from near to far (the near field, where the
+/// horizon is usually decided, gets the density), clamped below at 0
+/// and capped at `PARALLAX_MAX_SLOPE`.
+///
+/// The slopes are `scale`-proportional in the same UV-commensurate
+/// units as the march, so the calibrated and faded `scale` used for the
+/// offset is exactly the `scale` to pass here, and a non-positive
+/// `scale` (the unpopulated LOD state, a faded-out relief, the
+/// transport guard) returns all zeros, which the shadow factor treats
+/// as an exact passthrough.
+///
+/// A blocker at distance `t` cannot contribute a slope above
+/// `scale / t`, so searching much past `scale / PARALLAX_MIN_VIEW_Z` is
+/// provably pointless; the `max_distance` default is generous for
+/// typical relief scales. Cost: 4 x `steps` height samples on top of
+/// the view march.
+@(pure macro)
+// See the note on 'parallax_offset_with': the annotations quiet the
+// guarded-off comptime instantiation.
+export float4 horizon_slopes_with(
+  const auto height_at [[anno::unused()]],
+  const float2 coord [[anno::unused()]],
+  const float scale,
+  const int steps = 8 [[anno::unused()]],
+  const float max_distance = 0.25,
+) {
+  return float4(0.0) if (!(scale > 0.0) | !(max_distance > 0.0));
+  const float h0(math::saturate(height_at(coord)));
+  const int n(math::clamp(steps, 1, 24));
+  float4 slopes(0.0);
+  for (int k = 0; k < n; k++) {
+    // Geometric spacing: each sample doubles the distance, ending at
+    // `max_distance`.
+    const float t(max_distance / float(1 << (n - 1 - k)));
+    const float rise(scale / t);
+    slopes.x = #max(slopes.x, (math::saturate(height_at(coord + float2(t, 0.0))) - h0) * rise);
+    slopes.y = #max(slopes.y, (math::saturate(height_at(coord - float2(t, 0.0))) - h0) * rise);
+    slopes.z = #max(slopes.z, (math::saturate(height_at(coord + float2(0.0, t))) - h0) * rise);
+    slopes.w = #max(slopes.w, (math::saturate(height_at(coord - float2(0.0, t))) - h0) * rise);
+  }
+  return #min(slopes, PARALLAX_MAX_SLOPE);
+}
+
+/// The parallax-adjusted UV coordinate for the height texture
+/// `height_tex`, from `state::direction()` via `view_vector(space)`. This
+/// is the texture specialization of `parallax_offset_with()`; see there
+/// for the semantics, and see the module documentation for the intended
+/// use. Identity whenever the LOD state is unpopulated.
+@(macro)
+export float2 parallax_uv(
+  const texture_2d height_tex,
+  const float scale,
+  const float2 coord = state::texture_coordinate(0).xy,
+  const int space = 0,
+  const int min_steps = 8,
+  const int max_steps = 32,
+  const tex::wrap_mode wrap_u = tex::wrap_repeat,
+  const tex::wrap_mode wrap_v = tex::wrap_repeat,
+  const float jitter = 0.0,
+  const int refine_steps = 2,
+) = parallax_offset_with(
+      \(const float2 coord) = tex::lookup_float(height_tex, coord, wrap_u, wrap_v),
+      coord,
+      view_vector(space),
+      scale,
+      min_steps,
+      max_steps,
+      jitter,
+      refine_steps,
+    );
+
+/// The bump-perturbed shading normal matching the relief: central
+/// differences of the height lambda at `coord` (pass the *offset* UV so
+/// the normal matches what the viewer sees) with spacing `delta` in UV
+/// units, built in the tangent frame of `space` and returned in internal
+/// space. A constant height gives `state::normal()` back to normalization
+/// precision (fast-math lowers `normalize` through an approximate
+/// reciprocal square root, so not bit-exactly); a non-positive `delta`
+/// (the division guard) returns it exactly, untouched.
+@(macro)
+// See the note on 'parallax_offset_with': the annotations quiet the
+// guarded-off comptime instantiation.
+export float3 perturbed_normal_with(
+  const auto height_at [[anno::unused()]],
+  const float2 coord [[anno::unused()]],
+  const float scale [[anno::unused()]],
+  const float2 delta,
+  const int space = 0 [[anno::unused()]],
+) {
+  return state::normal() if (!(delta.x > 0.0) | !(delta.y > 0.0));
+  const float dhdu((height_at(coord + float2(delta.x, 0.0)) - height_at(coord - float2(delta.x, 0.0))) / (2.0 * delta.x));
+  const float dhdv((height_at(coord + float2(0.0, delta.y)) - height_at(coord - float2(0.0, delta.y))) / (2.0 * delta.y));
+  const float3 nt(math::normalize(float3(-scale * dhdu, -scale * dhdv, 1.0)));
+  return math::normalize(nt.x * state::texture_tangent_u(space) + nt.y * state::texture_tangent_v(space) + nt.z * state::normal());
+}
+
+/// The bump-perturbed shading normal for the height texture `height_tex`
+/// at `coord` (pass the UV from `parallax_uv()` so the normal matches
+/// the relief) with the difference spacing `delta_texels` texels. Returns
+/// `state::normal()` unchanged for invalid textures.
+@(macro)
+export float3 perturbed_normal(
+  const texture_2d height_tex,
+  const float scale,
+  const float2 coord = state::texture_coordinate(0).xy,
+  const int space = 0,
+  const float delta_texels = 1.0,
+  const tex::wrap_mode wrap_u = tex::wrap_repeat,
+  const tex::wrap_mode wrap_v = tex::wrap_repeat,
+) {
+  const int2 extent(tex::extent(height_tex));
+  return state::normal() if (#any(extent <= 0));
+  return perturbed_normal_with(
+           \(const float2 coord) = tex::lookup_float(height_tex, coord, wrap_u, wrap_v),
+           coord,
+           scale,
+           float2(delta_texels) / float2(extent),
+           space,
+         );
+}

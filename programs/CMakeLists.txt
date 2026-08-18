@@ -13,6 +13,15 @@ macro(smdl_add_program BIN_NAME)
   endif()
   if(NOT MissingTargets)
     add_executable(${BIN_NAME})
+    # The installed programs sit in '<prefix>/bin' and load 'libSpectralMDL'
+    # out of '<prefix>/lib', so they need an RPATH relative to their own
+    # location. Without it an installed binary only resolves the library by
+    # accident, through whatever the build tree happened to bake in.
+    if(APPLE)
+      set(RPATH_ORIGIN "@loader_path")
+    else()
+      set(RPATH_ORIGIN "$ORIGIN")
+    endif()
     set_target_properties(
       ${BIN_NAME}
       PROPERTIES
@@ -21,10 +30,15 @@ macro(smdl_add_program BIN_NAME)
         LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/lib"
         ARCHIVE_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/lib"
         RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+        INSTALL_RPATH "${RPATH_ORIGIN}/../${CMAKE_INSTALL_LIBDIR}"
       )
     target_sources(${BIN_NAME} PRIVATE "${Args_SOURCES}")
     target_compile_options(${BIN_NAME} PRIVATE "${RTTI_FLAG}")
-    target_link_libraries(${BIN_NAME} PRIVATE "SpectralMDL" ${SMDL_LLVM_TARGETS})
+    # The programs use LLVM only for command line parsing and diagnostics
+    # ('llvm/Support/...'), so they want LLVMSupport and nothing else. All of
+    # the code generation lives inside SpectralMDL itself, which links the
+    # native backend privately.
+    target_link_libraries(${BIN_NAME} PRIVATE "SpectralMDL" "LLVMSupport")
     target_include_directories(${BIN_NAME} PRIVATE "${LLVM_INCLUDE_DIR}")
     if(Args_DEPENDS)
       foreach(DEPEND ${Args_DEPENDS})
@@ -34,13 +48,12 @@ macro(smdl_add_program BIN_NAME)
     if(Args_MORE_INCLUDES)
       foreach(INCLUDE_DIR ${Args_MORE_INCLUDES})
         target_include_directories(${BIN_NAME} PRIVATE ${INCLUDE_DIR})
-      endforeach(DEPEND)
+      endforeach()
     endif()
     target_include_directories(
       ${BIN_NAME} 
       PRIVATE 
         "${CMAKE_SOURCE_DIR}/programs/common"
-        "${CMAKE_SOURCE_DIR}/programs/common/pcg-cpp"
       )
     if(SMDL_INSTALL)
       install(
@@ -56,7 +69,7 @@ macro(smdl_add_program BIN_NAME)
   endif()
 endmacro()
 
-add_subdirectory(smdlc)
+add_subdirectory(smdl)
 if(SMDL_TOY)
 add_subdirectory(smdl-toy)
 endif()

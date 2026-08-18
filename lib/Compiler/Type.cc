@@ -1,5 +1,8 @@
 // vim:foldmethod=marker:foldlevel=0:fmr=--{,--}
 #include "Type.h"
+
+#include <algorithm>
+
 #include "Emitter.h"
 
 #include "smdl/Support/Logger.h"
@@ -173,7 +176,7 @@ llvm::Type *Scalar::getLLVMType(llvm::LLVMContext &context) const {
     } else if (numBits == 128) {
       return llvm::Type::getFP128Ty(context);
     } else {
-      SMDL_SANITY_CHECK(false, "Invalid float type specification!");
+      SMDL_SANITY_CHECK_MSG(false, "Invalid float type specification!");
       return nullptr;
     }
   } else {
@@ -275,11 +278,11 @@ Value ArithmeticType::invoke(Emitter &emitter, const ArgumentList &args,
               emitter, this, getScalarType(emitter.context), value)})
         return *loaded;
       // If constructing from color and this is a 3-dimensional vector,
-      // delegate to the `_color_to_rgb` function in the `api` module.
+      // delegate to the `_colorToRgb` function in the `api` module.
       if (value.type == emitter.context.getColorType() && dim == 3)
         return invoke(
             emitter,
-            emitter.emitCall(emitter.context.getKeyword("_color_to_rgb"), value,
+            emitter.emitCall(emitter.context.getKeyword("_colorToRgb"), value,
                              srcLoc),
             srcLoc);
     }
@@ -758,10 +761,9 @@ Value ColorType::invoke(Emitter &emitter, const ArgumentList &args,
             emitter, this, emitter.context.getFloatType(), value)})
       return *loaded;
     if (value.type == context.getFloatType(Extent(3)))
-      return emitter.emitCall(context.getKeyword("_rgb_to_color"), value,
-                              srcLoc);
+      return emitter.emitCall(context.getKeyword("_rgbToColor"), value, srcLoc);
     if (value.type == context.getSpectralCurveType())
-      return emitter.emitCall(context.getKeyword("_spectral_curve_to_color"),
+      return emitter.emitCall(context.getKeyword("_spectralCurveToColor"),
                               value, srcLoc);
   }
   if (args.size() <= 3 && args.isOnlyTheseNames({"r", "g", "b"})) {
@@ -772,7 +774,7 @@ Value ColorType::invoke(Emitter &emitter, const ArgumentList &args,
     if (emitter.canResolveArguments(params, args, srcLoc)) {
       auto resolvedArgs{emitter.resolveArguments(params, args, srcLoc)};
       return emitter.emitCall(
-          context.getKeyword("_rgb_to_color"),
+          context.getKeyword("_rgbToColor"),
           emitter.invoke(context.getFloatType(Extent(3)),
                          llvm::ArrayRef<Value>(resolvedArgs.values), srcLoc),
           srcLoc);
@@ -793,7 +795,7 @@ Value ColorType::invoke(Emitter &emitter, const ArgumentList &args,
         srcLoc.throwError(
             "expected wavelength and amplitude arrays to be same size");
       return emitter.emitCall(
-          context.getKeyword("_samples_to_color"),
+          context.getKeyword("_samplesToColor"),
           ArgumentList{context.getComptimeInt(int(arrayType0->size)),
                        resolvedArgs.values[0], resolvedArgs.values[1]},
           srcLoc);
@@ -997,12 +999,9 @@ void FunctionType::initialize(Emitter &emitter) {
       emitter.emit(decl.returnType).getComptimeMetaType(context, decl.srcLoc);
   for (auto &param : decl.params)
     params.push_back(
-        Parameter{.type = emitter.emit(param.type)
-                              .getComptimeMetaType(context, param.name.srcLoc),
-                  .name = param.name,
-                  .astParam = &param,
-                  .astField = nullptr,
-                  .builtinDefaultValue = {}});
+        Parameter{emitter.emit(param.type)
+                      .getComptimeMetaType(context, param.name.srcLoc),
+                  param.name, /*astParam=*/&param});
   // Reject duplicate parameter names.
   {
     auto uniqueNames{llvm::StringSet<>()};
@@ -1072,24 +1071,20 @@ void FunctionType::initializeLambda(Emitter &emitter) {
   returnType = context.getAutoType();
   for (auto &param : decl.params)
     params.push_back(
-        Parameter{.type = emitter.emit(param.type)
-                              .getComptimeMetaType(context, param.name.srcLoc),
-                  .name = param.name,
-                  .astParam = &param,
-                  .astField = nullptr,
-                  .builtinDefaultValue = {}});
+        Parameter{emitter.emit(param.type)
+                      .getComptimeMetaType(context, param.name.srcLoc),
+                  param.name, /*astParam=*/&param});
   // Reject duplicate parameter names.
   {
     auto uniqueNames{llvm::StringSet<>()};
     for (auto &param : params)
       if (!uniqueNames.insert(param.name).second)
-        param.getSourceLocation().throwError(
-            "duplicate parameter name ", Quoted(param.name), " in lambda");
+        param.getSourceLocation().throwError("duplicate parameter name ",
+                                             Quoted(param.name), " in lambda");
   }
   // The parser already rejects `...` in lambdas; belt and braces because
   // macros must not be variadic.
-  if (decl.isVariadic())
-    decl.srcLoc.throwError("lambda must not be variadic");
+  if (decl.isVariadic()) decl.srcLoc.throwError("lambda must not be variadic");
 }
 
 Value FunctionType::invoke(Emitter &emitter, const ArgumentList &args,
@@ -1179,11 +1174,17 @@ Value FunctionType::invoke(Emitter &emitter, const ArgumentList &args,
     auto indirectParams{llvm::SmallVector<std::pair<unsigned, Type *>, 4>{}};
     for (size_t i = 0; i < resolvedArgs.values.size(); i++) {
       const auto &value{resolvedArgs.values[i]};
+      // A voided argument carries no data and is absent from the callee's
+      // signature (see 'Emitter::createFunction'), so it contributes no
+      // LLVM argument here either. The callee's parameter types are the
+      // types of these very values, by way of 'getNonVariadicTypes()', so
+      // the two sides drop exactly the same positions.
+      if (value.isVoid()) continue;
       if (func->usesIndirectParams() && i < func->params.size() &&
           emitter.getLLVMFunction() && emitter.passesIndirectly(value.type)) {
-        SMDL_SANITY_CHECK(value.isLValue(),
-                          "indirect parameter must reach the call "
-                          "memory-resident (see 'resolveArguments')");
+        SMDL_SANITY_CHECK_MSG(value.isLValue(),
+                              "indirect parameter must reach the call "
+                              "memory-resident (see 'resolveArguments')");
         indirectParams.push_back({unsigned(llvmArgs.size()), value.type});
       }
       llvmArgs.push_back(value);
@@ -1280,7 +1281,7 @@ FunctionType *FunctionType::resolveOverload(Emitter &emitter,
   // Remove every candidate beaten by another candidate, first by conversion
   // quality, then by specificity among what remains. Both relations are
   // strict partial orders, so at least one candidate always survives. If
-  // more than one survives, the call is genuinely ambiguous — fail loudly
+  // more than one survives, the call is genuinely ambiguous: fail loudly
   // instead of picking by declaration order.
   auto filterBeaten{[&](auto &&beats) {
     auto beaten{llvm::SmallVector<bool>(overloads.size(), false)};
@@ -1324,15 +1325,14 @@ FunctionType::getInstance(Emitter &emitter,
     inst.isCompiling = true;
     inst.returnType = returnType;
     if (isForeign()) {
-      emitter.createFunction(inst.llvmFunc, declName, isPure(),
-                             inst.returnType, paramTypes, params, decl.srcLoc,
-                             nullptr);
+      emitter.createFunction(inst.llvmFunc, declName, isPure(), inst.returnType,
+                             paramTypes, params, decl.srcLoc, nullptr);
     } else {
       SMDL_SANITY_CHECK(decl.definition);
       // A lambda instance is always compiled pure: lambdas ordinarily
       // macro-expand, and materialization exists to hand the compiled
       // function across an ABI with no state channel (see the
-      // 'tabulate_albedo' intrinsic). A lambda body that references
+      // 'tabulateAlbedo' intrinsic). A lambda body that references
       // '$state' fails with the usual pure-context error, and a lambda
       // body that captures run-time locals fails with the usual
       // cross-function reference error.
@@ -1373,7 +1373,7 @@ FunctionType::getInstance(Emitter &emitter,
 /// Verify that the C++ `JIT::Material::Instance` layout matches the api
 /// `_MaterialInstance` struct emitted by the compiler. The JIT boundary
 /// reinterprets one as the other, so any drift is silent undefined
-/// behavior at render time — fail the compile loudly instead.
+/// behavior at render time; fail the compile loudly instead.
 static void verifyMaterialInstanceLayout(Context &context, Type *type,
                                          const SourceLocation &srcLoc) {
   auto llvmStructType{
@@ -1389,6 +1389,17 @@ static void verifyMaterialInstanceLayout(Context &context, Type *type,
       {"temperature", offsetof(Instance, temperature)},
       {"absorption_coefficient", offsetof(Instance, absorption_coefficient)},
       {"scattering_coefficient", offsetof(Instance, scattering_coefficient)},
+      {"max_absorption_coefficient",
+       offsetof(Instance, max_absorption_coefficient)},
+      {"max_scattering_coefficient",
+       offsetof(Instance, max_scattering_coefficient)},
+      {"volume_density_resource", offsetof(Instance, volume_density_resource)},
+      {"volume_density_bound_min",
+       offsetof(Instance, volume_density_bound_min)},
+      {"volume_density_bound_max",
+       offsetof(Instance, volume_density_bound_max)},
+      {"volume_emission_intensity",
+       offsetof(Instance, volume_emission_intensity)},
       {"surface_emission_intensity",
        offsetof(Instance, surface_emission_intensity)},
       {"backface_emission_intensity",
@@ -1417,33 +1428,48 @@ static void verifyMaterialInstanceLayout(Context &context, Type *type,
 
 void FunctionType::initializeMaterialFunctions(Emitter &emitter) {
   using namespace std::literals::string_view_literals;
-  SMDL_LOG_DEBUG(std::string(decl.srcLoc), " New material ", Quoted(decl.name));
   auto &context{emitter.context};
-  auto &jitMaterial{context.compiler.mMaterials.emplace_back()};
+  auto &compiler{context.compiler};
+  // Build the qualified material name from the module identity, the
+  // enclosing namespace names, and the material name.
+  auto module_{decl.srcLoc.module_};
+  SMDL_SANITY_CHECK(module_);
+  auto qualifiedName{std::string(module_->getQualifiedName())};
+  if (qualifiedName.empty()) {
+    // Builtin modules have no search root; use the bare name.
+    qualifiedName += "::";
+    qualifiedName += module_->getName();
+  }
+  for (const auto &namespaceName : context.currentNamespacePath) {
+    qualifiedName += "::";
+    qualifiedName += namespaceName;
+  }
+  qualifiedName += "::";
+  qualifiedName += decl.name.srcName;
+  // If the host named the materials it wants (see
+  // `Compiler::setDesiredMaterials()`), skip everything else: no JIT
+  // entry points are emitted, so nothing this material alone references
+  // is instantiated or loaded. The function itself still exists, so
+  // other materials may instantiate it.
+  if (!compiler.mDesiredMaterialNames.empty() &&
+      std::none_of(
+          compiler.mDesiredMaterialNames.begin(),
+          compiler.mDesiredMaterialNames.end(), [&](const auto &desiredName) {
+            return Compiler::matchesMaterialName(desiredName, qualifiedName);
+          })) {
+    SMDL_LOG_DEBUG(std::string(decl.srcLoc), " Skipping material ",
+                   Quoted(decl.name), ": not a desired material");
+    compiler.mSkippedMaterialNames.push_back(std::move(qualifiedName));
+    return;
+  }
+  SMDL_LOG_DEBUG(std::string(decl.srcLoc), " New material ", Quoted(decl.name));
+  auto &jitMaterial{compiler.mMaterials.emplace_back()};
   jitMaterial.moduleName = std::string(decl.srcLoc.getModuleName());
   jitMaterial.moduleFileName = std::string(decl.srcLoc.getModuleFileName());
   jitMaterial.lineNo = decl.srcLoc.lineNo;
   jitMaterial.materialName = std::string(decl.name.srcName);
-  {
-    // Build the qualified material name from the module identity, the
-    // enclosing namespace names, and the material name.
-    auto module_{decl.srcLoc.module_};
-    SMDL_SANITY_CHECK(module_);
-    auto qualifiedName{std::string(module_->getQualifiedName())};
-    if (qualifiedName.empty()) {
-      // Builtin modules have no search root; use the bare name.
-      qualifiedName += "::";
-      qualifiedName += module_->getName();
-    }
-    for (const auto &namespaceName : context.currentNamespacePath) {
-      qualifiedName += "::";
-      qualifiedName += namespaceName;
-    }
-    qualifiedName += "::";
-    qualifiedName += decl.name.srcName;
-    jitMaterial.qualifiedName = qualifiedName;
-    jitMaterial.moduleIsShadowed = module_->isShadowed();
-  }
+  jitMaterial.qualifiedName = std::move(qualifiedName);
+  jitMaterial.moduleIsShadowed = module_->isShadowed();
   // The JIT symbol base name is the dotted qualified name, plus a
   // disambiguating ordinal for duplicates, which only arise when the
   // module is shadowed by an equally named module under an earlier
@@ -1478,12 +1504,7 @@ void FunctionType::initializeMaterialFunctions(Emitter &emitter) {
   Type *floatPtrType{context.getPointerType(context.getFloatType())};
   Type *intPtrType{context.getPointerType(context.getIntType())};
   auto constParameter{[](Type *type, std::string_view name) {
-    return Parameter{.type = type,
-                     .name = name,
-                     .astParam = {},
-                     .astField = {},
-                     .builtinDefaultValue = {},
-                     .builtinConst = true};
+    return Parameter{type, name, {}, {}, {}, /*builtinConst=*/true};
   }};
   // The '@(visible)' entry points are called by the renderer through the
   // C++ 'JIT::Material' API, which passes distinct, sufficiently aligned,
@@ -1814,6 +1835,118 @@ void FunctionType::initializeMaterialFunctions(Emitter &emitter) {
     jitMaterial.volumeScatterSample.name = func->getName().str();
   }
   {
+    // Generate the hair scatter evaluate function:
+    // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    // @(pure visible) int "material_name.hairScatterEvaluate"(
+    //     &_MaterialInstance instance,
+    //     &float3 wo,
+    //     &float3 wi,
+    //     &float pdfFwd,
+    //     &float pdfRev,
+    //     &float f) {
+    //   return ::df::_hairScatterEvaluate(
+    //     instance, wo, wi, pdfFwd, pdfRev, f);
+    // }
+    // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    auto funcReturnType{static_cast<Type *>(context.getIntType())};
+    auto func{emitter.createFunction(
+        concat(symbolBase, ".hairScatterEvaluate"), /*isPure=*/true,
+        funcReturnType,
+        {constParameter(materialInstancePtrType, "instance"),
+         constParameter(float3PtrType, "wo"),
+         constParameter(float3PtrType, "wi"),
+         constParameter(floatPtrType, "pdfFwd"),
+         constParameter(floatPtrType, "pdfRev"),
+         constParameter(floatPtrType, "f")},
+        decl.srcLoc, [&] {
+          auto dfFunc{Declaration::findInModule(
+              context, "_hairScatterEvaluate"sv, nullptr, dfModule,
+              /*ignoreIfNotExported=*/false)};
+          SMDL_SANITY_CHECK(dfFunc);
+          emitter.emitReturn(
+              emitter.emitCall(
+                  dfFunc->value,
+                  llvm::ArrayRef<Value>{
+                      emitter.resolveIdentifier("instance"sv, decl.srcLoc),
+                      emitter.resolveIdentifier("wo"sv, decl.srcLoc),
+                      emitter.resolveIdentifier("wi"sv, decl.srcLoc),
+                      emitter.resolveIdentifier("pdfFwd"sv, decl.srcLoc),
+                      emitter.resolveIdentifier("pdfRev"sv, decl.srcLoc),
+                      emitter.resolveIdentifier("f"sv, decl.srcLoc)},
+                  decl.srcLoc),
+              decl.srcLoc);
+        })};
+    func->setLinkage(llvm::Function::ExternalLinkage);
+    markPointerParam(func, 0, materialInstanceType);
+    markPointerParam(func, 1, context.getFloatType(3)); // wo
+    markPointerParam(func, 2, context.getFloatType(3)); // wi
+    markPointerParam(func, 3, context.getFloatType());  // pdfFwd
+    markPointerParam(func, 4, context.getFloatType());  // pdfRev
+    markPointerParam(func, 5, context.getFloatType(),   // f
+                     context.getColorType()->wavelengthBaseMax);
+    jitMaterial.hairScatterEvaluate.name = func->getName().str();
+  }
+  {
+    // Generate the hair scatter sample function:
+    // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    // @(pure visible) int "material_name.hairScatterSample"(
+    //     &_MaterialInstance instance,
+    //     &float4 xi,
+    //     &float3 wo,
+    //     &float3 wi,
+    //     &float pdfFwd,
+    //     &float pdfRev,
+    //     &float f,
+    //     &int isDelta) {
+    //   return ::df::_hairScatterSample(
+    //     instance, xi, wo, wi, pdfFwd, pdfRev, f, isDelta);
+    // }
+    // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    auto funcReturnType{static_cast<Type *>(context.getIntType())};
+    auto func{emitter.createFunction(
+        concat(symbolBase, ".hairScatterSample"), /*isPure=*/true,
+        funcReturnType,
+        {constParameter(materialInstancePtrType, "instance"),
+         constParameter(float4PtrType, "xi"),
+         constParameter(float3PtrType, "wo"),
+         constParameter(float3PtrType, "wi"),
+         constParameter(floatPtrType, "pdfFwd"),
+         constParameter(floatPtrType, "pdfRev"),
+         constParameter(floatPtrType, "f"),
+         constParameter(intPtrType, "isDelta")},
+        decl.srcLoc, [&] {
+          auto dfFunc{Declaration::findInModule(context, "_hairScatterSample"sv,
+                                                nullptr, dfModule,
+                                                /*ignoreIfNotExported=*/false)};
+          SMDL_SANITY_CHECK(dfFunc);
+          emitter.emitReturn(
+              emitter.emitCall(
+                  dfFunc->value,
+                  llvm::ArrayRef<Value>{
+                      emitter.resolveIdentifier("instance"sv, decl.srcLoc),
+                      emitter.resolveIdentifier("xi"sv, decl.srcLoc),
+                      emitter.resolveIdentifier("wo"sv, decl.srcLoc),
+                      emitter.resolveIdentifier("wi"sv, decl.srcLoc),
+                      emitter.resolveIdentifier("pdfFwd"sv, decl.srcLoc),
+                      emitter.resolveIdentifier("pdfRev"sv, decl.srcLoc),
+                      emitter.resolveIdentifier("f"sv, decl.srcLoc),
+                      emitter.resolveIdentifier("isDelta"sv, decl.srcLoc)},
+                  decl.srcLoc),
+              decl.srcLoc);
+        })};
+    func->setLinkage(llvm::Function::ExternalLinkage);
+    markPointerParam(func, 0, materialInstanceType);
+    markPointerParam(func, 1, context.getFloatType(4)); // xi
+    markPointerParam(func, 2, context.getFloatType(3)); // wo
+    markPointerParam(func, 3, context.getFloatType(3)); // wi
+    markPointerParam(func, 4, context.getFloatType());  // pdfFwd
+    markPointerParam(func, 5, context.getFloatType());  // pdfRev
+    markPointerParam(func, 6, context.getFloatType(),   // f
+                     context.getColorType()->wavelengthBaseMax);
+    markPointerParam(func, 7, context.getIntType()); // isDelta
+    jitMaterial.hairScatterSample.name = func->getName().str();
+  }
+  {
     // Generate the evaluate opacity function:
     // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
     // @(visible) float "material_name.evaluateOpacity"() {
@@ -1842,6 +1975,83 @@ void FunctionType::initializeMaterialFunctions(Emitter &emitter) {
     jitMaterial.evaluateOpacity.name = func->getName().str();
   }
   {
+    // Generate the displacement evaluate function:
+    // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    // @(visible) void "material_name.displacementEvaluate"(
+    //     &float3 displacement) {
+    //   *displacement = material_name().geometry.displacement;
+    // }
+    // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    // Like 'evaluateOpacity', this evaluates only the displacement: no
+    // '_MaterialInstance' and no '#bump', so 'state.allocator' may be
+    // null and everything not feeding 'geometry.displacement' is
+    // dead-code eliminated. This is the per-vertex query for hosts
+    // that apply displacement to geometry at load time.
+    auto funcReturnType{static_cast<Type *>(context.getVoidType())};
+    auto func{emitter.createFunction(
+        concat(symbolBase, ".displacementEvaluate"), /*isPure=*/false,
+        funcReturnType, {constParameter(float3PtrType, "displacement")},
+        decl.srcLoc, [&] {
+          auto value{emitter.accessField(
+              emitter.accessField(invoke(emitter, {}, decl.srcLoc),
+                                  "geometry"sv, decl.srcLoc),
+              "displacement"sv, decl.srcLoc)};
+          auto out{emitter.rvalue(
+              emitter.resolveIdentifier("displacement"sv, decl.srcLoc))};
+          emitter.createStore(emitter.rvalue(value), out);
+        })};
+    func->setLinkage(llvm::Function::ExternalLinkage);
+    markPointerParam(func, 0, context.getStateType(), 1, /*noAlias=*/false);
+    markPointerParam(func, 1, context.getFloatType(3)); // displacement
+    jitMaterial.displacementEvaluate.name = func->getName().str();
+  }
+  {
+    // Generate the volume evaluate function:
+    // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    // @(visible) void "material_name.volumeEvaluate"(
+    //     &float sigma_a,
+    //     &float sigma_s,
+    //     &float emission) {
+    //   _volumeEvaluate(material_name(), sigma_a, sigma_s, emission);
+    // }
+    // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    // Like 'evaluateOpacity', this evaluates only the volume
+    // coefficient expressions: no '_MaterialInstance' and no '#bump',
+    // so 'state.allocator' may be null and everything not feeding the
+    // coefficients is dead-code eliminated. Unlike instance
+    // evaluation, renderers call this at arbitrary points inside a
+    // heterogeneous medium with a partial object-space state (see
+    // 'JIT::Material::volumeEvaluate'). After optimization,
+    // 'deriveStaticMaterialFlags' in 'Compiler.cc' inspects whether
+    // the body still reads the state to derive the static
+    // 'MATERIAL_HAS_HETEROGENEOUS_VOLUME' flag.
+    auto funcReturnType{static_cast<Type *>(context.getVoidType())};
+    auto func{emitter.createFunction(
+        concat(symbolBase, ".volumeEvaluate"), /*isPure=*/false, funcReturnType,
+        {constParameter(floatPtrType, "sigma_a"),
+         constParameter(floatPtrType, "sigma_s"),
+         constParameter(floatPtrType, "emission")},
+        decl.srcLoc, [&] {
+          emitter.emitCall(
+              context.getKeyword("_volumeEvaluate"),
+              llvm::ArrayRef<Value>{
+                  invoke(emitter, {}, decl.srcLoc),
+                  emitter.resolveIdentifier("sigma_a"sv, decl.srcLoc),
+                  emitter.resolveIdentifier("sigma_s"sv, decl.srcLoc),
+                  emitter.resolveIdentifier("emission"sv, decl.srcLoc)},
+              decl.srcLoc);
+        })};
+    func->setLinkage(llvm::Function::ExternalLinkage);
+    markPointerParam(func, 0, context.getStateType(), 1, /*noAlias=*/false);
+    markPointerParam(func, 1, context.getFloatType(), // sigma_a
+                     context.getColorType()->wavelengthBaseMax);
+    markPointerParam(func, 2, context.getFloatType(), // sigma_s
+                     context.getColorType()->wavelengthBaseMax);
+    markPointerParam(func, 3, context.getFloatType(), // emission
+                     context.getColorType()->wavelengthBaseMax);
+    jitMaterial.volumeEvaluate.name = func->getName().str();
+  }
+  {
     // Generate the thin-walled probe, compile-time scaffolding that
     // 'deriveStaticMaterialFlags' in 'Compiler.cc' inspects for a
     // constant 'thin_walled' and then erases; it is never a host entry
@@ -1858,8 +2068,28 @@ void FunctionType::initializeMaterialFunctions(Emitter &emitter) {
     func->setLinkage(llvm::Function::ExternalLinkage);
   }
   {
+    // Generate the displacement probe, compile-time scaffolding in the
+    // mold of the thin-walled probe: it returns 'geometry.displacement'
+    // itself, so 'deriveStaticMaterialFlags' in 'Compiler.cc' can
+    // inspect whether the body folded to a constant vector, settling
+    // 'MATERIAL_HAS_DISPLACEMENT'. Erased after inspection; never a
+    // host entry point.
+    auto funcReturnType{static_cast<Type *>(context.getFloatType(3))};
+    auto func{emitter.createFunction(
+        concat(symbolBase, ".displacementProbe"), /*isPure=*/false,
+        funcReturnType, {}, decl.srcLoc, [&] {
+          emitter.emitReturn(
+              emitter.accessField(
+                  emitter.accessField(invoke(emitter, {}, decl.srcLoc),
+                                      "geometry"sv, decl.srcLoc),
+                  "displacement"sv, decl.srcLoc),
+              decl.srcLoc);
+        })};
+    func->setLinkage(llvm::Function::ExternalLinkage);
+  }
+  {
     // Compute the structural static flags, which are type-level facts:
-    // 'Type::isDefault()' is the same definition the '#is_default'
+    // 'Type::isDefault()' is the same definition the '#isDefault'
     // intrinsic uses in the api '_MaterialInstance.flags' initializer,
     // so the invariant '(instance.flags & staticFlagsKnown) ==
     // staticFlags' holds by construction. The value-dependent bits
@@ -1872,9 +2102,9 @@ void FunctionType::initializeMaterialFunctions(Emitter &emitter) {
             auto structType{llvm::dyn_cast_if_present<StructType>(type)};
             SMDL_SANITY_CHECK(structType);
             auto seq{ParameterList::LookupSequence{}};
-            SMDL_SANITY_CHECK(structType->params.getLookupSequence(name, seq) &&
-                                  !seq.empty(),
-                              "cannot resolve material field");
+            SMDL_SANITY_CHECK_MSG(
+                structType->params.getLookupSequence(name, seq) && !seq.empty(),
+                "cannot resolve material field");
             type = seq.back().first->type;
           }
           return type;
@@ -1918,7 +2148,7 @@ Value InferredSizeArrayType::invoke(Emitter &emitter, const ArgumentList &args,
       // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
       // auto arr0 = float[4](1, 2, 3, 4);
       // auto arr1 = auto[](arr0);
-      // #assert(#typeof(arr0) == #typeof(arr1));
+      // #assert(#typeOf(arr0) == #typeOf(arr1));
       // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
       auto value{args[0].value};
       auto arrayType{llvm::dyn_cast<ArrayType>(value.type)};
@@ -1963,6 +2193,16 @@ Value InferredSizeArrayType::invoke(Emitter &emitter, const ArgumentList &args,
 //--}
 
 //--{ MetaType
+bool MetaType::hasNonVoidField(Emitter &emitter, Value value,
+                               std::string_view name,
+                               const SourceLocation &srcLoc) {
+  // Meta-types resolve their fields from the value, so there is no
+  // type-level answer to give: ask 'accessField()', which is the only
+  // implementation that never emits instructions and reports a missing
+  // name by returning void.
+  return value && !accessField(emitter, value, name, srcLoc).isVoid();
+}
+
 Value MetaType::accessField(Emitter &emitter, Value value,
                             std::string_view name,
                             const SourceLocation &srcLoc) {
@@ -2080,13 +2320,14 @@ StateType::StateType(Context &context) {
   ADD_FIELD(wavelength_base);
   ADD_FIELD(wavelength_min);
   ADD_FIELD(wavelength_max);
+  ADD_FIELD(wavelength_weight);
   ADD_FIELD(meters_per_scene_unit);
   ADD_FIELD(animation_time);
   ADD_FIELD(object_id);
   ADD_FIELD(ptex_face_id);
   ADD_FIELD(ptex_face_uv);
   ADD_FIELD(position);
-  /* ADD_FIELD(direction); */
+  ADD_FIELD(direction);
   ADD_FIELD(motion);
   ADD_FIELD(normal);
   ADD_FIELD(geometry_normal);
@@ -2098,8 +2339,13 @@ StateType::StateType(Context &context) {
   ADD_FIELD(geometry_tangent_v);
   ADD_FIELD(tangent_to_object_matrix);
   ADD_FIELD(object_to_world_matrix);
+  ADD_FIELD(rng);
   ADD_FIELD(transport);
-  ADD_FIELD(seed);
+  ADD_FIELD(scattering_order);
+  ADD_FIELD(travel_distance);
+  ADD_FIELD(cone_angle);
+  ADD_FIELD(cone_width);
+  ADD_FIELD(texture_density);
 #undef ADD_FIELD
   auto llvmTypes{llvm::SmallVector<llvm::Type *>{}};
   for (auto &field : mFields) {
@@ -2246,8 +2492,8 @@ void StructType::initialize(Emitter &emitter) {
   // concrete LLVM definition (e.g., through abstract pointers).
   if (params.isAllTrue(
           [](auto &param) { return param.type->llvmType != nullptr; }))
-    llvmType = llvm::StructType::create(emitter.context, params.getLLVMTypes(),
-                                        displayName);
+    llvmType = llvm::StructType::create(
+        emitter.context, params.getLLVMFieldTypes(), displayName);
 }
 
 StructType *
@@ -2267,7 +2513,8 @@ StructType::getInstance(Context &context,
       structType->params[i].type = paramTypes[i];
     }
     structType->llvmType = llvm::StructType::create(
-        context, structType->params.getLLVMTypes(), structType->displayName);
+        context, structType->params.getLLVMFieldTypes(),
+        structType->displayName);
   }
   return structType.get();
 }
@@ -2336,69 +2583,10 @@ Value StructType::invoke(Emitter &emitter, const ArgumentList &args,
         candidateNotes += reason;
       }};
   auto whyNot{std::string{}};
-  if (emitter.canResolveArguments(params, args, srcLoc, &whyNot)) {
-    auto resolvedArgs{emitter.resolveArguments(params, args, srcLoc)};
-    auto resultType{this};
-    if (resultType->isAbstract()) {
-      resultType =
-          getInstance(emitter.context, resolvedArgs.getNonVariadicTypes());
-      resultType->isDefaultInstance = args.empty();
-      SMDL_SANITY_CHECK(!resultType->isAbstract());
-    }
-    auto allComptime{true};
-    for (const auto &value : resolvedArgs.values)
-      allComptime &= value.isComptime();
-    auto result{Value()};
-    if (!allComptime && emitter.getLLVMFunction() &&
-        emitter.returnsIndirectly(resultType)) {
-      // Construct large structs in place: allocate a slot, store the
-      // fields through it, and return it as an lvalue. Building them as
-      // first-class 'insertvalue' chains makes the optimizer juggle
-      // whole-struct SSA values, which lower poorly. Small structs and
-      // compile-time constants keep the by-value construction below so
-      // module scope and constant folding continue to work.
-      auto lv{emitter.createAlloca(resultType, "struct.lv")};
-      auto i{unsigned(0)};
-      for (auto &value : resolvedArgs.values) {
-        if (!value.isVoid())
-          emitter.createStore(
-              value, LValue(value.type, emitter.builder.CreateStructGEP(
-                                            resultType->llvmType, lv, i)));
-        i++;
-      }
-      result = LValue(resultType, lv.llvmValue);
-    } else {
-      result = Value::zero(resultType);
-      auto i{size_t(0)};
-      for (auto &value : resolvedArgs.values)
-        result = emitter.insert(result, value, i++, srcLoc);
-    }
-    if (decl.stmtFinalize) {
-      SMDL_PRESERVE(emitter.scope, emitter.anchors);
-      emitter.restoreResolutionAnchor(params);
-      emitter.handleScope(nullptr, nullptr, [&] {
-        emitter.labelReturn = {};   // Invalidate!
-        emitter.labelBreak = {};    // Invalidate!
-        emitter.labelContinue = {}; // Invalidate!
-        emitter.setCurrentModule(decl.srcLoc);
-        const auto inPlace{result.isLValue()};
-        auto lv{emitter.lvalue(result)};
-        for (auto &param : params)
-          emitter.declare(param.name, &decl,
-                          emitter.accessField(lv, param.name, srcLoc));
-        emitter.emit(decl.stmtFinalize);
-        if (inPlace) {
-          result = lv;
-        } else {
-          result = emitter.rvalue(lv);
-          emitter.createLifetimeEnd(lv);
-        }
-      });
-    }
-    return result;
-  }
-  addCandidateNote("field-wise", params, decl.name.srcLoc,
-                   dropSourceLocation(std::move(whyNot), srcLoc));
+  // Explicit constructors are applied first, so a struct with constructors
+  // controls its own construction. Field-wise construction below is the
+  // fallback; callers can always force it by naming the fields explicitly,
+  // provided no constructor parameter names collide exactly.
   // TODO Overload resolution?
   auto viableConstructors{llvm::SmallVector<Constructor *>{}};
   for (auto &constructor : getInstanceOf().constructors) {
@@ -2443,15 +2631,104 @@ Value StructType::invoke(Emitter &emitter, const ArgumentList &args,
     srcLoc.throwError("cannot construct ", Quoted(displayName), " from ",
                       Quoted(std::string(args)), ambiguousNotes);
   }
+  whyNot.clear();
+  if (emitter.canResolveArguments(params, args, srcLoc, &whyNot)) {
+    auto resolvedArgs{emitter.resolveArguments(params, args, srcLoc)};
+    auto resultType{this};
+    if (resultType->isAbstract()) {
+      resultType =
+          getInstance(emitter.context, resolvedArgs.getNonVariadicTypes());
+      resultType->isDefaultInstance = args.empty();
+      SMDL_SANITY_CHECK(!resultType->isAbstract());
+    }
+    // Void values count as compile-time: they contribute no runtime data
+    // ('insert()' and the in-place stores below both skip them), and
+    // counting them as runtime would push an otherwise-constant aggregate
+    // through the in-place path, where it can no longer fold, e.g., as a
+    // module-scope initializer of a large struct with void fields.
+    auto allComptime{true};
+    for (const auto &value : resolvedArgs.values)
+      allComptime &= value.isVoid() || value.isComptime();
+    auto result{Value()};
+    if (!allComptime && emitter.getLLVMFunction() &&
+        emitter.returnsIndirectly(resultType)) {
+      // Construct large structs in place: allocate a slot, store the
+      // fields through it, and return it as an lvalue. Building them as
+      // first-class 'insertvalue' chains makes the optimizer juggle
+      // whole-struct SSA values, which lower poorly. Small structs and
+      // compile-time constants keep the by-value construction below so
+      // module scope and constant folding continue to work.
+      auto lv{emitter.createAlloca(resultType, "struct.lv")};
+      SMDL_SANITY_CHECK(resolvedArgs.values.size() ==
+                        resultType->params.size());
+      for (size_t i{}; i < resolvedArgs.values.size(); i++) {
+        auto &value{resolvedArgs.values[i]};
+        // NOTE: 'i' is the field index, which is the LLVM element index
+        // only when no preceding field is voided.
+        const auto j{resultType->params.getLLVMFieldIndex(i)};
+        SMDL_SANITY_CHECK(value.isVoid() ==
+                          (j == ParameterList::NO_LLVM_FIELD));
+        if (j == ParameterList::NO_LLVM_FIELD) continue;
+        emitter.createStore(
+            value, LValue(value.type, emitter.builder.CreateStructGEP(
+                                          resultType->llvmType, lv, j)));
+      }
+      result = LValue(resultType, lv.llvmValue);
+    } else {
+      result = Value::zero(resultType);
+      auto i{size_t(0)};
+      for (auto &value : resolvedArgs.values)
+        result = emitter.insert(result, value, i++, srcLoc);
+    }
+    if (decl.stmtFinalize) {
+      SMDL_PRESERVE(emitter.scope, emitter.anchors);
+      emitter.restoreResolutionAnchor(params);
+      emitter.handleScope(nullptr, nullptr, [&] {
+        emitter.labelReturn = {};   // Invalidate!
+        emitter.labelBreak = {};    // Invalidate!
+        emitter.labelContinue = {}; // Invalidate!
+        emitter.setCurrentModule(decl.srcLoc);
+        const auto inPlace{result.isLValue()};
+        auto lv{emitter.lvalue(result)};
+        for (auto &param : params)
+          emitter.declare(param.name, &decl,
+                          emitter.accessField(lv, param.name, srcLoc));
+        emitter.emit(decl.stmtFinalize);
+        if (inPlace) {
+          result = lv;
+        } else {
+          result = emitter.rvalue(lv);
+          emitter.createLifetimeEnd(lv);
+        }
+      });
+    }
+    return result;
+  }
+  addCandidateNote("field-wise", params, decl.name.srcLoc,
+                   dropSourceLocation(std::move(whyNot), srcLoc));
   srcLoc.throwError("cannot construct ", Quoted(displayName), " from ",
                     Quoted(std::string(args)), candidateNotes);
   return Value();
 }
 
 bool StructType::hasField(std::string_view name) {
-  if (params.isAnyTrue([&](auto &param) { return param.name == name; }))
-    return true;
+  // Resolve through 'getLookupSequence()' rather than scanning 'params'
+  // flat, so that this agrees with 'accessField()' below about fields
+  // reached through an 'inline' parameter.
+  auto seq{ParameterList::LookupSequence{}};
+  if (params.getLookupSequence(name, seq)) return true;
   return getInstanceOf().staticFields.contains(name);
+}
+
+bool StructType::hasNonVoidField(Emitter &, Value, std::string_view name,
+                                 const SourceLocation &) {
+  auto seq{ParameterList::LookupSequence{}};
+  if (params.getLookupSequence(name, seq))
+    return !seq.back().first->type->isVoid();
+  if (auto itr{getInstanceOf().staticFields.find(name)};
+      itr != getInstanceOf().staticFields.end())
+    return !itr->second.isVoid();
+  return false;
 }
 
 Value StructType::accessField(Emitter &emitter, Value value,
@@ -2464,6 +2741,14 @@ Value StructType::accessField(Emitter &emitter, Value value,
     bool isConst{};
     for (auto [param, i] : seq) {
       isConst |= param->isConst();
+      // A voided field occupies no storage, so there is nothing to
+      // address: it resolves to the void value itself, as an rvalue. It
+      // can only ever be the last step of a sequence, because 'void' has
+      // no fields of its own to descend into. Returning here also skips
+      // the name decoration below, which would dereference the null
+      // 'llvmValue' that a void value carries.
+      if (i == ParameterList::NO_LLVM_FIELD)
+        return RValue(param->type, nullptr);
       value = Value(
           value.kind, param->type,
           value.isLValue()
@@ -2488,12 +2773,15 @@ Value StructType::accessField(Emitter &emitter, Value value,
 Value StructType::insert(Emitter &emitter, Value value, Value elem, unsigned i,
                          const SourceLocation &srcLoc) {
   SMDL_SANITY_CHECK(i < params.size());
-  if (params[i].type->isVoid())
+  // NOTE: 'i' is the field index, which is the LLVM element index only
+  // when no preceding field is voided.
+  const auto j{params.getLLVMFieldIndex(i)};
+  if (j == ParameterList::NO_LLVM_FIELD)
     return emitter.rvalue(value);
   else
     return RValue(this, emitter.builder.CreateInsertValue(
                             emitter.rvalue(value),
-                            emitter.invoke(params[i].type, elem, srcLoc), {i}));
+                            emitter.invoke(params[i].type, elem, srcLoc), {j}));
 }
 //--}
 
@@ -2546,7 +2834,7 @@ UnionType::UnionType(Context &context, llvm::SmallVector<Type *> caseTys)
   // chunks rather than a single wide vector. The chunk vector type
   // guarantees the alignment of the most-aligned case type even when the
   // union nests inside other types, while the array bounds how much of
-  // the payload SROA promotes into any one SSA value — a single
+  // the payload SROA promotes into any one SSA value: a single
   // union-sized vector otherwise reappears in optimized code as giant
   // byte shuffles and unmergeable scalar stores.
   uint64_t chunkSize{std::max<uint64_t>(requiredAlign, 8)};
@@ -2640,6 +2928,21 @@ Value UnionType::invoke(Emitter &emitter, const ArgumentList &args,
   srcLoc.throwError("cannot construct union ", Quoted(displayName), " from ",
                     Quoted(std::string(args)));
   return Value();
+}
+
+bool UnionType::hasNonVoidField(Emitter &emitter, Value, std::string_view name,
+                                const SourceLocation &srcLoc) {
+  if (name == "#ptr" || name == "#idx") return true;
+  // Every non-void case must have the field, else 'accessField()' below
+  // throws; and at least one of them must carry something, else the visit
+  // it emits yields void from every case.
+  bool anyNonVoid{};
+  for (auto caseType : caseTypes) {
+    if (caseType->isVoid()) continue;
+    if (!caseType->hasField(name)) return false;
+    anyNonVoid |= caseType->hasNonVoidField(emitter, Value(), name, srcLoc);
+  }
+  return anyNonVoid;
 }
 
 Value UnionType::accessField(Emitter &emitter, Value value,

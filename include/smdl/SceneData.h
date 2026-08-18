@@ -62,6 +62,10 @@ public:
   /// Associate the given name with a constant `float4`.
   void setFloat4(std::string_view name, float4 var);
 
+  /// Associate the given name with a constant `float4x4`, stored as
+  /// 16 floats in column-major order.
+  void setFloat4x4(std::string_view name, const float4x4 &var);
+
   /// Associate the given name with a `color`.
   ///
   /// \param[in] name

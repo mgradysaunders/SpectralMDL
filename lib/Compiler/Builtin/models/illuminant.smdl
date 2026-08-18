@@ -2,9 +2,9 @@
 /// current wavelengths in `$state.wavelength_base`: the daylight D series,
 /// reconstructed for any chromaticity on the daylight locus from the CIE
 /// S0/S1/S2 components tabulated over 300..830nm, plus the lamp series
-/// tabulated over 380..780nm -- the fluorescent F series F1 through F12,
-/// the high-pressure discharge HP series HP1 through HP5, and the LED
-/// series. Wavelengths outside the tables evaluate to zero.
+/// tabulated over 380..780nm: the fluorescent F series F1 through F12, the
+/// high-pressure discharge HP series HP1 through HP5, and the LED series.
+/// Wavelengths outside the tables evaluate to zero.
 ///
 /// Every illuminant here is a relative spectral power distribution
 /// normalized so that illuminant D is 1 at 560nm, with the lamp series
@@ -12,8 +12,8 @@
 /// scene calls for.
 ///
 /// References:
-///   CIE 15:2004 (Colorimetry) -- daylight components, F and HP tables
-///   CIE 15:2018 (Colorimetry) -- LED tables
+///   CIE 15:2004 (Colorimetry): daylight components, F and HP tables
+///   CIE 15:2018 (Colorimetry): LED tables
 #smdl
 
 @(foreign pure)
@@ -76,7 +76,7 @@ export color illuminant_D75() = illuminant_D(7504.0);
 /// evaluates to black. F1..F6 are standard halophosphate lamps, F7..F9 are
 /// broadband full-spectrum lamps (F7 approximates D65 and F8 approximates
 /// D50), and F10..F12 are narrowband triphosphor lamps (F11 is the common
-/// commercial TL84). F2 -- cool white -- is the usual representative of the
+/// commercial TL84). F2, cool white, is the usual representative of the
 /// series.
 @(macro)
 export color illuminant_F(const int number = 1) {
@@ -99,11 +99,11 @@ export color illuminant_HP(const int number = 1) {
   return illuminant;
 }
 
-/// Evaluate CIE standard LED illuminant B1 through B5 -- the blue-pumped
-/// phosphor LED lamps in order of increasing color temperature: B1
-/// (2733K), B2 (2998K), B3 (4103K), B4 (5109K), and B5 (6598K) -- as
-/// selected by `number`, which is out-of-range-safe: anything other than
-/// 1 through 5 evaluates to black.
+/// Evaluate CIE standard LED illuminant B1 through B5, the blue-pumped
+/// phosphor LED lamps in order of increasing color temperature: B1 (2733K),
+/// B2 (2998K), B3 (4103K), B4 (5109K), and B5 (6598K). Selected by `number`,
+/// which is out-of-range-safe: anything other than 1 through 5 evaluates to
+/// black.
 @(macro)
 export color illuminant_LED_B(const int number = 1) {
   color illuminant = color(0);
@@ -112,8 +112,8 @@ export color illuminant_LED_B(const int number = 1) {
   return illuminant;
 }
 
-/// Evaluate CIE standard LED illuminant V1 (2724K) or V2 (4070K) -- the
-/// violet-pumped phosphor LED lamps -- as selected by `number`, which is
+/// Evaluate CIE standard LED illuminant V1 (2724K) or V2 (4070K), the
+/// violet-pumped phosphor LED lamps, as selected by `number`, which is
 /// out-of-range-safe: anything other than 1 or 2 evaluates to black.
 @(macro)
 export color illuminant_LED_V(const int number = 1) {

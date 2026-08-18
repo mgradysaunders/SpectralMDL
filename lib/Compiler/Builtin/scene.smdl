@@ -2,6 +2,11 @@
 /// up by name in renderer-provided scene data, e.g., per-vertex or
 /// per-object attributes, falling back to the given default when the name
 /// is unavailable.
+///
+/// NOTE: SMDL has no uniform/varying distinction, so each
+/// `data_lookup_uniform_*` function is an alias of its generic
+/// counterpart.
+///
 #smdl
 
 @(foreign pure)
@@ -12,8 +17,8 @@ void smdlDataLookup(&void sceneData, string name, int kind, int size, &void resu
 
 @(macro)
 auto data_lookup(const string name, auto value) {
-  const int kind = #is_arithmetic_integral(value) ? 0 : //
-                   #is_arithmetic_floating_point(value) ? 1 : 2;
+  const int kind = #isArithmeticIntegral(value) ? 0 : //
+                   #isArithmeticFloatingPoint(value) ? 1 : 2;
   smdlDataLookup($SCENE_DATA, name, kind, #num(value), cast<&void>(&value));
   return value;
 }
@@ -57,3 +62,54 @@ export float4 data_lookup_float4(const string name, float4 default_value = float
 /// Returns the named scene data as `color`, else `default_value`.
 @(macro)
 export color data_lookup_color(const string name, color default_value = color()) = data_lookup(name, default_value);
+
+/// Returns the named scene data as `float4x4`, else `default_value`.
+@(macro)
+export float4x4 data_lookup_float4x4(const string name, float4x4 default_value = float4x4()) {
+  // The generic `data_lookup` derives its size from `#num`, which sees a
+  // matrix as 4 columns and would collide with the `float4` getters, so
+  // the matrix lookup spells its kind (1 = `SceneData::Kind::Float`) and
+  // float count explicitly: 16 floats in column-major order.
+  smdlDataLookup($SCENE_DATA, name, 1, 16, cast<&void>(&default_value));
+  return default_value;
+}
+
+/// Same as `data_lookup_int()`; see the module note on `uniform`.
+@(macro)
+export int data_lookup_uniform_int(const string name, int default_value = int()) = data_lookup_int(name, default_value);
+
+/// Same as `data_lookup_int2()`; see the module note on `uniform`.
+@(macro)
+export int2 data_lookup_uniform_int2(const string name, int2 default_value = int2()) = data_lookup_int2(name, default_value);
+
+/// Same as `data_lookup_int3()`; see the module note on `uniform`.
+@(macro)
+export int3 data_lookup_uniform_int3(const string name, int3 default_value = int3()) = data_lookup_int3(name, default_value);
+
+/// Same as `data_lookup_int4()`; see the module note on `uniform`.
+@(macro)
+export int4 data_lookup_uniform_int4(const string name, int4 default_value = int4()) = data_lookup_int4(name, default_value);
+
+/// Same as `data_lookup_float()`; see the module note on `uniform`.
+@(macro)
+export float data_lookup_uniform_float(const string name, float default_value = float()) = data_lookup_float(name, default_value);
+
+/// Same as `data_lookup_float2()`; see the module note on `uniform`.
+@(macro)
+export float2 data_lookup_uniform_float2(const string name, float2 default_value = float2()) = data_lookup_float2(name, default_value);
+
+/// Same as `data_lookup_float3()`; see the module note on `uniform`.
+@(macro)
+export float3 data_lookup_uniform_float3(const string name, float3 default_value = float3()) = data_lookup_float3(name, default_value);
+
+/// Same as `data_lookup_float4()`; see the module note on `uniform`.
+@(macro)
+export float4 data_lookup_uniform_float4(const string name, float4 default_value = float4()) = data_lookup_float4(name, default_value);
+
+/// Same as `data_lookup_color()`; see the module note on `uniform`.
+@(macro)
+export color data_lookup_uniform_color(const string name, color default_value = color()) = data_lookup_color(name, default_value);
+
+/// Same as `data_lookup_float4x4()`; see the module note on `uniform`.
+@(macro)
+export float4x4 data_lookup_uniform_float4x4(const string name, float4x4 default_value = float4x4()) = data_lookup_float4x4(name, default_value);

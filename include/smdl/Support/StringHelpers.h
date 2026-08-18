@@ -146,6 +146,15 @@ template <typename T, typename... Ts>
   return str;
 }
 
+/// The did-you-mean helper: the nearest candidate to `name` within
+/// `maxDistance` edits (Levenshtein), or empty if none is close enough.
+/// Ties keep the earliest candidate. The threshold is the caller's policy,
+/// because what counts as a plausible typo depends on how long the names
+/// in the candidate list tend to be.
+[[nodiscard]] SMDL_EXPORT std::string_view
+suggestNearest(std::string_view name, Span<const std::string_view> candidates,
+               size_t maxDistance = 2);
+
 /// \}
 
 /// \}

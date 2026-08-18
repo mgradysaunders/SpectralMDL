@@ -1,16 +1,20 @@
-/// MARMIT -- a physically based way to layer a film of water over an arbitrary
-/// diffuse reflectance spectrum, darkening and spectrally reshaping it the way a
-/// wet surface differs from a dry one. It is the reflective, water-on-top analog
-/// of the leaf model in `prospect.smdl`, and is built the same way: interpolate
-/// tabulated optical constants of water per wavelength, then evaluate a small
-/// closed-form radiative-transfer expression using cheap analytic fits in place
-/// of the special functions the reference model calls.
+/// MARMIT: a physically based way to layer a film of water over an arbitrary
+/// diffuse reflectance spectrum, darkening and spectrally reshaping it the way
+/// a wet surface differs from a dry one. Built like the leaf model in
+/// `prospect.smdl`: interpolate tabulated optical constants of water per
+/// wavelength, then evaluate a closed-form radiative-transfer expression using
+/// analytic fits in place of the special functions the reference model calls.
+///
+/// The output is a reflectance spectrum rather than a BSDF, and says nothing
+/// about direction. The closed form factors into an interface term and a
+/// substrate term, both exposed on `marmit_result`, so the same physics can
+/// drive a layered BSDF instead.
 ///
 /// References:
-///   Bablet et al. (2018)   -- MARMIT
-///   Dupiau et al. (2022)   -- MARMIT-2
-///   Segelstein (1981)      -- real refractive index of water
-///   Buiteveld/Kou/Wieliczka -- absorption coefficient of water (cm^-1)
+///   Bablet et al. (2018): MARMIT
+///   Dupiau et al. (2022): MARMIT-2
+///   Segelstein (1981): real refractive index of water
+///   Buiteveld/Kou/Wieliczka: absorption coefficient of water (cm^-1)
 #smdl
 
 using ::math import *;
@@ -18,37 +22,57 @@ using ::math import *;
 /// The result of the MARMIT model, being the reflectance of the wetted
 /// surface.
 export struct marmit_result {
-  /// Reflectance after wetting: the `wet_fraction`-weighted mix of the wetted
-  /// and dry reflectances (this is the model's primary output).
-  color reflectance = color(0);
+  /// Reflectance of the fully wetted surface with the entering interface
+  /// transmittance factored back out: the albedo to place underneath a Fresnel
+  /// interface rather than to use on its own. Pass it as the `albedo` of the
+  /// base of a `::df::fresnel_layer` whose `ior` is `interface_ior`.
+  ///
+  /// The layer combinator weights its base by `1 - F`, the directional form of
+  /// the hemispherical `1 - r12` divided out here, so the composite reproduces
+  /// `wet_reflectance` without double counting while also supplying the
+  /// specular lobe the reflectance model structurally cannot.
+  color wet_albedo = color(0);
 
-  /// Reflectance of the fully wetted surface (i.e. `wet_fraction` = 1), exposed
-  /// as a convenience since it is computed along the way.
-  color reflectance_wet = color(0);
+  /// Reflectance of the fully wetted surface: the dry reflectance seen through
+  /// the film, with the interface reflections and the geometric series of
+  /// internal bounces summed in closed form. This is the model's primary
+  /// output.
+  ///
+  /// NOTE: This describes the film, not how much of the surface it covers. To
+  /// model a surface only partly wetted, combine this with the dry reflectance
+  /// yourself; `areal_mix()` is MARMIT-2's own way of doing so.
+  color wet_reflectance = color(0);
+
+  /// The real refractive index of the film, being water alone in the common
+  /// case and the effective medium of the volume mix when a suspension is
+  /// present. This is the interface the layered arrangement above refracts and
+  /// reflects at, so it belongs to the layer rather than to the substrate.
+  color interface_ior = color(1);
+
+  /// The diffuse Fresnel reflectance of the film's top interface, `r12`, which
+  /// is the fraction of incident light the surface turns away before any of it
+  /// reaches the substrate. This is the energy `wet_reflectance` omits and the
+  /// specular layer restores, so `wet_reflectance + interface_reflectance` is
+  /// the total the surface returns, reaching `1` for a lossless film over a
+  /// white substrate.
+  color interface_reflectance = color(0);
 };
 
-// The absorption table spans 400..2500 nm on a uniform ~8 nm grid (264 entries,
-// endpoints included), linearly resampled from the previously shipped 4 nm table
-// (itself decimated from the 1 nm MARMIT reference parameter file) on exactly the
-// endpoint-inclusive grid this module looks up. alpha_w spans ~6 decades with
-// sharp vibrational bands, but the model
-// only ever uses it through the layer transmittance tau = exp(-alpha_w * L) * P/Q
-// below, which saturates to 0 wherever absorption is strong -- so the ~8%
-// relative error this grid leaves in the strong bands is swallowed there (tau is
-// 0 either way). End to end, the wet reflectance stays within one 8-bit quantum
-// of a far finer table for typical substrates (it scales with the dry
-// reflectance, so very bright surfaces see a bit more). The refractive index is 
-// fit analytically instead (see below), so it needs no table.
+// The absorption table spans 400..2500 nm on a uniform ~8 nm grid (264
+// entries, endpoints included), decimated from the 1 nm MARMIT reference
+// parameter file. alpha_w spans ~6 decades with sharp vibrational bands, but
+// the model only uses it through the layer transmittance tau below, which
+// saturates to 0 wherever absorption is strong, so the ~8% relative error this
+// grid leaves in the strong bands does not reach the result. The refractive
+// index is fit analytically instead, so it needs no table.
 /// The minimum wavelength of the MARMIT table in nanometers.
 export const float MARMIT_MIN_WAVELENGTH = 400.0;
 /// The maximum wavelength of the MARMIT table in nanometers.
 export const float MARMIT_MAX_WAVELENGTH = 2500.0;
 /// The number of entries in the MARMIT table.
 export const int MARMIT_TABLE_SIZE = 264;
-// Empirical exponent for the wet/dry areal mixing (generalized power mean),
-// carried over from MARMIT-2.
 /// The exponent of the generalized power mean that mixes the wet and dry
-/// reflectances.
+/// reflectances. Empirical, carried over from MARMIT-2.
 export const float MARMIT_MIXING_EXPONENT = 2.27;
 
 // smdl format off
@@ -92,30 +116,34 @@ export static const auto MARMIT_TABLE_ALPHA = float[264](
 
 /// Evaluate the MARMIT model, layering a film of water of the given
 /// thickness over the given dry reflectance spectrum.
+///
+/// NOTE: The layer transmittance is the DIFFUSE one, the slab transmittance for
+/// isotropically incident light, which is why the exponential integral appears
+/// in it rather than a plain exponential. Correcting it for a single viewing
+/// direction means scaling `water_thickness` by `1 / cos(theta_t)` at the
+/// REFRACTED angle; nothing here applies it. Refraction into water caps
+/// `theta_t` at the critical angle, so the path never exceeds 1.52 times the
+/// normal-incidence one, which moves the wetted albedo by under one 8-bit
+/// quantum across the visible out to about a centimetre of standing water. The
+/// correction is worth applying only to a spectral render that cares about band
+/// depths in standing water, and costs one multiply at the call site.
+///
 @(noinline)
 export marmit_result marmit(
   color reflectance = color(0.3),  ///< The dry reflectance of the underlying material.
   float water_thickness = 0.01,    ///< The equivalent water-film thickness in centimeters, clamped to be non-negative.
-  float wet_fraction = 1.0,        ///< The fraction of the surface covered by water, clamped to [0, 1].
   float suspension_ior = 1.53,     ///< Real refractive index n_i of particles suspended in the film.
   float suspension_k = 0.0,        ///< Imaginary refractive index k_i of the suspended particles.
   float suspension_fraction = 0.0, ///< Volume fraction d_i of suspension in the film; 0 = pure water.
 ) {
-  // Optical constants of water at each wavelength: its own n_w and alpha_w. In the
-  // common pure-water case these are the effective medium directly; a suspension,
-  // if any, mixes them into an effective (n, alpha) further below.
-  //
-  // The absorption spans ~6 decades with sharp vibrational bands, so it stays a
-  // table lookup. The refractive index, in contrast, is smooth and low-curvature,
-  // so we skip the table and evaluate it as a polynomial below. `s` is the
-  // wavelength remapped to [-1, 1]; we collect it (and the absorption) per lane in
-  // one contiguous pass, then evaluate n(s) on the whole color at once.
+  // Optical constants of water at each wavelength, n_w and alpha_w. In the
+  // common pure-water case these are the effective medium directly; a
+  // suspension mixes them into an effective (n, alpha) further below. `s` is
+  // the wavelength remapped to [-1, 1] for the index polynomial.
   const color s = 2.0 * saturate((color(&$state.wavelength_base[0]) - MARMIT_MIN_WAVELENGTH) / (MARMIT_MAX_WAVELENGTH - MARMIT_MIN_WAVELENGTH)) - 1.0;
   // Real refractive index of water (Segelstein), degree-6 polynomial fit in the
-  // remapped wavelength s = 2*(lambda - 400)/2100 - 1. Max abs error 1.2e-3 over
-  // 400..2500 nm -- below the r12 fit's own error, so effectively exact here. This
-  // is pure vectorized Horner (7 FMAs, no gather): the generated code drops the
-  // per-lane table gathers and the 8 KB index table entirely.
+  // remapped wavelength s. Max abs error 1.2e-3 over 400..2500 nm, below the
+  // r12 fit's own error.
   color ior = return_from {
     color ior = -0.0000601351 * s - 0.0248482921;
     ior = ior * s - 0.0005980717;
@@ -126,22 +154,18 @@ export marmit_result marmit(
     return ior;
   };
   // alpha_w, absorption coefficient of water in cm^-1
-  color alpha = _spectral_map(\(const float wavelength) {
-    const auto {w0, w} = _uniform_lerp_index_and_fraction(MARMIT_TABLE_SIZE, MARMIT_MIN_WAVELENGTH, MARMIT_MAX_WAVELENGTH, wavelength);
+  color alpha = _spectralInit(\(const float wavelength) {
+    const auto {w0, w} = _uniformLerpIndexAndFraction(MARMIT_TABLE_SIZE, MARMIT_MIN_WAVELENGTH, MARMIT_MAX_WAVELENGTH, wavelength);
     return lerp(MARMIT_TABLE_ALPHA[w0], MARMIT_TABLE_ALPHA[w0 + 1], w);
   });
-  // Effective medium the light travels through. With no suspended particles this is
-  // just water. When a suspension is present (volume fraction d_i > 0), form the
-  // complex permittivities e = (n + i k)^2 of water and of the particles, volume-mix
-  // them (e = d_i e_i + (1 - d_i) e_w, MARMIT-2), and take the principal square root
-  // back to an effective complex index; alpha = 4 pi k / lambda. The particle side
-  // (n_i, k_i) is a pair of scalar constants, so only the water/mix side is per-lane.
-  // With d_i = 0 this reduces exactly to water, so the branch is a skippable add-on.
+  // Effective medium the light travels through, by MARMIT-2's volume mixing of
+  // the complex permittivities of water and of the suspended particles. With no
+  // suspension this reduces exactly to water, so the branch is skippable.
   if (suspension_fraction > 0.0) {
     const auto d = suspension_fraction;
-    // wavelength in cm, recovered from the normalized s used by the index polynomial
+    // Wavelength in cm, recovered from the normalized `s`.
     const auto lambda = (MARMIT_MIN_WAVELENGTH + 0.5 * (s + 1.0) * (MARMIT_MAX_WAVELENGTH - MARMIT_MIN_WAVELENGTH)) * 1.0e-7;
-    // imaginary index of water from its absorption coefficient: k_w = alpha_w lambda / (4 pi)
+    // Imaginary index of water, k_w = alpha_w lambda / (4 pi).
     const auto k_w = alpha * lambda * 0.07957747154594767;
     const auto ew_re = ior * ior - k_w * k_w;
     const auto ew_im = 2.0 * ior * k_w;
@@ -151,17 +175,14 @@ export marmit_result marmit(
     const auto e_im = d * ei_im + (1.0 - d) * ew_im;
     const auto mag = #sqrt(e_re * e_re + e_im * e_im);
     ior = #sqrt(0.5 * (mag + e_re));
-    // k = Im(sqrt(e)). Since (n + i k)^2 = e gives 2 n k = e_im, take k = e_im/(2n)
-    // rather than sqrt((mag - e_re)/2): the latter cancels catastrophically in
-    // float32 when absorption is weak (e_im small, so mag ~ e_re). Here n ~ 1.3-1.5
-    // and e_im >= 0, so this is stable and positive.
+    // Take k = e_im/(2n) rather than sqrt((mag - e_re)/2): the latter cancels
+    // catastrophically in float32 when absorption is weak, where mag ~ e_re.
     alpha = 12.566370614359172 * 0.5 * e_im / ior / lambda; // 4 pi k / lambda
   }
   // Diffuse (hemispherically integrated) Fresnel reflectance of the air->water
-  // interface, r12. The exact expression is a long rational-plus-logarithm form;
-  // this is our cheap fit r12 = v * P(v) / Q(v) with v = (n - 1) / (n + 1), exact
-  // at n = 1 and monotone for all n >= 1. Max abs error ~1.7e-4 (RMSE ~1.1e-4)
-  // over the water index range, using two divides and no log/pow. (1 - r12 equals
+  // interface, r12, fit as r12 = v * P(v) / Q(v) with v = (n - 1) / (n + 1) in
+  // place of the exact rational-plus-logarithm form. Exact at n = 1, monotone
+  // for n >= 1, max abs error ~1.7e-4 over the water index range. (1 - r12 is
   // PROSPECT's average transmittance tav(90 deg, n).)
   const auto r12 = return_from {
     const auto v = (ior - 1.0) / (ior + 1.0);
@@ -174,14 +195,12 @@ export marmit_result marmit(
   // n^2 relation t21 = (1 - r12) / n^2.
   const auto t21 = t12 / (ior * ior);
   const auto r21 = 1 - t21;
-  // One-way transmittance of the water layer of optical depth x = alpha * L.
-  // tau(x) = (1 - x) exp(-x) + x^2 E1(x); this is our cheap fit tau = exp(-x) P/Q
-  // that reproduces tau(0) = 1 and the exact 2 exp(-x)/x tail with one exp and one
-  // divide (no exponential integral, no pow). Max abs error ~3.9e-4 for all x >= 0.
-  // The clamp holds x inside that domain: the upper end keeps exp(-x) from
-  // underflowing where tau is 0 anyway, and the lower end absorbs a negative
-  // thickness, which would otherwise overflow exp(-x) to infinity and -- with P/Q
-  // negative for x < 0 -- come back as a fully opaque layer instead of no layer.
+  // One-way transmittance of the water layer of optical depth x = alpha * L,
+  // tau(x) = (1 - x) exp(-x) + x^2 E1(x), fit as tau = exp(-x) P/Q to avoid the
+  // exponential integral. Max abs error ~3.9e-4 for all x >= 0. The clamp holds
+  // x inside that domain: the upper end keeps exp(-x) from underflowing where
+  // tau is 0 anyway, and the lower end absorbs a negative thickness, which
+  // would otherwise come back as a fully opaque layer instead of no layer.
   const auto tau = return_from {
     const auto x = #max(#min(alpha * water_thickness, 50.0), 0.0);
     const auto num = (1.236150246012 * x + 3.672877420834) * x + 1.0;
@@ -189,17 +208,51 @@ export marmit_result marmit(
     return saturate(#exp(-x) * num / den);
   };
   const auto tau2_reflectance = tau * tau * reflectance;
-  // Reflectance of the fully wetted surface: the dry reflectance seen through the
-  // water film with the interface reflections and the geometric series of internal
-  // bounces summed in closed form.
-  const auto wet = saturate(t12 * t21 * tau2_reflectance / (1 - r21 * tau2_reflectance));
-  // Blend the wetted and dry reflectances over the surface as a generalized power
-  // mean (MARMIT-2's areal mixing). wet_fraction = 1 recovers `wet`, 0 recovers the
-  // dry reflectance. It is clamped because the mean only interpolates: extrapolating
-  // past 1 drives the base of the outer `pow` negative, and a NaN raised through
-  // `saturate` would surface as a fully white material.
+  // The substrate as seen from just below the top interface: the dry
+  // reflectance attenuated both ways through the film, brightened by the
+  // geometric series of internal bounces trapped under the water/air boundary,
+  // and admitted through it. This is the Saunderson correction, and the half of
+  // the model belonging to the substrate rather than the interface; see
+  // `marmit_result::wet_albedo`. Forming it before scaling by `t12` keeps `t12`
+  // out of any denominator.
+  const auto wet_albedo = saturate(t21 * tau2_reflectance / (1 - r21 * tau2_reflectance));
+  // Reflectance of the fully wetted surface: the above seen from outside, having
+  // paid the entering interface transmittance. Note that this discards `r12`, the
+  // light the interface turns away, which is why it cannot reach 1 even for a
+  // lossless film over a white substrate.
+  const auto wet_reflectance = saturate(t12 * wet_albedo);
+  return marmit_result(
+           wet_albedo: wet_albedo,
+           wet_reflectance: wet_reflectance,
+           interface_ior: ior,
+           interface_reflectance: r12,
+         );
+}
+
+/// Blend a wetted and a dry reflectance over a surface that is only partly
+/// covered by water, as the generalized power mean of MARMIT-2's areal mixing.
+///
+/// A `wet_fraction` of 1 recovers `wet_reflectance` and 0 recovers
+/// `dry_reflectance`. The exponent is empirical, and what it corrects for is
+/// light crossing laterally between wet and dry patches, which a plain linear
+/// average of two isolated reflectances cannot represent.
+///
+/// NOTE: This is deliberately separate from `marmit()` rather than a parameter
+/// of it. It corrects for UNRESOLVED sub-pixel mixing, in the remote-sensing
+/// sense where a pixel spans meters. A renderer that resolves coverage with a
+/// texture, or spends it as a weight between two materials in a layered BSDF,
+/// already represents that mixing geometrically and must not fold it in twice.
+///
+@(pure)
+export color areal_mix(
+  const color wet_reflectance,    ///< The reflectance of the fully wetted surface.
+  const color dry_reflectance,    ///< The reflectance of the dry surface.
+  const float wet_fraction = 1.0, ///< The fraction of the surface covered by water, clamped to [0, 1].
+) {
+  // The mean only interpolates: extrapolating past 1 drives the base of the
+  // outer `pow` negative, and the resulting NaN would `saturate` to a fully
+  // white material.
   const auto f = saturate(wet_fraction);
   const auto e = 1.0 / MARMIT_MIXING_EXPONENT;
-  const auto mixed = #pow(f * #pow(wet, e) + (1.0 - f) * #pow(reflectance, e), MARMIT_MIXING_EXPONENT);
-  return marmit_result(reflectance: saturate(mixed), reflectance_wet: wet);
+  return saturate(#pow(f * #pow(wet_reflectance, e) + (1.0 - f) * #pow(dry_reflectance, e), MARMIT_MIXING_EXPONENT));
 }

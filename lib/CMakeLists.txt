@@ -1,11 +1,20 @@
+# Manual, on-demand regeneration targets. Neither is part of 'all'.
+#
+# NOTE: Invoke the interpreter explicitly instead of relying on the script's
+# shebang and executable bit, which do not exist on Windows.
 add_custom_target(
   builtin_header
-  COMMAND "./Builtin.h.rb"
+  COMMAND ruby "Builtin.h.rb"
   WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/Compiler"
   )
+# NOTE: Each of these must be a separate COMMAND argument, and the path has
+# to come from '$<TARGET_FILE:smdl>' rather than being spelled out: that
+# picks up the '.exe' suffix on Windows and the per-configuration output
+# subdirectory of multi-config generators, and it makes the target depend on
+# 'smdl' automatically.
 add_custom_target(
   builtin_albedo
-  COMMAND "${CMAKE_BINARY_DIR}/bin/smdl test tabulate.smdl"
+  COMMAND "$<TARGET_FILE:smdl>" test "tabulate.smdl"
   WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/Compiler/Builtin/Albedo"
   )
 add_library(
@@ -17,6 +26,7 @@ add_library(
     "Compiler.cc"
     "Compiler/Context.cc"
     "Compiler/Emitter.cc"
+    "Compiler/Intrinsics.cc"
     "Compiler/llvm.cc"
     "Compiler/Type.cc"
     "Compiler/Value.cc"
@@ -42,6 +52,9 @@ add_library(
     "Support/QualifiedName.cc"
     "Support/SpectralRenderImage.cc"
     "Support/StringHelpers.cc"
+    "Support/SunSky.cc"
+    "Support/PBRMaps.cc"
+    "VoxelGrid.cc"
     "thirdparty/miniz.c"
   )
 add_library(
@@ -90,7 +103,7 @@ target_include_directories(
   )
 target_include_directories(
   SpectralMDL
-  PRIVATE 
+  PRIVATE
     "${LLVM_INCLUDE_DIR}"
     "${CMAKE_CURRENT_LIST_DIR}"
     "${CMAKE_CURRENT_LIST_DIR}/Compiler"
@@ -109,9 +122,41 @@ target_link_libraries(SpectralMDL PRIVATE Threads::Threads ${SMDL_LLVM_TARGETS})
 
 if(TARGET Ptex_static)
   target_compile_options(Ptex_static PRIVATE "${RTTI_FLAG}")
+  # Ptex 2.5 calls 'unlink' in 'PtexWriter.cpp' but only includes <unistd.h>
+  # on FreeBSD and macOS.
+  if(NOT WIN32)
+    target_compile_options(Ptex_static PRIVATE "SHELL:-include unistd.h")
+  endif()
   target_link_libraries(SpectralMDL PRIVATE Ptex_static)
   target_include_directories(SpectralMDL PRIVATE "${ptex_SOURCE_DIR}/src/ptex")
-  target_compile_definitions(SpectralMDL PRIVATE "-DSMDL_HAS_PTEX=1")
+  if(NOT SMDL_Ptex_TAG)
+    # 'Ptex_static' can come from a parent project instead of our own fetch,
+    # in which case the pinned tag is unknown.
+    set(SMDL_Ptex_TAG "unknown")
+  endif()
+  target_compile_definitions(
+    SpectralMDL
+    PRIVATE
+      "-DSMDL_HAS_PTEX=1"
+      "-DSMDL_PTEX_VERSION=\"${SMDL_Ptex_TAG}\""
+    )
+endif()
+
+if(nanovdb_SOURCE_DIR)
+  # The headers sit in '<openvdb>/nanovdb/nanovdb', so the directory above
+  # them is what belongs on the search path.
+  target_include_directories(
+    SpectralMDL PRIVATE "${nanovdb_SOURCE_DIR}/nanovdb"
+    )
+  if(NOT SMDL_NanoVDB_TAG)
+    set(SMDL_NanoVDB_TAG "unknown")
+  endif()
+  target_compile_definitions(
+    SpectralMDL
+    PRIVATE
+      "-DSMDL_HAS_NANOVDB=1"
+      "-DSMDL_NANOVDB_VERSION=\"${SMDL_NanoVDB_TAG}\""
+    )
 endif()
 
 include(GenerateExportHeader)

@@ -4,12 +4,14 @@
 #include <cstdio>
 #include <iostream>
 
-#if __linux__ || __unix__ || defined(_POSIX_VERSION)
+// NOTE: Test for the header directly. Do not gate this on an OS list:
+// Darwin defines neither '__linux__' nor '__unix__', and '_POSIX_VERSION'
+// only exists after <unistd.h> has been included, so any such list silently
+// turns off 'isatty' (and therefore colored output) on macOS.
 #if __has_include(<unistd.h>)
 #define SMDL_HAS_UNISTD 1
 #include <unistd.h>
 #endif // #if __has_include(<unistd.h>)
-#endif // #if __linux__ || __unix__ || defined(_POSIX_VERSION)
 
 namespace smdl {
 
@@ -29,23 +31,18 @@ void Logger::reset() {
 
 void Logger::flush() {
   std::lock_guard guard{mtx};
-  for (auto &sink : sinks)
-    sink->flush();
+  for (auto &sink : sinks) sink->flush();
 }
 
 void Logger::close() {
   std::lock_guard guard{mtx};
-  for (auto &sink : sinks)
-    sink->close();
+  for (auto &sink : sinks) sink->close();
 }
 
 void Logger::logMessage(LogLevel level, std::string_view message) {
   std::lock_guard guard{mtx};
-  for (auto &sink : sinks)
-    sink->logMessage(level, message);
+  for (auto &sink : sinks) sink->logMessage(level, message);
 }
-
-namespace LogSinks {
 
 static const char *LabelsWithColors[]{"\033[36m[debug]\033[0m ", "",
                                       "\033[33m[warn]\033[0m ",
@@ -53,16 +50,22 @@ static const char *LabelsWithColors[]{"\033[36m[debug]\033[0m ", "",
 
 static const char *LabelsWithoutColors[]{"[debug] ", "", "[warn] ", "[error] "};
 
+std::string_view logLevelLabel(LogLevel level, bool withColors) {
+  const auto labels{withColors ? &LabelsWithColors[0]
+                               : &LabelsWithoutColors[0]};
+  return labels[int(level)];
+}
+
+namespace LogSinks {
+
 void print_to_cerr::logMessage(LogLevel level, std::string_view message) {
-  static const auto Labels{cerrSupportsANSIColors() ? &LabelsWithColors[0]
-                                                    : &LabelsWithoutColors[0]};
-  std::cerr << Labels[int(level)] << message << '\n';
+  static const bool WithColors{cerrSupportsANSIColors()};
+  std::cerr << logLevelLabel(level, WithColors) << message << '\n';
 }
 
 void print_to_cout::logMessage(LogLevel level, std::string_view message) {
-  static const auto Labels{coutSupportsANSIColors() ? &LabelsWithColors[0]
-                                                    : &LabelsWithoutColors[0]};
-  std::cout << Labels[int(level)] << message << std::endl;
+  static const bool WithColors{coutSupportsANSIColors()};
+  std::cout << logLevelLabel(level, WithColors) << message << std::endl;
 }
 
 void print_to_cout::flush() { std::cout.flush(); }

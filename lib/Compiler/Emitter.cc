@@ -2,13 +2,20 @@
 #include "Emitter.h"
 
 #include "smdl/BSDFMeasurement.h"
+#include "smdl/Support/Filesystem.h"
 #include "smdl/Support/Logger.h"
+#include "smdl/Support/PBRMaps.h"
 #include "llvm/Support/Format.h"
 #include "llvm/Support/Parallel.h"
 #include <atomic>
+#include <cstdlib>
 #include <exception>
 #include <filesystem>
 #include <mutex>
+
+#if defined(_WIN32)
+#include <malloc.h> // for '_aligned_malloc' and '_aligned_free'
+#endif              // #if defined(_WIN32)
 
 #if SMDL_HAS_PTEX
 #include "Ptexture.h"
@@ -164,9 +171,9 @@ void Emitter::createFunction(llvm::Function *&llvmFunc, std::string_view name,
                              const std::function<void()> &callback,
                              bool useIndirectParams) {
   SMDL_SANITY_CHECK(returnType && params.size() == paramTypes.size());
-  SMDL_SANITY_CHECK(!useIndirectParams || callback,
-                    "'@(foreign)' must not use the indirect parameter "
-                    "convention: it has to match the C ABI exactly");
+  SMDL_SANITY_CHECK_MSG(!useIndirectParams || callback,
+                        "'@(foreign)' must not use the indirect parameter "
+                        "convention: it has to match the C ABI exactly");
   auto llvmParamTys{std::vector<llvm::Type *>{}};
   if (!isPure) llvmParamTys.push_back(llvm::PointerType::get(context, 0));
   // The parameters that travel as 'byval' pointers, as (LLVM parameter
@@ -177,6 +184,12 @@ void Emitter::createFunction(llvm::Function *&llvmFunc, std::string_view name,
   for (const auto &paramType : paramTypes) {
     SMDL_SANITY_CHECK(paramType);
     SMDL_SANITY_CHECK(paramType->llvmType);
+    // A voided parameter carries no data, so it is absent from the
+    // signature entirely, exactly as a voided field is absent from a
+    // struct layout. The call site drops it the same way (see
+    // 'FunctionType::invoke'), and both sides derive it from the same
+    // type vector, so the two cannot disagree.
+    if (paramType->isVoid()) continue;
     if (useIndirectParams && passesIndirectly(paramType)) {
       indirectParams.push_back({unsigned(llvmParamTys.size()), paramType});
       llvmParamTys.push_back(llvm::PointerType::get(context, 0));
@@ -230,6 +243,13 @@ void Emitter::createFunction(llvm::Function *&llvmFunc, std::string_view name,
     auto paramValues{llvm::SmallVector<Value>()};
     auto indirectItr{indirectParams.begin()};
     for (size_t i = 0; i < params.size(); i++) {
+      // A voided parameter has no LLVM argument to consume, so do not
+      // advance past one. It still binds, as the void value, so that the
+      // name resolves in the body like any other parameter.
+      if (paramTypes[i]->isVoid()) {
+        paramValues.push_back(RValue(paramTypes[i], nullptr));
+        continue;
+      }
       llvmArg->setName(params[i].name);
       auto llvmParam{&*llvmArg++};
       // An indirect parameter arrives as a 'byval' pointer to storage the
@@ -292,8 +312,9 @@ void Emitter::createFunction(llvm::Function *&llvmFunc, std::string_view name,
       // giving each call site its own result slot in its entry block.
       for (auto user : llvm::make_early_inc_range(llvmFunc0->users())) {
         auto callInst{llvm::dyn_cast<llvm::CallInst>(user)};
-        SMDL_SANITY_CHECK(callInst && callInst->getCalledOperand() == llvmFunc0,
-                          "unexpected use of function during 'sret' rebuild");
+        SMDL_SANITY_CHECK_MSG(
+            callInst && callInst->getCalledOperand() == llvmFunc0,
+            "unexpected use of function during 'sret' rebuild");
         auto blockEntry{&callInst->getFunction()->getEntryBlock()};
         builder.SetInsertPoint(blockEntry,
                                blockEntry->getFirstNonPHIOrDbgOrAlloca());
@@ -345,7 +366,7 @@ void Emitter::createFunction(llvm::Function *&llvmFunc, std::string_view name,
 
 Value Emitter::createAlloca(Type *type, const llvm::Twine &name) {
   auto llvmFunc{getLLVMFunction()};
-  SMDL_SANITY_CHECK(llvmFunc, "tried to alloca outside of LLVM function");
+  SMDL_SANITY_CHECK_MSG(llvmFunc, "tried to alloca outside of LLVM function");
   auto blockEntry{&llvmFunc->getEntryBlock()};
   auto ip{builder.saveIP()};
   builder.SetInsertPoint(blockEntry, blockEntry->getFirstNonPHIOrDbgOrAlloca());
@@ -382,8 +403,8 @@ Value Emitter::spillToMemory(Value value) {
         builder.SetInsertPoint(inst->getParent(),
                                inst->getParent()->getFirstInsertionPt());
       } else {
-        SMDL_SANITY_CHECK(!inst->isTerminator(),
-                          "cannot spill the result of a terminator");
+        SMDL_SANITY_CHECK_MSG(!inst->isTerminator(),
+                              "cannot spill the result of a terminator");
         // The value is very often the last instruction emitted so far, in a
         // block that has no terminator yet, in which case there is no 'next'
         // to insert before and the store simply appends.
@@ -508,8 +529,8 @@ void Emitter::declareImport(Span<const std::string_view> importPath, bool isAbs,
 }
 
 void Emitter::unwind(size_t depth) {
-  SMDL_SANITY_CHECK(!hasTerminator(), "tried to unwind after terminator");
-  SMDL_SANITY_CHECK(depth <= unwindStack.size(), "inconsistent unwind");
+  SMDL_SANITY_CHECK_MSG(!hasTerminator(), "tried to unwind after terminator");
+  SMDL_SANITY_CHECK_MSG(depth <= unwindStack.size(), "inconsistent unwind");
   for (auto i{unwindStack.size()}; i-- > depth;) {
     // Copy the action: a defer body may push actions of its own, which can
     // reallocate the stack (its `handleScope` truncates them again, so the
@@ -688,7 +709,7 @@ Value Emitter::emit(AST::Variable &decl) {
     const auto depth0{unwindStack.size()};
     auto scope0{scope};
     // The initializer's bindings (e.g. ':=') go out of scope below, before
-    // the declared variable itself enters the enclosing scope — hence a
+    // the declared variable itself enters the enclosing scope, hence a
     // transparent scope whose entries pop with the initializer region.
     scope = pushScope(/*transparent=*/true);
     auto args{[&]() -> ArgumentList {
@@ -778,12 +799,11 @@ Value Emitter::emit(AST::Variable &decl) {
 
 //--{ Emit: Expr
 Value Emitter::emit(AST::Expr &expr) {
-  return emitTypeSwitch<AST::AccessField, AST::AccessIndex, AST::Binary,
-                        AST::Call, AST::Identifier, AST::Intrinsic, AST::Lambda,
-                        AST::Let, AST::LiteralBool, AST::LiteralFloat,
-                        AST::LiteralInt, AST::LiteralString, AST::Parens,
-                        AST::ReturnFrom, AST::Select, AST::Type, AST::TypeCast,
-                        AST::Unary>(expr);
+  return emitTypeSwitch<
+      AST::AccessField, AST::AccessIndex, AST::Binary, AST::Call,
+      AST::Identifier, AST::Intrinsic, AST::Lambda, AST::Let, AST::LiteralBool,
+      AST::LiteralFloat, AST::LiteralInt, AST::LiteralString, AST::Parens,
+      AST::ReturnFrom, AST::Select, AST::Type, AST::TypeCast, AST::Unary>(expr);
 }
 
 Value Emitter::emit(AST::AccessIndex &expr) {
@@ -959,7 +979,7 @@ Value Emitter::emit(AST::Select &expr) {
   auto cond{invoke(context.getBoolType(), emit(expr.exprCond), expr.srcLoc)};
   if (cond.isComptimeInt()) {
     // Contain arm declarations, matching the runtime two-arm merge. (A ':='
-    // in the condition still leaks, in both paths — it dominates the merge.)
+    // in the condition still leaks, in both paths; it dominates the merge.)
     SMDL_PRESERVE(scope);
     scope = pushScope(/*transparent=*/true);
     return emit(cond.getComptimeInt() ? expr.exprThen : expr.exprElse);
@@ -978,7 +998,7 @@ Value Emitter::emitTwoArmMerge(Value cond, const char *name,
                                const SourceLocation &srcLoc) {
   // Contain declarations emitted inside either arm (e.g. the ':=' operator):
   // an arm executes only on its own control path, so a binding introduced
-  // there must not be visible to the other arm or after the merge — its
+  // there must not be visible to the other arm or after the merge: its
   // value would not dominate those uses. Each arm gets its own transparent
   // scope: resolution inside arm 1 must not see arm 0's bindings.
   SMDL_PRESERVE(scope);
@@ -999,7 +1019,7 @@ Value Emitter::emitTwoArmMerge(Value cond, const char *name,
   auto commonType{context.getCommonType({value0.type, value1.type},
                                         /*defaultToUnion=*/true, srcLoc)};
   // If both arms are already lvalues of the common type, merge the
-  // pointers and stay an lvalue — mirroring 'createResult' — so large
+  // pointers and stay an lvalue (mirroring 'createResult') so large
   // values (unions, structs) are not loaded into SSA just to be merged.
   const bool mergeAsLValues{value0.isLValue() && value1.isLValue() &&
                             value0.type == commonType &&
@@ -1159,7 +1179,7 @@ Value Emitter::emit(AST::Switch &stmt) {
       builder.SetInsertPoint(switchCase.block);
       // Each case is its own scope: the dispatch may jump directly to any
       // case, past the declarations of the cases before it, so a
-      // declaration must not be visible beyond its own case — not even on
+      // declaration must not be visible beyond its own case, not even on
       // fallthrough. Falling through unwinds the case scope like any other
       // scope exit (and `handleScope` emits the fallthrough branch).
       auto blockNext{i + 1 < switchCases.size() ? switchCases[i + 1].block
@@ -1251,7 +1271,7 @@ Value Emitter::emitOp(AST::UnaryOp op, Value value,
           return emitOp(op, accessIndex(value, j, srcLoc), srcLoc);
         });
       } else if (value.type->isComplex(context)) {
-        return invoke("_complex_neg", value, srcLoc);
+        return invoke("_complexNeg", value, srcLoc);
       }
     }
     // Unary not, e.g., `~value`
@@ -1274,6 +1294,11 @@ Value Emitter::emitOp(AST::UnaryOp op, Value value,
     }
     // Unary address, e.g., `&value`
     if (op == UNOP_ADDR) {
+      // This must come first: after it, the value is an rvalue anyway, and
+      // the rvalue message below says nothing about why.
+      if (value.isVoid())
+        srcLoc.throwError("cannot take address of 'void'; a voided field "
+                          "occupies no storage");
       if (!value.isLValue()) srcLoc.throwError("cannot take address of rvalue");
       return RValue(context.getPointerType(value.type), value);
     }
@@ -1496,7 +1521,7 @@ Value Emitter::emitOp(AST::BinaryOp op, Value lhs, Value rhs,
     if (auto llvmOp{llvmArithOp(Scalar::Intent::Int, op)};
         llvmOp && lhs.type == rhs.type)
       // NOTE: The result stays enum-typed even though it need not be a
-      // declared enumerator — flag-mask idioms like '(mode & m) == flag'
+      // declared enumerator; flag-mask idioms like '(mode & m) == flag'
       // depend on this.
       return RValue(lhs.type, builder.CreateBinOp(*llvmOp, lhs, rhs));
     if (auto llvmOp{llvmCmpOp(Scalar::Intent::Int, op)}) {
@@ -1518,13 +1543,19 @@ Value Emitter::emitOp(AST::BinaryOp op, Value lhs, Value rhs,
       return RValue(context.getColorType(),
                     builder.CreateBinOp(*llvmOp, lhs, rhs));
     }
-    if (auto llvmOp{llvmCmpOp(Scalar::Intent::FP, op)}) {
+    if (auto llvmCmpOpResult{llvmCmpOp(Scalar::Intent::FP, op)}) {
       lhs = invoke(context.getColorType(), lhs, srcLoc);
       rhs = invoke(context.getColorType(), rhs, srcLoc);
-      return RValue(context.getColorType()
-                        ->getArithmeticVectorType(context)
-                        ->getWithDifferentScalar(context, Scalar::getBool()),
-                    builder.CreateCmp(*llvmOp, lhs, rhs));
+      auto resultType{context.getColorType()
+                          ->getArithmeticVectorType(context)
+                          ->getWithDifferentScalar(context, Scalar::getBool())};
+      llvm::Value *llvmResult{builder.CreateCmp(*llvmCmpOpResult, lhs, rhs)};
+      // A 1-wide 'color' still lowers to '<1 x float>', but the type
+      // system has no 1-wide arithmetic vector, so the result type here
+      // is scalar 'bool' and the '<1 x i1>' must be reduced to match.
+      if (resultType->extent.isScalar())
+        llvmResult = builder.CreateExtractElement(llvmResult, uint64_t(0));
+      return RValue(resultType, llvmResult);
     }
   }
   // Complex numbers
@@ -1534,13 +1565,13 @@ Value Emitter::emitOp(AST::BinaryOp op, Value lhs, Value rhs,
     rhs = invoke(context.getComplexType(), rhs, srcLoc);
     const char *funcName{};
     if (op == BINOP_ADD) {
-      funcName = "_complex_add";
+      funcName = "_complexAdd";
     } else if (op == BINOP_SUB) {
-      funcName = "_complex_sub";
+      funcName = "_complexSub";
     } else if (op == BINOP_MUL) {
-      funcName = "_complex_mul";
+      funcName = "_complexMul";
     } else if (op == BINOP_DIV) {
-      funcName = "_complex_div";
+      funcName = "_complexDiv";
     }
     if (funcName) {
       return invoke(funcName, {lhs, rhs}, srcLoc);
@@ -1549,7 +1580,7 @@ Value Emitter::emitOp(AST::BinaryOp op, Value lhs, Value rhs,
   // Strings
   if (lhs.type->isString() && rhs.type->isString() &&
       (op == BINOP_CMP_EQ || op == BINOP_CMP_NE)) {
-    // Compare size+1 bytes so the NUL terminator participates — otherwise
+    // Compare size+1 bytes so the NUL terminator participates; otherwise
     // a prefix would compare equal to a longer string.
     auto result{llvm::emitStrNCmp(
         lhs, rhs,
@@ -1622,25 +1653,60 @@ Value Emitter::emitOp(AST::BinaryOp op, Value lhs, Value rhs,
 }
 //--}
 
+// Round an alignment request up to something every aligned allocator
+// accepts: a power of two that is at least 'sizeof(void *)'. Over-aligning
+// is always safe for the caller, who asked for *at least* this alignment,
+// and '#alloc(size, align)' takes both arguments straight from user source,
+// so neither is guaranteed to be sane on the way in.
+[[nodiscard]] static size_t normalizeAlignment(size_t align) noexcept {
+  auto result{sizeof(void *)};
+  while (result < align) result <<= 1;
+  return result;
+}
+
+// NOTE: Deliberately not 'std::aligned_alloc'. The Microsoft STL does not
+// provide it at all (their 'free()' cannot release an aligned allocation),
+// Apple only declares it for deployment targets of macOS 10.15 or later,
+// and C11 additionally requires the size to be an integral multiple of the
+// alignment, which nothing here guarantees.
+[[nodiscard]] static void *alignedAllocate(size_t size, size_t align) noexcept {
+#if defined(_WIN32)
+  return _aligned_malloc(size, align);
+#else
+  void *ptr{};
+  return ::posix_memalign(&ptr, align, size) == 0 ? ptr : nullptr;
+#endif // #if defined(_WIN32)
+}
+
+static void alignedFree(void *ptr) noexcept {
+#if defined(_WIN32)
+  _aligned_free(ptr);
+#else
+  std::free(ptr);
+#endif // #if defined(_WIN32)
+}
+
 extern "C" {
 
 SMDL_EXPORT void *smdlAllocate(int size, int align) {
   SMDL_SANITY_CHECK(align > 0);
   if (!(size > 0)) return nullptr;
-  auto ptr{std::aligned_alloc(align, size)};
+  auto ptr{alignedAllocate(size_t(size), normalizeAlignment(size_t(align)))};
   if (!ptr) throw std::bad_alloc();
   std::memset(ptr, 0x0, size);
   return ptr;
 }
 
-SMDL_EXPORT void smdlFree(void *ptr) { std::free(ptr); }
+// NOTE: Must pair with 'alignedAllocate' above. On Windows in particular,
+// 'std::free' cannot release memory from '_aligned_malloc'.
+SMDL_EXPORT void smdlFree(void *ptr) { alignedFree(ptr); }
 
 SMDL_EXPORT void *smdlBumpAllocate(void *state, int size, int align) {
   SMDL_SANITY_CHECK(state != nullptr && align > 0);
   if (size <= 0) return nullptr;
   auto allocator{
       static_cast<BumpPtrAllocator *>(static_cast<State *>(state)->allocator)};
-  SMDL_SANITY_CHECK(allocator != nullptr, "allocator cannot be null!");
+  SMDL_SANITY_CHECK_MSG(allocator != nullptr, "allocator cannot be null!");
   return allocator->allocate(size, align);
 }
 
@@ -1735,9 +1801,30 @@ SMDL_EXPORT void smdlTabulateAlbedo(const char *name, int num_cos_theta,
 
 } // extern "C"
 
-//--{ emit_intrinsic
+//--{ emitIntrinsic
+IntrinsicID Emitter::resolveIntrinsic(std::string_view name,
+                                      const SourceLocation &srcLoc) {
+  // The parser accepts any '#word', so this is where a misspelling is caught.
+  // The registry makes it cheap to guess what was meant.
+  auto intrinsicID{getIntrinsicByName(name)};
+  if (intrinsicID == IntrinsicID::Invalid) {
+    auto similar{getSimilarIntrinsicName(name)};
+    if (!similar.empty())
+      srcLoc.throwError("unimplemented intrinsic ", Quoted(name),
+                        "; did you mean ", Quoted(similar), "?");
+    srcLoc.throwError("unimplemented intrinsic ", Quoted(name));
+  }
+  return intrinsicID;
+}
+
 Value Emitter::emitIntrinsic(std::string_view name, const ArgumentList &args,
                              const SourceLocation &srcLoc) {
+  return emitIntrinsic(resolveIntrinsic(name, srcLoc), args, srcLoc);
+}
+
+Value Emitter::emitIntrinsic(IntrinsicID intrinsicID, const ArgumentList &args,
+                             const SourceLocation &srcLoc) {
+  const auto name{getIntrinsicName(intrinsicID)};
   if (args.isAnyNamed())
     srcLoc.throwError("intrinsics expect only unnamed arguments");
   if (!getLLVMFunction()) {
@@ -1757,7 +1844,7 @@ Value Emitter::emitIntrinsic(std::string_view name, const ArgumentList &args,
       scratchFunc->eraseFromParent();
     });
     builder.SetInsertPoint(blockEntry);
-    auto value{emitIntrinsic(name, args, srcLoc)};
+    auto value{emitIntrinsic(intrinsicID, args, srcLoc)};
     if (scratchFunc->size() > 1 || !blockEntry->empty())
       srcLoc.throwError("intrinsic ", Quoted(name),
                         " does not resolve to a compile-time constant and "
@@ -1797,7 +1884,7 @@ Value Emitter::emitIntrinsic(std::string_view name, const ArgumentList &args,
     SMDL_SANITY_CHECK(false);
     return nullptr;
   }};
-  // '#heap_allocate' and '#bump_allocate' expect '(size)' or '(size, align)'
+  // '#heapAllocate' and '#bumpAllocate' expect '(size)' or '(size, align)'
   // int arguments.
   auto expectSizeAndAlign{[&]() {
     auto arg0{args.size() >= 1 ? args[0].value : context.getComptimeInt(0)};
@@ -1819,7 +1906,7 @@ Value Emitter::emitIntrinsic(std::string_view name, const ArgumentList &args,
         context.getVoidPointerType(),
         builder.CreateCall(callee, {size.llvmValue, align.llvmValue}));
   }};
-  // Shared by '#bump' and '#bump_allocate'.
+  // Shared by '#bump' and '#bumpAllocate'.
   auto emitBumpAllocate{[&](Value size, Value align) {
     if (!state)
       srcLoc.throwError("intrinsic ", Quoted(name),
@@ -1834,1011 +1921,1370 @@ Value Emitter::emitIntrinsic(std::string_view name, const ArgumentList &args,
         builder.CreateCall(callee, {rvalue(state).llvmValue, size.llvmValue,
                                     align.llvmValue}));
   }};
-  // '#bitreverse', '#ctlz', '#cttz', and '#ctpop' differ only in the LLVM
-  // intrinsic and whether it takes the trailing is-zero-poison flag.
-  {
-    static constexpr struct {
-      std::string_view intrName;
-      llvm::Intrinsic::ID intrID;
-      bool hasIsZeroPoisonFlag;
-    } unaryIntIntrinsics[]{
-        {"bitreverse", llvm::Intrinsic::bitreverse, false},
-        {"ctlz", llvm::Intrinsic::ctlz, true},
-        {"cttz", llvm::Intrinsic::cttz, true},
-        {"ctpop", llvm::Intrinsic::ctpop, false},
-    };
-    for (const auto &[intrName, intrID, hasFlag] : unaryIntIntrinsics) {
-      if (name == intrName) {
-        auto value{rvalue(expectOneIntOrIntVector())};
-        return RValue(value.type,
-                      hasFlag
-                          ? builder.CreateBinaryIntrinsic(
-                                intrID, value, context.getComptimeBool(false))
-                          : builder.CreateUnaryIntrinsic(intrID, value));
+  switch (intrinsicID) {
+  case IntrinsicID::Invalid:
+    break;
+  case IntrinsicID::AlignOf: {
+    return context.getComptimeInt(int(context.getAlignOf(expectOneType())));
+  }
+  case IntrinsicID::Abs: {
+    // Intercept instances of `complex` and forward appropriately.
+    if (args.size() == 1 && args[0].value.type->isComplex(context)) {
+      return invoke("_complexAbs", args, srcLoc);
+    }
+    auto value{rvalue(expectOneVectorized())};
+    return RValue(
+        value.type,
+        value.type->isArithmeticIntegral()
+            ? builder.CreateBinaryIntrinsic(llvm::Intrinsic::abs, value,
+                                            context.getComptimeBool(false))
+            : builder.CreateUnaryIntrinsic(llvm::Intrinsic::fabs, value));
+  }
+  case IntrinsicID::Any:
+  case IntrinsicID::All: {
+    auto value{expectOne()};
+    if (!value.type->isArithmeticScalar() && !value.type->isArithmeticVector())
+      srcLoc.throwError("intrinsic ", Quoted(name),
+                        " expects 1 scalar or vector argument");
+    value = invoke(static_cast<ArithmeticType *>(value.type)
+                       ->getWithDifferentScalar(context, Scalar::getBool()),
+                   value, srcLoc);
+    if (value.type->isArithmeticScalar()) return value;
+    return RValue(
+        context.getBoolType(),
+        builder.CreateUnaryIntrinsic(intrinsicID == IntrinsicID::Any
+                                         ? llvm::Intrinsic::vector_reduce_or
+                                         : llvm::Intrinsic::vector_reduce_and,
+                                     value));
+  }
+  case IntrinsicID::Assert: {
+    if (!((args.size() == 1 && args[0].value.type == context.getBoolType()) ||
+          (args.size() == 2 && args[0].value.type == context.getBoolType() &&
+           args[1].value.type == context.getStringType())))
+      srcLoc.throwError("intrinsic 'assert' expects 1 bool argument and 1 "
+                        "optional string argument");
+    auto cond{rvalue(args[0].value)};
+    // A condition that folds is decided here and now: a true assertion
+    // emits nothing at all, and a false one is a compile-time error
+    // naming the offending source location.
+    //
+    // Deciding it here is what makes the false case reportable. Left to
+    // the runtime path below, the panic is only as good as the program's
+    // reaching it: it loses the source location, and in a compile-time
+    // context (a macro expanded into a module-scope initializer, say)
+    // the whole branch folds away and the assertion says nothing at all.
+    //
+    // This only fires for code that is actually emitted, so an assertion
+    // in the untaken branch of an 'if $(...)' still costs nothing and
+    // says nothing.
+    if (cond.isComptimeInt()) {
+      if (cond.getComptimeInt()) return Value();
+      // The message is only usable here if it is itself compile-time.
+      // A runtime string falls back to the source of the condition,
+      // the same text the runtime panic below would report.
+      if (args.size() == 2 && args[1].value.isComptimeString())
+        srcLoc.throwError(std::string(args[1].value.getComptimeString()));
+      if (!args[0].getSource().empty())
+        srcLoc.throwError("assertion failed: ", args[0].getSource());
+      srcLoc.throwError("assertion failed");
+    }
+    auto [blockPanic, blockOk] = createBlocks<2>("assert", {".panic", ".ok"});
+    builder.CreateCondBr(cond, blockOk, blockPanic);
+    builder.SetInsertPoint(blockPanic);
+    handleScope(nullptr, nullptr, [&] {
+      if (args.size() == 1) {
+        std::string message{"assertion failed"};
+        if (!args[0].getSource().empty()) {
+          message += ": ";
+          message += args[0].getSource();
+        }
+        emitPanic(context.getComptimeString(message), srcLoc);
+      } else {
+        emitPanic(rvalue(args[1].value), srcLoc);
       }
+    });
+    builder.CreateBr(blockOk);
+    builder.SetInsertPoint(blockOk);
+    return Value();
+  }
+  case IntrinsicID::Atan2: {
+    if (!(args.size() == 2 &&                   //
+          args[0].value.type->isVectorized() && //
+          args[1].value.type->isVectorized()))
+      srcLoc.throwError("intrinsic 'atan2' expects 2 vectorized arguments");
+    auto commonType{context.getCommonType(
+        {args[0].value.type, args[1].value.type, context.getFloatType()},
+        /*defaultToUnion=*/false, srcLoc)};
+    SMDL_SANITY_CHECK(commonType->isArithmeticFloatingPoint() ||
+                      commonType->isColor());
+    auto value0{invoke(commonType, args[0].value, srcLoc)};
+    auto value1{invoke(commonType, args[1].value, srcLoc)};
+    return RValue(commonType, builder.CreateBinaryIntrinsic(
+                                  llvm::Intrinsic::atan2, value0, value1));
+  }
+  case IntrinsicID::AlbedoLUT: {
+    if (!(args.size() == 1 && args[0].value.isComptimeString()))
+      srcLoc.throwError(
+          "intrinsic 'albedoLUT' expects 1 compile-time string argument");
+    auto lutName{args[0].value.getComptimeString()};
+    auto lutType{
+        context.getKeyword("_AlbedoLUT").getComptimeMetaType(context, srcLoc)};
+    auto lut{context.getBuiltinAlbedo(lutName)};
+    if (!lut)
+      srcLoc.throwError(
+          "intrinsic 'albedoLUT' passed invalid name ", Quoted(lutName),
+          " that does not identify any known look-up table at compile time");
+    auto floatPtrType{context.getPointerType(context.getFloatType())};
+    auto args{ArgumentList{}};
+    args.emplace_back("num_cos_theta",
+                      context.getComptimeInt(lut->num_cos_theta));
+    args.emplace_back("num_roughness",
+                      context.getComptimeInt(lut->num_roughness));
+    args.emplace_back(
+        "directional_albedo",
+        context.getComptimePtr(floatPtrType, lut->directional_albedo));
+    args.emplace_back("average_albedo", context.getComptimePtr(
+                                            floatPtrType, lut->average_albedo));
+    return invoke(lutType, args, srcLoc);
+  }
+  case IntrinsicID::BitCast: {
+    if (!(args.size() == 2 &&                          //
+          args[0].value.isComptimeMetaType(context) && //
+          args[1].value.llvmValue != nullptr))
+      srcLoc.throwError("intrinsic 'bitCast' expects 1 type argument and 1 "
+                        "value argument");
+    auto targetType{args[0].value.getComptimeMetaType(context, srcLoc)};
+    if (targetType->isAbstract())
+      srcLoc.throwError("intrinsic 'bitCast' expects concrete type argument");
+    auto value{args[1].value};
+    if (context.getSizeOf(targetType) != context.getSizeOf(value.type))
+      srcLoc.throwError("intrinsic 'bitCast' expects source and target type "
+                        "with identical size");
+    // If the alignment is compatible and the value is already an lvalue,
+    // we can just load it into an rvalue after transparently changing the
+    // type.
+    if (context.getAlignOf(targetType) <= context.getAlignOf(value.type) &&
+        value.isLValue())
+      return rvalue(LValue(targetType, value.llvmValue));
+    // Otherwise, we guarantee the value is an lvalue and then create a
+    // temporary alloca to perform the cast. We memcpy the bytes from the
+    // lvalue
+    auto lv{lvalue(value)};
+    auto lvResult{createAlloca(targetType, value.getName() + ".bitcast")};
+    createLifetimeStart(lvResult);
+    builder.CreateMemCpyInline(lvResult, //
+                               llvm::Align(context.getAlignOf(targetType)), lv,
+                               llvm::Align(context.getAlignOf(value.type)),
+                               builder.getInt64(context.getSizeOf(targetType)));
+    auto rvResult{rvalue(lvResult)};
+    createLifetimeEnd(lvResult);
+    if (value.isRValue()) createLifetimeEnd(lv);
+    return rvResult;
+  }
+  case IntrinsicID::Breakpoint: {
+    if (!args.empty())
+      srcLoc.throwError("intrinsic 'breakpoint' expects no arguments");
+    builder.CreateIntrinsic(context.getVoidType()->llvmType,
+                            llvm::Intrinsic::debugtrap, {});
+    return RValue(context.getVoidType(), nullptr);
+  }
+  case IntrinsicID::BumpAllocate: {
+    auto [size, align] = expectSizeAndAlign();
+    return emitBumpAllocate(size, align);
+  }
+  case IntrinsicID::Bump: {
+    auto value{expectOne()};
+    auto ptr{emitBumpAllocate(
+        context.getComptimeInt(int(context.getSizeOf(value.type))),
+        context.getComptimeInt(int(context.getAlignOf(value.type))))};
+    if (value.isLValue()) {
+      // Copy directly out of memory (e.g. an 'sret' result slot)
+      // instead of round-tripping the value through an SSA aggregate.
+      builder.CreateMemCpy(ptr, llvm::Align(context.getAlignOf(value.type)),
+                           value, llvm::Align(context.getAlignOf(value.type)),
+                           context.getSizeOf(value.type));
+    } else {
+      builder.CreateStore(rvalue(value), ptr);
+    }
+    return RValue(context.getPointerType(value.type), ptr.llvmValue);
+  }
+  case IntrinsicID::Clock: {
+    if (!args.empty())
+      srcLoc.throwError("intrinsic 'clock' expects no arguments");
+    // Lowers to the CPU cycle counter (RDTSC on x86-64, CNTVCT_EL0 on
+    // AArch64). Units are reference cycles, only meaningful as deltas;
+    // targets without a cycle counter lower this to constant 0.
+    auto int64Type{context.getArithmeticType(Scalar::getInt(64))};
+    return RValue(int64Type, builder.CreateIntrinsic(
+                                 int64Type->llvmType,
+                                 llvm::Intrinsic::readcyclecounter, {}));
+  }
+  case IntrinsicID::Fprint:
+  case IntrinsicID::Fprintln: {
+    if (args.size() < 2)
+      srcLoc.throwError("intrinsic 'fprint' expects 1 file argument and 1 or "
+                        "more printable arguments");
+    auto file{rvalue(args[0].value)};
+    for (size_t i = 1; i < args.size(); i++)
+      emitPrint(file, args[i].value, srcLoc);
+    if (intrinsicID == IntrinsicID::Fprintln)
+      emitPrint(file, context.getComptimeString("\n"), srcLoc);
+    return RValue(context.getVoidType(), nullptr);
+  }
+  case IntrinsicID::GetIntType: {
+    auto value{rvalue(expectOne())};
+    auto numBits{value.getComptimeSignedInt()};
+    if (!numBits || *numBits < 1 || *numBits > 255)
+      srcLoc.throwError("intrinsic 'getIntType' expects 1 compile-time int "
+                        "between 1 and 255");
+    return context.getComptimeMetaType(context.getArithmeticType(
+        Scalar::getInt(uint8_t(*numBits)), Extent(1)));
+  }
+  case IntrinsicID::GetFloatType: {
+    auto value{rvalue(expectOne())};
+    auto numBits{value.getComptimeSignedInt()};
+    if (!numBits || !(*numBits == 16 || *numBits == 32 || *numBits == 64 ||
+                      *numBits == 80 || *numBits == 128))
+      srcLoc.throwError("intrinsic 'getFloatType' expects 1 compile-time int "
+                        "in {16, 32, 64, 80, 128}");
+    return context.getComptimeMetaType(
+        context.getArithmeticType(Scalar::getFP(uint8_t(*numBits)), Extent(1)));
+  }
+  case IntrinsicID::GetVectorType: {
+    auto reportError{[&] {
+      srcLoc.throwError("intrinsic 'getVectorType' expects 1 compile-time "
+                        "scalar type and 1 compile-time positive int");
+    }};
+    if (!(args.size() == 2 &&                          //
+          args[0].value.isComptimeMetaType(context) && //
+          args[1].value.isComptimeInt()))
+      reportError();
+    auto type{args[0].value.getComptimeMetaType(context, srcLoc)};
+    auto size{args[1].value.getComptimeSignedInt()};
+    if (!type->isArithmeticScalar() || !size || *size < 1 || *size > 65535)
+      reportError();
+    return context.getComptimeMetaType(context.getArithmeticType(
+        static_cast<ArithmeticType *>(type)->scalar, Extent(uint16_t(*size))));
+  }
+  case IntrinsicID::GetMatrixType: {
+    auto reportError{[&] {
+      srcLoc.throwError("intrinsic 'getMatrixType' expects 1 compile-time "
+                        "scalar type and 2 compile-time positive ints");
+    }};
+    if (!(args.size() == 3 &&                          //
+          args[0].value.isComptimeMetaType(context) && //
+          args[1].value.isComptimeInt() &&             //
+          args[2].value.isComptimeInt()))
+      reportError();
+    auto type{args[0].value.getComptimeMetaType(context, srcLoc)};
+    auto numCols{args[1].value.getComptimeSignedInt()};
+    auto numRows{args[2].value.getComptimeSignedInt()};
+    if (!type->isArithmeticScalar() ||                  //
+        !numCols || *numCols < 1 || *numCols > 65535 || //
+        !numRows || *numRows < 1 || *numRows > 65535)
+      reportError();
+    return context.getComptimeMetaType(context.getArithmeticType(
+        static_cast<ArithmeticType *>(type)->scalar,
+        Extent(uint16_t(*numCols), uint16_t(*numRows))));
+  }
+  case IntrinsicID::HasField: {
+    if (!(args.size() == 2 && args[1].value.isComptimeString()))
+      srcLoc.throwError("intrinsic 'hasField' expects 1 argument and 1 "
+                        "compile-time string argument");
+    auto fieldName{args[1].value.getComptimeString()};
+    auto value{args[0].value};
+    if (value.isVoid()) return context.getComptimeBool(false);
+    // A compile-time type asks about instances of that type, so that
+    // '#hasField(value, ...)' and '#hasField(#typeOf(value), ...)' agree.
+    // Only meta-*types* unwrap: a module or namespace stays a value,
+    // because 'MetaType::accessField()' resolves its fields from it.
+    if (value.isComptimeMetaType(context)) {
+      auto type{value.getComptimeMetaType(context, srcLoc)};
+      if (type->isAbstract())
+        srcLoc.throwError("intrinsic 'hasField' cannot query abstract type ",
+                          Quoted(type->displayName));
+      return context.getComptimeBool(
+          type->hasNonVoidField(*this, Value(), fieldName, srcLoc));
+    }
+    // NOTE: The value is deliberately not 'rvalue()'d. Only its type
+    // matters, and forcing the load would leave dead IR behind.
+    return context.getComptimeBool(
+        value.type->hasNonVoidField(*this, value, fieldName, srcLoc));
+  }
+  case IntrinsicID::HeapAllocate: {
+    return emitAllocateCall(
+        context.getBuiltinCallee("smdlAllocate", &smdlAllocate));
+  }
+  case IntrinsicID::HeapFree: {
+    auto value{expectOne()};
+    if (!value.type->isPointer())
+      srcLoc.throwError("intrinsic ", Quoted(name),
+                        " expects 1 pointer argument");
+    auto callee{context.getBuiltinCallee("smdlFree", &smdlFree)};
+    return RValue(context.getVoidType(),
+                  builder.CreateCall(callee, {rvalue(value).llvmValue}));
+  }
+  case IntrinsicID::TestFPClass: {
+    if (!(args.size() == 2 &&                                 //
+          (args[0].value.type->isArithmeticFloatingPoint() || //
+           args[0].value.type->isColor()) &&                  //
+          args[1].value.isComptimeInt()))
+      srcLoc.throwError(
+          "intrinsic 'testFPClass' expects 1 vectorized floating point "
+          "argument and 1 compile-time int argument");
+    auto value{rvalue(args[0].value)};
+    auto arithType{value.type->isColor()
+                       ? static_cast<ColorType *>(value.type)
+                             ->getArithmeticVectorType(context)
+                       : static_cast<ArithmeticType *>(value.type)};
+    llvm::Value *llvmResult{
+        builder.createIsFPClass(value, args[1].value.getComptimeInt())};
+    // As with color comparison: a 1-wide 'color' is '<1 x float>' but
+    // its arithmetic type is scalar, so reduce the '<1 x i1>' to match.
+    if (value.type->isColor() && arithType->extent.isScalar())
+      llvmResult = builder.CreateExtractElement(llvmResult, uint64_t(0));
+    return RValue(arithType->getWithDifferentScalar(context, Scalar::getBool()),
+                  llvmResult);
+  }
+  case IntrinsicID::IsArray:
+  case IntrinsicID::IsArithmetic:
+  case IntrinsicID::IsArithmeticIntegral:
+  case IntrinsicID::IsArithmeticFloatingPoint:
+  case IntrinsicID::IsArithmeticScalar:
+  case IntrinsicID::IsArithmeticVector:
+  case IntrinsicID::IsArithmeticMatrix:
+  case IntrinsicID::IsEnum:
+  case IntrinsicID::IsOptionalUnion:
+  case IntrinsicID::IsPointer:
+  case IntrinsicID::IsStruct:
+  case IntrinsicID::IsTag:
+  case IntrinsicID::IsUnion:
+  case IntrinsicID::IsVoid:
+  case IntrinsicID::IsDefault: {
+    // Every type predicate is a compile-time query of the 'Type' member
+    // function it is named for, so the table is the whole implementation.
+    static constexpr struct {
+      IntrinsicID intrinsicID;
+      bool (Type::*predicate)() const;
+    } typePredicates[]{
+        {IntrinsicID::IsArray, &Type::isArray},
+        {IntrinsicID::IsArithmetic, &Type::isArithmetic},
+        {IntrinsicID::IsArithmeticIntegral, &Type::isArithmeticIntegral},
+        {IntrinsicID::IsArithmeticFloatingPoint,
+         &Type::isArithmeticFloatingPoint},
+        {IntrinsicID::IsArithmeticScalar, &Type::isArithmeticScalar},
+        {IntrinsicID::IsArithmeticVector, &Type::isArithmeticVector},
+        {IntrinsicID::IsArithmeticMatrix, &Type::isArithmeticMatrix},
+        {IntrinsicID::IsEnum, &Type::isEnum},
+        {IntrinsicID::IsOptionalUnion, &Type::isOptionalUnion},
+        {IntrinsicID::IsPointer, &Type::isPointer},
+        {IntrinsicID::IsStruct, &Type::isStruct},
+        {IntrinsicID::IsTag, &Type::isTag},
+        {IntrinsicID::IsUnion, &Type::isUnion},
+        {IntrinsicID::IsVoid, &Type::isVoid},
+        {IntrinsicID::IsDefault, &Type::isDefault},
+    };
+    auto type{expectOneType()};
+    for (auto [predicateID, predicate] : typePredicates)
+      if (predicateID == intrinsicID)
+        return context.getComptimeBool((type->*predicate)());
+    break;
+  }
+  case IntrinsicID::LoadTexture2D:
+  case IntrinsicID::LoadTexture3D:
+  case IntrinsicID::LoadTextureCube:
+  case IntrinsicID::LoadTexturePtex:
+  case IntrinsicID::LoadPBRMaps:
+  case IntrinsicID::LoadBSDFMeasurement:
+  case IntrinsicID::LoadLightProfile:
+  case IntrinsicID::LoadSpectralCurve:
+    return emitIntrinsicLoad(intrinsicID, args, srcLoc);
+  case IntrinsicID::Memset: {
+    if (!(args.size() == 3 &&                            //
+          args[0].value.type->isPointer() &&             //
+          args[1].value.type->isArithmeticScalarInt() && //
+          args[2].value.type->isArithmeticScalarInt()))
+      srcLoc.throwError("intrinsic 'memset' expects 1 pointer argument "
+                        "and 2 int arguments");
+    auto ptr{rvalue(args[0].value)};
+    auto val{llvmEmitCast(builder, rvalue(args[1].value), builder.getInt8Ty())};
+    auto count{
+        llvmEmitCast(builder, rvalue(args[2].value), builder.getInt64Ty())};
+    return RValue(context.getVoidType(),
+                  builder.CreateMemSet(ptr, val, count, std::nullopt));
+  }
+  case IntrinsicID::Memcpy: {
+    if (!(args.size() == 3 &&                //
+          args[0].value.type->isPointer() && //
+          args[1].value.type->isPointer() && //
+          args[2].value.type->isArithmeticScalarInt()))
+      srcLoc.throwError("intrinsic 'memcpy' expects 2 pointer arguments "
+                        "and 1 int argument");
+    auto dst{rvalue(args[0].value)};
+    auto src{rvalue(args[1].value)};
+    auto count{
+        llvmEmitCast(builder, rvalue(args[2].value), builder.getInt64Ty())};
+    return RValue(
+        context.getVoidType(),
+        builder.CreateMemCpy(dst, std::nullopt, src, std::nullopt, count));
+  }
+  case IntrinsicID::Max:
+  case IntrinsicID::Min: {
+    if (args.size() != 2 || !args.isAllTrue([](auto &arg) {
+          return arg.value.type->isVectorized();
+        }))
+      srcLoc.throwError("intrinsic ", Quoted(name),
+                        " expects 2 vectorized arguments");
+    auto value0{args[0].value};
+    auto value1{args[1].value};
+    auto type{context.getCommonType({value0.type, value1.type},
+                                    /*defaultToUnion=*/false, srcLoc)};
+    value0 = invoke(type, value0, srcLoc);
+    value1 = invoke(type, value1, srcLoc);
+    auto intrID =
+        intrinsicID == IntrinsicID::Max
+            ? (type->isArithmeticBoolean()    ? llvm::Intrinsic::umax
+               : type->isArithmeticIntegral() ? llvm::Intrinsic::smax
+                                              : llvm::Intrinsic::maxnum)
+            : (type->isArithmeticBoolean()    ? llvm::Intrinsic::umin
+               : type->isArithmeticIntegral() ? llvm::Intrinsic::smin
+                                              : llvm::Intrinsic::minnum);
+    return RValue(type, builder.CreateBinaryIntrinsic(intrID, value0, value1));
+  }
+  case IntrinsicID::Num: {
+    auto type{expectOneType()};
+    auto size{[&]() -> int {
+      if (type->isArithmeticVector()) {
+        return static_cast<ArithmeticType *>(type)->extent.numRows;
+      } else if (type->isArithmeticMatrix()) {
+        return static_cast<ArithmeticType *>(type)->extent.numCols;
+      } else if (type->isColor()) {
+        return int(static_cast<ColorType *>(type)->wavelengthBaseMax);
+      } else if (type->isArray()) {
+        return int(static_cast<ArrayType *>(type)->size);
+      } else {
+        return 1;
+      }
+    }()};
+    return context.getComptimeInt(size);
+  }
+  case IntrinsicID::NumRows:
+  case IntrinsicID::NumCols: {
+    auto type{expectOneType()};
+    if (!type->isArithmeticMatrix())
+      srcLoc.throwError("intrinsic ", Quoted(name),
+                        " expects 1 matrix argument");
+    return context.getComptimeInt(
+        intrinsicID == IntrinsicID::NumRows
+            ? int(static_cast<ArithmeticType *>(type)->extent.numRows)
+            : int(static_cast<ArithmeticType *>(type)->extent.numCols));
+  }
+  case IntrinsicID::Panic: {
+    if (args.size() != 1 || args[0].value.type != context.getStringType())
+      srcLoc.throwError("intrinsic 'panic' expects 1 string argument");
+    emitPanic(args[0].value, srcLoc);
+    return Value();
+  }
+  case IntrinsicID::Pow: {
+    if (args.size() != 2 ||                    //
+        !args[0].value.type->isVectorized() || //
+        !args[1].value.type->isVectorized())
+      srcLoc.throwError("intrinsic 'pow' expects 2 vectorized arguments");
+    auto value0{rvalue(args[0].value)};
+    auto value1{rvalue(args[1].value)};
+    if (value1.isComptimeInt()) {
+      auto power{value1.getComptimeInt()};
+      if (power == 1) return value0;
+      if (power == 2) return emitOp(BINOP_MUL, value0, value0, srcLoc);
+    }
+    auto resultType{context.getCommonType(
+        {value0.type, value1.type, context.getFloatType()},
+        /*defaultToUnion=*/false, srcLoc)};
+    value0 = invoke(resultType, value0, srcLoc);
+    return RValue(resultType, value1.type->isArithmeticScalarInt()
+                                  ? llvmEmitPowi(builder, value0, value1)
+                                  : builder.CreateBinaryIntrinsic(
+                                        llvm::Intrinsic::pow, value0,
+                                        invoke(resultType, value1, srcLoc)));
+  }
+  case IntrinsicID::Print:
+  case IntrinsicID::Println: {
+    auto os{context.getComptimePtr(context.getVoidPointerType(), stderr)};
+    for (auto &arg : args) emitPrint(os, arg.value, srcLoc);
+    if (intrinsicID == IntrinsicID::Println)
+      emitPrint(os, context.getComptimeString("\n"), srcLoc);
+    return Value();
+  }
+  case IntrinsicID::Rotl:
+  case IntrinsicID::Rotr: {
+    if (!(args.size() == 2 && //
+          args[0].value.type->isArithmeticIntegral() &&
+          args[1].value.type->isArithmeticIntegral())) {
+      srcLoc.throwError("intrinsic ", Quoted(name),
+                        " expects 2 integer or vectorized integer arguments");
+    }
+    auto intType{context.getCommonType({args[0].value.type, args[1].value.type},
+                                       /*defaultToUnion=*/false, srcLoc)};
+    auto value0{invoke(intType, args[0].value, srcLoc)};
+    auto value1{invoke(intType, args[1].value, srcLoc)};
+    auto llvmIntrID{intrinsicID == IntrinsicID::Rotl ? llvm::Intrinsic::fshl
+                                                     : llvm::Intrinsic::fshr};
+    return RValue(intType,
+                  builder.CreateIntrinsic(
+                      intType->llvmType, llvmIntrID,
+                      {value0.llvmValue, value0.llvmValue, value1.llvmValue}));
+  }
+  case IntrinsicID::SizeOf: {
+    return context.getComptimeInt(int(context.getSizeOf(expectOneType())));
+  }
+  case IntrinsicID::Sign: {
+    auto value{rvalue(expectOneVectorized())};
+    if (value.type->isArithmeticIntegral()) {
+      return RValue(
+          value.type,
+          builder.CreateSelect(
+              emitOp(BINOP_CMP_LT, value, context.getComptimeInt(0), srcLoc),
+              invoke(value.type, context.getComptimeInt(-1), srcLoc),
+              invoke(value.type, context.getComptimeInt(+1), srcLoc)));
+    } else {
+      return RValue(value.type,
+                    builder.CreateBinaryIntrinsic(
+                        llvm::Intrinsic::copysign,
+                        invoke(value.type, context.getComptimeFloat(1), srcLoc),
+                        value));
     }
   }
-  // '#sum', '#prod', '#max_value', and '#min_value' share one vector
+  case IntrinsicID::Select: {
+    if (args.size() != 3 || !args[0].value.type->isArithmeticBoolean() ||
+        !args.isAllTrue(
+            [](auto arg) { return arg.value.type->isVectorized(); }))
+      srcLoc.throwError("intrinsic 'select' expects 1 vectorized boolean "
+                        "argument and 2 vectorized selection arguments");
+    auto valueCond{rvalue(args[0].value)};
+    auto valueThen{args[1].value};
+    auto valueElse{args[2].value};
+    // The number of components a vectorized type selects over.
+    auto numComponents{[](Type *type) -> uint32_t {
+      if (type->isArithmeticVector())
+        return static_cast<ArithmeticType *>(type)->extent.numRows;
+      if (type->isColor())
+        return static_cast<ColorType *>(type)->wavelengthBaseMax;
+      return 1;
+    }};
+    // The condition fixes the number of components of the result, but takes
+    // no part in its value type, so it joins the common type only when both
+    // selection arguments are scalars and neither can supply that number
+    // itself. Folding it in unconditionally fails on 'color', which has no
+    // common type with the boolean vector that comparing two colors yields.
+    auto type{
+        context.getCommonType({valueThen.type, valueElse.type,
+                               valueThen.type->isArithmeticScalar() &&
+                                       valueElse.type->isArithmeticScalar() &&
+                                       valueCond.type->isArithmeticVector()
+                                   ? valueCond.type
+                                   : nullptr},
+                              /*defaultToUnion=*/false, srcLoc)};
+    // The common type no longer sees the condition in every case, so the
+    // component counts must be reconciled here instead of falling out of it.
+    if (valueCond.type->isArithmeticVector() &&
+        numComponents(valueCond.type) != numComponents(type))
+      srcLoc.throwError("intrinsic 'select' expects the condition ",
+                        Quoted(valueCond.type->displayName),
+                        " to have the same number of components as the "
+                        "selection arguments ",
+                        Quoted(type->displayName));
+    valueThen = invoke(type, valueThen, srcLoc);
+    valueElse = invoke(type, valueElse, srcLoc);
+    return RValue(type, builder.CreateSelect(valueCond, valueThen, valueElse));
+  }
+    // TODO This is a specific solution to a specific problem of calculating
+    // tabulated albedos conveniently and efficiently. There might be a more
+    // general way of addressing this in the future.
+  case IntrinsicID::TabulateAlbedo: {
+    if (!(args.size() == 4 && args[0].value.type == context.getStringType() &&
+          args[1].value.type->isArithmeticScalarInt() &&
+          args[2].value.type->isArithmeticScalarInt() &&
+          args[3].value.isComptimeMetaType(context)))
+      srcLoc.throwError("intrinsic 'tabulateAlbedo' expects 1 compile-time "
+                        "string argument, 2 compile-time integer arguments, "
+                        "and 1 function argument");
+    auto funcType{llvm::dyn_cast<FunctionType>(
+        args[3].value.getComptimeMetaType(context, srcLoc))};
+    // Named functions must be declared '@(pure) float(float, float)'.
+    // Lambdas declare neither purity nor a return type, so accept two
+    // 'float' parameters and let materialization validate the rest: the
+    // instance is compiled pure (see 'FunctionType::getInstance') and
+    // the inferred return type is checked below.
+    if (!(funcType && !funcType->isVariant() && funcType->hasNoOverloads() &&
+          funcType->params.size() == 2 &&
+          funcType->params[0].type == context.getFloatType() &&
+          funcType->params[1].type == context.getFloatType() &&
+          (funcType->isLambda ||
+           (funcType->isPure() && !funcType->isMacro() &&
+            funcType->returnType == context.getFloatType())))) {
+      srcLoc.throwError("intrinsic 'tabulateAlbedo' function argument must "
+                        "have signature '@(pure) float(float, float)' or be "
+                        "a lambda with two 'float' parameters");
+    }
+    auto &funcInst{funcType->getInstance(
+        *this, {context.getFloatType(), context.getFloatType()})};
+    if (funcInst.returnType != context.getFloatType())
+      srcLoc.throwError("intrinsic 'tabulateAlbedo' function argument must "
+                        "return 'float'");
+    auto callee{
+        context.getBuiltinCallee("smdlTabulateAlbedo", &smdlTabulateAlbedo)};
+    auto callInst{
+        builder.CreateCall(callee, {rvalue(args[0].value).llvmValue, //
+                                    rvalue(args[1].value).llvmValue, //
+                                    rvalue(args[2].value).llvmValue, //
+                                    funcInst.llvmFunc})};
+    return RValue(context.getVoidType(), callInst);
+  }
+  case IntrinsicID::TypeOf: {
+    return context.getComptimeMetaType(expectOne().type);
+  }
+  case IntrinsicID::TypeName: {
+    return context.getComptimeString(expectOneType()->displayName);
+  }
+  case IntrinsicID::Transpose: {
+    if (!(args.size() == 1 && args[0].value.type->isArithmeticMatrix()))
+      srcLoc.throwError("intrinsic 'transpose' expects 1 matrix argument");
+    auto value{args[0].value};
+    auto valueCols{llvm::SmallVector<Value>{}};
+    for (unsigned j = 0;
+         j < static_cast<ArithmeticType *>(value.type)->extent.numCols; j++)
+      valueCols.push_back(rvalue(accessIndex(value, j, srcLoc)));
+    auto resultType{
+        static_cast<ArithmeticType *>(value.type)->getTransposeType(context)};
+    auto result{Value::zero(resultType)};
+    for (unsigned j = 0; j < resultType->extent.numCols; j++) {
+      auto resultCol{Value::zero(resultType->getColumnType(context))};
+      for (unsigned i = 0; i < resultType->extent.numRows; i++)
+        resultCol =
+            insert(resultCol, accessIndex(valueCols[i], j, srcLoc), i, srcLoc);
+      result = insert(result, resultCol, j, srcLoc);
+    }
+    return result;
+  }
+  case IntrinsicID::Uitofp: {
+    if (!(args.size() == 2 &&                           //
+          args[0].value.type->isArithmeticIntegral() && //
+          args[1].value.isComptimeMetaType(context))) {
+      srcLoc.throwError("intrinsic 'uitofp' expects 1 int argument and "
+                        "1 type argument");
+    }
+    auto floatType{args[1].value.getComptimeMetaType(context, srcLoc)};
+    if (!floatType->isArithmeticFloatingPoint())
+      srcLoc.throwError("intrinsic 'uitofp' expects 1 int argument and "
+                        "1 floating point type argument");
+    return RValue(floatType, builder.CreateUIToFP(rvalue(args[0].value),
+                                                  floatType->llvmType));
+  }
+  case IntrinsicID::UnpackFloat4: {
+    auto value{rvalue(expectOne())};
+    if (!value.type->isArithmeticScalar() && !value.type->isArithmeticVector())
+      srcLoc.throwError(
+          "intrinsic 'unpackFloat4' expects 1 scalar or vector argument");
+    auto texelType{static_cast<ArithmeticType *>(value.type)};
+    value.type = texelType->getWithDifferentScalar(context, Scalar::getFloat());
+    value.llvmValue =
+        texelType->isArithmeticIntegral()
+            ? builder.CreateUIToFP(value.llvmValue, value.type->llvmType)
+            : builder.CreateFPCast(value.llvmValue, value.type->llvmType);
+    if (texelType->isArithmeticIntegral())
+      value =
+          emitOp(BINOP_MUL, value,
+                 // Compute in double via ldexp: '1ULL << numBits' is
+                 // undefined for 64-bit texel types.
+                 context.getComptimeFloat(float(
+                     1.0 / (std::ldexp(1.0, texelType->scalar.numBits) - 1.0))),
+                 srcLoc);
+    if (value.type == context.getFloatType(Extent(4))) // Early out?
+      return value;
+    auto result{Value::zero(context.getFloatType(Extent(4)))};
+    if (value.type->isArithmeticScalar()) {
+      result.llvmValue = builder.CreateVectorSplat(4, value.llvmValue);
+    } else {
+      for (uint64_t i = 0; i < texelType->extent.numRows; i++)
+        result.llvmValue = builder.CreateInsertElement(
+            result.llvmValue, builder.CreateExtractElement(value.llvmValue, i),
+            i);
+    }
+    result.llvmValue = builder.CreateInsertElement(
+        result.llvmValue, context.getComptimeFloat(1).llvmValue, uint64_t(3));
+    return result;
+  }
+  // '#bitReverse', '#ctlz', '#cttz', and '#ctpop' differ only in the LLVM
+  // intrinsic and whether it takes the trailing is-zero-poison flag.
+  case IntrinsicID::BitReverse:
+  case IntrinsicID::Ctlz:
+  case IntrinsicID::Cttz:
+  case IntrinsicID::Ctpop: {
+    auto hasIsZeroPoisonFlag{intrinsicID == IntrinsicID::Ctlz ||
+                             intrinsicID == IntrinsicID::Cttz};
+    auto llvmIntrID{
+        intrinsicID == IntrinsicID::BitReverse ? llvm::Intrinsic::bitreverse
+        : intrinsicID == IntrinsicID::Ctlz     ? llvm::Intrinsic::ctlz
+        : intrinsicID == IntrinsicID::Cttz     ? llvm::Intrinsic::cttz
+                                               : llvm::Intrinsic::ctpop};
+    auto value{rvalue(expectOneIntOrIntVector())};
+    return RValue(value.type,
+                  hasIsZeroPoisonFlag
+                      ? builder.CreateBinaryIntrinsic(
+                            llvmIntrID, value, context.getComptimeBool(false))
+                      : builder.CreateUnaryIntrinsic(llvmIntrID, value));
+  }
+  // '#sum', '#prod', '#maxValue', and '#minValue' share one vector
   // reduction implementation.
-  if (name == "sum" || name == "prod" || name == "max_value" ||
-      name == "min_value") {
+  case IntrinsicID::Sum:
+  case IntrinsicID::Prod:
+  case IntrinsicID::MaxValue:
+  case IntrinsicID::MinValue: {
     auto value{rvalue(expectOneVectorized())};
     if (value.type->isArithmeticScalar()) return value;
     // Widen bool vectors before '#sum': add-reducing '<N x i1>' computes
     // the parity of the lanes, not the count of true lanes.
-    if (name == "sum" && value.type->isArithmeticBoolean())
+    if (intrinsicID == IntrinsicID::Sum && value.type->isArithmeticBoolean())
       value = invoke(static_cast<ArithmeticType *>(value.type)
                          ->getWithDifferentScalar(context, Scalar::getInt(32)),
                      value, srcLoc);
     auto scalarType{scalarTypeOf(value.type)};
-    if (name == "max_value" || name == "min_value") {
-      auto intrID = name == "max_value"
-                        ? (value.type->isArithmeticBoolean()
-                               ? llvm::Intrinsic::vector_reduce_umax
-                           : value.type->isArithmeticIntegral()
-                               ? llvm::Intrinsic::vector_reduce_smax
-                               : llvm::Intrinsic::vector_reduce_fmax)
-                        : (value.type->isArithmeticBoolean()
-                               ? llvm::Intrinsic::vector_reduce_umin
-                           : value.type->isArithmeticIntegral()
-                               ? llvm::Intrinsic::vector_reduce_smin
-                               : llvm::Intrinsic::vector_reduce_fmin);
-      return RValue(scalarType, builder.CreateUnaryIntrinsic(intrID, value));
+    if (intrinsicID == IntrinsicID::MaxValue ||
+        intrinsicID == IntrinsicID::MinValue) {
+      auto llvmIntrID = intrinsicID == IntrinsicID::MaxValue
+                            ? (value.type->isArithmeticBoolean()
+                                   ? llvm::Intrinsic::vector_reduce_umax
+                               : value.type->isArithmeticIntegral()
+                                   ? llvm::Intrinsic::vector_reduce_smax
+                                   : llvm::Intrinsic::vector_reduce_fmax)
+                            : (value.type->isArithmeticBoolean()
+                                   ? llvm::Intrinsic::vector_reduce_umin
+                               : value.type->isArithmeticIntegral()
+                                   ? llvm::Intrinsic::vector_reduce_smin
+                                   : llvm::Intrinsic::vector_reduce_fmin);
+      return RValue(scalarType,
+                    builder.CreateUnaryIntrinsic(llvmIntrID, value));
     }
     if (scalarType->isArithmeticIntegral())
-      return RValue(scalarType, name == "sum" ? builder.CreateAddReduce(value)
-                                              : builder.CreateMulReduce(value));
+      return RValue(scalarType, intrinsicID == IntrinsicID::Sum
+                                    ? builder.CreateAddReduce(value)
+                                    : builder.CreateMulReduce(value));
     return RValue(
         scalarType,
-        name == "sum"
+        intrinsicID == IntrinsicID::Sum
             ? builder.CreateFAddReduce(Value::zero(scalarType), value)
             : builder.CreateFMulReduce(
                   invoke(scalarType, context.getComptimeFloat(1), srcLoc),
                   value));
   }
-  switch (name[0]) {
-  default:
-    break;
-  case 'a': {
-    if (name == "alignof") {
-      return context.getComptimeInt(int(context.getAlignOf(expectOneType())));
-    }
-    if (name == "abs") {
-      // Intercept instances of `complex` and forward appropriately.
-      if (args.size() == 1 && args[0].value.type->isComplex(context)) {
-        return invoke("_complex_abs", args, srcLoc);
-      }
-      auto value{rvalue(expectOneVectorized())};
-      return RValue(
-          value.type,
-          value.type->isArithmeticIntegral()
-              ? builder.CreateBinaryIntrinsic(llvm::Intrinsic::abs, value,
-                                              context.getComptimeBool(false))
-              : builder.CreateUnaryIntrinsic(llvm::Intrinsic::fabs, value));
-    }
-    if (name == "any" || name == "all") {
-      auto value{expectOne()};
-      if (!value.type->isArithmeticScalar() &&
-          !value.type->isArithmeticVector())
-        srcLoc.throwError("intrinsic ", Quoted(name),
-                          " expects 1 scalar or vector argument");
+  // The complex accessors are defined on real numbers too, where they
+  // degenerate to identity, zero, or a square.
+  case IntrinsicID::Conj: {
+    auto value{expectOne()};
+    // NOTE: Conjugate of real number is no-op
+    return value.type->isComplex(context)
+               ? invoke("_complexConj", value, srcLoc)
+               : rvalue(value);
+  }
+  case IntrinsicID::Real: {
+    auto value{expectOne()};
+    // NOTE: Real part of real number is identity
+    return value.type->isComplex(context) ? accessField(value, "a", srcLoc)
+                                          : value;
+  }
+  case IntrinsicID::Imag: {
+    auto value{expectOne()};
+    // NOTE: Imag part of real number is zero
+    return value.type->isComplex(context) ? accessField(value, "b", srcLoc)
+                                          : invoke(value.type, {}, srcLoc);
+  }
+  case IntrinsicID::Norm: {
+    auto value{expectOne()};
+    // NOTE: Norm of real number is square
+    return value.type->isComplex(context)
+               ? invoke("_complexNorm", value, srcLoc)
+               : emitOp(BINOP_MUL, value, value, srcLoc);
+  }
+  // Unary floating-point math intrinsics. '#exp', '#log', and '#sqrt' accept
+  // 'complex' as well and forward to the corresponding implementation.
+  case IntrinsicID::Exp:
+  case IntrinsicID::Log:
+  case IntrinsicID::Sqrt:
+    if (expectOne().type->isComplex(context))
+      return invoke(intrinsicID == IntrinsicID::Exp   ? "_complexExp"
+                    : intrinsicID == IntrinsicID::Log ? "_complexLog"
+                                                      : "_complexSqrt",
+                    args[0].value, srcLoc);
+    [[fallthrough]];
+  case IntrinsicID::Floor:
+  case IntrinsicID::Ceil:
+  case IntrinsicID::Trunc:
+  case IntrinsicID::Round:
+  case IntrinsicID::Sin:
+  case IntrinsicID::Cos:
+  case IntrinsicID::Tan:
+  case IntrinsicID::Asin:
+  case IntrinsicID::Acos:
+  case IntrinsicID::Atan:
+  case IntrinsicID::Sinh:
+  case IntrinsicID::Cosh:
+  case IntrinsicID::Tanh:
+  case IntrinsicID::Exp2:
+  case IntrinsicID::Exp10:
+  case IntrinsicID::Log2:
+  case IntrinsicID::Log10: {
+    static const std::pair<IntrinsicID, llvm::Intrinsic::ID>
+        unaryFPIntrinsics[]{
+            {IntrinsicID::Floor, llvm::Intrinsic::floor},
+            {IntrinsicID::Ceil, llvm::Intrinsic::ceil},
+            {IntrinsicID::Trunc, llvm::Intrinsic::trunc},
+            {IntrinsicID::Round, llvm::Intrinsic::round},
+            {IntrinsicID::Sqrt, llvm::Intrinsic::sqrt},
+            {IntrinsicID::Sin, llvm::Intrinsic::sin},
+            {IntrinsicID::Cos, llvm::Intrinsic::cos},
+            {IntrinsicID::Tan, llvm::Intrinsic::tan},
+            {IntrinsicID::Asin, llvm::Intrinsic::asin},
+            {IntrinsicID::Acos, llvm::Intrinsic::acos},
+            {IntrinsicID::Atan, llvm::Intrinsic::atan},
+            {IntrinsicID::Sinh, llvm::Intrinsic::sinh},
+            {IntrinsicID::Cosh, llvm::Intrinsic::cosh},
+            {IntrinsicID::Tanh, llvm::Intrinsic::tanh},
+            {IntrinsicID::Exp, llvm::Intrinsic::exp},
+            {IntrinsicID::Exp2, llvm::Intrinsic::exp2},
+            {IntrinsicID::Exp10, llvm::Intrinsic::exp10},
+            {IntrinsicID::Log, llvm::Intrinsic::log},
+            {IntrinsicID::Log2, llvm::Intrinsic::log2},
+            {IntrinsicID::Log10, llvm::Intrinsic::log10},
+        };
+    auto value{rvalue(expectOneVectorized())};
+    if (value.type->isArithmeticIntegral())
       value = invoke(static_cast<ArithmeticType *>(value.type)
-                         ->getWithDifferentScalar(context, Scalar::getBool()),
-                     value, srcLoc);
-      if (value.type->isArithmeticScalar()) return value;
-      return RValue(context.getBoolType(),
-                    builder.CreateUnaryIntrinsic(
-                        name == "any" ? llvm::Intrinsic::vector_reduce_or
-                                      : llvm::Intrinsic::vector_reduce_and,
-                        value));
-    }
-    if (name == "assert") {
-      if (!((args.size() == 1 && args[0].value.type == context.getBoolType()) ||
-            (args.size() == 2 && args[0].value.type == context.getBoolType() &&
-             args[1].value.type == context.getStringType())))
-        srcLoc.throwError("intrinsic 'assert' expects 1 bool argument and 1 "
-                          "optional string argument");
-      auto [blockPanic, blockOk] = createBlocks<2>("assert", {".panic", ".ok"});
-      builder.CreateCondBr(rvalue(args[0].value), blockOk, blockPanic);
-      builder.SetInsertPoint(blockPanic);
-      handleScope(nullptr, nullptr, [&] {
-        if (args.size() == 1) {
-          std::string message{"assertion failed"};
-          if (!args[0].getSource().empty()) {
-            message += ": ";
-            message += args[0].getSource();
-          }
-          emitPanic(context.getComptimeString(message), srcLoc);
-        } else {
-          emitPanic(rvalue(args[1].value), srcLoc);
-        }
-      });
-      builder.CreateBr(blockOk);
-      builder.SetInsertPoint(blockOk);
-      return Value();
-    }
-    if (name == "atan2") {
-      if (!(args.size() == 2 &&                   //
-            args[0].value.type->isVectorized() && //
-            args[1].value.type->isVectorized()))
-        srcLoc.throwError("intrinsic 'atan2' expects 2 vectorized arguments");
-      auto commonType{context.getCommonType(
-          {args[0].value.type, args[1].value.type, context.getFloatType()},
-          /*defaultToUnion=*/false, srcLoc)};
-      SMDL_SANITY_CHECK(commonType->isArithmeticFloatingPoint() ||
-                        commonType->isColor());
-      auto value0{invoke(commonType, args[0].value, srcLoc)};
-      auto value1{invoke(commonType, args[1].value, srcLoc)};
-      return RValue(commonType, builder.CreateBinaryIntrinsic(
-                                    llvm::Intrinsic::atan2, value0, value1));
-    }
-    if (name == "albedo_lut") {
-      if (!(args.size() == 1 && args[0].value.isComptimeString()))
-        srcLoc.throwError(
-            "intrinsic 'albedo_lut' expects 1 compile-time string argument");
-      auto lutName{args[0].value.getComptimeString()};
-      auto lutType{context.getKeyword("_AlbedoLUT")
-                       .getComptimeMetaType(context, srcLoc)};
-      auto lut{context.getBuiltinAlbedo(lutName)};
-      if (!lut)
-        srcLoc.throwError(
-            "intrinsic 'albedo_lut' passed invalid name ", Quoted(lutName),
-            " that does not identify any known look-up table at compile time");
-      auto floatPtrType{context.getPointerType(context.getFloatType())};
-      auto args{ArgumentList{}};
-      args.emplace_back("num_cos_theta",
-                        context.getComptimeInt(lut->num_cos_theta));
-      args.emplace_back("num_roughness",
-                        context.getComptimeInt(lut->num_roughness));
-      args.emplace_back(
-          "directional_albedo",
-          context.getComptimePtr(floatPtrType, lut->directional_albedo));
-      args.emplace_back(
-          "average_albedo",
-          context.getComptimePtr(floatPtrType, lut->average_albedo));
-      return invoke(lutType, args, srcLoc);
-    }
-    break;
-  }
-  case 'b': {
-    if (name == "bitcast") {
-      if (!(args.size() == 2 &&                          //
-            args[0].value.isComptimeMetaType(context) && //
-            args[1].value.llvmValue != nullptr))
-        srcLoc.throwError("intrinsic 'bitcast' expects 1 type argument and 1 "
-                          "value argument");
-      auto targetType{args[0].value.getComptimeMetaType(context, srcLoc)};
-      if (targetType->isAbstract())
-        srcLoc.throwError(
-            "intrinsic 'bit_cast' expects concrete type argument");
-      auto value{args[1].value};
-      if (context.getSizeOf(targetType) != context.getSizeOf(value.type))
-        srcLoc.throwError("intrinsic 'bitcast' expects source and target type "
-                          "with identical size");
-      // If the alignment is compatible and the value is already an lvalue,
-      // we can just load it into an rvalue after transparently changing the
-      // type.
-      if (context.getAlignOf(targetType) <= context.getAlignOf(value.type) &&
-          value.isLValue())
-        return rvalue(LValue(targetType, value.llvmValue));
-      // Otherwise, we guarantee the value is an lvalue and then create a
-      // temporary alloca to perform the cast. We memcpy the bytes from the
-      // lvalue
-      auto lv{lvalue(value)};
-      auto lvResult{createAlloca(targetType, value.getName() + ".bitcast")};
-      createLifetimeStart(lvResult);
-      builder.CreateMemCpyInline(
-          lvResult, //
-          llvm::Align(context.getAlignOf(targetType)), lv,
-          llvm::Align(context.getAlignOf(value.type)),
-          builder.getInt64(context.getSizeOf(targetType)));
-      auto rvResult{rvalue(lvResult)};
-      createLifetimeEnd(lvResult);
-      if (value.isRValue()) createLifetimeEnd(lv);
-      return rvResult;
-    }
-    if (name == "breakpoint") {
-      if (!args.empty())
-        srcLoc.throwError("intrinsic 'breakpoint' expects no arguments");
-      builder.CreateIntrinsic(context.getVoidType()->llvmType,
-                              llvm::Intrinsic::debugtrap, {});
-      return RValue(context.getVoidType(), nullptr);
-    }
-    if (name == "bump_allocate") {
-      auto [size, align] = expectSizeAndAlign();
-      return emitBumpAllocate(size, align);
-    }
-    if (name == "bump") {
-      auto value{expectOne()};
-      auto ptr{emitBumpAllocate(
-          context.getComptimeInt(int(context.getSizeOf(value.type))),
-          context.getComptimeInt(int(context.getAlignOf(value.type))))};
-      if (value.isLValue()) {
-        // Copy directly out of memory (e.g. an 'sret' result slot)
-        // instead of round-tripping the value through an SSA aggregate.
-        builder.CreateMemCpy(ptr, llvm::Align(context.getAlignOf(value.type)),
-                             value, llvm::Align(context.getAlignOf(value.type)),
-                             context.getSizeOf(value.type));
-      } else {
-        builder.CreateStore(rvalue(value), ptr);
-      }
-      return RValue(context.getPointerType(value.type), ptr.llvmValue);
-    }
-    break;
-  }
-  case 'c': {
-    if (name == "clock") {
-      if (!args.empty())
-        srcLoc.throwError("intrinsic 'clock' expects no arguments");
-      // Lowers to the CPU cycle counter (RDTSC on x86-64, CNTVCT_EL0 on
-      // AArch64). Units are reference cycles, only meaningful as deltas;
-      // targets without a cycle counter lower this to constant 0.
-      auto int64Type{context.getArithmeticType(Scalar::getInt(64))};
-      return RValue(int64Type, builder.CreateIntrinsic(
-                                   int64Type->llvmType,
-                                   llvm::Intrinsic::readcyclecounter, {}));
-    }
-    break;
-  }
-  case 'f': {
-    if (name == "fprint" || name == "fprintln") {
-      if (args.size() < 2)
-        srcLoc.throwError("intrinsic 'fprint' expects 1 file argument and 1 or "
-                          "more printable arguments");
-      auto file{rvalue(args[0].value)};
-      for (size_t i = 1; i < args.size(); i++)
-        emitPrint(file, args[i].value, srcLoc);
-      if (name == "fprintln")
-        emitPrint(file, context.getComptimeString("\n"), srcLoc);
-      return RValue(context.getVoidType(), nullptr);
-    }
-    break;
-  }
-  case 'h': {
-    if (name == "heap_allocate") {
-      return emitAllocateCall(
-          context.getBuiltinCallee("smdlAllocate", &smdlAllocate));
-    }
-    if (name == "heap_free") {
-      auto value{expectOne()};
-      if (!value.type->isPointer())
-        srcLoc.throwError("intrinsic ", Quoted(name),
-                          " expects 1 pointer argument");
-      auto callee{context.getBuiltinCallee("smdlFree", &smdlFree)};
-      return RValue(context.getVoidType(),
-                    builder.CreateCall(callee, {rvalue(value).llvmValue}));
-    }
-    break;
-  }
-  case 'i': {
-    if (name == "isfpclass") {
-      if (!(args.size() == 2 &&                                 //
-            (args[0].value.type->isArithmeticFloatingPoint() || //
-             args[0].value.type->isColor()) &&                  //
-            args[1].value.isComptimeInt()))
-        srcLoc.throwError(
-            "intrinsic 'isfpclass' expects 1 vectorized floating point "
-            "argument and 1 compile-time int argument");
-      auto value{rvalue(args[0].value)};
-      auto arithType{value.type->isColor()
-                         ? static_cast<ColorType *>(value.type)
-                               ->getArithmeticVectorType(context)
-                         : static_cast<ArithmeticType *>(value.type)};
-      return RValue(
-          arithType->getWithDifferentScalar(context, Scalar::getBool()),
-          builder.createIsFPClass(value, args[1].value.getComptimeInt()));
-    }
-    if (startsWith(name, "is_")) {
-      auto type{expectOneType()};
-      auto result{std::optional<bool>{}};
-      if (name == "is_array") {
-        result = type->isArray();
-      } else if (name == "is_arithmetic") {
-        result = type->isArithmetic();
-      } else if (name == "is_arithmetic_integral") {
-        result = type->isArithmeticIntegral();
-      } else if (name == "is_arithmetic_floating_point") {
-        result = type->isArithmeticFloatingPoint();
-      } else if (name == "is_arithmetic_scalar") {
-        result = type->isArithmeticScalar();
-      } else if (name == "is_arithmetic_vector") {
-        result = type->isArithmeticVector();
-      } else if (name == "is_arithmetic_matrix") {
-        result = type->isArithmeticMatrix();
-      } else if (name == "is_enum") {
-        result = type->isEnum();
-      } else if (name == "is_optional_union") {
-        result = type->isOptionalUnion();
-      } else if (name == "is_pointer") {
-        result = type->isPointer();
-      } else if (name == "is_struct") {
-        result = type->isStruct();
-      } else if (name == "is_tag") {
-        result = type->isTag();
-      } else if (name == "is_union") {
-        result = type->isUnion();
-      } else if (name == "is_void") {
-        result = type->isVoid();
-      } else if (name == "is_default") {
-        result = type->isDefault();
-      }
-      if (result) {
-        return context.getComptimeBool(*result);
-      }
-    }
-    break;
-  }
-  case 'l': {
-    if (startsWith(name, "load_")) {
-      auto expectOneComptimeString{[&]() {
-        if (!(args.size() == 1 && args[0].value.isComptimeString()))
-          srcLoc.throwError("intrinsic ", Quoted(name),
-                            " expects 1 compile-time string argument");
-        return std::string(args[0].value.getComptimeString());
-      }};
-      auto expectOneComptimeStringAndOneInt{[&]() {
-        if (!(args.size() == 2 &&                 //
-              args[0].value.isComptimeString() && //
-              args[1].value.type->isArithmeticScalarInt()))
-          srcLoc.throwError(
-              "intrinsic ", Quoted(name),
-              " expects 1 compile-time string argument and 1 int argument");
-        return std::make_pair(std::string(args[0].value.getComptimeString()),
-                              rvalue(args[1].value));
-      }};
-      // The '#load_*' resource intrinsics share one locate-or-warn
-      // prologue: a file that cannot be found is a warning, and the
-      // resource type is default-constructed.
-      auto withLocatedFile{[&](const std::string &fileName, Type *resultType,
-                               auto &&buildFromFile) -> Value {
-        auto resolvedFileName{context.locate(fileName)};
-        if (!resolvedFileName) {
-          srcLoc.logWarn(
-              concat("cannot load ", Quoted(fileName), ": file not found"));
-          return invoke(resultType, {}, srcLoc);
-        }
-        return buildFromFile(*resolvedFileName);
-      }};
-      if (name == "load_texture_2d") {
-        auto texture2DType{context.getTexture2DType()};
-        auto [fileName, valueGammaAsInt] = expectOneComptimeStringAndOneInt();
-        auto resolvedImagePaths{context.locateImages(fileName)};
-        if (resolvedImagePaths.empty()) {
-          srcLoc.logWarn(concat("no image(s) found for ", Quoted(fileName)));
-          return invoke(texture2DType, {}, srcLoc);
-        }
-        auto tileCountU{uint32_t(1)};
-        auto tileCountV{uint32_t(1)};
-        auto images{llvm::SmallVector<const Image *>{}};
-        for (auto &[tileIndexU, tileIndexV, filePath] : resolvedImagePaths) {
-          tileCountU = std::max(tileCountU, tileIndexU + 1);
-          tileCountV = std::max(tileCountV, tileIndexV + 1);
-          images.push_back(&context.compiler.loadImage(filePath, srcLoc));
-          if (images.back()->getFormat() != images.front()->getFormat() ||
-              images.back()->getNumChannels() !=
-                  images.front()->getNumChannels()) {
-            srcLoc.logWarn(
-                concat("inconsistent image formats for ", Quoted(fileName)));
-            return invoke(texture2DType, {}, srcLoc);
-          }
-        }
-        auto texelPtrType{context.getPointerType(context.getArithmeticType(
-            images[0]->getFormat() == Image::UINT8     ? Scalar::getInt(8)
-            : images[0]->getFormat() == Image::UINT16  ? Scalar::getInt(16)
-            : images[0]->getFormat() == Image::FLOAT16 ? Scalar::getHalf()
-                                                       : Scalar::getFloat(),
-            Extent(images[0]->getNumChannels())))};
-        auto valueTileExtents{Value::zero(context.getArrayType(
-            context.getIntType(2), tileCountU * tileCountV))};
-        auto valueTileBuffers{Value::zero(
-            context.getArrayType(texelPtrType, tileCountU * tileCountV))};
-        for (unsigned int i = 0; i < resolvedImagePaths.size(); i++) {
-          auto &imagePath{resolvedImagePaths[i]};
-          auto &image{images[i]};
-          auto insertPos{imagePath.tileIndexV * tileCountU +
-                         imagePath.tileIndexU};
-          valueTileExtents = insert(
-              valueTileExtents,
-              context.getComptimeVector(int2(int(image->getNumTexelsX()),
-                                             int(image->getNumTexelsY()))),
-              insertPos, srcLoc);
-          valueTileBuffers =
-              insert(valueTileBuffers,
-                     context.getComptimePtr(texelPtrType, image->getTexels()),
-                     insertPos, srcLoc);
-        }
-        return invoke(
-            texture2DType,
-            {Argument{"tile_count", context.getComptimeVector(int2(
-                                        int(tileCountU), int(tileCountV)))},
-             Argument{"tile_extents", valueTileExtents},
-             Argument{"tile_buffers", valueTileBuffers},
-             Argument{"gamma", valueGammaAsInt}},
-            srcLoc);
-      }
-      if (name == "load_texture_3d") {
-        auto texture3DType{context.getTexture3DType()};
-        auto [fileName, valueGammaAsInt] = expectOneComptimeStringAndOneInt();
-        // TODO Actually load the texture
-        srcLoc.logWarn("intrinsic 'load_texture_3d' is not implemented "
-                       "yet; returning default texture");
-        return invoke(texture3DType, {}, srcLoc);
-      }
-      if (name == "load_texture_cube") {
-        auto textureCubeType{context.getTextureCubeType()};
-        auto [fileName, valueGammaAsInt] = expectOneComptimeStringAndOneInt();
-        // TODO Actually load the texture
-        srcLoc.logWarn("intrinsic 'load_texture_cube' is not implemented "
-                       "yet; returning default texture");
-        return invoke(textureCubeType, {}, srcLoc);
-      }
-      if (name == "load_texture_ptex") {
-        auto texturePtexType{context.getTexturePtexType()};
-        auto fileNameAndGamma{expectOneComptimeStringAndOneInt()};
-        return withLocatedFile(
-            fileNameAndGamma.first, texturePtexType,
-            [&](const std::string &resolvedFileName) {
-              auto &ptexture{
-                  context.compiler.loadPtexture(resolvedFileName, srcLoc)};
-              auto valuePtr{context.getComptimePtr(context.getVoidPointerType(),
-                                                   ptexture.texture ? &ptexture
-                                                                    : nullptr)};
-              return invoke(texturePtexType,
-                            {Argument{"ptr", valuePtr},
-                             Argument{"gamma", fileNameAndGamma.second}},
-                            srcLoc);
-            });
-      }
-      if (name == "load_bsdf_measurement") {
-        auto bsdfMeasurementType{context.getBSDFMeasurementType()};
-        auto fileName{expectOneComptimeString()};
-        return withLocatedFile(
-            fileName, bsdfMeasurementType,
-            [&](const std::string &resolvedFileName) {
-              auto &bsdfMeasurement{context.compiler.loadBSDFMeasurement(
-                  resolvedFileName, srcLoc)};
-              auto bufferPtrType{context.getPointerType(context.getFloatType(
-                  bsdfMeasurement.type == BSDFMeasurement::TYPE_FLOAT ? 1
-                                                                      : 3))};
-              return invoke(
-                  bsdfMeasurementType,
-                  {Argument{"ptr", context.getComptimePtr(
-                                       context.getVoidPointerType(),
-                                       bsdfMeasurement.buffer ? &bsdfMeasurement
-                                                              : nullptr)},
-                   Argument{"mode", context.getComptimeInt(
-                                        bsdfMeasurement.kind ==
-                                                BSDFMeasurement::KIND_REFLECTION
-                                            ? /* scatter_reflect  */ 1
-                                            : /* scatter_transmit */ 2)},
-                   Argument{"num_theta", context.getComptimeInt(
-                                             int(bsdfMeasurement.numTheta))},
-                   Argument{"num_phi", context.getComptimeInt(
-                                           int(bsdfMeasurement.numPhi))},
-                   Argument{"buffer",
-                            context.getComptimePtr(bufferPtrType,
-                                                   bsdfMeasurement.buffer)}},
-                  srcLoc);
-            });
-      }
-      if (name == "load_light_profile") {
-        auto lightProfileType{context.getLightProfileType()};
-        auto fileName{expectOneComptimeString()};
-        // Register the light profile runtime callees backing the
-        // '@(pure foreign)' declarations in 'df.smdl' (which implement
-        // 'df::measured_edf'), so they resolve as absolute JIT symbols
-        // even when the host process does not export its own dynamic
-        // symbols. Any 'measured_edf' necessarily loads a light profile
-        // first, so this registration is a safe superset.
-        (void)context.getBuiltinCallee("smdlLightProfileInterpolate",
-                                       &smdlLightProfileInterpolate);
-        (void)context.getBuiltinCallee("smdlLightProfileDirectionPDF",
-                                       &smdlLightProfileDirectionPDF);
-        (void)context.getBuiltinCallee("smdlLightProfileDirectionSample",
-                                       &smdlLightProfileDirectionSample);
-        return withLocatedFile(
-            fileName, lightProfileType,
-            [&](const std::string &resolvedFileName) {
-              auto &lightProfile{
-                  context.compiler.loadLightProfile(resolvedFileName, srcLoc)};
-              return invoke(
-                  lightProfileType,
-                  {Argument{"ptr", context.getComptimePtr(
-                                       context.getVoidPointerType(),
-                                       lightProfile.isValid() ? &lightProfile
-                                                              : nullptr)},
-                   Argument{"max_intensity", context.getComptimeFloat(
-                                                 lightProfile.maxIntensity())},
-                   Argument{"power",
-                            context.getComptimeFloat(lightProfile.power())}},
-                  srcLoc);
-            });
-      }
-      if (name == "load_spectral_curve") {
-        auto spectralCurveType{context.getSpectralCurveType()};
-        if (args.size() == 1) {
-          if (!args[0].value.isComptimeString()) {
-            srcLoc.throwError("intrinsic ", Quoted(name),
-                              " expects 1 compile-time string argument");
-          }
-        } else if (args.size() == 2) {
-          if (!(args[0].value.isComptimeString() &&
-                (args[1].value.isComptimeString() ||
-                 args[1].value.isComptimeInt()))) {
-            srcLoc.throwError("intrinsic ", Quoted(name),
-                              " expects 1 compile-time string argument and 1 "
-                              "compile-time string or int argument");
-          }
-        } else {
-          srcLoc.throwError("intrinsic ", Quoted(name),
-                            " expects 1 or 2 arguments");
-        }
-        auto fileName{std::string(args[0].value.getComptimeString())};
-        return withLocatedFile(
-            fileName, spectralCurveType,
-            [&](const std::string &resolvedFileName) -> Value {
-              auto spectrumView{SpectrumView{}};
-              if (args.size() == 1) {
-                spectrumView =
-                    context.compiler.loadSpectrum(resolvedFileName, srcLoc);
-              } else if (args[1].value.isComptimeString()) {
-                spectrumView = context.compiler.loadSpectrum(
-                    resolvedFileName,
-                    std::string(args[1].value.getComptimeString()), srcLoc);
-              } else if (args[1].value.isComptimeInt()) {
-                spectrumView = context.compiler.loadSpectrum(
-                    resolvedFileName, int(args[1].value.getComptimeInt()),
-                    srcLoc);
-              }
-              if (spectrumView.curveValues.empty()) {
-                return invoke(spectralCurveType, {}, srcLoc);
-              }
-              auto floatPtrType{context.getPointerType(context.getFloatType())};
-              return invoke(
-                  spectralCurveType,
-                  {Argument{"count", context.getComptimeInt(
-                                         int(spectrumView.wavelengths.size()))},
-                   Argument{"wavelengths",
-                            context.getComptimePtr(
-                                floatPtrType, spectrumView.wavelengths.data())},
-                   Argument{
-                       "amplitudes",
-                       context.getComptimePtr(
-                           floatPtrType, spectrumView.curveValues.data())}},
-                  srcLoc);
-            });
-      }
-    }
-    break;
-  }
-  case 'm': {
-    if (name == "memset") {
-      if (!(args.size() == 3 &&                            //
-            args[0].value.type->isPointer() &&             //
-            args[1].value.type->isArithmeticScalarInt() && //
-            args[2].value.type->isArithmeticScalarInt()))
-        srcLoc.throwError("intrinsic 'memset' expects 1 pointer argument "
-                          "and 2 int arguments");
-      auto ptr{rvalue(args[0].value)};
-      auto val{
-          llvmEmitCast(builder, rvalue(args[1].value), builder.getInt8Ty())};
-      auto count{
-          llvmEmitCast(builder, rvalue(args[2].value), builder.getInt64Ty())};
-      return RValue(context.getVoidType(),
-                    builder.CreateMemSet(ptr, val, count, std::nullopt));
-    }
-    if (name == "memcpy") {
-      if (!(args.size() == 3 &&                //
-            args[0].value.type->isPointer() && //
-            args[1].value.type->isPointer() && //
-            args[2].value.type->isArithmeticScalarInt()))
-        srcLoc.throwError("intrinsic 'memcpy' expects 2 pointer arguments "
-                          "and 1 int argument");
-      auto dst{rvalue(args[0].value)};
-      auto src{rvalue(args[1].value)};
-      auto count{
-          llvmEmitCast(builder, rvalue(args[2].value), builder.getInt64Ty())};
-      return RValue(
-          context.getVoidType(),
-          builder.CreateMemCpy(dst, std::nullopt, src, std::nullopt, count));
-    }
-    if (name == "max" || name == "min") {
-      if (args.size() != 2 || !args.isAllTrue([](auto &arg) {
-            return arg.value.type->isVectorized();
-          }))
-        srcLoc.throwError("intrinsic ", Quoted(name),
-                          " expects 2 vectorized arguments");
-      auto value0{args[0].value};
-      auto value1{args[1].value};
-      auto type{context.getCommonType({value0.type, value1.type},
-                                      /*defaultToUnion=*/false, srcLoc)};
-      value0 = invoke(type, value0, srcLoc);
-      value1 = invoke(type, value1, srcLoc);
-      auto intrID =
-          name == "max"
-              ? (type->isArithmeticBoolean()    ? llvm::Intrinsic::umax
-                 : type->isArithmeticIntegral() ? llvm::Intrinsic::smax
-                                                : llvm::Intrinsic::maxnum)
-              : (type->isArithmeticBoolean()    ? llvm::Intrinsic::umin
-                 : type->isArithmeticIntegral() ? llvm::Intrinsic::smin
-                                                : llvm::Intrinsic::minnum);
-      return RValue(type,
-                    builder.CreateBinaryIntrinsic(intrID, value0, value1));
-    }
-    break;
-  }
-  case 'n': {
-    if (name == "num") {
-      auto type{expectOneType()};
-      auto size{[&]() -> int {
-        if (type->isArithmeticVector()) {
-          return static_cast<ArithmeticType *>(type)->extent.numRows;
-        } else if (type->isArithmeticMatrix()) {
-          return static_cast<ArithmeticType *>(type)->extent.numCols;
-        } else if (type->isColor()) {
-          return int(static_cast<ColorType *>(type)->wavelengthBaseMax);
-        } else if (type->isArray()) {
-          return int(static_cast<ArrayType *>(type)->size);
-        } else {
-          return 1;
-        }
-      }()};
-      return context.getComptimeInt(size);
-    }
-    if (name == "num_rows" || name == "num_cols") {
-      auto type{expectOneType()};
-      if (!type->isArithmeticMatrix())
-        srcLoc.throwError("intrinsic ", Quoted(name),
-                          " expects 1 matrix argument");
-      return context.getComptimeInt(
-          name == "num_rows"
-              ? int(static_cast<ArithmeticType *>(type)->extent.numRows)
-              : int(static_cast<ArithmeticType *>(type)->extent.numCols));
-    }
-    break;
-  }
-  case 'p': {
-    if (name == "panic") {
-      if (args.size() != 1 || args[0].value.type != context.getStringType())
-        srcLoc.throwError("intrinsic 'panic' expects 1 string argument");
-      emitPanic(args[0].value, srcLoc);
-      return Value();
-    }
-    if (name == "pow") {
-      if (args.size() != 2 ||                    //
-          !args[0].value.type->isVectorized() || //
-          !args[1].value.type->isVectorized())
-        srcLoc.throwError("intrinsic 'pow' expects 2 vectorized arguments");
-      auto value0{rvalue(args[0].value)};
-      auto value1{rvalue(args[1].value)};
-      if (value1.isComptimeInt()) {
-        auto power{value1.getComptimeInt()};
-        if (power == 1) return value0;
-        if (power == 2) return emitOp(BINOP_MUL, value0, value0, srcLoc);
-      }
-      auto resultType{context.getCommonType(
-          {value0.type, value1.type, context.getFloatType()},
-          /*defaultToUnion=*/false, srcLoc)};
-      value0 = invoke(resultType, value0, srcLoc);
-      return RValue(resultType, value1.type->isArithmeticScalarInt()
-                                    ? llvmEmitPowi(builder, value0, value1)
-                                    : builder.CreateBinaryIntrinsic(
-                                          llvm::Intrinsic::pow, value0,
-                                          invoke(resultType, value1, srcLoc)));
-    }
-    if (name == "print" || name == "println") {
-      auto os{context.getComptimePtr(context.getVoidPointerType(), stderr)};
-      for (auto &arg : args) emitPrint(os, arg.value, srcLoc);
-      if (name == "println")
-        emitPrint(os, context.getComptimeString("\n"), srcLoc);
-      return Value();
-    }
-    break;
-  }
-  case 'r': {
-    if (name == "rotl" || name == "rotr") {
-      if (!(args.size() == 2 && //
-            args[0].value.type->isArithmeticIntegral() &&
-            args[1].value.type->isArithmeticIntegral())) {
-        srcLoc.throwError("intrinsic ", Quoted(name),
-                          " expects 2 integer or vectorized integer arguments");
-      }
-      auto intType{
-          context.getCommonType({args[0].value.type, args[1].value.type},
-                                /*defaultToUnion=*/false, srcLoc)};
-      auto value0{invoke(intType, args[0].value, srcLoc)};
-      auto value1{invoke(intType, args[1].value, srcLoc)};
-      auto intrID{name == "rotl" ? llvm::Intrinsic::fshl
-                                 : llvm::Intrinsic::fshr};
-      return RValue(intType,
-                    builder.CreateIntrinsic(intType->llvmType, intrID,
-                                            {value0.llvmValue, value0.llvmValue,
-                                             value1.llvmValue}));
-    }
-    break;
-  }
-  case 's': {
-    if (name == "sizeof") {
-      return context.getComptimeInt(int(context.getSizeOf(expectOneType())));
-    }
-    if (name == "sign") {
-      auto value{rvalue(expectOneVectorized())};
-      if (value.type->isArithmeticIntegral()) {
-        return RValue(
-            value.type,
-            builder.CreateSelect(
-                emitOp(BINOP_CMP_LT, value, context.getComptimeInt(0), srcLoc),
-                invoke(value.type, context.getComptimeInt(-1), srcLoc),
-                invoke(value.type, context.getComptimeInt(+1), srcLoc)));
-      } else {
-        return RValue(
-            value.type,
-            builder.CreateBinaryIntrinsic(
-                llvm::Intrinsic::copysign,
-                invoke(value.type, context.getComptimeFloat(1), srcLoc),
-                value));
-      }
-    }
-    if (name == "select") {
-      if (args.size() != 3 || !args[0].value.type->isArithmeticBoolean() ||
-          !args.isAllTrue(
-              [](auto arg) { return arg.value.type->isVectorized(); }))
-        srcLoc.throwError("intrinsic 'select' expects 1 vectorized boolean "
-                          "argument and 2 vectorized selection arguments");
-      auto valueCond{rvalue(args[0].value)};
-      auto valueThen{args[1].value};
-      auto valueElse{args[2].value};
-      auto type{context.getCommonType(
-          {valueThen.type, valueElse.type,
-           valueCond.type->isArithmeticVector() ? valueCond.type : nullptr},
-          /*defaultToUnion=*/false, srcLoc)};
-      valueThen = invoke(type, valueThen, srcLoc);
-      valueElse = invoke(type, valueElse, srcLoc);
-      return RValue(type,
-                    builder.CreateSelect(valueCond, valueThen, valueElse));
-    }
-    break;
-  }
-  case 't': {
-    // TODO This is a specific solution to a specific problem of calculating
-    // tabulated albedos conveniently and efficiently. There might be a more
-    // general way of addressing this in the future.
-    if (name == "tabulate_albedo") {
-      if (!(args.size() == 4 && args[0].value.type == context.getStringType() &&
-            args[1].value.type->isArithmeticScalarInt() &&
-            args[2].value.type->isArithmeticScalarInt() &&
-            args[3].value.isComptimeMetaType(context)))
-        srcLoc.throwError("intrinsic 'tabulate_albedo' expects 1 compile-time "
-                          "string argument, 2 compile-time integer arguments, "
-                          "and 1 function argument");
-      auto funcType{llvm::dyn_cast<FunctionType>(
-          args[3].value.getComptimeMetaType(context, srcLoc))};
-      // Named functions must be declared '@(pure) float(float, float)'.
-      // Lambdas declare neither purity nor a return type, so accept two
-      // 'float' parameters and let materialization validate the rest: the
-      // instance is compiled pure (see 'FunctionType::getInstance') and
-      // the inferred return type is checked below.
-      if (!(funcType && !funcType->isVariant() && funcType->hasNoOverloads() &&
-            funcType->params.size() == 2 &&
-            funcType->params[0].type == context.getFloatType() &&
-            funcType->params[1].type == context.getFloatType() &&
-            (funcType->isLambda ||
-             (funcType->isPure() && !funcType->isMacro() &&
-              funcType->returnType == context.getFloatType())))) {
-        srcLoc.throwError("intrinsic 'tabulate_albedo' function argument must "
-                          "have signature '@(pure) float(float, float)' or be "
-                          "a lambda with two 'float' parameters");
-      }
-      auto &funcInst{funcType->getInstance(
-          *this, {context.getFloatType(), context.getFloatType()})};
-      if (funcInst.returnType != context.getFloatType())
-        srcLoc.throwError("intrinsic 'tabulate_albedo' function argument must "
-                          "return 'float'");
-      auto callee{
-          context.getBuiltinCallee("smdlTabulateAlbedo", &smdlTabulateAlbedo)};
-      auto callInst{
-          builder.CreateCall(callee, {rvalue(args[0].value).llvmValue, //
-                                      rvalue(args[1].value).llvmValue, //
-                                      rvalue(args[2].value).llvmValue, //
-                                      funcInst.llvmFunc})};
-      return RValue(context.getVoidType(), callInst);
-    }
-    if (name == "typeof") {
-      return context.getComptimeMetaType(expectOne().type);
-    }
-    if (name == "typename") {
-      return context.getComptimeString(expectOneType()->displayName);
-    }
-    if (name == "type_int") {
-      auto value{rvalue(expectOne())};
-      auto numBits{value.getComptimeSignedInt()};
-      if (!numBits || *numBits < 1 || *numBits > 255)
-        srcLoc.throwError("intrinsic 'type_int' expects 1 compile-time int "
-                          "between 1 and 255");
-      return context.getComptimeMetaType(context.getArithmeticType(
-          Scalar::getInt(uint8_t(*numBits)), Extent(1)));
-    }
-    if (name == "type_float") {
-      auto value{rvalue(expectOne())};
-      auto numBits{value.getComptimeSignedInt()};
-      if (!numBits || !(*numBits == 16 || *numBits == 32 || *numBits == 64 ||
-                        *numBits == 80 || *numBits == 128))
-        srcLoc.throwError("intrinsic 'type_float' expects 1 compile-time int "
-                          "in {16, 32, 64, 80, 128}");
-      return context.getComptimeMetaType(context.getArithmeticType(
-          Scalar::getFP(uint8_t(*numBits)), Extent(1)));
-    }
-    if (name == "type_vector") {
-      auto reportError{[&] {
-        srcLoc.throwError("intrinsic 'type_vector' expects 1 compile-time "
-                          "scalar type and 1 compile-time positive int");
-      }};
-      if (!(args.size() == 2 &&                          //
-            args[0].value.isComptimeMetaType(context) && //
-            args[1].value.isComptimeInt()))
-        reportError();
-      auto type{args[0].value.getComptimeMetaType(context, srcLoc)};
-      auto size{args[1].value.getComptimeSignedInt()};
-      if (!type->isArithmeticScalar() || !size || *size < 1 || *size > 65535)
-        reportError();
-      return context.getComptimeMetaType(
-          context.getArithmeticType(static_cast<ArithmeticType *>(type)->scalar,
-                                    Extent(uint16_t(*size))));
-    }
-    if (name == "type_matrix") {
-      auto reportError{[&] {
-        srcLoc.throwError("intrinsic 'type_matrix' expects 1 compile-time "
-                          "scalar type and 2 compile-time positive ints");
-      }};
-      if (!(args.size() == 3 &&                          //
-            args[0].value.isComptimeMetaType(context) && //
-            args[1].value.isComptimeInt() &&             //
-            args[2].value.isComptimeInt()))
-        reportError();
-      auto type{args[0].value.getComptimeMetaType(context, srcLoc)};
-      auto numCols{args[1].value.getComptimeSignedInt()};
-      auto numRows{args[2].value.getComptimeSignedInt()};
-      if (!type->isArithmeticScalar() ||                  //
-          !numCols || *numCols < 1 || *numCols > 65535 || //
-          !numRows || *numRows < 1 || *numRows > 65535)
-        reportError();
-      return context.getComptimeMetaType(context.getArithmeticType(
-          static_cast<ArithmeticType *>(type)->scalar,
-          Extent(uint16_t(*numCols), uint16_t(*numRows))));
-    }
-    if (name == "transpose") {
-      if (!(args.size() == 1 && args[0].value.type->isArithmeticMatrix()))
-        srcLoc.throwError("intrinsic 'transpose' expects 1 matrix argument");
-      auto value{args[0].value};
-      auto valueCols{llvm::SmallVector<Value>{}};
-      for (unsigned j = 0;
-           j < static_cast<ArithmeticType *>(value.type)->extent.numCols; j++)
-        valueCols.push_back(rvalue(accessIndex(value, j, srcLoc)));
-      auto resultType{
-          static_cast<ArithmeticType *>(value.type)->getTransposeType(context)};
-      auto result{Value::zero(resultType)};
-      for (unsigned j = 0; j < resultType->extent.numCols; j++) {
-        auto resultCol{Value::zero(resultType->getColumnType(context))};
-        for (unsigned i = 0; i < resultType->extent.numRows; i++)
-          resultCol = insert(resultCol, accessIndex(valueCols[i], j, srcLoc), i,
-                             srcLoc);
-        result = insert(result, resultCol, j, srcLoc);
-      }
-      return result;
-    }
-    break;
-  }
-  case 'u': {
-    if (name == "unsigned_to_fp") {
-      if (!(args.size() == 2 &&                           //
-            args[0].value.type->isArithmeticIntegral() && //
-            args[1].value.isComptimeMetaType(context))) {
-        srcLoc.throwError(
-            "intrinsic 'unsigned_to_fp' expects 1 int argument and "
-            "1 type argument");
-      }
-      auto floatType{args[1].value.getComptimeMetaType(context, srcLoc)};
-      if (!floatType->isArithmeticFloatingPoint())
-        srcLoc.throwError(
-            "intrinsic 'unsigned_to_fp' expects 1 int argument and "
-            "1 floating point type argument");
-      return RValue(floatType, builder.CreateUIToFP(rvalue(args[0].value),
-                                                    floatType->llvmType));
-    }
-    if (name == "unpack_float4") {
-      auto value{rvalue(expectOne())};
-      if (!value.type->isArithmeticScalar() &&
-          !value.type->isArithmeticVector())
-        srcLoc.throwError(
-            "intrinsic 'unpack_float4' expects 1 scalar or vector argument");
-      auto texelType{static_cast<ArithmeticType *>(value.type)};
-      value.type =
-          texelType->getWithDifferentScalar(context, Scalar::getFloat());
-      value.llvmValue =
-          texelType->isArithmeticIntegral()
-              ? builder.CreateUIToFP(value.llvmValue, value.type->llvmType)
-              : builder.CreateFPCast(value.llvmValue, value.type->llvmType);
-      if (texelType->isArithmeticIntegral())
-        value = emitOp(
-            BINOP_MUL, value,
-            // Compute in double via ldexp: '1ULL << numBits' is
-            // undefined for 64-bit texel types.
-            context.getComptimeFloat(float(
-                1.0 / (std::ldexp(1.0, texelType->scalar.numBits) - 1.0))),
-            srcLoc);
-      if (value.type == context.getFloatType(Extent(4))) // Early out?
-        return value;
-      auto result{Value::zero(context.getFloatType(Extent(4)))};
-      if (value.type->isArithmeticScalar()) {
-        result.llvmValue = builder.CreateVectorSplat(4, value.llvmValue);
-      } else {
-        for (uint64_t i = 0; i < texelType->extent.numRows; i++)
-          result.llvmValue = builder.CreateInsertElement(
-              result.llvmValue,
-              builder.CreateExtractElement(value.llvmValue, i), i);
-      }
-      result.llvmValue = builder.CreateInsertElement(
-          result.llvmValue, context.getComptimeFloat(1).llvmValue, uint64_t(3));
-      return result;
-    }
-    break;
-  }
-  }
-  // Unary floating-point math intrinsics
-  if (args.size() == 1 && name.size() <= 5) {
-    // Intercept instances of `complex` and forward appropriately.
-    {
-      auto value{args[0].value};
-      auto valueIsComplex{value.type->isComplex(context)};
-      if (name == "conj") {
-        // NOTE: Conjugate of real number is no-op
-        return valueIsComplex ? invoke("_complex_conj", value, srcLoc)
-                              : rvalue(value);
-      } else if (name == "real") {
-        // NOTE: Real part of real number is identity
-        return valueIsComplex ? accessField(value, "a", srcLoc) : value;
-      } else if (name == "imag") {
-        // NOTE: Imag part of real number is zero
-        return valueIsComplex ? accessField(value, "b", srcLoc)
-                              : invoke(value.type, {}, srcLoc);
-      } else if (name == "norm") {
-        // NOTE: Norm of real number is square
-        return valueIsComplex ? invoke("_complex_norm", value, srcLoc)
-                              : emitOp(BINOP_MUL, value, value, srcLoc);
-      } else if (valueIsComplex) {
-        if (name == "exp") {
-          return invoke("_complex_exp", value, srcLoc);
-        } else if (name == "log") {
-          return invoke("_complex_log", value, srcLoc);
-        } else if (name == "sqrt") {
-          return invoke("_complex_sqrt", value, srcLoc);
-        }
-      }
-    }
-    static const std::pair<std::string_view, llvm::Intrinsic::ID> intrs[] = {
-        {"floor", llvm::Intrinsic::floor}, {"ceil", llvm::Intrinsic::ceil},
-        {"trunc", llvm::Intrinsic::trunc}, {"round", llvm::Intrinsic::round},
-        {"sqrt", llvm::Intrinsic::sqrt},   {"sin", llvm::Intrinsic::sin},
-        {"cos", llvm::Intrinsic::cos},     {"tan", llvm::Intrinsic::tan},
-        {"asin", llvm::Intrinsic::asin},   {"acos", llvm::Intrinsic::acos},
-        {"atan", llvm::Intrinsic::atan},   {"sinh", llvm::Intrinsic::sinh},
-        {"cosh", llvm::Intrinsic::cosh},   {"tanh", llvm::Intrinsic::tanh},
-        {"exp", llvm::Intrinsic::exp},     {"exp2", llvm::Intrinsic::exp2},
-        {"exp10", llvm::Intrinsic::exp10}, {"log", llvm::Intrinsic::log},
-        {"log2", llvm::Intrinsic::log2},   {"log10", llvm::Intrinsic::log10}};
-    for (auto [intrName, intrID] : intrs) {
-      if (name == intrName) {
-        auto value{rvalue(expectOneVectorized())};
-        if (value.type->isArithmeticIntegral())
-          value =
-              invoke(static_cast<ArithmeticType *>(value.type)
                          ->getWithDifferentScalar(context, Scalar::getFloat()),
                      value, srcLoc);
-        return RValue(value.type, builder.CreateUnaryIntrinsic(intrID, value));
-      }
-    }
+    for (auto [mathID, llvmIntrID] : unaryFPIntrinsics)
+      if (mathID == intrinsicID)
+        return RValue(value.type,
+                      builder.CreateUnaryIntrinsic(llvmIntrID, value));
+    break;
+  }
   }
   srcLoc.throwError("unimplemented intrinsic ", Quoted(name));
+}
+
+/// Emit one of the `#load...` intrinsics.
+///
+/// These are separated out from `emitIntrinsic()` because they are a third of
+/// it by volume and because they share the argument checking below; splitting
+/// them keeps the main dispatch flat enough to read.
+Value Emitter::emitIntrinsicLoad(IntrinsicID intrinsicID,
+                                 const ArgumentList &args,
+                                 const SourceLocation &srcLoc) {
+  const auto name{getIntrinsicName(intrinsicID)};
+  auto expectOneComptimeString{[&]() {
+    if (!(args.size() == 1 && args[0].value.isComptimeString()))
+      srcLoc.throwError("intrinsic ", Quoted(name),
+                        " expects 1 compile-time string argument");
+    return std::string(args[0].value.getComptimeString());
+  }};
+  auto expectOneComptimeStringAndOneInt{[&]() {
+    if (!(args.size() == 2 &&                 //
+          args[0].value.isComptimeString() && //
+          args[1].value.type->isArithmeticScalarInt()))
+      srcLoc.throwError(
+          "intrinsic ", Quoted(name),
+          " expects 1 compile-time string argument and 1 int argument");
+    return std::make_pair(std::string(args[0].value.getComptimeString()),
+                          rvalue(args[1].value));
+  }};
+  // The third argument must be compile-time, unlike the gamma: it is
+  // baked into the texture as its level count at emission time, which
+  // no runtime value can influence.
+  auto expectOneComptimeStringOneIntAndOneComptimeBool{[&]() {
+    if (!(args.size() == 3 &&                 //
+          args[0].value.isComptimeString() && //
+          args[1].value.type->isArithmeticScalarInt() &&
+          args[2].value.isComptimeInt()))
+      srcLoc.throwError("intrinsic ", Quoted(name),
+                        " expects 1 compile-time string argument, 1 int "
+                        "argument, and 1 compile-time bool argument");
+    return std::make_tuple(std::string(args[0].value.getComptimeString()),
+                           rvalue(args[1].value),
+                           args[2].value.getComptimeInt() != 0);
+  }};
+  // Every flag must be compile-time for the same reason: together they
+  // decide which images are loaded at all, which fields the resulting
+  // struct has, and what each texture bakes for its level count. The
+  // names are passed in so that the diagnostic can blame the parameter
+  // the user actually wrote instead of an argument position.
+  auto expectOneComptimeStringAndComptimeBools{
+      [&](std::initializer_list<const char *> flagNames) {
+        if (!(args.size() == 1 + flagNames.size() &&
+              args[0].value.isComptimeString()))
+          srcLoc.throwError("intrinsic ", Quoted(name),
+                            " expects 1 compile-time string argument and ",
+                            flagNames.size(), " compile-time bool arguments");
+        auto flags{llvm::SmallVector<bool, 8>{}};
+        for (size_t i = 0; i < flagNames.size(); i++) {
+          if (!args[i + 1].value.isComptimeInt())
+            srcLoc.throwError("intrinsic ", Quoted(name), " argument ",
+                              Quoted(flagNames.begin()[i]),
+                              " must be compile-time");
+          flags.push_back(args[i + 1].value.getComptimeInt() != 0);
+        }
+        return std::make_pair(std::string(args[0].value.getComptimeString()),
+                              std::move(flags));
+      }};
+  // The '#load_*' resource intrinsics share one locate-or-warn
+  // prologue: a file that cannot be found is a warning, and the
+  // resource type is default-constructed.
+  //
+  // The warning goes through 'logMissingFileOnce' rather than
+  // 'srcLoc.logWarn' because this runs at emission time and a material
+  // body is emitted three times (see 'Type.cc': the 'evaluate',
+  // 'evaluateOpacity' and 'thinWalledProbe' functions each inline it),
+  // which would otherwise report the same missing file three times over.
+  // Resources that are found but fail to load already report once,
+  // memoized by file hash in 'loadResource'.
+  auto withLocatedFile{[&](const std::string &fileName, Type *resultType,
+                           auto &&buildFromFile) -> Value {
+    auto resolvedFileName{context.locate(fileName)};
+    if (!resolvedFileName) {
+      context.compiler.logResourceWarningOnce(
+          srcLoc, fileName,
+          concat("cannot load ", Quoted(fileName), ": file not found"));
+      return invoke(resultType, {}, srcLoc);
+    }
+    return buildFromFile(*resolvedFileName);
+  }};
+  switch (intrinsicID) {
+  case IntrinsicID::LoadTexture2D: {
+    auto texture2DType{context.getTexture2DType()};
+    auto [fileName, valueGammaAsInt, withMipLevels] =
+        expectOneComptimeStringOneIntAndOneComptimeBool();
+    auto resolvedImagePaths{context.locateImages(fileName)};
+    if (resolvedImagePaths.empty()) {
+      context.compiler.logResourceWarningOnce(
+          srcLoc, fileName, concat("no image(s) found for ", Quoted(fileName)));
+      return invoke(texture2DType, {}, srcLoc);
+    }
+    auto tileCountU{uint32_t(1)};
+    auto tileCountV{uint32_t(1)};
+    auto images{llvm::SmallVector<const Image *>{}};
+    for (auto &[tileIndexU, tileIndexV, filePath] : resolvedImagePaths) {
+      tileCountU = std::max(tileCountU, tileIndexU + 1);
+      tileCountV = std::max(tileCountV, tileIndexV + 1);
+      images.push_back(
+          &context.compiler.loadImage(filePath, srcLoc, withMipLevels));
+      if (images.back()->getFormat() != images.front()->getFormat() ||
+          images.back()->getNumChannels() != images.front()->getNumChannels()) {
+        context.compiler.logResourceWarningOnce(
+            srcLoc, fileName,
+            concat("inconsistent image formats for ", Quoted(fileName)));
+        return invoke(texture2DType, {}, srcLoc);
+      }
+    }
+    auto texelPtrType{context.getPointerType(context.getArithmeticType(
+        images[0]->getFormat() == Image::UINT8     ? Scalar::getInt(8)
+        : images[0]->getFormat() == Image::UINT16  ? Scalar::getInt(16)
+        : images[0]->getFormat() == Image::FLOAT16 ? Scalar::getHalf()
+                                                   : Scalar::getFloat(),
+        Extent(images[0]->getNumChannels())))};
+    // Only the level 0 pointer of each tile is baked; the higher
+    // levels live contiguously behind it and 'tex.smdl' recomputes
+    // their offsets from the tile extent (see the layout note on
+    // 'texture_2d' in 'api.smdl'). Baking pointer tables instead
+    // would grow the struct past the by-value ABI sweet spot.
+    //
+    // The level count is per texture, not per image: the images are
+    // shared with every other reference to the same files, so a texture
+    // that opted out of mip levels bakes 1 here and never reads past
+    // level 0, whatever the images behind it happen to hold.
+    auto numLevels{1};
+    if (withMipLevels)
+      for (auto &image : images)
+        numLevels = std::max(numLevels, image->getNumLevels());
+    auto valueTileExtents{Value::zero(
+        context.getArrayType(context.getIntType(2), tileCountU * tileCountV))};
+    auto valueTileBuffers{Value::zero(
+        context.getArrayType(texelPtrType, tileCountU * tileCountV))};
+    for (unsigned int i = 0; i < resolvedImagePaths.size(); i++) {
+      auto &imagePath{resolvedImagePaths[i]};
+      auto &image{images[i]};
+      auto insertPos{imagePath.tileIndexV * tileCountU + imagePath.tileIndexU};
+      valueTileExtents =
+          insert(valueTileExtents,
+                 context.getComptimeVector(int2(int(image->getNumTexelsX()),
+                                                int(image->getNumTexelsY()))),
+                 insertPos, srcLoc);
+      valueTileBuffers =
+          insert(valueTileBuffers,
+                 context.getComptimePtr(texelPtrType, image->getTexels()),
+                 insertPos, srcLoc);
+    }
+    return invoke(
+        texture2DType,
+        {Argument{"tile_count", context.getComptimeVector(
+                                    int2(int(tileCountU), int(tileCountV)))},
+         Argument{"num_levels", context.getComptimeInt(numLevels)},
+         Argument{"tile_extents", valueTileExtents},
+         Argument{"tile_buffers", valueTileBuffers},
+         Argument{"gamma", valueGammaAsInt}},
+        srcLoc);
+  }
+  case IntrinsicID::LoadTexture3D: {
+    auto texture3DType{context.getTexture3DType()};
+    // The selector must be compile-time like the file name: together
+    // they identify the resource, whose pointers are baked into the
+    // compiled code at emission time.
+    if (!(args.size() == 3 &&                 //
+          args[0].value.isComptimeString() && //
+          args[1].value.type->isArithmeticScalarInt() &&
+          args[2].value.isComptimeString()))
+      srcLoc.throwError("intrinsic ", Quoted(name),
+                        " expects 1 compile-time string argument, 1 int "
+                        "argument, and 1 compile-time string argument");
+    auto fileName{std::string(args[0].value.getComptimeString())};
+    auto valueGammaAsInt{rvalue(args[1].value)};
+    auto gridName{std::string(args[2].value.getComptimeString())};
+    return withLocatedFile(
+        fileName, texture3DType, [&](const std::string &resolvedFileName) {
+          auto &voxelGrid{context.compiler.loadVoxelGrid(resolvedFileName,
+                                                         gridName, srcLoc)};
+          // A load failure was already reported as a warning by
+          // 'loadVoxelGrid', so quietly return the default (invalid)
+          // texture, matching the missing-file behavior.
+          if (!voxelGrid.isValid()) return invoke(texture3DType, {}, srcLoc);
+          const auto extent{voxelGrid.getExtent()};
+          const auto brickCount{voxelGrid.getBrickCount()};
+          return invoke(
+              texture3DType,
+              {Argument{"extent", context.getComptimeVector(extent)},
+               Argument{"brick_count", context.getComptimeVector(brickCount)},
+               Argument{"brick_table",
+                        context.getComptimePtr(
+                            context.getPointerType(context.getIntType()),
+                            voxelGrid.getBrickTable())},
+               Argument{"brick_buffer",
+                        context.getComptimePtr(
+                            context.getPointerType(context.getFloatType()),
+                            voxelGrid.getBrickData())},
+               Argument{"background",
+                        context.getComptimeFloat(voxelGrid.getBackground())},
+               Argument{"min_value",
+                        context.getComptimeFloat(voxelGrid.getMinValue())},
+               Argument{"max_value",
+                        context.getComptimeFloat(voxelGrid.getMaxValue())},
+               Argument{"gamma", valueGammaAsInt},
+               Argument{"resource",
+                        context.getComptimePtr(context.getVoidPointerType(),
+                                               &voxelGrid)}},
+              srcLoc);
+        });
+  }
+  case IntrinsicID::LoadTextureCube: {
+    auto textureCubeType{context.getTextureCubeType()};
+    auto [fileName, valueGammaAsInt] = expectOneComptimeStringAndOneInt();
+    // TODO Actually load the texture
+    context.compiler.logResourceWarningOnce(
+        srcLoc, fileName,
+        "intrinsic 'loadTextureCube' is not implemented yet; returning "
+        "default texture");
+    return invoke(textureCubeType, {}, srcLoc);
+  }
+  case IntrinsicID::LoadTexturePtex: {
+    auto texturePtexType{context.getTexturePtexType()};
+    auto fileNameAndGamma{expectOneComptimeStringAndOneInt()};
+    return withLocatedFile(
+        fileNameAndGamma.first, texturePtexType,
+        [&](const std::string &resolvedFileName) {
+          auto &ptexture{
+              context.compiler.loadPtexture(resolvedFileName, srcLoc)};
+          auto valuePtr{
+              context.getComptimePtr(context.getVoidPointerType(),
+                                     ptexture.texture ? &ptexture : nullptr)};
+          return invoke(texturePtexType,
+                        {Argument{"ptr", valuePtr},
+                         Argument{"gamma", fileNameAndGamma.second}},
+                        srcLoc);
+        });
+  }
+  case IntrinsicID::LoadPBRMaps: {
+    // The 'pbr_maps' and 'pbr_map' structs live in the non-standard
+    // '::extras::pbr' module rather than the keyword-seeded 'api'
+    // module, precisely so they do not masquerade as official MDL.
+    // This intrinsic only ever appears in the 'pbr_maps' constructor
+    // in that same module, so both types resolve by name right here.
+    auto resolveStructType{[&](std::string_view typeName) {
+      return static_cast<StructType *>(
+          resolveIdentifier(typeName, srcLoc)
+              .getComptimeMetaType(context, srcLoc));
+    }};
+    auto pbrMapsType{resolveStructType("pbr_maps")};
+    auto pbrMapType{resolveStructType("pbr_map")};
+    auto [fileName, flags] = expectOneComptimeStringAndComptimeBools(
+        {"use_mipmap", "no_basecolor", "no_class_map", "no_height",
+         "no_parallax"});
+    const bool useMipmap{flags[0]};
+    const bool noBasecolor{flags[1]};
+    const bool noClassMap{flags[2]};
+    const bool noHeight{flags[3]};
+    // Dropping the height map drops the relief pipeline with it, so
+    // 'no_height' subsumes 'no_parallax' and the effective flag is what
+    // gets baked below.
+    const bool noParallax{flags[4] || noHeight};
+    auto resolvedPath{context.locateDirOrFile(fileName)};
+    if (!resolvedPath) {
+      context.compiler.logResourceWarningOnce(
+          srcLoc, fileName,
+          concat("cannot load ", Quoted(fileName),
+                 ": file or directory not found"));
+      return invoke(pbrMapsType, {}, srcLoc);
+    }
+    // Once the pack path is located, a broken pack is an authoring
+    // bug: an ambiguous or absent '.pbr' manifest and a manifest
+    // that fails to parse are errors, not warnings.
+    const PBRMaps *manifest{};
+    auto manifestFileName{std::string()};
+    try {
+      manifestFileName = PBRMaps::resolveFileName(*resolvedPath);
+      manifest = &context.compiler.loadPBRMaps(manifestFileName, srcLoc);
+    } catch (const Error &error) {
+      srcLoc.throwError(error.message);
+      return invoke(pbrMapsType, {}, srcLoc); // Unreachable
+    }
+    // An ambiguous manifest still loads, so report what it said and
+    // which reading won. The key is the manifest and the message
+    // together, so a manifest with two independent warnings reports
+    // both, while a pack loaded by ten materials warns once.
+    for (const auto &warning : manifest->warnings)
+      context.compiler.logResourceWarningOnce(
+          srcLoc, concat(manifestFileName, ": ", warning), warning);
+    auto manifestDirName{parentPathOf(manifestFileName)};
+    auto args{ArgumentList{}};
+    if (!manifest->name.empty())
+      args.elems.push_back(
+          Argument{"name", context.getComptimeString(manifest->name)});
+    if (manifest->physicalExtent)
+      args.elems.push_back(Argument{
+          "physical_extent",
+          context.getComptimeVector(float2((*manifest->physicalExtent)[0],
+                                           (*manifest->physicalExtent)[1]))});
+    if (manifest->physicalRelief)
+      args.elems.push_back(
+          Argument{"physical_relief",
+                   context.getComptimeFloat(*manifest->physicalRelief)});
+    // The resolved UV-space relief scale, from either spelling: the
+    // one relief quantity the builtin module consumes.
+    if (auto reliefScale{manifest->effectiveReliefScale()})
+      args.elems.push_back(
+          Argument{"relief_scale", context.getComptimeFloat(*reliefScale)});
+    args.elems.push_back(Argument{
+        "hex_rotation", context.getComptimeFloat(manifest->hexRotation)});
+    // The effective relief switch, which the module reads to gate the
+    // whole relief pipeline. The height map may well be present and
+    // sampled anyway; only the march, the horizon slopes, and the
+    // height-implied normal are off.
+    args.elems.push_back(
+        Argument{"no_parallax", context.getComptimeBool(noParallax)});
+    // Build one 'pbr_map' per declared map: a single-tile
+    // 'texture_2d' through the image cache (so a file shared between
+    // roles or with a plain 'texture_2d' decodes exactly once), plus
+    // the folded storage facts. A map whose image fails to load stays
+    // void, and 'loadImage' has warned.
+    auto loadMap{[&](PBRMaps::Role role, std::string_view fieldName) -> bool {
+      const auto &map{(*manifest)[role]};
+      if (!map) return false;
+      // Height and horizon maps never read mip levels, whatever
+      // 'use_mipmap' says: box filtering is wrong for both (averaged
+      // heights flatten the relief the parallax march and
+      // finite-difference normals reconstruct; a horizon tangent's
+      // meaningful minification is a max, not a mean), so 'num_levels'
+      // bakes as 1 and every lod-aware lookup stays at level 0. The
+      // image itself may still carry a chain if something else
+      // references the same file and asks for one, which costs nothing
+      // here.
+      auto withMipLevels{useMipmap && role != PBRMaps::ROLE_HEIGHT &&
+                         role != PBRMaps::ROLE_HORIZON};
+      auto &image{context.compiler.loadImage(
+          joinPaths(manifestDirName, map.file), srcLoc, withMipLevels)};
+      if (!image.getTexels()) return false;
+      auto texelPtrType{context.getPointerType(context.getArithmeticType(
+          image.getFormat() == Image::UINT8     ? Scalar::getInt(8)
+          : image.getFormat() == Image::UINT16  ? Scalar::getInt(16)
+          : image.getFormat() == Image::FLOAT16 ? Scalar::getHalf()
+                                                : Scalar::getFloat(),
+          Extent(image.getNumChannels())))};
+      auto numLevels{withMipLevels ? image.getNumLevels() : 1};
+      auto valueTileExtents{
+          Value::zero(context.getArrayType(context.getIntType(2), 1))};
+      auto valueTileBuffers{Value::zero(context.getArrayType(texelPtrType, 1))};
+      valueTileExtents =
+          insert(valueTileExtents,
+                 context.getComptimeVector(int2(int(image.getNumTexelsX()),
+                                                int(image.getNumTexelsY()))),
+                 0, srcLoc);
+      valueTileBuffers = insert(
+          valueTileBuffers,
+          context.getComptimePtr(texelPtrType, image.getTexels()), 0, srcLoc);
+      auto valueTex{invoke(
+          context.getTexture2DType(),
+          {Argument{"tile_count", context.getComptimeVector(int2(1, 1))},
+           Argument{"num_levels", context.getComptimeInt(numLevels)},
+           Argument{"tile_extents", valueTileExtents},
+           Argument{"tile_buffers", valueTileBuffers},
+           Argument{"gamma",
+                    context.getComptimeInt(map.effectiveColorSpace() ==
+                                                   PBRMaps::COLOR_SPACE_SRGB
+                                               ? 1
+                                               : 0)}},
+          srcLoc)};
+      auto convention{0};
+      if (role == PBRMaps::ROLE_NORMAL) convention = int(map.normalConvention);
+      args.elems.push_back(Argument{
+          fieldName,
+          invoke(
+              pbrMapType,
+              {Argument{"tex", valueTex},
+               Argument{"channel", context.getComptimeInt(int(map.channel))},
+               Argument{"convention", context.getComptimeInt(convention)},
+               Argument{"max_slope", context.getComptimeFloat(map.maxSlope)}},
+              srcLoc)});
+      return true;
+    }};
+    // A map the call site opted out of is simply not loaded, so the
+    // field stays void and every presence gate in the module reads the
+    // set exactly as if the manifest had never declared it. The horizon
+    // map goes with the relief pipeline: nothing else consumes it.
+    if (!noBasecolor) loadMap(PBRMaps::ROLE_BASECOLOR, "basecolor");
+    loadMap(PBRMaps::ROLE_NORMAL, "normal");
+    loadMap(PBRMaps::ROLE_ROUGHNESS, "roughness");
+    loadMap(PBRMaps::ROLE_METALLIC, "metallic");
+    if (!noHeight) loadMap(PBRMaps::ROLE_HEIGHT, "height");
+    loadMap(PBRMaps::ROLE_EMISSION, "emission");
+    if (!noParallax) loadMap(PBRMaps::ROLE_HORIZON, "horizon");
+    if (!noClassMap) loadMap(PBRMaps::ROLE_CLASS, "class_map");
+    return invoke(pbrMapsType, args, srcLoc);
+  }
+  case IntrinsicID::LoadBSDFMeasurement: {
+    auto bsdfMeasurementType{context.getBSDFMeasurementType()};
+    auto fileName{expectOneComptimeString()};
+    return withLocatedFile(
+        fileName, bsdfMeasurementType,
+        [&](const std::string &resolvedFileName) {
+          auto &bsdfMeasurement{
+              context.compiler.loadBSDFMeasurement(resolvedFileName, srcLoc)};
+          auto bufferPtrType{context.getPointerType(context.getFloatType(
+              bsdfMeasurement.type == BSDFMeasurement::TYPE_FLOAT ? 1 : 3))};
+          return invoke(
+              bsdfMeasurementType,
+              {Argument{"ptr", context.getComptimePtr(
+                                   context.getVoidPointerType(),
+                                   bsdfMeasurement.buffer ? &bsdfMeasurement
+                                                          : nullptr)},
+               Argument{"mode", context.getComptimeInt(
+                                    bsdfMeasurement.kind ==
+                                            BSDFMeasurement::KIND_REFLECTION
+                                        ? /* scatter_reflect  */ 1
+                                        : /* scatter_transmit */ 2)},
+               Argument{"num_theta",
+                        context.getComptimeInt(int(bsdfMeasurement.numTheta))},
+               Argument{"num_phi",
+                        context.getComptimeInt(int(bsdfMeasurement.numPhi))},
+               Argument{"buffer", context.getComptimePtr(
+                                      bufferPtrType, bsdfMeasurement.buffer)}},
+              srcLoc);
+        });
+  }
+  case IntrinsicID::LoadLightProfile: {
+    auto lightProfileType{context.getLightProfileType()};
+    auto fileName{expectOneComptimeString()};
+    // Register the light profile runtime callees backing the
+    // '@(pure foreign)' declarations in 'df.smdl' (which implement
+    // 'df::measured_edf'), so they resolve as absolute JIT symbols
+    // even when the host process does not export its own dynamic
+    // symbols. Any 'measured_edf' necessarily loads a light profile
+    // first, so this registration is a safe superset.
+    (void)context.getBuiltinCallee("smdlLightProfileInterpolate",
+                                   &smdlLightProfileInterpolate);
+    (void)context.getBuiltinCallee("smdlLightProfileDirectionPDF",
+                                   &smdlLightProfileDirectionPDF);
+    (void)context.getBuiltinCallee("smdlLightProfileDirectionSample",
+                                   &smdlLightProfileDirectionSample);
+    return withLocatedFile(
+        fileName, lightProfileType, [&](const std::string &resolvedFileName) {
+          auto &lightProfile{
+              context.compiler.loadLightProfile(resolvedFileName, srcLoc)};
+          return invoke(
+              lightProfileType,
+              {Argument{"ptr",
+                        context.getComptimePtr(
+                            context.getVoidPointerType(),
+                            lightProfile.isValid() ? &lightProfile : nullptr)},
+               Argument{"max_intensity",
+                        context.getComptimeFloat(lightProfile.maxIntensity())},
+               Argument{"power",
+                        context.getComptimeFloat(lightProfile.power())}},
+              srcLoc);
+        });
+  }
+  case IntrinsicID::LoadSpectralCurve: {
+    auto spectralCurveType{context.getSpectralCurveType()};
+    if (args.size() == 1) {
+      if (!args[0].value.isComptimeString()) {
+        srcLoc.throwError("intrinsic ", Quoted(name),
+                          " expects 1 compile-time string argument");
+      }
+    } else if (args.size() == 2) {
+      if (!(args[0].value.isComptimeString() &&
+            (args[1].value.isComptimeString() ||
+             args[1].value.isComptimeInt()))) {
+        srcLoc.throwError("intrinsic ", Quoted(name),
+                          " expects 1 compile-time string argument and 1 "
+                          "compile-time string or int argument");
+      }
+    } else {
+      srcLoc.throwError("intrinsic ", Quoted(name),
+                        " expects 1 or 2 arguments");
+    }
+    auto fileName{std::string(args[0].value.getComptimeString())};
+    return withLocatedFile(
+        fileName, spectralCurveType,
+        [&](const std::string &resolvedFileName) -> Value {
+          auto spectrumView{SpectrumView{}};
+          if (args.size() == 1) {
+            spectrumView =
+                context.compiler.loadSpectrum(resolvedFileName, srcLoc);
+          } else if (args[1].value.isComptimeString()) {
+            spectrumView = context.compiler.loadSpectrum(
+                resolvedFileName,
+                std::string(args[1].value.getComptimeString()), srcLoc);
+          } else if (args[1].value.isComptimeInt()) {
+            spectrumView = context.compiler.loadSpectrum(
+                resolvedFileName, int(args[1].value.getComptimeInt()), srcLoc);
+          }
+          if (spectrumView.curveValues.empty()) {
+            return invoke(spectralCurveType, {}, srcLoc);
+          }
+          auto floatPtrType{context.getPointerType(context.getFloatType())};
+          return invoke(
+              spectralCurveType,
+              {Argument{"count", context.getComptimeInt(
+                                     int(spectrumView.wavelengths.size()))},
+               Argument{"wavelengths",
+                        context.getComptimePtr(
+                            floatPtrType, spectrumView.wavelengths.data())},
+               Argument{"amplitudes",
+                        context.getComptimePtr(
+                            floatPtrType, spectrumView.curveValues.data())}},
+              srcLoc);
+        });
+  }
+  default:
+    break;
+  }
+  // Unreachable: 'emitIntrinsic()' only routes the '#load...' identifiers here.
+  SMDL_SANITY_CHECK(false);
+  return Value();
 }
 //--}
 
@@ -2859,12 +3305,11 @@ void Emitter::expandInlineArgument(ArgumentList &args, AST::Argument &astArg) {
       args.push_back(Argument{{}, accessIndex(value, i, srcLoc), &astArg});
   } else if (type->isStruct() && !type->isAbstract()) {
     for (auto &param : static_cast<StructType *>(type)->params)
-      args.push_back(
-          Argument{param.name, accessField(value, param.name, srcLoc), &astArg});
+      args.push_back(Argument{param.name,
+                              accessField(value, param.name, srcLoc), &astArg});
   } else if (type->isPointer()) {
     srcLoc.throwError("cannot expand 'inline' argument of pointer type ",
-                      Quoted(type->displayName),
-                      "; dereference it first");
+                      Quoted(type->displayName), "; dereference it first");
   } else {
     srcLoc.throwError("cannot expand 'inline' argument of type ",
                       Quoted(type->displayName),
@@ -3204,7 +3649,8 @@ Emitter::resolveArguments(const ParameterList &params, const ArgumentList &args,
   // `InferredSizeArrayType::invoke`). This runs during overload probing,
   // so a size-inconsistent candidate is rejected like any other
   // conversion failure.
-  auto deducedSizes{llvm::SmallVector<std::pair<std::string_view, uint32_t>, 2>{}};
+  auto deducedSizes{
+      llvm::SmallVector<std::pair<std::string_view, uint32_t>, 2>{}};
   for (size_t iParam{}; iParam < params.size(); iParam++) {
     auto &param{params[iParam]};
     auto arg{[&]() -> const Argument * {
@@ -3256,8 +3702,8 @@ Emitter::resolveArguments(const ParameterList &params, const ArgumentList &args,
           } else if (deduced->second != arrayType->size) {
             srcLoc.throwError(
                 "argument type ", Quoted(arg->value.type->displayName),
-                " of parameter ", Quoted(param.name),
-                " deduces array size ", Quoted(inferredType->sizeName), " = ",
+                " of parameter ", Quoted(param.name), " deduces array size ",
+                Quoted(inferredType->sizeName), " = ",
                 std::to_string(arrayType->size),
                 " but an earlier argument deduced ",
                 Quoted(inferredType->sizeName), " = ",

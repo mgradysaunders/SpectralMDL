@@ -26,18 +26,23 @@ STR
 # The lookup key replaces '/' with '::' (so 'models/prospect' is addressed
 # as '::models::prospect'), and the generated variable replaces '/' with '_'.
 fnames = ['api', 'anno', 'debug', 'df', 'limits', 'math', 'scene', 'state', 'std', 'tex',
+          'extras/hex',
           'extras/io',
-          'extras/pcg32',
-          'models/empirical',
-          'models/hex_tiling',
+          'extras/layering',
+          'extras/lod',
+          'extras/noise',
+          'extras/parallax',
+          'extras/pbr',
+          'extras/rng',
+          'extras/sampling',
           'models/illuminant',
-          'models/layering',
           'models/marmit',
           'models/metal_ior',
-          'models/noise',
-          'models/prospect']
+          'models/prospect',
+          'models/regolith',
+          'models/woody']
 for fname in fnames
-  text = `smdlc format -c --no-comments --keep-doc-comments Builtin/#{fname}.smdl`
+  text = `smdl format -c --no-comments --keep-doc-comments Builtin/#{fname}.smdl`
   text = File.read "Builtin/#{fname}.smdl" unless $?.success?
   name = fname.gsub('/', '_')
   f.write "static const unsigned char #{name}_compressed[]{\n"

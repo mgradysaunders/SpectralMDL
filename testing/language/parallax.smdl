@@ -1,0 +1,193 @@
+#smdl
+
+import ::math::*;
+import ::state::*;
+import ::tex::*;
+using parallax = ::extras::parallax;
+import parallax::*;
+
+// The march core with explicit view vectors and analytic height lambdas,
+// where the intersections have closed forms; then the state wrappers under
+// the default all-zero LOD state, where everything must be the identity.
+
+unit_test "Parallax zero-state identity" {
+  // No populated direction: the view vector is exactly zero, and every
+  // wrapper returns its input untouched.
+  #assert(#all(parallax::view_vector() == float3(0.0)));
+  const float2 uv = float2(0.3, 0.7);
+  const auto tex = texture_2d("4x4.png", tex::gamma_linear);
+  #assert(#all(parallax::parallax_uv(tex, 0.05, uv) == uv));
+  #assert(#all(parallax::parallax_uv(texture_2d(), 0.05, uv) == uv));
+  // The core with a zero view is likewise the identity.
+  #assert(#all(parallax::parallax_offset_with(\(const float2 c) = 0.5, uv, float3(0.0), 0.1) == uv));
+}
+
+unit_test "Parallax march on constant heights" {
+  const float2 uv = float2(0.6, 0.4);
+  const auto flat = \(const float2 c [[anno::unused()]]) = 0.25;
+  // Straight-on view: zero slope, zero offset, at any depth.
+  #assert(#all(parallax::parallax_offset_with(flat, uv, float3(0.0, 0.0, 1.0), 0.1) == uv));
+  // Height 1 is the un-displaced surface: identity, exactly.
+  const float3 v = math::normalize(float3(0.4, -0.2, 0.8));
+  #assert(#all(parallax::parallax_offset_with(\(const float2 c [[anno::unused()]]) = 1.0, uv, v, 0.1) == uv));
+  // Heights above 1 clamp to the surface: still the identity.
+  #assert(#all(parallax::parallax_offset_with(\(const float2 c [[anno::unused()]]) = 1.5, uv, v, 0.1) == uv));
+  // Constant height h: the secant refinement makes the march exact, so
+  // the offset is -view.xy / view.z * scale * (1 - h) regardless of the
+  // step count.
+  const float scale = 0.1;
+  const float2 expected = uv - v.xy / v.z * (scale * 0.75);
+  const float2 got = parallax::parallax_offset_with(flat, uv, v, scale);
+  #assert(math::abs(got.x - expected.x) < 1e-6);
+  #assert(math::abs(got.y - expected.y) < 1e-6);
+  const float2 coarse = parallax::parallax_offset_with(flat, uv, v, scale, 4, 4);
+  const float2 fine = parallax::parallax_offset_with(flat, uv, v, scale, 64, 64);
+  #assert(math::abs(coarse.x - fine.x) < 1e-6);
+  #assert(math::abs(coarse.y - fine.y) < 1e-6);
+}
+
+unit_test "Parallax march on a linear ramp" {
+  // Height 1 - k * u, i.e., depth k * u: the clearance is linear in the
+  // layer, so the secant intersection is the closed form
+  // l* = k * u0 / (1 + k * slope_x * scale) at any step count.
+  const float k = 0.5;
+  const auto ramp = \(const float2 c) = 1.0 - k * c.x;
+  const float2 uv = float2(0.6, 0.4);
+  const float scale = 0.2;
+  const float3 v = math::normalize(float3(0.3, 0.0, 0.9));
+  const float slope_x = v.x / v.z;
+  const float l_star = k * uv.x / (1.0 + k * slope_x * scale);
+  const float2 expected = uv - float2(slope_x, 0.0) * (scale * l_star);
+  const float2 got = parallax::parallax_offset_with(ramp, uv, v, scale);
+  #assert(math::abs(got.x - expected.x) < 1e-5);
+  #assert(math::abs(got.y - expected.y) < 1e-5);
+  // Step-count independence, again from the secant exactness.
+  const float2 coarse = parallax::parallax_offset_with(ramp, uv, v, scale, 4, 4);
+  #assert(math::abs(coarse.x - got.x) < 1e-5);
+  #assert(math::abs(coarse.y - got.y) < 1e-5);
+}
+
+unit_test "Parallax guards" {
+  const float2 uv = float2(0.5, 0.5);
+  const auto flat = \(const float2 c [[anno::unused()]]) = 0.5;
+  // Backface views are the identity.
+  #assert(#all(parallax::parallax_offset_with(flat, uv, float3(0.0, 0.0, -1.0), 0.1) == uv));
+  // Non-positive scales are the identity.
+  #assert(#all(parallax::parallax_offset_with(flat, uv, float3(0.0, 0.0, 1.0), 0.0) == uv));
+  #assert(#all(parallax::parallax_offset_with(flat, uv, math::normalize(float3(0.4, 0.0, 0.8)), -0.1) == uv));
+  // Near the view floor the slope caps at PARALLAX_MAX_SLOPE, so the offset
+  // for constant depth d is exactly PARALLAX_MAX_SLOPE * scale * d.
+  const float3 oblique = math::normalize(float3(1.0, 0.0, 0.06));
+  const float scale = 0.01;
+  const float2 got = parallax::parallax_offset_with(flat, uv, oblique, scale);
+  #assert(math::length(got - uv) <= parallax::PARALLAX_MAX_SLOPE * scale * 0.5 + 1e-6);
+  #assert(math::abs((uv.x - got.x) - parallax::PARALLAX_MAX_SLOPE * scale * 0.5) < 1e-6);
+  // At and below PARALLAX_MIN_VIEW_Z the view Z clamps up to the floor
+  // instead of cutting to the identity, so grazing views land on the same
+  // saturated plateau: no discontinuity at the floor.
+  const float2 grazing = parallax::parallax_offset_with(flat, uv, math::normalize(float3(1.0, 0.0, 0.03)), scale);
+  const float2 extreme = parallax::parallax_offset_with(flat, uv, math::normalize(float3(1.0, 0.0, 1.0e-4)), scale);
+  #assert(math::abs(grazing.x - got.x) < 1e-6);
+  #assert(math::abs(grazing.y - got.y) < 1e-6);
+  #assert(math::abs(extreme.x - got.x) < 1e-6);
+  #assert(math::abs(extreme.y - got.y) < 1e-6);
+}
+
+unit_test "Parallax horizon slopes" {
+  const float2 uv = float2(0.5, 0.5);
+  // Constant heights have no horizon anywhere, exactly (including
+  // out-of-range heights, which clamp before differencing).
+  #assert(#all(parallax::horizon_slopes_with(\(const float2 c [[anno::unused()]]) = 0.5, uv, 0.1) == float4(0.0)));
+  #assert(#all(parallax::horizon_slopes_with(\(const float2 c [[anno::unused()]]) = 1.5, uv, 0.1) == float4(0.0)));
+  // Non-positive scale is the off switch, regardless of the field.
+  #assert(#all(parallax::horizon_slopes_with(\(const float2 c) = c.x, uv, 0.0) == float4(0.0)));
+  #assert(#all(parallax::horizon_slopes_with(\(const float2 c) = c.x, uv, -1.0) == float4(0.0)));
+
+  // A step blocker toward +U only, its edge exactly on a sample distance
+  // (the defaults place samples at 0.25 / 2^k): the +U slope is exactly
+  // scale * (1 - h0) / d from that sample, and every other direction
+  // sees flat ground.
+  const float d = 0.03125;
+  const float scale = 0.1;
+  const auto step = \(const float2 c) = c.x >= uv.x + d ? 1.0 : 0.2;
+  const auto s1 = parallax::horizon_slopes_with(step, uv, scale);
+  #assert(math::abs(s1.x - scale * 0.8 / d) < 1e-5);
+  #assert((s1.y == 0.0) & (s1.z == 0.0) & (s1.w == 0.0));
+
+  // An uphill ramp toward +U: the blocker slope is the same at every
+  // sample distance, so the marched slope is exactly scale * k, and the
+  // downhill -U direction clamps to zero.
+  const float k = 2.0;
+  const auto ramp = \(const float2 c) = 0.2 + k * (c.x - uv.x);
+  const auto s2 = parallax::horizon_slopes_with(ramp, uv, scale);
+  #assert(math::abs(s2.x - scale * k) < 1e-5);
+  #assert(s2.y == 0.0);
+
+  // A wall at the nearest sample would exceed PARALLAX_MAX_SLOPE; the result caps
+  // there, consistent with the march's own slope cap.
+  const auto wall = \(const float2 c) = c.x >= uv.x + 0.001 ? 1.0 : 0.0;
+  #assert(parallax::horizon_slopes_with(wall, uv, scale).x == parallax::PARALLAX_MAX_SLOPE);
+}
+
+unit_test "Parallax perturbed normal" {
+  const float2 uv = float2(0.5, 0.5);
+  // Constant heights give the shading normal back to normalization
+  // precision. (Not bit-exactly: fast-math lowers `normalize` through an
+  // approximate rsqrt, so even a unit vector moves by an ulp or so.)
+  const float3 n0 = parallax::perturbed_normal_with(\(const float2 c [[anno::unused()]]) = 0.25, uv, 0.5, float2(0.01));
+  #assert(#all(math::abs(n0 - state::normal()) < float3(1e-6)));
+  // The guard paths return the shading normal untouched, bit-exactly.
+  #assert(#all(parallax::perturbed_normal_with(\(const float2 c) = c.x, uv, 0.5, float2(0.0)) == state::normal()));
+  #assert(#all(parallax::perturbed_normal(texture_2d(), 0.5, uv) == state::normal()));
+  // A linear ramp has an exact central difference, so the normal is the
+  // closed-form slope normal. The default test state tangent frame is the
+  // identity, so the tangent-frame normal passes through unchanged.
+  const float a = 0.25;
+  const float scale = 0.4;
+  const float3 expected = math::normalize(float3(-scale * a, 0.0, 1.0));
+  const float3 got = parallax::perturbed_normal_with(\(const float2 c) = a * c.x, uv, scale, float2(0.01));
+  #assert(math::abs(got.x - expected.x) < 1e-6);
+  #assert(math::abs(got.y - expected.y) < 1e-6);
+  #assert(math::abs(got.z - expected.z) < 1e-6);
+}
+
+unit_test "Parallax march refinement and jitter" {
+  // A curved (quadratic) height field: depth k*x^2 bends within a
+  // layer, so the single secant of the coarse march leaves a residual
+  // clearance -- the per-layer error that shows up as banding on steep
+  // relief. The false-position refinement must drive that residual to
+  // (near) zero. The residual is measured directly: recover the layer
+  // from the returned offset and compare against the field.
+  const float k = 0.8;
+  const auto bowl = \(const float2 c) = 1.0 - k * c.x * c.x;
+  const float2 uv = float2(0.7, 0.5);
+  const float scale = 0.3;
+  const float3 v = math::normalize(float3(0.5, 0.0, 0.8));
+  const float s = v.x / v.z;
+  const auto residual = \(const float2 p) {
+    const float l = (uv.x - p.x) / (s * scale);
+    return math::abs(l - k * p.x * p.x);
+  };
+  // Two coarse layers, no refinement vs. three refinement passes.
+  const auto coarse = parallax::parallax_offset_with(bowl, uv, v, scale, 2, 2, 0.0, 0);
+  const auto refined = parallax::parallax_offset_with(bowl, uv, v, scale, 2, 2, 0.0, 3);
+  #assert(residual(coarse) > 1e-4);
+  #assert(residual(refined) < 1e-5);
+  #assert(residual(refined) < residual(coarse));
+
+  // On fields where the secant is already exact -- constant heights and
+  // linear ramps -- the jittered layer grid is a provable no-op, so any
+  // per-sample jitter fed by a renderer cannot disturb them.
+  const auto flat = \(const float2 c [[anno::unused()]]) = 0.25;
+  const float2 expectFlat = uv - v.xy / v.z * (scale * 0.75);
+  const auto ramp = \(const float2 c) = 1.0 - 0.5 * c.x;
+  const float lRamp = 0.5 * uv.x / (1.0 + 0.5 * s * scale);
+  const float2 expectRamp = uv - float2(s, 0.0) * (scale * lRamp);
+  for (int j = 0; j < 3; j++) {
+    const float xi = float(j) * 0.33;
+    const auto gotFlat = parallax::parallax_offset_with(flat, uv, v, scale, 8, 8, xi);
+    #assert(math::length(gotFlat - expectFlat) < 1e-5);
+    const auto gotRamp = parallax::parallax_offset_with(ramp, uv, v, scale, 8, 8, xi);
+    #assert(math::length(gotRamp - expectRamp) < 1e-5);
+  }
+}

@@ -1,0 +1,83 @@
+#smdl
+
+import ::math::*;
+using regolith = ::models::regolith;
+import regolith::*;
+
+// Two regolith presets as 11-component vectors (base, fineness, organic,
+// iron, aridity, phyllo, hydrous, ferrous, unstained, moisture,
+// moisture_sensitivity), the
+// motivating case for call-site 'inline': store parameters as vectors for
+// barycentric mixing, then expand the mix into the call.
+const auto SOIL_A = auto(0.51, 0.57, 0.63, 0.55, 0.19, 0.05, 0.34, 0.04, 1.0, 0.25, 0.0);
+const auto SOIL_B = auto(0.32, 0.82, 0.51, 0.57, 0.90, 0.06, 0.12, 0.00, 0.0, 0.16, 0.8);
+
+// A small helper whose parameters are distinguishable by position, with a
+// trailing defaulted parameter to exercise inline-then-named call shapes.
+float weighted(const float a, const float b, const float c,
+               const float scale = 1.0) = scale * (a + 2.0 * b + 3.0 * c);
+
+// Structs for the named expansion: 'Shuffled' declares the same field names
+// as 'weighted's parameters but in a different order, so only name-driven
+// matching can get it right.
+struct WeightedArgs {
+  float a = 0.0;
+  float b = 0.0;
+  float c = 0.0;
+};
+struct Shuffled {
+  float scale = 2.0;
+  float b = 5.0;
+};
+
+unit_test "Inline vector arguments" {
+  // Expansion is exactly the spelled-out call: same values, same defaults,
+  // bit-for-bit.
+  const auto viaInline = regolith::regolith_albedo(inline SOIL_A);
+  const auto viaManual = regolith::regolith_albedo(
+    SOIL_A[0], SOIL_A[1], SOIL_A[2], SOIL_A[3], SOIL_A[4], SOIL_A[5],
+    SOIL_A[6], SOIL_A[7], SOIL_A[8], SOIL_A[9], SOIL_A[10]);
+  for (int i = 0; i < $WAVELENGTH_BASE_MAX; i++)
+    #assert(viaInline[i] == viaManual[i]);
+
+  // The same through a runtime barycentric mix.
+  for (int k = 0; k <= 4; k++) {
+    const auto mixed = math::lerp(SOIL_A, SOIL_B, 0.25 * k);
+    const auto m0 = regolith::regolith_albedo(inline mixed);
+    const auto m1 = regolith::regolith_albedo(
+      mixed[0], mixed[1], mixed[2], mixed[3], mixed[4], mixed[5],
+      mixed[6], mixed[7], mixed[8], mixed[9], mixed[10]);
+    for (int i = 0; i < $WAVELENGTH_BASE_MAX; i++)
+      #assert(m0[i] == m1[i]);
+  }
+
+  // Expanded elements are ordinary positional arguments: they may follow
+  // leading positionals and precede named arguments, and an inlined
+  // temporary works as well as a variable.
+  #assert(weighted(1.0, inline auto(2.0, 3.0)) == 1.0 + 4.0 + 9.0);
+  #assert(weighted(1.0, inline auto(2.0, 3.0), scale: 2.0) == 2.0 * 14.0);
+  #assert(weighted(inline auto(1.0, 2.0, 3.0), scale: 0.5) == 0.5 * 14.0);
+
+  // Static-size arrays expand positionally too.
+  const auto arr = float[3](1.0, 2.0, 3.0);
+  #assert(weighted(inline arr) == 14.0);
+
+  // Intrinsic argument lists share the same expansion path; pin it.
+  #assert(#min(inline auto(3.0, 1.0)) == 1.0);
+}
+
+unit_test "Inline struct arguments" {
+  // A struct expands as keyword arguments: field names drive the matching.
+  auto full = WeightedArgs(a: 1.0, b: 2.0, c: 3.0);
+  #assert(weighted(inline full) == weighted(a: 1.0, b: 2.0, c: 3.0));
+
+  // Field declaration order does not matter, unmatched parameters keep
+  // their defaults, and explicit arguments may precede the expansion.
+  auto shuffled = Shuffled();
+  #assert(weighted(a: 1.0, c: 0.0, inline shuffled) == 2.0 * (1.0 + 10.0));
+
+  // Struct construction goes through the same argument path, so a struct
+  // can be built from another struct's matching fields.
+  auto rebuilt = WeightedArgs(inline full);
+  #assert(rebuilt.a == full.a && rebuilt.b == full.b && rebuilt.c == full.c);
+}

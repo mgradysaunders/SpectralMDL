@@ -20,6 +20,17 @@ Memberships behave like area fractions: a pixel midway between two class centers
 splits 50/50. Averaging them (mipmapping) and renormalizing therefore stays
 physically meaningful.
 
+How literally that holds depends on --encoding. The default reads each pixel as
+a soft classification, which is only an area fraction near the midpoint and
+saturates quickly on either side; --encoding pairwise reads it as a mixture of
+the two classes that best explain it, blended linearly in reflectance, and does
+hold across the range.
+
+The classes themselves are found by a fit that discounts how much of the texture
+each color covers (see --rarity), so a material present over a small fraction of
+the pixels can still claim a class of its own rather than losing it to a second
+shade of the substrate.
+
 The sidecar JSON carries the class centers -- in CIELAB, linear RGB and sRGB hex
 -- so each class can be matched to a spectral model downstream.
 """
@@ -228,6 +239,9 @@ def pick_seeds(lin, k, radius):
 
 # clustering
 
+REG_COVAR = 1e-4
+
+
 def fit_centers(sample, k, l_weight, seed, seeds=None):
     """GMM with full covariance, fitted in the weighted metric.
 
@@ -239,14 +253,28 @@ def fit_centers(sample, k, l_weight, seed, seeds=None):
     means, so the fit refines the classes that were pointed at instead of
     searching from k-means restarts. Restarts are pointless once the init is
     explicit -- they would all start from the same place -- so n_init drops to 1.
+
+    Seeding the means alone is not enough. GaussianMixture runs its k-means
+    initializer regardless, and takes the starting covariances and mixture
+    weights from that partition while overriding only the means, so a seed is
+    paired with the shape and the prior of whichever k-means cluster happened to
+    land in the same slot. A component seeded on a thin material and handed a
+    quarter of the gamut to cover claims a piece of the substrate on the first
+    step and never comes back. Deriving all three from the seeds keeps them
+    consistent.
     """
     from sklearn.mixture import GaussianMixture
 
-    weighted = sample * weight_scale(l_weight)
+    scale = weight_scale(l_weight)
+    weighted = sample * scale
+    init = {}
+    if seeds is not None:
+        init = dict(zip(("weights_init", "precisions_init"),
+                        seeded_init(weighted, seeds * scale, REG_COVAR)))
     gmm = GaussianMixture(n_components=k, covariance_type="full",
                           n_init=1 if seeds is not None else 4,
-                          means_init=None if seeds is None else seeds * weight_scale(l_weight),
-                          random_state=seed, reg_covar=1e-4)
+                          means_init=None if seeds is None else seeds * scale,
+                          random_state=seed, reg_covar=REG_COVAR, **init)
     resp = gmm.fit(weighted).predict_proba(weighted)
     mass = resp.sum(axis=0)
     keep = mass > 1e-6
@@ -254,8 +282,112 @@ def fit_centers(sample, k, l_weight, seed, seeds=None):
     return centers, mass[keep] / mass[keep].sum()
 
 
+def seeded_init(x, seeds, reg):
+    """Starting mixture weight and precision for each seed, from its own cell.
+
+    Each seed is given the prior and the shape of the samples that are nearer to
+    it than to any other seed, so it starts out describing the material it was
+    pointed at rather than a quarter of the whole gamut.
+    """
+    cell = np.argmin(((x[:, None, :] - seeds) ** 2).sum(axis=-1), axis=1)
+    d = x.shape[1]
+    weights = np.empty(len(seeds))
+    precisions = np.empty((len(seeds), d, d))
+    for i in range(len(seeds)):
+        m = cell == i
+        weights[i] = max(int(m.sum()), 1)
+        cov = np.cov(x[m].T) if m.sum() > d else np.eye(d) * 4.0
+        precisions[i] = np.linalg.inv(cov + np.eye(d) * reg)
+    return weights / weights.sum(), precisions
+
+
 def weight_scale(l_weight):
     return np.array([l_weight, 1.0, 1.0])
+
+
+def rarity_multiplicity(lab, alpha, bin_size, floor, budget):
+    """How many times each sample should count in the fit, given how rare its color is.
+
+    A maximum likelihood fit weights every pixel equally, so a class's pull on
+    the centers is proportional to the area it covers. A material over a few
+    percent of the texture holds a class comfortably; one under a couple of
+    percent does not, and the component that should have described it walks off
+    to split the substrate into two shades of the same thing instead. That
+    happens whether the class was found by the fit or seeded on the color by
+    hand, which is why pointing at a thin material does not make it stick.
+
+    Repeating a sample is exactly how a fit is told to weight it, and unlike
+    drawing a weighted resample it adds no noise of its own -- which matters
+    here, because the classes at stake are the ones with the fewest pixels to
+    draw from. Samples are binned on a coarse Lab lattice, and a bin holding a
+    fraction f of the pixels of the most populated bin is repeated f**-alpha
+    times, so alpha=0 leaves the fit area-proportional and alpha=1 equalizes the
+    occupied bins outright, clustering the palette rather than the pixels.
+
+    Bins holding fewer than `floor` samples are left at their natural weight
+    rather than boosted, so the flattening reaches thin materials and not the
+    stray pixels of compression ringing between them. `budget` caps the total
+    sample count, since a texture with many rare colors could otherwise inflate
+    the fitting set without bound.
+    """
+    key = np.floor(lab / bin_size).astype(np.int64)
+    key -= key.min(axis=0)
+    flat = (key[:, 0] * (key[:, 1].max() + 1) + key[:, 1]) * (key[:, 2].max() + 1) + key[:, 2]
+    _, inv, counts = np.unique(flat, return_inverse=True, return_counts=True)
+    c = counts[inv].astype(np.float64)
+    busiest = counts[counts >= floor].max() if (counts >= floor).any() else counts.max()
+    m = np.where(c >= floor, np.maximum(busiest / np.maximum(c, 1.0), 1.0) ** alpha, 1.0)
+    m = np.maximum(np.round(m), 1).astype(np.int64)
+    # Spend at most `budget` samples: shrink the boost, never the sample itself.
+    excess = m.sum() - len(lab)
+    if excess > budget - len(lab) and excess > 0:
+        s = max(budget - len(lab), 0) / excess
+        m = np.maximum(np.round(1 + (m - 1) * s), 1).astype(np.int64)
+    return m
+
+
+def chromatic_endmembers(sample, centers, q, l_weight):
+    """Move each center out from the mean toward the edge of its own class.
+
+    A cluster center is the average of everything the class owns, and most of
+    what it owns is mixed with something. The center is therefore not the color
+    of the pure material but the color of the material with the mixing already
+    averaged in, biased inward toward whatever it neighbors. A mixture encoding
+    wants the unmixed color, so the bias is worth undoing: the centroid is the
+    contaminated estimate, not the conservative one.
+
+    Each class is pushed along the direction leading away from the mean of all
+    the centers, out to the q-th percentile of how far its own members reach in
+    that direction. Reach is measured in the weighted metric, so lightness
+    counts for as little in placing an endmember as it did in finding the class.
+    The shift is taken relative to the class's own median, which leaves q = 50
+    exactly where it started, and it is a percentile rather than an extreme so
+    that one stray pixel cannot drag a class across the gamut.
+
+    Pushing indefinitely does not pay: past the point where the endmembers stop
+    resembling the material, ordinary pixels have further to travel to be
+    explained and the reconstruction gets worse again.
+    """
+    scale = weight_scale(l_weight)
+    hub = centers.mean(axis=0)
+    cell = np.argmin((((sample[:, None, :] - centers) * scale) ** 2).sum(axis=-1), axis=1)
+    out = centers.copy()
+    for i in range(len(centers)):
+        members = sample[cell == i]
+        if len(members) < 32:
+            continue
+        d = (centers[i] - hub) * scale
+        norm = float(np.linalg.norm(d))
+        if norm < 1e-9:  # a class sitting on the hub has no outward direction
+            continue
+        axis = d / norm
+        reach = ((members - hub) * scale) @ axis
+        beyond = float(np.percentile(reach, q) - np.percentile(reach, 50.0))
+        # Back out of the weighted metric. An axis carrying no weight gets no
+        # movement, rather than an infinite one.
+        out[i] = centers[i] + np.divide(axis * beyond, scale,
+                                        out=np.zeros(len(scale)), where=scale > 0)
+    return out
 
 
 def merge_close(centers, weights, min_sep, l_weight):
@@ -286,13 +418,162 @@ def pairwise(centers, l_weight):
 
 
 def memberships(lab, centers, sigma, l_weight):
-    """Softmax over -dE^2 / 2 sigma^2. Shape (..., K), rows sum to 1."""
+    """Softmax over -dE^2 / 2 sigma^2. Shape (..., K), rows sum to 1.
+
+    This answers "which class is this pixel", not "what is this pixel made of".
+    The distinction matters, because sigma is one number for the whole texture
+    and is derived from the closest pair of centers: the blend between any two
+    classes has width 2 sigma^2 / D, so the further apart a pair is the harder
+    the switch between them, and introducing a single pair of similar classes
+    sharpens every other pair at once. On a ramp between two of four classes,
+    two of which sit 2 dE apart, the blend occupies about 1% of the ramp and the
+    rest reads as pure one class or the other. See pairwise_memberships for the
+    mixture reading of the same data.
+    """
     d2 = ((lab[..., None, :] - centers) * weight_scale(l_weight)) ** 2
     d2 = d2.sum(axis=-1)
     z = -d2 / (2.0 * sigma * sigma)
     z -= z.max(axis=-1, keepdims=True)
     e = np.exp(z)
     return e / e.sum(axis=-1, keepdims=True)
+
+
+def pairwise_memberships(lab, lin, centers, centers_lin, tau, l_weight):
+    """Mixture of the two classes that best account for the pixel. Rows sum to 1.
+
+    Every pair of classes offers an explanation: a fraction along the segment
+    joining them, and a residual saying how well that reproduces the color.
+    Taking the best explanation would jump wherever the winning pair changes, so
+    the explanations are averaged, weighted by exp(-excess residual^2 / 2 tau^2).
+
+    Which pair is plausible is a question about chromatic character, and is
+    judged in the same weighted Lab metric the classes were found in. How much
+    of each is a question about areal mixing, which is linear in reflectance,
+    and so the fraction is measured there. The two deliberately differ.
+
+    `tau` is a residual scale: how much worse a rival explanation has to be
+    before it stops counting. Unlike the softmax sigma it says nothing about the
+    distance between classes, so similar classes no longer sharpen unrelated
+    pairs. Only ever two classes mix at a time, so three channels remain enough
+    however many classes there are, and no pixel is required to lie inside the
+    simplex the classes span.
+
+    Costs K(K-1)/2 evaluations per pixel. The hypotheses are recomputed rather
+    than kept, because holding every pair's fraction and residual for a whole
+    row tile costs more memory than recomputing them costs time.
+    """
+    n, k = len(lab), len(centers)
+    if k == 1:
+        return np.ones((n, 1))
+    scale = weight_scale(l_weight)
+    pairs = [(i, j) for i in range(k) for j in range(i + 1, k)]
+
+    def hypothesis(i, j):
+        d = centers_lin[j] - centers_lin[i]
+        denom = float(d @ d)
+        # Coincident centers explain nothing beyond their own color.
+        t = (np.clip(((lin - centers_lin[i]) @ d) / denom, 0.0, 1.0)
+             if denom > 1e-18 else np.zeros(n))
+        model = centers[i] + t[:, None] * (centers[j] - centers[i])
+        return t, np.linalg.norm((model - lab) * scale, axis=-1)
+
+    best = np.full(n, np.inf)
+    for i, j in pairs:
+        np.minimum(best, hypothesis(i, j)[1], out=best)
+
+    u = np.zeros((n, k))
+    total = np.zeros(n)
+    for i, j in pairs:
+        t, err = hypothesis(i, j)
+        w = np.exp(-(err ** 2 - best ** 2) / (2.0 * tau * tau))
+        u[:, i] += w * (1.0 - t)
+        u[:, j] += w * t
+        total += w
+    return u / total[:, None]
+
+
+def triangle_memberships(lab, lin, centers, centers_lin, tau, l_weight, min_det=1e-24):
+    """As pairwise_memberships, but each hypothesis is a triple rather than a pair.
+
+    Letting three classes mix at once buys reconstruction wherever the classes
+    span real area in reflectance, and buys nothing where they sit on a line.
+    Which of those a texture is varies, hence the separate encoding rather than a
+    replacement.
+
+    Each hypothesis is the closest point on the CLOSED triangle: the barycentric
+    fit where that lands inside, and the nearest of the three edges where it does
+    not. Closing the triangle is what keeps the encoding continuous. Letting a
+    hypothesis abstain outside itself instead looks equivalent and is not, since
+    it both vanishes abruptly at the boundary and, just inside, double counts an
+    edge that another hypothesis already covers; measured on a path crossing
+    between two triples, abstaining jumps about twenty times as far.
+
+    Every edge belongs to some triangle, so pairs are not enumerated separately;
+    doing so would reintroduce exactly that double counting. Triples spanning
+    less than `min_det` are dropped as slivers, whose barycentric coordinates
+    swing wildly on noise, and if that leaves nothing the pairwise encoding
+    stands in.
+    """
+    n, k = len(lab), len(centers)
+    scale = weight_scale(l_weight)
+    triples = [(i, j, m) for i in range(k) for j in range(i + 1, k)
+               for m in range(j + 1, k)]
+
+    def edge(p, q):
+        v = centers_lin[q] - centers_lin[p]
+        vv = float(v @ v)
+        t = (np.clip(((lin - centers_lin[p]) @ v) / vv, 0.0, 1.0)
+             if vv > 1e-18 else np.zeros(n))
+        w = np.zeros((n, k))
+        w[:, p] = 1.0 - t
+        w[:, q] = t
+        return w
+
+    def hypothesis(i, j, m):
+        e1, e2 = centers_lin[j] - centers_lin[i], centers_lin[m] - centers_lin[i]
+        g11, g12, g22 = float(e1 @ e1), float(e1 @ e2), float(e2 @ e2)
+        det = g11 * g22 - g12 * g12
+        if abs(det) < min_det:
+            return None
+        d = lin - centers_lin[i]
+        r1, r2 = d @ e1, d @ e2
+        b = (g22 * r1 - g12 * r2) / det
+        c = (g11 * r2 - g12 * r1) / det
+        inside = (b >= 0) & (c >= 0) & (b + c <= 1)
+
+        w = np.zeros((n, k))
+        w[:, i] = 1.0 - b - c
+        w[:, j] = b
+        w[:, m] = c
+        if not inside.all():
+            # Outside the triangle the closest point lies on one of its edges.
+            best_r = np.full(n, np.inf)
+            best_w = np.zeros((n, k))
+            for p, q in ((i, j), (i, m), (j, m)):
+                ew = edge(p, q)
+                r = np.linalg.norm(ew @ centers_lin - lin, axis=-1)
+                take = r < best_r
+                best_r = np.where(take, r, best_r)
+                best_w = np.where(take[:, None], ew, best_w)
+            w = np.where(inside[:, None], w, best_w)
+        return w, np.linalg.norm((w @ centers - lab) * scale, axis=-1)
+
+    live = [t for t in triples if hypothesis(*t) is not None]
+    if not live:
+        return pairwise_memberships(lab, lin, centers, centers_lin, tau, l_weight)
+
+    best = np.full(n, np.inf)
+    for t in live:
+        np.minimum(best, hypothesis(*t)[1], out=best)
+
+    u = np.zeros((n, k))
+    total = np.zeros(n)
+    for t in live:
+        w, err = hypothesis(*t)
+        g = np.exp(-(err ** 2 - best ** 2) / (2.0 * tau * tau))
+        u += w * g[:, None]
+        total += g
+    return u / total[:, None]
 
 
 # encoding
@@ -354,12 +635,43 @@ def main():
                         "separates materials (raise it) or varies within one material "
                         "(lower it). At 1.0 classes tend to become lightness strata, "
                         "which duplicates what the alpha channel already carries.")
+    p.add_argument("--endmember", type=float, default=50.0, metavar="Q",
+                   help="place each class at the Qth percentile of how far its own "
+                        "members reach outward, rather than at their average "
+                        "(default 50, which is the average and so leaves this off). "
+                        "A class average is biased inward, because most of what a "
+                        "class owns is mixed with its neighbors and the mixing is "
+                        "averaged in with it; a mixture encoding wants the unmixed "
+                        "color. Around 90 measures best, and pushing further makes "
+                        "the reconstruction worse again, not better. Ignored under "
+                        "--lock-seeds, which asks for the seed colors verbatim.")
     p.add_argument("--min-separation", type=float, default=2.5,
                    help="merge class centers closer than this, measured in the weighted "
                         "clustering metric (default 2.5)")
+    p.add_argument("--encoding", choices=("softmax", "pairwise", "triangle"),
+                   default="softmax",
+                   help="how per-pixel memberships are computed. 'softmax' (default) "
+                        "reads each pixel as a soft classification, which switches "
+                        "between distant classes sharply and sharpens further still "
+                        "when any two classes are similar. 'pairwise' reads it as a "
+                        "mixture of the two classes that best explain it, blending "
+                        "linearly in reflectance, which is what the memberships are "
+                        "meant to drive downstream. 'triangle' lets three classes mix "
+                        "at once, which reconstructs better where the class colors "
+                        "span real area and no better where they lie on a line, so it "
+                        "is worth trying per texture rather than assuming.")
     p.add_argument("--blend-sigma", type=float, default=None,
-                   help="membership blend width in dE (default: 0.4x the smallest "
-                        "pairwise center separation)")
+                   help="membership blend width in dE for --encoding softmax "
+                        "(default: 0.4x the smallest pairwise center separation)")
+    p.add_argument("--blend-residual", type=float, default=2.0, metavar="TAU",
+                   help="for --encoding pairwise, how much worse a rival pair of "
+                        "classes has to reproduce a pixel before it stops "
+                        "contributing, in dE (default 2.0). Small values approach "
+                        "picking a single best pair, which is discontinuous where the "
+                        "winner changes; large values average unrelated pairs together "
+                        "and wash the fractions out. Unlike --blend-sigma this is a "
+                        "residual, not a distance between classes, so it does not "
+                        "couple to how far apart the classes happen to be.")
     p.add_argument("--noise", type=float, default=0.0, metavar="SIGMA",
                    help="std deviation of gaussian noise added independently to each "
                         "linear R, G, B channel after sRGB decode, clamped to [0,1] "
@@ -374,6 +686,23 @@ def main():
                         "all three channels, so a genuine color cast survives; chroma "
                         "widens along with the tonal range, which pushes hazy or "
                         "low-contrast scans further apart in a* b*.")
+    p.add_argument("--rarity", type=float, default=0.5, metavar="ALPHA",
+                   help="flatten the fit's sensitivity to how much of the texture a "
+                        "color covers, by repeating each sampled pixel in inverse "
+                        "proportion to how populated its region of color space is "
+                        "(default 0.5; 0 weights by area as before, 1 equalizes "
+                        "outright, clustering the palette rather than the pixels). "
+                        "Without it a material under a couple of percent cannot hold a "
+                        "class against the substrate even when seeded on it by hand. "
+                        "Reported class shares are unaffected: they are always measured "
+                        "on the sample as drawn.")
+    p.add_argument("--rarity-bin", type=float, default=4.0, metavar="DE",
+                   help="edge of the Lab bins --rarity measures color density over "
+                        "(default 4.0)")
+    p.add_argument("--rarity-floor", type=int, default=8, metavar="N",
+                   help="leave color bins holding fewer than N sampled pixels at their "
+                        "natural weight, so --rarity lifts thin materials and not the "
+                        "stray pixels of compression ringing (default 8)")
     p.add_argument("--samples", type=int, default=300_000, help="pixels sampled to fit centers")
     p.add_argument("--bits", type=int, choices=(8, 16), default=8)
     p.add_argument("--lightness-range", nargs=2, type=float, metavar=("LO", "HI"),
@@ -396,6 +725,16 @@ def main():
         p.error("--lock-seeds requires --seed-color or --pick")
     if args.pick_radius < 0:
         p.error("--pick-radius must be non-negative")
+    if not 0.0 <= args.rarity <= 1.0:
+        p.error("--rarity must be in [0, 1]")
+    if args.rarity_bin <= 0:
+        p.error("--rarity-bin must be positive")
+    if args.rarity_floor < 1:
+        p.error("--rarity-floor must be at least 1")
+    if args.blend_residual <= 0:
+        p.error("--blend-residual must be positive")
+    if not 50.0 <= args.endmember < 100.0:
+        p.error("--endmember must be in [50, 100)")
 
     to_lab, from_lab = SPACES[args.space]
     out_path = args.output or args.image.with_name(args.image.stem + "_cls.png")
@@ -436,7 +775,20 @@ def main():
 
     flat = lin.reshape(-1, 3)
     n = min(args.samples, len(flat))
-    sample = to_lab(flat[rng.choice(len(flat), n, replace=False)].astype(np.float64))
+    sample_lin = flat[rng.choice(len(flat), n, replace=False)].astype(np.float64)
+    sample = to_lab(sample_lin)
+
+    # The fit sees rare colors repeated; everything downstream (class shares, the
+    # L* range, the diagnostic scatter) reads the sample as drawn, so reported
+    # proportions stay true to the texture.
+    fit_sample = sample
+    if args.rarity > 0:
+        m = rarity_multiplicity(sample, args.rarity, args.rarity_bin,
+                                args.rarity_floor, 4 * n)
+        fit_sample = np.repeat(sample, m, axis=0)
+        print(f"  rarity weighting (alpha {args.rarity:g}, bin {args.rarity_bin:g} dE): "
+              f"{n} samples -> {len(fit_sample)}, thinnest color counted "
+              f"{m.max()}x against the busiest")
 
     seeds_lab = to_lab(np.asarray(seed_lin, dtype=np.float64)) if seed_lin else None
     if seeds_lab is not None and args.lock_seeds:
@@ -444,7 +796,8 @@ def main():
         weights = np.full(len(centers), 1.0 / len(centers))
         print(f"  {len(centers)} seed colors locked, no fit")
     else:
-        centers, weights = fit_centers(sample, args.classes, args.l_weight, args.seed, seeds_lab)
+        centers, weights = fit_centers(fit_sample, args.classes, args.l_weight,
+                                       args.seed, seeds_lab)
         # Merging seeded centers would collapse classes named apart on purpose.
         if args.classes > 1 and seeds_lab is None:
             centers, weights = merge_close(centers, weights, args.min_separation, args.l_weight)
@@ -457,6 +810,17 @@ def main():
               f"into others during the fit (--lock-seeds keeps them as picked)")
     else:
         print(f"  {k} seeded classes, merging disabled")
+
+    if args.endmember > 50.0:
+        if args.lock_seeds:
+            print("  --endmember ignored: --lock-seeds asks for the seeds verbatim")
+        else:
+            moved = chromatic_endmembers(sample, centers, args.endmember, args.l_weight)
+            delta = np.linalg.norm((moved - centers) * weight_scale(args.l_weight), axis=1)
+            centers = moved
+            print(f"  endmembers at the {args.endmember:g}th percentile: "
+                  f"centers moved {delta.mean():.2f} dE on average, "
+                  f"{delta.max():.2f} at most")
 
     if k > 1:
         d = pairwise(centers, args.l_weight)
@@ -471,12 +835,28 @@ def main():
     else:
         sep = 10.0
     sigma = args.blend_sigma if args.blend_sigma is not None else 0.4 * sep
-    print(f"  blend sigma: {sigma:.2f} dE")
+    if args.encoding == "softmax":
+        print(f"  blend sigma: {sigma:.2f} dE")
+    else:
+        print(f"  {args.encoding} mixing, blend residual: {args.blend_residual:.2f} dE")
+
+    # The pairwise encoding mixes in reflectance, so the centers are needed there
+    # too. Kept alongside `centers` from here on, reordered with them.
+    centers_lin = np.clip(from_lab(centers), 0.0, None)
+
+    def encode(lab, lin_rgb):
+        if args.encoding == "pairwise":
+            return pairwise_memberships(lab, lin_rgb, centers, centers_lin,
+                                        args.blend_residual, args.l_weight)
+        if args.encoding == "triangle":
+            return triangle_memberships(lab, lin_rgb, centers, centers_lin,
+                                        args.blend_residual, args.l_weight)
+        return memberships(lab, centers, sigma, args.l_weight)
 
     # Order classes by total membership mass over the sampled pixels.
-    mass = memberships(sample, centers, sigma, args.l_weight).sum(axis=0)
+    mass = encode(sample, sample_lin).sum(axis=0)
     order = np.argsort(-mass)
-    centers, mass = centers[order], mass[order]
+    centers, centers_lin, mass = centers[order], centers_lin[order], mass[order]
     shares = mass / mass.sum()
     print("  class shares: " + "  ".join(f"{s:.1%}" for s in shares))
 
@@ -496,10 +876,14 @@ def main():
     out = np.empty((H, W, 4), dtype=dtype)
     resid = np.zeros(H, dtype=np.float64)
     tile = max(1, (1 << 22) // max(W, 1))
+    if args.encoding in ("pairwise", "triangle"):
+        # Every hypothesis needs its own scratch, so take smaller bites.
+        tile = max(1, tile // 4)
     for y0 in range(0, H, tile):
         y1 = min(y0 + tile, H)
-        lab = to_lab(lin[y0:y1].reshape(-1, 3).astype(np.float64))
-        u = memberships(lab, centers, sigma, args.l_weight)
+        tile_lin = lin[y0:y1].reshape(-1, 3).astype(np.float64)
+        lab = to_lab(tile_lin)
+        u = encode(lab, tile_lin)
 
         # Pad to 4 classes so the sum-to-one encoding is uniform across textures.
         if k < 4:
@@ -516,9 +900,10 @@ def main():
 
     write_rgba(out, out_path)
     print(f"  wrote {out_path}  ({args.bits}-bit RGBA)")
-    print(f"  mean mixture residual: {resid.mean():.2f} dE  (diagnostic, not an objective)")
+    objective = "diagnostic, not an objective" if args.encoding == "softmax" \
+        else f"what the {args.encoding} encoding minimizes"
+    print(f"  mean mixture residual: {resid.mean():.2f} dE  ({objective})")
 
-    centers_lin = np.clip(from_lab(centers), 0.0, None)
     meta = {
         "source": args.image.name,
         "resolution": [W, H],
@@ -530,10 +915,16 @@ def main():
             "alpha": "L* = lightness_range[0] + A * (lightness_range[1] - lightness_range[0])",
             "bits": args.bits,
             "ordering": "descending total membership mass",
+            "membership": args.encoding,
         },
         "lightness_range": [lo, hi],
-        "blend_sigma": float(sigma),
+        "blend_sigma": float(sigma) if args.encoding == "softmax" else None,
+        "blend_residual": float(args.blend_residual) if args.encoding != "softmax" else None,
         "l_weight": args.l_weight,
+        "endmember": args.endmember,
+        "rarity": args.rarity,
+        "rarity_bin": args.rarity_bin,
+        "rarity_floor": args.rarity_floor,
         "min_separation": args.min_separation,
         "noise": args.noise,
         "stretch_percentile": args.stretch,
@@ -594,9 +985,9 @@ def write_diagnostics(out_path, lin, out, sample, centers, shares, args, seeds_l
     ax[1, 1].imshow(small[..., 3], cmap="gray"); ax[1, 1].set_title("A: lightness")
 
     # False-color composite: memberships blended with each class's own color.
-    #comp = np.einsum("...k,kc->...c", u[..., :k], cols)
-    #ax[1, 2].imshow(np.clip(comp, 0, 1)); ax[1, 2].set_title("class composite")
-    ax[1, 2].imshow(np.clip(u[...,:3], 0, 1)); ax[1, 2].set_title("class composite")
+    comp = np.einsum("...k,kc->...c", u[..., :k], cols)
+    ax[1, 2].imshow(np.clip(comp, 0, 1)); ax[1, 2].set_title("class composite")
+    #ax[1, 2].imshow(np.clip(u[...,:3], 0, 1)); ax[1, 2].set_title("class composite")
 
     ax[1, 3].scatter(sample[::37, 1], sample[::37, 2], s=1, alpha=0.05,
                      c=np.clip(linear_to_srgb(np.clip(from_lab(sample[::37]), 0, None)), 0, 1))

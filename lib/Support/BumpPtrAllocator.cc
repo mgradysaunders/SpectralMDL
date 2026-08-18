@@ -16,8 +16,7 @@ BumpPtrAllocator::~BumpPtrAllocator() {
 }
 
 void *BumpPtrAllocator::allocate(size_t size, size_t align) noexcept {
-  if (size == 0)
-    return nullptr;
+  if (size == 0) return nullptr;
   return static_cast<LLVMAllocator *>(mPtr)->Allocate(size, align);
 }
 

@@ -4,7 +4,10 @@
 #include <atomic>
 #include <cmath>
 #include <cstring>
+#include <map>
 #include <memory>
+#include <string>
+#include <vector>
 
 #include "smdl/Export.h"
 #include "smdl/Support/Macros.h"
@@ -153,6 +156,35 @@ public:
         }
       }
     }
+
+    /// Add an already-summed contribution of `numSamples` samples: the
+    /// count grows by `numSamples` while the totals grow by the given
+    /// sums. The buffer invariant this maintains is that `totals` is
+    /// always the raw sum over `totalCount` samples, and the mean is
+    /// taken only at the edges (see `mean()`).
+    ///
+    /// \param[in] numSamples
+    /// The number of samples summed into `totalPtr`.
+    ///
+    /// \param[in] totalPtr
+    /// The pointer to `numBands` summed contribution values.
+    ///
+    template <typename T>
+    void addSamples(uint64_t numSamples, const T *totalPtr) noexcept {
+      totalCount += numSamples;
+      for (size_t i = 0; i < numBands; i++) {
+        totals[i] += static_cast<double>(totalPtr[i]);
+      }
+    }
+
+    /// The mean of band `i`: the accumulated total divided by the
+    /// sample count, or 0 with no samples. This is the single source of
+    /// radiance values; every output must read the buffer through it.
+    [[nodiscard]] double mean(size_t i) const noexcept {
+      SMDL_SANITY_CHECK(i < numBands);
+      uint64_t count{totalCount.load(std::memory_order_relaxed)};
+      return count > 0 ? double(totals[i]) / double(count) : 0.0;
+    }
   };
 
   /// A pixel const reference.
@@ -183,6 +215,15 @@ public:
       SMDL_SANITY_CHECK(i < numBands);
       return totals[i];
     }
+
+    /// The mean of band `i`: the accumulated total divided by the
+    /// sample count, or 0 with no samples. This is the single source of
+    /// radiance values; every output must read the buffer through it.
+    [[nodiscard]] double mean(size_t i) const noexcept {
+      SMDL_SANITY_CHECK(i < numBands);
+      uint64_t count{totalCount.load(std::memory_order_relaxed)};
+      return count > 0 ? double(totals[i]) / double(count) : 0.0;
+    }
   };
 
   /// Get pixel reference.
@@ -196,14 +237,43 @@ public:
 
   /// Write an ENVI Standard image file and header.
   ///
+  /// The binary file holds the per-pixel per-band MEAN, i.e., the
+  /// accumulated totals divided by each pixel's sample count, so the
+  /// pixel values are physically meaningful radiance no matter how many
+  /// samples were folded in. When the sample count is uniform over the
+  /// image, the header records it as `samples per pixel = N`, which is
+  /// what `readENVIFile()` uses to reconstruct the totals so that a
+  /// later render can keep accumulating.
+  ///
   /// \param[in] wavelengths
   /// The wavelengths in nanometers.
   ///
   /// \param[in] fileName
-  /// The filename of the image.
+  /// The filename of the image. The header is written alongside as
+  /// `fileName + ".hdr"`.
   ///
-  void writeENVIFile(Span<const float> wavelengths,
-                     const std::string &fileName) const;
+  /// \param[in] extraHeaderLines
+  /// Additional `key = value` lines appended to the header verbatim,
+  /// for application metadata. Lines whose keys ENVI readers do not
+  /// recognize are ignored by convention.
+  ///
+  void writeENVIFile(Span<const float> wavelengths, const std::string &fileName,
+                     Span<const std::string> extraHeaderLines = {}) const;
+
+  /// The result of `readENVIFile()`, defined after the class.
+  struct ENVIFile;
+
+  /// Read an ENVI Standard image file and header, as written by
+  /// `writeENVIFile()`.
+  ///
+  /// The header is read from `fileName + ".hdr"`. Only the exact
+  /// format the writer emits is accepted (`data type = 5`, `interleave
+  /// = bip`); a byte order other than the native one is swapped on
+  /// load.
+  ///
+  /// \throws Error if either file is missing or malformed.
+  ///
+  [[nodiscard]] static ENVIFile readENVIFile(const std::string &fileName);
 
 private:
   size_t mNumBands{};
@@ -213,6 +283,26 @@ private:
   size_t mNumPixelsY{};
 
   std::unique_ptr<uint8_t[]> mBuf{};
+};
+
+/// The result of `SpectralRenderImage::readENVIFile()`.
+struct SpectralRenderImage::ENVIFile final {
+  /// The image, with totals and per-pixel counts reconstructed from
+  /// the stored means and the `samples per pixel` header field.
+  SpectralRenderImage image{};
+
+  /// The wavelengths in nanometers, empty if the header has none.
+  std::vector<float> wavelengths{};
+
+  /// The value of the `samples per pixel` header field, or 0 if the
+  /// header does not carry one (a foreign or legacy file). Without
+  /// it the image reads back with a count of 1 per pixel, so means
+  /// stay meaningful but the true sample count is unknown.
+  uint64_t samplesPerPixel{};
+
+  /// Every header field this loader has no specific handling for,
+  /// keyed by the lower-cased field name, values verbatim.
+  std::map<std::string, std::string> fields{};
 };
 
 /// \}

@@ -78,6 +78,15 @@ void SceneData::setFloat4(std::string_view name, float4 var) {
   });
 }
 
+void SceneData::setFloat4x4(std::string_view name, const float4x4 &var) {
+  set(name, [var](State *, Kind kind, int size, void *out) {
+    if (kind == Kind::Float && size == 16)
+      for (int j = 0; j < 4; j++)
+        for (int i = 0; i < 4; i++)
+          static_cast<float *>(out)[4 * j + i] = var[j][i];
+  });
+}
+
 void SceneData::setColor(std::string_view name,
                          std::function<void(State &, float *)> getter) {
   SMDL_SANITY_CHECK(getter != nullptr);

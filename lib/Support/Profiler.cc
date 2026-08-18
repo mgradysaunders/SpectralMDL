@@ -10,8 +10,8 @@ static bool isProfilerRunning{};
 
 void profilerInitialize(unsigned granularityMicroseconds,
                         const char *processName) {
-  SMDL_SANITY_CHECK(!isProfilerRunning,
-                    "Must only call profiler_initialize() once");
+  SMDL_SANITY_CHECK_MSG(!isProfilerRunning,
+                        "Must only call profiler_initialize() once");
   llvm::timeTraceProfilerInitialize(granularityMicroseconds, processName);
   isProfilerRunning = true;
 }
@@ -27,8 +27,8 @@ void profilerEntryEnd(ProfilerEntry *entry) {
 }
 
 void profilerFinalize(const char *outputFilename) {
-  SMDL_SANITY_CHECK(isProfilerRunning,
-                    "Must only call profiler_finalize() if initialized");
+  SMDL_SANITY_CHECK_MSG(isProfilerRunning,
+                        "Must only call profiler_finalize() if initialized");
   auto error{llvm::timeTraceProfilerWrite(outputFilename, "-")};
   if (error) {
     SMDL_LOG_ERROR("cannot write profiler time-trace file ",

@@ -1,13 +1,13 @@
 /// The renderer state in the current shading context, following the MDL
 /// specification. Unless documented otherwise, positions, normals, and
-/// tangents are in internal space, which SMDL takes to be tangent space.
+/// tangents are in internal space, which SMDL defines to be tangent space.
 #smdl
 
 import ::math::*;
 
 /// The coordinate space, used by the `transform*` functions.
 export enum coordinate_space {
-  coordinate_internal = 0, ///< The internal space, which SMDL takes to be tangent space.
+  coordinate_internal = 0, ///< The internal space, which SMDL defines to be tangent space.
   coordinate_object = 1,   ///< The object space.
   coordinate_world = 2,    ///< The world space.
 };
@@ -64,9 +64,13 @@ export float3x3 geometry_tangent_space(const int i) = float3x3($state.geometry_t
 @(macro)
 export int object_id() = $state.object_id;
 
-/// The lookup direction in environment lookups. NOTE: Not implemented yet, always zero.
+/// The lookup direction in environment lookups. At surface shading points
+/// this is, non-standardly, the direction of propagation of the ray that
+/// produced this evaluation, pointing toward the shading point. Zero if the
+/// renderer does not provide it, in which case direction-dependent effects
+/// must be skipped. Never normalize this without checking for zero!
 @(macro)
-export float3 direction() = /* $state.direction */ float3(0.0, 0.0, 0.0);
+export float3 direction() = $state.direction;
 
 /// The animation time of the current sample.
 @(macro)
@@ -95,8 +99,53 @@ export float meters_per_scene_unit() = $state.meters_per_scene_unit;
 @(macro)
 export float scene_units_per_meter() = 1.0 / $state.meters_per_scene_unit;
 
+/// The number of path segments traversed to reach this shading point, so 1
+/// at a primary hit. Zero means "not provided", which must be treated
+/// exactly like 1, i.e., highest fidelity.
+///
+/// NOTE: This is non-standard!
+@(macro)
+export int scattering_order() = $state.scattering_order;
+
+/// Is directly visible shading point?
+///
+/// NOTE: This is non-standard!
+@(macro)
+export bool directly_visible() = $state.scattering_order <= 1 && $state.transport == 0;
+
+/// The accumulated distance in scene units traveled by the path to reach
+/// this shading point. Zero conventionally means "not provided" and implies
+/// highest fidelity.
+///
+/// NOTE: This is non-standard!
+@(macro)
+export float travel_distance() = $state.travel_distance;
+
+/// The pixel ray cone spread angle in radians, using the small-angle
+/// convention that the cone width grows by `cone_angle` per unit distance.
+/// Zero means "no cone", i.e., level-of-detail off.
+///
+/// NOTE: This is non-standard!
+@(macro)
+export float cone_angle() = $state.cone_angle;
+
+/// The pixel ray cone width in scene units at the shading point. Zero means
+/// "no footprint", i.e., level-of-detail off.
+///
+/// NOTE: This is non-standard!
+@(macro)
+export float cone_width() = $state.cone_width;
+
+/// The UV texture density of texture space `i`: UV area per world-space
+/// area of the geometry, so `cone_width() * #sqrt(texture_density(i))` is
+/// a UV-space footprint radius. Zero means "unknown", i.e., no filtering.
+///
+/// NOTE: This is non-standard!
+@(macro)
+export float texture_density(const int i) = $state.texture_density[i];
+
 @(pure macro)
-float4x4 affine_inverse(const float4x4 matrix) {
+float4x4 affineInverse(const float4x4 matrix) {
   return float4x4(
            float4(matrix[0].x, matrix[1].x, matrix[2].x, 0.0),
            float4(matrix[0].y, matrix[1].y, matrix[2].y, 0.0),
@@ -117,11 +166,11 @@ export float4x4 transform(const coordinate_space from, const coordinate_space to
   } else if ((from == coordinate_object) & (to == coordinate_world)) {
     return $state.object_to_world_matrix;
   } else if ((from == coordinate_object) & (to == coordinate_internal)) {
-    return affine_inverse($state.tangent_to_object_matrix);
+    return affineInverse($state.tangent_to_object_matrix);
   } else if ((from == coordinate_world) & (to == coordinate_object)) {
-    return affine_inverse($state.object_to_world_matrix);
+    return affineInverse($state.object_to_world_matrix);
   } else if ((from == coordinate_world) & (to == coordinate_internal)) {
-    return affine_inverse($state.object_to_world_matrix * $state.tangent_to_object_matrix);
+    return affineInverse($state.object_to_world_matrix * $state.tangent_to_object_matrix);
   } else {
     // Unreachable
     return float4x4(1.0);
@@ -151,4 +200,74 @@ export float3 transform_normal(const coordinate_space from, const coordinate_spa
 export float transform_scale(const coordinate_space from, const coordinate_space to, const float scale) {
   // TODO
   return 1.0 * scale;
+}
+
+/// The next uniform random `float` in `[0, 1)`, drawn from the random
+/// number generator on the `$state`, advancing it. The renderer seeds the
+/// generator per evaluation, so sequential draws are decorrelated by
+/// construction, and a fixed initial generator keeps evaluations
+/// deterministic. Not available in `@(pure)` functions, which have no
+/// `$state`.
+///
+/// NOTE: This is non-standard!
+@(macro)
+export float random_float() = _randomFloat();
+
+/// The next uniform random `float2` in `[0, 1)^2`, drawn component-wise.
+///
+/// NOTE: This is non-standard!
+@(macro)
+export float2 random_float2() = return_from {
+  const auto x = _randomFloat();
+  const auto y = _randomFloat();
+  return float2(x, y);
+};
+
+/// The next uniform random `float3` in `[0, 1)^3`, drawn component-wise.
+///
+/// NOTE: This is non-standard!
+@(macro)
+export float3 random_float3() = return_from {
+  const auto x = _randomFloat();
+  const auto y = _randomFloat();
+  const auto z = _randomFloat();
+  return float3(x, y, z);
+};
+
+/// The next uniform random `float4` in `[0, 1)^4`, drawn component-wise.
+///
+/// NOTE: This is non-standard!
+@(macro)
+export float4 random_float4() = return_from {
+  const auto x = _randomFloat();
+  const auto y = _randomFloat();
+  const auto z = _randomFloat();
+  const auto w = _randomFloat();
+  return float4(x, y, z, w);
+};
+
+/// The next uniform random 32-bit integer, drawn from the random number
+/// generator on the `$state`, advancing it.
+///
+/// NOTE: This is non-standard!
+@(macro)
+export int random_int() = _randomInt();
+
+/// The next uniform random integer in `[0, bound)`, by rejection sampling.
+///
+/// NOTE: This is non-standard!
+@(macro)
+export int random_int(const int bound) {
+  if (bound > 1) {
+    // Work in 64-bit arithmetic so that the threshold remainder and the
+    // comparison below are effectively unsigned: zero-extend each 32-bit
+    // draw into [0, 2^32) instead of reinterpreting it as signed.
+    const auto bound64 = int64_t(bound);
+    const auto xmin = (int64_t(1) << 32) % bound64;
+    while (true) {
+      const auto x = (int64_t(_randomInt()) << 32) >>> 32;
+      return int(x % bound64) if (x >= xmin);
+    }
+  }
+  return 0;
 }

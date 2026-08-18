@@ -439,10 +439,27 @@ public:
   /// Get the parameter types.
   [[nodiscard]] std::vector<Type *> getTypes() const;
 
-  /// Get the paramter LLVM types.
-  [[nodiscard]] std::vector<llvm::Type *> getLLVMTypes() const;
+  /// The LLVM field index of a parameter that is voided, and so occupies
+  /// no storage in the struct laid out by `getLLVMFieldTypes()`.
+  static constexpr unsigned NO_LLVM_FIELD{~0U};
 
-  /// The lookup sequence.
+  /// Get the LLVM field types, i.e., the element types of the LLVM struct
+  /// this parameter list lays out.
+  ///
+  /// Voided parameters occupy no storage and are omitted entirely, so this
+  /// is shorter than the parameter list whenever any parameter is voided,
+  /// and the indexes do not line up. Use `getLLVMFieldIndex()` to convert.
+  ///
+  [[nodiscard]] std::vector<llvm::Type *> getLLVMFieldTypes() const;
+
+  /// Get the LLVM field index of the parameter at index `i`, or
+  /// `NO_LLVM_FIELD` if that parameter is voided.
+  [[nodiscard]] unsigned getLLVMFieldIndex(size_t i) const;
+
+  /// A field lookup path: each step is the parameter matched at that level
+  /// paired with its LLVM field index (`NO_LLVM_FIELD` when voided), so
+  /// that a caller can walk the path without re-deriving the layout of
+  /// each intermediate struct.
   using LookupSequence = std::vector<std::pair<const Parameter *, unsigned>>;
 
   /// Get the lookup sequence to access the given parameter name. Returns false
@@ -454,7 +471,7 @@ public:
   /// Is variadic? i.e., ends with `...`?
   bool isVariadic{};
 
-  /// The scope at the parameter list's declaration site — together with
+  /// The scope at the parameter list's declaration site: together with
   /// `lastSeq` this is the resolution anchor for lazily emitted bodies,
   /// and it is null iff no anchor was captured. See
   /// `Emitter::captureResolutionAnchor`/`restoreResolutionAnchor`.

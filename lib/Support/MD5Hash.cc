@@ -41,10 +41,10 @@ const MD5FileHash *MD5FileHasher::operator[](const std::string &fileName) {
   if (nameInserted) {
     auto hash{MD5Hash::hashFile(canonicalFileName)};
     // Identical files at different paths share one entry. The zero hash
-    // means the file was unreadable — keep those per-path so distinct
+    // means the file was unreadable; keep those per-path so distinct
     // broken files are not conflated.
-    auto &fileHash{fileHashes[std::pair(
-        hash, !hash ? canonicalFileName : std::string())]};
+    auto &fileHash{
+        fileHashes[std::pair(hash, !hash ? canonicalFileName : std::string())]};
     fileHash.hash = hash;
     fileHash.canonicalFileNames.push_back(canonicalFileName);
     nameItr->second = &fileHash;

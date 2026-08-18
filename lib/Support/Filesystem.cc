@@ -1,5 +1,6 @@
 #include "smdl/Support/Filesystem.h"
-#include "smdl/Common.h"
+#include "smdl/Support/Error.h"
+#include "smdl/Support/StringHelpers.h"
 
 #include <cerrno>
 #include <filesystem>
@@ -48,10 +49,8 @@ bool isParentPathOf(const std::string &path0, const std::string &path1) noexcept
 }
 
 std::string joinPaths(std::string_view path0, std::string_view path1) {
-  if (path1.empty())
-    return std::string(path0);
-  if (path0.empty())
-    return std::string(path1);
+  if (path1.empty()) return std::string(path0);
+  if (path0.empty()) return std::string(path1);
   return (std::filesystem::path(path0) / std::filesystem::path(path1)).string();
 }
 
@@ -59,9 +58,8 @@ std::string expandPathVariables(std::string_view path) {
   auto isNameStart{[](char ch) {
     return ch == '_' || (ch >= 'A' && ch <= 'Z') || (ch >= 'a' && ch <= 'z');
   }};
-  auto isNameContinue{[&](char ch) {
-    return isNameStart(ch) || (ch >= '0' && ch <= '9');
-  }};
+  auto isNameContinue{
+      [&](char ch) { return isNameStart(ch) || (ch >= '0' && ch <= '9'); }};
   const auto fullPath{path};
   auto result{std::string()};
   result.reserve(path.size());
@@ -112,8 +110,36 @@ std::string makePathCanonical(std::string path) noexcept try {
   return path;
 }
 
+std::string makePathAbsolute(std::string path) noexcept try {
+  if (!path.empty() && path[0] == '~') {
+    llvm::SmallString<128> pathTmp{};
+    llvm::sys::fs::expand_tilde(path, pathTmp);
+    path = pathTmp.str();
+  }
+  return std::filesystem::absolute(path).string();
+} catch (...) {
+  return path;
+}
+
 std::string makePathRelative(std::string path) noexcept try {
   return std::filesystem::relative(path).string();
+} catch (...) {
+  return path;
+}
+
+std::string bestPathForPrinting(std::string path) noexcept try {
+  // For the purpose of terminal spew, display the relative path (with
+  // respect to the current CWD), the absolute path, or the given string
+  // unaltered, depending on whichever is shortest.
+  auto absPath{makePathAbsolute(path)};
+  auto relPath{makePathRelative(path)};
+  if (absPath.size() < path.size() && absPath.size() < relPath.size()) {
+    return absPath;
+  } else if (relPath.size() < path.size()) {
+    return relPath;
+  } else {
+    return path;
+  }
 } catch (...) {
   return path;
 }

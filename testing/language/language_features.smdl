@@ -1,0 +1,675 @@
+#smdl
+
+struct Empty {};
+
+unit_test "Type checking" {
+  auto empty = Empty();
+  #assert(2 <: int);
+  #assert(2.0f <: float);
+  #assert(2.0d <: double);
+  #assert("Hi!" <: string);
+  #assert(empty <: Empty);
+  #assert(#sizeOf(int8_t) == 1);
+  #assert(#sizeOf(int16_t) == 2);
+  #assert(#sizeOf(int32_t) == 4);
+  #assert(#sizeOf(int64_t) == 8);
+  #assert(#alignOf(int8_t) == 1);
+  #assert(#alignOf(int32_t) == 4);
+  #assert(#alignOf(double) == 8);
+}
+
+unit_test "Type constructors" {
+  // The scalar constructors accept any bit width LLVM can represent, and the
+  // familiar spellings are aliases for the usual widths.
+  #assert(#getIntType(1) == bool);
+  #assert(#getIntType(32) == int);
+  #assert(#getFloatType(32) == float);
+  #assert(#getFloatType(64) == double);
+  #assert(#sizeOf(#getIntType(11)) == 2);
+  #assert(#getVectorType(float, 3) == float3);
+  #assert(#getVectorType(int, 2) == int2);
+  #assert(#getMatrixType(float, 4, 3) == float4x3);
+  #assert(#numCols(float4x3) == 4);
+  #assert(#numRows(float4x3) == 3);
+  // Every type has a name, and the name of a type without a familiar spelling
+  // is the constructor call that names it.
+  #assert(#typeName(int) == "int");
+  #assert(#typeName(float3) == "float3");
+  #assert(#typeName(#getIntType(11)) == "#getIntType(11)");
+}
+
+unit_test "Bit casting" {
+  // '#bitCast' reinterprets the bytes, so the exponent and mantissa of 1.0f
+  // land in the IEEE-754 single precision bit pattern.
+  #assert(#bitCast(int, 1.0f) == 0x3F800000);
+  #assert(#bitCast(float, 0x3F800000) == 1.0f);
+  // Round tripping through an equally sized type is the identity.
+  const auto v = float2(1.25, -3.5);
+  #assert(#all(#bitCast(float2, #bitCast(int2, v)) == v));
+}
+
+unit_test "Bit counting" {
+  // '#bitReverse' reverses the bit order within the width of the type, so the
+  // low bit of an int32 becomes the high bit.
+  #assert(#bitReverse(int32_t(1)) == int32_t(0x80000000));
+  #assert(#bitReverse(#bitReverse(int32_t(0x0F0F1234))) == int32_t(0x0F0F1234));
+  #assert(#ctpop(int32_t(0b1011)) == 3);
+  #assert(#ctlz(int32_t(1)) == 31);
+  #assert(#cttz(int32_t(0b1000)) == 3);
+}
+
+unit_test "Approximate comparison" {
+  // Absolute tolerance `|eps|` means `#abs(lhs - rhs) <= eps`, so zero
+  // tolerance is exact equality.
+  #assert(3.7 ~== |0.0| 3.7);
+  #assert(0.3 ~== |1e-6| 0.1 + 0.2);
+  #assert(1.0 ~!= |1e-6| 1.001);
+
+  // The epsilon may be any unary expression, including parenthesized.
+  #assert(1.0 ~== |(0.5 * 1e-5)| 1.0);
+
+  // Relative tolerance `(eps)` means
+  // `#abs(lhs - rhs) <= eps * #max(#abs(lhs), #abs(rhs))`, so it is
+  // magnitude-independent where absolute tolerance is not.
+  #assert(1.0e6 ~== (1e-5) 1.000001e6);
+  #assert(1.0e6 ~!= |1e-5| 1.000001e6);
+  #assert(1.0e-6 ~== (1e-5) 1.000001e-6);
+  #assert(1.0 ~!= (1e-3) 1.1);
+
+  // The epsilon may be any expression inside the parentheses.
+  #assert(1.0e6 ~== (0.5 * 2e-5) 1.000001e6);
+
+  // Relative tolerance is symmetric in the operands.
+  #assert(1.000001e6 ~== (1e-5) 1.0e6);
+
+  // Relative tolerance against zero only accepts exact zero.
+  #assert(0.0 ~== (0.5) 0.0);
+  #assert(1e-8 ~!= (0.5) 0.0);
+
+  // Vector operands broadcast a scalar epsilon elementwise.
+  #assert(#all(float2(1.0, -1.0) ~== |1e-6| float2(1.0, -1.0)));
+  #assert(#all(float2(1.0e6, 1.0e-3) ~== (1e-5) float2(1.000001e6, 1.0e-3)));
+}
+
+unit_test "Complex numbers" {
+  auto z = complex(0.884, -0.318);
+  #assert(#real(z) ~== |1e-6| 0.884);
+  #assert(#imag(z) ~== |1e-6| -0.318);
+  #assert(#norm(z) ~== |1e-6| #real(#conj(z) * z));
+  #assert(#abs(z) ~== |1e-6| #sqrt(#norm(z)));
+
+  const auto sqrt_z = #sqrt(z);
+  #assert(#real(sqrt_z * sqrt_z) ~== |1e-6| #real(z));
+  #assert(#imag(sqrt_z * sqrt_z) ~== |1e-6| #imag(z));
+
+  const auto log_z = #log(z);
+  #assert(#real(#exp(log_z)) ~== |1e-6| #real(z));
+  #assert(#imag(#exp(log_z)) ~== |1e-6| #imag(z));
+
+  // Literal imaginary
+  #assert(#real(#exp(0.558j)) ~== |1e-6| #cos(0.558));
+  #assert(#imag(#exp(0.558j)) ~== |1e-6| #sin(0.558));
+
+  // Intrinsics behave as expected on real numbers
+  #assert(#real(2.4) == 2.4);
+  #assert(#imag(2.4) == 0.0);
+  #assert(#conj(2.4) == 2.4);
+  #assert(#norm(2.4) ~== |1e-6| 2.4 * 2.4);
+}
+
+struct Defaults {
+  int x = 2;
+  int y = 3 + x;
+  int z = 4 - 2 * y + x;
+};
+
+unit_test "Defaults" {
+  // Variables with same names as the struct fields to make sure nothing
+  // shadows!
+  int x = 102 [[anno::unused()]];
+  int y = 103 [[anno::unused()]];
+  int z = 104 [[anno::unused()]];
+  auto foo0 = Defaults();
+  #assert(foo0.x == 2);
+  #assert(foo0.y == 3 + 2);
+  #assert(foo0.z == 4 - 2 * (3 + 2) + 2);
+
+  auto foo1 = Defaults(x: 5);
+  #assert(foo1.x == 5);
+  #assert(foo1.y == 3 + 5);
+  #assert(foo1.z == 4 - 2 * (3 + 5) + 5);
+}
+
+struct Finalizable {
+  int bar = 4;
+  int baz = 2 * bar - 3;
+
+  // The finalize block has the opportunity to check or modify
+  // the fields immediately after the constructor. NOTE: Does not
+  // run after the copy constructor!
+  finalize {
+    bar = #min(bar, 11);
+    baz = #min(baz, 17);
+  }
+};
+
+unit_test "Finalize" {
+  auto foo = Finalizable(bar: 13);
+  #assert(foo.bar == 11); // Clamped at 11!
+  #assert(foo.baz == 17); // Clamped at 17!
+
+  foo.bar = 13;
+  foo.baz = 2 * 13 - 3;
+  foo = Finalizable(foo); // Copying does NOT run finalize!
+  #assert(foo.bar == 13);
+  #assert(foo.baz == 23);
+}
+
+struct CtorPrecedence {
+  // The parameter name 'value' deliberately collides with the field name,
+  // so 'CtorPrecedence(value: ...)' resolves both as this constructor and
+  // as field-wise construction. Explicit constructors are applied first!
+  CtorPrecedence(const int value) = CtorPrecedence(field_wise: false, value: 10 * value);
+
+  bool field_wise = true;
+
+  int value = 0;
+};
+
+unit_test "Constructor precedence" {
+  // Both the constructor and field-wise construction can resolve this,
+  // and the constructor must win.
+  auto foo0 = CtorPrecedence(value: 7);
+  #assert(!foo0.field_wise);
+  #assert(foo0.value == 70);
+
+  // Naming a field the constructor does not know forces field-wise
+  // construction.
+  auto foo1 = CtorPrecedence(value: 7, field_wise: true);
+  #assert(foo1.field_wise);
+  #assert(foo1.value == 7);
+}
+
+struct StaticFields {
+  // Static fields are visible in ordinary field initializers, even
+  // if declared after the ordinary field. This is because the ordinary
+  // field initializer is not invoked until an instance of the struct
+  // is constructed.
+  int v = 2 * bar - baz;
+
+  // Static fields must have initializers that evaluate to compile-time
+  // constants.
+  static const int bar = 11;
+
+  // Static field initializers may reference static fields declared
+  // above in the same struct.
+  static const int baz = 3 * bar - 9;
+};
+
+unit_test "Static fields" {
+  // Static fields may be accessed either thru instances of the
+  // struct or through the struct type itself
+  auto foo = StaticFields();
+  #assert(StaticFields.bar == 11);
+  #assert(StaticFields.baz == 33 - 9);
+  #assert(#typeOf(foo) == StaticFields);
+  #assert(#typeOf(foo).bar == foo.bar);
+  #assert(#typeOf(foo).baz == foo.baz);
+  #assert(foo.v == 22 - 33 + 9);
+
+  // Static fields are not stored on instances of the struct
+  // and therefore do not contribute to the `#sizeOf(StaticFields)`
+  #assert(#sizeOf(StaticFields) == #sizeOf(int));
+}
+
+struct VoidFields {
+  auto bar;
+  auto baz;
+};
+
+// The same live fields as `Interleaved` below, and nothing else, so that
+// the two sizes can be compared directly.
+struct Interleaved2 {
+  int a = 1;
+  float b = 2.0;
+};
+
+// Voided fields both between and after the live ones. The interleaving is
+// what catches a field-index-to-element-index mapping that is off by one.
+struct Interleaved {
+  int a = 1;
+  auto v = void();
+  float b = 2.0;
+  auto w = void();
+};
+
+unit_test "Void fields" {
+  // Void-ing fields is legal!
+  auto foo = VoidFields(bar: void(), baz: void());
+
+  // Accessing these fields returns `void`.
+  #assert(foo.bar <: void);
+  #assert(foo.baz <: void);
+
+  // Voided fields occupy no storage at all: they are absent from the
+  // struct layout, not reduced to a placeholder byte. A struct of nothing
+  // but voided fields is therefore empty.
+  #assert(#sizeOf(#typeOf(foo)) == 0);
+
+  // And the live fields around them lay out exactly as they would if the
+  // voided ones were not written at all.
+  auto bar = Interleaved();
+  #assert(#sizeOf(#typeOf(bar)) == #sizeOf(Interleaved2));
+
+  // The live fields still read back correctly on both sides of a voided
+  // one, by default construction, ...
+  #assert(bar.a == 1);
+  #assert(bar.b == 2.0);
+  #assert(#isVoid(bar.v));
+  #assert(#isVoid(bar.w));
+
+  // ... naming every field explicitly, including the voided ones, ...
+  auto baz = Interleaved(a: 3, v: void(), b: 4.0, w: void());
+  #assert(baz.a == 3);
+  #assert(baz.b == 4.0);
+
+  // ... and copying the whole struct.
+  auto qux = baz;
+  #assert(qux.a == 3);
+  #assert(qux.b == 4.0);
+
+  // Taking the address of a voided field is a compile error, so the way
+  // to write generic code over a field that may or may not be voided is
+  // to guard with `#hasField`. The dead branch of a compile-time `?:` is
+  // never emitted, so the guard is what makes this legal.
+  const auto ptr_v = #hasField(bar, "v") ? &bar.v : none;
+  const auto ptr_b = #hasField(bar, "b") ? &bar.b : none;
+  #assert(#isVoid(ptr_v));
+  #assert(*ptr_b == 2.0);
+}
+
+// A voided parameter drops out of the LLVM signature the same way a
+// voided field drops out of a struct layout. Each of these puts the
+// voided parameter somewhere that a mistake in the index bookkeeping
+// would show up: the caller and the callee have to agree about which
+// positions disappeared.
+
+// Voided in the middle of the list.
+int voided_between(int a, auto x [[anno::unused()]], int b) = a + b;
+
+// Every parameter voided, so the function takes nothing at all.
+int voided_all(auto x [[anno::unused()]], auto y [[anno::unused()]]) = 42;
+
+// Voided by a generic default rather than by deduction, and referenced in
+// the body, which is the reason a voided parameter still has to bind.
+float voided_used($(?float) k = none, float v = 1.0) {
+  return #isVoid(k) ? v : v * k;
+}
+
+// Impure, so the state pointer leads the signature and must not shift.
+float voided_with_state(auto x [[anno::unused()]], float v) = v + $state.position.x;
+
+// Larger than the 64-byte threshold, so it travels as an indirect
+// ('byval') parameter whose index must survive the dropped ones.
+struct VoidParamBig {
+  double a = 1.0;
+  double b = 2.0;
+  double c = 3.0;
+  double d = 4.0;
+  double e = 5.0;
+  double f = 6.0;
+  double g = 7.0;
+  double h = 8.0;
+  double i = 9.0;
+};
+
+double voided_around_indirect(auto x [[anno::unused()]], VoidParamBig p, auto y [[anno::unused()]], double s) = p.a + p.i + s;
+
+// Returned indirectly, which rebuilds the function with a leading result
+// slot and shifts every parameter index by one.
+VoidParamBig voided_with_indirect_return(auto x [[anno::unused()]], double a, auto y [[anno::unused()]]) {
+  auto result = VoidParamBig();
+  result.a = a;
+  return result;
+}
+
+// Recursive, so the call is emitted against the by-value placeholder and
+// rewritten afterwards.
+int voided_recursive(auto x [[anno::unused()]], int n) = n <= 0 ? 0 : 1 + voided_recursive(void(), n - 1);
+
+@(macro)
+int voided_macro(auto x [[anno::unused()]], int n) = n * 2;
+
+unit_test "Void parameters" {
+  #assert(voided_between(3, void(), 4) == 7);
+  #assert(voided_all(void(), void()) == 42);
+  #assert(voided_used(v: 4.0) == 4.0);
+  #assert(voided_used(k: 0.5, v: 4.0) == 2.0);
+  #assert(voided_with_state(void(), 2.0) == 2.0 + $state.position.x);
+  #assert(voided_around_indirect(void(), VoidParamBig(), void(), 0.5) == 10.5);
+  #assert(voided_recursive(void(), 5) == 5);
+  #assert(voided_macro(void(), 21) == 42);
+
+  const auto big = voided_with_indirect_return(void(), 11.0, void());
+  #assert(big.a == 11.0);
+  #assert(big.i == 9.0);
+}
+
+struct HasFieldProbe {
+  int always = 1;
+
+  // Voided by its initializer.
+  auto voided = void();
+
+  // Comptime-generic: the instantiated field type is whatever it is
+  // constructed with, and `void` when it is left at `none`.
+  $(?color) generic = none;
+
+  // A genuine optional union, which is present either way. Whether it
+  // holds a color is a runtime question, not a compile-time one.
+  ?color optional = none;
+
+  static const int static_field = 3;
+};
+
+// `#hasField` folds to a constant with no instructions, so it is legal
+// at module scope.
+const bool PROBE_HAS_ALWAYS = #hasField(HasFieldProbe(), "always");
+
+unit_test "Has field" {
+  const auto probe = HasFieldProbe();
+  #assert(#hasField(probe, "always"));
+  #assert(!#hasField(probe, "voided"));
+  #assert(!#hasField(probe, "generic"));
+  #assert(#hasField(probe, "optional"));
+
+  // Static fields count, just as they do for field access.
+  #assert(#hasField(probe, "static_field"));
+
+  // A field that is not declared at all is simply absent, rather than
+  // the error that spelling this `!#isVoid(probe.nonexistent)` would be.
+  #assert(!#hasField(probe, "nonexistent"));
+
+  // A compile-time type asks about instances of that type, so that the
+  // two spellings agree.
+  #assert(#hasField(#typeOf(probe), "always"));
+  #assert(!#hasField(#typeOf(probe), "voided"));
+
+  // Pointers forward to the pointee, matching field access through them.
+  auto addressable = HasFieldProbe();
+  #assert(#hasField(&addressable, "always"));
+  #assert(!#hasField(&addressable, "voided"));
+
+  // Builtin pseudo-fields count too.
+  #assert(#hasField(float3(), "xy"));
+  #assert(!#hasField(float3(), "w"));
+  #assert(#hasField($state, "normal"));
+
+  // Types with no fields at all, including void itself.
+  #assert(!#hasField(probe.always, "anything"));
+  #assert(!#hasField(void(), "anything"));
+
+  #assert(PROBE_HAS_ALWAYS);
+}
+
+unit_test "Has field on generic" {
+  // The same struct, constructed so the generic field resolves to
+  // `color` instead of collapsing to `void`.
+  const auto probe = HasFieldProbe(generic: color(0.5));
+  #assert(#hasField(probe, "generic"));
+  #assert(#typeOf(probe.generic) == color);
+
+  // The optional is unchanged: it is present in both instantiations.
+  #assert(#hasField(probe, "optional"));
+}
+
+// A `#assert` whose condition folds is decided at compile time: a true
+// one emits nothing, and a false one is a compile-time error rather
+// than a panic that has to be reached to report. So this macro is
+// checked at every expansion, even the ones folded into compile-time
+// constants where no runtime panic could ever have fired.
+@(pure macro) int checked_positive(const int n) {
+  #assert(n > 0, "expected a positive value");
+  return n;
+}
+
+const int CHECKED_AT_MODULE_SCOPE = checked_positive(7);
+
+unit_test "Comptime assert" {
+  // Folds to nothing. Every `#assert` above with a compile-time
+  // condition is in the same boat.
+  #assert(1 + 1 == 2);
+  #assert(#typeOf(CHECKED_AT_MODULE_SCOPE) == int);
+  #assert(CHECKED_AT_MODULE_SCOPE == 7);
+
+  // Still an ordinary runtime assertion when the condition is not
+  // compile-time.
+  #assert(checked_positive($state.wavelength_max > 0.0 ? 3 : 5) > 0);
+}
+
+struct Destructurable {
+  int bar = 2;
+  int baz = 3;
+};
+
+unit_test "Destructure" {
+  const auto foo = Destructurable(bar: 7, baz: 5);
+  const auto {bar, baz} = foo;
+  #assert(bar == 7);
+  #assert(baz == 5);
+  auto {bar2, baz2} = foo; // No const
+  bar2 = 8;
+  baz2 = 11;
+  #assert(bar2 == 8);
+  #assert(baz2 == 11);
+}
+
+int add3(int a, int b, int c) = a + b + c;
+
+// A function variant may be expressed in two ways. The first is simply
+// a call expression with named arguments that will operate as defaults
+// if not explicitly set in the variant call.
+int add3_variant(*) = add3(a: 2);
+
+// The second is a let expression followed by a call expression with
+// a call expression with named arguments. This allows the user to
+// define arbitrary helper variables conveniently. The let variables go
+// unused in instantiations that pass 'c' explicitly (the default they
+// feed is skipped), so they are marked to quiet the warning.
+int add3_variant_of_variant(*) = let {
+                                   int f = 7 [[anno::unused()]];
+                                   int g = 11 [[anno::unused()]];
+                                 } in add3_variant(c: f * g + 1);
+
+unit_test "Function variants" {
+  #assert(add3_variant(4, 7) == 2 + 4 + 7);
+  #assert(add3_variant_of_variant(8) == 2 + 8 + (7 * 11 + 1));
+  #assert(add3_variant_of_variant(8, c: 1) == 2 + 8 + 1);
+}
+
+// This is a concrete run-time function. This must not return auto!
+@(pure)
+int factorial(int n) {
+  return 1 if (n <= 1);
+  switch (n) {
+  case 2: return 2;
+  case 3: return 3 * 2;
+  default: break;
+  }
+  return n * factorial(n - 1);
+}
+
+// This is a macro that expands inline at compile-time. If you
+// pass in a compile-time constant it evaluates at compile-time,
+// otherwise there is a recursion-depth-exceeded error!
+@(pure macro)
+auto factorial_macro(const auto n) {
+  if (n <= 1)
+    return 1;
+  else
+    return n * factorial_macro(n - 1);
+}
+
+unit_test "Recursion" {
+  #assert(factorial(0) == 1);
+  #assert(factorial(4) == 4 * 3 * 2 * 1);
+  #assert(factorial(7) == 7 * 6 * 5 * 4 * 3 * 2 * 1);
+  #assert(factorial_macro(5) == 5 * 4 * 3 * 2 * 1);
+}
+
+@(pure)
+&int first_nonnull(
+  const &int a,
+  const &int b,
+  const &int c,
+) = a else b else c;
+
+unit_test "Else expressions" {
+  int a = 7;
+  int b = 1;
+  int c = 9;
+  #assert(first_nonnull(&a, &b, &c) == &a);
+  #assert(first_nonnull(none, &b, &c) == &b);
+  #assert(first_nonnull(none, none, &c) == &c);
+}
+
+unit_test "Return from" {
+  auto result = return_from {
+    int sum = 0;
+    for (int i = 0; i < 10; i++) {
+      sum += 3 * i + 1;
+      return sum if (sum > 20);
+    }
+    return -17;
+  };
+  #assert(result == 22);
+}
+
+@(pure macro)
+float select_lane(const int lane, const float4 v) {
+  return v.x if (lane < 0);
+  return v[lane];
+}
+
+unit_test "Late if comptime fold" {
+  // A comptime-true late 'if' must prune the statements after it, or
+  // 'v[lane]' would be rejected for its constant out-of-bounds index.
+  #assert(select_lane(-1, float4(1, 2, 3, 4)) == 1);
+  // And a comptime-false late 'if' must skip the guarded statement.
+  #assert(select_lane(2, float4(1, 2, 3, 4)) == 3);
+}
+
+int get_array_dim(auto[<N>] x) {
+  x; // Silence unused parameter warning
+  return N;
+}
+
+int get_array_dim_rows(auto[<M>][<N>] x) {
+  x; // Silence unused parameter warning
+  return M;
+}
+
+int get_array_dim_cols(auto[<M>][<N>] x) {
+  x; // Silence unused parameter warning
+  return N;
+}
+
+unit_test "Inferred-size arrays" {
+  auto arr1 = int[3](4, 5, 6);
+  auto arr2 = int[4][2](
+    int[2](1, 2),
+    int[2](3, 4),
+    int[2](5, 6),
+    int[2](7, 8),
+  );
+  #assert(get_array_dim(arr1) == 3);
+  #assert(get_array_dim_rows(arr2) == 4);
+  #assert(get_array_dim_cols(arr2) == 2);
+}
+
+unit_test "Working heapAllocate and heapFree" {
+  auto p = #heapAllocate(64, 16);
+  #assert(bool(p));
+  #heapFree(p);
+  // Both arguments come straight from source, so neither is guaranteed to
+  // be sane on the way in: the alignment need not be a power of two or a
+  // multiple of the pointer size, and the size need not be a multiple of
+  // the alignment. Every one of these must still allocate.
+  auto p0 = #heapAllocate(1, 1);
+  auto p1 = #heapAllocate(12, 3);
+  auto p2 = #heapAllocate(100, 64);
+  #assert(bool(p0));
+  #assert(bool(p1));
+  #assert(bool(p2));
+  #heapFree(p0);
+  #heapFree(p1);
+  #heapFree(p2);
+}
+
+unit_test "Working bump and bumpAllocate" {
+  auto p0 = #bumpAllocate(64, 16);
+  auto p1 = #bumpAllocate(64, 16);
+  #assert(bool(p0));
+  #assert(bool(p1));
+  #assert(p0 != p1);
+  auto v = #bump(float4(1, 2, 3, 4));
+  #assert(#all(*v == float4(1, 2, 3, 4)));
+}
+
+unit_test "Monotonic clock" {
+  const auto t0 = #clock();
+  const auto t1 = #clock();
+  #assert(#typeOf(t0) == #getIntType(64));
+  // The counter is monotonic, so consecutive reads must not decrease. On
+  // targets without a cycle counter both reads are 0 and this still holds.
+  #assert(t1 >= t0);
+}
+
+unit_test "Select over colors" {
+  auto c = color(0.0);
+  for (int i = 0; i < $WAVELENGTH_BASE_MAX; i++)
+    c[i] = float(i);
+  // A boolean vector condition, which is what comparing two colors yields,
+  // selects componentwise and keeps the result a color.
+  const auto both = #select(c < 8.0, color(-1.0), c);
+  #assert(#typeOf(both) == color);
+  // A scalar selection argument alongside a color one is broadcast, as is a
+  // scalar condition.
+  const auto mixed = #select(c < 8.0, -1.0, c);
+  #assert(#typeOf(mixed) == color);
+  const auto scalarCond = #select(true, color(-1.0), c);
+  #assert(#typeOf(scalarCond) == color);
+  for (int i = 0; i < $WAVELENGTH_BASE_MAX; i++) {
+    const auto expect = i < 8 ? -1.0 : float(i);
+    #assert(both[i] == expect);
+    #assert(mixed[i] == expect);
+    #assert(scalarCond[i] == -1.0);
+  }
+  // Two scalars still take their extent from the condition.
+  #assert(#typeOf(#select(float3(1.0) < 2.0, 0.0, 1.0)) == float3);
+}
+
+// The build configuration constants fold at compile time, so they are
+// usable where only a constant is: at module scope, and as the condition
+// of an `if $(...)` that compiles just the branch that applies.
+const bool HAS_NANOVDB_AT_MODULE_SCOPE = $HAS_NANOVDB;
+const bool HAS_PTEX_AT_MODULE_SCOPE = $HAS_PTEX;
+
+unit_test "Build configuration" {
+  #assert(#typeOf($HAS_NANOVDB) == bool);
+  #assert(#typeOf($HAS_PTEX) == bool);
+  #assert($HAS_NANOVDB == HAS_NANOVDB_AT_MODULE_SCOPE);
+  #assert($HAS_PTEX == HAS_PTEX_AT_MODULE_SCOPE);
+  // The branch not taken is never emitted, which is what lets a gated
+  // block name resources that an unconfigured build cannot load.
+  if $($HAS_NANOVDB) {
+    #assert($HAS_NANOVDB);
+  } else {
+    #assert(!$HAS_NANOVDB);
+  }
+  if $($HAS_PTEX) {
+    #assert($HAS_PTEX);
+  } else {
+    #assert(!$HAS_PTEX);
+  }
+}

@@ -2,8 +2,6 @@
 // vim:foldmethod=marker:foldlevel=0:fmr=--{,--}
 #pragma once
 
-#include <array>
-#include <functional>
 #include <initializer_list>
 #include <type_traits>
 #include <utility>

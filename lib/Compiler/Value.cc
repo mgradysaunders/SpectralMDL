@@ -97,8 +97,8 @@ Declaration *Declaration::resolveInScope(Context &context,
                                          Declaration **unusableMatch) {
   if (!scope || name.empty()) return nullptr;
   name = context.internName(name);
-  // Gather the candidates for every prefix of the name — an exact-name
-  // match for the full name, a namespace descent for a proper prefix — and
+  // Gather the candidates for every prefix of the name (an exact-name
+  // match for the full name, a namespace descent for a proper prefix) and
   // try them newest-first, mirroring the chain walk's declaration order.
   struct Candidate final {
     Declaration *declaration{};
@@ -176,21 +176,35 @@ std::vector<Type *> ParameterList::getTypes() const {
   return transform<Type *>([](auto &param) { return param.type; });
 }
 
-std::vector<llvm::Type *> ParameterList::getLLVMTypes() const {
-  return transform<llvm::Type *>([](auto &param) {
-    auto llvmType = param.type->llvmType;
-    // Account for `void` fields!
-    if (llvmType && llvmType->isVoidTy())
-      llvmType = llvm::Type::getInt8Ty(llvmType->getContext());
-    return llvmType;
-  });
+std::vector<llvm::Type *> ParameterList::getLLVMFieldTypes() const {
+  auto llvmTypes{std::vector<llvm::Type *>{}};
+  llvmTypes.reserve(size());
+  for (auto &param : *this) {
+    // Voided fields occupy no storage: they are absent from the layout
+    // rather than reduced to a placeholder byte. Note that this shifts
+    // every subsequent field down, which is what `getLLVMFieldIndex()`
+    // accounts for.
+    if (param.type->isVoid()) continue;
+    llvmTypes.push_back(param.type->llvmType);
+  }
+  return llvmTypes;
+}
+
+unsigned ParameterList::getLLVMFieldIndex(size_t i) const {
+  SMDL_SANITY_CHECK(i < size());
+  if ((*this)[i].type->isVoid()) return NO_LLVM_FIELD;
+  unsigned j = 0;
+  for (size_t k = 0; k < i; k++)
+    if (!(*this)[k].type->isVoid()) j++;
+  return j;
 }
 
 bool ParameterList::getLookupSequence(std::string_view name,
                                       LookupSequence &seq) const {
   unsigned i = 0;
   for (auto &param : *this) {
-    seq.push_back({&param, i});
+    const auto isVoid{param.type->isVoid()};
+    seq.push_back({&param, isVoid ? NO_LLVM_FIELD : i});
     if (param.name == name) return true;
     if (param.isInline()) {
       if (auto structType{
@@ -200,7 +214,7 @@ bool ParameterList::getLookupSequence(std::string_view name,
       }
     }
     seq.pop_back();
-    i++;
+    if (!isVoid) i++;
   }
   return false;
 }

@@ -1,0 +1,41 @@
+#smdl
+
+import ::scene::*;
+
+// The `scene::data_lookup_*` macros expand to `$SCENE_DATA`, which must match
+// the keyword the compiler registers in `Context.cc`. Because they are
+// `@(macro)`s they are only instantiated where they are used, so a mismatch
+// compiles cleanly and fails here instead --- at the first call site.
+//
+// With no getters registered, every lookup misses and returns its default,
+// which is enough to exercise the identifier.
+unit_test "Scene data lookup falls back to defaults" {
+  #assert(!scene::data_isvalid("smdl_absent"));
+  #assert(scene::data_lookup_int("smdl_absent", 7) == 7);
+  #assert(scene::data_lookup_float("smdl_absent", 2.5) == 2.5);
+  #assert(#all(scene::data_lookup_int2("smdl_absent", int2(3, 4)) == int2(3, 4)));
+  #assert(#all(scene::data_lookup_float3("smdl_absent", float3(1.0, 2.0, 3.0)) == float3(1.0, 2.0, 3.0)));
+}
+
+unit_test "Scene data uniform aliases and float4x4" {
+  // SMDL has no uniform/varying distinction, so the `uniform` names are
+  // aliases of the generic lookups; they must fall back identically.
+  #assert(scene::data_lookup_uniform_int("smdl_absent", 7) == 7);
+  #assert(#all(scene::data_lookup_uniform_int2("smdl_absent", int2(3, 4)) == int2(3, 4)));
+  #assert(#all(scene::data_lookup_uniform_int3("smdl_absent", int3(3, 4, 5)) == int3(3, 4, 5)));
+  #assert(#all(scene::data_lookup_uniform_int4("smdl_absent", int4(3, 4, 5, 6)) == int4(3, 4, 5, 6)));
+  #assert(scene::data_lookup_uniform_float("smdl_absent", 2.5) == 2.5);
+  #assert(#all(scene::data_lookup_uniform_float2("smdl_absent", float2(1.0, 2.0)) == float2(1.0, 2.0)));
+  #assert(#all(scene::data_lookup_uniform_float3("smdl_absent", float3(1.0, 2.0, 3.0)) == float3(1.0, 2.0, 3.0)));
+  #assert(#all(scene::data_lookup_uniform_float4("smdl_absent", float4(1.0, 2.0, 3.0, 4.0)) == float4(1.0, 2.0, 3.0, 4.0)));
+  #assert(#all(scene::data_lookup_uniform_color("smdl_absent", color(0.25)) == color(0.25)));
+  // The matrix lookup misses and returns its default, including the
+  // spec's zero-matrix default when none is given.
+  const auto m = scene::data_lookup_float4x4("smdl_absent", float4x4(2.0));
+  #assert(m[0][0] == 2.0 && m[1][1] == 2.0 && m[2][2] == 2.0 && m[3][3] == 2.0);
+  #assert(m[1][0] == 0.0 && m[0][3] == 0.0);
+  const auto mu = scene::data_lookup_uniform_float4x4("smdl_absent", float4x4(3.0));
+  #assert(mu[2][2] == 3.0 && mu[3][0] == 0.0);
+  const auto mz = scene::data_lookup_float4x4("smdl_absent");
+  #assert(mz[0][0] == 0.0 && mz[3][3] == 0.0);
+}

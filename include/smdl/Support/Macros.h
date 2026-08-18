@@ -12,26 +12,26 @@ namespace smdl {
 /// \addtogroup support
 /// \{
 
-/// Expand the correct sanity check macro.
-#define SMDL_SANITY_CHECK__EXPAND(X, Y, Z, ...) Z
-
 /// Sanity check a condition.
-#define SMDL_SANITY_CHECK__1(cond)                                             \
+///
+/// \note
+/// This is two macros rather than one variadic macro that dispatches on the
+/// argument count. The dispatching form is not portable: forwarding
+/// `__VA_ARGS__` into a nested macro passes it as a *single* argument under
+/// MSVC's traditional preprocessor, and supplying no argument at all for a
+/// `...` parameter is only well-formed as of C++20.
+///
+#define SMDL_SANITY_CHECK(cond)                                                \
   do {                                                                         \
     if (!(cond)) ::smdl::detail::sanityCheckFailed(#cond, __FILE__, __LINE__); \
   } while (false)
 
-/// Sanity check a condition with a message.
-#define SMDL_SANITY_CHECK__2(cond, message)                                  \
+/// Sanity check a condition, explaining what it means if it fails.
+#define SMDL_SANITY_CHECK_MSG(cond, message)                                 \
   do {                                                                       \
     if (!(cond))                                                             \
       ::smdl::detail::sanityCheckFailed(#cond, __FILE__, __LINE__, message); \
   } while (false)
-
-/// Sanity check a condition with or without a message.
-#define SMDL_SANITY_CHECK(...)                                 \
-  SMDL_SANITY_CHECK__EXPAND(__VA_ARGS__, SMDL_SANITY_CHECK__2, \
-                            SMDL_SANITY_CHECK__1)(__VA_ARGS__)
 
 namespace detail {
 

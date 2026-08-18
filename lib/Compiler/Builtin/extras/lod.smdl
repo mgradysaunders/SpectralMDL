@@ -1,0 +1,140 @@
+// NOTE: This module is non-standard!
+/// Level-of-detail helpers over the non-standard LOD state: the pixel ray
+/// cone, the UV texture density, and the scattering order. Everything honors
+/// the zero-means-off convention of the LOD state, so with the state at its
+/// defaults (a renderer that populates nothing) every export reduces to the
+/// identity, i.e., highest fidelity:
+///
+/// - `filter_width()` and `mip_level()` are 0, so nothing is prefiltered.
+/// - `detail_fade()` is 1, so nothing fades.
+/// - `regularized_roughness()` returns its input unchanged, because the
+///   unset scattering order 0 is treated exactly like a primary hit.
+///
+/// The footprint-driven helpers accept a `uv_scale` declaring the scale of
+/// the caller's lookup coordinates relative to the raw
+/// `state::texture_coordinate()`: the state cannot see coordinate scaling
+/// applied in material expressions, so a material that tiles at `coord * m`
+/// passes `uv_scale: m`; see `filter_width()`.
+///
+/// The roughness regularization is path-space regularization in the spirit
+/// of Kaplanyan and Dachsbacher (2013): a roughness floor that grows with
+/// the scattering order, trading bias for a large variance reduction on
+/// caustic-like transport. It operates directly on the `roughness_u/v`
+/// parameter domain of the `df` BSDFs, which square it into alpha
+/// internally.
+///
+/// References:
+///   Kaplanyan and Dachsbacher (2013): Path Space Regularization for Holistic
+///                                     and Robust Light Transport
+///   Akenine-Moller et al. (2019): Texture Level of Detail Strategies for
+///                                 Real-Time Ray Tracing
+#smdl
+
+import ::math::smoothstep;
+import ::tex::max_extent;
+
+/// The filter width of the pixel ray cone footprint in texture space
+/// `space`, measured in the UV space of the coordinates the caller actually
+/// passes to its lookups: `uv_scale` is the scale of those coordinates
+/// relative to `state::texture_coordinate(space)`, so a material that looks
+/// up at `coord * m` passes `uv_scale: m`. Accepts `float` or `float2`; an
+/// anisotropic scale uses the larger axis, which over-blurs the stretched
+/// axis rather than aliasing the compressed one. Zero whenever the renderer
+/// does not populate the cone or the density, i.e., LOD off.
+@(macro)
+export float filter_width(
+  const int space = 0,
+  const auto uv_scale = 1.0,
+) = $state.cone_width * #sqrt(#max($state.texture_density[space], 0.0)) * #maxValue(#abs(float2(uv_scale)));
+
+/// The filter width of the pixel ray cone footprint in texels of `tex`,
+/// using the larger image dimension. Zero for invalid textures.
+@(macro)
+export float filter_width_texels(
+  const texture_2d tex,
+  const int space = 0,
+  const auto uv_scale = 1.0,
+) = filter_width(space, uv_scale) * float(tex::max_extent(tex));
+
+/// The mip-style level of detail of the pixel ray cone footprint in `tex`.
+/// Scaling the lookup coordinates up by 2 shrinks the effective texels, so
+/// `uv_scale: 2.0` raises the level by exactly 1, and vice versa. Zero
+/// (meaning full resolution) whenever the LOD state is unpopulated or the
+/// texture is invalid.
+///
+/// This is the level the footprint implies, whatever the texture holds:
+/// mip filtering is opt in, so a texture constructed without
+/// `use_mipmap: true` has one level and the `::tex` lookups clamp this
+/// to 0, sampling full resolution however far this level climbs.
+///
+/// The level is deliberately computed from HALF the footprint width: full
+/// resolution holds until the footprint exceeds two texels, and every level
+/// thereafter is one sharper than the footprint alone would pick. Erring
+/// detailed costs nothing visually, since the Monte Carlo sampling resolves
+/// the residual detail either way.
+@(macro)
+export float mip_level(
+  const texture_2d tex,
+  const int space = 0,
+  const auto uv_scale = 1.0,
+) = #log2(#max(1.0, 0.5 * filter_width_texels(tex, space, uv_scale)));
+
+@(pure macro)
+float fade(const float width_start, const float width_end, const float width) {
+  // A non-positive width is the sentinel for LOD being switched off, and the
+  // negated comparison catches NaN with it. Either way nothing fades.
+  return 1.0 if (!(width > 0.0));
+  return 1.0 - math::smoothstep(width_start, width_end, width);
+}
+
+/// The detail fade factor driven by the UV filter width of the
+/// ray cone footprint in texture space `space`.
+///
+/// For example, `detail_fade(width_start: 0.002, width_end: 0.1)` returns 1
+/// when the ray footprint width is less than 0.002 units in UV space and fades
+/// to 0 as the ray footprint width exceeds 0.1 units in UV space.
+///
+/// With a non-identity `uv_scale` the thresholds are interpreted in the
+/// scaled UV units (the space the detail features actually live in), so a
+/// material tiled at `coord * 4` fades 4 times sooner, as its features are
+/// 4 times smaller on screen.
+@(macro)
+export float detail_fade(
+  const float width_start,   ///< The width start in UV-space coordinates.
+  const float width_end,     ///< The width end in UV-space coordinates.
+  const int space = 0,       ///< The texture space.
+  const auto uv_scale = 1.0, ///< The caller's UV scale; see `filter_width()`.
+) = fade(width_start, width_end, filter_width(space, uv_scale));
+
+/// The detail fade factor driven by the footprint width measured in
+/// the texels of the given `tex` and texture space `space`.
+@(macro)
+export float detail_fade_texels(
+  const texture_2d tex,          ///< The texture.
+  const float width_start = 1.0, ///< The width start in texels.
+  const float width_end = 4.0,   ///< The width end in texels.
+  const int space = 0,           ///< The texture space.
+  const auto uv_scale = 1.0,     ///< The caller's UV scale; see `filter_width()`.
+) = fade(width_start, width_end, filter_width_texels(tex, space, uv_scale));
+
+/// The roughness regularized against the scattering order, applied from
+/// `start_order` on, and the identity below it. The unset order 0 is treated
+/// exactly like a primary hit, so an unpopulated state never regularizes.
+///
+/// How much this helps is integrator-dependent. The win is transport the
+/// renderer's sampling strategies cannot cover, such as specular-chain
+/// caustics; an integrator that next-event-estimates with MIS at every vertex
+/// already handles most sharp chains, and roughening its secondary vertices
+/// trades appearance for variance. Treat `strength` and `start_order` as
+/// per-scene knobs. Directly viewed (order 1) appearance is untouched by
+/// construction.
+@(macro)
+export auto regularized_roughness(
+  const auto roughness,
+  const float strength = 0.1,
+  const int start_order = 2,
+) {
+  const auto order(#max($state.scattering_order, 1));
+  return roughness if (order < start_order);
+  return #max(roughness, #max(0.0, #min(strength * (order - start_order + 1), 1.0)));
+}

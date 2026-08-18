@@ -201,6 +201,22 @@ template <typename G> [[nodiscard]] inline float4 generateCanonical4(G &g) {
 [[nodiscard]] SMDL_EXPORT float3 uniformConeSample(float cosThetaC,
                                                    float2 xi) noexcept;
 
+/// Uniform aperture sample.
+///
+/// \param[in] numBlades
+/// The number of blades, should be at least 3. The implementation
+/// falls back to the unit disk otherwise.
+///
+/// \param[in] bladeAngle
+/// The blade offset angle in radians. Passing zero aligns a regular polygon 
+/// vertex to the +X axis.
+///
+/// \param[in] xi
+/// The random sample \f$ \xi \in (0,1)^2 \f$.
+///
+[[nodiscard]] SMDL_EXPORT float2
+uniformApertureSample(int numBlades, float bladeAngle, float2 xi) noexcept;
+
 /// The error function inverse, necessary to sample the standard normal
 /// distribution.
 [[nodiscard]] SMDL_EXPORT float erfInverse(float y) noexcept;

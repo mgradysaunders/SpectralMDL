@@ -40,6 +40,22 @@ extern "C" {
 #pragma GCC diagnostic pop
 #endif
 
+// NOTE: Outside the 'extern "C"' block above because the implementation
+// pulls in SIMD intrinsics headers.
+#if defined(__GNUC__) || defined(__clang__)
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wunused-function"
+#endif
+#define STBIR_ASSERT(X) ((void)0)
+#define STBIR_MALLOC(sz, user) ::smdl::Image::image_malloc(sz)
+#define STBIR_FREE(p, user) ::smdl::Image::image_free(p)
+#define STB_IMAGE_RESIZE_STATIC 1
+#define STB_IMAGE_RESIZE_IMPLEMENTATION 1
+#include "thirdparty/stb_image_resize2.h"
+#if defined(__GNUC__) || defined(__clang__)
+#pragma GCC diagnostic pop
+#endif
+
 #define TINYEXR_MALLOC(sz) ::smdl::Image::image_malloc(sz)
 #define TINYEXR_CALLOC(n, sz) ::smdl::Image::image_calloc(n, sz)
 #define TINYEXR_FREE(p) ::smdl::Image::image_free(p)
@@ -149,12 +165,20 @@ void Image::clear() {
   mNumTexelsY = 0;
   mNumChannels = 1;
   mTexelSize = 1;
+  mNumLevels = 1;
+  mMipLevelsAllowed = true;
+  mMipLevelsRequested = false;
+  mMipLevelsGenerated = false;
+  mLevelOffsets.assign(1, 0);
+  mSizeInBytes = 0;
   mTexels.reset();
   mFinishLoad = nullptr;
 }
 
-std::optional<Error> Image::startLoad(const std::string &fileName) noexcept {
+std::optional<Error> Image::startLoad(const std::string &fileName,
+                                      bool allowMipLevels) noexcept {
   clear();
+  mMipLevelsAllowed = allowMipLevels;
   auto error{catchAndReturnError([&] {
     if (stbi_info(fileName.c_str(), &mNumTexelsX, &mNumTexelsY,
                   &mNumChannels)) {
@@ -173,10 +197,6 @@ std::optional<Error> Image::startLoad(const std::string &fileName) noexcept {
         mFormat = UINT8;
         mTexelSize = 1 * mNumChannels;
       }
-      // Pre-allocate the texels, value-initialized so that a decode
-      // failure in 'finishLoad()' leaves well-defined zero texels.
-      mTexels.reset(new std::byte[size_t(mNumTexelsX) * size_t(mNumTexelsY) *
-                                  size_t(mTexelSize)]());
       // Defer the actual load until later!
       mFinishLoad = [this, fileName]() {
         // NOTE: The thread-local variant because 'finishLoad()' may be
@@ -251,7 +271,7 @@ std::optional<Error> Image::startLoad(const std::string &fileName) noexcept {
         else if (pixelType == TINYEXR_PIXELTYPE_FLOAT)
           mFormat = FLOAT32, mTexelSize = 4 * mNumChannels;
         else
-          SMDL_SANITY_CHECK(false, "unknown EXR pixel type");
+          SMDL_SANITY_CHECK_MSG(false, "unknown EXR pixel type");
       }};
       if (header->num_channels == 1) {
         // 1-channel R
@@ -279,10 +299,6 @@ std::optional<Error> Image::startLoad(const std::string &fileName) noexcept {
       }
       mNumTexelsX = nX;
       mNumTexelsY = nY;
-      // Pre-allocate the texels, value-initialized so that a decode
-      // failure in 'finishLoad()' leaves well-defined zero texels.
-      mTexels.reset(new std::byte[size_t(mNumTexelsX) * size_t(mNumTexelsY) *
-                                  size_t(mTexelSize)]());
       mFinishLoad = [this, fileName, header]() {
         EXRImage image{};
         InitEXRImage(&image);
@@ -350,8 +366,8 @@ std::optional<Error> Image::startLoad(const std::string &fileName) noexcept {
                 itr += mTexelSize;
               }
             } else {
-              SMDL_SANITY_CHECK(false,
-                                "format must be FLOAT16 or FLOAT32 by now!");
+              SMDL_SANITY_CHECK_MSG(
+                  false, "format must be FLOAT16 or FLOAT32 by now!");
             }
           }
         }
@@ -359,6 +375,37 @@ std::optional<Error> Image::startLoad(const std::string &fileName) noexcept {
     } else {
       throw std::runtime_error("failed to open file or recognize image format");
     }
+    // Lay out the mip chain, one contiguous allocation with level 0
+    // first. This must happen here rather than in 'finishLoad()' because
+    // the level pointers may be baked into JIT-compiled code before the
+    // texels are decoded, so neither the size nor the base address may
+    // change afterward.
+    //
+    // The chain is laid out whether or not anything has asked for mip
+    // levels yet, which is precisely what lets 'requestMipLevels()' be
+    // honored at any later point (see the class doc comment). Unless it
+    // is disallowed outright, in which case there is nothing to honor
+    // and the layout is level 0 alone.
+    mNumLevels = 1;
+    if (mMipLevelsAllowed)
+      while ((std::max(mNumTexelsX, mNumTexelsY) >> (mNumLevels - 1)) > 1)
+        mNumLevels++;
+    mLevelOffsets.assign(size_t(mNumLevels), 0);
+    size_t offset{0};
+    for (int level = 0; level < mNumLevels; level++) {
+      mLevelOffsets[size_t(level)] = offset;
+      offset += size_t(getNumTexelsX(level)) * size_t(getNumTexelsY(level)) *
+                size_t(mTexelSize);
+    }
+    mSizeInBytes = offset;
+    // Default-initialized, then zeroed over level 0 only: zeroing the
+    // whole buffer would touch every page of the chain, which is exactly
+    // the memory an image nobody mips must not cost. Level 0 is zeroed
+    // so that a decode failure in 'finishLoad()' leaves well-defined
+    // zero texels, and the failure path there zeroes the chain too.
+    mTexels.reset(new std::byte[mSizeInBytes]);
+    std::memset(mTexels.get(), 0,
+                size_t(mNumTexelsX) * size_t(mNumTexelsY) * size_t(mTexelSize));
   })};
   if (error) {
     clear();
@@ -375,29 +422,87 @@ void Image::finishLoad() {
     // invoked again.
     auto finishLoad{std::move(mFinishLoad)};
     mFinishLoad = nullptr;
-    finishLoad();
+    try {
+      finishLoad();
+    } catch (...) {
+      // Only level 0 was zeroed at allocation, so zero all of it here: a
+      // partially decoded image and an ungenerated chain must still read
+      // as well-defined zero texels.
+      if (mTexels) std::memset(mTexels.get(), 0, mSizeInBytes);
+      throw;
+    }
+  }
+  // Generate whenever a request is outstanding, rather than only right
+  // after the decode: the chain is laid out unconditionally, so a
+  // request arriving later (e.g., in a subsequent 'compile()') is still
+  // honored, and generating only ever writes into reserved space that no
+  // existing 'texture_2d' reads.
+  if (mTexels && mMipLevelsRequested && !mMipLevelsGenerated) {
+    generateMipLevels();
+    mMipLevelsGenerated = true;
+  }
+}
+
+void Image::abandonLoad() noexcept {
+  mFinishLoad = nullptr;
+  mTexels.reset();
+}
+
+void Image::generateMipLevels() noexcept {
+  const auto dataType{mFormat == UINT8     ? STBIR_TYPE_UINT8
+                      : mFormat == UINT16  ? STBIR_TYPE_UINT16
+                      : mFormat == FLOAT16 ? STBIR_TYPE_HALF_FLOAT
+                                           : STBIR_TYPE_FLOAT};
+  // The plain N-channel layouts, so no channel gets alpha semantics:
+  // the chain averages stored values as-is (see the class doc comment
+  // for why filtering is gamma-agnostic).
+  const auto layout{mNumChannels == 1   ? STBIR_1CHANNEL
+                    : mNumChannels == 2 ? STBIR_2CHANNEL
+                                        : STBIR_4CHANNEL};
+  for (int level = 1; level < mNumLevels; level++) {
+    // Each level halves the previous one, so the box filter is an
+    // area average whenever the parent extent is even, and blends the
+    // straddling texels with the correct fractional weights when it
+    // is odd. Averaging level to level keeps the whole chain
+    // mean-preserving.
+    stbir_resize(mTexels.get() + mLevelOffsets[size_t(level - 1)],
+                 getNumTexelsX(level - 1), getNumTexelsY(level - 1),
+                 getNumTexelsX(level - 1) * mTexelSize,
+                 mTexels.get() + mLevelOffsets[size_t(level)],
+                 getNumTexelsX(level), getNumTexelsY(level),
+                 getNumTexelsX(level) * mTexelSize, layout, dataType,
+                 STBIR_EDGE_CLAMP, STBIR_FILTER_BOX);
   }
 }
 
 void Image::flipVertically() noexcept {
-  auto rowSize{size_t(mTexelSize) * size_t(mNumTexelsX)};
-  for (int iY = 0; iY < mNumTexelsY / 2; iY++) {
-    std::swap_ranges(mTexels.get() + rowSize * size_t(iY),
-                     mTexels.get() + rowSize * size_t(iY + 1),
-                     mTexels.get() + rowSize * size_t(mNumTexelsY - iY - 1));
+  // The levels in memory, not the levels in the layout: an ungenerated
+  // chain holds nothing to flip, and walking it would touch every page
+  // it is meant to leave alone.
+  for (int level = 0; level < getNumLevelsInMemory(); level++) {
+    auto levelTexels{mTexels.get() + mLevelOffsets[size_t(level)]};
+    auto numTexelsY{getNumTexelsY(level)};
+    auto rowSize{size_t(mTexelSize) * size_t(getNumTexelsX(level))};
+    for (int iY = 0; iY < numTexelsY / 2; iY++) {
+      std::swap_ranges(levelTexels + rowSize * size_t(iY),
+                       levelTexels + rowSize * size_t(iY + 1),
+                       levelTexels + rowSize * size_t(numTexelsY - iY - 1));
+    }
   }
 }
 
-float4 Image::fetch(int x, int y) const noexcept {
+float4 Image::fetch(int x, int y, int level) const noexcept {
   SMDL_SANITY_CHECK(mTexels != nullptr);
-  SMDL_SANITY_CHECK(0 <= x && x < mNumTexelsX);
-  SMDL_SANITY_CHECK(0 <= y && y < mNumTexelsY);
+  SMDL_SANITY_CHECK(0 <= level && level < getNumLevels());
+  SMDL_SANITY_CHECK(0 <= x && x < getNumTexelsX(level));
+  SMDL_SANITY_CHECK(0 <= y && y < getNumTexelsY(level));
   auto texel{float4{std::numeric_limits<float>::quiet_NaN(),
                     std::numeric_limits<float>::quiet_NaN(),
                     std::numeric_limits<float>::quiet_NaN(),
                     std::numeric_limits<float>::quiet_NaN()}};
-  auto texelPtr{&mTexels[size_t(mTexelSize) *
-                         (size_t(x) + size_t(mNumTexelsX) * size_t(y))]};
+  auto texelPtr{mTexels.get() + mLevelOffsets[size_t(level)] +
+                size_t(mTexelSize) *
+                    (size_t(x) + size_t(getNumTexelsX(level)) * size_t(y))};
   for (int i = 0; i < mNumChannels; i++) {
     switch (mFormat) {
     case UINT8:
@@ -417,7 +522,7 @@ float4 Image::fetch(int x, int y) const noexcept {
       texelPtr += 4;
       break;
     default:
-      SMDL_SANITY_CHECK(false, "Unexpected texel format!");
+      SMDL_SANITY_CHECK_MSG(false, "Unexpected texel format!");
       break;
     }
   }

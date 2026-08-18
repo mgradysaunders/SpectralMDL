@@ -72,6 +72,29 @@ public:
     return false;
   }
 
+  /// Has the given field, and does accessing it yield a non-void result?
+  ///
+  /// This is the predicate behind the `#hasField` intrinsic, and it must
+  /// agree with `accessField()`: true exactly when `accessField()` would
+  /// succeed and return something other than void. The default defers to
+  /// `hasField()`, which is right for every type whose fields cannot be
+  /// void.
+  ///
+  /// \param[inout] emitter  The emitter.
+  /// \param[in]    value    The value (i.e., the instance of this type).
+  ///                        Only `MetaType` needs this, because it resolves
+  ///                        its fields from the value rather than the type,
+  ///                        so the forwarding overrides pass a null value.
+  /// \param[in]    name     The field name.
+  /// \param[in]    srcLoc   The source location if applicable.
+  ///
+  [[nodiscard]] virtual bool hasNonVoidField(Emitter &emitter, Value value,
+                                             std::string_view name,
+                                             const SourceLocation &srcLoc) {
+    (void)emitter, (void)value, (void)srcLoc;
+    return hasField(name);
+  }
+
   /// Access the given field or throw an `Error` on failure.
   ///
   /// \param[inout] emitter  The emitter.
@@ -176,7 +199,7 @@ public:
   /// Is instance of `UnionType` where `void` is an alternative?
   [[nodiscard]] bool isOptionalUnion() const;
 
-  /// Is "default" in the sense of the `#is_default` intrinsic? True for
+  /// Is "default" in the sense of the `#isDefault` intrinsic? True for
   /// a struct type that is either the default type for its first tag or
   /// the default instantiation of an abstract struct. This is the single
   /// definition shared by the intrinsic and the static material flags
@@ -292,7 +315,7 @@ public:
       } else if (numBits == sizeof(int) * 8) {
         return "int";
       } else {
-        return concat("#type_int(", numBits, ")");
+        return concat("#getIntType(", numBits, ")");
       }
     } else {
       if (numBits == 32) {
@@ -300,7 +323,7 @@ public:
       } else if (numBits == 64) {
         return "double";
       } else {
-        return concat("#type_float(", numBits, ")");
+        return concat("#getFloatType(", numBits, ")");
       }
     }
   }
@@ -319,7 +342,7 @@ public:
   /// Get integral scalar with the given `numBits`.
   ///
   /// \note
-  /// In SMDL, this corresponds to the `#type_int()` intrinsic.
+  /// In SMDL, this corresponds to the `#getIntType()` intrinsic.
   ///
   /// \note
   /// For integral scalars, the `numBits` is not restricted to be a power of
@@ -332,7 +355,7 @@ public:
   /// Get floating-point scalar with the given `numBits`.
   ///
   /// \note
-  /// In SMDL, this corresponds to the `#type_float()` intrinsic.
+  /// In SMDL, this corresponds to the `#getFloatType()` intrinsic.
   ///
   /// \note
   /// For floating point scalars, the `numBits` may only ever be
@@ -424,11 +447,11 @@ public:
     } else if (isVector()) {
       return str[0] != '#' && numRows <= 4
                  ? concat(str, numRows)
-                 : concat("#type_vector(", str, ", ", numRows, ")");
+                 : concat("#getVectorType(", str, ", ", numRows, ")");
     } else if (isMatrix()) {
       return str[0] != '#' && numCols <= 4 && numRows <= 4
                  ? concat(str, numCols, "x", numRows)
-                 : concat("#type_matrix(", str, ", ", numCols, ", ", numRows,
+                 : concat("#getMatrixType(", str, ", ", numCols, ", ", numRows,
                           ")");
     }
     SMDL_SANITY_CHECK(false);
@@ -527,7 +550,7 @@ private:
   ///
   [[nodiscard]] std::optional<uint32_t> toIndex(char c) const {
     if (!extent.isScalar()) {
-      // Only the first 4 components are nameable — larger vectors would
+      // Only the first 4 components are nameable: larger vectors would
       // read past the "xyzw"/"rgba" literals.
       const auto count{std::min<uint16_t>(
           extent.isVector() ? extent.numRows : extent.numCols, 4)};
@@ -575,6 +598,12 @@ public:
 
   [[nodiscard]] bool hasField(std::string_view name) final {
     return elemType->hasField(name);
+  }
+
+  [[nodiscard]] bool hasNonVoidField(Emitter &emitter, Value,
+                                     std::string_view name,
+                                     const SourceLocation &srcLoc) final {
+    return elemType->hasNonVoidField(emitter, Value(), name, srcLoc);
   }
 
   [[nodiscard]]
@@ -891,7 +920,7 @@ public:
       : elemType(elemType), sizeName(std::move(sizeName)) {
     displayName = elemType->displayName;
     displayName += '[';
-    // NOTE: Must test the member — the parameter is moved-from here.
+    // NOTE: Must test the member; the parameter is moved-from here.
     if (!this->sizeName.empty()) {
       displayName += '<';
       displayName += this->sizeName;
@@ -940,6 +969,10 @@ public:
     return true;
   }
 
+  [[nodiscard]] bool hasNonVoidField(Emitter &emitter, Value value,
+                                     std::string_view name,
+                                     const SourceLocation &srcLoc) final;
+
   [[nodiscard]]
   Value accessField(Emitter &emitter, Value value, std::string_view name,
                     const SourceLocation &srcLoc) final;
@@ -964,6 +997,12 @@ public:
 
   [[nodiscard]] bool hasField(std::string_view name) final {
     return pointeeType->hasField(name);
+  }
+
+  [[nodiscard]] bool hasNonVoidField(Emitter &emitter, Value,
+                                     std::string_view name,
+                                     const SourceLocation &srcLoc) final {
+    return pointeeType->hasNonVoidField(emitter, Value(), name, srcLoc);
   }
 
   [[nodiscard]]
@@ -1097,6 +1136,10 @@ public:
 
   [[nodiscard]] bool hasField(std::string_view name) final;
 
+  [[nodiscard]] bool hasNonVoidField(Emitter &emitter, Value value,
+                                     std::string_view name,
+                                     const SourceLocation &srcLoc) final;
+
   [[nodiscard]]
   Value accessField(Emitter &emitter, Value value, std::string_view name,
                     const SourceLocation &srcLoc) final;
@@ -1200,6 +1243,10 @@ public:
       if (!(caseType->isVoid() || caseType->hasField(name))) return false;
     return true;
   }
+
+  [[nodiscard]] bool hasNonVoidField(Emitter &emitter, Value value,
+                                     std::string_view name,
+                                     const SourceLocation &srcLoc) final;
 
   [[nodiscard]]
   Value accessField(Emitter &emitter, Value value, std::string_view name,

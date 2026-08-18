@@ -1,5 +1,10 @@
 /// Texture lookup functions, following the MDL specification, plus
 /// non-standard support for Ptex textures.
+///
+/// NOTE: SpectralMDL loads single-frame textures, so the `frame`
+/// parameters for animated textures introduced in MDL 1.7 are accepted
+/// and ignored, and `first_frame`/`last_frame` are always zero.
+///
 #smdl
 
 import ::math::lerp;
@@ -11,8 +16,10 @@ export enum gamma_mode {
   gamma_srgb = 1,    ///< The sRGB decoding to linear.
 };
 
+/// The piecewise sRGB decoding per IEC 61966-2-1: linear below the
+/// break, a 2.4-power segment above it.
 @(pure macro)
-auto decodeSRGB(const auto texel) = #pow(texel, 2.2);
+auto decodeSRGB(const auto texel) = #select(texel <= 0.04045, texel * (1.0 / 12.92), #pow((texel + 0.055) * (1.0 / 1.055), 2.4));
 
 @(pure macro)
 float4 applyGamma(const int gamma, const float4 texel) = gamma == int(gamma_srgb) ? float4(decodeSRGB(texel.rgb), texel.a) : texel;
@@ -32,90 +39,132 @@ int getTileIndex(const texture_2d tex, const int2 uv_tile) {
   return uv_tile.y * tex.tile_count.x + uv_tile.x;
 }
 
-/// The width in texels, of the given uv-tile for uv-tilesets.
 @(pure macro)
-export int width(const texture_2d tex, const int2 uv_tile = int2(0)) {
-  const auto i(getTileIndex(tex, uv_tile));
-  return i < 0 ? 0 : tex.tile_extents[i].x;
+int2 getExtent(const texture_2d tex, const int2 uv_tile = int2(0)) {
+  return (i := getTileIndex(tex, uv_tile)) < 0 ? int2(0) : tex.tile_extents[i];
 }
 
-/// The width in texels. NOTE: Not implemented yet, always zero.
+/// The width in texels, of the given uv-tile for uv-tilesets.
 @(pure macro)
-export int width(const texture_3d tex) = 0; // TODO
+export int width(const texture_2d tex, const int2 uv_tile = int2(0), const float frame = 0.0 [[anno::unused()]]) = getExtent(tex, uv_tile).x;
+
+/// The width in texels.
+@(pure macro)
+export int width(const texture_3d tex, const float frame = 0.0 [[anno::unused()]]) = tex.extent.x;
 
 /// The width in texels. NOTE: Not implemented yet, always zero.
 @(pure macro)
-export int width(const texture_cube tex) = 0; // TODO
+export int width(const texture_cube tex [[anno::unused()]]) = 0;
 
 /// The height in texels, of the given uv-tile for uv-tilesets.
 @(pure macro)
-export int height(const texture_2d tex, const int2 uv_tile = int2(0)) {
-  const auto i(getTileIndex(tex, uv_tile));
-  return i < 0 ? 0 : tex.tile_extents[i].y;
+export int height(const texture_2d tex, const int2 uv_tile = int2(0), const float frame = 0.0 [[anno::unused()]]) = getExtent(tex, uv_tile).y;
+
+/// The height in texels.
+@(pure macro)
+export int height(const texture_3d tex, const float frame = 0.0 [[anno::unused()]]) = tex.extent.y;
+
+/// The height in texels. NOTE: Not implemented yet, always zero.
+@(pure macro)
+export int height(const texture_cube tex [[anno::unused()]]) = 0;
+
+/// The depth in texels.
+@(pure macro)
+export int depth(const texture_3d tex, const float frame = 0.0 [[anno::unused()]]) = tex.extent.z;
+
+/// The first frame of an animated texture; see the module note, always zero.
+@(pure macro)
+export int first_frame(const texture_2d tex [[anno::unused()]]) = 0;
+
+/// The first frame of an animated texture; see the module note, always zero.
+@(pure macro)
+export int first_frame(const texture_3d tex [[anno::unused()]]) = 0;
+
+/// The last frame of an animated texture; see the module note, always zero.
+@(pure macro)
+export int last_frame(const texture_2d tex [[anno::unused()]]) = 0;
+
+/// The last frame of an animated texture; see the module note, always zero.
+@(pure macro)
+export int last_frame(const texture_3d tex [[anno::unused()]]) = 0;
+
+/// The extent in texels, of the given uv-tile for uv-tilesets. NOTE: This is non-standard!
+@(pure macro)
+export int2 extent(const texture_2d tex, const int2 uv_tile = int2(0)) = getExtent(tex, uv_tile);
+
+/// The minimum extent in texels. NOTE: This is non-standard!
+@(pure macro)
+export int min_extent(const texture_2d tex, const int2 uv_tile = int2(0)) {
+  const auto extent(getExtent(tex, uv_tile));
+  return #min(extent.x, extent.y);
 }
 
-/// The height in texels. NOTE: Not implemented yet, always zero.
+/// The maximum extent in texels. NOTE: This is non-standard!
 @(pure macro)
-export int height(const texture_3d tex) = 0; // TODO
-
-/// The height in texels. NOTE: Not implemented yet, always zero.
-@(pure macro)
-export int height(const texture_cube tex) = 0; // TODO
+export int max_extent(const texture_2d tex, const int2 uv_tile = int2(0)) {
+  const auto extent(getExtent(tex, uv_tile));
+  return #max(extent.x, extent.y);
+}
 
 /// Is the texture valid, i.e., backed by loaded image data?
 @(pure macro)
 export bool texture_isvalid(const texture_2d tex) = bool(tex.tile_buffers[0]);
 
-/// Is the texture valid? NOTE: Not implemented yet, always false.
+/// Is the texture valid, i.e., backed by loaded voxel grid data?
 @(pure macro)
-export bool texture_isvalid(const texture_3d tex) = false; // TODO
+export bool texture_isvalid(const texture_3d tex) = bool(tex.brick_table);
 
 /// Is the texture valid? NOTE: Not implemented yet, always false.
 @(pure macro)
-export bool texture_isvalid(const texture_cube tex) = false; // TODO
+export bool texture_isvalid(const texture_cube tex [[anno::unused()]]) = false; // TODO
 
 /// Is the texture valid, i.e., backed by a loaded Ptex file?
 @(pure macro)
 export bool texture_isvalid(const texture_ptex tex) = bool(tex.ptr);
 
+/// The texel at integer `coord` as whatever type is determined by loading
+/// the image at compile time, without gamma, filtering, or wrapping.
 @(pure)
-auto texel_fetch(const texture_2d tex, const int2 coord, const int2 uv_tile = int2(0)) {
-  const auto texel_type(*#typeof(tex.tile_buffers[0]));
+auto texelFetch(const texture_2d tex, const int2 coord, const int2 uv_tile = int2(0)) {
+  const auto texel_type(*#typeOf(tex.tile_buffers[0]));
   const auto i(getTileIndex(tex, uv_tile));
   return texel_type(0) if (i < 0);
   const auto tileExtent(tex.tile_extents[i]);
   const auto tileBuffer(tex.tile_buffers[i]);
   return texel_type(0) if (!tileBuffer | #any((coord < 0) | (coord >= tileExtent)));
-  return tileBuffer[coord.y * tileExtent.x + coord.x];
+  // Each level is stored in file order, top row first, while texel
+  // coordinates are v-up per the MDL convention, so the row is mirrored
+  // here. This module is the only place that knows the storage order.
+  return tileBuffer[coord.x + tileExtent.x * (tileExtent.y - 1 - coord.y)];
 }
 
 /// The texel at integer `coord` as `float4`, with gamma applied but no filtering or wrapping.
 @(pure macro)
-export float4 texel_float4(const texture_2d tex, const int2 coord, const int2 uv_tile = int2(0)) {
-  return applyGamma(tex.gamma, #unpack_float4(texel_fetch(tex, coord, uv_tile)));
+export float4 texel_float4(const texture_2d tex, const int2 coord, const int2 uv_tile = int2(0), const float frame = 0.0 [[anno::unused()]]) {
+  return applyGamma(tex.gamma, #unpackFloat4(texelFetch(tex, coord, uv_tile)));
 }
 
 /// The texel at integer `coord` as `float3`, with gamma applied but no filtering or wrapping.
 @(pure macro)
-export float3 texel_float3(const texture_2d tex, const int2 coord, const int2 uv_tile = int2(0)) {
-  return applyGamma(tex.gamma, #unpack_float4(texel_fetch(tex, coord, uv_tile)).xyz);
+export float3 texel_float3(const texture_2d tex, const int2 coord, const int2 uv_tile = int2(0), const float frame = 0.0 [[anno::unused()]]) {
+  return applyGamma(tex.gamma, #unpackFloat4(texelFetch(tex, coord, uv_tile)).xyz);
 }
 
 /// The texel at integer `coord` as `float2`, with gamma applied but no filtering or wrapping.
 @(pure macro)
-export float2 texel_float2(const texture_2d tex, const int2 coord, const int2 uv_tile = int2(0)) {
-  return applyGamma(tex.gamma, #unpack_float4(texel_fetch(tex, coord, uv_tile)).xy);
+export float2 texel_float2(const texture_2d tex, const int2 coord, const int2 uv_tile = int2(0), const float frame = 0.0 [[anno::unused()]]) {
+  return applyGamma(tex.gamma, #unpackFloat4(texelFetch(tex, coord, uv_tile)).xy);
 }
 
 /// The texel at integer `coord` as `float`, with gamma applied but no filtering or wrapping.
 @(pure macro)
-export float texel_float(const texture_2d tex, const int2 coord, const int2 uv_tile = int2(0)) {
-  return applyGamma(tex.gamma, #unpack_float4(texel_fetch(tex, coord, uv_tile)).x);
+export float texel_float(const texture_2d tex, const int2 coord, const int2 uv_tile = int2(0), const float frame = 0.0 [[anno::unused()]]) {
+  return applyGamma(tex.gamma, #unpackFloat4(texelFetch(tex, coord, uv_tile)).x);
 }
 
 /// The texel at integer `coord` as `color`, with gamma applied but no filtering or wrapping.
 @(pure macro)
-export color texel_color(const texture_2d tex, const int2 coord, const int2 uv_tile = int2(0)) {
+export color texel_color(const texture_2d tex, const int2 coord, const int2 uv_tile = int2(0), const float frame = 0.0 [[anno::unused()]]) {
   return color(texel_float3(tex, coord, uv_tile));
 }
 
@@ -150,6 +199,7 @@ export float4 lookup_float4(
   const wrap_mode wrap_v = wrap_repeat,
   const float2 crop_u = float2(0.0, 1.0),
   const float2 crop_v = float2(0.0, 1.0),
+  const float frame = 0.0 [[anno::unused()]],
 ) {
   if ((tex.tile_count.x > 1) | (tex.tile_count.y > 1)) {
     // MDL specification:
@@ -167,17 +217,27 @@ export float4 lookup_float4(
     coord *= tileExtent;
     coord -= 0.5;
     const int2 ic(#floor(coord));
-    const int2 ic0(#min(ic, tileExtent - 1));
-    const int2 ic1(#min(ic + 1, tileExtent - 1));
+    // NOTE: The '#max' against 0 matters within half a texel of the
+    // low-side tile borders, where 'ic' is -1 and would otherwise index
+    // out of bounds.
+    const int2 ic0(#max(#min(ic, tileExtent - 1), 0));
+    const int2 ic1(#max(#min(ic + 1, tileExtent - 1), 0));
     coord -= ic;
+    // See 'texelFetch()': mirror once per row, then index within it.
+    const int row0(tileExtent.x * (tileExtent.y - 1 - ic0.y));
+    const int row1(tileExtent.x * (tileExtent.y - 1 - ic1.y));
     return applyGamma(
              tex.gamma,
-             math::lerp(math::lerp(#unpack_float4(tileBuffer[ic0.x + tileExtent.x * ic0.y]),           //
-                                   #unpack_float4(tileBuffer[ic1.x + tileExtent.x * ic0.y]), coord.x), //
-                        math::lerp(#unpack_float4(tileBuffer[ic0.x + tileExtent.x * ic1.y]),           //
-                                   #unpack_float4(tileBuffer[ic1.x + tileExtent.x * ic1.y]), coord.x), coord.y),
+             math::lerp(math::lerp(#unpackFloat4(tileBuffer[row0 + ic0.x]),           //
+                                   #unpackFloat4(tileBuffer[row0 + ic1.x]), coord.x), //
+                        math::lerp(#unpackFloat4(tileBuffer[row1 + ic0.x]),           //
+                                   #unpackFloat4(tileBuffer[row1 + ic1.x]), coord.x), coord.y),
            );
   } else {
+    // MDL specification:
+    // The clip wrap mode returns zero for lookups outside [0, 1).
+    return float4(0) if ((int(wrap_u) == int(wrap_clip)) & !((coord.x >= 0.0) & (coord.x < 1.0)));
+    return float4(0) if ((int(wrap_v) == int(wrap_clip)) & !((coord.y >= 0.0) & (coord.y < 1.0)));
     const auto i(getTileIndex(tex, int2(0)));
     return float4(0) if (i < 0);
     const auto tileExtent(tex.tile_extents[i]);
@@ -195,12 +255,16 @@ export float4 lookup_float4(
     const auto ic0(iCorner0 + applyWrap(wrap, subextent, ic));
     const auto ic1(iCorner0 + applyWrap(wrap, subextent, ic + 1));
     coord -= ic;
+    // See 'texelFetch()': mirror once per row, then index within it. The
+    // crop corners above stay in v-up space, so cropping is unaffected.
+    const int row0(tileExtent.x * (tileExtent.y - 1 - ic0.y));
+    const int row1(tileExtent.x * (tileExtent.y - 1 - ic1.y));
     return applyGamma(
              tex.gamma,
-             math::lerp(math::lerp(#unpack_float4(tileBuffer[ic0.x + tileExtent.x * ic0.y]),           //
-                                   #unpack_float4(tileBuffer[ic1.x + tileExtent.x * ic0.y]), coord.x), //
-                        math::lerp(#unpack_float4(tileBuffer[ic0.x + tileExtent.x * ic1.y]),           //
-                                   #unpack_float4(tileBuffer[ic1.x + tileExtent.x * ic1.y]), coord.x), coord.y),
+             math::lerp(math::lerp(#unpackFloat4(tileBuffer[row0 + ic0.x]),           //
+                                   #unpackFloat4(tileBuffer[row0 + ic1.x]), coord.x), //
+                        math::lerp(#unpackFloat4(tileBuffer[row1 + ic0.x]),           //
+                                   #unpackFloat4(tileBuffer[row1 + ic1.x]), coord.x), coord.y),
            );
   }
 }
@@ -215,7 +279,8 @@ export float3 lookup_float3(
   const wrap_mode wrap_v = wrap_repeat,
   const float2 crop_u = float2(0.0, 1.0),
   const float2 crop_v = float2(0.0, 1.0),
-) = lookup_float4(tex, coord, wrap_u, wrap_v, crop_u, crop_v).xyz;
+  const float frame = 0.0,
+) = lookup_float4(tex, coord, wrap_u, wrap_v, crop_u, crop_v, frame).xyz;
 
 /// The bilinearly filtered lookup at `coord` as `float2`, honoring the wrap
 /// modes and crop windows, which are ignored for uv-tilesets.
@@ -227,7 +292,8 @@ export float2 lookup_float2(
   const wrap_mode wrap_v = wrap_repeat,
   const float2 crop_u = float2(0.0, 1.0),
   const float2 crop_v = float2(0.0, 1.0),
-) = lookup_float4(tex, coord, wrap_u, wrap_v, crop_u, crop_v).xy;
+  const float frame = 0.0,
+) = lookup_float4(tex, coord, wrap_u, wrap_v, crop_u, crop_v, frame).xy;
 
 /// The bilinearly filtered lookup at `coord` as `float`, honoring the wrap
 /// modes and crop windows, which are ignored for uv-tilesets.
@@ -239,7 +305,8 @@ export float lookup_float(
   const wrap_mode wrap_v = wrap_repeat,
   const float2 crop_u = float2(0.0, 1.0),
   const float2 crop_v = float2(0.0, 1.0),
-) = lookup_float4(tex, coord, wrap_u, wrap_v, crop_u, crop_v).x;
+  const float frame = 0.0,
+) = lookup_float4(tex, coord, wrap_u, wrap_v, crop_u, crop_v, frame).x;
 
 /// The bilinearly filtered lookup at `coord` as `color`, honoring the wrap
 /// modes and crop windows, which are ignored for uv-tilesets.
@@ -251,12 +318,393 @@ export color lookup_color(
   const wrap_mode wrap_v = wrap_repeat,
   const float2 crop_u = float2(0.0, 1.0),
   const float2 crop_v = float2(0.0, 1.0),
-) = color(lookup_float4(tex, coord, wrap_u, wrap_v, crop_u, crop_v).xyz);
+  const float frame = 0.0,
+) = color(lookup_float4(tex, coord, wrap_u, wrap_v, crop_u, crop_v, frame).xyz);
+
+/// The voxel value at integer `coord`, without gamma, filtering, or
+/// wrapping. This is the one place that knows the brick layout of
+/// `texture_3d`: resolve the brick through the brick table, then index
+/// the dense 16x16x16 block, where empty bricks and out-of-extent
+/// coordinates resolve to the uniform background value. Nothing is
+/// mirrored: 3D texture space needs no v-flip.
+@(pure)
+float voxelFetch(const texture_3d tex, const int3 coord) {
+  return tex.background if (!tex.brick_table | #any((coord < 0) | (coord >= tex.extent)));
+  const int3 brickCoord(coord / 16);
+  const int brickIndex(tex.brick_table[brickCoord.x + tex.brick_count.x * (brickCoord.y + tex.brick_count.y * brickCoord.z)]);
+  return tex.background if (brickIndex < 0);
+  const int3 localCoord(coord % 16);
+  return tex.brick_buffer[4096 * brickIndex + localCoord.x + 16 * (localCoord.y + 16 * localCoord.z)];
+}
+
+/// The trilinearly filtered lookup at `coord` as `float4`, honoring the
+/// wrap modes and crop windows. The voxel grid holds one scalar field,
+/// so the value is splatted across the color components with alpha 1,
+/// matching the single-channel 2D convention.
+@(pure)
+export float4 lookup_float4(
+  const texture_3d tex,
+  float3 coord,
+  const wrap_mode wrap_u = wrap_repeat,
+  const wrap_mode wrap_v = wrap_repeat,
+  const wrap_mode wrap_w = wrap_repeat,
+  const float2 crop_u = float2(0.0, 1.0),
+  const float2 crop_v = float2(0.0, 1.0),
+  const float2 crop_w = float2(0.0, 1.0),
+  const float frame = 0.0 [[anno::unused()]],
+) {
+  return float4(0) if (!tex.brick_table);
+  // MDL specification:
+  // The clip wrap mode returns zero for lookups outside [0, 1).
+  return float4(0) if ((int(wrap_u) == int(wrap_clip)) & !((coord.x >= 0.0) & (coord.x < 1.0)));
+  return float4(0) if ((int(wrap_v) == int(wrap_clip)) & !((coord.y >= 0.0) & (coord.y < 1.0)));
+  return float4(0) if ((int(wrap_w) == int(wrap_clip)) & !((coord.z >= 0.0) & (coord.z < 1.0)));
+  const auto iCropU(int2(crop_u * tex.extent.x));
+  const auto iCropV(int2(crop_v * tex.extent.y));
+  const auto iCropW(int2(crop_w * tex.extent.z));
+  const auto iCorner0(int3(iCropU[0], iCropV[0], iCropW[0]));
+  const auto iCorner1(int3(iCropU[1], iCropV[1], iCropW[1]));
+  const auto subextent(iCorner1 - iCorner0);
+  coord *= subextent;
+  coord -= 0.5;
+  const int3 wrap(int(wrap_u), int(wrap_v), int(wrap_w));
+  const int3 ic(#floor(coord));
+  const auto ic0(iCorner0 + applyWrap(wrap, subextent, ic));
+  const auto ic1(iCorner0 + applyWrap(wrap, subextent, ic + 1));
+  coord -= ic;
+  // Eight corner fetches: unlike the 2D path there is no single dense
+  // buffer to index, and the wrapped corners may resolve to different
+  // bricks, so each corner goes through 'voxelFetch()'.
+  const auto v000(voxelFetch(tex, int3(ic0.x, ic0.y, ic0.z)));
+  const auto v100(voxelFetch(tex, int3(ic1.x, ic0.y, ic0.z)));
+  const auto v010(voxelFetch(tex, int3(ic0.x, ic1.y, ic0.z)));
+  const auto v110(voxelFetch(tex, int3(ic1.x, ic1.y, ic0.z)));
+  const auto v001(voxelFetch(tex, int3(ic0.x, ic0.y, ic1.z)));
+  const auto v101(voxelFetch(tex, int3(ic1.x, ic0.y, ic1.z)));
+  const auto v011(voxelFetch(tex, int3(ic0.x, ic1.y, ic1.z)));
+  const auto v111(voxelFetch(tex, int3(ic1.x, ic1.y, ic1.z)));
+  const auto value(math::lerp(math::lerp(math::lerp(v000, v100, coord.x),  //
+                                         math::lerp(v010, v110, coord.x), coord.y),
+                              math::lerp(math::lerp(v001, v101, coord.x),  //
+                                         math::lerp(v011, v111, coord.x), coord.y), coord.z));
+  return applyGamma(tex.gamma, #unpackFloat4(value));
+}
+
+/// The trilinearly filtered lookup at `coord` as `float3`, honoring the
+/// wrap modes and crop windows.
+@(pure macro)
+export float3 lookup_float3(
+  const texture_3d tex,
+  const float3 coord,
+  const wrap_mode wrap_u = wrap_repeat,
+  const wrap_mode wrap_v = wrap_repeat,
+  const wrap_mode wrap_w = wrap_repeat,
+  const float2 crop_u = float2(0.0, 1.0),
+  const float2 crop_v = float2(0.0, 1.0),
+  const float2 crop_w = float2(0.0, 1.0),
+  const float frame = 0.0 [[anno::unused()]],
+) = lookup_float4(tex, coord, wrap_u, wrap_v, wrap_w, crop_u, crop_v, crop_w).xyz;
+
+/// The trilinearly filtered lookup at `coord` as `float2`, honoring the
+/// wrap modes and crop windows.
+@(pure macro)
+export float2 lookup_float2(
+  const texture_3d tex,
+  const float3 coord,
+  const wrap_mode wrap_u = wrap_repeat,
+  const wrap_mode wrap_v = wrap_repeat,
+  const wrap_mode wrap_w = wrap_repeat,
+  const float2 crop_u = float2(0.0, 1.0),
+  const float2 crop_v = float2(0.0, 1.0),
+  const float2 crop_w = float2(0.0, 1.0),
+  const float frame = 0.0 [[anno::unused()]],
+) = lookup_float4(tex, coord, wrap_u, wrap_v, wrap_w, crop_u, crop_v, crop_w).xy;
+
+/// The trilinearly filtered lookup at `coord` as `float`, honoring the
+/// wrap modes and crop windows.
+@(pure macro)
+export float lookup_float(
+  const texture_3d tex,
+  const float3 coord,
+  const wrap_mode wrap_u = wrap_repeat,
+  const wrap_mode wrap_v = wrap_repeat,
+  const wrap_mode wrap_w = wrap_repeat,
+  const float2 crop_u = float2(0.0, 1.0),
+  const float2 crop_v = float2(0.0, 1.0),
+  const float2 crop_w = float2(0.0, 1.0),
+  const float frame = 0.0 [[anno::unused()]],
+) = lookup_float4(tex, coord, wrap_u, wrap_v, wrap_w, crop_u, crop_v, crop_w).x;
+
+/// The trilinearly filtered lookup at `coord` as `color`, honoring the
+/// wrap modes and crop windows.
+@(pure macro)
+export color lookup_color(
+  const texture_3d tex,
+  const float3 coord,
+  const wrap_mode wrap_u = wrap_repeat,
+  const wrap_mode wrap_v = wrap_repeat,
+  const wrap_mode wrap_w = wrap_repeat,
+  const float2 crop_u = float2(0.0, 1.0),
+  const float2 crop_v = float2(0.0, 1.0),
+  const float2 crop_w = float2(0.0, 1.0),
+  const float frame = 0.0 [[anno::unused()]],
+) = color(lookup_float4(tex, coord, wrap_u, wrap_v, wrap_w, crop_u, crop_v, crop_w).xyz);
+
+/// The lookup at `coord` as `float4`. NOTE: Not implemented yet, always zero.
+@(pure macro)
+export float4 lookup_float4(const texture_cube tex [[anno::unused()]], const float3 coord [[anno::unused()]]) = float4(0.0);
+
+/// The lookup at `coord` as `float3`. NOTE: Not implemented yet, always zero.
+@(pure macro)
+export float3 lookup_float3(const texture_cube tex [[anno::unused()]], const float3 coord [[anno::unused()]]) = float3(0.0);
+
+/// The lookup at `coord` as `float2`. NOTE: Not implemented yet, always zero.
+@(pure macro)
+export float2 lookup_float2(const texture_cube tex [[anno::unused()]], const float3 coord [[anno::unused()]]) = float2(0.0);
+
+/// The lookup at `coord` as `float`. NOTE: Not implemented yet, always zero.
+@(pure macro)
+export float lookup_float(const texture_cube tex [[anno::unused()]], const float3 coord [[anno::unused()]]) = 0.0;
+
+/// The lookup at `coord` as `color`. NOTE: Not implemented yet, always zero.
+@(pure macro)
+export color lookup_color(const texture_cube tex [[anno::unused()]], const float3 coord [[anno::unused()]]) = color(0.0);
+
+/// The texel at integer `coord` as `float4`, with gamma applied but no filtering or wrapping.
+@(pure macro)
+export float4 texel_float4(const texture_3d tex, const int3 coord, const float frame = 0.0 [[anno::unused()]]) {
+  // An invalid texture returns all zero including alpha, matching the
+  // 2D behavior; a valid fetch splats the scalar field with alpha 1
+  // per the single-channel convention.
+  return float4(0) if (!tex.brick_table);
+  return applyGamma(tex.gamma, #unpackFloat4(voxelFetch(tex, coord)));
+}
+
+/// The texel at integer `coord` as `float3`, with gamma applied but no filtering or wrapping.
+@(pure macro)
+export float3 texel_float3(const texture_3d tex, const int3 coord, const float frame = 0.0 [[anno::unused()]]) {
+  return applyGamma(tex.gamma, #unpackFloat4(voxelFetch(tex, coord)).xyz);
+}
+
+/// The texel at integer `coord` as `float2`, with gamma applied but no filtering or wrapping.
+@(pure macro)
+export float2 texel_float2(const texture_3d tex, const int3 coord, const float frame = 0.0 [[anno::unused()]]) {
+  return applyGamma(tex.gamma, #unpackFloat4(voxelFetch(tex, coord)).xy);
+}
+
+/// The texel at integer `coord` as `float`, with gamma applied but no filtering or wrapping.
+@(pure macro)
+export float texel_float(const texture_3d tex, const int3 coord, const float frame = 0.0 [[anno::unused()]]) {
+  return applyGamma(tex.gamma, voxelFetch(tex, coord));
+}
+
+/// The texel at integer `coord` as `color`, with gamma applied but no filtering or wrapping.
+@(pure macro)
+export color texel_color(const texture_3d tex, const int3 coord, const float frame = 0.0 [[anno::unused()]]) {
+  return color(texel_float3(tex, coord));
+}
+
+/// The extent in voxels. NOTE: This is non-standard!
+@(pure macro)
+export int3 extent(const texture_3d tex) = tex.extent;
+
+/// The minimum value over the whole voxel field, without gamma applied.
+/// NOTE: This is non-standard!
+@(pure macro)
+export float min_value(const texture_3d tex) = tex.min_value;
+
+/// The maximum value over the whole voxel field, without gamma applied.
+/// This is what makes author-declared volume majorants exact for
+/// grid-backed heterogeneous media: a scattering coefficient of
+/// `sigma * lookup_float(tex, ...)` is bounded by
+/// `sigma * max_value(tex)`. NOTE: This is non-standard!
+@(pure macro)
+export float max_value(const texture_3d tex) = tex.max_value;
+
+/// The bilinear sample of one mip level of a plain (non-tileset)
+/// texture, honoring the wrap modes and crop windows. `levelOffset` is
+/// the texel offset of the level within the tile's contiguous mip
+/// chain. No gamma; the caller applies it once after the level blend.
+@(pure macro)
+float4 lookupLevelPlain(
+  const auto tileBuffer,
+  const int levelOffset,
+  const int2 levelExtent,
+  float2 coord,
+  const int2 wrap,
+  const float2 crop_u,
+  const float2 crop_v,
+) {
+  const auto iCropU(int2(crop_u * levelExtent));
+  const auto iCropV(int2(crop_v * levelExtent));
+  const auto iCorner0(int2(iCropU[0], iCropV[0]));
+  const auto iCorner1(int2(iCropU[1], iCropV[1]));
+  const auto subextent(iCorner1 - iCorner0);
+  coord *= subextent;
+  coord -= 0.5;
+  const int2 ic(#floor(coord));
+  const auto ic0(iCorner0 + applyWrap(wrap, subextent, ic));
+  const auto ic1(iCorner0 + applyWrap(wrap, subextent, ic + 1));
+  coord -= ic;
+  // See 'texelFetch()': mirror within the level, then index within the row.
+  const int row0(levelOffset + levelExtent.x * (levelExtent.y - 1 - ic0.y));
+  const int row1(levelOffset + levelExtent.x * (levelExtent.y - 1 - ic1.y));
+  return math::lerp(math::lerp(#unpackFloat4(tileBuffer[row0 + ic0.x]),           //
+                               #unpackFloat4(tileBuffer[row0 + ic1.x]), coord.x), //
+                    math::lerp(#unpackFloat4(tileBuffer[row1 + ic0.x]),           //
+                               #unpackFloat4(tileBuffer[row1 + ic1.x]), coord.x), coord.y);
+}
+
+/// The bilinear sample of one mip level of a uv-tileset texture, with
+/// `coord` already reduced to the tile-local `[0,1)` range and
+/// `levelOffset` as above. No gamma; the caller applies it once after
+/// the level blend.
+@(pure macro)
+float4 lookupLevelTileset(const auto tileBuffer, const int levelOffset, const int2 levelExtent, float2 coord) {
+  coord *= levelExtent;
+  coord -= 0.5;
+  const int2 ic(#floor(coord));
+  const int2 ic0(#max(#min(ic, levelExtent - 1), 0));
+  const int2 ic1(#max(#min(ic + 1, levelExtent - 1), 0));
+  coord -= ic;
+  // See 'texelFetch()': mirror within the level, then index within the row.
+  const int row0(levelOffset + levelExtent.x * (levelExtent.y - 1 - ic0.y));
+  const int row1(levelOffset + levelExtent.x * (levelExtent.y - 1 - ic1.y));
+  return math::lerp(math::lerp(#unpackFloat4(tileBuffer[row0 + ic0.x]),           //
+                               #unpackFloat4(tileBuffer[row0 + ic1.x]), coord.x), //
+                    math::lerp(#unpackFloat4(tileBuffer[row1 + ic0.x]),           //
+                               #unpackFloat4(tileBuffer[row1 + ic1.x]), coord.x), coord.y);
+}
+
+/// The trilinearly filtered lookup at `coord` and continuous mip level
+/// `lod` as `float4`, honoring the wrap modes and crop windows, which
+/// are ignored for uv-tilesets. NOTE: This is non-standard!
+///
+/// `lod` is clamped to `[0, num_levels - 1]`; level `l` is the level-0
+/// image box-filtered down by `2^l`, so a caller tracking a screen-space
+/// footprint should pass `lod = log2(footprint in level-0 texels)`
+/// (`::extras::lod::mip_level()` deliberately sits one level sharper;
+/// see the rationale there). Integral `lod` samples a single
+/// level bilinearly (so `lod: 0.0` reproduces `lookup_float4()`
+/// exactly); fractional `lod` blends the two straddling levels.
+@(pure)
+export float4 lookup_float4_lod(
+  const texture_2d tex,
+  float2 coord,
+  const float lod = 0.0,
+  const wrap_mode wrap_u = wrap_repeat,
+  const wrap_mode wrap_v = wrap_repeat,
+  const float2 crop_u = float2(0.0, 1.0),
+  const float2 crop_v = float2(0.0, 1.0),
+) {
+  const float lodClamped(#min(#max(lod, 0.0), float(tex.num_levels - 1)));
+  const int l0(int(lodClamped));
+  const float lodFrac(lodClamped - l0);
+  if ((tex.tile_count.x > 1) | (tex.tile_count.y > 1)) {
+    // See 'lookup_float4()': floor(coord) selects the tile and the
+    // remainder looks up in the tile, with wrap and crop ignored.
+    const int2 tileIndex(#floor(coord));
+    const auto i(getTileIndex(tex, tileIndex));
+    return float4(0) if (i < 0);
+    const auto tileBuffer(tex.tile_buffers[i]);
+    return float4(0) if (!tileBuffer);
+    coord -= tileIndex;
+    // Walk the contiguous chain down to level 'l0' (see the layout
+    // note on 'texture_2d' in 'api.smdl'), stopping early if this
+    // tile's own chain runs out before the tileset-wide level count.
+    int levelOffset(0);
+    int2 levelExtent(tex.tile_extents[i]);
+    for (int k = 0; k < l0; k++) {
+      if (#all(levelExtent <= 1)) break;
+      levelOffset += levelExtent.x * levelExtent.y;
+      levelExtent = #max(levelExtent / 2, 1);
+    }
+    const auto s0(lookupLevelTileset(tileBuffer, levelOffset, levelExtent, coord));
+    return applyGamma(tex.gamma, s0) if (!(lodFrac > 0.0) | #all(levelExtent <= 1));
+    const auto s1(lookupLevelTileset(tileBuffer, levelOffset + levelExtent.x * levelExtent.y,
+                                     #max(levelExtent / 2, 1), coord));
+    return applyGamma(tex.gamma, math::lerp(s0, s1, lodFrac));
+  } else {
+    // MDL specification:
+    // The clip wrap mode returns zero for lookups outside [0, 1).
+    return float4(0) if ((int(wrap_u) == int(wrap_clip)) & !((coord.x >= 0.0) & (coord.x < 1.0)));
+    return float4(0) if ((int(wrap_v) == int(wrap_clip)) & !((coord.y >= 0.0) & (coord.y < 1.0)));
+    const auto i(getTileIndex(tex, int2(0)));
+    return float4(0) if (i < 0);
+    const auto tileBuffer(tex.tile_buffers[i]);
+    return float4(0) if (!tileBuffer);
+    const int2 wrap(int(wrap_u), int(wrap_v));
+    int levelOffset(0);
+    int2 levelExtent(tex.tile_extents[i]);
+    for (int k = 0; k < l0; k++) {
+      if (#all(levelExtent <= 1)) break;
+      levelOffset += levelExtent.x * levelExtent.y;
+      levelExtent = #max(levelExtent / 2, 1);
+    }
+    const auto s0(lookupLevelPlain(tileBuffer, levelOffset, levelExtent, coord, wrap, crop_u, crop_v));
+    return applyGamma(tex.gamma, s0) if (!(lodFrac > 0.0) | #all(levelExtent <= 1));
+    const auto s1(lookupLevelPlain(tileBuffer, levelOffset + levelExtent.x * levelExtent.y,
+                                   #max(levelExtent / 2, 1), coord, wrap, crop_u, crop_v));
+    return applyGamma(tex.gamma, math::lerp(s0, s1, lodFrac));
+  }
+}
+
+/// The trilinearly filtered lookup at `coord` and continuous mip level
+/// `lod` as `float3`; see `lookup_float4_lod()`. NOTE: This is non-standard!
+@(pure macro)
+export float3 lookup_float3_lod(
+  const texture_2d tex,
+  const float2 coord,
+  const float lod = 0.0,
+  const wrap_mode wrap_u = wrap_repeat,
+  const wrap_mode wrap_v = wrap_repeat,
+  const float2 crop_u = float2(0.0, 1.0),
+  const float2 crop_v = float2(0.0, 1.0),
+) = lookup_float4_lod(tex, coord, lod, wrap_u, wrap_v, crop_u, crop_v).xyz;
+
+/// The trilinearly filtered lookup at `coord` and continuous mip level
+/// `lod` as `float2`; see `lookup_float4_lod()`. NOTE: This is non-standard!
+@(pure macro)
+export float2 lookup_float2_lod(
+  const texture_2d tex,
+  const float2 coord,
+  const float lod = 0.0,
+  const wrap_mode wrap_u = wrap_repeat,
+  const wrap_mode wrap_v = wrap_repeat,
+  const float2 crop_u = float2(0.0, 1.0),
+  const float2 crop_v = float2(0.0, 1.0),
+) = lookup_float4_lod(tex, coord, lod, wrap_u, wrap_v, crop_u, crop_v).xy;
+
+/// The trilinearly filtered lookup at `coord` and continuous mip level
+/// `lod` as `float`; see `lookup_float4_lod()`. NOTE: This is non-standard!
+@(pure macro)
+export float lookup_float_lod(
+  const texture_2d tex,
+  const float2 coord,
+  const float lod = 0.0,
+  const wrap_mode wrap_u = wrap_repeat,
+  const wrap_mode wrap_v = wrap_repeat,
+  const float2 crop_u = float2(0.0, 1.0),
+  const float2 crop_v = float2(0.0, 1.0),
+) = lookup_float4_lod(tex, coord, lod, wrap_u, wrap_v, crop_u, crop_v).x;
+
+/// The trilinearly filtered lookup at `coord` and continuous mip level
+/// `lod` as `color`; see `lookup_float4_lod()`. NOTE: This is non-standard!
+@(pure macro)
+export color lookup_color_lod(
+  const texture_2d tex,
+  const float2 coord,
+  const float lod = 0.0,
+  const wrap_mode wrap_u = wrap_repeat,
+  const wrap_mode wrap_v = wrap_repeat,
+  const float2 crop_u = float2(0.0, 1.0),
+  const float2 crop_v = float2(0.0, 1.0),
+) = color(lookup_float4_lod(tex, coord, lod, wrap_u, wrap_v, crop_u, crop_v).xyz);
 
 @(foreign)
 void smdlPtexEvaluate(&void tex, int gamma, int first, int num, &float result);
 
-/// The Ptex lookup of four channels starting at `channel` as `float4`. NOTE: This is non-standard!
+/// The Ptex lookup of four channels starting at `channel` as `float4`.
 @(macro)
 export float4 lookup_float4(const texture_ptex tex, const int channel = 0) {
   float4 result;
@@ -264,7 +712,7 @@ export float4 lookup_float4(const texture_ptex tex, const int channel = 0) {
   return result;
 }
 
-/// The Ptex lookup of three channels starting at `channel` as `float3`. NOTE: This is non-standard!
+/// The Ptex lookup of three channels starting at `channel` as `float3`.
 @(macro)
 export float3 lookup_float3(const texture_ptex tex, const int channel = 0) {
   float3 result;
@@ -272,7 +720,7 @@ export float3 lookup_float3(const texture_ptex tex, const int channel = 0) {
   return result;
 }
 
-/// The Ptex lookup of two channels starting at `channel` as `float2`. NOTE: This is non-standard!
+/// The Ptex lookup of two channels starting at `channel` as `float2`.
 @(macro)
 export float2 lookup_float2(const texture_ptex tex, const int channel = 0) {
   float2 result;
@@ -280,7 +728,7 @@ export float2 lookup_float2(const texture_ptex tex, const int channel = 0) {
   return result;
 }
 
-/// The Ptex lookup of one channel at `channel` as `float`. NOTE: This is non-standard!
+/// The Ptex lookup of one channel at `channel` as `float`.
 @(macro)
 export float lookup_float(const texture_ptex tex, const int channel = 0) {
   float result;
@@ -288,7 +736,7 @@ export float lookup_float(const texture_ptex tex, const int channel = 0) {
   return result;
 }
 
-/// The Ptex lookup of three channels starting at `channel` as `color`. NOTE: This is non-standard!
+/// The Ptex lookup of three channels starting at `channel` as `color`.
 @(macro)
 export color lookup_color(const texture_ptex tex, const int channel = 0) {
   float3 result;

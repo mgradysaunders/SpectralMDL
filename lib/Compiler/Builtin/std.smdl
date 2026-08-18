@@ -2,6 +2,7 @@
 /// the other standard modules for convenience.
 #smdl
 
+export using ::anno import *;
 export using ::debug import *;
 export using ::df import *;
 export using ::limits import *;

@@ -4,6 +4,16 @@
 
 #include "../thirdparty/miniz.h"
 
+// The optional dependencies define these on the library target only when
+// they are actually linked, so give them a value either way and hand it
+// to SMDL source as '$HAS_NANOVDB' and '$HAS_PTEX'.
+#ifndef SMDL_HAS_NANOVDB
+#define SMDL_HAS_NANOVDB 0
+#endif // #ifndef SMDL_HAS_NANOVDB
+#ifndef SMDL_HAS_PTEX
+#define SMDL_HAS_PTEX 0
+#endif // #ifndef SMDL_HAS_PTEX
+
 namespace smdl {
 
 [[nodiscard]] static std::string
@@ -60,6 +70,8 @@ Context::Context(Compiler &compiler) : compiler(compiler) {
       {"string", getComptimeMetaType(getStringType())},
       {"void", getComptimeMetaType(getVoidType())},
       {"$DEBUG", getComptimeBool(compiler.enableDebug)},
+      {"$HAS_NANOVDB", getComptimeBool(bool(SMDL_HAS_NANOVDB))},
+      {"$HAS_PTEX", getComptimeBool(bool(SMDL_HAS_PTEX))},
       {"$DOUBLE_EPS",
        getComptimeDouble(std::numeric_limits<double>::epsilon())},
       {"$DOUBLE_MAX", getComptimeDouble(std::numeric_limits<double>::max())},
@@ -109,16 +121,16 @@ Context::Context(Compiler &compiler) : compiler(compiler) {
   // - `struct material_volume`
   // - `struct material_geometry`
   // - `struct material`
-  // - Function `_wyman_xyz`
-  // - Function `_wyman_y`
-  // - Function `_color_to_rgb`
-  // - Function `_rgb_to_color`
+  // - Function `_wymanXYZ`
+  // - Function `_wymanY`
+  // - Function `_colorToRgb`
+  // - Function `_rgbToColor`
   auto apiRootScope{getBuiltinModule("api")->mRootScope};
   auto seedKeyword{[&](Declaration *declaration) {
     if (declaration->isExported() && declaration->hasSimpleName()) {
       auto simpleName{llvm::StringRef(declaration->name[0])};
-      SMDL_SANITY_CHECK(!mKeywords.contains(simpleName),
-                        "keyword collision in builtin 'api' module");
+      SMDL_SANITY_CHECK_MSG(!mKeywords.contains(simpleName),
+                            "keyword collision in builtin 'api' module");
       mKeywords[simpleName] = declaration->value;
     }
   }};

@@ -517,15 +517,39 @@ constexpr Matrix<T, 4, 4> affineInverse(const Matrix<T, 4, 4> &m) noexcept {
   return float3x3(x, y, z);
 }
 
-/// Calculate orthonormal coordinate system with Gram-Schmidt process.
+/// Gram-Schmidt orthonormalize `tangentU` and `tangentV` against `normal`,
+/// which must already be normalized.
+///
+/// Handedness is preserved: `tangentV` is projected off the other two axes
+/// rather than being replaced by their cross product, so a left-handed frame
+/// stays left-handed. That matters wherever the frame comes from a transform
+/// that can mirror. The cross product is only the fallback for a `tangentV`
+/// that is degenerate and so carries no handedness to preserve.
+///
+/// This is the orthonormalization that
+/// `State::finalizeAndApplyInternalSpaceConventions()` applies, so a host
+/// that needs to predict what the state will do to a frame should call this
+/// rather than reimplement it.
+///
+inline void gramSchmidtOrthonormalize(const float3 &normal, float3 &tangentU,
+                                      float3 &tangentV) noexcept {
+  tangentU = tangentU - dot(tangentU, normal) * normal;
+  if (!tryNormalize(tangentU)) {
+    tangentU = normalize(perpendicularTo(normal));
+  }
+  tangentV = tangentV - dot(tangentV, normal) * normal -
+             dot(tangentV, tangentU) * tangentU;
+  if (!tryNormalize(tangentV)) {
+    tangentV = normalize(cross(normal, tangentU));
+  }
+}
+
+/// Calculate orthonormal coordinate system with Gram-Schmidt process,
+/// anchored on the third column and preserving handedness. See
+/// `gramSchmidtOrthonormalize()`.
 [[nodiscard]] inline float3x3 orthonormalize(float3x3 m) noexcept {
-  float3 &x{m[0]};
-  float3 &y{m[1]};
-  float3 &z{m[2]};
-  if (!tryNormalize(z)) z = float3(0, 0, 1);
-  x = x - dot(x, z) * z;
-  if (!tryNormalize(x)) x = perpendicularTo(z);
-  y = normalize(cross(z, x));
+  if (!tryNormalize(m[2])) m[2] = float3(0, 0, 1);
+  gramSchmidtOrthonormalize(m[2], m[0], m[1]);
   return m;
 }
 

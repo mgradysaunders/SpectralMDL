@@ -2,252 +2,278 @@
 #pragma once
 
 #include <cmath>
+#include <cstring>
 
 #include "smdl/Export.h"
+#include "smdl/Support/Macros.h"
 #include "smdl/Support/Span.h"
-
-#if __clang__
-#define SMDL_USE_EXT_VECTOR_TYPES 1
-#pragma clang diagnostic push
-#pragma clang diagnostic ignored "-Wpsabi"
-#endif // #if __clang__
 
 namespace smdl {
 
 /// \addtogroup support
 /// \{
 
-/// A color vector to parallelize math operations.
+/// A color vector: a runtime-sized vector of per-band amplitudes.
 ///
-/// \tparam N
-/// The number of bands/channels.
+/// The band count of a spectral render is a runtime constant, so this
+/// carries its size instead of a template parameter. Up to
+/// `INLINE_CAPACITY` bands live in the object itself, which is the
+/// historical fixed size of 16, so a default 16-band render allocates
+/// nothing; larger band counts spill to the heap.
 ///
-template <size_t N> class ColorVector final {
+/// Performance note: whenever the storage is inline, arithmetic runs
+/// fixed-length loops over the full `INLINE_CAPACITY` and copies move
+/// the whole inline buffer, so the compiler unrolls and vectorizes
+/// exactly as it did when the size was a compile-time 16. This is
+/// sound because the inline buffer is zero-initialized at construction
+/// and only ever written by these same fixed-length operations, so
+/// lanes at or beyond `size()` always hold initialized floats; they
+/// may compute to NaN (for example a division's `0/0`) but they are
+/// never read by anything size-bounded, which is everything the class
+/// exposes.
+///
+/// Sizes must agree in mixed operations; this is sanity-checked, not
+/// reconciled. The default constructor makes an empty vector, which is
+/// a valid operand of nothing; give a size before doing arithmetic.
+/// Deliberately not `final`: a renderer wants a subclass whose default
+/// constructor supplies its render-wide band count.
+class ColorVector {
 public:
-#if SMDL_USE_EXT_VECTOR_TYPES
-  using vector_type = float __attribute__((ext_vector_type(N)));
-#else
-  using vector_type = std::array<float, N>;
-#endif // #if SMDL_USE_EXT_VECTOR_TYPES
+  /// The number of bands stored inline.
+  static constexpr size_t INLINE_CAPACITY = 16;
 
-  constexpr ColorVector() = default;
+  /// Construct empty.
+  ColorVector() = default;
 
-  constexpr ColorVector(vector_type v) : v(v) {}
-
-#if SMDL_USE_EXT_VECTOR_TYPES
-  constexpr ColorVector(float s) : v(s) {}
-#else
-  constexpr ColorVector(float s) {
-    for (size_t i = 0; i < N; i++) v[i] = s;
-  }
-#endif // #if SMDL_USE_EXT_VECTOR_TYPES
-
-  constexpr ColorVector(Span<const float> s) {
-    for (size_t i = 0; i < std::min(N, s.size()); i++) {
-      v[i] = s[i];
+  /// Construct with `size` bands of `value`.
+  explicit ColorVector(size_t size, float value = 0.0f) {
+    reallocate(size);
+    if (isInline()) {
+      for (size_t i = 0; i < INLINE_CAPACITY; i++) mLocal[i] = value;
+    } else {
+      for (size_t i = 0; i < mSize; i++) mData[i] = value;
     }
   }
 
+  /// Construct with `values.size()` bands copied from `values`.
+  explicit ColorVector(Span<const float> values) {
+    reallocate(values.size());
+    if (mSize > 0) std::memcpy(mData, values.data(), mSize * sizeof(float));
+  }
+
+  ColorVector(const ColorVector &other) {
+    if (other.isInline()) {
+      std::memcpy(mLocal, other.mLocal, sizeof(mLocal));
+      mSize = other.mSize;
+    } else {
+      reallocate(other.mSize);
+      std::memcpy(mData, other.mData, mSize * sizeof(float));
+    }
+  }
+
+  ColorVector(ColorVector &&other) noexcept { stealOrCopy(other); }
+
+  ColorVector &operator=(const ColorVector &other) {
+    if (this != &other) {
+      if (other.isInline() && isInline()) {
+        std::memcpy(mLocal, other.mLocal, sizeof(mLocal));
+        mSize = other.mSize;
+      } else {
+        reallocate(other.mSize);
+        if (mSize > 0) std::memcpy(mData, other.mData, mSize * sizeof(float));
+      }
+    }
+    return *this;
+  }
+
+  ColorVector &operator=(ColorVector &&other) noexcept {
+    if (this != &other) {
+      if (!isInline()) delete[] mData;
+      stealOrCopy(other);
+    }
+    return *this;
+  }
+
+  ~ColorVector() {
+    if (!isInline()) delete[] mData;
+    mData = mLocal;
+    mSize = 0;
+  }
+
 public:
-  [[nodiscard]] constexpr size_t size() const noexcept { return N; }
+  [[nodiscard]] size_t size() const noexcept { return mSize; }
 
-  [[nodiscard]] auto data() noexcept -> float * {
-#if SMDL_USE_EXT_VECTOR_TYPES
-    return reinterpret_cast<float *>(&v);
-#else
-    return v.data();
-#endif // #if SMDL_USE_EXT_VECTOR_TYPES
-  }
+  [[nodiscard]] float *data() noexcept { return mData; }
 
-  [[nodiscard]] auto data() const noexcept -> const float * {
-    return const_cast<ColorVector &>(*this).data();
-  }
+  [[nodiscard]] const float *data() const noexcept { return mData; }
 
-  [[nodiscard]] auto operator[](size_t i) noexcept -> float & {
-    return data()[i];
-  }
+  [[nodiscard]] float &operator[](size_t i) noexcept { return mData[i]; }
 
-  [[nodiscard]] auto operator[](size_t i) const noexcept -> const float & {
-    return data()[i];
+  [[nodiscard]] const float &operator[](size_t i) const noexcept {
+    return mData[i];
   }
 
 public:
-#if SMDL_USE_EXT_VECTOR_TYPES
-  [[nodiscard]] constexpr ColorVector operator+() const noexcept { return v; }
-
-  [[nodiscard]] constexpr ColorVector operator-() const noexcept { return -v; }
-
-  [[nodiscard]]
-  constexpr ColorVector operator+(const ColorVector &rhs) const noexcept {
-    return v + rhs.v;
+  ColorVector &operator+=(const ColorVector &rhs) noexcept {
+    SMDL_SANITY_CHECK(mSize == rhs.mSize);
+    if (isInline()) {
+      for (size_t i = 0; i < INLINE_CAPACITY; i++) mLocal[i] += rhs.mLocal[i];
+    } else {
+      for (size_t i = 0; i < mSize; i++) mData[i] += rhs.mData[i];
+    }
+    return *this;
   }
 
-  [[nodiscard]]
-  constexpr ColorVector operator-(const ColorVector &rhs) const noexcept {
-    return v - rhs.v;
+  ColorVector &operator-=(const ColorVector &rhs) noexcept {
+    SMDL_SANITY_CHECK(mSize == rhs.mSize);
+    if (isInline()) {
+      for (size_t i = 0; i < INLINE_CAPACITY; i++) mLocal[i] -= rhs.mLocal[i];
+    } else {
+      for (size_t i = 0; i < mSize; i++) mData[i] -= rhs.mData[i];
+    }
+    return *this;
   }
 
-  [[nodiscard]]
-  constexpr ColorVector operator*(const ColorVector &rhs) const noexcept {
-    return v * rhs.v;
+  ColorVector &operator*=(const ColorVector &rhs) noexcept {
+    SMDL_SANITY_CHECK(mSize == rhs.mSize);
+    if (isInline()) {
+      for (size_t i = 0; i < INLINE_CAPACITY; i++) mLocal[i] *= rhs.mLocal[i];
+    } else {
+      for (size_t i = 0; i < mSize; i++) mData[i] *= rhs.mData[i];
+    }
+    return *this;
   }
 
-  [[nodiscard]]
-  constexpr ColorVector operator/(const ColorVector &rhs) const noexcept {
-    return v / rhs.v;
+  ColorVector &operator/=(const ColorVector &rhs) noexcept {
+    SMDL_SANITY_CHECK(mSize == rhs.mSize);
+    if (isInline()) {
+      for (size_t i = 0; i < INLINE_CAPACITY; i++) mLocal[i] /= rhs.mLocal[i];
+    } else {
+      for (size_t i = 0; i < mSize; i++) mData[i] /= rhs.mData[i];
+    }
+    return *this;
   }
 
-  [[nodiscard]] constexpr ColorVector operator+(float rhs) const noexcept {
-    return v + rhs;
+  ColorVector &operator+=(float rhs) noexcept {
+    if (isInline()) {
+      for (size_t i = 0; i < INLINE_CAPACITY; i++) mLocal[i] += rhs;
+    } else {
+      for (size_t i = 0; i < mSize; i++) mData[i] += rhs;
+    }
+    return *this;
   }
 
-  [[nodiscard]] constexpr ColorVector operator-(float rhs) const noexcept {
-    return v - rhs;
+  ColorVector &operator-=(float rhs) noexcept {
+    if (isInline()) {
+      for (size_t i = 0; i < INLINE_CAPACITY; i++) mLocal[i] -= rhs;
+    } else {
+      for (size_t i = 0; i < mSize; i++) mData[i] -= rhs;
+    }
+    return *this;
   }
 
-  [[nodiscard]] constexpr ColorVector operator*(float rhs) const noexcept {
-    return v * rhs;
+  ColorVector &operator*=(float rhs) noexcept {
+    if (isInline()) {
+      for (size_t i = 0; i < INLINE_CAPACITY; i++) mLocal[i] *= rhs;
+    } else {
+      for (size_t i = 0; i < mSize; i++) mData[i] *= rhs;
+    }
+    return *this;
   }
 
-  [[nodiscard]] constexpr ColorVector operator/(float rhs) const noexcept {
-    return v / rhs;
+  ColorVector &operator/=(float rhs) noexcept {
+    if (isInline()) {
+      for (size_t i = 0; i < INLINE_CAPACITY; i++) mLocal[i] /= rhs;
+    } else {
+      for (size_t i = 0; i < mSize; i++) mData[i] /= rhs;
+    }
+    return *this;
   }
 
-  [[nodiscard]]
-  friend constexpr ColorVector operator+(float lhs,
-                                         const ColorVector &rhs) noexcept {
-    return lhs + rhs.v;
-  }
+  [[nodiscard]] ColorVector operator+() const { return *this; }
 
-  [[nodiscard]]
-  friend constexpr ColorVector operator-(float lhs,
-                                         const ColorVector &rhs) noexcept {
-    return lhs - rhs.v;
-  }
-
-  [[nodiscard]]
-  friend constexpr ColorVector operator*(float lhs,
-                                         const ColorVector &rhs) noexcept {
-    return lhs * rhs.v;
-  }
-
-  [[nodiscard]]
-  friend constexpr ColorVector operator/(float lhs,
-                                         const ColorVector &rhs) noexcept {
-    return lhs / rhs.v;
-  }
-#else
-  [[nodiscard]] constexpr ColorVector operator+() const noexcept { return v; }
-
-  [[nodiscard]] constexpr ColorVector operator-() const noexcept {
-    ColorVector result{};
-    for (size_t i = 0; i < N; i++) result.v[i] = -v[i];
+  [[nodiscard]] ColorVector operator-() const {
+    ColorVector result{*this};
+    if (result.isInline()) {
+      for (size_t i = 0; i < INLINE_CAPACITY; i++)
+        result.mLocal[i] = -result.mLocal[i];
+    } else {
+      for (size_t i = 0; i < result.mSize; i++)
+        result.mData[i] = -result.mData[i];
+    }
     return result;
   }
 
-  [[nodiscard]]
-  constexpr ColorVector operator+(const ColorVector &rhs) const noexcept {
-    ColorVector result{};
-    for (size_t i = 0; i < N; i++) result.v[i] = v[i] + rhs.v[i];
+  [[nodiscard]] ColorVector operator+(const ColorVector &rhs) const {
+    ColorVector result{*this};
+    result += rhs;
     return result;
   }
 
-  [[nodiscard]]
-  constexpr ColorVector operator-(const ColorVector &rhs) const noexcept {
-    ColorVector result{};
-    for (size_t i = 0; i < N; i++) result.v[i] = v[i] - rhs.v[i];
+  [[nodiscard]] ColorVector operator-(const ColorVector &rhs) const {
+    ColorVector result{*this};
+    result -= rhs;
     return result;
   }
 
-  [[nodiscard]]
-  constexpr ColorVector operator*(const ColorVector &rhs) const noexcept {
-    ColorVector result{};
-    for (size_t i = 0; i < N; i++) result.v[i] = v[i] * rhs.v[i];
+  [[nodiscard]] ColorVector operator*(const ColorVector &rhs) const {
+    ColorVector result{*this};
+    result *= rhs;
     return result;
   }
 
-  [[nodiscard]]
-  constexpr ColorVector operator/(const ColorVector &rhs) const noexcept {
-    ColorVector result{};
-    for (size_t i = 0; i < N; i++) result.v[i] = v[i] / rhs.v[i];
+  [[nodiscard]] ColorVector operator/(const ColorVector &rhs) const {
+    ColorVector result{*this};
+    result /= rhs;
     return result;
   }
 
-  [[nodiscard]] constexpr ColorVector operator+(float rhs) const noexcept {
-    ColorVector result{};
-    for (size_t i = 0; i < N; i++) result.v[i] = v[i] + rhs;
+  [[nodiscard]] ColorVector operator+(float rhs) const {
+    ColorVector result{*this};
+    result += rhs;
     return result;
   }
 
-  [[nodiscard]] constexpr ColorVector operator-(float rhs) const noexcept {
-    ColorVector result{};
-    for (size_t i = 0; i < N; i++) result.v[i] = v[i] - rhs;
+  [[nodiscard]] ColorVector operator-(float rhs) const {
+    ColorVector result{*this};
+    result -= rhs;
     return result;
   }
 
-  [[nodiscard]] constexpr ColorVector operator*(float rhs) const noexcept {
-    ColorVector result{};
-    for (size_t i = 0; i < N; i++) result.v[i] = v[i] * rhs;
+  [[nodiscard]] ColorVector operator*(float rhs) const {
+    ColorVector result{*this};
+    result *= rhs;
     return result;
   }
 
-  [[nodiscard]] constexpr ColorVector operator/(float rhs) const noexcept {
-    ColorVector result{};
-    for (size_t i = 0; i < N; i++) result.v[i] = v[i] / rhs;
+  [[nodiscard]] ColorVector operator/(float rhs) const {
+    ColorVector result{*this};
+    result /= rhs;
     return result;
   }
 
-  [[nodiscard]]
-  friend constexpr ColorVector operator+(float lhs,
-                                         const ColorVector &rhs) noexcept {
-    ColorVector result{};
-    for (size_t i = 0; i < N; i++) result.v[i] = lhs + rhs.v[i];
+  [[nodiscard]] friend ColorVector operator+(float lhs,
+                                             const ColorVector &rhs) {
+    return rhs + lhs;
+  }
+
+  [[nodiscard]] friend ColorVector operator-(float lhs,
+                                             const ColorVector &rhs) {
+    ColorVector result{rhs.mSize, lhs};
+    result -= rhs;
     return result;
   }
 
-  [[nodiscard]]
-  friend constexpr ColorVector operator-(float lhs,
-                                         const ColorVector &rhs) noexcept {
-    ColorVector result{};
-    for (size_t i = 0; i < N; i++) result.v[i] = lhs - rhs.v[i];
+  [[nodiscard]] friend ColorVector operator*(float lhs,
+                                             const ColorVector &rhs) {
+    return rhs * lhs;
+  }
+
+  [[nodiscard]] friend ColorVector operator/(float lhs,
+                                             const ColorVector &rhs) {
+    ColorVector result{rhs.mSize, lhs};
+    result /= rhs;
     return result;
-  }
-
-  [[nodiscard]]
-  friend constexpr ColorVector operator*(float lhs,
-                                         const ColorVector &rhs) noexcept {
-    ColorVector result{};
-    for (size_t i = 0; i < N; i++) result.v[i] = lhs * rhs.v[i];
-    return result;
-  }
-
-  [[nodiscard]]
-  friend constexpr ColorVector operator/(float lhs,
-                                         const ColorVector &rhs) noexcept {
-    ColorVector result{};
-    for (size_t i = 0; i < N; i++) result.v[i] = lhs / rhs.v[i];
-    return result;
-  }
-#endif // #if SMDL_USE_EXT_VECTOR_TYPES
-
-  template <typename Other>
-  constexpr ColorVector &operator+=(const Other &rhs) noexcept {
-    return *this = *this + rhs;
-  }
-
-  template <typename Other>
-  constexpr ColorVector &operator-=(const Other &rhs) noexcept {
-    return *this = *this - rhs;
-  }
-
-  template <typename Other>
-  constexpr ColorVector &operator*=(const Other &rhs) noexcept {
-    return *this = *this * rhs;
-  }
-
-  template <typename Other>
-  constexpr ColorVector &operator/=(const Other &rhs) noexcept {
-    return *this = *this / rhs;
   }
 
 public:
@@ -260,85 +286,124 @@ public:
   /// spectra.
   ///
   [[nodiscard]] bool isAllZero(float thresh = 0.0f) const noexcept {
-    for (size_t i = 0; i < N; i++)
-      if (!(std::abs(v[i]) <= thresh)) return false;
+    for (size_t i = 0; i < mSize; i++)
+      if (!(std::abs(mData[i]) <= thresh)) return false;
     return true;
   }
 
   /// Is any component infinite?
   [[nodiscard]] bool isAnyInf() const noexcept {
-    for (size_t i = 0; i < N; i++)
-      if (std::isinf(v[i])) return true;
+    for (size_t i = 0; i < mSize; i++)
+      if (std::isinf(mData[i])) return true;
     return false;
   }
 
   /// Is any component not-a-number?
   [[nodiscard]] bool isAnyNan() const noexcept {
-    for (size_t i = 0; i < N; i++)
-      if (std::isnan(v[i])) return true;
+    for (size_t i = 0; i < mSize; i++)
+      if (std::isnan(mData[i])) return true;
     return false;
   }
 
   /// Is any component either infinite or not-a-number?
   [[nodiscard]] bool isAnyNonFinite() const noexcept {
-    for (size_t i = 0; i < N; i++)
-      if (!std::isfinite(v[i])) return true;
+    for (size_t i = 0; i < mSize; i++)
+      if (!std::isfinite(mData[i])) return true;
     return false;
   }
 
   /// Set all non-positive components to zero.
   void setNonPositiveToZero() noexcept {
-    for (size_t i = 0; i < N; i++) {
-      v[i] = std::fmax(v[i], 0.0f);
+    for (size_t i = 0; i < mSize; i++) {
+      mData[i] = std::fmax(mData[i], 0.0f);
     }
   }
 
   /// Set all non-finite components to zero.
   void setNonFiniteToZero() noexcept {
-    for (size_t i = 0; i < N; i++) {
-      if (!std::isfinite(v[i])) {
-        v[i] = 0.0f;
+    for (size_t i = 0; i < mSize; i++) {
+      if (!std::isfinite(mData[i])) {
+        mData[i] = 0.0f;
       }
     }
   }
 
   /// Calculate the average.
   [[nodiscard]] float average() const noexcept {
+    SMDL_SANITY_CHECK(mSize > 0);
     float result{};
-    for (size_t i = 0; i < N; i++) result += v[i];
-    return result / N;
+    for (size_t i = 0; i < mSize; i++) result += mData[i];
+    return result / float(mSize);
   }
 
   /// Find the maximum component.
   [[nodiscard]] float maxComponent() const noexcept {
-    float result{v[0]};
-    for (size_t i = 1; i < N; i++) result = std::fmax(result, v[i]);
+    SMDL_SANITY_CHECK(mSize > 0);
+    float result{mData[0]};
+    for (size_t i = 1; i < mSize; i++) result = std::fmax(result, mData[i]);
     return result;
   }
 
   /// Find the minimum component.
   [[nodiscard]] float minComponent() const noexcept {
-    float result{v[0]};
-    for (size_t i = 1; i < N; i++) result = std::fmin(result, v[i]);
+    SMDL_SANITY_CHECK(mSize > 0);
+    float result{mData[0]};
+    for (size_t i = 1; i < mSize; i++) result = std::fmin(result, mData[i]);
     return result;
   }
 
   [[nodiscard]] operator Span<float>() noexcept {
-    return Span<float>(data(), size());
+    return Span<float>(mData, mSize);
   }
 
   [[nodiscard]] operator Span<const float>() const noexcept {
-    return Span<const float>(data(), size());
+    return Span<const float>(mData, mSize);
   }
 
-public:
-  vector_type v{};
+private:
+  /// Is the storage the inline buffer? True exactly when
+  /// `mSize <= INLINE_CAPACITY`, which is what makes the fixed-length
+  /// fast paths sound: an inline operand of an agreeing size is
+  /// another inline buffer.
+  [[nodiscard]] bool isInline() const noexcept { return mData == mLocal; }
+
+  /// Point `mData` at storage for `size` bands, uninitialized beyond
+  /// the guarantee that inline lanes stay initialized. A size equal to
+  /// the current one implies the storage is already right, because the
+  /// heap is in use exactly when the size exceeds `INLINE_CAPACITY`.
+  void reallocate(size_t size) {
+    if (size == mSize) return;
+    if (!isInline()) delete[] mData;
+    mData = size <= INLINE_CAPACITY ? mLocal : new float[size];
+    mSize = size;
+  }
+
+  /// Move-construct the representation: steal a heap allocation, copy
+  /// the whole inline buffer. The moved-from vector is left empty.
+  void stealOrCopy(ColorVector &other) noexcept {
+    mSize = other.mSize;
+    if (!other.isInline()) {
+      mData = other.mData;
+    } else {
+      mData = mLocal;
+      std::memcpy(mLocal, other.mLocal, sizeof(mLocal));
+    }
+    other.mData = other.mLocal;
+    other.mSize = 0;
+  }
+
+  /// The number of bands.
+  size_t mSize{};
+
+  /// The band values: `mLocal` when `mSize <= INLINE_CAPACITY`, a heap
+  /// allocation otherwise.
+  float *mData{mLocal};
+
+  /// The inline storage. Zero-initialized in full so the fixed-length
+  /// fast paths only ever read initialized lanes.
+  alignas(32) float mLocal[INLINE_CAPACITY]{};
 };
 
 /// \}
 
 } // namespace smdl
-
-#if __clang__
-#pragma clang diagnostic pop
-#endif // #if __clang__

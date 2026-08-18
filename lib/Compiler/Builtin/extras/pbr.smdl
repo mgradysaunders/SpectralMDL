@@ -1,0 +1,715 @@
+// NOTE: This module is non-standard!
+/// PBR texture map sets: the `pbr_maps` construct that loads a
+/// `.pbr`-manifest-described directory of related maps at compile time,
+/// and the decode tier that turns those maps into ready-to-use surface
+/// quantities, so materials consume decoded values instead of
+/// re-implementing storage conventions.
+///
+/// This deliberately lives here rather than in the keyword-seeded `api`
+/// module: it is an SMDL extension, not official MDL, so it must be asked
+/// for by name, whether imported or fully qualified.
+///
+/// Everything here folds against the compile-time facts the maps
+/// carry. Presence is a property of the set's type (an absent map is
+/// a void field, or no field at all), so the gates below
+/// (`#hasField(...)`, `if $(...)`) compile only the branch that applies
+/// to the set at hand, and touching an absent map without a gate is a
+/// compile-time error. Storage facts (which channel a scalar lives in,
+/// which normal convention applies) are compile-time constants on
+/// `pbr_map`, so the dispatches below fold to straight-line lookups.
+/// Gamma is not handled here at all: it rides on each `texture_2d` by
+/// role (sRGB for basecolor and emission, linear otherwise), and
+/// `::tex` applies it during lookup.
+///
+/// Lookups run through the `::tex` LOD lookups at the level
+/// `::extras::lod::mip_level()` implies for the map's texture and the
+/// pixel-footprint LOD state. Whether that level does anything is up to
+/// the call site: mip filtering is opt in, as it is for `texture_2d`,
+/// so `pbr_maps(..., use_mipmap: true)` is what actually prefilters,
+/// and without it (or without a renderer that populates the LOD state)
+/// every lookup resolves to level 0 exactly.
+///
+/// The LOD state measures the raw `state::texture_coordinate()`,
+/// so a material that scales its coordinates must say so: if you pass
+/// `coord: state::texture_coordinate(0).xy * m`, also pass
+/// `uv_scale: m` and the filtering follows the effective texel size
+/// (see `::extras::lod::filter_width()`). The hex-tiling paths
+/// deliberately stay unfiltered: per `::extras::hex`, minification
+/// there resolves by Monte Carlo sampling rather than prefiltering.
+///
+/// The height and horizon maps are a further deliberate exception:
+/// they read no mip levels even under `use_mipmap: true` (`num_levels`
+/// is 1) and their lookups always read level 0. Box filtering is wrong
+/// for both: averaged heights flatten the relief the parallax march and
+/// finite-difference normals reconstruct; a horizon tangent's
+/// meaningful minification is a max, not a mean.
+///
+/// `sample()` covers the common case in one call, decoding every map of a
+/// set at one coordinate, while the individual lookups remain available for
+/// materials that need to sample maps at different coordinates (e.g.,
+/// through hex tiling or a parallax-offset UV) or want only one quantity.
+#smdl
+
+import ::math::*;
+import ::state::*;
+import ::tex::*;
+using hex = ::extras::hex;
+import hex::*;
+using lod = ::extras::lod;
+import lod::*;
+using noise = ::extras::noise;
+import noise::*;
+using parallax = ::extras::parallax;
+import parallax::*;
+
+/// The OpenGL normal convention: 3-channel, Y up. The default.
+export const int NORMAL_OPENGL = 0;
+
+/// The DirectX normal convention: 3-channel, Y flipped.
+export const int NORMAL_DIRECTX = 1;
+
+/// The OpenGL XY normal convention: 2-channel, Y up, Z reconstructed
+/// as `sqrt(1 - x^2 - y^2)`.
+export const int NORMAL_OPENGL_XY = 2;
+
+/// The DirectX XY normal convention: 2-channel, Y flipped, Z
+/// reconstructed as `sqrt(1 - x^2 - y^2)`.
+export const int NORMAL_DIRECTX_XY = 3;
+
+/// One map in a set of PBR maps: the texture plus the storage facts
+/// the `.pbr` manifest declared for it.
+export struct pbr_map {
+  /// The texture.
+  const auto tex = texture_2d();
+
+  /// The channel a scalar map is packed into, or `-1` for the natural
+  /// channels of the image.
+  const int channel = -1;
+
+  /// The convention, which is only meaningful for normal maps:
+  /// `NORMAL_OPENGL`, `NORMAL_DIRECTX`, `NORMAL_OPENGL_XY`, or
+  /// `NORMAL_DIRECTX_XY`.
+  const int convention = 0;
+
+  /// The encoding scale of a horizon map (a stored channel value of 1
+  /// means this slope), which is only meaningful for horizon maps.
+  const float max_slope = 8.0;
+};
+
+/// A set of related PBR texture maps, loaded at compile time from a
+/// `.pbr` manifest describing a directory of maps (see
+/// `smdl::PBRMaps` for the manifest format).
+///
+/// Each map field is a `pbr_map` if the manifest declares the map and
+/// the constructor did not opt out of it, and void otherwise, so
+/// presence is a compile-time fact: test it with
+/// `#hasField(pack, "name")` and gate on it with `if $(...)`, which
+/// only compiles the taken branch. The optional metadata fields behave
+/// the same way.
+///
+/// The functions below take the set as a `const auto`, and every one of
+/// their gates asks `#hasField`, which reports a field that is not
+/// declared at all as absent rather than as an error. So a hand-built
+/// set that simply omits the maps it does not carry works everywhere
+/// `pbr_maps` does; it need only declare the fields it has.
+export struct pbr_maps {
+  /// Load the maps the `.pbr` manifest named by `name` declares.
+  ///
+  /// Every parameter below must be compile-time, and each is a fact
+  /// about the resulting type: they decide which maps are loaded at
+  /// all, so a set that opts out of a map is indistinguishable from a
+  /// manifest that never declared it, and every `#hasField` gate in
+  /// this module folds accordingly. Opting out of a map the manifest
+  /// does not declare is a no-op.
+  ///
+  /// - `use_mipmap`: load mip chains for the maps that benefit, which
+  ///   is what prefiltering needs under a renderer that populates the
+  ///   ray-cone LOD state. Off by default, matching `texture_2d`. The
+  ///   height and horizon maps are never mipped either way, for the
+  ///   reason in the module doc.
+  /// - `no_basecolor`: do not load the base color map. The decoded
+  ///   `basecolor` is then the scalar 1.0 rather than a spectral
+  ///   `color`, which is what a material wants when it supplies its own
+  ///   spectrum (see `::models`).
+  /// - `no_class_map`: do not load the class map. `class_weights()` on
+  ///   the resulting set is a compile-time error.
+  /// - `no_height`: do not load the height map. This implies
+  ///   `no_parallax`.
+  /// - `no_parallax`: switch off the relief pipeline, i.e., the
+  ///   parallax march, the horizon slopes, and the height-implied
+  ///   normal. The height map still loads and is still sampled at the
+  ///   untouched coordinate, which is the point: geometry displaced
+  ///   from the same map must not be marched again on top. The horizon
+  ///   map does not load, having no other consumer.
+  pbr_maps(
+    const string name,
+    const bool use_mipmap = false,
+    const bool no_basecolor = false,
+    const bool no_class_map = false,
+    const bool no_height = false,
+    const bool no_parallax = false,
+  ) = #loadPBRMaps(name, use_mipmap, no_basecolor, no_class_map, no_height, no_parallax);
+
+  /// The display name, or the empty string.
+  const string name = "";
+
+  /// The physical extent in meters covered by one repeat in U and V as
+  /// a `float2`, or void if the manifest does not declare it.
+  const auto physical_extent = void();
+
+  /// The physical relief in meters spanned by the height map from 0 to
+  /// 1 as a `float`, or void if the manifest does not declare it.
+  const auto physical_relief = void();
+
+  /// The relief scale as a `float`: the span of the height map from 0
+  /// to 1 as a fraction of one UV unit, in the units of the
+  /// `relief_scale` parameters below. Void if the manifest declares
+  /// neither `relief_scale` nor the complete physical pair.
+  ///
+  /// This is the *resolved* scale rather than a verbatim echo of the
+  /// manifest: the manifest's `relief_scale` if it declares one, else
+  /// `physical_relief / physical_extent.x`. It is the only relief
+  /// quantity the pipeline below consumes.
+  const auto relief_scale = void();
+
+  /// The random-rotation fraction for hex tiling in `[0, 1]`.
+  ///
+  /// NOTE: This defaults to 0.0, unlike the `::extras::hex` lookups, which
+  /// default to full rotation: a pack is arbitrary content and often
+  /// oriented (brick courses, wood grain), which per-tile rotation would
+  /// visibly mangle, so a pack opts in per material via the manifest.
+  const float hex_rotation = 0.0;
+
+  /// Is the relief pipeline switched off? True when the set was loaded
+  /// with `no_parallax` or `no_height`, which implies it. This is the
+  /// one opt-out that absence cannot express, since the height map may
+  /// still be present and still be sampled. Read it through
+  /// `uses_parallax()` rather than directly, so that hand-built sets
+  /// that never declare it work too.
+  const bool no_parallax = false;
+
+  /// The base color map, AKA albedo. A `pbr_map` or void.
+  const auto basecolor = void();
+
+  /// The tangent-space normal map. A `pbr_map` or void.
+  const auto normal = void();
+
+  /// The roughness map. A `pbr_map` or void.
+  const auto roughness = void();
+
+  /// The metallic map. A `pbr_map` or void.
+  const auto metallic = void();
+
+  /// The height map, where 1 is the un-displaced surface. A `pbr_map`
+  /// or void. Loads without a mip chain; see the filtering note in
+  /// the module doc.
+  const auto height = void();
+
+  /// The emission color map. A `pbr_map` or void.
+  const auto emission = void();
+
+  /// The precomputed horizon map, with the +U, -U, +V, -V horizon
+  /// tangents stored as `slope / max_slope` in R, G, B, A (see
+  /// `etc/horizon_map.py`). A `pbr_map` or void. The manifest loader
+  /// guarantees `relief_scale` is present alongside it. Loads without
+  /// a mip chain; see the filtering note in the module doc.
+  const auto horizon = void();
+
+  /// The class weight map, with weights in R, G, B, and the remainder
+  /// `1 - (R + G + B)`. A `pbr_map` or void.
+  ///
+  /// The map does not say what its classes are, or how many of the four
+  /// it uses. That is knowledge about the content, held by whatever
+  /// generated the map (`etc/albedo_cluster.py` writes it to a `.json`
+  /// beside the map), and a material that cares reads it there once and
+  /// hard-codes what it found. A map fit with fewer than four classes
+  /// carries zeros in the weights it does not use, to the precision the
+  /// map is stored at: the memberships partition every texel, so a
+  /// two-class map leaves B and the remainder at zero.
+  const auto class_map = void();
+};
+
+/// Is the relief pipeline live for this set? True when the set carries
+/// a height map and was not loaded with `no_parallax` (or `no_height`,
+/// which implies it). This is the gate `prepared()` runs on, and it is
+/// a compile-time fact, so it folds. A set that declares no
+/// `no_parallax` field at all, e.g. one built by hand, reads as relief
+/// on, matching the rule that presence alone decides.
+@(pure macro)
+export bool uses_parallax(const auto pack) =
+  #hasField(pack, "height") && !(#hasField(pack, "no_parallax") ? pack.no_parallax : false);
+
+/// The scalar of a texel per the map's declared channel, `x` if natural.
+/// The channel is a compile-time fact, so this folds.
+@(pure macro)
+float select_channel(const pbr_map map, const float4 texel) {
+  return texel.x if (map.channel < 0);
+  return texel[map.channel];
+}
+
+// TODO Possibly floor `lod::mip_level()`: saves computation by eliminating
+// blending between mips but may introduce visual artifacts?
+
+/// Look up a scalar map, extracting the channel the manifest declared.
+///
+/// The channel is a compile-time fact, so the extraction folds: a
+/// roughness map packed into `g` of a shared ARM texture compiles to
+/// the same code as a dedicated single-channel map. The lookup is
+/// mip-filtered at the pixel footprint via `lod::mip_level()` in
+/// texture space `space`; if `coord` is scaled relative to the raw
+/// texture coordinate, pass the scale as `uv_scale` (see
+/// `::extras::lod::filter_width()`).
+@(macro)
+export float lookup_float(
+  const pbr_map map,
+  const float2 coord,
+  const int space = 0,
+  const tex::wrap_mode wrap_u = tex::wrap_repeat,
+  const tex::wrap_mode wrap_v = tex::wrap_repeat,
+  const auto uv_scale = 1.0,
+) = select_channel(map, tex::lookup_float4_lod(map.tex, coord, lod::mip_level(map.tex, space, uv_scale), wrap_u, wrap_v));
+
+/// Look up a 3-channel map as raw RGB, gamma already applied by role.
+/// Mip-filtered; see `lookup_float()`.
+@(macro)
+export float3 lookup_float3(
+  const pbr_map map,
+  const float2 coord,
+  const int space = 0,
+  const tex::wrap_mode wrap_u = tex::wrap_repeat,
+  const tex::wrap_mode wrap_v = tex::wrap_repeat,
+  const auto uv_scale = 1.0,
+) = tex::lookup_float3_lod(map.tex, coord, lod::mip_level(map.tex, space, uv_scale), wrap_u, wrap_v);
+
+/// Look up a color map as a spectral `color`, gamma already applied by
+/// role. This is the right call for the `basecolor` and `emission` maps.
+/// Mip-filtered; see `lookup_float()`.
+@(macro)
+export color lookup_color(
+  const pbr_map map,
+  const float2 coord,
+  const int space = 0,
+  const tex::wrap_mode wrap_u = tex::wrap_repeat,
+  const tex::wrap_mode wrap_v = tex::wrap_repeat,
+  const auto uv_scale = 1.0,
+) = tex::lookup_color_lod(map.tex, coord, lod::mip_level(map.tex, space, uv_scale), wrap_u, wrap_v);
+
+/// Decode a raw normal-map texel per the convention the manifest
+/// declared into a unit tangent-space normal. The dispatch is
+/// compile-time, so each map compiles exactly one decoder. This is the
+/// texel-level core behind `decode_normal()`, exposed for custom
+/// pipelines that fetch texels their own way, e.g., per hex tile.
+@(pure macro)
+export float3 decode_normal_texel(const pbr_map map, const float4 texel) {
+  if (map.convention == NORMAL_OPENGL_XY || map.convention == NORMAL_DIRECTX_XY) {
+    float2 xy(2.0 * texel.xy - 1.0);
+    xy.y = -xy.y if (map.convention == NORMAL_DIRECTX_XY);
+    return math::normalize(float3(xy, math::sqrt(math::max(1.0 - math::dot(xy, xy), 0.0))));
+  } else {
+    float3 normal(2.0 * texel.xyz - 1.0);
+    normal.y = -normal.y if (map.convention == NORMAL_DIRECTX);
+    return math::normalize(normal);
+  }
+}
+
+/// Decode a normal map into a unit tangent-space normal, dispatching on
+/// the convention the manifest declared. The lookup is mip-filtered;
+/// filtering shortens the encoded average under minification, and the
+/// decode renormalizes it.
+@(macro)
+export float3 decode_normal(
+  const pbr_map map,
+  const float2 coord,
+  const int space = 0,
+  const tex::wrap_mode wrap_u = tex::wrap_repeat,
+  const tex::wrap_mode wrap_v = tex::wrap_repeat,
+  const auto uv_scale = 1.0,
+) = decode_normal_texel(map, tex::lookup_float4_lod(map.tex, coord, lod::mip_level(map.tex, space, uv_scale), wrap_u, wrap_v));
+
+/// The pack's shading normal in internal space: the decoded normal map
+/// wrapped into the shading tangent frame of texture space `space`, or
+/// exactly `state::normal()` when the pack has no normal map, so this
+/// is always safe to pass to `material_geometry(normal: ...)`.
+@(macro)
+export float3 shading_normal(
+  const auto pack,
+  const float2 coord = state::texture_coordinate(0).xy,
+  const int space = 0,
+  const tex::wrap_mode wrap_u = tex::wrap_repeat,
+  const tex::wrap_mode wrap_v = tex::wrap_repeat,
+  const auto uv_scale = 1.0,
+) {
+  if $(#hasField(pack, "normal")) {
+    return math::normalize(state::tangent_space(space) * decode_normal(pack.normal, coord, space, wrap_u, wrap_v, uv_scale));
+  } else {
+    return state::normal();
+  }
+}
+
+/// The class weights as a `float[4]`, which plugs directly into the
+/// size-generic `::extras::layering` functions.
+///
+/// The weights are the R, G, B channels in class order, followed by the
+/// remainder `1 - (R + G + B)` clamped at zero. Four of them always,
+/// because the map does not say how many classes were fit into it (see
+/// `pbr_maps.class_map`); a map that used fewer carries zeros in the
+/// rest, which every consumer of a weight vector already handles, since
+/// a class absent at a texel weighs zero there too. Requires the class
+/// map: touching a pack without one is a compile-time error. The lookup
+/// is mip-filtered; see `lookup_float()`.
+@(macro)
+export auto class_weights(
+  const auto pack,
+  const float2 coord = state::texture_coordinate(0).xy,
+  const int space = 0,
+  const tex::wrap_mode wrap_u = tex::wrap_repeat,
+  const tex::wrap_mode wrap_v = tex::wrap_repeat,
+  const auto uv_scale = 1.0,
+) {
+  #assert(#hasField(pack, "class_map"), "class_weights() needs a class map, which these maps do not carry (or were loaded with 'no_class_map: true')");
+  const auto texel(tex::lookup_float3_lod(pack.class_map.tex, coord, lod::mip_level(pack.class_map.tex, space, uv_scale), wrap_u, wrap_v));
+  return float[4](texel.x, texel.y, texel.z, math::max(1.0 - (texel.x + texel.y + texel.z), 0.0));
+}
+
+/// The four horizon slopes toward +U, -U, +V, -V decoded from the
+/// pack's precomputed horizon map, for `df::horizon_shadow_factor()`:
+/// the single-lookup replacement for the multi-tap search of
+/// `parallax::horizon_slopes_with()` (`etc/horizon_map.py` generates
+/// the maps). Requires the horizon map: touching a pack without one is
+/// a compile-time error.
+///
+/// The map stores horizon tangents normalized by the manifest's
+/// `max_slope`, so the decode is exact at the pack's own
+/// `relief_scale`; and, when the pack spells that scale as a physical
+/// extent and relief, the baked map honors an anisotropic extent the
+/// runtime search's single scale cannot. `relief_scale` rescales to the
+/// relief the march actually ran at: pass the same
+/// overridden-and-faded scale, with the default -1 meaning the pack's
+/// own scale. A zero scale returns all zeros, which the shadow factor
+/// treats as an exact passthrough, and the result is capped at
+/// `PARALLAX_MAX_SLOPE` like the runtime search. The lookup is
+/// mip-filtered; see `lookup_float()`.
+@(macro)
+export float4 horizon_slopes(
+  const auto pack,
+  const float2 coord = state::texture_coordinate(0).xy,
+  const tex::wrap_mode wrap_u = tex::wrap_repeat,
+  const tex::wrap_mode wrap_v = tex::wrap_repeat,
+  const float relief_scale = -1.0,
+) {
+  #assert(#hasField(pack, "horizon"), "horizon_slopes() needs a precomputed horizon map, which these maps do not carry");
+  #assert(#hasField(pack, "relief_scale"), "horizon_slopes() needs the relief scale the horizon map was baked at");
+  const float factor(relief_scale < 0.0 ? 1.0 : relief_scale / pack.relief_scale);
+  const auto texel(tex::lookup_float4(pack.horizon.tex, coord, wrap_u, wrap_v));
+  return #min(pack.horizon.max_slope * factor * texel, parallax::PARALLAX_MAX_SLOPE);
+}
+
+/// The decoded surface at one coordinate, with neutral defaults for
+/// everything the maps do not ship. See `sample()`.
+export struct pbr_sample {
+  /// The base color: a `color` when the maps ship a basecolor map, else
+  /// the scalar 1.0 (white).
+  $(color | float) basecolor = 1.0;
+
+  /// The shading normal in internal space. `state::normal()` if there
+  /// is no normal map.
+  float3 normal = float3(0.0, 0.0, 1.0);
+
+  /// The roughness. 1 if there is no roughness map.
+  float roughness = 1.0;
+
+  /// The metallic factor. 0 if there is no metallic map.
+  float metallic = 0.0;
+
+  /// The height, where 1 is the un-displaced surface. 1 if there is
+  /// no height map.
+  float height = 1.0;
+
+  /// The emission color: a `color` when the maps ship an emission map,
+  /// else the scalar 0.0 (black).
+  $(color | float) emission = 0.0;
+};
+
+/// Decode the whole surface at one coordinate: every map the pack
+/// ships, sampled and decoded per its storage facts; every map it does
+/// not ship, the neutral default documented on `pbr_sample`. Absence
+/// is compile-time knowledge, so the absent branches cost nothing.
+///
+/// If `coord` is scaled relative to the raw texture coordinate (e.g.
+/// `coord: state::texture_coordinate(0).xy * m`), also pass
+/// `uv_scale: m` so the mip filtering follows the effective texel size.
+@(macro)
+export pbr_sample sample(
+  const auto pack,
+  const float2 coord = state::texture_coordinate(0).xy,
+  const int space = 0,
+  const tex::wrap_mode wrap_u = tex::wrap_repeat,
+  const tex::wrap_mode wrap_v = tex::wrap_repeat,
+  const auto uv_scale = 1.0,
+) {
+  // The comptime '?:' seeds each union field with its final variant, so
+  // the gated stores below land in slots that are concretely 'color'.
+  auto result(pbr_sample(
+    normal: state::normal(),
+    basecolor: #hasField(pack, "basecolor") ? color(1.0) : 1.0,
+    emission: #hasField(pack, "emission") ? color(0.0) : 0.0,
+  ));
+  if $(#hasField(pack, "basecolor")) {
+    result.basecolor = lookup_color(pack.basecolor, coord, space, wrap_u, wrap_v, uv_scale);
+  }
+  if $(#hasField(pack, "normal")) {
+    result.normal = shading_normal(pack, coord, space, wrap_u, wrap_v, uv_scale);
+  }
+  if $(#hasField(pack, "roughness")) {
+    result.roughness = lookup_float(pack.roughness, coord, space, wrap_u, wrap_v, uv_scale);
+  }
+  if $(#hasField(pack, "metallic")) {
+    result.metallic = lookup_float(pack.metallic, coord, space, wrap_u, wrap_v, uv_scale);
+  }
+  if $(#hasField(pack, "height")) {
+    result.height = lookup_float(pack.height, coord, space, wrap_u, wrap_v, uv_scale);
+  }
+  if $(#hasField(pack, "emission")) {
+    result.emission = lookup_color(pack.emission, coord, space, wrap_u, wrap_v, uv_scale);
+  }
+  return result;
+}
+
+/// Look up a scalar map through the hex tiling at a fresh lattice,
+/// extracting the declared channel. This is the form the parallax march
+/// needs, since every march sample lands at a different coordinate.
+/// Lookups that share one coordinate should instead share one lattice
+/// from `hex::hex_lattice_at()`, as `prepared()` does.
+@(macro)
+export float map_hex_lookup_float(
+  const pbr_map map,
+  const float2 coord,
+  const float rotate = 0.0, ///< Defaults off, matching `pbr_maps.hex_rotation`; see the rationale there.
+  const int seed = 0,
+) = select_channel(map, hex::hex_lookup_float4(map.tex, coord, rotate, seed: seed));
+
+/// Decode the normal map through the hex tiling: stochastically select
+/// one tile by `xi` (blending encoded normals across differently rotated
+/// tiles is not meaningful), decode per the declared convention, and
+/// counter-rotate back into the un-tiled frame. Returns the unit
+/// tangent-space normal.
+@(macro)
+export float3 hex_decode_normal(
+  const pbr_map map,
+  const auto tiling,
+  const float xi,
+) {
+  const auto tile(tiling.tiles[hex::hex_select(tiling.weights, xi)]);
+  const auto normal(decode_normal_texel(map, tex::lookup_float4(map.tex, tile.coord)));
+  return float3(hex::hex_rotate_inverse(tile.rotation, normal.xy), normal.z);
+}
+
+/// The prepared surface: the decoded quantities of `pbr_sample` plus
+/// the relief pipeline outputs. See `prepared()`.
+export struct pbr_prepared {
+  /// The final texture coordinate: `coord` offset by the parallax march
+  /// when relief ran, else `coord` untouched. Chain further lookups
+  /// (e.g. `class_weights(pack, p.coord)`) at this coordinate to stay
+  /// in register with the relief.
+  float2 coord = float2(0.0);
+
+  /// The base color: a `color` when the maps ship a basecolor map, else
+  /// the scalar 1.0 (white).
+  $(color | float) basecolor = 1.0;
+
+  /// The shading normal in internal space: the authored normal map when
+  /// present (hex-aware), else the normal implied by the marched height
+  /// field, else `state::normal()`.
+  float3 normal = float3(0.0, 0.0, 1.0);
+
+  /// The roughness. 1 if there is no roughness map.
+  float roughness = 1.0;
+
+  /// The metallic factor. 0 if there is no metallic map.
+  float metallic = 0.0;
+
+  /// The height at `coord`, where 1 is the un-displaced surface. 1 if
+  /// there is no height map.
+  float height = 1.0;
+
+  /// The four-axis horizon slopes of the marched height field at `coord`,
+  /// for `df::horizon_shadow_factor()`. Zero (which the shadow factor
+  /// passes through untouched) whenever relief is off.
+  float4 horizon_slopes = float4(0.0);
+
+  /// The emission color: a `color` when the maps ship an emission map,
+  /// else the scalar 0.0 (black).
+  $(color | float) emission = 0.0;
+};
+
+/// Decode the whole surface through the full relief pipeline: the
+/// encapsulation of the idioms a hand-wired ground material spells out
+/// (see `misc/monkey.mdl`), each riding the zero-means-off conventions
+/// of the modules it composes.
+///
+/// - **Parallax relief**, when the maps ship `height` and were not
+///   loaded with `no_parallax` (see `uses_parallax()`): the march runs at
+///   `relief_scale` if given, else at the maps' own `relief_scale`, the
+///   relief as a fraction of one repeat (declared directly, or derived
+///   as `physical_relief / physical_extent`). That scale fixes the
+///   asset's *shape*, not an absolute world depth: mapping the maps
+///   larger or smaller than the nominal extent scales the world-space
+///   relief with the features, rather than holding it metrically
+///   constant and distorting their aspect. It is a UV-space constant,
+///   so no `uv_multiplier` calibration and no renderer state are
+///   involved; the maps must declare it, else relief stays off. The
+///   relief runs on
+///   direct line-of-sight rays only (`state::scattering_order() <= 1`),
+///   fades out by pixel footprint over `[width_start, width_end]` before
+///   minification can alias it, and every remaining lookup happens at
+///   the one offset coordinate, keeping all maps in register. With
+///   `jitter` (the default), the march's layer grid is offset by
+///   per-sample randomness so residual layer banding on steep relief
+///   averages out as noise; the march also runs false-position
+///   refinement either way (see `parallax_offset_with()`).
+/// - **Hex tiling**, when `hex` is true: every map reads through the
+///   lattice at the maps' `hex_rotation`, with the height field
+///   hex-tiled *inside* the march so the relief sees the same
+///   untiled-looking field the other maps do, and the normal map
+///   counter-rotated per tile.
+/// - **Horizon slopes** of the marched field, for
+///   `df::horizon_shadow_factor()`, so NEE and BSDF sampling shadow the
+///   relief consistently. When the maps ship a precomputed `horizon`
+///   map, the multi-tap runtime search is replaced by one decoded
+///   lookup at the same effective scale (`horizon_slopes()`), except
+///   under hex tiling, whose re-tiled height field only the runtime
+///   search sees.
+/// - **The normal**: the authored normal map when present, else the
+///   normal implied by the height field at the same scale the march
+///   used: shading and displacement agree by construction.
+///
+/// With the relief off, whether because the maps ship no `height` or
+/// because they were loaded with `no_parallax`, `coord` passes through
+/// untouched and the horizon slopes are zero, which the shadow factor
+/// treats as an exact passthrough. A height map that is loaded is still
+/// reported at `height`, sampled where the other maps read, so a
+/// pipeline that displaces geometry from the same map gets its values
+/// without marching the relief a second time.
+///
+/// Class weights are deliberately not returned (their compile-time size
+/// varies per maps): call `class_weights(pack, p.coord)` at the exposed
+/// coordinate.
+///
+/// If `coord` is scaled relative to the raw texture coordinate (e.g.
+/// `coord: state::texture_coordinate(0).xy * m`), also pass
+/// `uv_scale: m`: the mip filtering then follows the effective texel
+/// size, and the relief fade retires against the footprint measured in
+/// the scaled UV units its features live in. The relief scale itself is
+/// a UV-space ratio, so it needs no correction by construction.
+@(macro)
+export pbr_prepared prepared(
+  const auto pack,
+  const float2 coord = state::texture_coordinate(0).xy, // TODO Eliminate this -> it is implied by space and uv_scale!
+  const bool use_hex = false,
+  const int space = 0,
+  const auto uv_scale = 1.0,
+  // Read only when the relief pipeline is live, which is a property of the
+  // set: one with no height map, or loaded with 'no_parallax', consumes no
+  // relief scale, and that is a configuration rather than a mistake.
+  const float relief_scale = -1.0 [[anno::unused()]],
+) {
+  // The comptime '?:' seeds each union field with its final variant, so
+  // the gated stores below land in slots that are concretely 'color'.
+  auto result(pbr_prepared(
+    coord: coord,
+    normal: state::normal(),
+    basecolor: #hasField(pack, "basecolor") ? color(1.0) : 1.0,
+    emission: #hasField(pack, "emission") ? color(0.0) : 0.0,
+  ));
+  if $(uses_parallax(pack)) {
+    // The mip level is hoisted so the march lambda stays pure for the
+    // `@(pure macro)` march and slope cores; the hex path is
+    // unfiltered by design.
+    const float height_lod(lod::mip_level(pack.height.tex, space, uv_scale));
+    // The rotation is the one field the hex paths read outside a presence
+    // gate, so it resolves against the `pbr_maps` default: a set that
+    // never means to hex-tile has no reason to declare it.
+    const auto height_at(\(const float2 c) {
+                           if (use_hex)
+                             return map_hex_lookup_float(pack.height, c, #hasField(pack, "hex_rotation") ? pack.hex_rotation : 0.0, $state.object_id);
+                           return select_channel(pack.height, tex::lookup_float4_lod(pack.height.tex, c, height_lod));
+                         });
+    // Relief on direct line-of-sight rays only, retired by the pixel
+    // footprint fade; folding both into `scale` rides the existing zero
+    // short-circuits in the march, the slopes, and the implied normal.
+    const bool direct(state::directly_visible());
+    float scale(0.0);
+    if (direct) {
+      if (relief_scale >= 0.0) {
+        scale = relief_scale;
+      } else if $(#hasField(pack, "relief_scale")) {
+        // The relief as a fraction of one repeat: intrinsic to the
+        // asset, so rescaling the UV mapping rescales the world relief
+        // with the features. (When the pack spells this as a physical
+        // extent and relief, U is nominal: an anisotropic extent cannot
+        // be honored by the march's single scale.)
+        scale = pack.relief_scale;
+      }
+    }
+    // Per-sample jitter of the march's layer grid: banding from steep
+    // relief becomes noise the sampler averages out.
+    result.coord = parallax::parallax_offset_with(height_at, coord, parallax::view_vector(space), scale, state::random_float());
+    if $(#hasField(pack, "horizon")) {
+      // The precomputed map stores the untiled field, so under hex
+      // tiling the runtime search over the hex-tiled height is still
+      // the consistent answer.
+      result.horizon_slopes = use_hex ? parallax::horizon_slopes_with(height_at, result.coord, scale) : horizon_slopes(pack, result.coord, relief_scale: scale);
+    } else {
+      result.horizon_slopes = parallax::horizon_slopes_with(height_at, result.coord, scale);
+    }
+    result.height = height_at(result.coord);
+    if $(!#hasField(pack, "normal")) {
+      const float2 delta(direct ? 2.0 / float2(tex::extent(pack.height.tex)) : float2(0.0));
+      result.normal = parallax::perturbed_normal_with(height_at, result.coord, scale, delta, space);
+    }
+  }
+  if (use_hex) {
+    const auto tiling(hex::hex_lattice_at(result.coord, #hasField(pack, "hex_rotation") ? pack.hex_rotation : 0.0, $state.object_id));
+    if $(#hasField(pack, "basecolor")) {
+      result.basecolor = color(hex::hex_blend(hex::hex_lookup(pack.basecolor.tex, tiling)).xyz);
+    }
+    if $(#hasField(pack, "roughness")) {
+      result.roughness = select_channel(pack.roughness, hex::hex_blend(hex::hex_lookup(pack.roughness.tex, tiling)));
+    }
+    if $(#hasField(pack, "metallic")) {
+      result.metallic = select_channel(pack.metallic, hex::hex_blend(hex::hex_lookup(pack.metallic.tex, tiling)));
+    }
+    if $(#hasField(pack, "emission")) {
+      result.emission = color(hex::hex_blend(hex::hex_lookup(pack.emission.tex, tiling)).xyz);
+    }
+    if $(#hasField(pack, "normal")) {
+      result.normal = math::normalize(state::tangent_space(space) * hex_decode_normal(pack.normal, tiling, state::random_float()));
+    }
+    if $(#hasField(pack, "height") && !uses_parallax(pack)) {
+      // Relief off but the map is loaded: report the height at the
+      // coordinate the other maps read, which is `coord` untouched.
+      result.height = map_hex_lookup_float(pack.height, result.coord, #hasField(pack, "hex_rotation") ? pack.hex_rotation : 0.0, $state.object_id);
+    }
+  } else {
+    if $(#hasField(pack, "basecolor")) {
+      result.basecolor = lookup_color(pack.basecolor, result.coord, space, uv_scale: uv_scale);
+    }
+    if $(#hasField(pack, "roughness")) {
+      result.roughness = lookup_float(pack.roughness, result.coord, space, uv_scale: uv_scale);
+    }
+    if $(#hasField(pack, "metallic")) {
+      result.metallic = lookup_float(pack.metallic, result.coord, space, uv_scale: uv_scale);
+    }
+    if $(#hasField(pack, "emission")) {
+      result.emission = lookup_color(pack.emission, result.coord, space, uv_scale: uv_scale);
+    }
+    if $(#hasField(pack, "normal")) {
+      result.normal = shading_normal(pack, result.coord, space, uv_scale: uv_scale);
+    }
+    if $(#hasField(pack, "height") && !uses_parallax(pack)) {
+      // See the hex branch above: the map is loaded, so report it.
+      result.height = lookup_float(pack.height, result.coord, space, uv_scale: uv_scale);
+    }
+  }
+  return result;
+}

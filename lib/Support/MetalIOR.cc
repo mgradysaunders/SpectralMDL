@@ -637,8 +637,8 @@ static constexpr MetalIORTableEntry METAL_IOR_PT[45] = {
 //
 // Tin at 293K. The data starts at 730nm, so the visible range down to
 // 380nm is synthesized from a Drude-Lorentz model fit to the data and
-// the literature value at 632.8nm, ratio-corrected for continuity at 
-// the seam. Expect roughly +-0.1 uncertainty in visible reflectance 
+// the literature value at 632.8nm, ratio-corrected for continuity at
+// the seam. Expect roughly +-0.1 uncertainty in visible reflectance
 // until measured data replaces it.
 //
 // Downsampled from 58 entries covering 380nm to 12000nm.

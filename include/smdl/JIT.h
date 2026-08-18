@@ -7,6 +7,8 @@ namespace smdl {
 
 class Compiler;
 
+class VoxelGrid;
+
 /// \addtogroup compiler
 /// \{
 
@@ -81,6 +83,28 @@ static constexpr int MATERIAL_HAS_HAIR = (1 << 7);
 ///
 static constexpr int MATERIAL_HAS_CUTOUT = (1 << 8);
 
+/// Indicates that the material volume coefficients vary with position.
+///
+/// \note
+/// This bit only ever appears in `Material::staticFlags`: position
+/// dependence is not observable at instance evaluation time, so
+/// `Instance::flags` never sets it. Like `MATERIAL_HAS_CUTOUT` it is
+/// derived after optimization and degrades to unknown at
+/// `OPT_LEVEL_NONE`; see `Material::hasHomogeneousVolume()` for the
+/// conservative reading.
+///
+static constexpr int MATERIAL_HAS_HETEROGENEOUS_VOLUME = (1 << 9);
+
+/// Indicates that the material has a non-zero `geometry.displacement`.
+///
+/// \note
+/// This bit only ever appears in `Material::staticFlags`: it is derived
+/// after optimization from whether the displacement expression folds to
+/// a constant, so it degrades to unknown at `OPT_LEVEL_NONE`, and
+/// `Instance::flags` never sets it. See
+/// `Material::hasZeroDisplacement()` for the conservative reading.
+static constexpr int MATERIAL_HAS_DISPLACEMENT = (1 << 10);
+
 /// \}
 
 /// \name Distribution Function (DF) Flags
@@ -137,7 +161,7 @@ public:
 
   /// The mask of flag bits whose values are compile-time constants.
   ///
-  /// The `MATERIAL_HAS_*` bits derived from `#is_default` are always
+  /// The `MATERIAL_HAS_*` bits derived from `#isDefault` are always
   /// known. `MATERIAL_THIN_WALLED` and `MATERIAL_HAS_CUTOUT` are known
   /// iff their initializers constant-fold after optimization, so they
   /// degrade to unknown at `OPT_LEVEL_NONE`; an unknown bit must be
@@ -162,12 +186,58 @@ public:
     return (staticFlags & MATERIAL_HAS_VOLUME) != 0;
   }
 
+  /// Has a non-default `hair` initializer? Always statically known.
+  /// Hosts should route hair-primitive hits through `hairScatterEvaluate`
+  /// and `hairScatterSample` iff this is true; calling them anyway is
+  /// safe because the default `hair_bsdf()` reports black.
+  [[nodiscard]] bool hasHair() const noexcept {
+    return (staticFlags & MATERIAL_HAS_HAIR) != 0;
+  }
+
   /// Do shadow rays need no material work at all? True if the material
   /// is provably opaque and has no volume, in which case an occlusion
   /// hit is fully blocking and the material never needs to be
   /// constructed for shadow or transmission rays.
   [[nodiscard]] bool isShadowTrivial() const noexcept {
     return isAlwaysOpaque() && !hasVolume();
+  }
+
+  /// Is this a null interface: a boundary that scatters nothing itself
+  /// (default `surface` and `backface`, which per the MDL semantics of
+  /// an invalid BSDF means no scattering event at all) but encloses a
+  /// participating medium? Light crosses such a boundary undeflected,
+  /// so renderers should pass rays straight through, on camera and
+  /// shadow rays alike, while updating their nested-medium tracking.
+  /// Always statically known. This is how a smoke or cloud container
+  /// is expressed: a material whose only non-default initializers are
+  /// `volume` (and typically `ior: 1.0`).
+  [[nodiscard]] bool isNullInterface() const noexcept {
+    return (staticFlags & (MATERIAL_HAS_SURFACE | MATERIAL_HAS_BACKFACE)) ==
+               0 &&
+           hasVolume();
+  }
+
+  /// Provably homogeneous: the volume coefficients are independent of
+  /// the evaluation point, so the coefficient spectra captured by the
+  /// `Instance` at the surface hit are exact everywhere in the interior
+  /// and `volumeEvaluate` never needs to be called. When this returns
+  /// false the volume is heterogeneous *or unproven*, and hosts must
+  /// treat it as heterogeneous: sample the interior through
+  /// `volumeEvaluate` against the majorants (see
+  /// `Instance::max_scattering_coefficient`).
+  [[nodiscard]] bool hasHomogeneousVolume() const noexcept {
+    return (staticFlagsKnown & MATERIAL_HAS_HETEROGENEOUS_VOLUME) != 0 &&
+           (staticFlags & MATERIAL_HAS_HETEROGENEOUS_VOLUME) == 0;
+  }
+
+  /// Provably undisplaced: `geometry.displacement` is the compile-time
+  /// constant zero vector, so hosts that apply displacement to geometry
+  /// at load time may skip this material without evaluating anything.
+  /// When this returns false the displacement is non-zero *or unproven*,
+  /// and hosts must query it per point through `displacementEvaluate`.
+  [[nodiscard]] bool hasZeroDisplacement() const noexcept {
+    return (staticFlagsKnown & MATERIAL_HAS_DISPLACEMENT) != 0 &&
+           (staticFlags & MATERIAL_HAS_DISPLACEMENT) == 0;
   }
 
   /// An instance of the material.
@@ -214,19 +284,80 @@ public:
     /// The temperature in Kelvin or -1 if undefined.
     float temperature{};
 
-    /// The volume absorption coefficient if applicable.
+    /// The volume absorption coefficient if applicable, in units of
+    /// inverse meters per the MDL specification: hosts working in scene
+    /// units convert distances with `State::meters_per_scene_unit`
+    /// before exponentiating.
     ///
     /// \note
     /// If non-null, this necessarily points to `wavelength_base_max` values.
+    /// The value is whatever the coefficient expression evaluated to at
+    /// instance time; for heterogeneous volumes (see
+    /// `Material::hasHomogeneousVolume()`) that is merely the
+    /// coefficient at the surface hit, and interior sampling must go
+    /// through `Material::volumeEvaluate` instead.
     ///
     const float *absorption_coefficient{};
 
-    /// The volume scattering coefficient if applicable.
+    /// The volume scattering coefficient if applicable, in units of
+    /// inverse meters. See `absorption_coefficient` for the
+    /// heterogeneous-volume caveat.
     ///
     /// \note
     /// If non-null, this necessarily points to `wavelength_base_max` values.
     ///
     const float *scattering_coefficient{};
+
+    /// The volume absorption coefficient majorant if declared, in units
+    /// of inverse meters: an author-declared, position-independent
+    /// upper bound of `absorption_coefficient` over the whole interior
+    /// (the SMDL extension field
+    /// `material_volume.max_absorption_coefficient`).
+    ///
+    /// \note
+    /// If non-null, this necessarily points to `wavelength_base_max` values.
+    ///
+    const float *max_absorption_coefficient{};
+
+    /// The volume scattering coefficient majorant if declared, in units
+    /// of inverse meters, see `max_absorption_coefficient`. This is
+    /// what null-collision tracking through a heterogeneous interior
+    /// runs against.
+    ///
+    /// \note
+    /// If non-null, this necessarily points to `wavelength_base_max` values.
+    ///
+    const float *max_scattering_coefficient{};
+
+    /// The `smdl::VoxelGrid` behind the volume density acceleration
+    /// hint if declared (the SMDL extension field
+    /// `material_volume.density`), else null. Together with the bound
+    /// box below, this promises the coefficients at any interior point
+    /// are bounded by the majorants scaled by the grid's trilinear
+    /// value there over its maximum, so renderers may track against
+    /// per-region majorants from the grid's per-brick bounds and skip
+    /// empty regions. See `MaterialInstance::getVolumeDensityGrid()`.
+    const void *volume_density_resource{};
+
+    /// The object-space lower corner of the box that the density
+    /// hint's texture space spans, if declared. If non-null, points to
+    /// one `float3`.
+    const float3 *volume_density_bound_min{};
+
+    /// The object-space upper corner, see `volume_density_bound_min`.
+    const float3 *volume_density_bound_max{};
+
+    /// The volumetric emission coefficient if declared (MDL 1.8
+    /// `material_volume.emission_intensity`): the radiance the medium
+    /// adds per unit length, in `W/(m^2 sr nm)` per meter, converted
+    /// with `State::meters_per_scene_unit` like the scattering
+    /// coefficients. Evaluated at the surface hit; heterogeneous
+    /// interiors re-query per point through `volumeEvaluate`.
+    ///
+    /// \note
+    /// If non-null, this necessarily points to `wavelength_base_max` values.
+    ///
+    const float *volume_emission_intensity{};
 
     /// The `surface` emission intensity, or null if the `surface` has no
     /// non-default emission EDF.
@@ -261,10 +392,10 @@ public:
     /// `intensity_radiant_exitance`), and bit 1 likewise for the `backface`.
     int emission_modes{};
 
-    /// The random seed captured from `State::seed` when constructing the
-    /// instance, which seeds the generator for stochastically evaluated
-    /// BSDFs.
-    int seed{};
+    /// The random seed captured from the raw state of `State::rng` when
+    /// constructing the instance, which seeds the generator for
+    /// stochastically evaluated BSDFs.
+    int64_t seed{};
 
     /// The tangent-to-world space matrix present when constructing the
     /// instance.
@@ -301,6 +432,67 @@ public:
   /// `isShadowTrivial()`.
   ///
   Function<float(State &state)> evaluateOpacity{};
+
+  /// The displacement evaluate function.
+  ///
+  /// \param[in] state
+  /// The state, which identifies the surface point being queried.
+  ///
+  /// \param[out] displacement
+  /// The displacement vector, in the internal space the state's
+  /// geometric fields were given in.
+  ///
+  /// Evaluates only `geometry.displacement` and nothing else: no
+  /// instance is constructed and no allocation happens, so
+  /// `state.allocator` may be null, and everything not feeding the
+  /// displacement is dead-code eliminated, the way `evaluateOpacity`
+  /// evaluates only the cutout opacity. This is the per-vertex query
+  /// for hosts that apply displacement to geometry at load time; see
+  /// `Material::hasZeroDisplacement()` for skipping materials that
+  /// provably never displace.
+  Function<void(State &state, float3 &displacement)> displacementEvaluate{};
+
+  /// The volume evaluate function.
+  ///
+  /// \param[inout] state
+  /// The state, which identifies the interior point being queried.
+  ///
+  /// \param[out] sigma_a
+  /// The absorption coefficient spectrum in units of inverse meters.
+  /// This must point to `wavelengthBaseMax` floats!
+  ///
+  /// \param[out] sigma_s
+  /// The scattering coefficient spectrum in units of inverse meters.
+  /// This must point to `wavelengthBaseMax` floats!
+  ///
+  /// \param[out] emission
+  /// The volumetric emission coefficient spectrum, the radiance added
+  /// per meter, resolved to zero when `emission_intensity` is not
+  /// declared. This must point to `wavelengthBaseMax` floats!
+  ///
+  /// Evaluates only the volume coefficient expressions of the material
+  /// at `state`, resolving an absent coefficient to zero: no instance
+  /// is constructed and no allocation happens, so `state.allocator` may
+  /// be null, and everything not feeding the coefficients is dead-code
+  /// eliminated, the way `evaluateOpacity` evaluates only the cutout
+  /// opacity. This is the per-point query that null-collision tracking
+  /// calls at every tentative collision inside a heterogeneous medium;
+  /// for provably homogeneous materials
+  /// (`Material::hasHomogeneousVolume()`) the instance coefficient
+  /// pointers answer the same question with no call at all.
+  ///
+  /// \note
+  /// The state is a partial state in the sense of an environment
+  /// lookup: the caller fills `position` with the query point in the
+  /// *object space* of the volume instance (internal space equals
+  /// object space here, there being no surface frame; do NOT call
+  /// `State::finalizeAndApplyInternalSpaceConventions()`), along with
+  /// the render-wide fields (`wavelength_base`, ...), and may leave the
+  /// surface-geometry fields defaulted. Volume expressions read the
+  /// point through `state::position()`.
+  ///
+  Function<void(State &state, float *sigma_a, float *sigma_s, float *emission)>
+      volumeEvaluate{};
 
   /// The scatter evaluate function.
   ///
@@ -463,6 +655,83 @@ public:
   Function<float(const Instance &instance, const float4 &xi, const float3 &wo,
                  float3 &wi)>
       volumeScatterSample{};
+
+  /// The hair scatter evaluate function, dispatching `material.hair`.
+  ///
+  /// \param[in] instance
+  /// The instance obtained from the `evaluate` function.
+  ///
+  /// \param[in] wo
+  /// The outgoing direction in world space.
+  ///
+  /// \param[in] wi
+  /// The incoming direction in world space.
+  ///
+  /// \param[out] pdfFwd
+  /// The forward PDF of sampling `wi` given `wo`.
+  ///
+  /// \param[out] pdfRev
+  /// The reverse PDF of sampling `wo` given `wi`.
+  ///
+  /// \param[out] f
+  /// The BSDF spectrum. This must be non-null!
+  ///
+  /// \return
+  /// Returns `true` if the result is non-zero.
+  ///
+  /// \note
+  /// The state contract at a hair hit: `State::normal` must be the
+  /// shading normal on the fiber surface (the true normal of a tube;
+  /// ribbon geometry must synthesize it) and `State::texture_tangent_u[0]`
+  /// must be the fiber tangent pointing root to tip. The BSDF implies the
+  /// cross-section offset from the normal as `h = sin(gamma_o)` and reads
+  /// no texture coordinate. Per the MDL specification, the material `ior`,
+  /// `thin_walled`, `volume`, and `geometry` fields do not influence hair
+  /// shading, and `wo` on the far side of the normal plane is a
+  /// legitimate configuration rather than a backface hit. Hosts should
+  /// gate calls on `hasHair()`; calling anyway is safe because the
+  /// default `hair_bsdf()` reports black.
+  ///
+  Function<int(const Instance &instance, const float3 &wo, const float3 &wi,
+               float &pdfFwd, float &pdfRev, float *f)>
+      hairScatterEvaluate{};
+
+  /// The hair scatter sample function.
+  ///
+  /// \param[in] instance
+  /// The instance obtained from the `evaluate` function.
+  ///
+  /// \param[in] xi
+  /// The canonical random sample in \f$ [0,1]^4 \f$.
+  ///
+  /// \param[in] wo
+  /// The outgoing direction in world space.
+  ///
+  /// \param[out] wi
+  /// The incoming direction in world space.
+  ///
+  /// \param[out] pdfFwd
+  /// The forward PDF of sampling `wi` given `wo`.
+  ///
+  /// \param[out] pdfRev
+  /// The reverse PDF of sampling `wo` given `wi`.
+  ///
+  /// \param[out] f
+  /// The BSDF spectrum. This must be non-null!
+  ///
+  /// \param[out] isDelta
+  /// Always set to `false`: there are no delta hair distributions.
+  ///
+  /// \return
+  /// Returns `true` if the result is non-zero.
+  ///
+  /// \note
+  /// See `hairScatterEvaluate` for the state contract at a hair hit.
+  ///
+  Function<int(const Instance &instance, const float4 &xi, const float3 &wo,
+               float3 &wi, float &pdfFwd, float &pdfRev, float *f,
+               int &isDelta)>
+      hairScatterSample{};
 };
 
 /// A just-in-time SMDL material pointer and an instance of the material.
@@ -491,6 +760,11 @@ public:
   [[nodiscard]] bool hasMedium() const noexcept {
     return (instance.absorption_coefficient != nullptr ||
             instance.scattering_coefficient != nullptr);
+  }
+
+  /// Has a non-default `hair` initializer?
+  [[nodiscard]] bool hasHair() const noexcept {
+    return (instance.flags & MATERIAL_HAS_HAIR) != 0;
   }
 
   /// Has a non-default emission EDF in the `surface` initializer?
@@ -568,6 +842,43 @@ public:
     return Span<const float>(
         instance.scattering_coefficient,
         instance.scattering_coefficient ? instance.wavelength_base_max : 0);
+  }
+
+  /// The declared absorption coefficient majorant, or empty if none.
+  [[nodiscard]] Span<const float> getMaxAbsorptionCoefficient() const noexcept {
+    return Span<const float>(
+        instance.max_absorption_coefficient,
+        instance.max_absorption_coefficient ? instance.wavelength_base_max : 0);
+  }
+
+  /// The declared scattering coefficient majorant, or empty if none.
+  [[nodiscard]] Span<const float> getMaxScatteringCoefficient() const noexcept {
+    return Span<const float>(
+        instance.max_scattering_coefficient,
+        instance.max_scattering_coefficient ? instance.wavelength_base_max : 0);
+  }
+
+  /// The volume density acceleration hint grid, or null if not
+  /// declared. See `Instance::volume_density_resource`.
+  [[nodiscard]] const VoxelGrid *getVolumeDensityGrid() const noexcept {
+    return static_cast<const VoxelGrid *>(instance.volume_density_resource);
+  }
+
+  /// The lower corner of the density hint box, or null if not declared.
+  [[nodiscard]] const float3 *getVolumeDensityBoundMin() const noexcept {
+    return instance.volume_density_bound_min;
+  }
+
+  /// The upper corner of the density hint box, or null if not declared.
+  [[nodiscard]] const float3 *getVolumeDensityBoundMax() const noexcept {
+    return instance.volume_density_bound_max;
+  }
+
+  /// The volumetric emission coefficient, or empty if none.
+  [[nodiscard]] Span<const float> getVolumeEmissionIntensity() const noexcept {
+    return Span<const float>(
+        instance.volume_emission_intensity,
+        instance.volume_emission_intensity ? instance.wavelength_base_max : 0);
   }
 
   /// The geometry normal in world space.
@@ -746,6 +1057,71 @@ public:
                                           float3 &wi) const {
     SMDL_SANITY_CHECK(material && instance);
     return material->volumeScatterSample(instance, xi, wo, wi);
+  }
+
+  /// The hair scatter evaluate function. See
+  /// `Material::hairScatterEvaluate` for the state contract at a hair
+  /// hit.
+  ///
+  /// \param[in] wo
+  /// The outgoing direction in world space.
+  ///
+  /// \param[in] wi
+  /// The incoming direction in world space.
+  ///
+  /// \param[out] pdfFwd
+  /// The forward PDF of sampling `wi` given `wo`.
+  ///
+  /// \param[out] pdfRev
+  /// The reverse PDF of sampling `wo` given `wi`.
+  ///
+  /// \param[out] f
+  /// The BSDF spectrum. This must be non-null!
+  ///
+  /// \return
+  /// Returns `true` if the result is non-zero.
+  ///
+  [[nodiscard]] bool hairScatterEvaluate(const float3 &wo, const float3 &wi,
+                                         float &pdfFwd, float &pdfRev,
+                                         Span<float> f) const {
+    SMDL_SANITY_CHECK(material && instance);
+    SMDL_SANITY_CHECK(f.size() == size_t(instance.wavelength_base_max));
+    return material->hairScatterEvaluate(instance, wo, wi, pdfFwd, pdfRev,
+                                         f.data());
+  }
+
+  /// The hair scatter sample function. There are no delta hair
+  /// distributions, so there is no `isDelta` output.
+  ///
+  /// \param[in] xi
+  /// The canonical random sample in \f$ [0,1]^4 \f$.
+  ///
+  /// \param[in] wo
+  /// The outgoing direction in world space.
+  ///
+  /// \param[out] wi
+  /// The incoming direction in world space.
+  ///
+  /// \param[out] pdfFwd
+  /// The forward PDF of sampling `wi` given `wo`.
+  ///
+  /// \param[out] pdfRev
+  /// The reverse PDF of sampling `wo` given `wi`.
+  ///
+  /// \param[out] f
+  /// The BSDF spectrum. This must be non-null!
+  ///
+  /// \return
+  /// Returns `true` if the result is non-zero.
+  ///
+  [[nodiscard]] bool hairScatterSample(const float4 &xi, const float3 &wo,
+                                       float3 &wi, float &pdfFwd, float &pdfRev,
+                                       Span<float> f) const {
+    SMDL_SANITY_CHECK(material && instance);
+    SMDL_SANITY_CHECK(f.size() == size_t(instance.wavelength_base_max));
+    auto isDeltaInt{int(0)};
+    return material->hairScatterSample(instance, xi, wo, wi, pdfFwd, pdfRev,
+                                       f.data(), isDeltaInt);
   }
 
 public:

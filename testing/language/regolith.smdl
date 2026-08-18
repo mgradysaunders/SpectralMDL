@@ -1,0 +1,367 @@
+#smdl
+
+import ::math::*;
+using regolith = ::models::regolith;
+import regolith::*;
+
+// The regolith model with all eleven parameters spelled out positionally
+// (base, fineness, organic, iron, aridity, phyllo, hydrous, ferrous,
+// unstained, moisture, moisture_sensitivity), so each case below reads as a
+// point in the parameter box.
+color reg(const float base, const float fineness, const float organic,
+          const float iron, const float aridity, const float phyllo,
+          const float hydrous, const float ferrous, const float unstained,
+          const float moisture, const float moisture_sensitivity) = regolith::regolith_albedo(
+  base: base, fineness: fineness, organic: organic, iron: iron,
+  aridity: aridity, phyllo: phyllo, hydrous: hydrous, ferrous: ferrous,
+  unstained: unstained, moisture: moisture, moisture_sensitivity: moisture_sensitivity);
+
+unit_test "REGOLITH parameter box" {
+  // Every corner of the parameter box stays strictly inside (0, 1). The
+  // extrapolated corners are exactly where the logistic link's float32 rails
+  // earn their keep: without them, |z| gets large enough for the bare link
+  // to round to exactly 1.0.
+  for (int c = 0; c < 2048; c++) {
+    const auto corner = reg(
+      (c & 1) != 0 ? 1.0 : 0.0, (c & 2) != 0 ? 1.0 : 0.0,
+      (c & 4) != 0 ? 1.0 : 0.0, (c & 8) != 0 ? 1.0 : 0.0,
+      (c & 16) != 0 ? 1.0 : 0.0, (c & 32) != 0 ? 1.0 : 0.0,
+      (c & 64) != 0 ? 1.0 : 0.0, (c & 128) != 0 ? 1.0 : 0.0,
+      (c & 256) != 0 ? 1.0 : 0.0, (c & 512) != 0 ? 1.0 : 0.0,
+      (c & 1024) != 0 ? 1.0 : 0.0);
+    for (int i = 0; i < $WAVELENGTH_BASE_MAX; i++) {
+      #assert(corner[i] > 0.0);
+      #assert(corner[i] < 1.0);
+    }
+  }
+
+  // All eleven parameters clamp to [0, 1], so nothing outside the box can
+  // extrapolate through the fit. (Wavelengths clamp to [400, 2500] the same
+  // way; the C++ reference suite pins that from 220nm to 2692nm.)
+  const auto lo = reg(0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0);
+  const auto hi = reg(1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0);
+  const auto below = reg(-1.0, -0.5, -2.0, -1.0, -3.0, -0.25, -1.0, -0.5, -2.0, -1.0, -0.5);
+  const auto above = reg(3.0, 1.5, 2.0, 4.0, 1.25, 2.0, 3.0, 1.5, 2.0, 4.0, 1.1);
+  for (int i = 0; i < $WAVELENGTH_BASE_MAX; i++) {
+    #assert(below[i] == lo[i]);
+    #assert(above[i] == hi[i]);
+  }
+}
+
+unit_test "REGOLITH monotonicity" {
+  // The latent value is affine in each parameter, so per-lane monotonicity
+  // is context-independent and reduces to the sign of the parameter's table
+  // column. Only the axes whose columns are single-signed are pinned here;
+  // fineness, phyllo, hydrous, ferrous, unstained, and the iron/aridity
+  // pigment pair legitimately change direction across the spectrum.
+  for (int j = 1; j <= 4; j++) {
+    // Reflectance rises strictly with base at every wavelength...
+    const auto darker = reg(0.25 * (j - 1), 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.0, 0.5);
+    const auto brighter = reg(0.25 * j, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.0, 0.5);
+    // ... and falls strictly with organic.
+    const auto paler = reg(0.5, 0.5, 0.25 * (j - 1), 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.0, 0.5);
+    const auto richer = reg(0.5, 0.5, 0.25 * j, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.0, 0.5);
+    for (int i = 0; i < $WAVELENGTH_BASE_MAX; i++) {
+      #assert(brighter[i] > darker[i]);
+      #assert(richer[i] < paler[i]);
+    }
+  }
+
+  // Water darkens strictly at every wavelength, at BOTH sensitivity
+  // endpoints: the water*sensitivity interaction term never overcomes the
+  // water term itself anywhere in the box.
+  for (int j = 1; j <= 4; j++) {
+    const auto drier0 = reg(0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.25 * (j - 1), 0.0);
+    const auto wetter0 = reg(0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.25 * j, 0.0);
+    const auto drier1 = reg(0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.25 * (j - 1), 1.0);
+    const auto wetter1 = reg(0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.25 * j, 1.0);
+    for (int i = 0; i < $WAVELENGTH_BASE_MAX; i++) {
+      #assert(wetter0[i] < drier0[i]);
+      #assert(wetter1[i] < drier1[i]);
+    }
+  }
+
+  // Unstained is inert past ~700nm (its curve is identically zero there),
+  // so in the SWIR window it must be exactly a no-op. In the visible it is
+  // mixed-sign (lifts the blue end, lowers the red edge) and deliberately
+  // not pinned per-lane.
+  if ($state.wavelength_min >= 710.0) {
+    const auto stained = reg(0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.0, 0.0, 0.5);
+    const auto scrubbed = reg(0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 1.0, 0.0, 0.5);
+    for (int i = 0; i < $WAVELENGTH_BASE_MAX; i++) {
+      #assert(scrubbed[i] == stained[i]);
+    }
+  }
+}
+
+unit_test "REGOLITH golden values" {
+  // Absolute reflectance against the C++ reference implementation
+  // ('regolith.cpp', exported by cppexport.py from the fitted Python model;
+  // arrays generated by 'regolith_golden_gen.cpp'), evaluated at the exact
+  // wavelengths of the spectral state each block guards on. The port repeats
+  // the same float arithmetic, including the link's [1e-7, 0.9999999] rails,
+  // so the tolerance only admits association differences in the
+  // interpolation and the 12-term dot product.
+  //
+  // The points: the defaults (called with no arguments to pin those too),
+  // bright and dark end members, an iron-rich arid hematite red, full
+  // moisture at both sensitivity endpoints (separating the water term from
+  // the water*sensitivity interaction), and a scattered interior point from
+  // the C++ suite's CASE_PARAMS[50].
+  const auto mid = regolith::regolith_albedo();
+  const auto bright = reg(1.0, 1.0, 0.0, 0.0, 0.5, 0.5, 0.5, 0.5, 0.5, 0.0, 0.5);
+  const auto dark = reg(0.0, 0.5, 1.0, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.0, 0.5);
+  const auto red = reg(0.5, 0.5, 0.5, 1.0, 1.0, 0.5, 0.5, 0.5, 0.5, 0.0, 0.5);
+  const auto wet0 = reg(0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 1.0, 0.0);
+  const auto wet1 = reg(0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 1.0, 1.0);
+  const auto interior = reg(
+    0.441332195, 0.639823256, 0.135714505, 0.138037888, 0.173721413, 0.283331405,
+    0.961709275, 0.0257912926, 0.183739118, 0.165047839, 0.474348025);
+
+  // Note that lane 0 of the default state sits at 380 nm, below the 400 nm
+  // floor of the table, so these also pin the clamp there.
+  if ($WAVELENGTH_BASE_MAX == 16 && math::abs($state.wavelength_base[0] - 380.0) < 1e-3 &&
+      math::abs($state.wavelength_base[15] - 720.0) < 1e-3) {
+    const auto REF_MID = float[16](
+      0.118134, 0.118083, 0.121067, 0.136785,
+      0.153968, 0.166732, 0.183403, 0.200398,
+      0.226424, 0.256987, 0.277668, 0.293709,
+      0.311118, 0.336166, 0.359255, 0.374878);
+    const auto REF_BRIGHT = float[16](
+      0.916328, 0.916132, 0.913557, 0.912846,
+      0.917704, 0.914992, 0.904838, 0.896650,
+      0.889453, 0.886104, 0.890469, 0.893867,
+      0.899154, 0.906753, 0.912305, 0.914758);
+    const auto REF_DARK = float[16](
+      0.007768, 0.007760, 0.008022, 0.009323,
+      0.010632, 0.012069, 0.014549, 0.016990,
+      0.020565, 0.024705, 0.026772, 0.028495,
+      0.030322, 0.033423, 0.036504, 0.038559);
+    const auto REF_RED = float[16](
+      0.110343, 0.109249, 0.103382, 0.108336,
+      0.116054, 0.123938, 0.133531, 0.157270,
+      0.227412, 0.334611, 0.420112, 0.463042,
+      0.487261, 0.517333, 0.544880, 0.562648);
+    const auto REF_WET_S0 = float[16](
+      0.058156, 0.058004, 0.058846, 0.066155,
+      0.075018, 0.080628, 0.088307, 0.097804,
+      0.113032, 0.131026, 0.144292, 0.153748,
+      0.163634, 0.179132, 0.194332, 0.204557);
+    const auto REF_WET_S1 = float[16](
+      0.034721, 0.034620, 0.034100, 0.036431,
+      0.041370, 0.043796, 0.046771, 0.051048,
+      0.058499, 0.068611, 0.077194, 0.083737,
+      0.091016, 0.101886, 0.112452, 0.119850);
+    const auto REF_INTERIOR = float[16](
+      0.313866, 0.315426, 0.329828, 0.340036,
+      0.341039, 0.344289, 0.346942, 0.351987,
+      0.356548, 0.362882, 0.371929, 0.379477,
+      0.388085, 0.400578, 0.413621, 0.424581);
+    for (int i = 0; i < 16; i++) {
+      #assert(mid[i] ~== |1e-4| REF_MID[i]);
+      #assert(bright[i] ~== |1e-4| REF_BRIGHT[i]);
+      #assert(dark[i] ~== |1e-4| REF_DARK[i]);
+      #assert(red[i] ~== |1e-4| REF_RED[i]);
+      #assert(wet0[i] ~== |1e-4| REF_WET_S0[i]);
+      #assert(wet1[i] ~== |1e-4| REF_WET_S1[i]);
+      #assert(interior[i] ~== |1e-4| REF_INTERIOR[i]);
+    }
+  }
+
+  // The same comparison in the shortwave infrared, covering the water bands
+  // and the 2.2um clay absorption. The default spectral state never reaches
+  // this far, so run it explicitly (on this file alone -- other files in the
+  // suite are not written for a SWIR-only state) with
+  //
+  //   smdl test -wavelength-min 900 -wavelength-max 2400 testing/language/regolith.smdl
+  //
+  if ($WAVELENGTH_BASE_MAX == 16 && math::abs($state.wavelength_base[0] - 900.0) < 1e-3 &&
+      math::abs($state.wavelength_base[15] - 2400.0) < 1e-3) {
+    const auto REF_SWIR_MID = float[16](
+      0.392615, 0.408044, 0.451248, 0.495725,
+      0.527023, 0.560280, 0.592839, 0.604953,
+      0.606916, 0.627112, 0.634161, 0.649607,
+      0.657333, 0.551052, 0.574405, 0.572188);
+    const auto REF_SWIR_BRIGHT = float[16](
+      0.925688, 0.928180, 0.934728, 0.939534,
+      0.943422, 0.950185, 0.958582, 0.960282,
+      0.962570, 0.963931, 0.966372, 0.971131,
+      0.971566, 0.953867, 0.956055, 0.961915);
+    const auto REF_SWIR_DARK = float[16](
+      0.038029, 0.038736, 0.044401, 0.050841,
+      0.056443, 0.062620, 0.066244, 0.070412,
+      0.069506, 0.076634, 0.076166, 0.074426,
+      0.077768, 0.056018, 0.065068, 0.056295);
+    const auto REF_SWIR_RED = float[16](
+      0.445386, 0.458785, 0.511057, 0.563607,
+      0.581398, 0.586726, 0.595726, 0.603682,
+      0.613148, 0.608204, 0.605309, 0.618261,
+      0.604487, 0.459058, 0.459912, 0.461485);
+    const auto REF_SWIR_WET_S0 = float[16](
+      0.218024, 0.228095, 0.269749, 0.289455,
+      0.310256, 0.185415, 0.196687, 0.268179,
+      0.292907, 0.256519, 0.092735, 0.101535,
+      0.170892, 0.132486, 0.150976, 0.102881);
+    const auto REF_SWIR_WET_S1 = float[16](
+      0.126909, 0.132050, 0.151301, 0.172731,
+      0.190361, 0.122742, 0.164554, 0.206758,
+      0.208508, 0.192770, 0.067463, 0.085294,
+      0.143320, 0.107153, 0.119966, 0.081800);
+    const auto REF_SWIR_INTERIOR = float[16](
+      0.475148, 0.510566, 0.552653, 0.599759,
+      0.628486, 0.623652, 0.668306, 0.692625,
+      0.711477, 0.703707, 0.649145, 0.670446,
+      0.664960, 0.559900, 0.546110, 0.542055);
+    for (int i = 0; i < 16; i++) {
+      #assert(mid[i] ~== |1e-4| REF_SWIR_MID[i]);
+      #assert(bright[i] ~== |1e-4| REF_SWIR_BRIGHT[i]);
+      #assert(dark[i] ~== |1e-4| REF_SWIR_DARK[i]);
+      #assert(red[i] ~== |1e-4| REF_SWIR_RED[i]);
+      #assert(wet0[i] ~== |1e-4| REF_SWIR_WET_S0[i]);
+      #assert(wet1[i] ~== |1e-4| REF_SWIR_WET_S1[i]);
+      #assert(interior[i] ~== |1e-4| REF_SWIR_INTERIOR[i]);
+    }
+  }
+}
+
+// BEGIN GENERATED PRESET TESTS
+// Regenerate with `python -m fits.regolith_presets --tests-into <this file>`.
+
+unit_test "REGOLITH presets" {
+  // Every preset is a point inside the parameter box, so the
+  // link's strict (0, 1) guarantee applies to all of them -- and
+  // this is the only test that touches every constant, so it is
+  // also what notices one going missing.
+  const auto ALL = auto[58](
+    regolith::REGOLITH_PRESET_ACRISOL,
+    regolith::REGOLITH_PRESET_ANDOSOL,
+    regolith::REGOLITH_PRESET_ARENOSOL,
+    regolith::REGOLITH_PRESET_CAMBISOL,
+    regolith::REGOLITH_PRESET_CHERNOZEM,
+    regolith::REGOLITH_PRESET_FERRALSOL,
+    regolith::REGOLITH_PRESET_FLUVISOL,
+    regolith::REGOLITH_PRESET_GLEYSOL,
+    regolith::REGOLITH_PRESET_LUVISOL,
+    regolith::REGOLITH_PRESET_NITISOL,
+    regolith::REGOLITH_PRESET_PHAEOZEM,
+    regolith::REGOLITH_PRESET_PLANOSOL,
+    regolith::REGOLITH_PRESET_PODZOL,
+    regolith::REGOLITH_PRESET_REGOSOL,
+    regolith::REGOLITH_PRESET_RENDZINA,
+    regolith::REGOLITH_PRESET_SOLONCHAK,
+    regolith::REGOLITH_PRESET_SOLONETZ,
+    regolith::REGOLITH_PRESET_VERTISOL,
+    regolith::REGOLITH_PRESET_XEROSOL,
+    regolith::REGOLITH_PRESET_YERMOSOL,
+    regolith::REGOLITH_PRESET_LATERITE,
+    regolith::REGOLITH_PRESET_TERRA_ROSSA,
+    regolith::REGOLITH_PRESET_OCHRE,
+    regolith::REGOLITH_PRESET_BAUXITE,
+    regolith::REGOLITH_PRESET_HUMIC_TOPSOIL,
+    regolith::REGOLITH_PRESET_DARK_LOAM,
+    regolith::REGOLITH_PRESET_PALE_SAND,
+    regolith::REGOLITH_PRESET_CLAY_PAN,
+    regolith::REGOLITH_PRESET_ARIDIC_ENTISOL,
+    regolith::REGOLITH_PRESET_MASONRY_SAND,
+    regolith::REGOLITH_PRESET_BASALT,
+    regolith::REGOLITH_PRESET_PERIDOTITE,
+    regolith::REGOLITH_PRESET_PICRITE,
+    regolith::REGOLITH_PRESET_GABBRO,
+    regolith::REGOLITH_PRESET_DIABASE,
+    regolith::REGOLITH_PRESET_ANDESITE,
+    regolith::REGOLITH_PRESET_GRANODIORITE,
+    regolith::REGOLITH_PRESET_GRANITE,
+    regolith::REGOLITH_PRESET_RHYOLITE,
+    regolith::REGOLITH_PRESET_TUFF,
+    regolith::REGOLITH_PRESET_SCHIST,
+    regolith::REGOLITH_PRESET_GNEISS,
+    regolith::REGOLITH_PRESET_QUARTZITE,
+    regolith::REGOLITH_PRESET_HORNFELS,
+    regolith::REGOLITH_PRESET_SHALE,
+    regolith::REGOLITH_PRESET_SANDSTONE,
+    regolith::REGOLITH_PRESET_GREYWACKE,
+    regolith::REGOLITH_PRESET_SILTSTONE,
+    regolith::REGOLITH_PRESET_CONGLOMERATE,
+    regolith::REGOLITH_PRESET_PELITE,
+    regolith::REGOLITH_PRESET_PALEOSOL,
+    regolith::REGOLITH_PRESET_ASPHALT_ROAD,
+    regolith::REGOLITH_PRESET_ASPHALT_SHINGLE,
+    regolith::REGOLITH_PRESET_TAR_PAPER,
+    regolith::REGOLITH_PRESET_BRICK_RED,
+    regolith::REGOLITH_PRESET_BRICK_TAN,
+    regolith::REGOLITH_PRESET_BRICK_GREY,
+    regolith::REGOLITH_PRESET_CONCRETE_ROAD);
+  for (int k = 0; k < 58; k++) {
+    const auto r = regolith::regolith_albedo(inline ALL[k]);
+    for (int i = 0; i < $WAVELENGTH_BASE_MAX; i++) {
+      #assert(r[i] > 0.0);
+      #assert(r[i] < 1.0);
+    }
+  }
+
+  // Absolute reflectance against the Python fit these constants
+  // were measured from (`fits/regolith_presets.py` in the
+  // Empirical-Reflectance repository), at 16 lanes over
+  // 380-720 nm. The tolerance admits the module's
+  // resampling of that fit onto 138 table entries -- worst case
+  // 0.0019 over the roster, at the strongly red soils where the
+  // visible slope is steepest -- and nothing else. Lane 0 sits at
+  // 380 nm, below the table's 400 nm floor, so these pin the
+  // clamp there too.
+  if ($WAVELENGTH_BASE_MAX == 16 &&
+      math::abs($state.wavelength_base[0] - 380.0) < 1e-3 &&
+      math::abs($state.wavelength_base[15] - 720.0) < 1e-3) {
+    // bright saturated red clay over karst: the steepest visible slope in
+    // the roster, so the worst case for the table's 15.2 nm spacing.
+    const auto REF_TERRA_ROSSA = float[16](
+      0.055854, 0.056068, 0.059781, 0.066438,
+      0.070321, 0.077823, 0.089221, 0.112028,
+      0.164009, 0.241683, 0.308990, 0.346418,
+      0.372616, 0.397612, 0.424144, 0.449841);
+    // dark swelling smectite clay soil: a dark soil, near the bottom of the
+    // reflectance range.
+    const auto REF_VERTISOL = float[16](
+      0.037203, 0.037556, 0.040694, 0.044095,
+      0.047328, 0.050858, 0.055924, 0.061451,
+      0.067475, 0.073557, 0.078718, 0.084862,
+      0.092087, 0.100080, 0.108512, 0.116936);
+    // the brightest soil measured: the brightest soil in the roster.
+    const auto REF_PALE_SAND = float[16](
+      0.265208, 0.268188, 0.292838, 0.317816,
+      0.333860, 0.350392, 0.370210, 0.393743,
+      0.416000, 0.434641, 0.451886, 0.467482,
+      0.485735, 0.503600, 0.520683, 0.536874);
+    // fresh mafic lava: a neutral dark rock, where the pigment terms
+    // cancel.
+    const auto REF_BASALT = float[16](
+      0.066083, 0.065984, 0.065073, 0.066140,
+      0.067247, 0.067942, 0.069024, 0.069396,
+      0.069377, 0.069707, 0.069654, 0.069682,
+      0.070449, 0.075300, 0.079649, 0.080447);
+    // light grey road concrete: made ground, measured by transfer rather
+    // than fitted.
+    const auto REF_CONCRETE_ROAD = float[16](
+      0.184848, 0.187092, 0.205985, 0.223737,
+      0.229620, 0.241179, 0.257700, 0.275636,
+      0.290814, 0.300619, 0.306891, 0.310495,
+      0.315356, 0.322162, 0.328756, 0.333834);
+    const auto GOT_TERRA_ROSSA =
+      regolith::regolith_albedo(inline regolith::REGOLITH_PRESET_TERRA_ROSSA);
+    const auto GOT_VERTISOL =
+      regolith::regolith_albedo(inline regolith::REGOLITH_PRESET_VERTISOL);
+    const auto GOT_PALE_SAND =
+      regolith::regolith_albedo(inline regolith::REGOLITH_PRESET_PALE_SAND);
+    const auto GOT_BASALT =
+      regolith::regolith_albedo(inline regolith::REGOLITH_PRESET_BASALT);
+    const auto GOT_CONCRETE_ROAD =
+      regolith::regolith_albedo(inline regolith::REGOLITH_PRESET_CONCRETE_ROAD);
+    for (int i = 0; i < 16; i++) {
+      #assert(GOT_TERRA_ROSSA[i] ~== |0.0025| REF_TERRA_ROSSA[i]);
+      #assert(GOT_VERTISOL[i] ~== |0.0025| REF_VERTISOL[i]);
+      #assert(GOT_PALE_SAND[i] ~== |0.0025| REF_PALE_SAND[i]);
+      #assert(GOT_BASALT[i] ~== |0.0025| REF_BASALT[i]);
+      #assert(GOT_CONCRETE_ROAD[i] ~== |0.0025| REF_CONCRETE_ROAD[i]);
+    }
+  }
+}
+// END GENERATED PRESET TESTS

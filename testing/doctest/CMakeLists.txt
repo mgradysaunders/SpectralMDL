@@ -8,20 +8,30 @@ target_sources(
   PRIVATE
     "doctest.cc"
     "BSDFMeasurement.cc"
+    "Common.cc"
     "Compiler.cc"
+    "Compiler/Emitter.cc"
     "Doc.cc"
     "FileLocator.cc"
     "Image.cc"
     "LightProfile.cc"
     "Module.cc"
     "Parser.cc"
+    "SceneData.cc"
+    "VoxelGrid.cc"
+    "Support/ColorVector.cc"
     "Support/Illuminant.cc"
     "Support/MD5Hash.cc"
     "Support/MetalIOR.cc"
     "Support/MonteCarlo.cc"
     "Support/QualifiedName.cc"
+    "Support/SpectralRenderImage.cc"
+    "Support/StringHelpers.cc"
+    "Support/SunSky.cc"
+    "Support/PBRMaps.cc"
   )
-# So nested test sources can '#include "doctest.h"' unqualified.
+# So nested test sources can '#include "doctest.h"' unqualified. The
+# vendored pcg-cpp is the golden-vector oracle for 'Support/RNG.cc'.
 target_include_directories(
   "smdl-doctest"
   PRIVATE
@@ -31,6 +41,14 @@ target_link_libraries(
   "smdl-doctest"
   PRIVATE
     "SpectralMDL::SpectralMDL"
+  )
+# Match the library's RTTI setting, as 'lib' and 'programs' do; the
+# 'BuildInfo' test relies on this to check 'hasRTTI' against this
+# binary's own compile.
+target_compile_options(
+  "smdl-doctest"
+  PRIVATE
+    "${RTTI_FLAG}"
   )
 set_target_properties(
   "smdl-doctest"

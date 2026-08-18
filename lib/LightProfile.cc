@@ -298,7 +298,7 @@ float LightProfile::interpolate(float3 wo) const noexcept {
         // |   -Y |   90 |  270 |
         return atan2DegreesPositive(wo.y, wo.x);
       } else {
-        SMDL_SANITY_CHECK(
+        SMDL_SANITY_CHECK_MSG(
             false, "Unexpected horizontal angles for Type C photometry!");
         return 0.0f;
       }

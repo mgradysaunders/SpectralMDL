@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 3.22)
+cmake_minimum_required(VERSION 3.28)
 set(SMDL_VERSION_MAJOR 1 CACHE INTERNAL "")
 set(SMDL_VERSION_MINOR 0 CACHE INTERNAL "")
 set(SMDL_VERSION_PATCH 0 CACHE INTERNAL "")
@@ -15,16 +15,35 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 include(CTest)
 include(cmake/Git.cmake)
 include(cmake/Options.cmake)
+include(cmake/NativeArch.cmake)
 include(cmake/Dependencies.cmake)
 
 if(NOT CMAKE_BUILD_TYPE)
   set(CMAKE_BUILD_TYPE Release) 
 endif()
 
+# The RTTI setting must agree with how LLVM itself was built. MSVC spells
+# this '/GR-' and does not understand '-fno-rtti'.
 if(NOT SMDL_ENABLE_RTTI)
-  set(RTTI_FLAG "-fno-rtti")
+  if(MSVC)
+    set(RTTI_FLAG "/GR-")
+  else()
+    set(RTTI_FLAG "-fno-rtti")
+  endif()
 else()
   set(RTTI_FLAG "")
+endif()
+
+# MSVC needs to be told two things it cannot work out on its own: '/utf-8',
+# because the sources are UTF-8 and a few doc comments are not ASCII (MSVC
+# otherwise reads them in the active code page and warns C4819), and
+# '/bigobj', because the LLVM-heavy translation units under 'lib' blow past
+# the default object-file section limit. Set here rather than per-target so
+# 'programs' and 'testing' inherit them. NOTE: This is deliberately after
+# 'Dependencies.cmake', which is where in-tree LLVM, Ptex, Embree, and
+# Assimp are added, so their builds are not affected.
+if(MSVC)
+  add_compile_options("/utf-8" "/bigobj")
 endif()
 
 if(SMDL_SANITIZE)

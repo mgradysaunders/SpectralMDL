@@ -1,0 +1,117 @@
+/// The sampling utilities: low-discrepancy sequences and the canonical
+/// sampling warps shared by the distribution functions in `::df` and by
+/// user code that integrates them.
+/// NOTE: This module is non-standard!
+#smdl
+
+using ::math import *;
+
+/// Declare libm `erf`
+@(pure foreign)
+double erf(double x);
+
+/// Next canonical random vector in quasi-random 2-dimensional low discrepancy sequence.
+@(pure macro)
+export float2 next_low_discrepancy(const &float2 xi) = (*xi = frac(*xi + float2(0.75487766, 0.56984029)));
+
+/// Next canonical random vector in quasi-random 3-dimensional low discrepancy sequence.
+@(pure macro)
+export float3 next_low_discrepancy(const &float3 xi) = (*xi = frac(*xi + float3(0.81917251, 0.67104360, 0.54970047)));
+
+/// Next canonical random vector in quasi-random 4-dimensional low discrepancy sequence.
+@(pure macro)
+export float4 next_low_discrepancy(const &float4 xi) = (*xi = frac(*xi + float4(0.85667488, 0.73389185, 0.62870672, 0.53859725)));
+
+/// Bool sample with `chance` probability of returning `true`.
+@(pure macro)
+export bool bool_sample(const &float xi, const float chance) {
+  if (*xi < chance) {
+    *xi = (*xi / chance);
+    return true;
+  } else {
+    *xi = (*xi - chance) / (1 - chance);
+    return false;
+  }
+}
+
+/// Uniform wavelength index sample.
+@(pure macro)
+export int uniform_wavelength_index_sample(const &float xi) {
+  const int i(#min(int(*xi *= $WAVELENGTH_BASE_MAX), $WAVELENGTH_BASE_MAX - 1));
+  *xi -= i;
+  return i;
+}
+
+/// Uniform disk sample.
+@(pure)
+export float2 uniform_disk_sample(float2 xi) {
+  xi = 2 * xi - 1;
+  xi = #select(xi == 0, 1e-6, xi);
+  const bool cond((absxi := #abs(xi), absxi.x > absxi.y));
+  const float rad(#select(cond, xi.x, xi.y));
+  const float phi(#select(cond, ($PI / 4) * xi.y / xi.x, ($PI / 2) - ($PI / 4) * xi.x / xi.y));
+  return rad * float2(#cos(phi), #sin(phi));
+}
+
+/// Cosine-weighted hemisphere sample.
+@(pure)
+export float3 cosine_hemisphere_sample(float2 xi) {
+  return float3((p := uniform_disk_sample(xi)), #sqrt(#max(1 - #sum(p * p), 0)));
+}
+
+/// Uniform hemisphere sample.
+@(pure)
+export float3 uniform_hemisphere_sample(float2 xi) {
+  const float cosTheta = saturate(xi.x);
+  const float sinTheta = #sqrt(1 - cosTheta * cosTheta);
+  return float3(
+           sinTheta * #cos(phi := $TWO_PI * xi.y),
+           sinTheta * #sin(phi),
+           cosTheta,
+         );
+}
+
+/// Uniform sphere sample.
+@(pure)
+export float3 uniform_sphere_sample(float2 xi) {
+  const float cosTheta = 2 * saturate(xi.x) - 1;
+  const float sinTheta = #sqrt(1 - cosTheta * cosTheta);
+  return float3(
+           sinTheta * #cos(phi := $TWO_PI * xi.y),
+           sinTheta * #sin(phi),
+           cosTheta,
+         );
+}
+
+/// Erf inverse.
+@(pure)
+export double erf_inverse(double y) {
+  double w = -#log(#max(1e-6d, (1 - y) * (1 + y)));
+  double x = 0;
+  if (w < 5) {
+    w = w - 2.5d;
+    x = w * 2.81022636e-08d + 3.43273939e-7d;
+    x = w * x - 3.52338770e-6d;
+    x = w * x - 4.39150654e-6d;
+    x = w * x + 2.18580870e-4d;
+    x = w * x - 1.25372503e-3d;
+    x = w * x - 4.17768164e-3d;
+    x = w * x + 2.46640727e-1d;
+    x = w * x + 1.50140941d;
+  } else {
+    w = #sqrt(w) - 3;
+    x = x * -2.00214257e-4d + 1.00950558e-4d;
+    x = w * x + 1.34934322e-3d;
+    x = w * x - 3.67342844e-3d;
+    x = w * x + 5.73950773e-3d;
+    x = w * x - 7.62246130e-3d;
+    x = w * x + 9.43887047e-3d;
+    x = w * x + 1.00167406d;
+    x = w * x + 2.83297682d;
+  }
+  x *= y;
+  // Two rounds of Newton iteration.
+  x -= (erf(x) - y) / (1.1283791671d * #exp(-x * x));
+  x -= (erf(x) - y) / (1.1283791671d * #exp(-x * x));
+  return x;
+}

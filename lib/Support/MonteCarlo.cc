@@ -20,29 +20,24 @@ Distribution1D::Distribution1D(Span<const float> values) {
 }
 
 float Distribution1D::indexPMF(int i) const noexcept {
-  if (0 <= i && i < size())
-    return static_cast<float>(cmfs[i + 1] - cmfs[i]);
+  if (0 <= i && i < size()) return static_cast<float>(cmfs[i + 1] - cmfs[i]);
   return 0.0f;
 }
 
 float Distribution1D::indexCMF(int i) const noexcept {
-  if (0 <= i && i < size())
-    return static_cast<float>(cmfs[i]);
+  if (0 <= i && i < size()) return static_cast<float>(cmfs[i]);
   return i < 0 ? 0.0f : 1.0f;
 }
 
 int Distribution1D::indexSample(float xi, float *xiRemap,
                                 float *pmf) const noexcept {
   if (cmfs.size() < 2) {
-    if (pmf)
-      *pmf = 1;
+    if (pmf) *pmf = 1;
     return 0;
   }
   auto itr{std::lower_bound(cmfs.begin(), cmfs.end(), double(xi))};
-  if (itr == cmfs.begin())
-    ++itr;
-  if (itr == cmfs.end())
-    --itr;
+  if (itr == cmfs.begin()) ++itr;
+  if (itr == cmfs.end()) --itr;
   --itr;
   auto i{int(itr - cmfs.begin())};
   auto cmf0{*itr++};
@@ -72,13 +67,37 @@ float2 uniformDiskSample(float2 xi) noexcept {
 
 float3 uniformConeSample(float cosThetaC, float2 xi) noexcept {
   float cosTheta{(1.0f - xi.x) * cosThetaC + xi.x};
-  if (cosTheta < -1.0f)
-    cosTheta = -1.0f;
-  if (cosTheta > +1.0f)
-    cosTheta = +1.0f;
+  if (cosTheta < -1.0f) cosTheta = -1.0f;
+  if (cosTheta > +1.0f) cosTheta = +1.0f;
   float sinTheta{std::sqrt(std::max(1.0f - cosTheta * cosTheta, 0.0f))};
-  float phi{2.0f * PI * xi.y};
+  float phi{2 * PI * xi.y};
   return float3(sinTheta * std::cos(phi), sinTheta * std::sin(phi), cosTheta);
+}
+
+float2 uniformApertureSample(int numBlades, float bladeAngle,
+                             float2 xi) noexcept {
+  if (numBlades < 3) return uniformDiskSample(xi);
+  // Equal area with the unit disk
+  const float n{float(numBlades)};
+  const float circumRadius{std::sqrt(2 * PI / (n * std::sin(2 * PI / n)))};
+  // Pick one of the `n` triangles that meet at the center with the first
+  // dimension and rescale it back to (0,1), so the polygon costs nothing in
+  // dimensions over the disk.
+  const float i{std::floor(xi.x * n)};
+  xi.x = std::fmin(xi.x * n - i, 1.0f);
+  // Heitz's low-distortion square-to-triangle map
+  if (xi.y > xi.x) {
+    xi.x *= 0.5f;
+    xi.y -= xi.x;
+  } else {
+    xi.y *= 0.5f;
+    xi.x -= xi.y;
+  }
+  const float theta0{bladeAngle + 2 * PI * i / n};
+  const float theta1{theta0 + 2 * PI / n};
+  // Barycentric over (center, v0, v1); the center contributes nothing.
+  return circumRadius * (xi.x * float2(std::cos(theta0), std::sin(theta0)) +
+                         xi.y * float2(std::cos(theta1), std::sin(theta1)));
 }
 
 float erfInverse(float y) noexcept {
@@ -153,19 +172,16 @@ float Distribution2D::directionPDF(float3 wi, int2 *iPixel) const noexcept {
   theta = std::max(theta, 0.0f);
   theta = std::min(theta, PI);
   float sinTheta{std::sin(theta)};
-  if (!(sinTheta > 0))
-    return 0.0f;
+  if (!(sinTheta > 0)) return 0.0f;
   float phi = std::atan2(wi.y, wi.x);
-  if (phi < 0.0f)
-    phi += 2.0f * PI;
+  if (phi < 0.0f) phi += 2.0f * PI;
   phi = std::max(phi, 0.0f);
   phi = std::min(phi, 2.0f * PI);
   int nX = numTexelsX, iX = int(nX * phi / (2.0f * PI));
   int nY = numTexelsY, iY = int(nY * theta / PI);
   iX = std::max(0, std::min(iX, nX - 1));
   iY = std::max(0, std::min(iY, nY - 1));
-  if (iPixel)
-    *iPixel = {iX, iY};
+  if (iPixel) *iPixel = {iX, iY};
   float pdf = pixelPMF(int2(iX, iY));
   pdf *= numTexelsX * numTexelsY;
   pdf /= 2.0f * PI * PI * sinTheta;
@@ -175,15 +191,13 @@ float Distribution2D::directionPDF(float3 wi, int2 *iPixel) const noexcept {
 float3 Distribution2D::directionSample(float2 xi, int2 *iPixel,
                                        float *pdf) const noexcept {
   auto i{pixelSample(xi, &xi, pdf)};
-  if (iPixel)
-    *iPixel = i;
+  if (iPixel) *iPixel = i;
   auto phi{2.0f * PI * (i.x + xi.x) / float(numTexelsX)};
   auto theta{PI * (i.y + xi.y) / float(numTexelsY)};
   auto cosTheta{std::cos(theta)};
   auto sinTheta{std::sin(theta)};
   if (sinTheta == 0.0f) {
-    if (pdf)
-      *pdf = 0.0f;
+    if (pdf) *pdf = 0.0f;
     return {};
   } else {
     if (pdf) {
