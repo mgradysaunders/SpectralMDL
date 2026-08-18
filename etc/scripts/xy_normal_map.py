@@ -34,7 +34,7 @@ is reported and written with its Z sign lost.
 
 Example:
 
-    python3 etc/xy_normal_map.py textures/ground_nor_gl_4k.png \\
+    python3 xy_normal_map.py textures/ground_nor_gl_4k.png \\
         -o textures/ground_nor_xy_4k.png
 """
 import argparse
