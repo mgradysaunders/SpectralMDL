@@ -284,6 +284,26 @@ private:
       if (!(maxSlope > 0))
         fail(entry.lineNo, "expected a positive real for 'max_slope'");
       map.maxSlope = maxSlope;
+    } else if (entry.key == "factor") {
+      if (role != PBRMaps::ROLE_EMISSION)
+        fail(entry.lineNo,
+             concat("'factor' is not allowed for '", roleStr, "'"));
+      auto factor{parseFloat(entry, entry.value)};
+      if (!(factor >= 0))
+        fail(entry.lineNo, "expected a non-negative real for 'factor'");
+      map.factor = factor;
+    } else if (entry.key == "range") {
+      if (role != PBRMaps::ROLE_ROUGHNESS && role != PBRMaps::ROLE_METALLIC)
+        fail(entry.lineNo,
+             concat("'range' is not allowed for '", roleStr, "'"));
+      auto items{parseList(entry)};
+      if (items.size() != 2)
+        fail(entry.lineNo, "expected two reals in [0, 1] for 'range'");
+      auto lower{parseFloat(entry, items[0])};
+      auto upper{parseFloat(entry, items[1])};
+      if (!(0 <= lower && lower <= 1 && 0 <= upper && upper <= 1))
+        fail(entry.lineNo, "expected two reals in [0, 1] for 'range'");
+      map.range = {lower, upper};
     } else if (entry.key == "classes") {
       // The schema used to make the class map name its classes, and the
       // names decided how many weights came out of a lookup. Say what

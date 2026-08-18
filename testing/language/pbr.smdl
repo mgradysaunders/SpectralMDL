@@ -91,6 +91,49 @@ unit_test "PBR neutral defaults stay scalar" {
   #assert(p.emission == 0.0);
 }
 
+// The per-map remap facts: 'range' remaps a stored scalar onto
+// [lo, hi] (inverted allowed), and 'factor' scales the decoded
+// emission color. The constant fixture image gives every decode a
+// closed form, and the affine remap commutes with filtering and hex
+// blending, so the same value must come out of every path.
+unit_test "PBR remap range and emission factor" {
+  const auto pack = pbr::pbr_maps("pbr_fixture/fixture_remap.pbr");
+  // The manifest facts land on the maps.
+  #assert(pack.roughness.range.x ~== |1e-6| 0.1);
+  #assert(pack.roughness.range.y ~== |1e-6| 0.3);
+  #assert(pack.metallic.range.x == 1.0);
+  #assert(pack.metallic.range.y == 0.0);
+  #assert(pack.emission.factor == 2.0);
+  const float2 uv = float2(0.5, 0.5);
+  // Stored r = 0.25 onto [0.1, 0.3]: 0.1 + 0.25 * 0.2 = 0.15.
+  #assert(pbr::lookup_float(pack.roughness, uv) ~== |1e-3| 0.15);
+  // Stored b = 0.75 through the inverted range [1, 0]: 0.25, the
+  // gloss-as-roughness reading.
+  #assert(pbr::lookup_float(pack.metallic, uv) ~== |1e-3| 0.25);
+  // Identically through sample() and both prepared() branches: the
+  // constant image makes even the hex blend exact.
+  const auto s = pbr::sample(pack, uv);
+  #assert(s.roughness ~== |1e-3| 0.15);
+  #assert(s.metallic ~== |1e-3| 0.25);
+  const auto p = pbr::prepared(pack, uv);
+  #assert(p.roughness ~== |1e-3| 0.15);
+  #assert(p.metallic ~== |1e-3| 0.25);
+  const auto ph = pbr::prepared(pack, uv, use_hex: true);
+  #assert(ph.roughness ~== |1e-3| 0.15);
+  #assert(ph.metallic ~== |1e-3| 0.25);
+  // The factor multiplies the decoded spectral color, so the result is
+  // exactly the factor-free twin times 2, whatever the RGB upsampling
+  // does, through the plain, sample(), and hex paths alike.
+  const auto plain = pbr::pbr_maps("pbr_fixture/fixture_remap_plain.pbr");
+  #assert(#all(pbr::lookup_color(pack.emission, uv) ~== |1e-5| 2.0 * pbr::lookup_color(plain.emission, uv)));
+  #assert(#all(s.emission ~== |1e-5| 2.0 * pbr::sample(plain, uv).emission));
+  #assert(#all(ph.emission ~== |1e-5| 2.0 * pbr::prepared(plain, uv, use_hex: true).emission));
+  // A map that declares neither fact decodes exactly as before: the
+  // defaults are the identity.
+  #assert(pbr::pbr_map().factor == 1.0);
+  #assert(#all(pbr::pbr_map().range == float2(0.0, 1.0)));
+}
+
 // A hand-built set that declares only the maps it has works everywhere
 // 'pbr_maps' does (see the module doc), and a present basecolor map
 // resolves the union field to a spectral 'color'.

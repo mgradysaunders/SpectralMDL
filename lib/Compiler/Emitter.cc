@@ -3142,13 +3142,15 @@ Value Emitter::emitIntrinsicLoad(IntrinsicID intrinsicID,
       if (role == PBRMaps::ROLE_NORMAL) convention = int(map.normalConvention);
       args.elems.push_back(Argument{
           fieldName,
-          invoke(
-              pbrMapType,
-              {Argument{"tex", valueTex},
-               Argument{"channel", context.getComptimeInt(int(map.channel))},
-               Argument{"convention", context.getComptimeInt(convention)},
-               Argument{"max_slope", context.getComptimeFloat(map.maxSlope)}},
-              srcLoc)});
+          invoke(pbrMapType,
+                 {Argument{"tex", valueTex},
+                  Argument{"channel", context.getComptimeInt(int(map.channel))},
+                  Argument{"convention", context.getComptimeInt(convention)},
+                  Argument{"max_slope", context.getComptimeFloat(map.maxSlope)},
+                  Argument{"factor", context.getComptimeFloat(map.factor)},
+                  Argument{"range", context.getComptimeVector(
+                                        float2(map.range[0], map.range[1]))}},
+                 srcLoc)});
       return true;
     }};
     // A map the call site opted out of is simply not loaded, so the

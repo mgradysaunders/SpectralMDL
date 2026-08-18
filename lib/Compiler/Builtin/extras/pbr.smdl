@@ -94,6 +94,19 @@ export struct pbr_map {
   /// The encoding scale of a horizon map (a stored channel value of 1
   /// means this slope), which is only meaningful for horizon maps.
   const float max_slope = 8.0;
+
+  /// The multiplier on the decoded (linear, after-gamma) color, which
+  /// is only meaningful for emission maps. Applied by `lookup_color()`
+  /// and the color paths of `prepared()`; `lookup_float3()` stays raw.
+  const float factor = 1.0;
+
+  /// The decode range of a scalar map: a stored value `v` decodes as
+  /// `math::lerp(range.x, range.y, v)`, so the default is the identity
+  /// and an inverted range (e.g. `float2(1.0, 0.0)` for a gloss map
+  /// stored as smoothness) flips the map. Only meaningful for roughness
+  /// and metallic maps. Applied by `select_channel()`, and through it
+  /// by every scalar lookup.
+  const float2 range = float2(0.0, 1.0);
 };
 
 /// A set of related PBR texture maps, loaded at compile time from a
@@ -239,12 +252,16 @@ export struct pbr_maps {
 export bool uses_parallax(const auto pack) =
   #hasField(pack, "height") && !(#hasField(pack, "no_parallax") ? pack.no_parallax : false);
 
-/// The scalar of a texel per the map's declared channel, `x` if natural.
-/// The channel is a compile-time fact, so this folds.
+/// The scalar of a texel per the map's declared channel (`x` if
+/// natural), remapped onto the map's declared `range`. Both are
+/// compile-time facts, so this folds, and the identity range folds
+/// away entirely. The remap is affine, so it commutes with mip
+/// filtering and hex blending: remapping the filtered value equals
+/// filtering the remapped map.
 @(pure macro)
 float select_channel(const pbr_map map, const float4 texel) {
-  return texel.x if (map.channel < 0);
-  return texel[map.channel];
+  const float value(map.channel < 0 ? texel.x : texel[map.channel]);
+  return math::lerp(map.range.x, map.range.y, value);
 }
 
 // TODO Possibly floor `lod::mip_level()`: saves computation by eliminating
@@ -282,8 +299,10 @@ export float3 lookup_float3(
 ) = tex::lookup_float3_lod(map.tex, coord, lod::mip_level(map.tex, space, uv_scale), wrap_u, wrap_v);
 
 /// Look up a color map as a spectral `color`, gamma already applied by
-/// role. This is the right call for the `basecolor` and `emission` maps.
-/// Mip-filtered; see `lookup_float()`.
+/// role and scaled by the map's `factor` (the identity 1 for every role
+/// but emission, where the manifest may declare it). This is the right
+/// call for the `basecolor` and `emission` maps. Mip-filtered; see
+/// `lookup_float()`.
 @(macro)
 export color lookup_color(
   const pbr_map map,
@@ -292,7 +311,7 @@ export color lookup_color(
   const tex::wrap_mode wrap_u = tex::wrap_repeat,
   const tex::wrap_mode wrap_v = tex::wrap_repeat,
   const auto uv_scale = 1.0,
-) = tex::lookup_color_lod(map.tex, coord, lod::mip_level(map.tex, space, uv_scale), wrap_u, wrap_v);
+) = map.factor * tex::lookup_color_lod(map.tex, coord, lod::mip_level(map.tex, space, uv_scale), wrap_u, wrap_v);
 
 /// Decode a raw normal-map texel per the convention the manifest
 /// declared into a unit tangent-space normal. The dispatch is
@@ -671,7 +690,7 @@ export pbr_prepared prepared(
   if (use_hex) {
     const auto tiling(hex::hex_lattice_at(result.coord, #hasField(pack, "hex_rotation") ? pack.hex_rotation : 0.0, $state.object_id));
     if $(#hasField(pack, "basecolor")) {
-      result.basecolor = color(hex::hex_blend(hex::hex_lookup(pack.basecolor.tex, tiling)).xyz);
+      result.basecolor = pack.basecolor.factor * color(hex::hex_blend(hex::hex_lookup(pack.basecolor.tex, tiling)).xyz);
     }
     if $(#hasField(pack, "roughness")) {
       result.roughness = select_channel(pack.roughness, hex::hex_blend(hex::hex_lookup(pack.roughness.tex, tiling)));
@@ -680,7 +699,7 @@ export pbr_prepared prepared(
       result.metallic = select_channel(pack.metallic, hex::hex_blend(hex::hex_lookup(pack.metallic.tex, tiling)));
     }
     if $(#hasField(pack, "emission")) {
-      result.emission = color(hex::hex_blend(hex::hex_lookup(pack.emission.tex, tiling)).xyz);
+      result.emission = pack.emission.factor * color(hex::hex_blend(hex::hex_lookup(pack.emission.tex, tiling)).xyz);
     }
     if $(#hasField(pack, "normal")) {
       result.normal = math::normalize(state::tangent_space(space) * hex_decode_normal(pack.normal, tiling, state::random_float()));

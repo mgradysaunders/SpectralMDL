@@ -65,7 +65,15 @@ namespace smdl {
 /// - `convention`: `opengl`, `directx`, `opengl_xy`, or `directx_xy`,
 ///   for `normal` only,
 /// - `max_slope`: the positive encoding scale of the horizon map, for
-///   `horizon` only (default 8, the `PARALLAX_MAX_SLOPE` cap).
+///   `horizon` only (default 8, the `PARALLAX_MAX_SLOPE` cap),
+/// - `factor`: a real `>= 0` multiplying the decoded (linear,
+///   after-gamma) color, for `emission` only (default 1), so a [0, 1]
+///   map can express radiant intensity,
+/// - `range`: two reals in `[0, 1]` as an inline list, for `roughness`
+///   and `metallic` only (default `[0, 1]`): the stored value `v`
+///   decodes as `lo + (hi - lo) * v`, concentrating an 8-bit map's
+///   precision in a sub-range. `lo > hi` is allowed and decodes an
+///   inverted map, e.g. `[1, 0]` reads a gloss map as roughness.
 ///
 /// The `class` role carries per-texel membership in up to four classes:
 /// R, G, and B are the first three, and the fourth is the remainder
@@ -162,6 +170,16 @@ public:
     /// The encoding scale of a horizon map: a stored channel value of 1
     /// means this slope. Only meaningful for `ROLE_HORIZON`.
     float maxSlope{8.0f};
+
+    /// The multiplier on the decoded (linear, after-gamma) color. Only
+    /// meaningful for `ROLE_EMISSION`.
+    float factor{1.0f};
+
+    /// The decode range: a stored value `v` decodes as
+    /// `range[0] + (range[1] - range[0]) * v`, so the default is the
+    /// identity. Only meaningful for `ROLE_ROUGHNESS` and
+    /// `ROLE_METALLIC`.
+    std::array<float, 2> range{{0.0f, 1.0f}};
 
     /// The line number of the declaration, for diagnostics.
     int lineNo{0};

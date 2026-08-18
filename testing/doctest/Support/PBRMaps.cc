@@ -198,6 +198,33 @@ height:
     CHECK(manifest[Manifest::ROLE_HEIGHT].effectiveColorSpace() ==
           Manifest::COLOR_SPACE_SRGB);
   }
+  SUBCASE("Emission factor and roughness range") {
+    auto manifest{parseOK(R"(emission:
+  file: e.png
+  factor: 2.5
+roughness:
+  file: r.png
+  range: [0.1, 0.2]
+metallic:
+  file: m.png
+  range: [1, 0]
+basecolor: c.png
+)")};
+    CHECK(manifest[Manifest::ROLE_EMISSION].factor == doctest::Approx(2.5f));
+    CHECK(manifest[Manifest::ROLE_ROUGHNESS].range[0] == doctest::Approx(0.1f));
+    CHECK(manifest[Manifest::ROLE_ROUGHNESS].range[1] == doctest::Approx(0.2f));
+    // Inverted, e.g. a gloss map read as roughness.
+    CHECK(manifest[Manifest::ROLE_METALLIC].range[0] == doctest::Approx(1.0f));
+    CHECK(manifest[Manifest::ROLE_METALLIC].range[1] == doctest::Approx(0.0f));
+    // Undeclared maps keep the identity defaults.
+    CHECK(manifest[Manifest::ROLE_BASECOLOR].factor == doctest::Approx(1.0f));
+    CHECK(manifest[Manifest::ROLE_BASECOLOR].range[0] == doctest::Approx(0.0f));
+    CHECK(manifest[Manifest::ROLE_BASECOLOR].range[1] == doctest::Approx(1.0f));
+    // Zero is allowed: emission present but switched off, which
+    // tool-generated manifests express without dropping the map.
+    auto zeroFactor{parseOK("emission:\n  file: e.png\n  factor: 0\n")};
+    CHECK(zeroFactor[Manifest::ROLE_EMISSION].factor == doctest::Approx(0.0f));
+  }
   SUBCASE("Comments, blank lines, CRLF, and quotes") {
     auto manifest{parseOK("# leading comment\r\n"
                           "\r\n"
@@ -316,6 +343,27 @@ height:
               "'physical_relief'");
     parseFail("roughness:\n  file: r.png\n  max_slope: 4\n", 3,
               "'max_slope' is not allowed for 'roughness'");
+    // Emission factor and roughness/metallic range
+    parseFail("roughness:\n  file: r.png\n  factor: 2\n", 3,
+              "'factor' is not allowed for 'roughness'");
+    parseFail("basecolor:\n  file: c.png\n  factor: 0.5\n", 3,
+              "'factor' is not allowed for 'basecolor'");
+    parseFail("emission:\n  file: e.png\n  factor: -1\n", 3,
+              "expected a non-negative real for 'factor'");
+    parseFail("emission:\n  file: e.png\n  range: [0, 1]\n", 3,
+              "'range' is not allowed for 'emission'");
+    parseFail("height:\n  file: h.png\n  range: [0, 1]\n", 3,
+              "'range' is not allowed for 'height'");
+    parseFail("roughness:\n  file: r.png\n  range: 0.5\n", 3,
+              "expected an inline list");
+    parseFail("roughness:\n  file: r.png\n  range: [0.5]\n", 3,
+              "expected two reals in [0, 1] for 'range'");
+    parseFail("roughness:\n  file: r.png\n  range: [0, 0.5, 1]\n", 3,
+              "expected two reals in [0, 1] for 'range'");
+    parseFail("roughness:\n  file: r.png\n  range: [0, 1.5]\n", 3,
+              "expected two reals in [0, 1] for 'range'");
+    parseFail("roughness:\n  file: r.png\n  range: [-0.1, 1]\n", 3,
+              "expected two reals in [0, 1] for 'range'");
     parseFail("physical_extent: [2, 2]\nphysical_relief: 0.5\n"
               "horizon:\n  file: h.png\n  max_slope: 0\n",
               5, "expected a positive real for 'max_slope'");
