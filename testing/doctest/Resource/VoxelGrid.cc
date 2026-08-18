@@ -7,7 +7,7 @@
 #include <fstream>
 #include <vector>
 
-#include "smdl/VoxelGrid.h"
+#include "smdl/Resource/VoxelGrid.h"
 
 namespace fs = std::filesystem;
 

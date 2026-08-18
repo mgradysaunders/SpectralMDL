@@ -4,7 +4,7 @@
 #include <random>
 #include <vector>
 
-#include "smdl/BSDFMeasurement.h"
+#include "smdl/Resource/BSDFMeasurement.h"
 
 // Build an MBSDF file in memory. The data must contain
 // `numTheta * numTheta * numPhi` entries of 1 float (`TYPE_FLOAT`) or

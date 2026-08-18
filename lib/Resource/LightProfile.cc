@@ -1,4 +1,4 @@
-#include "smdl/LightProfile.h"
+#include "smdl/Resource/LightProfile.h"
 
 #include <algorithm>
 #include <cmath>

@@ -1004,6 +1004,7 @@ WARN_LOGFILE           =
 
 INPUT                  = include/smdl \
                          include/smdl/AST \
+                         include/smdl/Resource \
                          include/smdl/Support \
                          README.md
 

@@ -3,8 +3,8 @@
 #include <mutex>
 #include <set>
 
+#include "smdl/Resource/VoxelGrid.h"
 #include "smdl/Support/Logger.h"
-#include "smdl/VoxelGrid.h"
 
 // The cap on tentative collisions per segment, a guard against
 // marching forever through unbounded or leaky geometry with a positive

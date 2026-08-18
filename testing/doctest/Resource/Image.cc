@@ -5,7 +5,7 @@
 #include <fstream>
 #include <vector>
 
-#include "smdl/Image.h"
+#include "smdl/Resource/Image.h"
 
 namespace fs = std::filesystem;
 

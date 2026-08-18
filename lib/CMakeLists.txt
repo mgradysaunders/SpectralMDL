@@ -21,7 +21,6 @@ add_library(
   SpectralMDL 
   SHARED
     "AST.cc"
-    "BSDFMeasurement.cc"
     "Common.cc"
     "Compiler.cc"
     "Compiler/Context.cc"
@@ -33,12 +32,14 @@ add_library(
     "Doc.cc"
     "FileLocator.cc"
     "Formatter.cc"
-    "Image.cc"
-    "LightProfile.cc"
     "Module.cc"
     "Parser.cc"
+    "Resource/BSDFMeasurement.cc"
+    "Resource/Image.cc"
+    "Resource/LightProfile.cc"
+    "Resource/Spectrum.cc"
+    "Resource/VoxelGrid.cc"
     "SceneData.cc"
-    "Spectrum.cc"
     "Support/BumpPtrAllocator.cc"
     "Support/Error.cc"
     "Support/Filesystem.cc"
@@ -54,7 +55,6 @@ add_library(
     "Support/StringHelpers.cc"
     "Support/SunSky.cc"
     "Support/PBRMaps.cc"
-    "VoxelGrid.cc"
     "thirdparty/miniz.c"
   )
 add_library(

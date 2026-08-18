@@ -1,4 +1,4 @@
-#include "smdl/VoxelGrid.h"
+#include "smdl/Resource/VoxelGrid.h"
 
 #include <algorithm>
 #include <cmath>

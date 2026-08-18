@@ -2,7 +2,7 @@
 
 #include <random>
 
-#include "smdl/LightProfile.h"
+#include "smdl/Resource/LightProfile.h"
 
 // An axially symmetric Type C profile, brightest toward +Z and dimming
 // toward -Z. Candela values are multiples of 683 so the parsed

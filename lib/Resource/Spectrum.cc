@@ -1,4 +1,4 @@
-#include "smdl/Spectrum.h"
+#include "smdl/Resource/Spectrum.h"
 #include "smdl/Support/Filesystem.h"
 #include "smdl/Support/Macros.h"
 #include "smdl/Support/StringHelpers.h"

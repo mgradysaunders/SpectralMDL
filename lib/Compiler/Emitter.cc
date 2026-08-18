@@ -1,7 +1,7 @@
 // vim:foldmethod=marker:foldlevel=0:fmr=--{,--}
 #include "Emitter.h"
 
-#include "smdl/BSDFMeasurement.h"
+#include "smdl/Resource/BSDFMeasurement.h"
 #include "smdl/Support/Filesystem.h"
 #include "smdl/Support/Logger.h"
 #include "smdl/Support/PBRMaps.h"

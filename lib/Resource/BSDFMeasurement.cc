@@ -1,4 +1,4 @@
-#include "smdl/BSDFMeasurement.h"
+#include "smdl/Resource/BSDFMeasurement.h"
 
 #include <algorithm>
 #include <cmath>

@@ -6,18 +6,18 @@
 #include <set>
 #include <unordered_map>
 
-#include "smdl/BSDFMeasurement.h"
 #include "smdl/Doc.h"
 #include "smdl/FileLocator.h"
-#include "smdl/Image.h"
 #include "smdl/JIT.h"
-#include "smdl/LightProfile.h"
 #include "smdl/Module.h"
+#include "smdl/Resource/BSDFMeasurement.h"
+#include "smdl/Resource/Image.h"
+#include "smdl/Resource/LightProfile.h"
+#include "smdl/Resource/Spectrum.h"
+#include "smdl/Resource/VoxelGrid.h"
 #include "smdl/SceneData.h"
-#include "smdl/Spectrum.h"
 #include "smdl/Support/MD5Hash.h"
 #include "smdl/Support/PBRMaps.h"
-#include "smdl/VoxelGrid.h"
 
 namespace smdl {
 

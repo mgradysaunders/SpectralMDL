@@ -5,7 +5,7 @@
 #include "Scene.h"
 
 #include "smdl/Compiler.h"
-#include "smdl/Image.h"
+#include "smdl/Resource/Image.h"
 #include "smdl/Support/MonteCarlo.h"
 #include "smdl/Support/SunSky.h"
 

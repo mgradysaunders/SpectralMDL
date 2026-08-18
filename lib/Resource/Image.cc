@@ -4,7 +4,7 @@
 #endif
 #endif
 
-#include "smdl/Image.h"
+#include "smdl/Resource/Image.h"
 
 #if defined(__GNUC__) || defined(__clang__)
 #pragma GCC diagnostic push
