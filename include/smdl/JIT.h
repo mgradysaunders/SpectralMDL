@@ -105,6 +105,13 @@ static constexpr int MATERIAL_HAS_HETEROGENEOUS_VOLUME = (1 << 9);
 /// `Material::hasZeroDisplacement()` for the conservative reading.
 static constexpr int MATERIAL_HAS_DISPLACEMENT = (1 << 10);
 
+/// Indicates that the material volume is declared additive (the SMDL
+/// extension field `material_volume.additive`): it overlaps rather than
+/// displaces the medium that encloses it, so hosts tracking nested media
+/// should add its coefficients to the enclosing medium's over the shared
+/// interior instead of replacing them.
+static constexpr int MATERIAL_ADDITIVE_VOLUME = (1 << 11);
+
 /// \}
 
 /// \name Distribution Function (DF) Flags
@@ -767,6 +774,11 @@ public:
   [[nodiscard]] bool hasMedium() const noexcept {
     return (instance.absorption_coefficient != nullptr ||
             instance.scattering_coefficient != nullptr);
+  }
+
+  /// Is the volume declared additive? See `MATERIAL_ADDITIVE_VOLUME`.
+  [[nodiscard]] bool hasAdditiveVolume() const noexcept {
+    return (instance.flags & MATERIAL_ADDITIVE_VOLUME) != 0;
   }
 
   /// Has a non-default `hair` initializer?

@@ -194,104 +194,324 @@ private:
   bool mDone{};
 };
 
+// Is the density acceleration hint of the given instance usable? The
+// material must declare all three fields and they must be coherent.
+[[nodiscard]] static bool
+hasUsableDensityGrid(const smdl::JIT::MaterialInstance &materialInstance) {
+  const auto *densityGrid{materialInstance.getVolumeDensityGrid()};
+  const auto *boundMin{materialInstance.getVolumeDensityBoundMin()};
+  const auto *boundMax{materialInstance.getVolumeDensityBoundMax()};
+  return densityGrid && boundMin && boundMax && densityGrid->isValid() &&
+         densityGrid->getMaxValue() > 0.0f && //
+         boundMax->x > boundMin->x &&         //
+         boundMax->y > boundMin->y &&         //
+         boundMax->z > boundMin->z;
+}
+
 Medium::Medium(const MediumStack *stack, const Color &wavelengths,
                const float3 &org, const float3 &dir) noexcept {
-  if (!stack || (!stack->materialInstance.hasMedium() &&
-                 stack->materialInstance.getVolumeEmissionIntensity().empty()))
-    return;
+  // Collect the active media: the run of additive entries from the top
+  // of the stack plus the first non-additive entry, which replaces
+  // everything below it. Entries that carry no coefficients and no
+  // emission (e.g., clear glass interiors) contribute nothing but
+  // still terminate the walk when non-additive.
+  const MediumStack *primary{};
+  size_t count{0};
+  for (const MediumStack *entry{stack}; entry; entry = entry->prev) {
+    const auto &materialInstance{entry->materialInstance};
+    if (materialInstance.hasMedium() ||
+        !materialInstance.getVolumeEmissionIntensity().empty()) {
+      if (!primary) primary = entry;
+      ++count;
+    }
+    if (!materialInstance.hasAdditiveVolume()) break;
+  }
+  if (count == 0) return;
   mHasMedium = true;
-  const auto &materialInstance{stack->materialInstance};
-  mMaterial = materialInstance.material;
   mState = makeRenderState(wavelengths);
   // Coefficients are in inverse meters per the MDL specification;
   // distances here are in scene units. smdl-toy renders with the
   // default meters-per-scene-unit of 1, so this is the identity, but
   // the conversion is where a unit-aware scene flag would land.
   const float unitScale{mState.meters_per_scene_unit};
-  mSigmaA = Color(materialInstance.getAbsorptionCoefficient()) * unitScale;
-  mSigmaS = Color(materialInstance.getScatteringCoefficient()) * unitScale;
-  mHasEmission = !materialInstance.getVolumeEmissionIntensity().empty();
-  mEmission = Color(materialInstance.getVolumeEmissionIntensity()) * unitScale;
-  if (mMaterial->hasHomogeneousVolume()) return;
-  // Heterogeneous (or unproven, which must be treated the same): the
-  // per-point queries need majorants to track against, covering every
-  // coefficient the material actually has.
-  const bool missingMajorantA{
-      !materialInstance.getAbsorptionCoefficient().empty() &&
-      materialInstance.getMaxAbsorptionCoefficient().empty()};
-  const bool missingMajorantS{
-      !materialInstance.getScatteringCoefficient().empty() &&
-      materialInstance.getMaxScatteringCoefficient().empty()};
-  if (missingMajorantA || missingMajorantS) {
-    warnMissingMajorantOnce(mMaterial);
+  mUnitScale = unitScale;
+  if (count == 1) {
+    // The single-medium segment, which is the overwhelmingly common
+    // case: everything lives in the flat members and the component
+    // vector stays empty.
+    const auto &materialInstance{primary->materialInstance};
+    mScatterInstance = &materialInstance;
+    mMaterial = materialInstance.material;
+    mSigmaA = Color(materialInstance.getAbsorptionCoefficient()) * unitScale;
+    mSigmaS = Color(materialInstance.getScatteringCoefficient()) * unitScale;
+    mHasEmission = !materialInstance.getVolumeEmissionIntensity().empty();
+    mEmission =
+        Color(materialInstance.getVolumeEmissionIntensity()) * unitScale;
+    if (mMaterial->hasHomogeneousVolume()) return;
+    // Heterogeneous (or unproven, which must be treated the same): the
+    // per-point queries need majorants to track against, covering every
+    // coefficient the material actually has.
+    const bool missingMajorantA{
+        !materialInstance.getAbsorptionCoefficient().empty() &&
+        materialInstance.getMaxAbsorptionCoefficient().empty()};
+    const bool missingMajorantS{
+        !materialInstance.getScatteringCoefficient().empty() &&
+        materialInstance.getMaxScatteringCoefficient().empty()};
+    if (missingMajorantA || missingMajorantS) {
+      warnMissingMajorantOnce(mMaterial);
+      return;
+    }
+    mHeterogeneous = true;
+    mMaxSigmaA =
+        Color(materialInstance.getMaxAbsorptionCoefficient()) * unitScale;
+    mMaxSigmaS =
+        Color(materialInstance.getMaxScatteringCoefficient()) * unitScale;
+    mMajorant = (mMaxSigmaA + mMaxSigmaS).maxComponent();
+    mMajorantGrid = mMajorant;
+    mGridMaxSigma = mMaxSigmaA + mMaxSigmaS;
+    // The queries evaluate in the rigid frame of the instance whose
+    // boundary entered the medium, paired with the rigid transform so
+    // world reassembly inside the material is exact. The rigid transform
+    // has no scale, so the direction stays unit length and distances
+    // stay in scene units. A medium with no geometry queries in world
+    // space directly.
+    if (const auto *meshInstance{primary->meshInstance}) {
+      if (meshInstance->isDeformed) warnDeformedVolumeOnce(mMaterial);
+      mOrgR = float3(meshInstance->worldToRigid * float4(org, 1.0f));
+      mDirR = float3(meshInstance->worldToRigid * float4(dir, 0.0f));
+      mState.object_to_world_matrix = meshInstance->rigidToWorld;
+    } else {
+      mOrgR = org;
+      mDirR = dir;
+    }
+    mState.direction = mDirR;
+    // The density acceleration hint, active only when the material
+    // declares all three fields and they are usable. The segment is
+    // mapped into the grid's brick space up front: the hint box spans
+    // texture space [0,1]^3, which spans the voxel extent, and bricks
+    // are 16 voxels per axis.
+    if (hasUsableDensityGrid(materialInstance)) {
+      const auto *densityGrid{materialInstance.getVolumeDensityGrid()};
+      const auto *boundMin{materialInstance.getVolumeDensityBoundMin()};
+      const auto *boundMax{materialInstance.getVolumeDensityBoundMax()};
+      mDensityGrid = densityGrid;
+      const auto extent{densityGrid->getExtent()};
+      const float3 scale{
+          float(extent.x) / (16.0f * (boundMax->x - boundMin->x)),
+          float(extent.y) / (16.0f * (boundMax->y - boundMin->y)),
+          float(extent.z) / (16.0f * (boundMax->z - boundMin->z))};
+      for (int axis = 0; axis < 3; axis++) {
+        mBrickOrg[axis] = (mOrgR[axis] - (*boundMin)[axis]) * scale[axis];
+        mBrickDir[axis] = mDirR[axis] * scale[axis];
+      }
+      mInvMaxValue = 1.0f / densityGrid->getMaxValue();
+    }
     return;
   }
-  mHeterogeneous = true;
-  mMaxSigmaA =
-      Color(materialInstance.getMaxAbsorptionCoefficient()) * unitScale;
-  mMaxSigmaS =
-      Color(materialInstance.getMaxScatteringCoefficient()) * unitScale;
-  mMajorant = (mMaxSigmaA + mMaxSigmaS).maxComponent();
-  // The queries evaluate in the rigid frame of the instance whose
-  // boundary entered the medium, paired with the rigid transform so
-  // world reassembly inside the material is exact. The rigid transform
-  // has no scale, so the direction stays unit length and distances
-  // stay in scene units. A medium with no geometry queries in world
-  // space directly.
-  if (const auto *meshInstance{stack->meshInstance}) {
-    if (meshInstance->isDeformed) warnDeformedVolumeOnce(mMaterial);
-    mOrgR = float3(meshInstance->worldToRigid * float4(org, 1.0f));
-    mDirR = float3(meshInstance->worldToRigid * float4(dir, 0.0f));
-    mState.object_to_world_matrix = meshInstance->rigidToWorld;
-  } else {
-    mOrgR = org;
-    mDirR = dir;
+  // Additive overlap: two or more media are active at once. Set up one
+  // component per entry, mirroring the single-medium setup, and
+  // aggregate the sums the sampling loops run against.
+  mComponents.reserve(count);
+  int gridComponent{-1};
+  int gridCandidates{0};
+  for (const MediumStack *entry{stack}; entry; entry = entry->prev) {
+    const auto &materialInstance{entry->materialInstance};
+    const bool contributes{
+        materialInstance.hasMedium() ||
+        !materialInstance.getVolumeEmissionIntensity().empty()};
+    if (contributes) {
+      auto &component{mComponents.emplace_back()};
+      component.materialInstance = &materialInstance;
+      component.sigmaA =
+          Color(materialInstance.getAbsorptionCoefficient()) * unitScale;
+      component.sigmaS =
+          Color(materialInstance.getScatteringCoefficient()) * unitScale;
+      component.emission =
+          Color(materialInstance.getVolumeEmissionIntensity()) * unitScale;
+      mHasEmission |= !materialInstance.getVolumeEmissionIntensity().empty();
+      if (!materialInstance.material->hasHomogeneousVolume()) {
+        const bool missingMajorantA{
+            !materialInstance.getAbsorptionCoefficient().empty() &&
+            materialInstance.getMaxAbsorptionCoefficient().empty()};
+        const bool missingMajorantS{
+            !materialInstance.getScatteringCoefficient().empty() &&
+            materialInstance.getMaxScatteringCoefficient().empty()};
+        if (missingMajorantA || missingMajorantS) {
+          warnMissingMajorantOnce(materialInstance.material);
+        } else {
+          component.heterogeneous = true;
+          component.maxSigmaA =
+              Color(materialInstance.getMaxAbsorptionCoefficient()) * unitScale;
+          component.maxSigmaS =
+              Color(materialInstance.getMaxScatteringCoefficient()) * unitScale;
+          component.state = makeRenderState(wavelengths);
+          if (const auto *meshInstance{entry->meshInstance}) {
+            if (meshInstance->isDeformed)
+              warnDeformedVolumeOnce(materialInstance.material);
+            component.orgR =
+                float3(meshInstance->worldToRigid * float4(org, 1.0f));
+            component.dirR =
+                float3(meshInstance->worldToRigid * float4(dir, 0.0f));
+            component.state.object_to_world_matrix = meshInstance->rigidToWorld;
+          } else {
+            component.orgR = org;
+            component.dirR = dir;
+          }
+          component.state.direction = component.dirR;
+          if (hasUsableDensityGrid(materialInstance)) {
+            ++gridCandidates;
+            gridComponent = int(mComponents.size()) - 1;
+          }
+        }
+      }
+    }
+    if (!materialInstance.hasAdditiveVolume()) break;
   }
-  mState.direction = mDirR;
-  // The density acceleration hint, active only when the material
-  // declares all three fields and they are usable. The segment is
-  // mapped into the grid's brick space up front: the hint box spans
-  // texture space [0,1]^3, which spans the voxel extent, and bricks
-  // are 16 voxels per axis.
-  const auto *densityGrid{materialInstance.getVolumeDensityGrid()};
-  const auto *boundMin{materialInstance.getVolumeDensityBoundMin()};
-  const auto *boundMax{materialInstance.getVolumeDensityBoundMax()};
-  if (densityGrid && boundMin && boundMax && densityGrid->isValid() &&
-      densityGrid->getMaxValue() > 0.0f && //
-      boundMax->x > boundMin->x &&         //
-      boundMax->y > boundMin->y &&         //
-      boundMax->z > boundMin->z) {
+  // The aggregates. The homogeneous closed form runs on the summed
+  // snapshots when every component is homogeneous; otherwise the
+  // tracking loops run against the summed majorants, a homogeneous
+  // component contributing its exact spectrum as its own bound.
+  mSigmaA = Color();
+  mSigmaS = Color();
+  mEmission = Color();
+  for (const auto &component : mComponents) {
+    mSigmaA += component.sigmaA;
+    mSigmaS += component.sigmaS;
+    mEmission += component.emission;
+    mHeterogeneous |= component.heterogeneous;
+  }
+  if (!mHeterogeneous) return;
+  mMaxSigmaA = Color();
+  mMaxSigmaS = Color();
+  for (const auto &component : mComponents) {
+    mMaxSigmaA +=
+        component.heterogeneous ? component.maxSigmaA : component.sigmaA;
+    mMaxSigmaS +=
+        component.heterogeneous ? component.maxSigmaS : component.sigmaS;
+  }
+  mMajorant = (mMaxSigmaA + mMaxSigmaS).maxComponent();
+  // The density-hint spans can drive the walk only when exactly one
+  // component has a usable grid: its contribution scales per span, and
+  // everything else is the constant base. With competing grids (or
+  // none) the whole majorant is the constant global span.
+  if (gridCandidates == 1) {
+    auto &component{mComponents[size_t(gridComponent)]};
+    component.scaledByGrid = true;
+    mGridMaxSigma = component.maxSigmaA + component.maxSigmaS;
+    mMajorantGrid = mGridMaxSigma.maxComponent();
+    mMajorantBase = std::max(
+        (mMaxSigmaA + mMaxSigmaS - mGridMaxSigma).maxComponent(), 0.0f);
+    const auto &materialInstance{*component.materialInstance};
+    const auto *densityGrid{materialInstance.getVolumeDensityGrid()};
+    const auto *boundMin{materialInstance.getVolumeDensityBoundMin()};
+    const auto *boundMax{materialInstance.getVolumeDensityBoundMax()};
     mDensityGrid = densityGrid;
     const auto extent{densityGrid->getExtent()};
     const float3 scale{float(extent.x) / (16.0f * (boundMax->x - boundMin->x)),
                        float(extent.y) / (16.0f * (boundMax->y - boundMin->y)),
                        float(extent.z) / (16.0f * (boundMax->z - boundMin->z))};
     for (int axis = 0; axis < 3; axis++) {
-      mBrickOrg[axis] = (mOrgR[axis] - (*boundMin)[axis]) * scale[axis];
-      mBrickDir[axis] = mDirR[axis] * scale[axis];
+      mBrickOrg[axis] =
+          (component.orgR[axis] - (*boundMin)[axis]) * scale[axis];
+      mBrickDir[axis] = component.dirR[axis] * scale[axis];
     }
     mInvMaxValue = 1.0f / densityGrid->getMaxValue();
+  } else {
+    mGridMaxSigma = Color();
+    mMajorantGrid = mMajorant;
+    mMajorantBase = 0.0f;
   }
 }
 
 void Medium::evaluateCoefficients(float t, float majorantScale, Color &sigmaA,
                                   Color &sigmaS, Color &emission) const {
-  mState.position = mOrgR + t * mDirR;
-  mMaterial->volumeEvaluate(mState, sigmaA.data(), sigmaS.data(),
-                            emission.data());
-  // Convert to inverse scene units and clamp to the declared majorants
-  // at the local scale, so a lying majorant or density hint renders a
-  // clamped medium instead of accumulating negative-weight bias. The
-  // emission coefficient has no majorant and only clamps nonnegative:
-  // it never gates sampling, so no bound is needed for unbiasedness.
-  const float unitScale{mState.meters_per_scene_unit};
-  for (size_t i = 0; i < sigmaA.size(); i++) {
-    sigmaA[i] = std::min(std::max(sigmaA[i] * unitScale, 0.0f),
-                         mMaxSigmaA[i] * majorantScale);
-    sigmaS[i] = std::min(std::max(sigmaS[i] * unitScale, 0.0f),
-                         mMaxSigmaS[i] * majorantScale);
-    emission[i] = std::max(emission[i] * unitScale, 0.0f);
+  if (mComponents.empty()) {
+    mState.position = mOrgR + t * mDirR;
+    mMaterial->volumeEvaluate(mState, sigmaA.data(), sigmaS.data(),
+                              emission.data());
+    // Convert to inverse scene units and clamp to the declared majorants
+    // at the local scale, so a lying majorant or density hint renders a
+    // clamped medium instead of accumulating negative-weight bias. The
+    // emission coefficient has no majorant and only clamps nonnegative:
+    // it never gates sampling, so no bound is needed for unbiasedness.
+    for (size_t i = 0; i < sigmaA.size(); i++) {
+      sigmaA[i] = std::min(std::max(sigmaA[i] * mUnitScale, 0.0f),
+                           mMaxSigmaA[i] * majorantScale);
+      sigmaS[i] = std::min(std::max(sigmaS[i] * mUnitScale, 0.0f),
+                           mMaxSigmaS[i] * majorantScale);
+      emission[i] = std::max(emission[i] * mUnitScale, 0.0f);
+    }
+    return;
   }
+  // Additive overlap: sum the per-component queries, each clamped to
+  // its own majorants, with the density-hint scale applying only to
+  // the grid component. Homogeneous components contribute their exact
+  // snapshots. The clamped scattering coefficient is stashed per
+  // heterogeneous component for the phase pick at a real collision.
+  sigmaA = Color();
+  sigmaS = Color();
+  emission = Color();
+  for (const auto &component : mComponents) {
+    if (!component.heterogeneous) {
+      sigmaA += component.sigmaA;
+      sigmaS += component.sigmaS;
+      emission += component.emission;
+      continue;
+    }
+    component.state.position = component.orgR + t * component.dirR;
+    Color a{};
+    Color s{};
+    Color e{};
+    component.materialInstance->material->volumeEvaluate(
+        component.state, a.data(), s.data(), e.data());
+    const float scale{component.scaledByGrid ? majorantScale : 1.0f};
+    for (size_t i = 0; i < a.size(); i++) {
+      a[i] = std::min(std::max(a[i] * mUnitScale, 0.0f),
+                      component.maxSigmaA[i] * scale);
+      s[i] = std::min(std::max(s[i] * mUnitScale, 0.0f),
+                      component.maxSigmaS[i] * scale);
+      e[i] = std::max(e[i] * mUnitScale, 0.0f);
+    }
+    sigmaA += a;
+    sigmaS += s;
+    emission += e;
+    component.lastSigmaS = s;
+  }
+}
+
+void Medium::pickScatterComponent(float xi, const Color &sigmaS,
+                                  Color &beta) const {
+  // Selection probability proportional to the component's share of the
+  // scattering coefficient at the collision, averaged over bins. Zero
+  // total scattering (a pure-absorption collision) leaves `beta` all
+  // zero already; default to the first component so the caller always
+  // has a phase function.
+  mScatterInstance = mComponents.front().materialInstance;
+  float totalAverage{};
+  for (const auto &component : mComponents)
+    totalAverage += componentSigmaS(component).average();
+  if (!(totalAverage > 0.0f)) return;
+  const Component *picked{};
+  float pickedProbability{};
+  float cdf{};
+  for (const auto &component : mComponents) {
+    const float average{componentSigmaS(component).average()};
+    if (!(average > 0.0f)) continue;
+    picked = &component;
+    pickedProbability = average / totalAverage;
+    cdf += pickedProbability;
+    if (xi < cdf) break;
+  }
+  mScatterInstance = picked->materialInstance;
+  // The per-bin spectral share over the scalar pick probability, so
+  // the expectation per bin is the sigma_s-weighted phase mixture. A
+  // bin with zero total scattering has zero throughput already; keep
+  // it zero rather than forming 0/0.
+  const auto &pickedSigmaS{componentSigmaS(*picked)};
+  for (size_t i = 0; i < beta.size(); i++)
+    beta[i] *= sigmaS[i] > 0.0f
+                   ? pickedSigmaS[i] / sigmaS[i] / pickedProbability
+                   : 0.0f;
 }
 
 bool Medium::sampleDistance(Sampler &sampler, float tEnd, float &t, Color &beta,
@@ -328,6 +548,8 @@ bool Medium::sampleDistance(Sampler &sampler, float tEnd, float &t, Color &beta,
                                           std::numeric_limits<float>::max()}));
     if (tScatter < tEnd) {
       beta *= mSigmaS * Tr / (mu * Tr).average();
+      if (!mComponents.empty())
+        pickScatterComponent(float(sampler), mSigmaS, beta);
       t = tScatter;
       return true;
     }
@@ -357,11 +579,13 @@ bool Medium::sampleDistance(Sampler &sampler, float tEnd, float &t, Color &beta,
                                   mInvMaxValue, tEnd)};
   MajorantSpan span{};
   while (spans.next(span)) {
-    // The local tracking majorant of this span. A zero-scale span is
-    // an empty brick: skipped outright, at no cost of any kind. The
+    // The local tracking majorant of this span: the constant base plus
+    // the grid part at the span's scale (a single medium is all grid
+    // part, so this is plain scaling). A zero span is an empty brick
+    // with no base: skipped outright, at no cost of any kind. The
     // exponential restart at each span boundary is unbiased by
     // memorylessness.
-    const float m{mMajorant * span.scale};
+    const float m{mMajorantBase + mMajorantGrid * span.scale};
     if (!(m > 0.0f)) continue;
     float tCur{span.t0};
     while (true) {
@@ -397,6 +621,8 @@ bool Medium::sampleDistance(Sampler &sampler, float tEnd, float &t, Color &beta,
           return false;
         }
         beta *= sigmaS * P / pdf;
+        if (!mComponents.empty())
+          pickScatterComponent(rng.generateFloat(), sigmaS, beta);
         t = tCur;
         return true;
       }
@@ -447,11 +673,14 @@ void Medium::attenuate(Sampler &sampler, float tEnd, Color &beta) const {
                                   mInvMaxValue, tEnd)};
   MajorantSpan span{};
   Color controlDepth{};
-  const Color majorantColor{mMaxSigmaA + mMaxSigmaS};
+  // The control that `span.scaleMin` lower bounds is the grid
+  // component's majorant alone; with overlap the base contribution of
+  // the other components stays in the tracked rate at full strength.
+  const Color majorantColor{mGridMaxSigma};
   while (spans.next(span)) {
     if (span.scaleMin > 0.0f)
       controlDepth += majorantColor * (span.scaleMin * (span.t1 - span.t0));
-    const float m{mMajorant * (span.scale - span.scaleMin)};
+    const float m{mMajorantGrid * (span.scale - span.scaleMin) + mMajorantBase};
     if (!(m > 0.0f)) continue;
     float tCur{span.t0};
     while (true) {

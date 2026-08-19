@@ -608,6 +608,14 @@ export struct material_volume {
   /// The opposite object-space corner, see `density`. Must be
   /// position-independent. NOTE: This is non-standard!
   $(?float3) density_bound_max = none;
+
+  /// If true, this volume overlaps rather than displaces the medium
+  /// that encloses it: over the shared interior, renderers should add
+  /// its coefficients to the enclosing medium's, e.g., a cloud overlaid
+  /// on fog. The default is the nested-dielectric convention, where the
+  /// innermost boundary's medium replaces the enclosing one. NOTE: This
+  /// is non-standard!
+  bool additive = false;
 };
 
 /// The material geometry description.
@@ -686,6 +694,8 @@ const int MATERIAL_HAS_HETEROGENEOUS_VOLUME = (1 << 9);
 /// displacement is non-zero is not a flag the instance reports, so
 /// the instance `flags` below never set this bit.
 const int MATERIAL_HAS_DISPLACEMENT = (1 << 10);
+
+const int MATERIAL_ADDITIVE_VOLUME = (1 << 11);
 
 /// The multiplier of the linear congruential generator that advances
 /// `$state.rng`. This and the output permutation in `_randomInt()` must
@@ -799,7 +809,8 @@ export struct _MaterialInstance {
               | (!#isDefault(ptr.backface.emission.emission) ? MATERIAL_HAS_BACKFACE_EMISSION : 0) //
               | (!#isDefault(ptr.volume) ? MATERIAL_HAS_VOLUME : 0)                              //
               | (!#isDefault(ptr.hair) ? MATERIAL_HAS_HAIR : 0)                                  //
-              | (ptr.geometry.cutout_opacity < 1.0 ? MATERIAL_HAS_CUTOUT : 0);
+              | (ptr.geometry.cutout_opacity < 1.0 ? MATERIAL_HAS_CUTOUT : 0)                    //
+              | (ptr.volume.additive ? MATERIAL_ADDITIVE_VOLUME : 0);
 
   /// The df flags for the `surface` component.
   int df_flags_surface = ptr.surface.scattering.df_flags;

@@ -271,23 +271,26 @@ Color tracePath(smdl::Compiler &compiler, const Scene &scene, Sampler &sampler,
           record->point = point;
           record->beta = beta;
         }
+        // The phase function of the vertex: the medium's own, or with
+        // additive overlap the component the collision picked.
+        const auto &phaseInstance{*segmentMedium.scatterInstance()};
         {
           // The SD-tree never participates at volume vertices, so the
           // continuation density the gather weighs against is the phase
           // function alone.
           const Color direct{gatherDirect(
               scene, sampler, wavelengths, allocator, lights, gatherState,
-              medium->materialInstance, VertexKind::VOLUME, /*dtree=*/nullptr,
+              phaseInstance, VertexKind::VOLUME, /*dtree=*/nullptr,
               /*bsdfFraction=*/1.0f, medium, point, wo)};
           L += beta * direct;
           if (record) record->direct = direct;
         }
-        // Sample the medium's own phase function. It returns the phase
+        // Sample the vertex's phase function. It returns the phase
         // value, which is also the solid-angle PDF of having sampled it,
         // so the throughput weight is exactly 1 and `beta` is unchanged.
         float3 wNext{};
-        float phase{medium->materialInstance.volumeScatterSample(
-            float4(sampler), wo, wNext)};
+        float phase{
+            phaseInstance.volumeScatterSample(float4(sampler), wo, wNext)};
         if (!(phase > 0)) {
           break;
         }

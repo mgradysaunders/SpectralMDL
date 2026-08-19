@@ -1211,6 +1211,20 @@ unit_test "Tinted VDF" {
   #assert(pTinted ~== |1e-6| 0.5 * pPlain);
 }
 
+unit_test "Additive volume flag" {
+  auto matDefault = material(volume: material_volume(absorption_coefficient: color(0.5)));
+  auto matAdditive = material(ior: 1.0, volume: material_volume(absorption_coefficient: color(0.5), additive: true));
+  #assert(!matDefault.volume.additive);
+  #assert(matAdditive.volume.additive);
+  // The declaration reaches the instance flags, mirroring
+  // 'smdl::JIT::MATERIAL_ADDITIVE_VOLUME'.
+  const int MATERIAL_ADDITIVE_VOLUME = (1 << 11);
+  auto instDefault = _MaterialInstance(&matDefault);
+  auto instAdditive = _MaterialInstance(&matAdditive);
+  #assert((instDefault.flags & MATERIAL_ADDITIVE_VOLUME) == 0);
+  #assert((instAdditive.flags & MATERIAL_ADDITIVE_VOLUME) != 0);
+}
+
 unit_test "Modifier sampling" {
   // Every factor modifier must also compile and execute through the
   // sampling entry point -- 'measured_curve_factor' shipped with a typo

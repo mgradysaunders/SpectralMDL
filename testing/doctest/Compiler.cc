@@ -787,6 +787,11 @@ TEST_CASE("Compiler static material flags") {
       "  thin_walled: state::position().x > 0.0);\n"
       "export material mat_volume() = material(\n"
       "  volume: material_volume(absorption_coefficient: color(0.5)));\n"
+      "export material mat_volume_additive() = material(\n"
+      "  ior: 1.0,\n"
+      "  volume: material_volume(\n"
+      "    scattering_coefficient: color(0.5),\n"
+      "    additive: true));\n"
       "export material mat_emissive() = material(\n"
       "  surface: material_surface(\n"
       "    scattering: df::diffuse_reflection_bsdf(),\n"
@@ -883,6 +888,12 @@ TEST_CASE("Compiler static material flags") {
     }
     CHECK(get("mat_default")->evaluateOpacity(stateNoAlloc) == 1.0f);
     CHECK(get("mat_cutout_const")->evaluateOpacity(stateNoAlloc) == 0.5f);
+    // The additive-volume declaration reaches the instance flags.
+    auto instAdditive{
+        smdl::JIT::MaterialInstance(state, get("mat_volume_additive"))};
+    CHECK(instAdditive.hasAdditiveVolume());
+    auto instReplacing{smdl::JIT::MaterialInstance(state, get("mat_volume"))};
+    CHECK(!instReplacing.hasAdditiveVolume());
   }
   fs::remove_all(tmpDir);
 }
@@ -1787,7 +1798,7 @@ TEST_CASE("Compiler addCode") {
   SUBCASE("Source code compiles as a module with no file") {
     smdl::Compiler compiler{};
     REQUIRE(!compiler.addCode("::host::mats", "#smdl\nimport ::df::*;\n" +
-                                                        materialDef("mat_ok")));
+                                                  materialDef("mat_ok")));
     REQUIRE(!compiler.compile(smdl::OPT_LEVEL_NONE));
     REQUIRE(!compiler.jitCompile());
     auto material{compiler.findMaterial("mat_ok")};
@@ -1810,10 +1821,8 @@ TEST_CASE("Compiler addCode") {
   }
   SUBCASE("A different body under a taken name is an error") {
     smdl::Compiler compiler{};
-    REQUIRE(
-        !compiler.addCode("::host", "#smdl\nexport const int x = 1;\n"));
-    auto error{
-        compiler.addCode("::host", "#smdl\nexport const int x = 2;\n")};
+    REQUIRE(!compiler.addCode("::host", "#smdl\nexport const int x = 1;\n"));
+    auto error{compiler.addCode("::host", "#smdl\nexport const int x = 2;\n")};
     REQUIRE(error.has_value());
     CHECK(error->message.find("already taken") != std::string::npos);
     CHECK(error->message.find("<string ::host>") != std::string::npos);
@@ -1822,8 +1831,7 @@ TEST_CASE("Compiler addCode") {
     writeFile(tmpDir / "root" / "util.mdl", "#smdl\nexport const int x = 1;\n");
     smdl::Compiler compiler{};
     REQUIRE(!compiler.add((tmpDir / "root").string()));
-    auto error{
-        compiler.addCode("::util", "#smdl\nexport const int x = 2;\n")};
+    auto error{compiler.addCode("::util", "#smdl\nexport const int x = 2;\n")};
     REQUIRE(error.has_value());
     CHECK(error->message.find("already taken") != std::string::npos);
   }
@@ -1832,7 +1840,7 @@ TEST_CASE("Compiler addCode") {
               "#smdl\nimport ::df::*;\n" + materialDef("from_file"));
     smdl::Compiler compiler{};
     REQUIRE(!compiler.addCode("::host", "#smdl\nimport ::df::*;\n" +
-                                                  materialDef("from_string")));
+                                            materialDef("from_string")));
     REQUIRE(!compiler.add((tmpDir / "root").string()));
     REQUIRE(!compiler.compile(smdl::OPT_LEVEL_NONE));
     REQUIRE(!compiler.jitCompile());
@@ -1869,8 +1877,8 @@ TEST_CASE("Compiler addCode") {
   }
   SUBCASE("A compile error names the module it came from") {
     smdl::Compiler compiler{};
-    REQUIRE(!compiler.addCode("::host::bad",
-                                    "#smdl\nimport ::nonexistent::*;\n"));
+    REQUIRE(
+        !compiler.addCode("::host::bad", "#smdl\nimport ::nonexistent::*;\n"));
     auto error{compiler.compile(smdl::OPT_LEVEL_NONE)};
     REQUIRE(error.has_value());
     CHECK(error->message.find("[<string ::host::bad>:2]") != std::string::npos);
@@ -1879,9 +1887,9 @@ TEST_CASE("Compiler addCode") {
     smdl::Compiler compiler{};
     compiler.enableUnitTests = true;
     REQUIRE(!compiler.addCode("::host::tests",
-                                    "#smdl\nunit_test \"Arithmetic\" {\n"
-                                    "  int i = 2;\n"
-                                    "  #assert(i + i == 4);\n}\n"));
+                              "#smdl\nunit_test \"Arithmetic\" {\n"
+                              "  int i = 2;\n"
+                              "  #assert(i + i == 4);\n}\n"));
     REQUIRE(!compiler.compile(smdl::OPT_LEVEL_NONE));
     REQUIRE(!compiler.jitCompile());
     CHECK(runUnitTests(compiler) == "");
@@ -1921,8 +1929,7 @@ TEST_CASE("Compiler addCode") {
       compiler.enableUnitTests = true;
       if (auto error{compiler.add((tmpDir / "anchor").string())})
         return error->message;
-      if (auto error{
-              compiler.addCode("::host::mats", source, anchorDirectory)})
+      if (auto error{compiler.addCode("::host::mats", source, anchorDirectory)})
         return error->message;
       if (auto error{compiler.compile(smdl::OPT_LEVEL_NONE)})
         return error->message;
@@ -1936,7 +1943,7 @@ TEST_CASE("Compiler addCode") {
     // An anchor that is not a directory is refused outright.
     smdl::Compiler compiler{};
     auto error{compiler.addCode("::host::mats", source,
-                                      (tmpDir / "nowhere").string())};
+                                (tmpDir / "nowhere").string())};
     REQUIRE(error.has_value());
     CHECK(error->message.find("not an existing directory") !=
           std::string::npos);
