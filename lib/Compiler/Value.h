@@ -378,6 +378,12 @@ public:
     return builtinConst;
   }
 
+  /// Is eliminated into a baked compile-time constant? Only ever true for
+  /// `const` fields of value-instantiated struct types (see
+  /// `StructType::getInstance`): the field occupies no storage and every
+  /// access reads the constant.
+  [[nodiscard]] bool isBaked() const { return bakedConstant != nullptr; }
+
   /// Is marked with the keyword `inline`?
   [[nodiscard]] bool isInline() const {
     if (auto astType{getASTType()}) return astType->hasQualifier("inline");
@@ -409,6 +415,10 @@ public:
 
   /// Force const-ness?
   bool builtinConst{};
+
+  /// The compile-time constant a baked field reads as, or null if the
+  /// field occupies storage. See `isBaked()`.
+  llvm::Constant *bakedConstant{};
 };
 
 /// A parameter list.
@@ -439,16 +449,18 @@ public:
   /// Get the parameter types.
   [[nodiscard]] std::vector<Type *> getTypes() const;
 
-  /// The LLVM field index of a parameter that is voided, and so occupies
-  /// no storage in the struct laid out by `getLLVMFieldTypes()`.
+  /// The LLVM field index of a parameter that is voided or baked, and
+  /// so occupies no storage in the struct laid out by
+  /// `getLLVMFieldTypes()`.
   static constexpr unsigned NO_LLVM_FIELD{~0U};
 
   /// Get the LLVM field types, i.e., the element types of the LLVM struct
   /// this parameter list lays out.
   ///
-  /// Voided parameters occupy no storage and are omitted entirely, so this
-  /// is shorter than the parameter list whenever any parameter is voided,
-  /// and the indexes do not line up. Use `getLLVMFieldIndex()` to convert.
+  /// Voided and baked parameters occupy no storage and are omitted
+  /// entirely, so this is shorter than the parameter list whenever any
+  /// parameter is voided or baked, and the indexes do not line up. Use
+  /// `getLLVMFieldIndex()` to convert.
   ///
   [[nodiscard]] std::vector<llvm::Type *> getLLVMFieldTypes() const;
 
@@ -457,9 +469,9 @@ public:
   [[nodiscard]] unsigned getLLVMFieldIndex(size_t i) const;
 
   /// A field lookup path: each step is the parameter matched at that level
-  /// paired with its LLVM field index (`NO_LLVM_FIELD` when voided), so
-  /// that a caller can walk the path without re-deriving the layout of
-  /// each intermediate struct.
+  /// paired with its LLVM field index (`NO_LLVM_FIELD` when voided or
+  /// baked), so that a caller can walk the path without re-deriving the
+  /// layout of each intermediate struct.
   using LookupSequence = std::vector<std::pair<const Parameter *, unsigned>>;
 
   /// Get the lookup sequence to access the given parameter name. Returns false

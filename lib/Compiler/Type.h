@@ -1108,9 +1108,27 @@ public:
   /// In the example code, `foo1` and `foo2` have distinct concrete
   /// struct types instantiated from the abstract `Foo` type definition.
   ///
+  /// \param[in] paramConstants
+  /// If non-empty, one entry per parameter: the compile-time constant a
+  /// `const` field is baked into, or null if the field keeps storage.
+  /// Baked constants join the instance key, so instances are
+  /// value-monomorphized: constructions of the same shape with different
+  /// constants are distinct types, and a baked field is eliminated from
+  /// the LLVM layout with every access reading the constant.
+  ///
   [[nodiscard]]
   StructType *getInstance(Context &context,
-                          const llvm::SmallVector<Type *> &paramTypes);
+                          const llvm::SmallVector<Type *> &paramTypes,
+                          llvm::ArrayRef<llvm::Constant *> paramConstants = {});
+
+  /// If `typeA` and `typeB` are sibling instances of the same abstract
+  /// struct with identical parameter types, get the instance keeping only
+  /// the baked constants they agree on: the common type both siblings
+  /// convert to by materializing the disagreeing constants into storage.
+  /// Returns null if they are not siblings of the same abstract struct.
+  [[nodiscard]]
+  static StructType *getCommonSiblingInstance(Context &context, Type *typeA,
+                                              Type *typeB);
 
   /// Is instantiation of the given type?
   ///
@@ -1189,8 +1207,12 @@ public:
   ///
   llvm::StringMap<Value> staticFields{};
 
-  /// If applicable, the instances of this abstract struct.
-  std::map<llvm::SmallVector<Type *>, BumpPtr<StructType>> instances{};
+  /// If applicable, the instances of this abstract struct, keyed by the
+  /// concrete parameter types paired with the baked constants (null for
+  /// parameters that keep storage).
+  std::map<llvm::SmallVector<std::pair<Type *, llvm::Constant *>>,
+           BumpPtr<StructType>>
+      instances{};
 
   /// Is this the default instance of the abstract `instanceOf` struct?
   bool isDefaultInstance{};

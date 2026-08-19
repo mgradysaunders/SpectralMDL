@@ -288,6 +288,11 @@ Type *Context::getCommonType(llvm::ArrayRef<Type *> types, bool defaultToUnion,
   auto getCommonTypeOfPair{[&](Type *typeA, Type *typeB) -> Type * {
     if (typeA == getAutoType() || !typeA) return typeB;
     if (typeB == getAutoType() || !typeB || typeA == typeB) return typeA;
+    // Sibling struct instances differing only in baked constants merge to
+    // the sibling keeping the constants they agree on, so they stay one
+    // struct type instead of becoming a union.
+    if (auto merged{StructType::getCommonSiblingInstance(*this, typeA, typeB)})
+      return merged;
     if (typeA->isArithmetic() && typeB->isArithmetic()) {
       auto arithTypeA{static_cast<ArithmeticType *>(typeA)};
       auto arithTypeB{static_cast<ArithmeticType *>(typeB)};

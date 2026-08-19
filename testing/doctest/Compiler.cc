@@ -1657,11 +1657,17 @@ TEST_CASE("Compiler unused image dropping") {
     CHECK(dropped.messages[0].find("dead.png") != std::string::npos);
     smdl::Logger::get().reset();
   }
-  SUBCASE("Nothing is provably unused at OPT_LEVEL_NONE") {
+  SUBCASE("The unread image is dropped even at OPT_LEVEL_NONE") {
+    // Constant-field elimination bakes the 'texture_2d' struct into the
+    // type, so the dead image's texel pointers never enter the IR at
+    // all: the image is provably unused with no optimization running.
+    // The size requirement doubles as the guard that the sampled image
+    // is never dropped.
     auto &dropped{
         smdl::Logger::get().addSink<MessageCollector>("Dropping image")};
     CHECK(build(smdl::OPT_LEVEL_NONE) == "");
-    CHECK(dropped.messages.empty());
+    REQUIRE(dropped.messages.size() == 1);
+    CHECK(dropped.messages[0].find("dead.png") != std::string::npos);
     smdl::Logger::get().reset();
   }
   fs::remove_all(tmpDir);

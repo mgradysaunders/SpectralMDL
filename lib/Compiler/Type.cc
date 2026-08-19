@@ -2500,10 +2500,20 @@ void StructType::initialize(Emitter &emitter) {
 
 StructType *
 StructType::getInstance(Context &context,
-                        const llvm::SmallVector<Type *> &paramTypes) {
+                        const llvm::SmallVector<Type *> &paramTypes,
+                        llvm::ArrayRef<llvm::Constant *> paramConstants) {
   SMDL_SANITY_CHECK(params.isAbstract());
   SMDL_SANITY_CHECK(params.size() == paramTypes.size());
-  auto &structType{instances[paramTypes]};
+  SMDL_SANITY_CHECK(paramConstants.empty() ||
+                    paramConstants.size() == paramTypes.size());
+  auto key{llvm::SmallVector<std::pair<Type *, llvm::Constant *>>{}};
+  key.reserve(paramTypes.size());
+  for (size_t i{}; i < paramTypes.size(); i++) {
+    auto paramConstant{paramConstants.empty() ? nullptr : paramConstants[i]};
+    SMDL_SANITY_CHECK(!paramConstant || params[i].isConst());
+    key.push_back({paramTypes[i], paramConstant});
+  }
+  auto &structType{instances[key]};
   if (!structType) {
     structType = context.allocator.allocate<StructType>(decl);
     structType->instanceOf = this;
@@ -2513,12 +2523,38 @@ StructType::getInstance(Context &context,
       SMDL_SANITY_CHECK(paramTypes[i]);
       SMDL_SANITY_CHECK(!paramTypes[i]->isAbstract());
       structType->params[i].type = paramTypes[i];
+      structType->params[i].bakedConstant = key[i].second;
     }
     structType->llvmType = llvm::StructType::create(
         context, structType->params.getLLVMFieldTypes(),
         structType->displayName);
   }
   return structType.get();
+}
+
+StructType *StructType::getCommonSiblingInstance(Context &context, Type *typeA,
+                                                 Type *typeB) {
+  auto structTypeA{llvm::dyn_cast_if_present<StructType>(typeA)};
+  auto structTypeB{llvm::dyn_cast_if_present<StructType>(typeB)};
+  if (!structTypeA || !structTypeB || !structTypeA->instanceOf ||
+      structTypeA->instanceOf != structTypeB->instanceOf)
+    return nullptr;
+  SMDL_SANITY_CHECK(structTypeA->params.size() == structTypeB->params.size());
+  auto paramTypes{llvm::SmallVector<Type *>{}};
+  auto paramConstants{llvm::SmallVector<llvm::Constant *>{}};
+  paramTypes.reserve(structTypeA->params.size());
+  paramConstants.reserve(structTypeA->params.size());
+  for (size_t i{}; i < structTypeA->params.size(); i++) {
+    auto &paramA{structTypeA->params[i]};
+    auto &paramB{structTypeB->params[i]};
+    if (paramA.type != paramB.type) return nullptr;
+    paramTypes.push_back(paramA.type);
+    paramConstants.push_back(paramA.bakedConstant == paramB.bakedConstant
+                                 ? paramA.bakedConstant
+                                 : nullptr);
+  }
+  return structTypeA->instanceOf->getInstance(context, paramTypes,
+                                              paramConstants);
 }
 
 bool StructType::isAbstract() {
@@ -2561,9 +2597,33 @@ Value StructType::invoke(Emitter &emitter, const ArgumentList &args,
     return Value::zero(this);
   }
   if (args.isOnePositional()) {
-    if (auto structType{llvm::dyn_cast<StructType>(args[0].value.type)};
-        structType && (structType == this || structType->isInstanceOf(this))) {
-      return emitter.rvalue(args[0].value);
+    if (auto structType{llvm::dyn_cast<StructType>(args[0].value.type)}) {
+      if (structType == this || structType->isInstanceOf(this)) {
+        return emitter.rvalue(args[0].value);
+      }
+      // A sibling instance converts to this instance if this instance
+      // bakes a subset of its constants: the demoted constants
+      // materialize into storage. This is the conversion the merges of
+      // 'getCommonSiblingInstance' resolve through, so e.g. a '?:' over
+      // two constructions differing only in a 'const' field value stays
+      // one struct type instead of becoming a union.
+      if (instanceOf && structType->instanceOf == instanceOf &&
+          getCommonSiblingInstance(emitter.context, structType, this) == this) {
+        auto value{emitter.rvalue(args[0].value)};
+        auto result{Value::zero(this)};
+        for (size_t i{}; i < params.size(); i++) {
+          if (params[i].isBaked() || params[i].type->isVoid()) continue;
+          auto &sourceParam{structType->params[i]};
+          auto elem{RValue(
+              sourceParam.type,
+              sourceParam.isBaked()
+                  ? sourceParam.bakedConstant
+                  : emitter.builder.CreateExtractValue(
+                        value, {structType->params.getLLVMFieldIndex(i)}))};
+          result = emitter.insert(result, elem, i, srcLoc);
+        }
+        return result;
+      }
     }
   }
   // Why each candidate was rejected, so that a failure to construct can say
@@ -2636,11 +2696,44 @@ Value StructType::invoke(Emitter &emitter, const ArgumentList &args,
   whyNot.clear();
   if (emitter.canResolveArguments(params, args, srcLoc, &whyNot)) {
     auto resolvedArgs{emitter.resolveArguments(params, args, srcLoc)};
+    // Constructing a value instance directly (e.g. '#typeOf(x)(...)'): a
+    // baked field is part of the type and cannot be overridden, but
+    // explicitly passing the identical constant is allowed so generic
+    // code can round-trip.
+    if (instanceOf) {
+      for (size_t iArg{}; iArg < args.size(); iArg++) {
+        if (auto param{resolvedArgs.argParams[iArg]};
+            param && param->isBaked()) {
+          const auto &value{resolvedArgs.values[size_t(param - &params[0])]};
+          if (!(value.isComptime() && value.llvmValue == param->bakedConstant))
+            srcLoc.throwError(
+                "cannot construct ", Quoted(displayName), ": field ",
+                Quoted(param->name),
+                " is baked to a compile-time constant in this instance");
+        }
+      }
+    }
     auto resultType{this};
     if (resultType->isAbstract()) {
-      resultType =
-          getInstance(emitter.context, resolvedArgs.getNonVariadicTypes());
-      resultType->isDefaultInstance = args.empty();
+      // Constant-field elimination: a 'const' field whose resolved value
+      // is a compile-time constant is baked into the instantiated type,
+      // where it occupies no storage and reads as the constant. 'const'
+      // is already not addressable, so only type identity can observe
+      // the elimination.
+      auto paramConstants{llvm::SmallVector<llvm::Constant *>{}};
+      paramConstants.reserve(params.size());
+      for (size_t i{}; i < params.size(); i++) {
+        const auto &value{resolvedArgs.values[i]};
+        paramConstants.push_back(
+            params[i].isConst() && value.isComptime() && !value.isVoid()
+                ? static_cast<llvm::Constant *>(value.llvmValue)
+                : nullptr);
+      }
+      resultType = getInstance(
+          emitter.context, resolvedArgs.getNonVariadicTypes(), paramConstants);
+      // Sticky: a later construction landing on the same instance with
+      // explicit arguments must not clear the flag.
+      resultType->isDefaultInstance |= args.empty();
       SMDL_SANITY_CHECK(!resultType->isAbstract());
     }
     // Void values count as compile-time: they contribute no runtime data
@@ -2666,11 +2759,13 @@ Value StructType::invoke(Emitter &emitter, const ArgumentList &args,
       for (size_t i{}; i < resolvedArgs.values.size(); i++) {
         auto &value{resolvedArgs.values[i]};
         // NOTE: 'i' is the field index, which is the LLVM element index
-        // only when no preceding field is voided.
+        // only when no preceding field is voided or baked.
         const auto j{resultType->params.getLLVMFieldIndex(i)};
-        SMDL_SANITY_CHECK(value.isVoid() ==
-                          (j == ParameterList::NO_LLVM_FIELD));
-        if (j == ParameterList::NO_LLVM_FIELD) continue;
+        if (j == ParameterList::NO_LLVM_FIELD) {
+          SMDL_SANITY_CHECK(value.isVoid() || resultType->params[i].isBaked());
+          continue;
+        }
+        SMDL_SANITY_CHECK(!value.isVoid());
         emitter.createStore(
             value, LValue(value.type, emitter.builder.CreateStructGEP(
                                           resultType->llvmType, lv, j)));
@@ -2710,7 +2805,7 @@ Value StructType::invoke(Emitter &emitter, const ArgumentList &args,
                    dropSourceLocation(std::move(whyNot), srcLoc));
   srcLoc.throwError("cannot construct ", Quoted(displayName), " from ",
                     Quoted(std::string(args)), candidateNotes);
-  return Value();
+  return {};
 }
 
 bool StructType::hasField(std::string_view name) {
@@ -2743,21 +2838,32 @@ Value StructType::accessField(Emitter &emitter, Value value,
     bool isConst{};
     for (auto [param, i] : seq) {
       isConst |= param->isConst();
-      // A voided field occupies no storage, so there is nothing to
-      // address: it resolves to the void value itself, as an rvalue. It
-      // can only ever be the last step of a sequence, because 'void' has
-      // no fields of its own to descend into. Returning here also skips
-      // the name decoration below, which would dereference the null
-      // 'llvmValue' that a void value carries.
-      if (i == ParameterList::NO_LLVM_FIELD)
+      if (i == ParameterList::NO_LLVM_FIELD) {
+        // A baked field occupies no storage and reads as its compile-time
+        // constant. Unlike a voided field it may be an interior step of
+        // the sequence: the walk continues by extraction, which folds on
+        // constants.
+        if (param->isBaked()) {
+          value = RValue(param->type, param->bakedConstant);
+          continue;
+        }
+        // A voided field occupies no storage, so there is nothing to
+        // address: it resolves to the void value itself, as an rvalue. It
+        // can only ever be the last step of a sequence, because 'void' has
+        // no fields of its own to descend into. Returning here also skips
+        // the name decoration below, which would dereference the null
+        // 'llvmValue' that a void value carries.
         return RValue(param->type, nullptr);
+      }
       value = Value(
           value.kind, param->type,
           value.isLValue()
               ? emitter.builder.CreateStructGEP(value.type->llvmType, value, i)
               : emitter.builder.CreateExtractValue(value, {i}));
     }
-    if (hasName0) {
+    // Skip the decoration when the walk ended on a constant (a baked
+    // field, or an extraction that folded): constants cannot carry names.
+    if (hasName0 && !value.isLLVMConstant()) {
       name0 += '.';
       name0 += name;
       value.llvmValue->setName(name0);
@@ -2769,14 +2875,16 @@ Value StructType::accessField(Emitter &emitter, Value value,
     return itr->second;
   srcLoc.throwError("no field ", Quoted(name), " in struct ",
                     Quoted(displayName));
-  return Value();
+  return {};
 }
 
 Value StructType::insert(Emitter &emitter, Value value, Value elem, unsigned i,
                          const SourceLocation &srcLoc) {
   SMDL_SANITY_CHECK(i < params.size());
   // NOTE: 'i' is the field index, which is the LLVM element index only
-  // when no preceding field is voided.
+  // when no preceding field is voided or baked. Neither has storage to
+  // insert into; construction is the only writer of a baked field and
+  // always passes its own constant.
   const auto j{params.getLLVMFieldIndex(i)};
   if (j == ParameterList::NO_LLVM_FIELD)
     return emitter.rvalue(value);
