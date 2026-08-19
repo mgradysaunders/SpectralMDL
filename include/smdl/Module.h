@@ -33,6 +33,15 @@ public:
     COMPILE_STATUS_FAILED,      ///< Failed with an error.
   };
 
+  /// Where the module came from.
+  enum Origin {
+    ORIGIN_FILE,        ///< Loaded from a file on disk.
+    ORIGIN_ARCHIVE,     ///< Extracted from an archive or MDLE container.
+    ORIGIN_SOURCE_CODE, ///< Supplied by the host as source code.
+    ORIGIN_BUILTIN,     ///< Embedded in the binary as part of the standard
+                        ///< library.
+  };
+
 public:
   Module() = default;
 
@@ -120,30 +129,77 @@ public:
                const std::string &qualifiedName,
                const std::string &resourceDirectory);
 
+  /// Load from source code supplied by the host.
+  ///
+  /// \param[in] qualifiedName
+  /// The qualified name, e.g., `::vendor::metals::steel`. This is
+  /// assumed to be normalized and validated already, as
+  /// `Compiler::addSourceCode()` does it.
+  ///
+  /// \param[in] sourceCode
+  /// The source code, which is copied into the module, so the caller
+  /// need not keep it alive.
+  ///
+  /// \param[in] anchorDirectory
+  /// The canonical directory the module resolves relative paths
+  /// against, as if its source lived there. May be empty.
+  ///
+  [[nodiscard]] static std::unique_ptr<Module>
+  loadFromSourceCode(const std::string &qualifiedName, std::string sourceCode,
+                     const std::string &anchorDirectory = {});
+
 public:
+  /// Get the origin.
+  [[nodiscard]] Origin getOrigin() const noexcept { return mOrigin; }
+
   /// Is a builtin module?
-  [[nodiscard]] bool isBuiltin() const noexcept { return mFileName.empty(); }
+  [[nodiscard]] bool isBuiltin() const noexcept {
+    return mOrigin == ORIGIN_BUILTIN;
+  }
 
   /// Is extracted from an archive?
   [[nodiscard]] bool isExtractedFromArchive() const noexcept {
-    return mIsExtractedFromArchive;
+    return mOrigin == ORIGIN_ARCHIVE;
   }
 
-  /// Get the file name. This is empty if the module is builtin.
+  /// Is supplied by the host as source code? See
+  /// `Compiler::addSourceCode()`.
+  [[nodiscard]] bool isFromSourceCode() const noexcept {
+    return mOrigin == ORIGIN_SOURCE_CODE;
+  }
+
+  /// Is backed by a file on disk? This is true for ordinary files and
+  /// for the entries of archives and MDLE containers, and false for
+  /// builtin modules and modules supplied as source code.
+  [[nodiscard]] bool isFileBacked() const noexcept {
+    return mOrigin == ORIGIN_FILE || mOrigin == ORIGIN_ARCHIVE;
+  }
+
+  /// Get the file name. This is empty unless the module is file backed.
   [[nodiscard]] std::string_view getFileName() const noexcept {
     return mFileName;
   }
 
-  /// Get the directory. This is empty if the module is builtin.
+  /// Get the name to print in diagnostics: the file name if the module
+  /// is file backed, else markup naming the origin and the qualified
+  /// name, e.g., `<builtin ::df>` or `<string ::my_materials>`.
+  [[nodiscard]] std::string_view getDisplayName() const noexcept {
+    return mDisplayName;
+  }
+
+  /// Get the directory the module resolves relative paths against. This
+  /// is the parent directory of the file name if the module is file
+  /// backed, else the anchor directory if there is one (see
+  /// `Compiler::addSourceCode()`), else empty.
   [[nodiscard]] std::string getDirectory() const {
-    return parentPathOf(mFileName);
+    return mFileName.empty() ? mAnchorDirectory : parentPathOf(mFileName);
   }
 
   /// Get the name.
   [[nodiscard]] std::string_view getName() const noexcept { return mName; }
 
   /// Get the canonical search root directory this module was found under.
-  /// This is empty if the module is builtin.
+  /// This is empty unless the module is file backed.
   [[nodiscard]] std::string_view getSearchRoot() const noexcept {
     return mSearchRoot;
   }
@@ -171,10 +227,11 @@ public:
   /// This is ordinarily the module file name, so resources resolve
   /// relative to the containing directory. For modules loaded from MDLE
   /// containers it is the directory the container resources were
-  /// extracted to.
+  /// extracted to, and for modules supplied as source code it is the
+  /// anchor directory if there is one.
   [[nodiscard]] std::string_view getResourceAnchor() const noexcept {
-    return mResourceDirectory.empty() ? std::string_view(mFileName)
-                                      : std::string_view(mResourceDirectory);
+    return mAnchorDirectory.empty() ? std::string_view(mFileName)
+                                    : std::string_view(mAnchorDirectory);
   }
 
   /// Get the search directories declared by `#search_dir` at the top of
@@ -223,30 +280,34 @@ private:
   /// parsed AST. Called by `parse()`.
   void computeSearchDirs();
 
-  /// Is extracted from an archive?
-  bool mIsExtractedFromArchive{};
+  /// Where the module came from.
+  Origin mOrigin{ORIGIN_FILE};
 
-  /// The file name if applicable. This is empty if the module is builtin.
+  /// The file name if applicable. This is empty unless the module is
+  /// file backed.
   std::string mFileName{};
+
+  /// The name to print in diagnostics. See `getDisplayName()`.
+  std::string mDisplayName{};
 
   /// The name of the module.
   std::string mName{};
 
-  /// The canonical search root directory. This is empty if the module is
-  /// builtin.
+  /// The canonical search root directory. This is empty unless the
+  /// module is file backed.
   std::string mSearchRoot{};
 
-  /// The qualified name, e.g., `::vendor::metals::steel`. This is empty
-  /// if the module is builtin.
+  /// The qualified name, e.g., `::vendor::metals::steel`.
   std::string mQualifiedName{};
 
   /// Is shadowed by an equally named module under an earlier search
   /// root? Maintained by `Compiler::add()`.
   bool mIsShadowed{};
 
-  /// The resource anchor directory if it differs from the directory of
-  /// `mFileName`. See `getResourceAnchor()`.
-  std::string mResourceDirectory{};
+  /// The directory relative paths resolve against when it is not the
+  /// directory of `mFileName`. See `getDirectory()` and
+  /// `getResourceAnchor()`.
+  std::string mAnchorDirectory{};
 
   /// The expanded canonical `#search_dir` directories, populated by
   /// `parse()`. See `getSearchDirs()`.

@@ -191,8 +191,13 @@ public:
   /// Get the module name.
   [[nodiscard]] std::string_view getModuleName() const;
 
-  /// Get the file name.
+  /// Get the file name. This is empty unless the module is file backed.
   [[nodiscard]] std::string_view getModuleFileName() const;
+
+  /// Get the name to print in diagnostics, which is the file name for
+  /// ordinary modules and origin markup for the others. See
+  /// `Module::getDisplayName()`.
+  [[nodiscard]] std::string_view getModuleDisplayName() const;
 
   /// Log a warning.
   void logWarn(std::string_view message) const;

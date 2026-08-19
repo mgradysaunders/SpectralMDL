@@ -176,6 +176,48 @@ public:
   add(std::string fileOrDirName,
       std::vector<std::string> *addedModuleNames = nullptr) noexcept;
 
+  /// Add MDL module from source code supplied by the host, so that a
+  /// material may be added programmatically without going through the
+  /// filesystem at all.
+  ///
+  /// \param[in] moduleName
+  /// The qualified module name, e.g., `::vendor::metals::steel`. The
+  /// leading `::` is optional and every `::`-delimited component must
+  /// be an identifier (a letter or underscore followed by letters,
+  /// digits, and underscores), because this is the name other modules
+  /// spell in an `import`. It is an error for the name to be taken
+  /// already, except that adding the same name with byte-identical
+  /// source code again is a no-op. Note that a name that matches a
+  /// builtin module is legal but unreachable by absolute import, which
+  /// prefers the builtin, so it is warned about.
+  ///
+  /// \param[in] sourceCode
+  /// The source code, which is copied into the module, so the caller
+  /// need not keep it alive. This is the module verbatim, so the SMDL
+  /// dialect requires the leading `#smdl` pragma exactly as a file
+  /// does.
+  ///
+  /// \param[in] anchorDirectory
+  /// If not empty, an existing directory the module resolves relative
+  /// paths against, as if its source lived there: resources, relative
+  /// `#search_dir` paths, and relative imports all anchor here. With no
+  /// anchor, resources resolve only through `fileLocator` and relative
+  /// imports resolve nothing.
+  ///
+  /// The module joins the added modules as an equal: it compiles with
+  /// them, imports them by qualified name and is imported by them, and
+  /// its materials are found by `findMaterial()` under
+  /// `<moduleName>::<materialName>`. Because it has no file, it is
+  /// skipped by `formatSourceCode()` and reports its source locations
+  /// as `<string ::vendor::metals::steel>` (see
+  /// `Module::getDisplayName()`). Unlike a file, it is immune to the
+  /// source changing underneath the compiler: `compile()` re-parses the
+  /// string it was given here.
+  ///
+  [[nodiscard]] std::optional<Error>
+  addSourceCode(std::string moduleName, std::string sourceCode,
+                std::string anchorDirectory = {}) noexcept;
+
   /// Set the desired material names, which restricts the next
   /// `compile()` to the named materials.
   ///
@@ -335,7 +377,7 @@ private:
 
   /// After JIT-compiling, lookup symbol with the given name or throw an error
   /// if it is not present.
-  template <typename T> void jitLookupOrThrow(JIT::Function<T> &func) {
+  template <typename T> void jitLookup(JIT::Function<T> &func) {
     func.func = reinterpret_cast<typename JIT::Function<T>::function_pointer>(
         jitLookup(func.name));
     if (!func.func)
@@ -578,6 +620,16 @@ private:
   /// `compile()` can skip decoding it and release its texel
   /// reservation. Returns the number of images dropped.
   size_t dropUnusedImages();
+
+  /// Take ownership of a successfully loaded module: index it by file
+  /// name and by qualified name, mark it shadowed if the qualified name
+  /// is taken (the earliest added module wins), and report its
+  /// qualified name through `addedModuleNames` if non-null.
+  ///
+  /// This runs only after the load succeeds, so a file that failed can
+  /// be retried instead of being silently skipped.
+  void registerModule(std::unique_ptr<Module> loadedModule,
+                      std::vector<std::string> *addedModuleNames);
 
   /// The LLVM context for the module being compiled. Consumed (moved into
   /// the JIT) by `jitCompile()`.

@@ -133,8 +133,15 @@ public:
   /// The module name.
   std::string moduleName{};
 
-  /// The module file name.
+  /// The module file name. This is empty if the module has no file, as
+  /// is the case for builtin modules and modules supplied as source
+  /// code (see `Compiler::addSourceCode()`).
   std::string moduleFileName{};
+
+  /// The module name to print in diagnostics, which is the file name
+  /// for ordinary modules and origin markup for the others. See
+  /// `Module::getDisplayName()`.
+  std::string moduleDisplayName{};
 
   /// The line number.
   uint32_t lineNo{};
@@ -1138,8 +1145,15 @@ public:
   /// The module name.
   std::string moduleName{};
 
-  /// The module file name.
+  /// The module file name. This is empty if the module has no file, as
+  /// is the case for builtin modules and modules supplied as source
+  /// code (see `Compiler::addSourceCode()`).
   std::string moduleFileName{};
+
+  /// The module name to print in diagnostics, which is the file name
+  /// for ordinary modules and origin markup for the others. See
+  /// `Module::getDisplayName()`.
+  std::string moduleDisplayName{};
 
   /// The line number.
   uint32_t lineNo{};

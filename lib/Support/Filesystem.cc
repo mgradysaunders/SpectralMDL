@@ -101,9 +101,9 @@ std::string expandPathVariables(std::string_view path) {
 
 std::string makePathCanonical(std::string path) noexcept try {
   if (!path.empty() && path[0] == '~') {
-    llvm::SmallString<128> pathTmp{};
-    llvm::sys::fs::expand_tilde(path, pathTmp);
-    path = pathTmp.str();
+    llvm::SmallString<128> tmpPath{};
+    llvm::sys::fs::expand_tilde(path, tmpPath);
+    path = tmpPath.str();
   }
   return std::filesystem::weakly_canonical(path).string();
 } catch (...) {
@@ -112,9 +112,9 @@ std::string makePathCanonical(std::string path) noexcept try {
 
 std::string makePathAbsolute(std::string path) noexcept try {
   if (!path.empty() && path[0] == '~') {
-    llvm::SmallString<128> pathTmp{};
-    llvm::sys::fs::expand_tilde(path, pathTmp);
-    path = pathTmp.str();
+    llvm::SmallString<128> tmpPath{};
+    llvm::sys::fs::expand_tilde(path, tmpPath);
+    path = tmpPath.str();
   }
   return std::filesystem::absolute(path).string();
 } catch (...) {
@@ -122,7 +122,12 @@ std::string makePathAbsolute(std::string path) noexcept try {
 }
 
 std::string makePathRelative(std::string path) noexcept try {
-  return std::filesystem::relative(path).string();
+  // 'std::filesystem::relative' yields the empty path when it cannot
+  // resolve against the working directory, which is the ordinary result
+  // for a path that does not exist. Report the path unchanged instead,
+  // so that a diagnostic about a missing file still names it.
+  auto relPath{std::filesystem::relative(path).string()};
+  return relPath.empty() ? path : relPath;
 } catch (...) {
   return path;
 }

@@ -94,6 +94,10 @@ std::string_view SourceLocation::getModuleFileName() const {
   return module_ ? module_->getFileName() : std::string_view();
 }
 
+std::string_view SourceLocation::getModuleDisplayName() const {
+  return module_ ? module_->getDisplayName() : std::string_view();
+}
+
 void SourceLocation::logWarn(std::string_view message) const {
   auto str{std::string(*this)};
   if (!str.empty()) str += ' ';
@@ -119,10 +123,12 @@ SourceLocation::operator std::string() const {
   std::string str{};
   if (module_) {
     str += '[';
-    if (module_->isBuiltin()) {
-      str += module_->getName();
+    // A module with no file prints its origin markup verbatim, e.g.,
+    // '<builtin ::df>'; only a real path is worth shortening.
+    if (module_->isFileBacked()) {
+      str += bestPathForPrinting(std::string(module_->getDisplayName()));
     } else {
-      str += bestPathForPrinting(std::string(module_->getFileName()));
+      str += module_->getDisplayName();
     }
     str += ':';
     str += std::to_string(lineNo);

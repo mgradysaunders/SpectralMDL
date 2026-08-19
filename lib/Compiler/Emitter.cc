@@ -664,6 +664,8 @@ Value Emitter::emit(AST::UnitTest &decl) {
     auto &unitTest{context.compiler.mUnitTests.emplace_back()};
     unitTest.moduleName = std::string(decl.srcLoc.getModuleName());
     unitTest.moduleFileName = std::string(decl.srcLoc.getModuleFileName());
+    unitTest.moduleDisplayName =
+        std::string(decl.srcLoc.getModuleDisplayName());
     unitTest.lineNo = decl.srcLoc.lineNo;
     unitTest.testName = decl.name->value;
     unitTest.test.name = llvmFunc->getName().str();
@@ -3843,11 +3845,15 @@ Module *Emitter::resolveModule(Span<const std::string_view> importPath,
     }};
     auto lexicalDirPath{normalizePath(dirPath)};
     for (auto &otherModule : context.compiler.mModules) {
-      if (otherModule.get() != thisModule && !otherModule->isBuiltin() &&
+      // A module with no directory of its own (builtin, or supplied as
+      // source code without an anchor) is not reachable this way: its
+      // empty directory must not match the empty path this search walks
+      // when the current module has no directory either.
+      auto otherDirPath{otherModule->getDirectory()};
+      if (otherModule.get() != thisModule && !otherDirPath.empty() &&
           otherModule->getName() == resolvedImportPath.back() &&
-          (isPathEquivalent(dirPath, otherModule->getDirectory()) ||
-           lexicalDirPath ==
-               normalizePath(std::string(otherModule->getDirectory())))) {
+          (isPathEquivalent(dirPath, otherDirPath) ||
+           lexicalDirPath == normalizePath(otherDirPath))) {
         if (auto error{otherModule->compile(context)}) throw std::move(*error);
         return otherModule.get();
       }
@@ -3855,9 +3861,8 @@ Module *Emitter::resolveModule(Span<const std::string_view> importPath,
     return nullptr;
   }};
   auto searchRelativeToCurrentModule{[&]() -> Module * {
-    if (!thisModule->isBuiltin())
-      if (auto mod{findModuleInDirectory(thisModule->getDirectory())})
-        return mod;
+    if (auto dirPath{thisModule->getDirectory()}; !dirPath.empty())
+      if (auto mod{findModuleInDirectory(std::move(dirPath))}) return mod;
     return nullptr;
   }};
   auto searchCompilerDirPaths{[&]() -> Module * {

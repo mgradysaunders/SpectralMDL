@@ -1466,6 +1466,8 @@ void FunctionType::initializeMaterialFunctions(Emitter &emitter) {
   auto &jitMaterial{compiler.mMaterials.emplace_back()};
   jitMaterial.moduleName = std::string(decl.srcLoc.getModuleName());
   jitMaterial.moduleFileName = std::string(decl.srcLoc.getModuleFileName());
+  jitMaterial.moduleDisplayName =
+      std::string(decl.srcLoc.getModuleDisplayName());
   jitMaterial.lineNo = decl.srcLoc.lineNo;
   jitMaterial.materialName = std::string(decl.name.srcName);
   jitMaterial.qualifiedName = std::move(qualifiedName);

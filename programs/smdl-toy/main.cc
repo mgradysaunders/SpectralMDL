@@ -15,7 +15,6 @@
 #include "opensubdiv/version.h"
 
 #include "cl.h"
-#include "llvm/Support/FileSystem.h"
 #include "llvm/Support/Parallel.h"
 #include "llvm/Support/WithColor.h"
 
@@ -619,51 +618,16 @@ export material default_ground() = material(
     scattering: df::diffuse_reflection_bsdf(tint: color(0.1))));
 )";
 
-// The default material as a module the compiler can load. A module's
-// qualified name comes from its file stem, so this is a uniquely named
-// directory holding a fixed file name: two renders at once cannot read
-// each other's half-written copy, and the module is still called
-// `::smdl_toy_default`.
-class DefaultMaterialModule final {
-public:
-  DefaultMaterialModule() {
-    llvm::SmallString<128> directory{};
-    if (auto error{llvm::sys::fs::createUniqueDirectory("smdl-toy", directory)})
-      throw smdl::Error(smdl::concat("cannot create a temporary directory "
-                                     "for the default material: ",
-                                     error.message()));
-    mDirectory = directory.str().str();
-    mFileName =
-        (std::filesystem::path(mDirectory) / "smdl_toy_default.smdl").string();
-    auto stream{std::ofstream(mFileName)};
-    if (!stream)
-      throw smdl::Error(smdl::concat("cannot write the default material to ",
-                                     smdl::QuotedPath(mFileName)));
-    stream << DEFAULT_MATERIAL_SOURCE;
-  }
+// What the compiler calls the module above, which is what qualifies the
+// names of the two materials in it.
+constexpr const char *DEFAULT_MATERIAL_MODULE = "::smdl_toy_default";
 
-  DefaultMaterialModule(const DefaultMaterialModule &) = delete;
+// The material `-material-fallback` names to get it.
+constexpr const char *DEFAULT_MATERIAL_NAME = "default_material";
 
-  ~DefaultMaterialModule() {
-    std::error_code ignored{};
-    std::filesystem::remove_all(mDirectory, ignored);
-  }
-
-  [[nodiscard]] const std::string &fileName() const noexcept {
-    return mFileName;
-  }
-
-  /// The material `-material-fallback` names to get it.
-  static constexpr const char *MATERIAL_NAME = "default_material";
-
-  /// The darker gray `-ground` defaults to, for contrast against the
-  /// default material above.
-  static constexpr const char *GROUND_MATERIAL_NAME = "default_ground";
-
-private:
-  std::string mDirectory{};
-  std::string mFileName{};
-};
+// The darker gray `-ground` defaults to, for contrast against the
+// default material above.
+constexpr const char *DEFAULT_GROUND_MATERIAL_NAME = "default_ground";
 
 // How the sample budget is split into passes.
 //
@@ -1086,8 +1050,9 @@ int main(int argc, char **argv) try {
   // resolve has somewhere to fall back to. It is added even when MDL
   // modules are given, so that '-material-fallback default' works
   // alongside them.
-  auto defaultModule{DefaultMaterialModule()};
-  if (auto error{compiler.add(defaultModule.fileName())}) error->printAndExit();
+  if (auto error{compiler.addSourceCode(DEFAULT_MATERIAL_MODULE,
+                                        DEFAULT_MATERIAL_SOURCE)})
+    error->printAndExit();
   for (auto &inputMDLFile : optInputMDLFiles)
     if (auto error{compiler.add(std::string(inputMDLFile))})
       error->printAndExit();
@@ -1123,7 +1088,7 @@ int main(int argc, char **argv) try {
   // means a name that was meant to resolve and did not.
   auto fallbackMaterial{std::string(optMaterialFallback)};
   if (fallbackMaterial.empty() && optInputMDLFiles.empty())
-    fallbackMaterial = DefaultMaterialModule::MATERIAL_NAME;
+    fallbackMaterial = DEFAULT_MATERIAL_NAME;
   // The lowering folds every alias and override into the items
   // themselves, which is what keeps an imported layout's names closed;
   // see `MaterialAssignment::renames`.
@@ -1161,8 +1126,7 @@ int main(int argc, char **argv) try {
         std::min(std::max(1000.0f * 0.5f * smdl::length(upper - lower), 100.0f),
                  20000.0f)};
     auto groundMaterial{std::string(optGroundMaterial)};
-    if (groundMaterial.empty())
-      groundMaterial = DefaultMaterialModule::GROUND_MATERIAL_NAME;
+    if (groundMaterial.empty()) groundMaterial = DEFAULT_GROUND_MATERIAL_NAME;
     // The one command-line-facing name the entry file's aliases still
     // reach, now that the aliases themselves are folded into the items.
     if (auto alias{layout.entryMaterialAliases.find(groundMaterial)};

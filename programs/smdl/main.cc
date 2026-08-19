@@ -12,7 +12,7 @@
 #include "llvm/Support/raw_ostream.h"
 
 namespace cl = llvm::cl;
-static cl::OptionCategory optionsCat{"Options"};
+static cl::OptionCategory catOptions{"Options"};
 static cl::SubCommand subDump{"dump", "Dump as LLVM-IR or native assembly"};
 static cl::SubCommand subList{"list", "List all materials"};
 static cl::SubCommand subRun{"run", "Run execs"};
@@ -31,22 +31,22 @@ static cl::SubCommandGroup allSubs{&subDump, &subList,   &subRun,
 // enforced in `main()`.
 static cl::list<std::string> inputFiles{cl::Positional, cl::desc("<input>"),
                                         cl::ZeroOrMore, cl::sub(allSubs),
-                                        cl::cat(optionsCat)};
+                                        cl::cat(catOptions)};
 
 static cl::opt<unsigned> optLevel{"O",
                                   cl::desc("Optimization level (default 2)"),
                                   cl::Prefix,
                                   cl::init(2U),
                                   cl::sub(subsWithCompileOptions),
-                                  cl::cat(optionsCat)};
+                                  cl::cat(catOptions)};
 static cl::opt<bool> enableDebug{"g", cl::desc("Enable debugging"),
                                  cl::sub(subsWithCompileOptions),
-                                 cl::cat(optionsCat)};
+                                 cl::cat(catOptions)};
 static cl::opt<bool> noMipMaps{
     "no-mipmaps",
     cl::desc("Disable mip maps, so that 'use_mipmap: true' is ignored and no "
              "mip chains are allocated or generated"),
-    cl::sub(subsWithCompileOptions), cl::cat(optionsCat)};
+    cl::sub(subsWithCompileOptions), cl::cat(catOptions)};
 static cl::opt<smdl::DumpFormat> dumpFormat{
     "f", cl::desc("Dump format:"),
     cl::values(
@@ -55,10 +55,10 @@ static cl::opt<smdl::DumpFormat> dumpFormat{
                             "Native assembly"},
         cl::OptionEnumValue{"obj", int(smdl::DUMP_FORMAT_OBJ),
                             "Native object file"}),
-    cl::sub(subDump), cl::cat(optionsCat)};
+    cl::sub(subDump), cl::cat(catOptions)};
 static cl::opt<std::string> outputFilename{
     "output", cl::desc("Output filename (default stdout)"), cl::Optional,
-    cl::sub(subsWithOutputFile), cl::cat(optionsCat)};
+    cl::sub(subsWithOutputFile), cl::cat(catOptions)};
 
 // NOTE: LLVM registers a `--color` of its own on the top-level
 // subcommand, in a hidden category that `HideUnrelatedOptions` filters
@@ -75,23 +75,23 @@ static cl::opt<std::string> outputFilename{
 // the same option map as LLVM's, and `cl` aborts on a duplicate name.
 static cl::opt<cl::boolOrDefault> colorOption{
     "color", cl::desc("Colorize the output (default autodetect)"),
-    cl::init(cl::BOU_UNSET), cl::sub(subsWithColor), cl::cat(optionsCat)};
+    cl::init(cl::BOU_UNSET), cl::sub(subsWithColor), cl::cat(catOptions)};
 
 static cl::opt<bool> formatInPlace{"i", cl::desc("Format in place"),
-                                   cl::sub(subFormat), cl::cat(optionsCat)};
+                                   cl::sub(subFormat), cl::cat(catOptions)};
 static cl::opt<bool> formatNoComments{"no-comments",
                                       cl::desc("Remove comments"),
-                                      cl::sub(subFormat), cl::cat(optionsCat)};
+                                      cl::sub(subFormat), cl::cat(catOptions)};
 static cl::opt<bool> formatKeepDocComments{
     "keep-doc-comments",
     cl::desc("Keep '///' doc comments despite '--no-comments'"),
-    cl::sub(subFormat), cl::cat(optionsCat)};
+    cl::sub(subFormat), cl::cat(catOptions)};
 static cl::opt<bool> formatNoAnnotations{
     "no-annotations", cl::desc("Remove annotations"), cl::sub(subFormat),
-    cl::cat(optionsCat)};
+    cl::cat(catOptions)};
 static cl::opt<bool> formatCompact{"c",
                                    cl::desc("Format output more compactly"),
-                                   cl::sub(subFormat), cl::cat(optionsCat)};
+                                   cl::sub(subFormat), cl::cat(catOptions)};
 
 enum DocOutputFormat : int {
   DOC_FORMAT_TEXT,
@@ -109,15 +109,15 @@ static cl::opt<DocOutputFormat> docFormat{
         cl::OptionEnumValue{"json", int(DOC_FORMAT_JSON), "JSON database"},
         cl::OptionEnumValue{"md", int(DOC_FORMAT_MD), "Markdown"}),
     cl::sub(subDoc),
-    cl::cat(optionsCat)};
+    cl::cat(catOptions)};
 static cl::opt<bool> docIncludeHidden{
     "all",
     cl::desc("Include hidden declarations, i.e., declarations not marked "
              "'export' or named with a leading underscore"),
-    cl::sub(subDoc), cl::cat(optionsCat)};
+    cl::sub(subDoc), cl::cat(catOptions)};
 static cl::opt<bool> docAllBuiltins{"builtins",
                                     cl::desc("Include all builtin modules"),
-                                    cl::sub(subDoc), cl::cat(optionsCat)};
+                                    cl::sub(subDoc), cl::cat(catOptions)};
 
 static cl::OptionCategory catState{"State Options"};
 static cl::opt<unsigned> wavelengthBaseMax{
@@ -410,7 +410,7 @@ int main(int argc, char **argv) {
   smdl::Logger::get().addSink<smdl::LogSinks::print_to_cerr>();
   cl::SetVersionPrinter(
       [](llvm::raw_ostream &os) { os << smdl::BuildInfo::get().toString(); });
-  cl::HideUnrelatedOptions({&optionsCat});
+  cl::HideUnrelatedOptions({&catOptions});
   cl::ParseCommandLineOptions(argc, argv, "SpectralMDL compiler");
   auto compiler{smdl::Compiler{}};
   compiler.enableDebug = enableDebug;

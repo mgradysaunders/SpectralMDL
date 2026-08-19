@@ -16,6 +16,7 @@
 #include "llvm/Support/raw_ostream.h"
 
 #include "Archive.h"
+#include "Compiler/BuiltinAccess.h"
 #include "Compiler/Context.h"
 
 #if SMDL_HAS_PTEX
@@ -27,21 +28,25 @@ namespace smdl {
 Compiler::Compiler(uint32_t wavelengthBaseMax)
     : wavelengthBaseMax(wavelengthBaseMax) {}
 
-/// Sort JIT handle records by module filename, then line number.
-template <typename T> static void sortByFileAndLine(std::vector<T> &elems) {
+// Sort JIT handle records by module display name, then line number.
+// The display name rather than the file name, because a module that
+// has no file has no file name to be distinguished by.
+template <typename T> static void sortByModuleAndLine(std::vector<T> &elems) {
   std::sort(elems.begin(), elems.end(), [](const auto &lhs, const auto &rhs) {
-    return std::pair(std::string_view(lhs.moduleFileName), lhs.lineNo) <
-           std::pair(std::string_view(rhs.moduleFileName), rhs.lineNo);
+    return std::pair(std::string_view(lhs.moduleDisplayName), lhs.lineNo) <
+           std::pair(std::string_view(rhs.moduleDisplayName), rhs.lineNo);
   });
 }
 
-/// Visit `[itrFirst, itrLast)` runs of records that share a module
-/// filename, assuming the records are sorted by `sortByFileAndLine`.
+// Visit `[itrFirst, itrLast)` runs of records that share a module,
+// assuming the records are sorted by `sortByModuleAndLine`.
 template <typename Iterator, typename Visitor>
-static void forEachFileGroup(Iterator itr, Iterator itrEnd, Visitor &&visitor) {
+static void forEachModuleGroup(Iterator itr, Iterator itrEnd,
+                               Visitor &&visitor) {
   while (itr != itrEnd) {
     auto itrLast{itr};
-    while (itrLast != itrEnd && itrLast->moduleFileName == itr->moduleFileName)
+    while (itrLast != itrEnd &&
+           itrLast->moduleDisplayName == itr->moduleDisplayName)
       ++itrLast;
     visitor(itr, itrLast);
     itr = itrLast;
@@ -65,9 +70,9 @@ void Ptexture::release() noexcept {
   alphaIndex = -1;
 }
 
-/// Parse the dot-separated package prefix encoded by an MDL archive
-/// file name per the MDL specification, e.g., `vendor.metals.mdr`
-/// encodes `{"vendor", "metals"}`. Throws on empty components.
+// Parse the dot-separated package prefix encoded by an MDL archive
+// file name per the MDL specification, e.g., `vendor.metals.mdr`
+// encodes `{"vendor", "metals"}`. Throws on empty components.
 [[nodiscard]] static std::vector<std::string>
 parseArchivePackagePrefix(const std::string &fileName) {
   auto stem{std::filesystem::path(fileName).stem().string()};
@@ -86,11 +91,11 @@ parseArchivePackagePrefix(const std::string &fileName) {
   }
 }
 
-/// Does the archive entry conform to the package prefix encoded by the
-/// archive file name? A conforming `.mdl` entry is either the enclosed
-/// module itself (`vendor/metals.mdl` for the prefix
-/// `{"vendor", "metals"}`) or anywhere under the enclosed package
-/// directory (`vendor/metals/...`).
+// Does the archive entry conform to the package prefix encoded by the
+// archive file name? A conforming `.mdl` entry is either the enclosed
+// module itself (`vendor/metals.mdl` for the prefix
+// `{"vendor", "metals"}`) or anywhere under the enclosed package
+// directory (`vendor/metals/...`).
 [[nodiscard]] static bool
 isConformingArchiveEntry(const std::vector<std::string> &prefix,
                          const std::string &entryName) {
@@ -118,8 +123,8 @@ isConformingArchiveEntry(const std::vector<std::string> &prefix,
   return false;
 }
 
-/// Is `parent` a lexical ancestor directory of `child`? Assumes both
-/// paths are already canonical. Equal paths do not count.
+// Is `parent` a lexical ancestor directory of `child`? Assumes both
+// paths are already canonical. Equal paths do not count.
 [[nodiscard]] static bool isLexicalSubPath(const std::string &parent,
                                            const std::string &child) {
   auto parentPath{std::filesystem::path(parent)};
@@ -130,6 +135,103 @@ isConformingArchiveEntry(const std::vector<std::string> &prefix,
   return parentItr == parentPath.end() && childItr != childPath.end();
 }
 
+void Compiler::registerModule(std::unique_ptr<Module> loadedModule,
+                              std::vector<std::string> *addedModuleNames) {
+  auto &module_{*mModules.emplace_back(std::move(loadedModule))};
+  if (!module_.getFileName().empty()) {
+    mModuleFileNames.emplace(std::string(module_.getFileName()), &module_);
+  }
+  auto qualifiedName{std::string(module_.getQualifiedName())};
+  if (auto [itr, inserted] =
+          mModulesByQualifiedName.try_emplace(qualifiedName, &module_);
+      !inserted) {
+    // The earliest search root wins for qualified-name lookup. The
+    // module still loads and compiles, and relative imports within
+    // its own tree still resolve to it.
+    module_.mIsShadowed = true;
+    SMDL_LOG_WARN("module ", Quoted(qualifiedName), " in ",
+                  QuotedPath(module_.getDisplayName()), " is shadowed by ",
+                  QuotedPath(itr->second->getDisplayName()));
+  }
+  if (addedModuleNames) {
+    addedModuleNames->push_back(std::move(qualifiedName));
+  }
+}
+
+// Normalize a host-supplied module name to an absolute qualified name,
+// or throw an `Error` explaining why it is not a legal module name. It
+// must be spellable in an `import`, so every component is an ordinary
+// identifier.
+[[nodiscard]] static std::string
+normalizeModuleName(const std::string &moduleName) {
+  auto isIdentifier{[](std::string_view component) {
+    auto isLetter{[](char ch) {
+      return ch == '_' || (ch >= 'A' && ch <= 'Z') || (ch >= 'a' && ch <= 'z');
+    }};
+    if (component.empty() || !isLetter(component[0])) return false;
+    return std::all_of(component.begin(), component.end(), [&](char ch) {
+      return isLetter(ch) || (ch >= '0' && ch <= '9');
+    });
+  }};
+  auto components{splitQualifiedName(moduleName)};
+  if (components.empty()) {
+    throw Error(concat("module name ", Quoted(moduleName), " is empty"));
+  }
+  for (const auto &component : components) {
+    if (!isIdentifier(component)) {
+      throw Error(concat("module name ", Quoted(moduleName), " has component ",
+                         Quoted(component), " that is not an identifier"));
+    }
+  }
+  return joinQualifiedName(components);
+}
+
+std::optional<Error>
+Compiler::addSourceCode(std::string moduleName, std::string sourceCode,
+                        std::string anchorDirectory) noexcept {
+  SMDL_PROFILER_ENTRY("Compiler::addSourceCode()", moduleName.c_str());
+  return catchAndReturnError([&] {
+    auto qualifiedName{normalizeModuleName(moduleName)};
+    if (auto itr{mModulesByQualifiedName.find(qualifiedName)};
+        itr != mModulesByQualifiedName.end()) {
+      // Adding the same source code under the same name again is a
+      // no-op, so a host may register its defaults defensively. Any
+      // other clash is a name the host does not actually own, which is
+      // a host bug rather than the search-root accident that 'add()'
+      // resolves by shadowing.
+      if (itr->second->isFromSourceCode() &&
+          itr->second->getSourceCode() == sourceCode) {
+        return;
+      }
+      throw Error(concat("cannot add module ", Quoted(qualifiedName),
+                         ": the name is already taken by ",
+                         QuotedPath(itr->second->getDisplayName())));
+    }
+    // An absolute import resolves builtins first, so a module named
+    // after one compiles but is unreachable by qualified name.
+    for (const auto &builtinName : builtin::getAllNames()) {
+      if (joinQualifiedName(splitQualifiedName(builtinName)) == qualifiedName) {
+        SMDL_LOG_WARN("module ", Quoted(qualifiedName),
+                      " has the same name as a builtin module, so imports "
+                      "of that name resolve to the builtin");
+        break;
+      }
+    }
+    if (!anchorDirectory.empty()) {
+      if (!isDirectory(anchorDirectory)) {
+        throw Error(concat("cannot add module ", Quoted(qualifiedName),
+                           ": the anchor ", QuotedPath(anchorDirectory),
+                           " is not an existing directory"));
+      }
+      anchorDirectory = makePathCanonical(std::move(anchorDirectory));
+    }
+    SMDL_LOG_DEBUG("Adding MDL source code as ", Quoted(qualifiedName));
+    registerModule(Module::loadFromSourceCode(
+                       qualifiedName, std::move(sourceCode), anchorDirectory),
+                   nullptr);
+  });
+}
+
 std::optional<Error>
 Compiler::add(std::string fileOrDirName,
               std::vector<std::string> *addedModuleNames) noexcept {
@@ -137,130 +239,111 @@ Compiler::add(std::string fileOrDirName,
   // The filesystem iterators, 'Archive', and 'Module::loadFromFile' all
   // throw; catch everything so the 'optional<Error>' contract holds.
   return catchAndReturnError([&] {
-    // Register a successfully loaded module: index it by file name and
-    // by qualified name, and report it through 'addedModuleNames'.
-    // NOTE: This runs only after the load succeeds, so a failed file can
-    // be retried instead of being silently skipped.
-    auto registerModule{[&](std::unique_ptr<Module> loadedModule) {
-      auto &module_{*mModules.emplace_back(std::move(loadedModule))};
-      mModuleFileNames.emplace(std::string(module_.getFileName()), &module_);
-      auto qualifiedName{std::string(module_.getQualifiedName())};
-      if (auto [itr, inserted] =
-              mModulesByQualifiedName.try_emplace(qualifiedName, &module_);
-          !inserted) {
-        // The earliest search root wins for qualified-name lookup. The
-        // module still loads and compiles, and relative imports within
-        // its own tree still resolve to it.
-        module_.mIsShadowed = true;
-        SMDL_LOG_WARN("module ", Quoted(qualifiedName), " in ",
-                      QuotedPath(module_.getFileName()), " is shadowed by ",
-                      QuotedPath(itr->second->getFileName()));
-      }
-      if (addedModuleNames) {
-        addedModuleNames->push_back(std::move(qualifiedName));
-      }
-    }};
-    auto addFile{[&](const std::string &fileName,
-                     const std::string &searchRoot) {
-      if (llvm::StringRef(fileName).ends_with_insensitive(".mdle")) {
-        SMDL_LOG_DEBUG("Adding MDLE ", QuotedPath(fileName));
-        // An MDLE is a self-contained encapsulated material. Identity
-        // is content-based: the qualified name is '::mdle::<md5>' of
-        // the container bytes, so identical containers at different
-        // paths dedupe to one module and distinct containers can never
-        // collide.
-        auto qualifiedName{"::mdle::" +
-                           std::string(MD5Hash::hashFile(fileName))};
-        if (auto itr{mModulesByQualifiedName.find(qualifiedName)};
-            itr != mModulesByQualifiedName.end()) {
-          if (addedModuleNames) {
-            addedModuleNames->push_back(std::move(qualifiedName));
-          }
-          return;
-        }
-        // Load 'main.mdl' and extract every other entry into a
-        // content-addressed cache directory that serves as the anchor
-        // for the module's resource lookups.
-        auto extractDir{(std::filesystem::temp_directory_path() /
-                         ("smdl-mdle-" + qualifiedName.substr(8)))
-                            .string()};
-        auto archive{Archive{fileName}};
-        auto mainSource{std::optional<std::string>()};
-        for (int i = 0; i < archive.get_file_count(); i++) {
-          auto entryName{archive.get_file_name(i)};
-          if (entryName == "main.mdl") {
-            mainSource = archive.extract_file(i);
-          } else if (!entryName.empty() && entryName.back() != '/') {
-            auto outPath{std::filesystem::path(extractDir) / entryName};
-            std::filesystem::create_directories(outPath.parent_path());
-            openOrThrow(outPath.string(), std::ios::out | std::ios::binary)
-                << archive.extract_file(i);
-          }
-        }
-        if (!mainSource) {
-          throw Error(concat("MDLE ", QuotedPath(fileName),
-                             " does not contain 'main.mdl'"));
-        }
-        registerModule(Module::loadFromMDLE(fileName, *mainSource,
-                                            qualifiedName, extractDir));
-      } else if (llvm::StringRef(fileName).ends_with_insensitive(".mdr")) {
-        SMDL_LOG_DEBUG("Adding MDL archive ", QuotedPath(fileName));
-        // Per the MDL specification, the archive file name encodes the
-        // enclosed package prefix: 'vendor.metals.mdr' provides
-        // '::vendor::metals', and every '.mdl' entry must be the
-        // enclosed module ('vendor/metals.mdl') or live under the
-        // enclosed package directory ('vendor/metals/...').
-        auto prefix{parseArchivePackagePrefix(fileName)};
-        {
-          // Duplicating the enclosed contents as loose files in the
-          // same search root is an error.
-          auto loosePath{searchRoot};
-          for (const auto &component : prefix) {
-            loosePath = joinPaths(loosePath, component);
-          }
-          if (isDirectory(loosePath) || isFile(loosePath + ".mdl") ||
-              isFile(loosePath + ".smdl")) {
-            throw Error(concat("archive ", QuotedPath(fileName),
-                               " conflicts with loose contents at ",
-                               QuotedPath(loosePath),
-                               " in the same search root"));
-          }
-        }
-        auto archive{Archive{fileName}};
-        for (int i = 0; i < archive.get_file_count(); i++) {
-          if (auto entryName{archive.get_file_name(i)};
-              hasExtension(entryName, ".mdl")) {
-            if (!isConformingArchiveEntry(prefix, entryName)) {
-              throw Error(
-                  concat("archive ", QuotedPath(fileName), " entry ",
-                         Quoted(entryName),
-                         " does not conform to the package prefix encoded "
-                         "by the archive file name"));
+    auto addFile{
+        [&](const std::string &fileName, const std::string &searchRoot) {
+          if (llvm::StringRef(fileName).ends_with_insensitive(".mdle")) {
+            SMDL_LOG_DEBUG("Adding MDLE ", QuotedPath(fileName));
+            // An MDLE is a self-contained encapsulated material. Identity
+            // is content-based: the qualified name is '::mdle::<md5>' of
+            // the container bytes, so identical containers at different
+            // paths dedupe to one module and distinct containers can never
+            // collide.
+            auto qualifiedName{"::mdle::" +
+                               std::string(MD5Hash::hashFile(fileName))};
+            if (auto itr{mModulesByQualifiedName.find(qualifiedName)};
+                itr != mModulesByQualifiedName.end()) {
+              if (addedModuleNames) {
+                addedModuleNames->push_back(std::move(qualifiedName));
+              }
+              return;
             }
-            if (auto entryPath{joinPaths(fileName, entryName)};
-                mModuleFileNames.count(entryPath) == 0) {
-              SMDL_LOG_DEBUG("Adding MDL file from archive ",
-                             QuotedPath(entryPath));
-              registerModule(Module::loadFromFileExtractedFromArchive(
-                  fileName, entryName, archive.extract_file(i), searchRoot));
+            // Load 'main.mdl' and extract every other entry into a
+            // content-addressed cache directory that serves as the anchor
+            // for the module's resource lookups.
+            auto extractDir{(std::filesystem::temp_directory_path() /
+                             ("smdl-mdle-" + qualifiedName.substr(8)))
+                                .string()};
+            auto archive{Archive{fileName}};
+            auto mainSource{std::optional<std::string>()};
+            for (int i = 0; i < archive.get_file_count(); i++) {
+              auto entryName{archive.get_file_name(i)};
+              if (entryName == "main.mdl") {
+                mainSource = archive.extract_file(i);
+              } else if (!entryName.empty() && entryName.back() != '/') {
+                auto outPath{std::filesystem::path(extractDir) / entryName};
+                std::filesystem::create_directories(outPath.parent_path());
+                openOrThrow(outPath.string(), std::ios::out | std::ios::binary)
+                    << archive.extract_file(i);
+              }
+            }
+            if (!mainSource) {
+              throw Error(concat("MDLE ", QuotedPath(fileName),
+                                 " does not contain 'main.mdl'"));
+            }
+            registerModule(Module::loadFromMDLE(fileName, *mainSource,
+                                                qualifiedName, extractDir),
+                           addedModuleNames);
+          } else if (llvm::StringRef(fileName).ends_with_insensitive(".mdr")) {
+            SMDL_LOG_DEBUG("Adding MDL archive ", QuotedPath(fileName));
+            // Per the MDL specification, the archive file name encodes the
+            // enclosed package prefix: 'vendor.metals.mdr' provides
+            // '::vendor::metals', and every '.mdl' entry must be the
+            // enclosed module ('vendor/metals.mdl') or live under the
+            // enclosed package directory ('vendor/metals/...').
+            auto prefix{parseArchivePackagePrefix(fileName)};
+            {
+              // Duplicating the enclosed contents as loose files in the
+              // same search root is an error.
+              auto loosePath{searchRoot};
+              for (const auto &component : prefix) {
+                loosePath = joinPaths(loosePath, component);
+              }
+              if (isDirectory(loosePath) || isFile(loosePath + ".mdl") ||
+                  isFile(loosePath + ".smdl")) {
+                throw Error(concat("archive ", QuotedPath(fileName),
+                                   " conflicts with loose contents at ",
+                                   QuotedPath(loosePath),
+                                   " in the same search root"));
+              }
+            }
+            auto archive{Archive{fileName}};
+            for (int i = 0; i < archive.get_file_count(); i++) {
+              if (auto entryName{archive.get_file_name(i)};
+                  hasExtension(entryName, ".mdl")) {
+                if (!isConformingArchiveEntry(prefix, entryName)) {
+                  throw Error(
+                      concat("archive ", QuotedPath(fileName), " entry ",
+                             Quoted(entryName),
+                             " does not conform to the package prefix encoded "
+                             "by the archive file name"));
+                }
+                if (auto entryPath{joinPaths(fileName, entryName)};
+                    mModuleFileNames.count(entryPath) == 0) {
+                  SMDL_LOG_DEBUG("Adding MDL file from archive ",
+                                 QuotedPath(entryPath));
+                  registerModule(Module::loadFromFileExtractedFromArchive(
+                                     fileName, entryName,
+                                     archive.extract_file(i), searchRoot),
+                                 addedModuleNames);
+                }
+              }
+            }
+          } else {
+            if (auto itr{mModuleFileNames.find(fileName)};
+                itr == mModuleFileNames.end()) {
+              SMDL_LOG_DEBUG("Adding MDL file ", QuotedPath(fileName));
+              registerModule(Module::loadFromFile(fileName, searchRoot),
+                             addedModuleNames);
+            } else if (itr->second->getSearchRoot() != searchRoot) {
+              // Already added under a different search root: the first
+              // identity wins.
+              SMDL_LOG_WARN("module file ", QuotedPath(fileName),
+                            " was already added as ",
+                            Quoted(itr->second->getQualifiedName()),
+                            "; keeping the existing identity");
             }
           }
-        }
-      } else {
-        if (auto itr{mModuleFileNames.find(fileName)};
-            itr == mModuleFileNames.end()) {
-          SMDL_LOG_DEBUG("Adding MDL file ", QuotedPath(fileName));
-          registerModule(Module::loadFromFile(fileName, searchRoot));
-        } else if (itr->second->getSearchRoot() != searchRoot) {
-          // Already added under a different search root: the first
-          // identity wins.
-          SMDL_LOG_WARN("module file ", QuotedPath(fileName),
-                        " was already added as ",
-                        Quoted(itr->second->getQualifiedName()),
-                        "; keeping the existing identity");
-        }
-      }
-    }};
+        }};
     if (auto maybePath{fileLocator.locate(fileOrDirName, {},
                                           FileLocator::REGULAR_FILES |
                                               FileLocator::DIRS)}) {
@@ -341,16 +424,16 @@ Compiler::add(std::string fileOrDirName,
   });
 }
 
-/// Derive the value-dependent static material flags after optimization.
-///
-/// `FunctionType::initializeMaterialFunctions` fills the type-level
-/// (`#isDefault`-derived) bits of `staticFlags`/`staticFlagsKnown` at
-/// emit time and also emits, per material, the `.evaluateOpacity` entry
-/// point and a `.thinWalledProbe` scaffolding function. After the
-/// optimizer runs, a body that reduces to returning a constant proves the
-/// corresponding flag bit for every possible instance, so it is marked
-/// known here; a body that stays runtime (or an unoptimized module) just
-/// leaves the bit unknown, which hosts must treat conservatively.
+// Derive the value-dependent static material flags after optimization.
+//
+// `FunctionType::initializeMaterialFunctions` fills the type-level
+// (`#isDefault`-derived) bits of `staticFlags`/`staticFlagsKnown` at
+// emit time and also emits, per material, the `.evaluateOpacity` entry
+// point and a `.thinWalledProbe` scaffolding function. After the
+// optimizer runs, a body that reduces to returning a constant proves the
+// corresponding flag bit for every possible instance, so it is marked
+// known here; a body that stays runtime (or an unoptimized module) just
+// leaves the bit unknown, which hosts must treat conservatively.
 static void deriveStaticMaterialFlags(llvm::Module &llvmModule,
                                       std::vector<JIT::Material> &materials) {
   // If every 'ret' in the named function returns one identical constant,
@@ -432,23 +515,23 @@ static void deriveStaticMaterialFlags(llvm::Module &llvmModule,
   }
 }
 
-/// Texel addresses only ever enter the IR as `inttoptr` constants of an
-/// image's reservation (see `IntrinsicID::LoadTexture2D`), and any
-/// derived address the optimizer folds to a constant stays inside the
-/// reservation, so the test is interval membership: scan every integer
-/// constant reachable from an instruction operand or global initializer
-/// and mark the reservation it lands in. The failure direction is
-/// conservative by construction: a coincidental in-range constant keeps
-/// an image alive, but a referenced image cannot be missed, because
-/// every access derives its address from one of the baked constants. At
-/// `OPT_LEVEL_NONE` nothing is provably unused because nothing was
-/// dead-code eliminated, and an image whose `startLoad()` failed has no
-/// reservation, so neither is ever dropped here.
+// Texel addresses only ever enter the IR as `inttoptr` constants of an
+// image's reservation (see `IntrinsicID::LoadTexture2D`), and any
+// derived address the optimizer folds to a constant stays inside the
+// reservation, so the test is interval membership: scan every integer
+// constant reachable from an instruction operand or global initializer
+// and mark the reservation it lands in. The failure direction is
+// conservative by construction: a coincidental in-range constant keeps
+// an image alive, but a referenced image cannot be missed, because
+// every access derives its address from one of the baked constants. At
+// `OPT_LEVEL_NONE` nothing is provably unused because nothing was
+// dead-code eliminated, and an image whose `startLoad()` failed has no
+// reservation, so neither is ever dropped here.
 size_t Compiler::dropUnusedImages() {
   const auto &llvmModule{*mLLVMModule};
   struct Interval final {
     uint64_t addressBegin{};
-    /// Inclusive, so a folded one-past-end address still counts.
+    // Inclusive, so a folded one-past-end address still counts.
     uint64_t addressEnd{};
     const MD5FileHash *fileHash{};
     Image *image{};
@@ -587,10 +670,10 @@ std::optional<Error> Compiler::compile(OptLevel optLevel) noexcept {
       for (auto &module_ : mModules)
         if (auto error{module_->compile(context)}) throw std::move(*error);
     }
-    // Sort JIT materials and unit tests by filename and line number in
+    // Sort JIT materials and unit tests by module and line number in
     // case we want to print them later.
-    sortByFileAndLine(mMaterials);
-    sortByFileAndLine(mUnitTests);
+    sortByModuleAndLine(mMaterials);
+    sortByModuleAndLine(mUnitTests);
     // Warn about desired material names that matched nothing at all, so
     // a typo does not silently skip the material it meant to keep.
     for (const auto &desiredName : mDesiredMaterialNames) {
@@ -661,7 +744,7 @@ std::optional<Error>
 Compiler::formatSourceCode(const FormatOptions &formatOptions) noexcept {
   SMDL_PROFILER_ENTRY("Compiler::formatSourceCode()");
   for (auto &module_ : mModules) {
-    if (!module_->isBuiltin()) {
+    if (module_->isFileBacked()) {
       if (auto error{module_->formatSourceCode(formatOptions)}) return error;
     }
   }
@@ -693,11 +776,11 @@ llvm::Module &Compiler::getLLVMModule() {
   return *mLLVMModule;
 }
 
-/// Look up the resource for the given key in `resources`, running `loader`
-/// exactly once per distinct key. The key is the content hash of the file,
-/// possibly extended with load parameters (see `mImages`). A load failure
-/// is a warning, not an error: the resource stays default-constructed and
-/// rendering continues.
+// Look up the resource for the given key in `resources`, running `loader`
+// exactly once per distinct key. The key is the content hash of the file,
+// possibly extended with load parameters (see `mImages`). A load failure
+// is a warning, not an error: the resource stays default-constructed and
+// rendering continues.
 template <typename K, typename T, typename Hash, typename Eq, typename Loader>
 static T &
 loadResource(std::unordered_map<K, std::unique_ptr<T>, Hash, Eq> &resources,
@@ -905,27 +988,27 @@ std::optional<Error> Compiler::jitCompile() noexcept {
     auto llvmJitModule{llvm::orc::ThreadSafeModule(std::move(mLLVMModule),
                                                    std::move(mLLVMContext))};
     llvmThrowIfError(mLLVMJit->addIRModule(std::move(llvmJitModule)));
-    jitLookupOrThrow(mColorToRGB);
-    jitLookupOrThrow(mRGBToColor);
+    jitLookup(mColorToRGB);
+    jitLookup(mRGBToColor);
     for (auto &jitMaterial : mMaterials) {
-      jitLookupOrThrow(jitMaterial.evaluate);
-      jitLookupOrThrow(jitMaterial.evaluateOpacity);
-      jitLookupOrThrow(jitMaterial.displacementEvaluate);
-      jitLookupOrThrow(jitMaterial.volumeEvaluate);
-      jitLookupOrThrow(jitMaterial.scatterEvaluate);
-      jitLookupOrThrow(jitMaterial.scatterSample);
-      jitLookupOrThrow(jitMaterial.emissionEvaluate);
-      jitLookupOrThrow(jitMaterial.emissionSample);
-      jitLookupOrThrow(jitMaterial.volumeScatterEvaluate);
-      jitLookupOrThrow(jitMaterial.volumeScatterSample);
-      jitLookupOrThrow(jitMaterial.hairScatterEvaluate);
-      jitLookupOrThrow(jitMaterial.hairScatterSample);
+      jitLookup(jitMaterial.evaluate);
+      jitLookup(jitMaterial.evaluateOpacity);
+      jitLookup(jitMaterial.displacementEvaluate);
+      jitLookup(jitMaterial.volumeEvaluate);
+      jitLookup(jitMaterial.scatterEvaluate);
+      jitLookup(jitMaterial.scatterSample);
+      jitLookup(jitMaterial.emissionEvaluate);
+      jitLookup(jitMaterial.emissionSample);
+      jitLookup(jitMaterial.volumeScatterEvaluate);
+      jitLookup(jitMaterial.volumeScatterSample);
+      jitLookup(jitMaterial.hairScatterEvaluate);
+      jitLookup(jitMaterial.hairScatterSample);
     }
     for (auto &jitUnitTest : mUnitTests) {
-      jitLookupOrThrow(jitUnitTest.test);
+      jitLookup(jitUnitTest.test);
     }
     for (auto &jitExec : mExecs) {
-      jitLookupOrThrow(jitExec);
+      jitLookup(jitExec);
     }
     // Deallocate everything we no longer need!
     for (auto &mod : mModules) {
@@ -971,8 +1054,8 @@ Compiler::findMaterial(std::string_view materialName) const noexcept try {
     for (const auto *jitMaterial : results) {
       message += "\n  ";
       message +=
-          concat(jitMaterial->qualifiedName, " (", jitMaterial->moduleFileName,
-                 ":", jitMaterial->lineNo, ")");
+          concat(jitMaterial->qualifiedName, " (",
+                 jitMaterial->moduleDisplayName, ":", jitMaterial->lineNo, ")");
     }
     SMDL_LOG_ERROR(message);
     return nullptr;
@@ -1019,10 +1102,10 @@ void Compiler::convertRGBToColor(const State &state, const float3 &rgb,
   mRGBToColor(state, rgb, color);
 }
 
-/// The color scheme of the unit test results, sharing the vocabulary of
-/// the `doc` subcommand's text printer: identity in blue, the name being
-/// reported in cyan, and metadata in grey, plus green and red for the
-/// results themselves.
+// The color scheme of the unit test results, sharing the vocabulary of
+// the `doc` subcommand's text printer: identity in blue, the name being
+// reported in cyan, and metadata in grey, plus green and red for the
+// results themselves.
 static constexpr auto testColorFile{llvm::HighlightColor::Tag};
 static constexpr auto testColorName{llvm::HighlightColor::Attribute};
 static constexpr auto testColorMetadata{llvm::HighlightColor::Note};
@@ -1044,11 +1127,11 @@ std::optional<Error> Compiler::runUnitTests(const State &state) noexcept {
         colorMode == COLOR_MODE_ALWAYS  ? llvm::ColorMode::Enable
         : colorMode == COLOR_MODE_NEVER ? llvm::ColorMode::Disable
                                         : llvm::ColorMode::Auto};
-    forEachFileGroup(
+    forEachModuleGroup(
         mUnitTests.begin(), mUnitTests.end(), [&](auto itr0, auto itr1) {
           os << "Running tests in ";
           llvm::WithColor(os, testColorFile, llvmColorMode)
-              << concat(QuotedPath(itr0->moduleFileName));
+              << concat(QuotedPath(itr0->moduleDisplayName));
           os << ":\n";
           for (; itr0 != itr1; ++itr0) {
             os << "  ";
@@ -1107,9 +1190,9 @@ std::string Compiler::printMaterialSummary() const {
     return flags;
   }};
   std::string message{};
-  forEachFileGroup(
+  forEachModuleGroup(
       mMaterials.begin(), mMaterials.end(), [&](auto itr0, auto itr1) {
-        message += concat(QuotedPath(itr0->moduleFileName), " contains ",
+        message += concat(QuotedPath(itr0->moduleDisplayName), " contains ",
                           itr1 - itr0, " materials:\n");
         for (; itr0 != itr1; ++itr0) {
           message += "  ";
@@ -1125,10 +1208,10 @@ std::string Compiler::printMaterialSummary() const {
 #if SMDL_HAS_PTEX
 namespace {
 
-/// Per-thread Ptex filters: 'PtexFilter::eval' mutates filter members, so
-/// render threads must not share one filter instance. Each filter holds a
-/// reference on its 'PtexTexture', so a cached filter stays memory-safe
-/// even after the compiler releases the texture on recompile.
+// Per-thread Ptex filters: 'PtexFilter::eval' mutates filter members, so
+// render threads must not share one filter instance. Each filter holds a
+// reference on its 'PtexTexture', so a cached filter stays memory-safe
+// even after the compiler releases the texture on recompile.
 class ThreadLocalPtexFilters final {
 public:
   ~ThreadLocalPtexFilters() {

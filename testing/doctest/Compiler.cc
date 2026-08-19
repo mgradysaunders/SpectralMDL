@@ -1757,3 +1757,191 @@ TEST_CASE("Compiler wavelengthBaseMax") {
   }
   fs::remove_all(tmpDir);
 }
+
+TEST_CASE("Compiler addSourceCode") {
+  auto tmpDir{fs::temp_directory_path() / "smdl-source-code-test"};
+  fs::remove_all(tmpDir);
+  // The render state the unit tests below run against.
+  auto runUnitTests{[](smdl::Compiler &compiler) {
+    auto allocator{smdl::BumpPtrAllocator()};
+    auto wavelengths{std::vector<float>(size_t(compiler.wavelengthBaseMax))};
+    auto state{smdl::State()};
+    state.allocator = &allocator;
+    state.wavelength_min = 380.0f;
+    state.wavelength_max = 720.0f;
+    state.wavelength_base = wavelengths.data();
+    for (uint32_t i = 0; i < compiler.wavelengthBaseMax; i++) {
+      float fac{float(i) / float(compiler.wavelengthBaseMax - 1)};
+      wavelengths[i] =
+          (1 - fac) * state.wavelength_min + fac * state.wavelength_max;
+    }
+    if (auto error{compiler.runUnitTests(state)}) return error->message;
+    return std::string();
+  }};
+  SUBCASE("Source code compiles as a module with no file") {
+    smdl::Compiler compiler{};
+    REQUIRE(!compiler.addSourceCode("::host::mats", "#smdl\nimport ::df::*;\n" +
+                                                        materialDef("mat_ok")));
+    REQUIRE(!compiler.compile(smdl::OPT_LEVEL_NONE));
+    REQUIRE(!compiler.jitCompile());
+    auto material{compiler.findMaterial("mat_ok")};
+    REQUIRE(material != nullptr);
+    CHECK(material->qualifiedName == "::host::mats::mat_ok");
+    CHECK(material->moduleName == "mats");
+    CHECK(material->moduleFileName.empty());
+    CHECK(material->moduleDisplayName == "<string ::host::mats>");
+  }
+  SUBCASE("The leading '::' is optional") {
+    smdl::Compiler compiler{};
+    auto source{"#smdl\nimport ::df::*;\n" + materialDef("mat_ok")};
+    REQUIRE(!compiler.addSourceCode("host::mats", source));
+    // The same name and the same source code again is a no-op, so a host
+    // may register its defaults defensively.
+    CHECK(!compiler.addSourceCode("::host::mats", source));
+    REQUIRE(!compiler.compile(smdl::OPT_LEVEL_NONE));
+    REQUIRE(!compiler.jitCompile());
+    CHECK(compiler.findMaterials("mat_ok").size() == 1);
+  }
+  SUBCASE("A different body under a taken name is an error") {
+    smdl::Compiler compiler{};
+    REQUIRE(
+        !compiler.addSourceCode("::host", "#smdl\nexport const int x = 1;\n"));
+    auto error{
+        compiler.addSourceCode("::host", "#smdl\nexport const int x = 2;\n")};
+    REQUIRE(error.has_value());
+    CHECK(error->message.find("already taken") != std::string::npos);
+    CHECK(error->message.find("<string ::host>") != std::string::npos);
+  }
+  SUBCASE("A name taken by a file module is an error") {
+    writeFile(tmpDir / "root" / "util.mdl", "#smdl\nexport const int x = 1;\n");
+    smdl::Compiler compiler{};
+    REQUIRE(!compiler.add((tmpDir / "root").string()));
+    auto error{
+        compiler.addSourceCode("::util", "#smdl\nexport const int x = 2;\n")};
+    REQUIRE(error.has_value());
+    CHECK(error->message.find("already taken") != std::string::npos);
+  }
+  SUBCASE("A file module added later is shadowed, not an error") {
+    writeFile(tmpDir / "root" / "host.mdl",
+              "#smdl\nimport ::df::*;\n" + materialDef("from_file"));
+    smdl::Compiler compiler{};
+    REQUIRE(!compiler.addSourceCode("::host", "#smdl\nimport ::df::*;\n" +
+                                                  materialDef("from_string")));
+    REQUIRE(!compiler.add((tmpDir / "root").string()));
+    REQUIRE(!compiler.compile(smdl::OPT_LEVEL_NONE));
+    REQUIRE(!compiler.jitCompile());
+    // The earliest added module wins the qualified name, exactly as it
+    // does across search roots, so the file is the one shadowed here.
+    CHECK(compiler.findMaterial("from_string") != nullptr);
+    CHECK(compiler.findMaterial("from_file") == nullptr);
+  }
+  SUBCASE("Invalid module names are rejected") {
+    smdl::Compiler compiler{};
+    for (const char *moduleName :
+         {"", "::", "a::", "::a::::b", "1bad", "a b", "a-b"}) {
+      auto error{compiler.addSourceCode(moduleName, "#smdl\n")};
+      CAPTURE(moduleName);
+      CHECK(error.has_value());
+    }
+  }
+  SUBCASE("Modules import each other by qualified name") {
+    writeFile(tmpDir / "root" / "util.mdl",
+              "#smdl\nexport const int marker_file = 1;\n");
+    writeFile(tmpDir / "root" / "main.mdl",
+              "#smdl\nimport ::df::*;\nimport ::host::consts::*;\n"
+              "export const int echo = host::consts::marker_host;\n" +
+                  materialDef("main_ok"));
+    smdl::Compiler compiler{};
+    REQUIRE(!compiler.addSourceCode(
+        "::host::consts",
+        "#smdl\nimport ::util::*;\n"
+        "export const int marker_host = util::marker_file + 1;\n"));
+    REQUIRE(!compiler.add((tmpDir / "root").string()));
+    REQUIRE(!compiler.compile(smdl::OPT_LEVEL_NONE));
+    REQUIRE(!compiler.jitCompile());
+    CHECK(compiler.findMaterial("main_ok") != nullptr);
+  }
+  SUBCASE("A compile error names the module it came from") {
+    smdl::Compiler compiler{};
+    REQUIRE(!compiler.addSourceCode("::host::bad",
+                                    "#smdl\nimport ::nonexistent::*;\n"));
+    auto error{compiler.compile(smdl::OPT_LEVEL_NONE)};
+    REQUIRE(error.has_value());
+    CHECK(error->message.find("[<string ::host::bad>:2]") != std::string::npos);
+  }
+  SUBCASE("Unit tests run") {
+    smdl::Compiler compiler{};
+    compiler.enableUnitTests = true;
+    REQUIRE(!compiler.addSourceCode("::host::tests",
+                                    "#smdl\nunit_test \"Arithmetic\" {\n"
+                                    "  int i = 2;\n"
+                                    "  #assert(i + i == 4);\n}\n"));
+    REQUIRE(!compiler.compile(smdl::OPT_LEVEL_NONE));
+    REQUIRE(!compiler.jitCompile());
+    CHECK(runUnitTests(compiler) == "");
+  }
+  SUBCASE("The source code outlives the string it was given") {
+    smdl::Compiler compiler{};
+    {
+      auto source{"#smdl\nimport ::df::*;\n" + materialDef("mat_ok")};
+      REQUIRE(!compiler.addSourceCode("::host::mats", source));
+    }
+    // Twice, because 'compile()' resets and re-parses every module: a
+    // module of source code has no file to read back.
+    for (int i = 0; i < 2; i++) {
+      REQUIRE(!compiler.compile(smdl::OPT_LEVEL_NONE));
+      REQUIRE(!compiler.jitCompile());
+      CHECK(compiler.findMaterial("mat_ok") != nullptr);
+    }
+  }
+  SUBCASE("An anchor directory resolves relative paths") {
+    const uint8_t texels[4] = {16, 32, 48, 64};
+    fs::create_directories(tmpDir / "anchor");
+    REQUIRE(!smdl::write8bitImage((tmpDir / "anchor" / "wood.png").string(), 2,
+                                  2, 1, texels));
+    writeFile(tmpDir / "anchor" / "helper.mdl",
+              "#smdl\nexport const int marker = 3;\n");
+    // Explicitly relative, so this resolves against the module's own
+    // directory and nothing else.
+    auto source{std::string("#smdl\nimport ::tex::*;\n"
+                            "import .::helper::marker;\n"
+                            "unit_test \"Anchored\" {\n"
+                            "  #assert(helper::marker == 3);\n"
+                            "  const auto t = texture_2d(\"wood.png\", "
+                            "tex::gamma_linear);\n"
+                            "  #assert(tex::texture_isvalid(t));\n}\n")};
+    auto build{[&](const std::string &anchorDirectory) {
+      smdl::Compiler compiler{};
+      compiler.enableUnitTests = true;
+      if (auto error{compiler.add((tmpDir / "anchor").string())})
+        return error->message;
+      if (auto error{
+              compiler.addSourceCode("::host::mats", source, anchorDirectory)})
+        return error->message;
+      if (auto error{compiler.compile(smdl::OPT_LEVEL_NONE)})
+        return error->message;
+      if (auto error{compiler.jitCompile()}) return error->message;
+      return runUnitTests(compiler);
+    }};
+    CHECK(build((tmpDir / "anchor").string()) == "");
+    // Without the anchor the relative import has nothing to resolve
+    // against.
+    CHECK(build("") != "");
+    // An anchor that is not a directory is refused outright.
+    smdl::Compiler compiler{};
+    auto error{compiler.addSourceCode("::host::mats", source,
+                                      (tmpDir / "nowhere").string())};
+    REQUIRE(error.has_value());
+    CHECK(error->message.find("not an existing directory") !=
+          std::string::npos);
+  }
+  SUBCASE("A name that matches a builtin module is warned about") {
+    auto &warned{smdl::Logger::get().addSink<MessageCollector>(
+        "same name as a builtin")};
+    smdl::Compiler compiler{};
+    CHECK(!compiler.addSourceCode("::df", "#smdl\nexport const int x = 1;\n"));
+    CHECK(warned.messages.size() == 1);
+    smdl::Logger::get().reset();
+  }
+  fs::remove_all(tmpDir);
+}
