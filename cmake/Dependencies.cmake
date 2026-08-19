@@ -49,6 +49,11 @@ endif()
 # branches, which takes forever. For this reason, we use `execute_process`
 # to the clone manually into our build directory, then `add_subdirectory`
 # to incorporate it into our CMake build.
+
+# The oldest LLVM whose API this compiles against, and the tag that
+# SMDL_BUILD_LLVM clones when there is no suitable installation to find.
+set(SMDL_LLVM_VERSION_MIN "22.1.0")
+set(SMDL_LLVM_TAG "llvmorg-22.1.8")
 if(SMDL_BUILD_LLVM)
   # Fail now rather than after spending several minutes cloning LLVM.
   if(NOT SMDL_ARCH)
@@ -60,12 +65,13 @@ if(SMDL_BUILD_LLVM)
       "in 'cmake/NativeArch.cmake' or set SMDL_LLVM_ARCH to the backend name "
       "(for example 'X86' or 'AArch64').")
   endif()
+  message(STATUS "LLVM: building ${SMDL_LLVM_TAG} in tree")
   execute_process(
     COMMAND
       "git"
       "clone"
       "--depth=1"
-      "--branch=llvmorg-22.1.8"
+      "--branch=${SMDL_LLVM_TAG}"
       "https://github.com/llvm/llvm-project"
       "llvm-project"
     WORKING_DIRECTORY "${CMAKE_BINARY_DIR}"
@@ -92,7 +98,18 @@ if(SMDL_BUILD_LLVM)
     "${CMAKE_BINARY_DIR}/llvm-project-build/include"
   )
 else()
+  # Do not pass the version to 'find_package'. LLVM ships a hand written
+  # 'LLVMConfigVersion.cmake' that treats the request as an exact major.minor
+  # match with a patch floor, so asking for 22.1.0 would reject 22.2 and every
+  # later release, and fail with a generic message instead of this one.
   find_package(LLVM REQUIRED)
+  if(LLVM_PACKAGE_VERSION VERSION_LESS SMDL_LLVM_VERSION_MIN)
+    message(FATAL_ERROR
+      "SpectralMDL needs LLVM ${SMDL_LLVM_VERSION_MIN} or newer, but found "
+      "${LLVM_PACKAGE_VERSION} at '${LLVM_DIR}'. Point CMAKE_PREFIX_PATH at a "
+      "newer LLVM, or configure -DSMDL_BUILD_LLVM=ON to build one.")
+  endif()
+  message(STATUS "LLVM: ${LLVM_PACKAGE_VERSION} (${LLVM_DIR})")
   # LLVM computed this from its own host triple, and it is the last word:
   # 'llvm-config.h' defines LLVM_NATIVE_TARGET as
   # 'LLVMInitialize${LLVM_NATIVE_ARCH}Target', so this is literally the
