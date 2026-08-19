@@ -13,9 +13,9 @@ namespace fs = std::filesystem;
 
 using smdl::float3;
 
-/// Write a version-3 Mitsuba volume: the 48-byte header, then the
-/// single-channel float32 values x-fastest. Assumes a little-endian
-/// host, like the loader's own test fixtures elsewhere.
+// Write a version-3 Mitsuba volume: the 48-byte header, then the
+// single-channel float32 values x-fastest. Assumes a little-endian
+// host, like the loader's own test fixtures elsewhere.
 static void writeVol(const std::string &fileName, int nx, int ny, int nz,
                      const std::vector<float> &values, int32_t encoding = 1,
                      int32_t numChannels = 1) {

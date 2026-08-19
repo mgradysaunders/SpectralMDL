@@ -2,6 +2,7 @@
 
 #include "smdl/Support/Logger.h"
 
+#include <map>
 #include <set>
 
 EnvLight::EnvLight(const std::string &filename, float scaleFactor)
@@ -107,8 +108,135 @@ float3 EnvLight::Li_sample(smdl::Compiler &compiler, const smdl::State &state,
   return wi;
 }
 
+// The quadrature width of each wavelength band in nanometers, for
+// normalizing a spectral shape to unit integral over the render band:
+// the render-wide trapezoid weights when the grid is non-uniform, the
+// uniform spacing otherwise, and 1 for a single-band render, where
+// "per nanometer" degenerates to a plain per-band value.
+[[nodiscard]] static std::vector<float> bandWidths(const Color &wavelengths) {
+  if (const auto &weights{renderWavelengthWeights()}; !weights.empty())
+    return weights;
+  auto widths{std::vector<float>(wavelengths.size(), 1.0f)};
+  if (wavelengths.size() > 1) {
+    const float spacing{(wavelengths[wavelengths.size() - 1] - wavelengths[0]) /
+                        float(wavelengths.size() - 1)};
+    for (auto &width : widths) width = spacing;
+  }
+  return widths;
+}
+
+PunctualLight::PunctualLight(smdl::Compiler &compiler, const smdl::State &state,
+                             const Color &wavelengths, const LayoutLight &light,
+                             std::shared_ptr<const smdl::LightProfile> profile)
+    : mKind(light.decl.kind), mIntensity(wavelengths.size()),
+      mProfile(std::move(profile)) {
+  const auto &decl{light.decl};
+  const auto &xf{light.lightToWorld};
+  mPosition = float3(xf[3]);
+  auto column{[&](int i) {
+    auto v{float3(xf[i])};
+    return smdl::tryNormalize(v) ? v : float3(i == 0, i == 1, i == 2);
+  }};
+  mLocalX = column(0);
+  mLocalY = column(1);
+  mLocalZ = column(2);
+  // The spectral shape: blackbody or flat, normalized to unit integral
+  // over the render band, then the RGB tint applied WITHOUT
+  // renormalizing, so tinting dims the way dimming a lamp does.
+  auto shape{Color(1.0f)};
+  if (decl.temperature > 0) {
+    for (size_t i = 0; i < wavelengths.size(); i++) {
+      const float lambda{wavelengths[i] * 1.0e-3f}; // micrometers
+      constexpr float c2 = 1.4388e4f;               // micrometer kelvins
+      shape[i] = 1.0f / (lambda * lambda * lambda * lambda * lambda *
+                         std::expm1(c2 / (lambda * decl.temperature)));
+    }
+  }
+  const auto widths{bandWidths(wavelengths)};
+  double integral{};
+  for (size_t i = 0; i < wavelengths.size(); i++)
+    integral += double(shape[i]) * widths[i];
+  if (integral > 0) shape *= float(1.0 / integral);
+  if (decl.color.x != 1.0f || decl.color.y != 1.0f || decl.color.z != 1.0f) {
+    auto tint{Color()};
+    compiler.convertRGBToColor(state, decl.color, tint.data());
+    shape *= tint;
+  }
+  // What fraction of the (unit) power the tint leaves.
+  double tintedIntegral{};
+  for (size_t i = 0; i < wavelengths.size(); i++)
+    tintedIntegral += double(shape[i]) * widths[i];
+  // The per-kind directional intensity scale.
+  float intensityScale{};
+  switch (mKind) {
+  case LayoutLightDecl::Kind::POINT:
+    intensityScale = decl.power / (4.0f * PI);
+    mPower = decl.power * float(tintedIntegral);
+    break;
+  case LayoutLightDecl::Kind::SPOT: {
+    mCosOuter = std::cos(decl.spotAngle * PI / 180.0f * 0.5f);
+    mCosInner =
+        std::cos(decl.spotAngle * PI / 180.0f * 0.5f * (1.0f - decl.spotBlend));
+    // The peak from the power: the falloff is a smoothstep in the
+    // cosine, whose mean over the blend band is exactly 1/2.
+    const float solidAngle{2.0f * PI *
+                           ((1.0f - mCosInner) + (mCosInner - mCosOuter) / 2)};
+    intensityScale = decl.power / std::max(solidAngle, 1.0e-6f);
+    mPower = decl.power * float(tintedIntegral);
+    break;
+  }
+  case LayoutLightDecl::Kind::PROFILE: {
+    // The profile's intensities are already broadband W/sr, so the
+    // scale is per unit, renormalized to `power` watts when given.
+    intensityScale = decl.scale;
+    if (decl.powerSet) {
+      const float profilePower{mProfile->power()};
+      if (profilePower > 0) intensityScale = decl.power / profilePower;
+    }
+    mPower = mProfile->power() * intensityScale * float(tintedIntegral);
+    break;
+  }
+  }
+  for (size_t i = 0; i < wavelengths.size(); i++)
+    mIntensity[i] = intensityScale * shape[i];
+}
+
+Color PunctualLight::Li(const float3 &point,
+                        float metersPerSceneUnit) const noexcept {
+  auto direction{point - mPosition};
+  const float distSq{lengthSquared(direction)};
+  if (!(distSq > 0)) return Color(0.0f);
+  direction = normalize(direction);
+  float factor{1.0f};
+  if (mKind == LayoutLightDecl::Kind::SPOT) {
+    // Emission aims along the local -Z axis, full intensity inside the
+    // inner cone, smoothstepped in the cosine down to zero at the outer.
+    const float cosTheta{dot(direction, -mLocalZ)};
+    if (!(cosTheta > mCosOuter)) return Color(0.0f);
+    if (cosTheta < mCosInner) {
+      const float t{(cosTheta - mCosOuter) / (mCosInner - mCosOuter)};
+      factor = t * t * (3.0f - 2.0f * t);
+    }
+  } else if (mKind == LayoutLightDecl::Kind::PROFILE) {
+    // The profile's polar axis is the local Z axis with its photometric
+    // zero (the nadir of a typical luminaire) along local -Z, matching
+    // the spot convention, so the Z component flips going into
+    // `LightProfile::interpolate`, whose zero vertical angle is at +Z.
+    factor = mProfile->interpolate(float3(dot(direction, mLocalX),
+                                          dot(direction, mLocalY),
+                                          -dot(direction, mLocalZ)));
+    if (!(factor > 0)) return Color(0.0f);
+  }
+  const float distSqMeters{distSq * metersPerSceneUnit * metersPerSceneUnit};
+  auto Li{Color(mIntensity)};
+  Li *= factor / distSqMeters;
+  return Li;
+}
+
 LightSampler::LightSampler(smdl::Compiler &compiler, const Scene &scene,
-                           const EnvLight *envLight, const Color &wavelengths)
+                           const EnvLight *envLight,
+                           const std::vector<LayoutLight> &layoutLights,
+                           const Color &wavelengths)
     : compiler(compiler), scene(scene), envLight(envLight) {
   auto allocator{smdl::BumpPtrAllocator()};
   auto weights{std::vector<float>()};
@@ -233,13 +361,39 @@ LightSampler::LightSampler(smdl::Compiler &compiler, const Scene &scene,
     weights.push_back(weight);
     allocator.reset();
   }
+  if (!layoutLights.empty()) {
+    // One profile per distinct resolved path, shared between its
+    // placements: a layout that scatters a hundred streetlights loads
+    // the IES file once.
+    auto profiles{
+        std::map<std::string, std::shared_ptr<const smdl::LightProfile>>()};
+    auto state{makeRenderState(wavelengths)};
+    punctualLights.reserve(layoutLights.size());
+    for (const auto &layoutLight : layoutLights) {
+      auto profile{std::shared_ptr<const smdl::LightProfile>()};
+      if (layoutLight.decl.kind == LayoutLightDecl::Kind::PROFILE) {
+        auto &cached{profiles[layoutLight.decl.profilePath]};
+        if (!cached) {
+          auto loaded{std::make_shared<smdl::LightProfile>()};
+          if (auto error{loaded->loadFromFile(layoutLight.decl.profilePath)})
+            error->printAndExit();
+          cached = std::move(loaded);
+        }
+        profile = cached;
+      }
+      auto &light{punctualLights.emplace_back(compiler, state, wavelengths,
+                                              layoutLight, std::move(profile))};
+      weights.push_back(light.power());
+    }
+  }
   if (envLight) {
     // Treat the environment as shining on a disk of the scene radius.
     float radius{std::max(scene.boundRadius, 1.0f)};
     weights.push_back(envLight->averageRadiance() * PI * radius * radius);
   }
   if (!weights.empty()) lightDistr = smdl::Distribution1D(weights);
-  SMDL_LOG_DEBUG("Light sampler: ", areaLights.size(), " area light(s)",
+  SMDL_LOG_DEBUG("Light sampler: ", areaLights.size(), " area light(s), ",
+                 punctualLights.size(), " punctual light(s)",
                  envLight ? ", plus the environment" : "");
 }
 
@@ -249,13 +403,29 @@ bool LightSampler::sample(smdl::State state, Sampler &sampler,
   float selectPMF{};
   int lightIndex{lightDistr.indexSample(float(sampler), nullptr, &selectPMF)};
   if (!(selectPMF > 0)) return false;
-  if (envLight && lightIndex == int(areaLights.size())) {
+  lightSample.isDelta = false;
+  if (envLight &&
+      lightIndex == int(areaLights.size() + punctualLights.size())) {
     float dirPDF{};
     lightSample.wi = envLight->Li_sample(compiler, state, float2(sampler),
                                          dirPDF, lightSample.Li);
     if (!(dirPDF > 0)) return false;
     lightSample.pdf = selectPMF * dirPDF;
     lightSample.target = point + 2.0f * scene.boundRadius * lightSample.wi;
+    return true;
+  }
+  if (lightIndex >= int(areaLights.size())) {
+    // A punctual light: the direction is a Dirac, so the pdf is the
+    // selection PMF alone and `Li` carries the inverse-square falloff.
+    const auto &light{punctualLights[lightIndex - int(areaLights.size())]};
+    auto direction{light.position() - point};
+    if (!(lengthSquared(direction) > 0)) return false;
+    lightSample.Li = light.Li(point, state.meters_per_scene_unit);
+    if (lightSample.Li.isAllZero()) return false;
+    lightSample.wi = normalize(direction);
+    lightSample.pdf = selectPMF;
+    lightSample.target = light.position();
+    lightSample.isDelta = true;
     return true;
   }
   const auto &light{areaLights[lightIndex]};

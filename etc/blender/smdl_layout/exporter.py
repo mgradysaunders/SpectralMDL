@@ -847,6 +847,90 @@ def sky_block(scene):
     return ["sky {"] + lines + ["}"]
 
 
+def light_ies_path(light):
+    """The IES file an SMDL profile light can read, or "".
+
+    Blender attaches IES data through an IES Texture node on the light,
+    which is read here exactly as `world_environment_image` reads the
+    world's environment node: a filepath lifted from the tree, never the
+    shading behind it. IES text embedded in the .blend has no file to
+    name, so it does not export.
+    """
+    if not light.use_nodes or light.node_tree is None:
+        return ""
+    for node in light.node_tree.nodes:
+        if node.type == "TEX_IES" and node.mode == "EXTERNAL" and node.filepath:
+            path = bpy.path.abspath(node.filepath)
+            if path:
+                return os.path.abspath(path)
+    return ""
+
+
+def light_blocks(scene, problems):
+    """The scene's point and spot lamps as `light` declarations plus one
+    `place` per lamp, or nothing.
+
+    A sun lamp belongs to `sky_block` and an area lamp is really an
+    emissive material on a shape, which is the user's to author, so both
+    are left out; area lamps get a problem note rather than silence.
+
+    Blender treats a spot as a point lamp with a cone mask, so its
+    `energy` is the power of the full sphere and the cone keeps only its
+    share; the layout's `power` is what the cone actually emits, so the
+    export scales by the cone's solid-angle fraction and the on-axis
+    intensity comes out identical.
+    """
+    lines = []
+    names = set()
+    for ob in scene.objects:
+        if ob.type != "LIGHT" or not ob.visible_get():
+            continue
+        light = ob.data
+        if light.type == "AREA":
+            problems.append(f"the area lamp {ob.name!r} does not export; "
+                            f"model it as a disk or plane with an emissive "
+                            f"material instead")
+            continue
+        if light.type not in ("POINT", "SPOT"):
+            continue
+        name = "light_" + to_identifier(ob.name)
+        while name in names:
+            name += "_"
+        names.add(name)
+        ies = light_ies_path(light)
+        settings = []
+        if light.type == "SPOT":
+            angle = math.degrees(light.spot_size)
+            blend = light.spot_blend
+            cos_outer = math.cos(light.spot_size / 2)
+            cos_inner = math.cos(light.spot_size / 2 * (1 - blend))
+            fraction = ((1 - cos_inner) + (cos_inner - cos_outer) / 2) / 2
+            power = light.energy * fraction
+            head = f"light {name} = spot {{"
+            settings.append(f"  power {power:.9g}")
+            settings.append(f"  angle {angle:.9g}")
+            if blend > 0:
+                settings.append(f"  blend {blend:.9g}")
+        elif ies:
+            head = f'light {name} = profile "{ies}" {{'
+            settings.append(f"  power {light.energy:.9g}")
+        else:
+            head = f"light {name} = point {{"
+            settings.append(f"  power {light.energy:.9g}")
+        if getattr(light, "use_temperature", False):
+            settings.append(f"  temperature {light.temperature:.9g}")
+        color = tuple(light.color)
+        if color != (1.0, 1.0, 1.0):
+            settings.append(f"  color {color[0]:.9g} {color[1]:.9g} "
+                            f"{color[2]:.9g}")
+        lines.append(head)
+        lines.extend(settings)
+        lines.append("}")
+        lines.extend(place_lines(name, ob.matrix_world))
+        lines.append("")
+    return lines
+
+
 def is_mdl_identifier(name):
     if not name or not (name[0].isalpha() or name[0] == "_"):
         return False
@@ -1454,6 +1538,7 @@ def write_scene(context, filepath, asset_root="", bake=True, collection=None,
                                 f"identifier, so an alias was written for it")
         lines.append("")
 
+    lines.extend(light_blocks(context.scene, problems))
     lines.extend(sky_block(context.scene))
     if lines and lines[-1] == "}":
         lines.append("")

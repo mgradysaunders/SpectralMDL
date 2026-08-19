@@ -72,15 +72,15 @@ class SkipPlacement final {};
 class Target final {
 public:
   enum class Kind {
-    MESH,   ///< A mesh file, `correction` applied if it came via an asset.
-    CURVES, ///< A `.curves` fiber file; `correction` applies the same way.
-    LAYOUT, ///< Another layout, to be recursed into.
+    MESH,   // A mesh file, `correction` applied if it came via an asset.
+    CURVES, // A `.curves` fiber file; `correction` applies the same way.
+    LAYOUT, // Another layout, to be recursed into.
   };
   Kind kind{Kind::MESH};
   std::string path{};
   float4x4 correction{float4x4(1.0f)};
 
-  /// The kind as a diagnostic spells it.
+  // The kind as a diagnostic spells it.
   [[nodiscard]] std::string_view kindName() const noexcept {
     return kind == Kind::LAYOUT   ? "layout"
            : kind == Kind::CURVES ? "curves file"
@@ -170,9 +170,10 @@ private:
     }
     auto usedAssets{std::vector<bool>(document.assets.size(), false)};
     auto usedGroups{std::vector<bool>(document.groups.size(), false)};
+    auto usedLights{std::vector<bool>(document.lights.size(), false)};
     auto groupStack{std::vector<GroupFrame>()};
     lowerPlacements(document, document.placements, xf, outerRenames, usedAssets,
-                    usedGroups, groupStack, std::string());
+                    usedGroups, usedLights, groupStack, std::string());
     for (size_t i = 0; i < document.assets.size(); i++)
       if (!usedAssets[i])
         mDiags.warn(document.assets[i].nameLocation,
@@ -183,10 +184,15 @@ private:
         mDiags.warn(document.groups[i].nameLocation,
                     smdl::concat("unused group ",
                                  smdl::Quoted(document.groups[i].name)));
+    for (size_t i = 0; i < document.lights.size(); i++)
+      if (!usedLights[i])
+        mDiags.warn(document.lights[i].nameLocation,
+                    smdl::concat("unused light ",
+                                 smdl::Quoted(document.lights[i].name)));
   }
 
-  /// One `place` of a group on the lowering stack, for cycle detection
-  /// and for the chain the cycle error reports.
+  // One `place` of a group on the lowering stack, for cycle detection
+  // and for the chain the cycle error reports.
   class GroupFrame final {
   public:
     const LayoutGroupDecl *group{};
@@ -198,13 +204,14 @@ private:
                        const float4x4 &xf, const RenameMap &outerRenames,
                        std::vector<bool> &usedAssets,
                        std::vector<bool> &usedGroups,
+                       std::vector<bool> &usedLights,
                        std::vector<GroupFrame> &groupStack,
                        const std::string &namePrefix) {
     for (const auto &placement : placements) {
       try {
         if (placement.kind == LayoutPlacement::Kind::PLACE) {
           lowerPlace(document, placement, xf, outerRenames, usedAssets,
-                     usedGroups, groupStack, namePrefix);
+                     usedGroups, usedLights, groupStack, namePrefix);
         } else {
           lowerImport(document, placement, xf, outerRenames);
         }
@@ -218,7 +225,7 @@ private:
   void lowerPlace(const LayoutDocument &document,
                   const LayoutPlacement &placement, const float4x4 &xf,
                   const RenameMap &outerRenames, std::vector<bool> &usedAssets,
-                  std::vector<bool> &usedGroups,
+                  std::vector<bool> &usedGroups, std::vector<bool> &usedLights,
                   std::vector<GroupFrame> &groupStack,
                   const std::string &namePrefix) {
     const auto placeName{placement.asName.empty() ? namePrefix
@@ -240,15 +247,25 @@ private:
           usedGroups[i] = true;
           break;
         }
-    if (!decl && !group) {
+    const LayoutLightDecl *light{};
+    if (!decl && !group)
+      for (size_t i = 0; i < document.lights.size(); i++)
+        if (document.lights[i].name == placement.assetName) {
+          light = &document.lights[i];
+          usedLights[i] = true;
+          break;
+        }
+    if (!decl && !group && !light) {
       auto &error{
           mDiags.error(placement.assetNameLocation,
-                       smdl::concat("no asset or group named ",
+                       smdl::concat("no asset, group, or light named ",
                                     smdl::Quoted(placement.assetName)))};
       auto candidates{std::vector<std::string_view>()};
       for (const auto &asset : document.assets)
         candidates.push_back(asset.name);
       for (const auto &declared : document.groups)
+        candidates.push_back(declared.name);
+      for (const auto &declared : document.lights)
         candidates.push_back(declared.name);
       if (const auto nearest{
               smdl::suggestNearest(placement.assetName, candidates)};
@@ -257,6 +274,13 @@ private:
                    smdl::concat("did you mean ", smdl::Quoted(nearest), "?"));
       throw SkipPlacement();
     }
+    // A light has no material slots, so a place-site override on one is a
+    // statement that does nothing; say so rather than silently ignore it.
+    if (light && (!placement.overrides.empty() || !placement.variants.empty()))
+      mDiags.warn(placement.assetNameLocation,
+                  smdl::concat("material overrides on the light ",
+                               smdl::Quoted(placement.assetName),
+                               " have no effect"));
     // The place's own overrides apply outside everything the target says
     // for itself, and inside everything above: each syntactic enclosure
     // adds its rename layer one step further out.
@@ -324,8 +348,9 @@ private:
         checkAssetTargetKind(*decl, target);
       if (!batchable) {
         for (size_t i = 0; i < places.transforms.size(); i++)
-          lowerPlaceTarget(document, decl, group, placement.assetNameLocation,
-                           recordXf(i), outerFor(i), usedAssets, usedGroups,
+          lowerPlaceTarget(document, decl, group, light,
+                           placement.assetNameLocation, recordXf(i),
+                           outerFor(i), usedAssets, usedGroups, usedLights,
                            groupStack, placeName);
         return;
       }
@@ -373,20 +398,33 @@ private:
       }
       return;
     }
-    lowerPlaceTarget(document, decl, group, placement.assetNameLocation,
+    lowerPlaceTarget(document, decl, group, light, placement.assetNameLocation,
                      xf * placement.transform, baseOuter, usedAssets,
-                     usedGroups, groupStack, placeName);
+                     usedGroups, usedLights, groupStack, placeName);
   }
 
-  /// One resolved placement of `decl` or `group` (exactly one is set)
-  /// under the fully combined placement transform: the shared tail of
-  /// the ordinary and bulk `place` forms.
+  // One resolved placement of `decl`, `group`, or `light` (exactly one
+  // is set) under the fully combined placement transform: the shared
+  // tail of the ordinary and bulk `place` forms.
   void lowerPlaceTarget(
       const LayoutDocument &document, const LayoutAssetDecl *decl,
-      const LayoutGroupDecl *group, const LayoutLocation &nameLocation,
-      const float4x4 &combinedXf, const RenameMap &effectiveOuter,
-      std::vector<bool> &usedAssets, std::vector<bool> &usedGroups,
+      const LayoutGroupDecl *group, const LayoutLightDecl *lightDecl,
+      const LayoutLocation &nameLocation, const float4x4 &combinedXf,
+      const RenameMap &effectiveOuter, std::vector<bool> &usedAssets,
+      std::vector<bool> &usedGroups, std::vector<bool> &usedLights,
       std::vector<GroupFrame> &groupStack, const std::string &placeName) {
+    if (lightDecl) {
+      auto &light{mResult.lights.emplace_back()};
+      light.decl = *lightDecl;
+      light.lightToWorld = combinedXf * lightDecl->transform;
+      light.placeName = placeName;
+      if (lightDecl->kind == LayoutLightDecl::Kind::PROFILE)
+        light.decl.profilePath =
+            resolvePath(document, lightDecl->profilePath,
+                        lightDecl->profilePathLocation, true)
+                .string();
+      return;
+    }
     if (group) {
       for (const auto &frame : groupStack)
         if (frame.group == group) {
@@ -404,7 +442,8 @@ private:
         }
       groupStack.push_back({group, nameLocation});
       lowerPlacements(document, group->placements, combinedXf, effectiveOuter,
-                      usedAssets, usedGroups, groupStack, placeName);
+                      usedAssets, usedGroups, usedLights, groupStack,
+                      placeName);
       groupStack.pop_back();
       return;
     }

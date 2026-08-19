@@ -1237,8 +1237,8 @@ Value Emitter::emitOp(AST::UnaryOp op, Value value,
     }
     // Unary increment or decrement, e.g., `++value` or `--value`
     if (op == UNOP_INC || op == UNOP_DEC) {
-      /// We can increment or decrement if the value is an arithmetic scalar,
-      /// arithmetic vector, color, or pointer.
+      // We can increment or decrement if the value is an arithmetic scalar,
+      // arithmetic vector, color, or pointer.
       if (value.type->isArithmeticScalar() ||
           value.type->isArithmeticVector() || value.type->isColor() ||
           value.type->isPointer())
@@ -2817,11 +2817,11 @@ Value Emitter::emitIntrinsic(IntrinsicID intrinsicID, const ArgumentList &args,
   srcLoc.throwError("unimplemented intrinsic ", Quoted(name));
 }
 
-/// Emit one of the `#load...` intrinsics.
-///
-/// These are separated out from `emitIntrinsic()` because they are a third of
-/// it by volume and because they share the argument checking below; splitting
-/// them keeps the main dispatch flat enough to read.
+// Emit one of the `#load...` intrinsics.
+//
+// These are separated out from `emitIntrinsic()` because they are a third of
+// it by volume and because they share the argument checking below; splitting
+// them keeps the main dispatch flat enough to read.
 Value Emitter::emitIntrinsicLoad(IntrinsicID intrinsicID,
                                  const ArgumentList &args,
                                  const SourceLocation &srcLoc) {

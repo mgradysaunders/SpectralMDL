@@ -379,6 +379,80 @@ public:
   LayoutLocation curvesOpsLocation{};
 };
 
+/// One `light` declaration: a named punctual emitter, placeable exactly
+/// like an asset, so `place` gives it its position, orientation, and
+/// instancing for free:
+///
+///     light lamp = point { power 60 temperature 3000 }
+///     light beam = spot { power 100 angle 40 blend 0.2 }
+///     light street = profile "street.ies" { scale 2 }
+///     place lamp translate 0 0 3
+///
+/// A point light emits uniformly; a spot and a profile emit along the
+/// local **-Z** axis (a spot with an identity placement shines straight
+/// down, and an IES profile's photometric nadir points the same way),
+/// aimed by the placement's rotations.
+///
+/// `power` is the total radiant power in watts. The spectral shape is
+/// flat across the render band by default; `temperature` reshapes it to
+/// a blackbody, and `color` multiplies by an RGB tint (uplifted at
+/// render time), which scales power the way dimming a lamp does. A
+/// profile's intensities are already watts per steradian, so it takes
+/// `scale` instead, and giving it `power` renormalizes its total.
+class LayoutLightDecl final {
+public:
+  enum class Kind {
+    POINT,
+    SPOT,
+    PROFILE,
+  };
+  std::string name{};
+  LayoutLocation nameLocation{};
+  Kind kind{Kind::POINT};
+
+  /// The IES path, as written (PROFILE only); the lowering resolves it.
+  std::string profilePath{};
+  LayoutLocation profilePathLocation{};
+
+  /// The total radiant power in watts. For PROFILE, applied only when
+  /// written (`powerSet`), renormalizing the profile's own total.
+  float power{1.0f};
+  bool powerSet{};
+
+  /// The blackbody temperature in kelvin shaping the spectrum, or 0 for
+  /// a flat spectrum across the render band.
+  float temperature{};
+
+  /// The RGB tint, uplifted to a spectrum at render time.
+  float3 color{1.0f};
+
+  /// SPOT: the full cone apex angle in degrees.
+  float spotAngle{60.0f};
+
+  /// SPOT: the fraction of the cone smoothed from full intensity down
+  /// to zero at the edge, in [0, 1].
+  float spotBlend{0.15f};
+
+  /// PROFILE: a multiplier on the profile's intensities.
+  float scale{1.0f};
+
+  /// The correction transform the block's operations accumulated,
+  /// applied innermost, underneath every placement of the light.
+  float4x4 transform{float4x4(1.0f)};
+
+  /// The kind keyword, as the grammar spells it.
+  [[nodiscard]] std::string_view kindName() const noexcept {
+    switch (kind) {
+    case Kind::SPOT:
+      return "spot";
+    case Kind::PROFILE:
+      return "profile";
+    default:
+      return "point";
+    }
+  }
+};
+
 /// One world-contributing statement, in document order: a `place` of a
 /// declared asset or group, or an anonymous `import`.
 ///
@@ -470,6 +544,7 @@ public:
 
   std::vector<LayoutAssetDecl> assets{};
   std::vector<LayoutGroupDecl> groups{};
+  std::vector<LayoutLightDecl> lights{};
   std::vector<LayoutPlacement> placements{};
 
   /// This file's `material` aliases, last-wins within the file.
@@ -492,8 +567,8 @@ public:
   std::string iblPath{};
   LayoutLocation iblPathLocation{};
 
-  /// The declared asset named `name`, or null. Assets and groups share
-  /// one namespace, since a `place` names either.
+  /// The declared asset named `name`, or null. Assets, groups, and
+  /// lights share one namespace, since a `place` names any of them.
   [[nodiscard]] const LayoutAssetDecl *findAsset(std::string_view name) const {
     for (const auto &asset : assets)
       if (asset.name == name) return &asset;
@@ -504,6 +579,13 @@ public:
   [[nodiscard]] const LayoutGroupDecl *findGroup(std::string_view name) const {
     for (const auto &group : groups)
       if (group.name == name) return &group;
+    return nullptr;
+  }
+
+  /// The declared light named `name`, or null.
+  [[nodiscard]] const LayoutLightDecl *findLight(std::string_view name) const {
+    for (const auto &light : lights)
+      if (light.name == name) return &light;
     return nullptr;
   }
 };
@@ -538,12 +620,31 @@ public:
   std::vector<float4x4> batchTransforms{};
 };
 
+/// One punctual light placed in the world: what the lowering emits and
+/// the renderer's `LightSampler` consumes. The declaration travels by
+/// value with the placement transform composed over its correction, and
+/// `decl.profilePath` already resolved.
+class LayoutLight final {
+public:
+  LayoutLightDecl decl{};
+
+  /// The fully composed placement, positioning the light at its origin
+  /// and aiming its local -Z axis.
+  float4x4 lightToWorld{float4x4(1.0f)};
+
+  /// The `/`-joined chain of `as` names along the place path, or empty.
+  std::string placeName{};
+};
+
 /// A lowered layout: the flat item list, plus the entry file's camera,
 /// sky, medium, and aliases. Everything scoped is already folded into
 /// the items; what remains here is exactly what `main()` consumes.
 class Layout final {
 public:
   std::vector<LayoutItem> items{};
+
+  /// The punctual lights, from every file the lowering visited.
+  std::vector<LayoutLight> lights{};
 
   /// The entry file's `material` aliases. The items already carry them
   /// folded into their `MaterialAssignment::renames`; this copy exists

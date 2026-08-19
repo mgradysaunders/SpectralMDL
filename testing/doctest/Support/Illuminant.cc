@@ -4,9 +4,9 @@
 
 #include "smdl/Support/Illuminant.h"
 
-/// Piecewise-Gaussian fits of the CIE 1931 XYZ color matching functions by
-/// Wyman et al, used to integrate spectra to chromaticities independently of
-/// the illuminant tables under test.
+// Piecewise-Gaussian fits of the CIE 1931 XYZ color matching functions by
+// Wyman et al, used to integrate spectra to chromaticities independently of
+// the illuminant tables under test.
 static double wymanGaussian(double w, double mu, double invSigmaL,
                             double invSigmaR) {
   double t{(w - mu) * (w < mu ? invSigmaL : invSigmaR)};
@@ -43,8 +43,8 @@ static float evalIlluminantLED(int number, float wavelen) {
   return illum;
 }
 
-/// Integrate the given spectral power distribution against the CIE 1931
-/// color matching functions and return the resulting chromaticity.
+// Integrate the given spectral power distribution against the CIE 1931
+// color matching functions and return the resulting chromaticity.
 template <typename Spd> static smdl::float2 integrateChromaticity(Spd &&spd) {
   double sumX{}, sumY{}, sumZ{};
   for (int w = 300; w <= 830; w++) {

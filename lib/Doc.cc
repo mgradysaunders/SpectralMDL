@@ -14,10 +14,10 @@ namespace smdl {
 //--{ Extraction
 namespace {
 
-/// If a comment or a `[[ ... ]]` annotation block begins at index `i`,
-/// advance past it. Otherwise return `i` unchanged. These are the spans
-/// the normalizer drops outright, as opposed to whitespace, which it
-/// collapses.
+// If a comment or a `[[ ... ]]` annotation block begins at index `i`,
+// advance past it. Otherwise return `i` unchanged. These are the spans
+// the normalizer drops outright, as opposed to whitespace, which it
+// collapses.
 [[nodiscard]] size_t skipDropped(std::string_view src, size_t i) {
   auto remaining{src.substr(i)};
   auto skipPast{[&](std::string_view close) {
@@ -35,8 +35,8 @@ namespace {
   return i;
 }
 
-/// Advance past everything the normalizer drops: whitespace, comments,
-/// and `[[ ... ]]` annotation blocks.
+// Advance past everything the normalizer drops: whitespace, comments,
+// and `[[ ... ]]` annotation blocks.
 [[nodiscard]] size_t skipIgnorable(std::string_view src, size_t i) {
   while (i < src.size()) {
     if (isSpace(src[i])) {
@@ -50,28 +50,28 @@ namespace {
   return i;
 }
 
-/// Is the `=` at index `i` part of a multi-character operator, e.g.,
-/// `==`, `!=`, `<=`, or `:=`? Such an `=` belongs to an expression inside
-/// an initializer and must not be spaced apart, unlike the `=` that
-/// introduces the initializer itself.
+// Is the `=` at index `i` part of a multi-character operator, e.g.,
+// `==`, `!=`, `<=`, or `:=`? Such an `=` belongs to an expression inside
+// an initializer and must not be spaced apart, unlike the `=` that
+// introduces the initializer itself.
 [[nodiscard]] bool isCompoundOperatorEquals(std::string_view src, size_t i) {
   static constexpr std::string_view OperatorChars{"!<>=~:+-*/%&|^"};
   return (i > 0 && OperatorChars.find(src[i - 1]) != std::string_view::npos) ||
          (i + 1 < src.size() && src[i + 1] == '=');
 }
 
-/// Normalize a raw signature slice: strip comments and `[[ ... ]]`
-/// annotation blocks, collapse whitespace runs to single spaces, and tidy
-/// spacing around punctuation.
-///
-/// NOTE: This also re-expands the spacing that minification removes, so
-/// that the embedded builtins read like the sources they came from:
-/// initializers are spaced as `x = 1` and separators as `a, b`, and a
-/// trailing comma before a closing bracket is dropped.
-///
-/// If `srcName` points into `src`, `nameOffset` receives the offset at
-/// which it lands in the result, which survives normalization because
-/// identifiers are copied verbatim.
+// Normalize a raw signature slice: strip comments and `[[ ... ]]`
+// annotation blocks, collapse whitespace runs to single spaces, and tidy
+// spacing around punctuation.
+//
+// NOTE: This also re-expands the spacing that minification removes, so
+// that the embedded builtins read like the sources they came from:
+// initializers are spaced as `x = 1` and separators as `a, b`, and a
+// trailing comma before a closing bracket is dropped.
+//
+// If `srcName` points into `src`, `nameOffset` receives the offset at
+// which it lands in the result, which survives normalization because
+// identifiers are copied verbatim.
 [[nodiscard]] std::string normalizeSignature(std::string_view src,
                                              std::string_view srcName = {},
                                              uint32_t *nameOffset = nullptr) {
@@ -129,8 +129,8 @@ namespace {
   return result;
 }
 
-/// Get the string in the `description(...)` or `anno::description(...)`
-/// annotation if present. This may be empty!
+// Get the string in the `description(...)` or `anno::description(...)`
+// annotation if present. This may be empty!
 [[nodiscard]] std::string
 descriptionOf(const AST::AnnotationBlock *annotations) {
   if (!annotations) return {};
@@ -146,9 +146,9 @@ descriptionOf(const AST::AnnotationBlock *annotations) {
   return {};
 }
 
-/// Get the documentation text from the first non-empty source: the
-/// leading `///` block, the trailing `///<` comment, or the
-/// `description(...)` annotation. This may be empty!
+// Get the documentation text from the first non-empty source: the
+// leading `///` block, the trailing `///<` comment, or the
+// `description(...)` annotation. This may be empty!
 [[nodiscard]] std::string docTextOf(std::string_view srcDocComment,
                                     std::string_view srcTrailing,
                                     const AST::AnnotationBlock *annotations) {
@@ -158,7 +158,7 @@ descriptionOf(const AST::AnnotationBlock *annotations) {
   return text;
 }
 
-/// The AST-to-`DocModule` extractor.
+// The AST-to-`DocModule` extractor.
 class Extractor final {
 public:
   explicit Extractor(const Module &module_)
@@ -182,12 +182,12 @@ public:
   }
 
 private:
-  /// Get the begin index of a non-empty span into the module source.
+  // Get the begin index of a non-empty span into the module source.
   [[nodiscard]] size_t beginOf(std::string_view span) const {
     return size_t(span.data() - mSource.data());
   }
 
-  /// Get the end index of a non-empty span into the module source.
+  // Get the end index of a non-empty span into the module source.
   [[nodiscard]] size_t endOf(std::string_view span) const {
     return beginOf(span) + span.size();
   }
@@ -196,17 +196,17 @@ private:
     return mSource.substr(i0, i1 - i0);
   }
 
-  /// Slice from `i0` up to the separating comma if there is one, else up
-  /// to the token that terminates the enclosing declaration. This is the
-  /// shape of every comma-separated declarator and parameter.
+  // Slice from `i0` up to the separating comma if there is one, else up
+  // to the token that terminates the enclosing declaration. This is the
+  // shape of every comma-separated declarator and parameter.
   [[nodiscard]] std::string_view sliceUntil(size_t i0,
                                             std::string_view srcComma,
                                             std::string_view srcEnd) const {
     return slice(i0, beginOf(!srcComma.empty() ? srcComma : srcEnd));
   }
 
-  /// The signature prefix from the attributes and the `export` keyword,
-  /// which precede the declaration's own source location.
+  // The signature prefix from the attributes and the `export` keyword,
+  // which precede the declaration's own source location.
   [[nodiscard]] static std::string declPrefix(const AST::Decl &decl) {
     auto prefix{std::string{}};
     if (decl.attributes) {
@@ -225,8 +225,8 @@ private:
     return mQualifiedNamePrefix + "::" + std::string(name);
   }
 
-  /// Set `entry.signature` from the given prefix and source slice, and
-  /// record where the declared name landed in it.
+  // Set `entry.signature` from the given prefix and source slice, and
+  // record where the declared name landed in it.
   static void setSignature(DocEntry &entry, std::string_view prefix,
                            std::string_view src, std::string_view srcName) {
     auto offset{DocEntry::NO_NAME_OFFSET};
@@ -247,11 +247,11 @@ private:
     return entry;
   }
 
-  /// Make an entry for a member of an enum or a struct. Members are not
-  /// `AST::Decl`s, so they carry no `export` of their own and their
-  /// qualified names are formed differently, but everything else about
-  /// them is the same: `node` is an `AST::Enum::Declarator` or an
-  /// `AST::Struct::Field`, and `srcEnd` is where its signature stops.
+  // Make an entry for a member of an enum or a struct. Members are not
+  // `AST::Decl`s, so they carry no `export` of their own and their
+  // qualified names are formed differently, but everything else about
+  // them is the same: `node` is an `AST::Enum::Declarator` or an
+  // `AST::Struct::Field`, and `srcEnd` is where its signature stops.
   template <typename Node>
   [[nodiscard]] DocEntry makeMember(const DocEntry &parent, const char *kind,
                                     std::string qualifiedName, const Node &node,
@@ -269,9 +269,9 @@ private:
     return member;
   }
 
-  /// Extract a declaration whose entire signature runs from its own
-  /// source location to its semicolon, i.e., `AST::Tag` and
-  /// `AST::Typedef`.
+  // Extract a declaration whose entire signature runs from its own
+  // source location to its semicolon, i.e., `AST::Tag` and
+  // `AST::Typedef`.
   template <typename Decl>
   void extractSimpleDecl(const AST::Decl &decl, const char *kind,
                          std::vector<DocEntry> &out) {
@@ -455,8 +455,8 @@ private:
 
   std::string_view mSource;
 
-  /// The qualified name prefix, i.e., the qualified module name plus
-  /// the namespaces currently being descended into.
+  // The qualified name prefix, i.e., the qualified module name plus
+  // the namespaces currently being descended into.
   std::string mQualifiedNamePrefix{};
 };
 
@@ -513,9 +513,9 @@ void DocDatabase::removeHidden() {
 //--{ Print: JSON
 namespace {
 
-/// The JSON printer. Just enough of a writer to emit the database, with
-/// the escaping, the indentation, and the key punctuation in one place
-/// instead of spelled out at every field.
+// The JSON printer. Just enough of a writer to emit the database, with
+// the escaping, the indentation, and the key punctuation in one place
+// instead of spelled out at every field.
 class JSONWriter final {
 public:
   explicit JSONWriter(std::string &out) : mOut(out) {}
@@ -580,29 +580,29 @@ public:
 private:
   void writeIndent(int depth) { mOut.append(size_t(2 * depth), ' '); }
 
-  /// Write the indented `"key": ` that opens a field, leaving the value
-  /// to the caller.
+  // Write the indented `"key": ` that opens a field, leaving the value
+  // to the caller.
   void writeKey(int depth, const char *key) {
     writeIndent(depth);
     mOut += '"', mOut += key, mOut += "\": ";
   }
 
-  /// Write `"key": "value",` on a line of its own.
+  // Write `"key": "value",` on a line of its own.
   void writeField(int depth, const char *key, std::string_view value) {
     writeKey(depth, key);
     writeString(value);
     mOut += ",\n";
   }
 
-  /// Write `"key": value,` on a line of its own, where the value is
-  /// already JSON: a number, a boolean, or `null`.
+  // Write `"key": value,` on a line of its own, where the value is
+  // already JSON: a number, a boolean, or `null`.
   void writeRawField(int depth, const char *key, std::string_view value) {
     writeKey(depth, key);
     mOut += value;
     mOut += ",\n";
   }
 
-  /// Write `"key": "value"` with no indentation and no newline.
+  // Write `"key": "value"` with no indentation and no newline.
   void writeInlineField(const char *key, std::string_view value) {
     mOut += '"', mOut += key, mOut += "\": ";
     writeString(value);
@@ -662,14 +662,14 @@ std::string DocDatabase::printJSON() const {
 
 //--{ Print: Markdown
 
-/// Is this the kind of member that documents inline as a bullet rather
-/// than as a section of its own, i.e., a struct field or an enumerator?
+// Is this the kind of member that documents inline as a bullet rather
+// than as a section of its own, i.e., a struct field or an enumerator?
 [[nodiscard]] static bool isMarkdownBullet(const DocEntry &member) {
   return member.kind == "field" || member.kind == "enumerator";
 }
 
-/// Write a `- \`signature\` — documentation` bullet, for a `DocParam` or
-/// an inline `DocEntry` member, both of which document this way.
+// Write a `- \`signature\` — documentation` bullet, for a `DocParam` or
+// an inline `DocEntry` member, both of which document this way.
 template <typename Item>
 static void printMarkdownBullet(std::string &out, const Item &item) {
   out += "- `" + item.signature + "`";

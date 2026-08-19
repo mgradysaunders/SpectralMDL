@@ -173,7 +173,10 @@ gatherDirect(const Scene &scene, Sampler &sampler, const Color &wavelengths,
                          lightSample.target, f)) {
         auto D{f * lightSample.Li / lightSample.pdf};
         if (!D.isAnyNonFinite()) {
-          D *= powerHeuristic(lightSample.pdf, continuationPdf);
+          // A delta light is unreachable by the continuation, so its
+          // MIS weight is 1.
+          if (!lightSample.isDelta)
+            D *= powerHeuristic(lightSample.pdf, continuationPdf);
           direct += D;
         }
       }

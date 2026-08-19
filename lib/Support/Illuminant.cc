@@ -6,8 +6,8 @@ namespace smdl {
 
 namespace {
 
-/// Linearly interpolate a uniformly spaced wavelength lookup table,
-/// returning zero outside of the table range.
+// Linearly interpolate a uniformly spaced wavelength lookup table,
+// returning zero outside of the table range.
 template <typename Value>
 [[nodiscard]] Value lerpTable(const Value *table, int tableSize,
                               float minWavelen, float maxWavelen,

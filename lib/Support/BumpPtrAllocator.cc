@@ -4,8 +4,8 @@
 
 namespace smdl {
 
-/// Use 64K slabs instead of the default 4K so that typical per-sample
-/// render allocations fit in the first slab, which `Reset()` retains.
+// Use 64K slabs instead of the default 4K so that typical per-sample
+// render allocations fit in the first slab, which `Reset()` retains.
 using LLVMAllocator = llvm::BumpPtrAllocatorImpl<llvm::MallocAllocator, 65536>;
 
 BumpPtrAllocator::BumpPtrAllocator() { mPtr = new LLVMAllocator(); }

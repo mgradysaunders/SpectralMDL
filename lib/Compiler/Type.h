@@ -1,4 +1,5 @@
 // vim:foldmethod=marker:foldlevel=0:fmr=--{,--}
+/// \file
 #pragma once
 
 #include "Value.h"

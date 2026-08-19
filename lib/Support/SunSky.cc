@@ -111,7 +111,7 @@ void evalSkyOutputs(double sunZenithDeg, double viewZenithDeg,
       rural_sun_sky::SKY_COEFF_OFFSETS, outputs);
 }
 
-/// Evaluate the direct-beam-fit outputs, same conventions.
+// Evaluate the direct-beam-fit outputs, same conventions.
 void evalSunOutputs(double sunZenithDeg, double visibility, double waterVapor,
                     double (&outputs)[rural_sun_sky::SUN_OUTPUT_COUNT]) {
   const double m = airmass(sunZenithDeg);

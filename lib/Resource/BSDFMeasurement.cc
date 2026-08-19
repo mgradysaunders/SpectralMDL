@@ -133,8 +133,8 @@ float3 BSDFMeasurement::fetch(int iThetao, int iThetai,
   }
 }
 
-/// The lookup of a cell-centered linear interpolation, where `t` is the
-/// continuous cell coordinate and `n` is the number of cells.
+// The lookup of a cell-centered linear interpolation, where `t` is the
+// continuous cell coordinate and `n` is the number of cells.
 struct CellLookup final {
   int index0{};
   int index1{};
@@ -171,7 +171,7 @@ float3 BSDFMeasurement::interpolate(float thetao, float thetai,
               o.fraction);
 }
 
-/// Calculate the azimuth difference angle in `[0, pi]`.
+// Calculate the azimuth difference angle in `[0, pi]`.
 [[nodiscard]] static float azimuthDifference(const float3 &wo,
                                              const float3 &wi) noexcept {
   float phi{std::atan2(wi.y, wi.x) - std::atan2(wo.y, wo.x)};

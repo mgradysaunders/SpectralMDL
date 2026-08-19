@@ -10,7 +10,7 @@ static smdl::float2 evalMetalIOR(smdl::Metal metal, float wavelen) {
   return {n, k};
 }
 
-/// The normal-incidence Fresnel reflectance.
+// The normal-incidence Fresnel reflectance.
 static float reflectance(smdl::float2 ior) {
   const float n{ior[0]}, k{ior[1]};
   return ((n - 1) * (n - 1) + k * k) / ((n + 1) * (n + 1) + k * k);

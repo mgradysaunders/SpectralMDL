@@ -1002,11 +1002,16 @@ WARN_LOGFILE           =
 # spaces. See also FILE_PATTERNS and EXTENSION_MAPPING
 # Note: If this tag is empty the current directory is searched.
 
+# SMDL_DOXYGEN_INTERNAL optionally names extra directories of internal
+# implementation headers to document, e.g. "lib lib/Compiler". It is empty
+# by default, so the public headers alone are documented.
+
 INPUT                  = include/smdl \
                          include/smdl/AST \
                          include/smdl/Resource \
                          include/smdl/Support \
-                         README.md
+                         README.md \
+                         $(SMDL_DOXYGEN_INTERNAL)
 
 # This tag can be used to specify the character encoding of the source files
 # that Doxygen parses. Internally Doxygen uses the UTF-8 encoding. Doxygen uses

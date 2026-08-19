@@ -75,9 +75,9 @@ std::optional<std::string_view> Parser::nextInteger() {
   }
 }
 
-/// Is the source between a documentation comment and what follows it
-/// close enough to attach? I.e., only whitespace with at most one
-/// newline, so that a blank line breaks attachment.
+// Is the source between a documentation comment and what follows it
+// close enough to attach? I.e., only whitespace with at most one
+// newline, so that a blank line breaks attachment.
 [[nodiscard]] static bool isDocCommentAdjacent(std::string_view src) {
   int numNewLines{};
   for (char ch : src) {

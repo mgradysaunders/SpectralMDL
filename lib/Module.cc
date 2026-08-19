@@ -30,9 +30,9 @@ Module::Module(std::string name, std::string sourceCode)
 
 Module::~Module() {}
 
-/// Derive the qualified module name, e.g., `::vendor::metals::steel`
-/// for `<searchRoot>/vendor/metals/steel.mdl`. Falls back to the bare
-/// `::stem` if the file name is not lexically under the search root.
+// Derive the qualified module name, e.g., `::vendor::metals::steel`
+// for `<searchRoot>/vendor/metals/steel.mdl`. Falls back to the bare
+// `::stem` if the file name is not lexically under the search root.
 [[nodiscard]] static std::string
 deriveQualifiedName(const std::string &fileName,
                     const std::string &searchRoot) {

@@ -25,11 +25,11 @@ namespace smdl {
 
 static constexpr int B{VoxelGrid::BRICK_EXTENT};
 
-/// The number of voxels in a brick.
+// The number of voxels in a brick.
 static constexpr int64_t BRICK_VOLUME{int64_t(B) * B * B};
 
-/// The flattened form every loader produces, moved into the `VoxelGrid`
-/// members on success so that a failed load leaves the grid cleared.
+// The flattened form every loader produces, moved into the `VoxelGrid`
+// members on success so that a failed load leaves the grid cleared.
 struct FlatGrid final {
   int3 extent{};
   int3 brickCount{};
@@ -46,8 +46,8 @@ struct FlatGrid final {
   return int64_t(brickCount.x) * brickCount.y * brickCount.z;
 }
 
-/// Initialize the extent-derived fields of `flat` and the all-empty
-/// brick table.
+// Initialize the extent-derived fields of `flat` and the all-empty
+// brick table.
 static void initFlatGrid(FlatGrid &flat, int3 extent, float background) {
   if (!(extent.x > 0 && extent.y > 0 && extent.z > 0))
     throw Error(concat("invalid voxel grid extent (", extent.x, ", ", extent.y,
@@ -60,10 +60,10 @@ static void initFlatGrid(FlatGrid &flat, int3 extent, float background) {
   flat.brickTable.assign(size_t(brickTableSize(flat.brickCount)), -1);
 }
 
-/// Allocate the brick data blocks for every occupied brick, assigning
-/// table indices in x-fastest brick order. Every block starts out
-/// filled with the background, which is what the padding voxels of
-/// partial bricks at the high boundary must hold anyway.
+// Allocate the brick data blocks for every occupied brick, assigning
+// table indices in x-fastest brick order. Every block starts out
+// filled with the background, which is what the padding voxels of
+// partial bricks at the high boundary must hold anyway.
 static void allocateBricks(FlatGrid &flat, const std::vector<char> &occupied) {
   int32_t numOccupied{0};
   for (size_t i = 0; i < flat.brickTable.size(); i++)
@@ -71,9 +71,9 @@ static void allocateBricks(FlatGrid &flat, const std::vector<char> &occupied) {
   flat.brickData.assign(size_t(numOccupied) * BRICK_VOLUME, flat.background);
 }
 
-/// Finalize the global value bounds: `fillValue` has been called for
-/// every in-extent voxel of every occupied brick, so all that is left
-/// is folding in the background if any empty brick remains.
+// Finalize the global value bounds: `fillValue` has been called for
+// every in-extent voxel of every occupied brick, so all that is left
+// is folding in the background if any empty brick remains.
 static void finalizeValueBounds(FlatGrid &flat, bool sawAnyValue) {
   const bool anyEmptyBrick{std::find(flat.brickTable.begin(),
                                      flat.brickTable.end(),
@@ -87,11 +87,11 @@ static void finalizeValueBounds(FlatGrid &flat, bool sawAnyValue) {
 }
 
 //--{ NanoVDB loading
-/// Mark every brick overlapping the voxel range `[lo, lo + span)` as
-/// occupied, clamping the range against the extent. The range is in
-/// grid-local voxel coordinates and may hang off either end, because
-/// NanoVDB node origins are aligned in index space while the local
-/// origin is the corner of the active bounding box.
+// Mark every brick overlapping the voxel range `[lo, lo + span)` as
+// occupied, clamping the range against the extent. The range is in
+// grid-local voxel coordinates and may hang off either end, because
+// NanoVDB node origins are aligned in index space while the local
+// origin is the corner of the active bounding box.
 static void markRange(const FlatGrid &flat, std::vector<char> &occupied,
                       int3 lo, int span) {
   const int3 hi{std::min(lo.x + span, flat.extent.x),
@@ -107,9 +107,9 @@ static void markRange(const FlatGrid &flat, std::vector<char> &occupied,
 
 #if SMDL_HAS_NANOVDB
 
-/// Flatten the NanoVDB grid in `handle` if its build type is `BuildT`,
-/// widening values to `float`. Returns false if the build type does not
-/// match, so the caller can try the next one.
+// Flatten the NanoVDB grid in `handle` if its build type is `BuildT`,
+// widening values to `float`. Returns false if the build type does not
+// match, so the caller can try the next one.
 template <typename BuildT>
 [[nodiscard]] static bool
 tryFlattenNanoGrid(const nanovdb::GridHandle<nanovdb::HostBuffer> &handle,
@@ -221,10 +221,10 @@ static void loadNanoVDB(const std::string &fileName,
 //--}
 
 //--{ Mitsuba volume loading
-/// Load a Mitsuba `.vol` volume: a 48-byte header of magic `VOL`,
-/// version 3, the encoding, the extent, the channel count, and a
-/// world-space bounding box, followed by the values x-fastest. Only the
-/// single-channel `float32` encoding is supported.
+// Load a Mitsuba `.vol` volume: a 48-byte header of magic `VOL`,
+// version 3, the encoding, the extent, the channel count, and a
+// world-space bounding box, followed by the values x-fastest. Only the
+// single-channel `float32` encoding is supported.
 static void loadMitsubaVol(const std::string &fileName, FlatGrid &flat) {
   const auto file{readOrThrow(fileName)};
   const auto mem{llvm::StringRef(file)};

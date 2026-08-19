@@ -7,7 +7,7 @@ using namespace smdl;
 
 namespace {
 
-/// The helper that owns the allocator and module backing a parsed AST.
+// The helper that owns the allocator and module backing a parsed AST.
 class ParsedModule final {
 public:
   explicit ParsedModule(std::string sourceCode)

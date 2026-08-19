@@ -789,6 +789,8 @@ int main(int argc, char **argv) try {
     auto more{resolveLayoutArgument(fileName, assetSearchPath)};
     layout.items.insert(layout.items.end(), more.items.begin(),
                         more.items.end());
+    layout.lights.insert(layout.lights.end(), more.lights.begin(),
+                         more.lights.end());
     layout.entryMaterialAliases.insert(more.entryMaterialAliases.begin(),
                                        more.entryMaterialAliases.end());
   }
@@ -1275,7 +1277,8 @@ int main(int argc, char **argv) try {
   // Every light in one selection path: each emissive mesh instance plus
   // the environment, weighted by power.
   auto profLightSampler{smdl::profilerEntryBegin("Build light sampler")};
-  const auto lights{LightSampler(compiler, scene, envLight.get(), wavelengths)};
+  const auto lights{LightSampler(compiler, scene, envLight.get(),
+                                 layout.lights, wavelengths)};
   smdl::profilerEntryEnd(profLightSampler);
   // The render loop is deliberately outside the trace; see -profile.
   if (profiling) smdl::profilerFinalize(profileFileName.c_str());

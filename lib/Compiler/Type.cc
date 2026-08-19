@@ -14,9 +14,9 @@
 namespace smdl {
 
 //--{ Diagnostic helpers
-/// Render a candidate signature like `Foo(int a, float b)` for a diagnostic
-/// note. Shared by every "which candidate was this?" note so that overloads
-/// and struct constructors describe themselves the same way.
+// Render a candidate signature like `Foo(int a, float b)` for a diagnostic
+// note. Shared by every "which candidate was this?" note so that overloads
+// and struct constructors describe themselves the same way.
 static std::string toSignatureString(std::string_view name,
                                      const ParameterList &params) {
   auto str{std::string(name)};
@@ -35,10 +35,10 @@ static std::string toSignatureString(std::string_view name,
   return str;
 }
 
-/// Drop the leading source location that `throwError` prepends to a message
-/// thrown at `srcLoc`. Every candidate is probed against the same call site,
-/// so repeating it on every note only obscures the candidate's own location.
-/// This is a no-op if the message does not begin with that prefix.
+// Drop the leading source location that `throwError` prepends to a message
+// thrown at `srcLoc`. Every candidate is probed against the same call site,
+// so repeating it on every note only obscures the candidate's own location.
+// This is a no-op if the message does not begin with that prefix.
 static std::string dropSourceLocation(std::string message,
                                       const SourceLocation &srcLoc) {
   auto prefix{std::string(srcLoc)};
@@ -200,20 +200,20 @@ std::optional<Value> Type::invokeTrivialCases(Emitter &emitter,
   return std::nullopt;
 }
 
-/// Materialize `value` in memory, apply `access` to it, and load the result
-/// back out as an rvalue.
-///
-/// The slot is cached per value by `spillToMemory()`, so indexing the same
-/// aggregate several times costs one copy rather than one copy per access.
+// Materialize `value` in memory, apply `access` to it, and load the result
+// back out as an rvalue.
+//
+// The slot is cached per value by `spillToMemory()`, so indexing the same
+// aggregate several times costs one copy rather than one copy per access.
 template <typename Access>
 static Value accessViaLValue(Emitter &emitter, Value value, Access &&access) {
   return emitter.rvalue(
       std::invoke(std::forward<Access>(access), emitter.spillToMemory(value)));
 }
 
-/// If `value` is a pointer to `pointeeType`, construct `resultType` by
-/// loading through the pointer. Assume the pointer is only as aligned as
-/// the pointee type itself!
+// If `value` is a pointer to `pointeeType`, construct `resultType` by
+// loading through the pointer. Assume the pointer is only as aligned as
+// the pointee type itself!
 static std::optional<Value> tryConstructFromPointer(Emitter &emitter,
                                                     Type *resultType,
                                                     Type *pointeeType,
@@ -943,8 +943,8 @@ Value EnumType::invoke(Emitter &emitter, const ArgumentList &args,
 //--}
 
 //--{ FunctionType
-/// Reject duplicate parameter names, e.g., `foo(int a, float a)`. The
-/// `owner` phrase names the offending declaration in the diagnostic.
+// Reject duplicate parameter names, e.g., `foo(int a, float a)`. The
+// `owner` phrase names the offending declaration in the diagnostic.
 static void rejectDuplicateParameterNames(const ParameterList &params,
                                           std::string_view owner) {
   auto uniqueNames{llvm::StringSet<>()};
@@ -1352,10 +1352,10 @@ FunctionType::getInstance(Emitter &emitter,
   return inst;
 }
 
-/// Verify that the C++ `JIT::Material::Instance` layout matches the api
-/// `_MaterialInstance` struct emitted by the compiler. The JIT boundary
-/// reinterprets one as the other, so any drift is silent undefined
-/// behavior at render time; fail the compile loudly instead.
+// Verify that the C++ `JIT::Material::Instance` layout matches the api
+// `_MaterialInstance` struct emitted by the compiler. The JIT boundary
+// reinterprets one as the other, so any drift is silent undefined
+// behavior at render time; fail the compile loudly instead.
 static void verifyMaterialInstanceLayout(Context &context, Type *type,
                                          const SourceLocation &srcLoc) {
   auto llvmStructType{

@@ -91,8 +91,9 @@ private:
 class Recover final {};
 
 // The top-level keywords, which are the synchronization points.
-constexpr std::array<std::string_view, 8> TOP_LEVEL_KEYWORDS{
-    "asset", "group", "place", "import", "material", "medium", "camera", "sky"};
+constexpr std::array<std::string_view, 9> TOP_LEVEL_KEYWORDS{
+    "asset",    "group",  "place",  "import", "light",
+    "material", "medium", "camera", "sky"};
 
 // The transform operations, named here so an unknown top-level
 // directive that is really a stray transform gets a pointed note.
@@ -150,6 +151,8 @@ private:
       parsePlaceInto(mDocument.placements);
     } else if (mToken.text == "import") {
       parseImport();
+    } else if (mToken.text == "light") {
+      parseLight();
     } else if (mToken.text == "material") {
       parseAlias();
     } else if (mToken.text == "medium") {
@@ -373,6 +376,152 @@ private:
     advance(); // '}'
   }
 
+  // A `light` declaration: `light <name> = point|spot|profile "<path>"`
+  // with an optional block of settings and transform operations. See
+  // `LayoutLightDecl` for the semantics of each setting.
+  void parseLight() {
+    advance();
+    auto &decl{mDocument.lights.emplace_back()};
+    if (mToken.kind != Token::WORD || !isIdentifier(mToken.text)) {
+      mDiags.error(location(), "expected a light name after 'light'");
+      mDocument.lights.pop_back();
+      throw Recover();
+    }
+    decl.name = mToken.text;
+    decl.nameLocation = location();
+    if (const auto previous{findDeclaration(decl.name, &decl)}) {
+      mDiags
+          .error(decl.nameLocation, smdl::concat("redeclaration of light ",
+                                                 smdl::Quoted(decl.name)))
+          .note(previous, "previous declaration is here");
+      mDocument.lights.pop_back();
+      throw Recover();
+    }
+    advance();
+    expect(Token::EQUALS, "'=' after the light name");
+    if (mToken.kind != Token::WORD) {
+      mDiags.error(location(), "expected 'point', 'spot', or 'profile' "
+                               "after '='");
+      throw Recover();
+    }
+    if (mToken.text == "point") {
+      decl.kind = LayoutLightDecl::Kind::POINT;
+      advance();
+    } else if (mToken.text == "spot") {
+      decl.kind = LayoutLightDecl::Kind::SPOT;
+      advance();
+    } else if (mToken.text == "profile") {
+      decl.kind = LayoutLightDecl::Kind::PROFILE;
+      advance();
+      decl.profilePathLocation = location();
+      decl.profilePath =
+          expect(Token::STRING, "a quoted IES path after 'profile'");
+    } else {
+      mDiags.error(location(),
+                   smdl::concat("expected 'point', 'spot', or 'profile' "
+                                "after '=', got ",
+                                smdl::Quoted(mToken.text)));
+      throw Recover();
+    }
+    if (mToken.kind == Token::OPEN) parseLightBody(decl);
+  }
+
+  void parseLightBody(LayoutLightDecl &decl) {
+    advance(); // '{'
+    const auto isSpot{decl.kind == LayoutLightDecl::Kind::SPOT};
+    const auto isProfile{decl.kind == LayoutLightDecl::Kind::PROFILE};
+    while (mToken.kind != Token::CLOSE) {
+      if (mToken.kind == Token::END) {
+        mDiags.error(location(), "expected '}' before end of file");
+        throw Recover();
+      }
+      if (mToken.kind != Token::WORD) {
+        mDiags.error(location(), "expected a light setting or '}'");
+        throw Recover();
+      }
+      const auto op{mToken.text};
+      const auto opLocation{location()};
+      advance();
+      if (op == "power") {
+        const auto value{numbers<1>()[0]};
+        if (!(value > 0)) {
+          mDiags.error(opLocation, "expected a positive number for 'power'");
+          throw Recover();
+        }
+        decl.power = value;
+        decl.powerSet = true;
+      } else if (op == "temperature") {
+        const auto value{numbers<1>()[0]};
+        if (!(value > 0)) {
+          mDiags.error(opLocation,
+                       "expected a positive number for 'temperature'");
+          throw Recover();
+        }
+        decl.temperature = value;
+      } else if (op == "color") {
+        const auto v{numbers<3>()};
+        if (!(v[0] >= 0 && v[1] >= 0 && v[2] >= 0)) {
+          mDiags.error(opLocation,
+                       "expected three non-negative numbers for 'color'");
+          throw Recover();
+        }
+        decl.color = float3(v[0], v[1], v[2]);
+      } else if (op == "angle" || op == "blend") {
+        if (!isSpot) {
+          mDiags.error(opLocation,
+                       smdl::concat(smdl::Quoted(op),
+                                    " applies to a spot, and this light is "
+                                    "a ",
+                                    decl.kindName()));
+          throw Recover();
+        }
+        const auto value{numbers<1>()[0]};
+        if (op == "angle") {
+          if (!(value > 0 && value <= 180)) {
+            mDiags.error(opLocation, "expected an 'angle' between 0 and 180 "
+                                     "degrees");
+            throw Recover();
+          }
+          decl.spotAngle = value;
+        } else {
+          if (!(value >= 0 && value <= 1)) {
+            mDiags.error(opLocation, "expected a 'blend' between 0 and 1");
+            throw Recover();
+          }
+          decl.spotBlend = value;
+        }
+      } else if (op == "scale") {
+        if (!isProfile) {
+          mDiags.error(opLocation,
+                       smdl::concat("'scale' applies to a profile, and this "
+                                    "light is a ",
+                                    decl.kindName()));
+          throw Recover();
+        }
+        const auto value{numbers<1>()[0]};
+        if (!(value > 0)) {
+          mDiags.error(opLocation, "expected a positive number for 'scale'");
+          throw Recover();
+        }
+        decl.scale = value;
+      } else if (!parseTransformOp(op, opLocation, decl.transform)) {
+        // Note 'scale' is taken by the profile multiplier, so unlike the
+        // other blocks it is not offered as a transform here; a light has
+        // no extent for it to act on anyway.
+        mDiags.error(opLocation,
+                     smdl::concat("unknown light setting ", smdl::Quoted(op),
+                                  " (expected power, temperature, color, ",
+                                  isSpot      ? "angle, blend, "
+                                  : isProfile ? "scale, "
+                                              : "",
+                                  "translate, rotate, rotate_x, rotate_y, "
+                                  "rotate_z, or matrix)"));
+        throw Recover();
+      }
+    }
+    advance(); // '}'
+  }
+
   // A `group` declaration: a named arrangement of `place` statements
   // and nothing else, so that a group stays an arrangement and never
   // becomes a scope.
@@ -414,10 +563,10 @@ private:
                                                 smdl::Quoted(mToken.text)))};
       if (mToken.kind == Token::WORD &&
           (mToken.text == "import" || mToken.text == "asset" ||
-           mToken.text == "group"))
+           mToken.text == "group" || mToken.text == "light"))
         error.note({}, "a group holds 'place' statements only; declare "
-                       "assets and groups at the top level and 'place' "
-                       "them here");
+                       "assets, groups, and lights at the top level and "
+                       "'place' them here");
       throw Recover();
     }
     advance(); // '}'
@@ -1032,14 +1181,16 @@ private:
   }
 
   // The location of an existing declaration of `name` across the shared
-  // asset/group namespace, or an invalid location. `skip` is the entry
-  // being built, excluded from the search.
+  // asset/group/light namespace, or an invalid location. `skip` is the
+  // entry being built, excluded from the search.
   [[nodiscard]] LayoutLocation findDeclaration(std::string_view name,
                                                const void *skip) const {
     for (const auto &asset : mDocument.assets)
       if (&asset != skip && asset.name == name) return asset.nameLocation;
     for (const auto &group : mDocument.groups)
       if (&group != skip && group.name == name) return group.nameLocation;
+    for (const auto &light : mDocument.lights)
+      if (&light != skip && light.name == name) return light.nameLocation;
     return {};
   }
 
@@ -1074,8 +1225,8 @@ private:
   Token mToken{};
   LayoutDocument &mDocument;
 
-  /// Every `as` name seen, for the duplicate warning: identity is only
-  /// worth recording if it names one thing.
+  // Every `as` name seen, for the duplicate warning: identity is only
+  // worth recording if it names one thing.
   std::map<std::string, LayoutLocation, std::less<>> mAsNames{};
 };
 

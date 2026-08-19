@@ -155,30 +155,30 @@ static cl::opt<float> ptexFaceV{
     "ptex-face-v", cl::desc("Ptex face coordinate V (default 0)"),
     cl::init(0.0f), cl::sub(subTest), cl::cat(catState)};
 
-/// The color scheme of the `doc` subcommand's plain text output:
-/// identity in blue, structure in cyan, and metadata in grey, with the
-/// documentation text left unstyled so that the prose stays the easiest
-/// thing to read.
+// The color scheme of the `doc` subcommand's plain text output:
+// identity in blue, structure in cyan, and metadata in grey, with the
+// documentation text left unstyled so that the prose stays the easiest
+// thing to read.
 static constexpr auto docColorName{llvm::HighlightColor::Tag};
 static constexpr auto docColorSignature{llvm::HighlightColor::Attribute};
 static constexpr auto docColorMetadata{llvm::HighlightColor::Note};
 
-/// The `doc` subcommand's plain text printer, for symbol and module
-/// queries. The Markdown and JSON printers live in the library, but this
-/// one colors as it goes, which a `std::string` cannot carry.
-///
-/// NOTE: All coloring must go through `WithColor`, which is what detects
-/// the terminal. On POSIX, `raw_ostream::changeColor()` writes escape
-/// codes whether or not the stream is a terminal, so calling it directly
-/// would corrupt piped and redirected output.
+// The `doc` subcommand's plain text printer, for symbol and module
+// queries. The Markdown and JSON printers live in the library, but this
+// one colors as it goes, which a `std::string` cannot carry.
+//
+// NOTE: All coloring must go through `WithColor`, which is what detects
+// the terminal. On POSIX, `raw_ostream::changeColor()` writes escape
+// codes whether or not the stream is a terminal, so calling it directly
+// would corrupt piped and redirected output.
 class DocTextPrinter final {
 public:
   DocTextPrinter(llvm::raw_ostream &os, llvm::ColorMode colorMode,
                  bool includeHidden)
       : mOS(os), mColorMode(colorMode), mIncludeHidden(includeHidden) {}
 
-  /// Print a module as its documentation text plus a listing of the
-  /// declarations in it.
+  // Print a module as its documentation text plus a listing of the
+  // declarations in it.
   void printModule(const smdl::DocModule &mod) {
     mOS << "module ";
     emit(mod.qualifiedName, docColorName);
@@ -198,8 +198,8 @@ public:
     mOS << '\n';
   }
 
-  /// Print one declaration in full: signature, documentation text,
-  /// documented parameters, and visible members.
+  // Print one declaration in full: signature, documentation text,
+  // documented parameters, and visible members.
   void printEntry(const smdl::DocEntry &entry) {
     emit(entry.qualifiedName, docColorName);
     emit(" (" + entry.kind + ", line " + std::to_string(entry.lineNo) + ")",
@@ -230,9 +230,9 @@ private:
     }
   }
 
-  /// Emit indented text line by line. The indentation and the newlines
-  /// stay outside the colored span so that no escape code lands on a
-  /// blank line or stretches across the width of the terminal.
+  // Emit indented text line by line. The indentation and the newlines
+  // stay outside the colored span so that no escape code lands on a
+  // blank line or stretches across the width of the terminal.
   void emitIndented(std::string_view text, size_t indent,
                     std::optional<llvm::HighlightColor> color) {
     size_t i{0};
@@ -249,8 +249,8 @@ private:
     }
   }
 
-  /// Signatures are always a single line, so the declared name inside one
-  /// can be split out and colored to give the eye something to land on.
+  // Signatures are always a single line, so the declared name inside one
+  // can be split out and colored to give the eye something to land on.
   void emitSignature(const smdl::DocEntry &item, size_t indent) {
     mOS.indent(indent);
     // NOTE: `nameOffset` is `NO_NAME_OFFSET` when the name does not
@@ -270,8 +270,8 @@ private:
     mOS << '\n';
   }
 
-  /// Print the documented parameters, skipping the undocumented ones,
-  /// which the signature already shows.
+  // Print the documented parameters, skipping the undocumented ones,
+  // which the signature already shows.
   void printParams(const smdl::DocEntry &entry) {
     auto anyParamDocs{false};
     for (const auto &param : entry.params)
@@ -288,9 +288,9 @@ private:
     }
   }
 
-  /// Print the visible members. NOTE: A member whose documentation text
-  /// ends the previous member is separated from it by a blank line, so
-  /// that multi-line texts do not run into the next signature.
+  // Print the visible members. NOTE: A member whose documentation text
+  // ends the previous member is separated from it by a blank line, so
+  // that multi-line texts do not run into the next signature.
   void printMembers(const smdl::DocEntry &entry) {
     auto anyMembers{false};
     auto afterDocText{false};
@@ -316,9 +316,9 @@ private:
   bool mIncludeHidden;
 };
 
-/// Add the builtin modules named by the queries, or all of them, to the
-/// database. A module already added from an input file wins, so that
-/// documenting a local copy of a builtin shows the local copy.
+// Add the builtin modules named by the queries, or all of them, to the
+// database. A module already added from an input file wins, so that
+// documenting a local copy of a builtin shows the local copy.
 static void loadBuiltinDocModules(smdl::DocDatabase &docs,
                                   const std::vector<std::string> &queries) {
   const auto builtinNames{smdl::getBuiltinModuleNames()};
@@ -341,8 +341,8 @@ static void loadBuiltinDocModules(smdl::DocDatabase &docs,
   }
 }
 
-/// Run the `doc` subcommand: `queries` holds the `::`-prefixed
-/// positional arguments, everything else was added to the compiler.
+// Run the `doc` subcommand: `queries` holds the `::`-prefixed
+// positional arguments, everything else was added to the compiler.
 static void runDocSubcommand(smdl::Compiler &compiler,
                              const std::vector<std::string> &queries) {
   auto docs{smdl::DocDatabase{}};

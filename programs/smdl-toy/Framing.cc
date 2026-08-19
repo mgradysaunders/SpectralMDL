@@ -6,9 +6,9 @@
 
 namespace {
 
-/// The camera basis for one candidate direction. The zenith is validated
-/// away from the poles by the command line, so the world-up cross product
-/// never degenerates.
+// The camera basis for one candidate direction. The zenith is validated
+// away from the poles by the command line, so the world-up cross product
+// never degenerates.
 class FramingBasis final {
 public:
   FramingBasis(float zenithInDegrees, float azimuthInDegrees) {
@@ -27,7 +27,7 @@ public:
   float3 forward{};
 };
 
-/// One candidate azimuth, solved and scored.
+// One candidate azimuth, solved and scored.
 class Candidate final {
 public:
   float3 position{};
@@ -38,10 +38,10 @@ public:
 
 } // namespace
 
-/// Every framed vertex in world space, gathered once so the per-candidate
-/// passes are pure arithmetic, plus the axis-aligned bounds that `lookTo`
-/// centers on. Runs after `commit()`, so refinement and displacement are
-/// already in the vertices.
+// Every framed vertex in world space, gathered once so the per-candidate
+// passes are pure arithmetic, plus the axis-aligned bounds that `lookTo`
+// centers on. Runs after `commit()`, so refinement and displacement are
+// already in the vertices.
 [[nodiscard]] static std::vector<float3>
 gatherWorldPoints(const Scene &scene, uint32_t skipInstance, float3 &lower,
                   float3 &upper) {
@@ -74,10 +74,10 @@ gatherWorldPoints(const Scene &scene, uint32_t skipInstance, float3 &lower,
   return points;
 }
 
-/// The closed-form tightest containing camera for a fixed direction: each
-/// frustum plane is a linear constraint on the position, so four min
-/// reductions decide it. The binding axis ends tangent to the geometry;
-/// the slack axis is centered independently of the distance.
+// The closed-form tightest containing camera for a fixed direction: each
+// frustum plane is a linear constraint on the position, so four min
+// reductions decide it. The binding axis ends tangent to the geometry;
+// the slack axis is centered independently of the distance.
 [[nodiscard]] static float3 solvePosition(const std::vector<float3> &points,
                                           const FramingBasis &basis, float tanX,
                                           float tanY) {
@@ -98,28 +98,28 @@ gatherWorldPoints(const Scene &scene, uint32_t skipInstance, float3 &lower,
 
 namespace {
 
-/// What one low-resolution ray grid through the frame measures.
-///
-/// The ranking metric is `visibleArea`, the classic viewpoint-selection
-/// criterion: it peaks on the three-face 3/4 diagonals and puts both
-/// degenerate views (end-on and dead broadside) below them. Frame
-/// coverage is deliberately not the ranking: the exact fit lets an
-/// end-on camera sit much closer, so coverage prefers degenerate end-on
-/// views.
+// What one low-resolution ray grid through the frame measures.
+//
+// The ranking metric is `visibleArea`, the classic viewpoint-selection
+// criterion: it peaks on the three-face 3/4 diagonals and puts both
+// degenerate views (end-on and dead broadside) below them. Frame
+// coverage is deliberately not the ranking: the exact fit lets an
+// end-on camera sit much closer, so coverage prefers degenerate end-on
+// views.
 class ProbeResult final {
 public:
-  /// The fraction of the frame the framed geometry covers. Reported as
-  /// the fill diagnostic; deliberately not the ranking (see above).
+  // The fraction of the frame the framed geometry covers. Reported as
+  // the fill diagnostic; deliberately not the ranking (see above).
   float coverage{};
 
-  /// The visible surface area in scene units squared: per hit pixel,
-  /// distance squared times pixel solid angle over the incidence cosine
-  /// (clamped, so silhouette-grazing pixels stay bounded). Distance
-  /// invariant, occlusion aware, and what the sweep maximizes.
+  // The visible surface area in scene units squared: per hit pixel,
+  // distance squared times pixel solid angle over the incidence cosine
+  // (clamped, so silhouette-grazing pixels stay bounded). Distance
+  // invariant, occlusion aware, and what the sweep maximizes.
   float visibleArea{};
 
-  /// The fraction of covered pixels showing non-exempt backfaces, which
-  /// recognizes an open mesh seen from the side never meant to be seen.
+  // The fraction of covered pixels showing non-exempt backfaces, which
+  // recognizes an open mesh seen from the side never meant to be seen.
   float backfaceFraction{};
 };
 

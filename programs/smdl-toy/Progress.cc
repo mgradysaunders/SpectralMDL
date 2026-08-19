@@ -16,37 +16,37 @@
 
 namespace {
 
-/// How often the bar may redraw. About 10 Hz, which reads as continuous
-/// motion and costs nothing. Deliberately a time and not a count of work
-/// units: the same render loop covers a 64x64 thumbnail and a 4K frame.
+// How often the bar may redraw. About 10 Hz, which reads as continuous
+// motion and costs nothing. Deliberately a time and not a count of work
+// units: the same render loop covers a 64x64 thumbnail and a 4K frame.
 constexpr auto REDRAW_INTERVAL{std::chrono::milliseconds(100)};
 
-/// The narrowest bar worth drawing. Below this the ladder in `drawLocked()`
-/// drops a field instead.
+// The narrowest bar worth drawing. Below this the ladder in `drawLocked()`
+// drops a field instead.
 constexpr size_t MIN_BAR_WIDTH{10};
 
-/// The widest bar worth drawing, so that a very wide terminal gets a
-/// readable line rather than a runway.
+// The widest bar worth drawing, so that a very wide terminal gets a
+// readable line rather than a runway.
 constexpr size_t MAX_BAR_WIDTH{48};
 
-/// The columns between fields.
+// The columns between fields.
 constexpr size_t SEPARATOR_WIDTH{2};
 
-/// The columns assumed when the terminal will not say how wide it is.
+// The columns assumed when the terminal will not say how wide it is.
 constexpr size_t FALLBACK_COLUMNS{80};
 
-/// The weight each estimate carries in the smoothed time remaining.
-/// Work does not complete evenly within a pass (whole pixels land at
-/// once, worker threads finish in bursts, and a preview checkpoint stops
-/// completions entirely while it writes), so the estimate is damped
-/// rather than shown raw. Measured over a 25 second render, this takes
-/// the mean change between readings from 0.14 to 0.12 seconds and the
-/// largest from 1.11 to 0.37.
+// The weight each estimate carries in the smoothed time remaining.
+// Work does not complete evenly within a pass (whole pixels land at
+// once, worker threads finish in bursts, and a preview checkpoint stops
+// completions entirely while it writes), so the estimate is damped
+// rather than shown raw. Measured over a 25 second render, this takes
+// the mean change between readings from 0.14 to 0.12 seconds and the
+// largest from 1.11 to 0.37.
 constexpr double REMAINING_SMOOTHING{0.25};
 
-/// How far in before the ETA is shown at all. An estimate from the first
-/// few samples of a render is worse than no estimate, and reads as one
-/// because it moves the moment it appears.
+// How far in before the ETA is shown at all. An estimate from the first
+// few samples of a render is worse than no estimate, and reads as one
+// because it moves the moment it appears.
 constexpr double ETA_MIN_ELAPSED{1.0};
 constexpr double ETA_MIN_FRACTION{0.02};
 
@@ -54,19 +54,19 @@ constexpr const char *COLOR_BAR{"\033[36m"};
 constexpr const char *COLOR_DIM{"\033[2m"};
 constexpr const char *COLOR_OFF{"\033[0m"};
 
-/// Is stderr a terminal that can act on carriage returns and ANSI escape
-/// codes? `cerrSupportsANSIColors()` is the `isatty()` test; `TERM` rules
-/// out the terminals that are interactive but cannot erase a line, where
-/// a bar would leave one line of wreckage per redraw.
+// Is stderr a terminal that can act on carriage returns and ANSI escape
+// codes? `cerrSupportsANSIColors()` is the `isatty()` test; `TERM` rules
+// out the terminals that are interactive but cannot erase a line, where
+// a bar would leave one line of wreckage per redraw.
 [[nodiscard]] bool stderrIsInteractive() {
   if (!smdl::cerrSupportsANSIColors()) return false;
   const char *term{std::getenv("TERM")};
   return term && *term && std::strcmp(term, "dumb") != 0;
 }
 
-/// Does the environment claim UTF-8? Tests the locale variables in the
-/// order the C library resolves them, first non-empty wins, so that a
-/// specific `LC_CTYPE` is not overruled by a stale `LANG`.
+// Does the environment claim UTF-8? Tests the locale variables in the
+// order the C library resolves them, first non-empty wins, so that a
+// specific `LC_CTYPE` is not overruled by a stale `LANG`.
 [[nodiscard]] bool localeIsUTF8() {
   for (const char *name : {"LC_ALL", "LC_CTYPE", "LANG"}) {
     const char *value{std::getenv(name)};
@@ -80,9 +80,9 @@ constexpr const char *COLOR_OFF{"\033[0m"};
   return false;
 }
 
-/// Round a duration to a step a person can read without watching it
-/// twitch. The larger the estimate, the less a second of it matters and
-/// the coarser the step it moves in.
+// Round a duration to a step a person can read without watching it
+// twitch. The larger the estimate, the less a second of it matters and
+// the coarser the step it moves in.
 [[nodiscard]] double coarsenDuration(double seconds) {
   const double step{seconds < 20.0    ? 1.0
                     : seconds < 120.0 ? 5.0
@@ -91,7 +91,7 @@ constexpr const char *COLOR_OFF{"\033[0m"};
   return std::round(seconds / step) * step;
 }
 
-/// Format seconds as `M:SS`, or `H:MM:SS` past an hour.
+// Format seconds as `M:SS`, or `H:MM:SS` past an hour.
 [[nodiscard]] std::string formatDuration(double seconds) {
   auto ticks{uint64_t(std::max(seconds, 0.0))};
   const auto hours{ticks / 3600};
@@ -110,7 +110,7 @@ constexpr const char *COLOR_OFF{"\033[0m"};
   return str;
 }
 
-/// Format a count in at most 5 columns: `999`, `436k`, `8.3M`, `1.2G`.
+// Format a count in at most 5 columns: `999`, `436k`, `8.3M`, `1.2G`.
 [[nodiscard]] std::string formatCount(uint64_t value) {
   const auto scaled{[](uint64_t whole, uint64_t tenths, char suffix) {
     auto str{std::to_string(whole)};
@@ -128,7 +128,7 @@ constexpr const char *COLOR_OFF{"\033[0m"};
   return scaled(value / 1000000000, (value / 100000000) % 10, 'G');
 }
 
-/// The bar itself, drawn to half a cell, colored.
+// The bar itself, drawn to half a cell, colored.
 [[nodiscard]] std::string renderBar(double fraction, size_t width,
                                     bool unicode) {
   // The ASCII form spends two of its columns on the brackets that give it
@@ -160,8 +160,8 @@ constexpr const char *COLOR_OFF{"\033[0m"};
   return str;
 }
 
-/// The bar currently on screen. There is at most one: nesting two would
-/// mean two things drawing to the same line.
+// The bar currently on screen. There is at most one: nesting two would
+// mean two things drawing to the same line.
 std::atomic<ProgressBar *> sActive{nullptr};
 
 } // namespace

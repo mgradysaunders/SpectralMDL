@@ -27,14 +27,14 @@ void apply_sort_order(const std::vector<size_t> &order, Span<float> values) {
   for (size_t i = 0; i < order.size(); i++) values[i] = tmpValues[order[i]];
 }
 
-/// Wavelength units.
+// Wavelength units.
 enum WaveUnits : int {
-  WAVE_UNITS_ANGSTROMS,   ///< Angstroms.
-  WAVE_UNITS_WAVENUMBERS, ///< Wavenumbers.
-  WAVE_UNITS_MEGAHERTZ,   ///< Megahertz.
-  WAVE_UNITS_GIGAHERTZ,   ///< Gigahertz.
-  WAVE_UNITS_MICROMETERS, ///< Micrometers.
-  WAVE_UNITS_NANOMETERS,  ///< Nanometers.
+  WAVE_UNITS_ANGSTROMS,   // Angstroms.
+  WAVE_UNITS_WAVENUMBERS, // Wavenumbers.
+  WAVE_UNITS_MEGAHERTZ,   // Megahertz.
+  WAVE_UNITS_GIGAHERTZ,   // Gigahertz.
+  WAVE_UNITS_MICROMETERS, // Micrometers.
+  WAVE_UNITS_NANOMETERS,  // Nanometers.
 };
 
 [[nodiscard]] static float to_nanometers(WaveUnits units, float wave) {

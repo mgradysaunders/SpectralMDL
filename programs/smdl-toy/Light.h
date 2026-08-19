@@ -1,11 +1,14 @@
 #pragma once
 
+#include <memory>
 #include <optional>
 
+#include "Layout.h"
 #include "Scene.h"
 
 #include "smdl/Compiler.h"
 #include "smdl/Resource/Image.h"
+#include "smdl/Resource/LightProfile.h"
 #include "smdl/Support/MonteCarlo.h"
 #include "smdl/Support/SunSky.h"
 
@@ -92,12 +95,73 @@ public:
   float3x3 invCofactor{};
 };
 
+/// A punctual light placed by the layout: a point, a spot, or an IES
+/// profile. Delta lights never appear on a path through BSDF sampling,
+/// so they contribute through `LightSampler::sample()` alone, with a
+/// unit MIS weight (see `LightSample::isDelta`).
+class PunctualLight final {
+public:
+  /// Bake the lowered light at the render wavelengths: the spectral
+  /// shape (blackbody or flat, times the uplifted RGB tint) normalized
+  /// to unit integral over the band, scaled into the per-kind
+  /// directional intensity. `state` must carry the wavelength fields
+  /// for the RGB uplift, and `profile` the loaded IES profile for a
+  /// PROFILE light (null otherwise).
+  PunctualLight(smdl::Compiler &compiler, const smdl::State &state,
+                const Color &wavelengths, const LayoutLight &light,
+                std::shared_ptr<const smdl::LightProfile> profile);
+
+  /// The unoccluded spectral incident radiance equivalent at `point`:
+  /// the directional intensity toward it over the squared distance in
+  /// meters. Zero outside a spot cone or the profile's support.
+  [[nodiscard]] Color Li(const float3 &point,
+                         float metersPerSceneUnit) const noexcept;
+
+  /// The position in world space.
+  [[nodiscard]] const float3 &position() const noexcept { return mPosition; }
+
+  /// The total radiant power in watts (after the tint), the selection
+  /// weight.
+  [[nodiscard]] float power() const noexcept { return mPower; }
+
+private:
+  LayoutLightDecl::Kind mKind{LayoutLightDecl::Kind::POINT};
+
+  float3 mPosition{};
+
+  /// The world-space rows of the local frame: emission aims along the
+  /// local -Z axis. Columns of the placement, normalized; a sheared
+  /// placement gets the nearest frame rather than an error.
+  float3 mLocalX{1.0f, 0.0f, 0.0f};
+  float3 mLocalY{0.0f, 1.0f, 0.0f};
+  float3 mLocalZ{0.0f, 0.0f, 1.0f};
+
+  /// The per-band spectral intensity in W/(sr nm): the full intensity
+  /// of a point, the on-axis peak of a spot, and the per-unit
+  /// multiplier on the profile's broadband W/sr.
+  smdl::ColorVector mIntensity{};
+
+  /// SPOT: the cosine of the outer (cutoff) and inner (full intensity)
+  /// half angles.
+  float mCosOuter{-1.0f};
+  float mCosInner{-1.0f};
+
+  /// PROFILE: the loaded profile, shared between placements of the
+  /// same file (see the dedupe cache in the `LightSampler` constructor).
+  std::shared_ptr<const smdl::LightProfile> mProfile{};
+
+  float mPower{};
+};
+
 /// The unified light-selection path over every light in the scene: each
-/// emissive mesh instance plus the environment, weighted by power.
+/// emissive mesh instance, plus the layout's punctual lights, plus the
+/// environment, weighted by power.
 class LightSampler final {
 public:
   LightSampler(smdl::Compiler &compiler, const Scene &scene,
-               const EnvLight *envLight, const Color &wavelengths);
+               const EnvLight *envLight,
+               const std::vector<LayoutLight> &layoutLights,
+               const Color &wavelengths);
 
   /// The result of `sample()`.
   struct LightSample final {
@@ -109,10 +173,16 @@ public:
 
     /// The full density of this sample in solid angle at the receiving
     /// point: the selection PMF times the per-light directional PDF.
+    /// For a delta light the directional density is a Dirac and `pdf`
+    /// is the selection PMF alone, with the delta folded into `Li`.
     float pdf{};
 
     /// The unoccluded incident radiance.
     Color Li{};
+
+    /// Sampled a delta (punctual) light? BSDF sampling can never hit
+    /// one, so the MIS weight of this sample must be 1.
+    bool isDelta{};
   };
 
   /// Are there no lights to sample?
@@ -125,8 +195,10 @@ public:
 
   /// The probability of light selection picking the environment.
   [[nodiscard]] float envSelectionPMF() const noexcept {
-    return envLight && !empty() ? lightDistr.indexPMF(int(areaLights.size()))
-                                : 0.0f;
+    return envLight && !empty()
+               ? lightDistr.indexPMF(
+                     int(areaLights.size() + punctualLights.size()))
+               : 0.0f;
   }
 
   /// Sample a direction toward one light from `point`. The `state` is
@@ -164,11 +236,14 @@ private:
 
   std::vector<AreaLight> areaLights{};
 
+  std::vector<PunctualLight> punctualLights{};
+
   /// Map from mesh instance index to index in `areaLights`, or
   /// `INVALID_INDEX`.
   std::vector<uint32_t> instanceToLight{};
 
-  /// The power-weighted distribution over `areaLights`, with one extra
-  /// entry at the end for the environment if present.
+  /// The power-weighted distribution over `areaLights`, then
+  /// `punctualLights`, with one extra entry at the end for the
+  /// environment if present.
   smdl::Distribution1D lightDistr{};
 };
