@@ -5,6 +5,7 @@
 #include "smdl/Support/Filesystem.h"
 #include "smdl/Support/Logger.h"
 #include "smdl/Support/PBRMaps.h"
+#include "llvm/Analysis/ConstantFolding.h"
 #include "llvm/Support/Format.h"
 #include "llvm/Support/Parallel.h"
 #include <atomic>
@@ -1819,6 +1820,23 @@ IntrinsicID Emitter::resolveIntrinsic(std::string_view name,
   return intrinsicID;
 }
 
+llvm::Value *Emitter::tryConstantFold(llvm::Value *llvmValue) {
+  auto inst{llvm::dyn_cast_if_present<llvm::Instruction>(llvmValue)};
+  if (!inst || !inst->use_empty()) return llvmValue;
+  for (auto &operand : inst->operands())
+    if (!llvm::isa<llvm::Constant>(operand)) return llvmValue;
+  if (auto folded{llvm::ConstantFoldInstruction(inst, context.llvmLayout)}) {
+    // With no insert point, the builder constructs instructions without
+    // inserting them anywhere, so there may be no parent to erase from.
+    if (inst->getParent())
+      inst->eraseFromParent();
+    else
+      inst->deleteValue();
+    return folded;
+  }
+  return llvmValue;
+}
+
 Value Emitter::emitIntrinsic(std::string_view name, const ArgumentList &args,
                              const SourceLocation &srcLoc) {
   return emitIntrinsic(resolveIntrinsic(name, srcLoc), args, srcLoc);
@@ -1937,10 +1955,11 @@ Value Emitter::emitIntrinsic(IntrinsicID intrinsicID, const ArgumentList &args,
     auto value{rvalue(expectOneVectorized())};
     return RValue(
         value.type,
-        value.type->isArithmeticIntegral()
-            ? builder.CreateBinaryIntrinsic(llvm::Intrinsic::abs, value,
-                                            context.getComptimeBool(false))
-            : builder.CreateUnaryIntrinsic(llvm::Intrinsic::fabs, value));
+        tryConstantFold(
+            value.type->isArithmeticIntegral()
+                ? builder.CreateBinaryIntrinsic(llvm::Intrinsic::abs, value,
+                                                context.getComptimeBool(false))
+                : builder.CreateUnaryIntrinsic(llvm::Intrinsic::fabs, value)));
   }
   case IntrinsicID::Any:
   case IntrinsicID::All: {
@@ -1952,12 +1971,12 @@ Value Emitter::emitIntrinsic(IntrinsicID intrinsicID, const ArgumentList &args,
                        ->getWithDifferentScalar(context, Scalar::getBool()),
                    value, srcLoc);
     if (value.type->isArithmeticScalar()) return value;
-    return RValue(
-        context.getBoolType(),
-        builder.CreateUnaryIntrinsic(intrinsicID == IntrinsicID::Any
-                                         ? llvm::Intrinsic::vector_reduce_or
-                                         : llvm::Intrinsic::vector_reduce_and,
-                                     value));
+    return RValue(context.getBoolType(),
+                  tryConstantFold(builder.CreateUnaryIntrinsic(
+                      intrinsicID == IntrinsicID::Any
+                          ? llvm::Intrinsic::vector_reduce_or
+                          : llvm::Intrinsic::vector_reduce_and,
+                      value)));
   }
   case IntrinsicID::Assert: {
     if (!((args.size() == 1 && args[0].value.type == context.getBoolType()) ||
@@ -2021,8 +2040,8 @@ Value Emitter::emitIntrinsic(IntrinsicID intrinsicID, const ArgumentList &args,
                       commonType->isColor());
     auto value0{invoke(commonType, args[0].value, srcLoc)};
     auto value1{invoke(commonType, args[1].value, srcLoc)};
-    return RValue(commonType, builder.CreateBinaryIntrinsic(
-                                  llvm::Intrinsic::atan2, value0, value1));
+    return RValue(commonType, tryConstantFold(builder.CreateBinaryIntrinsic(
+                                  llvm::Intrinsic::atan2, value0, value1)));
   }
   case IntrinsicID::AlbedoLUT: {
     if (!(args.size() == 1 && args[0].value.isComptimeString()))
@@ -2351,7 +2370,8 @@ Value Emitter::emitIntrinsic(IntrinsicID intrinsicID, const ArgumentList &args,
             : (type->isArithmeticBoolean()    ? llvm::Intrinsic::umin
                : type->isArithmeticIntegral() ? llvm::Intrinsic::smin
                                               : llvm::Intrinsic::minnum);
-    return RValue(type, builder.CreateBinaryIntrinsic(intrID, value0, value1));
+    return RValue(type, tryConstantFold(builder.CreateBinaryIntrinsic(
+                            intrID, value0, value1)));
   }
   case IntrinsicID::Num: {
     auto type{expectOneType()};
@@ -2403,11 +2423,13 @@ Value Emitter::emitIntrinsic(IntrinsicID intrinsicID, const ArgumentList &args,
         {value0.type, value1.type, context.getFloatType()},
         /*defaultToUnion=*/false, srcLoc)};
     value0 = invoke(resultType, value0, srcLoc);
-    return RValue(resultType, value1.type->isArithmeticScalarInt()
-                                  ? llvmEmitPowi(builder, value0, value1)
-                                  : builder.CreateBinaryIntrinsic(
-                                        llvm::Intrinsic::pow, value0,
-                                        invoke(resultType, value1, srcLoc)));
+    return RValue(
+        resultType,
+        tryConstantFold(value1.type->isArithmeticScalarInt()
+                            ? llvmEmitPowi(builder, value0, value1)
+                            : builder.CreateBinaryIntrinsic(
+                                  llvm::Intrinsic::pow, value0,
+                                  invoke(resultType, value1, srcLoc))));
   }
   case IntrinsicID::Print:
   case IntrinsicID::Println: {
@@ -2432,9 +2454,9 @@ Value Emitter::emitIntrinsic(IntrinsicID intrinsicID, const ArgumentList &args,
     auto llvmIntrID{intrinsicID == IntrinsicID::Rotl ? llvm::Intrinsic::fshl
                                                      : llvm::Intrinsic::fshr};
     return RValue(intType,
-                  builder.CreateIntrinsic(
+                  tryConstantFold(builder.CreateIntrinsic(
                       intType->llvmType, llvmIntrID,
-                      {value0.llvmValue, value0.llvmValue, value1.llvmValue}));
+                      {value0.llvmValue, value0.llvmValue, value1.llvmValue})));
   }
   case IntrinsicID::SizeOf: {
     return context.getComptimeInt(int(context.getSizeOf(expectOneType())));
@@ -2449,11 +2471,11 @@ Value Emitter::emitIntrinsic(IntrinsicID intrinsicID, const ArgumentList &args,
               invoke(value.type, context.getComptimeInt(-1), srcLoc),
               invoke(value.type, context.getComptimeInt(+1), srcLoc)));
     } else {
-      return RValue(value.type,
-                    builder.CreateBinaryIntrinsic(
-                        llvm::Intrinsic::copysign,
-                        invoke(value.type, context.getComptimeFloat(1), srcLoc),
-                        value));
+      return RValue(
+          value.type,
+          tryConstantFold(builder.CreateBinaryIntrinsic(
+              llvm::Intrinsic::copysign,
+              invoke(value.type, context.getComptimeFloat(1), srcLoc), value)));
     }
   }
   case IntrinsicID::Select: {
@@ -2630,11 +2652,13 @@ Value Emitter::emitIntrinsic(IntrinsicID intrinsicID, const ArgumentList &args,
         : intrinsicID == IntrinsicID::Cttz     ? llvm::Intrinsic::cttz
                                                : llvm::Intrinsic::ctpop};
     auto value{rvalue(expectOneIntOrIntVector())};
-    return RValue(value.type,
-                  hasIsZeroPoisonFlag
-                      ? builder.CreateBinaryIntrinsic(
-                            llvmIntrID, value, context.getComptimeBool(false))
-                      : builder.CreateUnaryIntrinsic(llvmIntrID, value));
+    return RValue(
+        value.type,
+        tryConstantFold(
+            hasIsZeroPoisonFlag
+                ? builder.CreateBinaryIntrinsic(llvmIntrID, value,
+                                                context.getComptimeBool(false))
+                : builder.CreateUnaryIntrinsic(llvmIntrID, value)));
   }
   // '#sum', '#prod', '#maxValue', and '#minValue' share one vector
   // reduction implementation.
@@ -2651,6 +2675,43 @@ Value Emitter::emitIntrinsic(IntrinsicID intrinsicID, const ArgumentList &args,
                          ->getWithDifferentScalar(context, Scalar::getInt(32)),
                      value, srcLoc);
     auto scalarType{scalarTypeOf(value.type)};
+    // LLVM constant-folds the integer reduction intrinsics but not the
+    // floating-point ones, so reduce a constant operand element-wise here
+    // instead, replicating the intrinsic semantics exactly: sum and product
+    // reduce sequentially from the start value, and '#maxValue'/'#minValue'
+    // reduce with 'maxnum'/'minnum'. Compile-time-ness must survive
+    // reductions, which appear in 'const' field defaults like
+    // '#sqrt(#prod(roughness))'.
+    if (!scalarType->isArithmeticIntegral()) {
+      if (auto llvmConst{llvm::dyn_cast<llvm::Constant>(value.llvmValue)}) {
+        const auto numElems{
+            llvm::cast<llvm::FixedVectorType>(llvmConst->getType())
+                ->getNumElements()};
+        auto elems{llvm::SmallVector<llvm::Constant *>{}};
+        for (unsigned i{}; i < numElems; i++)
+          if (auto elem{llvmConst->getAggregateElement(i)})
+            elems.push_back(elem);
+        if (elems.size() == numElems) {
+          auto result{static_cast<llvm::Value *>(nullptr)};
+          if (intrinsicID == IntrinsicID::Sum) {
+            result = llvm::Constant::getNullValue(scalarType->llvmType);
+            for (auto elem : elems) result = builder.CreateFAdd(result, elem);
+          } else if (intrinsicID == IntrinsicID::Prod) {
+            result = llvm::ConstantFP::get(scalarType->llvmType, 1.0);
+            for (auto elem : elems) result = builder.CreateFMul(result, elem);
+          } else {
+            const auto llvmIntrID{intrinsicID == IntrinsicID::MaxValue
+                                      ? llvm::Intrinsic::maxnum
+                                      : llvm::Intrinsic::minnum};
+            result = elems[0];
+            for (unsigned i{1}; i < numElems; i++)
+              result = tryConstantFold(
+                  builder.CreateBinaryIntrinsic(llvmIntrID, result, elems[i]));
+          }
+          return RValue(scalarType, result);
+        }
+      }
+    }
     if (intrinsicID == IntrinsicID::MaxValue ||
         intrinsicID == IntrinsicID::MinValue) {
       auto llvmIntrID = intrinsicID == IntrinsicID::MaxValue
@@ -2664,13 +2725,14 @@ Value Emitter::emitIntrinsic(IntrinsicID intrinsicID, const ArgumentList &args,
                                : value.type->isArithmeticIntegral()
                                    ? llvm::Intrinsic::vector_reduce_smin
                                    : llvm::Intrinsic::vector_reduce_fmin);
-      return RValue(scalarType,
-                    builder.CreateUnaryIntrinsic(llvmIntrID, value));
+      return RValue(scalarType, tryConstantFold(builder.CreateUnaryIntrinsic(
+                                    llvmIntrID, value)));
     }
     if (scalarType->isArithmeticIntegral())
-      return RValue(scalarType, intrinsicID == IntrinsicID::Sum
-                                    ? builder.CreateAddReduce(value)
-                                    : builder.CreateMulReduce(value));
+      return RValue(scalarType,
+                    tryConstantFold(intrinsicID == IntrinsicID::Sum
+                                        ? builder.CreateAddReduce(value)
+                                        : builder.CreateMulReduce(value)));
     return RValue(
         scalarType,
         intrinsicID == IntrinsicID::Sum
@@ -2765,8 +2827,8 @@ Value Emitter::emitIntrinsic(IntrinsicID intrinsicID, const ArgumentList &args,
                      value, srcLoc);
     for (auto [mathID, llvmIntrID] : unaryFPIntrinsics)
       if (mathID == intrinsicID)
-        return RValue(value.type,
-                      builder.CreateUnaryIntrinsic(llvmIntrID, value));
+        return RValue(value.type, tryConstantFold(builder.CreateUnaryIntrinsic(
+                                      llvmIntrID, value)));
     break;
   }
   }

@@ -1078,6 +1078,14 @@ public:
   Value emitIntrinsicLoad(IntrinsicID intrinsicID, const ArgumentList &args,
                           const SourceLocation &srcLoc);
 
+  /// If the given value is a just-created instruction with no uses, all
+  /// operands constant, and a fold LLVM knows, erase it and return the
+  /// folded constant; otherwise return the value unchanged. The IRBuilder
+  /// folder handles core IR operations but never calls, so without this
+  /// the math intrinsics (`llvm.sqrt`, `llvm.maxnum`, ...) block
+  /// compile-time-ness even on constant operands.
+  [[nodiscard]] llvm::Value *tryConstantFold(llvm::Value *llvmValue);
+
   /// Emit call.
   Value emitCall(Value callee, const ArgumentList &args,
                  const SourceLocation &srcLoc);
