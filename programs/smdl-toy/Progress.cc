@@ -270,8 +270,7 @@ void ProgressBar::eraseLocked() {
   mOnScreen = false;
 }
 
-double ProgressBar::secondsRemainingLocked(uint64_t done,
-                                           double elapsedSeconds,
+double ProgressBar::secondsRemainingLocked(uint64_t done, double elapsedSeconds,
                                            double fraction) {
   if (done >= mOptions.total || done == 0 || elapsedSeconds <= 0.0 ||
       elapsedSeconds < ETA_MIN_ELAPSED || fraction < ETA_MIN_FRACTION) {
@@ -287,10 +286,9 @@ double ProgressBar::secondsRemainingLocked(uint64_t done,
   // accurate as a trailing rate and simpler by a whole mechanism.
   const double remaining{elapsedSeconds * double(mOptions.total - done) /
                          double(done)};
-  mRemaining = mRemaining < 0.0
-                   ? remaining
-                   : (1.0 - REMAINING_SMOOTHING) * mRemaining +
-                         REMAINING_SMOOTHING * remaining;
+  mRemaining = mRemaining < 0.0 ? remaining
+                                : (1.0 - REMAINING_SMOOTHING) * mRemaining +
+                                      REMAINING_SMOOTHING * remaining;
   return mRemaining;
 }
 
@@ -316,8 +314,8 @@ void ProgressBar::reportLocked(uint64_t done) {
   {
     auto stream{std::ofstream(partPath, std::ios::trunc)};
     if (!stream) return;
-    stream << "done=" << done << " total=" << mOptions.total << " elapsed="
-           << std::fixed << std::setprecision(2) << elapsed
+    stream << "done=" << done << " total=" << mOptions.total
+           << " elapsed=" << std::fixed << std::setprecision(2) << elapsed
            << " eta=" << remaining << " note=" << mNote << '\n';
   }
   std::error_code ignored{};

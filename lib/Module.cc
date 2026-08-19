@@ -191,7 +191,7 @@ std::optional<Error> Module::compile(Context &context) noexcept {
 }
 
 std::optional<Error>
-Module::formatSourceCode(const FormatOptions &formatOptions) noexcept {
+Module::formatSourceFiles(const FormatOptions &formatOptions) noexcept {
   if (!isFileBacked()) {
     return Error(concat("cannot format ", Quoted(mDisplayName),
                         " because the module has no file"));
@@ -199,12 +199,12 @@ Module::formatSourceCode(const FormatOptions &formatOptions) noexcept {
   if (!isParsed()) {
     auto allocator{BumpPtrAllocator{}};
     if (auto error{parse(allocator)}) return error;
-    auto error{formatSourceCode(formatOptions)};
+    auto error{formatSourceFiles(formatOptions)};
     mRoot = {};
     return error;
   }
   return catchAndReturnError([&] {
-    SMDL_PROFILER_ENTRY("Module::formatSourceCode()", mDisplayName.c_str());
+    SMDL_PROFILER_ENTRY("Module::formatSourceFiles()", mDisplayName.c_str());
     auto formatter{Formatter{formatOptions}};
     auto formatted{formatter.format(mSourceCode, *mRoot)};
     if (formatOptions.inPlace) {

@@ -444,7 +444,7 @@ int main(int argc, char **argv) {
     options.keepDocComments = formatKeepDocComments;
     options.noAnnotations = formatNoAnnotations;
     options.compact = formatCompact;
-    if (auto error{compiler.formatSourceCode(options)}) {
+    if (auto error{compiler.formatSourceFiles(options)}) {
       error->printAndExit();
     }
   } else {

@@ -208,14 +208,14 @@ public:
   /// them, imports them by qualified name and is imported by them, and
   /// its materials are found by `findMaterial()` under
   /// `<moduleName>::<materialName>`. Because it has no file, it is
-  /// skipped by `formatSourceCode()` and reports its source locations
+  /// skipped by `formatSourceFiles()` and reports its source locations
   /// as `<string ::vendor::metals::steel>` (see
   /// `Module::getDisplayName()`). Unlike a file, it is immune to the
   /// source changing underneath the compiler: `compile()` re-parses the
   /// string it was given here.
   ///
   [[nodiscard]] std::optional<Error>
-  addSourceCode(std::string moduleName, std::string sourceCode,
+  addCode(std::string moduleName, std::string sourceCode,
                 std::string anchorDirectory = {}) noexcept;
 
   /// Set the desired material names, which restricts the next
@@ -251,7 +251,7 @@ public:
 
   /// Format source code.
   [[nodiscard]] std::optional<Error>
-  formatSourceCode(const FormatOptions &formatOptions) noexcept;
+  formatSourceFiles(const FormatOptions &formatOptions) noexcept;
 
   /// Extract documentation for all added modules into `docs`. This
   /// parses modules as necessary, but does not require `compile()`.

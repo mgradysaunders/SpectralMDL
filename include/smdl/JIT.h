@@ -135,7 +135,7 @@ public:
 
   /// The module file name. This is empty if the module has no file, as
   /// is the case for builtin modules and modules supplied as source
-  /// code (see `Compiler::addSourceCode()`).
+  /// code (see `Compiler::addCode()`).
   std::string moduleFileName{};
 
   /// The module name to print in diagnostics, which is the file name
@@ -1147,7 +1147,7 @@ public:
 
   /// The module file name. This is empty if the module has no file, as
   /// is the case for builtin modules and modules supplied as source
-  /// code (see `Compiler::addSourceCode()`).
+  /// code (see `Compiler::addCode()`).
   std::string moduleFileName{};
 
   /// The module name to print in diagnostics, which is the file name

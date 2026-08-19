@@ -187,9 +187,9 @@ normalizeModuleName(const std::string &moduleName) {
 }
 
 std::optional<Error>
-Compiler::addSourceCode(std::string moduleName, std::string sourceCode,
+Compiler::addCode(std::string moduleName, std::string sourceCode,
                         std::string anchorDirectory) noexcept {
-  SMDL_PROFILER_ENTRY("Compiler::addSourceCode()", moduleName.c_str());
+  SMDL_PROFILER_ENTRY("Compiler::addCode()", moduleName.c_str());
   return catchAndReturnError([&] {
     auto qualifiedName{normalizeModuleName(moduleName)};
     if (auto itr{mModulesByQualifiedName.find(qualifiedName)};
@@ -741,11 +741,11 @@ std::optional<Error> Compiler::compile(OptLevel optLevel) noexcept {
 }
 
 std::optional<Error>
-Compiler::formatSourceCode(const FormatOptions &formatOptions) noexcept {
-  SMDL_PROFILER_ENTRY("Compiler::formatSourceCode()");
+Compiler::formatSourceFiles(const FormatOptions &formatOptions) noexcept {
+  SMDL_PROFILER_ENTRY("Compiler::formatSourceFiles()");
   for (auto &module_ : mModules) {
     if (module_->isFileBacked()) {
-      if (auto error{module_->formatSourceCode(formatOptions)}) return error;
+      if (auto error{module_->formatSourceFiles(formatOptions)}) return error;
     }
   }
   return std::nullopt;

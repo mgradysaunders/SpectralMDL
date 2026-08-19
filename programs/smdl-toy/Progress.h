@@ -125,9 +125,8 @@ private:
 
   /// The damped seconds remaining, negative until the estimate is worth
   /// anything and once the work is complete. Assumes the lock is held.
-  [[nodiscard]] double secondsRemainingLocked(uint64_t done,
-                                              double elapsedSeconds,
-                                              double fraction);
+  [[nodiscard]] double
+  secondsRemainingLocked(uint64_t done, double elapsedSeconds, double fraction);
 
   /// Format the ETA field, empty once the work is complete. Assumes the
   /// lock is held.

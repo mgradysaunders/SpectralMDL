@@ -1758,7 +1758,7 @@ TEST_CASE("Compiler wavelengthBaseMax") {
   fs::remove_all(tmpDir);
 }
 
-TEST_CASE("Compiler addSourceCode") {
+TEST_CASE("Compiler addCode") {
   auto tmpDir{fs::temp_directory_path() / "smdl-source-code-test"};
   fs::remove_all(tmpDir);
   // The render state the unit tests below run against.
@@ -1780,7 +1780,7 @@ TEST_CASE("Compiler addSourceCode") {
   }};
   SUBCASE("Source code compiles as a module with no file") {
     smdl::Compiler compiler{};
-    REQUIRE(!compiler.addSourceCode("::host::mats", "#smdl\nimport ::df::*;\n" +
+    REQUIRE(!compiler.addCode("::host::mats", "#smdl\nimport ::df::*;\n" +
                                                         materialDef("mat_ok")));
     REQUIRE(!compiler.compile(smdl::OPT_LEVEL_NONE));
     REQUIRE(!compiler.jitCompile());
@@ -1794,10 +1794,10 @@ TEST_CASE("Compiler addSourceCode") {
   SUBCASE("The leading '::' is optional") {
     smdl::Compiler compiler{};
     auto source{"#smdl\nimport ::df::*;\n" + materialDef("mat_ok")};
-    REQUIRE(!compiler.addSourceCode("host::mats", source));
+    REQUIRE(!compiler.addCode("host::mats", source));
     // The same name and the same source code again is a no-op, so a host
     // may register its defaults defensively.
-    CHECK(!compiler.addSourceCode("::host::mats", source));
+    CHECK(!compiler.addCode("::host::mats", source));
     REQUIRE(!compiler.compile(smdl::OPT_LEVEL_NONE));
     REQUIRE(!compiler.jitCompile());
     CHECK(compiler.findMaterials("mat_ok").size() == 1);
@@ -1805,9 +1805,9 @@ TEST_CASE("Compiler addSourceCode") {
   SUBCASE("A different body under a taken name is an error") {
     smdl::Compiler compiler{};
     REQUIRE(
-        !compiler.addSourceCode("::host", "#smdl\nexport const int x = 1;\n"));
+        !compiler.addCode("::host", "#smdl\nexport const int x = 1;\n"));
     auto error{
-        compiler.addSourceCode("::host", "#smdl\nexport const int x = 2;\n")};
+        compiler.addCode("::host", "#smdl\nexport const int x = 2;\n")};
     REQUIRE(error.has_value());
     CHECK(error->message.find("already taken") != std::string::npos);
     CHECK(error->message.find("<string ::host>") != std::string::npos);
@@ -1817,7 +1817,7 @@ TEST_CASE("Compiler addSourceCode") {
     smdl::Compiler compiler{};
     REQUIRE(!compiler.add((tmpDir / "root").string()));
     auto error{
-        compiler.addSourceCode("::util", "#smdl\nexport const int x = 2;\n")};
+        compiler.addCode("::util", "#smdl\nexport const int x = 2;\n")};
     REQUIRE(error.has_value());
     CHECK(error->message.find("already taken") != std::string::npos);
   }
@@ -1825,7 +1825,7 @@ TEST_CASE("Compiler addSourceCode") {
     writeFile(tmpDir / "root" / "host.mdl",
               "#smdl\nimport ::df::*;\n" + materialDef("from_file"));
     smdl::Compiler compiler{};
-    REQUIRE(!compiler.addSourceCode("::host", "#smdl\nimport ::df::*;\n" +
+    REQUIRE(!compiler.addCode("::host", "#smdl\nimport ::df::*;\n" +
                                                   materialDef("from_string")));
     REQUIRE(!compiler.add((tmpDir / "root").string()));
     REQUIRE(!compiler.compile(smdl::OPT_LEVEL_NONE));
@@ -1839,7 +1839,7 @@ TEST_CASE("Compiler addSourceCode") {
     smdl::Compiler compiler{};
     for (const char *moduleName :
          {"", "::", "a::", "::a::::b", "1bad", "a b", "a-b"}) {
-      auto error{compiler.addSourceCode(moduleName, "#smdl\n")};
+      auto error{compiler.addCode(moduleName, "#smdl\n")};
       CAPTURE(moduleName);
       CHECK(error.has_value());
     }
@@ -1852,7 +1852,7 @@ TEST_CASE("Compiler addSourceCode") {
               "export const int echo = host::consts::marker_host;\n" +
                   materialDef("main_ok"));
     smdl::Compiler compiler{};
-    REQUIRE(!compiler.addSourceCode(
+    REQUIRE(!compiler.addCode(
         "::host::consts",
         "#smdl\nimport ::util::*;\n"
         "export const int marker_host = util::marker_file + 1;\n"));
@@ -1863,7 +1863,7 @@ TEST_CASE("Compiler addSourceCode") {
   }
   SUBCASE("A compile error names the module it came from") {
     smdl::Compiler compiler{};
-    REQUIRE(!compiler.addSourceCode("::host::bad",
+    REQUIRE(!compiler.addCode("::host::bad",
                                     "#smdl\nimport ::nonexistent::*;\n"));
     auto error{compiler.compile(smdl::OPT_LEVEL_NONE)};
     REQUIRE(error.has_value());
@@ -1872,7 +1872,7 @@ TEST_CASE("Compiler addSourceCode") {
   SUBCASE("Unit tests run") {
     smdl::Compiler compiler{};
     compiler.enableUnitTests = true;
-    REQUIRE(!compiler.addSourceCode("::host::tests",
+    REQUIRE(!compiler.addCode("::host::tests",
                                     "#smdl\nunit_test \"Arithmetic\" {\n"
                                     "  int i = 2;\n"
                                     "  #assert(i + i == 4);\n}\n"));
@@ -1884,7 +1884,7 @@ TEST_CASE("Compiler addSourceCode") {
     smdl::Compiler compiler{};
     {
       auto source{"#smdl\nimport ::df::*;\n" + materialDef("mat_ok")};
-      REQUIRE(!compiler.addSourceCode("::host::mats", source));
+      REQUIRE(!compiler.addCode("::host::mats", source));
     }
     // Twice, because 'compile()' resets and re-parses every module: a
     // module of source code has no file to read back.
@@ -1916,7 +1916,7 @@ TEST_CASE("Compiler addSourceCode") {
       if (auto error{compiler.add((tmpDir / "anchor").string())})
         return error->message;
       if (auto error{
-              compiler.addSourceCode("::host::mats", source, anchorDirectory)})
+              compiler.addCode("::host::mats", source, anchorDirectory)})
         return error->message;
       if (auto error{compiler.compile(smdl::OPT_LEVEL_NONE)})
         return error->message;
@@ -1929,7 +1929,7 @@ TEST_CASE("Compiler addSourceCode") {
     CHECK(build("") != "");
     // An anchor that is not a directory is refused outright.
     smdl::Compiler compiler{};
-    auto error{compiler.addSourceCode("::host::mats", source,
+    auto error{compiler.addCode("::host::mats", source,
                                       (tmpDir / "nowhere").string())};
     REQUIRE(error.has_value());
     CHECK(error->message.find("not an existing directory") !=
@@ -1939,7 +1939,7 @@ TEST_CASE("Compiler addSourceCode") {
     auto &warned{smdl::Logger::get().addSink<MessageCollector>(
         "same name as a builtin")};
     smdl::Compiler compiler{};
-    CHECK(!compiler.addSourceCode("::df", "#smdl\nexport const int x = 1;\n"));
+    CHECK(!compiler.addCode("::df", "#smdl\nexport const int x = 1;\n"));
     CHECK(warned.messages.size() == 1);
     smdl::Logger::get().reset();
   }

@@ -117,7 +117,7 @@ TEST_CASE("Module search dirs") {
     module_ = smdl::Module::loadFromFile((tmpDir / "mod.smdl").string());
     auto formatOptions{smdl::FormatOptions{}};
     formatOptions.inPlace = true;
-    CHECK(!module_->formatSourceCode(formatOptions));
+    CHECK(!module_->formatSourceFiles(formatOptions));
     auto formatted{readFile(tmpDir / "mod.smdl")};
     CHECK(formatted.find("#search_dir \"./data/\"") != std::string::npos);
     CHECK(formatted.find("#search_dir \"$HOME\"") != std::string::npos);

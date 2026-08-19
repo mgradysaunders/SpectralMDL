@@ -134,7 +134,7 @@ public:
   /// \param[in] qualifiedName
   /// The qualified name, e.g., `::vendor::metals::steel`. This is
   /// assumed to be normalized and validated already, as
-  /// `Compiler::addSourceCode()` does it.
+  /// `Compiler::addCode()` does it.
   ///
   /// \param[in] sourceCode
   /// The source code, which is copied into the module, so the caller
@@ -163,7 +163,7 @@ public:
   }
 
   /// Is supplied by the host as source code? See
-  /// `Compiler::addSourceCode()`.
+  /// `Compiler::addCode()`.
   [[nodiscard]] bool isFromSourceCode() const noexcept {
     return mOrigin == ORIGIN_SOURCE_CODE;
   }
@@ -190,7 +190,7 @@ public:
   /// Get the directory the module resolves relative paths against. This
   /// is the parent directory of the file name if the module is file
   /// backed, else the anchor directory if there is one (see
-  /// `Compiler::addSourceCode()`), else empty.
+  /// `Compiler::addCode()`), else empty.
   [[nodiscard]] std::string getDirectory() const {
     return mFileName.empty() ? mAnchorDirectory : parentPathOf(mFileName);
   }
@@ -256,7 +256,7 @@ public:
 
   /// Format the source code and write or overwrite the file on disk.
   [[nodiscard]] std::optional<Error>
-  formatSourceCode(const FormatOptions &formatOptions) noexcept;
+  formatSourceFiles(const FormatOptions &formatOptions) noexcept;
 
   /// Is parsed yet?
   [[nodiscard]] bool isParsed() const noexcept { return mRoot; }

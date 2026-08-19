@@ -1050,8 +1050,8 @@ int main(int argc, char **argv) try {
   // resolve has somewhere to fall back to. It is added even when MDL
   // modules are given, so that '-material-fallback default' works
   // alongside them.
-  if (auto error{compiler.addSourceCode(DEFAULT_MATERIAL_MODULE,
-                                        DEFAULT_MATERIAL_SOURCE)})
+  if (auto error{
+          compiler.addCode(DEFAULT_MATERIAL_MODULE, DEFAULT_MATERIAL_SOURCE)})
     error->printAndExit();
   for (auto &inputMDLFile : optInputMDLFiles)
     if (auto error{compiler.add(std::string(inputMDLFile))})
