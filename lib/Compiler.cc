@@ -57,12 +57,8 @@ Compiler::~Compiler() = default;
 
 void Ptexture::release() noexcept {
 #if SMDL_HAS_PTEX
-  if (textureFilter) {
-    static_cast<PtexFilter *>(textureFilter)->release();
-  }
-  if (texture) {
-    static_cast<PtexTexture *>(texture)->release();
-  }
+  if (textureFilter) static_cast<PtexFilter *>(textureFilter)->release();
+  if (texture) static_cast<PtexTexture *>(texture)->release();
 #endif // #if SMDL_HAS_PTEX
   texture = nullptr;
   textureFilter = nullptr;
@@ -76,19 +72,16 @@ void Ptexture::release() noexcept {
 [[nodiscard]] static std::vector<std::string>
 parseArchivePackagePrefix(const std::string &fileName) {
   auto stem{std::filesystem::path(fileName).stem().string()};
+  auto components{llvm::SmallVector<llvm::StringRef>{}};
+  llvm::StringRef(stem).split(components, '.');
   auto prefix{std::vector<std::string>()};
-  size_t pos{0};
-  while (true) {
-    auto dot{stem.find('.', pos)};
-    auto component{stem.substr(pos, dot == std::string::npos ? std::string::npos
-                                                             : dot - pos)};
+  for (auto component : components) {
     if (component.empty())
       throw Error(concat("invalid archive name ", QuotedPath(fileName),
                          ": empty package prefix component"));
-    prefix.push_back(std::move(component));
-    if (dot == std::string::npos) return prefix;
-    pos = dot + 1;
+    prefix.push_back(component.str());
   }
+  return prefix;
 }
 
 // Does the archive entry conform to the package prefix encoded by the
@@ -99,28 +92,13 @@ parseArchivePackagePrefix(const std::string &fileName) {
 [[nodiscard]] static bool
 isConformingArchiveEntry(const std::vector<std::string> &prefix,
                          const std::string &entryName) {
-  auto components{std::vector<std::string>()};
-  size_t pos{0};
-  while (true) {
-    auto sep{entryName.find('/', pos)};
-    components.push_back(entryName.substr(
-        pos, sep == std::string::npos ? std::string::npos : sep - pos));
-    if (sep == std::string::npos) break;
-    pos = sep + 1;
-  }
-  if (components.size() == prefix.size()) {
-    for (size_t i{0}; i + 1 < prefix.size(); i++) {
-      if (components[i] != prefix[i]) return false;
-    }
-    return components.back() == prefix.back() + ".mdl";
-  }
-  if (components.size() > prefix.size()) {
-    for (size_t i{0}; i < prefix.size(); i++) {
-      if (components[i] != prefix[i]) return false;
-    }
-    return true;
-  }
-  return false;
+  auto components{llvm::SmallVector<llvm::StringRef>{}};
+  llvm::StringRef(entryName).split(components, '/');
+  if (components.size() == prefix.size())
+    return std::equal(prefix.begin(), prefix.end() - 1, components.begin()) &&
+           components.back() == prefix.back() + ".mdl";
+  return components.size() > prefix.size() &&
+         std::equal(prefix.begin(), prefix.end(), components.begin());
 }
 
 // Is `parent` a lexical ancestor directory of `child`? Assumes both
@@ -209,14 +187,15 @@ std::optional<Error> Compiler::addCode(std::string moduleName,
     }
     // An absolute import resolves builtins first, so a module named
     // after one compiles but is unreachable by qualified name.
-    for (const auto &builtinName : builtin::getAllNames()) {
-      if (joinQualifiedName(splitQualifiedName(builtinName)) == qualifiedName) {
-        SMDL_LOG_WARN("module ", Quoted(qualifiedName),
-                      " has the same name as a builtin module, so imports "
-                      "of that name resolve to the builtin");
-        break;
-      }
-    }
+    auto builtinNames{builtin::getAllNames()};
+    if (std::any_of(builtinNames.begin(), builtinNames.end(),
+                    [&](std::string_view builtinName) {
+                      return joinQualifiedName(splitQualifiedName(
+                                 builtinName)) == qualifiedName;
+                    }))
+      SMDL_LOG_WARN("module ", Quoted(qualifiedName),
+                    " has the same name as a builtin module, so imports "
+                    "of that name resolve to the builtin");
     if (!anchorDirectory.empty()) {
       if (!isDirectory(anchorDirectory)) {
         throw Error(concat("cannot add module ", Quoted(qualifiedName),
@@ -239,109 +218,119 @@ Compiler::add(std::string fileOrDirName,
   // The filesystem iterators, 'Archive', and 'Module::loadFromFile' all
   // throw; catch everything so the 'optional<Error>' contract holds.
   return catchAndReturnError([&] {
+    auto addMDLE{[&](const std::string &fileName) {
+      SMDL_LOG_DEBUG("Adding MDLE ", QuotedPath(fileName));
+      // An MDLE is a self-contained encapsulated material. Identity
+      // is content-based: the qualified name is '::mdle::<md5>' of
+      // the container bytes, so identical containers at different
+      // paths dedupe to one module and distinct containers can never
+      // collide.
+      auto contentHash{std::string(MD5Hash::hashFile(fileName))};
+      auto qualifiedName{"::mdle::" + contentHash};
+      if (auto itr{mModulesByQualifiedName.find(qualifiedName)};
+          itr != mModulesByQualifiedName.end()) {
+        if (addedModuleNames) {
+          addedModuleNames->push_back(std::move(qualifiedName));
+        }
+        return;
+      }
+      // Load 'main.mdl' and extract every other entry into a
+      // content-addressed cache directory that serves as the anchor
+      // for the module's resource lookups.
+      auto extractDir{(std::filesystem::temp_directory_path() /
+                       ("smdl-mdle-" + contentHash))
+                          .string()};
+      auto archive{Archive{fileName}};
+      auto mainSource{std::optional<std::string>()};
+      for (int i = 0; i < archive.get_file_count(); i++) {
+        auto entryName{archive.get_file_name(i)};
+        if (entryName == "main.mdl") {
+          mainSource = archive.extract_file(i);
+        } else if (!entryName.empty() && entryName.back() != '/') {
+          auto outPath{std::filesystem::path(extractDir) / entryName};
+          std::filesystem::create_directories(outPath.parent_path());
+          openOrThrow(outPath.string(), std::ios::out | std::ios::binary)
+              << archive.extract_file(i);
+        }
+      }
+      if (!mainSource) {
+        throw Error(concat("MDLE ", QuotedPath(fileName),
+                           " does not contain 'main.mdl'"));
+      }
+      registerModule(Module::loadFromMDLE(fileName, *mainSource, qualifiedName,
+                                          extractDir),
+                     addedModuleNames);
+    }};
+    auto addArchive{[&](const std::string &fileName,
+                        const std::string &searchRoot) {
+      SMDL_LOG_DEBUG("Adding MDL archive ", QuotedPath(fileName));
+      // Per the MDL specification, the archive file name encodes the
+      // enclosed package prefix: 'vendor.metals.mdr' provides
+      // '::vendor::metals', and every '.mdl' entry must be the
+      // enclosed module ('vendor/metals.mdl') or live under the
+      // enclosed package directory ('vendor/metals/...').
+      auto prefix{parseArchivePackagePrefix(fileName)};
+      {
+        // Duplicating the enclosed contents as loose files in the
+        // same search root is an error.
+        auto loosePath{searchRoot};
+        for (const auto &component : prefix) {
+          loosePath = joinPaths(loosePath, component);
+        }
+        if (isDirectory(loosePath) || isFile(loosePath + ".mdl") ||
+            isFile(loosePath + ".smdl")) {
+          throw Error(concat("archive ", QuotedPath(fileName),
+                             " conflicts with loose contents at ",
+                             QuotedPath(loosePath),
+                             " in the same search root"));
+        }
+      }
+      auto archive{Archive{fileName}};
+      for (int i = 0; i < archive.get_file_count(); i++) {
+        if (auto entryName{archive.get_file_name(i)};
+            hasExtension(entryName, ".mdl")) {
+          if (!isConformingArchiveEntry(prefix, entryName)) {
+            throw Error(concat(
+                "archive ", QuotedPath(fileName), " entry ", Quoted(entryName),
+                " does not conform to the package prefix encoded "
+                "by the archive file name"));
+          }
+          if (auto entryPath{joinPaths(fileName, entryName)};
+              mModuleFileNames.count(entryPath) == 0) {
+            SMDL_LOG_DEBUG("Adding MDL file from archive ",
+                           QuotedPath(entryPath));
+            registerModule(
+                Module::loadFromFileExtractedFromArchive(
+                    fileName, entryName, archive.extract_file(i), searchRoot),
+                addedModuleNames);
+          }
+        }
+      }
+    }};
+    auto addLooseFile{
+        [&](const std::string &fileName, const std::string &searchRoot) {
+          if (auto itr{mModuleFileNames.find(fileName)};
+              itr == mModuleFileNames.end()) {
+            SMDL_LOG_DEBUG("Adding MDL file ", QuotedPath(fileName));
+            registerModule(Module::loadFromFile(fileName, searchRoot),
+                           addedModuleNames);
+          } else if (itr->second->getSearchRoot() != searchRoot) {
+            // Already added under a different search root: the first
+            // identity wins.
+            SMDL_LOG_WARN("module file ", QuotedPath(fileName),
+                          " was already added as ",
+                          Quoted(itr->second->getQualifiedName()),
+                          "; keeping the existing identity");
+          }
+        }};
     auto addFile{
         [&](const std::string &fileName, const std::string &searchRoot) {
           if (llvm::StringRef(fileName).ends_with_insensitive(".mdle")) {
-            SMDL_LOG_DEBUG("Adding MDLE ", QuotedPath(fileName));
-            // An MDLE is a self-contained encapsulated material. Identity
-            // is content-based: the qualified name is '::mdle::<md5>' of
-            // the container bytes, so identical containers at different
-            // paths dedupe to one module and distinct containers can never
-            // collide.
-            auto qualifiedName{"::mdle::" +
-                               std::string(MD5Hash::hashFile(fileName))};
-            if (auto itr{mModulesByQualifiedName.find(qualifiedName)};
-                itr != mModulesByQualifiedName.end()) {
-              if (addedModuleNames) {
-                addedModuleNames->push_back(std::move(qualifiedName));
-              }
-              return;
-            }
-            // Load 'main.mdl' and extract every other entry into a
-            // content-addressed cache directory that serves as the anchor
-            // for the module's resource lookups.
-            auto extractDir{(std::filesystem::temp_directory_path() /
-                             ("smdl-mdle-" + qualifiedName.substr(8)))
-                                .string()};
-            auto archive{Archive{fileName}};
-            auto mainSource{std::optional<std::string>()};
-            for (int i = 0; i < archive.get_file_count(); i++) {
-              auto entryName{archive.get_file_name(i)};
-              if (entryName == "main.mdl") {
-                mainSource = archive.extract_file(i);
-              } else if (!entryName.empty() && entryName.back() != '/') {
-                auto outPath{std::filesystem::path(extractDir) / entryName};
-                std::filesystem::create_directories(outPath.parent_path());
-                openOrThrow(outPath.string(), std::ios::out | std::ios::binary)
-                    << archive.extract_file(i);
-              }
-            }
-            if (!mainSource) {
-              throw Error(concat("MDLE ", QuotedPath(fileName),
-                                 " does not contain 'main.mdl'"));
-            }
-            registerModule(Module::loadFromMDLE(fileName, *mainSource,
-                                                qualifiedName, extractDir),
-                           addedModuleNames);
+            addMDLE(fileName);
           } else if (llvm::StringRef(fileName).ends_with_insensitive(".mdr")) {
-            SMDL_LOG_DEBUG("Adding MDL archive ", QuotedPath(fileName));
-            // Per the MDL specification, the archive file name encodes the
-            // enclosed package prefix: 'vendor.metals.mdr' provides
-            // '::vendor::metals', and every '.mdl' entry must be the
-            // enclosed module ('vendor/metals.mdl') or live under the
-            // enclosed package directory ('vendor/metals/...').
-            auto prefix{parseArchivePackagePrefix(fileName)};
-            {
-              // Duplicating the enclosed contents as loose files in the
-              // same search root is an error.
-              auto loosePath{searchRoot};
-              for (const auto &component : prefix) {
-                loosePath = joinPaths(loosePath, component);
-              }
-              if (isDirectory(loosePath) || isFile(loosePath + ".mdl") ||
-                  isFile(loosePath + ".smdl")) {
-                throw Error(concat("archive ", QuotedPath(fileName),
-                                   " conflicts with loose contents at ",
-                                   QuotedPath(loosePath),
-                                   " in the same search root"));
-              }
-            }
-            auto archive{Archive{fileName}};
-            for (int i = 0; i < archive.get_file_count(); i++) {
-              if (auto entryName{archive.get_file_name(i)};
-                  hasExtension(entryName, ".mdl")) {
-                if (!isConformingArchiveEntry(prefix, entryName)) {
-                  throw Error(
-                      concat("archive ", QuotedPath(fileName), " entry ",
-                             Quoted(entryName),
-                             " does not conform to the package prefix encoded "
-                             "by the archive file name"));
-                }
-                if (auto entryPath{joinPaths(fileName, entryName)};
-                    mModuleFileNames.count(entryPath) == 0) {
-                  SMDL_LOG_DEBUG("Adding MDL file from archive ",
-                                 QuotedPath(entryPath));
-                  registerModule(Module::loadFromFileExtractedFromArchive(
-                                     fileName, entryName,
-                                     archive.extract_file(i), searchRoot),
-                                 addedModuleNames);
-                }
-              }
-            }
+            addArchive(fileName, searchRoot);
           } else {
-            if (auto itr{mModuleFileNames.find(fileName)};
-                itr == mModuleFileNames.end()) {
-              SMDL_LOG_DEBUG("Adding MDL file ", QuotedPath(fileName));
-              registerModule(Module::loadFromFile(fileName, searchRoot),
-                             addedModuleNames);
-            } else if (itr->second->getSearchRoot() != searchRoot) {
-              // Already added under a different search root: the first
-              // identity wins.
-              SMDL_LOG_WARN("module file ", QuotedPath(fileName),
-                            " was already added as ",
-                            Quoted(itr->second->getQualifiedName()),
-                            "; keeping the existing identity");
-            }
+            addLooseFile(fileName, searchRoot);
           }
         }};
     if (auto maybePath{fileLocator.locate(fileOrDirName, {},
@@ -922,11 +911,10 @@ Compiler::loadSpectrumLibrary(const std::string &fileName,
 const PBRMaps &Compiler::loadPBRMaps(const std::string &fileName,
                                      const SourceLocation &srcLoc) {
   auto [itr, inserted] = mPBRMaps.try_emplace(mFileHasher[fileName]);
-  if (inserted) itr->second = std::make_unique<PBRMaps>();
-  auto &manifest{*itr->second};
   if (inserted) {
     SMDL_PROFILER_ENTRY("Compiler::loadPBRMaps()", fileName.c_str());
-    if (auto error{manifest.loadFromFile(fileName)}) {
+    itr->second = std::make_unique<PBRMaps>();
+    if (auto error{itr->second->loadFromFile(fileName)}) {
       // Discard the failed entry so a later reference to the same
       // manifest re-parses and re-throws instead of silently returning
       // a default-constructed manifest.
@@ -934,7 +922,7 @@ const PBRMaps &Compiler::loadPBRMaps(const std::string &fileName,
       throw std::move(*error);
     }
   }
-  return manifest;
+  return *itr->second;
 }
 
 std::optional<Error> Compiler::dump(DumpFormat dumpFormat,
@@ -1005,16 +993,10 @@ std::optional<Error> Compiler::jitCompile() noexcept {
       jitLookup(jitMaterial.hairScatterEvaluate);
       jitLookup(jitMaterial.hairScatterSample);
     }
-    for (auto &jitUnitTest : mUnitTests) {
-      jitLookup(jitUnitTest.test);
-    }
-    for (auto &jitExec : mExecs) {
-      jitLookup(jitExec);
-    }
+    for (auto &jitUnitTest : mUnitTests) jitLookup(jitUnitTest.test);
+    for (auto &jitExec : mExecs) jitLookup(jitExec);
     // Deallocate everything we no longer need!
-    for (auto &mod : mModules) {
-      mod->reset();
-    }
+    for (auto &mod : mModules) mod->reset();
     mAllocator.reset();
   })};
   if (error && !mJITSessionErrors.empty()) {
@@ -1070,12 +1052,9 @@ std::vector<const JIT::Material *>
 Compiler::findMaterials(std::string_view materialName) const {
   auto results{std::vector<const JIT::Material *>()};
   for (const auto &jitMaterial : mMaterials) {
-    if (jitMaterial.moduleIsShadowed) {
-      continue;
-    }
-    if (matchesMaterialName(materialName, jitMaterial.qualifiedName)) {
+    if (!jitMaterial.moduleIsShadowed &&
+        matchesMaterialName(materialName, jitMaterial.qualifiedName))
       results.push_back(&jitMaterial);
-    }
   }
   return results;
 }
@@ -1242,20 +1221,17 @@ SMDL_EXPORT void smdlPtexEvaluate(const void *state,
                                   int first, int num, float *out) {
   SMDL_SANITY_CHECK(state != nullptr);
   SMDL_SANITY_CHECK(out != nullptr);
-  for (int i = 0; i < num; i++) {
-    out[i] = 0.0f;
-  }
+  std::fill_n(out, num, 0.0f);
 #if SMDL_HAS_PTEX
   if (ptex && ptex->texture && first < ptex->channelCount) {
     num = std::min(num, int(ptex->channelCount - first));
     thread_local ThreadLocalPtexFilters filters{};
-    filters.get(*ptex)->eval(
-        out, first, num, static_cast<const smdl::State *>(state)->ptex_face_id,
-        static_cast<const smdl::State *>(state)->ptex_face_uv.x,
-        static_cast<const smdl::State *>(state)->ptex_face_uv.y,
-        /*uw1=*/0.0f, /*vw1=*/0.0f,
-        /*uw2=*/0.0f, /*vw2=*/0.0f,
-        /*width=*/1.0f, /*blur=*/0.0f);
+    const auto &smdlState{*static_cast<const smdl::State *>(state)};
+    filters.get(*ptex)->eval(out, first, num, smdlState.ptex_face_id,
+                             smdlState.ptex_face_uv.x, smdlState.ptex_face_uv.y,
+                             /*uw1=*/0.0f, /*vw1=*/0.0f,
+                             /*uw2=*/0.0f, /*vw2=*/0.0f,
+                             /*width=*/1.0f, /*blur=*/0.0f);
     if (gamma == 1) { // sRGB?
       for (int i = 0; i < num; i++) {
         int channel{first + i};
