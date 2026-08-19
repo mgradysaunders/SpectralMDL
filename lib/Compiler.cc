@@ -69,7 +69,8 @@ void Ptexture::release() noexcept {
 // Parse the dot-separated package prefix encoded by an MDL archive
 // file name per the MDL specification, e.g., `vendor.metals.mdr`
 // encodes `{"vendor", "metals"}`. Throws on empty components.
-[[nodiscard]] static std::vector<std::string>
+[[nodiscard]]
+static std::vector<std::string>
 parseArchivePackagePrefix(const std::string &fileName) {
   auto stem{std::filesystem::path(fileName).stem().string()};
   auto components{llvm::SmallVector<llvm::StringRef>{}};
@@ -89,9 +90,9 @@ parseArchivePackagePrefix(const std::string &fileName) {
 // module itself (`vendor/metals.mdl` for the prefix
 // `{"vendor", "metals"}`) or anywhere under the enclosed package
 // directory (`vendor/metals/...`).
-[[nodiscard]] static bool
-isConformingArchiveEntry(const std::vector<std::string> &prefix,
-                         const std::string &entryName) {
+[[nodiscard]]
+static bool isConformingArchiveEntry(const std::vector<std::string> &prefix,
+                                     const std::string &entryName) {
   auto components{llvm::SmallVector<llvm::StringRef>{}};
   llvm::StringRef(entryName).split(components, '/');
   if (components.size() == prefix.size())
@@ -103,8 +104,9 @@ isConformingArchiveEntry(const std::vector<std::string> &prefix,
 
 // Is `parent` a lexical ancestor directory of `child`? Assumes both
 // paths are already canonical. Equal paths do not count.
-[[nodiscard]] static bool isLexicalSubPath(const std::string &parent,
-                                           const std::string &child) {
+[[nodiscard]]
+static bool isLexicalSubPath(const std::string &parent,
+                             const std::string &child) {
   auto parentPath{std::filesystem::path(parent)};
   auto childPath{std::filesystem::path(child)};
   auto [parentItr, childItr] =
@@ -140,10 +142,10 @@ void Compiler::registerModule(std::unique_ptr<Module> loadedModule,
 // or throw an `Error` explaining why it is not a legal module name. It
 // must be spellable in an `import`, so every component is an ordinary
 // identifier.
-[[nodiscard]] static std::string
-normalizeModuleName(const std::string &moduleName) {
-  auto isIdentifier{[](std::string_view component) {
-    auto isLetter{[](char ch) {
+[[nodiscard]]
+static std::string normalizeModuleName(const std::string &moduleName) {
+  const auto isIdentifier{[](std::string_view component) {
+    const auto isLetter{[](char ch) {
       return ch == '_' || (ch >= 'A' && ch <= 'Z') || (ch >= 'a' && ch <= 'z');
     }};
     if (component.empty() || !isLetter(component[0])) return false;
