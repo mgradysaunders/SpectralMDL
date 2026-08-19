@@ -1,0 +1,91 @@
+#smdl
+
+// An abstract struct: 'payload' forces instantiation through
+// 'StructType::getInstance', where 'const' fields whose values fold at
+// compile time are baked into the type and eliminated from storage.
+struct wrap {
+  auto payload;
+  const float r = 0.5;
+  const float r2 = r * r;
+  float mut = 0.0;
+};
+
+@(pure)
+float wrap_r(const &wrap w) = w.r + w.r2;
+
+unit_test "Constant fields (elimination)" {
+  auto a = wrap(payload: 1, r: 0.25);
+  #assert(a.r == 0.25);
+  #assert(a.r2 == 0.0625);
+  #assert(a.mut == 0.0);
+  // 'r' and 'r2' are baked away: only 'payload' and 'mut' have storage.
+  #assert(#sizeOf(#typeOf(a)) == #sizeOf(int) + #sizeOf(float));
+  // Identical constants share one instance; different constants are
+  // distinct types.
+  auto b = wrap(payload: 2, r: 0.25);
+  #assert(#typeOf(b) == #typeOf(a));
+  auto c = wrap(payload: 1, r: 0.75);
+  #assert(#typeOf(c) != #typeOf(a));
+  // A runtime value keeps its storage, and the derived default computed
+  // from it stays stored as well.
+  float rt = 0.25;
+  auto d = wrap(payload: 1, r: rt);
+  #assert(d.r == 0.25);
+  #assert(d.r2 == 0.0625);
+  #assert(#typeOf(d) != #typeOf(a));
+  #assert(#sizeOf(#typeOf(d)) == #sizeOf(int) + 3 * #sizeOf(float));
+  // Baked fields read correctly through pointers and functions, which
+  // monomorphize per instance type.
+  #assert(wrap_r(&a) == 0.25 + 0.0625);
+  #assert(wrap_r(&d) == 0.25 + 0.0625);
+  // Re-invoking the instance type accepts the identical constant.
+  auto e = #typeOf(a)(payload: 3, r: 0.25);
+  #assert(#typeOf(e) == #typeOf(a));
+  #assert(e.r == 0.25 && e.payload == 3);
+}
+
+unit_test "Constant fields (merging)" {
+  int k = 1;
+  bool cond = k > 0;
+  // Arms differing only in a baked constant merge to one struct type
+  // with the constant demoted to storage, not to a union: the merged
+  // type is exactly the instance a runtime-valued construction produces.
+  auto m = cond ? wrap(payload: 1, r: 0.25) : wrap(payload: 1, r: 0.75);
+  float rt = 0.25;
+  #assert(#typeOf(m) == #typeOf(wrap(payload: 1, r: rt)));
+  #assert(m.r == 0.25);
+  #assert(m.r2 == 0.0625);
+  #assert(m.mut == 0.0);
+  // Arms agreeing on the constants keep them baked.
+  auto m2 = cond ? wrap(payload: 1, r: 0.25, mut: 1.0)
+                 : wrap(payload: 1, r: 0.25, mut: 2.0);
+  #assert(#typeOf(m2) == #typeOf(wrap(payload: 1, r: 0.25)));
+  #assert(m2.r == 0.25);
+  #assert(m2.mut == 1.0);
+  // Arrays of disagreeing constructions demote element-wise.
+  auto arr = wrap[2](wrap(payload: 1, r: 0.25), wrap(payload: 2, r: 0.75));
+  #assert(arr[0].r == 0.25);
+  #assert(arr[0].r2 == 0.0625);
+  #assert(arr[1].r == 0.75);
+  #assert(arr[1].payload == 2);
+}
+
+struct tinted {
+  const $(color | float) tint = 1.0;
+};
+
+unit_test "Constant fields (comptime unions)" {
+  auto t1 = tinted(tint: 0.5);
+  auto t2 = tinted(tint: color(0.5));
+  #assert(t1.tint == 0.5);
+  #assert(#all(t2.tint == color(0.5)));
+  // Both eliminate entirely: the instances have no storage at all.
+  #assert(#sizeOf(#typeOf(t1)) == 0);
+  #assert(#sizeOf(#typeOf(t2)) == 0);
+  #assert(#typeOf(t1) != #typeOf(t2));
+  float rt = 0.5;
+  auto t3 = tinted(tint: rt);
+  #assert(t3.tint == 0.5);
+  #assert(#sizeOf(#typeOf(t3)) == #sizeOf(float));
+  #assert(#typeOf(t3) != #typeOf(t1));
+}
