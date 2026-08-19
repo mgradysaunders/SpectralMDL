@@ -186,9 +186,9 @@ normalizeModuleName(const std::string &moduleName) {
   return joinQualifiedName(components);
 }
 
-std::optional<Error>
-Compiler::addCode(std::string moduleName, std::string sourceCode,
-                        std::string anchorDirectory) noexcept {
+std::optional<Error> Compiler::addCode(std::string moduleName,
+                                       std::string sourceCode,
+                                       std::string anchorDirectory) noexcept {
   SMDL_PROFILER_ENTRY("Compiler::addCode()", moduleName.c_str());
   return catchAndReturnError([&] {
     auto qualifiedName{normalizeModuleName(moduleName)};
@@ -382,8 +382,9 @@ Compiler::add(std::string fileOrDirName,
           auto prefixI{parseArchivePackagePrefix(archivePaths[i])};
           for (size_t j = i + 1; j < archivePaths.size(); j++) {
             auto prefixJ{parseArchivePackagePrefix(archivePaths[j])};
-            if (auto n{std::min(prefixI.size(), prefixJ.size())}; std::equal(
-                    prefixI.begin(), prefixI.begin() + n, prefixJ.begin())) {
+            if (auto n{std::min(prefixI.size(), prefixJ.size())};
+                std::equal(prefixI.begin(), prefixI.begin() + long(n),
+                           prefixJ.begin())) {
               throw Error(concat(
                   "archives ", //
                   QuotedPath(archivePaths[i]), " and ",
