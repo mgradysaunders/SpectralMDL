@@ -1,0 +1,79 @@
+#smdl
+
+import ::math::*;
+
+// Intrinsic calls on constant operands fold at emit time, so they can
+// appear anywhere a compile-time constant is required, including at
+// module scope.
+const float MODULE_SCOPE_SQRT2 = #sqrt(2.0);
+
+unit_test "Comptime folding (unary float intrinsics)" {
+  static const float SQRT4 = #sqrt(4.0);
+  static const float FLOOR = #floor(2.75);
+  static const float CEIL = #ceil(2.25);
+  static const float TRUNC = #trunc(-2.75);
+  static const float EXP0 = #exp(0.0);
+  static const float EXP2_3 = #exp2(3.0);
+  static const float LOG1 = #log(1.0);
+  static const float COS0 = #cos(0.0);
+  #assert(SQRT4 == 2.0);
+  #assert(FLOOR == 2.0);
+  #assert(CEIL == 3.0);
+  #assert(TRUNC == -2.0);
+  #assert(EXP0 == 1.0);
+  #assert(EXP2_3 == 8.0);
+  #assert(LOG1 == 0.0);
+  #assert(COS0 == 1.0);
+  #assert(MODULE_SCOPE_SQRT2 == #sqrt(2.0));
+  static const float2 SQRTV = #sqrt(float2(4.0, 9.0));
+  #assert(#all(SQRTV == float2(2.0, 3.0)));
+}
+
+unit_test "Comptime folding (binary intrinsics)" {
+  static const float POWF = #pow(2.0, 8.0);
+  static const float POWI = #pow(2.0, 8);
+  static const float ABSF = #abs(-2.5);
+  static const int ABSI = #abs(-5);
+  static const float SIGNF = #sign(-2.5);
+  static const int ROT = #rotl(8, 1);
+  static const int POP = #ctpop(255);
+  #assert(POWF == 256.0);
+  #assert(POWI == 256.0);
+  #assert(ABSF == 2.5);
+  #assert(ABSI == 5);
+  #assert(SIGNF == -1.0);
+  #assert(ROT == 16);
+  #assert(POP == 8);
+  static const float2 CLAMPED = #max(float2(0.05), #min(float2(0.2, 1.7), float2(1.0)));
+  #assert(#all(CLAMPED == float2(0.2, 1.0)));
+}
+
+unit_test "Comptime folding (reductions)" {
+  static const float PROD = #prod(float2(0.25, 0.5));
+  static const float SUM = #sum(float2(0.25, 0.5));
+  static const float MAXV = #maxValue(float3(-1.0, 3.5, 2.0));
+  static const float MINV = #minValue(float3(-1.0, 3.5, 2.0));
+  static const int SUMI = #sum(int3(1, 2, 3));
+  static const int PRODI = #prod(int3(2, 3, 4));
+  static const bool ANY = #any(bool2(false, true));
+  static const bool ALL = #all(bool2(false, true));
+  #assert(PROD == 0.125);
+  #assert(SUM == 0.75);
+  #assert(MAXV == 3.5);
+  #assert(MINV == -1.0);
+  #assert(SUMI == 6);
+  #assert(PRODI == 24);
+  #assert(ANY);
+  #assert(!ALL);
+  static const float CMAX = #maxValue(color(0.5));
+  #assert(CMAX == 0.5);
+}
+
+unit_test "Comptime folding (derived defaults chain)" {
+  // The 'microfacet_bsdf' derived-default pattern: 'clamp' is a macro over
+  // '#max'/'#min', and 'roughness0' chains '#sqrt' onto '#prod'.
+  static const float2 ALPHA = math::clamp(float2(0.2, 0.7) * float2(0.2, 0.7), 0.001, 1.0);
+  static const float R0 = #sqrt(#prod(float2(0.25, 0.25)));
+  #assert(#all(ALPHA == float2(0.2, 0.7) * float2(0.2, 0.7)));
+  #assert(R0 == 0.25);
+}
