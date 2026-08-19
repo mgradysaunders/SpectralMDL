@@ -22,12 +22,13 @@ static std::string toSignatureString(std::string_view name,
   auto str{std::string(name)};
   str += '(';
   for (size_t i = 0; i < params.size(); i++) {
-    str += params[i].type->displayName;
-    if (!params[i].name.empty()) {
+    if (i) str += ", ";
+    const auto &param{params[i]};
+    str += param.type->displayName;
+    if (!param.name.empty()) {
       str += ' ';
-      str += params[i].name;
+      str += param.name;
     }
-    if (i + 1 < params.size()) str += ", ";
   }
   if (params.isVariadic) str += params.empty() ? "..." : ", ...";
   str += ')';
@@ -99,7 +100,7 @@ bool Type::isDefault() const {
     if (!structType->instanceOf) {
       // The struct is considered 'default' if it is the default type for
       // its first tag.
-      return structType->tags.size() >= 1 &&
+      return !structType->tags.empty() &&
              structType->tags[0]->defaultType == structType;
     } else {
       // The struct is considered 'default' if it is the default
@@ -165,20 +166,22 @@ llvm::Type *Scalar::getLLVMType(llvm::LLVMContext &context) const {
   if (intent == Intent::Int) {
     return llvm::Type::getIntNTy(context, numBits);
   } else if (intent == Intent::FP) {
-    if (numBits == 16) {
+    switch (numBits) {
+    case 16:
       return llvm::Type::getHalfTy(context);
-    } else if (numBits == 32) {
+    case 32:
       return llvm::Type::getFloatTy(context);
-    } else if (numBits == 64) {
+    case 64:
       return llvm::Type::getDoubleTy(context);
-    } else if (numBits == 80) {
+    case 80:
       return llvm::Type::getX86_FP80Ty(context);
-    } else if (numBits == 128) {
+    case 128:
       return llvm::Type::getFP128Ty(context);
-    } else {
-      SMDL_SANITY_CHECK_MSG(false, "Invalid float type specification!");
-      return nullptr;
+    default:
+      break;
     }
+    SMDL_SANITY_CHECK_MSG(false, "Invalid float type specification!");
+    return nullptr;
   } else {
     return llvm::Type::getVoidTy(context);
   }
@@ -225,6 +228,7 @@ static std::optional<Value> tryConstructFromPointer(Emitter &emitter,
 
 Value ArithmeticType::invoke(Emitter &emitter, const ArgumentList &args,
                              const SourceLocation &srcLoc) {
+  auto &context{emitter.context};
   if (auto trivial{invokeTrivialCases(emitter, args)}) {
     return *trivial;
   }
@@ -242,7 +246,7 @@ Value ArithmeticType::invoke(Emitter &emitter, const ArgumentList &args,
       return RValue(
           this, emitter.builder.CreateICmpNE(
                     emitter.rvalue(emitter.accessField(value, "#idx", srcLoc)),
-                    emitter.context.getComptimeInt(int(
+                    context.getComptimeInt(int(
                         static_cast<UnionType *>(value.type)->caseTypes.size() -
                         1))));
     // If constructing from another scalar or enum type, cast the
@@ -259,10 +263,10 @@ Value ArithmeticType::invoke(Emitter &emitter, const ArgumentList &args,
       // float3(2.7) // == float3(2.7, 2.7, 2.7)
       // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
       if (value.type->isArithmeticScalar())
-        return RValue(this, emitter.builder.CreateVectorSplat(
-                                extent.getVectorSize(),
-                                emitter.invoke(getScalarType(emitter.context),
-                                               value, srcLoc)));
+        return RValue(
+            this, emitter.builder.CreateVectorSplat(
+                      extent.getVectorSize(),
+                      emitter.invoke(getScalarType(context), value, srcLoc)));
       // If constructing from vector of the same size, cast the
       // underlying LLVM representation.
       // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -274,16 +278,15 @@ Value ArithmeticType::invoke(Emitter &emitter, const ArgumentList &args,
                                          llvmType));
       // If constructing from a pointer to the scalar type, load from the
       // pointer.
-      if (auto loaded{tryConstructFromPointer(
-              emitter, this, getScalarType(emitter.context), value)})
+      if (auto loaded{tryConstructFromPointer(emitter, this,
+                                              getScalarType(context), value)})
         return *loaded;
       // If constructing from color and this is a 3-dimensional vector,
       // delegate to the `_colorToRgb` function in the `api` module.
-      if (value.type == emitter.context.getColorType() && dim == 3)
+      if (value.type == context.getColorType() && dim == 3)
         return invoke(
             emitter,
-            emitter.emitCall(emitter.context.getKeyword("_colorToRgb"), value,
-                             srcLoc),
+            emitter.emitCall(context.getKeyword("_colorToRgb"), value, srcLoc),
             srcLoc);
     }
     // From scalars
@@ -304,7 +307,7 @@ Value ArithmeticType::invoke(Emitter &emitter, const ArgumentList &args,
       // float4(w: 3.0, x: 5.0, y: 7.0, z: 9.0)
       // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
       if (2 <= dim && dim <= 4) {
-        auto scalarType{getScalarType(emitter.context)};
+        auto scalarType{getScalarType(context)};
         auto params{ParameterList{}};
         params.push_back(Parameter{scalarType, "x"});
         params.push_back(Parameter{scalarType, "y"});
@@ -348,8 +351,7 @@ Value ArithmeticType::invoke(Emitter &emitter, const ArgumentList &args,
                           arg.value.type->isArithmeticVector());
         auto arithType{static_cast<ArithmeticType *>(arg.value.type)};
         auto value{emitter.invoke(
-            arithType->getWithDifferentScalar(emitter.context, scalar), arg,
-            srcLoc)};
+            arithType->getWithDifferentScalar(context, scalar), arg, srcLoc)};
         if (arg.value.type->isArithmeticScalar()) {
           result = emitter.insert(result, value, i++, srcLoc);
         } else {
@@ -361,8 +363,8 @@ Value ArithmeticType::invoke(Emitter &emitter, const ArgumentList &args,
       return result;
     }
   } else if (extent.isMatrix()) {
-    auto scalarType{getScalarType(emitter.context)};
-    auto columnType{getColumnType(emitter.context)};
+    auto scalarType{getScalarType(context)};
+    auto columnType{getColumnType(context)};
     auto construct{[&](auto &&func) {
       auto result{Value::zero(this)};
       for (unsigned j = 0; j < extent.numCols; j++)
@@ -432,34 +434,23 @@ Value ArithmeticType::accessField(Emitter &emitter, Value value,
     srcLoc.throwError("scalar ", Quoted(displayName),
                       " has no field access operator");
   }
+  // Set LLVM name for more readable LLVM-IR.
+  auto named{[&](Value result) {
+    if (value.llvmValue->hasName())
+      result.llvmValue->setName(
+          concat(value.llvmValue->getName().str(), ".", name));
+    return result;
+  }};
   if (name.size() == 1) {
-    if (auto i{toIndex(name[0])}) {
-      auto result{accessIndex(emitter, value,
-                              emitter.context.getComptimeInt(int(*i)), srcLoc)};
-      // Set LLVM name for more readable LLVM-IR.
-      if (value.llvmValue->hasName()) {
-        auto name0{value.llvmValue->getName().str()};
-        name0 += '.';
-        name0 += name;
-        result.llvmValue->setName(name0);
-      }
-      return result;
-    }
+    if (auto i{toIndex(name[0])})
+      return named(accessIndex(
+          emitter, value, emitter.context.getComptimeInt(int(*i)), srcLoc));
   }
   if (extent.isVector()) {
-    if (auto iMask{toIndexSwizzle(name)}) {
-      auto result{RValue(
+    if (auto iMask{toIndexSwizzle(name)})
+      return named(RValue(
           emitter.context.getArithmeticType(scalar, Extent(iMask->size())),
-          emitter.builder.CreateShuffleVector(emitter.rvalue(value), *iMask))};
-      // Set LLVM name for more readable LLVM-IR.
-      if (value.llvmValue->hasName()) {
-        auto name0{value.llvmValue->getName().str()};
-        name0 += '.';
-        name0 += name;
-        result.llvmValue->setName(name0);
-      }
-      return result;
-    }
+          emitter.builder.CreateShuffleVector(emitter.rvalue(value), *iMask)));
   }
   srcLoc.throwError("no field ", Quoted(name), " in ", Quoted(displayName));
   return Value();
@@ -507,7 +498,6 @@ Value ArithmeticType::accessIndex(Emitter &emitter, Value value, Value i,
               llvmType, value, {emitter.builder.getInt32(0), i.llvmValue}));
     }
   }
-  return Value();
 }
 
 Value ArithmeticType::insert(Emitter &emitter, Value value, Value elem,
@@ -748,17 +738,17 @@ Value ColorType::invoke(Emitter &emitter, const ArgumentList &args,
   if (args.isOnePositional()) {
     auto value{args[0].value};
     if (value.type->isArithmeticScalar())
-      return RValue(this, emitter.builder.CreateVectorSplat(
-                              wavelengthBaseMax,
-                              emitter.invoke(emitter.context.getFloatType(),
-                                             value, srcLoc)));
+      return RValue(this,
+                    emitter.builder.CreateVectorSplat(
+                        wavelengthBaseMax,
+                        emitter.invoke(context.getFloatType(), value, srcLoc)));
     if (value.type->isArithmeticVector() &&
         static_cast<ArithmeticType *>(value.type)->extent.numRows ==
             wavelengthBaseMax)
       return RValue(
           this, llvmEmitCast(emitter.builder, emitter.rvalue(value), llvmType));
-    if (auto loaded{tryConstructFromPointer(
-            emitter, this, emitter.context.getFloatType(), value)})
+    if (auto loaded{tryConstructFromPointer(emitter, this,
+                                            context.getFloatType(), value)})
       return *loaded;
     if (value.type == context.getFloatType(Extent(3)))
       return emitter.emitCall(context.getKeyword("_rgbToColor"), value, srcLoc);
@@ -791,7 +781,7 @@ Value ColorType::invoke(Emitter &emitter, const ArgumentList &args,
       auto resolvedArgs{emitter.resolveArguments(params, args, srcLoc)};
       auto arrayType0{llvm::dyn_cast<ArrayType>(resolvedArgs.values[0].type)};
       auto arrayType1{llvm::dyn_cast<ArrayType>(resolvedArgs.values[1].type)};
-      if (!(arrayType0 && arrayType1 && arrayType0 == arrayType1))
+      if (!arrayType0 || arrayType0 != arrayType1)
         srcLoc.throwError(
             "expected wavelength and amplitude arrays to be same size");
       return emitter.emitCall(
@@ -903,35 +893,33 @@ void EnumType::initialize(Emitter &emitter) {
   }
 
   // Initialize the to-string LLVM function. This is just a big switch.
-  auto returnType{emitter.context.getStringType()};
+  auto returnType{context.getStringType()};
   llvmFuncToString = emitter.createFunction(
       displayName + ".to_string", /*isPure=*/true, returnType,
       {Parameter{this, "value"}}, decl.name.srcLoc, [&]() {
-        auto valueName{std::string_view("value")};
-        auto value{emitter.resolveIdentifier(valueName, decl.srcLoc)};
+        auto value{
+            emitter.resolveIdentifier(std::string_view("value"), decl.srcLoc)};
         auto blockDefault{emitter.createBlock("switch.default")};
         auto switchInst{
             emitter.builder.CreateSwitch(emitter.rvalue(value), blockDefault)};
         auto switchUniq{llvm::DenseSet<llvm::Value *>{}};
         for (unsigned i = 0; i < decl.declarators.size(); i++) {
-          if (auto [itr, inserted] =
-                  switchUniq.insert(decl.declarators[i].llvmConst);
-              !inserted)
+          auto &declarator{decl.declarators[i]};
+          if (!switchUniq.insert(declarator.llvmConst).second)
             continue; // Skip repeats!
           auto blockCase{
               emitter.createBlock("switch.case." + std::to_string(i))};
-          switchInst->addCase(decl.declarators[i].llvmConst, blockCase);
+          switchInst->addCase(declarator.llvmConst, blockCase);
           emitter.builder.SetInsertPoint(blockCase);
-          emitter.returns.push_back({emitter.context.getComptimeString(
-                                         decl.declarators[i].name.srcName),
-                                     blockCase,
-                                     decl.declarators[i].name.srcLoc});
+          emitter.returns.push_back(
+              {context.getComptimeString(declarator.name.srcName), blockCase,
+               declarator.name.srcLoc});
           emitter.builder.CreateBr(emitter.labelReturn.block);
         }
         llvmMoveBlockToEnd(blockDefault);
         emitter.builder.SetInsertPoint(blockDefault);
-        emitter.returns.push_back({emitter.context.getComptimeString(""),
-                                   blockDefault, decl.name.srcLoc});
+        emitter.returns.push_back(
+            {context.getComptimeString(""), blockDefault, decl.name.srcLoc});
         emitter.builder.CreateBr(emitter.labelReturn.block);
       });
 }
@@ -955,6 +943,17 @@ Value EnumType::invoke(Emitter &emitter, const ArgumentList &args,
 //--}
 
 //--{ FunctionType
+/// Reject duplicate parameter names, e.g., `foo(int a, float a)`. The
+/// `owner` phrase names the offending declaration in the diagnostic.
+static void rejectDuplicateParameterNames(const ParameterList &params,
+                                          std::string_view owner) {
+  auto uniqueNames{llvm::StringSet<>()};
+  for (auto &param : params)
+    if (!uniqueNames.insert(param.name).second)
+      param.getSourceLocation().throwError("duplicate parameter name ",
+                                           Quoted(param.name), " in ", owner);
+}
+
 void FunctionType::initialize(Emitter &emitter) {
   auto &context{emitter.context};
   // Find previous overload.
@@ -1002,21 +1001,18 @@ void FunctionType::initialize(Emitter &emitter) {
         Parameter{emitter.emit(param.type)
                       .getComptimeMetaType(context, param.name.srcLoc),
                   param.name, /*astParam=*/&param});
-  // Reject duplicate parameter names.
-  {
-    auto uniqueNames{llvm::StringSet<>()};
-    for (auto &param : params)
-      if (!uniqueNames.insert(param.name).second)
-        param.getSourceLocation().throwError("duplicate parameter name ",
-                                             Quoted(param.name),
-                                             " in function ", Quoted(declName));
-  }
+  rejectDuplicateParameterNames(params, concat("function ", Quoted(declName)));
   // Initialize whether parameter list is variadic.
   params.isVariadic = decl.isVariadic();
   if (decl.hasAttribute("macro") && decl.isVariadic()) {
     decl.srcLoc.throwError("function ", Quoted(declName),
                            " declared '@(macro)' must not be variadic");
   }
+  auto compileNow{[&] {
+    auto paramTypes{params.getTypes()};
+    getInstance(emitter, llvm::SmallVector<Type *>(paramTypes.begin(),
+                                                   paramTypes.end()));
+  }};
   if (decl.hasAttribute("foreign")) {
     if (!params.isConcrete())
       decl.srcLoc.throwError(
@@ -1025,9 +1021,7 @@ void FunctionType::initialize(Emitter &emitter) {
     if (decl.definition)
       decl.srcLoc.throwError("function ", Quoted(declName),
                              " declared '@(foreign)' must not have definition");
-    auto paramTypes{params.getTypes()};
-    getInstance(emitter, llvm::SmallVector<Type *>(paramTypes.begin(),
-                                                   paramTypes.end()));
+    compileNow();
   }
   // If this is declared `@(visible)`, we compile it immediately to
   // guarantee that the symbol exists for the C++ runtime.
@@ -1039,9 +1033,7 @@ void FunctionType::initialize(Emitter &emitter) {
     if (!decl.definition)
       decl.srcLoc.throwError("function ", Quoted(declName),
                              " declared '@(visible)' must have definition");
-    auto paramTypes{params.getTypes()};
-    getInstance(emitter, llvm::SmallVector<Type *>(paramTypes.begin(),
-                                                   paramTypes.end()));
+    compileNow();
   }
   // If this is a function with no parameters that returns `material`,
   // it is a material definition!
@@ -1074,14 +1066,7 @@ void FunctionType::initializeLambda(Emitter &emitter) {
         Parameter{emitter.emit(param.type)
                       .getComptimeMetaType(context, param.name.srcLoc),
                   param.name, /*astParam=*/&param});
-  // Reject duplicate parameter names.
-  {
-    auto uniqueNames{llvm::StringSet<>()};
-    for (auto &param : params)
-      if (!uniqueNames.insert(param.name).second)
-        param.getSourceLocation().throwError("duplicate parameter name ",
-                                             Quoted(param.name), " in lambda");
-  }
+  rejectDuplicateParameterNames(params, "lambda");
   // The parser already rejects `...` in lambdas; belt and braces because
   // macros must not be variadic.
   if (decl.isVariadic()) decl.srcLoc.throwError("lambda must not be variadic");
@@ -1099,11 +1084,8 @@ Value FunctionType::invoke(Emitter &emitter, const ArgumentList &args,
       auto [astLet, astCall] = func->decl.getVariantLetAndCallExpressions();
       // If the function variant has a `let` expression, generate the variable
       // declarations.
-      if (astLet) {
-        for (auto &subDecl : astLet->decls) {
-          emitter.emit(subDecl);
-        }
-      }
+      if (astLet)
+        for (auto &subDecl : astLet->decls) emitter.emit(subDecl);
       // In the function variant call expression, we visit each argument in the
       // AST argument list and add it to the patched argument list but only if
       // the caller did not explicitly set it by name.
@@ -1412,18 +1394,19 @@ static void verifyMaterialInstanceLayout(Context &context, Type *type,
       {"seed", offsetof(Instance, seed)},
       {"tangent_to_world_space", offsetof(Instance, tangent_to_world_space)},
   };
-  const auto numFields{sizeof(fields) / sizeof(fields[0])};
   auto llvmLayout{context.llvmLayout.getStructLayout(llvmStructType)};
-  if (llvmStructType->getNumElements() != numFields ||
+  if (llvmStructType->getNumElements() != std::size(fields) ||
       uint64_t(llvmLayout->getSizeInBytes()) > sizeof(Instance))
     srcLoc.throwError("mismatch between C++ 'JIT::Material::Instance' and "
                       "SMDL '_MaterialInstance' structures");
-  for (size_t i = 0; i < numFields; i++)
-    if (uint64_t(llvmLayout->getElementOffset(i)) != fields[i].second)
+  for (size_t i = 0; i < std::size(fields); i++) {
+    const auto &[fieldName, fieldOffset] = fields[i];
+    if (uint64_t(llvmLayout->getElementOffset(i)) != fieldOffset)
       srcLoc.throwError(
           concat("mismatch between C++ 'JIT::Material::Instance' and SMDL "
                  "'_MaterialInstance' structures (field ",
-                 Quoted(fields[i].first), " is misaligned)"));
+                 Quoted(fieldName), " is misaligned)"));
+  }
 }
 
 void FunctionType::initializeMaterialFunctions(Emitter &emitter) {
@@ -1479,32 +1462,24 @@ void FunctionType::initializeMaterialFunctions(Emitter &emitter) {
   // relying on LLVM's load-order '.N' uniquing.
   auto symbolBase{std::string()};
   for (auto component : splitQualifiedName(jitMaterial.qualifiedName)) {
-    if (!symbolBase.empty()) {
-      symbolBase += '.';
-    }
+    if (!symbolBase.empty()) symbolBase += '.';
     symbolBase += component;
   }
-  {
-    auto numDuplicates{size_t(0)};
-    for (const auto &other : context.compiler.mMaterials) {
-      if (&other != &jitMaterial &&
-          other.qualifiedName == jitMaterial.qualifiedName) {
-        numDuplicates++;
-      }
-    }
-    if (numDuplicates > 0) {
-      symbolBase += concat(".", numDuplicates);
-    }
-  }
+  if (auto numDuplicates{std::count_if(
+          compiler.mMaterials.begin(), compiler.mMaterials.end(),
+          [&](const auto &other) {
+            return &other != &jitMaterial &&
+                   other.qualifiedName == jitMaterial.qualifiedName;
+          })};
+      numDuplicates > 0)
+    symbolBase += concat(".", numDuplicates);
   auto dfModule{context.getBuiltinModule("df")};
   SMDL_SANITY_CHECK(dfModule);
   Type *materialType{};
   Type *materialInstanceType{};
   Type *materialInstancePtrType{};
-  Type *float4PtrType{context.getPointerType(context.getFloatType(4))};
   Type *float3PtrType{context.getPointerType(context.getFloatType(3))};
   Type *floatPtrType{context.getPointerType(context.getFloatType())};
-  Type *intPtrType{context.getPointerType(context.getIntType())};
   auto constParameter{[](Type *type, std::string_view name) {
     return Parameter{type, name, {}, {}, {}, /*builtinConst=*/true};
   }};
@@ -1531,7 +1506,7 @@ void FunctionType::initializeMaterialFunctions(Emitter &emitter) {
     //   *out = _MaterialInstance(#bump(material_name()));
     // }
     // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-    auto funcReturnType{static_cast<Type *>(context.getVoidType())};
+    auto funcReturnType{context.getVoidType()};
     auto func{emitter.createFunction(
         concat(symbolBase, ".evaluate"), /*isPure=*/false, funcReturnType,
         {constParameter(context.getVoidPointerType(), "out")}, decl.srcLoc,
@@ -1557,397 +1532,105 @@ void FunctionType::initializeMaterialFunctions(Emitter &emitter) {
     jitMaterial.evaluate.name = func->getName().str();
   }
   verifyMaterialInstanceLayout(context, materialInstanceType, decl.srcLoc);
-  {
-    // Generate the scatter evaluate function:
-    // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-    // @(pure visible) int "material_name.scatterEvaluate"(
-    //     &_MaterialInstance instance,
-    //     &float3 wo,
-    //     &float3 wi,
-    //     &float pdfFwd,
-    //     &float pdfRev,
-    //     &float f) {
-    //   return ::df::_scatterEvaluate(
-    //     instance, wo, wi, pdf_fwd, pdf_rev, f);
-    // }
-    // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-    auto funcReturnType{static_cast<Type *>(context.getIntType())};
+  // Generate the scatter and emission entry points, which all have the
+  // same shape: a '@(pure visible)' wrapper that forwards the material
+  // instance and its pointer parameters to the like-named function in
+  // the 'df' module:
+  // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+  // @(pure visible) int "material_name.scatterEvaluate"(
+  //     &_MaterialInstance instance,
+  //     &float3 wo,
+  //     &float3 wi,
+  //     &float pdfFwd,
+  //     &float pdfRev,
+  //     &float f) {
+  //   return ::df::_scatterEvaluate(
+  //     instance, wo, wi, pdfFwd, pdfRev, f);
+  // }
+  // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+  struct PointerParam final {
+    std::string_view name{};
+    Type *pointeeType{};
+    uint64_t count{1};
+  };
+  auto makeDfWrapper{[&](auto &jitFunc, std::string_view suffix,
+                         Type *funcReturnType,
+                         std::initializer_list<PointerParam> ptrParams) {
+    auto params{ParameterList{}};
+    params.push_back(constParameter(materialInstancePtrType, "instance"));
+    for (const auto &ptrParam : ptrParams)
+      params.push_back(constParameter(
+          context.getPointerType(ptrParam.pointeeType), ptrParam.name));
     auto func{emitter.createFunction(
-        concat(symbolBase, ".scatterEvaluate"), /*isPure=*/true, funcReturnType,
-        {constParameter(materialInstancePtrType, "instance"),
-         constParameter(float3PtrType, "wo"),
-         constParameter(float3PtrType, "wi"),
-         constParameter(floatPtrType, "pdfFwd"),
-         constParameter(floatPtrType, "pdfRev"),
-         constParameter(floatPtrType, "f")},
-        decl.srcLoc, [&] {
-          auto dfFunc{Declaration::findInModule(context, "_scatterEvaluate"sv,
-                                                nullptr, dfModule,
-                                                /*ignoreIfNotExported=*/false)};
-          SMDL_SANITY_CHECK(dfFunc);
-          emitter.emitReturn(
-              emitter.emitCall(
-                  dfFunc->value,
-                  llvm::ArrayRef<Value>{
-                      emitter.resolveIdentifier("instance"sv, decl.srcLoc),
-                      emitter.resolveIdentifier("wo"sv, decl.srcLoc),
-                      emitter.resolveIdentifier("wi"sv, decl.srcLoc),
-                      emitter.resolveIdentifier("pdfFwd"sv, decl.srcLoc),
-                      emitter.resolveIdentifier("pdfRev"sv, decl.srcLoc),
-                      emitter.resolveIdentifier("f"sv, decl.srcLoc)},
-                  decl.srcLoc),
-              decl.srcLoc);
-        })};
-    func->setLinkage(llvm::Function::ExternalLinkage);
-    markPointerParam(func, 0, materialInstanceType);
-    markPointerParam(func, 1, context.getFloatType(3)); // wo
-    markPointerParam(func, 2, context.getFloatType(3)); // wi
-    markPointerParam(func, 3, context.getFloatType());  // pdfFwd
-    markPointerParam(func, 4, context.getFloatType());  // pdfRev
-    markPointerParam(func, 5, context.getFloatType(),   // f
-                     context.getColorType()->wavelengthBaseMax);
-    jitMaterial.scatterEvaluate.name = func->getName().str();
-  }
-  {
-    // Generate the scatter sample function:
-    // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-    // @(pure visible) int "material_name.scatterSample"(
-    //     &_MaterialInstance instance,
-    //     &float4 xi,
-    //     &float3 wo,
-    //     &float3 wi,
-    //     &float pdfFwd,
-    //     &float pdfFev,
-    //     &float f,
-    //     &int isDelta) {
-    //   return ::df::_scatterSample(
-    //     instance, xi, wo, wi, pdf_fwd, pdf_rev, f, isDelta);
-    // }
-    // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-    auto funcReturnType{static_cast<Type *>(context.getIntType())};
-    auto func{emitter.createFunction(
-        concat(symbolBase, ".scatterSample"), /*isPure=*/true, funcReturnType,
-        {constParameter(materialInstancePtrType, "instance"),
-         constParameter(float4PtrType, "xi"),
-         constParameter(float3PtrType, "wo"),
-         constParameter(float3PtrType, "wi"),
-         constParameter(floatPtrType, "pdfFwd"),
-         constParameter(floatPtrType, "pdfRev"),
-         constParameter(floatPtrType, "f"),
-         constParameter(intPtrType, "isDelta")},
-        decl.srcLoc, [&] {
-          auto dfFunc{Declaration::findInModule(context, "_scatterSample"sv,
-                                                nullptr, dfModule,
-                                                /*ignoreIfNotExported=*/false)};
-          SMDL_SANITY_CHECK(dfFunc);
-          emitter.emitReturn(
-              emitter.emitCall(
-                  dfFunc->value,
-                  llvm::ArrayRef<Value>{
-                      emitter.resolveIdentifier("instance"sv, decl.srcLoc),
-                      emitter.resolveIdentifier("xi"sv, decl.srcLoc),
-                      emitter.resolveIdentifier("wo"sv, decl.srcLoc),
-                      emitter.resolveIdentifier("wi"sv, decl.srcLoc),
-                      emitter.resolveIdentifier("pdfFwd"sv, decl.srcLoc),
-                      emitter.resolveIdentifier("pdfRev"sv, decl.srcLoc),
-                      emitter.resolveIdentifier("f"sv, decl.srcLoc),
-                      emitter.resolveIdentifier("isDelta"sv, decl.srcLoc)},
-                  decl.srcLoc),
-              decl.srcLoc);
-        })};
-    func->setLinkage(llvm::Function::ExternalLinkage);
-    markPointerParam(func, 0, materialInstanceType);
-    markPointerParam(func, 1, context.getFloatType(4)); // xi
-    markPointerParam(func, 2, context.getFloatType(3)); // wo
-    markPointerParam(func, 3, context.getFloatType(3)); // wi
-    markPointerParam(func, 4, context.getFloatType());  // pdfFwd
-    markPointerParam(func, 5, context.getFloatType());  // pdfRev
-    markPointerParam(func, 6, context.getFloatType(),   // f
-                     context.getColorType()->wavelengthBaseMax);
-    markPointerParam(func, 7, context.getIntType()); // isDelta
-    jitMaterial.scatterSample.name = func->getName().str();
-  }
-  {
-    // Generate the emission evaluate function:
-    // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-    // @(pure visible) int "material_name.emissionEvaluate"(
-    //     &_MaterialInstance instance,
-    //     &float3 wi,
-    //     &float pdf,
-    //     &float Le) {
-    //   return ::df::_emissionEvaluate(instance, wi, pdf, Le);
-    // }
-    // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-    auto funcReturnType{static_cast<Type *>(context.getIntType())};
-    auto func{emitter.createFunction(
-        concat(symbolBase, ".emissionEvaluate"), /*isPure=*/true,
-        funcReturnType,
-        {constParameter(materialInstancePtrType, "instance"),
-         constParameter(float3PtrType, "wi"),
-         constParameter(floatPtrType, "pdf"),
-         constParameter(floatPtrType, "Le")},
-        decl.srcLoc, [&] {
-          auto dfFunc{Declaration::findInModule(context, "_emissionEvaluate"sv,
-                                                nullptr, dfModule,
-                                                /*ignoreIfNotExported=*/false)};
-          SMDL_SANITY_CHECK(dfFunc);
-          emitter.emitReturn(
-              emitter.emitCall(
-                  dfFunc->value,
-                  llvm::ArrayRef<Value>{
-                      emitter.resolveIdentifier("instance"sv, decl.srcLoc),
-                      emitter.resolveIdentifier("wi"sv, decl.srcLoc),
-                      emitter.resolveIdentifier("pdf"sv, decl.srcLoc),
-                      emitter.resolveIdentifier("Le"sv, decl.srcLoc)},
-                  decl.srcLoc),
-              decl.srcLoc);
-        })};
-    func->setLinkage(llvm::Function::ExternalLinkage);
-    markPointerParam(func, 0, materialInstanceType);
-    markPointerParam(func, 1, context.getFloatType(3)); // wi
-    markPointerParam(func, 2, context.getFloatType());  // pdf
-    markPointerParam(func, 3, context.getFloatType(),   // Le
-                     context.getColorType()->wavelengthBaseMax);
-    jitMaterial.emissionEvaluate.name = func->getName().str();
-  }
-  {
-    // Generate the emission sample function:
-    // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-    // @(pure visible) int "material_name.emissionSample"(
-    //     &_MaterialInstance instance,
-    //     &float4 xi,
-    //     &float3 wi,
-    //     &float pdf,
-    //     &float Le) {
-    //   return ::df::_emissionSample(instance, xi, wi, pdf, Le);
-    // }
-    // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-    auto funcReturnType{static_cast<Type *>(context.getIntType())};
-    auto func{emitter.createFunction(
-        concat(symbolBase, ".emissionSample"), /*isPure=*/true, funcReturnType,
-        {constParameter(materialInstancePtrType, "instance"),
-         constParameter(float4PtrType, "xi"),
-         constParameter(float3PtrType, "wi"),
-         constParameter(floatPtrType, "pdf"),
-         constParameter(floatPtrType, "Le")},
-        decl.srcLoc, [&] {
-          auto dfFunc{Declaration::findInModule(context, "_emissionSample"sv,
-                                                nullptr, dfModule,
-                                                /*ignoreIfNotExported=*/false)};
-          SMDL_SANITY_CHECK(dfFunc);
-          emitter.emitReturn(
-              emitter.emitCall(
-                  dfFunc->value,
-                  llvm::ArrayRef<Value>{
-                      emitter.resolveIdentifier("instance"sv, decl.srcLoc),
-                      emitter.resolveIdentifier("xi"sv, decl.srcLoc),
-                      emitter.resolveIdentifier("wi"sv, decl.srcLoc),
-                      emitter.resolveIdentifier("pdf"sv, decl.srcLoc),
-                      emitter.resolveIdentifier("Le"sv, decl.srcLoc)},
-                  decl.srcLoc),
-              decl.srcLoc);
-        })};
-    func->setLinkage(llvm::Function::ExternalLinkage);
-    markPointerParam(func, 0, materialInstanceType);
-    markPointerParam(func, 1, context.getFloatType(4)); // xi
-    markPointerParam(func, 2, context.getFloatType(3)); // wi
-    markPointerParam(func, 3, context.getFloatType());  // pdf
-    markPointerParam(func, 4, context.getFloatType(),   // Le
-                     context.getColorType()->wavelengthBaseMax);
-    jitMaterial.emissionSample.name = func->getName().str();
-  }
-  {
-    // Generate the volume scatter evaluate function:
-    // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-    // @(pure visible) float "material_name.volumeScatterEvaluate"(
-    //     &_MaterialInstance instance,
-    //     &float3 wo,
-    //     &float3 wi) {
-    //   return ::df::_volumeScatterEvaluate(instance, wo, wi);
-    // }
-    // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-    auto funcReturnType{static_cast<Type *>(context.getFloatType())};
-    auto func{emitter.createFunction(
-        concat(symbolBase, ".volumeScatterEvaluate"), /*isPure=*/true,
-        funcReturnType,
-        {constParameter(materialInstancePtrType, "instance"),
-         constParameter(float3PtrType, "wo"),
-         constParameter(float3PtrType, "wi")},
-        decl.srcLoc, [&] {
+        concat(symbolBase, ".", suffix), /*isPure=*/true, funcReturnType,
+        params, decl.srcLoc, [&] {
+          const auto dfName{concat("_", suffix)};
           auto dfFunc{Declaration::findInModule(
-              context, "_volumeScatterEvaluate"sv, nullptr, dfModule,
+              context, std::string_view(dfName), nullptr, dfModule,
               /*ignoreIfNotExported=*/false)};
           SMDL_SANITY_CHECK(dfFunc);
-          emitter.emitReturn(
-              emitter.emitCall(
-                  dfFunc->value,
-                  llvm::ArrayRef<Value>{
-                      emitter.resolveIdentifier("instance"sv, decl.srcLoc),
-                      emitter.resolveIdentifier("wo"sv, decl.srcLoc),
-                      emitter.resolveIdentifier("wi"sv, decl.srcLoc)},
-                  decl.srcLoc),
-              decl.srcLoc);
+          auto callArgs{llvm::SmallVector<Value>{}};
+          for (const auto &param : params)
+            callArgs.push_back(
+                emitter.resolveIdentifier(param.name, decl.srcLoc));
+          emitter.emitReturn(emitter.emitCall(dfFunc->value,
+                                              llvm::ArrayRef<Value>(callArgs),
+                                              decl.srcLoc),
+                             decl.srcLoc);
         })};
     func->setLinkage(llvm::Function::ExternalLinkage);
     markPointerParam(func, 0, materialInstanceType);
-    markPointerParam(func, 1, context.getFloatType(3)); // wo
-    markPointerParam(func, 2, context.getFloatType(3)); // wi
-    jitMaterial.volumeScatterEvaluate.name = func->getName().str();
-  }
-  {
-    // Generate the volume scatter sample function:
-    // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-    // @(pure visible) float "material_name.volumeScatterSample"(
-    //     &_MaterialInstance instance,
-    //     &float4 xi,
-    //     &float3 wo,
-    //     &float3 wi) {
-    //   return ::df::_volumeScatterSample(instance, xi, wo, wi);
-    // }
-    // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-    auto funcReturnType{static_cast<Type *>(context.getFloatType())};
-    auto func{emitter.createFunction(
-        concat(symbolBase, ".volumeScatterSample"), /*isPure=*/true,
-        funcReturnType,
-        {constParameter(materialInstancePtrType, "instance"),
-         constParameter(float4PtrType, "xi"),
-         constParameter(float3PtrType, "wo"),
-         constParameter(float3PtrType, "wi")},
-        decl.srcLoc, [&] {
-          auto dfFunc{Declaration::findInModule(
-              context, "_volumeScatterSample"sv, nullptr, dfModule,
-              /*ignoreIfNotExported=*/false)};
-          SMDL_SANITY_CHECK(dfFunc);
-          emitter.emitReturn(
-              emitter.emitCall(
-                  dfFunc->value,
-                  llvm::ArrayRef<Value>{
-                      emitter.resolveIdentifier("instance"sv, decl.srcLoc),
-                      emitter.resolveIdentifier("xi"sv, decl.srcLoc),
-                      emitter.resolveIdentifier("wo"sv, decl.srcLoc),
-                      emitter.resolveIdentifier("wi"sv, decl.srcLoc)},
-                  decl.srcLoc),
-              decl.srcLoc);
-        })};
-    func->setLinkage(llvm::Function::ExternalLinkage);
-    markPointerParam(func, 0, materialInstanceType);
-    markPointerParam(func, 1, context.getFloatType(4)); // xi
-    markPointerParam(func, 2, context.getFloatType(3)); // wo
-    markPointerParam(func, 3, context.getFloatType(3)); // wi
-    jitMaterial.volumeScatterSample.name = func->getName().str();
-  }
-  {
-    // Generate the hair scatter evaluate function:
-    // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-    // @(pure visible) int "material_name.hairScatterEvaluate"(
-    //     &_MaterialInstance instance,
-    //     &float3 wo,
-    //     &float3 wi,
-    //     &float pdfFwd,
-    //     &float pdfRev,
-    //     &float f) {
-    //   return ::df::_hairScatterEvaluate(
-    //     instance, wo, wi, pdfFwd, pdfRev, f);
-    // }
-    // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-    auto funcReturnType{static_cast<Type *>(context.getIntType())};
-    auto func{emitter.createFunction(
-        concat(symbolBase, ".hairScatterEvaluate"), /*isPure=*/true,
-        funcReturnType,
-        {constParameter(materialInstancePtrType, "instance"),
-         constParameter(float3PtrType, "wo"),
-         constParameter(float3PtrType, "wi"),
-         constParameter(floatPtrType, "pdfFwd"),
-         constParameter(floatPtrType, "pdfRev"),
-         constParameter(floatPtrType, "f")},
-        decl.srcLoc, [&] {
-          auto dfFunc{Declaration::findInModule(
-              context, "_hairScatterEvaluate"sv, nullptr, dfModule,
-              /*ignoreIfNotExported=*/false)};
-          SMDL_SANITY_CHECK(dfFunc);
-          emitter.emitReturn(
-              emitter.emitCall(
-                  dfFunc->value,
-                  llvm::ArrayRef<Value>{
-                      emitter.resolveIdentifier("instance"sv, decl.srcLoc),
-                      emitter.resolveIdentifier("wo"sv, decl.srcLoc),
-                      emitter.resolveIdentifier("wi"sv, decl.srcLoc),
-                      emitter.resolveIdentifier("pdfFwd"sv, decl.srcLoc),
-                      emitter.resolveIdentifier("pdfRev"sv, decl.srcLoc),
-                      emitter.resolveIdentifier("f"sv, decl.srcLoc)},
-                  decl.srcLoc),
-              decl.srcLoc);
-        })};
-    func->setLinkage(llvm::Function::ExternalLinkage);
-    markPointerParam(func, 0, materialInstanceType);
-    markPointerParam(func, 1, context.getFloatType(3)); // wo
-    markPointerParam(func, 2, context.getFloatType(3)); // wi
-    markPointerParam(func, 3, context.getFloatType());  // pdfFwd
-    markPointerParam(func, 4, context.getFloatType());  // pdfRev
-    markPointerParam(func, 5, context.getFloatType(),   // f
-                     context.getColorType()->wavelengthBaseMax);
-    jitMaterial.hairScatterEvaluate.name = func->getName().str();
-  }
-  {
-    // Generate the hair scatter sample function:
-    // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-    // @(pure visible) int "material_name.hairScatterSample"(
-    //     &_MaterialInstance instance,
-    //     &float4 xi,
-    //     &float3 wo,
-    //     &float3 wi,
-    //     &float pdfFwd,
-    //     &float pdfRev,
-    //     &float f,
-    //     &int isDelta) {
-    //   return ::df::_hairScatterSample(
-    //     instance, xi, wo, wi, pdfFwd, pdfRev, f, isDelta);
-    // }
-    // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-    auto funcReturnType{static_cast<Type *>(context.getIntType())};
-    auto func{emitter.createFunction(
-        concat(symbolBase, ".hairScatterSample"), /*isPure=*/true,
-        funcReturnType,
-        {constParameter(materialInstancePtrType, "instance"),
-         constParameter(float4PtrType, "xi"),
-         constParameter(float3PtrType, "wo"),
-         constParameter(float3PtrType, "wi"),
-         constParameter(floatPtrType, "pdfFwd"),
-         constParameter(floatPtrType, "pdfRev"),
-         constParameter(floatPtrType, "f"),
-         constParameter(intPtrType, "isDelta")},
-        decl.srcLoc, [&] {
-          auto dfFunc{Declaration::findInModule(context, "_hairScatterSample"sv,
-                                                nullptr, dfModule,
-                                                /*ignoreIfNotExported=*/false)};
-          SMDL_SANITY_CHECK(dfFunc);
-          emitter.emitReturn(
-              emitter.emitCall(
-                  dfFunc->value,
-                  llvm::ArrayRef<Value>{
-                      emitter.resolveIdentifier("instance"sv, decl.srcLoc),
-                      emitter.resolveIdentifier("xi"sv, decl.srcLoc),
-                      emitter.resolveIdentifier("wo"sv, decl.srcLoc),
-                      emitter.resolveIdentifier("wi"sv, decl.srcLoc),
-                      emitter.resolveIdentifier("pdfFwd"sv, decl.srcLoc),
-                      emitter.resolveIdentifier("pdfRev"sv, decl.srcLoc),
-                      emitter.resolveIdentifier("f"sv, decl.srcLoc),
-                      emitter.resolveIdentifier("isDelta"sv, decl.srcLoc)},
-                  decl.srcLoc),
-              decl.srcLoc);
-        })};
-    func->setLinkage(llvm::Function::ExternalLinkage);
-    markPointerParam(func, 0, materialInstanceType);
-    markPointerParam(func, 1, context.getFloatType(4)); // xi
-    markPointerParam(func, 2, context.getFloatType(3)); // wo
-    markPointerParam(func, 3, context.getFloatType(3)); // wi
-    markPointerParam(func, 4, context.getFloatType());  // pdfFwd
-    markPointerParam(func, 5, context.getFloatType());  // pdfRev
-    markPointerParam(func, 6, context.getFloatType(),   // f
-                     context.getColorType()->wavelengthBaseMax);
-    markPointerParam(func, 7, context.getIntType()); // isDelta
-    jitMaterial.hairScatterSample.name = func->getName().str();
-  }
+    auto argIndex{1U};
+    for (const auto &ptrParam : ptrParams)
+      markPointerParam(func, argIndex++, ptrParam.pointeeType, ptrParam.count);
+    jitFunc.name = func->getName().str();
+  }};
+  auto floatType{context.getFloatType()};
+  auto float3Type{context.getFloatType(3)};
+  auto float4Type{context.getFloatType(4)};
+  auto intType{context.getIntType()};
+  const auto colorSize{uint64_t(context.getColorType()->wavelengthBaseMax)};
+  makeDfWrapper(jitMaterial.scatterEvaluate, "scatterEvaluate", intType,
+                {{"wo", float3Type},
+                 {"wi", float3Type},
+                 {"pdfFwd", floatType},
+                 {"pdfRev", floatType},
+                 {"f", floatType, colorSize}});
+  makeDfWrapper(jitMaterial.scatterSample, "scatterSample", intType,
+                {{"xi", float4Type},
+                 {"wo", float3Type},
+                 {"wi", float3Type},
+                 {"pdfFwd", floatType},
+                 {"pdfRev", floatType},
+                 {"f", floatType, colorSize},
+                 {"isDelta", intType}});
+  makeDfWrapper(
+      jitMaterial.emissionEvaluate, "emissionEvaluate", intType,
+      {{"wi", float3Type}, {"pdf", floatType}, {"Le", floatType, colorSize}});
+  makeDfWrapper(jitMaterial.emissionSample, "emissionSample", intType,
+                {{"xi", float4Type},
+                 {"wi", float3Type},
+                 {"pdf", floatType},
+                 {"Le", floatType, colorSize}});
+  makeDfWrapper(jitMaterial.volumeScatterEvaluate, "volumeScatterEvaluate",
+                floatType, {{"wo", float3Type}, {"wi", float3Type}});
+  makeDfWrapper(jitMaterial.volumeScatterSample, "volumeScatterSample",
+                floatType,
+                {{"xi", float4Type}, {"wo", float3Type}, {"wi", float3Type}});
+  makeDfWrapper(jitMaterial.hairScatterEvaluate, "hairScatterEvaluate", intType,
+                {{"wo", float3Type},
+                 {"wi", float3Type},
+                 {"pdfFwd", floatType},
+                 {"pdfRev", floatType},
+                 {"f", floatType, colorSize}});
+  makeDfWrapper(jitMaterial.hairScatterSample, "hairScatterSample", intType,
+                {{"xi", float4Type},
+                 {"wo", float3Type},
+                 {"wi", float3Type},
+                 {"pdfFwd", floatType},
+                 {"pdfRev", floatType},
+                 {"f", floatType, colorSize},
+                 {"isDelta", intType}});
   {
     // Generate the evaluate opacity function:
     // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -1961,7 +1644,7 @@ void FunctionType::initializeMaterialFunctions(Emitter &emitter) {
     // 'deriveStaticMaterialFlags' in 'Compiler.cc' also inspects whether
     // the body folded to a constant to derive the static
     // 'MATERIAL_HAS_CUTOUT' flag.
-    auto funcReturnType{static_cast<Type *>(context.getFloatType())};
+    auto funcReturnType{context.getFloatType()};
     auto func{emitter.createFunction(
         concat(symbolBase, ".evaluateOpacity"), /*isPure=*/false,
         funcReturnType, {}, decl.srcLoc, [&] {
@@ -1989,7 +1672,7 @@ void FunctionType::initializeMaterialFunctions(Emitter &emitter) {
     // null and everything not feeding 'geometry.displacement' is
     // dead-code eliminated. This is the per-vertex query for hosts
     // that apply displacement to geometry at load time.
-    auto funcReturnType{static_cast<Type *>(context.getVoidType())};
+    auto funcReturnType{context.getVoidType()};
     auto func{emitter.createFunction(
         concat(symbolBase, ".displacementEvaluate"), /*isPure=*/false,
         funcReturnType, {constParameter(float3PtrType, "displacement")},
@@ -2027,7 +1710,7 @@ void FunctionType::initializeMaterialFunctions(Emitter &emitter) {
     // 'deriveStaticMaterialFlags' in 'Compiler.cc' inspects whether
     // the body still reads the state to derive the static
     // 'MATERIAL_HAS_HETEROGENEOUS_VOLUME' flag.
-    auto funcReturnType{static_cast<Type *>(context.getVoidType())};
+    auto funcReturnType{context.getVoidType()};
     auto func{emitter.createFunction(
         concat(symbolBase, ".volumeEvaluate"), /*isPure=*/false, funcReturnType,
         {constParameter(floatPtrType, "sigma_a"),
@@ -2058,7 +1741,7 @@ void FunctionType::initializeMaterialFunctions(Emitter &emitter) {
     // 'deriveStaticMaterialFlags' in 'Compiler.cc' inspects for a
     // constant 'thin_walled' and then erases; it is never a host entry
     // point.
-    auto funcReturnType{static_cast<Type *>(context.getIntType())};
+    auto funcReturnType{context.getIntType()};
     auto func{emitter.createFunction(
         concat(symbolBase, ".thinWalledProbe"), /*isPure=*/false,
         funcReturnType, {}, decl.srcLoc, [&] {
@@ -2076,7 +1759,7 @@ void FunctionType::initializeMaterialFunctions(Emitter &emitter) {
     // inspect whether the body folded to a constant vector, settling
     // 'MATERIAL_HAS_DISPLACEMENT'. Erased after inspection; never a
     // host entry point.
-    auto funcReturnType{static_cast<Type *>(context.getFloatType(3))};
+    auto funcReturnType{context.getFloatType(3)};
     auto func{emitter.createFunction(
         concat(symbolBase, ".displacementProbe"), /*isPure=*/false,
         funcReturnType, {}, decl.srcLoc, [&] {
@@ -2208,32 +1891,33 @@ bool MetaType::hasNonVoidField(Emitter &emitter, Value value,
 Value MetaType::accessField(Emitter &emitter, Value value,
                             std::string_view name,
                             const SourceLocation &srcLoc) {
-  if (value.isComptimeMetaType(emitter.context)) {
-    auto type{value.getComptimeMetaType(emitter.context, srcLoc)};
+  auto &context{emitter.context};
+  if (value.isComptimeMetaType(context)) {
+    auto type{value.getComptimeMetaType(context, srcLoc)};
     // Make static fields available
     if (auto structType{llvm::dyn_cast<StructType>(type)}) {
       const auto &staticFields{structType->getInstanceOf().staticFields};
       if (auto itr{staticFields.find(name)}; itr != staticFields.end())
         return itr->second;
     }
-  } else if (value.isComptimeMetaModule(emitter.context)) {
+  } else if (value.isComptimeMetaModule(context)) {
     // Make exported declarations available
-    auto module_{value.getComptimeMetaModule(emitter.context, srcLoc)};
+    auto module_{value.getComptimeMetaModule(context, srcLoc)};
     if (auto declaration{Declaration::findInModule(
-            emitter.context, name, emitter.getLLVMFunction(), module_)})
+            context, name, emitter.getLLVMFunction(), module_)})
       return declaration->value;
-  } else if (value.isComptimeMetaNamespace(emitter.context)) {
+  } else if (value.isComptimeMetaNamespace(context)) {
     // Make declarations available. 'export' only gates access from other
     // modules, not from the namespace's own module.
-    auto namespace_{value.getComptimeMetaNamespace(emitter.context, srcLoc)};
+    auto namespace_{value.getComptimeMetaNamespace(context, srcLoc)};
     if (auto declaration{Declaration::resolveInScope(
-            emitter.context, name, emitter.getLLVMFunction(), namespace_->scope,
+            context, name, emitter.getLLVMFunction(), namespace_->scope,
             /*ignoreIfNotExported=*/
             namespace_->srcLoc.module_ != emitter.currentModule,
             std::numeric_limits<uint64_t>::max(), nullptr)})
       return declaration->value;
   }
-  return RValue(emitter.context.getVoidType(), nullptr);
+  return RValue(context.getVoidType(), nullptr);
 }
 //--}
 
@@ -2370,12 +2054,13 @@ Value StateType::accessField(Emitter &emitter, Value value,
                              const SourceLocation &srcLoc) {
   SMDL_SANITY_CHECK(value.isLValue());
   for (unsigned i = 0; i < mFields.size(); i++) {
-    if (mFields[i].name == name) {
+    const auto &field{mFields[i]};
+    if (field.name == name) {
       auto llvmValue{
           emitter.builder.CreateStructGEP(value.type->llvmType, value, i)};
       if (value.llvmValue->hasName())
         llvmValue->setName(concat(value.llvmValue->getName().str(), ".", name));
-      return LValue(mFields[i].type, llvmValue);
+      return LValue(field.type, llvmValue);
     }
   }
   srcLoc.throwError("no field ", Quoted(name), " in 'state'");
@@ -2833,8 +2518,7 @@ Value StructType::accessField(Emitter &emitter, Value value,
                               const SourceLocation &srcLoc) {
   auto seq{ParameterList::LookupSequence{}};
   if (params.getLookupSequence(name, seq)) {
-    auto hasName0{value.llvmValue->hasName()};
-    auto name0{value.llvmValue->getName().str()};
+    const auto name0{value.llvmValue->getName().str()};
     bool isConst{};
     for (auto [param, i] : seq) {
       isConst |= param->isConst();
@@ -2863,11 +2547,8 @@ Value StructType::accessField(Emitter &emitter, Value value,
     }
     // Skip the decoration when the walk ended on a constant (a baked
     // field, or an extraction that folded): constants cannot carry names.
-    if (hasName0 && !value.isLLVMConstant()) {
-      name0 += '.';
-      name0 += name;
-      value.llvmValue->setName(name0);
-    }
+    if (!name0.empty() && !value.isLLVMConstant())
+      value.llvmValue->setName(concat(name0, ".", name));
     return isConst ? emitter.rvalue(value) : value;
   }
   if (auto itr{getInstanceOf().staticFields.find(name)};
@@ -2886,12 +2567,10 @@ Value StructType::insert(Emitter &emitter, Value value, Value elem, unsigned i,
   // insert into; construction is the only writer of a baked field and
   // always passes its own constant.
   const auto j{params.getLLVMFieldIndex(i)};
-  if (j == ParameterList::NO_LLVM_FIELD)
-    return emitter.rvalue(value);
-  else
-    return RValue(this, emitter.builder.CreateInsertValue(
-                            emitter.rvalue(value),
-                            emitter.invoke(params[i].type, elem, srcLoc), {j}));
+  if (j == ParameterList::NO_LLVM_FIELD) return emitter.rvalue(value);
+  return RValue(this, emitter.builder.CreateInsertValue(
+                          emitter.rvalue(value),
+                          emitter.invoke(params[i].type, elem, srcLoc), {j}));
 }
 //--}
 
@@ -2935,8 +2614,8 @@ UnionType::UnionType(Context &context, llvm::SmallVector<Type *> caseTys)
   std::sort(caseTypeNames.begin(), caseTypeNames.end());
   displayName += '(';
   for (size_t i = 0; i < caseTypeNames.size(); i++) {
+    if (i) displayName += " | ";
     displayName += caseTypeNames[i].str();
-    if (i + 1 < caseTypeNames.size()) displayName += " | ";
   }
   displayName += ')';
 
@@ -2950,27 +2629,28 @@ UnionType::UnionType(Context &context, llvm::SmallVector<Type *> caseTys)
   uint64_t chunkSize{std::max<uint64_t>(requiredAlign, 8)};
   uint64_t numChunks{(requiredSize + chunkSize - 1) / chunkSize};
   auto i64Type{llvm::Type::getInt64Ty(context)};
-  llvmType = llvm::StructType::create(
-      {llvm::ArrayType::get(chunkSize == 8 ? i64Type
-                                           : static_cast<llvm::Type *>(
-                                                 llvm::FixedVectorType::get(
-                                                     i64Type, chunkSize / 8)),
-                            numChunks),
-       context.getIntType()->llvmType},
-      "union_t");
+  auto chunkType{chunkSize == 8
+                     ? i64Type
+                     : static_cast<llvm::Type *>(
+                           llvm::FixedVectorType::get(i64Type, chunkSize / 8))};
+  llvmType =
+      llvm::StructType::create({llvm::ArrayType::get(chunkType, numChunks),
+                                context.getIntType()->llvmType},
+                               "union_t");
   SMDL_SANITY_CHECK(requiredAlign <= context.getAlignOf(this));
 }
 
 Value UnionType::invoke(Emitter &emitter, const ArgumentList &args,
                         const SourceLocation &srcLoc) {
+  auto &context{emitter.context};
   if (args.empty() || args.isNull()) {
     if (!isOptionalUnion())
       srcLoc.throwError("cannot zero construct non-optional union type ",
                         Quoted(displayName));
     auto result{Value::zero(this)};
     result.llvmValue = emitter.builder.CreateInsertValue(
-        result.llvmValue,
-        emitter.context.getComptimeInt(int(caseTypes.size() - 1)), {1U});
+        result.llvmValue, context.getComptimeInt(int(caseTypes.size() - 1)),
+        {1U});
     return result;
   }
   if (args.isOnePositional(this)) {
@@ -2983,12 +2663,12 @@ Value UnionType::invoke(Emitter &emitter, const ArgumentList &args,
       auto lv{emitter.createAlloca(this, "")};
       emitter.builder.CreateStore(Value::zero(this), lv);
       emitter.builder.CreateMemCpy(
-          lv, llvm::Align(emitter.context.getAlignOf(this)), //
-          lvArg, llvm::Align(emitter.context.getAlignOf(argUnionType)),
+          lv, llvm::Align(context.getAlignOf(this)), //
+          lvArg, llvm::Align(context.getAlignOf(argUnionType)),
           std::min(requiredSize, argUnionType->requiredSize));
       if (!arg.isLValue()) emitter.createLifetimeEnd(lvArg);
       auto index{emitter.rvalue(emitter.accessIndex(
-          emitter.context.getComptimeUnionIndexMap(argUnionType, this),
+          context.getComptimeUnionIndexMap(argUnionType, this),
           emitter.accessField(arg, "#idx", srcLoc), srcLoc))};
       emitter.builder.CreateStore(index,
                                   emitter.accessField(lv, "#idx", srcLoc));
@@ -3004,14 +2684,13 @@ Value UnionType::invoke(Emitter &emitter, const ArgumentList &args,
       if (!hasAllCaseTypes(argUnionType)) {
         auto [blockFail, blockPass] =
             emitter.createBlocks<2>("union_conversion", {".fail", ".pass"});
-        emitter.builder.CreateCondBr(
-            emitter.emitOp(BINOP_CMP_LT, index,
-                           emitter.context.getComptimeInt(0), srcLoc),
-            blockFail, blockPass);
+        emitter.builder.CreateCondBr(emitter.emitOp(BINOP_CMP_LT, index,
+                                                    context.getComptimeInt(0),
+                                                    srcLoc),
+                                     blockFail, blockPass);
         emitter.builder.SetInsertPoint(blockFail);
-        emitter.emitPanic(
-            emitter.context.getComptimeString("union conversion failed"),
-            srcLoc);
+        emitter.emitPanic(context.getComptimeString("union conversion failed"),
+                          srcLoc);
         emitter.builder.CreateBr(blockPass);
         emitter.builder.SetInsertPoint(blockPass);
       }
@@ -3025,7 +2704,7 @@ Value UnionType::invoke(Emitter &emitter, const ArgumentList &args,
       emitter.createLifetimeStart(lv);
       emitter.builder.CreateStore(Value::zero(this), lv); // zeroinitializer
       emitter.createStore(arg, LValue(arg.type, lv.llvmValue));
-      emitter.builder.CreateStore(emitter.context.getComptimeInt(i),
+      emitter.builder.CreateStore(context.getComptimeInt(i),
                                   emitter.accessField(lv, "#idx", srcLoc));
       // Large unions stay memory-resident: return the slot as an lvalue
       // instead of loading the whole payload into an SSA value.
@@ -3106,8 +2785,8 @@ UnionType::canonicalizeTypes(llvm::ArrayRef<Type *> types) {
       caseTypes.push_back(type);
   }
   std::sort(caseTypes.begin(), caseTypes.end());
-  auto itr{std::unique(caseTypes.begin(), caseTypes.end())};
-  caseTypes.erase(itr, caseTypes.end());
+  caseTypes.erase(std::unique(caseTypes.begin(), caseTypes.end()),
+                  caseTypes.end());
   // If void is present, sort it to the end. This guarantees an optional union
   // has the same non-void index as its non-optional version.
   std::sort(caseTypes.begin(), caseTypes.end(),
