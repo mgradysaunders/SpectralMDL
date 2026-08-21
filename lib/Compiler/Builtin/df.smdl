@@ -2214,6 +2214,46 @@ export float smith_slope_pdf(const beckmann this [[anno::unused()]], const float
   return (1 / $PI) * #exp(-#sum(m * m));
 }
 
+/// The Smith slope sampling function for the GGX distribution, drawing the
+/// slope distribution itself rather than the part of it a given direction
+/// can see. Sampling `r = sqrt(xi / (1 - xi))` inverts the GGX slope CDF.
+@(pure)
+export float2 smith_slope_sample(
+  const ggx this [[anno::unused()]],
+  const float xi0, ///< A canonical random number in `[0,1]`
+  const float xi1, ///< A canonical random number in `[0,1]`
+) {
+  const auto r(#sqrt(xi0 / #max(1 - xi0, 1e-9)));
+  return r * float2(#cos(phi := $TWO_PI * xi1), #sin(phi));
+}
+
+/// The same for the Beckmann distribution, whose slopes are Gaussian, so
+/// the radial inverse is `sqrt(-log(1 - xi))`.
+@(pure)
+export float2 smith_slope_sample(
+  const beckmann this [[anno::unused()]],
+  const float xi0, ///< A canonical random number in `[0,1]`
+  const float xi1, ///< A canonical random number in `[0,1]`
+) {
+  const auto r(#sqrt(-#log(#max(1 - xi0, 1e-9))));
+  return r * float2(#cos(phi := $TWO_PI * xi1), #sin(phi));
+}
+
+/// The microsurface normal of the distribution itself, as opposed to
+/// `smith_visible_normal_sample`, which draws the part of it that a given
+/// outgoing direction can see. The solid-angle density of the result is
+/// `smith_normal_pdf() * wm.z`.
+@(pure)
+export float3 smith_normal_sample(
+  const distribution this,
+  const float xi0,    ///< A canonical random number in `[0,1]`
+  const float xi1,    ///< A canonical random number in `[0,1]`
+  const float2 alpha, ///< The squared roughness
+) {
+  const auto m(alpha * smith_slope_sample(this, xi0, xi1));
+  return #all(isfinite(m)) ? normalize(float3(-m, 1)) : float3(0, 0, 1);
+}
+
 /// The Smith visible slope sampling function for the GGX distribution.
 @(pure)
 export float2 smith_visible_slope_sample(
@@ -2671,35 +2711,44 @@ auto scatterEvaluate(const &microfacet_bsdf this, inline const &ScatterEvaluateP
 // forms are visible-normal, tightened to a bounded spherical cap for
 // reflection-only GGX lobes (Eto and Tokuyoshi 2023).
 //
-// `bounded` is the one difference between the two callers, and it is false
-// for the normal queries on purpose. The bound exists to avoid drawing
-// normals that would reflect `wo` below the horizon, which is a reflection
-// concern; a caller constraining a half vector is not reflecting through it.
-// The cap is also conservative rather than exactly that set, so its support
-// has no closed form to report a density against, and a density that is
-// nonzero where the draw cannot reach is exactly the thing these queries may
-// not do. The plain visible-normal distribution covers the bounded one, is
-// normalized over the hemisphere, and has a density in closed form.
+// `visible` is the one difference between the two callers, and the normal
+// queries pass false. `scatterSample` wants the visible-normal distribution,
+// which is the better proposal for a scattering event because it accounts for
+// what the outgoing direction can actually see; a caller constraining a half
+// vector is not scattering through it, and the visible form would make the
+// proposal depend on a direction the constraint solve then changes. Zeltner,
+// Georgiev and Jakob sample the distribution itself for the same purpose, and
+// disable visible-normal sampling explicitly to do it.
+//
+// Reflection-only GGX lobes tighten the visible form onto a bounded spherical
+// cap (Eto and Tokuyoshi 2023) to avoid drawing normals that reflect `wo`
+// below the horizon. That is a reflection concern and comes along with
+// `visible`, which is just as well: the cap is conservative rather than
+// exactly that set, so its support has no closed form to report a density
+// against, and a density that is nonzero where the draw cannot reach is
+// exactly the thing these queries may not do.
 @(pure macro)
-float3 microfacetNormalSample(const auto this, const float2 xi, const float3 wo, const bool bounded) {
+float3 microfacetNormalSample(const auto this, const float2 xi, const float3 wo, const bool visible) {
   if $(this.distribution <: microfacet::blinn) {
+    // The Blinn routine draws the distribution itself either way.
     return microfacet::blinn_normal_sample(xi.x, xi.y, #min(2 / (this.alpha * this.alpha), MAX_BLINN_EXPONENT));
   } else {
+    if (!visible)
+      return microfacet::smith_normal_sample(this.distribution, xi.x, xi.y, this.alpha);
     if $(this.distribution <: microfacet::ggx) {
-      if (bounded && this.mode == scatter_reflect)
+      if (this.mode == scatter_reflect)
         return microfacet::ggx_bounded_visible_normal_sample(xi.x, xi.y, this.alpha, wo);
     }
     return microfacet::smith_visible_normal_sample(this.distribution, xi.x, xi.y, this.alpha, wo);
   }
 }
 
-// Its solid-angle density at `bounded` false, which is the density
-// `scatterEvaluate` reports with the half-vector Jacobian it multiplies in
-// divided back out. `testing/language/df.smdl` asserts that identity
-// numerically, so the proposal matches the lobe rather than merely
-// resembling it, and the two cannot drift.
+// Its solid-angle density at `visible` false, which is the distribution's own
+// and so does not depend on `wo` at all. `testing/language/df.smdl` asserts
+// that it integrates to one and that it is the plain form rather than the
+// visible one, which is the property that would silently regress.
 @(pure macro)
-float microfacetNormalPdf(const auto this, const float3 wo, const float3 wm) {
+float microfacetNormalPdf(const auto this, const float3 wm) {
   return 0.0 if (!(wm.z > 0.0));
   if $(this.distribution <: microfacet::blinn) {
     const auto e(#min(2 / (this.alpha * this.alpha), MAX_BLINN_EXPONENT));
@@ -2707,11 +2756,7 @@ float microfacetNormalPdf(const auto this, const float3 wo, const float3 wm) {
     const auto D((sin2Theta > 0.0 ? #pow(wm.z, (e.x * wm.x * wm.x + e.y * wm.y * wm.y) / sin2Theta) : 1.0) / $TWO_PI);
     return #sqrt(#prod(1 + e)) * D;
   } else {
-    const auto dotWoWm(#sum(wo * wm));
-    return 0.0 if (!(dotWoWm > 0.0));
-    const auto D(microfacet::smith_normal_pdf(this.distribution, this.alpha, wm));
-    const auto projArea(microfacet::smith_projected_area(this.distribution, this.alpha, wo));
-    return projArea > 0.0 ? D * dotWoWm / projArea : 0.0;
+    return microfacet::smith_normal_pdf(this.distribution, this.alpha, wm) * wm.z;
   }
 }
 
@@ -2721,7 +2766,7 @@ auto normalSample(const &microfacet_bsdf this, inline const &ScatterNormalParame
   tangent_u = this.tangent_u;
   auto tbn(recalculateTangentSpace(params));
   return ScatterNormalSampleResult() if (!tbn || !(#abs(wo.z) > MIN_COS_THETA));
-  const auto wmLocal(microfacetNormalSample(this, xi.xy, wo, false));
+  const auto wmLocal(microfacetNormalSample(this, xi.xy, wo, /*visible=*/false));
   return ScatterNormalSampleResult() if (!(wmLocal.z > 0.0));
   return ScatterNormalSampleResult(wm: normalize((*tbn) * wmLocal), alpha: this.alpha, isValid: true);
 }
@@ -2731,7 +2776,7 @@ float normalEvaluate(const &microfacet_bsdf this, inline const &ScatterNormalPar
   preserve tangent_u;
   tangent_u = this.tangent_u;
   return 0.0 if (!recalculateTangentSpace(params) || !(#abs(wo.z) > MIN_COS_THETA));
-  return microfacetNormalPdf(this, wo, normalize(wm));
+  return microfacetNormalPdf(this, normalize(wm));
 }
 
 @(pure noinline)
@@ -2778,7 +2823,7 @@ auto scatterSample(const &microfacet_bsdf this, inline const &ScatterSampleParam
   // refract through the normal depending on whether we decided to reflect or transmit. Note: The Blinn
   // distribution is not a closed-form scale-invariant Smith distribution, so it has a separate normal
   // sampling routine.
-  const auto wm(microfacetNormalSample(this, xi.xy, wo, true));
+  const auto wm(microfacetNormalSample(this, xi.xy, wo, /*visible=*/true));
   const auto wi = return_from {
     if (mode == scatter_reflect) {
       return specular::reflect(wo, wm);

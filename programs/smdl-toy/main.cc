@@ -138,6 +138,14 @@ static cl::opt<unsigned> optMNEEDepth{
     cl::desc("With -mnee, the maximum number of refractive interfaces a "
              "connection may cross, 1 to 4 (default: 4)"),
     cl::init(4), cl::cat(catSampling)};
+static cl::opt<bool> optMNEEGlossy{
+    "mnee-glossy",
+    cl::desc("With -mnee, also connect through GLOSSY transmissive "
+             "interfaces, by drawing a half vector from each interface's "
+             "normal distribution and constraining the crossing to it. Such "
+             "an interface stops gathering on its own account, since the "
+             "gather at the receiver behind it claims that transport"),
+    cl::init(false), cl::cat(catSampling)};
 static cl::opt<bool> optNoLOD{
     "no-lod", cl::desc("Disable LOD by zeroing the camera ray cone spread"),
     cl::init(false), cl::cat(catSampling)};
@@ -542,7 +550,7 @@ stripSessionOnlyArgs(const std::string &args) {
                                                     "guide-split",
                                                     "mnee-depth"};
   static constexpr const char *SESSION_ONLY_FLAG[]{"guide", "guide-adrrs",
-                                                   "mnee"};
+                                                   "mnee", "mnee-glossy"};
   auto tokens{std::vector<std::string>()};
   for (size_t pos{}; pos < args.size();) {
     size_t end{args.find_first_of(" \t", pos)};
@@ -1078,6 +1086,10 @@ int main(int argc, char **argv) try {
   compiler.enableDebug = false;
   compiler.enableMipMaps = !optNoMipMaps;
   compiler.enableUnitTests = false;
+  // The normal distribution entry points are what a glossy manifold
+  // crossing draws its half vector from, and nothing else here asks for
+  // them, so they are emitted only when that is on.
+  compiler.enableScatterNormal = optMNEE && optMNEEGlossy;
   // The built-in stand-in, always available: a scene whose materials
   // have not been written yet still renders, and a name that does not
   // resolve has somewhere to fall back to. It is added even when MDL
@@ -1426,6 +1438,7 @@ int main(int argc, char **argv) try {
                           : 0};
   ManifoldOptions manifold{};
   manifold.depth = mneeDepth;
+  manifold.glossy = optMNEE && optMNEEGlossy;
   progressOptions.total = numPixelsX * numPixelsY * spp;
   progressOptions.displayScale = std::max<size_t>(spp, 1);
   progressOptions.summary = smdl::concat("Rendered ", numPixelsX, "x",

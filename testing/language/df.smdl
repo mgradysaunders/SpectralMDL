@@ -570,7 +570,7 @@ unit_test "Normal distribution sample and evaluate agree" {
     #assert(r.success);
     #assert(r.pdf > 0.0);
     #assert(#all(math::normalize(r.wm) ~== |1e-5| r.wm)); // Unit...
-    #assert(math::dot(r.wm, wo) > 0.0);                   // ...on `wo`'s side
+    #assert(math::dot(r.wm, float3(0, 0, 1)) > 0.0);      // ...above the normal
     #assert(normalEvaluate(layered, wo, r.wm) ~== |1e-5| r.pdf);
     // The reported roughness is the drawn lobe's own, not the mixture's.
     #assert((r.alpha.x ~== |1e-6| 0.36) | (r.alpha.x ~== |1e-6| 0.0625));
@@ -625,38 +625,28 @@ unit_test "Normal distribution normalization" {
     df::bsdf_component(weight: 0.7, component: df::simple_glossy_bsdf(roughness_u: 0.6, tint: 1.0)))), wo);
 }
 
-// The proposal is the lobe's own distribution and not merely something
-// lobe-shaped: the density reported here, carried through the half-vector
-// Jacobian, is the density `scatterEvaluate` reports for the direction that
-// half vector produces. Masked to one domain, so the reflect-transmit
-// selection weight drops out of both sides.
-//
-// Reflection-only GGX lobes are deliberately absent: `scatterSample` draws
-// those from a bounded spherical cap and the normal queries do not, which is
-// the one place the two distributions differ on purpose.
-unit_test "Normal distribution matches the scattering density" {
+// The proposal is the distribution ITSELF and not the visible part of it,
+// which is a deliberate choice and the one that would regress silently: the
+// visible form is the better proposal for a scattering event and the wrong
+// one for a constraint, since it would make the draw depend on a direction
+// the solve then changes. So assert what the density is, leaf by leaf.
+unit_test "Normal distribution is the plain one, not the visible one" {
   const auto wo = math::normalize(float3(-0.3, 0.4, 0.87));
-  const auto glass = df::microfacet_ggx_smith_bsdf(
-    roughness_u: 0.45, roughness_v: 0.45, tint: 1.0, mode: df::scatter_reflect_transmit);
-  const auto ior = 1.0 / 1.4; // The relative ratio the BSDF works in
-  for (int i = 0; i < 8; i++) {
-    const auto xi = float4((i + 0.5) / 8, 0.7, 0.5, 0.5);
-    const auto r = normalSample(glass, xi, wo);
-    #assert(r.success);
-    const auto wm = r.wm;
-    // Reflection: the Jacobian is `1 / (4 |wo . wm|)`.
-    const auto wiR = df::specular::reflect(wo, wm);
-    if (wiR.z > 0.05) {
-      const auto expect = r.pdf / (4 * math::dot(wo, wm));
-      #assert(evaluate(glass, wo, wiR, lobeMask: df::DF_GLOSSY_BRDF).pdf.x ~== |1e-3| expect);
-    }
-    // Transmission: the Jacobian the refraction half vector carries.
-    const auto wiT = df::specular::refract(wo, wm, ior);
-    if (wiT.z < -0.05) {
-      const auto expect = r.pdf * df::specular::refraction_half_vector_jacobian(wo, wiT, ior);
-      #assert(evaluate(glass, wo, wiT, lobeMask: df::DF_GLOSSY_BTDF).pdf.x ~== |1e-3| expect);
-    }
-  }
+  const auto wm = math::normalize(float3(0.12, -0.09, 0.99));
+  const auto alpha = float2(0.45 * 0.45);
+  const auto ggx = df::microfacet_ggx_smith_bsdf(roughness_u: 0.45, roughness_v: 0.45, tint: 1.0);
+  const auto beckmann = df::microfacet_beckmann_smith_bsdf(roughness_u: 0.45, roughness_v: 0.45, tint: 1.0);
+  // `D(wm) cos(theta_m)` is the distribution's own solid-angle density.
+  #assert(normalEvaluate(ggx, wo, wm) ~== |1e-4|
+          df::microfacet::smith_normal_pdf(df::microfacet::ggx(), alpha, wm) * wm.z);
+  #assert(normalEvaluate(beckmann, wo, wm) ~== |1e-4|
+          df::microfacet::smith_normal_pdf(df::microfacet::beckmann(), alpha, wm) * wm.z);
+  // And it does not depend on `wo`, which the visible form would.
+  const auto woGrazing = math::normalize(float3(0.95, 0.1, 0.3));
+  #assert(normalEvaluate(ggx, woGrazing, wm) ~== |1e-6| normalEvaluate(ggx, wo, wm));
+  // A visible-normal density would be larger here, since it concentrates on
+  // what `wo` sees; check the two are actually distinguishable at all.
+  #assert(!(normalEvaluate(ggx, wo, wm) ~== |1e-3| 0.0));
 }
 
 // Nothing without a normal distribution answers, whatever the mask says, and
@@ -689,7 +679,6 @@ unit_test "Normal distribution masking" {
   const auto woBack = math::normalize(float3(0.2, -0.3, -0.93));
   const auto back = normalSample(glossyReflect, xi, woBack);
   #assert(back.success);
-  #assert(math::dot(back.wm, woBack) > 0.0);
   #assert(back.wm.z < 0.0);
   #assert(normalEvaluate(glossyReflect, woBack, back.wm) ~== |1e-5| back.pdf);
 }

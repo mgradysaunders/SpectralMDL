@@ -157,7 +157,9 @@ public:
   const LightSampler::LightSample &lightSample;
 
   /// What one converged connection is worth; see the definition.
-  [[nodiscard]] Color contribution(const ManifoldConnection &connection) const;
+  [[nodiscard]] Color contribution(const ManifoldChain &chain,
+                                   const ManifoldConnection &connection,
+                                   float inverseProbability) const;
 };
 
 // What one converged connection is worth: the transport along it, the
@@ -166,11 +168,15 @@ public:
 // Every discovery funnels through here, so that solving the constraint a
 // different way, or for a different lobe, changes nothing about what a
 // solution is worth.
-Color ManifoldGatherContext::contribution(
-    const ManifoldConnection &connection) const {
+Color ManifoldGatherContext::contribution(const ManifoldChain &chain,
+                                          const ManifoldConnection &connection,
+                                          float inverseProbability) const {
+  const bool glossy{chain.vertices[0].isGlossy};
   // Naming one LOBE forces that branch on the sampling path
   // however the material layers it, and reports both the weight of the
   // branch and the chance the ordinary continuation would have taken it.
+  // A glossy crossing has a density instead, so it is evaluated rather
+  // than sampled and this mask goes unused.
   const int lobeMask{smdl::JIT::DF_DELTA_BTDF};
   // A finite light illuminates the last crossing, not the receiver, so
   // whatever the light does with direction has to be asked again along
@@ -209,6 +215,10 @@ Color ManifoldGatherContext::contribution(
   // Jacobian carries the purely geometric part.
   Color T{Color(1.0f)};
   float chainChance{1.0f};
+  // The continuation's own density through the chain, which is what a
+  // glossy crossing contributes to the competing strategy in place of the
+  // discrete chance a Dirac one has.
+  float chainPdf{1.0f};
   // Visibility and attenuation of every sub-segment, crossing the
   // nested-medium stack at each converged vertex, and finally toward
   // the light: the actual sample point for a finite light, or the far
@@ -239,22 +249,38 @@ Color ManifoldGatherContext::contribution(
     // several of them renormalizes over the mix, and a fixed sample would
     // take the first every time while weighting it as though it had been
     // chosen at random. See `isManifoldInterface()` for what remains.
-    float3 wiDelta{};
-    float deltaPdfFwd{}, deltaPdfRev{}, vertexChance{1.0f};
-    Color fDelta{};
-    int sampledLobe{};
-    if (!crossInst.scatterSample(float4(sampler), vertex.wFront, wiDelta,
-                                 deltaPdfFwd, deltaPdfRev, fDelta, sampledLobe,
-                                 lobeMask, &vertexChance) ||
-        (sampledLobe & smdl::JIT::DF_DELTA) == 0)
-      return {};
-    // The constraint was solved for this crossing, so the material has
-    // to agree that it scatters that way. A disagreement means the
-    // interface is not the one the solve differentiated.
-    if (!(dot(wiDelta, vertex.wBack) > 1.0f - 1e-3f)) return {};
-    T *= fDelta;
-    chainChance *= vertexChance;
-    if (!(chainChance > 0.0f) || T.isAllZero()) return {};
+    if (glossy) {
+      // A glossy crossing has a density, so one evaluation at the
+      // directions the solve produced gives both what the transport is
+      // worth and what the continuation would have called it. No mask:
+      // the direction pair already names the transmissive domain, and
+      // the competing sampler is the whole BSDF.
+      float crossPdfFwd{}, crossPdfRev{};
+      Color fCross{};
+      if (!crossInst.scatterEvaluate(vertex.wFront, vertex.wBack, crossPdfFwd,
+                                     crossPdfRev, fCross))
+        return {};
+      T *= fCross;
+      chainPdf *= crossPdfFwd;
+      if (!(chainPdf > 0.0f) || T.isAllZero()) return {};
+    } else {
+      float3 wiDelta{};
+      float deltaPdfFwd{}, deltaPdfRev{}, vertexChance{1.0f};
+      Color fDelta{};
+      int sampledLobe{};
+      if (!crossInst.scatterSample(float4(sampler), vertex.wFront, wiDelta,
+                                   deltaPdfFwd, deltaPdfRev, fDelta,
+                                   sampledLobe, lobeMask, &vertexChance) ||
+          (sampledLobe & smdl::JIT::DF_DELTA) == 0)
+        return {};
+      // The constraint was solved for this crossing, so the material has
+      // to agree that it scatters that way. A disagreement means the
+      // interface is not the one the solve differentiated.
+      if (!(dot(wiDelta, vertex.wBack) > 1.0f - 1e-3f)) return {};
+      T *= fDelta;
+      chainChance *= vertexChance;
+      if (!(chainChance > 0.0f) || T.isAllZero()) return {};
+    }
     MediumStack::Update(segMedium, allocator, crossInst, vertex.hit.instance,
                         vertex.wFront, vertex.wBack);
     segStart = vertex.geometry.point;
@@ -273,14 +299,103 @@ Color ManifoldGatherContext::contribution(
   const float contPdf{dtree ? bsdfFrac * fpdfFwd +
                                   (1.0f - bsdfFrac) * dtree->pdf(connection.wr)
                             : fpdfFwd};
-  const float escPdf{contPdf * chainChance * connection.transfer};
   auto direct{f * vis * Li * T};
-  direct *= connection.transfer / lightSample.pdf;
-  // A delta light is unreachable by the continuation, so its MIS
-  // weight is 1, matching the plain branch.
-  if (!lightSample.isDelta)
-    direct *= smdl::powerHeuristic(lightSample.pdf, escPdf);
+  if (glossy) {
+    // A roughened connection is drawn in the light direction and one half
+    // vector per crossing, so its measure is the offset Jacobian and its
+    // density is the light sampler's times the offsets' own. Both
+    // competing densities then live on the same path space, and the
+    // heuristic compares them there.
+    float offsetDensity{1.0f};
+    for (int i = 0; i < connection.count; i++)
+      offsetDensity *= chain.vertices[i].offsetDensity;
+    if (!(offsetDensity > 0.0f) || !(connection.offsetJacobian > 0.0f))
+      return {};
+    const float pGather{lightSample.pdf * offsetDensity /
+                        connection.offsetJacobian};
+    const float pArrival{contPdf * chainPdf};
+    // No MIS weight. The walk reaches one of several isolated solutions
+    // with a probability it cannot compute, so there is no density to weigh
+    // against the path tracer's; the reciprocal estimate stands in for the
+    // sum over solutions instead, and the path tracer is barred from this
+    // transport rather than sharing it. That is the reference's structure
+    // too, and its authors call the missing MIS an open problem.
+    (void)pArrival;
+    (void)pGather;
+    direct *= inverseProbability * connection.offsetJacobian /
+              (lightSample.pdf * offsetDensity);
+  } else {
+    const float escPdf{contPdf * chainChance * connection.transfer};
+    direct *= connection.transfer / lightSample.pdf;
+    // A delta light is unreachable by the continuation, so its MIS
+    // weight is 1, matching the plain branch.
+    if (!lightSample.isDelta)
+      direct *= smdl::powerHeuristic(lightSample.pdf, escPdf);
+  }
   return direct.isAnyNonFinite() ? Color() : direct;
+}
+
+// Draw the offset a glossy crossing is solved for: a microfacet normal
+// from the interface's own transmissive normal distribution, converted
+// into the walk's frame at the seed and into the measure the constraint
+// lives in.
+//
+// The draw is conditioned on the SPECULAR solution, not on the straight
+// segment. It cannot be conditioned on its own outcome, since the density
+// of having drawn it is what the estimator divides by; but the specular
+// solution is a deterministic function of the seed, so conditioning on it
+// is free and both halves of the estimator can reproduce it.
+//
+// This matters more than it sounds. Seeding from the straight segment puts
+// the proposal at a vertex the solve then walks away from, and on a wavy
+// interface it walks far: the lobe is drawn about one normal and evaluated
+// about another, and the ratio of the two runs away in the tail. Measured
+// on the pool, that alone was the difference between an unusable estimator
+// and a working one.
+[[nodiscard]] static bool
+drawManifoldOffset(const Scene &scene, Sampler &sampler,
+                   const smdl::JIT::MaterialInstance &mat, const Hit &hit,
+                   const float3 &wo, ManifoldVertexSeed &seed) {
+  float3 normal{}, t1{}, t2{};
+  if (!manifoldSeedFrame(scene, hit, normal, t1, t2)) return false;
+  float3 wm{};
+  float pdf{};
+  float2 alpha{};
+  if (!mat.scatterNormalSample(float4(sampler), wo, wm, pdf, alpha,
+                               smdl::JIT::DF_GLOSSY_BTDF) ||
+      !(pdf > 0.0f))
+    return false;
+  // The walk orients its half vector onto the shading normal, so the
+  // offset has to name the representative on that side.
+  if (dot(wm, normal) < 0.0f) wm = -wm;
+  const float cosWm{dot(wm, normal)};
+  if (!(cosWm > 1e-4f)) return false;
+  seed.offset = float2(dot(wm, t1), dot(wm, t2));
+  seed.offsetDensity = pdf / cosWm;
+  return true;
+}
+
+// The density the draw above would have had for an offset already in
+// hand, which is what the arrival side needs: it has a crossing and must
+// ask how likely the gather was to have aimed at it.
+[[nodiscard]] static bool
+manifoldOffsetDensity(const Scene &scene,
+                      const smdl::JIT::MaterialInstance &mat, const Hit &hit,
+                      const float3 &wo, const float2 &offset, float &density) {
+  float3 normal{}, t1{}, t2{};
+  if (!manifoldSeedFrame(scene, hit, normal, t1, t2)) return false;
+  const float sinSq{dot(offset, offset)};
+  // Off the unit disk there is no direction to rebuild, so the gather
+  // could not have aimed here however it drew.
+  if (!(sinSq < 1.0f)) return false;
+  const float cosWm{std::sqrt(1.0f - sinSq)};
+  const float3 wm{offset.x * t1 + offset.y * t2 + cosWm * normal};
+  float pdf{};
+  if (!mat.scatterNormalEvaluate(wo, wm, pdf, smdl::JIT::DF_GLOSSY_BTDF) ||
+      !(pdf > 0.0f) || !(cosWm > 1e-4f))
+    return false;
+  density = pdf / cosWm;
+  return true;
 }
 
 // Manifold next-event estimation for an environment sample whose
@@ -316,15 +431,23 @@ static Color gatherManifoldNEE(
   // per-side refractive indices resolved against the medium stack as of
   // the crossing, and the segment must clear past the last one.
   ManifoldChain chain{};
+  // The medium on the receiver side of each crossing, kept so that the
+  // offset draw below can resolve the same exterior index the transport
+  // does. The arrival side keeps the same thing for the same reason.
+  std::array<const MediumStack *, MNEE_MAX_DEPTH> seedMedium{};
   while (true) {
     if (chain.count == std::min(maxDepth, MNEE_MAX_DEPTH)) return {};
     if (blocker.instance->isCurves()) return {};
     auto state{makeRenderState(wavelengths, &allocator)};
     blocker.applyGeometryToState(state, lightSample.wi);
     smdl::JIT::MaterialInstance interfaceInst{state, blocker.material};
+    auto &seed{chain.vertices[chain.count]};
+    seedMedium[chain.count] = walk.medium();
     if (!makeManifoldSeed(walk.medium(), interfaceInst, state, blocker,
-                          lightSample.wi, chain.vertices[chain.count]))
+                          lightSample.wi, manifold.glossy, seed))
       return {};
+    // A chain is all Dirac or all glossy; see `ManifoldVertexSeed`.
+    if (seed.isGlossy != chain.vertices[0].isGlossy) return {};
     chain.count++;
     walk.passThrough(interfaceInst, blocker);
     if (!walk.nextBlocker(blocker)) break;
@@ -337,14 +460,62 @@ static Color gatherManifoldNEE(
   target.wl = lightSample.wi;
   target.point = lightSample.target;
   target.infinite = lightSample.isInfinite;
+  // An area sample carries the emitter's orientation, which the offset
+  // Jacobian needs and a punctual or distant one does not have.
+  if (!lightSample.isDelta && !lightSample.isInfinite)
+    target.normal = lightSample.hit.Ng;
   const ManifoldGatherContext ctx{
       scene, sampler, wavelengths, allocator, lights, gatherState, mat,
       kind,  dtree,   bsdfFrac,    medium,    point,  wo,          lightSample};
 
+  if (!chain.vertices[0].isGlossy) {
+    ManifoldConnection connection{};
+    if (!solveManifoldConnection(scene, point, target, chain, connection))
+      return {};
+    return ctx.contribution(chain, connection, 1.0f);
+  }
+  // A roughened connection, by the estimator of Zeltner, Georgiev and Jakob.
+  //
+  // Draw one half vector per crossing and hold it FIXED. With the offsets
+  // fixed the constraint has isolated solutions, so "which one did the walk
+  // reach" is a question with a probability rather than a certainty, and the
+  // reciprocal of that probability is what an unbiased estimate of the sum
+  // over them needs. Redrawing the offsets per trial would move the solutions
+  // and leave nothing to recognize.
+  for (int i = 0; i < chain.count; i++) {
+    auto crossState{makeRenderState(wavelengths, &allocator)};
+    chain.vertices[i].hit.applyGeometryToState(crossState, lightSample.wi);
+    smdl::JIT::MaterialInstance crossInst{crossState,
+                                          chain.vertices[i].hit.material};
+    crossInst.setExteriorIOR(
+        ExteriorIOR(seedMedium[i], crossInst, -lightSample.wi));
+    if (!drawManifoldOffset(scene, sampler, crossInst, chain.vertices[i].hit,
+                            -lightSample.wi, chain.vertices[i]))
+      return {};
+  }
+  auto jitterAndSolve{[&](ManifoldConnection &connection) {
+    for (int i = 0; i < chain.count; i++)
+      chain.vertices[i].seedJitter =
+          MANIFOLD_SEED_JITTER * smdl::uniformDiskSample(float2(sampler));
+    return solveManifoldConnection(scene, point, target, chain, connection);
+  }};
   ManifoldConnection connection{};
-  if (!solveManifoldConnection(scene, point, target, chain, connection))
-    return {};
-  return ctx.contribution(connection);
+  if (!jitterAndSolve(connection)) return {};
+  // The reciprocal estimate: keep drawing fresh starts until one lands on the
+  // same solution, and count how many that took. The count is geometric with
+  // mean one over the chance of reaching this solution, so it estimates that
+  // reciprocal without ever computing it. Running out of trials drops the
+  // sample rather than truncating the estimate, which is what the reference
+  // does and is the one place this is knowingly not unbiased.
+  float inverseProbability{1.0f};
+  for (int trial = 0; trial < MANIFOLD_MAX_TRIALS; trial++) {
+    ManifoldConnection other{};
+    if (jitterAndSolve(other) &&
+        isSameManifoldSolution(point, connection, other))
+      return ctx.contribution(chain, connection, inverseProbability);
+    inverseProbability += 1.0f;
+  }
+  return {};
 }
 
 // The manifold-NEE re-walk MIS state the camera walk carries: armed at
@@ -375,11 +546,14 @@ public:
   // Extend the chain across an eligible specular bounce. The length
   // keeps counting past `MNEE_MAX_DEPTH` so that an overlong chain
   // reads as uncovered rather than as a shorter one.
-  void extend(const Hit &hit) noexcept {
+  void extend(const Hit &hit, float pdfFwd) noexcept {
     if (mChainLength < MNEE_MAX_DEPTH) {
       mChainInstances[mChainLength] = hit.instance;
       mChainPieces[mChainLength] = hit.faceIndex;
       mChainHits[mChainLength] = hit;
+      // Unread on a Dirac chain, whose crossings have a discrete chance
+      // instead of a density; a glossy one weighs against it directly.
+      mChainPdf[mChainLength] = pdfFwd;
     }
     mChainLength++;
   }
@@ -409,6 +583,7 @@ private:
   std::array<const MeshInstance *, MNEE_MAX_DEPTH> mChainInstances{};
   std::array<uint32_t, MNEE_MAX_DEPTH> mChainPieces{};
   std::array<Hit, MNEE_MAX_DEPTH> mChainHits{};
+  std::array<float, MNEE_MAX_DEPTH> mChainPdf{};
 };
 
 // The MIS weight of a BSDF-side arrival at a light, an environment
@@ -493,7 +668,11 @@ float ManifoldCancelState::coverWeight(const Scene &scene, Sampler &sampler,
     if (hit.instance->isPrimitive() && hit.faceIndex != chainPieces[seed.count])
       return 1.0f;
     if (!makeManifoldSeed(medium, interfaceInst, state, hit, wl,
-                          seed.vertices[seed.count]))
+                          manifold.glossy, seed.vertices[seed.count]))
+      return 1.0f;
+    // The gather declines a mixed chain, so this must decline it too or
+    // the pair stops summing to one.
+    if (seed.vertices[seed.count].isGlossy != seed.vertices[0].isGlossy)
       return 1.0f;
     crossingMedium[seed.count] = medium;
     seed.count++;
@@ -502,17 +681,65 @@ float ManifoldCancelState::coverWeight(const Scene &scene, Sampler &sampler,
     origin = hit.point;
   }
   if (!reached || seed.count != chainLength) return 1.0f;
-  // Can the gather produce this transport at all? The walk is
-  // deterministic, so it can only where it converges onto the crossings
-  // this arrival actually took.
+  const bool glossy{seed.vertices[0].isGlossy};
+  if (glossy) return 0.0f; // Barred; see `quasiSpecularBarred` in `tracePath`.
+  // A roughened connection is solved for offsets, so the arrival has to
+  // say which offsets would have produced the crossings it took, and then
+  // how likely the gather was to have drawn them. The gather draws about
+  // the specular solution, so the density is read there and this side has
+  // to solve for it first, exactly as the gather does.
+  float offsetDensity{1.0f};
   ManifoldConnection connection{};
   if (!solveManifoldConnection(scene, receiver, target, seed, connection))
     return 1.0f;
+  if (glossy) {
+    ManifoldChain actual{};
+    actual.count = chainLength;
+    for (int i = 0; i < chainLength; i++) {
+      actual.vertices[i] = seed.vertices[i];
+      actual.vertices[i].hit = chainHits[i];
+      actual.vertices[i].offset = float2();
+    }
+    if (!evaluateManifoldOffsets(scene, receiver, target, actual)) return 1.0f;
+    for (int i = 0; i < chainLength; i++) {
+      const auto &vertex{connection.vertices[i]};
+      seed.vertices[i].offset = actual.vertices[i].offset;
+      auto crossState{makeRenderState(wavelengths, &allocator)};
+      vertex.hit.applyGeometryToState(crossState, -vertex.wFront);
+      smdl::JIT::MaterialInstance crossInst{crossState, vertex.hit.material};
+      crossInst.setExteriorIOR(
+          ExteriorIOR(crossingMedium[i], crossInst, vertex.wFront));
+      float density{};
+      if (!manifoldOffsetDensity(scene, crossInst, vertex.hit, vertex.wFront,
+                                 seed.vertices[i].offset, density))
+        return 1.0f;
+      seed.vertices[i].offsetDensity = density;
+      offsetDensity *= density;
+    }
+    if (!(offsetDensity > 0.0f)) return 1.0f;
+    // Now solve for those offsets, which is the walk the gather ran.
+    if (!solveManifoldConnection(scene, receiver, target, seed, connection))
+      return 1.0f;
+  }
   for (int i = 0; i < chainLength; i++) {
     const float scale{std::max(1e-3f, length(chainHits[i].point - receiver))};
     if (!(length(connection.vertices[i].hit.point - chainHits[i].point) <
           MANIFOLD_IDENTITY_FRACTION * scale))
       return 1.0f;
+  }
+  if (glossy) {
+    // Both densities live on the path space the roughened connection is
+    // drawn in: the gather's is the light sampler's times the offsets',
+    // over the measure of the map; the arrival's is what the walk
+    // actually used at the receiver and at every crossing.
+    if (!(connection.offsetJacobian > 0.0f)) return 1.0f;
+    float pArrival{receiverPdf};
+    for (int i = 0; i < chainLength; i++) pArrival *= mChainPdf[i];
+    const float pGather{lightPdf * offsetDensity / connection.offsetJacobian};
+    if (!(pArrival > 0.0f) || !std::isfinite(pArrival) || !(pGather > 0.0f) ||
+        !std::isfinite(pGather))
+      return 1.0f;
+    return smdl::powerHeuristic(pArrival, pGather);
   }
   const float transfer{connection.transfer};
   // The chance the continuation takes this chain, asked of each
@@ -706,6 +933,7 @@ Color tracePath(smdl::Compiler &compiler, const Scene &scene, Sampler &sampler,
   // light sampling competes with.
   float prevWpdf{};
   bool prevDelta{};
+  bool prevQuasiSpecularBar{};
   float3 prevPoint{};
   ManifoldCancelState mnee{};
   // The number of path vertices so far, counting the camera as the first.
@@ -799,6 +1027,7 @@ Color tracePath(smdl::Compiler &compiler, const Scene &scene, Sampler &sampler,
                          ? 1.0f
                          : smdl::powerHeuristic(
                                prevWpdf, lights.envSelectionPMF() * Lipdf)};
+        if (prevQuasiSpecularBar) weight = 0.0f;
         // An escape through a manifold-connectable chain of eligible
         // refractive interfaces competes with the manifold gather at
         // its receiver by re-walk MIS; `manifoldEscapeWeight` returns 1
@@ -906,6 +1135,7 @@ Color tracePath(smdl::Compiler &compiler, const Scene &scene, Sampler &sampler,
                 : smdl::powerHeuristic(
                       prevWpdf, lights.solidAnglePDF(hit.instIndex, hit.point,
                                                      hit.Ng, prevPoint))};
+        if (prevQuasiSpecularBar) weight = 0.0f;
         // An emitter reached through a manifold-connectable chain of
         // eligible refractive interfaces competes with the manifold
         // gather at its receiver by re-walk MIS, exactly as an
@@ -919,6 +1149,7 @@ Color tracePath(smdl::Compiler &compiler, const Scene &scene, Sampler &sampler,
             target.wl = toLight / distStraight;
             target.point = hit.point;
             target.infinite = false;
+            target.normal = hit.Ng;
             weight =
                 mnee.coverWeight(scene, sampler, wavelengths, allocator, target,
                                  lights.solidAnglePDF(hit.instIndex, hit.point,
@@ -943,8 +1174,20 @@ Color tracePath(smdl::Compiler &compiler, const Scene &scene, Sampler &sampler,
     // to match the continuation density. Hair vertices bypass guiding
     // outright: the guided halves would evaluate the surface BSDF rather
     // than the hair BSDF.
+    //
+    // An eligible glossy interface bypasses both guiding and the gather
+    // below, because the manifold estimator claims its transport: it is a
+    // link in a chain, not a receiver, and the gather at the receiver
+    // behind it already competes with every path through it. Letting it
+    // gather as well would count that transport twice, since neither
+    // weight knows about the other. A Dirac interface needs no such rule,
+    // its gather being identically zero.
+    const bool quasiSpecular{
+        manifold.glossy && manifold.depth > 0 && !isHair &&
+        isManifoldInterface(mat, state.normal, /*allowGlossy=*/true) &&
+        isGlossyManifoldInterface(mat)};
     const DTree *dtree{};
-    if (guideTree && !isHair) {
+    if (guideTree && !isHair && !quasiSpecular) {
       int dfLobes{dfLobesOf(mat)};
       if ((dfLobes & smdl::JIT::DF_FINITE) != 0)
         dtree = &guideTree->samplingAt(hit.point);
@@ -958,7 +1201,7 @@ Color tracePath(smdl::Compiler &compiler, const Scene &scene, Sampler &sampler,
                              : dtree->mixtureAlpha};
     // Gather direct lighting at this vertex, before the bounce, so the
     // cone the gather rays inherit is the arrival cone.
-    {
+    if (!quasiSpecular) {
       const Color direct{gatherDirect(
           scene, sampler, wavelengths, allocator, lights, gatherState, mat,
           isHair ? VertexKind::HAIR : VertexKind::SURFACE, dtree, bsdfFrac,
@@ -1042,25 +1285,48 @@ Color tracePath(smdl::Compiler &compiler, const Scene &scene, Sampler &sampler,
       record->isDeltaBounce = isDeltaBounce;
     }
     prevWpdf = wpdfFwd;
-    prevDelta = isDeltaBounce;
+    // `prevDelta` is really "the previous vertex ran no gather", which a
+    // delta bounce and a bypassed glossy interface both are. Getting this
+    // wrong halves the transport rather than double counting it.
+    prevDelta = isDeltaBounce || quasiSpecular;
     prevPoint = hit.point;
     // Advance the manifold-NEE cancelation state: a non-delta,
     // non-hair vertex is a fresh receiver whose gather may attempt a
     // connection; a delta transmission through an eligible interface
     // extends the chain; anything else (a hair vertex, a specular
     // reflection, an ineligible or index-matched interface) breaks it.
+    bool extendedChain{false};
     if (isHair) {
       mnee.disarm();
+    } else if (mnee.armed() && manifold.depth > 0 &&
+               isManifoldInterface(mat, state.normal, manifold.glossy) &&
+               mat.isTransmitting(wo, wNext)) {
+      extendedChain = true;
+      // A transmission through an eligible interface extends the chain
+      // whether it was Dirac or glossy. A glossy one is a finite-density
+      // bounce that would otherwise have armed a new receiver, and it
+      // must not: it ran no gather of its own, and the gather at the
+      // receiver behind it is what competes with this path.
+      mnee.extend(hit, wpdfFwd);
     } else if (!isDeltaBounce) {
       mnee.arm(manifold.any(), hit.point, wpdfFwd, medium);
-    } else if (mnee.armed()) {
-      if (manifold.depth > 0 && isManifoldInterface(mat, state.normal) &&
-          mat.isTransmitting(wo, wNext)) {
-        mnee.extend(hit);
-      } else {
-        mnee.disarm();
-      }
+    } else {
+      mnee.disarm();
     }
+    // A glossy crossing bars the path tracer from what lies beyond it. The
+    // roughened gather reaches those solutions with a probability it cannot
+    // report, so there is no weight that would let the two share the
+    // transport, and the reference implementation makes the same trade: it
+    // filters emitter hits behind a caustic caster outright and calls the
+    // missing MIS an open problem.
+    //
+    // Only a crossing that EXTENDED a chain, though. Barring every bounce at
+    // an eligible interface takes the reflection off it as well, and a
+    // transmission with no armed receiver behind it, neither of which any
+    // gather claims: that is transport thrown away for nothing, and it
+    // measured as a 24 percent loss. What is still lost is what the gather
+    // cannot find, chains past `MNEE_MAX_DEPTH` among them.
+    prevQuasiSpecularBar = quasiSpecular && extendedChain;
     beta *= (1.0f / wpdfFwd) * f;
     if (beta.isAnyNonFinite()) break;
     // Terminate by Russian roulette instead of by a fixed depth limit, so that

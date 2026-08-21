@@ -88,7 +88,8 @@ static constexpr int MAX_DIM{2 * MNEE_MAX_DEPTH};
 // determinant, which is the signed product of the pivots the elimination
 // leaves on the diagonal and so costs nothing to report.
 [[nodiscard]] static bool solveDense(int n, int nrhs, float A[MAX_DIM][MAX_DIM],
-                                     float b[MAX_DIM][2], float *det = nullptr) {
+                                     float b[MAX_DIM][2],
+                                     float *det = nullptr) {
   float scale{};
   for (int r = 0; r < n; r++)
     for (int c = 0; c < n; c++) scale = std::max(scale, std::abs(A[r][c]));
@@ -124,6 +125,10 @@ static constexpr int MAX_DIM{2 * MNEE_MAX_DEPTH};
   return true;
 }
 
+// Defined below, and used by the jittered start above.
+[[nodiscard]] bool manifoldSeedFrame(const Scene &scene, const Hit &hit,
+                                     float3 &normal, float3 &t1, float3 &t2);
+
 namespace {
 
 // One Newton iterate over the whole chain: the differential geometry at
@@ -144,6 +149,14 @@ public:
   std::array<float, MNEE_MAX_DEPTH> distBack{}; // 0 for the distant light.
   std::array<float3, MNEE_MAX_DEPTH> Hhat{};
   std::array<float, MNEE_MAX_DEPTH> Hlen{};
+  // The sign that orients `Hhat` onto the shading normal's side, so that
+  // the constraint means a microfacet normal rather than a line through
+  // one. Zero offsets do not care, which is why it never mattered before.
+  std::array<float, MNEE_MAX_DEPTH> Hsign{};
+  // The area element of the parameterization the Jacobian is expressed in,
+  // and the half-vector measure of the crossing; see the header.
+  std::array<float, MNEE_MAX_DEPTH> areaElement{};
+  std::array<float, MNEE_MAX_DEPTH> halfVectorJacobian{};
   std::array<float3, MNEE_MAX_DEPTH> t1{};
   std::array<float3, MNEE_MAX_DEPTH> t2{};
   float C[MAX_DIM]{};
@@ -210,6 +223,20 @@ evaluateChain(const Scene &scene, const float3 &receiver,
     state.Hlen[i] = length(H);
     if (!(state.Hlen[i] > 1e-6f)) return false;
     state.Hhat[i] = H / state.Hlen[i];
+    // `H` points into the denser medium, so which side it lands on depends
+    // on which side is denser. Orienting it onto the shading normal makes
+    // it the microfacet normal the interface's own distribution is
+    // expressed in, which is what an offset has to be measured against.
+    state.Hsign[i] = dot(state.Hhat[i], geometry.normal) < 0.0f ? -1.0f : 1.0f;
+    state.areaElement[i] = length(cross(geometry.dPdu, geometry.dPdv));
+    // `|d h / d omega_back|`, being the refraction half-vector Jacobian
+    // times the cosine that converts its solid angle into the projected
+    // measure the constraint lives in.
+    state.halfVectorJacobian[i] =
+        std::abs(dot(state.Hhat[i], geometry.normal)) *
+        std::abs(dot(state.wBack[i], state.Hhat[i])) *
+        (chain.vertices[i].etaBack * chain.vertices[i].etaBack) /
+        (state.Hlen[i] * state.Hlen[i]);
     // The tangent frame the constraint projects onto, seeded from a
     // vector held FIXED for the whole walk, so the frame varies only
     // through the shading normal and the frame derivatives below are
@@ -223,8 +250,15 @@ evaluateChain(const Scene &scene, const float3 &receiver,
     if (!(gLen[i] > 1e-6f)) return false;
     state.t1[i] = g / gLen[i];
     state.t2[i] = cross(n, state.t1[i]);
-    state.C[2 * i + 0] = dot(state.Hhat[i], state.t1[i]);
-    state.C[2 * i + 1] = dot(state.Hhat[i], state.t2[i]);
+    // The constraint is the oriented tangential half vector against the
+    // offset this crossing is solved for. At zero offset the sign cancels
+    // out of every use, since the Newton step and the transfer solve scale
+    // a row of the matrix and of the right-hand side together.
+    const float2 &offset{chain.vertices[i].offset};
+    state.C[2 * i + 0] =
+        state.Hsign[i] * dot(state.Hhat[i], state.t1[i]) - offset.x;
+    state.C[2 * i + 1] =
+        state.Hsign[i] * dot(state.Hhat[i], state.t2[i]) - offset.y;
   }
   // The coupled Jacobian. Constraint `i` sees vertex `j` through the
   // segment directions (and, for `j == i`, through its own frame, whose
@@ -267,8 +301,10 @@ evaluateChain(const Scene &scene, const float3 &receiver,
           term1 += dot(state.Hhat[i], dt1);
           term2 += dot(state.Hhat[i], dt2);
         }
-        state.J[2 * i + 0][2 * j + k] = term1;
-        state.J[2 * i + 1][2 * j + k] = term2;
+        // The same orientation the constraint carries, applied to the
+        // whole row so that a sign flip cancels out of every solve.
+        state.J[2 * i + 0][2 * j + k] = state.Hsign[i] * term1;
+        state.J[2 * i + 1][2 * j + k] = state.Hsign[i] * term2;
       }
     }
   }
@@ -312,7 +348,7 @@ evaluateChain(const Scene &scene, const float3 &receiver,
   const float3 t[2]{state.t1[last], state.t2[last]};
   for (int m = 0; m < 2; m++)
     for (int k = 0; k < 2; k++)
-      Y[2 * last + m][k] = etaL / state.Hlen[last] *
+      Y[2 * last + m][k] = state.Hsign[last] * etaL / state.Hlen[last] *
                            (dot(a[k], t[m]) - dot(state.Hhat[last], a[k]) *
                                                   dot(state.Hhat[last], t[m]));
   if (!solveDense(2 * count, 2, A, Y)) return false;
@@ -323,6 +359,55 @@ evaluateChain(const Scene &scene, const float3 &receiver,
                                         state.geometry[0].dPdv)};
   transfer = length(cross(dwr[0], dwr[1])) * std::abs(detTop);
   return std::isfinite(transfer) && transfer > 0.0f;
+}
+
+// The offset Jacobian of an evaluated chain: the measure of the nested
+// outgoing solid angles per unit of the variables a roughened connection
+// is drawn in. See the header for the expression; this assembles it from
+// the same state the transfer solve uses.
+//
+// The determinant is the constraint Jacobian's, so it is expressed in the
+// surface parameterization, and the area elements convert it back out.
+// Their ratio is what is invariant; neither factor is on its own.
+[[nodiscard]] static bool computeOffsetJacobian(const ChainState &state,
+                                                const float3 &receiver,
+                                                const ManifoldTarget &target,
+                                                float &offsetJacobian) {
+  const int count{state.count};
+  const int last{count - 1};
+  float A[MAX_DIM][MAX_DIM];
+  float rhs[MAX_DIM][2]{};
+  for (int r = 0; r < 2 * count; r++)
+    for (int c = 0; c < 2 * count; c++) A[r][c] = state.J[r][c];
+  float detJ{};
+  if (!solveDense(2 * count, 0, A, rhs, &detJ)) return false;
+  if (!(std::abs(detJ) > 0.0f)) return false;
+  float factor{1.0f / std::abs(detJ)};
+  for (int i = 0; i < count; i++) {
+    if (!(state.distFront[i] > 0.0f)) return false;
+    const float cosFront{
+        std::abs(dot(state.wFront[i], state.geometry[i].normal))};
+    factor *= cosFront * state.areaElement[i] /
+              (state.distFront[i] * state.distFront[i]);
+  }
+  // The light-side correction, carrying the geometry term across from the
+  // straight line the sampler measured in to the segment that arrives. A
+  // distant target needs none, since its direction is the straight one; a
+  // punctual target has no orientation, so only the distances differ.
+  if (!target.infinite) {
+    const float distStraight{length(target.point - receiver)};
+    const float distBack{state.distBack[last]};
+    if (!(distStraight > 0.0f) || !(distBack > 0.0f)) return false;
+    factor *= (distStraight * distStraight) / (distBack * distBack);
+    if (dot(target.normal, target.normal) > 0.0f) {
+      const float cosStraight{std::abs(dot(target.normal, target.wl))};
+      const float cosBack{std::abs(dot(target.normal, state.wBack[last]))};
+      if (!(cosStraight > 0.0f)) return false;
+      factor *= cosBack / cosStraight;
+    }
+  }
+  offsetJacobian = factor;
+  return std::isfinite(offsetJacobian) && offsetJacobian > 0.0f;
 }
 
 // The fixed frame-seed vectors for a chain's hits: each seed hit's own
@@ -353,11 +438,18 @@ normalIsUnremapped(const smdl::JIT::MaterialInstance &mat,
          materialNormal.y == stateNormal.y && materialNormal.z == stateNormal.z;
 }
 
-bool isManifoldInterface(const smdl::JIT::MaterialInstance &mat,
-                         const float3 &stateNormal) {
+bool isGlossyManifoldInterface(const smdl::JIT::MaterialInstance &mat) {
   const int dfLobes{dfLobesOf(mat)};
-  if ((dfLobes & smdl::JIT::DF_DELTA_BTDF) == 0 || mat.isThinWalled() ||
-      mat.hasEmission() ||
+  return (dfLobes & smdl::JIT::DF_DELTA_BTDF) == 0 &&
+         (dfLobes & smdl::JIT::DF_GLOSSY_BTDF) != 0;
+}
+
+bool isManifoldInterface(const smdl::JIT::MaterialInstance &mat,
+                         const float3 &stateNormal, bool allowGlossy) {
+  const int dfLobes{dfLobesOf(mat)};
+  const int transmits{smdl::JIT::DF_DELTA_BTDF |
+                      (allowGlossy ? smdl::JIT::DF_GLOSSY_BTDF : 0)};
+  if ((dfLobes & transmits) == 0 || mat.isThinWalled() || mat.hasEmission() ||
       !(std::abs(mat.getIOR() - mat.getExteriorIOR()) > 1e-4f))
     return false;
   return normalIsUnremapped(mat, stateNormal);
@@ -373,10 +465,12 @@ bool isManifoldCrossing(const ManifoldVertexSeed &seed, const float3 &normal,
 bool makeManifoldSeed(const MediumStack *medium,
                       smdl::JIT::MaterialInstance &mat,
                       const smdl::State &state, const Hit &hit,
-                      const float3 &wl, ManifoldVertexSeed &seed) {
+                      const float3 &wl, bool allowGlossy,
+                      ManifoldVertexSeed &seed) {
   const float3 woStraight{-wl};
   mat.setExteriorIOR(ExteriorIOR(medium, mat, woStraight));
-  if (!isManifoldInterface(mat, state.normal)) return false;
+  if (!isManifoldInterface(mat, state.normal, allowGlossy)) return false;
+  seed.isGlossy = isGlossyManifoldInterface(mat);
   const bool frontInterior{mat.isInterior(woStraight)};
   seed.hit = hit;
   seed.etaFront = frontInterior ? mat.getIOR() : mat.getExteriorIOR();
@@ -394,6 +488,28 @@ bool solveManifoldConnection(const Scene &scene, const float3 &receiver,
   std::array<Hit, MNEE_MAX_DEPTH> hits{};
   std::array<float3, MNEE_MAX_DEPTH> frameSeeds{};
   for (int i = 0; i < count; i++) hits[i] = chain.vertices[i].hit;
+  // Move the starting iterate off the straight-line crossing, if asked. The
+  // walk re-anchors onto the real surface from the previous vertex, which is
+  // the same cast a Newton step takes, so a displaced start is an ordinary
+  // start somewhere else rather than a special case.
+  {
+    float3 origin{receiver};
+    for (int i = 0; i < count; i++) {
+      const auto &jitter{chain.vertices[i].seedJitter};
+      if (dot(jitter, jitter) > 0.0f) {
+        float3 normal{}, t1{}, t2{};
+        if (!manifoldSeedFrame(scene, hits[i], normal, t1, t2)) return false;
+        const float scale{length(hits[i].point - receiver)};
+        Hit moved{};
+        if (!project(scene, origin,
+                     hits[i].point + scale * (jitter.x * t1 + jitter.y * t2),
+                     chain.vertices[i].hit, moved))
+          return false;
+        hits[i] = moved;
+      }
+      origin = hits[i].point;
+    }
+  }
   buildFrameSeeds(scene, hits, count, frameSeeds);
   ChainState state{};
   if (!evaluateChain(scene, receiver, target, chain, frameSeeds, hits, state))
@@ -491,11 +607,17 @@ bool solveManifoldConnection(const Scene &scene, const float3 &receiver,
     vertex.wBack = state.wBack[i];
     vertex.cosFront = std::abs(sideF);
     vertex.cosBack = std::abs(sideB);
+    vertex.halfVectorJacobian = state.halfVectorJacobian[i];
   }
   connection.count = count;
   connection.wr = -state.wFront[0];
-  return computeTransfer(state, chain.vertices[count - 1].etaBack, receiver,
-                         target, connection.transfer);
+  if (!computeOffsetJacobian(state, receiver, target,
+                             connection.offsetJacobian))
+    return false;
+  if (!computeTransfer(state, chain.vertices[count - 1].etaBack, receiver,
+                       target, connection.transfer))
+    return false;
+  return true;
 }
 
 bool evaluateManifoldTransfer(const Scene &scene, const float3 &receiver,
@@ -517,4 +639,56 @@ bool evaluateManifoldTransfer(const Scene &scene, const float3 &receiver,
   if (!(state.residual() < RESIDUAL_SANITY)) return false;
   return computeTransfer(state, chain.vertices[count - 1].etaBack, receiver,
                          target, transfer);
+}
+
+bool evaluateManifoldOffsets(const Scene &scene, const float3 &receiver,
+                             const ManifoldTarget &target,
+                             ManifoldChain &chain) {
+  const int count{chain.count};
+  if (count < 1 || count > MNEE_MAX_DEPTH) return false;
+  std::array<Hit, MNEE_MAX_DEPTH> hits{};
+  std::array<float3, MNEE_MAX_DEPTH> frameSeeds{};
+  for (int i = 0; i < count; i++) {
+    hits[i] = chain.vertices[i].hit;
+    // Read the constraint itself rather than its residual against whatever
+    // was there, which is what makes this the inverse of the solve.
+    chain.vertices[i].offset = float2();
+  }
+  buildFrameSeeds(scene, hits, count, frameSeeds);
+  ChainState state{};
+  if (!evaluateChain(scene, receiver, target, chain, frameSeeds, hits, state))
+    return false;
+  for (int i = 0; i < count; i++) {
+    if (!std::isfinite(state.C[2 * i + 0]) ||
+        !std::isfinite(state.C[2 * i + 1]))
+      return false;
+    chain.vertices[i].offset = float2(state.C[2 * i + 0], state.C[2 * i + 1]);
+  }
+  return true;
+}
+
+bool manifoldSeedFrame(const Scene &scene, const Hit &hit, float3 &normal,
+                       float3 &t1, float3 &t2) {
+  if (hit.instance->isCurves()) return false;
+  const auto geometry{scene.manifoldGeometry(hit)};
+  normal = geometry.normal;
+  float3 g{geometry.dPdu - dot(normal, geometry.dPdu) * normal};
+  const float3 seed{smdl::tryNormalize(g) ? g : smdl::perpendicularTo(normal)};
+  float3 t{seed - dot(normal, seed) * normal};
+  if (!smdl::tryNormalize(t)) return false;
+  t1 = t, t2 = cross(normal, t1);
+  return true;
+}
+
+bool isSameManifoldSolution(const float3 &receiver, const ManifoldConnection &a,
+                            const ManifoldConnection &b) {
+  if (a.count != b.count) return false;
+  for (int i = 0; i < a.count; i++) {
+    const float scale{
+        std::max(1e-3f, length(a.vertices[i].hit.point - receiver))};
+    if (!(length(a.vertices[i].hit.point - b.vertices[i].hit.point) <
+          MANIFOLD_IDENTITY_FRACTION * scale))
+      return false;
+  }
+  return true;
 }

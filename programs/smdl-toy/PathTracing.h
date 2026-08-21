@@ -15,6 +15,11 @@ public:
   /// manifold next-event estimation is off.
   int depth{};
 
+  /// Solve through glossy transmissive interfaces as well as Dirac ones,
+  /// by drawing a half vector from each interface's normal distribution
+  /// and constraining the crossing to it.
+  bool glossy{};
+
   /// Does the manifold estimator run at all? The cancelation state only
   /// arms when it does.
   [[nodiscard]] bool any() const noexcept { return depth > 0; }

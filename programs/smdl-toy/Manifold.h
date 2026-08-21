@@ -64,6 +64,31 @@ public:
   /// same constraint. See `evaluateManifoldOffsets()` for the inverse the
   /// arrival side needs.
   float2 offset{};
+
+  /// The density the offset was drawn with, in the offset's own measure,
+  /// which is the interface's normal density over the cosine that projects
+  /// a solid angle onto the tangent plane. One for a Dirac crossing, which
+  /// has no offset to draw and no chance of drawing it.
+  float offsetDensity{1.0f};
+
+  /// A tangential displacement of the starting iterate, in the walk's own
+  /// frame at the hit and in units of the distance from the receiver.
+  ///
+  /// The walk is otherwise deterministic, which is what lets the arrival
+  /// side ask whether the gather could have produced a path. A roughened
+  /// connection cannot use that: with the offset held fixed the constraint
+  /// has several isolated solutions, and a deterministic walk reaches
+  /// exactly one of them however many there are, which over-counts by the
+  /// number it cannot see. Randomizing where the walk STARTS turns "which
+  /// solution" into a question with a probability, which the caller can
+  /// then estimate; see `ManifoldConnection::inverseProbability`.
+  float2 seedJitter{};
+
+  /// Is this a glossy crossing rather than a Dirac one? A chain must be
+  /// all of one or all of the other: the Dirac crossings collapse two
+  /// dimensions each, so a mixed chain's map is not square and its measure
+  /// is not either of the two the estimator knows how to write.
+  bool isGlossy{};
 };
 
 /// A seed chain: the eligible interfaces the straight shadow segment
@@ -149,6 +174,33 @@ public:
   float offsetJacobian{};
 };
 
+/// How far a jittered start may sit from the straight-line crossing, as a
+/// fraction of the distance from the receiver.
+///
+/// This is the reach of the search: a solution further from the straight
+/// segment than this is never found, and its transport is lost. Larger costs
+/// convergence, since the walk starts further from every solution. The
+/// reference implementation samples the whole caster uniformly instead,
+/// which has no reach limit and needs area sampling per interface.
+constexpr float MANIFOLD_SEED_JITTER{0.60f};
+
+/// How many fresh starts the reciprocal estimate may draw before giving up
+/// and dropping the sample.
+///
+/// The count until a solution recurs is geometric, so its mean is the
+/// reciprocal being estimated and its tail is unbounded. Truncating is the
+/// one knowing departure from unbiasedness in the roughened estimator, and
+/// it loses the solutions that are hardest to find, which are the ones a
+/// bounded search would have found least often anyway.
+constexpr int MANIFOLD_MAX_TRIALS{64};
+
+/// Are two converged connections the same solution? Compared by where the
+/// crossings land, at the same scale the arrival side identifies solutions
+/// at, so the estimator has one notion of "same" rather than two.
+[[nodiscard]] bool isSameManifoldSolution(const float3 &receiver,
+                                          const ManifoldConnection &a,
+                                          const ManifoldConnection &b);
+
 /// The light side of a manifold connection: a distant direction (the
 /// environment) or a finite light point (a punctual light or a point
 /// on an area light). `wl` is always the unit direction of the
@@ -210,7 +262,28 @@ public:
 /// still estimates its own transport correctly; it is the two MIS weights
 /// that stop summing to exactly one.
 [[nodiscard]] bool isManifoldInterface(const smdl::JIT::MaterialInstance &mat,
-                                       const float3 &stateNormal);
+                                       const float3 &stateNormal,
+                                       bool allowGlossy);
+
+/// Does the interface's transmission bend light through a normal
+/// distribution rather than a Dirac delta? Only meaningful where
+/// `isManifoldInterface()` already said yes, and it decides which of the
+/// two measures the connection is written in, so both halves of the
+/// estimator must agree on it. A material carrying both is claimed by the
+/// Dirac reading, which is the one that was there first and the one whose
+/// transport the ordinary estimators cannot reach at all.
+[[nodiscard]] bool
+isGlossyManifoldInterface(const smdl::JIT::MaterialInstance &mat);
+
+/// The walk's tangent frame at a hit: the shading normal it constrains
+/// against and the two tangents an offset is expressed in.
+///
+/// This is the frame an offset MEANS something in, so the gather converting
+/// a microfacet normal into one and the arrival converting one back have to
+/// read it from the same place. It is built from the hit alone, which is
+/// what makes that possible.
+[[nodiscard]] bool manifoldSeedFrame(const Scene &scene, const Hit &hit,
+                                     float3 &normal, float3 &t1, float3 &t2);
 
 /// Seed one chain vertex from an interface the straight segment
 /// crosses: resolve the instance's exterior IOR against `medium`,
@@ -231,7 +304,8 @@ public:
 [[nodiscard]] bool makeManifoldSeed(const MediumStack *medium,
                                     smdl::JIT::MaterialInstance &mat,
                                     const smdl::State &state, const Hit &hit,
-                                    const float3 &wl, ManifoldVertexSeed &seed);
+                                    const float3 &wl, bool allowGlossy,
+                                    ManifoldVertexSeed &seed);
 
 /// Solve the refractive connection from `receiver` to the light target
 /// through the seed chain, by damped Newton iteration on the
@@ -272,6 +346,23 @@ public:
 /// hits must be the crossing points in order from `receiver`, with the
 /// target past the last one. Fails on a degenerate frame or a chain
 /// whose residual says it is not actually a solution.
+/// The offsets a set of crossings implies: given a chain whose hits are the
+/// points a path actually crossed, in order from `receiver` and with the
+/// target past the last one, fill in each vertex's `offset` with the
+/// tangential half vector the crossing realizes in the walk's own frame.
+///
+/// This is the inverse of what the solve does, and the arrival side of the
+/// estimator is what needs it. The gather draws an offset and asks where it
+/// lands; the arrival has a landing and has to ask which offset would have
+/// produced it, so that it can weigh the chance of drawing that one. Both
+/// therefore read the same frames, built from the same hits.
+///
+/// Fails on a degenerate frame, exactly as the solve does.
+[[nodiscard]] bool evaluateManifoldOffsets(const Scene &scene,
+                                           const float3 &receiver,
+                                           const ManifoldTarget &target,
+                                           ManifoldChain &chain);
+
 [[nodiscard]] bool evaluateManifoldTransfer(const Scene &scene,
                                             const float3 &receiver,
                                             const ManifoldTarget &target,

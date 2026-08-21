@@ -752,8 +752,12 @@ public:
   /// distribution however the tree layers it.
   ///
   /// \param[out] wm
-  /// The microfacet normal in world space, on the same side of the shading
-  /// normal as `wo`.
+  /// The microfacet normal in world space, in the hemisphere of the shading
+  /// normal that `wo` is in. NOT necessarily within 90 degrees of `wo`: this
+  /// draws the normal distribution itself and not the part of it `wo` can
+  /// see, which is deliberate. The visible form is the better proposal for a
+  /// scattering event and the wrong one for a constraint, since it would make
+  /// the draw depend on a direction a solve then changes.
   ///
   /// \param[out] pdf
   /// The density of `wm` per unit solid angle, mixed over every lobe the
