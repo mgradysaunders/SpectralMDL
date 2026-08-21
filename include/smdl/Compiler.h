@@ -503,6 +503,21 @@ public:
   /// every image from scratch and decides again.
   bool enableMipMaps{true};
 
+  /// Enable the `scatterNormalSample` and `scatterNormalEvaluate` entry
+  /// points?
+  ///
+  /// These answer for the normal distribution behind a GLOSSY lobe, which a
+  /// host needs only to solve a manifold constraint through a rough
+  /// interface or to do something else with a half vector. When false they
+  /// are never emitted, so they cost no codegen, no optimizer time and no
+  /// JIT compilation, and `JIT::Material::scatterNormalSample` stays null;
+  /// `JIT::MaterialInstance` aborts with a message naming this flag if
+  /// called anyway.
+  ///
+  /// This is read while `compile()` lowers each material, so set it
+  /// beforehand. Changing it means recompiling.
+  bool enableScatterNormal{false};
+
   /// Enable unit tests?
   bool enableUnitTests{false};
 

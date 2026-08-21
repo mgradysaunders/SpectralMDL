@@ -305,11 +305,20 @@ Value ArithmeticType::invoke(Emitter &emitter, const ArgumentList &args,
         return *loaded;
       // If constructing from color and this is a 3-dimensional vector,
       // delegate to the `_colorToRgb` function in the `api` module.
-      if (value.type == context.getColorType() && dim == 3)
+      if (value.type == context.getColorType() && dim == 3) {
+        // That function integrates the spectrum against the CIE observer,
+        // so it needs the wavelengths in '$state'. Say so here: letting the
+        // call fail names an internal function the user never wrote.
+        if (!emitter.state)
+          srcLoc.throwError("cannot convert 'color' to ", Quoted(displayName),
+                            " in a '@(pure)' context; "
+                            "the conversion is colorimetric and needs the "
+                            "wavelengths in '$state'");
         return invoke(
             emitter,
             emitter.emitCall(context.getKeyword("_colorToRgb"), value, srcLoc),
             srcLoc);
+      }
     }
     // From scalars
     auto canConstructFromScalars{[&] {
@@ -807,8 +816,23 @@ Value ColorType::invoke(Emitter &emitter, const ArgumentList &args,
     if (auto loaded{tryConstructFromPointer(emitter, this,
                                             context.getFloatType(), value)})
       return *loaded;
-    if (value.type == context.getFloatType(Extent(3)))
-      return emitter.emitCall(context.getKeyword("_rgbToColor"), value, srcLoc);
+    if (value.type == context.getFloatType(Extent(3))) {
+      try {
+        return emitter.emitCall(context.getKeyword("_rgbToColor"), value,
+                                srcLoc);
+      } catch (const Error &error) {
+        // A grey RGB folds to a flat spectrum and needs nothing, so this
+        // cannot be rejected up front. Any other value goes through the
+        // colorimetric path, which needs '$state'.
+        if (!emitter.state)
+          srcLoc.throwError("cannot convert 'float3' to 'color' in a "
+                            "'@(pure)' context; the conversion is "
+                            "colorimetric and needs the wavelengths in "
+                            "'$state', unless the value is a compile-time "
+                            "grey");
+        throw;
+      }
+    }
     if (value.type == context.getSpectralCurveType())
       return emitter.emitCall(context.getKeyword("_spectralCurveToColor"),
                               value, srcLoc);
@@ -1669,6 +1693,7 @@ void FunctionType::initializeMaterialFunctions(Emitter &emitter) {
     jitFunc.name = func->getName().str();
   }};
   auto floatType{context.getFloatType()};
+  auto float2Type{context.getFloatType(2)};
   auto float3Type{context.getFloatType(3)};
   auto float4Type{context.getFloatType(4)};
   auto intType{context.getIntType()};
@@ -1690,6 +1715,26 @@ void FunctionType::initializeMaterialFunctions(Emitter &emitter) {
                  {"f", floatType, colorSize},
                  {"sampledLobe", intType},
                  {"lobeChance", floatType}});
+  // The normal distribution entry points are opt-in: a host that never
+  // constrains a half vector should not pay to emit and optimize two more
+  // whole-tree descents per material. See 'Compiler::enableScatterNormal',
+  // and the matching skip in 'Compiler::jitCompile()'.
+  if (compiler.enableScatterNormal) {
+    makeDfWrapper(jitMaterial.scatterNormalSample, "scatterNormalSample",
+                  intType,
+                  {{"xi", float4Type},
+                   {"wo", float3Type},
+                   {"lobeMask", intType, 1, /*byValue=*/true},
+                   {"wm", float3Type},
+                   {"pdf", floatType},
+                   {"alpha", float2Type}});
+    makeDfWrapper(jitMaterial.scatterNormalEvaluate, "scatterNormalEvaluate",
+                  intType,
+                  {{"wo", float3Type},
+                   {"wm", float3Type},
+                   {"lobeMask", intType, 1, /*byValue=*/true},
+                   {"pdf", floatType}});
+  }
   makeDfWrapper(
       jitMaterial.emissionEvaluate, "emissionEvaluate", intType,
       {{"wi", float3Type}, {"pdf", floatType}, {"Le", floatType, colorSize}});

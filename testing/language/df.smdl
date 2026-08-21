@@ -171,6 +171,52 @@ SampleResult sample(
   return SampleResult(wi, f, float2(pdfFwd, pdfRev), sampledLobe, bool(success), lobeChanceOut);
 }
 
+struct NormalSampleResult {
+  float3 wm = float3(0);
+  float pdf = 0;
+  float2 alpha = float2(0);
+  bool success = false;
+};
+
+NormalSampleResult normalSample(
+  const bsdf scattering,
+  const float4 xi,
+  float3 wo,
+  const float3 normal = float3(0, 0, 1),
+  const bool thin_walled = false,
+  const float ior = 1.4,
+  const float exterior_ior = 1.0,
+  const int lobeMask = df::DF_GLOSSY,
+) {
+  auto mat = material(thin_walled: thin_walled, ior: ior, surface: material_surface(scattering: scattering), geometry: material_geometry(normal: normal));
+  auto instance = _MaterialInstance(&mat);
+  instance.exterior_ior = exterior_ior;
+  float4 xi1 = xi;
+  float3 wm = float3(0);
+  float pdf = 0;
+  float2 alpha = float2(0);
+  const auto success = df::_scatterNormalSample(&instance, &xi1, &wo, lobeMask, &wm, &pdf, &alpha);
+  return NormalSampleResult(wm, pdf, alpha, bool(success));
+}
+
+float normalEvaluate(
+  const bsdf scattering,
+  float3 wo,
+  float3 wm,
+  const float3 normal = float3(0, 0, 1),
+  const bool thin_walled = false,
+  const float ior = 1.4,
+  const float exterior_ior = 1.0,
+  const int lobeMask = df::DF_GLOSSY,
+) {
+  auto mat = material(thin_walled: thin_walled, ior: ior, surface: material_surface(scattering: scattering), geometry: material_geometry(normal: normal));
+  auto instance = _MaterialInstance(&mat);
+  instance.exterior_ior = exterior_ior;
+  float pdf = 0;
+  df::_scatterNormalEvaluate(&instance, &wo, &wm, lobeMask, &pdf);
+  return pdf;
+}
+
 // The two mask axes filter independently, and naming nothing on an axis
 // means every value of it. The domain axis is decided by the direction pair
 // on the evaluation path and forced on the sampling path, so unlike the lobe
@@ -502,6 +548,150 @@ unit_test "Multiscatter compensation selection chance" {
     #assert(genericOnly.pdf.x ~== |1e-5| evaluate(rough, wo, genericOnly.wi, lobeMask: df::DF_GENERIC).pdf.x);
     #assert(glossyOnly.pdf.x ~== |1e-3| evaluate(rough, wo, glossyOnly.wi, lobeMask: df::DF_GLOSSY).pdf.x);
   }
+}
+
+// `DF_GLOSSY` promises a normal distribution behind the lobe, and these two
+// queries are how a caller reaches it. What their correctness rests on is one
+// property and only one: the density the evaluate reports is the density the
+// sample draws with. Everything a manifold estimator does with them is built
+// on that, so it is what these cases pin down.
+unit_test "Normal distribution sample and evaluate agree" {
+  const auto wo = math::normalize(float3(0.2, -0.3, 0.93));
+  // Two glossy lobes of different roughness under a layer, so the reported
+  // density is a mixture and not one leaf's own.
+  const auto rough = df::microfacet_ggx_smith_bsdf(roughness_u: 0.6, roughness_v: 0.6, tint: 0.9);
+  const auto smooth = df::microfacet_beckmann_smith_bsdf(roughness_u: 0.25, roughness_v: 0.25, tint: 0.9);
+  const auto layered = df::weighted_layer(weight: 0.4, layer: smooth, base: rough);
+  int seenSmooth = 0;
+  int seenRough = 0;
+  for (int i = 0; i < 16; i++) {
+    const auto xi = float4((i + 0.5) / 16, 0.7, ((i * 3) % 16 + 0.5) / 16, ((i * 5) % 16 + 0.5) / 16);
+    const auto r = normalSample(layered, xi, wo);
+    #assert(r.success);
+    #assert(r.pdf > 0.0);
+    #assert(#all(math::normalize(r.wm) ~== |1e-5| r.wm)); // Unit...
+    #assert(math::dot(r.wm, wo) > 0.0);                   // ...on `wo`'s side
+    #assert(normalEvaluate(layered, wo, r.wm) ~== |1e-5| r.pdf);
+    // The reported roughness is the drawn lobe's own, not the mixture's.
+    #assert((r.alpha.x ~== |1e-6| 0.36) | (r.alpha.x ~== |1e-6| 0.0625));
+    seenSmooth += int(r.alpha.x < 0.1);
+    seenRough += int(r.alpha.x > 0.1);
+  }
+  #assert((seenSmooth > 0) & (seenRough > 0)); // Else the mixture is untested
+  // The mixture is strictly between the two lobes it mixes, which is what
+  // makes the agreement above a statement about the mixture rather than
+  // about one lobe the layer happened to always pick.
+  const auto wm = normalSample(layered, float4(0.3, 0.7, 0.5, 0.05), wo).wm;
+  const auto densitySmooth = normalEvaluate(smooth, wo, wm);
+  const auto densityRough = normalEvaluate(rough, wo, wm);
+  const auto densityBoth = normalEvaluate(layered, wo, wm);
+  #assert((densitySmooth > 0.0) & (densityRough > 0.0));
+  #assert(!(densitySmooth ~== |1e-3| densityRough)); // Else nothing is mixed
+  #assert(#min(densitySmooth, densityRough) < densityBoth);
+  #assert(densityBoth < #max(densitySmooth, densityRough));
+}
+
+// Check that the reported normal density integrates to one over the
+// hemisphere, which it must or it is not the density of anything. This is the
+// check that would have caught reporting a tightened sampling density against
+// its untightened support.
+void checkNormalIntegral(const bsdf scattering, const float3 wo) {
+  const int n = 400;
+  double integral = 0;
+  for (int i = 0; i < n; i++) {
+    for (int j = 0; j < n; j++) {
+      const auto wm = sampling::uniform_hemisphere_sample(float2((i + 0.5) / n, (j + 0.5) / n));
+      integral += normalEvaluate(scattering, wo, wm);
+    }
+  }
+  #assert(float(integral * $TWO_PI / (n * n)) ~== |2e-2| 1.0);
+}
+
+unit_test "Normal distribution normalization" {
+  const auto wo = math::normalize(float3(0.2, -0.3, 0.93));
+  checkNormalIntegral(df::microfacet_ggx_smith_bsdf(roughness_u: 0.5, roughness_v: 0.5, tint: 1.0), wo);
+  checkNormalIntegral(df::microfacet_ggx_smith_bsdf(roughness_u: 0.5, roughness_v: 0.5, tint: 1.0, mode: df::scatter_reflect_transmit), wo);
+  checkNormalIntegral(df::microfacet_ggx_vcavities_bsdf(roughness_u: 0.5, roughness_v: 0.5, tint: 1.0), wo);
+  checkNormalIntegral(df::microfacet_beckmann_smith_bsdf(roughness_u: 0.5, roughness_v: 0.5, tint: 1.0), wo);
+  checkNormalIntegral(df::simple_glossy_bsdf(roughness_u: 0.5, roughness_v: 0.5, tint: 1.0), wo);
+  checkNormalIntegral(df::ward_geisler_moroder_bsdf(roughness_u: 0.5, roughness_v: 0.5, tint: 1.0), wo);
+  // And a mixture, where the density is the mixture's rather than a leaf's.
+  checkNormalIntegral(df::weighted_layer(
+    weight: 0.4,
+    layer: df::microfacet_ggx_smith_bsdf(roughness_u: 0.4, roughness_v: 0.4, tint: 1.0),
+    base: df::microfacet_beckmann_smith_bsdf(roughness_u: 0.7, roughness_v: 0.7, tint: 1.0)), wo);
+  checkNormalIntegral(df::normalized_mix(df::bsdf_component[2](
+    df::bsdf_component(weight: 0.3, component: df::microfacet_ggx_smith_bsdf(roughness_u: 0.4, tint: 1.0)),
+    df::bsdf_component(weight: 0.7, component: df::simple_glossy_bsdf(roughness_u: 0.6, tint: 1.0)))), wo);
+}
+
+// The proposal is the lobe's own distribution and not merely something
+// lobe-shaped: the density reported here, carried through the half-vector
+// Jacobian, is the density `scatterEvaluate` reports for the direction that
+// half vector produces. Masked to one domain, so the reflect-transmit
+// selection weight drops out of both sides.
+//
+// Reflection-only GGX lobes are deliberately absent: `scatterSample` draws
+// those from a bounded spherical cap and the normal queries do not, which is
+// the one place the two distributions differ on purpose.
+unit_test "Normal distribution matches the scattering density" {
+  const auto wo = math::normalize(float3(-0.3, 0.4, 0.87));
+  const auto glass = df::microfacet_ggx_smith_bsdf(
+    roughness_u: 0.45, roughness_v: 0.45, tint: 1.0, mode: df::scatter_reflect_transmit);
+  const auto ior = 1.0 / 1.4; // The relative ratio the BSDF works in
+  for (int i = 0; i < 8; i++) {
+    const auto xi = float4((i + 0.5) / 8, 0.7, 0.5, 0.5);
+    const auto r = normalSample(glass, xi, wo);
+    #assert(r.success);
+    const auto wm = r.wm;
+    // Reflection: the Jacobian is `1 / (4 |wo . wm|)`.
+    const auto wiR = df::specular::reflect(wo, wm);
+    if (wiR.z > 0.05) {
+      const auto expect = r.pdf / (4 * math::dot(wo, wm));
+      #assert(evaluate(glass, wo, wiR, lobeMask: df::DF_GLOSSY_BRDF).pdf.x ~== |1e-3| expect);
+    }
+    // Transmission: the Jacobian the refraction half vector carries.
+    const auto wiT = df::specular::refract(wo, wm, ior);
+    if (wiT.z < -0.05) {
+      const auto expect = r.pdf * df::specular::refraction_half_vector_jacobian(wo, wiT, ior);
+      #assert(evaluate(glass, wo, wiT, lobeMask: df::DF_GLOSSY_BTDF).pdf.x ~== |1e-3| expect);
+    }
+  }
+}
+
+// Nothing without a normal distribution answers, whatever the mask says, and
+// a mask naming a domain the glossy lobes do not reach answers with nothing.
+unit_test "Normal distribution masking" {
+  const auto wo = math::normalize(float3(0.2, -0.3, 0.93));
+  const auto xi = float4(0.3, 0.7, 0.5, 0.5);
+  // A reflection-only glossy lobe has nothing transmissive to offer.
+  const auto glossyReflect = df::microfacet_ggx_smith_bsdf(roughness_u: 0.4, tint: 0.9);
+  #assert(normalSample(glossyReflect, xi, wo).success);
+  #assert(!normalSample(glossyReflect, xi, wo, lobeMask: df::DF_GLOSSY_BTDF).success);
+  // Neither does a Dirac lobe, nor a diffuse one, at any mask: the promise is
+  // attached to `DF_GLOSSY` and nothing else makes it.
+  #assert(!normalSample(df::specular_bsdf(mode: df::scatter_reflect_transmit), xi, wo, lobeMask: df::DF_ALL).success);
+  #assert(!normalSample(df::diffuse_reflection_bsdf(tint: 0.7), xi, wo, lobeMask: df::DF_ALL).success);
+  #assert(!normalSample(df::sheen_bsdf(tint: 0.8, roughness: 0.4), xi, wo, lobeMask: df::DF_ALL).success);
+  // Nor the micrograin layer, which declares GENERIC precisely so that it
+  // does not: its base is what answers here.
+  const auto dusted = df::micrograin_layer(
+    filling_factor: 0.4, grain_diffuse_albedo: color(0.5), base: glossyReflect);
+  #assert(normalSample(dusted, xi, wo).success);
+  #assert(!normalSample(df::micrograin_layer(
+    filling_factor: 0.4, grain_diffuse_albedo: color(0.5),
+    base: df::diffuse_reflection_bsdf(tint: 0.7)), xi, wo, lobeMask: df::DF_ALL).success);
+  // A mask naming nothing selects nothing, as everywhere else.
+  #assert(!normalSample(glossyReflect, xi, wo, lobeMask: 0).success);
+  #assert(normalEvaluate(glossyReflect, wo, float3(0, 0, 1), lobeMask: 0) == 0.0);
+  // A backface hit reports a normal on the side `wo` is on, so that the
+  // caller never has to know which side it asked from.
+  const auto woBack = math::normalize(float3(0.2, -0.3, -0.93));
+  const auto back = normalSample(glossyReflect, xi, woBack);
+  #assert(back.success);
+  #assert(math::dot(back.wm, woBack) > 0.0);
+  #assert(back.wm.z < 0.0);
+  #assert(normalEvaluate(glossyReflect, woBack, back.wm) ~== |1e-5| back.pdf);
 }
 
 // A layer whose own lobe the mask removes still weights its base by what the

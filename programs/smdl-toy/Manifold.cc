@@ -84,14 +84,17 @@ static constexpr int MAX_DIM{2 * MNEE_MAX_DEPTH};
 
 // Solve `A x = b` in place by Gaussian elimination with partial
 // pivoting, for `n` unknowns and `nrhs` right-hand sides. Returns false
-// on a (numerically) singular system.
+// on a (numerically) singular system. `det`, if given, receives the
+// determinant, which is the signed product of the pivots the elimination
+// leaves on the diagonal and so costs nothing to report.
 [[nodiscard]] static bool solveDense(int n, int nrhs, float A[MAX_DIM][MAX_DIM],
-                                     float b[MAX_DIM][2]) {
+                                     float b[MAX_DIM][2], float *det = nullptr) {
   float scale{};
   for (int r = 0; r < n; r++)
     for (int c = 0; c < n; c++) scale = std::max(scale, std::abs(A[r][c]));
   if (!(scale > 0.0f)) return false;
   const float minPivot{scale * MIN_PIVOT_RELATIVE};
+  if (det) *det = 1.0f;
   for (int c = 0; c < n; c++) {
     int pivot{c};
     for (int r = c + 1; r < n; r++)
@@ -100,6 +103,7 @@ static constexpr int MAX_DIM{2 * MNEE_MAX_DEPTH};
     if (pivot != c) {
       for (int k = c; k < n; k++) std::swap(A[c][k], A[pivot][k]);
       for (int k = 0; k < nrhs; k++) std::swap(b[c][k], b[pivot][k]);
+      if (det) *det = -*det;
     }
     for (int r = c + 1; r < n; r++) {
       const float m{A[r][c] / A[c][c]};
@@ -108,6 +112,8 @@ static constexpr int MAX_DIM{2 * MNEE_MAX_DEPTH};
       for (int k = 0; k < nrhs; k++) b[r][k] -= m * b[c][k];
     }
   }
+  if (det)
+    for (int c = 0; c < n; c++) *det *= A[c][c];
   for (int c = n - 1; c >= 0; c--) {
     for (int k = 0; k < nrhs; k++) {
       float sum{b[c][k]};

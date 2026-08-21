@@ -52,6 +52,18 @@ public:
   float etaFront{};
   float etaBack{};
   float sideSign{};
+
+  /// The tangential half vector the crossing is solved for, in the walk's
+  /// own frame at the vertex: zero solves Snell's law exactly, which is a
+  /// Dirac interface, and a nonzero offset solves for a microfacet normal
+  /// drawn from the interface's own distribution, which is a glossy one.
+  ///
+  /// The walk carries this rather than deriving it, because the offset has
+  /// to be fixed before the solve for the density of drawing it to mean
+  /// anything, and because both halves of the estimator must solve the
+  /// same constraint. See `evaluateManifoldOffsets()` for the inverse the
+  /// arrival side needs.
+  float2 offset{};
 };
 
 /// A seed chain: the eligible interfaces the straight shadow segment
@@ -82,6 +94,16 @@ public:
 
   /// The cosine of `wBack` against the shading normal, positive.
   float cosBack{};
+
+  /// The measure `|d h / d omega_back|` of this crossing: how much
+  /// tangential half vector a unit of outgoing solid angle is worth,
+  /// holding the arriving direction and the vertex fixed.
+  ///
+  /// This is what a Dirac crossing contributes to the offset Jacobian in
+  /// place of the density a glossy one has, since the delta that collapses
+  /// its two dimensions is expressed in direction and the walk works in
+  /// half vectors.
+  float halfVectorJacobian{};
 };
 
 /// A converged refractive connection.
@@ -106,6 +128,25 @@ public:
   /// deliberately not included, so the caller applies the same
   /// convention the specular BSDF uses.
   float transfer{};
+
+  /// The offset Jacobian: the measure of the nested outgoing solid angles
+  /// per unit of the variables a roughened connection is drawn in, which
+  /// are the light direction and one tangential half vector per crossing.
+  ///
+  ///     [prod_i cosFront_i / distFront_i^2] . [prod_i A_i] / |det J| . R
+  ///
+  /// with `A_i` the area element of the parameterization the constraint
+  /// Jacobian is expressed in, so that `prod A_i / |det J|` is invariant to
+  /// that choice, and `R` the correction from the straight-line geometry
+  /// term the light sampler measured in to the one the chain's last segment
+  /// actually arrives with.
+  ///
+  /// `transfer` is the same quantity for a chain with no offsets to draw,
+  /// where the crossings' deltas have collapsed all but two dimensions.
+  /// The two agree where both apply: an all-Dirac chain has
+  /// `offsetJacobian * prod_i halfVectorJacobian_i == transfer`, which is
+  /// how this is checked.
+  float offsetJacobian{};
 };
 
 /// The light side of a manifold connection: a distant direction (the
@@ -118,6 +159,12 @@ public:
   float3 wl{};
   float3 point{};
   bool infinite{true};
+
+  /// The light surface normal at `point`, or zero when the target has no
+  /// orientation, which is every distant and punctual one. Only the offset
+  /// Jacobian reads it, to carry the light-side geometry term across from
+  /// the straight line to the segment that actually arrives.
+  float3 normal{};
 };
 
 /// Is the material at a blocking hit an interface a connection may

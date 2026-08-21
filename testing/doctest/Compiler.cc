@@ -2247,3 +2247,85 @@ TEST_CASE("Compiler diagnostic wording") {
     smdl::Logger::get().reset();
   }
 }
+
+TEST_CASE("Compiler color conversions") {
+  auto compileError{[](std::string sourceCode) {
+    smdl::Compiler compiler{};
+    if (auto error{compiler.addCode("::diag", std::move(sourceCode))})
+      return *error;
+    if (auto error{compiler.compile(smdl::OPT_LEVEL_NONE)}) return *error;
+    return smdl::Error("compiled without error");
+  }};
+  SUBCASE("'color' to 'float3' is refused in a pure context") {
+    auto error{compileError(
+        "#smdl\nexec { color c = color(1.0); float3 v = c; #print(v); }\n")};
+    CHECK(error.message.find("cannot convert 'color' to 'float3' in a "
+                             "'@(pure)' context") != std::string::npos);
+    // Naming the internal function the conversion reaches is what this
+    // replaced.
+    CHECK(error.message.find("_colorToRgb") == std::string::npos);
+  }
+  SUBCASE("'float3' to 'color' is refused in a pure context") {
+    auto error{compileError("#smdl\nexec { color c = float3(1.0, 0.5, 0.25); "
+                            "#print(c[0]); }\n")};
+    CHECK(error.message.find("cannot convert 'float3' to 'color' in a "
+                             "'@(pure)' context") != std::string::npos);
+    CHECK(error.message.find("nontrivialRGBToColor") == std::string::npos);
+  }
+  SUBCASE("A compile-time grey needs no wavelengths") {
+    // It folds to a flat spectrum, so it stays legal where the
+    // colorimetric path is not.
+    CHECK(compileError("#smdl\nexec { color c = float3(0.5); #print(c[0]); }\n")
+              .message == "compiled without error");
+  }
+  SUBCASE("The conversion is colorimetric where there is state") {
+    // A flat spectrum is not RGB white, which is the whole point of the
+    // conversion being an integration against the observer.
+    CHECK(compileError("#smdl\nexport material m() = material(\n"
+                       "  geometry: material_geometry(normal: "
+                       "float3(color(1.0))));\n")
+              .message == "compiled without error");
+  }
+}
+
+TEST_CASE("Compiler enableScatterNormal") {
+  // The normal distribution entry points are opt-in, so that a host with no
+  // half vector to constrain never pays to emit or optimize them.
+  auto buildGlossy{[](smdl::Compiler &compiler, bool enable) {
+    compiler.enableScatterNormal = enable;
+    auto error{compiler.addCode(
+        "::glossy", "#smdl\nimport ::df::*;\nexport material m() = material(\n"
+                    "  surface: material_surface(scattering: "
+                    "df::microfacet_ggx_smith_bsdf(\n"
+                    "    roughness_u: 0.4, tint: 0.8)));\n")};
+    REQUIRE(!error);
+    error = compiler.compile(smdl::OPT_LEVEL_NONE);
+    if (error) FAIL(error->message);
+    error = compiler.jitCompile();
+    if (error) FAIL(error->message);
+  }};
+  SUBCASE("Off by default, and the entry points are absent") {
+    CHECK(smdl::Compiler().enableScatterNormal == false);
+    auto compiler{smdl::Compiler()};
+    buildGlossy(compiler, false);
+    auto *material{compiler.findMaterial("m")};
+    REQUIRE(material);
+    // Absent, not merely unresolved: nothing was emitted to resolve.
+    CHECK(material->scatterNormalSample.name.empty());
+    CHECK(!material->scatterNormalSample);
+    CHECK(!material->scatterNormalEvaluate);
+    // Everything else is untouched by the switch.
+    CHECK(bool(material->scatterSample));
+    CHECK(bool(material->scatterEvaluate));
+  }
+  SUBCASE("On, and the entry points resolve") {
+    auto compiler{smdl::Compiler()};
+    buildGlossy(compiler, true);
+    auto *material{compiler.findMaterial("m")};
+    REQUIRE(material);
+    CHECK(bool(material->scatterNormalSample));
+    CHECK(bool(material->scatterNormalEvaluate));
+    CHECK(material->scatterNormalSample.name.find(".scatterNormalSample") !=
+          std::string::npos);
+  }
+}

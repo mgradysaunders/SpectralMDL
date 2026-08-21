@@ -721,6 +721,89 @@ public:
                int &sampledLobe, float &lobeChance)>
       scatterSample{};
 
+  /// The normal distribution sample function.
+  ///
+  /// Draws a microfacet normal from the normal distribution behind one
+  /// GLOSSY lobe, which is what `DF_GLOSSY_BRDF` promises exists and this
+  /// is how a caller reaches. A host solving a manifold constraint through
+  /// a rough interface needs a half vector it can draw and weigh; this and
+  /// `scatterNormalEvaluate` are that, and nothing more. What such an
+  /// estimator is worth is `scatterEvaluate` at the directions the
+  /// constraint resolves to.
+  ///
+  /// \note
+  /// Null unless `Compiler::enableScatterNormal` was set before
+  /// `compile()`. A host that never asks pays nothing for these.
+  ///
+  /// \param[in] instance
+  /// The instance obtained from the `evaluate` function.
+  ///
+  /// \param[in] xi
+  /// The canonical random sample in \f$ [0,1]^4 \f$.
+  ///
+  /// \param[in] wo
+  /// The outgoing direction in world space.
+  ///
+  /// \param[in] lobeMask
+  /// Which lobes to draw from, intersected with `DF_GLOSSY` throughout
+  /// since nothing else has a normal distribution to report. Selection
+  /// chances are renormalized over the lobes that survive, so a mask
+  /// naming one interface's transmissive lobe draws that lobe's own
+  /// distribution however the tree layers it.
+  ///
+  /// \param[out] wm
+  /// The microfacet normal in world space, on the same side of the shading
+  /// normal as `wo`.
+  ///
+  /// \param[out] pdf
+  /// The density of `wm` per unit solid angle, mixed over every lobe the
+  /// mask keeps that could have produced it. This is exactly what
+  /// `scatterNormalEvaluate` reports at the same directions, and that
+  /// identity is the one property a caller's correctness may rest on: it
+  /// is what makes the pair a usable proposal. It is NOT in general the
+  /// density `scatterEvaluate` divides out, though the microfacet lobes
+  /// match that too.
+  ///
+  /// \param[out] alpha
+  /// The squared roughness of the lobe drawn from, so a host can decide
+  /// whether an interface is smooth enough to be worth constraining
+  /// without a second query.
+  ///
+  /// \return
+  /// Returns `true` if a lobe with a normal distribution was reached.
+  ///
+  Function<int(const Instance &instance, const float4 &xi, const float3 &wo,
+               int lobeMask, float3 &wm, float &pdf, float2 &alpha)>
+      scatterNormalSample{};
+
+  /// The normal distribution evaluate function.
+  ///
+  /// The density with which `scatterNormalSample` draws `wm` given `wo`.
+  /// See it for the contract; see `Compiler::enableScatterNormal` for why
+  /// this may be null.
+  ///
+  /// \param[in] instance
+  /// The instance obtained from the `evaluate` function.
+  ///
+  /// \param[in] wo
+  /// The outgoing direction in world space.
+  ///
+  /// \param[in] wm
+  /// The microfacet normal in world space.
+  ///
+  /// \param[in] lobeMask
+  /// Which lobes to mix over, as in `scatterNormalSample`.
+  ///
+  /// \param[out] pdf
+  /// The density of `wm` per unit solid angle.
+  ///
+  /// \return
+  /// Returns `true` if the density is non-zero.
+  ///
+  Function<int(const Instance &instance, const float3 &wo, const float3 &wm,
+               int lobeMask, float &pdf)>
+      scatterNormalEvaluate{};
+
   /// The emission evaluate function.
   ///
   /// \param[in] instance
@@ -1139,6 +1222,38 @@ public:
     return material->scatterSample(instance, xi, wo, lobeMask, wi, pdfFwd,
                                    pdfRev, f.data(), sampledLobe,
                                    lobeChance ? *lobeChance : lobeChanceLocal);
+  }
+
+  /// The normal distribution sample function.
+  ///
+  /// See `Material::scatterNormalSample` for the contract. Aborts if the
+  /// entry point was not emitted, which is the case unless
+  /// `Compiler::enableScatterNormal` was set before `compile()`.
+  [[nodiscard]] bool scatterNormalSample(const float4 &xi, const float3 &wo,
+                                         float3 &wm, float &pdf, float2 &alpha,
+                                         int lobeMask = DF_GLOSSY) const {
+    SMDL_SANITY_CHECK(material && instance);
+    SMDL_SANITY_CHECK_MSG(bool(material->scatterNormalSample),
+                          "set 'Compiler::enableScatterNormal' before "
+                          "'compile()' to emit the normal distribution "
+                          "entry points");
+    return material->scatterNormalSample(instance, xi, wo, lobeMask, wm, pdf,
+                                         alpha);
+  }
+
+  /// The normal distribution evaluate function.
+  ///
+  /// See `Material::scatterNormalEvaluate` for the contract. Aborts if the
+  /// entry point was not emitted, as above.
+  [[nodiscard]] bool scatterNormalEvaluate(const float3 &wo, const float3 &wm,
+                                           float &pdf,
+                                           int lobeMask = DF_GLOSSY) const {
+    SMDL_SANITY_CHECK(material && instance);
+    SMDL_SANITY_CHECK_MSG(bool(material->scatterNormalEvaluate),
+                          "set 'Compiler::enableScatterNormal' before "
+                          "'compile()' to emit the normal distribution "
+                          "entry points");
+    return material->scatterNormalEvaluate(instance, wo, wm, lobeMask, pdf);
   }
 
   /// The emission evaluate function.
