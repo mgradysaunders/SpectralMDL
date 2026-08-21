@@ -14,7 +14,7 @@
 #include "embree4/rtcore_config.h"
 #include "opensubdiv/version.h"
 
-#include "cl.h"
+#include "CommandLine.h"
 #include "llvm/Support/Parallel.h"
 #include "llvm/Support/WithColor.h"
 
@@ -23,6 +23,7 @@
 #include "Guiding.h"
 #include "Layout.h"
 #include "Light.h"
+#include "Manifold.h"
 #include "PathTracing.h"
 #include "Progress.h"
 #include "Scene.h"
@@ -114,6 +115,29 @@ static cl::opt<float> optGuideBSDFFraction{
     cl::desc("With -guide, the probability of sampling the BSDF instead of "
              "the SD-tree at guided vertices (default: 0.5)"),
     cl::init(0.5f), cl::cat(catSampling)};
+static cl::opt<float> optGuideSplit{
+    "guide-split",
+    cl::desc("With -guide, the spatial split threshold scale: a leaf splits "
+             "past this many records times sqrt(pass spp) (default: 12000)"),
+    cl::init(12000.0f), cl::cat(catSampling)};
+static cl::opt<bool> optMNEE{
+    "mnee",
+    cl::desc("Enable manifold next-event estimation: light samples blocked "
+             "by smooth refractive interfaces connect through them instead "
+             "of reading as occluded, e.g., onto a submerged surface or a "
+             "refractive caustic\n"
+             "* reaches the sun and sky, area lights, and punctual lights, "
+             "whose through-interface\n  transport no other estimator can "
+             "produce at all\n"
+             "* re-walk MIS against the walk's own arrivals keeps the "
+             "combined estimator\n  unbiased; opt-in for the added cost per "
+             "blocked light sample"),
+    cl::init(false), cl::cat(catSampling)};
+static cl::opt<unsigned> optMNEEDepth{
+    "mnee-depth",
+    cl::desc("With -mnee, the maximum number of refractive interfaces a "
+             "connection may cross, 1 to 4 (default: 4)"),
+    cl::init(4), cl::cat(catSampling)};
 static cl::opt<bool> optNoLOD{
     "no-lod", cl::desc("Disable LOD by zeroing the camera ray cone spread"),
     cl::init(false), cl::cat(catSampling)};
@@ -414,8 +438,8 @@ static cl::opt<std::string> optOutputFloat{
     cl::desc("Also write the linear radiance to this '.exr' or '.hdr' file, "
              "with no exposure or gamma applied"),
     cl::cat(catOutput)};
-static cl::opt<std::string> optOutputSpectral{
-    "output-spectral",
+static cl::opt<std::string> optOutputSpectrum{
+    "output-spectrum",
     cl::desc("Also write every wavelength band to this ENVI file, alongside "
              "which a '.hdr' header is written\n"
              "* the header records the samples per pixel, so a later run can "
@@ -427,10 +451,10 @@ static cl::opt<std::string> optResume{
     "resume",
     cl::desc(
         "Resume accumulating from this ENVI file written by a previous run's "
-        "-output-spectral\n"
-        "* implies '-output-spectral' back to the same file, so one command "
+        "-output-spectrum\n"
+        "* implies '-output-spectrum' back to the same file, so one command "
         "line can be\n  re-run to keep accumulating (an explicit "
-        "-output-spectral still wins)\n"
+        "-output-spectrum still wins)\n"
         "* the file not existing yet is fine: this run is then the first "
         "session of the\n  sequence and renders from scratch\n"
         "* continues the sample sequence where the file left off and merges "
@@ -502,7 +526,7 @@ stripSessionOnlyArgs(const std::string &args) {
                                                     "spp",
                                                     "output",
                                                     "output-float",
-                                                    "output-spectral",
+                                                    "output-spectrum",
                                                     "exposure",
                                                     "tonemap",
                                                     "tonemap-decades",
@@ -514,8 +538,11 @@ stripSessionOnlyArgs(const std::string &args) {
                                                     "bands",
                                                     "wave-range",
                                                     "wavelengths",
-                                                    "guide-bsdf-fraction"};
-  static constexpr const char *SESSION_ONLY_FLAG[]{"guide", "guide-adrrs"};
+                                                    "guide-bsdf-fraction",
+                                                    "guide-split",
+                                                    "mnee-depth"};
+  static constexpr const char *SESSION_ONLY_FLAG[]{"guide", "guide-adrrs",
+                                                   "mnee"};
   auto tokens{std::vector<std::string>()};
   for (size_t pos{}; pos < args.size();) {
     size_t end{args.find_first_of(" \t", pos)};
@@ -667,6 +694,10 @@ int main(int argc, char **argv) try {
                             &catLens, &catSunSky, &catIBL, &catStaging,
                             &catTonemap, &catOutput});
   cl::ParseCommandLineOptions(argc, argv, "SpectralMDL toy renderer");
+  // Honors '-print-options' and '-print-all-options', which LLVM
+  // registers but leaves to the tool to act on; it prints nothing unless
+  // one of them was given.
+  cl::PrintOptionValues();
   // Validate the occurrence-dependent lens flags here at the CLI, where
   // "was this given at all" is knowable; in the `CameraOptions` built
   // below zero means unset, so an explicit value has to be positive to
@@ -817,8 +848,8 @@ int main(int argc, char **argv) try {
       pick(float3(optLookTo), optLookTo.getNumOccurrences(), fileCamera.lookTo);
   cameraOptions.up =
       pick(float3(optUp), optUp.getNumOccurrences(), fileCamera.up);
-  cameraOptions.fovYInDegrees =
-      pick(float(optFOV), optFOV.getNumOccurrences(), fileCamera.fovYInDegrees);
+  cameraOptions.fovYDeg =
+      pick(float(optFOV), optFOV.getNumOccurrences(), fileCamera.fovYDeg);
   cameraOptions.fStop =
       pick(float(optFStop), optFStop.getNumOccurrences(), fileCamera.fStop);
   cameraOptions.aperture = pick(
@@ -827,9 +858,9 @@ int main(int argc, char **argv) try {
       pick(float(optFocus), optFocus.getNumOccurrences(), fileCamera.focus);
   cameraOptions.blades =
       pick(int(optBlades), optBlades.getNumOccurrences(), fileCamera.blades);
-  cameraOptions.bladeAngleInDegrees =
+  cameraOptions.bladeAngleDeg =
       pick(float(optBladeAngle), optBladeAngle.getNumOccurrences(),
-           fileCamera.bladeAngleInDegrees);
+           fileCamera.bladeAngleDeg);
   cameraOptions.distortionK1 =
       pick(float(optDistortionK1), optDistortionK1.getNumOccurrences(),
            fileCamera.distortionK1);
@@ -878,7 +909,7 @@ int main(int argc, char **argv) try {
   // deterministic in (pixel, sample index) with no seed, so continuing
   // the sample index where the file left off and merging afterward
   // yields the same estimator as one longer uninterrupted run. The
-  // flag also implies -output-spectral back to the same file; see the
+  // flag also implies -output-spectrum back to the same file; see the
   // output stage at the bottom.
   auto resumed{smdl::SpectralRenderImage::ENVIFile{}};
   size_t sampleIndexBase{0};
@@ -925,7 +956,7 @@ int main(int argc, char **argv) try {
     if (resumed.samplesPerPixel == 0)
       throw smdl::Error(
           "cannot resume: the header has no 'samples per pixel' count "
-          "(the file was not written by -output-spectral)");
+          "(the file was not written by -output-spectrum)");
     if (auto itr{resumed.fields.find("smdl sampler")};
         itr == resumed.fields.end() || itr->second != SAMPLER_VERSION)
       SMDL_LOG_WARN(
@@ -1110,23 +1141,20 @@ int main(int argc, char **argv) try {
   // orders of magnitude wider than the subject, and cubifying over it
   // spends every spatial refinement level zooming back in.
   auto guideBoundsValid{false};
-  float3 guideLower{}, guideUpper{};
+  BoundBox3 guideBound{};
   if (optGround || optGroundZ.getNumOccurrences() > 0) {
-    float3 lower{}, upper{};
-    scene.preCommitBounds(lower, upper);
+    guideBound = scene.preCommitBounds();
     guideBoundsValid = true;
-    guideLower = lower;
-    guideUpper = upper;
-    if (!(lower.x <= upper.x))
+    if (guideBound.isEmpty())
       throw smdl::Error("cannot -ground: the scene has no geometry to "
                         "put a plane under");
     const float z{optGroundZ.getNumOccurrences() > 0 ? float(optGroundZ)
-                                                     : lower.z};
+                                                     : guideBound.lower.z};
     // Large enough that at framing elevations the plane's edge lands at
     // the visual horizon, small enough to stay in float precision.
-    const float halfExtent{
-        std::min(std::max(1000.0f * 0.5f * smdl::length(upper - lower), 100.0f),
-                 20000.0f)};
+    const float halfExtent{std::min(
+        std::max(1000.0f * 0.5f * smdl::length(guideBound.extent()), 100.0f),
+        20000.0f)};
     auto groundMaterial{std::string(optGroundMaterial)};
     if (groundMaterial.empty()) groundMaterial = DEFAULT_GROUND_MATERIAL_NAME;
     // The one command-line-facing name the entry file's aliases still
@@ -1168,13 +1196,13 @@ int main(int argc, char **argv) try {
   auto framedSunAzimuth{std::optional<float>()};
   if (optFrame) {
     auto framingOptions{FramingOptions{}};
-    framingOptions.fovYInDegrees = cameraOptions.fovYInDegrees;
+    framingOptions.fovYDeg = cameraOptions.fovYDeg;
     framingOptions.aspectRatio = float(dims.x) / float(dims.y);
-    framingOptions.zenithInDegrees = float(optFrameZenith);
+    framingOptions.zenithDeg = float(optFrameZenith);
     if (optFrameAzimuth.getNumOccurrences() > 0) {
-      framingOptions.azimuthInDegrees = float(optFrameAzimuth);
+      framingOptions.azimuthDeg = float(optFrameAzimuth);
     } else if (layout.frontAzimuth) {
-      framingOptions.azimuthInDegrees = layout.frontAzimuth;
+      framingOptions.azimuthDeg = layout.frontAzimuth;
       SMDL_LOG_INFO("Framing: locked to the manifest's front azimuth ",
                     *layout.frontAzimuth, " degrees");
     }
@@ -1186,7 +1214,7 @@ int main(int argc, char **argv) try {
     cameraOptions.lookTo = framed.lookTo;
     camera.emplace(cameraOptions);
     // The key light over the camera's right shoulder.
-    framedSunAzimuth = framed.azimuthInDegrees - 35.0f;
+    framedSunAzimuth = framed.azimuthDeg - 35.0f;
   }
 
   // The environment, merged from the same three sources as the camera and
@@ -1209,24 +1237,23 @@ int main(int argc, char **argv) try {
   } else if (!pick(bool(optNoSunSky), optNoSunSky.getNumOccurrences(),
                    fileSky.none)) {
     auto options{smdl::SunSkyOptions{}};
-    const float zenith{pick(float(optSunZenith),
-                            optSunZenith.getNumOccurrences(),
-                            fileSky.sunZenith) *
-                       PI / 180.0f};
-    float azimuthInDegrees{pick(float(optSunAzimuth),
-                                optSunAzimuth.getNumOccurrences(),
-                                fileSky.sunAzimuth)};
+    float zenith{smdl::radians(pick(float(optSunZenith),
+                                    optSunZenith.getNumOccurrences(),
+                                    fileSky.sunZenith))};
+    float azimuthDeg{pick(float(optSunAzimuth),
+                          optSunAzimuth.getNumOccurrences(),
+                          fileSky.sunAzimuth)};
     // Under -frame with no stated sun azimuth, the key light follows the
     // solved camera: a perfectly framed thumbnail lit from behind is as
     // unreadable as one framed end-on, and this keeps a whole library
     // consistently lit however each asset was framed.
     if (framedSunAzimuth && optSunAzimuth.getNumOccurrences() == 0 &&
         !fileSky.sunAzimuth) {
-      azimuthInDegrees = *framedSunAzimuth;
-      SMDL_LOG_INFO("Sun azimuth follows the framed camera: ", azimuthInDegrees,
+      azimuthDeg = *framedSunAzimuth;
+      SMDL_LOG_INFO("Sun azimuth follows the framed camera: ", azimuthDeg,
                     " degrees");
     }
-    const float azimuth{azimuthInDegrees * PI / 180.0f};
+    const float azimuth{smdl::radians(azimuthDeg)};
     options.sunDirection =
         float3(std::sin(zenith) * std::cos(azimuth),
                std::sin(zenith) * std::sin(azimuth), std::cos(zenith));
@@ -1277,8 +1304,8 @@ int main(int argc, char **argv) try {
   // Every light in one selection path: each emissive mesh instance plus
   // the environment, weighted by power.
   auto profLightSampler{smdl::profilerEntryBegin("Build light sampler")};
-  const auto lights{LightSampler(compiler, scene, envLight.get(),
-                                 layout.lights, wavelengths)};
+  const auto lights{LightSampler(compiler, scene, envLight.get(), layout.lights,
+                                 wavelengths)};
   smdl::profilerEntryEnd(profLightSampler);
   // The render loop is deliberately outside the trace; see -profile.
   if (profiling) smdl::profilerFinalize(profileFileName.c_str());
@@ -1299,8 +1326,8 @@ int main(int argc, char **argv) try {
     auto center{scene.boundCenter};
     auto r{scene.boundRadius};
     if (guideBoundsValid) {
-      center = 0.5f * (guideLower + guideUpper);
-      r = 0.75f * smdl::length(guideUpper - guideLower);
+      center = guideBound.center();
+      r = 0.75f * smdl::length(guideBound.extent());
     }
     sdtree = std::make_unique<STree>(center - float3(r, r, r),
                                      center + float3(r, r, r));
@@ -1314,14 +1341,24 @@ int main(int argc, char **argv) try {
   if (optGuide) {
     combiner = std::make_unique<PassCombiner>(numPixelsX, numPixelsY);
     // Seed with the prior session's accumulation, so resolve() below
-    // reproduces the full merged image (the unguided path merges with
-    // an image-level add instead) and the first pass's ADRRS starts
-    // from the resumed estimates rather than zero.
+    // reproduces the full merged image (the unguided path adds it into
+    // the accumulation instead, just below) and the first pass's ADRRS
+    // starts from the resumed estimates rather than zero.
     if (resuming) {
       combiner->seed(resumed.image, resumed.samplesPerPixel);
       combiner->rebuildPixelEstimates();
     }
   }
+  // Merge a resumed session's samples in before rendering rather than
+  // after it, so that the previews written along the way already stand on
+  // every sample taken and the image is never displayed noisier than it
+  // is. One image-level add, which is exactly the merge the
+  // sums-plus-counts invariant makes safe; every read below divides by
+  // the combined count.
+  if (resuming && !combiner) renderImage.add(resumed.image);
+  // Nothing reads it again, and it is the same size as the image being
+  // rendered into.
+  resumed.image.clear();
   // Progress is counted in samples rather than pixels, so that the
   // geometrically growing passes below read as one bar that only ever
   // moves forward. The counters still show pixels, which is the number a
@@ -1348,13 +1385,19 @@ int main(int argc, char **argv) try {
   const bool checkpointing{previewEvery > 0.0 &&
                            !std::string(optOutput).empty()};
   const auto writeDisplayImage{[&] {
+    // Resolve first, so that a guided preview stands on every pass folded
+    // so far, the resumed seed included, instead of the newest pass
+    // alone. Guided checkpoints only happen on pass boundaries, where the
+    // pass just rendered is already folded in.
+    if (combiner) combiner->resolve(renderImage);
     const auto path{std::filesystem::path(std::string(optOutput))};
     auto partPath{path};
     partPath.replace_extension("part" + path.extension().string());
     const auto rgb{resolveRGB(compiler, renderImage, wavelengths, rgbPolicy)};
     const auto ldr{tonemap(tonemapOptions, rgb, renderImage, wavelengths)};
-    if (auto error{smdl::write8bitImage(partPath.string(), numPixelsX,
-                                        numPixelsY, 3, ldr.data())}) {
+    if (auto error{smdl::write8bitImage(partPath.string(), //
+                                        int(numPixelsX), int(numPixelsY), 3,
+                                        ldr.data())}) {
       error->print();
       return;
     }
@@ -1375,6 +1418,14 @@ int main(int argc, char **argv) try {
   }};
 
   const auto passes{solveSamplePasses(spp, bool(optGuide))};
+  // The manifold-NEE chain depth `tracePath()` runs with, 0 when
+  // disabled.
+  const int mneeDepth{optMNEE
+                          ? int(std::min(std::max(unsigned(optMNEEDepth), 1U),
+                                         unsigned(MNEE_MAX_DEPTH)))
+                          : 0};
+  ManifoldOptions manifold{};
+  manifold.depth = mneeDepth;
   progressOptions.total = numPixelsX * numPixelsY * spp;
   progressOptions.displayScale = std::max<size_t>(spp, 1);
   progressOptions.summary = smdl::concat("Rendered ", numPixelsX, "x",
@@ -1391,7 +1442,6 @@ int main(int argc, char **argv) try {
     // Pre-final passes train the SD-tree; every pass contributes to the
     // output through the pass combination below.
     const bool recordPass{optGuide && !isFinal};
-    renderImage.resize(wavelengths.size(), numPixelsX, numPixelsY);
     // Without guiding the whole budget is one pass, so checkpointing has
     // to split it; the chunk starts at one sample, so the first image
     // lands almost immediately, and then grows toward the interval asked
@@ -1442,7 +1492,7 @@ int main(int argc, char **argv) try {
             Lsample = tracePath(
                 compiler, scene, sampler, wavelengths, allocator,
                 cameraSample.ray, cameraSample.weight, cameraSample.coneAngle,
-                exteriorMedium, MAX_PATH_LEN, lights, &guiding,
+                exteriorMedium, MAX_PATH_LEN, lights, &guiding, manifold,
                 recordPass ? guideRecords->data() : nullptr, numRecords);
           }
           // Train the SD-tree on the records the walk retained.
@@ -1463,8 +1513,13 @@ int main(int argc, char **argv) try {
           }
           allocator.reset();
         }
-        if (combiner) combiner->deposit(i, halves);
-        renderImage(x, y).addSamples(chunk, Lsum.data());
+        // With guiding the combination owns the image and resolves into
+        // it, pass by pass; without, the accumulation is the image.
+        if (combiner) {
+          combiner->deposit(i, halves);
+        } else {
+          renderImage(x, y).addSamples(chunk, Lsum.data());
+        }
         // Counted where the work is finished rather than where it starts,
         // which at thumbnail sizes is a whole pool's worth of pixels.
         progress.advance(chunk);
@@ -1489,10 +1544,11 @@ int main(int argc, char **argv) try {
     if (combiner) combiner->foldPass(thisPass);
     if (recordPass) {
       combiner->rebuildPixelEstimates();
-      // Refine: split spatial leaves past c*sqrt(2^k) records (c = 12000,
-      // k this pass's index), rebuild the directional quadtrees with the
-      // 1% flux threshold.
-      sdtree->refine(uint32_t(12000.0 * std::sqrt(thisPass)), 0.01f, 20);
+      // Refine: split spatial leaves past c*sqrt(2^k) records (k this
+      // pass's index), rebuild the directional quadtrees with the 1% flux
+      // threshold.
+      sdtree->refine(uint32_t(double(optGuideSplit) * std::sqrt(thisPass)),
+                     0.01f, 20);
       float minAlpha{}, meanAlpha{};
       sdtree->alphaStats(minAlpha, meanAlpha);
       SMDL_LOG_INFO("Guide pass ", passIndex + 1, "/", passes.size(),
@@ -1507,29 +1563,25 @@ int main(int argc, char **argv) try {
   }
   progress.finish();
   // Resolve the pass combination back into the image every downstream
-  // output reads from.
+  // output reads from. A resumed session's samples are already in there,
+  // through the seeded combination or the add before the render.
   if (combiner) combiner->resolve(renderImage);
-  // Fold the prior session's samples back in: one image-level add,
-  // which is exactly the merge the sums-plus-counts invariant makes
-  // safe. A guided render already merged them through the seeded pass
-  // combination. Every output below divides by the combined count.
-  if (sampleIndexBase > 0 && !combiner) renderImage.add(resumed.image);
   const auto rgbImage{
       resolveRGB(compiler, renderImage, wavelengths, rgbPolicy)};
   if (!std::string(optOutputFloat).empty()) {
     if (auto error{smdl::writeFloatImage(std::string(optOutputFloat),
-                                         numPixelsX, numPixelsY, 3,
+                                         int(numPixelsX), int(numPixelsY), 3,
                                          rgbImage.data())}) {
       error->print();
     }
   }
   // -resume implies writing back to the file being resumed, so one
   // command line re-runs to keep accumulating; an explicitly given
-  // -output-spectral wins verbatim, redirecting or (when empty)
+  // -output-spectrum wins verbatim, redirecting or (when empty)
   // suppressing the write.
-  const auto outputSpectral{optOutputSpectral.getNumOccurrences() > 0 ||
+  const auto outputSpectral{optOutputSpectrum.getNumOccurrences() > 0 ||
                                     !resumeRequested
-                                ? std::string(optOutputSpectral)
+                                ? std::string(optOutputSpectrum)
                                 : std::string(optResume)};
   if (!outputSpectral.empty()) {
     // Write through a temporary and rename, so an interrupted write
@@ -1551,8 +1603,9 @@ int main(int argc, char **argv) try {
   {
     const auto ldrImage{
         tonemap(tonemapOptions, rgbImage, renderImage, wavelengths)};
-    if (auto error{smdl::write8bitImage(std::string(optOutput), numPixelsX,
-                                        numPixelsY, 3, ldrImage.data())}) {
+    if (auto error{smdl::write8bitImage(std::string(optOutput), //
+                                        int(numPixelsX), int(numPixelsY), 3,
+                                        ldrImage.data())}) {
       error->print();
     }
   }

@@ -18,6 +18,22 @@ void QuotedPath::appendTo(std::string &result) {
   result += '\'';
 }
 
+std::string_view suggestNearestName(std::string_view name,
+                                    Span<const std::string_view> candidates) {
+  auto tailOf{[](std::string_view str) {
+    auto i{str.rfind('_')};
+    return i == std::string_view::npos ? std::string_view() : str.substr(i + 1);
+  }};
+  const auto maxDistance{std::min<size_t>(1 + name.size() / 4, 4)};
+  if (auto tail{tailOf(name)}; !tail.empty()) {
+    auto sameKind{std::vector<std::string_view>{}};
+    for (auto candidate : candidates)
+      if (tailOf(candidate) == tail) sameKind.push_back(candidate);
+    if (!sameKind.empty()) return suggestNearest(name, sameKind, maxDistance);
+  }
+  return suggestNearest(name, candidates, maxDistance);
+}
+
 std::string_view suggestNearest(std::string_view name,
                                 Span<const std::string_view> candidates,
                                 size_t maxDistance) {

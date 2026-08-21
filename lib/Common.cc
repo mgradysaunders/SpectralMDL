@@ -98,7 +98,39 @@ std::string_view SourceLocation::getModuleDisplayName() const {
   return module_ ? module_->getDisplayName() : std::string_view();
 }
 
+std::string SourceLocation::getSourceSnippet() const {
+  auto sourceCode{module_ ? module_->getSourceCode() : std::string_view()};
+  if (sourceCode.empty()) return {};
+  // An error raised at EOF has no character to point at, so clamp and let
+  // the caret land one past the end of the last line.
+  auto pos{i < sourceCode.size() ? size_t(i) : sourceCode.size()};
+  auto lineBegin{sourceCode.rfind('\n', pos)};
+  lineBegin = lineBegin == std::string_view::npos ? 0 : lineBegin + 1;
+  auto lineEnd{sourceCode.find('\n', pos)};
+  lineEnd = lineEnd == std::string_view::npos ? sourceCode.size() : lineEnd;
+  auto line{sourceCode.substr(lineBegin, lineEnd - lineBegin)};
+  if (!line.empty() && line.back() == '\r') line.remove_suffix(1);
+  auto column{pos - lineBegin};
+  if (line.empty() || column > line.size()) return {};
+  auto gutter{std::to_string(lineNo)};
+  std::string str{};
+  str += "\n  ";
+  str += gutter;
+  str += " | ";
+  str += line;
+  str += "\n  ";
+  str.append(gutter.size(), ' ');
+  str += " | ";
+  // Copy the indentation verbatim so that a tab-indented line keeps the
+  // caret under the right character.
+  for (size_t j = 0; j < column; j++) str += line[j] == '\t' ? '\t' : ' ';
+  str += '^';
+  return str;
+}
+
 void SourceLocation::logWarn(std::string_view message) const {
+  // No source snippet: warnings come in bulk and mostly name what they are
+  // about, so the caret costs more in noise than it returns in clarity.
   auto str{std::string(*this)};
   if (!str.empty()) str += ' ';
   str += message;
@@ -109,6 +141,7 @@ void SourceLocation::logError(std::string_view message) const {
   auto str{std::string(*this)};
   if (!str.empty()) str += ' ';
   str += message;
+  str += getSourceSnippet();
   SMDL_LOG_ERROR(str);
 }
 
@@ -116,7 +149,7 @@ void SourceLocation::throwError(std::string message) const {
   auto str{std::string(*this)};
   if (!str.empty()) str += ' ';
   str += message;
-  throw Error(std::move(str));
+  throw Error(std::move(str), getSourceSnippet());
 }
 
 SourceLocation::operator std::string() const {
@@ -132,6 +165,8 @@ SourceLocation::operator std::string() const {
     }
     str += ':';
     str += std::to_string(lineNo);
+    str += ':';
+    str += std::to_string(charNo);
     str += ']';
   }
   return str;

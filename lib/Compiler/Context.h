@@ -113,6 +113,16 @@ public:
     return mKeywords.contains(name);
   }
 
+  /// Get every keyword name, for did-you-mean suggestions. The views are
+  /// borrowed from the keyword table and live as long as the `Context`.
+  [[nodiscard]] std::vector<std::string_view> getKeywordNames() const {
+    auto names{std::vector<std::string_view>{}};
+    names.reserve(mKeywords.size());
+    for (const auto &entry : mKeywords)
+      names.push_back(std::string_view(entry.getKey()));
+    return names;
+  }
+
 public:
   /// Get the alignment of the given type in bytes. Return 0 if undefined.
   [[nodiscard]] uint64_t getAlignOf(Type *type) {

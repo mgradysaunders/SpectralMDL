@@ -295,25 +295,25 @@ export tag hair_bsdf;
 /// The default BSDF is just an empty struct!
 export struct _default_bsdf: default bsdf {
   /// The flags.
-  static const int df_flags = 0;
+  static const int df_lobes = 0;
 };
 
 /// The default VDF is just an empty struct!
 export struct _default_vdf: default vdf {
   /// The flags.
-  static const int df_flags = 0;
+  static const int df_lobes = 0;
 };
 
 /// The default EDF is just an empty struct!
 export struct _default_edf: default edf {
   /// The flags.
-  static const int df_flags = 0;
+  static const int df_lobes = 0;
 };
 
 /// The default hair BSDF is just an empty struct!
 export struct _default_hair_bsdf: default hair_bsdf {
   /// The flags.
-  static const int df_flags = 0;
+  static const int df_lobes = 0;
 };
 
 /// The texture 2D structure.
@@ -813,10 +813,10 @@ export struct _MaterialInstance {
               | (ptr.volume.additive ? MATERIAL_ADDITIVE_VOLUME : 0);
 
   /// The df flags for the `surface` component.
-  int df_flags_surface = ptr.surface.scattering.df_flags;
+  int df_lobes_surface = ptr.surface.scattering.df_lobes;
 
   /// The df flags for the `backface` component.
-  int df_flags_backface = ptr.backface.scattering.df_flags;
+  int df_lobes_backface = ptr.backface.scattering.df_lobes;
 
   /// The emission intensity modes: bit 0 is set if the `surface` emission
   /// intensity is `intensity_power` (as opposed to the default

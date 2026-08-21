@@ -7,7 +7,7 @@
 /// How `-frame` wants the camera solved. See `solveFraming()`.
 struct FramingOptions final {
   /// The vertical field of view in degrees, as merged from every source.
-  float fovYInDegrees{37.8f};
+  float fovYDeg{37.8f};
 
   /// The aspect ratio, X over Y, from the merged image dimensions.
   float aspectRatio{16.0f / 9.0f};
@@ -16,11 +16,11 @@ struct FramingOptions final {
   /// same convention as `-sun-zenith`: 0 is straight overhead. Fixed on
   /// purpose: solving elevation degenerates to a straight-down view for
   /// flat assets.
-  float zenithInDegrees{65.0f};
+  float zenithDeg{65.0f};
 
   /// The azimuth of the scene-to-camera direction in degrees CCW from +X,
   /// like `-sun-azimuth`. Unset means solve it (see `solveFraming()`).
-  std::optional<float> azimuthInDegrees{};
+  std::optional<float> azimuthDeg{};
 
   /// The padding between the scene and the frame edge, as a fraction of
   /// the frame.
@@ -50,7 +50,7 @@ struct FramingResult final {
 
   /// The chosen (or locked) azimuth in degrees, which is what the sun
   /// default follows under `-frame`.
-  float azimuthInDegrees{};
+  float azimuthDeg{};
 
   /// The fraction of the frame the framed geometry covers, from the
   /// probe: true projected area, occlusion and perspective included.
@@ -72,7 +72,7 @@ struct FramingResult final {
 /// position, so four min-reductions over every world-space vertex decide
 /// it, and nothing ever clips.
 ///
-/// With `azimuthInDegrees` unset, candidate azimuths are swept and scored
+/// With `azimuthDeg` unset, candidate azimuths are swept and scored
 /// by one low-resolution ray probe each: views dominated by backfaces are
 /// rejected (statically thin-walled materials and declared backface
 /// surfaces exempt), and the survivors are ranked by visible surface

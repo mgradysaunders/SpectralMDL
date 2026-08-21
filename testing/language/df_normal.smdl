@@ -44,7 +44,7 @@ EvaluateResult evaluate(
   float pdfFwd = 0;
   float pdfRev = 0;
   color f = color(0);
-  if (df::_scatterEvaluate(&instance, &wo, &wi, &pdfFwd, &pdfRev, cast<&float>(&f)))
+  if (df::_scatterEvaluate(&instance, &wo, &wi, df::DF_ALL, &pdfFwd, &pdfRev, cast<&float>(&f)))
     return EvaluateResult(f, float2(pdfFwd, pdfRev), true);
   else
     return EvaluateResult();
@@ -187,7 +187,8 @@ unit_test "Shading normal bend recovers sampling below the shading horizon" {
   float pdfRev = 0;
   color f = color(0);
   int isDelta = 0;
-  #assert(bool(df::_scatterSample(&instance, &xi, &wo, &wi, &pdfFwd, &pdfRev, cast<&float>(&f), &isDelta)));
+  float lobeChanceOut = 1.0;
+  #assert(bool(df::_scatterSample(&instance, &xi, &wo, df::DF_ALL, &wi, &pdfFwd, &pdfRev, cast<&float>(&f), &isDelta, &lobeChanceOut)));
   #assert(wi.z > 0.0); // Reflection, in the natural tangent space
   #assert(#all(f > 0.0));
   #assert(pdfFwd > 0.0);

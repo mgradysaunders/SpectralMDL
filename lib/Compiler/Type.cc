@@ -49,6 +49,28 @@ static std::string dropSourceLocation(std::string message,
   }
   return message;
 }
+
+// One "candidate rejected" note. The candidate names itself and says where
+// it is declared, because the reason it was rejected is always about the one
+// call site that every candidate was probed against.
+static void appendCandidateNote(std::string &notes, std::string_view kind,
+                                std::string_view name,
+                                const ParameterList &params,
+                                const SourceLocation &declSrcLoc,
+                                std::string_view reason) {
+  notes += "\n  candidate rejected: ";
+  if (!kind.empty()) {
+    notes += kind;
+    notes += ' ';
+  }
+  notes += toSignatureString(name, params);
+  if (declSrcLoc) {
+    notes += " declared at ";
+    notes += std::string(declSrcLoc);
+  }
+  notes += ": ";
+  notes += reason;
+}
 //--}
 
 //--{ Type
@@ -414,8 +436,23 @@ Value ArithmeticType::invoke(Emitter &emitter, const ArgumentList &args,
         });
     }
   }
+  // These constructions are a chain of shape tests rather than a list of
+  // candidates, so say what the shape accepts instead of only that the
+  // arguments did not fit it.
+  auto accepts{std::string()};
+  if (extent.isVector()) {
+    accepts = concat("; ", Quoted(displayName),
+                     " takes one scalar, or scalars and shorter vectors "
+                     "totalling ",
+                     extent.getVectorSize(), " components");
+  } else if (extent.isMatrix()) {
+    accepts =
+        concat("; ", Quoted(displayName), " takes one scalar, ", extent.numCols,
+               " column vectors of ", extent.numRows, " components, or ",
+               extent.numCols * extent.numRows, " scalars");
+  }
   srcLoc.throwError("cannot construct ", Quoted(displayName), " from ",
-                    Quoted(std::string(args)));
+                    Quoted(std::string(args)), accepts);
   return Value();
 }
 
@@ -452,7 +489,26 @@ Value ArithmeticType::accessField(Emitter &emitter, Value value,
           emitter.context.getArithmeticType(scalar, Extent(iMask->size())),
           emitter.builder.CreateShuffleVector(emitter.rvalue(value), *iMask)));
   }
-  srcLoc.throwError("no field ", Quoted(name), " in ", Quoted(displayName));
+  // The nameable components, so that a swizzle off the end says how far it
+  // may actually go.
+  auto components{std::string()};
+  auto colorComponents{std::string()};
+  for (uint32_t i{}; i < 4; i++) {
+    if (!toIndex("xyzw"[i])) break;
+    if (!components.empty()) {
+      components += ", ";
+      colorComponents += ", ";
+    }
+    components += "xyzw"[i];
+    colorComponents += "rgba"[i];
+  }
+  srcLoc.throwError("no field ", Quoted(name), " in ", Quoted(displayName),
+                    components.empty()
+                        ? std::string()
+                        : concat("; the components are ", components,
+                                 extent.isVector()
+                                     ? concat(" (or ", colorComponents, ")")
+                                     : std::string()));
   return Value();
 }
 
@@ -605,7 +661,8 @@ Value ArrayType::invoke(Emitter &emitter, const ArgumentList &args,
       return *loaded;
   }
   srcLoc.throwError("cannot construct ", Quoted(displayName), " from ",
-                    Quoted(std::string(args)));
+                    Quoted(std::string(args)), "; ", Quoted(displayName),
+                    " takes ", size, " elements or one array of that size");
   return Value();
 }
 
@@ -791,8 +848,10 @@ Value ColorType::invoke(Emitter &emitter, const ArgumentList &args,
           srcLoc);
     }
   }
-  srcLoc.throwError("cannot construct 'color' from ",
-                    Quoted(std::string(args)));
+  srcLoc.throwError(
+      "cannot construct 'color' from ", Quoted(std::string(args)),
+      "; 'color' takes one scalar, one 'float3' or 'spectral_curve', "
+      "'(r, g, b)', or '(wavelengths, amplitudes)'");
   return Value();
 }
 
@@ -1097,7 +1156,18 @@ Value FunctionType::invoke(Emitter &emitter, const ArgumentList &args,
         }
       }
       auto callee{emitter.emit(astCall->expr)};
-      result = emitter.emitCall(callee, patchedArgs, srcLoc);
+      try {
+        result = emitter.emitCall(callee, patchedArgs, srcLoc);
+      } catch (const Error &error) {
+        // A failure here reports the function behind the '(*)' and the
+        // arguments the variant injected, none of which the caller wrote.
+        // Lead with the call as it was actually written and keep the
+        // underlying reason as a note.
+        srcLoc.throwError(concat(
+            "cannot call ", Quoted(declName), " with arguments ",
+            Quoted(std::string(args)),
+            "\n  forwards to: ", dropSourceLocation(error.message, srcLoc)));
+      }
       // Skip the conversion when the type already matches exactly, so
       // memory-resident (lvalue) results stay in memory instead of being
       // loaded back into SSA by the pass-through conversion.
@@ -1209,8 +1279,9 @@ FunctionType *FunctionType::resolveOverload(Emitter &emitter,
                                                  /*dontEmit=*/true)};
       overloads.push_back({func, std::move(resolvedArgs.argParams)});
     } catch (const Error &error) {
-      overloadErrors += "\n  candidate rejected: ";
-      overloadErrors += error.message;
+      appendCandidateNote(overloadErrors, {}, func->declName, func->params,
+                          func->decl.srcLoc,
+                          dropSourceLocation(error.message, srcLoc));
     }
   }
   // If no matching declarations, fail, including the reason each
@@ -1388,8 +1459,8 @@ static void verifyMaterialInstanceLayout(Context &context, Type *type,
        offsetof(Instance, backface_emission_intensity)},
       {"wavelength_base_max", offsetof(Instance, wavelength_base_max)},
       {"flags", offsetof(Instance, flags)},
-      {"df_flags_surface", offsetof(Instance, df_flags_surface)},
-      {"df_flags_backface", offsetof(Instance, df_flags_backface)},
+      {"df_lobes_surface", offsetof(Instance, df_lobes_surface)},
+      {"df_lobes_backface", offsetof(Instance, df_lobes_backface)},
       {"emission_modes", offsetof(Instance, emission_modes)},
       {"seed", offsetof(Instance, seed)},
       {"tangent_to_world_space", offsetof(Instance, tangent_to_world_space)},
@@ -1441,7 +1512,7 @@ void FunctionType::initializeMaterialFunctions(Emitter &emitter) {
             return Compiler::matchesMaterialName(desiredName, qualifiedName);
           })) {
     SMDL_LOG_DEBUG(std::string(decl.srcLoc), " Skipping material ",
-                   Quoted(decl.name), ": not a desired material");
+                   Quoted(decl.name), ": undesired by host program");
     compiler.mSkippedMaterialNames.push_back(std::move(qualifiedName));
     return;
   }
@@ -1534,33 +1605,42 @@ void FunctionType::initializeMaterialFunctions(Emitter &emitter) {
   verifyMaterialInstanceLayout(context, materialInstanceType, decl.srcLoc);
   // Generate the scatter and emission entry points, which all have the
   // same shape: a '@(pure visible)' wrapper that forwards the material
-  // instance and its pointer parameters to the like-named function in
+  // instance and its remaining parameters to the like-named function in
   // the 'df' module:
   // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
   // @(pure visible) int "material_name.scatterEvaluate"(
   //     &_MaterialInstance instance,
   //     &float3 wo,
   //     &float3 wi,
+  //     int lobeMask,
   //     &float pdfFwd,
   //     &float pdfRev,
   //     &float f) {
   //   return ::df::_scatterEvaluate(
-  //     instance, wo, wi, pdfFwd, pdfRev, f);
+  //     instance, wo, wi, lobeMask, pdfFwd, pdfRev, f);
   // }
   // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-  struct PointerParam final {
+  // A wrapper parameter passes by pointer unless it is marked
+  // 'byValue'. Pointers are the default because the aggregates and the
+  // SIMD vectors have no stable by-value ABI across the JIT boundary and
+  // the outputs have to be written through; a scalar input has neither
+  // problem and passes in a register.
+  struct WrapperParam final {
     std::string_view name{};
-    Type *pointeeType{};
+    Type *type{};
     uint64_t count{1};
+    bool byValue{};
   };
   auto makeDfWrapper{[&](auto &jitFunc, std::string_view suffix,
                          Type *funcReturnType,
-                         std::initializer_list<PointerParam> ptrParams) {
+                         std::initializer_list<WrapperParam> wrapperParams) {
     auto params{ParameterList{}};
     params.push_back(constParameter(materialInstancePtrType, "instance"));
-    for (const auto &ptrParam : ptrParams)
+    for (const auto &wrapperParam : wrapperParams)
       params.push_back(constParameter(
-          context.getPointerType(ptrParam.pointeeType), ptrParam.name));
+          wrapperParam.byValue ? wrapperParam.type
+                               : context.getPointerType(wrapperParam.type),
+          wrapperParam.name));
     auto func{emitter.createFunction(
         concat(symbolBase, ".", suffix), /*isPure=*/true, funcReturnType,
         params, decl.srcLoc, [&] {
@@ -1581,8 +1661,11 @@ void FunctionType::initializeMaterialFunctions(Emitter &emitter) {
     func->setLinkage(llvm::Function::ExternalLinkage);
     markPointerParam(func, 0, materialInstanceType);
     auto argIndex{1U};
-    for (const auto &ptrParam : ptrParams)
-      markPointerParam(func, argIndex++, ptrParam.pointeeType, ptrParam.count);
+    for (const auto &wrapperParam : wrapperParams) {
+      if (!wrapperParam.byValue)
+        markPointerParam(func, argIndex, wrapperParam.type, wrapperParam.count);
+      argIndex++;
+    }
     jitFunc.name = func->getName().str();
   }};
   auto floatType{context.getFloatType()};
@@ -1593,17 +1676,20 @@ void FunctionType::initializeMaterialFunctions(Emitter &emitter) {
   makeDfWrapper(jitMaterial.scatterEvaluate, "scatterEvaluate", intType,
                 {{"wo", float3Type},
                  {"wi", float3Type},
+                 {"lobeMask", intType, 1, /*byValue=*/true},
                  {"pdfFwd", floatType},
                  {"pdfRev", floatType},
                  {"f", floatType, colorSize}});
   makeDfWrapper(jitMaterial.scatterSample, "scatterSample", intType,
                 {{"xi", float4Type},
                  {"wo", float3Type},
+                 {"lobeMask", intType, 1, /*byValue=*/true},
                  {"wi", float3Type},
                  {"pdfFwd", floatType},
                  {"pdfRev", floatType},
                  {"f", floatType, colorSize},
-                 {"isDelta", intType}});
+                 {"sampledLobe", intType},
+                 {"lobeChance", floatType}});
   makeDfWrapper(
       jitMaterial.emissionEvaluate, "emissionEvaluate", intType,
       {{"wi", float3Type}, {"pdf", floatType}, {"Le", floatType, colorSize}});
@@ -1629,8 +1715,7 @@ void FunctionType::initializeMaterialFunctions(Emitter &emitter) {
                  {"wi", float3Type},
                  {"pdfFwd", floatType},
                  {"pdfRev", floatType},
-                 {"f", floatType, colorSize},
-                 {"isDelta", intType}});
+                 {"f", floatType, colorSize}});
   {
     // Generate the evaluate opacity function:
     // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -2318,16 +2403,8 @@ Value StructType::invoke(Emitter &emitter, const ArgumentList &args,
   auto addCandidateNote{
       [&](std::string_view kind, const ParameterList &candidateParams,
           const SourceLocation &declSrcLoc, std::string_view reason) {
-        candidateNotes += "\n  candidate rejected: ";
-        candidateNotes += kind;
-        candidateNotes += ' ';
-        candidateNotes += toSignatureString(displayName, candidateParams);
-        if (declSrcLoc) {
-          candidateNotes += " declared at ";
-          candidateNotes += std::string(declSrcLoc);
-        }
-        candidateNotes += ": ";
-        candidateNotes += reason;
+        appendCandidateNote(candidateNotes, kind, displayName, candidateParams,
+                            declSrcLoc, reason);
       }};
   auto whyNot{std::string{}};
   // Explicit constructors are applied first, so a struct with constructors
@@ -2554,8 +2631,14 @@ Value StructType::accessField(Emitter &emitter, Value value,
   if (auto itr{getInstanceOf().staticFields.find(name)};
       itr != getInstanceOf().staticFields.end())
     return itr->second;
+  auto fieldNames{params.getNames()};
+  for (const auto &[staticName, staticValue] : getInstanceOf().staticFields)
+    fieldNames.push_back(staticName);
+  auto suggestion{std::string()};
+  if (auto similar{suggestNearestName(name, fieldNames)}; !similar.empty())
+    suggestion = concat("; did you mean ", Quoted(similar), "?");
   srcLoc.throwError("no field ", Quoted(name), " in struct ",
-                    Quoted(displayName));
+                    Quoted(displayName), suggestion);
   return {};
 }
 

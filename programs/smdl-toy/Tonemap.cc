@@ -181,8 +181,9 @@ constexpr float PBR_NEUTRAL_DESATURATION{0.15f};
 }
 
 static void pbrNeutralRGB(const float *rgb, float *out) noexcept {
-  float color[3]{std::fmax(rgb[0], 0.0f), std::fmax(rgb[1], 0.0f),
-                 std::fmax(rgb[2], 0.0f)};
+  std::array<float, 3> color = {std::fmax(rgb[0], 0.0f),
+                                std::fmax(rgb[1], 0.0f),
+                                std::fmax(rgb[2], 0.0f)};
   // Subtracting the offset from every channel, tapering to zero as the
   // darkest channel approaches black, is the toe. It never drives a
   // channel negative: the darkest is left at 6.25 x^2 >= 0 in the toe,
@@ -428,6 +429,7 @@ struct Plane final {
 }
 
 //--}
+
 //--{ Local operator: exposure fusion
 
 // Exposure fusion (Mertens, Kautz, and Van Reeth 2007) over a synthetic
@@ -571,6 +573,7 @@ computeFusionGain(const std::vector<float> &image, size_t numPixelsX,
 }
 
 //--}
+
 //--{ Appearance stage
 
 // The appearance stage's output: the linear display color to map, and a

@@ -3,6 +3,7 @@
 #include "PlacesFile.h"
 #include "Scene.h"
 
+#include "llvm/Support/JSON.h"
 #include "llvm/Support/WithColor.h"
 
 #include "smdl/Support/Logger.h"
@@ -17,11 +18,13 @@
 // streams and the scene's assimp-backed introspection, neither of which
 // the parser and lowering may depend on.
 
-// Is spelled as an MDL identifier, and therefore can be matched by
-// `smdl::Compiler::findMaterial()` at all? Exporters routinely emit names
-// like `Material.001` or `Wood Floor` that no MDL material can be called.
-[[nodiscard]]
-static bool isMDLIdentifier(std::string_view name) {
+namespace {
+
+// The material name is the entire binding surface between a scene file
+// and a material, so a name that no MDL material can be called is a
+// binding that can never resolve. Exporters routinely emit names like
+// `Material.001` or `Wood Floor`, which `findMaterial()` cannot match.
+[[nodiscard]] bool isMDLIdentifier(std::string_view name) {
   if (name.empty() || !(std::isalpha(uint8_t(name[0])) || name[0] == '_'))
     return false;
   for (char ch : name)
@@ -30,8 +33,7 @@ static bool isMDLIdentifier(std::string_view name) {
 }
 
 // The nearest MDL identifier to `name`, to suggest as a rename.
-[[nodiscard]]
-static std::string toMDLIdentifier(std::string_view name) {
+[[nodiscard]] std::string toMDLIdentifier(std::string_view name) {
   std::string result{};
   for (char ch : name)
     result += std::isalnum(uint8_t(ch)) || ch == '_' ? ch : '_';
@@ -40,106 +42,75 @@ static std::string toMDLIdentifier(std::string_view name) {
   return result;
 }
 
-// A JSON string, escaped. Paths and authored names are arbitrary text, so
-// this cannot be skipped even though it almost never does anything.
-[[nodiscard]]
-static std::string jsonString(std::string_view text) {
-  auto result{std::string("\"")};
-  for (char ch : text) {
-    switch (ch) {
-    case '"':
-      result += "\\\"";
-      break;
-    case '\\':
-      result += "\\\\";
-      break;
-    case '\n':
-      result += "\\n";
-      break;
-    case '\r':
-      result += "\\r";
-      break;
-    case '\t':
-      result += "\\t";
-      break;
-    default:
-      if (uint8_t(ch) < 0x20) {
-        static constexpr char DIGITS[]{"0123456789abcdef"};
-        result += "\\u00";
-        result += DIGITS[(uint8_t(ch) >> 4) & 0xF];
-        result += DIGITS[uint8_t(ch) & 0xF];
-      } else {
-        result += ch;
-      }
-      break;
-    }
+// Print the object rows of one file's usage, preceded by a blank line
+// and followed by another, or the note that the file has nothing to
+// name. The caller prints the header line that says which file this is.
+void printObjectUsageRows(llvm::raw_ostream &os,
+                          const std::vector<ObjectUsage> &usage) {
+  if (usage.empty()) {
+    os << "\n  No named object holds geometry. Everything sits on the "
+          "file's root node, which 'select' cannot name.\n\n";
+    return;
   }
-  return result += '"';
+  // Pad the name field so the counts line up in a column, which is the
+  // thing being scanned. Nesting is shown by indenting the path, but the
+  // path printed is still the whole thing, because that is what a pattern
+  // containing '/' has to match.
+  auto names{std::vector<std::string>()};
+  auto counts{std::vector<std::string>()};
+  size_t nameWidth{};
+  size_t countWidth{};
+  for (const auto &entry : usage) {
+    names.push_back(smdl::concat(std::string(2 * entry.depth, ' '),
+                                 smdl::Quoted(entry.path)));
+    counts.push_back(smdl::concat(
+        entry.triangleCount, entry.triangleCount == 1 ? " tri" : " tris",
+        entry.instanceCount == 1
+            ? std::string()
+            : smdl::concat(" in ", entry.instanceCount, " meshes")));
+    nameWidth = std::max(nameWidth, names.back().size());
+    countWidth = std::max(countWidth, counts.back().size());
+  }
+  os << '\n';
+  for (size_t i = 0; i < usage.size(); i++) {
+    const auto &entry{usage[i]};
+    os << "  ";
+    llvm::WithColor(os, llvm::HighlightColor::Tag) << names[i];
+    os.indent(nameWidth - names[i].size() + 2);
+    llvm::WithColor(os, llvm::HighlightColor::Note) << counts[i];
+    os.indent(countWidth - counts[i].size() + 2);
+    if (entry.materialNames.size() == 1) {
+      llvm::WithColor(os, llvm::HighlightColor::Attribute)
+          << smdl::concat(smdl::Quoted(entry.materialNames[0]));
+    } else {
+      llvm::WithColor(os, llvm::HighlightColor::Note)
+          << smdl::concat(entry.materialNames.size(), " materials");
+    }
+    os << '\n';
+  }
+  os << '\n';
 }
 
-// A float with enough digits to read back exactly.
-[[nodiscard]]
-static std::string jsonNumber(float value) {
-  // JSON has no infinity, and empty bounds are a real answer rather than
-  // an error, so they are reported as the absence of a number.
-  if (!std::isfinite(value)) return "null";
-  char buffer[32]{};
-  std::snprintf(buffer, sizeof(buffer), "%.9g", double(value));
-  return buffer;
-}
-
-[[nodiscard]]
-static std::string jsonNumbers(const float3 &values) {
-  return smdl::concat("[", jsonNumber(values.x), ", ", jsonNumber(values.y),
-                      ", ", jsonNumber(values.z), "]");
-}
-
-[[nodiscard]]
-static std::string jsonStrings(const std::vector<std::string> &values) {
-  auto result{std::string("[")};
-  for (size_t i = 0; i < values.size(); i++)
-    result += smdl::concat(i == 0 ? "" : ", ", jsonString(values[i]));
-  return result += ']';
-}
+} // namespace
 
 void printObjectTableJSON(const Layout &layout) {
-  auto &os{llvm::outs()};
   auto seenFiles{std::set<std::string, std::less<>>()};
-  os << "{\n  \"files\": [\n";
-  size_t fileIndex{};
-  for (const auto &item : layout.items) {
-    // Primitives and curves offer nothing to 'select', and this JSON is
-    // what the mesh preparation tooling reads, so neither appears here.
-    if (item.primitive.active() || item.curves.active) continue;
-    if (!seenFiles.insert(item.fileName).second) continue;
-    auto info{ObjectFileInfo()};
-    const auto usage{importObjectUsage(item.fileName, &info)};
-    os << (fileIndex++ == 0 ? "" : ",\n");
-    os << smdl::concat(
-        "    {\n      \"file\": ", jsonString(item.fileName),
-        ",\n      \"triangles\": ", info.triangleCount,
-        ",\n      \"up_axis\": ", info.upAxis,
-        ",\n      \"up_axis_sign\": ", info.upAxisSign,
-        ",\n      \"units_per_meter\": ", jsonNumber(info.unitsPerMeter),
-        ",\n      \"bounds\": [", jsonNumbers(info.boundMin), ", ",
-        jsonNumbers(info.boundMax), "]",
-        ",\n      \"materials\": ", jsonStrings(info.materialNames),
-        ",\n      \"objects\": [\n");
-    for (size_t i = 0; i < usage.size(); i++) {
-      const auto &entry{usage[i]};
-      os << smdl::concat("        {\"path\": ", jsonString(entry.path),
-                         ", \"depth\": ", entry.depth,
-                         ", \"triangles\": ", entry.triangleCount,
-                         ", \"instances\": ", entry.instanceCount,
-                         ", \"materials\": ", jsonStrings(entry.materialNames),
-                         ", \"pivot\": ", jsonNumbers(entry.pivot),
-                         ", \"bounds\": [", jsonNumbers(entry.boundMin), ", ",
-                         jsonNumbers(entry.boundMax), "]}",
-                         i + 1 < usage.size() ? ",\n" : "\n");
-    }
-    os << "      ]\n    }";
-  }
-  os << "\n  ]\n}\n";
+  llvm::json::OStream json{llvm::outs(), 2};
+  json.object([&] {
+    json.attributeArray("files", [&] {
+      for (const auto &item : layout.items) {
+        // Primitives and curves offer nothing to 'select', and this JSON
+        // is what the mesh preparation tooling reads, so neither appears
+        // here.
+        if (item.primitive.active() || item.curves.active) continue;
+        if (!seenFiles.insert(item.fileName).second) continue;
+        auto info{ObjectFileInfo()};
+        const auto usage{importObjectUsage(item.fileName, &info)};
+        objectListingJSON(json, item.fileName, info, usage);
+      }
+    });
+  });
+  llvm::outs() << '\n';
 }
 
 void printObjectTable(const Layout &layout) {
@@ -164,48 +135,7 @@ void printObjectTable(const Layout &layout) {
       if (entry.depth == 0) numTriangles += entry.triangleCount;
     os << smdl::concat(item.fileName, ": ", usage.size(), " object(s), ",
                        numTriangles, " triangles\n");
-    if (usage.empty()) {
-      os << "\n  No named object holds geometry. Everything sits on the "
-            "file's root node, which 'select' cannot name.\n\n";
-      continue;
-    }
-    // Pad the name field so the counts line up in a column, which is the
-    // thing being scanned. Nesting is shown by indenting the path, but the
-    // path printed is still the whole thing, because that is what a pattern
-    // containing '/' has to match.
-    auto names{std::vector<std::string>()};
-    auto counts{std::vector<std::string>()};
-    size_t nameWidth{};
-    size_t countWidth{};
-    for (const auto &entry : usage) {
-      names.push_back(smdl::concat(std::string(2 * entry.depth, ' '),
-                                   smdl::Quoted(entry.path)));
-      counts.push_back(smdl::concat(
-          entry.triangleCount, entry.triangleCount == 1 ? " tri" : " tris",
-          entry.instanceCount == 1
-              ? std::string()
-              : smdl::concat(" in ", entry.instanceCount, " meshes")));
-      nameWidth = std::max(nameWidth, names.back().size());
-      countWidth = std::max(countWidth, counts.back().size());
-    }
-    os << '\n';
-    for (size_t i = 0; i < usage.size(); i++) {
-      const auto &entry{usage[i]};
-      os << "  ";
-      llvm::WithColor(os, llvm::HighlightColor::Tag) << names[i];
-      os.indent(nameWidth - names[i].size() + 2);
-      llvm::WithColor(os, llvm::HighlightColor::Note) << counts[i];
-      os.indent(countWidth - counts[i].size() + 2);
-      if (entry.materialNames.size() == 1) {
-        llvm::WithColor(os, llvm::HighlightColor::Attribute)
-            << smdl::concat(smdl::Quoted(entry.materialNames[0]));
-      } else {
-        llvm::WithColor(os, llvm::HighlightColor::Note)
-            << smdl::concat(entry.materialNames.size(), " materials");
-      }
-      os << '\n';
-    }
-    os << '\n';
+    printObjectUsageRows(os, usage);
   }
   os << "Select one in a '.layout' file, for instance:\n"
         "  asset thing = \"file\" { select \"name\" recenter }\n"
@@ -232,8 +162,7 @@ static std::vector<MaterialUsage> collectMaterialUsage(const Layout &layout) {
   auto multiplicity{std::map<std::pair<std::string, std::string>, uint32_t>()};
   for (const auto &item : layout.items)
     multiplicity[importKey(item)] +=
-        item.batchTransforms.empty() ? 1
-                                     : uint32_t(item.batchTransforms.size());
+        item.batchXfs.empty() ? 1 : uint32_t(item.batchXfs.size());
   auto usage{std::vector<MaterialUsage>()};
   auto indexByName{std::map<std::string, size_t, std::less<>>()};
   auto seenImports{std::set<std::pair<std::string, std::string>>()};
@@ -270,30 +199,31 @@ static std::vector<MaterialUsage> collectMaterialUsage(const Layout &layout) {
 
 void printMaterialTableJSON(const smdl::Compiler *compiler,
                             const Layout &layout) {
-  auto &os{llvm::outs()};
   const auto usage{collectMaterialUsage(layout)};
-  os << "{\n  \"materials\": [\n";
-  for (size_t i = 0; i < usage.size(); i++) {
-    const auto &entry{usage[i]};
-    // The aliases and overrides are already folded into the item
-    // assignments, so the name IS the lookup; the key stays for the
-    // tools that read it.
-    auto qualified{std::vector<std::string>()};
-    if (compiler)
-      for (const auto *match : compiler->findMaterials(entry.name))
-        qualified.push_back(match->qualifiedName);
-    os << smdl::concat(
-        "    {\"name\": ", jsonString(entry.name),
-        ", \"lookup\": ", jsonString(entry.name),
-        ", \"identifier\": ", isMDLIdentifier(entry.name) ? "true" : "false",
-        ", \"suggestion\": ", jsonString(toMDLIdentifier(entry.name)),
-        ", \"meshes\": ", entry.meshCount,
-        ", \"instances\": ", entry.instanceCount,
-        ", \"triangles\": ", entry.triangleCount,
-        ", \"resolved\": ", jsonStrings(qualified), "}",
-        i + 1 < usage.size() ? ",\n" : "\n");
-  }
-  os << "  ]\n}\n";
+  llvm::json::OStream json{llvm::outs(), 2};
+  json.object([&] {
+    json.attributeArray("materials", [&] {
+      for (const auto &entry : usage)
+        json.object([&] {
+          // The aliases and overrides are already folded into the item
+          // assignments, so the name IS the lookup; the key stays for
+          // the tools that read it.
+          json.attribute("name", entry.name);
+          json.attribute("lookup", entry.name);
+          json.attribute("identifier", isMDLIdentifier(entry.name));
+          json.attribute("suggestion", toMDLIdentifier(entry.name));
+          json.attribute("meshes", entry.meshCount);
+          json.attribute("instances", entry.instanceCount);
+          json.attribute("triangles", entry.triangleCount);
+          json.attributeArray("resolved", [&] {
+            if (compiler)
+              for (const auto *match : compiler->findMaterials(entry.name))
+                json.value(match->qualifiedName);
+          });
+        });
+    });
+  });
+  llvm::outs() << '\n';
 }
 
 void printMaterialTable(const smdl::Compiler *compiler, const Layout &layout) {
@@ -410,15 +340,11 @@ void dumpPlaces(const std::string &fileName) {
 
 void dumpCurves(const std::string &fileName) {
   const auto file{readCurvesFile(fileName)};
-  auto lower{float3(+INF, +INF, +INF)};
-  auto upper{float3(-INF, -INF, -INF)};
+  BoundBox3 bound{};
   auto minRadius{+INF};
   auto maxRadius{-INF};
   for (const auto &point : file.points) {
-    for (int axis = 0; axis < 3; axis++) {
-      lower[axis] = std::min(lower[axis], point[axis]);
-      upper[axis] = std::max(upper[axis], point[axis]);
-    }
+    bound.extend(float3(point.x, point.y, point.z));
     minRadius = std::min(minRadius, point.w);
     maxRadius = std::max(maxRadius, point.w);
   }
@@ -428,8 +354,9 @@ void dumpCurves(const std::string &fileName) {
       CurvesFile::basisName(file.basis), " basis\n  ", file.strandCount(),
       " strand(s), ", file.points.size(), " point(s)",
       file.hasRootUVs() ? ", with a root UV column" : "", "\n  bounds [",
-      lower.x, ", ", lower.y, ", ", lower.z, "] to [", upper.x, ", ", upper.y,
-      ", ", upper.z, "]\n  radius ", minRadius, " to ", maxRadius, "\n");
+      bound.lower.x, ", ", bound.lower.y, ", ", bound.lower.z, "] to [",
+      bound.upper.x, ", ", bound.upper.y, ", ", bound.upper.z, "]\n  radius ",
+      minRadius, " to ", maxRadius, "\n");
 }
 
 void packPlaces(const std::string &layoutFileName, std::string outputFileName) {

@@ -155,6 +155,17 @@ template <typename T, typename... Ts>
 suggestNearest(std::string_view name, Span<const std::string_view> candidates,
                size_t maxDistance = 2);
 
+/// The did-you-mean helper with the compiler's own policy applied: the
+/// tolerance scales with the length of what was typed, because one edit in
+/// `abs` is a much bigger relative error than one edit in
+/// `loadBSDFMeasurement`; and a suggestion must keep the trailing `_word`
+/// of the typed name whenever any candidate has one to match, which keeps a
+/// missing `diffuse_bsdf` from being answered with the unrelated
+/// `diffuse_edf`.
+[[nodiscard]] SMDL_EXPORT std::string_view
+suggestNearestName(std::string_view name,
+                   Span<const std::string_view> candidates);
+
 /// \}
 
 /// \}

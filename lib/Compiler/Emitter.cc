@@ -1,6 +1,7 @@
 // vim:foldmethod=marker:foldlevel=0:fmr=--{,--}
 #include "Emitter.h"
 
+#include "BuiltinAccess.h"
 #include "smdl/Resource/BSDFMeasurement.h"
 #include "smdl/Support/Filesystem.h"
 #include "smdl/Support/Logger.h"
@@ -91,7 +92,7 @@ Value Emitter::createFunctionImplementation(
   });
   llvmMoveBlockToEnd(labelReturn.block);
   builder.SetInsertPoint(labelReturn.block);
-  auto result{createResult(returnType, returns, srcLoc)};
+  auto result{createResult(returnType, returns, srcLoc, "return value")};
   // If the result is a lambda, its body has not been emitted yet and may
   // still legitimately use this expansion's parameters and locals when it
   // is called later. Leave the unused-value warnings in the list for the
@@ -509,7 +510,8 @@ void Emitter::declareImport(Span<const std::string_view> importPath, bool isAbs,
       resolveModule(importPath.dropBack(), isAbs, decl.srcLoc.module_)};
   if (!importedModule)
     decl.srcLoc.throwError("cannot resolve import identifier ",
-                           Quoted(join(importPath, "::")));
+                           Quoted(join(importPath, "::")),
+                           suggestForFailedImport(importPath.dropBack()));
   if (importPath.back() == "*") {
     importPath = importPath.dropBack();
     importPath = importPath.dropFrontWhile(isDots);
@@ -517,9 +519,15 @@ void Emitter::declareImport(Span<const std::string_view> importPath, bool isAbs,
   } else {
     auto importedDeclaration{Declaration::findInModule(
         context, importPath.back(), getLLVMFunction(), importedModule)};
-    if (!importedDeclaration)
+    if (!importedDeclaration) {
+      auto suggestion{std::string()};
+      if (auto similar{suggestNearestName(importPath.back(),
+                                          exportedNamesOf(importedModule))};
+          !similar.empty())
+        suggestion = concat("; did you mean ", Quoted(similar), "?");
       decl.srcLoc.throwError("cannot resolve import identifier ",
-                             Quoted(join(importPath, "::")));
+                             Quoted(join(importPath, "::")), suggestion);
+    }
     declare(importPath.dropFrontWhile(isDots), &decl,
             importedDeclaration->value);
   }
@@ -561,7 +569,8 @@ void Emitter::unwind(size_t depth) {
 }
 
 Value Emitter::createResult(Type *type, llvm::ArrayRef<Result> results,
-                            const SourceLocation &srcLoc) {
+                            const SourceLocation &srcLoc,
+                            std::string_view resultKind) {
   SMDL_SANITY_CHECK(type);
   if (type->isAbstract()) {
     auto resultTypes{llvm::SmallVector<Type *>{}};
@@ -611,6 +620,16 @@ Value Emitter::createResult(Type *type, llvm::ArrayRef<Result> results,
       auto terminator{block->getTerminator()};
       terminator->removeFromParent();
       builder.SetInsertPoint(block);
+      // Say what the value was for before letting the conversion fail: a
+      // returned value of the wrong type otherwise reports only that the
+      // return type could not be constructed from it, which reads as a
+      // constructor call the user never wrote.
+      if (!resultKind.empty() && value.type &&
+          context.getConversionRule(value.type, type) ==
+              CONVERSION_RULE_NOT_ALLOWED)
+        valueSrcLoc.throwError("cannot convert ", resultKind, " of type ",
+                               Quoted(value.type->displayName), " to ",
+                               Quoted(type->displayName));
       // The 'rvalue' matters: conversions may come back memory-resident
       // (see e.g. 'UnionType::invoke'), and the PHI merges values here.
       value = rvalue(invoke(type, value, valueSrcLoc));
@@ -636,6 +655,13 @@ Value Emitter::emit(AST::Decl &decl) {
 }
 
 Value Emitter::emit(AST::Exec &decl) {
+  // Emitting an empty 'exec' would JIT a void function that does nothing
+  // and then call it, so drop it and say why.
+  if (auto compound{llvm::dyn_cast_if_present<AST::Compound>(decl.stmt.get())};
+      compound && compound->stmts.empty()) {
+    decl.srcLoc.logWarn("'exec' with an empty body does nothing; ignoring it");
+    return Value();
+  }
   auto returnType{context.getVoidType()};
   // Execs must be pure: the C++ side invokes them as 'void()' (see
   // 'JIT::Function<void()>' in Compiler.h), so a non-pure exec would read
@@ -835,7 +861,33 @@ Value Emitter::emit(AST::AccessIndex &expr) {
   }
 }
 
+void Emitter::rejectAssignmentToNonVariable(AST::Binary &expr) {
+  if ((expr.op & BINOP_EQ) != BINOP_EQ) return;
+  auto identifier{
+      llvm::dyn_cast_if_present<AST::Identifier>(expr.exprLhs.get())};
+  if (!identifier || !identifier->isSimpleName()) return;
+  auto names{context.internName(*identifier)};
+  Declaration *unusableMatch{};
+  auto declaration{probeName(names, getLLVMFunction(), &unusableMatch)};
+  if (!declaration || declaration->value.isLValue()) return;
+  // Say 'const' only when the declaration really says it, because plenty of
+  // other things are bound as rvalues: enumerators, comptime constants, the
+  // names of functions and types.
+  auto isConst{false};
+  if (auto declarator{llvm::dyn_cast_if_present<AST::Variable::Declarator>(
+          declaration->node)};
+      declarator && declarator->decl && declarator->decl->type)
+    isConst = declarator->decl->type->hasQualifier("const");
+  auto message{concat("cannot assign to ", Quoted(names[0]),
+                      isConst ? " because it is declared 'const'"
+                              : " because it is not a variable")};
+  if (auto declSrcLoc{declaration->getSourceLocation()})
+    message += concat(", declared at ", std::string(declSrcLoc));
+  expr.srcLoc.throwError(std::move(message));
+}
+
 Value Emitter::emit(AST::Binary &expr) {
+  rejectAssignmentToNonVariable(expr);
   // Temporary let.
   if (expr.op == BINOP_LET) {
     auto ident{llvm::dyn_cast<AST::Identifier>(&*expr.exprLhs)};
@@ -1312,8 +1364,8 @@ Value Emitter::emitOp(AST::UnaryOp op, Value value,
       }
     }
   }
-  srcLoc.throwError("unimplemented unary operator ", Quoted(to_string(op)),
-                    " for type ", Quoted(value.type->displayName));
+  srcLoc.throwError("no unary operator ", Quoted(to_string(op)), " for type ",
+                    Quoted(value.type->displayName));
 }
 //--}
 
@@ -1364,6 +1416,33 @@ llvmArithOp(Scalar::Intent intent, AST::BinaryOp op) {
     }
   }
   return std::nullopt;
+}
+//--}
+
+//--{ Helper: throwIfDividingByZero
+// LLVM makes integer division and remainder by zero poison, which silently
+// corrupts the program instead of failing it. A constant divisor is the case
+// the compiler can see for itself, so refuse it here.
+static void throwIfDividingByZero(AST::BinaryOp op, llvm::Value *rhs,
+                                  const SourceLocation &srcLoc) {
+  if (op != BINOP_DIV && op != BINOP_REM) return;
+  auto constant{llvm::dyn_cast_if_present<llvm::Constant>(rhs)};
+  if (!constant) return;
+  auto isZero{[&]() {
+    if (constant->isZeroValue()) return true;
+    // A vector divisor is poison if any lane is zero, not only if all are.
+    if (auto vectorType{
+            llvm::dyn_cast<llvm::FixedVectorType>(constant->getType())}) {
+      for (unsigned i{}; i < vectorType->getNumElements(); i++)
+        if (auto element{constant->getAggregateElement(i)};
+            element && element->isZeroValue())
+          return true;
+    }
+    return false;
+  }()};
+  if (isZero)
+    srcLoc.throwError(op == BINOP_DIV ? "integer division by zero"
+                                      : "integer remainder by zero");
 }
 //--}
 
@@ -1434,8 +1513,11 @@ Value Emitter::emitOp(AST::BinaryOp op, Value lhs, Value rhs,
       auto commonType{lhsType->getCommonType(context, rhsType)};
       lhs = invoke(commonType, lhs, srcLoc);
       rhs = invoke(commonType, rhs, srcLoc);
-      if (auto llvmOp{llvmArithOp(commonType->scalar.intent, op)})
+      if (auto llvmOp{llvmArithOp(commonType->scalar.intent, op)}) {
+        if (commonType->scalar.intent == Scalar::Intent::Int)
+          throwIfDividingByZero(op, rhs, srcLoc);
         return RValue(commonType, builder.CreateBinOp(*llvmOp, lhs, rhs));
+      }
       if (auto llvmOp{llvmCmpOp(commonType->scalar.intent, op)})
         return RValue(
             commonType->getWithDifferentScalar(context, Scalar::getBool()),
@@ -1510,11 +1592,13 @@ Value Emitter::emitOp(AST::BinaryOp op, Value lhs, Value rhs,
   // Enums
   if (lhs.type->isEnum() && rhs.type->isEnum()) {
     if (auto llvmOp{llvmArithOp(Scalar::Intent::Int, op)};
-        llvmOp && lhs.type == rhs.type)
+        llvmOp && lhs.type == rhs.type) {
+      throwIfDividingByZero(op, rhs, srcLoc);
       // NOTE: The result stays enum-typed even though it need not be a
       // declared enumerator; flag-mask idioms like '(mode & m) == flag'
       // depend on this.
       return RValue(lhs.type, builder.CreateBinOp(*llvmOp, lhs, rhs));
+    }
     if (auto llvmOp{llvmCmpOp(Scalar::Intent::Int, op)}) {
       if (lhs.type != rhs.type)
         srcLoc.throwError("cannot compare different enum types ",
@@ -1631,9 +1715,21 @@ Value Emitter::emitOp(AST::BinaryOp op, Value lhs, Value rhs,
           context.isPerfectlyConvertible(lhsTy, rhsTy));
     }
   }
-  srcLoc.throwError("unimplemented binary operator ", Quoted(to_string(op)),
+  // Two matrices that do not compose are the common case here, and saying
+  // only that there is no operator reads as a missing feature rather than
+  // as the shape mismatch it is.
+  auto note{std::string()};
+  if (op == BINOP_MUL && lhs.type->isArithmeticMatrix() &&
+      rhs.type->isArithmeticMatrix()) {
+    const auto &lhsExtent{static_cast<ArithmeticType *>(lhs.type)->extent};
+    const auto &rhsExtent{static_cast<ArithmeticType *>(rhs.type)->extent};
+    note = concat("; matrix multiplication needs the columns of the left (",
+                  lhsExtent.numCols, ") to match the rows of the right (",
+                  rhsExtent.numRows, ")");
+  }
+  srcLoc.throwError("no binary operator ", Quoted(to_string(op)),
                     " for argument types ", Quoted(lhs.type->displayName),
-                    " and ", Quoted(rhs.type->displayName));
+                    " and ", Quoted(rhs.type->displayName), note);
 }
 //--}
 
@@ -1793,10 +1889,11 @@ IntrinsicID Emitter::resolveIntrinsic(std::string_view name,
   auto intrinsicID{getIntrinsicByName(name)};
   if (intrinsicID == IntrinsicID::Invalid) {
     auto similar{getSimilarIntrinsicName(name)};
+    // The name is quoted with its '#' because that is how it is written.
     if (!similar.empty())
-      srcLoc.throwError("unimplemented intrinsic ", Quoted(name),
-                        "; did you mean ", Quoted(similar), "?");
-    srcLoc.throwError("unimplemented intrinsic ", Quoted(name));
+      srcLoc.throwError("no intrinsic ", Quoted(concat("#", name)),
+                        "; did you mean ", Quoted(concat("#", similar)), "?");
+    srcLoc.throwError("no intrinsic ", Quoted(concat("#", name)));
   }
   return intrinsicID;
 }
@@ -2814,7 +2911,8 @@ Value Emitter::emitIntrinsic(IntrinsicID intrinsicID, const ArgumentList &args,
     break;
   }
   }
-  srcLoc.throwError("unimplemented intrinsic ", Quoted(name));
+  srcLoc.throwError("intrinsic ", Quoted(concat("#", name)),
+                    " is recognized but not implemented");
 }
 
 // Emit one of the `#load...` intrinsics.
@@ -2897,7 +2995,7 @@ Value Emitter::emitIntrinsicLoad(IntrinsicID intrinsicID,
     auto resolvedFileName{context.locate(fileName)};
     if (!resolvedFileName) {
       context.compiler.logResourceWarningOnce(
-          srcLoc, fileName,
+          resourceSourceLocation(srcLoc), fileName,
           concat("cannot load ", Quoted(fileName), ": file not found"));
       return invoke(resultType, {}, srcLoc);
     }
@@ -2921,7 +3019,8 @@ Value Emitter::emitIntrinsicLoad(IntrinsicID intrinsicID,
     auto resolvedImagePaths{context.locateImages(fileName)};
     if (resolvedImagePaths.empty()) {
       context.compiler.logResourceWarningOnce(
-          srcLoc, fileName, concat("no image(s) found for ", Quoted(fileName)));
+          resourceSourceLocation(srcLoc), fileName,
+          concat("no image(s) found for ", Quoted(fileName)));
       return invoke(texture2DType, {}, srcLoc);
     }
     auto tileCountU{uint32_t(1)};
@@ -2935,7 +3034,7 @@ Value Emitter::emitIntrinsicLoad(IntrinsicID intrinsicID,
       if (images.back()->getFormat() != images.front()->getFormat() ||
           images.back()->getNumChannels() != images.front()->getNumChannels()) {
         context.compiler.logResourceWarningOnce(
-            srcLoc, fileName,
+            resourceSourceLocation(srcLoc), fileName,
             concat("inconsistent image formats for ", Quoted(fileName)));
         return invoke(texture2DType, {}, srcLoc);
       }
@@ -3038,7 +3137,7 @@ Value Emitter::emitIntrinsicLoad(IntrinsicID intrinsicID,
     auto [fileName, valueGammaAsInt] = expectOneComptimeStringAndOneInt();
     // TODO Actually load the texture
     context.compiler.logResourceWarningOnce(
-        srcLoc, fileName,
+        resourceSourceLocation(srcLoc), fileName,
         "intrinsic 'loadTextureCube' is not implemented yet; returning "
         "default texture");
     return invoke(textureCubeType, {}, srcLoc);
@@ -3087,7 +3186,7 @@ Value Emitter::emitIntrinsicLoad(IntrinsicID intrinsicID,
     auto resolvedPath{context.locateDirOrFile(fileName)};
     if (!resolvedPath) {
       context.compiler.logResourceWarningOnce(
-          srcLoc, fileName,
+          resourceSourceLocation(srcLoc), fileName,
           concat("cannot load ", Quoted(fileName),
                  ": file or directory not found"));
       return invoke(pbrMapsType, {}, srcLoc);
@@ -3110,7 +3209,8 @@ Value Emitter::emitIntrinsicLoad(IntrinsicID intrinsicID,
     // both, while a pack loaded by ten materials warns once.
     for (const auto &warning : manifest->warnings)
       context.compiler.logResourceWarningOnce(
-          srcLoc, concat(manifestFileName, ": ", warning), warning);
+          resourceSourceLocation(srcLoc),
+          concat(manifestFileName, ": ", warning), warning);
     auto manifestDirName{parentPathOf(manifestFileName)};
     auto mapsArgs{ArgumentList{}};
     if (!manifest->name.empty())
@@ -3366,8 +3466,31 @@ void Emitter::expandInlineArgument(ArgumentList &args, AST::Argument &astArg) {
   }
 }
 
+void Emitter::rejectAssignmentAsNamedArgument(AST::Argument &astArg) {
+  if (!astArg.isPositional()) return;
+  auto binary{llvm::dyn_cast_if_present<AST::Binary>(astArg.expr.get())};
+  if (!binary || binary->op != BINOP_EQ) return;
+  auto identifier{
+      llvm::dyn_cast_if_present<AST::Identifier>(binary->exprLhs.get())};
+  if (!identifier || !identifier->isSimpleName()) return;
+  // An assignment to something that exists is a real assignment, however
+  // odd it looks in an argument list.
+  auto names{context.internName(*identifier)};
+  Declaration *unusableMatch{};
+  if (probeName(names, getLLVMFunction(), &unusableMatch)) return;
+  const auto name{names[0]};
+  identifier->srcLoc.throwError("cannot resolve identifier ", Quoted(name),
+                                "; a named argument is written ",
+                                Quoted(concat(name, ": ...")), ", not ",
+                                Quoted(concat(name, " = ...")));
+}
+
 Value Emitter::emitCall(Value callee, const ArgumentList &args,
                         const SourceLocation &srcLoc) {
+  // Anything emitted inside this call can blame the user's line for a
+  // resource it cannot find, however deep into the builtins it goes.
+  SMDL_PRESERVE(srcLocUserCall);
+  if (srcLoc.module_ && !srcLoc.module_->isBuiltin()) srcLocUserCall = srcLoc;
   if (args.isAnyVisited()) {
     auto visitedIndex{args.indexOfFirstVisited()};
     return emitVisit(args[visitedIndex].value, srcLoc, [&](Value value) {
@@ -3442,8 +3565,12 @@ Value Emitter::emitVisit(Value value, const SourceLocation &srcLoc,
 
 extern "C" {
 
-SMDL_EXPORT void smdlPanic(const char *message) {
-  throw Error(std::string(message));
+SMDL_EXPORT void smdlPanic(const char *location, const char *message,
+                           const char *snippet) {
+  auto str{std::string(location)};
+  if (!str.empty()) str += ' ';
+  str += message;
+  throw Error(std::move(str), std::string(snippet));
 }
 
 } // extern "C"
@@ -3452,8 +3579,13 @@ void Emitter::emitPanic(Value message, const SourceLocation &srcLoc) {
   SMDL_SANITY_CHECK(message);
   SMDL_SANITY_CHECK(message.type == context.getStringType());
   message = rvalue(message);
+  // The location travels as its own argument because the message may be a
+  // run-time string, which there is no way to concatenate to here.
+  auto location{context.getComptimeString(std::string(srcLoc))};
+  auto snippet{context.getComptimeString(srcLoc.getSourceSnippet())};
   auto callInst{builder.CreateCall(
-      context.getBuiltinCallee("smdlPanic", &smdlPanic), {message.llvmValue})};
+      context.getBuiltinCallee("smdlPanic", &smdlPanic),
+      {location.llvmValue, message.llvmValue, snippet.llvmValue})};
   callInst->setIsNoInline();
   callInst->setDoesNotReturn();
 }
@@ -3624,6 +3756,127 @@ void Emitter::emitPrint(Value file, Value value, const SourceLocation &srcLoc,
   }
 }
 
+std::vector<std::string_view> Emitter::exportedNamesOf(Module *module_) {
+  auto exportedNames{std::vector<std::string_view>{}};
+  if (module_ && module_->mRootScope)
+    for (const auto &[key, declaration] : module_->mRootScope->decls)
+      if (declaration && declaration->name.size() == 1 &&
+          declaration->isExported())
+        exportedNames.push_back(declaration->name[0]);
+  return exportedNames;
+}
+
+std::string
+Emitter::suggestForFailedImport(Span<const std::string_view> modulePath) {
+  const auto typed{join(modulePath, "::")};
+  auto candidates{std::vector<std::string_view>{}};
+  for (auto builtinName : builtin::getAllNames())
+    candidates.push_back(builtinName);
+  // The qualified names carry the leading '::' that an import path spells
+  // separately, so drop it before comparing.
+  for (const auto &[qualifiedName, module_] :
+       context.compiler.mModulesByQualifiedName)
+    candidates.push_back(std::string_view(qualifiedName).substr(2));
+  if (auto similar{suggestNearestName(typed, candidates)}; !similar.empty())
+    return concat("; did you mean ", Quoted(concat("::", similar)), "?");
+  // Nothing is close, so answer the question the user actually has, which
+  // for a failed import is where the compiler looked.
+  const auto &searchPaths{context.compiler.mModuleDirSearchPaths};
+  if (searchPaths.empty())
+    return "; there are no module search paths to look in";
+  auto str{std::string("; searched ")};
+  for (size_t i{}; i < searchPaths.size(); i++) {
+    if (i > 0) str += ", ";
+    str += concat(QuotedPath(searchPaths[i]));
+  }
+  return str;
+}
+
+std::string
+Emitter::suggestForUnresolvedName(Span<const std::string_view> names,
+                                  const SourceLocation &srcLoc) {
+  auto suggest{[](std::string_view name) {
+    return concat("; did you mean ", Quoted(name), "?");
+  }};
+  const auto isSMDL{currentModule == nullptr || currentModule->isSMDLSyntax()};
+  if (names.size() > 1) {
+    // A qualified name whose prefix names a module: look for the last
+    // element among that module's exports.
+    auto prefix{names.dropBack()};
+    Declaration *unusableMatch{};
+    auto declaration{probeName(prefix, getLLVMFunction(), &unusableMatch)};
+    if (!declaration || !declaration->value.isComptimeMetaModule(context))
+      return {};
+    auto exportedNames{exportedNamesOf(
+        declaration->value.getComptimeMetaModule(context, srcLoc))};
+    if (auto similar{suggestNearestName(names.back(), exportedNames)};
+        !similar.empty())
+      return suggest(concat(join(prefix, "::"), "::", similar));
+    return {};
+  }
+  const auto name{names[0]};
+  // The strongest signal there is: a module the file already imports really
+  // does export this name, and only the qualification is missing. Imports
+  // live apart from the other declarations, so both lists are walked.
+  auto declaredNames{std::vector<std::string_view>{}};
+  auto hintIfModuleExports{[&](Declaration *declaration) {
+    auto hint{std::string()};
+    if (!declaration || declaration->name.size() != 1 ||
+        !declaration->value.isComptimeMetaModule(context))
+      return hint;
+    auto module_{declaration->value.getComptimeMetaModule(context, srcLoc)};
+    if (!module_ ||
+        !Declaration::findInModule(context, name, getLLVMFunction(), module_))
+      return hint;
+    const auto moduleName{declaration->name[0]};
+    hint = concat("; ", Quoted(moduleName),
+                  " is imported but not opened, did you mean ",
+                  Quoted(concat(moduleName, "::", name)),
+                  ", or 'using ::", moduleName, " import ", name, ";'?");
+    return hint;
+  }};
+  for (auto s{scope}; s; s = s->parent) {
+    for (const auto &[key, declaration] : s->decls) {
+      if (declaration && declaration->name.size() == 1)
+        declaredNames.push_back(declaration->name[0]);
+      if (auto hint{hintIfModuleExports(declaration)}; !hint.empty())
+        return hint;
+    }
+    for (auto declaration : s->imports)
+      if (auto hint{hintIfModuleExports(declaration)}; !hint.empty())
+        return hint;
+  }
+  if (isSMDL) {
+    if (name == "state") return suggest("$state");
+    // The C spelling of an intrinsic is a stronger signal than any
+    // near-miss, because the word is exactly right and only the '#' is
+    // missing.
+    if (getIntrinsicByName(name) != IntrinsicID::Invalid)
+      return suggest(concat("#", name));
+  }
+  // Everything else that could have been meant, weighed together so that
+  // the nearest one wins outright instead of whichever list is consulted
+  // first. The literals read as words but never reach name resolution, so
+  // they have to be added by hand.
+  static constexpr std::string_view literalNames[]{"true", "false", "none"};
+  auto candidates{std::move(declaredNames)};
+  auto displayNames{std::vector<std::string>{}};
+  for (auto keyword : context.getKeywordNames()) candidates.push_back(keyword);
+  for (auto literal : literalNames) candidates.push_back(literal);
+  for (auto candidate : candidates) displayNames.emplace_back(candidate);
+  if (isSMDL)
+    for (auto intrinsicName : getAllIntrinsicNames()) {
+      candidates.push_back(intrinsicName);
+      displayNames.push_back(concat("#", intrinsicName));
+    }
+  if (auto similar{suggestNearestName(name, candidates)}; !similar.empty())
+    // The plain spellings come first, so an intrinsic whose bare name is
+    // also a real name in scope is suggested without the '#'.
+    for (size_t i{}; i < candidates.size(); i++)
+      if (candidates[i] == similar) return suggest(displayNames[i]);
+  return {};
+}
+
 Value Emitter::resolveIdentifier(Span<const std::string_view> names,
                                  const SourceLocation &srcLoc,
                                  bool voidByDefault) {
@@ -3662,7 +3915,8 @@ Value Emitter::resolveIdentifier(Span<const std::string_view> names,
   if (voidByDefault) {
     return RValue(context.getVoidType(), nullptr);
   }
-  srcLoc.throwError("cannot resolve identifier ", Quoted(join(names, "::")));
+  srcLoc.throwError("cannot resolve identifier ", Quoted(join(names, "::")),
+                    suggestForUnresolvedName(names, srcLoc));
   return Value();
 }
 
@@ -3673,12 +3927,32 @@ Emitter::resolveArguments(const ParameterList &params, const ArgumentList &args,
   // Obvious case: If there are more arguments than parameters, resolution
   // fails.
   if (args.size() > params.size() && !params.isVariadic) {
-    srcLoc.throwError("too many arguments");
+    srcLoc.throwError("too many arguments: expected at most ", params.size(),
+                      ", got ", args.size());
   }
   // Obvious case: If there are argument names that do not correspond to any
   // parameter names, resolution fails.
-  if (!args.isOnlyTheseNames(params.getNames())) {
-    srcLoc.throwError("invalid argument name(s)");
+  // Held by value: a 'Span' over the temporary would dangle.
+  auto paramNames{params.getNames()};
+  if (!args.isOnlyTheseNames(paramNames)) {
+    auto invalidNames{llvm::SmallVector<std::string_view, 2>{}};
+    for (const auto &arg : args)
+      if (!arg.name.empty() &&
+          !Span<const std::string_view>(paramNames).contains(arg.name))
+        invalidNames.push_back(arg.name);
+    auto message{std::string(invalidNames.size() == 1
+                                 ? "no parameter named "
+                                 : "no parameters named ")};
+    for (size_t i{}; i < invalidNames.size(); i++) {
+      if (i > 0) message += ", ";
+      message += concat(Quoted(invalidNames[i]));
+    }
+    // Only the first offender gets a suggestion. Past that the user is not
+    // making a typo, they are calling something else entirely.
+    if (auto similar{suggestNearest(invalidNames[0], paramNames)};
+        !similar.empty())
+      message += concat("; did you mean ", Quoted(similar), "?");
+    srcLoc.throwError(std::move(message));
   }
   // The primary resolution logic.
   ResolvedArguments resolvedArgs{params, args};

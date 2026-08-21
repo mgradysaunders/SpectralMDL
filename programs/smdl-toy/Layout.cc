@@ -151,20 +151,20 @@ private:
         mResult.exteriorMediumName = document.mediumName;
       if (!document.iblPath.empty())
         if (auto resolved{resolvePath(document, document.iblPath,
-                                      document.iblPathLocation, false)};
+                                      document.iblPathLoc, false)};
             !resolved.empty())
           mResult.sky.iblFileName = resolved.string();
     } else {
-      if (document.cameraLocation)
-        mDiags.warn(document.cameraLocation,
+      if (document.cameraLoc)
+        mDiags.warn(document.cameraLoc,
                     "the 'camera' of an imported layout is ignored (only "
                     "the entry layout's camera takes effect)");
-      if (document.skyLocation)
-        mDiags.warn(document.skyLocation,
+      if (document.skyLoc)
+        mDiags.warn(document.skyLoc,
                     "the 'sky' of an imported layout is ignored (only the "
                     "entry layout's sky takes effect)");
-      if (document.mediumLocation)
-        mDiags.warn(document.mediumLocation,
+      if (document.mediumLoc)
+        mDiags.warn(document.mediumLoc,
                     "the 'medium' of an imported layout is ignored (only "
                     "the entry layout's medium takes effect)");
     }
@@ -176,17 +176,17 @@ private:
                     usedGroups, usedLights, groupStack, std::string());
     for (size_t i = 0; i < document.assets.size(); i++)
       if (!usedAssets[i])
-        mDiags.warn(document.assets[i].nameLocation,
+        mDiags.warn(document.assets[i].nameLoc,
                     smdl::concat("unused asset ",
                                  smdl::Quoted(document.assets[i].name)));
     for (size_t i = 0; i < document.groups.size(); i++)
       if (!usedGroups[i])
-        mDiags.warn(document.groups[i].nameLocation,
+        mDiags.warn(document.groups[i].nameLoc,
                     smdl::concat("unused group ",
                                  smdl::Quoted(document.groups[i].name)));
     for (size_t i = 0; i < document.lights.size(); i++)
       if (!usedLights[i])
-        mDiags.warn(document.lights[i].nameLocation,
+        mDiags.warn(document.lights[i].nameLoc,
                     smdl::concat("unused light ",
                                  smdl::Quoted(document.lights[i].name)));
   }
@@ -257,7 +257,7 @@ private:
         }
     if (!decl && !group && !light) {
       auto &error{
-          mDiags.error(placement.assetNameLocation,
+          mDiags.error(placement.assetNameLoc,
                        smdl::concat("no asset, group, or light named ",
                                     smdl::Quoted(placement.assetName)))};
       auto candidates{std::vector<std::string_view>()};
@@ -277,7 +277,7 @@ private:
     // A light has no material slots, so a place-site override on one is a
     // statement that does nothing; say so rather than silently ignore it.
     if (light && (!placement.overrides.empty() || !placement.variants.empty()))
-      mDiags.warn(placement.assetNameLocation,
+      mDiags.warn(placement.assetNameLoc,
                   smdl::concat("material overrides on the light ",
                                smdl::Quoted(placement.assetName),
                                " have no effect"));
@@ -291,22 +291,22 @@ private:
       // record's variant composing where that place's own overrides
       // would (inside this statement's, outside the target's).
       const auto resolved{resolvePath(document, placement.placesPath,
-                                      placement.placesPathLocation, true)};
+                                      placement.placesPathLoc, true)};
       auto places{PlacesFile()};
       try {
         places = readPlacesFile(resolved.string());
       } catch (const smdl::Error &error) {
-        mDiags.error(placement.placesPathLocation, error.message);
+        mDiags.error(placement.placesPathLoc, error.message);
         throw SkipPlacement();
       }
       if (!placement.variants.empty() && !places.hasVariants())
-        mDiags.warn(placement.placesPathLocation,
+        mDiags.warn(placement.placesPathLoc,
                     "the buffer has no variant column, so the 'variant' "
                     "blocks go unused");
       for (size_t i = 0; i < places.variants.size(); i++)
         if (places.variants[i] != PlacesFile::NO_VARIANT &&
             places.variants[i] >= placement.variants.size()) {
-          mDiags.error(placement.placesPathLocation,
+          mDiags.error(placement.placesPathLoc,
                        smdl::concat("record ", i, " picks variant ",
                                     places.variants[i], ", but only ",
                                     placement.variants.size(),
@@ -342,16 +342,15 @@ private:
       const auto batchable{
           decl != nullptr &&
           (decl->primitive.active() ||
-           (target = resolveTarget(document, decl->path, decl->pathLocation))
-                   .kind != Target::Kind::LAYOUT)};
+           (target = resolveTarget(document, decl->path, decl->pathLoc)).kind !=
+               Target::Kind::LAYOUT)};
       if (batchable && !decl->primitive.active())
         checkAssetTargetKind(*decl, target);
       if (!batchable) {
         for (size_t i = 0; i < places.transforms.size(); i++)
-          lowerPlaceTarget(document, decl, group, light,
-                           placement.assetNameLocation, recordXf(i),
-                           outerFor(i), usedAssets, usedGroups, usedLights,
-                           groupStack, placeName);
+          lowerPlaceTarget(document, decl, group, light, placement.assetNameLoc,
+                           recordXf(i), outerFor(i), usedAssets, usedGroups,
+                           usedLights, groupStack, placeName);
         return;
       }
       // Batch by variant class in first-appearance order. Instance
@@ -393,12 +392,12 @@ private:
         if (xfs.size() == 1) {
           item.objectToWorld = xfs[0];
         } else {
-          item.batchTransforms = std::move(xfs);
+          item.batchXfs = std::move(xfs);
         }
       }
       return;
     }
-    lowerPlaceTarget(document, decl, group, light, placement.assetNameLocation,
+    lowerPlaceTarget(document, decl, group, light, placement.assetNameLoc,
                      xf * placement.transform, baseOuter, usedAssets,
                      usedGroups, usedLights, groupStack, placeName);
   }
@@ -409,7 +408,7 @@ private:
   void lowerPlaceTarget(
       const LayoutDocument &document, const LayoutAssetDecl *decl,
       const LayoutGroupDecl *group, const LayoutLightDecl *lightDecl,
-      const LayoutLocation &nameLocation, const float4x4 &combinedXf,
+      const LayoutLocation &nameLoc, const float4x4 &combinedXf,
       const RenameMap &effectiveOuter, std::vector<bool> &usedAssets,
       std::vector<bool> &usedGroups, std::vector<bool> &usedLights,
       std::vector<GroupFrame> &groupStack, const std::string &placeName) {
@@ -419,10 +418,9 @@ private:
       light.lightToWorld = combinedXf * lightDecl->transform;
       light.placeName = placeName;
       if (lightDecl->kind == LayoutLightDecl::Kind::PROFILE)
-        light.decl.profilePath =
-            resolvePath(document, lightDecl->profilePath,
-                        lightDecl->profilePathLocation, true)
-                .string();
+        light.decl.profilePath = resolvePath(document, lightDecl->profilePath,
+                                             lightDecl->profilePathLoc, true)
+                                     .string();
       return;
     }
     if (group) {
@@ -435,12 +433,12 @@ private:
             if (inCycle) message += smdl::concat(" ", open.group->name, " ->");
           }
           message += smdl::concat(" ", group->name);
-          auto &error{mDiags.error(nameLocation, message)};
+          auto &error{mDiags.error(nameLoc, message)};
           for (const auto &open : groupStack)
             error.note(open.site, "placed from here");
           throw SkipPlacement();
         }
-      groupStack.push_back({group, nameLocation});
+      groupStack.push_back({group, nameLoc});
       lowerPlacements(document, group->placements, combinedXf, effectiveOuter,
                       usedAssets, usedGroups, usedLights, groupStack,
                       placeName);
@@ -459,14 +457,13 @@ private:
       item.placeName = placeName;
       return;
     }
-    const auto target{resolveTarget(document, decl->path, decl->pathLocation)};
+    const auto target{resolveTarget(document, decl->path, decl->pathLoc)};
     checkAssetTargetKind(*decl, target);
     if (target.kind == Target::Kind::LAYOUT) {
-      lowerFile(
-          target.path, combinedXf * decl->transform,
-          composeRename(subtreeRenames(decl->materials, decl->pathLocation),
-                        effectiveOuter),
-          false, decl->pathLocation);
+      lowerFile(target.path, combinedXf * decl->transform,
+                composeRename(subtreeRenames(decl->materials, decl->pathLoc),
+                              effectiveOuter),
+                false, decl->pathLoc);
       return;
     }
     auto &item{mResult.items.emplace_back()};
@@ -495,7 +492,7 @@ private:
     if (target.kind != Target::Kind::MESH &&
         (!decl.selection.patterns.empty() || decl.selection.recenter ||
          decl.subdiv.active())) {
-      mDiags.error(decl.pathLocation,
+      mDiags.error(decl.pathLoc,
                    smdl::concat("'select', 'recenter', 'subdivide', and "
                                 "'displace' apply to a mesh file, but ",
                                 smdl::QuotedPath(decl.path), " is a ",
@@ -503,7 +500,7 @@ private:
       throw SkipPlacement();
     }
     if (target.kind != Target::Kind::CURVES && decl.curves.anyOps()) {
-      mDiags.error(decl.curvesOpsLocation,
+      mDiags.error(decl.curvesOpsLoc,
                    smdl::concat("'tube', 'ribbon', and 'radius_scale' apply "
                                 "to a curves file, but ",
                                 smdl::QuotedPath(decl.path), " is a ",
@@ -514,13 +511,12 @@ private:
       // Fibers have no mesh slots, so like a primitive the one thing
       // the declaration cannot go without is the whole-asset binding.
       if (!decl.materials.bySlot.empty()) {
-        mDiags.error(decl.nameLocation,
-                     "a curves file has no material slots; use "
-                     "'material <name>' alone");
+        mDiags.error(decl.nameLoc, "a curves file has no material slots; use "
+                                   "'material <name>' alone");
         throw SkipPlacement();
       }
       if (decl.materials.all.empty()) {
-        mDiags.error(decl.nameLocation,
+        mDiags.error(decl.nameLoc,
                      smdl::concat("the curves asset ", smdl::Quoted(decl.name),
                                   " needs 'material <name>' in its block"));
         throw SkipPlacement();
@@ -531,28 +527,28 @@ private:
   void lowerImport(const LayoutDocument &document,
                    const LayoutPlacement &placement, const float4x4 &xf,
                    const RenameMap &outerRenames) {
-    const auto target{resolveTarget(document, placement.importPath,
-                                    placement.importPathLocation)};
+    const auto target{
+        resolveTarget(document, placement.importPath, placement.importPathLoc)};
     if (target.kind == Target::Kind::LAYOUT) {
       lowerFile(target.path, xf * placement.transform,
                 composeRename(subtreeRenames(placement.importMaterials,
-                                             placement.importPathLocation),
+                                             placement.importPathLoc),
                               outerRenames),
-                false, placement.importPathLocation);
+                false, placement.importPathLoc);
       return;
     }
     if (target.kind == Target::Kind::CURVES) {
       // Fibers have no slots to default from, so an import must bind
       // them, exactly as an asset declaration must.
       if (!placement.importMaterials.bySlot.empty()) {
-        mDiags.error(placement.importPathLocation,
+        mDiags.error(placement.importPathLoc,
                      "a curves file has no material slots; use "
                      "'material <name>' alone");
         throw SkipPlacement();
       }
       if (placement.importMaterials.all.empty()) {
         mDiags
-            .error(placement.importPathLocation,
+            .error(placement.importPathLoc,
                    smdl::concat("importing the curves file ",
                                 smdl::QuotedPath(placement.importPath),
                                 " needs a material"))

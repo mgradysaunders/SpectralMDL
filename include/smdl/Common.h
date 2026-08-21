@@ -199,6 +199,12 @@ public:
   /// `Module::getDisplayName()`.
   [[nodiscard]] std::string_view getModuleDisplayName() const;
 
+  /// Get the source line containing this location with a caret under the
+  /// relevant column, as a block that begins with a newline so that it may
+  /// be appended after a diagnostic message and whatever notes follow it.
+  /// Returns the empty string if there is no source code to show.
+  [[nodiscard]] std::string getSourceSnippet() const;
+
   /// Log a warning.
   void logWarn(std::string_view message) const;
 

@@ -192,12 +192,9 @@ float LightProfile::power() const noexcept {
   return distribution.unnormalizedSum() * 2.0f * PI * PI /
          (float(nX) * float(nY));
 }
-
-constexpr float radToDeg = 180.0f / 3.14159265359f;
-
 [[nodiscard]]
 static float atan2Degrees(float y, float x) {
-  float theta{radToDeg * std::atan2(y, x)};
+  float theta{degrees(std::atan2(y, x))};
   theta = std::fmax(theta, -180.0f);
   theta = std::fmin(theta, +180.0f);
   return theta;
@@ -210,7 +207,7 @@ static float atan2DegreesPositive(float y, float x) {
   // to a value in degrees between negative and positive 180,
   // then biases negative values so that the result is between
   // zero and 360.
-  float theta{radToDeg * std::atan2(y, x)};
+  float theta{degrees(std::atan2(y, x))};
   if (theta < 0.0f) theta += 360.0f;
   theta = std::fmax(theta, 0.0f);
   theta = std::fmin(theta, 360.0f);

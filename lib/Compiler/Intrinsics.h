@@ -3,6 +3,8 @@
 
 #include <string_view>
 
+#include "smdl/Support/Span.h"
+
 namespace smdl {
 
 /// \addtogroup Compiler
@@ -29,6 +31,11 @@ enum class IntrinsicID {
 /// The canonical source spelling of the given intrinsic, without the leading
 /// `#`. Returns an empty view for `IntrinsicID::Invalid`.
 [[nodiscard]] std::string_view getIntrinsicName(IntrinsicID intrID);
+
+/// Every intrinsic's canonical source spelling, without the leading `#`,
+/// for did-you-mean suggestions that weigh intrinsics against the other
+/// names in scope.
+[[nodiscard]] Span<const std::string_view> getAllIntrinsicNames();
 
 /// The name of the intrinsic most similar to `name`, for use in a
 /// "did you mean" hint after `getIntrinsicByName()` fails. Returns an empty

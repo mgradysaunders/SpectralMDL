@@ -59,7 +59,7 @@ public:
   /// The index in the `Scene::materials` array, interned from the
   /// asset's `material <name>` under the same instance-level split
   /// meshes get: overrides that rename it bind on the instance.
-  uint32_t materialIndex{};
+  uint32_t matIndex{};
 
   /// The Embree vertex buffer, shared with the geometry (so this vector
   /// must never reallocate once the geometry is built): the file's
@@ -69,16 +69,16 @@ public:
 
   /// The Embree index buffer source: the first control vertex of each
   /// segment.
-  std::vector<uint32_t> segmentIndices{};
+  std::vector<uint32_t> segIndices{};
 
   /// The strand each segment belongs to. Size = segment count.
-  std::vector<uint32_t> segmentStrand{};
+  std::vector<uint32_t> segStrand{};
 
   /// The fence-post table of segments per strand: strand `i` owns the
-  /// segments `[strandFirstSegment[i], strandFirstSegment[i + 1])`,
+  /// segments `[strandFirstSeg[i], strandFirstSeg[i + 1])`,
   /// which is what turns a per-segment `u` into the root-to-tip
   /// `strandU`.
-  std::vector<uint32_t> strandFirstSegment{};
+  std::vector<uint32_t> strandFirstSeg{};
 
   /// The per-strand root UVs, straight from the file, or empty.
   std::vector<float2> rootUVs{};
@@ -91,26 +91,25 @@ public:
   std::vector<float3> proxyPoints{};
 
   [[nodiscard]] uint32_t strandCount() const noexcept {
-    return strandFirstSegment.empty() ? 0
-                                      : uint32_t(strandFirstSegment.size() - 1);
+    return strandFirstSeg.empty() ? 0 : uint32_t(strandFirstSeg.size() - 1);
   }
 
-  [[nodiscard]] uint32_t segmentCount() const noexcept {
-    return uint32_t(segmentIndices.size());
+  [[nodiscard]] uint32_t segCount() const noexcept {
+    return uint32_t(segIndices.size());
   }
 
-  /// The fiber center at (`segmentIndex`, `u` in [0, 1]).
-  [[nodiscard]] CurveAxis axisAt(uint32_t segmentIndex, float u) const {
-    return evalCurveAxis(basis, &points[segmentIndices[segmentIndex]], u);
+  /// The fiber center at (`segIndex`, `u` in [0, 1]).
+  [[nodiscard]] CurveAxis axisAt(uint32_t segIndex, float u) const {
+    return evalCurveAxis(basis, &points[segIndices[segIndex]], u);
   }
 };
 
 /// Create a curves object: build the Embree curve geometry (the file's
 /// basis crossed with `spec.mode`), the strand tables, and the proxy
-/// points, and commit its scene. The caller interns `materialIndex` and
+/// points, and commit its scene. The caller interns `matIndex` and
 /// owns the result; the geometry shares the point buffer, so the result
 /// must not be relocated afterward.
 [[nodiscard]] std::unique_ptr<Curves> makeCurves(RTCDevice device,
                                                  CurvesFile file,
                                                  const CurvesSpec &spec,
-                                                 uint32_t materialIndex);
+                                                 uint32_t matIndex);

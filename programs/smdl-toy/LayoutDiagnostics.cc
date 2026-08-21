@@ -33,11 +33,11 @@ std::string_view LayoutSource::lineText(uint32_t lineNo) const noexcept {
   return std::string_view(text).substr(start, end - start);
 }
 
-LayoutDiagnostic &LayoutDiagnostic::note(LayoutLocation noteLocation,
+LayoutDiagnostic &LayoutDiagnostic::note(LayoutLocation noteLoc,
                                          std::string noteMessage) {
   auto &added{notes.emplace_back()};
   added.kind = Kind::NOTE;
-  added.location = noteLocation;
+  added.location = noteLoc;
   added.message = std::move(noteMessage);
   return *this;
 }
@@ -77,11 +77,10 @@ LayoutDiagnostic &LayoutDiagnostics::warn(LayoutLocation location,
   return added;
 }
 
-void LayoutDiagnostics::noteAllFrom(size_t firstIndex,
-                                    LayoutLocation noteLocation,
+void LayoutDiagnostics::noteAllFrom(size_t firstIndex, LayoutLocation noteLoc,
                                     std::string noteMessage) {
   for (size_t i = firstIndex; i < mDiagnostics.size(); i++)
-    mDiagnostics[i].note(noteLocation, noteMessage);
+    mDiagnostics[i].note(noteLoc, noteMessage);
 }
 
 namespace {

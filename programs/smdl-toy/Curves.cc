@@ -8,12 +8,11 @@
 // stays Embree-free for the doctest binary.
 
 std::unique_ptr<Curves> makeCurves(RTCDevice device, CurvesFile file,
-                                   const CurvesSpec &spec,
-                                   uint32_t materialIndex) {
+                                   const CurvesSpec &spec, uint32_t matIndex) {
   auto curves{std::make_unique<Curves>()};
   curves->spec = spec;
   curves->basis = file.basis;
-  curves->materialIndex = materialIndex;
+  curves->matIndex = matIndex;
   curves->rootUVs = std::move(file.rootUVs);
   const auto strandCount{file.strandCount()};
   // Build the Embree-ready buffers strand by strand. The points pass
@@ -27,8 +26,8 @@ std::unique_ptr<Curves> makeCurves(RTCDevice device, CurvesFile file,
   const auto windowSize{file.basis == CurvesFile::Basis::LINEAR ? 2U : 4U};
   curves->points.reserve(file.points.size() +
                          (isCatmullRom ? 2 * size_t(strandCount) : 0));
-  curves->strandFirstSegment.reserve(size_t(strandCount) + 1);
-  curves->strandFirstSegment.push_back(0);
+  curves->strandFirstSeg.reserve(size_t(strandCount) + 1);
+  curves->strandFirstSeg.push_back(0);
   for (uint32_t strand = 0; strand < strandCount; strand++) {
     const auto first{file.strandOffsets[strand]};
     const auto last{file.strandOffsets[strand + 1]};
@@ -41,26 +40,21 @@ std::unique_ptr<Curves> makeCurves(RTCDevice device, CurvesFile file,
       for (auto i = size_t(base); i < curves->points.size(); i++)
         curves->points[i].w *= spec.radiusScale;
     const auto numPoints{uint32_t(curves->points.size()) - base};
-    const auto numSegments{numPoints - (windowSize - 1)};
-    for (uint32_t segment = 0; segment < numSegments; segment++) {
-      curves->segmentIndices.push_back(base + segment);
-      curves->segmentStrand.push_back(strand);
+    const auto numSegs{numPoints - (windowSize - 1)};
+    for (uint32_t segment = 0; segment < numSegs; segment++) {
+      curves->segIndices.push_back(base + segment);
+      curves->segStrand.push_back(strand);
     }
-    curves->strandFirstSegment.push_back(
-        uint32_t(curves->segmentIndices.size()));
+    curves->strandFirstSeg.push_back(uint32_t(curves->segIndices.size()));
   }
   // The proxy points: enough of the control points to frame and bound
   // by, plus the radius-inflated bounding corners so the fattest fiber
   // still fits. The framing solver walks these per instance, so they
   // are capped rather than complete.
-  auto lower{float3(+INFINITY, +INFINITY, +INFINITY)};
-  auto upper{float3(-INFINITY, -INFINITY, -INFINITY)};
+  BoundBox3 bound{};
   float maxRadius{};
   for (const auto &point : curves->points) {
-    for (int axis = 0; axis < 3; axis++) {
-      lower[axis] = std::min(lower[axis], point[axis]);
-      upper[axis] = std::max(upper[axis], point[axis]);
-    }
+    bound.extend(float3(point.x, point.y, point.z));
     maxRadius = std::max(maxRadius, point.w);
   }
   constexpr size_t PROXY_POINT_CAP = 4096;
@@ -71,9 +65,12 @@ std::unique_ptr<Curves> makeCurves(RTCDevice device, CurvesFile file,
   if (!curves->points.empty())
     for (int corner = 0; corner < 8; corner++)
       curves->proxyPoints.push_back(
-          float3(((corner & 1) ? upper.x + maxRadius : lower.x - maxRadius),
-                 ((corner & 2) ? upper.y + maxRadius : lower.y - maxRadius),
-                 ((corner & 4) ? upper.z + maxRadius : lower.z - maxRadius)));
+          float3(((corner & 1) ? bound.upper.x + maxRadius
+                               : bound.lower.x - maxRadius),
+                 ((corner & 2) ? bound.upper.y + maxRadius
+                               : bound.lower.y - maxRadius),
+                 ((corner & 4) ? bound.upper.z + maxRadius
+                               : bound.lower.z - maxRadius)));
   // The geometry type is the file's basis crossed with the spec's
   // cross-section mode; see `RTC_GEOMETRY_TYPE_CURVE(3)`.
   auto geometryType{RTC_GEOMETRY_TYPE_ROUND_BSPLINE_CURVE};
@@ -107,9 +104,8 @@ std::unique_ptr<Curves> makeCurves(RTCDevice device, CurvesFile file,
                              sizeof(float4), curves->points.size());
   auto *indices{static_cast<uint32_t *>(rtcSetNewGeometryBuffer(
       geometry, RTC_BUFFER_TYPE_INDEX, 0, RTC_FORMAT_UINT, sizeof(uint32_t),
-      curves->segmentIndices.size()))};
-  std::copy(curves->segmentIndices.begin(), curves->segmentIndices.end(),
-            indices);
+      curves->segIndices.size()))};
+  std::copy(curves->segIndices.begin(), curves->segIndices.end(), indices);
   rtcCommitGeometry(geometry);
   rtcAttachGeometry(curves->scene, geometry);
   rtcReleaseGeometry(geometry);

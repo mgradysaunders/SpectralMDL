@@ -15,9 +15,6 @@
 
 namespace {
 
-constexpr float PI = 3.14159265358979323846f;
-constexpr float TWO_PI = 6.28318530717958647692f;
-
 // The azimuth parameter of a point in the XY plane, wrapped to [0, 1).
 [[nodiscard]] float azimuthOf(float x, float y) noexcept {
   float u{std::atan2(y, x) * (1.0f / TWO_PI)};
@@ -50,10 +47,7 @@ enum : uint32_t {
   return surface;
 }
 
-// One candidate root acceptor for the quadratic shapes: the smallest
-// `t` inside the ray interval whose hit also lies inside the shape's
-// finite extent wins, and testing both roots is what lets a ray that
-// starts inside (a transmissive interior) find its way out.
+// The real roots of a quadratic, in increasing order.
 class RootPair final {
 public:
   float t0{-1.0f};
@@ -88,6 +82,21 @@ public:
   float3 ng{};
 };
 
+// Accept the first root that lies inside the ray interval and that the
+// shape also admits: `accept(t)` fills `hit` and returns true, or
+// returns false to reject the root and fall through to the next.
+// Testing both roots is what lets a ray that starts inside (a
+// transmissive interior) find its way out.
+template <typename F>
+[[nodiscard]] bool acceptRoot(const RootPair &roots, float tnear, float tfar,
+                              F accept) {
+  for (int i = 0; i < roots.count; i++) {
+    const float t{i == 0 ? roots.t0 : roots.t1};
+    if (t > tnear && t < tfar && accept(t)) return true;
+  }
+  return false;
+}
+
 [[nodiscard]] bool intersectCap(float r, float z, float sign, const float3 &org,
                                 const float3 &dir, float tnear, float tfar,
                                 PieceHit &hit) {
@@ -114,9 +123,7 @@ public:
     const auto roots{solveQuadratic(smdl::dot(dir, dir),
                                     2.0f * smdl::dot(org, dir),
                                     smdl::dot(org, org) - r * r)};
-    for (int i = 0; i < roots.count; i++) {
-      const float t{i == 0 ? roots.t0 : roots.t1};
-      if (!(t > tnear && t < tfar)) continue;
+    return acceptRoot(roots, tnear, tfar, [&](float t) {
       const auto point{org + t * dir};
       const auto normal{smdl::normalize(point)};
       hit.t = t;
@@ -125,8 +132,7 @@ public:
                           (1.0f / PI));
       hit.ng = normal;
       return true;
-    }
-    return false;
+    });
   }
   case PrimitiveSpec::Shape::DISK:
     return intersectCap(r, 0.0f, 1.0f, org, dir, tnear, tfar, hit);
@@ -138,19 +144,16 @@ public:
     const auto roots{solveQuadratic(dir.x * dir.x + dir.y * dir.y,
                                     2.0f * (org.x * dir.x + org.y * dir.y),
                                     org.x * org.x + org.y * org.y - r * r)};
-    for (int i = 0; i < roots.count; i++) {
-      const float t{i == 0 ? roots.t0 : roots.t1};
-      if (!(t > tnear && t < tfar)) continue;
+    return acceptRoot(roots, tnear, tfar, [&](float t) {
       const float z{org.z + t * dir.z};
-      if (!(z >= 0.0f && z <= h)) continue;
+      if (!(z >= 0.0f && z <= h)) return false;
       const float px{org.x + t * dir.x};
       const float py{org.y + t * dir.y};
       hit.t = t;
       hit.uv = float2(azimuthOf(px, py), z / h);
       hit.ng = float3(px, py, 0.0f);
       return true;
-    }
-    return false;
+    });
   }
   case PrimitiveSpec::Shape::CONE: {
     if (primID == CONE_BASE)
@@ -163,22 +166,19 @@ public:
         solveQuadratic(dir.x * dir.x + dir.y * dir.y - k * k * dir.z * dir.z,
                        2.0f * (org.x * dir.x + org.y * dir.y + k * m * dir.z),
                        org.x * org.x + org.y * org.y - m * m)};
-    for (int i = 0; i < roots.count; i++) {
-      const float t{i == 0 ? roots.t0 : roots.t1};
-      if (!(t > tnear && t < tfar)) continue;
+    return acceptRoot(roots, tnear, tfar, [&](float t) {
       const float z{org.z + t * dir.z};
-      if (!(z >= 0.0f && z <= h)) continue;
+      if (!(z >= 0.0f && z <= h)) return false;
       const float px{org.x + t * dir.x};
       const float py{org.y + t * dir.y};
       // The apex has no azimuth and a zero gradient; treat a hit within
       // float noise of it as a miss rather than manufacture a frame.
-      if (px * px + py * py < 1e-12f * r * r) continue;
+      if (px * px + py * py < 1e-12f * r * r) return false;
       hit.t = t;
       hit.uv = float2(azimuthOf(px, py), z / h);
       hit.ng = float3(px, py, k * (r - k * z));
       return true;
-    }
-    return false;
+    });
   }
   default:
     return false;
@@ -249,7 +249,7 @@ void primitiveOccluded(const RTCOccludedFunctionNArguments *args) {
   PieceHit hit{};
   if (intersectPiece(primitive->spec, args->primID, org, dir, ray->tnear,
                      ray->tfar, hit))
-    ray->tfar = -std::numeric_limits<float>::infinity();
+    ray->tfar = -INF;
 }
 
 // The object-space area of one piece.
@@ -311,6 +311,10 @@ PrimitiveSurface evalPrimitiveSurface(const PrimitiveSpec &spec,
     surface.dPdu = TWO_PI * float3(-surface.point.y, surface.point.x, 0.0f);
     surface.dPdv =
         PI * r * float3(cosTheta * cosPhi, cosTheta * sinPhi, -sinTheta);
+    // The unit normal is the point over the radius, so its partials are
+    // the point's partials over the radius.
+    surface.dNdu = surface.dPdu / r;
+    surface.dNdv = surface.dPdv / r;
     return surface;
   }
   case PrimitiveSpec::Shape::DISK:
@@ -323,6 +327,7 @@ PrimitiveSurface evalPrimitiveSurface(const PrimitiveSpec &spec,
     surface.normal = float3(cosPhi, sinPhi, 0.0f);
     surface.dPdu = TWO_PI * float3(-surface.point.y, surface.point.x, 0.0f);
     surface.dPdv = float3(0.0f, 0.0f, h);
+    surface.dNdu = TWO_PI * float3(-sinPhi, cosPhi, 0.0f);
     return surface;
   }
   case PrimitiveSpec::Shape::CONE: {
@@ -335,6 +340,8 @@ PrimitiveSurface evalPrimitiveSurface(const PrimitiveSpec &spec,
     surface.normal = smdl::normalize(float3(h * cosPhi, h * sinPhi, r));
     surface.dPdu = TWO_PI * float3(-surface.point.y, surface.point.x, 0.0f);
     surface.dPdv = float3(-r * cosPhi, -r * sinPhi, h);
+    surface.dNdu =
+        (TWO_PI * h / std::sqrt(h * h + r * r)) * float3(-sinPhi, cosPhi, 0.0f);
     return surface;
   }
   default:
@@ -385,12 +392,11 @@ PrimitiveAreaSample samplePrimitiveArea(const PrimitiveSpec &spec, float2 xi) {
   return sample;
 }
 
-std::unique_ptr<Primitive> makePrimitive(RTCDevice device,
-                                         const PrimitiveSpec &spec,
-                                         uint32_t materialIndex) {
+std::unique_ptr<Primitive>
+makePrimitive(RTCDevice device, const PrimitiveSpec &spec, uint32_t matIndex) {
   auto primitive{std::make_unique<Primitive>()};
   primitive->spec = spec;
-  primitive->materialIndex = materialIndex;
+  primitive->matIndex = matIndex;
   primitive->objectArea = primitiveObjectArea(spec);
   // The proxy points: a coarse parameter grid per piece, endpoints
   // included so poles, rims, and caps all contribute to bounds.

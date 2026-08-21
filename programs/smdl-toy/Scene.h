@@ -11,9 +11,13 @@
 #include "smdl/Support/ColorVector.h"
 #include "smdl/Support/MonteCarlo.h"
 
-// For `ObjectSelection`, `SubdivSpec`, and `MaterialAssignment`: the
-// properties an item carries live with the layout format that spells
-// them, and the scene consumes them as plain data.
+// For the import data model, the listing entry points, and `INF` and
+// `INVALID_INDEX`.
+#include "MeshImport.h"
+
+// For `SubdivSpec` and `MaterialAssignment`: the properties an item
+// carries live with the layout format that spells them, and the scene
+// consumes them as plain data.
 #include "Layout.h"
 
 // The analytic shapes, which instances wrap exactly as they wrap meshes.
@@ -25,12 +29,10 @@
 /// The default wavelength range in nanometers, spanning the visible.
 constexpr float WAVELENGTH_MIN = 380.0f;
 constexpr float WAVELENGTH_MAX = 720.0f;
+
+/// The self-intersection offset, in scene units.
 constexpr float EPS = 0.0001f;
-constexpr float INF = std::numeric_limits<float>::infinity();
-constexpr uint32_t INVALID_INDEX = uint32_t(-1);
-using smdl::PI;
-using namespace smdl::vector_type_aliases;
-using namespace smdl::matrix_type_aliases;
+
 /// The render-wide wavelength band count, which sizes every `Color`.
 ///
 /// Set exactly once in `main()` before anything constructs a `Color`
@@ -84,18 +86,6 @@ public:
   Color(ColorVector &&other) noexcept
       : ColorVector(static_cast<ColorVector &&>(other)) {}
 };
-
-/// The power heuristic with \f$ \beta = 2 \f$ for two sampling strategies.
-///
-/// This is written as \f$ 1/(1+(q/p)^2) \f$ rather than the equivalent
-/// \f$ p^2/(p^2+q^2) \f$ to avoid overflowing on the enormous PDFs that
-/// near-specular lobes produce.
-///
-[[nodiscard]] inline float powerHeuristic(float pdf0, float pdf1) noexcept {
-  if (!(pdf0 > 0)) return 0.0f;
-  float ratio{pdf1 / pdf0};
-  return 1.0f / (1.0f + ratio * ratio);
-}
 
 /// An `smdl::State` carrying the render-wide fields every evaluation
 /// needs: the wavelength grid and, when material construction is involved,
@@ -176,8 +166,8 @@ private:
   /// The next canonical sample in `(0,1)`, advancing the dimension.
   [[nodiscard]] float next() noexcept {
     float xi{float(nextBits()) * 0x1p-32f};
-    xi = std::fmax(xi, std::numeric_limits<float>::denorm_min());      // > 0
-    xi = std::fmin(xi, 1 - std::numeric_limits<float>::epsilon() / 2); // < 1
+    xi = std::fmax(xi, std::numeric_limits<float>::denorm_min()); // > 0
+    xi = std::fmin(xi, ONE_MINUS_EPS);                            // < 1
     return xi;
   }
 
@@ -282,24 +272,24 @@ public:
   /// space itself. See `MeshInstance::rigidToWorld` for why the rigid frame
   /// and not the raw object space, and for when the two coincide.
   ///
-  void apply_geometry_to_state(smdl::State &state,
-                               const float3 &rayDir = float3{}) const noexcept;
+  void applyGeometryToState(smdl::State &state,
+                            const float3 &rayDir = float3{}) const noexcept;
 
 public:
-  const MeshInstance *instance{};            ///< The mesh instance.
-  uint32_t meshInstanceIndex{INVALID_INDEX}; ///< The mesh instance index.
-  uint32_t meshIndex{INVALID_INDEX};         ///< The mesh index.
-  uint32_t faceIndex{INVALID_INDEX};         ///< The face index.
-  uint32_t materialIndex{INVALID_INDEX};     ///< The material index.
-  const smdl::JIT::Material *material{};     ///< The material.
-  float3 bary{};                             ///< The barycentric coordinate.
-  float3 point{};                            ///< The point.
-  float3 normal{};                           ///< The shading normal.
-  float3 tangent{};                          ///< The shading tangent.
-  float3 geometryNormal{};                   ///< The geometry normal.
-  float3 geometryTangent{};                  ///< The geometry tangent.
-  float2 texcoord{};                         ///< The texture coordinate.
-  float textureDensity{};                    ///< The UV texture density.
+  const MeshInstance *instance{};        ///< The mesh instance.
+  uint32_t instIndex{INVALID_INDEX};     ///< The mesh instance index.
+  uint32_t meshIndex{INVALID_INDEX};     ///< The mesh index.
+  uint32_t faceIndex{INVALID_INDEX};     ///< The face index.
+  uint32_t matIndex{INVALID_INDEX};      ///< The material index.
+  const smdl::JIT::Material *material{}; ///< The material.
+  float3 bary{};                         ///< The barycentric coordinate.
+  float3 point{};                        ///< The point.
+  float3 normal{};                       ///< The shading normal.
+  float3 tangent{};                      ///< The shading tangent.
+  float3 Ng{};                           ///< The geometry normal.
+  float3 Tg{};                           ///< The geometry tangent.
+  float2 texcoord{};                     ///< The texture coordinate.
+  float textureDensity{};                ///< The UV texture density.
 
   /// The world-space fiber diameter at a curves hit, 0 otherwise. Feeds
   /// `texture_coordinate[0].z` per the MDL hair texturing convention.
@@ -314,6 +304,24 @@ public:
   /// tangents, since a per-strand constant has no derivatives of its
   /// own.
   float2 texcoord1{};
+};
+
+/// The differential geometry a manifold connection walk differentiates
+/// at a hit, in world space: the point, the unit shading normal, and
+/// the parametric partials of both over the hit's own surface
+/// parameterization, which is the triangle's barycentric coordinates
+/// (`bary[1]`, `bary[2]`) or the primitive piece's (u, v). The two
+/// parameterizations need not agree on units; each only has to span
+/// the tangent plane consistently with itself, which is all a Newton
+/// step needs.
+class ManifoldGeometry final {
+public:
+  float3 point{};
+  float3 normal{};
+  float3 dPdu{};
+  float3 dPdv{};
+  float3 dNdu{};
+  float3 dNdv{};
 };
 
 /// A mesh.
@@ -332,7 +340,7 @@ public:
   RTCScene scene{};          ///< The Embree scene.
   std::vector<Vert> verts{}; ///< The verts.
   std::vector<Face> faces{}; ///< The faces.
-  uint32_t materialIndex{};  ///< The index in the `Scene::materials` array.
+  uint32_t matIndex{};       ///< The index in the `Scene::materials` array.
 
   /// The refinement the import asked for; inactive by default.
   SubdivSpec subdiv{};
@@ -449,16 +457,16 @@ public:
   uint32_t meshIndex{};
 
   /// The index in the `Scene::primitives` array, or `INVALID_INDEX`.
-  /// Exactly one of `meshIndex`, `primitiveIndex`, and `curvesIndex` is
+  /// Exactly one of `meshIndex`, `primIndex`, and `curvesIndex` is
   /// valid.
-  uint32_t primitiveIndex{INVALID_INDEX};
+  uint32_t primIndex{INVALID_INDEX};
 
   /// The index in the `Scene::curves` array, or `INVALID_INDEX`.
   uint32_t curvesIndex{INVALID_INDEX};
 
   /// Instantiates a primitive rather than a mesh?
   [[nodiscard]] bool isPrimitive() const noexcept {
-    return primitiveIndex != INVALID_INDEX;
+    return primIndex != INVALID_INDEX;
   }
 
   /// Instantiates a curves groom rather than a mesh?
@@ -476,11 +484,11 @@ public:
   /// does not feed displacement changes nothing about the geometry. See
   /// `Scene::materialIndexOf()`, the one accessor every shading consumer
   /// goes through.
-  uint32_t materialIndex{INVALID_INDEX};
+  uint32_t matIndex{INVALID_INDEX};
 };
 
-inline void Hit::apply_geometry_to_state(smdl::State &state,
-                                         const float3 &rayDir) const noexcept {
+inline void Hit::applyGeometryToState(smdl::State &state,
+                                      const float3 &rayDir) const noexcept {
   // World space to the instance's rigid frame. The library multiplies by
   // `object_to_world_matrix` on the way back out, which lands on world
   // space again exactly, because `rigidToWorld` is what the library
@@ -490,8 +498,8 @@ inline void Hit::apply_geometry_to_state(smdl::State &state,
   auto rayDirR{float3(toRigid * float4(rayDir, 0.0f))};
   auto normalR{float3(toRigid * float4(normal, 0.0f))};
   auto tangentR{float3(toRigid * float4(tangent, 0.0f))};
-  auto geometryNormalR{float3(toRigid * float4(geometryNormal, 0.0f))};
-  auto geometryTangentR{float3(toRigid * float4(geometryTangent, 0.0f))};
+  auto NgR{float3(toRigid * float4(Ng, 0.0f))};
+  auto TgR{float3(toRigid * float4(Tg, 0.0f))};
   state.object_to_world_matrix = instance->objectToWorld;
   state.position = pointR;
   state.direction = rayDirR;
@@ -505,180 +513,19 @@ inline void Hit::apply_geometry_to_state(smdl::State &state,
     state.texture_tangent_u[1] = tangentR;
     state.texture_tangent_v[1] = state.texture_tangent_v[0];
   }
-  state.geometry_normal = geometryNormalR;
-  state.geometry_tangent_u[0] = geometryTangentR;
-  state.geometry_tangent_v[0] = smdl::cross(geometryNormalR, geometryTangentR);
+  state.geometry_normal = NgR;
+  state.geometry_tangent_u[0] = TgR;
+  state.geometry_tangent_v[0] = smdl::cross(NgR, TgR);
   if (textureSpaces > 1) {
     state.geometry_tangent_u[1] = state.geometry_tangent_u[0];
     state.geometry_tangent_v[1] = state.geometry_tangent_v[0];
   }
-  state.object_id = int(meshInstanceIndex);
+  state.object_id = int(instIndex);
   state.ptex_face_id = int(faceIndex);
   state.ptex_face_uv = {bary[1], bary[2]};
   state.texture_density[0] = textureDensity;
   state.finalizeAndApplyInternalSpaceConventions();
 }
-
-/// One node of an imported file's graph, flattened.
-///
-/// The `path` is what a selection pattern matches against. It joins the node
-/// names from the root with `/`, **leaving the root node's own name out**,
-/// because that name is importer trivia rather than anything the file's
-/// author chose: assimp calls it `ROOT` for glTF and `RootNode` elsewhere.
-/// The root node itself therefore has an empty path.
-///
-class ImportNode final {
-public:
-  std::string path{};                  ///< The `/`-joined path.
-  float4x4 nodeToFile{float4x4(1.0f)}; ///< Accumulated from the root.
-  uint32_t parent{INVALID_INDEX};      ///< The parent, or `INVALID_INDEX`.
-};
-
-/// Where one file's node graph puts one of its meshes: an index into
-/// `meshes` and the node that places it, with the file transform left out so
-/// that the pair can be replayed at a different placement.
-class Placement final {
-public:
-  uint32_t meshIndex{}; ///< The index in the `Scene::meshes` array.
-  uint32_t nodeIndex{}; ///< The index in the `ImportFile::nodes` array.
-};
-
-/// What one scene file contributed, cached so that placing it again costs a
-/// few Embree instances rather than another parse and another BVH.
-///
-/// The nodes are in preorder, so a node always precedes its descendants,
-/// which is what lets `resolveSelection()` propagate a match down a subtree
-/// in one forward pass.
-///
-class ImportFile final {
-public:
-  std::vector<ImportNode> nodes{};
-  std::vector<Placement> placements{};
-};
-
-/// Resolve a selection against a node table.
-///
-/// Returns, for each node, the index of the matched node it is selected
-/// through, or `INVALID_INDEX` if it is not selected at all. That index is
-/// the subtree root whose translation `ObjectSelection::recenter` removes,
-/// which is why this reports the ancestor rather than a plain yes or no.
-///
-/// With no patterns every node is selected through the root, so that
-/// `recenter` still has a well defined meaning.
-///
-/// \throws smdl::Error  If any pattern matches nothing, listing the names
-///                      the file does have. A pattern that silently selects
-///                      nothing renders an empty image, which is the worst
-///                      way to find out about a typo.
-///
-[[nodiscard]] std::vector<uint32_t>
-resolveSelection(const std::vector<ImportNode> &nodes,
-                 const ObjectSelection &selection, std::string_view fileName);
-
-/// How one material name is used by a scene file.
-class MaterialUsage final {
-public:
-  std::string name{};       ///< The name as the scene file spells it.
-  uint32_t meshCount{};     ///< The number of meshes that reference it.
-  uint32_t instanceCount{}; ///< The number of instantiated references.
-  uint64_t triangleCount{}; ///< The number of triangles that reference it.
-};
-
-/// One selectable object of a scene file: a node whose subtree places
-/// geometry, reported as the file authored it.
-class ObjectUsage final {
-public:
-  std::string path{};       ///< The path a pattern would match.
-  uint32_t depth{};         ///< The depth below the root, for indenting.
-  uint32_t instanceCount{}; ///< The meshes the subtree places.
-  uint64_t triangleCount{}; ///< The triangles the subtree places.
-
-  /// The distinct materials the subtree uses, in the order encountered.
-  std::vector<std::string> materialNames{};
-
-  /// The translation of the node's accumulated transform, which is what
-  /// `ObjectSelection::recenter` removes. Reported so that a tool building
-  /// a stand-in for this object can put its origin where the renderer will.
-  float3 pivot{};
-
-  /// The axis-aligned bounds of the subtree, in the file's own space.
-  ///
-  /// Exact rather than conservative: the vertices are transformed and then
-  /// bounded, not the other way around. A tool comparing these against what
-  /// some other importer produced for the same file learns the axis and unit
-  /// conventions that separate the two, which beats guessing them from the
-  /// file extension.
-  ///
-  /// Empty (`boundMin > boundMax`) if the subtree places no geometry.
-  float3 boundMin{+INF, +INF, +INF};
-  float3 boundMax{-INF, -INF, -INF};
-};
-
-/// Import only the material usage of a scene file.
-///
-/// This reports the material names that the scene actually needs: the ones
-/// on a mesh that the node graph instantiates and `selection` keeps, which
-/// are exactly the ones a ray can hit. Materials that the file declares and
-/// never uses are left out. Vertex data is dropped on the way in and no
-/// acceleration structure is built, so this is much cheaper than
-/// constructing a `Scene`.
-///
-/// \throws smdl::Error  If assimp cannot read the file, or if a selection
-///                      pattern matches nothing.
-///
-[[nodiscard]] std::vector<MaterialUsage>
-importMaterialUsage(const std::string &fileName,
-                    const ObjectSelection &selection = {});
-
-/// What a scene file declares about its own conventions, where it declares
-/// anything at all.
-///
-/// Nothing in the renderer acts on this: assimp reports the file in the
-/// file's own space and the renderer places it there, so a convention is
-/// something a composition or an `.asset` manifest states rather than
-/// something anyone infers. It is reported because a tool writing such a
-/// manifest would otherwise be guessing from the file extension, and an FBX
-/// that says it is Y-up in centimeters should not have to be guessed at.
-///
-class ObjectFileInfo final {
-public:
-  /// The up axis as 0, 1 or 2, or -1 if the file does not say.
-  int upAxis{-1};
-
-  /// The sign of the up axis, 1 unless the file says otherwise.
-  int upAxisSign{1};
-
-  /// The file's units per meter, or 0 if the file does not say. An FBX
-  /// authored in centimeters reports 100.
-  float unitsPerMeter{};
-
-  /// The bounds of everything the file places, in the file's own space.
-  ///
-  /// Reported separately from the object listing because a file whose
-  /// geometry sits on its unnamed root node offers nothing to `select` and
-  /// so lists no objects at all, while still being perfectly placeable as a
-  /// whole. A tool preparing such a file needs its size from somewhere.
-  ///
-  float3 boundMin{+INF, +INF, +INF};
-  float3 boundMax{-INF, -INF, -INF};
-
-  /// Every material name the file uses, in the order encountered.
-  std::vector<std::string> materialNames{};
-
-  /// Every triangle the file places, including those on nodes that have no
-  /// name to be selected by and so appear in no object listing.
-  uint64_t triangleCount{};
-};
-
-/// Import only the object listing of a scene file: what `select` can name,
-/// and how much geometry each name stands for. Reported in preorder, as the
-/// file is authored, with no selection applied, since this is what a user
-/// reads to write a selection in the first place.
-///
-/// \throws smdl::Error  If assimp cannot read the file.
-///
-[[nodiscard]] std::vector<ObjectUsage>
-importObjectUsage(const std::string &fileName, ObjectFileInfo *info = nullptr);
 
 /// A scene, composed from one or more scene files: call `add()` once
 /// per file, then `commit()` once.
@@ -720,7 +567,7 @@ public:
   /// refined twice, while identical specs share. The `renames` half is
   /// different: a rename that does not feed displacement changes
   /// nothing about the geometry, so it stays OUT of the cache key and is
-  /// resolved per instance instead (`MeshInstance::materialIndex`). That
+  /// resolved per instance instead (`MeshInstance::matIndex`). That
   /// is what lets N placements of one asset carry N shading-only
   /// overrides over one shared mesh and one BVH. The exception is an
   /// import with `subdiv.displace`, where the renamed material's
@@ -737,13 +584,13 @@ public:
 
   /// Add one lowered layout item, whichever kind it is: a mesh file
   /// through `add()`, a primitive through `addPrimitive()`, or a curves
-  /// file through `addCurves()`. An item carrying `batchTransforms`
+  /// file through `addCurves()`. An item carrying `batchXfs`
   /// lands as one Embree instance ARRAY per instantiated geometry
   /// rather than one instance geometry per entry, which is what lets a
   /// 100k-record scatter commit in a handful of geometry objects.
   void add(const LayoutItem &item);
 
-  /// Add a `.curves` groom, placed once per entry of `objectToWorlds`
+  /// Add a `.curves` groom, placed once per entry of `worldXfs`
   /// exactly as `addPrimitive()` places a shape, and with the same
   /// material split: fibers have one implicit slot, the whole-asset
   /// binding joins the (file, spec, binding) cache key, and the renames
@@ -754,12 +601,12 @@ public:
   /// \throws smdl::Error  If the file cannot be read or fails
   ///                      validation; see `readCurvesFile()`.
   uint32_t addCurves(const std::string &fileName,
-                     smdl::Span<const float4x4> objectToWorlds,
+                     smdl::Span<const float4x4> worldXfs,
                      const CurvesSpec &spec,
                      const MaterialAssignment &materials = {});
 
   /// Add an analytic primitive, placed once per entry of
-  /// `objectToWorlds` (one entry is an ordinary instance; several are
+  /// `worldXfs` (one entry is an ordinary instance; several are
   /// an instance array).
   ///
   /// The material assignment splits exactly as `add()` splits it for
@@ -768,7 +615,7 @@ public:
   /// the instance, so N shading-only overrides of one shape share one
   /// `Primitive` and its tiny BVH. Returns the first instance index.
   uint32_t addPrimitive(const PrimitiveSpec &spec,
-                        smdl::Span<const float4x4> objectToWorlds,
+                        smdl::Span<const float4x4> worldXfs,
                         const MaterialAssignment &materials = {});
 
   /// Add a ground plane: a two-triangle quad of `halfExtent` at height
@@ -789,9 +636,8 @@ public:
   /// `commit()` exists to ask Embree: the instance transforms folded over
   /// the mesh vertices, base vertices standing in for meshes whose
   /// refinement is deferred (displacement can therefore still move
-  /// geometry slightly past this). Lower exceeds upper if there is no
-  /// geometry at all.
-  void preCommitBounds(float3 &lower, float3 &upper) const;
+  /// geometry slightly past this). Empty if there is no geometry at all.
+  [[nodiscard]] BoundBox3 preCommitBounds() const;
 
   /// The deduped names of materials some instance actually shades with,
   /// in first-interned order: exactly the names `resolveMaterials()`
@@ -833,24 +679,24 @@ private:
                const MaterialAssignment &materials);
 
   /// Returns the new instance's index in `meshInstances`. Exactly one
-  /// of `meshIndex`, `primitiveIndex`, and `curvesIndex` names the
-  /// instantiated geometry; `materialIndex` is the instance's own
+  /// of `meshIndex`, `primIndex`, and `curvesIndex` names the
+  /// instantiated geometry; `matIndex` is the instance's own
   /// binding, or `INVALID_INDEX` to shade with the geometry's.
-  uint32_t addInstance(uint32_t meshIndex, uint32_t primitiveIndex,
+  uint32_t addInstance(uint32_t meshIndex, uint32_t primIndex,
                        uint32_t curvesIndex, const float4x4 &xf,
                        std::string_view fileName,
-                       uint32_t materialIndex = INVALID_INDEX);
+                       uint32_t matIndex = INVALID_INDEX);
 
   /// The array counterpart of `addInstance()`: one Embree instance
   /// array geometry whose element `i` places the geometry under
   /// `worldXfs[i] * nodeXf`, appending one `MeshInstance` per element
   /// so every consumer that walks `meshInstances` is none the wiser.
   /// Returns the first element's index in `meshInstances`.
-  uint32_t addInstanceArray(uint32_t meshIndex, uint32_t primitiveIndex,
+  uint32_t addInstanceArray(uint32_t meshIndex, uint32_t primIndex,
                             uint32_t curvesIndex,
                             smdl::Span<const float4x4> worldXfs,
                             const float4x4 &nodeXf, std::string_view fileName,
-                            uint32_t materialIndex = INVALID_INDEX);
+                            uint32_t matIndex = INVALID_INDEX);
 
   /// The index of `name` in `materials`, appending it if this is the first
   /// file to mention it.
@@ -894,8 +740,8 @@ private:
   /// The primitive half of `makeHit()`: rebuild the differential
   /// geometry of `primID`'s piece at the (u, v) packed in `bary[1]` and
   /// `bary[2]`, in world space.
-  [[nodiscard]] Hit makePrimitiveHit(uint32_t meshInstanceIndex,
-                                     uint32_t primID, const float3 &bary) const;
+  [[nodiscard]] Hit makePrimitiveHit(uint32_t instIndex, uint32_t primID,
+                                     const float3 &bary) const;
 
   /// The curves half of `intersect()`: build the hit record for the
   /// (segment `primID`, `u`) Embree reports, in world space. Unlike
@@ -906,8 +752,8 @@ private:
   /// hand. That is not a loss, because nothing re-derives curve hits:
   /// grooms never register as area lights. See `Curves.h` for the
   /// state conventions this encodes.
-  [[nodiscard]] Hit makeCurvesHit(uint32_t meshInstanceIndex, uint32_t primID,
-                                  float u, float v, const float3 &objectNg,
+  [[nodiscard]] Hit makeCurvesHit(uint32_t instIndex, uint32_t primID, float u,
+                                  float v, const float3 &objectNg,
                                   const float3 &worldPoint,
                                   const float3 &rayDir) const;
 
@@ -929,8 +775,17 @@ public:
   /// that the geometry a light reports and the geometry a ray finds cannot
   /// drift apart.
   ///
-  [[nodiscard]] Hit makeHit(uint32_t meshInstanceIndex, uint32_t faceIndex,
+  [[nodiscard]] Hit makeHit(uint32_t instIndex, uint32_t faceIndex,
                             const float3 &bary) const;
+
+  /// The differential geometry of the shading normal field at a mesh or
+  /// primitive hit, for the manifold connection walk. The point and
+  /// normal reproduce the hit's own bit for bit; the normal partials
+  /// come from the interpolated vertex normals or the analytic surface,
+  /// through the same cofactor transform and winding flip `makeHit()`
+  /// applies. Curve hits have no rebuildable parameterization and are
+  /// not supported.
+  [[nodiscard]] ManifoldGeometry manifoldGeometry(const Hit &hit) const;
 
   /// The index in `meshInstances` of the hit Embree reports: the
   /// geometry's first instance plus the element within it, which is 0
@@ -949,11 +804,10 @@ public:
   /// or shades.
   [[nodiscard]] uint32_t
   materialIndexOf(const MeshInstance &instance) const noexcept {
-    if (instance.materialIndex != INVALID_INDEX) return instance.materialIndex;
-    if (instance.isPrimitive())
-      return primitives[instance.primitiveIndex]->materialIndex;
-    if (instance.isCurves()) return curves[instance.curvesIndex]->materialIndex;
-    return meshes[instance.meshIndex]->materialIndex;
+    if (instance.matIndex != INVALID_INDEX) return instance.matIndex;
+    if (instance.isPrimitive()) return primitives[instance.primIndex]->matIndex;
+    if (instance.isCurves()) return curves[instance.curvesIndex]->matIndex;
+    return meshes[instance.meshIndex]->matIndex;
   }
 
 public:

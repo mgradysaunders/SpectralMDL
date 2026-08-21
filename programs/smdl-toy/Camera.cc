@@ -58,7 +58,7 @@ Camera::Camera(const CameraOptions &options) {
   numPixelsX = float(options.dims.x);
   numPixelsY = float(options.dims.y);
   aspectRatio = numPixelsX / numPixelsY;
-  focalLength = 0.5f / std::tan(options.fovYInDegrees / 2 * PI / 180);
+  focalLength = 0.5f / std::tan(smdl::radians(options.fovYDeg / 2));
   // One pixel's subtended angle, the ray cone spread that seeds the LOD
   // state; zero switches the cone off end to end.
   coneAngleBase =
@@ -67,14 +67,16 @@ Camera::Camera(const CameraOptions &options) {
   // The distortion radius is corner-normalized so the coefficients sum to
   // the fractional corner displacement at any aspect ratio and FOV.
   rCorner = std::hypot(0.5f * aspectRatio, 0.5f);
-  distortK1 = options.distortionK1;
-  distortK2 = options.distortionK2;
-  hasDistortion = distortK1 != 0 || distortK2 != 0;
-  distortScale = options.distortionFit ? 1 / (1 + distortK1 + distortK2) : 1.0f;
+  distortionK1 = options.distortionK1;
+  distortionK2 = options.distortionK2;
+  hasDistortion = distortionK1 != 0 || distortionK2 != 0;
+  distortionScale =
+      options.distortionFit ? 1 / (1 + distortionK1 + distortionK2) : 1.0f;
   if (hasDistortion) {
     SMDL_LOG_INFO("Lens distortion: corner displacement ",
-                  100 * (distortScale * (1 + distortK1 + distortK2) - 1),
-                  "%, center scale ", distortScale);
+                  100 *
+                      (distortionScale * (1 + distortionK1 + distortionK2) - 1),
+                  "%, center scale ", distortionScale);
   }
   // `lookAt()` is orthonormal, so the lens disk needs no unit conversion.
   // The LOD ray cone keeps the per-pixel spread: defocus blur comes out of
@@ -91,7 +93,7 @@ Camera::Camera(const CameraOptions &options) {
   focusDistance = options.focus > 0 ? options.focus
                                     : length(options.lookTo - options.lookFrom);
   numBlades = options.blades;
-  bladeAngle = options.bladeAngleInDegrees * PI / 180;
+  bladeAngle = smdl::radians(options.bladeAngleDeg);
   vignetteStrength = options.vignetting;
   // The barrel rim radius and the rim displacement per unit of image
   // radius, both zero when mechanical vignetting is off. Parameterizing
@@ -135,8 +137,9 @@ CameraSample Camera::sample(size_t x, size_t y,
   float2 imageIdeal{image};
   float distortConeScale{1.0f};
   if (hasDistortion)
-    imageIdeal = distortSensorPoint(image, distortK1, distortK2, distortScale,
-                                    rCorner, focalLength, distortConeScale);
+    imageIdeal =
+        distortSensorPoint(image, distortionK1, distortionK2, distortionScale,
+                           rCorner, focalLength, distortConeScale);
   float2 lens{};
   auto result{CameraSample{}};
   result.ray = Ray{float3(0.0f),

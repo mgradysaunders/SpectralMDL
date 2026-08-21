@@ -114,23 +114,100 @@ static constexpr int MATERIAL_ADDITIVE_VOLUME = (1 << 11);
 
 /// \}
 
-/// \name Distribution Function (DF) Flags
+/// \name Distribution Function (DF) Lobes
 /// \{
 
-/// Indicates that the function has a non-zero reflection component.
-static constexpr int DF_REFLECTION = (1 << 0);
+/// \anchor DFLobes
+/// One bit per **lobe**: a domain (which side of the surface the lobe
+/// sends light to) paired with a kind (what structure it has to sample).
+/// The six partition everything the library can build, so a lobe word is
+/// the SET of lobes present and a lobe mask is a set of lobes wanted, in
+/// one vocabulary. `|` unions, `&` intersects, and a lobe is live iff the
+/// two sets share a bit.
+///
+/// A bit is a lobe and not a distribution type: one `bsdf` struct spans
+/// as many bits as it has ways to scatter, and a whole tree unions into
+/// one word.
+///
+/// The pairs rather than the two axes separately are what a material
+/// reports, because `Instance::df_lobes_surface` unions over a whole
+/// BSDF tree. Two axes OR'd together lose which domain went with which
+/// kind: a Dirac reflection over a diffuse transmission and a Dirac
+/// transmission over a diffuse reflection would report identical words,
+/// and only the second has a Dirac transmission to refract through.
+///
+/// A reflective lobe with a finite density and no normal distribution
+/// behind it: diffuse, sheen, micrograin and Hapke lobes among them. It
+/// can be sampled and evaluated by direction, but has no half vector to
+/// constrain.
+///
+/// The energy-compensation lobe of a rough BSDF is one of these, so a
+/// glossy BSDF that carries one reports both kinds and a mask cuts
+/// between them. See `DF_GLOSSY_BRDF`.
+static constexpr int DF_GENERIC_BRDF = (1 << 0);
 
-/// Indicates that the function has a non-zero transmission component.
-static constexpr int DF_TRANSMISSION = (1 << 1);
+/// A reflective lobe with a sampleable normal distribution, so a half
+/// vector is a meaningful quantity of it and a manifold constraint can be
+/// solved through it.
+///
+/// This holds of the whole lobe and not merely of most of it, which is
+/// why the Kulla-Conty style compensation lobe that a rough BSDF adds to
+/// make up its energy deficit is `DF_GENERIC_BRDF` rather than part of
+/// this: it is a cosine hemisphere with no normal distribution behind it,
+/// and a caller that asks for a half vector must not be handed a lobe
+/// that has none.
+///
+/// Having a normal distribution is necessary and not sufficient. A lobe
+/// that mixes one with something else, or whose half vector nothing would
+/// ever want to constrain, belongs in `DF_GENERIC_BRDF`; the micrograin
+/// layer is both and is classified there.
+static constexpr int DF_GLOSSY_BRDF = (1 << 1);
 
-/// Indicates that the function has a diffuse component.
-static constexpr int DF_DIFFUSE = (1 << 2);
+/// A reflective Dirac delta lobe, which has no density and whose half
+/// vector is fixed by the geometry.
+static constexpr int DF_DELTA_BRDF = (1 << 2);
 
-/// Indicates that the function has a glossy component.
-static constexpr int DF_GLOSSY = (1 << 3);
+/// \copydoc DF_GENERIC_BRDF
+static constexpr int DF_GENERIC_BTDF = (1 << 3);
 
-/// Indicates that the function has a specular (Dirac delta) component.
-static constexpr int DF_SPECULAR = (1 << 4);
+/// \copydoc DF_GLOSSY_BRDF
+static constexpr int DF_GLOSSY_BTDF = (1 << 4);
+
+/// \copydoc DF_DELTA_BRDF
+static constexpr int DF_DELTA_BTDF = (1 << 5);
+
+/// \name Lobe unions
+/// The rows and columns of the table: each names one axis and leaves the
+/// other unconstrained. Intersecting two of them names the single lobe
+/// their names spell, so `DF_DELTA & DF_BTDF` is `DF_DELTA_BTDF`.
+/// \{
+
+/// Every reflective lobe.
+static constexpr int DF_BRDF = DF_GENERIC_BRDF | DF_GLOSSY_BRDF | DF_DELTA_BRDF;
+
+/// Every transmissive lobe.
+static constexpr int DF_BTDF = DF_GENERIC_BTDF | DF_GLOSSY_BTDF | DF_DELTA_BTDF;
+
+/// Every lobe with a density but no normal distribution, of either
+/// domain.
+static constexpr int DF_GENERIC = DF_GENERIC_BRDF | DF_GENERIC_BTDF;
+
+/// Every normal-distribution lobe of either domain.
+static constexpr int DF_GLOSSY = DF_GLOSSY_BRDF | DF_GLOSSY_BTDF;
+
+/// Every Dirac lobe of either domain.
+static constexpr int DF_DELTA = DF_DELTA_BRDF | DF_DELTA_BTDF;
+
+/// Every lobe with a density, which is every lobe but the Dirac ones.
+/// This is the question a caller asks to find out whether a vertex can
+/// scatter a direction that another strategy could also have produced.
+static constexpr int DF_FINITE = DF_GENERIC | DF_GLOSSY;
+
+/// Every lobe, which is the lobe mask of a caller that wants the whole
+/// distribution.
+static constexpr int DF_ALL = DF_BRDF | DF_BTDF;
+
+/// \}
 
 /// \}
 
@@ -201,9 +278,6 @@ public:
   }
 
   /// Has a non-default `hair` initializer? Always statically known.
-  /// Hosts should route hair-primitive hits through `hairScatterEvaluate`
-  /// and `hairScatterSample` iff this is true; calling them anyway is
-  /// safe because the default `hair_bsdf()` reports black.
   [[nodiscard]] bool hasHair() const noexcept {
     return (staticFlags & MATERIAL_HAS_HAIR) != 0;
   }
@@ -216,19 +290,11 @@ public:
     return isAlwaysOpaque() && !hasVolume();
   }
 
-  /// Is this a null interface: a boundary that scatters nothing itself
-  /// (default `surface` and `backface`, which per the MDL semantics of
-  /// an invalid BSDF means no scattering event at all) but encloses a
-  /// participating medium? Light crosses such a boundary undeflected,
-  /// so renderers should pass rays straight through, on camera and
-  /// shadow rays alike, while updating their nested-medium tracking.
-  /// Always statically known. This is how a smoke or cloud container
-  /// is expressed: a material whose only non-default initializers are
-  /// `volume` (and typically `ior: 1.0`).
+  /// Is this a null interface? (a boundary that scatters nothing itself
+  /// but encloses a participating medium)
   [[nodiscard]] bool isNullInterface() const noexcept {
-    return (staticFlags & (MATERIAL_HAS_SURFACE | MATERIAL_HAS_BACKFACE)) ==
-               0 &&
-           hasVolume();
+    return hasVolume() &&
+           (staticFlags & (MATERIAL_HAS_SURFACE | MATERIAL_HAS_BACKFACE)) == 0;
   }
 
   /// Provably homogeneous: the volume coefficients are independent of
@@ -395,11 +461,23 @@ public:
     /// The flags.
     int flags{};
 
-    /// The df flags for the material `surface` component.
-    int df_flags_surface{};
+    /// The set of lobes (\ref DFLobes "the `DF_` lobes") present
+    /// anywhere in the material `surface` scattering tree.
+    ///
+    /// This is a union over the tree, so it answers "could this material
+    /// do that" and never "will this query do that". It is exact about
+    /// which domain goes with which kind, which is what makes
+    /// `df_lobes_surface & DF_DELTA_BTDF` a sound test for an interface
+    /// a manifold walk can refract through.
+    ///
+    /// One distribution can contribute more than one bit: a rough BSDF
+    /// with an energy-compensation lobe is `DF_GLOSSY_BRDF` and
+    /// `DF_GENERIC_BRDF` together, since the two parts are different kinds
+    /// on the same domain.
+    int df_lobes_surface{};
 
-    /// The df flags for the material `backface` component.
-    int df_flags_backface{};
+    /// \copydoc df_lobes_surface
+    int df_lobes_backface{};
 
     /// The emission intensity modes: bit 0 is set if the `surface` emission
     /// intensity is `intensity_power` (as opposed to the default
@@ -519,6 +597,32 @@ public:
   /// \param[in] wi
   /// The incoming direction in world space.
   ///
+  /// \param[in] lobeMask
+  /// Which lobes to evaluate: a lobe contributes when it is in this set
+  /// (\ref DFLobes "the DF lobes"). `DF_ALL` is every lobe, which is the
+  /// whole BSDF and what an ordinary caller wants; `0` names nothing and
+  /// selects nothing.
+  ///
+  /// A restricted mask restricts `f` to the part of the whole BSDF the
+  /// named lobes account for, weighted as they are weighted inside it
+  /// and renormalized by nothing. **Disjoint masks therefore add**, so
+  /// evaluating with `DF_GLOSSY`, `DF_GENERIC` and `DF_DELTA` and summing
+  /// gives what `DF_ALL` gives, and so does evaluating with `DF_BRDF` and
+  /// `DF_BTDF` and summing.
+  ///
+  /// The densities are not that. They are the densities of the sampler
+  /// restricted to the same mask, which takes a lobe with certainty once
+  /// the mask has removed the alternatives, so they do not add and they
+  /// exceed the share the mask keeps. The pairing is the point: a masked
+  /// `f` over a masked density is an estimator of the masked part, and
+  /// this is the density `scatterSample` reports for a non-delta sample
+  /// drawn under the same mask.
+  ///
+  /// The domain axis partitions even a `scatter_reflect_transmit` lobe,
+  /// which is in lobes of both domains: `wo` and `wi` decide which of
+  /// its branches this query is about, so masking away that domain
+  /// returns zero rather than the other branch.
+  ///
   /// \param[out] pdfFwd
   /// The forward PDF of sampling `wi` given `wo`.
   ///
@@ -532,7 +636,7 @@ public:
   /// Returns `true` if the result is non-zero.
   ///
   Function<int(const Instance &instance, const float3 &wo, const float3 &wi,
-               float &pdfFwd, float &pdfRev, float *f)>
+               int lobeMask, float &pdfFwd, float &pdfRev, float *f)>
       scatterEvaluate{};
 
   /// The scatter sample function.
@@ -546,6 +650,31 @@ public:
   /// \param[in] wo
   /// The outgoing direction in world space.
   ///
+  /// \param[in] lobeMask
+  /// Which lobes to sample among: a lobe is a candidate when it is in
+  /// this set (\ref DFLobes "the DF lobes"). `DF_ALL` is every lobe.
+  ///
+  /// Selection chances are renormalized over the lobes the mask keeps,
+  /// so this draws from the masked part of the BSDF rather than drawing
+  /// from the whole and sometimes landing outside the mask. What comes
+  /// back estimates that masked part: `f` and the densities describe the
+  /// restricted sampler, and the estimators of disjoint masks sum in
+  /// expectation to the estimator of the whole.
+  ///
+  /// This is how a caller reaches the Dirac lobes of a layered material:
+  /// `DF_DELTA` selects them wherever they sit in the tree, and the
+  /// layering above them is applied on the way out. `scatterEvaluate`
+  /// cannot do this at any mask, because a Dirac lobe has no density to
+  /// evaluate at a direction pair.
+  ///
+  /// Naming one domain **forces** it here: a mask holding only
+  /// transmissive lobes makes a `scatter_reflect_transmit` lobe
+  /// transmit every time, in place of the Fresnel choice it would
+  /// otherwise make, and the weight it reports is the transmissive part
+  /// of the lobe rather than the whole. So `DF_DELTA_BTDF` is how a
+  /// caller asks for the Dirac transmission of an interface, whatever
+  /// the tree above it.
+  ///
   /// \param[out] wi
   /// The incoming direction in world space.
   ///
@@ -558,15 +687,38 @@ public:
   /// \param[out] f
   /// The BSDF spectrum. This must be non-null!
   ///
-  /// \param[out] isDelta
-  /// Set to `true` if sampling Dirac delta distribution.
+  /// \param[out] sampledLobe
+  /// The single lobe the sample was drawn from (\ref DFLobes "the DF
+  /// lobes"), or `0` when nothing was sampled. Exactly one bit: the
+  /// selection descends to one branch of one leaf, and that branch has one
+  /// domain and one kind.
+  ///
+  /// This subsumes the older `isDelta`, which is `sampledLobe & DF_DELTA`,
+  /// and answers what a class word over the whole tree cannot: a material
+  /// reports what it *could* do, and this reports what it *did*. It is the
+  /// per-sample quantity a ray-cone heuristic, a guiding bypass, or a
+  /// specular-chain test wants.
+  ///
+  /// The bit is always one the material declared in `df_lobes_surface` or
+  /// `df_lobes_backface`, and always inside the caller's `lobeMask`.
+  ///
+  /// \param[out] lobeChance
+  /// The discrete probability that an **unmasked** sample would have
+  /// made the same selections this call did.
+  ///
+  /// A masked call renormalizes its own chances over the lobes the mask
+  /// keeps, so this is the only way back to what the whole BSDF would
+  /// have done. A caller weighing a masked result against a strategy
+  /// that samples the whole BSDF needs it, and for a Dirac lobe there is
+  /// no other source, since `scatterEvaluate` reports zero there at
+  /// every mask. Exactly 1 when nothing chose.
   ///
   /// \return
   /// Returns `true` if the result is non-zero.
   ///
   Function<int(const Instance &instance, const float4 &xi, const float3 &wo,
-               float3 &wi, float &pdfFwd, float &pdfRev, float *f,
-               int &isDelta)>
+               int lobeMask, float3 &wi, float &pdfFwd, float &pdfRev, float *f,
+               int &sampledLobe, float &lobeChance)>
       scatterSample{};
 
   /// The emission evaluate function.
@@ -733,18 +885,16 @@ public:
   /// \param[out] f
   /// The BSDF spectrum. This must be non-null!
   ///
-  /// \param[out] isDelta
-  /// Always set to `false`: there are no delta hair distributions.
-  ///
   /// \return
   /// Returns `true` if the result is non-zero.
   ///
   /// \note
-  /// See `hairScatterEvaluate` for the state contract at a hair hit.
+  /// See `hairScatterEvaluate` for the state contract at a hair hit. There
+  /// are no delta hair distributions and no lobe taxonomy for hair, so this
+  /// reports neither a sampled lobe nor a delta flag.
   ///
   Function<int(const Instance &instance, const float4 &xi, const float3 &wo,
-               float3 &wi, float &pdfFwd, float &pdfRev, float *f,
-               int &isDelta)>
+               float3 &wi, float &pdfFwd, float &pdfRev, float *f)>
       hairScatterSample{};
 };
 
@@ -943,10 +1093,11 @@ public:
   ///
   [[nodiscard]] bool scatterEvaluate(const float3 &wo, const float3 &wi,
                                      float &pdfFwd, float &pdfRev,
-                                     Span<float> f) const {
+                                     Span<float> f,
+                                     int lobeMask = DF_ALL) const {
     SMDL_SANITY_CHECK(material && instance);
     SMDL_SANITY_CHECK(f.size() == size_t(instance.wavelength_base_max));
-    return material->scatterEvaluate(instance, wo, wi, pdfFwd, pdfRev,
+    return material->scatterEvaluate(instance, wo, wi, lobeMask, pdfFwd, pdfRev,
                                      f.data());
   }
 
@@ -970,22 +1121,24 @@ public:
   /// \param[out] f
   /// The BSDF spectrum. This must be non-null!
   ///
-  /// \param[out] isDelta
-  /// Set to `true` if sampling Dirac delta distribution.
+  /// \param[out] sampledLobe
+  /// The single lobe the sample was drawn from, `0` if none. See
+  /// `Material::scatterSample`; `sampledLobe & DF_DELTA` is the Dirac test.
   ///
   /// \return
   /// Returns `true` if the result is non-zero.
   ///
   [[nodiscard]] bool scatterSample(const float4 &xi, const float3 &wo,
                                    float3 &wi, float &pdfFwd, float &pdfRev,
-                                   Span<float> f, bool &isDelta) const {
+                                   Span<float> f, int &sampledLobe,
+                                   int lobeMask = DF_ALL,
+                                   float *lobeChance = nullptr) const {
     SMDL_SANITY_CHECK(material && instance);
     SMDL_SANITY_CHECK(f.size() == size_t(instance.wavelength_base_max));
-    auto isDeltaInt{int(0)};
-    auto isNonZero{material->scatterSample(instance, xi, wo, wi, pdfFwd, pdfRev,
-                                           f.data(), isDeltaInt)};
-    isDelta = isDeltaInt;
-    return isNonZero;
+    auto lobeChanceLocal{float(1)};
+    return material->scatterSample(instance, xi, wo, lobeMask, wi, pdfFwd,
+                                   pdfRev, f.data(), sampledLobe,
+                                   lobeChance ? *lobeChance : lobeChanceLocal);
   }
 
   /// The emission evaluate function.
@@ -1138,9 +1291,8 @@ public:
                                        Span<float> f) const {
     SMDL_SANITY_CHECK(material && instance);
     SMDL_SANITY_CHECK(f.size() == size_t(instance.wavelength_base_max));
-    auto isDeltaInt{int(0)};
     return material->hairScatterSample(instance, xi, wo, wi, pdfFwd, pdfRev,
-                                       f.data(), isDeltaInt);
+                                       f.data());
   }
 
 public:

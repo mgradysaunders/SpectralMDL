@@ -27,7 +27,6 @@ struct SampleResult {
   float3 wi = float3(0);
   color f = color(0);
   float pdfFwd = 0;
-  bool isDelta = false;
   bool success = false;
 };
 
@@ -39,9 +38,8 @@ SampleResult sample(const hair_bsdf scattering, const float4 xi, float3 wo) {
   float pdfFwd = 0;
   float pdfRev = 0;
   color f = color(0);
-  int isDelta = 0;
-  const auto success = df::_hairScatterSample(&instance, &xi1, &wo, &wi, &pdfFwd, &pdfRev, cast<&float>(&f), &isDelta);
-  return SampleResult(wi, f, pdfFwd, bool(isDelta), bool(success));
+  const auto success = df::_hairScatterSample(&instance, &xi1, &wo, &wi, &pdfFwd, &pdfRev, cast<&float>(&f));
+  return SampleResult(wi, f, pdfFwd, bool(success));
 }
 
 // A direction in the hair frame from the longitudinal angle `theta` and
@@ -195,7 +193,6 @@ unit_test "Hair sample consistency" {
     const auto r = sample(smooth, xi, wo);
     if (r.success) {
       accepted++;
-      #assert(!r.isDelta);
       #assert(r.pdfFwd > 0.0);
       #assert(math::average(r.f) / r.pdfFwd ~== |1e-3| 1.0);
     }

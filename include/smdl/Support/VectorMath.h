@@ -14,8 +14,30 @@ namespace smdl {
 /// The constant `PI`.
 constexpr float PI = 3.141592653589793f;
 
+/// The constant `2 PI`.
+constexpr float TWO_PI = 6.283185307179586f;
+
+/// Positive infinity, the canonical unbounded ray parameter.
+constexpr float INF = std::numeric_limits<float>::infinity();
+
+/// The largest `float` strictly less than 1, which is what a canonical
+/// random sample in `[0, 1)` and a texture or quadtree coordinate that
+/// must not land on the far edge clamp to.
+constexpr float ONE_MINUS_EPS =
+    1.0f - std::numeric_limits<float>::epsilon() / 2;
+
 /// \name Functions (scalar math)
 /// \{
+
+/// Convert degrees to radians.
+[[nodiscard]] constexpr float radians(float degrees) noexcept {
+  return degrees * PI / 180.0f;
+}
+
+/// Convert radians to degrees.
+[[nodiscard]] constexpr float degrees(float radians) noexcept {
+  return radians * (180.0f / PI);
+}
 
 [[nodiscard]] inline float finiteOrZero(float x) noexcept {
   return std::isfinite(x) ? x : 0.0f;
@@ -41,6 +63,7 @@ public:
 
   constexpr Vector(T x) : Vector(x, x) {}
 
+  // NOLINTNEXTLINE
   constexpr Vector(T x, T y) : x(x), y(y) {}
 
   template <typename U>
@@ -72,6 +95,7 @@ public:
 
   constexpr Vector(T x) : Vector(x, x, x) {}
 
+  // NOLINTNEXTLINE
   constexpr Vector(T x, T y, T z) : x(x), y(y), z(z) {}
 
   template <typename U>
@@ -103,6 +127,7 @@ public:
 
   constexpr Vector(T x) : Vector(x, x, x, x) {}
 
+  // NOLINTNEXTLINE
   constexpr Vector(T x, T y, T z, T w) : x(x), y(y), z(z), w(w) {}
 
   constexpr Vector(Vector<T, 3> v, T w) : Vector(v.x, v.y, v.z, w) {}
@@ -204,7 +229,7 @@ template <typename T, size_t N>
   return v;
 }
 
-/// Vector-Vector `operator+`.
+/// Vector-vector `operator+`.
 template <typename T, size_t N>
 [[nodiscard]] constexpr Vector<T, N>
 operator+(const Vector<T, N> &v0, const Vector<T, N> &v1) noexcept {
@@ -213,7 +238,7 @@ operator+(const Vector<T, N> &v0, const Vector<T, N> &v1) noexcept {
   return v;
 }
 
-/// Vector-Vector `operator-`.
+/// Vector-vector `operator-`.
 template <typename T, size_t N>
 [[nodiscard]] constexpr Vector<T, N>
 operator-(const Vector<T, N> &v0, const Vector<T, N> &v1) noexcept {
@@ -222,7 +247,21 @@ operator-(const Vector<T, N> &v0, const Vector<T, N> &v1) noexcept {
   return v;
 }
 
-/// Scalar-Vector `operator*`.
+/// Vector-vector `operator+=`.
+template <typename T, size_t N>
+constexpr Vector<T, N> &operator+=(Vector<T, N> &v0,
+                                   const Vector<T, N> &v1) noexcept {
+  return v0 = v0 + v1;
+}
+
+/// Vector-vector `operator-=`.
+template <typename T, size_t N>
+constexpr Vector<T, N> &operator-=(Vector<T, N> &v0,
+                                   const Vector<T, N> &v1) noexcept {
+  return v0 = v0 - v1;
+}
+
+/// Scalar-vector `operator*`.
 template <typename T, size_t N>
 [[nodiscard]] constexpr Vector<T, N>
 operator*(const T &s0, const Vector<T, N> &v1) noexcept {
@@ -231,7 +270,7 @@ operator*(const T &s0, const Vector<T, N> &v1) noexcept {
   return v;
 }
 
-/// Vector-Scalar `operator*`.
+/// Vector-scalar `operator*`.
 template <typename T, size_t N>
 [[nodiscard]] constexpr Vector<T, N> operator*(const Vector<T, N> &v0,
                                                const T &s1) noexcept {
@@ -249,7 +288,19 @@ template <typename T, size_t N>
   return v;
 }
 
-/// Vector-Vector `operator==`.
+/// Vector-scalar `operator*=`.
+template <typename T, size_t N>
+constexpr Vector<T, N> &operator*=(Vector<T, N> &v0, const T &s1) noexcept {
+  return v0 = v0 * s1;
+}
+
+/// Vector-scalar `operator/=`.
+template <typename T, size_t N>
+constexpr Vector<T, N> &operator/=(Vector<T, N> &v0, const T &s1) noexcept {
+  return v0 = v0 / s1;
+}
+
+/// Vector-vector `operator==`.
 template <typename T, size_t N>
 [[nodiscard]] constexpr Vector<bool, N>
 operator==(const Vector<T, N> &v0, const Vector<T, N> &v1) noexcept {
@@ -258,7 +309,7 @@ operator==(const Vector<T, N> &v0, const Vector<T, N> &v1) noexcept {
   return v;
 }
 
-/// Vector-Vector `operator!=`.
+/// Vector-vector `operator!=`.
 template <typename T, size_t N>
 [[nodiscard]] constexpr Vector<bool, N>
 operator!=(const Vector<T, N> &v0, const Vector<T, N> &v1) noexcept {
@@ -317,7 +368,7 @@ template <typename T, size_t N>
 template <typename T, size_t N>
 [[nodiscard]] inline bool tryNormalize(Vector<T, N> &v) noexcept {
   static_assert(std::is_floating_point_v<T>);
-  if (T len{length(v)}; len > 0) {
+  if (T len{length(v)}; len > T(0)) {
     v = v / len;
     return true;
   } else {
@@ -329,9 +380,42 @@ template <typename T, size_t N>
 template <typename T>
 [[nodiscard]] constexpr Vector<T, 3> cross(Vector<T, 3> u,
                                            Vector<T, 3> v) noexcept {
-  return {u.y * v.z - u.z * v.y, //
-          u.z * v.x - u.x * v.z, //
-          u.x * v.y - u.y * v.x};
+  return {u.y * v.z - u.z * v.y, u.z * v.x - u.x * v.z, u.x * v.y - u.y * v.x};
+}
+
+/// Calculate vector perpendicular to the given vector.
+template <typename T>
+[[nodiscard]] inline Vector<T, 3> perpendicularTo(Vector<T, 3> w) noexcept {
+  static_assert(std::is_floating_point_v<T>);
+  if (!tryNormalize(w)) return {1, 0, 0};
+  auto u{float3(0, -1, 0)};
+  if (w.z > T(-0.9999)) {
+    u.x = -w.x / (w.z + 1) + 1;
+    u.y = -w.y / (w.z + 1);
+    u.z = -1;
+  }
+  return normalize(u - dot(u, w) * w);
+}
+
+/// Gram-Schmidt orthonormalize `u` and `v` against `w`, which must already
+/// be normalized. Handedness is preserved: `v` is projected from the other
+/// axes rather than being replaced by the cross product, so a left-handed
+/// frame stays left-handed. The cross product is the fallback when `v` is
+/// degenerate and so carries no handedness to preserve.
+///
+/// This is the orthonormalization that
+/// `State::finalizeAndApplyInternalSpaceConventions()` applies, so a host
+/// that needs to predict what the state will do to a frame should call this
+/// rather than reimplement it.
+///
+template <typename T>
+inline void gramSchmidtOrthonormalize(Vector<T, 3> w, Vector<T, 3> &u,
+                                      Vector<T, 3> &v) noexcept {
+  static_assert(std::is_floating_point_v<T>);
+  u = u - dot(u, w) * w;
+  if (!tryNormalize(u)) u = perpendicularTo(w); // NOTE: Already normalized
+  v = v - dot(v, w) * w - dot(v, u) * u;
+  if (!tryNormalize(v)) v = normalize(cross(w, u));
 }
 
 /// \}
@@ -500,69 +584,41 @@ constexpr Matrix<T, 4, 4> affineInverse(const Matrix<T, 4, 4> &m) noexcept {
   return mI;
 }
 
-/// Calculate vector perpendicular to the given vector.
-[[nodiscard]] inline float3 perpendicularTo(float3 z) noexcept {
-  z = normalize(z);
-  auto x{z.z < -0.9999f
-             ? float3(0.0f, -1.0f, 0.0f)
-             : float3(-z.x / (z.z + 1.0f) + 1.0f, -z.y / (z.z + 1.0f), -1.0f)};
-  return normalize(x - dot(x, z) * z);
-}
-
 /// Calculate orthonormal coordinate system with the given vector as the Z axis.
-[[nodiscard]] inline float3x3 coordinateSystem(float3 z) noexcept {
-  z = normalize(z);
-  auto x{perpendicularTo(z)};
-  auto y{normalize(cross(z, x))};
-  return float3x3(x, y, z);
-}
-
-/// Gram-Schmidt orthonormalize `tangentU` and `tangentV` against `normal`,
-/// which must already be normalized.
-///
-/// Handedness is preserved: `tangentV` is projected off the other two axes
-/// rather than being replaced by their cross product, so a left-handed frame
-/// stays left-handed. That matters wherever the frame comes from a transform
-/// that can mirror. The cross product is only the fallback for a `tangentV`
-/// that is degenerate and so carries no handedness to preserve.
-///
-/// This is the orthonormalization that
-/// `State::finalizeAndApplyInternalSpaceConventions()` applies, so a host
-/// that needs to predict what the state will do to a frame should call this
-/// rather than reimplement it.
-///
-inline void gramSchmidtOrthonormalize(const float3 &normal, float3 &tangentU,
-                                      float3 &tangentV) noexcept {
-  tangentU = tangentU - dot(tangentU, normal) * normal;
-  if (!tryNormalize(tangentU)) {
-    tangentU = normalize(perpendicularTo(normal));
-  }
-  tangentV = tangentV - dot(tangentV, normal) * normal -
-             dot(tangentV, tangentU) * tangentU;
-  if (!tryNormalize(tangentV)) {
-    tangentV = normalize(cross(normal, tangentU));
-  }
+template <typename T = float>
+[[nodiscard]] inline Matrix<T, 3, 3> coordinateSystem(Vector<T, 3> w) noexcept {
+  static_assert(std::is_floating_point_v<T>);
+  if (!tryNormalize(w)) return Matrix<T, 3, 3>(1);
+  auto u{perpendicularTo(w)};
+  auto v{normalize(cross(w, u))};
+  return {u, v, w};
 }
 
 /// Calculate orthonormal coordinate system with Gram-Schmidt process,
 /// anchored on the third column and preserving handedness. See
 /// `gramSchmidtOrthonormalize()`.
-[[nodiscard]] inline float3x3 orthonormalize(float3x3 m) noexcept {
-  if (!tryNormalize(m[2])) m[2] = float3(0, 0, 1);
+template <typename T = float>
+[[nodiscard]] inline Matrix<T, 3, 3>
+orthonormalize(Matrix<T, 3, 3> m) noexcept {
+  static_assert(std::is_floating_point_v<T>);
+  if (!tryNormalize(m[2])) m[2] = Vector<T, 3>(0, 0, 1);
   gramSchmidtOrthonormalize(m[2], m[0], m[1]);
   return m;
 }
 
 /// Calculate look-at transform.
-[[nodiscard]] inline float4x4 lookAt(float3 from, float3 to,
-                                     float3 up = {0, 0, 1}) noexcept {
-  float3 z{normalize(from - to)};
-  float3 x{normalize(cross(up, z))};
-  float3 y{cross(z, x)};
-  return {float4{x.x, x.y, x.z, 0.0f}, //
-          float4{y.x, y.y, y.z, 0.0f}, //
-          float4{z.x, z.y, z.z, 0.0f}, //
-          float4{from.x, from.y, from.z, 1.0f}};
+template <typename T = float>
+[[nodiscard]] inline Matrix<T, 4, 4>
+lookAt(const Vector<T, 3> &from, const Vector<T, 3> &to,
+       const Vector<T, 3> &up = {0, 0, 1}) noexcept {
+  static_assert(std::is_floating_point_v<T>);
+  auto w{normalize(from - to)};
+  auto u{normalize(cross(up, w))};
+  auto v{cross(w, u)};
+  return {Vector<T, 4>{u.x, u.y, u.z, 0}, //
+          Vector<T, 4>{v.x, v.y, v.z, 0}, //
+          Vector<T, 4>{w.x, w.y, w.z, 0}, //
+          Vector<T, 4>{from.x, from.y, from.z, 1}};
 }
 
 /// \}

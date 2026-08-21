@@ -73,7 +73,7 @@ EvaluateResult evaluate(
   float pdfFwd = 0;
   float pdfRev = 0;
   color f = color(0);
-  if (df::_scatterEvaluate(&instance, &wo, &wi, &pdfFwd, &pdfRev, cast<&float>(&f)))
+  if (df::_scatterEvaluate(&instance, &wo, &wi, df::DF_ALL, &pdfFwd, &pdfRev, cast<&float>(&f)))
     return EvaluateResult(f, float2(pdfFwd, pdfRev), true);
   else
     return EvaluateResult();
@@ -82,8 +82,11 @@ EvaluateResult evaluate(
 struct SampleResult {
   float3 wi = float3(0);
   color f = color(0);
-  bool isDelta = false;
+  int sampledLobe = 0;
   bool success = false;
+
+  /// The Dirac test the entry point used to report on its own.
+  bool isDelta = (sampledLobe & df::DF_DELTA) != 0;
 };
 
 SampleResult sample(const bsdf scattering, const float4 xi, float3 wo) {
@@ -95,9 +98,10 @@ SampleResult sample(const bsdf scattering, const float4 xi, float3 wo) {
   float pdfFwd = 0;
   float pdfRev = 0;
   color f = color(0);
-  int isDelta = 0;
-  const auto success = df::_scatterSample(&instance, &xi1, &wo, &wi, &pdfFwd, &pdfRev, cast<&float>(&f), &isDelta);
-  return SampleResult(wi, f, bool(isDelta), bool(success));
+  int sampledLobe = 0;
+  float lobeChanceOut = 1.0;
+  const auto success = df::_scatterSample(&instance, &xi1, &wo, df::DF_ALL, &wi, &pdfFwd, &pdfRev, cast<&float>(&f), &sampledLobe, &lobeChanceOut);
+  return SampleResult(wi, f, sampledLobe, bool(success));
 }
 
 // The bidirectional consistency checks of the main suite, with relative

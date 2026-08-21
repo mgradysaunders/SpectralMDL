@@ -49,6 +49,118 @@ std::optional<std::string_view> Parser::nextKeyword(std::string_view str) {
   }
 }
 
+std::string_view Parser::tokenAt(uint64_t i) const {
+  auto src{getSourceCode()};
+  if (i >= src.size()) return {};
+  src = src.substr(i);
+  // '#' and '$' lead words rather than standing alone, so that a message
+  // can name '#include' or '$state' instead of a lone sigil.
+  if (isAlpha(src[0]) || src[0] == '_' || src[0] == '#' || src[0] == '$') {
+    size_t n{1};
+    while (n < src.size() && isWord(src[n])) n++;
+    return src.substr(0, n);
+  }
+  return src.substr(0, 1);
+}
+
+std::string_view Parser::peekToken() {
+  skip();
+  return tokenAt(mSrcLoc.i);
+}
+
+std::string Parser::explainToken(std::string_view token) const {
+  // The spellings people reach for out of habit, where the generic parse
+  // failure says nothing about the actual mistake. Each entry names its own
+  // token, because the token that stops the parse is often not the one that
+  // needs explaining.
+  static constexpr std::pair<std::string_view, std::string_view> foreign[]{
+      {"and", "there is no 'and'; use '&&'"},
+      {"class", "there is no 'class'; use 'struct'"},
+      {"const_cast", "conversions are written 'T(x)' or 'cast<T>(x)'"},
+      {"delete", "there is no 'delete'; there is no dynamic allocation"},
+      {"dynamic_cast", "conversions are written 'T(x)' or 'cast<T>(x)'"},
+      {"elif", "there is no 'elif'; use 'else if'"},
+      {"is", "there is no 'is'; the type test operator is '<:'"},
+      {"new", "there is no 'new'; there is no dynamic allocation"},
+      {"not", "there is no 'not'; use '!'"},
+      {"or", "there is no 'or'; use '||'"},
+      {"private", "there are no access specifiers"},
+      {"protected", "there are no access specifiers"},
+      {"public", "there are no access specifiers"},
+      {"reinterpret_cast", "use '#bitCast(T, x)'"},
+      {"static_cast", "conversions are written 'T(x)' or 'cast<T>(x)'"},
+      {"template", "there are no templates; parameters may be declared 'auto'"},
+      {"union", "'union' is not a keyword; union types are written '(A | B)'"},
+      {"#define", "there is no preprocessor; use 'const' or 'typedef'"},
+      {"#include", "there is no '#include'; use 'import'"},
+      {"'", "there are no character literals; strings use double quotes"},
+  };
+  for (const auto &[spelling, advice] : foreign)
+    if (token == spelling) return concat("; ", advice);
+  // A file that never opted in cannot use the extensions, and naming the
+  // one it reached for beats reporting that a declaration was expected.
+  if (!mIsSMDL) {
+    static constexpr std::string_view extensions[]{
+        "defer", "exec",      "namespace",   "return_from", "static",
+        "tag",   "unit_test", "unreachable", "visit",
+    };
+    auto isExtension{token.size() > 1 && (token[0] == '#' || token[0] == '$')};
+    for (auto extension : extensions) isExtension |= token == extension;
+    if (isExtension)
+      return concat("; ", Quoted(token),
+                    " is a SpectralMDL extension, so the file must begin "
+                    "with '#smdl'");
+  }
+  return {};
+}
+
+void Parser::throwUnexpectedToken(const SourceLocation &srcLoc,
+                                  std::string_view message,
+                                  const SourceLocation *srcLocStart) {
+  auto token{peekToken()};
+  auto explanation{explainToken(token)};
+  // Neither end explains it, so look through the construct itself: a
+  // borrowed keyword often sits in the middle, as 'new' does in
+  // 'auto p = new int(3);', which fails at 'int'.
+  if (explanation.empty() && srcLocStart) {
+    const auto src{getSourceCode()};
+    // Out to the end of the statement, not merely to where the parse gave
+    // up: an infix word like 'and' stops the parse at the token before it.
+    auto scanEnd{src.find_first_of(";\n", srcLoc.i)};
+    if (scanEnd == std::string_view::npos) scanEnd = src.size();
+    for (auto i{srcLocStart->i}; i < scanEnd && i < src.size();) {
+      // Step over anything whose contents are not code, so that the word
+      // 'class' in a comment or a string never becomes advice.
+      if (src[i] == '"') {
+        for (i++; i < src.size() && src[i] != '"'; i++)
+          if (src[i] == '\\') i++;
+        i++;
+        continue;
+      }
+      if (src.compare(i, 2, "//") == 0) break;
+      if (src.compare(i, 2, "/*") == 0) {
+        auto close{src.find("*/", i + 2)};
+        if (close == std::string_view::npos) break;
+        i = close + 2;
+        continue;
+      }
+      auto tokenInside{tokenAt(i)};
+      if (tokenInside.empty()) break;
+      if (auto hit{explainToken(tokenInside)}; !hit.empty()) {
+        explanation = hit;
+        break;
+      }
+      i += tokenInside.size();
+      while (i < src.size() && isSpace(src[i])) i++;
+    }
+  }
+  if (token.empty())
+    srcLoc.throwError(
+        concat(message, ", but reached the end of the file", explanation));
+  srcLoc.throwError(
+      concat(message, ", but found ", Quoted(token), explanation));
+}
+
 std::optional<std::string_view> Parser::nextWord() {
   checkpoint();
   auto i{mSrcLoc.i};
@@ -269,7 +381,8 @@ auto Parser::parseParameter() -> std::optional<AST::Parameter> {
   param.name = *name;
   if (auto srcEqual{nextDelimiter("=")}) {
     auto exprInit{parseAssignmentExpression()};
-    if (!exprInit) srcLoc0.throwError("expected initializer after '='");
+    if (!exprInit)
+      throwUnexpectedToken(mSrcLoc, "expected an initializer after '='");
     param.srcEqual = *srcEqual;
     param.exprInit = std::move(exprInit);
   }
@@ -416,7 +529,11 @@ auto Parser::parseExpressionInParentheses() -> BumpPtr<AST::Expr> {
     return nullptr;
   }
   auto srcParenR{nextDelimiter(")")};
-  if (!srcParenR) srcLoc0.throwError("expected closing ')'");
+  if (!srcParenR)
+    throwUnexpectedToken(
+        mSrcLoc,
+        concat("expected ')' to close the '(' opened at line ", srcLoc0.lineNo),
+        &srcLoc0);
   accept();
   return allocate<AST::Parens>(srcLoc0, std::in_place, orEmpty(srcDollar),
                                *srcParenL, std::move(expr), *srcParenR);
@@ -586,7 +703,12 @@ auto Parser::parsePostfixExpression() -> BumpPtr<AST::Expr> {
         index.expr = parseExpression(); // This may be null to represent `[]`
       }
       auto srcBrackR{nextDelimiter("]")};
-      if (!srcBrackR) srcLoc0.throwError("expected ']'");
+      if (!srcBrackR)
+        throwUnexpectedToken(mSrcLoc,
+                             concat("expected ']' to close the '[' opened at "
+                                    "line ",
+                                    srcLoc0.lineNo),
+                             &srcLoc0);
       index.srcBrackL = *srcBrackL;
       index.srcBrackR = *srcBrackR;
       indexes.push_back(std::move(index));
@@ -620,8 +742,14 @@ auto Parser::parseLetExpression() -> BumpPtr<AST::Expr> {
       skip();
       if (peek() == '}') break;
     }
-    if (srcBraceR = nextDelimiter("}"); !srcBraceR)
-      srcLoc0.throwError("expected closing '}' after 'let'");
+    if (srcBraceR = nextDelimiter("}"); !srcBraceR) {
+      // Anything that is not a declaration stops the loop above, so the
+      // block is far more often wrong at the offending token than it is
+      // missing its closing brace. Only blame the brace at EOF.
+      if (isEOF()) srcLoc0.throwError("expected closing '}' after 'let'");
+      mSrcLoc.throwError("expected variable declaration or closing '}' in "
+                         "'let' block, which must contain only declarations");
+    }
   } else {
     auto decl{parseVariableDeclaration()};
     if (!decl) srcLoc0.throwError("expected variable declaration after 'let'");
@@ -1020,7 +1148,7 @@ auto Parser::parseFile() -> BumpPtr<AST::File> {
     if (startsWith(getRemainingSourceCode(), "#search_dir"))
       mSrcLoc.throwError("'#search_dir' is only allowed at the top of the "
                          "file immediately after '#smdl'");
-    mSrcLoc.throwError("unexpected token, expected a declaration");
+    throwUnexpectedToken(mSrcLoc, "expected a declaration");
   }
   auto file{allocate<AST::File>(
       srcLoc0, std::in_place, orEmpty(srcKwSmdlSyntax), std::move(searchDirs),
@@ -1386,7 +1514,8 @@ auto Parser::parseStructTypeDeclaration() -> BumpPtr<AST::Struct> {
   }
   auto srcBraceR{nextDelimiter("}")};
   if (!srcBraceR)
-    mSrcLoc.throwError("expected field declarator or '}' in 'struct ...'");
+    throwUnexpectedToken(mSrcLoc,
+                         "expected a field declarator or '}' in 'struct ...'");
   auto srcSemicolon{nextDelimiter(";")};
   if (!srcSemicolon)
     srcLoc0.throwError("expected ';' after 'struct ... { ... }'");
@@ -1450,7 +1579,8 @@ auto Parser::parseStructFieldDeclarator() -> std::optional<AST::Struct::Field> {
   field.name = *name;
   if (auto srcEqual{nextDelimiter("=")}) {
     auto exprInit{parseExpression()};
-    if (!exprInit) mSrcLoc.throwError("expected initializer after '='");
+    if (!exprInit)
+      throwUnexpectedToken(mSrcLoc, "expected an initializer after '='");
     field.srcEqual = *srcEqual;
     field.exprInit = std::move(exprInit);
   }
@@ -1475,7 +1605,8 @@ auto Parser::parseEnumTypeDeclaration() -> BumpPtr<AST::Enum> {
   parseCommaSeparated(declarators, [&] { return parseEnumValueDeclarator(); });
   auto srcBraceR{nextDelimiter("}")};
   if (!srcBraceR)
-    mSrcLoc.throwError("expected value declarator or '}' in 'enum ...'");
+    throwUnexpectedToken(mSrcLoc,
+                         "expected a value declarator or '}' in 'enum ...'");
   auto srcSemicolon{nextDelimiter(";")};
   if (!srcSemicolon) srcLoc0.throwError("expected ';' after 'enum ...'");
   return allocate<AST::Enum>(srcLoc0, std::in_place, kwEnum->src, *name,
@@ -1498,7 +1629,8 @@ auto Parser::parseEnumValueDeclarator()
   declarator.name = *name;
   if (auto srcEqual{nextDelimiter("=")}) {
     auto exprInit{parseAssignmentExpression()};
-    if (!exprInit) srcLoc0.throwError("expected initializer after '='");
+    if (!exprInit)
+      throwUnexpectedToken(mSrcLoc, "expected an initializer after '='");
     declarator.srcEqual = *srcEqual;
     declarator.exprInit = std::move(exprInit);
   }
@@ -1522,7 +1654,11 @@ auto Parser::parseVariableDeclaration() -> BumpPtr<AST::Variable> {
   }
   auto srcSemicolon{nextDelimiter(";")};
   if (!srcSemicolon)
-    srcLoc0.throwError("expected ';' after variable declaration");
+    throwUnexpectedToken(mSrcLoc,
+                         concat("expected ';' after the variable declaration "
+                                "starting at line ",
+                                srcLoc0.lineNo),
+                         &srcLoc0);
   // Pick up a trailing documentation comment after the semicolon, e.g.,
   // `const int X = 0; ///< doc`.
   skip();
@@ -1552,7 +1688,10 @@ auto Parser::parseVariableDeclarator()
           return AST::Variable::Declarator::DeclaratorName{*name};
         });
     auto srcBraceR{nextDelimiter("}")};
-    if (!srcBraceR) {
+    // An empty destructure binds nothing, and accepting it would swallow
+    // the '{}' of any declaration that merely begins with a name, e.g.
+    // 'exec {}'.
+    if (!srcBraceR || declarator.names.empty()) {
       reject();
       return std::nullopt;
     }
@@ -1563,7 +1702,8 @@ auto Parser::parseVariableDeclarator()
   }
   if (auto srcEqual{nextDelimiter("=")}) {
     auto exprInit{parseAssignmentExpression()};
-    if (!exprInit) srcLoc0.throwError("expected initializer after '='");
+    if (!exprInit)
+      throwUnexpectedToken(mSrcLoc, "expected an initializer after '='");
     declarator.srcEqual = *srcEqual;
     declarator.exprInit = std::move(exprInit);
   } else if (auto argsInit{parseArgumentList()}) {
@@ -1683,7 +1823,8 @@ auto Parser::parseNamespaceDeclaration() -> BumpPtr<AST::Namespace> {
   }
   auto srcBraceR{nextDelimiter("}")};
   if (!srcBraceR)
-    mSrcLoc.throwError("expected declaration or '}' in 'namespace ...'");
+    throwUnexpectedToken(mSrcLoc,
+                         "expected a declaration or '}' in 'namespace ...'");
   return allocate<AST::Namespace>(srcLoc0, std::in_place, kwNamespace->src,
                                   std::move(identifier), *srcBraceL,
                                   std::move(decls), *srcBraceR);
@@ -1720,7 +1861,8 @@ auto Parser::parseStatement() -> BumpPtr<AST::Stmt> {
   if (auto expr{parseExpression()}) {
     auto lateIf{parseLateIf()};
     auto srcSemicolon{nextDelimiter(";")};
-    if (!srcSemicolon) srcLoc0.throwError("expected ';' after expression");
+    if (!srcSemicolon)
+      throwUnexpectedToken(mSrcLoc, "expected ';' after expression", &srcLoc0);
     return allocate<AST::ExprStmt>(srcLoc0, std::in_place, std::move(expr),
                                    std::move(lateIf), *srcSemicolon);
   }
@@ -1740,9 +1882,10 @@ auto Parser::parseCompoundStatement() -> BumpPtr<AST::Compound> {
   }
   auto srcBraceR{nextDelimiter("}")};
   if (!srcBraceR)
-    mSrcLoc.throwError("expected statement or '}' in compound statement "
-                       "starting at line ",
-                       braceL->srcLoc.lineNo);
+    throwUnexpectedToken(
+        mSrcLoc, concat("expected a statement or '}' to close the block "
+                        "starting at line ",
+                        braceL->srcLoc.lineNo));
   return allocate<AST::Compound>(braceL->srcLoc, std::in_place, braceL->src,
                                  std::move(stmts), *srcBraceR);
 }
@@ -1788,7 +1931,8 @@ auto Parser::parseSwitchStatement() -> BumpPtr<AST::Switch> {
   }
   auto srcBraceR{nextDelimiter("}")};
   if (!srcBraceR)
-    mSrcLoc.throwError("expected 'case', 'default', or '}' in 'switch'");
+    throwUnexpectedToken(mSrcLoc,
+                         "expected 'case', 'default', or '}' in 'switch'");
   return allocate<AST::Switch>(srcLoc0, std::in_place, kwSwitch->src,
                                std::move(expr), *srcBraceL,
                                std::move(switchCases), *srcBraceR);
@@ -1868,7 +2012,8 @@ auto Parser::parseForStatement() -> BumpPtr<AST::For> {
         allocate<AST::DeclStmt>(decl->srcLoc, std::in_place, std::move(decl));
   } else if (auto expr{parseExpression()}) {
     auto srcSemicolon{nextDelimiter(";")};
-    if (!srcSemicolon) srcLoc0.throwError("expected ';' after expression");
+    if (!srcSemicolon)
+      throwUnexpectedToken(mSrcLoc, "expected ';' after expression", &srcLoc0);
     stmtInit =
         allocate<AST::ExprStmt>(expr->srcLoc, std::in_place, std::move(expr),
                                 std::nullopt, *srcSemicolon);
@@ -1906,7 +2051,8 @@ auto Parser::parseReturnStatement() -> BumpPtr<AST::Return> {
   auto lateIf{parseLateIf()};
   auto srcSemicolon{nextDelimiter(";")};
   if (!srcSemicolon)
-    kwReturn->srcLoc.throwError("expected ';' after 'return ...'");
+    throwUnexpectedToken(mSrcLoc, "expected ';' after 'return ...'",
+                         &kwReturn->srcLoc);
   return allocate<AST::Return>(kwReturn->srcLoc, std::in_place, kwReturn->src,
                                std::move(expr), std::move(lateIf),
                                *srcSemicolon);

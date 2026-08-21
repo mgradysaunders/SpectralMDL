@@ -21,7 +21,7 @@ struct CameraOptions final {
   float3 up{0, 0, 1};
 
   /// The vertical field of view in degrees.
-  float fovYInDegrees{37.8f};
+  float fovYDeg{37.8f};
 
   /// Enable DOF by f-number assuming a 35mm-format frame, or 0.
   /// Mutually exclusive with `aperture`.
@@ -38,7 +38,7 @@ struct CameraOptions final {
   int blades{};
 
   /// With `blades`, the rotation of the aperture polygon in degrees.
-  float bladeAngleInDegrees{};
+  float bladeAngleDeg{};
 
   /// The radial distortion (barrel > 0, pincushion < 0), in units of
   /// relative corner displacement.
@@ -129,7 +129,7 @@ private:
   float rCorner{};
 
   /// The radial distortion coefficients.
-  float distortK1{}, distortK2{};
+  float distortionK1{}, distortionK2{};
 
   /// Is either distortion coefficient nonzero?
   bool hasDistortion{};
@@ -137,7 +137,7 @@ private:
   /// Under `distortionFit` the whole map is divided by its value at
   /// the corner, so only the interior warps. The monotonicity scan in
   /// the constructor guarantees the divisor is positive.
-  float distortScale{1};
+  float distortionScale{1};
 
   /// The thin-lens radius in scene units, zero for the pinhole default.
   float lensRadius{};

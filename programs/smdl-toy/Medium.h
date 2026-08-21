@@ -10,7 +10,7 @@ class MediumStack final {
 public:
   const MediumStack *prev{};
 
-  smdl::JIT::MaterialInstance materialInstance{};
+  smdl::JIT::MaterialInstance mat{};
 
   /// The mesh instance whose boundary was crossed to enter this medium,
   /// which carries the world-to-rigid transform that heterogeneous
@@ -40,7 +40,7 @@ public:
     const MediumStack *found{};
     for (const MediumStack *entry{stack}; entry; entry = entry->prev) {
       if (entry->meshInstance == meshInstance) {
-        if (entry->materialInstance.material == mat.material) {
+        if (entry->mat.material == mat.material) {
           found = entry;
           break;
         }
@@ -58,9 +58,8 @@ private:
   Remove(const MediumStack *stack, const MediumStack *entry,
          smdl::BumpPtrAllocator &allocator) {
     if (stack == entry) return stack->prev;
-    return new (allocator)
-        MediumStack{Remove(stack->prev, entry, allocator),
-                    stack->materialInstance, stack->meshInstance};
+    return new (allocator) MediumStack{Remove(stack->prev, entry, allocator),
+                                       stack->mat, stack->meshInstance};
   }
 };
 
@@ -73,7 +72,7 @@ private:
                                        const smdl::JIT::MaterialInstance &mat,
                                        const float3 &wo) noexcept {
   if (mat.isInterior(wo)) stack = stack ? stack->prev : nullptr;
-  return stack ? stack->materialInstance.getIOR() : 1.0f;
+  return stack ? stack->mat.getIOR() : 1.0f;
 }
 
 /// The medium of one ray segment: a view over the active media on the
@@ -166,7 +165,7 @@ private:
   struct Component final {
     /// The material instance of the stack entry, whose lifetime is the
     /// path's allocator.
-    const smdl::JIT::MaterialInstance *materialInstance{};
+    const smdl::JIT::MaterialInstance *mat{};
 
     /// Is this component heterogeneous (or unproven) with usable
     /// majorants? A component missing a majorant falls back to the

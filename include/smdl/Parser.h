@@ -118,6 +118,31 @@ private:
 
   void skip();
 
+  /// The token beginning at the given index in the source code, without
+  /// moving the parser. Returns the empty view past the end.
+  [[nodiscard]] std::string_view tokenAt(uint64_t i) const;
+
+  /// The next token as source text, for naming what the parser choked on.
+  /// Skips whitespace and comments first, so this must only be used where
+  /// the parser is about to throw. Returns the empty view at end of file.
+  [[nodiscard]] std::string_view peekToken();
+
+  /// The explanation for a token the parser cannot use here, either
+  /// because it belongs to another language or because it is a
+  /// SpectralMDL extension in a file that did not opt in. Returns a clause
+  /// ready to append to a message, or the empty string when there is
+  /// nothing useful to say.
+  [[nodiscard]] std::string explainToken(std::string_view token) const;
+
+  /// Throw `message`, naming the token that stopped the parser and
+  /// explaining it when there is anything to explain. `srcLocStart`, when
+  /// given, is where the construct that failed began: a borrowed keyword
+  /// is usually consumed as a name long before the parse gives up, so
+  /// `class Foo {` stops at the brace while `class` is the real mistake.
+  [[noreturn]] void
+  throwUnexpectedToken(const SourceLocation &srcLoc, std::string_view message,
+                       const SourceLocation *srcLocStart = nullptr);
+
   /// Get the pending documentation comment block most recently scanned
   /// by `skip()`. This may be empty!
   [[nodiscard]] std::string_view getPendingDocComment() const {

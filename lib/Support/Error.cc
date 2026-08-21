@@ -11,7 +11,7 @@
 
 namespace smdl {
 
-void Error::print() const { SMDL_LOG_ERROR(message); }
+void Error::print() const { SMDL_LOG_ERROR(message, snippet); }
 
 void Error::printAndExit() const {
   print();

@@ -42,7 +42,7 @@ public:
   /// The index in the `Scene::materials` array, interned from the
   /// asset's `material <name>` under the same instance-level split
   /// meshes get: overrides that rename it bind on the instance.
-  uint32_t materialIndex{};
+  uint32_t matIndex{};
 
   /// The total object-space surface area, exact.
   float objectArea{};
@@ -54,14 +54,19 @@ public:
 };
 
 /// The differential geometry of a shape at (piece, u, v), in object
-/// space: the point, the outward unit normal, and the parametric
-/// partials the texture frame and the ray-cone density come from.
+/// space: the point, the outward unit normal, the parametric partials
+/// the texture frame and the ray-cone density come from, and the
+/// parametric partials of the unit normal itself, which the manifold
+/// connection walk differentiates. The caps have constant normals, so
+/// their normal partials are zero.
 class PrimitiveSurface final {
 public:
   float3 point{};
   float3 normal{};
   float3 dPdu{};
   float3 dPdv{};
+  float3 dNdu{};
+  float3 dNdv{};
 };
 
 /// One uniform-area sample of a shape's whole surface, in object space,
@@ -79,12 +84,11 @@ public:
 };
 
 /// Create a primitive: build its user geometry, bounds, and proxy
-/// points, and commit its scene. The caller interns `materialIndex` and
+/// points, and commit its scene. The caller interns `matIndex` and
 /// owns the result; the geometry's user pointer refers back to the
 /// returned object, so it must not be relocated afterward.
 [[nodiscard]] std::unique_ptr<Primitive>
-makePrimitive(RTCDevice device, const PrimitiveSpec &spec,
-              uint32_t materialIndex);
+makePrimitive(RTCDevice device, const PrimitiveSpec &spec, uint32_t matIndex);
 
 /// The number of sub-surface pieces of a shape, which is the user
 /// geometry's primitive count.

@@ -542,8 +542,13 @@ public:
   }
 
   /// Create result PHI instruction.
+  /// Merge results into one value of `resultType`. `resultKind`, when
+  /// given, names what the results are for so that a value of the wrong
+  /// type says so in those terms instead of reporting the failed
+  /// conversion as if it were a constructor call.
   Value createResult(Type *resultType, llvm::ArrayRef<Result> results,
-                     const SourceLocation &srcLoc);
+                     const SourceLocation &srcLoc,
+                     std::string_view resultKind = {});
 
   /// Emit a two-arm conditional merge: branch on `cond`, emit each arm,
   /// convert both to their common type in their own blocks, and join with
@@ -990,11 +995,13 @@ public:
   ArgumentList emit(AST::ArgumentList &astArgs) {
     ArgumentList args{};
     for (auto &astArg : astArgs) {
-      if (astArg.isInlined())
+      if (astArg.isInlined()) {
         expandInlineArgument(args, astArg);
-      else
+      } else {
+        rejectAssignmentAsNamedArgument(astArg);
         args.push_back(
             Argument{astArg.name.srcName, emit(astArg.expr), &astArg});
+      }
     }
     args.astArgs = &astArgs;
     args.validateNames();
@@ -1007,6 +1014,18 @@ public:
   /// once. `validateNames()` afterwards catches name collisions and
   /// positional-after-named ordering introduced by the expansion.
   void expandInlineArgument(ArgumentList &args, AST::Argument &astArg);
+
+  /// Reject an assignment whose target is a name that is not a variable.
+  /// A `const` declaration binds an rvalue, so the assignment otherwise
+  /// fails deep in `emitOp` with only the word "rvalue" to go on, long
+  /// after the name and its declaration are out of reach.
+  void rejectAssignmentToNonVariable(AST::Binary &expr);
+
+  /// Reject `name = value` in an argument list when `name` resolves to
+  /// nothing, which is the `=` typed where `:` was meant. Left alone, it
+  /// reports only that the name does not resolve, which describes the
+  /// symptom and not the mistake.
+  void rejectAssignmentAsNamedArgument(AST::Argument &astArg);
 
   /// Emit pointer if non-null.
   template <typename T> Value emit(T *ptr) {
@@ -1297,6 +1316,41 @@ public:
   [[nodiscard]] Declaration *probeName(Span<const std::string_view> name,
                                        llvm::Function *llvmFunc,
                                        Declaration **unusableMatch);
+
+  /// Every top-level name the given module exports, for did-you-mean
+  /// suggestions against a module's contents.
+  [[nodiscard]] static std::vector<std::string_view>
+  exportedNamesOf(Module *module_);
+
+  /// The did-you-mean clause for an import that failed to resolve: the
+  /// nearest module name, or, when nothing is near enough, the search
+  /// roots that were actually consulted.
+  [[nodiscard]] std::string
+  suggestForFailedImport(Span<const std::string_view> modulePath);
+
+  /// The did-you-mean clause for a name that failed to resolve, gathered
+  /// from the intrinsics, the keywords, the enclosing scopes, and the
+  /// modules visible where the lookup failed. Returns the empty string
+  /// when nothing is close enough to be worth suggesting.
+  [[nodiscard]] std::string
+  suggestForUnresolvedName(Span<const std::string_view> names,
+                           const SourceLocation &srcLoc);
+
+  /// The innermost call site that lives in a real source file. A builtin
+  /// body is inlined into the caller, so a diagnostic raised inside one
+  /// carries the builtin's location, which the user cannot act on. This
+  /// remembers where they actually wrote the call.
+  SourceLocation srcLocUserCall{};
+
+  /// The best location to blame for a resource diagnostic: `srcLoc` when it
+  /// is already in the user's own source, and otherwise the innermost call
+  /// site that is, so that a missing texture names the user's line instead
+  /// of the builtin constructor that happened to load it.
+  [[nodiscard]] const SourceLocation &
+  resourceSourceLocation(const SourceLocation &srcLoc) const {
+    if (srcLoc.module_ && !srcLoc.module_->isBuiltin()) return srcLoc;
+    return srcLocUserCall ? srcLocUserCall : srcLoc;
+  }
 
   /// The `$state` value.
   Value state{};

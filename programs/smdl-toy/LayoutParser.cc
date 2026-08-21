@@ -16,8 +16,6 @@
 
 namespace {
 
-constexpr float PI = 3.14159265358979323846f;
-
 // One token, with the byte range it came from so that every diagnostic
 // can point at it.
 class Token final {
@@ -205,18 +203,18 @@ private:
       throw Recover();
     }
     decl.name = mToken.text;
-    decl.nameLocation = location();
+    decl.nameLoc = location();
     if (const auto previous{findDeclaration(decl.name, &decl)}) {
       mDiags
-          .error(decl.nameLocation, smdl::concat("redeclaration of asset ",
-                                                 smdl::Quoted(decl.name)))
+          .error(decl.nameLoc, smdl::concat("redeclaration of asset ",
+                                            smdl::Quoted(decl.name)))
           .note(previous, "previous declaration is here");
       mDocument.assets.pop_back();
       throw Recover();
     }
     advance();
     expect(Token::EQUALS, "'=' after the asset name");
-    decl.pathLocation = location();
+    decl.pathLoc = location();
     // The source is a quoted path, or one of the built-in shape
     // keywords: paths are quoted because they are names out of the
     // filesystem, and shapes are bare because they are vocabulary.
@@ -246,15 +244,14 @@ private:
     // required, and per-slot assignment is impossible.
     if (decl.primitive.active()) {
       if (decl.materials.all.empty())
-        mDiags.error(decl.nameLocation,
+        mDiags.error(decl.nameLoc,
                      smdl::concat("the ", decl.primitive.name(), " asset ",
                                   smdl::Quoted(decl.name),
                                   " needs 'material <name>' in its block"));
       if (!decl.materials.bySlot.empty())
-        mDiags.error(decl.nameLocation,
-                     smdl::concat("a ", decl.primitive.name(),
-                                  " has no material slots; use "
-                                  "'material <name>' alone"));
+        mDiags.error(decl.nameLoc, smdl::concat("a ", decl.primitive.name(),
+                                                " has no material slots; use "
+                                                "'material <name>' alone"));
     }
   }
 
@@ -270,18 +267,17 @@ private:
         throw Recover();
       }
       const auto op{mToken.text};
-      const auto opLocation{location()};
+      const auto opLoc{location()};
       advance();
       if (op == "select" || op == "recenter" || op == "subdivide" ||
           op == "displace") {
         // Analytic shapes have no objects to pick, no polygons to refine,
         // and displacement would need vertices to move.
         if (decl.primitive.active()) {
-          mDiags.error(opLocation,
-                       smdl::concat(smdl::Quoted(op),
-                                    " applies to a mesh file, but this "
-                                    "asset is a ",
-                                    decl.primitive.name()));
+          mDiags.error(opLoc, smdl::concat(smdl::Quoted(op),
+                                           " applies to a mesh file, but this "
+                                           "asset is a ",
+                                           decl.primitive.name()));
           throw Recover();
         }
         if (op == "select") {
@@ -290,28 +286,27 @@ private:
         } else if (op == "recenter") {
           decl.selection.recenter = true;
         } else if (op == "subdivide") {
-          parseSubdivide(decl.subdiv, opLocation);
+          parseSubdivide(decl.subdiv, opLoc);
         } else {
           decl.subdiv.displace = true;
         }
       } else if (op == "radius" || op == "height") {
         if (!decl.primitive.active()) {
-          mDiags.error(opLocation,
+          mDiags.error(opLoc,
                        smdl::concat(smdl::Quoted(op),
                                     " is a shape parameter, and this asset "
                                     "is a file"));
           throw Recover();
         }
         if (op == "height" && !decl.primitive.hasHeight()) {
-          mDiags.error(opLocation, smdl::concat("a ", decl.primitive.name(),
-                                                " has no 'height'"));
+          mDiags.error(opLoc, smdl::concat("a ", decl.primitive.name(),
+                                           " has no 'height'"));
           throw Recover();
         }
         const auto value{numbers<1>()[0]};
         if (!(value > 0)) {
-          mDiags.error(opLocation,
-                       smdl::concat("expected a positive number for ",
-                                    smdl::Quoted(op)));
+          mDiags.error(opLoc, smdl::concat("expected a positive number for ",
+                                           smdl::Quoted(op)));
           throw Recover();
         }
         (op == "radius" ? decl.primitive.radius : decl.primitive.height) =
@@ -321,18 +316,18 @@ private:
         // discover; what the parser can already reject is a shape,
         // which is never one.
         if (decl.primitive.active()) {
-          mDiags.error(opLocation,
+          mDiags.error(opLoc,
                        smdl::concat(smdl::Quoted(op),
                                     " applies to a curves file, but this "
                                     "asset is a ",
                                     decl.primitive.name()));
           throw Recover();
         }
-        if (!decl.curvesOpsLocation) decl.curvesOpsLocation = opLocation;
+        if (!decl.curvesOpsLoc) decl.curvesOpsLoc = opLoc;
         if (op == "radius_scale") {
           const auto value{numbers<1>()[0]};
           if (!(value > 0)) {
-            mDiags.error(opLocation,
+            mDiags.error(opLoc,
                          "expected a positive number for 'radius_scale'");
             throw Recover();
           }
@@ -341,8 +336,8 @@ private:
           // One word decides the cross-section, so a second is either
           // a repeat or a contradiction, and both are conflicts.
           if (decl.curves.modeSet) {
-            mDiags.error(opLocation, "'tube' or 'ribbon' appears twice in "
-                                     "one asset");
+            mDiags.error(opLoc, "'tube' or 'ribbon' appears twice in "
+                                "one asset");
             throw Recover();
           }
           decl.curves.mode = op == "ribbon" ? CurvesSpec::Mode::RIBBON
@@ -353,12 +348,12 @@ private:
         parseMaterialOps(decl.materials, "asset");
       } else if (op == "at") {
         mDiags
-            .error(opLocation, "'at' blocks were retired with the '.scene' "
-                               "format")
+            .error(opLoc, "'at' blocks were retired with the '.scene' "
+                          "format")
             .note({}, "write one top-level 'place' per instance instead");
         throw Recover();
-      } else if (!parseTransformOp(op, opLocation, decl.transform)) {
-        mDiags.error(opLocation,
+      } else if (!parseTransformOp(op, opLoc, decl.transform)) {
+        mDiags.error(opLoc,
                      smdl::concat("unknown asset operation ", smdl::Quoted(op),
                                   decl.primitive.active()
                                       ? " (expected radius, height, "
@@ -388,11 +383,11 @@ private:
       throw Recover();
     }
     decl.name = mToken.text;
-    decl.nameLocation = location();
+    decl.nameLoc = location();
     if (const auto previous{findDeclaration(decl.name, &decl)}) {
       mDiags
-          .error(decl.nameLocation, smdl::concat("redeclaration of light ",
-                                                 smdl::Quoted(decl.name)))
+          .error(decl.nameLoc, smdl::concat("redeclaration of light ",
+                                            smdl::Quoted(decl.name)))
           .note(previous, "previous declaration is here");
       mDocument.lights.pop_back();
       throw Recover();
@@ -413,7 +408,7 @@ private:
     } else if (mToken.text == "profile") {
       decl.kind = LayoutLightDecl::Kind::PROFILE;
       advance();
-      decl.profilePathLocation = location();
+      decl.profilePathLoc = location();
       decl.profilePath =
           expect(Token::STRING, "a quoted IES path after 'profile'");
     } else {
@@ -440,12 +435,12 @@ private:
         throw Recover();
       }
       const auto op{mToken.text};
-      const auto opLocation{location()};
+      const auto opLoc{location()};
       advance();
       if (op == "power") {
         const auto value{numbers<1>()[0]};
         if (!(value > 0)) {
-          mDiags.error(opLocation, "expected a positive number for 'power'");
+          mDiags.error(opLoc, "expected a positive number for 'power'");
           throw Recover();
         }
         decl.power = value;
@@ -453,22 +448,21 @@ private:
       } else if (op == "temperature") {
         const auto value{numbers<1>()[0]};
         if (!(value > 0)) {
-          mDiags.error(opLocation,
-                       "expected a positive number for 'temperature'");
+          mDiags.error(opLoc, "expected a positive number for 'temperature'");
           throw Recover();
         }
         decl.temperature = value;
       } else if (op == "color") {
         const auto v{numbers<3>()};
         if (!(v[0] >= 0 && v[1] >= 0 && v[2] >= 0)) {
-          mDiags.error(opLocation,
+          mDiags.error(opLoc,
                        "expected three non-negative numbers for 'color'");
           throw Recover();
         }
         decl.color = float3(v[0], v[1], v[2]);
       } else if (op == "angle" || op == "blend") {
         if (!isSpot) {
-          mDiags.error(opLocation,
+          mDiags.error(opLoc,
                        smdl::concat(smdl::Quoted(op),
                                     " applies to a spot, and this light is "
                                     "a ",
@@ -478,21 +472,21 @@ private:
         const auto value{numbers<1>()[0]};
         if (op == "angle") {
           if (!(value > 0 && value <= 180)) {
-            mDiags.error(opLocation, "expected an 'angle' between 0 and 180 "
-                                     "degrees");
+            mDiags.error(opLoc, "expected an 'angle' between 0 and 180 "
+                                "degrees");
             throw Recover();
           }
           decl.spotAngle = value;
         } else {
           if (!(value >= 0 && value <= 1)) {
-            mDiags.error(opLocation, "expected a 'blend' between 0 and 1");
+            mDiags.error(opLoc, "expected a 'blend' between 0 and 1");
             throw Recover();
           }
           decl.spotBlend = value;
         }
       } else if (op == "scale") {
         if (!isProfile) {
-          mDiags.error(opLocation,
+          mDiags.error(opLoc,
                        smdl::concat("'scale' applies to a profile, and this "
                                     "light is a ",
                                     decl.kindName()));
@@ -500,15 +494,15 @@ private:
         }
         const auto value{numbers<1>()[0]};
         if (!(value > 0)) {
-          mDiags.error(opLocation, "expected a positive number for 'scale'");
+          mDiags.error(opLoc, "expected a positive number for 'scale'");
           throw Recover();
         }
         decl.scale = value;
-      } else if (!parseTransformOp(op, opLocation, decl.transform)) {
+      } else if (!parseTransformOp(op, opLoc, decl.transform)) {
         // Note 'scale' is taken by the profile multiplier, so unlike the
         // other blocks it is not offered as a transform here; a light has
         // no extent for it to act on anyway.
-        mDiags.error(opLocation,
+        mDiags.error(opLoc,
                      smdl::concat("unknown light setting ", smdl::Quoted(op),
                                   " (expected power, temperature, color, ",
                                   isSpot      ? "angle, blend, "
@@ -534,11 +528,11 @@ private:
       throw Recover();
     }
     group.name = mToken.text;
-    group.nameLocation = location();
+    group.nameLoc = location();
     if (const auto previous{findDeclaration(group.name, &group)}) {
       mDiags
-          .error(group.nameLocation, smdl::concat("redeclaration of group ",
-                                                  smdl::Quoted(group.name)))
+          .error(group.nameLoc, smdl::concat("redeclaration of group ",
+                                             smdl::Quoted(group.name)))
           .note(previous, "previous declaration is here");
       mDocument.groups.pop_back();
       throw Recover();
@@ -589,13 +583,13 @@ private:
       throw Recover();
     }
     placement.assetName = mToken.text;
-    placement.assetNameLocation = location();
+    placement.assetNameLoc = location();
     advance();
     // The bulk form: one instance per record of a '.places' buffer,
     // each record standing where a one-line place's operations would.
     if (mToken.kind == Token::WORD && mToken.text == "*") {
       advance();
-      placement.placesPathLocation = location();
+      placement.placesPathLoc = location();
       placement.placesPath =
           expect(Token::STRING, "a quoted '.places' path after '*'");
     }
@@ -614,14 +608,14 @@ private:
         throw Recover();
       }
       placement.asName = mToken.text;
-      placement.asNameLocation = location();
+      placement.asNameLoc = location();
       // Identity wants uniqueness; nothing consumes it yet, so a repeat
       // is a warning rather than an error.
       if (auto [itr, isNew]{
-              mAsNames.try_emplace(placement.asName, placement.asNameLocation)};
+              mAsNames.try_emplace(placement.asName, placement.asNameLoc)};
           !isNew)
         mDiags
-            .warn(placement.asNameLocation,
+            .warn(placement.asNameLoc,
                   smdl::concat("duplicate place name ",
                                smdl::Quoted(placement.asName)))
             .note(itr->second, "first placed here");
@@ -654,21 +648,19 @@ private:
   // pointed back at it.
   void parsePlaceOp(LayoutPlacement &placement) {
     const auto op{mToken.text};
-    const auto opLocation{location()};
+    const auto opLoc{location()};
     advance();
     if (op == "select" || op == "recenter" || op == "subdivide" ||
         op == "displace" || op == "tube" || op == "ribbon" ||
         op == "radius_scale") {
-      mDiags.error(opLocation,
+      mDiags.error(opLoc,
                    smdl::concat(smdl::Quoted(op),
                                 " is a property of what is loaded, so it "
                                 "belongs on the 'asset' declaration"));
       throw Recover();
     }
     if (op == "at") {
-      mDiags
-          .error(opLocation,
-                 "'at' blocks were retired with the '.scene' format")
+      mDiags.error(opLoc, "'at' blocks were retired with the '.scene' format")
           .note({}, "write one top-level 'place' per instance instead");
       throw Recover();
     }
@@ -676,7 +668,7 @@ private:
       // One entry of a bulk place's override table, picked by the
       // buffer's per-record variant indices in order of appearance.
       if (placement.placesPath.empty()) {
-        mDiags.error(opLocation,
+        mDiags.error(opLoc,
                      "'variant' belongs to a bulk place: 'place <name> * "
                      "\"<file>\" { variant { ... } }'");
         throw Recover();
@@ -697,19 +689,18 @@ private:
                                    "overrides and nothing else");
           throw Recover();
         }
-        const auto pairLocation{location()};
+        const auto pairLoc{location()};
         advance();
         std::string from{};
         if (mToken.kind == Token::WORD || mToken.kind == Token::STRING) {
           from = mToken.text;
           advance();
         } else {
-          mDiags.error(pairLocation,
-                       "expected a material name after 'material'");
+          mDiags.error(pairLoc, "expected a material name after 'material'");
           throw Recover();
         }
         if (mToken.kind != Token::EQUALS) {
-          mDiags.error(pairLocation,
+          mDiags.error(pairLoc,
                        "a variant override renames one material: write "
                        "'material <from> = <to>'");
           throw Recover();
@@ -717,7 +708,7 @@ private:
         advance(); // '='
         auto to{expect(Token::WORD, "an MDL material name after '='")};
         if (!variant.try_emplace(from, std::move(to)).second) {
-          mDiags.error(pairLocation,
+          mDiags.error(pairLoc,
                        smdl::concat("the material ", smdl::Quoted(from),
                                     " is overridden twice in one variant"));
           throw Recover();
@@ -735,14 +726,14 @@ private:
         from = mToken.text;
         advance();
       } else {
-        mDiags.error(opLocation, "expected a material name after "
-                                 "'material'");
+        mDiags.error(opLoc, "expected a material name after "
+                            "'material'");
         throw Recover();
       }
       if (mToken.kind != Token::EQUALS) {
         mDiags
-            .error(opLocation, "a place override renames one material: write "
-                               "'material <from> = <to>'")
+            .error(opLoc, "a place override renames one material: write "
+                          "'material <from> = <to>'")
             .note({}, "to shade every slot at once, use 'material <name>' "
                       "on the 'asset' declaration");
         throw Recover();
@@ -750,15 +741,14 @@ private:
       advance(); // '='
       auto to{expect(Token::WORD, "an MDL material name after '='")};
       if (!placement.overrides.try_emplace(from, std::move(to)).second) {
-        mDiags.error(opLocation,
-                     smdl::concat("the material ", smdl::Quoted(from),
-                                  " is overridden twice in one place"));
+        mDiags.error(opLoc, smdl::concat("the material ", smdl::Quoted(from),
+                                         " is overridden twice in one place"));
         throw Recover();
       }
       return;
     }
-    if (!parseTransformOp(op, opLocation, placement.transform)) {
-      mDiags.error(opLocation,
+    if (!parseTransformOp(op, opLoc, placement.transform)) {
+      mDiags.error(opLoc,
                    smdl::concat("unknown place operation ", smdl::Quoted(op),
                                 " (expected material, variant, translate, "
                                 "scale, rotate, rotate_x, rotate_y, "
@@ -771,7 +761,7 @@ private:
     advance();
     auto &placement{mDocument.placements.emplace_back()};
     placement.kind = LayoutPlacement::Kind::IMPORT;
-    placement.importPathLocation = location();
+    placement.importPathLoc = location();
     placement.importPath =
         expect(Token::STRING, "a quoted path after 'import'");
     if (mToken.kind != Token::OPEN) return;
@@ -786,13 +776,13 @@ private:
         throw Recover();
       }
       const auto op{mToken.text};
-      const auto opLocation{location()};
+      const auto opLoc{location()};
       advance();
       if (op == "select" || op == "recenter" || op == "subdivide" ||
           op == "displace" || op == "tube" || op == "ribbon" ||
           op == "radius_scale") {
         mDiags
-            .error(opLocation,
+            .error(opLoc,
                    smdl::concat(smdl::Quoted(op),
                                 " is a property of what is loaded, so it "
                                 "belongs on an 'asset' declaration"))
@@ -802,15 +792,15 @@ private:
       }
       if (op == "at") {
         mDiags
-            .error(opLocation, "'at' blocks were retired with the '.scene' "
-                               "format")
+            .error(opLoc, "'at' blocks were retired with the '.scene' "
+                          "format")
             .note({}, "write one top-level 'place' per instance instead");
         throw Recover();
       }
       if (op == "material") {
         parseMaterialOps(placement.importMaterials, "import");
-      } else if (!parseTransformOp(op, opLocation, placement.transform)) {
-        mDiags.error(opLocation,
+      } else if (!parseTransformOp(op, opLoc, placement.transform)) {
+        mDiags.error(opLoc,
                      smdl::concat("unknown import operation ", smdl::Quoted(op),
                                   " (expected material, translate, scale, "
                                   "rotate, rotate_x, rotate_y, rotate_z, or "
@@ -826,14 +816,14 @@ private:
   // shades one. Unambiguous by what follows: a slot is quoted because it
   // is a name out of the mesh file, an MDL material name is bare.
   void parseMaterialOps(MaterialAssignment &materials, std::string_view where) {
-    const auto opLocation{location()};
+    const auto opLoc{location()};
     if (mToken.kind == Token::STRING) {
       auto slot{mToken.text};
       advance();
       expect(Token::EQUALS, "'=' after the material slot name");
       auto target{expect(Token::WORD, "an MDL material name after '='")};
       if (!materials.bySlot.try_emplace(slot, std::move(target)).second) {
-        mDiags.error(opLocation,
+        mDiags.error(opLoc,
                      smdl::concat("the material slot ", smdl::Quoted(slot),
                                   " is assigned twice in one ", where));
         throw Recover();
@@ -841,31 +831,30 @@ private:
       return;
     }
     if (mToken.kind != Token::WORD) {
-      mDiags.error(opLocation,
-                   "expected an MDL material name, or a quoted material "
-                   "slot name, after 'material'");
+      mDiags.error(opLoc, "expected an MDL material name, or a quoted material "
+                          "slot name, after 'material'");
       throw Recover();
     }
     if (!materials.all.empty()) {
-      mDiags.error(opLocation, smdl::concat("'material' assigns the whole ",
-                                            where, " twice"));
+      mDiags.error(opLoc, smdl::concat("'material' assigns the whole ", where,
+                                       " twice"));
       throw Recover();
     }
     materials.all = mToken.text;
     advance();
   }
 
-  void parseSubdivide(SubdivSpec &subdiv, const LayoutLocation &opLocation) {
+  void parseSubdivide(SubdivSpec &subdiv, const LayoutLocation &opLoc) {
     // Once per asset: a second 'subdivide' is far more likely a
     // conflicting edit than an intentional override.
     if (subdiv.levels > 0) {
-      mDiags.error(opLocation, "'subdivide' appears twice in one asset");
+      mDiags.error(opLoc, "'subdivide' appears twice in one asset");
       throw Recover();
     }
     const float levels{numbers<1>()[0]};
     if (!(levels >= 1 && levels <= 8 && levels == float(int(levels)))) {
-      mDiags.error(opLocation, "expected an integer subdivision level from 1 "
-                               "to 8 after 'subdivide'");
+      mDiags.error(opLoc, "expected an integer subdivision level from 1 "
+                          "to 8 after 'subdivide'");
       throw Recover();
     }
     subdiv.levels = uint32_t(levels);
@@ -903,19 +892,19 @@ private:
   }
 
   void parseMedium() {
-    const auto opLocation{location()};
+    const auto opLoc{location()};
     advance();
     // Last one wins within the file, like the 'material' aliasing.
     mDocument.mediumName =
         expect(Token::WORD, "an MDL material name after 'medium'");
-    mDocument.mediumLocation = opLocation;
+    mDocument.mediumLoc = opLoc;
   }
 
   // A `camera { ... }` block. Last one wins per field within the file; a
   // field no directive names is left unset for the command line, or
   // failing that the built-in default, to fill in.
   void parseCamera() {
-    if (!mDocument.cameraLocation) mDocument.cameraLocation = location();
+    if (!mDocument.cameraLoc) mDocument.cameraLoc = location();
     advance();
     if (mToken.kind != Token::OPEN) {
       mDiags.error(location(), "expected '{' after 'camera'");
@@ -933,13 +922,12 @@ private:
         throw Recover();
       }
       const auto key{mToken.text};
-      const auto keyLocation{location()};
+      const auto keyLoc{location()};
       advance();
       if (key == "dims") {
         auto v{numbers<2>()};
         if (!(v[0] >= 1 && v[1] >= 1)) {
-          mDiags.error(keyLocation,
-                       "expected two positive integers for 'dims'");
+          mDiags.error(keyLoc, "expected two positive integers for 'dims'");
           throw Recover();
         }
         camera.dims = int2(int(v[0]), int(v[1]));
@@ -953,17 +941,17 @@ private:
         auto v{numbers<3>()};
         camera.up = float3(v[0], v[1], v[2]);
       } else if (key == "fovy") {
-        camera.fovYInDegrees = positive(keyLocation, key, numbers<1>()[0]);
+        camera.fovYDeg = positive(keyLoc, key, numbers<1>()[0]);
       } else if (key == "fstop") {
-        camera.fStop = positive(keyLocation, key, numbers<1>()[0]);
+        camera.fStop = positive(keyLoc, key, numbers<1>()[0]);
       } else if (key == "aperture") {
-        camera.aperture = positive(keyLocation, key, numbers<1>()[0]);
+        camera.aperture = positive(keyLoc, key, numbers<1>()[0]);
       } else if (key == "focus") {
-        camera.focus = positive(keyLocation, key, numbers<1>()[0]);
+        camera.focus = positive(keyLoc, key, numbers<1>()[0]);
       } else if (key == "blades") {
         camera.blades = int(numbers<1>()[0]);
       } else if (key == "blade_angle") {
-        camera.bladeAngleInDegrees = numbers<1>()[0];
+        camera.bladeAngleDeg = numbers<1>()[0];
       } else if (key == "distortion_k1") {
         camera.distortionK1 = numbers<1>()[0];
       } else if (key == "distortion_k2") {
@@ -977,10 +965,10 @@ private:
       } else if (key == "cat_eye") {
         camera.catEye = numbers<1>()[0];
       } else if (key == "cat_eye_radius") {
-        camera.catEyeRadius = positive(keyLocation, key, numbers<1>()[0]);
+        camera.catEyeRadius = positive(keyLoc, key, numbers<1>()[0]);
       } else {
         mDiags.error(
-            keyLocation,
+            keyLoc,
             smdl::concat("unknown camera setting ", smdl::Quoted(key),
                          " (expected dims, look_from, look_to, up, fovy, "
                          "fstop, aperture, focus, blades, blade_angle, "
@@ -994,7 +982,7 @@ private:
 
   // A `sky { ... }` block, merged per field like `camera`.
   void parseSky() {
-    if (!mDocument.skyLocation) mDocument.skyLocation = location();
+    if (!mDocument.skyLoc) mDocument.skyLoc = location();
     advance();
     if (mToken.kind != Token::OPEN) {
       mDiags.error(location(), "expected '{' after 'sky'");
@@ -1012,7 +1000,7 @@ private:
         throw Recover();
       }
       const auto key{mToken.text};
-      const auto keyLocation{location()};
+      const auto keyLoc{location()};
       advance();
       if (key == "none") {
         // A bare keyword, like 'recenter': there is nothing to say about
@@ -1023,27 +1011,27 @@ private:
       } else if (key == "sun_azimuth") {
         sky.sunAzimuth = numbers<1>()[0];
       } else if (key == "visibility") {
-        sky.visibility = positive(keyLocation, key, numbers<1>()[0]);
+        sky.visibility = positive(keyLoc, key, numbers<1>()[0]);
       } else if (key == "water_vapor") {
-        sky.waterVapor = positive(keyLocation, key, numbers<1>()[0]);
+        sky.waterVapor = positive(keyLoc, key, numbers<1>()[0]);
       } else if (key == "scale") {
-        sky.scale = positive(keyLocation, key, numbers<1>()[0]);
+        sky.scale = positive(keyLoc, key, numbers<1>()[0]);
       } else if (key == "moon") {
         sky.moonPhase = numbers<1>()[0];
       } else if (key == "moon_distance") {
-        sky.moonDistance = positive(keyLocation, key, numbers<1>()[0]);
+        sky.moonDistance = positive(keyLoc, key, numbers<1>()[0]);
       } else if (key == "ibl") {
         // Recorded as written; the lowering resolves it like any other
         // path the layout names, so an environment map can live in the
         // asset library too.
         sky.iblFileName.reset();
-        mDocument.iblPathLocation = location();
+        mDocument.iblPathLoc = location();
         mDocument.iblPath =
             expect(Token::STRING, "a quoted file name after 'ibl'");
       } else if (key == "ibl_scale") {
-        sky.iblScale = positive(keyLocation, key, numbers<1>()[0]);
+        sky.iblScale = positive(keyLoc, key, numbers<1>()[0]);
       } else {
-        mDiags.error(keyLocation,
+        mDiags.error(keyLoc,
                      smdl::concat("unknown sky setting ", smdl::Quoted(key),
                                   " (expected none, sun_zenith, sun_azimuth, "
                                   "visibility, water_vapor, scale, moon, "
@@ -1056,12 +1044,12 @@ private:
 
   // Check a setting whose zero means "unset" everywhere downstream, so
   // that writing it down has to mean something.
-  [[nodiscard]] float positive(const LayoutLocation &keyLocation,
+  [[nodiscard]] float positive(const LayoutLocation &keyLoc,
                                std::string_view key, float value) {
     if (!(value > 0)) {
-      mDiags.error(keyLocation, smdl::concat("expected a positive number for ",
-                                             smdl::Quoted(key),
-                                             " (omit it to leave it unset)"));
+      mDiags.error(keyLoc, smdl::concat("expected a positive number for ",
+                                        smdl::Quoted(key),
+                                        " (omit it to leave it unset)"));
       throw Recover();
     }
     return value;
@@ -1072,7 +1060,7 @@ private:
   // no transform operation, leaving the caller to decide what that
   // means.
   [[nodiscard]] bool parseTransformOp(const std::string &op,
-                                      const LayoutLocation &opLocation,
+                                      const LayoutLocation &opLoc,
                                       float4x4 &xf) {
     if (op == "translate") {
       auto v{numbers<3>()};
@@ -1086,7 +1074,7 @@ private:
       if (isNumber(mToken)) {
         scale[1] = numbers<1>()[0];
         if (!isNumber(mToken)) {
-          mDiags.error(opLocation,
+          mDiags.error(opLoc,
                        "expected one number for a uniform 'scale' or three "
                        "for a non-uniform one");
           throw Recover();
@@ -1186,11 +1174,11 @@ private:
   [[nodiscard]] LayoutLocation findDeclaration(std::string_view name,
                                                const void *skip) const {
     for (const auto &asset : mDocument.assets)
-      if (&asset != skip && asset.name == name) return asset.nameLocation;
+      if (&asset != skip && asset.name == name) return asset.nameLoc;
     for (const auto &group : mDocument.groups)
-      if (&group != skip && group.name == name) return group.nameLocation;
+      if (&group != skip && group.name == name) return group.nameLoc;
     for (const auto &light : mDocument.lights)
-      if (&light != skip && light.name == name) return light.nameLocation;
+      if (&light != skip && light.name == name) return light.nameLoc;
     return {};
   }
 
@@ -1207,7 +1195,7 @@ private:
 
   [[nodiscard]] static float4x4 rotation(float3 axis, float degrees) {
     if (!smdl::tryNormalize(axis)) return float4x4(1.0f);
-    const float radians{degrees * PI / 180.0f};
+    const float radians{smdl::radians(degrees)};
     const float c{std::cos(radians)}, s{std::sin(radians)}, t{1.0f - c};
     return float4x4{
         float4{t * axis.x * axis.x + c, t * axis.x * axis.y + s * axis.z,

@@ -1881,7 +1881,7 @@ TEST_CASE("Compiler addCode") {
         !compiler.addCode("::host::bad", "#smdl\nimport ::nonexistent::*;\n"));
     auto error{compiler.compile(smdl::OPT_LEVEL_NONE)};
     REQUIRE(error.has_value());
-    CHECK(error->message.find("[<string ::host::bad>:2]") != std::string::npos);
+    CHECK(error->message.find("[<string ::host::bad>:2:") != std::string::npos);
   }
   SUBCASE("Unit tests run") {
     smdl::Compiler compiler{};
@@ -1957,4 +1957,293 @@ TEST_CASE("Compiler addCode") {
     smdl::Logger::get().reset();
   }
   fs::remove_all(tmpDir);
+}
+
+TEST_CASE("Compiler diagnostics") {
+  // Compile source that is expected to fail, returning the whole error so
+  // that the message and its source snippet can both be checked.
+  auto compileError{[](std::string sourceCode) {
+    smdl::Compiler compiler{};
+    if (auto error{compiler.addCode("::diag", std::move(sourceCode))})
+      return *error;
+    if (auto error{compiler.compile(smdl::OPT_LEVEL_NONE)}) return *error;
+    return smdl::Error("compiled without error");
+  }};
+  SUBCASE("A message carries the line, the column, and the source line") {
+    auto error{compileError("#smdl\nexec { int i = nope; }\n")};
+    CHECK(error.message.find("[<string ::diag>:2:16]") != std::string::npos);
+    CHECK(error.snippet.find("exec { int i = nope; }") != std::string::npos);
+    CHECK(error.snippet.find('^') != std::string::npos);
+  }
+  SUBCASE("A quoted candidate note does not repeat the caret") {
+    auto error{compileError("#smdl\nstruct S { int alpha = 1; };\n"
+                            "exec { auto s = S(alhpa: 2); }\n")};
+    CHECK(error.message.find("no parameter named 'alhpa'; did you mean "
+                             "'alpha'?") != std::string::npos);
+    // The caret belongs to the primary error, not to the note quoting the
+    // rejected candidate.
+    CHECK(error.message.find('^') == std::string::npos);
+    CHECK(error.snippet.find('^') != std::string::npos);
+  }
+  SUBCASE("Too many arguments reports how many were expected") {
+    auto error{compileError("#smdl\nint f(int a) { return a; }\n"
+                            "exec { #assert(f(1, 2) == 1); }\n")};
+    CHECK(error.message.find("expected at most 1, got 2") != std::string::npos);
+  }
+  SUBCASE("Integer division by a constant zero is rejected") {
+    CHECK(compileError("#smdl\nexec { const int i = 1 / 0; }\n")
+              .message.find("integer division by zero") != std::string::npos);
+    CHECK(compileError("#smdl\nexec { const int i = 1 % 0; }\n")
+              .message.find("integer remainder by zero") != std::string::npos);
+    // A compound assignment lowers to the same operator.
+    CHECK(compileError("#smdl\nexec { int i = 4; i /= 0; }\n")
+              .message.find("integer division by zero") != std::string::npos);
+    // One zero lane is enough to poison a vector divide.
+    CHECK(compileError(
+              "#smdl\nexec { const auto v = int2(1, 2) / int2(1, 0); }\n")
+              .message.find("integer division by zero") != std::string::npos);
+    // Floating point division by zero is well defined and stays legal.
+    CHECK(
+        compileError("#smdl\nexec { const float f = 1.0 / 0.0; }\n").message ==
+        "compiled without error");
+  }
+  SUBCASE("A run-time assertion failure reports where it failed") {
+    smdl::Compiler compiler{};
+    compiler.enableUnitTests = true;
+    REQUIRE(!compiler.addCode("::diag", "#smdl\nunit_test \"t\" {\n"
+                                        "  int i = 1;\n"
+                                        "  #assert(i == 2);\n}\n"));
+    REQUIRE(!compiler.compile(smdl::OPT_LEVEL_NONE));
+    REQUIRE(!compiler.jitCompile());
+    auto allocator{smdl::BumpPtrAllocator()};
+    auto wavelengths{std::vector<float>(size_t(compiler.wavelengthBaseMax))};
+    auto state{smdl::State()};
+    state.allocator = &allocator;
+    state.wavelength_min = 380.0f;
+    state.wavelength_max = 720.0f;
+    state.wavelength_base = wavelengths.data();
+    for (uint32_t i = 0; i < compiler.wavelengthBaseMax; i++) {
+      float fac{float(i) / float(compiler.wavelengthBaseMax - 1)};
+      wavelengths[i] =
+          (1 - fac) * state.wavelength_min + fac * state.wavelength_max;
+    }
+    auto error{compiler.runUnitTests(state)};
+    REQUIRE(error.has_value());
+    CHECK(error->message.find("[<string ::diag>:4:") != std::string::npos);
+    CHECK(error->message.find("assertion failed: i == 2") != std::string::npos);
+    CHECK(error->snippet.find("#assert(i == 2);") != std::string::npos);
+  }
+}
+
+TEST_CASE("Compiler diagnostic suggestions") {
+  auto compileError{[](std::string sourceCode) {
+    smdl::Compiler compiler{};
+    if (auto error{compiler.addCode("::diag", std::move(sourceCode))})
+      return *error;
+    if (auto error{compiler.compile(smdl::OPT_LEVEL_NONE)}) return *error;
+    return smdl::Error("compiled without error");
+  }};
+  auto errorFor{[&](std::string body) {
+    return compileError("#smdl\nexec {\n" + std::move(body) + "\n}\n").message;
+  }};
+  SUBCASE("The C spelling of an intrinsic suggests the intrinsic") {
+    CHECK(errorFor("  assert(1 == 1);").find("did you mean '#assert'?") !=
+          std::string::npos);
+    CHECK(errorFor("  printf(\"hi\");").find("did you mean '#print'?") !=
+          std::string::npos);
+    // Wins over 'size_t', which is a keyword two edits away, because the
+    // candidates are weighed together instead of list by list.
+    CHECK(errorFor("  #print(sizeof(int));").find("did you mean '#sizeOf'?") !=
+          std::string::npos);
+  }
+  SUBCASE("A word-shaped literal is suggested") {
+    CHECK(
+        errorFor("  bool b = True; #print(b);").find("did you mean 'true'?") !=
+        std::string::npos);
+  }
+  SUBCASE("A bare 'state' suggests '$state'") {
+    CHECK(errorFor("  #print(state);").find("did you mean '$state'?") !=
+          std::string::npos);
+  }
+  SUBCASE("A qualified name suggests within its module") {
+    auto error{compileError("#smdl\nimport ::math::*;\n"
+                            "exec { #print(math::sqr(4.0)); }\n")};
+    CHECK(error.message.find("did you mean 'math::sqrt'?") !=
+          std::string::npos);
+  }
+  SUBCASE("A suggestion keeps the kind of what was typed") {
+    // 'diffuse_edf' is nearer to 'diffuse_bsdf' by edit distance, and is
+    // the wrong kind of distribution function, so nothing is suggested.
+    auto error{compileError("#smdl\nimport ::df::*;\n"
+                            "exec { auto b = df::diffuse_bsdf(); }\n")};
+    CHECK(error.message.find("cannot resolve identifier") != std::string::npos);
+    CHECK(error.message.find("did you mean") == std::string::npos);
+  }
+  SUBCASE("An imported module that is not opened says so") {
+    auto error{compileError("#smdl\nimport ::math::*;\n"
+                            "exec { #print(sqrt(4.0)); }\n")};
+    CHECK(error.message.find("'math' is imported but not opened") !=
+          std::string::npos);
+    CHECK(error.message.find("'math::sqrt'") != std::string::npos);
+    CHECK(error.message.find("using ::math import sqrt;") != std::string::npos);
+  }
+  SUBCASE("A misspelled module suggests the builtin") {
+    auto error{
+        compileError("#smdl\nimport ::maths::*;\nexec { #print(1); }\n")};
+    CHECK(error.message.find("did you mean '::math'?") != std::string::npos);
+  }
+  SUBCASE("A misspelled imported name suggests within the module") {
+    auto error{compileError("#smdl\nusing ::math import sqrtt;\n"
+                            "exec { #print(1); }\n")};
+    CHECK(error.message.find("did you mean 'sqrt'?") != std::string::npos);
+  }
+  SUBCASE("A misspelled field suggests the field") {
+    auto error{compileError("#smdl\nstruct S { int alpha = 1; };\n"
+                            "exec { #print(S().alhpa); }\n")};
+    CHECK(error.message.find("did you mean 'alpha'?") != std::string::npos);
+  }
+  SUBCASE("A swizzle off the end lists the components") {
+    auto error{compileError("#smdl\nexec { float2 v; #print(v.z); }\n")};
+    CHECK(error.message.find("the components are x, y (or r, g)") !=
+          std::string::npos);
+  }
+  SUBCASE("'=' where ':' was meant names the mistake") {
+    auto error{
+        compileError("#smdl\nexport material m() = material(ior = 1.5);\n")};
+    CHECK(error.message.find("a named argument is written 'ior: ...', not "
+                             "'ior = ...'") != std::string::npos);
+  }
+  SUBCASE("An empty 'exec' is skipped with a warning") {
+    auto &warned{smdl::Logger::get().addSink<MessageCollector>(
+        "empty body does nothing")};
+    smdl::Compiler compiler{};
+    REQUIRE(!compiler.addCode("::diag", "#smdl\nexec {}\n"));
+    REQUIRE(!compiler.compile(smdl::OPT_LEVEL_NONE));
+    REQUIRE(!compiler.jitCompile());
+    CHECK(warned.messages.size() == 1);
+    // Nothing was emitted, so there is nothing to run.
+    CHECK(!compiler.runExecs());
+    smdl::Logger::get().reset();
+  }
+  SUBCASE("An assignment to something real stays an assignment") {
+    CHECK(compileError("#smdl\nint f(int a) { return a; }\n"
+                       "export int g() { int y = 0; return f(y = 3); }\n")
+              .message == "compiled without error");
+  }
+}
+
+TEST_CASE("Compiler candidate diagnostics") {
+  auto compileError{[](std::string sourceCode) {
+    smdl::Compiler compiler{};
+    if (auto error{compiler.addCode("::diag", std::move(sourceCode))})
+      return *error;
+    if (auto error{compiler.compile(smdl::OPT_LEVEL_NONE)}) return *error;
+    return smdl::Error("compiled without error");
+  }};
+  SUBCASE("A rejected overload names itself and where it is declared") {
+    auto error{compileError("#smdl\nint f(int a) { return a; }\n"
+                            "exec { #assert(f(1, 2) == 1); }\n")};
+    // The signature identifies which candidate the note is about, and the
+    // location is the declaration, not the call site every candidate was
+    // probed against.
+    CHECK(error.message.find("candidate rejected: f(int a) declared at "
+                             "[<string ::diag>:2:") != std::string::npos);
+    CHECK(error.message.find("expected at most 1, got 2") != std::string::npos);
+  }
+  SUBCASE("Every overload of a builtin is told apart") {
+    auto error{compileError(
+        "#smdl\nimport ::tex::*;\n"
+        "export material m(uniform texture_2d t = texture_2d()) = material(\n"
+        "  surface: material_surface(emission: material_emission(\n"
+        "    intensity: tex::lookup_color(t, 0.5))));\n")};
+    CHECK(error.message.find("lookup_color(texture_2d tex") !=
+          std::string::npos);
+    CHECK(error.message.find("lookup_color(texture_3d tex") !=
+          std::string::npos);
+    CHECK(error.message.find("<builtin ::tex>") != std::string::npos);
+  }
+  SUBCASE("A forwarded call leads with the name that was written") {
+    auto error{compileError(
+        "#smdl\nimport ::df::*;\nexport material m() = material(surface: "
+        "material_surface(scattering: "
+        "df::microfacet_ggx_smith_bsdf(roughness: 0.1)));\n")};
+    // The '(*)' forwarder used to report only the internal callee and the
+    // two arguments it injects, neither of which the caller wrote.
+    CHECK(error.message.find("cannot call 'microfacet_ggx_smith_bsdf' with "
+                             "arguments '(roughness: float)'") !=
+          std::string::npos);
+    CHECK(error.message.find("forwards to:") != std::string::npos);
+    CHECK(error.message.find("did you mean 'roughness_u'?") !=
+          std::string::npos);
+  }
+  SUBCASE("A builtin type says what it accepts") {
+    CHECK(compileError("#smdl\nexec { float3 v = float3(1, 2, 3, 4); }\n")
+              .message.find("takes one scalar, or scalars and shorter vectors "
+                            "totalling 3 components") != std::string::npos);
+    CHECK(
+        compileError("#smdl\nexec { float4x3 m = float4x3(1, 2, 3); }\n")
+            .message.find("4 column vectors of 3 components, or 12 scalars") !=
+        std::string::npos);
+    CHECK(compileError("#smdl\nexec { color c = color(1.0, 0.5); }\n")
+              .message.find("'(wavelengths, amplitudes)'") !=
+          std::string::npos);
+    CHECK(compileError("#smdl\nexec { int[3] a(1, 2); }\n")
+              .message.find("takes 3 elements or one array of that size") !=
+          std::string::npos);
+  }
+}
+
+TEST_CASE("Compiler diagnostic wording") {
+  auto compileError{[](std::string sourceCode) {
+    smdl::Compiler compiler{};
+    if (auto error{compiler.addCode("::diag", std::move(sourceCode))})
+      return *error;
+    if (auto error{compiler.compile(smdl::OPT_LEVEL_NONE)}) return *error;
+    return smdl::Error("compiled without error");
+  }};
+  SUBCASE("An ill-formed operator is not called unimplemented") {
+    auto error{compileError("#smdl\nexec { float4x3 a; float4x3 b; auto c = a "
+                            "* b; #print(c); }\n")};
+    CHECK(error.message.find("no binary operator '*'") != std::string::npos);
+    CHECK(error.message.find("columns of the left (4) to match the rows of "
+                             "the right (3)") != std::string::npos);
+    CHECK(error.message.find("unimplemented") == std::string::npos);
+  }
+  SUBCASE("A returned value of the wrong type says so") {
+    // A function body is only emitted where something reaches it, so the
+    // call has to be somewhere that is compiled.
+    auto error{compileError("#smdl\n@(pure) int f() { return \"hello\"; }\n"
+                            "exec { #print(f()); }\n")};
+    CHECK(error.message.find("cannot convert return value of type 'string' "
+                             "to 'int'") != std::string::npos);
+  }
+  SUBCASE("Assigning to a 'const' says 'const', not 'rvalue'") {
+    auto error{compileError("#smdl\nexec { const int i = 1; i = 2; }\n")};
+    CHECK(error.message.find("cannot assign to 'i' because it is declared "
+                             "'const'") != std::string::npos);
+    CHECK(error.message.find("declared at [<string ::diag>:2:") !=
+          std::string::npos);
+    CHECK(error.message.find("rvalue") == std::string::npos);
+  }
+  SUBCASE(
+      "Assigning to something that is not a variable does not claim const") {
+    auto error{compileError("#smdl\nenum E { A, B };\nexec { A = B; }\n")};
+    CHECK(error.message.find("because it is not a variable") !=
+          std::string::npos);
+  }
+  SUBCASE("A missing resource blames the line that asked for it") {
+    auto &warned{
+        smdl::Logger::get().addSink<MessageCollector>("no image(s) found")};
+    smdl::Compiler compiler{};
+    REQUIRE(!compiler.addCode("::diag",
+                              "#smdl\nexport material m(uniform texture_2d t = "
+                              "texture_2d(\"nope.png\")) = material();\n"));
+    REQUIRE(!compiler.compile(smdl::OPT_LEVEL_NONE));
+    REQUIRE(warned.messages.size() >= 1);
+    // The load happens inside the builtin 'texture_2d' constructor, whose
+    // location the user cannot act on.
+    CHECK(warned.messages[0].find("<builtin") == std::string::npos);
+    CHECK(warned.messages[0].find("<string ::diag>:2:") != std::string::npos);
+    smdl::Logger::get().reset();
+  }
 }

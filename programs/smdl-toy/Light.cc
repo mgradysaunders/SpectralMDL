@@ -5,13 +5,13 @@
 #include <map>
 #include <set>
 
-EnvLight::EnvLight(const std::string &filename, float scaleFactor)
+EnvLight::EnvLight(const std::string &fileName, float scaleFactor)
     : scaleFactor(scaleFactor) {
   // Never mipped: the environment is sampled by direction through the
   // tabulated density below, never with a texture-space footprint, so
   // the chain would be reserved and never touched. That matters here,
   // where the image is routinely a multi-thousand-pixel HDR.
-  if (auto error{image.startLoad(filename, /*allowMipLevels=*/false)})
+  if (auto error{image.startLoad(fileName, /*allowMipLevels=*/false)})
     error->printAndExit();
   image.finishLoad();
   auto weights{std::vector<float>{}};
@@ -174,9 +174,9 @@ PunctualLight::PunctualLight(smdl::Compiler &compiler, const smdl::State &state,
     mPower = decl.power * float(tintedIntegral);
     break;
   case LayoutLightDecl::Kind::SPOT: {
-    mCosOuter = std::cos(decl.spotAngle * PI / 180.0f * 0.5f);
-    mCosInner =
-        std::cos(decl.spotAngle * PI / 180.0f * 0.5f * (1.0f - decl.spotBlend));
+    mCosOuter = std::cos(smdl::radians(decl.spotAngle) * 0.5f);
+    mCosInner = std::cos(smdl::radians(decl.spotAngle) * 0.5f *
+                         (1.0f - decl.spotBlend));
     // The peak from the power: the falloff is a smoothstep in the
     // cosine, whose mean over the blend band is exactly 1/2.
     const float solidAngle{2.0f * PI *
@@ -203,9 +203,15 @@ PunctualLight::PunctualLight(smdl::Compiler &compiler, const smdl::State &state,
 
 Color PunctualLight::Li(const float3 &point,
                         float metersPerSceneUnit) const noexcept {
-  auto direction{point - mPosition};
-  const float distSq{lengthSquared(direction)};
+  return Li(point, point, metersPerSceneUnit);
+}
+
+Color PunctualLight::Li(const float3 &point, const float3 &incidencePoint,
+                        float metersPerSceneUnit) const noexcept {
+  const float distSq{lengthSquared(point - mPosition)};
   if (!(distSq > 0)) return Color(0.0f);
+  auto direction{incidencePoint - mPosition};
+  if (!(lengthSquared(direction) > 0)) return Color(0.0f);
   direction = normalize(direction);
   float factor{1.0f};
   if (mKind == LayoutLightDecl::Kind::SPOT) {
@@ -258,8 +264,8 @@ LightSampler::LightSampler(smdl::Compiler &compiler, const Scene &scene,
     auto state{makeRenderState(wavelengths, &allocator)};
     state.texture_space_max = 1;
     state.finalizeAndApplyInternalSpaceConventions();
-    auto materialInstance{smdl::JIT::MaterialInstance(state, material)};
-    if (!materialInstance.hasEmission()) {
+    auto mat{smdl::JIT::MaterialInstance(state, material)};
+    if (!mat.hasEmission()) {
       allocator.reset();
       continue;
     }
@@ -278,7 +284,7 @@ LightSampler::LightSampler(smdl::Compiler &compiler, const Scene &scene,
       continue;
     }
     auto light{AreaLight()};
-    light.meshInstanceIndex = instIndex;
+    light.instIndex = instIndex;
     // Areas are world-space areas, matching the world-space geometry
     // `Scene::makeHit` reports: a scaled instance covers more surface and
     // must emit proportionally more power. Because an `AreaLight` is per
@@ -287,7 +293,7 @@ LightSampler::LightSampler(smdl::Compiler &compiler, const Scene &scene,
     // would do.
     const auto &objectToWorld{instance.objectToWorld};
     if (instance.isPrimitive()) {
-      const auto &primitive{*scene.primitives[instance.primitiveIndex]};
+      const auto &primitive{*scene.primitives[instance.primIndex]};
       light.isPrimitive = true;
       light.objectArea = primitive.objectArea;
       // The world area through the placement's area stretch, J(n) =
@@ -344,18 +350,14 @@ LightSampler::LightSampler(smdl::Compiler &compiler, const Scene &scene,
       return values.empty() ? 0.0f : sum / values.size();
     }};
     float weight{};
-    if (float intensity{
-            average(materialInstance.getSurfaceEmissionIntensity())};
+    if (float intensity{average(mat.getSurfaceEmissionIntensity())};
         intensity > 0)
-      weight += materialInstance.isSurfaceEmissionPower()
-                    ? intensity
-                    : intensity * light.totalArea;
-    if (float intensity{
-            average(materialInstance.getBackfaceEmissionIntensity())};
+      weight += mat.isSurfaceEmissionPower() ? intensity
+                                             : intensity * light.totalArea;
+    if (float intensity{average(mat.getBackfaceEmissionIntensity())};
         intensity > 0)
-      weight += materialInstance.isBackfaceEmissionPower()
-                    ? intensity
-                    : intensity * light.totalArea;
+      weight += mat.isBackfaceEmissionPower() ? intensity
+                                              : intensity * light.totalArea;
     instanceToLight[instIndex] = uint32_t(areaLights.size());
     areaLights.push_back(std::move(light));
     weights.push_back(weight);
@@ -404,6 +406,7 @@ bool LightSampler::sample(smdl::State state, Sampler &sampler,
   int lightIndex{lightDistr.indexSample(float(sampler), nullptr, &selectPMF)};
   if (!(selectPMF > 0)) return false;
   lightSample.isDelta = false;
+  lightSample.punctualIndex = INVALID_INDEX;
   if (envLight &&
       lightIndex == int(areaLights.size() + punctualLights.size())) {
     float dirPDF{};
@@ -412,12 +415,15 @@ bool LightSampler::sample(smdl::State state, Sampler &sampler,
     if (!(dirPDF > 0)) return false;
     lightSample.pdf = selectPMF * dirPDF;
     lightSample.target = point + 2.0f * scene.boundRadius * lightSample.wi;
+    lightSample.isInfinite = true;
     return true;
   }
   if (lightIndex >= int(areaLights.size())) {
     // A punctual light: the direction is a Dirac, so the pdf is the
     // selection PMF alone and `Li` carries the inverse-square falloff.
-    const auto &light{punctualLights[lightIndex - int(areaLights.size())]};
+    const uint32_t punctualIndex{uint32_t(lightIndex) -
+                                 uint32_t(areaLights.size())};
+    const auto &light{punctualLights[punctualIndex]};
     auto direction{light.position() - point};
     if (!(lengthSquared(direction) > 0)) return false;
     lightSample.Li = light.Li(point, state.meters_per_scene_unit);
@@ -426,6 +432,7 @@ bool LightSampler::sample(smdl::State state, Sampler &sampler,
     lightSample.pdf = selectPMF;
     lightSample.target = light.position();
     lightSample.isDelta = true;
+    lightSample.punctualIndex = punctualIndex;
     return true;
   }
   const auto &light{areaLights[lightIndex]};
@@ -435,12 +442,12 @@ bool LightSampler::sample(smdl::State state, Sampler &sampler,
     // Sample the shape uniformly by OBJECT area and pay the placement's
     // exact area stretch in the pdf: still unbiased under any affine
     // placement, and exactly uniform under a similarity.
-    const auto &instance{scene.meshInstances[light.meshInstanceIndex]};
-    const auto &primitive{*scene.primitives[instance.primitiveIndex]};
+    const auto &instance{scene.meshInstances[light.instIndex]};
+    const auto &primitive{*scene.primitives[instance.primIndex]};
     const auto areaSample{samplePrimitiveArea(primitive.spec, float2(sampler))};
     const float stretch{length(instance.normalMatrix * areaSample.normal)};
     if (!(stretch > 0)) return false;
-    hit = scene.makeHit(light.meshInstanceIndex, areaSample.primID,
+    hit = scene.makeHit(light.instIndex, areaSample.primID,
                         float3(0.0f, areaSample.uv.x, areaSample.uv.y));
     positionPDF = 1.0f / (light.objectArea * stretch);
   } else {
@@ -452,62 +459,84 @@ bool LightSampler::sample(smdl::State state, Sampler &sampler,
     float2 xi{sampler};
     float sqrtXi{std::sqrt(xi.x)};
     auto bary{float3(1.0f - sqrtXi, sqrtXi * (1.0f - xi.y), sqrtXi * xi.y)};
-    hit = scene.makeHit(light.meshInstanceIndex, uint32_t(faceIndex), bary);
+    hit = scene.makeHit(light.instIndex, uint32_t(faceIndex), bary);
     positionPDF = 1.0f / light.totalArea;
   }
   auto direction{hit.point - point};
   float distSq{lengthSquared(direction)};
   if (!(distSq > 0)) return false;
   lightSample.wi = normalize(direction);
-  float cosTheta{absDot(hit.geometryNormal, lightSample.wi)};
+  float cosTheta{absDot(hit.Ng, lightSample.wi)};
   if (!(cosTheta > 0)) return false;
   // The NEE ray arrives at the light surface along `wi`. The LOD fields
   // stay zero here deliberately: emission evaluates at full fidelity.
-  hit.apply_geometry_to_state(state, lightSample.wi);
-  auto materialInstance{smdl::JIT::MaterialInstance(state, hit.material)};
-  if (!emittedRadiance(materialInstance, light.meshInstanceIndex,
-                       -lightSample.wi, lightSample.Li)) {
+  hit.applyGeometryToState(state, lightSample.wi);
+  auto mat{smdl::JIT::MaterialInstance(state, hit.material)};
+  if (!emittedRadiance(mat, light.instIndex, -lightSample.wi, lightSample.Li)) {
     return false;
   }
   // Convert the position density to solid angle at the receiver.
   lightSample.pdf = selectPMF * distSq * positionPDF / cosTheta;
   lightSample.target = hit.point;
+  lightSample.hit = hit;
   return true;
 }
 
-bool LightSampler::emittedRadiance(
-    const smdl::JIT::MaterialInstance &materialInstance,
-    uint32_t meshInstanceIndex, const float3 &wi, Color &Le) const {
+Color LightSampler::reevaluateAreaLi(const LightSample &lightSample,
+                                     smdl::State state,
+                                     const float3 &incidencePoint) const {
+  const auto &hit{lightSample.hit};
+  if (!hit.material) return Color(0.0f);
+  auto wEmit{incidencePoint - hit.point};
+  if (!smdl::tryNormalize(wEmit)) return Color(0.0f);
+  // The arriving ray travels the other way down the same segment, which
+  // is the sense `sample()` applies the geometry in.
+  hit.applyGeometryToState(state, -wEmit);
+  auto mat{smdl::JIT::MaterialInstance(state, hit.material)};
+  Color Le{};
+  if (!emittedRadiance(mat, hit.instIndex, wEmit, Le)) return Color(0.0f);
+  return Le;
+}
+
+Color LightSampler::reevaluatePunctualLi(const LightSample &lightSample,
+                                         const float3 &point,
+                                         const float3 &incidencePoint,
+                                         float metersPerSceneUnit) const {
+  if (lightSample.punctualIndex >= punctualLights.size()) return Color(0.0f);
+  return punctualLights[lightSample.punctualIndex].Li(point, incidencePoint,
+                                                      metersPerSceneUnit);
+}
+
+bool LightSampler::emittedRadiance(const smdl::JIT::MaterialInstance &mat,
+                                   uint32_t instIndex, const float3 &wi,
+                                   Color &Le) const {
   float edfPDF{};
-  if (!materialInstance.emissionEvaluate(wi, edfPDF, Le)) return false;
+  if (!mat.emissionEvaluate(wi, edfPDF, Le)) return false;
   // `intensity_power` leaves the host to divide by the total emitting
   // surface area; see `JIT::Material::emissionEvaluate`. The mode is per
   // side, so pick the side actually emitting toward `wi`.
-  bool isPower{materialInstance.isExterior(wi)
-                   ? materialInstance.isSurfaceEmissionPower()
-               : materialInstance.hasBackfaceEmission()
-                   ? materialInstance.isBackfaceEmissionPower()
-                   : materialInstance.isSurfaceEmissionPower()};
+  bool isPower{mat.isExterior(wi)          ? mat.isSurfaceEmissionPower()
+               : mat.hasBackfaceEmission() ? mat.isBackfaceEmissionPower()
+                                           : mat.isSurfaceEmissionPower()};
   if (isPower) {
     float area{1.0f};
-    if (meshInstanceIndex < instanceToLight.size() &&
-        instanceToLight[meshInstanceIndex] != INVALID_INDEX) {
-      area = areaLights[instanceToLight[meshInstanceIndex]].totalArea;
+    if (instIndex < instanceToLight.size() &&
+        instanceToLight[instIndex] != INVALID_INDEX) {
+      area = areaLights[instanceToLight[instIndex]].totalArea;
     }
     Le = Le / area;
   }
   return true;
 }
 
-float LightSampler::solidAnglePDF(uint32_t meshInstanceIndex,
-                                  const float3 &lightPoint,
+float LightSampler::solidAnglePDF(uint32_t instIndex, const float3 &lightPoint,
                                   const float3 &lightNormal,
                                   const float3 &point) const {
-  if (empty() || meshInstanceIndex >= instanceToLight.size() ||
-      instanceToLight[meshInstanceIndex] == INVALID_INDEX) {
+  if (empty() || instIndex >= instanceToLight.size() ||
+      instanceToLight[instIndex] == INVALID_INDEX) {
     return 0.0f;
   }
-  auto lightIndex{instanceToLight[meshInstanceIndex]};
+  auto lightIndex{instanceToLight[instIndex]};
   const auto &light{areaLights[lightIndex]};
   float selectPMF{lightDistr.indexPMF(int(lightIndex))};
   auto direction{lightPoint - point};

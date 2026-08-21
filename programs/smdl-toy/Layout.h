@@ -13,6 +13,10 @@
 
 #include "smdl/Support/VectorMath.h"
 
+// For `ObjectSelection`, which an `import` block spells and the
+// shared import resolves.
+#include "MeshImport.h"
+
 #include "LayoutDiagnostics.h"
 
 using namespace smdl::vector_type_aliases;
@@ -37,37 +41,6 @@ constexpr std::string_view LAYOUT_EXTENSION = ".layout";
 /// with `#`, so it reads as a comment to the grammar and as an identity
 /// to everything else, exactly as `#smdl` marks an SMDL file.
 constexpr std::string_view LAYOUT_MAGIC = "#smdl layout";
-
-/// Which objects of a mesh file to instantiate, and how to pivot them.
-///
-/// A pattern containing `/` matches an `ImportNode::path`; one without
-/// matches only the last component of it, so that the wrapper node an
-/// exporter puts above everything does not have to be spelled out. Both
-/// support the `*` and `?` wildcards. A match takes the matched node's
-/// **whole subtree**, since one authored object may well be a subtree,
-/// and a match nested inside another match is dropped rather than
-/// instantiated twice.
-///
-class ObjectSelection final {
-public:
-  /// The patterns, unioned. Empty means the whole file, which is what an
-  /// `asset` with no `select` asks for.
-  std::vector<std::string> patterns{};
-
-  /// Remove the **translation** of the matched node's accumulated
-  /// transform, keeping its rotation and scale, so that an object
-  /// authored in place arrives at the origin ready to be put somewhere
-  /// else. With no patterns this recenters the file as a whole.
-  bool recenter{};
-
-  /// A key that distinguishes two selections of the same file, for
-  /// callers that cache or merge by (file, selection).
-  [[nodiscard]] std::string key() const {
-    auto result{std::string(recenter ? "recenter" : "")};
-    for (const auto &pattern : patterns) result += '\n', result += pattern;
-    return result;
-  }
-};
 
 /// How an asset wants its meshes refined at load time. See the
 /// `subdivide` and `displace` operations in the layout grammar.
@@ -307,12 +280,12 @@ public:
   std::optional<float3> lookFrom{};
   std::optional<float3> lookTo{};
   std::optional<float3> up{};
-  std::optional<float> fovYInDegrees{};
+  std::optional<float> fovYDeg{};
   std::optional<float> fStop{};
   std::optional<float> aperture{};
   std::optional<float> focus{};
   std::optional<int> blades{};
-  std::optional<float> bladeAngleInDegrees{};
+  std::optional<float> bladeAngleDeg{};
   std::optional<float> distortionK1{};
   std::optional<float> distortionK2{};
   std::optional<bool> distortionFit{};
@@ -351,13 +324,13 @@ public:
 class LayoutAssetDecl final {
 public:
   std::string name{};
-  LayoutLocation nameLocation{};
+  LayoutLocation nameLoc{};
 
   /// The source path, as written; the lowering resolves it. Empty when
-  /// the asset is a primitive, in which case `pathLocation` marks the
+  /// the asset is a primitive, in which case `pathLoc` marks the
   /// shape keyword instead.
   std::string path{};
-  LayoutLocation pathLocation{};
+  LayoutLocation pathLoc{};
 
   /// The built-in shape, when the asset is `= sphere|disk|cylinder|cone`
   /// rather than `= "<path>"`.
@@ -374,9 +347,9 @@ public:
   /// The curves operations the block wrote (`tube`, `ribbon`,
   /// `radius_scale`), with `active` still false: whether the path
   /// actually names a `.curves` file is the lowering's to discover, and
-  /// `curvesOpsLocation` is where its complaint points when it does not.
+  /// `curvesOpsLoc` is where its complaint points when it does not.
   CurvesSpec curves{};
-  LayoutLocation curvesOpsLocation{};
+  LayoutLocation curvesOpsLoc{};
 };
 
 /// One `light` declaration: a named punctual emitter, placeable exactly
@@ -407,12 +380,12 @@ public:
     PROFILE,
   };
   std::string name{};
-  LayoutLocation nameLocation{};
+  LayoutLocation nameLoc{};
   Kind kind{Kind::POINT};
 
   /// The IES path, as written (PROFILE only); the lowering resolves it.
   std::string profilePath{};
-  LayoutLocation profilePathLocation{};
+  LayoutLocation profilePathLoc{};
 
   /// The total radiant power in watts. For PROFILE, applied only when
   /// written (`powerSet`), renormalizing the profile's own total.
@@ -470,13 +443,13 @@ public:
 
   /// PLACE: the declared asset or group the placement names.
   std::string assetName{};
-  LayoutLocation assetNameLocation{};
+  LayoutLocation assetNameLoc{};
 
   /// PLACE: the stable identity `place <name> as <id>` records, or
   /// empty. Nothing consumes it yet: it is the seam a future animation
   /// or override layer refers to.
   std::string asName{};
-  LayoutLocation asNameLocation{};
+  LayoutLocation asNameLoc{};
 
   /// PLACE: the site's `material <from> = <to>` overrides: what this
   /// placement's subtree resolves as `from` resolves as `to` instead,
@@ -496,7 +469,7 @@ public:
   /// would: composed under this placement's own operations and over the
   /// target's correction transform, one instance per record.
   std::string placesPath{};
-  LayoutLocation placesPathLocation{};
+  LayoutLocation placesPathLoc{};
 
   /// PLACE: the `variant { material <from> = <to> ... }` blocks of a
   /// bulk placement, in order of appearance: the override table the
@@ -507,7 +480,7 @@ public:
 
   /// IMPORT: the path, as written; the lowering resolves it.
   std::string importPath{};
-  LayoutLocation importPathLocation{};
+  LayoutLocation importPathLoc{};
 
   /// IMPORT: the site's `material` assignments. On a mesh or asset
   /// import these assign the mesh's slots, exactly as an `asset` block
@@ -527,7 +500,7 @@ public:
 class LayoutGroupDecl final {
 public:
   std::string name{};
-  LayoutLocation nameLocation{};
+  LayoutLocation nameLoc{};
   std::vector<LayoutPlacement> placements{};
 };
 
@@ -551,21 +524,21 @@ public:
   std::map<std::string, std::string, std::less<>> materialAliases{};
 
   std::string mediumName{};
-  LayoutLocation mediumLocation{};
+  LayoutLocation mediumLoc{};
 
   /// The camera and sky, with the location of the first directive so
   /// that lowering a non-entry file can say what it is ignoring. An
   /// invalid location means the directive never appeared.
   LayoutCamera camera{};
-  LayoutLocation cameraLocation{};
+  LayoutLocation cameraLoc{};
   LayoutSky sky{};
-  LayoutLocation skyLocation{};
+  LayoutLocation skyLoc{};
 
   /// The written `ibl` path and where it was written, resolved by the
   /// lowering rather than the parser, so the parser stays free of the
   /// filesystem.
   std::string iblPath{};
-  LayoutLocation iblPathLocation{};
+  LayoutLocation iblPathLoc{};
 
   /// The declared asset named `name`, or null. Assets, groups, and
   /// lights share one namespace, since a `place` names any of them.
@@ -617,7 +590,7 @@ public:
   /// share a variant class (their materials must agree for the batch to
   /// share one binding), so instance order within a scatter is grouped
   /// by variant rather than by record.
-  std::vector<float4x4> batchTransforms{};
+  std::vector<float4x4> batchXfs{};
 };
 
 /// One punctual light placed in the world: what the lowering emits and

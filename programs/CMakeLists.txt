@@ -50,11 +50,6 @@ macro(smdl_add_program BIN_NAME)
         target_include_directories(${BIN_NAME} PRIVATE ${INCLUDE_DIR})
       endforeach()
     endif()
-    target_include_directories(
-      ${BIN_NAME} 
-      PRIVATE 
-        "${CMAKE_SOURCE_DIR}/programs/common"
-      )
     if(SMDL_INSTALL)
       install(
         TARGETS "${BIN_NAME}"

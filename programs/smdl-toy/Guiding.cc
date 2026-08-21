@@ -25,7 +25,7 @@ void DTree::record(float2 uv, float value) noexcept {
   uint32_t n{0};
   while (true) {
     int q{descendQuadrant(uv)};
-    atomicAdd(mNodes[n].flux[q], value);
+    mNodes[n].flux[q].add(value);
     uint32_t c{mNodes[n].child[q]};
     if (c == 0) break;
     n = c;
@@ -45,7 +45,7 @@ float DTree::leafSize(float2 uv) const noexcept {
 }
 
 float DTree::pdf(const float3 &w) const noexcept {
-  constexpr float uniformPDF{1.0f / (4.0f * PI)};
+  const float uniformPDF{smdl::uniformSpherePDF()};
   if (!(totalFlux() > 0)) return uniformPDF;
   float2 uv{directionToSquare(w)};
   float pdf{uniformPDF};
@@ -53,9 +53,8 @@ float DTree::pdf(const float3 &w) const noexcept {
   while (true) {
     int q{descendQuadrant(uv)};
     float total{};
-    for (int i = 0; i < 4; i++)
-      total += mNodes[n].flux[i].load(std::memory_order_relaxed);
-    float flux{mNodes[n].flux[q].load(std::memory_order_relaxed)};
+    for (int i = 0; i < 4; i++) total += mNodes[n].flux[i];
+    float flux{mNodes[n].flux[q]};
     if (!(total > 0) || !(flux > 0)) return 0.0f;
     pdf *= 4.0f * flux / total;
     uint32_t c{mNodes[n].child[q]};
@@ -65,7 +64,7 @@ float DTree::pdf(const float3 &w) const noexcept {
 }
 
 float3 DTree::sampleDirection(Sampler &sampler, float &pdf) const noexcept {
-  constexpr float uniformPDF{1.0f / (4.0f * PI)};
+  const float uniformPDF{smdl::uniformSpherePDF()};
   if (!(totalFlux() > 0)) {
     pdf = uniformPDF;
     return squareToDirection(float2(sampler));
@@ -77,8 +76,7 @@ float3 DTree::sampleDirection(Sampler &sampler, float &pdf) const noexcept {
   while (true) {
     float flux[4];
     float total{};
-    for (int i = 0; i < 4; i++)
-      total += flux[i] = mNodes[n].flux[i].load(std::memory_order_relaxed);
+    for (int i = 0; i < 4; i++) total += flux[i] = mNodes[n].flux[i];
     if (!(total > 0)) break; // Degenerate: sample uniformly within the box.
     // Choose a quadrant proportional to flux.
     float xi{float(sampler) * total};
@@ -101,9 +99,7 @@ float3 DTree::sampleDirection(Sampler &sampler, float &pdf) const noexcept {
 
 void DTree::rebuildFrom(const DTree &prev, float rho, int maxDepth) {
   mNodes.assign(1, Node{});
-  statisticalWeight.store(
-      prev.statisticalWeight.load(std::memory_order_relaxed),
-      std::memory_order_relaxed);
+  statisticalWeight = prev.statisticalWeight;
   const float total{prev.totalFlux()};
   if (!(total > 0)) return;
   const float threshold{rho * total};
@@ -122,10 +118,9 @@ void DTree::rebuildFrom(const DTree &prev, float rho, int maxDepth) {
     Item item{stack.back()};
     stack.pop_back();
     for (int q = 0; q < 4; q++) {
-      float flux{item.prevValid ? prev.mNodes[item.prev].flux[q].load(
-                                      std::memory_order_relaxed)
+      float flux{item.prevValid ? float(prev.mNodes[item.prev].flux[q])
                                 : item.synthFlux / 4.0f};
-      mNodes[item.dst].flux[q].store(flux, std::memory_order_relaxed);
+      mNodes[item.dst].flux[q] = flux;
       if (flux > threshold && item.depth < maxDepth) {
         uint32_t c{uint32_t(mNodes.size())};
         mNodes.emplace_back();
@@ -142,11 +137,10 @@ void DTree::rebuildFrom(const DTree &prev, float rho, int maxDepth) {
 void DTree::resetToStructureOf(const DTree &structure) {
   mNodes = structure.mNodes;
   for (auto &node : mNodes)
-    for (int q = 0; q < 4; q++)
-      node.flux[q].store(0.0f, std::memory_order_relaxed);
-  statisticalWeight.store(0.0f, std::memory_order_relaxed);
-  momentBSDF.store(0.0f, std::memory_order_relaxed);
-  momentGuide.store(0.0f, std::memory_order_relaxed);
+    for (int q = 0; q < 4; q++) node.flux[q] = 0.0f;
+  statisticalWeight = 0.0f;
+  momentBSDF = 0.0f;
+  momentGuide = 0.0f;
 }
 
 STree::STree(const float3 &boundsMin, const float3 &boundsMax) : mNodes(1) {
@@ -190,8 +184,8 @@ void STree::record(Sampler &sampler, const float3 &position,
   // cell's own estimator quality, not a field worth splat-filtering.
   {
     auto &node{mNodes[leafIndex(position)]};
-    atomicAdd(node.building.momentBSDF, momentBSDF);
-    atomicAdd(node.building.momentGuide, momentGuide);
+    node.building.momentBSDF.add(momentBSDF);
+    node.building.momentGuide.add(momentGuide);
   }
   // Stochastic box filter: jitter the position within the containing
   // leaf's box, then record wherever the jittered position lands.
@@ -208,8 +202,8 @@ void STree::record(Sampler &sampler, const float3 &position,
   jittered.z = std::fmin(std::fmax(jittered.z, mBoundMin.z),
                          mBoundMin.z + mBoundExtent.z);
   auto &node{mNodes[leafIndex(jittered)]};
-  node.recordCount.fetch_add(1, std::memory_order_relaxed);
-  atomicAdd(node.building.statisticalWeight, 1.0f);
+  node.recordCount.add(1);
+  node.building.statisticalWeight.add(1.0f);
   // And likewise for the direction, within its leaf cell of the building
   // quadtree. The `u` axis is azimuth, so it wraps; `v` clamps.
   float2 uv{directionToSquare(direction)};
@@ -217,7 +211,7 @@ void STree::record(Sampler &sampler, const float3 &position,
   float2 uvXi{sampler};
   uv = float2(uv.x + cell * (uvXi.x - 0.5f), uv.y + cell * (uvXi.y - 0.5f));
   uv.x -= std::floor(uv.x);
-  uv.y = std::fmin(std::fmax(uv.y, 0.0f), 0.99999994f);
+  uv.y = std::fmin(std::fmax(uv.y, 0.0f), ONE_MINUS_EPS);
   node.building.record(uv, value);
 }
 
@@ -228,7 +222,7 @@ void STree::refine(uint32_t splitThreshold, float rho, int maxDepth) {
   constexpr size_t MAX_NODES{1u << 16};
   for (size_t n = 0; n < mNodes.size(); n++) {
     if (mNodes[n].child[0] != 0) continue;
-    uint32_t count{mNodes[n].recordCount.load(std::memory_order_relaxed)};
+    uint32_t count{mNodes[n].recordCount};
     if (count <= splitThreshold || mNodes.size() + 2 > MAX_NODES) continue;
     // Copy the parent BEFORE appending: emplacing an element of the same
     // vector is undefined behavior when the append reallocates.
@@ -242,7 +236,7 @@ void STree::refine(uint32_t splitThreshold, float rho, int maxDepth) {
       auto &childNode{mNodes[c]};
       childNode.child = {0, 0};
       childNode.axis = uint8_t((parent.axis + 1) % 3);
-      childNode.recordCount.store(count / 2, std::memory_order_relaxed);
+      childNode.recordCount = count / 2;
     }
     parent.sampling = DTree();
     parent.building = DTree();
@@ -259,15 +253,15 @@ void STree::refine(uint32_t splitThreshold, float rho, int maxDepth) {
     // strategy is ever shut out, and blended with the previous weight so
     // one noisy pass cannot swing a cell to either extreme. Cells with
     // no moment statistics keep their weight.
-    const float mf{node.building.momentBSDF.load(std::memory_order_relaxed)};
-    const float mg{node.building.momentGuide.load(std::memory_order_relaxed)};
+    const float mf{node.building.momentBSDF};
+    const float mg{node.building.momentGuide};
     node.sampling.mixtureAlpha =
         mf + mg > 0
             ? 0.5f * prevAlpha +
                   0.5f * std::fmin(std::fmax(mg / (mf + mg), 0.25f), 0.98f)
             : prevAlpha;
     node.building.resetToStructureOf(node.sampling);
-    node.recordCount.store(0, std::memory_order_relaxed);
+    node.recordCount = 0;
   }
 }
 
@@ -307,7 +301,7 @@ void trainGuiding(STree &tree, Sampler &sampler, const GuideRecord *records,
           float momentBSDF{};
           float momentGuide{};
           if (record.pdfGuide >= 0) {
-            constexpr float PDF_FLOOR{0.01f / (4.0f * PI)};
+            const float PDF_FLOOR{0.01f * smdl::uniformSpherePDF()};
             const float fL2{(record.fAvg * Lhat) * (record.fAvg * Lhat)};
             momentBSDF =
                 fL2 / (std::fmax(record.pdfBSDF, PDF_FLOOR) * record.pdfWNext);

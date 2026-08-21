@@ -39,6 +39,20 @@ private:
   return AST::getDocCommentText(srcDocComment);
 }
 
+// Parse source code that is expected to fail and return the error message,
+// which is prefixed by the source location '[<string ::test>:LINE:COLUMN]'.
+[[nodiscard]] static std::string parseError(std::string sourceCode) {
+  auto allocator{BumpPtrAllocator{}};
+  auto module{Module("test", std::move(sourceCode))};
+  auto error{module.parse(allocator)};
+  REQUIRE(error);
+  return error->message;
+}
+
+[[nodiscard]] static bool contains(std::string_view str, std::string_view sub) {
+  return str.find(sub) != str.npos;
+}
+
 } // namespace
 
 TEST_CASE("Parser doc comments") {
@@ -280,5 +294,89 @@ export const int X = 0;
 )")};
     CHECK(docText(parsed.root().srcDocComment) == "The module documentation.");
     CHECK(docText(parsed.decl(0).srcDocComment) == "The documented constant.");
+  }
+}
+
+TEST_CASE("Parser let expression") {
+  SUBCASE("non-declaration is reported at the offending token") {
+    auto message{parseError(R"(#smdl
+exec {
+  int y = let {
+    float x = 2;
+    x = 3;
+  } in int(x);
+}
+)")};
+    CHECK(contains(message, "::test>:5:"));
+    CHECK(contains(message, "must contain only declarations"));
+  }
+  SUBCASE("unterminated block is reported at the 'let'") {
+    auto message{parseError(R"(#smdl
+exec {
+  int y = let {
+    float x = 2;
+)")};
+    CHECK(contains(message, "::test>:3:"));
+    CHECK(contains(message, "expected closing '}' after 'let'"));
+  }
+}
+
+TEST_CASE("Parser unexpected token") {
+  SUBCASE("The token that stopped the parse is named") {
+    auto message{parseError("#smdl\nint i = 1\nint j = 2;\n")};
+    CHECK(contains(message, "but found 'int'"));
+  }
+  SUBCASE("End of file is said plainly") {
+    auto message{parseError("#smdl\nexec {\n  int i = 1;\n")};
+    CHECK(contains(message, "reached the end of the file"));
+  }
+  SUBCASE("A keyword borrowed from another language is explained") {
+    CHECK(contains(parseError("#smdl\nclass Foo { int a; };\n"),
+                   "there is no 'class'; use 'struct'"));
+    CHECK(contains(parseError("#smdl\nunion U { int a; };\n"),
+                   "union types are written '(A | B)'"));
+    CHECK(contains(parseError("#smdl\n#define N 3\nexec { #print(N); }\n"),
+                   "there is no preprocessor"));
+  }
+  SUBCASE("A borrowed keyword inside the construct is found") {
+    // 'new' is neither where the parse started nor where it stopped.
+    CHECK(contains(parseError("#smdl\nexec { auto p = new int(3); }\n"),
+                   "there is no 'new'"));
+    // 'and' sits past the token that stopped the parse.
+    CHECK(contains(parseError("#smdl\nexec { #assert(1 == 1 and 2 == 2); }\n"),
+                   "there is no 'and'; use '&&'"));
+    CHECK(contains(parseError("#smdl\nexec { #assert(1 is int); }\n"),
+                   "the type test operator is '<:'"));
+  }
+  SUBCASE("A borrowed keyword in a comment or string is not advice") {
+    auto message{parseError("#smdl\nexec { int i = 1 /* class */ 2; }\n")};
+    CHECK(contains(message, "but found"));
+    CHECK(!contains(message, "use 'struct'"));
+    message = parseError("#smdl\nexec { string s = \"class\" 2; }\n");
+    CHECK(!contains(message, "use 'struct'"));
+  }
+  SUBCASE("An extension in a conformant file says to use '#smdl'") {
+    CHECK(contains(parseError("mdl 1.8;\nunit_test \"x\" {}\n"),
+                   "'unit_test' is a SpectralMDL extension"));
+    CHECK(contains(
+        parseError("mdl 1.8;\nexport int f() { return #sizeOf(int); }\n"),
+        "'#sizeOf' is a SpectralMDL extension"));
+  }
+  SUBCASE("An extension in an SMDL file is not blamed on the dialect") {
+    CHECK(!contains(parseError("#smdl\nexec { int i = 1 unit_test; }\n"),
+                    "SpectralMDL extension"));
+  }
+  SUBCASE("A character literal is called out") {
+    CHECK(contains(parseError("#smdl\nexec { int c = 'a'; }\n"),
+                   "there are no character literals"));
+  }
+  SUBCASE("An unclosed delimiter says where it opened") {
+    CHECK(contains(parseError("#smdl\nexec {\n  int i = (1 +\n    2;\n}\n"),
+                   "to close the '(' opened at line 3"));
+  }
+  SUBCASE("An empty destructure is not a declarator") {
+    // Accepting '{}' here swallowed the body of 'exec {}'.
+    auto parsed{ParsedModule("#smdl\nexec {}\n")};
+    CHECK(parsed.root().globalDecls.size() == 1);
   }
 }

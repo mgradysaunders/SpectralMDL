@@ -30,18 +30,18 @@ std::string_view getIntrinsicName(IntrinsicID intrID) {
   return {};
 }
 
-std::string_view getSimilarIntrinsicName(std::string_view name) {
+Span<const std::string_view> getAllIntrinsicNames() {
   static constexpr std::string_view names[]{
 #define SMDL_INTRINSIC(Enumerator, Spelling) Spelling,
 #include "Intrinsics.def"
   };
+  return {names, std::size(names)};
+}
+
+std::string_view getSimilarIntrinsicName(std::string_view name) {
   // Only ever suggest a name that is a small number of edits away, so that a
-  // wildly wrong spelling produces no hint instead of a misleading one. The
-  // threshold scales with the length of what was typed, because one edit in
-  // '#abs' is a much bigger relative error than one edit in
-  // '#loadBSDFMeasurement'.
-  return suggestNearest(name, {names, std::size(names)},
-                        std::min<size_t>(1 + name.size() / 4, 4));
+  // wildly wrong spelling produces no hint instead of a misleading one.
+  return suggestNearestName(name, getAllIntrinsicNames());
 }
 
 } // namespace smdl

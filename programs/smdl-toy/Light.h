@@ -16,7 +16,7 @@ class EnvLight final {
 public:
   EnvLight() = default;
 
-  EnvLight(const std::string &filename, float scaleFactor = 1.0f);
+  EnvLight(const std::string &fileName, float scaleFactor = 1.0f);
 
   /// Construct as the procedural MODTRAN-fitted sun and sky instead of
   /// an image, see `smdl::SunSky`. The radiance is evaluated spectrally
@@ -66,7 +66,7 @@ private:
 class AreaLight final {
 public:
   /// The index in the `Scene::meshInstances` array.
-  uint32_t meshInstanceIndex{INVALID_INDEX};
+  uint32_t instIndex{INVALID_INDEX};
 
   /// The area-weighted distribution over the mesh faces. Empty for a
   /// primitive light, which samples its shape analytically instead.
@@ -115,6 +115,16 @@ public:
   /// the directional intensity toward it over the squared distance in
   /// meters. Zero outside a spot cone or the profile's support.
   [[nodiscard]] Color Li(const float3 &point,
+                         float metersPerSceneUnit) const noexcept;
+
+  /// The same with the directional (spot cone or profile) factor
+  /// evaluated toward `incidencePoint` instead: what a manifold gather
+  /// needs when the segment actually arriving at the light starts at
+  /// the last chain crossing rather than at the receiver. The
+  /// inverse-square falloff stays at `point`, matching the
+  /// straight-line solid-angle measure the gather's estimator is
+  /// built in.
+  [[nodiscard]] Color Li(const float3 &point, const float3 &incidencePoint,
                          float metersPerSceneUnit) const noexcept;
 
   /// The position in world space.
@@ -183,6 +193,19 @@ public:
     /// Sampled a delta (punctual) light? BSDF sampling can never hit
     /// one, so the MIS weight of this sample must be 1.
     bool isDelta{};
+
+    /// Sampled the environment? The target is then a far point in the
+    /// `wi` direction rather than a real position.
+    bool isInfinite{};
+
+    /// The index in the punctual light array when `isDelta`, else
+    /// `INVALID_INDEX`: the identity `reevaluatePunctualLi()` needs.
+    uint32_t punctualIndex{INVALID_INDEX};
+
+    /// The sampled point on an area light, empty for the other two
+    /// kinds: what `reevaluateAreaLi()` rebuilds the emitting material
+    /// from.
+    Hit hit{};
   };
 
   /// Are there no lights to sample?
@@ -209,20 +232,46 @@ public:
                             const float3 &point,
                             LightSample &lightSample) const;
 
+  /// Re-evaluate a punctual sample's incident radiance with the
+  /// directional factor toward `incidencePoint`, see the two-point
+  /// `PunctualLight::Li()` overload. The sample must be punctual
+  /// (`isDelta` set).
+  [[nodiscard]] Color reevaluatePunctualLi(const LightSample &lightSample,
+                                           const float3 &point,
+                                           const float3 &incidencePoint,
+                                           float metersPerSceneUnit) const;
+
+  /// Re-evaluate an area sample's emitted radiance in the direction of
+  /// `incidencePoint` instead of toward the receiver it was sampled
+  /// from. The sample must be an area sample (neither `isDelta` nor
+  /// `isInfinite`).
+  ///
+  /// What a manifold connection needs, because the segment that actually
+  /// arrives at the light starts at the last chain crossing: an emitter
+  /// with a directional EDF radiates something else that way, and a
+  /// one-sided one may radiate nothing at all. The measure is untouched,
+  /// so the sample's `pdf` stands as it is; only the radiance moves.
+  ///
+  /// This is the same quantity the path tracer reads off an emitter it
+  /// hits through the chain, so the two halves of the manifold estimator
+  /// agree on what the transport carries, including on its being zero.
+  [[nodiscard]] Color reevaluateAreaLi(const LightSample &lightSample,
+                                       smdl::State state,
+                                       const float3 &incidencePoint) const;
+
   /// The emitted radiance of an already-constructed material instance in
   /// direction `wi` pointing away from the emitting surface, with the
   /// `intensity_power` area normalization applied. Returns `false` if the
   /// instance does not emit in `wi`.
-  [[nodiscard]] bool
-  emittedRadiance(const smdl::JIT::MaterialInstance &materialInstance,
-                  uint32_t meshInstanceIndex, const float3 &wi,
-                  Color &Le) const;
+  [[nodiscard]] bool emittedRadiance(const smdl::JIT::MaterialInstance &mat,
+                                     uint32_t instIndex, const float3 &wi,
+                                     Color &Le) const;
 
   /// The solid-angle density of `sample()` connecting `point` to
   /// `lightPoint` on the given mesh instance, for MIS when a BSDF sample
   /// happens to hit an emitter. Returns zero if the mesh instance is not a
   /// registered light.
-  [[nodiscard]] float solidAnglePDF(uint32_t meshInstanceIndex,
+  [[nodiscard]] float solidAnglePDF(uint32_t instIndex,
                                     const float3 &lightPoint,
                                     const float3 &lightNormal,
                                     const float3 &point) const;

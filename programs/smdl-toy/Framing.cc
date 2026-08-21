@@ -11,9 +11,9 @@ namespace {
 // never degenerates.
 class FramingBasis final {
 public:
-  FramingBasis(float zenithInDegrees, float azimuthInDegrees) {
-    const float zenith{zenithInDegrees * PI / 180.0f};
-    const float azimuth{azimuthInDegrees * PI / 180.0f};
+  FramingBasis(float zenithDeg, float azimuthDeg) {
+    const float zenith{smdl::radians(zenithDeg)};
+    const float azimuth{smdl::radians(azimuthDeg)};
     const auto toCamera{float3(std::sin(zenith) * std::cos(azimuth),
                                std::sin(zenith) * std::sin(azimuth),
                                std::cos(zenith))};
@@ -43,8 +43,7 @@ public:
 // centers on. Runs after `commit()`, so refinement and displacement are
 // already in the vertices.
 [[nodiscard]] static std::vector<float3>
-gatherWorldPoints(const Scene &scene, uint32_t skipInstance, float3 &lower,
-                  float3 &upper) {
+gatherWorldPoints(const Scene &scene, uint32_t skipInstance, BoundBox3 &bound) {
   auto points{std::vector<float3>()};
   for (size_t i = 0; i < scene.meshInstances.size(); i++) {
     if (uint32_t(i) == skipInstance) continue;
@@ -53,15 +52,12 @@ gatherWorldPoints(const Scene &scene, uint32_t skipInstance, float3 &lower,
       const auto point{
           float3(instance.objectToWorld * float4(objectPoint, 1.0f))};
       points.push_back(point);
-      for (int axis = 0; axis < 3; axis++) {
-        lower[axis] = std::min(lower[axis], point[axis]);
-        upper[axis] = std::max(upper[axis], point[axis]);
-      }
+      bound.extend(point);
     }};
     // A primitive or a groom stands in with its coarse proxy points.
     if (instance.isPrimitive()) {
       for (const auto &point :
-           scene.primitives[instance.primitiveIndex]->proxyPoints)
+           scene.primitives[instance.primIndex]->proxyPoints)
         fold(point);
     } else if (instance.isCurves()) {
       for (const auto &point : scene.curves[instance.curvesIndex]->proxyPoints)
@@ -148,11 +144,10 @@ public:
           (2.0f * (float(j) + 0.5f) / RESOLUTION - 1.0f) * tanY * basis.up);
       auto hit{Hit()};
       if (!scene.intersect(ray, hit)) continue;
-      if (hit.meshInstanceIndex == skipInstance) continue;
+      if (hit.instIndex == skipInstance) continue;
       numHits++;
-      visibleArea +=
-          ray.tmax * ray.tmax * pixelSolidAngle /
-          std::max(std::abs(smdl::dot(hit.geometryNormal, ray.dir)), 0.05f);
+      visibleArea += ray.tmax * ray.tmax * pixelSolidAngle /
+                     std::max(std::abs(smdl::dot(hit.Ng, ray.dir)), 0.05f);
       if (hit.material) {
         // A statically thin-walled material, or one declaring a backface
         // surface, legitimately shows its back (foliage cards); an
@@ -165,7 +160,7 @@ public:
             (hit.material->staticFlags & smdl::JIT::MATERIAL_HAS_BACKFACE))
           continue;
       }
-      if (smdl::dot(hit.geometryNormal, ray.dir) > 0) numBackfacing++;
+      if (smdl::dot(hit.Ng, ray.dir) > 0) numBackfacing++;
     }
   }
   auto result{ProbeResult{}};
@@ -177,19 +172,16 @@ public:
 }
 
 FramingResult solveFraming(const Scene &scene, const FramingOptions &options) {
-  auto lower{float3(+INF, +INF, +INF)};
-  auto upper{float3(-INF, -INF, -INF)};
-  const auto points{
-      gatherWorldPoints(scene, options.skipInstance, lower, upper)};
+  BoundBox3 bound{};
+  const auto points{gatherWorldPoints(scene, options.skipInstance, bound)};
   if (points.empty())
     throw smdl::Error("cannot -frame: the scene has no geometry");
   const float usable{1.0f - options.margin};
-  const float tanY{std::tan(0.5f * options.fovYInDegrees * PI / 180.0f) *
-                   usable};
+  const float tanY{std::tan(smdl::radians(0.5f * options.fovYDeg)) * usable};
   const float tanX{tanY * options.aspectRatio};
   auto azimuths{std::vector<float>()};
-  if (options.azimuthInDegrees) {
-    azimuths.push_back(*options.azimuthInDegrees);
+  if (options.azimuthDeg) {
+    azimuths.push_back(*options.azimuthDeg);
   } else {
     constexpr int STEPS = 72;
     for (int i = 0; i < STEPS; i++)
@@ -197,7 +189,7 @@ FramingResult solveFraming(const Scene &scene, const FramingOptions &options) {
   }
   auto candidates{std::vector<Candidate>(azimuths.size())};
   llvm::parallelFor(0, azimuths.size(), [&](size_t i) {
-    const auto basis{FramingBasis(options.zenithInDegrees, azimuths[i])};
+    const auto basis{FramingBasis(options.zenithDeg, azimuths[i])};
     auto &candidate{candidates[i]};
     candidate.position = solvePosition(points, basis, tanX, tanY);
     const auto probe{probeFrame(scene, basis, candidate.position, tanX, tanY,
@@ -243,20 +235,20 @@ FramingResult solveFraming(const Scene &scene, const FramingOptions &options) {
         "side of an open mesh that is never meant to be seen");
   }
   const auto &chosen{candidates[best]};
-  const auto basis{FramingBasis(options.zenithInDegrees, azimuths[best])};
-  const auto center{0.5f * (lower + upper)};
+  const auto basis{FramingBasis(options.zenithDeg, azimuths[best])};
+  const auto center{bound.center()};
   auto result{FramingResult{}};
   result.lookFrom = chosen.position;
   result.lookTo =
       chosen.position +
       smdl::dot(center - chosen.position, basis.forward) * basis.forward;
-  result.azimuthInDegrees = azimuths[best];
+  result.azimuthDeg = azimuths[best];
   result.fill = chosen.fill;
   result.visibleArea = chosen.visibleArea;
   result.backfaceFraction = chosen.backfaceFraction;
-  SMDL_LOG_INFO("Framing: azimuth ", result.azimuthInDegrees,
-                " deg, look from (", result.lookFrom.x, ", ", result.lookFrom.y,
-                ", ", result.lookFrom.z, "), visible area ", result.visibleArea,
+  SMDL_LOG_INFO("Framing: azimuth ", result.azimuthDeg, " deg, look from (",
+                result.lookFrom.x, ", ", result.lookFrom.y, ", ",
+                result.lookFrom.z, "), visible area ", result.visibleArea,
                 ", fill ", 100.0f * result.fill, "%, backface ",
                 100.0f * result.backfaceFraction, "%");
   return result;

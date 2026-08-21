@@ -157,6 +157,21 @@ template <typename G> [[nodiscard]] inline float4 generateCanonical4(G &g) {
   return float3(sinTheta.x, sinTheta.y, cosTheta);
 }
 
+/// The power heuristic with \f$ \beta = 2 \f$ for two sampling strategies,
+/// the multiple-importance-sampling weight of a sample drawn from the
+/// strategy with density `pdf0` against a competing strategy with density
+/// `pdf1` (Veach & Guibas, SIGGRAPH 1995).
+///
+/// This is written as \f$ 1/(1+(q/p)^2) \f$ rather than the equivalent
+/// \f$ p^2/(p^2+q^2) \f$ to avoid overflowing on the enormous PDFs that
+/// near-specular lobes produce.
+///
+[[nodiscard]] inline float powerHeuristic(float pdf0, float pdf1) noexcept {
+  if (!(pdf0 > 0)) return 0.0f;
+  float ratio{pdf1 / pdf0};
+  return 1.0f / (1.0f + ratio * ratio);
+}
+
 /// Uniform sphere direction PDF.
 ///
 /// \f[
@@ -208,14 +223,15 @@ template <typename G> [[nodiscard]] inline float4 generateCanonical4(G &g) {
 /// falls back to the unit disk otherwise.
 ///
 /// \param[in] bladeAngle
-/// The blade offset angle in radians. Passing zero aligns a regular polygon 
+/// The blade offset angle in radians. Passing zero aligns a regular polygon
 /// vertex to the +X axis.
 ///
 /// \param[in] xi
 /// The random sample \f$ \xi \in (0,1)^2 \f$.
 ///
-[[nodiscard]] SMDL_EXPORT float2
-uniformApertureSample(int numBlades, float bladeAngle, float2 xi) noexcept;
+[[nodiscard]] SMDL_EXPORT float2 uniformApertureSample(int numBlades,
+                                                       float bladeAngle,
+                                                       float2 xi) noexcept;
 
 /// The error function inverse, necessary to sample the standard normal
 /// distribution.

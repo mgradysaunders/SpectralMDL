@@ -94,7 +94,7 @@ public:
   /// Attach a note, returning `*this` so that notes chain:
   /// `error(loc, ...).note(loc2, ...).note(loc3, ...)`. A note with a
   /// default `LayoutLocation` renders with no location and no excerpt.
-  LayoutDiagnostic &note(LayoutLocation noteLocation, std::string noteMessage);
+  LayoutDiagnostic &note(LayoutLocation noteLoc, std::string noteMessage);
 
 public:
   Kind kind{Kind::ERROR};
@@ -136,7 +136,7 @@ public:
   /// record `all().size()`, recurse, and every diagnostic the recursion
   /// produced gains a "imported from here" note pointing at the import
   /// site.
-  void noteAllFrom(size_t firstIndex, LayoutLocation noteLocation,
+  void noteAllFrom(size_t firstIndex, LayoutLocation noteLoc,
                    std::string noteMessage);
 
   [[nodiscard]] bool empty() const noexcept { return mDiagnostics.empty(); }

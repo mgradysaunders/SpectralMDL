@@ -1,28 +1,71 @@
 #pragma once
 
 #include <atomic>
+#include <type_traits>
 
 #include "Scene.h"
 
 #include "smdl/Support/SpectralRenderImage.h"
 
-/// Atomic add for `std::atomic<float>`, which gains a native `fetch_add`
-/// only in C++20.
-inline void atomicAdd(std::atomic<float> &atomicValue, float value) noexcept {
-  float expected{atomicValue.load(std::memory_order_relaxed)};
-  while (!atomicValue.compare_exchange_weak(expected, expected + value,
-                                            std::memory_order_relaxed)) {
+/// A copyable atomic whose every access is relaxed.
+///
+/// The SD-tree is accumulated into by every render thread while a pass
+/// runs and copied wholesale between passes, where refinement splits a
+/// spatial leaf by duplicating it. Ordering never matters: the
+/// structure is frozen during a pass so only the counters move, and
+/// between passes there is one thread. What does matter is that
+/// `std::atomic` is not copyable, which without this leaves every node
+/// needing a hand-written copy constructor whose entire body is
+/// load-then-store.
+template <typename T> class Relaxed final {
+public:
+  Relaxed() = default;
+
+  Relaxed(T value) noexcept : mValue(value) {}
+
+  Relaxed(const Relaxed &other) noexcept : mValue(T(other)) {}
+
+  Relaxed &operator=(const Relaxed &other) noexcept { return *this = T(other); }
+
+  Relaxed &operator=(T value) noexcept {
+    mValue.store(value, std::memory_order_relaxed);
+    return *this;
   }
-}
+
+  [[nodiscard]] operator T() const noexcept {
+    return mValue.load(std::memory_order_relaxed);
+  }
+
+  /// Add atomically. `std::atomic<float>` gains a native `fetch_add`
+  /// only in C++20, so a float goes around a compare-exchange loop
+  /// instead; note that the resulting sum depends on the order the
+  /// threads happen to win it, so a guided render is not bit-wise
+  /// reproducible run to run.
+  void add(T value) noexcept {
+    if constexpr (std::is_integral_v<T>) {
+      mValue.fetch_add(value, std::memory_order_relaxed);
+    } else {
+      T expected{mValue.load(std::memory_order_relaxed)};
+      while (!mValue.compare_exchange_weak(expected, expected + value,
+                                           std::memory_order_relaxed)) {
+      }
+    }
+  }
+
+private:
+  std::atomic<T> mValue{};
+};
+
+using RelaxedFloat = Relaxed<float>;
 
 /// Map a unit direction to the unit square with the equal-area world-space
 /// cylindrical parameterization, so uniform density on the square is
 /// uniform density over the sphere: `dω = 4π du dv`.
 [[nodiscard]] inline float2 directionToSquare(const float3 &w) noexcept {
-  float u{(std::atan2(w.y, w.x) + PI) / (2.0f * PI)};
+  float u{(std::atan2(w.y, w.x) + PI) / TWO_PI};
   float v{(w.z + 1.0f) / 2.0f};
-  u = std::fmin(std::fmax(u, 0.0f), 0.99999994f);
-  v = std::fmin(std::fmax(v, 0.0f), 0.99999994f);
+  u = std::fmin(std::fmax(u, 0.0f), ONE_MINUS_EPS);
+  v = std::fmin(std::fmax(v, 0.0f), ONE_MINUS_EPS);
   return {u, v};
 }
 
@@ -30,7 +73,7 @@ inline void atomicAdd(std::atomic<float> &atomicValue, float value) noexcept {
 [[nodiscard]] inline float3 squareToDirection(const float2 &uv) noexcept {
   float cosTheta{2.0f * uv.y - 1.0f};
   float sinTheta{std::sqrt(std::max(0.0f, 1.0f - cosTheta * cosTheta))};
-  float phi{2.0f * PI * uv.x - PI};
+  float phi{TWO_PI * uv.x - PI};
   return {sinTheta * std::cos(phi), sinTheta * std::sin(phi), cosTheta};
 }
 
@@ -47,24 +90,8 @@ inline void atomicAdd(std::atomic<float> &atomicValue, float value) noexcept {
 class DTree final {
 public:
   struct Node final {
-    Node() = default;
-
-    Node(const Node &other) noexcept : child(other.child) {
-      for (int q = 0; q < 4; q++)
-        flux[q].store(other.flux[q].load(std::memory_order_relaxed),
-                      std::memory_order_relaxed);
-    }
-
-    Node &operator=(const Node &other) noexcept {
-      child = other.child;
-      for (int q = 0; q < 4; q++)
-        flux[q].store(other.flux[q].load(std::memory_order_relaxed),
-                      std::memory_order_relaxed);
-      return *this;
-    }
-
     /// The flux of each quadrant subtree.
-    std::array<std::atomic<float>, 4> flux{};
+    std::array<RelaxedFloat, 4> flux{};
 
     /// The node index of each quadrant subtree, or 0 if the quadrant is a
     /// leaf cell. (Node 0 is the root and is never anyone's child.)
@@ -73,43 +100,18 @@ public:
 
   DTree() : mNodes(1) {}
 
-  DTree(const DTree &other) : mNodes(other.mNodes) {
-    statisticalWeight.store(
-        other.statisticalWeight.load(std::memory_order_relaxed),
-        std::memory_order_relaxed);
-    momentBSDF.store(other.momentBSDF.load(std::memory_order_relaxed),
-                     std::memory_order_relaxed);
-    momentGuide.store(other.momentGuide.load(std::memory_order_relaxed),
-                      std::memory_order_relaxed);
-    mixtureAlpha = other.mixtureAlpha;
-  }
-
-  DTree &operator=(const DTree &other) {
-    mNodes = other.mNodes;
-    statisticalWeight.store(
-        other.statisticalWeight.load(std::memory_order_relaxed),
-        std::memory_order_relaxed);
-    momentBSDF.store(other.momentBSDF.load(std::memory_order_relaxed),
-                     std::memory_order_relaxed);
-    momentGuide.store(other.momentGuide.load(std::memory_order_relaxed),
-                      std::memory_order_relaxed);
-    mixtureAlpha = other.mixtureAlpha;
-    return *this;
-  }
-
   /// The total flux at the root.
   [[nodiscard]] float totalFlux() const noexcept {
     float total{};
-    for (int q = 0; q < 4; q++)
-      total += mNodes[0].flux[q].load(std::memory_order_relaxed);
+    for (int q = 0; q < 4; q++) total += mNodes[0].flux[q];
     return total;
   }
 
   /// The mean incident radiance implied by the recorded flux: the total
   /// over the record count and the sphere area.
   [[nodiscard]] float meanRadiance() const noexcept {
-    float w{statisticalWeight.load(std::memory_order_relaxed)};
-    return w > 0 ? totalFlux() / (4.0f * PI * w) : 0.0f;
+    const float w{statisticalWeight};
+    return w > 0 ? totalFlux() / (2.0f * TWO_PI * w) : 0.0f;
   }
 
   /// Record `value` at the square point `uv`, adding flux at every level
@@ -142,15 +144,15 @@ public:
   void resetToStructureOf(const DTree &structure);
 
   /// The number of records, for converting flux to mean radiance.
-  std::atomic<float> statisticalWeight{};
+  RelaxedFloat statisticalWeight{};
 
   /// Estimated second moments of the pure-BSDF and pure-tree one-sample
   /// estimators over the training records: `Σ (f L)² / (p_s p_mix)`
   /// estimates the second moment strategy `s` would have alone.
   /// Accumulated on the building side of a pass; they yield
   /// `mixtureAlpha` at refinement.
-  std::atomic<float> momentBSDF{};
-  std::atomic<float> momentGuide{};
+  RelaxedFloat momentBSDF{};
+  RelaxedFloat momentGuide{};
 
   /// The learned probability of sampling the BSDF rather than the tree
   /// at vertices in this cell: the inverse-second-moment share
@@ -172,15 +174,6 @@ private:
 class STree final {
 public:
   struct Node final {
-    Node() = default;
-
-    Node(const Node &other) noexcept
-        : child(other.child), axis(other.axis), sampling(other.sampling),
-          building(other.building) {
-      recordCount.store(other.recordCount.load(std::memory_order_relaxed),
-                        std::memory_order_relaxed);
-    }
-
     /// The child node indices, or 0 if this is a leaf.
     std::array<uint32_t, 2> child{};
 
@@ -188,7 +181,7 @@ public:
     uint8_t axis{};
 
     /// The number of vertices recorded here since the last refinement.
-    std::atomic<uint32_t> recordCount{};
+    Relaxed<uint32_t> recordCount{};
 
     DTree sampling{};
 

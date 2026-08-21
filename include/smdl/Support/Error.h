@@ -18,6 +18,9 @@ class SMDL_EXPORT Error final : public std::exception {
 public:
   explicit Error(std::string message) : message(std::move(message)) {}
 
+  Error(std::string message, std::string snippet)
+      : message(std::move(message)), snippet(std::move(snippet)) {}
+
   /// Print to standard error.
   void print() const;
 
@@ -29,6 +32,12 @@ public:
 public:
   /// The message.
   std::string message{};
+
+  /// The source context to show beneath the message, if any. This is kept
+  /// apart from `message` so that an error quoted inside another error, as
+  /// the overload and construction candidate notes do, contributes its
+  /// wording without dragging a second caret into the output.
+  std::string snippet{};
 };
 
 /// Use C++ ABI to demangle the given name.

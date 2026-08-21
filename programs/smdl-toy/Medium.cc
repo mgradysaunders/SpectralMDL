@@ -197,10 +197,10 @@ private:
 // Is the density acceleration hint of the given instance usable? The
 // material must declare all three fields and they must be coherent.
 [[nodiscard]] static bool
-hasUsableDensityGrid(const smdl::JIT::MaterialInstance &materialInstance) {
-  const auto *densityGrid{materialInstance.getVolumeDensityGrid()};
-  const auto *boundMin{materialInstance.getVolumeDensityBoundMin()};
-  const auto *boundMax{materialInstance.getVolumeDensityBoundMax()};
+hasUsableDensityGrid(const smdl::JIT::MaterialInstance &mat) {
+  const auto *densityGrid{mat.getVolumeDensityGrid()};
+  const auto *boundMin{mat.getVolumeDensityBoundMin()};
+  const auto *boundMax{mat.getVolumeDensityBoundMax()};
   return densityGrid && boundMin && boundMax && densityGrid->isValid() &&
          densityGrid->getMaxValue() > 0.0f && //
          boundMax->x > boundMin->x &&         //
@@ -218,13 +218,12 @@ Medium::Medium(const MediumStack *stack, const Color &wavelengths,
   const MediumStack *primary{};
   size_t count{0};
   for (const MediumStack *entry{stack}; entry; entry = entry->prev) {
-    const auto &materialInstance{entry->materialInstance};
-    if (materialInstance.hasMedium() ||
-        !materialInstance.getVolumeEmissionIntensity().empty()) {
+    const auto &mat{entry->mat};
+    if (mat.hasMedium() || !mat.getVolumeEmissionIntensity().empty()) {
       if (!primary) primary = entry;
       ++count;
     }
-    if (!materialInstance.hasAdditiveVolume()) break;
+    if (!mat.hasAdditiveVolume()) break;
   }
   if (count == 0) return;
   mHasMedium = true;
@@ -239,33 +238,28 @@ Medium::Medium(const MediumStack *stack, const Color &wavelengths,
     // The single-medium segment, which is the overwhelmingly common
     // case: everything lives in the flat members and the component
     // vector stays empty.
-    const auto &materialInstance{primary->materialInstance};
-    mScatterInstance = &materialInstance;
-    mMaterial = materialInstance.material;
-    mSigmaA = Color(materialInstance.getAbsorptionCoefficient()) * unitScale;
-    mSigmaS = Color(materialInstance.getScatteringCoefficient()) * unitScale;
-    mHasEmission = !materialInstance.getVolumeEmissionIntensity().empty();
-    mEmission =
-        Color(materialInstance.getVolumeEmissionIntensity()) * unitScale;
+    const auto &mat{primary->mat};
+    mScatterInstance = &mat;
+    mMaterial = mat.material;
+    mSigmaA = Color(mat.getAbsorptionCoefficient()) * unitScale;
+    mSigmaS = Color(mat.getScatteringCoefficient()) * unitScale;
+    mHasEmission = !mat.getVolumeEmissionIntensity().empty();
+    mEmission = Color(mat.getVolumeEmissionIntensity()) * unitScale;
     if (mMaterial->hasHomogeneousVolume()) return;
     // Heterogeneous (or unproven, which must be treated the same): the
     // per-point queries need majorants to track against, covering every
     // coefficient the material actually has.
-    const bool missingMajorantA{
-        !materialInstance.getAbsorptionCoefficient().empty() &&
-        materialInstance.getMaxAbsorptionCoefficient().empty()};
-    const bool missingMajorantS{
-        !materialInstance.getScatteringCoefficient().empty() &&
-        materialInstance.getMaxScatteringCoefficient().empty()};
+    const bool missingMajorantA{!mat.getAbsorptionCoefficient().empty() &&
+                                mat.getMaxAbsorptionCoefficient().empty()};
+    const bool missingMajorantS{!mat.getScatteringCoefficient().empty() &&
+                                mat.getMaxScatteringCoefficient().empty()};
     if (missingMajorantA || missingMajorantS) {
       warnMissingMajorantOnce(mMaterial);
       return;
     }
     mHeterogeneous = true;
-    mMaxSigmaA =
-        Color(materialInstance.getMaxAbsorptionCoefficient()) * unitScale;
-    mMaxSigmaS =
-        Color(materialInstance.getMaxScatteringCoefficient()) * unitScale;
+    mMaxSigmaA = Color(mat.getMaxAbsorptionCoefficient()) * unitScale;
+    mMaxSigmaS = Color(mat.getMaxScatteringCoefficient()) * unitScale;
     mMajorant = (mMaxSigmaA + mMaxSigmaS).maxComponent();
     mMajorantGrid = mMajorant;
     mGridMaxSigma = mMaxSigmaA + mMaxSigmaS;
@@ -290,10 +284,10 @@ Medium::Medium(const MediumStack *stack, const Color &wavelengths,
     // mapped into the grid's brick space up front: the hint box spans
     // texture space [0,1]^3, which spans the voxel extent, and bricks
     // are 16 voxels per axis.
-    if (hasUsableDensityGrid(materialInstance)) {
-      const auto *densityGrid{materialInstance.getVolumeDensityGrid()};
-      const auto *boundMin{materialInstance.getVolumeDensityBoundMin()};
-      const auto *boundMax{materialInstance.getVolumeDensityBoundMax()};
+    if (hasUsableDensityGrid(mat)) {
+      const auto *densityGrid{mat.getVolumeDensityGrid()};
+      const auto *boundMin{mat.getVolumeDensityBoundMin()};
+      const auto *boundMax{mat.getVolumeDensityBoundMax()};
       mDensityGrid = densityGrid;
       const auto extent{densityGrid->getExtent()};
       const float3 scale{
@@ -315,39 +309,32 @@ Medium::Medium(const MediumStack *stack, const Color &wavelengths,
   int gridComponent{-1};
   int gridCandidates{0};
   for (const MediumStack *entry{stack}; entry; entry = entry->prev) {
-    const auto &materialInstance{entry->materialInstance};
-    const bool contributes{
-        materialInstance.hasMedium() ||
-        !materialInstance.getVolumeEmissionIntensity().empty()};
+    const auto &mat{entry->mat};
+    const bool contributes{mat.hasMedium() ||
+                           !mat.getVolumeEmissionIntensity().empty()};
     if (contributes) {
       auto &component{mComponents.emplace_back()};
-      component.materialInstance = &materialInstance;
-      component.sigmaA =
-          Color(materialInstance.getAbsorptionCoefficient()) * unitScale;
-      component.sigmaS =
-          Color(materialInstance.getScatteringCoefficient()) * unitScale;
-      component.emission =
-          Color(materialInstance.getVolumeEmissionIntensity()) * unitScale;
-      mHasEmission |= !materialInstance.getVolumeEmissionIntensity().empty();
-      if (!materialInstance.material->hasHomogeneousVolume()) {
-        const bool missingMajorantA{
-            !materialInstance.getAbsorptionCoefficient().empty() &&
-            materialInstance.getMaxAbsorptionCoefficient().empty()};
-        const bool missingMajorantS{
-            !materialInstance.getScatteringCoefficient().empty() &&
-            materialInstance.getMaxScatteringCoefficient().empty()};
+      component.mat = &mat;
+      component.sigmaA = Color(mat.getAbsorptionCoefficient()) * unitScale;
+      component.sigmaS = Color(mat.getScatteringCoefficient()) * unitScale;
+      component.emission = Color(mat.getVolumeEmissionIntensity()) * unitScale;
+      mHasEmission |= !mat.getVolumeEmissionIntensity().empty();
+      if (!mat.material->hasHomogeneousVolume()) {
+        const bool missingMajorantA{!mat.getAbsorptionCoefficient().empty() &&
+                                    mat.getMaxAbsorptionCoefficient().empty()};
+        const bool missingMajorantS{!mat.getScatteringCoefficient().empty() &&
+                                    mat.getMaxScatteringCoefficient().empty()};
         if (missingMajorantA || missingMajorantS) {
-          warnMissingMajorantOnce(materialInstance.material);
+          warnMissingMajorantOnce(mat.material);
         } else {
           component.heterogeneous = true;
           component.maxSigmaA =
-              Color(materialInstance.getMaxAbsorptionCoefficient()) * unitScale;
+              Color(mat.getMaxAbsorptionCoefficient()) * unitScale;
           component.maxSigmaS =
-              Color(materialInstance.getMaxScatteringCoefficient()) * unitScale;
+              Color(mat.getMaxScatteringCoefficient()) * unitScale;
           component.state = makeRenderState(wavelengths);
           if (const auto *meshInstance{entry->meshInstance}) {
-            if (meshInstance->isDeformed)
-              warnDeformedVolumeOnce(materialInstance.material);
+            if (meshInstance->isDeformed) warnDeformedVolumeOnce(mat.material);
             component.orgR =
                 float3(meshInstance->worldToRigid * float4(org, 1.0f));
             component.dirR =
@@ -358,14 +345,14 @@ Medium::Medium(const MediumStack *stack, const Color &wavelengths,
             component.dirR = dir;
           }
           component.state.direction = component.dirR;
-          if (hasUsableDensityGrid(materialInstance)) {
+          if (hasUsableDensityGrid(mat)) {
             ++gridCandidates;
             gridComponent = int(mComponents.size()) - 1;
           }
         }
       }
     }
-    if (!materialInstance.hasAdditiveVolume()) break;
+    if (!mat.hasAdditiveVolume()) break;
   }
   // The aggregates. The homogeneous closed form runs on the summed
   // snapshots when every component is homogeneous; otherwise the
@@ -401,10 +388,10 @@ Medium::Medium(const MediumStack *stack, const Color &wavelengths,
     mMajorantGrid = mGridMaxSigma.maxComponent();
     mMajorantBase = std::max(
         (mMaxSigmaA + mMaxSigmaS - mGridMaxSigma).maxComponent(), 0.0f);
-    const auto &materialInstance{*component.materialInstance};
-    const auto *densityGrid{materialInstance.getVolumeDensityGrid()};
-    const auto *boundMin{materialInstance.getVolumeDensityBoundMin()};
-    const auto *boundMax{materialInstance.getVolumeDensityBoundMax()};
+    const auto &mat{*component.mat};
+    const auto *densityGrid{mat.getVolumeDensityGrid()};
+    const auto *boundMin{mat.getVolumeDensityBoundMin()};
+    const auto *boundMax{mat.getVolumeDensityBoundMax()};
     mDensityGrid = densityGrid;
     const auto extent{densityGrid->getExtent()};
     const float3 scale{float(extent.x) / (16.0f * (boundMax->x - boundMin->x)),
@@ -462,8 +449,8 @@ void Medium::evaluateCoefficients(float t, float majorantScale, Color &sigmaA,
     Color a{};
     Color s{};
     Color e{};
-    component.materialInstance->material->volumeEvaluate(
-        component.state, a.data(), s.data(), e.data());
+    component.mat->material->volumeEvaluate(component.state, a.data(), s.data(),
+                                            e.data());
     const float scale{component.scaledByGrid ? majorantScale : 1.0f};
     for (size_t i = 0; i < a.size(); i++) {
       a[i] = std::min(std::max(a[i] * mUnitScale, 0.0f),
@@ -486,7 +473,7 @@ void Medium::pickScatterComponent(float xi, const Color &sigmaS,
   // total scattering (a pure-absorption collision) leaves `beta` all
   // zero already; default to the first component so the caller always
   // has a phase function.
-  mScatterInstance = mComponents.front().materialInstance;
+  mScatterInstance = mComponents.front().mat;
   float totalAverage{};
   for (const auto &component : mComponents)
     totalAverage += componentSigmaS(component).average();
@@ -502,7 +489,7 @@ void Medium::pickScatterComponent(float xi, const Color &sigmaS,
     cdf += pickedProbability;
     if (xi < cdf) break;
   }
-  mScatterInstance = picked->materialInstance;
+  mScatterInstance = picked->mat;
   // The per-bin spectral share over the scalar pick probability, so
   // the expectation per bin is the sigma_s-weighted phase mixture. A
   // bin with zero total scattering has zero throughput already; keep

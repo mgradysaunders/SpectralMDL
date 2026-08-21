@@ -270,6 +270,47 @@ if(SMDL_ENABLE_PTEX)
       PTEX_BUILD_SHARED_LIBS OFF
       PTEX_BUILD_DOCS OFF
     )
+  # Assimp
+  #
+  # Narrowed to the widely adopted formats. Assimp reads roughly fifty, most
+  # of them for games and modelers that no asset pipeline is going to hand us,
+  # and every one costs build time and binary size. Exporters are on because
+  # the asset processing tooling reads and writes through Assimp both ways,
+  # so each format is enabled in both directions where a writer exists (there
+  # is no OFF exporter). 'assbin' is Assimp's own container and the only
+  # lossless one of the set, which is what makes it a round-trip test
+  # fixture rather than a delivery format.
+  smdl_fetch_dependency(
+    "Assimp"
+    REPOSITORY "https://github.com/assimp/assimp"
+    TAG "v6.0.5"
+    OPTIONS
+      ASSIMP_WARNINGS_AS_ERRORS OFF
+      ASSIMP_BUILD_SAMPLES OFF
+      ASSIMP_BUILD_TESTS OFF
+      ASSIMP_BUILD_ZLIB ON
+      ASSIMP_INSTALL OFF
+      ASSIMP_NO_EXPORT OFF
+      ASSIMP_BUILD_ALL_IMPORTERS_BY_DEFAULT OFF
+      ASSIMP_BUILD_ASSBIN_IMPORTER ON
+      ASSIMP_BUILD_COLLADA_IMPORTER ON
+      ASSIMP_BUILD_FBX_IMPORTER ON
+      ASSIMP_BUILD_GLTF_IMPORTER ON
+      ASSIMP_BUILD_OBJ_IMPORTER ON
+      ASSIMP_BUILD_OFF_IMPORTER ON
+      ASSIMP_BUILD_OPENGEX_IMPORTER ON
+      ASSIMP_BUILD_PLY_IMPORTER ON
+      ASSIMP_BUILD_STL_IMPORTER ON
+      ASSIMP_BUILD_ALL_EXPORTERS_BY_DEFAULT OFF
+      ASSIMP_BUILD_ASSBIN_EXPORTER ON
+      ASSIMP_BUILD_COLLADA_EXPORTER ON
+      ASSIMP_BUILD_FBX_EXPORTER ON
+      ASSIMP_BUILD_GLTF_EXPORTER ON
+      ASSIMP_BUILD_OBJ_EXPORTER ON
+      ASSIMP_BUILD_OPENGEX_EXPORTER ON
+      ASSIMP_BUILD_PLY_EXPORTER ON
+      ASSIMP_BUILD_STL_EXPORTER ON
+    )
 endif()
 
 if(SMDL_ENABLE_NANOVDB)
@@ -315,44 +356,6 @@ if(SMDL_TOY)
       EMBREE_FILTER_FUNCTION OFF
       EMBREE_RAY_MASK OFF
       ${EmbreeISAOption}
-    )
-
-  # Assimp
-  #
-  # Narrowed to the widely adopted formats. Assimp reads roughly fifty, most
-  # of them for games and modelers that no asset pipeline is going to hand us,
-  # and every one costs build time and binary size. Exporters are on because
-  # the asset processing tooling means to read and write through Assimp both
-  # ways, so each format is enabled in both directions where a writer exists
-  # (there is no OFF exporter).
-  smdl_fetch_dependency(
-    "Assimp"
-    REPOSITORY "https://github.com/assimp/assimp"
-    TAG "v6.0.5"
-    OPTIONS
-      ASSIMP_WARNINGS_AS_ERRORS OFF
-      ASSIMP_BUILD_SAMPLES OFF
-      ASSIMP_BUILD_TESTS OFF
-      ASSIMP_BUILD_ZLIB ON
-      ASSIMP_INSTALL OFF
-      ASSIMP_NO_EXPORT OFF
-      ASSIMP_BUILD_ALL_IMPORTERS_BY_DEFAULT OFF
-      ASSIMP_BUILD_COLLADA_IMPORTER ON
-      ASSIMP_BUILD_FBX_IMPORTER ON
-      ASSIMP_BUILD_GLTF_IMPORTER ON
-      ASSIMP_BUILD_OBJ_IMPORTER ON
-      ASSIMP_BUILD_OFF_IMPORTER ON
-      ASSIMP_BUILD_OPENGEX_IMPORTER ON
-      ASSIMP_BUILD_PLY_IMPORTER ON
-      ASSIMP_BUILD_STL_IMPORTER ON
-      ASSIMP_BUILD_ALL_EXPORTERS_BY_DEFAULT OFF
-      ASSIMP_BUILD_COLLADA_EXPORTER ON
-      ASSIMP_BUILD_FBX_EXPORTER ON
-      ASSIMP_BUILD_GLTF_EXPORTER ON
-      ASSIMP_BUILD_OBJ_EXPORTER ON
-      ASSIMP_BUILD_OPENGEX_EXPORTER ON
-      ASSIMP_BUILD_PLY_EXPORTER ON
-      ASSIMP_BUILD_STL_EXPORTER ON
     )
 
   # OpenSubdiv
