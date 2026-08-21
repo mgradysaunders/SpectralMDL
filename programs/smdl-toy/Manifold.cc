@@ -334,9 +334,37 @@ evaluateChain(const Scene &scene, const float3 &receiver,
   float3 a[2]{a1, a2};
   if (!target.infinite) {
     const float distStraight{length(target.point - receiver)};
+    if (!(distStraight > 0.0f) || !(state.distBack[last] > 0.0f)) return false;
     const float3 wB{state.wBack[last]};
+    // Where the light point goes as the straight direction is perturbed,
+    // which decides what the chain has to reach and so what the connection
+    // is worth. An ORIENTED target moves on its own surface, because that
+    // is the surface the light sampler drew it from and the measure its
+    // density is expressed in: perturbing the direction slides the point
+    // along the emitter, changing its distance as well as its bearing.
+    //
+    // An unoriented one has no surface to slide on. A punctual light is a
+    // fixed point and a distant one a fixed direction, and for them the
+    // perturbation is the fiction the estimator is built on: the light
+    // moves on the plane through it perpendicular to the straight line, at
+    // the straight distance, so that a unit of it is a unit of solid angle
+    // at the receiver and composes with the inverse square that `Li`
+    // already carries.
+    //
+    // Treating an emitter as though it were unoriented is the same
+    // convention only where its surface happens to face the straight line
+    // squarely. Where it does not, the two disagree by the tilt, which on
+    // a refractive chain is small, since the interface sits near the
+    // receiver and the emitter far, and on a reflective one is not.
+    const bool oriented{dot(target.normal, target.normal) > 0.0f};
+    const float cosStraight{oriented ? dot(target.wl, target.normal) : 0.0f};
+    if (oriented && !(std::abs(cosStraight) > 1e-6f)) return false;
     for (auto &ak : a) {
-      ak = (distStraight / state.distBack[last]) * (ak - dot(wB, ak) * wB);
+      float3 dy{ak};
+      if (oriented)
+        dy = dy - target.wl * (dot(ak, target.normal) / cosStraight);
+      dy = distStraight * dy;
+      ak = (dy - dot(wB, dy) * wB) / state.distBack[last];
     }
   }
   float A[MAX_DIM][MAX_DIM];
