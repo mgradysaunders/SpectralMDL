@@ -146,6 +146,14 @@ static cl::opt<bool> optMNEEGlossy{
              "an interface stops gathering on its own account, since the "
              "gather at the receiver behind it claims that transport"),
     cl::init(false), cl::cat(catSampling)};
+static cl::opt<bool> optMNEEReflect{
+    "mnee-reflect",
+    cl::desc("With -mnee, also connect by reflection off a mirror or a "
+             "low-roughness reflector, which a refractive connection cannot "
+             "reach because such a surface is nowhere near the line from the "
+             "receiver to the light. The reflector is searched by sampling "
+             "it, so it stops gathering on its own account"),
+    cl::init(false), cl::cat(catSampling)};
 static cl::opt<bool> optNoLOD{
     "no-lod", cl::desc("Disable LOD by zeroing the camera ray cone spread"),
     cl::init(false), cl::cat(catSampling)};
@@ -549,8 +557,8 @@ stripSessionOnlyArgs(const std::string &args) {
                                                     "guide-bsdf-fraction",
                                                     "guide-split",
                                                     "mnee-depth"};
-  static constexpr const char *SESSION_ONLY_FLAG[]{"guide", "guide-adrrs",
-                                                   "mnee", "mnee-glossy"};
+  static constexpr const char *SESSION_ONLY_FLAG[]{
+      "guide", "guide-adrrs", "mnee", "mnee-glossy", "mnee-reflect"};
   auto tokens{std::vector<std::string>()};
   for (size_t pos{}; pos < args.size();) {
     size_t end{args.find_first_of(" \t", pos)};
@@ -1089,7 +1097,7 @@ int main(int argc, char **argv) try {
   // The normal distribution entry points are what a glossy manifold
   // crossing draws its half vector from, and nothing else here asks for
   // them, so they are emitted only when that is on.
-  compiler.enableScatterNormal = optMNEE && optMNEEGlossy;
+  compiler.enableScatterNormal = optMNEE && (optMNEEGlossy || optMNEEReflect);
   // The built-in stand-in, always available: a scene whose materials
   // have not been written yet still renders, and a name that does not
   // resolve has somewhere to fall back to. It is added even when MDL
@@ -1439,6 +1447,18 @@ int main(int argc, char **argv) try {
   ManifoldOptions manifold{};
   manifold.depth = mneeDepth;
   manifold.glossy = optMNEE && optMNEEGlossy;
+  manifold.reflect = optMNEE && optMNEEReflect;
+  // The reflective gather searches this in place of the straight shadow
+  // segment, so it is built once per render and only when asked for.
+  auto casters{ManifoldCasterSet()};
+  if (manifold.reflect) {
+    casters = ManifoldCasterSet(scene, wavelengths, manifold.glossy);
+    manifold.casters = &casters;
+    SMDL_LOG_DEBUG("Manifold casters: ", casters.casters.size(),
+                   " instance(s)");
+    if (casters.empty())
+      SMDL_LOG_WARN("'-mnee-reflect' found no eligible reflectors");
+  }
   progressOptions.total = numPixelsX * numPixelsY * spp;
   progressOptions.displayScale = std::max<size_t>(spp, 1);
   progressOptions.summary = smdl::concat("Rendered ", numPixelsX, "x",

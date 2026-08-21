@@ -4,6 +4,7 @@
 #include "Medium.h"
 
 class LightSampler;
+class ManifoldCasterSet;
 
 struct Guiding;
 
@@ -14,6 +15,14 @@ public:
   /// The most refractive interfaces a connection may cross, 0 when
   /// manifold next-event estimation is off.
   int depth{};
+
+  /// Connect by reflection off a caster as well as by refraction through
+  /// an interface. Needs `casters`, which is what a reflective gather
+  /// searches in place of the straight shadow segment.
+  bool reflect{};
+
+  /// The reflective casters, built once per render when `reflect` is on.
+  const ManifoldCasterSet *casters{};
 
   /// Solve through glossy transmissive interfaces as well as Dirac ones,
   /// by drawing a half vector from each interface's normal distribution

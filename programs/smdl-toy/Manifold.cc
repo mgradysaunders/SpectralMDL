@@ -444,6 +444,12 @@ bool isGlossyManifoldInterface(const smdl::JIT::MaterialInstance &mat) {
          (dfLobes & smdl::JIT::DF_GLOSSY_BTDF) != 0;
 }
 
+bool isGlossyManifoldCaster(const smdl::JIT::MaterialInstance &mat) {
+  const int dfLobes{dfLobesOf(mat)};
+  return (dfLobes & smdl::JIT::DF_DELTA_BRDF) == 0 &&
+         (dfLobes & smdl::JIT::DF_GLOSSY_BRDF) != 0;
+}
+
 bool isManifoldInterface(const smdl::JIT::MaterialInstance &mat,
                          const float3 &stateNormal, bool allowGlossy) {
   const int dfLobes{dfLobesOf(mat)};
@@ -459,7 +465,79 @@ bool isManifoldCrossing(const ManifoldVertexSeed &seed, const float3 &normal,
                         const float3 &wFront, const float3 &wBack) {
   const float sideF{dot(wFront, normal)};
   const float sideB{dot(wBack, normal)};
+  // A reflection leaves on the side it arrived from, and has no straight
+  // segment whose side it has to have kept: it was searched for rather than
+  // handed over, so there is nothing to have migrated away from.
+  if (seed.isReflect) return sideF * sideB > 0.0f;
   return sideF * sideB < 0.0f && -sideF * seed.sideSign > 0.0f;
+}
+
+bool isManifoldCaster(const smdl::JIT::MaterialInstance &mat,
+                      const float3 &stateNormal, bool allowGlossy) {
+  const int dfLobes{dfLobesOf(mat)};
+  const int reflects{smdl::JIT::DF_DELTA_BRDF |
+                     (allowGlossy ? smdl::JIT::DF_GLOSSY_BRDF : 0)};
+  if ((dfLobes & reflects) == 0 || mat.hasEmission()) return false;
+  return normalIsUnremapped(mat, stateNormal);
+}
+
+ManifoldCasterSet::ManifoldCasterSet(const Scene &scene,
+                                     const Color &wavelengths,
+                                     bool allowGlossy) {
+  auto allocator{smdl::BumpPtrAllocator()};
+  for (uint32_t instIndex = 0; instIndex < scene.meshInstances.size();
+       instIndex++) {
+    const auto &instance{scene.meshInstances[instIndex]};
+    // Triangle meshes only: a seed is drawn by area over faces, and the
+    // walk re-anchors onto the seed's own piece, which a primitive's
+    // several pieces and a curve's tube do not offer.
+    if (instance.isPrimitive() || instance.isCurves()) continue;
+    const auto *material{scene.materials[scene.materialIndexOf(instance)]};
+    if (!material) continue;
+    auto state{makeRenderState(wavelengths, &allocator)};
+    state.texture_space_max = 1;
+    state.finalizeAndApplyInternalSpaceConventions();
+    auto mat{smdl::JIT::MaterialInstance(state, material)};
+    const bool eligible{isManifoldCaster(mat, state.normal, allowGlossy)};
+    allocator.reset();
+    if (!eligible) continue;
+    const auto &mesh{*scene.meshes[instance.meshIndex]};
+    auto caster{ManifoldCaster()};
+    caster.instIndex = instIndex;
+    auto faceAreas{std::vector<float>()};
+    faceAreas.reserve(mesh.faces.size());
+    for (const auto &face : mesh.faces) {
+      auto toWorld{[&](const float3 &point) {
+        return float3(instance.objectToWorld * float4(point, 1.0f));
+      }};
+      const auto point0{toWorld(mesh.verts[face[0]].point)};
+      const auto point1{toWorld(mesh.verts[face[1]].point)};
+      const auto point2{toWorld(mesh.verts[face[2]].point)};
+      const auto area{0.5f * length(cross(point1 - point0, point2 - point0))};
+      faceAreas.push_back(area);
+      caster.totalArea += area;
+    }
+    if (!(caster.totalArea > 0.0f)) continue;
+    caster.faceDistr = smdl::Distribution1D(faceAreas);
+    casters.push_back(std::move(caster));
+  }
+}
+
+bool ManifoldCasterSet::sampleSeed(const Scene &scene, Sampler &sampler,
+                                   Hit &hit) const {
+  if (casters.empty()) return false;
+  // Uniformly among casters, then by area within one. Neither density is
+  // ever divided out; see the class comment.
+  const auto which{
+      std::min(size_t(float(sampler) * casters.size()), casters.size() - 1)};
+  const auto &caster{casters[which]};
+  const auto faceIndex{caster.faceDistr.indexSample(float(sampler))};
+  const float2 xi{sampler};
+  const float sqrtXi{std::sqrt(xi.x)};
+  hit = scene.makeHit(
+      caster.instIndex, uint32_t(faceIndex),
+      float3(1.0f - sqrtXi, sqrtXi * (1.0f - xi.y), sqrtXi * xi.y));
+  return hit.instance != nullptr;
 }
 
 bool makeManifoldSeed(const MediumStack *medium,

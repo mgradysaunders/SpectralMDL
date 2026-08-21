@@ -84,6 +84,17 @@ public:
   /// then estimate; see `ManifoldConnection::inverseProbability`.
   float2 seedJitter{};
 
+  /// Does the crossing reflect rather than transmit?
+  ///
+  /// The constraint is the same either way. `H` is
+  /// `etaFront wFront + etaBack wBack`, and with the two indices equal, as
+  /// they are on a reflection, that IS the reflection half vector; only
+  /// which side the two segments have to be on differs. What differs
+  /// outside the constraint is where the seed comes from: a refractive
+  /// crossing lies on the straight shadow segment and is handed one, and a
+  /// reflective one does not and has to be searched for.
+  bool isReflect{};
+
   /// Is this a glossy crossing rather than a Dirac one? A chain must be
   /// all of one or all of the other: the Dirac crossings collapse two
   /// dimensions each, so a mixed chain's map is not square and its measure
@@ -219,6 +230,60 @@ public:
   float3 normal{};
 };
 
+/// One instance a reflective connection may bounce off, with the
+/// area-weighted face distribution a seed is drawn from.
+class ManifoldCaster final {
+public:
+  uint32_t instIndex{INVALID_INDEX};
+  smdl::Distribution1D faceDistr{};
+  float totalArea{};
+};
+
+/// Every mesh instance a reflective connection may bounce off.
+///
+/// This is what a reflective gather searches in place of the straight
+/// shadow segment a refractive one is handed. A mirror is nowhere near the
+/// line from the receiver to the light, so there is no crossing to seed
+/// from and the surface has to be sampled instead.
+///
+/// The sampling density never enters the estimator. The reciprocal estimate
+/// asks how often a fresh draw reaches the same solution, and that already
+/// accounts for however the draws are distributed; all this has to be is
+/// the same distribution every time, and able to reach the solutions that
+/// matter.
+class ManifoldCasterSet final {
+public:
+  ManifoldCasterSet() = default;
+
+  /// Enumerate the scene's eligible instances, evaluating each instance's
+  /// material once against a placeholder state exactly as the light
+  /// sampler does for emission.
+  ManifoldCasterSet(const Scene &scene, const Color &wavelengths,
+                    bool allowGlossy);
+
+  [[nodiscard]] bool empty() const noexcept { return casters.empty(); }
+
+  /// Draw a seed: a caster, a face on it by area, and a point on that
+  /// face. Returns false when there is nothing to draw.
+  [[nodiscard]] bool sampleSeed(const Scene &scene, Sampler &sampler,
+                                Hit &hit) const;
+
+  std::vector<ManifoldCaster> casters{};
+};
+
+/// Is the material at a hit a surface a reflective connection may bounce
+/// off: a mirror, or a rough one, that is not itself a light?
+///
+/// Unlike a refractive interface this asks nothing about indices or thin
+/// walls, since a mirror bends nothing and a thin one reflects the same as
+/// a thick one. The normal-remap veto is the same and for the same reason:
+/// the walk differentiates the mesh shading-normal field, so a material
+/// that moves the normal is solving a different constraint than the one it
+/// scatters about.
+[[nodiscard]] bool isManifoldCaster(const smdl::JIT::MaterialInstance &mat,
+                                    const float3 &stateNormal,
+                                    bool allowGlossy);
+
 /// Is the material at a blocking hit an interface a connection may
 /// refract through: a solid carrying a Dirac transmission that actually
 /// bends light? Thin walls transmit without bending and emitters are
@@ -274,6 +339,11 @@ public:
 /// transport the ordinary estimators cannot reach at all.
 [[nodiscard]] bool
 isGlossyManifoldInterface(const smdl::JIT::MaterialInstance &mat);
+
+/// The reflective twin: does the caster reflect through a normal
+/// distribution rather than a Dirac delta?
+[[nodiscard]] bool
+isGlossyManifoldCaster(const smdl::JIT::MaterialInstance &mat);
 
 /// The walk's tangent frame at a hit: the shading normal it constrains
 /// against and the two tangents an offset is expressed in.

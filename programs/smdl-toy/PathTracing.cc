@@ -177,7 +177,8 @@ Color ManifoldGatherContext::contribution(const ManifoldChain &chain,
   // branch and the chance the ordinary continuation would have taken it.
   // A glossy crossing has a density instead, so it is evaluated rather
   // than sampled and this mask goes unused.
-  const int lobeMask{smdl::JIT::DF_DELTA_BTDF};
+  const int lobeMask{chain.vertices[0].isReflect ? smdl::JIT::DF_DELTA_BRDF
+                                                 : smdl::JIT::DF_DELTA_BTDF};
   // A finite light illuminates the last crossing, not the receiver, so
   // whatever the light does with direction has to be asked again along
   // the segment that actually arrives: a punctual light's spot cone or
@@ -281,8 +282,11 @@ Color ManifoldGatherContext::contribution(const ManifoldChain &chain,
       chainChance *= vertexChance;
       if (!(chainChance > 0.0f) || T.isAllZero()) return {};
     }
-    MediumStack::Update(segMedium, allocator, crossInst, vertex.hit.instance,
-                        vertex.wFront, vertex.wBack);
+    // A reflection stays on the side it arrived from, so it crosses no
+    // boundary and the nested medium is the one it was already in.
+    if (!chain.vertices[i].isReflect)
+      MediumStack::Update(segMedium, allocator, crossInst, vertex.hit.instance,
+                          vertex.wFront, vertex.wBack);
     segStart = vertex.geometry.point;
   }
   const float3 lightPoint{lightSample.isInfinite
@@ -324,6 +328,14 @@ Color ManifoldGatherContext::contribution(const ManifoldChain &chain,
     (void)pGather;
     direct *= inverseProbability * connection.offsetJacobian /
               (lightSample.pdf * offsetDensity);
+  } else if (chain.vertices[0].isReflect) {
+    // A reflective connection is claimed exclusively however it scatters,
+    // Dirac or not: it was searched for rather than handed over, so the
+    // walk reaches one of several solutions with a chance it cannot
+    // report, and the path tracer is barred instead of weighed against.
+    // Applying a heuristic here as well would lose whatever share it
+    // assigns to a strategy that is no longer running.
+    direct *= inverseProbability * connection.transfer / lightSample.pdf;
   } else {
     const float escPdf{contPdf * chainChance * connection.transfer};
     direct *= connection.transfer / lightSample.pdf;
@@ -355,14 +367,13 @@ Color ManifoldGatherContext::contribution(const ManifoldChain &chain,
 [[nodiscard]] static bool
 drawManifoldOffset(const Scene &scene, Sampler &sampler,
                    const smdl::JIT::MaterialInstance &mat, const Hit &hit,
-                   const float3 &wo, ManifoldVertexSeed &seed) {
+                   const float3 &wo, ManifoldVertexSeed &seed, int lobeMask) {
   float3 normal{}, t1{}, t2{};
   if (!manifoldSeedFrame(scene, hit, normal, t1, t2)) return false;
   float3 wm{};
   float pdf{};
   float2 alpha{};
-  if (!mat.scatterNormalSample(float4(sampler), wo, wm, pdf, alpha,
-                               smdl::JIT::DF_GLOSSY_BTDF) ||
+  if (!mat.scatterNormalSample(float4(sampler), wo, wm, pdf, alpha, lobeMask) ||
       !(pdf > 0.0f))
     return false;
   // The walk orients its half vector onto the shading normal, so the
@@ -378,10 +389,9 @@ drawManifoldOffset(const Scene &scene, Sampler &sampler,
 // The density the draw above would have had for an offset already in
 // hand, which is what the arrival side needs: it has a crossing and must
 // ask how likely the gather was to have aimed at it.
-[[nodiscard]] static bool
-manifoldOffsetDensity(const Scene &scene,
-                      const smdl::JIT::MaterialInstance &mat, const Hit &hit,
-                      const float3 &wo, const float2 &offset, float &density) {
+[[nodiscard]] static bool manifoldOffsetDensity(
+    const Scene &scene, const smdl::JIT::MaterialInstance &mat, const Hit &hit,
+    const float3 &wo, const float2 &offset, float &density, int lobeMask) {
   float3 normal{}, t1{}, t2{};
   if (!manifoldSeedFrame(scene, hit, normal, t1, t2)) return false;
   const float sinSq{dot(offset, offset)};
@@ -391,11 +401,87 @@ manifoldOffsetDensity(const Scene &scene,
   const float cosWm{std::sqrt(1.0f - sinSq)};
   const float3 wm{offset.x * t1 + offset.y * t2 + cosWm * normal};
   float pdf{};
-  if (!mat.scatterNormalEvaluate(wo, wm, pdf, smdl::JIT::DF_GLOSSY_BTDF) ||
-      !(pdf > 0.0f) || !(cosWm > 1e-4f))
+  if (!mat.scatterNormalEvaluate(wo, wm, pdf, lobeMask) || !(pdf > 0.0f) ||
+      !(cosWm > 1e-4f))
     return false;
   density = pdf / cosWm;
   return true;
+}
+
+// Manifold next-event estimation by REFLECTION off a caster, for a light
+// sample at a receiver, whether or not the straight segment to it is clear.
+//
+// The structure is the refractive glossy one: fix a half vector, jitter the
+// start, solve, and estimate the reciprocal of the chance of having reached
+// that solution by drawing fresh starts until one lands on it again. What
+// differs is where a start comes from. A mirror is nowhere near the line
+// from the receiver to the light, so there is no crossing to seed from and
+// the caster surface is sampled instead, which is exactly the seed the
+// reflective family lacked when it needed a polynomial root finder to do
+// without one.
+[[nodiscard]]
+static Color gatherManifoldReflection(
+    const Scene &scene, Sampler &sampler, const Color &wavelengths,
+    smdl::BumpPtrAllocator &allocator, const LightSampler &lights,
+    const smdl::State &gatherState, const smdl::JIT::MaterialInstance &mat,
+    VertexKind kind, const DTree *dtree, float bsdfFrac,
+    const MediumStack *medium, const float3 &point, const float3 &wo,
+    const LightSampler::LightSample &lightSample,
+    const ManifoldOptions &manifold) {
+  if (kind == VertexKind::SURFACE) {
+    const int dfLobes{dfLobesOf(mat)};
+    if ((dfLobes & smdl::JIT::DF_FINITE) == 0) return {};
+  }
+  ManifoldTarget target{};
+  target.wl = lightSample.wi;
+  target.point = lightSample.target;
+  target.infinite = lightSample.isInfinite;
+  if (!lightSample.isDelta && !lightSample.isInfinite)
+    target.normal = lightSample.hit.Ng;
+  const ManifoldGatherContext ctx{
+      scene, sampler, wavelengths, allocator, lights, gatherState, mat,
+      kind,  dtree,   bsdfFrac,    medium,    point,  wo,          lightSample};
+  // A reflection changes no medium and has no index contrast to resolve, so
+  // the two sides weigh the same and `H` is the reflection half vector.
+  ManifoldChain chain{};
+  chain.count = 1;
+  auto &seed{chain.vertices[0]};
+  seed.etaFront = seed.etaBack = 1.0f;
+  seed.isReflect = true;
+  auto drawSeedHit{[&](Hit &hit) {
+    return manifold.casters->sampleSeed(scene, sampler, hit);
+  }};
+  if (!drawSeedHit(seed.hit)) return {};
+  // The half vector is drawn once and held, as on the refractive path: with
+  // it fixed the constraint has isolated solutions to recognize. It is a
+  // direction in the surface's own frame, so where it was drawn matters
+  // only through the roughness there.
+  {
+    auto crossState{makeRenderState(wavelengths, &allocator)};
+    seed.hit.applyGeometryToState(crossState, seed.hit.point - point);
+    smdl::JIT::MaterialInstance crossInst{crossState, seed.hit.material};
+    seed.isGlossy = isGlossyManifoldCaster(crossInst);
+    if (seed.isGlossy &&
+        !drawManifoldOffset(scene, sampler, crossInst, seed.hit,
+                            normalize(point - seed.hit.point), seed,
+                            smdl::JIT::DF_GLOSSY_BRDF))
+      return {};
+  }
+  auto reseedAndSolve{[&](ManifoldConnection &connection) {
+    if (!drawSeedHit(chain.vertices[0].hit)) return false;
+    return solveManifoldConnection(scene, point, target, chain, connection);
+  }};
+  ManifoldConnection connection{};
+  if (!reseedAndSolve(connection)) return {};
+  float inverseProbability{1.0f};
+  for (int trial = 0; trial < MANIFOLD_MAX_TRIALS; trial++) {
+    ManifoldConnection other{};
+    if (reseedAndSolve(other) &&
+        isSameManifoldSolution(point, connection, other))
+      return ctx.contribution(chain, connection, inverseProbability);
+    inverseProbability += 1.0f;
+  }
+  return {};
 }
 
 // Manifold next-event estimation for an environment sample whose
@@ -490,7 +576,8 @@ static Color gatherManifoldNEE(
     crossInst.setExteriorIOR(
         ExteriorIOR(seedMedium[i], crossInst, -lightSample.wi));
     if (!drawManifoldOffset(scene, sampler, crossInst, chain.vertices[i].hit,
-                            -lightSample.wi, chain.vertices[i]))
+                            -lightSample.wi, chain.vertices[i],
+                            smdl::JIT::DF_GLOSSY_BTDF))
       return {};
   }
   auto jitterAndSolve{[&](ManifoldConnection &connection) {
@@ -711,7 +798,8 @@ float ManifoldCancelState::coverWeight(const Scene &scene, Sampler &sampler,
           ExteriorIOR(crossingMedium[i], crossInst, vertex.wFront));
       float density{};
       if (!manifoldOffsetDensity(scene, crossInst, vertex.hit, vertex.wFront,
-                                 seed.vertices[i].offset, density))
+                                 seed.vertices[i].offset, density,
+                                 smdl::JIT::DF_GLOSSY_BTDF))
         return 1.0f;
       seed.vertices[i].offsetDensity = density;
       offsetDensity *= density;
@@ -863,6 +951,15 @@ gatherDirect(const Scene &scene, Sampler &sampler, const Color &wavelengths,
                                     bsdfFrac, medium, point, wo, lightSample,
                                     walk, blocker, mneeDepth, manifold);
       }
+    }
+    // The reflective gather is additive rather than an alternative: a mirror
+    // is nowhere near the line to the light, so whether that line is clear
+    // says nothing about whether there is a reflection to find.
+    if (mneeDepth > 0 && manifold.reflect && manifold.casters &&
+        !manifold.casters->empty()) {
+      direct += gatherManifoldReflection(
+          scene, sampler, wavelengths, allocator, lights, gatherState, mat,
+          kind, dtree, bsdfFrac, medium, point, wo, lightSample, manifold);
     }
   }
   return direct;
@@ -1183,9 +1280,19 @@ Color tracePath(smdl::Compiler &compiler, const Scene &scene, Sampler &sampler,
     // weight knows about the other. A Dirac interface needs no such rule,
     // its gather being identically zero.
     const bool quasiSpecular{
-        manifold.glossy && manifold.depth > 0 && !isHair &&
-        isManifoldInterface(mat, state.normal, /*allowGlossy=*/true) &&
-        isGlossyManifoldInterface(mat)};
+        (manifold.glossy && manifold.depth > 0 && !isHair &&
+         isManifoldInterface(mat, state.normal, /*allowGlossy=*/true) &&
+         isGlossyManifoldInterface(mat)) ||
+        (manifold.reflect && manifold.depth > 0 && !isHair &&
+         isManifoldCaster(mat, state.normal, manifold.glossy))};
+    // A caster is a link and not a receiver for the same reason an
+    // interface is: the reflective gather at the vertex behind it claims
+    // the connection from there to the light, and this vertex gathering as
+    // well would count that connection twice.
+    const bool casterBounce{
+        manifold.reflect && manifold.depth > 0 && !isHair &&
+        isManifoldCaster(mat, state.normal, manifold.glossy)};
+    const bool mneeWasArmed{mnee.armed()};
     const DTree *dtree{};
     if (guideTree && !isHair && !quasiSpecular) {
       int dfLobes{dfLobesOf(mat)};
@@ -1326,7 +1433,13 @@ Color tracePath(smdl::Compiler &compiler, const Scene &scene, Sampler &sampler,
     // gather claims: that is transport thrown away for nothing, and it
     // measured as a 24 percent loss. What is still lost is what the gather
     // cannot find, chains past `MNEE_MAX_DEPTH` among them.
-    prevQuasiSpecularBar = quasiSpecular && extendedChain;
+    // ...and a reflection off a caster is barred on the same terms, but
+    // only when there IS a receiver behind it to have claimed it. A caster
+    // the camera looks at directly is claimed by nobody, and barring it
+    // would lose the mirror rather than deduplicate it.
+    prevQuasiSpecularBar =
+        (quasiSpecular && extendedChain) ||
+        (casterBounce && mneeWasArmed && !mat.isTransmitting(wo, wNext));
     beta *= (1.0f / wpdfFwd) * f;
     if (beta.isAnyNonFinite()) break;
     // Terminate by Russian roulette instead of by a fixed depth limit, so that
