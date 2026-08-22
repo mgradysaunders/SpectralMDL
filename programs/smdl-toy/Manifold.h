@@ -1,11 +1,14 @@
 /// \file
-/// The Newton solve behind manifold next-event estimation (Hanika,
-/// Droske & Fascione, "Manifold Next Event Estimation", EGSR 2015):
-/// given a receiver point and a distant light direction, find the
-/// points on a chain of smooth refractive interfaces where the
-/// connection obeys Snell's law at every crossing. The transport-side
-/// work (Fresnel, medium attenuation, MIS bookkeeping) lives with the
-/// path tracer; this is the geometry.
+/// The Newton solve behind manifold connections: given a receiver point
+/// and a light target (a distant direction or a finite point), find the
+/// points on a chain of smooth interfaces where the connection obeys
+/// Snell's law or the law of reflection at every crossing, exactly for a
+/// Dirac crossing or about a drawn microfacet normal for a glossy one
+/// (Hanika, Droske & Fascione, "Manifold Next Event Estimation", EGSR
+/// 2015; Zeltner, Georgiev & Jakob, "Specular Manifold Sampling",
+/// SIGGRAPH 2020). The transport-side work (Fresnel, medium attenuation,
+/// MIS and reciprocal-probability bookkeeping) lives with the path
+/// tracer; this is the geometry.
 #pragma once
 
 #include <algorithm>
@@ -40,12 +43,12 @@ dfLobesOf(const smdl::JIT::MaterialInstance &mat) noexcept {
   return mat.instance.df_lobes_surface | mat.instance.df_lobes_backface;
 }
 
-/// One interface of a seed chain, as discovered along the straight
-/// shadow segment: where it was hit, the absolute refractive indices on
-/// the receiver-facing and light-facing sides (resolved against the
-/// medium stack as of the crossing), and which side of the shading
-/// normal the segment arrived from, so a walk that migrates across a
-/// silhouette is rejected rather than solved with swapped indices.
+/// One interface of a seed chain: where it was hit, the absolute
+/// refractive indices on the receiver-facing and light-facing sides
+/// (resolved against the medium stack as of the crossing, and equal for a
+/// reflection), and which side of the shading normal the straight segment
+/// arrived from, so a refractive walk that migrates across a silhouette is
+/// rejected rather than solved with swapped indices.
 class ManifoldVertexSeed final {
 public:
   Hit hit{};
@@ -60,9 +63,8 @@ public:
   ///
   /// The walk carries this rather than deriving it, because the offset has
   /// to be fixed before the solve for the density of drawing it to mean
-  /// anything, and because both halves of the estimator must solve the
-  /// same constraint. See `evaluateManifoldOffsets()` for the inverse the
-  /// arrival side needs.
+  /// anything, and because every walk of one estimate must solve the same
+  /// constraint.
   float2 offset{};
 
   /// The density the offset was drawn with, in the offset's own measure,
@@ -80,8 +82,8 @@ public:
   /// has several isolated solutions, and a deterministic walk reaches
   /// exactly one of them however many there are, which over-counts by the
   /// number it cannot see. Randomizing where the walk STARTS turns "which
-  /// solution" into a question with a probability, which the caller can
-  /// then estimate; see `ManifoldConnection::inverseProbability`.
+  /// solution" into a question with a probability, which the reciprocal
+  /// estimate in the gather then counts.
   float2 seedJitter{};
 
   /// Does the crossing reflect rather than transmit?
@@ -102,8 +104,9 @@ public:
   bool isGlossy{};
 };
 
-/// A seed chain: the eligible interfaces the straight shadow segment
-/// crosses, in order from the receiver.
+/// A seed chain: the interfaces a connection is solved through, in order
+/// from the receiver: the eligible crossings of the straight shadow segment
+/// for a refractive connection, a sampled caster point for a reflective one.
 class ManifoldChain final {
 public:
   std::array<ManifoldVertexSeed, MNEE_MAX_DEPTH> vertices{};
@@ -142,7 +145,7 @@ public:
   float halfVectorJacobian{};
 };
 
-/// A converged refractive connection.
+/// A converged connection.
 class ManifoldConnection final {
 public:
   std::array<ManifoldConnectionVertex, MNEE_MAX_DEPTH> vertices{};
@@ -346,12 +349,8 @@ isGlossyManifoldInterface(const smdl::JIT::MaterialInstance &mat);
 isGlossyManifoldCaster(const smdl::JIT::MaterialInstance &mat);
 
 /// The walk's tangent frame at a hit: the shading normal it constrains
-/// against and the two tangents an offset is expressed in.
-///
-/// This is the frame an offset MEANS something in, so the gather converting
-/// a microfacet normal into one and the arrival converting one back have to
-/// read it from the same place. It is built from the hit alone, which is
-/// what makes that possible.
+/// against and the two tangents an offset is expressed in, built from the
+/// hit alone.
 [[nodiscard]] bool manifoldSeedFrame(const Scene &scene, const Hit &hit,
                                      float3 &normal, float3 &t1, float3 &t2);
 
@@ -416,23 +415,6 @@ isGlossyManifoldCaster(const smdl::JIT::MaterialInstance &mat);
 /// hits must be the crossing points in order from `receiver`, with the
 /// target past the last one. Fails on a degenerate frame or a chain
 /// whose residual says it is not actually a solution.
-/// The offsets a set of crossings implies: given a chain whose hits are the
-/// points a path actually crossed, in order from `receiver` and with the
-/// target past the last one, fill in each vertex's `offset` with the
-/// tangential half vector the crossing realizes in the walk's own frame.
-///
-/// This is the inverse of what the solve does, and the arrival side of the
-/// estimator is what needs it. The gather draws an offset and asks where it
-/// lands; the arrival has a landing and has to ask which offset would have
-/// produced it, so that it can weigh the chance of drawing that one. Both
-/// therefore read the same frames, built from the same hits.
-///
-/// Fails on a degenerate frame, exactly as the solve does.
-[[nodiscard]] bool evaluateManifoldOffsets(const Scene &scene,
-                                           const float3 &receiver,
-                                           const ManifoldTarget &target,
-                                           ManifoldChain &chain);
-
 [[nodiscard]] bool evaluateManifoldTransfer(const Scene &scene,
                                             const float3 &receiver,
                                             const ManifoldTarget &target,

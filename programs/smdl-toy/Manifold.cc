@@ -747,32 +747,6 @@ bool evaluateManifoldTransfer(const Scene &scene, const float3 &receiver,
                          target, transfer);
 }
 
-bool evaluateManifoldOffsets(const Scene &scene, const float3 &receiver,
-                             const ManifoldTarget &target,
-                             ManifoldChain &chain) {
-  const int count{chain.count};
-  if (count < 1 || count > MNEE_MAX_DEPTH) return false;
-  std::array<Hit, MNEE_MAX_DEPTH> hits{};
-  std::array<float3, MNEE_MAX_DEPTH> frameSeeds{};
-  for (int i = 0; i < count; i++) {
-    hits[i] = chain.vertices[i].hit;
-    // Read the constraint itself rather than its residual against whatever
-    // was there, which is what makes this the inverse of the solve.
-    chain.vertices[i].offset = float2();
-  }
-  buildFrameSeeds(scene, hits, count, frameSeeds);
-  ChainState state{};
-  if (!evaluateChain(scene, receiver, target, chain, frameSeeds, hits, state))
-    return false;
-  for (int i = 0; i < count; i++) {
-    if (!std::isfinite(state.C[2 * i + 0]) ||
-        !std::isfinite(state.C[2 * i + 1]))
-      return false;
-    chain.vertices[i].offset = float2(state.C[2 * i + 0], state.C[2 * i + 1]);
-  }
-  return true;
-}
-
 bool manifoldSeedFrame(const Scene &scene, const Hit &hit, float3 &normal,
                        float3 &t1, float3 &t2) {
   if (hit.instance->isCurves()) return false;
