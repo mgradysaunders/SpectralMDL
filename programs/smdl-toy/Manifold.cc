@@ -1,5 +1,7 @@
 #include "Manifold.h"
 
+#include <iomanip>
+
 // The walk fails cleanly rather than loop or wander: iteration and
 // step-halving budgets, and a cap on the null-interface hops the
 // re-anchoring casts skip.
@@ -588,9 +590,21 @@ bool makeManifoldSeed(const MediumStack *medium,
 bool solveManifoldConnection(const Scene &scene, const float3 &receiver,
                              const ManifoldTarget &target,
                              const ManifoldChain &chain,
-                             ManifoldConnection &connection) {
+                             ManifoldConnection &connection,
+                             ManifoldWalkReport *report) {
+  int iterationsDone{0};
+  float residual{0.0f};
+  auto finish{[&](ManifoldWalkReport::Outcome outcome) {
+    if (report) {
+      report->iterations = iterationsDone;
+      report->residual = residual;
+      report->outcome = outcome;
+    }
+    return outcome == ManifoldWalkReport::Outcome::CONVERGED;
+  }};
+  using Outcome = ManifoldWalkReport::Outcome;
   const int count{chain.count};
-  if (count < 1 || count > MNEE_MAX_DEPTH) return false;
+  if (count < 1 || count > MNEE_MAX_DEPTH) return finish(Outcome::DIVERGED);
   std::array<Hit, MNEE_MAX_DEPTH> hits{};
   std::array<float3, MNEE_MAX_DEPTH> frameSeeds{};
   for (int i = 0; i < count; i++) hits[i] = chain.vertices[i].hit;
@@ -610,7 +624,7 @@ bool solveManifoldConnection(const Scene &scene, const float3 &receiver,
         if (!project(scene, origin,
                      hits[i].point + scale * (jitter.x * t1 + jitter.y * t2),
                      chain.vertices[i].hit, moved))
-          return false;
+          return finish(Outcome::DIVERGED);
         hits[i] = moved;
       }
       origin = hits[i].point;
@@ -619,10 +633,12 @@ bool solveManifoldConnection(const Scene &scene, const float3 &receiver,
   buildFrameSeeds(scene, hits, count, frameSeeds);
   ChainState state{};
   if (!evaluateChain(scene, receiver, target, chain, frameSeeds, hits, state))
-    return false;
+    return finish(Outcome::DIVERGED);
   bool converged{false};
   for (int iteration = 0; iteration < MAX_ITERATIONS && !converged;
        iteration++) {
+    iterationsDone = iteration;
+    residual = state.residual();
     // Solve for the Newton step of every vertex at once.
     float A[MAX_DIM][MAX_DIM];
     float rhs[MAX_DIM][2];
@@ -630,7 +646,7 @@ bool solveManifoldConnection(const Scene &scene, const float3 &receiver,
       for (int c = 0; c < 2 * count; c++) A[r][c] = state.J[r][c];
       rhs[r][0] = -state.C[r];
     }
-    if (!solveDense(2 * count, 1, A, rhs)) return false;
+    if (!solveDense(2 * count, 1, A, rhs)) return finish(Outcome::DIVERGED);
     // The world-space steps, clamped together so a bad early Jacobian
     // cannot fling any vertex across the scene, and measured against the
     // distance to the receiver, which is the scale the arrival side
@@ -649,7 +665,7 @@ bool solveManifoldConnection(const Scene &scene, const float3 &receiver,
       maxStepFraction = std::max(maxStepFraction, stepLen / scale);
       minDist = std::min(minDist, state.distFront[i]);
     }
-    if (!std::isfinite(maxStepLen)) return false;
+    if (!std::isfinite(maxStepLen)) return finish(Outcome::DIVERGED);
     // Arrived: the step left to take cannot move the answer far enough to
     // change what the arrival side makes of it, and the residual agrees
     // this is a solution rather than a stall. Stop without taking it.
@@ -664,7 +680,7 @@ bool solveManifoldConnection(const Scene &scene, const float3 &receiver,
       converged = true;
       break;
     }
-    if (!(maxStepLen > 0.0f)) return false;
+    if (!(maxStepLen > 0.0f)) return finish(Outcome::DIVERGED);
     float beta{1.0f};
     if (maxStepLen > 0.5f * minDist) beta = 0.5f * minDist / maxStepLen;
     // Damped Newton: re-anchor each stepped vertex by casting from its
@@ -695,17 +711,22 @@ bool solveManifoldConnection(const Scene &scene, const float3 &receiver,
         break;
       }
     }
-    if (!accepted) return false;
+    if (!accepted) return finish(Outcome::DIVERGED);
   }
-  if (!converged) return false;
-  // A valid connection refracts at every vertex, on the same side of
-  // the surface the seed chain crossed.
+  if (!converged) {
+    iterationsDone = MAX_ITERATIONS;
+    residual = state.residual();
+    return finish(Outcome::DIVERGED);
+  }
+  residual = state.residual();
+  // A valid connection scatters the right way at every vertex, on the
+  // same side of the surface the seed chain crossed.
   for (int i = 0; i < count; i++) {
     const float sideF{dot(state.wFront[i], state.geometry[i].normal)};
     const float sideB{dot(state.wBack[i], state.geometry[i].normal)};
     if (!isManifoldCrossing(chain.vertices[i], state.geometry[i].normal,
                             state.wFront[i], state.wBack[i]))
-      return false;
+      return finish(Outcome::REJECTED);
     auto &vertex{connection.vertices[i]};
     vertex.hit = hits[i];
     vertex.geometry = state.geometry[i];
@@ -719,11 +740,11 @@ bool solveManifoldConnection(const Scene &scene, const float3 &receiver,
   connection.wr = -state.wFront[0];
   if (!computeOffsetJacobian(state, receiver, target,
                              connection.offsetJacobian))
-    return false;
+    return finish(Outcome::REJECTED);
   if (!computeTransfer(state, chain.vertices[count - 1].etaBack, receiver,
                        target, connection.transfer))
-    return false;
-  return true;
+    return finish(Outcome::REJECTED);
+  return finish(Outcome::CONVERGED);
 }
 
 bool evaluateManifoldTransfer(const Scene &scene, const float3 &receiver,
@@ -771,4 +792,129 @@ bool isSameManifoldSolution(const float3 &receiver, const ManifoldConnection &a,
       return false;
   }
   return true;
+}
+
+ManifoldStats &ManifoldStats::global() noexcept {
+  static ManifoldStats stats{};
+  return stats;
+}
+
+void ManifoldStats::addMax(Counter &counter, uint64_t value) noexcept {
+  uint64_t seen{counter.load(std::memory_order_relaxed)};
+  while (seen < value && !counter.compare_exchange_weak(
+                             seen, value, std::memory_order_relaxed)) {
+  }
+}
+
+void ManifoldStats::addSum(std::atomic<double> &sum, double value) noexcept {
+  double seen{sum.load(std::memory_order_relaxed)};
+  while (!sum.compare_exchange_weak(seen, seen + value,
+                                    std::memory_order_relaxed)) {
+  }
+}
+
+void ManifoldStats::addMax(std::atomic<double> &value, double other) noexcept {
+  double seen{value.load(std::memory_order_relaxed)};
+  while (seen < other &&
+         !value.compare_exchange_weak(seen, other, std::memory_order_relaxed)) {
+  }
+}
+
+void ManifoldStats::recordEstimate(Kind kind,
+                                   bool firstWalkConverged) noexcept {
+  mEstimates[kind].fetch_add(1, std::memory_order_relaxed);
+  if (firstWalkConverged)
+    mFirstWalkConverged[kind].fetch_add(1, std::memory_order_relaxed);
+}
+
+void ManifoldStats::recordWalk(const ManifoldWalkReport &report) noexcept {
+  mWalks.fetch_add(1, std::memory_order_relaxed);
+  mWalkIterations.fetch_add(uint64_t(std::max(report.iterations, 0)),
+                            std::memory_order_relaxed);
+  addMax(mWalkIterationsMax, uint64_t(std::max(report.iterations, 0)));
+  if (report.outcome == ManifoldWalkReport::Outcome::CONVERGED) {
+    mWalksConverged.fetch_add(1, std::memory_order_relaxed);
+    addSum(mWalkResidual, double(report.residual));
+    addMax(mWalkResidualMax, double(report.residual));
+  } else if (report.outcome == ManifoldWalkReport::Outcome::REJECTED) {
+    mWalksRejected.fetch_add(1, std::memory_order_relaxed);
+  }
+}
+
+void ManifoldStats::recordRewalk(const ManifoldWalkReport &report) noexcept {
+  mRewalks.fetch_add(1, std::memory_order_relaxed);
+  if (report.outcome == ManifoldWalkReport::Outcome::CONVERGED)
+    mRewalksConverged.fetch_add(1, std::memory_order_relaxed);
+}
+
+void ManifoldStats::recordTrials(Kind kind, int trials, bool dropped) noexcept {
+  mTrialEstimates[kind].fetch_add(1, std::memory_order_relaxed);
+  mTrials[kind].fetch_add(uint64_t(std::max(trials, 0)),
+                          std::memory_order_relaxed);
+  addMax(mTrialsMax[kind], uint64_t(std::max(trials, 0)));
+  if (dropped) mCapDrops[kind].fetch_add(1, std::memory_order_relaxed);
+}
+
+void ManifoldStats::recordContribution(bool nonZero) noexcept {
+  mContributions.fetch_add(1, std::memory_order_relaxed);
+  if (nonZero) mContributionsNonZero.fetch_add(1, std::memory_order_relaxed);
+}
+
+void ManifoldStats::print(std::ostream &out) const {
+  auto load{[](const Counter &counter) {
+    return counter.load(std::memory_order_relaxed);
+  }};
+  auto percent{[](uint64_t part, uint64_t whole) {
+    return whole > 0 ? 100.0 * double(part) / double(whole) : 0.0;
+  }};
+  auto mean{[](double sum, uint64_t count) {
+    return count > 0 ? sum / double(count) : 0.0;
+  }};
+  static constexpr const char *KIND_NAME[NUM_KINDS]{
+      "dirac refraction", "glossy refraction", "reflection"};
+  out << std::fixed << std::setprecision(2);
+  out << "----------------------------------------------------------\n";
+  out << "    Manifold sampling statistics\n";
+  out << "----------------------------------------------------------\n";
+  out << std::left << std::setw(20) << "Estimates" << std::right
+      << std::setw(12) << "count" << std::setw(18) << "first converged"
+      << std::setw(12) << "trials avg" << std::setw(12) << "trials max"
+      << std::setw(12) << "cap drops" << '\n';
+  for (int kind = 0; kind < NUM_KINDS; kind++) {
+    const uint64_t estimates{load(mEstimates[kind])};
+    const uint64_t converged{load(mFirstWalkConverged[kind])};
+    const uint64_t trialEstimates{load(mTrialEstimates[kind])};
+    out << "  " << std::left << std::setw(18) << KIND_NAME[kind] << std::right
+        << std::setw(12) << estimates << std::setw(11) << converged << " ("
+        << std::setw(5) << percent(converged, estimates) << "%)"
+        << std::setw(12) << mean(double(load(mTrials[kind])), trialEstimates)
+        << std::setw(12) << load(mTrialsMax[kind]) << std::setw(12)
+        << load(mCapDrops[kind]) << '\n';
+  }
+  const uint64_t walks{load(mWalks)};
+  const uint64_t walksConverged{load(mWalksConverged)};
+  out << std::left << std::setw(20) << "Walks" << std::right << std::setw(12)
+      << walks << std::setw(11) << walksConverged << " (" << std::setw(5)
+      << percent(walksConverged, walks) << "%) converged, "
+      << load(mWalksRejected) << " rejected after converging\n";
+  out << std::left << std::setw(20) << "  iterations" << std::right << "avg "
+      << mean(double(load(mWalkIterations)), walks) << ", max "
+      << load(mWalkIterationsMax) << '\n';
+  out << std::left << std::setw(20) << "  residual" << std::right
+      << std::scientific << "avg "
+      << mean(mWalkResidual.load(std::memory_order_relaxed), walksConverged)
+      << ", max " << mWalkResidualMax.load(std::memory_order_relaxed)
+      << " (converged walks)\n"
+      << std::fixed;
+  const uint64_t rewalks{load(mRewalks)};
+  const uint64_t rewalksConverged{load(mRewalksConverged)};
+  out << std::left << std::setw(20) << "Re-walks (MIS)" << std::right
+      << std::setw(12) << rewalks << std::setw(11) << rewalksConverged << " ("
+      << std::setw(5) << percent(rewalksConverged, rewalks) << "%) converged\n";
+  const uint64_t contributions{load(mContributions)};
+  const uint64_t nonZero{load(mContributionsNonZero)};
+  out << std::left << std::setw(20) << "Contributions" << std::right
+      << std::setw(12) << contributions << std::setw(11) << nonZero << " ("
+      << std::setw(5) << percent(nonZero, contributions) << "%) non-zero\n";
+  out << "----------------------------------------------------------\n";
 }

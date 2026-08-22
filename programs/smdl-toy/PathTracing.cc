@@ -120,7 +120,8 @@ enum class VertexKind { SURFACE, VOLUME, HAIR };
 [[nodiscard]]
 static bool scatterEvaluate(const smdl::JIT::MaterialInstance &mat,
                             VertexKind kind, const float3 &wo, const float3 &wi,
-                            float &pdfFwd, Color &f) {
+                            float &pdfFwd, Color &f,
+                            int lobeMask = smdl::JIT::DF_ALL) {
   if (kind == VertexKind::VOLUME) {
     float phase{mat.volumeScatterEvaluate(wo, wi)};
     pdfFwd = phase;
@@ -130,10 +131,42 @@ static bool scatterEvaluate(const smdl::JIT::MaterialInstance &mat,
     // The JIT ABI reports a reverse PDF alongside every forward PDF,
     // which a forward path tracer never consumes.
     float pdfRevUnused{};
-    return kind == VertexKind::HAIR
-               ? mat.hairScatterEvaluate(wo, wi, pdfFwd, pdfRevUnused, f)
-               : mat.scatterEvaluate(wo, wi, pdfFwd, pdfRevUnused, f);
+    if (kind == VertexKind::HAIR)
+      return mat.hairScatterEvaluate(wo, wi, pdfFwd, pdfRevUnused, f);
+    if (!mat.scatterEvaluate(wo, wi, pdfFwd, pdfRevUnused, f)) return false;
+    if (lobeMask == smdl::JIT::DF_ALL) return true;
+    // The masked value over the UNMASKED density: the mask restricts what
+    // is estimated, not the continuation sampler it competes with.
+    float pdfMaskedUnused{};
+    return mat.scatterEvaluate(wo, wi, pdfMaskedUnused, pdfRevUnused, f,
+                               lobeMask);
   }
+}
+
+// The lobes the manifold estimators claim at a vertex, with today's
+// eligibility: the Dirac lobe of a domain when the material has one, else
+// its glossy lobe when glossy chains are on; zero when the vertex is
+// neither an interface nor a caster. This is the skeleton the caster mark
+// and per-lobe claim replace; the isolation modes and the PT estimator of
+// the claimed paths are what read it.
+[[nodiscard]] static int
+manifoldClaimedLobes(const smdl::JIT::MaterialInstance &mat,
+                     const float3 &stateNormal,
+                     const ManifoldOptions &manifold) {
+  if (manifold.depth <= 0) return 0;
+  const int dfLobes{dfLobesOf(mat)};
+  int claimed{};
+  if (isManifoldInterface(mat, stateNormal, manifold.glossy))
+    claimed |= (dfLobes & smdl::JIT::DF_DELTA_BTDF) != 0
+                   ? smdl::JIT::DF_DELTA_BTDF
+               : manifold.glossy ? (dfLobes & smdl::JIT::DF_GLOSSY_BTDF)
+                                 : 0;
+  if (manifold.reflect && isManifoldCaster(mat, stateNormal, manifold.glossy))
+    claimed |= (dfLobes & smdl::JIT::DF_DELTA_BRDF) != 0
+                   ? smdl::JIT::DF_DELTA_BRDF
+               : manifold.glossy ? (dfLobes & smdl::JIT::DF_GLOSSY_BRDF)
+                                 : 0;
+  return claimed;
 }
 
 // Everything one manifold connection is weighed against that does not
@@ -421,20 +454,33 @@ static Color gatherManifoldReflection(
                             smdl::JIT::DF_GLOSSY_BRDF))
       return {};
   }
+  auto &stats{ManifoldStats::global()};
   auto reseedAndSolve{[&](ManifoldConnection &connection) {
     if (!drawSeedHit(chain.vertices[0].hit)) return false;
-    return solveManifoldConnection(scene, point, target, chain, connection);
+    ManifoldWalkReport report{};
+    const bool ok{solveManifoldConnection(scene, point, target, chain,
+                                          connection, &report)};
+    stats.recordWalk(report);
+    return ok;
   }};
   ManifoldConnection connection{};
-  if (!reseedAndSolve(connection)) return {};
+  const bool firstConverged{reseedAndSolve(connection)};
+  stats.recordEstimate(ManifoldStats::REFLECT, firstConverged);
+  if (!firstConverged) return {};
   float inverseProbability{1.0f};
   for (int trial = 0; trial < MANIFOLD_MAX_TRIALS; trial++) {
     ManifoldConnection other{};
     if (reseedAndSolve(other) &&
-        isSameManifoldSolution(point, connection, other))
-      return ctx.contribution(chain, connection, inverseProbability);
+        isSameManifoldSolution(point, connection, other)) {
+      stats.recordTrials(ManifoldStats::REFLECT, trial + 1, false);
+      const Color value{
+          ctx.contribution(chain, connection, inverseProbability)};
+      stats.recordContribution(!value.isAllZero());
+      return value;
+    }
     inverseProbability += 1.0f;
   }
+  stats.recordTrials(ManifoldStats::REFLECT, MANIFOLD_MAX_TRIALS, true);
   return {};
 }
 
@@ -508,11 +554,18 @@ static Color gatherManifoldNEE(
       scene, sampler, wavelengths, allocator, lights, gatherState, mat,
       kind,  dtree,   bsdfFrac,    medium,    point,  wo,          lightSample};
 
+  auto &stats{ManifoldStats::global()};
   if (!chain.vertices[0].isGlossy) {
     ManifoldConnection connection{};
-    if (!solveManifoldConnection(scene, point, target, chain, connection))
-      return {};
-    return ctx.contribution(chain, connection, 1.0f);
+    ManifoldWalkReport report{};
+    const bool converged{solveManifoldConnection(scene, point, target, chain,
+                                                 connection, &report)};
+    stats.recordWalk(report);
+    stats.recordEstimate(ManifoldStats::DIRAC_REFRACT, converged);
+    if (!converged) return {};
+    const Color value{ctx.contribution(chain, connection, 1.0f)};
+    stats.recordContribution(!value.isAllZero());
+    return value;
   }
   // A roughened connection, by the estimator of Zeltner, Georgiev and Jakob.
   //
@@ -538,10 +591,16 @@ static Color gatherManifoldNEE(
     for (int i = 0; i < chain.count; i++)
       chain.vertices[i].seedJitter =
           MANIFOLD_SEED_JITTER * smdl::uniformDiskSample(float2(sampler));
-    return solveManifoldConnection(scene, point, target, chain, connection);
+    ManifoldWalkReport report{};
+    const bool ok{solveManifoldConnection(scene, point, target, chain,
+                                          connection, &report)};
+    stats.recordWalk(report);
+    return ok;
   }};
   ManifoldConnection connection{};
-  if (!jitterAndSolve(connection)) return {};
+  const bool firstConverged{jitterAndSolve(connection)};
+  stats.recordEstimate(ManifoldStats::GLOSSY_REFRACT, firstConverged);
+  if (!firstConverged) return {};
   // The reciprocal estimate: keep drawing fresh starts until one lands on the
   // same solution, and count how many that took. The count is geometric with
   // mean one over the chance of reaching this solution, so it estimates that
@@ -552,10 +611,16 @@ static Color gatherManifoldNEE(
   for (int trial = 0; trial < MANIFOLD_MAX_TRIALS; trial++) {
     ManifoldConnection other{};
     if (jitterAndSolve(other) &&
-        isSameManifoldSolution(point, connection, other))
-      return ctx.contribution(chain, connection, inverseProbability);
+        isSameManifoldSolution(point, connection, other)) {
+      stats.recordTrials(ManifoldStats::GLOSSY_REFRACT, trial + 1, false);
+      const Color value{
+          ctx.contribution(chain, connection, inverseProbability)};
+      stats.recordContribution(!value.isAllZero());
+      return value;
+    }
     inverseProbability += 1.0f;
   }
+  stats.recordTrials(ManifoldStats::GLOSSY_REFRACT, MANIFOLD_MAX_TRIALS, true);
   return {};
 }
 
@@ -722,8 +787,11 @@ float ManifoldCancelState::coverWeight(const Scene &scene, Sampler &sampler,
   // tracer from it; see `prevQuasiSpecularBar` in `tracePath()`.
   if (seed.vertices[0].isGlossy) return 0.0f;
   ManifoldConnection connection{};
-  if (!solveManifoldConnection(scene, receiver, target, seed, connection))
-    return 1.0f;
+  ManifoldWalkReport report{};
+  const bool converged{solveManifoldConnection(scene, receiver, target, seed,
+                                               connection, &report)};
+  ManifoldStats::global().recordRewalk(report);
+  if (!converged) return 1.0f;
   for (int i = 0; i < chainLength; i++) {
     const float scale{std::max(1e-3f, length(chainHits[i].point - receiver))};
     if (!(length(connection.vertices[i].hit.point - chainHits[i].point) <
@@ -781,23 +849,34 @@ float ManifoldCancelState::coverWeight(const Scene &scene, Sampler &sampler,
 // `gatherManifoldNEE()` instead of reading as occluded. Hair vertices
 // keep plain gathering: the manifold estimator's MIS is not wired
 // through the hair BSDF.
-[[nodiscard]] static Color
-gatherDirect(const Scene &scene, Sampler &sampler, const Color &wavelengths,
-             smdl::BumpPtrAllocator &allocator, const LightSampler &lights,
-             const smdl::State &gatherState,
-             const smdl::JIT::MaterialInstance &mat, VertexKind kind,
-             const DTree *dtree, float bsdfFrac, const MediumStack *medium,
-             const float3 &point, const float3 &wo,
-             const ManifoldOptions &manifold) {
+//
+// A `lobeMask` other than `DF_ALL` is the PT estimator of the claimed
+// paths gathering at a claimed vertex: light sampling restricted to the
+// claimed lobes and nothing else, a claimed contribution for the isolation
+// modes. The manifold gathers run only under the manifold estimator, and
+// only from a receiver.
+[[nodiscard]] static Color gatherDirect(
+    const Scene &scene, Sampler &sampler, const Color &wavelengths,
+    smdl::BumpPtrAllocator &allocator, const LightSampler &lights,
+    const smdl::State &gatherState, const smdl::JIT::MaterialInstance &mat,
+    VertexKind kind, const DTree *dtree, float bsdfFrac,
+    const MediumStack *medium, const float3 &point, const float3 &wo,
+    const ManifoldOptions &manifold, int lobeMask = smdl::JIT::DF_ALL) {
   const auto mneeDepth{kind == VertexKind::HAIR ? 0 : manifold.depth};
+  const bool claimedGather{lobeMask != smdl::JIT::DF_ALL};
+  const bool keepNEE{claimedGather ? manifold.keepClaimed()
+                                   : manifold.keepOrdinary()};
+  const bool runManifold{!claimedGather && mneeDepth > 0 &&
+                         manifold.useManifold() && manifold.keepClaimed()};
   Color direct{};
   if (lights.empty()) return direct;
   LightSampler::LightSample lightSample{};
   if (lights.sample(gatherState, sampler, point, lightSample)) {
-    if (mneeDepth <= 0 || kind == VertexKind::HAIR) {
+    if (!runManifold) {
       float fpdfFwd{};
       Color f{};
-      if (scatterEvaluate(mat, kind, wo, lightSample.wi, fpdfFwd, f)) {
+      if (keepNEE && scatterEvaluate(mat, kind, wo, lightSample.wi, fpdfFwd, f,
+                                     lobeMask)) {
         // The competing density in the MIS weight must be the density the
         // continuation sampler actually assigns to this direction: the BSDF
         // alone, or the guided mixture when the SD-tree participates at
@@ -831,7 +910,7 @@ gatherDirect(const Scene &scene, Sampler &sampler, const Color &wavelengths,
       if (!walk.nextBlocker(blocker)) {
         float fpdfFwd{};
         Color f{};
-        if (vis.maxComponent() > 0.0f &&
+        if (keepNEE && vis.maxComponent() > 0.0f &&
             scatterEvaluate(mat, kind, wo, lightSample.wi, fpdfFwd, f)) {
           // The same estimator as the plain branch, with the walk's
           // attenuation carried separately instead of folded into `f`.
@@ -856,7 +935,7 @@ gatherDirect(const Scene &scene, Sampler &sampler, const Color &wavelengths,
     // The reflective gather is additive rather than an alternative: a mirror
     // is nowhere near the line to the light, so whether that line is clear
     // says nothing about whether there is a reflection to find.
-    if (mneeDepth > 0 && manifold.reflect && manifold.casters &&
+    if (runManifold && manifold.reflect && manifold.casters &&
         !manifold.casters->empty()) {
       direct += gatherManifoldReflection(
           scene, sampler, wavelengths, allocator, lights, gatherState, mat,
@@ -932,6 +1011,10 @@ Color tracePath(smdl::Compiler &compiler, const Scene &scene, Sampler &sampler,
   float prevWpdf{};
   bool prevDelta{};
   bool prevQuasiSpecularBar{};
+  // Of the barred arrivals, whether this one is through a claimed lobe, so
+  // the PT estimator of the claimed paths keeps it and the isolation modes
+  // can tell it from the rest.
+  bool prevClaimedArrival{};
   float3 prevPoint{};
   ManifoldCancelState mnee{};
   // The number of path vertices so far, counting the camera as the first.
@@ -957,7 +1040,7 @@ Color tracePath(smdl::Compiler &compiler, const Scene &scene, Sampler &sampler,
       const bool scattered{
           segMedium.sampleDistance(sampler, ray.tmax, t, beta, emitted)};
       const Color Lemit{betaStart * emitted};
-      if (!Lemit.isAnyNonFinite()) L += Lemit;
+      if (!Lemit.isAnyNonFinite() && manifold.keepOrdinary()) L += Lemit;
       if (scattered) {
         // A volume scattering event.
         ++depth;
@@ -1025,22 +1108,38 @@ Color tracePath(smdl::Compiler &compiler, const Scene &scene, Sampler &sampler,
                          ? 1.0f
                          : smdl::powerHeuristic(
                                prevWpdf, lights.envSelectionPMF() * Lipdf)};
-        if (prevQuasiSpecularBar) weight = 0.0f;
         // An escape through a manifold-connectable chain of eligible
         // refractive interfaces competes with the manifold gather at
-        // its receiver by re-walk MIS; `manifoldEscapeWeight` returns 1
-        // whenever the gather cannot produce this transport, which
-        // covers the dim sky the compensated environment sampler never
-        // draws (`envPdf` zero), fold solutions the walk does not find,
-        // and failed walks. The chain always follows a delta
-        // transmission, so the weight it replaces is the `prevDelta` 1.
-        if (mnee.covers(manifold)) {
-          ManifoldTarget target{};
-          target.wl = ray.dir;
-          weight =
-              mnee.coverWeight(scene, sampler, wavelengths, allocator, target,
-                               lights.envSelectionPMF() * Lipdf, manifold);
+        // its receiver by re-walk MIS; `coverWeight` returns 1 whenever
+        // the gather cannot produce this transport, which covers the dim
+        // sky the compensated environment sampler never draws (`envPdf`
+        // zero), fold solutions the walk does not find, and failed walks.
+        // The chain always follows a delta transmission, so the weight it
+        // replaces is the `prevDelta` 1. A barred arrival is one the
+        // gather claims outright.
+        //
+        // Under the PT estimator of the claimed paths a claimed arrival
+        // keeps its ordinary weight (1 after a Dirac bounce, MIS after the
+        // claimed gather a glossy vertex ran), and an arrival the manifold
+        // estimator bars without claiming stays barred, so the complement
+        // is the same under both estimators. The isolation modes then keep
+        // one side or the other.
+        const bool claimedArrival{prevClaimedArrival || mnee.covers(manifold)};
+        if (manifold.useManifold()) {
+          if (prevQuasiSpecularBar) {
+            weight = 0.0f;
+          } else if (mnee.covers(manifold)) {
+            ManifoldTarget target{};
+            target.wl = ray.dir;
+            weight =
+                mnee.coverWeight(scene, sampler, wavelengths, allocator, target,
+                                 lights.envSelectionPMF() * Lipdf, manifold);
+          }
+        } else if (prevQuasiSpecularBar && !prevClaimedArrival) {
+          weight = 0.0f;
         }
+        if (claimedArrival ? !manifold.keepClaimed() : !manifold.keepOrdinary())
+          weight = 0.0f;
         auto Lenv{beta * Li * weight};
         if (!Lenv.isAnyNonFinite()) {
           L += Lenv;
@@ -1133,28 +1232,36 @@ Color tracePath(smdl::Compiler &compiler, const Scene &scene, Sampler &sampler,
                 : smdl::powerHeuristic(
                       prevWpdf, lights.solidAnglePDF(hit.instIndex, hit.point,
                                                      hit.Ng, prevPoint))};
-        if (prevQuasiSpecularBar) weight = 0.0f;
         // An emitter reached through a manifold-connectable chain of
         // eligible refractive interfaces competes with the manifold
         // gather at its receiver by re-walk MIS, exactly as an
-        // environment escape does; the chain always follows a delta
-        // transmission, so the weight replaced is the `prevDelta` 1.
-        if (mnee.covers(manifold)) {
-          const float3 toLight{hit.point - mnee.receiver()};
-          const float distStraight{length(toLight)};
-          if (distStraight > 0.0f) {
-            ManifoldTarget target{};
-            target.wl = toLight / distStraight;
-            target.point = hit.point;
-            target.infinite = false;
-            target.normal = hit.Ng;
-            weight =
-                mnee.coverWeight(scene, sampler, wavelengths, allocator, target,
-                                 lights.solidAnglePDF(hit.instIndex, hit.point,
-                                                      hit.Ng, mnee.receiver()),
-                                 manifold);
+        // environment escape does, and the estimator and isolation rules
+        // are the same as there.
+        const bool claimedArrival{prevClaimedArrival || mnee.covers(manifold)};
+        if (manifold.useManifold()) {
+          if (prevQuasiSpecularBar) {
+            weight = 0.0f;
+          } else if (mnee.covers(manifold)) {
+            const float3 toLight{hit.point - mnee.receiver()};
+            const float distStraight{length(toLight)};
+            if (distStraight > 0.0f) {
+              ManifoldTarget target{};
+              target.wl = toLight / distStraight;
+              target.point = hit.point;
+              target.infinite = false;
+              target.normal = hit.Ng;
+              weight = mnee.coverWeight(
+                  scene, sampler, wavelengths, allocator, target,
+                  lights.solidAnglePDF(hit.instIndex, hit.point, hit.Ng,
+                                       mnee.receiver()),
+                  manifold);
+            }
           }
+        } else if (prevQuasiSpecularBar && !prevClaimedArrival) {
+          weight = 0.0f;
         }
+        if (claimedArrival ? !manifold.keepClaimed() : !manifold.keepOrdinary())
+          weight = 0.0f;
         auto Lem{beta * Le * weight};
         if (!Lem.isAnyNonFinite()) {
           L += Lem;
@@ -1207,13 +1314,22 @@ Color tracePath(smdl::Compiler &compiler, const Scene &scene, Sampler &sampler,
     const float bsdfFrac{!dtree || guiding->bsdfFractionFixed
                              ? guiding ? guiding->bsdfFraction : 1.0f
                              : dtree->mixtureAlpha};
+    // The lobes the manifold estimators claim here, and whether this is a
+    // claimed vertex reached from an armed receiver that the PT estimator
+    // of the claimed paths gathers at instead of the manifold gather
+    // behind it; see `ManifoldOptions::Estimator`.
+    const int claimedLobes{manifoldClaimedLobes(mat, state.normal, manifold)};
+    const bool claimedNEE{quasiSpecular && mneeWasArmed && !isHair &&
+                          !manifold.useManifold() && claimedLobes != 0};
     // Gather direct lighting at this vertex, before the bounce, so the
-    // cone the gather rays inherit is the arrival cone.
-    if (!quasiSpecular) {
+    // cone the gather rays inherit is the arrival cone. A claimed vertex
+    // gathers only under the PT estimator, and only its claimed lobes.
+    if (!quasiSpecular || claimedNEE) {
       const Color direct{gatherDirect(
           scene, sampler, wavelengths, allocator, lights, gatherState, mat,
           isHair ? VertexKind::HAIR : VertexKind::SURFACE, dtree, bsdfFrac,
-          medium, hit.point, wo, manifold)};
+          medium, hit.point, wo, manifold,
+          claimedNEE ? claimedLobes : smdl::JIT::DF_ALL)};
       L += beta * direct;
       if (record) record->direct = direct;
     }
@@ -1294,9 +1410,10 @@ Color tracePath(smdl::Compiler &compiler, const Scene &scene, Sampler &sampler,
     }
     prevWpdf = wpdfFwd;
     // `prevDelta` is really "the previous vertex ran no gather", which a
-    // delta bounce and a bypassed glossy interface both are. Getting this
-    // wrong halves the transport rather than double counting it.
-    prevDelta = isDeltaBounce || quasiSpecular;
+    // delta bounce and a bypassed glossy interface both are, and a claimed
+    // vertex gathering under the PT estimator is not. Getting this wrong
+    // halves the transport rather than double counting it.
+    prevDelta = isDeltaBounce || (quasiSpecular && !claimedNEE);
     prevPoint = hit.point;
     // Advance the manifold-NEE cancelation state: a non-delta,
     // non-hair vertex is a fresh receiver whose gather may attempt a
@@ -1341,6 +1458,8 @@ Color tracePath(smdl::Compiler &compiler, const Scene &scene, Sampler &sampler,
     prevQuasiSpecularBar =
         (quasiSpecular && extendedChain) ||
         (casterBounce && mneeWasArmed && !mat.isTransmitting(wo, wNext));
+    prevClaimedArrival =
+        prevQuasiSpecularBar && (sampledLobe & claimedLobes) != 0;
     beta *= (1.0f / wpdfFwd) * f;
     if (beta.isAnyNonFinite()) break;
     // Terminate by Russian roulette instead of by a fixed depth limit, so that

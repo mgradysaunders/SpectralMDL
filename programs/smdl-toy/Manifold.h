@@ -13,6 +13,9 @@
 
 #include <algorithm>
 #include <array>
+#include <atomic>
+#include <cstdint>
+#include <ostream>
 #include <vector>
 
 // For the nested-medium stack the per-side refractive indices resolve
@@ -376,21 +379,34 @@ isGlossyManifoldCaster(const smdl::JIT::MaterialInstance &mat);
                                     const float3 &wl, bool allowGlossy,
                                     ManifoldVertexSeed &seed);
 
-/// Solve the refractive connection from `receiver` to the light target
-/// through the seed chain, by damped Newton iteration on the
-/// block-coupled per-vertex constraints. Steps re-anchor onto the real
-/// surfaces by re-casting each vertex from its (already updated)
-/// predecessor, so a converged connection's segments are known to see
-/// their endpoints (null interfaces excepted). Returns true on
-/// convergence to a transmission configuration on the seed's own side
-/// of every interface; failure (divergence, leaving a seed instance,
-/// total internal reflection, a silhouette migration, a grazing or
-/// degenerate frame) means no contribution, never a wrong one.
-[[nodiscard]] bool solveManifoldConnection(const Scene &scene,
-                                           const float3 &receiver,
-                                           const ManifoldTarget &target,
-                                           const ManifoldChain &chain,
-                                           ManifoldConnection &connection);
+/// What one Newton walk did, for the caller's statistics: the steps it
+/// took, the constraint residual where it stopped, and how it ended.
+class ManifoldWalkReport final {
+public:
+  enum class Outcome {
+    CONVERGED, ///< Converged to a valid crossing at every vertex.
+    DIVERGED,  ///< Ran out of iterations, lost the surface, or stalled.
+    REJECTED,  ///< Converged, but to a configuration the estimator refuses.
+  };
+  int iterations{};
+  float residual{};
+  Outcome outcome{Outcome::DIVERGED};
+};
+
+/// Solve the connection from `receiver` to the light target through the
+/// seed chain, by damped Newton iteration on the block-coupled per-vertex
+/// constraints. Steps re-anchor onto the real surfaces by re-casting each
+/// vertex from its (already updated) predecessor, so a converged
+/// connection's segments are known to see their endpoints (null
+/// interfaces excepted). Returns true on convergence to a valid crossing
+/// on the seed's own side of every interface; failure (divergence,
+/// leaving a seed instance, total internal reflection, a silhouette
+/// migration, a grazing or degenerate frame) means no contribution, never
+/// a wrong one. `report`, if given, receives what the walk did either way.
+[[nodiscard]] bool solveManifoldConnection(
+    const Scene &scene, const float3 &receiver, const ManifoldTarget &target,
+    const ManifoldChain &chain, ManifoldConnection &connection,
+    ManifoldWalkReport *report = nullptr);
 
 /// Is a converged crossing one the estimator accepts? The two segments
 /// must lie on opposite sides of the shading normal, which is what makes
@@ -420,3 +436,58 @@ isGlossyManifoldCaster(const smdl::JIT::MaterialInstance &mat);
                                             const ManifoldTarget &target,
                                             const ManifoldChain &chain,
                                             float &transfer);
+
+/// Counters over every manifold estimate of a render, printed on request.
+/// Relaxed atomics on one process-wide instance: each increment is per
+/// walk or per estimate, which is nothing next to the ray casts a walk
+/// makes.
+class ManifoldStats final {
+public:
+  /// Which gather an estimate belongs to.
+  enum Kind : int { DIRAC_REFRACT, GLOSSY_REFRACT, REFLECT, NUM_KINDS };
+
+  [[nodiscard]] static ManifoldStats &global() noexcept;
+
+  /// A gather that reached its first walk, and whether that walk
+  /// converged.
+  void recordEstimate(Kind kind, bool firstWalkConverged) noexcept;
+
+  /// One walk of a gather, first or trial.
+  void recordWalk(const ManifoldWalkReport &report) noexcept;
+
+  /// One re-walk the arrival side ran for MIS.
+  void recordRewalk(const ManifoldWalkReport &report) noexcept;
+
+  /// The reciprocal estimate of one gather: how many trials it took to
+  /// re-find the solution, or that it ran out and dropped the sample.
+  void recordTrials(Kind kind, int trials, bool dropped) noexcept;
+
+  /// A converged connection weighed, and whether anything came of it.
+  void recordContribution(bool nonZero) noexcept;
+
+  void print(std::ostream &out) const;
+
+private:
+  using Counter = std::atomic<uint64_t>;
+  static void addMax(Counter &counter, uint64_t value) noexcept;
+  static void addSum(std::atomic<double> &sum, double value) noexcept;
+  static void addMax(std::atomic<double> &value, double other) noexcept;
+
+  std::array<Counter, NUM_KINDS> mEstimates{};
+  std::array<Counter, NUM_KINDS> mFirstWalkConverged{};
+  std::array<Counter, NUM_KINDS> mTrialEstimates{};
+  std::array<Counter, NUM_KINDS> mTrials{};
+  std::array<Counter, NUM_KINDS> mTrialsMax{};
+  std::array<Counter, NUM_KINDS> mCapDrops{};
+  Counter mWalks{};
+  Counter mWalksConverged{};
+  Counter mWalksRejected{};
+  Counter mWalkIterations{};
+  Counter mWalkIterationsMax{};
+  std::atomic<double> mWalkResidual{};
+  std::atomic<double> mWalkResidualMax{};
+  Counter mRewalks{};
+  Counter mRewalksConverged{};
+  Counter mContributions{};
+  Counter mContributionsNonZero{};
+};

@@ -154,6 +154,33 @@ static cl::opt<bool> optMNEEReflect{
              "receiver to the light. The reflector is searched by sampling "
              "it, so it stops gathering on its own account"),
     cl::init(false), cl::cat(catSampling)};
+static cl::opt<bool> optMNEEStats{
+    "mnee-stats",
+    cl::desc("With -mnee, print the manifold estimators' counters after the "
+             "render: estimates per kind and how often the first walk "
+             "converged, walk iterations and residuals, Bernoulli trials and "
+             "the samples dropped at the trial cap, re-walks, contributions"),
+    cl::init(false), cl::cat(catSampling)};
+static cl::opt<std::string> optMNEEIsolate{
+    "mnee-isolate",
+    cl::desc("With -mnee, render one part of the transport for validation: "
+             "'claimed' keeps only the paths the manifold estimators claim "
+             "(receiver, caster crossings, light), 'complement' keeps "
+             "everything else, 'none' keeps all (default: none)"),
+    cl::init("none"), cl::cat(catSampling)};
+static cl::opt<std::string> optMNEEEstimator{
+    "mnee-estimator",
+    cl::desc("With -mnee, which estimator renders the claimed paths: "
+             "'manifold', the gathers (default), or 'pt', ordinary sampling "
+             "restricted to the same paths, which a manifold render must "
+             "agree with"),
+    cl::init("manifold"), cl::cat(catSampling)};
+static cl::opt<unsigned> optSampleBase{
+    "sample-base",
+    cl::desc("The sample index the first sample of this render takes, so two "
+             "renders of one scene decorrelate (default: 0; -resume "
+             "overrides)"),
+    cl::init(0), cl::cat(catSampling)};
 static cl::opt<bool> optNoLOD{
     "no-lod", cl::desc("Disable LOD by zeroing the camera ray cone spread"),
     cl::init(false), cl::cat(catSampling)};
@@ -556,9 +583,13 @@ stripSessionOnlyArgs(const std::string &args) {
                                                     "wavelengths",
                                                     "guide-bsdf-fraction",
                                                     "guide-split",
-                                                    "mnee-depth"};
+                                                    "mnee-depth",
+                                                    "mnee-isolate",
+                                                    "mnee-estimator",
+                                                    "sample-base"};
   static constexpr const char *SESSION_ONLY_FLAG[]{
-      "guide", "guide-adrrs", "mnee", "mnee-glossy", "mnee-reflect"};
+      "guide",       "guide-adrrs",  "mnee",
+      "mnee-glossy", "mnee-reflect", "mnee-stats"};
   auto tokens{std::vector<std::string>()};
   for (size_t pos{}; pos < args.size();) {
     size_t end{args.find_first_of(" \t", pos)};
@@ -928,7 +959,7 @@ int main(int argc, char **argv) try {
   // flag also implies -output-spectrum back to the same file; see the
   // output stage at the bottom.
   auto resumed{smdl::SpectralRenderImage::ENVIFile{}};
-  size_t sampleIndexBase{0};
+  size_t sampleIndexBase{optSampleBase};
   const bool resumeRequested{!std::string(optResume).empty()};
   bool resuming{false};
   if (resumeRequested) {
@@ -1448,6 +1479,30 @@ int main(int argc, char **argv) try {
   manifold.depth = mneeDepth;
   manifold.glossy = optMNEE && optMNEEGlossy;
   manifold.reflect = optMNEE && optMNEEReflect;
+  {
+    const auto isolate{std::string(optMNEEIsolate)};
+    if (isolate == "claimed")
+      manifold.isolate = ManifoldOptions::Isolate::CLAIMED;
+    else if (isolate == "complement")
+      manifold.isolate = ManifoldOptions::Isolate::COMPLEMENT;
+    else if (isolate != "none")
+      throw smdl::Error(smdl::concat("unknown -mnee-isolate ",
+                                     smdl::Quoted(isolate),
+                                     ": expected none, claimed, or "
+                                     "complement"));
+    const auto estimator{std::string(optMNEEEstimator)};
+    if (estimator == "pt")
+      manifold.estimator = ManifoldOptions::Estimator::PT;
+    else if (estimator != "manifold")
+      throw smdl::Error(smdl::concat("unknown -mnee-estimator ",
+                                     smdl::Quoted(estimator),
+                                     ": expected manifold or pt"));
+    if (!optMNEE &&
+        (manifold.isolate != ManifoldOptions::Isolate::NONE ||
+         manifold.estimator != ManifoldOptions::Estimator::MANIFOLD))
+      SMDL_LOG_WARN("'-mnee-isolate' and '-mnee-estimator' need '-mnee': "
+                    "nothing is claimed without it");
+  }
   // The reflective gather searches this in place of the straight shadow
   // segment, so it is built once per render and only when asked for.
   auto casters{ManifoldCasterSet()};
@@ -1595,6 +1650,7 @@ int main(int argc, char **argv) try {
     if (!isFinal) checkpoint();
   }
   progress.finish();
+  if (optMNEEStats) ManifoldStats::global().print(std::cout);
   // Resolve the pass combination back into the image every downstream
   // output reads from. A resumed session's samples are already in there,
   // through the seeded combination or the add before the render.

@@ -29,9 +29,35 @@ public:
   /// and constraining the crossing to it.
   bool glossy{};
 
+  /// Which part of the transport to render, for validation: everything,
+  /// only the paths the manifold estimators claim (receiver, claimed
+  /// crossings, light), or only their complement.
+  enum class Isolate { NONE, CLAIMED, COMPLEMENT };
+  Isolate isolate{Isolate::NONE};
+
+  /// Which estimator renders the claimed paths: the manifold gathers, or
+  /// ordinary sampling restricted to the same paths, which is the filtered
+  /// path tracer the reference validates against. Under `PT` a claimed
+  /// vertex reached from an armed receiver gathers its claimed lobes by
+  /// light sampling, MIS-weighted against the continuation, and arrivals
+  /// through claimed lobes keep their ordinary weight instead of being
+  /// barred or re-walk weighted.
+  enum class Estimator { MANIFOLD, PT };
+  Estimator estimator{Estimator::MANIFOLD};
+
   /// Does the manifold estimator run at all? The cancelation state only
   /// arms when it does.
   [[nodiscard]] bool any() const noexcept { return depth > 0; }
+
+  [[nodiscard]] bool keepClaimed() const noexcept {
+    return isolate != Isolate::COMPLEMENT;
+  }
+  [[nodiscard]] bool keepOrdinary() const noexcept {
+    return isolate != Isolate::CLAIMED;
+  }
+  [[nodiscard]] bool useManifold() const noexcept {
+    return estimator == Estimator::MANIFOLD;
+  }
 };
 
 struct GuideRecord;
