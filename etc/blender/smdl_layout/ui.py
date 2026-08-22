@@ -439,7 +439,9 @@ class SMDL_PT_preview(bpy.types.Panel):
         row = layout.row(align=True)
         row.prop(context.scene, "smdl_preview_spp")
         row.prop(context.scene, "smdl_preview_scale")
-        layout.prop(context.scene, "smdl_preview_every")
+        row = layout.row(align=True)
+        row.prop(context.scene, "smdl_preview_every")
+        row.prop(context.scene, "smdl_preview_threads")
         # Exposure is a tone mapping option the layout cannot carry, so it
         # rides the preview's command line and belongs with the preview.
         layout.prop(context.scene.smdl_render, "exposure")

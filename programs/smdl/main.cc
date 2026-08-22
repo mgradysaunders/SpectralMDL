@@ -1,6 +1,7 @@
 #include "smdl/Common.h"
 #include "smdl/Compiler.h"
 #include "smdl/Support/Logger.h"
+#include "smdl/Support/Parallel.h"
 #include <fstream>
 #include <iostream>
 #include <optional>
@@ -47,6 +48,12 @@ static cl::opt<bool> noMipMaps{
     cl::desc("Disable mip maps, so that 'use_mipmap: true' is ignored and no "
              "mip chains are allocated or generated"),
     cl::sub(subsWithCompileOptions), cl::cat(catOptions)};
+static cl::opt<unsigned> optThreads{
+    "threads",
+    cl::desc("Use at most this many threads for image loading and albedo "
+             "tabulation, or 0 for every hardware thread (default 0); 1 runs "
+             "them inline on this thread"),
+    cl::init(0U), cl::sub(subsWithCompileOptions), cl::cat(catOptions)};
 static cl::opt<smdl::DumpFormat> dumpFormat{
     "f", cl::desc("Dump format:"),
     cl::values(
@@ -412,6 +419,9 @@ int main(int argc, char **argv) {
       [](llvm::raw_ostream &os) { os << smdl::BuildInfo::get().toString(); });
   cl::HideUnrelatedOptions({&catOptions});
   cl::ParseCommandLineOptions(argc, argv, "SpectralMDL compiler");
+  // Before 'compile()', which is where the parallel work is and which
+  // builds the thread pool that cannot be resized afterward.
+  smdl::setThreadCount(unsigned(optThreads));
   auto compiler{smdl::Compiler{}};
   compiler.enableDebug = enableDebug;
   compiler.enableMipMaps = !noMipMaps;

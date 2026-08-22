@@ -336,6 +336,14 @@ def register():
         name="Preview Scale", description="Percentage of the render "
         "resolution to preview at", default=50, min=1, max=100,
         subtype="PERCENTAGE")
+    bpy.types.Scene.smdl_preview_threads = bpy.props.IntProperty(
+        name="Threads",
+        description="Threads the preview render may use. Zero, the "
+                    "default, uses every hardware thread, which is fastest "
+                    "but leaves Blender competing with the renderer for the "
+                    "machine; a smaller number keeps cores free to keep "
+                    "working in",
+        default=0, min=0, soft_max=64)
     # Runtime only: what the render is doing belongs to the session, not
     # to the .blend.
     bpy.types.WindowManager.smdl_preview_status = bpy.props.StringProperty(
@@ -368,6 +376,7 @@ def unregister():
     for cls in reversed(CLASSES):
         bpy.utils.unregister_class(cls)
     del bpy.types.WindowManager.smdl_preview_status
+    del bpy.types.Scene.smdl_preview_threads
     del bpy.types.Scene.smdl_preview_scale
     del bpy.types.Scene.smdl_preview_every
     del bpy.types.Scene.smdl_preview_spp

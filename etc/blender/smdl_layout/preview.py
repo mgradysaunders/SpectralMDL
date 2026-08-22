@@ -70,6 +70,10 @@ def build_command(context, renderer, scene_path, output_path, material="",
         command += ["-preview-every", f"{scene.smdl_preview_every:.9g}"]
     if progress_path:
         command += ["-progress-file", progress_path]
+    # Zero is the renderer's own default, so it is left off the command
+    # line entirely rather than spelled out as '-threads 0'.
+    if scene.smdl_preview_threads > 0:
+        command += ["-threads", str(scene.smdl_preview_threads)]
     # The one render setting the layout cannot carry: exposure is a
     # tonemapping option, applied to the image rather than the scene.
     exposure = scene.smdl_render.exposure
