@@ -10,6 +10,7 @@
 #include "smdl/Compiler.h"
 #include "smdl/Support/ColorVector.h"
 #include "smdl/Support/MonteCarlo.h"
+#include "smdl/Support/Parallel.h"
 
 // For the import data model, the listing entry points, and `INF` and
 // `INVALID_INDEX`.
@@ -531,6 +532,11 @@ inline void Hit::applyGeometryToState(smdl::State &state,
 /// per file, then `commit()` once.
 class Scene final {
 public:
+  /// Embree is built with its own internal task scheduler, so 'threads='
+  /// is what keeps the acceleration structure builds inside the same
+  /// budget the rest of the render honors; without it Embree spawns a
+  /// thread per hardware thread no matter what was asked for.
+  ///
   /// \param[in] fallbackMaterialName
   /// The material to substitute for scene material names that do not
   /// resolve. If empty, an unresolved name is an error instead.
@@ -538,7 +544,10 @@ public:
   explicit Scene(const smdl::Compiler &compiler,
                  std::string_view fallbackMaterialName = {})
       : compiler(compiler), fallbackMaterialName(fallbackMaterialName),
-        device(rtcNewDevice("verbose=0")), scene(rtcNewScene(device)) {}
+        device(rtcNewDevice(
+            smdl::concat("verbose=0,threads=", smdl::getThreadCount())
+                .c_str())),
+        scene(rtcNewScene(device)) {}
   Scene(const Scene &) = delete;
   ~Scene();
 

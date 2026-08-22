@@ -49,6 +49,7 @@ add_library(
     "Support/Macros.cc"
     "Support/MetalIOR.cc"
     "Support/MonteCarlo.cc"
+    "Support/Parallel.cc"
     "Support/Profiler.cc"
     "Support/QualifiedName.cc"
     "Support/SpectralRenderImage.cc"

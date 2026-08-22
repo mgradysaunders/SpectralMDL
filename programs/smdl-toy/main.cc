@@ -15,7 +15,6 @@
 #include "opensubdiv/version.h"
 
 #include "CommandLine.h"
-#include "llvm/Support/Parallel.h"
 #include "llvm/Support/WithColor.h"
 
 #include "Camera.h"
@@ -32,6 +31,7 @@
 #include "smdl/Common.h"
 #include "smdl/Support/Filesystem.h"
 #include "smdl/Support/Logger.h"
+#include "smdl/Support/Parallel.h"
 #include "smdl/Support/Profiler.h"
 #include "smdl/Support/SpectralRenderImage.h"
 
@@ -539,6 +539,18 @@ static cl::opt<std::string> optProgress{
              "line recording how\n  long the render took, so a scripted run "
              "stays greppable"),
     cl::init(std::string("auto")), cl::cat(catOutput)};
+static cl::opt<unsigned> optThreads{
+    "threads",
+    cl::desc("Use at most this many threads, or 0 for every hardware thread "
+             "(default: 0)\n"
+             "* clamped to the hardware thread count, so asking for more than "
+             "the machine\n  has is the same as asking for all of it\n"
+             "* '-threads 1' runs everything inline on one thread with no "
+             "pool at all, which\n  is how to walk a render under a debugger\n"
+             "* the split into tasks depends only on the pixel count, so an "
+             "unguided render\n  gives the same image at any thread count "
+             "('-guide' is racy either way)"),
+    cl::init(0), cl::cat(catOutput)};
 static cl::opt<std::string> optProfile{
     "profile",
     cl::desc(
@@ -553,13 +565,14 @@ static cl::opt<std::string> optProfile{
 
 // The command line, joined for the `smdl args` metadata field, with the
 // session-only flags stripped: outputs, display transforms, the sample
-// budget, the guiding strategy, and -resume itself legitimately change
-// between the sessions of one render, while anything else that differs
-// likely changes the radiance being estimated and earns a warning. The
-// wavelength flags are stripped too: a genuine grid mismatch already
-// has its own hard error, so warning here would double-report.
-// Tokenizes on whitespace, so a path containing spaces can misalign the
-// comparison; the result only feeds a warning, never behavior.
+// budget, the guiding strategy, the thread count, and -resume itself
+// legitimately change between the sessions of one render, while anything
+// else that differs likely changes the radiance being estimated and
+// earns a warning. The wavelength flags are stripped too: a genuine grid
+// mismatch already has its own hard error, so warning here would
+// double-report. Tokenizes on whitespace, so a path containing spaces
+// can misalign the comparison; the result only feeds a warning, never
+// behavior.
 [[nodiscard]] static std::vector<std::string>
 stripSessionOnlyArgs(const std::string &args) {
   // Split by whether the flag's value arrives as a separate token, so
@@ -586,7 +599,8 @@ stripSessionOnlyArgs(const std::string &args) {
                                                     "mnee-depth",
                                                     "mnee-isolate",
                                                     "mnee-estimator",
-                                                    "sample-base"};
+                                                    "sample-base",
+                                                    "threads"};
   static constexpr const char *SESSION_ONLY_FLAG[]{
       "guide",       "guide-adrrs",  "mnee",
       "mnee-glossy", "mnee-reflect", "mnee-stats"};
@@ -745,6 +759,12 @@ int main(int argc, char **argv) try {
   // registers but leaves to the tool to act on; it prints nothing unless
   // one of them was given.
   cl::PrintOptionValues();
+  // Before anything parallel: the thread pool is built by whichever
+  // parallel operation runs first (the compile's image loads, usually)
+  // and cannot be resized afterward. Embree keeps its own pool for
+  // building acceleration structures, and `Scene` bounds that one from
+  // `smdl::getThreadCount()`.
+  smdl::setThreadCount(unsigned(optThreads));
   // Validate the occurrence-dependent lens flags here at the CLI, where
   // "was this given at all" is knowable; in the `CameraOptions` built
   // below zero means unset, so an explicit value has to be positive to
@@ -1542,7 +1562,7 @@ int main(int argc, char **argv) try {
                                  : thisPass - passDone};
       const size_t chunkBase{passDone};
       const auto chunkStart{std::chrono::steady_clock::now()};
-      llvm::parallelFor(0, numPixelsX * numPixelsY, [&](size_t i) {
+      smdl::parallelFor(0, numPixelsX * numPixelsY, [&](size_t i) {
         // Constructed per pixel deliberately: hoisting this to a
         // thread_local measures as pure noise (the few malloc/free pairs
         // per pixel amortize across worker threads and malloc's own thread

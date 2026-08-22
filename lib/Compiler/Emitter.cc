@@ -6,9 +6,9 @@
 #include "smdl/Support/Filesystem.h"
 #include "smdl/Support/Logger.h"
 #include "smdl/Support/PBRMaps.h"
+#include "smdl/Support/Parallel.h"
 #include "llvm/Analysis/ConstantFolding.h"
 #include "llvm/Support/Format.h"
-#include "llvm/Support/Parallel.h"
 #include <atomic>
 #include <cstdlib>
 #include <exception>
@@ -1802,11 +1802,11 @@ SMDL_EXPORT void smdlTabulateAlbedo(const char *name, int num_cos_theta,
   auto numCalculationsDone{std::atomic_int(0)};
   auto directionalAlbedo{std::vector<float>(numCalculationsTodo, 0.0f)};
   // The JIT'd function may throw (e.g. '#panic'), and an exception must
-  // not unwind into LLVM's '-fno-exceptions' thread pool. Capture the
-  // first one and rethrow it on the calling thread.
+  // not unwind out of 'parallelFor'. Capture the first one and rethrow
+  // it on the calling thread.
   auto firstException{std::exception_ptr{}};
   auto firstExceptionMutex{std::mutex{}};
-  llvm::parallelFor(0, num_cos_theta, [&](size_t i) {
+  parallelFor(0, num_cos_theta, [&](size_t i) {
     try {
       float cos_theta{float(i) / float(num_cos_theta - 1)};
       for (int j = 0; j < num_roughness; j++) {

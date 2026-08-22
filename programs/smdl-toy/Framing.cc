@@ -1,8 +1,7 @@
 #include "Framing.h"
 
-#include "llvm/Support/Parallel.h"
-
 #include "smdl/Support/Logger.h"
+#include "smdl/Support/Parallel.h"
 
 namespace {
 
@@ -188,7 +187,7 @@ FramingResult solveFraming(const Scene &scene, const FramingOptions &options) {
       azimuths.push_back(float(i) * (360.0f / STEPS));
   }
   auto candidates{std::vector<Candidate>(azimuths.size())};
-  llvm::parallelFor(0, azimuths.size(), [&](size_t i) {
+  smdl::parallelFor(0, azimuths.size(), [&](size_t i) {
     const auto basis{FramingBasis(options.zenithDeg, azimuths[i])};
     auto &candidate{candidates[i]};
     candidate.position = solvePosition(points, basis, tanX, tanY);

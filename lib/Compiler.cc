@@ -1,5 +1,6 @@
 #include "smdl/Compiler.h"
 #include "smdl/Support/Logger.h"
+#include "smdl/Support/Parallel.h"
 #include "smdl/Support/Profiler.h"
 #include "smdl/Support/QualifiedName.h"
 
@@ -11,7 +12,6 @@
 #include "llvm/ExecutionEngine/Orc/LLJIT.h"
 #include "llvm/ExecutionEngine/Orc/Mangling.h"
 #include "llvm/ExecutionEngine/Orc/ThreadSafeModule.h"
-#include "llvm/Support/Parallel.h"
 #include "llvm/Support/WithColor.h"
 #include "llvm/Support/raw_ostream.h"
 
@@ -707,16 +707,16 @@ std::optional<Error> Compiler::compile(OptLevel optLevel) noexcept {
       SMDL_PROFILER_ENTRY("Load images in parallel");
       SMDL_LOG_INFO("Loading images ...");
       auto now{std::chrono::steady_clock::now()};
-      llvm::parallelFor(0, imageEntries.size(), [&](size_t i) {
+      parallelFor(0, imageEntries.size(), [&](size_t i) {
         auto fileHash{imageEntries[i].first};
         auto image{imageEntries[i].second};
         SMDL_PROFILER_ENTRY("Load image",
                             fileHash->canonicalFileNames[0].c_str());
         SMDL_LOG_DEBUG("Loading image ",
                        QuotedPath(fileHash->canonicalFileNames[0]), " ...");
-        // A decode failure must not unwind into LLVM's thread pool (LLVM
-        // is built '-fno-exceptions'); warn and continue with the image's
-        // pre-allocated (zeroed) texels, matching the 'loadImage' policy.
+        // A decode failure must not unwind out of 'parallelFor'; warn
+        // and continue with the image's pre-allocated (zeroed) texels,
+        // matching the 'loadImage' policy.
         if (auto error{catchAndReturnError([&] { image->finishLoad(); })}) {
           SMDL_LOG_WARN("cannot load ",
                         QuotedPath(fileHash->canonicalFileNames[0]), ": ",

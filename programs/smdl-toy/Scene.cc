@@ -9,9 +9,8 @@
 
 #include "embree4/rtcore_ray.h"
 
-#include "llvm/Support/Parallel.h"
-
 #include "smdl/Support/Logger.h"
+#include "smdl/Support/Parallel.h"
 #include "smdl/Support/Profiler.h"
 
 #include <atomic>
@@ -698,7 +697,7 @@ void Scene::finalizeMeshes(const Color &wavelengths) {
   for (auto i : pending)
     facesBefore += meshes[i]->faces.size() + meshes[i]->baseFaceCounts.size();
   std::atomic<uint32_t> numDisplaced{0};
-  llvm::parallelFor(0, pending.size(), [&](size_t k) {
+  smdl::parallelFor(0, pending.size(), [&](size_t k) {
     if (finalizeMesh(*meshes[pending[k]], wavelengths)) numDisplaced++;
   });
   uint64_t facesAfter{};
