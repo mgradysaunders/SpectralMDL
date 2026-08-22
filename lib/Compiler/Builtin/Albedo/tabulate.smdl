@@ -107,9 +107,12 @@ double integrateAlbedo(const int numSamples, const auto sample) {
     const float3 wm = math::normalize(df::microfacet::smith_visible_normal_sample(distribution, xi.x, xi.y, alpha, wo));
     const float3 wi = math::normalize(df::specular::reflect(wo, wm));
     if (wi.z > 0) {
-      const float lambdao = df::microfacet::smith_lambda(distribution, #abs(wo.z) / (math::length(alpha * wo.xy)));
-      const float lambdai = df::microfacet::smith_lambda(distribution, #abs(wi.z) / (math::length(alpha * wi.xy)));
-      return (1 + lambdao) / (1 + lambdao + lambdai);
+      // `1 + Lambda(w)` through the projected area, which avoids the
+      // ratio `cos(theta) / |alpha w.xy|` that is singular for a
+      // direction exactly on the macro normal.
+      const float onePlusLambdao = df::microfacet::smith_projected_area(distribution, alpha, wo) / #abs(wo.z);
+      const float onePlusLambdai = df::microfacet::smith_projected_area(distribution, alpha, wi) / #abs(wi.z);
+      return onePlusLambdao / (onePlusLambdao + onePlusLambdai - 1);
     }
     return 0.0;
   });

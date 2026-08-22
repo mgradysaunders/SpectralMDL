@@ -2190,7 +2190,11 @@ export struct ggx: default distribution {};
 /// The Beckmann or Gaussian distribution.
 export struct beckmann: distribution {};
 
-/// The Smith Lambda function for the GGX distribution.
+/// The Smith Lambda function for the GGX distribution, in terms of the
+/// ratio `m = cos(theta) / |alpha w.xy|`. That ratio is singular for a
+/// direction exactly on the macro normal, so prefer `smith_projected_area()`
+/// wherever `(1 + Lambda) cos(theta)` is what is wanted: it is the same
+/// quantity in a form that never needs the ratio.
 @(pure macro)
 export float smith_lambda(const ggx this [[anno::unused()]], const float m) {
   return 1 / (2 * m * (#sqrt(m * m + 1) + m));
@@ -2377,8 +2381,12 @@ export float3 smith_visible_normal_sample(
 ) {
   const auto w11(normalize(float3(alpha * wo.xy, wo.z)));
   const auto sinTheta(length(w11.xy));
-  const auto cosPhi(w11.x / sinTheta);
-  const auto sinPhi(w11.y / sinTheta);
+  // On the macro normal the azimuth is undefined and the visible
+  // distribution is rotationally symmetric, so any frame is correct.
+  // Without the guard the ratio is `0/0`, and the fallback below would
+  // collapse the draw onto the macro normal itself.
+  const auto cosPhi(sinTheta > 0.0 ? w11.x / sinTheta : 1.0);
+  const auto sinPhi(sinTheta > 0.0 ? w11.y / sinTheta : 0.0);
   const auto m11(smith_visible_slope_sample(this, xi0, xi1, w11.z));
   const auto m(float2(alpha.x * dot(float2(cosPhi, -sinPhi), m11), //
                       alpha.y * dot(float2(sinPhi, +cosPhi), m11)));
@@ -2645,15 +2653,18 @@ auto scatterEvaluate(const &microfacet_bsdf this, inline const &ScatterEvaluateP
     const auto projAreai(microfacet::smith_projected_area(this.distribution, this.alpha, wi));
     const auto G = return_from {
       if $(this.shadowing <: microfacet::smith) {
-        const auto lambdao(microfacet::smith_lambda(this.distribution, cosThetao / length(this.alpha * wo.xy)));
-        const auto lambdai(microfacet::smith_lambda(this.distribution, cosThetai / length(this.alpha * wi.xy)));
+        // `1 + Lambda(w)` comes from the projected area rather than from
+        // `smith_lambda()` directly, whose argument `cos(theta) / |alpha
+        // w.xy|` is singular for a direction exactly on the macro normal
+        // and, at the horizon, infinite. The projected area is the same
+        // quantity in the cancelled form, finite and positive at both
+        // ends, and `cosTheta` is already above `MIN_COS_THETA`.
+        const auto onePlusLambdao(projAreao / cosThetao);
+        const auto onePlusLambdai(projAreai / cosThetai);
         if (effectiveMode == scatter_reflect) {
-          return float(1 / (1 + lambdao + lambdai));
+          return float(1 / (onePlusLambdao + onePlusLambdai - 1));
         } else {
-          // Lambda overflows to infinity for directions numerically at
-          // the horizon, where the shadowing correctly vanishes but
-          // `beta` must not be handed the infinities.
-          return isfinite(lambdao + lambdai) ? float(microfacet::beta(1 + lambdao, 1 + lambdai)) : 0.0;
+          return float(microfacet::beta(onePlusLambdao, onePlusLambdai));
         }
       } else {
         // V-cavities
