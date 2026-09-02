@@ -7,9 +7,15 @@
 #include "embree4/rtcore_geometry.h"
 #include "embree4/rtcore_scene.h"
 
+#include <algorithm>
+#include <limits>
+
 #include "smdl/Compiler.h"
-#include "smdl/Support/ColorVector.h"
-#include "smdl/Support/MonteCarlo.h"
+#include "smdl/Manifold.h"
+#include "smdl/RenderUtil/MonteCarlo.h"
+#include "smdl/RenderUtil/SpectralColor.h"
+#include "smdl/Support/Parallel.h"
+#include "smdl/Support/RNG.h"
 
 // For the import data model, the listing entry points, and `INF` and
 // `INVALID_INDEX`.
@@ -37,7 +43,7 @@ constexpr float EPS = 0.0001f;
 ///
 /// Set exactly once in `main()` before anything constructs a `Color`
 /// and long before rendering threads start. The default of 16 matches
-/// `smdl::ColorVector::INLINE_CAPACITY`, so a default render's colors
+/// `smdl::SpectralColor::INLINE_CAPACITY`, so a default render's colors
 /// never touch the heap.
 [[nodiscard]] inline size_t &renderNumBands() noexcept {
   static size_t numBands{16};
@@ -57,53 +63,78 @@ constexpr float EPS = 0.0001f;
   return weights;
 }
 
-/// The render-wide time in seconds.
+/// The render-wide base animation time in seconds. Setup-time
+/// evaluations use it directly; a path traced with an open shutter
+/// evaluates at its own offset from it.
 [[nodiscard]] inline float &renderTime() noexcept {
   static float time{};
   return time;
 }
 
-/// The render color type: an `smdl::ColorVector` whose constructors
+/// The render color type: an `smdl::SpectralColor` whose constructors
 /// supply the render-wide band count, so the ubiquitous `Color c{}`
 /// zero vector and `Color(scalar)` splat idioms work with a runtime
 /// band count.
-class Color final : public smdl::ColorVector {
+class Color final : public smdl::SpectralColor {
 public:
-  Color() : ColorVector(renderNumBands()) {}
+  Color() : SpectralColor(renderNumBands()) {}
 
-  Color(float value) : ColorVector(renderNumBands(), value) {}
+  Color(float value) : SpectralColor(renderNumBands(), value) {}
 
   /// Construct from however many values are present: a shorter or
   /// empty span (a material coefficient the instance does not have)
   /// leaves the remaining bands zero.
-  Color(smdl::Span<const float> values) : ColorVector(renderNumBands()) {
+  Color(smdl::Span<const float> values) : SpectralColor(renderNumBands()) {
     const size_t n{values.size() < size() ? values.size() : size()};
     for (size_t i = 0; i < n; i++) (*this)[i] = values[i];
   }
 
-  Color(const ColorVector &other) : ColorVector(other) {}
+  Color(const SpectralColor &other) : SpectralColor(other) {}
 
-  Color(ColorVector &&other) noexcept
-      : ColorVector(static_cast<ColorVector &&>(other)) {}
+  Color(SpectralColor &&other) noexcept
+      : SpectralColor(static_cast<SpectralColor &&>(other)) {}
 };
+
+/// The render-wide wavelength grid in nanometers.
+///
+/// Set once in `main()` alongside `renderNumBands()`. Most evaluations
+/// carry their own copy through call arguments; this is for the few
+/// places too far from the render loop to be handed one, such as the
+/// geometry-normal queries inside a manifold walk.
+[[nodiscard]] inline Color &renderWavelengths() noexcept {
+  static Color wavelengths{};
+  return wavelengths;
+}
 
 /// An `smdl::State` carrying the render-wide fields every evaluation
 /// needs: the wavelength grid and, when material construction is involved,
 /// the allocator. The geometric fields are applied afterward by
-/// `Hit::apply_geometry_to_state()`.
+/// `Hit::apply_geometry_to_state()`. The time defaults to the render-wide
+/// base time; per-path callers pass the path's own.
 [[nodiscard]] inline smdl::State
 makeRenderState(const Color &wavelengths,
-                smdl::BumpPtrAllocator *allocator = nullptr) noexcept {
+                smdl::BumpPtrAllocator *allocator = nullptr,
+                float time = renderTime()) noexcept {
   smdl::State state{};
   state.allocator = allocator;
   state.wavelength_base = wavelengths.data();
   state.wavelength_min = wavelengths[0];
   state.wavelength_max = wavelengths[wavelengths.size() - 1];
-  state.animation_time = renderTime();
+  state.animation_time = time;
   const auto &weights{renderWavelengthWeights()};
   state.wavelength_weight = weights.empty() ? nullptr : weights.data();
   return state;
 }
+
+/// Selects the sampler implementation. Zero, the default, is the
+/// hash-based Owen-scrambled Sobol sequence; nonzero substitutes plain
+/// PCG32, which is unstratified but unquestionably independent, so that
+/// a suspect result can be A/B'd against an estimator whose only claim
+/// is uniformity. Define it on the compiler command line
+/// (`-DSMDL_TOY_SAMPLER_PCG32=1`) and rebuild.
+#ifndef SMDL_TOY_SAMPLER_PCG32
+#define SMDL_TOY_SAMPLER_PCG32 0
+#endif
 
 /// The sampler version tag written into resumable output metadata. A
 /// resumed render continues the sampler's deterministic (pixel, sample
@@ -111,18 +142,27 @@ makeRenderState(const Color &wavelengths,
 /// continuation samples are merely independent of the first session's
 /// rather than jointly stratified with them; still unbiased, but worth
 /// a warning. Bump this whenever the sequence changes.
-constexpr const char *SAMPLER_VERSION = "owen-sobol-1";
+constexpr const char *SAMPLER_VERSION =
+#if SMDL_TOY_SAMPLER_PCG32
+    "pcg32-1";
+#else
+    "owen-sobol-1";
+#endif
 
-/// A hash-based Owen-scrambled Sobol sampler after Burley, "Practical
-/// Hash-Based Owen Scrambling," JCGT 9(4) 2020.
+/// The rendering sampler: the draw policy around the library's
+/// `smdl::OwenSobolSampler`.
 ///
-/// Each (pixel, sample) pair yields a deterministic low-discrepancy point
-/// sequence consumed two dimensions at a time. Every 2D pair reuses the
-/// first two Sobol dimensions with an independently hashed index shuffle
-/// and per-dimension Owen scramble, which keeps each pair's stratification
-/// while decorrelating the pairs from one another, so the sequence
-/// extends to arbitrarily many dimensions with no direction-number tables
-/// beyond the second dimension's.
+/// Draws happen through the vector conversion operators, which quantize
+/// every draw to a whole Sobol pair so that a 2D draw is jointly
+/// stratified instead of straddling two independently scrambled pairs.
+/// The skipped dimensions cost nothing, the pairs being padded rather
+/// than consecutive Sobol dimensions, and the joint 2D stratification
+/// dominates convergence wherever the integrand is smooth, so the
+/// quantization is unconditional. A pair is stratified across the
+/// samples of a pixel only when every sample reaches it at the same
+/// dimension, so a caller that consumes a data-dependent count costs
+/// every draw after it, not just its own. Under `SMDL_TOY_SAMPLER_PCG32`
+/// none of this applies and the draws are simply independent.
 class Sampler final {
 public:
   Sampler() = default;
@@ -130,100 +170,79 @@ public:
   /// Begin the sample `sampleIndex` of the pixel `pixelIndex`, resetting
   /// the dimension counter.
   void startPixelSample(uint32_t pixelIndex, uint32_t sampleIndex) noexcept {
-    pixelHash = hash(pixelIndex);
-    this->sampleIndex = sampleIndex;
-    dimension = 0;
+#if SMDL_TOY_SAMPLER_PCG32
+    // Seeded rather than strided so a resumed or windowed render
+    // reproduces the same draws for the same (pixel, sample) the
+    // low-discrepancy sequence does. The stream keeps two pixels whose
+    // seeds happen to collide on separate sequences anyway.
+    rng = smdl::RNG(
+        smdl::mixBits((uint64_t(pixelIndex) << 32) | uint64_t(sampleIndex)),
+        smdl::mixBits(uint64_t(0x9E3779B97F4A7C15ULL) ^ uint64_t(pixelIndex)));
+#else
+    sobol.start(pixelIndex, sampleIndex);
+#endif
   }
 
-  [[nodiscard]] operator float() { return next(); }
-
-  [[nodiscard]] operator float2() { return {next(), next()}; }
-
-  [[nodiscard]] operator float3() { return {next(), next(), next()}; }
-
-  [[nodiscard]] operator float4() { return {next(), next(), next(), next()}; }
-
-  [[nodiscard]] int index(int n) {
-    int i{int(std::floor(float(n) * next()))};
-    i = std::min(i, n - 1);
-    i = std::max(i, 0);
-    return i;
-  }
-
-  /// The next scrambled sample as raw bits, advancing the dimension.
-  [[nodiscard]] uint32_t nextBits() noexcept {
-    uint32_t pair{dimension >> 1};
-    uint32_t component{dimension & 1};
-    ++dimension;
-    uint32_t seed{hash(pixelHash ^ (0x9E3779B9U * pair))};
-    uint32_t shuffledIndex{nestedUniformScramble(sampleIndex, seed)};
-    uint32_t X{component == 0 ? reverseBits(shuffledIndex)
-                              : sobolDim1(shuffledIndex)};
-    return nestedUniformScramble(X, hash(seed ^ (0x55555555U + component)));
-  }
-
-private:
-  /// The next canonical sample in `(0,1)`, advancing the dimension.
-  [[nodiscard]] float next() noexcept {
-    float xi{float(nextBits()) * 0x1p-32f};
-    xi = std::fmax(xi, std::numeric_limits<float>::denorm_min()); // > 0
-    xi = std::fmin(xi, ONE_MINUS_EPS);                            // < 1
+  [[nodiscard]] operator float() {
+    alignPair();
+    const float xi{next()};
+    alignPair();
     return xi;
   }
 
-  /// Murmur3-style finalizer.
-  [[nodiscard]] static uint32_t hash(uint32_t x) noexcept {
-    x ^= x >> 16;
-    x *= 0x85EBCA6BU;
-    x ^= x >> 13;
-    x *= 0xC2B2AE35U;
-    x ^= x >> 16;
-    return x;
+  [[nodiscard]] operator float2() {
+    alignPair();
+    const float x{next()};
+    return {x, next()};
   }
 
-  [[nodiscard]] static uint32_t reverseBits(uint32_t x) noexcept {
-    x = (x << 16) | (x >> 16);
-    x = ((x & 0x00FF00FFU) << 8) | ((x & 0xFF00FF00U) >> 8);
-    x = ((x & 0x0F0F0F0FU) << 4) | ((x & 0xF0F0F0F0U) >> 4);
-    x = ((x & 0x33333333U) << 2) | ((x & 0xCCCCCCCCU) >> 2);
-    x = ((x & 0x55555555U) << 1) | ((x & 0xAAAAAAAAU) >> 1);
-    return x;
+  [[nodiscard]] operator float3() {
+    alignPair();
+    const float x{next()}, y{next()}, z{next()};
+    alignPair();
+    return {x, y, z};
   }
 
-  /// The hash-based Owen scramble: reverse so the high (most significant)
-  /// bits sit low, run the Laine-Karras permutation, which only lets each
-  /// bit affect bits above it, and reverse back.
-  [[nodiscard]] static uint32_t nestedUniformScramble(uint32_t x,
-                                                      uint32_t seed) noexcept {
-    x = reverseBits(x);
-    x += seed;
-    x ^= x * 0x6C50B47CU;
-    x ^= x * 0xB82F1E52U;
-    x ^= x * 0xC7AFE638U;
-    x ^= x * 0x8D22F6E6U;
-    return reverseBits(x);
+  [[nodiscard]] operator float4() {
+    alignPair();
+    const float x{next()}, y{next()}, z{next()};
+    return {x, y, z, next()};
   }
 
-  /// The second Sobol dimension. (The first is just `reverseBits`.)
-  [[nodiscard]] static uint32_t sobolDim1(uint32_t index) noexcept {
-    static constexpr std::array<uint32_t, 32> directions = {
-        0x80000000U, 0xC0000000U, 0xA0000000U, 0xF0000000U, //
-        0x88000000U, 0xCC000000U, 0xAA000000U, 0xFF000000U, //
-        0x80800000U, 0xC0C00000U, 0xA0A00000U, 0xF0F00000U, //
-        0x88880000U, 0xCCCC0000U, 0xAAAA0000U, 0xFFFF0000U, //
-        0x80008000U, 0xC000C000U, 0xA000A000U, 0xF000F000U, //
-        0x88008800U, 0xCC00CC00U, 0xAA00AA00U, 0xFF00FF00U, //
-        0x80808080U, 0xC0C0C0C0U, 0xA0A0A0A0U, 0xF0F0F0F0U, //
-        0x88888888U, 0xCCCCCCCCU, 0xAAAAAAAAU, 0xFFFFFFFFU};
-    uint32_t X{};
-    for (int bit = 0; index; index >>= 1, bit++)
-      if (index & 1) X ^= directions[bit];
-    return X;
+  [[nodiscard]] int index(int n) {
+    SMDL_SANITY_CHECK(n > 0);
+    return std::clamp(int(std::floor(float(n) * float(*this))), 0, n - 1);
   }
 
-  uint32_t pixelHash{};
-  uint32_t sampleIndex{};
-  uint32_t dimension{};
+  /// The next sample as raw bits.
+  [[nodiscard]] uint32_t nextBits() noexcept {
+#if SMDL_TOY_SAMPLER_PCG32
+    return rng.generate();
+#else
+    return sobol.generate();
+#endif
+  }
+
+private:
+  /// Round the dimension up to a pair boundary, called before and after
+  /// every draw so that none of them straddles two pairs.
+  void alignPair() noexcept {
+#if !SMDL_TOY_SAMPLER_PCG32
+    sobol.alignPair();
+#endif
+  }
+
+  /// The next canonical sample in `(0,1)`.
+  [[nodiscard]] float next() noexcept {
+    return std::clamp(float(nextBits()) * 0x1p-32f,
+                      std::numeric_limits<float>::denorm_min(), ONE_MINUS_EPS);
+  }
+
+#if SMDL_TOY_SAMPLER_PCG32
+  smdl::RNG rng{};
+#else
+  smdl::OwenSobolSampler sobol{};
+#endif
 };
 
 class Ray final {
@@ -272,6 +291,13 @@ public:
   /// space itself. See `MeshInstance::rigidToWorld` for why the rigid frame
   /// and not the raw object space, and for when the two coincide.
   ///
+  /// One state serves any number of hits: every geometric field is
+  /// overwritten here, and what is left standing (`motion`, the texture
+  /// spaces past what `texture_space_max` admits, `rng`, `transport` and
+  /// the level-of-detail fields) is the caller's to set or leave at zero.
+  /// A `JIT::MaterialInstance` built from the state keeps no pointer back
+  /// into it, so it outlives the next hit applied over it.
+  ///
   void applyGeometryToState(smdl::State &state,
                             const float3 &rayDir = float3{}) const noexcept;
 
@@ -307,21 +333,26 @@ public:
 };
 
 /// The differential geometry a manifold connection walk differentiates
-/// at a hit, in world space: the point, the unit shading normal, and
-/// the parametric partials of both over the hit's own surface
+/// at a hit: the library's `smdl::ManifoldGeometry`, filled by
+/// `Scene::manifoldGeometry()` over the hit's own surface
 /// parameterization, which is the triangle's barycentric coordinates
 /// (`bary[1]`, `bary[2]`) or the primitive piece's (u, v). The two
 /// parameterizations need not agree on units; each only has to span
 /// the tangent plane consistently with itself, which is all a Newton
 /// step needs.
-class ManifoldGeometry final {
+using ManifoldGeometry = smdl::ManifoldGeometry;
+
+/// A projection-cast hit for the manifold walk: the vertex address the
+/// walk pins and steps, plus what the projection checks (instance
+/// identity, null interface), with none of the shading fields
+/// `makeHit()` derives. The point and coordinates are computed by the
+/// same parametric expressions as `manifoldGeometry()`, so a walk
+/// stepping through these sees the same numbers bit for bit.
+class ManifoldHit final {
 public:
-  float3 point{};
-  float3 normal{};
-  float3 dPdu{};
-  float3 dPdv{};
-  float3 dNdu{};
-  float3 dNdv{};
+  smdl::ManifoldVertex vertex{};
+  const MeshInstance *instance{};
+  const smdl::JIT::Material *material{};
 };
 
 /// A mesh.
@@ -366,6 +397,24 @@ public:
   std::vector<float2> baseTexcoords{};    ///< Empty if the file has no UVs.
   std::vector<uint32_t> baseFaceCounts{}; ///< Vertex count per polygon.
   std::vector<uint32_t> baseIndices{};    ///< Concatenated corner indices.
+};
+
+/// The welding of a mesh's vertices by exact position bits, which is what
+/// the surface's own connectivity looks like once the copies split to
+/// carry different UVs across a texture seam are put back together.
+///
+/// Displacement moves every vertex of a group by one common offset, so a
+/// grouping outlives it and `Scene::finalizeMesh()` builds only one per
+/// mesh. The one visible consequence is that two groups displaced into
+/// contact stay distinct, where re-welding afterward would merge them and
+/// smooth their normals into each other.
+struct WeldMap final {
+  /// The group of each vertex, numbered `0` to `numGroups - 1` in
+  /// first-encounter order, so the grouping is deterministic regardless
+  /// of the hashing underneath.
+  std::vector<uint32_t> groupOf{};
+
+  uint32_t numGroups{};
 };
 
 /// The UV texture density of a triangle: UV area per world-space area, so
@@ -414,12 +463,12 @@ public:
   /// The rigid frame of the instance: `objectToWorld` orthonormalized,
   /// keeping its translation.
   ///
-  /// This is the frame the shading point is expressed in, and it is
-  /// deliberately computed with the same `orthonormalize()` the library
-  /// applies to `State::object_to_world_matrix`, from the same matrix. The
-  /// round trip is therefore exact rather than merely close: what
-  /// `worldToRigid` undoes here is bit for bit what the library rebuilds
-  /// there.
+  /// This is the frame the shading point is expressed in, and it is what
+  /// `applyGeometryToState()` hands the library as
+  /// `State::object_to_world_matrix`. The round trip is therefore exact
+  /// rather than merely close: the library recognizes an already
+  /// orthonormal frame and leaves it alone, so what it multiplies by on
+  /// the way out is bit for bit what `worldToRigid` undoes here.
   ///
   /// Note that a rigid frame carries **world units**, so object space is
   /// world-scaled even for a uniformly scaled instance.
@@ -464,6 +513,17 @@ public:
   /// The index in the `Scene::curves` array, or `INVALID_INDEX`.
   uint32_t curvesIndex{INVALID_INDEX};
 
+  /// Marked `caster` in the layout: a surface the manifold estimators
+  /// search for specular and glossy connections to the lights and claim
+  /// that transport from the path tracer. See `LayoutAssetDecl::caster`
+  /// for the grammar and `manifoldClaim()` for what the mark claims.
+  bool causticCaster{};
+
+  /// Is a caustic target for the manifold reflective gather, from the
+  /// layout's `caustic` mark; consumed by the `LightSampler`, which
+  /// treats every light as a target while no light anywhere is marked.
+  bool causticLight{};
+
   /// Instantiates a primitive rather than a mesh?
   [[nodiscard]] bool isPrimitive() const noexcept {
     return primIndex != INVALID_INDEX;
@@ -491,8 +551,8 @@ inline void Hit::applyGeometryToState(smdl::State &state,
                                       const float3 &rayDir) const noexcept {
   // World space to the instance's rigid frame. The library multiplies by
   // `object_to_world_matrix` on the way back out, which lands on world
-  // space again exactly, because `rigidToWorld` is what the library
-  // reduces `objectToWorld` to.
+  // space again exactly, because that is the very matrix `worldToRigid`
+  // inverts and the library leaves an orthonormal one untouched.
   const auto &toRigid{instance->worldToRigid};
   auto pointR{float3(toRigid * float4(point, 1.0f))};
   auto rayDirR{float3(toRigid * float4(rayDir, 0.0f))};
@@ -500,7 +560,7 @@ inline void Hit::applyGeometryToState(smdl::State &state,
   auto tangentR{float3(toRigid * float4(tangent, 0.0f))};
   auto NgR{float3(toRigid * float4(Ng, 0.0f))};
   auto TgR{float3(toRigid * float4(Tg, 0.0f))};
-  state.object_to_world_matrix = instance->objectToWorld;
+  state.object_to_world_matrix = instance->rigidToWorld;
   state.position = pointR;
   state.direction = rayDirR;
   state.normal = normalR;
@@ -531,6 +591,11 @@ inline void Hit::applyGeometryToState(smdl::State &state,
 /// per file, then `commit()` once.
 class Scene final {
 public:
+  /// Embree is built with its own internal task scheduler, so 'threads='
+  /// is what keeps the acceleration structure builds inside the same
+  /// budget the rest of the render honors; without it Embree spawns a
+  /// thread per hardware thread no matter what was asked for.
+  ///
   /// \param[in] fallbackMaterialName
   /// The material to substitute for scene material names that do not
   /// resolve. If empty, an unresolved name is an error instead.
@@ -538,7 +603,10 @@ public:
   explicit Scene(const smdl::Compiler &compiler,
                  std::string_view fallbackMaterialName = {})
       : compiler(compiler), fallbackMaterialName(fallbackMaterialName),
-        device(rtcNewDevice("verbose=0")), scene(rtcNewScene(device)) {}
+        device(rtcNewDevice(
+            smdl::concat("verbose=0,threads=", smdl::getThreadCount())
+                .c_str())),
+        scene(rtcNewScene(device)) {}
   Scene(const Scene &) = delete;
   ~Scene();
 
@@ -626,9 +694,9 @@ public:
   /// once across the quad.
   ///
   /// Call between the last `add()` and `commit()`. Returns the plane's
-  /// mesh instance index, which is what lets the framing solver tell
+  /// mesh instance index, which is what lets the autolook solver tell
   /// scenery to be framed through from geometry to be framed; see
-  /// `FramingOptions::skipInstance`.
+  /// `AutolookOptions::skipInstance`.
   [[nodiscard]] uint32_t addGroundPlane(float z, float halfExtent,
                                         const std::string &materialName);
 
@@ -718,11 +786,20 @@ private:
   /// mesh's Embree BVH. Meshes that were never instantiated are skipped
   /// outright, since nothing can ever hit them and their materials may
   /// legitimately be unresolved.
+  ///
+  /// Whether the parallelism is across meshes or within one depends on
+  /// how many there are to do; see `finalizeMesh()`.
   void finalizeMeshes(const Color &wavelengths);
 
   /// One mesh of `finalizeMeshes()`, safe to run concurrently with other
   /// meshes. Returns true if displacement actually moved vertices.
-  bool finalizeMesh(Mesh &mesh, const Color &wavelengths);
+  ///
+  /// \param[in] spread
+  /// Whether to spread this mesh's per-vertex work across the thread
+  /// pool, which is only correct (and only useful) when the caller is
+  /// not itself running meshes in parallel.
+  ///
+  bool finalizeMesh(Mesh &mesh, const Color &wavelengths, bool spread);
 
   /// Apply the material `geometry.displacement` to the final vertices, in
   /// the mesh's own space. Offsets are evaluated once per position-welded
@@ -730,7 +807,14 @@ private:
   /// seams), and applied to every copy, so the displaced surface cannot
   /// crack along seams. Returns true if any vertex moved, false when the
   /// material is null or provably undisplaced.
-  bool displaceMesh(Mesh &mesh, const Color &wavelengths);
+  ///
+  /// The result does not depend on `spread`: only the material evaluation
+  /// is spread, and the accumulation that follows stays in vertex order.
+  ///
+  /// `weld` must describe `mesh` as it stands, so a subdivided mesh has to
+  /// be welded after refinement replaces its vertices.
+  bool displaceMesh(Mesh &mesh, const Color &wavelengths, bool spread,
+                    const WeldMap &weld);
 
   /// Build and commit the Embree triangle geometry for `mesh.verts` and
   /// `mesh.faces` into `mesh.scene`. The buffers are shared, so the
@@ -742,6 +826,12 @@ private:
   /// `bary[2]`, in world space.
   [[nodiscard]] Hit makePrimitiveHit(uint32_t instIndex, uint32_t primID,
                                      const float3 &bary) const;
+
+  /// The common tail of both primitive hit builders: the world-space
+  /// record from an object-space surface and the parameters.
+  [[nodiscard]] Hit makePrimitiveHitFrom(uint32_t instIndex, uint32_t primID,
+                                         const float3 &bary,
+                                         const PrimitiveSurface &surface) const;
 
   /// The curves half of `intersect()`: build the hit record for the
   /// (segment `primID`, `u`) Embree reports, in world space. Unlike
@@ -759,6 +849,18 @@ private:
 
 public:
   [[nodiscard]] bool intersect(Ray &ray, Hit &hit) const;
+
+  /// The projection-cast intersect behind
+  /// `SceneManifoldSurfaces::project()`: `intersect()` without the `Hit`
+  /// reconstruction, which the walk pays once per vertex per damped
+  /// Newton step. See `ManifoldHit`.
+  [[nodiscard]] bool intersect(Ray &ray, ManifoldHit &hit) const;
+
+  /// Is anything in the way over `[tmin, tmax]`? An Embree occlusion
+  /// query, which early-outs on any hit instead of ordering them; only
+  /// meaningful as a visibility answer where `opaqueShadows` holds, since
+  /// it cannot say what was hit.
+  [[nodiscard]] bool isOccluded(const Ray &ray) const;
 
   /// Build the hit record for a barycentric point on a triangle, in world
   /// space.
@@ -778,14 +880,38 @@ public:
   [[nodiscard]] Hit makeHit(uint32_t instIndex, uint32_t faceIndex,
                             const float3 &bary) const;
 
+  /// The hit record of a primitive at a known object-space point on
+  /// piece `primID`, with the parameters packed in `bary` as `makeHit()`
+  /// takes them: what a ray hit and an area sample hold, so the geometry
+  /// comes from the point without the trigonometry of the parametric
+  /// rebuild. Agrees with `makeHit()` to float rounding.
+  [[nodiscard]] Hit makePrimitiveHit(uint32_t instIndex, uint32_t primID,
+                                     const float3 &bary,
+                                     const float3 &objectPoint) const;
+
   /// The differential geometry of the shading normal field at a mesh or
   /// primitive hit, for the manifold connection walk. The point and
-  /// normal reproduce the hit's own bit for bit; the normal partials
+  /// normal reproduce the hit's own bit for bit, except that a primitive
+  /// hit taken from a ray holds its intersection point, which the
+  /// parametric rebuild here matches to float rounding; the normal partials
   /// come from the interpolated vertex normals or the analytic surface,
   /// through the same cofactor transform and winding flip `makeHit()`
   /// applies. Curve hits have no rebuildable parameterization and are
   /// not supported.
   [[nodiscard]] ManifoldGeometry manifoldGeometry(const Hit &hit) const;
+
+  /// The same differential geometry from the vertex address alone,
+  /// without building the `Hit`: one fetch and transform of the face
+  /// serves both the point and the normal field, where going through
+  /// `makeHit()` derives the face twice and pays for the shading
+  /// fields (texture coordinates, UV density, tangents) the walk never
+  /// reads. Every field is computed by the same expressions as the
+  /// `Hit` path, so the two are bit-for-bit interchangeable; the `Hit`
+  /// overload delegates here. This is the form the manifold solver's
+  /// per-iteration geometry queries call.
+  [[nodiscard]] ManifoldGeometry manifoldGeometry(uint32_t instIndex,
+                                                  uint32_t faceIndex,
+                                                  const float3 &bary) const;
 
   /// The index in `meshInstances` of the hit Embree reports: the
   /// geometry's first instance plus the element within it, which is 0
@@ -811,14 +937,28 @@ public:
   }
 
 public:
-  const smdl::Compiler &compiler;       ///< The compiler.
-  std::string fallbackMaterialName{};   ///< The unresolved-name substitute.
-  RTCDevice device{};                   ///< The Embree device.
-  RTCScene scene{};                     ///< The Embree scene.
-  float3 boundCenter{};                 ///< The bound center.
-  float boundRadius{};                  ///< The bound radius.
-  std::vector<std::string> fileNames{}; ///< The files that were added.
-  std::vector<std::unique_ptr<Mesh>> meshes{};          ///< The meshes.
+  const smdl::Compiler &compiler;     ///< The compiler.
+  std::string fallbackMaterialName{}; ///< The unresolved-name substitute.
+  RTCDevice device{};                 ///< The Embree device.
+  RTCScene scene{};                   ///< The Embree scene.
+  float3 boundCenter{};               ///< The bound center.
+  float boundRadius{};                ///< The bound radius.
+
+  /// Shadow rays are pure boolean queries: every material an instance
+  /// shades with blocks a shadow ray at its first hit
+  /// (`isShadowTrivial()`: provably opaque, so no cutout draw, and not
+  /// a null interface, so no pass-through hop). A visibility walk then
+  /// reduces to `isOccluded()` unless its caller asks for the blocker
+  /// itself, which only the manifold refraction gather does, to
+  /// discover chains through transmissive interfaces (see
+  /// `VisibilityWalk`). Computed by `commit()`. Deliberately does NOT
+  /// exclude transmission or volumes: clear glass blocks an ordinary
+  /// shadow test exactly as a wall does (the cutout is statically 1),
+  /// and a walk in such a scene can never cross a boundary, so its
+  /// starting medium is its only medium.
+  bool opaqueShadows{};
+  std::vector<std::string> fileNames{};        ///< The files that were added.
+  std::vector<std::unique_ptr<Mesh>> meshes{}; ///< The meshes.
   std::vector<std::unique_ptr<Primitive>> primitives{}; ///< The primitives.
   std::vector<std::unique_ptr<Curves>> curves{};        ///< The grooms.
   std::vector<MeshInstance> meshInstances{};            ///< The mesh instances.

@@ -1,62 +1,20 @@
 #pragma once
 
-#include <atomic>
-#include <type_traits>
+#include <algorithm>
+#include <string>
+#include <string_view>
 
 #include "Scene.h"
 
-#include "smdl/Support/SpectralRenderImage.h"
+#include "smdl/RenderUtil/SpectralFilm.h"
 
-/// A copyable atomic whose every access is relaxed.
-///
-/// The SD-tree is accumulated into by every render thread while a pass
-/// runs and copied wholesale between passes, where refinement splits a
-/// spatial leaf by duplicating it. Ordering never matters: the
-/// structure is frozen during a pass so only the counters move, and
-/// between passes there is one thread. What does matter is that
-/// `std::atomic` is not copyable, which without this leaves every node
-/// needing a hand-written copy constructor whose entire body is
-/// load-then-store.
-template <typename T> class Relaxed final {
-public:
-  Relaxed() = default;
+/// The extension that conventionally marks a saved SD-tree (see
+/// `STree::writeFile()`). Advisory, as everywhere: the magic bytes
+/// decide.
+constexpr std::string_view GUIDE_TREE_EXTENSION = ".sdtree";
 
-  Relaxed(T value) noexcept : mValue(value) {}
-
-  Relaxed(const Relaxed &other) noexcept : mValue(T(other)) {}
-
-  Relaxed &operator=(const Relaxed &other) noexcept { return *this = T(other); }
-
-  Relaxed &operator=(T value) noexcept {
-    mValue.store(value, std::memory_order_relaxed);
-    return *this;
-  }
-
-  [[nodiscard]] operator T() const noexcept {
-    return mValue.load(std::memory_order_relaxed);
-  }
-
-  /// Add atomically. `std::atomic<float>` gains a native `fetch_add`
-  /// only in C++20, so a float goes around a compare-exchange loop
-  /// instead; note that the resulting sum depends on the order the
-  /// threads happen to win it, so a guided render is not bit-wise
-  /// reproducible run to run.
-  void add(T value) noexcept {
-    if constexpr (std::is_integral_v<T>) {
-      mValue.fetch_add(value, std::memory_order_relaxed);
-    } else {
-      T expected{mValue.load(std::memory_order_relaxed)};
-      while (!mValue.compare_exchange_weak(expected, expected + value,
-                                           std::memory_order_relaxed)) {
-      }
-    }
-  }
-
-private:
-  std::atomic<T> mValue{};
-};
-
-using RelaxedFloat = Relaxed<float>;
+/// The magic that begins a saved SD-tree.
+constexpr std::string_view GUIDE_TREE_MAGIC = "SMDLSDTR";
 
 /// Map a unit direction to the unit square with the equal-area world-space
 /// cylindrical parameterization, so uniform density on the square is
@@ -64,8 +22,8 @@ using RelaxedFloat = Relaxed<float>;
 [[nodiscard]] inline float2 directionToSquare(const float3 &w) noexcept {
   float u{(std::atan2(w.y, w.x) + PI) / TWO_PI};
   float v{(w.z + 1.0f) / 2.0f};
-  u = std::fmin(std::fmax(u, 0.0f), ONE_MINUS_EPS);
-  v = std::fmin(std::fmax(v, 0.0f), ONE_MINUS_EPS);
+  u = std::clamp(u, 0.0f, ONE_MINUS_EPS);
+  v = std::clamp(v, 0.0f, ONE_MINUS_EPS);
   return {u, v};
 }
 
@@ -85,13 +43,25 @@ using RelaxedFloat = Relaxed<float>;
 /// with no child index is a leaf cell. Recording adds flux at every level
 /// of the descent, so every node's quadrant flux is the total of its
 /// subtree without a separate propagation pass. The structure is fixed
-/// while a pass renders (recording only touches the atomic flux) and is
-/// rebuilt between passes on a single thread.
+/// while a pass renders and is rebuilt between passes on a single
+/// thread; the counters do not move during a pass either, because
+/// recording goes through the per-thread mirrors of `GuideAccumulator`
+/// and lands here only when they are absorbed between passes.
 class DTree final {
 public:
   struct Node final {
-    /// The flux of each quadrant subtree.
-    std::array<RelaxedFloat, 4> flux{};
+    /// The flux of each quadrant subtree, in fixed-point units of
+    /// `fluxUnit`.
+    ///
+    /// Integral on purpose: integer addition commutes, so the absorbed
+    /// totals do not depend on which thread recorded what, and a guided
+    /// render is bit-wise reproducible run to run. Real-valued
+    /// accumulation goes through the fixed-point units of `fluxUnit`
+    /// instead of float sums, whose totals take whatever order the
+    /// threads happen to record in; a one-ulp wobble in the trained
+    /// tree amplifies through the sampling feedback into visibly
+    /// different renders.
+    std::array<uint64_t, 4> flux{};
 
     /// The node index of each quadrant subtree, or 0 if the quadrant is a
     /// leaf cell. (Node 0 is the root and is never anyone's child.)
@@ -100,23 +70,29 @@ public:
 
   DTree() : mNodes(1) {}
 
-  /// The total flux at the root.
-  [[nodiscard]] float totalFlux() const noexcept {
-    float total{};
+  /// The total flux at the root, in units of `fluxUnit`.
+  [[nodiscard]] uint64_t totalFluxUnits() const noexcept {
+    uint64_t total{};
     for (int q = 0; q < 4; q++) total += mNodes[0].flux[q];
     return total;
+  }
+
+  /// The total flux at the root, as a value.
+  [[nodiscard]] float totalFlux() const noexcept {
+    return float(totalFluxUnits()) * fluxUnit;
   }
 
   /// The mean incident radiance implied by the recorded flux: the total
   /// over the record count and the sphere area.
   [[nodiscard]] float meanRadiance() const noexcept {
-    const float w{statisticalWeight};
-    return w > 0 ? totalFlux() / (2.0f * TWO_PI * w) : 0.0f;
+    const auto w{uint64_t(statisticalWeight)};
+    return w > 0 ? totalFlux() / (2.0f * TWO_PI * float(w)) : 0.0f;
   }
 
-  /// Record `value` at the square point `uv`, adding flux at every level
-  /// of the descent.
-  void record(float2 uv, float value) noexcept;
+  /// Record `units` of flux at the square point `uv` into the mirror
+  /// counters `flux`, which hold four counters per node in node order,
+  /// adding at every level of the descent.
+  void record(float2 uv, uint64_t units, uint64_t *flux) const noexcept;
 
   /// The side length in square space of the leaf cell containing `uv`,
   /// for filtered (jittered) splatting.
@@ -144,15 +120,31 @@ public:
   void resetToStructureOf(const DTree &structure);
 
   /// The number of records, for converting flux to mean radiance.
-  RelaxedFloat statisticalWeight{};
+  uint64_t statisticalWeight{};
 
   /// Estimated second moments of the pure-BSDF and pure-tree one-sample
   /// estimators over the training records: `Σ (f L)² / (p_s p_mix)`
-  /// estimates the second moment strategy `s` would have alone.
-  /// Accumulated on the building side of a pass; they yield
-  /// `mixtureAlpha` at refinement.
-  RelaxedFloat momentBSDF{};
-  RelaxedFloat momentGuide{};
+  /// estimates the second moment strategy `s` would have alone, in
+  /// fixed-point units of `momentUnit`. Accumulated on the building side
+  /// of a pass; they yield `mixtureAlpha` at refinement.
+  uint64_t momentBSDF{};
+  uint64_t momentGuide{};
+
+  /// The value of one fixed-point unit of `flux`, and of the moments.
+  ///
+  /// The scale is chosen per pass from the total the counter reached in
+  /// the previous one (see `STree::refine()`), floored for a fresh
+  /// tree, so 64 bits leave billionfold growth headroom above the
+  /// expected total. A record's sub-unit fraction rounds stochastically
+  /// with the pixel's sampler, so no scale can quantize the training
+  /// signal to zero, and its magnitude caps at 2^40 units, three
+  /// decades above the previous pass's whole total, where only a
+  /// genuinely absurd firefly clamps. Both are harmless where exact
+  /// float accumulation would not be: the tree only steers sampling,
+  /// and every density the estimator weighs with is read back from the
+  /// tree that resulted.
+  float fluxUnit{0x1p-20f};
+  float momentUnit{0x1p-20f};
 
   /// The learned probability of sampling the BSDF rather than the tree
   /// at vertices in this cell: the inverse-second-moment share
@@ -163,14 +155,23 @@ public:
   float mixtureAlpha{0.5f};
 
 private:
+  /// For `STree::writeFile()` and `STree::readFile()`, which move the
+  /// nodes to and from disk directly.
+  friend class STree;
+
   std::vector<Node> mNodes;
 };
 
 /// The spatial half of the SD-tree: a binary tree over the (cubified)
 /// scene bounds with midpoint splits on alternating axes. Each leaf holds
 /// a pair of directional quadtrees, `sampling` frozen and read during a
-/// pass and `building` accumulating the pass's records, swapped and
+/// pass and `building` collecting the pass's records, swapped and
 /// refined between passes.
+///
+/// The whole tree is immutable while a pass renders: the threads record
+/// into the per-thread counter mirrors of a `GuideAccumulator`, which
+/// `absorb()` sums into the building side between passes. Nothing here
+/// is atomic, and the render threads never write a shared line.
 class STree final {
 public:
   struct Node final {
@@ -181,7 +182,7 @@ public:
     uint8_t axis{};
 
     /// The number of vertices recorded here since the last refinement.
-    Relaxed<uint32_t> recordCount{};
+    uint32_t recordCount{};
 
     DTree sampling{};
 
@@ -203,14 +204,86 @@ public:
   /// `momentBSDF` and `momentGuide` are the bounce's contributions to the
   /// cell's per-strategy second moments, deposited unjittered on the leaf
   /// containing `position`.
+  ///
+  /// The deposit lands in `counters`, one thread's mirror of the
+  /// building-side counters (see `GuideAccumulator`); the sampler draws
+  /// and fixed-point scales read only the frozen structure, so what a
+  /// record deposits never depends on what the mirrors have collected.
   void record(Sampler &sampler, const float3 &position, const float3 &direction,
-              float value, float momentBSDF, float momentGuide) noexcept;
+              float value, float momentBSDF, float momentGuide,
+              uint64_t *counters) const noexcept;
+
+  /// The number of `uint64_t` counters a mirror of the building side
+  /// holds: per leaf, the record count, statistical weight, and two
+  /// moments, then four flux counters per building quadtree node.
+  /// Fixed until `refine()` rebuilds the structure.
+  [[nodiscard]] size_t counterCount() const noexcept { return mCounterCount; }
+
+  /// Sum per-thread counter mirrors into the building side, in parallel
+  /// over the spatial nodes. Every counter is integral, so the result
+  /// is the same bits no matter how the records were spread across the
+  /// mirrors.
+  void absorb(const std::vector<const uint64_t *> &mirrors);
 
   /// Refine between passes: split spatial leaves whose record count
   /// exceeds `splitThreshold` (children copy their parent's quadtrees and
   /// halve its count), then rebuild every leaf's sampling quadtree from
   /// the flux its building quadtree collected and zero the building side.
   void refine(uint32_t splitThreshold, float rho, int maxDepth);
+
+  /// Write the tree to `fileName`, with `samplesPerPixel` recording how
+  /// many samples per pixel trained it, so a session resuming from the
+  /// paired accumulation can tell a current tree from a stale one.
+  ///
+  /// Meant for the moment `refine()` leaves behind: the sampling side
+  /// frozen and worth keeping, the building side zeroed, so only the
+  /// sampling quadtrees and the units the next pass needs are written.
+  /// The layout is little-endian:
+  ///
+  /// ```
+  /// offset  size  field
+  ///      0     8  magic "SMDLSDTR"
+  ///      8     2  u16 version, currently 1
+  ///     10     2  u16 reserved, 0 in v1
+  ///     12     4  u32 spatial node count
+  ///     16     8  u64 samples per pixel the tree was trained by
+  ///     24    12  f32 x3 bound minimum
+  ///     36    12  f32 x3 bound extent
+  ///     48        spatial nodes, each:
+  ///            8  u32 x2 child node indices, 0 for a leaf
+  ///            4  u32 split axis
+  ///   and, for a leaf only:
+  ///            8  u64 record count (statistical weight)
+  ///            4  f32 learned mixture weight
+  ///            4  f32 flux unit of the sampling quadtree
+  ///            4  f32 moment unit for the next pass
+  ///            4  u32 quadtree node count, then that many:
+  ///           32  u64 x4 quadrant flux, in flux units
+  ///           16  u32 x4 quadrant child node indices, 0 for a leaf
+  /// ```
+  ///
+  /// \throws smdl::Error  If the file cannot be written.
+  ///
+  void writeFile(const std::string &fileName, uint64_t samplesPerPixel) const;
+
+  /// Read a tree written by `writeFile()`, filling `samplesPerPixel`
+  /// from its header.
+  ///
+  /// The result continues training exactly as the saving session's next
+  /// pass would have: the bounds come from the file (they are baked
+  /// into every leaf lookup, so the scene never re-derives them), each
+  /// leaf's building side is rebuilt from its sampling structure, and
+  /// the saved moment unit is restored, it being the one scale
+  /// `refine()` derives from totals it consumes.
+  ///
+  /// \throws smdl::Error  If the file cannot be read, the magic or
+  ///                      version is wrong, or the structure does not
+  ///                      add up. Fail-loud so the caller can decide to
+  ///                      retrain from scratch, which is always safe:
+  ///                      the tree only steers sampling.
+  ///
+  [[nodiscard]] static STree readFile(const std::string &fileName,
+                                      uint64_t &samplesPerPixel);
 
   /// The number of spatial leaves, for progress diagnostics.
   [[nodiscard]] size_t leafCount() const noexcept {
@@ -228,7 +301,7 @@ public:
     size_t count{};
     for (const auto &node : mNodes) {
       if (node.child[0] != 0) continue;
-      minAlpha = std::fmin(minAlpha, node.sampling.mixtureAlpha);
+      minAlpha = std::min(minAlpha, node.sampling.mixtureAlpha);
       meanAlpha += node.sampling.mixtureAlpha;
       count++;
     }
@@ -236,6 +309,9 @@ public:
   }
 
 private:
+  /// For `readFile()`, which fills everything in from the file.
+  STree() = default;
+
   [[nodiscard]] uint32_t leafIndex(const float3 &position) const noexcept;
 
   /// The leaf containing `position` along with the size of its box, for
@@ -243,11 +319,54 @@ private:
   [[nodiscard]] uint32_t leafIndex(const float3 &position,
                                    float3 &leafBoxSize) const noexcept;
 
+  /// Assign every leaf its offset into the counter mirrors; called
+  /// whenever the structure changes.
+  void buildCounterLayout();
+
   std::vector<Node> mNodes;
+
+  /// Each leaf's offset into a counter mirror; see `counterCount()`.
+  std::vector<uint64_t> mCounterOffset;
+
+  size_t mCounterCount{};
 
   float3 mBoundMin{};
 
   float3 mBoundExtent{};
+};
+
+/// The per-thread accumulation of one training pass: each render thread
+/// records into its own flat mirror of the SD-tree's building-side
+/// counters, and the mirrors are summed into the tree between passes.
+/// This is what lets a pass run with no shared writes at all, which is
+/// where a shared tree loses its scaling: every record descends to the
+/// root of some quadtree, and under a small render window most of them
+/// descend to the same one.
+///
+/// A mirror costs 8 bytes per counter and is allocated (and zeroed) the
+/// first time its thread records, so threads that never train a pass
+/// cost nothing. The observed heaviest tree to date (a long full-frame
+/// waves training run) costs about 16 MB per mirror, roughly 2 GB
+/// across a 128-thread pool.
+class GuideAccumulator final {
+public:
+  explicit GuideAccumulator(const STree &tree);
+
+  /// The calling thread's counter mirror, allocated on first use.
+  [[nodiscard]] uint64_t *local();
+
+  /// Sum the mirrors into the tree's building side; single-threaded
+  /// caller, between passes. The tree must be the one this accumulator
+  /// was built for, with the same structure.
+  void absorbInto(STree &tree) const;
+
+private:
+  const STree &mTree;
+
+  /// One mirror per thread that may record: the pool plus the calling
+  /// thread. Indexed by a process-wide per-thread slot, so a thread
+  /// keeps its slot across passes and the vector is never resized.
+  std::vector<std::vector<uint64_t>> mMirrors;
 };
 
 /// The per-pixel guiding context handed to `tracePath`. A null `tree`
@@ -272,6 +391,63 @@ struct Guiding final {
   /// everywhere, for experiments.
   bool bsdfFractionFixed{};
 };
+
+/// The one-sample-MIS mixture density of a finite continuation
+/// direction: the SD-tree's density and the BSDF's own, mixed by the
+/// probability of having drawn the direction from the BSDF.
+[[nodiscard]] inline float guidedMixturePdf(float guidePdf, float bsdfPdf,
+                                            float bsdfFraction) noexcept {
+  return smdl::lerp(guidePdf, bsdfPdf, bsdfFraction);
+}
+
+/// The density the continuation sampler assigns to `w` at a vertex: the
+/// BSDF's own `bsdfPdf`, or the guided mixture when the SD-tree
+/// participates there. Every MIS weight that competes against the
+/// walk's continuation must use this density, not the raw BSDF's: the
+/// sampler draws from the mixture, and weighing against anything else
+/// leaves the pair of estimators summing away from one.
+[[nodiscard]] inline float guidedContinuationPdf(const DTree *dtree,
+                                                 float bsdfFraction,
+                                                 const float3 &w,
+                                                 float bsdfPdf) noexcept {
+  return dtree ? guidedMixturePdf(dtree->pdf(w), bsdfPdf, bsdfFraction)
+               : bsdfPdf;
+}
+
+/// The tree cell participating at a surface vertex: the cell at `point`
+/// when guiding is on and the vertex's material has finite lobes for
+/// the mixture to draw, else null and the BSDF samples alone.
+[[nodiscard]] inline const DTree *guidingCellAt(const Guiding *guiding,
+                                                const float3 &point,
+                                                bool anyFiniteLobes) noexcept {
+  return guiding && guiding->tree && anyFiniteLobes
+             ? &guiding->tree->samplingAt(point)
+             : nullptr;
+}
+
+/// The probability the continuation sampler draws from the BSDF at a
+/// vertex whose cell is `dtree`: the cell's learned mixture weight
+/// unless pinned for experiments or the cell is absent, 1 with no
+/// guiding at all.
+[[nodiscard]] inline float bsdfFractionAt(const Guiding *guiding,
+                                          const DTree *dtree) noexcept {
+  return !dtree || guiding->bsdfFractionFixed
+             ? guiding ? guiding->bsdfFraction : 1.0f
+             : dtree->mixtureAlpha;
+}
+
+/// The discrete chance the continuation at a vertex entered a Dirac
+/// lobe: only the BSDF branch of the one-sample MIS can produce a Dirac
+/// direction, so this is the vertex's mixture weight where a cell
+/// participates, else 1. Every density that competes against a
+/// continuation through a Dirac crossing must carry this factor to
+/// match what the sampler actually pays there.
+[[nodiscard]] inline float diracBranchChance(const Guiding *guiding,
+                                             const float3 &point,
+                                             bool anyFiniteLobes) noexcept {
+  const DTree *dtree{guidingCellAt(guiding, point, anyFiniteLobes)};
+  return dtree ? bsdfFractionAt(guiding, dtree) : 1.0f;
+}
 
 /// One vertex of training data retained by `tracePath()` for
 /// `trainGuiding()`: what the SD-tree needs to reconstruct the radiance
@@ -303,20 +479,20 @@ struct GuideRecord final {
 
   /// The solid-angle density that sampled `wNext`, the full mixture
   /// density when path guiding participated.
-  float pdfWNext{};
+  float wNextPdf{};
 
   /// The BSDF and SD-tree densities of `wNext` separately, valid only
   /// when the tree participated at the vertex (`pdfGuide >= 0`), and the
   /// spectral average of the BSDF value: what the trainer needs to
   /// estimate each strategy's stand-alone second moment for the cell's
   /// learned mixture weight.
-  float pdfBSDF{};
-  float pdfGuide{-1.0f};
+  float wNextBsdfPdf{};
+  float wNextGuidePdf{-1.0f};
   float fAvg{};
 
-  /// Was the continuation a Dirac lobe? The tree cannot learn delta
+  /// Was the continuation a Dirac lobe? The tree cannot learn Dirac
   /// directions, so the trainer skips them.
-  bool isDeltaBounce{};
+  bool isDiracBounce{};
 
   /// Did the walk escape to the environment here? Escape radiance is not
   /// part of the reflected field the tree trains on.
@@ -324,8 +500,10 @@ struct GuideRecord final {
 };
 
 /// Train the SD-tree from one completed path's records, in path order as
-/// `tracePath` appended them.
-void trainGuiding(STree &tree, Sampler &sampler, const GuideRecord *records,
+/// `tracePath` appended them. The deposits land in the calling thread's
+/// mirror of `accumulator`; the tree itself is only read.
+void trainGuiding(const STree &tree, GuideAccumulator &accumulator,
+                  Sampler &sampler, const GuideRecord *records,
                   uint64_t numRecords);
 
 /// Combination of a guided render's passes, each folded in at plain
@@ -334,21 +512,23 @@ void trainGuiding(STree &tree, Sampler &sampler, const GuideRecord *records,
 /// Russian roulette between passes.
 class PassCombiner final {
 public:
-  PassCombiner(size_t nX, size_t nY)
-      : mNumPixelsX(nX), mNumPixelsY(nY), mNumBands(renderNumBands()),
-        mHalfImageA(nX * nY * renderNumBands()),
+  /// Construct for a frame of `nX` by `nY` pixels, of which `window` is
+  /// the rectangle actually being rendered.
+  PassCombiner(size_t nX, size_t nY, int4 window)
+      : mNumPixelsX(nX), mNumPixelsY(nY), mWindow(window),
+        mNumBands(renderNumBands()), mHalfImageA(nX * nY * renderNumBands()),
         mHalfImageB(nX * nY * renderNumBands()), //
         mHalfSquaresA(nX * nY), mHalfSquaresB(nX * nY),
         mComboNumer(nX * nY * renderNumBands(), 0.0),
         mComboDenom(nX * nY, 0.0) {}
 
   /// Seed the combination with a resumed prior session's accumulation,
-  /// folded in as if it were an already-rendered pass of
-  /// `samplesPerPixel` samples. Because every pass folds in at
-  /// sample-count weight, `resolve()` then reproduces the exact merged
-  /// accumulation of both sessions, and `rebuildPixelEstimates()` can
-  /// inform the first pass's ADRRS from the resumed image.
-  void seed(const smdl::SpectralRenderImage &image, size_t samplesPerPixel);
+  /// folded in as if it were an already-rendered pass of the film's
+  /// own sample count. Because every pass folds in at sample-count
+  /// weight, `resolve()` then reproduces the exact merged accumulation
+  /// of both sessions, and `rebuildPixelEstimates()` can inform the
+  /// first pass's ADRRS from the resumed image.
+  void seed(const smdl::SpectralFilm &film);
 
   /// One pixel's contribution to the pass being rendered, split into
   /// two half images by alternating samples so the combination can
@@ -374,7 +554,9 @@ public:
 
   /// Rebuild the ADRRS pixel estimates from the combination so far:
   /// the spectral mean of the combined image, box-blurred so
-  /// single-pixel noise does not drive the roulette.
+  /// single-pixel noise does not drive the roulette. Both the estimates
+  /// and their blur stay inside the render window, where the samples
+  /// are.
   void rebuildPixelEstimates();
 
   /// The pixel's value estimate, or 0 before the first
@@ -383,16 +565,21 @@ public:
     return mImageEstimate.empty() ? 0.0f : mImageEstimate[pixelIndex];
   }
 
-  /// Resolve the combination into the image every downstream output
+  /// Resolve the combination into the film every downstream output
   /// reads from, replacing its contents. The folded sample count
-  /// becomes the image's per-pixel count, so the sums-plus-counts
+  /// becomes the film's sample count, so the sums-plus-count
   /// invariant holds and the means read back as the combined image.
-  void resolve(smdl::SpectralRenderImage &image) const;
+  void resolve(smdl::SpectralFilm &film) const;
 
 private:
   // The image dimensions in pixels.
   size_t mNumPixelsX{};
   size_t mNumPixelsY{};
+
+  // The rendered pixel rectangle, the whole image unless -crop-window
+  // narrows it. Every buffer below stays frame-sized and indexed by the
+  // frame pixel index; only the estimates restrict to this.
+  int4 mWindow{};
 
   // The band count, frozen at construction.
   size_t mNumBands{};

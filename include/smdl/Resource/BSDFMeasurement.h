@@ -4,11 +4,11 @@
 #include <unordered_map>
 
 #include "smdl/Common.h"
-#include "smdl/Support/MonteCarlo.h"
+#include "smdl/RenderUtil/MonteCarlo.h"
 
 namespace smdl {
 
-/// \addtogroup scene
+/// \addtogroup resource
 /// \{
 
 /// A BSDF measurement (`.mbsdf`).

@@ -91,25 +91,6 @@ constexpr const char *COLOR_OFF{"\033[0m"};
   return std::round(seconds / step) * step;
 }
 
-// Format seconds as `M:SS`, or `H:MM:SS` past an hour.
-[[nodiscard]] std::string formatDuration(double seconds) {
-  auto ticks{uint64_t(std::max(seconds, 0.0))};
-  const auto hours{ticks / 3600};
-  const auto minutes{(ticks / 60) % 60};
-  const auto secs{ticks % 60};
-  auto str{std::string()};
-  if (hours > 0) {
-    str += std::to_string(hours);
-    str += ':';
-    if (minutes < 10) str += '0';
-  }
-  str += std::to_string(minutes);
-  str += ':';
-  if (secs < 10) str += '0';
-  str += std::to_string(secs);
-  return str;
-}
-
 // Format a count in at most 5 columns: `999`, `436k`, `8.3M`, `1.2G`.
 [[nodiscard]] std::string formatCount(uint64_t value) {
   const auto scaled{[](uint64_t whole, uint64_t tenths, char suffix) {
@@ -135,7 +116,7 @@ constexpr const char *COLOR_OFF{"\033[0m"};
   // an edge to fill up to; the Unicode form draws the unfilled run as a
   // dim rule instead, so all of its columns are bar.
   const size_t cells{unicode ? width : width - 2};
-  const double filled{std::max(std::min(fraction, 1.0), 0.0) * double(cells)};
+  const double filled{std::clamp(fraction, 0.0, 1.0) * double(cells)};
   const auto full{std::min(size_t(filled), cells)};
   const bool half{filled - double(full) >= 0.5 && full < cells};
   const auto empty{cells - full - size_t(half)};
@@ -165,6 +146,24 @@ constexpr const char *COLOR_OFF{"\033[0m"};
 std::atomic<ProgressBar *> sActive{nullptr};
 
 } // namespace
+
+[[nodiscard]] std::string formatDuration(double seconds) {
+  auto ticks{uint64_t(std::max(seconds, 0.0))};
+  const auto hours{ticks / 3600};
+  const auto minutes{(ticks / 60) % 60};
+  const auto secs{ticks % 60};
+  auto str{std::string()};
+  if (hours > 0) {
+    str += std::to_string(hours);
+    str += ':';
+    if (minutes < 10) str += '0';
+  }
+  str += std::to_string(minutes);
+  str += ':';
+  if (secs < 10) str += '0';
+  str += std::to_string(secs);
+  return str;
+}
 
 void validateProgressOptions(const ProgressOptions &options) {
   if (options.style != "auto" && options.style != "plain" &&

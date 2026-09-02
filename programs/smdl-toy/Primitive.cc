@@ -31,20 +31,56 @@ enum : uint32_t {
   CONE_BASE = 1,
 };
 
-// A cap: a disk of radius `r` at height `z`, facing `sign` along Z. The
-// disk primitive is the cap that faces up from the origin.
+// A cap: a disk of radius `r` at height `z`, facing `sign` along Z, at
+// the point `rho` from the axis with the given azimuth trig. The disk
+// primitive is the cap that faces up from the origin.
 [[nodiscard]] PrimitiveSurface capSurface(float r, float z, float sign,
-                                          float2 uv) {
-  const float phi{TWO_PI * uv.x};
-  const float cosPhi{std::cos(phi)};
-  const float sinPhi{std::sin(phi)};
-  const float rho{r * uv.y};
+                                          float rho, float cosPhi,
+                                          float sinPhi) {
   PrimitiveSurface surface{};
   surface.point = float3(rho * cosPhi, rho * sinPhi, z);
   surface.normal = float3(0.0f, 0.0f, sign);
   surface.dPdu = TWO_PI * float3(-surface.point.y, surface.point.x, 0.0f);
   surface.dPdv = float3(r * cosPhi, r * sinPhi, 0.0f);
   return surface;
+}
+
+// The cylinder's side at height `z` with the given azimuth trig.
+[[nodiscard]] PrimitiveSurface cylinderSideSurface(float r, float h, float z,
+                                                   float cosPhi, float sinPhi) {
+  PrimitiveSurface surface{};
+  surface.point = float3(r * cosPhi, r * sinPhi, z);
+  surface.normal = float3(cosPhi, sinPhi, 0.0f);
+  surface.dPdu = TWO_PI * float3(-surface.point.y, surface.point.x, 0.0f);
+  surface.dPdv = float3(0.0f, 0.0f, h);
+  surface.dNdu = TWO_PI * float3(-sinPhi, cosPhi, 0.0f);
+  return surface;
+}
+
+// The cone's side at height `z`, `rho` from the axis, with the given
+// azimuth trig.
+[[nodiscard]] PrimitiveSurface coneSideSurface(float r, float h, float rho,
+                                               float z, float cosPhi,
+                                               float sinPhi) {
+  PrimitiveSurface surface{};
+  surface.point = float3(rho * cosPhi, rho * sinPhi, z);
+  // The gradient is rho (cos, sin, r/h), so the unit normal is
+  // constant along each generator, apex included.
+  surface.normal = smdl::normalize(float3(h * cosPhi, h * sinPhi, r));
+  surface.dPdu = TWO_PI * float3(-surface.point.y, surface.point.x, 0.0f);
+  surface.dPdv = float3(-r * cosPhi, -r * sinPhi, h);
+  surface.dNdu =
+      (TWO_PI * h / std::sqrt(h * h + r * r)) * float3(-sinPhi, cosPhi, 0.0f);
+  return surface;
+}
+
+// The azimuth trig of a point in the XY plane and its distance from the
+// axis; +X on the axis itself, where `azimuthOf()` reports zero too.
+void azimuthTrigOf(float x, float y, float &rho, float &cosPhi, float &sinPhi) {
+  rho = std::sqrt(x * x + y * y);
+  const bool onAxis{!(rho > 0.0f)};
+  cosPhi = onAxis ? 1.0f : x / rho;
+  sinPhi = onAxis ? 0.0f : y / rho;
 }
 
 // The real roots of a quadratic, in increasing order.
@@ -74,12 +110,16 @@ public:
   return roots;
 }
 
-// What one accepted intersection reports back to Embree.
+// What one accepted intersection reports back to Embree: the distance
+// and the object-space point. `pieceUV()` derives the parameters from
+// the point afterwards, in the closest-hit callback only, because an
+// occlusion query never looks at them and the sphere's cost an
+// arccosine and an arctangent; `Scene::intersect()` derives everything
+// else from the point itself.
 class PieceHit final {
 public:
   float t{};
-  float2 uv{};
-  float3 ng{};
+  float3 point{};
 };
 
 // Accept the first root that lies inside the ray interval and that the
@@ -108,8 +148,7 @@ template <typename F>
   const float rhoSq{px * px + py * py};
   if (rhoSq > r * r) return false;
   hit.t = t;
-  hit.uv = float2(azimuthOf(px, py), std::sqrt(rhoSq) / r);
-  hit.ng = float3(0.0f, 0.0f, sign);
+  hit.point = float3(px, py, z);
   return true;
 }
 
@@ -125,12 +164,8 @@ template <typename F>
                                     smdl::dot(org, org) - r * r)};
     return acceptRoot(roots, tnear, tfar, [&](float t) {
       const auto point{org + t * dir};
-      const auto normal{smdl::normalize(point)};
       hit.t = t;
-      hit.uv = float2(azimuthOf(normal.x, normal.y),
-                      std::acos(std::max(-1.0f, std::min(1.0f, normal.z))) *
-                          (1.0f / PI));
-      hit.ng = normal;
+      hit.point = point;
       return true;
     });
   }
@@ -150,8 +185,7 @@ template <typename F>
       const float px{org.x + t * dir.x};
       const float py{org.y + t * dir.y};
       hit.t = t;
-      hit.uv = float2(azimuthOf(px, py), z / h);
-      hit.ng = float3(px, py, 0.0f);
+      hit.point = float3(px, py, z);
       return true;
     });
   }
@@ -175,14 +209,38 @@ template <typename F>
       // float noise of it as a miss rather than manufacture a frame.
       if (px * px + py * py < 1e-12f * r * r) return false;
       hit.t = t;
-      hit.uv = float2(azimuthOf(px, py), z / h);
-      hit.ng = float3(px, py, k * (r - k * z));
+      hit.point = float3(px, py, z);
       return true;
     });
   }
   default:
     return false;
   }
+}
+
+// Is the piece one of the flat caps, which share the disk's
+// parameterization?
+[[nodiscard]] bool isCapPiece(const PrimitiveSpec &spec, uint32_t primID) {
+  return spec.shape == PrimitiveSpec::Shape::DISK ||
+         (spec.shape == PrimitiveSpec::Shape::CYLINDER &&
+          primID != CYLINDER_SIDE) ||
+         (spec.shape == PrimitiveSpec::Shape::CONE && primID == CONE_BASE);
+}
+
+// The surface parameters of an accepted intersection, the inverse of
+// `evalPrimitiveSurface()` on its piece.
+[[nodiscard]] float2 pieceUV(const PrimitiveSpec &spec, uint32_t primID,
+                             const PieceHit &hit) {
+  const float3 &p{hit.point};
+  if (isCapPiece(spec, primID))
+    return float2(azimuthOf(p.x, p.y),
+                  std::sqrt(p.x * p.x + p.y * p.y) / spec.radius);
+  if (spec.shape == PrimitiveSpec::Shape::SPHERE) {
+    const float3 n{smdl::normalize(p)};
+    return float2(azimuthOf(n.x, n.y),
+                  std::acos(std::clamp(n.z, -1.0f, 1.0f)) * (1.0f / PI));
+  }
+  return float2(azimuthOf(p.x, p.y), p.z / spec.height);
 }
 
 void primitiveBounds(const RTCBoundsFunctionArguments *args) {
@@ -233,11 +291,15 @@ void primitiveIntersect(const RTCIntersectFunctionNArguments *args) {
   // element of the array the traversal came through; regular instances
   // report element 0.
   rayHit->hit.instPrimID[0] = args->context->instPrimID[0];
-  rayHit->hit.u = hit.uv.x;
-  rayHit->hit.v = hit.uv.y;
-  rayHit->hit.Ng_x = hit.ng.x;
-  rayHit->hit.Ng_y = hit.ng.y;
-  rayHit->hit.Ng_z = hit.ng.z;
+  const float2 uv{pieceUV(primitive->spec, args->primID, hit)};
+  rayHit->hit.u = uv.x;
+  rayHit->hit.v = uv.y;
+  // The normal slots carry the object-space point instead: it is what
+  // `Scene::intersect()` builds the surface from, normal included,
+  // without going back through the parameters.
+  rayHit->hit.Ng_x = hit.point.x;
+  rayHit->hit.Ng_y = hit.point.y;
+  rayHit->hit.Ng_z = hit.point.z;
 }
 
 void primitiveOccluded(const RTCOccludedFunctionNArguments *args) {
@@ -293,6 +355,26 @@ float primitiveObjectArea(const PrimitiveSpec &spec) {
   return area;
 }
 
+// The sphere's surface from the zenith and azimuth trig directly, so
+// that a sampler holding the zenith cosine need not go through the
+// angle and back.
+[[nodiscard]] static PrimitiveSurface sphereSurface(float r, float cosTheta,
+                                                    float sinTheta,
+                                                    float cosPhi,
+                                                    float sinPhi) {
+  PrimitiveSurface surface{};
+  surface.normal = float3(sinTheta * cosPhi, sinTheta * sinPhi, cosTheta);
+  surface.point = r * surface.normal;
+  surface.dPdu = TWO_PI * float3(-surface.point.y, surface.point.x, 0.0f);
+  surface.dPdv =
+      PI * r * float3(cosTheta * cosPhi, cosTheta * sinPhi, -sinTheta);
+  // The unit normal is the point over the radius, so its partials are
+  // the point's partials over the radius.
+  surface.dNdu = surface.dPdu / r;
+  surface.dNdv = surface.dPdv / r;
+  return surface;
+}
+
 PrimitiveSurface evalPrimitiveSurface(const PrimitiveSpec &spec,
                                       uint32_t primID, float2 uv) {
   const float r{spec.radius};
@@ -303,47 +385,50 @@ PrimitiveSurface evalPrimitiveSurface(const PrimitiveSpec &spec,
   switch (spec.shape) {
   case PrimitiveSpec::Shape::SPHERE: {
     const float theta{PI * uv.y};
-    const float sinTheta{std::sin(theta)};
-    const float cosTheta{std::cos(theta)};
-    PrimitiveSurface surface{};
-    surface.normal = float3(sinTheta * cosPhi, sinTheta * sinPhi, cosTheta);
-    surface.point = r * surface.normal;
-    surface.dPdu = TWO_PI * float3(-surface.point.y, surface.point.x, 0.0f);
-    surface.dPdv =
-        PI * r * float3(cosTheta * cosPhi, cosTheta * sinPhi, -sinTheta);
-    // The unit normal is the point over the radius, so its partials are
-    // the point's partials over the radius.
-    surface.dNdu = surface.dPdu / r;
-    surface.dNdv = surface.dPdv / r;
-    return surface;
+    return sphereSurface(r, std::cos(theta), std::sin(theta), cosPhi, sinPhi);
   }
   case PrimitiveSpec::Shape::DISK:
-    return capSurface(r, 0.0f, 1.0f, uv);
-  case PrimitiveSpec::Shape::CYLINDER: {
-    if (primID == CYLINDER_BOTTOM) return capSurface(r, 0.0f, -1.0f, uv);
-    if (primID == CYLINDER_TOP) return capSurface(r, h, 1.0f, uv);
-    PrimitiveSurface surface{};
-    surface.point = float3(r * cosPhi, r * sinPhi, h * uv.y);
-    surface.normal = float3(cosPhi, sinPhi, 0.0f);
-    surface.dPdu = TWO_PI * float3(-surface.point.y, surface.point.x, 0.0f);
-    surface.dPdv = float3(0.0f, 0.0f, h);
-    surface.dNdu = TWO_PI * float3(-sinPhi, cosPhi, 0.0f);
-    return surface;
+    return capSurface(r, 0.0f, 1.0f, r * uv.y, cosPhi, sinPhi);
+  case PrimitiveSpec::Shape::CYLINDER:
+    if (primID == CYLINDER_BOTTOM)
+      return capSurface(r, 0.0f, -1.0f, r * uv.y, cosPhi, sinPhi);
+    if (primID == CYLINDER_TOP)
+      return capSurface(r, h, 1.0f, r * uv.y, cosPhi, sinPhi);
+    return cylinderSideSurface(r, h, h * uv.y, cosPhi, sinPhi);
+  case PrimitiveSpec::Shape::CONE:
+    if (primID == CONE_BASE)
+      return capSurface(r, 0.0f, -1.0f, r * uv.y, cosPhi, sinPhi);
+    return coneSideSurface(r, h, r * (1.0f - uv.y), h * uv.y, cosPhi, sinPhi);
+  default:
+    return {};
   }
-  case PrimitiveSpec::Shape::CONE: {
-    if (primID == CONE_BASE) return capSurface(r, 0.0f, -1.0f, uv);
-    const float rho{r * (1.0f - uv.y)};
-    PrimitiveSurface surface{};
-    surface.point = float3(rho * cosPhi, rho * sinPhi, h * uv.y);
-    // The gradient is rho (cos, sin, r/h), so the unit normal is
-    // constant along each generator, apex included.
-    surface.normal = smdl::normalize(float3(h * cosPhi, h * sinPhi, r));
-    surface.dPdu = TWO_PI * float3(-surface.point.y, surface.point.x, 0.0f);
-    surface.dPdv = float3(-r * cosPhi, -r * sinPhi, h);
-    surface.dNdu =
-        (TWO_PI * h / std::sqrt(h * h + r * r)) * float3(-sinPhi, cosPhi, 0.0f);
-    return surface;
-  }
+}
+
+PrimitiveSurface evalPrimitiveSurfaceAt(const PrimitiveSpec &spec,
+                                        uint32_t primID, const float3 &point) {
+  const float r{spec.radius};
+  const float h{spec.height};
+  float rho{};
+  float cosPhi{};
+  float sinPhi{};
+  azimuthTrigOf(point.x, point.y, rho, cosPhi, sinPhi);
+  switch (spec.shape) {
+  case PrimitiveSpec::Shape::SPHERE:
+    // The zenith trig straight off the point over the radius, so the
+    // normal is the point over the radius as the intersection found it.
+    return sphereSurface(r, point.z / r, rho / r, cosPhi, sinPhi);
+  case PrimitiveSpec::Shape::DISK:
+    return capSurface(r, 0.0f, 1.0f, rho, cosPhi, sinPhi);
+  case PrimitiveSpec::Shape::CYLINDER:
+    if (primID == CYLINDER_BOTTOM)
+      return capSurface(r, 0.0f, -1.0f, rho, cosPhi, sinPhi);
+    if (primID == CYLINDER_TOP)
+      return capSurface(r, h, 1.0f, rho, cosPhi, sinPhi);
+    return cylinderSideSurface(r, h, point.z, cosPhi, sinPhi);
+  case PrimitiveSpec::Shape::CONE:
+    if (primID == CONE_BASE)
+      return capSurface(r, 0.0f, -1.0f, rho, cosPhi, sinPhi);
+    return coneSideSurface(r, h, rho, point.z, cosPhi, sinPhi);
   default:
     return {};
   }
@@ -360,32 +445,40 @@ PrimitiveAreaSample samplePrimitiveArea(const PrimitiveSpec &spec, float2 xi) {
     const float fraction{pieceArea(spec, i) / totalArea};
     if (xi.x < accum + fraction || i + 1 == pieceCount) {
       primID = i;
-      xi.x = std::min(std::max((xi.x - accum) / fraction, 0.0f), 0.999999f);
+      xi.x = std::clamp((xi.x - accum) / fraction, 0.0f, 0.999999f);
       break;
     }
     accum += fraction;
   }
   // Uniform area within the piece: azimuth is always uniform; the other
   // parameter warps by the piece's area element.
+  PrimitiveAreaSample sample{};
+  sample.primID = primID;
   auto uv{float2(xi.x, xi.y)};
-  const bool isCap{
-      spec.shape == PrimitiveSpec::Shape::DISK ||
-      (spec.shape == PrimitiveSpec::Shape::CYLINDER &&
-       primID != CYLINDER_SIDE) ||
-      (spec.shape == PrimitiveSpec::Shape::CONE && primID == CONE_BASE)};
-  if (isCap) {
+  if (spec.shape == PrimitiveSpec::Shape::SPHERE) {
+    // Uniform area on the sphere is uniform in the zenith cosine, so the
+    // point is built from that cosine directly; only the reported `v`
+    // needs the angle itself.
+    const float cosTheta{1.0f - 2.0f * xi.y};
+    const float sinTheta{
+        std::sqrt(std::max((1.0f - cosTheta) * (1.0f + cosTheta), 0.0f))};
+    const float phi{TWO_PI * uv.x};
+    const auto surface{sphereSurface(spec.radius, cosTheta, sinTheta,
+                                     std::cos(phi), std::sin(phi))};
+    uv.y = std::acos(cosTheta) * (1.0f / PI);
+    sample.uv = uv;
+    sample.point = surface.point;
+    sample.normal = surface.normal;
+    return sample;
+  }
+  if (isCapPiece(spec, primID)) {
     uv.y = std::sqrt(xi.y);
-  } else if (spec.shape == PrimitiveSpec::Shape::SPHERE) {
-    uv.y = std::acos(std::max(-1.0f, std::min(1.0f, 1.0f - 2.0f * xi.y))) *
-           (1.0f / PI);
   } else if (spec.shape == PrimitiveSpec::Shape::CONE) {
     // Lateral area density is proportional to the distance from the
     // apex, i.e. to (1 - v).
     uv.y = 1.0f - std::sqrt(1.0f - xi.y);
   }
   const auto surface{evalPrimitiveSurface(spec, primID, uv)};
-  PrimitiveAreaSample sample{};
-  sample.primID = primID;
   sample.uv = uv;
   sample.point = surface.point;
   sample.normal = surface.normal;

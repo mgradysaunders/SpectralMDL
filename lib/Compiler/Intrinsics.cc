@@ -6,7 +6,7 @@
 #include "llvm/ADT/StringRef.h"
 #include "llvm/ADT/StringSwitch.h"
 
-#include "smdl/Support/StringHelpers.h"
+#include "smdl/Support/Strings.h"
 
 namespace smdl {
 

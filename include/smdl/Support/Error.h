@@ -25,9 +25,11 @@ public:
   void print() const;
 
   /// Print to standard error and exit with `EXIT_FAILURE`.
-  void printAndExit() const;
+  [[noreturn]] void printAndExit() const;
 
-  const char *what() const noexcept final { return message.c_str(); }
+  [[nodiscard]] const char *what() const noexcept final {
+    return message.c_str();
+  }
 
 public:
   /// The message.

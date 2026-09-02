@@ -9,6 +9,7 @@
 #include <vector>
 
 #include "smdl/Compiler.h"
+#include "smdl/Manifold.h"
 #include "smdl/Support/Logger.h"
 #include "smdl/Support/MD5Hash.h"
 
@@ -792,6 +793,11 @@ TEST_CASE("Compiler static material flags") {
       "  volume: material_volume(\n"
       "    scattering_coefficient: color(0.5),\n"
       "    additive: true));\n"
+      "export material mat_volume_surface() = material(\n"
+      "  ior: 1.33,\n"
+      "  surface: material_surface(\n"
+      "    scattering: df::specular_bsdf(mode: df::scatter_reflect_transmit)),\n"
+      "  volume: material_volume(absorption_coefficient: color(0.5)));\n"
       "export material mat_emissive() = material(\n"
       "  surface: material_surface(\n"
       "    scattering: df::diffuse_reflection_bsdf(),\n"
@@ -809,16 +815,19 @@ TEST_CASE("Compiler static material flags") {
   // at -O2 the constant-foldable value bits are too, including the
   // heterogeneous-volume bit (every material here has a constant, or
   // no, volume, so the '.volumeEvaluate' body folds away from the
-  // state and homogeneity is proven) and the displacement bit (every
+  // state and homogeneity is proven), the displacement bit (every
   // material here has a constant, in fact default, displacement, so
-  // the '.displacementProbe' body folds to the zero vector).
+  // the '.displacementProbe' body folds to the zero vector), and the
+  // normal-remap bit (every material here keeps the state normal, so
+  // the '.normalProbe' body folds to the zero vector too).
   constexpr int structuralBits{MATERIAL_HAS_SURFACE | MATERIAL_HAS_BACKFACE |
                                MATERIAL_HAS_SURFACE_EMISSION |
                                MATERIAL_HAS_BACKFACE_EMISSION |
                                MATERIAL_HAS_VOLUME | MATERIAL_HAS_HAIR};
-  constexpr int allBits{
-      structuralBits | MATERIAL_THIN_WALLED | MATERIAL_HAS_CUTOUT |
-      MATERIAL_HAS_HETEROGENEOUS_VOLUME | MATERIAL_HAS_DISPLACEMENT};
+  constexpr int allBits{structuralBits | MATERIAL_THIN_WALLED |
+                        MATERIAL_HAS_CUTOUT |
+                        MATERIAL_HAS_HETEROGENEOUS_VOLUME |
+                        MATERIAL_HAS_DISPLACEMENT | MATERIAL_REMAPS_NORMAL};
   SUBCASE("Structural and constant-foldable bits are known") {
     auto matDefault{get("mat_default")};
     CHECK(matDefault->staticFlagsKnown == allBits);
@@ -844,7 +853,16 @@ TEST_CASE("Compiler static material flags") {
     CHECK(matVolume->hasVolume());
     CHECK(matVolume->hasHomogeneousVolume());
     CHECK(matVolume->isAlwaysOpaque());
+    // Not trivial because it passes shadow rays through, not because it
+    // has a volume: the volume-with-surface material below blocks at
+    // every hit and is trivial despite its interior.
+    CHECK(matVolume->isNullInterface());
     CHECK(!matVolume->isShadowTrivial());
+    auto matVolumeSurface{get("mat_volume_surface")};
+    CHECK(matVolumeSurface->hasVolume());
+    CHECK(matVolumeSurface->isAlwaysOpaque());
+    CHECK(!matVolumeSurface->isNullInterface());
+    CHECK(matVolumeSurface->isShadowTrivial());
     auto matEmissive{get("mat_emissive")};
     CHECK((matEmissive->staticFlags & MATERIAL_HAS_SURFACE_EMISSION) != 0);
     CHECK(matEmissive->isShadowTrivial());
@@ -2245,5 +2263,245 @@ TEST_CASE("Compiler diagnostic wording") {
     CHECK(warned.messages[0].find("<builtin") == std::string::npos);
     CHECK(warned.messages[0].find("<string ::diag>:2:") != std::string::npos);
     smdl::Logger::get().reset();
+  }
+}
+
+TEST_CASE("Compiler color conversions") {
+  auto compileError{[](std::string sourceCode) {
+    smdl::Compiler compiler{};
+    if (auto error{compiler.addCode("::diag", std::move(sourceCode))})
+      return *error;
+    if (auto error{compiler.compile(smdl::OPT_LEVEL_NONE)}) return *error;
+    return smdl::Error("compiled without error");
+  }};
+  SUBCASE("'color' to 'float3' is refused in a pure context") {
+    auto error{compileError(
+        "#smdl\nexec { color c = color(1.0); float3 v = c; #print(v); }\n")};
+    CHECK(error.message.find("cannot convert 'color' to 'float3' in a "
+                             "'@(pure)' context") != std::string::npos);
+    // Naming the internal function the conversion reaches is what this
+    // replaced.
+    CHECK(error.message.find("_colorToRgb") == std::string::npos);
+  }
+  SUBCASE("'float3' to 'color' is refused in a pure context") {
+    auto error{compileError("#smdl\nexec { color c = float3(1.0, 0.5, 0.25); "
+                            "#print(c[0]); }\n")};
+    CHECK(error.message.find("cannot convert 'float3' to 'color' in a "
+                             "'@(pure)' context") != std::string::npos);
+    CHECK(error.message.find("nontrivialRGBToColor") == std::string::npos);
+  }
+  SUBCASE("A compile-time grey needs no wavelengths") {
+    // It folds to a flat spectrum, so it stays legal where the
+    // colorimetric path is not.
+    CHECK(compileError("#smdl\nexec { color c = float3(0.5); #print(c[0]); }\n")
+              .message == "compiled without error");
+  }
+  SUBCASE("The conversion is colorimetric where there is state") {
+    // A flat spectrum is not RGB white, which is the whole point of the
+    // conversion being an integration against the observer.
+    CHECK(compileError("#smdl\nexport material m() = material(\n"
+                       "  geometry: material_geometry(normal: "
+                       "float3(color(1.0))));\n")
+              .message == "compiled without error");
+  }
+}
+
+TEST_CASE("Compiler enableScatterNormal") {
+  // The normal distribution entry points are opt-in, so that a host with no
+  // half vector to constrain never pays to emit or optimize them.
+  auto buildGlossy{[](smdl::Compiler &compiler, bool enable) {
+    compiler.enableScatterNormal = enable;
+    auto error{compiler.addCode(
+        "::glossy", "#smdl\nimport ::df::*;\nexport material m() = material(\n"
+                    "  surface: material_surface(scattering: "
+                    "df::microfacet_ggx_smith_bsdf(\n"
+                    "    roughness_u: 0.4, tint: 0.8)));\n")};
+    REQUIRE(!error);
+    error = compiler.compile(smdl::OPT_LEVEL_NONE);
+    if (error) FAIL(error->message);
+    error = compiler.jitCompile();
+    if (error) FAIL(error->message);
+  }};
+  SUBCASE("Off by default, and the entry points are absent") {
+    CHECK(smdl::Compiler().enableScatterNormal == false);
+    auto compiler{smdl::Compiler()};
+    buildGlossy(compiler, false);
+    auto *material{compiler.findMaterial("m")};
+    REQUIRE(material);
+    // Absent, not merely unresolved: nothing was emitted to resolve.
+    CHECK(material->scatterNormalSample.name.empty());
+    CHECK(!material->scatterNormalSample);
+    CHECK(!material->scatterNormalEvaluate);
+    // Everything else is untouched by the switch.
+    CHECK(bool(material->scatterSample));
+    CHECK(bool(material->scatterEvaluate));
+  }
+  SUBCASE("On, and the entry points resolve") {
+    auto compiler{smdl::Compiler()};
+    buildGlossy(compiler, true);
+    auto *material{compiler.findMaterial("m")};
+    REQUIRE(material);
+    CHECK(bool(material->scatterNormalSample));
+    CHECK(bool(material->scatterNormalEvaluate));
+    CHECK(material->scatterNormalSample.name.find(".scatterNormalSample") !=
+          std::string::npos);
+  }
+  SUBCASE("The wrapper takes exactly one glossy kind") {
+    // The two-domain mixture is not a distribution any single crossing
+    // scatters by, so the wrapper refuses it; the raw entry point still
+    // reports the mixture for a caller that wants it.
+    auto compiler{smdl::Compiler()};
+    buildGlossy(compiler, true);
+    auto *material{compiler.findMaterial("m")};
+    REQUIRE(material);
+    auto allocator{smdl::BumpPtrAllocator()};
+    auto wavelengths{std::vector<float>(size_t(compiler.wavelengthBaseMax))};
+    auto state{smdl::State()};
+    state.allocator = &allocator;
+    state.wavelength_min = 380.0f;
+    state.wavelength_max = 720.0f;
+    state.wavelength_base = wavelengths.data();
+    for (uint32_t i = 0; i < compiler.wavelengthBaseMax; i++) {
+      float fac{float(i) / float(compiler.wavelengthBaseMax - 1)};
+      wavelengths[i] =
+          (1 - fac) * state.wavelength_min + fac * state.wavelength_max;
+    }
+    state.finalizeAndApplyInternalSpaceConventions();
+    auto inst{smdl::JIT::MaterialInstance(state, material)};
+    const auto xi{smdl::float4(0.25f, 0.5f, 0.5f, 0.5f)};
+    auto wm{smdl::float3()};
+    auto alpha{smdl::float2()};
+    float pdf{};
+    CHECK(!inst.scatterNormalSample(xi, false, wm, pdf, alpha,
+                                    smdl::JIT::DF_GLOSSY));
+    CHECK(!inst.scatterNormalSample(xi, false, wm, pdf, alpha,
+                                    smdl::JIT::DF_ALL));
+    CHECK(!inst.scatterNormalEvaluate(false, smdl::float3(0.0f, 0.0f, 1.0f),
+                                      pdf, smdl::JIT::DF_GLOSSY));
+    // And exactly one kind answers: this material is glossy in
+    // reflection only, so that kind draws and the other reports nothing.
+    CHECK(inst.scatterNormalSample(xi, false, wm, pdf, alpha,
+                                   smdl::JIT::DF_GLOSSY_BRDF));
+    CHECK(pdf > 0.0f);
+    CHECK(alpha.x == doctest::Approx(0.16f));
+    CHECK(!inst.scatterNormalSample(xi, false, wm, pdf, alpha,
+                                    smdl::JIT::DF_GLOSSY_BTDF));
+  }
+  SUBCASE("The normal probe and the geometry normal hook") {
+    auto compiler{smdl::Compiler()};
+    compiler.enableScatterNormal = true;
+    auto error{compiler.addCode(
+        "::remap",
+        "#smdl\nimport ::df::*;\nimport ::math::*;\n"
+        "export material plain() = material(\n"
+        "  surface: material_surface(scattering: "
+        "df::microfacet_ggx_smith_bsdf(roughness_u: 0.4, tint: 0.8)));\n"
+        "export material remapped() = material(\n"
+        "  surface: material_surface(scattering: "
+        "df::microfacet_ggx_smith_bsdf(roughness_u: 0.4, tint: 0.8)),\n"
+        "  geometry: material_geometry(normal: "
+        "math::normalize(float3(0.3, 0.0, 1.0))));\n")};
+    REQUIRE(!error);
+    error = compiler.compile(smdl::OPT_LEVEL_O2);
+    if (error) FAIL(error->message);
+    error = compiler.jitCompile();
+    if (error) FAIL(error->message);
+    auto *plain{compiler.findMaterial("plain")};
+    auto *remapped{compiler.findMaterial("remapped")};
+    REQUIRE(plain);
+    REQUIRE(remapped);
+    // The probe folds 'geometry.normal - $state.normal' at O2, so the
+    // flag is known on both sides: provably identity on one, provably
+    // remapped on the other.
+    CHECK(!plain->remapsNormal());
+    CHECK(remapped->remapsNormal());
+    // And the hook reads the field itself, in internal space.
+    auto wavelengths{std::vector<float>(size_t(compiler.wavelengthBaseMax))};
+    auto state{smdl::State()};
+    state.wavelength_min = 380.0f;
+    state.wavelength_max = 720.0f;
+    state.wavelength_base = wavelengths.data();
+    for (uint32_t i = 0; i < compiler.wavelengthBaseMax; i++) {
+      float fac{float(i) / float(compiler.wavelengthBaseMax - 1)};
+      wavelengths[i] =
+          (1 - fac) * state.wavelength_min + fac * state.wavelength_max;
+    }
+    state.finalizeAndApplyInternalSpaceConventions();
+    auto normal{smdl::float3()};
+    REQUIRE(bool(plain->geometryNormalEvaluate));
+    plain->geometryNormalEvaluate(state, normal);
+    CHECK(normal.x == doctest::Approx(0.0f));
+    CHECK(normal.y == doctest::Approx(0.0f));
+    CHECK(normal.z == doctest::Approx(1.0f));
+    remapped->geometryNormalEvaluate(state, normal);
+    const float invLen{1.0f / std::sqrt(1.09f)};
+    CHECK(normal.x == doctest::Approx(0.3f * invLen));
+    CHECK(normal.y == doctest::Approx(0.0f));
+    CHECK(normal.z == doctest::Approx(1.0f * invLen));
+  }
+  SUBCASE("A remap bars a claim only over a df node given its own normal") {
+    auto compiler{smdl::Compiler()};
+    compiler.enableScatterNormal = true;
+    auto error{compiler.addCode(
+        "::claim",
+        "#smdl\nimport ::df::*;\nimport ::math::*;\n"
+        "const auto N = math::normalize(float3(0.3, 0.0, 1.0));\n"
+        "export material inherits() = material(\n"
+        "  surface: material_surface(scattering: df::fresnel_layer(ior: 1.5,\n"
+        "    layer: df::specular_bsdf(mode: df::scatter_reflect),\n"
+        "    base: df::diffuse_reflection_bsdf(tint: 0.8))),\n"
+        "  geometry: material_geometry(normal: N));\n"
+        "export material pinned() = material(\n"
+        "  surface: material_surface(scattering: df::fresnel_layer(ior: 1.5,\n"
+        "    layer: df::specular_bsdf(mode: df::scatter_reflect),\n"
+        "    base: df::diffuse_reflection_bsdf(tint: 0.8),\n"
+        "    normal: $state.normal)),\n"
+        "  geometry: material_geometry(normal: N));\n")};
+    REQUIRE(!error);
+    error = compiler.compile(smdl::OPT_LEVEL_O2);
+    if (error) FAIL(error->message);
+    error = compiler.jitCompile();
+    if (error) FAIL(error->message);
+    auto *inheritsMaterial{compiler.findMaterial("inherits")};
+    auto *pinnedMaterial{compiler.findMaterial("pinned")};
+    REQUIRE(inheritsMaterial);
+    REQUIRE(pinnedMaterial);
+    CHECK(inheritsMaterial->remapsNormal());
+    CHECK(pinnedMaterial->remapsNormal());
+    auto allocator{smdl::BumpPtrAllocator()};
+    auto wavelengths{std::vector<float>(size_t(compiler.wavelengthBaseMax))};
+    auto state{smdl::State()};
+    state.allocator = &allocator;
+    state.wavelength_min = 380.0f;
+    state.wavelength_max = 720.0f;
+    state.wavelength_base = wavelengths.data();
+    for (uint32_t i = 0; i < compiler.wavelengthBaseMax; i++) {
+      float fac{float(i) / float(compiler.wavelengthBaseMax - 1)};
+      wavelengths[i] =
+          (1 - fac) * state.wavelength_min + fac * state.wavelength_max;
+    }
+    state.finalizeAndApplyInternalSpaceConventions();
+    auto inherits{smdl::JIT::MaterialInstance(state, inheritsMaterial)};
+    auto pinned{smdl::JIT::MaterialInstance(state, pinnedMaterial)};
+    // A defaulted layer normal follows the remapped field, so it reports
+    // neither property bit and the walk can solve the whole tree.
+    CHECK((smdl::dfLobesOf(inherits) &
+           (smdl::JIT::DF_SETS_NORMAL | smdl::JIT::DF_CAN_SET_NORMAL)) == 0);
+    CHECK(!smdl::manifoldClaim(inherits, /*marked=*/true).empty());
+    // Spelling out the state normal detaches the layer from the remapped
+    // field even though the two values agree here, which is exactly what
+    // `DF_CAN_SET_NORMAL` exists to report.
+    CHECK((smdl::dfLobesOf(pinned) & smdl::JIT::DF_SETS_NORMAL) == 0);
+    CHECK((smdl::dfLobesOf(pinned) & smdl::JIT::DF_CAN_SET_NORMAL) != 0);
+    CHECK(smdl::manifoldClaim(pinned, /*marked=*/true).empty());
+  }
+  SUBCASE("The remap flag degrades to unproven without optimization") {
+    auto compiler{smdl::Compiler()};
+    buildGlossy(compiler, false); // OPT_LEVEL_NONE inside
+    auto *material{compiler.findMaterial("m")};
+    REQUIRE(material);
+    // Nothing folded, so the identity is unproven and the conservative
+    // reading is that the material may remap.
+    CHECK(material->remapsNormal());
   }
 }

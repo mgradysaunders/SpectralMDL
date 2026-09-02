@@ -86,7 +86,7 @@ struct SampleResult {
   bool success = false;
 
   /// The Dirac test the entry point used to report on its own.
-  bool isDelta = (sampledLobe & df::DF_DELTA) != 0;
+  bool isDirac = (sampledLobe & df::DF_DIRAC) != 0;
 };
 
 SampleResult sample(const bsdf scattering, const float4 xi, float3 wo) {
@@ -142,11 +142,45 @@ unit_test "Microfacet at roughness 0.01" {
   checkBidirectionalConsistencyRel(df::microfacet_ggx_smith_bsdf(roughness_u: 0.02, tint: 1.0, mode: df::scatter_transmit), wo, wt);
 }
 
+unit_test "Directions exactly on the macro normal" {
+  // `wo` or `wi` exactly on `+Z` makes `|alpha w.xy|` exactly zero, so the
+  // Smith Lambda argument `cos(theta) / |alpha w.xy|` is `x/0`. The
+  // approximate reciprocal square root the division lowers to resolves
+  // that to NaN rather than to infinity, which used to poison `f` (but
+  // not the densities, which never formed the ratio) for every direction
+  // pair with a straight-down leg.
+  const auto wz = float3(0, 0, 1);
+  const auto wa = math::normalize(float3(0.3, -0.2, 0.9));
+  const auto wnear = math::normalize(float3(1.0e-5, 0.0, 1.0));
+  for (int i = 0; i < 2; ++i) {
+    const auto scattering = i == 0 ? df::microfacet_ggx_smith_bsdf(roughness_u: 0.3, tint: 1.0)
+                                   : df::microfacet_beckmann_smith_bsdf(roughness_u: 0.3, tint: 1.0);
+    const auto rOut = evaluate(scattering, wz, wa);
+    const auto rIn = evaluate(scattering, wa, wz);
+    #assert(rOut.success & #all(math::isfinite(rOut.f)) & #any(rOut.f > 0.0));
+    #assert(rIn.success & #all(math::isfinite(rIn.f)) & #any(rIn.f > 0.0));
+    // Nothing special happens there: the limit is the neighborhood.
+    #assert(math::average(rOut.f) ~== (1e-3) math::average(evaluate(scattering, wnear, wa).f));
+    #assert(math::average(rIn.f) ~== (1e-3) math::average(evaluate(scattering, wa, wnear).f));
+    const auto s = sample(scattering, float4(0.25, 0.05, 0.9, 0.5), wz);
+    #assert(s.success & !s.isDirac & #all(math::isfinite(s.wi)));
+    #assert(#all(math::isfinite(evaluate(scattering, wz, s.wi).f)));
+  }
+  // The visible-normal draw is rotationally symmetric there rather than
+  // undefined, so it must still spread over the distribution instead of
+  // collapsing onto the macro normal itself.
+  const float2 alpha = float2(0.09);
+  const auto wmBeckmann = df::microfacet::smith_visible_normal_sample(df::microfacet::beckmann(), 0.7, 0.41, alpha, wz);
+  #assert(math::length(wmBeckmann.xy) > 1.0e-3);
+  const auto wmGGX = df::microfacet::ggx_bounded_visible_normal_sample(0.7, 0.41, alpha, wz);
+  #assert(math::length(wmGGX.xy) > 1.0e-3);
+}
+
 unit_test "Low-roughness sample round trip" {
   const auto scattering = df::microfacet_ggx_smith_bsdf(roughness_u: 0.01, tint: 1.0);
   const auto wo = math::normalize(float3(0.1, 0.2, 1.0));
   const auto s = sample(scattering, float4(0.25, 0.05, 0.9, 0.5), wo);
-  #assert(s.success & !s.isDelta);
+  #assert(s.success & !s.isDirac);
   const auto r = evaluate(scattering, wo, s.wi);
   // The reported density of a near-specular sample is genuinely huge;
   // an absolute epsilon in the denominator caps it orders of magnitude
@@ -262,17 +296,17 @@ unit_test "Clamped Fresnel selection keeps densities live at TIR" {
   #assert(math::average(r.f) < 300.0 * r.pdf[0]);
 }
 
-unit_test "Mixer delta selection compensation" {
-  // A delta component selected with chance `c` must divide its folded
+unit_test "Mixer Dirac selection compensation" {
+  // A Dirac component selected with chance `c` must divide its folded
   // weight by `c`, exactly as the layer combinators do; otherwise the
-  // mixture loses delta energy in proportion to the selection chance.
+  // mixture loses Dirac energy in proportion to the selection chance.
   const auto wo = math::normalize(float3(0.2, 0.1, 0.9));
   const auto mix = df::normalized_mix(df::bsdf_component[](
     df::bsdf_component(0.5, df::specular_bsdf(tint: 1.0)),
     df::bsdf_component(0.5, df::diffuse_reflection_bsdf(tint: 1.0)),
   ));
   const auto s = sample(mix, float4(0.1, 0.2, 0.25, 0.7), wo);
-  #assert(s.success & s.isDelta);
+  #assert(s.success & s.isDirac);
   #assert(#all(s.f ~== (1e-5) color(1.0)));
 }
 

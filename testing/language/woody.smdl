@@ -92,7 +92,7 @@ unit_test "Woody golden values" {
   // wavelengths of the spectral state each block guards on. The generator
   // warps parameters through the same endpoint-constrained cubic fits as
   // the module, with the same float32 coefficients (the module replaces the
-  // reference's warp tables; see woody-plan.md), so the tolerance only
+  // reference's warp tables), so the tolerance only
   // admits association differences in the interpolation and the 6-term dot
   // product.
   //

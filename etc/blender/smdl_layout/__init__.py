@@ -67,11 +67,12 @@ class SMDLSlotOptions(bpy.types.PropertyGroup):
 class SMDLAssetOptions(bpy.types.PropertyGroup):
     """Per-object export options, written into the exported layout.
 
-    Subdivision and displacement belong to the asset declaration in the
-    layout grammar, so instances that disagree export as separate
-    declarations. A material override is a per-place fact and exports as
-    one, so heavy scatter still shares one mesh in the renderer, and a list
-    of them spreads over the instances an object emits. A scattered
+    Subdivision, displacement, and the caustic marks belong to the asset
+    declaration in the layout grammar, so instances that disagree export
+    as separate declarations. A material override is a per-place fact and
+    exports as one, so heavy scatter still shares one mesh in the
+    renderer, and a list of them spreads over the instances an object
+    emits. A scattered
     instance reads all of these from its asset's retained source empty
     when one exists (see `scatter.retire_source()`), and from the emitting
     surface otherwise.
@@ -111,6 +112,23 @@ class SMDLAssetOptions(bpy.types.PropertyGroup):
         name="Displace",
         description="Apply the material's geometry.displacement to the "
                     "refined vertices at load time",
+        default=False)
+    caster: bpy.props.BoolProperty(
+        name="Caustic Caster",
+        description="Let the renderer's manifold estimators search this "
+                    "surface for specular and glossy connections to the "
+                    "lights, rather than leaving that transport to the "
+                    "path tracer. Scene judgment rather than a material "
+                    "fact: the same chrome is worth it on a mirror wall "
+                    "and is noise on a thousand screws",
+        default=False)
+    caustic: bpy.props.BoolProperty(
+        name="Caustic Emitter",
+        description="Search the caustic casters for connections to this "
+                    "asset's emission. Meaningful only on an emissive "
+                    "asset, and only once something in the scene carries "
+                    "the mark: with none anywhere every light and the sky "
+                    "is searched, and with any, only the marked ones are",
         default=False)
     material: bpy.props.StringProperty(
         name="Material Override",
@@ -164,6 +182,26 @@ class SMDLGroomOptions(bpy.types.PropertyGroup):
                     "first material slot's name, and failing that the "
                     "object's own name",
         default="")
+
+
+class SMDLLightOptions(bpy.types.PropertyGroup):
+    """Per-lamp export options, written into the exported layout's `light`
+    declaration.
+
+    On the lamp data rather than on the object, since every other fact the
+    export takes from a lamp (power, color, temperature, cone angle, IES
+    path) is read from there too, so lamps sharing a data-block agree about
+    this the way they already agree about the rest.
+    """
+
+    caustic: bpy.props.BoolProperty(
+        name="Caustic Emitter",
+        description="Search the caustic casters for connections to this "
+                    "lamp. It restricts anything only once something in "
+                    "the scene carries the mark: with none anywhere every "
+                    "light and the sky is searched, and with any, only the "
+                    "marked ones are",
+        default=False)
 
 
 class SMDLRenderSettings(bpy.types.PropertyGroup):
@@ -286,7 +324,7 @@ class SMDLRenderSettings(bpy.types.PropertyGroup):
 
 
 CLASSES = ((SMDLSlotOptions, SMDLAssetOptions, SMDLGroomOptions,
-            SMDLRenderSettings) +
+            SMDLLightOptions, SMDLRenderSettings) +
            importer.CLASSES +
            material.CLASSES + preview.CLASSES + scatter.CLASSES + ui.CLASSES)
 
@@ -336,6 +374,14 @@ def register():
         name="Preview Scale", description="Percentage of the render "
         "resolution to preview at", default=50, min=1, max=100,
         subtype="PERCENTAGE")
+    bpy.types.Scene.smdl_preview_threads = bpy.props.IntProperty(
+        name="Threads",
+        description="Threads the preview render may use. Zero, the "
+                    "default, uses every hardware thread, which is fastest "
+                    "but leaves Blender competing with the renderer for the "
+                    "machine; a smaller number keeps cores free to keep "
+                    "working in",
+        default=0, min=0, soft_max=64)
     # Runtime only: what the render is doing belongs to the session, not
     # to the .blend.
     bpy.types.WindowManager.smdl_preview_status = bpy.props.StringProperty(
@@ -354,6 +400,8 @@ def register():
         type=SMDLAssetOptions)
     bpy.types.Object.smdl_groom_options = bpy.props.PointerProperty(
         type=SMDLGroomOptions)
+    bpy.types.Light.smdl_light_options = bpy.props.PointerProperty(
+        type=SMDLLightOptions)
     bpy.types.TOPBAR_MT_file_import.append(ui.menu_import)
     bpy.types.TOPBAR_MT_file_export.append(ui.menu_export)
 
@@ -361,6 +409,7 @@ def register():
 def unregister():
     bpy.types.TOPBAR_MT_file_export.remove(ui.menu_export)
     bpy.types.TOPBAR_MT_file_import.remove(ui.menu_import)
+    del bpy.types.Light.smdl_light_options
     del bpy.types.Object.smdl_groom_options
     del bpy.types.Object.smdl_asset_options
     del bpy.types.Scene.smdl_material_text
@@ -368,6 +417,7 @@ def unregister():
     for cls in reversed(CLASSES):
         bpy.utils.unregister_class(cls)
     del bpy.types.WindowManager.smdl_preview_status
+    del bpy.types.Scene.smdl_preview_threads
     del bpy.types.Scene.smdl_preview_scale
     del bpy.types.Scene.smdl_preview_every
     del bpy.types.Scene.smdl_preview_spp

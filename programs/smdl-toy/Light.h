@@ -7,10 +7,10 @@
 #include "Scene.h"
 
 #include "smdl/Compiler.h"
+#include "smdl/RenderUtil/MonteCarlo.h"
+#include "smdl/RenderUtil/SunSky.h"
 #include "smdl/Resource/Image.h"
 #include "smdl/Resource/LightProfile.h"
-#include "smdl/Support/MonteCarlo.h"
-#include "smdl/Support/SunSky.h"
 
 class EnvLight final {
 public:
@@ -36,6 +36,18 @@ public:
   /// environment against area lights in light selection.
   [[nodiscard]] float averageRadiance() const noexcept {
     return scaleFactor * meanRadiance;
+  }
+
+  /// The procedural sun disk, for gating manifold work to the sun cone:
+  /// fills the unit direction toward the disk center and the cosine of
+  /// its angular radius and returns true when constructed as the
+  /// procedural sun-sky with the sun enabled. An image environment has
+  /// no analytic sun and returns false.
+  [[nodiscard]] bool sunCone(float3 &direction, float &cosRadius) const {
+    if (!sunSky || !sunSky->hasSun()) return false;
+    direction = sunSky->sunDirection();
+    cosRadius = sunSky->cosSunAngularRadius();
+    return true;
   }
 
 private:
@@ -85,6 +97,11 @@ public:
   /// Lights a primitive rather than a mesh?
   bool isPrimitive{};
 
+  /// Is a caustic target, from the instance's layout mark, normalized
+  /// by the `LightSampler` constructor so that "no marks anywhere"
+  /// reads as every light marked.
+  bool caustic{};
+
   /// The object-space surface area (primitive lights only).
   float objectArea{};
 
@@ -96,9 +113,9 @@ public:
 };
 
 /// A punctual light placed by the layout: a point, a spot, or an IES
-/// profile. Delta lights never appear on a path through BSDF sampling,
+/// profile. Dirac lights never appear on a path through BSDF sampling,
 /// so they contribute through `LightSampler::sample()` alone, with a
-/// unit MIS weight (see `LightSample::isDelta`).
+/// unit MIS weight (see `LightSample::isDirac`).
 class PunctualLight final {
 public:
   /// Bake the lowered light at the render wavelengths: the spectral
@@ -134,6 +151,10 @@ public:
   /// weight.
   [[nodiscard]] float power() const noexcept { return mPower; }
 
+  /// Is a caustic target; see `AreaLight::caustic`. Normalized by the
+  /// `LightSampler` constructor, hence settable.
+  bool caustic{};
+
 private:
   LayoutLightDecl::Kind mKind{LayoutLightDecl::Kind::POINT};
 
@@ -149,7 +170,7 @@ private:
   /// The per-band spectral intensity in W/(sr nm): the full intensity
   /// of a point, the on-axis peak of a spot, and the per-unit
   /// multiplier on the profile's broadband W/sr.
-  smdl::ColorVector mIntensity{};
+  smdl::SpectralColor mIntensity{};
 
   /// SPOT: the cosine of the outer (cutoff) and inner (full intensity)
   /// half angles.
@@ -163,6 +184,50 @@ private:
   float mPower{};
 };
 
+/// The result of `LightSampler::sample()`.
+struct LightSample final {
+  /// The direction from the receiving point toward the light.
+  float3 wi{};
+
+  /// The point to test visibility against.
+  float3 target{};
+
+  /// The full density of this sample in solid angle at the receiving
+  /// point: the selection PMF times the per-light directional PDF.
+  /// For a Dirac light the directional density is a Dirac delta and
+  /// `pdf` is the selection PMF alone, with the delta folded into `Li`.
+  float pdf{};
+
+  /// The unoccluded incident radiance along the straight segment; zero
+  /// for a sample kept by `keepDark`.
+  Color Li{};
+
+  /// Sampled a Dirac (punctual) light? BSDF sampling can never hit
+  /// one, so the MIS weight of this sample must be 1.
+  bool isDirac{};
+
+  /// Sampled the environment? The target is then a far point in the
+  /// `wi` direction rather than a real position.
+  bool isInfinite{};
+
+  /// The index in the punctual light array when `isDirac`, else
+  /// `INVALID_INDEX`: the identity `reevaluatePunctualLi()` needs.
+  uint32_t punctualIndex{INVALID_INDEX};
+
+  /// The sampled point on an area light, empty for the other two
+  /// kinds: what `reevaluateAreaLi()` rebuilds the emitting material
+  /// from.
+  Hit hit{};
+
+  /// Is the sampled light a caustic target, one the manifold
+  /// reflective gather searches the casters for? Always true while no
+  /// light in the scene carries the layout's `caustic` mark; with any
+  /// mark, only the marked lights are targets, the arrivals at
+  /// everything else keep their ordinary weights, and the environment
+  /// is not a target at all.
+  bool caustic{true};
+};
+
 /// The unified light-selection path over every light in the scene: each
 /// emissive mesh instance, plus the layout's punctual lights, plus the
 /// environment, weighted by power.
@@ -172,41 +237,6 @@ public:
                const EnvLight *envLight,
                const std::vector<LayoutLight> &layoutLights,
                const Color &wavelengths);
-
-  /// The result of `sample()`.
-  struct LightSample final {
-    /// The direction from the receiving point toward the light.
-    float3 wi{};
-
-    /// The point to test visibility against.
-    float3 target{};
-
-    /// The full density of this sample in solid angle at the receiving
-    /// point: the selection PMF times the per-light directional PDF.
-    /// For a delta light the directional density is a Dirac and `pdf`
-    /// is the selection PMF alone, with the delta folded into `Li`.
-    float pdf{};
-
-    /// The unoccluded incident radiance.
-    Color Li{};
-
-    /// Sampled a delta (punctual) light? BSDF sampling can never hit
-    /// one, so the MIS weight of this sample must be 1.
-    bool isDelta{};
-
-    /// Sampled the environment? The target is then a far point in the
-    /// `wi` direction rather than a real position.
-    bool isInfinite{};
-
-    /// The index in the punctual light array when `isDelta`, else
-    /// `INVALID_INDEX`: the identity `reevaluatePunctualLi()` needs.
-    uint32_t punctualIndex{INVALID_INDEX};
-
-    /// The sampled point on an area light, empty for the other two
-    /// kinds: what `reevaluateAreaLi()` rebuilds the emitting material
-    /// from.
-    Hit hit{};
-  };
 
   /// Are there no lights to sample?
   [[nodiscard]] bool empty() const noexcept {
@@ -224,18 +254,29 @@ public:
                : 0.0f;
   }
 
-  /// Sample a direction toward one light from `point`. The `state` is
-  /// copied to construct the material instance at the sampled point, so it
-  /// must carry the allocator and wavelengths. Returns `false` on a zero
-  /// probability or zero radiance sample.
-  [[nodiscard]] bool sample(smdl::State state, Sampler &sampler,
-                            const float3 &point,
-                            LightSample &lightSample) const;
+  /// Sample a direction toward one light from `point`. The `state` must
+  /// carry the allocator and wavelengths; an area sample copies it to
+  /// construct the material instance at the sampled point, and the other
+  /// kinds only read it, so the copy is confined to the branch that
+  /// mutates. Returns `false` on a zero probability sample, and on a
+  /// zero radiance one unless `keepDark`.
+  ///
+  /// `keepDark` keeps an area or punctual sample that radiates nothing
+  /// toward `point`, with `Li` zero and the measure untouched. A manifold
+  /// connection arrives at the light from its last crossing, not from
+  /// `point`, and re-evaluates the radiance from there: a point on a lamp
+  /// that faces the mirror but not the receiver, or a spot cone aimed at
+  /// the glass, is a legitimate target for it, and refusing such samples
+  /// loses their transport outright, since the path tracer is barred from
+  /// the same paths on the strength of the gather producing them.
+  [[nodiscard]] bool sample(const smdl::State &state, Sampler &sampler,
+                            const float3 &point, LightSample &lightSample,
+                            bool keepDark = false) const;
 
   /// Re-evaluate a punctual sample's incident radiance with the
   /// directional factor toward `incidencePoint`, see the two-point
   /// `PunctualLight::Li()` overload. The sample must be punctual
-  /// (`isDelta` set).
+  /// (`isDirac` set).
   [[nodiscard]] Color reevaluatePunctualLi(const LightSample &lightSample,
                                            const float3 &point,
                                            const float3 &incidencePoint,
@@ -243,7 +284,7 @@ public:
 
   /// Re-evaluate an area sample's emitted radiance in the direction of
   /// `incidencePoint` instead of toward the receiver it was sampled
-  /// from. The sample must be an area sample (neither `isDelta` nor
+  /// from. The sample must be an area sample (neither `isDirac` nor
   /// `isInfinite`).
   ///
   /// What a manifold connection needs, because the segment that actually
@@ -256,7 +297,7 @@ public:
   /// hits through the chain, so the two halves of the manifold estimator
   /// agree on what the transport carries, including on its being zero.
   [[nodiscard]] Color reevaluateAreaLi(const LightSample &lightSample,
-                                       smdl::State state,
+                                       const smdl::State &state,
                                        const float3 &incidencePoint) const;
 
   /// The emitted radiance of an already-constructed material instance in
@@ -266,6 +307,21 @@ public:
   [[nodiscard]] bool emittedRadiance(const smdl::JIT::MaterialInstance &mat,
                                      uint32_t instIndex, const float3 &wi,
                                      Color &Le) const;
+
+  /// Is an arrival at an emitter on the given mesh instance a caustic
+  /// target's, so the claimed share of the arriving throughput is the
+  /// reflective gather's to drop? An unregistered emitter is nobody's
+  /// target: light selection never aims at it, so no gather claims its
+  /// transport and its arrivals keep their ordinary weights.
+  [[nodiscard]] bool causticLight(uint32_t instIndex) const noexcept {
+    const auto lightIndex{instIndex < instanceToLight.size()
+                              ? instanceToLight[instIndex]
+                              : INVALID_INDEX};
+    return lightIndex != INVALID_INDEX && areaLights[lightIndex].caustic;
+  }
+
+  /// Is an environment escape a caustic target's; see `causticLight()`.
+  [[nodiscard]] bool causticEnv() const noexcept { return mEnvCaustic; }
 
   /// The solid-angle density of `sample()` connecting `point` to
   /// `lightPoint` on the given mesh instance, for MIS when a BSDF sample
@@ -295,4 +351,8 @@ private:
   /// `punctualLights`, with one extra entry at the end for the
   /// environment if present.
   smdl::Distribution1D lightDistr{};
+
+  /// Is the environment a caustic target: true exactly while no light
+  /// carries a mark, since the environment cannot be marked.
+  bool mEnvCaustic{true};
 };

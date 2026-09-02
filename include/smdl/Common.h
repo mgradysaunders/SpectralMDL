@@ -25,7 +25,7 @@
 #include "smdl/Support/Macros.h"
 #include "smdl/Support/RNG.h"
 #include "smdl/Support/Span.h"
-#include "smdl/Support/StringHelpers.h"
+#include "smdl/Support/Strings.h"
 #include "smdl/Support/VectorMath.h"
 
 namespace llvm {
@@ -65,12 +65,22 @@ namespace smdl {
 /// \{
 /// \}
 
-/// \defgroup scene Scene
+/// \defgroup resource Resources
 ///
 /// The resource and runtime types a renderer hands to, or receives from,
 /// compiled MDL materials: images and textures, spectra, measured BSDFs and
-/// light profiles, scene data lookups, file resolution, and the shading
-/// `State` that material functions read from.
+/// light profiles, scene data lookups, and the shading `State` that
+/// material functions read from.
+///
+/// \{
+/// \}
+
+/// \defgroup manifold Manifold
+///
+/// The renderer-agnostic core of manifold next-event estimation and
+/// specular manifold sampling: the Newton solver over renderer-supplied
+/// surfaces, the connection measures, the reciprocal trial loop, and the
+/// eligibility questions answerable from `JIT` material instances.
 ///
 /// \{
 /// \}
@@ -87,12 +97,22 @@ namespace smdl {
 /// \{
 /// \}
 
+/// \defgroup renderutil Render Utilities
+///
+/// Algorithmic rendering utilities layered on the support types and usable
+/// by any renderer: color and spectral containers, Monte Carlo sampling,
+/// illuminants and metal IORs, PBR map baking, the sun-sky model, and
+/// spectral render images.
+///
+/// \{
+/// \}
+
 /// \defgroup support Support
 ///
-/// Standalone utility types and functions used throughout the library and
-/// usable independently of it: vector and matrix math, color and spectral
-/// containers, Monte Carlo sampling, string and filesystem helpers,
-/// logging, hashing, and allocation.
+/// Standalone mechanical utility types and functions used throughout the
+/// library and usable independently of it: vector and matrix math, string
+/// and filesystem helpers, logging, hashing, random number generation, and
+/// allocation.
 ///
 /// \{
 /// \}
@@ -103,10 +123,18 @@ namespace smdl {
 /// The SMDL build information.
 class SMDL_EXPORT BuildInfo final {
 public:
+  /// A third-party dependency: its name and the version linked, or "off"
+  /// for one the build configured out.
+  struct ThirdParty final {
+    std::string name{};
+    std::string version{};
+  };
+
   /// Get.
   [[nodiscard]] static BuildInfo get() noexcept;
 
-  /// Summarize as a human-readable multi-line string.
+  /// Summarize as a human-readable multi-line string, with `thirdparty`
+  /// as one comma-separated list wrapped to 80 columns.
   [[nodiscard]] std::string toString() const;
 
 public:
@@ -136,6 +164,11 @@ public:
   /// Was the library built with RTTI?
   bool hasRTTI{};
 
+  /// Does `parallelFor()` schedule dynamically? False is the fixed split
+  /// of the range into contiguous tasks. This changes only how fast a
+  /// parallel loop runs, never what it computes.
+  bool hasDynamicScheduling{};
+
   /// The version of the vendored miniz. Never null.
   const char *withMiniz{};
 
@@ -157,6 +190,11 @@ public:
   /// The pinned OpenVDB release tag providing NanoVDB, or null if built
   /// without NanoVDB.
   const char *withNanoVDB{};
+
+  /// The dependencies above in the order `toString()` lists them. A
+  /// program linking dependencies of its own appends them before
+  /// printing, so that the list reads as one.
+  std::vector<ThirdParty> thirdparty{};
 };
 
 /// The LLVM native target.
@@ -266,7 +304,7 @@ public:
 
 /// \}
 
-/// \addtogroup scene
+/// \addtogroup resource
 /// \{
 
 /// The transport mode.
@@ -289,7 +327,8 @@ public:
   ///    space and object space.
   /// 4. Transform every member variable defined in object space to
   ///    geometric tangent space.
-  /// 5. Orthonormalize the object-to-world matrix.
+  /// 5. Orthonormalize the object-to-world matrix, unless it already is,
+  ///    in which case it is left exactly as given.
   ///
   /// Afterward,
   /// - `position` is at the origin `float3(0,0,0)`
@@ -373,29 +412,36 @@ public:
   float3 geometry_normal{0, 0, 1};
 
   /// The max supported number of texture spaces.
-  static constexpr size_t TEXTURE_SPACE_MAX = 4;
+  ///
+  /// \note
+  /// Half of `State` scales with this, so it is set to what materials
+  /// actually index: a base space and an optional second one, which is as
+  /// many as any of the geometry paths fill. A constant index past it is a
+  /// compile error in SMDL; `texture_space_max` gates the rest, and
+  /// `finalizeAndApplyInternalSpaceConventions()` clamps it.
+  static constexpr size_t TEXTURE_SPACE_MAX = 2;
 
-  /// The number of texture spaces.
+  /// The number of texture spaces, clamped to `TEXTURE_SPACE_MAX`.
   int texture_space_max{1};
 
   /// The texture coordinates.
   float3 texture_coordinate[TEXTURE_SPACE_MAX]{};
 
   /// The texture tangent U vector(s) in object space.
-  float3 texture_tangent_u[TEXTURE_SPACE_MAX] = {
-      float3{1, 0, 0}, float3{1, 0, 0}, float3{1, 0, 0}, float3{1, 0, 0}};
+  float3 texture_tangent_u[TEXTURE_SPACE_MAX] = {float3{1, 0, 0},
+                                                 float3{1, 0, 0}};
 
   /// The texture tangent V vector(s) in object space.
-  float3 texture_tangent_v[TEXTURE_SPACE_MAX] = {
-      float3{0, 1, 0}, float3{0, 1, 0}, float3{0, 1, 0}, float3{0, 1, 0}};
+  float3 texture_tangent_v[TEXTURE_SPACE_MAX] = {float3{0, 1, 0},
+                                                 float3{0, 1, 0}};
 
   /// The geometry tangent U vector(s) in object space.
-  float3 geometry_tangent_u[TEXTURE_SPACE_MAX] = {
-      float3{1, 0, 0}, float3{1, 0, 0}, float3{1, 0, 0}, float3{1, 0, 0}};
+  float3 geometry_tangent_u[TEXTURE_SPACE_MAX] = {float3{1, 0, 0},
+                                                  float3{1, 0, 0}};
 
   /// The geometry tangent V vector(s) in object space.
-  float3 geometry_tangent_v[TEXTURE_SPACE_MAX] = {
-      float3{0, 1, 0}, float3{0, 1, 0}, float3{0, 1, 0}, float3{0, 1, 0}};
+  float3 geometry_tangent_v[TEXTURE_SPACE_MAX] = {float3{0, 1, 0},
+                                                  float3{0, 1, 0}};
 
   /// The tangent-to-object matrix.
   ///
@@ -447,7 +493,7 @@ public:
   int scattering_order{};
 
   /// The accumulated distance in scene units traveled by the path to reach
-  /// this shading point. Zero conventionally means "not provided" and implies 
+  /// this shading point. Zero conventionally means "not provided" and implies
   /// highest fidelity.
   ///
   /// \note This is non-standard!
@@ -469,7 +515,7 @@ public:
   /// The UV texture density of each texture space: UV area per world-space
   /// area of the underlying geometry, so `cone_width * sqrt(texture_density)`
   /// is a UV-space filter width. Zero means "unknown", i.e., no filtering.
-  /// Renderers must guard the defining division against degenerate geometry: 
+  /// Renderers must guard the defining division against degenerate geometry:
   /// a degenerate triangle must produce 0, never infinity.
   ///
   /// \note This is non-standard!

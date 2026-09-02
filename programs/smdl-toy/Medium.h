@@ -1,5 +1,6 @@
 #pragma once
 
+#include <optional>
 #include <vector>
 
 #include "Scene.h"
@@ -116,15 +117,42 @@ private:
 /// here stay in scene units.
 class Medium final {
 public:
-  /// Resolve the medium for a segment leaving `org` toward the unit
-  /// direction `dir`, both in world space. Cheap for the vacuum and
-  /// homogeneous cases; the heterogeneous case builds the partial
-  /// query state and transforms the segment into the rigid frame.
-  explicit Medium(const MediumStack *stack, const Color &wavelengths,
-                  const float3 &org, const float3 &dir) noexcept;
+  /// Construct with nothing resolved; `reset()` targets the view at a
+  /// segment.
+  Medium() = default;
+
+  /// Target the segment leaving `org` toward the unit direction `dir`,
+  /// both in world space, inside the media on `stack`.
+  ///
+  /// Resolving the stack is the expensive half: the coefficient
+  /// spectra, the majorants, the query state and the density-hint
+  /// mapping all follow from the stack alone, so it is skipped
+  /// whenever the stack and time are the ones already resolved, and
+  /// only the segment is reprojected into the rigid frame, which a
+  /// homogeneous medium does not even need. Reusing one view across
+  /// the segments of a path and the shadow rays they spawn is what
+  /// keeps a walk that scatters repeatedly inside one medium from
+  /// resolving it at every bounce.
+  ///
+  /// The resolution is keyed on the address of the stack, so a view
+  /// must not be reused past the lifetime of the stacks it resolved,
+  /// which is one path: the allocator that owns them is reset between
+  /// samples.
+  void reset(const MediumStack *stack, const Color &wavelengths, float time,
+             const float3 &org, const float3 &dir) noexcept;
 
   /// Is there a participating medium at all?
   [[nodiscard]] bool hasMedium() const noexcept { return mHasMedium; }
+
+  /// Does `attenuate()` consume sampler draws? True exactly for the
+  /// heterogeneous tracking path, which seeds its generator from two
+  /// draws; the count is fixed and span-independent, which is what lets
+  /// a caller that discards the transmittance of a blocked segment
+  /// consume the same two draws instead of running the tracking, keeping
+  /// the deterministic sample sequence unchanged.
+  [[nodiscard]] bool attenuationDraws() const noexcept {
+    return mHasMedium && mHeterogeneous && mMajorant > 0.0f;
+  }
 
   /// Sample a free-flight scattering distance over `[0, tEnd)` in scene
   /// units. Returns true on a real scattering event, setting `t` and
@@ -159,6 +187,17 @@ public:
   }
 
 private:
+  /// Resolve the active media on `stack` into the members that depend
+  /// on the stack alone, everything `reset()` skips on a repeat.
+  void resolve(const MediumStack *stack, const Color &wavelengths,
+               float time) noexcept;
+
+  /// Project the segment into the rigid frame of every heterogeneous
+  /// medium, and into brick space where a density hint drives the
+  /// majorant spans. Nothing to do for a homogeneous medium, whose
+  /// coefficients do not vary along the segment.
+  void setSegment(const float3 &org, const float3 &dir) noexcept;
+
   /// One component of an additive overlap, mirroring the single-medium
   /// members below; populated only when the segment is inside two or
   /// more overlapping media.
@@ -178,22 +217,26 @@ private:
     /// spans, see `mDensityGrid`.
     bool scaledByGrid{};
 
+    /// The instance whose rigid frame this component's queries evaluate
+    /// in, see `Medium::mMeshInstance`.
+    const MeshInstance *meshInstance{};
+
     /// The coefficient snapshots captured by the instance, in inverse
     /// scene units, see the single-medium members below.
-    smdl::ColorVector sigmaA{};
+    smdl::SpectralColor sigmaA{};
 
     /// See `sigmaA`.
-    smdl::ColorVector sigmaS{};
+    smdl::SpectralColor sigmaS{};
 
     /// See `sigmaA`.
-    smdl::ColorVector emission{};
+    smdl::SpectralColor emission{};
 
     /// The declared majorants in inverse scene units, present only on
     /// heterogeneous components.
-    smdl::ColorVector maxSigmaA{};
+    smdl::SpectralColor maxSigmaA{};
 
     /// See `maxSigmaA`.
-    smdl::ColorVector maxSigmaS{};
+    smdl::SpectralColor maxSigmaS{};
 
     /// The segment in the rigid frame of this component's instance.
     float3 orgR{};
@@ -208,7 +251,7 @@ private:
     /// The clamped scattering coefficient at the most recent
     /// `evaluateCoefficients` query, which is the collision point when
     /// a real collision picks the scattering component.
-    mutable smdl::ColorVector lastSigmaS{};
+    mutable smdl::SpectralColor lastSigmaS{};
   };
 
   /// Query the volume coefficients at distance `t` along the segment,
@@ -233,7 +276,7 @@ private:
   /// The scattering coefficient of one component at the most recent
   /// query: the per-collision clamp for a heterogeneous component, the
   /// snapshot otherwise.
-  [[nodiscard]] static const smdl::ColorVector &
+  [[nodiscard]] static const smdl::SpectralColor &
   componentSigmaS(const Component &component) noexcept {
     return component.heterogeneous ? component.lastSigmaS : component.sigmaS;
   }
@@ -252,16 +295,16 @@ private:
   /// or the surface-hit snapshot that the heterogeneous path ignores,
   /// in inverse scene units.
   ///
-  /// The coefficient members are plain `ColorVector`s that stay
-  /// empty until a medium sizes them, so the ubiquitous
-  /// vacuum-segment construction costs nothing; every read is
-  /// guarded by `mHasMedium`/`mHeterogeneous`, under which the
-  /// constructor sized them.
-  smdl::ColorVector mSigmaA{};
+  /// The coefficient members are plain `SpectralColor`s that stay
+  /// empty until a medium sizes them, so a view that never resolves
+  /// one costs nothing; every read is guarded by
+  /// `mHasMedium`/`mHeterogeneous`, under which `resolve()` sized
+  /// them.
+  smdl::SpectralColor mSigmaA{};
 
   /// The scattering coefficient captured by the instance, see
   /// `mSigmaA`.
-  smdl::ColorVector mSigmaS{};
+  smdl::SpectralColor mSigmaS{};
 
   /// Does the medium emit at all? A pure emitter with no coefficients
   /// still counts as a medium.
@@ -269,15 +312,15 @@ private:
 
   /// The emission coefficient captured by the instance, in radiance
   /// per scene unit, see `mSigmaA` for the heterogeneous caveat.
-  smdl::ColorVector mEmission{};
+  smdl::SpectralColor mEmission{};
 
   /// The declared majorants in inverse scene units, present only on
   /// the heterogeneous path. With overlap these are per-bin sums, a
   /// homogeneous component contributing its exact spectrum.
-  smdl::ColorVector mMaxSigmaA{};
+  smdl::SpectralColor mMaxSigmaA{};
 
   /// See `mMaxSigmaA`.
-  smdl::ColorVector mMaxSigmaS{};
+  smdl::SpectralColor mMaxSigmaS{};
 
   /// The scalar tracking majorant: the maximum over bins of the summed
   /// extinction majorant, in inverse scene units.
@@ -300,7 +343,7 @@ private:
   /// component's alone with overlap (the other components' extinction
   /// is not bounded below by the grid). Sized only on the
   /// heterogeneous path.
-  smdl::ColorVector mGridMaxSigma{};
+  smdl::SpectralColor mGridMaxSigma{};
 
   /// The segment origin in the rigid frame of the medium's instance.
   float3 mOrgR{};
@@ -331,8 +374,11 @@ private:
   /// The partial state for `volumeEvaluate` queries: render-wide
   /// fields plus the rigid-frame transform; `position` is set per
   /// query. Mutable because queries write the position into it while
-  /// leaving the medium logically unchanged.
-  mutable smdl::State mState{};
+  /// leaving the medium logically unchanged. Present only on the
+  /// heterogeneous path, which is the only one that queries: a `State`
+  /// is some 700 bytes of initialization, too much to hand a view that
+  /// never asks a material anything.
+  mutable std::optional<smdl::State> mState{};
 
   /// The `State::meters_per_scene_unit` conversion the coefficient
   /// clamps apply, hoisted so the per-component states need not be
@@ -347,4 +393,35 @@ private:
   /// See `scatterInstance()`. Mutable because a real collision picks
   /// the component during the const sampling call.
   mutable const smdl::JIT::MaterialInstance *mScatterInstance{};
+
+  /// The stack the resolved members above describe and the time they
+  /// were resolved at, which `reset()` compares against to decide
+  /// whether it can keep them, plus whether anything has been resolved
+  /// at all: resolving a null stack, or one carrying no medium, is a
+  /// resolution like any other. This and the members below are what
+  /// `resolve()` needs and the sampling loops never read.
+  const MediumStack *mStack{};
+
+  /// See `mStack`.
+  float mTime{};
+
+  /// See `mStack`.
+  bool mResolved{};
+
+  /// The instance whose rigid frame the queries evaluate in, which
+  /// `setSegment()` projects the segment into. Null for a medium with
+  /// no geometry, which queries in world space directly.
+  const MeshInstance *mMeshInstance{};
+
+  /// With the hint, the affine map from the rigid frame into the grid's
+  /// brick space, per axis: `(x - mBrickBoundMin) * mBrickScale`.
+  float3 mBrickBoundMin{};
+
+  /// See `mBrickBoundMin`.
+  float3 mBrickScale{};
+
+  /// With the hint, the index in `mComponents` of the component whose
+  /// grid drives the majorant spans, or -1 for a single medium, whose
+  /// own segment is the one that maps.
+  int mGridComponent{-1};
 };

@@ -305,11 +305,20 @@ Value ArithmeticType::invoke(Emitter &emitter, const ArgumentList &args,
         return *loaded;
       // If constructing from color and this is a 3-dimensional vector,
       // delegate to the `_colorToRgb` function in the `api` module.
-      if (value.type == context.getColorType() && dim == 3)
+      if (value.type == context.getColorType() && dim == 3) {
+        // That function integrates the spectrum against the CIE observer,
+        // so it needs the wavelengths in '$state'. Say so here: letting the
+        // call fail names an internal function the user never wrote.
+        if (!emitter.state)
+          srcLoc.throwError("cannot convert 'color' to ", Quoted(displayName),
+                            " in a '@(pure)' context; "
+                            "the conversion is colorimetric and needs the "
+                            "wavelengths in '$state'");
         return invoke(
             emitter,
             emitter.emitCall(context.getKeyword("_colorToRgb"), value, srcLoc),
             srcLoc);
+      }
     }
     // From scalars
     auto canConstructFromScalars{[&] {
@@ -807,8 +816,23 @@ Value ColorType::invoke(Emitter &emitter, const ArgumentList &args,
     if (auto loaded{tryConstructFromPointer(emitter, this,
                                             context.getFloatType(), value)})
       return *loaded;
-    if (value.type == context.getFloatType(Extent(3)))
-      return emitter.emitCall(context.getKeyword("_rgbToColor"), value, srcLoc);
+    if (value.type == context.getFloatType(Extent(3))) {
+      try {
+        return emitter.emitCall(context.getKeyword("_rgbToColor"), value,
+                                srcLoc);
+      } catch (const Error &error) {
+        // A grey RGB folds to a flat spectrum and needs nothing, so this
+        // cannot be rejected up front. Any other value goes through the
+        // colorimetric path, which needs '$state'.
+        if (!emitter.state)
+          srcLoc.throwError("cannot convert 'float3' to 'color' in a "
+                            "'@(pure)' context; the conversion is "
+                            "colorimetric and needs the wavelengths in "
+                            "'$state', unless the value is a compile-time "
+                            "grey");
+        throw;
+      }
+    }
     if (value.type == context.getSpectralCurveType())
       return emitter.emitCall(context.getKeyword("_spectralCurveToColor"),
                               value, srcLoc);
@@ -1669,6 +1693,7 @@ void FunctionType::initializeMaterialFunctions(Emitter &emitter) {
     jitFunc.name = func->getName().str();
   }};
   auto floatType{context.getFloatType()};
+  auto float2Type{context.getFloatType(2)};
   auto float3Type{context.getFloatType(3)};
   auto float4Type{context.getFloatType(4)};
   auto intType{context.getIntType()};
@@ -1690,6 +1715,26 @@ void FunctionType::initializeMaterialFunctions(Emitter &emitter) {
                  {"f", floatType, colorSize},
                  {"sampledLobe", intType},
                  {"lobeChance", floatType}});
+  // The normal distribution entry points are opt-in: a host that never
+  // constrains a half vector should not pay to emit and optimize two more
+  // whole-tree descents per material. See 'Compiler::enableScatterNormal',
+  // and the matching skip in 'Compiler::jitCompile()'.
+  if (compiler.enableScatterNormal) {
+    makeDfWrapper(jitMaterial.scatterNormalSample, "scatterNormalSample",
+                  intType,
+                  {{"xi", float4Type},
+                   {"backface", intType, 1, /*byValue=*/true},
+                   {"lobeMask", intType, 1, /*byValue=*/true},
+                   {"wm", float3Type},
+                   {"pdf", floatType},
+                   {"alpha", float2Type}});
+    makeDfWrapper(jitMaterial.scatterNormalEvaluate, "scatterNormalEvaluate",
+                  intType,
+                  {{"backface", intType, 1, /*byValue=*/true},
+                   {"wm", float3Type},
+                   {"lobeMask", intType, 1, /*byValue=*/true},
+                   {"pdf", floatType}});
+  }
   makeDfWrapper(
       jitMaterial.emissionEvaluate, "emissionEvaluate", intType,
       {{"wi", float3Type}, {"pdf", floatType}, {"Le", floatType, colorSize}});
@@ -1775,6 +1820,31 @@ void FunctionType::initializeMaterialFunctions(Emitter &emitter) {
     markPointerParam(func, 1, context.getFloatType(3)); // displacement
     jitMaterial.displacementEvaluate.name = func->getName().str();
   }
+  if (compiler.enableScatterNormal) {
+    // Generate the geometry normal evaluate function, in the mold of
+    // 'displacementEvaluate': it evaluates only 'geometry.normal', so
+    // 'state.allocator' may be null and everything not feeding the
+    // normal is dead-code eliminated. Opt-in with the normal
+    // distribution entry points, since only a host solving manifold
+    // constraints through a remapped shading normal has a use for it.
+    auto funcReturnType{context.getVoidType()};
+    auto func{emitter.createFunction(
+        concat(symbolBase, ".geometryNormalEvaluate"), /*isPure=*/false,
+        funcReturnType, {constParameter(float3PtrType, "normal")}, decl.srcLoc,
+        [&] {
+          auto value{emitter.accessField(
+              emitter.accessField(invoke(emitter, {}, decl.srcLoc),
+                                  "geometry"sv, decl.srcLoc),
+              "normal"sv, decl.srcLoc)};
+          auto out{emitter.rvalue(
+              emitter.resolveIdentifier("normal"sv, decl.srcLoc))};
+          emitter.createStore(emitter.rvalue(value), out);
+        })};
+    func->setLinkage(llvm::Function::ExternalLinkage);
+    markPointerParam(func, 0, context.getStateType(), 1, /*noAlias=*/false);
+    markPointerParam(func, 1, context.getFloatType(3)); // normal
+    jitMaterial.geometryNormalEvaluate.name = func->getName().str();
+  }
   {
     // Generate the volume evaluate function:
     // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -1854,6 +1924,40 @@ void FunctionType::initializeMaterialFunctions(Emitter &emitter) {
                                       "geometry"sv, decl.srcLoc),
                   "displacement"sv, decl.srcLoc),
               decl.srcLoc);
+        })};
+    func->setLinkage(llvm::Function::ExternalLinkage);
+  }
+  {
+    // Generate the normal probe, compile-time scaffolding in the mold
+    // of the displacement probe: it returns
+    // 'geometry.normal - $state.normal', which folds to the constant
+    // zero vector exactly when the material leaves the shading normal
+    // alone, settling 'MATERIAL_REMAPS_NORMAL'. Erased after
+    // inspection; never a host entry point.
+    auto funcReturnType{context.getFloatType(3)};
+    auto func{emitter.createFunction(
+        concat(symbolBase, ".normalProbe"), /*isPure=*/false, funcReturnType,
+        {}, decl.srcLoc, [&] {
+          auto materialNormal{emitter.accessField(
+              emitter.accessField(invoke(emitter, {}, decl.srcLoc),
+                                  "geometry"sv, decl.srcLoc),
+              "normal"sv, decl.srcLoc)};
+          auto stateNormal{emitter.accessField(
+              emitter.resolveIdentifier("$state"sv, decl.srcLoc), "normal"sv,
+              decl.srcLoc)};
+          auto delta{emitter.emitOp(BINOP_SUB, materialNormal, stateNormal,
+                                    decl.srcLoc)};
+          // The default fast-math flags lack 'nnan'/'ninf', under which
+          // 'x - x' of the untouched normal cannot fold to zero. The
+          // probe only ever asks whether the two are the same value, so
+          // assume the normal finite here and let the fold happen.
+          if (auto subInst{llvm::dyn_cast_if_present<llvm::Instruction>(
+                  delta.llvmValue)};
+              subInst && llvm::isa<llvm::FPMathOperator>(subInst)) {
+            subInst->setHasNoNaNs(true);
+            subInst->setHasNoInfs(true);
+          }
+          emitter.emitReturn(delta, decl.srcLoc);
         })};
     func->setLinkage(llvm::Function::ExternalLinkage);
   }

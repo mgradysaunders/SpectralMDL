@@ -30,31 +30,33 @@ add_library(
     "Compiler/Type.cc"
     "Compiler/Value.cc"
     "Doc.cc"
-    "FileLocator.cc"
     "Formatter.cc"
+    "Manifold.cc"
     "Module.cc"
     "Parser.cc"
+    "RenderUtil/Illuminant.cc"
+    "RenderUtil/Metal.cc"
+    "RenderUtil/MonteCarlo.cc"
+    "RenderUtil/PBRMaps.cc"
+    "RenderUtil/SpectralFilm.cc"
+    "RenderUtil/SunSky.cc"
     "Resource/BSDFMeasurement.cc"
     "Resource/Image.cc"
     "Resource/LightProfile.cc"
+    "Resource/SceneData.cc"
     "Resource/Spectrum.cc"
     "Resource/VoxelGrid.cc"
-    "SceneData.cc"
     "Support/BumpPtrAllocator.cc"
     "Support/Error.cc"
+    "Support/FileLocator.cc"
     "Support/Filesystem.cc"
-    "Support/Illuminant.cc"
     "Support/Logger.cc"
     "Support/MD5Hash.cc"
     "Support/Macros.cc"
-    "Support/MetalIOR.cc"
-    "Support/MonteCarlo.cc"
+    "Support/Parallel.cc"
     "Support/Profiler.cc"
     "Support/QualifiedName.cc"
-    "Support/SpectralRenderImage.cc"
-    "Support/StringHelpers.cc"
-    "Support/SunSky.cc"
-    "Support/PBRMaps.cc"
+    "Support/Strings.cc"
     "thirdparty/miniz.c"
   )
 add_library(
@@ -91,9 +93,20 @@ if(UNIX)
 endif()
 target_compile_options(
   SpectralMDL
-  PRIVATE 
+  PRIVATE
     "${RTTI_FLAG}"
   )
+if(SMDL_CXX_NATIVE)
+  target_compile_options(
+    SpectralMDL
+    PRIVATE
+      "-march=native"
+      "-mtune=native"
+    )
+endif()
+if(CXX_ARCH_FLAGS)
+  target_compile_options(SpectralMDL PRIVATE ${CXX_ARCH_FLAGS})
+endif()
 target_include_directories(
   SpectralMDL
   PUBLIC
@@ -117,6 +130,13 @@ target_compile_definitions(
     "-DSMDL_GIT_BRANCH=\"${SMDL_GIT_BRANCH}\""
     "-DSMDL_GIT_COMMIT=\"${SMDL_GIT_COMMIT}\""
   )
+if(SMDL_DYNAMIC_SCHEDULING)
+  target_compile_definitions(
+    SpectralMDL
+    PRIVATE
+      "-DSMDL_DYNAMIC_SCHEDULING=1"
+    )
+endif()
 find_package(Threads REQUIRED)
 target_link_libraries(SpectralMDL PRIVATE Threads::Threads ${SMDL_LLVM_TARGETS})
 

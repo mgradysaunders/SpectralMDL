@@ -1,514 +1,521 @@
 #include "Manifold.h"
+#include "Primitive.h"
 
-// The walk fails cleanly rather than loop or wander: iteration and
-// step-halving budgets, and a cap on the null-interface hops the
-// re-anchoring casts skip.
-static constexpr int MAX_ITERATIONS{64};
-static constexpr int MAX_HALVINGS{5};
+#include "smdl/Compiler.h"
+#include "smdl/Support/Logger.h"
+
+#include <iostream>
+
+// A cap on the null-interface hops the projection casts skip.
 static constexpr int MAX_SKIPS{16};
 
-// The walk has arrived when its next step would move every vertex less
-// than this fraction of that vertex's distance to the receiver.
-//
-// The stopping rule is in the units the ARRIVAL side judges the answer
-// in, which is the whole point. Re-walk MIS decides whether the gather
-// can produce a path by re-running this walk and comparing where it lands
-// against the crossings the path took, within
-// `MANIFOLD_IDENTITY_FRACTION` of the distance to the receiver. Stopping
-// on the residual instead asks for a precision in a different currency:
-// the exchange rate between a tangential half vector and a position is
-// the conditioning of the constraint, which is worst exactly where
-// caustics are, so a residual tight enough to pin the position on easy
-// geometry is unreachable on hard geometry. Measured, that was not a
-// small effect. At a residual tolerance of 1e-7 the walk converged on
-// 0.38 percent of attempts and the estimator degraded to path tracing
-// with the cost of a search; at 1e-5 it converged on 86 percent but the
-// position was no longer reliably inside the identity test, which cost
-// about 0.8 percent of bias.
-//
-// The fraction is 1, which is the principle taken literally: stop at the
-// precision the identity test judges at, no tighter. Measured, the exact
-// match matters. Converging an order of magnitude further costs nothing
-// in convergence rate, since Newton collapses the step quadratically once
-// it is close, but it reads 0.76 percent dark against brute force where
-// stopping at the identity scale reads 0.19 percent, on a scene where
-// path tracing alone reads 0.02. Both sides of the estimator run this
-// same walk, and they agree best when neither is more precise than the
-// comparison between them.
-static constexpr float STEP_FRACTION{1.0f * MANIFOLD_IDENTITY_FRACTION};
+ManifoldVertex vertexOf(const Hit &hit) {
+  ManifoldVertex vertex{};
+  vertex.point = hit.point;
+  vertex.surface = hit.instIndex;
+  vertex.face = hit.faceIndex;
+  vertex.coords = hit.bary;
+  return vertex;
+}
 
-// A step can also fall small because the Jacobian is nearly singular
-// rather than because the walk has arrived, so the residual still has to
-// be plausible for a solution. This is the same gate
-// `evaluateManifoldTransfer()` holds a caller's chain to, and it is loose
-// on purpose: it rejects a stuck walk, not an imprecise one.
-static constexpr float RESIDUAL_SANITY{1e-3f};
+Hit hitOf(const Scene &scene, const ManifoldVertex &vertex) {
+  return scene.makeHit(uint32_t(vertex.surface), uint32_t(vertex.face),
+                       vertex.coords);
+}
 
-// The pivot the dense solve refuses to divide by, as a fraction of the
-// largest entry of the system. Absolute would not do: the Jacobian
-// entries carry units of inverse distance, so one geometry measured in
-// millimeters and the same in kilometers would land on opposite sides of
-// a fixed number. A pivot this far below the scale of the matrix is
-// noise at float precision, and the walk is better off failing.
-static constexpr float MIN_PIVOT_RELATIVE{1e-7f};
-
-// The dimension of the coupled constraint system.
-static constexpr int MAX_DIM{2 * MNEE_MAX_DEPTH};
+bool SceneManifoldSurfaces::geometry(const ManifoldVertex &vertex,
+                                     smdl::ManifoldGeometry &geometry) const {
+  const auto &instance{scene.meshInstances[vertex.surface]};
+  if (instance.isCurves()) return false;
+  // Only the remapped-normal hook needs the full hit record; the mesh
+  // field goes straight to the fused derivation, skipping the shading
+  // fields `makeHit()` computes that the walk never reads. This runs
+  // once per vertex per Newton iteration, so it is the hot path of the
+  // whole solver. 'remapsNormal()' is conservative: unproven reads as
+  // remapped, and the hook then reports the same field the mesh
+  // carries, at the cost of the query; the mesh path is the fallback
+  // either way, so a material without the hook solves the mesh field
+  // as it always has.
+  if (const auto *material{scene.materials[scene.materialIndexOf(instance)]};
+      material && material->remapsNormal()) {
+    const Hit hit{hitOf(scene, vertex)};
+    if (!hit.instance) return false;
+    if (manifoldHookGeometry(scene, hit, geometry)) return true;
+  }
+  geometry = scene.manifoldGeometry(uint32_t(vertex.surface),
+                                    uint32_t(vertex.face), vertex.coords);
+  return true;
+}
 
 // Re-anchor a Newton step onto the real surface: cast from the previous
 // vertex (or the receiver) toward the stepped position and accept the
-// first hit on the seed's own instance, passing through null
+// first hit on the pinned vertex's own instance, passing through null
 // interfaces. Anything else in the way fails the step, so a converged
 // connection's segments are known to see their endpoints. A primitive
-// hit must also land on the seed's own piece: a shape's pieces (a
-// cylinder's side and caps) are distinct smooth surfaces, and letting a
-// vertex hop between them mid-walk corrupts the iterate; a failed
+// hit must also land on the pinned vertex's own piece: a shape's pieces
+// (a cylinder's side and caps) are distinct smooth surfaces, and letting
+// a vertex hop between them mid-walk corrupts the iterate; a failed
 // projection just halves the step instead. Mesh vertices slide across
 // faces freely, since the faces tile one smooth surface.
-[[nodiscard]] static bool project(const Scene &scene, const float3 &origin,
-                                  const float3 &target, const Hit &seedHit,
-                                  Hit &hit) {
+bool SceneManifoldSurfaces::project(const ManifoldVertex &pin,
+                                    const float3 &origin, const float3 &target,
+                                    ManifoldVertex &moved) const {
   auto dir{target - origin};
   if (!smdl::tryNormalize(dir)) return false;
   Ray ray{origin, dir, EPS, INF};
   for (int skip = 0; skip < MAX_SKIPS; skip++) {
-    hit = Hit{};
+    ManifoldHit hit{};
     if (!scene.intersect(ray, hit)) return false;
-    if (hit.instance == seedHit.instance && !hit.instance->isCurves())
-      return !hit.instance->isPrimitive() || hit.faceIndex == seedHit.faceIndex;
+    if (hit.vertex.surface == pin.surface && !hit.instance->isCurves()) {
+      if (hit.instance->isPrimitive() && hit.vertex.face != pin.face)
+        return false;
+      moved = hit.vertex;
+      return true;
+    }
     if (!hit.material->isNullInterface()) return false;
-    ray = Ray{hit.point, dir, EPS, INF};
+    ray = Ray{hit.vertex.point, dir, EPS, INF};
   }
   return false;
 }
 
-// Solve `A x = b` in place by Gaussian elimination with partial
-// pivoting, for `n` unknowns and `nrhs` right-hand sides. Returns false
-// on a (numerically) singular system.
-[[nodiscard]] static bool solveDense(int n, int nrhs, float A[MAX_DIM][MAX_DIM],
-                                     float b[MAX_DIM][2]) {
-  float scale{};
-  for (int r = 0; r < n; r++)
-    for (int c = 0; c < n; c++) scale = std::max(scale, std::abs(A[r][c]));
-  if (!(scale > 0.0f)) return false;
-  const float minPivot{scale * MIN_PIVOT_RELATIVE};
-  for (int c = 0; c < n; c++) {
-    int pivot{c};
-    for (int r = c + 1; r < n; r++)
-      if (std::abs(A[r][c]) > std::abs(A[pivot][c])) pivot = r;
-    if (!(std::abs(A[pivot][c]) > minPivot)) return false;
-    if (pivot != c) {
-      for (int k = c; k < n; k++) std::swap(A[c][k], A[pivot][k]);
-      for (int k = 0; k < nrhs; k++) std::swap(b[c][k], b[pivot][k]);
-    }
-    for (int r = c + 1; r < n; r++) {
-      const float m{A[r][c] / A[c][c]};
-      if (m == 0.0f) continue;
-      for (int k = c; k < n; k++) A[r][k] -= m * A[c][k];
-      for (int k = 0; k < nrhs; k++) b[r][k] -= m * b[c][k];
-    }
-  }
-  for (int c = n - 1; c >= 0; c--) {
-    for (int k = 0; k < nrhs; k++) {
-      float sum{b[c][k]};
-      for (int j = c + 1; j < n; j++) sum -= A[c][j] * b[j][k];
-      b[c][k] = sum / A[c][c];
-    }
-  }
-  return true;
+// The hook's normal at a face parameter, in world space: build the
+// shading state exactly as a render hit would, ask the material for
+// `geometry.normal`, and carry the answer back out through the
+// internal-to-object and object-to-world frames the state itself holds
+// after finalization.
+[[nodiscard]] static bool hookNormalAt(const Scene &scene,
+                                       const smdl::JIT::Material &material,
+                                       const Hit &seedHit, const float3 &bary,
+                                       float3 &normal) {
+  const Hit hit{scene.makeHit(seedHit.instIndex, seedHit.faceIndex, bary)};
+  if (!hit.instance) return false;
+  auto state{makeRenderState(renderWavelengths())};
+  hit.applyGeometryToState(state, float3());
+  auto internalNormal{float3()};
+  material.geometryNormalEvaluate(state, internalNormal);
+  const auto objectNormal{
+      float3(state.tangent_to_object_matrix * float4(internalNormal, 0.0f))};
+  normal = float3(state.object_to_world_matrix * float4(objectNormal, 0.0f));
+  return smdl::tryNormalize(normal);
 }
 
-namespace {
-
-// One Newton iterate over the whole chain: the differential geometry at
-// every vertex, the per-vertex constraints (each generalized half
-// vector projected into its tangent plane), and the coupled Jacobian
-// over the surface parameterizations, including the frame terms the
-// shading-normal derivatives induce, which is what buys quadratic
-// convergence on normal-interpolated meshes. Constraint `i` couples
-// vertices `i-1`, `i`, and `i+1`, so the system is block tridiagonal;
-// at this size a dense solve is simpler and just as fast.
-class ChainState final {
-public:
-  int count{};
-  std::array<ManifoldGeometry, MNEE_MAX_DEPTH> geometry{};
-  std::array<float3, MNEE_MAX_DEPTH> wFront{}; // Toward the previous vertex.
-  std::array<float3, MNEE_MAX_DEPTH> wBack{};  // Toward the next, or the light.
-  std::array<float, MNEE_MAX_DEPTH> distFront{};
-  std::array<float, MNEE_MAX_DEPTH> distBack{}; // 0 for the distant light.
-  std::array<float3, MNEE_MAX_DEPTH> Hhat{};
-  std::array<float, MNEE_MAX_DEPTH> Hlen{};
-  std::array<float3, MNEE_MAX_DEPTH> t1{};
-  std::array<float3, MNEE_MAX_DEPTH> t2{};
-  float C[MAX_DIM]{};
-  float J[MAX_DIM][MAX_DIM]{};
-
-  [[nodiscard]] float residual() const noexcept {
-    float sum{};
-    for (int i = 0; i < 2 * count; i++) sum += C[i] * C[i];
-    return std::sqrt(sum);
-  }
-};
-
-} // namespace
-
-// The derivative of a unit direction `w = (q - p)/d` with respect to a
-// perturbation `dp` of the base point `p`: the tangential projector
-// over the distance, negated. A perturbation of the far point `q` is
-// the same expression with the opposite sign.
-[[nodiscard]] static float3 unitDirDerivative(const float3 &w, float d,
-                                              const float3 &dp) {
-  return -(dp - dot(w, dp) * w) / d;
-}
-
-[[nodiscard]] static bool
-evaluateChain(const Scene &scene, const float3 &receiver,
-              const ManifoldTarget &target, const ManifoldChain &chain,
-              const std::array<float3, MNEE_MAX_DEPTH> &frameSeeds,
-              const std::array<Hit, MNEE_MAX_DEPTH> &hits, ChainState &state) {
-  const int count{chain.count};
-  state.count = count;
-  for (int i = 0; i < count; i++)
-    state.geometry[i] = scene.manifoldGeometry(hits[i]);
-  // Segment directions, half vectors, frames, and constraints. The last
-  // vertex's back segment is the distant light direction (whose zero
-  // distance drops the position-derivative term below) or the segment
-  // to the finite light point (whose derivative term the shared
-  // formula picks up through the real distance).
-  std::array<float, MNEE_MAX_DEPTH> gLen{};
-  for (int i = 0; i < count; i++) {
-    const auto &geometry{state.geometry[i]};
-    const float3 prev{i == 0 ? receiver : state.geometry[i - 1].point};
-    auto toPrev{prev - geometry.point};
-    state.distFront[i] = length(toPrev);
-    if (!(state.distFront[i] > 1e-6f)) return false;
-    state.wFront[i] = toPrev / state.distFront[i];
-    if (i + 1 < count) {
-      auto toNext{state.geometry[i + 1].point - geometry.point};
-      state.distBack[i] = length(toNext);
-      if (!(state.distBack[i] > 1e-6f)) return false;
-      state.wBack[i] = toNext / state.distBack[i];
-    } else if (target.infinite) {
-      state.wBack[i] = target.wl;
-      state.distBack[i] = 0.0f;
-    } else {
-      auto toLight{target.point - geometry.point};
-      state.distBack[i] = length(toLight);
-      if (!(state.distBack[i] > 1e-6f)) return false;
-      state.wBack[i] = toLight / state.distBack[i];
-    }
-    // The generalized half vector of refraction, parallel to the normal
-    // exactly when the segment pair obeys Snell's law.
-    const float3 H{chain.vertices[i].etaFront * state.wFront[i] +
-                   chain.vertices[i].etaBack * state.wBack[i]};
-    state.Hlen[i] = length(H);
-    if (!(state.Hlen[i] > 1e-6f)) return false;
-    state.Hhat[i] = H / state.Hlen[i];
-    // The tangent frame the constraint projects onto, seeded from a
-    // vector held FIXED for the whole walk, so the frame varies only
-    // through the shading normal and the frame derivatives below are
-    // exact. Seeding from the local dPdu instead would rotate the frame
-    // with the parameterization itself, a variation dNdu cannot see (a
-    // flat cap rotates its azimuthal tangent with zero dN), and the
-    // resulting Jacobian error stalls the walk.
-    const float3 n{geometry.normal};
-    const float3 g{frameSeeds[i] - dot(n, frameSeeds[i]) * n};
-    gLen[i] = length(g);
-    if (!(gLen[i] > 1e-6f)) return false;
-    state.t1[i] = g / gLen[i];
-    state.t2[i] = cross(n, state.t1[i]);
-    state.C[2 * i + 0] = dot(state.Hhat[i], state.t1[i]);
-    state.C[2 * i + 1] = dot(state.Hhat[i], state.t2[i]);
-  }
-  // The coupled Jacobian. Constraint `i` sees vertex `j` through the
-  // segment directions (and, for `j == i`, through its own frame, whose
-  // variation the shading-normal derivatives induce; the seed vector
-  // dPdu is treated as constant, which drops second-order surface terms
-  // the geometry query cannot provide).
-  for (int r = 0; r < 2 * count; r++)
-    for (int c = 0; c < 2 * count; c++) state.J[r][c] = 0.0f;
-  for (int i = 0; i < count; i++) {
-    const auto &seed{chain.vertices[i]};
-    const float3 n{state.geometry[i].normal};
-    for (int j = std::max(i - 1, 0); j <= std::min(i + 1, count - 1); j++) {
-      const float3 e[2]{state.geometry[j].dPdu, state.geometry[j].dPdv};
-      for (int k = 0; k < 2; k++) {
-        float3 dH{};
-        if (j == i) {
-          dH = seed.etaFront *
-               unitDirDerivative(state.wFront[i], state.distFront[i], e[k]);
-          if (state.distBack[i] > 0.0f)
-            dH = dH + seed.etaBack * unitDirDerivative(state.wBack[i],
-                                                       state.distBack[i], e[k]);
-        } else if (j == i - 1) {
-          dH = -seed.etaFront *
-               unitDirDerivative(state.wFront[i], state.distFront[i], e[k]);
-        } else {
-          dH = -seed.etaBack *
-               unitDirDerivative(state.wBack[i], state.distBack[i], e[k]);
-        }
-        const float3 dHhat{(dH - dot(state.Hhat[i], dH) * state.Hhat[i]) /
-                           state.Hlen[i]};
-        float term1{dot(dHhat, state.t1[i])};
-        float term2{dot(dHhat, state.t2[i])};
-        if (j == i) {
-          const float3 dn{k == 0 ? state.geometry[i].dNdu
-                                 : state.geometry[i].dNdv};
-          const float3 a{frameSeeds[i]};
-          const float3 dg{-(dot(n, a) * dn + dot(dn, a) * n)};
-          const float3 dt1{(dg - dot(state.t1[i], dg) * state.t1[i]) / gLen[i]};
-          const float3 dt2{cross(dn, state.t1[i]) + cross(n, dt1)};
-          term1 += dot(state.Hhat[i], dt1);
-          term2 += dot(state.Hhat[i], dt2);
-        }
-        state.J[2 * i + 0][2 * j + k] = term1;
-        state.J[2 * i + 1][2 * j + k] = term2;
-      }
-    }
-  }
-  return true;
-}
-
-// The transfer Jacobian |d omega_r / d omega_l| of an evaluated chain by
-// the implicit function theorem: only the last constraint block sees the
-// light (with the vertices held fixed, so no frame terms), and only the
-// first vertex moves the receiver-side direction. Solve
-// J Y = dC/d(omega_l) and combine the top block with the receiver-side
-// direction partials. The light-direction measure is the solid angle of
-// the straight receiver-to-light line: a distant light perturbs the
-// last back direction directly, while a finite light point moves on the
-// plane through it perpendicular to the straight line, scaled by the
-// straight distance so a unit perturbation is a unit of solid angle at
-// the receiver, and reaches the back direction through the geometry of
-// the last segment.
-[[nodiscard]] static bool computeTransfer(const ChainState &state, float etaL,
-                                          const float3 &receiver,
-                                          const ManifoldTarget &target,
-                                          float &transfer) {
-  const int count{state.count};
-  const float3 a1{smdl::perpendicularTo(target.wl)};
-  const float3 a2{cross(target.wl, a1)};
-  const int last{count - 1};
-  float3 a[2]{a1, a2};
-  if (!target.infinite) {
-    const float distStraight{length(target.point - receiver)};
-    const float3 wB{state.wBack[last]};
-    for (auto &ak : a) {
-      ak = (distStraight / state.distBack[last]) * (ak - dot(wB, ak) * wB);
-    }
-  }
-  float A[MAX_DIM][MAX_DIM];
-  float Y[MAX_DIM][2];
-  for (int r = 0; r < 2 * count; r++) {
-    for (int c = 0; c < 2 * count; c++) A[r][c] = state.J[r][c];
-    Y[r][0] = Y[r][1] = 0.0f;
-  }
-  const float3 t[2]{state.t1[last], state.t2[last]};
-  for (int m = 0; m < 2; m++)
-    for (int k = 0; k < 2; k++)
-      Y[2 * last + m][k] = etaL / state.Hlen[last] *
-                           (dot(a[k], t[m]) - dot(state.Hhat[last], a[k]) *
-                                                  dot(state.Hhat[last], t[m]));
-  if (!solveDense(2 * count, 2, A, Y)) return false;
-  const float detTop{Y[0][0] * Y[1][1] - Y[0][1] * Y[1][0]};
-  const float3 dwr[2]{unitDirDerivative(state.wFront[0], state.distFront[0],
-                                        state.geometry[0].dPdu),
-                      unitDirDerivative(state.wFront[0], state.distFront[0],
-                                        state.geometry[0].dPdv)};
-  transfer = length(cross(dwr[0], dwr[1])) * std::abs(detTop);
-  return std::isfinite(transfer) && transfer > 0.0f;
-}
-
-// The fixed frame-seed vectors for a chain's hits: each seed hit's own
-// tangent, or any perpendicular when the tangent is degenerate against
-// the normal.
-static void buildFrameSeeds(const Scene &scene,
-                            const std::array<Hit, MNEE_MAX_DEPTH> &hits,
-                            int count,
-                            std::array<float3, MNEE_MAX_DEPTH> &frameSeeds) {
-  for (int i = 0; i < count; i++) {
-    const auto geometry{scene.manifoldGeometry(hits[i])};
-    float3 g{geometry.dPdu -
-             dot(geometry.normal, geometry.dPdu) * geometry.normal};
-    frameSeeds[i] =
-        smdl::tryNormalize(g) ? g : smdl::perpendicularTo(geometry.normal);
-  }
-}
-
-// Did the material leave `geometry.normal` alone? Byte equality rather
-// than a tolerance, because an untouched normal is initialized from
-// `$state.normal` and a remap genuinely moves the manifold. Shared by
-// both eligibility tests so the two vetoes cannot drift apart.
-[[nodiscard]] static bool
-normalIsUnremapped(const smdl::JIT::MaterialInstance &mat,
-                   const float3 &stateNormal) {
-  const float3 &materialNormal{mat.instance.geometry->normal};
-  return materialNormal.x == stateNormal.x &&
-         materialNormal.y == stateNormal.y && materialNormal.z == stateNormal.z;
-}
-
-bool isManifoldInterface(const smdl::JIT::MaterialInstance &mat,
-                         const float3 &stateNormal) {
-  const int dfLobes{dfLobesOf(mat)};
-  if ((dfLobes & smdl::JIT::DF_DELTA_BTDF) == 0 || mat.isThinWalled() ||
-      mat.hasEmission() ||
-      !(std::abs(mat.getIOR() - mat.getExteriorIOR()) > 1e-4f))
+bool manifoldHookGeometry(const Scene &scene, const Hit &hit,
+                          ManifoldGeometry &geometry) {
+  const auto *material{hit.material};
+  if (!material || !material->geometryNormalEvaluate ||
+      hit.instance->isCurves())
     return false;
-  return normalIsUnremapped(mat, stateNormal);
+  geometry = scene.manifoldGeometry(hit);
+  auto baryAt{[&](float du, float dv) {
+    const float u{hit.bary[1] + du};
+    const float v{hit.bary[2] + dv};
+    return float3(1.0f - u - v, u, v);
+  }};
+  // The constraint solves against the normal itself; without it there
+  // is nothing to substitute. The partials only steer the Newton step,
+  // so a failed difference sample (a start pushed just off the surface
+  // parameterization) degrades to a zero partial rather than failing
+  // the whole query.
+  float3 normal{};
+  if (!hookNormalAt(scene, *material, hit, baryAt(0.0f, 0.0f), normal))
+    return false;
+  geometry.normal = normal;
+  geometry.dNdu = float3();
+  geometry.dNdv = float3();
+  const float span{std::max(length(geometry.dPdu), length(geometry.dPdv))};
+  const float h{span > 0.0f ? std::clamp(MANIFOLD_NORMAL_STEP_WORLD / span,
+                                         MANIFOLD_NORMAL_STEP_MIN,
+                                         MANIFOLD_NORMAL_STEP_MAX)
+                            : MANIFOLD_NORMAL_STEP_MAX};
+  float3 nPu{}, nMu{}, nPv{}, nMv{};
+  if (hookNormalAt(scene, *material, hit, baryAt(+h, 0.0f), nPu) &&
+      hookNormalAt(scene, *material, hit, baryAt(-h, 0.0f), nMu)) {
+    const float3 d{(nPu - nMu) / (2.0f * h)};
+    geometry.dNdu = d - dot(d, normal) * normal;
+  }
+  if (hookNormalAt(scene, *material, hit, baryAt(0.0f, +h), nPv) &&
+      hookNormalAt(scene, *material, hit, baryAt(0.0f, -h), nMv)) {
+    const float3 d{(nPv - nMv) / (2.0f * h)};
+    geometry.dNdv = d - dot(d, normal) * normal;
+  }
+  return true;
 }
 
-bool isManifoldCrossing(const ManifoldVertexSeed &seed, const float3 &normal,
-                        const float3 &wFront, const float3 &wBack) {
-  const float sideF{dot(wFront, normal)};
-  const float sideB{dot(wBack, normal)};
-  return sideF * sideB < 0.0f && -sideF * seed.sideSign > 0.0f;
+MNEECasterSet::MNEECasterSet(const Scene &scene, const Color &wavelengths,
+                             float maxGlossyAlpha) {
+  auto allocator{smdl::BumpPtrAllocator()};
+  for (uint32_t instIndex = 0; instIndex < scene.meshInstances.size();
+       instIndex++) {
+    const auto &instance{scene.meshInstances[instIndex]};
+    if (!instance.causticCaster || instance.isCurves()) continue;
+    const auto matIndex{scene.materialIndexOf(instance)};
+    const auto *material{scene.materials[matIndex]};
+    if (!material) continue;
+    auto state{makeRenderState(wavelengths, &allocator)};
+    state.texture_space_max = 1;
+    state.finalizeAndApplyInternalSpaceConventions();
+    auto mat{smdl::JIT::MaterialInstance(state, material)};
+    // The transmission claim measures the index contrast against the
+    // exterior the instance sits in; here that is the vacuum, which is
+    // what an unplaced material sees, and the per-hit claim measures it
+    // against the medium the path is actually in.
+    mat.setExteriorIOR(ExteriorIOR(nullptr, mat, float3(0.0f, 0.0f, 1.0f)));
+    const auto claim{manifoldClaim(mat, /*marked=*/true, maxGlossyAlpha)};
+    const int dfLobes{dfLobesOf(mat)};
+    allocator.reset();
+    if (claim.empty()) {
+      const char *reason{") claims nothing: the material has no Dirac or "
+                         "glossy lobe in either domain, so the mark is "
+                         "ignored"};
+      if ((dfLobes & smdl::JIT::DF_SETS_NORMAL) != 0)
+        reason = ") claims nothing: a df node was given its own normal, "
+                 "which the manifold walk cannot solve against; leave it "
+                 "defaulted to inherit 'geometry.normal', else the mark is "
+                 "ignored";
+      else if (mat.material->remapsNormal() &&
+               (dfLobes & smdl::JIT::DF_CAN_SET_NORMAL) != 0)
+        reason = ") claims nothing: the material remaps 'geometry.normal' "
+                 "while a df node was given a normal of its own, which "
+                 "detaches it from the remapped field, so the mark is "
+                 "ignored";
+      else if (maxGlossyAlpha > 0.0f &&
+               !manifoldClaim(mat, /*marked=*/true).empty())
+        reason = ") claims nothing under '-mnee-max-roughness': every "
+                 "claimable lobe is wider, so the mark is ignored and the "
+                 "transport stays with ordinary sampling";
+      SMDL_LOG_WARN("'caster' on ",
+                    smdl::QuotedPath(scene.fileNames[instIndex]), " (material ",
+                    smdl::Quoted(scene.materialNames[matIndex]), reason);
+      continue;
+    }
+    if (claim.reflectLobes == 0) continue;
+    auto caster{MNEECaster()};
+    caster.instIndex = instIndex;
+    caster.reflectLobes = claim.reflectLobes;
+    if (instance.isPrimitive()) {
+      caster.primitive = scene.primitives[instance.primIndex]->spec;
+      caster.totalArea = scene.primitives[instance.primIndex]->objectArea;
+    } else {
+      const auto &mesh{*scene.meshes[instance.meshIndex]};
+      auto faceAreas{std::vector<float>()};
+      faceAreas.reserve(mesh.faces.size());
+      auto toWorld{[&](const float3 &point) {
+        return float3(instance.objectToWorld * float4(point, 1.0f));
+      }};
+      for (const auto &face : mesh.faces) {
+        const auto point0{toWorld(mesh.verts[face[0]].point)};
+        const auto point1{toWorld(mesh.verts[face[1]].point)};
+        const auto point2{toWorld(mesh.verts[face[2]].point)};
+        const auto area{0.5f * length(cross(point1 - point0, point2 - point0))};
+        faceAreas.push_back(area);
+        caster.totalArea += area;
+      }
+      if (!(caster.totalArea > 0.0f)) continue;
+      caster.faceDistr = smdl::Distribution1D(faceAreas);
+    }
+    casters.push_back(std::move(caster));
+  }
+}
+
+const MNEECaster *MNEECasterSet::sampleCaster(Sampler &sampler,
+                                              float &pdf) const {
+  if (casters.empty()) return nullptr;
+  const auto which{std::min(size_t(float(sampler) * float(casters.size())),
+                            casters.size() - 1)};
+  pdf = 1.0f / float(casters.size());
+  return &casters[which];
+}
+
+bool MNEECasterSet::samplePoint(const Scene &scene, Sampler &sampler,
+                                const MNEECaster &caster, Hit &hit) const {
+  // By area within the caster. This density is never divided out; see the
+  // class comment.
+  if (caster.primitive.active()) {
+    const auto sample{samplePrimitiveArea(caster.primitive, float2(sampler))};
+    hit = scene.makeHit(caster.instIndex, sample.primID,
+                        float3(0.0f, sample.uv.x, sample.uv.y));
+    return hit.instance != nullptr;
+  }
+  const auto faceIndex{caster.faceDistr.indexSample(float(sampler))};
+  const float2 xi{sampler};
+  const float sqrtXi{std::sqrt(xi.x)};
+  hit = scene.makeHit(
+      caster.instIndex, uint32_t(faceIndex),
+      float3(1.0f - sqrtXi, sqrtXi * (1.0f - xi.y), sqrtXi * xi.y));
+  return hit.instance != nullptr;
 }
 
 bool makeManifoldSeed(const MediumStack *medium,
-                      smdl::JIT::MaterialInstance &mat,
-                      const smdl::State &state, const Hit &hit,
-                      const float3 &wl, ManifoldVertexSeed &seed) {
+                      smdl::JIT::MaterialInstance &mat, const Hit &hit,
+                      const float3 &wl, float maxGlossyAlpha,
+                      ManifoldVertexSeed &seed) {
   const float3 woStraight{-wl};
   mat.setExteriorIOR(ExteriorIOR(medium, mat, woStraight));
-  if (!isManifoldInterface(mat, state.normal)) return false;
-  const bool frontInterior{mat.isInterior(woStraight)};
-  seed.hit = hit;
-  seed.etaFront = frontInterior ? mat.getIOR() : mat.getExteriorIOR();
-  seed.etaBack = frontInterior ? mat.getExteriorIOR() : mat.getIOR();
+  const auto claim{
+      manifoldClaim(mat, hit.instance->causticCaster, maxGlossyAlpha)};
+  if (claim.refractLobes == 0) return false;
+  seed.claimedLobes = claim.refractLobes;
+  seed.isGlossy = false;
+  const bool prevInterior{mat.isInterior(woStraight)};
+  seed.vertex = vertexOf(hit);
+  seed.etaPrev = prevInterior ? mat.getIOR() : mat.getExteriorIOR();
+  seed.etaNext = prevInterior ? mat.getExteriorIOR() : mat.getIOR();
   seed.sideSign = dot(wl, hit.normal) < 0 ? -1.0f : 1.0f;
   return true;
 }
 
-bool solveManifoldConnection(const Scene &scene, const float3 &receiver,
-                             const ManifoldTarget &target,
-                             const ManifoldChain &chain,
-                             ManifoldConnection &connection) {
-  const int count{chain.count};
-  if (count < 1 || count > MNEE_MAX_DEPTH) return false;
-  std::array<Hit, MNEE_MAX_DEPTH> hits{};
-  std::array<float3, MNEE_MAX_DEPTH> frameSeeds{};
-  for (int i = 0; i < count; i++) hits[i] = chain.vertices[i].hit;
-  buildFrameSeeds(scene, hits, count, frameSeeds);
-  ChainState state{};
-  if (!evaluateChain(scene, receiver, target, chain, frameSeeds, hits, state))
-    return false;
-  bool converged{false};
-  for (int iteration = 0; iteration < MAX_ITERATIONS && !converged;
-       iteration++) {
-    // Solve for the Newton step of every vertex at once.
-    float A[MAX_DIM][MAX_DIM];
-    float rhs[MAX_DIM][2];
-    for (int r = 0; r < 2 * count; r++) {
-      for (int c = 0; c < 2 * count; c++) A[r][c] = state.J[r][c];
-      rhs[r][0] = -state.C[r];
-    }
-    if (!solveDense(2 * count, 1, A, rhs)) return false;
-    // The world-space steps, clamped together so a bad early Jacobian
-    // cannot fling any vertex across the scene, and measured against the
-    // distance to the receiver, which is the scale the arrival side
-    // judges the same answer at.
-    std::array<float3, MNEE_MAX_DEPTH> steps{};
-    float maxStepLen{};
-    float maxStepFraction{};
-    float minDist{state.distFront[0]};
-    for (int i = 0; i < count; i++) {
-      steps[i] = rhs[2 * i + 0][0] * state.geometry[i].dPdu +
-                 rhs[2 * i + 1][0] * state.geometry[i].dPdv;
-      const float stepLen{length(steps[i])};
-      const float scale{
-          std::max(1e-3f, length(state.geometry[i].point - receiver))};
-      maxStepLen = std::max(maxStepLen, stepLen);
-      maxStepFraction = std::max(maxStepFraction, stepLen / scale);
-      minDist = std::min(minDist, state.distFront[i]);
-    }
-    if (!std::isfinite(maxStepLen)) return false;
-    // Arrived: the step left to take cannot move the answer far enough to
-    // change what the arrival side makes of it, and the residual agrees
-    // this is a solution rather than a stall. Stop without taking it.
-    //
-    // A small step with a bad residual is NOT an arrival, and it is not a
-    // failure to declare here either: it is Newton making no progress,
-    // which the line search below reports on its own terms by failing to
-    // find a step that lowers the residual. Deciding it here instead made
-    // a looser threshold converge LESS often, since it reached this test
-    // earlier and gave up before the residual had come down.
-    if (maxStepFraction < STEP_FRACTION && state.residual() < RESIDUAL_SANITY) {
-      converged = true;
-      break;
-    }
-    if (!(maxStepLen > 0.0f)) return false;
-    float beta{1.0f};
-    if (maxStepLen > 0.5f * minDist) beta = 0.5f * minDist / maxStepLen;
-    // Damped Newton: re-anchor each stepped vertex by casting from its
-    // updated predecessor, and halve the step until the residual
-    // decreases.
-    bool accepted{false};
-    for (int halving = 0; halving < MAX_HALVINGS; halving++, beta *= 0.5f) {
-      std::array<Hit, MNEE_MAX_DEPTH> stepHits{};
-      float3 origin{receiver};
-      bool projected{true};
-      for (int i = 0; i < count; i++) {
-        if (!project(scene, origin, state.geometry[i].point + beta * steps[i],
-                     chain.vertices[i].hit, stepHits[i])) {
-          projected = false;
-          break;
-        }
-        origin = stepHits[i].point;
-      }
-      if (!projected) continue;
-      ChainState stepState{};
-      if (!evaluateChain(scene, receiver, target, chain, frameSeeds, stepHits,
-                         stepState))
-        continue;
-      if (stepState.residual() < state.residual()) {
-        hits = stepHits;
-        state = stepState;
-        accepted = true;
-        break;
-      }
-    }
-    if (!accepted) return false;
-  }
-  if (!converged) return false;
-  // A valid connection refracts at every vertex, on the same side of
-  // the surface the seed chain crossed.
-  for (int i = 0; i < count; i++) {
-    const float sideF{dot(state.wFront[i], state.geometry[i].normal)};
-    const float sideB{dot(state.wBack[i], state.geometry[i].normal)};
-    if (!isManifoldCrossing(chain.vertices[i], state.geometry[i].normal,
-                            state.wFront[i], state.wBack[i]))
-      return false;
-    auto &vertex{connection.vertices[i]};
-    vertex.hit = hits[i];
-    vertex.geometry = state.geometry[i];
-    vertex.wFront = state.wFront[i];
-    vertex.wBack = state.wBack[i];
-    vertex.cosFront = std::abs(sideF);
-    vertex.cosBack = std::abs(sideB);
-  }
-  connection.count = count;
-  connection.wr = -state.wFront[0];
-  return computeTransfer(state, chain.vertices[count - 1].etaBack, receiver,
-                         target, connection.transfer);
+// Flat mirrors and dielectric interfaces, on which the walk converges
+// from anywhere and the measure has independent ground truth.
+static const char *SELFTEST_MATERIALS{
+    "#smdl\n"
+    "import ::df::*;\n"
+    "export material self_mirror() = material(\n"
+    "  surface: material_surface(scattering:\n"
+    "    df::specular_bsdf(mode: df::scatter_reflect)));\n"
+    "export material self_glass() = material(\n"
+    "  ior: 1.5,\n"
+    "  surface: material_surface(scattering:\n"
+    "    df::specular_bsdf(mode: df::scatter_reflect_transmit)));\n"};
+
+// The first surface hit casting from `from` toward `toward`.
+[[nodiscard]] static Hit castOnto(const Scene &scene, const float3 &from,
+                                  const float3 &toward) {
+  Ray ray{from, toward - from, EPS, INF};
+  Hit hit{};
+  if (!scene.intersect(ray, hit)) return Hit{};
+  return hit;
 }
 
-bool evaluateManifoldTransfer(const Scene &scene, const float3 &receiver,
+namespace {
+
+struct Solve final {
+  bool ok{};
+  float3 wr{};
+  float measure{};
+};
+
+[[nodiscard]] Solve solveOnce(const SceneManifoldSurfaces &surfaces,
+                              const float3 &receiver,
                               const ManifoldTarget &target,
-                              const ManifoldChain &chain, float &transfer) {
-  const int count{chain.count};
-  if (count < 1 || count > MNEE_MAX_DEPTH) return false;
-  std::array<Hit, MNEE_MAX_DEPTH> hits{};
-  std::array<float3, MNEE_MAX_DEPTH> frameSeeds{};
-  for (int i = 0; i < count; i++) hits[i] = chain.vertices[i].hit;
-  buildFrameSeeds(scene, hits, count, frameSeeds);
-  ChainState state{};
-  if (!evaluateChain(scene, receiver, target, chain, frameSeeds, hits, state))
+                              const ManifoldChain &chain,
+                              ManifoldWalkReport *report = nullptr) {
+  ManifoldConnection connection{};
+  if (!solveManifoldConnection(surfaces, receiver, target, chain, connection,
+                               report))
+    return {};
+  return {true, connection.wr, connection.measure(chain)};
+}
+
+// One check: solve the chain for its target, difference the solved
+// receiver direction over the light direction, and compare the numeric
+// Jacobian against the connection measure; `analytic`, if nonnegative,
+// is an additional closed-form value the measure must match. A finite
+// target is perturbed on the plane through it perpendicular to the
+// straight line at the straight distance, which is the unoriented
+// convention the measure is expressed in.
+[[nodiscard]] bool checkMeasure(const SceneManifoldSurfaces &surfaces,
+                                const char *name, const float3 &receiver,
+                                const ManifoldTarget &target,
+                                const ManifoldChain &chain,
+                                float analytic = -1.0f) {
+  auto failWalk{[&](const char *what, const ManifoldWalkReport &walkReport) {
+    std::cout << "  FAIL " << name << ": " << what << " (outcome "
+              << int(walkReport.outcome) << ", failure "
+              << int(walkReport.failure) << ", iterations "
+              << walkReport.iterations << ", residual " << walkReport.residual
+              << ")\n";
     return false;
-  // A chain that refracted through these interfaces satisfies the
-  // constraints up to float noise in the interpolated normals; a large
-  // residual means the caller handed over something that is not a
-  // solution.
-  if (!(state.residual() < RESIDUAL_SANITY)) return false;
-  return computeTransfer(state, chain.vertices[count - 1].etaBack, receiver,
-                         target, transfer);
+  }};
+  ManifoldWalkReport report{};
+  const auto center{solveOnce(surfaces, receiver, target, chain, &report)};
+  if (!center.ok) return failWalk("the walk did not converge", report);
+  constexpr float STEP{2e-3f};
+  constexpr float TOLERANCE{0.02f};
+  const float3 a1{smdl::perpendicularTo(target.wl)};
+  const float3 a2{cross(target.wl, a1)};
+  float3 dwr[2]{};
+  for (int k = 0; k < 2; k++) {
+    const float3 &axis{k == 0 ? a1 : a2};
+    float3 wrPlus{}, wrMinus{};
+    for (int side = 0; side < 2; side++) {
+      const float sign{side == 0 ? +1.0f : -1.0f};
+      ManifoldTarget perturbed{target};
+      if (target.infinite) {
+        perturbed.wl = normalize(target.wl + sign * STEP * axis);
+      } else {
+        const float distStraight{length(target.point - receiver)};
+        perturbed.point = target.point + sign * STEP * distStraight * axis;
+        perturbed.wl = normalize(perturbed.point - receiver);
+      }
+      ManifoldWalkReport perturbedReport{};
+      const auto solved{
+          solveOnce(surfaces, receiver, perturbed, chain, &perturbedReport)};
+      if (!solved.ok)
+        return failWalk("a perturbed walk did not converge", perturbedReport);
+      (side == 0 ? wrPlus : wrMinus) = solved.wr;
+    }
+    dwr[k] = (wrPlus - wrMinus) / (2.0f * STEP);
+  }
+  const float numeric{length(cross(dwr[0], dwr[1]))};
+  const float scale{std::max(numeric, center.measure)};
+  const float err{scale > 0.0f ? std::abs(numeric - center.measure) / scale
+                               : 0.0f};
+  bool ok{err <= TOLERANCE};
+  float analyticErr{0.0f};
+  if (analytic >= 0.0f) {
+    analyticErr =
+        std::abs(center.measure - analytic) / std::max(analytic, 1e-6f);
+    ok = ok && analyticErr <= 1e-3f;
+  }
+  std::cout << "  " << (ok ? "ok   " : "FAIL ") << name << ": measure "
+            << center.measure << ", finite differences " << numeric
+            << " (rel err " << err << ")";
+  if (analytic >= 0.0f)
+    std::cout << ", analytic " << analytic << " (rel err " << analyticErr
+              << ")";
+  std::cout << "\n";
+  return ok;
+}
+
+} // namespace
+
+bool runManifoldWalkTest() {
+  auto compiler{smdl::Compiler()};
+  if (auto error{compiler.addCode("::selftest", SELFTEST_MATERIALS)}) {
+    std::cout << "  FAIL setup: " << error->message << "\n";
+    return false;
+  }
+  auto scene{Scene(compiler)};
+  // A mirror disk at the origin and two stacked glass disks off to the
+  // side, so the two families' casts never see each other; not too far,
+  // because float resolution of the crossing positions is what sets the
+  // residual floor the walks can reach.
+  {
+    LayoutItem mirror{};
+    mirror.primitive.shape = PrimitiveSpec::Shape::DISK;
+    mirror.primitive.radius = 20.0f;
+    mirror.materials.all = "self_mirror";
+    scene.add(mirror);
+    LayoutItem glassA{mirror};
+    glassA.materials.all = "self_glass";
+    glassA.objectToWorld[3] = float4(50.0f, 0.0f, 0.0f, 1.0f);
+    scene.add(glassA);
+    LayoutItem glassB{glassA};
+    glassB.objectToWorld[3] = float4(50.0f, 0.0f, -2.0f, 1.0f);
+    scene.add(glassB);
+  }
+  if (auto error{compiler.compile(smdl::OPT_LEVEL_O2)}) {
+    std::cout << "  FAIL setup: " << error->message << "\n";
+    return false;
+  }
+  if (auto error{compiler.jitCompile()}) {
+    std::cout << "  FAIL setup: " << error->message << "\n";
+    return false;
+  }
+  auto gridSpec{std::vector<float>(16)};
+  for (size_t i = 0; i < gridSpec.size(); i++)
+    gridSpec[i] = 400.0f + 300.0f * float(i) / float(gridSpec.size() - 1);
+  const auto wavelengths{
+      Color(smdl::Span<const float>(gridSpec.data(), gridSpec.size()))};
+  renderWavelengths() = wavelengths;
+  scene.commit(wavelengths);
+  const SceneManifoldSurfaces surfaces{scene};
+  bool ok{true};
+  // The flat mirror. For a distant light the reflected connection is the
+  // mirrored light direction independent of the receiver, so the measure
+  // is exactly 1; the finite light has no value this clean and rests on
+  // the finite differences alone.
+  {
+    const float3 receiver{0.5f, -0.8f, 1.2f};
+    ManifoldChain chain{};
+    chain.count = 1;
+    chain.residualTolerance = 1e-5f;
+    auto &seed{chain.vertices[0]};
+    const Hit mirrorHit{castOnto(scene, receiver, float3(0.3f, 0.2f, 0.0f))};
+    if (!mirrorHit.instance) {
+      std::cout << "  FAIL setup: no mirror hit\n";
+      return false;
+    }
+    seed.vertex = vertexOf(mirrorHit);
+    seed.etaPrev = seed.etaNext = 1.0f;
+    seed.sideSign = 1.0f;
+    seed.isReflect = true;
+    {
+      ManifoldTarget target{};
+      target.wl = normalize(float3(-0.2f, 0.35f, 0.91f));
+      ok &= checkMeasure(surfaces, "mirror, distant light", receiver, target,
+                         chain, 1.0f);
+    }
+    {
+      ManifoldTarget target{};
+      target.point = float3(-1.3f, 0.9f, 2.1f);
+      target.wl = normalize(target.point - receiver);
+      target.infinite = false;
+      ok &= checkMeasure(surfaces, "mirror, finite light", receiver, target,
+                         chain);
+    }
+  }
+  // One flat dielectric interface, the receiver on the dense side, like
+  // a submerged surface looking up through still water.
+  {
+    const float3 receiver{50.2f, 0.3f, -1.0f};
+    ManifoldChain chain{};
+    chain.count = 1;
+    chain.residualTolerance = 1e-5f;
+    auto &seed{chain.vertices[0]};
+    const Hit glassHit{castOnto(scene, receiver, float3(50.1f, 0.2f, 0.0f))};
+    if (!glassHit.instance) {
+      std::cout << "  FAIL setup: no glass hit\n";
+      return false;
+    }
+    seed.vertex = vertexOf(glassHit);
+    seed.etaPrev = 1.33f;
+    seed.etaNext = 1.0f;
+    seed.sideSign = 1.0f;
+    {
+      ManifoldTarget target{};
+      target.wl = normalize(float3(0.25f, -0.15f, 0.96f));
+      ok &= checkMeasure(surfaces, "refraction, distant light", receiver,
+                         target, chain);
+    }
+    {
+      ManifoldTarget target{};
+      target.point = float3(49.4f, 1.1f, 3.0f);
+      target.wl = normalize(target.point - receiver);
+      target.infinite = false;
+      ok &= checkMeasure(surfaces, "refraction, finite light", receiver, target,
+                         chain);
+    }
+  }
+  // Two stacked interfaces, the coupled system.
+  {
+    const float3 receiver{50.2f, 0.15f, -3.5f};
+    ManifoldChain chain{};
+    chain.count = 2;
+    chain.residualTolerance = 1e-5f;
+    auto &lower{chain.vertices[0]};
+    auto &upper{chain.vertices[1]};
+    const Hit lowerHit{castOnto(scene, receiver, receiver + float3(0, 0, 1))};
+    Hit upperHit{};
+    if (lowerHit.instance)
+      upperHit = castOnto(scene, lowerHit.point + float3(0, 0, EPS),
+                          lowerHit.point + float3(0, 0, 1));
+    if (!lowerHit.instance || !upperHit.instance) {
+      std::cout << "  FAIL setup: no stacked glass hits\n";
+      return false;
+    }
+    lower.vertex = vertexOf(lowerHit);
+    upper.vertex = vertexOf(upperHit);
+    lower.etaPrev = 1.4f;
+    lower.etaNext = 1.0f;
+    lower.sideSign = 1.0f;
+    upper.etaPrev = 1.0f;
+    upper.etaNext = 1.6f;
+    upper.sideSign = 1.0f;
+    ManifoldTarget target{};
+    target.wl = normalize(float3(-0.2f, 0.1f, 0.97f));
+    ok &= checkMeasure(surfaces, "two refractions, distant light", receiver,
+                       target, chain);
+  }
+  return ok;
 }

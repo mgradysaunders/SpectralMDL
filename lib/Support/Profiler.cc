@@ -1,6 +1,6 @@
 #include "smdl/Support/Profiler.h"
 #include "smdl/Support/Logger.h"
-#include "smdl/Support/StringHelpers.h"
+#include "smdl/Support/Strings.h"
 
 #include "llvm/Support/TimeProfiler.h"
 

@@ -1,7 +1,7 @@
 #include "LayoutDiagnostics.h"
 
 #include "smdl/Support/Error.h"
-#include "smdl/Support/StringHelpers.h"
+#include "smdl/Support/Strings.h"
 
 #include <algorithm>
 #include <fstream>

@@ -27,6 +27,9 @@ BuildInfo BuildInfo::get() noexcept {
 #if defined(__cpp_rtti) || defined(__GXX_RTTI) || defined(_CPPRTTI)
   info.hasRTTI = true;
 #endif
+#ifdef SMDL_DYNAMIC_SCHEDULING
+  info.hasDynamicScheduling = SMDL_DYNAMIC_SCHEDULING;
+#endif
   info.withMiniz = MZ_VERSION;
   info.withSTBImage = SMDL_STB_IMAGE_VERSION;
   info.withSTBImageWrite = SMDL_STB_IMAGE_WRITE_VERSION;
@@ -38,25 +41,50 @@ BuildInfo BuildInfo::get() noexcept {
 #ifdef SMDL_NANOVDB_VERSION
   info.withNanoVDB = SMDL_NANOVDB_VERSION;
 #endif
+  info.thirdparty = {
+      {"LLVM", info.llvmVersion},
+      {"miniz", info.withMiniz},
+      {"stb_image", info.withSTBImage},
+      {"stb_image_write", info.withSTBImageWrite},
+      {"stb_image_resize2", info.withSTBImageResize},
+      {"tinyexr", info.withTinyEXR},
+      {"Ptex", info.withPtex ? info.withPtex : "off"},
+      {"NanoVDB", info.withNanoVDB ? info.withNanoVDB : "off"},
+  };
   return info;
 }
 
 std::string BuildInfo::toString() const {
-  return concat("SpectralMDL ", major, ".", minor, ".", patch,           //
-                " (", gitBranch, ", commit ", gitCommit, ")\n",          //
-                "  built:      ", buildDate,                             //
-                hasRTTI ? " (RTTI on)\n" : " (RTTI off)\n",              //
-                "  LLVM:       ", llvmVersion, "\n",                     //
-                "  Ptex:       ", withPtex ? withPtex : "off", "\n",     //
-                "  NanoVDB:    ",                                        //
-                withNanoVDB ? concat("OpenVDB ", withNanoVDB)            //
-                            : std::string("off"),                        //
-                "\n",                                                    //
-                "  vendored:   miniz ", withMiniz,                       //
-                ", stb_image ", withSTBImage,                            //
-                ", stb_image_write ", withSTBImageWrite, ",\n",          //
-                "              stb_image_resize2 ", withSTBImageResize,  //
-                ", tinyexr ", withTinyEXR, "\n");
+  auto result{concat("SpectralMDL ", major, ".", minor, ".", patch,  //
+                     " (", gitBranch, ", commit ", gitCommit, ")\n", //
+                     "  built:      ", buildDate, "\n",              //
+                     "  options:    rtti ", hasRTTI ? "on" : "off",  //
+                     ", dynamic scheduling ",                        //
+                     hasDynamicScheduling ? "on" : "off", "\n")};
+  // The dependencies as one comma-separated list, greedily wrapped to
+  // 80 columns under a hanging indent the width of the label.
+  constexpr size_t COLUMNS{80};
+  constexpr std::string_view LABEL{"  thirdparty: "};
+  result += LABEL;
+  size_t column{LABEL.size()};
+  for (size_t i{}; i < thirdparty.size(); i++) {
+    auto item{thirdparty[i].name + ' ' + thirdparty[i].version};
+    if (i + 1 < thirdparty.size()) item += ',';
+    if (i > 0) {
+      if (column + 1 + item.size() > COLUMNS) {
+        result += '\n';
+        result.append(LABEL.size(), ' ');
+        column = LABEL.size();
+      } else {
+        result += ' ';
+        column++;
+      }
+    }
+    result += item;
+    column += item.size();
+  }
+  result += '\n';
+  return result;
 }
 
 const NativeTarget &NativeTarget::get() noexcept {
@@ -173,6 +201,11 @@ SourceLocation::operator std::string() const {
 }
 
 void State::finalizeAndApplyInternalSpaceConventions() noexcept {
+  // Every loop below indexes the tangent arrays by it, and so does the
+  // generated code that reads them, so a host asking for more spaces than
+  // are there is clamped once, here, rather than running off the end.
+  texture_space_max = std::clamp(texture_space_max, 0, int(TEXTURE_SPACE_MAX));
+
   // 1. Orthonormalize normal and tangent vectors.
   if (!tryNormalize(normal)) normal = {0, 0, 1};
   for (int i = 0; i < texture_space_max; i++)
@@ -191,33 +224,61 @@ void State::finalizeAndApplyInternalSpaceConventions() noexcept {
   tangent_to_object_matrix[2] = float4(geometry_normal, 0.0f);
   tangent_to_object_matrix[3] = float4(position, 1.0f);
 
-  // 4. Transform everything from object space to tangent space.
-  auto object_to_tangent_matrix{affineInverse(tangent_to_object_matrix)};
+  // 4. Transform everything from object space to tangent space. The frame
+  // is orthonormal, so the inverse of its linear part is its transpose and
+  // a direction maps to its three dots with the axes, which is the whole of
+  // `affineInverse()` and the 4x4 product for a vector whose `w` is zero.
+  const auto u{geometry_tangent_u[0]}, v{geometry_tangent_v[0]},
+      w{geometry_normal};
+  const auto toTangent{
+      [&](const float3 &d) { return float3(dot(d, u), dot(d, v), dot(d, w)); }};
   position = {};
-  direction = object_to_tangent_matrix * float4(direction, 0.0f);
-  motion = object_to_tangent_matrix * float4(motion, 0.0f);
-  normal = object_to_tangent_matrix * float4(normal, 0.0f);
+  direction = toTangent(direction);
+  motion = toTangent(motion);
+  normal = toTangent(normal);
   geometry_normal = {0, 0, 1};
   for (int i = 0; i < texture_space_max; i++) {
-    texture_tangent_u[i] =
-        object_to_tangent_matrix * float4(texture_tangent_u[i], 0.0f);
-    texture_tangent_v[i] =
-        object_to_tangent_matrix * float4(texture_tangent_v[i], 0.0f);
-    geometry_tangent_u[i] =
-        object_to_tangent_matrix * float4(geometry_tangent_u[i], 0.0f);
-    geometry_tangent_v[i] =
-        object_to_tangent_matrix * float4(geometry_tangent_v[i], 0.0f);
+    texture_tangent_u[i] = toTangent(texture_tangent_u[i]);
+    texture_tangent_v[i] = toTangent(texture_tangent_v[i]);
+    if (i == 0) {
+      // Space 0's geometry tangents are the axes the frame was built from,
+      // so they land on the axes of the frame exactly rather than within
+      // rounding of them, which is what this function documents.
+      geometry_tangent_u[0] = {1, 0, 0};
+      geometry_tangent_v[0] = {0, 1, 0};
+    } else {
+      geometry_tangent_u[i] = toTangent(geometry_tangent_u[i]);
+      geometry_tangent_v[i] = toTangent(geometry_tangent_v[i]);
+    }
   }
 
-  // 5. Orthonormalize object-to-world matrix. A host that needs to know
-  // what this leaves behind can call `orthonormalize()` on the same matrix
-  // and get the same answer, bit for bit.
-  auto axes{orthonormalize(float3x3(float3(object_to_world_matrix[0]),
-                                    float3(object_to_world_matrix[1]),
-                                    float3(object_to_world_matrix[2])))};
-  object_to_world_matrix[0] = float4(axes[0], 0.0f);
-  object_to_world_matrix[1] = float4(axes[1], 0.0f);
-  object_to_world_matrix[2] = float4(axes[2], 0.0f);
+  // 5. Orthonormalize object-to-world matrix. An already orthonormal one
+  // is left exactly as the host set it; otherwise this is `orthonormalize()`
+  // of it, which a host can call to predict the answer bit for bit.
+  //
+  // The matrix is a per-instance constant that arrives again at every
+  // shading point, and a renderer that hands over the rigid frame it
+  // already derived takes the first branch every time, so the six dot
+  // products that recognize the case are worth their cost against the
+  // three square roots and six divides they skip.
+  const auto axisX{float3(object_to_world_matrix[0])};
+  const auto axisY{float3(object_to_world_matrix[1])};
+  const auto axisZ{float3(object_to_world_matrix[2])};
+  constexpr float ORTHONORMAL_EPS = 1e-6f;
+  const auto isOrthonormal{[&] {
+    return std::abs(dot(axisX, axisX) - 1) < ORTHONORMAL_EPS &&
+           std::abs(dot(axisY, axisY) - 1) < ORTHONORMAL_EPS &&
+           std::abs(dot(axisZ, axisZ) - 1) < ORTHONORMAL_EPS &&
+           std::abs(dot(axisX, axisY)) < ORTHONORMAL_EPS &&
+           std::abs(dot(axisX, axisZ)) < ORTHONORMAL_EPS &&
+           std::abs(dot(axisY, axisZ)) < ORTHONORMAL_EPS;
+  }};
+  if (!isOrthonormal()) {
+    auto axes{orthonormalize(float3x3(axisX, axisY, axisZ))};
+    object_to_world_matrix[0] = float4(axes[0], 0.0f);
+    object_to_world_matrix[1] = float4(axes[1], 0.0f);
+    object_to_world_matrix[2] = float4(axes[2], 0.0f);
+  }
 }
 
 } // namespace smdl

@@ -6,7 +6,7 @@
 ///   exactly at any coordinate.
 /// - `blob.nvdb`: a NanoVDB file holding two named float grids, both
 ///   written with NanoVDB's own `build::Grid`/`createNanoGrid`/
-///   `writeGrids` tooling (see `hetero-media-plan.md`):
+///   `writeGrids` tooling:
 ///   - `density`, first in the file: a dense box over the *global*
 ///     index region `[3,22] x [-5,10] x [7,20]`, so the active origin
 ///     is deliberately non-aligned and partially negative, with

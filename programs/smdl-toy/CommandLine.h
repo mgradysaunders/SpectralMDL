@@ -3,7 +3,6 @@
 #include "smdl/Common.h"
 
 #include "llvm/Support/CommandLine.h"
-#include "llvm/Support/InitLLVM.h"
 #include "llvm/Support/raw_ostream.h"
 
 #include <cassert>
@@ -62,7 +61,7 @@ struct cl::OptionValue<smdl::Vector<T, N>> final : cl::GenericOptionValue {
     return true;
   }
 
-  bool compare(const GenericOptionValue &value) const override {
+  [[nodiscard]] bool compare(const GenericOptionValue &value) const override {
     const auto &other{static_cast<const OptionValue &>(value)};
     return other.hasValue() && compare(other.getValue());
   }
@@ -80,6 +79,7 @@ public:
 
   parser(Option &O) : base(O) {}
 
+  // NOLINTNEXTLINE
   bool parse(Option &O, StringRef ArgName, StringRef Arg,
              smdl::Vector<T, N> &Val) {
     SmallVector<StringRef> tokens{};
@@ -108,7 +108,7 @@ public:
     return false;
   }
 
-  StringRef getValueName() const override {
+  [[nodiscard]] StringRef getValueName() const override {
     if constexpr (std::is_same_v<T, float>) {
       if constexpr (N == 2) return "float2";
       if constexpr (N == 3) return "float3";
@@ -152,6 +152,7 @@ private:
     for (size_t i{}; i < N; i++) {
       if (i != 0) result += ',';
       if constexpr (std::is_floating_point_v<T>) {
+        // NOLINTNEXTLINE
         char buffer[32]{};
         std::snprintf(buffer, sizeof(buffer), "%g", double(value[i]));
         result += buffer;

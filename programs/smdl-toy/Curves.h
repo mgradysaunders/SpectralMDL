@@ -85,7 +85,7 @@ public:
 
   /// A coarse set of points standing in for mesh vertices wherever the
   /// renderer folds geometry into bounds (`Scene::preCommitBounds()`,
-  /// the framing solver): the control points subsampled to a workable
+  /// the autolook solver): the control points subsampled to a workable
   /// count, plus the radius-inflated bounding corners so a thick cable
   /// is not framed by its centerline.
   std::vector<float3> proxyPoints{};

@@ -7,7 +7,7 @@
 
 namespace smdl {
 
-/// \addtogroup scene
+/// \addtogroup resource
 /// \{
 
 /// A voxel grid.

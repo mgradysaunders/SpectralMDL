@@ -285,6 +285,7 @@ LightSampler::LightSampler(smdl::Compiler &compiler, const Scene &scene,
     }
     auto light{AreaLight()};
     light.instIndex = instIndex;
+    light.caustic = instance.causticLight;
     // Areas are world-space areas, matching the world-space geometry
     // `Scene::makeHit` reports: a scaled instance covers more surface and
     // must emit proportionally more power. Because an `AreaLight` is per
@@ -385,6 +386,7 @@ LightSampler::LightSampler(smdl::Compiler &compiler, const Scene &scene,
       }
       auto &light{punctualLights.emplace_back(compiler, state, wavelengths,
                                               layoutLight, std::move(profile))};
+      light.caustic = layoutLight.decl.caustic;
       weights.push_back(light.power());
     }
   }
@@ -394,18 +396,34 @@ LightSampler::LightSampler(smdl::Compiler &compiler, const Scene &scene,
     weights.push_back(envLight->averageRadiance() * PI * radius * radius);
   }
   if (!weights.empty()) lightDistr = smdl::Distribution1D(weights);
+  // The `caustic` marks restrict the manifold reflective gather to the
+  // marked lights; no marks anywhere means no restriction, so the flags
+  // normalize to all-true and the whole mechanism disappears. The
+  // environment cannot carry a mark, so it is a target exactly while
+  // nothing is restricted.
+  {
+    bool anyMark{false};
+    for (const auto &light : areaLights) anyMark |= light.caustic;
+    for (const auto &light : punctualLights) anyMark |= light.caustic;
+    if (!anyMark) {
+      for (auto &light : areaLights) light.caustic = true;
+      for (auto &light : punctualLights) light.caustic = true;
+    }
+    mEnvCaustic = !anyMark;
+  }
   SMDL_LOG_DEBUG("Light sampler: ", areaLights.size(), " area light(s), ",
                  punctualLights.size(), " punctual light(s)",
                  envLight ? ", plus the environment" : "");
 }
 
-bool LightSampler::sample(smdl::State state, Sampler &sampler,
-                          const float3 &point, LightSample &lightSample) const {
+bool LightSampler::sample(const smdl::State &state, Sampler &sampler,
+                          const float3 &point, LightSample &lightSample,
+                          bool keepDark) const {
   if (empty()) return false;
   float selectPMF{};
   int lightIndex{lightDistr.indexSample(float(sampler), nullptr, &selectPMF)};
   if (!(selectPMF > 0)) return false;
-  lightSample.isDelta = false;
+  lightSample.isDirac = false;
   lightSample.punctualIndex = INVALID_INDEX;
   if (envLight &&
       lightIndex == int(areaLights.size() + punctualLights.size())) {
@@ -416,6 +434,7 @@ bool LightSampler::sample(smdl::State state, Sampler &sampler,
     lightSample.pdf = selectPMF * dirPDF;
     lightSample.target = point + 2.0f * scene.boundRadius * lightSample.wi;
     lightSample.isInfinite = true;
+    lightSample.caustic = mEnvCaustic;
     return true;
   }
   if (lightIndex >= int(areaLights.size())) {
@@ -427,16 +446,18 @@ bool LightSampler::sample(smdl::State state, Sampler &sampler,
     auto direction{light.position() - point};
     if (!(lengthSquared(direction) > 0)) return false;
     lightSample.Li = light.Li(point, state.meters_per_scene_unit);
-    if (lightSample.Li.isAllZero()) return false;
+    if (lightSample.Li.isAllZero() && !keepDark) return false;
     lightSample.wi = normalize(direction);
     lightSample.pdf = selectPMF;
     lightSample.target = light.position();
-    lightSample.isDelta = true;
+    lightSample.isDirac = true;
     lightSample.punctualIndex = punctualIndex;
+    lightSample.caustic = light.caustic;
     return true;
   }
   const auto &light{areaLights[lightIndex]};
   Hit hit{};
+  lightSample.caustic = light.caustic;
   float positionPDF{}; // world-space area density at the sampled point
   if (light.isPrimitive) {
     // Sample the shape uniformly by OBJECT area and pay the placement's
@@ -447,8 +468,9 @@ bool LightSampler::sample(smdl::State state, Sampler &sampler,
     const auto areaSample{samplePrimitiveArea(primitive.spec, float2(sampler))};
     const float stretch{length(instance.normalMatrix * areaSample.normal)};
     if (!(stretch > 0)) return false;
-    hit = scene.makeHit(light.instIndex, areaSample.primID,
-                        float3(0.0f, areaSample.uv.x, areaSample.uv.y));
+    hit = scene.makePrimitiveHit(light.instIndex, areaSample.primID,
+                                 float3(0.0f, areaSample.uv.x, areaSample.uv.y),
+                                 areaSample.point);
     positionPDF = 1.0f / (light.objectArea * stretch);
   } else {
     int faceIndex{light.faceDistr.indexSample(float(sampler))};
@@ -470,10 +492,12 @@ bool LightSampler::sample(smdl::State state, Sampler &sampler,
   if (!(cosTheta > 0)) return false;
   // The NEE ray arrives at the light surface along `wi`. The LOD fields
   // stay zero here deliberately: emission evaluates at full fidelity.
-  hit.applyGeometryToState(state, lightSample.wi);
-  auto mat{smdl::JIT::MaterialInstance(state, hit.material)};
+  auto lightState{state};
+  hit.applyGeometryToState(lightState, lightSample.wi);
+  auto mat{smdl::JIT::MaterialInstance(lightState, hit.material)};
   if (!emittedRadiance(mat, light.instIndex, -lightSample.wi, lightSample.Li)) {
-    return false;
+    if (!keepDark) return false;
+    lightSample.Li = Color(0.0f);
   }
   // Convert the position density to solid angle at the receiver.
   lightSample.pdf = selectPMF * distSq * positionPDF / cosTheta;
@@ -483,7 +507,7 @@ bool LightSampler::sample(smdl::State state, Sampler &sampler,
 }
 
 Color LightSampler::reevaluateAreaLi(const LightSample &lightSample,
-                                     smdl::State state,
+                                     const smdl::State &state,
                                      const float3 &incidencePoint) const {
   const auto &hit{lightSample.hit};
   if (!hit.material) return Color(0.0f);
@@ -491,8 +515,9 @@ Color LightSampler::reevaluateAreaLi(const LightSample &lightSample,
   if (!smdl::tryNormalize(wEmit)) return Color(0.0f);
   // The arriving ray travels the other way down the same segment, which
   // is the sense `sample()` applies the geometry in.
-  hit.applyGeometryToState(state, -wEmit);
-  auto mat{smdl::JIT::MaterialInstance(state, hit.material)};
+  auto lightState{state};
+  hit.applyGeometryToState(lightState, -wEmit);
+  auto mat{smdl::JIT::MaterialInstance(lightState, hit.material)};
   Color Le{};
   if (!emittedRadiance(mat, hit.instIndex, wEmit, Le)) return Color(0.0f);
   return Le;

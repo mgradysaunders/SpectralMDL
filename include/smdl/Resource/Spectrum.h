@@ -9,7 +9,7 @@
 
 namespace smdl {
 
-/// \addtogroup scene
+/// \addtogroup resource
 /// \{
 
 /// A spectrum view.

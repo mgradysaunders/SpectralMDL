@@ -2,7 +2,7 @@
 /// n + ik that conductor Fresnel terms expect, interpolated per wavelength
 /// from published measurements. Each metal is backed by a table extracted
 /// from the refractiveindex.info database and embedded in the support
-/// library; see `lib/Support/MetalIOR.cc` for the citations and the
+/// library; see `lib/RenderUtil/Metal.cc` for the citations and the
 /// processing applied.
 ///
 /// Coverage varies by source: every metal covers at least 380nm to 2200nm,

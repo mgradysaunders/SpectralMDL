@@ -276,10 +276,10 @@ public:
 ///
 class LayoutCamera final {
 public:
-  std::optional<int2> dims{};
+  std::optional<int2> resolution{};
   std::optional<float3> lookFrom{};
   std::optional<float3> lookTo{};
-  std::optional<float3> up{};
+  std::optional<float3> lookUp{};
   std::optional<float> fovYDeg{};
   std::optional<float> fStop{};
   std::optional<float> aperture{};
@@ -350,6 +350,31 @@ public:
   /// `curvesOpsLoc` is where its complaint points when it does not.
   CurvesSpec curves{};
   LayoutLocation curvesOpsLoc{};
+
+  /// The bare operation `caster`: every placement of this asset is a
+  /// caustic caster, a surface the renderer's manifold estimators search
+  /// for specular and glossy connections to the lights and claim that
+  /// transport from the path tracer. The mark is scene judgment, which
+  /// is why it lives here and not on the material: the same chrome is a
+  /// caster on a mirror wall and noise on a thousand screws. A
+  /// placement overrides it with `caster` or `caster off`, a bulk place
+  /// inherits it for every record, and a mark on an asset whose material
+  /// has no Dirac or glossy lobe is reported at scene load and ignored.
+  /// It applies to mesh files and shapes; a curves groom cannot carry
+  /// it, and on a layout target it passes down to the whole subtree
+  /// like a placement override.
+  bool caster{};
+  LayoutLocation casterLoc{};
+
+  /// The bare operation `caustic`: every placement of this asset is a
+  /// caustic target, an emitter the renderer's manifold reflective
+  /// gather searches the marked casters for. Meaningful only on an
+  /// emissive asset, and only once any light in the scene carries the
+  /// mark: with no marks anywhere every light is a target, and with
+  /// any, only the marked ones are, which is how a scene with many
+  /// lights restricts the search to the few worth it. Asset-level only,
+  /// no placement override: mark the asset, or declare two.
+  bool caustic{};
 };
 
 /// One `light` declaration: a named punctual emitter, placeable exactly
@@ -372,6 +397,10 @@ public:
 /// render time), which scales power the way dimming a lamp does. A
 /// profile's intensities are already watts per steradian, so it takes
 /// `scale` instead, and giving it `power` renormalizes its total.
+///
+/// `caustic` marks the light as a caustic target; see
+/// `LayoutAssetDecl::caustic` for the semantics the mark shares with an
+/// emissive asset's.
 class LayoutLightDecl final {
 public:
   enum class Kind {
@@ -408,6 +437,9 @@ public:
 
   /// PROFILE: a multiplier on the profile's intensities.
   float scale{1.0f};
+
+  /// Is a caustic target; see `LayoutAssetDecl::caustic`.
+  bool caustic{};
 
   /// The correction transform the block's operations accumulated,
   /// applied innermost, underneath every placement of the light.
@@ -486,6 +518,14 @@ public:
   /// import these assign the mesh's slots, exactly as an `asset` block
   /// would; on a layout import they rename what the subtree resolves.
   MaterialAssignment importMaterials{};
+
+  /// The site's `caster` or `caster off`, or unset to take what the
+  /// target declares: see `LayoutAssetDecl::caster`. On a place of a
+  /// group or a layout import it passes down to every placement inside
+  /// that does not say otherwise itself, the innermost explicit word
+  /// winning.
+  std::optional<bool> casterOverride{};
+  LayoutLocation casterLoc{};
 
   /// The transform the block's operations accumulated.
   float4x4 transform{float4x4(1.0f)};
@@ -576,6 +616,14 @@ public:
   SubdivSpec subdiv{};                    ///< How to refine it at load time.
   MaterialAssignment materials{};         ///< What shades it, fully composed.
 
+  /// Is a caustic caster, with the asset's mark and every override on
+  /// the place path already composed; see `LayoutAssetDecl::caster`.
+  bool caster{};
+
+  /// Is a caustic target, from the asset's mark alone; see
+  /// `LayoutAssetDecl::caustic`.
+  bool causticLight{};
+
   /// The `/`-joined chain of `as` names along the place path that
   /// produced this item, or empty. The stable identity a future stage
   /// animates or overrides by; nothing consumes it yet.
@@ -637,7 +685,7 @@ public:
 
   /// The `front:` azimuth of the asset manifest the command line named
   /// directly, or unset. Only `resolveLayoutArgument()` fills this in:
-  /// it belongs to rendering one bare asset, where `-frame` locks to
+  /// it belongs to rendering one bare asset, where `-autolook` locks to
   /// it, rather than to a layout of many.
   std::optional<float> frontAzimuth{};
 };

@@ -60,9 +60,9 @@ def build_command(context, renderer, scene_path, output_path, material="",
     height = max(int(render.resolution_y * fraction), 1)
     # The layout carries a camera, resolution included, so this overrides
     # only the size and the framing stays exactly what the export wrote.
-    command += ["-dims", f"{width},{height}",
+    command += ["-resolution", f"{width},{height}",
                 "-spp", str(max(scene.smdl_preview_spp, 1)),
-                "-output", output_path]
+                "-output-rgb", output_path]
     # The renderer rewrites the image as it converges and writes its
     # progress where this can read it: the bar on its stderr is drawn for
     # a person at a terminal and deliberately draws nothing into a pipe.
@@ -70,6 +70,10 @@ def build_command(context, renderer, scene_path, output_path, material="",
         command += ["-preview-every", f"{scene.smdl_preview_every:.9g}"]
     if progress_path:
         command += ["-progress-file", progress_path]
+    # Zero is the renderer's own default, so it is left off the command
+    # line entirely rather than spelled out as '-threads 0'.
+    if scene.smdl_preview_threads > 0:
+        command += ["-threads", str(scene.smdl_preview_threads)]
     # The one render setting the layout cannot carry: exposure is a
     # tonemapping option, applied to the image rather than the scene.
     exposure = scene.smdl_render.exposure

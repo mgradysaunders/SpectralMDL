@@ -142,7 +142,7 @@ struct SampleResult {
   float lobeChance = 1.0;
 
   /// The Dirac test the entry point used to report on its own.
-  bool isDelta = (sampledLobe & df::DF_DELTA) != 0;
+  bool isDirac = (sampledLobe & df::DF_DIRAC) != 0;
 };
 
 SampleResult sample(
@@ -171,16 +171,63 @@ SampleResult sample(
   return SampleResult(wi, f, float2(pdfFwd, pdfRev), sampledLobe, bool(success), lobeChanceOut);
 }
 
+struct NormalSampleResult {
+  float3 wm = float3(0);
+  float pdf = 0;
+  float2 alpha = float2(0);
+  bool success = false;
+};
+
+NormalSampleResult normalSample(
+  const bsdf scattering,
+  const float4 xi,
+  const bool backface = false,
+  const float3 normal = float3(0, 0, 1),
+  const bool thin_walled = false,
+  const float ior = 1.4,
+  const float exterior_ior = 1.0,
+  const int lobeMask = df::DF_GLOSSY,
+) {
+  auto mat = material(thin_walled: thin_walled, ior: ior, surface: material_surface(scattering: scattering), geometry: material_geometry(normal: normal));
+  auto instance = _MaterialInstance(&mat);
+  instance.exterior_ior = exterior_ior;
+  float4 xi1 = xi;
+  float3 wm = float3(0);
+  float pdf = 0;
+  float2 alpha = float2(0);
+  const auto success = df::_scatterNormalSample(&instance, &xi1, int(backface), lobeMask, &wm, &pdf, &alpha);
+  return NormalSampleResult(wm, pdf, alpha, bool(success));
+}
+
+float normalEvaluate(
+  const bsdf scattering,
+  float3 wm,
+  const bool backface = false,
+  const float3 normal = float3(0, 0, 1),
+  const bool thin_walled = false,
+  const float ior = 1.4,
+  const float exterior_ior = 1.0,
+  const int lobeMask = df::DF_GLOSSY,
+) {
+  auto mat = material(thin_walled: thin_walled, ior: ior, surface: material_surface(scattering: scattering), geometry: material_geometry(normal: normal));
+  auto instance = _MaterialInstance(&mat);
+  instance.exterior_ior = exterior_ior;
+  float pdf = 0;
+  df::_scatterNormalEvaluate(&instance, int(backface), &wm, lobeMask, &pdf);
+  return pdf;
+}
+
 // The two mask axes filter independently, and naming nothing on an axis
 // means every value of it. The domain axis is decided by the direction pair
 // on the evaluation path and forced on the sampling path, so unlike the lobe
 // kinds it partitions a `scatter_reflect_transmit` lobe rather than keeping
 // all of it under either bit.
 
-// The lobes a material reports.
+// The lobes a material reports, without the property bits riding above
+// them; those have their own test.
 int surfaceLobes(const bsdf scattering) {
   auto mat = material(ior: 1.5, surface: material_surface(scattering: scattering));
-  return _MaterialInstance(&mat).df_lobes_surface;
+  return _MaterialInstance(&mat).df_lobes_surface & df::DF_ALL;
 }
 
 // `df_lobes` unions over a whole BSDF tree, so a flag word has to keep each
@@ -193,11 +240,11 @@ unit_test "Lobes keep domain and kind together" {
   // table are two ways of covering the same set and each row meets each
   // column in exactly one lobe.
   #assert(df::DF_ALL == (df::DF_BRDF | df::DF_BTDF));
-  #assert(df::DF_ALL == (df::DF_GENERIC | df::DF_GLOSSY | df::DF_DELTA));
+  #assert(df::DF_ALL == (df::DF_GENERIC | df::DF_GLOSSY | df::DF_DIRAC));
   #assert((df::DF_BRDF & df::DF_BTDF) == 0);
   #assert((df::DF_GENERIC & df::DF_GLOSSY) == 0);
-  #assert((df::DF_GLOSSY & df::DF_DELTA) == 0);
-  #assert(df::DF_DELTA_BTDF == (df::DF_BTDF & df::DF_DELTA));
+  #assert((df::DF_GLOSSY & df::DF_DIRAC) == 0);
+  #assert(df::DF_DIRAC_BTDF == (df::DF_BTDF & df::DF_DIRAC));
   #assert(df::DF_GLOSSY_BRDF == (df::DF_BRDF & df::DF_GLOSSY));
   const auto N = float3(0, 0, 1);
   // A Dirac reflection over a diffuse transmission.
@@ -210,16 +257,16 @@ unit_test "Lobes keep domain and kind together" {
     weight: 0.5, normal: N,
     layer: df::specular_bsdf(mode: df::scatter_reflect_transmit),
     base: df::diffuse_reflection_bsdf(tint: 0.8)));
-  #assert(mirrorOverDT == (df::DF_DELTA_BRDF | df::DF_GENERIC_BTDF));
-  #assert(glassOverDiffuse == (df::DF_GENERIC_BRDF | df::DF_DELTA_BRDF | df::DF_DELTA_BTDF));
-  #assert((mirrorOverDT & df::DF_DELTA_BTDF) == 0);
-  #assert((glassOverDiffuse & df::DF_DELTA_BTDF) != 0);
+  #assert(mirrorOverDT == (df::DF_DIRAC_BRDF | df::DF_GENERIC_BTDF));
+  #assert(glassOverDiffuse == (df::DF_GENERIC_BRDF | df::DF_DIRAC_BRDF | df::DF_DIRAC_BTDF));
+  #assert((mirrorOverDT & df::DF_DIRAC_BTDF) == 0);
+  #assert((glassOverDiffuse & df::DF_DIRAC_BTDF) != 0);
   // The axis unions answer the coarse questions identically for both, which
   // is the ambiguity the lobes resolve.
   #assert((mirrorOverDT & df::DF_BTDF) != 0);
   #assert((glassOverDiffuse & df::DF_BTDF) != 0);
-  #assert((mirrorOverDT & df::DF_DELTA) != 0);
-  #assert((glassOverDiffuse & df::DF_DELTA) != 0);
+  #assert((mirrorOverDT & df::DF_DIRAC) != 0);
+  #assert((glassOverDiffuse & df::DF_DIRAC) != 0);
   // A tree with no Dirac transmission has nothing to give at that lobe,
   // however deeply the mask has to descend to find that out.
   const auto nested = df::weighted_layer(
@@ -232,8 +279,42 @@ unit_test "Lobes keep domain and kind together" {
   const auto wo = math::normalize(float3(0.3, 0.1, 1.0));
   for (int i = 0; i < 8; i++) {
     #assert(!sample(nested, float4(0.3, 0.7, i / 8.0, 0.5), wo,
-                    lobeMask: df::DF_DELTA_BTDF).success);
+                    lobeMask: df::DF_DIRAC_BTDF).success);
   }
+}
+
+unit_test "Normal property bits ride above the lobes" {
+  // Not lobes: no mask names them, so they cannot leak into masked
+  // dispatch, and `DF_ALL` does not cover them.
+  #assert((df::DF_ALL & (df::DF_SETS_NORMAL | df::DF_CAN_SET_NORMAL)) == 0);
+  const int bits = df::DF_SETS_NORMAL | df::DF_CAN_SET_NORMAL;
+  const auto leafR = df::specular_bsdf(mode: df::scatter_reflect);
+  const auto leafD = df::diffuse_reflection_bsdf(tint: 0.8);
+  // A leaf has no normal parameter and reports neither bit.
+  #assert((leafD.df_lobes & bits) == 0);
+  // A layer node left defaulted inherits the active normal, so it detaches
+  // from nothing and reports neither bit either.
+  const auto defaulted = df::weighted_layer(weight: 0.5, layer: leafR, base: leafD);
+  #assert((defaulted.df_lobes & bits) == 0);
+  // A layer node that was GIVEN a normal CAN set it, whatever the value;
+  // it SETS it only when the value differs from the state normal.
+  const auto explicitSame = df::weighted_layer(
+    weight: 0.5, layer: leafR, base: leafD, normal: $state.normal);
+  #assert((explicitSame.df_lobes & bits) == df::DF_CAN_SET_NORMAL);
+  const auto tilted = df::weighted_layer(
+    weight: 0.5, layer: leafR, base: leafD,
+    normal: math::normalize(float3(0.2, 0.0, 1.0)));
+  #assert((tilted.df_lobes & bits) == bits);
+  // A coated material's fresnel_layer keeps its default, so it follows
+  // whatever `geometry.normal` the material set and reports nothing.
+  const auto coated = df::fresnel_layer(ior: 1.5, layer: leafR, base: leafD);
+  #assert((coated.df_lobes & bits) == 0);
+  // The bits union through plain wrappers exactly as the lobes do.
+  const auto wrapped = df::tint(color(0.5), tilted);
+  #assert((wrapped.df_lobes & bits) == bits);
+  // And they surface on the instance's own lobe word.
+  auto mat = material(surface: material_surface(scattering: tilted));
+  #assert((_MaterialInstance(&mat).df_lobes_surface & bits) == bits);
 }
 
 unit_test "Lobe mask domain axis" {
@@ -268,29 +349,112 @@ unit_test "Lobe mask domain axis" {
   #assert(#any(evaluate(df::diffuse_reflection_bsdf(tint: 0.7), wo, wiR,
                         lobeMask: df::DF_BRDF).f > 0.0));
   // One lobe is one domain paired with one kind: a diffuse reflector is not
-  // a Dirac one, and `DF_BRDF & DF_DELTA` names the same lobe.
-  #assert(df::DF_DELTA_BRDF == (df::DF_BRDF & df::DF_DELTA));
+  // a Dirac one, and `DF_BRDF & DF_DIRAC` names the same lobe.
+  #assert(df::DF_DIRAC_BRDF == (df::DF_BRDF & df::DF_DIRAC));
   #assert(!#any(evaluate(df::diffuse_reflection_bsdf(tint: 0.7), wo, wiR,
-                         lobeMask: df::DF_DELTA_BRDF).f > 0.0));
+                         lobeMask: df::DF_DIRAC_BRDF).f > 0.0));
+}
+
+// The kind axis binds inside a domain a leaf keeps. A mask that removes one
+// KIND of a domain must kill that kind at a leaf carrying it even while
+// other kinds of the same domain stay in the mask; the domain-axis test
+// above cannot see this, because its masks remove whole domains.
+unit_test "Lobe mask kind within a domain" {
+  const auto wo = math::normalize(float3(0.2, -0.3, 0.93));
+  const auto wiT = math::normalize(float3(-0.1, 0.2, -0.9)); // opposite hemisphere
+  const auto wiR = math::normalize(float3(-0.1, 0.2, +0.9)); // same hemisphere
+  const auto glass = df::microfacet_ggx_smith_bsdf(
+    roughness_u: 0.3, roughness_v: 0.3, mode: df::scatter_reflect_transmit);
+  const auto tWhole = evaluate(glass, wo, wiT);
+  const auto rWhole = evaluate(glass, wo, wiR);
+  #assert(#any(tWhole.f > 0.0)); // Else the checks pass vacuously
+  #assert(#any(rWhole.f > 0.0));
+  // The removed kind's domain evaluates to nothing, and the live domain's
+  // value is untouched.
+  #assert(!#any(evaluate(glass, wo, wiT, lobeMask: df::DF_ALL & ~df::DF_GLOSSY_BTDF).f > 0.0));
+  #assert(!#any(evaluate(glass, wo, wiR, lobeMask: df::DF_ALL & ~df::DF_GLOSSY_BRDF).f > 0.0));
+  #assert(#all(evaluate(glass, wo, wiR, lobeMask: df::DF_ALL & ~df::DF_GLOSSY_BTDF).f ~== |1e-5| rWhole.f));
+  #assert(#all(evaluate(glass, wo, wiT, lobeMask: df::DF_ALL & ~df::DF_GLOSSY_BRDF).f ~== |1e-5| tWhole.f));
+  // A color tint instantiates the other result type, so exercise the
+  // masked evaluate through it too.
+  const auto glassC = df::microfacet_ggx_smith_bsdf(
+    roughness_u: 0.3, roughness_v: 0.3, tint: color(0.9, 0.8, 0.7),
+    mode: df::scatter_reflect_transmit);
+  #assert(#any(evaluate(glassC, wo, wiT).f > 0.0));
+  #assert(!#any(evaluate(glassC, wo, wiT, lobeMask: df::DF_ALL & ~df::DF_GLOSSY_BTDF).f > 0.0));
+  // The density under the mask is the restricted sampler's, which is the
+  // density of the same distribution built without the dead domain. The
+  // reflect side checks Beckmann, because a reflect-only GGX tightens its
+  // sampling cap and its densities are not comparable across modes.
+  const auto glassT = df::microfacet_ggx_smith_bsdf(
+    roughness_u: 0.3, roughness_v: 0.3, mode: df::scatter_transmit);
+  #assert(#all(evaluate(glass, wo, wiT, lobeMask: df::DF_ALL & ~df::DF_GLOSSY_BRDF).pdf
+               ~== |1e-5| evaluate(glassT, wo, wiT).pdf));
+  const auto beck = df::microfacet_beckmann_smith_bsdf(
+    roughness_u: 0.3, roughness_v: 0.3, mode: df::scatter_reflect_transmit);
+  const auto beckR = df::microfacet_beckmann_smith_bsdf(roughness_u: 0.3, roughness_v: 0.3);
+  #assert(#all(evaluate(beck, wo, wiR, lobeMask: df::DF_ALL & ~df::DF_GLOSSY_BTDF).pdf
+               ~== |1e-5| evaluate(beckR, wo, wiR).pdf));
+  // Sampling never lands in the dead kind's domain, for the rough glass
+  // and for the Dirac one.
+  const auto mirror = df::specular_bsdf(mode: df::scatter_reflect_transmit);
+  for (int i = 0; i < 8; i++) {
+    const auto xi = float4(0.3, 0.7, i / 8.0, 0.5);
+    const auto r = sample(glass, xi, wo, lobeMask: df::DF_ALL & ~df::DF_GLOSSY_BTDF);
+    #assert(!r.success | (r.wi.z > 0.0));
+    const auto t = sample(glass, xi, wo, lobeMask: df::DF_ALL & ~df::DF_GLOSSY_BRDF);
+    #assert(!t.success | (t.wi.z < 0.0));
+    const auto rD = sample(mirror, xi, wo, lobeMask: df::DF_ALL & ~df::DF_DIRAC_BTDF);
+    #assert(rD.success & (rD.wi.z > 0.0) & (rD.sampledLobe == df::DF_DIRAC_BRDF));
+    const auto tD = sample(mirror, xi, wo, lobeMask: df::DF_ALL & ~df::DF_DIRAC_BRDF);
+    #assert(tD.success & (tD.wi.z < 0.0) & (tD.sampledLobe == df::DF_DIRAC_BTDF));
+  }
+}
+
+// The overlap a per-domain mask cannot cut: a Dirac transmission and a
+// glossy transmission on the same interface. A caller that claims the
+// glossy transmission masks it away and must keep the Dirac one, on the
+// value and on the sampler alike.
+unit_test "Lobe mask keeps kinds apart across a layering" {
+  const auto wo = math::normalize(float3(0.2, -0.3, 0.93));
+  const auto wiT = math::normalize(float3(-0.1, 0.2, -0.9));
+  const auto mixedGlass = df::weighted_layer(
+    weight: 0.5,
+    layer: df::microfacet_ggx_smith_bsdf(
+      roughness_u: 0.1, roughness_v: 0.1, mode: df::scatter_reflect_transmit),
+    base: df::specular_bsdf(mode: df::scatter_reflect_transmit));
+  #assert(#any(evaluate(mixedGlass, wo, wiT).f > 0.0)); // Else vacuous
+  // The masked transmission is all Dirac, which no evaluation sees.
+  const auto masked = evaluate(mixedGlass, wo, wiT, lobeMask: df::DF_ALL & ~df::DF_GLOSSY_BTDF);
+  #assert(!#any(masked.f > 0.0));
+  #assert(!#any(masked.pdf > 0.0));
+  // A masked sample transmits only through the Dirac lobe.
+  for (int i = 0; i < 16; i++) {
+    const auto xi = float4(0.3, 0.7, (i % 4 + 0.5) / 4, (i / 4 + 0.5) / 4);
+    const auto s = sample(mixedGlass, xi, wo, lobeMask: df::DF_ALL & ~df::DF_GLOSSY_BTDF);
+    continue if (!s.success);
+    #assert((s.sampledLobe & df::DF_GLOSSY_BTDF) == 0);
+    #assert((s.wi.z > 0.0) | (s.sampledLobe == df::DF_DIRAC_BTDF));
+  }
 }
 
 // A lobe mask on the SAMPLING path is how a caller reaches one Dirac lobe of
 // a layered material. No mask on the evaluation path can, because a Dirac
 // lobe has no density to evaluate at a direction pair.
-unit_test "Lobe mask sampling reaches a delta lobe" {
+unit_test "Lobe mask sampling reaches a Dirac lobe" {
   const auto wo = math::normalize(float3(0.2, -0.3, 0.93));
   // A scalar weight, so the layer selection chance is the weight exactly.
   const auto scattering = df::weighted_layer(
     weight: 0.5,
     layer: df::simple_glossy_bsdf(roughness_u: 0.3, roughness_v: 0.3, tint: 0.9),
     base: df::specular_bsdf(mode: df::scatter_reflect_transmit));
-  const auto masked = df::DF_DELTA;
+  const auto masked = df::DF_DIRAC;
   // The chances are renormalized over the lobes the mask keeps, so the dead
   // glossy layer is never selected however the selection sample falls.
   for (int i = 0; i < 8; i++) {
     const auto result = sample(scattering, float4(0.3, 0.7, 0.5, i / 8.0), wo, lobeMask: masked);
     #assert(result.success);
-    #assert(result.isDelta);
+    #assert(result.isDirac);
     #assert(#any(result.f > 0.0));
   }
   // Against the unmasked sampler forced onto the same branch: an `xi.w` of
@@ -300,12 +464,12 @@ unit_test "Lobe mask sampling reaches a delta lobe" {
   const auto xi = float4(0.3, 0.7, 0.5, 0.75);
   const auto whole = sample(scattering, xi, wo);
   const auto part = sample(scattering, xi, wo, lobeMask: masked);
-  #assert(whole.isDelta & part.isDelta);
+  #assert(whole.isDirac & part.isDirac);
   #assert(#all(part.wi ~== |1e-5| whole.wi));
   #assert(#any(whole.f > 0.0));
   #assert(#all(part.f ~== |1e-5| whole.f * 0.5));
   // A mask naming no lobe of the distribution samples nothing.
-  #assert(!sample(df::diffuse_reflection_bsdf(tint: 0.7), xi, wo, lobeMask: df::DF_DELTA).success);
+  #assert(!sample(df::diffuse_reflection_bsdf(tint: 0.7), xi, wo, lobeMask: df::DF_DIRAC).success);
 }
 
 // A lobe mask restricts which lobes contribute to the VALUE and renormalizes
@@ -329,18 +493,18 @@ unit_test "Lobe mask additivity" {
   const auto all = evaluate(scattering, wo, wi);
   const auto ndf = evaluate(scattering, wo, wi, lobeMask: df::DF_GLOSSY);
   const auto density = evaluate(scattering, wo, wi, lobeMask: df::DF_GENERIC);
-  const auto delta = evaluate(scattering, wo, wi, lobeMask: df::DF_DELTA);
+  const auto dirac = evaluate(scattering, wo, wi, lobeMask: df::DF_DIRAC);
   #assert(#any(all.f > 0.0));     // Else the checks pass vacuously
   #assert(#any(ndf.f > 0.0));     // Else the split is not exercised
   #assert(#any(density.f > 0.0)); //
-  #assert(#all(all.f ~== |1e-5| ndf.f + density.f + delta.f));
+  #assert(#all(all.f ~== |1e-5| ndf.f + density.f + dirac.f));
   // Each mask leaves exactly one lobe alive, so each masked density is that
   // lobe's own, undiluted by the selection chances the mask removed.
   const auto glossyAlone = evaluate(df::simple_glossy_bsdf(roughness_u: 0.3, roughness_v: 0.3, tint: 0.9), wo, wi);
   const auto diffuseAlone = evaluate(df::diffuse_reflection_bsdf(tint: 0.7), wo, wi);
   #assert(#all(ndf.pdf ~== |1e-4| glossyAlone.pdf));
   #assert(#all(density.pdf ~== |1e-4| diffuseAlone.pdf));
-  #assert(!#any(delta.pdf > 0.0)); // A Dirac lobe has no density to report.
+  #assert(!#any(dirac.pdf > 0.0)); // A Dirac lobe has no density to report.
   // The unmasked density is the mixture of the two, so it lands strictly
   // below their sum.
   #assert(#all(all.pdf < ndf.pdf + density.pdf));
@@ -359,7 +523,7 @@ unit_test "Lobe mask density is the restricted sampler's" {
     weight: 0.5, layer: layer, base: df::diffuse_reflection_bsdf(tint: 0.7));
   const auto masked = sample(scattering, float4(0.3, 0.7, 0.5, 0.9), wo, lobeMask: df::DF_GLOSSY);
   #assert(masked.success);
-  #assert(!masked.isDelta);
+  #assert(!masked.isDirac);
   #assert(masked.pdf.x > 0.0);
   // The mask leaves only the layer, so that is what the sampler drew from.
   #assert(masked.pdf.x ~== |1e-3| evaluate(layer, wo, masked.wi).pdf.x);
@@ -376,9 +540,9 @@ int checkSampledLobe(const bsdf scattering, const float4 xi, const float3 wo, co
   return 0 if (!r.success);
   #assert(r.sampledLobe == lobe);
   // The domain agrees with the hemispheres the sample actually landed in,
-  // and the Dirac bit agrees with the unit density a delta lobe reports.
+  // and the Dirac bit agrees with the unit density a Dirac lobe reports.
   #assert(((lobe & df::DF_BRDF) != 0) == ((wo.z < 0.0) == (r.wi.z < 0.0)));
-  #assert(((lobe & df::DF_DELTA) != 0) == (r.pdf.x == 1.0));
+  #assert(((lobe & df::DF_DIRAC) != 0) == (r.pdf.x == 1.0));
   return r.sampledLobe;
 }
 
@@ -400,17 +564,17 @@ unit_test "A sample reports the one lobe it came from" {
       layer: df::diffuse_reflection_bsdf(tint: 0.7),
       base: df::specular_bsdf(mode: df::scatter_reflect_transmit)));
   const int declared = surfaceLobes(scattering);
-  #assert(declared == (df::DF_GENERIC_BRDF | df::DF_GLOSSY_BRDF | df::DF_DELTA_BRDF |
-                       df::DF_GLOSSY_BTDF | df::DF_DELTA_BTDF));
+  #assert(declared == (df::DF_GENERIC_BRDF | df::DF_GLOSSY_BRDF | df::DF_DIRAC_BRDF |
+                       df::DF_GLOSSY_BTDF | df::DF_DIRAC_BTDF));
   // Every declared lobe, reached deterministically by naming it.
   int seen = 0;
   for (int i = 0; i < 16; i++) {
     const auto xi = float4((i + 0.5) / 16, 0.7, ((i * 3) % 16 + 0.5) / 16, ((i * 5) % 16 + 0.5) / 16);
     seen |= checkSampledLobe(scattering, xi, wo, df::DF_GENERIC_BRDF);
     seen |= checkSampledLobe(scattering, xi, wo, df::DF_GLOSSY_BRDF);
-    seen |= checkSampledLobe(scattering, xi, wo, df::DF_DELTA_BRDF);
+    seen |= checkSampledLobe(scattering, xi, wo, df::DF_DIRAC_BRDF);
     seen |= checkSampledLobe(scattering, xi, wo, df::DF_GLOSSY_BTDF);
-    seen |= checkSampledLobe(scattering, xi, wo, df::DF_DELTA_BTDF);
+    seen |= checkSampledLobe(scattering, xi, wo, df::DF_DIRAC_BTDF);
   }
   #assert(seen == declared); // Else the checks above passed vacuously
   // And unmasked, where the sampler chooses for itself, the word is still a
@@ -422,11 +586,11 @@ unit_test "A sample reports the one lobe it came from" {
     #assert((r.sampledLobe != 0) & ((r.sampledLobe & (r.sampledLobe - 1)) == 0));
     #assert((r.sampledLobe & declared) == r.sampledLobe);
     #assert(((r.sampledLobe & df::DF_BRDF) != 0) == ((wo.z < 0.0) == (r.wi.z < 0.0)));
-    #assert(((r.sampledLobe & df::DF_DELTA) != 0) == (r.pdf.x == 1.0));
+    #assert(((r.sampledLobe & df::DF_DIRAC) != 0) == (r.pdf.x == 1.0));
   }
   // Nothing sampled, nothing reported.
   #assert(sample(df::diffuse_reflection_bsdf(tint: 0.7), float4(0.3), wo,
-                 lobeMask: df::DF_DELTA).sampledLobe == 0);
+                 lobeMask: df::DF_DIRAC).sampledLobe == 0);
 }
 
 // The Kulla-Conty compensation lobe of a `multiscatter_tint` is a cosine
@@ -502,6 +666,148 @@ unit_test "Multiscatter compensation selection chance" {
     #assert(genericOnly.pdf.x ~== |1e-5| evaluate(rough, wo, genericOnly.wi, lobeMask: df::DF_GENERIC).pdf.x);
     #assert(glossyOnly.pdf.x ~== |1e-3| evaluate(rough, wo, glossyOnly.wi, lobeMask: df::DF_GLOSSY).pdf.x);
   }
+}
+
+// `DF_GLOSSY` promises a normal distribution behind the lobe, and these two
+// queries are how a caller reaches it. What their correctness rests on is one
+// property and only one: the density the evaluate reports is the density the
+// sample draws with. Everything a manifold estimator does with them is built
+// on that, so it is what these cases pin down.
+unit_test "Normal distribution sample and evaluate agree" {
+  // Two glossy lobes of different roughness under a layer, so the reported
+  // density is a mixture and not one leaf's own.
+  const auto rough = df::microfacet_ggx_smith_bsdf(roughness_u: 0.6, roughness_v: 0.6, tint: 0.9);
+  const auto smooth = df::microfacet_beckmann_smith_bsdf(roughness_u: 0.25, roughness_v: 0.25, tint: 0.9);
+  const auto layered = df::weighted_layer(weight: 0.4, layer: smooth, base: rough);
+  int seenSmooth = 0;
+  int seenRough = 0;
+  for (int i = 0; i < 16; i++) {
+    const auto xi = float4((i + 0.5) / 16, 0.7, ((i * 3) % 16 + 0.5) / 16, ((i * 5) % 16 + 0.5) / 16);
+    const auto r = normalSample(layered, xi);
+    #assert(r.success);
+    #assert(r.pdf > 0.0);
+    #assert(#all(math::normalize(r.wm) ~== |1e-5| r.wm)); // Unit...
+    #assert(math::dot(r.wm, float3(0, 0, 1)) > 0.0);      // ...above the normal
+    #assert(normalEvaluate(layered, r.wm) ~== |1e-5| r.pdf);
+    // The reported roughness is the drawn lobe's own, not the mixture's.
+    #assert((r.alpha.x ~== |1e-6| 0.36) | (r.alpha.x ~== |1e-6| 0.0625));
+    seenSmooth += int(r.alpha.x < 0.1);
+    seenRough += int(r.alpha.x > 0.1);
+  }
+  #assert((seenSmooth > 0) & (seenRough > 0)); // Else the mixture is untested
+  // The mixture is strictly between the two lobes it mixes, which is what
+  // makes the agreement above a statement about the mixture rather than
+  // about one lobe the layer happened to always pick.
+  const auto wm = normalSample(layered, float4(0.3, 0.7, 0.5, 0.05)).wm;
+  const auto densitySmooth = normalEvaluate(smooth, wm);
+  const auto densityRough = normalEvaluate(rough, wm);
+  const auto densityBoth = normalEvaluate(layered, wm);
+  #assert((densitySmooth > 0.0) & (densityRough > 0.0));
+  #assert(!(densitySmooth ~== |1e-3| densityRough)); // Else nothing is mixed
+  #assert(#min(densitySmooth, densityRough) < densityBoth);
+  #assert(densityBoth < #max(densitySmooth, densityRough));
+}
+
+// Check that the reported normal density integrates to one over the
+// hemisphere, which it must or it is not the density of anything. This is the
+// check that would have caught reporting a tightened sampling density against
+// its untightened support.
+void checkNormalIntegral(const bsdf scattering) {
+  const int n = 400;
+  double integral = 0;
+  for (int i = 0; i < n; i++) {
+    for (int j = 0; j < n; j++) {
+      const auto wm = sampling::uniform_hemisphere_sample(float2((i + 0.5) / n, (j + 0.5) / n));
+      integral += normalEvaluate(scattering, wm);
+    }
+  }
+  #assert(float(integral * $TWO_PI / (n * n)) ~== |2e-2| 1.0);
+}
+
+unit_test "Normal distribution normalization" {
+  checkNormalIntegral(df::microfacet_ggx_smith_bsdf(roughness_u: 0.5, roughness_v: 0.5, tint: 1.0));
+  checkNormalIntegral(df::microfacet_ggx_smith_bsdf(roughness_u: 0.5, roughness_v: 0.5, tint: 1.0, mode: df::scatter_reflect_transmit));
+  checkNormalIntegral(df::microfacet_ggx_vcavities_bsdf(roughness_u: 0.5, roughness_v: 0.5, tint: 1.0));
+  checkNormalIntegral(df::microfacet_beckmann_smith_bsdf(roughness_u: 0.5, roughness_v: 0.5, tint: 1.0));
+  checkNormalIntegral(df::simple_glossy_bsdf(roughness_u: 0.5, roughness_v: 0.5, tint: 1.0));
+  checkNormalIntegral(df::ward_geisler_moroder_bsdf(roughness_u: 0.5, roughness_v: 0.5, tint: 1.0));
+  // And a mixture, where the density is the mixture's rather than a leaf's.
+  checkNormalIntegral(df::weighted_layer(
+    weight: 0.4,
+    layer: df::microfacet_ggx_smith_bsdf(roughness_u: 0.4, roughness_v: 0.4, tint: 1.0),
+    base: df::microfacet_beckmann_smith_bsdf(roughness_u: 0.7, roughness_v: 0.7, tint: 1.0)));
+  checkNormalIntegral(df::normalized_mix(df::bsdf_component[2](
+    df::bsdf_component(weight: 0.3, component: df::microfacet_ggx_smith_bsdf(roughness_u: 0.4, tint: 1.0)),
+    df::bsdf_component(weight: 0.7, component: df::simple_glossy_bsdf(roughness_u: 0.6, tint: 1.0)))));
+}
+
+// The proposal is the distribution ITSELF and not the visible part of it.
+// The query takes no outgoing direction, so the visible form is now
+// unrepresentable by construction; what can still regress silently is the
+// number, so assert what the density is, leaf by leaf.
+unit_test "Normal distribution is the plain one, not the visible one" {
+  const auto wm = math::normalize(float3(0.12, -0.09, 0.99));
+  const auto alpha = float2(0.45 * 0.45);
+  const auto ggx = df::microfacet_ggx_smith_bsdf(roughness_u: 0.45, roughness_v: 0.45, tint: 1.0);
+  const auto beckmann = df::microfacet_beckmann_smith_bsdf(roughness_u: 0.45, roughness_v: 0.45, tint: 1.0);
+  // `D(wm) cos(theta_m)` is the distribution's own solid-angle density.
+  #assert(normalEvaluate(ggx, wm) ~== |1e-4|
+          df::microfacet::smith_normal_pdf(df::microfacet::ggx(), alpha, wm) * wm.z);
+  #assert(normalEvaluate(beckmann, wm) ~== |1e-4|
+          df::microfacet::smith_normal_pdf(df::microfacet::beckmann(), alpha, wm) * wm.z);
+}
+
+// Nothing without a normal distribution answers, whatever the mask says, and
+// a mask naming a domain the glossy lobes do not reach answers with nothing.
+unit_test "Normal distribution masking" {
+  const auto xi = float4(0.3, 0.7, 0.5, 0.5);
+  // A reflection-only glossy lobe has nothing transmissive to offer.
+  const auto glossyReflect = df::microfacet_ggx_smith_bsdf(roughness_u: 0.4, tint: 0.9);
+  #assert(normalSample(glossyReflect, xi).success);
+  #assert(!normalSample(glossyReflect, xi, lobeMask: df::DF_GLOSSY_BTDF).success);
+  // Neither does a Dirac lobe, nor a diffuse one, at any mask: the promise is
+  // attached to `DF_GLOSSY` and nothing else makes it.
+  #assert(!normalSample(df::specular_bsdf(mode: df::scatter_reflect_transmit), xi, lobeMask: df::DF_ALL).success);
+  #assert(!normalSample(df::diffuse_reflection_bsdf(tint: 0.7), xi, lobeMask: df::DF_ALL).success);
+  #assert(!normalSample(df::sheen_bsdf(tint: 0.8, roughness: 0.4), xi, lobeMask: df::DF_ALL).success);
+  // Nor the micrograin layer, which declares GENERIC precisely so that it
+  // does not: its base is what answers here.
+  const auto dusted = df::micrograin_layer(
+    filling_factor: 0.4, grain_diffuse_albedo: color(0.5), base: glossyReflect);
+  #assert(normalSample(dusted, xi).success);
+  #assert(!normalSample(df::micrograin_layer(
+    filling_factor: 0.4, grain_diffuse_albedo: color(0.5),
+    base: df::diffuse_reflection_bsdf(tint: 0.7)), xi, lobeMask: df::DF_ALL).success);
+  // A mask naming nothing selects nothing, as everywhere else.
+  #assert(!normalSample(glossyReflect, xi, lobeMask: 0).success);
+  #assert(normalEvaluate(glossyReflect, float3(0, 0, 1), lobeMask: 0) == 0.0);
+  // A backface query reports a normal on the requested side, so the
+  // caller never has to transform anything across.
+  const auto back = normalSample(glossyReflect, xi, backface: true);
+  #assert(back.success);
+  #assert(back.wm.z < 0.0);
+  #assert(normalEvaluate(glossyReflect, back.wm, backface: true) ~== |1e-5| back.pdf);
+}
+
+// A layer's own `normal:` tilts the frame its lobe reports in, and the
+// reported density must remain a density: integrate to one, here over
+// both hemispheres, because the tilt pushes part of the lobe below the
+// horizon of the natural frame.
+unit_test "Normal distribution under a tilted layer normal" {
+  const auto scattering = df::weighted_layer(
+    weight: 0.5, normal: math::normalize(float3(0.25, -0.15, 0.96)),
+    layer: df::microfacet_ggx_smith_bsdf(roughness_u: 0.4, roughness_v: 0.4, tint: 1.0),
+    base: df::microfacet_beckmann_smith_bsdf(roughness_u: 0.6, roughness_v: 0.6, tint: 1.0));
+  const int n = 400;
+  double integral = 0;
+  for (int i = 0; i < n; i++) {
+    for (int j = 0; j < n; j++) {
+      const auto wm = sampling::uniform_hemisphere_sample(float2((i + 0.5) / n, (j + 0.5) / n));
+      integral += normalEvaluate(scattering, wm);
+      integral += normalEvaluate(scattering, wm * float3(1, 1, -1));
+    }
+  }
+  #assert(float(integral * $TWO_PI / (n * n)) ~== |2e-2| 1.0);
 }
 
 // A layer whose own lobe the mask removes still weights its base by what the
@@ -743,7 +1049,7 @@ unit_test "Measured BSDF" {
   #assert(#all(result2.pdf ~== |1e-6| result1.pdf));
 }
 
-unit_test "Specular delta shading normal correction" {
+unit_test "Specular Dirac shading normal correction" {
   const auto ns = math::normalize(float3(0.2, -0.1, 1.0)); // Tilted shading normal
   const auto wo = math::normalize(float3(0.3, 0.2, 1.5));
   const auto xi = float4(0.3, 0.4, 0.5, 0.6);
@@ -753,8 +1059,8 @@ unit_test "Specular delta shading normal correction" {
     const auto bsdfR = df::specular_bsdf(tint: 1.0, mode: df::scatter_reflect);
     const auto rad = sample(bsdfR, xi, wo, false, ns);
     const auto imp = sample(bsdfR, xi, wo, true, ns);
-    #assert(rad.success && rad.isDelta);
-    #assert(imp.success && imp.isDelta);
+    #assert(rad.success && rad.isDirac);
+    #assert(imp.success && imp.isDirac);
     #assert(#all(imp.wi ~== |1e-6| rad.wi));
     #assert(#all(rad.f ~== |1e-6| color(1.0)));
     const auto corr = #abs(math::dot(wo, ns) * rad.wi.z) / #abs(math::dot(rad.wi, ns) * wo.z);
@@ -769,8 +1075,8 @@ unit_test "Specular delta shading normal correction" {
     const auto bsdfT = df::specular_bsdf(tint: 1.0, mode: df::scatter_transmit);
     const auto rad = sample(bsdfT, xi, wo, false, ns);
     const auto imp = sample(bsdfT, xi, wo, true, ns);
-    #assert(rad.success && rad.isDelta);
-    #assert(imp.success && imp.isDelta);
+    #assert(rad.success && rad.isDirac);
+    #assert(imp.success && imp.isDirac);
     #assert(#all(imp.wi ~== |1e-6| rad.wi));
     #assert(rad.wi.z < 0.0);
     #assert(#all(rad.f ~== |1e-5| color((1.0 / 1.4) * (1.0 / 1.4)))); // Material IOR defaults to 1.4
@@ -789,20 +1095,20 @@ unit_test "Specular transmission round trip" {
   const auto xi = float4(0.3, 0.4, 0.5, 0.6);
   const auto wo = math::normalize(float3(0.6, -0.2, 0.9));
   const auto rIn = sample(bsdfT, xi, wo);
-  #assert(rIn.success && rIn.isDelta);
+  #assert(rIn.success && rIn.isDirac);
   #assert(rIn.wi.z < 0.0);
   const auto rOut = sample(bsdfT, xi, rIn.wi);
-  #assert(rOut.success && rOut.isDelta);
+  #assert(rOut.success && rOut.isDirac);
   #assert(#all(rOut.wi ~== |1e-5| wo));
   #assert(#all(rIn.f * rOut.f ~== |1e-5| color(1.0)));
 }
 
-unit_test "Thin-walled specular delta transmission" {
+unit_test "Thin-walled specular Dirac transmission" {
   // Thin-walled surfaces enclose no volume: specular transmission passes
   // straight through, with no refraction and no radiance compression.
   const auto wo = math::normalize(float3(0.3, 0.2, 1.5));
   const auto r = sample(df::specular_bsdf(tint: 1.0, mode: df::scatter_transmit), float4(0.8, 0.4, 0.5, 0.6), wo, false, float3(0, 0, 1), true);
-  #assert(r.success && r.isDelta);
+  #assert(r.success && r.isDirac);
   #assert(#all(r.wi ~== |1e-6| -wo));
   #assert(#all(r.f ~== |1e-6| color(1.0)));
 }
@@ -830,8 +1136,10 @@ unit_test "Fresnel layer defines the layer interface" {
   // material IOR, and the PDF weight equals the dielectric Fresnel selection
   // chance exactly, so the layered PDF must be the bare-layer PDF (evaluated
   // in a material whose IOR matches the layer interface) scaled by the
-  // chance.
-  const auto wo = math::normalize(float3(-0.3, 0.4, 0.8));
+  // chance. The incidence grazes enough that the chance sits inside the
+  // `MIN_CHANCE` clamp bounds, where selection follows the Fresnel term
+  // exactly.
+  const auto wo = math::normalize(float3(-0.6, 0.7, 0.35));
   const auto layerB = df::microfacet_ggx_smith_bsdf(roughness_u: 0.5, tint: 1.0, mode: df::scatter_transmit);
   const auto layered = df::fresnel_layer(ior: 1.8, layer: layerB);
   const auto chance = df::specular::dielectric_fresnel(wo.z, 1 / 1.8);
@@ -883,12 +1191,18 @@ unit_test "Nested dielectric exterior IOR" {
   #assert(#all(e1.pdf ~== |1e-5| e2.pdf));
 }
 
+// The reflect-transmit selection chance carried by the PDF lanes: the
+// dielectric Fresnel term clamped into the selection floor. Mirrors
+// `MIN_CHANCE` in the df builtin.
+float selectionChance(const float F) = math::clamp(F, 0.1, 0.9);
+
 unit_test "Fresnel-weighted reflect-transmit decomposition" {
   // With `scatter_reflect_transmit`, the microfacet lobe must be the pure
   // reflect and transmit lobes weighted by the dielectric Fresnel term: the
   // scattering function by the term at the half vector, and the PDFs by the
-  // term at the macro normal (forward lane from the wo side, reverse lane
-  // from the wi side), which is exactly the sampling selection chance.
+  // selection chance at the macro normal (forward lane from the wo side,
+  // reverse lane from the wi side), which is the Fresnel term clamped into
+  // the selection floor.
   const auto eta = 1 / 1.4; // Entering relative ratio at the default material IOR
   const auto wo = math::normalize(float3(-0.3, 0.4, 0.8));
   const auto wiR = math::normalize(float3(+0.5, 0.2, 0.9));
@@ -915,7 +1229,7 @@ unit_test "Fresnel-weighted reflect-transmit decomposition" {
     const auto tO = math::length(float3(alpha.x * wo.x, alpha.y * wo.y, wo.z));
     const auto tI = math::length(float3(alpha.x * wiR.x, alpha.y * wiR.y, wiR.z));
     const auto unbound = float2((kO * wo.z + tO) / (wo.z + tO), (kI * wiR.z + tI) / (wiR.z + tI));
-    #assert(#all(r2.pdf ~== |1e-5| float2(Fo, Fi) * r1.pdf * unbound));
+    #assert(#all(r2.pdf ~== |1e-5| float2(selectionChance(Fo), selectionChance(Fi)) * r1.pdf * unbound));
   }
   // Transmission pair. The reverse PDF lane sees the reciprocal ratio.
   {
@@ -926,7 +1240,7 @@ unit_test "Fresnel-weighted reflect-transmit decomposition" {
     const auto Fi = df::specular::dielectric_fresnel(-wiT.z, 1 / eta);
     #assert(#any(r1.f > 0.0));
     #assert(#all(r2.f ~== |1e-5| (1 - Fh) * r1.f));
-    #assert(#all(r2.pdf ~== |1e-5| (1 - float2(Fo, Fi)) * r1.pdf));
+    #assert(#all(r2.pdf ~== |1e-5| (1 - float2(selectionChance(Fo), selectionChance(Fi))) * r1.pdf));
   }
 }
 
@@ -1243,24 +1557,25 @@ unit_test "Micrograin layer" {
   #assert((0.0 < EDiff) & (EDiff < 1.02));
 }
 
-unit_test "Fresnel-weighted specular delta dielectric" {
+unit_test "Fresnel-weighted specular Dirac dielectric" {
   const auto bRT = df::specular_bsdf(tint: 1.0, mode: df::scatter_reflect_transmit);
   const auto wo = math::normalize(float3(0.3, 0.2, 1.5));
   const auto F = df::specular::dielectric_fresnel(wo.z, 1 / 1.4);
-  // Entering: a random number below the Fresnel term reflects with weight
-  // `tint`; above it refracts with the `ior * ior` compression, the
-  // selection chance canceling against the lobe weight exactly.
+  const auto chance = selectionChance(F);
+  // Entering: a random number below the clamped selection chance reflects
+  // and carries the Fresnel weight over the chance; above it refracts with
+  // the complementary ratio and the `ior * ior` compression.
   {
-    const auto r = sample(bRT, float4(0.9 * F, 0.4, 0.5, 0.6), wo);
-    #assert(r.success && r.isDelta);
+    const auto r = sample(bRT, float4(0.9 * chance, 0.4, 0.5, 0.6), wo);
+    #assert(r.success && r.isDirac);
     #assert(r.wi.z > 0.0);
-    #assert(#all(r.f ~== |1e-5| color(1.0)));
+    #assert(#all(r.f ~== |1e-5| color(F / chance)));
   }
   {
-    const auto r = sample(bRT, float4(F + 0.9 * (1 - F), 0.4, 0.5, 0.6), wo);
-    #assert(r.success && r.isDelta);
+    const auto r = sample(bRT, float4(chance + 0.9 * (1 - chance), 0.4, 0.5, 0.6), wo);
+    #assert(r.success && r.isDirac);
     #assert(r.wi.z < 0.0);
-    #assert(#all(r.f ~== |1e-5| color((1.0 / 1.4) * (1.0 / 1.4))));
+    #assert(#all(r.f ~== |1e-5| color((1 - F) / (1 - chance) * (1.0 / 1.4) * (1.0 / 1.4))));
   }
   // From inside beyond the critical angle the Fresnel term is 1, so every
   // sample reflects: total internal reflection wastes nothing. (The 50/50
@@ -1268,7 +1583,7 @@ unit_test "Fresnel-weighted specular delta dielectric" {
   const auto woIn = math::normalize(float3(0.8, 0.1, -0.6));
   for (int k = 0; k < 8; k++) {
     const auto r = sample(bRT, float4((k + 0.5) / 8, 0.4, 0.5, 0.6), woIn);
-    #assert(r.success && r.isDelta);
+    #assert(r.success && r.isDirac);
     #assert(r.wi.z < 0.0); // Reflection stays on the incident side
     #assert(#all(r.f ~== |1e-5| color(1.0)));
   }
@@ -1348,10 +1663,10 @@ unit_test "Thin film" {
     const auto result1 = evaluate(df::thin_film(thickness: 0.0, ior: color(1.5), base: base), wo, wi);
     #assert(#all(result1.f ~== |1e-5| result0.f));
   }
-  // The same identity holds on the delta sampling path.
+  // The same identity holds on the Dirac sampling path.
   {
     const auto r = sample(df::thin_film(thickness: 0.0, ior: 1.5, base: df::specular_bsdf(tint: 1.0)), float4(0.3, 0.4, 0.5, 0.6), wo);
-    #assert(r.success && r.isDelta);
+    #assert(r.success && r.isDirac);
     #assert(#all(r.f ~== |1e-5| color(1.0)));
   }
   // At normal incidence with the default material IOR of 1.4. The design
@@ -1413,7 +1728,7 @@ unit_test "Custom curve layer" {
     #assert(#all(r.f ~== |1e-5| math::lerp(rBase.f, rLayer.f, fWeight)));
     #assert(#all(r.pdf ~== |1e-5| math::lerp(rBase.pdf, rLayer.pdf, pWeight)));
   }
-  // A delta sample from the layer compensates the selection chance exactly when the
+  // A Dirac sample from the layer compensates the selection chance exactly when the
   // weight is uniform and the shading normal is default, so the tint passes through.
   {
     const auto r = sample(
@@ -1421,7 +1736,7 @@ unit_test "Custom curve layer" {
       float4(0.3, 0.4, 0.05, 0.6),
       wo,
     );
-    #assert(r.success && r.isDelta);
+    #assert(r.success && r.isDirac);
     #assert(#all(r.f ~== |1e-5| color(1.0)));
   }
 }

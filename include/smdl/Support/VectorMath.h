@@ -51,6 +51,11 @@ constexpr float ONE_MINUS_EPS =
   return std::nextafter(x, -std::numeric_limits<float>::infinity());
 }
 
+template <typename T>
+[[nodiscard]] inline T lerp(const T &a, const T &b, float t) noexcept {
+  return (1 - t) * a + t * b;
+}
+
 /// \}
 
 /// The vector template.

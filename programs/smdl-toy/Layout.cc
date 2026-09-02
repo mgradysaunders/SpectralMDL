@@ -6,10 +6,11 @@
 
 #include "smdl/Support/Error.h"
 #include "smdl/Support/Logger.h"
-#include "smdl/Support/StringHelpers.h"
+#include "smdl/Support/Strings.h"
 
 #include <filesystem>
 #include <fstream>
+#include <optional>
 
 // The lowering half of the layout toolchain: resolve every path, follow
 // every import, and flatten the document tree into the item list the
@@ -95,7 +96,8 @@ public:
       : mDiags(diags), mSearch(search), mResult(result) {}
 
   void lowerFile(const std::string &fileName, const float4x4 &xf,
-                 const RenameMap &outerRenames, bool isEntry,
+                 const RenameMap &outerRenames,
+                 const std::optional<bool> &outerCaster, bool isEntry,
                  const LayoutLocation &importSite) {
     std::error_code ignored{};
     auto canonical{std::filesystem::weakly_canonical(fileName, ignored)};
@@ -128,7 +130,7 @@ public:
         parseLayout(mDiags, *source,
                     std::filesystem::path(fileName).parent_path().string())};
     mOpenFiles.push_back({canonical, fileName, importSite});
-    lowerDocument(document, xf, outerRenames, isEntry);
+    lowerDocument(document, xf, outerRenames, outerCaster, isEntry);
     mOpenFiles.pop_back();
     // Everything the nested file reported, parse and lowering alike,
     // points back at the import that pulled it in.
@@ -138,7 +140,8 @@ public:
 
 private:
   void lowerDocument(const LayoutDocument &document, const float4x4 &xf,
-                     const RenameMap &outerRenames, bool isEntry) {
+                     const RenameMap &outerRenames,
+                     const std::optional<bool> &outerCaster, bool isEntry) {
     // Only the entry file's camera, sky, and medium take effect. An
     // imported layout carrying its own is a layout that can also render
     // standalone, so say what is being ignored rather than erroring, and
@@ -172,8 +175,9 @@ private:
     auto usedGroups{std::vector<bool>(document.groups.size(), false)};
     auto usedLights{std::vector<bool>(document.lights.size(), false)};
     auto groupStack{std::vector<GroupFrame>()};
-    lowerPlacements(document, document.placements, xf, outerRenames, usedAssets,
-                    usedGroups, usedLights, groupStack, std::string());
+    lowerPlacements(document, document.placements, xf, outerRenames,
+                    outerCaster, usedAssets, usedGroups, usedLights, groupStack,
+                    std::string());
     for (size_t i = 0; i < document.assets.size(); i++)
       if (!usedAssets[i])
         mDiags.warn(document.assets[i].nameLoc,
@@ -202,6 +206,7 @@ private:
   void lowerPlacements(const LayoutDocument &document,
                        const std::vector<LayoutPlacement> &placements,
                        const float4x4 &xf, const RenameMap &outerRenames,
+                       const std::optional<bool> &outerCaster,
                        std::vector<bool> &usedAssets,
                        std::vector<bool> &usedGroups,
                        std::vector<bool> &usedLights,
@@ -210,10 +215,11 @@ private:
     for (const auto &placement : placements) {
       try {
         if (placement.kind == LayoutPlacement::Kind::PLACE) {
-          lowerPlace(document, placement, xf, outerRenames, usedAssets,
-                     usedGroups, usedLights, groupStack, namePrefix);
+          lowerPlace(document, placement, xf, outerRenames, outerCaster,
+                     usedAssets, usedGroups, usedLights, groupStack,
+                     namePrefix);
         } else {
-          lowerImport(document, placement, xf, outerRenames);
+          lowerImport(document, placement, xf, outerRenames, outerCaster);
         }
         // NOLINTNEXTLINE
       } catch (const SkipPlacement &) {
@@ -224,8 +230,10 @@ private:
 
   void lowerPlace(const LayoutDocument &document,
                   const LayoutPlacement &placement, const float4x4 &xf,
-                  const RenameMap &outerRenames, std::vector<bool> &usedAssets,
-                  std::vector<bool> &usedGroups, std::vector<bool> &usedLights,
+                  const RenameMap &outerRenames,
+                  const std::optional<bool> &outerCaster,
+                  std::vector<bool> &usedAssets, std::vector<bool> &usedGroups,
+                  std::vector<bool> &usedLights,
                   std::vector<GroupFrame> &groupStack,
                   const std::string &namePrefix) {
     const auto placeName{placement.asName.empty() ? namePrefix
@@ -281,10 +289,19 @@ private:
                   smdl::concat("material overrides on the light ",
                                smdl::Quoted(placement.assetName),
                                " have no effect"));
+    if (light && placement.casterOverride)
+      mDiags.warn(placement.casterLoc,
+                  smdl::concat("'caster' on the light ",
+                               smdl::Quoted(placement.assetName),
+                               " has no effect"));
     // The place's own overrides apply outside everything the target says
     // for itself, and inside everything above: each syntactic enclosure
     // adds its rename layer one step further out.
     const auto baseOuter{composeRename(placement.overrides, outerRenames)};
+    // The caster mark composes the other way round: the innermost
+    // explicit word wins, and the asset's own mark is the default.
+    const auto effectiveCaster{
+        placement.casterOverride ? placement.casterOverride : outerCaster};
     if (!placement.placesPath.empty()) {
       // The bulk form: one instance per record, each record's transform
       // standing where a one-line place's operations would, and each
@@ -349,8 +366,9 @@ private:
       if (!batchable) {
         for (size_t i = 0; i < places.transforms.size(); i++)
           lowerPlaceTarget(document, decl, group, light, placement.assetNameLoc,
-                           recordXf(i), outerFor(i), usedAssets, usedGroups,
-                           usedLights, groupStack, placeName);
+                           recordXf(i), outerFor(i), effectiveCaster,
+                           usedAssets, usedGroups, usedLights, groupStack,
+                           placeName);
         return;
       }
       // Batch by variant class in first-appearance order. Instance
@@ -388,6 +406,8 @@ private:
             document.materialAliases, variantIndex == PlacesFile::NO_VARIANT
                                           ? baseOuter
                                           : outerByVariant[variantIndex]);
+        item.caster = casterOf(*decl, effectiveCaster, target);
+        item.causticLight = decl->caustic;
         item.placeName = placeName;
         if (xfs.size() == 1) {
           item.objectToWorld = xfs[0];
@@ -398,8 +418,8 @@ private:
       return;
     }
     lowerPlaceTarget(document, decl, group, light, placement.assetNameLoc,
-                     xf * placement.transform, baseOuter, usedAssets,
-                     usedGroups, usedLights, groupStack, placeName);
+                     xf * placement.transform, baseOuter, effectiveCaster,
+                     usedAssets, usedGroups, usedLights, groupStack, placeName);
   }
 
   // One resolved placement of `decl`, `group`, or `light` (exactly one
@@ -409,7 +429,8 @@ private:
       const LayoutDocument &document, const LayoutAssetDecl *decl,
       const LayoutGroupDecl *group, const LayoutLightDecl *lightDecl,
       const LayoutLocation &nameLoc, const float4x4 &combinedXf,
-      const RenameMap &effectiveOuter, std::vector<bool> &usedAssets,
+      const RenameMap &effectiveOuter,
+      const std::optional<bool> &effectiveCaster, std::vector<bool> &usedAssets,
       std::vector<bool> &usedGroups, std::vector<bool> &usedLights,
       std::vector<GroupFrame> &groupStack, const std::string &placeName) {
     if (lightDecl) {
@@ -440,8 +461,8 @@ private:
         }
       groupStack.push_back({group, nameLoc});
       lowerPlacements(document, group->placements, combinedXf, effectiveOuter,
-                      usedAssets, usedGroups, usedLights, groupStack,
-                      placeName);
+                      effectiveCaster, usedAssets, usedGroups, usedLights,
+                      groupStack, placeName);
       groupStack.pop_back();
       return;
     }
@@ -454,15 +475,22 @@ private:
       item.materials = decl->materials;
       item.materials.renames =
           composeRename(document.materialAliases, effectiveOuter);
+      item.caster = effectiveCaster.value_or(decl->caster);
+      item.causticLight = decl->caustic;
       item.placeName = placeName;
       return;
     }
     const auto target{resolveTarget(document, decl->path, decl->pathLoc)};
     checkAssetTargetKind(*decl, target);
     if (target.kind == Target::Kind::LAYOUT) {
+      // The asset's own mark passes down like an override, since there is
+      // no one item for it to mark.
       lowerFile(target.path, combinedXf * decl->transform,
                 composeRename(subtreeRenames(decl->materials, decl->pathLoc),
                               effectiveOuter),
+                effectiveCaster ? effectiveCaster
+                : decl->caster  ? std::optional<bool>(true)
+                                : std::nullopt,
                 false, decl->pathLoc);
       return;
     }
@@ -479,7 +507,28 @@ private:
     item.materials = decl->materials;
     item.materials.renames =
         composeRename(document.materialAliases, effectiveOuter);
+    item.caster = casterOf(*decl, effectiveCaster, target);
+    item.causticLight = decl->caustic;
     item.placeName = placeName;
+  }
+
+  // The composed mark of an item lowered from `decl` through a target of
+  // known kind: a groom cannot carry it, since the manifold walk has no
+  // smooth surface to run on there.
+  [[nodiscard]] bool casterOf(const LayoutAssetDecl &decl,
+                              const std::optional<bool> &effectiveCaster,
+                              const Target &target) {
+    const bool caster{effectiveCaster.value_or(decl.caster)};
+    if (caster && target.kind == Target::Kind::CURVES) {
+      mDiags.error(decl.casterLoc ? decl.casterLoc : decl.pathLoc,
+                   smdl::concat("'caster' applies to a mesh file or a shape, "
+                                "but ",
+                                smdl::QuotedPath(decl.path),
+                                " is a curves "
+                                "file"));
+      throw SkipPlacement();
+    }
+    return caster;
   }
 
   // The kind-specific properties an asset block can write, cross-checked
@@ -526,16 +575,29 @@ private:
 
   void lowerImport(const LayoutDocument &document,
                    const LayoutPlacement &placement, const float4x4 &xf,
-                   const RenameMap &outerRenames) {
+                   const RenameMap &outerRenames,
+                   const std::optional<bool> &outerCaster) {
     const auto target{
         resolveTarget(document, placement.importPath, placement.importPathLoc)};
+    const auto effectiveCaster{
+        placement.casterOverride ? placement.casterOverride : outerCaster};
     if (target.kind == Target::Kind::LAYOUT) {
       lowerFile(target.path, xf * placement.transform,
                 composeRename(subtreeRenames(placement.importMaterials,
                                              placement.importPathLoc),
                               outerRenames),
-                false, placement.importPathLoc);
+                effectiveCaster, false, placement.importPathLoc);
       return;
+    }
+    if (effectiveCaster.value_or(false) &&
+        target.kind == Target::Kind::CURVES) {
+      mDiags.error(placement.casterLoc ? placement.casterLoc
+                                       : placement.importPathLoc,
+                   smdl::concat("'caster' applies to a mesh file or a shape, "
+                                "but ",
+                                smdl::QuotedPath(placement.importPath),
+                                " is a curves file"));
+      throw SkipPlacement();
     }
     if (target.kind == Target::Kind::CURVES) {
       // Fibers have no slots to default from, so an import must bind
@@ -563,6 +625,7 @@ private:
     item.materials = placement.importMaterials;
     item.materials.renames =
         composeRename(document.materialAliases, outerRenames);
+    item.caster = effectiveCaster.value_or(false);
   }
 
   // The `material` assignments written against a layout target, turned
@@ -687,7 +750,7 @@ Layout lowerLayout(LayoutDiagnostics &diags, const std::string &fileName,
                    const AssetSearchPath &search) {
   auto result{Layout()};
   Lowerer(diags, search, result)
-      .lowerFile(fileName, float4x4(1.0f), {}, true, {});
+      .lowerFile(fileName, float4x4(1.0f), {}, std::nullopt, true, {});
   return result;
 }
 

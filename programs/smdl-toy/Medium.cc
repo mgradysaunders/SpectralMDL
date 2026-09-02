@@ -1,10 +1,24 @@
 #include "Medium.h"
 
+#include <algorithm>
+#include <cstdint>
 #include <mutex>
 #include <set>
 
+#include "smdl/RenderUtil/FastMath.h"
 #include "smdl/Resource/VoxelGrid.h"
 #include "smdl/Support/Logger.h"
+
+// The Beer-Lambert transmittance of one band, exp(-d): exactly 1 for a
+// negative depth, exactly 0 past 87, where the true value is under 1e-38,
+// and 0 for a depth that is not a number. Inline because the per-band
+// loops call it once per band and libm's expf neither inlines nor
+// vectorizes, which left it at 7 percent of a scene rendered through a
+// homogeneous medium.
+[[nodiscard]] static inline float transmittance(float opticalDepth) noexcept {
+  const float d{opticalDepth > 0.0f ? opticalDepth : 0.0f};
+  return opticalDepth < 87.0f ? smdl::fastExp(-d) : 0.0f;
+}
 
 // The cap on tentative collisions per segment, a guard against
 // marching forever through unbounded or leaky geometry with a positive
@@ -208,8 +222,38 @@ hasUsableDensityGrid(const smdl::JIT::MaterialInstance &mat) {
          boundMax->z > boundMin->z;
 }
 
-Medium::Medium(const MediumStack *stack, const Color &wavelengths,
-               const float3 &org, const float3 &dir) noexcept {
+void Medium::reset(const MediumStack *stack, const Color &wavelengths,
+                   float time, const float3 &org, const float3 &dir) noexcept {
+  if (!mResolved || stack != mStack || time != mTime)
+    resolve(stack, wavelengths, time);
+  setSegment(org, dir);
+}
+
+void Medium::resolve(const MediumStack *stack, const Color &wavelengths,
+                     float time) noexcept {
+  mStack = stack;
+  mTime = time;
+  mResolved = true;
+  mHasMedium = false;
+  mHeterogeneous = false;
+  mMaterial = nullptr;
+  mHasEmission = false;
+  mMajorant = 0.0f;
+  mMajorantBase = 0.0f;
+  mMajorantGrid = 0.0f;
+  mMeshInstance = nullptr;
+  mState = std::nullopt;
+  mDensityGrid = nullptr;
+  mGridComponent = -1;
+  mInvMaxValue = 0.0f;
+  mUnitScale = 1.0f;
+  mComponents.clear();
+  mScatterInstance = nullptr;
+  // The coefficient spectra are left holding whatever the last
+  // resolution put there: every read of them is guarded by
+  // `mHasMedium`/`mHeterogeneous`, under which the branches below
+  // assign them.
+
   // Collect the active media: the run of additive entries from the top
   // of the stack plus the first non-additive entry, which replaces
   // everything below it. Entries that carry no coefficients and no
@@ -227,12 +271,12 @@ Medium::Medium(const MediumStack *stack, const Color &wavelengths,
   }
   if (count == 0) return;
   mHasMedium = true;
-  mState = makeRenderState(wavelengths);
+  const auto renderState{makeRenderState(wavelengths, nullptr, time)};
   // Coefficients are in inverse meters per the MDL specification;
   // distances here are in scene units. smdl-toy renders with the
   // default meters-per-scene-unit of 1, so this is the identity, but
   // the conversion is where a unit-aware scene flag would land.
-  const float unitScale{mState.meters_per_scene_unit};
+  const float unitScale{renderState.meters_per_scene_unit};
   mUnitScale = unitScale;
   if (count == 1) {
     // The single-medium segment, which is the overwhelmingly common
@@ -258,6 +302,7 @@ Medium::Medium(const MediumStack *stack, const Color &wavelengths,
       return;
     }
     mHeterogeneous = true;
+    mState = renderState;
     mMaxSigmaA = Color(mat.getMaxAbsorptionCoefficient()) * unitScale;
     mMaxSigmaS = Color(mat.getMaxScatteringCoefficient()) * unitScale;
     mMajorant = (mMaxSigmaA + mMaxSigmaS).maxComponent();
@@ -269,35 +314,27 @@ Medium::Medium(const MediumStack *stack, const Color &wavelengths,
     // has no scale, so the direction stays unit length and distances
     // stay in scene units. A medium with no geometry queries in world
     // space directly.
-    if (const auto *meshInstance{primary->meshInstance}) {
-      if (meshInstance->isDeformed) warnDeformedVolumeOnce(mMaterial);
-      mOrgR = float3(meshInstance->worldToRigid * float4(org, 1.0f));
-      mDirR = float3(meshInstance->worldToRigid * float4(dir, 0.0f));
-      mState.object_to_world_matrix = meshInstance->rigidToWorld;
-    } else {
-      mOrgR = org;
-      mDirR = dir;
+    mMeshInstance = primary->meshInstance;
+    if (mMeshInstance) {
+      if (mMeshInstance->isDeformed) warnDeformedVolumeOnce(mMaterial);
+      mState->object_to_world_matrix = mMeshInstance->rigidToWorld;
     }
-    mState.direction = mDirR;
     // The density acceleration hint, active only when the material
-    // declares all three fields and they are usable. The segment is
-    // mapped into the grid's brick space up front: the hint box spans
+    // declares all three fields and they are usable. The hint box spans
     // texture space [0,1]^3, which spans the voxel extent, and bricks
-    // are 16 voxels per axis.
+    // are 16 voxels per axis, which is the map `setSegment()` takes the
+    // segment into brick space with.
     if (hasUsableDensityGrid(mat)) {
       const auto *densityGrid{mat.getVolumeDensityGrid()};
       const auto *boundMin{mat.getVolumeDensityBoundMin()};
       const auto *boundMax{mat.getVolumeDensityBoundMax()};
       mDensityGrid = densityGrid;
       const auto extent{densityGrid->getExtent()};
-      const float3 scale{
-          float(extent.x) / (16.0f * (boundMax->x - boundMin->x)),
-          float(extent.y) / (16.0f * (boundMax->y - boundMin->y)),
-          float(extent.z) / (16.0f * (boundMax->z - boundMin->z))};
-      for (int axis = 0; axis < 3; axis++) {
-        mBrickOrg[axis] = (mOrgR[axis] - (*boundMin)[axis]) * scale[axis];
-        mBrickDir[axis] = mDirR[axis] * scale[axis];
-      }
+      mBrickBoundMin = *boundMin;
+      mBrickScale =
+          float3(float(extent.x) / (16.0f * (boundMax->x - boundMin->x)),
+                 float(extent.y) / (16.0f * (boundMax->y - boundMin->y)),
+                 float(extent.z) / (16.0f * (boundMax->z - boundMin->z)));
       mInvMaxValue = 1.0f / densityGrid->getMaxValue();
     }
     return;
@@ -332,19 +369,14 @@ Medium::Medium(const MediumStack *stack, const Color &wavelengths,
               Color(mat.getMaxAbsorptionCoefficient()) * unitScale;
           component.maxSigmaS =
               Color(mat.getMaxScatteringCoefficient()) * unitScale;
-          component.state = makeRenderState(wavelengths);
-          if (const auto *meshInstance{entry->meshInstance}) {
-            if (meshInstance->isDeformed) warnDeformedVolumeOnce(mat.material);
-            component.orgR =
-                float3(meshInstance->worldToRigid * float4(org, 1.0f));
-            component.dirR =
-                float3(meshInstance->worldToRigid * float4(dir, 0.0f));
-            component.state.object_to_world_matrix = meshInstance->rigidToWorld;
-          } else {
-            component.orgR = org;
-            component.dirR = dir;
+          component.state = renderState;
+          component.meshInstance = entry->meshInstance;
+          if (component.meshInstance) {
+            if (component.meshInstance->isDeformed)
+              warnDeformedVolumeOnce(mat.material);
+            component.state.object_to_world_matrix =
+                component.meshInstance->rigidToWorld;
           }
-          component.state.direction = component.dirR;
           if (hasUsableDensityGrid(mat)) {
             ++gridCandidates;
             gridComponent = int(mComponents.size()) - 1;
@@ -384,6 +416,7 @@ Medium::Medium(const MediumStack *stack, const Color &wavelengths,
   if (gridCandidates == 1) {
     auto &component{mComponents[size_t(gridComponent)]};
     component.scaledByGrid = true;
+    mGridComponent = gridComponent;
     mGridMaxSigma = component.maxSigmaA + component.maxSigmaS;
     mMajorantGrid = mGridMaxSigma.maxComponent();
     mMajorantBase = std::max(
@@ -394,14 +427,11 @@ Medium::Medium(const MediumStack *stack, const Color &wavelengths,
     const auto *boundMax{mat.getVolumeDensityBoundMax()};
     mDensityGrid = densityGrid;
     const auto extent{densityGrid->getExtent()};
-    const float3 scale{float(extent.x) / (16.0f * (boundMax->x - boundMin->x)),
-                       float(extent.y) / (16.0f * (boundMax->y - boundMin->y)),
-                       float(extent.z) / (16.0f * (boundMax->z - boundMin->z))};
-    for (int axis = 0; axis < 3; axis++) {
-      mBrickOrg[axis] =
-          (component.orgR[axis] - (*boundMin)[axis]) * scale[axis];
-      mBrickDir[axis] = component.dirR[axis] * scale[axis];
-    }
+    mBrickBoundMin = *boundMin;
+    mBrickScale =
+        float3(float(extent.x) / (16.0f * (boundMax->x - boundMin->x)),
+               float(extent.y) / (16.0f * (boundMax->y - boundMin->y)),
+               float(extent.z) / (16.0f * (boundMax->z - boundMin->z)));
     mInvMaxValue = 1.0f / densityGrid->getMaxValue();
   } else {
     mGridMaxSigma = Color();
@@ -410,17 +440,61 @@ Medium::Medium(const MediumStack *stack, const Color &wavelengths,
   }
 }
 
+void Medium::setSegment(const float3 &org, const float3 &dir) noexcept {
+  // A homogeneous medium has the same coefficients everywhere, so it
+  // never queries and has no segment to place.
+  if (!mHeterogeneous) return;
+  if (mComponents.empty()) {
+    if (mMeshInstance) {
+      mOrgR = float3(mMeshInstance->worldToRigid * float4(org, 1.0f));
+      mDirR = float3(mMeshInstance->worldToRigid * float4(dir, 0.0f));
+    } else {
+      mOrgR = org;
+      mDirR = dir;
+    }
+    mState->direction = mDirR;
+  } else {
+    for (auto &component : mComponents) {
+      if (!component.heterogeneous) continue;
+      if (component.meshInstance) {
+        component.orgR =
+            float3(component.meshInstance->worldToRigid * float4(org, 1.0f));
+        component.dirR =
+            float3(component.meshInstance->worldToRigid * float4(dir, 0.0f));
+      } else {
+        component.orgR = org;
+        component.dirR = dir;
+      }
+      component.state.direction = component.dirR;
+    }
+  }
+  if (mDensityGrid) {
+    // The grid's own component drives the spans, which is the single
+    // medium itself where there is no overlap.
+    const float3 &orgR{
+        mGridComponent < 0 ? mOrgR : mComponents[size_t(mGridComponent)].orgR};
+    const float3 &dirR{
+        mGridComponent < 0 ? mDirR : mComponents[size_t(mGridComponent)].dirR};
+    for (int axis = 0; axis < 3; axis++) {
+      mBrickOrg[axis] = (orgR[axis] - mBrickBoundMin[axis]) * mBrickScale[axis];
+      mBrickDir[axis] = dirR[axis] * mBrickScale[axis];
+    }
+  }
+}
+
 void Medium::evaluateCoefficients(float t, float majorantScale, Color &sigmaA,
                                   Color &sigmaS, Color &emission) const {
   if (mComponents.empty()) {
-    mState.position = mOrgR + t * mDirR;
-    mMaterial->volumeEvaluate(mState, sigmaA.data(), sigmaS.data(),
+    mState->position = mOrgR + t * mDirR;
+    mMaterial->volumeEvaluate(*mState, sigmaA.data(), sigmaS.data(),
                               emission.data());
     // Convert to inverse scene units and clamp to the declared majorants
     // at the local scale, so a lying majorant or density hint renders a
     // clamped medium instead of accumulating negative-weight bias. The
     // emission coefficient has no majorant and only clamps nonnegative:
     // it never gates sampling, so no bound is needed for unbiasedness.
+    // Not `std::clamp`: the majorant is what the material declared, and a
+    // misdeclared negative one must not invert the bounds.
     for (size_t i = 0; i < sigmaA.size(); i++) {
       sigmaA[i] = std::min(std::max(sigmaA[i] * mUnitScale, 0.0f),
                            mMaxSigmaA[i] * majorantScale);
@@ -438,6 +512,9 @@ void Medium::evaluateCoefficients(float t, float majorantScale, Color &sigmaA,
   sigmaA = Color();
   sigmaS = Color();
   emission = Color();
+  // One component's query, reused down the components: `volumeEvaluate`
+  // overwrites every band of all three.
+  Color a{}, s{}, e{};
   for (const auto &component : mComponents) {
     if (!component.heterogeneous) {
       sigmaA += component.sigmaA;
@@ -446,9 +523,6 @@ void Medium::evaluateCoefficients(float t, float majorantScale, Color &sigmaA,
       continue;
     }
     component.state.position = component.orgR + t * component.dirR;
-    Color a{};
-    Color s{};
-    Color e{};
     component.mat->material->volumeEvaluate(component.state, a.data(), s.data(),
                                             e.data());
     const float scale{component.scaledByGrid ? majorantScale : 1.0f};
@@ -511,8 +585,13 @@ bool Medium::sampleDistance(Sampler &sampler, float tEnd, float &t, Color &beta,
     // where scattering is sampled below. The extinction-free limit is
     // linear in distance, so an unbounded segment through an emissive
     // vacuum is clamped rather than infinite.
+    //
+    // The one place that keeps `std::exp`: at small optical depth the
+    // difference against one cancels down to the error of whatever
+    // computed it, and the two ulp `transmittance()` carries are enough
+    // to turn this integral negative there.
+    const Color mu{mSigmaA + mSigmaS};
     if (mHasEmission) {
-      const Color mu{mSigmaA + mSigmaS};
       const float tEmit{std::min(tEnd, 1e8f)};
       for (size_t i = 0; i < mu.size(); i++)
         emitted[i] +=
@@ -525,14 +604,14 @@ bool Medium::sampleDistance(Sampler &sampler, float tEnd, float &t, Color &beta,
     // by the single-sample MIS balance heuristic over all bins. The
     // caller clamps nothing: wavelengths with zero extinction keep
     // transmittance 1 through the min against FLT_MAX.
-    const Color mu{mSigmaA + mSigmaS};
     const float xi{float(sampler)};
     const int hero{sampler.index(int(mu.size()))};
     const float tScatter{-std::log1p(-xi) / mu[hero]};
     Color Tr{};
+    const float tTravel{
+        std::min({tScatter, tEnd, std::numeric_limits<float>::max()})};
     for (size_t i = 0; i < mu.size(); i++)
-      Tr[i] = std::exp(-mu[i] * std::min({tScatter, tEnd,
-                                          std::numeric_limits<float>::max()}));
+      Tr[i] = transmittance(mu[i] * tTravel);
     if (tScatter < tEnd) {
       beta *= mSigmaS * Tr / (mu * Tr).average();
       if (!mComponents.empty())
@@ -562,6 +641,10 @@ bool Medium::sampleDistance(Sampler &sampler, float tEnd, float &t, Color &beta,
       smdl::RNG((uint64_t(sampler.nextBits()) << 32) | sampler.nextBits())};
   Color P{1.0f};
   int iter{0};
+  // The coefficients of one tentative collision, held across the loop
+  // rather than sized anew at each: `evaluateCoefficients()` overwrites
+  // every band of all three.
+  Color sigmaA{}, sigmaS{}, emission{};
   auto spans{MajorantSpanIterator(mDensityGrid, mBrickOrg, mBrickDir,
                                   mInvMaxValue, tEnd)};
   MajorantSpan span{};
@@ -582,8 +665,6 @@ bool Medium::sampleDistance(Sampler &sampler, float tEnd, float &t, Color &beta,
         beta = Color();
         return false;
       }
-      Color sigmaA{}, sigmaS{};
-      Color emission{};
       evaluateCoefficients(tCur, span.scale, sigmaA, sigmaS, emission);
       // Accumulate the medium's own emission at every tentative
       // collision, before classification: the chain-survival density
@@ -637,7 +718,8 @@ void Medium::attenuate(Sampler &sampler, float tEnd, Color &beta) const {
     // wavelengths with zero extinction keep transmittance 1 instead of
     // producing 0 times infinity.
     const Color mu{mSigmaA + mSigmaS};
-    for (size_t i = 0; i < mu.size(); i++) beta[i] *= std::exp(-mu[i] * tEnd);
+    for (size_t i = 0; i < mu.size(); i++)
+      beta[i] *= transmittance(mu[i] * tEnd);
     return;
   }
   // Residual ratio tracking (Novak et al. 2014): per span, the
@@ -656,6 +738,8 @@ void Medium::attenuate(Sampler &sampler, float tEnd, Color &beta) const {
   auto rng{
       smdl::RNG((uint64_t(sampler.nextBits()) << 32) | sampler.nextBits())};
   int iter{0};
+  // See `sampleDistance()`; the emission this one asks for goes unread.
+  Color sigmaA{}, sigmaS{}, emissionUnused{};
   auto spans{MajorantSpanIterator(mDensityGrid, mBrickOrg, mBrickDir,
                                   mInvMaxValue, tEnd)};
   MajorantSpan span{};
@@ -677,8 +761,6 @@ void Medium::attenuate(Sampler &sampler, float tEnd, Color &beta) const {
         beta = Color();
         return;
       }
-      Color sigmaA{}, sigmaS{};
-      Color emissionUnused{};
       evaluateCoefficients(tCur, span.scale, sigmaA, sigmaS, emissionUnused);
       // The residual factor per bin. The local clamp keeps the
       // residual at most `m`, so the factor is nonnegative; where the
@@ -693,5 +775,5 @@ void Medium::attenuate(Sampler &sampler, float tEnd, Color &beta) const {
   }
   // The analytic control transmittance, one exponential per segment.
   for (size_t i = 0; i < beta.size(); i++)
-    beta[i] *= std::exp(-controlDepth[i]);
+    beta[i] *= transmittance(controlDepth[i]);
 }

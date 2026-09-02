@@ -6,7 +6,7 @@ import ::math::*;
 // `df::horizon_shadow_factor`: first-order relief self-shadowing captured
 // as four horizon slopes at material evaluation time and applied to the
 // incoming direction inside the BSDF, so NEE, BSDF sampling, and MIS stay
-// consistent. See `horizon-shadow-plan.md` at the repository root.
+// consistent.
 //
 // The harness mirrors `df_stability.smdl`: the default test state has an
 // identity tangent frame, so the directions below read directly as
@@ -39,7 +39,7 @@ EvaluateResult evaluate(
 struct SampleResult {
   float3 wi = float3(0);
   color f = color(0);
-  bool isDelta = false;
+  bool isDirac = false;
   bool success = false;
 };
 
@@ -52,10 +52,10 @@ SampleResult sample(const bsdf scattering, const float4 xi, float3 wo) {
   float pdfFwd = 0;
   float pdfRev = 0;
   color f = color(0);
-  int isDelta = 0;
+  int sampledLobe = 0;
   float lobeChanceOut = 1.0;
-  const auto success = df::_scatterSample(&instance, &xi1, &wo, df::DF_ALL, &wi, &pdfFwd, &pdfRev, cast<&float>(&f), &isDelta, &lobeChanceOut);
-  return SampleResult(wi, f, bool(isDelta), bool(success));
+  const auto success = df::_scatterSample(&instance, &xi1, &wo, df::DF_ALL, &wi, &pdfFwd, &pdfRev, cast<&float>(&f), &sampledLobe, &lobeChanceOut);
+  return SampleResult(wi, f, (sampledLobe & df::DF_DIRAC) != 0, bool(success));
 }
 
 // A direction with azimuth `d` (need not be normalized) and elevation
@@ -172,23 +172,23 @@ unit_test "Horizon factor guards" {
   #assert(#all(a.f == b.f));
 }
 
-unit_test "Horizon factor on a delta lobe" {
+unit_test "Horizon factor on a Dirac lobe" {
   // A mirror at 45 degrees: `wo = normalize(1, 0, 1)` reflects to
   // `wi = normalize(-1, 0, 1)`, whose azimuth is -U and light slope is 1.
   const auto mirror = df::specular_bsdf(tint: 0.9);
   const auto wo = math::normalize(float3(1.0, 0.0, 1.0));
   const auto xi = float4(0.3, 0.4, 0.5, 0.6);
   const auto bare = sample(mirror, xi, wo);
-  #assert(bare.success & bare.isDelta);
+  #assert(bare.success & bare.isDirac);
   #assert(#any(bare.f > 0.0));
 
-  // No horizon toward -U: exact passthrough of the delta weight.
+  // No horizon toward -U: exact passthrough of the Dirac weight.
   const auto open = sample(df::horizon_shadow_factor(slopes: float4(0.0, 0.5, 0.0, 0.0), base: mirror), xi, wo);
-  #assert(open.success & open.isDelta);
+  #assert(open.success & open.isDirac);
   #assert(#all(open.wi ~== |1e-6| bare.wi));
   #assert(#all(open.f == bare.f));
 
-  // A hard horizon above the mirror direction: the delta weight goes to 0
+  // A hard horizon above the mirror direction: the Dirac weight goes to 0
   // (the sample itself still succeeds; only its carried f is shadowed).
   const auto blocked = sample(df::horizon_shadow_factor(slopes: float4(0.0, 2.0, 0.0, 0.0), softness: 0.0, base: mirror), xi, wo);
   #assert(blocked.success);

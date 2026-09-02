@@ -1,7 +1,7 @@
 #include "smdl/Resource/Spectrum.h"
 #include "smdl/Support/Filesystem.h"
 #include "smdl/Support/Macros.h"
-#include "smdl/Support/StringHelpers.h"
+#include "smdl/Support/Strings.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/StringRef.h"
 #include "llvm/Support/Endian.h"

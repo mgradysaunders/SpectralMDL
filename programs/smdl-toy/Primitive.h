@@ -27,8 +27,14 @@
 /// (see `evalPrimitiveSurface()`), and it rides through the renderer in
 /// the same slots a triangle's barycentrics do: the intersect callback
 /// reports (u, v), `Scene::intersect()` packs them as `bary[1]` and
-/// `bary[2]`, and `Scene::makeHit()` rebuilds the full differential
+/// `bary[2]`, and `Scene::makeHit()` can rebuild the full differential
 /// geometry from them. Texture coordinates ARE the parameterization.
+///
+/// The callback also reports the object-space hit point, in the slots a
+/// triangle's geometric normal would take, and a hit built from a ray
+/// takes its geometry from that point (`evalPrimitiveSurfaceAt()`),
+/// which costs no trigonometry. Only a hit rebuilt from the parameters
+/// alone, as the manifold walk does, pays for the angles.
 ///
 class Primitive final {
 public:
@@ -49,7 +55,7 @@ public:
 
   /// A coarse set of surface points, in object space, standing in for
   /// mesh vertices wherever the renderer folds geometry into bounds:
-  /// `Scene::preCommitBounds()` and the framing solver both walk these.
+  /// `Scene::preCommitBounds()` and the autolook solver both walk these.
   std::vector<float3> proxyPoints{};
 };
 
@@ -100,6 +106,15 @@ makePrimitive(RTCDevice device, const PrimitiveSpec &spec, uint32_t matIndex);
 /// The differential geometry at (piece `primID`, `uv`).
 [[nodiscard]] PrimitiveSurface evalPrimitiveSurface(const PrimitiveSpec &spec,
                                                     uint32_t primID, float2 uv);
+
+/// The differential geometry at an object-space `point` on piece
+/// `primID`, which must lie on it: the same construction as
+/// `evalPrimitiveSurface()` with the trigonometry read off the point, so
+/// a hit or a sample that holds its point need not go through the
+/// parameters and back. The two agree to float rounding.
+[[nodiscard]] PrimitiveSurface evalPrimitiveSurfaceAt(const PrimitiveSpec &spec,
+                                                      uint32_t primID,
+                                                      const float3 &point);
 
 /// Sample the whole surface uniformly by object-space area.
 [[nodiscard]] PrimitiveAreaSample samplePrimitiveArea(const PrimitiveSpec &spec,

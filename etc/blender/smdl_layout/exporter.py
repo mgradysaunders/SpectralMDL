@@ -135,14 +135,18 @@ def is_group_instance(ob):
             and ASSET_KEY not in ob.instance_collection.keys())
 
 
-NO_OPTIONS = ((0, "CATMARK", False, False), "", (), ())
+NO_OPTIONS = ((0, "CATMARK", False, False), (False, False), "", (), ())
 
 
 def options_of(ob):
     """The per-object export options of a placed asset: the subdivision
-    part (levels, scheme, linear, displace), the flat material override,
-    the flat variant names, and the per-slot rows that carry content as
-    (slot, override, variants) triples.
+    part (levels, scheme, linear, displace), the caustic marks (caster,
+    caustic), the flat material override, the flat variant names, and the
+    per-slot rows that carry content as (slot, override, variants) triples.
+
+    Subdivision and the marks are properties of the asset declaration, so
+    they join the key `gather()` groups placements by; everything else is
+    a per-place fact.
 
     Any content-bearing slot row switches the asset to per-slot
     resolution and the flat fields stand down; `gather()` applies that
@@ -156,6 +160,7 @@ def options_of(ob):
               options.scheme if levels else "CATMARK",
               bool(options.linear) if levels else False,
               bool(options.displace))
+    marks = (bool(options.caster), bool(options.caustic))
     variants = tuple(name.strip() for name in options.variants.split(",")
                      if name.strip())
     slots = []
@@ -168,7 +173,7 @@ def options_of(ob):
                              if name.strip())
         if row_override or row_variants:
             slots.append((row.name, row_override, row_variants))
-    return subdiv, options.material.strip(), variants, tuple(slots)
+    return subdiv, marks, options.material.strip(), variants, tuple(slots)
 
 
 def slot_pick(random_id, slot):
@@ -290,9 +295,10 @@ def scatter_source_options(scene):
 
 def gather(context, collection=None):
     """Everything the layout asks for: the flat asset placements grouped by
-    what they place and how they refine it, each entry a (matrix, flat
-    material override, per-slot combo) triple where the combo is the
-    (slot, chosen name) picks of an asset resolved per slot; the group
+    what they place, how they refine it, and how it is marked for caustics,
+    each entry a (matrix, flat material override, per-slot combo) triple
+    where the combo is the (slot, chosen name) picks of an asset resolved
+    per slot; the group
     bundles (one per instanced user collection:
     its tagged members, its groom members, and the world matrix of every
     instance); the untagged objects, which were modeled here rather than
@@ -415,10 +421,10 @@ def gather(context, collection=None):
                 relative = (first_of[source].matrix_world.inverted() @
                             instance.matrix_world)
                 tag = tag_of(original)
-                subdiv, override, _, member_slots = member_options[source].get(
-                    tag, NO_OPTIONS)
-                members[source].append((tag, subdiv, override, member_slots,
-                                        relative))
+                subdiv, marks, override, _, member_slots = \
+                    member_options[source].get(tag, NO_OPTIONS)
+                members[source].append((tag, subdiv, marks, override,
+                                        member_slots, relative))
             continue
         if wanted is not None and not instance_is_wanted(instance, wanted):
             continue
@@ -442,7 +448,7 @@ def gather(context, collection=None):
         # wins when one exists.
         owner = (instance.parent.original
                  if instance.is_instance and instance.parent else original)
-        subdiv, override, variants, slots = options_of(owner)
+        subdiv, marks, override, variants, slots = options_of(owner)
         if (instance.is_instance
                 and not (owner.instance_type == "COLLECTION"
                          and owner.instance_collection is not None)):
@@ -452,7 +458,7 @@ def gather(context, collection=None):
             slots = ()
             claimed = source_options.get(original)
             if claimed is not None:
-                subdiv, override, variants, slots = claimed
+                subdiv, marks, override, variants, slots = claimed
         combo = ()
         if slots:
             # Per-slot resolution: each slot picks on its own and the flat
@@ -475,7 +481,7 @@ def gather(context, collection=None):
             # This is the only per-instance channel Blender offers Python:
             # instance attributes are not readable from here.
             override = variants[instance.random_id % len(variants)]
-        key = (tag, subdiv)
+        key = (tag, subdiv, marks)
         if key not in placements:
             placements[key] = []
             order.append(key)
@@ -642,6 +648,32 @@ def diagnose(context, collection=None):
                 f"{ob.name} displaces and randomizes slot materials, so the "
                 f"renderer bakes one displaced mesh per material "
                 f"combination in use: correct, but costly")
+
+    # The caustic emitter mark reads as a property of one light and is a
+    # statement about the whole scene: it turns the search from every
+    # light and the sky into the marked ones alone, so the first mark
+    # silently drops the sky out of it. Lamps are read out of the scene
+    # rather than out of `wanted`, exactly as `light_blocks()` reads them.
+    marked = [ob.name for ob in objects
+              if getattr(ob, "smdl_asset_options", None) is not None
+              and ob.smdl_asset_options.caustic]
+    for ob in sorted(context.scene.objects, key=lambda ob: ob.name):
+        if ob.type != "LIGHT" or not ob.visible_get():
+            continue
+        options = getattr(ob.data, "smdl_light_options", None)
+        if options is None or not options.caustic:
+            continue
+        if ob.data.type in ("POINT", "SPOT"):
+            marked.append(ob.name)
+        else:
+            problems.append(f"{ob.name} is marked a caustic emitter, but a "
+                            f"{ob.data.type.lower()} lamp exports no light "
+                            f"declaration to carry the mark")
+    if marked and context.scene.smdl_render.sky_scale > 0:
+        problems.append(f"{len(marked)} caustic emitter mark(s) restrict the "
+                        f"caustic search to what is marked, so the sky is "
+                        f"left out of it; clearing them all searches every "
+                        f"light and the sky instead")
     return problems
 
 
@@ -745,10 +777,10 @@ def camera_block(scene):
     height = int(render.resolution_y * render.resolution_percentage / 100)
     lines = [
         "camera {",
-        f"  dims {max(width, 1)} {max(height, 1)}",
+        f"  resolution {max(width, 1)} {max(height, 1)}",
         f"  look_from {origin.x:.9g} {origin.y:.9g} {origin.z:.9g}",
         f"  look_to {target.x:.9g} {target.y:.9g} {target.z:.9g}",
-        f"  up {up.x:.9g} {up.y:.9g} {up.z:.9g}",
+        f"  look_up {up.x:.9g} {up.y:.9g} {up.z:.9g}",
         f"  fovy {data.angle_y * 180.0 / 3.14159265358979:.9g}",
     ]
     settings = scene.smdl_render
@@ -874,6 +906,9 @@ def light_blocks(scene, problems):
     emissive material on a shape, which is the user's to author, so both
     are left out; area lamps get a problem note rather than silence.
 
+    A lamp marked a caustic emitter says so here; `diagnose()` reports
+    the marks on the lamps that do not export.
+
     Blender treats a spot as a point lamp with a cone mask, so its
     `energy` is the power of the full sphere and the cone keeps only its
     share; the layout's `power` is what the cone actually emits, so the
@@ -923,6 +958,9 @@ def light_blocks(scene, problems):
         if color != (1.0, 1.0, 1.0):
             settings.append(f"  color {color[0]:.9g} {color[1]:.9g} "
                             f"{color[2]:.9g}")
+        marks = getattr(light, "smdl_light_options", None)
+        if marks is not None and marks.caustic:
+            settings.append("  caustic")
         lines.append(head)
         lines.extend(settings)
         lines.append("}")
@@ -1146,12 +1184,14 @@ class _Assets:
         self.used_names.add(candidate)
         return candidate
 
-    def name_for(self, key, hint):
+    def name_for(self, key, hint, suffix=""):
         if key in self.by_tag:
             return self.by_tag[key]
+        # The suffix goes on after the manifest extension comes off, or
+        # every suffixed name carries the '.asset' through into itself.
         if hint.endswith(".asset"):
             hint = hint[:-len(".asset")]
-        name = self.unique(hint)
+        name = self.unique(hint + suffix)
         self.by_tag[key] = name
         self.order.append(key)
         return name
@@ -1193,21 +1233,25 @@ def write_scene(context, filepath, asset_root="", bake=True, collection=None,
         "",
     ]
 
-    # One declaration per distinct (manifest, select, refinement) that
-    # anything places, directly or through a group: instances that
-    # subdivide differently are different mesh data in the renderer.
+    # One declaration per distinct (manifest, select, refinement, marks)
+    # that anything places, directly or through a group: instances that
+    # subdivide differently are different mesh data in the renderer, and
+    # the caustic marks have no per-place spelling to carry them. The
+    # renderer caches an import by file, selection, and refinement, so two
+    # declarations that differ only in their marks still load one mesh.
     assets = _Assets()
     every_key = [key for key, _ in flat]
     for _, group_members, _, _ in groups:
-        for tag, subdiv, _, _, _ in group_members:
-            if (tag, subdiv) not in every_key:
-                every_key.append((tag, subdiv))
+        for tag, subdiv, marks, _, _, _ in group_members:
+            if (tag, subdiv, marks) not in every_key:
+                every_key.append((tag, subdiv, marks))
     declared = []
     base_of = {}
     assignment_of = {}
     for key in every_key:
-        (manifest_path, select), subdiv = key
+        (manifest_path, select), subdiv, marks = key
         levels, scheme, linear, displace = subdiv
+        caster, caustic = marks
         if not os.path.exists(manifest_path):
             problems.append(f"the asset manifest {manifest_path} is gone, so "
                             f"placement(s) of it were skipped")
@@ -1215,8 +1259,12 @@ def write_scene(context, filepath, asset_root="", bake=True, collection=None,
         suffix = f"_sub{levels}" if levels else ""
         if displace and not levels:
             suffix = "_displaced"
+        if caster:
+            suffix += "_caster"
+        if caustic:
+            suffix += "_caustic"
         name = assets.name_for(
-            key, (select or os.path.basename(manifest_path)) + suffix)
+            key, select or os.path.basename(manifest_path), suffix)
         reference = relative_asset_path(manifest_path, asset_root,
                                         scene_directory)
         # What shades this asset: whatever it was assigned last time, else
@@ -1280,6 +1328,10 @@ def write_scene(context, filepath, asset_root="", bake=True, collection=None,
             lines.append(op)
         if displace:
             lines.append("  displace")
+        if caster:
+            lines.append("  caster")
+        if caustic:
+            lines.append("  caustic")
         lines.append("}")
         declared.append(key)
     if declared:
@@ -1287,7 +1339,7 @@ def write_scene(context, filepath, asset_root="", bake=True, collection=None,
     flat = [(key, entries) for key, entries in flat if key in declared]
     groups = [(source,
                [entry for entry in group_members
-                if (entry[0], entry[1]) in declared],
+                if entry[:3] in declared],
                groom_members, instances)
               for source, group_members, groom_members, instances in groups]
 
@@ -1414,8 +1466,9 @@ def write_scene(context, filepath, asset_root="", bake=True, collection=None,
         name = assets.unique(source.name)
         group_names.append(name)
         lines.append(f"group {name} {{")
-        for tag, subdiv, override, member_slots, matrix in group_members:
-            key = (tag, subdiv)
+        for tag, subdiv, marks, override, member_slots, matrix \
+                in group_members:
+            key = (tag, subdiv, marks)
             member = assets.by_tag[key]
             # A group is one template placed whole, so a member's slot
             # overrides apply and its variants have nothing to vary over.

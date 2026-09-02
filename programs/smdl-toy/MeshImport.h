@@ -6,8 +6,9 @@
 /// pivots, material names and triangle counts are what the renderer
 /// itself will see rather than a second reader's opinion of the file.
 ///
-/// Deliberately free of assimp, so that including it costs nothing.
-/// The assimp-facing pieces live in `MeshImportAssimp.h`.
+/// The assimp types stay forward declared, so that including this costs
+/// nothing; the source file that calls the reading half below is the one
+/// that talks to assimp.
 ///
 #pragma once
 
@@ -22,6 +23,13 @@
 namespace llvm::json {
 class OStream;
 } // namespace llvm::json
+
+namespace Assimp {
+class Importer;
+} // namespace Assimp
+
+struct aiNode;
+struct aiScene;
 
 using namespace smdl::vector_type_aliases;
 using namespace smdl::matrix_type_aliases;
@@ -142,6 +150,60 @@ public:
   std::vector<ImportNode> nodes{};
   std::vector<Placement> placements{};
 };
+
+/// Configure an importer to read the least that assimp can be made to read:
+/// triangle geometry, one texture coordinate set, and material names. That is
+/// everything the renderer takes from a scene file, since SMDL loads every
+/// texture itself and the material name is the only thing a material
+/// contributes.
+///
+/// A listing built on this therefore answers "what will the renderer see"
+/// rather than "what is in the file". The configuration is lossy by design, so
+/// anything meaning to write a file back out must read it some other way.
+///
+/// `extraRemovedComponents` drops more per-vertex data on top of the baseline,
+/// for callers that do not build geometry at all.
+///
+/// \note `aiComponent_MATERIALS` must NEVER appear in the removal mask. It
+///       deletes every material and substitutes one generated default, which
+///       destroys the only thing we are here to read.
+///
+void configureImporter(Assimp::Importer &importer,
+                       unsigned extraRemovedComponents = 0);
+
+/// Read a scene file keeping everything in it: no components removed, no
+/// triangulation, no welding, no generated normals, no flattening.
+///
+/// This is the read for a caller that reports or rewrites what a file actually
+/// contains, and it is deliberately the opposite of `configureImporter()`. The
+/// two answer different questions and the answers differ: the listing read
+/// reports triangles after triangulation and vertices after welding, this one
+/// reports the polygons and the vertices the file was authored with. Neither
+/// number is wrong and they must never be presented as the same number.
+///
+/// Skeleton mesh generation is off, since it adds geometry the file does not
+/// have. Structure validation is off too, because
+/// `aiProcess_ValidateDataStructure` repairs what it finds, and a read that
+/// repairs cannot report.
+///
+/// The returned scene belongs to `importer`. Call
+/// `Assimp::Importer::GetOrphanedScene()` to take it.
+///
+/// \throws smdl::Error  If assimp cannot read the file.
+///
+[[nodiscard]] const aiScene *readLossless(Assimp::Importer &importer,
+                                          const std::string &fileName);
+
+/// Flatten a node graph into nodes and placements, in preorder, so that a node
+/// always precedes its descendants.
+///
+/// `meshBase` offsets the file's own mesh indices into the caller's mesh
+/// array; a listing that builds no meshes passes zero and reads the file's
+/// indices straight back.
+///
+void flattenNodes(const aiNode &assNode, const float4x4 &parentXf,
+                  uint32_t parentIndex, std::string_view parentPath,
+                  uint32_t meshBase, ImportFile &file);
 
 /// Resolve a selection against a node table.
 ///

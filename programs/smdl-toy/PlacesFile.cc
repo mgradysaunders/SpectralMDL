@@ -1,7 +1,7 @@
 #include "PlacesFile.h"
 
 #include "smdl/Support/Error.h"
-#include "smdl/Support/StringHelpers.h"
+#include "smdl/Support/Strings.h"
 
 #include <cstring>
 #include <fstream>

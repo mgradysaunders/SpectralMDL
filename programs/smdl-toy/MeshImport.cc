@@ -1,15 +1,31 @@
-#include "MeshImportAssimp.h"
+#include "MeshImport.h"
 
+#include "assimp/Importer.hpp"
 #include "assimp/config.h"
+#include "assimp/postprocess.h"
+#include "assimp/scene.h"
 
 #include "llvm/Support/JSON.h"
 
 #include "smdl/Support/Error.h"
-#include "smdl/Support/StringHelpers.h"
+#include "smdl/Support/Strings.h"
 
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
+
+namespace {
+
+// An assimp matrix as a `float4x4`. assimp stores rows, this stores columns;
+// both denote the same map, so nothing about the composition order changes
+// with the conversion.
+[[nodiscard]] float4x4 fromAssimp(const aiMatrix4x4 &m) noexcept {
+  return float4x4{
+      float4{m.a1, m.b1, m.c1, m.d1}, float4{m.a2, m.b2, m.c2, m.d2},
+      float4{m.a3, m.b3, m.c3, m.d3}, float4{m.a4, m.b4, m.c4, m.d4}};
+}
+
+} // namespace
 
 void configureImporter(Assimp::Importer &importer,
                        unsigned extraRemovedComponents) {
@@ -193,6 +209,17 @@ std::vector<uint32_t> resolveSelection(const std::vector<ImportNode> &nodes,
 }
 
 namespace {
+
+// The post-processing for a material-usage-only load, which needs the meshes
+// (they carry `mMaterialIndex`) but none of the vertex data.
+//
+// `aiProcess_FindInstances` is deliberately absent even though a full geometry
+// load enables it. The listing answers "how much geometry needs this
+// material", which is a question about the file as authored: deduplicating
+// first would report one shared copy where the file has sixty-four, and
+// undercount the triangles accordingly.
+constexpr unsigned MATERIAL_POSTPROCESS_FLAGS =
+    aiProcess_RemoveComponent | aiProcess_Triangulate | aiProcess_SortByPType;
 
 // Read a scene file for listing only: the meshes come in because they carry
 // `mMaterialIndex` and the face count, but no vertex data does and no

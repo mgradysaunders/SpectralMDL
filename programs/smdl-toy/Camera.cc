@@ -1,5 +1,7 @@
 #include "Camera.h"
 
+#include <algorithm>
+
 #include "smdl/Support/Logger.h"
 
 // Apply radial lens distortion to a sensor point, returning the ideal
@@ -22,7 +24,7 @@
   const float foreshorten{std::hypot(focalLength, length(image)) /
                           std::hypot(focalLength, length(imageIdeal))};
   coneScale =
-      std::sqrt(std::fmax(scale * radial, 0.0f)) * std::pow(foreshorten, 1.5f);
+      std::sqrt(std::max(scale * radial, 0.0f)) * std::pow(foreshorten, 1.5f);
   return imageIdeal;
 }
 
@@ -55,15 +57,16 @@ Camera::Camera(const CameraOptions &options) {
             "-distortion-k2"));
     }
   }
-  numPixelsX = float(options.dims.x);
-  numPixelsY = float(options.dims.y);
+  numPixelsX = float(options.resolution.x);
+  numPixelsY = float(options.resolution.y);
   aspectRatio = numPixelsX / numPixelsY;
   focalLength = 0.5f / std::tan(smdl::radians(options.fovYDeg / 2));
   // One pixel's subtended angle, the ray cone spread that seeds the LOD
   // state; zero switches the cone off end to end.
   coneAngleBase =
       options.noLOD ? 0.0f : std::atan(1.0f / (focalLength * numPixelsY));
-  cameraToWorld = smdl::lookAt(options.lookFrom, options.lookTo, options.up);
+  cameraToWorld =
+      smdl::lookAt(options.lookFrom, options.lookTo, options.lookUp);
   // The distortion radius is corner-normalized so the coefficients sum to
   // the fractional corner displacement at any aspect ratio and FOV.
   rCorner = std::hypot(0.5f * aspectRatio, 0.5f);

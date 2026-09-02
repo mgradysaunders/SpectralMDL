@@ -28,7 +28,7 @@ import ::df::*;
 // The layout resolves the material names it was written with here. Assign
 // one to an asset in the SpectralMDL Asset panel.
 
-export material default_material() = material(
+export material default_object() = material(
   surface: material_surface(
     scattering: df::diffuse_reflection_bsdf(tint: color(0.2))));
 """

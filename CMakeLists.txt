@@ -26,7 +26,7 @@ endif()
 
 # The RTTI setting must agree with how LLVM itself was built. MSVC spells
 # this '/GR-' and does not understand '-fno-rtti'.
-if(NOT SMDL_ENABLE_RTTI)
+if(NOT SMDL_RTTI)
   if(MSVC)
     set(RTTI_FLAG "/GR-")
   else()
@@ -34,6 +34,65 @@ if(NOT SMDL_ENABLE_RTTI)
   endif()
 else()
   set(RTTI_FLAG "")
+endif()
+
+if(SMDL_CXX_NATIVE AND MSVC)
+  message(WARNING "SMDL_CXX_NATIVE is ignored: MSVC does not support -march=native")
+  set(SMDL_CXX_NATIVE OFF)
+endif()
+
+# Resolve SMDL_CXX_X86_ISA into 'CXX_ARCH_FLAGS', which 'lib' and the
+# programs apply privately. The GCC and Clang spelling names the x86-64
+# psABI microarchitecture level rather than the individual instructions,
+# because the level is a defined contract: it pins the whole set at once,
+# and the loader can check for it.
+set(CXX_ARCH_FLAGS "")
+if(SMDL_CXX_X86_ISA)
+  if(SMDL_CXX_NATIVE)
+    message(FATAL_ERROR
+      "SMDL_CXX_NATIVE and SMDL_CXX_X86_ISA cannot both be set. SMDL_CXX_NATIVE "
+      "compiles for this machine alone; SMDL_CXX_X86_ISA raises the floor "
+      "to an instruction set that other machines may have too.")
+  endif()
+  if(NOT CMAKE_SYSTEM_PROCESSOR MATCHES "^([Xx]86|[Xx]86_64|x64|AMD64|amd64|i[3-6]86)$")
+    message(STATUS "CXX_X86_ISA: ignored on ${CMAKE_SYSTEM_PROCESSOR}")
+  elseif(MSVC)
+    if(SMDL_CXX_X86_ISA STREQUAL "SSE42")
+      message(STATUS "CXX_X86_ISA: SSE42 has no MSVC switch, and x64 already implies SSE2")
+    elseif(SMDL_CXX_X86_ISA MATCHES "^(AVX|AVX2|AVX512)$")
+      set(CXX_ARCH_FLAGS "/arch:${SMDL_CXX_X86_ISA}")
+    else()
+      message(FATAL_ERROR
+        "SMDL_CXX_X86_ISA: '${SMDL_CXX_X86_ISA}' is not one of SSE42, AVX, AVX2, AVX512")
+    endif()
+  else()
+    if(SMDL_CXX_X86_ISA STREQUAL "SSE42")
+      set(ArchFlag "-march=x86-64-v2")
+      set(ArchFallback "-msse4.2;-mpopcnt")
+    elseif(SMDL_CXX_X86_ISA STREQUAL "AVX")
+      set(ArchFlag "-mavx")
+      set(ArchFallback "-mavx")
+    elseif(SMDL_CXX_X86_ISA STREQUAL "AVX2")
+      set(ArchFlag "-march=x86-64-v3")
+      set(ArchFallback "-mavx2;-mfma;-mbmi;-mbmi2;-mf16c;-mlzcnt;-mmovbe")
+    elseif(SMDL_CXX_X86_ISA STREQUAL "AVX512")
+      set(ArchFlag "-march=x86-64-v4")
+      set(ArchFallback "-mavx512f;-mavx512bw;-mavx512cd;-mavx512dq;-mavx512vl")
+    else()
+      message(FATAL_ERROR
+        "SMDL_CXX_X86_ISA: '${SMDL_CXX_X86_ISA}' is not one of SSE42, AVX, AVX2, AVX512")
+    endif()
+    # The psABI level names postdate GCC 11 and Clang 12, so an older
+    # compiler gets the instructions named individually instead.
+    include(CheckCXXCompilerFlag)
+    check_cxx_compiler_flag("${ArchFlag}" "SMDL_HAVE_ARCH_${SMDL_CXX_X86_ISA}")
+    if(SMDL_HAVE_ARCH_${SMDL_CXX_X86_ISA})
+      set(CXX_ARCH_FLAGS "${ArchFlag}")
+    else()
+      set(CXX_ARCH_FLAGS ${ArchFallback})
+    endif()
+  endif()
+  message(STATUS "CXX_X86_ISA: ${SMDL_CXX_X86_ISA} (${CXX_ARCH_FLAGS})")
 endif()
 
 # MSVC needs to be told two things it cannot work out on its own: '/utf-8',

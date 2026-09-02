@@ -195,9 +195,7 @@ float LightProfile::power() const noexcept {
 [[nodiscard]]
 static float atan2Degrees(float y, float x) {
   float theta{degrees(std::atan2(y, x))};
-  theta = std::fmax(theta, -180.0f);
-  theta = std::fmin(theta, +180.0f);
-  return theta;
+  return std::clamp(theta, -180.0f, +180.0f);
 }
 
 [[nodiscard]]
@@ -209,9 +207,7 @@ static float atan2DegreesPositive(float y, float x) {
   // zero and 360.
   float theta{degrees(std::atan2(y, x))};
   if (theta < 0.0f) theta += 360.0f;
-  theta = std::fmax(theta, 0.0f);
-  theta = std::fmin(theta, 360.0f);
-  return theta;
+  return std::clamp(theta, 0.0f, 360.0f);
 }
 
 float LightProfile::interpolate(float3 wo) const noexcept {

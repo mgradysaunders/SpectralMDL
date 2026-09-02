@@ -169,6 +169,76 @@ unit_test "Shading normal bend covers a layer's own normal" {
   #assert(#all(nestedResult.f > 0.0));
 }
 
+unit_test "A defaulted layer normal follows the material geometry normal" {
+  // A layer that is not given a normal inherits the one already active
+  // where it sits, which at the top of the tree is `geometry.normal`. So
+  // normal mapping once through `material_geometry` reaches the layer, and
+  // the result must be identical to spelling the same normal out on it.
+  // Nesting must carry it the whole way down.
+  const auto wo = math::normalize(float3(0.3, 0.1, 1.0));
+  const auto wi = math::normalize(float3(-0.2, 0.4, 1.0));
+  const auto leaf = df::microfacet_ggx_smith_bsdf(roughness_u: 0.4, tint: 1.0);
+  const auto base = df::diffuse_reflection_bsdf(tint: 0.7);
+  const auto inherited = df::weighted_layer(
+    weight: 0.6,
+    layer: df::fresnel_layer(ior: 1.5, layer: leaf, base: base),
+    base: base);
+  const auto spelled = df::weighted_layer(
+    weight: 0.6,
+    layer: df::fresnel_layer(ior: 1.5, layer: leaf, base: base, normal: TILTED),
+    base: base,
+    normal: TILTED);
+  const auto a = evaluate(inherited, TILTED, wo, wi);
+  const auto b = evaluate(spelled, TILTED, wo, wi);
+  #assert(a.success & b.success);
+  #assert(#any(a.f > 0.0)); // Else the comparison passes vacuously
+  #assert(#all(a.f ~== (1e-5) b.f));
+  #assert(#all(a.pdf ~== (1e-5) b.pdf));
+  // And the defaulted tree must NOT be the one pinned to the state normal,
+  // which is what the geometry normal was remapped away from.
+  const auto pinned = df::weighted_layer(
+    weight: 0.6,
+    layer: df::fresnel_layer(ior: 1.5, layer: leaf, base: base, normal: $state.normal),
+    base: base,
+    normal: $state.normal);
+  const auto c = evaluate(pinned, TILTED, wo, wi);
+  #assert(c.success);
+  #assert(#any(!(a.f ~== (1e-5) c.f)));
+}
+
+unit_test "A micrograin layer samples its base in the inherited frame" {
+  // The grains sit on the substrate and orient themselves; they do not
+  // reorient it. So the base is sampled in the frame this layer inherited,
+  // which is where `scatterEvaluate` evaluates it and so where the density
+  // reported for the draw comes from. A Dirac base makes the frame directly
+  // observable: the reflection is about whichever normal the base was
+  // handed, and about the grain normal it would be a draw from one
+  // distribution weighed by the density of another.
+  auto mat = material(
+    surface: material_surface(scattering: df::micrograin_layer(
+      filling_factor: 0.05, // Small, so the pores dominate the selection
+      base: df::specular_bsdf(mode: df::scatter_reflect),
+      normal: TILTED)));
+  auto instance = _MaterialInstance(&mat);
+  instance.exterior_ior = 1.0;
+  float3 wo = math::normalize(float3(0.3, 0.1, 1.0));
+  float4 xi = float4(0.3, 0.7, 0.05, 0.5); // xi.z low: take the base branch
+  float3 wi = float3(0.0);
+  float pdfFwd = 0;
+  float pdfRev = 0;
+  color f = color(0);
+  int sampledLobe = 0;
+  float lobeChanceOut = 1.0;
+  #assert(bool(df::_scatterSample(&instance, &xi, &wo, df::DF_ALL, &wi, &pdfFwd, &pdfRev, cast<&float>(&f), &sampledLobe, &lobeChanceOut)));
+  #assert(sampledLobe == df::DF_DIRAC_BRDF); // Else the base was not taken
+  // The mirror direction about the inherited normal, which is the state
+  // normal here because the material does not remap it.
+  #assert(#all(wi ~== (1e-5) float3(-wo.x, -wo.y, wo.z)));
+  // And not the mirror direction about the grain normal.
+  const auto grainWi = 2.0 * math::dot(wo, TILTED) * TILTED - wo;
+  #assert(#any(!(wi ~== (1e-3) grainWi))); // Else the check is vacuous
+}
+
 unit_test "Shading normal bend recovers sampling below the shading horizon" {
   // The sampling path knows only `wo`, so it bends for `wo` alone; the
   // evaluation that follows it bends for the sampled direction too. Neither
@@ -186,9 +256,9 @@ unit_test "Shading normal bend recovers sampling below the shading horizon" {
   float pdfFwd = 0;
   float pdfRev = 0;
   color f = color(0);
-  int isDelta = 0;
+  int sampledLobe = 0;
   float lobeChanceOut = 1.0;
-  #assert(bool(df::_scatterSample(&instance, &xi, &wo, df::DF_ALL, &wi, &pdfFwd, &pdfRev, cast<&float>(&f), &isDelta, &lobeChanceOut)));
+  #assert(bool(df::_scatterSample(&instance, &xi, &wo, df::DF_ALL, &wi, &pdfFwd, &pdfRev, cast<&float>(&f), &sampledLobe, &lobeChanceOut)));
   #assert(wi.z > 0.0); // Reflection, in the natural tangent space
   #assert(#all(f > 0.0));
   #assert(pdfFwd > 0.0);

@@ -2,7 +2,7 @@
 
 #include "Scene.h"
 
-#include "smdl/Support/SpectralRenderImage.h"
+#include "smdl/RenderUtil/SpectralFilm.h"
 
 /// The display transform, resolved from the command line into plain
 /// values.
@@ -51,7 +51,7 @@ struct TonemapOptions final {
 /// \throws smdl::Error if any of the three names is not recognized.
 void validateTonemapOptions(const TonemapOptions &options);
 
-/// How `resolveRGB()` maps the spectral buffer to RGB when the CIE
+/// How `resolveRGB()` maps the film to RGB when the CIE
 /// projection is not simply the right thing.
 struct RGBPolicy final {
   /// Force the false-color band mapping even when the grid could carry
@@ -64,7 +64,7 @@ struct RGBPolicy final {
   std::vector<float> falseColorWaves{};
 };
 
-/// Resolve the spectral buffer to linear RGB once. This is the radiance
+/// Resolve the film to linear RGB once. This is the radiance
 /// the renderer actually estimated, so it is what gets written to the
 /// floating point file; everything in `tonemap()` is a display transform
 /// applied only on the way to an 8-bit file.
@@ -78,20 +78,21 @@ struct RGBPolicy final {
 /// the grayscale mean radiance. Every non-true-color choice is
 /// announced on stderr; the spectral ENVI output is always the
 /// radiometric record.
-[[nodiscard]] std::vector<float>
-resolveRGB(smdl::Compiler &compiler, const smdl::SpectralRenderImage &spectral,
-           const Color &wavelengths, const RGBPolicy &policy = {});
+[[nodiscard]] std::vector<float> resolveRGB(smdl::Compiler &compiler,
+                                            const smdl::SpectralFilm &film,
+                                            const Color &wavelengths,
+                                            const RGBPolicy &policy = {});
 
 /// Tone map the resolved RGB image to 8-bit display values.
 ///
-/// The `spectral` buffer and its `wavelengths` back the night mode, which
-/// needs the absolute photopic and scotopic luminance of every pixel
-/// rather than the RGB projection alone; `rgbImage` must be the
-/// `resolveRGB()` of the same buffer, so every mode displays the same
-/// radiance.
+/// The `film` and its `wavelengths` back the night mode, which needs the
+/// absolute photopic and scotopic luminance of every pixel rather than
+/// the RGB projection alone; `rgbImage` must be the `resolveRGB()` of
+/// the same film, so every mode displays the same radiance.
 ///
 /// \throws smdl::Error if any of the mode, curve, or local names is not
 /// recognized.
-[[nodiscard]] std::vector<uint8_t>
-tonemap(const TonemapOptions &options, const std::vector<float> &rgbImage,
-        const smdl::SpectralRenderImage &spectral, const Color &wavelengths);
+[[nodiscard]] std::vector<uint8_t> tonemap(const TonemapOptions &options,
+                                           const std::vector<float> &rgbImage,
+                                           const smdl::SpectralFilm &film,
+                                           const Color &wavelengths);

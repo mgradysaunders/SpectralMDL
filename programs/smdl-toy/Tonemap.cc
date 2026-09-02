@@ -19,7 +19,7 @@
 // The fraction of the photopic luminous mass the wavelength grid can
 // see: a fine sweep of the visible, crediting the mass wherever some
 // band lies within 30nm. This decides whether the CIE projection of
-// the spectral buffer means anything as a picture.
+// the film means anything as a picture.
 [[nodiscard]] static double visibleCoverage(const Color &wavelengths) {
   double total{};
   double covered{};
@@ -47,13 +47,22 @@
   return best;
 }
 
+// The film mean of one band, with a non-finite value (a pixel some
+// material poisoned) read as black, so that everything downstream can
+// assume finite input and use plain min and max.
+[[nodiscard]] static double filmMean(const smdl::SpectralFilm &film, size_t x,
+                                     size_t y, size_t i) noexcept {
+  const double value{film.mean(x, y, i)};
+  return std::isfinite(value) ? value : 0.0;
+}
+
 std::vector<float> resolveRGB(smdl::Compiler &compiler,
-                              const smdl::SpectralRenderImage &spectral,
+                              const smdl::SpectralFilm &film,
                               const Color &wavelengths,
                               const RGBPolicy &policy) {
-  const size_t numPixelsX{spectral.getNumPixelsX()};
-  const size_t numPixelsY{spectral.getNumPixelsY()};
-  const size_t numBands{spectral.getNumBands()};
+  const size_t numPixelsX{film.getNumPixelsX()};
+  const size_t numPixelsY{film.getNumPixelsY()};
+  const size_t numBands{film.getNumBands()};
   auto rgbImage{std::vector<float>(numPixelsX * numPixelsY * 3)};
   // Down to 90% coverage the CIE projection is a faithful picture, and
   // down to 35% it is still the physically correct band-limited view
@@ -78,9 +87,9 @@ std::vector<float> resolveRGB(smdl::Compiler &compiler,
                   numBands);
     std::cerr << note;
     for (size_t p = 0; p < numPixelsX * numPixelsY; p++) {
-      auto pixel{spectral(p % numPixelsX, p / numPixelsX)};
+      const size_t x{p % numPixelsX}, y{p / numPixelsX};
       double mean{};
-      for (size_t i = 0; i < numBands; i++) mean += pixel.mean(i);
+      for (size_t i = 0; i < numBands; i++) mean += filmMean(film, x, y, i);
       mean /= double(numBands);
       auto texel{&rgbImage[3 * p]};
       texel[0] = texel[1] = texel[2] = float(mean);
@@ -111,11 +120,11 @@ std::vector<float> resolveRGB(smdl::Compiler &compiler,
                   double(wavelengths[bandB]), 100.0 * coverage);
     std::cerr << note;
     for (size_t p = 0; p < numPixelsX * numPixelsY; p++) {
-      auto pixel{spectral(p % numPixelsX, p / numPixelsX)};
+      const size_t x{p % numPixelsX}, y{p / numPixelsX};
       auto texel{&rgbImage[3 * p]};
-      texel[0] = float(pixel.mean(bandR));
-      texel[1] = float(pixel.mean(bandG));
-      texel[2] = float(pixel.mean(bandB));
+      texel[0] = float(filmMean(film, x, y, bandR));
+      texel[1] = float(filmMean(film, x, y, bandG));
+      texel[2] = float(filmMean(film, x, y, bandB));
     }
     return rgbImage;
   }
@@ -130,8 +139,8 @@ std::vector<float> resolveRGB(smdl::Compiler &compiler,
   for (size_t y{}; y < numPixelsY; y++) {
     for (size_t x{}; x < numPixelsX; x++) {
       auto color{Color()};
-      auto pixel{spectral(x, y)};
-      for (size_t i = 0; i < color.size(); i++) color[i] = float(pixel.mean(i));
+      for (size_t i = 0; i < color.size(); i++)
+        color[i] = float(filmMean(film, x, y, i));
       auto state{makeRenderState(wavelengths)};
       auto rgb{compiler.convertColorToRGB(state, color.data())};
       auto texel{&rgbImage[3 * (x + numPixelsX * y)]};
@@ -181,18 +190,17 @@ constexpr float PBR_NEUTRAL_DESATURATION{0.15f};
 }
 
 static void pbrNeutralRGB(const float *rgb, float *out) noexcept {
-  std::array<float, 3> color = {std::fmax(rgb[0], 0.0f),
-                                std::fmax(rgb[1], 0.0f),
-                                std::fmax(rgb[2], 0.0f)};
+  std::array<float, 3> color = {std::max(rgb[0], 0.0f), std::max(rgb[1], 0.0f),
+                                std::max(rgb[2], 0.0f)};
   // Subtracting the offset from every channel, tapering to zero as the
   // darkest channel approaches black, is the toe. It never drives a
   // channel negative: the darkest is left at 6.25 x^2 >= 0 in the toe,
   // and no smaller than 0.04 above it.
-  const float low{std::fmin(color[0], std::fmin(color[1], color[2]))};
+  const float low{std::min({color[0], color[1], color[2]})};
   const float offset{low < PBR_NEUTRAL_TOE_END ? low - 6.25f * low * low
                                                : PBR_NEUTRAL_OFFSET};
   for (auto &channel : color) channel -= offset;
-  const float peak{std::fmax(color[0], std::fmax(color[1], color[2]))};
+  const float peak{std::max({color[0], color[1], color[2]})};
   if (peak < PBR_NEUTRAL_START) {
     out[0] = color[0], out[1] = color[1], out[2] = color[2];
     return;
@@ -226,15 +234,13 @@ struct DisplayCurve final {
   [[nodiscard]] float apply(float value) const noexcept {
     switch (kind) {
     case GAMMA:
-      return std::pow(std::fmin(std::fmax(value, 0.0f), 1.0f), 1.0f / 2.2f);
+      return std::pow(std::clamp(value, 0.0f, 1.0f), 1.0f / 2.2f);
     case LOG:
       return value > 0.0f
-                 ? std::fmin(
-                       std::fmax(1.0f + std::log10(value) / logDecades, 0.0f),
-                       1.0f)
+                 ? std::clamp(1.0f + std::log10(value) / logDecades, 0.0f, 1.0f)
                  : 0.0f;
     default:
-      return std::pow(std::fmin(std::fmax(pbrNeutralGray(value), 0.0f), 1.0f),
+      return std::pow(std::clamp(pbrNeutralGray(value), 0.0f, 1.0f),
                       1.0f / 2.2f);
     }
   }
@@ -244,7 +250,7 @@ struct DisplayCurve final {
     // range just short of it. The caller only ever feeds this a fused
     // display value that is about to become a bounded exposure, so the
     // exact cutoff matters far less than staying finite.
-    display = std::fmin(std::fmax(display, 0.0f), 1.0f - 1e-4f);
+    display = std::clamp(display, 0.0f, 1.0f - 1e-4f);
     switch (kind) {
     case GAMMA:
       return std::pow(display, 2.2f);
@@ -264,21 +270,20 @@ struct DisplayCurve final {
       // Scale the channels by the luminance ratio so the log curve
       // moves brightness without moving hue. The luminance here is
       // deliberately the channel mean, not the Rec.709 weighting.
-      const float r{std::fmax(rgb[0], 0.0f)};
-      const float g{std::fmax(rgb[1], 0.0f)};
-      const float b{std::fmax(rgb[2], 0.0f)};
+      const float r{std::max(rgb[0], 0.0f)};
+      const float g{std::max(rgb[1], 0.0f)};
+      const float b{std::max(rgb[2], 0.0f)};
       const float lum{(r + g + b) / 3.0f};
       const float scale{lum > 0.0f ? apply(lum) / lum : 0.0f};
-      out[0] = std::fmin(r * scale, 1.0f);
-      out[1] = std::fmin(g * scale, 1.0f);
-      out[2] = std::fmin(b * scale, 1.0f);
+      out[0] = std::min(r * scale, 1.0f);
+      out[1] = std::min(g * scale, 1.0f);
+      out[2] = std::min(b * scale, 1.0f);
       return;
     }
     default:
       pbrNeutralRGB(rgb, out);
       for (int i = 0; i < 3; i++)
-        out[i] =
-            std::pow(std::fmin(std::fmax(out[i], 0.0f), 1.0f), 1.0f / 2.2f);
+        out[i] = std::pow(std::clamp(out[i], 0.0f, 1.0f), 1.0f / 2.2f);
       return;
     }
   }
@@ -307,7 +312,7 @@ struct Plane final {
 // Clamp a possibly out-of-bounds tap back into the image, so edges
 // repeat rather than darken.
 [[nodiscard]] static size_t clampIndex(long i, size_t size) noexcept {
-  return size_t(std::min<long>(std::max<long>(i, 0), long(size) - 1));
+  return size_t(std::clamp<long>(i, 0, long(size) - 1));
 }
 
 // Burt-Adelson reduce: the separable [1 4 6 4 1]/16 kernel, then keep
@@ -457,7 +462,7 @@ computeFusionGain(const std::vector<float> &image, size_t numPixelsX,
   auto luminance{std::vector<float>(numPixels)};
   for (size_t p = 0; p < numPixels; p++) {
     const auto texel{&image[3 * p]};
-    luminance[p] = std::fmax(
+    luminance[p] = std::max(
         0.2126f * texel[0] + 0.7152f * texel[1] + 0.0722f * texel[2], 0.0f);
   }
   // The ladder spans the 1st to 99th percentile of the luminance that
@@ -493,10 +498,9 @@ computeFusionGain(const std::vector<float> &image, size_t numPixelsX,
   // scene at different sample counts pick the same ladder.
   float spanInEV{options.localRange > 0.0f ? options.localRange
                                            : std::log2(lumHi / lumLo)};
-  spanInEV =
-      std::round(std::fmin(std::fmax(spanInEV, 2.0f), 16.0f) * 4.0f) / 4.0f;
-  const size_t numExposures{std::min<size_t>(
-      std::max<size_t>(size_t(std::lround(spanInEV / 2.0f)) + 1, 2), 9)};
+  spanInEV = std::round(std::clamp(spanInEV, 2.0f, 16.0f) * 4.0f) / 4.0f;
+  const size_t numExposures{
+      std::clamp<size_t>(size_t(std::lround(spanInEV / 2.0f)) + 1, 2, 9)};
   auto exposureGain{std::vector<float>(numExposures)};
   for (size_t k = 0; k < numExposures; k++)
     exposureGain[k] =
@@ -546,8 +550,8 @@ computeFusionGain(const std::vector<float> &image, size_t numPixelsX,
     if (!(luminance[p] > 0.0f)) continue; // Black stays black at any gain.
     const float target{curve.applyInverse(fusedDisplay.values[p])};
     float ev{
-        std::log2(std::fmax(target, 1e-30f) / (autoExposure * luminance[p]))};
-    ev = std::fmin(std::fmax(ev, -options.localClamp), options.localClamp);
+        std::log2(std::max(target, 1e-30f) / (autoExposure * luminance[p]))};
+    ev = std::clamp(ev, -options.localClamp, options.localClamp);
     deviation.push_back(ev);
     gain[p] = std::exp2(options.localStrength * ev);
   }
@@ -590,7 +594,7 @@ struct Appearance final {
 };
 
 // Perceptual low-light reproduction in the spirit of Jensen et
-// al. 2000 and Kirk & O'Brien 2011. The spectral buffer gives the
+// al. 2000 and Kirk & O'Brien 2011. The film gives the
 // absolute photopic and scotopic luminances of every pixel; the
 // mesopic blend between cone color and the blue-shifted colorless
 // rod signal runs on those PHYSICAL values, modeling the observer
@@ -602,10 +606,9 @@ struct Appearance final {
 // as ordinary auto-exposed color.
 [[nodiscard]] static Appearance
 applyNightFilter(const std::vector<float> &rgbImage,
-                 const smdl::SpectralRenderImage &spectral,
-                 const Color &wavelengths) {
-  const size_t numPixelsX{spectral.getNumPixelsX()};
-  const size_t numPixelsY{spectral.getNumPixelsY()};
+                 const smdl::SpectralFilm &film, const Color &wavelengths) {
+  const size_t numPixelsX{film.getNumPixelsX()};
+  const size_t numPixelsY{film.getNumPixelsY()};
   // Luminous efficiency as Gaussian fits over wavelength in um:
   // photopic V(l) ~ 1.019 exp(-285.4 (l - 0.5590)^2), 683 lm/W at
   // peak; scotopic V'(l) ~ 0.992 exp(-321.9 (l - 0.5030)^2), 1700
@@ -656,11 +659,10 @@ applyNightFilter(const std::vector<float> &rgbImage,
   double coneWeightSum{0.0};
   for (size_t y{}; y < numPixelsY; y++) {
     for (size_t x{}; x < numPixelsX; x++) {
-      auto pixel{spectral(x, y)};
       double yPhotopic{0.0};
       double yScotopic{0.0};
       for (size_t i = 0; i < numBands; i++) {
-        const double radiance{std::fmax(0.0, pixel.mean(i))};
+        const double radiance{std::max(0.0, filmMean(film, x, y, i))};
         yPhotopic += weightPhotopic[i] * radiance;
         yScotopic += weightScotopic[i] * radiance;
       }
@@ -668,7 +670,7 @@ applyNightFilter(const std::vector<float> &rgbImage,
       double u{yPhotopic > 0.0 ? (std::log10(yPhotopic) - logConesOut) /
                                      (logRodsSaturate - logConesOut)
                                : 0.0};
-      u = std::fmin(std::fmax(u, 0.0), 1.0);
+      u = std::clamp(u, 0.0, 1.0);
       const double coneWeight{u * u * (3.0 - 2.0 * u)};
       coneWeightSum += coneWeight;
       // The rod signal expressed on the RGB image's own photopic
@@ -676,9 +678,9 @@ applyNightFilter(const std::vector<float> &rgbImage,
       // photopic ratio, so the blend is immune to any calibration
       // constant in the spectral-to-RGB conversion.
       const auto texel{&rgbImage[3 * (x + numPixelsX * y)]};
-      const double r{std::fmax(0.0, double(texel[0]))};
-      const double g{std::fmax(0.0, double(texel[1]))};
-      const double b{std::fmax(0.0, double(texel[2]))};
+      const double r{std::max(0.0, double(texel[0]))};
+      const double g{std::max(0.0, double(texel[1]))};
+      const double b{std::max(0.0, double(texel[2]))};
       const double yImage{0.2126 * r + 0.7152 * g + 0.0722 * b};
       const double rodY{yPhotopic > 0.0 ? yImage * (yScotopic / yPhotopic)
                                         : 0.0};
@@ -693,9 +695,8 @@ applyNightFilter(const std::vector<float> &rgbImage,
   // fusion should be free to supersede.
   auto peaks{std::vector<float>(numPixelsX * numPixelsY)};
   for (size_t p = 0; p < peaks.size(); p++)
-    peaks[p] =
-        std::fmax(nightImage[3 * p + 0],
-                  std::fmax(nightImage[3 * p + 1], nightImage[3 * p + 2]));
+    peaks[p] = std::max(
+        {nightImage[3 * p + 0], nightImage[3 * p + 1], nightImage[3 * p + 2]});
   const size_t nth{
       std::min(size_t(0.995 * double(peaks.size())), peaks.size() - 1)};
   std::nth_element(peaks.begin(), peaks.begin() + long(nth), peaks.end());
@@ -762,17 +763,17 @@ void validateTonemapOptions(const TonemapOptions &options) {
 
 std::vector<uint8_t> tonemap(const TonemapOptions &options,
                              const std::vector<float> &rgbImage,
-                             const smdl::SpectralRenderImage &spectral,
+                             const smdl::SpectralFilm &film,
                              const Color &wavelengths) {
-  const size_t numPixelsX{spectral.getNumPixelsX()};
-  const size_t numPixelsY{spectral.getNumPixelsY()};
+  const size_t numPixelsX{film.getNumPixelsX()};
+  const size_t numPixelsY{film.getNumPixelsY()};
   const auto mode{parseMode(options.mode)};
   auto curve{DisplayCurve{}};
   curve.kind = parseCurve(options.curve);
   curve.logDecades = std::max(0.1f, options.logDecades);
   auto appearance{Appearance{}};
   if (mode == AppearanceMode::NIGHT) {
-    appearance = applyNightFilter(rgbImage, spectral, wavelengths);
+    appearance = applyNightFilter(rgbImage, film, wavelengths);
   } else {
     appearance = Appearance{rgbImage, 1.0f};
     // '-tonemap log' is shorthand for '-tonemap linear -curve log'.
@@ -794,8 +795,8 @@ std::vector<uint8_t> tonemap(const TonemapOptions &options,
     float display[3]{};
     curve.applyRGB(rgb, display);
     for (int i = 0; i < 3; i++)
-      ldrImage[3 * p + i] = uint8_t(
-          std::round(255.0f * std::fmin(std::fmax(display[i], 0.0f), 1.0f)));
+      ldrImage[3 * p + i] =
+          uint8_t(std::round(255.0f * std::clamp(display[i], 0.0f, 1.0f)));
   }
   return ldrImage;
 }

@@ -42,6 +42,11 @@ struct ProgressOptions final {
   std::string filePath{};
 };
 
+/// Format seconds as `M:SS`, or `H:MM:SS` past an hour. This is how the
+/// bar prints elapsed time and the ETA, and how the render times recorded
+/// in the spectral output's header are logged.
+[[nodiscard]] std::string formatDuration(double seconds);
+
 /// Check that the style name is recognized.
 ///
 /// The bar is not constructed until everything has loaded and compiled,

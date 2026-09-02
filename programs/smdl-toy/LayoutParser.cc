@@ -1,6 +1,6 @@
 #include "Layout.h"
 
-#include "smdl/Support/StringHelpers.h"
+#include "smdl/Support/Strings.h"
 
 #include <algorithm>
 #include <array>
@@ -346,6 +346,11 @@ private:
         }
       } else if (op == "material") {
         parseMaterialOps(decl.materials, "asset");
+      } else if (op == "caster") {
+        decl.caster = true;
+        decl.casterLoc = opLoc;
+      } else if (op == "caustic") {
+        decl.caustic = true;
       } else if (op == "at") {
         mDiags
             .error(opLoc, "'at' blocks were retired with the '.scene' "
@@ -357,14 +362,14 @@ private:
                      smdl::concat("unknown asset operation ", smdl::Quoted(op),
                                   decl.primitive.active()
                                       ? " (expected radius, height, "
-                                        "material, translate, scale, rotate, "
-                                        "rotate_x, rotate_y, rotate_z, or "
-                                        "matrix)"
+                                        "material, caster, translate, scale, "
+                                        "rotate, rotate_x, rotate_y, "
+                                        "rotate_z, or matrix)"
                                       : " (expected select, recenter, "
                                         "subdivide, displace, tube, ribbon, "
-                                        "radius_scale, material, translate, "
-                                        "scale, rotate, rotate_x, rotate_y, "
-                                        "rotate_z, or matrix)"));
+                                        "radius_scale, material, caster, "
+                                        "translate, scale, rotate, rotate_x, "
+                                        "rotate_y, rotate_z, or matrix)"));
         throw Recover();
       }
     }
@@ -498,6 +503,8 @@ private:
           throw Recover();
         }
         decl.scale = value;
+      } else if (op == "caustic") {
+        decl.caustic = true;
       } else if (!parseTransformOp(op, opLoc, decl.transform)) {
         // Note 'scale' is taken by the profile multiplier, so unlike the
         // other blocks it is not offered as a transform here; a light has
@@ -508,8 +515,8 @@ private:
                                   isSpot      ? "angle, blend, "
                                   : isProfile ? "scale, "
                                               : "",
-                                  "translate, rotate, rotate_x, rotate_y, "
-                                  "rotate_z, or matrix)"));
+                                  "caustic, translate, rotate, rotate_x, "
+                                  "rotate_y, rotate_z, or matrix)"));
         throw Recover();
       }
     }
@@ -717,6 +724,10 @@ private:
       advance(); // '}'
       return;
     }
+    if (op == "caster") {
+      parseCasterOverride(placement, opLoc, "place");
+      return;
+    }
     if (op == "material") {
       // Only the pair form: a place override renames one resolved name.
       // Whole-target assignment belongs to the asset declaration, where
@@ -750,10 +761,29 @@ private:
     if (!parseTransformOp(op, opLoc, placement.transform)) {
       mDiags.error(opLoc,
                    smdl::concat("unknown place operation ", smdl::Quoted(op),
-                                " (expected material, variant, translate, "
-                                "scale, rotate, rotate_x, rotate_y, "
-                                "rotate_z, or matrix)"));
+                                " (expected material, variant, caster, "
+                                "translate, scale, rotate, rotate_x, "
+                                "rotate_y, rotate_z, or matrix)"));
       throw Recover();
+    }
+  }
+
+  // The `caster` / `caster off` override of a place or an import. Operation
+  // names are never `off`, so peeking for it is unambiguous.
+  void parseCasterOverride(LayoutPlacement &placement,
+                           const LayoutLocation &opLoc,
+                           std::string_view where) {
+    if (placement.casterOverride) {
+      mDiags.error(opLoc,
+                   smdl::concat("'caster' appears twice in one ", where));
+      throw Recover();
+    }
+    placement.casterLoc = opLoc;
+    if (mToken.kind == Token::WORD && mToken.text == "off") {
+      placement.casterOverride = false;
+      advance();
+    } else {
+      placement.casterOverride = true;
     }
   }
 
@@ -799,12 +829,14 @@ private:
       }
       if (op == "material") {
         parseMaterialOps(placement.importMaterials, "import");
+      } else if (op == "caster") {
+        parseCasterOverride(placement, opLoc, "import");
       } else if (!parseTransformOp(op, opLoc, placement.transform)) {
         mDiags.error(opLoc,
                      smdl::concat("unknown import operation ", smdl::Quoted(op),
-                                  " (expected material, translate, scale, "
-                                  "rotate, rotate_x, rotate_y, rotate_z, or "
-                                  "matrix)"));
+                                  " (expected material, caster, translate, "
+                                  "scale, rotate, rotate_x, rotate_y, "
+                                  "rotate_z, or matrix)"));
         throw Recover();
       }
     }
@@ -924,22 +956,23 @@ private:
       const auto key{mToken.text};
       const auto keyLoc{location()};
       advance();
-      if (key == "dims") {
+      if (key == "resolution") {
         auto v{numbers<2>()};
         if (!(v[0] >= 1 && v[1] >= 1)) {
-          mDiags.error(keyLoc, "expected two positive integers for 'dims'");
+          mDiags.error(keyLoc,
+                       "expected two positive integers for 'resolution'");
           throw Recover();
         }
-        camera.dims = int2(int(v[0]), int(v[1]));
+        camera.resolution = int2(int(v[0]), int(v[1]));
       } else if (key == "look_from") {
         auto v{numbers<3>()};
         camera.lookFrom = float3(v[0], v[1], v[2]);
       } else if (key == "look_to") {
         auto v{numbers<3>()};
         camera.lookTo = float3(v[0], v[1], v[2]);
-      } else if (key == "up") {
+      } else if (key == "look_up") {
         auto v{numbers<3>()};
-        camera.up = float3(v[0], v[1], v[2]);
+        camera.lookUp = float3(v[0], v[1], v[2]);
       } else if (key == "fovy") {
         camera.fovYDeg = positive(keyLoc, key, numbers<1>()[0]);
       } else if (key == "fstop") {
@@ -970,8 +1003,8 @@ private:
         mDiags.error(
             keyLoc,
             smdl::concat("unknown camera setting ", smdl::Quoted(key),
-                         " (expected dims, look_from, look_to, up, fovy, "
-                         "fstop, aperture, focus, blades, blade_angle, "
+                         " (expected resolution, look_from, look_to, look_up, "
+                         "fovy, fstop, aperture, focus, blades, blade_angle, "
                          "distortion_k1, distortion_k2, distortion_fit, "
                          "vignetting, cat_eye, or cat_eye_radius)"));
         throw Recover();

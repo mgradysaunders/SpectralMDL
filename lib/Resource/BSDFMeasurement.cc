@@ -108,6 +108,8 @@ BSDFMeasurement::loadFromFileMemory(const std::string &file) noexcept {
       const float weight{std::cos(thetai) * std::sin(thetai)};
       for (size_t iP = 0; iP < numPhi; iP++) {
         const auto value{fetch(int(iO), int(iI), int(iP))};
+        // Deliberately `fmax`: measured data from a file, and a NaN entry
+        // must not poison the sampling table.
         values[numPhi * iI + iP] =
             weight * std::fmax((value.x + value.y + value.z) / 3.0f, 0.0f);
       }

@@ -7,7 +7,7 @@
 #include <unordered_map>
 
 #include "smdl/Doc.h"
-#include "smdl/FileLocator.h"
+#include "smdl/Support/FileLocator.h"
 #include "smdl/JIT.h"
 #include "smdl/Module.h"
 #include "smdl/Resource/BSDFMeasurement.h"
@@ -15,13 +15,13 @@
 #include "smdl/Resource/LightProfile.h"
 #include "smdl/Resource/Spectrum.h"
 #include "smdl/Resource/VoxelGrid.h"
-#include "smdl/SceneData.h"
+#include "smdl/Resource/SceneData.h"
 #include "smdl/Support/MD5Hash.h"
-#include "smdl/Support/PBRMaps.h"
+#include "smdl/RenderUtil/PBRMaps.h"
 
 namespace smdl {
 
-/// \addtogroup scene
+/// \addtogroup resource
 /// \{
 
 /// An opaque Ptex texture.
@@ -502,6 +502,23 @@ public:
   /// Changing it between compiles is fine: every `compile()` reloads
   /// every image from scratch and decides again.
   bool enableMipMaps{true};
+
+  /// Enable the `scatterNormalSample`, `scatterNormalEvaluate`, and
+  /// `geometryNormalEvaluate` entry points?
+  ///
+  /// The first two answer for the normal distribution behind a GLOSSY
+  /// lobe, and the third reads the `geometry.normal` field itself; a
+  /// host needs them only to solve a manifold constraint through a rough
+  /// or normal-remapped interface or to do something else with a half
+  /// vector. When false they are never emitted, so they cost no codegen,
+  /// no optimizer time and no JIT compilation, and
+  /// `JIT::Material::scatterNormalSample` stays null;
+  /// `JIT::MaterialInstance` aborts with a message naming this flag if
+  /// called anyway.
+  ///
+  /// This is read while `compile()` lowers each material, so set it
+  /// beforehand. Changing it means recompiling.
+  bool enableScatterNormal{false};
 
   /// Enable unit tests?
   bool enableUnitTests{false};

@@ -30,7 +30,7 @@ constexpr std::string_view ASSET_EXTENSION = ".asset";
 /// render: rock_moss_set_01_4k.gltf      # the mesh, relative to this file
 /// up: y                                 # the file's up axis, y or z
 /// scale: 1                              # scene units per file unit
-/// front: 205                            # the camera azimuth -frame locks to
+/// front: 205                            # the camera azimuth -autolook uses
 /// proxy: proxy/rock_moss_set_01.blend   # the layout stand-in
 /// materials: [trunk, leaves]            # the file's material names, when
 ///                                       # 'objects' has nothing to list
@@ -86,7 +86,7 @@ public:
   float4x4 correction{float4x4(1.0f)};
 
   /// The camera azimuth of the asset's best view in degrees CCW from +X,
-  /// in the corrected space, or unset. `-frame` locks to it unless the
+  /// in the corrected space, or unset. `-autolook` locks to it unless the
   /// command line says otherwise, overriding the automatic sweep.
   std::optional<float> front{};
 

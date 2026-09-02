@@ -112,6 +112,18 @@ static constexpr int MATERIAL_HAS_DISPLACEMENT = (1 << 10);
 /// interior instead of replacing them.
 static constexpr int MATERIAL_ADDITIVE_VOLUME = (1 << 11);
 
+/// Indicates that the material remaps `geometry.normal` away from the
+/// state's shading normal.
+///
+/// \note
+/// Like `MATERIAL_HAS_DISPLACEMENT`, this bit only ever appears in
+/// `Material::staticFlags`: it is derived after optimization from
+/// whether `geometry.normal - $state.normal` folds to the constant zero
+/// vector, so it degrades to unknown at `OPT_LEVEL_NONE`, and
+/// `Instance::flags` never sets it. See `Material::remapsNormal()` for
+/// the conservative reading.
+static constexpr int MATERIAL_REMAPS_NORMAL = (1 << 12);
+
 /// \}
 
 /// \name Distribution Function (DF) Lobes
@@ -165,7 +177,7 @@ static constexpr int DF_GLOSSY_BRDF = (1 << 1);
 
 /// A reflective Dirac delta lobe, which has no density and whose half
 /// vector is fixed by the geometry.
-static constexpr int DF_DELTA_BRDF = (1 << 2);
+static constexpr int DF_DIRAC_BRDF = (1 << 2);
 
 /// \copydoc DF_GENERIC_BRDF
 static constexpr int DF_GENERIC_BTDF = (1 << 3);
@@ -173,20 +185,20 @@ static constexpr int DF_GENERIC_BTDF = (1 << 3);
 /// \copydoc DF_GLOSSY_BRDF
 static constexpr int DF_GLOSSY_BTDF = (1 << 4);
 
-/// \copydoc DF_DELTA_BRDF
-static constexpr int DF_DELTA_BTDF = (1 << 5);
+/// \copydoc DF_DIRAC_BRDF
+static constexpr int DF_DIRAC_BTDF = (1 << 5);
 
 /// \name Lobe unions
 /// The rows and columns of the table: each names one axis and leaves the
 /// other unconstrained. Intersecting two of them names the single lobe
-/// their names spell, so `DF_DELTA & DF_BTDF` is `DF_DELTA_BTDF`.
+/// their names spell, so `DF_DIRAC & DF_BTDF` is `DF_DIRAC_BTDF`.
 /// \{
 
 /// Every reflective lobe.
-static constexpr int DF_BRDF = DF_GENERIC_BRDF | DF_GLOSSY_BRDF | DF_DELTA_BRDF;
+static constexpr int DF_BRDF = DF_GENERIC_BRDF | DF_GLOSSY_BRDF | DF_DIRAC_BRDF;
 
 /// Every transmissive lobe.
-static constexpr int DF_BTDF = DF_GENERIC_BTDF | DF_GLOSSY_BTDF | DF_DELTA_BTDF;
+static constexpr int DF_BTDF = DF_GENERIC_BTDF | DF_GLOSSY_BTDF | DF_DIRAC_BTDF;
 
 /// Every lobe with a density but no normal distribution, of either
 /// domain.
@@ -196,7 +208,7 @@ static constexpr int DF_GENERIC = DF_GENERIC_BRDF | DF_GENERIC_BTDF;
 static constexpr int DF_GLOSSY = DF_GLOSSY_BRDF | DF_GLOSSY_BTDF;
 
 /// Every Dirac lobe of either domain.
-static constexpr int DF_DELTA = DF_DELTA_BRDF | DF_DELTA_BTDF;
+static constexpr int DF_DIRAC = DF_DIRAC_BRDF | DF_DIRAC_BTDF;
 
 /// Every lobe with a density, which is every lobe but the Dirac ones.
 /// This is the question a caller asks to find out whether a vertex can
@@ -206,6 +218,31 @@ static constexpr int DF_FINITE = DF_GENERIC | DF_GLOSSY;
 /// Every lobe, which is the lobe mask of a caller that wants the whole
 /// distribution.
 static constexpr int DF_ALL = DF_BRDF | DF_BTDF;
+
+/// Property bit riding above the lobes in the same word: some node in
+/// the scattering tree was given a `normal` that is, at the instance
+/// evaluation reporting the bit, actually different from the state's
+/// shading normal. Such a node's lobes scatter about that normal rather
+/// than `geometry.normal`, which is what a manifold estimator solves
+/// against, so an estimator refuses trees reporting this bit.
+///
+/// A node whose `normal` is left defaulted inherits the normal already
+/// active where it sits, which is `geometry.normal` unless an enclosing
+/// node overrode it, so it detaches from nothing and reports neither
+/// this bit nor `DF_CAN_SET_NORMAL`.
+///
+/// NOT a lobe and NOT in `DF_ALL`: a lobe mask never names it, so it
+/// cannot select anything, and it survives only in `df_lobes_surface`
+/// and `df_lobes_backface`.
+static constexpr int DF_SETS_NORMAL = (1 << 6);
+
+/// Property bit like `DF_SETS_NORMAL`: some node in the tree was given a
+/// `normal` at all, whether or not it currently differs from the state's
+/// shading normal. A given normal that equals the state normal still
+/// detaches its node from a REMAPPED `geometry.normal`, so when a
+/// material also remaps the field (see `MATERIAL_REMAPS_NORMAL`) an
+/// estimator refuses that combination by this bit.
+static constexpr int DF_CAN_SET_NORMAL = (1 << 7);
 
 /// \}
 
@@ -282,12 +319,16 @@ public:
     return (staticFlags & MATERIAL_HAS_HAIR) != 0;
   }
 
-  /// Do shadow rays need no material work at all? True if the material
-  /// is provably opaque and has no volume, in which case an occlusion
-  /// hit is fully blocking and the material never needs to be
-  /// constructed for shadow or transmission rays.
+  /// Does a hit on this material always block a shadow query, with no
+  /// material work? True when the cutout opacity is the compile-time
+  /// constant 1 and the material is not a null interface: nothing to
+  /// sample, nothing to pass through, so an occlusion query answers the
+  /// hit outright and neither `evaluateOpacity` nor an instance is ever
+  /// needed at it. This is a statement about hits, not interiors: a
+  /// shadow segment that STARTS inside this material's volume still
+  /// integrates that medium, and `hasVolume()` is that question.
   [[nodiscard]] bool isShadowTrivial() const noexcept {
-    return isAlwaysOpaque() && !hasVolume();
+    return isAlwaysOpaque() && !isNullInterface();
   }
 
   /// Is this a null interface? (a boundary that scatters nothing itself
@@ -318,6 +359,17 @@ public:
   [[nodiscard]] bool hasZeroDisplacement() const noexcept {
     return (staticFlagsKnown & MATERIAL_HAS_DISPLACEMENT) != 0 &&
            (staticFlags & MATERIAL_HAS_DISPLACEMENT) == 0;
+  }
+
+  /// Possibly remaps `geometry.normal`: the material's shading normal is
+  /// not provably the state's own. When this returns true the remap is
+  /// real *or unproven*, and a host that differentiates the shading
+  /// normal field must read the field itself through
+  /// `geometryNormalEvaluate`; reading it for a material that turns out
+  /// not to remap returns the state normal and costs only the query.
+  [[nodiscard]] bool remapsNormal() const noexcept {
+    return (staticFlagsKnown & MATERIAL_REMAPS_NORMAL) == 0 ||
+           (staticFlags & MATERIAL_REMAPS_NORMAL) != 0;
   }
 
   /// An instance of the material.
@@ -467,13 +519,17 @@ public:
     /// This is a union over the tree, so it answers "could this material
     /// do that" and never "will this query do that". It is exact about
     /// which domain goes with which kind, which is what makes
-    /// `df_lobes_surface & DF_DELTA_BTDF` a sound test for an interface
+    /// `df_lobes_surface & DF_DIRAC_BTDF` a sound test for an interface
     /// a manifold walk can refract through.
     ///
     /// One distribution can contribute more than one bit: a rough BSDF
     /// with an energy-compensation lobe is `DF_GLOSSY_BRDF` and
     /// `DF_GENERIC_BRDF` together, since the two parts are different kinds
     /// on the same domain.
+    ///
+    /// The word also carries the normal property bits `DF_SETS_NORMAL`
+    /// and `DF_CAN_SET_NORMAL`, which are not lobes; mask with `DF_ALL`
+    /// where only the lobes are wanted.
     int df_lobes_surface{};
 
     /// \copydoc df_lobes_surface
@@ -521,7 +577,8 @@ public:
   /// instance is constructed and no allocation happens, so
   /// `state.allocator` may be null. This is the cheap path for shadow
   /// and transmission rays against materials that are not
-  /// `isShadowTrivial()`.
+  /// `isAlwaysOpaque()` (a null interface needs no opacity either, it
+  /// passes through unconditionally).
   ///
   Function<float(State &state)> evaluateOpacity{};
 
@@ -606,7 +663,7 @@ public:
   /// A restricted mask restricts `f` to the part of the whole BSDF the
   /// named lobes account for, weighted as they are weighted inside it
   /// and renormalized by nothing. **Disjoint masks therefore add**, so
-  /// evaluating with `DF_GLOSSY`, `DF_GENERIC` and `DF_DELTA` and summing
+  /// evaluating with `DF_GLOSSY`, `DF_GENERIC` and `DF_DIRAC` and summing
   /// gives what `DF_ALL` gives, and so does evaluating with `DF_BRDF` and
   /// `DF_BTDF` and summing.
   ///
@@ -615,7 +672,7 @@ public:
   /// the mask has removed the alternatives, so they do not add and they
   /// exceed the share the mask keeps. The pairing is the point: a masked
   /// `f` over a masked density is an estimator of the masked part, and
-  /// this is the density `scatterSample` reports for a non-delta sample
+  /// this is the density `scatterSample` reports for a non-Dirac sample
   /// drawn under the same mask.
   ///
   /// The domain axis partitions even a `scatter_reflect_transmit` lobe,
@@ -662,7 +719,7 @@ public:
   /// expectation to the estimator of the whole.
   ///
   /// This is how a caller reaches the Dirac lobes of a layered material:
-  /// `DF_DELTA` selects them wherever they sit in the tree, and the
+  /// `DF_DIRAC` selects them wherever they sit in the tree, and the
   /// layering above them is applied on the way out. `scatterEvaluate`
   /// cannot do this at any mask, because a Dirac lobe has no density to
   /// evaluate at a direction pair.
@@ -671,7 +728,7 @@ public:
   /// transmissive lobes makes a `scatter_reflect_transmit` lobe
   /// transmit every time, in place of the Fresnel choice it would
   /// otherwise make, and the weight it reports is the transmissive part
-  /// of the lobe rather than the whole. So `DF_DELTA_BTDF` is how a
+  /// of the lobe rather than the whole. So `DF_DIRAC_BTDF` is how a
   /// caller asks for the Dirac transmission of an interface, whatever
   /// the tree above it.
   ///
@@ -693,11 +750,11 @@ public:
   /// selection descends to one branch of one leaf, and that branch has one
   /// domain and one kind.
   ///
-  /// This subsumes the older `isDelta`, which is `sampledLobe & DF_DELTA`,
-  /// and answers what a class word over the whole tree cannot: a material
-  /// reports what it *could* do, and this reports what it *did*. It is the
-  /// per-sample quantity a ray-cone heuristic, a guiding bypass, or a
-  /// specular-chain test wants.
+  /// `sampledLobe & DF_DIRAC` is the Dirac test, and this answers what a
+  /// class word over the whole tree cannot: a material reports what it
+  /// *could* do, and this reports what it *did*. It is the per-sample
+  /// quantity a ray-cone heuristic, a guiding bypass, or a specular-chain
+  /// test wants.
   ///
   /// The bit is always one the material declared in `df_lobes_surface` or
   /// `df_lobes_backface`, and always inside the caller's `lobeMask`.
@@ -720,6 +777,121 @@ public:
                int lobeMask, float3 &wi, float &pdfFwd, float &pdfRev, float *f,
                int &sampledLobe, float &lobeChance)>
       scatterSample{};
+
+  /// The normal distribution sample function.
+  ///
+  /// Draws a microfacet normal from the normal distribution behind one
+  /// GLOSSY lobe, which is what `DF_GLOSSY_BRDF` promises exists and this
+  /// is how a caller reaches. A host solving a manifold constraint through
+  /// a rough interface needs a half vector it can draw and weigh; this and
+  /// `scatterNormalEvaluate` are that, and nothing more. What such an
+  /// estimator is worth is `scatterEvaluate` at the directions the
+  /// constraint resolves to.
+  ///
+  /// \note
+  /// Null unless `Compiler::enableScatterNormal` was set before
+  /// `compile()`. A host that never asks pays nothing for these.
+  ///
+  /// \param[in] instance
+  /// The instance obtained from the `evaluate` function.
+  ///
+  /// \param[in] xi
+  /// The canonical random sample in \f$ [0,1]^4 \f$.
+  ///
+  /// \param[in] backface
+  /// Nonzero to ask on the geometric backface side of the interface. A
+  /// normal query carries no outgoing direction, so the side is an
+  /// input: the caller asks about one side of one crossing and already
+  /// knows which.
+  ///
+  /// \param[in] lobeMask
+  /// Which lobes to draw from, intersected with `DF_GLOSSY` throughout
+  /// since nothing else has a normal distribution to report. Selection
+  /// chances are renormalized over the lobes that survive, so a mask
+  /// naming one interface's transmissive lobe draws that lobe's own
+  /// distribution however the tree layers it. A manifold estimator wants
+  /// exactly one kind, `DF_GLOSSY_BRDF` or `DF_GLOSSY_BTDF`: a two-domain
+  /// mask reports the mixture of the distributions on both sides of the
+  /// interface, which is not a distribution any single crossing scatters
+  /// by, and the `MaterialInstance` wrapper refuses it.
+  ///
+  /// \param[out] wm
+  /// The microfacet normal in world space, on the requested side. This
+  /// draws the normal distribution itself and not the part of it any
+  /// direction can see, which is deliberate: the visible form is the
+  /// better proposal for a scattering event and the wrong one for a
+  /// constraint, since it would make the draw depend on a direction a
+  /// solve then changes.
+  ///
+  /// \param[out] pdf
+  /// The density of `wm` per unit solid angle, mixed over every lobe the
+  /// mask keeps that could have produced it. This is exactly what
+  /// `scatterNormalEvaluate` reports at the same directions, and that
+  /// identity is the one property a caller's correctness may rest on: it
+  /// is what makes the pair a usable proposal. It is NOT in general the
+  /// density `scatterEvaluate` divides out, though the microfacet lobes
+  /// match that too.
+  ///
+  /// \param[out] alpha
+  /// The squared roughness of the lobe drawn from, so a host can decide
+  /// whether an interface is smooth enough to be worth constraining
+  /// without a second query.
+  ///
+  /// \return
+  /// Returns `true` if a lobe with a normal distribution was reached.
+  ///
+  Function<int(const Instance &instance, const float4 &xi, int backface,
+               int lobeMask, float3 &wm, float &pdf, float2 &alpha)>
+      scatterNormalSample{};
+
+  /// The normal distribution evaluate function.
+  ///
+  /// The density with which `scatterNormalSample` draws `wm` on the same
+  /// side. See it for the contract; see `Compiler::enableScatterNormal`
+  /// for why this may be null.
+  ///
+  /// \param[in] instance
+  /// The instance obtained from the `evaluate` function.
+  ///
+  /// \param[in] backface
+  /// Nonzero to ask on the geometric backface side, as in
+  /// `scatterNormalSample`.
+  ///
+  /// \param[in] wm
+  /// The microfacet normal in world space.
+  ///
+  /// \param[in] lobeMask
+  /// Which lobes to mix over, as in `scatterNormalSample`.
+  ///
+  /// \param[out] pdf
+  /// The density of `wm` per unit solid angle.
+  ///
+  /// \return
+  /// Returns `true` if the density is non-zero.
+  ///
+  Function<int(const Instance &instance, int backface, const float3 &wm,
+               int lobeMask, float &pdf)>
+      scatterNormalEvaluate{};
+
+  /// The geometry normal evaluate function.
+  ///
+  /// Evaluates only `geometry.normal` and nothing else: no instance is
+  /// constructed and no allocation happens, so `state.allocator` may be
+  /// null, exactly as `displacementEvaluate` evaluates only the
+  /// displacement. The normal comes back in the internal space the
+  /// state's geometric fields were given in.
+  ///
+  /// This is the query for a host that must read or differentiate the
+  /// shading normal field a material remaps (see
+  /// `Material::remapsNormal()`), a manifold walk over a normal-mapped
+  /// caster being the motivating case: the compiler does not
+  /// differentiate materials, so such a host evaluates the field at
+  /// perturbed surface parameterizations and differences it.
+  ///
+  /// \note
+  /// Null unless `Compiler::enableScatterNormal` was set before
+  /// `compile()`, like the two normal distribution hooks above.
+  Function<void(State &state, float3 &normal)> geometryNormalEvaluate{};
 
   /// The emission evaluate function.
   ///
@@ -890,8 +1062,8 @@ public:
   ///
   /// \note
   /// See `hairScatterEvaluate` for the state contract at a hair hit. There
-  /// are no delta hair distributions and no lobe taxonomy for hair, so this
-  /// reports neither a sampled lobe nor a delta flag.
+  /// are no Dirac hair distributions and no lobe taxonomy for hair, so this
+  /// reports neither a sampled lobe nor a Dirac flag.
   ///
   Function<int(const Instance &instance, const float4 &xi, const float3 &wo,
                float3 &wi, float &pdfFwd, float &pdfRev, float *f)>
@@ -1123,7 +1295,7 @@ public:
   ///
   /// \param[out] sampledLobe
   /// The single lobe the sample was drawn from, `0` if none. See
-  /// `Material::scatterSample`; `sampledLobe & DF_DELTA` is the Dirac test.
+  /// `Material::scatterSample`; `sampledLobe & DF_DIRAC` is the Dirac test.
   ///
   /// \return
   /// Returns `true` if the result is non-zero.
@@ -1139,6 +1311,52 @@ public:
     return material->scatterSample(instance, xi, wo, lobeMask, wi, pdfFwd,
                                    pdfRev, f.data(), sampledLobe,
                                    lobeChance ? *lobeChance : lobeChanceLocal);
+  }
+
+  /// The normal distribution sample function.
+  ///
+  /// See `Material::scatterNormalSample` for the contract. Aborts if the
+  /// entry point was not emitted, which is the case unless
+  /// `Compiler::enableScatterNormal` was set before `compile()`.
+  [[nodiscard]] bool scatterNormalSample(const float4 &xi, bool backface,
+                                         float3 &wm, float &pdf, float2 &alpha,
+                                         int lobeMask) const {
+    SMDL_SANITY_CHECK(material && instance);
+    SMDL_SANITY_CHECK_MSG(bool(material->scatterNormalSample),
+                          "set 'Compiler::enableScatterNormal' before "
+                          "'compile()' to emit the normal distribution "
+                          "entry points");
+    // The mask must name exactly one glossy kind: the mixture over both
+    // domains is not a distribution any single crossing scatters by, so
+    // a manifold estimator must never draw from it. The raw entry point
+    // still reports the mixture for a caller that wants it.
+    if (lobeMask != DF_GLOSSY_BRDF && lobeMask != DF_GLOSSY_BTDF) {
+      pdf = 0.0f;
+      alpha = {};
+      return false;
+    }
+    return material->scatterNormalSample(instance, xi, int(backface), lobeMask,
+                                         wm, pdf, alpha);
+  }
+
+  /// The normal distribution evaluate function.
+  ///
+  /// See `Material::scatterNormalEvaluate` for the contract. Aborts if the
+  /// entry point was not emitted, as above.
+  [[nodiscard]] bool scatterNormalEvaluate(bool backface, const float3 &wm,
+                                           float &pdf, int lobeMask) const {
+    SMDL_SANITY_CHECK(material && instance);
+    SMDL_SANITY_CHECK_MSG(bool(material->scatterNormalEvaluate),
+                          "set 'Compiler::enableScatterNormal' before "
+                          "'compile()' to emit the normal distribution "
+                          "entry points");
+    // As in `scatterNormalSample`: exactly one glossy kind.
+    if (lobeMask != DF_GLOSSY_BRDF && lobeMask != DF_GLOSSY_BTDF) {
+      pdf = 0.0f;
+      return false;
+    }
+    return material->scatterNormalEvaluate(instance, int(backface), wm,
+                                           lobeMask, pdf);
   }
 
   /// The emission evaluate function.
@@ -1262,8 +1480,8 @@ public:
                                          f.data());
   }
 
-  /// The hair scatter sample function. There are no delta hair
-  /// distributions, so there is no `isDelta` output.
+  /// The hair scatter sample function. There are no Dirac hair
+  /// distributions, so there is no sampled-lobe output.
   ///
   /// \param[in] xi
   /// The canonical random sample in \f$ [0,1]^4 \f$.

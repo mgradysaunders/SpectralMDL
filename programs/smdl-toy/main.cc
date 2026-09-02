@@ -4,22 +4,30 @@
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
+#include <ctime>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
 #include <iterator>
 #include <optional>
 
+#if defined(_WIN32)
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h> // for 'GetProcessTimes'
+#endif               // #if defined(_WIN32)
+
 #include "assimp/version.h"
 #include "embree4/rtcore_config.h"
 #include "opensubdiv/version.h"
 
 #include "CommandLine.h"
-#include "llvm/Support/Parallel.h"
+#include "llvm/Support/InitLLVM.h"
 #include "llvm/Support/WithColor.h"
 
+#include "Autolook.h"
 #include "Camera.h"
-#include "Framing.h"
 #include "Guiding.h"
 #include "Layout.h"
 #include "Light.h"
@@ -30,10 +38,11 @@
 #include "Tonemap.h"
 
 #include "smdl/Common.h"
+#include "smdl/RenderUtil/SpectralFilm.h"
 #include "smdl/Support/Filesystem.h"
 #include "smdl/Support/Logger.h"
+#include "smdl/Support/Parallel.h"
 #include "smdl/Support/Profiler.h"
-#include "smdl/Support/SpectralRenderImage.h"
 
 // Optional rather than required only because the '.places' utility
 // flags below run without a scene; everything else checks it by hand
@@ -44,321 +53,339 @@ static cl::list<std::string> optInputMDLFiles{
     cl::Positional, cl::desc("<input mdl>"), cl::ZeroOrMore};
 //--{ CLI: Scene Options
 static cl::OptionCategory catScene{"Scene Options"};
+static cl::opt<float> optTime{
+    "time", cl::desc("The animation time in seconds (default: 0)"),
+    cl::init(0.0f), cl::cat(catScene)};
 static cl::list<std::string> optInputMeshFiles{
-    "mesh",
-    cl::desc("Add another mesh, repeatable (use a '.layout' file if you need "
-             "transforms)"),
-    cl::cat(catScene)};
-static cl::opt<std::string> optDumpPlaces{
-    "dump-places",
-    cl::desc("Print a '.places' buffer as one-line place text, then exit"),
-    cl::cat(catScene)};
-static cl::opt<std::string> optDumpCurves{
-    "dump-curves", cl::desc("Print a '.curves' file summary, then exit"),
-    cl::cat(catScene)};
-static cl::opt<std::string> optPackPlaces{
-    "pack-places",
-    cl::desc("Pack a layout's 'place' statements into a '.places' buffer, "
-             "then exit"),
-    cl::cat(catScene)};
-static cl::opt<std::string> optOutputPlaces{
-    "output-places",
-    cl::desc("The output of -pack-places (default: the layout's name with "
-             "'.places')"),
-    cl::cat(catScene)};
+    "mesh", cl::desc("Add another mesh, repeatable"), cl::cat(catScene)};
 static cl::list<std::string> optAssetDirs{
     "asset-dir",
-    cl::desc("Add a directory to search for assets and meshes, repeatable\n"
-             "* a relative path in a scene file is looked for beside that "
-             "file first, then in each of these"),
-    cl::cat(catScene)};
-static cl::opt<bool> optListMaterials{
-    "list-materials",
-    cl::desc("List the material names the scene needs and exit"),
-    cl::init(false), cl::cat(catScene)};
-static cl::opt<bool> optListObjects{
-    "list-objects",
-    cl::desc("List the objects present in each scene file and exit"),
-    cl::init(false), cl::cat(catScene)};
-static cl::opt<bool> optJSON{
-    "json",
-    cl::desc("With -list-objects or -list-materials, print JSON for tooling "
-             "instead of a table for a person"),
-    cl::init(false), cl::cat(catScene)};
-static cl::opt<std::string> optMaterialFallback{
-    "material-fallback",
-    cl::desc("The MDL material to use by default, without this an unresolved "
-             "name is an error\n"
-             "* 'default_material' is built in: a plain 20 percent "
-             "Lambertian, and what a\n  scene given no <input mdl> at all "
-             "falls back to"),
+    cl::desc("Add a directory to search for assets and meshes, repeatable"),
     cl::cat(catScene)};
 static cl::opt<bool> optAllMaterials{
     "all-materials",
-    cl::desc("Compile every material in the given MDL modules, not just the "
-             "ones the scene\nbinds\n"
-             "* a skipped material's body is never emitted, so this is how "
-             "errors inside an\n  unused material get diagnosed"),
+    cl::desc("Compile every material in the given MDL modules unconditionally"),
     cl::init(false), cl::cat(catScene)};
+static cl::opt<bool> optGround{"ground",
+                               cl::desc("Add a ground plane under the scene"),
+                               cl::init(false), cl::cat(catScene)};
+static cl::opt<float> optGroundZ{
+    "ground-z",
+    cl::desc("Place the ground plane at this height (implies -ground)"),
+    cl::init(0.0f), cl::cat(catScene)};
+static cl::opt<std::string> optGroundMaterial{
+    "ground-material",
+    cl::desc("With -ground, the MDL material for the ground plane (default: 10 "
+             "percent gray)"),
+    cl::cat(catScene)};
+static cl::opt<std::string> optFallbackMaterial{
+    "fallback-material",
+    cl::desc("The MDL material for names the scene does not resolve "
+             "(default: none, an error)\n"
+             "* 'default_object' is built in, a plain 20 percent Lambertian"),
+    cl::cat(catScene)};
+//--}
+//--{ CLI: Utility Options
+static cl::OptionCategory catUtility{"Utility Options"};
+static cl::opt<std::string> optDumpPlaces{
+    "dump-places",
+    cl::desc("Print '.places' buffer as one-line place text, then exit"),
+    cl::cat(catUtility)};
+static cl::opt<std::string> optDumpCurves{
+    "dump-curves", cl::desc("Print '.curves' file summary, then exit"),
+    cl::cat(catUtility)};
+static cl::opt<std::string> optPackPlaces{
+    "pack-places",
+    cl::desc("Pack layout's 'place' statements into a '.places' buffer, "
+             "then exit"),
+    cl::cat(catUtility)};
+static cl::opt<std::string> optOutputPlaces{
+    "pack-places-file",
+    cl::desc(
+        "The output file for -pack-places (default: layout name + '.places')"),
+    cl::cat(catUtility)};
+static cl::opt<bool> optListMaterials{
+    "list-materials", cl::desc("List material names the scene needs and exit"),
+    cl::init(false), cl::cat(catUtility)};
+static cl::opt<bool> optListObjects{
+    "list-objects",
+    cl::desc("List objects present in each scene file and exit"),
+    cl::init(false), cl::cat(catUtility)};
+static cl::opt<bool> optJSON{
+    "json",
+    cl::desc(
+        "With -list-objects or -list-materials, print JSON instead of a table"),
+    cl::init(false), cl::cat(catUtility)};
 //--}
 //--{ CLI: Sampling Options
 static cl::OptionCategory catSampling{"Sampling Options"};
+static cl::opt<unsigned> optSPP{
+    "spp", cl::desc("The number of samples per pixel (default: 8)"),
+    cl::init(8U), cl::cat(catSampling)};
+static cl::opt<unsigned> optSampleOffset{
+    "sample-offset",
+    cl::desc("The sample index this render starts from, to decorrelate renders "
+             "(default: 0, -resume overrides)"),
+    cl::init(0), cl::cat(catSampling)};
+static cl::opt<unsigned> optMaxBounces{
+    "max-bounces",
+    cl::desc("Trace every path to at most this many bounces with no Russian "
+             "roulette (default: roulette, backstopped at 63)\n"
+             "* a bounce is a scattering event: 0 keeps only the emission the "
+             "camera sees directly, 1 adds direct lighting"),
+    cl::init(63U), cl::cat(catSampling)};
+static cl::opt<float> optMaxContribution{
+    "max-contribution",
+    cl::desc("Limit any single contribution to this per-band radiance "
+             "(default: 0, off)"),
+    cl::init(0.0f), cl::cat(catSampling)};
+static cl::opt<unsigned> optMaxContributionBounces{
+    "max-contribution-bounces",
+    cl::desc("With -max-contribution, only bound contributions of at least "
+             "this many bounces (default: 1)"),
+    cl::init(1U), cl::cat(catSampling)};
+static cl::opt<bool> optNoLOD{
+    "no-lod", cl::desc("Disable LOD by zeroing the camera ray cone spread"),
+    cl::init(false), cl::cat(catSampling)};
+static cl::opt<bool> optNoMipMaps{
+    "no-mipmaps", cl::desc("Disable mip maps, ignoring 'use_mipmap: true'"),
+    cl::init(false), cl::cat(catSampling)};
+static cl::opt<unsigned> optThreads{
+    "threads",
+    cl::desc("Set the thread limit, or 0 for the maximum (default: 0)\n"
+             "* '-threads 1' runs inline with no pool at all, for a debugger"),
+    cl::init(0), cl::cat(catSampling)};
 static cl::opt<bool> optGuide{"guide", cl::desc("Enable SD-tree path guiding"),
                               cl::init(false), cl::cat(catSampling)};
 static cl::opt<bool> optGuideADRRS{
     "guide-adrrs",
     cl::desc("With -guide, drive Russian roulette by expected pixel "
-             "contribution instead of throughput (default: true)"),
+             "contribution instead of throughput (default: true)\n"
+             "* moot with -max-bounces, which turns roulette off"),
     cl::init(true), cl::cat(catSampling)};
 static cl::opt<float> optGuideBSDFFraction{
     "guide-bsdf-fraction",
-    cl::desc("With -guide, the probability of sampling the BSDF instead of "
+    cl::desc("With -guide, probability of sampling the BSDF instead of "
              "the SD-tree at guided vertices (default: 0.5)"),
     cl::init(0.5f), cl::cat(catSampling)};
 static cl::opt<float> optGuideSplit{
     "guide-split",
-    cl::desc("With -guide, the spatial split threshold scale: a leaf splits "
-             "past this many records times sqrt(pass spp) (default: 12000)"),
+    cl::desc("With -guide, SD-tree spatial split threshold in records "
+             "(default: 12000)"),
     cl::init(12000.0f), cl::cat(catSampling)};
-static cl::opt<bool> optMNEE{
-    "mnee",
-    cl::desc("Enable manifold next-event estimation: light samples blocked "
-             "by smooth refractive interfaces connect through them instead "
-             "of reading as occluded, e.g., onto a submerged surface or a "
-             "refractive caustic\n"
-             "* reaches the sun and sky, area lights, and punctual lights, "
-             "whose through-interface\n  transport no other estimator can "
-             "produce at all\n"
-             "* re-walk MIS against the walk's own arrivals keeps the "
-             "combined estimator\n  unbiased; opt-in for the added cost per "
-             "blocked light sample"),
-    cl::init(false), cl::cat(catSampling)};
+static cl::opt<bool> optMNEE{"mnee",
+                             cl::desc("Enable manifold next-event estimation"),
+                             cl::init(false), cl::cat(catSampling)};
 static cl::opt<unsigned> optMNEEDepth{
     "mnee-depth",
-    cl::desc("With -mnee, the maximum number of refractive interfaces a "
+    cl::desc("With -mnee, maximum number of refractive interfaces a "
              "connection may cross, 1 to 4 (default: 4)"),
     cl::init(4), cl::cat(catSampling)};
-static cl::opt<bool> optNoLOD{
-    "no-lod", cl::desc("Disable LOD by zeroing the camera ray cone spread"),
+static cl::opt<unsigned> optMNEEMaxTrials{
+    "mnee-max-trials",
+    cl::desc("With -mnee, max attempts to re-find a reciprocal "
+             "estimate before dropping the sample (default: 256)"),
+    cl::init(256), cl::cat(catSampling)};
+static cl::opt<float> optMNEEReceiverAlpha{
+    "mnee-receiver-alpha",
+    cl::desc("With -mnee, squared roughness needed to be a "
+             "receiver (default: 0.005, 0 takes every finite lobe)"),
+    cl::init(0.005f), cl::cat(catSampling)};
+static cl::opt<unsigned> optMNEEBiased{
+    "mnee-biased",
+    cl::desc("With -mnee, enable biased mode with this many walks per estimate "
+             "(default: 0, unbiased)"),
+    cl::init(0), cl::cat(catSampling)};
+static cl::opt<float> optMNEEMaxRoughness{
+    "mnee-max-roughness",
+    cl::desc("With -mnee, do not claim glossy lobes with roughness wider than "
+             "this (default: 0, no limit)"),
+    cl::init(0.0f), cl::cat(catSampling)};
+static cl::opt<bool> optMNEESunOnly{
+    "mnee-sun-only",
+    cl::desc("With -mnee and the procedural sun-sky, restrict the Dirac-chain "
+             "machinery to the sun disk"),
     cl::init(false), cl::cat(catSampling)};
-static cl::opt<bool> optNoMipMaps{
-    "no-mipmaps",
-    cl::desc("Disable mip maps, so that 'use_mipmap: true' is ignored and no "
-             "mip chains are allocated or generated\n"
-             "* the natural partner of -no-lod, which leaves the chains "
-             "allocated but never\n  selects one"),
+static cl::opt<bool> optMNEEReport{
+    "mnee-report",
+    cl::desc("With -mnee, print the manifold estimator stats after the render"),
     cl::init(false), cl::cat(catSampling)};
-static cl::opt<unsigned> optSPP{
-    "spp", cl::desc("The number of samples per pixel (default: 8)"),
-    cl::init(8U), cl::cat(catSampling)};
-//--}
-//--{ CLI: Wavelength Options
-static cl::OptionCategory catWavelength{"Wavelength Options"};
-static cl::opt<unsigned> optBands{
-    "bands",
-    cl::desc("The number of wavelength bands (default: 16)\n"
-             "* the JIT compiles materials for exactly this many bands; "
-             "compile time and\n  per-sample cost both grow with it"),
-    cl::init(16U), cl::cat(catWavelength)};
-static cl::opt<float2> optWaveRange{
-    "wave-range",
-    cl::desc("The wavelength range in nm spanned by -bands uniform bands, "
-             "endpoints\ninclusive (default: 380,720)\n"
-             "* a single band sits at the midpoint\n"
-             "* the built-in sun-sky covers 400-2500nm natively"),
-    cl::init(float2{WAVELENGTH_MIN, WAVELENGTH_MAX}), cl::cat(catWavelength)};
-static cl::opt<std::string> optWavelengths{
-    "wavelengths",
-    cl::desc("Explicit wavelengths in nm, comma-separated and strictly "
-             "increasing\n(mutually exclusive with -bands/-wave-range)\n"
-             "* a filename reads whitespace-separated values from that text "
-             "file, which is\n  how a sensor's hundreds of band centers "
-             "arrive"),
-    cl::cat(catWavelength)};
+static cl::opt<bool> optMNEETestWalk{
+    "mnee-test-manifoldwalk",
+    cl::desc("Run the manifold walk test and exit, non-zero on failure, needs "
+             "no scene arguments"),
+    cl::init(false), cl::cat(catSampling)};
+static cl::opt<bool> optMNEETestNormalHook{
+    "mnee-test-normalhook",
+    cl::desc("Test the geometry-normal hook against the meshes and exit, "
+             "non-zero on failure"),
+    cl::init(false), cl::cat(catSampling)};
 //--}
 //--{ CLI: Camera Options
 static cl::OptionCategory catCamera{"Camera Options"};
-static cl::opt<int2> optDims{
-    "dims", cl::desc("The image dimensions in pixels (default: 1280,720)"),
+static cl::opt<int2> optResolution{
+    "resolution",
+    cl::desc("The image dimensions in pixels (default: 1280,720)"),
     cl::init(int2{1280, 720}), cl::cat(catCamera)};
+static cl::opt<int4> optCropWindow{
+    "crop-window",
+    cl::desc("Render only pixels x0 <= x < x1, y0 <= y < y1 of the -resolution "
+             "frame, given as x0,y0,x1,y1 (default: the whole frame)\n"
+             "* the output keeps the full size with the rest black"),
+    cl::init(int4{0, 0, 0, 0}), cl::cat(catCamera)};
 static cl::opt<float3> optLookFrom{
     "look-from", cl::desc("The position to look from (default: -6,0,2)"),
     cl::init(float3{-6, 0, 2}), cl::cat(catCamera)};
 static cl::opt<float3> optLookTo{
     "look-to", cl::desc("The position to look to (default: 0,0,0.5)"),
     cl::init(float3{0, 0, 0.5}), cl::cat(catCamera)};
-static cl::opt<float3> optUp{"up", cl::desc("The up vector (default: 0,0,1)"),
-                             cl::init(float3{0, 0, 1}), cl::cat(catCamera)};
+static cl::opt<float3> optLookUp{"look-up",
+                                 cl::desc("The up vector (default: 0,0,1)"),
+                                 cl::init(float3{0, 0, 1}), cl::cat(catCamera)};
 static cl::opt<float> optFOV{
     "fovy", cl::desc("The vertical FOV in degrees (default: 37.8)"),
     cl::init(37.8f), cl::cat(catCamera)};
-static cl::opt<bool> optFrame{
-    "frame",
-    cl::desc("Solve -look-from/-look-to to fit the scene at the given FOV\n"
-             "* the fit is exact per vertex (nothing clips), and runs after "
-             "the scene\n"
-             "  is committed, so it sees subdivided and displaced geometry"),
+static cl::opt<std::string> optWavelengthRange{
+    "wavelength-range",
+    cl::desc("Uniform wavelengths spanning A to B nm with N bands, "
+             "format 'A,B:N' where ':N' is optional (default: 380,720:16)"),
+    cl::cat(catCamera)};
+static cl::opt<std::string> optWavelengths{
+    "wavelengths",
+    cl::desc("Explicit wavelengths in nm, comma-separated or a text file of "
+             "whitespace-separated values (mutually exclusive with "
+             "-wavelength-range)"),
+    cl::cat(catCamera)};
+static cl::opt<bool> optAutolook{
+    "autolook",
+    cl::desc("Solve -look-from/-look-to to fit the scene at the given FOV"),
     cl::init(false), cl::cat(catCamera)};
-static cl::opt<float> optFrameZenith{
-    "frame-zenith",
-    cl::desc("With -frame, the zenith angle of the scene-to-camera "
-             "direction in\n"
-             "degrees, like -sun-zenith (default: 65, the camera 25 degrees "
-             "above the\n"
-             "horizon, which is the standardized 3/4 view)"),
-    cl::init(65.0f), cl::cat(catCamera)};
-static cl::opt<float> optFrameAzimuth{
-    "frame-azimuth",
-    cl::desc("With -frame, the azimuth of the scene-to-camera direction in "
-             "degrees\n"
-             "CCW from +X, like -sun-azimuth (default: solved to maximize "
-             "frame fill\n"
-             "while avoiding views dominated by backfaces)"),
+// Kept apart from -autolook on purpose: folding the azimuth into an
+// optional value of -autolook would make LLVM demand '-autolook=N' (a
+// space never binds the value) and hide a bare -autolook from
+// -print-options.
+static cl::opt<float> optAutolookAzimuth{
+    "autolook-azimuth",
+    cl::desc("With -autolook, the azimuth of the scene-to-camera direction in "
+             "degrees CCW from +X (default: solved for frame fill)"),
     cl::init(0.0f), cl::cat(catCamera)};
-static cl::opt<float> optFrameMargin{
-    "frame-margin",
-    cl::desc("With -frame, the padding between the scene and the frame "
-             "edge as a\n"
-             "fraction of the frame (default: 0.05)"),
+static cl::opt<float> optAutolookZenith{
+    "autolook-zenith",
+    cl::desc("With -autolook, the zenith angle of the scene-to-camera "
+             "direction in degrees (default: 65, the standard 3/4 view)"),
+    cl::init(65.0f), cl::cat(catCamera)};
+static cl::opt<float> optAutolookMargin{
+    "autolook-margin",
+    cl::desc("With -autolook, the padding to the frame edge as a fraction of "
+             "the frame (default: 0.05)"),
     cl::init(0.05f), cl::cat(catCamera)};
-static cl::opt<bool> optFrameIgnoreBackfaces{
-    "frame-ignore-backfaces",
-    cl::desc("With -frame, neither avoid nor warn about views of "
-             "backfacing geometry\n"
-             "* the veto also stands down on its own when every view shows "
-             "backfaces,\n"
-             "  which is what unshaded two-sided geometry (foliage cards) "
-             "looks like"),
+static cl::opt<bool> optAutolookIgnoreBackfaces{
+    "autolook-ignore-backfaces",
+    cl::desc("With -autolook, neither avoid nor warn about views of backfacing "
+             "geometry"),
     cl::init(false), cl::cat(catCamera)};
 //--}
-//--{ CLI: Lens Options
-static cl::OptionCategory catLens{"Lens Options"};
+//--{ CLI: Camera-Lens Options
+static cl::OptionCategory catCameraLens{"Camera-Lens Options"};
+static cl::opt<float> optShutterSpeed{
+    "shutter-speed", cl::desc("The shutter speed in seconds (default: 0)"),
+    cl::init(0.0f), cl::cat(catCameraLens)};
 static cl::opt<float> optFStop{
     "fstop", cl::desc("Enable DOF by f-number assuming 35mm-format frame"),
-    cl::init(0.0f), cl::cat(catLens)};
+    cl::init(0.0f), cl::cat(catCameraLens)};
 static cl::opt<float> optAperture{
     "aperture",
     cl::desc("Enable DOF by aperture radius in scene units (mutually exclusive "
              "with -fstop)"),
-    cl::init(0.0f), cl::cat(catLens)};
+    cl::init(0.0f), cl::cat(catCameraLens)};
 static cl::opt<float> optFocus{
     "focus",
     cl::desc("The focus distance along the view axis in scene units (default: "
              "distance between -look-from and -look-to)"),
-    cl::init(0.0f), cl::cat(catLens)};
+    cl::init(0.0f), cl::cat(catCameraLens)};
 static cl::opt<int> optBlades{
     "blades",
     cl::desc("The number of aperture blades (default: 0, a round lens)"),
-    cl::init(0), cl::cat(catLens)};
+    cl::init(0), cl::cat(catCameraLens)};
 static cl::opt<float> optBladeAngle{
     "blade-angle",
     cl::desc("With -blades, the rotation of the aperture polygon in "
              "degrees (default: 0, vertex at screen right)"),
-    cl::init(0.0f), cl::cat(catLens)};
+    cl::init(0.0f), cl::cat(catCameraLens)};
 static cl::opt<float> optDistortionK1{
     "distortion-k1",
-    cl::desc("The radial distortion (barrel >0, pincushion <0, default: 0)\n"
-             "* given in units of relative corner displacement, e.g., 0.1 "
-             "pushes the corners out by 10 percent"),
-    cl::init(0.0f), cl::cat(catLens)};
+    cl::desc("The radial distortion, in relative corner displacement (barrel "
+             ">0, pincushion <0, default: 0)"),
+    cl::init(0.0f), cl::cat(catCameraLens)};
 static cl::opt<float> optDistortionK2{
     "distortion-k2",
-    cl::desc("The quartic term of radial distortion (default: 0)\n"
-             "* same corner-fraction units as -distortion-k1\n"
-             "* real lenses need this to pull the corners back without\n"
-             "  over-bending the middle of the frame"),
-    cl::init(0.0f), cl::cat(catLens)};
+    cl::desc("The quartic term of radial distortion, same units as "
+             "-distortion-k1 (default: 0)"),
+    cl::init(0.0f), cl::cat(catCameraLens)};
 static cl::opt<bool> optDistortionFit{
     "distortion-fit",
-    cl::desc("Refit so frame corner directions hold constant under distortion\n"
-             "* convenience for comparing renders, not a physical effect"),
-    cl::init(false), cl::cat(catLens)};
+    cl::desc("Refit so frame corner directions hold constant under distortion"),
+    cl::init(false), cl::cat(catCameraLens)};
 static cl::opt<float> optVignetting{
     "vignetting",
     cl::desc("The strength of cos^4 falloff (default: 0 is off, 1 is the "
              "physical law)"),
-    cl::init(0.0f), cl::cat(catLens)};
+    cl::init(0.0f), cl::cat(catCameraLens)};
 static cl::opt<float> optCatEye{
     "cat-eye",
     cl::desc(
         "With -fstop or -aperture, mechanical vignette from the lens barrel\n"
-        "* relative displacement at the frame corner in units of rim radius\n"
-        "  (0 is off, 0.5 costs 1.35 stops in the corners, 1 is fully dark)"),
-    cl::init(0.0f), cl::cat(catLens)};
+        "* corner displacement in rim radii (0 is off, 1 is fully dark)"),
+    cl::init(0.0f), cl::cat(catCameraLens)};
 static cl::opt<float> optCatEyeRadius{
     "cat-eye-radius",
-    cl::desc("With -cat-eye, barrel rim radius in scene units (default: "
-             "aperture radius, i.e., wide-open)\n"
-             "* fixing at the wide-open radius and stopping down with -fstop\n"
-             "  weakens the cat's eye on its own, as a real lens does"),
-    cl::init(0.0f), cl::cat(catLens)};
+    cl::desc("With -cat-eye, the barrel rim radius in scene units (default: "
+             "the aperture radius, i.e., wide-open)"),
+    cl::init(0.0f), cl::cat(catCameraLens)};
 //--}
-//--{ CLI: Staging Options
-static cl::OptionCategory catStaging{"Staging Options"};
-static cl::opt<bool> optGround{"ground",
-                               cl::desc("Add a ground plane under the scene"),
-                               cl::init(false), cl::cat(catStaging)};
-static cl::opt<float> optGroundZ{
-    "ground-z",
-    cl::desc("Place the ground plane at this height instead (implies "
-             "-ground)"),
-    cl::init(0.0f), cl::cat(catStaging)};
-static cl::opt<std::string> optGroundMaterial{
-    "ground-material",
-    cl::desc("With -ground, the MDL material for the ground plane "
-             "(default: 10\% gray)"),
-    cl::cat(catStaging)};
-static cl::opt<float> optTime{
-    "animation-time", cl::desc("The animation time in seconds (default: 0)"),
-    cl::init(0.0f), cl::cat(catStaging)};
-//--}
-//--{ CLI: Sun-Sky Options
-static cl::OptionCategory catSunSky{"Sun-Sky Options"};
+//--{ CLI: Light Options
+static cl::OptionCategory catLight{"Light Options"};
 static cl::opt<bool> optNoSunSky{
     "no-sky",
     cl::desc("Disable the default sun-sky, restoring the black "
              "environment"),
-    cl::init(false), cl::cat(catSunSky)};
+    cl::init(false), cl::cat(catLight)};
 static cl::opt<float> optSunZenith{
     "sun-zenith",
     cl::desc("The solar zenith angle in degrees, 5-88 (default: 42)"),
-    cl::init(42.0f), cl::cat(catSunSky)};
+    cl::init(42.0f), cl::cat(catLight)};
 static cl::opt<float> optSunAzimuth{
     "sun-azimuth",
     cl::desc("The solar azimuth angle in degrees CCW from +X (default: 135)"),
-    cl::init(135.0f), cl::cat(catSunSky)};
+    cl::init(135.0f), cl::cat(catLight)};
 static cl::opt<float> optSkyVisibility{
     "visibility", cl::desc("The aerosol visibility in km, 5-100 (default: 23)"),
-    cl::init(23.0f), cl::cat(catSunSky)};
+    cl::init(23.0f), cl::cat(catLight)};
 static cl::opt<float> optSkyWaterVapor{
     "water-vapor",
     cl::desc("The water-vapor column scale factor, 0.3-3 (default: 1)"),
-    cl::init(1.0f), cl::cat(catSunSky)};
+    cl::init(1.0f), cl::cat(catLight)};
 static cl::opt<float> optSkyScale{
     "sky-scale", cl::desc("The sky radiance scale factor (default: 1)"),
-    cl::init(1.0f), cl::cat(catSunSky)};
+    cl::init(1.0f), cl::cat(catLight)};
 static cl::opt<float> optMoonPhase{
     "moon",
-    cl::desc("Enable moonlight mode\n"
-             "* pass signed phase angle in degrees (0 is full moon, +/-180 is\n"
-             "  new moon, sign picks waxing vs waning)\n"
-             "* radiance is ~1e-6 of daylight, use with '-tonemap night'\n"),
-    cl::init(0.0f), cl::cat(catSunSky)};
+    cl::desc("Enable moonlight mode at this signed phase angle in degrees\n"
+             "* 0 is full, +/-180 is new, the sign picks waxing or waning\n"
+             "* radiance is ~1e-6 of daylight, use with '-tonemap night'"),
+    cl::init(0.0f), cl::cat(catLight)};
 static cl::opt<float> optMoonDistance{
     "moon-distance",
-    cl::desc("With -moon, the lunar distance factor (default: 1)\n"
-             "* realistic range is ~0.86-1.14 over the month"),
-    cl::init(1.0f), cl::cat(catSunSky)};
-//--}
-//--{ CLI: Image-Based Light Options
-static cl::OptionCategory catIBL{"Image-Based Light Options"};
+    cl::desc("With -moon, the lunar distance factor (default: 1, realistic "
+             "range ~0.86-1.14)"),
+    cl::init(1.0f), cl::cat(catLight)};
 static cl::opt<std::string> optIBLFilename{
     "ibl",
     cl::desc("The IBL filename (any supported format, likely '.hdr', '.exr')"),
-    cl::cat(catIBL)};
+    cl::cat(catLight)};
 static cl::opt<float> optIBLScale{
     "ibl-scale", cl::desc("With -ibl, the IBL scale factor (default: 1)"),
-    cl::init(1.0f), cl::cat(catIBL)};
+    cl::init(1.0f), cl::cat(catLight)};
 //--}
 //--{ CLI: Tonemapping Options
 static cl::OptionCategory catTonemap{"Tonemapping Options"};
@@ -370,39 +397,28 @@ static cl::opt<std::string> optTonemap{
     "tonemap", cl::desc(R"(Tone mapping for 8-bit output (default: linear)
 * 'linear' passes the radiance through to the display curve
 * 'log' is shorthand for '-tonemap linear -curve log'
-* 'night' models human vision at absolute luminance (rods dominate below ~3
-  cd/m^2, desaturated, blue-shifted, colorless by ~0.005) and auto-exposes
-  the display brightness, so physically dim scenes like moonlight are both
-  visible and perceptually right. In bright scenes 'night' behaves like
-  auto-exposed 'linear')"),
+* 'night' models human vision at absolute luminance and auto-exposes,
+  for physically dim scenes like moonlight)"),
     cl::init(std::string("linear")), cl::cat(catTonemap)};
 static cl::opt<float> optTonemapDecades{
     "tonemap-decades",
-    cl::desc("With -curve log, how many decades below white reach "
+    cl::desc("With -curve=log, how many decades below white reach "
              "black (default: 4)"),
     cl::init(4.0f), cl::cat(catTonemap)};
 static cl::opt<std::string> optCurve{
     "curve", cl::desc(R"(The display curve for 8-bit output (default: gamma)
-* 'gamma' straightforwardly clamps and gamma-encodes
-* 'log' maps decades below the exposure-scaled white point for scenes
-  where the radiance spans several orders of magnitude
-* 'filmic' rolls highlights off toward white instead of clipping them
-  per channel, so saturated colors bleach the way film does; reproduces 
-  color exactly below the rolloff and never clips, good to use with
-  '-local fusion')"),
+* 'gamma' clamps and gamma-encodes
+* 'log' maps decades below the exposure-scaled white point
+* 'filmic' rolls highlights off toward white instead of clipping them)"),
     cl::init(std::string("gamma")), cl::cat(catTonemap)};
 static cl::opt<std::string> optLocal{
     "local", cl::desc(R"(Local tone mapping for 8-bit output (default: off)
-* 'fusion' brackets the render into several synthetic exposures and
-  blends them by Laplacian pyramid, the bracket is taken from the image 
-  histogram, so this needs no setup and handles any dynamic range; it also 
-  auto-exposes, leaving -exposure a relative adjustment)"),
+* 'fusion' by Laplacian pyramid; also auto-exposes, leaving -exposure a relative adjustment)"),
     cl::init(std::string("off")), cl::cat(catTonemap)};
 static cl::opt<float> optLocalStrength{
     "local-strength",
-    cl::desc("With -local, how much local exposure to keep (default: 0.75)\n"
-             "* 0 is the globally auto-exposed image, 1 is the full "
-             "local result"),
+    cl::desc(
+        "With -local, how much local exposure to keep, 0 to 1 (default: 0.75)"),
     cl::init(0.75f), cl::cat(catTonemap)};
 static cl::opt<float> optLocalRange{
     "local-range",
@@ -415,134 +431,114 @@ static cl::opt<float> optLocalClamp{
     cl::init(3.0f), cl::cat(catTonemap)};
 static cl::opt<bool> optFalseColor{
     "false-color",
-    cl::desc("Force the false-color band mapping for the RGB outputs\n"
-             "* false color engages by itself when the wavelength grid "
-             "cannot cover the\n  visible; this forces it for a grid that "
-             "could"),
+    cl::desc("Force false color band mapping for the RGB outputs\n"
+             "* engages automatically when wavelength grid does not cover the "
+             "visible"),
     cl::init(false), cl::cat(catTonemap)};
 static cl::opt<float3> optRGBWaves{
-    "rgb-waves",
-    cl::desc("With false color, the wavelengths in nm mapped to R,G,B\n"
-             "(default: the bands at 5/6, 1/2, and 1/6 of the grid span, "
-             "long to red)\n"
-             "* giving -rgb-waves also forces false color"),
+    "rgb-wavelengths",
+    cl::desc("With -false-color, the wavelengths in nm mapped to R,G,B "
+             "(default: 5/6, 1/2, and 1/6 of the grid span, long to red)"),
     cl::init(float3{}), cl::cat(catTonemap)};
 //--}
 //--{ CLI: Output Options
 static cl::OptionCategory catOutput{"Output Options"};
-static cl::opt<std::string> optOutput{
-    "output", cl::desc("The tone mapped image filename (default: output.png)"),
+static cl::opt<std::string> optOutputRGB{
+    "output-rgb",
+    cl::desc("The tone mapped RGB image filename (default: output.png)"),
     cl::init(std::string("output.png")), cl::cat(catOutput)};
-static cl::opt<std::string> optOutputFloat{
-    "output-float",
-    cl::desc("Also write the linear radiance to this '.exr' or '.hdr' file, "
-             "with no exposure or gamma applied"),
+static cl::opt<std::string> optOutputRGBf{
+    "output-rgbf",
+    cl::desc("Also write linear RGB radiance to this '.exr' or '.hdr' file"),
     cl::cat(catOutput)};
 static cl::opt<std::string> optOutputSpectrum{
     "output-spectrum",
-    cl::desc("Also write every wavelength band to this ENVI file, alongside "
-             "which a '.hdr' header is written\n"
-             "* the header records the samples per pixel, so a later run can "
-             "pick up where\n  this one left off with -resume\n"
-             "* implied by -resume, so it only needs to be given to redirect "
-             "the write away\n  from the file being resumed"),
+    cl::desc("Also write linear spectral radiance to this ENVI file"),
     cl::cat(catOutput)};
 static cl::opt<std::string> optResume{
     "resume",
-    cl::desc(
-        "Resume accumulating from this ENVI file written by a previous run's "
-        "-output-spectrum\n"
-        "* implies '-output-spectrum' back to the same file, so one command "
-        "line can be\n  re-run to keep accumulating (an explicit "
-        "-output-spectrum still wins)\n"
-        "* the file not existing yet is fine: this run is then the first "
-        "session of the\n  sequence and renders from scratch\n"
-        "* continues the sample sequence where the file left off and merges "
-        "both\n  sessions, so scene and camera flags must match for the merge "
-        "to mean anything\n"
-        "* reads before rendering, so writing back to the same file is safe\n"
-        "* with '-spp 0', re-runs the output stage without rendering\n"
-        "* with no wavelength flags at all, the file's grid is adopted\n"
-        "* works with -guide, though the SD-tree is not saved between "
-        "sessions, so a\n  resumed session retrains it from scratch"),
+    cl::desc("Resume accumulating from this ENVI file written by a previous "
+             "-output-spectrum"),
     cl::cat(catOutput)};
 static cl::opt<std::string> optProgressFile{
     "progress-file",
-    cl::desc("Write the progress as one line into this file, rewritten about "
-             "ten times a second\n"
-             "* 'done=N total=M elapsed=S eta=S note=...', for a tool "
-             "watching the render\n"
-             "* the bar on stderr is for a person and draws nothing into a "
-             "pipe, so this is\n  how the Blender add-on follows a render"),
+    cl::desc("Write 'done=N total=M elapsed=S eta=S note=...' progress into "
+             "this file, about ten times a second"),
     cl::cat(catOutput)};
 static cl::opt<double> optPreviewEvery{
     "preview-every",
-    cl::desc("Rewrite '-output' about this often (in seconds) while "
-             "rendering, so that\nsomething watching the file sees the image "
-             "converge instead of nothing\n"
-             "* the samples are unchanged, so the finished image is exactly "
-             "what it would\n  have been; only the writing is extra\n"
-             "* with '-guide' the checkpoints land on the pass boundaries "
-             "instead, which\n  already grow geometrically"),
+    cl::desc("Rewrite '-output-rgb' about this often in seconds "
+             "(default: 0, off)"),
     cl::init(0.0), cl::cat(catOutput)};
 static cl::opt<std::string> optProgress{
     "progress",
     cl::desc("Draw a progress bar while rendering: 'auto', 'plain', or 'none' "
-             "(default: auto)\n"
-             "* auto uses block characters when the locale says UTF-8 and "
-             "falls back to ASCII\n  when it does not; plain always draws the "
-             "ASCII bar\n"
-             "* a captured or redirected stderr never gets a bar, only a "
-             "line recording how\n  long the render took, so a scripted run "
-             "stays greppable"),
+             "(default: auto)"),
     cl::init(std::string("auto")), cl::cat(catOutput)};
 static cl::opt<std::string> optProfile{
     "profile",
-    cl::desc(
-        "Write a time-trace JSON of everything before rendering starts: MDL "
-        "parse and JIT\ncompile, scene import, and acceleration structures "
-        "(default: smdl-toy.trace.json)\n"
-        "* open in chrome://tracing or https://ui.perfetto.dev\n"
-        "* the render loop is deliberately not traced; the format suits a "
-        "sequential\n  breakdown, not per-sample shader timing"),
+    cl::desc("Write a time-trace JSON of everything before rendering starts "
+             "(default: smdl-toy.trace.json)\n"
+             "* open in chrome://tracing or https://ui.perfetto.dev"),
     cl::ValueOptional, cl::init(std::string{}), cl::cat(catOutput)};
 //--}
 
+// A pixel window as '-crop-window' spells it.
+[[nodiscard]] static std::string formatWindow(int4 window) {
+  return smdl::concat(window[0], ",", window[1], ",", window[2], ",",
+                      window[3]);
+}
+
+// Whole-rectangle equality, which vector `operator==` does not give:
+// it yields one result per component, per MDL semantics.
+[[nodiscard]] static bool sameWindow(int4 lhs, int4 rhs) noexcept {
+  return lhs[0] == rhs[0] && lhs[1] == rhs[1] && //
+         lhs[2] == rhs[2] && lhs[3] == rhs[3];
+}
+
 // The command line, joined for the `smdl args` metadata field, with the
 // session-only flags stripped: outputs, display transforms, the sample
-// budget, the guiding strategy, and -resume itself legitimately change
-// between the sessions of one render, while anything else that differs
-// likely changes the radiance being estimated and earns a warning. The
-// wavelength flags are stripped too: a genuine grid mismatch already
-// has its own hard error, so warning here would double-report.
-// Tokenizes on whitespace, so a path containing spaces can misalign the
-// comparison; the result only feeds a warning, never behavior.
-[[nodiscard]] static std::vector<std::string>
-stripSessionOnlyArgs(const std::string &args) {
+// budget, the guiding strategy, the thread count, and -resume itself
+// legitimately change between the sessions of one render, while anything
+// else that differs likely changes the radiance being estimated and
+// earns a warning. The wavelength and window flags are stripped too: a
+// genuine grid or window mismatch already has its own hard error, so
+// warning here would double-report. Tokenizes on whitespace, so a path
+// containing spaces can misalign the comparison; the result only feeds a
+// warning, never behavior.
+[[nodiscard]]
+static std::vector<std::string> stripSessionOnlyArgs(const std::string &args) {
   // Split by whether the flag's value arrives as a separate token, so
   // that token is stripped with it; the boolean guiding flags carry no
   // value and must not eat the token after them.
-  static constexpr const char *SESSION_ONLY_VALUE[]{"resume",
-                                                    "spp",
-                                                    "output",
-                                                    "output-float",
-                                                    "output-spectrum",
-                                                    "exposure",
-                                                    "tonemap",
-                                                    "tonemap-decades",
-                                                    "curve",
-                                                    "local",
-                                                    "local-strength",
-                                                    "local-range",
-                                                    "local-clamp",
-                                                    "bands",
-                                                    "wave-range",
-                                                    "wavelengths",
-                                                    "guide-bsdf-fraction",
-                                                    "guide-split",
-                                                    "mnee-depth"};
-  static constexpr const char *SESSION_ONLY_FLAG[]{"guide", "guide-adrrs",
-                                                   "mnee"};
+  static constexpr auto SESSION_ONLY_VALUES = std::array{"resume",
+                                                         "spp",
+                                                         "output-rgb",
+                                                         "output-rgbf",
+                                                         "output-spectrum",
+                                                         "exposure",
+                                                         "tonemap",
+                                                         "tonemap-decades",
+                                                         "curve",
+                                                         "local",
+                                                         "local-strength",
+                                                         "local-range",
+                                                         "local-clamp",
+                                                         "wavelength-range",
+                                                         "wavelengths",
+                                                         "crop-window",
+                                                         "guide-bsdf-fraction",
+                                                         "guide-split",
+                                                         "mnee-depth",
+                                                         "mnee-max-trials",
+                                                         "mnee-biased",
+                                                         "mnee-max-roughness",
+                                                         "mnee-receiver-alpha",
+                                                         "sample-offset",
+                                                         "threads"};
+  static constexpr auto SESSION_ONLY_FLAGS =
+      std::array{"guide",         "guide-adrrs", "mnee",
+                 "mnee-sun-only", "mnee-report", "mnee-test-normalhook"};
   auto tokens{std::vector<std::string>()};
   for (size_t pos{}; pos < args.size();) {
     size_t end{args.find_first_of(" \t", pos)};
@@ -561,14 +557,14 @@ stripSessionOnlyArgs(const std::string &args) {
       auto equals{name.find('=')};
       hasAttachedValue = equals != std::string::npos;
       name = name.substr(0, equals);
-      for (const auto *sessionOnlyName : SESSION_ONLY_VALUE)
+      for (const auto *sessionOnlyName : SESSION_ONLY_VALUES)
         if (name == sessionOnlyName) {
           isSessionOnly = true;
           takesValue = true;
           break;
         }
       if (!isSessionOnly)
-        for (const auto *sessionOnlyName : SESSION_ONLY_FLAG)
+        for (const auto *sessionOnlyName : SESSION_ONLY_FLAGS)
           if (name == sessionOnlyName) {
             isSessionOnly = true;
             break;
@@ -589,8 +585,8 @@ stripSessionOnlyArgs(const std::string &args) {
 // line expands '@'-prefixed argv tokens as response files before any
 // option sees them. Returns empty when the flag was not given; anything
 // else must be a finite, positive, strictly increasing list.
-[[nodiscard]] static std::vector<float>
-parseWavelengthsFlag(const std::string &flagValue) {
+[[nodiscard]]
+static std::vector<float> parseWavelengthsFlag(const std::string &flagValue) {
   auto values{std::vector<float>()};
   if (flagValue.empty()) return values;
   auto text{flagValue};
@@ -626,6 +622,50 @@ parseWavelengthsFlag(const std::string &flagValue) {
   return values;
 }
 
+struct WavelengthRange final {
+  float2 range{};
+  unsigned bandCount{};
+};
+
+// Parse the '-wavelength-range' flag: 'A,B:N' for N uniform bands
+// spanning A to B nm, with ':N' optional. Returns the default grid when
+// the flag was not given.
+[[nodiscard]]
+static WavelengthRange parseWavelengthRangeFlag(const std::string &flagValue) {
+  auto result{WavelengthRange{float2{WAVELENGTH_MIN, WAVELENGTH_MAX}, 16U}};
+  if (flagValue.empty()) return result;
+  const char *ptr{flagValue.c_str()};
+  char *numEnd{};
+  result.range.x = std::strtof(ptr, &numEnd);
+  if (numEnd == ptr || *numEnd != ',')
+    throw smdl::Error(smdl::concat("cannot parse -wavelength-range near ",
+                                   smdl::Quoted(std::string(ptr, 0, 12))));
+  ptr = numEnd + 1;
+  result.range.y = std::strtof(ptr, &numEnd);
+  if (numEnd == ptr)
+    throw smdl::Error(smdl::concat("cannot parse -wavelength-range near ",
+                                   smdl::Quoted(std::string(ptr, 0, 12))));
+  ptr = numEnd;
+  if (*ptr == ':') {
+    ptr++;
+    if (!std::isdigit(static_cast<unsigned char>(*ptr)))
+      throw smdl::Error(smdl::concat("cannot parse -wavelength-range near ",
+                                     smdl::Quoted(std::string(ptr, 0, 12))));
+    result.bandCount = unsigned(std::strtoul(ptr, &numEnd, 10));
+    ptr = numEnd;
+  }
+  if (*ptr != '\0')
+    throw smdl::Error(smdl::concat("cannot parse -wavelength-range near ",
+                                   smdl::Quoted(std::string(ptr, 0, 12))));
+  if (!(std::isfinite(result.range.x) && std::isfinite(result.range.y) &&
+        result.range.x > 0 && result.range.x < result.range.y))
+    throw smdl::Error(
+        "expected -wavelength-range 'A,B' to be positive and increasing");
+  if (result.bandCount < 2)
+    throw smdl::Error("expected -wavelength-range ':N' to be at least 2");
+  return result;
+}
+
 // The material a scene falls back to when it has none of its own: a
 // plain 20 percent Lambertian, so a layout can be looked at before any
 // material has been written for it. Deliberately the dullest thing that
@@ -634,7 +674,7 @@ parseWavelengthsFlag(const std::string &flagValue) {
 constexpr const char *DEFAULT_MATERIAL_SOURCE = R"(#smdl
 import ::df::*;
 
-export material default_material() = material(
+export material default_object() = material(
   surface: material_surface(
     scattering: df::diffuse_reflection_bsdf(tint: color(0.2))));
 
@@ -649,12 +689,41 @@ export material default_ground() = material(
 // names of the two materials in it.
 constexpr const char *DEFAULT_MATERIAL_MODULE = "::smdl_toy_default";
 
-// The material `-material-fallback` names to get it.
-constexpr const char *DEFAULT_MATERIAL_NAME = "default_material";
+// The material `-fallback-material` names to get it.
+constexpr const char *DEFAULT_OBJECT_MATERIAL_NAME = "default_object";
 
 // The darker gray `-ground` defaults to, for contrast against the
 // default material above.
 constexpr const char *DEFAULT_GROUND_MATERIAL_NAME = "default_ground";
+
+// The process CPU time in seconds, summed over every thread, so a render
+// on N cores accrues about N seconds per second of wall clock. Zero when
+// the platform has no way to ask, which the caller sees as a session that
+// took no compute time rather than as an error.
+//
+// NOTE: 'std::clock()' is only the right answer where nothing better is
+// available: it measures process CPU time on POSIX but wall clock since
+// process start on MSVC.
+[[nodiscard]] static double cpuTimeSeconds() {
+#if defined(_WIN32)
+  FILETIME creationTime{}, exitTime{}, kernelTime{}, userTime{};
+  if (!GetProcessTimes(GetCurrentProcess(), &creationTime, &exitTime,
+                       &kernelTime, &userTime))
+    return 0.0;
+  // Both are 100-nanosecond tick counts in a split 64-bit integer.
+  const auto toSeconds{[](const FILETIME &fileTime) {
+    return 1e-7 * double((uint64_t(fileTime.dwHighDateTime) << 32) |
+                         uint64_t(fileTime.dwLowDateTime));
+  }};
+  return toSeconds(kernelTime) + toSeconds(userTime);
+#elif defined(CLOCK_PROCESS_CPUTIME_ID)
+  timespec time{};
+  if (clock_gettime(CLOCK_PROCESS_CPUTIME_ID, &time) != 0) return 0.0;
+  return double(time.tv_sec) + 1e-9 * double(time.tv_nsec);
+#else
+  return double(std::clock()) / double(CLOCKS_PER_SEC);
+#endif
+}
 
 // How the sample budget is split into passes.
 //
@@ -663,11 +732,19 @@ constexpr const char *DEFAULT_GROUND_MATERIAL_NAME = "default_ground";
 // into the final pass, so it always holds at least half the budget. Solved
 // up front rather than as the loop runs so that the progress bar can say
 // which pass of how many.
-[[nodiscard]] static std::vector<size_t> solveSamplePasses(size_t spp,
-                                                           bool guide) {
+[[nodiscard]]
+static std::vector<size_t> solveSamplePasses(size_t spp, bool guide,
+                                             size_t trainedSpp) {
+  // The geometric warmup exists to bound the samples spent while the
+  // tree is immature, so a session that resumed a saved tree skips it:
+  // the first pass starts at the largest power of two at or below what
+  // already trained the tree, and the refine threshold keeps scaling
+  // with the pass size.
+  size_t firstPass{1};
+  while (guide && firstPass * 2 <= trainedSpp) firstPass *= 2;
   auto passes{std::vector<size_t>()};
   for (size_t sppDone{0}; sppDone < spp;) {
-    size_t thisPass{guide ? std::min(size_t(1) << passes.size(), spp - sppDone)
+    size_t thisPass{guide ? std::min(firstPass << passes.size(), spp - sppDone)
                           : spp};
     if (guide && (spp - sppDone) < 2 * thisPass) thisPass = spp - sppDone;
     passes.push_back(thisPass);
@@ -676,28 +753,117 @@ constexpr const char *DEFAULT_GROUND_MATERIAL_NAME = "default_ground";
   return passes;
 }
 
+// The '-mnee-test-normalhook' pass: at deterministic quasi-random points of
+// every surface instance, read the shading normal field through the
+// geometry-normal hook (with its central-difference partials) and compare
+// against the analytic mesh derivatives. Wherever the material leaves
+// 'geometry.normal' alone the two are the same field and must agree; a
+// remapped material has no analytic truth to compare against, so it
+// reports how far its field bends instead. Returns the number of
+// unmapped instances that disagree.
+[[nodiscard]] static int runMNEETestNormalHook(const Scene &scene) {
+  constexpr int NUM_SAMPLES{64};
+  constexpr float TOLERANCE{1e-3f};
+  int failures{0};
+  for (uint32_t instIndex = 0; instIndex < scene.meshInstances.size();
+       instIndex++) {
+    const auto &instance{scene.meshInstances[instIndex]};
+    if (instance.isCurves()) continue;
+    const auto matIndex{scene.materialIndexOf(instance)};
+    const auto *material{scene.materials[matIndex]};
+    if (!material || !material->geometryNormalEvaluate) continue;
+    const size_t faceCount{
+        instance.isPrimitive()
+            ? size_t(1)
+            : scene.meshes[instance.meshIndex]->faces.size()};
+    if (faceCount == 0) continue;
+    const bool remapped{material->remapsNormal()};
+    float maxNormalDot{-1.0f};
+    float minNormalDot{+1.0f};
+    float maxPartialErr{0.0f};
+    int samples{0};
+    for (int k = 0; k < NUM_SAMPLES; k++) {
+      // Deterministic low-discrepancy-ish points, interior to the face
+      // parameterization so the central differences stay inside it.
+      const auto faceIndex{uint32_t((size_t(k) * 2654435761UL) % faceCount)};
+      const float u{0.05f + 0.35f * std::fmod(0.618034f * float(k + 1), 1.0f)};
+      const float v{0.05f + 0.35f * std::fmod(0.754878f * float(k + 2), 1.0f)};
+      const auto hit{
+          scene.makeHit(instIndex, faceIndex, float3(1.0f - u - v, u, v))};
+      if (!hit.instance) continue;
+      const auto meshGeometry{scene.manifoldGeometry(hit)};
+      ManifoldGeometry hookGeometry{};
+      if (!manifoldHookGeometry(scene, hit, hookGeometry)) continue;
+      samples++;
+      const float normalDot{dot(meshGeometry.normal, hookGeometry.normal)};
+      maxNormalDot = std::max(maxNormalDot, normalDot);
+      minNormalDot = std::min(minNormalDot, normalDot);
+      for (int axis = 0; axis < 2; axis++) {
+        const float3 &a{axis == 0 ? meshGeometry.dNdu : meshGeometry.dNdv};
+        const float3 &b{axis == 0 ? hookGeometry.dNdu : hookGeometry.dNdv};
+        const float scale{std::max(length(a), length(b))};
+        if (scale > 1e-4f)
+          maxPartialErr = std::max(maxPartialErr, length(a - b) / scale);
+      }
+    }
+    if (samples == 0) continue;
+    if (remapped) {
+      std::cout << "  " << scene.fileNames[instIndex] << " (material "
+                << scene.materialNames[matIndex]
+                << "): remapped, max bend from mesh normal "
+                << smdl::degrees(
+                       std::acos(std::clamp(minNormalDot, -1.0f, 1.0f)))
+                << " deg over " << samples << " samples\n";
+      continue;
+    }
+    const bool ok{minNormalDot > 1.0f - TOLERANCE &&
+                  maxPartialErr <= TOLERANCE};
+    if (!ok) failures++;
+    std::cout << "  " << scene.fileNames[instIndex] << " (material "
+              << scene.materialNames[matIndex]
+              << "): " << (ok ? "OK" : "MISMATCH") << ", max relative dN error "
+              << maxPartialErr << " over " << samples << " samples\n";
+  }
+  return failures;
+}
+
 int main(int argc, char **argv) try {
   llvm::InitLLVM X(argc, argv);
   // Prints exactly like 'print_to_cerr', except that it knows to step
   // around a progress bar while one is on screen.
   smdl::Logger::get().addSink<ProgressLogSink>();
   cl::SetVersionPrinter([](llvm::raw_ostream &os) {
-    os << smdl::BuildInfo::get().toString();
-    os << "smdl-toy:\n";
-    os << "  Embree:     " << RTC_VERSION_STRING << '\n';
-    os << "  Assimp:     " << aiGetVersionMajor() << '.' << aiGetVersionMinor()
-       << '.' << aiGetVersionPatch() << '\n';
-    os << "  OpenSubdiv: " << OPENSUBDIV_VERSION_MAJOR << '.'
-       << OPENSUBDIV_VERSION_MINOR << '.' << OPENSUBDIV_VERSION_PATCH << '\n';
+    auto info{smdl::BuildInfo::get()};
+    info.thirdparty.push_back({"Embree", RTC_VERSION_STRING});
+    info.thirdparty.push_back(
+        {"Assimp", smdl::concat(aiGetVersionMajor(), ".", aiGetVersionMinor(),
+                                ".", aiGetVersionPatch())});
+    info.thirdparty.push_back(
+        {"OpenSubdiv",
+         smdl::concat(OPENSUBDIV_VERSION_MAJOR, ".", OPENSUBDIV_VERSION_MINOR,
+                      ".", OPENSUBDIV_VERSION_PATCH)});
+    os << info.toString();
   });
-  cl::HideUnrelatedOptions({&catScene, &catSampling, &catWavelength, &catCamera,
-                            &catLens, &catSunSky, &catIBL, &catStaging,
-                            &catTonemap, &catOutput});
+  cl::HideUnrelatedOptions({&catScene, &catUtility, &catSampling, &catCamera,
+                            &catCameraLens, &catLight, &catTonemap,
+                            &catOutput});
   cl::ParseCommandLineOptions(argc, argv, "SpectralMDL toy renderer");
   // Honors '-print-options' and '-print-all-options', which LLVM
   // registers but leaves to the tool to act on; it prints nothing unless
   // one of them was given.
   cl::PrintOptionValues();
+  // Before anything parallel: the thread pool is built by whichever
+  // parallel operation runs first (the compile's image loads, usually)
+  // and cannot be resized afterward. Embree keeps its own pool for
+  // building acceleration structures, and `Scene` bounds that one from
+  // `smdl::getThreadCount()`.
+  smdl::setThreadCount(unsigned(optThreads));
+  if (optMNEETestWalk) {
+    std::cout << "Manifold walk test:\n";
+    const bool ok{runManifoldWalkTest()};
+    std::cout << (ok ? "All checks pass\n" : "Checks FAILED\n");
+    return ok ? EXIT_SUCCESS : EXIT_FAILURE;
+  }
   // Validate the occurrence-dependent lens flags here at the CLI, where
   // "was this given at all" is knowable; in the `CameraOptions` built
   // below zero means unset, so an explicit value has to be positive to
@@ -713,15 +879,15 @@ int main(int argc, char **argv) try {
     throw smdl::Error("expected -focus to be positive");
   if (optCatEyeRadius.getNumOccurrences() > 0 && !(float(optCatEyeRadius) > 0))
     throw smdl::Error("expected -cat-eye-radius to be positive");
-  if (optFrame && (optLookFrom.getNumOccurrences() > 0 ||
-                   optLookTo.getNumOccurrences() > 0))
-    throw smdl::Error("expected at most one of -frame and "
-                      "-look-from/-look-to (framing solves the camera "
+  if (optAutolook && (optLookFrom.getNumOccurrences() > 0 ||
+                      optLookTo.getNumOccurrences() > 0))
+    throw smdl::Error("expected at most one of -autolook and "
+                      "-look-from/-look-to (autolook solves the camera "
                       "position)");
-  if (!(float(optFrameZenith) >= 1 && float(optFrameZenith) <= 179))
-    throw smdl::Error("expected -frame-zenith between 1 and 179");
-  if (!(float(optFrameMargin) >= 0 && float(optFrameMargin) <= 0.5f))
-    throw smdl::Error("expected -frame-margin between 0 and 0.5");
+  if (!(float(optAutolookZenith) >= 1 && float(optAutolookZenith) <= 179))
+    throw smdl::Error("expected -autolook-zenith between 1 and 179");
+  if (!(float(optAutolookMargin) >= 0 && float(optAutolookMargin) <= 0.5f))
+    throw smdl::Error("expected -autolook-margin between 0 and 0.5");
   // '-tonemap log' is kept as shorthand for '-tonemap linear -curve
   // log'; allow it, but not while the curve says otherwise.
   if (std::string(optTonemap) == "log" && optCurve.getNumOccurrences() > 0 &&
@@ -735,24 +901,22 @@ int main(int argc, char **argv) try {
   if (optLocalRange.getNumOccurrences() > 0 && !(float(optLocalRange) > 0))
     throw smdl::Error("expected -local-range to be positive");
   if (optWavelengths.getNumOccurrences() > 0 &&
-      (optBands.getNumOccurrences() > 0 ||
-       optWaveRange.getNumOccurrences() > 0))
+      optWavelengthRange.getNumOccurrences() > 0)
     throw smdl::Error("expected at most one of -wavelengths and "
-                      "-bands/-wave-range (they are two spellings of the "
+                      "-wavelength-range (they are two spellings of the "
                       "wavelength grid)");
-  if (optBands.getNumOccurrences() > 0 && unsigned(optBands) == 0)
-    throw smdl::Error("expected -bands to be at least 1");
-  if (const auto range{float2(optWaveRange)};
-      !(range.x > 0 && range.y > range.x))
-    throw smdl::Error("expected -wave-range to be positive and increasing");
   if (optRGBWaves.getNumOccurrences() > 0) {
     const auto waves{float3(optRGBWaves)};
     if (!(waves.x > 0 && waves.y > 0 && waves.z > 0))
-      throw smdl::Error("expected -rgb-waves to be three positive "
+      throw smdl::Error("expected -rgb-wavelengths to be three positive "
                         "wavelengths in nm");
   }
+  if (!(std::isfinite(float(optShutterSpeed)) && float(optShutterSpeed) >= 0))
+    throw smdl::Error("expected -shutter-speed to be finite and nonnegative");
   renderTime() = float(optTime);
   // Parsed and validated now so a typo fails before anything loads.
+  const auto waveRange{
+      parseWavelengthRangeFlag(std::string(optWavelengthRange))};
   const auto explicitWavelengths{
       parseWavelengthsFlag(std::string(optWavelengths))};
   // The display transform only runs after the last sample, so check its
@@ -833,51 +997,31 @@ int main(int argc, char **argv) try {
   // occurrence count rather than the value. Constructed before anything
   // slow loads so that the value-dependent validation in the constructor
   // also fails fast.
-  auto pick{[](auto cliValue, unsigned cliOccurrences, const auto &fileValue) {
-    return cliOccurrences == 0 && fileValue ? decltype(cliValue)(*fileValue)
-                                            : cliValue;
+  const auto pick{[](const auto &cliValueOpt, const auto &fileValue) {
+    using ValueT = std::decay_t<decltype(cliValueOpt.getValue())>;
+    return cliValueOpt.getNumOccurrences() == 0 && fileValue.has_value()
+               ? ValueT(*fileValue)
+               : ValueT(cliValueOpt);
   }};
   const auto &fileCamera{layout.camera};
   auto cameraOptions{CameraOptions{}};
-  cameraOptions.dims =
-      pick(int2(optDims), optDims.getNumOccurrences(), fileCamera.dims);
-  cameraOptions.lookFrom =
-      pick(float3(optLookFrom), optLookFrom.getNumOccurrences(),
-           fileCamera.lookFrom);
-  cameraOptions.lookTo =
-      pick(float3(optLookTo), optLookTo.getNumOccurrences(), fileCamera.lookTo);
-  cameraOptions.up =
-      pick(float3(optUp), optUp.getNumOccurrences(), fileCamera.up);
-  cameraOptions.fovYDeg =
-      pick(float(optFOV), optFOV.getNumOccurrences(), fileCamera.fovYDeg);
-  cameraOptions.fStop =
-      pick(float(optFStop), optFStop.getNumOccurrences(), fileCamera.fStop);
-  cameraOptions.aperture = pick(
-      float(optAperture), optAperture.getNumOccurrences(), fileCamera.aperture);
-  cameraOptions.focus =
-      pick(float(optFocus), optFocus.getNumOccurrences(), fileCamera.focus);
-  cameraOptions.blades =
-      pick(int(optBlades), optBlades.getNumOccurrences(), fileCamera.blades);
-  cameraOptions.bladeAngleDeg =
-      pick(float(optBladeAngle), optBladeAngle.getNumOccurrences(),
-           fileCamera.bladeAngleDeg);
-  cameraOptions.distortionK1 =
-      pick(float(optDistortionK1), optDistortionK1.getNumOccurrences(),
-           fileCamera.distortionK1);
-  cameraOptions.distortionK2 =
-      pick(float(optDistortionK2), optDistortionK2.getNumOccurrences(),
-           fileCamera.distortionK2);
+  cameraOptions.resolution = pick(optResolution, fileCamera.resolution);
+  cameraOptions.lookFrom = pick(optLookFrom, fileCamera.lookFrom);
+  cameraOptions.lookTo = pick(optLookTo, fileCamera.lookTo);
+  cameraOptions.lookUp = pick(optLookUp, fileCamera.lookUp);
+  cameraOptions.fovYDeg = pick(optFOV, fileCamera.fovYDeg);
+  cameraOptions.fStop = pick(optFStop, fileCamera.fStop);
+  cameraOptions.aperture = pick(optAperture, fileCamera.aperture);
+  cameraOptions.focus = pick(optFocus, fileCamera.focus);
+  cameraOptions.blades = pick(optBlades, fileCamera.blades);
+  cameraOptions.bladeAngleDeg = pick(optBladeAngle, fileCamera.bladeAngleDeg);
+  cameraOptions.distortionK1 = pick(optDistortionK1, fileCamera.distortionK1);
+  cameraOptions.distortionK2 = pick(optDistortionK2, fileCamera.distortionK2);
   cameraOptions.distortionFit =
-      pick(bool(optDistortionFit), optDistortionFit.getNumOccurrences(),
-           fileCamera.distortionFit);
-  cameraOptions.vignetting =
-      pick(float(optVignetting), optVignetting.getNumOccurrences(),
-           fileCamera.vignetting);
-  cameraOptions.catEye =
-      pick(float(optCatEye), optCatEye.getNumOccurrences(), fileCamera.catEye);
-  cameraOptions.catEyeRadius =
-      pick(float(optCatEyeRadius), optCatEyeRadius.getNumOccurrences(),
-           fileCamera.catEyeRadius);
+      pick(optDistortionFit, fileCamera.distortionFit);
+  cameraOptions.vignetting = pick(optVignetting, fileCamera.vignetting);
+  cameraOptions.catEye = pick(optCatEye, fileCamera.catEye);
+  cameraOptions.catEyeRadius = pick(optCatEyeRadius, fileCamera.catEyeRadius);
   cameraOptions.noLOD = bool(optNoLOD);
   // The same exclusivity the command line checks above, now that the file
   // has had its say: either source can supply either spelling, so only the
@@ -887,16 +1031,31 @@ int main(int argc, char **argv) try {
                       "the command line and the scene file's 'camera' "
                       "directive (they are two spellings of the same "
                       "quantity)");
-  // Under -frame the position comes from measuring the committed scene,
+  // Under -autolook the position comes from measuring the committed scene,
   // so construction (with the lens validation and the summary it logs)
   // waits until the solve below. Every other path keeps constructing
   // here, before anything slow loads, so a lens typo still fails fast.
   auto camera{std::optional<Camera>()};
-  if (!optFrame) camera.emplace(cameraOptions);
-  const auto dims{cameraOptions.dims};
-  const auto numPixelsX{size_t(dims.x)};
-  const auto numPixelsY{size_t(dims.y)};
+  if (!optAutolook) camera.emplace(cameraOptions);
+  const auto resolution{cameraOptions.resolution};
+  const auto numPixelsX{size_t(resolution.x)};
+  const auto numPixelsY{size_t(resolution.y)};
   const auto spp{size_t(optSPP)};
+  // The pixel window to render, the whole frame unless -crop-window
+  // narrows it.
+  int4 window{0, 0, resolution.x, resolution.y};
+  if (optCropWindow.getNumOccurrences() > 0) {
+    window = int4(optCropWindow);
+    if (!(0 <= window[0] && window[0] < window[2] &&
+          window[2] <= resolution.x && 0 <= window[1] &&
+          window[1] < window[3] && window[3] <= resolution.y))
+      throw smdl::Error(
+          smdl::concat("-crop-window ", formatWindow(window),
+                       " is not a non-empty sub-rectangle of -resolution ",
+                       resolution.x, ",", resolution.y));
+  }
+  const auto numWindowPixels{size_t(window[2] - window[0]) *
+                             size_t(window[3] - window[1])};
   // The command line, echoed into the spectral output's metadata so a
   // resumed session can warn when it is being driven differently.
   auto argsEcho{std::string()};
@@ -911,8 +1070,23 @@ int main(int argc, char **argv) try {
   // yields the same estimator as one longer uninterrupted run. The
   // flag also implies -output-spectrum back to the same file; see the
   // output stage at the bottom.
-  auto resumed{smdl::SpectralRenderImage::ENVIFile{}};
-  size_t sampleIndexBase{0};
+  auto resumedFilm{smdl::SpectralFilm{}};
+  auto resumed{smdl::SpectralFilm::ENVIFileInfo{}};
+  size_t sampleIndexBase{optSampleOffset};
+  // The sample index the sequence BEGAN at, recorded in the spectrum
+  // header and restored on resume, so that `-sample-offset` survives a
+  // resumed session: a two-seed reference pair stays decorrelated only
+  // if each seed's continuation keeps to its own stream.
+  size_t sequenceSampleOffset{optSampleOffset};
+  // How long the sequence has taken so far, over every session that has
+  // rendered into it: wall clock, and the CPU time summed over all the
+  // worker threads. Recorded in the spectrum header and added to below,
+  // so that an image built over many resumed sessions still knows what
+  // it cost. A file written before these fields existed starts the tally
+  // at this session.
+  double cumulativeWallSeconds{};
+  double cumulativeComputeSeconds{};
+  uint64_t sessionCount{};
   const bool resumeRequested{!std::string(optResume).empty()};
   bool resuming{false};
   if (resumeRequested) {
@@ -934,7 +1108,7 @@ int main(int argc, char **argv) try {
     if (!haveData) {
       // -spp 0 re-runs the output stage, which is meaningless with
       // nothing to load; worse, the 0-sample file it would write has
-      // no 'samples per pixel' field and could not itself be resumed.
+      // no 'smdl spp' field and could not itself be resumed.
       if (spp == 0)
         throw smdl::Error(smdl::concat(
             "cannot resume with '-spp 0': ", smdl::Quoted(resumeName),
@@ -946,17 +1120,28 @@ int main(int argc, char **argv) try {
     resuming = haveData;
   }
   if (resuming) {
-    resumed = smdl::SpectralRenderImage::readENVIFile(std::string(optResume));
-    if (resumed.image.getNumPixelsX() != numPixelsX ||
-        resumed.image.getNumPixelsY() != numPixelsY)
+    resumed = resumedFilm.readENVIFile(std::string(optResume));
+    if (resumedFilm.getNumPixelsX() != numPixelsX ||
+        resumedFilm.getNumPixelsY() != numPixelsY)
       throw smdl::Error(smdl::concat(
-          "cannot resume: the file is ", resumed.image.getNumPixelsX(), "x",
-          resumed.image.getNumPixelsY(), " against -dims ", numPixelsX, ",",
+          "cannot resume: the file is ", resumedFilm.getNumPixelsX(), "x",
+          resumedFilm.getNumPixelsY(), " against -resolution ", numPixelsX, ",",
           numPixelsY));
     if (resumed.samplesPerPixel == 0)
-      throw smdl::Error(
-          "cannot resume: the header has no 'samples per pixel' count "
-          "(the file was not written by -output-spectrum)");
+      throw smdl::Error("cannot resume: the header has no 'smdl spp' count "
+                        "(the file was not written by -output-spectrum)");
+    // The window is what the recorded count applies to, so a session
+    // that moved it would accumulate over a different set of pixels and
+    // the film would stop having a single samples per pixel. Both
+    // directions land here: the file's window defaults to the whole
+    // frame, and so does this session's.
+    if (!sameWindow(resumed.window, window))
+      throw smdl::Error(smdl::concat(
+          "cannot resume: the file was rendered with -crop-window ",
+          formatWindow(resumed.window), " against this session's ",
+          formatWindow(window),
+          "; the window must be held constant across a resumed sequence, "
+          "otherwise the samples per pixel stop being uniform"));
     if (auto itr{resumed.fields.find("smdl sampler")};
         itr == resumed.fields.end() || itr->second != SAMPLER_VERSION)
       SMDL_LOG_WARN(
@@ -971,18 +1156,34 @@ int main(int argc, char **argv) try {
                     smdl::Quoted(itr->second),
                     "; if the scene or camera changed, the merged image "
                     "mixes two different renders");
-    sampleIndexBase = resumed.samplesPerPixel;
-    SMDL_LOG_INFO("Resuming: ", sampleIndexBase, " samples per pixel from ",
-                  smdl::Quoted(std::string(optResume)));
+    sequenceSampleOffset = 0;
+    if (auto itr{resumed.fields.find("smdl sample offset")};
+        itr != resumed.fields.end())
+      sequenceSampleOffset =
+          size_t(std::strtoull(itr->second.c_str(), nullptr, 10));
+    const auto resumedSeconds{[&](const char *key) {
+      auto itr{resumed.fields.find(key)};
+      if (itr == resumed.fields.end()) return 0.0;
+      const double seconds{std::strtod(itr->second.c_str(), nullptr)};
+      return std::isfinite(seconds) && seconds > 0.0 ? seconds : 0.0;
+    }};
+    cumulativeWallSeconds = resumedSeconds("smdl wall seconds");
+    cumulativeComputeSeconds = resumedSeconds("smdl compute seconds");
+    if (auto itr{resumed.fields.find("smdl sessions")};
+        itr != resumed.fields.end())
+      sessionCount = uint64_t(std::strtoull(itr->second.c_str(), nullptr, 10));
+    sampleIndexBase = sequenceSampleOffset + resumed.samplesPerPixel;
+    SMDL_LOG_INFO("Resuming: ", resumed.samplesPerPixel,
+                  " samples per pixel from ",
+                  smdl::Quoted(std::string(optResume)), " (sample offset ",
+                  sequenceSampleOffset, ")");
   }
   // The wavelength grid, in priority order: explicit '-wavelengths',
-  // '-bands' uniform over '-wave-range' (endpoint-inclusive, a single
-  // band at the midpoint), or, when resuming with no grid flags at all,
-  // the grid recorded in the resumed file, so a resumed render needs no
-  // grid retyping. The band count seeds every 'Color' constructed from
-  // here on.
-  const bool haveGridFlags{optBands.getNumOccurrences() > 0 ||
-                           optWaveRange.getNumOccurrences() > 0 ||
+  // '-wavelength-range' uniform bands (endpoint-inclusive), or, when
+  // resuming with no grid flags at all, the grid recorded in the resumed
+  // file, so a resumed render needs no grid retyping. The band count
+  // seeds every 'Color' constructed from here on.
+  const bool haveGridFlags{optWavelengthRange.getNumOccurrences() > 0 ||
                            optWavelengths.getNumOccurrences() > 0};
   const bool adoptResumedGrid{!haveGridFlags && resuming};
   auto gridSpec{explicitWavelengths};
@@ -990,16 +1191,14 @@ int main(int argc, char **argv) try {
     if (resumed.wavelengths.empty())
       throw smdl::Error(
           "cannot resume: the file carries no wavelengths to adopt, give "
-          "the grid explicitly with -bands/-wave-range or -wavelengths");
+          "the grid explicitly with -wavelength-range or -wavelengths");
     gridSpec = resumed.wavelengths;
   }
   if (gridSpec.empty()) {
-    const auto range{float2(optWaveRange)};
-    gridSpec.resize(size_t(unsigned(optBands)));
+    gridSpec.resize(size_t(waveRange.bandCount));
     for (size_t i = 0; i < gridSpec.size(); i++) {
-      const float t{gridSpec.size() > 1 ? float(i) / float(gridSpec.size() - 1)
-                                        : 0.5f};
-      gridSpec[i] = (1 - t) * range.x + t * range.y;
+      const float t{float(i) / float(gridSpec.size() - 1)};
+      gridSpec[i] = (1 - t) * waveRange.range.x + t * waveRange.range.y;
     }
   }
   renderNumBands() = gridSpec.size();
@@ -1028,10 +1227,11 @@ int main(int argc, char **argv) try {
   }
   const auto wavelengths{
       Color(smdl::Span<const float>(gridSpec.data(), gridSpec.size()))};
+  renderWavelengths() = wavelengths;
   if (resuming) {
-    if (resumed.image.getNumBands() != wavelengths.size())
+    if (resumedFilm.getNumBands() != wavelengths.size())
       throw smdl::Error(smdl::concat(
-          "cannot resume: the file has ", resumed.image.getNumBands(),
+          "cannot resume: the file has ", resumedFilm.getNumBands(),
           " bands against the renderer's ", wavelengths.size()));
     for (size_t i = 0; i < wavelengths.size(); i++)
       if (i >= resumed.wavelengths.size() ||
@@ -1078,10 +1278,17 @@ int main(int argc, char **argv) try {
   compiler.enableDebug = false;
   compiler.enableMipMaps = !optNoMipMaps;
   compiler.enableUnitTests = false;
+  // The normal distribution entry points are what a glossy manifold
+  // crossing draws its half vector from, and nothing else here asks for
+  // them, so they are emitted only when that is on.
+  bool anyCaster{false};
+  for (const auto &item : layout.items) anyCaster |= item.caster;
+  compiler.enableScatterNormal =
+      (optMNEE && anyCaster) || optMNEETestNormalHook;
   // The built-in stand-in, always available: a scene whose materials
   // have not been written yet still renders, and a name that does not
   // resolve has somewhere to fall back to. It is added even when MDL
-  // modules are given, so that '-material-fallback default' works
+  // modules are given, so that '-fallback-material default_object' works
   // alongside them.
   if (auto error{
           compiler.addCode(DEFAULT_MATERIAL_MODULE, DEFAULT_MATERIAL_SOURCE)})
@@ -1119,9 +1326,9 @@ int main(int argc, char **argv) try {
   // so it falls back to the built-in material rather than refusing to
   // render. Given MDL, an unresolved name stays an error, since there it
   // means a name that was meant to resolve and did not.
-  auto fallbackMaterial{std::string(optMaterialFallback)};
+  auto fallbackMaterial{std::string(optFallbackMaterial)};
   if (fallbackMaterial.empty() && optInputMDLFiles.empty())
-    fallbackMaterial = DEFAULT_MATERIAL_NAME;
+    fallbackMaterial = DEFAULT_OBJECT_MATERIAL_NAME;
   // The lowering folds every alias and override into the items
   // themselves, which is what keeps an imported layout's names closed;
   // see `MaterialAssignment::renames`.
@@ -1150,11 +1357,10 @@ int main(int argc, char **argv) try {
                         "put a plane under");
     const float z{optGroundZ.getNumOccurrences() > 0 ? float(optGroundZ)
                                                      : guideBound.lower.z};
-    // Large enough that at framing elevations the plane's edge lands at
+    // Large enough that at autolook elevations the plane's edge lands at
     // the visual horizon, small enough to stay in float precision.
-    const float halfExtent{std::min(
-        std::max(1000.0f * 0.5f * smdl::length(guideBound.extent()), 100.0f),
-        20000.0f)};
+    const float halfExtent{std::clamp(
+        1000.0f * 0.5f * smdl::length(guideBound.extent()), 100.0f, 20000.0f)};
     auto groundMaterial{std::string(optGroundMaterial)};
     if (groundMaterial.empty()) groundMaterial = DEFAULT_GROUND_MATERIAL_NAME;
     // The one command-line-facing name the entry file's aliases still
@@ -1189,67 +1395,59 @@ int main(int argc, char **argv) try {
     SMDL_PROFILER_ENTRY("Scene::commit()");
     scene.commit(wavelengths);
   }
-  // The framing solve, and the deferred camera construction it exists
+  // The autolook solve, and the deferred camera construction it exists
   // for. The solved azimuth also becomes the default sun azimuth below,
   // so a batch of thumbnails is consistently lit however each one is
   // framed.
-  auto framedSunAzimuth{std::optional<float>()};
-  if (optFrame) {
-    auto framingOptions{FramingOptions{}};
-    framingOptions.fovYDeg = cameraOptions.fovYDeg;
-    framingOptions.aspectRatio = float(dims.x) / float(dims.y);
-    framingOptions.zenithDeg = float(optFrameZenith);
-    if (optFrameAzimuth.getNumOccurrences() > 0) {
-      framingOptions.azimuthDeg = float(optFrameAzimuth);
+  auto autolookSunAzimuth{std::optional<float>()};
+  if (optAutolook) {
+    auto autolookOptions{AutolookOptions{}};
+    autolookOptions.fovYDeg = cameraOptions.fovYDeg;
+    autolookOptions.aspectRatio = float(resolution.x) / float(resolution.y);
+    autolookOptions.zenithDeg = float(optAutolookZenith);
+    if (optAutolookAzimuth.getNumOccurrences() > 0) {
+      autolookOptions.azimuthDeg = float(optAutolookAzimuth);
     } else if (layout.frontAzimuth) {
-      framingOptions.azimuthDeg = layout.frontAzimuth;
-      SMDL_LOG_INFO("Framing: locked to the manifest's front azimuth ",
+      autolookOptions.azimuthDeg = layout.frontAzimuth;
+      SMDL_LOG_INFO("Autolook: locked to the manifest's front azimuth ",
                     *layout.frontAzimuth, " degrees");
     }
-    framingOptions.margin = float(optFrameMargin);
-    framingOptions.ignoreBackfaces = bool(optFrameIgnoreBackfaces);
-    framingOptions.skipInstance = groundInstance;
-    const auto framed{solveFraming(scene, framingOptions)};
-    cameraOptions.lookFrom = framed.lookFrom;
-    cameraOptions.lookTo = framed.lookTo;
+    autolookOptions.margin = float(optAutolookMargin);
+    autolookOptions.ignoreBackfaces = bool(optAutolookIgnoreBackfaces);
+    autolookOptions.skipInstance = groundInstance;
+    const auto autolook{solveAutolook(scene, autolookOptions)};
+    cameraOptions.lookFrom = autolook.lookFrom;
+    cameraOptions.lookTo = autolook.lookTo;
     camera.emplace(cameraOptions);
     // The key light over the camera's right shoulder.
-    framedSunAzimuth = framed.azimuthDeg - 35.0f;
+    autolookSunAzimuth = autolook.azimuthDeg - 35.0f;
   }
 
   // The environment, merged from the same three sources as the camera and
   // in the same order: the defaults, the layout's 'sky' directive, and
   // whatever the command line explicitly gave.
   const auto &fileSky{layout.sky};
-  const auto iblFileName{pick(std::string(optIBLFilename),
-                              optIBLFilename.getNumOccurrences(),
-                              fileSky.iblFileName)};
+  const auto iblFileName{pick(optIBLFilename, fileSky.iblFileName)};
   const auto moonGiven{optMoonPhase.getNumOccurrences() > 0 ||
                        bool(fileSky.moonPhase)};
   std::unique_ptr<EnvLight> envLight{};
   if (!iblFileName.empty()) {
-    envLight = std::make_unique<EnvLight>(
-        iblFileName, pick(float(optIBLScale), optIBLScale.getNumOccurrences(),
-                          fileSky.iblScale));
+    envLight = std::make_unique<EnvLight>(iblFileName,
+                                          pick(optIBLScale, fileSky.iblScale));
     if (gridBeyondVisible)
       SMDL_LOG_WARN("-ibl is an RGB image: on this wavelength grid it "
                     "contributes only inside the visible");
-  } else if (!pick(bool(optNoSunSky), optNoSunSky.getNumOccurrences(),
-                   fileSky.none)) {
+  } else if (!pick(optNoSunSky, fileSky.none)) {
     auto options{smdl::SunSkyOptions{}};
-    float zenith{smdl::radians(pick(float(optSunZenith),
-                                    optSunZenith.getNumOccurrences(),
-                                    fileSky.sunZenith))};
-    float azimuthDeg{pick(float(optSunAzimuth),
-                          optSunAzimuth.getNumOccurrences(),
-                          fileSky.sunAzimuth)};
-    // Under -frame with no stated sun azimuth, the key light follows the
+    float zenith{smdl::radians(pick(optSunZenith, fileSky.sunZenith))};
+    float azimuthDeg{pick(optSunAzimuth, fileSky.sunAzimuth)};
+    // Under -autolook with no stated sun azimuth, the key light follows the
     // solved camera: a perfectly framed thumbnail lit from behind is as
     // unreadable as one framed end-on, and this keeps a whole library
     // consistently lit however each asset was framed.
-    if (framedSunAzimuth && optSunAzimuth.getNumOccurrences() == 0 &&
+    if (autolookSunAzimuth && optSunAzimuth.getNumOccurrences() == 0 &&
         !fileSky.sunAzimuth) {
-      azimuthDeg = *framedSunAzimuth;
+      azimuthDeg = *autolookSunAzimuth;
       SMDL_LOG_INFO("Sun azimuth follows the framed camera: ", azimuthDeg,
                     " degrees");
     }
@@ -1257,22 +1455,13 @@ int main(int argc, char **argv) try {
     options.sunDirection =
         float3(std::sin(zenith) * std::cos(azimuth),
                std::sin(zenith) * std::sin(azimuth), std::cos(zenith));
-    options.visibility =
-        pick(float(optSkyVisibility), optSkyVisibility.getNumOccurrences(),
-             fileSky.visibility);
-    options.waterVaporScale =
-        pick(float(optSkyWaterVapor), optSkyWaterVapor.getNumOccurrences(),
-             fileSky.waterVapor);
-    options.scaleFactor = pick(float(optSkyScale),
-                               optSkyScale.getNumOccurrences(), fileSky.scale);
+    options.visibility = pick(optSkyVisibility, fileSky.visibility);
+    options.waterVaporScale = pick(optSkyWaterVapor, fileSky.waterVapor);
+    options.scaleFactor = pick(optSkyScale, fileSky.scale);
     if (moonGiven) {
       options.moon = true;
-      options.moonPhase =
-          pick(float(optMoonPhase), optMoonPhase.getNumOccurrences(),
-               fileSky.moonPhase);
-      options.moonDistanceScale =
-          pick(float(optMoonDistance), optMoonDistance.getNumOccurrences(),
-               fileSky.moonDistance);
+      options.moonPhase = pick(optMoonPhase, fileSky.moonPhase);
+      options.moonDistanceScale = pick(optMoonDistance, fileSky.moonDistance);
     }
     envLight = std::make_unique<EnvLight>(options);
   }
@@ -1281,7 +1470,10 @@ int main(int argc, char **argv) try {
   // any: one material instance evaluated up front in an allocator that
   // outlives the render, seeding every camera path's medium stack. The
   // instance has no geometry, so heterogeneous coefficient queries run
-  // in world space directly.
+  // in world space directly. Evaluated once at the base animation time,
+  // so an open shutter does not vary its captured homogeneous
+  // coefficients (per-point heterogeneous queries still see the path
+  // time).
   auto exteriorMediumAllocator{smdl::BumpPtrAllocator()};
   const MediumStack *exteriorMedium{};
   if (!layout.exteriorMediumName.empty()) {
@@ -1309,15 +1501,55 @@ int main(int argc, char **argv) try {
   smdl::profilerEntryEnd(profLightSampler);
   // The render loop is deliberately outside the trace; see -profile.
   if (profiling) smdl::profilerFinalize(profileFileName.c_str());
-  auto renderImage{
-      smdl::SpectralRenderImage(wavelengths.size(), numPixelsX, numPixelsY)};
-  // An upper bound on the walk depth, which also sizes the training-record
-  // buffer. Paths are terminated by Russian roulette in `tracePath` long
-  // before this, so it is set high enough that clipping it is negligible
-  // even for high-albedo transport.
-  constexpr int MAX_PATH_LEN = 64;
+  auto film{smdl::SpectralFilm(wavelengths.size(), numPixelsX, numPixelsY)};
+  // -resume implies writing back to the file being resumed, so one
+  // command line re-runs to keep accumulating; an explicitly given
+  // -output-spectrum wins verbatim, redirecting or (when empty)
+  // suppressing the write.
+  const auto outputSpectrum{optOutputSpectrum.getNumOccurrences() > 0 ||
+                                    !resumeRequested
+                                ? std::string(optOutputSpectrum)
+                                : std::string(optResume)};
+  // Will this session leave a guide tree behind? Whenever guiding is on
+  // and the spectrum accumulation is being written: the tree pairs with
+  // that file, and a session resuming it inherits the training.
+  const bool savingTree{bool(optGuide) && spp > 0 && !outputSpectrum.empty()};
   auto sdtree{std::unique_ptr<STree>()};
-  if (optGuide) {
+  // How many samples per pixel trained the resumed tree, 0 without one:
+  // what the pass schedule continues from.
+  size_t guideTrainedSpp{0};
+  if (optGuide && resuming) {
+    // Resume the guide tree saved beside the accumulation, so this
+    // session starts guided by everything the sequence has learned. The
+    // tree only steers sampling, so a missing or unreadable one is
+    // never fatal: retraining from scratch is always safe, just slower
+    // to converge.
+    const auto treeName{std::string(optResume) +
+                        std::string(GUIDE_TREE_EXTENSION)};
+    if (smdl::exists(treeName)) {
+      try {
+        uint64_t treeSpp{};
+        sdtree = std::make_unique<STree>(STree::readFile(treeName, treeSpp));
+        guideTrainedSpp = size_t(treeSpp);
+        SMDL_LOG_INFO("Resuming guide tree: ", smdl::Quoted(treeName), ", ",
+                      sdtree->leafCount(), " spatial leaves trained by ",
+                      treeSpp, " spp");
+        if (treeSpp != resumed.samplesPerPixel)
+          SMDL_LOG_WARN("The guide tree was trained by ", treeSpp,
+                        " spp against the accumulation's ",
+                        resumed.samplesPerPixel,
+                        "; using it anyway, since a tree that is behind "
+                        "still guides");
+      } catch (const smdl::Error &error) {
+        SMDL_LOG_WARN("Cannot resume guide tree, retraining from scratch: ",
+                      error.message);
+      }
+    } else {
+      SMDL_LOG_INFO("No guide tree at ", smdl::Quoted(treeName),
+                    ", retraining from scratch");
+    }
+  }
+  if (optGuide && !sdtree) {
     // With a ground plane, guide over the actual geometry padded by half
     // its own size, so the plane's enormous backdrop extent does not
     // dilute the spatial resolution; vertices on the far plane clamp
@@ -1336,16 +1568,16 @@ int main(int argc, char **argv) try {
   }
   // The combination of the guided passes, which also maintains the
   // ADRRS pixel estimates between passes. Null without guiding, where
-  // the single pass accumulates straight into `renderImage`.
+  // the single pass accumulates straight into `film`.
   auto combiner{std::unique_ptr<PassCombiner>()};
   if (optGuide) {
-    combiner = std::make_unique<PassCombiner>(numPixelsX, numPixelsY);
+    combiner = std::make_unique<PassCombiner>(numPixelsX, numPixelsY, window);
     // Seed with the prior session's accumulation, so resolve() below
     // reproduces the full merged image (the unguided path adds it into
     // the accumulation instead, just below) and the first pass's ADRRS
     // starts from the resumed estimates rather than zero.
     if (resuming) {
-      combiner->seed(resumed.image, resumed.samplesPerPixel);
+      combiner->seed(resumedFilm);
       combiner->rebuildPixelEstimates();
     }
   }
@@ -1353,12 +1585,12 @@ int main(int argc, char **argv) try {
   // after it, so that the previews written along the way already stand on
   // every sample taken and the image is never displayed noisier than it
   // is. One image-level add, which is exactly the merge the
-  // sums-plus-counts invariant makes safe; every read below divides by
+  // sums-plus-count invariant makes safe; every read below divides by
   // the combined count.
-  if (resuming && !combiner) renderImage.add(resumed.image);
-  // Nothing reads it again, and it is the same size as the image being
+  if (resuming && !combiner) film.add(resumedFilm);
+  // Nothing reads it again, and it is the same size as the film being
   // rendered into.
-  resumed.image.clear();
+  resumedFilm.clear();
   // Progress is counted in samples rather than pixels, so that the
   // geometrically growing passes below read as one bar that only ever
   // moves forward. The counters still show pixels, which is the number a
@@ -1376,25 +1608,25 @@ int main(int argc, char **argv) try {
     rgbPolicy.falseColorWaves = {waves.x, waves.y, waves.z};
   }
   // Rewriting the tone mapped output while the render runs, so that a tool
-  // watching the file sees the image converge. The sums-plus-counts image
+  // watching the file sees the image converge. The sums-plus-count film
   // is a valid mean at every moment, so a checkpoint is the finished write
   // with fewer samples behind it, and nothing about the estimator changes.
   // Written beside the output and renamed into place: a watcher polling
   // the path never opens a half-written PNG.
   const double previewEvery{std::max(double(optPreviewEvery), 0.0)};
   const bool checkpointing{previewEvery > 0.0 &&
-                           !std::string(optOutput).empty()};
+                           !std::string(optOutputRGB).empty()};
   const auto writeDisplayImage{[&] {
     // Resolve first, so that a guided preview stands on every pass folded
     // so far, the resumed seed included, instead of the newest pass
     // alone. Guided checkpoints only happen on pass boundaries, where the
     // pass just rendered is already folded in.
-    if (combiner) combiner->resolve(renderImage);
-    const auto path{std::filesystem::path(std::string(optOutput))};
+    if (combiner) combiner->resolve(film);
+    const auto path{std::filesystem::path(std::string(optOutputRGB))};
     auto partPath{path};
     partPath.replace_extension("part" + path.extension().string());
-    const auto rgb{resolveRGB(compiler, renderImage, wavelengths, rgbPolicy)};
-    const auto ldr{tonemap(tonemapOptions, rgb, renderImage, wavelengths)};
+    const auto rgb{resolveRGB(compiler, film, wavelengths, rgbPolicy)};
+    const auto ldr{tonemap(tonemapOptions, rgb, film, wavelengths)};
     if (auto error{smdl::write8bitImage(partPath.string(), //
                                         int(numPixelsX), int(numPixelsY), 3,
                                         ldr.data())}) {
@@ -1417,19 +1649,65 @@ int main(int argc, char **argv) try {
     lastCheckpoint = std::chrono::steady_clock::now();
   }};
 
-  const auto passes{solveSamplePasses(spp, bool(optGuide))};
+  const auto passes{solveSamplePasses(spp, bool(optGuide), guideTrainedSpp)};
   // The manifold-NEE chain depth `tracePath()` runs with, 0 when
   // disabled.
-  const int mneeDepth{optMNEE
-                          ? int(std::min(std::max(unsigned(optMNEEDepth), 1U),
-                                         unsigned(MNEE_MAX_DEPTH)))
-                          : 0};
-  ManifoldOptions manifold{};
-  manifold.depth = mneeDepth;
-  progressOptions.total = numPixelsX * numPixelsY * spp;
+  const int mneeDepth{optMNEE ? int(std::clamp(unsigned(optMNEEDepth), 1U,
+                                               unsigned(MANIFOLD_MAX_DEPTH)))
+                              : 0};
+  MNEEOptions mneeOptions{};
+  mneeOptions.depth = mneeDepth;
+  ManifoldStats::global().setEnabled(bool(optMNEEReport));
+  mneeOptions.maxTrials = int(std::max(unsigned(optMNEEMaxTrials), 1U));
+  mneeOptions.biasedTrials = int(unsigned(optMNEEBiased));
+  mneeOptions.maxRoughness = std::max(float(optMNEEMaxRoughness), 0.0f);
+  mneeOptions.minReceiverAlpha = std::max(float(optMNEEReceiverAlpha), 0.0f);
+  // The reflective gather searches this in place of the straight shadow
+  // segment, so it is built once per render: the layout's marked casters,
+  // with what each claims.
+  auto mneeCasters{MNEECasterSet()};
+  if (optMNEE) {
+    mneeCasters = MNEECasterSet(scene, wavelengths, mneeOptions.maxRoughness);
+    mneeOptions.casters = &mneeCasters;
+    SMDL_LOG_DEBUG("MNEE casters: ", mneeCasters.casters.size(),
+                   " instance(s)");
+    if (optMNEESunOnly && envLight)
+      mneeOptions.sunOnly =
+          envLight->sunCone(mneeOptions.sunDirection, mneeOptions.cosSunRadius);
+  }
+  // The default walk is terminated by Russian roulette, with the bounce
+  // bound set high enough that clipping it is negligible even for
+  // high-albedo transport; giving -max-bounces makes the bound the whole
+  // termination rule, so the estimate is the fixed-depth truncation.
+  PathOptions pathOptions{};
+  pathOptions.maxBounces = unsigned(optMaxBounces);
+  pathOptions.roulette = optMaxBounces.getNumOccurrences() == 0;
+  pathOptions.maxContribution = std::max(float(optMaxContribution), 0.0f);
+  pathOptions.maxContributionBounces =
+      int(std::max(unsigned(optMaxContributionBounces), 1U));
+  if (optMNEETestNormalHook) {
+    std::cout << "Checking the geometry-normal hook against the meshes:\n";
+    const int failures{runMNEETestNormalHook(scene)};
+    if (failures == 0)
+      std::cout << "All unmapped instances agree\n";
+    else
+      std::cout << failures << " instance(s) disagree\n";
+    return failures == 0 ? EXIT_SUCCESS : EXIT_FAILURE;
+  }
+  progressOptions.total = numWindowPixels * spp;
   progressOptions.displayScale = std::max<size_t>(spp, 1);
-  progressOptions.summary = smdl::concat("Rendered ", numPixelsX, "x",
-                                         numPixelsY, " at ", spp, " spp");
+  progressOptions.summary =
+      optCropWindow.getNumOccurrences() > 0
+          ? smdl::concat("Rendered window ", formatWindow(window), " of ",
+                         numPixelsX, "x", numPixelsY, " at ", spp, " spp")
+          : smdl::concat("Rendered ", numPixelsX, "x", numPixelsY, " at ", spp,
+                         " spp");
+  // The render window the cumulative times above measure: the sample
+  // passes and the previews written between them, but none of the setup
+  // that came before or the outputs that come after, so that the number
+  // means the same thing in every session of a resumed sequence.
+  const auto renderStartWall{std::chrono::steady_clock::now()};
+  const double renderStartCompute{cpuTimeSeconds()};
   auto progress{ProgressBar(progressOptions)};
   size_t sppDone{0};
   size_t chunkSpp{1};
@@ -1440,8 +1718,16 @@ int main(int argc, char **argv) try {
       progress.setNote(
           smdl::concat("pass ", passIndex + 1, "/", passes.size()));
     // Pre-final passes train the SD-tree; every pass contributes to the
-    // output through the pass combination below.
-    const bool recordPass{optGuide && !isFinal};
+    // output through the pass combination below. When the tree will be
+    // saved the final pass trains too: its training is no longer wasted,
+    // it is what the next session of the sequence inherits.
+    const bool recordPass{optGuide && (!isFinal || savingTree)};
+    // The per-thread training mirrors for this pass, absorbed into the
+    // tree after the pass renders and before it refines; the tree
+    // structure the layout mirrors is frozen in between.
+    auto guideAccumulator{std::unique_ptr<GuideAccumulator>()};
+    if (recordPass)
+      guideAccumulator = std::make_unique<GuideAccumulator>(*sdtree);
     // Without guiding the whole budget is one pass, so checkpointing has
     // to split it; the chunk starts at one sample, so the first image
     // lands almost immediately, and then grows toward the interval asked
@@ -1454,19 +1740,26 @@ int main(int argc, char **argv) try {
                                  : thisPass - passDone};
       const size_t chunkBase{passDone};
       const auto chunkStart{std::chrono::steady_clock::now()};
-      llvm::parallelFor(0, numPixelsX * numPixelsY, [&](size_t i) {
+      smdl::parallelFor(0, numWindowPixels, [&](size_t k) {
+        // The pixel index in the whole frame, which seeds the sampler and
+        // addresses every per-pixel buffer, so a window renders the same
+        // pixels the whole frame would.
+        const size_t i{(size_t(window[1]) + k / size_t(window[2] - window[0])) *
+                           numPixelsX +
+                       size_t(window[0]) + k % size_t(window[2] - window[0])};
         // Constructed per pixel deliberately: hoisting this to a
         // thread_local measures as pure noise (the few malloc/free pairs
         // per pixel amortize across worker threads and malloc's own thread
         // cache), so the simpler lifetime wins.
         auto allocator{smdl::BumpPtrAllocator()};
         auto sampler{Sampler()};
-        // Training records for `trainGuiding()`, constructed only on
-        // the pre-final guiding passes that fill them: at a runtime
-        // band count this is 128 sized vectors rather than one flat
-        // memset, too much to pay per pixel of a non-guiding render.
-        std::optional<std::array<GuideRecord, MAX_PATH_LEN>> guideRecords{};
-        if (recordPass) guideRecords.emplace();
+        // Training records for `trainGuiding()`, one per vertex the walk
+        // may reach, constructed only on the pre-final guiding passes
+        // that fill them: at a runtime band count every record holds
+        // sized vectors, too much to pay per pixel of a non-guiding
+        // render.
+        auto guideRecords{std::vector<GuideRecord>()};
+        if (recordPass) guideRecords.resize(pathOptions.maxBounces + 1);
         auto y{i / numPixelsX};
         auto x{i % numPixelsX};
         Color Lsum{};
@@ -1476,7 +1769,7 @@ int main(int argc, char **argv) try {
         guiding.pixelEstimate =
             combiner && optGuideADRRS ? combiner->pixelEstimate(i) : 0.0f;
         guiding.bsdfFraction =
-            std::min(std::max(float(optGuideBSDFFraction), 0.0f), 1.0f);
+            std::clamp(float(optGuideBSDFFraction), 0.0f, 1.0f);
         guiding.bsdfFractionFixed =
             optGuideBSDFFraction.getNumOccurrences() > 0;
         for (size_t s = 0; s < chunk; s++) {
@@ -1489,15 +1782,24 @@ int main(int argc, char **argv) try {
           // darkening unbiased.
           uint64_t numRecords{0};
           if (cameraSample.weight > 0) {
+            // The path's animation time. The dimension is consumed only
+            // when the shutter is open, matching the lens-point
+            // precedent, so a default render's sampler sequence is
+            // unchanged.
+            float time{renderTime()};
+            if (const float shutter{float(optShutterSpeed)}; shutter > 0)
+              time += shutter * float(sampler);
             Lsample = tracePath(
-                compiler, scene, sampler, wavelengths, allocator,
-                cameraSample.ray, cameraSample.weight, cameraSample.coneAngle,
-                exteriorMedium, MAX_PATH_LEN, lights, &guiding, manifold,
-                recordPass ? guideRecords->data() : nullptr, numRecords);
+                compiler, allocator, scene, sampler, wavelengths,
+                cameraSample.ray, time, cameraSample.weight,
+                cameraSample.coneAngle, exteriorMedium, lights, mneeOptions,
+                pathOptions, &guiding,
+                recordPass ? guideRecords.data() : nullptr, numRecords);
           }
           // Train the SD-tree on the records the walk retained.
           if (recordPass && numRecords > 0)
-            trainGuiding(*sdtree, sampler, guideRecords->data(), numRecords);
+            trainGuiding(*sdtree, *guideAccumulator, sampler,
+                         guideRecords.data(), numRecords);
           Lsum += Lsample;
           if (combiner) {
             // Split the samples into two half images so the combination can
@@ -1513,17 +1815,22 @@ int main(int argc, char **argv) try {
           }
           allocator.reset();
         }
-        // With guiding the combination owns the image and resolves into
-        // it, pass by pass; without, the accumulation is the image.
+        // With guiding the combination owns the film and resolves into
+        // it, pass by pass; without, the accumulation is the film.
         if (combiner) {
           combiner->deposit(i, halves);
         } else {
-          renderImage(x, y).addSamples(chunk, Lsum.data());
+          film.addTotals(x, y, Lsum.data());
         }
         // Counted where the work is finished rather than where it starts,
         // which at thumbnail sizes is a whole pool's worth of pixels.
         progress.advance(chunk);
       });
+      // Every pixel of the window took the same samples, so the count
+      // belongs to the film rather than to each pixel, and is recorded
+      // once here where the chunk is finished. It has to land before the
+      // checkpoint below, which divides by it.
+      if (!combiner) film.addSamples(chunk);
       passDone += chunk;
       if (chunked) {
         // Aim the next chunk at the interval from what this one cost,
@@ -1537,12 +1844,13 @@ int main(int argc, char **argv) try {
         const size_t wanted{
             perSample > 0.0 ? size_t(std::max(previewEvery / perSample, 1.0))
                             : thisPass};
-        chunkSpp = std::max<size_t>(1, std::min(wanted, chunk * 4));
+        chunkSpp = std::clamp<size_t>(wanted, 1, chunk * 4);
         checkpoint();
       }
     }
     if (combiner) combiner->foldPass(thisPass);
     if (recordPass) {
+      guideAccumulator->absorbInto(*sdtree);
       combiner->rebuildPixelEstimates();
       // Refine: split spatial leaves past c*sqrt(2^k) records (k this
       // pass's index), rebuild the directional quadtrees with the 1% flux
@@ -1562,48 +1870,76 @@ int main(int argc, char **argv) try {
     if (!isFinal) checkpoint();
   }
   progress.finish();
-  // Resolve the pass combination back into the image every downstream
+  // A '-spp 0' re-run of the output stage rendered nothing, so it is not
+  // a session and must leave the totals it rewrites exactly as they were.
+  if (spp > 0) {
+    cumulativeWallSeconds +=
+        std::chrono::duration<double>(std::chrono::steady_clock::now() -
+                                      renderStartWall)
+            .count();
+    cumulativeComputeSeconds +=
+        std::max(cpuTimeSeconds() - renderStartCompute, 0.0);
+    sessionCount++;
+  }
+  if (optMNEEReport) ManifoldStats::global().print(std::cout);
+  // Resolve the pass combination back into the film every downstream
   // output reads from. A resumed session's samples are already in there,
   // through the seeded combination or the add before the render.
-  if (combiner) combiner->resolve(renderImage);
-  const auto rgbImage{
-      resolveRGB(compiler, renderImage, wavelengths, rgbPolicy)};
-  if (!std::string(optOutputFloat).empty()) {
-    if (auto error{smdl::writeFloatImage(std::string(optOutputFloat),
+  if (combiner) combiner->resolve(film);
+  const auto rgbImage{resolveRGB(compiler, film, wavelengths, rgbPolicy)};
+  if (!std::string(optOutputRGBf).empty()) {
+    if (auto error{smdl::writeFloatImage(std::string(optOutputRGBf),
                                          int(numPixelsX), int(numPixelsY), 3,
                                          rgbImage.data())}) {
       error->print();
     }
   }
-  // -resume implies writing back to the file being resumed, so one
-  // command line re-runs to keep accumulating; an explicitly given
-  // -output-spectrum wins verbatim, redirecting or (when empty)
-  // suppressing the write.
-  const auto outputSpectral{optOutputSpectrum.getNumOccurrences() > 0 ||
-                                    !resumeRequested
-                                ? std::string(optOutputSpectrum)
-                                : std::string(optResume)};
-  if (!outputSpectral.empty()) {
+  if (!outputSpectrum.empty()) {
     // Write through a temporary and rename, so an interrupted write
     // cannot destroy the file a resumed session reads from, which may
     // be this very path.
-    const auto partName{outputSpectral + ".part"};
+    const auto partName{outputSpectrum + ".part"};
     const auto extraHeaderLines{std::vector<std::string>{
         smdl::concat("smdl sampler = ", SAMPLER_VERSION),
+        smdl::concat("smdl sample offset = ", sequenceSampleOffset),
+        smdl::concat("smdl wall seconds = ", cumulativeWallSeconds),
+        smdl::concat("smdl compute seconds = ", cumulativeComputeSeconds),
+        smdl::concat("smdl sessions = ", sessionCount),
         smdl::concat("smdl args = ", argsEcho)}};
-    renderImage.writeENVIFile(
+    // The window the recorded count belongs to, which the film itself
+    // does not know: a windowed render still carries a full frame of
+    // pixels, and the header must not describe the untouched ones as
+    // samples.
+    film.writeENVIFile(
         smdl::Span<const float>(wavelengths.data(), wavelengths.size()),
-        partName, extraHeaderLines);
-    if (std::rename(partName.c_str(), outputSpectral.c_str()) != 0 ||
+        partName, extraHeaderLines, window);
+    if (std::rename(partName.c_str(), outputSpectrum.c_str()) != 0 ||
         std::rename((partName + ".hdr").c_str(),
-                    (outputSpectral + ".hdr").c_str()) != 0)
+                    (outputSpectrum + ".hdr").c_str()) != 0)
       throw smdl::Error(smdl::concat("cannot rename ", smdl::Quoted(partName),
                                      " into place"));
+    if (savingTree) {
+      // The guide tree rides beside the accumulation with the same
+      // temporary-and-rename discipline, stamped with the merged sample
+      // count so a resumed session can tell how far behind a stale tree
+      // is.
+      const auto treeName{outputSpectrum + std::string(GUIDE_TREE_EXTENSION)};
+      const auto treePartName{treeName + ".part"};
+      sdtree->writeFile(treePartName, resumed.samplesPerPixel + spp);
+      if (std::rename(treePartName.c_str(), treeName.c_str()) != 0)
+        throw smdl::Error(smdl::concat(
+            "cannot rename ", smdl::Quoted(treePartName), " into place"));
+      SMDL_LOG_INFO("Wrote guide tree: ", smdl::Quoted(treeName), ", ",
+                    sdtree->leafCount(), " spatial leaves");
+    }
+    SMDL_LOG_INFO(
+        "Cumulative render time: ", formatDuration(cumulativeWallSeconds),
+        " wall, ", formatDuration(cumulativeComputeSeconds), " compute over ",
+        sessionCount, " session(s)");
   }
   {
-    const auto ldrImage{
-        tonemap(tonemapOptions, rgbImage, renderImage, wavelengths)};
-    if (auto error{smdl::write8bitImage(std::string(optOutput), //
+    const auto ldrImage{tonemap(tonemapOptions, rgbImage, film, wavelengths)};
+    if (auto error{smdl::write8bitImage(std::string(optOutputRGB), //
                                         int(numPixelsX), int(numPixelsY), 3,
                                         ldrImage.data())}) {
       error->print();

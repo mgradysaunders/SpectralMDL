@@ -1,5 +1,6 @@
 #include "smdl/Compiler.h"
 #include "smdl/Support/Logger.h"
+#include "smdl/Support/Parallel.h"
 #include "smdl/Support/Profiler.h"
 #include "smdl/Support/QualifiedName.h"
 
@@ -11,7 +12,6 @@
 #include "llvm/ExecutionEngine/Orc/LLJIT.h"
 #include "llvm/ExecutionEngine/Orc/Mangling.h"
 #include "llvm/ExecutionEngine/Orc/ThreadSafeModule.h"
-#include "llvm/Support/Parallel.h"
 #include "llvm/Support/WithColor.h"
 #include "llvm/Support/raw_ostream.h"
 
@@ -478,6 +478,17 @@ static void deriveStaticMaterialFlags(llvm::Module &llvmModule,
       if (!displacement->isZeroValue())
         jitMaterial.staticFlags |= JIT::MATERIAL_HAS_DISPLACEMENT;
     }
+    // The normal probe returns 'geometry.normal - $state.normal', which
+    // folds to the constant zero vector exactly when the material
+    // leaves the shading normal alone, settling
+    // 'MATERIAL_REMAPS_NORMAL' the way the displacement probe settles
+    // its flag. See 'JIT::Material::remapsNormal()'.
+    auto normalProbeName{concat(symbolBase, ".normalProbe")};
+    if (auto normalDelta{foldedReturnValue(normalProbeName)}) {
+      jitMaterial.staticFlagsKnown |= JIT::MATERIAL_REMAPS_NORMAL;
+      if (!normalDelta->isZeroValue())
+        jitMaterial.staticFlags |= JIT::MATERIAL_REMAPS_NORMAL;
+    }
     // A material with no volume is trivially position-independent, and
     // a '.volumeEvaluate' body that no longer touches its '%state'
     // argument proves the volume coefficients independent of the
@@ -503,6 +514,8 @@ static void deriveStaticMaterialFlags(llvm::Module &llvmModule,
     if (auto probeFunc{llvmModule.getFunction(thinWalledProbeName)})
       probeFunc->eraseFromParent();
     if (auto probeFunc{llvmModule.getFunction(displacementProbeName)})
+      probeFunc->eraseFromParent();
+    if (auto probeFunc{llvmModule.getFunction(normalProbeName)})
       probeFunc->eraseFromParent();
   }
 }
@@ -707,16 +720,16 @@ std::optional<Error> Compiler::compile(OptLevel optLevel) noexcept {
       SMDL_PROFILER_ENTRY("Load images in parallel");
       SMDL_LOG_INFO("Loading images ...");
       auto now{std::chrono::steady_clock::now()};
-      llvm::parallelFor(0, imageEntries.size(), [&](size_t i) {
+      parallelFor(0, imageEntries.size(), [&](size_t i) {
         auto fileHash{imageEntries[i].first};
         auto image{imageEntries[i].second};
         SMDL_PROFILER_ENTRY("Load image",
                             fileHash->canonicalFileNames[0].c_str());
         SMDL_LOG_DEBUG("Loading image ",
                        QuotedPath(fileHash->canonicalFileNames[0]), " ...");
-        // A decode failure must not unwind into LLVM's thread pool (LLVM
-        // is built '-fno-exceptions'); warn and continue with the image's
-        // pre-allocated (zeroed) texels, matching the 'loadImage' policy.
+        // A decode failure must not unwind out of 'parallelFor'; warn
+        // and continue with the image's pre-allocated (zeroed) texels,
+        // matching the 'loadImage' policy.
         if (auto error{catchAndReturnError([&] { image->finishLoad(); })}) {
           SMDL_LOG_WARN("cannot load ",
                         QuotedPath(fileHash->canonicalFileNames[0]), ": ",
@@ -988,6 +1001,13 @@ std::optional<Error> Compiler::jitCompile() noexcept {
       jitLookup(jitMaterial.volumeEvaluate);
       jitLookup(jitMaterial.scatterEvaluate);
       jitLookup(jitMaterial.scatterSample);
+      // Emitted only when the host asked for them; see
+      // 'Compiler::enableScatterNormal'.
+      if (!jitMaterial.scatterNormalSample.name.empty()) {
+        jitLookup(jitMaterial.scatterNormalSample);
+        jitLookup(jitMaterial.scatterNormalEvaluate);
+        jitLookup(jitMaterial.geometryNormalEvaluate);
+      }
       jitLookup(jitMaterial.emissionEvaluate);
       jitLookup(jitMaterial.emissionSample);
       jitLookup(jitMaterial.volumeScatterEvaluate);

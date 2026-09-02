@@ -2,14 +2,19 @@
 
 #include "Scene.h"
 
-/// The camera and lens parameters, resolved from the command line into
-/// plain values. The occurrence-dependent CLI checks (mutually exclusive
-/// flags, explicitly given values that must be positive) run before this
-/// is built, so here zero uniformly means "unset" for every quantity
-/// that derives a default and "off" for every optional effect.
+/// The camera and lens parameters, merged from the scene file's `camera`
+/// directive and the command line into plain values. The
+/// occurrence-dependent CLI checks (mutually exclusive flags, explicitly
+/// given values that must be positive) run before this is built, so here
+/// zero uniformly means "unset" for every quantity that derives a default
+/// and "off" for every optional effect.
+///
+/// `lookFrom` and `lookTo` are not final here under `-autolook`:
+/// `solveAutolook()` overwrites both after `Scene::commit()` measures the
+/// geometry, so the `Camera` is constructed only once that has run.
 struct CameraOptions final {
   /// The image dimensions in pixels.
-  int2 dims{1280, 720};
+  int2 resolution{1280, 720};
 
   /// The position to look from.
   float3 lookFrom{-6, 0, 2};
@@ -18,7 +23,7 @@ struct CameraOptions final {
   float3 lookTo{0, 0, 0.5f};
 
   /// The up vector.
-  float3 up{0, 0, 1};
+  float3 lookUp{0, 0, 1};
 
   /// The vertical field of view in degrees.
   float fovYDeg{37.8f};

@@ -1,6 +1,6 @@
 #include "smdl/Support/Filesystem.h"
 #include "smdl/Support/Error.h"
-#include "smdl/Support/StringHelpers.h"
+#include "smdl/Support/Strings.h"
 
 #include <cerrno>
 #include <filesystem>

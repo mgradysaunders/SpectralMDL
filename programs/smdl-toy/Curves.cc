@@ -49,7 +49,7 @@ std::unique_ptr<Curves> makeCurves(RTCDevice device, CurvesFile file,
   }
   // The proxy points: enough of the control points to frame and bound
   // by, plus the radius-inflated bounding corners so the fattest fiber
-  // still fits. The framing solver walks these per instance, so they
+  // still fits. The autolook solver walks these per instance, so they
   // are capped rather than complete.
   BoundBox3 bound{};
   float maxRadius{};

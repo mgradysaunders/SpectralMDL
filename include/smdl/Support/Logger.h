@@ -6,7 +6,7 @@
 #include <string_view>
 #include <vector>
 
-#include "smdl/Support/StringHelpers.h"
+#include "smdl/Support/Strings.h"
 
 namespace smdl {
 

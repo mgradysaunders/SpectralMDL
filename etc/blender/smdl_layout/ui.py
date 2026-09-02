@@ -354,6 +354,12 @@ class SMDL_PT_asset_object(bpy.types.Panel):
         column.prop(options, "scheme")
         column.prop(options, "linear")
         layout.prop(options, "displace")
+        layout.separator()
+        # What the manifold estimators search, and what they search for.
+        marks = layout.column(align=True)
+        marks.prop(options, "caster")
+        marks.prop(options, "caustic")
+        layout.separator()
         # Any slot row with content switches the asset to per-slot
         # resolution, so the flat fields gray out rather than lie.
         per_slot = any(row.material.strip() or row.variants.strip()
@@ -401,6 +407,36 @@ class SMDL_PT_groom_object(bpy.types.Panel):
         layout.prop(options, "material")
 
 
+class SMDL_PT_light(bpy.types.Panel):
+    """Per-lamp export options, shown on lamps. See `SMDLLightOptions`."""
+
+    bl_label = "SpectralMDL Light"
+    bl_space_type = "PROPERTIES"
+    bl_region_type = "WINDOW"
+    bl_context = "data"
+
+    @classmethod
+    def poll(cls, context):
+        return context.object is not None and context.object.type == "LIGHT"
+
+    def draw(self, context):
+        layout = self.layout
+        layout.use_property_split = True
+        layout.use_property_decorate = False
+        light = context.object.data
+        # A sun states the sky's direction and an area lamp is an
+        # emissive material on a shape, so neither reaches a `light`
+        # declaration for the mark to sit in.
+        exports = light.type in ("POINT", "SPOT")
+        column = layout.column()
+        column.active = exports
+        column.prop(light.smdl_light_options, "caustic")
+        if not exports:
+            layout.label(text=f"A {light.type.lower()} lamp exports no "
+                              f"light declaration",
+                         icon="INFO")
+
+
 class SMDL_PT_materials(bpy.types.Panel):
     """The scene's SMDL source, written beside the layout on export."""
 
@@ -439,7 +475,9 @@ class SMDL_PT_preview(bpy.types.Panel):
         row = layout.row(align=True)
         row.prop(context.scene, "smdl_preview_spp")
         row.prop(context.scene, "smdl_preview_scale")
-        layout.prop(context.scene, "smdl_preview_every")
+        row = layout.row(align=True)
+        row.prop(context.scene, "smdl_preview_every")
+        row.prop(context.scene, "smdl_preview_threads")
         # Exposure is a tone mapping option the layout cannot carry, so it
         # rides the preview's command line and belongs with the preview.
         layout.prop(context.scene.smdl_render, "exposure")
@@ -468,4 +506,5 @@ CLASSES = (SMDL_OT_export_scene, SMDL_FH_scene, SMDL_OT_check_scene,
            SMDL_OT_register_library, SMDL_OT_sync_slots, SMDL_PT_layout,
            SMDL_PT_import,
            SMDL_PT_export, SMDL_PT_camera, SMDL_PT_sky, SMDL_PT_materials,
-           SMDL_PT_preview, SMDL_PT_asset_object, SMDL_PT_groom_object)
+           SMDL_PT_preview, SMDL_PT_asset_object, SMDL_PT_groom_object,
+           SMDL_PT_light)

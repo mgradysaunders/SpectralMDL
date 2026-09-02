@@ -1,7 +1,7 @@
 #include "Scene.h"
-#include "Subdivide.h"
 
-#include "MeshImportAssimp.h"
+#include "MeshImport.h"
+#include "Subdivide.h"
 
 #include "assimp/Importer.hpp"
 #include "assimp/postprocess.h"
@@ -9,14 +9,15 @@
 
 #include "embree4/rtcore_ray.h"
 
-#include "llvm/Support/Parallel.h"
-
 #include "smdl/Support/Logger.h"
+#include "smdl/Support/Parallel.h"
 #include "smdl/Support/Profiler.h"
 
+#include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <filesystem>
+#include <optional>
 #include <unordered_map>
 
 namespace {
@@ -271,6 +272,7 @@ void Scene::add(const LayoutItem &item) {
                           ? smdl::Span<const float4x4>(&item.objectToWorld, 1)
                           : smdl::Span<const float4x4>(item.batchXfs.data(),
                                                        item.batchXfs.size())};
+  const auto firstInstance{meshInstances.size()};
   if (item.primitive.active()) {
     addPrimitive(item.primitive, worldXfs, item.materials);
   } else if (item.curves.active) {
@@ -279,6 +281,14 @@ void Scene::add(const LayoutItem &item) {
     addMesh(item.fileName, worldXfs, item.selection, item.subdiv,
             item.materials);
   }
+  // Every instance the item produced carries its mark; the lowering has
+  // already refused it on a groom.
+  if (item.caster && !item.curves.active)
+    for (size_t i = firstInstance; i < meshInstances.size(); i++)
+      meshInstances[i].causticCaster = true;
+  if (item.causticLight && !item.curves.active)
+    for (size_t i = firstInstance; i < meshInstances.size(); i++)
+      meshInstances[i].causticLight = true;
 }
 
 uint32_t Scene::addPrimitive(const PrimitiveSpec &spec,
@@ -524,6 +534,20 @@ void Scene::commit(const Color &wavelengths) {
   // per-mesh work; and only then the top-level structure, whose bounds
   // must see the displaced geometry.
   resolveMaterials();
+  // See the field: does every material block a shadow ray at its first
+  // hit, which is what turns a visibility walk into a boolean occlusion
+  // query.
+  {
+    opaqueShadows = true;
+    const auto used{computeUsedMaterials()};
+    for (size_t i = 0; i < materials.size(); i++) {
+      if (!used[i] || !materials[i]) continue;
+      if (!materials[i]->isShadowTrivial()) {
+        opaqueShadows = false;
+        break;
+      }
+    }
+  }
   finalizeMeshes(wavelengths);
   rtcCommitScene(scene);
   RTCBounds bounds{};
@@ -539,7 +563,8 @@ void Scene::commit(const Color &wavelengths) {
                  " grooms, ", meshInstances.size(), " instances, ",
                  materials.size(), " materials, ", numTriangles,
                  " triangles, center (", boundCenter.x, ", ", boundCenter.y,
-                 ", ", boundCenter.z, ") radius ", boundRadius);
+                 ", ", boundCenter.z, ") radius ", boundRadius,
+                 opaqueShadows ? ", boolean shadows" : "");
 }
 
 std::vector<bool> Scene::computeUsedMaterials() const {
@@ -596,30 +621,28 @@ void Scene::resolveMaterials() {
     for (const auto &name : unresolved)
       message += smdl::concat("\n  ", smdl::Quoted(name));
     message += "\nRun with -list-materials to see how each name resolves, or "
-               "pass -material-fallback=<name> to substitute a material.";
+               "pass -fallback-material=<name> to substitute a material.";
     throw smdl::Error(std::move(message));
   }
 }
 
 namespace {
 
-// Weld the mesh's vertices by exact position bits: `weldOf[i]` is the
-// welded group of vertex `i`, and groups number `0` to the returned count
-// minus one, in first-encounter order, so the grouping is deterministic
-// regardless of the hashing underneath. See `positionKey()` for why
-// exactness is the point.
-[[nodiscard]] uint32_t weldByPosition(const Mesh &mesh,
-                                      std::vector<uint32_t> &weldOf) {
+// Weld the mesh's vertices by exact position bits. See `positionKey()` for
+// why exactness is the point, and `WeldMap` for what the result promises.
+[[nodiscard]] WeldMap weldByPosition(const Mesh &mesh) {
   auto groups{
       std::unordered_map<std::array<uint32_t, 3>, uint32_t, WeldHash>()};
   groups.reserve(mesh.verts.size());
-  weldOf.resize(mesh.verts.size());
+  auto weld{WeldMap()};
+  weld.groupOf.resize(mesh.verts.size());
   for (size_t i = 0; i < mesh.verts.size(); i++)
-    weldOf[i] = groups
-                    .try_emplace(positionKey(mesh.verts[i].point),
-                                 uint32_t(groups.size()))
-                    .first->second;
-  return uint32_t(groups.size());
+    weld.groupOf[i] = groups
+                          .try_emplace(positionKey(mesh.verts[i].point),
+                                       uint32_t(groups.size()))
+                          .first->second;
+  weld.numGroups = uint32_t(groups.size());
+  return weld;
 }
 
 // Recompute shading normals from the triangles: area-weighted face
@@ -627,10 +650,9 @@ namespace {
 // smooth and cannot crack along texture seams. Hard edges smooth out
 // with everything else, which is the accepted trade of recomputing
 // normals on a surface that subdivision or displacement just changed.
-void recomputeNormals(Mesh &mesh) {
-  auto weldOf{std::vector<uint32_t>()};
-  const auto numGroups{weldByPosition(mesh, weldOf)};
-  auto sums{std::vector<float3>(numGroups)};
+void recomputeNormals(Mesh &mesh, const WeldMap &weld) {
+  const auto &weldOf{weld.groupOf};
+  auto sums{std::vector<float3>(weld.numGroups)};
   for (const auto &face : mesh.faces) {
     const auto &p0{mesh.verts[face[0]].point};
     const auto &p1{mesh.verts[face[1]].point};
@@ -697,10 +719,23 @@ void Scene::finalizeMeshes(const Color &wavelengths) {
   uint64_t facesBefore{};
   for (auto i : pending)
     facesBefore += meshes[i]->faces.size() + meshes[i]->baseFaceCounts.size();
+  // Which level of the work gets the thread pool. A nested 'parallelFor'
+  // runs every task inline, since only the outermost one is parallel, so
+  // it has to be one or the other: enough meshes keep the pool busy side
+  // by side, and a handful of large ones instead spread the per-vertex
+  // displacement within each. A scene that subdivides at all usually
+  // takes the second path, since 'subdivide' is marked per asset and one
+  // asset is one mesh however many times it is placed.
+  const auto perMesh{pending.size() >= smdl::getThreadCount()};
   std::atomic<uint32_t> numDisplaced{0};
-  llvm::parallelFor(0, pending.size(), [&](size_t k) {
-    if (finalizeMesh(*meshes[pending[k]], wavelengths)) numDisplaced++;
-  });
+  if (perMesh) {
+    smdl::parallelFor(0, pending.size(), [&](size_t k) {
+      if (finalizeMesh(*meshes[pending[k]], wavelengths, false)) numDisplaced++;
+    });
+  } else {
+    for (auto i : pending)
+      if (finalizeMesh(*meshes[i], wavelengths, true)) numDisplaced++;
+  }
   uint64_t facesAfter{};
   for (auto i : pending) facesAfter += meshes[i]->faces.size();
   const auto seconds{std::chrono::duration<double>(
@@ -720,20 +755,29 @@ void Scene::finalizeMeshes(const Color &wavelengths) {
         "materials you meant (run with -list-materials).");
 }
 
-bool Scene::finalizeMesh(Mesh &mesh, const Color &wavelengths) {
+bool Scene::finalizeMesh(Mesh &mesh, const Color &wavelengths, bool spread) {
+  // The one welding every pass below shares, built on first use: it costs
+  // about as much as displacing the mesh does, and a smoothly subdivided
+  // mesh that is never displaced needs none at all. Subdivision replaces
+  // the vertices outright, so nothing may weld ahead of it.
+  auto weld{std::optional<WeldMap>()};
+  const auto weldOnce{[&]() -> const WeldMap & {
+    if (!weld) weld = weldByPosition(mesh);
+    return *weld;
+  }};
   if (mesh.subdiv.levels > 0) {
     // Smooth refinement carries exact limit normals out of the refiner;
     // linear refinement, a degenerate limit normal, or the fallback
     // triangulation all leave the geometry as the only authority.
-    if (!subdivideMesh(mesh)) recomputeNormals(mesh);
+    if (!subdivideMesh(mesh)) recomputeNormals(mesh, weldOnce());
     recomputeTangents(mesh);
   }
   auto displaced{false};
   if (mesh.subdiv.displace) {
-    displaced = displaceMesh(mesh, wavelengths);
+    displaced = displaceMesh(mesh, wavelengths, spread, weldOnce());
     if (displaced) {
       // The surface changed; the shading frame must follow it.
-      recomputeNormals(mesh);
+      recomputeNormals(mesh, weldOnce());
       recomputeTangents(mesh);
     }
   }
@@ -746,7 +790,8 @@ bool Scene::finalizeMesh(Mesh &mesh, const Color &wavelengths) {
   return displaced;
 }
 
-bool Scene::displaceMesh(Mesh &mesh, const Color &wavelengths) {
+bool Scene::displaceMesh(Mesh &mesh, const Color &wavelengths, bool spread,
+                         const WeldMap &weld) {
   SMDL_SANITY_CHECK(mesh.matIndex < materials.size());
   const auto *material{materials[mesh.matIndex]};
   if (!material || material->hasZeroDisplacement()) return false;
@@ -754,11 +799,14 @@ bool Scene::displaceMesh(Mesh &mesh, const Color &wavelengths) {
   // copies (whose UVs may disagree along texture seams) and applied to
   // every copy, so the displaced surface cannot crack. Well-authored
   // displacement matches across seams, where the averaging is a no-op.
-  auto weldOf{std::vector<uint32_t>()};
-  const auto numGroups{weldByPosition(mesh, weldOf)};
-  auto offsets{std::vector<float3>(numGroups)};
-  auto counts{std::vector<uint32_t>(numGroups)};
-  for (size_t i = 0; i < mesh.verts.size(); i++) {
+  const auto &weldOf{weld.groupOf};
+  auto offsets{std::vector<float3>(weld.numGroups)};
+  auto counts{std::vector<uint32_t>(weld.numGroups)};
+  // Evaluating the material is the expensive half and is independent per
+  // vertex; the weld accumulation below is neither, and is left in vertex
+  // order so that the sums do not depend on how this was scheduled.
+  auto vertOffsets{std::vector<float3>(mesh.verts.size())};
+  const auto evaluate{[&](size_t i) {
     const auto &vert{mesh.verts[i]};
     // The orthonormal shading frame, built here exactly as the state
     // finalize would Gram-Schmidt it, so that mapping the displacement
@@ -789,12 +837,20 @@ bool Scene::displaceMesh(Mesh &mesh, const Color &wavelengths) {
     material->displacementEvaluate(state, displacement);
     // Internal space is the tangent frame, so the vector maps back
     // through it: `d.x` along U, `d.y` along V, `d.z` along the normal.
-    offsets[weldOf[i]] = offsets[weldOf[i]] + displacement.x * tangent +
-                         displacement.y * bitangent + displacement.z * normal;
+    vertOffsets[i] = displacement.x * tangent + displacement.y * bitangent +
+                     displacement.z * normal;
+  }};
+  if (spread) {
+    smdl::parallelFor(0, mesh.verts.size(), evaluate);
+  } else {
+    for (size_t i = 0; i < mesh.verts.size(); i++) evaluate(i);
+  }
+  for (size_t i = 0; i < mesh.verts.size(); i++) {
+    offsets[weldOf[i]] = offsets[weldOf[i]] + vertOffsets[i];
     counts[weldOf[i]]++;
   }
   auto anyMoved{false};
-  for (uint32_t g = 0; g < numGroups; g++) {
+  for (uint32_t g = 0; g < weld.numGroups; g++) {
     if (counts[g] > 1) offsets[g] = offsets[g] / float(counts[g]);
     anyMoved |= smdl::length(offsets[g]) > 0;
   }
@@ -952,13 +1008,94 @@ bool Scene::intersect(Ray &ray, Hit &hit) const {
           ray(rayHit.ray.tfar), ray.dir);
       return true;
     }
-    auto clamp01{
-        [](float value) { return std::max(0.0f, std::min(1.0f, value)); }};
+    auto clamp01{[](float value) { return std::clamp(value, 0.0f, 1.0f); }};
     auto bary{float3(clamp01(1.0f - rayHit.hit.u - rayHit.hit.v),
                      clamp01(rayHit.hit.u), clamp01(rayHit.hit.v))};
-    hit = makeHit(instIndex, rayHit.hit.primID, bary);
+    // A primitive reports its object-space point in the normal slots,
+    // and the hit is built from that rather than from the parameters.
+    hit = meshInstances[instIndex].isPrimitive()
+              ? makePrimitiveHit(
+                    instIndex, rayHit.hit.primID, bary,
+                    float3(rayHit.hit.Ng_x, rayHit.hit.Ng_y, rayHit.hit.Ng_z))
+              : makeHit(instIndex, rayHit.hit.primID, bary);
     return true;
   }
+}
+
+bool Scene::isOccluded(const Ray &ray) const {
+  RTCRay rtcRay{};
+  rtcRay.org_x = ray.org.x;
+  rtcRay.org_y = ray.org.y;
+  rtcRay.org_z = ray.org.z;
+  rtcRay.dir_x = ray.dir.x;
+  rtcRay.dir_y = ray.dir.y;
+  rtcRay.dir_z = ray.dir.z;
+  rtcRay.tnear = ray.tmin;
+  rtcRay.tfar = ray.tmax;
+  rtcRay.time = 0;
+  rtcRay.mask = unsigned(-1);
+  rtcRay.id = 0;
+  rtcRay.flags = 0;
+  rtcOccluded1(scene, &rtcRay, nullptr);
+  return rtcRay.tfar < 0.0f;
+}
+
+bool Scene::intersect(Ray &ray, ManifoldHit &hit) const {
+  RTCRayHit rayHit{};
+  rayHit.ray.org_x = ray.org.x;
+  rayHit.ray.org_y = ray.org.y;
+  rayHit.ray.org_z = ray.org.z;
+  rayHit.ray.dir_x = ray.dir.x;
+  rayHit.ray.dir_y = ray.dir.y;
+  rayHit.ray.dir_z = ray.dir.z;
+  rayHit.ray.tnear = ray.tmin;
+  rayHit.ray.tfar = ray.tmax;
+  rayHit.ray.time = 0;
+  rayHit.ray.mask = unsigned(-1);
+  rayHit.ray.id = 0;
+  rayHit.ray.flags = 0;
+  rayHit.hit.primID = unsigned(-1);
+  rayHit.hit.geomID = unsigned(-1);
+  rtcIntersect1(scene, &rayHit, nullptr);
+  if (rayHit.hit.primID == unsigned(-1)) return false;
+  ray.tmax = rayHit.ray.tfar;
+  const auto instIndex{
+      instanceIndexOf(rayHit.hit.instID[0], rayHit.hit.instPrimID[0])};
+  const auto &meshInstance{meshInstances[instIndex]};
+  hit.instance = &meshInstance;
+  hit.material = materials[materialIndexOf(meshInstance)];
+  hit.vertex.surface = instIndex;
+  hit.vertex.face = rayHit.hit.primID;
+  // The projection rejects curve pins, so a curve hit only ever
+  // contributes its point, for a null-interface passthrough; computed
+  // from the ray exactly as `makeCurvesHit()` receives it.
+  if (meshInstance.isCurves()) {
+    hit.vertex.point = ray(rayHit.ray.tfar);
+    hit.vertex.coords = float3(0.0f, rayHit.hit.u, rayHit.hit.v);
+    return true;
+  }
+  auto clamp01{[](float value) { return std::clamp(value, 0.0f, 1.0f); }};
+  const auto bary{float3(clamp01(1.0f - rayHit.hit.u - rayHit.hit.v),
+                         clamp01(rayHit.hit.u), clamp01(rayHit.hit.v))};
+  hit.vertex.coords = bary;
+  const auto &objectToWorld{meshInstance.objectToWorld};
+  if (meshInstance.isPrimitive()) {
+    const auto &primitive{*primitives[meshInstance.primIndex]};
+    const auto surface{evalPrimitiveSurface(primitive.spec, rayHit.hit.primID,
+                                            float2(bary[1], bary[2]))};
+    hit.vertex.point = float3(objectToWorld * float4(surface.point, 1.0f));
+  } else {
+    const auto &mesh{*meshes[meshInstance.meshIndex]};
+    const auto &face{mesh.faces[rayHit.hit.primID]};
+    const auto &vert0{mesh.verts[face[0]]};
+    const auto &vert1{mesh.verts[face[1]]};
+    const auto &vert2{mesh.verts[face[2]]};
+    const auto point0{float3(objectToWorld * float4(vert0.point, 1.0f))};
+    const auto point1{float3(objectToWorld * float4(vert1.point, 1.0f))};
+    const auto point2{float3(objectToWorld * float4(vert2.point, 1.0f))};
+    hit.vertex.point = bary[0] * point0 + bary[1] * point1 + bary[2] * point2;
+  }
+  return true;
 }
 
 Hit Scene::makeHit(uint32_t instIndex, uint32_t faceIndex,
@@ -981,8 +1118,13 @@ Hit Scene::makeHit(uint32_t instIndex, uint32_t faceIndex,
   auto point0{float3(objectToWorld * float4(vert0.point, 1.0f))};
   auto point1{float3(objectToWorld * float4(vert1.point, 1.0f))};
   auto point2{float3(objectToWorld * float4(vert2.point, 1.0f))};
+  // `Ng` from the raw edges: scaling either one only scales the cross
+  // product, which the normalize divides back out, so the edges need not be
+  // unit for it. `Tg` does need a unit edge, and is the only reason one of
+  // them is normalized at all. `Scene::manifoldGeometry()` forms `Ng` by
+  // this same expression, so the two agree bit for bit.
+  const auto faceNormal{cross(point1 - point0, point2 - point0)};
   auto edge1{smdl::normalize(point1 - point0)};
-  auto edge2{smdl::normalize(point2 - point0)};
   auto barycentric{[&](auto member) {
     return bary[0] * vert0.*member + bary[1] * vert1.*member +
            bary[2] * vert2.*member;
@@ -1007,7 +1149,7 @@ Hit Scene::makeHit(uint32_t instIndex, uint32_t faceIndex,
       normalize(meshInstance.normalMatrix * barycentric(&Mesh::Vert::normal));
   hit.tangent = normalize(
       float3(objectToWorld * float4(barycentric(&Mesh::Vert::tangent), 0.0f)));
-  hit.Ng = normalize(cross(edge1, edge2));
+  hit.Ng = normalize(faceNormal);
   if (meshInstance.flipsWinding) {
     hit.normal = -hit.normal;
     hit.Ng = -hit.Ng;
@@ -1022,12 +1164,27 @@ Hit Scene::makeHit(uint32_t instIndex, uint32_t faceIndex,
 
 Hit Scene::makePrimitiveHit(uint32_t instIndex, uint32_t primID,
                             const float3 &bary) const {
-  const auto &meshInstance{meshInstances[instIndex]};
-  const auto &primitive{*primitives[meshInstance.primIndex]};
+  const auto &primitive{*primitives[meshInstances[instIndex].primIndex]};
   // The (u, v) ride in the barycentric slots, exactly as
   // `Scene::intersect()` packed them; see `Primitive.h`.
-  const auto surface{
-      evalPrimitiveSurface(primitive.spec, primID, float2(bary[1], bary[2]))};
+  return makePrimitiveHitFrom(
+      instIndex, primID, bary,
+      evalPrimitiveSurface(primitive.spec, primID, float2(bary[1], bary[2])));
+}
+
+Hit Scene::makePrimitiveHit(uint32_t instIndex, uint32_t primID,
+                            const float3 &bary,
+                            const float3 &objectPoint) const {
+  const auto &primitive{*primitives[meshInstances[instIndex].primIndex]};
+  return makePrimitiveHitFrom(
+      instIndex, primID, bary,
+      evalPrimitiveSurfaceAt(primitive.spec, primID, objectPoint));
+}
+
+Hit Scene::makePrimitiveHitFrom(uint32_t instIndex, uint32_t primID,
+                                const float3 &bary,
+                                const PrimitiveSurface &surface) const {
+  const auto &meshInstance{meshInstances[instIndex]};
   const auto &objectToWorld{meshInstance.objectToWorld};
   Hit hit{};
   hit.instIndex = instIndex;
@@ -1063,44 +1220,57 @@ Hit Scene::makePrimitiveHit(uint32_t instIndex, uint32_t primID,
 }
 
 ManifoldGeometry Scene::manifoldGeometry(const Hit &hit) const {
-  const auto &meshInstance{meshInstances[hit.instIndex]};
+  return manifoldGeometry(hit.instIndex, hit.faceIndex, hit.bary);
+}
+
+ManifoldGeometry Scene::manifoldGeometry(uint32_t instIndex, uint32_t faceIndex,
+                                         const float3 &bary) const {
+  const auto &meshInstance{meshInstances[instIndex]};
   SMDL_SANITY_CHECK(!meshInstance.isCurves());
   const auto &objectToWorld{meshInstance.objectToWorld};
   ManifoldGeometry geometry{};
-  geometry.point = hit.point;
-  // The unnormalized shading normal field and its parametric partials,
-  // through the cofactor matrix exactly as `makeHit()` transforms the
-  // normal itself; the winding flip is applied at the end, where it
-  // negates the unit normal and its partials together.
+  // The point and geometry normal by the same expressions `makeHit()`
+  // uses, and the unnormalized shading normal field and its parametric
+  // partials through the cofactor matrix exactly as `makeHit()`
+  // transforms the normal itself; the winding flip on the shading field
+  // is applied at the end, where it negates the unit normal and its
+  // partials together.
   float3 rawNormal{};
   float3 dRawdu{};
   float3 dRawdv{};
   if (meshInstance.isPrimitive()) {
     const auto &primitive{*primitives[meshInstance.primIndex]};
-    const auto surface{evalPrimitiveSurface(primitive.spec, hit.faceIndex,
-                                            float2(hit.bary[1], hit.bary[2]))};
+    const auto surface{evalPrimitiveSurface(primitive.spec, faceIndex,
+                                            float2(bary[1], bary[2]))};
+    geometry.point = float3(objectToWorld * float4(surface.point, 1.0f));
     geometry.dPdu = float3(objectToWorld * float4(surface.dPdu, 0.0f));
     geometry.dPdv = float3(objectToWorld * float4(surface.dPdv, 0.0f));
     rawNormal = meshInstance.normalMatrix * surface.normal;
     dRawdu = meshInstance.normalMatrix * surface.dNdu;
     dRawdv = meshInstance.normalMatrix * surface.dNdv;
+    geometry.Ng = normalize(meshInstance.normalMatrix * surface.normal);
+    if (meshInstance.flipsWinding) geometry.Ng = -geometry.Ng;
   } else {
     const auto &mesh{*meshes[meshInstance.meshIndex]};
-    const auto &face{mesh.faces[hit.faceIndex]};
+    const auto &face{mesh.faces[faceIndex]};
     const auto &vert0{mesh.verts[face[0]]};
     const auto &vert1{mesh.verts[face[1]]};
     const auto &vert2{mesh.verts[face[2]]};
     const auto point0{float3(objectToWorld * float4(vert0.point, 1.0f))};
     const auto point1{float3(objectToWorld * float4(vert1.point, 1.0f))};
     const auto point2{float3(objectToWorld * float4(vert2.point, 1.0f))};
+    geometry.point = bary[0] * point0 + bary[1] * point1 + bary[2] * point2;
     // The parameterization is the barycentric pair (bary[1], bary[2]).
     geometry.dPdu = point1 - point0;
     geometry.dPdv = point2 - point0;
     rawNormal = meshInstance.normalMatrix *
-                (hit.bary[0] * vert0.normal + hit.bary[1] * vert1.normal +
-                 hit.bary[2] * vert2.normal);
+                (bary[0] * vert0.normal + bary[1] * vert1.normal +
+                 bary[2] * vert2.normal);
     dRawdu = meshInstance.normalMatrix * (vert1.normal - vert0.normal);
     dRawdv = meshInstance.normalMatrix * (vert2.normal - vert0.normal);
+    // The same expression `makeHit()` uses, see there.
+    geometry.Ng = normalize(cross(point1 - point0, point2 - point0));
+    if (meshInstance.flipsWinding) geometry.Ng = -geometry.Ng;
   }
   // Differentiate the normalization: with N = m / |m|,
   // dN = (dm - N dot(N, dm)) / |m|.
@@ -1111,9 +1281,9 @@ ManifoldGeometry Scene::manifoldGeometry(const Hit &hit) const {
     // the flat reading of a field that has no direction to give, and
     // leave the partials zero: there is nothing left to differentiate.
     // The alternative is a NaN normal propagating into the walk, and
-    // `hit.Ng` already carries the winding flip applied
-    // below, so this returns before it.
-    geometry.normal = hit.Ng;
+    // `geometry.Ng` already carries the winding flip, so this returns
+    // before the flip below.
+    geometry.normal = geometry.Ng;
     return geometry;
   }
   geometry.normal = normalize(rawNormal);
