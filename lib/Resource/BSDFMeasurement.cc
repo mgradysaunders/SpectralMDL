@@ -152,11 +152,11 @@ struct CellLookup final {
 float3 BSDFMeasurement::interpolate(float thetao, float thetai,
                                     float phi) const noexcept {
   if (!buffer || numTheta == 0 || numPhi == 0) return {};
-  const auto o{
-      cellLookup(thetao * (2.0f / PI) * float(numTheta), int(numTheta))};
-  const auto i{
-      cellLookup(thetai * (2.0f / PI) * float(numTheta), int(numTheta))};
-  const auto p{cellLookup(phi * (1.0f / PI) * float(numPhi), int(numPhi))};
+  const int nTheta{int(numTheta)};
+  const int nPhi{int(numPhi)};
+  const auto o{cellLookup(thetao * (2.0f / PI) * float(nTheta), nTheta)};
+  const auto i{cellLookup(thetai * (2.0f / PI) * float(nTheta), nTheta)};
+  const auto p{cellLookup(phi * (1.0f / PI) * float(nPhi), nPhi)};
   const auto lerp{[](const float3 &a, const float3 &b, float t) {
     return a + (b - a) * t;
   }};
