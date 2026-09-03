@@ -182,7 +182,7 @@ public:
                  Sampler &sampler, const Color &wavelengths, float time,
                  const MediumStack *medium, PathScratch &scratch,
                  const float3 &point0, const float3 &point1, Color &beta,
-                 bool needBlocker = false);
+                 bool needBlocker = false, bool infiniteTarget = false);
 
   /// Advance to the next blocking surface. Returns true with `hit`
   /// filled in; returns false when the walk finished without one,
@@ -258,6 +258,10 @@ private:
 
   /// See the constructor.
   bool mNeedBlocker{};
+
+  /// Does the segment end where it does only because a light infinitely
+  /// far away needs a finite point to aim at? See `Medium::attenuate()`.
+  bool mInfiniteTarget{};
 };
 
 /// Trace a camera path and return its radiance estimate.
@@ -278,6 +282,14 @@ private:
 /// sampling at the previous vertex would have produced, and the camera
 /// segment, which no light sampling competes with, contributes at
 /// weight 1.
+///
+/// The `haze` is the scene-wide exterior atmosphere, or null. It is the
+/// medium of every segment the walk spends outside all geometry, so it
+/// is mutually exclusive with an `exteriorMedium`, which occupies the
+/// same place with a material behind it. When it carries a sun, that
+/// sun is integrated in closed form over every segment and left out of
+/// the gathers and arrivals at haze vertices, so that the transport is
+/// counted once; see `smdl::Haze::sunInscatter()`.
 ///
 /// The walk starts inside `exteriorMedium`, which may be null for
 /// vacuum: this is the bottom of the nested-medium stack, typically a
@@ -317,7 +329,7 @@ private:
 Color tracePath(smdl::Compiler &compiler, smdl::BumpPtrAllocator &allocator,
                 const Scene &scene, Sampler &sampler, const Color &wavelengths,
                 Ray ray, float time, float cameraWeight, float cameraConeAngle,
-                const MediumStack *exteriorMedium,
+                const MediumStack *exteriorMedium, const smdl::Haze *haze,
                 const LightSampler &lightSampler,
                 const MNEEOptions &mneeOptions, const PathOptions &pathOptions,
                 const Guiding *guiding, GuideRecord *records,

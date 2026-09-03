@@ -4,7 +4,8 @@
 "
 " The scene layout format that `smdl-toy` reads: `asset` and `light`
 " declarations, reusable `group` arrangements, `place` and `import`
-" statements, and the `material`, `medium`, `camera`, and `sky` directives.
+" statements, and the `material`, `medium`, `camera`, `sky`, and `haze`
+" directives.
 " This file is derived directly from the parser in
 " `programs/smdl-toy/LayoutParser.cc`, so the words it knows inside a block are
 " exactly the ones that block accepts, and anything else there is flagged the
@@ -139,9 +140,11 @@ syn keyword layoutStatement import nextgroup=layoutImportPath skipwhite skipempt
 syn match layoutImportPath contained display +"[^"]*"+
       \ nextgroup=layoutImportBlock skipwhite skipempty
 
-" camera { ... } and sky { ... }, merged per field, last one wins.
+" camera { ... }, sky { ... } and haze { ... }, merged per field, last one
+" wins.
 syn keyword layoutStatement camera nextgroup=layoutCameraBlock skipwhite skipempty
 syn keyword layoutStatement sky nextgroup=layoutSkyBlock skipwhite skipempty
+syn keyword layoutStatement haze nextgroup=layoutHazeBlock skipwhite skipempty
 
 " medium <material>
 syn keyword layoutStatement medium nextgroup=layoutMaterialName skipwhite skipempty
@@ -227,6 +230,10 @@ syn keyword layoutCameraSetting contained vignetting cat_eye cat_eye_radius
 syn keyword layoutSkySetting contained none sun_zenith sun_azimuth visibility
 syn keyword layoutSkySetting contained water_vapor scale moon moon_distance
 syn keyword layoutSkySetting contained ibl ibl_scale
+
+" The haze settings.
+syn keyword layoutHazeSetting contained none visibility scale_height
+syn keyword layoutHazeSetting contained base_height albedo angstrom droplet
 "--}
 
 "--{ Blocks
@@ -265,6 +272,9 @@ syn region layoutCameraBlock contained matchgroup=layoutDelim start="{" end="}"
 
 syn region layoutSkyBlock contained matchgroup=layoutDelim start="{" end="}"
       \ contains=@layoutCommon,layoutSkySetting
+
+syn region layoutHazeBlock contained matchgroup=layoutDelim start="{" end="}"
+      \ contains=@layoutCommon,layoutHazeSetting
 "--}
 
 " Blocks nest at most three deep (group, place, variant) and are short, so
@@ -300,6 +310,7 @@ hi def link layoutAssetSetting    Label
 hi def link layoutLightSetting    Label
 hi def link layoutCameraSetting   Label
 hi def link layoutSkySetting      Label
+hi def link layoutHazeSetting     Label
 
 hi def link layoutShape           Constant
 hi def link layoutLightKind       Constant

@@ -236,6 +236,7 @@ void Medium::resolve(const MediumStack *stack, const Color &wavelengths,
   mResolved = true;
   mHasMedium = false;
   mHeterogeneous = false;
+  mIsHaze = false;
   mMaterial = nullptr;
   mHasEmission = false;
   mMajorant = 0.0f;
@@ -253,6 +254,16 @@ void Medium::resolve(const MediumStack *stack, const Color &wavelengths,
   // resolution put there: every read of them is guarded by
   // `mHasMedium`/`mHeterogeneous`, under which the branches below
   // assign them.
+
+  // The exterior haze stands in for the empty stack, that being where
+  // the atmosphere is: a walk inside an object is inside whatever the
+  // object encloses instead. Nothing else here applies to it, since it
+  // is neither a material nor tracked against a majorant.
+  if (!stack && mHaze) {
+    mHasMedium = true;
+    mIsHaze = true;
+    return;
+  }
 
   // Collect the active media: the run of additive entries from the top
   // of the stack plus the first non-additive entry, which replaces
@@ -441,6 +452,14 @@ void Medium::resolve(const MediumStack *stack, const Color &wavelengths,
 }
 
 void Medium::setSegment(const float3 &org, const float3 &dir) noexcept {
+  // The haze varies with world height alone, so the segment reduces to
+  // the extinction where it starts and the rate the height changes at.
+  if (mIsHaze) {
+    mHaze->extinctionAt(
+        org.z, smdl::Span<float>(mHazeSigmaC.data(), mHazeSigmaC.size()));
+    mHazeK = mHaze->shapeExponent(dir.z);
+    return;
+  }
   // A homogeneous medium has the same coefficients everywhere, so it
   // never queries and has no segment to place.
   if (!mHeterogeneous) return;
@@ -578,6 +597,40 @@ void Medium::pickScatterComponent(float xi, const Color &sigmaS,
 bool Medium::sampleDistance(Sampler &sampler, float tEnd, float &t, Color &beta,
                             Color &emitted) const {
   if (!mHasMedium) return false;
+  if (mIsHaze) {
+    // The analytic exponential-height medium. The optical depth is the
+    // extinction at the segment origin times one distance shape shared
+    // by every band, so the free-flight distance inverts in closed form
+    // against the hero band and the other bands' transmittance follows
+    // from the same shape. Nothing is tracked, nothing is clamped, and
+    // the spectral weighting is the homogeneous estimator's with
+    // `shape(t)` in place of `t`. The haze does not emit.
+    const float xi{float(sampler)};
+    const int hero{sampler.index(int(mHazeSigmaC.size()))};
+    const float tScatter{smdl::Haze::shapeInverse(
+        mHazeK, -std::log1p(-xi) / mHazeSigmaC[size_t(hero)])};
+    const float tTravel{
+        std::min({tScatter, tEnd, std::numeric_limits<float>::max()})};
+    // Clamped for the same reason the distance above is: an unbounded
+    // segment that never turns upward has infinite depth, and infinity
+    // times a band whose extinction has underflowed to zero is not a
+    // number.
+    const float depth{std::min(smdl::Haze::shape(mHazeK, tTravel),
+                               std::numeric_limits<float>::max())};
+    Color Tr{};
+    for (size_t i = 0; i < Tr.size(); i++)
+      Tr[i] = transmittance(mHazeSigmaC[i] * depth);
+    if (tScatter < tEnd) {
+      // The extinction at the collision is the origin spectrum times a
+      // factor common to every band, which cancels between the
+      // scattering weight and the balance heuristic that normalizes it.
+      beta *= mHazeSigmaC * mHaze->albedo() * Tr / (mHazeSigmaC * Tr).average();
+      t = tScatter;
+      return true;
+    }
+    beta *= Tr / Tr.average();
+    return false;
+  }
   if (!mHeterogeneous) {
     // The emitted radiance along the segment is deterministic for a
     // homogeneous medium: the integral of transmittance times the
@@ -711,8 +764,20 @@ bool Medium::sampleDistance(Sampler &sampler, float tEnd, float &t, Color &beta,
   return false;
 }
 
-void Medium::attenuate(Sampler &sampler, float tEnd, Color &beta) const {
+void Medium::attenuate(Sampler &sampler, float tEnd, Color &beta,
+                       bool unbounded) const {
   if (!mHasMedium) return;
+  if (mIsHaze) {
+    // Closed-form Beer-Lambert against the analytic optical depth: a
+    // shadow ray through the haze is exact and draws nothing, which is
+    // the whole reason not to track it.
+    const float depth{
+        std::min(smdl::Haze::shape(mHazeK, unbounded ? INF : tEnd),
+                 std::numeric_limits<float>::max())};
+    for (size_t i = 0; i < beta.size(); i++)
+      beta[i] *= transmittance(mHazeSigmaC[i] * depth);
+    return;
+  }
   if (!mHeterogeneous) {
     // Closed-form Beer-Lambert. The caller clamps 'tEnd' finite, so
     // wavelengths with zero extinction keep transmittance 1 instead of

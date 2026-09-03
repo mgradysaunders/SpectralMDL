@@ -34,6 +34,7 @@ add_library(
     "Manifold.cc"
     "Module.cc"
     "Parser.cc"
+    "RenderUtil/Haze.cc"
     "RenderUtil/Illuminant.cc"
     "RenderUtil/Metal.cc"
     "RenderUtil/MonteCarlo.cc"

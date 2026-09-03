@@ -89,9 +89,9 @@ private:
 class Recover final {};
 
 // The top-level keywords, which are the synchronization points.
-constexpr std::array<std::string_view, 9> TOP_LEVEL_KEYWORDS{
+constexpr std::array<std::string_view, 10> TOP_LEVEL_KEYWORDS{
     "asset",    "group",  "place",  "import", "light",
-    "material", "medium", "camera", "sky"};
+    "material", "medium", "camera", "sky",    "haze"};
 
 // The transform operations, named here so an unknown top-level
 // directive that is really a stray transform gets a pointed note.
@@ -159,6 +159,8 @@ private:
       parseCamera();
     } else if (mToken.text == "sky") {
       parseSky();
+    } else if (mToken.text == "haze") {
+      parseHaze();
     } else {
       auto &error{
           mDiags.error(location(), smdl::concat("unknown directive ",
@@ -1069,6 +1071,56 @@ private:
                                   " (expected none, sun_zenith, sun_azimuth, "
                                   "visibility, water_vapor, scale, moon, "
                                   "moon_distance, ibl, or ibl_scale)"));
+        throw Recover();
+      }
+    }
+    advance(); // '}'
+  }
+
+  // A `haze { ... }` block, merged per field like `sky`. Writing the
+  // block at all is what turns the haze on, so an empty one is the
+  // default atmosphere rather than a statement of nothing.
+  void parseHaze() {
+    if (!mDocument.hazeLoc) mDocument.hazeLoc = location();
+    advance();
+    if (mToken.kind != Token::OPEN) {
+      mDiags.error(location(), "expected '{' after 'haze'");
+      throw Recover();
+    }
+    advance(); // '{'
+    auto &haze{mDocument.haze};
+    while (mToken.kind != Token::CLOSE) {
+      if (mToken.kind == Token::END) {
+        mDiags.error(location(), "expected '}' before end of file");
+        throw Recover();
+      }
+      if (mToken.kind != Token::WORD) {
+        mDiags.error(location(), "expected a haze setting or '}'");
+        throw Recover();
+      }
+      const auto key{mToken.text};
+      const auto keyLoc{location()};
+      advance();
+      if (key == "none") {
+        haze.none = true;
+      } else if (key == "visibility") {
+        haze.visibility = positive(keyLoc, key, numbers<1>()[0]);
+      } else if (key == "scale_height") {
+        haze.scaleHeight = positive(keyLoc, key, numbers<1>()[0]);
+      } else if (key == "base_height") {
+        haze.baseHeight = numbers<1>()[0];
+      } else if (key == "albedo") {
+        haze.albedo = numbers<1>()[0];
+      } else if (key == "angstrom") {
+        haze.angstrom = numbers<1>()[0];
+      } else if (key == "droplet") {
+        haze.droplet = positive(keyLoc, key, numbers<1>()[0]);
+      } else {
+        mDiags.error(keyLoc,
+                     smdl::concat("unknown haze setting ", smdl::Quoted(key),
+                                  " (expected none, visibility, scale_height, "
+                                  "base_height, albedo, angstrom, or "
+                                  "droplet)"));
         throw Recover();
       }
     }

@@ -16,6 +16,7 @@ target_sources(
     "Parser.cc"
     "RenderUtil/SpectralColor.cc"
     "RenderUtil/FastMath.cc"
+    "RenderUtil/Haze.cc"
     "RenderUtil/Illuminant.cc"
     "RenderUtil/Metal.cc"
     "RenderUtil/MonteCarlo.cc"

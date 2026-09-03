@@ -319,6 +319,41 @@ public:
   std::optional<float> iblScale{};
 };
 
+/// The exterior atmosphere a layout's `haze` directive describes: the
+/// distance haze that produces aerial perspective, whose extinction
+/// falls off exponentially with height.
+///
+/// Writing the block at all turns the haze on. Everything in it is
+/// optional and merged with the command line the same way `LayoutSky`
+/// works, and an unwritten `visibility` follows the sky's. The haze is
+/// the medium of everything outside all geometry, so it and the
+/// `medium` directive cannot both name the exterior.
+///
+/// The haze and the sun-sky model overlap: the model is fitted for an
+/// observer under the whole atmospheric column, aerosol included, so a
+/// ray that ends on the sky is attenuated by a layer whose effect the
+/// radiance it carries already accounts for. Over the finite paths
+/// aerial perspective is about, which the model has no notion of, the
+/// haze is exactly what is missing; toward the sky it is counted twice.
+/// Matching the two visibilities keeps them reading consistently, and
+/// keeping the haze thin keeps the overlap small.
+///
+class LayoutHaze final {
+public:
+  /// `none`: no haze at all, mirroring `-no-haze`.
+  std::optional<bool> none{};
+
+  std::optional<float> visibility{};
+  std::optional<float> scaleHeight{};
+  std::optional<float> baseHeight{};
+  std::optional<float> albedo{};
+  std::optional<float> angstrom{};
+
+  /// The water droplet diameter in micrometers, which drives the
+  /// approximate Mie phase function; see `HazeOptions::dropletSize`.
+  std::optional<float> droplet{};
+};
+
 /// One `asset` declaration: a named source with the properties of what
 /// is loaded, as written. Nothing in it puts geometry in the world.
 class LayoutAssetDecl final {
@@ -573,6 +608,8 @@ public:
   LayoutLocation cameraLoc{};
   LayoutSky sky{};
   LayoutLocation skyLoc{};
+  LayoutHaze haze{};
+  LayoutLocation hazeLoc{};
 
   /// The written `ibl` path and where it was written, resolved by the
   /// lowering rather than the parser, so the parser stays free of the
@@ -682,6 +719,11 @@ public:
 
   /// Whatever the entry file's `sky` directives named, merged.
   LayoutSky sky{};
+
+  /// Whatever the entry file's `haze` directives named, merged, and
+  /// whether one appeared at all, which is what turns the haze on.
+  LayoutHaze haze{};
+  bool hasHaze{};
 
   /// The `front:` azimuth of the asset manifest the command line named
   /// directly, or unset. Only `resolveLayoutArgument()` fills this in:

@@ -365,6 +365,28 @@ static cl::opt<float> optSkyWaterVapor{
     "water-vapor",
     cl::desc("The water-vapor column scale factor, 0.3-3 (default: 1)"),
     cl::init(1.0f), cl::cat(catLight)};
+static cl::opt<bool> optHaze{
+    "haze",
+    cl::desc("Enable the exterior haze that produces aerial perspective, "
+             "which a layout's 'haze' block configures"),
+    cl::init(false), cl::cat(catLight)};
+static cl::opt<bool> optNoHaze{
+    "no-haze", cl::desc("Disable the exterior haze a layout asked for"),
+    cl::init(false), cl::cat(catLight)};
+static cl::opt<float> optHazeVisibility{
+    "haze-visibility",
+    cl::desc("The haze meteorological range in km at 550nm (default: the "
+             "sky's visibility)"),
+    cl::init(0.0f), cl::cat(catLight)};
+static cl::opt<float> optHazeScaleHeight{
+    "haze-scale-height",
+    cl::desc("The haze scale height in meters (default: 1200)"),
+    cl::init(1200.0f), cl::cat(catLight)};
+static cl::opt<bool> optHazeSampledSun{
+    "haze-sampled-sun",
+    cl::desc("Estimate the haze's sun by sampling like any other light "
+             "instead of integrating it in closed form, for A/B"),
+    cl::init(false), cl::cat(catLight)};
 static cl::opt<float> optSkyScale{
     "sky-scale", cl::desc("The sky radiance scale factor (default: 1)"),
     cl::init(1.0f), cl::cat(catLight)};
@@ -1493,6 +1515,54 @@ int main(int argc, char **argv) try {
         nullptr, smdl::JIT::MaterialInstance(state, material), nullptr};
     SMDL_LOG_INFO("Exterior medium: ", smdl::Quoted(layout.exteriorMediumName));
   }
+
+  // The exterior haze: the analytic exponential-height atmosphere that
+  // produces aerial perspective, whose extinction, transmittance and
+  // free-flight distance are all closed form, so it costs no tracking
+  // and no majorant. It is the medium of everything outside all
+  // geometry, which is where the 'medium' directive puts its material
+  // too, so the two cannot both be asked for.
+  const auto &fileHaze{layout.haze};
+  bool hazeEnabled{optHaze || layout.hasHaze};
+  if (pick(optNoHaze, fileHaze.none)) hazeEnabled = false;
+  std::unique_ptr<smdl::Haze> haze{};
+  if (hazeEnabled) {
+    if (exteriorMedium)
+      throw smdl::Error("the exterior haze and the 'medium' directive both "
+                        "describe the medium outside all geometry; keep one");
+    auto options{smdl::HazeOptions{}};
+    // An unwritten visibility follows the sky's, so that distant
+    // terrain does not read hazier or clearer than the horizon sky
+    // immediately behind it. The two models overlap toward the sky; see
+    // `LayoutHaze`.
+    options.visibility = pick(optHazeVisibility, fileHaze.visibility);
+    if (!(options.visibility > 0.0f))
+      options.visibility = pick(optSkyVisibility, fileSky.visibility);
+    options.scaleHeight = pick(optHazeScaleHeight, fileHaze.scaleHeight);
+    if (fileHaze.baseHeight) options.baseHeight = *fileHaze.baseHeight;
+    if (fileHaze.albedo) options.albedo = *fileHaze.albedo;
+    if (fileHaze.angstrom) options.angstrom = *fileHaze.angstrom;
+    if (fileHaze.droplet) options.dropletSize = *fileHaze.droplet;
+    // The sun the analytic single-scattering term integrates, taken
+    // from the environment when it is the procedural sun-sky. An image
+    // environment has no analytic sun, and the haze then estimates
+    // every light by sampling. It is a constructor argument because the
+    // haze is immutable once the render threads share it.
+    auto sun{smdl::HazeSun{}};
+    if (envLight && !optHazeSampledSun) {
+      auto irradiance{Color()};
+      if (envLight->sunCone(sun.direction, sun.cosRadius) &&
+          envLight->sunIrradiance(makeRenderState(wavelengths), irradiance))
+        sun.irradiance = std::move(irradiance);
+    }
+    haze = std::make_unique<smdl::Haze>(
+        options,
+        smdl::Span<const float>(wavelengths.data(), wavelengths.size()),
+        makeRenderState(wavelengths).meters_per_scene_unit, std::move(sun));
+    SMDL_LOG_INFO("Exterior haze: visibility ", options.visibility,
+                  " km, scale height ", options.scaleHeight, " m",
+                  haze->sun().isValid() ? ", analytic sun" : "");
+  }
   // Every light in one selection path: each emissive mesh instance plus
   // the environment, weighted by power.
   auto profLightSampler{smdl::profilerEntryBegin("Build light sampler")};
@@ -1792,8 +1862,8 @@ int main(int argc, char **argv) try {
             Lsample = tracePath(
                 compiler, allocator, scene, sampler, wavelengths,
                 cameraSample.ray, time, cameraSample.weight,
-                cameraSample.coneAngle, exteriorMedium, lights, mneeOptions,
-                pathOptions, &guiding,
+                cameraSample.coneAngle, exteriorMedium, haze.get(), lights,
+                mneeOptions, pathOptions, &guiding,
                 recordPass ? guideRecords.data() : nullptr, numRecords);
           }
           // Train the SD-tree on the records the walk retained.

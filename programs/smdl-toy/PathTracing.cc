@@ -10,10 +10,12 @@ VisibilityWalk::VisibilityWalk(smdl::BumpPtrAllocator &allocator,
                                const Color &wavelengths, float time,
                                const MediumStack *medium, PathScratch &scratch,
                                const float3 &point0, const float3 &point1,
-                               Color &beta, bool needBlocker)
+                               Color &beta, bool needBlocker,
+                               bool infiniteTarget)
     : mAllocator(allocator), mScene(scene), mSampler(sampler),
       mWavelengths(wavelengths), mTime(time), mMedium(medium),
-      mScratch(scratch), mBeta(beta), mNeedBlocker(needBlocker) {
+      mScratch(scratch), mBeta(beta), mNeedBlocker(needBlocker),
+      mInfiniteTarget(infiniteTarget) {
   mDistance = length(point1 - point0);
   mShadowDir = mDistance > 0 ? (point1 - point0) / mDistance : float3{};
   mParamEps = mDistance > 1.0f ? EPS / mDistance : EPS;
@@ -36,12 +38,12 @@ bool VisibilityWalk::nextBlocker(Hit &hit) {
   // path.
   if (mScene.opaqueShadows && !mNeedBlocker) {
     const bool occluded{mScene.isOccluded(mRay)};
-    if (mMedium) {
+    if (mMedium || mScratch.medium.hasHaze()) {
       mScratch.medium.reset(mMedium, mWavelengths, mTime, mRay(mTCovered),
                             mShadowDir);
       if (!occluded) {
         mScratch.medium.attenuate(mSampler, (mRay.tmax - mTCovered) * mDistance,
-                                  mBeta);
+                                  mBeta, mInfiniteTarget);
       } else if (mScratch.medium.attenuationDraws()) {
         (void)mSampler.nextBits();
         (void)mSampler.nextBits();
@@ -58,13 +60,13 @@ bool VisibilityWalk::nextBlocker(Hit &hit) {
     // world-space span is rescaled and the medium sees a unit direction
     // with distances in scene units. The epsilon slivers the casts
     // exclude are attributed to whichever side of the boundary this
-    // iteration integrates. An empty stack skips the medium view
-    // outright, shadow segments in vacuum being the common case.
-    if (mMedium) {
+    // iteration integrates. An empty stack with no haze skips the medium
+    // view outright, shadow segments in vacuum being the common case.
+    if (mMedium || mScratch.medium.hasHaze()) {
       mScratch.medium.reset(mMedium, mWavelengths, mTime, mRay(mTCovered),
                             mShadowDir);
       mScratch.medium.attenuate(mSampler, (mRay.tmax - mTCovered) * mDistance,
-                                mBeta);
+                                mBeta, mInfiniteTarget && !hitSurface);
     }
     mTCovered = mRay.tmax;
     if (!(mBeta.maxComponent() > 0.0f)) {
@@ -142,27 +144,33 @@ enum class VertexKind { SURFACE, VOLUME, HAIR };
 bool testVisibility(smdl::BumpPtrAllocator &allocator, const Scene &scene,
                     Sampler &sampler, const Color &wavelengths, float time,
                     const MediumStack *medium, PathScratch &scratch,
-                    const float3 &point0, const float3 &point1, Color &beta) {
+                    const float3 &point0, const float3 &point1, Color &beta,
+                    bool infiniteTarget = false) {
   Hit hit{};
-  VisibilityWalk walk{allocator, scene,   sampler, wavelengths, time,
-                      medium,    scratch, point0,  point1,      beta};
+  VisibilityWalk walk{allocator, scene,  sampler, wavelengths,
+                      time,      medium, scratch, point0,
+                      point1,    beta,   false,   infiniteTarget};
   return walk.nextBlocker(hit) ? false : beta.maxComponent() > 0.0f;
 }
 
 [[nodiscard]]
-bool scatterEvaluate(const smdl::JIT::MaterialInstance &mat, VertexKind kind,
-                     const float3 &wo, const float3 &wi, float &pdf, Color &f,
+bool scatterEvaluate(Scatterer scatterer, VertexKind kind, const float3 &wo,
+                     const float3 &wi, float &pdf, Color &f,
                      int lobeMask = smdl::JIT::DF_ALL) {
   // The JIT ABI reports a reverse PDF alongside every forward PDF,
   // which a forward path tracer never consumes.
   float pdfFwdUnused{};
   float pdfRevUnused{};
   if (kind == VertexKind::VOLUME) {
-    float phase{mat.volumeScatterEvaluate(wo, wi)};
+    float phase{scatterer.volumeScatterEvaluate(wo, wi)};
     pdf = phase;
     f = Color(phase);
     return phase > 0;
-  } else if (kind == VertexKind::HAIR) {
+  }
+  // Everything but a volume vertex is a material's, the haze being the
+  // one scatterer with no material behind it.
+  const auto &mat{scatterer.mat()};
+  if (kind == VertexKind::HAIR) {
     return mat.hairScatterEvaluate(wo, wi, pdf, pdfRevUnused, f);
   } else {
     if (!mat.scatterEvaluate(wo, wi, pdf, pdfRevUnused, f)) return false;
@@ -223,7 +231,7 @@ public:
   smdl::BumpPtrAllocator &allocator;
   const LightSampler &lights;
   const smdl::State &gatherState;
-  const smdl::JIT::MaterialInstance &mat;
+  Scatterer scatterer;
   VertexKind kind{};
   const DTree *dtree{};
   float bsdfFraction{};
@@ -555,7 +563,8 @@ Color MNEEGather::contribution(const ManifoldChain &chain,
   // behind this receiver already claims through it; see `gatherDirect()`.
   float fPdf{};
   Color f{};
-  if (!scatterEvaluate(mat, kind, wo, connection.wr, fPdf, f, receiverMask))
+  if (!scatterEvaluate(scatterer, kind, wo, connection.wr, fPdf, f,
+                       receiverMask))
     return {};
   // The per-crossing throughput and the continuation's chance of taking
   // this chain, both accumulated below from the interface material
@@ -1167,10 +1176,10 @@ float MNEECoverage::coverWeight(const Scene &scene, Sampler &sampler,
 Color gatherDirect(const Scene &scene, Sampler &sampler,
                    const Color &wavelengths, smdl::BumpPtrAllocator &allocator,
                    const LightSampler &lights, const smdl::State &gatherState,
-                   const smdl::JIT::MaterialInstance &mat, VertexKind kind,
-                   const DTree *dtree, float bsdfFraction,
-                   const Guiding *guiding, const MediumStack *medium,
-                   PathScratch &scratch, const float3 &point, const float3 &wo,
+                   Scatterer scatterer, VertexKind kind, const DTree *dtree,
+                   float bsdfFraction, const Guiding *guiding,
+                   const MediumStack *medium, PathScratch &scratch,
+                   const float3 &point, const float3 &wo,
                    const MNEEOptions &mneeOptions,
                    const ManifoldClaim &manifoldClaim = {},
                    bool armedBehind = false, bool receiver = true) {
@@ -1184,10 +1193,16 @@ Color gatherDirect(const Scene &scene, Sampler &sampler,
   // the radiance from there. The plain estimate of such a sample is zero
   // and is skipped below.
   if (lights.sample(gatherState, sampler, point, lightSample, runManifold)) {
+    // The sun the haze integrates in closed form over every segment is
+    // not gathered again at a haze vertex, nor connected to through a
+    // manifold chain from one; see `smdl::Haze::sunInscatter()`.
+    if (const smdl::Haze *haze{scatterer.haze()};
+        haze && lightSample.isInfinite && haze->sun().contains(lightSample.wi))
+      return direct;
     const MNEEGather mneeGather{
-        scene,   sampler, wavelengths, allocator,    lights,  gatherState,
-        mat,     kind,    dtree,       bsdfFraction, guiding, medium,
-        scratch, point,   wo,          lightSample};
+        scene,     sampler, wavelengths, allocator,    lights,  gatherState,
+        scatterer, kind,    dtree,       bsdfFraction, guiding, medium,
+        scratch,   point,   wo,          lightSample};
     // The reflect claims belong to the reflective gather, which the
     // layout's light marks may restrict to the caustic targets: toward
     // any other light the claimed reflections are ordinary transport
@@ -1209,7 +1224,8 @@ Color gatherDirect(const Scene &scene, Sampler &sampler,
       float fPdf{};
       Color f{};
       if (neeMask == 0 || lightSample.Li.isAllZero() ||
-          !scatterEvaluate(mat, kind, wo, lightSample.wi, fPdf, f, neeMask))
+          !scatterEvaluate(scatterer, kind, wo, lightSample.wi, fPdf, f,
+                           neeMask))
         return;
       const float continuationPdf{
           guidedContinuationPdf(dtree, bsdfFraction, lightSample.wi, fPdf)};
@@ -1226,7 +1242,7 @@ Color gatherDirect(const Scene &scene, Sampler &sampler,
           neeMask != 0 &&
           testVisibility(allocator, scene, sampler, wavelengths,
                          gatherState.animation_time, medium, scratch, point,
-                         lightSample.target, Tr)) {
+                         lightSample.target, Tr, lightSample.isInfinite)) {
         gatherPlain(Tr);
       }
     } else {
@@ -1245,7 +1261,8 @@ Color gatherDirect(const Scene &scene, Sampler &sampler,
                           point,
                           lightSample.target,
                           Tr,
-                          /*needBlocker=*/true};
+                          /*needBlocker=*/true,
+                          lightSample.isInfinite};
       if (!walk.nextBlocker(blocker)) {
         if (Tr.maxComponent() > 0.0f) gatherPlain(Tr);
       } else {
@@ -1337,7 +1354,7 @@ Color claimedShareOf(const smdl::JIT::MaterialInstance &mat,
 Color tracePath(smdl::Compiler &compiler, smdl::BumpPtrAllocator &allocator,
                 const Scene &scene, Sampler &sampler, const Color &wavelengths,
                 Ray ray, float time, float cameraWeight, float cameraConeAngle,
-                const MediumStack *exteriorMedium,
+                const MediumStack *exteriorMedium, const smdl::Haze *haze,
                 const LightSampler &lightSampler,
                 const MNEEOptions &mneeOptions, const PathOptions &pathOptions,
                 const Guiding *guiding, GuideRecord *records,
@@ -1357,6 +1374,7 @@ Color tracePath(smdl::Compiler &compiler, smdl::BumpPtrAllocator &allocator,
   // repeatedly inside one medium resolves it once and the surfaces its
   // shadow rays pass through shade in one state; see `PathScratch`.
   PathScratch scratch{};
+  scratch.medium.setHaze(haze);
 
   // The pristine gather-side state, see `gatherDirect()`.
   const auto gatherState{makeRenderState(wavelengths, &allocator, time)};
@@ -1387,6 +1405,10 @@ Color tracePath(smdl::Compiler &compiler, smdl::BumpPtrAllocator &allocator,
   // light sampling competes with.
   float wpdfPrev{};
   bool prevDirac{};
+  // Was the vertex behind the segment in flight a haze scattering event?
+  // The sun it can arrive at is the sun that segment's analytic term
+  // already carries.
+  bool prevHazeScatter{};
   // The share of the current segment's throughput the manifold estimators
   // claim, per wavelength: what an arrival at a light along it must drop,
   // since a gather behind produces it. Zero on a segment nobody claims.
@@ -1465,12 +1487,34 @@ Color tracePath(smdl::Compiler &compiler, smdl::BumpPtrAllocator &allocator,
   while (true) {
     auto hit{Hit{}};
     bool hitSurface{scene.intersect(ray, hit)};
-    // The stack being empty is the exterior vacuum segment, the common
-    // case: the view is left alone rather than resolved to nothing,
-    // which would still walk the stack.
-    if (medium) {
+    // The stack being empty is the exterior segment, and with no haze
+    // it is vacuum, the common case: the view is left alone rather than
+    // resolved to nothing, which would still walk the stack.
+    if (medium || scratch.medium.hasHaze()) {
       scratch.medium.reset(medium, wavelengths, time, ray.org, ray.dir);
       if (scratch.medium.hasMedium()) {
+        // The exterior haze integrates the sun's single scattering over
+        // the whole segment in closed form, which is the noisy half of
+        // aerial perspective and the half that fireflies: the phase
+        // function is constant along the segment, the sun being
+        // directional, so the integral is elementary and only the sun's
+        // visibility is left to estimate, from one shadow ray at a
+        // distance drawn from the integrand's own density. Added at the
+        // throughput from before the segment, like the medium's
+        // emission, and left out of everything downstream so that the
+        // transport is carried once.
+        if (haze && haze->sun().isValid() && !atMaxBounces(depth + 1)) {
+          Color Lsun{};
+          float tShadow{};
+          if (haze->sunInscatter(ray.org, ray.dir, ray.tmax, float(sampler),
+                                 smdl::Span<float>(Lsun.data(), Lsun.size()),
+                                 tShadow) &&
+              !Lsun.isAllZero() &&
+              !scene.isOccluded(
+                  Ray{ray(tShadow), haze->sun().direction, EPS, INF})) {
+            if (const Color Lss{beta * Lsun}; !Lss.isAnyNonFinite()) L += Lss;
+          }
+        }
         // Sample a free-flight distance over the cast, which
         // `Scene::intersect` bounded at the hit parameter (or left
         // unbounded on a miss). The medium weighs `beta` itself: the
@@ -1503,17 +1547,17 @@ Color tracePath(smdl::Compiler &compiler, smdl::BumpPtrAllocator &allocator,
             record->beta = beta;
           }
           if (atMaxBounces(depth)) break;
-          // The phase function of the vertex: the medium's own, or with
-          // additive overlap the component the collision picked. The
-          // instance lives on the medium stack rather than in the view,
-          // so the gather below is free to retarget the view.
-          const auto &phaseInst{*scratch.medium.scatterInstance()};
+          // The phase function of the vertex: the haze's own, the
+          // medium's, or with additive overlap the component the
+          // collision picked. Whatever it names outlives the view, so
+          // the gather below is free to retarget the view.
+          const Scatterer phase{scratch.medium.scatterer()};
           {
             // The SD-tree never participates at volume vertices, so the
             // continuation density the gather weighs against is the
             // phase function alone.
             Color direct{gatherDirect(scene, sampler, wavelengths, allocator,
-                                      lightSampler, gatherState, phaseInst,
+                                      lightSampler, gatherState, phase,
                                       VertexKind::VOLUME, /*dtree=*/nullptr,
                                       /*bsdfFraction=*/1.0f, guiding, medium,
                                       scratch, point, wo, mneeOptions)};
@@ -1528,18 +1572,25 @@ Color tracePath(smdl::Compiler &compiler, smdl::BumpPtrAllocator &allocator,
           // it, so the throughput weight is exactly 1 and `beta` is
           // unchanged.
           float3 wNext{};
-          float phase{
-              phaseInst.volumeScatterSample(float4(sampler), wo, wNext)};
-          if (!(phase > 0)) break;
+          float phaseValue{
+              phase.volumeScatterSample(float4(sampler), wo, wNext)};
+          if (!(phaseValue > 0)) break;
           if (record) {
             record->wNext = wNext;
-            record->wNextPdf = phase;
+            record->wNextPdf = phaseValue;
           }
-          wpdfPrev = phase;
+          wpdfPrev = phaseValue;
           prevDirac = false;
           prevPoint = point;
-          // A volume vertex is a manifold-NEE receiver like any other.
-          mneeCoverage.arm(mneeOptions.any(), point, phase, medium);
+          // A volume vertex is a manifold-NEE receiver like any other,
+          // except a haze vertex whose sun is integrated analytically:
+          // its gather stands down toward the sun, so the arrivals it
+          // would claim must keep their ordinary weights.
+          const bool hazeScatter{phase.haze() != nullptr};
+          prevHazeScatter = hazeScatter;
+          mneeCoverage.arm(mneeOptions.any() &&
+                               !(hazeScatter && phase.haze()->sun().isValid()),
+                           point, phaseValue, medium);
           // Phase functions scatter wide, so grow the cone like a
           // diffuse bounce.
           spread = std::min(spread + ANGLE_GROWTH_DIFFUSE, ANGLE_MAX);
@@ -1559,6 +1610,13 @@ Color tracePath(smdl::Compiler &compiler, smdl::BumpPtrAllocator &allocator,
       if (envLight) {
         float Lipdf{};
         Color Li{envLight->Li(compiler, gatherState, ray.dir, Lipdf)};
+        // The continuation of a haze scattering vertex must not arrive
+        // at the sun: the segment it left carried that transport in
+        // closed form. Zeroed rather than skipped so that both halves
+        // of the MIS pair estimate the same integrand, the gather
+        // having stood down over the same cone.
+        if (prevHazeScatter && haze && haze->sun().contains(ray.dir))
+          Li = Color();
         float weight{
             depth == 1 || prevDirac
                 ? 1.0f
@@ -1793,6 +1851,7 @@ Color tracePath(smdl::Compiler &compiler, smdl::BumpPtrAllocator &allocator,
     }
     wpdfPrev = wpdf;
     prevDirac = isDiracBounce;
+    prevHazeScatter = false;
     prevPoint = hit.point;
     const bool transmits{!isHair && mat.isTransmitting(wo, wNext)};
     const Color claimedShare{claimedShareOf(

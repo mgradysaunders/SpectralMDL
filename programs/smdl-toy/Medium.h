@@ -3,6 +3,8 @@
 #include <optional>
 #include <vector>
 
+#include "smdl/RenderUtil/Haze.h"
+
 #include "Scene.h"
 
 /// The stack of nested participating media the walk is currently
@@ -76,6 +78,48 @@ private:
   return stack ? stack->mat.getIOR() : 1.0f;
 }
 
+/// The scattering interface of one path vertex: the material instance
+/// that owns the BSDF at a surface or the phase function inside a
+/// medium, or the exterior haze, whose phase function has no material
+/// behind it. Converts implicitly from a material instance, so every
+/// vertex that has one reads exactly as it did.
+class Scatterer final {
+public:
+  Scatterer(const smdl::JIT::MaterialInstance &mat) noexcept : mMat(&mat) {}
+
+  Scatterer(const smdl::Haze &haze) noexcept : mHaze(&haze) {}
+
+  /// The material instance behind the vertex, which only a haze volume
+  /// vertex lacks: every surface and hair vertex has one, and so does
+  /// every volume vertex whose medium an MDL material describes.
+  [[nodiscard]] const smdl::JIT::MaterialInstance &mat() const noexcept {
+    return *mMat;
+  }
+
+  /// The haze behind the vertex, or null for every other vertex.
+  [[nodiscard]] const smdl::Haze *haze() const noexcept { return mHaze; }
+
+  /// The phase function of a volume vertex, normalized over the sphere
+  /// and so also the solid-angle density of `volumeScatterSample()`.
+  [[nodiscard]] float volumeScatterEvaluate(const float3 &wo,
+                                            const float3 &wi) const {
+    return mHaze ? mHaze->phase().evaluate(wo, wi)
+                 : mMat->volumeScatterEvaluate(wo, wi);
+  }
+
+  /// Sample the phase function of a volume vertex, returning its value.
+  [[nodiscard]] float volumeScatterSample(const float4 &xi, const float3 &wo,
+                                          float3 &wi) const {
+    return mHaze ? mHaze->phase().sample(float3(xi.x, xi.y, xi.z), wo, wi)
+                 : mMat->volumeScatterSample(xi, wo, wi);
+  }
+
+private:
+  const smdl::JIT::MaterialInstance *mMat{};
+
+  const smdl::Haze *mHaze{};
+};
+
 /// The medium of one ray segment: a view over the active media on the
 /// stack that owns free-flight distance sampling and transmittance
 /// estimation, resolved against the materials' static knowledge.
@@ -141,6 +185,22 @@ public:
   void reset(const MediumStack *stack, const Color &wavelengths, float time,
              const float3 &org, const float3 &dir) noexcept;
 
+  /// Set the scene-wide exterior haze that an empty stack resolves to,
+  /// or null for a vacuum exterior. Invalidates whatever is resolved,
+  /// so call it before the first `reset()`.
+  void setHaze(const smdl::Haze *haze) noexcept {
+    mHaze = haze;
+    mResolved = false;
+  }
+
+  /// Is there a scene-wide exterior haze? A caller that skips the view
+  /// outright for an empty stack, the exterior vacuum being the common
+  /// case, must not skip it when there is.
+  [[nodiscard]] bool hasHaze() const noexcept { return mHaze != nullptr; }
+
+  /// The scene-wide exterior haze, or null.
+  [[nodiscard]] const smdl::Haze *haze() const noexcept { return mHaze; }
+
   /// Is there a participating medium at all?
   [[nodiscard]] bool hasMedium() const noexcept { return mHasMedium; }
 
@@ -175,15 +235,23 @@ public:
 
   /// Multiply `beta` by an unbiased estimate of the transmittance over
   /// `[0, tEnd]` in scene units, for shadow rays. Draws nothing from
-  /// `sampler` for the vacuum and homogeneous cases.
-  void attenuate(Sampler &sampler, float tEnd, Color &beta) const;
+  /// `sampler` for the vacuum, haze and homogeneous cases.
+  ///
+  /// `unbounded` says the segment only ends at `tEnd` because a light
+  /// infinitely far away needs a finite point to aim at, and really
+  /// runs to infinity. Only the exterior haze honors it, its depth to
+  /// infinity being finite and closed form; a medium whose extent the
+  /// stand-in point already bounds sees no difference, and one that is
+  /// tracked would have nothing finite to track over.
+  void attenuate(Sampler &sampler, float tEnd, Color &beta,
+                 bool unbounded = false) const;
 
-  /// The material whose phase function governs the scattering event
-  /// the last `sampleDistance` call returned: the single medium, or
-  /// with additive overlap the component picked at the collision.
-  [[nodiscard]] const smdl::JIT::MaterialInstance *
-  scatterInstance() const noexcept {
-    return mScatterInstance;
+  /// The scattering interface of the vertex the last `sampleDistance`
+  /// call returned: the haze's own phase function, or the material of
+  /// the medium, which with additive overlap is the component the
+  /// collision picked.
+  [[nodiscard]] Scatterer scatterer() const noexcept {
+    return mIsHaze ? Scatterer(*mHaze) : Scatterer(*mScatterInstance);
   }
 
 private:
@@ -280,6 +348,21 @@ private:
   componentSigmaS(const Component &component) noexcept {
     return component.heterogeneous ? component.lastSigmaS : component.sigmaS;
   }
+
+  /// The scene-wide exterior haze, or null; see `setHaze()`.
+  const smdl::Haze *mHaze{};
+
+  /// Is the resolved medium the exterior haze? Mutually exclusive with
+  /// `mHeterogeneous`, and never true on a non-empty stack: the haze is
+  /// the atmosphere, which a walk inside an object is not in.
+  bool mIsHaze{};
+
+  /// The haze extinction at the segment origin, in inverse scene units,
+  /// which scales the shared distance shape of the optical depth.
+  Color mHazeSigmaC{};
+
+  /// The haze shape exponent of the segment; see `Haze::shape()`.
+  float mHazeK{};
 
   /// Is there a medium?
   bool mHasMedium{};

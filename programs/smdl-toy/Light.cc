@@ -62,6 +62,15 @@ EnvLight::EnvLight(const smdl::SunSkyOptions &options)
   meanRadiance = sunSky->averageRadiance();
 }
 
+bool EnvLight::sunIrradiance(const smdl::State &state,
+                             Color &irradiance) const {
+  if (!sunSky || !sunSky->hasSun()) return false;
+  sunSky->sunRadiance(int(irradiance.size()), state.wavelength_base,
+                      irradiance.data());
+  irradiance *= sunSky->sunSolidAngle();
+  return true;
+}
+
 Color EnvLight::Li(smdl::Compiler &compiler, const smdl::State &state,
                    float3 wi, float &pdf) const {
   Color Li{};
