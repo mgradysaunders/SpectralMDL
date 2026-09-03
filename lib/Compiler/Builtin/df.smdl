@@ -1419,6 +1419,27 @@ auto scatterSample(const &specular_bsdf this, inline const &ScatterSampleParamet
 }
 //--}
 
+//--{ RGB upsampling
+/// The sRGB primary spectra of the wavelengths a value is constructed at.
+///
+/// A distribution that produces RGB at evaluation time cannot upsample it
+/// there: the conversion is colorimetric and wants the wavelengths in
+/// `$state`, and the scattering and emission entry points are pure and
+/// take no `State`. Capturing the primaries at construction, where
+/// `$state` is live, moves the only state-dependent part of the
+/// conversion to where the state exists. The upsampling is linear in RGB
+/// and the primaries sum to one at every wavelength, so `upsample`
+/// reproduces the `color(float3)` constructor exactly, greys included.
+struct RGBPrimaries {
+  color r = color(float3(1.0, 0.0, 0.0));
+  color g = color(float3(0.0, 1.0, 0.0));
+  color b = color(float3(0.0, 0.0, 1.0));
+};
+
+@(pure macro)
+color upsample(const RGBPrimaries this, const float3 rgb) = rgb.x * this.r + rgb.y * this.g + rgb.z * this.b;
+//--}
+
 //--{ measured_bsdf
 /// Is the BSDF measurement valid, i.e., backed by loaded measurement data?
 export bool bsdf_measurement_isvalid(const bsdf_measurement measurement) = bool(measurement.buffer);
@@ -1454,6 +1475,10 @@ export struct measured_bsdf: bsdf {
   /// data has no normal distribution behind it to sample a half vector
   /// from, which is the distinction the flag draws.
   const int df_lobes = modeLobes(int(mode) & measurement.mode, DF_GENERIC);
+
+  /// The primaries the RGB the measurement yields is upsampled against.
+  /// Captured rather than accepted, like `df_lobes`; see `RGBPrimaries`.
+  const RGBPrimaries primaries = RGBPrimaries();
 };
 
 @(macro)
@@ -1467,8 +1492,9 @@ auto scatterEvaluate(const &measured_bsdf this, inline const &ScatterEvaluatePar
   auto wiUpper(float3(wi.x, wi.y, #abs(wi.z)));
   auto f3(float3(0.0));
   smdBSDFMeasurementInterpolate(this.measurement.ptr, &wo, &wiUpper, &f3);
+  const auto f(upsample(this.primaries, f3));
   auto result(ScatterEvaluateResult(
-                f: this.multiplier * #abs(wi.z) * color(f3),
+                f: this.multiplier * #abs(wi.z) * f,
                 pdf: float2(
                   smdBSDFMeasurementDirectionPDF(this.measurement.ptr, &wo, &wiUpper),
                   smdBSDFMeasurementDirectionPDF(this.measurement.ptr, &wiUpper, &wo),
@@ -4667,6 +4693,12 @@ export struct thin_film: bsdf {
 
   /// The flags.
   const int df_lobes = base.df_lobes;
+
+  /// The wavelengths this instance was constructed at, in nanometers.
+  /// The interference phase is spectral, so the factor needs them, and
+  /// the scattering entry points are pure and cannot read `$state`;
+  /// captured rather than accepted, like `df_lobes`.
+  const color wavelengths = color($state.wavelength_base);
 };
 
 /// The maximum amplification `thinFilmFactor` may apply to the base BSDF,
@@ -4691,7 +4723,7 @@ const float THIN_FILM_FACTOR_MAX = 100.0;
 /// correct magnitude but without the phase shift of the evanescent case.
 ///
 @(macro)
-auto thinFilmFactor(const auto thickness, const auto filmIOR, const float baseIOR, const float cosTheta1) {
+auto thinFilmFactor(const auto thickness, const auto filmIOR, const float baseIOR, const float cosTheta1, const color wavelengths) {
   const auto eta2(filmIOR);
   const auto eta3(baseIOR);
   const auto sin2Theta1(#max(1 - cosTheta1 * cosTheta1, 0.0));
@@ -4705,7 +4737,7 @@ auto thinFilmFactor(const auto thickness, const auto filmIOR, const float baseIO
   const auto rp23((eta3 * cosTheta2 - eta2 * cosTheta3) / (eta3 * cosTheta2 + eta2 * cosTheta3));
   // The Airy summation of the coated reflectance, with the spectral round-trip
   // phase through the film `4 pi n d cos / wavelength`.
-  const auto phi(2.0 * $TWO_PI * eta2 * cosTheta2 * thickness / color($state.wavelength_base));
+  const auto phi(2.0 * $TWO_PI * eta2 * cosTheta2 * thickness / wavelengths);
   const auto phase(complex(#cos(phi), #sin(phi)));
   const auto Rs(#norm((rs12 + rs23 * phase) / (1 + rs12 * rs23 * phase)));
   const auto Rp(#norm((rp12 + rp23 * phase) / (1 + rp12 * rp23 * phase)));
@@ -4747,7 +4779,7 @@ auto scatterEvaluate(const &thin_film this, const &ScatterEvaluateParameters par
   factorScatterEvaluate(
     this,
     params,
-    \(const float3 h) = thinFilmFactor(this.thickness, thinFilmIncidentRelativeIOR(this, params), 1 / params.ior, #abs(dot(params.wo, h))),
+    \(const float3 h) = thinFilmFactor(this.thickness, thinFilmIncidentRelativeIOR(this, params), 1 / params.ior, #abs(dot(params.wo, h)), this.wavelengths),
   );
 
 @(macro)
@@ -4763,7 +4795,7 @@ auto scatterSample(const &thin_film this, const &ScatterSampleParameters params)
   factorScatterSample(
     this,
     params,
-    \(const float3 h) = thinFilmFactor(this.thickness, thinFilmIncidentRelativeIOR(this, params), 1 / params.ior, #abs(dot(params.wo, h))),
+    \(const float3 h) = thinFilmFactor(this.thickness, thinFilmIncidentRelativeIOR(this, params), 1 / params.ior, #abs(dot(params.wo, h)), this.wavelengths),
   );
 //--}
 
@@ -5163,19 +5195,27 @@ export struct measured_factor: bsdf {
 
   /// The flags.
   const int df_lobes = base.df_lobes;
+
+  /// The primaries the texture's RGB is upsampled against. Captured
+  /// rather than accepted, like `df_lobes`; see `RGBPrimaries`.
+  const RGBPrimaries primaries = RGBPrimaries();
 };
 
 /// Evaluate the reflectivity of the measured factor, where `cosAlpha` is the cosine
 /// of the angle between the outgoing direction and the half vector `h`, and `cosBeta`
-/// is the cosine of the angle between `h` and the shading normal.
+/// is the cosine of the angle between `h` and the shading normal. The lookup is
+/// `float3` rather than `color` because this is pure; see `RGBPrimaries`.
 @(pure macro)
 color evaluateMeasuredFactor(const &measured_factor this, const float cosAlpha, const float cosBeta) {
   return saturate(
-           tex::lookup_color(
-             this.values,
-             float2(#acos(saturate(#abs(cosAlpha))), #acos(saturate(cosBeta))) * (2 / $PI),
-             tex::wrap_clamp,
-             tex::wrap_clamp,
+           upsample(
+             this.primaries,
+             tex::lookup_float3(
+               this.values,
+               float2(#acos(saturate(#abs(cosAlpha))), #acos(saturate(cosBeta))) * (2 / $PI),
+               tex::wrap_clamp,
+               tex::wrap_clamp,
+             ),
            ),
          );
 }
