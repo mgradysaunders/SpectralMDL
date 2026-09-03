@@ -1,7 +1,0 @@
-# The factor-free twin of 'fixture_remap.pbr': the same emission map
-# with the default factor of 1, so the factor's effect is exactly the
-# ratio between the two decodes, whatever the RGB upsampling does.
-name: Remap Plain Fixture
-emission:
-  file: horizon_4x4.png
-  color_space: linear

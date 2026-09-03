@@ -21,8 +21,7 @@ constexpr std::string_view ASSET_EXTENSION = ".asset";
 ///
 /// An asset is a directory named as a unit by an `import` in a layout; its
 /// `.asset` manifest resolves that name to the render mesh. The manifest is
-/// the same flat `key: value` YAML subset the `.pbr` manifests use (see
-/// `smdl::PBRMaps`):
+/// the flat YAML subset of `smdl::FlatYAML`:
 ///
 /// ```
 /// asset: 1                              # the schema version, if given
@@ -102,8 +101,8 @@ public:
 
 /// Read an asset manifest.
 ///
-/// \throws smdl::Error  On any syntax error, reported as `file:line: ...`,
-///                      or if the render mesh it names does not exist.
+/// \throws smdl::Error  On any syntax error, reported with the file and
+///                      line, or if the render mesh it names does not exist.
 ///
 [[nodiscard]] Asset readAsset(const std::string &fileName);
 

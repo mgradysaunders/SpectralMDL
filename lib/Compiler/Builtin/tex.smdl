@@ -189,6 +189,70 @@ auto applyWrap(const auto wrap, const auto n, auto i) {
   return i;
 }
 
+/// The extent in texels of mip level `level` of the given uv-tile: the
+/// level-0 extent halved `level` times, saturating at 1x1, and zero for
+/// an invalid tile. Levels past `num_levels - 1` report the last level.
+/// NOTE: This is non-standard!
+@(pure macro)
+export int2 level_extent(const texture_2d tex, const int level, const int2 uv_tile = int2(0)) {
+  const auto extent(getExtent(tex, uv_tile));
+  const int l(#max(0, #min(level, tex.num_levels - 1)));
+  return #select(extent > 0, #max(extent / (1 << l), 1), 0);
+}
+
+/// The texel at integer `coord` of mip level `level` as whatever type
+/// is determined by loading the image at compile time, with `coord`
+/// wrapped into the level's extent by the wrap modes (clip clamps, since
+/// a texel index is not a coordinate), without gamma or filtering.
+/// Levels past `num_levels - 1` read the last level.
+@(pure)
+auto levelTexelFetch(const texture_2d tex, const int level, const int2 coord, const int2 wrap, const int2 uv_tile = int2(0)) {
+  const auto texel_type(*#typeOf(tex.tile_buffers[0]));
+  const auto i(getTileIndex(tex, uv_tile));
+  return texel_type(0) if (i < 0);
+  const auto tileBuffer(tex.tile_buffers[i]);
+  return texel_type(0) if (!tileBuffer);
+  // Walk the contiguous chain down to the level (see the layout note on
+  // 'texture_2d' in 'api.smdl').
+  const int l(#max(0, #min(level, tex.num_levels - 1)));
+  int levelOffset(0);
+  int2 levelExtent(tex.tile_extents[i]);
+  for (int k = 0; k < l; k++) {
+    if (#all(levelExtent <= 1)) break;
+    levelOffset += levelExtent.x * levelExtent.y;
+    levelExtent = #max(levelExtent / 2, 1);
+  }
+  const auto ic(applyWrap(wrap, levelExtent, coord));
+  // See 'texelFetch()': mirror within the level, then index within the row.
+  return tileBuffer[levelOffset + ic.x + levelExtent.x * (levelExtent.y - 1 - ic.y)];
+}
+
+/// The texel at integer `coord` of mip level `level` as `float4`, with
+/// gamma applied and `coord` wrapped into the level's extent by the
+/// wrap modes, but no filtering. On a `max_mipmap` texture this is the
+/// bound a hierarchical march reads. NOTE: This is non-standard!
+@(pure macro)
+export float4 level_texel_float4(
+  const texture_2d tex,
+  const int level,
+  const int2 coord,
+  const wrap_mode wrap_u = wrap_repeat,
+  const wrap_mode wrap_v = wrap_repeat,
+  const int2 uv_tile = int2(0),
+) = applyGamma(tex.gamma, #unpackFloat4(levelTexelFetch(tex, level, coord, int2(int(wrap_u), int(wrap_v)), uv_tile)));
+
+/// The texel at integer `coord` of mip level `level` as `float`, see
+/// `level_texel_float4()`. NOTE: This is non-standard!
+@(pure macro)
+export float level_texel_float(
+  const texture_2d tex,
+  const int level,
+  const int2 coord,
+  const wrap_mode wrap_u = wrap_repeat,
+  const wrap_mode wrap_v = wrap_repeat,
+  const int2 uv_tile = int2(0),
+) = level_texel_float4(tex, level, coord, wrap_u, wrap_v, uv_tile).x;
+
 /// The bilinearly filtered lookup at `coord` as `float4`, honoring the wrap
 /// modes and crop windows, which are ignored for uv-tilesets.
 @(pure)

@@ -24,8 +24,8 @@ static cl::SubCommandGroup subsWithCompileOptions{&subDump, &subList, &subRun,
                                                   &subTest};
 static cl::SubCommandGroup subsWithOutputFile{&subDump, &subDoc};
 static cl::SubCommandGroup subsWithColor{&subTest, &subDoc};
-static cl::SubCommandGroup allSubs{&subDump, &subList,   &subRun,
-                                   &subTest, &subFormat, &subDoc};
+static cl::SubCommandGroup allSubs{&subDump,   &subList, &subRun, &subTest,
+                                   &subFormat, &subDoc};
 
 // NOTE: This is `ZeroOrMore` only so that `smdl doc --builtins` works
 // with no inputs; every other subcommand requires at least one input,

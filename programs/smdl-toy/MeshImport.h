@@ -336,7 +336,7 @@ importObjectUsage(const std::string &fileName, ObjectFileInfo *info = nullptr);
 /// Write one file's listing as a JSON object into `json`, which must be
 /// positioned where a value is expected, inside the `{"files": [...]}`
 /// envelope that the asset preparation tooling reads
-/// (`etc/prepare_asset.py`). The shape is a contract with that tooling.
+/// (`etc/scripts/prepare_asset.py`). The shape is a contract with that tooling.
 /// Pure formatting: the caller does the import and writes the envelope.
 ///
 void objectListingJSON(llvm::json::OStream &json, std::string_view fileName,

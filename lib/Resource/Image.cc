@@ -169,6 +169,7 @@ void Image::clear() {
   mMipLevelsAllowed = true;
   mMipLevelsRequested = false;
   mMipLevelsGenerated = false;
+  mMipFilter = MIP_MEAN;
   mLevelOffsets.assign(1, 0);
   mSizeInBytes = 0;
   mTexels.reset();
@@ -449,6 +450,13 @@ void Image::abandonLoad() noexcept {
 }
 
 void Image::generateMipLevels() noexcept {
+  if (mMipFilter == MIP_MAX)
+    generateMaxMipLevels();
+  else
+    generateMeanMipLevels();
+}
+
+void Image::generateMeanMipLevels() noexcept {
   const auto dataType{mFormat == UINT8     ? STBIR_TYPE_UINT8
                       : mFormat == UINT16  ? STBIR_TYPE_UINT16
                       : mFormat == FLOAT16 ? STBIR_TYPE_HALF_FLOAT
@@ -472,6 +480,71 @@ void Image::generateMipLevels() noexcept {
                  getNumTexelsX(level), getNumTexelsY(level),
                  getNumTexelsX(level) * mTexelSize, layout, dataType,
                  STBIR_EDGE_CLAMP, STBIR_FILTER_BOX);
+  }
+}
+
+void Image::generateMaxMipLevels() noexcept {
+  const auto channelSize{mTexelSize / mNumChannels};
+  // Compare in single precision and copy the winning channel's stored
+  // bytes, so every format reduces without a pack step.
+  auto valueOf{[&](const void *ptr) -> float {
+    switch (mFormat) {
+    case UINT8:
+      return *static_cast<const uint8_t *>(ptr);
+    case UINT16:
+      return *static_cast<const uint16_t *>(ptr);
+    case FLOAT16:
+      return unpackHalf(ptr);
+    default:
+      return *static_cast<const float *>(ptr);
+    }
+  }};
+  auto wrap{[](int i, int n) { return ((i % n) + n) % n; }};
+  for (int level = 1; level < mNumLevels; level++) {
+    const int prevX{getNumTexelsX(level - 1)};
+    const int prevY{getNumTexelsY(level - 1)};
+    const int numX{getNumTexelsX(level)};
+    const int numY{getNumTexelsY(level)};
+    auto prevTexels{mTexels.get() + mLevelOffsets[size_t(level - 1)]};
+    auto texels{mTexels.get() + mLevelOffsets[size_t(level)]};
+    // Level 1 alone adds the one-texel border around the pair it
+    // covers; the higher levels inherit it from their children. The
+    // last texel of an odd extent widens to cover the remainder.
+    const int border{level == 1 ? 1 : 0};
+    for (int j = 0; j < numY; j++) {
+      const int y0{2 * j - border};
+      const int y1{(j == numY - 1 ? prevY : std::min(2 * j + 2, prevY)) +
+                   border};
+      for (int i = 0; i < numX; i++) {
+        const int x0{2 * i - border};
+        const int x1{(i == numX - 1 ? prevX : std::min(2 * i + 2, prevX)) +
+                     border};
+        const uint8_t *best[4]{};
+        float bestValue[4]{};
+        for (int y = y0; y < y1; y++) {
+          for (int x = x0; x < x1; x++) {
+            auto src{prevTexels + size_t(mTexelSize) *
+                                      (size_t(wrap(x, prevX)) +
+                                       size_t(prevX) * size_t(wrap(y, prevY)))};
+            for (int c = 0; c < mNumChannels; c++) {
+              auto ptr{reinterpret_cast<const uint8_t *>(src) +
+                       size_t(c) * size_t(channelSize)};
+              const float value{valueOf(ptr)};
+              if (!best[c] || value > bestValue[c]) {
+                best[c] = ptr;
+                bestValue[c] = value;
+              }
+            }
+          }
+        }
+        auto dst{reinterpret_cast<uint8_t *>(
+            texels +
+            size_t(mTexelSize) * (size_t(i) + size_t(numX) * size_t(j)))};
+        for (int c = 0; c < mNumChannels; c++)
+          std::memcpy(dst + size_t(c) * size_t(channelSize), best[c],
+                      size_t(channelSize));
+      }
+    }
   }
 }
 

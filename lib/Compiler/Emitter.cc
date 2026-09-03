@@ -5,7 +5,6 @@
 #include "smdl/Resource/BSDFMeasurement.h"
 #include "smdl/Support/Filesystem.h"
 #include "smdl/Support/Logger.h"
-#include "smdl/RenderUtil/PBRMaps.h"
 #include "smdl/Support/Parallel.h"
 #include "llvm/Analysis/ConstantFolding.h"
 #include "llvm/Support/Format.h"
@@ -2394,7 +2393,6 @@ Value Emitter::emitIntrinsic(IntrinsicID intrinsicID, const ArgumentList &args,
   case IntrinsicID::LoadTexture3D:
   case IntrinsicID::LoadTextureCube:
   case IntrinsicID::LoadTexturePtex:
-  case IntrinsicID::LoadPBRMaps:
   case IntrinsicID::LoadBSDFMeasurement:
   case IntrinsicID::LoadLightProfile:
   case IntrinsicID::LoadSpectralCurve:
@@ -2940,45 +2938,23 @@ Value Emitter::emitIntrinsicLoad(IntrinsicID intrinsicID,
     return std::make_pair(std::string(args[0].value.getComptimeString()),
                           rvalue(args[1].value));
   }};
-  // The third argument must be compile-time, unlike the gamma: it is
-  // baked into the texture as its level count at emission time, which
-  // no runtime value can influence.
-  auto expectOneComptimeStringOneIntAndOneComptimeBool{[&]() {
-    if (!(args.size() == 3 &&                 //
+  // The mip requests must be compile-time, unlike the gamma: they are
+  // baked into the texture as its level count and chain kind at
+  // emission time, which no runtime value can influence.
+  auto expectOneComptimeStringOneIntAndTwoComptimeBools{[&]() {
+    if (!(args.size() == 4 &&                 //
           args[0].value.isComptimeString() && //
           args[1].value.type->isArithmeticScalarInt() &&
-          args[2].value.isComptimeInt()))
+          args[2].value.isComptimeInt() && //
+          args[3].value.isComptimeInt()))
       srcLoc.throwError("intrinsic ", Quoted(name),
                         " expects 1 compile-time string argument, 1 int "
-                        "argument, and 1 compile-time bool argument");
+                        "argument, and 2 compile-time bool arguments");
     return std::make_tuple(std::string(args[0].value.getComptimeString()),
                            rvalue(args[1].value),
-                           args[2].value.getComptimeInt() != 0);
+                           args[2].value.getComptimeInt() != 0,
+                           args[3].value.getComptimeInt() != 0);
   }};
-  // Every flag must be compile-time for the same reason: together they
-  // decide which images are loaded at all, which fields the resulting
-  // struct has, and what each texture bakes for its level count. The
-  // names are passed in so that the diagnostic can blame the parameter
-  // the user actually wrote instead of an argument position.
-  auto expectOneComptimeStringAndComptimeBools{
-      [&](std::initializer_list<const char *> flagNames) {
-        if (!(args.size() == 1 + flagNames.size() &&
-              args[0].value.isComptimeString()))
-          srcLoc.throwError("intrinsic ", Quoted(name),
-                            " expects 1 compile-time string argument and ",
-                            flagNames.size(), " compile-time bool arguments");
-        auto flags{llvm::SmallVector<bool, 8>{}};
-        auto argIndex{size_t(1)};
-        for (auto flagName : flagNames) {
-          const auto &arg{args[argIndex++]};
-          if (!arg.value.isComptimeInt())
-            srcLoc.throwError("intrinsic ", Quoted(name), " argument ",
-                              Quoted(flagName), " must be compile-time");
-          flags.push_back(arg.value.getComptimeInt() != 0);
-        }
-        return std::make_pair(std::string(args[0].value.getComptimeString()),
-                              std::move(flags));
-      }};
   // The '#load_*' resource intrinsics share one locate-or-warn
   // prologue: a file that cannot be found is a warning, and the
   // resource type is default-constructed.
@@ -3014,8 +2990,10 @@ Value Emitter::emitIntrinsicLoad(IntrinsicID intrinsicID,
   switch (intrinsicID) {
   case IntrinsicID::LoadTexture2D: {
     auto texture2DType{context.getTexture2DType()};
-    auto [fileName, valueGammaAsInt, withMipLevels] =
-        expectOneComptimeStringOneIntAndOneComptimeBool();
+    auto [fileName, valueGammaAsInt, useMipmap, maxMipmap] =
+        expectOneComptimeStringOneIntAndTwoComptimeBools();
+    const bool withMipLevels{useMipmap || maxMipmap};
+    const auto mipFilter{maxMipmap ? Image::MIP_MAX : Image::MIP_MEAN};
     auto resolvedImagePaths{context.locateImages(fileName)};
     if (resolvedImagePaths.empty()) {
       context.compiler.logResourceWarningOnce(
@@ -3029,8 +3007,10 @@ Value Emitter::emitIntrinsicLoad(IntrinsicID intrinsicID,
     for (auto &[tileIndexU, tileIndexV, filePath] : resolvedImagePaths) {
       tileCountU = std::max(tileCountU, tileIndexU + 1);
       tileCountV = std::max(tileCountV, tileIndexV + 1);
-      images.push_back(
-          &context.compiler.loadImage(filePath, srcLoc, withMipLevels));
+      // The user's call site, not the builtin constructor's: the load
+      // errors and the mip chain requests are reported against it.
+      images.push_back(&context.compiler.loadImage(
+          filePath, resourceSourceLocation(srcLoc), withMipLevels, mipFilter));
       if (images.back()->getFormat() != images.front()->getFormat() ||
           images.back()->getNumChannels() != images.front()->getNumChannels()) {
         context.compiler.logResourceWarningOnce(
@@ -3077,6 +3057,8 @@ Value Emitter::emitIntrinsicLoad(IntrinsicID intrinsicID,
         {Argument{"tile_count", context.getComptimeVector(
                                     int2(int(tileCountU), int(tileCountV)))},
          Argument{"num_levels", context.getComptimeInt(numLevels)},
+         Argument{"max_mipmap",
+                  context.getComptimeBool(maxMipmap && numLevels > 1)},
          Argument{"tile_extents", valueTileExtents},
          Argument{"tile_buffers", valueTileBuffers},
          Argument{"gamma", valueGammaAsInt}},
@@ -3158,161 +3140,6 @@ Value Emitter::emitIntrinsicLoad(IntrinsicID intrinsicID,
                          Argument{"gamma", fileNameAndGamma.second}},
                         srcLoc);
         });
-  }
-  case IntrinsicID::LoadPBRMaps: {
-    // The 'pbr_maps' and 'pbr_map' structs live in the non-standard
-    // '::extras::pbr' module rather than the keyword-seeded 'api'
-    // module, precisely so they do not masquerade as official MDL.
-    // This intrinsic only ever appears in the 'pbr_maps' constructor
-    // in that same module, so both types resolve by name right here.
-    auto resolveStructType{[&](std::string_view typeName) {
-      return static_cast<StructType *>(
-          resolveIdentifier(typeName, srcLoc)
-              .getComptimeMetaType(context, srcLoc));
-    }};
-    auto pbrMapsType{resolveStructType("pbr_maps")};
-    auto pbrMapType{resolveStructType("pbr_map")};
-    auto [fileName, flags] = expectOneComptimeStringAndComptimeBools(
-        {"use_mipmap", "no_basecolor", "no_class_map", "no_height",
-         "no_parallax"});
-    const bool useMipmap{flags[0]};
-    const bool noBasecolor{flags[1]};
-    const bool noClassMap{flags[2]};
-    const bool noHeight{flags[3]};
-    // Dropping the height map drops the relief pipeline with it, so
-    // 'no_height' subsumes 'no_parallax' and the effective flag is what
-    // gets baked below.
-    const bool noParallax{flags[4] || noHeight};
-    auto resolvedPath{context.locateDirOrFile(fileName)};
-    if (!resolvedPath) {
-      context.compiler.logResourceWarningOnce(
-          resourceSourceLocation(srcLoc), fileName,
-          concat("cannot load ", Quoted(fileName),
-                 ": file or directory not found"));
-      return invoke(pbrMapsType, {}, srcLoc);
-    }
-    // Once the pack path is located, a broken pack is an authoring
-    // bug: an ambiguous or absent '.pbr' manifest and a manifest
-    // that fails to parse are errors, not warnings.
-    const PBRMaps *manifest{};
-    auto manifestFileName{std::string()};
-    try {
-      manifestFileName = PBRMaps::resolveFileName(*resolvedPath);
-      manifest = &context.compiler.loadPBRMaps(manifestFileName, srcLoc);
-    } catch (const Error &error) {
-      srcLoc.throwError(error.message);
-      return invoke(pbrMapsType, {}, srcLoc); // Unreachable
-    }
-    // An ambiguous manifest still loads, so report what it said and
-    // which reading won. The key is the manifest and the message
-    // together, so a manifest with two independent warnings reports
-    // both, while a pack loaded by ten materials warns once.
-    for (const auto &warning : manifest->warnings)
-      context.compiler.logResourceWarningOnce(
-          resourceSourceLocation(srcLoc),
-          concat(manifestFileName, ": ", warning), warning);
-    auto manifestDirName{parentPathOf(manifestFileName)};
-    auto mapsArgs{ArgumentList{}};
-    if (!manifest->name.empty())
-      mapsArgs.push_back(
-          Argument{"name", context.getComptimeString(manifest->name)});
-    if (manifest->physicalExtent)
-      mapsArgs.push_back(Argument{
-          "physical_extent",
-          context.getComptimeVector(float2((*manifest->physicalExtent)[0],
-                                           (*manifest->physicalExtent)[1]))});
-    if (manifest->physicalRelief)
-      mapsArgs.push_back(
-          Argument{"physical_relief",
-                   context.getComptimeFloat(*manifest->physicalRelief)});
-    // The resolved UV-space relief scale, from either spelling: the
-    // one relief quantity the builtin module consumes.
-    if (auto reliefScale{manifest->effectiveReliefScale()})
-      mapsArgs.push_back(
-          Argument{"relief_scale", context.getComptimeFloat(*reliefScale)});
-    mapsArgs.push_back(Argument{
-        "hex_rotation", context.getComptimeFloat(manifest->hexRotation)});
-    // The effective relief switch, which the module reads to gate the
-    // whole relief pipeline. The height map may well be present and
-    // sampled anyway; only the march, the horizon slopes, and the
-    // height-implied normal are off.
-    mapsArgs.push_back(
-        Argument{"no_parallax", context.getComptimeBool(noParallax)});
-    // Build one 'pbr_map' per declared map: a single-tile
-    // 'texture_2d' through the image cache (so a file shared between
-    // roles or with a plain 'texture_2d' decodes exactly once), plus
-    // the folded storage facts. A map whose image fails to load stays
-    // void, and 'loadImage' has warned.
-    auto loadMap{[&](PBRMaps::Role role, std::string_view fieldName) -> bool {
-      const auto &map{(*manifest)[role]};
-      if (!map) return false;
-      // Height and horizon maps never read mip levels, whatever
-      // 'use_mipmap' says: box filtering is wrong for both (averaged
-      // heights flatten the relief the parallax march and
-      // finite-difference normals reconstruct; a horizon tangent's
-      // meaningful minification is a max, not a mean), so 'num_levels'
-      // bakes as 1 and every lod-aware lookup stays at level 0. The
-      // image itself may still carry a chain if something else
-      // references the same file and asks for one, which costs nothing
-      // here.
-      auto withMipLevels{useMipmap && role != PBRMaps::ROLE_HEIGHT &&
-                         role != PBRMaps::ROLE_HORIZON};
-      auto &image{context.compiler.loadImage(
-          joinPaths(manifestDirName, map.file), srcLoc, withMipLevels)};
-      if (!image.getTexels()) return false;
-      auto texelPtrType{texelPtrTypeOf(image)};
-      auto numLevels{withMipLevels ? image.getNumLevels() : 1};
-      auto valueTileExtents{
-          Value::zero(context.getArrayType(context.getIntType(2), 1))};
-      auto valueTileBuffers{Value::zero(context.getArrayType(texelPtrType, 1))};
-      valueTileExtents =
-          insert(valueTileExtents,
-                 context.getComptimeVector(int2(int(image.getNumTexelsX()),
-                                                int(image.getNumTexelsY()))),
-                 0, srcLoc);
-      valueTileBuffers = insert(
-          valueTileBuffers,
-          context.getComptimePtr(texelPtrType, image.getTexels()), 0, srcLoc);
-      auto valueTex{invoke(
-          context.getTexture2DType(),
-          {Argument{"tile_count", context.getComptimeVector(int2(1, 1))},
-           Argument{"num_levels", context.getComptimeInt(numLevels)},
-           Argument{"tile_extents", valueTileExtents},
-           Argument{"tile_buffers", valueTileBuffers},
-           Argument{"gamma",
-                    context.getComptimeInt(map.effectiveColorSpace() ==
-                                                   PBRMaps::COLOR_SPACE_SRGB
-                                               ? 1
-                                               : 0)}},
-          srcLoc)};
-      auto convention{0};
-      if (role == PBRMaps::ROLE_NORMAL) convention = int(map.normalConvention);
-      mapsArgs.push_back(Argument{
-          fieldName,
-          invoke(pbrMapType,
-                 {Argument{"tex", valueTex},
-                  Argument{"channel", context.getComptimeInt(int(map.channel))},
-                  Argument{"convention", context.getComptimeInt(convention)},
-                  Argument{"max_slope", context.getComptimeFloat(map.maxSlope)},
-                  Argument{"factor", context.getComptimeFloat(map.factor)},
-                  Argument{"range", context.getComptimeVector(
-                                        float2(map.range[0], map.range[1]))}},
-                 srcLoc)});
-      return true;
-    }};
-    // A map the call site opted out of is simply not loaded, so the
-    // field stays void and every presence gate in the module reads the
-    // set exactly as if the manifest had never declared it. The horizon
-    // map goes with the relief pipeline: nothing else consumes it.
-    if (!noBasecolor) loadMap(PBRMaps::ROLE_BASECOLOR, "basecolor");
-    loadMap(PBRMaps::ROLE_NORMAL, "normal");
-    loadMap(PBRMaps::ROLE_ROUGHNESS, "roughness");
-    loadMap(PBRMaps::ROLE_METALLIC, "metallic");
-    if (!noHeight) loadMap(PBRMaps::ROLE_HEIGHT, "height");
-    loadMap(PBRMaps::ROLE_EMISSION, "emission");
-    if (!noParallax) loadMap(PBRMaps::ROLE_HORIZON, "horizon");
-    if (!noClassMap) loadMap(PBRMaps::ROLE_CLASS, "class_map");
-    return invoke(pbrMapsType, mapsArgs, srcLoc);
   }
   case IntrinsicID::LoadBSDFMeasurement: {
     auto bsdfMeasurementType{context.getBSDFMeasurementType()};

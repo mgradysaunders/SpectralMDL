@@ -1,5 +1,6 @@
 #include "doctest.h"
 
+#include <algorithm>
 #include <cmath>
 #include <filesystem>
 #include <fstream>
@@ -111,6 +112,95 @@ TEST_CASE("Image") {
           CHECK(value >= 10.0f / 255.0f);
           CHECK(value <= 150.0f / 255.0f);
         }
+  }
+  SUBCASE("Maximum mip chain") {
+    // 7x5 gray, odd on both axes, with the maxima placed so that the
+    // border and the widened last cells matter: texel (I, J) of level l
+    // must be the maximum over level 0 texels [I << l, (I + 1) << l),
+    // widened to the edge for the last texel, plus a one-texel wrapped
+    // border on every side.
+    const int numX{7}, numY{5};
+    const uint8_t texels[35] = {200, 10,  20,  30,  40,  50,  60,  //
+                                70,  80,  90,  100, 110, 120, 130, //
+                                140, 150, 160, 170, 180, 190, 255, //
+                                5,   15,  25,  35,  45,  55,  65,  //
+                                75,  85,  95,  105, 115, 125, 135};
+    auto fileName{(tmpDir / "max.png").string()};
+    REQUIRE(!smdl::write8bitImage(fileName, numX, numY, 1, texels));
+    smdl::Image image{};
+    REQUIRE(!image.startLoad(fileName));
+    CHECK(image.requestMipLevels(smdl::Image::MIP_MAX));
+    CHECK(image.getMipFilter() == smdl::Image::MIP_MAX);
+    // Asking again for the same kind is a no-op; the other kind is
+    // refused and changes nothing.
+    CHECK(image.requestMipLevels(smdl::Image::MIP_MAX));
+    CHECK(!image.requestMipLevels(smdl::Image::MIP_MEAN));
+    CHECK(image.getMipFilter() == smdl::Image::MIP_MAX);
+    CHECK(image.getNumLevels() == 3);
+    image.finishLoad();
+    auto wrap{[](int i, int n) { return ((i % n) + n) % n; }};
+    for (int level = 1; level < image.getNumLevels(); level++) {
+      const int levelX{image.getNumTexelsX(level)};
+      const int levelY{image.getNumTexelsY(level)};
+      for (int j = 0; j < levelY; j++) {
+        for (int i = 0; i < levelX; i++) {
+          const int x0{i << level};
+          const int x1{i == levelX - 1 ? numX : (i + 1) << level};
+          const int y0{j << level};
+          const int y1{j == levelY - 1 ? numY : (j + 1) << level};
+          int expected{0};
+          for (int y = y0 - 1; y <= y1; y++)
+            for (int x = x0 - 1; x <= x1; x++)
+              expected = std::max(
+                  expected, int(texels[wrap(x, numX) + numX * wrap(y, numY)]));
+          CAPTURE(level);
+          CAPTURE(i);
+          CAPTURE(j);
+          CHECK(image.fetch(i, j, level)[0] == float(expected) / 255.0f);
+        }
+      }
+    }
+    // Level 1 texel (1, 0) covers texels 2..3 by 0..1 plus the border,
+    // which reaches the 180 at (4, 2) but not the 200 at (0, 0); the last
+    // texel of level 1 in X covers texels 4..6, where the 255 at (6, 2)
+    // sits inside its border.
+    CHECK(image.fetch(1, 0, 1)[0] == 180.0f / 255.0f);
+    CHECK(image.fetch(2, 0, 1)[0] == 1.0f);
+    CHECK(image.fetch(0, 0, 2)[0] == 1.0f);
+  }
+  SUBCASE("Maximum mip chain reduces per channel") {
+    // 2x2 RGBA whose per-channel maxima sit in four different texels.
+    const uint8_t texels[16] = {200, 1,   2,   3,  //
+                                4,   210, 6,   7,  //
+                                8,   9,   220, 11, //
+                                12,  13,  14,  230};
+    auto fileName{(tmpDir / "max_rgba.png").string()};
+    REQUIRE(!smdl::write8bitImage(fileName, 2, 2, 4, texels));
+    smdl::Image image{};
+    REQUIRE(!image.startLoad(fileName));
+    CHECK(image.requestMipLevels(smdl::Image::MIP_MAX));
+    image.finishLoad();
+    auto texel{image.fetch(0, 0, 1)};
+    CHECK(texel[0] == 200.0f / 255.0f);
+    CHECK(texel[1] == 210.0f / 255.0f);
+    CHECK(texel[2] == 220.0f / 255.0f);
+    CHECK(texel[3] == 230.0f / 255.0f);
+  }
+  SUBCASE("Maximum mip chain of a float image") {
+    // The reduction copies stored bytes, so a float image must come back
+    // with its exact values, including ones beyond [0, 1].
+    const float texels[8] = {0.25f, -1.0f, 2.5f,  0.75f,
+                             0.5f,  0.5f,  1.25f, 0.0f};
+    auto fileName{(tmpDir / "max.exr").string()};
+    REQUIRE(!smdl::writeFloatImage(fileName, 4, 2, 1, texels));
+    smdl::Image image{};
+    REQUIRE(!image.startLoad(fileName));
+    CHECK(image.requestMipLevels(smdl::Image::MIP_MAX));
+    image.finishLoad();
+    CHECK(image.getNumLevels() == 3);
+    CHECK(image.fetch(0, 0, 1)[0] == 2.5f);
+    CHECK(image.fetch(1, 0, 1)[0] == 2.5f);
+    CHECK(image.fetch(0, 0, 2)[0] == 2.5f);
   }
   SUBCASE("Mip levels are opt in") {
     const uint8_t texels[16] = {0,   16,  32,  48,  //

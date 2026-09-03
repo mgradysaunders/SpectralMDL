@@ -191,3 +191,270 @@ unit_test "Parallax march refinement and jitter" {
     #assert(math::length(gotRamp - expectRamp) < 1e-5);
   }
 }
+
+// The hierarchical march over a maximum mip chain. The ridge fixture is a
+// 16x16 field at height 0.2 with a one-texel wall at x = 8 (height 1.0),
+// so along u the bilinear field ramps from 0.2 at texel center 7.5 to 1.0
+// at 8.5 and back down to 0.2 at 9.5. A ray entering at texel X0 with
+// slope s (UV per unit depth) sits at X(l) = X0 + 16 s l and height 1 - l,
+// and meets the up-ramp where 1 - l = 0.2 + 0.8 (X(l) - 7.5).
+
+unit_test "Maximum chain bounds the ridge" {
+  const auto ridge = texture_2d("relief_fixture/ridge_16.png", tex::gamma_linear, max_mipmap: true);
+  #assert(ridge.max_mipmap);
+  #assert(ridge.num_levels == 5);
+  #assert(#all(tex::level_extent(ridge, 1) == int2(8)));
+  #assert(#all(tex::level_extent(ridge, 4) == int2(1)));
+  // Level 1 cell c covers texels [2c - 1, 2c + 2]: cells 3 and 4 see the
+  // wall at texel 8, cells 2 and 5 do not.
+  #assert(tex::level_texel_float(ridge, 1, int2(3, 2)) == 1.0);
+  #assert(tex::level_texel_float(ridge, 1, int2(4, 2)) == 1.0);
+  #assert(math::abs(tex::level_texel_float(ridge, 1, int2(2, 2)) - 0.2) < 1e-6);
+  #assert(math::abs(tex::level_texel_float(ridge, 1, int2(5, 2)) - 0.2) < 1e-6);
+  // Level 2 cell c covers [4c - 1, 4c + 4]; the wrapped border of the
+  // last cell reaches texel 0, which is flat.
+  #assert(tex::level_texel_float(ridge, 2, int2(1, 0)) == 1.0);
+  #assert(tex::level_texel_float(ridge, 2, int2(2, 0)) == 1.0);
+  #assert(math::abs(tex::level_texel_float(ridge, 2, int2(0, 0)) - 0.2) < 1e-6);
+  #assert(math::abs(tex::level_texel_float(ridge, 2, int2(3, 0)) - 0.2) < 1e-6);
+  // The coarsest levels see the wall everywhere, and the cell index wraps.
+  #assert(tex::level_texel_float(ridge, 3, int2(0, 0)) == 1.0);
+  #assert(tex::level_texel_float(ridge, 4, int2(7, -3)) == 1.0);
+  #assert(tex::level_texel_float(ridge, 1, int2(11, 0)) == tex::level_texel_float(ridge, 1, int2(3, 0)));
+  // Level 0 is the image itself.
+  #assert(tex::level_texel_float(ridge, 0, int2(8, 5)) == 1.0);
+  #assert(math::abs(tex::level_texel_float(ridge, 0, int2(7, 5)) - 0.2) < 1e-6);
+}
+
+unit_test "Hierarchical march hits the ridge where the layer march tunnels" {
+  const auto ridge = texture_2d("relief_fixture/ridge_16.png", tex::gamma_linear, max_mipmap: true);
+  const float scale = 0.5;
+  // From X0 = 4 with s = 2 (view.xy / view.z = (-4, 0), so the surface
+  // ray runs toward +u): the up-ramp is met at l = 3.6 / 26.6.
+  const float2 uv = float2(0.25, 0.5);
+  const float3 v = math::normalize(float3(-4.0, 0.0, 1.0));
+  const float l_star = 3.6 / 26.6;
+  const float2 got = parallax::parallax_offset_max(ridge, uv, v, scale);
+  #assert(math::abs(got.x - (uv.x + 2.0 * l_star)) < 1e-4);
+  #assert(got.y == uv.y);
+  // Eight fixed layers step clean over the two-texel wall and land on
+  // its next repetition, one full tile later.
+  const auto field = \(const float2 c) = tex::lookup_float(ridge, c);
+  const float2 layered = parallax::parallax_offset_with(field, uv, v, scale, 8, 8);
+  #assert(layered.x > uv.x + 1.0);
+  // A shallower ray (s = 1/2) reaches the ramp deeper, at l = 3.6 / 7.4.
+  const float3 v_half = math::normalize(float3(-1.0, 0.0, 1.0));
+  const float2 got_half = parallax::parallax_offset_max(ridge, uv, v_half, scale);
+  #assert(math::abs(got_half.x - (uv.x + 0.5 * 3.6 / 7.4)) < 1e-4);
+  // A diagonal ray crosses a v cell per u cell and meets the same wall at
+  // the same depth, since the field is constant along v.
+  const float3 v_diag = math::normalize(float3(-4.0, -4.0, 1.0));
+  const float2 got_diag = parallax::parallax_offset_max(ridge, uv, v_diag, scale);
+  #assert(math::abs(got_diag.x - (uv.x + 2.0 * l_star)) < 1e-4);
+  #assert(math::abs(got_diag.y - (uv.y + 2.0 * l_star)) < 1e-4);
+  // A ray toward -u from X0 = 12 meets the down-ramp (texel centers 9.5
+  // to 8.5) where 1 - l = 0.2 + 0.8 (9.5 - (12 - 32 l)).
+  const float3 v_back = math::normalize(float3(4.0, 0.0, 1.0));
+  const float2 got_back = parallax::parallax_offset_max(ridge, float2(0.75, 0.5), v_back, scale);
+  #assert(math::abs(got_back.x - (0.75 - 2.0 * 2.8 / 26.6)) < 1e-4);
+}
+
+unit_test "Hierarchical march wraps and clamps" {
+  const auto ridge = texture_2d("relief_fixture/ridge_16.png", tex::gamma_linear, max_mipmap: true);
+  const float scale = 0.5;
+  const float3 v = math::normalize(float3(-4.0, 0.0, 1.0));
+  // From X0 = 14.4 under repeat the wall is met one tile over, where
+  // 1 - l = 0.2 + 0.8 (14.4 + 32 l - 23.5).
+  const float2 uv = float2(0.9, 0.5);
+  const float2 wrapped = parallax::parallax_offset_max(ridge, uv, v, scale);
+  #assert(math::abs(wrapped.x - (uv.x + 2.0 * 8.08 / 26.6)) < 1e-4);
+  // Under clamp the field past the edge holds the edge texel's 0.2, so
+  // the ray bottoms out on the flat at l = 0.8.
+  const float2 clamped = parallax::parallax_offset_max(ridge, uv, v, scale, tex::wrap_clamp, tex::wrap_clamp);
+  #assert(math::abs(clamped.x - (uv.x + 2.0 * 0.8)) < 1e-4);
+  // Starting outside the image under clamp, the ray crosses the flat edge
+  // region, enters, and meets the wall as if it had started inside:
+  // X(l) = -4 + 32 l meets the up-ramp where 1 - l = 0.2 + 0.8 (32 l - 11.5).
+  const float2 outside = float2(-0.25, 0.5);
+  const float2 entered = parallax::parallax_offset_max(ridge, outside, v, scale, tex::wrap_clamp, tex::wrap_clamp);
+  #assert(math::abs(entered.x - (outside.x + 2.0 * 10.0 / 26.6)) < 1e-4);
+}
+
+unit_test "Hierarchical march finds the first crossing" {
+  // On a rough field with no closed form, the march must return a point
+  // on the surface that no earlier point of the ray is below: the
+  // definition of the first crossing, checked by dense sampling.
+  const auto bumps = texture_2d("relief_fixture/bumps_32.png", tex::gamma_linear, max_mipmap: true);
+  #assert(bumps.max_mipmap);
+  const auto field = \(const float2 c) = math::saturate(tex::lookup_float(bumps, c));
+  // smdl format off
+  const auto views = auto[](
+    math::normalize(float3(-4.0, 1.0, 1.0)), math::normalize(float3(0.3, -0.7, 0.8)),
+    math::normalize(float3(2.0, 2.0, 0.3)), math::normalize(float3(-0.05, 0.02, 1.0)),
+    math::normalize(float3(7.0, -3.0, 1.0)), math::normalize(float3(0.0, 1.0, 0.5)));
+  const auto coords = auto[](float2(0.1, 0.2), float2(0.53, 0.91), float2(0.99, 0.5), float2(0.37, 0.005));
+  // smdl format on
+  const float scale = 0.3;
+  for (int k = 0; k < 6; k++) {
+    for (int j = 0; j < 4; j++) {
+      const float3 v = views[k];
+      const float2 uv = coords[j];
+      const float2 got = parallax::parallax_offset_max(bumps, uv, v, scale);
+      // Recover the depth from the offset (the slope is what the march
+      // used, cap included).
+      float2 slope = v.xy / #max(v.z, parallax::PARALLAX_MIN_VIEW_Z);
+      const float slope_len = math::length(slope);
+      slope *= slope_len > parallax::PARALLAX_MAX_SLOPE ? parallax::PARALLAX_MAX_SLOPE / slope_len : 1.0;
+      slope *= scale;
+      const float l_star = math::length(uv - got) / math::length(slope);
+      #assert(l_star >= 0.0);
+      #assert(l_star <= 1.0 + 1e-6);
+      // On the surface: the field at the hit equals the ray height there,
+      // within the patch solve's tolerance.
+      #assert(math::abs(field(got) - (1.0 - l_star)) < 2e-3);
+      // And above it everywhere before: the field never exceeds the ray.
+      for (int i = 0; i < 400; i++) {
+        const float l = l_star * (float(i) + 0.5) / 400.0;
+        #assert(field(uv - slope * l) < 1.0 - l + 2e-3);
+      }
+    }
+  }
+}
+
+unit_test "Hierarchical march guards" {
+  const auto ridge = texture_2d("relief_fixture/ridge_16.png", tex::gamma_linear, max_mipmap: true);
+  const float2 uv = float2(0.3, 0.6);
+  // The same guards as the layer march: backfaces, non-positive scale, an
+  // invalid texture, and a surface already at its reference height.
+  #assert(#all(parallax::parallax_offset_max(ridge, uv, float3(0.0, 0.0, -1.0), 0.1) == uv));
+  #assert(#all(parallax::parallax_offset_max(ridge, uv, float3(0.0, 0.0, 1.0), 0.0) == uv));
+  #assert(#all(parallax::parallax_offset_max(ridge, uv, math::normalize(float3(0.4, 0.0, 0.8)), -0.1) == uv));
+  #assert(#all(parallax::parallax_offset_max(texture_2d(), uv, math::normalize(float3(0.4, 0.0, 0.8)), 0.1) == uv));
+  const float2 on_wall = float2(8.5 / 16.0, 0.5);
+  #assert(#all(parallax::parallax_offset_max(ridge, on_wall, math::normalize(float3(0.4, 0.0, 0.8)), 0.1) == on_wall));
+  // Straight down there is no offset: the ray bottoms out on the flat at
+  // depth 0.8 under the entry point.
+  #assert(#all(parallax::parallax_offset_max(ridge, uv, float3(0.0, 0.0, 1.0), 0.1) == uv));
+  // A capped traversal stops above the surface, never below it.
+  const float3 v = math::normalize(float3(-4.0, 0.0, 1.0));
+  const float2 capped = parallax::parallax_offset_max(ridge, float2(0.25, 0.5), v, 0.5, max_steps: 2);
+  const float l_capped = (capped.x - 0.25) / 2.0;
+  #assert(l_capped >= 0.0);
+  #assert(l_capped <= 3.6 / 26.6 + 1e-6);
+}
+
+unit_test "parallax_uv selects the march by the chain" {
+  // A populated direction with the identity tangent frame of the test
+  // state: the view vector is the negated direction.
+  const float3 v = math::normalize(float3(-4.0, 0.0, 1.0));
+  $state.direction = -v;
+  defer $state.direction = float3(0.0);
+  #assert(#all(parallax::view_vector() ~== |1e-6| v));
+  const float2 uv = float2(0.25, 0.5);
+  const float scale = 0.5;
+  const auto ridge_max = texture_2d("relief_fixture/ridge_16.png", tex::gamma_linear, max_mipmap: true);
+  // An image holds one chain, so the mean-chain texture is over a file
+  // no test wants a maximum chain for.
+  const auto steps_mean = texture_2d("4x4.png", tex::gamma_linear, use_mipmap: true);
+  #assert(!steps_mean.max_mipmap);
+  // A maximum chain takes the hierarchical march.
+  #assert(#all(parallax::parallax_uv(ridge_max, scale, uv) == parallax::parallax_offset_max(ridge_max, uv, v, scale)));
+  // A mean chain takes the layer march with the given layer parameters.
+  const auto field = \(const float2 c) = tex::lookup_float(steps_mean, c);
+  #assert(#all(parallax::parallax_uv(steps_mean, scale, uv, min_steps: 4, max_steps: 4) == parallax::parallax_offset_with(field, uv, v, scale, 4, 4)));
+  // So does a maximum chain under a wrap mode the traversal does not take.
+  const auto field_mirror = \(const float2 c) = tex::lookup_float(ridge_max, c, tex::wrap_mirrored_repeat, tex::wrap_mirrored_repeat);
+  #assert(#all(parallax::parallax_uv(ridge_max, scale, uv, wrap_u: tex::wrap_mirrored_repeat, wrap_v: tex::wrap_mirrored_repeat) == parallax::parallax_offset_with(field_mirror, uv, v, scale)));
+}
+
+// The light-side march: `relief_visible()` runs the same traversal upward
+// from the surface point, so a light direction is either clear of the
+// relief or not. On the ridge, from the flat at texel 4 toward the wall,
+// the ray starts at height 0.2 + bias and rises e / 8 per texel for a
+// light at elevation slope e (scale 0.5, 8 texels per unit height at
+// e = 1), so it clears the top of the wall 4.5 texels away exactly when
+// 0.22 + 4.5 e / 8 > 1, i.e. above e = 1.3867.
+
+unit_test "Relief visibility on the ridge" {
+  const auto ridge = texture_2d("relief_fixture/ridge_16.png", tex::gamma_linear, max_mipmap: true);
+  const float2 uv = float2(0.25, 0.5);
+  const float scale = 0.5;
+  const auto toward = \(const float e) = math::normalize(float3(1.0, 0.0, e));
+  const auto away = \(const float e) = math::normalize(float3(-1.0, 0.0, e));
+  #assert(!parallax::relief_visible(ridge, uv, toward(1.3), scale));
+  #assert(parallax::relief_visible(ridge, uv, toward(1.5), scale));
+  // Away from the wall the field repeats: the previous wall's far face
+  // is 10.5 texels off, met by a grazing light and topped out over by a
+  // higher one.
+  #assert(!parallax::relief_visible(ridge, uv, away(0.3), scale));
+  #assert(parallax::relief_visible(ridge, uv, away(1.0), scale));
+  // Along V the field is constant; straight up nothing occludes.
+  #assert(parallax::relief_visible(ridge, uv, math::normalize(float3(0.0, 1.0, 0.3)), scale));
+  #assert(parallax::relief_visible(ridge, uv, float3(0.0, 0.0, 1.0), scale));
+  // Just past the wall, a light from over the wall is blocked at once.
+  #assert(!parallax::relief_visible(ridge, float2(10.0 / 16.0, 0.5), away(1.0), scale));
+  #assert(parallax::relief_visible(ridge, float2(10.0 / 16.0, 0.5), toward(1.0), scale));
+  // A larger bias lifts the start of the ray, so the threshold moves down.
+  #assert(parallax::relief_visible(ridge, uv, toward(1.3), scale, bias: 0.1));
+  // Under clamp the field past the edge is flat, so from near the edge
+  // toward it nothing occludes, while the wall behind still does.
+  const float2 edge = float2(0.9, 0.5);
+  #assert(parallax::relief_visible(ridge, edge, toward(0.2), scale, tex::wrap_clamp, tex::wrap_clamp));
+  #assert(!parallax::relief_visible(ridge, edge, toward(0.2), scale));
+  #assert(!parallax::relief_visible(ridge, edge, away(0.5), scale, tex::wrap_clamp, tex::wrap_clamp));
+  // The guards: below the tangent plane, non-positive scale or bias, an
+  // invalid texture or one without a maximum chain, and a point at the
+  // un-displaced surface are all visible.
+  #assert(parallax::relief_visible(ridge, uv, float3(1.0, 0.0, 0.0), scale));
+  #assert(parallax::relief_visible(ridge, uv, math::normalize(float3(1.0, 0.0, -0.5)), scale));
+  #assert(parallax::relief_visible(ridge, uv, toward(0.5), 0.0));
+  #assert(parallax::relief_visible(ridge, uv, toward(0.5), scale, bias: 0.0));
+  #assert(parallax::relief_visible(texture_2d(), uv, toward(0.5), scale));
+  #assert(parallax::relief_visible(texture_2d("relief_fixture/ridge_16.png", tex::gamma_linear), uv, toward(0.5), scale));
+  #assert(parallax::relief_visible(ridge, float2(8.5 / 16.0, 0.5), toward(0.5), scale));
+}
+
+unit_test "Relief visibility agrees with dense sampling" {
+  // On the rough field, the answer must agree with a dense sample of the
+  // shadow ray wherever that sample is decisive: occluded when the field
+  // clearly rises above the ray somewhere, visible when it clearly never
+  // does.
+  const auto bumps = texture_2d("relief_fixture/bumps_32.png", tex::gamma_linear, max_mipmap: true);
+  const auto field = \(const float2 c) = math::saturate(tex::lookup_float(bumps, c));
+  const float scale = 0.3;
+  const float bias = 0.02;
+  int decided = 0;
+  int occluded = 0;
+  for (int a = 0; a < 12; a++) {
+    for (int e = 1; e <= 5; e++) {
+      for (int j = 0; j < 3; j++) {
+        const float phi = 2.0 * $PI * (float(a) + 0.5) / 12.0;
+        const float3 wi = math::normalize(float3(math::cos(phi), math::sin(phi), 0.25 * e));
+        const float2 uv = float2(0.13 + 0.3 * j, 0.71 - 0.2 * j);
+        const bool visible = parallax::relief_visible(bumps, uv, wi, scale, bias: bias);
+        float2 slope = wi.xy / #max(wi.z, parallax::PARALLAX_MIN_VIEW_Z);
+        const float slope_len = math::length(slope);
+        slope *= slope_len > parallax::PARALLAX_MAX_SLOPE ? parallax::PARALLAX_MAX_SLOPE / slope_len : 1.0;
+        slope *= scale;
+        const float start = field(uv) + bias;
+        const float t_end = 1.0 - start;
+        float worst = -1.0;
+        for (int i = 0; i < 800; i++) {
+          const float t = t_end * (float(i) + 0.5) / 800.0;
+          worst = #max(worst, field(uv + slope * t) - (start + t));
+        }
+        if (worst > 2e-3) {
+          #assert(!visible);
+          decided += 1;
+          occluded += 1;
+        } else if (worst < -2e-3) {
+          #assert(visible);
+          decided += 1;
+        }
+      }
+    }
+  }
+  #assert(decided > 120);
+  #assert(occluded > 20);
+  #assert(occluded < decided);
+}

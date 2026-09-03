@@ -419,9 +419,7 @@ public:
         FileLocator::REGULAR_FILES, currentModule->getSearchDirs());
   }
 
-  /// Same as `locate()`, but also accepts directories. Used by
-  /// `#loadPBRMaps`, whose argument may name the pack directory
-  /// rather than the `.pbr` manifest inside it.
+  /// Same as `locate()`, but also accepts directories.
   [[nodiscard]] std::optional<std::string>
   locateDirOrFile(const std::string &fileName) {
     return compiler.fileLocator.locate(

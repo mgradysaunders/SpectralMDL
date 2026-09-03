@@ -7,17 +7,16 @@
 #include <unordered_map>
 
 #include "smdl/Doc.h"
-#include "smdl/Support/FileLocator.h"
 #include "smdl/JIT.h"
 #include "smdl/Module.h"
 #include "smdl/Resource/BSDFMeasurement.h"
 #include "smdl/Resource/Image.h"
 #include "smdl/Resource/LightProfile.h"
+#include "smdl/Resource/SceneData.h"
 #include "smdl/Resource/Spectrum.h"
 #include "smdl/Resource/VoxelGrid.h"
-#include "smdl/Resource/SceneData.h"
+#include "smdl/Support/FileLocator.h"
 #include "smdl/Support/MD5Hash.h"
-#include "smdl/RenderUtil/PBRMaps.h"
 
 namespace smdl {
 
@@ -216,7 +215,7 @@ public:
   ///
   [[nodiscard]] std::optional<Error>
   addCode(std::string moduleName, std::string sourceCode,
-                std::string anchorDirectory = {}) noexcept;
+          std::string anchorDirectory = {}) noexcept;
 
   /// Set the desired material names, which restricts the next
   /// `compile()` to the named materials.
@@ -305,9 +304,14 @@ private:
   /// All of that is subject to `enableMipMaps`: with it false, the
   /// request is refused rather than shared, and the image is laid out
   /// for level 0 alone.
-  [[nodiscard]] const Image &loadImage(const std::string &fileName,
-                                       const SourceLocation &srcLoc,
-                                       bool withMipLevels = true);
+  ///
+  /// An image holds one chain, so every reference that asks for one
+  /// must ask for the same `filter`; a reference asking for the other
+  /// kind is an error naming the file and the earlier request.
+  [[nodiscard]] const Image &
+  loadImage(const std::string &fileName, const SourceLocation &srcLoc,
+            bool withMipLevels = true,
+            Image::MipFilter filter = Image::MIP_MEAN);
 
   /// Load ptex texture.
   [[nodiscard]] const Ptexture &loadPtexture(const std::string &fileName,
@@ -350,16 +354,6 @@ private:
   [[nodiscard]] const SpectrumLibrary &
   loadSpectrumLibrary(const std::string &fileName,
                       const SourceLocation &srcLoc);
-
-  /// Load texture pack manifest from `.pbr` file.
-  ///
-  /// Unlike the other resource loaders, a manifest that fails to parse
-  /// is an error, not a warning: the failed entry is discarded and the
-  /// `Error` is thrown for the caller to report. The manifest is a
-  /// contract, so a schema violation must not silently void the pack.
-  ///
-  [[nodiscard]] const PBRMaps &loadPBRMaps(const std::string &fileName,
-                                           const SourceLocation &srcLoc);
 
 public:
   /// Dump as LLVM-IR or native assembly into `out`. Must be called after
@@ -566,6 +560,10 @@ private:
   /// in whether they read mip levels.
   std::unordered_map<const MD5FileHash *, std::unique_ptr<Image>> mImages;
 
+  /// The first reference to request a mip chain of each image, which a
+  /// later request for the other kind of chain is reported against.
+  std::unordered_map<const Image *, SourceLocation> mImageMipRequesters;
+
   /// The ptex textures.
   std::unordered_map<const MD5FileHash *, std::unique_ptr<Ptexture>> mPtextures;
 
@@ -600,9 +598,6 @@ private:
   /// The spectrum libraries.
   std::unordered_map<const MD5FileHash *, std::unique_ptr<SpectrumLibrary>>
       mSpectrumLibraries;
-
-  /// The texture pack manifests.
-  std::unordered_map<const MD5FileHash *, std::unique_ptr<PBRMaps>> mPBRMaps;
 
   /// The MDL modules by canonical file name, used to skip files that
   /// were already added.

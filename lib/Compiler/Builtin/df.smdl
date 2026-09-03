@@ -24,6 +24,7 @@ using ::extras::rng import *;
 using sampling = ::extras::sampling;
 import sampling::*;
 import ::tex::*;
+using ::extras::parallax import relief_visible;
 
 /// The scatter mode, describing the hemispheres a BSDF scatters into.
 export enum scatter_mode {
@@ -5030,6 +5031,109 @@ auto scatterSample(const &horizon_shadow_factor this, const &ScatterSampleParame
   // the natural tangent frame, the frame the slopes live in.
   if ((result.mode == scatter_reflect) & bool(result.fDirac) & !params.isImportance & !params.hitBackface) {
     *result.fDirac *= horizonShadowTerm(this.slopes, this.softness, result.wi);
+  }
+  return result;
+}
+//--}
+
+//--{ relief_shadow_factor
+/// The relief self-shadowing factor. NOTE: This is non-standard!
+///
+/// Multiplies the base BSDF by the binary visibility of the incoming
+/// direction against a height field: `::extras::parallax::relief_visible()`
+/// marches the direction through the maximum mip chain of `height` from
+/// the surface point at `coord`, the same chain and the same traversal
+/// that `::extras::parallax::parallax_uv()` displaces the view ray with,
+/// so the shadow matches the relief exactly, thin features included, from
+/// any azimuth. Because the term modifies `f` inside the BSDF, next-event
+/// estimation, BSDF sampling, and their MIS weights all see the same
+/// shadowing and stay mutually consistent by construction. The answer is
+/// binary; a light's extent and the sampler make the penumbra.
+///
+/// The term applies to reflection off the front face under radiance
+/// transport only:
+/// - importance transport passes through unshadowed, the reciprocity
+///   guard matching `::extras::parallax::view_vector()`,
+/// - backface hits and transmission pass through,
+/// - the view side is deliberately not shadowed, since the parallax march
+///   already accounts for view-side occlusion geometrically.
+///
+/// PDFs are untouched: sampling still comes from the base and the factor
+/// only removes energy, which keeps MIS weights valid at the cost of the
+/// samples that land in shadow. A non-positive `scale`, an invalid
+/// `height`, or a texture without a maximum chain is an exact passthrough
+/// of `base`, so a forgotten `max_mipmap: true` reads as no shadowing
+/// rather than as wrong shadowing.
+///
+/// The incoming direction is taken in the natural tangent frame, whose
+/// axes are texture space 0's tangents and the normal: the frame
+/// `parallax_uv()` marches in.
+export struct relief_shadow_factor: bsdf {
+  /// The height texture, constructed with `max_mipmap: true`; heights
+  /// follow the parallax convention, 1 at the un-displaced surface and 0
+  /// at the deepest point.
+  texture_2d height;
+
+  /// The UV coordinate of the shading point in the height field: the
+  /// offset UV from `::extras::parallax::parallax_uv()`, so the shadow ray
+  /// starts where the view ray landed.
+  float2 coord = $state.texture_coordinate[0].xy;
+
+  /// The relief depth in UV units, the `scale` of the march.
+  float scale = 0.0;
+
+  /// The wrap mode of the height texture along U.
+  tex::wrap_mode wrap_u = tex::wrap_repeat;
+
+  /// The wrap mode of the height texture along V.
+  tex::wrap_mode wrap_v = tex::wrap_repeat;
+
+  /// The height above the surface the shadow ray starts at, as a fraction
+  /// of the relief depth, which keeps the surface from shadowing itself
+  /// where the light grazes it.
+  float bias = 0.02;
+
+  /// The base BSDF.
+  bsdf base = bsdf();
+
+  /// The flags.
+  const int df_lobes = base.df_lobes;
+};
+
+/// The visibility of the natural-tangent-frame direction `wi` as a
+/// factor: 1 when the relief does not occlude it, and 0 when it does.
+@(pure)
+float reliefShadowTerm(const &relief_shadow_factor this, const float3 wi) {
+  return 1.0 if (!(wi.z > 0.0) | !(this.scale > 0.0) | !this.height.max_mipmap);
+  return relief_visible(this.height, this.coord, wi, this.scale, this.wrap_u, this.wrap_v, this.bias) ? 1.0 : 0.0;
+}
+
+@(macro)
+auto scatterEvaluate(const &relief_shadow_factor this, const &ScatterEvaluateParameters params) {
+  auto result(scatterEvaluateMasked(visit &this.base, params));
+  if (!result.isBlack && params.mode == scatter_reflect && !params.isImportance && !params.hitBackface) {
+    return ScatterEvaluateResult(f: reliefShadowTerm(this, params.wi0) * result.f, pdf: result.pdf);
+  } else {
+    return result;
+  }
+}
+
+@(macro)
+auto normalSample(const &relief_shadow_factor this, const &ScatterNormalParameters params) =
+  factorNormalSample(this, params);
+
+@(macro)
+auto normalEvaluate(const &relief_shadow_factor this, const &ScatterNormalParameters params) =
+  factorNormalEvaluate(this, params);
+
+@(macro)
+auto scatterSample(const &relief_shadow_factor this, const &ScatterSampleParameters params) {
+  auto result(scatterSampleMasked(visit &this.base, params));
+  // Smooth lobes are shadowed on the evaluate path; only a sampled Dirac
+  // carries its own `f` and must be shadowed here. The sampled `wi` is in
+  // the natural tangent frame, the frame the march runs in.
+  if ((result.mode == scatter_reflect) & bool(result.fDirac) & !params.isImportance & !params.hitBackface) {
+    *result.fDirac *= reliefShadowTerm(this, result.wi);
   }
   return result;
 }

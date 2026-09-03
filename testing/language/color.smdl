@@ -1,0 +1,150 @@
+#smdl
+
+import ::math::*;
+
+// The RGB-to-color conversion: `color(float3)` upsamples with the sRGB
+// spectral primaries, so it is linear in RGB, bounded on the unit cube,
+// exactly flat for gray, and flat rather than zero beyond the tabulated
+// range. The tests swap their own wavelength base into `$state` and put
+// the runner's base back on the way out.
+
+// A wavelength base from 300 nm to 14 um on a log scale: one band below
+// the primaries' table, a few in the visible, and the rest in the SWIR
+// and LWIR.
+float[$WAVELENGTH_BASE_MAX] wide_base() {
+  float[$WAVELENGTH_BASE_MAX] ws;
+  for (int i = 0; i < $WAVELENGTH_BASE_MAX; i++) {
+    const float t = $WAVELENGTH_BASE_MAX > 1 ? float(i) / ($WAVELENGTH_BASE_MAX - 1) : 0.5;
+    ws[i] = 300.0 * math::pow(14000.0 / 300.0, t);
+  }
+  return ws;
+}
+
+// A base of one repeated wavelength, to read a conversion at a single
+// wavelength off any component.
+float[$WAVELENGTH_BASE_MAX] flat_base(const float w) {
+  float[$WAVELENGTH_BASE_MAX] ws;
+  for (int i = 0; i < $WAVELENGTH_BASE_MAX; i++) {
+    ws[i] = w;
+  }
+  return ws;
+}
+
+// The conversion of `rgb` at the single wavelength `w`.
+float convert_at(const float3 rgb, const float w) {
+  auto ws = flat_base(w);
+  const auto saved = $state.wavelength_base;
+  $state.wavelength_base = &ws[0];
+  defer $state.wavelength_base = saved;
+  return color(rgb)[0];
+}
+
+unit_test "The primaries partition unity from 300 nm to 14 um" {
+  auto ws = wide_base();
+  const auto saved = $state.wavelength_base;
+  $state.wavelength_base = &ws[0];
+  defer $state.wavelength_base = saved;
+  const color sum = color(1.0, 0.0, 0.0) + color(0.0, 1.0, 0.0) + color(0.0, 0.0, 1.0);
+  const color white = color(1.0, 1.0, 1.0);
+  for (int i = 0; i < $WAVELENGTH_BASE_MAX; i++) {
+    #assert(math::abs(sum[i] - 1.0) < 1e-6);
+    #assert(white[i] == 1.0);
+  }
+  #assert(ws[0] == 300.0);
+  #assert(math::abs(ws[$WAVELENGTH_BASE_MAX - 1] - 14000.0) < 1e-2);
+}
+
+unit_test "Gray is exactly flat" {
+  auto ws = wide_base();
+  const auto saved = $state.wavelength_base;
+  $state.wavelength_base = &ws[0];
+  defer $state.wavelength_base = saved;
+  const color gray = color(0.3, 0.3, 0.3);
+  const color black = color(0.0, 0.0, 0.0);
+  const color computed = color(float3(0.25) * 2.0);
+  for (int i = 0; i < $WAVELENGTH_BASE_MAX; i++) {
+    #assert(gray[i] == 0.3);
+    #assert(black[i] == 0.0);
+    #assert(computed[i] == 0.5);
+  }
+}
+
+unit_test "The sRGB cube maps into [0, 1]" {
+  auto ws = wide_base();
+  const auto saved = $state.wavelength_base;
+  $state.wavelength_base = &ws[0];
+  defer $state.wavelength_base = saved;
+  // smdl format off
+  const auto corners = auto[](
+    float3(0.0, 0.0, 0.0), float3(1.0, 0.0, 0.0), float3(0.0, 1.0, 0.0), float3(0.0, 0.0, 1.0),
+    float3(1.0, 1.0, 0.0), float3(1.0, 0.0, 1.0), float3(0.0, 1.0, 1.0), float3(1.0, 1.0, 1.0),
+    float3(0.8, 0.5, 0.2), float3(0.05, 0.95, 0.5));
+  // smdl format on
+  for (int k = 0; k < 10; k++) {
+    const color c = color(corners[k]);
+    for (int i = 0; i < $WAVELENGTH_BASE_MAX; i++) {
+      #assert(c[i] >= 0.0);
+      #assert(c[i] <= 1.0);
+    }
+  }
+}
+
+unit_test "The conversion is linear in RGB" {
+  auto ws = wide_base();
+  const auto saved = $state.wavelength_base;
+  $state.wavelength_base = &ws[0];
+  defer $state.wavelength_base = saved;
+  const float3 a = float3(0.8, 0.5, 0.2);
+  const float3 b = float3(0.1, 0.3, 0.6);
+  const color sum = color(a) + color(b);
+  const color of_sum = color(a + b);
+  const color twice = 2.0 * color(a);
+  const color of_twice = color(2.0 * a);
+  for (int i = 0; i < $WAVELENGTH_BASE_MAX; i++) {
+    #assert(math::abs(sum[i] - of_sum[i]) < 1e-6);
+    #assert(math::abs(twice[i] - of_twice[i]) < 1e-6);
+  }
+}
+
+unit_test "Beyond the table the conversion is flat, not zero" {
+  const float3 rgb = float3(0.8, 0.5, 0.2);
+  const float at_380 = convert_at(rgb, 380.0);
+  const float at_780 = convert_at(rgb, 780.0);
+  #assert(at_380 > 0.0);
+  #assert(at_780 > 0.0);
+  #assert(convert_at(rgb, 300.0) == at_380);
+  #assert(convert_at(rgb, 1000.0) == at_780);
+  #assert(convert_at(rgb, 14000.0) == at_780);
+  auto ws = wide_base();
+  const auto saved = $state.wavelength_base;
+  $state.wavelength_base = &ws[0];
+  defer $state.wavelength_base = saved;
+  const color c = color(rgb);
+  for (int i = 0; i < $WAVELENGTH_BASE_MAX; i++) {
+    if (ws[i] < 380.0) {
+      #assert(c[i] == at_380);
+    } else if (ws[i] > 780.0) {
+      #assert(c[i] == at_780);
+    }
+  }
+}
+
+unit_test "Each primary peaks in its own band" {
+  const float3 red = float3(1.0, 0.0, 0.0);
+  const float3 green = float3(0.0, 1.0, 0.0);
+  const float3 blue = float3(0.0, 0.0, 1.0);
+  #assert(convert_at(blue, 450.0) > 0.9);
+  #assert(convert_at(red, 450.0) < 0.05);
+  #assert(convert_at(green, 550.0) > 0.9);
+  #assert(convert_at(blue, 550.0) < 0.05);
+  #assert(convert_at(red, 650.0) > 0.85);
+  #assert(convert_at(green, 650.0) < 0.1);
+  // Between tabulated wavelengths the lookup interpolates linearly.
+  const float mid = convert_at(red, 602.5);
+  #assert(math::abs(mid - 0.5 * (convert_at(red, 600.0) + convert_at(red, 605.0))) < 1e-6);
+}
+
+unit_test "The runner's base is restored" {
+  #assert($state.wavelength_base[0] == $state.wavelength_min);
+  #assert($state.wavelength_base[$WAVELENGTH_BASE_MAX - 1] == $state.wavelength_max);
+}

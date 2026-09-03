@@ -3,7 +3,7 @@
 The whole exporter rests on one fact established when the proxy was built:
 a proxy object's local space is exactly the space the renderer places, so
 the matrix Blender shows for it is the matrix the layout writes, with
-nothing to convert. See `etc/asset_proxy.py`.
+nothing to convert. See `etc/scripts/asset_proxy.py`.
 
 A tagged proxy becomes an `asset` declaration and a `place` per instance,
 with `depsgraph.object_instances` flattening geometry-nodes scatter and
@@ -975,30 +975,6 @@ def is_mdl_identifier(name):
     return all(ch.isalnum() or ch == "_" for ch in name)
 
 
-def default_material_for(manifest_path):
-    """The material name an asset suggests for itself, or None.
-
-    An asset directory holding exactly one `.pbr` manifest is an asset with
-    one texture set, whatever its mesh file calls the material slot, and the
-    name of that texture set is the obvious name for the material shading
-    it. That covers the case the mesh files are useless for, where a pack of
-    variants all call their slot the same thing.
-
-    Assets with several texture sets (a tree with separate trunk, branch,
-    and leaf sheets) get nothing, since which slot takes which sheet is not
-    ours to guess. Those are written by hand, and preserved from there on.
-    """
-    directory = os.path.dirname(os.path.abspath(manifest_path))
-    try:
-        packs = [f for f in os.listdir(directory) if f.endswith(".pbr")]
-    except OSError:
-        return None
-    if len(packs) != 1:
-        return None
-    stem = os.path.splitext(packs[0])[0]
-    return stem if is_mdl_identifier(stem) else None
-
-
 def existing_materials(filepath):
     """The material assignments already written in the file being replaced,
     keyed by the (reference, select) of the asset they belong to.
@@ -1006,7 +982,6 @@ def existing_materials(filepath):
     A layout is exported over and over as things move, and its material
     assignments are hand-authored knowledge the exporter cannot re-derive,
     so whatever an asset block said last time is written again verbatim.
-    Only assets that say nothing fall back to `default_material_for()`.
     """
     found = {}
     try:
@@ -1165,6 +1140,22 @@ def bake_untagged(context, objects, filepath):
             ob.name = name
 
 
+def declaration_hint(manifest_path, select):
+    """What to name an asset declaration after: the manifest, unless the
+    manifest offers several objects and the select is what tells them
+    apart. A single-object manifest's select is the mesh file's own node
+    name, which is whatever its exporter left there."""
+    from . import manifest as manifest_module
+    if select:
+        try:
+            asset = manifest_module.Asset(manifest_path)
+        except (OSError, ValueError):
+            return select
+        if len(asset.objects) > 1:
+            return select
+    return os.path.basename(manifest_path)
+
+
 class _Assets:
     """The asset declarations an export accumulates, one per distinct
     (manifest, select), named as a layout identifier. Groups share this
@@ -1264,17 +1255,13 @@ def write_scene(context, filepath, asset_root="", bake=True, collection=None,
         if caustic:
             suffix += "_caustic"
         name = assets.name_for(
-            key, select or os.path.basename(manifest_path), suffix)
+            key, declaration_hint(manifest_path, select), suffix)
         reference = relative_asset_path(manifest_path, asset_root,
                                         scene_directory)
-        # What shades this asset: whatever it was assigned last time, else
-        # the asset's own texture set if it has exactly one. Only when
-        # neither says anything do the mesh file's own material names go
+        # What shades this asset: whatever it was assigned last time. Only
+        # when that says nothing do the mesh file's own material names go
         # into the file-wide alias list at the bottom.
         assigned = previous_materials.get((reference, select))
-        if not assigned:
-            default = default_material_for(manifest_path)
-            assigned = [f"material {default}"] if default else []
         if not assigned:
             asset = manifest_module.Asset(manifest_path)
             entry = asset.object_for(select) if select else None

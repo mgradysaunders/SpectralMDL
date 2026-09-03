@@ -622,13 +622,13 @@ void Compiler::resetForRecompile() {
   mJITSessionErrors.clear();
   mWarnedResourceFileNames.clear();
   mImages.clear();
+  mImageMipRequesters.clear();
   mPtextures.clear();
   mBSDFMeasurements.clear();
   mLightProfiles.clear();
   mVoxelGrids.clear();
   mSpectrums.clear();
   mSpectrumLibraries.clear();
-  mPBRMaps.clear();
   mBuiltinCalleeAddresses.clear();
   mRGBToColor.func = nullptr;
   mColorToRGB.func = nullptr;
@@ -808,7 +808,7 @@ void Compiler::logResourceWarningOnce(const SourceLocation &srcLoc,
 
 const Image &Compiler::loadImage(const std::string &fileName,
                                  const SourceLocation &srcLoc,
-                                 bool withMipLevels) {
+                                 bool withMipLevels, Image::MipFilter filter) {
   auto &image{
       loadResource(mImages, mFileHasher[fileName], srcLoc, [&](Image &image) {
         SMDL_PROFILER_ENTRY("Compiler::loadImage()", fileName.c_str());
@@ -823,7 +823,17 @@ const Image &Compiler::loadImage(const std::string &fileName,
   // first: the mip levels are generated at the end of the compile, by
   // which point every reference has been seen.
   if (withMipLevels && enableMipMaps) {
-    image.requestMipLevels();
+    auto [itr, inserted] = mImageMipRequesters.try_emplace(&image, srcLoc);
+    if (!image.requestMipLevels(filter)) {
+      auto filterName{[](Image::MipFilter f) {
+        return f == Image::MIP_MAX ? "maximum" : "mean";
+      }};
+      srcLoc.throwError(
+          "cannot request a ", filterName(filter), " mip chain for ",
+          QuotedPath(fileName), ": a ", filterName(image.getMipFilter()),
+          " mip chain was requested at ", itr->second.getModuleDisplayName(),
+          ":", itr->second.lineNo, ", and an image holds one chain");
+    }
   } else if (withMipLevels) {
     // Refusing is the whole point of the switch, so this is not a
     // warning. It is still the reason a render is aliased, so say so
@@ -921,23 +931,6 @@ Compiler::loadSpectrumLibrary(const std::string &fileName,
                                             fileName.c_str());
                         return spectrumLibrary.loadFromFile(fileName);
                       });
-}
-
-const PBRMaps &Compiler::loadPBRMaps(const std::string &fileName,
-                                     const SourceLocation &srcLoc) {
-  auto [itr, inserted] = mPBRMaps.try_emplace(mFileHasher[fileName]);
-  if (inserted) {
-    SMDL_PROFILER_ENTRY("Compiler::loadPBRMaps()", fileName.c_str());
-    itr->second = std::make_unique<PBRMaps>();
-    if (auto error{itr->second->loadFromFile(fileName)}) {
-      // Discard the failed entry so a later reference to the same
-      // manifest re-parses and re-throws instead of silently returning
-      // a default-constructed manifest.
-      mPBRMaps.erase(itr);
-      throw std::move(*error);
-    }
-  }
-  return *itr->second;
 }
 
 std::optional<Error> Compiler::dump(DumpFormat dumpFormat,

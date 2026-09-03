@@ -1,0 +1,201 @@
+#smdl
+
+import ::df::*;
+import ::math::*;
+import ::tex::*;
+using parallax = ::extras::parallax;
+import parallax::*;
+
+// `df::relief_shadow_factor`: exact binary self-shadowing by a height
+// field's maximum mip chain, applied to the incoming direction inside the
+// BSDF, so NEE, BSDF sampling, and MIS stay consistent.
+//
+// The harness mirrors `df_horizon.smdl`: the default test state has an
+// identity tangent frame, so the directions below read directly as
+// natural-tangent-frame vectors, with x along +U of the height field.
+// The field is the ridge fixture: height 0.2 everywhere except the
+// one-texel wall at x = 8 (height 1.0) of a 16x16 image, whose faces ramp
+// over one texel on either side.
+
+struct EvaluateResult {
+  color f = color(0);
+  float2 pdf = float2(0);
+  bool success = false;
+};
+
+EvaluateResult evaluate(
+  const bsdf scattering,
+  float3 wo,
+  float3 wi,
+  const bool isImportance = false,
+) {
+  auto mat = material(ior: 1.4, surface: material_surface(scattering: scattering));
+  auto instance = _MaterialInstance(&mat);
+  instance.flags |= isImportance ? 1 : 0; // MATERIAL_TRANSPORT_IMPORTANCE
+  instance.exterior_ior = 1.0;
+  float pdfFwd = 0;
+  float pdfRev = 0;
+  color f = color(0);
+  if (df::_scatterEvaluate(&instance, &wo, &wi, df::DF_ALL, &pdfFwd, &pdfRev, cast<&float>(&f)))
+    return EvaluateResult(f, float2(pdfFwd, pdfRev), true);
+  return EvaluateResult();
+}
+
+struct SampleResult {
+  float3 wi = float3(0);
+  color f = color(0);
+  bool isDirac = false;
+  bool success = false;
+};
+
+SampleResult sample(const bsdf scattering, const float4 xi, float3 wo) {
+  auto mat = material(ior: 1.4, surface: material_surface(scattering: scattering));
+  auto instance = _MaterialInstance(&mat);
+  instance.exterior_ior = 1.0;
+  float4 xi1 = xi;
+  float3 wi = float3(0);
+  float pdfFwd = 0;
+  float pdfRev = 0;
+  color f = color(0);
+  int sampledLobe = 0;
+  float lobeChanceOut = 1.0;
+  const auto success = df::_scatterSample(&instance, &xi1, &wo, df::DF_ALL, &wi, &pdfFwd, &pdfRev, cast<&float>(&f), &sampledLobe, &lobeChanceOut);
+  return SampleResult(wi, f, (sampledLobe & df::DF_DIRAC) != 0, bool(success));
+}
+
+// A direction with azimuth `d` (need not be normalized) and elevation
+// slope `l` (tan of the angle up from the tangent plane).
+float3 dirAt(const float2 d, const float l) = math::normalize(float3(math::normalize(d), l));
+
+const auto BASE = df::diffuse_reflection_bsdf(tint: 0.8);
+
+@(pure macro)
+float3 WO() = math::normalize(float3(0.2, -0.3, 1.0));
+
+// The shading point on the flat at texel 4, whose shadow ray toward +U
+// meets the wall's near face unless it clears the top of the wall first.
+const float2 ON_FLAT = float2(0.25, 0.5);
+const float SCALE = 0.5;
+
+unit_test "Relief factor shadows the ridge" {
+  const auto ridge = texture_2d("relief_fixture/ridge_16.png", tex::gamma_linear, max_mipmap: true);
+  const auto shadowed = df::relief_shadow_factor(height: ridge, coord: ON_FLAT, scale: SCALE, base: BASE);
+  // Toward the wall: with the ray starting at 0.22 and rising e / 8 per
+  // texel, it clears the top of the wall (4.5 texels away) when
+  // 0.22 + 4.5 e / 8 > 1, i.e. above e = 1.3867.
+  const auto low = evaluate(shadowed, WO(), dirAt(float2(1.0, 0.0), 1.3));
+  #assert(#all(low.f == color(0.0)));
+  const auto high = evaluate(shadowed, WO(), dirAt(float2(1.0, 0.0), 1.5));
+  const auto highBase = evaluate(BASE, WO(), dirAt(float2(1.0, 0.0), 1.5));
+  #assert(#any(highBase.f > 0.0));
+  #assert(#all(high.f == highBase.f));
+  // Away from the wall the field repeats, and the previous wall's far
+  // face is 10.5 texels off: a grazing light meets it, a higher one tops
+  // out before reaching it.
+  const auto backLow = evaluate(shadowed, WO(), dirAt(float2(-1.0, 0.0), 0.3));
+  #assert(#all(backLow.f == color(0.0)));
+  const auto backHigh = evaluate(shadowed, WO(), dirAt(float2(-1.0, 0.0), 1.0));
+  const auto backHighBase = evaluate(BASE, WO(), dirAt(float2(-1.0, 0.0), 1.0));
+  #assert(#all(backHigh.f == backHighBase.f));
+  // Along V the field is constant, and straight up nothing occludes.
+  const auto side = evaluate(shadowed, WO(), dirAt(float2(0.0, 1.0), 0.3));
+  const auto sideBase = evaluate(BASE, WO(), dirAt(float2(0.0, 1.0), 0.3));
+  #assert(#all(side.f == sideBase.f));
+  const auto up = evaluate(shadowed, WO(), float3(0.0, 0.0, 1.0));
+  const auto upBase = evaluate(BASE, WO(), float3(0.0, 0.0, 1.0));
+  #assert(#all(up.f == upBase.f));
+  // Just past the wall, a light from over the wall is blocked by its
+  // far face right away.
+  const auto behind = df::relief_shadow_factor(height: ridge, coord: float2(10.0 / 16.0, 0.5), scale: SCALE, base: BASE);
+  const auto blocked = evaluate(behind, WO(), dirAt(float2(-1.0, 0.0), 1.0));
+  #assert(#all(blocked.f == color(0.0)));
+  const auto open = evaluate(behind, WO(), dirAt(float2(1.0, 0.0), 1.0));
+  const auto openBase = evaluate(BASE, WO(), dirAt(float2(1.0, 0.0), 1.0));
+  #assert(#all(open.f == openBase.f));
+}
+
+unit_test "Relief factor guards" {
+  const auto ridge = texture_2d("relief_fixture/ridge_16.png", tex::gamma_linear, max_mipmap: true);
+  const auto wi = dirAt(float2(1.0, 0.0), 0.5); // shadowed from ON_FLAT
+  const auto shadowed = df::relief_shadow_factor(height: ridge, coord: ON_FLAT, scale: SCALE, base: BASE);
+  #assert(#all(evaluate(shadowed, WO(), wi).f == color(0.0)));
+  const auto base = evaluate(BASE, WO(), wi);
+  #assert(#any(base.f > 0.0));
+  // A non-positive scale is an exact passthrough.
+  const auto flat = df::relief_shadow_factor(height: ridge, coord: ON_FLAT, scale: 0.0, base: BASE);
+  #assert(#all(evaluate(flat, WO(), wi).f == base.f));
+  // So is a texture without a maximum chain, and an invalid texture.
+  const auto plain = texture_2d("relief_fixture/ridge_16.png", tex::gamma_linear);
+  #assert(!plain.max_mipmap);
+  const auto unchained = df::relief_shadow_factor(height: plain, coord: ON_FLAT, scale: SCALE, base: BASE);
+  #assert(#all(evaluate(unchained, WO(), wi).f == base.f));
+  const auto invalid = df::relief_shadow_factor(height: texture_2d(), coord: ON_FLAT, scale: SCALE, base: BASE);
+  #assert(#all(evaluate(invalid, WO(), wi).f == base.f));
+  // Importance transport passes through unshadowed.
+  const auto imp = evaluate(shadowed, WO(), wi, isImportance: true);
+  const auto impBase = evaluate(BASE, WO(), wi, isImportance: true);
+  #assert(#any(impBase.f > 0.0));
+  #assert(#all(imp.f == impBase.f));
+  // Backface reflection passes through unshadowed.
+  const auto woDown = math::normalize(float3(0.2, -0.3, -1.0));
+  const auto wiDown = math::normalize(float3(1.0, 0.0, -0.5));
+  const auto back = evaluate(shadowed, woDown, wiDown);
+  const auto backBase = evaluate(BASE, woDown, wiDown);
+  #assert(#any(backBase.f > 0.0));
+  #assert(#all(back.f == backBase.f));
+  // Transmission passes through unshadowed.
+  const auto trans = df::diffuse_transmission_bsdf(tint: 0.7);
+  const auto shadowedTrans = df::relief_shadow_factor(height: ridge, coord: ON_FLAT, scale: SCALE, base: trans);
+  const auto a = evaluate(shadowedTrans, WO(), wiDown);
+  const auto b = evaluate(trans, WO(), wiDown);
+  #assert(#any(b.f > 0.0));
+  #assert(#all(a.f == b.f));
+}
+
+unit_test "Relief factor on a Dirac lobe" {
+  // A mirror at 45 degrees: `wo = normalize(1, 0, 1)` reflects to
+  // `wi = normalize(-1, 0, 1)`, toward -U at slope 1.
+  const auto ridge = texture_2d("relief_fixture/ridge_16.png", tex::gamma_linear, max_mipmap: true);
+  const auto mirror = df::specular_bsdf(tint: 0.9);
+  const auto wo = math::normalize(float3(1.0, 0.0, 1.0));
+  const auto xi = float4(0.3, 0.4, 0.5, 0.6);
+  const auto bare = sample(mirror, xi, wo);
+  #assert(bare.success & bare.isDirac);
+  #assert(#any(bare.f > 0.0));
+  // From the flat, the reflected light tops out before the previous wall:
+  // exact passthrough of the Dirac weight.
+  const auto open = sample(df::relief_shadow_factor(height: ridge, coord: ON_FLAT, scale: SCALE, base: mirror), xi, wo);
+  #assert(open.success & open.isDirac);
+  #assert(#all(open.wi ~== |1e-6| bare.wi));
+  #assert(#all(open.f == bare.f));
+  // From just past the wall, the same direction runs into its far face:
+  // the Dirac weight goes to 0 (the sample itself still succeeds).
+  const auto blocked = sample(df::relief_shadow_factor(height: ridge, coord: float2(10.0 / 16.0, 0.5), scale: SCALE, base: mirror), xi, wo);
+  #assert(blocked.success);
+  #assert(#all(blocked.f == color(0.0)));
+}
+
+unit_test "Relief factor agrees with relief_visible and only removes energy" {
+  const auto bumps = texture_2d("relief_fixture/bumps_32.png", tex::gamma_linear, max_mipmap: true);
+  const float2 coord = float2(0.37, 0.61);
+  const float scale = 0.3;
+  const auto shadowed = df::relief_shadow_factor(height: bumps, coord: coord, scale: scale, base: BASE);
+  int visibleCount = 0;
+  for (int a = 0; a < 8; a++) {
+    for (int e = 1; e <= 6; e++) {
+      const float phi = 2.0 * $PI * a / 8.0;
+      const auto wi = dirAt(float2(math::cos(phi), math::sin(phi)), 0.3 * e);
+      const auto s = evaluate(shadowed, WO(), wi);
+      const auto b = evaluate(BASE, WO(), wi);
+      const bool visible = parallax::relief_visible(bumps, coord, wi, scale);
+      visibleCount += visible ? 1 : 0;
+      for (int i = 0; i < $WAVELENGTH_BASE_MAX; i++) {
+        #assert(s.f[i] == (visible ? b.f[i] : 0.0));
+        #assert(s.f[i] <= b.f[i]);
+      }
+    }
+  }
+  // The field is rough, so the sweep must see both outcomes.
+  #assert(visibleCount > 0);
+  #assert(visibleCount < 48);
+}

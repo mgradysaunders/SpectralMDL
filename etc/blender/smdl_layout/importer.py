@@ -72,8 +72,8 @@ def import_asset(manifest_path, location=(0.0, 0.0, 0.0), spread=True):
     """
     asset = manifest_module.Asset(manifest_path)
     if not asset.proxy:
-        return [], (f"{asset.name} has no proxy; run etc/prepare_asset.py on "
-                    f"{asset.directory}")
+        return [], (f"{asset.name} has no proxy; run "
+                    f"etc/scripts/prepare_asset.py build on {asset.directory}")
     proxy_path = asset.proxy_path
     if not os.path.exists(proxy_path):
         return [], f"the proxy {proxy_path} does not exist"

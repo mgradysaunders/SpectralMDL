@@ -81,6 +81,29 @@ public:
     FLOAT32 = 4  ///< 32-bit floating point, AKA single precision.
   };
 
+  /// The reduction that builds each mip level from the level below it.
+  enum MipFilter : int {
+    /// The box filter: each texel is the mean of the texels it covers,
+    /// so the chain is what prefiltered lookups want.
+    MIP_MEAN = 0,
+    /// The maximum: each texel bounds the bilinearly interpolated image
+    /// over its footprint, so the chain is what a hierarchical march
+    /// through a height field wants. Level 1 texel `(I, J)` is the
+    /// maximum over level 0 texels `x` in `[2I - 1, 2I + 2]` and `y` in
+    /// `[2J - 1, 2J + 2]`, that is, over the pair it covers plus the
+    /// one-texel border whose bilinear patches straddle the pair's
+    /// edges, wrapping at the image edges (an over-bound under the
+    /// clamp and mirror wrap modes, never an under-bound); the last
+    /// texel of an odd extent widens to cover the remainder; every
+    /// further level is the plain maximum over the level below it. So
+    /// the texel `(I, J)` of level `l` bounds the image over level 0
+    /// texels `[I << l, (I + 1) << l)` per axis, the last texel of a
+    /// level bounding through to the image edge. The maximum is taken
+    /// per channel, each channel keeping a value that occurs in
+    /// level 0.
+    MIP_MAX = 1,
+  };
+
   Image() = default;
 
   /// Non-copyable, and non-movable!
@@ -126,19 +149,34 @@ public:
   [[nodiscard]] std::optional<Error>
   startLoad(const std::string &fileName, bool allowMipLevels = true) noexcept;
 
-  /// Request mip levels, which `finishLoad()` generates.
+  /// Request mip levels, which `finishLoad()` generates by `filter`.
   ///
   /// The request is sticky: an image is mipped if anything that
   /// references it ever asks, and asking twice is the same as asking
   /// once. It may be called before or after `finishLoad()`; in the
   /// latter case the next `finishLoad()` generates the chain.
   ///
+  /// An image holds one chain, so every request must agree on the
+  /// filter: the first request decides, and a request for the other
+  /// filter is refused so that the caller can say who asked for what.
+  ///
   /// Call it after `startLoad()`, which clears the request along with
   /// everything else. If that load disallowed mip levels, this does
   /// nothing: the space they would occupy was never reserved.
-  void requestMipLevels() noexcept {
-    if (mMipLevelsAllowed) mMipLevelsRequested = true;
+  ///
+  /// \return True unless a chain with the other filter was already
+  /// requested, in which case nothing changes.
+  bool requestMipLevels(MipFilter filter = MIP_MEAN) noexcept {
+    if (!mMipLevelsAllowed) return true;
+    if (mMipLevelsRequested && mMipFilter != filter) return false;
+    mMipLevelsRequested = true;
+    mMipFilter = filter;
+    return true;
   }
+
+  /// The filter of the mip chain, meaningful once `requestMipLevels()`
+  /// has asked for one.
+  [[nodiscard]] MipFilter getMipFilter() const noexcept { return mMipFilter; }
 
   /// If `start_load()` was successful, finish loading the texels, then
   /// generate the mip chain if `requestMipLevels()` has asked for it and
@@ -251,9 +289,15 @@ private:
   /// `finishLoad()` is a harmless no-op.
   void abandonLoad() noexcept;
 
-  /// Generate mip levels 1 and up from level 0 by successive
-  /// box-filtered halvings. Called at the end of `finishLoad()`.
+  /// Generate mip levels 1 and up from level 0 by the requested
+  /// `MipFilter`. Called at the end of `finishLoad()`.
   void generateMipLevels() noexcept;
+
+  /// The `MIP_MEAN` reduction: successive box-filtered halvings.
+  void generateMeanMipLevels() noexcept;
+
+  /// The `MIP_MAX` reduction, see `MipFilter`.
+  void generateMaxMipLevels() noexcept;
 
   /// The number of mip levels actually written, i.e., holding texels.
   /// Unlike `getNumLevels()`, this waits for the generation itself, so
@@ -287,6 +331,9 @@ private:
 
   /// Are mip levels requested? Sticky, see `requestMipLevels()`.
   bool mMipLevelsRequested{false};
+
+  /// The filter of the requested chain, see `requestMipLevels()`.
+  MipFilter mMipFilter{MIP_MEAN};
 
   /// Are mip levels generated? I.e., do levels 1 and up hold texels?
   bool mMipLevelsGenerated{false};

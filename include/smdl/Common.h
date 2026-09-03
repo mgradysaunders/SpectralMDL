@@ -101,7 +101,7 @@ namespace smdl {
 ///
 /// Algorithmic rendering utilities layered on the support types and usable
 /// by any renderer: color and spectral containers, Monte Carlo sampling,
-/// illuminants and metal IORs, PBR map baking, the sun-sky model, and
+/// illuminants and metal IORs, the sun-sky model, and
 /// spectral render images.
 ///
 /// \{

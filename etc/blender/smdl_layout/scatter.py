@@ -625,7 +625,7 @@ def selected_assets(context, surface):
     if not assets:
         return [], (f"nothing in {instancers[0].instance_collection.name} "
                     f"carries an {ASSET_KEY} tag, so it is not a prepared "
-                    f"asset: build one with etc/prepare_asset.py")
+                    f"asset: build one with etc/scripts/prepare_asset.py")
     return assets, ""
 
 

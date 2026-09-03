@@ -57,8 +57,8 @@ class SMDL_OT_sync_slots(bpy.types.Operator):
         else:
             self.report({"WARNING"},
                         f"the manifest for {ob.name} records no material "
-                        f"names: re-run etc/prepare_asset.py on "
-                        f"{os.path.dirname(manifest_path)}")
+                        f"names: re-run etc/scripts/prepare_asset.py init "
+                        f"--force on {os.path.dirname(manifest_path)}")
         return {"FINISHED"}
 
 

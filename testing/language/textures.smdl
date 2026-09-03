@@ -92,6 +92,33 @@ void run_4x4_tests(texture_2d t) {
   #assert(tex::lookup_float_lod(t, float2(0.25, 0.25), lod: 1.0) ~== |4e-3| 32.0 / 255.0);
 }
 
+unit_test "Texture 2D level extents and texels" {
+  const auto t = texture_2d("4x4.png", tex::gamma_linear, use_mipmap: true);
+  #assert(#all(tex::level_extent(t, 0) == int2(4)));
+  #assert(#all(tex::level_extent(t, 1) == int2(2)));
+  #assert(#all(tex::level_extent(t, 2) == int2(1)));
+  // Levels past the chain report the last level, and an invalid texture
+  // has no extent at any level.
+  #assert(#all(tex::level_extent(t, 7) == int2(1)));
+  #assert(#all(tex::level_extent(texture_2d(), 1) == int2(0)));
+  // Level 0 is the texel fetch, the row mirror included.
+  #assert(#all(tex::level_texel_float4(t, 0, int2(1, 3)) == tex::texel_float4(t, int2(1, 3))));
+  #assert(#all(tex::level_texel_float4(t, 0, int2(3, 0)) == tex::texel_float4(t, int2(3, 0))));
+  // Level 1 is the 2x2 box average, here (0 + 64) / 2 over R and G.
+  #assert(#all(tex::level_texel_float4(t, 1, int2(0, 0)) ~== |4e-3| float4(32.0, 32.0, 0.0, 255.0) / 255.0));
+  #assert(tex::level_texel_float(t, 2, int2(0, 0)) ~== |4e-3| 111.75 / 255.0);
+  // The coordinate wraps into the level by the wrap modes.
+  #assert(tex::level_texel_float(t, 1, int2(2, 0)) == tex::level_texel_float(t, 1, int2(0, 0)));
+  #assert(tex::level_texel_float(t, 1, int2(-1, 0)) == tex::level_texel_float(t, 1, int2(1, 0)));
+  #assert(tex::level_texel_float(t, 1, int2(5, 0), tex::wrap_clamp) == tex::level_texel_float(t, 1, int2(1, 0)));
+  #assert(tex::level_texel_float(t, 1, int2(2, 0), tex::wrap_mirrored_repeat) == tex::level_texel_float(t, 1, int2(1, 0)));
+  // A texture without a chain reads level 0 at every level.
+  const auto t0 = texture_2d("4x4.png", tex::gamma_linear);
+  #assert(#all(tex::level_texel_float4(t0, 1, int2(1, 1)) == tex::texel_float4(t0, int2(1, 1))));
+  #assert(!t.max_mipmap);
+  #assert(!t0.max_mipmap);
+}
+
 unit_test "Texture 2D tests (4x4.png)" {
   run_4x4_tests(texture_2d("4x4.png", tex::gamma_linear, use_mipmap: true));
 }

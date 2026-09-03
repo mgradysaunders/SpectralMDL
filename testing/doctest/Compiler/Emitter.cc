@@ -6,6 +6,7 @@
 #include <string_view>
 
 #include "smdl/Compiler.h"
+#include "smdl/Resource/Image.h"
 
 namespace fs = std::filesystem;
 
@@ -161,54 +162,47 @@ TEST_CASE("Emitter voided parameters") {
   fs::remove_all(tmpDir);
 }
 
-TEST_CASE("Emitter pbr_maps load flags") {
-  auto tmpDir{fs::temp_directory_path() / "smdl-emitter-pbr-test"};
+TEST_CASE("Emitter mip chain kinds") {
+  auto tmpDir{fs::temp_directory_path() / "smdl-emitter-mip-test"};
   fs::remove_all(tmpDir);
-  // The flags decide which images load and which fields the resulting
-  // type has, so a runtime value can never reach one. The pack itself
-  // need not exist: the argument check runs before the pack is located.
-  auto materialWith{[](std::string_view args) {
-    auto text{std::string("#smdl\nimport ::df::*;\n"
-                          "using ::extras::pbr import *;\n"
-                          "export material M(bool flag = false) = let {\n"
-                          "  auto p = pbr_maps(\"nowhere\"")};
-    text += args;
-    text += ");\n"
-            "} in material(surface: material_surface(\n"
-            "  scattering: df::diffuse_reflection_bsdf()));\n";
-    return text;
-  }};
-  SUBCASE("A runtime flag is an error naming the parameter") {
-    auto error{compileSource(tmpDir, materialWith(", use_mipmap: flag"))};
-    CHECK(error.find("use_mipmap") != std::string::npos);
-    CHECK(error.find("compile-time") != std::string::npos);
+  fs::create_directories(tmpDir);
+  const uint8_t texels[4] = {0, 85, 170, 255};
+  REQUIRE(
+      !smdl::write8bitImage((tmpDir / "height.png").string(), 2, 2, 1, texels));
+  SUBCASE("One image, one chain") {
+    // The same file wanted with a mean chain and a maximum chain is an
+    // error at the second request, naming the first.
+    auto error{compileSource(tmpDir,
+                             "#smdl\n"
+                             "import ::tex::*;\n"
+                             "const auto mean = texture_2d(\"height.png\", "
+                             "tex::gamma_linear, use_mipmap: true);\n"
+                             "const auto peak = texture_2d(\"height.png\", "
+                             "tex::gamma_linear, max_mipmap: true);\n")};
+    CHECK(error.find("maximum mip chain") != std::string::npos);
+    CHECK(error.find("mean mip chain was requested at") != std::string::npos);
+    CHECK(error.find("main.smdl:3") != std::string::npos);
   }
-  SUBCASE("Each flag is blamed by its own name") {
-    auto error{compileSource(tmpDir, materialWith(", no_parallax: flag"))};
-    CHECK(error.find("no_parallax") != std::string::npos);
-    CHECK(error.find("use_mipmap") == std::string::npos);
+  SUBCASE("Agreeing requests share the image") {
+    CHECK(compileSource(tmpDir,
+                        "#smdl\n"
+                        "import ::tex::*;\n"
+                        "const auto a = texture_2d(\"height.png\", "
+                        "tex::gamma_linear, max_mipmap: true);\n"
+                        "const auto b = texture_2d(\"height.png\", "
+                        "tex::gamma_linear, use_mipmap: true, max_mipmap: "
+                        "true);\n"
+                        "const auto c = texture_2d(\"height.png\", "
+                        "tex::gamma_linear);\n") == "");
   }
-  SUBCASE("Compile-time flags are accepted") {
-    // A pack that does not exist is a warning, not an error, so this
-    // isolates the argument check from the resource lookup.
-    CHECK(compileSource(tmpDir, materialWith(", no_height: true, "
-                                             "use_mipmap: true"))
-              .empty());
-  }
-  SUBCASE("Class weights on a set with no class map blame the flag") {
-    // A set with no class map is a compile-time error to ask for class
-    // weights, and since opting out is one way to get there, the
-    // diagnostic has to mention it.
+  SUBCASE("The requests must be compile-time") {
     auto error{compileSource(
-        tmpDir, "#smdl\nimport ::df::*;\n"
-                "using ::extras::pbr import *;\n"
-                "export material M() = let {\n"
-                "  auto p = pbr_maps(\"nowhere\", no_class_map: true);\n"
-                "  auto w = class_weights(p);\n"
-                "} in material(surface: material_surface(\n"
-                "  scattering: df::diffuse_reflection_bsdf()));\n")};
-    CHECK(error.find("class_weights") != std::string::npos);
-    CHECK(error.find("no_class_map") != std::string::npos);
+        tmpDir, "#smdl\n"
+                "import ::tex::*;\n"
+                "unit_test \"t\" { bool b = $state.wavelength_min > 0.0; "
+                "auto t = texture_2d(\"height.png\", tex::gamma_linear, "
+                "max_mipmap: b); }\n")};
+    CHECK(error.find("compile-time") != std::string::npos);
   }
   fs::remove_all(tmpDir);
 }

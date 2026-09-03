@@ -5,11 +5,19 @@
 /// coordinate the viewer actually sees, buying relief detail that would
 /// otherwise take heavy subdivision and displacement.
 ///
-/// The march core `parallax_offset_with()` is a macro over a height
-/// *lambda* `float2 -> float`, so procedural height fields are first-class
-/// and textures are just the `parallax_uv()` specialization via
-/// `tex::lookup_float`. Heights follow the convention **1 = un-displaced
-/// surface, 0 = deepest**, and are clamped to `[0, 1]` when sampled.
+/// There are two marches. The march core `parallax_offset_with()` is a
+/// macro over a height *lambda* `float2 -> float`, so procedural height
+/// fields are first-class; it samples fixed depth layers and refines the
+/// crossing, and it can step over features thinner than one layer.
+/// `parallax_offset_max()` marches a height *texture* through its maximum
+/// mip chain (a `texture_2d` constructed with `max_mipmap: true`): each
+/// chain texel bounds the field over its footprint, so whole cells the ray
+/// clears are skipped at once and the crossing is solved exactly against
+/// the bilinear patch it lands on, with a data-dependent step count that
+/// is logarithmic in practice. `parallax_uv()` picks the hierarchical
+/// march whenever the texture carries a maximum chain and the layer march
+/// otherwise. Heights follow the convention **1 = un-displaced surface,
+/// 0 = deepest**, and are clamped to `[0, 1]` when sampled.
 ///
 /// Everything reduces to the identity (no offset, the unperturbed shading
 /// normal) whenever the ray direction is unavailable or unusable:
@@ -19,7 +27,7 @@
 /// - backface incidence (`view_vector().z <= 0`),
 /// - non-positive `scale` (which is also how a faded-out effect reads).
 ///
-/// Grazing incidence is deliberately not culled: the march divides by
+/// Grazing incidence is deliberately not culled: the marches divide by
 /// `#max(view.z, PARALLAX_MIN_VIEW_Z)`, so toward the horizon the offset
 /// saturates at the `PARALLAX_MAX_SLOPE` cap instead of snapping back to
 /// the identity along a visible band.
@@ -28,19 +36,26 @@
 /// feeds every downstream lookup, with the matching bump normal from
 /// `perturbed_normal()` and a level-of-detail fade from `::extras::lod`.
 ///
-/// Limitations, by construction: silhouettes do not change; backfaces are
-/// not offset; and per-light shadow marching is architecturally out of
-/// reach, since light directions are unknown at evaluation time and the
-/// scattering entry points are stateless. First-order self-shadowing is
-/// available anyway: `horizon_slopes_with()` compresses the height field's
-/// directional occlusion into four slopes at the offset UV, and
-/// `df::horizon_shadow_factor` applies them to the incoming direction
-/// inside the BSDF, where next-event estimation and BSDF sampling see them
-/// consistently.
+/// Self-shadowing runs inside the BSDF, where next-event estimation and
+/// BSDF sampling see it consistently, since light directions are unknown
+/// at material evaluation time. `relief_visible()` marches the light
+/// direction through the same maximum chain from the surface point, and
+/// `df::relief_shadow_factor` applies it per evaluated direction: exact
+/// binary visibility against the relief. The older first-order term
+/// remains: `horizon_slopes_with()` compresses the field's directional
+/// occlusion into four slopes at the offset UV for
+/// `df::horizon_shadow_factor`, for height lambdas without a chain.
+///
+/// Limitations, by construction: silhouettes do not change, and backfaces
+/// are not offset.
 ///
 /// References:
 ///   Tatarchuk (2006): Practical Parallax Occlusion Mapping
 ///   McGuire and McGuire (2005): Steep Parallax Mapping
+///   Tevs, Ihrke, and Seidel (2008): Maximum Mipmaps for Fast, Accurate,
+///                                   and Scalable Dynamic Height Field
+///                                   Rendering
+///   Drobot (2009): Quadtree Displacement Mapping with Height Blending
 #smdl
 
 import ::math::*;
@@ -59,6 +74,18 @@ export const float PARALLAX_MIN_VIEW_Z = 0.05;
 /// The cap on the parallax slope `|view.xy| / view.z`, bounding the total
 /// UV offset by `PARALLAX_MAX_SLOPE * scale` no matter how oblique the view.
 export const float PARALLAX_MAX_SLOPE = 8.0;
+
+/// The cap on the cell steps of `parallax_offset_max()`. The traversal
+/// is data dependent; one that runs out of steps stops at its current
+/// depth, which is above the surface, never below it. Smooth relief
+/// takes a few dozen steps; white noise at a grazing view takes about
+/// two per texel crossed.
+export const int PARALLAX_MAX_CELL_STEPS = 128;
+
+/// The nudge in texels applied along the ray before choosing the cell a
+/// position falls in, so that a position sitting on a cell boundary
+/// after an exit lands in the cell ahead rather than the one behind.
+const float PARALLAX_CELL_NUDGE = 0.002;
 
 /// The unit view vector (from the shading point toward the viewer) in
 /// the shading tangent frame of texture space `space`, as consumed by the
@@ -203,33 +230,320 @@ export float4 horizon_slopes_with(
   return #min(slopes, PARALLAX_MAX_SLOPE);
 }
 
+/// Does the hierarchical march traverse the wrap mode exactly? Repeat
+/// tiles the cells, and clamp holds the edge texel outside the image;
+/// the other modes take the layer march.
+@(pure macro)
+export bool marches_wrap(const tex::wrap_mode wrap) = (int(wrap) == int(tex::wrap_repeat)) | (int(wrap) == int(tex::wrap_clamp));
+
+/// The first root in `[0, ub]` of `q0 + q1 u + q2 u^2`, given `q0 < 0`,
+/// or -1 if there is none. A root the quadratic formula loses to
+/// rounding while the sign still changes over the interval is recovered
+/// by the secant.
+@(pure)
+float firstRoot(const float q0, const float q1, const float q2, const float ub) {
+  return 0.0 if (q0 >= 0.0);
+  const float fb(q0 + (q1 + q2 * ub) * ub);
+  float u(-1.0);
+  if (#abs(q2) <= 1.0e-12) {
+    u = q1 > 0.0 ? -q0 / q1 : -1.0;
+  } else {
+    const float disc(q1 * q1 - 4.0 * q2 * q0);
+    if (disc >= 0.0) {
+      const float sq(#sqrt(disc));
+      const float qq(-0.5 * (q1 + (q1 >= 0.0 ? sq : -sq)));
+      const float ra(qq / q2);
+      const float rb(q0 / qq);
+      const float lo(#min(ra, rb));
+      const float hi(#max(ra, rb));
+      u = lo >= 0.0 ? lo : (hi >= 0.0 ? hi : -1.0);
+    }
+  }
+  return u if ((u >= 0.0) & (u <= ub));
+  return fb >= 0.0 ? ub * (-q0) / #max(fb - q0, $FLOAT_MIN) : -1.0;
+}
+
+/// The crossing of the ray `p0 + d * t` (level-0 texel coordinates, ray
+/// height `h_start + h_rate * t`) with the one bilinear patch the segment
+/// `[sa, sb]` lies in, as the ray parameter, or -1 if the segment stays
+/// above it. The patch is the one under the segment's midpoint: its
+/// corners are the four texel centers around it, fetched through the
+/// wrap modes and clamped to `[0, 1]` like every sampled height. Along
+/// the segment the bilinear height is quadratic in the parameter, so the
+/// crossing is a root of a quadratic, solved from the segment start for
+/// conditioning.
+@(pure)
+float patchHit(
+  const texture_2d height_tex,
+  const tex::wrap_mode wrap_u,
+  const tex::wrap_mode wrap_v,
+  const float2 p0,
+  const float2 d,
+  const float h_start,
+  const float h_rate,
+  const float sa,
+  const float sb,
+) {
+  const float2 pm(p0 + d * (0.5 * (sa + sb)));
+  const int2 i0(int2(#floor(pm - 0.5)));
+  const float t00(math::saturate(tex::level_texel_float(height_tex, 0, i0, wrap_u, wrap_v)));
+  const float t10(math::saturate(tex::level_texel_float(height_tex, 0, i0 + int2(1, 0), wrap_u, wrap_v)));
+  const float t01(math::saturate(tex::level_texel_float(height_tex, 0, i0 + int2(0, 1), wrap_u, wrap_v)));
+  const float t11(math::saturate(tex::level_texel_float(height_tex, 0, i0 + int2(1, 1), wrap_u, wrap_v)));
+  const float2 xs(p0 + d * sa - float2(i0) - 0.5);
+  const float bx(t10 - t00);
+  const float by(t01 - t00);
+  const float bxy(t00 - t10 - t01 + t11);
+  const float h0(t00 + bx * xs.x + by * xs.y + bxy * xs.x * xs.y);
+  const float h1(bx * d.x + by * d.y + bxy * (xs.x * d.y + xs.y * d.x));
+  const float h2(bxy * d.x * d.y);
+  // The clearance h(u) - (h_start + h_rate (sa + u)) over u in
+  // [0, sb - sa], negative above the surface.
+  const float u(firstRoot(h0 - (h_start + h_rate * sa), h1 - h_rate, h2, sb - sa));
+  return u < 0.0 ? -1.0 : sa + u;
+}
+
+/// The result of `reliefMarch()`: whether the ray met the field, and the
+/// ray parameter of the crossing, or of how far the march got when it
+/// did not (the end of the ray, or the step cap).
+struct ReliefHit {
+  bool hit = false;
+  float t = 0.0;
+};
+
+/// The quadtree traversal of the maximum mip chain of `height_tex` by
+/// the ray `p0 + d * t` in level-0 texel coordinates at height
+/// `h_start + h_rate * t`, for `t` in `[0, t_end]`: descending rays
+/// (`h_rate < 0`, the view march) and ascending rays (`h_rate > 0`, the
+/// shadow march) alike. From the coarsest level, at each cell either the
+/// ray's lowest height in the cell clears the cell's bound, so the cell
+/// is skipped (coarsening by one level only when the exit leaves the
+/// parent cell, which spares a re-fetch of a parent bound that would only
+/// send the traversal back down), or the traversal refines by one level,
+/// a descending ray first advancing to the depth where it meets the
+/// bound; at level 0 the segment is split where it crosses the
+/// texel-center lines and each piece is solved by `patchHit()`. Cells
+/// are chosen from a position nudged along the ray, so an exit lands in
+/// the cell ahead. `tex::wrap_repeat` tiles the cells; every other wrap
+/// mode holds the edge texel outside the image, which is exact for
+/// `tex::wrap_clamp`.
+@(pure)
+ReliefHit reliefMarch(
+  const texture_2d height_tex,
+  const tex::wrap_mode wrap_u,
+  const tex::wrap_mode wrap_v,
+  const float2 p0,
+  const float2 d,
+  const float h_start,
+  const float h_rate,
+  const float t_end,
+  const int max_steps,
+) {
+  const int2 extent(tex::extent(height_tex));
+  const float2 extentF(extent);
+  const int2 clampAxis(int2(int(wrap_u) != int(tex::wrap_repeat) ? 1 : 0, int(wrap_v) != int(tex::wrap_repeat) ? 1 : 0));
+  const float2 nudge(#select(d >= 0.0, PARALLAX_CELL_NUDGE, -PARALLAX_CELL_NUDGE));
+  const int top(height_tex.num_levels - 1);
+  int level(top);
+  float t(0.0);
+  for (int step = 0; step < max_steps; step++) {
+    const int cellSize(1 << level);
+    const int2 levelExtent(tex::level_extent(height_tex, level));
+    const float2 p(p0 + d * t + nudge);
+    const int2 xi(int2(#floor(p)));
+    const int2 xw(((xi % extent) + extent) % extent);
+    const int2 base(xi - xw);
+    const int2 c(#min(xw / cellSize, levelExtent - 1));
+    // The cell's span in level-0 texels along the unwrapped ray, the
+    // last cell of a level reaching the image edge (the chain widens it
+    // the same way). Under clamp, outside the image lies a half-infinite
+    // cell bounded by the edge cell, whose texel the field holds there.
+    const auto below((clampAxis != 0) & (xi < 0));
+    const auto above((clampAxis != 0) & (xi >= extent));
+    const int2 cell(#select(below, 0, #select(above, levelExtent - 1, c)));
+    float2 lo(float2(base + c * cellSize));
+    float2 hi(float2(base + #select(c == levelExtent - 1, extent, (c + 1) * cellSize)));
+    lo = #select(below, -1.0e30, #select(above, extentF, lo));
+    hi = #select(below, 0.0, #select(above, 1.0e30, hi));
+    const float2 dSafe(#select(d != 0.0, d, 1.0));
+    float2 tExit2(1.0e30);
+    tExit2 = #select(d > 0.0, (hi - p0) / dSafe, tExit2);
+    tExit2 = #select(d < 0.0, (lo - p0) / dSafe, tExit2);
+    const float tExit(#min(#min(tExit2.x, tExit2.y), t_end));
+    const float parentSize(float(2 * cellSize));
+    const auto leavesParent(#any(#floor((p0 + d * tExit + nudge) / parentSize) != #floor(p / parentSize)));
+    const int levelAfterSkip(leavesParent ? #min(level + 1, top) : level);
+    if (level > 0) {
+      const float bound(tex::level_texel_float(height_tex, level, cell, wrap_u, wrap_v));
+      // The ray's lowest height in the cell: at the exit descending, at
+      // the entry ascending.
+      const float hMin(h_start + h_rate * (h_rate < 0.0 ? tExit : t));
+      if (hMin > bound) {
+        t = tExit;
+        level = levelAfterSkip;
+      } else {
+        t = #max(t, (bound - h_start) / h_rate) if (h_rate < 0.0);
+        level -= 1;
+      }
+    } else {
+      // The leaf: the patches under this texel, split where the ray
+      // crosses the texel-center lines (never for a half-infinite cell,
+      // where the field is constant along that axis).
+      float2 tc(1.0e30);
+      tc = #select((d != 0.0) & !below & !above, (lo + 0.5 - p0) / dSafe, tc);
+      tc = #select((tc > t) & (tc < tExit), tc, 1.0e30);
+      const float tA(#min(tc.x, tc.y));
+      const float tB(#max(tc.x, tc.y));
+      float hit(patchHit(height_tex, wrap_u, wrap_v, p0, d, h_start, h_rate, t, #min(tA, tExit)));
+      hit = patchHit(height_tex, wrap_u, wrap_v, p0, d, h_start, h_rate, tA, #min(tB, tExit)) if ((hit < 0.0) & (tA < tExit));
+      hit = patchHit(height_tex, wrap_u, wrap_v, p0, d, h_start, h_rate, tB, tExit) if ((hit < 0.0) & (tB < tExit));
+      return ReliefHit(true, hit) if (hit >= 0.0);
+      t = tExit;
+      level = levelAfterSkip;
+    }
+    return ReliefHit(false, t_end) if (t >= t_end);
+  }
+  return ReliefHit(false, t);
+}
+
 /// The parallax-adjusted UV coordinate for the height texture
-/// `height_tex`, from `state::direction()` via `view_vector(space)`. This
-/// is the texture specialization of `parallax_offset_with()`; see there
-/// for the semantics, and see the module documentation for the intended
-/// use. Identity whenever the LOD state is unpopulated.
+/// `height_tex`, which must carry a maximum mip chain (constructed with
+/// `max_mipmap: true`), viewed along the tangent-frame `view` as produced
+/// by `view_vector()`, with the relief depth `scale` in UV units. The
+/// identity under the same guards as `parallax_offset_with()`, when the
+/// texture is invalid, and when it carries no maximum chain, so a
+/// forgotten `max_mipmap: true` reads as no relief rather than as wrong
+/// relief.
+///
+/// The march is the quadtree traversal of Tevs et al. and Drobot over
+/// the chain (see `reliefMarch()`), descending from the un-displaced
+/// surface until it meets the field, with the crossing solved exactly
+/// against the bilinear patch it lands on. So thin features are never
+/// stepped over, and the answer does not depend on a layer count. The
+/// traversal wraps under `tex::wrap_repeat` and holds the edge texel
+/// under `tex::wrap_clamp` (see `marches_wrap()`); pass only those. It
+/// runs over the first tile of a uv-tileset.
+///
+/// Cost: one bound fetch per step plus four texel fetches per patch
+/// tested at the leaf, for a step count that grows with the chain depth
+/// and the relief's roughness along the ray, and is capped by
+/// `max_steps`; a capped ray stops above the surface.
+@(pure)
+// See the note on 'parallax_offset_with': the annotations quiet the
+// guarded-off instantiation, here the one for an invalid texture.
+export float2 parallax_offset_max(
+  const texture_2d height_tex,
+  const float2 coord,
+  const float3 view,
+  const float scale,
+  const tex::wrap_mode wrap_u = tex::wrap_repeat [[anno::unused()]],
+  const tex::wrap_mode wrap_v = tex::wrap_repeat [[anno::unused()]],
+  const int max_steps = PARALLAX_MAX_CELL_STEPS [[anno::unused()]],
+) {
+  return coord if (!(view.z > 0.0) | !(scale > 0.0) | !height_tex.max_mipmap);
+  const int2 extent(tex::extent(height_tex));
+  return coord if (#any(extent <= 0));
+  auto slope(view.xy / #max(view.z, PARALLAX_MIN_VIEW_Z));
+  const auto slope_len(math::length(slope));
+  slope *= PARALLAX_MAX_SLOPE / slope_len if (slope_len > PARALLAX_MAX_SLOPE);
+  slope *= scale; // Always multiplies l, so fold into slope
+  return coord if (math::saturate(tex::lookup_float(height_tex, coord, wrap_u, wrap_v)) >= 1.0);
+  // The ray in level-0 texel coordinates, from the un-displaced surface
+  // (height 1) down one relief depth per unit parameter.
+  const float2 extentF(extent);
+  const auto hit(reliefMarch(height_tex, wrap_u, wrap_v, coord * extentF, -slope * extentF, 1.0, -1.0, 1.0, max_steps));
+  return coord - slope * hit.t;
+}
+
+/// Is the light direction `wi` (in the tangent frame of the height
+/// field, z up, as the BSDFs see it) unoccluded by the relief of
+/// `height_tex`, which must carry a maximum mip chain, from the surface
+/// point at `coord` (pass the *offset* UV from `parallax_uv()`), with the
+/// relief depth `scale` in UV units? This is the light-side counterpart
+/// of `parallax_offset_max()`: the same traversal, run upward from the
+/// surface height at `coord` plus `bias` (a fraction of the relief depth,
+/// which keeps the surface from shadowing itself where the light grazes
+/// it) until the ray clears the un-displaced surface at height 1, above
+/// which nothing can occlude. The answer is binary; a light's extent and
+/// the sampler make the penumbra. `df::relief_shadow_factor` applies it
+/// inside a BSDF, per evaluated direction.
+///
+/// Visible whenever there is nothing to decide: `wi` at or below the
+/// tangent plane (the BSDF's business), a non-positive `scale` or
+/// `bias`, an invalid texture or one without a maximum chain, a point at
+/// the un-displaced surface, and a traversal that runs out of steps,
+/// which errs toward light rather than toward a false shadow. Grazing
+/// light divides by
+/// `#max(wi.z, PARALLAX_MIN_VIEW_Z)` and the ray's slope caps at
+/// `PARALLAX_MAX_SLOPE`, as the view march does, so light within a few
+/// degrees of the tangent plane is tested as if it were at the cap.
+/// Exact under `tex::wrap_repeat` and `tex::wrap_clamp`; the other modes
+/// hold the edge texel outside the image.
+@(pure)
+// See the note on 'parallax_offset_with': the annotations quiet the
+// guarded-off instantiation, here the one for an invalid texture.
+export bool relief_visible(
+  const texture_2d height_tex,
+  const float2 coord [[anno::unused()]],
+  const float3 wi,
+  const float scale,
+  const tex::wrap_mode wrap_u = tex::wrap_repeat [[anno::unused()]],
+  const tex::wrap_mode wrap_v = tex::wrap_repeat [[anno::unused()]],
+  const float bias = 0.02 [[anno::unused()]],
+  const int max_steps = PARALLAX_MAX_CELL_STEPS [[anno::unused()]],
+) {
+  return true if (!(wi.z > 0.0) | !(scale > 0.0) | !(bias > 0.0) | !height_tex.max_mipmap);
+  const int2 extent(tex::extent(height_tex));
+  return true if (#any(extent <= 0));
+  auto slope(wi.xy / #max(wi.z, PARALLAX_MIN_VIEW_Z));
+  const auto slope_len(math::length(slope));
+  slope *= PARALLAX_MAX_SLOPE / slope_len if (slope_len > PARALLAX_MAX_SLOPE);
+  slope *= scale;
+  const float start(math::saturate(tex::lookup_float(height_tex, coord, wrap_u, wrap_v)) + bias);
+  return true if (start >= 1.0);
+  // The ray in level-0 texel coordinates, rising one relief depth per
+  // unit parameter until it reaches the un-displaced surface.
+  const float2 extentF(extent);
+  return !reliefMarch(height_tex, wrap_u, wrap_v, coord * extentF, slope * extentF, start, 1.0, 1.0 - start, max_steps).hit;
+}
+
+/// The parallax-adjusted UV coordinate for the height texture
+/// `height_tex`, from `state::direction()` via `view_vector(space)`.
+/// This is the texture specialization of the marches: a texture that
+/// carries a maximum mip chain (constructed with `max_mipmap: true`)
+/// under a wrap mode that `marches_wrap()` takes the hierarchical
+/// `parallax_offset_max()`, and any other texture the layer march
+/// `parallax_offset_with()`, whose `min_steps`, `max_steps`, `jitter`,
+/// and `refine_steps` apply only there. See those for the semantics,
+/// and see the module documentation for the intended use. Identity
+/// whenever the LOD state is unpopulated.
 @(macro)
+// The annotations quiet the instantiation that folds to the
+// hierarchical march, where the layer parameters go unused.
 export float2 parallax_uv(
   const texture_2d height_tex,
   const float scale,
   const float2 coord = state::texture_coordinate(0).xy,
   const int space = 0,
-  const int min_steps = 8,
-  const int max_steps = 32,
+  const int min_steps = 8 [[anno::unused()]],
+  const int max_steps = 32 [[anno::unused()]],
   const tex::wrap_mode wrap_u = tex::wrap_repeat,
   const tex::wrap_mode wrap_v = tex::wrap_repeat,
-  const float jitter = 0.0,
-  const int refine_steps = 2,
-) = parallax_offset_with(
-      \(const float2 coord) = tex::lookup_float(height_tex, coord, wrap_u, wrap_v),
-      coord,
-      view_vector(space),
-      scale,
-      min_steps,
-      max_steps,
-      jitter,
-      refine_steps,
-    );
+  const float jitter = 0.0 [[anno::unused()]],
+  const int refine_steps = 2 [[anno::unused()]],
+) {
+  return parallax_offset_max(height_tex, coord, view_vector(space), scale, wrap_u, wrap_v) if (height_tex.max_mipmap & (height_tex.num_levels > 1) & marches_wrap(wrap_u) & marches_wrap(wrap_v));
+  return parallax_offset_with(
+           \(const float2 coord) = tex::lookup_float(height_tex, coord, wrap_u, wrap_v),
+           coord,
+           view_vector(space),
+           scale,
+           min_steps,
+           max_steps,
+           jitter,
+           refine_steps,
+         );
+}
 
 /// The bump-perturbed shading normal matching the relief: central
 /// differences of the height lambda at `coord` (pass the *offset* UV so

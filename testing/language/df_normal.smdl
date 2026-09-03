@@ -147,8 +147,8 @@ unit_test "Shading normal bend covers a layer's own normal" {
   // The `*_layer` combinators carry their own `normal`, and they test the
   // horizon themselves before the nested BSDFs ever build a tangent space.
   // That test has to bend too, or the combinator paints the black contour
-  // one level above the bend. This is the shape every material built from
-  // decoded PBR maps has, since the normal map arrives on the layer.
+  // one level above the bend. This is the shape every material with a
+  // normal map has, since the normal map arrives on the layer.
   const auto wo = float3(-0.9, 0.0, 0.436);
   const auto wi = float3(0.0, 0.0, 1.0);
   #assert(math::dot(TILTED, wo) < 0.0); // Else the test is vacuous
