@@ -24,8 +24,4 @@ void BumpPtrAllocator::reset() noexcept {
   static_cast<LLVMAllocator *>(mPtr)->Reset();
 }
 
-size_t BumpPtrAllocator::getBytesAllocated() const noexcept {
-  return static_cast<const LLVMAllocator *>(mPtr)->getBytesAllocated();
-}
-
 } // namespace smdl

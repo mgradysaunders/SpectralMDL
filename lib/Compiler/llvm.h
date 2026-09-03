@@ -110,6 +110,12 @@ template <typename T>
   return nullptr;
 }
 
+/// Is the constant zero or negative zero? Also true for a splat vector of
+/// either, so a folded vector compares against zero regardless of sign.
+[[nodiscard]] inline bool llvmIsZeroValue(const llvm::Constant *constant) {
+  return constant->isNullValue() || constant->isNegativeZeroValue();
+}
+
 llvm::Value *llvmEmitCast(llvm::IRBuilderBase &builder, llvm::Value *value,
                           llvm::Type *dstType);
 
@@ -125,6 +131,13 @@ llvm::InlineResult llvmForceInline(llvm::Value *value,
 void llvmForceInlineFlatten(llvm::Function &func);
 
 void llvmMoveBlockToEnd(llvm::BasicBlock *block);
+
+/// Does the block end in a terminator? 'BasicBlock::getTerminator' is not
+/// the way to ask: it returns null on an unterminated block in LLVM 22 but
+/// assumes a well-formed block in LLVM 23.
+[[nodiscard]] inline bool llvmHasTerminator(const llvm::BasicBlock *block) {
+  return !block->empty() && block->back().isTerminator();
+}
 
 template <typename, typename = void> struct llvm_get_type_template;
 

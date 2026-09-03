@@ -82,7 +82,8 @@ static cl::opt<std::string> outputFilename{
 // the same option map as LLVM's, and `cl` aborts on a duplicate name.
 static cl::opt<cl::boolOrDefault> colorOption{
     "color", cl::desc("Colorize the output (default autodetect)"),
-    cl::init(cl::BOU_UNSET), cl::sub(subsWithColor), cl::cat(catOptions)};
+    cl::init(cl::boolOrDefault::BOU_UNSET), cl::sub(subsWithColor),
+    cl::cat(catOptions)};
 
 static cl::opt<bool> formatInPlace{"i", cl::desc("Format in place"),
                                    cl::sub(subFormat), cl::cat(catOptions)};
@@ -380,10 +381,11 @@ static void runDocSubcommand(smdl::Compiler &compiler,
   // documentation into a file, and JSON and Markdown are machine and
   // document formats. Otherwise honor `--color`, and without it let
   // `WithColor` detect the terminal itself.
+  const auto colorArg{colorOption.getValue()};
   const auto colorMode{
       outputFile || docFormat != DOC_FORMAT_TEXT ? llvm::ColorMode::Disable
-      : colorOption.getValue() == cl::BOU_TRUE   ? llvm::ColorMode::Enable
-      : colorOption.getValue() == cl::BOU_FALSE  ? llvm::ColorMode::Disable
+      : colorArg == cl::boolOrDefault::BOU_TRUE  ? llvm::ColorMode::Enable
+      : colorArg == cl::boolOrDefault::BOU_FALSE ? llvm::ColorMode::Disable
                                                  : llvm::ColorMode::Auto};
   if (queries.empty() || docFormat != DOC_FORMAT_TEXT) {
     // Whole-database output. Symbol queries only participate by loading
@@ -427,10 +429,11 @@ int main(int argc, char **argv) {
   compiler.enableMipMaps = !noMipMaps;
   compiler.enableUnitTests = true;
   compiler.wavelengthBaseMax = wavelengthBaseMax;
+  const auto colorArg{colorOption.getValue()};
   compiler.colorMode =
-      colorOption.getValue() == cl::BOU_TRUE    ? smdl::COLOR_MODE_ALWAYS
-      : colorOption.getValue() == cl::BOU_FALSE ? smdl::COLOR_MODE_NEVER
-                                                : smdl::COLOR_MODE_AUTO;
+      colorArg == cl::boolOrDefault::BOU_TRUE    ? smdl::COLOR_MODE_ALWAYS
+      : colorArg == cl::boolOrDefault::BOU_FALSE ? smdl::COLOR_MODE_NEVER
+                                                 : smdl::COLOR_MODE_AUTO;
   if (inputFiles.empty() && !subDoc) {
     std::cerr << "expected at least one input\n";
     return EXIT_FAILURE;

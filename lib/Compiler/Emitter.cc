@@ -607,7 +607,7 @@ Value Emitter::createResult(Type *type, llvm::ArrayRef<Result> results,
   for (auto &result : results) {
     auto value{result.value};
     auto block{result.block};
-    SMDL_SANITY_CHECK(block->getTerminator());
+    SMDL_SANITY_CHECK(llvmHasTerminator(block));
     if (!isAllIdenticalLValues) {
       // Blame the 'return' that produced this value rather than the merge:
       // the conversion below is what rejects a return of the wrong type,
@@ -1429,13 +1429,13 @@ static void throwIfDividingByZero(AST::BinaryOp op, llvm::Value *rhs,
   auto constant{llvm::dyn_cast_if_present<llvm::Constant>(rhs)};
   if (!constant) return;
   auto isZero{[&]() {
-    if (constant->isZeroValue()) return true;
+    if (constant->isNullValue()) return true;
     // A vector divisor is poison if any lane is zero, not only if all are.
     if (auto vectorType{
             llvm::dyn_cast<llvm::FixedVectorType>(constant->getType())}) {
       for (unsigned i{}; i < vectorType->getNumElements(); i++)
         if (auto element{constant->getAggregateElement(i)};
-            element && element->isZeroValue())
+            element && element->isNullValue())
           return true;
     }
     return false;

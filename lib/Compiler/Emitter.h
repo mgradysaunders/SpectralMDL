@@ -123,7 +123,7 @@ public:
   /// Does the insert block have a terminator instruction? (e.g.,
   /// unconditional branch, unreachable, no-return function call)
   [[nodiscard]] bool hasTerminator() {
-    return getInsertBlock() && getInsertBlock()->getTerminator() != nullptr;
+    return getInsertBlock() && llvmHasTerminator(getInsertBlock());
   }
 
   /// Set the current module from the given source location.
@@ -506,7 +506,7 @@ public:
       if (blockEnd) builder.CreateBr(blockEnd);
     }
     unwindStack.resize(depth0);
-    if (blockEnd && !blockEnd->getTerminator()) llvmMoveBlockToEnd(blockEnd);
+    if (blockEnd && !llvmHasTerminator(blockEnd)) llvmMoveBlockToEnd(blockEnd);
   }
 
   /// Emit a loop-body scope: run `func` in a scope entered from

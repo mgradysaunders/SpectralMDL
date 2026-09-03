@@ -468,14 +468,14 @@ static void deriveStaticMaterialFlags(llvm::Module &llvmModule,
     // The displacement probe returns 'geometry.displacement' itself, so
     // a body folded to a constant vector settles
     // 'MATERIAL_HAS_DISPLACEMENT': known, and set iff the constant is
-    // not the zero vector ('isZeroValue' so that -0.0 counts as zero).
+    // not the zero vector (-0.0 counts as zero).
     // A body that did not fold leaves the bit unknown, which hosts
     // treat as possibly displacing. See
     // 'JIT::Material::hasZeroDisplacement()'.
     auto displacementProbeName{concat(symbolBase, ".displacementProbe")};
     if (auto displacement{foldedReturnValue(displacementProbeName)}) {
       jitMaterial.staticFlagsKnown |= JIT::MATERIAL_HAS_DISPLACEMENT;
-      if (!displacement->isZeroValue())
+      if (!llvmIsZeroValue(displacement))
         jitMaterial.staticFlags |= JIT::MATERIAL_HAS_DISPLACEMENT;
     }
     // The normal probe returns 'geometry.normal - $state.normal', which
@@ -486,7 +486,7 @@ static void deriveStaticMaterialFlags(llvm::Module &llvmModule,
     auto normalProbeName{concat(symbolBase, ".normalProbe")};
     if (auto normalDelta{foldedReturnValue(normalProbeName)}) {
       jitMaterial.staticFlagsKnown |= JIT::MATERIAL_REMAPS_NORMAL;
-      if (!normalDelta->isZeroValue())
+      if (!llvmIsZeroValue(normalDelta))
         jitMaterial.staticFlags |= JIT::MATERIAL_REMAPS_NORMAL;
     }
     // A material with no volume is trivially position-independent, and

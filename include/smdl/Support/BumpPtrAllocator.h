@@ -121,9 +121,6 @@ public:
   /// Reset the allocator, freeing all memory.
   void reset() noexcept;
 
-  /// Get the number of bytes allocated.
-  [[nodiscard]] size_t getBytesAllocated() const noexcept;
-
 private:
   /// The pointer to the `llvm::BumpPtrAllocator`.
   void *mPtr{};
