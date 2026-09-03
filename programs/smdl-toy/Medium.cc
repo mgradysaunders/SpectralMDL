@@ -607,25 +607,28 @@ bool Medium::sampleDistance(Sampler &sampler, float tEnd, float &t, Color &beta,
     // `shape(t)` in place of `t`. The haze does not emit.
     const float xi{float(sampler)};
     const int hero{sampler.index(int(mHazeSigmaC.size()))};
-    const float tScatter{smdl::Haze::shapeInverse(
-        mHazeK, -std::log1p(-xi) / mHazeSigmaC[size_t(hero)])};
-    const float tTravel{
-        std::min({tScatter, tEnd, std::numeric_limits<float>::max()})};
-    // Clamped for the same reason the distance above is: an unbounded
-    // segment that never turns upward has infinite depth, and infinity
-    // times a band whose extinction has underflowed to zero is not a
-    // number.
-    const float depth{std::min(smdl::Haze::shape(mHazeK, tTravel),
-                               std::numeric_limits<float>::max())};
+    // Both the collision and the segment end are placed by their shape
+    // rather than their distance. The shape is monotone, so the two
+    // orders agree, and settling it here means only a collision pays
+    // the inversion, while the depth it carries is the shape that was
+    // sampled instead of a round trip back out through the logarithm.
+    // The end is clamped because an unbounded segment that never turns
+    // upward has infinite depth, and infinity times a band whose
+    // extinction has underflowed to zero is not a number.
+    const float sScatter{-std::log1p(-xi) / mHazeSigmaC[size_t(hero)]};
+    const float sEnd{std::min(smdl::Haze::shape(mHazeK, tEnd),
+                              std::numeric_limits<float>::max())};
+    const bool scattered{sScatter < sEnd};
+    const float depth{scattered ? sScatter : sEnd};
     Color Tr{};
     for (size_t i = 0; i < Tr.size(); i++)
       Tr[i] = transmittance(mHazeSigmaC[i] * depth);
-    if (tScatter < tEnd) {
+    if (scattered) {
       // The extinction at the collision is the origin spectrum times a
       // factor common to every band, which cancels between the
       // scattering weight and the balance heuristic that normalizes it.
       beta *= mHazeSigmaC * mHaze->albedo() * Tr / (mHazeSigmaC * Tr).average();
-      t = tScatter;
+      t = smdl::Haze::shapeInverse(mHazeK, sScatter);
       return true;
     }
     beta *= Tr / Tr.average();

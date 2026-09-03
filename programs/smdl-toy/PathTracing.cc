@@ -121,6 +121,16 @@ constexpr uint64_t ROULETTE_MIN_DEPTH{4};
 // path terminates eventually no matter how bright its throughput is.
 constexpr float ROULETTE_MAX_SURVIVAL{0.95f};
 
+// The survival probability under which Russian roulette is worth running at
+// a volume vertex. A phase sample carries weight exactly 1 and a scattering
+// albedo is often near it, so throughput decays far more slowly in a medium
+// than across a surface: rouletting a vertex whose survival is still near 1
+// retires a sliver of the paths to save a sliver of the work, and the
+// variance of that trade compounds over the many vertices a dense medium
+// produces. The gate leaves a bounded medium to terminate the walk by its
+// own far side and still bounds one in an unbounded medium, which has none.
+constexpr float ROULETTE_VOLUME_GATE{0.25f};
+
 // The ray cone spread growth in radians added by a non-Dirac bounce whose
 // material has no diffuse component. Crude heuristic: the JIT instance
 // exposes only the DF_* lobe word, not per-lobe roughness.
@@ -1431,6 +1441,35 @@ Color tracePath(smdl::Compiler &compiler, smdl::BumpPtrAllocator &allocator,
   const auto atMaxBounces{[&](uint64_t depth) noexcept {
     return depth - 1 > pathOptions.maxBounces;
   }};
+  // Terminate by Russian roulette instead of by a fixed depth limit, so
+  // that high-albedo transport keeps the energy it is entitled to.
+  // Returns whether the walk continues, scaling the throughput by the
+  // reciprocal survival when it does. Asked at every scattering vertex,
+  // volume as well as surface: an unbounded medium of high albedo goes
+  // on scattering indefinitely otherwise, and the deep vertices cost a
+  // gather apiece to carry a throughput roulette would have retired.
+  const auto rouletteSurvives{[&](uint64_t depth, const DTree *dtree,
+                                  float gate = 1.0f) noexcept -> bool {
+    if (!pathOptions.roulette || depth <= ROULETTE_MIN_DEPTH) return true;
+    float survival{};
+    const float meanRadiance{
+        dtree && guiding->pixelEstimate > 0 ? dtree->meanRadiance() : 0};
+    if (meanRadiance > 0) {
+      // Adjoint-driven Russian roulette (Vorba & Krivanek, SIGGRAPH
+      // 2016; roulette only, no splitting): survive in proportion to the
+      // expected pixel contribution of continuing the walk, which is the
+      // throughput times the SD-tree's cached mean incident radiance,
+      // relative to the pixel's estimate from the previous pass.
+      survival = std::clamp(
+          beta.average() * meanRadiance / guiding->pixelEstimate, 0.05f, 1.0f);
+    } else {
+      survival = std::min(ROULETTE_MAX_SURVIVAL, beta.maxComponent());
+    }
+    if (!(survival < gate)) return true;
+    if (!(float(sampler) < survival)) return false;
+    beta *= 1.0f / survival;
+    return true;
+  }};
   // Weigh an arrival at a light, an environment escape or an emitter hit,
   // and fold it into the estimate and the guide record. Through a Dirac
   // chain of claimed refractive interfaces the arrival competes with the
@@ -1555,6 +1594,10 @@ Color tracePath(smdl::Compiler &compiler, smdl::BumpPtrAllocator &allocator,
           // Phase functions scatter wide, so grow the cone like a
           // diffuse bounce.
           spread = std::min(spread + ANGLE_GROWTH_DIFFUSE, ANGLE_MAX);
+          // No SD-tree steers a volume vertex, so the throughput is the
+          // only thing the roulette can weigh here.
+          if (!rouletteSurvives(depth, /*dtree=*/nullptr, ROULETTE_VOLUME_GATE))
+            break;
           ray = Ray{point, wNext, EPS, INF};
           continue;
         }
@@ -1841,28 +1884,7 @@ Color tracePath(smdl::Compiler &compiler, smdl::BumpPtrAllocator &allocator,
     prevShareCausticOnly = !extendedChain;
     beta *= f / wpdf;
     if (beta.isAnyNonFinite()) break;
-    // Terminate by Russian roulette instead of by a fixed depth limit, so that
-    // high-albedo transport keeps the energy it is entitled to.
-    if (pathOptions.roulette && depth > ROULETTE_MIN_DEPTH) {
-      float survival{};
-      float meanRadiance{
-          dtree && guiding->pixelEstimate > 0 ? dtree->meanRadiance() : 0};
-      if (meanRadiance > 0) {
-        // Adjoint-driven Russian roulette (Vorba & Krivanek, SIGGRAPH
-        // 2016; roulette only, no splitting): survive in proportion to the
-        // expected pixel contribution of continuing the walk, which is the
-        // throughput times the SD-tree's cached mean incident radiance,
-        // relative to the pixel's estimate from the previous pass.
-        survival = beta.average() * meanRadiance / guiding->pixelEstimate;
-        survival = std::clamp(survival, 0.05f, 1.0f);
-      } else {
-        survival = std::min(ROULETTE_MAX_SURVIVAL, beta.maxComponent());
-      }
-      if (survival < 1.0f) {
-        if (!(float(sampler) < survival)) break;
-        beta *= 1.0f / survival;
-      }
-    }
+    if (!rouletteSurvives(depth, dtree)) break;
     if (!isHair)
       MediumStack::Update(medium, allocator, mat, hit.instance, wo, wNext);
     ray = Ray{hit.point, wNext, EPS, INF};

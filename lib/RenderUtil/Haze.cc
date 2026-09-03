@@ -1,5 +1,7 @@
 #include "smdl/RenderUtil/Haze.h"
 
+#include "smdl/RenderUtil/FastMath.h"
+
 #include <algorithm>
 #include <cmath>
 
@@ -166,7 +168,9 @@ Haze::Haze(const HazeOptions &options, Span<const float> wavelens,
 
 void Haze::extinctionAt(float height, Span<float> sigma) const noexcept {
   SMDL_SANITY_CHECK(sigma.size() == size());
-  const float scale{std::exp(
+  // The inline exponential: two ulp is nothing against the fit the
+  // extinction spectrum came out of, and this runs once per ray segment.
+  const float scale{fastExp(
       std::min((mBaseHeight - height) * mInvScaleHeight, MAX_EXPONENT))};
   for (size_t i = 0; i < sigma.size(); i++) sigma[i] = mSigmaRef[i] * scale;
 }
