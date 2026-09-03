@@ -146,12 +146,11 @@ float MiePhase::sample(float3 xi, const float3 &wo, float3 &wi) const noexcept {
 }
 
 Haze::Haze(const HazeOptions &options, Span<const float> wavelens,
-           float metersPerSceneUnit, HazeSun sun)
+           float metersPerSceneUnit)
     : mAlbedo(std::clamp(options.albedo, 0.0f, 1.0f)),
       mInvScaleHeight(metersPerSceneUnit /
                       std::max(options.scaleHeight, 1e-3f)),
-      mBaseHeight(options.baseHeight), mPhase(MiePhase(options.dropletSize)),
-      mSun(std::move(sun)) {
+      mBaseHeight(options.baseHeight), mPhase(MiePhase(options.dropletSize)) {
   // Koschmieder fixes the extinction at the reference wavelength; the
   // Angstrom exponent carries it across the spectrum. Coefficients are
   // in inverse meters, and distances here are in scene units, the same
@@ -163,8 +162,6 @@ Haze::Haze(const HazeOptions &options, Span<const float> wavelens,
     mSigmaRef[i] =
         sigmaRef * metersPerSceneUnit *
         std::pow(wavelens[i] / REFERENCE_WAVELENGTH, -options.angstrom);
-  SMDL_SANITY_CHECK(!mSun.isValid() || mSun.irradiance.size() == size());
-  mSun.direction = normalize(mSun.direction);
 }
 
 void Haze::extinctionAt(float height, Span<float> sigma) const noexcept {
@@ -194,75 +191,6 @@ float Haze::shapeInverse(float k, float s) noexcept {
   const float ks{k * s};
   if (!(ks < 1.0f)) return INF;
   return -std::log1p(-ks) / k;
-}
-
-float Haze::phaseOverSunDisk(const float3 &dir) const noexcept {
-  constexpr int N{16};
-  // The golden angle, which spreads the azimuths of a small stratified
-  // set about as evenly as anything without a second dimension to
-  // stratify in.
-  constexpr float GOLDEN{2.39996323f};
-  const auto frame{coordinateSystem(mSun.direction)};
-  double sum{0.0};
-  for (int i = 0; i < N; i++) {
-    const float cosTheta{1.0f -
-                         (float(i) + 0.5f) / N * (1.0f - mSun.cosRadius)};
-    const float sinTheta{std::sqrt(std::max(0.0f, 1.0f - cosTheta * cosTheta))};
-    const float phi{GOLDEN * float(i)};
-    const float3 wi{frame * float3(sinTheta * std::cos(phi),
-                                   sinTheta * std::sin(phi), cosTheta)};
-    sum += mPhase.evaluate(dot(dir, wi));
-  }
-  return float(sum / N);
-}
-
-bool Haze::sunInscatter(const float3 &org, const float3 &dir, float tEnd,
-                        float xi, Span<float> radiance, float &tShadow) const {
-  SMDL_SANITY_CHECK(radiance.size() == size());
-  if (!mSun.isValid() || !(tEnd > 0.0f)) return false;
-  const float t{std::min(tEnd, 1e12f)};
-  const float k{shapeExponent(dir.z)};
-  const float phase{phaseOverSunDisk(dir)};
-  if (!(phase > 0.0f)) return false;
-  // The density at the far end relative to the origin, which scales the
-  // sun path there. An unbounded segment that never turns upward drives
-  // it and the span below past what a float holds, while the integral
-  // they form converges: clamping it is what keeps the arithmetic
-  // finite, and the span is then derived from the clamped value rather
-  // than clamped on its own, because the limit is a ratio of the two and
-  // a clamp applied to one alone destroys it.
-  const float growth{-k * t};
-  const float uEnd{std::exp(std::min(growth, 60.0f))};
-  const float span{growth > 60.0f ? (1.0f - uEnd) / k : shape(k, t)};
-  if (!(span > 0.0f)) return false;
-  const float invSunSlope{1.0f / shapeExponent(mSun.direction.z)};
-  auto sigmaC{SpectralColor(size())};
-  extinctionAt(org.z, Span<float>(sigmaC.data(), sigmaC.size()));
-  double sigmaMean{0.0};
-  for (size_t i = 0; i < sigmaC.size(); i++) {
-    const float a{sigmaC[i] * span};        // tau_cam(tEnd)
-    const float b{sigmaC[i] * invSunSlope}; // tau_sun(0)
-    const float c{b * uEnd};                // tau_sun(tEnd)
-    const float x{a - b + c};
-    // Both exponents are non-positive, so neither overflows, and the
-    // series covers the cancellation as `x` approaches zero.
-    const float ratio{std::abs(x) < 1e-3f
-                          ? std::exp(-b) * (1.0f - 0.5f * x)
-                          : (std::exp(-b) - std::exp(-(a + c))) / x};
-    radiance[i] = phase * mSun.irradiance[i] * mAlbedo * a * ratio;
-    sigmaMean += double(sigmaC[i]);
-  }
-  sigmaMean /= double(sigmaC.size());
-  // Where to test the source's visibility. In the optical depth `tau`
-  // the integrand is proportional to `exp(-m tau)` with `m = 1 - dir.z /
-  // sun.z` purely geometric, so the sampling inverts in closed form on
-  // the normalized depth, and the distance follows from the shape.
-  const float m{1.0f - dir.z / mSun.direction.z};
-  const float beta{m * float(sigmaMean) * span};
-  float w{xi};
-  if (std::abs(beta) > 1e-6f) w = -std::log1p(xi * std::expm1(-beta)) / beta;
-  tShadow = std::min(shapeInverse(k, std::clamp(w, 0.0f, 1.0f) * span), tEnd);
-  return true;
 }
 
 } // namespace smdl

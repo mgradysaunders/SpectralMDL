@@ -86,40 +86,6 @@ private:
   float mWD{};
 };
 
-/// A directional source for `Haze::sunInscatter()`: the sun, or
-/// anything else far enough away to read as a beam.
-///
-/// The caller builds this from whatever light model it has, so the haze
-/// is coupled to the idea of a distant beam, which its closed form
-/// genuinely requires, rather than to any one sky model.
-class HazeSun final {
-public:
-  /// The unit direction toward the disk center, whose `z` must be
-  /// positive: the closed form integrates the beam's path straight out
-  /// of the atmosphere, which a source at or below the horizon does not
-  /// have.
-  float3 direction{0.0f, 0.0f, 1.0f};
-
-  /// The cosine of the disk's angular radius, 1 for a point source.
-  float cosRadius{1.0f};
-
-  /// The spectral irradiance on a surface facing the disk, on the
-  /// wavelength grid the `Haze` was built with. Empty means there is no
-  /// source and the analytic term is off.
-  SpectralColor irradiance{};
-
-  /// Is there a source at all?
-  [[nodiscard]] bool isValid() const noexcept {
-    return irradiance.size() > 0 && direction.z > 0.0f;
-  }
-
-  /// Does `wi` point into the disk? Transport the analytic term already
-  /// carries must not be gathered or arrived at a second time.
-  [[nodiscard]] bool contains(const float3 &wi) const noexcept {
-    return isValid() && dot(wi, direction) >= cosRadius;
-  }
-};
-
 /// The parameters of a `Haze`: one aerosol species whose extinction
 /// falls off exponentially with height above `baseHeight`.
 struct HazeOptions final {
@@ -168,10 +134,8 @@ struct HazeOptions final {
 /// depth: a haze that falls off with height dims the horizon without
 /// ever washing out the sky, which is what a homogeneous one cannot do.
 ///
-/// Renderer-agnostic by design: it never traces a ray. A renderer
-/// supplies the distant source through `HazeSun` and keeps the
-/// transport-side work, including the visibility test that
-/// `sunInscatter()` hands back a distance for.
+/// Renderer-agnostic by design: it never traces a ray, and knows
+/// nothing about the lights the medium it describes is lit by.
 ///
 /// The height is world `z`, matching the `+Z` zenith of `SunSky`.
 /// Coefficients are in inverse scene units and distances in scene
@@ -183,12 +147,9 @@ public:
   Haze() = default;
 
   /// Construct on the wavelength grid in `wavelens`, in nanometers,
-  /// which fixes the extinction spectrum. `sun` is the distant source
-  /// the analytic term integrates, and may be left empty, in which case
-  /// `sunInscatter()` reports nothing and the renderer is expected to
-  /// estimate every source by sampling.
+  /// which fixes the extinction spectrum.
   Haze(const HazeOptions &options, Span<const float> wavelens,
-       float metersPerSceneUnit, HazeSun sun = {});
+       float metersPerSceneUnit);
 
   /// The band count of the wavelength grid, which sizes every spectral
   /// output.
@@ -199,9 +160,6 @@ public:
 
   /// The phase function.
   [[nodiscard]] const MiePhase &phase() const noexcept { return mPhase; }
-
-  /// The distant source, whose `isValid()` says whether there is one.
-  [[nodiscard]] const HazeSun &sun() const noexcept { return mSun; }
 
   /// The extinction spectrum at `height` in scene units, in inverse
   /// scene units, written into `sigma`, which must have `size()`
@@ -222,53 +180,6 @@ public:
   /// never does, which is an upward ray leaving the atmosphere.
   [[nodiscard]] static float shapeInverse(float k, float s) noexcept;
 
-  /// The phase function averaged over the source's disk, for a segment
-  /// traveling toward `dir`, which is what `sunInscatter()` factors out
-  /// of its integral.
-  ///
-  /// The analytic term treats the source as a direction, which the
-  /// approximate Mie function will not stand for on its own: at a
-  /// droplet diameter of 12 micrometers the diffraction peak falls by a
-  /// quarter across the solar disk's own radius, so the value at the
-  /// center is not the value the disk delivers. Sixteen directions
-  /// stratified in solid angle over the cone are enough, the integrand
-  /// being smooth at that scale.
-  [[nodiscard]] float phaseOverSunDisk(const float3 &dir) const noexcept;
-
-  /// The unshadowed single scattering of the source into the segment of
-  /// length `tEnd` leaving `org` toward the unit direction `dir`,
-  /// written to `radiance`, along with the distance `tShadow` at which
-  /// to test whether the source reaches the segment at all.
-  ///
-  /// The whole segment is integrated in closed form. Writing the optical
-  /// depths of the segment and of the source's own path out of the
-  /// atmosphere as `a = tau_cam(tEnd)`, `b = tau_sun(0)` and `c =
-  /// tau_sun(tEnd)`, the integral is
-  ///
-  ///     L = p(cos theta) * E * albedo * a * (e^-b - e^-(a+c)) / x,
-  ///     x = a - b + c,
-  ///
-  /// per band, exact for a single exponential species and a directional
-  /// source, with the `x` near zero limit `a * e^-b`. The scattering
-  /// angle does not vary along the segment, the source being
-  /// directional, which is what leaves the phase function outside the
-  /// integral and makes it elementary.
-  ///
-  /// `tShadow` is drawn with `xi` from the density of that same
-  /// integrand, so multiplying `radiance` by the source's visibility
-  /// there estimates the shadowed integral. It is exact wherever the
-  /// segment is entirely lit or entirely shadowed, which in an open
-  /// scene is almost everywhere, and where a shadow edge crosses the
-  /// segment it is off only by the spectral spread of the density, which
-  /// vanishes with optical depth: at first order in the depth every band
-  /// has the same normalized density.
-  ///
-  /// Returns false, leaving both outputs untouched, when there is
-  /// nothing to add.
-  [[nodiscard]] bool sunInscatter(const float3 &org, const float3 &dir,
-                                  float tEnd, float xi, Span<float> radiance,
-                                  float &tShadow) const;
-
 private:
   /// The extinction spectrum at `mBaseHeight`, in inverse scene units.
   SpectralColor mSigmaRef{};
@@ -284,9 +195,6 @@ private:
 
   /// See `phase()`.
   MiePhase mPhase{};
-
-  /// See `sun()`.
-  HazeSun mSun{};
 };
 
 /// \}

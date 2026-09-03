@@ -50,14 +50,6 @@ public:
     return true;
   }
 
-  /// The procedural sun as a directional beam, for an estimator that
-  /// integrates it in closed form: the spectral irradiance on a surface
-  /// facing the disk, which is its uniform radiance times its solid
-  /// angle. False, leaving `irradiance` untouched, when there is no
-  /// procedural sun. The wavelengths are the state's, as everywhere.
-  [[nodiscard]] bool sunIrradiance(const smdl::State &state,
-                                   Color &irradiance) const;
-
 private:
   float scaleFactor{1.0f};
 

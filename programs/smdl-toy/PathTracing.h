@@ -286,10 +286,7 @@ private:
 /// The `haze` is the scene-wide exterior atmosphere, or null. It is the
 /// medium of every segment the walk spends outside all geometry, so it
 /// is mutually exclusive with an `exteriorMedium`, which occupies the
-/// same place with a material behind it. When it carries a sun, that
-/// sun is integrated in closed form over every segment and left out of
-/// the gathers and arrivals at haze vertices, so that the transport is
-/// counted once; see `smdl::Haze::sunInscatter()`.
+/// same place with a material behind it.
 ///
 /// The walk starts inside `exteriorMedium`, which may be null for
 /// vacuum: this is the bottom of the nested-medium stack, typically a

@@ -382,11 +382,6 @@ static cl::opt<float> optHazeScaleHeight{
     "haze-scale-height",
     cl::desc("The haze scale height in meters (default: 1200)"),
     cl::init(1200.0f), cl::cat(catLight)};
-static cl::opt<bool> optHazeSampledSun{
-    "haze-sampled-sun",
-    cl::desc("Estimate the haze's sun by sampling like any other light "
-             "instead of integrating it in closed form, for A/B"),
-    cl::init(false), cl::cat(catLight)};
 static cl::opt<float> optSkyScale{
     "sky-scale", cl::desc("The sky radiance scale factor (default: 1)"),
     cl::init(1.0f), cl::cat(catLight)};
@@ -1543,25 +1538,12 @@ int main(int argc, char **argv) try {
     if (fileHaze.albedo) options.albedo = *fileHaze.albedo;
     if (fileHaze.angstrom) options.angstrom = *fileHaze.angstrom;
     if (fileHaze.droplet) options.dropletSize = *fileHaze.droplet;
-    // The sun the analytic single-scattering term integrates, taken
-    // from the environment when it is the procedural sun-sky. An image
-    // environment has no analytic sun, and the haze then estimates
-    // every light by sampling. It is a constructor argument because the
-    // haze is immutable once the render threads share it.
-    auto sun{smdl::HazeSun{}};
-    if (envLight && !optHazeSampledSun) {
-      auto irradiance{Color()};
-      if (envLight->sunCone(sun.direction, sun.cosRadius) &&
-          envLight->sunIrradiance(makeRenderState(wavelengths), irradiance))
-        sun.irradiance = std::move(irradiance);
-    }
     haze = std::make_unique<smdl::Haze>(
         options,
         smdl::Span<const float>(wavelengths.data(), wavelengths.size()),
-        makeRenderState(wavelengths).meters_per_scene_unit, std::move(sun));
+        makeRenderState(wavelengths).meters_per_scene_unit);
     SMDL_LOG_INFO("Exterior haze: visibility ", options.visibility,
-                  " km, scale height ", options.scaleHeight, " m",
-                  haze->sun().isValid() ? ", analytic sun" : "");
+                  " km, scale height ", options.scaleHeight, " m");
   }
   // Every light in one selection path: each emissive mesh instance plus
   // the environment, weighted by power.

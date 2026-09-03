@@ -1193,12 +1193,6 @@ Color gatherDirect(const Scene &scene, Sampler &sampler,
   // the radiance from there. The plain estimate of such a sample is zero
   // and is skipped below.
   if (lights.sample(gatherState, sampler, point, lightSample, runManifold)) {
-    // The sun the haze integrates in closed form over every segment is
-    // not gathered again at a haze vertex, nor connected to through a
-    // manifold chain from one; see `smdl::Haze::sunInscatter()`.
-    if (const smdl::Haze *haze{scatterer.haze()};
-        haze && lightSample.isInfinite && haze->sun().contains(lightSample.wi))
-      return direct;
     const MNEEGather mneeGather{
         scene,     sampler, wavelengths, allocator,    lights,  gatherState,
         scatterer, kind,    dtree,       bsdfFraction, guiding, medium,
@@ -1405,10 +1399,6 @@ Color tracePath(smdl::Compiler &compiler, smdl::BumpPtrAllocator &allocator,
   // light sampling competes with.
   float wpdfPrev{};
   bool prevDirac{};
-  // Was the vertex behind the segment in flight a haze scattering event?
-  // The sun it can arrive at is the sun that segment's analytic term
-  // already carries.
-  bool prevHazeScatter{};
   // The share of the current segment's throughput the manifold estimators
   // claim, per wavelength: what an arrival at a light along it must drop,
   // since a gather behind produces it. Zero on a segment nobody claims.
@@ -1493,28 +1483,6 @@ Color tracePath(smdl::Compiler &compiler, smdl::BumpPtrAllocator &allocator,
     if (medium || scratch.medium.hasHaze()) {
       scratch.medium.reset(medium, wavelengths, time, ray.org, ray.dir);
       if (scratch.medium.hasMedium()) {
-        // The exterior haze integrates the sun's single scattering over
-        // the whole segment in closed form, which is the noisy half of
-        // aerial perspective and the half that fireflies: the phase
-        // function is constant along the segment, the sun being
-        // directional, so the integral is elementary and only the sun's
-        // visibility is left to estimate, from one shadow ray at a
-        // distance drawn from the integrand's own density. Added at the
-        // throughput from before the segment, like the medium's
-        // emission, and left out of everything downstream so that the
-        // transport is carried once.
-        if (haze && haze->sun().isValid() && !atMaxBounces(depth + 1)) {
-          Color Lsun{};
-          float tShadow{};
-          if (haze->sunInscatter(ray.org, ray.dir, ray.tmax, float(sampler),
-                                 smdl::Span<float>(Lsun.data(), Lsun.size()),
-                                 tShadow) &&
-              !Lsun.isAllZero() &&
-              !scene.isOccluded(
-                  Ray{ray(tShadow), haze->sun().direction, EPS, INF})) {
-            if (const Color Lss{beta * Lsun}; !Lss.isAnyNonFinite()) L += Lss;
-          }
-        }
         // Sample a free-flight distance over the cast, which
         // `Scene::intersect` bounded at the hit parameter (or left
         // unbounded on a miss). The medium weighs `beta` itself: the
@@ -1582,15 +1550,8 @@ Color tracePath(smdl::Compiler &compiler, smdl::BumpPtrAllocator &allocator,
           wpdfPrev = phaseValue;
           prevDirac = false;
           prevPoint = point;
-          // A volume vertex is a manifold-NEE receiver like any other,
-          // except a haze vertex whose sun is integrated analytically:
-          // its gather stands down toward the sun, so the arrivals it
-          // would claim must keep their ordinary weights.
-          const bool hazeScatter{phase.haze() != nullptr};
-          prevHazeScatter = hazeScatter;
-          mneeCoverage.arm(mneeOptions.any() &&
-                               !(hazeScatter && phase.haze()->sun().isValid()),
-                           point, phaseValue, medium);
+          // A volume vertex is a manifold-NEE receiver like any other.
+          mneeCoverage.arm(mneeOptions.any(), point, phaseValue, medium);
           // Phase functions scatter wide, so grow the cone like a
           // diffuse bounce.
           spread = std::min(spread + ANGLE_GROWTH_DIFFUSE, ANGLE_MAX);
@@ -1610,13 +1571,6 @@ Color tracePath(smdl::Compiler &compiler, smdl::BumpPtrAllocator &allocator,
       if (envLight) {
         float Lipdf{};
         Color Li{envLight->Li(compiler, gatherState, ray.dir, Lipdf)};
-        // The continuation of a haze scattering vertex must not arrive
-        // at the sun: the segment it left carried that transport in
-        // closed form. Zeroed rather than skipped so that both halves
-        // of the MIS pair estimate the same integrand, the gather
-        // having stood down over the same cone.
-        if (prevHazeScatter && haze && haze->sun().contains(ray.dir))
-          Li = Color();
         float weight{
             depth == 1 || prevDirac
                 ? 1.0f
@@ -1851,7 +1805,6 @@ Color tracePath(smdl::Compiler &compiler, smdl::BumpPtrAllocator &allocator,
     }
     wpdfPrev = wpdf;
     prevDirac = isDiracBounce;
-    prevHazeScatter = false;
     prevPoint = hit.point;
     const bool transmits{!isHair && mat.isTransmitting(wo, wNext)};
     const Color claimedShare{claimedShareOf(

@@ -96,9 +96,6 @@ public:
     return *mMat;
   }
 
-  /// The haze behind the vertex, or null for every other vertex.
-  [[nodiscard]] const smdl::Haze *haze() const noexcept { return mHaze; }
-
   /// The phase function of a volume vertex, normalized over the sphere
   /// and so also the solid-angle density of `volumeScatterSample()`.
   [[nodiscard]] float volumeScatterEvaluate(const float3 &wo,
@@ -197,9 +194,6 @@ public:
   /// outright for an empty stack, the exterior vacuum being the common
   /// case, must not skip it when there is.
   [[nodiscard]] bool hasHaze() const noexcept { return mHaze != nullptr; }
-
-  /// The scene-wide exterior haze, or null.
-  [[nodiscard]] const smdl::Haze *haze() const noexcept { return mHaze; }
 
   /// Is there a participating medium at all?
   [[nodiscard]] bool hasMedium() const noexcept { return mHasMedium; }
