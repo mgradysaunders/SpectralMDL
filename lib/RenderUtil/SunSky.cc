@@ -289,8 +289,7 @@ void evalSunOutputs(double sunZenithDeg, double visibility, double waterVapor,
 // that, so widening to double only buys conversions in the innermost
 // loop the model has.
 [[nodiscard]]
-float skyShape(const float (&modeCoeffs)[rural::SKY_MODE_COUNT],
-               std::size_t i) {
+float skyShape(const float (&modeCoeffs)[rural::SKY_MODE_COUNT], int i) {
   float shape = rural::SKY_MEAN_SHAPE[i];
   for (std::size_t m = 0; m < rural::SKY_MODE_COUNT; ++m)
     shape += modeCoeffs[m] * rural::SKY_MODES[m][i];
@@ -298,10 +297,13 @@ float skyShape(const float (&modeCoeffs)[rural::SKY_MODE_COUNT],
 }
 
 // The continuous channel coordinate of the given wavelength in
-// nanometers, clamped to the grid. Non-finite wavelengths clamp to
-// the first channel.
+// nanometers, clamped to the grid. Non-finite wavelengths clamp to the
+// first channel. The indexes are signed because converting a float to
+// an unsigned integer costs a range fixup and a branch on x86, once
+// each way, and every table address in the per-wavelength loops waits
+// behind it.
 struct ChannelLerp final {
-  std::size_t i0{}, i1{};
+  int i0{}, i1{};
   float frac{};
 };
 [[nodiscard]] ChannelLerp channelOf(float wavelenNm) {
@@ -310,8 +312,8 @@ struct ChannelLerp final {
   if (t > float(rural::WAVELENGTH_COUNT - 1))
     t = float(rural::WAVELENGTH_COUNT - 1);
   ChannelLerp lerp{};
-  lerp.i0 = std::size_t(t);
-  lerp.i1 = std::min(lerp.i0 + 1, std::size_t(rural::WAVELENGTH_COUNT - 1));
+  lerp.i0 = int(t);
+  lerp.i1 = std::min(lerp.i0 + 1, int(rural::WAVELENGTH_COUNT) - 1);
   lerp.frac = t - float(lerp.i0);
   return lerp;
 }
