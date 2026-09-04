@@ -167,15 +167,16 @@ private:
   void lowerDocument(const LayoutDocument &document, const float4x4 &xf,
                      const RenameMap &outerRenames,
                      const MarkOverrides &outerMarks, bool isEntry) {
-    // Only the entry file's camera, sky, haze, and medium take effect. An
-    // imported layout carrying its own is a layout that can also render
-    // standalone, so say what is being ignored rather than erroring, and
-    // never adopt it silently.
+    // Only the entry file's camera, sky, haze, time, and medium take
+    // effect. An imported layout carrying its own is a layout that can
+    // also render standalone, so say what is being ignored rather than
+    // erroring, and never adopt it silently.
     if (isEntry) {
       mResult.camera = document.camera;
       mResult.sky = document.sky;
       mResult.haze = document.haze;
       mResult.hasHaze = bool(document.hazeLoc);
+      mResult.time = document.time;
       mResult.entryMaterialAliases = document.materialAliases;
       if (!document.mediumName.empty())
         mResult.exteriorMediumName = document.mediumName;
@@ -197,6 +198,10 @@ private:
         mDiags.warn(document.hazeLoc,
                     "the 'haze' of an imported layout is ignored (only the "
                     "entry layout's haze takes effect)");
+      if (document.timeLoc)
+        mDiags.warn(document.timeLoc,
+                    "the 'time' of an imported layout is ignored (only the "
+                    "entry layout's time takes effect)");
       if (document.mediumLoc)
         mDiags.warn(document.mediumLoc,
                     "the 'medium' of an imported layout is ignored (only "

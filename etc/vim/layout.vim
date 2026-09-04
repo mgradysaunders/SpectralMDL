@@ -4,8 +4,8 @@
 "
 " The scene layout format that `smdl-toy` reads: `asset` and `light`
 " declarations, reusable `group` arrangements, `place` and `import`
-" statements, and the `material`, `medium`, `camera`, `sky`, and `haze`
-" directives.
+" statements, and the `material`, `medium`, `camera`, `sky`, `haze`, and
+" `time` directives.
 " This file is derived directly from the parser in
 " `programs/smdl-toy/LayoutParser.cc`, so the words it knows inside a block are
 " exactly the ones that block accepts, and anything else there is flagged the
@@ -143,11 +143,12 @@ syn keyword layoutStatement import nextgroup=layoutImportPath skipwhite skipempt
 syn match layoutImportPath contained display +"[^"]*"+
       \ nextgroup=layoutImportBlock skipwhite skipempty
 
-" camera { ... }, sky { ... } and haze { ... }, merged per field, last one
-" wins.
+" camera { ... }, sky { ... }, haze { ... } and time { ... }, merged per
+" field, last one wins.
 syn keyword layoutStatement camera nextgroup=layoutCameraBlock skipwhite skipempty
 syn keyword layoutStatement sky nextgroup=layoutSkyBlock skipwhite skipempty
 syn keyword layoutStatement haze nextgroup=layoutHazeBlock skipwhite skipempty
+syn keyword layoutStatement time nextgroup=layoutTimeBlock skipwhite skipempty
 
 " medium <material>
 syn keyword layoutStatement medium nextgroup=layoutMaterialName skipwhite skipempty
@@ -236,6 +237,11 @@ syn keyword layoutCameraSetting contained aperture focus blades blade_angle
 syn keyword layoutCameraSetting contained distortion_k1 distortion_k2 distortion_fit
 syn keyword layoutCameraSetting contained vignetting cat_eye cat_eye_radius
 
+" motion { ... } inside camera: the framing at shutter close.
+syn keyword layoutCameraSetting contained motion
+      \ nextgroup=layoutCameraMotionBlock skipwhite skipempty
+syn keyword layoutCameraMotionSetting contained look_from look_to look_up
+
 syn keyword layoutSkySetting contained none sun_zenith sun_azimuth visibility
 syn keyword layoutSkySetting contained water_vapor scale moon moon_distance
 syn keyword layoutSkySetting contained ibl ibl_scale
@@ -243,6 +249,9 @@ syn keyword layoutSkySetting contained ibl ibl_scale
 " The haze settings.
 syn keyword layoutHazeSetting contained none visibility scale_height
 syn keyword layoutHazeSetting contained base_height albedo angstrom droplet
+
+" The time settings.
+syn keyword layoutTimeSetting contained base shutter
 "--}
 
 "--{ Blocks
@@ -279,11 +288,17 @@ syn region layoutImportBlock contained matchgroup=layoutDelim start="{" end="}"
 syn region layoutCameraBlock contained matchgroup=layoutDelim start="{" end="}"
       \ contains=@layoutCommon,layoutCameraSetting
 
+syn region layoutCameraMotionBlock contained matchgroup=layoutDelim start="{" end="}"
+      \ contains=@layoutCommon,layoutCameraMotionSetting
+
 syn region layoutSkyBlock contained matchgroup=layoutDelim start="{" end="}"
       \ contains=@layoutCommon,layoutSkySetting
 
 syn region layoutHazeBlock contained matchgroup=layoutDelim start="{" end="}"
       \ contains=@layoutCommon,layoutHazeSetting
+
+syn region layoutTimeBlock contained matchgroup=layoutDelim start="{" end="}"
+      \ contains=@layoutCommon,layoutTimeSetting
 "--}
 
 " Blocks nest at most three deep (group, place, variant) and are short, so
@@ -320,8 +335,10 @@ hi def link layoutAs              Keyword
 hi def link layoutAssetSetting    Label
 hi def link layoutLightSetting    Label
 hi def link layoutCameraSetting   Label
+hi def link layoutCameraMotionSetting Label
 hi def link layoutSkySetting      Label
 hi def link layoutHazeSetting     Label
+hi def link layoutTimeSetting     Label
 
 hi def link layoutShape           Constant
 hi def link layoutLightKind       Constant

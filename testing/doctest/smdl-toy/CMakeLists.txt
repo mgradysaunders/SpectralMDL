@@ -7,6 +7,7 @@ smdl_add_doctest(
     "IO/PlacesFile.cc"
     "Layout/Layout.cc"
     "Layout/LayoutParser.cc"
+    "Render/Camera.cc"
     "Render/Light.cc"
     "Render/LightTree.cc"
     "Render/Manifold.cc"

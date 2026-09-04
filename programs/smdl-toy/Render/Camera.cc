@@ -69,6 +69,19 @@ Camera::Camera(const CameraOptions &options) {
       options.noLOD ? 0.0f : std::atan(1.0f / (focalLength * numPixelsY));
   cameraToWorld =
       smdl::lookAt(options.lookFrom, options.lookTo, options.lookUp);
+  lookFrom = options.lookFrom;
+  lookTo = options.lookTo;
+  lookUp = options.lookUp;
+  if (options.motion) {
+    lookFromClose = options.lookFromClose;
+    lookToClose = options.lookToClose;
+    lookUpClose = options.lookUpClose;
+    const auto same{[](const float3 &a, const float3 &b) {
+      return a.x == b.x && a.y == b.y && a.z == b.z;
+    }};
+    moving = !(same(lookFromClose, lookFrom) && same(lookToClose, lookTo) &&
+               same(lookUpClose, lookUp));
+  }
   // The distortion radius is corner-normalized so the coefficients sum to
   // the fractional corner displacement at any aspect ratio and FOV.
   rCorner = std::hypot(0.5f * aspectRatio, 0.5f);
@@ -124,6 +137,15 @@ Camera::Camera(const CameraOptions &options) {
                   " scene units against a lens radius of ", lensRadius,
                   ", displaced ", options.catEye * rimRadius,
                   " at the frame corner");
+  }
+  if (moving) {
+    SMDL_LOG_INFO("Camera motion: over the shutter the position moves ",
+                  length(lookFromClose - lookFrom),
+                  " scene units and the target moves ",
+                  length(lookToClose - lookTo));
+  } else if (options.motion) {
+    SMDL_LOG_INFO("Camera motion: the close keys equal the open keys, "
+                  "rendering still");
   }
 }
 
@@ -183,8 +205,18 @@ CameraSample Camera::sample(size_t x, size_t y,
         lengthSquared(lens + offset) > rimRadius * rimRadius)
       result.weight = 0;
   }
-  result.ray.transform(cameraToWorld);
-  result.ray.dir = normalize(result.ray.dir);
   result.coneAngle = coneAngleBase * distortConeScale;
   return result;
+}
+
+void Camera::toWorld(CameraSample &sample, float u) const noexcept {
+  if (!moving) {
+    sample.ray.transform(cameraToWorld);
+  } else {
+    sample.ray.transform(smdl::lookAt((1 - u) * lookFrom + u * lookFromClose,
+                                      (1 - u) * lookTo + u * lookToClose,
+                                      (1 - u) * lookUp + u * lookUpClose));
+  }
+  sample.ray.dir = normalize(sample.ray.dir);
+  sample.ray.time = u;
 }

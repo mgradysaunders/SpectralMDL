@@ -57,7 +57,9 @@ static cl::list<std::string> optInputMDLFiles{
 //--{ CLI: Scene Options
 static cl::OptionCategory catScene{"Scene Options"};
 static cl::opt<float> optTime{
-    "time", cl::desc("The animation time in seconds (default: 0)"),
+    "time",
+    cl::desc("The animation time in seconds at shutter open, overriding the "
+             "layout's 'time' directive (default: 0)"),
     cl::init(0.0f), cl::cat(catScene)};
 static cl::list<std::string> optInputMeshFiles{
     "mesh", cl::desc("Add another mesh, repeatable"), cl::cat(catScene)};
@@ -290,7 +292,9 @@ static cl::opt<bool> optAutolookIgnoreBackfaces{
 //--{ CLI: Camera-Lens Options
 static cl::OptionCategory catCameraLens{"Camera-Lens Options"};
 static cl::opt<float> optShutterSpeed{
-    "shutter-speed", cl::desc("The shutter speed in seconds (default: 0)"),
+    "shutter-speed",
+    cl::desc("The seconds the shutter stays open, overriding the layout's "
+             "'time' directive (default: 0, closed)"),
     cl::init(0.0f), cl::cat(catCameraLens)};
 static cl::opt<float> optFStop{
     "fstop", cl::desc("Enable DOF by f-number assuming 35mm-format frame"),
@@ -939,8 +943,6 @@ int main(int argc, char **argv) try {
   }
   if (!(std::isfinite(float(optShutterSpeed)) && float(optShutterSpeed) >= 0))
     throw smdl::Error("expected -shutter-speed to be finite and nonnegative");
-  renderTime() = float(optTime);
-  renderShutter() = float(optShutterSpeed);
   // Parsed and validated now so a typo fails before anything loads.
   const auto waveRange{
       parseWavelengthRangeFlag(std::string(optWavelengthRange))};
@@ -1058,6 +1060,37 @@ int main(int argc, char **argv) try {
                       "the command line and the scene file's 'camera' "
                       "directive (they are two spellings of the same "
                       "quantity)");
+  // The two clocks, merged the same way from the layout's 'time'
+  // directive. The parser has already refused a file value that is not
+  // finite or, for the shutter, negative.
+  renderTime() = pick(optTime, layout.time.base);
+  renderShutter() = pick(optShutterSpeed, layout.time.shutter);
+  // The camera's close keys. The layout wrote them against its own
+  // framing, so a flag that replaces that framing drops them rather
+  // than moving a camera the file never described; a key the block
+  // leaves unstated holds its open value.
+  if (fileCamera.motion) {
+    const char *framingFlag{optAutolook                           ? "-autolook"
+                            : optLookFrom.getNumOccurrences() > 0 ? "-look-from"
+                            : optLookTo.getNumOccurrences() > 0   ? "-look-to"
+                            : optLookUp.getNumOccurrences() > 0   ? "-look-up"
+                                                                  : nullptr};
+    if (framingFlag) {
+      SMDL_LOG_INFO("Camera motion: dropped, since ", framingFlag,
+                    " replaces the framing the layout's 'motion' was "
+                    "written against");
+    } else if (!(renderShutter() > 0)) {
+      SMDL_LOG_INFO("Camera motion: the shutter is closed, so the camera "
+                    "holds its open framing");
+    } else {
+      const auto &motion{*fileCamera.motion};
+      cameraOptions.motion = true;
+      cameraOptions.lookFromClose =
+          motion.lookFrom.value_or(cameraOptions.lookFrom);
+      cameraOptions.lookToClose = motion.lookTo.value_or(cameraOptions.lookTo);
+      cameraOptions.lookUpClose = motion.lookUp.value_or(cameraOptions.lookUp);
+    }
+  }
   // Under -autolook the position comes from measuring the committed scene,
   // so construction (with the lens validation and the summary it logs)
   // waits until the solve below. Every other path keeps constructing
@@ -1881,7 +1914,7 @@ int main(int argc, char **argv) try {
           const Color &sampleWavelengths{jitterWavelength ? *jittered
                                                           : wavelengths};
           Color Lsample{};
-          const auto cameraSample{camera->sample(x, y, sampler)};
+          auto cameraSample{camera->sample(x, y, sampler)};
           // A fully vignetted sample contributes nothing, so skip the
           // walk but let it still count in the average below, keeping the
           // darkening unbiased.
@@ -1889,10 +1922,12 @@ int main(int argc, char **argv) try {
           if (cameraSample.weight > 0) {
             // The path's time. The shutter fraction is drawn only when
             // the shutter is open, matching the lens-point precedent, so
-            // a default render's sampler sequence is unchanged.
+            // a default render's sampler sequence is unchanged; the
+            // camera ray is placed in the world only now, at that time.
             float shutterFraction{};
             if (renderShutter() > 0) shutterFraction = float(sampler);
             const PathTime time{shutterFraction};
+            camera->toWorld(cameraSample, time.fraction);
             Lsample = tracePath(
                 compiler, allocator, scene, sampler, sampleWavelengths,
                 cameraSample.ray, time, cameraSample.weight,

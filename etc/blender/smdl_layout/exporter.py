@@ -17,6 +17,7 @@ here rather than imported: it bakes to a `.curves` sidecar (see
 `curves.py`) declared and placed as an asset of its own.
 """
 
+import collections
 import math
 import os
 import re
@@ -880,38 +881,125 @@ def to_identifier(name):
     return result
 
 
-def camera_block(scene):
+# The shutter of one exported frame: where it opens and closes as
+# `(frame, subframe)` keys the scene can be evaluated at, and the two
+# values of the `time` directive, `base` (the open key in seconds) and
+# `shutter` (the seconds from open to close).
+ShutterKeys = collections.namedtuple("ShutterKeys",
+                                     "open close base shutter")
+
+
+def split_frame(time):
+    """A fractional frame as the `(frame, subframe)` pair `frame_set`
+    takes, with the subframe in [0, 1)."""
+    frame = math.floor(time)
+    return int(frame), time - frame
+
+
+def shutter_keys(scene):
+    """The shutter keys of the current frame, or `None` with motion blur
+    off, which is the only thing that turns motion on in the export.
+
+    Blender states the shutter in frames and says where the current frame
+    sits in it: at the open (`START`), in the middle (`CENTER`), or at the
+    close (`END`). The frame rate then turns frames into the seconds the
+    renderer's clock runs on.
+    """
+    render = scene.render
+    if not render.use_motion_blur:
+        return None
+    length = render.motion_blur_shutter
+    current = scene.frame_current + scene.frame_subframe
+    if render.motion_blur_position == "START":
+        opens = current
+    elif render.motion_blur_position == "END":
+        opens = current - length
+    else:
+        opens = current - length / 2
+    seconds_per_frame = render.fps_base / render.fps
+    return ShutterKeys(open=split_frame(opens),
+                       close=split_frame(opens + length),
+                       base=opens * seconds_per_frame,
+                       shutter=length * seconds_per_frame)
+
+
+def time_block(keys):
+    """The `time` directive from the shutter keys, or nothing."""
+    if keys is None:
+        return []
+    return ["time {",
+            f"  base {keys.base:.9g}",
+            f"  shutter {keys.shutter:.9g}",
+            "}"]
+
+
+def framing_of(matrix):
+    """The three framing vectors of a camera matrix: the position, the
+    point one unit ahead of it, and the up vector. Blender's camera looks
+    down its local -Z with +Y up, so this is a naming exercise rather
+    than a conversion."""
+    origin = matrix.translation.copy()
+    forward = -matrix.col[2].xyz.normalized()
+    up = matrix.col[1].xyz.normalized()
+    return origin, origin + forward, up
+
+
+def framing_at(scene, camera, key):
+    """The camera's framing at the `(frame, subframe)` key, with the
+    scene's frame put back afterward whatever happens."""
+    frame, subframe = scene.frame_current, scene.frame_subframe
+    try:
+        scene.frame_set(key[0], subframe=key[1])
+        return framing_of(camera.matrix_world)
+    finally:
+        scene.frame_set(frame, subframe=subframe)
+
+
+def framing_lines(framing, indent="  "):
+    origin, target, up = framing
+    return [f"{indent}look_from {origin.x:.9g} {origin.y:.9g} {origin.z:.9g}",
+            f"{indent}look_to {target.x:.9g} {target.y:.9g} {target.z:.9g}",
+            f"{indent}look_up {up.x:.9g} {up.y:.9g} {up.z:.9g}"]
+
+
+def camera_block(scene, keys=None):
     """The scene camera as a `camera` directive, or nothing.
 
-    Blender's camera looks down its local -Z with +Y up and states its
-    vertical field of view directly, so this is a naming exercise rather
-    than a conversion. The lens comes from the add-on's Camera Options
-    panel alone; the camera datablock's own Depth of Field is deliberately
-    not read, so blur can never come from a panel this add-on does not
-    draw. A setting is written only when it differs from the renderer's
-    default, which is what the grammar demands: zero is not a value there,
-    it is the absence of one.
+    The framing is read at the shutter's open key when there is one and
+    at the current frame otherwise, and the `motion` block carries the
+    framing at the close key whenever it differs, so a still camera under
+    motion blur writes none. The field of view and the lens hold over the
+    shutter. The lens comes from the add-on's Camera Options panel alone;
+    the camera datablock's own Depth of Field is deliberately not read, so
+    blur can never come from a panel this add-on does not draw. A setting
+    is written only when it differs from the renderer's default, which is
+    what the grammar demands: zero is not a value there, it is the
+    absence of one.
     """
     camera = scene.camera
     if camera is None or camera.type != "CAMERA":
         return []
-    matrix = camera.matrix_world
-    origin = matrix.translation
-    forward = -matrix.col[2].xyz.normalized()
-    up = matrix.col[1].xyz.normalized()
-    target = origin + forward
+    if keys is None:
+        framing = framing_of(camera.matrix_world)
+        motion = None
+    else:
+        framing = framing_at(scene, camera, keys.open)
+        motion = framing_at(scene, camera, keys.close)
+        if all((a - b).length == 0 for a, b in zip(motion, framing)):
+            motion = None
+    origin = framing[0]
+    forward = framing[1] - origin
     data = camera.data
     render = scene.render
     width = int(render.resolution_x * render.resolution_percentage / 100)
     height = int(render.resolution_y * render.resolution_percentage / 100)
-    lines = [
-        "camera {",
-        f"  resolution {max(width, 1)} {max(height, 1)}",
-        f"  look_from {origin.x:.9g} {origin.y:.9g} {origin.z:.9g}",
-        f"  look_to {target.x:.9g} {target.y:.9g} {target.z:.9g}",
-        f"  look_up {up.x:.9g} {up.y:.9g} {up.z:.9g}",
-        f"  fovy {data.angle_y * 180.0 / 3.14159265358979:.9g}",
-    ]
+    lines = ["camera {", f"  resolution {max(width, 1)} {max(height, 1)}"]
+    lines.extend(framing_lines(framing))
+    lines.append(f"  fovy {data.angle_y * 180.0 / 3.14159265358979:.9g}")
+    if motion is not None:
+        lines.append("  motion {")
+        lines.extend(framing_lines(motion, indent="    "))
+        lines.append("  }")
     settings = scene.smdl_render
     if settings.vignette > 0:
         lines.append(f"  vignetting {settings.vignette:.9g}")
@@ -1875,7 +1963,11 @@ def write_scene(context, filepath, asset_root="", bake=True, collection=None,
     lines.extend(haze_block(context.scene))
     if lines and lines[-1] == "}":
         lines.append("")
-    lines.extend(camera_block(context.scene))
+    keys = shutter_keys(context.scene)
+    lines.extend(time_block(keys))
+    if lines and lines[-1] == "}":
+        lines.append("")
+    lines.extend(camera_block(context.scene, keys))
     if context.scene.camera is None:
         problems.append("the scene has no camera, so the layout carries no "
                         "viewpoint")

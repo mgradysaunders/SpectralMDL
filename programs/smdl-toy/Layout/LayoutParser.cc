@@ -89,9 +89,9 @@ private:
 class Recover final {};
 
 // The top-level keywords, which are the synchronization points.
-constexpr std::array<std::string_view, 10> TOP_LEVEL_KEYWORDS{
-    "asset",    "group",  "place",  "import", "light",
-    "material", "medium", "camera", "sky",    "haze"};
+constexpr std::array<std::string_view, 11> TOP_LEVEL_KEYWORDS{
+    "asset",  "group",  "place", "import", "light", "material",
+    "medium", "camera", "sky",   "haze",   "time"};
 
 // The transform operations, named here so an unknown top-level
 // directive that is really a stray transform gets a pointed note.
@@ -161,6 +161,8 @@ private:
       parseSky();
     } else if (mToken.text == "haze") {
       parseHaze();
+    } else if (mToken.text == "time") {
+      parseTime();
     } else {
       auto &error{
           mDiags.error(location(), smdl::concat("unknown directive ",
@@ -1089,6 +1091,8 @@ private:
         camera.catEye = numbers<1>()[0];
       } else if (key == "cat_eye_radius") {
         camera.catEyeRadius = positive(keyLoc, key, numbers<1>()[0]);
+      } else if (key == "motion") {
+        parseCameraMotion(camera);
       } else {
         mDiags.error(
             keyLoc,
@@ -1096,7 +1100,49 @@ private:
                          " (expected resolution, look_from, look_to, look_up, "
                          "fovy, fstop, aperture, focus, blades, blade_angle, "
                          "distortion_k1, distortion_k2, distortion_fit, "
-                         "vignetting, cat_eye, or cat_eye_radius)"));
+                         "vignetting, cat_eye, cat_eye_radius, or motion)"));
+        throw Recover();
+      }
+    }
+    advance(); // '}'
+  }
+
+  // The `motion { ... }` block inside `camera`: the framing at shutter
+  // close, merged per field like the block around it.
+  void parseCameraMotion(LayoutCamera &camera) {
+    if (mToken.kind != Token::OPEN) {
+      mDiags.error(location(), "expected '{' after 'motion'");
+      throw Recover();
+    }
+    advance(); // '{'
+    if (!camera.motion) camera.motion.emplace();
+    auto &motion{*camera.motion};
+    while (mToken.kind != Token::CLOSE) {
+      if (mToken.kind == Token::END) {
+        mDiags.error(location(), "expected '}' before end of file");
+        throw Recover();
+      }
+      if (mToken.kind != Token::WORD) {
+        mDiags.error(location(), "expected a camera motion setting or '}'");
+        throw Recover();
+      }
+      const auto key{mToken.text};
+      const auto keyLoc{location()};
+      advance();
+      if (key == "look_from") {
+        auto v{numbers<3>()};
+        motion.lookFrom = float3(v[0], v[1], v[2]);
+      } else if (key == "look_to") {
+        auto v{numbers<3>()};
+        motion.lookTo = float3(v[0], v[1], v[2]);
+      } else if (key == "look_up") {
+        auto v{numbers<3>()};
+        motion.lookUp = float3(v[0], v[1], v[2]);
+      } else {
+        mDiags.error(keyLoc, smdl::concat("unknown camera motion setting ",
+                                          smdl::Quoted(key),
+                                          " (expected look_from, look_to, "
+                                          "or look_up)"));
         throw Recover();
       }
     }
@@ -1210,6 +1256,48 @@ private:
     advance(); // '}'
   }
 
+  // A `time { ... }` block, merged per field like `sky`.
+  void parseTime() {
+    if (!mDocument.timeLoc) mDocument.timeLoc = location();
+    advance();
+    if (mToken.kind != Token::OPEN) {
+      mDiags.error(location(), "expected '{' after 'time'");
+      throw Recover();
+    }
+    advance(); // '{'
+    auto &time{mDocument.time};
+    while (mToken.kind != Token::CLOSE) {
+      if (mToken.kind == Token::END) {
+        mDiags.error(location(), "expected '}' before end of file");
+        throw Recover();
+      }
+      if (mToken.kind != Token::WORD) {
+        mDiags.error(location(), "expected a time setting or '}'");
+        throw Recover();
+      }
+      const auto key{mToken.text};
+      const auto keyLoc{location()};
+      advance();
+      if (key == "base") {
+        time.base = finite(keyLoc, key, numbers<1>()[0]);
+      } else if (key == "shutter") {
+        const auto value{finite(keyLoc, key, numbers<1>()[0])};
+        if (!(value >= 0)) {
+          mDiags.error(keyLoc, "expected a nonnegative number for 'shutter' "
+                               "(0 or omitted is a closed shutter)");
+          throw Recover();
+        }
+        time.shutter = value;
+      } else {
+        mDiags.error(keyLoc,
+                     smdl::concat("unknown time setting ", smdl::Quoted(key),
+                                  " (expected base or shutter)"));
+        throw Recover();
+      }
+    }
+    advance(); // '}'
+  }
+
   // Check a setting whose zero means "unset" everywhere downstream, so
   // that writing it down has to mean something.
   [[nodiscard]] float positive(const LayoutLocation &keyLoc,
@@ -1218,6 +1306,18 @@ private:
       mDiags.error(keyLoc, smdl::concat("expected a positive number for ",
                                         smdl::Quoted(key),
                                         " (omit it to leave it unset)"));
+      throw Recover();
+    }
+    return value;
+  }
+
+  // Check a setting that is a clock reading, which the number syntax
+  // alone would let be infinite or not a number.
+  [[nodiscard]] float finite(const LayoutLocation &keyLoc, std::string_view key,
+                             float value) {
+    if (!std::isfinite(value)) {
+      mDiags.error(keyLoc, smdl::concat("expected a finite number for ",
+                                        smdl::Quoted(key)));
       throw Recover();
     }
     return value;

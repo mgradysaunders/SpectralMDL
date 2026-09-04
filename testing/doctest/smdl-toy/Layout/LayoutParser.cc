@@ -296,3 +296,156 @@ light coin = disk { rotate_x 90 }
   CHECK(document.lights[3].transform[1].z == doctest::Approx(1.0f));
   CHECK(document.lights[3].transform[1].y == doctest::Approx(0.0f));
 }
+
+TEST_CASE("LayoutParser: the time directive") {
+  LayoutDiagnostics diags{};
+  SUBCASE("Both settings parse, and the location is the first block's") {
+    const auto document{
+        parseOK(diags, "#smdl layout\ntime { base 2.5 shutter 0.02 }\n")};
+    REQUIRE(document.time.base);
+    REQUIRE(document.time.shutter);
+    CHECK(*document.time.base == doctest::Approx(2.5f));
+    CHECK(*document.time.shutter == doctest::Approx(0.02f));
+    REQUIRE(document.timeLoc);
+    CHECK(document.source->lineAndColumn(document.timeLoc.offset).lineNo == 2);
+  }
+  SUBCASE("Absent, both stay unset") {
+    const auto document{parseOK(diags, "#smdl layout\n")};
+    CHECK(!document.time.base);
+    CHECK(!document.time.shutter);
+    CHECK(!document.timeLoc);
+  }
+  SUBCASE("Two blocks merge per field, last one wins") {
+    const auto document{parseOK(diags, "#smdl layout\n"
+                                       "time { base 1 shutter 0.5 }\n"
+                                       "time { base 2 }\n")};
+    CHECK(*document.time.base == doctest::Approx(2.0f));
+    CHECK(*document.time.shutter == doctest::Approx(0.5f));
+  }
+  SUBCASE("A zero shutter is a closed shutter, not an error") {
+    const auto document{parseOK(diags, "#smdl layout\ntime { shutter 0 }\n")};
+    CHECK(*document.time.shutter == 0.0f);
+  }
+  SUBCASE("A negative shutter is an error") {
+    const auto &source{
+        diags.addSource("test.layout", "#smdl layout\ntime { shutter -1 }\n")};
+    (void)parseLayout(diags, source, "/nowhere");
+    REQUIRE(diags.errorCount() == 1);
+    CHECK(diags.all().front().message.find(
+              "nonnegative number for 'shutter'") != std::string::npos);
+  }
+  SUBCASE("A non-numeric base is an error") {
+    const auto &source{
+        diags.addSource("test.layout", "#smdl layout\ntime { base noon }\n")};
+    (void)parseLayout(diags, source, "/nowhere");
+    REQUIRE(diags.errorCount() == 1);
+    CHECK(diags.all().front().message.find("expected a number") !=
+          std::string::npos);
+  }
+  SUBCASE("A non-finite base is an error") {
+    const auto &source{
+        diags.addSource("test.layout", "#smdl layout\ntime { base inf }\n")};
+    (void)parseLayout(diags, source, "/nowhere");
+    REQUIRE(diags.errorCount() == 1);
+    CHECK(diags.all().front().message.find("finite number for 'base'") !=
+          std::string::npos);
+  }
+  SUBCASE("An unknown setting names the two that exist") {
+    const auto &source{
+        diags.addSource("test.layout", "#smdl layout\ntime { fps 24 }\n")};
+    (void)parseLayout(diags, source, "/nowhere");
+    REQUIRE(diags.errorCount() == 1);
+    const auto &error{diags.all().front()};
+    CHECK(error.message.find("unknown time setting") != std::string::npos);
+    CHECK(error.message.find("base or shutter") != std::string::npos);
+  }
+  SUBCASE("The parse resynchronizes at the next statement") {
+    const auto &source{diags.addSource(
+        "test.layout", "#smdl layout\ntime { shutter -1 }\nsky { none }\n")};
+    const auto document{parseLayout(diags, source, "/nowhere")};
+    REQUIRE(diags.errorCount() == 1);
+    CHECK(document.sky.none == true);
+  }
+}
+
+TEST_CASE("LayoutParser: the camera motion block") {
+  LayoutDiagnostics diags{};
+  SUBCASE("Absent, there is no motion") {
+    const auto document{
+        parseOK(diags, "#smdl layout\ncamera { look_from 1 2 3 }\n")};
+    CHECK(!document.camera.motion);
+  }
+  SUBCASE("One key: the others stay unset for the merge to fill") {
+    const auto document{parseOK(
+        diags, "#smdl layout\ncamera { motion { look_to 0 1 0.5 } }\n")};
+    REQUIRE(document.camera.motion);
+    CHECK(!document.camera.motion->lookFrom);
+    REQUIRE(document.camera.motion->lookTo);
+    CHECK(document.camera.motion->lookTo->y == doctest::Approx(1.0f));
+    CHECK(!document.camera.motion->lookUp);
+  }
+  SUBCASE("Two keys") {
+    const auto document{parseOK(diags, "#smdl layout\ncamera {\n"
+                                       "  look_from -6 0 2\n"
+                                       "  motion { look_from -5 0 2 "
+                                       "look_up 0.1 0 1 }\n"
+                                       "}\n")};
+    REQUIRE(document.camera.motion);
+    REQUIRE(document.camera.motion->lookFrom);
+    REQUIRE(document.camera.motion->lookUp);
+    CHECK(document.camera.motion->lookFrom->x == doctest::Approx(-5.0f));
+    CHECK(document.camera.motion->lookUp->x == doctest::Approx(0.1f));
+    CHECK(!document.camera.motion->lookTo);
+    REQUIRE(document.camera.lookFrom);
+    CHECK(document.camera.lookFrom->x == doctest::Approx(-6.0f));
+  }
+  SUBCASE("Three keys") {
+    const auto document{
+        parseOK(diags, "#smdl layout\ncamera { motion { look_from 1 2 3 "
+                       "look_to 4 5 6 look_up 7 8 9 } }\n")};
+    REQUIRE(document.camera.motion);
+    REQUIRE(document.camera.motion->lookFrom);
+    REQUIRE(document.camera.motion->lookTo);
+    REQUIRE(document.camera.motion->lookUp);
+    CHECK(document.camera.motion->lookFrom->z == doctest::Approx(3.0f));
+    CHECK(document.camera.motion->lookTo->z == doctest::Approx(6.0f));
+    CHECK(document.camera.motion->lookUp->z == doctest::Approx(9.0f));
+  }
+  SUBCASE("A repeated block merges per field, last one wins") {
+    const auto document{parseOK(diags,
+                                "#smdl layout\n"
+                                "camera { motion { look_from 1 0 0 "
+                                "look_to 0 1 0 } }\n"
+                                "camera { motion { look_from 2 0 0 } }\n")};
+    REQUIRE(document.camera.motion);
+    CHECK(document.camera.motion->lookFrom->x == doctest::Approx(2.0f));
+    CHECK(document.camera.motion->lookTo->y == doctest::Approx(1.0f));
+  }
+  SUBCASE("An unknown key inside names the three that exist") {
+    const auto &source{diags.addSource(
+        "test.layout", "#smdl layout\ncamera { motion { fovy 30 } }\n")};
+    (void)parseLayout(diags, source, "/nowhere");
+    REQUIRE(diags.errorCount() == 1);
+    const auto &error{diags.all().front()};
+    CHECK(error.message.find("unknown camera motion setting") !=
+          std::string::npos);
+    CHECK(error.message.find("look_from, look_to, or look_up") !=
+          std::string::npos);
+  }
+  SUBCASE("The block needs its brace") {
+    const auto &source{diags.addSource(
+        "test.layout", "#smdl layout\ncamera { motion look_to 0 0 0 }\n")};
+    (void)parseLayout(diags, source, "/nowhere");
+    REQUIRE(diags.errorCount() == 1);
+    CHECK(diags.all().front().message.find("'{' after 'motion'") !=
+          std::string::npos);
+  }
+  SUBCASE("At the top level, motion is still an unknown directive") {
+    const auto &source{diags.addSource(
+        "test.layout", "#smdl layout\nmotion { look_to 0 0 0 }\n")};
+    (void)parseLayout(diags, source, "/nowhere");
+    REQUIRE(diags.errorCount() == 1);
+    CHECK(diags.all().front().message.find("unknown directive") !=
+          std::string::npos);
+  }
+}

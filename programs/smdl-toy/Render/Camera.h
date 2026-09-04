@@ -26,6 +26,22 @@ struct CameraOptions final {
   /// The up vector.
   float3 lookUp{0, 0, 1};
 
+  /// Does the camera move over the shutter? When set, the three close
+  /// keys below are the framing at shutter close, and a ray at shutter
+  /// fraction `u` sees the framing vectors interpolated linearly
+  /// between the two. Field of view, focus, aperture, and distortion
+  /// hold over the shutter.
+  bool motion{};
+
+  /// The position to look from at shutter close.
+  float3 lookFromClose{};
+
+  /// The position to look to at shutter close.
+  float3 lookToClose{};
+
+  /// The up vector at shutter close.
+  float3 lookUpClose{};
+
   /// The vertical field of view in degrees.
   float fovYDeg{37.8f};
 
@@ -71,9 +87,12 @@ struct CameraOptions final {
   bool noLOD{};
 };
 
-/// One camera ray, built by `Camera::sample()`.
+/// One camera ray, built by `Camera::sample()` and placed in the world
+/// by `Camera::toWorld()`.
 struct CameraSample final {
-  /// The world-space ray, direction normalized.
+  /// The ray: in camera space with an unnormalized direction as
+  /// `sample()` leaves it, in world space with the direction
+  /// normalized and the time stamped once `toWorld()` has run.
   Ray ray{};
 
   /// The camera response: 1 unless a vignetting mechanism is on, and
@@ -103,15 +122,23 @@ public:
   /// \throws smdl::Error if validation fails.
   explicit Camera(const CameraOptions &options);
 
-  /// Sample the camera ray for the pixel `(x, y)`.
+  /// Sample the camera ray for the pixel `(x, y)`, in camera space.
   ///
   /// Consumes sampler dimensions in a fixed order downstream renders
   /// depend on: the pixel jitter is always dimensions 0-1, and the
   /// lens point is drawn only when DOF is enabled, so a pinhole
   /// render consumes exactly the dimensions it would with no lens
-  /// code at all.
+  /// code at all. The ray stays in camera space until `toWorld()`, so
+  /// that the caller can draw the shutter fraction after the lens
+  /// point and before the frame is chosen.
   [[nodiscard]] CameraSample sample(size_t x, size_t y,
                                     Sampler &sampler) const noexcept;
+
+  /// Place the ray `sample()` built into the world at shutter fraction
+  /// `u`: apply the camera frame at `u`, normalize the direction, and
+  /// stamp the ray's time. A still camera applies its one frame
+  /// whatever `u` is.
+  void toWorld(CameraSample &sample, float u) const noexcept;
 
 private:
   /// The image dimensions in pixels.
@@ -127,8 +154,24 @@ private:
   /// subtends this angle, or 0 when LOD is disabled.
   float coneAngleBase{};
 
-  /// The camera-to-world transform, orthonormal by construction.
+  /// The camera-to-world transform at shutter open, orthonormal by
+  /// construction.
   float4x4 cameraToWorld{float4x4(1.0f)};
+
+  /// Does the camera move over the shutter? False when the close keys
+  /// equal the open keys, so a still camera exported under motion blur
+  /// renders bit for bit what it renders exported without.
+  bool moving{};
+
+  /// The framing at shutter open and at shutter close, read only when
+  /// `moving`. The frame at fraction `u` is the look-at of the vectors
+  /// interpolated as `(1 - u) * open + u * close`, spelled so that the
+  /// two ends reproduce the keys exactly. The view direction is then
+  /// the normalized chord, whose angular rate differs from a slerp's by
+  /// third order in the pan angle: nothing over the angle a shutter
+  /// spans, and the interpolation of what the file states.
+  float3 lookFrom{}, lookTo{}, lookUp{};
+  float3 lookFromClose{}, lookToClose{}, lookUpClose{};
 
   /// The image radius at the frame corner, which normalizes the
   /// distortion polynomial and the rim displacement.

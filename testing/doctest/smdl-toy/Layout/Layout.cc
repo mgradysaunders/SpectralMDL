@@ -296,3 +296,35 @@ TEST_CASE("Layout lowering: a shape light keeps the placement's scale") {
   CHECK(length(float3(light.lightToWorld[2])) == doctest::Approx(1.0f));
   CHECK(light.lightToWorld[3].z == doctest::Approx(5.0f));
 }
+
+TEST_CASE("Layout lowering: only the entry file's time takes effect") {
+  LayoutDir dir{};
+  dir.write("inner.layout", "#smdl layout\n"
+                            "time { base 9 shutter 1 }\n"
+                            "asset ball = sphere { material m }\n"
+                            "place ball\n");
+  SUBCASE("An imported layout's time warns and is ignored") {
+    const auto entry{dir.write("entry.layout", "#smdl layout\n"
+                                               "time { base 2.5 }\n"
+                                               "import \"inner.layout\"\n")};
+    LayoutDiagnostics diags{};
+    const auto layout{lowerOK(diags, entry)};
+    REQUIRE(layout.items.size() == 1);
+    REQUIRE(layout.time.base);
+    CHECK(*layout.time.base == doctest::Approx(2.5f));
+    CHECK(!layout.time.shutter);
+    CHECK(diags.warningCount() == 1);
+    CHECK(hasDiagnostic(diags, LayoutDiagnostic::Kind::WARNING,
+                        "'time' of an imported layout is ignored"));
+  }
+  SUBCASE("An entry without the directive leaves both unset") {
+    const auto entry{dir.write("entry.layout", "#smdl layout\n"
+                                               "asset ball = sphere { "
+                                               "material m }\n"
+                                               "place ball\n")};
+    LayoutDiagnostics diags{};
+    const auto layout{lowerOK(diags, entry)};
+    CHECK(!layout.time.base);
+    CHECK(!layout.time.shutter);
+  }
+}

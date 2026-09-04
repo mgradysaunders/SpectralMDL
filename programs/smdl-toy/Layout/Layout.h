@@ -288,6 +288,16 @@ public:
   }
 };
 
+/// The framing at shutter close, the `motion` block inside `camera`.
+/// A key not restated holds its open value, so a block that names only
+/// `look_from` is a dolly and one that names only `look_to` is a pan.
+class LayoutCameraMotion final {
+public:
+  std::optional<float3> lookFrom{};
+  std::optional<float3> lookTo{};
+  std::optional<float3> lookUp{};
+};
+
 /// The camera a layout's `camera` directive describes.
 ///
 /// Everything is optional and unset by default. The built-in defaults
@@ -300,6 +310,11 @@ public:
   std::optional<float3> lookFrom{};
   std::optional<float3> lookTo{};
   std::optional<float3> lookUp{};
+
+  /// The close keys, present iff a `motion` block appeared. The keys
+  /// are absolute, written against this block's own framing: a flag
+  /// that replaces the framing drops them (see `main()`).
+  std::optional<LayoutCameraMotion> motion{};
   std::optional<float> fovYDeg{};
   std::optional<float> fStop{};
   std::optional<float> aperture{};
@@ -373,6 +388,23 @@ public:
   /// The water droplet diameter in micrometers, which drives the
   /// approximate Mie phase function; see `HazeOptions::dropletSize`.
   std::optional<float> droplet{};
+};
+
+/// The clock a layout's `time` directive sets: where the frame sits in
+/// the host's animation, in seconds, and how long the shutter stays
+/// open. Everything is optional and merged with the command line the
+/// same way `LayoutCamera` works, over the defaults of zero and zero.
+///
+/// The shutter is open iff `shutter` is positive. Closed, every path
+/// renders at `base` exactly, whatever motion the layout carries.
+///
+class LayoutTime final {
+public:
+  /// `base`: `State::animation_time` at shutter open, in seconds.
+  std::optional<float> base{};
+
+  /// `shutter`: the seconds from open to close, nonnegative.
+  std::optional<float> shutter{};
 };
 
 /// One `asset` declaration: a named source with the properties of what
@@ -676,15 +708,17 @@ public:
   std::string mediumName{};
   LayoutLocation mediumLoc{};
 
-  /// The camera and sky, with the location of the first directive so
-  /// that lowering a non-entry file can say what it is ignoring. An
-  /// invalid location means the directive never appeared.
+  /// The camera, sky, haze, and time, with the location of the first
+  /// directive so that lowering a non-entry file can say what it is
+  /// ignoring. An invalid location means the directive never appeared.
   LayoutCamera camera{};
   LayoutLocation cameraLoc{};
   LayoutSky sky{};
   LayoutLocation skyLoc{};
   LayoutHaze haze{};
   LayoutLocation hazeLoc{};
+  LayoutTime time{};
+  LayoutLocation timeLoc{};
 
   /// The written `ibl` path and where it was written, resolved by the
   /// lowering rather than the parser, so the parser stays free of the
@@ -774,8 +808,8 @@ public:
 };
 
 /// A lowered layout: the flat item list, plus the entry file's camera,
-/// sky, medium, and aliases. Everything scoped is already folded into
-/// the items; what remains here is exactly what `main()` consumes.
+/// sky, haze, time, medium, and aliases. Everything scoped is already folded
+/// into the items; what remains here is exactly what `main()` consumes.
 class Layout final {
 public:
   std::vector<LayoutItem> items{};
@@ -803,6 +837,9 @@ public:
   /// whether one appeared at all, which is what turns the haze on.
   LayoutHaze haze{};
   bool hasHaze{};
+
+  /// Whatever the entry file's `time` directives named, merged.
+  LayoutTime time{};
 
   /// The `front:` azimuth of the asset manifest the command line named
   /// directly, or unset. Only `resolveLayoutArgument()` fills this in:
