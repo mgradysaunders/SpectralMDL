@@ -69,7 +69,8 @@ void printObjectUsageRows(llvm::raw_ostream &os,
         entry.triangleCount, entry.triangleCount == 1 ? " tri" : " tris",
         entry.instanceCount == 1
             ? std::string()
-            : smdl::concat(" in ", entry.instanceCount, " meshes")));
+            : smdl::concat(" in ", entry.instanceCount, " meshes"),
+        entry.hasColors ? ", colors" : ""));
     nameWidth = std::max(nameWidth, names.back().size());
     countWidth = std::max(countWidth, counts.back().size());
   }

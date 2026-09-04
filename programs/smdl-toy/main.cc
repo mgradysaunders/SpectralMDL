@@ -1293,6 +1293,7 @@ int main(int argc, char **argv) try {
   compiler.enableDebug = false;
   compiler.enableMipMaps = !optNoMipMaps;
   compiler.enableUnitTests = false;
+  registerSceneData(compiler);
   // The normal distribution entry points are what a glossy manifold
   // crossing draws its half vector from, and nothing else here asks for
   // them, so they are emitted only when that is on.

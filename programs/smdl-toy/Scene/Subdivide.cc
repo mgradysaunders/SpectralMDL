@@ -23,12 +23,23 @@ struct OsdPoint final {
   float3 value{};
 };
 
-struct OsdUV final {
-  void Clear(void * = nullptr) { value = {}; }
-  void AddWithWeight(const OsdUV &other, float weight) {
-    value = value + weight * other.value;
+// The face-varying corner attributes, UV and vertex color, refined
+// together through one channel: both index the imported vertices, which
+// the importer welded on position, UV, and color alike, so they share the
+// seam structure and one set of indices refines both. An absent half
+// rides along as zero, so a mesh with neither UVs nor colors has no
+// channel and one with either has exactly this one.
+struct OsdCorner final {
+  void Clear(void * = nullptr) {
+    uv = {};
+    color = {};
   }
-  float2 value{};
+  void AddWithWeight(const OsdCorner &other, float weight) {
+    uv = uv + weight * other.uv;
+    color = color + weight * other.color;
+  }
+  float2 uv{};
+  float4 color{};
 };
 
 // The fallback when OpenSubdiv rejects the topology: fan triangulate the
@@ -41,6 +52,7 @@ void fanTriangulate(Mesh &mesh) {
     if (i < mesh.baseTexcoords.size())
       mesh.verts[i].texcoord = mesh.baseTexcoords[i];
   }
+  if (!mesh.baseColors.empty()) mesh.colors = mesh.baseColors;
   size_t corner{};
   for (const auto count : mesh.baseFaceCounts) {
     for (size_t j = 2; j < count; j++)
@@ -91,29 +103,31 @@ bool subdivideMesh(Mesh &mesh) {
     }
   }
   const bool hasUVs{!mesh.baseTexcoords.empty()};
+  const bool hasColors{!mesh.baseColors.empty()};
+  const bool hasCorners{hasUVs || hasColors};
   auto faceCounts{
       std::vector<int>(mesh.baseFaceCounts.begin(), mesh.baseFaceCounts.end())};
   auto vertIndices{std::vector<int>()};
   vertIndices.reserve(mesh.baseIndices.size());
   for (const auto index : mesh.baseIndices)
     vertIndices.push_back(weldOf[index]);
-  // The UV channel indexes the imported vertices directly: the importer
-  // welded identical (position, UV) pairs, so distinct imported vertices
-  // at one position differ in UV, which is exactly the face-varying
-  // seam structure.
-  auto uvIndices{
+  // The corner channel indexes the imported vertices directly: the
+  // importer welded identical (position, UV, color) tuples, so distinct
+  // imported vertices at one position differ in UV or color, which is
+  // exactly the face-varying seam structure.
+  auto cornerIndices{
       std::vector<int>(mesh.baseIndices.begin(), mesh.baseIndices.end())};
   auto desc{Far::TopologyDescriptor{}};
   desc.numVertices = int(weldedPoints.size());
   desc.numFaces = int(faceCounts.size());
   desc.numVertsPerFace = faceCounts.data();
   desc.vertIndicesPerFace = vertIndices.data();
-  auto uvChannel{Far::TopologyDescriptor::FVarChannel{}};
-  if (hasUVs) {
-    uvChannel.numValues = int(mesh.baseTexcoords.size());
-    uvChannel.valueIndices = uvIndices.data();
+  auto cornerChannel{Far::TopologyDescriptor::FVarChannel{}};
+  if (hasCorners) {
+    cornerChannel.numValues = int(mesh.basePoints.size());
+    cornerChannel.valueIndices = cornerIndices.data();
     desc.numFVarChannels = 1;
-    desc.fvarChannels = &uvChannel;
+    desc.fvarChannels = &cornerChannel;
   }
   // Corners are kept whatever the scheme (an open ground plane must not
   // round away). Smooth refinement locks UV seams and boundaries but
@@ -172,30 +186,33 @@ bool subdivideMesh(Mesh &mesh) {
     }
     srcPoint = dstPoint;
   }
-  // And likewise the face-varying UVs.
-  auto uvs{std::vector<OsdUV>()};
-  auto *srcUV{static_cast<OsdUV *>(nullptr)};
-  if (hasUVs) {
-    uvs.resize(size_t(refiner->GetNumFVarValuesTotal(0)));
-    for (size_t i = 0; i < mesh.baseTexcoords.size(); i++)
-      uvs[i].value = mesh.baseTexcoords[i];
-    srcUV = uvs.data();
+  // And likewise the face-varying corner attributes.
+  auto corners{std::vector<OsdCorner>()};
+  auto *srcCorner{static_cast<OsdCorner *>(nullptr)};
+  if (hasCorners) {
+    corners.resize(size_t(refiner->GetNumFVarValuesTotal(0)));
+    for (size_t i = 0; i < mesh.basePoints.size(); i++) {
+      if (hasUVs) corners[i].uv = mesh.baseTexcoords[i];
+      if (hasColors) corners[i].color = mesh.baseColors[i];
+    }
+    srcCorner = corners.data();
     for (int level = 1; level <= int(spec.levels); level++) {
-      auto *dstUV{srcUV + refiner->GetLevel(level - 1).GetNumFVarValues(0)};
-      primvar.InterpolateFaceVarying(level, srcUV, dstUV, 0);
-      srcUV = dstUV;
+      auto *dstCorner{srcCorner +
+                      refiner->GetLevel(level - 1).GetNumFVarValues(0)};
+      primvar.InterpolateFaceVarying(level, srcCorner, dstCorner, 0);
+      srcCorner = dstCorner;
     }
   }
   const auto &lastLevel{refiner->GetLevel(int(spec.levels))};
   const auto numFineVerts{size_t(lastLevel.GetNumVertices())};
   // Smooth refinement additionally snaps the last level to the limit
   // surface, whose first derivatives are exact normals; that is what
-  // "smooth" means, and it is what every DCC displays. The limit UVs
-  // pair with the limit positions for the same reason.
+  // "smooth" means, and it is what every DCC displays. The limit corner
+  // attributes pair with the limit positions for the same reason.
   auto limitPoints{std::vector<OsdPoint>()};
   auto limitDu{std::vector<OsdPoint>()};
   auto limitDv{std::vector<OsdPoint>()};
-  auto limitUVs{std::vector<OsdUV>()};
+  auto limitCorners{std::vector<OsdCorner>()};
   auto haveLimitNormals{false};
   if (spec.smooth) {
     limitPoints.resize(numFineVerts);
@@ -206,28 +223,31 @@ bool subdivideMesh(Mesh &mesh) {
     auto *dstDv{limitDv.data()};
     primvar.Limit(srcPoint, dstPoints, dstDu, dstDv);
     haveLimitNormals = true;
-    if (hasUVs) {
-      limitUVs.resize(size_t(lastLevel.GetNumFVarValues(0)));
-      auto *dstUVs{limitUVs.data()};
-      primvar.LimitFaceVarying(srcUV, dstUVs, 0);
-      srcUV = limitUVs.data();
+    if (hasCorners) {
+      limitCorners.resize(size_t(lastLevel.GetNumFVarValues(0)));
+      auto *dstCorners{limitCorners.data()};
+      primvar.LimitFaceVarying(srcCorner, dstCorners, 0);
+      srcCorner = limitCorners.data();
     }
     srcPoint = limitPoints.data();
   }
-  // Emit the unique (vertex, UV) pairs of the last level as the final
+  // Emit the unique (vertex, corner) pairs of the last level as the final
   // vertices, and split its quads into triangles. A vertex on a texture
-  // seam appears once per distinct UV, exactly as it did coming in.
-  // Output indices number in first-encounter order, so the result is
-  // deterministic regardless of the hashing underneath.
+  // or color seam appears once per distinct corner value, exactly as it
+  // did coming in. Output indices number in first-encounter order, so the
+  // result is deterministic regardless of the hashing underneath.
   auto outIndex{std::unordered_map<std::pair<int, int>, uint32_t, WeldHash>()};
   outIndex.reserve(numFineVerts);
-  auto emit{[&](int vertex, int uv) {
-    auto [entry, isNew]{outIndex.try_emplace(std::make_pair(vertex, uv),
+  auto emit{[&](int vertex, int corner) {
+    auto [entry, isNew]{outIndex.try_emplace(std::make_pair(vertex, corner),
                                              uint32_t(mesh.verts.size()))};
     if (isNew) {
       auto &vert{mesh.verts.emplace_back()};
       vert.point = srcPoint[vertex].value;
-      if (uv >= 0) vert.texcoord = srcUV[uv].value;
+      if (corner >= 0) {
+        vert.texcoord = srcCorner[corner].uv;
+        if (hasColors) mesh.colors.push_back(srcCorner[corner].color);
+      }
       if (haveLimitNormals) {
         const auto normal{smdl::cross(limitDu[size_t(vertex)].value,
                                       limitDv[size_t(vertex)].value)};
@@ -245,17 +265,19 @@ bool subdivideMesh(Mesh &mesh) {
     return entry->second;
   }};
   mesh.verts.reserve(numFineVerts);
+  if (hasColors) mesh.colors.reserve(numFineVerts);
   mesh.faces.reserve(size_t(lastLevel.GetNumFaces()) * (isLoop ? 1 : 2));
   for (int face = 0; face < lastLevel.GetNumFaces(); face++) {
     const auto fVerts{lastLevel.GetFaceVertices(face)};
-    const auto fUVs{hasUVs ? lastLevel.GetFaceFVarValues(face, 0)
-                           : Far::ConstIndexArray()};
-    auto corner{[&](int j) { return emit(fVerts[j], hasUVs ? fUVs[j] : -1); }};
+    const auto fCorners{hasCorners ? lastLevel.GetFaceFVarValues(face, 0)
+                                   : Far::ConstIndexArray()};
+    auto vertexOf{
+        [&](int j) { return emit(fVerts[j], hasCorners ? fCorners[j] : -1); }};
     // Every refined face is a quad under Catmull-Clark and bilinear and
     // a triangle under Loop, but fan out generically so that an
     // unexpected size cannot misindex.
     for (int j = 2; j < fVerts.size(); j++)
-      mesh.faces.push_back({corner(0), corner(j - 1), corner(j)});
+      mesh.faces.push_back({vertexOf(0), vertexOf(j - 1), vertexOf(j)});
   }
   return haveLimitNormals;
 }

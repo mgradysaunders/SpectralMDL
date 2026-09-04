@@ -1155,9 +1155,13 @@ def bake_untagged(context, objects, filepath):
         # Materials are exported for their names alone: `usemtl` carries the
         # only thing the renderer wants, and turning materials off would drop
         # the name with them. The `.mtl` that comes along is never read.
+        # Colors ride along as six-component `v` lines, which assimp reads
+        # into the per-vertex colors the renderer hands materials; a mesh
+        # with no color attribute writes exactly what it wrote before.
         bpy.ops.wm.obj_export(filepath=filepath, export_selected_objects=True,
                               forward_axis="Y", up_axis="Z",
-                              export_materials=True, apply_modifiers=False)
+                              export_materials=True, apply_modifiers=False,
+                              export_colors=True)
         bpy.ops.object.select_all(action="DESELECT")
         for ob in previous:
             ob.select_set(True)

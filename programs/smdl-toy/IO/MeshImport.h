@@ -193,6 +193,10 @@ public:
   uint32_t instanceCount{}; ///< The meshes the subtree places.
   uint64_t triangleCount{}; ///< The triangles the subtree places.
 
+  /// Does any mesh the subtree places carry per-vertex colors, which the
+  /// renderer hands materials as `state::vertex_color()`?
+  bool hasColors{};
+
   /// The distinct materials the subtree uses, in the order encountered.
   std::vector<std::string> materialNames{};
 
@@ -272,6 +276,9 @@ public:
   /// Every triangle the file places, including those on nodes that have no
   /// name to be selected by and so appear in no object listing.
   uint64_t triangleCount{};
+
+  /// Does any mesh the file places carry per-vertex colors?
+  bool hasColors{};
 };
 
 /// Import only the object listing of a scene file: what `select` can name,

@@ -38,7 +38,6 @@ void configureImporter(Assimp::Importer &importer,
   const unsigned removedComponents{
       extraRemovedComponents |
       aiComponent_TEXTURES |    // Embedded FBX/GLB image blobs
-      aiComponent_COLORS |      // Per-vertex colors
       aiComponent_BONEWEIGHTS | //
       aiComponent_ANIMATIONS |  //
       aiComponent_LIGHTS |      //
@@ -316,6 +315,7 @@ std::vector<ObjectUsage> importObjectUsage(const std::string &fileName,
          i = file.nodes[i].parent) {
       usage[i].instanceCount++;
       usage[i].triangleCount += assMesh.mNumFaces;
+      usage[i].hasColors |= assMesh.mColors[0] != nullptr;
       usage[i].bound.extend(bound);
       auto &indices{materialIndices[i]};
       if (std::find(indices.begin(), indices.end(), assMesh.mMaterialIndex) ==
@@ -340,6 +340,7 @@ std::vector<ObjectUsage> importObjectUsage(const std::string &fileName,
     info->bound = usage[0].bound;
     info->materialNames = usage[0].materialNames;
     info->triangleCount = usage[0].triangleCount;
+    info->hasColors = usage[0].hasColors;
   }
   // The root has no name and so cannot be selected; an unnamed node cannot
   // either. Everything else is reported in preorder, as authored.
@@ -388,6 +389,7 @@ void objectListingJSON(llvm::json::OStream &json, std::string_view fileName,
   json.object([&] {
     json.attribute("file", llvm::StringRef(fileName.data(), fileName.size()));
     json.attribute("triangles", info.triangleCount);
+    json.attribute("colors", info.hasColors);
     json.attribute("up_axis", info.upAxis);
     json.attribute("up_axis_sign", info.upAxisSign);
     json.attributeBegin("meters_per_unit");
@@ -407,6 +409,7 @@ void objectListingJSON(llvm::json::OStream &json, std::string_view fileName,
           json.attribute("depth", entry.depth);
           json.attribute("triangles", entry.triangleCount);
           json.attribute("instances", entry.instanceCount);
+          json.attribute("colors", entry.hasColors);
           json.attributeBegin("materials");
           jsonStrings(json, entry.materialNames);
           json.attributeEnd();

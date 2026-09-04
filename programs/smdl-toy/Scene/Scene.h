@@ -56,10 +56,11 @@ public:
   /// space itself. See `MeshInstance::rigidToWorld` for why the rigid frame
   /// and not the raw object space, and for when the two coincide.
   ///
-  /// One state serves any number of hits: every geometric field is
-  /// overwritten here, and what is left standing (`motion`, the texture
-  /// spaces past what `texture_space_max` admits, `rng`, `transport` and
-  /// the level-of-detail fields) is the caller's to set or leave at zero.
+  /// One state serves any number of hits: every geometric field and the
+  /// vertex color set are overwritten here, and what is left standing
+  /// (`motion`, the texture spaces past what `texture_space_max` admits,
+  /// `rng`, `transport` and the level-of-detail fields) is the caller's to
+  /// set or leave at zero.
   /// A `JIT::MaterialInstance` built from the state keeps no pointer back
   /// into it, so it outlives the next hit applied over it.
   ///
@@ -95,6 +96,14 @@ public:
   /// tangents, since a per-strand constant has no derivatives of its
   /// own.
   float2 texcoord1{};
+
+  /// The number of vertex color sets the hit carries: 1 at a mesh hit
+  /// whose mesh stores colors, 0 everywhere else.
+  int vertexColorSets{};
+
+  /// The interpolated RGBA vertex color when `vertexColorSets` is 1,
+  /// else white, which is the state's own default.
+  float4 vertexColor{1.0f, 1.0f, 1.0f, 1.0f};
 };
 
 /// The differential geometry a manifold connection walk differentiates
@@ -138,6 +147,11 @@ public:
   std::vector<Face> faces{}; ///< The faces.
   uint32_t matIndex{};       ///< The index in the `Scene::materials` array.
 
+  /// The per-vertex RGBA colors, parallel to `verts`, as the file stores
+  /// them; empty when it stores none, which is the common case and so
+  /// deliberately not a field of `Vert`.
+  std::vector<float4> colors{};
+
   /// The refinement the import asked for; inactive by default.
   SubdivSpec subdiv{};
 
@@ -160,6 +174,7 @@ public:
   /// refined (and possibly displaced) surface.
   std::vector<float3> basePoints{};       ///< Per imported vertex.
   std::vector<float2> baseTexcoords{};    ///< Empty if the file has no UVs.
+  std::vector<float4> baseColors{};       ///< Empty if the file has no colors.
   std::vector<uint32_t> baseFaceCounts{}; ///< Vertex count per polygon.
   std::vector<uint32_t> baseIndices{};    ///< Concatenated corner indices.
 };
@@ -355,8 +370,19 @@ inline void Hit::applyGeometryToState(smdl::State &state,
   state.ptex_face_id = int(faceIndex);
   state.ptex_face_uv = {bary[1], bary[2]};
   state.texture_density[0] = textureDensity;
+  state.vertex_color_max = vertexColorSets;
+  state.vertex_color[0] = vertexColor;
   state.finalizeAndApplyInternalSpaceConventions();
 }
+
+/// Register the scene data this renderer provides to materials, on a
+/// compiler about to compile them: the vertex color a hit puts on the
+/// state, under the name `"vertex_color"` an MDL-conformant material
+/// looks it up by (`scene::data_lookup_float4`, `_float3`, or `_color`,
+/// which uplifts the RGB at the state's wavelengths), present exactly
+/// where the geometry carries a set. See `State::vertex_color` and
+/// `Hit::applyGeometryToState()`.
+void registerSceneData(smdl::Compiler &compiler);
 
 /// A scene, composed from one or more scene files: call `add()` once
 /// per file, then `commit()` once.

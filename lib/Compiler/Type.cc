@@ -2221,6 +2221,8 @@ StateType::StateType(Context &context) {
   ADD_FIELD(cone_angle);
   ADD_FIELD(cone_width);
   ADD_FIELD(texture_density);
+  ADD_FIELD(vertex_color_max);
+  ADD_FIELD(vertex_color);
 #undef ADD_FIELD
   auto llvmTypes{llvm::SmallVector<llvm::Type *>{}};
   for (auto &field : mFields) {

@@ -205,6 +205,7 @@ void State::finalizeAndApplyInternalSpaceConventions() noexcept {
   // generated code that reads them, so a host asking for more spaces than
   // are there is clamped once, here, rather than running off the end.
   texture_space_max = std::clamp(texture_space_max, 0, int(TEXTURE_SPACE_MAX));
+  vertex_color_max = std::clamp(vertex_color_max, 0, int(VERTEX_COLOR_MAX));
 
   // 1. Orthonormalize normal and tangent vectors.
   if (!tryNormalize(normal)) normal = {0, 0, 1};
