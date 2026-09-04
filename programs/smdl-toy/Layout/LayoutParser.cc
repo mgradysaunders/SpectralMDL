@@ -241,6 +241,8 @@ private:
     if (mToken.kind == Token::WORD) {
       if (mToken.text == "sphere") {
         decl.primitive.shape = PrimitiveSpec::Shape::SPHERE;
+      } else if (mToken.text == "box") {
+        decl.primitive.shape = PrimitiveSpec::Shape::BOX;
       } else if (mToken.text == "disk") {
         decl.primitive.shape = PrimitiveSpec::Shape::DISK;
       } else if (mToken.text == "cylinder") {
@@ -250,8 +252,8 @@ private:
       } else {
         mDiags.error(location(),
                      smdl::concat("expected a quoted path, or one of the "
-                                  "shapes 'sphere', 'disk', 'cylinder', or "
-                                  "'cone', after '=', got ",
+                                  "shapes 'sphere', 'box', 'disk', "
+                                  "'cylinder', or 'cone', after '=', got ",
                                   smdl::Quoted(mToken.text)));
         throw Recover();
       }
@@ -310,7 +312,7 @@ private:
         } else {
           decl.subdiv.displace = true;
         }
-      } else if (op == "radius" || op == "height") {
+      } else if (op == "radius" || op == "height" || op == "size") {
         if (!decl.primitive.active()) {
           mDiags.error(opLoc,
                        smdl::concat(smdl::Quoted(op),
@@ -318,19 +320,30 @@ private:
                                     "is a file"));
           throw Recover();
         }
-        if (op == "height" && !decl.primitive.hasHeight()) {
+        if ((op == "radius" && !decl.primitive.hasRadius()) ||
+            (op == "height" && !decl.primitive.hasHeight()) ||
+            (op == "size" && !decl.primitive.hasSize())) {
           mDiags.error(opLoc, smdl::concat("a ", decl.primitive.name(),
-                                           " has no 'height'"));
+                                           " has no ", smdl::Quoted(op)));
           throw Recover();
         }
-        const auto value{numbers<1>()[0]};
-        if (!(value > 0)) {
-          mDiags.error(opLoc, smdl::concat("expected a positive number for ",
-                                           smdl::Quoted(op)));
-          throw Recover();
+        if (op == "size") {
+          const auto values{numbers<3>()};
+          if (!(values[0] > 0 && values[1] > 0 && values[2] > 0)) {
+            mDiags.error(opLoc, "expected three positive numbers for 'size'");
+            throw Recover();
+          }
+          decl.primitive.size = float3(values[0], values[1], values[2]);
+        } else {
+          const auto value{numbers<1>()[0]};
+          if (!(value > 0)) {
+            mDiags.error(opLoc, smdl::concat("expected a positive number for ",
+                                             smdl::Quoted(op)));
+            throw Recover();
+          }
+          (op == "radius" ? decl.primitive.radius : decl.primitive.height) =
+              value;
         }
-        (op == "radius" ? decl.primitive.radius : decl.primitive.height) =
-            value;
       } else if (op == "tube" || op == "ribbon" || op == "radius_scale") {
         // Whether the path names a curves file is the lowering's to
         // discover; what the parser can already reject is a shape,
@@ -384,7 +397,7 @@ private:
         mDiags.error(opLoc,
                      smdl::concat("unknown asset operation ", smdl::Quoted(op),
                                   decl.primitive.active()
-                                      ? " (expected radius, height, "
+                                      ? " (expected radius, height, size, "
                                         "material, caster, light, translate, "
                                         "scale, rotate, rotate_x, rotate_y, "
                                         "rotate_z, or matrix)"

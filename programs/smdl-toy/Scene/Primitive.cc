@@ -22,7 +22,8 @@ namespace {
 }
 
 // The piece indices, fixed per shape: the sphere and disk are piece 0;
-// the cylinder is side, bottom cap, top cap; the cone is side, base cap.
+// the cylinder is side, bottom cap, top cap; the cone is side, base cap;
+// the box is two faces per axis, low end then high end.
 enum : uint32_t {
   CYLINDER_SIDE = 0,
   CYLINDER_BOTTOM = 1,
@@ -30,6 +31,34 @@ enum : uint32_t {
   CONE_SIDE = 0,
   CONE_BASE = 1,
 };
+
+// The axis a box face is perpendicular to, and which end of it the face
+// sits at.
+[[nodiscard]] size_t boxFaceAxis(uint32_t primID) noexcept {
+  return size_t(primID >> 1);
+}
+[[nodiscard]] float boxFaceSign(uint32_t primID) noexcept {
+  return (primID & 1) ? 1.0f : -1.0f;
+}
+
+// One face of the box: a rectangle at one end of its axis, parameterized
+// by the other two axes in cyclic order. The face is planar, so the
+// normal and both parametric partials are constant over it and the
+// normal partials vanish.
+[[nodiscard]] PrimitiveSurface boxFaceSurface(const float3 &size,
+                                              uint32_t primID, float2 uv) {
+  const auto axis{boxFaceAxis(primID)};
+  const auto axisU{(axis + 1) % 3};
+  const auto axisV{(axis + 2) % 3};
+  PrimitiveSurface surface{};
+  surface.point[axis] = 0.5f * boxFaceSign(primID) * size[axis];
+  surface.point[axisU] = size[axisU] * (uv.x - 0.5f);
+  surface.point[axisV] = size[axisV] * (uv.y - 0.5f);
+  surface.normal[axis] = boxFaceSign(primID);
+  surface.dPdu[axisU] = size[axisU];
+  surface.dPdv[axisV] = size[axisV];
+  return surface;
+}
 
 // A cap: a disk of radius `r` at height `z`, facing `sign` along Z, at
 // the point `rho` from the axis with the given azimuth trig. The disk
@@ -152,12 +181,36 @@ template <typename F>
   return true;
 }
 
+[[nodiscard]] bool intersectBoxFace(const float3 &size, uint32_t primID,
+                                    const float3 &org, const float3 &dir,
+                                    float tnear, float tfar, PieceHit &hit) {
+  const auto axis{boxFaceAxis(primID)};
+  if (std::fabs(dir[axis]) < 1e-12f) return false;
+  const float plane{0.5f * boxFaceSign(primID) * size[axis]};
+  const float t{(plane - org[axis]) / dir[axis]};
+  if (!(t > tnear && t < tfar)) return false;
+  auto point{org + t * dir};
+  const auto axisU{(axis + 1) % 3};
+  const auto axisV{(axis + 2) % 3};
+  if (std::fabs(point[axisU]) > 0.5f * size[axisU] ||
+      std::fabs(point[axisV]) > 0.5f * size[axisV])
+    return false;
+  // Snap onto the plane, so that the reported point is exactly on the
+  // face the way the caps' construction is.
+  point[axis] = plane;
+  hit.t = t;
+  hit.point = point;
+  return true;
+}
+
 [[nodiscard]] bool intersectPiece(const PrimitiveSpec &spec, uint32_t primID,
                                   const float3 &org, const float3 &dir,
                                   float tnear, float tfar, PieceHit &hit) {
   const float r{spec.radius};
   const float h{spec.height};
   switch (spec.shape) {
+  case PrimitiveSpec::Shape::BOX:
+    return intersectBoxFace(spec.size, primID, org, dir, tnear, tfar, hit);
   case PrimitiveSpec::Shape::SPHERE: {
     const auto roots{solveQuadratic(smdl::dot(dir, dir),
                                     2.0f * smdl::dot(org, dir),
@@ -232,6 +285,13 @@ template <typename F>
 [[nodiscard]] float2 pieceUV(const PrimitiveSpec &spec, uint32_t primID,
                              const PieceHit &hit) {
   const float3 &p{hit.point};
+  if (spec.shape == PrimitiveSpec::Shape::BOX) {
+    const auto axis{boxFaceAxis(primID)};
+    const auto axisU{(axis + 1) % 3};
+    const auto axisV{(axis + 2) % 3};
+    return float2(p[axisU] / spec.size[axisU] + 0.5f,
+                  p[axisV] / spec.size[axisV] + 0.5f);
+  }
   if (isCapPiece(spec, primID))
     return float2(azimuthOf(p.x, p.y),
                   std::sqrt(p.x * p.x + p.y * p.y) / spec.radius);
@@ -249,6 +309,18 @@ void primitiveBounds(const RTCBoundsFunctionArguments *args) {
   const float r{spec.radius};
   const float h{spec.height};
   auto &bounds{*args->bounds_o};
+  if (spec.shape == PrimitiveSpec::Shape::BOX) {
+    // Each face is a slab of the whole box, flat along its own axis.
+    auto lower{-0.5f * spec.size};
+    auto upper{0.5f * spec.size};
+    const auto axis{boxFaceAxis(args->primID)};
+    lower[axis] = upper[axis] =
+        0.5f * boxFaceSign(args->primID) * spec.size[axis];
+    bounds.lower_x = lower.x, bounds.upper_x = upper.x;
+    bounds.lower_y = lower.y, bounds.upper_y = upper.y;
+    bounds.lower_z = lower.z, bounds.upper_z = upper.z;
+    return;
+  }
   bounds.lower_x = -r, bounds.upper_x = r;
   bounds.lower_y = -r, bounds.upper_y = r;
   switch (spec.shape) {
@@ -321,6 +393,10 @@ void primitiveOccluded(const RTCOccludedFunctionNArguments *args) {
   switch (spec.shape) {
   case PrimitiveSpec::Shape::SPHERE:
     return 4.0f * PI * r * r;
+  case PrimitiveSpec::Shape::BOX: {
+    const auto axis{boxFaceAxis(primID)};
+    return spec.size[(axis + 1) % 3] * spec.size[(axis + 2) % 3];
+  }
   case PrimitiveSpec::Shape::DISK:
     return PI * r * r;
   case PrimitiveSpec::Shape::CYLINDER:
@@ -339,6 +415,8 @@ uint32_t primitivePieceCount(const PrimitiveSpec &spec) {
   case PrimitiveSpec::Shape::SPHERE:
   case PrimitiveSpec::Shape::DISK:
     return 1;
+  case PrimitiveSpec::Shape::BOX:
+    return 6;
   case PrimitiveSpec::Shape::CYLINDER:
     return 3;
   case PrimitiveSpec::Shape::CONE:
@@ -387,6 +465,8 @@ PrimitiveSurface evalPrimitiveSurface(const PrimitiveSpec &spec,
     const float theta{PI * uv.y};
     return sphereSurface(r, std::cos(theta), std::sin(theta), cosPhi, sinPhi);
   }
+  case PrimitiveSpec::Shape::BOX:
+    return boxFaceSurface(spec.size, primID, uv);
   case PrimitiveSpec::Shape::DISK:
     return capSurface(r, 0.0f, 1.0f, r * uv.y, cosPhi, sinPhi);
   case PrimitiveSpec::Shape::CYLINDER:
@@ -417,6 +497,15 @@ PrimitiveSurface evalPrimitiveSurfaceAt(const PrimitiveSpec &spec,
     // The zenith trig straight off the point over the radius, so the
     // normal is the point over the radius as the intersection found it.
     return sphereSurface(r, point.z / r, rho / r, cosPhi, sinPhi);
+  case PrimitiveSpec::Shape::BOX: {
+    // A planar face has nothing that varies over it, so the parameters
+    // are not needed at all: only the point has to land on the plane.
+    const auto axis{boxFaceAxis(primID)};
+    auto surface{boxFaceSurface(spec.size, primID, float2(0.5f, 0.5f))};
+    surface.point = point;
+    surface.point[axis] = 0.5f * boxFaceSign(primID) * spec.size[axis];
+    return surface;
+  }
   case PrimitiveSpec::Shape::DISK:
     return capSurface(r, 0.0f, 1.0f, rho, cosPhi, sinPhi);
   case PrimitiveSpec::Shape::CYLINDER:

@@ -111,7 +111,7 @@ syn match layoutBadWord display "\<\h\w*\>"
 
 "--{ Declarations
 " asset <name> = "<path>" { ... }
-" asset <name> = sphere|disk|cylinder|cone { ... }
+" asset <name> = sphere|box|disk|cylinder|cone { ... }
 syn keyword layoutStatement asset nextgroup=layoutAssetName skipwhite skipempty
 syn match layoutAssetName contained display "\h\w*"
       \ nextgroup=layoutAssetEq skipwhite skipempty
@@ -154,7 +154,7 @@ syn keyword layoutStatement medium nextgroup=layoutMaterialName skipwhite skipem
 
 " The built-in analytic shapes and the light kinds, which are bare because they
 " are vocabulary; a path is quoted because it is a name out of the filesystem.
-syn keyword layoutShape contained sphere disk cylinder cone
+syn keyword layoutShape contained sphere box disk cylinder cone
       \ nextgroup=layoutAssetBlock skipwhite skipempty
 syn keyword layoutLightKind contained point spot
       \ nextgroup=layoutLightBlock skipwhite skipempty
@@ -205,10 +205,10 @@ syn keyword layoutTransform
       \ translate scale rotate rotate_x rotate_y rotate_z matrix
 syn keyword layoutVariant variant nextgroup=layoutVariantBlock skipwhite skipempty
 
-" Asset operations. `radius` and `height` belong to a shape, `radius_scale`
-" to a `.curves` file, and the rest to a mesh file.
+" Asset operations. `radius`, `height`, and `size` belong to a shape,
+" `radius_scale` to a `.curves` file, and the rest to a mesh file.
 syn keyword layoutAssetOp contained select recenter subdivide displace tube ribbon
-syn keyword layoutAssetSetting contained radius height radius_scale
+syn keyword layoutAssetSetting contained radius height size radius_scale
 
 " The caustic caster and light marks: bare on an asset, `caster` or `caster
 " off` (`light`, `light off`) on a place or an import. Top level like

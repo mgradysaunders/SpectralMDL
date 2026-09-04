@@ -93,11 +93,19 @@ public:
 ///
 /// The shapes are authored in a fixed object space, and any other
 /// orientation or proportion is spelled with the asset's own transform
-/// operations: the sphere is centered at the origin; the disk lies in
-/// the XY plane facing +Z; the cylinder and cone stand on the XY plane
-/// and rise along +Z to `height` (the cone's apex at the top), both
-/// closed by caps so that a transmissive material gets a watertight
-/// interior. The disk is the one open shape.
+/// operations: the sphere and the box are centered at the origin, the
+/// box spanning `[-size/2, +size/2]`; the disk lies in the XY plane
+/// facing +Z; the cylinder and cone stand on the XY plane and rise
+/// along +Z to `height` (the cone's apex at the top), both closed by
+/// caps so that a transmissive material gets a watertight interior. The
+/// disk is the one open shape.
+///
+/// A centered box is what makes it the container a heterogeneous volume
+/// wants: the asset's own `translate` composes into the placement
+/// rather than into object space, so the box the medium fills is
+/// exactly `[-size/2, +size/2]` wherever the declaration puts it, which
+/// is what a material's `density_bound_min` and `density_bound_max`
+/// state.
 ///
 /// A primitive has no mesh slots, no objects to `select`, and nothing
 /// to `subdivide` or `displace`, so it requires exactly one thing an
@@ -109,6 +117,7 @@ public:
   enum class Shape {
     NONE, ///< Not a primitive: the asset names a file.
     SPHERE,
+    BOX,
     DISK,
     CYLINDER,
     CONE,
@@ -116,20 +125,31 @@ public:
   Shape shape{Shape::NONE};
   float radius{1.0f};
   float height{1.0f};
+  float3 size{1.0f};
 
   /// Is a primitive at all?
   [[nodiscard]] bool active() const noexcept { return shape != Shape::NONE; }
+
+  /// Does the shape have a `radius` to speak of?
+  [[nodiscard]] bool hasRadius() const noexcept {
+    return active() && shape != Shape::BOX;
+  }
 
   /// Does the shape have a `height` to speak of?
   [[nodiscard]] bool hasHeight() const noexcept {
     return shape == Shape::CYLINDER || shape == Shape::CONE;
   }
 
+  /// Does the shape have a `size` to speak of?
+  [[nodiscard]] bool hasSize() const noexcept { return shape == Shape::BOX; }
+
   /// The shape keyword, as the grammar spells it.
   [[nodiscard]] std::string_view name() const noexcept {
     switch (shape) {
     case Shape::SPHERE:
       return "sphere";
+    case Shape::BOX:
+      return "box";
     case Shape::DISK:
       return "disk";
     case Shape::CYLINDER:
@@ -145,8 +165,11 @@ public:
   [[nodiscard]] std::string key() const {
     if (!active()) return {};
     auto result{std::string(name())};
-    result += " r=" + std::to_string(radius);
+    if (hasRadius()) result += " r=" + std::to_string(radius);
     if (hasHeight()) result += " h=" + std::to_string(height);
+    if (hasSize())
+      result += " s=" + std::to_string(size.x) + "," + std::to_string(size.y) +
+                "," + std::to_string(size.z);
     return result;
   }
 };

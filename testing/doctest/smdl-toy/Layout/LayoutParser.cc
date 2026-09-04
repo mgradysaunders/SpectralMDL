@@ -81,6 +81,49 @@ TEST_CASE("LayoutParser: diagnostics") {
     CHECK(where.lineNo == 3);
     CHECK(where.charNo == 3);
   }
+  SUBCASE("The box takes a size, and only the box does") {
+    const auto document{parseOK(diags, R"(#smdl layout
+asset crate = box { size 0.5 1.25 2 material wood }
+asset plain = box { material wood }
+)")};
+    REQUIRE(document.assets.size() == 2);
+    const auto &crate{document.assets[0]};
+    CHECK(crate.primitive.shape == PrimitiveSpec::Shape::BOX);
+    CHECK(crate.primitive.hasSize());
+    CHECK(!crate.primitive.hasRadius());
+    CHECK(!crate.primitive.hasHeight());
+    CHECK(crate.primitive.size.x == doctest::Approx(0.5f));
+    CHECK(crate.primitive.size.y == doctest::Approx(1.25f));
+    CHECK(crate.primitive.size.z == doctest::Approx(2.0f));
+    // The default is the unit cube, and it keys apart from a sized one.
+    CHECK(document.assets[1].primitive.size.x == doctest::Approx(1.0f));
+    CHECK(crate.primitive.key() != document.assets[1].primitive.key());
+  }
+  SUBCASE("A shape parameter the shape does not have is an error") {
+    for (const char *text :
+         {"#smdl layout\nasset a = box { radius 1 material m }\n",
+          "#smdl layout\nasset a = box { height 1 material m }\n",
+          "#smdl layout\nasset a = sphere { size 1 1 1 material m }\n",
+          "#smdl layout\nasset a = disk { height 1 material m }\n"}) {
+      CAPTURE(std::string(text));
+      LayoutDiagnostics local{};
+      const auto &source{local.addSource("test.layout", text)};
+      (void)parseLayout(local, source, "/nowhere");
+      // Recovery skips the rest of the block, so the missing `material`
+      // is reported after it; the first error is the one under test.
+      REQUIRE(local.hasErrors());
+      CHECK(local.all().front().message.find("has no") != std::string::npos);
+    }
+  }
+  SUBCASE("A box size must be three positive numbers") {
+    const auto &source{diags.addSource(
+        "test.layout",
+        "#smdl layout\nasset a = box { size 1 0 2 material m }\n")};
+    (void)parseLayout(diags, source, "/nowhere");
+    REQUIRE(diags.hasErrors());
+    CHECK(diags.all().front().message.find("three positive numbers") !=
+          std::string::npos);
+  }
   SUBCASE("A redeclared light points back at the first") {
     const auto &source{diags.addSource(
         "test.layout", "#smdl layout\nlight a = point\nlight a = spot\n")};

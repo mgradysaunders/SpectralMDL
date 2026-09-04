@@ -8,6 +8,7 @@ smdl_add_doctest(
     "Layout/LayoutParser.cc"
     "Render/Light.cc"
     "Render/Manifold.cc"
+    "Scene/Primitive.cc"
   LINK
     "smdl-toy-objects"
   )
