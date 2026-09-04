@@ -272,7 +272,7 @@ private:
     ManifoldTarget target{};
     target.wl = sample.wi;
     target.point = sample.target;
-    target.infinite = sample.isInfinite;
+    target.isInfinite = sample.isInfinite;
     target.normal = sample.normal;
     return target;
   }
@@ -1054,7 +1054,7 @@ float MNEECoverage::coverWeight(const Scene &scene, Sampler &sampler,
   bool reached{false};
   for (int skip = 0; skip < 64; skip++) {
     float tmax{INF};
-    if (!target.infinite) {
+    if (!target.isInfinite) {
       tmax = length(target.point - origin) - EPS;
       if (!(tmax > EPS)) {
         reached = true;
@@ -1722,7 +1722,7 @@ Color tracePath(smdl::Compiler &compiler, smdl::BumpPtrAllocator &allocator,
               if (!(distStraight > 0.0f)) return -1.0f;
               target.wl = toLight / distStraight;
               target.point = hit.point;
-              target.infinite = false;
+              target.isInfinite = false;
               target.normal = hit.Ng;
               return lightSampler.solidAnglePDF(
                   hit.instIndex, hit.point, hit.Ng, mneeCoverage.receiver());

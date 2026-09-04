@@ -254,7 +254,7 @@ public:
 /// for a refractive connection, a sampled caster point for a reflective one.
 class ManifoldChain final {
 public:
-  [[nodiscard]] size_t size() const noexcept { return size_t(count); }
+  [[nodiscard]] size_t size() const noexcept { return static_cast<size_t>(count); }
 
   [[nodiscard]] auto *begin() noexcept { return vertices.data(); }
 
@@ -375,13 +375,12 @@ class ManifoldTarget final {
 public:
   float3 wl{};
   float3 point{};
-  bool infinite{true};
-
   /// The light surface normal at `point`, or zero when the target has no
   /// orientation, which is every distant and punctual one. Only the offset
   /// Jacobian reads it, to carry the light-side geometry term across from
   /// the straight line to the segment that actually arrives.
   float3 normal{};
+  bool isInfinite{true};
 };
 
 /// What one Newton walk did, for the caller's statistics: the steps it

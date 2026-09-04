@@ -99,7 +99,7 @@ void checkMeasure(const SceneManifoldSurfaces &surfaces, const char *name,
     for (int side = 0; side < 2; side++) {
       const float sign{side == 0 ? +1.0f : -1.0f};
       ManifoldTarget perturbed{target};
-      if (target.infinite) {
+      if (target.isInfinite) {
         perturbed.wl = normalize(target.wl + sign * STEP * axis);
       } else {
         const float distStraight{length(target.point - receiver)};
@@ -204,7 +204,7 @@ TEST_CASE("Manifold walk: connection measure over scene surfaces") {
       ManifoldTarget target{};
       target.point = float3(-1.3f, 0.9f, 2.1f);
       target.wl = normalize(target.point - receiver);
-      target.infinite = false;
+      target.isInfinite = false;
       checkMeasure(surfaces, "mirror, finite light", receiver, target, chain);
     }
   }
@@ -232,7 +232,7 @@ TEST_CASE("Manifold walk: connection measure over scene surfaces") {
       ManifoldTarget target{};
       target.point = float3(49.4f, 1.1f, 3.0f);
       target.wl = normalize(target.point - receiver);
-      target.infinite = false;
+      target.isInfinite = false;
       checkMeasure(surfaces, "refraction, finite light", receiver, target,
                    chain);
     }

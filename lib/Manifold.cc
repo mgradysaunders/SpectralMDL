@@ -188,7 +188,7 @@ bool evaluateChain(
       sv.distNext = length(toNext);
       if (!(sv.distNext > 1e-6f)) return false;
       sv.wNext = toNext / sv.distNext;
-    } else if (target.infinite) {
+    } else if (target.isInfinite) {
       sv.wNext = target.wl;
       sv.distNext = 0.0f;
     } else {
@@ -328,7 +328,7 @@ bool evaluateChain(
   // however far the chain bent the arriving segment on the other. On a
   // refractive chain that bend is nearly nothing, which is why the
   // selftest's finite mirror is what caught its absence.
-  if (!target.infinite) {
+  if (!target.isInfinite) {
     const auto &sv{chainState[last]};
     const float distStraight{length(target.point - receiver)};
     const float distNext{sv.distNext};
