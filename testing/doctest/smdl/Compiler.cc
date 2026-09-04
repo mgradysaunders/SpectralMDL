@@ -1564,7 +1564,7 @@ TEST_CASE("Compiler missing resource warnings") {
   fs::remove_all(tmpDir);
 }
 
-TEST_CASE("Compiler enableMipMaps") {
+TEST_CASE("Compiler mip levels") {
   auto tmpDir{fs::temp_directory_path() / "smdl-compiler-mipmap-test"};
   fs::remove_all(tmpDir);
   // A 4x4 image, whose chain is 4x4 -> 2x2 -> 1x1, so a texture that
@@ -1579,18 +1579,18 @@ TEST_CASE("Compiler enableMipMaps") {
   REQUIRE(
       !smdl::write8bitImage((tmpDir / "mip.png").string(), 4, 4, 1, texels));
   // Build and run a module asserting the baked level count of a texture
-  // that asked for mip filtering. Whether the '#assert' folds at compile
-  // time or runs in the JIT, a mismatch comes back as a message here.
-  auto checkNumLevels{[&](bool enableMipMaps, int numLevels) {
-    writeFile(tmpDir / "mips.smdl",
-              "#smdl\nimport ::tex::*;\n"
-              "unit_test \"Baked level count\" {\n"
-              "  const auto t = texture_2d(\"mip.png\", tex::gamma_linear, "
-              "use_mipmap: true);\n"
-              "  #assert(t.num_levels == " +
-                  std::to_string(numLevels) + ");\n}\n");
+  // constructed with the given extra arguments. Whether the '#assert'
+  // folds at compile time or runs in the JIT, a mismatch comes back as a
+  // message here.
+  auto checkNumLevels{[&](std::string_view args, int numLevels) {
+    writeFile(tmpDir / "mips.smdl", "#smdl\nimport ::tex::*;\n"
+                                    "unit_test \"Baked level count\" {\n"
+                                    "  const auto t = texture_2d(\"mip.png\"" +
+                                        std::string(args) +
+                                        ");\n"
+                                        "  #assert(t.num_levels == " +
+                                        std::to_string(numLevels) + ");\n}\n");
     smdl::Compiler compiler{};
-    compiler.enableMipMaps = enableMipMaps;
     compiler.enableUnitTests = true;
     if (auto message{buildAll(compiler, {tmpDir / "mips.smdl"})};
         !message.empty())
@@ -1610,14 +1610,14 @@ TEST_CASE("Compiler enableMipMaps") {
     if (auto error{compiler.runUnitTests(state)}) return error->message;
     return std::string();
   }};
-  SUBCASE("The default honors 'use_mipmap: true'") {
-    CHECK(checkNumLevels(true, 3) == "");
+  SUBCASE("'use_mipmap: true' bakes the whole chain") {
+    CHECK(checkNumLevels(", tex::gamma_linear, use_mipmap: true", 3) == "");
   }
-  SUBCASE("Disabling bakes one level despite 'use_mipmap: true'") {
-    CHECK(checkNumLevels(false, 1) == "");
-    // And the request really was refused, rather than the check above
-    // passing for some unrelated reason.
-    CHECK(checkNumLevels(false, 3) != "");
+  SUBCASE("Mip filtering is opt in") {
+    CHECK(checkNumLevels(", tex::gamma_linear", 1) == "");
+    // And the level count really is what is asserted, rather than the
+    // check above passing for some unrelated reason.
+    CHECK(checkNumLevels(", tex::gamma_linear", 3) != "");
   }
   fs::remove_all(tmpDir);
 }

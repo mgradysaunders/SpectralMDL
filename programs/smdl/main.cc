@@ -48,11 +48,6 @@ static cl::opt<unsigned> optLevel{"O",
 static cl::opt<bool> enableDebug{"g", cl::desc("Enable debugging"),
                                  cl::sub(subsWithCompileOptions),
                                  cl::cat(catOptions)};
-static cl::opt<bool> noMipMaps{
-    "no-mipmaps",
-    cl::desc("Disable mip maps, so that 'use_mipmap: true' is ignored and no "
-             "mip chains are allocated or generated"),
-    cl::sub(subsWithCompileOptions), cl::cat(catOptions)};
 static cl::opt<unsigned> optThreads{
     "threads",
     cl::desc("Use at most this many threads for image loading and albedo "
@@ -525,7 +520,6 @@ int main(int argc, char **argv) {
   smdl::setThreadCount(unsigned(optThreads));
   auto compiler{smdl::Compiler{}};
   compiler.enableDebug = enableDebug;
-  compiler.enableMipMaps = !noMipMaps;
   compiler.enableUnitTests = true;
   compiler.wavelengthBaseMax = wavelengthBaseMax;
   const auto colorArg{colorOption.getValue()};
