@@ -655,30 +655,7 @@ public:
   /// The incoming direction in world space.
   ///
   /// \param[in] lobeMask
-  /// Which lobes to evaluate: a lobe contributes when it is in this set
-  /// (\ref DFLobes "the DF lobes"). `DF_ALL` is every lobe, which is the
-  /// whole BSDF and what an ordinary caller wants; `0` names nothing and
-  /// selects nothing.
-  ///
-  /// A restricted mask restricts `f` to the part of the whole BSDF the
-  /// named lobes account for, weighted as they are weighted inside it
-  /// and renormalized by nothing. **Disjoint masks therefore add**, so
-  /// evaluating with `DF_GLOSSY`, `DF_GENERIC` and `DF_DIRAC` and summing
-  /// gives what `DF_ALL` gives, and so does evaluating with `DF_BRDF` and
-  /// `DF_BTDF` and summing.
-  ///
-  /// The densities are not that. They are the densities of the sampler
-  /// restricted to the same mask, which takes a lobe with certainty once
-  /// the mask has removed the alternatives, so they do not add and they
-  /// exceed the share the mask keeps. The pairing is the point: a masked
-  /// `f` over a masked density is an estimator of the masked part, and
-  /// this is the density `scatterSample` reports for a non-Dirac sample
-  /// drawn under the same mask.
-  ///
-  /// The domain axis partitions even a `scatter_reflect_transmit` lobe,
-  /// which is in lobes of both domains: `wo` and `wi` decide which of
-  /// its branches this query is about, so masking away that domain
-  /// returns zero rather than the other branch.
+  /// The lobes to evaluate, `DF_ALL` is every lobe.
   ///
   /// \param[out] pdfFwd
   /// The forward PDF of sampling `wi` given `wo`.
@@ -708,29 +685,7 @@ public:
   /// The outgoing direction in world space.
   ///
   /// \param[in] lobeMask
-  /// Which lobes to sample among: a lobe is a candidate when it is in
-  /// this set (\ref DFLobes "the DF lobes"). `DF_ALL` is every lobe.
-  ///
-  /// Selection chances are renormalized over the lobes the mask keeps,
-  /// so this draws from the masked part of the BSDF rather than drawing
-  /// from the whole and sometimes landing outside the mask. What comes
-  /// back estimates that masked part: `f` and the densities describe the
-  /// restricted sampler, and the estimators of disjoint masks sum in
-  /// expectation to the estimator of the whole.
-  ///
-  /// This is how a caller reaches the Dirac lobes of a layered material:
-  /// `DF_DIRAC` selects them wherever they sit in the tree, and the
-  /// layering above them is applied on the way out. `scatterEvaluate`
-  /// cannot do this at any mask, because a Dirac lobe has no density to
-  /// evaluate at a direction pair.
-  ///
-  /// Naming one domain **forces** it here: a mask holding only
-  /// transmissive lobes makes a `scatter_reflect_transmit` lobe
-  /// transmit every time, in place of the Fresnel choice it would
-  /// otherwise make, and the weight it reports is the transmissive part
-  /// of the lobe rather than the whole. So `DF_DIRAC_BTDF` is how a
-  /// caller asks for the Dirac transmission of an interface, whatever
-  /// the tree above it.
+  /// The lobes to sample among, `DF_ALL` is every lobe.
   ///
   /// \param[out] wi
   /// The incoming direction in world space.
@@ -745,19 +700,7 @@ public:
   /// The BSDF spectrum. This must be non-null!
   ///
   /// \param[out] sampledLobe
-  /// The single lobe the sample was drawn from (\ref DFLobes "the DF
-  /// lobes"), or `0` when nothing was sampled. Exactly one bit: the
-  /// selection descends to one branch of one leaf, and that branch has one
-  /// domain and one kind.
-  ///
-  /// `sampledLobe & DF_DIRAC` is the Dirac test, and this answers what a
-  /// class word over the whole tree cannot: a material reports what it
-  /// *could* do, and this reports what it *did*. It is the per-sample
-  /// quantity a ray-cone heuristic, a guiding bypass, or a specular-chain
-  /// test wants.
-  ///
-  /// The bit is always one the material declared in `df_lobes_surface` or
-  /// `df_lobes_backface`, and always inside the caller's `lobeMask`.
+  /// The sampled lobe or `0` when nothing was sampled. Exactly one bit.
   ///
   /// \param[out] lobeChance
   /// The discrete probability that an **unmasked** sample would have
@@ -1335,7 +1278,7 @@ public:
                                    float *lobeChance = nullptr) const {
     SMDL_SANITY_CHECK(material && instance);
     SMDL_SANITY_CHECK(f.size() == size_t(instance.wavelength_base_max));
-    auto lobeChanceLocal{float(1)};
+    float lobeChanceLocal{1};
     return material->scatterSample(instance, xi, wo, lobeMask, wi, pdfFwd,
                                    pdfRev, f.data(), sampledLobe,
                                    lobeChance ? *lobeChance : lobeChanceLocal);
@@ -1363,7 +1306,7 @@ public:
       alpha = {};
       return false;
     }
-    return material->scatterNormalSample(instance, xi, int(backface), lobeMask,
+    return material->scatterNormalSample(instance, xi, backface, lobeMask,
                                          wm, pdf, alpha);
   }
 
