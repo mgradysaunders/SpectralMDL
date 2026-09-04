@@ -226,14 +226,14 @@ void Medium::reset(const MediumStack *stack, const Color &wavelengths,
                    PathTime time, const float3 &org,
                    const float3 &dir) noexcept {
   if (!mResolved || stack != mStack || time.seconds != mTime)
-    resolve(stack, wavelengths, time.seconds);
-  setSegment(org, dir);
+    resolve(stack, wavelengths, time);
+  setSegment(org, dir, time.fraction);
 }
 
 void Medium::resolve(const MediumStack *stack, const Color &wavelengths,
-                     float time) noexcept {
+                     PathTime time) noexcept {
   mStack = stack;
-  mTime = time;
+  mTime = time.seconds;
   mResolved = true;
   mHasMedium = false;
   mHeterogeneous = false;
@@ -283,7 +283,7 @@ void Medium::resolve(const MediumStack *stack, const Color &wavelengths,
   }
   if (count == 0) return;
   mHasMedium = true;
-  const auto renderState{makeRenderState(wavelengths, nullptr, time)};
+  const auto renderState{makeRenderState(wavelengths, nullptr, time.seconds)};
   // Coefficients are in inverse meters per the MDL specification;
   // distances here are in scene units. smdl-toy renders with the
   // default meters-per-scene-unit of 1, so this is the identity, but
@@ -328,8 +328,10 @@ void Medium::resolve(const MediumStack *stack, const Color &wavelengths,
     // space directly.
     mMeshInstance = primary->meshInstance;
     if (mMeshInstance) {
-      if (mMeshInstance->isDeformed) warnDeformedVolumeOnce(mMaterial);
-      mState->object_to_world_matrix = mMeshInstance->rigidToWorld;
+      if (mMeshInstance->frame.isDeformed) warnDeformedVolumeOnce(mMaterial);
+      std::optional<InstanceFrame> scratch{};
+      mState->object_to_world_matrix =
+          mMeshInstance->frameAt(time.fraction, scratch).rigidToWorld;
     }
     // The density acceleration hint, active only when the material
     // declares all three fields and they are usable. The hint box spans
@@ -384,10 +386,12 @@ void Medium::resolve(const MediumStack *stack, const Color &wavelengths,
           component.state = renderState;
           component.meshInstance = entry->meshInstance;
           if (component.meshInstance) {
-            if (component.meshInstance->isDeformed)
+            if (component.meshInstance->frame.isDeformed)
               warnDeformedVolumeOnce(mat.material);
+            std::optional<InstanceFrame> scratch{};
             component.state.object_to_world_matrix =
-                component.meshInstance->rigidToWorld;
+                component.meshInstance->frameAt(time.fraction, scratch)
+                    .rigidToWorld;
           }
           if (hasUsableDensityGrid(mat)) {
             ++gridCandidates;
@@ -452,7 +456,8 @@ void Medium::resolve(const MediumStack *stack, const Color &wavelengths,
   }
 }
 
-void Medium::setSegment(const float3 &org, const float3 &dir) noexcept {
+void Medium::setSegment(const float3 &org, const float3 &dir,
+                        float time) noexcept {
   // The haze varies with world height alone, so the segment reduces to
   // the extinction where it starts and the rate the height changes at.
   if (mIsHaze) {
@@ -466,8 +471,10 @@ void Medium::setSegment(const float3 &org, const float3 &dir) noexcept {
   if (!mHeterogeneous) return;
   if (mComponents.empty()) {
     if (mMeshInstance) {
-      mOrgR = float3(mMeshInstance->worldToRigid * float4(org, 1.0f));
-      mDirR = float3(mMeshInstance->worldToRigid * float4(dir, 0.0f));
+      std::optional<InstanceFrame> scratch{};
+      const auto &toRigid{mMeshInstance->frameAt(time, scratch).worldToRigid};
+      mOrgR = float3(toRigid * float4(org, 1.0f));
+      mDirR = float3(toRigid * float4(dir, 0.0f));
     } else {
       mOrgR = org;
       mDirR = dir;
@@ -477,10 +484,11 @@ void Medium::setSegment(const float3 &org, const float3 &dir) noexcept {
     for (auto &component : mComponents) {
       if (!component.heterogeneous) continue;
       if (component.meshInstance) {
-        component.orgR =
-            float3(component.meshInstance->worldToRigid * float4(org, 1.0f));
-        component.dirR =
-            float3(component.meshInstance->worldToRigid * float4(dir, 0.0f));
+        std::optional<InstanceFrame> scratch{};
+        const auto &toRigid{
+            component.meshInstance->frameAt(time, scratch).worldToRigid};
+        component.orgR = float3(toRigid * float4(org, 1.0f));
+        component.dirR = float3(toRigid * float4(dir, 0.0f));
       } else {
         component.orgR = org;
         component.dirR = dir;

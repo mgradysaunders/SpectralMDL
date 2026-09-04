@@ -422,8 +422,12 @@ public:
   /// the same reason a `keepDark` draw of a sphere is uniform over its
   /// whole area, where a plain draw is uniform over the cone the sphere
   /// subtends at `point` and never lands on the far side.
+  ///
+  /// `time` is the path's shutter fraction, which the hit an area sample
+  /// carries is built at; see `PathTime`.
   [[nodiscard]] bool sample(const smdl::State &state, Sampler &sampler,
-                            const float3 &point, LightSample &lightSample,
+                            const float3 &point, float time,
+                            LightSample &lightSample,
                             bool keepDark = false) const;
 
   /// Re-evaluate a sample's incident radiance for a segment that
@@ -494,8 +498,8 @@ private:
   /// nothing drawn when `point` is inside the sphere, for the caller to
   /// draw by area instead.
   [[nodiscard]] bool sampleSphereCone(const AreaLight &light,
-                                      const float3 &point, float2 xi, Hit &hit,
-                                      float &pdf) const;
+                                      const float3 &point, float time,
+                                      float2 xi, Hit &hit, float &pdf) const;
 
   smdl::Compiler &compiler;
 

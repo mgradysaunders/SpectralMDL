@@ -94,11 +94,10 @@ void registerSceneData(smdl::Compiler &compiler) {
       [](const smdl::State *state) { return state->vertex_color_max > 0; });
 }
 
-void MeshInstance::setObjectToWorld(const float4x4 &xf,
-                                    std::string_view fileName) {
-  // Kept whole, shear and all. See `MeshInstance` for why that is allowed
-  // even though MDL prohibits shear between coordinate spaces, and for
-  // where the deformation is confined to.
+InstanceFrame::InstanceFrame(const float4x4 &xf) noexcept {
+  // Kept whole, shear and all. See `InstanceFrame` for why that is
+  // allowed even though MDL prohibits shear between coordinate spaces,
+  // and for where the deformation is confined to.
   objectToWorld = xf;
   const auto axis0{float3(xf[0])};
   const auto axis1{float3(xf[1])};
@@ -131,10 +130,19 @@ void MeshInstance::setObjectToWorld(const float4x4 &xf,
       residual = std::max(
           residual, std::fabs(scale * rigidAxes[j][i] - float3(xf[j])[i]));
   isDeformed = residual > 1e-4f * std::max(scale, 1.0f);
+}
+
+void MeshInstance::setObjectToWorld(const float4x4 &xf,
+                                    std::string_view fileName) {
+  frame = InstanceFrame(xf);
   // A transform that collapses the object into a plane or a line has no
   // interior to shade and no well defined normal anywhere on it, and Embree
   // cannot invert it either. Nothing sensible is renderable, so say so
   // rather than emit whatever the arithmetic happens to produce.
+  const auto axis0{float3(xf[0])};
+  const float determinant{dot(axis0, frame.normalMatrix[0])};
+  const float scale{
+      (length(axis0) + length(float3(xf[1])) + length(float3(xf[2]))) / 3.0f};
   if (!(std::fabs(determinant) > 1e-9f * std::max(scale * scale * scale, 1.0f)))
     SMDL_LOG_WARN("Instance transform in ", smdl::QuotedPath(fileName),
                   " is degenerate: it collapses the object onto a plane or a "
@@ -142,11 +150,21 @@ void MeshInstance::setObjectToWorld(const float4x4 &xf,
                   "normal to shade.");
 }
 
+const InstanceFrame &MeshInstance::frameAtMoving(
+    float time, std::optional<InstanceFrame> &scratch) const noexcept {
+  float4x4 xf{};
+  rtcGetGeometryTransformEx(geometry, instPrimID, time,
+                            RTC_FORMAT_FLOAT4X4_COLUMN_MAJOR, &xf[0][0]);
+  return scratch.emplace(xf);
+}
+
 Scene::~Scene() {
   for (auto &mesh : meshes) rtcReleaseScene(mesh->scene), mesh->scene = {};
   for (auto &primitive : primitives)
     rtcReleaseScene(primitive->scene), primitive->scene = {};
   for (auto &groom : curves) rtcReleaseScene(groom->scene), groom->scene = {};
+  for (auto &geometry : instanceGeometries) rtcReleaseGeometry(geometry);
+  instanceGeometries.clear();
   rtcReleaseScene(scene), scene = {};
   rtcReleaseDevice(device), device = {};
 }
@@ -428,14 +446,16 @@ uint32_t Scene::addInstance(uint32_t meshIndex, uint32_t primIndex,
   rtcSetGeometryBuildQuality(inst, RTC_BUILD_QUALITY_HIGH);
   rtcSetGeometryTimeStepCount(inst, 1);
   rtcSetGeometryTransform(inst, 0, RTC_FORMAT_FLOAT4X4_COLUMN_MAJOR,
-                          &instance.objectToWorld[0][0]);
+                          &instance.frame.objectToWorld[0][0]);
   rtcSetGeometryInstancedScene(
       inst, curvesIndex != INVALID_INDEX ? curves[curvesIndex]->scene
             : primIndex != INVALID_INDEX ? primitives[primIndex]->scene
                                          : meshes[meshIndex]->scene);
   rtcCommitGeometry(inst);
   const auto geomID{rtcAttachGeometry(scene, inst)};
-  rtcReleaseGeometry(inst);
+  instanceGeometries.push_back(inst);
+  instance.geometry = inst;
+  instance.instPrimID = 0;
   const auto base{uint32_t(meshInstances.size())};
   meshInstances.push_back(instance);
   if (instanceBaseByGeomID.size() <= geomID)
@@ -480,11 +500,13 @@ uint32_t Scene::addInstanceArray(uint32_t meshIndex, uint32_t primIndex,
     instance.primIndex = primIndex;
     instance.curvesIndex = curvesIndex;
     instance.matIndex = matIndex;
+    instance.geometry = geometry;
+    instance.instPrimID = unsigned(i);
     meshInstances.push_back(instance);
   }
   rtcCommitGeometry(geometry);
   const auto geomID{rtcAttachGeometry(scene, geometry)};
-  rtcReleaseGeometry(geometry);
+  instanceGeometries.push_back(geometry);
   if (instanceBaseByGeomID.size() <= geomID)
     instanceBaseByGeomID.resize(size_t(geomID) + 1, INVALID_INDEX);
   instanceBaseByGeomID[geomID] = base;
@@ -520,7 +542,7 @@ BoundBox3 Scene::preCommitBounds() const {
   BoundBox3 bound{};
   for (const auto &instance : meshInstances) {
     auto fold{[&](const float3 &point) {
-      bound.extend(float3(instance.objectToWorld * float4(point, 1.0f)));
+      bound.extend(float3(instance.frame.objectToWorld * float4(point, 1.0f)));
     }};
     if (instance.isPrimitive()) {
       for (const auto &point : primitives[instance.primIndex]->proxyPoints)
@@ -1034,18 +1056,20 @@ bool Scene::intersect(Ray &ray, Hit &hit) const {
     ray.tmax = rayHit.ray.tfar;
     const auto instIndex{
         instanceIndexOf(rayHit.hit.instID[0], rayHit.hit.instPrimID[0])};
+    const auto &meshInstance{meshInstances[instIndex]};
+    std::optional<InstanceFrame> scratch{};
+    const auto &frame{meshInstance.frameAt(ray.time, scratch)};
     // A curve hit is built here rather than through `makeHit()`, because
     // it needs the ray: the point comes from `tfar`, the tube normal
     // from the object-space `Ng`, and the ribbon normal from the ray
     // direction. The (u, v) are the curve parameters, NOT barycentrics,
     // so the triangle path's clamp-and-complement does not apply
     // (ribbon `v` legitimately spans -1 to +1).
-    if (meshInstances[instIndex].isCurves()) {
+    if (meshInstance.isCurves()) {
       hit = makeCurvesHit(
-          instIndex, rayHit.hit.primID, rayHit.hit.u, rayHit.hit.v,
-          float3(rayHit.hit.Ng_x, rayHit.hit.Ng_y, rayHit.hit.Ng_z),
+          frame, instIndex, rayHit.hit.primID, rayHit.hit.u, rayHit.hit.v,
+          ray.time, float3(rayHit.hit.Ng_x, rayHit.hit.Ng_y, rayHit.hit.Ng_z),
           ray(rayHit.ray.tfar), ray.dir);
-      hit.time = ray.time;
       return true;
     }
     auto clamp01{[](float value) { return std::clamp(value, 0.0f, 1.0f); }};
@@ -1053,12 +1077,16 @@ bool Scene::intersect(Ray &ray, Hit &hit) const {
                      clamp01(rayHit.hit.u), clamp01(rayHit.hit.v))};
     // A primitive reports its object-space point in the normal slots,
     // and the hit is built from that rather than from the parameters.
-    hit = meshInstances[instIndex].isPrimitive()
-              ? makePrimitiveHit(
-                    instIndex, rayHit.hit.primID, bary,
-                    float3(rayHit.hit.Ng_x, rayHit.hit.Ng_y, rayHit.hit.Ng_z))
-              : makeHit(instIndex, rayHit.hit.primID, bary);
-    hit.time = ray.time;
+    if (meshInstance.isPrimitive()) {
+      const auto &primitive{*primitives[meshInstance.primIndex]};
+      hit = makePrimitiveHitFrom(
+          frame, instIndex, rayHit.hit.primID, bary, ray.time,
+          evalPrimitiveSurfaceAt(
+              primitive.spec, rayHit.hit.primID,
+              float3(rayHit.hit.Ng_x, rayHit.hit.Ng_y, rayHit.hit.Ng_z)));
+    } else {
+      hit = makeHit(frame, instIndex, rayHit.hit.primID, bary, ray.time);
+    }
     return true;
   }
 }
@@ -1119,7 +1147,9 @@ bool Scene::intersect(Ray &ray, ManifoldHit &hit) const {
   const auto bary{float3(clamp01(1.0f - rayHit.hit.u - rayHit.hit.v),
                          clamp01(rayHit.hit.u), clamp01(rayHit.hit.v))};
   hit.vertex.coords = bary;
-  const auto &objectToWorld{meshInstance.objectToWorld};
+  std::optional<InstanceFrame> scratch{};
+  const auto &objectToWorld{
+      meshInstance.frameAt(ray.time, scratch).objectToWorld};
   if (meshInstance.isPrimitive()) {
     const auto &primitive{*primitives[meshInstance.primIndex]};
     const auto surface{evalPrimitiveSurface(primitive.spec, rayHit.hit.primID,
@@ -1139,20 +1169,39 @@ bool Scene::intersect(Ray &ray, ManifoldHit &hit) const {
   return true;
 }
 
-Hit Scene::makeHit(uint32_t instIndex, uint32_t faceIndex,
-                   const float3 &bary) const {
+Hit Scene::makeHit(uint32_t instIndex, uint32_t faceIndex, const float3 &bary,
+                   float time) const {
   const auto &meshInstance{meshInstances[instIndex]};
-  if (meshInstance.isPrimitive())
-    return makePrimitiveHit(instIndex, faceIndex, bary);
+  if (meshInstance.isMoving)
+    return makeHitMoving(instIndex, faceIndex, bary, time);
+  return meshInstance.isPrimitive()
+             ? makePrimitiveHit(meshInstance.frame, instIndex, faceIndex, bary,
+                                time)
+             : makeHit(meshInstance.frame, instIndex, faceIndex, bary, time);
+}
+
+Hit Scene::makeHitMoving(uint32_t instIndex, uint32_t faceIndex,
+                         const float3 &bary, float time) const {
+  const auto &meshInstance{meshInstances[instIndex]};
+  std::optional<InstanceFrame> scratch{};
+  const auto &frame{meshInstance.frameAtMoving(time, scratch)};
+  return meshInstance.isPrimitive()
+             ? makePrimitiveHit(frame, instIndex, faceIndex, bary, time)
+             : makeHit(frame, instIndex, faceIndex, bary, time);
+}
+
+Hit Scene::makeHit(const InstanceFrame &frame, uint32_t instIndex,
+                   uint32_t faceIndex, const float3 &bary, float time) const {
+  const auto &meshInstance{meshInstances[instIndex]};
   // Curve hits need the ray and only ever come from `intersect()`,
   // which builds them itself; nothing may rebuild one from indices.
-  SMDL_SANITY_CHECK(!meshInstance.isCurves());
+  SMDL_SANITY_CHECK(!meshInstance.isCurves() && !meshInstance.isPrimitive());
   const auto &mesh{*meshes[meshInstance.meshIndex]};
   const auto &face{mesh.faces[faceIndex]};
   const auto &vert0{mesh.verts[face[0]]};
   const auto &vert1{mesh.verts[face[1]]};
   const auto &vert2{mesh.verts[face[2]]};
-  const auto &objectToWorld{meshInstance.objectToWorld};
+  const auto &objectToWorld{frame.objectToWorld};
   // World space first, everything else after. Interpolating the transformed
   // points is the same as transforming the interpolated point, so this
   // costs three matrix-vector products and buys exactness under scale.
@@ -1175,6 +1224,7 @@ Hit Scene::makeHit(uint32_t instIndex, uint32_t faceIndex,
   hit.meshIndex = meshInstance.meshIndex;
   hit.faceIndex = faceIndex;
   hit.matIndex = materialIndexOf(meshInstance);
+  hit.time = time;
   SMDL_SANITY_CHECK(hit.matIndex < materials.size());
   hit.material = materials[hit.matIndex];
   hit.bary = bary;
@@ -1186,12 +1236,11 @@ Hit Scene::makeHit(uint32_t instIndex, uint32_t faceIndex,
   // cofactor image of the object-space geometry normal. So both normals
   // pick up the sign of the determinant, and both are flipped back
   // together.
-  hit.normal =
-      normalize(meshInstance.normalMatrix * barycentric(&Mesh::Vert::normal));
+  hit.normal = normalize(frame.normalMatrix * barycentric(&Mesh::Vert::normal));
   hit.tangent = normalize(
       float3(objectToWorld * float4(barycentric(&Mesh::Vert::tangent), 0.0f)));
   hit.Ng = normalize(faceNormal);
-  if (meshInstance.flipsWinding) {
+  if (frame.flipsWinding) {
     hit.normal = -hit.normal;
     hit.Ng = -hit.Ng;
   }
@@ -1209,30 +1258,45 @@ Hit Scene::makeHit(uint32_t instIndex, uint32_t faceIndex,
   return hit;
 }
 
-Hit Scene::makePrimitiveHit(uint32_t instIndex, uint32_t primID,
-                            const float3 &bary) const {
+Hit Scene::makePrimitiveHit(const InstanceFrame &frame, uint32_t instIndex,
+                            uint32_t primID, const float3 &bary,
+                            float time) const {
   const auto &primitive{*primitives[meshInstances[instIndex].primIndex]};
   // The (u, v) ride in the barycentric slots, exactly as
   // `Scene::intersect()` packed them; see `Primitive.h`.
   return makePrimitiveHitFrom(
-      instIndex, primID, bary,
+      frame, instIndex, primID, bary, time,
       evalPrimitiveSurface(primitive.spec, primID, float2(bary[1], bary[2])));
 }
 
 Hit Scene::makePrimitiveHit(uint32_t instIndex, uint32_t primID,
-                            const float3 &bary,
+                            const float3 &bary, float time,
                             const float3 &objectPoint) const {
-  const auto &primitive{*primitives[meshInstances[instIndex].primIndex]};
+  const auto &meshInstance{meshInstances[instIndex]};
+  if (meshInstance.isMoving)
+    return makePrimitiveHitMoving(instIndex, primID, bary, time, objectPoint);
+  const auto &primitive{*primitives[meshInstance.primIndex]};
   return makePrimitiveHitFrom(
-      instIndex, primID, bary,
+      meshInstance.frame, instIndex, primID, bary, time,
       evalPrimitiveSurfaceAt(primitive.spec, primID, objectPoint));
 }
 
-Hit Scene::makePrimitiveHitFrom(uint32_t instIndex, uint32_t primID,
-                                const float3 &bary,
+Hit Scene::makePrimitiveHitMoving(uint32_t instIndex, uint32_t primID,
+                                  const float3 &bary, float time,
+                                  const float3 &objectPoint) const {
+  const auto &meshInstance{meshInstances[instIndex]};
+  const auto &primitive{*primitives[meshInstance.primIndex]};
+  std::optional<InstanceFrame> scratch{};
+  return makePrimitiveHitFrom(
+      meshInstance.frameAtMoving(time, scratch), instIndex, primID, bary, time,
+      evalPrimitiveSurfaceAt(primitive.spec, primID, objectPoint));
+}
+
+Hit Scene::makePrimitiveHitFrom(const InstanceFrame &frame, uint32_t instIndex,
+                                uint32_t primID, const float3 &bary, float time,
                                 const PrimitiveSurface &surface) const {
   const auto &meshInstance{meshInstances[instIndex]};
-  const auto &objectToWorld{meshInstance.objectToWorld};
+  const auto &objectToWorld{frame.objectToWorld};
   Hit hit{};
   hit.instIndex = instIndex;
   hit.meshIndex = INVALID_INDEX;
@@ -1240,13 +1304,14 @@ Hit Scene::makePrimitiveHitFrom(uint32_t instIndex, uint32_t primID,
   hit.matIndex = materialIndexOf(meshInstance);
   SMDL_SANITY_CHECK(hit.matIndex < materials.size());
   hit.material = materials[hit.matIndex];
+  hit.time = time;
   hit.bary = bary;
   hit.point = float3(objectToWorld * float4(surface.point, 1.0f));
   // The analytic normal transforms by the cofactor matrix like any
   // other; a mirroring instance flips its image inward, and the same
   // correction the mesh path applies flips it back out.
-  hit.normal = normalize(meshInstance.normalMatrix * surface.normal);
-  if (meshInstance.flipsWinding) hit.normal = -hit.normal;
+  hit.normal = normalize(frame.normalMatrix * surface.normal);
+  if (frame.flipsWinding) hit.normal = -hit.normal;
   // Shading and geometric agree by construction: that is the point of
   // an analytic surface.
   hit.Ng = hit.normal;
@@ -1267,14 +1332,39 @@ Hit Scene::makePrimitiveHitFrom(uint32_t instIndex, uint32_t primID,
 }
 
 ManifoldGeometry Scene::manifoldGeometry(const Hit &hit) const {
-  return manifoldGeometry(hit.instIndex, hit.faceIndex, hit.bary);
+  return manifoldGeometry(hit.instIndex, hit.faceIndex, hit.bary, hit.time);
 }
 
 ManifoldGeometry Scene::manifoldGeometry(uint32_t instIndex, uint32_t faceIndex,
-                                         const float3 &bary) const {
+                                         const float3 &bary, float time) const {
+  const auto &meshInstance{meshInstances[instIndex]};
+  if (meshInstance.isMoving)
+    return manifoldGeometryMoving(instIndex, faceIndex, bary, time);
+  return manifoldGeometry(meshInstance.frame, instIndex, faceIndex, bary, time);
+}
+
+ManifoldGeometry Scene::manifoldGeometryMoving(uint32_t instIndex,
+                                               uint32_t faceIndex,
+                                               const float3 &bary,
+                                               float time) const {
+  const auto &meshInstance{meshInstances[instIndex]};
+  std::optional<InstanceFrame> scratch{};
+  return manifoldGeometry(meshInstance.frameAtMoving(time, scratch), instIndex,
+                          faceIndex, bary, time);
+}
+
+void Hit::applyGeometryToStateMoving(smdl::State &state,
+                                     const float3 &rayDir) const noexcept {
+  std::optional<InstanceFrame> scratch{};
+  applyGeometryToState(instance->frameAtMoving(time, scratch), state, rayDir);
+}
+
+ManifoldGeometry Scene::manifoldGeometry(const InstanceFrame &frame,
+                                         uint32_t instIndex, uint32_t faceIndex,
+                                         const float3 &bary, float time) const {
   const auto &meshInstance{meshInstances[instIndex]};
   SMDL_SANITY_CHECK(!meshInstance.isCurves());
-  const auto &objectToWorld{meshInstance.objectToWorld};
+  const auto &objectToWorld{frame.objectToWorld};
   ManifoldGeometry geometry{};
   // The point and geometry normal by the same expressions `makeHit()`
   // uses, and the unnormalized shading normal field and its parametric
@@ -1292,11 +1382,11 @@ ManifoldGeometry Scene::manifoldGeometry(uint32_t instIndex, uint32_t faceIndex,
     geometry.point = float3(objectToWorld * float4(surface.point, 1.0f));
     geometry.dPdu = float3(objectToWorld * float4(surface.dPdu, 0.0f));
     geometry.dPdv = float3(objectToWorld * float4(surface.dPdv, 0.0f));
-    rawNormal = meshInstance.normalMatrix * surface.normal;
-    dRawdu = meshInstance.normalMatrix * surface.dNdu;
-    dRawdv = meshInstance.normalMatrix * surface.dNdv;
-    geometry.Ng = normalize(meshInstance.normalMatrix * surface.normal);
-    if (meshInstance.flipsWinding) geometry.Ng = -geometry.Ng;
+    rawNormal = frame.normalMatrix * surface.normal;
+    dRawdu = frame.normalMatrix * surface.dNdu;
+    dRawdv = frame.normalMatrix * surface.dNdv;
+    geometry.Ng = normalize(frame.normalMatrix * surface.normal);
+    if (frame.flipsWinding) geometry.Ng = -geometry.Ng;
   } else {
     const auto &mesh{*meshes[meshInstance.meshIndex]};
     const auto &face{mesh.faces[faceIndex]};
@@ -1310,14 +1400,14 @@ ManifoldGeometry Scene::manifoldGeometry(uint32_t instIndex, uint32_t faceIndex,
     // The parameterization is the barycentric pair (bary[1], bary[2]).
     geometry.dPdu = point1 - point0;
     geometry.dPdv = point2 - point0;
-    rawNormal = meshInstance.normalMatrix *
-                (bary[0] * vert0.normal + bary[1] * vert1.normal +
-                 bary[2] * vert2.normal);
-    dRawdu = meshInstance.normalMatrix * (vert1.normal - vert0.normal);
-    dRawdv = meshInstance.normalMatrix * (vert2.normal - vert0.normal);
+    rawNormal =
+        frame.normalMatrix * (bary[0] * vert0.normal + bary[1] * vert1.normal +
+                              bary[2] * vert2.normal);
+    dRawdu = frame.normalMatrix * (vert1.normal - vert0.normal);
+    dRawdv = frame.normalMatrix * (vert2.normal - vert0.normal);
     // The same expression `makeHit()` uses, see there.
     geometry.Ng = normalize(cross(point1 - point0, point2 - point0));
-    if (meshInstance.flipsWinding) geometry.Ng = -geometry.Ng;
+    if (frame.flipsWinding) geometry.Ng = -geometry.Ng;
   }
   // Differentiate the normalization: with N = m / |m|,
   // dN = (dm - N dot(N, dm)) / |m|.
@@ -1338,7 +1428,7 @@ ManifoldGeometry Scene::manifoldGeometry(uint32_t instIndex, uint32_t faceIndex,
       (dRawdu - dot(dRawdu, geometry.normal) * geometry.normal) / rawLength;
   geometry.dNdv =
       (dRawdv - dot(dRawdv, geometry.normal) * geometry.normal) / rawLength;
-  if (meshInstance.flipsWinding) {
+  if (frame.flipsWinding) {
     geometry.normal = -geometry.normal;
     geometry.dNdu = -geometry.dNdu;
     geometry.dNdv = -geometry.dNdv;
@@ -1346,12 +1436,13 @@ ManifoldGeometry Scene::manifoldGeometry(uint32_t instIndex, uint32_t faceIndex,
   return geometry;
 }
 
-Hit Scene::makeCurvesHit(uint32_t instIndex, uint32_t primID, float u, float v,
+Hit Scene::makeCurvesHit(const InstanceFrame &frame, uint32_t instIndex,
+                         uint32_t primID, float u, float v, float time,
                          const float3 &objectNg, const float3 &worldPoint,
                          const float3 &rayDir) const {
   const auto &meshInstance{meshInstances[instIndex]};
   const auto &groom{*curves[meshInstance.curvesIndex]};
-  const auto &objectToWorld{meshInstance.objectToWorld};
+  const auto &objectToWorld{frame.objectToWorld};
   const auto matIndex{materialIndexOf(meshInstance)};
   SMDL_SANITY_CHECK(matIndex < materials.size());
   const auto *material{materials[matIndex]};
@@ -1392,9 +1483,9 @@ Hit Scene::makeCurvesHit(uint32_t instIndex, uint32_t primID, float u, float v,
     // The swept surface normal, from Embree's object-space `Ng` through
     // the cofactor matrix; a mirroring instance flips it back outward
     // exactly as the mesh path does.
-    normal = meshInstance.normalMatrix * objectNg;
+    normal = frame.normalMatrix * objectNg;
     if (!smdl::tryNormalize(normal)) normal = -rayDir;
-    if (meshInstance.flipsWinding) normal = -normal;
+    if (frame.flipsWinding) normal = -normal;
     if (!smdl::tryNormalize(tangent)) tangent = smdl::perpendicularTo(normal);
   }
   // The strand parameter: a strand's segments partition it uniformly,
@@ -1411,6 +1502,7 @@ Hit Scene::makeCurvesHit(uint32_t instIndex, uint32_t primID, float u, float v,
   hit.faceIndex = primID;
   hit.matIndex = matIndex;
   hit.material = material;
+  hit.time = time;
   hit.bary = float3(0.0f, u, vAcross);
   hit.point = worldPoint;
   hit.normal = normal;

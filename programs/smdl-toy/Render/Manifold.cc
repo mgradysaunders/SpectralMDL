@@ -15,9 +15,9 @@ ManifoldVertex vertexOf(const Hit &hit) {
   return vertex;
 }
 
-Hit hitOf(const Scene &scene, const ManifoldVertex &vertex) {
+Hit hitOf(const Scene &scene, const ManifoldVertex &vertex, float time) {
   return scene.makeHit(uint32_t(vertex.surface), uint32_t(vertex.face),
-                       vertex.coords);
+                       vertex.coords, time);
 }
 
 bool SceneManifoldSurfaces::geometry(const ManifoldVertex &vertex,
@@ -35,12 +35,13 @@ bool SceneManifoldSurfaces::geometry(const ManifoldVertex &vertex,
   // as it always has.
   if (const auto *material{scene.materials[scene.materialIndexOf(instance)]};
       material && material->remapsNormal()) {
-    const Hit hit{hitOf(scene, vertex)};
+    const Hit hit{hitOf(scene, vertex, time.fraction)};
     if (!hit.instance) return false;
     if (manifoldHookGeometry(scene, hit, geometry)) return true;
   }
-  geometry = scene.manifoldGeometry(uint32_t(vertex.surface),
-                                    uint32_t(vertex.face), vertex.coords);
+  geometry =
+      scene.manifoldGeometry(uint32_t(vertex.surface), uint32_t(vertex.face),
+                             vertex.coords, time.fraction);
   return true;
 }
 
@@ -84,7 +85,8 @@ bool SceneManifoldSurfaces::project(const ManifoldVertex &pin,
                                        const smdl::JIT::Material &material,
                                        const Hit &seedHit, const float3 &bary,
                                        float3 &normal) {
-  const Hit hit{scene.makeHit(seedHit.instIndex, seedHit.faceIndex, bary)};
+  const Hit hit{
+      scene.makeHit(seedHit.instIndex, seedHit.faceIndex, bary, seedHit.time)};
   if (!hit.instance) return false;
   auto state{makeRenderState(renderWavelengths())};
   hit.applyGeometryToState(state, float3());
@@ -200,7 +202,7 @@ MNEECasterSet::MNEECasterSet(const Scene &scene, const Color &wavelengths,
       auto faceAreas{std::vector<float>()};
       faceAreas.reserve(mesh.faces.size());
       auto toWorld{[&](const float3 &point) {
-        return float3(instance.objectToWorld * float4(point, 1.0f));
+        return float3(instance.frame.objectToWorld * float4(point, 1.0f));
       }};
       for (const auto &face : mesh.faces) {
         const auto point0{toWorld(mesh.verts[face[0]].point)};
@@ -227,13 +229,14 @@ const MNEECaster *MNEECasterSet::sampleCaster(Sampler &sampler,
 }
 
 bool MNEECasterSet::samplePoint(const Scene &scene, Sampler &sampler,
-                                const MNEECaster &caster, Hit &hit) const {
+                                const MNEECaster &caster, float time,
+                                Hit &hit) const {
   // By area within the caster. This density is never divided out; see the
   // class comment.
   if (caster.primitive.active()) {
     const auto sample{samplePrimitiveArea(caster.primitive, float2(sampler))};
     hit = scene.makeHit(caster.instIndex, sample.primID,
-                        float3(0.0f, sample.uv.x, sample.uv.y));
+                        float3(0.0f, sample.uv.x, sample.uv.y), time);
     return hit.instance != nullptr;
   }
   const auto faceIndex{caster.faceDistr.indexSample(float(sampler))};
@@ -241,7 +244,7 @@ bool MNEECasterSet::samplePoint(const Scene &scene, Sampler &sampler,
   const float sqrtXi{std::sqrt(xi.x)};
   hit = scene.makeHit(
       caster.instIndex, uint32_t(faceIndex),
-      float3(1.0f - sqrtXi, sqrtXi * (1.0f - xi.y), sqrtXi * xi.y));
+      float3(1.0f - sqrtXi, sqrtXi * (1.0f - xi.y), sqrtXi * xi.y), time);
   return hit.instance != nullptr;
 }
 

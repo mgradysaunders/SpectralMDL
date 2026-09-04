@@ -4,6 +4,8 @@
 // in the buffer, device, and common headers, covering the `RTCDevice` and
 // `RTCScene` members below. The ray-query API and all of assimp are
 // implementation details of `Scene.cc`.
+#include <optional>
+
 #include "embree4/rtcore_geometry.h"
 #include "embree4/rtcore_scene.h"
 
@@ -33,6 +35,7 @@
 struct aiMesh;
 struct aiScene;
 
+class InstanceFrame;
 class MeshInstance;
 
 /// A hit.
@@ -53,7 +56,7 @@ public:
   /// The geometry is handed over in the instance's **rigid frame** rather
   /// than in world space, paired with the instance transform in
   /// `State::object_to_world_matrix`, so that the library reassembles world
-  /// space itself. See `MeshInstance::rigidToWorld` for why the rigid frame
+  /// space itself. See `InstanceFrame::rigidToWorld` for why the rigid frame
   /// and not the raw object space, and for when the two coincide.
   ///
   /// One state serves any number of hits: every geometric field and the
@@ -66,6 +69,21 @@ public:
   ///
   void applyGeometryToState(smdl::State &state,
                             const float3 &rayDir = float3{}) const noexcept;
+
+  /// The body of `applyGeometryToState()` under a given frame, the
+  /// instance's at the hit's time. The public form runs this under
+  /// `instance->frame` for a static instance and tail-calls
+  /// `applyGeometryToStateMoving()` otherwise, so that the static path,
+  /// which runs per path vertex, stays a leaf; see `Scene::makeHit()`
+  /// for the same split and why.
+  void applyGeometryToState(const InstanceFrame &frame, smdl::State &state,
+                            const float3 &rayDir) const noexcept;
+
+  /// The moving half of `applyGeometryToState()`: the frame queried
+  /// at the hit's time, then the body.
+  SMDL_TOY_NOINLINE void
+  applyGeometryToStateMoving(smdl::State &state,
+                             const float3 &rayDir) const noexcept;
 
 public:
   const MeshInstance *instance{};        ///< The mesh instance.
@@ -221,7 +239,9 @@ uvTextureDensity(const float3 &point0, const float3 &point1,
   return uvArea / worldArea;
 }
 
-/// A mesh instance.
+/// The matrices a placement derives from its object-to-world transform,
+/// as a value: an instance holds one for its open key, and a moving
+/// instance derives one on the stack for the time a hit asks about.
 ///
 /// The transform is kept in full, shear and non-uniform scale included, and
 /// is what both Embree and `Scene::makeHit()` use, so the silhouette and the
@@ -229,15 +249,12 @@ uvTextureDensity(const float3 &point0, const float3 &point1,
 /// implementation still uses orthonormalized versions in order to transform
 /// directions correctly without perturbing scattering distributions.
 ///
-class MeshInstance final {
+class InstanceFrame final {
 public:
-  /// Set `objectToWorld` to the transform the scene file authored and derive
-  /// everything else from it.
-  ///
-  /// `fileName` only names the file in the warning that a degenerate
-  /// transform emits.
-  ///
-  void setObjectToWorld(const float4x4 &xf, std::string_view fileName);
+  InstanceFrame() = default;
+
+  /// Derive everything from the authored transform.
+  explicit InstanceFrame(const float4x4 &xf) noexcept;
 
   /// The object-to-world matrix as authored, which may shear and scale
   /// non-uniformly. This is what Embree traces and what `makeHit()` puts
@@ -266,7 +283,7 @@ public:
   /// normals transform: `cof(A) = det(A) A^-T`.
   ///
   /// The geometry normal needs no such matrix only because it already has
-  /// one implicitly, by way of `cross(A u, A v) == cof(A) (u × v)`: the
+  /// one implicitly, by way of `cross(A u, A v) == cof(A) (u x v)`: the
   /// cross product of two transformed edges *is* the cofactor image of the
   /// object-space geometry normal. So the shading normal and the geometry
   /// normal are the same construction, and `flipsWinding` corrects both or
@@ -284,10 +301,65 @@ public:
   /// about the one place the deformation cannot reach, which is the interior
   /// of a volume; see `Medium`.
   bool isDeformed{};
+};
+
+/// A mesh instance.
+class MeshInstance final {
+public:
+  /// Set `frame` from the transform the scene file authored.
+  ///
+  /// `fileName` only names the file in the warning that a degenerate
+  /// transform emits.
+  ///
+  void setObjectToWorld(const float4x4 &xf, std::string_view fileName);
+
+  /// The frame at `time`, a shutter fraction: `frame` itself for a static
+  /// instance, which is every instance until motion keys exist, and for a
+  /// moving one the transform Embree interpolates for that time, read
+  /// back through the retained `geometry` and derived into `scratch`.
+  /// The returned reference is to `frame` or to `scratch`, never to a
+  /// temporary. The scratch is an empty optional so that a static
+  /// instance pays one branch and never fills the 256 bytes a frame is.
+  /// The hot per-hit paths do not even pay the branch here: see
+  /// `Scene::makeHit()` for the split that keeps them leaf functions.
+  ///
+  /// Embree, not this code, interpolates, because its slerp uses its
+  /// own transcendental approximations: the shading point, the geometry
+  /// normal, and the next ray's origin must all come from the one
+  /// transform the traversal used.
+  [[nodiscard]] const InstanceFrame &
+  frameAt(float time, std::optional<InstanceFrame> &scratch) const noexcept {
+    if (!isMoving) return frame;
+    return frameAtMoving(time, scratch);
+  }
+
+  /// The frame at shutter open, which is the frame at every time of a
+  /// static instance. Selection and build-time consumers (light bounds
+  /// and areas, caster distributions, autolook, the scene bounds) read
+  /// this; anything that runs per hit reads `frameAt()`.
+  InstanceFrame frame{};
+
+  /// Does the instance have more than one motion key? False for every
+  /// instance until keys exist; `frameAt()` never queries otherwise.
+  bool isMoving{};
+
+  /// The Embree geometry this instance is an element of, retained for
+  /// `frameAt()` (an instance array's elements share one) and released
+  /// with the scene. `instPrimID` is the element within it: 0 for a
+  /// regular instance, the entry index for an instance array.
+  RTCGeometry geometry{};
+  unsigned instPrimID{};
 
   /// The index in the `Scene::meshes` array, or `INVALID_INDEX` when
   /// the instance instantiates a primitive instead.
   uint32_t meshIndex{};
+
+  /// The moving half of `frameAt()`, kept out of line so the static path
+  /// inlines to a load and a branch and the query stays out of the hit
+  /// builders.
+  [[nodiscard]] SMDL_TOY_NOINLINE const InstanceFrame &
+  frameAtMoving(float time,
+                std::optional<InstanceFrame> &scratch) const noexcept;
 
   /// The index in the `Scene::primitives` array, or `INVALID_INDEX`.
   /// Exactly one of `meshIndex`, `primIndex`, and `curvesIndex` is
@@ -339,18 +411,25 @@ public:
 
 inline void Hit::applyGeometryToState(smdl::State &state,
                                       const float3 &rayDir) const noexcept {
+  if (instance->isMoving) return applyGeometryToStateMoving(state, rayDir);
+  applyGeometryToState(instance->frame, state, rayDir);
+}
+
+inline void Hit::applyGeometryToState(const InstanceFrame &frame,
+                                      smdl::State &state,
+                                      const float3 &rayDir) const noexcept {
   // World space to the instance's rigid frame. The library multiplies by
   // `object_to_world_matrix` on the way back out, which lands on world
   // space again exactly, because that is the very matrix `worldToRigid`
   // inverts and the library leaves an orthonormal one untouched.
-  const auto &toRigid{instance->worldToRigid};
+  const auto &toRigid{frame.worldToRigid};
   auto pointR{float3(toRigid * float4(point, 1.0f))};
   auto rayDirR{float3(toRigid * float4(rayDir, 0.0f))};
   auto normalR{float3(toRigid * float4(normal, 0.0f))};
   auto tangentR{float3(toRigid * float4(tangent, 0.0f))};
   auto NgR{float3(toRigid * float4(Ng, 0.0f))};
   auto TgR{float3(toRigid * float4(Tg, 0.0f))};
-  state.object_to_world_matrix = instance->rigidToWorld;
+  state.object_to_world_matrix = frame.rigidToWorld;
   state.position = pointR;
   state.direction = rayDirR;
   state.normal = normalR;
@@ -622,17 +701,51 @@ private:
   /// vectors must not change size afterward.
   void buildMeshGeometry(Mesh &mesh);
 
+  /// The builders under a given frame, the bodies of the public ones:
+  /// `frame` is the instance's at `time`, as `frameAt()` answers it. A
+  /// public builder tail-calls its `Moving` twin for a moving instance
+  /// and otherwise runs the body under `frame`; `intersect()` resolves
+  /// the frame once for the hit it is about to build and calls the body
+  /// directly. The split is what keeps the static path a leaf: a call on
+  /// a branch inside a body, even the cold moving-instance query, costs
+  /// every static hit the callee-saved register traffic of a non-leaf,
+  /// which the bench sees.
+  [[nodiscard]] Hit makeHit(const InstanceFrame &frame, uint32_t instIndex,
+                            uint32_t faceIndex, const float3 &bary,
+                            float time) const;
+
   /// The primitive half of `makeHit()`: rebuild the differential
   /// geometry of `primID`'s piece at the (u, v) packed in `bary[1]` and
   /// `bary[2]`, in world space.
-  [[nodiscard]] Hit makePrimitiveHit(uint32_t instIndex, uint32_t primID,
-                                     const float3 &bary) const;
+  [[nodiscard]] Hit makePrimitiveHit(const InstanceFrame &frame,
+                                     uint32_t instIndex, uint32_t primID,
+                                     const float3 &bary, float time) const;
 
   /// The common tail of both primitive hit builders: the world-space
   /// record from an object-space surface and the parameters.
-  [[nodiscard]] Hit makePrimitiveHitFrom(uint32_t instIndex, uint32_t primID,
-                                         const float3 &bary,
+  [[nodiscard]] Hit makePrimitiveHitFrom(const InstanceFrame &frame,
+                                         uint32_t instIndex, uint32_t primID,
+                                         const float3 &bary, float time,
                                          const PrimitiveSurface &surface) const;
+
+  [[nodiscard]] ManifoldGeometry
+  manifoldGeometry(const InstanceFrame &frame, uint32_t instIndex,
+                   uint32_t faceIndex, const float3 &bary, float time) const;
+
+  /// The moving twins of the public builders: the frame queried at
+  /// `time` through the retained handle, then the body.
+  [[nodiscard]] SMDL_TOY_NOINLINE Hit makeHitMoving(uint32_t instIndex,
+                                                    uint32_t faceIndex,
+                                                    const float3 &bary,
+                                                    float time) const;
+
+  [[nodiscard]] SMDL_TOY_NOINLINE Hit makePrimitiveHitMoving(
+      uint32_t instIndex, uint32_t primID, const float3 &bary, float time,
+      const float3 &objectPoint) const;
+
+  [[nodiscard]] SMDL_TOY_NOINLINE ManifoldGeometry
+  manifoldGeometryMoving(uint32_t instIndex, uint32_t faceIndex,
+                         const float3 &bary, float time) const;
 
   /// The curves half of `intersect()`: build the hit record for the
   /// (segment `primID`, `u`) Embree reports, in world space. Unlike
@@ -643,8 +756,9 @@ private:
   /// hand. That is not a loss, because nothing re-derives curve hits:
   /// grooms never register as area lights. See `Curves.h` for the
   /// state conventions this encodes.
-  [[nodiscard]] Hit makeCurvesHit(uint32_t instIndex, uint32_t primID, float u,
-                                  float v, const float3 &objectNg,
+  [[nodiscard]] Hit makeCurvesHit(const InstanceFrame &frame,
+                                  uint32_t instIndex, uint32_t primID, float u,
+                                  float v, float time, const float3 &objectNg,
                                   const float3 &worldPoint,
                                   const float3 &rayDir) const;
 
@@ -678,8 +792,11 @@ public:
   /// that the geometry a light reports and the geometry a ray finds cannot
   /// drift apart.
   ///
+  /// `time` is the shutter fraction the hit is built at (see `PathTime`),
+  /// which the instance's frame is read at and the hit records.
+  ///
   [[nodiscard]] Hit makeHit(uint32_t instIndex, uint32_t faceIndex,
-                            const float3 &bary) const;
+                            const float3 &bary, float time) const;
 
   /// The hit record of a primitive at a known object-space point on
   /// piece `primID`, with the parameters packed in `bary` as `makeHit()`
@@ -687,7 +804,7 @@ public:
   /// comes from the point without the trigonometry of the parametric
   /// rebuild. Agrees with `makeHit()` to float rounding.
   [[nodiscard]] Hit makePrimitiveHit(uint32_t instIndex, uint32_t primID,
-                                     const float3 &bary,
+                                     const float3 &bary, float time,
                                      const float3 &objectPoint) const;
 
   /// The differential geometry of the shading normal field at a mesh or
@@ -712,7 +829,8 @@ public:
   /// per-iteration geometry queries call.
   [[nodiscard]] ManifoldGeometry manifoldGeometry(uint32_t instIndex,
                                                   uint32_t faceIndex,
-                                                  const float3 &bary) const;
+                                                  const float3 &bary,
+                                                  float time) const;
 
   /// The index in `meshInstances` of the hit Embree reports: the
   /// geometry's first instance plus the element within it, which is 0
@@ -789,4 +907,9 @@ public:
   /// instance array owns a contiguous run, so a hit decodes as
   /// `instanceBaseByGeomID[instID] + instPrimID`.
   std::vector<uint32_t> instanceBaseByGeomID{};
+
+  /// The instance geometries, one per `addInstance()` and per
+  /// `addInstanceArray()`, retained for `MeshInstance::frameAt()` and
+  /// released by the destructor.
+  std::vector<RTCGeometry> instanceGeometries{};
 };

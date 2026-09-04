@@ -110,7 +110,7 @@ public:
   for (int i = 0; i < numDraws; i++) {
     sampler.startPixelSample(0, uint32_t(i));
     LightSample lightSample{};
-    if (lights.sample(state, sampler, Fixture::RECEIVER, lightSample)) {
+    if (lights.sample(state, sampler, Fixture::RECEIVER, 0.0f, lightSample)) {
       CHECK(!lightSample.isDirac);
       CHECK(!lightSample.isInfinite);
       drawn.insert(lightSample.hit.instIndex);
@@ -218,7 +218,7 @@ TEST_CASE("LightSampler: what each kind of sample says") {
   for (int i = 0; i < 512; i++) {
     sampler.startPixelSample(0, uint32_t(i));
     LightSample sample{};
-    if (!lights.sample(state, sampler, Fixture::RECEIVER, sample)) {
+    if (!lights.sample(state, sampler, Fixture::RECEIVER, 0.0f, sample)) {
       allocator.reset();
       continue;
     }
@@ -285,7 +285,7 @@ TEST_CASE("LightSampler: every kind of light weighs by its power") {
   for (int i = 0; i < 256; i++) {
     sampler.startPixelSample(0, uint32_t(i));
     LightSample sample{};
-    if (lights.sample(state, sampler, Fixture::RECEIVER, sample)) {
+    if (lights.sample(state, sampler, Fixture::RECEIVER, 0.0f, sample)) {
       CAPTURE(i);
       if (sample.isDirac) {
         pmfLamp = sample.pdf;
@@ -399,7 +399,7 @@ TEST_CASE("LightSampler: a sphere is drawn by its cone, or by area for a "
       const bool keepDark{pass == 1};
       sampler.startPixelSample(0, uint32_t(i));
       LightSample sample{};
-      if (!lights.sample(state, sampler, ConeFixture::RECEIVER, sample,
+      if (!lights.sample(state, sampler, ConeFixture::RECEIVER, 0.0f, sample,
                          keepDark)) {
         allocator.reset();
         continue;
@@ -566,7 +566,7 @@ TEST_CASE("AnalyticLight: a disk light matches the visible disk lamp") {
   for (int i = 0; i < NUM_DRAWS; i++) {
     sampler.startPixelSample(0, uint32_t(i));
     LightSample sample{};
-    if (!lights.sample(state, sampler, LampFixture::RECEIVER, sample)) {
+    if (!lights.sample(state, sampler, LampFixture::RECEIVER, 0.0f, sample)) {
       allocator.reset();
       continue;
     }
@@ -645,7 +645,7 @@ TEST_CASE("AnalyticLight: the placement scales the extent, not the power") {
     for (int i = 0; i < NUM_DRAWS; i++) {
       sampler.startPixelSample(0, uint32_t(i));
       LightSample sample{};
-      if (!lights.sample(state, sampler, LampFixture::RECEIVER, sample) ||
+      if (!lights.sample(state, sampler, LampFixture::RECEIVER, 0.0f, sample) ||
           sample.analyticIndex != 0) {
         allocator.reset();
         continue;
@@ -692,7 +692,7 @@ TEST_CASE("AnalyticLight: the placement scales the extent, not the power") {
     for (int i = 0; i < 1024; i++) {
       sampler.startPixelSample(0, uint32_t(i));
       LightSample sample{};
-      if (!lights.sample(state, sampler, LampFixture::RECEIVER, sample) ||
+      if (!lights.sample(state, sampler, LampFixture::RECEIVER, 0.0f, sample) ||
           sample.analyticIndex != 0) {
         allocator.reset();
         continue;
@@ -734,10 +734,10 @@ TEST_CASE("AnalyticLight: the emitting side and the re-evaluation") {
       // receiver below finds the radiance again.
       sampler.startPixelSample(0, uint32_t(i));
       LightSample sample{};
-      const bool drawn{lights.sample(state, sampler, above, sample)};
+      const bool drawn{lights.sample(state, sampler, above, 0.0f, sample)};
       if (drawn) CHECK(sample.analyticIndex == INVALID_INDEX);
       sampler.startPixelSample(0, uint32_t(i));
-      if (!lights.sample(state, sampler, above, sample, true) ||
+      if (!lights.sample(state, sampler, above, 0.0f, sample, true) ||
           sample.analyticIndex != 0) {
         allocator.reset();
         continue;
@@ -767,7 +767,7 @@ TEST_CASE("AnalyticLight: the emitting side and the re-evaluation") {
     for (int i = 0; i < 64; i++) {
       sampler.startPixelSample(0, uint32_t(i));
       LightSample sample{};
-      if (!lights.sample(state, sampler, above, sample) ||
+      if (!lights.sample(state, sampler, above, 0.0f, sample) ||
           sample.analyticIndex != 0) {
         allocator.reset();
         continue;

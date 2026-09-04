@@ -49,7 +49,7 @@ gatherWorldPoints(const Scene &scene, uint32_t skipInstance, BoundBox3 &bound) {
     const auto &instance{scene.meshInstances[i]};
     auto fold{[&](const float3 &objectPoint) {
       const auto point{
-          float3(instance.objectToWorld * float4(objectPoint, 1.0f))};
+          float3(instance.frame.objectToWorld * float4(objectPoint, 1.0f))};
       points.push_back(point);
       bound.extend(point);
     }};

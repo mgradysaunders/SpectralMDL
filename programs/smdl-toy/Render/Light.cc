@@ -514,7 +514,7 @@ LightSampler::LightSampler(smdl::Compiler &compiler, const Scene &scene,
     // instance rather than per mesh, transforming the vertices here is
     // exact even under non-uniform scale, where no single area factor
     // would do.
-    const auto &objectToWorld{instance.objectToWorld};
+    const auto &objectToWorld{instance.frame.objectToWorld};
     auto box{BoundBox3()};
     if (instance.isPrimitive()) {
       const auto &primitive{*scene.primitives[instance.primIndex]};
@@ -523,7 +523,7 @@ LightSampler::LightSampler(smdl::Compiler &compiler, const Scene &scene,
       for (const auto &point : primitive.proxyPoints)
         box.extend(float3(objectToWorld * float4(point, 1.0f)));
       if (primitive.spec.shape == PrimitiveSpec::Shape::SPHERE &&
-          !instance.isDeformed) {
+          !instance.frame.isDeformed) {
         light.sphereCenter = float3(objectToWorld[3]);
         light.sphereRadius =
             primitive.spec.radius * length(float3(objectToWorld[0]));
@@ -538,7 +538,8 @@ LightSampler::LightSampler(smdl::Compiler &compiler, const Scene &scene,
         const float x2{float(i) * 0.6180339887f};
         const auto areaSample{samplePrimitiveArea(
             primitive.spec, float2(x1, x2 - std::floor(x2)))};
-        stretchSum += double(length(instance.normalMatrix * areaSample.normal));
+        stretchSum +=
+            double(length(instance.frame.normalMatrix * areaSample.normal));
       }
       light.totalArea = light.objectArea * float(stretchSum / STRETCH_SAMPLES);
       // The inverse cofactor, directly: inv(cof(M)) is transpose(M)
@@ -671,8 +672,8 @@ LightSampler::LightSampler(smdl::Compiler &compiler, const Scene &scene,
 }
 
 bool LightSampler::sample(const smdl::State &state, Sampler &sampler,
-                          const float3 &point, LightSample &lightSample,
-                          bool keepDark) const {
+                          const float3 &point, float time,
+                          LightSample &lightSample, bool keepDark) const {
   if (empty()) return false;
   float selectPMF{};
   const int lightIndex{mSelection.select(point, float(sampler), selectPMF)};
@@ -747,16 +748,18 @@ bool LightSampler::sample(const smdl::State &state, Sampler &sampler,
     // connection can lie. The alternative is the cone everywhere,
     // leaving those arrivals to the path tracer at weight 1.
     if (!(light.sphereRadius > 0.0f && !keepDark &&
-          sampleSphereCone(light, point, xi, hit, conePDF))) {
+          sampleSphereCone(light, point, time, xi, hit, conePDF))) {
       // Sample the shape uniformly by OBJECT area and pay the placement's
       // exact area stretch in the pdf: still unbiased under any affine
       // placement, and exactly uniform under a similarity.
       const auto areaSample{samplePrimitiveArea(primitive.spec, xi)};
-      const float stretch{length(instance.normalMatrix * areaSample.normal)};
+      const float stretch{
+          length(instance.frame.normalMatrix * areaSample.normal)};
       if (!(stretch > 0)) return false;
-      hit = scene.makePrimitiveHit(
-          light.instIndex, areaSample.primID,
-          float3(0.0f, areaSample.uv.x, areaSample.uv.y), areaSample.point);
+      hit =
+          scene.makePrimitiveHit(light.instIndex, areaSample.primID,
+                                 float3(0.0f, areaSample.uv.x, areaSample.uv.y),
+                                 time, areaSample.point);
       positionPDF = 1.0f / (light.objectArea * stretch);
     }
   } else {
@@ -768,7 +771,7 @@ bool LightSampler::sample(const smdl::State &state, Sampler &sampler,
     float2 xi{sampler};
     float sqrtXi{std::sqrt(xi.x)};
     auto bary{float3(1.0f - sqrtXi, sqrtXi * (1.0f - xi.y), sqrtXi * xi.y)};
-    hit = scene.makeHit(light.instIndex, uint32_t(faceIndex), bary);
+    hit = scene.makeHit(light.instIndex, uint32_t(faceIndex), bary, time);
     positionPDF = 1.0f / light.totalArea;
   }
   auto direction{hit.point - point};
@@ -796,7 +799,8 @@ bool LightSampler::sample(const smdl::State &state, Sampler &sampler,
 }
 
 bool LightSampler::sampleSphereCone(const AreaLight &light, const float3 &point,
-                                    float2 xi, Hit &hit, float &pdf) const {
+                                    float time, float2 xi, Hit &hit,
+                                    float &pdf) const {
   const float3 toCenter{light.sphereCenter - point};
   const float distSq{lengthSquared(toCenter)};
   const float radiusSq{light.sphereRadius * light.sphereRadius};
@@ -817,11 +821,11 @@ bool LightSampler::sampleSphereCone(const AreaLight &light, const float3 &point,
   const auto &instance{scene.meshInstances[light.instIndex]};
   const auto &primitive{*scene.primitives[instance.primIndex]};
   const float3 objectNormal{
-      normalize(float3(instance.worldToRigid * float4(normal, 0.0f)))};
+      normalize(float3(instance.frame.worldToRigid * float4(normal, 0.0f)))};
   const float3 objectPoint{primitive.spec.radius * objectNormal};
   const float2 uv{primitiveUV(primitive.spec, 0, objectPoint)};
   hit = scene.makePrimitiveHit(light.instIndex, 0, float3(0.0f, uv.x, uv.y),
-                               objectPoint);
+                               time, objectPoint);
   pdf = 1.0f / (TWO_PI * coneOneMinusCos(sinThetaMaxSq, cosThetaMax));
   return true;
 }

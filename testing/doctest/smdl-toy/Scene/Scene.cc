@@ -242,3 +242,103 @@ TEST_CASE("Scene: vertex colors from file to state") {
           doctest::Approx(1.0f));
   }
 }
+
+// The frame of an instance at a time: a static instance answers with its
+// own frame by reference, and the transform Embree holds behind the
+// retained handle, read back at both ends of the shutter, is the frame's
+// own matrix, for a regular instance and for the elements of an instance
+// array alike.
+
+namespace {
+
+class FrameFixture final {
+public:
+  FrameFixture() {
+    if (auto error{compiler.addCode("::frametest", MATERIALS)}) {
+      MESSAGE(error->message);
+      REQUIRE(false);
+    }
+    // A sheared, non-uniformly scaled placement, so that the read-back is
+    // a real matrix rather than a pattern of ones and zeros: a sphere
+    // placed once, then a box placed as a batch of three, each element
+    // sheared a little differently.
+    const float4x4 shear{
+        float4(1.0f, 0.2f, 0.0f, 0.0f), float4(0.3f, 1.5f, 0.1f, 0.0f),
+        float4(0.0f, -0.4f, 0.8f, 0.0f), float4(2.0f, -1.0f, 3.0f, 1.0f)};
+    LayoutItem single{};
+    single.primitive.shape = PrimitiveSpec::Shape::SPHERE;
+    single.materials.all = "vc_red";
+    single.objectToWorld = shear;
+    scene.add(single);
+    LayoutItem batch{};
+    batch.primitive.shape = PrimitiveSpec::Shape::BOX;
+    batch.materials.all = "vc_red";
+    for (int i = 0; i < 3; i++) {
+      auto xf{shear};
+      xf[0][1] += 0.05f * float(i);
+      xf[3] = float4(10.0f * float(i), 0.0f, 0.0f, 1.0f);
+      batch.batchXfs.push_back(xf);
+    }
+    scene.add(batch);
+    if (auto error{compiler.compile(smdl::OPT_LEVEL_O2)}) {
+      MESSAGE(error->message);
+      REQUIRE(false);
+    }
+    if (auto error{compiler.jitCompile()}) {
+      MESSAGE(error->message);
+      REQUIRE(false);
+    }
+    auto gridSpec{std::vector<float>(16)};
+    for (size_t i = 0; i < gridSpec.size(); i++)
+      gridSpec[i] = 400.0f + 300.0f * float(i) / float(gridSpec.size() - 1);
+    wavelengths =
+        Color(smdl::Span<const float>(gridSpec.data(), gridSpec.size()));
+    renderWavelengths() = wavelengths;
+    scene.commit(wavelengths);
+  }
+
+  smdl::Compiler compiler{};
+  Scene scene{compiler};
+  Color wavelengths{};
+};
+
+[[nodiscard]] float4x4 readBack(const MeshInstance &instance, float time) {
+  float4x4 xf{};
+  rtcGetGeometryTransformEx(instance.geometry, instance.instPrimID, time,
+                            RTC_FORMAT_FLOAT4X4_COLUMN_MAJOR, &xf[0][0]);
+  return xf;
+}
+
+[[nodiscard]] bool sameMatrix(const float4x4 &a, const float4x4 &b) {
+  for (int j = 0; j < 4; j++)
+    for (int i = 0; i < 4; i++)
+      if (a[j][i] != b[j][i]) return false;
+  return true;
+}
+
+} // namespace
+
+TEST_CASE("Scene: the frame at a time through the retained handle") {
+  FrameFixture fixture{};
+  const auto &instances{fixture.scene.meshInstances};
+  REQUIRE(instances.size() == 4);
+  for (const auto &instance : instances) {
+    CHECK(!instance.isMoving);
+    std::optional<InstanceFrame> scratch{};
+    CHECK(&instance.frameAt(0.3f, scratch) == &instance.frame);
+    CHECK(sameMatrix(readBack(instance, 0.0f), instance.frame.objectToWorld));
+    CHECK(sameMatrix(readBack(instance, 1.0f), instance.frame.objectToWorld));
+  }
+  // One handle for the regular instance, one shared by the array's
+  // elements, addressed by their index.
+  CHECK(instances[0].instPrimID == 0);
+  CHECK(instances[1].instPrimID == 0);
+  CHECK(instances[2].instPrimID == 1);
+  CHECK(instances[3].instPrimID == 2);
+  CHECK(instances[0].geometry != instances[1].geometry);
+  CHECK(instances[1].geometry == instances[3].geometry);
+  CHECK(fixture.scene.instanceGeometries.size() == 2);
+  // The elements really do differ, so the array read is per element.
+  CHECK(!sameMatrix(instances[1].frame.objectToWorld,
+                    instances[3].frame.objectToWorld));
+}

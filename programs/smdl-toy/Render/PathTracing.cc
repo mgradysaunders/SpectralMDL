@@ -342,7 +342,8 @@ Color MNEEGather::gatherReflection(const MNEEOptions &mneeOptions) const {
     seed.isReflect = true;
     seed.isGlossy = kindLobe == smdl::DF_GLOSSY_BRDF;
     Hit startHit{};
-    if (!mneeOptions.casters->samplePoint(scene, sampler, *caster, startHit))
+    if (!mneeOptions.casters->samplePoint(scene, sampler, *caster,
+                                          time.fraction, startHit))
       continue;
     seed.vertex = vertexOf(startHit);
     seed.frameSeed = manifoldFrameSeed(surfaces, seed.vertex);
@@ -368,7 +369,7 @@ Color MNEEGather::gatherReflection(const MNEEOptions &mneeOptions) const {
         [&](ManifoldChain &reseeded) {
           Hit reseededHit{};
           if (mneeOptions.casters->samplePoint(scene, sampler, *caster,
-                                               reseededHit)) {
+                                               time.fraction, reseededHit)) {
             reseeded[0].vertex = vertexOf(reseededHit);
             return true;
           } else {
@@ -600,7 +601,7 @@ Color MNEEGather::contribution(const ManifoldChain &chain,
       return {};
     // The solver's vertex is an address, not a hit record; rebuild the
     // hit to evaluate the interface material at the converged crossing.
-    const Hit crossHit{hitOf(scene, vertex.vertex)};
+    const Hit crossHit{hitOf(scene, vertex.vertex, time.fraction)};
     if (!crossHit.instance) return {};
     crossHit.applyGeometryToState(crossState, -vertex.wPrev);
     smdl::JIT::MaterialInstance crossMat{crossState, crossHit.material};
@@ -1197,7 +1198,8 @@ Color gatherDirect(const Scene &scene, Sampler &sampler,
   // receiver: its connection arrives at the light from elsewhere and reads
   // the radiance from there. The plain estimate of such a sample is zero
   // and is skipped below.
-  if (lights.sample(gatherState, sampler, point, lightSample, runManifold)) {
+  if (lights.sample(gatherState, sampler, point, time.fraction, lightSample,
+                    runManifold)) {
     const MNEEGather mneeGather{
         scene,  sampler,   wavelengths, allocator, lights,       gatherState,
         time,   scatterer, kind,        dtree,     bsdfFraction, guiding,

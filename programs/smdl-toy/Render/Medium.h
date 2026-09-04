@@ -257,13 +257,13 @@ private:
   /// Resolve the active media on `stack` into the members that depend
   /// on the stack alone, everything `reset()` skips on a repeat.
   void resolve(const MediumStack *stack, const Color &wavelengths,
-               float time) noexcept;
+               PathTime time) noexcept;
 
   /// Project the segment into the rigid frame of every heterogeneous
   /// medium, and into brick space where a density hint drives the
   /// majorant spans. Nothing to do for a homogeneous medium, whose
   /// coefficients do not vary along the segment.
-  void setSegment(const float3 &org, const float3 &dir) noexcept;
+  void setSegment(const float3 &org, const float3 &dir, float time) noexcept;
 
   /// One component of an additive overlap, mirroring the single-medium
   /// members below; populated only when the segment is inside two or

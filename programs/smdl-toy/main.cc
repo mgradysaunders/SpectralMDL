@@ -820,8 +820,8 @@ static std::vector<size_t> solveSamplePasses(size_t spp, bool guide,
       const auto faceIndex{uint32_t((size_t(k) * 2654435761UL) % faceCount)};
       const float u{0.05f + 0.35f * std::fmod(0.618034f * float(k + 1), 1.0f)};
       const float v{0.05f + 0.35f * std::fmod(0.754878f * float(k + 2), 1.0f)};
-      const auto hit{
-          scene.makeHit(instIndex, faceIndex, float3(1.0f - u - v, u, v))};
+      const auto hit{scene.makeHit(instIndex, faceIndex,
+                                   float3(1.0f - u - v, u, v), 0.0f)};
       if (!hit.instance) continue;
       const auto meshGeometry{scene.manifoldGeometry(hit)};
       ManifoldGeometry hookGeometry{};

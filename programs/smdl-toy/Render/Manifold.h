@@ -81,9 +81,10 @@ constexpr float MANIFOLD_NORMAL_STEP_MAX{4e-3f};
 [[nodiscard]] ManifoldVertex vertexOf(const Hit &hit);
 
 /// The hit record a solver vertex stands for, rebuilt through
-/// `Scene::makeHit()`; `hit.instance` is null when the vertex cannot be
-/// rebuilt.
-[[nodiscard]] Hit hitOf(const Scene &scene, const ManifoldVertex &vertex);
+/// `Scene::makeHit()` at the shutter fraction `time`; `hit.instance` is
+/// null when the vertex cannot be rebuilt.
+[[nodiscard]] Hit hitOf(const Scene &scene, const ManifoldVertex &vertex,
+                        float time);
 
 /// The scene as the manifold solver's surfaces: projection casts pass
 /// through null interfaces and pin to the vertex's own instance (and
@@ -177,10 +178,12 @@ public:
   [[nodiscard]] const MNEECaster *sampleCaster(Sampler &sampler,
                                                float &pdf) const;
 
-  /// Draw a start on a caster: a face by area and a uniform point on it.
-  /// Returns false when the hit cannot be made.
+  /// Draw a start on a caster: a face by area and a uniform point on it,
+  /// the hit built at the shutter fraction `time`. Returns false when the
+  /// hit cannot be made.
   [[nodiscard]] bool samplePoint(const Scene &scene, Sampler &sampler,
-                                 const MNEECaster &caster, Hit &hit) const;
+                                 const MNEECaster &caster, float time,
+                                 Hit &hit) const;
 
   std::vector<MNEECaster> casters{};
 };
