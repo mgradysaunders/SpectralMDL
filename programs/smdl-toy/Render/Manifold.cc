@@ -157,6 +157,9 @@ MNEECasterSet::MNEECasterSet(const Scene &scene, const Color &wavelengths,
     // what an unplaced material sees, and the per-hit claim measures it
     // against the medium the path is actually in.
     mat.setExteriorIOR(ExteriorIOR(nullptr, mat, float3(0.0f, 0.0f, 1.0f)));
+    // Either side of the instance: a reflective walk's starts land
+    // wherever the caster faces, and the masked query at the converged
+    // crossing settles which side actually scatters.
     const auto claim{manifoldClaim(mat, /*marked=*/true, maxGlossyAlpha)};
     const int dfLobes{mat.getLobes()};
     allocator.reset();
@@ -248,12 +251,15 @@ bool makeManifoldSeed(const MediumStack *medium,
                       ManifoldVertexSeed &seed) {
   const float3 woStraight{-wl};
   mat.setExteriorIOR(ExteriorIOR(medium, mat, woStraight));
-  const auto claim{
-      manifoldClaim(mat, hit.instance->causticCaster, maxGlossyAlpha)};
+  // The side the straight segment arrives on, which is both the side
+  // whose scattering tree the claim may speak for and the side whose
+  // index is the previous one.
+  const bool prevInterior{mat.isInterior(woStraight)};
+  const auto claim{manifoldClaim(mat, prevInterior,
+                                 hit.instance->causticCaster, maxGlossyAlpha)};
   if (claim.refractLobes == 0) return false;
   seed.claimedLobes = claim.refractLobes;
   seed.isGlossy = false;
-  const bool prevInterior{mat.isInterior(woStraight)};
   seed.vertex = vertexOf(hit);
   seed.etaPrev = prevInterior ? mat.getIOR() : mat.getExteriorIOR();
   seed.etaNext = prevInterior ? mat.getExteriorIOR() : mat.getIOR();

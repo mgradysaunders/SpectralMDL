@@ -488,9 +488,10 @@ manifoldReciprocal(const float3 &receiver, const ManifoldConnection &connection,
 /// starts, reaches each solution with a probability it cannot report,
 /// and so has to be claimed outright, which is a decision the scene
 /// makes by marking the instance. The claim is a static, whole-tree
-/// question asked of `df_lobes`, so it can only say that the material
-/// HAS a kind, never that a given crossing reaches it; both sides of the
-/// estimator confirm that with a masked query at the converged geometry.
+/// question asked of one side's `df_lobes`, so it can only say that the
+/// material HAS a kind on the side asked, never that a given crossing
+/// reaches it; both halves of the estimator confirm that with a masked
+/// query at the converged geometry.
 class ManifoldClaim final {
 public:
   /// `DF_DIRAC_BRDF` and or `DF_GLOSSY_BRDF`, estimated by a
@@ -515,8 +516,16 @@ public:
 };
 
 /// The claim at an instance whose material instance is `mat`, with its
-/// exterior IOR already resolved (for the index contrast), `marked`
-/// being the renderer's caster mark on the instance.
+/// exterior IOR already resolved (for the index contrast), on the side
+/// `backface` names, which is the side the scattering functions
+/// dispatch on and a caller spells `JIT::MaterialInstance::isInterior(wo)`,
+/// `marked` being the renderer's caster mark on the instance.
+///
+/// The side is asked because a two-sided material scatters by a
+/// different tree on each of them. Claiming the union bars the path
+/// tracer from a kind on the side that cannot produce it while the
+/// gather's own draw fails there, and the transport falls between the
+/// two.
 ///
 /// A material that remaps `geometry.normal` (statically, see
 /// `JIT::Material::remapsNormal()`) claims only when the walk can
@@ -536,9 +545,19 @@ public:
 /// grows with the lobe width while ordinary sampling's shrinks, so past
 /// some width the claim costs more than it saves (the reference's
 /// figure 17 trade). The width is read from the normal hook at a fixed
-/// center draw on the front side, so both sides of the estimator gate
-/// identically; for a single-lobe material that is the lobe's own
-/// width exactly. Dirac kinds are never gated, having no width.
+/// center draw on the side asked, which both halves of the estimator
+/// meet a crossing from, so the two gate identically; for a single-lobe
+/// material that is the lobe's own width exactly. Dirac kinds are never
+/// gated, having no width.
+[[nodiscard]] SMDL_EXPORT ManifoldClaim
+manifoldClaim(const JIT::MaterialInstance &mat, bool backface, bool marked,
+              float maxGlossyAlpha = 0.0f);
+
+/// The claim on either side, the union of the two: what a caller with no
+/// one side in hand asks, a load-time enumeration of marked instances
+/// among them, where a walk's starts may land on either side of the
+/// instance and the masked query at the converged crossing settles which
+/// one actually scatters.
 [[nodiscard]] SMDL_EXPORT ManifoldClaim manifoldClaim(
     const JIT::MaterialInstance &mat, bool marked, float maxGlossyAlpha = 0.0f);
 
@@ -573,7 +592,7 @@ template <typename DrawXi>
 [[nodiscard]] inline bool isManifoldReceiver(const JIT::MaterialInstance &mat,
                                              bool backface, DrawXi &&drawXi,
                                              float minAlpha) {
-  const int dfLobes{mat.getLobes()};
+  const int dfLobes{mat.getLobes(backface)};
   if ((dfLobes & JIT::DF_FINITE) == 0) return false;
   if ((dfLobes & JIT::DF_GENERIC) != 0) return true;
   if (!(minAlpha > 0.0f) || !mat.material->scatterNormalSample) return true;
