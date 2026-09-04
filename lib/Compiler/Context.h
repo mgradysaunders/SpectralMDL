@@ -413,6 +413,16 @@ public:
                                       type->llvmType));
   }
 
+  /// Get the external symbol naming the level 0 texels of `image`, which
+  /// `Compiler::jitCompile()` defines once every image has been loaded.
+  ///
+  /// Unlike every other resource, an image is named rather than baked as
+  /// an address, because its size is not settled until emission ends: a
+  /// texture constructed later may ask for a mip chain that an earlier
+  /// one did not. Naming it also makes `Compiler::dropUnusedImages()`
+  /// exact, since a symbol has a use list and an address does not.
+  [[nodiscard]] Value getImageTexelBase(Type *type, const Image &image);
+
   [[nodiscard]] std::optional<std::string> locate(const std::string &fileName) {
     return compiler.fileLocator.locate(
         fileName, currentModule->getResourceAnchor(),

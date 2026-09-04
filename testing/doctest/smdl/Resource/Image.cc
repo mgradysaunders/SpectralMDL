@@ -211,8 +211,7 @@ TEST_CASE("Image") {
     REQUIRE(!smdl::write8bitImage(fileName, 4, 4, 1, texels));
     smdl::Image image{};
     REQUIRE(!image.startLoad(fileName));
-    // Nothing asked, so the image holds level 0 only. The chain is laid
-    // out behind it, but it is never generated and never reported.
+    // Nothing asked, so the image holds level 0 only.
     CHECK(image.getNumLevels() == 1);
     image.finishLoad();
     CHECK(image.getNumLevels() == 1);
@@ -226,13 +225,14 @@ TEST_CASE("Image") {
       for (int x = 0; x < 4; x++)
         CHECK(image.fetch(x, y)[0] == imageWithMips.fetch(x, y)[0]);
     // Flipping vertically must still work with a single level, and must
-    // not walk the ungenerated chain.
+    // not walk levels that were never allocated.
     image.flipVertically();
     CHECK(image.fetch(0, 0)[0] == doctest::Approx(192.0f / 255.0f));
   }
-  SUBCASE("Mip levels can be disallowed up front") {
-    // The compiler-wide kill switch: not 'nobody has asked yet' but
-    // 'nobody may ask', which is what lets the chain go unreserved.
+  SUBCASE("An image nobody mips allocates level 0 alone") {
+    // The point of allocating in 'finishLoad()' rather than in
+    // 'startLoad()': the level count is settled by then, so a chain
+    // nobody asked for costs nothing at all.
     const uint8_t texels[16] = {0,   16,  32,  48,  //
                                 64,  80,  96,  112, //
                                 128, 144, 160, 176, //
@@ -240,59 +240,51 @@ TEST_CASE("Image") {
     auto fileName{(tmpDir / "nochain.png").string()};
     REQUIRE(!smdl::write8bitImage(fileName, 4, 4, 1, texels));
     smdl::Image image{};
-    REQUIRE(!image.startLoad(fileName, /*allowMipLevels=*/false));
-    // The request must be refused, before and after loading, so that no
-    // texture can ever bake a level count the image does not hold.
-    image.requestMipLevels();
-    CHECK(image.getNumLevels() == 1);
-    image.finishLoad();
-    image.requestMipLevels();
+    REQUIRE(!image.startLoad(fileName));
+    // Nothing is obtained up front, whatever the file turns out to be.
+    CHECK(image.getSizeInBytes() == 0);
     image.finishLoad();
     CHECK(image.getNumLevels() == 1);
-    // And the point of the exercise: the allocation is exactly the
-    // level 0 texels, where the same load with a chain is larger.
     CHECK(image.getSizeInBytes() == 4 * 4 * 1);
+    // The same file with the chain asked for is larger by the levels it
+    // actually holds, and level 0 reads the same either way.
     smdl::Image imageWithChain{};
     REQUIRE(!imageWithChain.startLoad(fileName));
-    CHECK(imageWithChain.getSizeInBytes() > image.getSizeInBytes());
-    // Level 0 must be identical either way, and still flippable.
+    imageWithChain.requestMipLevels();
     imageWithChain.finishLoad();
+    CHECK(imageWithChain.getNumLevels() == 3);
+    CHECK(imageWithChain.getSizeInBytes() == 4 * 4 + 2 * 2 + 1);
     for (int y = 0; y < 4; y++)
       for (int x = 0; x < 4; x++)
         CHECK(image.fetch(x, y)[0] == imageWithChain.fetch(x, y)[0]);
     image.flipVertically();
     CHECK(image.fetch(0, 0)[0] == doctest::Approx(192.0f / 255.0f));
   }
-  SUBCASE("Mip levels requested after loading") {
-    // The whole point of laying the chain out unconditionally: a
-    // reference that shows up after the image is already loaded still
-    // gets its mip levels, and level 0 does not move or change.
+  SUBCASE("Mip levels must be requested before the load finishes") {
+    // The request is what sizes the allocation, so it has to arrive
+    // first: there is no reserved chain to fill in afterward.
     const uint8_t texels[16] = {0,   16,  32,  48,  //
                                 64,  80,  96,  112, //
                                 128, 144, 160, 176, //
                                 192, 208, 224, 240};
-    auto fileName{(tmpDir / "latemip.png").string()};
+    auto fileName{(tmpDir / "earlymip.png").string()};
     REQUIRE(!smdl::write8bitImage(fileName, 4, 4, 1, texels));
     smdl::Image image{};
     REQUIRE(!image.startLoad(fileName));
-    image.finishLoad();
-    CHECK(image.getNumLevels() == 1);
-    auto texel00{image.fetch(0, 0)[0]};
     image.requestMipLevels();
     image.finishLoad();
     CHECK(image.getNumLevels() == 3);
-    CHECK(image.fetch(0, 0)[0] == texel00);
+    CHECK(image.fetch(0, 0)[0] == doctest::Approx(0.0f));
     CHECK(image.fetch(0, 0, 1)[0] == doctest::Approx(40.0f / 255.0f));
     CHECK(image.fetch(0, 0, 2)[0] == doctest::Approx(120.0f / 255.0f));
-    // And repeating the request must not regenerate or disturb anything.
-    image.requestMipLevels();
+    // And finishing again must not regenerate or disturb anything.
     image.finishLoad();
     CHECK(image.fetch(0, 0, 2)[0] == doctest::Approx(120.0f / 255.0f));
   }
   SUBCASE("A decode failure must leave every level zeroed") {
     // A truncated PNG: the header still parses, so 'startLoad()'
-    // succeeds and allocates, and the failure lands in 'finishLoad()'.
-    // Only level 0 is zeroed at allocation, so this pins that the
+    // succeeds and the failure lands in 'finishLoad()', after it has
+    // allocated. Only level 0 is zeroed there, so this pins that the
     // failure path zeroes the chain as well.
     // 64x64 so that the truncation lands well past the PNG header and
     // inside the pixel data, and so that the chain is several levels.

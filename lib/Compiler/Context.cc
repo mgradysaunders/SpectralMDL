@@ -483,6 +483,28 @@ Value Context::getComptimeUnionIndexMap(UnionType *unionTypeA,
   return indexMap;
 }
 
+Value Context::getImageTexelBase(Type *type, const Image &image) {
+  SMDL_SANITY_CHECK(type && type->llvmType);
+  auto itr{compiler.mImageSymbolNames.find(&image)};
+  SMDL_SANITY_CHECK(itr != compiler.mImageSymbolNames.end());
+  auto llvmGlobal{llvmModule.getNamedGlobal(itr->second)};
+  if (!llvmGlobal) {
+    // A declaration, so the address stays open until the JIT links it.
+    // Deliberately not 'dso_local': that lets the backend address the
+    // texels PC-relative, which holds only if they land within 2GB of
+    // the JIT-compiled code, and a heap allocation promises no such
+    // thing.
+    llvmGlobal = new llvm::GlobalVariable(
+        llvmModule, llvm::Type::getInt8Ty(llvmContext), /*isConstant=*/true,
+        llvm::GlobalValue::ExternalLinkage, /*Initializer=*/nullptr,
+        itr->second);
+    // Exactly what 'Image::allocate()' guarantees: over-promising here
+    // lets the backend emit aligned accesses that fault.
+    llvmGlobal->setAlignment(llvm::Align(Image::TEXEL_ALIGNMENT));
+  }
+  return RValue(type, llvmGlobal);
+}
+
 namespace builtin {
 
 Span<const std::string_view> getAllNames() {

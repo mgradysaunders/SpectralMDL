@@ -802,7 +802,10 @@ Value Emitter::emit(AST::Variable &decl) {
           llvmGlobal->setName(name.srcName);
           value = LValue(value.type, llvmGlobal);
         } else if (isConst) {
-          value.llvmValue->setName(name.srcName);
+          // Never an LLVM global: its name is the linker symbol, and one
+          // global is shared by every reference to it (e.g. the texel
+          // base of an image), so a local binding must not rename it.
+          if (!value.isLLVMGlobal()) value.llvmValue->setName(name.srcName);
         } else {
           auto valueAlloca{createAlloca(value.type, name.srcName)};
           createLifetimeStart(valueAlloca);
@@ -3020,10 +3023,10 @@ Value Emitter::emitIntrinsicLoad(IntrinsicID intrinsicID,
       }
     }
     auto texelPtrType{texelPtrTypeOf(*images[0])};
-    // Only the level 0 pointer of each tile is baked; the higher
-    // levels live contiguously behind it and 'tex.smdl' recomputes
+    // Only the level 0 texels of each tile are named; the higher
+    // levels live contiguously behind them and 'tex.smdl' recomputes
     // their offsets from the tile extent (see the layout note on
-    // 'texture_2d' in 'api.smdl'). Baking pointer tables instead
+    // 'texture_2d' in 'api.smdl'). Carrying pointer tables instead
     // would grow the struct past the by-value ABI sweet spot.
     //
     // The level count is per texture, not per image: the images are
@@ -3047,10 +3050,9 @@ Value Emitter::emitIntrinsicLoad(IntrinsicID intrinsicID,
                  context.getComptimeVector(int2(int(image->getNumTexelsX()),
                                                 int(image->getNumTexelsY()))),
                  insertPos, srcLoc);
-      valueTileBuffers =
-          insert(valueTileBuffers,
-                 context.getComptimePtr(texelPtrType, image->getTexels()),
-                 insertPos, srcLoc);
+      valueTileBuffers = insert(valueTileBuffers,
+                                context.getImageTexelBase(texelPtrType, *image),
+                                insertPos, srcLoc);
     }
     return invoke(
         texture2DType,

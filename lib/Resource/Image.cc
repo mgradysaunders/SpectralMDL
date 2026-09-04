@@ -166,7 +166,6 @@ void Image::clear() {
   mNumChannels = 1;
   mTexelSize = 1;
   mNumLevels = 1;
-  mMipLevelsAllowed = true;
   mMipLevelsRequested = false;
   mMipLevelsGenerated = false;
   mMipFilter = MIP_MEAN;
@@ -176,10 +175,8 @@ void Image::clear() {
   mFinishLoad = nullptr;
 }
 
-std::optional<Error> Image::startLoad(const std::string &fileName,
-                                      bool allowMipLevels) noexcept {
+std::optional<Error> Image::startLoad(const std::string &fileName) noexcept {
   clear();
-  mMipLevelsAllowed = allowMipLevels;
   auto error{catchAndReturnError([&] {
     if (stbi_info(fileName.c_str(), &mNumTexelsX, &mNumTexelsY,
                   &mNumChannels)) {
@@ -376,37 +373,13 @@ std::optional<Error> Image::startLoad(const std::string &fileName,
     } else {
       throw std::runtime_error("failed to open file or recognize image format");
     }
-    // Lay out the mip chain, one contiguous allocation with level 0
-    // first. This must happen here rather than in 'finishLoad()' because
-    // the level pointers may be baked into JIT-compiled code before the
-    // texels are decoded, so neither the size nor the base address may
-    // change afterward.
-    //
-    // The chain is laid out whether or not anything has asked for mip
-    // levels yet, which is precisely what lets 'requestMipLevels()' be
-    // honored at any later point (see the class doc comment). Unless it
-    // is disallowed outright, in which case there is nothing to honor
-    // and the layout is level 0 alone.
+    // How many levels the extent implies, which is all of the layout
+    // that can be settled here: whether anything wants them is not known
+    // until every reference has been seen, so 'finishLoad()' does the
+    // rest once the answer is in.
     mNumLevels = 1;
-    if (mMipLevelsAllowed)
-      while ((std::max(mNumTexelsX, mNumTexelsY) >> (mNumLevels - 1)) > 1)
-        mNumLevels++;
-    mLevelOffsets.assign(size_t(mNumLevels), 0);
-    size_t offset{0};
-    for (int level = 0; level < mNumLevels; level++) {
-      mLevelOffsets[size_t(level)] = offset;
-      offset += size_t(getNumTexelsX(level)) * size_t(getNumTexelsY(level)) *
-                size_t(mTexelSize);
-    }
-    mSizeInBytes = offset;
-    // Default-initialized, then zeroed over level 0 only: zeroing the
-    // whole buffer would touch every page of the chain, which is exactly
-    // the memory an image nobody mips must not cost. Level 0 is zeroed
-    // so that a decode failure in 'finishLoad()' leaves well-defined
-    // zero texels, and the failure path there zeroes the chain too.
-    mTexels.reset(new std::byte[mSizeInBytes]);
-    std::memset(mTexels.get(), 0,
-                size_t(mNumTexelsX) * size_t(mNumTexelsY) * size_t(mTexelSize));
+    while ((std::max(mNumTexelsX, mNumTexelsY) >> (mNumLevels - 1)) > 1)
+      mNumLevels++;
   })};
   if (error) {
     clear();
@@ -416,38 +389,49 @@ std::optional<Error> Image::startLoad(const std::string &fileName,
   return error;
 }
 
-void Image::finishLoad() {
-  if (mFinishLoad) {
-    // NOTE: Move into a local and null the member before invoking, so
-    // that a throw cannot leave a stale finish function behind to be
-    // invoked again.
-    auto finishLoad{std::move(mFinishLoad)};
-    mFinishLoad = nullptr;
-    try {
-      finishLoad();
-    } catch (...) {
-      // Only level 0 was zeroed at allocation, so zero all of it here: a
-      // partially decoded image and an ungenerated chain must still read
-      // as well-defined zero texels.
-      if (mTexels) std::memset(mTexels.get(), 0, mSizeInBytes);
-      throw;
-    }
+void Image::allocate() {
+  const auto numLevels{getNumLevels()};
+  mLevelOffsets.assign(size_t(numLevels), 0);
+  size_t offset{0};
+  for (int level = 0; level < numLevels; level++) {
+    mLevelOffsets[size_t(level)] = offset;
+    offset += size_t(getNumTexelsX(level)) * size_t(getNumTexelsY(level)) *
+              size_t(mTexelSize);
   }
-  // Generate whenever a request is outstanding, rather than only right
-  // after the decode: the chain is laid out unconditionally, so a
-  // request arriving later (e.g., in a subsequent 'compile()') is still
-  // honored, and generating only ever writes into reserved space that no
-  // existing 'texture_2d' reads.
-  if (mTexels && mMipLevelsRequested && !mMipLevelsGenerated) {
+  mSizeInBytes = offset;
+  mTexels.reset(static_cast<std::byte *>(
+      ::operator new(mSizeInBytes, std::align_val_t(TEXEL_ALIGNMENT))));
+  // Level 0 only: the rest is written by 'generateMipLevels()' before
+  // anything can read it, and zeroing here is so that a decode failure
+  // leaves well-defined zero texels.
+  std::memset(mTexels.get(), 0,
+              size_t(mNumTexelsX) * size_t(mNumTexelsY) * size_t(mTexelSize));
+}
+
+void Image::finishLoad() {
+  if (!mFinishLoad) return;
+  allocate();
+  // NOTE: Move into a local and null the member before invoking, so
+  // that a throw cannot leave a stale finish function behind to be
+  // invoked again.
+  auto finishLoad{std::move(mFinishLoad)};
+  mFinishLoad = nullptr;
+  try {
+    finishLoad();
+  } catch (...) {
+    // Only level 0 was zeroed by 'allocate()', so zero all of it here: a
+    // partially decoded image and an ungenerated chain must still read
+    // as well-defined zero texels.
+    std::memset(mTexels.get(), 0, mSizeInBytes);
+    throw;
+  }
+  if (mMipLevelsRequested) {
     generateMipLevels();
     mMipLevelsGenerated = true;
   }
 }
 
-void Image::abandonLoad() noexcept {
-  mFinishLoad = nullptr;
-  mTexels.reset();
-}
+void Image::abandonLoad() noexcept { mFinishLoad = nullptr; }
 
 void Image::generateMipLevels() noexcept {
   if (mMipFilter == MIP_MAX)
@@ -549,9 +533,8 @@ void Image::generateMaxMipLevels() noexcept {
 }
 
 void Image::flipVertically() noexcept {
-  // The levels in memory, not the levels in the layout: an ungenerated
-  // chain holds nothing to flip, and walking it would touch every page
-  // it is meant to leave alone.
+  // The levels in memory, not the levels the extent implies: a chain
+  // that was never requested was never allocated either.
   for (int level = 0; level < getNumLevelsInMemory(); level++) {
     auto levelTexels{mTexels.get() + mLevelOffsets[size_t(level)]};
     auto numTexelsY{getNumTexelsY(level)};

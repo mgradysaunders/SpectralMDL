@@ -32,6 +32,15 @@ static std::string buildAll(smdl::Compiler &compiler,
   return {};
 }
 
+// Count the image symbol declarations in an LLVM-IR dump. A declaration
+// starts a line; every other mention of the symbol is a use.
+static size_t countImageSymbols(std::string_view ir) {
+  auto count{size_t(0)};
+  for (size_t pos{}; (pos = ir.find("\n@smdl.image.", pos)) != ir.npos; pos++)
+    count++;
+  return count;
+}
+
 // A minimal named material definition.
 static std::string materialDef(std::string_view name) {
   auto text{std::string()};
@@ -1666,12 +1675,15 @@ TEST_CASE("Compiler unused image dropping") {
             "unit_test \"Extent survives the drop\" {\n"
             "  #assert(tex::width(texture_2d(\"dead.png\")) == 2);\n"
             "}\n");
+  auto ir{std::string()};
   auto build{[&](smdl::OptLevel optLevel) {
     smdl::Compiler compiler{};
     compiler.enableUnitTests = true;
     if (auto error{compiler.add((tmpDir / "main.smdl").string())})
       return error->message;
     if (auto error{compiler.compile(optLevel)}) return error->message;
+    if (auto error{compiler.dump(smdl::DUMP_FORMAT_IR, ir)})
+      return error->message;
     if (auto error{compiler.jitCompile()}) return error->message;
     return std::string();
   }};
@@ -1681,6 +1693,9 @@ TEST_CASE("Compiler unused image dropping") {
     CHECK(build(smdl::OPT_LEVEL_O2) == "");
     REQUIRE(dropped.messages.size() == 1);
     CHECK(dropped.messages[0].find("dead.png") != std::string::npos);
+    // The declaration goes with the image, so the JIT is never asked to
+    // define a symbol for texels that were never loaded.
+    CHECK(countImageSymbols(ir) == 1);
     smdl::Logger::get().reset();
   }
   SUBCASE("The unread image is dropped even at OPT_LEVEL_NONE") {
@@ -1694,7 +1709,100 @@ TEST_CASE("Compiler unused image dropping") {
     CHECK(build(smdl::OPT_LEVEL_NONE) == "");
     REQUIRE(dropped.messages.size() == 1);
     CHECK(dropped.messages[0].find("dead.png") != std::string::npos);
+    CHECK(countImageSymbols(ir) == 1);
     smdl::Logger::get().reset();
+  }
+  fs::remove_all(tmpDir);
+}
+
+TEST_CASE("Compiler image symbols") {
+  auto tmpDir{fs::temp_directory_path() / "smdl-image-symbol-test"};
+  fs::remove_all(tmpDir);
+  fs::create_directories(tmpDir);
+  // 4x4 so the chain is 4x4 -> 2x2 -> 1x1, and distinct content so the
+  // two files cannot content-hash to one image.
+  const uint8_t texelsA[16] = {0,   16,  32,  48,  //
+                               64,  80,  96,  112, //
+                               128, 144, 160, 176, //
+                               192, 208, 224, 240};
+  const uint8_t texelsB[16] = {1, 2,  3,  4,  5,  6,  7,  8,
+                               9, 10, 11, 12, 13, 14, 15, 16};
+  REQUIRE(!smdl::write8bitImage((tmpDir / "a.png").string(), 4, 4, 1, texelsA));
+  REQUIRE(!smdl::write8bitImage((tmpDir / "b.png").string(), 4, 4, 1, texelsB));
+  SUBCASE("One symbol per file, however many textures read it") {
+    // Two textures over 'a.png' differing in exactly the thing that is
+    // per-texture rather than per-image: whether they read the chain.
+    writeFile(
+        tmpDir / "main.smdl",
+        "#smdl\nimport ::tex::*;\n"
+        "export const auto a0 = texture_2d(\"a.png\", tex::gamma_linear);\n"
+        "export const auto a1 = texture_2d(\"a.png\", tex::gamma_linear, "
+        "use_mipmap: true);\n"
+        "export const auto b = texture_2d(\"b.png\", tex::gamma_linear);\n"
+        "export exec {\n"
+        "  #assert(tex::texel_float(a0, int2(1, 2)) == "
+        "tex::texel_float(a1, int2(1, 2)));\n"
+        "  #assert(a0.num_levels == 1);\n"
+        "  #assert(a1.num_levels == 3);\n"
+        "  #assert(tex::texel_float(b, int2(0, 0)) != "
+        "tex::texel_float(a0, int2(0, 0)));\n"
+        "}\n");
+    smdl::Compiler compiler{};
+    REQUIRE(!compiler.add((tmpDir / "main.smdl").string()));
+    REQUIRE(!compiler.compile(smdl::OPT_LEVEL_O2));
+    auto ir{std::string()};
+    REQUIRE(!compiler.dump(smdl::DUMP_FORMAT_IR, ir));
+    // Two files, so two symbols: the level count is baked per texture,
+    // but the texels are shared and named once.
+    CHECK(countImageSymbols(ir) == 2);
+    // And they resolve, which is the whole point of naming them.
+    REQUIRE(!compiler.jitCompile());
+    CHECK(!compiler.runExecs());
+  }
+  SUBCASE("The chain reads correctly through the symbol") {
+    // Level 0 is named; the higher levels are found by offsetting from
+    // it, so a wrong base or a short allocation shows up here. The mean
+    // of each 2x2 block of 'texelsA' gives level 1 as 40, 72, 168, 200
+    // in file order, and level 2 as their mean, 120. Texture space is
+    // v-up, so 'int2(0, 0)' of level 1 is the last row in file order.
+    writeFile(tmpDir / "mips.smdl",
+              "#smdl\nimport ::tex::*;\n"
+              "export const auto t = texture_2d(\"a.png\", tex::gamma_linear, "
+              "use_mipmap: true);\n"
+              "export exec {\n"
+              "  #assert(#abs(tex::level_texel_float4(t, 1, int2(0, 0)).x - "
+              "168.0 / 255.0) < 1e-6);\n"
+              "  #assert(#abs(tex::level_texel_float4(t, 1, int2(0, 1)).x - "
+              "40.0 / 255.0) < 1e-6);\n"
+              "  #assert(#abs(tex::level_texel_float4(t, 2, int2(0, 0)).x - "
+              "120.0 / 255.0) < 1e-6);\n"
+              "}\n");
+    smdl::Compiler compiler{};
+    REQUIRE(!compiler.add((tmpDir / "mips.smdl").string()));
+    REQUIRE(!compiler.compile(smdl::OPT_LEVEL_O2));
+    REQUIRE(!compiler.jitCompile());
+    CHECK(!compiler.runExecs());
+  }
+  SUBCASE("An unloadable image still links") {
+    // 'startLoad()' fails, so there are no texels and the symbol
+    // resolves to a null address. The extent is zero, which is what
+    // keeps the lookups away from it, but the link must still succeed.
+    std::ofstream(tmpDir / "bad.png") << "This is not an image!\n";
+    writeFile(tmpDir / "bad.smdl",
+              "#smdl\nimport ::tex::*;\n"
+              "export const auto t = texture_2d(\"bad.png\", "
+              "tex::gamma_linear);\n"
+              "export exec {\n"
+              "  #assert(tex::width(t) == 0);\n"
+              "  #assert(tex::texel_float(t, int2(0, 0)) == 0.0);\n"
+              "}\n");
+    smdl::Compiler compiler{};
+    REQUIRE(!compiler.add((tmpDir / "bad.smdl").string()));
+    // 'OPT_LEVEL_NONE' so the reads survive to the JIT rather than being
+    // folded away along with the image.
+    REQUIRE(!compiler.compile(smdl::OPT_LEVEL_NONE));
+    REQUIRE(!compiler.jitCompile());
+    CHECK(!compiler.runExecs());
   }
   fs::remove_all(tmpDir);
 }

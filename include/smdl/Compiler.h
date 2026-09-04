@@ -111,7 +111,10 @@ enum ColorMode : int {
 ///   dangles. No thread may be executing JIT-compiled code during
 ///   `compile()` or `jitCompile()`.
 /// - JIT-compiled code embeds absolute pointers to host data owned by this
-///   `Compiler` (images, spectra, `sceneData`, ...). The `Compiler` must
+///   `Compiler` (images, spectra, `sceneData`, ...). Every resource but an
+///   image is baked at emission; an image's texels are named by a symbol
+///   that `jitCompile()` defines, which is what lets the allocation wait
+///   until the level count is settled. Either way the `Compiler` must
 ///   outlive all execution of its JIT-compiled code, and object files
 ///   emitted by `dump()` are not relocatable into other processes.
 class SMDL_EXPORT Compiler final {
@@ -305,6 +308,11 @@ private:
   /// An image holds one chain, so every reference that asks for one
   /// must ask for the same `filter`; a reference asking for the other
   /// kind is an error naming the file and the earlier request.
+  ///
+  /// The request has to arrive while `compile()` is still emitting,
+  /// which every reference does by construction: `compile()` allocates
+  /// and decodes the images it kept once emission is over, sizing each
+  /// allocation to the levels asked for by then.
   [[nodiscard]] const Image &
   loadImage(const std::string &fileName, const SourceLocation &srcLoc,
             bool withMipLevels = false,
@@ -355,6 +363,10 @@ private:
 public:
   /// Dump as LLVM-IR or native assembly into `out`. Must be called after
   /// `compile()` and before `jitCompile()`.
+  ///
+  /// An image's texels appear as the external symbol `jitCompile()`
+  /// would define rather than as an address, so a dumped object file
+  /// leaves those symbols undefined.
   [[nodiscard]] std::optional<Error> dump(DumpFormat dumpFormat,
                                           std::string &out) noexcept;
 
@@ -547,6 +559,12 @@ private:
   /// later request for the other kind of chain is reported against.
   std::unordered_map<const Image *, SourceLocation> mImageMipRequesters;
 
+  /// The JIT symbol naming each image's level 0 texels. Emitted code
+  /// refers to an image by symbol rather than by address (see
+  /// `Context::getImageTexelBase()`), and `jitCompile()` defines every
+  /// symbol here as an absolute symbol once the images are loaded.
+  std::unordered_map<const Image *, std::string> mImageSymbolNames;
+
   /// The ptex textures.
   std::unordered_map<const MD5FileHash *, std::unique_ptr<Ptexture>> mPtextures;
 
@@ -612,8 +630,8 @@ private:
   void resetForRecompile();
 
   /// Drop every image the optimized module provably never reads, so
-  /// `compile()` can skip decoding it and release its texel
-  /// reservation. Returns the number of images dropped.
+  /// `compile()` never allocates or decodes its texels at all. Returns
+  /// the number of images dropped.
   size_t dropUnusedImages();
 
   /// Take ownership of a successfully loaded module: index it by file

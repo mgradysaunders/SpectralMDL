@@ -520,97 +520,37 @@ static void deriveStaticMaterialFlags(llvm::Module &llvmModule,
   }
 }
 
-// Texel addresses only ever enter the IR as `inttoptr` constants of an
-// image's reservation (see `IntrinsicID::LoadTexture2D`), and any
-// derived address the optimizer folds to a constant stays inside the
-// reservation, so the test is interval membership: scan every integer
-// constant reachable from an instruction operand or global initializer
-// and mark the reservation it lands in. The failure direction is
-// conservative by construction: a coincidental in-range constant keeps
-// an image alive, but a referenced image cannot be missed, because
-// every access derives its address from one of the baked constants. At
-// `OPT_LEVEL_NONE` nothing is provably unused because nothing was
-// dead-code eliminated, and an image whose `startLoad()` failed has no
-// reservation, so neither is ever dropped here.
+// An image enters the IR as exactly one external symbol (see
+// `Context::getImageTexelBase()`), so liveness is exactly whether that
+// symbol still has uses: the optimizer erases the references along with
+// the code that made them, and nothing else in the module can name the
+// texels. This finds images at `OPT_LEVEL_NONE` too, where nothing is
+// dead-code eliminated but constant-field elimination keeps a comptime
+// `texture_2d` out of the IR, so a texture read only for its extent
+// never references its symbol in the first place.
 size_t Compiler::dropUnusedImages() {
-  const auto &llvmModule{*mLLVMModule};
-  struct Interval final {
-    uint64_t addressBegin{};
-    // Inclusive, so a folded one-past-end address still counts.
-    uint64_t addressEnd{};
-    const MD5FileHash *fileHash{};
-    Image *image{};
-    bool used{};
-  };
-  auto intervals{std::vector<Interval>()};
-  for (auto &[fileHash, image] : mImages) {
-    if (const auto *texels{image->getTexels()}) {
-      auto addressBegin{uint64_t(reinterpret_cast<uintptr_t>(texels))};
-      intervals.push_back(Interval{addressBegin,
-                                   addressBegin + image->getSizeInBytes(),
-                                   fileHash, image.get(), false});
-    }
-  }
-  if (intervals.empty()) return 0;
-  std::sort(intervals.begin(), intervals.end(),
-            [](const Interval &lhs, const Interval &rhs) {
-              return lhs.addressBegin < rhs.addressBegin;
-            });
-  // Mark the interval containing the address, if any. Reservations are
-  // disjoint, but the inclusive upper bound can touch the next
-  // reservation's begin, so check the predecessor too.
-  auto markAddress{[&](uint64_t address) {
-    auto itr{std::upper_bound(intervals.begin(), intervals.end(), address,
-                              [](uint64_t addr, const Interval &interval) {
-                                return addr < interval.addressBegin;
-                              })};
-    for (int i = 0; i < 2 && itr != intervals.begin(); i++) {
-      --itr;
-      if (itr->addressBegin <= address && address <= itr->addressEnd) {
-        itr->used = true;
-      }
-    }
-  }};
-  // Walk every integer constant in the module, including those nested
-  // in constant expressions and aggregate initializers. Constants form
-  // a DAG, so remember what has already been visited.
-  llvm::SmallPtrSet<const llvm::Constant *, 32> visited{};
-  auto scanConstant{[&](const llvm::Constant *constant, auto &self) -> void {
-    if (!visited.insert(constant).second) return;
-    if (auto constantInt{llvm::dyn_cast<llvm::ConstantInt>(constant)}) {
-      if (constantInt->getBitWidth() == 64)
-        markAddress(constantInt->getZExtValue());
-      return;
-    }
-    if (auto constantData{
-            llvm::dyn_cast<llvm::ConstantDataSequential>(constant)}) {
-      if (constantData->getElementType()->isIntegerTy(64))
-        for (unsigned i = 0; i < constantData->getNumElements(); i++)
-          markAddress(constantData->getElementAsInteger(i));
-      return;
-    }
-    for (const auto &operand : constant->operands())
-      if (auto operandConstant{llvm::dyn_cast<llvm::Constant>(operand)})
-        self(operandConstant, self);
-  }};
-  for (const auto &global : llvmModule.globals())
-    if (global.hasInitializer())
-      scanConstant(global.getInitializer(), scanConstant);
-  for (const auto &func : llvmModule.functions())
-    for (const auto &block : func)
-      for (const auto &inst : block)
-        for (const auto &operand : inst.operands())
-          if (auto constant{llvm::dyn_cast<llvm::Constant>(operand)})
-            scanConstant(constant, scanConstant);
   auto numDropped{size_t(0)};
-  for (auto &interval : intervals) {
-    if (!interval.used) {
-      SMDL_LOG_DEBUG("Dropping image ",
-                     QuotedPath(interval.fileHash->canonicalFileNames[0]),
-                     ": never read by the compiled code");
-      interval.image->abandonLoad();
-      numDropped++;
+  for (auto &[fileHash, image] : mImages) {
+    auto itr{mImageSymbolNames.find(image.get())};
+    if (itr == mImageSymbolNames.end()) continue;
+    // Absent as well as unused: an image loaded by a texture that failed
+    // to construct never reached `getImageTexelBase()` at all.
+    auto llvmGlobal{mLLVMModule->getNamedGlobal(itr->second)};
+    if (llvmGlobal) {
+      // The comptime `texture_2d` aggregate holding the symbol is a
+      // constant, and a constant that nothing in the module reaches is
+      // still a use until it is collected. Without this, an image that
+      // only ever contributed its extent looks read.
+      llvmGlobal->removeDeadConstantUsers();
+      if (!llvmGlobal->use_empty()) continue;
     }
+    SMDL_LOG_DEBUG("Dropping image ",
+                   QuotedPath(fileHash->canonicalFileNames[0]),
+                   ": never read by the compiled code");
+    if (llvmGlobal) llvmGlobal->eraseFromParent();
+    image->abandonLoad();
+    mImageSymbolNames.erase(itr);
+    numDropped++;
   }
   return numDropped;
 }
@@ -623,6 +563,7 @@ void Compiler::resetForRecompile() {
   mWarnedResourceFileNames.clear();
   mImages.clear();
   mImageMipRequesters.clear();
+  mImageSymbolNames.clear();
   mPtextures.clear();
   mBSDFMeasurements.clear();
   mLightProfiles.clear();
@@ -710,12 +651,12 @@ std::optional<Error> Compiler::compile(OptLevel optLevel) noexcept {
       SMDL_LOG_INFO("Dropped ", numDropped,
                     " image(s) never read by the compiled code");
     }
-    // Finish loading the images that still hold a texel reservation,
-    // i.e., neither failed 'startLoad()' nor were dropped above.
+    // Finish loading the images that still have a decode pending, i.e.,
+    // neither failed 'startLoad()' nor were dropped above.
     auto imageEntries{std::vector<std::pair<const MD5FileHash *, Image *>>()};
     imageEntries.reserve(mImages.size());
     for (auto &[key, image] : mImages)
-      if (image->getTexels()) imageEntries.emplace_back(key, image.get());
+      if (image->hasPendingLoad()) imageEntries.emplace_back(key, image.get());
     if (!imageEntries.empty()) {
       SMDL_PROFILER_ENTRY("Load images in parallel");
       SMDL_LOG_INFO("Loading images ...");
@@ -809,15 +750,18 @@ void Compiler::logResourceWarningOnce(const SourceLocation &srcLoc,
 const Image &Compiler::loadImage(const std::string &fileName,
                                  const SourceLocation &srcLoc,
                                  bool withMipLevels, Image::MipFilter filter) {
-  auto &image{
-      loadResource(mImages, mFileHasher[fileName], srcLoc, [&](Image &image) {
-        SMDL_PROFILER_ENTRY("Compiler::loadImage()", fileName.c_str());
-        // The chain is always laid out, whatever this reference asked
-        // for: the request is sticky and shared, so a later reference
-        // may ask for a chain that this one did not want, and the space
-        // for it has to be reserved by now.
-        return image.startLoad(fileName);
-      })};
+  auto fileHash{mFileHasher[fileName]};
+  auto &image{loadResource(mImages, fileHash, srcLoc, [&](Image &image) {
+    SMDL_PROFILER_ENTRY("Compiler::loadImage()", fileName.c_str());
+    // Probes the file and nothing more: the texels are allocated and
+    // decoded at the end of the compile, by which point every reference
+    // has been seen and the level count is settled.
+    return image.startLoad(fileName);
+  })};
+  // Named by content hash, so every reference to the same file resolves
+  // to one symbol and one set of texels.
+  mImageSymbolNames.try_emplace(
+      &image, concat("smdl.image.", std::string(fileHash->hash)));
   // The request is applied on every reference, not just the one that
   // decoded the image, so that it does not matter which reference comes
   // first: the mip levels are generated at the end of the compile, by
@@ -961,8 +905,10 @@ std::optional<Error> Compiler::jitCompile() noexcept {
     // Define the builtin runtime callees ('smdlPanic', 'smdlBumpAllocate',
     // ...) as absolute symbols so they resolve even when the host process
     // does not export its own symbols (e.g. static link without
-    // '--export-dynamic').
-    if (!mBuiltinCalleeAddresses.empty()) {
+    // '--export-dynamic'), and the image texel bases likewise: emitted
+    // code names those by symbol rather than by address, so this is where
+    // their addresses are finally committed.
+    if (!mBuiltinCalleeAddresses.empty() || !mImageSymbolNames.empty()) {
       auto mangle{llvm::orc::MangleAndInterner(mLLVMJit->getExecutionSession(),
                                                mLLVMJit->getDataLayout())};
       auto symbolMap{llvm::orc::SymbolMap{}};
@@ -970,6 +916,10 @@ std::optional<Error> Compiler::jitCompile() noexcept {
         symbolMap[mangle(calleeName)] = llvm::orc::ExecutorSymbolDef(
             llvm::orc::ExecutorAddr::fromPtr(calleeAddr),
             llvm::JITSymbolFlags::Exported | llvm::JITSymbolFlags::Callable);
+      for (const auto &[image, symbolName] : mImageSymbolNames)
+        symbolMap[mangle(symbolName)] = llvm::orc::ExecutorSymbolDef(
+            llvm::orc::ExecutorAddr::fromPtr(image->getTexels()),
+            llvm::JITSymbolFlags::Exported);
       llvmThrowIfError(mLLVMJit->getMainJITDylib().define(
           llvm::orc::absoluteSymbols(std::move(symbolMap))));
     }

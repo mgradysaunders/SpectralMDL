@@ -8,11 +8,9 @@
 EnvLight::EnvLight(const std::string &fileName, float scaleFactor)
     : scaleFactor(scaleFactor) {
   // Never mipped: the environment is sampled by direction through the
-  // tabulated density below, never with a texture-space footprint, so
-  // the chain would be reserved and never touched. That matters here,
-  // where the image is routinely a multi-thousand-pixel HDR.
-  if (auto error{image.startLoad(fileName, /*allowMipLevels=*/false)})
-    error->printAndExit();
+  // tabulated density below, never with a texture-space footprint. So
+  // nothing here requests a chain, and none is allocated.
+  if (auto error{image.startLoad(fileName)}) error->printAndExit();
   image.finishLoad();
   auto weights{std::vector<float>{}};
   const int numTexelsX{image.getNumTexelsX()};
