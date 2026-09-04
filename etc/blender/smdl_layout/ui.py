@@ -542,10 +542,9 @@ class SMDL_PT_light(bpy.types.Panel):
         layout.use_property_split = True
         layout.use_property_decorate = False
         light = context.object.data
-        # A sun states the sky's direction and an area lamp is an
-        # emissive material on a shape, so neither reaches a `light`
-        # declaration for the mark to sit in.
-        exports = light.type in ("POINT", "SPOT")
+        # A sun states the sky's direction rather than declaring a
+        # light, so it has nowhere for the mark to sit.
+        exports = light.type in ("POINT", "SPOT", "AREA")
         column = layout.column()
         column.active = exports
         column.prop(light.smdl_light_options, "caustic")

@@ -709,7 +709,7 @@ def diagnose(context, collection=None):
         options = getattr(ob.data, "smdl_light_options", None)
         if options is None or not options.caustic:
             continue
-        if ob.data.type in ("POINT", "SPOT"):
+        if ob.data.type in ("POINT", "SPOT", "AREA"):
             marked.append(ob.name)
         else:
             problems.append(f"{ob.name} is marked a caustic emitter, but a "
@@ -1059,12 +1059,8 @@ def light_ies_path(light):
 
 
 def light_blocks(scene, problems):
-    """The scene's point and spot lamps as `light` declarations plus one
-    `place` per lamp, or nothing.
-
-    A sun lamp belongs to `sky_block` and an area lamp is really an
-    emissive material on a shape, which is the user's to author, so both
-    are left out; area lamps get a problem note rather than silence.
+    """The scene's point, spot, and area lamps as `light` declarations plus
+    one `place` per lamp, or nothing. A sun lamp belongs to `sky_block`.
 
     A lamp marked a caustic emitter says so here; `diagnose()` reports
     the marks on the lamps that do not export.
@@ -1074,6 +1070,21 @@ def light_blocks(scene, problems):
     share; the layout's `power` is what the cone actually emits, so the
     export scales by the cone's solid-angle fraction and the on-axis
     intensity comes out identical.
+
+    An area lamp's `energy` is the radiant power of a one-sided
+    Lambertian emitter over its placed area (Cycles shades it at
+    `energy / (pi A)`), which is the layout's `power` exactly, so it is
+    copied. A square or rectangle is a `rect` of the lamp's size, a disk
+    is a `disk` of half its size, and an ellipse is that disk stretched
+    along the lamp's local Y by a scale folded into its placement; the
+    object's own scale stretches all four through the placement, as it
+    does in Blender. With Normalize off, `energy` is pi times the
+    radiance instead, so the power is `energy` times the placed area. A
+    spread narrower than 180 degrees has no counterpart and is ignored
+    with a note.
+
+    Every lamp's `energy` is scaled by its `exposure` stops, as Cycles
+    scales it.
     """
     lines = []
     names = set()
@@ -1081,26 +1092,49 @@ def light_blocks(scene, problems):
         if ob.type != "LIGHT" or not ob.visible_get():
             continue
         light = ob.data
-        if light.type == "AREA":
-            problems.append(f"the area lamp {ob.name!r} does not export; "
-                            f"model it as a disk or plane with an emissive "
-                            f"material instead")
-            continue
-        if light.type not in ("POINT", "SPOT"):
+        if light.type not in ("POINT", "SPOT", "AREA"):
             continue
         name = "light_" + to_identifier(ob.name)
         while name in names:
             name += "_"
         names.add(name)
         ies = light_ies_path(light)
+        energy = light.energy * 2.0 ** getattr(light, "exposure", 0.0)
+        matrix = ob.matrix_world
         settings = []
-        if light.type == "SPOT":
+        if light.type == "AREA":
+            size = light.size
+            size_y = (light.size_y if light.shape in ("RECTANGLE", "ELLIPSE")
+                      else light.size)
+            if light.shape in ("SQUARE", "RECTANGLE"):
+                head = f"light {name} = rect {{"
+                settings.append(f"  size {size:.9g} {size_y:.9g}")
+                area = size * size_y
+            else:
+                head = f"light {name} = disk {{"
+                settings.append(f"  radius {size / 2:.9g}")
+                area = math.pi * size * size_y / 4
+                if light.shape == "ELLIPSE" and size > 0:
+                    matrix = matrix @ mathutils.Matrix.Diagonal(
+                        (1.0, size_y / size, 1.0, 1.0))
+            power = energy
+            if not getattr(light, "normalize", True):
+                columns = ob.matrix_world.col
+                stretch = columns[0].xyz.cross(columns[1].xyz).length
+                power = energy * area * stretch
+            settings.append(f"  power {power:.9g}")
+            if light.spread < math.pi - 1e-6:
+                problems.append(f"the area lamp {ob.name!r} has a spread of "
+                                f"{math.degrees(light.spread):.3g} degrees, "
+                                f"which the export ignores: it renders as a "
+                                f"full Lambertian emitter")
+        elif light.type == "SPOT":
             angle = math.degrees(light.spot_size)
             blend = light.spot_blend
             cos_outer = math.cos(light.spot_size / 2)
             cos_inner = math.cos(light.spot_size / 2 * (1 - blend))
             fraction = ((1 - cos_inner) + (cos_inner - cos_outer) / 2) / 2
-            power = light.energy * fraction
+            power = energy * fraction
             head = f"light {name} = spot {{"
             settings.append(f"  power {power:.9g}")
             settings.append(f"  angle {angle:.9g}")
@@ -1108,10 +1142,10 @@ def light_blocks(scene, problems):
                 settings.append(f"  blend {blend:.9g}")
         elif ies:
             head = f'light {name} = profile "{ies}" {{'
-            settings.append(f"  power {light.energy:.9g}")
+            settings.append(f"  power {energy:.9g}")
         else:
             head = f"light {name} = point {{"
-            settings.append(f"  power {light.energy:.9g}")
+            settings.append(f"  power {energy:.9g}")
         if getattr(light, "use_temperature", False):
             settings.append(f"  temperature {light.temperature:.9g}")
         color = tuple(light.color)
@@ -1124,7 +1158,7 @@ def light_blocks(scene, problems):
         lines.append(head)
         lines.extend(settings)
         lines.append("}")
-        lines.extend(place_lines(name, ob.matrix_world))
+        lines.extend(place_lines(name, matrix))
         lines.append("")
     return lines
 

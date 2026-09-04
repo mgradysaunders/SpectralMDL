@@ -246,8 +246,8 @@ class SMDLLightOptions(bpy.types.PropertyGroup):
 
     On the lamp data rather than on the object, since every other fact the
     export takes from a lamp (power, color, temperature, cone angle, IES
-    path) is read from there too, so lamps sharing a data-block agree about
-    this the way they already agree about the rest.
+    path, area shape and size) is read from there too, so lamps sharing a
+    data-block agree about this the way they already agree about the rest.
     """
 
     caustic: bpy.props.BoolProperty(
