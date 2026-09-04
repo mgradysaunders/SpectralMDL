@@ -4,6 +4,7 @@
 #include <optional>
 
 #include "Layout/Layout.h"
+#include "Render/Sampler.h"
 #include "Scene/Scene.h"
 
 #include "smdl/Compiler.h"

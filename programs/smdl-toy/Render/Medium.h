@@ -5,6 +5,7 @@
 
 #include "smdl/RenderUtil/Haze.h"
 
+#include "Render/Sampler.h"
 #include "Scene/Scene.h"
 
 /// The stack of nested participating media the walk is currently

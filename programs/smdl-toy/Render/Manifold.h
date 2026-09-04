@@ -14,7 +14,9 @@
 
 #include "Layout/Layout.h"
 #include "Render/Medium.h"
+#include "Render/Sampler.h"
 #include "smdl/Manifold.h"
+#include "smdl/RenderUtil/MonteCarlo.h"
 
 // The solver types keep their unqualified spellings here; the solver
 // itself is the library's.

@@ -4,7 +4,8 @@
 #include <string>
 #include <string_view>
 
-#include "Scene/Scene.h"
+#include "Color.h"
+#include "Render/Sampler.h"
 
 #include "smdl/RenderUtil/SpectralFilm.h"
 

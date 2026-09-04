@@ -4,6 +4,7 @@
 
 #include "Render/Manifold.h"
 #include "Render/Medium.h"
+#include "Render/Sampler.h"
 
 class LightSampler;
 class MNEECasterSet;

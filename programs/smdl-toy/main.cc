@@ -26,6 +26,7 @@
 #include "llvm/Support/InitLLVM.h"
 #include "llvm/Support/WithColor.h"
 
+#include "Color.h"
 #include "Layout/Layout.h"
 #include "Layout/LayoutTables.h"
 #include "Progress.h"
@@ -35,6 +36,7 @@
 #include "Render/Light.h"
 #include "Render/Manifold.h"
 #include "Render/PathTracing.h"
+#include "Render/Sampler.h"
 #include "Scene/Scene.h"
 #include "Tonemap.h"
 

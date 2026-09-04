@@ -1,7 +1,7 @@
 /// \file
 /// The vocabulary every part of the program shares: the vector and
-/// matrix aliases, the math constants, the invalid index, and the
-/// bounding box. Nothing here depends on Embree, assimp, or the
+/// matrix aliases, the math constants, the invalid index, the bounding
+/// box, and the ray. Nothing here depends on Embree, assimp, or the
 /// compiler, so the format readers include it without pulling in the
 /// renderer.
 #pragma once
@@ -57,4 +57,27 @@ public:
 
   float3 lower{+INF, +INF, +INF};
   float3 upper{-INF, -INF, -INF};
+};
+
+/// The self-intersection offset, in scene units.
+constexpr float EPS = 0.0001f;
+
+class Ray final {
+public:
+  /// Evaluate.
+  [[nodiscard]] float3 operator()(float t) const noexcept {
+    return org + t * dir;
+  }
+
+  /// Apply transform.
+  void transform(const float4x4 &xf) noexcept {
+    org = xf * float4(org, 1.0f);
+    dir = xf * float4(dir, 0.0f);
+  }
+
+public:
+  float3 org{};    ///< The origin.
+  float3 dir{};    ///< The direction.
+  float tmin{EPS}; ///< The minimum parameter.
+  float tmax{INF}; ///< The maximum parameter.
 };

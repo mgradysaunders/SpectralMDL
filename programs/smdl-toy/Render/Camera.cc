@@ -2,6 +2,8 @@
 
 #include <algorithm>
 
+#include "smdl/RenderUtil/MonteCarlo.h"
+#include "smdl/Support/Error.h"
 #include "smdl/Support/Logger.h"
 
 // Apply radial lens distortion to a sensor point, returning the ideal

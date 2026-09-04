@@ -1,6 +1,7 @@
 #pragma once
 
-#include "Scene/Scene.h"
+#include "Common.h"
+#include "Render/Sampler.h"
 
 /// The camera and lens parameters, merged from the scene file's `camera`
 /// directive and the command line into plain values. The
