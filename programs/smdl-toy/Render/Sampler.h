@@ -1,7 +1,9 @@
 /// \file
 /// The rendering sampler: the draw policy around the library's
-/// `smdl::OwenSobolSampler`, and the version tag a resumable output
-/// records so that a continuation knows which sequence it continues.
+/// `smdl::OwenSobolSampler`, the version tag a resumable output records
+/// so that a continuation knows which sequence it continues, and the
+/// wavelength jitter offset, which is deliberately drawn outside the
+/// sampler.
 #pragma once
 
 #include <algorithm>
@@ -132,3 +134,20 @@ private:
   smdl::OwenSobolSampler sobol{};
 #endif
 };
+
+/// The `-wavelength-jitter` offset of one sample: the Owen-scrambled
+/// radical inverse of the sample index, seeded per pixel.
+///
+/// Deliberately drawn outside `Sampler`, whose draws quantize to Sobol
+/// pairs, so that turning the jitter on shifts no path dimension and an
+/// A/B of the flag isolates the jitter alone. Keyed on the absolute
+/// sample index, the same one `startPixelSample()` takes, so a resumed
+/// session continues the sequence where the last one left off.
+[[nodiscard]] inline float
+wavelengthJitterOffset(uint32_t pixelIndex, uint32_t sampleIndex) noexcept {
+  const uint32_t bits{smdl::nestedUniformScramble(
+      smdl::reverseBits(sampleIndex),
+      smdl::mixBits(pixelIndex ^ uint32_t(0x5CE4B17DU)))};
+  return std::clamp(float(bits) * 0x1p-32f,
+                    std::numeric_limits<float>::denorm_min(), ONE_MINUS_EPS);
+}

@@ -1,9 +1,9 @@
 /// \file
 /// The render-wide vocabulary the scene and the renderer share: the
-/// wavelength grid, its quadrature weights, and the base time, all set
-/// once in `main()`; the `Color` type the grid sizes; and the
-/// `smdl::State` builder that seeds every material evaluation with
-/// them.
+/// wavelength grid, its quadrature weights, its jitter band edges, and
+/// the base time, all set once in `main()`; the `Color` type the grid
+/// sizes; and the `smdl::State` builder that seeds every material
+/// evaluation with them.
 #pragma once
 
 #include <vector>
@@ -39,6 +39,40 @@ constexpr float WAVELENGTH_MAX = 720.0f;
 [[nodiscard]] inline std::vector<float> &renderWavelengthWeights() noexcept {
   static std::vector<float> weights{};
   return weights;
+}
+
+/// The render-wide wavelength band edges in nanometers, one more than
+/// the band count, or empty when `-wavelength-jitter` is off.
+///
+/// Set once in `main()` alongside `renderNumBands()`. Band `i` spans
+/// `[edges[i], edges[i + 1]]`, the halfway points to its neighbors, so
+/// the bands tile the grid with no gap and no overlap. The
+/// outermost edges mirror the inner half-width, which keeps the end
+/// bands full width instead of half at the cost of reaching half a band
+/// past each end of the grid. Tiling comes first, so a band of a
+/// non-uniform grid holds its nominal wavelength off center and averages
+/// about its own center instead. Empty is how the renderer asks whether
+/// the jitter is on at all, so a grid with too few bands to have a width
+/// leaves it empty.
+[[nodiscard]] inline std::vector<float> &renderWavelengthBandEdges() noexcept {
+  static std::vector<float> edges{};
+  return edges;
+}
+
+/// The jitter band edges of the wavelength grid `wavelens`, as
+/// `renderWavelengthBandEdges()` describes them, or empty for a grid of
+/// fewer than 2 wavelengths, which has no band width to speak of.
+[[nodiscard]] inline std::vector<float>
+wavelengthBandEdges(smdl::Span<const float> wavelens) {
+  const size_t numBands{wavelens.size()};
+  if (numBands < 2) return {};
+  auto edges{std::vector<float>(numBands + 1)};
+  for (size_t i = 1; i < numBands; i++)
+    edges[i] = 0.5f * (wavelens[i - 1] + wavelens[i]);
+  edges.front() = wavelens[0] - (edges[1] - wavelens[0]);
+  edges.back() =
+      wavelens[numBands - 1] + (wavelens[numBands - 1] - edges[numBands - 1]);
+  return edges;
 }
 
 /// The render-wide base animation time in seconds. Setup-time
@@ -96,10 +130,32 @@ makeRenderState(const Color &wavelengths,
   smdl::State state{};
   state.allocator = allocator;
   state.wavelength_base = wavelengths.data();
-  state.wavelength_min = wavelengths[0];
-  state.wavelength_max = wavelengths[wavelengths.size() - 1];
+  // The endpoints come from the nominal grid rather than from
+  // `wavelengths`, which under `-wavelength-jitter` is the sample's own
+  // perturbed grid: `state::wavelength_min()` and `wavelength_max()` are
+  // render-wide constants, and the library's uniform quadrature falls
+  // back on their difference, which must not wobble per sample.
+  const auto &nominal{renderWavelengths()};
+  state.wavelength_min = nominal[0];
+  state.wavelength_max = nominal[nominal.size() - 1];
   state.animation_time = time;
   const auto &weights{renderWavelengthWeights()};
   state.wavelength_weight = weights.empty() ? nullptr : weights.data();
   return state;
+}
+
+/// Write the sample's jittered wavelength grid into `wavelengths`: band
+/// `i` lands at the fraction `xi` across its rectangle in
+/// `renderWavelengthBandEdges()`, so that over many samples the band
+/// estimates the mean radiance over that rectangle instead of the
+/// radiance at one wavelength.
+///
+/// One shared `xi` rather than one per band: each band still covers its
+/// own rectangle uniformly either way, so the mean is the same, and the
+/// rigid shift keeps the spectrum of a single sample correlated, which
+/// is what stops the RGB outputs from gaining color noise.
+inline void jitterWavelengths(Color &wavelengths, float xi) noexcept {
+  const auto &edges{renderWavelengthBandEdges()};
+  for (size_t i = 0; i < wavelengths.size(); i++)
+    wavelengths[i] = edges[i] + xi * (edges[i + 1] - edges[i]);
 }
