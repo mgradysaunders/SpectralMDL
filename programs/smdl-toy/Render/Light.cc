@@ -293,13 +293,67 @@ Color AnalyticLight::Le(const float3 &lightPoint,
                                                        : Color(0.0f);
 }
 
+BoundBox3 AnalyticLight::bounds() const noexcept {
+  auto box{BoundBox3()};
+  if (isDirac()) {
+    box.extend(mPosition);
+    return box;
+  }
+  const float3 u{mHalfExtent.x * mAxisU};
+  const float3 v{mHalfExtent.y * mAxisV};
+  box.extend(mPosition + u + v);
+  box.extend(mPosition + u - v);
+  box.extend(mPosition - u + v);
+  box.extend(mPosition - u - v);
+  return box;
+}
+
+LightSelection::LightSelection(smdl::Span<const LightBounds> lights,
+                               bool hasEnv, float envWeight, bool useTree)
+    : mLightCount(int(lights.size())), mHasEnv(hasEnv) {
+  auto weights{std::vector<float>()};
+  weights.reserve(lights.size() + 1);
+  for (const auto &light : lights) weights.push_back(light.phi);
+  if (hasEnv) weights.push_back(envWeight);
+  mDistr = smdl::Distribution1D(weights);
+  if (useTree) mTree.emplace(lights);
+}
+
+int LightSelection::select(const float3 &point, float xi,
+                           float &pmf) const noexcept {
+  if (!mTree) return mDistr.indexSample(xi, nullptr, &pmf);
+  const float envPMF{mHasEnv ? mDistr.indexPMF(mLightCount) : 0.0f};
+  if (mHasEnv && xi < envPMF) {
+    pmf = envPMF;
+    return mLightCount;
+  }
+  const float lightShare{1.0f - envPMF};
+  if (mTree->empty() || !(lightShare > 0.0f)) {
+    pmf = 0.0f;
+    return 0;
+  }
+  float treePMF{};
+  const int lightIndex{
+      mTree->sample(point, clampUnit((xi - envPMF) / lightShare), treePMF)};
+  pmf = lightShare * treePMF;
+  return lightIndex;
+}
+
+float LightSelection::pmf(int lightIndex, const float3 &point) const noexcept {
+  if (!mTree) return mDistr.indexPMF(lightIndex);
+  const float envPMF{mHasEnv ? mDistr.indexPMF(mLightCount) : 0.0f};
+  if (mHasEnv && lightIndex == mLightCount) return envPMF;
+  return (1.0f - envPMF) * mTree->pmf(lightIndex, point);
+}
+
 LightSampler::LightSampler(smdl::Compiler &compiler, const Scene &scene,
                            const EnvLight *envLight,
                            const std::vector<LayoutLight> &layoutLights,
-                           const Color &wavelengths, bool allLights)
+                           const Color &wavelengths, bool allLights,
+                           bool useTree)
     : compiler(compiler), scene(scene), envLight(envLight) {
   auto allocator{smdl::BumpPtrAllocator()};
-  auto weights{std::vector<float>()};
+  auto bounds{std::vector<LightBounds>()};
   auto warnedCurveMaterials{std::set<uint32_t>()};
   auto warnedMarkMaterials{std::set<uint32_t>()};
   size_t numSampledArea{};
@@ -359,10 +413,13 @@ LightSampler::LightSampler(smdl::Compiler &compiler, const Scene &scene,
     // exact even under non-uniform scale, where no single area factor
     // would do.
     const auto &objectToWorld{instance.objectToWorld};
+    auto box{BoundBox3()};
     if (instance.isPrimitive()) {
       const auto &primitive{*scene.primitives[instance.primIndex]};
       light.isPrimitive = true;
       light.objectArea = primitive.objectArea;
+      for (const auto &point : primitive.proxyPoints)
+        box.extend(float3(objectToWorld * float4(point, 1.0f)));
       // The world area through the placement's area stretch, J(n) =
       // |cofactor * n|: constant under a similarity (so this is exact),
       // estimated as the mean over a deterministic sample set otherwise.
@@ -399,6 +456,9 @@ LightSampler::LightSampler(smdl::Compiler &compiler, const Scene &scene,
         const auto point0{toWorld(mesh.verts[face[0]].point)};
         const auto point1{toWorld(mesh.verts[face[1]].point)};
         const auto point2{toWorld(mesh.verts[face[2]].point)};
+        box.extend(point0);
+        box.extend(point1);
+        box.extend(point2);
         auto area{0.5f * length(cross(point1 - point0, point2 - point0))};
         if (light.isSampled) faceAreas.push_back(area);
         light.totalArea += area;
@@ -430,7 +490,7 @@ LightSampler::LightSampler(smdl::Compiler &compiler, const Scene &scene,
                                               : intensity * light.totalArea;
     instanceToLight[instIndex] = uint32_t(areaLights.size());
     (light.isSampled ? numSampledArea : numUnsampledArea)++;
-    weights.push_back(light.isSampled ? weight : 0.0f);
+    bounds.push_back({box, light.isSampled ? weight : 0.0f});
     areaLights.push_back(std::move(light));
     allocator.reset();
   }
@@ -457,15 +517,18 @@ LightSampler::LightSampler(smdl::Compiler &compiler, const Scene &scene,
       auto &light{analyticLights.emplace_back(compiler, state, wavelengths,
                                               layoutLight, std::move(profile))};
       light.caustic = layoutLight.decl.caustic;
-      weights.push_back(light.weight());
+      bounds.push_back({light.bounds(), light.weight()});
     }
   }
+  float envWeight{};
   if (envLight) {
     // Treat the environment as shining on a disk of the scene radius.
     float radius{std::max(scene.boundRadius, 1.0f)};
-    weights.push_back(envLight->averageRadiance() * PI * radius * radius);
+    envWeight = envLight->averageRadiance() * PI * radius * radius;
   }
-  if (!weights.empty()) lightDistr = smdl::Distribution1D(weights);
+  if (!bounds.empty() || envLight)
+    mSelection =
+        LightSelection(bounds, envLight != nullptr, envWeight, useTree);
   // The `caustic` marks restrict the manifold reflective gather to the
   // marked lights; no marks anywhere means no restriction, so the flags
   // normalize to all-true and the whole mechanism disappears. The
@@ -494,6 +557,9 @@ LightSampler::LightSampler(smdl::Compiler &compiler, const Scene &scene,
                  numUnsampledArea, " unsampled emitter(s), ",
                  analyticLights.size(), " analytic light(s)",
                  envLight ? ", plus the environment" : "");
+  if (const auto *tree{mSelection.tree()})
+    SMDL_LOG_DEBUG("Light tree: ", tree->nodeCount(), " node(s), depth ",
+                   tree->depth());
 }
 
 bool LightSampler::sample(const smdl::State &state, Sampler &sampler,
@@ -501,7 +567,7 @@ bool LightSampler::sample(const smdl::State &state, Sampler &sampler,
                           bool keepDark) const {
   if (empty()) return false;
   float selectPMF{};
-  int lightIndex{lightDistr.indexSample(float(sampler), nullptr, &selectPMF)};
+  const int lightIndex{mSelection.select(point, float(sampler), selectPMF)};
   if (!(selectPMF > 0)) return false;
   lightSample.isDirac = false;
   lightSample.isReachable = true;
@@ -669,7 +735,7 @@ float LightSampler::solidAnglePDF(uint32_t instIndex, const float3 &lightPoint,
   auto lightIndex{instanceToLight[instIndex]};
   const auto &light{areaLights[lightIndex]};
   if (!light.isSampled) return 0.0f;
-  float selectPMF{lightDistr.indexPMF(int(lightIndex))};
+  const float selectPMF{mSelection.pmf(int(lightIndex), point)};
   auto direction{lightPoint - point};
   float distSq{lengthSquared(direction)};
   if (!(distSq > 0)) return 0.0f;

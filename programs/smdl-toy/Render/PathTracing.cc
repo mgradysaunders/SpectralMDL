@@ -1609,7 +1609,8 @@ Color tracePath(smdl::Compiler &compiler, smdl::BumpPtrAllocator &allocator,
             depth == 1 || prevDirac
                 ? 1.0f
                 : smdl::powerHeuristic(wpdfPrev,
-                                       lightSampler.envSelectionPMF() * Lipdf)};
+                                       lightSampler.envSelectionPMF(prevPoint) *
+                                           Lipdf)};
         // The re-walk's `coverWeight` returns 1 whenever the gather
         // cannot produce this transport, which covers the dim sky the
         // compensated environment sampler never draws (`Lipdf` zero),
@@ -1617,14 +1618,15 @@ Color tracePath(smdl::Compiler &compiler, smdl::BumpPtrAllocator &allocator,
         // sun-gated sky arrival reports no target at all, so it keeps
         // its ordinary weight without spending a re-walk; the gather
         // side stands down by the same predicate.
-        addArrival(Li, weight, depth - 1, lightSampler.causticEnv(),
-                   records && numRecords > 0 ? &records[numRecords - 1]
-                                             : nullptr,
-                   [&](ManifoldTarget &target) {
-                     if (!mneeOptions.envTarget(ray.dir)) return -1.0f;
-                     target.wl = ray.dir;
-                     return lightSampler.envSelectionPMF() * Lipdf;
-                   });
+        addArrival(
+            Li, weight, depth - 1, lightSampler.causticEnv(),
+            records && numRecords > 0 ? &records[numRecords - 1] : nullptr,
+            [&](ManifoldTarget &target) {
+              if (!mneeOptions.envTarget(ray.dir)) return -1.0f;
+              target.wl = ray.dir;
+              return lightSampler.envSelectionPMF(mneeCoverage.receiver()) *
+                     Lipdf;
+            });
       }
       if (records) {
         records[numRecords] = GuideRecord{};

@@ -260,6 +260,71 @@ TEST_CASE("LightSampler: what each kind of sample says") {
   CHECK(numArea > 0);
 }
 
+TEST_CASE("LightSampler: every kind of light weighs by its power") {
+  Fixture fixture{};
+  // A point light whose radiant power per band is the exitance sphere's:
+  // intensity 2 per band over the sphere's area pi, so 2 pi per band,
+  // spread over the fixture's 320 nm band. The power-mode sphere emits
+  // 2 per band outright, so it must draw 1/pi as often.
+  LayoutLight lamp{};
+  lamp.decl.kind = LayoutLightDecl::Kind::POINT;
+  lamp.decl.power = 2.0f * PI * 320.0f;
+  lamp.decl.powerSet = true;
+  lamp.lightToWorld[3] = float4(4.0f, 0.0f, 3.0f, 1.0f);
+  const LightSampler lights{
+      fixture.compiler, fixture.scene, nullptr, {lamp}, fixture.wavelengths};
+  auto allocator{smdl::BumpPtrAllocator()};
+  auto state{makeRenderState(fixture.wavelengths, &allocator)};
+  const float area{4.0f * PI * Fixture::RADIUS * Fixture::RADIUS};
+  // The point light's selection PMF is its sample's pdf outright, the
+  // density being a delta. An area sample's pdf must be what the
+  // arrival site recomputes for the same receiver.
+  Sampler sampler{};
+  float pmfLamp{-1.0f};
+  int numArea{};
+  for (int i = 0; i < 256; i++) {
+    sampler.startPixelSample(0, uint32_t(i));
+    LightSample sample{};
+    if (lights.sample(state, sampler, Fixture::RECEIVER, sample)) {
+      CAPTURE(i);
+      if (sample.isDirac) {
+        pmfLamp = sample.pdf;
+      } else {
+        numArea++;
+        CHECK(sample.pdf ==
+              doctest::Approx(lights.solidAnglePDF(sample.hit.instIndex,
+                                                   sample.target, sample.normal,
+                                                   Fixture::RECEIVER))
+                  .epsilon(1e-4));
+      }
+    }
+    allocator.reset();
+  }
+  REQUIRE(pmfLamp > 0.0f);
+  CHECK(numArea > 0);
+  // A sphere's selection PMF is what is left of `solidAnglePDF()` after
+  // the geometry: the instances are translated only, so the position
+  // density is one over the object area.
+  auto spherePMF{[&](int i) {
+    auto hitState{makeRenderState(fixture.wavelengths, &allocator)};
+    const auto hit{fixture.hitOn(i, hitState)};
+    const float3 toLight{hit.point - Fixture::RECEIVER};
+    const float distSq{lengthSquared(toLight)};
+    const float cosLight{absDot(hit.Ng, toLight / std::sqrt(distSq))};
+    const float pmf{lights.solidAnglePDF(hit.instIndex, hit.point, hit.Ng,
+                                         Fixture::RECEIVER) *
+                    area * cosLight / distSq};
+    allocator.reset();
+    return pmf;
+  }};
+  const float pmfExitance{spherePMF(0)};
+  const float pmfPower{spherePMF(4)};
+  CHECK(pmfLamp == doctest::Approx(pmfExitance).epsilon(1e-3));
+  CHECK(pmfPower == doctest::Approx(pmfExitance / PI).epsilon(1e-3));
+  CHECK(pmfLamp + pmfExitance + pmfPower ==
+        doctest::Approx(1.0f).epsilon(1e-3));
+}
+
 // The lights the layout declares, against the visible lamp they stand
 // in for: a `disk` primitive shaded by an `intensity_power` emitter,
 // turned to face down at a receiver on its axis, and a disk light of the

@@ -407,6 +407,13 @@ static cl::opt<bool> optAllLights{
              "in the layout or not (a scene given without a layout marks "
              "everything already)"),
     cl::init(false), cl::cat(catLight)};
+static cl::opt<bool> optLightTree{
+    "light-tree",
+    cl::desc("Select lights through a bounding volume hierarchy weighted by "
+             "power over squared distance, so that selection depends on "
+             "where the receiver is (default: the flat power-weighted "
+             "distribution)"),
+    cl::init(false), cl::cat(catLight)};
 //--}
 //--{ CLI: Tonemapping Options
 static cl::OptionCategory catTonemap{"Tonemapping Options"};
@@ -1546,7 +1553,7 @@ int main(int argc, char **argv) try {
   // the environment, weighted by power.
   auto profLightSampler{smdl::profilerEntryBegin("Build light sampler")};
   const auto lights{LightSampler(compiler, scene, envLight.get(), layout.lights,
-                                 wavelengths, optAllLights)};
+                                 wavelengths, optAllLights, optLightTree)};
   smdl::profilerEntryEnd(profLightSampler);
   // The render loop is deliberately outside the trace; see -profile.
   if (profiling) smdl::profilerFinalize(profileFileName.c_str());

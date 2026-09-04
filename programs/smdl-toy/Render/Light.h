@@ -4,6 +4,7 @@
 #include <optional>
 
 #include "Layout/Layout.h"
+#include "Render/LightTree.h"
 #include "Render/Sampler.h"
 #include "Scene/Scene.h"
 
@@ -187,6 +188,9 @@ public:
   /// shape.
   [[nodiscard]] const float3 &position() const noexcept { return mPosition; }
 
+  /// The world-space box: the point itself, or a shape's corners.
+  [[nodiscard]] BoundBox3 bounds() const noexcept;
+
   /// The light selection weight: the mean over the render bands of the
   /// spectral radiant power after the tint. This is the quantity the
   /// area lights weigh by (their per-band emission intensity times
@@ -300,6 +304,62 @@ struct LightSample final {
   bool isCaustic{true};
 };
 
+/// The light selection strategy: which light a gather draws for a
+/// receiver, and with what probability, over the index space
+/// `LightSampler` keeps (its area lights, then its analytic lights,
+/// then one entry for the environment if present). Every query names
+/// the receiving point, because the selection density is defined per
+/// receiver: an arrival site recomputes a light's probability for the
+/// receiver whose gather competes with the arrival, and it must be the
+/// probability that gather drew with.
+///
+/// Two strategies: the flat power-weighted distribution, the same
+/// probabilities at every receiver, and on request the `LightTree`,
+/// which weighs each light by its power over its squared distance to
+/// the receiver. The environment keeps the flat distribution's share
+/// under both, so the tree redistributes the lights' share alone. An
+/// unsampled area light has weight zero, which keeps it out of
+/// `select()` and out of every PMF either way.
+class LightSelection final {
+public:
+  LightSelection() = default;
+
+  /// Construct over the lights' bounds and weights in index order, then
+  /// the environment's weight when `hasEnv`, through the tree when
+  /// `useTree`.
+  LightSelection(smdl::Span<const LightBounds> lights, bool hasEnv,
+                 float envWeight, bool useTree);
+
+  /// Is there nothing to select?
+  [[nodiscard]] bool empty() const noexcept {
+    return mDistr.size() == 0 || !(mDistr.unnormalizedSum() > 0.0f);
+  }
+
+  /// Select a light for the receiver at `point` on the uniform `xi`,
+  /// returning its index and filling `pmf` with its probability.
+  [[nodiscard]] int select(const float3 &point, float xi,
+                           float &pmf) const noexcept;
+
+  /// The probability that `select()` picks `lightIndex` for the
+  /// receiver at `point`.
+  [[nodiscard]] float pmf(int lightIndex, const float3 &point) const noexcept;
+
+  /// The tree, or null under the flat distribution.
+  [[nodiscard]] const LightTree *tree() const noexcept {
+    return mTree ? &*mTree : nullptr;
+  }
+
+private:
+  smdl::Distribution1D mDistr{};
+
+  std::optional<LightTree> mTree{};
+
+  /// The number of lights, which is also the environment's index.
+  int mLightCount{};
+
+  bool mHasEnv{};
+};
+
 /// The unified light-selection path over every light in the scene: each
 /// emissive mesh instance the layout marks `light`, plus the layout's
 /// declared lights, plus the environment, weighted by power. Every
@@ -309,25 +369,27 @@ class LightSampler final {
 public:
   /// `allLights` samples every emissive instance whether or not it is
   /// marked: the `-all-lights` switch, and what a render without a
-  /// layout to carry marks wants.
+  /// layout to carry marks wants. `useTree` selects through the
+  /// `LightTree` rather than the flat distribution; see
+  /// `LightSelection`.
   LightSampler(smdl::Compiler &compiler, const Scene &scene,
                const EnvLight *envLight,
                const std::vector<LayoutLight> &layoutLights,
-               const Color &wavelengths, bool allLights = false);
+               const Color &wavelengths, bool allLights = false,
+               bool useTree = false);
 
   /// Are there no lights to sample?
-  [[nodiscard]] bool empty() const noexcept {
-    return lightDistr.size() == 0 || !(lightDistr.unnormalizedSum() > 0.0f);
-  }
+  [[nodiscard]] bool empty() const noexcept { return mSelection.empty(); }
 
   /// The environment light, or null.
   [[nodiscard]] const EnvLight *env() const noexcept { return envLight; }
 
-  /// The probability of light selection picking the environment.
-  [[nodiscard]] float envSelectionPMF() const noexcept {
+  /// The probability of light selection picking the environment for
+  /// the receiver at `point`.
+  [[nodiscard]] float envSelectionPMF(const float3 &point) const noexcept {
     return envLight && !empty()
-               ? lightDistr.indexPMF(
-                     int(areaLights.size() + analyticLights.size()))
+               ? mSelection.pmf(int(areaLights.size() + analyticLights.size()),
+                                point)
                : 0.0f;
   }
 
@@ -424,11 +486,9 @@ private:
   /// `INVALID_INDEX`.
   std::vector<uint32_t> instanceToLight{};
 
-  /// The power-weighted distribution over `areaLights`, then
-  /// `analyticLights`, with one extra entry at the end for the
-  /// environment if present. An unsampled area light has weight zero,
-  /// which is what keeps it out of `sample()` and out of every PMF.
-  smdl::Distribution1D lightDistr{};
+  /// The selection over `areaLights`, then `analyticLights`, then the
+  /// environment if present; see `LightSelection`.
+  LightSelection mSelection{};
 
   /// Is the environment a caustic target: true exactly while no light
   /// carries a mark, since the environment cannot be marked.

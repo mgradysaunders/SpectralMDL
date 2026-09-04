@@ -41,6 +41,7 @@ target_sources(
     "Render/Camera.cc"
     "Render/Guiding.cc"
     "Render/Light.cc"
+    "Render/LightTree.cc"
     "Render/Manifold.cc"
     "Render/Medium.cc"
     "Render/PathTracing.cc"

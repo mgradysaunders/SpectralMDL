@@ -7,6 +7,7 @@ smdl_add_doctest(
     "Layout/Layout.cc"
     "Layout/LayoutParser.cc"
     "Render/Light.cc"
+    "Render/LightTree.cc"
     "Render/Manifold.cc"
     "Scene/Primitive.cc"
     "Scene/Scene.cc"
