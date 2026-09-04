@@ -716,7 +716,7 @@ Color MNEEGather::contribution(const ManifoldChain &chain,
     // discrete Fresnel transmissions and the transfer Jacobian. A light
     // the continuation cannot reach has MIS weight 1, matching the plain
     // branch; see `LightSample::reachable`.
-    if (lightSample.reachable) {
+    if (lightSample.isReachable) {
       float escapePdf{
           guidedContinuationPdf(dtree, bsdfFraction, connection.wr, fPdf) *
           chainChance * measure};
@@ -1204,7 +1204,7 @@ Color gatherDirect(const Scene &scene, Sampler &sampler,
     // again, here and at the arrivals. The transmit claims are the
     // refractive chains', which run for every light.
     ManifoldClaim lightClaim{manifoldClaim};
-    if (!lightSample.caustic) lightClaim.reflectLobes = 0;
+    if (!lightSample.isCaustic) lightClaim.reflectLobes = 0;
     const bool split{armedBehind && !lightClaim.empty()};
     const int neeMask{split ? (smdl::DF_ALL & ~lightClaim.lobes())
                             : smdl::DF_ALL};
@@ -1228,7 +1228,7 @@ Color gatherDirect(const Scene &scene, Sampler &sampler,
       if (D.isAnyNonFinite()) return;
       // A light the continuation cannot reach has MIS weight 1; see
       // `LightSample::reachable`.
-      if (lightSample.reachable)
+      if (lightSample.isReachable)
         D *= smdl::powerHeuristic(lightSample.pdf, continuationPdf);
       direct += D;
     }};
@@ -1275,7 +1275,7 @@ Color gatherDirect(const Scene &scene, Sampler &sampler,
       // It searches toward the caustic targets only; see
       // `LightSample::caustic`.
       if (mneeOptions.casters && !mneeOptions.casters->empty() &&
-          lightSample.caustic)
+          lightSample.isCaustic)
         direct += mneeGather.gatherReflection(mneeOptions);
     }
   }

@@ -226,7 +226,7 @@ TEST_CASE("LightSampler: what each kind of sample says") {
     CHECK(!sample.isInfinite);
     if (sample.isDirac) {
       numPunctual++;
-      CHECK(!sample.reachable);
+      CHECK(!sample.isReachable);
       CHECK(sample.analyticIndex == 0);
       CHECK(sample.hit.material == nullptr);
       CHECK(lengthSquared(sample.normal) == 0.0f);
@@ -238,7 +238,7 @@ TEST_CASE("LightSampler: what each kind of sample says") {
         CHECK(again[k] == doctest::Approx(sample.Li[k]));
     } else {
       numArea++;
-      CHECK(sample.reachable);
+      CHECK(sample.isReachable);
       CHECK(sample.analyticIndex == INVALID_INDEX);
       CHECK(sample.hit.material != nullptr);
       CHECK(lengthSquared(sample.normal - sample.hit.Ng) == 0.0f);
@@ -387,7 +387,7 @@ TEST_CASE("AnalyticLight: a disk light matches the visible disk lamp") {
     if (sample.analyticIndex == 0) {
       numShape++;
       sumShape += estimate;
-      CHECK(!sample.reachable);
+      CHECK(!sample.isReachable);
       CHECK(sample.hit.material == nullptr);
       for (size_t k = 0; k < fixture.wavelengths.size(); k++)
         CHECK(sample.Li[k] == doctest::Approx(LampFixture::RADIANCE));
@@ -396,7 +396,7 @@ TEST_CASE("AnalyticLight: a disk light matches the visible disk lamp") {
     } else {
       numLamp++;
       sumLamp += estimate;
-      CHECK(sample.reachable);
+      CHECK(sample.isReachable);
       CHECK(sample.analyticIndex == INVALID_INDEX);
       CHECK(sample.hit.instIndex == 0);
       for (size_t k = 0; k < fixture.wavelengths.size(); k++)

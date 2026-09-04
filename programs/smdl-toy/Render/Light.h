@@ -88,7 +88,7 @@ public:
   /// no selection weight: `sample()` never draws it, `solidAnglePDF()`
   /// reports zero for it, and it is never a caustic target, so its
   /// arrivals keep their full weight.
-  bool sampled{};
+  bool isSampled{};
 
   /// The area-weighted distribution over the mesh faces. Empty for a
   /// primitive light, which samples its shape analytically instead,
@@ -127,7 +127,7 @@ public:
 /// rectangle, or a disk, described analytically rather than by a
 /// surface in the scene. BSDF sampling can never reach one, so every
 /// kind contributes through `LightSampler::sample()` alone, with a unit
-/// MIS weight (see `LightSample::reachable`). The punctual kinds are
+/// MIS weight (see `LightSample::isReachable`). The punctual kinds are
 /// Dirac besides; the two shapes are sampled by area, one-sided and
 /// Lambertian, in the plane the placement puts them in.
 class AnalyticLight final {
@@ -269,7 +269,7 @@ struct LightSample final {
   /// with this sample and are weighed against it; false for every light
   /// the layout declares, which has no surface a path can hit, so this
   /// sample's MIS weight is 1 whether its density is a delta or not.
-  bool reachable{};
+  bool isReachable{};
 
   /// Sampled the environment? The target is then a far point in the
   /// `wi` direction rather than a real position.
@@ -297,7 +297,7 @@ struct LightSample final {
   /// mark, only the marked lights are targets, the arrivals at
   /// everything else keep their ordinary weights, and the environment
   /// is not a target at all.
-  bool caustic{true};
+  bool isCaustic{true};
 };
 
 /// The unified light-selection path over every light in the scene: each
@@ -393,7 +393,7 @@ public:
     const auto lightIndex{instIndex < instanceToLight.size()
                               ? instanceToLight[instIndex]
                               : INVALID_INDEX};
-    return lightIndex != INVALID_INDEX && areaLights[lightIndex].sampled &&
+    return lightIndex != INVALID_INDEX && areaLights[lightIndex].isSampled &&
            areaLights[lightIndex].caustic;
   }
 

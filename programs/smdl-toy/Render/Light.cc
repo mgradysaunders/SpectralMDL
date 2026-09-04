@@ -350,7 +350,7 @@ LightSampler::LightSampler(smdl::Compiler &compiler, const Scene &scene,
     }
     auto light{AreaLight()};
     light.instIndex = instIndex;
-    light.sampled = instance.light || allLights;
+    light.isSampled = instance.light || allLights;
     light.caustic = instance.causticLight;
     // Areas are world-space areas, matching the world-space geometry
     // `Scene::makeHit` reports: a scaled instance covers more surface and
@@ -394,16 +394,16 @@ LightSampler::LightSampler(smdl::Compiler &compiler, const Scene &scene,
       // The face distribution serves `sample()` alone, so an unsampled
       // emitter, which only needs its total area, does not build one.
       auto faceAreas{std::vector<float>()};
-      if (light.sampled) faceAreas.reserve(mesh.faces.size());
+      if (light.isSampled) faceAreas.reserve(mesh.faces.size());
       for (const auto &face : mesh.faces) {
         const auto point0{toWorld(mesh.verts[face[0]].point)};
         const auto point1{toWorld(mesh.verts[face[1]].point)};
         const auto point2{toWorld(mesh.verts[face[2]].point)};
         auto area{0.5f * length(cross(point1 - point0, point2 - point0))};
-        if (light.sampled) faceAreas.push_back(area);
+        if (light.isSampled) faceAreas.push_back(area);
         light.totalArea += area;
       }
-      if (light.sampled && light.totalArea > 0)
+      if (light.isSampled && light.totalArea > 0)
         light.faceDistr = smdl::Distribution1D(faceAreas);
     }
     if (!(light.totalArea > 0)) {
@@ -429,8 +429,8 @@ LightSampler::LightSampler(smdl::Compiler &compiler, const Scene &scene,
       weight += mat.isBackfaceEmissionPower() ? intensity
                                               : intensity * light.totalArea;
     instanceToLight[instIndex] = uint32_t(areaLights.size());
-    (light.sampled ? numSampledArea : numUnsampledArea)++;
-    weights.push_back(light.sampled ? weight : 0.0f);
+    (light.isSampled ? numSampledArea : numUnsampledArea)++;
+    weights.push_back(light.isSampled ? weight : 0.0f);
     areaLights.push_back(std::move(light));
     allocator.reset();
   }
@@ -475,10 +475,10 @@ LightSampler::LightSampler(smdl::Compiler &compiler, const Scene &scene,
   {
     bool anyMark{false};
     for (const auto &light : areaLights)
-      anyMark |= light.sampled && light.caustic;
+      anyMark |= light.isSampled && light.caustic;
     for (const auto &light : analyticLights) anyMark |= light.caustic;
     if (!anyMark) {
-      for (auto &light : areaLights) light.caustic = light.sampled;
+      for (auto &light : areaLights) light.caustic = light.isSampled;
       for (auto &light : analyticLights) light.caustic = true;
     }
     mEnvCaustic = !anyMark;
@@ -504,7 +504,7 @@ bool LightSampler::sample(const smdl::State &state, Sampler &sampler,
   int lightIndex{lightDistr.indexSample(float(sampler), nullptr, &selectPMF)};
   if (!(selectPMF > 0)) return false;
   lightSample.isDirac = false;
-  lightSample.reachable = true;
+  lightSample.isReachable = true;
   lightSample.normal = float3(0.0f);
   lightSample.analyticIndex = INVALID_INDEX;
   if (envLight &&
@@ -516,16 +516,16 @@ bool LightSampler::sample(const smdl::State &state, Sampler &sampler,
     lightSample.pdf = selectPMF * dirPDF;
     lightSample.target = point + 2.0f * scene.boundRadius * lightSample.wi;
     lightSample.isInfinite = true;
-    lightSample.caustic = mEnvCaustic;
+    lightSample.isCaustic = mEnvCaustic;
     return true;
   }
   if (lightIndex >= int(areaLights.size())) {
     const uint32_t analyticIndex{uint32_t(lightIndex) -
                                  uint32_t(areaLights.size())};
     const auto &light{analyticLights[analyticIndex]};
-    lightSample.reachable = false;
+    lightSample.isReachable = false;
     lightSample.analyticIndex = analyticIndex;
-    lightSample.caustic = light.caustic;
+    lightSample.isCaustic = light.caustic;
     if (light.isDirac()) {
       // A punctual light: the direction is a Dirac, so the pdf is the
       // selection PMF alone and `Li` carries the inverse-square falloff.
@@ -560,9 +560,9 @@ bool LightSampler::sample(const smdl::State &state, Sampler &sampler,
   }
   const auto &light{areaLights[lightIndex]};
   // The zero selection weight is what keeps an unsampled emitter out.
-  SMDL_SANITY_CHECK(light.sampled);
+  SMDL_SANITY_CHECK(light.isSampled);
   Hit hit{};
-  lightSample.caustic = light.caustic;
+  lightSample.isCaustic = light.caustic;
   float positionPDF{}; // world-space area density at the sampled point
   if (light.isPrimitive) {
     // Sample the shape uniformly by OBJECT area and pay the placement's
@@ -668,7 +668,7 @@ float LightSampler::solidAnglePDF(uint32_t instIndex, const float3 &lightPoint,
   }
   auto lightIndex{instanceToLight[instIndex]};
   const auto &light{areaLights[lightIndex]};
-  if (!light.sampled) return 0.0f;
+  if (!light.isSampled) return 0.0f;
   float selectPMF{lightDistr.indexPMF(int(lightIndex))};
   auto direction{lightPoint - point};
   float distSq{lengthSquared(direction)};
