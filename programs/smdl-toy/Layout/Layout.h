@@ -288,9 +288,11 @@ public:
   }
 };
 
-/// The framing at shutter close, the `motion` block inside `camera`.
+/// The framing at shutter shut, the `motion` block inside `camera`.
 /// A key not restated holds its open value, so a block that names only
 /// `look_from` is a dolly and one that names only `look_to` is a pan.
+/// The same word on a `place` restates that placement at shutter shut;
+/// see `LayoutPlacement::motion`.
 class LayoutCameraMotion final {
 public:
   std::optional<float3> lookFrom{};
@@ -311,7 +313,7 @@ public:
   std::optional<float3> lookTo{};
   std::optional<float3> lookUp{};
 
-  /// The close keys, present iff a `motion` block appeared. The keys
+  /// The shut keys, present iff a `motion` block appeared. The keys
   /// are absolute, written against this block's own framing: a flag
   /// that replaces the framing drops them (see `main()`).
   std::optional<LayoutCameraMotion> motion{};
@@ -395,7 +397,7 @@ public:
 /// open. Everything is optional and merged with the command line the
 /// same way `LayoutCamera` works, over the defaults of zero and zero.
 ///
-/// The shutter is open iff `shutter` is positive. Closed, every path
+/// The shutter is open iff `shutter` is positive. Shut, every path
 /// renders at `base` exactly, whatever motion the layout carries.
 ///
 class LayoutTime final {
@@ -403,7 +405,7 @@ public:
   /// `base`: `State::animation_time` at shutter open, in seconds.
   std::optional<float> base{};
 
-  /// `shutter`: the seconds from open to close, nonnegative.
+  /// `shutter`: the seconds from open to shut, nonnegative.
   std::optional<float> shutter{};
 };
 
@@ -671,6 +673,15 @@ public:
 
   /// The transform the block's operations accumulated.
   float4x4 transform{float4x4(1.0f)};
+
+  /// PLACE: the transform at shutter shut, the `motion { ... }` block's
+  /// operations accumulated from identity exactly as `transform` is, or
+  /// unset for a static placement. Absolute, never a delta: it restates
+  /// the placement the way the open key states it, which is what a
+  /// machine writes. A bulk place's block moves the whole scatter; the
+  /// records carry no keys of their own.
+  std::optional<float4x4> motion{};
+  LayoutLocation motionLoc{};
 };
 
 /// One `group` declaration: a named, reusable arrangement of `place`
@@ -758,9 +769,17 @@ public:
   PrimitiveSpec primitive{}; ///< The shape, when a primitive.
   CurvesSpec curves{};       ///< The fiber spec, when a curves file.
   float4x4 objectToWorld{float4x4(1.0f)}; ///< Where to put it.
-  ObjectSelection selection{};            ///< Which of its objects to place.
-  SubdivSpec subdiv{};                    ///< How to refine it at load time.
-  MaterialAssignment materials{};         ///< What shades it, fully composed.
+
+  /// Where to put it at shutter shut, present when something on the
+  /// place path carried a `motion` block and the composed shut key
+  /// differs from `objectToWorld`; absent for a static item, which
+  /// includes one whose blocks restate their open keys. Composition is
+  /// pairwise: a group's shut key over a member's, the asset's
+  /// correction and the file's node transforms under both.
+  std::optional<float4x4> objectToWorldShut{};
+  ObjectSelection selection{};    ///< Which of its objects to place.
+  SubdivSpec subdiv{};            ///< How to refine it at load time.
+  MaterialAssignment materials{}; ///< What shades it, fully composed.
 
   /// Is a caustic caster, with the asset's mark and every override on
   /// the place path already composed; see `LayoutAssetDecl::caster`.
@@ -789,6 +808,12 @@ public:
   /// share one binding), so instance order within a scatter is grouped
   /// by variant rather than by record.
   std::vector<float4x4> batchXfs{};
+
+  /// The shut keys of a batch, parallel to `batchXfs`, or empty when
+  /// the scatter is static. A bulk place's `motion` moves the scatter
+  /// as a whole, so every record's shut key is its record transform
+  /// under the moved placement.
+  std::vector<float4x4> batchXfsShut{};
 };
 
 /// One punctual light placed in the world: what the lowering emits and
@@ -802,6 +827,10 @@ public:
   /// The fully composed placement, positioning the light at its origin
   /// and aiming its local -Z axis.
   float4x4 lightToWorld{float4x4(1.0f)};
+
+  /// The placement at shutter shut, present when the light moves; see
+  /// `LayoutItem::objectToWorldShut` for when that is.
+  std::optional<float4x4> lightToWorldShut{};
 
   /// The `/`-joined chain of `as` names along the place path, or empty.
   std::string placeName{};

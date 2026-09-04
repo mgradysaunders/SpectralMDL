@@ -26,21 +26,21 @@ struct CameraOptions final {
   /// The up vector.
   float3 lookUp{0, 0, 1};
 
-  /// Does the camera move over the shutter? When set, the three close
-  /// keys below are the framing at shutter close, and a ray at shutter
+  /// Does the camera move over the shutter? When set, the three shut
+  /// keys below are the framing at shutter shut, and a ray at shutter
   /// fraction `u` sees the framing vectors interpolated linearly
   /// between the two. Field of view, focus, aperture, and distortion
   /// hold over the shutter.
   bool motion{};
 
-  /// The position to look from at shutter close.
-  float3 lookFromClose{};
+  /// The position to look from at shutter shut.
+  float3 lookFromShut{};
 
-  /// The position to look to at shutter close.
-  float3 lookToClose{};
+  /// The position to look to at shutter shut.
+  float3 lookToShut{};
 
-  /// The up vector at shutter close.
-  float3 lookUpClose{};
+  /// The up vector at shutter shut.
+  float3 lookUpShut{};
 
   /// The vertical field of view in degrees.
   float fovYDeg{37.8f};
@@ -158,20 +158,20 @@ private:
   /// construction.
   float4x4 cameraToWorld{float4x4(1.0f)};
 
-  /// Does the camera move over the shutter? False when the close keys
+  /// Does the camera move over the shutter? False when the shut keys
   /// equal the open keys, so a still camera exported under motion blur
   /// renders bit for bit what it renders exported without.
   bool moving{};
 
-  /// The framing at shutter open and at shutter close, read only when
+  /// The framing at shutter open and at shutter shut, read only when
   /// `moving`. The frame at fraction `u` is the look-at of the vectors
-  /// interpolated as `(1 - u) * open + u * close`, spelled so that the
+  /// interpolated as `(1 - u) * open + u * shut`, spelled so that the
   /// two ends reproduce the keys exactly. The view direction is then
   /// the normalized chord, whose angular rate differs from a slerp's by
   /// third order in the pan angle: nothing over the angle a shutter
   /// spans, and the interpolation of what the file states.
   float3 lookFrom{}, lookTo{}, lookUp{};
-  float3 lookFromClose{}, lookToClose{}, lookUpClose{};
+  float3 lookFromShut{}, lookToShut{}, lookUpShut{};
 
   /// The image radius at the frame corner, which normalizes the
   /// distortion polynomial and the rim displacement.

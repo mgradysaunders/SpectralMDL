@@ -303,6 +303,18 @@ public:
   bool isDeformed{};
 };
 
+/// The quaternion form of a placement key, for Embree to interpolate:
+/// `p' = T R S p`, with `S` upper triangular (the scales, the skews, and
+/// a zero shift), `R` a proper rotation, and `T` the translation. One
+/// fixed procedure, a Gram-Schmidt over the columns in the order x, y,
+/// z with the third axis by cross product, so that both keys of a pair
+/// decompose into comparable rotations and like-named skews, and a
+/// mirrored key comes out as a negative `scale_z` rather than an
+/// improper rotation. `R S` reproduces the linear part exactly; only
+/// the rotation-to-quaternion step rounds.
+[[nodiscard]] RTCQuaternionDecomposition
+quaternionDecompositionOf(const float4x4 &xf) noexcept;
+
 /// A mesh instance.
 class MeshInstance final {
 public:
@@ -339,8 +351,9 @@ public:
   /// this; anything that runs per hit reads `frameAt()`.
   InstanceFrame frame{};
 
-  /// Does the instance have more than one motion key? False for every
-  /// instance until keys exist; `frameAt()` never queries otherwise.
+  /// Does the instance have a shut key, so that Embree interpolates
+  /// its transform over the shutter? Set by the builders when the
+  /// placement carries one; `frameAt()` never queries otherwise.
   bool isMoving{};
 
   /// The Embree geometry this instance is an element of, retained for
@@ -546,16 +559,20 @@ public:
   /// share one loaded groom and one BVH. Returns the first instance
   /// index.
   ///
+  /// `worldXfsShut` is empty for a static placement, or parallel to
+  /// `worldXfs` with the keys at shutter shut; see `addInstance()`.
+  ///
   /// \throws smdl::Error  If the file cannot be read or fails
   ///                      validation; see `readCurvesFile()`.
   uint32_t addCurves(const std::string &fileName,
                      smdl::Span<const float4x4> worldXfs,
+                     smdl::Span<const float4x4> worldXfsShut,
                      const CurvesSpec &spec,
                      const MaterialAssignment &materials = {});
 
   /// Add an analytic primitive, placed once per entry of
   /// `worldXfs` (one entry is an ordinary instance; several are
-  /// an instance array).
+  /// an instance array), with `worldXfsShut` as `addCurves()` takes it.
   ///
   /// The material assignment splits exactly as `add()` splits it for
   /// meshes: the whole-asset binding (`materials.resolve("")` before
@@ -564,6 +581,7 @@ public:
   /// `Primitive` and its tiny BVH. Returns the first instance index.
   uint32_t addPrimitive(const PrimitiveSpec &spec,
                         smdl::Span<const float4x4> worldXfs,
+                        smdl::Span<const float4x4> worldXfsShut,
                         const MaterialAssignment &materials = {});
 
   /// Add a ground plane: a two-triangle quad of `halfExtent` at height
@@ -621,8 +639,10 @@ private:
   /// The batch-capable body of `add()`: every entry of `worldXfs` is
   /// one placement of the file. One entry becomes an ordinary instance;
   /// several become one Embree instance array per instantiated mesh,
-  /// with the file's node transform composed into every element.
+  /// with the file's node transform composed into every element, under
+  /// both keys when `worldXfsShut` carries them.
   void addMesh(const std::string &fileName, smdl::Span<const float4x4> worldXfs,
+               smdl::Span<const float4x4> worldXfsShut,
                const ObjectSelection &selection, const SubdivSpec &subdiv,
                const MaterialAssignment &materials);
 
@@ -630,8 +650,16 @@ private:
   /// of `meshIndex`, `primIndex`, and `curvesIndex` names the
   /// instantiated geometry; `matIndex` is the instance's own
   /// binding, or `INVALID_INDEX` to shade with the geometry's.
+  ///
+  /// `xfShut`, when present, is the placement at shutter shut: the
+  /// instance then takes Embree's quaternion form at both keys and two
+  /// time steps, and `isMoving` is set. Absent, the instance keeps the
+  /// matrix form and one step, so a static scene's Embree input is
+  /// exactly what it always was. A shut key that mirrors the open one
+  /// cannot be interpolated and is dropped with a warning.
   uint32_t addInstance(uint32_t meshIndex, uint32_t primIndex,
                        uint32_t curvesIndex, const float4x4 &xf,
+                       const std::optional<float4x4> &xfShut,
                        std::string_view fileName,
                        uint32_t matIndex = INVALID_INDEX);
 
@@ -639,10 +667,12 @@ private:
   /// array geometry whose element `i` places the geometry under
   /// `worldXfs[i] * nodeXf`, appending one `MeshInstance` per element
   /// so every consumer that walks `meshInstances` is none the wiser.
-  /// Returns the first element's index in `meshInstances`.
+  /// `worldXfsShut` is empty or parallel; a batch moves as a whole or
+  /// not at all. Returns the first element's index in `meshInstances`.
   uint32_t addInstanceArray(uint32_t meshIndex, uint32_t primIndex,
                             uint32_t curvesIndex,
                             smdl::Span<const float4x4> worldXfs,
+                            smdl::Span<const float4x4> worldXfsShut,
                             const float4x4 &nodeXf, std::string_view fileName,
                             uint32_t matIndex = INVALID_INDEX);
 
@@ -701,15 +731,18 @@ private:
   /// vectors must not change size afterward.
   void buildMeshGeometry(Mesh &mesh);
 
+public:
   /// The builders under a given frame, the bodies of the public ones:
   /// `frame` is the instance's at `time`, as `frameAt()` answers it. A
   /// public builder tail-calls its `Moving` twin for a moving instance
   /// and otherwise runs the body under `frame`; `intersect()` resolves
   /// the frame once for the hit it is about to build and calls the body
-  /// directly. The split is what keeps the static path a leaf: a call on
-  /// a branch inside a body, even the cold moving-instance query, costs
-  /// every static hit the callee-saved register traffic of a non-leaf,
-  /// which the bench sees.
+  /// directly, and so does the light sampler for a moving emitter, whose
+  /// stretch and sphere fields come off the same frame. The split is
+  /// what keeps the static path a leaf: a call on a branch inside a
+  /// body, even the cold moving-instance query, costs every static hit
+  /// the callee-saved register traffic of a non-leaf, which the bench
+  /// sees.
   [[nodiscard]] Hit makeHit(const InstanceFrame &frame, uint32_t instIndex,
                             uint32_t faceIndex, const float3 &bary,
                             float time) const;

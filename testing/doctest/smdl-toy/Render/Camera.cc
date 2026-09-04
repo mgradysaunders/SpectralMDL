@@ -16,16 +16,16 @@ static CameraOptions openOptions() {
   return options;
 }
 
-static const float3 LOOK_FROM_CLOSE{-5.0f, 1.0f, 2.5f};
-static const float3 LOOK_TO_CLOSE{0.5f, 0.2f, 0.4f};
-static const float3 LOOK_UP_CLOSE{0.1f, 0.0f, 1.0f};
+static const float3 LOOK_FROM_SHUT{-5.0f, 1.0f, 2.5f};
+static const float3 LOOK_TO_SHUT{0.5f, 0.2f, 0.4f};
+static const float3 LOOK_UP_SHUT{0.1f, 0.0f, 1.0f};
 
 static CameraOptions movingOptions() {
   auto options{openOptions()};
   options.motion = true;
-  options.lookFromClose = LOOK_FROM_CLOSE;
-  options.lookToClose = LOOK_TO_CLOSE;
-  options.lookUpClose = LOOK_UP_CLOSE;
+  options.lookFromShut = LOOK_FROM_SHUT;
+  options.lookToShut = LOOK_TO_SHUT;
+  options.lookUpShut = LOOK_UP_SHUT;
   return options;
 }
 
@@ -67,13 +67,13 @@ TEST_CASE("Camera: a still camera places its ray the same at every fraction") {
 TEST_CASE("Camera: a moving camera reproduces its keys at the shutter ends") {
   const Camera moving{movingOptions()};
   const Camera stillOpen{openOptions()};
-  auto closeOptions{openOptions()};
-  closeOptions.lookFrom = LOOK_FROM_CLOSE;
-  closeOptions.lookTo = LOOK_TO_CLOSE;
-  closeOptions.lookUp = LOOK_UP_CLOSE;
-  const Camera stillClose{closeOptions};
+  auto shutOptions{openOptions()};
+  shutOptions.lookFrom = LOOK_FROM_SHUT;
+  shutOptions.lookTo = LOOK_TO_SHUT;
+  shutOptions.lookUp = LOOK_UP_SHUT;
+  const Camera stillShut{shutOptions};
   CHECK(sameRay(rayAt(moving, 0.0f).ray, rayAt(stillOpen, 0.0f).ray));
-  CHECK(sameRay(rayAt(moving, 1.0f).ray, rayAt(stillClose, 1.0f).ray));
+  CHECK(sameRay(rayAt(moving, 1.0f).ray, rayAt(stillShut, 1.0f).ray));
   // The keys differ, so the two ends do.
   CHECK(!sameRay(rayAt(moving, 0.0f).ray, rayAt(moving, 1.0f).ray));
 }
@@ -81,9 +81,9 @@ TEST_CASE("Camera: a moving camera reproduces its keys at the shutter ends") {
 TEST_CASE("Camera: halfway through the shutter is the camera of the mid keys") {
   const Camera moving{movingOptions()};
   auto midOptions{openOptions()};
-  midOptions.lookFrom = 0.5f * (midOptions.lookFrom + LOOK_FROM_CLOSE);
-  midOptions.lookTo = 0.5f * (midOptions.lookTo + LOOK_TO_CLOSE);
-  midOptions.lookUp = 0.5f * (midOptions.lookUp + LOOK_UP_CLOSE);
+  midOptions.lookFrom = 0.5f * (midOptions.lookFrom + LOOK_FROM_SHUT);
+  midOptions.lookTo = 0.5f * (midOptions.lookTo + LOOK_TO_SHUT);
+  midOptions.lookUp = 0.5f * (midOptions.lookUp + LOOK_UP_SHUT);
   const Camera stillMid{midOptions};
   const auto mid{rayAt(moving, 0.5f)};
   const auto expected{rayAt(stillMid, 0.5f)};
@@ -100,9 +100,9 @@ TEST_CASE("Camera: halfway through the shutter is the camera of the mid keys") {
 TEST_CASE("Camera: a motion equal to the open keys is still") {
   auto options{openOptions()};
   options.motion = true;
-  options.lookFromClose = options.lookFrom;
-  options.lookToClose = options.lookTo;
-  options.lookUpClose = options.lookUp;
+  options.lookFromShut = options.lookFrom;
+  options.lookToShut = options.lookTo;
+  options.lookUpShut = options.lookUp;
   const Camera still{openOptions()};
   const Camera notMoving{options};
   const auto a{rayAt(still, 0.3f)};

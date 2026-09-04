@@ -8,6 +8,7 @@
 #include "smdl/Support/Error.h"
 
 #include "IO/CurvesFile.h"
+#include "IO/PlacesFile.h"
 #include "Layout/Layout.h"
 #include "Layout/LayoutTables.h"
 
@@ -327,4 +328,89 @@ TEST_CASE("Layout lowering: only the entry file's time takes effect") {
     CHECK(!layout.time.base);
     CHECK(!layout.time.shutter);
   }
+}
+
+TEST_CASE("Layout lowering: motion composes pairwise") {
+  LayoutDir dir{};
+  dir.write("sub.layout", "#smdl layout\n"
+                          "asset inner = sphere { material m }\n"
+                          "place inner translate 0 0 1\n");
+  {
+    // Two records, one unit apart along y.
+    auto places{PlacesFile()};
+    const auto translate{[](float x, float y, float z) {
+      auto xf{float4x4(1.0f)};
+      xf[3] = float4(x, y, z, 1.0f);
+      return xf;
+    }};
+    places.transforms = {translate(0.0f, 1.0f, 0.0f),
+                         translate(0.0f, 2.0f, 0.0f)};
+    writePlacesFile((dir.root / "pair.places").string(), places);
+  }
+  const auto entry{dir.write(
+      "entry.layout",
+      "#smdl layout\n"
+      "asset ball = sphere { radius 1 material m translate 0 0 1 }\n"
+      "light lamp = point { power 10 }\n"
+      "asset sub = \"sub.layout\"\n"
+      "group rig {\n"
+      "  place ball translate 1 0 0\n"
+      "  place ball translate 2 0 0 motion { translate 2 0 0 rotate_z 90 }\n"
+      "  place lamp translate 0 0 5\n"
+      "}\n"
+      "place ball\n"                                              // 0
+      "place ball translate 5 0 0 motion { translate 6 0 0 }\n"   // 1
+      "place ball translate 5 0 0 motion { translate 5 0 0 }\n"   // 2
+      "place rig translate 10 0 0 motion { translate 11 0 0 }\n"  // 3, 4
+      "place sub translate 20 0 0 motion { translate 21 0 0 }\n"  // 5
+      "place ball * \"pair.places\" motion { translate 0 0 1 }\n" // 6
+      "place ball * \"pair.places\"\n"                            // 7
+      )};
+  LayoutDiagnostics diags{};
+  const auto layout{lowerOK(diags, entry)};
+  CHECK(diags.empty());
+  REQUIRE(layout.items.size() == 8);
+  const auto translationOf{[](const float4x4 &xf) { return float3(xf[3]); }};
+  const auto near{[](const float3 &a, float x, float y, float z) {
+    return a.x == doctest::Approx(x) && a.y == doctest::Approx(y) &&
+           a.z == doctest::Approx(z);
+  }};
+  // 0: static, the asset's correction alone.
+  CHECK(near(translationOf(layout.items[0].objectToWorld), 0, 0, 1));
+  CHECK(!layout.items[0].objectToWorldShut);
+  // 1: the block's shut key over the correction.
+  CHECK(near(translationOf(layout.items[1].objectToWorld), 5, 0, 1));
+  REQUIRE(layout.items[1].objectToWorldShut);
+  CHECK(near(translationOf(*layout.items[1].objectToWorldShut), 6, 0, 1));
+  // 2: a block restating the open key lowers static.
+  CHECK(near(translationOf(layout.items[2].objectToWorld), 5, 0, 1));
+  CHECK(!layout.items[2].objectToWorldShut);
+  // 3: a static member moves rigidly with its group.
+  CHECK(near(translationOf(layout.items[3].objectToWorld), 11, 0, 1));
+  REQUIRE(layout.items[3].objectToWorldShut);
+  CHECK(near(translationOf(*layout.items[3].objectToWorldShut), 12, 0, 1));
+  // 4: a moving member composes its shut key under the group's: the
+  // correction, then the member's translate and turn, then the group's.
+  CHECK(near(translationOf(layout.items[4].objectToWorld), 12, 0, 1));
+  REQUIRE(layout.items[4].objectToWorldShut);
+  CHECK(near(translationOf(*layout.items[4].objectToWorldShut), 11, 2, 1));
+  CHECK(near(float3((*layout.items[4].objectToWorldShut)[0]), 0, 1, 0));
+  // 5: a layout target recurses under both keys.
+  CHECK(near(translationOf(layout.items[5].objectToWorld), 20, 0, 1));
+  REQUIRE(layout.items[5].objectToWorldShut);
+  CHECK(near(translationOf(*layout.items[5].objectToWorldShut), 21, 0, 1));
+  // 6: a bulk place's block moves every record; 7: a static scatter
+  // carries no shut keys.
+  REQUIRE(layout.items[6].batchXfs.size() == 2);
+  REQUIRE(layout.items[6].batchXfsShut.size() == 2);
+  CHECK(near(translationOf(layout.items[6].batchXfs[1]), 0, 2, 1));
+  CHECK(near(translationOf(layout.items[6].batchXfsShut[1]), 0, 2, 2));
+  REQUIRE(layout.items[7].batchXfs.size() == 2);
+  CHECK(layout.items[7].batchXfsShut.empty());
+  CHECK(near(translationOf(layout.items[7].batchXfs[0]), 0, 1, 1));
+  // The group's light moves with it.
+  REQUIRE(layout.lights.size() == 1);
+  CHECK(near(translationOf(layout.lights[0].lightToWorld), 10, 0, 5));
+  REQUIRE(layout.lights[0].lightToWorldShut);
+  CHECK(near(translationOf(*layout.lights[0].lightToWorldShut), 11, 0, 5));
 }

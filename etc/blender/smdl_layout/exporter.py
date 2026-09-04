@@ -18,6 +18,7 @@ here rather than imported: it bakes to a `.curves` sidecar (see
 """
 
 import collections
+import contextlib
 import math
 import os
 import re
@@ -305,18 +306,28 @@ def scatter_source_options(scene):
     return claimed
 
 
-def gather(context, collection=None):
+def gather(context, collection=None, shut=None):
     """Everything the layout asks for: the flat asset placements grouped by
     what they place, how they refine it, and how it is marked for caustics,
-    each entry a (matrix, flat material override, per-slot combo) triple
-    where the combo is the (slot, chosen name) picks of an asset resolved
-    per slot; the group
-    bundles (one per instanced user collection:
-    its tagged members, its groom members, and the world matrix of every
-    instance); the untagged objects, which were modeled here rather than
-    imported and so have to be baked rather than referenced; and the flat
-    grooms (one per Curves object, with its placement matrices), which
-    bake to `.curves` sidecars.
+    each entry a (matrix, flat material override, per-slot combo, shut
+    matrix) tuple where the combo is the (slot, chosen name) picks of an
+    asset resolved per slot; the group bundles (one per instanced user
+    collection: its tagged members, its groom members, and the world
+    matrix of every instance, each with its shut matrix); the untagged
+    objects, which were modeled here rather than imported and so have to
+    be baked rather than referenced; the flat grooms (one per Curves
+    object, with its placement matrices), which bake to `.curves`
+    sidecars; the volumes; and how many instances exist at the shut key
+    alone.
+
+    `shut` is the `ShutKeys` of the shutter's shut key, or None with
+    motion blur off. A placement's shut matrix is the matrix its
+    instance has there, paired by `instance_key()`, or None when the
+    instance has none, when Blender's per-object motion blur is off for
+    it or for what emits it, or when nothing moves; a group member's is
+    relative to the arrangement's first instance at the shut key, as
+    its open one is at the open key. An instance present at the shut
+    key alone is not part of this frame and is only counted.
 
     A group member's options come from the member object inside the
     collection that carries its tag; members that share a tag share
@@ -381,6 +392,38 @@ def gather(context, collection=None):
                 for ob in group_empties[source]}
     first_of = {source: group_empties[source][0] for source in group_order}
 
+    seen = set()
+
+    def note_seen(instance):
+        if shut is not None:
+            seen.add(instance_key(instance))
+
+    def shut_of(instance):
+        if shut is None:
+            return None
+        matrix = shut.instances.get(instance_key(instance))
+        if matrix is None:
+            return None
+        owner = (instance.parent.original
+                 if instance.is_instance and instance.parent else None)
+        if not motion_enabled(instance.object.original):
+            return None
+        if owner is not None and not motion_enabled(owner):
+            return None
+        return matrix
+
+    def shut_object(ob):
+        if shut is None or not motion_enabled(ob):
+            return None
+        return shut.objects.get(ob)
+
+    def relative_shut_of(instance, source):
+        member = shut_of(instance)
+        first = shut_object(first_of[source])
+        if member is None or first is None:
+            return None
+        return first.inverted() @ member
+
     # A group member's options come off the tagged member objects inside
     # its collection, matched to emissions by tag.
     member_options = {}
@@ -418,6 +461,7 @@ def gather(context, collection=None):
             # rather than a member the arrangement holds.
             if is_render_hidden(instance):
                 continue
+            note_seen(instance)
             if wanted is not None and not instance_is_wanted(instance,
                                                              wanted):
                 continue
@@ -425,7 +469,8 @@ def gather(context, collection=None):
             if original not in volumes:
                 volumes[original] = []
                 volume_order.append(original)
-            volumes[original].append(instance.matrix_world.copy())
+            volumes[original].append((instance.matrix_world.copy(),
+                                      shut_of(instance)))
             continue
         if ob.type == "CURVES":
             # Hair groomed here rather than imported: baked to a `.curves`
@@ -433,6 +478,7 @@ def gather(context, collection=None):
             # grooming modifiers live on the object. See `curves.py`.
             if is_render_hidden(instance):
                 continue
+            note_seen(instance)
             original = ob.original
             emitter = (instance.parent.original
                        if instance.is_instance and instance.parent else None)
@@ -445,7 +491,9 @@ def gather(context, collection=None):
                 if emitter is first_of[source]:
                     relative = (first_of[source].matrix_world.inverted() @
                                 instance.matrix_world)
-                    groom_members[source].append((original, relative))
+                    groom_members[source].append(
+                        (original, relative,
+                         relative_shut_of(instance, source)))
                 continue
             if wanted is not None and not instance_is_wanted(instance,
                                                              wanted):
@@ -453,12 +501,14 @@ def gather(context, collection=None):
             if original not in grooms:
                 grooms[original] = []
                 groom_order.append(original)
-            grooms[original].append(instance.matrix_world.copy())
+            grooms[original].append((instance.matrix_world.copy(),
+                                     shut_of(instance)))
             continue
         if ob.type != "MESH" or not ob.data.vertices:
             continue
         if is_render_hidden(instance):
             continue
+        note_seen(instance)
         original = ob.original
         emitter = (instance.parent.original
                    if instance.is_instance and instance.parent else None)
@@ -471,7 +521,8 @@ def gather(context, collection=None):
                 subdiv, marks, override, _, member_slots = \
                     member_options[source].get(tag, NO_OPTIONS)
                 members[source].append((tag, subdiv, marks, override,
-                                        member_slots, relative))
+                                        member_slots, relative,
+                                        relative_shut_of(instance, source)))
             continue
         if wanted is not None and not instance_is_wanted(instance, wanted):
             continue
@@ -533,15 +584,17 @@ def gather(context, collection=None):
             placements[key] = []
             order.append(key)
         placements[key].append((instance.matrix_world.copy(), override,
-                                combo))
+                                combo, shut_of(instance)))
 
     groups = [(source, members[source], groom_members[source],
-               [ob.matrix_world.copy() for ob in group_empties[source]])
+               [(ob.matrix_world.copy(), shut_object(ob))
+                for ob in group_empties[source]])
               for source in group_order
               if members[source] or groom_members[source]]
+    dropped = len(set(shut.instances) - seen) if shut is not None else 0
     return ([(key, placements[key]) for key in order], groups, untagged,
             [(ob, grooms[ob]) for ob in groom_order],
-            [(ob, volumes[ob]) for ob in volume_order])
+            [(ob, volumes[ob]) for ob in volume_order], dropped)
 
 
 def instance_is_wanted(instance, wanted):
@@ -855,6 +908,35 @@ def place_lines(name, matrix, indent=""):
     return [lead + rows[0]] + [" " * len(lead) + row for row in rows[1:]]
 
 
+def matrix_lines(matrix, indent):
+    """A `matrix` operation at the indent, wrapped one row per line."""
+    lead = f"{indent}matrix "
+    rows = format_matrix(matrix)
+    return [lead + rows[0]] + [" " * len(lead) + row for row in rows[1:]]
+
+
+def placement_lines(name, matrix, pairs=(), shut=None, indent=""):
+    """One `place` of `name`: the one-line form under `matrix` alone, or
+    the block form when rename pairs ride along or a shut matrix differs
+    from the open one, the `motion` block restating the placement at
+    shutter shut. A shut matrix that writes the open one's rows is no
+    motion and is left out, so a still object under motion blur reads as
+    it always did."""
+    if shut is not None and same_matrix(shut, matrix):
+        shut = None
+    if not pairs and shut is None:
+        return place_lines(name, matrix, indent)
+    lines = [f"{indent}place {name} {{"]
+    lines.extend(f"{indent}  material {frm} = {to}" for frm, to in pairs)
+    lines.extend(matrix_lines(matrix, indent + "  "))
+    if shut is not None:
+        lines.append(f"{indent}  motion {{")
+        lines.extend(matrix_lines(shut, indent + "    "))
+        lines.append(f"{indent}  }}")
+    lines.append(f"{indent}}}")
+    return lines
+
+
 def write_places(filepath, matrices, column=None):
     """Write matrices as a `.places` buffer: the 20-byte header, the top
     three rows of each matrix row-major, then the optional variant column,
@@ -881,12 +963,12 @@ def to_identifier(name):
     return result
 
 
-# The shutter of one exported frame: where it opens and closes as
+# The shutter of one exported frame: where it opens and shuts as
 # `(frame, subframe)` keys the scene can be evaluated at, and the two
 # values of the `time` directive, `base` (the open key in seconds) and
-# `shutter` (the seconds from open to close).
+# `shutter` (the seconds from open to shut).
 ShutterKeys = collections.namedtuple("ShutterKeys",
-                                     "open close base shutter")
+                                     "open shut base shutter")
 
 
 def split_frame(time):
@@ -896,13 +978,80 @@ def split_frame(time):
     return int(frame), time - frame
 
 
+@contextlib.contextmanager
+def evaluated_at(scene, key):
+    """The scene evaluated at the `(frame, subframe)` key for the body of
+    the `with`, and put back at its own frame afterward whatever happens.
+    With no key nothing is evaluated, so a scene without motion blur
+    never has its frame touched."""
+    if key is None:
+        yield
+        return
+    frame, subframe = scene.frame_current, scene.frame_subframe
+    try:
+        scene.frame_set(key[0], subframe=key[1])
+        yield
+    finally:
+        scene.frame_set(frame, subframe=subframe)
+
+
+def motion_enabled(ob):
+    """Does the object take part in motion blur? Blender's own per-object
+    switch, read off the Cycles settings when they exist and on
+    otherwise, so an object the user has told Cycles to hold still holds
+    still here too."""
+    cycles = getattr(ob, "cycles", None)
+    return cycles is None or bool(getattr(cycles, "use_motion_blur", True))
+
+
+def instance_key(instance):
+    """What pairs a depsgraph instance across two evaluations of the
+    scene: its original object and Blender's persistent id, which a
+    scatter keeps stable from one evaluation to the next."""
+    return instance.object.original, tuple(instance.persistent_id)
+
+
+# Every world matrix at the shutter's shut key: the depsgraph instances
+# by `instance_key()` and the scene objects (the group empties, the
+# lamps) by object.
+ShutKeys = collections.namedtuple("ShutKeys", "instances objects")
+
+
+def shut_matrices(context, wanted=None):
+    """The `ShutKeys` of the scene as evaluated now, which the caller has
+    made the shut key (see `evaluated_at()`), over the same instances
+    `gather()` walks: the meshes, grooms, and volumes that render, within
+    `wanted` when one is given."""
+    depsgraph = context.evaluated_depsgraph_get()
+    instances = {}
+    for instance in depsgraph.object_instances:
+        ob = instance.object
+        if ob is None or ob.type not in ("MESH", "CURVES", "VOLUME"):
+            continue
+        if ob.type == "MESH" and not ob.data.vertices:
+            continue
+        if is_render_hidden(instance):
+            continue
+        if wanted is not None and not instance_is_wanted(instance, wanted):
+            continue
+        instances[instance_key(instance)] = instance.matrix_world.copy()
+    objects = {ob: ob.matrix_world.copy() for ob in context.scene.objects}
+    return ShutKeys(instances, objects)
+
+
+def same_matrix(a, b):
+    """Do two matrices write the same `matrix` rows? What decides whether
+    a `motion` block is worth writing."""
+    return format_matrix(a) == format_matrix(b)
+
+
 def shutter_keys(scene):
     """The shutter keys of the current frame, or `None` with motion blur
     off, which is the only thing that turns motion on in the export.
 
     Blender states the shutter in frames and says where the current frame
     sits in it: at the open (`START`), in the middle (`CENTER`), or at the
-    close (`END`). The frame rate then turns frames into the seconds the
+    shut (`END`). The frame rate then turns frames into the seconds the
     renderer's clock runs on.
     """
     render = scene.render
@@ -918,7 +1067,7 @@ def shutter_keys(scene):
         opens = current - length / 2
     seconds_per_frame = render.fps_base / render.fps
     return ShutterKeys(open=split_frame(opens),
-                       close=split_frame(opens + length),
+                       shut=split_frame(opens + length),
                        base=opens * seconds_per_frame,
                        shutter=length * seconds_per_frame)
 
@@ -947,12 +1096,8 @@ def framing_of(matrix):
 def framing_at(scene, camera, key):
     """The camera's framing at the `(frame, subframe)` key, with the
     scene's frame put back afterward whatever happens."""
-    frame, subframe = scene.frame_current, scene.frame_subframe
-    try:
-        scene.frame_set(key[0], subframe=key[1])
+    with evaluated_at(scene, key):
         return framing_of(camera.matrix_world)
-    finally:
-        scene.frame_set(frame, subframe=subframe)
 
 
 def framing_lines(framing, indent="  "):
@@ -967,7 +1112,7 @@ def camera_block(scene, keys=None):
 
     The framing is read at the shutter's open key when there is one and
     at the current frame otherwise, and the `motion` block carries the
-    framing at the close key whenever it differs, so a still camera under
+    framing at the shut key whenever it differs, so a still camera under
     motion blur writes none. The field of view and the lens hold over the
     shutter. The lens comes from the add-on's Camera Options panel alone;
     the camera datablock's own Depth of Field is deliberately not read, so
@@ -984,7 +1129,7 @@ def camera_block(scene, keys=None):
         motion = None
     else:
         framing = framing_at(scene, camera, keys.open)
-        motion = framing_at(scene, camera, keys.close)
+        motion = framing_at(scene, camera, keys.shut)
         if all((a - b).length == 0 for a, b in zip(motion, framing)):
             motion = None
     origin = framing[0]
@@ -1146,9 +1291,11 @@ def light_ies_path(light):
     return ""
 
 
-def light_blocks(scene, problems):
+def light_blocks(scene, problems, shut=None):
     """The scene's point, spot, and area lamps as `light` declarations plus
     one `place` per lamp, or nothing. A sun lamp belongs to `sky_block`.
+    `shut` is the `ShutKeys` of the shutter's shut key, or None; a lamp
+    whose matrix differs there gets a `motion` block on its place.
 
     A lamp marked a caustic emitter says so here; `diagnose()` reports
     the marks on the lamps that do not export.
@@ -1189,6 +1336,8 @@ def light_blocks(scene, problems):
         ies = light_ies_path(light)
         energy = light.energy * 2.0 ** getattr(light, "exposure", 0.0)
         matrix = ob.matrix_world
+        shut_matrix = (shut.objects.get(ob)
+                        if shut is not None and motion_enabled(ob) else None)
         settings = []
         if light.type == "AREA":
             size = light.size
@@ -1203,8 +1352,11 @@ def light_blocks(scene, problems):
                 settings.append(f"  radius {size / 2:.9g}")
                 area = math.pi * size * size_y / 4
                 if light.shape == "ELLIPSE" and size > 0:
-                    matrix = matrix @ mathutils.Matrix.Diagonal(
+                    stretch = mathutils.Matrix.Diagonal(
                         (1.0, size_y / size, 1.0, 1.0))
+                    matrix = matrix @ stretch
+                    if shut_matrix is not None:
+                        shut_matrix = shut_matrix @ stretch
             power = energy
             if not getattr(light, "normalize", True):
                 columns = ob.matrix_world.col
@@ -1246,7 +1398,7 @@ def light_blocks(scene, problems):
         lines.append(head)
         lines.extend(settings)
         lines.append("}")
-        lines.extend(place_lines(name, matrix))
+        lines.extend(placement_lines(name, matrix, (), shut_matrix))
         lines.append("")
     return lines
 
@@ -1477,12 +1629,38 @@ class _Assets:
 def write_scene(context, filepath, asset_root="", bake=True, collection=None,
                 places_threshold=PLACES_THRESHOLD):
     """Write the Blender scene as a `.layout`. Returns a report of what it
-    did and of anything the renderer will not be able to resolve."""
+    did and of anything the renderer will not be able to resolve.
+
+    With motion blur on, the export happens at the shutter's open key:
+    the scene is evaluated there for everything the layout carries, a
+    second evaluation at the shut key supplies the `motion` blocks (see
+    `shut_matrices()` and `gather()`), and the frame is put back
+    afterward. With it off, nothing is evaluated anywhere but the
+    current frame, and the output is what it always was.
+    """
+    keys = shutter_keys(context.scene)
+    with evaluated_at(context.scene, keys.open if keys else None):
+        shut = None
+        if keys is not None:
+            wanted = (objects_under(collection)
+                      if collection is not None else None)
+            with evaluated_at(context.scene, keys.shut):
+                shut = shut_matrices(context, wanted)
+        return write_layout(context, filepath, asset_root, bake, collection,
+                            places_threshold, keys, shut)
+
+
+def write_layout(context, filepath, asset_root, bake, collection,
+                 places_threshold, keys, shut):
+    """The body of `write_scene()`, over a scene already evaluated at the
+    shutter's open key (or at the current frame, with `keys` None)."""
     from . import manifest as manifest_module
 
     scene_directory = os.path.dirname(os.path.abspath(filepath))
     layout_stem = os.path.splitext(os.path.basename(filepath))[0]
-    flat, groups, untagged, grooms, volumes = gather(context, collection)
+    flat, groups, untagged, grooms, volumes, dropped = gather(
+        context, collection, shut)
+    moving = [0]
     problems = diagnose(context, collection)
     materials = []
     alias_targets = {}
@@ -1519,7 +1697,7 @@ def write_scene(context, filepath, asset_root="", bake=True, collection=None,
     assets = _Assets()
     every_key = [key for key, _ in flat]
     for _, group_members, _, _ in groups:
-        for tag, subdiv, marks, _, _, _ in group_members:
+        for tag, subdiv, marks, *_ in group_members:
             if (tag, subdiv, marks) not in every_key:
                 every_key.append((tag, subdiv, marks))
     declared = []
@@ -1735,17 +1913,21 @@ def write_scene(context, filepath, asset_root="", bake=True, collection=None,
     for ob, matrices in volumes:
         if ob not in volume_names:
             continue
-        for matrix in matrices:
+        for matrix, _ in matrices:
             if is_sheared(matrix) and ob.name not in sheared:
                 sheared.add(ob.name)
                 problems.append(f"the volume {ob.name} is sheared by its "
                                 f"placement, which no bound box can follow, "
                                 f"so its medium will not line up with its "
                                 f"container")
-        volume_placements.append((volume_names[ob],
-                                  [rigid_part(matrix) for matrix in matrices]))
+        volume_placements.append(
+            (volume_names[ob],
+             [(rigid_part(matrix),
+               None if shut_matrix is None else rigid_part(shut_matrix))
+              for matrix, shut_matrix in matrices]))
     groups = [(source, group_members,
-               [(ob, matrix) for ob, matrix in groom_members
+               [(ob, matrix, shut_matrix)
+                for ob, matrix, shut_matrix in groom_members
                 if ob in groom_names],
                instances)
               for source, group_members, groom_members, instances in groups]
@@ -1761,7 +1943,7 @@ def write_scene(context, filepath, asset_root="", bake=True, collection=None,
             problems.append(problem)
 
     def resolve_renames(name, key, entries, where=""):
-        """Each entry's concrete rename pairs, as (matrix, pairs): a slot
+        """Each entry's concrete rename pairs, as (matrix, pairs, shut): a slot
         combo resolves through the asset's assignment (a slot's own line,
         else the whole-asset one, else its raw mesh name, quoted when it
         is not an identifier), and the flat override resolves through the
@@ -1773,7 +1955,7 @@ def write_scene(context, filepath, asset_root="", bake=True, collection=None,
         base = base_of.get(key, "")
         all_name, by_slot = assignment_of.get(key, ("", {}))
         resolved = []
-        for matrix, override, combo in entries:
+        for matrix, override, combo, shut_matrix in entries:
             pairs = []
             used = {}
             for slot, chosen in combo:
@@ -1803,7 +1985,7 @@ def write_scene(context, filepath, asset_root="", bake=True, collection=None,
                     say_once(
                         f"cannot override the material of {name}{where}: "
                         f"the asset declares no single material to rename")
-            resolved.append((matrix, tuple(pairs)))
+            resolved.append((matrix, tuple(pairs), shut_matrix))
         return resolved
 
     # The group declarations: user-authored arrangements, one `group` per
@@ -1813,7 +1995,7 @@ def write_scene(context, filepath, asset_root="", bake=True, collection=None,
         name = assets.unique(source.name)
         group_names.append(name)
         lines.append(f"group {name} {{")
-        for tag, subdiv, marks, override, member_slots, matrix \
+        for tag, subdiv, marks, override, member_slots, matrix, shut_matrix \
                 in group_members:
             key = (tag, subdiv, marks)
             member = assets.by_tag[key]
@@ -1826,29 +2008,39 @@ def write_scene(context, filepath, asset_root="", bake=True, collection=None,
             combo = tuple((slot, slot_override)
                           for slot, slot_override, _ in member_slots
                           if slot_override)
-            _, pairs = resolve_renames(member, key,
-                                       [(matrix, override, combo)],
-                                       where=f" in {source.name}")[0]
-            if pairs:
-                lines.append(f"  place {member} {{")
-                lines.extend(f"    material {frm} = {to}"
-                             for frm, to in pairs)
-                rows = format_matrix(matrix)
-                lines.append("    matrix " + rows[0])
-                lines.extend("           " + row for row in rows[1:])
-                lines.append("  }")
-            else:
-                lines.extend(place_lines(member, matrix, "  "))
-        for ob, matrix in groom_members:
-            lines.extend(place_lines(groom_names[ob], matrix, "  "))
+            _, pairs, _ = resolve_renames(member, key,
+                                          [(matrix, override, combo,
+                                            shut_matrix)],
+                                          where=f" in {source.name}")[0]
+            lines.extend(placement_lines(member, matrix, pairs, shut_matrix,
+                                         "  "))
+        for ob, matrix, shut_matrix in groom_members:
+            lines.extend(placement_lines(groom_names[ob], matrix, (),
+                                         shut_matrix, "  "))
         lines.append("}")
         lines.append("")
 
     def emit_placements(name, entries):
-        """The places of one name, each entry a (matrix, rename pairs):
-        readable text below the threshold, a `.places` sidecar at or
-        above it, where the distinct pair sets become the buffer's
-        variant tables, one per material combination in use."""
+        """The places of one name, each entry a (matrix, rename pairs,
+        shut matrix or None). The still entries are readable text below
+        the threshold and a `.places` sidecar at or above it, where the
+        distinct pair sets become the buffer's variant tables, one per
+        material combination in use; the moving entries are text blocks
+        whatever their count, since a buffer carries no shut keys."""
+        still = [(matrix, pairs) for matrix, pairs, shut_matrix in entries
+                 if shut_matrix is None or same_matrix(shut_matrix, matrix)]
+        movers = [(matrix, pairs, shut_matrix)
+                  for matrix, pairs, shut_matrix in entries
+                  if shut_matrix is not None
+                  and not same_matrix(shut_matrix, matrix)]
+        moving[0] += len(movers)
+        if places_threshold and len(movers) >= places_threshold:
+            problems.append(f"{len(movers)} moving placement(s) of {name} "
+                            f"were written as text; per-record motion in a "
+                            f"'.places' buffer is not supported yet")
+        for matrix, pairs, shut_matrix in movers:
+            lines.extend(placement_lines(name, matrix, pairs, shut_matrix))
+        entries = still
         if places_threshold and len(entries) >= places_threshold:
             sidecar = f"{layout_stem}.{name}.places"
             tables = []
@@ -1882,26 +2074,23 @@ def write_scene(context, filepath, asset_root="", bake=True, collection=None,
                 lines.append(f'place {name} * "{sidecar}"')
         else:
             for matrix, pairs in entries:
-                if pairs:
-                    lines.append(f"place {name} {{")
-                    lines.extend(f"  material {frm} = {to}"
-                                 for frm, to in pairs)
-                    rows = format_matrix(matrix)
-                    lines.append("  matrix " + rows[0])
-                    lines.extend("         " + row for row in rows[1:])
-                    lines.append("}")
-                else:
-                    lines.extend(place_lines(name, matrix))
+                lines.extend(placement_lines(name, matrix, pairs))
 
     for key, entries in flat:
         emit_placements(assets.by_tag[key],
                         resolve_renames(assets.by_tag[key], key, entries))
     for (_, _, _, instances), name in zip(groups, group_names):
-        emit_placements(name, [(matrix, ()) for matrix in instances])
+        emit_placements(name, [(matrix, (), shut_matrix)
+                               for matrix, shut_matrix in instances])
     for name, matrices in groom_placements:
-        emit_placements(name, [(matrix, ()) for matrix in matrices])
+        emit_placements(name, [(matrix, (), shut_matrix)
+                               for matrix, shut_matrix in matrices])
     for name, matrices in volume_placements:
-        emit_placements(name, [(matrix, ()) for matrix in matrices])
+        emit_placements(name, [(matrix, (), shut_matrix)
+                               for matrix, shut_matrix in matrices])
+    if dropped:
+        problems.append(f"{dropped} instance(s) exist only at shutter shut "
+                        f"and were left out of this frame")
     if flat or groups or groom_placements or volume_placements:
         lines.append("")
 
@@ -1956,14 +2145,13 @@ def write_scene(context, filepath, asset_root="", bake=True, collection=None,
             lines.extend(volume_material_lines(material_name, baked))
         lines.append("")
 
-    lines.extend(light_blocks(context.scene, problems))
+    lines.extend(light_blocks(context.scene, problems, shut))
     lines.extend(sky_block(context.scene))
     if lines and lines[-1] == "}":
         lines.append("")
     lines.extend(haze_block(context.scene))
     if lines and lines[-1] == "}":
         lines.append("")
-    keys = shutter_keys(context.scene)
     lines.extend(time_block(keys))
     if lines and lines[-1] == "}":
         lines.append("")
@@ -1989,6 +2177,8 @@ def write_scene(context, filepath, asset_root="", bake=True, collection=None,
         "volumes": len(volume_names),
         "groups": len(groups),
         "sidecars": sidecars,
+        "moving": moving[0],
+        "dropped": dropped,
         "baked": len(untagged) if bake else 0,
         "material_file": material_file,
         "materials": materials,

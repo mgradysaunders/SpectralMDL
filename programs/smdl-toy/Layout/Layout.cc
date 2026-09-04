@@ -115,13 +115,67 @@ public:
   }
 };
 
+// A placement transform at both keys of the shutter, and whether
+// anything on the path actually carried a `motion` block. Composes
+// pairwise, so a static factor (an asset's correction, a file's node
+// transform, a bulk record) multiplies into both keys, and a moving
+// factor above or below it moves everything it holds.
+class MotionXf final {
+public:
+  MotionXf() = default;
+  MotionXf(const float4x4 &xf) : open(xf), shut(xf) {}
+  MotionXf(const float4x4 &open, const std::optional<float4x4> &shut)
+      : open(open), shut(shut.value_or(open)), moving(shut.has_value()) {}
+
+  [[nodiscard]] MotionXf operator*(const MotionXf &other) const {
+    auto result{MotionXf()};
+    result.open = open * other.open;
+    result.shut = shut * other.shut;
+    result.moving = moving || other.moving;
+    return result;
+  }
+
+  // The shut key an item or light records: the composed shut
+  // transform when something moved and it differs from the open one,
+  // absent otherwise, so that a `motion` block restating the open key
+  // lowers to a static placement.
+  [[nodiscard]] std::optional<float4x4> shutKey() const {
+    if (!moving) return std::nullopt;
+    for (size_t j = 0; j < 4; j++)
+      for (size_t i = 0; i < 4; i++)
+        if (open[j][i] != shut[j][i]) return shut;
+    return std::nullopt;
+  }
+
+  float4x4 open{float4x4(1.0f)};
+  float4x4 shut{float4x4(1.0f)};
+  bool moving{};
+};
+
+static void placeItem(LayoutItem &item, const MotionXf &xf) {
+  item.objectToWorld = xf.open;
+  item.objectToWorldShut = xf.shutKey();
+}
+
+// A batch moves as a whole or not at all, so the shut keys are written
+// for every record or for none.
+static void placeBatch(LayoutItem &item, const std::vector<MotionXf> &xfs) {
+  item.batchXfs.reserve(xfs.size());
+  for (const auto &xf : xfs) item.batchXfs.push_back(xf.open);
+  bool moving{};
+  for (const auto &xf : xfs) moving |= xf.shutKey().has_value();
+  if (!moving) return;
+  item.batchXfsShut.reserve(xfs.size());
+  for (const auto &xf : xfs) item.batchXfsShut.push_back(xf.shut);
+}
+
 class Lowerer final {
 public:
   Lowerer(LayoutDiagnostics &diags, const AssetSearchPath &search,
           Layout &result)
       : mDiags(diags), mSearch(search), mResult(result) {}
 
-  void lowerFile(const std::string &fileName, const float4x4 &xf,
+  void lowerFile(const std::string &fileName, const MotionXf &xf,
                  const RenameMap &outerRenames, const MarkOverrides &outerMarks,
                  bool isEntry, const LayoutLocation &importSite) {
     std::error_code ignored{};
@@ -164,7 +218,7 @@ public:
   }
 
 private:
-  void lowerDocument(const LayoutDocument &document, const float4x4 &xf,
+  void lowerDocument(const LayoutDocument &document, const MotionXf &xf,
                      const RenameMap &outerRenames,
                      const MarkOverrides &outerMarks, bool isEntry) {
     // Only the entry file's camera, sky, haze, time, and medium take
@@ -241,7 +295,7 @@ private:
 
   void lowerPlacements(const LayoutDocument &document,
                        const std::vector<LayoutPlacement> &placements,
-                       const float4x4 &xf, const RenameMap &outerRenames,
+                       const MotionXf &xf, const RenameMap &outerRenames,
                        const MarkOverrides &outerMarks,
                        std::vector<bool> &usedAssets,
                        std::vector<bool> &usedGroups,
@@ -265,7 +319,7 @@ private:
   }
 
   void lowerPlace(const LayoutDocument &document,
-                  const LayoutPlacement &placement, const float4x4 &xf,
+                  const LayoutPlacement &placement, const MotionXf &xf,
                   const RenameMap &outerRenames,
                   const MarkOverrides &outerMarks,
                   std::vector<bool> &usedAssets, std::vector<bool> &usedGroups,
@@ -342,6 +396,10 @@ private:
     // The marks compose the other way round: the innermost explicit
     // word wins, and the asset's own mark is the default.
     const auto effectiveMarks{outerMarks.over(placement)};
+    // The placement's own keys under everything above it. The block's
+    // shut key, when there is one, is absolute: it stands where the
+    // open operations stand, and everything below composes under both.
+    const auto placeXf{xf * MotionXf(placement.transform, placement.motion)};
     if (!placement.placesPath.empty()) {
       // The bulk form: one instance per record, each record's transform
       // standing where a one-line place's operations would, and each
@@ -379,9 +437,8 @@ private:
         outerByVariant.push_back(composeRename(variant, baseOuter));
       SMDL_LOG_DEBUG("Scattering ", places.transforms.size(),
                      " record(s) from ", smdl::QuotedPath(resolved.string()));
-      const auto recordXf{[&](size_t i) {
-        return xf * placement.transform * places.transforms[i];
-      }};
+      const auto recordXf{
+          [&](size_t i) { return placeXf * MotionXf(places.transforms[i]); }};
       const auto outerFor{[&](size_t i) -> const RenameMap & {
         const auto variantIndex{places.hasVariants() ? places.variants[i]
                                                      : PlacesFile::NO_VARIANT};
@@ -415,17 +472,17 @@ private:
       // than by record, which only `state::object_id` could ever
       // observe.
       auto classSlots{std::map<uint32_t, size_t>()};
-      auto batches{std::vector<std::pair<uint32_t, std::vector<float4x4>>>()};
+      auto batches{std::vector<std::pair<uint32_t, std::vector<MotionXf>>>()};
       for (size_t i = 0; i < places.transforms.size(); i++) {
         const auto variantIndex{places.hasVariants() ? places.variants[i]
                                                      : PlacesFile::NO_VARIANT};
         const auto [slot, isNew]{
             classSlots.try_emplace(variantIndex, batches.size())};
-        if (isNew) batches.emplace_back(variantIndex, std::vector<float4x4>());
+        if (isNew) batches.emplace_back(variantIndex, std::vector<MotionXf>());
         batches[slot->second].second.push_back(
-            decl->primitive.active()
-                ? recordXf(i) * decl->transform
-                : recordXf(i) * decl->transform * target.correction);
+            decl->primitive.active() ? recordXf(i) * MotionXf(decl->transform)
+                                     : recordXf(i) * MotionXf(decl->transform) *
+                                           MotionXf(target.correction));
       }
       // The marks are resolved before any item exists, so a refused
       // mark leaves nothing half-built behind its diagnostic.
@@ -454,16 +511,16 @@ private:
         item.causticLight = decl->caustic;
         item.placeName = placeName;
         if (xfs.size() == 1) {
-          item.objectToWorld = xfs[0];
+          placeItem(item, xfs[0]);
         } else {
-          item.batchXfs = std::move(xfs);
+          placeBatch(item, xfs);
         }
       }
       return;
     }
     lowerPlaceTarget(document, decl, group, light, placement.assetNameLoc,
-                     xf * placement.transform, baseOuter, effectiveMarks,
-                     usedAssets, usedGroups, usedLights, groupStack, placeName);
+                     placeXf, baseOuter, effectiveMarks, usedAssets, usedGroups,
+                     usedLights, groupStack, placeName);
   }
 
   // One resolved placement of `decl`, `group`, or `light` (exactly one
@@ -472,7 +529,7 @@ private:
   void lowerPlaceTarget(
       const LayoutDocument &document, const LayoutAssetDecl *decl,
       const LayoutGroupDecl *group, const LayoutLightDecl *lightDecl,
-      const LayoutLocation &nameLoc, const float4x4 &combinedXf,
+      const LayoutLocation &nameLoc, const MotionXf &combinedXf,
       const RenameMap &effectiveOuter, const MarkOverrides &effectiveMarks,
       std::vector<bool> &usedAssets, std::vector<bool> &usedGroups,
       std::vector<bool> &usedLights, std::vector<GroupFrame> &groupStack,
@@ -480,7 +537,9 @@ private:
     if (lightDecl) {
       auto &light{mResult.lights.emplace_back()};
       light.decl = *lightDecl;
-      light.lightToWorld = combinedXf * lightDecl->transform;
+      const auto lightXf{combinedXf * MotionXf(lightDecl->transform)};
+      light.lightToWorld = lightXf.open;
+      light.lightToWorldShut = lightXf.shutKey();
       light.placeName = placeName;
       if (lightDecl->kind == LayoutLightDecl::Kind::PROFILE)
         light.decl.profilePath = resolvePath(document, lightDecl->profilePath,
@@ -517,7 +576,7 @@ private:
       const bool lightMark{lightOf(*decl, effectiveMarks, nullptr)};
       auto &item{mResult.items.emplace_back()};
       item.primitive = decl->primitive;
-      item.objectToWorld = combinedXf * decl->transform;
+      placeItem(item, combinedXf * MotionXf(decl->transform));
       item.materials = decl->materials;
       item.materials.renames =
           composeRename(document.materialAliases, effectiveOuter);
@@ -543,7 +602,7 @@ private:
         passed.light = true;
         passed.lightLoc = decl->lightLoc ? decl->lightLoc : decl->nameLoc;
       }
-      lowerFile(target.path, combinedXf * decl->transform,
+      lowerFile(target.path, combinedXf * MotionXf(decl->transform),
                 composeRename(subtreeRenames(decl->materials, decl->pathLoc),
                               effectiveOuter),
                 passed, false, decl->pathLoc);
@@ -553,7 +612,8 @@ private:
     const bool lightMark{lightOf(*decl, effectiveMarks, &target)};
     auto &item{mResult.items.emplace_back()};
     item.fileName = target.path;
-    item.objectToWorld = combinedXf * decl->transform * target.correction;
+    placeItem(item, combinedXf * MotionXf(decl->transform) *
+                        MotionXf(target.correction));
     if (target.kind == Target::Kind::CURVES) {
       item.curves = decl->curves;
       item.curves.active = true;
@@ -658,14 +718,14 @@ private:
   }
 
   void lowerImport(const LayoutDocument &document,
-                   const LayoutPlacement &placement, const float4x4 &xf,
+                   const LayoutPlacement &placement, const MotionXf &xf,
                    const RenameMap &outerRenames,
                    const MarkOverrides &outerMarks) {
     const auto target{
         resolveTarget(document, placement.importPath, placement.importPathLoc)};
     const auto effectiveMarks{outerMarks.over(placement)};
     if (target.kind == Target::Kind::LAYOUT) {
-      lowerFile(target.path, xf * placement.transform,
+      lowerFile(target.path, xf * MotionXf(placement.transform),
                 composeRename(subtreeRenames(placement.importMaterials,
                                              placement.importPathLoc),
                               outerRenames),
@@ -709,7 +769,8 @@ private:
     auto &item{mResult.items.emplace_back()};
     item.fileName = target.path;
     item.curves.active = target.kind == Target::Kind::CURVES;
-    item.objectToWorld = xf * placement.transform * target.correction;
+    placeItem(item,
+              xf * MotionXf(placement.transform) * MotionXf(target.correction));
     item.materials = placement.importMaterials;
     item.materials.renames =
         composeRename(document.materialAliases, outerRenames);
@@ -839,7 +900,7 @@ Layout lowerLayout(LayoutDiagnostics &diags, const std::string &fileName,
                    const AssetSearchPath &search) {
   auto result{Layout()};
   Lowerer(diags, search, result)
-      .lowerFile(fileName, float4x4(1.0f), {}, {}, true, {});
+      .lowerFile(fileName, MotionXf(), {}, {}, true, {});
   return result;
 }
 

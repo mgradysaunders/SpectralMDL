@@ -294,7 +294,7 @@ static cl::OptionCategory catCameraLens{"Camera-Lens Options"};
 static cl::opt<float> optShutterSpeed{
     "shutter-speed",
     cl::desc("The seconds the shutter stays open, overriding the layout's "
-             "'time' directive (default: 0, closed)"),
+             "'time' directive (default: 0, shut)"),
     cl::init(0.0f), cl::cat(catCameraLens)};
 static cl::opt<float> optFStop{
     "fstop", cl::desc("Enable DOF by f-number assuming 35mm-format frame"),
@@ -1065,7 +1065,7 @@ int main(int argc, char **argv) try {
   // finite or, for the shutter, negative.
   renderTime() = pick(optTime, layout.time.base);
   renderShutter() = pick(optShutterSpeed, layout.time.shutter);
-  // The camera's close keys. The layout wrote them against its own
+  // The camera's shut keys. The layout wrote them against its own
   // framing, so a flag that replaces that framing drops them rather
   // than moving a camera the file never described; a key the block
   // leaves unstated holds its open value.
@@ -1080,15 +1080,41 @@ int main(int argc, char **argv) try {
                     " replaces the framing the layout's 'motion' was "
                     "written against");
     } else if (!(renderShutter() > 0)) {
-      SMDL_LOG_INFO("Camera motion: the shutter is closed, so the camera "
+      SMDL_LOG_INFO("Camera motion: the shutter is shut, so the camera "
                     "holds its open framing");
     } else {
       const auto &motion{*fileCamera.motion};
       cameraOptions.motion = true;
-      cameraOptions.lookFromClose =
+      cameraOptions.lookFromShut =
           motion.lookFrom.value_or(cameraOptions.lookFrom);
-      cameraOptions.lookToClose = motion.lookTo.value_or(cameraOptions.lookTo);
-      cameraOptions.lookUpClose = motion.lookUp.value_or(cameraOptions.lookUp);
+      cameraOptions.lookToShut = motion.lookTo.value_or(cameraOptions.lookTo);
+      cameraOptions.lookUpShut = motion.lookUp.value_or(cameraOptions.lookUp);
+    }
+  }
+  // The instances' shut keys under a shut shutter are cleared, so
+  // that every placement builds and renders through the static path,
+  // which is what the layout without its 'motion' blocks renders.
+  {
+    size_t numMovingItems{};
+    size_t numMovingLights{};
+    for (const auto &item : layout.items)
+      numMovingItems += item.objectToWorldShut || !item.batchXfsShut.empty();
+    for (const auto &light : layout.lights)
+      numMovingLights += light.lightToWorldShut.has_value();
+    if (numMovingItems + numMovingLights > 0) {
+      if (!(renderShutter() > 0)) {
+        for (auto &item : layout.items) {
+          item.objectToWorldShut.reset();
+          item.batchXfsShut.clear();
+        }
+        for (auto &light : layout.lights) light.lightToWorldShut.reset();
+        SMDL_LOG_INFO("Instance motion: the shutter is shut, so ",
+                      numMovingItems, " placement(s) and ", numMovingLights,
+                      " light(s) hold their open keys");
+      } else {
+        SMDL_LOG_INFO("Instance motion: ", numMovingItems, " placement(s) and ",
+                      numMovingLights, " light(s) move over the shutter");
+      }
     }
   }
   // Under -autolook the position comes from measuring the committed scene,

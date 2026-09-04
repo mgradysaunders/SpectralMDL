@@ -845,14 +845,62 @@ private:
       }
       return;
     }
+    if (op == "motion") {
+      parsePlaceMotion(placement, opLoc);
+      return;
+    }
     if (!parseTransformOp(op, opLoc, placement.transform)) {
       mDiags.error(opLoc,
                    smdl::concat("unknown place operation ", smdl::Quoted(op),
                                 " (expected material, variant, caster, "
-                                "light, translate, scale, rotate, rotate_x, "
-                                "rotate_y, rotate_z, or matrix)"));
+                                "light, motion, translate, scale, rotate, "
+                                "rotate_x, rotate_y, rotate_z, or matrix)"));
       throw Recover();
     }
+  }
+
+  // The `motion { ... }` block of a place: the placement's transform at
+  // shutter shut, accumulated from identity by the same operations
+  // that state it at open. One block per place; a second is an error
+  // rather than a merge, since the block is one transform.
+  void parsePlaceMotion(LayoutPlacement &placement,
+                        const LayoutLocation &opLoc) {
+    if (placement.motion) {
+      mDiags.error(opLoc, "'motion' appears twice in one place")
+          .note(placement.motionLoc, "first written here");
+      throw Recover();
+    }
+    if (mToken.kind != Token::OPEN) {
+      mDiags.error(location(), "expected '{' after 'motion'");
+      throw Recover();
+    }
+    advance(); // '{'
+    auto xf{float4x4(1.0f)};
+    while (mToken.kind != Token::CLOSE) {
+      if (mToken.kind == Token::END) {
+        mDiags.error(location(), "expected '}' before end of file");
+        throw Recover();
+      }
+      if (mToken.kind != Token::WORD) {
+        mDiags.error(location(), "expected a transform operation or '}'");
+        throw Recover();
+      }
+      const auto innerOp{mToken.text};
+      const auto innerLoc{location()};
+      advance();
+      if (!parseTransformOp(innerOp, innerLoc, xf)) {
+        mDiags.error(innerLoc,
+                     smdl::concat("expected a transform operation inside "
+                                  "'motion', got ",
+                                  smdl::Quoted(innerOp),
+                                  " (translate, scale, rotate, rotate_x, "
+                                  "rotate_y, rotate_z, or matrix)"));
+        throw Recover();
+      }
+    }
+    advance(); // '}'
+    placement.motion = xf;
+    placement.motionLoc = opLoc;
   }
 
   // The `<word>` / `<word> off` override of a place or an import, for
@@ -913,6 +961,14 @@ private:
             .error(opLoc, "'at' blocks were retired with the '.scene' "
                           "format")
             .note({}, "write one top-level 'place' per instance instead");
+        throw Recover();
+      }
+      if (op == "motion") {
+        mDiags
+            .error(opLoc, "'motion' is a place operation, not an import "
+                          "operation")
+            .note({}, "declare the file as an asset and 'place' it with a "
+                      "'motion' block");
         throw Recover();
       }
       if (op == "material") {
@@ -1108,7 +1164,7 @@ private:
   }
 
   // The `motion { ... }` block inside `camera`: the framing at shutter
-  // close, merged per field like the block around it.
+  // shut, merged per field like the block around it.
   void parseCameraMotion(LayoutCamera &camera) {
     if (mToken.kind != Token::OPEN) {
       mDiags.error(location(), "expected '{' after 'motion'");
@@ -1284,7 +1340,7 @@ private:
         const auto value{finite(keyLoc, key, numbers<1>()[0])};
         if (!(value >= 0)) {
           mDiags.error(keyLoc, "expected a nonnegative number for 'shutter' "
-                               "(0 or omitted is a closed shutter)");
+                               "(0 or omitted is a shut shutter)");
           throw Recover();
         }
         time.shutter = value;

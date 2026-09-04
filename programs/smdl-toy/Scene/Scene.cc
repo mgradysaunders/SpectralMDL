@@ -172,12 +172,20 @@ Scene::~Scene() {
 void Scene::add(const std::string &fileName, const float4x4 &objectToWorld,
                 const ObjectSelection &selection, const SubdivSpec &subdiv,
                 const MaterialAssignment &materials) {
-  addMesh(fileName, smdl::Span<const float4x4>(&objectToWorld, 1), selection,
-          subdiv, materials);
+  addMesh(fileName, smdl::Span<const float4x4>(&objectToWorld, 1), {},
+          selection, subdiv, materials);
+}
+
+// The one shut key of a single placement, or nothing for a static one.
+[[nodiscard]] static std::optional<float4x4>
+firstKey(smdl::Span<const float4x4> keys) {
+  if (keys.empty()) return std::nullopt;
+  return keys[0];
 }
 
 void Scene::addMesh(const std::string &fileName,
                     smdl::Span<const float4x4> worldXfs,
+                    smdl::Span<const float4x4> worldXfsShut,
                     const ObjectSelection &selection, const SubdivSpec &subdiv,
                     const MaterialAssignment &materials) {
   // Layout files place the same file more than once as a matter of
@@ -281,13 +289,15 @@ void Scene::addMesh(const std::string &fileName,
       nodeXf[3] = float4(float3(nodeXf[3]) - origin, nodeXf[3].w);
     }
     if (worldXfs.size() == 1) {
+      auto shutXf{firstKey(worldXfsShut)};
+      if (shutXf) *shutXf = *shutXf * nodeXf;
       addInstance(placement.meshIndex, INVALID_INDEX, INVALID_INDEX,
-                  worldXfs[0] * nodeXf, fileName,
+                  worldXfs[0] * nodeXf, shutXf, fileName,
                   instanceMaterial(placement.meshIndex));
       numInstances++;
     } else {
       addInstanceArray(placement.meshIndex, INVALID_INDEX, INVALID_INDEX,
-                       worldXfs, nodeXf, fileName,
+                       worldXfs, worldXfsShut, nodeXf, fileName,
                        instanceMaterial(placement.meshIndex));
       numInstances += uint32_t(worldXfs.size());
     }
@@ -307,13 +317,21 @@ void Scene::add(const LayoutItem &item) {
                           ? smdl::Span<const float4x4>(&item.objectToWorld, 1)
                           : smdl::Span<const float4x4>(item.batchXfs.data(),
                                                        item.batchXfs.size())};
+  const auto worldXfsShut{
+      item.batchXfs.empty()
+          ? (item.objectToWorldShut
+                 ? smdl::Span<const float4x4>(&*item.objectToWorldShut, 1)
+                 : smdl::Span<const float4x4>())
+          : smdl::Span<const float4x4>(item.batchXfsShut.data(),
+                                       item.batchXfsShut.size())};
   const auto firstInstance{meshInstances.size()};
   if (item.primitive.active()) {
-    addPrimitive(item.primitive, worldXfs, item.materials);
+    addPrimitive(item.primitive, worldXfs, worldXfsShut, item.materials);
   } else if (item.curves.active) {
-    addCurves(item.fileName, worldXfs, item.curves, item.materials);
+    addCurves(item.fileName, worldXfs, worldXfsShut, item.curves,
+              item.materials);
   } else {
-    addMesh(item.fileName, worldXfs, item.selection, item.subdiv,
+    addMesh(item.fileName, worldXfs, worldXfsShut, item.selection, item.subdiv,
             item.materials);
   }
   // Every instance the item produced carries its mark; the lowering has
@@ -331,6 +349,7 @@ void Scene::add(const LayoutItem &item) {
 
 uint32_t Scene::addPrimitive(const PrimitiveSpec &spec,
                              smdl::Span<const float4x4> worldXfs,
+                             smdl::Span<const float4x4> worldXfsShut,
                              const MaterialAssignment &materials) {
   // The same split `add()` gives meshes, without the displacement
   // exception: an analytic shape has no vertices for a material to
@@ -357,13 +376,14 @@ uint32_t Scene::addPrimitive(const PrimitiveSpec &spec,
   fileNames.push_back(smdl::concat("<", spec.name(), ">"));
   if (worldXfs.size() == 1)
     return addInstance(INVALID_INDEX, primIndex, INVALID_INDEX, worldXfs[0],
-                       spec.name(), matIndex);
+                       firstKey(worldXfsShut), spec.name(), matIndex);
   return addInstanceArray(INVALID_INDEX, primIndex, INVALID_INDEX, worldXfs,
-                          float4x4(1.0f), spec.name(), matIndex);
+                          worldXfsShut, float4x4(1.0f), spec.name(), matIndex);
 }
 
 uint32_t Scene::addCurves(const std::string &fileName,
                           smdl::Span<const float4x4> worldXfs,
+                          smdl::Span<const float4x4> worldXfsShut,
                           const CurvesSpec &spec,
                           const MaterialAssignment &materials) {
   // The same split `addPrimitive()` gives shapes: fibers have one
@@ -401,9 +421,9 @@ uint32_t Scene::addCurves(const std::string &fileName,
   fileNames.push_back(fileName);
   if (worldXfs.size() == 1)
     return addInstance(INVALID_INDEX, INVALID_INDEX, curvesIndex, worldXfs[0],
-                       fileName, matIndex);
+                       firstKey(worldXfsShut), fileName, matIndex);
   return addInstanceArray(INVALID_INDEX, INVALID_INDEX, curvesIndex, worldXfs,
-                          float4x4(1.0f), fileName, matIndex);
+                          worldXfsShut, float4x4(1.0f), fileName, matIndex);
 }
 
 ImportFile Scene::load(const aiScene &assScene, const SubdivSpec &subdiv,
@@ -428,8 +448,88 @@ ImportFile Scene::load(const aiScene &assScene, const SubdivSpec &subdiv,
   return file;
 }
 
+RTCQuaternionDecomposition
+quaternionDecompositionOf(const float4x4 &xf) noexcept {
+  const auto m0{float3(xf[0])};
+  const auto m1{float3(xf[1])};
+  const auto m2{float3(xf[2])};
+  const float sx{length(m0)};
+  const float3 q0{m0 / sx};
+  const float skewXY{dot(q0, m1)};
+  const float3 v1{m1 - skewXY * q0};
+  const float sy{length(v1)};
+  const float3 q1{v1 / sy};
+  const float3 q2{cross(q0, q1)};
+  const float skewXZ{dot(q0, m2)};
+  const float skewYZ{dot(q1, m2)};
+  const float sz{dot(q2, m2)};
+  // The rotation (q0 q1 q2) as a quaternion, by the largest of the
+  // trace and the diagonal, which keeps the divisor away from zero.
+  // `r<row><column>`; Embree normalizes what it is given.
+  const float r00{q0.x}, r10{q0.y}, r20{q0.z};
+  const float r01{q1.x}, r11{q1.y}, r21{q1.z};
+  const float r02{q2.x}, r12{q2.y}, r22{q2.z};
+  float w{}, x{}, y{}, z{};
+  if (const float trace{r00 + r11 + r22}; trace >= 0.0f) {
+    const float t{1.0f + trace};
+    const float s{0.5f / std::sqrt(t)};
+    w = t * s;
+    x = (r21 - r12) * s;
+    y = (r02 - r20) * s;
+    z = (r10 - r01) * s;
+  } else if (r00 >= std::max(r11, r22)) {
+    const float t{(1.0f + r00) - (r11 + r22)};
+    const float s{0.5f / std::sqrt(t)};
+    w = (r21 - r12) * s;
+    x = t * s;
+    y = (r10 + r01) * s;
+    z = (r02 + r20) * s;
+  } else if (r11 >= r22) {
+    const float t{(1.0f + r11) - (r22 + r00)};
+    const float s{0.5f / std::sqrt(t)};
+    w = (r02 - r20) * s;
+    x = (r10 + r01) * s;
+    y = t * s;
+    z = (r21 + r12) * s;
+  } else {
+    const float t{(1.0f + r22) - (r00 + r11)};
+    const float s{0.5f / std::sqrt(t)};
+    w = (r10 - r01) * s;
+    x = (r02 + r20) * s;
+    y = (r21 + r12) * s;
+    z = t * s;
+  }
+  RTCQuaternionDecomposition qd{};
+  rtcInitQuaternionDecomposition(&qd);
+  rtcQuaternionDecompositionSetScale(&qd, sx, sy, sz);
+  rtcQuaternionDecompositionSetSkew(&qd, skewXY, skewXZ, skewYZ);
+  rtcQuaternionDecompositionSetQuaternion(&qd, w, x, y, z);
+  rtcQuaternionDecompositionSetTranslation(&qd, xf[3].x, xf[3].y, xf[3].z);
+  return qd;
+}
+
+// Can Embree interpolate between the two keys? A pair whose
+// determinants differ in sign passes through a collapsed object
+// mid-shutter, which no interpolation renders; such an instance is
+// warned about and holds its open key.
+[[nodiscard]] static bool keysInterpolate(const float4x4 &xf,
+                                          const float4x4 &xfShut,
+                                          std::string_view fileName) {
+  const auto det{[](const float4x4 &m) {
+    return dot(float3(m[0]), cross(float3(m[1]), float3(m[2])));
+  }};
+  if ((det(xf) < 0.0f) != (det(xfShut) < 0.0f)) {
+    SMDL_LOG_WARN("Instance motion in ", smdl::QuotedPath(fileName),
+                  " turns the object inside out over the shutter, which no "
+                  "interpolation can render; it holds its open key.");
+    return false;
+  }
+  return true;
+}
+
 uint32_t Scene::addInstance(uint32_t meshIndex, uint32_t primIndex,
                             uint32_t curvesIndex, const float4x4 &xf,
+                            const std::optional<float4x4> &xfShut,
                             std::string_view fileName, uint32_t matIndex) {
   // Embree gets the authored transform in full. It intersects in the
   // instance's own space and reports barycentrics, which are affine
@@ -444,9 +544,24 @@ uint32_t Scene::addInstance(uint32_t meshIndex, uint32_t primIndex,
   instance.matIndex = matIndex;
   auto inst{rtcNewGeometry(device, RTC_GEOMETRY_TYPE_INSTANCE)};
   rtcSetGeometryBuildQuality(inst, RTC_BUILD_QUALITY_HIGH);
-  rtcSetGeometryTimeStepCount(inst, 1);
-  rtcSetGeometryTransform(inst, 0, RTC_FORMAT_FLOAT4X4_COLUMN_MAJOR,
-                          &instance.frame.objectToWorld[0][0]);
+  if (xfShut && keysInterpolate(xf, *xfShut, fileName)) {
+    // A moving instance takes the quaternion form at both keys, so a
+    // turn over the shutter turns rather than thinning through the
+    // chord of its matrices: Embree slerps the rotation and lerps the
+    // rest. A static instance keeps the matrix form and one step, so
+    // its traversal and its transform are exactly the static ones.
+    const auto open{quaternionDecompositionOf(xf)};
+    const auto shut{quaternionDecompositionOf(*xfShut)};
+    rtcSetGeometryTimeStepCount(inst, 2);
+    rtcSetGeometryTransformQuaternion(inst, 0, &open);
+    rtcSetGeometryTransformQuaternion(inst, 1, &shut);
+    instance.isMoving = true;
+    SMDL_LOG_DEBUG("Moving instance of ", smdl::QuotedPath(fileName));
+  } else {
+    rtcSetGeometryTimeStepCount(inst, 1);
+    rtcSetGeometryTransform(inst, 0, RTC_FORMAT_FLOAT4X4_COLUMN_MAJOR,
+                            &instance.frame.objectToWorld[0][0]);
+  }
   rtcSetGeometryInstancedScene(
       inst, curvesIndex != INVALID_INDEX ? curves[curvesIndex]->scene
             : primIndex != INVALID_INDEX ? primitives[primIndex]->scene
@@ -467,33 +582,59 @@ uint32_t Scene::addInstance(uint32_t meshIndex, uint32_t primIndex,
 uint32_t Scene::addInstanceArray(uint32_t meshIndex, uint32_t primIndex,
                                  uint32_t curvesIndex,
                                  smdl::Span<const float4x4> worldXfs,
+                                 smdl::Span<const float4x4> worldXfsShut,
                                  const float4x4 &nodeXf,
                                  std::string_view fileName, uint32_t matIndex) {
   // One geometry for the whole batch: Embree reads the transforms from
   // its own buffer (written row-major, exactly the `.places` record
-  // layout), and reports hits as (this geometry, element index), which
+  // layout, or one quaternion-form buffer per key for a moving batch),
+  // and reports hits as (this geometry, element index), which
   // `instanceIndexOf()` folds back onto the contiguous run of
   // `MeshInstance` entries appended here. The per-instance derived
   // matrices (rigid frame, cofactor) are still materialized per entry,
   // because every hit consumer wants them; what the array removes is
   // the per-instance Embree geometry, its commit, and its footprint in
   // the top-level BVH build.
+  SMDL_SANITY_CHECK(worldXfsShut.empty() ||
+                    worldXfsShut.size() == worldXfs.size());
+  // A batch moves as a whole or not at all: one element that cannot be
+  // interpolated holds the whole array at its open keys.
+  bool moving{!worldXfsShut.empty()};
+  for (size_t i = 0; moving && i < worldXfs.size(); i++)
+    moving = keysInterpolate(worldXfs[i] * nodeXf, worldXfsShut[i] * nodeXf,
+                             fileName);
   auto geometry{rtcNewGeometry(device, RTC_GEOMETRY_TYPE_INSTANCE_ARRAY)};
   rtcSetGeometryBuildQuality(geometry, RTC_BUILD_QUALITY_HIGH);
-  rtcSetGeometryTimeStepCount(geometry, 1);
+  rtcSetGeometryTimeStepCount(geometry, moving ? 2 : 1);
   rtcSetGeometryInstancedScene(
       geometry, curvesIndex != INVALID_INDEX ? curves[curvesIndex]->scene
                 : primIndex != INVALID_INDEX ? primitives[primIndex]->scene
                                              : meshes[meshIndex]->scene);
-  auto *transforms{static_cast<float *>(rtcSetNewGeometryBuffer(
-      geometry, RTC_BUFFER_TYPE_TRANSFORM, 0, RTC_FORMAT_FLOAT3X4_ROW_MAJOR,
-      sizeof(float) * 12, worldXfs.size()))};
+  float *transforms{};
+  RTCQuaternionDecomposition *keys[2]{};
+  if (!moving) {
+    transforms = static_cast<float *>(rtcSetNewGeometryBuffer(
+        geometry, RTC_BUFFER_TYPE_TRANSFORM, 0, RTC_FORMAT_FLOAT3X4_ROW_MAJOR,
+        sizeof(float) * 12, worldXfs.size()));
+  } else {
+    for (unsigned step = 0; step < 2; step++)
+      keys[step] =
+          static_cast<RTCQuaternionDecomposition *>(rtcSetNewGeometryBuffer(
+              geometry, RTC_BUFFER_TYPE_TRANSFORM, step,
+              RTC_FORMAT_QUATERNION_DECOMPOSITION,
+              sizeof(RTCQuaternionDecomposition), worldXfs.size()));
+  }
   const auto base{uint32_t(meshInstances.size())};
   for (size_t i = 0; i < worldXfs.size(); i++) {
     const auto xf{worldXfs[i] * nodeXf};
-    for (int row = 0; row < 3; row++)
-      for (int column = 0; column < 4; column++)
-        transforms[12 * i + 4 * row + column] = xf[column][row];
+    if (!moving) {
+      for (int row = 0; row < 3; row++)
+        for (int column = 0; column < 4; column++)
+          transforms[12 * i + 4 * row + column] = xf[column][row];
+    } else {
+      keys[0][i] = quaternionDecompositionOf(xf);
+      keys[1][i] = quaternionDecompositionOf(worldXfsShut[i] * nodeXf);
+    }
     auto instance{MeshInstance()};
     instance.setObjectToWorld(xf, fileName);
     instance.meshIndex = meshIndex;
@@ -502,6 +643,7 @@ uint32_t Scene::addInstanceArray(uint32_t meshIndex, uint32_t primIndex,
     instance.matIndex = matIndex;
     instance.geometry = geometry;
     instance.instPrimID = unsigned(i);
+    instance.isMoving = moving;
     meshInstances.push_back(instance);
   }
   rtcCommitGeometry(geometry);
@@ -511,7 +653,7 @@ uint32_t Scene::addInstanceArray(uint32_t meshIndex, uint32_t primIndex,
     instanceBaseByGeomID.resize(size_t(geomID) + 1, INVALID_INDEX);
   instanceBaseByGeomID[geomID] = base;
   SMDL_LOG_DEBUG("Instance array: ", worldXfs.size(), " element(s) of ",
-                 fileName);
+                 fileName, moving ? ", moving" : "");
   return base;
 }
 
@@ -535,7 +677,7 @@ uint32_t Scene::addGroundPlane(float z, float halfExtent,
   mesh->faces = {{0, 1, 2}, {0, 2, 3}};
   buildMeshGeometry(*mesh);
   return addInstance(uint32_t(meshes.size() - 1), INVALID_INDEX, INVALID_INDEX,
-                     float4x4(1.0f), "ground plane");
+                     float4x4(1.0f), std::nullopt, "ground plane");
 }
 
 BoundBox3 Scene::preCommitBounds() const {

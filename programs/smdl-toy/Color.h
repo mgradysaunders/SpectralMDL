@@ -84,7 +84,7 @@ wavelengthBandEdges(smdl::Span<const float> wavelens) {
 }
 
 /// The render-wide shutter length in seconds. The shutter is open iff
-/// this is positive; closed, every path is at shutter open.
+/// this is positive; shut, every path is at shutter open.
 [[nodiscard]] inline float &renderShutter() noexcept {
   static float shutter{};
   return shutter;

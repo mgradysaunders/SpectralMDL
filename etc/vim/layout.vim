@@ -206,6 +206,12 @@ syn keyword layoutTransform
       \ translate scale rotate rotate_x rotate_y rotate_z matrix
 syn keyword layoutVariant variant nextgroup=layoutVariantBlock skipwhite skipempty
 
+" motion { ... } on a place: the placement's transform at shutter shut,
+" holding transform operations only. Top level like `variant`, since a
+" one-line place writes it outside any block; the camera's `motion` is the
+" contained setting above, which wins inside the camera block.
+syn keyword layoutMotionOp motion nextgroup=layoutMotionBlock skipwhite skipempty
+
 " Asset operations. `radius`, `height`, and `size` belong to a shape,
 " `radius_scale` to a `.curves` file, and the rest to a mesh file.
 syn keyword layoutAssetOp contained select recenter subdivide displace tube ribbon
@@ -237,7 +243,7 @@ syn keyword layoutCameraSetting contained aperture focus blades blade_angle
 syn keyword layoutCameraSetting contained distortion_k1 distortion_k2 distortion_fit
 syn keyword layoutCameraSetting contained vignetting cat_eye cat_eye_radius
 
-" motion { ... } inside camera: the framing at shutter close.
+" motion { ... } inside camera: the framing at shutter shut.
 syn keyword layoutCameraSetting contained motion
       \ nextgroup=layoutCameraMotionBlock skipwhite skipempty
 syn keyword layoutCameraMotionSetting contained look_from look_to look_up
@@ -272,15 +278,19 @@ syn region layoutLightBlock contained matchgroup=layoutDelim start="{" end="}"
 " never becomes a scope.
 syn region layoutGroupBlock contained matchgroup=layoutDelim start="{" end="}"
       \ contains=@layoutCommon,layoutPlaceStmt,layoutTransform,layoutMaterialOp,
-      \ layoutVariant,layoutCasterOp
+      \ layoutVariant,layoutCasterOp,layoutMotionOp
 
 syn region layoutPlaceBlock contained matchgroup=layoutDelim start="{" end="}"
       \ contains=@layoutCommon,layoutTransform,layoutMaterialOp,layoutVariant,
-      \ layoutCasterOp
+      \ layoutCasterOp,layoutMotionOp
 
 " A variant holds `material <from> = <to>` overrides and nothing else.
 syn region layoutVariantBlock contained matchgroup=layoutDelim start="{" end="}"
       \ contains=@layoutCommon,layoutMaterialOp
+
+" A motion block holds transform operations and nothing else.
+syn region layoutMotionBlock contained matchgroup=layoutDelim start="{" end="}"
+      \ contains=@layoutCommon,layoutTransform
 
 syn region layoutImportBlock contained matchgroup=layoutDelim start="{" end="}"
       \ contains=@layoutCommon,layoutTransform,layoutMaterialOp,layoutCasterOp
@@ -330,6 +340,7 @@ hi def link layoutLightStmt       Statement
 hi def link layoutCausticOp       Keyword
 hi def link layoutCasterOff       Keyword
 hi def link layoutVariant         Keyword
+hi def link layoutMotionOp        Keyword
 hi def link layoutAs              Keyword
 
 hi def link layoutAssetSetting    Label

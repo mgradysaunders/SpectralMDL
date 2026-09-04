@@ -322,7 +322,7 @@ TEST_CASE("LayoutParser: the time directive") {
     CHECK(*document.time.base == doctest::Approx(2.0f));
     CHECK(*document.time.shutter == doctest::Approx(0.5f));
   }
-  SUBCASE("A zero shutter is a closed shutter, not an error") {
+  SUBCASE("A zero shutter is a shut shutter, not an error") {
     const auto document{parseOK(diags, "#smdl layout\ntime { shutter 0 }\n")};
     CHECK(*document.time.shutter == 0.0f);
   }
@@ -447,5 +447,129 @@ TEST_CASE("LayoutParser: the camera motion block") {
     REQUIRE(diags.errorCount() == 1);
     CHECK(diags.all().front().message.find("unknown directive") !=
           std::string::npos);
+  }
+}
+
+TEST_CASE("LayoutParser: the motion block on a place") {
+  LayoutDiagnostics diags{};
+  SUBCASE("Absent, the placement is static") {
+    const auto document{parseOK(diags, "#smdl layout\n"
+                                       "asset ball = sphere { material m }\n"
+                                       "place ball translate 0 0 3\n")};
+    REQUIRE(document.placements.size() == 1);
+    CHECK(!document.placements[0].motion);
+    CHECK(!document.placements[0].motionLoc);
+  }
+  SUBCASE("The one-line form: the block restates the transform at shut") {
+    const auto document{parseOK(
+        diags, "#smdl layout\n"
+               "asset ball = sphere { material m }\n"
+               "place ball translate 0 0 3 motion { translate 0 0 3.2 }\n")};
+    REQUIRE(document.placements.size() == 1);
+    const auto &place{document.placements[0]};
+    CHECK(place.transform[3].z == doctest::Approx(3.0f));
+    REQUIRE(place.motion);
+    CHECK((*place.motion)[3].x == doctest::Approx(0.0f));
+    CHECK((*place.motion)[3].z == doctest::Approx(3.2f));
+    CHECK(place.motionLoc);
+  }
+  SUBCASE("The block form, beside a rename, with operations in order") {
+    const auto document{parseOK(diags,
+                                "#smdl layout\n"
+                                "asset rock = \"rock.obj\"\n"
+                                "place rock {\n"
+                                "  material a = b\n"
+                                "  translate 1 0 0\n"
+                                "  motion { translate 2 0 0 rotate_z 90 }\n"
+                                "}\n")};
+    REQUIRE(document.placements.size() == 1);
+    const auto &place{document.placements[0]};
+    CHECK(place.overrides.size() == 1);
+    CHECK(place.transform[3].x == doctest::Approx(1.0f));
+    REQUIRE(place.motion);
+    // The translation, then the turn about the origin, so the placed
+    // origin lands on the y axis.
+    CHECK((*place.motion)[3].x == doctest::Approx(0.0f));
+    CHECK((*place.motion)[3].y == doctest::Approx(2.0f));
+  }
+  SUBCASE("A block spanning lines in the one-line form") {
+    const auto document{parseOK(diags, "#smdl layout\n"
+                                       "asset ball = sphere { material m }\n"
+                                       "place ball translate 1 0 0 motion {\n"
+                                       "  translate 2 0 0\n"
+                                       "}\n"
+                                       "place ball\n")};
+    REQUIRE(document.placements.size() == 2);
+    REQUIRE(document.placements[0].motion);
+    CHECK((*document.placements[0].motion)[3].x == doctest::Approx(2.0f));
+    CHECK(!document.placements[1].motion);
+  }
+  SUBCASE("On a group's place and on a bulk place") {
+    const auto document{parseOK(
+        diags, "#smdl layout\n"
+               "asset ball = sphere { material m }\n"
+               "group rig { place ball motion { translate 1 0 0 } }\n"
+               "place ball * \"pair.places\" motion { rotate_z 10 }\n")};
+    REQUIRE(document.groups.size() == 1);
+    REQUIRE(document.groups[0].placements.size() == 1);
+    CHECK(document.groups[0].placements[0].motion);
+    REQUIRE(document.placements.size() == 1);
+    CHECK(document.placements[0].placesPath == "pair.places");
+    CHECK(document.placements[0].motion);
+  }
+  SUBCASE("A second block on one place is an error, not a merge") {
+    const auto &source{diags.addSource(
+        "test.layout", "#smdl layout\n"
+                       "asset ball = sphere { material m }\n"
+                       "place ball motion { translate 1 0 0 } motion { "
+                       "translate 2 0 0 }\n"
+                       "place ball\n")};
+    const auto document{parseLayout(diags, source, "/nowhere")};
+    REQUIRE(diags.errorCount() == 1);
+    CHECK(diags.all().front().message.find("'motion' appears twice") !=
+          std::string::npos);
+    REQUIRE(document.placements.size() == 2);
+    REQUIRE(document.placements[0].motion);
+    CHECK((*document.placements[0].motion)[3].x == doctest::Approx(1.0f));
+    CHECK(!document.placements[1].motion);
+  }
+  SUBCASE("On an import it is an error") {
+    const auto &source{diags.addSource(
+        "test.layout", "#smdl layout\n"
+                       "import \"rock.obj\" { motion { translate 1 0 0 } }\n"
+                       "asset ball = sphere { material m }\n"
+                       "place ball\n")};
+    const auto document{parseLayout(diags, source, "/nowhere")};
+    REQUIRE(diags.errorCount() == 1);
+    CHECK(diags.all().front().message.find("place operation") !=
+          std::string::npos);
+    CHECK(document.placements.size() == 2);
+  }
+  SUBCASE("Only transform operations are admitted inside") {
+    const auto &source{diags.addSource("test.layout",
+                                       "#smdl layout\n"
+                                       "asset ball = sphere { material m }\n"
+                                       "place ball motion { material a = b }\n"
+                                       "place ball\n")};
+    const auto document{parseLayout(diags, source, "/nowhere")};
+    REQUIRE(diags.errorCount() == 1);
+    const auto &error{diags.all().front()};
+    CHECK(error.message.find("transform operation inside 'motion'") !=
+          std::string::npos);
+    CHECK(error.message.find("rotate_z, or matrix") != std::string::npos);
+    REQUIRE(document.placements.size() == 2);
+    CHECK(!document.placements[1].motion);
+  }
+  SUBCASE("The block needs its brace") {
+    const auto &source{diags.addSource("test.layout",
+                                       "#smdl layout\n"
+                                       "asset ball = sphere { material m }\n"
+                                       "place ball motion translate 1 0 0\n"
+                                       "place ball\n")};
+    const auto document{parseLayout(diags, source, "/nowhere")};
+    REQUIRE(diags.errorCount() == 1);
+    CHECK(diags.all().front().message.find("'{' after 'motion'") !=
+          std::string::npos);
+    CHECK(document.placements.size() == 2);
   }
 }

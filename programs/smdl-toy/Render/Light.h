@@ -91,9 +91,11 @@ public:
   /// arrivals keep their full weight.
   bool isSampled{};
 
-  /// The area-weighted distribution over the mesh faces. Empty for a
-  /// primitive light, which samples its shape analytically instead,
-  /// and for an unsampled light, which is never drawn.
+  /// The area-weighted distribution over the mesh faces, by world area
+  /// for a static light and by object area for a moving one, whose
+  /// world area is a function of time. Empty for a primitive light,
+  /// which samples its shape analytically instead, and for an unsampled
+  /// light, which is never drawn.
   smdl::Distribution1D faceDistr{};
 
   /// The total world-space surface area: the divisor `intensity_power`
@@ -114,20 +116,27 @@ public:
   /// reads as every light marked.
   bool caustic{};
 
-  /// The object-space surface area (primitive lights only).
+  /// The object-space surface area: a primitive's, or a moving mesh
+  /// light's, which is drawn by object area with the exact stretch of
+  /// the frame at the time the way a primitive is; zero for a static
+  /// mesh light, which is drawn by world area.
   float objectArea{};
 
-  /// The inverse of the instance's cofactor matrix (primitive lights
-  /// only): what turns a WORLD unit normal back into the local area
+  /// The inverse of the instance's cofactor matrix (static primitive
+  /// lights only; a moving light derives it from the frame at the
+  /// time): what turns a WORLD unit normal back into the local area
   /// stretch, so the MIS pdf of a BSDF-sampled hit is exact even under
   /// a deformed placement. See `LightSampler::solidAnglePDF()`.
   float3x3 invCofactor{};
 
   /// A sphere under a similarity placement, which `LightSampler::sample()`
-  /// draws by its cone from the receiver: the world center and radius,
-  /// the radius zero for every other light.
+  /// draws by its cone from the receiver: the world center and radius
+  /// at the open key, the radius zero for every other light, and the
+  /// object radius that the frame at a time turns into a moving sphere's
+  /// world center and radius.
   float3 sphereCenter{};
   float sphereRadius{};
+  float sphereObjectRadius{};
 };
 
 /// A light the layout declares: a point, a spot, an IES profile, a
@@ -137,8 +146,41 @@ public:
 /// MIS weight (see `LightSample::isReachable`). The punctual kinds are
 /// Dirac besides; the two shapes are sampled by area, one-sided and
 /// Lambertian, in the plane the placement puts them in.
+///
+/// A light whose placement carries a shut key moves as the camera
+/// does: the placement matrix lerps between the keys and the light is
+/// derived from the lerped matrix at the time asked about, so a turning
+/// spot's axis follows the chord of its end directions. Nothing in
+/// Embree traces these lights, so there is no second interpolation to
+/// agree with. The intensity is baked once, from the open key.
 class AnalyticLight final {
 public:
+  /// What a placement matrix derives to: the position, the local frame
+  /// of a punctual kind, and the in-plane axes, emitting-side normal,
+  /// and world area of a shape. A static light holds one; a moving
+  /// light derives one on the stack for the time asked about.
+  class Placement final {
+  public:
+    float3 position{};
+
+    /// Punctual kinds: the world-space rows of the local frame, emission
+    /// aiming along the local -Z axis. Columns of the placement,
+    /// normalized; a sheared placement gets the nearest frame rather
+    /// than an error.
+    float3 localX{1.0f, 0.0f, 0.0f};
+    float3 localY{0.0f, 1.0f, 0.0f};
+    float3 localZ{0.0f, 0.0f, 1.0f};
+
+    /// Shapes: the world-space in-plane axes, the placement's first two
+    /// columns unnormalized so that their lengths carry the scale; the
+    /// unit normal of the emitting side, which is the side the placement
+    /// maps local -Z into; and the world area.
+    float3 axisU{1.0f, 0.0f, 0.0f};
+    float3 axisV{0.0f, 1.0f, 0.0f};
+    float3 normal{0.0f, 0.0f, -1.0f};
+    float worldArea{};
+  };
+
   /// Bake the lowered light at the render wavelengths: the spectral
   /// shape (blackbody or flat, times the uplifted RGB tint) normalized
   /// to unit integral over the band, scaled into the per-kind
@@ -160,9 +202,10 @@ public:
   /// Punctual kinds: the unoccluded spectral incident radiance
   /// equivalent at `point`, the directional intensity toward it over
   /// the squared distance in meters. Zero outside a spot cone or the
-  /// profile's support.
-  [[nodiscard]] Color Li(const float3 &point,
-                         float metersPerSceneUnit) const noexcept;
+  /// profile's support. `time` is the path's shutter fraction, which
+  /// every method here takes and which only a moving light reads.
+  [[nodiscard]] Color Li(const float3 &point, float metersPerSceneUnit,
+                         float time) const noexcept;
 
   /// Punctual kinds: the same with the directional (spot cone or
   /// profile) factor evaluated toward `incidencePoint` instead, what a
@@ -172,7 +215,7 @@ public:
   /// the straight-line solid-angle measure the gather's estimator is
   /// built in.
   [[nodiscard]] Color Li(const float3 &point, const float3 &incidencePoint,
-                         float metersPerSceneUnit) const noexcept;
+                         float metersPerSceneUnit, float time) const noexcept;
 
   /// Shapes: a point on the shape as placed, and its density in solid
   /// angle at `receiver`. A rect whose placed axes are orthogonal is
@@ -181,24 +224,28 @@ public:
   /// Spherical Rectangles", 2013), so every direction into it is
   /// equally likely; otherwise, and for a disk, uniformly by area, which
   /// a planar shape keeps exact under any affine placement. The density
-  /// is zero when the receiver is in the shape's plane.
+  /// is zero when the receiver is in the shape's plane. A moving shape
+  /// pays its area at the time in the density, so a shape that grows
+  /// over the shutter emits more.
   [[nodiscard]] float3 sampleShape(const float3 &receiver, float2 xi,
-                                   float &pdf) const noexcept;
+                                   float &pdf, float time) const noexcept;
 
   /// Shapes: the radiance emitted from `lightPoint` on the shape toward
   /// `incidencePoint`, the baked radiance when that point is on the
   /// emitting side of the plane and zero behind it.
-  [[nodiscard]] Color Le(const float3 &lightPoint,
-                         const float3 &incidencePoint) const noexcept;
+  [[nodiscard]] Color Le(const float3 &lightPoint, const float3 &incidencePoint,
+                         float time) const noexcept;
 
   /// Shapes: the unit normal of the emitting side.
-  [[nodiscard]] const float3 &normal() const noexcept { return mNormal; }
+  [[nodiscard]] float3 normal(float time) const noexcept;
 
   /// The position in world space: the point itself, or the center of a
   /// shape.
-  [[nodiscard]] const float3 &position() const noexcept { return mPosition; }
+  [[nodiscard]] float3 position(float time) const noexcept;
 
-  /// The world-space box: the point itself, or a shape's corners.
+  /// The world-space box: the point itself, or a shape's corners, at
+  /// both keys of a moving light, which is a hull, since a lerped corner
+  /// moves on a segment.
   [[nodiscard]] BoundBox3 bounds() const noexcept;
 
   /// The light selection weight: the mean over the render bands of the
@@ -213,29 +260,30 @@ public:
   bool caustic{};
 
 private:
+  /// The placement `xf` derives to; see `Placement`.
+  [[nodiscard]] Placement derivePlacement(const float4x4 &xf) const noexcept;
+
+  /// The placement at `time`: `mPlacement` for a static light, and for
+  /// a moving one the lerped matrix derived into `scratch`. The
+  /// returned reference is to one or the other, never to a temporary.
+  [[nodiscard]] const Placement &
+  placementAt(float time, std::optional<Placement> &scratch) const noexcept;
+
   LayoutLightDecl::Kind mKind{LayoutLightDecl::Kind::POINT};
 
-  /// The position, or the center of a shape.
-  float3 mPosition{};
+  /// The placement at the open key, and the placement at every time of
+  /// a static light.
+  Placement mPlacement{};
 
-  /// Punctual kinds: the world-space rows of the local frame, emission
-  /// aiming along the local -Z axis. Columns of the placement,
-  /// normalized; a sheared placement gets the nearest frame rather than
-  /// an error.
-  float3 mLocalX{1.0f, 0.0f, 0.0f};
-  float3 mLocalY{0.0f, 1.0f, 0.0f};
-  float3 mLocalZ{0.0f, 0.0f, 1.0f};
+  /// The two keys, read only under `mMoving`.
+  bool mMoving{};
+  float4x4 mLightToWorld{float4x4(1.0f)};
+  float4x4 mLightToWorldShut{float4x4(1.0f)};
 
-  /// Shapes: the world-space in-plane axes, the placement's first two
-  /// columns unnormalized so that their lengths carry the scale; the
-  /// half extents along them in object units; the unit normal of the
-  /// emitting side, which is the side the placement maps local -Z
-  /// into; and the world area.
-  float3 mAxisU{1.0f, 0.0f, 0.0f};
-  float3 mAxisV{0.0f, 1.0f, 0.0f};
+  /// Shapes: the half extents along the in-plane axes in object units,
+  /// and the object area they enclose.
   float2 mHalfExtent{};
-  float3 mNormal{0.0f, 0.0f, -1.0f};
-  float mWorldArea{};
+  float mObjectArea{};
 
   /// The per-band spectral intensity: for the punctual kinds W/(sr nm),
   /// the full intensity of a point, the on-axis peak of a spot, and the
@@ -451,10 +499,14 @@ public:
   /// This is the same quantity the path tracer reads off an emitter it
   /// hits through the chain, so the two halves of the manifold estimator
   /// agree on what the transport carries, including on its being zero.
+  ///
+  /// `time` is the path's shutter fraction, which a moving declared
+  /// light is placed at; an area sample carries its own on its hit.
   [[nodiscard]] Color reevaluateLi(const LightSample &lightSample,
                                    const smdl::State &state,
                                    const float3 &point,
-                                   const float3 &incidencePoint) const;
+                                   const float3 &incidencePoint,
+                                   float time) const;
 
   /// The emitted radiance of an already-constructed material instance in
   /// direction `wi` pointing away from the emitting surface, with the
@@ -484,22 +536,38 @@ public:
   /// `lightPoint` on the given mesh instance, for MIS when a BSDF sample
   /// happens to hit an emitter. `areaSampled` says the gather at `point`
   /// drew by area, as a `keepDark` draw does, rather than by a sphere's
-  /// cone. Returns zero if the mesh instance is not a sampled light, or
-  /// the cone does not reach `lightPoint`.
+  /// cone. `time` is the hit's shutter fraction, which a moving light's
+  /// geometry is read at. Returns zero if the mesh instance is not a
+  /// sampled light, or the cone does not reach `lightPoint`.
   [[nodiscard]] float solidAnglePDF(uint32_t instIndex,
                                     const float3 &lightPoint,
                                     const float3 &lightNormal,
-                                    const float3 &point,
-                                    bool areaSampled) const;
+                                    const float3 &point, bool areaSampled,
+                                    float time) const;
 
 private:
   /// Draw a sphere light by its cone from `point`: the hit at the
-  /// sampled point and the density in solid angle. Returns false with
-  /// nothing drawn when `point` is inside the sphere, for the caller to
-  /// draw by area instead.
+  /// sampled point and the density in solid angle, the sphere given by
+  /// its world center and radius and the instance's frame at the time.
+  /// Returns false with nothing drawn when `point` is inside the
+  /// sphere, for the caller to draw by area instead.
   [[nodiscard]] bool sampleSphereCone(const AreaLight &light,
+                                      const InstanceFrame &frame,
+                                      const float3 &center, float radius,
                                       const float3 &point, float time,
                                       float2 xi, Hit &hit, float &pdf) const;
+
+  /// The area-light draw of `sample()` for a moving emitter: the frame
+  /// resolved once at the path's time, every read through it, and a
+  /// mesh light drawn the way a primitive light is, uniformly by object
+  /// area with the exact stretch of that frame. Draws the static path's
+  /// dimensions in the static path's order. Fills the hit and the
+  /// position density, or the cone density when the sphere cone drew.
+  [[nodiscard]] bool sampleAreaMoving(const AreaLight &light,
+                                      const MeshInstance &instance,
+                                      Sampler &sampler, const float3 &point,
+                                      float time, bool keepDark, Hit &hit,
+                                      float &positionPDF, float &conePDF) const;
 
   smdl::Compiler &compiler;
 

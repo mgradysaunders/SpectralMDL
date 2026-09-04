@@ -73,14 +73,14 @@ Camera::Camera(const CameraOptions &options) {
   lookTo = options.lookTo;
   lookUp = options.lookUp;
   if (options.motion) {
-    lookFromClose = options.lookFromClose;
-    lookToClose = options.lookToClose;
-    lookUpClose = options.lookUpClose;
+    lookFromShut = options.lookFromShut;
+    lookToShut = options.lookToShut;
+    lookUpShut = options.lookUpShut;
     const auto same{[](const float3 &a, const float3 &b) {
       return a.x == b.x && a.y == b.y && a.z == b.z;
     }};
-    moving = !(same(lookFromClose, lookFrom) && same(lookToClose, lookTo) &&
-               same(lookUpClose, lookUp));
+    moving = !(same(lookFromShut, lookFrom) && same(lookToShut, lookTo) &&
+               same(lookUpShut, lookUp));
   }
   // The distortion radius is corner-normalized so the coefficients sum to
   // the fractional corner displacement at any aspect ratio and FOV.
@@ -140,11 +140,11 @@ Camera::Camera(const CameraOptions &options) {
   }
   if (moving) {
     SMDL_LOG_INFO("Camera motion: over the shutter the position moves ",
-                  length(lookFromClose - lookFrom),
+                  length(lookFromShut - lookFrom),
                   " scene units and the target moves ",
-                  length(lookToClose - lookTo));
+                  length(lookToShut - lookTo));
   } else if (options.motion) {
-    SMDL_LOG_INFO("Camera motion: the close keys equal the open keys, "
+    SMDL_LOG_INFO("Camera motion: the shut keys equal the open keys, "
                   "rendering still");
   }
 }
@@ -213,9 +213,9 @@ void Camera::toWorld(CameraSample &sample, float u) const noexcept {
   if (!moving) {
     sample.ray.transform(cameraToWorld);
   } else {
-    sample.ray.transform(smdl::lookAt((1 - u) * lookFrom + u * lookFromClose,
-                                      (1 - u) * lookTo + u * lookToClose,
-                                      (1 - u) * lookUp + u * lookUpClose));
+    sample.ray.transform(smdl::lookAt((1 - u) * lookFrom + u * lookFromShut,
+                                      (1 - u) * lookTo + u * lookToShut,
+                                      (1 - u) * lookUp + u * lookUpShut));
   }
   sample.ray.dir = normalize(sample.ray.dir);
   sample.ray.time = u;

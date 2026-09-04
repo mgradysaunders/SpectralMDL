@@ -265,6 +265,10 @@ public:
     const float4x4 shear{
         float4(1.0f, 0.2f, 0.0f, 0.0f), float4(0.3f, 1.5f, 0.1f, 0.0f),
         float4(0.0f, -0.4f, 0.8f, 0.0f), float4(2.0f, -1.0f, 3.0f, 1.0f)};
+    // A 90-degree turn about z: the x axis lands on y.
+    const float4x4 turn{
+        float4(0.0f, 1.0f, 0.0f, 0.0f), float4(-1.0f, 0.0f, 0.0f, 0.0f),
+        float4(0.0f, 0.0f, 1.0f, 0.0f), float4(0.0f, 0.0f, 0.0f, 1.0f)};
     LayoutItem single{};
     single.primitive.shape = PrimitiveSpec::Shape::SPHERE;
     single.materials.all = "vc_red";
@@ -280,6 +284,32 @@ public:
       batch.batchXfs.push_back(xf);
     }
     scene.add(batch);
+    // Then the moving instances: the sphere again under a shut key that
+    // turns and translates it; the batch again under one rigid shut
+    // key over every element; a sphere turning 90 degrees about z from
+    // identity, for the slerp check; and a sphere whose shut key
+    // mirrors its open key, which cannot be interpolated and stays
+    // still.
+    LayoutItem moving{single};
+    moving.objectToWorldShut = turn * shear;
+    (*moving.objectToWorldShut)[3] = float4(3.0f, 4.0f, 5.0f, 1.0f);
+    scene.add(moving);
+    LayoutItem movingBatch{batch};
+    for (const auto &xf : batch.batchXfs) {
+      auto shut{xf};
+      shut[3].z += 5.0f;
+      movingBatch.batchXfsShut.push_back(shut);
+    }
+    scene.add(movingBatch);
+    LayoutItem turning{single};
+    turning.objectToWorld = float4x4(1.0f);
+    turning.objectToWorldShut = turn;
+    scene.add(turning);
+    LayoutItem insideOut{single};
+    insideOut.objectToWorld = float4x4(1.0f);
+    insideOut.objectToWorldShut = float4x4(1.0f);
+    (*insideOut.objectToWorldShut)[0].x = -1.0f;
+    scene.add(insideOut);
     if (auto error{compiler.compile(smdl::OPT_LEVEL_O2)}) {
       MESSAGE(error->message);
       REQUIRE(false);
@@ -316,29 +346,165 @@ public:
   return true;
 }
 
+// Every component of `a` within `tolerance` of `b`'s, absolutely, which
+// is what the read-back of a decomposed key can promise: the
+// quaternion round trip rounds at the last bit, so a bitwise match is
+// not on offer.
+[[nodiscard]] bool nearMatrix(const float4x4 &a, const float4x4 &b,
+                              float tolerance) {
+  for (int j = 0; j < 4; j++)
+    for (int i = 0; i < 4; i++)
+      if (!(std::fabs(a[j][i] - b[j][i]) <= tolerance)) return false;
+  return true;
+}
+
+// The affine transform a decomposition stands for, `T R S` with the
+// shift inside `S`, from the fields alone: the check's own reassembly,
+// independent of Embree's.
+[[nodiscard]] float4x4 reassemble(const RTCQuaternionDecomposition &qd) {
+  const float r{qd.quaternion_r};
+  const float i{qd.quaternion_i};
+  const float j{qd.quaternion_j};
+  const float k{qd.quaternion_k};
+  const float3x3 R{float3(r * r + i * i - j * j - k * k, 2 * (i * j + r * k),
+                          2 * (i * k - r * j)),
+                   float3(2 * (i * j - r * k), r * r - i * i + j * j - k * k,
+                          2 * (j * k + r * i)),
+                   float3(2 * (i * k + r * j), 2 * (j * k - r * i),
+                          r * r - i * i - j * j + k * k)};
+  const float3x3 S{float3(qd.scale_x, 0.0f, 0.0f),
+                   float3(qd.skew_xy, qd.scale_y, 0.0f),
+                   float3(qd.skew_xz, qd.skew_yz, qd.scale_z)};
+  const float3x3 RS{R * S};
+  const float3 t{float3(qd.translation_x, qd.translation_y, qd.translation_z) +
+                 R * float3(qd.shift_x, qd.shift_y, qd.shift_z)};
+  return float4x4{float4(RS[0], 0.0f), float4(RS[1], 0.0f), float4(RS[2], 0.0f),
+                  float4(t, 1.0f)};
+}
+
 } // namespace
+
+TEST_CASE("Scene: the quaternion decomposition reassembles the key") {
+  const float4x4 shear{
+      float4(1.0f, 0.2f, 0.0f, 0.0f), float4(0.3f, 1.5f, 0.1f, 0.0f),
+      float4(0.0f, -0.4f, 0.8f, 0.0f), float4(2.0f, -1.0f, 3.0f, 1.0f)};
+  auto mirrored{shear};
+  mirrored[2] = -mirrored[2];
+  const std::pair<const char *, float4x4> keys[]{{"sheared", shear},
+                                                 {"mirrored", mirrored}};
+  for (const auto &entry : keys) {
+    const char *name{entry.first};
+    const auto &key{entry.second};
+    CAPTURE(name);
+    const auto qd{quaternionDecompositionOf(key)};
+    CHECK(nearMatrix(reassemble(qd), key, 2.0e-6f));
+    CHECK(qd.shift_x == 0.0f);
+    CHECK(qd.shift_y == 0.0f);
+    CHECK(qd.shift_z == 0.0f);
+    CHECK(qd.translation_x == key[3].x);
+    CHECK(qd.translation_y == key[3].y);
+    CHECK(qd.translation_z == key[3].z);
+    CHECK(qd.scale_x > 0.0f);
+    CHECK(qd.scale_y > 0.0f);
+    // The quaternion is a rotation, so its norm is 1 and the rotation
+    // it stands for is proper; a mirrored key folds into its scale.
+    const float norm{
+        qd.quaternion_r * qd.quaternion_r + qd.quaternion_i * qd.quaternion_i +
+        qd.quaternion_j * qd.quaternion_j + qd.quaternion_k * qd.quaternion_k};
+    CHECK(norm == doctest::Approx(1.0f).epsilon(1.0e-5));
+    CHECK((qd.scale_z < 0.0f) == (name == std::string("mirrored")));
+  }
+}
 
 TEST_CASE("Scene: the frame at a time through the retained handle") {
   FrameFixture fixture{};
   const auto &instances{fixture.scene.meshInstances};
-  REQUIRE(instances.size() == 4);
-  for (const auto &instance : instances) {
+  REQUIRE(instances.size() == 10);
+  // The four static instances: no query, the authored matrix exactly.
+  for (size_t i = 0; i < 4; i++) {
+    const auto &instance{instances[i]};
     CHECK(!instance.isMoving);
     std::optional<InstanceFrame> scratch{};
     CHECK(&instance.frameAt(0.3f, scratch) == &instance.frame);
+    CHECK(!scratch);
     CHECK(sameMatrix(readBack(instance, 0.0f), instance.frame.objectToWorld));
     CHECK(sameMatrix(readBack(instance, 1.0f), instance.frame.objectToWorld));
   }
   // One handle for the regular instance, one shared by the array's
-  // elements, addressed by their index.
+  // elements, addressed by their index; then one per moving item.
   CHECK(instances[0].instPrimID == 0);
   CHECK(instances[1].instPrimID == 0);
   CHECK(instances[2].instPrimID == 1);
   CHECK(instances[3].instPrimID == 2);
   CHECK(instances[0].geometry != instances[1].geometry);
   CHECK(instances[1].geometry == instances[3].geometry);
-  CHECK(fixture.scene.instanceGeometries.size() == 2);
+  CHECK(fixture.scene.instanceGeometries.size() == 6);
   // The elements really do differ, so the array read is per element.
   CHECK(!sameMatrix(instances[1].frame.objectToWorld,
                     instances[3].frame.objectToWorld));
+}
+
+TEST_CASE("Scene: a moving instance reads back its keys") {
+  FrameFixture fixture{};
+  const auto &instances{fixture.scene.meshInstances};
+  REQUIRE(instances.size() == 10);
+  constexpr float TOLERANCE = 1.0e-5f;
+  SUBCASE("A regular instance: the frame is queried, the keys come back") {
+    const auto &sphere{instances[4]};
+    CHECK(sphere.isMoving);
+    // The stored frame is the authored open key; the query fills the
+    // scratch and answers with it.
+    CHECK(sameMatrix(sphere.frame.objectToWorld,
+                     instances[0].frame.objectToWorld));
+    std::optional<InstanceFrame> scratch{};
+    const auto &frame{sphere.frameAt(0.3f, scratch)};
+    REQUIRE(scratch);
+    CHECK(&frame == &*scratch);
+    CHECK(nearMatrix(readBack(sphere, 0.0f), sphere.frame.objectToWorld,
+                     TOLERANCE));
+    auto shut{instances[0].frame.objectToWorld};
+    shut = float4x4{float4(0.0f, 1.0f, 0.0f, 0.0f),
+                    float4(-1.0f, 0.0f, 0.0f, 0.0f),
+                    float4(0.0f, 0.0f, 1.0f, 0.0f),
+                    float4(0.0f, 0.0f, 0.0f, 1.0f)} *
+           shut;
+    shut[3] = float4(3.0f, 4.0f, 5.0f, 1.0f);
+    CHECK(nearMatrix(readBack(sphere, 1.0f), shut, TOLERANCE));
+    CHECK(nearMatrix(sphere.frameAt(1.0f, scratch).objectToWorld, shut,
+                     TOLERANCE));
+  }
+  SUBCASE("An array: every element reads back its own pair") {
+    for (size_t i = 5; i < 8; i++) {
+      CAPTURE(i);
+      const auto &element{instances[i]};
+      CHECK(element.isMoving);
+      CHECK(element.instPrimID == unsigned(i - 5));
+      CHECK(element.geometry == instances[5].geometry);
+      const auto &open{instances[i - 4].frame.objectToWorld};
+      auto shut{open};
+      shut[3].z += 5.0f;
+      CHECK(nearMatrix(readBack(element, 0.0f), open, TOLERANCE));
+      CHECK(nearMatrix(readBack(element, 1.0f), shut, TOLERANCE));
+    }
+  }
+  SUBCASE("A turn slerps: halfway through 90 degrees is 45, not the lerp") {
+    const auto &turning{instances[8]};
+    CHECK(turning.isMoving);
+    const auto halfway{readBack(turning, 0.5f)};
+    const float c{std::cos(PI / 4)};
+    CHECK(halfway[0].x == doctest::Approx(c).epsilon(TOLERANCE));
+    CHECK(halfway[0].y == doctest::Approx(c).epsilon(TOLERANCE));
+    CHECK(halfway[0].z == doctest::Approx(0.0f).epsilon(TOLERANCE));
+    CHECK(halfway[1].x == doctest::Approx(-c).epsilon(TOLERANCE));
+    CHECK(halfway[1].y == doctest::Approx(c).epsilon(TOLERANCE));
+    // The componentwise lerp of the two keys has x axis (0.5, 0.5, 0).
+    CHECK(std::fabs(halfway[0].x - 0.5f) > 1.0e-2f);
+  }
+  SUBCASE("A pair that turns inside out holds its open key") {
+    const auto &insideOut{instances[9]};
+    CHECK(!insideOut.isMoving);
+    std::optional<InstanceFrame> scratch{};
+    CHECK(&insideOut.frameAt(1.0f, scratch) == &insideOut.frame);
+    CHECK(sameMatrix(readBack(insideOut, 1.0f), float4x4(1.0f)));
+  }
 }

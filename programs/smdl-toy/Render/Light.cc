@@ -129,15 +129,19 @@ AnalyticLight::AnalyticLight(smdl::Compiler &compiler, const smdl::State &state,
     : mKind(light.decl.kind), mIntensity(wavelengths.size()),
       mProfile(std::move(profile)) {
   const auto &decl{light.decl};
-  const auto &xf{light.lightToWorld};
-  mPosition = float3(xf[3]);
-  auto column{[&](int i) {
-    auto v{float3(xf[i])};
-    return smdl::tryNormalize(v) ? v : float3(i == 0, i == 1, i == 2);
-  }};
-  mLocalX = column(0);
-  mLocalY = column(1);
-  mLocalZ = column(2);
+  mLightToWorld = light.lightToWorld;
+  if (light.lightToWorldShut) {
+    mMoving = true;
+    mLightToWorldShut = *light.lightToWorldShut;
+  }
+  if (!isDirac()) {
+    const bool isRect{mKind == LayoutLightDecl::Kind::RECT};
+    mHalfExtent = isRect ? float2(0.5f * decl.size.x, 0.5f * decl.size.y)
+                         : float2(decl.radius, decl.radius);
+    mObjectArea =
+        isRect ? decl.size.x * decl.size.y : PI * decl.radius * decl.radius;
+  }
+  mPlacement = derivePlacement(mLightToWorld);
   // The spectral shape: blackbody or flat, normalized to unit integral
   // over the render band, then the RGB tint applied WITHOUT
   // renormalizing, so tinting dims the way dimming a lamp does.
@@ -197,33 +201,17 @@ AnalyticLight::AnalyticLight(smdl::Compiler &compiler, const smdl::State &state,
   }
   case LayoutLightDecl::Kind::RECT:
   case LayoutLightDecl::Kind::DISK: {
-    // The plane the placement puts the shape in: the in-plane axes keep
-    // the placement's scale, the area stretch is the length of their
-    // cross product, constant over a plane, and the emitting side is
-    // the one the placement maps local -Z into.
-    mAxisU = float3(xf[0]);
-    mAxisV = float3(xf[1]);
-    const bool isRect{mKind == LayoutLightDecl::Kind::RECT};
-    mHalfExtent = isRect ? float2(0.5f * decl.size.x, 0.5f * decl.size.y)
-                         : float2(decl.radius, decl.radius);
-    const float objectArea{isRect ? decl.size.x * decl.size.y
-                                  : PI * decl.radius * decl.radius};
-    auto planeNormal{cross(mAxisU, mAxisV)};
-    const float stretch{length(planeNormal)};
-    mWorldArea = objectArea * stretch;
-    if (!(mWorldArea > 0)) {
+    if (!(mPlacement.worldArea > 0)) {
       SMDL_LOG_WARN("The ", decl.kindName(), " light ", smdl::Quoted(decl.name),
                     " is placed with no area and is never sampled.");
       power = 0.0f;
       break;
     }
-    planeNormal /= stretch;
-    mNormal = dot(planeNormal, float3(xf[2])) > 0 ? -planeNormal : planeNormal;
     // One-sided Lambertian: the radiance is the power over pi times the
-    // area in square meters.
+    // area in square meters, at the open key.
     const float metersPerSceneUnit{state.meters_per_scene_unit};
-    intensityScale = decl.power / (PI * mWorldArea * metersPerSceneUnit *
-                                   metersPerSceneUnit);
+    intensityScale = decl.power / (PI * mPlacement.worldArea *
+                                   metersPerSceneUnit * metersPerSceneUnit);
     break;
   }
   }
@@ -232,23 +220,68 @@ AnalyticLight::AnalyticLight(smdl::Compiler &compiler, const smdl::State &state,
     mIntensity[i] = intensityScale * shape[i];
 }
 
-Color AnalyticLight::Li(const float3 &point,
-                        float metersPerSceneUnit) const noexcept {
-  return Li(point, point, metersPerSceneUnit);
+AnalyticLight::Placement
+AnalyticLight::derivePlacement(const float4x4 &xf) const noexcept {
+  auto result{Placement()};
+  result.position = float3(xf[3]);
+  auto column{[&](int i) {
+    auto v{float3(xf[i])};
+    return smdl::tryNormalize(v) ? v : float3(i == 0, i == 1, i == 2);
+  }};
+  result.localX = column(0);
+  result.localY = column(1);
+  result.localZ = column(2);
+  if (!isDirac()) {
+    // The plane the placement puts the shape in: the in-plane axes keep
+    // the placement's scale, the area stretch is the length of their
+    // cross product, constant over a plane, and the emitting side is
+    // the one the placement maps local -Z into.
+    result.axisU = float3(xf[0]);
+    result.axisV = float3(xf[1]);
+    auto planeNormal{cross(result.axisU, result.axisV)};
+    const float stretch{length(planeNormal)};
+    result.worldArea = mObjectArea * stretch;
+    if (result.worldArea > 0) {
+      planeNormal /= stretch;
+      result.normal =
+          dot(planeNormal, float3(xf[2])) > 0 ? -planeNormal : planeNormal;
+    }
+  }
+  return result;
+}
+
+const AnalyticLight::Placement &
+AnalyticLight::placementAt(float time,
+                           std::optional<Placement> &scratch) const noexcept {
+  if (!mMoving) return mPlacement;
+  // The lerp of the two keys, spelled so that the ends reproduce them
+  // exactly; the placement then follows from the lerped matrix as it
+  // does from a static one.
+  auto xf{float4x4()};
+  for (int j = 0; j < 4; j++)
+    xf[j] = (1.0f - time) * mLightToWorld[j] + time * mLightToWorldShut[j];
+  return scratch.emplace(derivePlacement(xf));
+}
+
+Color AnalyticLight::Li(const float3 &point, float metersPerSceneUnit,
+                        float time) const noexcept {
+  return Li(point, point, metersPerSceneUnit, time);
 }
 
 Color AnalyticLight::Li(const float3 &point, const float3 &incidencePoint,
-                        float metersPerSceneUnit) const noexcept {
-  const float distSq{lengthSquared(point - mPosition)};
+                        float metersPerSceneUnit, float time) const noexcept {
+  std::optional<Placement> scratch{};
+  const auto &placed{placementAt(time, scratch)};
+  const float distSq{lengthSquared(point - placed.position)};
   if (!(distSq > 0)) return Color(0.0f);
-  auto direction{incidencePoint - mPosition};
+  auto direction{incidencePoint - placed.position};
   if (!(lengthSquared(direction) > 0)) return Color(0.0f);
   direction = normalize(direction);
   float factor{1.0f};
   if (mKind == LayoutLightDecl::Kind::SPOT) {
     // Emission aims along the local -Z axis, full intensity inside the
     // inner cone, smoothstepped in the cosine down to zero at the outer.
-    const float cosTheta{dot(direction, -mLocalZ)};
+    const float cosTheta{dot(direction, -placed.localZ)};
     if (!(cosTheta > mCosOuter)) return Color(0.0f);
     if (cosTheta < mCosInner) {
       const float t{(cosTheta - mCosOuter) / (mCosInner - mCosOuter)};
@@ -259,9 +292,9 @@ Color AnalyticLight::Li(const float3 &point, const float3 &incidencePoint,
     // zero (the nadir of a typical luminaire) along local -Z, matching
     // the spot convention, so the Z component flips going into
     // `LightProfile::interpolate`, whose zero vertical angle is at +Z.
-    factor = mProfile->interpolate(float3(dot(direction, mLocalX),
-                                          dot(direction, mLocalY),
-                                          -dot(direction, mLocalZ)));
+    factor = mProfile->interpolate(float3(dot(direction, placed.localX),
+                                          dot(direction, placed.localY),
+                                          -dot(direction, placed.localZ)));
     if (!(factor > 0)) return Color(0.0f);
   }
   const float distSqMeters{distSq * metersPerSceneUnit * metersPerSceneUnit};
@@ -339,20 +372,23 @@ sampleSphericalRectangle(const float3 &receiver, const float3 &s,
   return true;
 }
 
-float3 AnalyticLight::sampleShape(const float3 &receiver, float2 xi,
-                                  float &pdf) const noexcept {
+float3 AnalyticLight::sampleShape(const float3 &receiver, float2 xi, float &pdf,
+                                  float time) const noexcept {
+  std::optional<Placement> scratch{};
+  const auto &placed{placementAt(time, scratch)};
   pdf = 0.0f;
   if (mKind == LayoutLightDecl::Kind::RECT) {
     // Over the spherical rectangle when the placed axes are orthogonal;
     // a sheared placement makes a parallelogram, which the
     // parametrization does not cover.
-    const float3 ex{2.0f * mHalfExtent.x * mAxisU};
-    const float3 ey{2.0f * mHalfExtent.y * mAxisV};
+    const float3 ex{2.0f * mHalfExtent.x * placed.axisU};
+    const float3 ey{2.0f * mHalfExtent.y * placed.axisV};
     if (std::abs(dot(ex, ey)) <= 1.0e-4f * length(ex) * length(ey)) {
       float3 point{};
       float solidAngle{};
-      if (sampleSphericalRectangle(receiver, mPosition - 0.5f * ex - 0.5f * ey,
-                                   ex, ey, xi, point, solidAngle)) {
+      if (sampleSphericalRectangle(receiver,
+                                   placed.position - 0.5f * ex - 0.5f * ey, ex,
+                                   ey, xi, point, solidAngle)) {
         pdf = 1.0f / solidAngle;
         return point;
       }
@@ -367,13 +403,14 @@ float3 AnalyticLight::sampleShape(const float3 &receiver, float2 xi,
     local = float2((2.0f * xi.x - 1.0f) * mHalfExtent.x,
                    (2.0f * xi.y - 1.0f) * mHalfExtent.y);
   }
-  const float3 point{mPosition + local.x * mAxisU + local.y * mAxisV};
+  const float3 point{placed.position + local.x * placed.axisU +
+                     local.y * placed.axisV};
   const float3 direction{point - receiver};
   const float distSq{lengthSquared(direction)};
   if (!(distSq > 0.0f)) return point;
-  const float cosTheta{absDot(mNormal, direction / std::sqrt(distSq))};
+  const float cosTheta{absDot(placed.normal, direction / std::sqrt(distSq))};
   if (!(cosTheta > 0.0f)) return point;
-  pdf = distSq / (mWorldArea * cosTheta);
+  pdf = distSq / (placed.worldArea * cosTheta);
   return point;
 }
 
@@ -386,24 +423,55 @@ float3 AnalyticLight::sampleShape(const float3 &receiver, float2 xi,
                                                 : 1.0f - cosTheta;
 }
 
-Color AnalyticLight::Le(const float3 &lightPoint,
-                        const float3 &incidencePoint) const noexcept {
-  return dot(incidencePoint - lightPoint, mNormal) > 0 ? Color(mIntensity)
-                                                       : Color(0.0f);
+// The inverse of the cofactor matrix of a placement's linear part,
+// directly: inv(cof(M)) is transpose(M) over det(M). What turns a WORLD
+// unit normal back into the local area stretch; see
+// `AreaLight::invCofactor`.
+[[nodiscard]] static float3x3
+inverseCofactorOf(const float4x4 &objectToWorld) noexcept {
+  const auto column0{float3(objectToWorld[0])};
+  const auto column1{float3(objectToWorld[1])};
+  const auto column2{float3(objectToWorld[2])};
+  const float det{dot(column0, cross(column1, column2))};
+  return float3x3(float3(column0.x, column1.x, column2.x) / det,
+                  float3(column0.y, column1.y, column2.y) / det,
+                  float3(column0.z, column1.z, column2.z) / det);
+}
+
+Color AnalyticLight::Le(const float3 &lightPoint, const float3 &incidencePoint,
+                        float time) const noexcept {
+  std::optional<Placement> scratch{};
+  const auto &placed{placementAt(time, scratch)};
+  return dot(incidencePoint - lightPoint, placed.normal) > 0 ? Color(mIntensity)
+                                                             : Color(0.0f);
+}
+
+float3 AnalyticLight::normal(float time) const noexcept {
+  std::optional<Placement> scratch{};
+  return placementAt(time, scratch).normal;
+}
+
+float3 AnalyticLight::position(float time) const noexcept {
+  std::optional<Placement> scratch{};
+  return placementAt(time, scratch).position;
 }
 
 BoundBox3 AnalyticLight::bounds() const noexcept {
   auto box{BoundBox3()};
-  if (isDirac()) {
-    box.extend(mPosition);
-    return box;
-  }
-  const float3 u{mHalfExtent.x * mAxisU};
-  const float3 v{mHalfExtent.y * mAxisV};
-  box.extend(mPosition + u + v);
-  box.extend(mPosition + u - v);
-  box.extend(mPosition - u + v);
-  box.extend(mPosition - u - v);
+  const auto extend{[&](const Placement &placed) {
+    if (isDirac()) {
+      box.extend(placed.position);
+      return;
+    }
+    const float3 u{mHalfExtent.x * placed.axisU};
+    const float3 v{mHalfExtent.y * placed.axisV};
+    box.extend(placed.position + u + v);
+    box.extend(placed.position + u - v);
+    box.extend(placed.position - u + v);
+    box.extend(placed.position - u - v);
+  }};
+  extend(mPlacement);
+  if (mMoving) extend(derivePlacement(mLightToWorldShut));
   return box;
 }
 
@@ -515,18 +583,30 @@ LightSampler::LightSampler(smdl::Compiler &compiler, const Scene &scene,
     // exact even under non-uniform scale, where no single area factor
     // would do.
     const auto &objectToWorld{instance.frame.objectToWorld};
+    // A moving emitter's shut frame: its box covers both keys, so that
+    // the light tree sees where it can be (a proxy rather than a hull
+    // for a turn, and consistent between `select()` and `pmf()`, which
+    // is all the tree needs), and the sphere cone is drawn only when
+    // the shape is a sphere at both keys.
+    std::optional<InstanceFrame> shutScratch{};
+    const InstanceFrame *shutFrame{
+        instance.isMoving ? &instance.frameAt(1.0f, shutScratch) : nullptr};
     auto box{BoundBox3()};
     if (instance.isPrimitive()) {
       const auto &primitive{*scene.primitives[instance.primIndex]};
       light.isPrimitive = true;
       light.objectArea = primitive.objectArea;
-      for (const auto &point : primitive.proxyPoints)
+      for (const auto &point : primitive.proxyPoints) {
         box.extend(float3(objectToWorld * float4(point, 1.0f)));
+        if (shutFrame)
+          box.extend(float3(shutFrame->objectToWorld * float4(point, 1.0f)));
+      }
       if (primitive.spec.shape == PrimitiveSpec::Shape::SPHERE &&
-          !instance.frame.isDeformed) {
+          !instance.frame.isDeformed && !(shutFrame && shutFrame->isDeformed)) {
         light.sphereCenter = float3(objectToWorld[3]);
         light.sphereRadius =
             primitive.spec.radius * length(float3(objectToWorld[0]));
+        light.sphereObjectRadius = primitive.spec.radius;
       }
       // The world area through the placement's area stretch, J(n) =
       // |cofactor * n|: constant under a similarity (so this is exact),
@@ -542,25 +622,20 @@ LightSampler::LightSampler(smdl::Compiler &compiler, const Scene &scene,
             double(length(instance.frame.normalMatrix * areaSample.normal));
       }
       light.totalArea = light.objectArea * float(stretchSum / STRETCH_SAMPLES);
-      // The inverse cofactor, directly: inv(cof(M)) is transpose(M)
-      // over det(M).
-      const auto column0{float3(objectToWorld[0])};
-      const auto column1{float3(objectToWorld[1])};
-      const auto column2{float3(objectToWorld[2])};
-      const float det{dot(column0, cross(column1, column2))};
-      light.invCofactor =
-          float3x3(float3(column0.x, column1.x, column2.x) / det,
-                   float3(column0.y, column1.y, column2.y) / det,
-                   float3(column0.z, column1.z, column2.z) / det);
+      light.invCofactor = inverseCofactorOf(objectToWorld);
     } else {
       const auto &mesh{*scene.meshes[instance.meshIndex]};
       auto toWorld{[&](const float3 &point) {
         return float3(objectToWorld * float4(point, 1.0f));
       }};
       // The face distribution serves `sample()` alone, so an unsampled
-      // emitter, which only needs its total area, does not build one.
+      // emitter, which only needs its total area, does not build one. A
+      // moving light's is over object area, since its world area is a
+      // function of time; see `sampleAreaMoving()`.
       auto faceAreas{std::vector<float>()};
+      auto objectFaceAreas{std::vector<float>()};
       if (light.isSampled) faceAreas.reserve(mesh.faces.size());
+      if (shutFrame) objectFaceAreas.reserve(mesh.faces.size());
       for (const auto &face : mesh.faces) {
         const auto point0{toWorld(mesh.verts[face[0]].point)};
         const auto point1{toWorld(mesh.verts[face[1]].point)};
@@ -571,9 +646,21 @@ LightSampler::LightSampler(smdl::Compiler &compiler, const Scene &scene,
         auto area{0.5f * length(cross(point1 - point0, point2 - point0))};
         if (light.isSampled) faceAreas.push_back(area);
         light.totalArea += area;
+        if (shutFrame) {
+          const auto &object0{mesh.verts[face[0]].point};
+          const auto &object1{mesh.verts[face[1]].point};
+          const auto &object2{mesh.verts[face[2]].point};
+          const float objectArea{
+              0.5f * length(cross(object1 - object0, object2 - object0))};
+          objectFaceAreas.push_back(objectArea);
+          light.objectArea += objectArea;
+          for (const auto &object : {object0, object1, object2})
+            box.extend(float3(shutFrame->objectToWorld * float4(object, 1.0f)));
+        }
       }
       if (light.isSampled && light.totalArea > 0)
-        light.faceDistr = smdl::Distribution1D(faceAreas);
+        light.faceDistr =
+            smdl::Distribution1D(shutFrame ? objectFaceAreas : faceAreas);
     }
     if (!(light.totalArea > 0)) {
       allocator.reset();
@@ -704,13 +791,14 @@ bool LightSampler::sample(const smdl::State &state, Sampler &sampler,
     if (light.isDirac()) {
       // A punctual light: the direction is a Dirac, so the pdf is the
       // selection PMF alone and `Li` carries the inverse-square falloff.
-      auto direction{light.position() - point};
+      const float3 position{light.position(time)};
+      auto direction{position - point};
       if (!(lengthSquared(direction) > 0)) return false;
-      lightSample.Li = light.Li(point, state.meters_per_scene_unit);
+      lightSample.Li = light.Li(point, state.meters_per_scene_unit, time);
       if (lightSample.Li.isAllZero() && !keepDark) return false;
       lightSample.wi = normalize(direction);
       lightSample.pdf = selectPMF;
-      lightSample.target = light.position();
+      lightSample.target = position;
       lightSample.isDirac = true;
       return true;
     }
@@ -719,16 +807,16 @@ bool LightSampler::sample(const smdl::State &state, Sampler &sampler,
     // area light except that no material stands behind the point.
     float shapePDF{};
     const float3 lightPoint{
-        light.sampleShape(point, float2(sampler), shapePDF)};
+        light.sampleShape(point, float2(sampler), shapePDF, time)};
     if (!(shapePDF > 0.0f)) return false;
     auto direction{lightPoint - point};
     if (!(lengthSquared(direction) > 0.0f)) return false;
     lightSample.wi = normalize(direction);
-    lightSample.Li = light.Le(lightPoint, point);
+    lightSample.Li = light.Le(lightPoint, point, time);
     if (lightSample.Li.isAllZero() && !keepDark) return false;
     lightSample.pdf = selectPMF * shapePDF;
     lightSample.target = lightPoint;
-    lightSample.normal = light.normal();
+    lightSample.normal = light.normal(time);
     return true;
   }
   const auto &light{areaLights[lightIndex]};
@@ -738,8 +826,12 @@ bool LightSampler::sample(const smdl::State &state, Sampler &sampler,
   lightSample.isCaustic = light.caustic;
   float positionPDF{}; // world-space area density at the sampled point
   float conePDF{};     // solid-angle density instead, when drawn by cone
-  if (light.isPrimitive) {
-    const auto &instance{scene.meshInstances[light.instIndex]};
+  const auto &instance{scene.meshInstances[light.instIndex]};
+  if (instance.isMoving) {
+    if (!sampleAreaMoving(light, instance, sampler, point, time, keepDark, hit,
+                          positionPDF, conePDF))
+      return false;
+  } else if (light.isPrimitive) {
     const auto &primitive{*scene.primitives[instance.primIndex]};
     const float2 xi{sampler};
     // A sphere is drawn by its cone from the receiver, except for a
@@ -748,7 +840,9 @@ bool LightSampler::sample(const smdl::State &state, Sampler &sampler,
     // connection can lie. The alternative is the cone everywhere,
     // leaving those arrivals to the path tracer at weight 1.
     if (!(light.sphereRadius > 0.0f && !keepDark &&
-          sampleSphereCone(light, point, time, xi, hit, conePDF))) {
+          sampleSphereCone(light, instance.frame, light.sphereCenter,
+                           light.sphereRadius, point, time, xi, hit,
+                           conePDF))) {
       // Sample the shape uniformly by OBJECT area and pay the placement's
       // exact area stretch in the pdf: still unbiased under any affine
       // placement, and exactly uniform under a similarity.
@@ -798,12 +892,62 @@ bool LightSampler::sample(const smdl::State &state, Sampler &sampler,
   return true;
 }
 
-bool LightSampler::sampleSphereCone(const AreaLight &light, const float3 &point,
-                                    float time, float2 xi, Hit &hit,
-                                    float &pdf) const {
-  const float3 toCenter{light.sphereCenter - point};
+bool LightSampler::sampleAreaMoving(const AreaLight &light,
+                                    const MeshInstance &instance,
+                                    Sampler &sampler, const float3 &point,
+                                    float time, bool keepDark, Hit &hit,
+                                    float &positionPDF, float &conePDF) const {
+  std::optional<InstanceFrame> scratch{};
+  const auto &frame{instance.frameAtMoving(time, scratch)};
+  if (light.isPrimitive) {
+    const auto &primitive{*scene.primitives[instance.primIndex]};
+    const float2 xi{sampler};
+    if (light.sphereObjectRadius > 0.0f && !keepDark &&
+        sampleSphereCone(light, frame, float3(frame.objectToWorld[3]),
+                         light.sphereObjectRadius *
+                             length(float3(frame.objectToWorld[0])),
+                         point, time, xi, hit, conePDF))
+      return true;
+    const auto areaSample{samplePrimitiveArea(primitive.spec, xi)};
+    const float stretch{length(frame.normalMatrix * areaSample.normal)};
+    if (!(stretch > 0)) return false;
+    hit = scene.makePrimitiveHitFrom(
+        frame, light.instIndex, areaSample.primID,
+        float3(0.0f, areaSample.uv.x, areaSample.uv.y), time,
+        evalPrimitiveSurfaceAt(primitive.spec, areaSample.primID,
+                               areaSample.point));
+    positionPDF = 1.0f / (light.objectArea * stretch);
+    return true;
+  }
+  // Uniform by object area: the face by its object area, the point
+  // uniformly within it, and the density through the exact stretch of
+  // the frame at the time, which is constant over a face.
+  const auto &mesh{*scene.meshes[instance.meshIndex]};
+  const int faceIndex{light.faceDistr.indexSample(float(sampler))};
+  const float2 xi{sampler};
+  const float sqrtXi{std::sqrt(xi.x)};
+  const auto bary{float3(1.0f - sqrtXi, sqrtXi * (1.0f - xi.y), sqrtXi * xi.y)};
+  hit = scene.makeHit(frame, light.instIndex, uint32_t(faceIndex), bary, time);
+  const auto &face{mesh.faces[size_t(faceIndex)]};
+  const auto &object0{mesh.verts[face[0]].point};
+  const auto &object1{mesh.verts[face[1]].point};
+  const auto &object2{mesh.verts[face[2]].point};
+  const float3 objectNormal{
+      normalize(cross(object1 - object0, object2 - object0))};
+  const float stretch{length(frame.normalMatrix * objectNormal)};
+  if (!(stretch > 0)) return false;
+  positionPDF = 1.0f / (light.objectArea * stretch);
+  return true;
+}
+
+bool LightSampler::sampleSphereCone(const AreaLight &light,
+                                    const InstanceFrame &frame,
+                                    const float3 &center, float radius,
+                                    const float3 &point, float time, float2 xi,
+                                    Hit &hit, float &pdf) const {
+  const float3 toCenter{center - point};
   const float distSq{lengthSquared(toCenter)};
-  const float radiusSq{light.sphereRadius * light.sphereRadius};
+  const float radiusSq{radius * radius};
   if (!(distSq > radiusSq)) return false;
   const float sinThetaMaxSq{radiusSq / distSq};
   const float cosThetaMax{std::sqrt(std::max(1.0f - sinThetaMaxSq, 0.0f))};
@@ -817,29 +961,31 @@ bool LightSampler::sampleSphereCone(const AreaLight &light, const float3 &point,
   // centered there, so the point is the radius along the rotated normal.
   const float b{dot(wi, toCenter)};
   const float t{b - std::sqrt(std::max(b * b - (distSq - radiusSq), 0.0f))};
-  const float3 normal{normalize(point + t * wi - light.sphereCenter)};
+  const float3 normal{normalize(point + t * wi - center)};
   const auto &instance{scene.meshInstances[light.instIndex]};
   const auto &primitive{*scene.primitives[instance.primIndex]};
   const float3 objectNormal{
-      normalize(float3(instance.frame.worldToRigid * float4(normal, 0.0f)))};
+      normalize(float3(frame.worldToRigid * float4(normal, 0.0f)))};
   const float3 objectPoint{primitive.spec.radius * objectNormal};
   const float2 uv{primitiveUV(primitive.spec, 0, objectPoint)};
-  hit = scene.makePrimitiveHit(light.instIndex, 0, float3(0.0f, uv.x, uv.y),
-                               time, objectPoint);
+  hit = scene.makePrimitiveHitFrom(
+      frame, light.instIndex, 0, float3(0.0f, uv.x, uv.y), time,
+      evalPrimitiveSurfaceAt(primitive.spec, 0, objectPoint));
   pdf = 1.0f / (TWO_PI * coneOneMinusCos(sinThetaMaxSq, cosThetaMax));
   return true;
 }
 
 Color LightSampler::reevaluateLi(const LightSample &lightSample,
                                  const smdl::State &state, const float3 &point,
-                                 const float3 &incidencePoint) const {
+                                 const float3 &incidencePoint,
+                                 float time) const {
   if (lightSample.isInfinite) return lightSample.Li;
   if (lightSample.analyticIndex != INVALID_INDEX) {
     if (lightSample.analyticIndex >= analyticLights.size()) return Color(0.0f);
     const auto &light{analyticLights[lightSample.analyticIndex]};
-    return light.isDirac()
-               ? light.Li(point, incidencePoint, state.meters_per_scene_unit)
-               : light.Le(lightSample.target, incidencePoint);
+    return light.isDirac() ? light.Li(point, incidencePoint,
+                                      state.meters_per_scene_unit, time)
+                           : light.Le(lightSample.target, incidencePoint, time);
   }
   const auto &hit{lightSample.hit};
   if (!hit.material) return Color(0.0f);
@@ -877,9 +1023,47 @@ bool LightSampler::emittedRadiance(const smdl::JIT::MaterialInstance &mat,
   return true;
 }
 
+// The solid-angle density of a moving light's draw, the geometry read
+// from the frame at the hit's time: the sphere's center and radius from
+// its columns, and the area stretch through its inverse cofactor, for
+// a mesh light exactly as for a primitive. The static path below keeps
+// its own arithmetic.
+[[nodiscard]] static float
+solidAnglePDFMoving(const AreaLight &light, const MeshInstance &instance,
+                    const float3 &lightPoint, const float3 &lightNormal,
+                    const float3 &point, bool areaSampled, float time,
+                    float selectPMF) {
+  std::optional<InstanceFrame> scratch{};
+  const auto &objectToWorld{
+      instance.frameAtMoving(time, scratch).objectToWorld};
+  if (light.sphereObjectRadius > 0.0f && !areaSampled) {
+    const float3 center{objectToWorld[3]};
+    const float radius{light.sphereObjectRadius *
+                       length(float3(objectToWorld[0]))};
+    const float distSqCenter{lengthSquared(center - point)};
+    const float radiusSq{radius * radius};
+    if (distSqCenter > radiusSq) {
+      if (!(dot(lightNormal, point - lightPoint) > 0.0f)) return 0.0f;
+      const float sinThetaMaxSq{radiusSq / distSqCenter};
+      const float cosThetaMax{std::sqrt(std::max(1.0f - sinThetaMaxSq, 0.0f))};
+      return selectPMF / (TWO_PI * coneOneMinusCos(sinThetaMaxSq, cosThetaMax));
+    }
+  }
+  auto direction{lightPoint - point};
+  const float distSq{lengthSquared(direction)};
+  if (!(distSq > 0)) return 0.0f;
+  const float cosTheta{absDot(lightNormal, normalize(direction))};
+  if (!(cosTheta > 0)) return 0.0f;
+  const float positionPDF{
+      length(inverseCofactorOf(objectToWorld) * lightNormal) /
+      light.objectArea};
+  return selectPMF * distSq * positionPDF / cosTheta;
+}
+
 float LightSampler::solidAnglePDF(uint32_t instIndex, const float3 &lightPoint,
                                   const float3 &lightNormal,
-                                  const float3 &point, bool areaSampled) const {
+                                  const float3 &point, bool areaSampled,
+                                  float time) const {
   if (empty() || instIndex >= instanceToLight.size() ||
       instanceToLight[instIndex] == INVALID_INDEX) {
     return 0.0f;
@@ -888,6 +1072,10 @@ float LightSampler::solidAnglePDF(uint32_t instIndex, const float3 &lightPoint,
   const auto &light{areaLights[lightIndex]};
   if (!light.isSampled) return 0.0f;
   const float selectPMF{mSelection.pmf(int(lightIndex), point)};
+  if (const auto &instance{scene.meshInstances[light.instIndex]};
+      instance.isMoving)
+    return solidAnglePDFMoving(light, instance, lightPoint, lightNormal, point,
+                               areaSampled, time, selectPMF);
   if (light.sphereRadius > 0.0f && !areaSampled) {
     const float distSqCenter{lengthSquared(light.sphereCenter - point)};
     const float radiusSq{light.sphereRadius * light.sphereRadius};

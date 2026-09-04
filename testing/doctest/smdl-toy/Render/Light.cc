@@ -1,6 +1,9 @@
 #include "doctest.h"
 
+#include <filesystem>
+#include <fstream>
 #include <set>
+#include <string>
 #include <vector>
 
 #include "smdl/Compiler.h"
@@ -11,6 +14,8 @@
 #include "Render/Light.h"
 #include "Render/Sampler.h"
 #include "Scene/Scene.h"
+
+namespace fs = std::filesystem;
 
 // The light sampler over marked and unmarked emitters: what the `light`
 // mark decides and, just as important, what it leaves alone. Two
@@ -135,7 +140,7 @@ TEST_CASE("LightSampler: the light mark decides selection alone") {
     auto state{makeRenderState(fixture.wavelengths, &allocator)};
     const auto hit{fixture.hitOn(i, state)};
     const float pdf{lights.solidAnglePDF(hit.instIndex, hit.point, hit.Ng,
-                                         Fixture::RECEIVER, false)};
+                                         Fixture::RECEIVER, false, 0.0f)};
     const bool sampled{i == 0 || i == 4};
     CHECK((pdf > 0.0f) == sampled);
     CHECK(lights.causticLight(hit.instIndex) == sampled);
@@ -187,7 +192,7 @@ TEST_CASE("LightSampler: -all-lights samples every emitter") {
     auto state{makeRenderState(fixture.wavelengths, &allocator)};
     const auto hit{fixture.hitOn(i, state)};
     const float pdf{lights.solidAnglePDF(hit.instIndex, hit.point, hit.Ng,
-                                         Fixture::RECEIVER, false)};
+                                         Fixture::RECEIVER, false, 0.0f)};
     const bool emitter{i != 2};
     CHECK((pdf > 0.0f) == emitter);
     CHECK(lights.causticLight(hit.instIndex) == emitter);
@@ -232,8 +237,8 @@ TEST_CASE("LightSampler: what each kind of sample says") {
       CHECK(lengthSquared(sample.normal) == 0.0f);
       // A point light has no directional factor, so re-evaluating toward
       // any other point leaves the radiance alone.
-      const Color again{
-          lights.reevaluateLi(sample, state, Fixture::RECEIVER, float3(0.0f))};
+      const Color again{lights.reevaluateLi(sample, state, Fixture::RECEIVER,
+                                            float3(0.0f), 0.0f)};
       for (size_t k = 0; k < fixture.wavelengths.size(); k++)
         CHECK(again[k] == doctest::Approx(sample.Li[k]));
     } else {
@@ -246,12 +251,12 @@ TEST_CASE("LightSampler: what each kind of sample says") {
       // sample's own radiance; toward the sphere's center, behind the
       // emitting surface, it is zero.
       const Color same{lights.reevaluateLi(sample, state, Fixture::RECEIVER,
-                                           Fixture::RECEIVER)};
+                                           Fixture::RECEIVER, 0.0f)};
       for (size_t k = 0; k < fixture.wavelengths.size(); k++)
         CHECK(same[k] == doctest::Approx(sample.Li[k]));
-      const Color behind{
-          lights.reevaluateLi(sample, state, Fixture::RECEIVER,
-                              Fixture::center(int(sample.hit.instIndex)))};
+      const Color behind{lights.reevaluateLi(
+          sample, state, Fixture::RECEIVER,
+          Fixture::center(int(sample.hit.instIndex)), 0.0f)};
       CHECK(behind.isAllZero());
     }
     allocator.reset();
@@ -291,11 +296,11 @@ TEST_CASE("LightSampler: every kind of light weighs by its power") {
         pmfLamp = sample.pdf;
       } else {
         numArea++;
-        CHECK(sample.pdf ==
-              doctest::Approx(lights.solidAnglePDF(sample.hit.instIndex,
-                                                   sample.target, sample.normal,
-                                                   Fixture::RECEIVER, false))
-                  .epsilon(1e-4));
+        CHECK(sample.pdf == doctest::Approx(lights.solidAnglePDF(
+                                                sample.hit.instIndex,
+                                                sample.target, sample.normal,
+                                                Fixture::RECEIVER, false, 0.0f))
+                                .epsilon(1e-4));
       }
     }
     allocator.reset();
@@ -312,7 +317,7 @@ TEST_CASE("LightSampler: every kind of light weighs by its power") {
     const float distSq{lengthSquared(toLight)};
     const float cosLight{absDot(hit.Ng, toLight / std::sqrt(distSq))};
     const float pmf{lights.solidAnglePDF(hit.instIndex, hit.point, hit.Ng,
-                                         Fixture::RECEIVER, true) *
+                                         Fixture::RECEIVER, true, 0.0f) *
                     area * cosLight / distSq};
     allocator.reset();
     return pmf;
@@ -420,7 +425,7 @@ TEST_CASE("LightSampler: a sphere is drawn by its cone, or by area for a "
       CHECK(sample.pdf ==
             doctest::Approx(
                 lights.solidAnglePDF(uint32_t(k), sample.target, sample.normal,
-                                     ConeFixture::RECEIVER, keepDark))
+                                     ConeFixture::RECEIVER, keepDark, 0.0f))
                 .epsilon(1.0e-4));
       const double estimate{double(sample.Li[0]) * dot(sample.wi, axis) /
                             sample.pdf};
@@ -747,10 +752,11 @@ TEST_CASE("AnalyticLight: the emitting side and the re-evaluation") {
       CHECK(!drawn);
       CHECK(sample.Li.isAllZero());
       CHECK(sample.normal.z == doctest::Approx(-1.0f));
-      const Color below{
-          lights.reevaluateLi(sample, state, above, LampFixture::RECEIVER)};
+      const Color below{lights.reevaluateLi(sample, state, above,
+                                            LampFixture::RECEIVER, 0.0f)};
       CHECK(below[0] == doctest::Approx(LampFixture::RADIANCE));
-      CHECK(lights.reevaluateLi(sample, state, above, beside).isAllZero());
+      CHECK(
+          lights.reevaluateLi(sample, state, above, beside, 0.0f).isAllZero());
       allocator.reset();
     }
     CHECK(numDark > 8);
@@ -776,10 +782,282 @@ TEST_CASE("AnalyticLight: the emitting side and the re-evaluation") {
       numUp++;
       CHECK(sample.normal.z == doctest::Approx(1.0f));
       CHECK(sample.Li[0] == doctest::Approx(LampFixture::RADIANCE));
-      CHECK(lights.reevaluateLi(sample, state, above, LampFixture::RECEIVER)
-                .isAllZero());
+      CHECK(
+          lights.reevaluateLi(sample, state, above, LampFixture::RECEIVER, 0.0f)
+              .isAllZero());
       allocator.reset();
     }
     CHECK(numUp > 8);
+  }
+}
+
+// Moving emitters against still twins placed at their keys: a sphere
+// lamp translating over the shutter beside still lamps at its open and
+// shut positions, and a mesh light scaling over the shutter beside a
+// still light at its shut scale. The sampler must place a moving
+// light where the path's time puts it, and its densities must agree
+// both with themselves and with the still twin's, which for the mesh
+// light is the object-area path against the world-area path.
+namespace {
+
+class MotionFixture final {
+public:
+  MotionFixture() {
+    fs::remove_all(dir);
+    fs::create_directories(dir);
+    quad = (dir / "quad.obj").string();
+    {
+      std::ofstream file(quad, std::ios::binary | std::ios::trunc);
+      file << "o quad\nv -1 -1 0\nv 1 -1 0\nv 1 1 0\nv -1 1 0\nf 1 2 3 4\n";
+    }
+    if (auto error{compiler.addCode("::motiontest", MATERIALS)}) {
+      MESSAGE(error->message);
+      REQUIRE(false);
+    }
+    const auto sphereAt{[](const float3 &center) {
+      LayoutItem item{};
+      item.primitive.shape = PrimitiveSpec::Shape::SPHERE;
+      item.primitive.radius = RADIUS;
+      item.materials.all = "glow";
+      item.light = true;
+      item.objectToWorld[3] = float4(center, 1.0f);
+      return item;
+    }};
+    // 0: the moving lamp; 1 and 2: still lamps at its two keys.
+    auto moving{sphereAt(CENTER_OPEN)};
+    moving.objectToWorldShut = sphereAt(CENTER_SHUT).objectToWorld;
+    scene.add(moving);
+    scene.add(sphereAt(CENTER_OPEN));
+    scene.add(sphereAt(CENTER_SHUT));
+    // 3: the quad below the receiver, facing up, scaling from 1 to 2
+    // over the shutter; 4: a still quad at the shut scale.
+    const auto quadAt{[&](float scale) {
+      LayoutItem item{};
+      item.fileName = quad;
+      item.materials.all = "glow";
+      item.light = true;
+      item.objectToWorld[0].x = scale;
+      item.objectToWorld[1].y = scale;
+      item.objectToWorld[3] = float4(QUAD_CENTER, 1.0f);
+      return item;
+    }};
+    auto movingQuad{quadAt(1.0f)};
+    movingQuad.objectToWorldShut = quadAt(2.0f).objectToWorld;
+    scene.add(movingQuad);
+    scene.add(quadAt(2.0f));
+    if (auto error{compiler.compile(smdl::OPT_LEVEL_O2)}) {
+      MESSAGE(error->message);
+      REQUIRE(false);
+    }
+    if (auto error{compiler.jitCompile()}) {
+      MESSAGE(error->message);
+      REQUIRE(false);
+    }
+    auto gridSpec{std::vector<float>(16)};
+    for (size_t i = 0; i < gridSpec.size(); i++)
+      gridSpec[i] = 400.0f + 300.0f * float(i) / float(gridSpec.size() - 1);
+    wavelengths =
+        Color(smdl::Span<const float>(gridSpec.data(), gridSpec.size()));
+    renderWavelengths() = wavelengths;
+    scene.commit(wavelengths);
+  }
+  ~MotionFixture() { fs::remove_all(dir); }
+
+  static constexpr float RADIUS{0.5f};
+  static constexpr float3 CENTER_OPEN{0.0f, 0.0f, 0.0f};
+  static constexpr float3 CENTER_SHUT{4.0f, 0.0f, 0.0f};
+  static constexpr float3 QUAD_CENTER{2.0f, 0.0f, -5.0f};
+  static constexpr float3 RECEIVER{2.0f, 0.0f, -3.0f};
+
+  fs::path dir{fs::temp_directory_path() / "smdl-toy-light-motion-test"};
+  std::string quad{};
+  smdl::Compiler compiler{};
+  Scene scene{compiler};
+  Color wavelengths{};
+};
+
+} // namespace
+
+TEST_CASE("LightSampler: a moving emitter is placed at the path's time") {
+  MotionFixture fixture{};
+  // The flat distribution, so that lights of equal power have equal
+  // selection probabilities wherever the receiver is: the moving lamp's
+  // weight is its open-key area, the same as its still twins'.
+  const LightSampler lights{
+      fixture.compiler,    fixture.scene, nullptr,          {},
+      fixture.wavelengths, false,         /*useTree=*/false};
+  auto allocator{smdl::BumpPtrAllocator()};
+  auto state{makeRenderState(fixture.wavelengths, &allocator)};
+  Sampler sampler{};
+  constexpr int NUM_DRAWS{2048};
+  SUBCASE("The sphere lamp: the cone at the time, and the still twin's") {
+    for (const float u : {0.0f, 1.0f, 0.5f}) {
+      CAPTURE(u);
+      const float3 center{(1.0f - u) * MotionFixture::CENTER_OPEN +
+                          u * MotionFixture::CENTER_SHUT};
+      int numDrawn{};
+      for (int i = 0; i < NUM_DRAWS; i++) {
+        sampler.startPixelSample(0, uint32_t(i));
+        LightSample sample{};
+        const bool drawn{
+            lights.sample(state, sampler, MotionFixture::RECEIVER, u, sample)};
+        allocator.reset();
+        if (!drawn || sample.hit.instIndex != 0) continue;
+        numDrawn++;
+        CAPTURE(i);
+        CHECK(sample.hit.time == u);
+        CHECK(length(sample.target - center) ==
+              doctest::Approx(MotionFixture::RADIUS).epsilon(1.0e-4));
+        // The density the arrival site recomputes, for this light at
+        // this time, and for the still twin at the same place.
+        const float own{lights.solidAnglePDF(0, sample.target, sample.normal,
+                                             MotionFixture::RECEIVER, false,
+                                             u)};
+        CHECK(sample.pdf == doctest::Approx(own).epsilon(1.0e-4));
+        if (u == 0.0f || u == 1.0f) {
+          const uint32_t twin{u == 0.0f ? 1u : 2u};
+          const float still{
+              lights.solidAnglePDF(twin, sample.target, sample.normal,
+                                   MotionFixture::RECEIVER, false, 0.0f)};
+          CHECK(sample.pdf == doctest::Approx(still).epsilon(1.0e-4));
+        }
+      }
+      CHECK(numDrawn > NUM_DRAWS / 16);
+    }
+  }
+  SUBCASE("The mesh light: object area with the stretch at the time") {
+    for (const float u : {0.0f, 1.0f}) {
+      CAPTURE(u);
+      const float scale{1.0f + u};
+      int numDrawn{};
+      for (int i = 0; i < NUM_DRAWS; i++) {
+        sampler.startPixelSample(0, uint32_t(i));
+        LightSample sample{};
+        const bool drawn{
+            lights.sample(state, sampler, MotionFixture::RECEIVER, u, sample)};
+        allocator.reset();
+        if (!drawn || sample.hit.instIndex != 3) continue;
+        numDrawn++;
+        CAPTURE(i);
+        // On the quad as scaled at the time.
+        CHECK(sample.target.z ==
+              doctest::Approx(MotionFixture::QUAD_CENTER.z).epsilon(1.0e-5));
+        CHECK(std::fabs(sample.target.x - MotionFixture::QUAD_CENTER.x) <=
+              scale * (1.0f + 1.0e-5f));
+        CHECK(std::fabs(sample.target.y - MotionFixture::QUAD_CENTER.y) <=
+              scale * (1.0f + 1.0e-5f));
+        const float own{lights.solidAnglePDF(3, sample.target, sample.normal,
+                                             MotionFixture::RECEIVER, true, u)};
+        CHECK(sample.pdf == doctest::Approx(own).epsilon(1.0e-4));
+        if (u == 1.0f) {
+          // The still twin at the shut scale weighs four times as much
+          // (its area is the shut-key area, the moving light's the
+          // open-key one), so its selection probability is four times
+          // the moving light's; past that, the two densities are one.
+          const float still{
+              lights.solidAnglePDF(4, sample.target, sample.normal,
+                                   MotionFixture::RECEIVER, true, 0.0f)};
+          CHECK(4.0f * own == doctest::Approx(still).epsilon(1.0e-4));
+        }
+      }
+      CHECK(numDrawn > NUM_DRAWS / 32);
+    }
+  }
+}
+
+TEST_CASE("AnalyticLight: a moving light interpolates its placement") {
+  MotionFixture fixture{};
+  auto state{makeRenderState(fixture.wavelengths)};
+  const auto translated{[](const float3 &offset) {
+    float4x4 xf{1.0f};
+    xf[3] = float4(offset, 1.0f);
+    return xf;
+  }};
+  SUBCASE("A point light moves along the chord") {
+    LayoutLight lamp{};
+    lamp.decl.kind = LayoutLightDecl::Kind::POINT;
+    lamp.decl.power = 10.0f;
+    lamp.lightToWorld = translated(float3(0.0f, 0.0f, 5.0f));
+    lamp.lightToWorldShut = translated(float3(4.0f, 0.0f, 5.0f));
+    const AnalyticLight light{fixture.compiler, state, fixture.wavelengths,
+                              lamp, nullptr};
+    CHECK(light.position(0.0f).x == 0.0f);
+    CHECK(light.position(1.0f).x == 4.0f);
+    CHECK(light.position(0.5f).x == doctest::Approx(2.0f));
+    CHECK(light.position(0.5f).z == doctest::Approx(5.0f));
+    const auto box{light.bounds()};
+    CHECK(box.lower.x == 0.0f);
+    CHECK(box.upper.x == 4.0f);
+    // At the shut key the moving light is the still light placed
+    // there, bit for bit: the lerp reproduces its ends exactly.
+    LayoutLight still{lamp};
+    still.lightToWorld = *lamp.lightToWorldShut;
+    still.lightToWorldShut.reset();
+    const AnalyticLight stillLight{fixture.compiler, state, fixture.wavelengths,
+                                   still, nullptr};
+    const float3 point{4.0f, 1.0f, 0.0f};
+    const Color moving{light.Li(point, 1.0f, 1.0f)};
+    const Color placed{stillLight.Li(point, 1.0f, 0.0f)};
+    for (size_t k = 0; k < fixture.wavelengths.size(); k++)
+      CHECK(moving[k] == placed[k]);
+    CHECK(moving[0] > 0.0f);
+    CHECK(light.Li(point, 1.0f, 0.0f)[0] < moving[0]);
+  }
+  SUBCASE("A rect pays its area at the time") {
+    LayoutLight panel{};
+    panel.decl.kind = LayoutLightDecl::Kind::RECT;
+    panel.decl.size = float2(2.0f, 1.0f);
+    panel.decl.power = 10.0f;
+    panel.lightToWorld = translated(float3(0.0f, 0.0f, 5.0f));
+    auto shut{panel.lightToWorld};
+    shut[0].x = 2.0f;
+    shut[1].y = 2.0f;
+    shut[3].z = 7.0f;
+    panel.lightToWorldShut = shut;
+    const AnalyticLight light{fixture.compiler, state, fixture.wavelengths,
+                              panel, nullptr};
+    LayoutLight still{panel};
+    still.lightToWorld = shut;
+    still.lightToWorldShut.reset();
+    const AnalyticLight stillLight{fixture.compiler, state, fixture.wavelengths,
+                                   still, nullptr};
+    const float3 receiver{0.5f, 0.2f, 0.0f};
+    for (int i = 0; i < 16; i++) {
+      CAPTURE(i);
+      const float2 xi{(float(i) + 0.5f) / 16.0f,
+                      std::fmod(0.618034f * float(i) + 0.3f, 1.0f)};
+      float pdfMoving{};
+      float pdfStill{};
+      const float3 pointMoving{
+          light.sampleShape(receiver, xi, pdfMoving, 1.0f)};
+      const float3 pointStill{
+          stillLight.sampleShape(receiver, xi, pdfStill, 0.0f)};
+      CHECK(pointMoving.x == pointStill.x);
+      CHECK(pointMoving.y == pointStill.y);
+      CHECK(pointMoving.z == 7.0f);
+      CHECK(pdfMoving == pdfStill);
+      CHECK(pdfMoving > 0.0f);
+      // At the open key the panel is half the size, so the same draw
+      // lands within the smaller extent at the lower height.
+      float pdfOpen{};
+      const float3 pointOpen{light.sampleShape(receiver, xi, pdfOpen, 0.0f)};
+      CHECK(pointOpen.z == 5.0f);
+      CHECK(std::fabs(pointOpen.x) <= 1.0f + 1.0e-5f);
+      CHECK(std::fabs(pointOpen.y) <= 0.5f + 1.0e-5f);
+    }
+    CHECK(light.normal(1.0f).z == doctest::Approx(-1.0f));
+    // The radiance is baked at the open key, where the panel has a
+    // quarter of the shut-key area, so the moving panel radiates four
+    // times what the still twin does from the same power; the emitting
+    // side faces the receiver below at both keys.
+    const float3 onPanel{0.0f, 0.0f, 7.0f};
+    CHECK(light.Le(onPanel, receiver, 1.0f)[0] ==
+          doctest::Approx(4.0f * stillLight.Le(onPanel, receiver, 0.0f)[0])
+              .epsilon(1.0e-5));
+    CHECK(light.Le(onPanel, receiver, 1.0f)[0] > 0.0f);
+    const auto box{light.bounds()};
+    CHECK(box.lower.z == 5.0f);
+    CHECK(box.upper.z == 7.0f);
+    CHECK(box.upper.x == 2.0f);
   }
 }
