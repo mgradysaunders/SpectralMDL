@@ -251,6 +251,13 @@ static cl::opt<std::string> optWavelengths{
              "whitespace-separated values (mutually exclusive with "
              "-wavelength-range)"),
     cl::cat(catCamera)};
+static cl::opt<bool> optWavelengthJitter{
+    "wavelength-jitter",
+    cl::desc("Jitter each wavelength within its band, so that every band "
+             "estimates the mean radiance over the band rather than the "
+             "radiance at one wavelength\n"
+             "* the outermost bands reach half a band past the grid ends"),
+    cl::init(false), cl::cat(catCamera)};
 static cl::opt<bool> optAutolook{
     "autolook",
     cl::desc("Solve -look-from/-look-to to fit the scene at the given FOV"),
@@ -1168,6 +1175,14 @@ int main(int argc, char **argv) try {
           "samples are independent of the first session's rather than "
           "jointly stratified (still unbiased, noise just improves more "
           "slowly)");
+    if (auto itr{resumed.fields.find("smdl wavelength jitter")};
+        (itr != resumed.fields.end() && itr->second != "0") !=
+        bool(optWavelengthJitter))
+      SMDL_LOG_WARN(
+          "resuming across a -wavelength-jitter change: a jittered band "
+          "holds the mean radiance over the band and an unjittered one holds "
+          "the radiance at one wavelength, so the merged image mixes two "
+          "different quantities");
     if (auto itr{resumed.fields.find("smdl args")};
         itr != resumed.fields.end() &&
         stripSessionOnlyArgs(itr->second) != stripSessionOnlyArgs(argsEcho))
@@ -1244,6 +1259,20 @@ int main(int argc, char **argv) try {
       }
     }
   }
+  // The jitter rectangles; see `renderWavelengthBandEdges()`. Left empty
+  // when the flag is off, which is what the renderer tests, so a default
+  // render never asks.
+  {
+    auto &edges{renderWavelengthBandEdges()};
+    edges.clear();
+    if (optWavelengthJitter) {
+      edges = wavelengthBandEdges(
+          smdl::Span<const float>(gridSpec.data(), gridSpec.size()));
+      if (edges.empty())
+        SMDL_LOG_WARN("-wavelength-jitter needs at least 2 bands to have a "
+                      "band width to jitter within, so it does nothing here");
+    }
+  }
   const auto wavelengths{
       Color(smdl::Span<const float>(gridSpec.data(), gridSpec.size()))};
   renderWavelengths() = wavelengths;
@@ -1265,6 +1294,15 @@ int main(int argc, char **argv) try {
                                    : " bands, ",
                   wavelengths[0], "-", wavelengths[wavelengths.size() - 1],
                   " nm");
+  // The spectral extent the render actually reaches, which the jitter
+  // widens to the outermost band edges.
+  const auto &bandEdges{renderWavelengthBandEdges()};
+  const float gridLower{bandEdges.empty() ? wavelengths[0] : bandEdges.front()};
+  const float gridUpper{bandEdges.empty() ? wavelengths[wavelengths.size() - 1]
+                                          : bandEdges.back()};
+  if (!bandEdges.empty())
+    SMDL_LOG_INFO("Wavelength jitter: bands tile ", gridLower, "-", gridUpper,
+                  " nm, each holding its own mean");
   if (wavelengths.size() > 256)
     SMDL_LOG_WARN(wavelengths.size(),
                   " bands: JIT compile time and per-sample cost both grow "
@@ -1272,8 +1310,7 @@ int main(int argc, char **argv) try {
                   "render");
   // Everything RGB-sourced degrades outside the visible; say so once
   // rather than rendering a mysteriously dark image.
-  const bool gridBeyondVisible{wavelengths[0] < 379.0f ||
-                               wavelengths[wavelengths.size() - 1] > 781.0f};
+  const bool gridBeyondVisible{gridLower < 379.0f || gridUpper > 781.0f};
   if (gridBeyondVisible)
     SMDL_LOG_WARN(
         "the wavelength grid leaves the visible (380-780nm): colored RGB "
@@ -1737,6 +1774,9 @@ int main(int argc, char **argv) try {
   pathOptions.maxContribution = std::max(float(optMaxContribution), 0.0f);
   pathOptions.maxContributionBounces =
       int(std::max(unsigned(optMaxContributionBounces), 1U));
+  // Whether every sample draws its own wavelength grid; see
+  // `renderWavelengthBandEdges()` and `jitterWavelengths()`.
+  const bool jitterWavelength{!renderWavelengthBandEdges().empty()};
   if (optMNEETestNormalHook) {
     std::cout << "Checking the geometry-normal hook against the meshes:\n";
     const int failures{runMNEETestNormalHook(scene)};
@@ -1812,6 +1852,12 @@ int main(int argc, char **argv) try {
         // render.
         auto guideRecords{std::vector<GuideRecord>()};
         if (recordPass) guideRecords.resize(pathOptions.maxBounces + 1);
+        // The sample's own wavelength grid, rewritten in place once per
+        // sample: a `Color` past `SpectralColor::INLINE_CAPACITY` bands
+        // heaps, and every state built from it holds the pointer rather
+        // than a copy, so one buffer per pixel serves the whole sample.
+        auto jittered{std::optional<Color>()};
+        if (jitterWavelength) jittered.emplace(wavelengths);
         auto y{i / numPixelsX};
         auto x{i % numPixelsX};
         Color Lsum{};
@@ -1825,8 +1871,14 @@ int main(int argc, char **argv) try {
         guiding.bsdfFractionFixed =
             optGuideBSDFFraction.getNumOccurrences() > 0;
         for (size_t s = 0; s < chunk; s++) {
-          sampler.startPixelSample(
-              uint32_t(i), uint32_t(sampleIndexBase + sppDone + chunkBase + s));
+          const auto sampleIndex{
+              uint32_t(sampleIndexBase + sppDone + chunkBase + s)};
+          sampler.startPixelSample(uint32_t(i), sampleIndex);
+          if (jitterWavelength)
+            jitterWavelengths(*jittered,
+                              wavelengthJitterOffset(uint32_t(i), sampleIndex));
+          const Color &sampleWavelengths{jitterWavelength ? *jittered
+                                                          : wavelengths};
           Color Lsample{};
           const auto cameraSample{camera->sample(x, y, sampler)};
           // A fully vignetted sample contributes nothing, so skip the
@@ -1842,7 +1894,7 @@ int main(int argc, char **argv) try {
             if (const float shutter{float(optShutterSpeed)}; shutter > 0)
               time += shutter * float(sampler);
             Lsample = tracePath(
-                compiler, allocator, scene, sampler, wavelengths,
+                compiler, allocator, scene, sampler, sampleWavelengths,
                 cameraSample.ray, time, cameraSample.weight,
                 cameraSample.coneAngle, exteriorMedium, haze.get(), lights,
                 mneeOptions, pathOptions, &guiding,
@@ -1953,6 +2005,7 @@ int main(int argc, char **argv) try {
     const auto partName{outputSpectrum + ".part"};
     const auto extraHeaderLines{std::vector<std::string>{
         smdl::concat("smdl sampler = ", SAMPLER_VERSION),
+        smdl::concat("smdl wavelength jitter = ", jitterWavelength ? "1" : "0"),
         smdl::concat("smdl sample offset = ", sequenceSampleOffset),
         smdl::concat("smdl wall seconds = ", cumulativeWallSeconds),
         smdl::concat("smdl compute seconds = ", cumulativeComputeSeconds),

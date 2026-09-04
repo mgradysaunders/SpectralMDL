@@ -3,6 +3,7 @@
 smdl_add_doctest(
   "smdl-toy-doctest"
   SOURCES
+    "Color.cc"
     "IO/PlacesFile.cc"
     "Layout/Layout.cc"
     "Layout/LayoutParser.cc"
