@@ -203,7 +203,7 @@ bool evaluateChain(
     sv.hLen = length(h);
     if (!(sv.hLen > 1e-6f)) return false;
     sv.hHat = h / sv.hLen;
-    // `H` points into the denser medium, so which side it lands on depends
+    // `h` points into the denser medium, so which side it lands on depends
     // on which side is denser. Orienting it onto the shading normal makes
     // it the microfacet normal the interface's own distribution is
     // expressed in, which is what an offset has to be measured against.
