@@ -204,14 +204,3 @@ public:
                                     const Hit &hit, const float3 &wl,
                                     float maxGlossyAlpha,
                                     ManifoldVertexSeed &seed);
-
-/// The manifold walk test behind `smdl-toy -mnee-test-manifoldwalk`, run
-/// by CTest: builds small flat scenes of its own, solves reflective and
-/// refractive connections through them, and checks the connection measure
-/// against the flat-mirror analytic value and against finite differences
-/// of the solved receiver direction over the light direction, which is
-/// the one ground truth every chain measure must agree with. Unlike the
-/// library doctests, which run the solver over analytic surfaces, this
-/// exercises this renderer's `SceneManifoldSurfaces` end to end. Returns
-/// true when every check passes; prints one line per check either way.
-[[nodiscard]] bool runManifoldWalkTest();

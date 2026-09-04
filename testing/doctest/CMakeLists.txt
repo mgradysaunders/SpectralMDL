@@ -1,70 +1,67 @@
-string(RANDOM LENGTH 8 ALPHABET "012345679" SEED)
-add_executable("smdl-doctest")
-# Test sources mirror the layout of 'lib/': the test for 'lib/X/Y.cc'
-# lives at 'X/Y.cc' here. The 'doctest.*' files at the root are the
-# vendored framework and runner, not tests of a lib file.
-target_sources(
-  "smdl-doctest"
-  PRIVATE
-    "doctest.cc"
-    "Common.cc"
-    "Compiler.cc"
-    "Compiler/Emitter.cc"
-    "Doc.cc"
-    "Manifold.cc"
-    "Module.cc"
-    "Parser.cc"
-    "RenderUtil/SpectralColor.cc"
-    "RenderUtil/FastMath.cc"
-    "RenderUtil/Haze.cc"
-    "RenderUtil/Illuminant.cc"
-    "RenderUtil/Metal.cc"
-    "RenderUtil/MonteCarlo.cc"
-    "RenderUtil/SpectralFilm.cc"
-    "RenderUtil/SunSky.cc"
-    "Resource/BSDFMeasurement.cc"
-    "Resource/Image.cc"
-    "Resource/LightProfile.cc"
-    "Resource/SceneData.cc"
-    "Resource/VoxelGrid.cc"
-    "Support/FileLocator.cc"
-    "Support/FlatYAML.cc"
-    "Support/MD5Hash.cc"
-    "Support/QualifiedName.cc"
-    "Support/RNG.cc"
-    "Support/Strings.cc"
-  )
-# So nested test sources can '#include "doctest.h"' unqualified.
+# Two suites, one framework. 'doctest.h' and 'doctest.cc' at this level
+# are the vendored framework and its runner, built once as an object
+# library that every suite links, so the suites share one 'main()' and
+# one copy of the framework's implementation. Each suite is a
+# subdirectory named for the executable it tests, laid out to mirror
+# that executable's sources: 'smdl/' mirrors 'lib/', and 'smdl-toy/'
+# mirrors 'programs/smdl-toy/'.
+add_library("doctest-runner" OBJECT "doctest.cc")
+# So test sources at any depth can '#include "doctest.h"' unqualified.
 target_include_directories(
-  "smdl-doctest"
-  PRIVATE
+  "doctest-runner"
+  PUBLIC
     "${CMAKE_CURRENT_SOURCE_DIR}"
   )
-target_link_libraries(
-  "smdl-doctest"
-  PRIVATE
-    "SpectralMDL::SpectralMDL"
-  )
-# Match the library's RTTI setting, as 'lib' and 'programs' do; the
-# 'BuildInfo' test relies on this to check 'hasRTTI' against this
-# binary's own compile.
-target_compile_options(
-  "smdl-doctest"
-  PRIVATE
-    "${RTTI_FLAG}"
-  )
 set_target_properties(
-  "smdl-doctest"
-  PROPERTIES
-    CXX_VISIBILITY_PRESET hidden
-    VISIBILITY_INLINES_HIDDEN ON
-    POSITION_INDEPENDENT_CODE ON
-  )
-set_target_properties(
-  "smdl-doctest"
+  "doctest-runner"
   PROPERTIES
     CXX_STANDARD 17
     CXX_STANDARD_REQUIRED YES
-    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+    CXX_VISIBILITY_PRESET hidden
+    VISIBILITY_INLINES_HIDDEN ON
   )
-add_test(NAME "smdl-doctest" COMMAND $<TARGET_FILE:smdl-doctest> -rs=${SEED})
+if(RTTI_FLAG)
+  target_compile_options("doctest-runner" PRIVATE "${RTTI_FLAG}")
+endif()
+
+# One seed per configure, shared by the suites, so a failure that
+# depends on test order reproduces with the '-rs' the CTest log shows.
+string(RANDOM LENGTH 8 ALPHABET "0123456789" SEED)
+
+# Add one suite: an executable of the given test sources over the
+# runner and whatever LINK names (the library, or the renderer's object
+# library), registered with CTest under its own name.
+#
+# The RTTI flag matches the library's, as 'lib' and 'programs' do; the
+# 'BuildInfo' test relies on this to check 'hasRTTI' against the test
+# binary's own compile.
+function(smdl_add_doctest BIN_NAME)
+  set(Options)
+  set(OneValArgs)
+  set(MultiValArgs SOURCES LINK)
+  cmake_parse_arguments(Args "${Options}" "${OneValArgs}" "${MultiValArgs}" ${ARGN})
+  add_executable(${BIN_NAME})
+  target_sources(${BIN_NAME} PRIVATE ${Args_SOURCES})
+  target_link_libraries(${BIN_NAME} PRIVATE "doctest-runner" ${Args_LINK})
+  if(RTTI_FLAG)
+    target_compile_options(${BIN_NAME} PRIVATE "${RTTI_FLAG}")
+  endif()
+  set_target_properties(
+    ${BIN_NAME}
+    PROPERTIES
+      CXX_STANDARD 17
+      CXX_STANDARD_REQUIRED YES
+      CXX_VISIBILITY_PRESET hidden
+      VISIBILITY_INLINES_HIDDEN ON
+      RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+    )
+  add_test(NAME ${BIN_NAME} COMMAND $<TARGET_FILE:${BIN_NAME}> -rs=${SEED})
+endfunction()
+
+add_subdirectory(smdl)
+# The renderer suite links the renderer's object library, which exists
+# only when 'programs' built 'smdl-toy' (see 'SMDL_TOY' and the
+# dependency checks in 'programs/smdl-toy/CMakeLists.txt').
+if(TARGET smdl-toy-objects)
+  add_subdirectory(smdl-toy)
+endif()

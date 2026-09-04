@@ -213,11 +213,6 @@ static cl::opt<bool> optMNEEReport{
     "mnee-report",
     cl::desc("With -mnee, print the manifold estimator stats after the render"),
     cl::init(false), cl::cat(catSampling)};
-static cl::opt<bool> optMNEETestWalk{
-    "mnee-test-manifoldwalk",
-    cl::desc("Run the manifold walk test and exit, non-zero on failure, needs "
-             "no scene arguments"),
-    cl::init(false), cl::cat(catSampling)};
 static cl::opt<bool> optMNEETestNormalHook{
     "mnee-test-normalhook",
     cl::desc("Test the geometry-normal hook against the meshes and exit, "
@@ -878,12 +873,6 @@ int main(int argc, char **argv) try {
   // building acceleration structures, and `Scene` bounds that one from
   // `smdl::getThreadCount()`.
   smdl::setThreadCount(unsigned(optThreads));
-  if (optMNEETestWalk) {
-    std::cout << "Manifold walk test:\n";
-    const bool ok{runManifoldWalkTest()};
-    std::cout << (ok ? "All checks pass\n" : "Checks FAILED\n");
-    return ok ? EXIT_SUCCESS : EXIT_FAILURE;
-  }
   // Validate the occurrence-dependent lens flags here at the CLI, where
   // "was this given at all" is knowable; in the `CameraOptions` built
   // below zero means unset, so an explicit value has to be positive to

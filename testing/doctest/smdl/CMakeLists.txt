@@ -1,0 +1,33 @@
+# The library suite: the test for 'lib/X/Y.cc' lives at 'X/Y.cc' here.
+smdl_add_doctest(
+  "smdl-doctest"
+  SOURCES
+    "Common.cc"
+    "Compiler.cc"
+    "Compiler/Emitter.cc"
+    "Doc.cc"
+    "Manifold.cc"
+    "Module.cc"
+    "Parser.cc"
+    "RenderUtil/SpectralColor.cc"
+    "RenderUtil/FastMath.cc"
+    "RenderUtil/Haze.cc"
+    "RenderUtil/Illuminant.cc"
+    "RenderUtil/Metal.cc"
+    "RenderUtil/MonteCarlo.cc"
+    "RenderUtil/SpectralFilm.cc"
+    "RenderUtil/SunSky.cc"
+    "Resource/BSDFMeasurement.cc"
+    "Resource/Image.cc"
+    "Resource/LightProfile.cc"
+    "Resource/SceneData.cc"
+    "Resource/VoxelGrid.cc"
+    "Support/FileLocator.cc"
+    "Support/FlatYAML.cc"
+    "Support/MD5Hash.cc"
+    "Support/QualifiedName.cc"
+    "Support/RNG.cc"
+    "Support/Strings.cc"
+  LINK
+    "SpectralMDL::SpectralMDL"
+  )
