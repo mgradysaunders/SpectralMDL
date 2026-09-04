@@ -879,6 +879,39 @@ def sky_block(scene):
     return ["sky {"] + lines + ["}"]
 
 
+def changed(settings, name):
+    """Whether a setting differs from its declared default, compared as the
+    single-precision values Blender stores, so a default that has no exact
+    single-precision spelling still reads as untouched."""
+    return getattr(settings, name) != settings.bl_rna.properties[name].default
+
+
+def haze_block(scene):
+    """The exterior haze as a `haze` directive, or nothing.
+
+    Writing the block at all is what turns the haze on, so an untouched
+    panel writes nothing and a bare block is the renderer's default
+    atmosphere. Inside it a setting is written only when it differs from
+    that default, and the visibility only when it is not to follow the
+    sky's, which an unwritten visibility does.
+    """
+    settings = scene.smdl_render
+    if not settings.haze:
+        return []
+    lines = ["haze {"]
+    if not settings.haze_match_sky:
+        lines.append(f"  visibility {settings.haze_visibility:.9g}")
+    for name, key in (("haze_scale_height", "scale_height"),
+                      ("haze_base_height", "base_height"),
+                      ("haze_albedo", "albedo"),
+                      ("haze_angstrom", "angstrom"),
+                      ("haze_droplet", "droplet")):
+        if changed(settings, name):
+            lines.append(f"  {key} {getattr(settings, name):.9g}")
+    lines.append("}")
+    return lines
+
+
 def light_ies_path(light):
     """The IES file an SMDL profile light can read, or "".
 
@@ -1580,6 +1613,9 @@ def write_scene(context, filepath, asset_root="", bake=True, collection=None,
 
     lines.extend(light_blocks(context.scene, problems))
     lines.extend(sky_block(context.scene))
+    if lines and lines[-1] == "}":
+        lines.append("")
+    lines.extend(haze_block(context.scene))
     if lines and lines[-1] == "}":
         lines.append("")
     lines.extend(camera_block(context.scene))

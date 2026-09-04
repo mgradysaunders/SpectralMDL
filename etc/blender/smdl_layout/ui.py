@@ -315,6 +315,38 @@ class SMDL_PT_sky(bpy.types.Panel):
         column.prop(settings, "water_vapor")
 
 
+class SMDL_PT_haze(bpy.types.Panel):
+    """The exterior haze the exporter writes into the layout's `haze {}`
+    block, which is what produces aerial perspective. Off writes nothing,
+    the renderer's default being no haze; on writes the block, and inside
+    it only what differs from the renderer's defaults."""
+
+    bl_label = "Haze Options"
+    bl_space_type = "PROPERTIES"
+    bl_region_type = "WINDOW"
+    bl_context = "scene"
+    bl_parent_id = "SMDL_PT_layout"
+    bl_options = {"DEFAULT_CLOSED"}
+
+    def draw(self, context):
+        layout = self.layout
+        layout.use_property_split = True
+        layout.use_property_decorate = False
+        settings = context.scene.smdl_render
+        layout.prop(settings, "haze")
+        column = layout.column()
+        column.active = settings.haze
+        column.prop(settings, "haze_match_sky")
+        row = column.row()
+        row.active = settings.haze and not settings.haze_match_sky
+        row.prop(settings, "haze_visibility")
+        column.prop(settings, "haze_scale_height")
+        column.prop(settings, "haze_base_height")
+        column.prop(settings, "haze_albedo")
+        column.prop(settings, "haze_angstrom")
+        column.prop(settings, "haze_droplet")
+
+
 class SMDL_PT_asset_object(bpy.types.Panel):
     """Per-object export options, shown on placed assets and on whatever
     scatters them. See `SMDLAssetOptions`."""
@@ -505,6 +537,7 @@ def menu_export(self, context):
 CLASSES = (SMDL_OT_export_scene, SMDL_FH_scene, SMDL_OT_check_scene,
            SMDL_OT_register_library, SMDL_OT_sync_slots, SMDL_PT_layout,
            SMDL_PT_import,
-           SMDL_PT_export, SMDL_PT_camera, SMDL_PT_sky, SMDL_PT_materials,
+           SMDL_PT_export, SMDL_PT_camera, SMDL_PT_sky, SMDL_PT_haze,
+           SMDL_PT_materials,
            SMDL_PT_preview, SMDL_PT_asset_object, SMDL_PT_groom_object,
            SMDL_PT_light)

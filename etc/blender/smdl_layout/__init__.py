@@ -208,10 +208,10 @@ class SMDLRenderSettings(bpy.types.PropertyGroup):
     """Per-scene render settings.
 
     Everything here except Exposure is written into the exported layout's
-    `camera {}` and `sky {}` blocks, and only when it differs from the
-    renderer's default, so an untouched panel exports nothing. Exposure is
-    a tonemapping option the layout does not carry, so it alone rides the
-    preview command line as `-exposure`.
+    `camera {}`, `sky {}`, and `haze {}` blocks, and only when it differs
+    from the renderer's default, so an untouched panel exports nothing.
+    Exposure is a tonemapping option the layout does not carry, so it alone
+    rides the preview command line as `-exposure`.
     """
 
     exposure: bpy.props.FloatProperty(
@@ -321,6 +321,55 @@ class SMDLRenderSettings(bpy.types.PropertyGroup):
         description="Water-vapor column scale factor; higher deepens the "
                     "near-infrared absorption bands",
         default=1.0, min=0.3, max=3.0)
+    haze: bpy.props.BoolProperty(
+        name="Haze",
+        description="Fill the space outside all geometry with the exterior "
+                    "haze that produces aerial perspective: one aerosol "
+                    "whose extinction falls off exponentially with height. "
+                    "Exported as the layout's haze block",
+        default=False)
+    haze_match_sky: bpy.props.BoolProperty(
+        name="Match Sky Visibility",
+        description="Take the haze's visibility from the sun-sky's, so "
+                    "distant ground reads neither hazier nor clearer than "
+                    "the horizon sky behind it",
+        default=True)
+    haze_visibility: bpy.props.FloatProperty(
+        name="Visibility [km]",
+        description="The haze's meteorological range at 550 nm, measured "
+                    "at the base height; lower is hazier",
+        default=23.0, min=0.5, soft_max=100.0)
+    haze_scale_height: bpy.props.FloatProperty(
+        name="Scale Height [m]",
+        description="The height over which the extinction falls by a "
+                    "factor of e. 1200 m is the boundary-layer aerosol; "
+                    "molecular scattering is nearer 8000",
+        default=1200.0, min=1.0, soft_max=10000.0)
+    haze_base_height: bpy.props.FloatProperty(
+        name="Base Height",
+        description="The height at which the extinction is the one the "
+                    "visibility names",
+        default=0.0, subtype="DISTANCE")
+    haze_albedo: bpy.props.FloatProperty(
+        name="Albedo",
+        description="The single-scattering albedo: the fraction of what "
+                    "the haze intercepts that it scatters rather than "
+                    "absorbs",
+        default=0.9, min=0.0, max=1.0)
+    haze_angstrom: bpy.props.FloatProperty(
+        name="Angstrom Exponent",
+        description="How steeply the extinction falls with wavelength: 0 "
+                    "is gray, 1.3 the continental-rural aerosol, and 4 "
+                    "molecular scattering, which is what blues the "
+                    "distance",
+        default=1.3, min=0.0, soft_max=4.0)
+    haze_droplet: bpy.props.FloatProperty(
+        name="Droplet Size [um]",
+        description="The water droplet diameter in micrometers that "
+                    "shapes the phase function: 1 is the accumulation-"
+                    "mode aerosol, fog and cloud droplets run from 5 to "
+                    "50, and larger scatters more sharply forward",
+        default=1.0, min=0.01, max=50.0)
 
 
 CLASSES = ((SMDLSlotOptions, SMDLAssetOptions, SMDLGroomOptions,
