@@ -20,7 +20,6 @@
 
 // The solver types keep their unqualified spellings here; the solver
 // itself is the library's.
-using smdl::dfLobesOf;
 using smdl::isManifoldReceiver;
 using smdl::isSameManifoldSolution;
 using smdl::MANIFOLD_IDENTITY_FRACTION;

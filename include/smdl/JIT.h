@@ -1243,6 +1243,15 @@ public:
     return isExterior(wo) != isExterior(wi);
   }
 
+  /// The lobes (\ref DFLobes "the `DF_` lobes") the material can produce
+  /// anywhere in its scattering tree, both sides together. What every
+  /// eligibility question in the library and in a host's path tracer is
+  /// asked of. Carries the normal property bits as well as the lobes;
+  /// mask with `DF_ALL` where only the lobes are wanted.
+  [[nodiscard]] int getLobes() const noexcept {
+    return instance.df_lobes_surface | instance.df_lobes_backface;
+  }
+
   /// The scatter evaluate function.
   ///
   /// \param[in] wo

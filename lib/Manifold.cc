@@ -364,7 +364,7 @@ ManifoldClaim manifoldClaim(const JIT::MaterialInstance &mat, bool marked,
                             float maxGlossyAlpha) {
   ManifoldClaim claim{};
   if (mat.hasEmission()) return claim;
-  const int dfLobes{dfLobesOf(mat)};
+  const int dfLobes{mat.getLobes()};
   // A df node scattering about a normal it was given is a field the walk
   // does not solve for, and under a remapped `geometry.normal` even a
   // given normal equal to the state normal detaches, that not being the

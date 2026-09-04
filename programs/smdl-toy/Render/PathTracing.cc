@@ -674,7 +674,7 @@ Color MNEEGather::contribution(const ManifoldChain &chain,
       chainChance *=
           vertexChance *
           diracBranchChance(guiding, vertex.geometry.point,
-                            (dfLobesOf(crossMat) & smdl::JIT::DF_FINITE) != 0);
+                            (crossMat.getLobes() & smdl::JIT::DF_FINITE) != 0);
       if (!(chainChance > 0.0f) || beta.isAllZero()) return {};
     }
     // A reflection stays on the side it arrived from, so it crosses no
@@ -1146,7 +1146,7 @@ float MNEECoverage::coverWeight(const Scene &scene, Sampler &sampler,
     // weighing the same number.
     Q *= vertexChance *
          diracBranchChance(guiding, chainHits[i].point,
-                           (dfLobesOf(crossMat) & smdl::JIT::DF_FINITE) != 0);
+                           (crossMat.getLobes() & smdl::JIT::DF_FINITE) != 0);
     prev = chainHits[i].point;
   }
   const float arrivalPdf{receiverPdf * Q * transfer};
@@ -1745,7 +1745,7 @@ Color tracePath(smdl::Compiler &compiler, smdl::BumpPtrAllocator &allocator,
     const bool wasArmed{mneeCoverage.isArmed()};
     const DTree *dtree{
         guidingCellAt(guiding, hit.point,
-                      !isHair && (dfLobesOf(mat) & smdl::JIT::DF_FINITE) != 0)};
+                      !isHair && (mat.getLobes() & smdl::JIT::DF_FINITE) != 0)};
     // The one-sample-MIS mixture weight at this vertex: the cell's
     // learned weight unless pinned for experiments. Meaningful only when
     // `dtree` is non-null, and shared by the gather below, whose MIS
@@ -1836,7 +1836,7 @@ Color tracePath(smdl::Compiler &compiler, smdl::BumpPtrAllocator &allocator,
     // sampled lobe was specular still gets its diffuse growth, which errs
     // toward more prefiltering deeper in the path.
     if (!isDiracBounce) {
-      spread = std::min(spread + ((dfLobesOf(mat) & smdl::JIT::DF_GENERIC) != 0
+      spread = std::min(spread + ((mat.getLobes() & smdl::JIT::DF_GENERIC) != 0
                                       ? ANGLE_GROWTH_DIFFUSE
                                       : ANGLE_GROWTH_GLOSSY),
                         ANGLE_MAX);

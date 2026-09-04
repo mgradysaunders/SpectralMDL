@@ -2486,14 +2486,14 @@ TEST_CASE("Compiler enableScatterNormal") {
     auto pinned{smdl::JIT::MaterialInstance(state, pinnedMaterial)};
     // A defaulted layer normal follows the remapped field, so it reports
     // neither property bit and the walk can solve the whole tree.
-    CHECK((smdl::dfLobesOf(inherits) &
+    CHECK((inherits.getLobes() &
            (smdl::JIT::DF_SETS_NORMAL | smdl::JIT::DF_CAN_SET_NORMAL)) == 0);
     CHECK(!smdl::manifoldClaim(inherits, /*marked=*/true).empty());
     // Spelling out the state normal detaches the layer from the remapped
     // field even though the two values agree here, which is exactly what
     // `DF_CAN_SET_NORMAL` exists to report.
-    CHECK((smdl::dfLobesOf(pinned) & smdl::JIT::DF_SETS_NORMAL) == 0);
-    CHECK((smdl::dfLobesOf(pinned) & smdl::JIT::DF_CAN_SET_NORMAL) != 0);
+    CHECK((pinned.getLobes() & smdl::JIT::DF_SETS_NORMAL) == 0);
+    CHECK((pinned.getLobes() & smdl::JIT::DF_CAN_SET_NORMAL) != 0);
     CHECK(smdl::manifoldClaim(pinned, /*marked=*/true).empty());
   }
   SUBCASE("The remap flag degrades to unproven without optimization") {

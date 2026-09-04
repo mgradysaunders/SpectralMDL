@@ -78,13 +78,6 @@ constexpr float MANIFOLD_RECIPROCAL_RESIDUAL{1e-5f};
 /// energy.
 constexpr int MANIFOLD_MAX_TRIALS{64};
 
-/// The lobes a material instance can produce anywhere in its
-/// scattering tree, both sides together. What every eligibility question
-/// here and in a renderer's path tracer is asked of.
-[[nodiscard]] inline int dfLobesOf(const JIT::MaterialInstance &mat) noexcept {
-  return mat.instance.df_lobes_surface | mat.instance.df_lobes_backface;
-}
-
 /// A point pinned to one of the renderer's surfaces: where it is, and
 /// the renderer's own addressing of the surface, the face, and the face
 /// parameterization of the point. The solver reads only `point`; the
@@ -580,7 +573,7 @@ template <typename DrawXi>
 [[nodiscard]] inline bool isManifoldReceiver(const JIT::MaterialInstance &mat,
                                              bool backface, DrawXi &&drawXi,
                                              float minAlpha) {
-  const int dfLobes{dfLobesOf(mat)};
+  const int dfLobes{mat.getLobes()};
   if ((dfLobes & JIT::DF_FINITE) == 0) return false;
   if ((dfLobes & JIT::DF_GENERIC) != 0) return true;
   if (!(minAlpha > 0.0f) || !mat.material->scatterNormalSample) return true;

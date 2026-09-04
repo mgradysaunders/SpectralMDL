@@ -158,7 +158,7 @@ MNEECasterSet::MNEECasterSet(const Scene &scene, const Color &wavelengths,
     // against the medium the path is actually in.
     mat.setExteriorIOR(ExteriorIOR(nullptr, mat, float3(0.0f, 0.0f, 1.0f)));
     const auto claim{manifoldClaim(mat, /*marked=*/true, maxGlossyAlpha)};
-    const int dfLobes{dfLobesOf(mat)};
+    const int dfLobes{mat.getLobes()};
     allocator.reset();
     if (claim.empty()) {
       const char *reason{") claims nothing: the material has no Dirac or "
