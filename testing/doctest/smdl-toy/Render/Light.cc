@@ -196,3 +196,66 @@ TEST_CASE("LightSampler: -all-lights samples every emitter") {
   const auto drawn{drawnInstances(lights, fixture, 512)};
   CHECK(drawn == std::set<uint32_t>{0, 1, 3, 4});
 }
+
+TEST_CASE("LightSampler: what each kind of sample says") {
+  Fixture fixture{};
+  // A point light above the receiver, beside the spheres: the sampler
+  // then draws punctual and area samples alike, and each kind has to
+  // say the right things about its density, its reachability, its
+  // orientation, and what a re-evaluation from elsewhere returns.
+  LayoutLight lamp{};
+  lamp.decl.kind = LayoutLightDecl::Kind::POINT;
+  lamp.decl.power = 20.0f;
+  lamp.decl.powerSet = true;
+  lamp.lightToWorld[3] = float4(4.0f, 0.0f, 3.0f, 1.0f);
+  const LightSampler lights{
+      fixture.compiler, fixture.scene, nullptr, {lamp}, fixture.wavelengths};
+  auto allocator{smdl::BumpPtrAllocator()};
+  auto state{makeRenderState(fixture.wavelengths, &allocator)};
+  Sampler sampler{};
+  int numPunctual{};
+  int numArea{};
+  for (int i = 0; i < 512; i++) {
+    sampler.startPixelSample(0, uint32_t(i));
+    LightSample sample{};
+    if (!lights.sample(state, sampler, Fixture::RECEIVER, sample)) {
+      allocator.reset();
+      continue;
+    }
+    CAPTURE(i);
+    CHECK(!sample.isInfinite);
+    if (sample.isDirac) {
+      numPunctual++;
+      CHECK(!sample.reachable);
+      CHECK(sample.punctualIndex == 0);
+      CHECK(sample.hit.material == nullptr);
+      CHECK(lengthSquared(sample.normal) == 0.0f);
+      // A point light has no directional factor, so re-evaluating toward
+      // any other point leaves the radiance alone.
+      const Color again{
+          lights.reevaluateLi(sample, state, Fixture::RECEIVER, float3(0.0f))};
+      for (size_t k = 0; k < fixture.wavelengths.size(); k++)
+        CHECK(again[k] == doctest::Approx(sample.Li[k]));
+    } else {
+      numArea++;
+      CHECK(sample.reachable);
+      CHECK(sample.punctualIndex == INVALID_INDEX);
+      CHECK(sample.hit.material != nullptr);
+      CHECK(lengthSquared(sample.normal - sample.hit.Ng) == 0.0f);
+      // Toward the receiver it was sampled from, the re-evaluation is the
+      // sample's own radiance; toward the sphere's center, behind the
+      // emitting surface, it is zero.
+      const Color same{lights.reevaluateLi(sample, state, Fixture::RECEIVER,
+                                           Fixture::RECEIVER)};
+      for (size_t k = 0; k < fixture.wavelengths.size(); k++)
+        CHECK(same[k] == doctest::Approx(sample.Li[k]));
+      const Color behind{
+          lights.reevaluateLi(sample, state, Fixture::RECEIVER,
+                              Fixture::center(int(sample.hit.instIndex)))};
+      CHECK(behind.isAllZero());
+    }
+    allocator.reset();
+  }
+  CHECK(numPunctual > 0);
+  CHECK(numArea > 0);
+}

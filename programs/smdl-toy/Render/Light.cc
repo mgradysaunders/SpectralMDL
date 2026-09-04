@@ -196,6 +196,9 @@ PunctualLight::PunctualLight(smdl::Compiler &compiler, const smdl::State &state,
     mPower = mProfile->power() * intensityScale * float(tintedIntegral);
     break;
   }
+  case LayoutLightDecl::Kind::RECT:
+  case LayoutLightDecl::Kind::DISK:
+    break;
   }
   for (size_t i = 0; i < wavelengths.size(); i++)
     mIntensity[i] = intensityScale * shape[i];
@@ -450,6 +453,8 @@ bool LightSampler::sample(const smdl::State &state, Sampler &sampler,
   int lightIndex{lightDistr.indexSample(float(sampler), nullptr, &selectPMF)};
   if (!(selectPMF > 0)) return false;
   lightSample.isDirac = false;
+  lightSample.reachable = true;
+  lightSample.normal = float3(0.0f);
   lightSample.punctualIndex = INVALID_INDEX;
   if (envLight &&
       lightIndex == int(areaLights.size() + punctualLights.size())) {
@@ -477,6 +482,7 @@ bool LightSampler::sample(const smdl::State &state, Sampler &sampler,
     lightSample.pdf = selectPMF;
     lightSample.target = light.position();
     lightSample.isDirac = true;
+    lightSample.reachable = false;
     lightSample.punctualIndex = punctualIndex;
     lightSample.caustic = light.caustic;
     return true;
@@ -530,13 +536,20 @@ bool LightSampler::sample(const smdl::State &state, Sampler &sampler,
   // Convert the position density to solid angle at the receiver.
   lightSample.pdf = selectPMF * distSq * positionPDF / cosTheta;
   lightSample.target = hit.point;
+  lightSample.normal = hit.Ng;
   lightSample.hit = hit;
   return true;
 }
 
-Color LightSampler::reevaluateAreaLi(const LightSample &lightSample,
-                                     const smdl::State &state,
-                                     const float3 &incidencePoint) const {
+Color LightSampler::reevaluateLi(const LightSample &lightSample,
+                                 const smdl::State &state, const float3 &point,
+                                 const float3 &incidencePoint) const {
+  if (lightSample.isInfinite) return lightSample.Li;
+  if (lightSample.punctualIndex != INVALID_INDEX) {
+    if (lightSample.punctualIndex >= punctualLights.size()) return Color(0.0f);
+    return punctualLights[lightSample.punctualIndex].Li(
+        point, incidencePoint, state.meters_per_scene_unit);
+  }
   const auto &hit{lightSample.hit};
   if (!hit.material) return Color(0.0f);
   auto wEmit{incidencePoint - hit.point};
@@ -549,15 +562,6 @@ Color LightSampler::reevaluateAreaLi(const LightSample &lightSample,
   Color Le{};
   if (!emittedRadiance(mat, hit.instIndex, wEmit, Le)) return Color(0.0f);
   return Le;
-}
-
-Color LightSampler::reevaluatePunctualLi(const LightSample &lightSample,
-                                         const float3 &point,
-                                         const float3 &incidencePoint,
-                                         float metersPerSceneUnit) const {
-  if (lightSample.punctualIndex >= punctualLights.size()) return Color(0.0f);
-  return punctualLights[lightSample.punctualIndex].Li(point, incidencePoint,
-                                                      metersPerSceneUnit);
 }
 
 bool LightSampler::emittedRadiance(const smdl::JIT::MaterialInstance &mat,

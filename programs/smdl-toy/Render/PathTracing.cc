@@ -264,16 +264,16 @@ private:
                                 int lobeMask,
                                 ManifoldVertexSeed &vertexSeed) const;
 
-  // The light side of a connection, as the solver's target: an area sample
-  // carries the emitter's orientation, which the offset Jacobian needs and
-  // a punctual or distant one does not have.
+  // The light side of a connection, as the solver's target: a sample with
+  // an orientation carries it for the offset Jacobian, and a punctual or
+  // distant one has none; see `LightSample::normal`.
   [[nodiscard]]
   static ManifoldTarget makeManifoldTarget(const LightSample &sample) {
     ManifoldTarget target{};
     target.wl = sample.wi;
     target.point = sample.target;
     target.infinite = sample.isInfinite;
-    if (!sample.isDirac && !sample.isInfinite) target.normal = sample.hit.Ng;
+    target.normal = sample.normal;
     return target;
   }
 
@@ -544,25 +544,16 @@ Color MNEEGather::contribution(const ManifoldChain &chain,
                                bool claimed) const {
   // A finite light illuminates the last crossing, not the receiver, so
   // whatever the light does with direction has to be asked again along
-  // the segment that actually arrives: a punctual light's spot cone or
-  // IES profile, an area light's EDF and which of its sides faces that
-  // way. The distance falloff and the pdf are not that; they carry the
-  // straight-line solid-angle measure the estimator is built in, which
-  // the transfer Jacobian converts out of, so they stay as they are.
-  //
-  // A zero here is not a failure to report: the path tracer reads the
-  // same radiance off an emitter it reaches through the chain, so both
-  // halves of the estimator agree the transport carries nothing.
+  // the segment that actually arrives; see `LightSampler::reevaluateLi()`
+  // for what moves and what stays. A zero here is not a failure to
+  // report: the path tracer reads the same radiance off an emitter it
+  // reaches through the chain, so both halves of the estimator agree the
+  // transport carries nothing.
   const float3 &lastPoint{
       connection.vertices[connection.count - 1].geometry.point};
   Color Li{lightSample.Li};
-  if (lightSample.isDirac) {
-    if (Li = lights.reevaluatePunctualLi(lightSample, point, lastPoint,
-                                         gatherState.meters_per_scene_unit);
-        Li.isAllZero())
-      return {};
-  } else if (!lightSample.isInfinite) {
-    if (Li = lights.reevaluateAreaLi(lightSample, gatherState, lastPoint);
+  if (!lightSample.isInfinite) {
+    if (Li = lights.reevaluateLi(lightSample, gatherState, point, lastPoint);
         Li.isAllZero())
       return {};
   }
@@ -722,10 +713,10 @@ Color MNEEGather::contribution(const ManifoldChain &chain,
   } else {
     // Re-walk MIS: the competing density is the receiver's continuation
     // density toward the bent direction, carried through the chain by the
-    // discrete Fresnel transmissions and the transfer Jacobian. A Dirac
-    // light is unreachable by the continuation, so its MIS weight is 1,
-    // matching the plain branch.
-    if (!lightSample.isDirac) {
+    // discrete Fresnel transmissions and the transfer Jacobian. A light
+    // the continuation cannot reach has MIS weight 1, matching the plain
+    // branch; see `LightSample::reachable`.
+    if (lightSample.reachable) {
       float escapePdf{
           guidedContinuationPdf(dtree, bsdfFraction, connection.wr, fPdf) *
           chainChance * measure};
@@ -1235,9 +1226,9 @@ Color gatherDirect(const Scene &scene, Sampler &sampler,
           guidedContinuationPdf(dtree, bsdfFraction, lightSample.wi, fPdf)};
       Color D{f * Tr * lightSample.Li / lightSample.pdf};
       if (D.isAnyNonFinite()) return;
-      // A Dirac light is unreachable by the continuation, so its MIS
-      // weight is 1.
-      if (!lightSample.isDirac)
+      // A light the continuation cannot reach has MIS weight 1; see
+      // `LightSample::reachable`.
+      if (lightSample.reachable)
         D *= smdl::powerHeuristic(lightSample.pdf, continuationPdf);
       direct += D;
     }};

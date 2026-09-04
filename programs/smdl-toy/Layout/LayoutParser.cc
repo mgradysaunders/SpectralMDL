@@ -413,9 +413,10 @@ private:
     advance(); // '}'
   }
 
-  // A `light` declaration: `light <name> = point|spot|profile "<path>"`
-  // with an optional block of settings and transform operations. See
-  // `LayoutLightDecl` for the semantics of each setting.
+  // A `light` declaration: `light <name> = point|spot|profile
+  // "<path>"|rect|disk` with an optional block of settings and
+  // transform operations. See `LayoutLightDecl` for the semantics of
+  // each setting.
   void parseLight() {
     advance();
     auto &decl{mDocument.lights.emplace_back()};
@@ -437,8 +438,8 @@ private:
     advance();
     expect(Token::EQUALS, "'=' after the light name");
     if (mToken.kind != Token::WORD) {
-      mDiags.error(location(), "expected 'point', 'spot', or 'profile' "
-                               "after '='");
+      mDiags.error(location(), "expected 'point', 'spot', 'profile', 'rect', "
+                               "or 'disk' after '='");
       throw Recover();
     }
     if (mToken.text == "point") {
@@ -453,10 +454,16 @@ private:
       decl.profilePathLoc = location();
       decl.profilePath =
           expect(Token::STRING, "a quoted IES path after 'profile'");
+    } else if (mToken.text == "rect") {
+      decl.kind = LayoutLightDecl::Kind::RECT;
+      advance();
+    } else if (mToken.text == "disk") {
+      decl.kind = LayoutLightDecl::Kind::DISK;
+      advance();
     } else {
       mDiags.error(location(),
-                   smdl::concat("expected 'point', 'spot', or 'profile' "
-                                "after '=', got ",
+                   smdl::concat("expected 'point', 'spot', 'profile', 'rect', "
+                                "or 'disk' after '=', got ",
                                 smdl::Quoted(mToken.text)));
       throw Recover();
     }
@@ -467,6 +474,8 @@ private:
     advance(); // '{'
     const auto isSpot{decl.kind == LayoutLightDecl::Kind::SPOT};
     const auto isProfile{decl.kind == LayoutLightDecl::Kind::PROFILE};
+    const auto isRect{decl.kind == LayoutLightDecl::Kind::RECT};
+    const auto isDisk{decl.kind == LayoutLightDecl::Kind::DISK};
     while (mToken.kind != Token::CLOSE) {
       if (mToken.kind == Token::END) {
         mDiags.error(location(), "expected '}' before end of file");
@@ -531,7 +540,11 @@ private:
           mDiags.error(opLoc,
                        smdl::concat("'scale' applies to a profile, and this "
                                     "light is a ",
-                                    decl.kindName()));
+                                    decl.kindName(),
+                                    isRect || isDisk
+                                        ? " (the place line's 'scale' "
+                                          "stretches it)"
+                                        : ""));
           throw Recover();
         }
         const auto value{numbers<1>()[0]};
@@ -540,17 +553,46 @@ private:
           throw Recover();
         }
         decl.scale = value;
+      } else if (op == "size") {
+        if (!isRect) {
+          mDiags.error(opLoc, smdl::concat("'size' applies to a rect, and this "
+                                           "light is a ",
+                                           decl.kindName()));
+          throw Recover();
+        }
+        const auto v{numbers<2>()};
+        if (!(v[0] > 0 && v[1] > 0)) {
+          mDiags.error(opLoc, "expected two positive numbers for 'size'");
+          throw Recover();
+        }
+        decl.size = float2(v[0], v[1]);
+      } else if (op == "radius") {
+        if (!isDisk) {
+          mDiags.error(opLoc,
+                       smdl::concat("'radius' applies to a disk, and this "
+                                    "light is a ",
+                                    decl.kindName()));
+          throw Recover();
+        }
+        const auto value{numbers<1>()[0]};
+        if (!(value > 0)) {
+          mDiags.error(opLoc, "expected a positive number for 'radius'");
+          throw Recover();
+        }
+        decl.radius = value;
       } else if (op == "caustic") {
         decl.caustic = true;
       } else if (!parseTransformOp(op, opLoc, decl.transform)) {
         // Note 'scale' is taken by the profile multiplier, so unlike the
-        // other blocks it is not offered as a transform here; a light has
-        // no extent for it to act on anyway.
+        // other blocks it is not offered as a transform here; a shape is
+        // stretched by the place line's 'scale' instead.
         mDiags.error(opLoc,
                      smdl::concat("unknown light setting ", smdl::Quoted(op),
                                   " (expected power, temperature, color, ",
                                   isSpot      ? "angle, blend, "
                                   : isProfile ? "scale, "
+                                  : isRect    ? "size, "
+                                  : isDisk    ? "radius, "
                                               : "",
                                   "caustic, translate, rotate, rotate_x, "
                                   "rotate_y, rotate_z, or matrix)"));

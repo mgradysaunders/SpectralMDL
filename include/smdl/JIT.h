@@ -41,6 +41,7 @@ public:
   function_pointer func{};
 };
 
+// TODO Move all of these above and outside `namespace JIT`
 /// \name Material Flags
 /// \{
 
@@ -126,6 +127,7 @@ static constexpr int MATERIAL_REMAPS_NORMAL = (1 << 12);
 
 /// \}
 
+// TODO Move all of these above and outside `namespace JIT`
 /// \name Distribution Function (DF) Lobes
 /// \{
 
@@ -305,6 +307,10 @@ public:
 
   /// Provably opaque: the cutout opacity is the compile-time constant 1.
   [[nodiscard]] bool isAlwaysOpaque() const noexcept {
+    // TODO If necessary, also gate this on 
+    //      MATERIAL_HAS_SURFACE | MATERIAL_HAS_BACKFACE so that a
+    //      material with no BSDF (null interface) returns false for
+    //      `isAlwaysOpaque()`
     return (staticFlagsKnown & MATERIAL_HAS_CUTOUT) != 0 &&
            (staticFlags & MATERIAL_HAS_CUTOUT) == 0;
   }
@@ -319,6 +325,7 @@ public:
     return (staticFlags & MATERIAL_HAS_HAIR) != 0;
   }
 
+  // TODO Remove this function! Users should check `isAlwaysOpaque()`
   /// Does a hit on this material always block a shadow query, with no
   /// material work? True when the cutout opacity is the compile-time
   /// constant 1 and the material is not a null interface: nothing to

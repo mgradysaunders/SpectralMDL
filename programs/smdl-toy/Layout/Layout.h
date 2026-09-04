@@ -453,19 +453,35 @@ public:
   bool caustic{};
 };
 
-/// One `light` declaration: a named punctual emitter, placeable exactly
-/// like an asset, so `place` gives it its position, orientation, and
-/// instancing for free:
+/// One `light` declaration: a named emitter with no surface in the
+/// scene, placeable exactly like an asset, so `place` gives it its
+/// position, orientation, and instancing for free:
 ///
 ///     light lamp = point { power 60 temperature 3000 }
 ///     light beam = spot { power 100 angle 40 blend 0.2 }
 ///     light street = profile "street.ies" { scale 2 }
+///     light panel = rect { size 2 1 power 400 }
+///     light ring = disk { radius 0.5 power 100 }
 ///     place lamp translate 0 0 3
 ///
 /// A point light emits uniformly; a spot and a profile emit along the
 /// local **-Z** axis (a spot with an identity placement shines straight
 /// down, and an IES profile's photometric nadir points the same way),
-/// aimed by the placement's rotations.
+/// aimed by the placement's rotations. A rect and a disk are flat,
+/// one-sided Lambertian emitters lying in the local XY plane, centered
+/// at the origin and emitting into the local -Z half space: the same
+/// convention, so an identity placement lights what is below it. The
+/// primitive `disk` shape faces +Z; the light does not. The placement's
+/// `scale` acts on the extent, so `place panel scale 2 1 1` doubles the
+/// width, while `power` stays fixed and the radiance falls as the area
+/// grows.
+///
+/// No light declared here has a surface: the camera cannot see it, a
+/// BSDF-sampled continuation cannot hit it, and a shadow ray passes
+/// through where it is. It reaches the scene through light selection
+/// alone, at MIS weight 1. A lamp that should be seen, or reflected, is
+/// a primitive asset with an emissive material and the `light` mark;
+/// see `LayoutAssetDecl::light`.
 ///
 /// `power` is the total radiant power in watts. The spectral shape is
 /// flat across the render band by default; `temperature` reshapes it to
@@ -483,6 +499,8 @@ public:
     POINT,
     SPOT,
     PROFILE,
+    RECT,
+    DISK,
   };
   std::string name{};
   LayoutLocation nameLoc{};
@@ -514,6 +532,12 @@ public:
   /// PROFILE: a multiplier on the profile's intensities.
   float scale{1.0f};
 
+  /// RECT: the width and height along the local X and Y axes.
+  float2 size{1.0f, 1.0f};
+
+  /// DISK: the radius in the local XY plane.
+  float radius{0.5f};
+
   /// Is a caustic target; see `LayoutAssetDecl::caustic`.
   bool caustic{};
 
@@ -528,6 +552,10 @@ public:
       return "spot";
     case Kind::PROFILE:
       return "profile";
+    case Kind::RECT:
+      return "rect";
+    case Kind::DISK:
+      return "disk";
     default:
       return "point";
     }

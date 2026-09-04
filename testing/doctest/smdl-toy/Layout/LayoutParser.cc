@@ -124,6 +124,43 @@ asset plain = box { material wood }
     CHECK(diags.all().front().message.find("three positive numbers") !=
           std::string::npos);
   }
+  SUBCASE("A shape light's extent must be positive") {
+    for (const char *text : {"#smdl layout\nlight a = rect { size 1 0 }\n",
+                             "#smdl layout\nlight a = rect { size -2 1 }\n",
+                             "#smdl layout\nlight a = disk { radius 0 }\n"}) {
+      CAPTURE(std::string(text));
+      LayoutDiagnostics local{};
+      const auto &source{local.addSource("test.layout", text)};
+      (void)parseLayout(local, source, "/nowhere");
+      REQUIRE(local.hasErrors());
+      CHECK(local.all().front().message.find("positive number") !=
+            std::string::npos);
+    }
+  }
+  SUBCASE("A light setting the kind does not have is an error") {
+    for (const auto &check :
+         {std::pair{"#smdl layout\nlight a = disk { size 1 1 }\n",
+                    "'size' applies to a rect"},
+          std::pair{"#smdl layout\nlight a = rect { radius 1 }\n",
+                    "'radius' applies to a disk"},
+          std::pair{"#smdl layout\nlight a = point { radius 1 }\n",
+                    "'radius' applies to a disk"},
+          std::pair{"#smdl layout\nlight a = rect { angle 30 }\n",
+                    "'angle' applies to a spot"},
+          std::pair{"#smdl layout\nlight a = rect { scale 2 }\n",
+                    "the place line's 'scale' stretches it"},
+          std::pair{"#smdl layout\nlight a = disk { frobnicate }\n",
+                    "radius, caustic"}}) {
+      const std::string text{check.first};
+      CAPTURE(text);
+      LayoutDiagnostics local{};
+      const auto &source{local.addSource("test.layout", text)};
+      (void)parseLayout(local, source, "/nowhere");
+      REQUIRE(local.hasErrors());
+      CHECK(local.all().front().message.find(check.second) !=
+            std::string::npos);
+    }
+  }
   SUBCASE("A redeclared light points back at the first") {
     const auto &source{diags.addSource(
         "test.layout", "#smdl layout\nlight a = point\nlight a = spot\n")};
@@ -224,4 +261,38 @@ import "b.gltf" { caster light }
             std::string::npos);
     }
   }
+}
+
+TEST_CASE("LayoutParser: the shape lights") {
+  LayoutDiagnostics diags{};
+  const auto document{parseOK(diags, R"(#smdl layout
+light panel = rect { size 2 1 power 400 caustic }
+light ring = disk { radius 0.25 }
+light square = rect
+light coin = disk { rotate_x 90 }
+)")};
+  CHECK(diags.empty());
+  REQUIRE(document.lights.size() == 4);
+  const auto &panel{document.lights[0]};
+  CHECK(panel.kind == LayoutLightDecl::Kind::RECT);
+  CHECK(panel.kindName() == "rect");
+  CHECK(panel.size.x == doctest::Approx(2.0f));
+  CHECK(panel.size.y == doctest::Approx(1.0f));
+  CHECK(panel.powerSet);
+  CHECK(panel.power == doctest::Approx(400.0f));
+  CHECK(panel.caustic);
+  const auto &ring{document.lights[1]};
+  CHECK(ring.kind == LayoutLightDecl::Kind::DISK);
+  CHECK(ring.kindName() == "disk");
+  CHECK(ring.radius == doctest::Approx(0.25f));
+  CHECK(!ring.powerSet);
+  CHECK(!ring.caustic);
+  // The defaults: a unit square and a unit diameter.
+  CHECK(document.lights[2].size.x == doctest::Approx(1.0f));
+  CHECK(document.lights[2].size.y == doctest::Approx(1.0f));
+  CHECK(document.lights[3].radius == doctest::Approx(0.5f));
+  // The block's transform operations apply to a shape as to any light:
+  // a quarter turn about X carries the local Y axis onto Z.
+  CHECK(document.lights[3].transform[1].z == doctest::Approx(1.0f));
+  CHECK(document.lights[3].transform[1].y == doctest::Approx(0.0f));
 }

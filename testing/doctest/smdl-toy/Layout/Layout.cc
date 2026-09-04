@@ -274,3 +274,25 @@ TEST_CASE("Layout packing: a per-place mark has no record to live in") {
   packPlaces(entry, output);
   CHECK(fs::exists(output));
 }
+
+TEST_CASE("Layout lowering: a shape light keeps the placement's scale") {
+  LayoutDir dir{};
+  const auto entry{dir.write("entry.layout",
+                             "#smdl layout\n"
+                             "light panel = rect { size 2 1 }\n"
+                             "place panel scale 3 2 1 translate 0 0 5\n")};
+  LayoutDiagnostics diags{};
+  const auto layout{lowerOK(diags, entry)};
+  CHECK(diags.empty());
+  REQUIRE(layout.lights.size() == 1);
+  const auto &light{layout.lights[0]};
+  CHECK(light.decl.kind == LayoutLightDecl::Kind::RECT);
+  CHECK(light.decl.size.x == doctest::Approx(2.0f));
+  CHECK(light.decl.size.y == doctest::Approx(1.0f));
+  // The columns carry the scale unnormalized: the light's extent is the
+  // declared extent through the placement.
+  CHECK(length(float3(light.lightToWorld[0])) == doctest::Approx(3.0f));
+  CHECK(length(float3(light.lightToWorld[1])) == doctest::Approx(2.0f));
+  CHECK(length(float3(light.lightToWorld[2])) == doctest::Approx(1.0f));
+  CHECK(light.lightToWorld[3].z == doctest::Approx(5.0f));
+}

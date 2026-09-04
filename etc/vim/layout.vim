@@ -120,7 +120,7 @@ syn match layoutAssetEq contained display "="
 syn match layoutAssetPath contained display +"[^"]*"+
       \ nextgroup=layoutAssetBlock skipwhite skipempty
 
-" light <name> = point|spot { ... }
+" light <name> = point|spot|rect|disk { ... }
 " light <name> = profile "<path>" { ... }
 " `light` is both the declaration keyword and a mark (see the marks under
 " Operations), told apart by what follows: a declaration is `light <name> =`.
@@ -156,7 +156,7 @@ syn keyword layoutStatement medium nextgroup=layoutMaterialName skipwhite skipem
 " are vocabulary; a path is quoted because it is a name out of the filesystem.
 syn keyword layoutShape contained sphere box disk cylinder cone
       \ nextgroup=layoutAssetBlock skipwhite skipempty
-syn keyword layoutLightKind contained point spot
+syn keyword layoutLightKind contained point spot rect disk
       \ nextgroup=layoutLightBlock skipwhite skipempty
 syn keyword layoutLightProfile contained profile
       \ nextgroup=layoutProfilePath skipwhite skipempty
@@ -227,8 +227,9 @@ syn keyword layoutCausticOp caustic
 syn keyword layoutSubdivMod contained loop linear
 
 " Light settings. Defined after the transform operations so that `scale`, which
-" is the profile multiplier here, wins inside a light block.
-syn keyword layoutLightSetting contained power temperature color angle blend scale caustic
+" is the profile multiplier here, wins inside a light block. `size` and
+" `radius` are the rect's and the disk's extents.
+syn keyword layoutLightSetting contained power temperature color angle blend scale caustic size radius
 
 syn keyword layoutCameraSetting contained resolution look_from look_to look_up fovy fstop
 syn keyword layoutCameraSetting contained aperture focus blades blade_angle

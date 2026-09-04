@@ -126,7 +126,7 @@ public:
 /// A punctual light placed by the layout: a point, a spot, or an IES
 /// profile. Dirac lights never appear on a path through BSDF sampling,
 /// so they contribute through `LightSampler::sample()` alone, with a
-/// unit MIS weight (see `LightSample::isDirac`).
+/// unit MIS weight (see `LightSample::reachable`).
 class PunctualLight final {
 public:
   /// Bake the lowered light at the render wavelengths: the spectral
@@ -213,21 +213,34 @@ struct LightSample final {
   /// for a sample kept by `keepDark`.
   Color Li{};
 
-  /// Sampled a Dirac (punctual) light? BSDF sampling can never hit
-  /// one, so the MIS weight of this sample must be 1.
+  /// Is the directional density a Dirac delta? True for a punctual
+  /// light: `pdf` is then the selection PMF alone and `Li` carries the
+  /// falloff. Says nothing about MIS; see `reachable`.
   bool isDirac{};
+
+  /// Can the walk's continuation, BSDF sampling, arrive at this light?
+  /// True for an area light and the environment, whose arrivals compete
+  /// with this sample and are weighed against it; false for every light
+  /// the layout declares, which has no surface a path can hit, so this
+  /// sample's MIS weight is 1 whether its density is a delta or not.
+  bool reachable{};
 
   /// Sampled the environment? The target is then a far point in the
   /// `wi` direction rather than a real position.
   bool isInfinite{};
 
+  /// The emitter's unit normal at the sampled point for a finite sample
+  /// with an orientation (an area light's geometric normal), which the
+  /// manifold target's offset Jacobian reads; zero for a punctual or an
+  /// infinite sample, which have none.
+  float3 normal{};
+
   /// The index in the punctual light array when `isDirac`, else
-  /// `INVALID_INDEX`: the identity `reevaluatePunctualLi()` needs.
+  /// `INVALID_INDEX`: the identity `reevaluateLi()` needs.
   uint32_t punctualIndex{INVALID_INDEX};
 
-  /// The sampled point on an area light, empty for the other two
-  /// kinds: what `reevaluateAreaLi()` rebuilds the emitting material
-  /// from.
+  /// The sampled point on an area light, empty for the other kinds:
+  /// what `reevaluateLi()` rebuilds the emitting material from.
   Hit hit{};
 
   /// Is the sampled light a caustic target, one the manifold
@@ -289,32 +302,31 @@ public:
                             const float3 &point, LightSample &lightSample,
                             bool keepDark = false) const;
 
-  /// Re-evaluate a punctual sample's incident radiance with the
-  /// directional factor toward `incidencePoint`, see the two-point
-  /// `PunctualLight::Li()` overload. The sample must be punctual
-  /// (`isDirac` set).
-  [[nodiscard]] Color reevaluatePunctualLi(const LightSample &lightSample,
-                                           const float3 &point,
-                                           const float3 &incidencePoint,
-                                           float metersPerSceneUnit) const;
-
-  /// Re-evaluate an area sample's emitted radiance in the direction of
-  /// `incidencePoint` instead of toward the receiver it was sampled
-  /// from. The sample must be an area sample (neither `isDirac` nor
-  /// `isInfinite`).
+  /// Re-evaluate a sample's incident radiance for a segment that
+  /// arrives at the light from `incidencePoint` rather than from
+  /// `point`, the receiver it was sampled from. `state` must carry the
+  /// allocator, wavelengths, and scene units; an area sample copies it
+  /// to rebuild the emitting material at its `hit`.
   ///
   /// What a manifold connection needs, because the segment that actually
-  /// arrives at the light starts at the last chain crossing: an emitter
-  /// with a directional EDF radiates something else that way, and a
-  /// one-sided one may radiate nothing at all. The measure is untouched,
-  /// so the sample's `pdf` stands as it is; only the radiance moves.
+  /// arrives at the light starts at the last chain crossing, and a light
+  /// that does anything with direction radiates something else that way:
+  /// a spot cone or an IES profile evaluated toward the crossing, an
+  /// emitter's EDF and which of its sides faces that way, possibly
+  /// nothing at all. The distance falloff and the measure are untouched,
+  /// since they carry the straight-line solid-angle measure the gather's
+  /// estimator is built in: a punctual sample keeps its inverse square
+  /// at `point`, an area sample's `pdf` stands as it is, and only the
+  /// directional part moves. The environment has no position to
+  /// re-evaluate from and returns the sample's own `Li`.
   ///
   /// This is the same quantity the path tracer reads off an emitter it
   /// hits through the chain, so the two halves of the manifold estimator
   /// agree on what the transport carries, including on its being zero.
-  [[nodiscard]] Color reevaluateAreaLi(const LightSample &lightSample,
-                                       const smdl::State &state,
-                                       const float3 &incidencePoint) const;
+  [[nodiscard]] Color reevaluateLi(const LightSample &lightSample,
+                                   const smdl::State &state,
+                                   const float3 &point,
+                                   const float3 &incidencePoint) const;
 
   /// The emitted radiance of an already-constructed material instance in
   /// direction `wi` pointing away from the emitting surface, with the
