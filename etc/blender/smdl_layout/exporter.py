@@ -23,6 +23,7 @@ import re
 import struct
 
 import bpy
+import mathutils
 
 # The custom properties a proxy carries to say what it stands for.
 ASSET_KEY = "smdl_asset"
@@ -261,6 +262,16 @@ def groom_options_of(ob):
     return options.mode, float(options.radius_scale), options.material.strip()
 
 
+def volume_options_of(ob):
+    """The per-volume export options: (grid names, material)."""
+    options = getattr(ob, "smdl_volume_options", None)
+    if options is None:
+        return [], ""
+    return ([row.name for row in options.grids
+             if row.export and row.name.strip()],
+            options.material.strip())
+
+
 def scatter_source_options(scene):
     """Per-object export options claimed by retained scatter sources.
 
@@ -311,8 +322,19 @@ def gather(context, collection=None):
     options, first one wins. With a collection, only what that collection
     holds is gathered.
     """
+    from . import volume as volume_module
     wanted = objects_under(collection) if collection is not None else None
     depsgraph = context.evaluated_depsgraph_get()
+
+    # Memoized because a heavy scatter asks about the same handful of
+    # originals thousands of times.
+    volume_answers = {}
+
+    def is_volume(ob):
+        answer = volume_answers.get(ob)
+        if answer is None:
+            answer = volume_answers[ob] = volume_module.is_volume(ob)
+        return answer
 
     # The candidate arrangements: untagged collection instances, grouped
     # by the collection they instance, in scene order.
@@ -338,6 +360,11 @@ def gather(context, collection=None):
     for instance in depsgraph.object_instances:
         ob = instance.object
         if ob is None or ob.type != "MESH" or not ob.data.vertices:
+            continue
+        # A fluid domain is a mesh that stands for a volume, so it is
+        # neither a member to reference nor geometry to bake, and it must
+        # not demote the arrangement it sits in.
+        if is_volume(ob.original):
             continue
         if not instance.is_instance or instance.parent is None:
             continue
@@ -374,11 +401,30 @@ def gather(context, collection=None):
     baked = set()
     grooms = {}
     groom_order = []
+    volumes = {}
+    volume_order = []
     members = {source: [] for source in group_order}
     groom_members = {source: [] for source in group_order}
     for instance in depsgraph.object_instances:
         ob = instance.object
         if ob is None:
+            continue
+        if is_volume(ob.original):
+            # A volume is baked to a voxel sidecar and placed in a `box`
+            # container of its own, so it is neither a mesh to reference
+            # nor a mesh to bake, wherever it is instanced from. It joins
+            # no `group`: what it places is a shape the layout writes
+            # rather than a member the arrangement holds.
+            if is_render_hidden(instance):
+                continue
+            if wanted is not None and not instance_is_wanted(instance,
+                                                             wanted):
+                continue
+            original = ob.original
+            if original not in volumes:
+                volumes[original] = []
+                volume_order.append(original)
+            volumes[original].append(instance.matrix_world.copy())
             continue
         if ob.type == "CURVES":
             # Hair groomed here rather than imported: baked to a `.curves`
@@ -493,7 +539,8 @@ def gather(context, collection=None):
               for source in group_order
               if members[source] or groom_members[source]]
     return ([(key, placements[key]) for key in order], groups, untagged,
-            [(ob, grooms[ob]) for ob in groom_order])
+            [(ob, grooms[ob]) for ob in groom_order],
+            [(ob, volumes[ob]) for ob in volume_order])
 
 
 def instance_is_wanted(instance, wanted):
@@ -561,7 +608,6 @@ def diagnose(context, collection=None):
     problems = []
     wanted = objects_under(collection) if collection is not None else None
     depsgraph = context.evaluated_depsgraph_get()
-
     anonymous = {}
     for instance in depsgraph.object_instances:
         if not instance.is_instance or instance.parent is None:
@@ -714,6 +760,89 @@ def format_matrix(matrix):
     for i in range(4):
         rows.append(" ".join(f"{matrix[i][j]:.9g}" for j in range(4)))
     return rows
+
+
+def format_vector(values, separator=" "):
+    """Three numbers as a layout operation spells them, or, with a comma,
+    as an MDL `float3` does."""
+    return separator.join(f"{float(value):.9g}" for value in values)
+
+
+def rigid_part(matrix):
+    """The placement without its scale: the rotation and translation
+    alone.
+
+    A primitive is shaded in its instance's RIGID frame, so a scale left
+    in the placement would not shrink the object space a material's bound
+    box is stated in. A volume's container carries the scale in its own
+    `size` instead, and the placement is written rigid to match.
+    """
+    location, rotation, _ = matrix.decompose()
+    return mathutils.Matrix.LocRotScale(location, rotation, None)
+
+
+def is_sheared(matrix):
+    """Do the placement's axes fail to stay perpendicular?
+
+    A rotated parent with a non-uniform scale shears what it holds, and a
+    sheared box is not the box its material declares.
+    """
+    axes = []
+    for i in range(3):
+        axis = matrix.col[i].xyz
+        if axis.length < 1e-9:
+            return True
+        axes.append(axis.normalized())
+    return (abs(axes[0].dot(axes[1])) > 1e-4
+            or abs(axes[1].dot(axes[2])) > 1e-4
+            or abs(axes[0].dot(axes[2])) > 1e-4)
+
+
+def volume_material_lines(material_name, baked):
+    """The SMDL a volume's container is waiting for, as comment lines.
+
+    Every number in it is a fact of the bake: the file each grid landed
+    in, the box texture space spans, and the maximum `tex::max_value()`
+    will report, which is what a declared majorant has to bound. Only the
+    coefficients are left to choose, which is the part that is a material
+    decision rather than a scene one.
+    """
+    hint = "density" if "density" in baked.names else baked.names[0]
+    lines = [f"#   const float3 {material_name}_half = "
+             f"float3({format_vector(0.5 * baked.size, ', ')});"]
+    for name in baked.names:
+        selector = baked.selectors[name]
+        arguments = f'"{baked.files[name]}"'
+        if selector:
+            arguments += f', selector: "{selector}"'
+        lines.append(f"#   const auto {material_name}_{name} = "
+                     f"texture_3d({arguments});")
+    lines.extend([
+        "#",
+        "#   @(macro)",
+        f"#   float {material_name}_lookup(const texture_3d tex) = "
+        f"tex::lookup_float(",
+        f"#     tex, 0.5 * state::position() / {material_name}_half + 0.5,",
+        "#     wrap_u: tex::wrap_clamp, wrap_v: tex::wrap_clamp, "
+        "wrap_w: tex::wrap_clamp);",
+        "#",
+        f"#   export material {material_name}() = material(",
+        "#     ior: 1.0,",
+        "#     volume: material_volume(",
+        "#       scattering: df::anisotropic_vdf(directional_bias: 0.3),",
+        f"#       absorption_coefficient: sigma_a * "
+        f"{material_name}_lookup({material_name}_{hint}) * color(1.0),",
+        f"#       scattering_coefficient: sigma_s * "
+        f"{material_name}_lookup({material_name}_{hint}) * color(1.0),",
+        f"#       max_absorption_coefficient: sigma_a * "
+        f"tex::max_value({material_name}_{hint}) * color(1.0),",
+        f"#       max_scattering_coefficient: sigma_s * "
+        f"tex::max_value({material_name}_{hint}) * color(1.0),",
+        f"#       density: {material_name}_{hint},",
+        f"#       density_bound_min: -{material_name}_half,",
+        f"#       density_bound_max: {material_name}_half));",
+    ])
+    return lines
 
 
 def place_lines(name, matrix, indent=""):
@@ -1231,7 +1360,7 @@ def write_scene(context, filepath, asset_root="", bake=True, collection=None,
 
     scene_directory = os.path.dirname(os.path.abspath(filepath))
     layout_stem = os.path.splitext(os.path.basename(filepath))[0]
-    flat, groups, untagged, grooms = gather(context, collection)
+    flat, groups, untagged, grooms, volumes = gather(context, collection)
     problems = diagnose(context, collection)
     materials = []
     alias_targets = {}
@@ -1376,6 +1505,7 @@ def write_scene(context, filepath, asset_root="", bake=True, collection=None,
     # requires one on a curves asset, so a groom that says nothing is
     # shaded by its own name and reported.
     from . import curves as curves_module
+    from . import volume as volume_module
     depsgraph = context.evaluated_depsgraph_get()
     every_groom = [ob for ob, _ in grooms]
     for _, _, groom_members, _ in groups:
@@ -1423,6 +1553,75 @@ def write_scene(context, filepath, asset_root="", bake=True, collection=None,
         lines.append("")
     groom_placements = [(groom_names[ob], matrices)
                         for ob, matrices in grooms if ob in groom_names]
+
+    # The volumes: each baked to a voxel sidecar and declared as a `box`
+    # container sized to its own grid, so that the material's bound box
+    # is exactly plus and minus half that size and no mesh file is
+    # involved at all. See `volume.py`.
+    from . import material as material_module
+    compiler = material_module.resolve_compiler(context)
+    volume_names = {}
+    volume_wiring = []
+    for ob, _ in volumes:
+        name = assets.unique(ob.name)
+        wanted, material_name = volume_options_of(ob)
+        if not wanted:
+            # An untouched panel exports everything the volume offers,
+            # which for most of them is the one `density` grid.
+            wanted = volume_module.grid_names(ob, depsgraph)
+        if not wanted:
+            problems.append(f"the volume {ob.name} offers no grid to export, "
+                            f"so it was skipped")
+            continue
+        baked, notes = volume_module.bake(depsgraph, ob, wanted,
+                                          scene_directory,
+                                          f"{layout_stem}.{name}", compiler)
+        problems.extend(notes)
+        if not baked.sidecars:
+            continue
+        sidecars.extend(baked.sidecars)
+        # The grammar requires a material on a shape, so a volume that
+        # says nothing is shaded by its own name and told about it.
+        if not material_name:
+            material_name = next((slot.name for slot in ob.material_slots
+                                  if slot.name), "")
+        if not material_name:
+            material_name = ob.name
+            problems.append(f"the volume {ob.name} has no material, so its "
+                            f"own name shades it")
+        if not is_mdl_identifier(material_name):
+            fixed = to_identifier(material_name)
+            problems.append(f"the material name {material_name!r} on the "
+                            f"volume {ob.name} is not an MDL identifier, so "
+                            f"{fixed} was written instead")
+            material_name = fixed
+        lines.append(f"asset {name} = box {{")
+        lines.append(f"  size {format_vector(baked.size)}")
+        # Relative to the box, since a grid centered on its object still
+        # lands a rounding error away from zero.
+        if any(abs(float(offset)) > 1e-6 * float(max(baked.size))
+               for offset in baked.center):
+            lines.append(f"  translate {format_vector(baked.center)}")
+        lines.append(f"  material {material_name}")
+        lines.append("}")
+        volume_names[ob] = name
+        volume_wiring.append((material_name, baked))
+    if volume_names:
+        lines.append("")
+    volume_placements = []
+    sheared = set()
+    for ob, matrices in volumes:
+        if ob not in volume_names:
+            continue
+        for matrix in matrices:
+            if is_sheared(matrix) and ob.name not in sheared:
+                sheared.add(ob.name)
+                problems.append(f"the volume {ob.name} is sheared by its "
+                                f"placement, which no bound box can follow, "
+                                f"so its medium will not line up with its "
+                                f"container")
+        volume_placements.append((volume_names[ob],
+                                  [rigid_part(matrix) for matrix in matrices]))
     groups = [(source, group_members,
                [(ob, matrix) for ob, matrix in groom_members
                 if ob in groom_names],
@@ -1579,7 +1778,9 @@ def write_scene(context, filepath, asset_root="", bake=True, collection=None,
         emit_placements(name, [(matrix, ()) for matrix in instances])
     for name, matrices in groom_placements:
         emit_placements(name, [(matrix, ()) for matrix in matrices])
-    if flat or groups or groom_placements:
+    for name, matrices in volume_placements:
+        emit_placements(name, [(matrix, ()) for matrix in matrices])
+    if flat or groups or groom_placements or volume_placements:
         lines.append("")
 
     if untagged and bake:
@@ -1617,6 +1818,22 @@ def write_scene(context, filepath, asset_root="", bake=True, collection=None,
                                 f"identifier, so an alias was written for it")
         lines.append("")
 
+    if volume_wiring:
+        lines.append("# Each volume above is a container; what fills it is a "
+                     "material fact, so it")
+        lines.append("# is said in the material file rather than here. The "
+                     "blocks below carry the")
+        lines.append("# file, the mapping, and the exact majorant of one "
+                     "volume apiece, so that")
+        lines.append("# only the coefficients are left to choose. Paste one "
+                     "in and name the")
+        lines.append("# sigmas; the renderer tracks against what the "
+                     "'max_' fields declare.")
+        for material_name, baked in volume_wiring:
+            lines.append("#")
+            lines.extend(volume_material_lines(material_name, baked))
+        lines.append("")
+
     lines.extend(light_blocks(context.scene, problems))
     lines.extend(sky_block(context.scene))
     if lines and lines[-1] == "}":
@@ -1638,9 +1855,12 @@ def write_scene(context, filepath, asset_root="", bake=True, collection=None,
                            (len(group_members) + len(groom_members))
                            for _, group_members, groom_members, instances
                            in groups) +
-                       sum(len(matrices) for _, matrices in groom_placements)),
-        "assets": len(declared) + len(groom_names),
+                       sum(len(matrices) for _, matrices in groom_placements) +
+                       sum(len(matrices)
+                           for _, matrices in volume_placements)),
+        "assets": len(declared) + len(groom_names) + len(volume_names),
         "grooms": len(groom_names),
+        "volumes": len(volume_names),
         "groups": len(groups),
         "sidecars": sidecars,
         "baked": len(untagged) if bake else 0,

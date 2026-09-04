@@ -19,6 +19,7 @@ if "importer" in locals():
 
     manifest = importlib.reload(manifest)  # noqa: F821
     curves = importlib.reload(curves)  # noqa: F821
+    volume = importlib.reload(volume)  # noqa: F821
     exporter = importlib.reload(exporter)  # noqa: F821
     material = importlib.reload(material)  # noqa: F821
     importer = importlib.reload(importer)  # noqa: F821
@@ -27,7 +28,7 @@ if "importer" in locals():
     ui = importlib.reload(ui)  # noqa: F821
 
 from . import (curves, exporter, importer, manifest, material, preview,
-               scatter, ui)
+               scatter, ui, volume)
 
 
 class SMDLSlotOptions(bpy.types.PropertyGroup):
@@ -189,6 +190,51 @@ class SMDLGroomOptions(bpy.types.PropertyGroup):
     material: bpy.props.StringProperty(
         name="Material",
         description="The MDL material shading this groom. Empty reads the "
+                    "first material slot's name, and failing that the "
+                    "object's own name",
+        default="")
+
+
+class SMDLVolumeGrid(bpy.types.PropertyGroup):
+    """One grid of a volume: what the volume calls it, and whether it is
+    exported.
+
+    Rows are seeded from the evaluated volume by the Sync Grids operator
+    (a panel cannot create collection items while drawing), and a volume
+    with no rows at all exports every grid it offers, which for most of
+    them is the one `density`.
+    """
+
+    name: bpy.props.StringProperty(
+        name="Grid",
+        description="The volume's own name for this grid, which is also "
+                    "the name it is written under")
+    export: bpy.props.BoolProperty(
+        name="Export",
+        description="Write this grid to the voxel sidecar. Every exported "
+                    "grid of one volume shares one bound box, so a material "
+                    "that reads two of them needs only one mapping",
+        default=True)
+
+
+class SMDLVolumeOptions(bpy.types.PropertyGroup):
+    """Per-volume export options, written into the exported layout.
+
+    A volume is baked to a voxel sidecar and declared as a `box` container
+    sized to its own grid, so the material's `density_bound_min` and
+    `density_bound_max` are exactly plus and minus half that size. What
+    fills the container is a material fact and is never read from here:
+    the export writes the mapping and the majorants into the layout as a
+    comment to paste, and the coefficients stay the user's to choose.
+    """
+
+    grids: bpy.props.CollectionProperty(
+        type=SMDLVolumeGrid, name="Grids",
+        description="Which of the volume's grids to write, seeded from the "
+                    "volume itself")
+    material: bpy.props.StringProperty(
+        name="Material",
+        description="The MDL material filling this volume. Empty reads the "
                     "first material slot's name, and failing that the "
                     "object's own name",
         default="")
@@ -372,6 +418,7 @@ class SMDLRenderSettings(bpy.types.PropertyGroup):
 
 
 CLASSES = ((SMDLSlotOptions, SMDLAssetOptions, SMDLGroomOptions,
+            SMDLVolumeGrid, SMDLVolumeOptions,
             SMDLLightOptions, SMDLRenderSettings) +
            importer.CLASSES +
            material.CLASSES + preview.CLASSES + scatter.CLASSES + ui.CLASSES)
@@ -448,6 +495,8 @@ def register():
         type=SMDLAssetOptions)
     bpy.types.Object.smdl_groom_options = bpy.props.PointerProperty(
         type=SMDLGroomOptions)
+    bpy.types.Object.smdl_volume_options = bpy.props.PointerProperty(
+        type=SMDLVolumeOptions)
     bpy.types.Light.smdl_light_options = bpy.props.PointerProperty(
         type=SMDLLightOptions)
     bpy.types.TOPBAR_MT_file_import.append(ui.menu_import)
@@ -458,6 +507,7 @@ def unregister():
     bpy.types.TOPBAR_MT_file_export.remove(ui.menu_export)
     bpy.types.TOPBAR_MT_file_import.remove(ui.menu_import)
     del bpy.types.Light.smdl_light_options
+    del bpy.types.Object.smdl_volume_options
     del bpy.types.Object.smdl_groom_options
     del bpy.types.Object.smdl_asset_options
     del bpy.types.Scene.smdl_material_text

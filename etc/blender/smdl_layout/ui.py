@@ -62,6 +62,51 @@ class SMDL_OT_sync_slots(bpy.types.Operator):
         return {"FINISHED"}
 
 
+class SMDL_OT_sync_grids(bpy.types.Operator):
+    """Seed or refresh this volume's grid rows from the volume itself"""
+
+    bl_idname = "smdl.sync_grids"
+    bl_label = "Sync Grids"
+    bl_options = {"REGISTER", "UNDO"}
+
+    @classmethod
+    def poll(cls, context):
+        from . import volume as volume_module
+        ob = context.object
+        return ob is not None and volume_module.is_volume(ob)
+
+    def execute(self, context):
+        from . import volume as volume_module
+        ob = context.object
+        # From the evaluated object: a volume built by geometry nodes has
+        # its grids nowhere else, and a fluid domain reports an empty
+        # field until it is evaluated.
+        names = volume_module.grid_names(
+            ob, context.evaluated_depsgraph_get())
+        rows = ob.smdl_volume_options.grids
+        known = {row.name for row in rows}
+        # One grid is on by default, the density where there is one:
+        # the others are fields a material asks for by name, and writing
+        # them unasked fills the layout directory with files nobody
+        # reads. Never leave every row off, or the panel would say
+        # nothing is exported while an empty selection exports all of
+        # them.
+        default = "density" if "density" in names else (names[0] if names
+                                                        else "")
+        for name in names:
+            if name not in known:
+                row = rows.add()
+                row.name = name
+                row.export = name == default
+        if not names:
+            self.report({"WARNING"},
+                        f"{ob.name} offers no grid; a fluid domain has to be "
+                        f"baked first, and a volume has to hold one")
+            return {"FINISHED"}
+        self.report({"INFO"}, f"{len(rows)} grid(s) on {ob.name}")
+        return {"FINISHED"}
+
+
 class SMDL_OT_export_scene(bpy.types.Operator, ExportHelper):
     """Write this scene as a '.layout'"""
 
@@ -112,6 +157,8 @@ class SMDL_OT_export_scene(bpy.types.Operator, ExportHelper):
             summary += f", {report['groups']} group(s)"
         if report["grooms"]:
             summary += f", {report['grooms']} groom(s)"
+        if report["volumes"]:
+            summary += f", {report['volumes']} volume(s)"
         if report["sidecars"]:
             summary += f", {len(report['sidecars'])} sidecar(s)"
         summary += (f", {report['baked']} baked, "
@@ -438,6 +485,46 @@ class SMDL_PT_groom_object(bpy.types.Panel):
         layout.prop(options, "material")
 
 
+class SMDL_PT_volume_object(bpy.types.Panel):
+    """Per-volume export options, shown on Volume objects and on fluid
+    domains. See `SMDLVolumeOptions`."""
+
+    bl_label = "SpectralMDL Volume"
+    bl_space_type = "PROPERTIES"
+    bl_region_type = "WINDOW"
+    bl_context = "object"
+
+    @classmethod
+    def poll(cls, context):
+        from . import volume as volume_module
+        ob = context.object
+        return ob is not None and volume_module.is_volume(ob)
+
+    def draw(self, context):
+        from . import volume as volume_module
+        layout = self.layout
+        layout.use_property_split = True
+        layout.use_property_decorate = False
+        ob = context.object
+        options = ob.smdl_volume_options
+        layout.prop(options, "material")
+        layout.separator()
+        column = layout.column(align=True)
+        column.use_property_split = False
+        for row in options.grids:
+            column.prop(row, "export", text=row.name)
+        if not options.grids:
+            column.label(text="Every grid is exported", icon="INFO")
+        layout.operator("smdl.sync_grids", icon="FILE_REFRESH")
+        settings = volume_module.fluid_domain_of(ob)
+        if settings is not None and settings.use_adaptive_domain:
+            box = layout.box()
+            box.label(text="Adaptive Domain moves the grid without",
+                      icon="ERROR")
+            box.label(text="saying where to, so this domain cannot")
+            box.label(text="export. Turn it off and re-bake.")
+
+
 class SMDL_PT_light(bpy.types.Panel):
     """Per-lamp export options, shown on lamps. See `SMDLLightOptions`."""
 
@@ -534,9 +621,10 @@ def menu_export(self, context):
 # The child panels must register after their parent, and register in the
 # order they should appear.
 CLASSES = (SMDL_OT_export_scene, SMDL_FH_scene, SMDL_OT_check_scene,
-           SMDL_OT_register_library, SMDL_OT_sync_slots, SMDL_PT_layout,
+           SMDL_OT_register_library, SMDL_OT_sync_slots, SMDL_OT_sync_grids,
+           SMDL_PT_layout,
            SMDL_PT_import,
            SMDL_PT_export, SMDL_PT_camera, SMDL_PT_sky, SMDL_PT_haze,
            SMDL_PT_materials,
            SMDL_PT_preview, SMDL_PT_asset_object, SMDL_PT_groom_object,
-           SMDL_PT_light)
+           SMDL_PT_volume_object, SMDL_PT_light)
