@@ -480,6 +480,18 @@ public:
   /// Enable debugging?
   bool enableDebug{false};
 
+  /// Enable unit tests?
+  bool enableUnitTests{false};
+
+  /// Colorize the unit test results printed by `runUnitTests()`?
+  ColorMode colorMode{COLOR_MODE_AUTO};
+
+  /// The number of wavelengths per MDL `color`.
+  uint32_t wavelengthBaseMax{16};
+
+  /// The scene data.
+  SceneData sceneData{};
+
   /// Enable the `scatterNormalSample`, `scatterNormalEvaluate`, and
   /// `geometryNormalEvaluate` entry points?
   ///
@@ -496,18 +508,6 @@ public:
   /// This is read while `compile()` lowers each material, so set it
   /// beforehand. Changing it means recompiling.
   bool enableScatterNormal{false};
-
-  /// Enable unit tests?
-  bool enableUnitTests{false};
-
-  /// Colorize the unit test results printed by `runUnitTests()`?
-  ColorMode colorMode{COLOR_MODE_AUTO};
-
-  /// The number of wavelengths per MDL `color`.
-  uint32_t wavelengthBaseMax{16};
-
-  /// The scene data.
-  SceneData sceneData{};
 
 private:
   /// The allocator.
