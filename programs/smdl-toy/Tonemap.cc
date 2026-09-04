@@ -5,6 +5,8 @@
 
 #include "Tonemap.h"
 
+#include "smdl/Compiler.h"
+
 //--{ Spectral to RGB
 
 // The photopic luminous efficiency V(lambda) for lambda in nm, as the

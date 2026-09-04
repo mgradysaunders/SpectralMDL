@@ -1,8 +1,12 @@
 #pragma once
 
-#include "Scene.h"
+#include "Color.h"
 
 #include "smdl/RenderUtil/SpectralFilm.h"
+
+namespace smdl {
+class Compiler;
+}
 
 /// The display transform, resolved from the command line into plain
 /// values.

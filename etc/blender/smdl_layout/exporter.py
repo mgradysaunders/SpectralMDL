@@ -728,7 +728,7 @@ def place_lines(name, matrix, indent=""):
 def write_places(filepath, matrices, column=None):
     """Write matrices as a `.places` buffer: the 20-byte header, the top
     three rows of each matrix row-major, then the optional variant column,
-    as `programs/smdl-toy/Places.h` documents. `column` entries are variant
+    as `programs/smdl-toy/IO/PlacesFile.h` documents. `column` entries are variant
     indices, None where a record has no variant."""
     with open(filepath, "wb") as stream:
         stream.write(struct.pack("<8sHHII", b"SMDLPLCS", 1,
