@@ -1,7 +1,9 @@
 #include "smdl/Common.h"
 #include "smdl/Compiler.h"
+#include "smdl/Resource/VoxelGrid.h"
 #include "smdl/Support/Logger.h"
 #include "smdl/Support/Parallel.h"
+#include <filesystem>
 #include <fstream>
 #include <iostream>
 #include <optional>
@@ -20,12 +22,15 @@ static cl::SubCommand subRun{"run", "Run execs"};
 static cl::SubCommand subTest{"test", "Run execs and unit tests"};
 static cl::SubCommand subFormat{"format", "Format source code"};
 static cl::SubCommand subDoc{"doc", "Show documentation"};
+static cl::SubCommand subVolume{
+    "volume", "Convert voxel grid files between '.vol' and '.nvdb', or "
+              "describe what one holds"};
 static cl::SubCommandGroup subsWithCompileOptions{&subDump, &subList, &subRun,
                                                   &subTest};
 static cl::SubCommandGroup subsWithOutputFile{&subDump, &subDoc};
 static cl::SubCommandGroup subsWithColor{&subTest, &subDoc};
-static cl::SubCommandGroup allSubs{&subDump,   &subList, &subRun, &subTest,
-                                   &subFormat, &subDoc};
+static cl::SubCommandGroup allSubs{&subDump,   &subList, &subRun,   &subTest,
+                                   &subFormat, &subDoc,  &subVolume};
 
 // NOTE: This is `ZeroOrMore` only so that `smdl doc --builtins` works
 // with no inputs; every other subcommand requires at least one input,
@@ -126,6 +131,19 @@ static cl::opt<bool> docIncludeHidden{
 static cl::opt<bool> docAllBuiltins{"builtins",
                                     cl::desc("Include all builtin modules"),
                                     cl::sub(subDoc), cl::cat(catOptions)};
+
+static cl::list<std::string> volumeGridNames{
+    "grid",
+    cl::desc("The grid to read from a NanoVDB input, and to name in a "
+             "NanoVDB output. Repeat once per input, or give none: an "
+             "unnamed input reads its first grid, and an unnamed output "
+             "grid is named after the input file's stem"),
+    cl::sub(subVolume), cl::cat(catOptions)};
+static cl::opt<std::string> volumeOutput{
+    "output",
+    cl::desc("Output filename, whose extension ('.vol' or '.nvdb') selects "
+             "the format. Without one, describe the inputs instead"),
+    cl::sub(subVolume), cl::cat(catOptions)};
 
 static cl::OptionCategory catState{"State Options"};
 static cl::opt<unsigned> wavelengthBaseMax{
@@ -414,6 +432,87 @@ static void runDocSubcommand(smdl::Compiler &compiler,
   os.flush();
 }
 
+[[nodiscard]] static bool isNanoVDBFileName(llvm::StringRef fileName) {
+  return fileName.ends_with_insensitive(".nvdb");
+}
+
+// Describe what one voxel grid file holds. This mode earns its place
+// beside the conversion: the maximum is what `tex::max_value()` returns
+// for the grid and the world bounds are what `density_bound_min` and
+// `density_bound_max` want, so it is where a hand-written volume
+// material gets its numbers.
+static void printVolumeInfo(const std::string &fileName,
+                            const std::string &gridName,
+                            const smdl::VoxelGrid &grid) {
+  const auto extent{grid.getExtent()};
+  const auto brickCount{grid.getBrickCount()};
+  const auto boundMin{grid.getWorldBoundMin()};
+  const auto boundMax{grid.getWorldBoundMax()};
+  llvm::outs() << smdl::concat(
+      smdl::bestPathForPrinting(fileName),
+      gridName.empty() ? std::string()
+                       : smdl::concat(": grid ", smdl::Quoted(gridName)),
+      "\n  extent ", extent.x, " x ", extent.y, " x ", extent.z, " (",
+      brickCount.x, " x ", brickCount.y, " x ", brickCount.z, " bricks)",
+      "\n  background ", grid.getBackground(), //
+      "\n  values ", grid.getMinValue(), " to ", grid.getMaxValue(),
+      "\n  bounds [", boundMin.x, ", ", boundMin.y, ", ", boundMin.z, "] to [",
+      boundMax.x, ", ", boundMax.y, ", ", boundMax.z, "]\n");
+  llvm::outs().flush();
+}
+
+// The `volume` subcommand, which needs no `Compiler` at all: a voxel
+// grid is a resource that stands on its own.
+//
+// `-grid` names the grid to READ from a NanoVDB input and the grid to
+// WRITE into a NanoVDB output, which is what lets one flag carry every
+// combination of the two formats. A Mitsuba volume holds one anonymous
+// grid, so the name reaches it in neither direction.
+static int runVolumeSubcommand() {
+  if (!volumeGridNames.empty() && volumeGridNames.size() != inputFiles.size()) {
+    std::cerr << "expected one -grid per input, or none at all\n";
+    return EXIT_FAILURE;
+  }
+  const auto explicitName{[](size_t i) {
+    return i < volumeGridNames.size() ? volumeGridNames[i] : std::string();
+  }};
+  auto grids{std::vector<std::unique_ptr<smdl::VoxelGrid>>()};
+  auto writeNames{std::vector<std::string>()};
+  for (size_t i = 0; i < inputFiles.size(); i++) {
+    const auto &fileName{inputFiles[i]};
+    auto grid{std::make_unique<smdl::VoxelGrid>()};
+    // An unnamed NanoVDB input reads its first grid, so the name only
+    // travels when it was actually asked for.
+    const auto readName{isNanoVDBFileName(fileName) ? explicitName(i)
+                                                    : std::string()};
+    if (auto error{grid->loadFromFile(fileName, readName)})
+      error->printAndExit();
+    auto writeName{explicitName(i)};
+    if (writeName.empty())
+      writeName = std::filesystem::path(fileName).stem().string();
+    grids.push_back(std::move(grid));
+    writeNames.push_back(std::move(writeName));
+  }
+  if (volumeOutput.empty()) {
+    for (size_t i = 0; i < grids.size(); i++)
+      printVolumeInfo(inputFiles[i], explicitName(i), *grids[i]);
+    return EXIT_SUCCESS;
+  }
+  if (grids.size() == 1) {
+    if (auto error{grids[0]->saveToFile(
+            volumeOutput,
+            isNanoVDBFileName(volumeOutput) ? writeNames[0] : std::string())})
+      error->printAndExit();
+    return EXIT_SUCCESS;
+  }
+  auto pointers{std::vector<const smdl::VoxelGrid *>()};
+  for (const auto &grid : grids) pointers.push_back(grid.get());
+  if (auto error{
+          smdl::VoxelGrid::saveToFile(volumeOutput, pointers, writeNames)})
+    error->printAndExit();
+  return EXIT_SUCCESS;
+}
+
 int main(int argc, char **argv) {
   llvm::InitLLVM X(argc, argv);
   smdl::Logger::get().addSink<smdl::LogSinks::print_to_cerr>();
@@ -438,6 +537,9 @@ int main(int argc, char **argv) {
     std::cerr << "expected at least one input\n";
     return EXIT_FAILURE;
   }
+  // Before the loop below, which would reject a voxel grid as a source
+  // file, and before the compiler this subcommand has no use for.
+  if (subVolume) return runVolumeSubcommand();
   auto docQueries{std::vector<std::string>{}};
   for (const auto &inputFile : inputFiles) {
     if (subDoc && smdl::startsWith(inputFile, "::")) {

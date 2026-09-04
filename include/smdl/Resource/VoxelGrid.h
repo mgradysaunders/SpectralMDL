@@ -74,6 +74,40 @@ public:
   loadFromFile(const std::string &fileName,
                const std::string &gridName = {}) noexcept;
 
+  /// Save to file.
+  ///
+  /// The file format is determined by the extension, exactly as
+  /// `loadFromFile()` determines it. `gridName` names the grid a NanoVDB
+  /// file carries, defaulting to `density`; Mitsuba volumes have no
+  /// named grids, so it must be empty for `.vol`.
+  ///
+  /// This is a format conversion rather than an archive. Every value
+  /// inside the extent survives it exactly, as do the extent itself and
+  /// the world bounds, but a NanoVDB grid is written from what differs
+  /// from the background, so the sparse topology of a grid that was
+  /// loaded from NanoVDB comes back only approximately: `loadFromFile()`
+  /// keeps no record of which voxels were active, and rebases the index
+  /// origin to zero.
+  ///
+  /// \return
+  /// `std::nullopt` if successful, or else an `Error` describing why the
+  /// grid could not be saved.
+  ///
+  [[nodiscard]] std::optional<Error>
+  saveToFile(const std::string &fileName,
+             const std::string &gridName = {}) const noexcept;
+
+  /// Save several grids to one NanoVDB file, which is how a medium whose
+  /// material reads more than one field (`density` and `temperature`,
+  /// say) travels as one file. The two vectors must be the same
+  /// non-zero length, every grid must be valid, and the names must be
+  /// non-empty and distinct. Mitsuba volumes hold one anonymous grid, so
+  /// `.vol` is rejected here. See `saveToFile()` for what survives.
+  [[nodiscard]] static std::optional<Error>
+  saveToFile(const std::string &fileName,
+             const std::vector<const VoxelGrid *> &voxelGrids,
+             const std::vector<std::string> &gridNames) noexcept;
+
 public:
   /// Is valid, i.e., backed by loaded data with a positive extent?
   [[nodiscard]] bool isValid() const noexcept {

@@ -8,16 +8,19 @@
 
 #include "smdl/Support/Filesystem.h"
 
-// NanoVDB is header-only and used here exclusively as a loader: grids are
-// flattened into the brick structure at load time, so nothing outside this
-// file ever sees a NanoVDB type, which is what keeps SMDL_HAS_NANOVDB a
-// one-file concern.
+// NanoVDB is header-only and used here exclusively to load and save: grids
+// are flattened into the brick structure at load time and rebuilt from it at
+// save time, so nothing outside this file ever sees a NanoVDB type, which is
+// what keeps SMDL_HAS_NANOVDB a one-file concern. The build tools come along
+// with `CreateNanoGrid.h`, and pull in OpenVDB only under
+// `NANOVDB_USE_OPENVDB`, which is never defined here.
 #if SMDL_HAS_NANOVDB
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wdeprecated-copy"
 #pragma GCC diagnostic ignored "-Wunused-private-field"
 #include "nanovdb/NanoVDB.h"
 #include "nanovdb/io/IO.h"
+#include "nanovdb/tools/CreateNanoGrid.h"
 #pragma GCC diagnostic pop
 #endif // #if SMDL_HAS_NANOVDB
 
@@ -220,6 +223,85 @@ static void loadNanoVDB(const std::string &fileName,
 }
 //--}
 
+//--{ NanoVDB saving
+#if SMDL_HAS_NANOVDB
+
+// Build a NanoVDB grid from the brick storage. Only the voxels that
+// differ from the background are set, which is what leaves the result
+// sparse, and the index-to-world map is recovered from the extent and
+// the world bounds.
+[[nodiscard]] static nanovdb::GridHandle<nanovdb::HostBuffer>
+buildNanoGrid(const VoxelGrid &voxelGrid, const std::string &gridName) {
+  const auto extent{voxelGrid.getExtent()};
+  const auto background{voxelGrid.getBackground()};
+  auto srcGrid{nanovdb::tools::build::Grid<float>(
+      background, gridName, nanovdb::GridClass::FogVolume)};
+  auto accessor{srcGrid.getAccessor()};
+  for (int z = 0; z < extent.z; z++)
+    for (int y = 0; y < extent.y; y++)
+      for (int x = 0; x < extent.x; x++) {
+        const float value{voxelGrid.fetch(x, y, z)};
+        if (value != background)
+          accessor.setValue(nanovdb::Coord(x, y, z), value);
+      }
+  // Anchor the extent at both ends. NanoVDB stores the ACTIVE index
+  // bounding box, and `loadFromFile()` takes the extent from it, so a
+  // grid whose boundary voxels hold the background would come back
+  // trimmed. Texture space spans the extent, so a trim would silently
+  // rescale every lookup: the two opposite corners pin all three axes,
+  // and setting them to what they already hold changes no value.
+  accessor.setValue(nanovdb::Coord(0, 0, 0), voxelGrid.fetch(0, 0, 0));
+  accessor.setValue(nanovdb::Coord(extent.x - 1, extent.y - 1, extent.z - 1),
+                    voxelGrid.fetch(extent.x - 1, extent.y - 1, extent.z - 1));
+  // The map puts index 0 at the low corner of the world bounds rather
+  // than at the first voxel center, because NanoVDB derives the world
+  // bounding box it stores as the map applied to the index bounds with
+  // the upper corner offset by one voxel. Writing it this way is what
+  // makes `getWorldBoundMin()` and `getWorldBoundMax()` survive a round
+  // trip exactly instead of drifting half a voxel per conversion.
+  const auto boundMin{voxelGrid.getWorldBoundMin()};
+  const auto boundMax{voxelGrid.getWorldBoundMax()};
+  const double voxelSize[3]{double(boundMax.x - boundMin.x) / extent.x,
+                            double(boundMax.y - boundMin.y) / extent.y,
+                            double(boundMax.z - boundMin.z) / extent.z};
+  if (voxelSize[0] > 0 && voxelSize[1] > 0 && voxelSize[2] > 0) {
+    const double mat[3][3]{{voxelSize[0], 0.0, 0.0},
+                           {0.0, voxelSize[1], 0.0},
+                           {0.0, 0.0, voxelSize[2]}};
+    const double invMat[3][3]{{1.0 / voxelSize[0], 0.0, 0.0},
+                              {0.0, 1.0 / voxelSize[1], 0.0},
+                              {0.0, 0.0, 1.0 / voxelSize[2]}};
+    const double translate[3]{boundMin.x, boundMin.y, boundMin.z};
+    srcGrid.mMap.set(mat, invMat, translate);
+  }
+  return nanovdb::tools::createNanoGrid(srcGrid);
+}
+
+#endif // #if SMDL_HAS_NANOVDB
+
+static void saveNanoVDB(const std::string &fileName,
+                        const std::vector<const VoxelGrid *> &voxelGrids,
+                        const std::vector<std::string> &gridNames) {
+#if SMDL_HAS_NANOVDB
+  // Declared without braces on purpose: `GridHandle` has a greedy
+  // constructor template, so a braced initializer resolves to the
+  // vector's `initializer_list` constructor and tries to copy a handle,
+  // which is deleted.
+  std::vector<nanovdb::GridHandle<nanovdb::HostBuffer>> handles;
+  handles.reserve(voxelGrids.size());
+  for (size_t i = 0; i < voxelGrids.size(); i++)
+    handles.push_back(buildNanoGrid(*voxelGrids[i], gridNames[i]));
+  // Only the uncompressed codec is available: the NanoVDB dependency is
+  // fetched without OpenVDB, and with it without the ZIP and Blosc that
+  // the other codecs need. The file is still sparse, which is the point.
+  nanovdb::io::writeGrids(fileName, handles, nanovdb::io::Codec::NONE);
+#else
+  (void)fileName, (void)voxelGrids, (void)gridNames;
+  throw Error("built without NanoVDB!");
+#endif // #if SMDL_HAS_NANOVDB
+}
+//--}
+
 //--{ Mitsuba volume loading
 // Load a Mitsuba `.vol` volume: a 48-byte header of magic `VOL`,
 // version 3, the encoding, the extent, the channel count, and a
@@ -314,6 +396,54 @@ static void loadMitsubaVol(const std::string &fileName, FlatGrid &flat) {
 }
 //--}
 
+//--{ Mitsuba volume saving
+// Save a Mitsuba `.vol` volume, the exact form `loadMitsubaVol()` reads
+// back: the 48-byte header, then every voxel of the extent x-fastest.
+// The format is dense and has no background, so an empty brick is
+// written out in full as the background value.
+static void saveMitsubaVol(const std::string &fileName,
+                           const VoxelGrid &voxelGrid) {
+  auto stream{openOrThrow(fileName, std::ios::out | std::ios::binary)};
+  const auto extent{voxelGrid.getExtent()};
+  const auto boundMin{voxelGrid.getWorldBoundMin()};
+  const auto boundMax{voxelGrid.getWorldBoundMax()};
+  unsigned char header[48]{'V', 'O', 'L', 3};
+  const auto writeInt32{[&](size_t offset, int32_t value) {
+    llvm::support::endian::write32le(header + offset, uint32_t(value));
+  }};
+  const auto writeFloat{[&](size_t offset, float value) {
+    uint32_t bits{};
+    std::memcpy(&bits, &value, sizeof(bits));
+    llvm::support::endian::write32le(header + offset, bits);
+  }};
+  writeInt32(4, /*encoding=*/1);
+  writeInt32(8, extent.x), writeInt32(12, extent.y), writeInt32(16, extent.z);
+  writeInt32(20, /*numChannels=*/1);
+  writeFloat(24, boundMin.x), writeFloat(28, boundMin.y);
+  writeFloat(32, boundMin.z), writeFloat(36, boundMax.x);
+  writeFloat(40, boundMax.y), writeFloat(44, boundMax.z);
+  stream.write(reinterpret_cast<const char *>(header), sizeof(header));
+  // One row at a time, so that the buffer is the row rather than the
+  // whole grid: a dense 512^3 field is half a gigabyte.
+  auto row{std::vector<uint32_t>(size_t(extent.x))};
+  for (int z = 0; z < extent.z; z++)
+    for (int y = 0; y < extent.y; y++) {
+      for (int x = 0; x < extent.x; x++) {
+        const float value{voxelGrid.fetch(x, y, z)};
+        uint32_t bits{};
+        std::memcpy(&bits, &value, sizeof(bits));
+        row[size_t(x)] =
+            llvm::support::endian::byte_swap(bits, llvm::endianness::little);
+      }
+      stream.write(reinterpret_cast<const char *>(row.data()),
+                   std::streamsize(row.size() * sizeof(uint32_t)));
+    }
+  if (!stream)
+    throw Error(concat("cannot write ", QuotedPath(fileName), ": ",
+                       std::strerror(errno)));
+}
+//--}
+
 void VoxelGrid::clear() noexcept {
   mExtent = int3();
   mBrickCount = int3();
@@ -385,6 +515,59 @@ VoxelGrid::loadFromFile(const std::string &fileName,
     error->message =
         concat("cannot load ", QuotedPath(fileName), ": ", error->message);
   }
+  return error;
+}
+
+std::optional<Error>
+VoxelGrid::saveToFile(const std::string &fileName,
+                      const std::string &gridName) const noexcept {
+  auto error{catchAndReturnError([&] {
+    if (!isValid()) throw Error("the grid is empty");
+    const auto fileNameRef{llvm::StringRef(fileName)};
+    if (fileNameRef.ends_with_insensitive(".nvdb")) {
+      saveNanoVDB(fileName, {this},
+                  {gridName.empty() ? std::string("density") : gridName});
+    } else if (fileNameRef.ends_with_insensitive(".vol")) {
+      if (!gridName.empty())
+        throw Error(concat("Mitsuba volumes have no named grids, cannot name "
+                           "one ",
+                           Quoted(gridName)));
+      saveMitsubaVol(fileName, *this);
+    } else {
+      throw Error("unrecognized volume file extension");
+    }
+  })};
+  if (error)
+    error->message =
+        concat("cannot save ", QuotedPath(fileName), ": ", error->message);
+  return error;
+}
+
+std::optional<Error>
+VoxelGrid::saveToFile(const std::string &fileName,
+                      const std::vector<const VoxelGrid *> &voxelGrids,
+                      const std::vector<std::string> &gridNames) noexcept {
+  auto error{catchAndReturnError([&] {
+    if (!llvm::StringRef(fileName).ends_with_insensitive(".nvdb"))
+      throw Error("several named grids need a '.nvdb' file");
+    if (voxelGrids.empty()) throw Error("no grids to save");
+    if (voxelGrids.size() != gridNames.size())
+      throw Error(concat("have ", voxelGrids.size(), " grid(s) but ",
+                         gridNames.size(), " name(s)"));
+    for (size_t i = 0; i < voxelGrids.size(); i++) {
+      if (!voxelGrids[i] || !voxelGrids[i]->isValid())
+        throw Error(concat("grid ", i, " is empty"));
+      if (gridNames[i].empty()) throw Error(concat("grid ", i, " has no name"));
+      for (size_t j = 0; j < i; j++)
+        if (gridNames[j] == gridNames[i])
+          throw Error(
+              concat("two grids are both named ", Quoted(gridNames[i])));
+    }
+    saveNanoVDB(fileName, voxelGrids, gridNames);
+  })};
+  if (error)
+    error->message =
+        concat("cannot save ", QuotedPath(fileName), ": ", error->message);
   return error;
 }
 
