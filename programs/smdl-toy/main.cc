@@ -940,6 +940,7 @@ int main(int argc, char **argv) try {
   if (!(std::isfinite(float(optShutterSpeed)) && float(optShutterSpeed) >= 0))
     throw smdl::Error("expected -shutter-speed to be finite and nonnegative");
   renderTime() = float(optTime);
+  renderShutter() = float(optShutterSpeed);
   // Parsed and validated now so a typo fails before anything loads.
   const auto waveRange{
       parseWavelengthRangeFlag(std::string(optWavelengthRange))};
@@ -1886,13 +1887,12 @@ int main(int argc, char **argv) try {
           // darkening unbiased.
           uint64_t numRecords{0};
           if (cameraSample.weight > 0) {
-            // The path's animation time. The dimension is consumed only
-            // when the shutter is open, matching the lens-point
-            // precedent, so a default render's sampler sequence is
-            // unchanged.
-            float time{renderTime()};
-            if (const float shutter{float(optShutterSpeed)}; shutter > 0)
-              time += shutter * float(sampler);
+            // The path's time. The shutter fraction is drawn only when
+            // the shutter is open, matching the lens-point precedent, so
+            // a default render's sampler sequence is unchanged.
+            float shutterFraction{};
+            if (renderShutter() > 0) shutterFraction = float(sampler);
+            const PathTime time{shutterFraction};
             Lsample = tracePath(
                 compiler, allocator, scene, sampler, sampleWavelengths,
                 cameraSample.ray, time, cameraSample.weight,

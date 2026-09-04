@@ -223,9 +223,10 @@ hasUsableDensityGrid(const smdl::JIT::MaterialInstance &mat) {
 }
 
 void Medium::reset(const MediumStack *stack, const Color &wavelengths,
-                   float time, const float3 &org, const float3 &dir) noexcept {
-  if (!mResolved || stack != mStack || time != mTime)
-    resolve(stack, wavelengths, time);
+                   PathTime time, const float3 &org,
+                   const float3 &dir) noexcept {
+  if (!mResolved || stack != mStack || time.seconds != mTime)
+    resolve(stack, wavelengths, time.seconds);
   setSegment(org, dir);
 }
 

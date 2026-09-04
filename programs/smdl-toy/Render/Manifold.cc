@@ -59,7 +59,7 @@ bool SceneManifoldSurfaces::project(const ManifoldVertex &pin,
                                     ManifoldVertex &moved) const {
   auto dir{target - origin};
   if (!smdl::tryNormalize(dir)) return false;
-  Ray ray{origin, dir, EPS, INF};
+  Ray ray{origin, dir, EPS, INF, time.fraction};
   for (int skip = 0; skip < MAX_SKIPS; skip++) {
     ManifoldHit hit{};
     if (!scene.intersect(ray, hit)) return false;
@@ -70,7 +70,7 @@ bool SceneManifoldSurfaces::project(const ManifoldVertex &pin,
       return true;
     }
     if (!hit.material->isNullInterface()) return false;
-    ray = Ray{hit.vertex.point, dir, EPS, INF};
+    ray = Ray{hit.vertex.point, dir, EPS, INF, time.fraction};
   }
   return false;
 }

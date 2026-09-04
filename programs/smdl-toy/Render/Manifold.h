@@ -96,7 +96,10 @@ constexpr float MANIFOLD_NORMAL_STEP_MAX{4e-3f};
 /// the same field.
 class SceneManifoldSurfaces final : public ManifoldSurfaces {
 public:
-  explicit SceneManifoldSurfaces(const Scene &scene) noexcept : scene(scene) {}
+  /// `time` is the path's: its fraction is what the projection casts
+  /// trace at.
+  SceneManifoldSurfaces(const Scene &scene, PathTime time) noexcept
+      : scene(scene), time(time) {}
 
   [[nodiscard]] bool geometry(const ManifoldVertex &vertex,
                               smdl::ManifoldGeometry &geometry) const override;
@@ -106,6 +109,7 @@ public:
                              ManifoldVertex &moved) const override;
 
   const Scene &scene;
+  const PathTime time;
 };
 
 /// The differential shading geometry read through the material's

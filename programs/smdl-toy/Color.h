@@ -75,13 +75,38 @@ wavelengthBandEdges(smdl::Span<const float> wavelens) {
   return edges;
 }
 
-/// The render-wide base animation time in seconds. Setup-time
-/// evaluations use it directly; a path traced with an open shutter
-/// evaluates at its own offset from it.
+/// The render-wide base animation time in seconds, the time at shutter
+/// open. Setup-time evaluations use it directly; a path traced with an
+/// open shutter evaluates at its own offset from it, see `PathTime`.
 [[nodiscard]] inline float &renderTime() noexcept {
   static float time{};
   return time;
 }
+
+/// The render-wide shutter length in seconds. The shutter is open iff
+/// this is positive; closed, every path is at shutter open.
+[[nodiscard]] inline float &renderShutter() noexcept {
+  static float shutter{};
+  return shutter;
+}
+
+/// When a path happens, on both clocks: the shutter fraction in
+/// `[0, 1]`, which is what the rays trace at and where every motion
+/// key sits, and the seconds `renderTime() + renderShutter() * fraction`,
+/// which is what the materials, lights, and media see as
+/// `State::animation_time`. The fraction must never reach a state and
+/// the seconds must never reach a ray, which is why the two travel as
+/// one value. There is no default: a zero pair is right only when the
+/// base time is zero.
+class PathTime final {
+public:
+  explicit PathTime(float fraction) noexcept
+      : fraction(fraction), seconds(renderTime() + renderShutter() * fraction) {
+  }
+
+  float fraction{};
+  float seconds{};
+};
 
 /// The render color type: an `smdl::SpectralColor` whose constructors
 /// supply the render-wide band count, so the ubiquitous `Color c{}`

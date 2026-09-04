@@ -80,4 +80,9 @@ public:
   float3 dir{};    ///< The direction.
   float tmin{EPS}; ///< The minimum parameter.
   float tmax{INF}; ///< The maximum parameter.
+
+  /// The shutter fraction the ray traces at, in `[0, 1]`; see
+  /// `PathTime`. Zero is shutter open, which is every ray of a closed
+  /// shutter and the right time for a probe that has none.
+  float time{};
 };

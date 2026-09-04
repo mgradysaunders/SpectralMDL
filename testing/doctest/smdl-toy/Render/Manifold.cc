@@ -176,7 +176,7 @@ TEST_CASE("Manifold walk: connection measure over scene surfaces") {
       Color(smdl::Span<const float>(gridSpec.data(), gridSpec.size()))};
   renderWavelengths() = wavelengths;
   scene.commit(wavelengths);
-  const SceneManifoldSurfaces surfaces{scene};
+  const SceneManifoldSurfaces surfaces{scene, PathTime(0.0f)};
 
   // The flat mirror. For a distant light the reflected connection is the
   // mirrored light direction independent of the receiver, so the measure

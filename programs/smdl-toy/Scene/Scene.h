@@ -83,6 +83,10 @@ public:
   float2 texcoord{};                     ///< The texture coordinate.
   float textureDensity{};                ///< The UV texture density.
 
+  /// The shutter fraction the hit happened at, the ray's `time`; see
+  /// `PathTime`.
+  float time{};
+
   /// The world-space fiber diameter at a curves hit, 0 otherwise. Feeds
   /// `texture_coordinate[0].z` per the MDL hair texturing convention.
   float fiberThickness{};

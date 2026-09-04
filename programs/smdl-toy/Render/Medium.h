@@ -180,7 +180,7 @@ public:
   /// must not be reused past the lifetime of the stacks it resolved,
   /// which is one path: the allocator that owns them is reset between
   /// samples.
-  void reset(const MediumStack *stack, const Color &wavelengths, float time,
+  void reset(const MediumStack *stack, const Color &wavelengths, PathTime time,
              const float3 &org, const float3 &dir) noexcept;
 
   /// Set the scene-wide exterior haze that an empty stack resolves to,

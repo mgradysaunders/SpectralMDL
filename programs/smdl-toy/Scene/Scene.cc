@@ -1021,7 +1021,7 @@ bool Scene::intersect(Ray &ray, Hit &hit) const {
   rayHit.ray.dir_z = ray.dir.z;
   rayHit.ray.tnear = ray.tmin;
   rayHit.ray.tfar = ray.tmax;
-  rayHit.ray.time = 0;
+  rayHit.ray.time = ray.time;
   rayHit.ray.mask = unsigned(-1);
   rayHit.ray.id = 0;
   rayHit.ray.flags = 0;
@@ -1045,6 +1045,7 @@ bool Scene::intersect(Ray &ray, Hit &hit) const {
           instIndex, rayHit.hit.primID, rayHit.hit.u, rayHit.hit.v,
           float3(rayHit.hit.Ng_x, rayHit.hit.Ng_y, rayHit.hit.Ng_z),
           ray(rayHit.ray.tfar), ray.dir);
+      hit.time = ray.time;
       return true;
     }
     auto clamp01{[](float value) { return std::clamp(value, 0.0f, 1.0f); }};
@@ -1057,6 +1058,7 @@ bool Scene::intersect(Ray &ray, Hit &hit) const {
                     instIndex, rayHit.hit.primID, bary,
                     float3(rayHit.hit.Ng_x, rayHit.hit.Ng_y, rayHit.hit.Ng_z))
               : makeHit(instIndex, rayHit.hit.primID, bary);
+    hit.time = ray.time;
     return true;
   }
 }
@@ -1071,7 +1073,7 @@ bool Scene::isOccluded(const Ray &ray) const {
   rtcRay.dir_z = ray.dir.z;
   rtcRay.tnear = ray.tmin;
   rtcRay.tfar = ray.tmax;
-  rtcRay.time = 0;
+  rtcRay.time = ray.time;
   rtcRay.mask = unsigned(-1);
   rtcRay.id = 0;
   rtcRay.flags = 0;
@@ -1089,7 +1091,7 @@ bool Scene::intersect(Ray &ray, ManifoldHit &hit) const {
   rayHit.ray.dir_z = ray.dir.z;
   rayHit.ray.tnear = ray.tmin;
   rayHit.ray.tfar = ray.tmax;
-  rayHit.ray.time = 0;
+  rayHit.ray.time = ray.time;
   rayHit.ray.mask = unsigned(-1);
   rayHit.ray.id = 0;
   rayHit.ray.flags = 0;

@@ -7,7 +7,7 @@
 
 VisibilityWalk::VisibilityWalk(smdl::BumpPtrAllocator &allocator,
                                const Scene &scene, Sampler &sampler,
-                               const Color &wavelengths, float time,
+                               const Color &wavelengths, PathTime time,
                                const MediumStack *medium, PathScratch &scratch,
                                const float3 &point0, const float3 &point1,
                                Color &beta, bool needBlocker,
@@ -19,7 +19,8 @@ VisibilityWalk::VisibilityWalk(smdl::BumpPtrAllocator &allocator,
   mDistance = length(point1 - point0);
   mShadowDir = mDistance > 0 ? (point1 - point0) / mDistance : float3{};
   mParamEps = mDistance > 1.0f ? EPS / mDistance : EPS;
-  mRay = Ray{point0, point1 - point0, mParamEps, 1.0f - mParamEps};
+  mRay =
+      Ray{point0, point1 - point0, mParamEps, 1.0f - mParamEps, time.fraction};
 }
 
 bool VisibilityWalk::nextBlocker(Hit &hit) {
@@ -79,8 +80,8 @@ bool VisibilityWalk::nextBlocker(Hit &hit) {
     // and no blocking, only the medium-stack bookkeeping, which needs
     // the full instance.
     if (hit.material->isNullInterface()) {
-      auto &state{
-          mScratch.shadeHit(hit, mShadowDir, mWavelengths, mAllocator, mTime)};
+      auto &state{mScratch.shadeHit(hit, mShadowDir, mWavelengths, mAllocator,
+                                    mTime.seconds)};
       passThrough(smdl::JIT::MaterialInstance{state, hit.material}, hit);
       continue;
     }
@@ -89,8 +90,8 @@ bool VisibilityWalk::nextBlocker(Hit &hit) {
     // Only the ray direction is populated; the LOD fields stay zero so
     // opacity evaluates at full fidelity, the conservative choice for
     // shadow rays.
-    auto &state{
-        mScratch.shadeHit(hit, mShadowDir, mWavelengths, mAllocator, mTime)};
+    auto &state{mScratch.shadeHit(hit, mShadowDir, mWavelengths, mAllocator,
+                                  mTime.seconds)};
     if (float opacity{hit.material->evaluateOpacity(state)};
         opacity == 1 || float(mSampler) < opacity) {
       return true; // Blocks visibility!
@@ -152,7 +153,7 @@ enum class VertexKind { SURFACE, VOLUME, HAIR };
 
 [[nodiscard]]
 bool testVisibility(smdl::BumpPtrAllocator &allocator, const Scene &scene,
-                    Sampler &sampler, const Color &wavelengths, float time,
+                    Sampler &sampler, const Color &wavelengths, PathTime time,
                     const MediumStack *medium, PathScratch &scratch,
                     const float3 &point0, const float3 &point1, Color &beta,
                     bool infiniteTarget = false) {
@@ -241,6 +242,7 @@ public:
   smdl::BumpPtrAllocator &allocator;
   const LightSampler &lights;
   const smdl::State &gatherState;
+  PathTime time;
   Scatterer scatterer;
   VertexKind kind{};
   const DTree *dtree{};
@@ -321,7 +323,7 @@ Color MNEEGather::gatherReflection(const MNEEOptions &mneeOptions) const {
   float casterPdf{};
   const auto *caster{mneeOptions.casters->sampleCaster(sampler, casterPdf)};
   if (!caster) return {};
-  const SceneManifoldSurfaces surfaces{scene};
+  const SceneManifoldSurfaces surfaces{scene, time};
   Color result{};
   // One estimate per claimed kind, each with its own constraint (the
   // exact reflection, or a drawn microfacet normal), its own throughput
@@ -443,7 +445,7 @@ Color MNEEGather::gatherRefraction(const MNEEOptions &mneeOptions,
   // cast, so the two must agree on what is covered.
   if (walk.passedCutout()) return {};
   const ManifoldTarget target{makeManifoldTarget(lightSample)};
-  const SceneManifoldSurfaces surfaces{scene};
+  const SceneManifoldSurfaces surfaces{scene, time};
   auto &stats{ManifoldStats::global()};
   Color result{};
   // One estimate per kind the whole chain claims: the Dirac chain,
@@ -591,16 +593,9 @@ Color MNEEGather::contribution(const ManifoldChain &chain,
       makeRenderState(wavelengths, &allocator, gatherState.animation_time)};
   for (int i = 0; i < connection.count; i++) {
     const auto &vertex{connection.vertices[i]};
-    VisibilityWalk segWalk{allocator,
-                           scene,
-                           sampler,
-                           wavelengths,
-                           gatherState.animation_time,
-                           segMedium,
-                           scratch,
-                           segStart,
-                           vertex.geometry.point,
-                           Tr};
+    VisibilityWalk segWalk{
+        allocator, scene,   sampler,  wavelengths,           time,
+        segMedium, scratch, segStart, vertex.geometry.point, Tr};
     if (segWalk.nextBlocker(blockerUnused) || !(Tr.maxComponent() > 0.0f))
       return {};
     // The solver's vertex is an address, not a hit record; rebuild the
@@ -678,9 +673,8 @@ Color MNEEGather::contribution(const ManifoldChain &chain,
   const float3 lightPoint{lightSample.isInfinite
                               ? segStart + (lightSample.target - point)
                               : lightSample.target};
-  VisibilityWalk lightWalk{
-      allocator, scene,   sampler,  wavelengths, gatherState.animation_time,
-      segMedium, scratch, segStart, lightPoint,  Tr};
+  VisibilityWalk lightWalk{allocator, scene,   sampler,  wavelengths, time,
+                           segMedium, scratch, segStart, lightPoint,  Tr};
   if (lightWalk.nextBlocker(blockerUnused) || !(Tr.maxComponent() > 0.0f))
     return {};
   // The connection's one measure (see `ManifoldConnection::measure()`),
@@ -795,7 +789,7 @@ Color MNEEGather::reciprocalEstimate(const ManifoldTarget &target,
                                      const MNEEOptions &mneeOptions,
                                      int receiverMask, float scale,
                                      const Reseed &reseed) const {
-  const SceneManifoldSurfaces surfaces{scene};
+  const SceneManifoldSurfaces surfaces{scene, time};
   auto &stats{ManifoldStats::global()};
   auto solve{[&](ManifoldConnection &connection) {
     ManifoldWalkReport report{};
@@ -967,7 +961,7 @@ public:
   // The MIS weight of a BSDF-side arrival at `target` through the
   // chain, by re-walk MIS; see the definition.
   [[nodiscard]] float coverWeight(const Scene &scene, Sampler &sampler,
-                                  const Color &wavelengths, float time,
+                                  const Color &wavelengths, PathTime time,
                                   smdl::BumpPtrAllocator &allocator,
                                   const ManifoldTarget &target, float lightPdf,
                                   const MNEEOptions &mneeOptions,
@@ -1015,7 +1009,7 @@ private:
 // the one the gather would compute: this walk IS the gather's walk, for
 // this target.
 float MNEECoverage::coverWeight(const Scene &scene, Sampler &sampler,
-                                const Color &wavelengths, float time,
+                                const Color &wavelengths, PathTime time,
                                 smdl::BumpPtrAllocator &allocator,
                                 const ManifoldTarget &target, float lightPdf,
                                 const MNEEOptions &mneeOptions,
@@ -1050,7 +1044,7 @@ float MNEECoverage::coverWeight(const Scene &scene, Sampler &sampler,
   float3 origin{receiver};
   // One state for every interface the cast crosses in turn, and for the
   // crossings re-asked below; see `Hit::applyGeometryToState()`.
-  auto state{makeRenderState(wavelengths, &allocator, time)};
+  auto state{makeRenderState(wavelengths, &allocator, time.seconds)};
   bool reached{false};
   for (int skip = 0; skip < 64; skip++) {
     float tmax{INF};
@@ -1061,7 +1055,7 @@ float MNEECoverage::coverWeight(const Scene &scene, Sampler &sampler,
         break;
       }
     }
-    Ray ray{origin, wl, EPS, tmax};
+    Ray ray{origin, wl, EPS, tmax, time.fraction};
     Hit hit{};
     if (!scene.intersect(ray, hit)) {
       reached = true;
@@ -1097,7 +1091,7 @@ float MNEECoverage::coverWeight(const Scene &scene, Sampler &sampler,
   if (!reached || chain.count != chainLength) return 1.0f;
   ManifoldConnection connection{};
   ManifoldWalkReport report{};
-  const SceneManifoldSurfaces surfaces{scene};
+  const SceneManifoldSurfaces surfaces{scene, time};
   const bool converged{solveManifoldConnection(surfaces, receiver, target,
                                                chain, connection, &report)};
   ManifoldStats::global().recordRewalk(report);
@@ -1187,10 +1181,10 @@ float MNEECoverage::coverWeight(const Scene &scene, Sampler &sampler,
 Color gatherDirect(const Scene &scene, Sampler &sampler,
                    const Color &wavelengths, smdl::BumpPtrAllocator &allocator,
                    const LightSampler &lights, const smdl::State &gatherState,
-                   Scatterer scatterer, VertexKind kind, const DTree *dtree,
-                   float bsdfFraction, const Guiding *guiding,
-                   const MediumStack *medium, PathScratch &scratch,
-                   const float3 &point, const float3 &wo,
+                   PathTime time, Scatterer scatterer, VertexKind kind,
+                   const DTree *dtree, float bsdfFraction,
+                   const Guiding *guiding, const MediumStack *medium,
+                   PathScratch &scratch, const float3 &point, const float3 &wo,
                    const MNEEOptions &mneeOptions,
                    const ManifoldClaim &manifoldClaim = {},
                    bool armedBehind = false, bool receiver = true) {
@@ -1205,9 +1199,9 @@ Color gatherDirect(const Scene &scene, Sampler &sampler,
   // and is skipped below.
   if (lights.sample(gatherState, sampler, point, lightSample, runManifold)) {
     const MNEEGather mneeGather{
-        scene,     sampler, wavelengths, allocator,    lights,  gatherState,
-        scatterer, kind,    dtree,       bsdfFraction, guiding, medium,
-        scratch,   point,   wo,          lightSample};
+        scene,  sampler,   wavelengths, allocator, lights,       gatherState,
+        time,   scatterer, kind,        dtree,     bsdfFraction, guiding,
+        medium, scratch,   point,       wo,        lightSample};
     // The reflect claims belong to the reflective gather, which the
     // layout's light marks may restrict to the caustic targets: toward
     // any other light the claimed reflections are ordinary transport
@@ -1245,9 +1239,9 @@ Color gatherDirect(const Scene &scene, Sampler &sampler,
     if (!runManifold) {
       if (Color Tr{Color(1.0f)};
           neeMask != 0 &&
-          testVisibility(allocator, scene, sampler, wavelengths,
-                         gatherState.animation_time, medium, scratch, point,
-                         lightSample.target, Tr, lightSample.isInfinite)) {
+          testVisibility(allocator, scene, sampler, wavelengths, time, medium,
+                         scratch, point, lightSample.target, Tr,
+                         lightSample.isInfinite)) {
         gatherPlain(Tr);
       }
     } else {
@@ -1260,7 +1254,7 @@ Color gatherDirect(const Scene &scene, Sampler &sampler,
                           scene,
                           sampler,
                           wavelengths,
-                          gatherState.animation_time,
+                          time,
                           medium,
                           scratch,
                           point,
@@ -1358,9 +1352,9 @@ Color claimedShareOf(const smdl::JIT::MaterialInstance &mat,
 
 Color tracePath(smdl::Compiler &compiler, smdl::BumpPtrAllocator &allocator,
                 const Scene &scene, Sampler &sampler, const Color &wavelengths,
-                Ray ray, float time, float cameraWeight, float cameraConeAngle,
-                const MediumStack *exteriorMedium, const smdl::Haze *haze,
-                const LightSampler &lightSampler,
+                Ray ray, PathTime time, float cameraWeight,
+                float cameraConeAngle, const MediumStack *exteriorMedium,
+                const smdl::Haze *haze, const LightSampler &lightSampler,
                 const MNEEOptions &mneeOptions, const PathOptions &pathOptions,
                 const Guiding *guiding, GuideRecord *records,
                 uint64_t &numRecords) {
@@ -1382,10 +1376,11 @@ Color tracePath(smdl::Compiler &compiler, smdl::BumpPtrAllocator &allocator,
   scratch.medium.setHaze(haze);
 
   // The pristine gather-side state, see `gatherDirect()`.
-  const auto gatherState{makeRenderState(wavelengths, &allocator, time)};
+  const auto gatherState{
+      makeRenderState(wavelengths, &allocator, time.seconds)};
   // Set up the state variables that never change; the geometric ones are
   // updated at every vertex by `Hit::apply_geometry_to_state()`.
-  auto state{makeRenderState(wavelengths, &allocator, time)};
+  auto state{makeRenderState(wavelengths, &allocator, time.seconds)};
 
   Color beta{Color(cameraWeight)};
   Color f{};
@@ -1568,7 +1563,7 @@ Color tracePath(smdl::Compiler &compiler, smdl::BumpPtrAllocator &allocator,
             // continuation density the gather weighs against is the
             // phase function alone.
             Color direct{gatherDirect(scene, sampler, wavelengths, allocator,
-                                      lightSampler, gatherState, phase,
+                                      lightSampler, gatherState, time, phase,
                                       VertexKind::VOLUME, /*dtree=*/nullptr,
                                       /*bsdfFraction=*/1.0f, guiding, medium,
                                       scratch, point, wo, mneeOptions)};
@@ -1604,7 +1599,7 @@ Color tracePath(smdl::Compiler &compiler, smdl::BumpPtrAllocator &allocator,
           // only thing the roulette can weigh here.
           if (!rouletteSurvives(depth, /*dtree=*/nullptr, ROULETTE_VOLUME_GATE))
             break;
-          ray = Ray{point, wNext, EPS, INF};
+          ray = Ray{point, wNext, EPS, INF, time.fraction};
           continue;
         }
       }
@@ -1690,7 +1685,7 @@ Color tracePath(smdl::Compiler &compiler, smdl::BumpPtrAllocator &allocator,
                           ray.dir);
       travel += castDistance;
       width += spread * castDistance;
-      ray = Ray{hit.point, ray.dir, EPS, INF};
+      ray = Ray{hit.point, ray.dir, EPS, INF, time.fraction};
       continue;
     }
 
@@ -1788,7 +1783,7 @@ Color tracePath(smdl::Compiler &compiler, smdl::BumpPtrAllocator &allocator,
     {
       Color direct{gatherDirect(
           scene, sampler, wavelengths, allocator, lightSampler, gatherState,
-          mat, isHair ? VertexKind::HAIR : VertexKind::SURFACE, dtree,
+          time, mat, isHair ? VertexKind::HAIR : VertexKind::SURFACE, dtree,
           bsdfFraction, guiding, medium, scratch, hit.point, wo, mneeOptions,
           reachable, wasArmed, receiver)};
       if (const float scale{clampScale(beta * direct, depth - 1)}; scale < 1.0f)
@@ -1904,7 +1899,7 @@ Color tracePath(smdl::Compiler &compiler, smdl::BumpPtrAllocator &allocator,
     if (!rouletteSurvives(depth, dtree)) break;
     if (!isHair)
       MediumStack::Update(medium, allocator, mat, hit.instance, wo, wNext);
-    ray = Ray{hit.point, wNext, EPS, INF};
+    ray = Ray{hit.point, wNext, EPS, INF, time.fraction};
   }
   return L;
 }

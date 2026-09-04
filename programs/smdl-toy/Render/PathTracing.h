@@ -180,7 +180,7 @@ public:
   /// `PathScratch`. The walk overwrites both of its members, so a caller
   /// must not expect either to survive the walk.
   VisibilityWalk(smdl::BumpPtrAllocator &allocator, const Scene &scene,
-                 Sampler &sampler, const Color &wavelengths, float time,
+                 Sampler &sampler, const Color &wavelengths, PathTime time,
                  const MediumStack *medium, PathScratch &scratch,
                  const float3 &point0, const float3 &point1, Color &beta,
                  bool needBlocker = false, bool infiniteTarget = false);
@@ -213,7 +213,7 @@ private:
   const Scene &mScene;
   Sampler &mSampler;
   const Color &mWavelengths;
-  float mTime{};
+  PathTime mTime;
 
   /// The nested-medium stack as of the walk's current position, a
   /// walk-local view that evolves across the boundaries it passes
@@ -273,9 +273,9 @@ private:
 /// Direct lighting is gathered at every scattering vertex as the walk
 /// reaches it, so nothing is retained per vertex.
 ///
-/// `time` is the animation time of the whole path: every material,
-/// light, and medium evaluation along it sees it in
-/// `State::animation_time`.
+/// `time` is the whole path's: its seconds reach every material, light,
+/// and medium evaluation along it as `State::animation_time`, and its
+/// shutter fraction every ray the path and its gathers trace.
 ///
 /// Each vertex pairs light sampling with the walk's own continuation as
 /// the BSDF-sampling half of the MIS estimate: an emitter hit or an
@@ -326,9 +326,9 @@ private:
 [[nodiscard]]
 Color tracePath(smdl::Compiler &compiler, smdl::BumpPtrAllocator &allocator,
                 const Scene &scene, Sampler &sampler, const Color &wavelengths,
-                Ray ray, float time, float cameraWeight, float cameraConeAngle,
-                const MediumStack *exteriorMedium, const smdl::Haze *haze,
-                const LightSampler &lightSampler,
+                Ray ray, PathTime time, float cameraWeight,
+                float cameraConeAngle, const MediumStack *exteriorMedium,
+                const smdl::Haze *haze, const LightSampler &lightSampler,
                 const MNEEOptions &mneeOptions, const PathOptions &pathOptions,
                 const Guiding *guiding, GuideRecord *records,
                 uint64_t &numRecords);
