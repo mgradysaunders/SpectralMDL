@@ -401,6 +401,12 @@ static cl::opt<std::string> optIBLFilename{
 static cl::opt<float> optIBLScale{
     "ibl-scale", cl::desc("With -ibl, the IBL scale factor (default: 1)"),
     cl::init(1.0f), cl::cat(catLight)};
+static cl::opt<bool> optAllLights{
+    "all-lights",
+    cl::desc("Aim light selection at every emissive surface, marked 'light' "
+             "in the layout or not (a scene given without a layout marks "
+             "everything already)"),
+    cl::init(false), cl::cat(catLight)};
 //--}
 //--{ CLI: Tonemapping Options
 static cl::OptionCategory catTonemap{"Tonemapping Options"};
@@ -1539,7 +1545,7 @@ int main(int argc, char **argv) try {
   // the environment, weighted by power.
   auto profLightSampler{smdl::profilerEntryBegin("Build light sampler")};
   const auto lights{LightSampler(compiler, scene, envLight.get(), layout.lights,
-                                 wavelengths)};
+                                 wavelengths, optAllLights)};
   smdl::profilerEntryEnd(profLightSampler);
   // The render loop is deliberately outside the trace; see -profile.
   if (profiling) smdl::profilerFinalize(profileFileName.c_str());

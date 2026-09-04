@@ -1,5 +1,6 @@
 #include "doctest.h"
 
+#include <optional>
 #include <string>
 
 #include "Layout/Layout.h"
@@ -93,5 +94,91 @@ TEST_CASE("LayoutParser: diagnostics") {
     // The second declaration is dropped, so the first survives intact.
     REQUIRE(document.lights.size() == 1);
     CHECK(document.lights[0].kind == LayoutLightDecl::Kind::POINT);
+  }
+}
+
+TEST_CASE("LayoutParser: the marks") {
+  LayoutDiagnostics diags{};
+  SUBCASE("Asset, place, and import spellings") {
+    const auto document{parseOK(diags, R"(#smdl layout
+asset a = sphere { radius 1 material m caster caustic light }
+asset b = "b.gltf"
+light l = point { caustic }
+place a caster light
+place a caster off light off
+place a { caster off light }
+place b
+import "b.gltf" { caster off light off }
+import "b.gltf" { caster light }
+)")};
+    REQUIRE(document.assets.size() == 2);
+    CHECK(document.assets[0].caster);
+    CHECK(bool(document.assets[0].casterLoc));
+    CHECK(document.assets[0].light);
+    CHECK(bool(document.assets[0].lightLoc));
+    CHECK(document.assets[0].caustic);
+    CHECK(!document.assets[1].caster);
+    CHECK(!document.assets[1].light);
+    CHECK(!document.assets[1].caustic);
+    REQUIRE(document.lights.size() == 1);
+    CHECK(document.lights[0].caustic);
+    REQUIRE(document.placements.size() == 6);
+    const auto casterOf{
+        [&](size_t i) { return document.placements[i].casterOverride; }};
+    const auto lightOf{
+        [&](size_t i) { return document.placements[i].lightOverride; }};
+    CHECK(casterOf(0) == std::optional<bool>(true));
+    CHECK(lightOf(0) == std::optional<bool>(true));
+    CHECK(casterOf(1) == std::optional<bool>(false));
+    CHECK(lightOf(1) == std::optional<bool>(false));
+    CHECK(casterOf(2) == std::optional<bool>(false));
+    CHECK(lightOf(2) == std::optional<bool>(true));
+    CHECK(casterOf(3) == std::nullopt);
+    CHECK(lightOf(3) == std::nullopt);
+    CHECK(document.placements[4].kind == LayoutPlacement::Kind::IMPORT);
+    CHECK(casterOf(4) == std::optional<bool>(false));
+    CHECK(lightOf(4) == std::optional<bool>(false));
+    CHECK(casterOf(5) == std::optional<bool>(true));
+    CHECK(lightOf(5) == std::optional<bool>(true));
+    CHECK(bool(document.placements[0].casterLoc));
+    CHECK(bool(document.placements[0].lightLoc));
+    CHECK(!document.placements[3].casterLoc);
+    CHECK(!document.placements[3].lightLoc);
+  }
+  SUBCASE("A mark written twice is an error") {
+    const auto &source{diags.addSource(
+        "test.layout", "#smdl layout\n"
+                       "asset a = sphere { radius 1 material m }\n"
+                       "place a caster caster\n"
+                       "place a light off light\n"
+                       "import \"b.gltf\" { caster off caster }\n"
+                       "import \"b.gltf\" { light light }\n")};
+    (void)parseLayout(diags, source, "/nowhere");
+    REQUIRE(diags.errorCount() == 4);
+    const char *expected[]{"'caster' appears twice in one place",
+                           "'light' appears twice in one place",
+                           "'caster' appears twice in one import",
+                           "'light' appears twice in one import"};
+    for (size_t i = 0; i < 4; i++) {
+      CAPTURE(i);
+      CHECK(diags.all()[i].message.find(expected[i]) != std::string::npos);
+      CHECK(source.lineAndColumn(diags.all()[i].location.offset).lineNo ==
+            uint32_t(3 + i));
+    }
+  }
+  SUBCASE("The word lists name both marks") {
+    const auto &source{diags.addSource(
+        "test.layout", "#smdl layout\n"
+                       "asset a = sphere { radius 1 material m frob }\n"
+                       "asset b = \"b.gltf\" { frob }\n"
+                       "place a frob\n"
+                       "import \"b.gltf\" { frob }\n")};
+    (void)parseLayout(diags, source, "/nowhere");
+    REQUIRE(diags.errorCount() == 4);
+    for (size_t i = 0; i < 4; i++) {
+      CAPTURE(i);
+      CHECK(diags.all()[i].message.find("caster, light, ") !=
+            std::string::npos);
+    }
   }
 }

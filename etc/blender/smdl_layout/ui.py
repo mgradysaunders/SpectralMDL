@@ -388,6 +388,7 @@ class SMDL_PT_asset_object(bpy.types.Panel):
         # What the manifold estimators search, and what they search for.
         marks = layout.column(align=True)
         marks.prop(options, "caster")
+        marks.prop(options, "light")
         marks.prop(options, "caustic")
         layout.separator()
         # Any slot row with content switches the asset to per-slot

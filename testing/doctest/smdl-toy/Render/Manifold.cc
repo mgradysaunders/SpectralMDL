@@ -110,8 +110,7 @@ void checkMeasure(const SceneManifoldSurfaces &surfaces, const char *name,
       const auto solved{
           solveOnce(surfaces, receiver, perturbed, chain, &perturbedReport)};
       {
-        INFO("a perturbed walk did not converge: ",
-             describe(perturbedReport));
+        INFO("a perturbed walk did not converge: ", describe(perturbedReport));
         REQUIRE(solved.ok);
       }
       (side == 0 ? wrPlus : wrMinus) = solved.wr;

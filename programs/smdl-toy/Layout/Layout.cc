@@ -69,6 +69,32 @@ using RenameMap = std::map<std::string, std::string, std::less<>>;
 // the diagnostics of the placements after it.
 class SkipPlacement final {};
 
+// The words said for the two per-placement marks on the place path so
+// far: each unset until some site says it, with where it was said, so
+// that a word refused further down can point back at it.
+class MarkOverrides final {
+public:
+  std::optional<bool> caster{};
+  LayoutLocation casterLoc{};
+  std::optional<bool> light{};
+  LayoutLocation lightLoc{};
+
+  // These words under `placement`'s own: the innermost explicit word
+  // wins.
+  [[nodiscard]] MarkOverrides over(const LayoutPlacement &placement) const {
+    auto result{*this};
+    if (placement.casterOverride) {
+      result.caster = placement.casterOverride;
+      result.casterLoc = placement.casterLoc;
+    }
+    if (placement.lightOverride) {
+      result.light = placement.lightOverride;
+      result.lightLoc = placement.lightLoc;
+    }
+    return result;
+  }
+};
+
 // What one written path turns out to name.
 class Target final {
 public:
@@ -96,9 +122,8 @@ public:
       : mDiags(diags), mSearch(search), mResult(result) {}
 
   void lowerFile(const std::string &fileName, const float4x4 &xf,
-                 const RenameMap &outerRenames,
-                 const std::optional<bool> &outerCaster, bool isEntry,
-                 const LayoutLocation &importSite) {
+                 const RenameMap &outerRenames, const MarkOverrides &outerMarks,
+                 bool isEntry, const LayoutLocation &importSite) {
     std::error_code ignored{};
     auto canonical{std::filesystem::weakly_canonical(fileName, ignored)};
     if (canonical.empty()) canonical = fileName;
@@ -130,7 +155,7 @@ public:
         parseLayout(mDiags, *source,
                     std::filesystem::path(fileName).parent_path().string())};
     mOpenFiles.push_back({canonical, fileName, importSite});
-    lowerDocument(document, xf, outerRenames, outerCaster, isEntry);
+    lowerDocument(document, xf, outerRenames, outerMarks, isEntry);
     mOpenFiles.pop_back();
     // Everything the nested file reported, parse and lowering alike,
     // points back at the import that pulled it in.
@@ -141,7 +166,7 @@ public:
 private:
   void lowerDocument(const LayoutDocument &document, const float4x4 &xf,
                      const RenameMap &outerRenames,
-                     const std::optional<bool> &outerCaster, bool isEntry) {
+                     const MarkOverrides &outerMarks, bool isEntry) {
     // Only the entry file's camera, sky, haze, and medium take effect. An
     // imported layout carrying its own is a layout that can also render
     // standalone, so say what is being ignored rather than erroring, and
@@ -181,8 +206,8 @@ private:
     auto usedGroups{std::vector<bool>(document.groups.size(), false)};
     auto usedLights{std::vector<bool>(document.lights.size(), false)};
     auto groupStack{std::vector<GroupFrame>()};
-    lowerPlacements(document, document.placements, xf, outerRenames,
-                    outerCaster, usedAssets, usedGroups, usedLights, groupStack,
+    lowerPlacements(document, document.placements, xf, outerRenames, outerMarks,
+                    usedAssets, usedGroups, usedLights, groupStack,
                     std::string());
     for (size_t i = 0; i < document.assets.size(); i++)
       if (!usedAssets[i])
@@ -212,7 +237,7 @@ private:
   void lowerPlacements(const LayoutDocument &document,
                        const std::vector<LayoutPlacement> &placements,
                        const float4x4 &xf, const RenameMap &outerRenames,
-                       const std::optional<bool> &outerCaster,
+                       const MarkOverrides &outerMarks,
                        std::vector<bool> &usedAssets,
                        std::vector<bool> &usedGroups,
                        std::vector<bool> &usedLights,
@@ -221,11 +246,11 @@ private:
     for (const auto &placement : placements) {
       try {
         if (placement.kind == LayoutPlacement::Kind::PLACE) {
-          lowerPlace(document, placement, xf, outerRenames, outerCaster,
+          lowerPlace(document, placement, xf, outerRenames, outerMarks,
                      usedAssets, usedGroups, usedLights, groupStack,
                      namePrefix);
         } else {
-          lowerImport(document, placement, xf, outerRenames, outerCaster);
+          lowerImport(document, placement, xf, outerRenames, outerMarks);
         }
         // NOLINTNEXTLINE
       } catch (const SkipPlacement &) {
@@ -237,7 +262,7 @@ private:
   void lowerPlace(const LayoutDocument &document,
                   const LayoutPlacement &placement, const float4x4 &xf,
                   const RenameMap &outerRenames,
-                  const std::optional<bool> &outerCaster,
+                  const MarkOverrides &outerMarks,
                   std::vector<bool> &usedAssets, std::vector<bool> &usedGroups,
                   std::vector<bool> &usedLights,
                   std::vector<GroupFrame> &groupStack,
@@ -300,14 +325,18 @@ private:
                   smdl::concat("'caster' on the light ",
                                smdl::Quoted(placement.assetName),
                                " has no effect"));
+    if (light && placement.lightOverride)
+      mDiags.warn(placement.lightLoc,
+                  smdl::concat("'light' on the light ",
+                               smdl::Quoted(placement.assetName),
+                               " has no effect"));
     // The place's own overrides apply outside everything the target says
     // for itself, and inside everything above: each syntactic enclosure
     // adds its rename layer one step further out.
     const auto baseOuter{composeRename(placement.overrides, outerRenames)};
-    // The caster mark composes the other way round: the innermost
-    // explicit word wins, and the asset's own mark is the default.
-    const auto effectiveCaster{
-        placement.casterOverride ? placement.casterOverride : outerCaster};
+    // The marks compose the other way round: the innermost explicit
+    // word wins, and the asset's own mark is the default.
+    const auto effectiveMarks{outerMarks.over(placement)};
     if (!placement.placesPath.empty()) {
       // The bulk form: one instance per record, each record's transform
       // standing where a one-line place's operations would, and each
@@ -372,9 +401,8 @@ private:
       if (!batchable) {
         for (size_t i = 0; i < places.transforms.size(); i++)
           lowerPlaceTarget(document, decl, group, light, placement.assetNameLoc,
-                           recordXf(i), outerFor(i), effectiveCaster,
-                           usedAssets, usedGroups, usedLights, groupStack,
-                           placeName);
+                           recordXf(i), outerFor(i), effectiveMarks, usedAssets,
+                           usedGroups, usedLights, groupStack, placeName);
         return;
       }
       // Batch by variant class in first-appearance order. Instance
@@ -394,6 +422,10 @@ private:
                 ? recordXf(i) * decl->transform
                 : recordXf(i) * decl->transform * target.correction);
       }
+      // The marks are resolved before any item exists, so a refused
+      // mark leaves nothing half-built behind its diagnostic.
+      const bool caster{casterOf(*decl, effectiveMarks, &target)};
+      const bool lightMark{lightOf(*decl, effectiveMarks, &target)};
       for (auto &[variantIndex, xfs] : batches) {
         auto &item{mResult.items.emplace_back()};
         if (decl->primitive.active()) {
@@ -412,7 +444,8 @@ private:
             document.materialAliases, variantIndex == PlacesFile::NO_VARIANT
                                           ? baseOuter
                                           : outerByVariant[variantIndex]);
-        item.caster = casterOf(*decl, effectiveCaster, target);
+        item.caster = caster;
+        item.light = lightMark;
         item.causticLight = decl->caustic;
         item.placeName = placeName;
         if (xfs.size() == 1) {
@@ -424,7 +457,7 @@ private:
       return;
     }
     lowerPlaceTarget(document, decl, group, light, placement.assetNameLoc,
-                     xf * placement.transform, baseOuter, effectiveCaster,
+                     xf * placement.transform, baseOuter, effectiveMarks,
                      usedAssets, usedGroups, usedLights, groupStack, placeName);
   }
 
@@ -435,10 +468,10 @@ private:
       const LayoutDocument &document, const LayoutAssetDecl *decl,
       const LayoutGroupDecl *group, const LayoutLightDecl *lightDecl,
       const LayoutLocation &nameLoc, const float4x4 &combinedXf,
-      const RenameMap &effectiveOuter,
-      const std::optional<bool> &effectiveCaster, std::vector<bool> &usedAssets,
-      std::vector<bool> &usedGroups, std::vector<bool> &usedLights,
-      std::vector<GroupFrame> &groupStack, const std::string &placeName) {
+      const RenameMap &effectiveOuter, const MarkOverrides &effectiveMarks,
+      std::vector<bool> &usedAssets, std::vector<bool> &usedGroups,
+      std::vector<bool> &usedLights, std::vector<GroupFrame> &groupStack,
+      const std::string &placeName) {
     if (lightDecl) {
       auto &light{mResult.lights.emplace_back()};
       light.decl = *lightDecl;
@@ -467,7 +500,7 @@ private:
         }
       groupStack.push_back({group, nameLoc});
       lowerPlacements(document, group->placements, combinedXf, effectiveOuter,
-                      effectiveCaster, usedAssets, usedGroups, usedLights,
+                      effectiveMarks, usedAssets, usedGroups, usedLights,
                       groupStack, placeName);
       groupStack.pop_back();
       return;
@@ -475,13 +508,16 @@ private:
     // A primitive is pure geometry by construction: no path to resolve,
     // no file to read, and the parser already guaranteed the assignment.
     if (decl->primitive.active()) {
+      const bool caster{casterOf(*decl, effectiveMarks, nullptr)};
+      const bool lightMark{lightOf(*decl, effectiveMarks, nullptr)};
       auto &item{mResult.items.emplace_back()};
       item.primitive = decl->primitive;
       item.objectToWorld = combinedXf * decl->transform;
       item.materials = decl->materials;
       item.materials.renames =
           composeRename(document.materialAliases, effectiveOuter);
-      item.caster = effectiveCaster.value_or(decl->caster);
+      item.caster = caster;
+      item.light = lightMark;
       item.causticLight = decl->caustic;
       item.placeName = placeName;
       return;
@@ -489,17 +525,27 @@ private:
     const auto target{resolveTarget(document, decl->path, decl->pathLoc)};
     checkAssetTargetKind(*decl, target);
     if (target.kind == Target::Kind::LAYOUT) {
-      // The asset's own mark passes down like an override, since there is
-      // no one item for it to mark.
+      // The asset's own marks pass down like overrides, since there is
+      // no one item for them to mark; the checks still run here, so
+      // that `light off` under `caustic` is refused wherever it is said.
+      (void)lightOf(*decl, effectiveMarks, nullptr);
+      auto passed{effectiveMarks};
+      if (!passed.caster && decl->caster) {
+        passed.caster = true;
+        passed.casterLoc = decl->casterLoc;
+      }
+      if (!passed.light && (decl->light || decl->caustic)) {
+        passed.light = true;
+        passed.lightLoc = decl->lightLoc ? decl->lightLoc : decl->nameLoc;
+      }
       lowerFile(target.path, combinedXf * decl->transform,
                 composeRename(subtreeRenames(decl->materials, decl->pathLoc),
                               effectiveOuter),
-                effectiveCaster ? effectiveCaster
-                : decl->caster  ? std::optional<bool>(true)
-                                : std::nullopt,
-                false, decl->pathLoc);
+                passed, false, decl->pathLoc);
       return;
     }
+    const bool caster{casterOf(*decl, effectiveMarks, &target)};
+    const bool lightMark{lightOf(*decl, effectiveMarks, &target)};
     auto &item{mResult.items.emplace_back()};
     item.fileName = target.path;
     item.objectToWorld = combinedXf * decl->transform * target.correction;
@@ -513,28 +559,55 @@ private:
     item.materials = decl->materials;
     item.materials.renames =
         composeRename(document.materialAliases, effectiveOuter);
-    item.caster = casterOf(*decl, effectiveCaster, target);
+    item.caster = caster;
+    item.light = lightMark;
     item.causticLight = decl->caustic;
     item.placeName = placeName;
   }
 
-  // The composed mark of an item lowered from `decl` through a target of
-  // known kind: a groom cannot carry it, since the manifold walk has no
-  // smooth surface to run on there.
+  // The composed caster mark of an item lowered from `decl`, through a
+  // target of known kind or through no target at all (a shape): a groom
+  // cannot carry it, since the manifold walk has no smooth surface to
+  // run on there.
   [[nodiscard]] bool casterOf(const LayoutAssetDecl &decl,
-                              const std::optional<bool> &effectiveCaster,
-                              const Target &target) {
-    const bool caster{effectiveCaster.value_or(decl.caster)};
-    if (caster && target.kind == Target::Kind::CURVES) {
+                              const MarkOverrides &marks,
+                              const Target *target) {
+    const bool caster{marks.caster.value_or(decl.caster)};
+    if (caster && target && target->kind == Target::Kind::CURVES) {
       mDiags.error(decl.casterLoc ? decl.casterLoc : decl.pathLoc,
                    smdl::concat("'caster' applies to a mesh file or a shape, "
                                 "but ",
                                 smdl::QuotedPath(decl.path),
-                                " is a curves "
-                                "file"));
+                                " is a curves file"));
       throw SkipPlacement();
     }
     return caster;
+  }
+
+  // The composed light mark, likewise: `caustic` implies it and cannot
+  // be turned off underneath, and a groom cannot carry it, since light
+  // selection has no way to sample a fiber.
+  [[nodiscard]] bool lightOf(const LayoutAssetDecl &decl,
+                             const MarkOverrides &marks, const Target *target) {
+    if (decl.caustic && marks.light == std::optional<bool>(false)) {
+      mDiags
+          .error(marks.lightLoc,
+                 smdl::concat("'light off' cannot apply to ",
+                              smdl::Quoted(decl.name),
+                              ": its 'caustic' mark makes it a light"))
+          .note(decl.nameLoc, "declared 'caustic' here");
+      throw SkipPlacement();
+    }
+    const bool light{marks.light.value_or(decl.light) || decl.caustic};
+    if (light && target && target->kind == Target::Kind::CURVES) {
+      mDiags.error(decl.lightLoc ? decl.lightLoc : decl.pathLoc,
+                   smdl::concat("'light' applies to a mesh file or a shape, "
+                                "but ",
+                                smdl::QuotedPath(decl.path),
+                                " is a curves file"));
+      throw SkipPlacement();
+    }
+    return light;
   }
 
   // The kind-specific properties an asset block can write, cross-checked
@@ -582,28 +655,32 @@ private:
   void lowerImport(const LayoutDocument &document,
                    const LayoutPlacement &placement, const float4x4 &xf,
                    const RenameMap &outerRenames,
-                   const std::optional<bool> &outerCaster) {
+                   const MarkOverrides &outerMarks) {
     const auto target{
         resolveTarget(document, placement.importPath, placement.importPathLoc)};
-    const auto effectiveCaster{
-        placement.casterOverride ? placement.casterOverride : outerCaster};
+    const auto effectiveMarks{outerMarks.over(placement)};
     if (target.kind == Target::Kind::LAYOUT) {
       lowerFile(target.path, xf * placement.transform,
                 composeRename(subtreeRenames(placement.importMaterials,
                                              placement.importPathLoc),
                               outerRenames),
-                effectiveCaster, false, placement.importPathLoc);
+                effectiveMarks, false, placement.importPathLoc);
       return;
     }
-    if (effectiveCaster.value_or(false) &&
-        target.kind == Target::Kind::CURVES) {
-      mDiags.error(placement.casterLoc ? placement.casterLoc
-                                       : placement.importPathLoc,
-                   smdl::concat("'caster' applies to a mesh file or a shape, "
-                                "but ",
-                                smdl::QuotedPath(placement.importPath),
-                                " is a curves file"));
-      throw SkipPlacement();
+    if (target.kind == Target::Kind::CURVES) {
+      const auto refuseMark{[&](const LayoutLocation &markLoc,
+                                std::string_view word) {
+        mDiags.error(markLoc ? markLoc : placement.importPathLoc,
+                     smdl::concat("'", word,
+                                  "' applies to a mesh file or a shape, but ",
+                                  smdl::QuotedPath(placement.importPath),
+                                  " is a curves file"));
+        throw SkipPlacement();
+      }};
+      if (effectiveMarks.caster.value_or(false))
+        refuseMark(effectiveMarks.casterLoc, "caster");
+      if (effectiveMarks.light.value_or(false))
+        refuseMark(effectiveMarks.lightLoc, "light");
     }
     if (target.kind == Target::Kind::CURVES) {
       // Fibers have no slots to default from, so an import must bind
@@ -631,7 +708,8 @@ private:
     item.materials = placement.importMaterials;
     item.materials.renames =
         composeRename(document.materialAliases, outerRenames);
-    item.caster = effectiveCaster.value_or(false);
+    item.caster = effectiveMarks.caster.value_or(false);
+    item.light = effectiveMarks.light.value_or(false);
   }
 
   // The `material` assignments written against a layout target, turned
@@ -756,7 +834,7 @@ Layout lowerLayout(LayoutDiagnostics &diags, const std::string &fileName,
                    const AssetSearchPath &search) {
   auto result{Layout()};
   Lowerer(diags, search, result)
-      .lowerFile(fileName, float4x4(1.0f), {}, std::nullopt, true, {});
+      .lowerFile(fileName, float4x4(1.0f), {}, {}, true, {});
   return result;
 }
 
@@ -799,12 +877,16 @@ Layout resolveLayoutArgument(const std::string &fileName,
     return renderPath.extension() == CURVES_EXTENSION ||
            sniffCurvesMagic(renderPath);
   }};
+  // With no layout to carry marks, every emitter is a light: nothing
+  // could say otherwise, and a bare model with a lamp in it expects to be
+  // lit by it.
   if (path.extension() == ASSET_EXTENSION) {
     const auto asset{readAssetFile(path.string())};
     auto &item{result.items.emplace_back()};
     item.fileName = asset.renderFileName;
     item.curves.active = classifyCurves(asset.renderFileName);
     item.objectToWorld = asset.correction;
+    item.light = !item.curves.active;
     result.frontAzimuth = asset.front;
     return result;
   }
@@ -813,5 +895,6 @@ Layout resolveLayoutArgument(const std::string &fileName,
   auto &item{result.items.emplace_back()};
   item.fileName = path.string();
   item.curves.active = classifyCurves(path);
+  item.light = !item.curves.active;
   return result;
 }

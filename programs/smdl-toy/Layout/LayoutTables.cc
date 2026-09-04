@@ -401,11 +401,14 @@ void packPlaces(const std::string &layoutFileName, std::string outputFileName) {
     // A record carries a transform and a variant index and nothing
     // else, so a per-place mark has nowhere to go; the asset's mark
     // covers every record.
-    if (placement.casterOverride)
+    const auto refuseMark{[&](const char *word) {
       throw smdl::Error(smdl::concat(
-          "cannot pack ", smdl::QuotedPath(layoutFileName),
-          ": a 'caster' override on a place has no record to live in; mark "
-          "the asset instead"));
+          "cannot pack ", smdl::QuotedPath(layoutFileName), ": a '", word,
+          "' override on a place has no record to live in; mark the asset "
+          "instead"));
+    }};
+    if (placement.casterOverride) refuseMark("caster");
+    if (placement.lightOverride) refuseMark("light");
     places.transforms.push_back(placement.transform);
     auto variantIndex{PlacesFile::NO_VARIANT};
     if (!placement.overrides.empty()) {

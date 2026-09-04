@@ -245,8 +245,8 @@ def as_surface(context, ob):
     options = getattr(ob, "smdl_asset_options", None)
     saved = {} if options is None else {
         field: getattr(options, field) for field in
-        ("subdivide", "scheme", "linear", "displace", "caster", "caustic",
-         "material", "variants")}
+        ("subdivide", "scheme", "linear", "displace", "caster", "light",
+         "caustic", "material", "variants")}
     saved_slots = [] if options is None else [
         (row.name, row.material, row.variants, row.stale)
         for row in options.slots]

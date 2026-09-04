@@ -4,7 +4,9 @@ smdl_add_doctest(
   "smdl-toy-doctest"
   SOURCES
     "IO/PlacesFile.cc"
+    "Layout/Layout.cc"
     "Layout/LayoutParser.cc"
+    "Render/Light.cc"
     "Render/Manifold.cc"
   LINK
     "smdl-toy-objects"

@@ -242,19 +242,23 @@ Color PunctualLight::Li(const float3 &point, const float3 &incidencePoint,
 LightSampler::LightSampler(smdl::Compiler &compiler, const Scene &scene,
                            const EnvLight *envLight,
                            const std::vector<LayoutLight> &layoutLights,
-                           const Color &wavelengths)
+                           const Color &wavelengths, bool allLights)
     : compiler(compiler), scene(scene), envLight(envLight) {
   auto allocator{smdl::BumpPtrAllocator()};
   auto weights{std::vector<float>()};
   auto warnedCurveMaterials{std::set<uint32_t>()};
+  auto warnedMarkMaterials{std::set<uint32_t>()};
+  size_t numSampledArea{};
+  size_t numUnsampledArea{};
   instanceToLight.resize(scene.meshInstances.size(), INVALID_INDEX);
   for (uint32_t instIndex = 0; instIndex < scene.meshInstances.size();
        instIndex++) {
     const auto &instance{scene.meshInstances[instIndex]};
     // The instance-resolved material: an instance whose override maps a
-    // plain material to an emissive one is a light, and one that maps an
-    // emissive material away is not.
-    const auto *material{scene.materials[scene.materialIndexOf(instance)]};
+    // plain material to an emissive one is an emitter, and one that maps
+    // an emissive material away is not.
+    const auto matIndex{scene.materialIndexOf(instance)};
+    const auto *material{scene.materials[matIndex]};
     if (!material) continue;
     // Evaluate the material once with a placeholder state to read the
     // structural emission flags and a representative intensity. The flags
@@ -266,6 +270,13 @@ LightSampler::LightSampler(smdl::Compiler &compiler, const Scene &scene,
     state.finalizeAndApplyInternalSpaceConventions();
     auto mat{smdl::JIT::MaterialInstance(state, material)};
     if (!mat.hasEmission()) {
+      // The mark is scene judgment about an emitter; on anything else it
+      // is a mistake worth one line, as the caster mark's is.
+      if (instance.light && warnedMarkMaterials.insert(matIndex).second)
+        SMDL_LOG_WARN("The material ",
+                      smdl::Quoted(scene.materialNames[matIndex]),
+                      " is marked 'light' but has no emission; the mark is "
+                      "ignored.");
       allocator.reset();
       continue;
     }
@@ -285,6 +296,7 @@ LightSampler::LightSampler(smdl::Compiler &compiler, const Scene &scene,
     }
     auto light{AreaLight()};
     light.instIndex = instIndex;
+    light.sampled = instance.light || allLights;
     light.caustic = instance.causticLight;
     // Areas are world-space areas, matching the world-space geometry
     // `Scene::makeHit` reports: a scaled instance covers more surface and
@@ -325,17 +337,19 @@ LightSampler::LightSampler(smdl::Compiler &compiler, const Scene &scene,
       auto toWorld{[&](const float3 &point) {
         return float3(objectToWorld * float4(point, 1.0f));
       }};
+      // The face distribution serves `sample()` alone, so an unsampled
+      // emitter, which only needs its total area, does not build one.
       auto faceAreas{std::vector<float>()};
-      faceAreas.reserve(mesh.faces.size());
+      if (light.sampled) faceAreas.reserve(mesh.faces.size());
       for (const auto &face : mesh.faces) {
         const auto point0{toWorld(mesh.verts[face[0]].point)};
         const auto point1{toWorld(mesh.verts[face[1]].point)};
         const auto point2{toWorld(mesh.verts[face[2]].point)};
         auto area{0.5f * length(cross(point1 - point0, point2 - point0))};
-        faceAreas.push_back(area);
+        if (light.sampled) faceAreas.push_back(area);
         light.totalArea += area;
       }
-      if (light.totalArea > 0)
+      if (light.sampled && light.totalArea > 0)
         light.faceDistr = smdl::Distribution1D(faceAreas);
     }
     if (!(light.totalArea > 0)) {
@@ -344,7 +358,8 @@ LightSampler::LightSampler(smdl::Compiler &compiler, const Scene &scene,
     }
     // The selection weight is the power: intensity times area under
     // `intensity_radiant_exitance`, the intensity itself under
-    // `intensity_power`.
+    // `intensity_power`. An unsampled emitter weighs nothing, which is
+    // the whole of what the mark decides.
     auto average{[](smdl::Span<const float> values) {
       float sum{};
       for (float value : values) sum += value;
@@ -360,8 +375,9 @@ LightSampler::LightSampler(smdl::Compiler &compiler, const Scene &scene,
       weight += mat.isBackfaceEmissionPower() ? intensity
                                               : intensity * light.totalArea;
     instanceToLight[instIndex] = uint32_t(areaLights.size());
+    (light.sampled ? numSampledArea : numUnsampledArea)++;
+    weights.push_back(light.sampled ? weight : 0.0f);
     areaLights.push_back(std::move(light));
-    weights.push_back(weight);
     allocator.reset();
   }
   if (!layoutLights.empty()) {
@@ -400,18 +416,28 @@ LightSampler::LightSampler(smdl::Compiler &compiler, const Scene &scene,
   // marked lights; no marks anywhere means no restriction, so the flags
   // normalize to all-true and the whole mechanism disappears. The
   // environment cannot carry a mark, so it is a target exactly while
-  // nothing is restricted.
+  // nothing is restricted. Only sampled lights take part: an unsampled
+  // emitter is never a target, since no gather aims at it.
   {
     bool anyMark{false};
-    for (const auto &light : areaLights) anyMark |= light.caustic;
+    for (const auto &light : areaLights)
+      anyMark |= light.sampled && light.caustic;
     for (const auto &light : punctualLights) anyMark |= light.caustic;
     if (!anyMark) {
-      for (auto &light : areaLights) light.caustic = true;
+      for (auto &light : areaLights) light.caustic = light.sampled;
       for (auto &light : punctualLights) light.caustic = true;
     }
     mEnvCaustic = !anyMark;
   }
-  SMDL_LOG_DEBUG("Light sampler: ", areaLights.size(), " area light(s), ",
+  // Leaving an emitter unmarked is a choice the layout makes silently;
+  // leaving every emitter unmarked is far more often a layout that has
+  // not been marked yet, and gets one line.
+  if (numSampledArea == 0 && numUnsampledArea > 0)
+    SMDL_LOG_INFO("No emitter is marked 'light': ", numUnsampledArea,
+                  " emissive instance(s) render through path hits alone; "
+                  "mark them in the layout, or pass -all-lights.");
+  SMDL_LOG_DEBUG("Light sampler: ", numSampledArea, " area light(s), ",
+                 numUnsampledArea, " unsampled emitter(s), ",
                  punctualLights.size(), " punctual light(s)",
                  envLight ? ", plus the environment" : "");
 }
@@ -456,6 +482,8 @@ bool LightSampler::sample(const smdl::State &state, Sampler &sampler,
     return true;
   }
   const auto &light{areaLights[lightIndex]};
+  // The zero selection weight is what keeps an unsampled emitter out.
+  SMDL_SANITY_CHECK(light.sampled);
   Hit hit{};
   lightSample.caustic = light.caustic;
   float positionPDF{}; // world-space area density at the sampled point
@@ -563,6 +591,7 @@ float LightSampler::solidAnglePDF(uint32_t instIndex, const float3 &lightPoint,
   }
   auto lightIndex{instanceToLight[instIndex]};
   const auto &light{areaLights[lightIndex]};
+  if (!light.sampled) return 0.0f;
   float selectPMF{lightDistr.indexPMF(int(lightIndex))};
   auto direction{lightPoint - point};
   float distSq{lengthSquared(direction)};

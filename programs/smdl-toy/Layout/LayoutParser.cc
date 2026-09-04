@@ -181,19 +181,37 @@ private:
 
   // Skip to the next top-level keyword, tracking brace depth so that a
   // keyword inside the abandoned statement's block does not fool the
-  // loop into starting mid-block.
+  // loop into starting mid-block. An error raised after a line's last
+  // token leaves the next statement's keyword current already; it is
+  // not part of the abandoned statement, so it is kept rather than
+  // skipped, and the line check is what tells it from a keyword that
+  // is merely an operation word of the abandoned line.
   void synchronize() {
     size_t depth{mToken.kind == Token::OPEN ? size_t(1) : size_t(0)};
+    if (depth == 0 && isTopLevelKeyword(mToken) &&
+        lineOf(mToken) > lastDiagnosticLine())
+      return;
     if (mToken.kind != Token::END) advance();
     while (mToken.kind != Token::END) {
       if (mToken.kind == Token::OPEN) depth++;
       if (mToken.kind == Token::CLOSE && depth > 0) depth--;
-      if (depth == 0 && mToken.kind == Token::WORD &&
-          std::find(TOP_LEVEL_KEYWORDS.begin(), TOP_LEVEL_KEYWORDS.end(),
-                    mToken.text) != TOP_LEVEL_KEYWORDS.end())
-        return;
+      if (depth == 0 && isTopLevelKeyword(mToken)) return;
       advance();
     }
+  }
+
+  [[nodiscard]] static bool isTopLevelKeyword(const Token &token) noexcept {
+    return token.kind == Token::WORD &&
+           std::find(TOP_LEVEL_KEYWORDS.begin(), TOP_LEVEL_KEYWORDS.end(),
+                     token.text) != TOP_LEVEL_KEYWORDS.end();
+  }
+
+  // The line of the diagnostic just raised, or 0 if it points nowhere.
+  [[nodiscard]] uint32_t lastDiagnosticLine() const noexcept {
+    if (mDiags.all().empty()) return 0;
+    const auto &location{mDiags.all().back().location};
+    if (location.source != &mSource) return 0;
+    return mSource.lineAndColumn(location.offset).lineNo;
   }
 
   void parseAsset() {
@@ -351,6 +369,9 @@ private:
       } else if (op == "caster") {
         decl.caster = true;
         decl.casterLoc = opLoc;
+      } else if (op == "light") {
+        decl.light = true;
+        decl.lightLoc = opLoc;
       } else if (op == "caustic") {
         decl.caustic = true;
       } else if (op == "at") {
@@ -364,14 +385,15 @@ private:
                      smdl::concat("unknown asset operation ", smdl::Quoted(op),
                                   decl.primitive.active()
                                       ? " (expected radius, height, "
-                                        "material, caster, translate, scale, "
-                                        "rotate, rotate_x, rotate_y, "
+                                        "material, caster, light, translate, "
+                                        "scale, rotate, rotate_x, rotate_y, "
                                         "rotate_z, or matrix)"
                                       : " (expected select, recenter, "
                                         "subdivide, displace, tube, ribbon, "
                                         "radius_scale, material, caster, "
-                                        "translate, scale, rotate, rotate_x, "
-                                        "rotate_y, rotate_z, or matrix)"));
+                                        "light, translate, scale, rotate, "
+                                        "rotate_x, rotate_y, rotate_z, or "
+                                        "matrix)"));
         throw Recover();
       }
     }
@@ -727,7 +749,13 @@ private:
       return;
     }
     if (op == "caster") {
-      parseCasterOverride(placement, opLoc, "place");
+      parseMarkOverride(placement.casterOverride, placement.casterLoc, opLoc,
+                        "caster", "place");
+      return;
+    }
+    if (op == "light") {
+      parseMarkOverride(placement.lightOverride, placement.lightLoc, opLoc,
+                        "light", "place");
       return;
     }
     if (op == "material") {
@@ -764,28 +792,29 @@ private:
       mDiags.error(opLoc,
                    smdl::concat("unknown place operation ", smdl::Quoted(op),
                                 " (expected material, variant, caster, "
-                                "translate, scale, rotate, rotate_x, "
+                                "light, translate, scale, rotate, rotate_x, "
                                 "rotate_y, rotate_z, or matrix)"));
       throw Recover();
     }
   }
 
-  // The `caster` / `caster off` override of a place or an import. Operation
-  // names are never `off`, so peeking for it is unambiguous.
-  void parseCasterOverride(LayoutPlacement &placement,
-                           const LayoutLocation &opLoc,
-                           std::string_view where) {
-    if (placement.casterOverride) {
+  // The `<word>` / `<word> off` override of a place or an import, for
+  // the `caster` and `light` marks alike. Operation names are never
+  // `off`, so peeking for it is unambiguous.
+  void parseMarkOverride(std::optional<bool> &mark, LayoutLocation &markLoc,
+                         const LayoutLocation &opLoc, std::string_view word,
+                         std::string_view where) {
+    if (mark) {
       mDiags.error(opLoc,
-                   smdl::concat("'caster' appears twice in one ", where));
+                   smdl::concat("'", word, "' appears twice in one ", where));
       throw Recover();
     }
-    placement.casterLoc = opLoc;
+    markLoc = opLoc;
     if (mToken.kind == Token::WORD && mToken.text == "off") {
-      placement.casterOverride = false;
+      mark = false;
       advance();
     } else {
-      placement.casterOverride = true;
+      mark = true;
     }
   }
 
@@ -832,13 +861,17 @@ private:
       if (op == "material") {
         parseMaterialOps(placement.importMaterials, "import");
       } else if (op == "caster") {
-        parseCasterOverride(placement, opLoc, "import");
+        parseMarkOverride(placement.casterOverride, placement.casterLoc, opLoc,
+                          "caster", "import");
+      } else if (op == "light") {
+        parseMarkOverride(placement.lightOverride, placement.lightLoc, opLoc,
+                          "light", "import");
       } else if (!parseTransformOp(op, opLoc, placement.transform)) {
         mDiags.error(opLoc,
                      smdl::concat("unknown import operation ", smdl::Quoted(op),
-                                  " (expected material, caster, translate, "
-                                  "scale, rotate, rotate_x, rotate_y, "
-                                  "rotate_z, or matrix)"));
+                                  " (expected material, caster, light, "
+                                  "translate, scale, rotate, rotate_x, "
+                                  "rotate_y, rotate_z, or matrix)"));
         throw Recover();
       }
     }

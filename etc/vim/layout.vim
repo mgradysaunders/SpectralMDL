@@ -122,7 +122,10 @@ syn match layoutAssetPath contained display +"[^"]*"+
 
 " light <name> = point|spot { ... }
 " light <name> = profile "<path>" { ... }
-syn keyword layoutStatement light nextgroup=layoutLightName skipwhite skipempty
+" `light` is both the declaration keyword and a mark (see the marks under
+" Operations), told apart by what follows: a declaration is `light <name> =`.
+syn match layoutLightStmt display "\<light\>\%(\s\+\h\w*\s*=\)\@="
+      \ nextgroup=layoutLightName skipwhite skipempty
 syn match layoutLightName contained display "\h\w*"
       \ nextgroup=layoutLightEq skipwhite skipempty
 syn match layoutLightEq contained display "="
@@ -207,11 +210,16 @@ syn keyword layoutVariant variant nextgroup=layoutVariantBlock skipwhite skipemp
 syn keyword layoutAssetOp contained select recenter subdivide displace tube ribbon
 syn keyword layoutAssetSetting contained radius height radius_scale
 
- The caustic caster mark: bare on an asset, `caster` or `caster off` on a
-" place or an import. Top level like `material`, since a one-line place
-" carries it outside any block. The `caustic` mark on an emissive asset or
-" a light is spelled the same way, bare, asset level only.
+" The caustic caster and light marks: bare on an asset, `caster` or `caster
+" off` (`light`, `light off`) on a place or an import. Top level like
+" `material`, since a one-line place carries them outside any block. The
+" `caustic` mark on an emissive asset or a light is spelled the same way,
+" bare, asset level only. The light mark is a match rather than a keyword
+" so that the `light` declaration, which is the same word followed by a
+" name and `=`, keeps its own group.
 syn keyword layoutCasterOp caster nextgroup=layoutCasterOff skipwhite
+syn match layoutLightMark display "\<light\>\%(\s\+\h\w*\s*=\)\@!"
+      \ nextgroup=layoutCasterOff skipwhite
 syn keyword layoutCasterOff contained off
 syn keyword layoutCausticOp caustic
 
@@ -301,6 +309,8 @@ hi def link layoutMaterialOp      Statement
 hi def link layoutTransform       Keyword
 hi def link layoutAssetOp         Keyword
 hi def link layoutCasterOp        Keyword
+hi def link layoutLightMark       Keyword
+hi def link layoutLightStmt       Statement
 hi def link layoutCausticOp       Keyword
 hi def link layoutCasterOff       Keyword
 hi def link layoutVariant         Keyword

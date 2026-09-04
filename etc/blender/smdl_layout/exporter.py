@@ -135,12 +135,12 @@ def is_group_instance(ob):
             and ASSET_KEY not in ob.instance_collection.keys())
 
 
-NO_OPTIONS = ((0, "CATMARK", False, False), (False, False), "", (), ())
+NO_OPTIONS = ((0, "CATMARK", False, False), (False, False, False), "", (), ())
 
 
 def options_of(ob):
     """The per-object export options of a placed asset: the subdivision
-    part (levels, scheme, linear, displace), the caustic marks (caster,
+    part (levels, scheme, linear, displace), the marks (caster, light,
     caustic), the flat material override, the flat variant names, and the
     per-slot rows that carry content as (slot, override, variants) triples.
 
@@ -160,7 +160,7 @@ def options_of(ob):
               options.scheme if levels else "CATMARK",
               bool(options.linear) if levels else False,
               bool(options.displace))
-    marks = (bool(options.caster), bool(options.caustic))
+    marks = (bool(options.caster), bool(options.light), bool(options.caustic))
     variants = tuple(name.strip() for name in options.variants.split(",")
                      if name.strip())
     slots = []
@@ -1258,7 +1258,7 @@ def write_scene(context, filepath, asset_root="", bake=True, collection=None,
     # One declaration per distinct (manifest, select, refinement, marks)
     # that anything places, directly or through a group: instances that
     # subdivide differently are different mesh data in the renderer, and
-    # the caustic marks have no per-place spelling to carry them. The
+    # the marks have no per-place spelling to carry them. The
     # renderer caches an import by file, selection, and refinement, so two
     # declarations that differ only in their marks still load one mesh.
     assets = _Assets()
@@ -1273,7 +1273,7 @@ def write_scene(context, filepath, asset_root="", bake=True, collection=None,
     for key in every_key:
         (manifest_path, select), subdiv, marks = key
         levels, scheme, linear, displace = subdiv
-        caster, caustic = marks
+        caster, light, caustic = marks
         if not os.path.exists(manifest_path):
             problems.append(f"the asset manifest {manifest_path} is gone, so "
                             f"placement(s) of it were skipped")
@@ -1283,6 +1283,8 @@ def write_scene(context, filepath, asset_root="", bake=True, collection=None,
             suffix = "_displaced"
         if caster:
             suffix += "_caster"
+        if light:
+            suffix += "_light"
         if caustic:
             suffix += "_caustic"
         name = assets.name_for(
@@ -1292,7 +1294,7 @@ def write_scene(context, filepath, asset_root="", bake=True, collection=None,
         # What shades this asset: whatever it was assigned last time. Only
         # when that says nothing do the mesh file's own material names go
         # into the file-wide alias list at the bottom.
-        assigned = previous_materials.get((reference, select))
+        assigned = previous_materials.get((reference, select), [])
         if not assigned:
             asset = manifest_module.Asset(manifest_path)
             entry = asset.object_for(select) if select else None
@@ -1348,6 +1350,8 @@ def write_scene(context, filepath, asset_root="", bake=True, collection=None,
             lines.append("  displace")
         if caster:
             lines.append("  caster")
+        if light:
+            lines.append("  light")
         if caustic:
             lines.append("  caustic")
         lines.append("}")

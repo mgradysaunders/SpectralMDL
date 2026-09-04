@@ -75,14 +75,24 @@ private:
 };
 
 /// A mesh or primitive instance whose material has a non-default
-/// emission EDF.
+/// emission EDF, whether or not light selection aims at it.
 class AreaLight final {
 public:
   /// The index in the `Scene::meshInstances` array.
   uint32_t instIndex{INVALID_INDEX};
 
+  /// Does light selection aim at it? From the instance's `light` mark
+  /// (see `LayoutAssetDecl::light`) or the `-all-lights` switch. An
+  /// unsampled emitter is registered for `totalArea` alone, which the
+  /// `intensity_power` normalization of its path hits needs, and gets
+  /// no selection weight: `sample()` never draws it, `solidAnglePDF()`
+  /// reports zero for it, and it is never a caustic target, so its
+  /// arrivals keep their full weight.
+  bool sampled{};
+
   /// The area-weighted distribution over the mesh faces. Empty for a
-  /// primitive light, which samples its shape analytically instead.
+  /// primitive light, which samples its shape analytically instead,
+  /// and for an unsampled light, which is never drawn.
   smdl::Distribution1D faceDistr{};
 
   /// The total world-space surface area: the divisor `intensity_power`
@@ -230,14 +240,19 @@ struct LightSample final {
 };
 
 /// The unified light-selection path over every light in the scene: each
-/// emissive mesh instance, plus the layout's punctual lights, plus the
-/// environment, weighted by power.
+/// emissive mesh instance the layout marks `light`, plus the layout's
+/// punctual lights, plus the environment, weighted by power. Every
+/// other emissive instance renders through the path hits the walk finds
+/// on its own, at MIS weight 1; see `AreaLight::sampled`.
 class LightSampler final {
 public:
+  /// `allLights` samples every emissive instance whether or not it is
+  /// marked: the `-all-lights` switch, and what a render without a
+  /// layout to carry marks wants.
   LightSampler(smdl::Compiler &compiler, const Scene &scene,
                const EnvLight *envLight,
                const std::vector<LayoutLight> &layoutLights,
-               const Color &wavelengths);
+               const Color &wavelengths, bool allLights = false);
 
   /// Are there no lights to sample?
   [[nodiscard]] bool empty() const noexcept {
@@ -311,14 +326,15 @@ public:
 
   /// Is an arrival at an emitter on the given mesh instance a caustic
   /// target's, so the claimed share of the arriving throughput is the
-  /// reflective gather's to drop? An unregistered emitter is nobody's
+  /// reflective gather's to drop? An unsampled emitter is nobody's
   /// target: light selection never aims at it, so no gather claims its
   /// transport and its arrivals keep their ordinary weights.
   [[nodiscard]] bool causticLight(uint32_t instIndex) const noexcept {
     const auto lightIndex{instIndex < instanceToLight.size()
                               ? instanceToLight[instIndex]
                               : INVALID_INDEX};
-    return lightIndex != INVALID_INDEX && areaLights[lightIndex].caustic;
+    return lightIndex != INVALID_INDEX && areaLights[lightIndex].sampled &&
+           areaLights[lightIndex].caustic;
   }
 
   /// Is an environment escape a caustic target's; see `causticLight()`.
@@ -327,7 +343,7 @@ public:
   /// The solid-angle density of `sample()` connecting `point` to
   /// `lightPoint` on the given mesh instance, for MIS when a BSDF sample
   /// happens to hit an emitter. Returns zero if the mesh instance is not a
-  /// registered light.
+  /// sampled light.
   [[nodiscard]] float solidAnglePDF(uint32_t instIndex,
                                     const float3 &lightPoint,
                                     const float3 &lightNormal,
@@ -350,7 +366,8 @@ private:
 
   /// The power-weighted distribution over `areaLights`, then
   /// `punctualLights`, with one extra entry at the end for the
-  /// environment if present.
+  /// environment if present. An unsampled area light has weight zero,
+  /// which is what keeps it out of `sample()` and out of every PMF.
   smdl::Distribution1D lightDistr{};
 
   /// Is the environment a caustic target: true exactly while no light

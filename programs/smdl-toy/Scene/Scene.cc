@@ -289,6 +289,9 @@ void Scene::add(const LayoutItem &item) {
   if (item.causticLight && !item.curves.active)
     for (size_t i = firstInstance; i < meshInstances.size(); i++)
       meshInstances[i].causticLight = true;
+  if (item.light && !item.curves.active)
+    for (size_t i = firstInstance; i < meshInstances.size(); i++)
+      meshInstances[i].light = true;
 }
 
 uint32_t Scene::addPrimitive(const PrimitiveSpec &spec,

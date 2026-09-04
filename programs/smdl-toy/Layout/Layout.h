@@ -399,6 +399,24 @@ public:
   bool caster{};
   LayoutLocation casterLoc{};
 
+  /// The bare operation `light`: every placement of this asset is a
+  /// light, an emitter that light selection (next-event estimation, and
+  /// the MIS and manifold gathers that hang off it) aims at. An emissive
+  /// surface without the mark still emits, through the path hits the
+  /// walk finds on its own, at MIS weight 1. The mark is scene judgment
+  /// like `caster`, and for the same reason: emission is a fact about a
+  /// material, and whether a surface is worth aiming at is a fact about
+  /// the scene; a lamp is a light on the ceiling and clutter in a pile,
+  /// and a material whose emission covers a sliver of its surface is
+  /// rarely worth a share of every gather. It composes exactly as
+  /// `caster` does: a placement overrides it with `light` or `light
+  /// off`, a bulk place inherits it for every record, on a layout target
+  /// it passes down to the whole subtree, a curves groom cannot carry
+  /// it, and a mark on an asset whose material has no emission is
+  /// reported at scene load and ignored. `caustic` implies it.
+  bool light{};
+  LayoutLocation lightLoc{};
+
   /// The bare operation `caustic`: every placement of this asset is a
   /// caustic target, an emitter the renderer's manifold reflective
   /// gather searches the marked casters for. Meaningful only on an
@@ -406,7 +424,9 @@ public:
   /// mark: with no marks anywhere every light is a target, and with
   /// any, only the marked ones are, which is how a scene with many
   /// lights restricts the search to the few worth it. Asset-level only,
-  /// no placement override: mark the asset, or declare two.
+  /// no placement override: mark the asset, or declare two. A caustic
+  /// target is necessarily a light, so the mark implies `light`, and
+  /// `light off` on a placement of a caustic asset is an error.
   bool caustic{};
 };
 
@@ -560,6 +580,12 @@ public:
   std::optional<bool> casterOverride{};
   LayoutLocation casterLoc{};
 
+  /// The site's `light` or `light off`, or unset to take what the target
+  /// declares: see `LayoutAssetDecl::light`. Passes down exactly as
+  /// `casterOverride` does.
+  std::optional<bool> lightOverride{};
+  LayoutLocation lightLoc{};
+
   /// The transform the block's operations accumulated.
   float4x4 transform{float4x4(1.0f)};
 };
@@ -654,6 +680,10 @@ public:
   /// Is a caustic caster, with the asset's mark and every override on
   /// the place path already composed; see `LayoutAssetDecl::caster`.
   bool caster{};
+
+  /// Is a light, composed the same way, with `caustic` folded in; see
+  /// `LayoutAssetDecl::light`.
+  bool light{};
 
   /// Is a caustic target, from the asset's mark alone; see
   /// `LayoutAssetDecl::caustic`.

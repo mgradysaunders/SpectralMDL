@@ -289,6 +289,12 @@ public:
   /// treats every light as a target while no light anywhere is marked.
   bool causticLight{};
 
+  /// Marked `light` in the layout (or `caustic`, which implies it): an
+  /// emitter that light selection aims at. See `LayoutAssetDecl::light`
+  /// for the grammar; the `LightSampler` gives an unmarked emitter no
+  /// selection weight, so it renders through path hits alone.
+  bool light{};
+
   /// Instantiates a primitive rather than a mesh?
   [[nodiscard]] bool isPrimitive() const noexcept {
     return primIndex != INVALID_INDEX;

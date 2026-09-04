@@ -122,6 +122,16 @@ class SMDLAssetOptions(bpy.types.PropertyGroup):
                     "fact: the same chrome is worth it on a mirror wall "
                     "and is noise on a thousand screws",
         default=False)
+    light: bpy.props.BoolProperty(
+        name="Light",
+        description="Aim the renderer's light sampling at this asset's "
+                    "emission. Without the mark an emissive material "
+                    "still glows, through the paths that happen to hit "
+                    "it, but nothing is lit by it efficiently. Scene "
+                    "judgment rather than a material fact: a lamp is a "
+                    "light on the ceiling and clutter in a pile. Caustic "
+                    "Emitter implies it",
+        default=False)
     caustic: bpy.props.BoolProperty(
         name="Caustic Emitter",
         description="Search the caustic casters for connections to this "
