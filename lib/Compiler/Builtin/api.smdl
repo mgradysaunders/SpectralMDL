@@ -691,14 +691,14 @@ const int MATERIAL_HAS_HAIR = (1 << 7);
 
 const int MATERIAL_HAS_CUTOUT = (1 << 8);
 
-/// Reserved for `smdl::JIT::MATERIAL_HAS_HETEROGENEOUS_VOLUME`, which
+/// Reserved for `smdl::MATERIAL_HAS_HETEROGENEOUS_VOLUME`, which
 /// only ever appears in the compile-time `staticFlags` derived by the
 /// C++ compiler from the per-material `volumeEvaluate` entry point.
 /// Position dependence is not observable at instance evaluation time,
 /// so the instance `flags` below never set this bit.
 const int MATERIAL_HAS_HETEROGENEOUS_VOLUME = (1 << 9);
 
-/// Reserved for `smdl::JIT::MATERIAL_HAS_DISPLACEMENT`, which only
+/// Reserved for `smdl::MATERIAL_HAS_DISPLACEMENT`, which only
 /// ever appears in the compile-time `staticFlags` derived by the C++
 /// compiler from the per-material `displacementProbe`. Whether the
 /// displacement is non-zero is not a flag the instance reports, so

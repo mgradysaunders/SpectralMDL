@@ -125,7 +125,7 @@ float3 EnvLight::Li_sample(smdl::Compiler &compiler, const smdl::State &state,
   return widths;
 }
 
-PunctualLight::PunctualLight(smdl::Compiler &compiler, const smdl::State &state,
+AnalyticLight::AnalyticLight(smdl::Compiler &compiler, const smdl::State &state,
                              const Color &wavelengths, const LayoutLight &light,
                              std::shared_ptr<const smdl::LightProfile> profile)
     : mKind(light.decl.kind), mIntensity(wavelengths.size()),
@@ -162,16 +162,18 @@ PunctualLight::PunctualLight(smdl::Compiler &compiler, const smdl::State &state,
     compiler.convertRGBToColor(state, decl.color, tint.data());
     shape *= tint;
   }
-  // What fraction of the (unit) power the tint leaves.
-  double tintedIntegral{};
-  for (size_t i = 0; i < wavelengths.size(); i++)
-    tintedIntegral += double(shape[i]) * widths[i];
-  // The per-kind directional intensity scale.
+  // The per-band mean of the unit-power spectrum after the tint, which
+  // turns a broadband power into the selection weight; see `weight()`.
+  double meanShape{};
+  for (size_t i = 0; i < wavelengths.size(); i++) meanShape += shape[i];
+  if (wavelengths.size() > 0) meanShape /= double(wavelengths.size());
+  // The per-kind directional intensity scale, and the broadband power
+  // the selection weight starts from.
   float intensityScale{};
+  float power{decl.power};
   switch (mKind) {
   case LayoutLightDecl::Kind::POINT:
     intensityScale = decl.power / (4.0f * PI);
-    mPower = decl.power * float(tintedIntegral);
     break;
   case LayoutLightDecl::Kind::SPOT: {
     mCosOuter = std::cos(smdl::radians(decl.spotAngle) * 0.5f);
@@ -182,7 +184,6 @@ PunctualLight::PunctualLight(smdl::Compiler &compiler, const smdl::State &state,
     const float solidAngle{2.0f * PI *
                            ((1.0f - mCosInner) + (mCosInner - mCosOuter) / 2)};
     intensityScale = decl.power / std::max(solidAngle, 1.0e-6f);
-    mPower = decl.power * float(tintedIntegral);
     break;
   }
   case LayoutLightDecl::Kind::PROFILE: {
@@ -193,23 +194,52 @@ PunctualLight::PunctualLight(smdl::Compiler &compiler, const smdl::State &state,
       const float profilePower{mProfile->power()};
       if (profilePower > 0) intensityScale = decl.power / profilePower;
     }
-    mPower = mProfile->power() * intensityScale * float(tintedIntegral);
+    power = mProfile->power() * intensityScale;
     break;
   }
   case LayoutLightDecl::Kind::RECT:
-  case LayoutLightDecl::Kind::DISK:
+  case LayoutLightDecl::Kind::DISK: {
+    // The plane the placement puts the shape in: the in-plane axes keep
+    // the placement's scale, the area stretch is the length of their
+    // cross product, constant over a plane, and the emitting side is
+    // the one the placement maps local -Z into.
+    mAxisU = float3(xf[0]);
+    mAxisV = float3(xf[1]);
+    const bool isRect{mKind == LayoutLightDecl::Kind::RECT};
+    mHalfExtent = isRect ? float2(0.5f * decl.size.x, 0.5f * decl.size.y)
+                         : float2(decl.radius, decl.radius);
+    const float objectArea{isRect ? decl.size.x * decl.size.y
+                                  : PI * decl.radius * decl.radius};
+    auto planeNormal{cross(mAxisU, mAxisV)};
+    const float stretch{length(planeNormal)};
+    mWorldArea = objectArea * stretch;
+    if (!(mWorldArea > 0)) {
+      SMDL_LOG_WARN("The ", decl.kindName(), " light ", smdl::Quoted(decl.name),
+                    " is placed with no area and is never sampled.");
+      power = 0.0f;
+      break;
+    }
+    planeNormal /= stretch;
+    mNormal = dot(planeNormal, float3(xf[2])) > 0 ? -planeNormal : planeNormal;
+    // One-sided Lambertian: the radiance is the power over pi times the
+    // area in square meters.
+    const float metersPerSceneUnit{state.meters_per_scene_unit};
+    intensityScale = decl.power / (PI * mWorldArea * metersPerSceneUnit *
+                                   metersPerSceneUnit);
     break;
   }
+  }
+  mWeight = power * float(meanShape);
   for (size_t i = 0; i < wavelengths.size(); i++)
     mIntensity[i] = intensityScale * shape[i];
 }
 
-Color PunctualLight::Li(const float3 &point,
+Color AnalyticLight::Li(const float3 &point,
                         float metersPerSceneUnit) const noexcept {
   return Li(point, point, metersPerSceneUnit);
 }
 
-Color PunctualLight::Li(const float3 &point, const float3 &incidencePoint,
+Color AnalyticLight::Li(const float3 &point, const float3 &incidencePoint,
                         float metersPerSceneUnit) const noexcept {
   const float distSq{lengthSquared(point - mPosition)};
   if (!(distSq > 0)) return Color(0.0f);
@@ -240,6 +270,27 @@ Color PunctualLight::Li(const float3 &point, const float3 &incidencePoint,
   auto Li{Color(mIntensity)};
   Li *= factor / distSqMeters;
   return Li;
+}
+
+float3 AnalyticLight::sampleShape(float2 xi,
+                                  float &positionPDF) const noexcept {
+  float2 local{};
+  if (mKind == LayoutLightDecl::Kind::DISK) {
+    local = smdl::uniformDiskSample(xi);
+    local.x *= mHalfExtent.x;
+    local.y *= mHalfExtent.y;
+  } else {
+    local = float2((2.0f * xi.x - 1.0f) * mHalfExtent.x,
+                   (2.0f * xi.y - 1.0f) * mHalfExtent.y);
+  }
+  positionPDF = 1.0f / mWorldArea;
+  return mPosition + local.x * mAxisU + local.y * mAxisV;
+}
+
+Color AnalyticLight::Le(const float3 &lightPoint,
+                        const float3 &incidencePoint) const noexcept {
+  return dot(incidencePoint - lightPoint, mNormal) > 0 ? Color(mIntensity)
+                                                       : Color(0.0f);
 }
 
 LightSampler::LightSampler(smdl::Compiler &compiler, const Scene &scene,
@@ -390,7 +441,7 @@ LightSampler::LightSampler(smdl::Compiler &compiler, const Scene &scene,
     auto profiles{
         std::map<std::string, std::shared_ptr<const smdl::LightProfile>>()};
     auto state{makeRenderState(wavelengths)};
-    punctualLights.reserve(layoutLights.size());
+    analyticLights.reserve(layoutLights.size());
     for (const auto &layoutLight : layoutLights) {
       auto profile{std::shared_ptr<const smdl::LightProfile>()};
       if (layoutLight.decl.kind == LayoutLightDecl::Kind::PROFILE) {
@@ -403,10 +454,10 @@ LightSampler::LightSampler(smdl::Compiler &compiler, const Scene &scene,
         }
         profile = cached;
       }
-      auto &light{punctualLights.emplace_back(compiler, state, wavelengths,
+      auto &light{analyticLights.emplace_back(compiler, state, wavelengths,
                                               layoutLight, std::move(profile))};
       light.caustic = layoutLight.decl.caustic;
-      weights.push_back(light.power());
+      weights.push_back(light.weight());
     }
   }
   if (envLight) {
@@ -425,10 +476,10 @@ LightSampler::LightSampler(smdl::Compiler &compiler, const Scene &scene,
     bool anyMark{false};
     for (const auto &light : areaLights)
       anyMark |= light.sampled && light.caustic;
-    for (const auto &light : punctualLights) anyMark |= light.caustic;
+    for (const auto &light : analyticLights) anyMark |= light.caustic;
     if (!anyMark) {
       for (auto &light : areaLights) light.caustic = light.sampled;
-      for (auto &light : punctualLights) light.caustic = true;
+      for (auto &light : analyticLights) light.caustic = true;
     }
     mEnvCaustic = !anyMark;
   }
@@ -441,7 +492,7 @@ LightSampler::LightSampler(smdl::Compiler &compiler, const Scene &scene,
                   "mark them in the layout, or pass -all-lights.");
   SMDL_LOG_DEBUG("Light sampler: ", numSampledArea, " area light(s), ",
                  numUnsampledArea, " unsampled emitter(s), ",
-                 punctualLights.size(), " punctual light(s)",
+                 analyticLights.size(), " analytic light(s)",
                  envLight ? ", plus the environment" : "");
 }
 
@@ -455,9 +506,9 @@ bool LightSampler::sample(const smdl::State &state, Sampler &sampler,
   lightSample.isDirac = false;
   lightSample.reachable = true;
   lightSample.normal = float3(0.0f);
-  lightSample.punctualIndex = INVALID_INDEX;
+  lightSample.analyticIndex = INVALID_INDEX;
   if (envLight &&
-      lightIndex == int(areaLights.size() + punctualLights.size())) {
+      lightIndex == int(areaLights.size() + analyticLights.size())) {
     float dirPDF{};
     lightSample.wi = envLight->Li_sample(compiler, state, float2(sampler),
                                          dirPDF, lightSample.Li);
@@ -469,22 +520,42 @@ bool LightSampler::sample(const smdl::State &state, Sampler &sampler,
     return true;
   }
   if (lightIndex >= int(areaLights.size())) {
-    // A punctual light: the direction is a Dirac, so the pdf is the
-    // selection PMF alone and `Li` carries the inverse-square falloff.
-    const uint32_t punctualIndex{uint32_t(lightIndex) -
+    const uint32_t analyticIndex{uint32_t(lightIndex) -
                                  uint32_t(areaLights.size())};
-    const auto &light{punctualLights[punctualIndex]};
-    auto direction{light.position() - point};
-    if (!(lengthSquared(direction) > 0)) return false;
-    lightSample.Li = light.Li(point, state.meters_per_scene_unit);
-    if (lightSample.Li.isAllZero() && !keepDark) return false;
-    lightSample.wi = normalize(direction);
-    lightSample.pdf = selectPMF;
-    lightSample.target = light.position();
-    lightSample.isDirac = true;
+    const auto &light{analyticLights[analyticIndex]};
     lightSample.reachable = false;
-    lightSample.punctualIndex = punctualIndex;
+    lightSample.analyticIndex = analyticIndex;
     lightSample.caustic = light.caustic;
+    if (light.isDirac()) {
+      // A punctual light: the direction is a Dirac, so the pdf is the
+      // selection PMF alone and `Li` carries the inverse-square falloff.
+      auto direction{light.position() - point};
+      if (!(lengthSquared(direction) > 0)) return false;
+      lightSample.Li = light.Li(point, state.meters_per_scene_unit);
+      if (lightSample.Li.isAllZero() && !keepDark) return false;
+      lightSample.wi = normalize(direction);
+      lightSample.pdf = selectPMF;
+      lightSample.target = light.position();
+      lightSample.isDirac = true;
+      return true;
+    }
+    // A shape: a uniform-area point on it, the radiance toward the
+    // receiver from its emitting side, and the position density
+    // converted to solid angle, exactly as for an area light except
+    // that no material stands behind the point.
+    float positionPDF{};
+    const float3 lightPoint{light.sampleShape(float2(sampler), positionPDF)};
+    auto direction{lightPoint - point};
+    const float distSq{lengthSquared(direction)};
+    if (!(distSq > 0)) return false;
+    lightSample.wi = normalize(direction);
+    const float cosTheta{absDot(light.normal(), lightSample.wi)};
+    if (!(cosTheta > 0)) return false;
+    lightSample.Li = light.Le(lightPoint, point);
+    if (lightSample.Li.isAllZero() && !keepDark) return false;
+    lightSample.pdf = selectPMF * distSq * positionPDF / cosTheta;
+    lightSample.target = lightPoint;
+    lightSample.normal = light.normal();
     return true;
   }
   const auto &light{areaLights[lightIndex]};
@@ -545,10 +616,12 @@ Color LightSampler::reevaluateLi(const LightSample &lightSample,
                                  const smdl::State &state, const float3 &point,
                                  const float3 &incidencePoint) const {
   if (lightSample.isInfinite) return lightSample.Li;
-  if (lightSample.punctualIndex != INVALID_INDEX) {
-    if (lightSample.punctualIndex >= punctualLights.size()) return Color(0.0f);
-    return punctualLights[lightSample.punctualIndex].Li(
-        point, incidencePoint, state.meters_per_scene_unit);
+  if (lightSample.analyticIndex != INVALID_INDEX) {
+    if (lightSample.analyticIndex >= analyticLights.size()) return Color(0.0f);
+    const auto &light{analyticLights[lightSample.analyticIndex]};
+    return light.isDirac()
+               ? light.Li(point, incidencePoint, state.meters_per_scene_unit)
+               : light.Le(lightSample.target, incidencePoint);
   }
   const auto &hit{lightSample.hit};
   if (!hit.material) return Color(0.0f);

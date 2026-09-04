@@ -167,13 +167,13 @@ MNEECasterSet::MNEECasterSet(const Scene &scene, const Color &wavelengths,
       const char *reason{") claims nothing: the material has no Dirac or "
                          "glossy lobe in either domain, so the mark is "
                          "ignored"};
-      if ((dfLobes & smdl::JIT::DF_SETS_NORMAL) != 0)
+      if ((dfLobes & smdl::DF_SETS_NORMAL) != 0)
         reason = ") claims nothing: a df node was given its own normal, "
                  "which the manifold walk cannot solve against; leave it "
                  "defaulted to inherit 'geometry.normal', else the mark is "
                  "ignored";
       else if (mat.material->remapsNormal() &&
-               (dfLobes & smdl::JIT::DF_CAN_SET_NORMAL) != 0)
+               (dfLobes & smdl::DF_CAN_SET_NORMAL) != 0)
         reason = ") claims nothing: the material remaps 'geometry.normal' "
                  "while a df node was given a normal of its own, which "
                  "detaches it from the remapped field, so the mark is "
@@ -255,8 +255,8 @@ bool makeManifoldSeed(const MediumStack *medium,
   // whose scattering tree the claim may speak for and the side whose
   // index is the previous one.
   const bool prevInterior{mat.isInterior(woStraight)};
-  const auto claim{manifoldClaim(mat, prevInterior,
-                                 hit.instance->causticCaster, maxGlossyAlpha)};
+  const auto claim{manifoldClaim(mat, prevInterior, hit.instance->causticCaster,
+                                 maxGlossyAlpha)};
   if (claim.refractLobes == 0) return false;
   seed.claimedLobes = claim.refractLobes;
   seed.isGlossy = false;

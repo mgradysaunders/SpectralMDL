@@ -166,7 +166,7 @@ bool testVisibility(smdl::BumpPtrAllocator &allocator, const Scene &scene,
 [[nodiscard]]
 bool scatterEvaluate(Scatterer scatterer, VertexKind kind, const float3 &wo,
                      const float3 &wi, float &pdf, Color &f,
-                     int lobeMask = smdl::JIT::DF_ALL) {
+                     int lobeMask = smdl::DF_ALL) {
   // The JIT ABI reports a reverse PDF alongside every forward PDF,
   // which a forward path tracer never consumes.
   float pdfFwdUnused{};
@@ -184,7 +184,7 @@ bool scatterEvaluate(Scatterer scatterer, VertexKind kind, const float3 &wo,
     return mat.hairScatterEvaluate(wo, wi, pdf, pdfRevUnused, f);
   } else {
     if (!mat.scatterEvaluate(wo, wi, pdf, pdfRevUnused, f)) return false;
-    if (lobeMask == smdl::JIT::DF_ALL) return true;
+    if (lobeMask == smdl::DF_ALL) return true;
     // The masked value over the UNMASKED density: the mask restricts what
     // is estimated, not the continuation sampler it competes with.
     return mat.scatterEvaluate(wo, wi, pdfFwdUnused, pdfRevUnused, f, lobeMask);
@@ -208,7 +208,7 @@ bool sampleDiracCrossing(const smdl::JIT::MaterialInstance &mat,
   chance = 1.0f;
   return mat.scatterSample(float4(sampler), wPrev, wi, pdfFwd, pdfRev, f,
                            sampledLobe, diracMask, &chance) &&
-         (sampledLobe & smdl::JIT::DF_DIRAC) != 0;
+         (sampledLobe & smdl::DF_DIRAC) != 0;
 }
 
 // Everything one manifold connection is weighed against that does not
@@ -328,8 +328,7 @@ Color MNEEGather::gatherReflection(const MNEEOptions &mneeOptions) const {
   // (the masked material query of that kind), and its own reciprocal
   // count. A material mixing both kinds weighs them inside the masked
   // query, so nothing else multiplies.
-  for (const int kindLobe :
-       {smdl::JIT::DF_DIRAC_BRDF, smdl::JIT::DF_GLOSSY_BRDF}) {
+  for (const int kindLobe : {smdl::DF_DIRAC_BRDF, smdl::DF_GLOSSY_BRDF}) {
     if ((caster->reflectLobes & kindLobe) == 0) continue;
     // A reflection changes no medium and has no index contrast to
     // resolve, so the two sides weigh the same and `H` is the reflection
@@ -339,7 +338,7 @@ Color MNEEGather::gatherReflection(const MNEEOptions &mneeOptions) const {
     auto &seed{chain[0]};
     seed.etaPrev = seed.etaNext = 1.0f;
     seed.isReflect = true;
-    seed.isGlossy = kindLobe == smdl::JIT::DF_GLOSSY_BRDF;
+    seed.isGlossy = kindLobe == smdl::DF_GLOSSY_BRDF;
     Hit startHit{};
     if (!mneeOptions.casters->samplePoint(scene, sampler, *caster, startHit))
       continue;
@@ -353,7 +352,7 @@ Color MNEEGather::gatherReflection(const MNEEOptions &mneeOptions) const {
     if (seed.isGlossy &&
         !drawOffset(surfaces, startHit, /*medium=*/nullptr,
                     startHit.point - point, normalize(point - startHit.point),
-                    smdl::JIT::DF_GLOSSY_BRDF, seed))
+                    smdl::DF_GLOSSY_BRDF, seed))
       continue;
     chain.residualTolerance = reciprocalResidualTolerance(chain);
     const auto statKind{seed.isGlossy ? ManifoldStats::GLOSSY_REFLECT
@@ -363,8 +362,8 @@ Color MNEEGather::gatherReflection(const MNEEOptions &mneeOptions) const {
     // whichever start it was drawn at, so nothing is gained by discarding
     // that one.
     result += reciprocalEstimate( //
-        target, chain, statKind, mneeOptions, smdl::JIT::DF_ALL,
-        1.0f / casterPdf, [&](ManifoldChain &reseeded) {
+        target, chain, statKind, mneeOptions, smdl::DF_ALL, 1.0f / casterPdf,
+        [&](ManifoldChain &reseeded) {
           Hit reseededHit{};
           if (mneeOptions.casters->samplePoint(scene, sampler, *caster,
                                                reseededHit)) {
@@ -412,7 +411,7 @@ Color MNEEGather::gatherRefraction(const MNEEOptions &mneeOptions,
   // discovering.
   const bool envGated{lightSample.isInfinite &&
                       !mneeOptions.envTarget(lightSample.wi)};
-  int lobes{smdl::JIT::DF_DIRAC_BTDF | smdl::JIT::DF_GLOSSY_BTDF};
+  int lobes{smdl::DF_DIRAC_BTDF | smdl::DF_GLOSSY_BTDF};
   // One state for every crossing the discovery walks in turn; see
   // `Hit::applyGeometryToState()`.
   auto state{
@@ -434,7 +433,7 @@ Color MNEEGather::gatherRefraction(const MNEEOptions &mneeOptions,
     // `MNEECoverage`), so the two policies must move together.
     lobes &= seed.claimedLobes;
     if (lobes == 0) return {};
-    if (envGated && (lobes & smdl::JIT::DF_GLOSSY_BTDF) == 0) return {};
+    if (envGated && (lobes & smdl::DF_GLOSSY_BTDF) == 0) return {};
     chain.count++;
     walk.passThrough(interfaceMat, blocker);
     if (!walk.nextBlocker(blocker)) break;
@@ -450,7 +449,7 @@ Color MNEEGather::gatherRefraction(const MNEEOptions &mneeOptions,
   // One estimate per kind the whole chain claims: the Dirac chain,
   // deterministic and weighed against the path tracer by re-walk MIS, and
   // the glossy chain below, claimed outright.
-  if (!envGated && (lobes & smdl::JIT::DF_DIRAC_BTDF) != 0) {
+  if (!envGated && (lobes & smdl::DF_DIRAC_BTDF) != 0) {
     for (int i = 0; i < chain.count; i++) chain[i].isGlossy = false;
     if (mneeOptions.biasedTrials > 0) {
       // The biased claimed mode: exactly `biasedTrials` walks, the
@@ -502,7 +501,7 @@ Color MNEEGather::gatherRefraction(const MNEEOptions &mneeOptions,
       }
     }
   }
-  if ((lobes & smdl::JIT::DF_GLOSSY_BTDF) == 0) return result;
+  if ((lobes & smdl::DF_GLOSSY_BTDF) == 0) return result;
   for (int i = 0; i < chain.count; i++) chain[i].isGlossy = true;
   // A roughened connection, by the estimator of Zeltner, Georgiev and Jakob.
   //
@@ -514,7 +513,7 @@ Color MNEEGather::gatherRefraction(const MNEEOptions &mneeOptions,
   // and leave nothing to recognize.
   for (int i = 0; i < chain.count; i++)
     if (!drawOffset(surfaces, seedHits[i], seedMedium[i], lightSample.wi,
-                    -lightSample.wi, smdl::JIT::DF_GLOSSY_BTDF, chain[i]))
+                    -lightSample.wi, smdl::DF_GLOSSY_BTDF, chain[i]))
       return result;
   chain.residualTolerance = reciprocalResidualTolerance(chain);
   auto jitter{[&](ManifoldChain &reseeded) {
@@ -630,10 +629,10 @@ Color MNEEGather::contribution(const ManifoldChain &chain,
     // every branch producing the direction, and the two MIS weights stop
     // summing to exactly one.
     const auto &vertexSeed{chain[i]};
-    const int diracMask{vertexSeed.isReflect ? smdl::JIT::DF_DIRAC_BRDF
-                                             : smdl::JIT::DF_DIRAC_BTDF};
-    const int glossyMask{vertexSeed.isReflect ? smdl::JIT::DF_GLOSSY_BRDF
-                                              : smdl::JIT::DF_GLOSSY_BTDF};
+    const int diracMask{vertexSeed.isReflect ? smdl::DF_DIRAC_BRDF
+                                             : smdl::DF_DIRAC_BTDF};
+    const int glossyMask{vertexSeed.isReflect ? smdl::DF_GLOSSY_BRDF
+                                              : smdl::DF_GLOSSY_BTDF};
     if (vertexSeed.isGlossy) {
       // A glossy crossing has a density, so it is evaluated at the
       // directions the solve produced rather than sampled, masked to the
@@ -666,7 +665,7 @@ Color MNEEGather::contribution(const ManifoldChain &chain,
                      diracBranchChance(
                          guiding, vertex.geometry.point,
                          (crossMat.getLobes(crossMat.isInterior(vertex.wPrev)) &
-                          smdl::JIT::DF_FINITE) != 0);
+                          smdl::DF_FINITE) != 0);
       if (!(chainChance > 0.0f) || beta.isAllZero()) return {};
     }
     // A reflection stays on the side it arrived from, so it crosses no
@@ -951,10 +950,10 @@ public:
         reachable.refractLobes = claim.refractLobes;
         break;
       case ChainKind::DIRAC:
-        reachable.refractLobes = claim.refractLobes & smdl::JIT::DF_DIRAC_BTDF;
+        reachable.refractLobes = claim.refractLobes & smdl::DF_DIRAC_BTDF;
         break;
       case ChainKind::GLOSSY:
-        reachable.refractLobes = claim.refractLobes & smdl::JIT::DF_GLOSSY_BTDF;
+        reachable.refractLobes = claim.refractLobes & smdl::DF_GLOSSY_BTDF;
         break;
       case ChainKind::MIXED:
         break;
@@ -1087,7 +1086,7 @@ float MNEECoverage::coverWeight(const Scene &scene, Sampler &sampler,
     // summing to one.
     if (!makeManifoldSeed(medium, interfaceInst, hit, wl,
                           mneeOptions.maxRoughness, chain[chain.count]) ||
-        (chain[chain.count].claimedLobes & smdl::JIT::DF_DIRAC_BTDF) == 0)
+        (chain[chain.count].claimedLobes & smdl::DF_DIRAC_BTDF) == 0)
       return 1.0f;
     crossingMedium[chain.count] = medium;
     chain.count++;
@@ -1129,9 +1128,8 @@ float MNEECoverage::coverWeight(const Scene &scene, Sampler &sampler,
     float3 wiDirac{};
     float vertexChance{};
     Color fDirac{};
-    if (!sampleDiracCrossing(crossMat, sampler, -travel,
-                             smdl::JIT::DF_DIRAC_BTDF, wiDirac, fDirac,
-                             vertexChance))
+    if (!sampleDiracCrossing(crossMat, sampler, -travel, smdl::DF_DIRAC_BTDF,
+                             wiDirac, fDirac, vertexChance))
       return 1.0f;
     // The gather folds the same guiding branch chance into its
     // `chainChance` at its converged crossing, so the pair keeps
@@ -1139,7 +1137,7 @@ float MNEECoverage::coverWeight(const Scene &scene, Sampler &sampler,
     Q *= vertexChance *
          diracBranchChance(guiding, chainHits[i].point,
                            (crossMat.getLobes(crossMat.isInterior(-travel)) &
-                            smdl::JIT::DF_FINITE) != 0);
+                            smdl::DF_FINITE) != 0);
     prev = chainHits[i].point;
   }
   const float arrivalPdf{receiverPdf * Q * transfer};
@@ -1208,8 +1206,8 @@ Color gatherDirect(const Scene &scene, Sampler &sampler,
     ManifoldClaim lightClaim{manifoldClaim};
     if (!lightSample.caustic) lightClaim.reflectLobes = 0;
     const bool split{armedBehind && !lightClaim.empty()};
-    const int neeMask{split ? (smdl::JIT::DF_ALL & ~lightClaim.lobes())
-                            : smdl::JIT::DF_ALL};
+    const int neeMask{split ? (smdl::DF_ALL & ~lightClaim.lobes())
+                            : smdl::DF_ALL};
     // The plain estimator of a sample whose straight segment is clear,
     // with `vis` the segment's attenuation. The competing density in the
     // MIS weight must be the density the continuation sampler actually
@@ -1269,7 +1267,7 @@ Color gatherDirect(const Scene &scene, Sampler &sampler,
         // the rest of the BSDF only.
         direct += mneeGather.gatherRefraction(
             mneeOptions, walk, blocker, mneeDepth,
-            smdl::JIT::DF_ALL & ~manifoldClaim.refractLobes);
+            smdl::DF_ALL & ~manifoldClaim.refractLobes);
       }
       // The reflective gather is additive rather than an alternative: a
       // mirror is nowhere near the line to the light, so whether that line
@@ -1326,17 +1324,17 @@ Color claimedShareOf(const smdl::JIT::MaterialInstance &mat,
   if (reachable.empty()) return claimedShare;
   if (isDiracBounce) {
     if (!transmits &&
-        (sampledLobe & reachable.reflectLobes & smdl::JIT::DF_DIRAC_BRDF) != 0)
+        (sampledLobe & reachable.reflectLobes & smdl::DF_DIRAC_BRDF) != 0)
       claimedShare = Color(1.0f);
     return claimedShare;
   }
-  if ((transmits ? reachable.refractLobes & smdl::JIT::DF_GLOSSY_BTDF
-                 : reachable.reflectLobes & smdl::JIT::DF_GLOSSY_BRDF) == 0)
+  if ((transmits ? reachable.refractLobes & smdl::DF_GLOSSY_BTDF
+                 : reachable.reflectLobes & smdl::DF_GLOSSY_BRDF) == 0)
     return claimedShare;
   float pdfUnclaimed{}, pdfRevUnused{};
   Color fUnclaimed{};
   if (mat.scatterEvaluate(wo, wNext, pdfUnclaimed, pdfRevUnused, fUnclaimed,
-                          smdl::JIT::DF_ALL & ~reachable.lobes()))
+                          smdl::DF_ALL & ~reachable.lobes()))
     for (size_t b = 0; b < claimedShare.size(); b++)
       claimedShare[b] =
           f[b] > 0.0f ? std::clamp(1.0f - fUnclaimed[b] / f[b], 0.0f, 1.0f)
@@ -1745,7 +1743,7 @@ Color tracePath(smdl::Compiler &compiler, smdl::BumpPtrAllocator &allocator,
     const bool wasArmed{mneeCoverage.isArmed()};
     const DTree *dtree{guidingCellAt(
         guiding, hit.point,
-        !isHair && (mat.getLobes(backface) & smdl::JIT::DF_FINITE) != 0)};
+        !isHair && (mat.getLobes(backface) & smdl::DF_FINITE) != 0)};
     // The one-sample-MIS mixture weight at this vertex: the cell's
     // learned weight unless pinned for experiments. Meaningful only when
     // `dtree` is non-null, and shared by the gather below, whose MIS
@@ -1801,8 +1799,7 @@ Color tracePath(smdl::Compiler &compiler, smdl::BumpPtrAllocator &allocator,
                                wpdfRevUnused, f, sampledLobe)) {
           break;
         }
-        if (isDiracBounce = (sampledLobe & smdl::JIT::DF_DIRAC) != 0;
-            !isDiracBounce)
+        if (isDiracBounce = (sampledLobe & smdl::DF_DIRAC) != 0; !isDiracBounce)
           guidePdf = dtree->pdf(wNext);
       } else {
         if (wNext = dtree->sampleDirection(sampler, guidePdf);
@@ -1826,7 +1823,7 @@ Color tracePath(smdl::Compiler &compiler, smdl::BumpPtrAllocator &allocator,
       }
     } else if (mat.scatterSample(float4(sampler), wo, wNext, wpdf,
                                  wpdfRevUnused, f, sampledLobe)) {
-      isDiracBounce = (sampledLobe & smdl::JIT::DF_DIRAC) != 0;
+      isDiracBounce = (sampledLobe & smdl::DF_DIRAC) != 0;
     } else {
       break;
     }
@@ -1836,11 +1833,11 @@ Color tracePath(smdl::Compiler &compiler, smdl::BumpPtrAllocator &allocator,
     // sampled lobe was specular still gets its diffuse growth, which errs
     // toward more prefiltering deeper in the path.
     if (!isDiracBounce) {
-      spread = std::min(
-          spread + ((mat.getLobes(backface) & smdl::JIT::DF_GENERIC) != 0
-                        ? ANGLE_GROWTH_DIFFUSE
-                        : ANGLE_GROWTH_GLOSSY),
-          ANGLE_MAX);
+      spread =
+          std::min(spread + ((mat.getLobes(backface) & smdl::DF_GENERIC) != 0
+                                 ? ANGLE_GROWTH_DIFFUSE
+                                 : ANGLE_GROWTH_GLOSSY),
+                   ANGLE_MAX);
     }
     if (record) {
       record->wNext = wNext;
@@ -1864,9 +1861,8 @@ Color tracePath(smdl::Compiler &compiler, smdl::BumpPtrAllocator &allocator,
     // gather at the receiver behind it is what claims this chain.
     bool extendedChain{false};
     if (!isHair && mneeCoverage.isArmed() && transmits &&
-        (claim.refractLobes & (isDiracBounce ? smdl::JIT::DF_DIRAC_BTDF
-                                             : smdl::JIT::DF_GLOSSY_BTDF)) !=
-            0) {
+        (claim.refractLobes &
+         (isDiracBounce ? smdl::DF_DIRAC_BTDF : smdl::DF_GLOSSY_BTDF)) != 0) {
       extendedChain = true;
       mneeCoverage.extend(hit, !isDiracBounce, claimedShare);
     } else if (!isHair && !isDiracBounce) {

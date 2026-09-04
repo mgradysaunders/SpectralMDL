@@ -821,62 +821,58 @@ TEST_CASE("Compiler static material flags") {
   // the '.displacementProbe' body folds to the zero vector), and the
   // normal-remap bit (every material here keeps the state normal, so
   // the '.normalProbe' body folds to the zero vector too).
-  constexpr int structuralBits{MATERIAL_HAS_SURFACE | MATERIAL_HAS_BACKFACE |
-                               MATERIAL_HAS_SURFACE_EMISSION |
-                               MATERIAL_HAS_BACKFACE_EMISSION |
-                               MATERIAL_HAS_VOLUME | MATERIAL_HAS_HAIR};
-  constexpr int allBits{structuralBits | MATERIAL_THIN_WALLED |
-                        MATERIAL_HAS_CUTOUT |
-                        MATERIAL_HAS_HETEROGENEOUS_VOLUME |
-                        MATERIAL_HAS_DISPLACEMENT | MATERIAL_REMAPS_NORMAL};
+  constexpr int structuralBits{
+      smdl::MATERIAL_HAS_SURFACE | smdl::MATERIAL_HAS_BACKFACE |
+      smdl::MATERIAL_HAS_SURFACE_EMISSION |
+      smdl::MATERIAL_HAS_BACKFACE_EMISSION | smdl::MATERIAL_HAS_VOLUME |
+      smdl::MATERIAL_HAS_HAIR};
+  constexpr int allBits{
+      structuralBits | smdl::MATERIAL_THIN_WALLED | smdl::MATERIAL_HAS_CUTOUT |
+      smdl::MATERIAL_HAS_HETEROGENEOUS_VOLUME |
+      smdl::MATERIAL_HAS_DISPLACEMENT | smdl::MATERIAL_REMAPS_NORMAL};
   SUBCASE("Structural and constant-foldable bits are known") {
     auto matDefault{get("mat_default")};
     CHECK(matDefault->staticFlagsKnown == allBits);
     CHECK(matDefault->staticFlags == 0);
     CHECK(matDefault->isAlwaysOpaque());
-    CHECK(matDefault->isShadowTrivial());
     auto matPlastic{get("mat_plastic")};
     CHECK(matPlastic->staticFlagsKnown == allBits);
-    CHECK(matPlastic->staticFlags == MATERIAL_HAS_SURFACE);
-    CHECK(matPlastic->isShadowTrivial());
+    CHECK(matPlastic->staticFlags == smdl::MATERIAL_HAS_SURFACE);
+    CHECK(matPlastic->isAlwaysOpaque());
     auto matCutoutConst{get("mat_cutout_const")};
-    CHECK((matCutoutConst->staticFlagsKnown & MATERIAL_HAS_CUTOUT) != 0);
-    CHECK((matCutoutConst->staticFlags & MATERIAL_HAS_CUTOUT) != 0);
+    CHECK((matCutoutConst->staticFlagsKnown & smdl::MATERIAL_HAS_CUTOUT) != 0);
+    CHECK((matCutoutConst->staticFlags & smdl::MATERIAL_HAS_CUTOUT) != 0);
     CHECK(!matCutoutConst->isAlwaysOpaque());
-    CHECK(!matCutoutConst->isShadowTrivial());
     auto matCutoutFolds{get("mat_cutout_folds")};
     CHECK(matCutoutFolds->isAlwaysOpaque());
-    CHECK(matCutoutFolds->isShadowTrivial());
     auto matThin{get("mat_thin")};
-    CHECK((matThin->staticFlagsKnown & MATERIAL_THIN_WALLED) != 0);
-    CHECK((matThin->staticFlags & MATERIAL_THIN_WALLED) != 0);
+    CHECK((matThin->staticFlagsKnown & smdl::MATERIAL_THIN_WALLED) != 0);
+    CHECK((matThin->staticFlags & smdl::MATERIAL_THIN_WALLED) != 0);
     auto matVolume{get("mat_volume")};
     CHECK(matVolume->hasVolume());
     CHECK(matVolume->hasHomogeneousVolume());
-    CHECK(matVolume->isAlwaysOpaque());
-    // Not trivial because it passes shadow rays through, not because it
+    // Not opaque because it passes shadow rays through, not because it
     // has a volume: the volume-with-surface material below blocks at
-    // every hit and is trivial despite its interior.
+    // every hit and is opaque despite its interior.
     CHECK(matVolume->isNullInterface());
-    CHECK(!matVolume->isShadowTrivial());
+    CHECK(!matVolume->isAlwaysOpaque());
     auto matVolumeSurface{get("mat_volume_surface")};
     CHECK(matVolumeSurface->hasVolume());
-    CHECK(matVolumeSurface->isAlwaysOpaque());
     CHECK(!matVolumeSurface->isNullInterface());
-    CHECK(matVolumeSurface->isShadowTrivial());
+    CHECK(matVolumeSurface->isAlwaysOpaque());
     auto matEmissive{get("mat_emissive")};
-    CHECK((matEmissive->staticFlags & MATERIAL_HAS_SURFACE_EMISSION) != 0);
-    CHECK(matEmissive->isShadowTrivial());
+    CHECK((matEmissive->staticFlags & smdl::MATERIAL_HAS_SURFACE_EMISSION) !=
+          0);
+    CHECK(matEmissive->isAlwaysOpaque());
   }
   SUBCASE("Runtime-dependent bits degrade to unknown") {
     auto matCutoutRuntime{get("mat_cutout_runtime")};
     CHECK(matCutoutRuntime->staticFlagsKnown ==
-          (allBits & ~MATERIAL_HAS_CUTOUT));
+          (allBits & ~smdl::MATERIAL_HAS_CUTOUT));
     CHECK(!matCutoutRuntime->isAlwaysOpaque());
-    CHECK(!matCutoutRuntime->isShadowTrivial());
     auto matThinRuntime{get("mat_thin_runtime")};
     CHECK(matThinRuntime->staticFlagsKnown ==
-          (allBits & ~MATERIAL_THIN_WALLED));
+          (allBits & ~smdl::MATERIAL_THIN_WALLED));
   }
   SUBCASE("Instances satisfy the static-flags invariant") {
     auto allocator{smdl::BumpPtrAllocator()};
@@ -1161,8 +1157,8 @@ TEST_CASE("Compiler displacement evaluate") {
   SUBCASE("The default material is provably undisplaced") {
     auto material{get("disp_none")};
     CHECK(material->hasZeroDisplacement());
-    CHECK((material->staticFlagsKnown & MATERIAL_HAS_DISPLACEMENT) != 0);
-    CHECK((material->staticFlags & MATERIAL_HAS_DISPLACEMENT) == 0);
+    CHECK((material->staticFlagsKnown & smdl::MATERIAL_HAS_DISPLACEMENT) != 0);
+    CHECK((material->staticFlags & smdl::MATERIAL_HAS_DISPLACEMENT) == 0);
     material->displacementEvaluate(state, displacement);
     CHECK(displacement.x == 0.0f);
     CHECK(displacement.y == 0.0f);
@@ -1171,8 +1167,8 @@ TEST_CASE("Compiler displacement evaluate") {
   SUBCASE("A constant displacement is provably non-zero") {
     auto material{get("disp_const")};
     CHECK(!material->hasZeroDisplacement());
-    CHECK((material->staticFlagsKnown & MATERIAL_HAS_DISPLACEMENT) != 0);
-    CHECK((material->staticFlags & MATERIAL_HAS_DISPLACEMENT) != 0);
+    CHECK((material->staticFlagsKnown & smdl::MATERIAL_HAS_DISPLACEMENT) != 0);
+    CHECK((material->staticFlags & smdl::MATERIAL_HAS_DISPLACEMENT) != 0);
     material->displacementEvaluate(state, displacement);
     CHECK(displacement.x == 0.0f);
     CHECK(displacement.y == 0.0f);
@@ -1181,7 +1177,7 @@ TEST_CASE("Compiler displacement evaluate") {
   SUBCASE("A state-dependent displacement is unknown, not proven zero") {
     auto material{get("disp_state")};
     CHECK(!material->hasZeroDisplacement());
-    CHECK((material->staticFlagsKnown & MATERIAL_HAS_DISPLACEMENT) == 0);
+    CHECK((material->staticFlagsKnown & smdl::MATERIAL_HAS_DISPLACEMENT) == 0);
     state.texture_coordinate[0] = smdl::float3(2.5f, 0.0f, 0.0f);
     material->displacementEvaluate(state, displacement);
     CHECK(displacement.x == 0.0f);
@@ -1236,8 +1232,8 @@ TEST_CASE("Compiler hair scattering") {
   SUBCASE("A hair material evaluates and samples through the entry points") {
     auto material{get("hair_brown")};
     CHECK(material->hasHair());
-    CHECK((material->staticFlagsKnown & MATERIAL_HAS_HAIR) != 0);
-    CHECK((material->staticFlags & MATERIAL_HAS_HAIR) != 0);
+    CHECK((material->staticFlagsKnown & smdl::MATERIAL_HAS_HAIR) != 0);
+    CHECK((material->staticFlags & smdl::MATERIAL_HAS_HAIR) != 0);
     auto materialInstance{smdl::JIT::MaterialInstance(state, material)};
     CHECK(materialInstance.hasHair());
     CHECK(materialInstance.hairScatterEvaluate(wo, wi, pdfFwd, pdfRev, fSpan));
@@ -1259,8 +1255,8 @@ TEST_CASE("Compiler hair scattering") {
   SUBCASE("The default hair BSDF is safe to call and reports black") {
     auto material{get("hair_none")};
     CHECK(!material->hasHair());
-    CHECK((material->staticFlagsKnown & MATERIAL_HAS_HAIR) != 0);
-    CHECK((material->staticFlags & MATERIAL_HAS_HAIR) == 0);
+    CHECK((material->staticFlagsKnown & smdl::MATERIAL_HAS_HAIR) != 0);
+    CHECK((material->staticFlags & smdl::MATERIAL_HAS_HAIR) == 0);
     auto materialInstance{smdl::JIT::MaterialInstance(state, material)};
     CHECK(!materialInstance.hasHair());
     CHECK(!materialInstance.hairScatterEvaluate(wo, wi, pdfFwd, pdfRev, fSpan));
@@ -2373,20 +2369,19 @@ TEST_CASE("Compiler enableScatterNormal") {
     auto wm{smdl::float3()};
     auto alpha{smdl::float2()};
     float pdf{};
-    CHECK(!inst.scatterNormalSample(xi, false, wm, pdf, alpha,
-                                    smdl::JIT::DF_GLOSSY));
-    CHECK(!inst.scatterNormalSample(xi, false, wm, pdf, alpha,
-                                    smdl::JIT::DF_ALL));
+    CHECK(
+        !inst.scatterNormalSample(xi, false, wm, pdf, alpha, smdl::DF_GLOSSY));
+    CHECK(!inst.scatterNormalSample(xi, false, wm, pdf, alpha, smdl::DF_ALL));
     CHECK(!inst.scatterNormalEvaluate(false, smdl::float3(0.0f, 0.0f, 1.0f),
-                                      pdf, smdl::JIT::DF_GLOSSY));
+                                      pdf, smdl::DF_GLOSSY));
     // And exactly one kind answers: this material is glossy in
     // reflection only, so that kind draws and the other reports nothing.
     CHECK(inst.scatterNormalSample(xi, false, wm, pdf, alpha,
-                                   smdl::JIT::DF_GLOSSY_BRDF));
+                                   smdl::DF_GLOSSY_BRDF));
     CHECK(pdf > 0.0f);
     CHECK(alpha.x == doctest::Approx(0.16f));
     CHECK(!inst.scatterNormalSample(xi, false, wm, pdf, alpha,
-                                    smdl::JIT::DF_GLOSSY_BTDF));
+                                    smdl::DF_GLOSSY_BTDF));
   }
   SUBCASE("The normal probe and the geometry normal hook") {
     auto compiler{smdl::Compiler()};
@@ -2487,13 +2482,13 @@ TEST_CASE("Compiler enableScatterNormal") {
     // A defaulted layer normal follows the remapped field, so it reports
     // neither property bit and the walk can solve the whole tree.
     CHECK((inherits.getLobes() &
-           (smdl::JIT::DF_SETS_NORMAL | smdl::JIT::DF_CAN_SET_NORMAL)) == 0);
+           (smdl::DF_SETS_NORMAL | smdl::DF_CAN_SET_NORMAL)) == 0);
     CHECK(!smdl::manifoldClaim(inherits, /*marked=*/true).empty());
     // Spelling out the state normal detaches the layer from the remapped
     // field even though the two values agree here, which is exactly what
-    // `DF_CAN_SET_NORMAL` exists to report.
-    CHECK((pinned.getLobes() & smdl::JIT::DF_SETS_NORMAL) == 0);
-    CHECK((pinned.getLobes() & smdl::JIT::DF_CAN_SET_NORMAL) != 0);
+    // `smdl::DF_CAN_SET_NORMAL` exists to report.
+    CHECK((pinned.getLobes() & smdl::DF_SETS_NORMAL) == 0);
+    CHECK((pinned.getLobes() & smdl::DF_CAN_SET_NORMAL) != 0);
     CHECK(smdl::manifoldClaim(pinned, /*marked=*/true).empty());
   }
   SUBCASE("The remap flag degrades to unproven without optimization") {
@@ -2548,23 +2543,22 @@ TEST_CASE("Compiler reports lobe words per side of the interface") {
   }
   state.finalizeAndApplyInternalSpaceConventions();
   const auto lobes{[](const smdl::JIT::MaterialInstance &mat, bool backface) {
-    return mat.getLobes(backface) & smdl::JIT::DF_ALL;
+    return mat.getLobes(backface) & smdl::DF_ALL;
   }};
   // A material with no `backface` initializer scatters by its `surface`
   // from both sides, so the back side reports the surface word and not
   // the empty one the raw `df_lobes_backface` field holds.
   auto oneSided{smdl::JIT::MaterialInstance(state, oneSidedMaterial)};
-  CHECK(lobes(oneSided, false) == smdl::JIT::DF_GENERIC_BRDF);
-  CHECK(lobes(oneSided, true) == smdl::JIT::DF_GENERIC_BRDF);
-  CHECK((oneSided.getLobes() & smdl::JIT::DF_ALL) ==
-        smdl::JIT::DF_GENERIC_BRDF);
+  CHECK(lobes(oneSided, false) == smdl::DF_GENERIC_BRDF);
+  CHECK(lobes(oneSided, true) == smdl::DF_GENERIC_BRDF);
+  CHECK((oneSided.getLobes() & smdl::DF_ALL) == smdl::DF_GENERIC_BRDF);
   // A two-sided one distinguishes, and the sideless union is the two
   // together.
   auto twoSided{smdl::JIT::MaterialInstance(state, twoSidedMaterial)};
-  CHECK(lobes(twoSided, false) == smdl::JIT::DF_GENERIC_BRDF);
-  CHECK(lobes(twoSided, true) == smdl::JIT::DF_DIRAC_BRDF);
-  CHECK((twoSided.getLobes() & smdl::JIT::DF_ALL) ==
-        (smdl::JIT::DF_GENERIC_BRDF | smdl::JIT::DF_DIRAC_BRDF));
+  CHECK(lobes(twoSided, false) == smdl::DF_GENERIC_BRDF);
+  CHECK(lobes(twoSided, true) == smdl::DF_DIRAC_BRDF);
+  CHECK((twoSided.getLobes() & smdl::DF_ALL) ==
+        (smdl::DF_GENERIC_BRDF | smdl::DF_DIRAC_BRDF));
   // And the claim follows the side: a diffuse front has no kind a walk
   // can solve, so a mark claims nothing there however the back mirrors.
   // The sideless claim is the union of the two, which is what a load-time
@@ -2572,9 +2566,9 @@ TEST_CASE("Compiler reports lobe words per side of the interface") {
   CHECK(smdl::manifoldClaim(twoSided, /*backface=*/false, /*marked=*/true)
             .empty());
   CHECK(smdl::manifoldClaim(twoSided, /*backface=*/true, /*marked=*/true)
-            .reflectLobes == smdl::JIT::DF_DIRAC_BRDF);
+            .reflectLobes == smdl::DF_DIRAC_BRDF);
   CHECK(smdl::manifoldClaim(twoSided, /*marked=*/true).reflectLobes ==
-        smdl::JIT::DF_DIRAC_BRDF);
+        smdl::DF_DIRAC_BRDF);
 }
 
 TEST_CASE("Compiler vertex color reaches SMDL and the scene data alias") {

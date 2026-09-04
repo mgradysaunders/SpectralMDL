@@ -152,11 +152,10 @@ public:
         // surface, legitimately shows its back (foliage cards); an
         // unknown thin-walled bit stays conservative and counts.
         const bool thinWalled{
-            (hit.material->staticFlagsKnown &
-             smdl::JIT::MATERIAL_THIN_WALLED) &&
-            (hit.material->staticFlags & smdl::JIT::MATERIAL_THIN_WALLED)};
+            (hit.material->staticFlagsKnown & smdl::MATERIAL_THIN_WALLED) &&
+            (hit.material->staticFlags & smdl::MATERIAL_THIN_WALLED)};
         if (thinWalled ||
-            (hit.material->staticFlags & smdl::JIT::MATERIAL_HAS_BACKFACE))
+            (hit.material->staticFlags & smdl::MATERIAL_HAS_BACKFACE))
           continue;
       }
       if (smdl::dot(hit.Ng, ray.dir) > 0) numBackfacing++;

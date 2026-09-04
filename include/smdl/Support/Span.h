@@ -26,7 +26,8 @@ public:
   constexpr Span(T &elem) : first(&elem), count(1) {}
 
   /// Construct from pointer to first element and element count.
-  constexpr Span(T *first, size_t count) : first(first), count(count) {}
+  constexpr Span(T *first, size_t count)
+      : first(first), count(first == nullptr ? 0 : count) {}
 
   /// Construct from `std::initializer_list`.
   constexpr Span(std::initializer_list<std::decay_t<T>> elems)

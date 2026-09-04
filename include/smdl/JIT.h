@@ -12,36 +12,6 @@ class VoxelGrid;
 /// \addtogroup compiler
 /// \{
 
-/// Just-in-time interfaces.
-namespace JIT {
-
-template <typename> struct Function;
-
-/// A just-in-time SMDL function.
-template <typename Result, typename... Args>
-struct Function<Result(Args...)> final {
-public:
-  /// The function pointer type.
-  using function_pointer = Result (*)(Args...);
-
-  Function() = default;
-
-  Function(std::string name) : name(std::move(name)) {}
-
-  /// Invoke the function.
-  Result operator()(Args... args) const { return func(args...); }
-
-  [[nodiscard]] operator bool() const { return func; }
-
-public:
-  /// The name used to look up the function in the JIT runtime.
-  std::string name{};
-
-  /// The function pointer.
-  function_pointer func{};
-};
-
-// TODO Move all of these above and outside `namespace JIT`
 /// \name Material Flags
 /// \{
 
@@ -66,7 +36,8 @@ static constexpr int MATERIAL_HAS_SURFACE_EMISSION = (1 << 4);
 ///
 /// \note
 /// The back side only actually emits if the material is also thin-walled,
-/// which may only be knowable at runtime. See `Material::emissionEvaluate`.
+/// which may only be knowable at runtime. See
+/// `JIT::Material::emissionEvaluate`.
 ///
 static constexpr int MATERIAL_HAS_BACKFACE_EMISSION = (1 << 5);
 
@@ -87,11 +58,11 @@ static constexpr int MATERIAL_HAS_CUTOUT = (1 << 8);
 /// Indicates that the material volume coefficients vary with position.
 ///
 /// \note
-/// This bit only ever appears in `Material::staticFlags`: position
+/// This bit only ever appears in `JIT::Material::staticFlags`: position
 /// dependence is not observable at instance evaluation time, so
-/// `Instance::flags` never sets it. Like `MATERIAL_HAS_CUTOUT` it is
+/// `JIT::Instance::flags` never sets it. Like `MATERIAL_HAS_CUTOUT` it is
 /// derived after optimization and degrades to unknown at
-/// `OPT_LEVEL_NONE`; see `Material::hasHomogeneousVolume()` for the
+/// `OPT_LEVEL_NONE`; see `JIT::Material::hasHomogeneousVolume()` for the
 /// conservative reading.
 ///
 static constexpr int MATERIAL_HAS_HETEROGENEOUS_VOLUME = (1 << 9);
@@ -99,11 +70,11 @@ static constexpr int MATERIAL_HAS_HETEROGENEOUS_VOLUME = (1 << 9);
 /// Indicates that the material has a non-zero `geometry.displacement`.
 ///
 /// \note
-/// This bit only ever appears in `Material::staticFlags`: it is derived
+/// This bit only ever appears in `JIT::Material::staticFlags`: it is derived
 /// after optimization from whether the displacement expression folds to
 /// a constant, so it degrades to unknown at `OPT_LEVEL_NONE`, and
-/// `Instance::flags` never sets it. See
-/// `Material::hasZeroDisplacement()` for the conservative reading.
+/// `JIT::Instance::flags` never sets it. See
+/// `JIT::Material::hasZeroDisplacement()` for the conservative reading.
 static constexpr int MATERIAL_HAS_DISPLACEMENT = (1 << 10);
 
 /// Indicates that the material volume is declared additive (the SMDL
@@ -118,16 +89,15 @@ static constexpr int MATERIAL_ADDITIVE_VOLUME = (1 << 11);
 ///
 /// \note
 /// Like `MATERIAL_HAS_DISPLACEMENT`, this bit only ever appears in
-/// `Material::staticFlags`: it is derived after optimization from
+/// `JIT::Material::staticFlags`: it is derived after optimization from
 /// whether `geometry.normal - $state.normal` folds to the constant zero
 /// vector, so it degrades to unknown at `OPT_LEVEL_NONE`, and
-/// `Instance::flags` never sets it. See `Material::remapsNormal()` for
-/// the conservative reading.
+/// `JIT::Instance::flags` never sets it. See `JIT::Material::remapsNormal()`
+/// for the conservative reading.
 static constexpr int MATERIAL_REMAPS_NORMAL = (1 << 12);
 
 /// \}
 
-// TODO Move all of these above and outside `namespace JIT`
 /// \name Distribution Function (DF) Lobes
 /// \{
 
@@ -144,7 +114,7 @@ static constexpr int MATERIAL_REMAPS_NORMAL = (1 << 12);
 /// one word.
 ///
 /// The pairs rather than the two axes separately are what a material
-/// reports, because `Instance::df_lobes_surface` unions over a whole
+/// reports, because `JIT::Instance::df_lobes_surface` unions over a whole
 /// BSDF tree. Two axes OR'd together lose which domain went with which
 /// kind: a Dirac reflection over a diffuse transmission and a Dirac
 /// transmission over a diffuse reflection would report identical words,
@@ -159,6 +129,13 @@ static constexpr int MATERIAL_REMAPS_NORMAL = (1 << 12);
 /// glossy BSDF that carries one reports both kinds and a mask cuts
 /// between them. See `DF_GLOSSY_BRDF`.
 static constexpr int DF_GENERIC_BRDF = (1 << 0);
+
+/// \copydoc DF_GENERIC_BRDF
+static constexpr int DF_GENERIC_BTDF = (1 << 3);
+
+/// Every lobe with a density but no normal distribution, of either
+/// domain.
+static constexpr int DF_GENERIC = DF_GENERIC_BRDF | DF_GENERIC_BTDF;
 
 /// A reflective lobe with a sampleable normal distribution, so a half
 /// vector is a meaningful quantity of it and a manifold constraint can be
@@ -177,37 +154,18 @@ static constexpr int DF_GENERIC_BRDF = (1 << 0);
 /// layer is both and is classified there.
 static constexpr int DF_GLOSSY_BRDF = (1 << 1);
 
+/// \copydoc DF_GLOSSY_BRDF
+static constexpr int DF_GLOSSY_BTDF = (1 << 4);
+
+/// Every normal-distribution lobe of either domain.
+static constexpr int DF_GLOSSY = DF_GLOSSY_BRDF | DF_GLOSSY_BTDF;
+
 /// A reflective Dirac delta lobe, which has no density and whose half
 /// vector is fixed by the geometry.
 static constexpr int DF_DIRAC_BRDF = (1 << 2);
 
-/// \copydoc DF_GENERIC_BRDF
-static constexpr int DF_GENERIC_BTDF = (1 << 3);
-
-/// \copydoc DF_GLOSSY_BRDF
-static constexpr int DF_GLOSSY_BTDF = (1 << 4);
-
 /// \copydoc DF_DIRAC_BRDF
 static constexpr int DF_DIRAC_BTDF = (1 << 5);
-
-/// \name Lobe unions
-/// The rows and columns of the table: each names one axis and leaves the
-/// other unconstrained. Intersecting two of them names the single lobe
-/// their names spell, so `DF_DIRAC & DF_BTDF` is `DF_DIRAC_BTDF`.
-/// \{
-
-/// Every reflective lobe.
-static constexpr int DF_BRDF = DF_GENERIC_BRDF | DF_GLOSSY_BRDF | DF_DIRAC_BRDF;
-
-/// Every transmissive lobe.
-static constexpr int DF_BTDF = DF_GENERIC_BTDF | DF_GLOSSY_BTDF | DF_DIRAC_BTDF;
-
-/// Every lobe with a density but no normal distribution, of either
-/// domain.
-static constexpr int DF_GENERIC = DF_GENERIC_BRDF | DF_GENERIC_BTDF;
-
-/// Every normal-distribution lobe of either domain.
-static constexpr int DF_GLOSSY = DF_GLOSSY_BRDF | DF_GLOSSY_BTDF;
 
 /// Every Dirac lobe of either domain.
 static constexpr int DF_DIRAC = DF_DIRAC_BRDF | DF_DIRAC_BTDF;
@@ -216,6 +174,12 @@ static constexpr int DF_DIRAC = DF_DIRAC_BRDF | DF_DIRAC_BTDF;
 /// This is the question a caller asks to find out whether a vertex can
 /// scatter a direction that another strategy could also have produced.
 static constexpr int DF_FINITE = DF_GENERIC | DF_GLOSSY;
+
+/// Every reflective lobe.
+static constexpr int DF_BRDF = DF_GENERIC_BRDF | DF_GLOSSY_BRDF | DF_DIRAC_BRDF;
+
+/// Every transmissive lobe.
+static constexpr int DF_BTDF = DF_GENERIC_BTDF | DF_GLOSSY_BTDF | DF_DIRAC_BTDF;
 
 /// Every lobe, which is the lobe mask of a caller that wants the whole
 /// distribution.
@@ -248,7 +212,34 @@ static constexpr int DF_CAN_SET_NORMAL = (1 << 7);
 
 /// \}
 
-/// \}
+/// Just-in-time interfaces.
+namespace JIT {
+
+template <typename> struct Function;
+
+/// A just-in-time SMDL function.
+template <typename Result, typename... Args>
+struct Function<Result(Args...)> final {
+public:
+  /// The function pointer type.
+  using function_pointer = Result (*)(Args...);
+
+  Function() = default;
+
+  Function(std::string name) : name(std::move(name)) {}
+
+  /// Invoke the function.
+  Result operator()(Args... args) const { return func(args...); }
+
+  [[nodiscard]] operator bool() const { return func; }
+
+public:
+  /// The name used to look up the function in the JIT runtime.
+  std::string name{};
+
+  /// The function pointer.
+  function_pointer func{};
+};
 
 /// A just-in-time SMDL material.
 struct Material final {
@@ -305,14 +296,17 @@ public:
   ///
   int staticFlagsKnown{};
 
-  /// Provably opaque: the cutout opacity is the compile-time constant 1.
+  /// Provably opaque: the cutout opacity is the compile-time constant 1
+  /// and the material is not a null interface, so a hit on it blocks a
+  /// shadow query outright, with no material work. Nothing to sample,
+  /// nothing to pass through: neither `evaluateOpacity` nor an instance
+  /// is ever needed at it. This is a statement about hits, not
+  /// interiors: a shadow segment that STARTS inside this material's
+  /// volume still integrates that medium, and `hasVolume()` is that
+  /// question.
   [[nodiscard]] bool isAlwaysOpaque() const noexcept {
-    // TODO If necessary, also gate this on 
-    //      MATERIAL_HAS_SURFACE | MATERIAL_HAS_BACKFACE so that a
-    //      material with no BSDF (null interface) returns false for
-    //      `isAlwaysOpaque()`
     return (staticFlagsKnown & MATERIAL_HAS_CUTOUT) != 0 &&
-           (staticFlags & MATERIAL_HAS_CUTOUT) == 0;
+           (staticFlags & MATERIAL_HAS_CUTOUT) == 0 && !isNullInterface();
   }
 
   /// Has a non-default `volume` initializer? Always statically known.
@@ -323,19 +317,6 @@ public:
   /// Has a non-default `hair` initializer? Always statically known.
   [[nodiscard]] bool hasHair() const noexcept {
     return (staticFlags & MATERIAL_HAS_HAIR) != 0;
-  }
-
-  // TODO Remove this function! Users should check `isAlwaysOpaque()`
-  /// Does a hit on this material always block a shadow query, with no
-  /// material work? True when the cutout opacity is the compile-time
-  /// constant 1 and the material is not a null interface: nothing to
-  /// sample, nothing to pass through, so an occlusion query answers the
-  /// hit outright and neither `evaluateOpacity` nor an instance is ever
-  /// needed at it. This is a statement about hits, not interiors: a
-  /// shadow segment that STARTS inside this material's volume still
-  /// integrates that medium, and `hasVolume()` is that question.
-  [[nodiscard]] bool isShadowTrivial() const noexcept {
-    return isAlwaysOpaque() && !isNullInterface();
   }
 
   /// Is this a null interface? (a boundary that scatters nothing itself
@@ -1077,9 +1058,8 @@ public:
   /// non-default emission EDF.
   [[nodiscard]]
   Span<const float> getSurfaceEmissionIntensity() const noexcept {
-    return Span<const float>(
-        instance.surface_emission_intensity,
-        instance.surface_emission_intensity ? instance.wavelength_base_max : 0);
+    return Span<const float>(instance.surface_emission_intensity,
+                             instance.wavelength_base_max);
   }
 
   /// The `backface` emission intensity, or empty if the `backface` has no
@@ -1087,9 +1067,7 @@ public:
   [[nodiscard]]
   Span<const float> getBackfaceEmissionIntensity() const noexcept {
     return Span<const float>(instance.backface_emission_intensity,
-                             instance.backface_emission_intensity
-                                 ? instance.wavelength_base_max
-                                 : 0);
+                             instance.wavelength_base_max);
   }
 
   /// Is the `surface` emission intensity in units of power (watts) as
@@ -1123,30 +1101,26 @@ public:
 
   /// The absorption coefficient of the medium, or empty if none.
   [[nodiscard]] Span<const float> getAbsorptionCoefficient() const noexcept {
-    return Span<const float>(
-        instance.absorption_coefficient,
-        instance.absorption_coefficient ? instance.wavelength_base_max : 0);
+    return Span<const float>(instance.absorption_coefficient,
+                             instance.wavelength_base_max);
   }
 
   /// The scattering coefficient of the medium, or empty if none.
   [[nodiscard]] Span<const float> getScatteringCoefficient() const noexcept {
-    return Span<const float>(
-        instance.scattering_coefficient,
-        instance.scattering_coefficient ? instance.wavelength_base_max : 0);
+    return Span<const float>(instance.scattering_coefficient,
+                             instance.wavelength_base_max);
   }
 
   /// The declared absorption coefficient majorant, or empty if none.
   [[nodiscard]] Span<const float> getMaxAbsorptionCoefficient() const noexcept {
-    return Span<const float>(
-        instance.max_absorption_coefficient,
-        instance.max_absorption_coefficient ? instance.wavelength_base_max : 0);
+    return Span<const float>(instance.max_absorption_coefficient,
+                             instance.wavelength_base_max);
   }
 
   /// The declared scattering coefficient majorant, or empty if none.
   [[nodiscard]] Span<const float> getMaxScatteringCoefficient() const noexcept {
-    return Span<const float>(
-        instance.max_scattering_coefficient,
-        instance.max_scattering_coefficient ? instance.wavelength_base_max : 0);
+    return Span<const float>(instance.max_scattering_coefficient,
+                             instance.wavelength_base_max);
   }
 
   /// The volume density acceleration hint grid, or null if not
@@ -1167,9 +1141,8 @@ public:
 
   /// The volumetric emission coefficient, or empty if none.
   [[nodiscard]] Span<const float> getVolumeEmissionIntensity() const noexcept {
-    return Span<const float>(
-        instance.volume_emission_intensity,
-        instance.volume_emission_intensity ? instance.wavelength_base_max : 0);
+    return Span<const float>(instance.volume_emission_intensity,
+                             instance.wavelength_base_max);
   }
 
   /// The geometry normal in world space.
@@ -1313,8 +1286,8 @@ public:
       alpha = {};
       return false;
     }
-    return material->scatterNormalSample(instance, xi, backface, lobeMask,
-                                         wm, pdf, alpha);
+    return material->scatterNormalSample(instance, xi, backface, lobeMask, wm,
+                                         pdf, alpha);
   }
 
   /// The normal distribution evaluate function.

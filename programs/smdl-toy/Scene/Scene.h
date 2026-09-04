@@ -743,7 +743,7 @@ public:
 
   /// Shadow rays are pure boolean queries: every material an instance
   /// shades with blocks a shadow ray at its first hit
-  /// (`isShadowTrivial()`: provably opaque, so no cutout draw, and not
+  /// (`isAlwaysOpaque()`: provably opaque, so no cutout draw, and not
   /// a null interface, so no pass-through hop). A visibility walk then
   /// reduces to `isOccluded()` unless its caller asks for the blocker
   /// itself, which only the manifold refraction gather does, to

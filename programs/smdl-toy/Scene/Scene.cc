@@ -562,7 +562,7 @@ void Scene::commit(const Color &wavelengths) {
     const auto used{computeUsedMaterials()};
     for (size_t i = 0; i < materials.size(); i++) {
       if (!used[i] || !materials[i]) continue;
-      if (!materials[i]->isShadowTrivial()) {
+      if (!materials[i]->isAlwaysOpaque()) {
         opaqueShadows = false;
         break;
       }

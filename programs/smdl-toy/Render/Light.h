@@ -123,44 +123,76 @@ public:
   float3x3 invCofactor{};
 };
 
-/// A punctual light placed by the layout: a point, a spot, or an IES
-/// profile. Dirac lights never appear on a path through BSDF sampling,
-/// so they contribute through `LightSampler::sample()` alone, with a
-/// unit MIS weight (see `LightSample::reachable`).
-class PunctualLight final {
+/// A light the layout declares: a point, a spot, an IES profile, a
+/// rectangle, or a disk, described analytically rather than by a
+/// surface in the scene. BSDF sampling can never reach one, so every
+/// kind contributes through `LightSampler::sample()` alone, with a unit
+/// MIS weight (see `LightSample::reachable`). The punctual kinds are
+/// Dirac besides; the two shapes are sampled by area, one-sided and
+/// Lambertian, in the plane the placement puts them in.
+class AnalyticLight final {
 public:
   /// Bake the lowered light at the render wavelengths: the spectral
   /// shape (blackbody or flat, times the uplifted RGB tint) normalized
   /// to unit integral over the band, scaled into the per-kind
-  /// directional intensity. `state` must carry the wavelength fields
-  /// for the RGB uplift, and `profile` the loaded IES profile for a
-  /// PROFILE light (null otherwise).
-  PunctualLight(smdl::Compiler &compiler, const smdl::State &state,
+  /// directional intensity, or into the radiance for a shape. `state`
+  /// must carry the wavelength fields for the RGB uplift and the scene
+  /// units, and `profile` the loaded IES profile for a PROFILE light
+  /// (null otherwise).
+  AnalyticLight(smdl::Compiler &compiler, const smdl::State &state,
                 const Color &wavelengths, const LayoutLight &light,
                 std::shared_ptr<const smdl::LightProfile> profile);
 
-  /// The unoccluded spectral incident radiance equivalent at `point`:
-  /// the directional intensity toward it over the squared distance in
-  /// meters. Zero outside a spot cone or the profile's support.
+  /// Is the directional density a delta? True for the punctual kinds,
+  /// false for the two shapes.
+  [[nodiscard]] bool isDirac() const noexcept {
+    return mKind != LayoutLightDecl::Kind::RECT &&
+           mKind != LayoutLightDecl::Kind::DISK;
+  }
+
+  /// Punctual kinds: the unoccluded spectral incident radiance
+  /// equivalent at `point`, the directional intensity toward it over
+  /// the squared distance in meters. Zero outside a spot cone or the
+  /// profile's support.
   [[nodiscard]] Color Li(const float3 &point,
                          float metersPerSceneUnit) const noexcept;
 
-  /// The same with the directional (spot cone or profile) factor
-  /// evaluated toward `incidencePoint` instead: what a manifold gather
-  /// needs when the segment actually arriving at the light starts at
-  /// the last chain crossing rather than at the receiver. The
-  /// inverse-square falloff stays at `point`, matching the
-  /// straight-line solid-angle measure the gather's estimator is
+  /// Punctual kinds: the same with the directional (spot cone or
+  /// profile) factor evaluated toward `incidencePoint` instead, what a
+  /// manifold gather needs when the segment actually arriving at the
+  /// light starts at the last chain crossing rather than at the
+  /// receiver. The inverse-square falloff stays at `point`, matching
+  /// the straight-line solid-angle measure the gather's estimator is
   /// built in.
   [[nodiscard]] Color Li(const float3 &point, const float3 &incidencePoint,
                          float metersPerSceneUnit) const noexcept;
 
-  /// The position in world space.
+  /// Shapes: a point drawn uniformly over the shape as placed, and its
+  /// position density, which is one over the world area everywhere. A
+  /// planar shape has one area stretch under any affine placement, so
+  /// object-uniform is world-uniform and the density is exact.
+  [[nodiscard]] float3 sampleShape(float2 xi,
+                                   float &positionPDF) const noexcept;
+
+  /// Shapes: the radiance emitted from `lightPoint` on the shape toward
+  /// `incidencePoint`, the baked radiance when that point is on the
+  /// emitting side of the plane and zero behind it.
+  [[nodiscard]] Color Le(const float3 &lightPoint,
+                         const float3 &incidencePoint) const noexcept;
+
+  /// Shapes: the unit normal of the emitting side.
+  [[nodiscard]] const float3 &normal() const noexcept { return mNormal; }
+
+  /// The position in world space: the point itself, or the center of a
+  /// shape.
   [[nodiscard]] const float3 &position() const noexcept { return mPosition; }
 
-  /// The total radiant power in watts (after the tint), the selection
-  /// weight.
-  [[nodiscard]] float power() const noexcept { return mPower; }
+  /// The light selection weight: the mean over the render bands of the
+  /// spectral radiant power after the tint. This is the quantity the
+  /// area lights weigh by (their per-band emission intensity times
+  /// area), so a declared light and an emissive surface of the same
+  /// brightness draw the same share of samples.
+  [[nodiscard]] float weight() const noexcept { return mWeight; }
 
   /// Is a caustic target; see `AreaLight::caustic`. Normalized by the
   /// `LightSampler` constructor, hence settable.
@@ -169,18 +201,32 @@ public:
 private:
   LayoutLightDecl::Kind mKind{LayoutLightDecl::Kind::POINT};
 
+  /// The position, or the center of a shape.
   float3 mPosition{};
 
-  /// The world-space rows of the local frame: emission aims along the
-  /// local -Z axis. Columns of the placement, normalized; a sheared
-  /// placement gets the nearest frame rather than an error.
+  /// Punctual kinds: the world-space rows of the local frame, emission
+  /// aiming along the local -Z axis. Columns of the placement,
+  /// normalized; a sheared placement gets the nearest frame rather than
+  /// an error.
   float3 mLocalX{1.0f, 0.0f, 0.0f};
   float3 mLocalY{0.0f, 1.0f, 0.0f};
   float3 mLocalZ{0.0f, 0.0f, 1.0f};
 
-  /// The per-band spectral intensity in W/(sr nm): the full intensity
-  /// of a point, the on-axis peak of a spot, and the per-unit
-  /// multiplier on the profile's broadband W/sr.
+  /// Shapes: the world-space in-plane axes, the placement's first two
+  /// columns unnormalized so that their lengths carry the scale; the
+  /// half extents along them in object units; the unit normal of the
+  /// emitting side, which is the side the placement maps local -Z
+  /// into; and the world area.
+  float3 mAxisU{1.0f, 0.0f, 0.0f};
+  float3 mAxisV{0.0f, 1.0f, 0.0f};
+  float2 mHalfExtent{};
+  float3 mNormal{0.0f, 0.0f, -1.0f};
+  float mWorldArea{};
+
+  /// The per-band spectral intensity: for the punctual kinds W/(sr nm),
+  /// the full intensity of a point, the on-axis peak of a spot, and the
+  /// per-unit multiplier on the profile's broadband W/sr; for a shape
+  /// the radiance in W/(sr m^2 nm).
   smdl::SpectralColor mIntensity{};
 
   /// SPOT: the cosine of the outer (cutoff) and inner (full intensity)
@@ -192,7 +238,7 @@ private:
   /// same file (see the dedupe cache in the `LightSampler` constructor).
   std::shared_ptr<const smdl::LightProfile> mProfile{};
 
-  float mPower{};
+  float mWeight{};
 };
 
 /// The result of `LightSampler::sample()`.
@@ -231,13 +277,15 @@ struct LightSample final {
 
   /// The emitter's unit normal at the sampled point for a finite sample
   /// with an orientation (an area light's geometric normal), which the
-  /// manifold target's offset Jacobian reads; zero for a punctual or an
-  /// infinite sample, which have none.
+  /// manifold target's offset Jacobian reads, and a shape light's
+  /// emitting-side normal; zero for a punctual or an infinite sample,
+  /// which have none.
   float3 normal{};
 
-  /// The index in the punctual light array when `isDirac`, else
-  /// `INVALID_INDEX`: the identity `reevaluateLi()` needs.
-  uint32_t punctualIndex{INVALID_INDEX};
+  /// The index in the analytic light array when the sample is one of
+  /// the lights the layout declares, else `INVALID_INDEX`: the identity
+  /// `reevaluateLi()` needs.
+  uint32_t analyticIndex{INVALID_INDEX};
 
   /// The sampled point on an area light, empty for the other kinds:
   /// what `reevaluateLi()` rebuilds the emitting material from.
@@ -254,7 +302,7 @@ struct LightSample final {
 
 /// The unified light-selection path over every light in the scene: each
 /// emissive mesh instance the layout marks `light`, plus the layout's
-/// punctual lights, plus the environment, weighted by power. Every
+/// declared lights, plus the environment, weighted by power. Every
 /// other emissive instance renders through the path hits the walk finds
 /// on its own, at MIS weight 1; see `AreaLight::sampled`.
 class LightSampler final {
@@ -279,7 +327,7 @@ public:
   [[nodiscard]] float envSelectionPMF() const noexcept {
     return envLight && !empty()
                ? lightDistr.indexPMF(
-                     int(areaLights.size() + punctualLights.size()))
+                     int(areaLights.size() + analyticLights.size()))
                : 0.0f;
   }
 
@@ -370,14 +418,14 @@ private:
 
   std::vector<AreaLight> areaLights{};
 
-  std::vector<PunctualLight> punctualLights{};
+  std::vector<AnalyticLight> analyticLights{};
 
   /// Map from mesh instance index to index in `areaLights`, or
   /// `INVALID_INDEX`.
   std::vector<uint32_t> instanceToLight{};
 
   /// The power-weighted distribution over `areaLights`, then
-  /// `punctualLights`, with one extra entry at the end for the
+  /// `analyticLights`, with one extra entry at the end for the
   /// environment if present. An unsampled area light has weight zero,
   /// which is what keeps it out of `sample()` and out of every PMF.
   smdl::Distribution1D lightDistr{};

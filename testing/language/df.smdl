@@ -1910,7 +1910,7 @@ unit_test "Additive volume flag" {
   #assert(!matDefault.volume.additive);
   #assert(matAdditive.volume.additive);
   // The declaration reaches the instance flags, mirroring
-  // 'smdl::JIT::MATERIAL_ADDITIVE_VOLUME'.
+  // 'smdl::MATERIAL_ADDITIVE_VOLUME'.
   const int MATERIAL_ADDITIVE_VOLUME = (1 << 11);
   auto instDefault = _MaterialInstance(&matDefault);
   auto instAdditive = _MaterialInstance(&matAdditive);

@@ -1990,14 +1990,14 @@ void FunctionType::initializeMaterialFunctions(Emitter &emitter) {
             jitMaterial.staticFlags |= flag;
           }
         }};
-    addStaticFlag(JIT::MATERIAL_HAS_SURFACE, {"surface"});
-    addStaticFlag(JIT::MATERIAL_HAS_BACKFACE, {"backface"});
-    addStaticFlag(JIT::MATERIAL_HAS_SURFACE_EMISSION,
+    addStaticFlag(MATERIAL_HAS_SURFACE, {"surface"});
+    addStaticFlag(MATERIAL_HAS_BACKFACE, {"backface"});
+    addStaticFlag(MATERIAL_HAS_SURFACE_EMISSION,
                   {"surface", "emission", "emission"});
-    addStaticFlag(JIT::MATERIAL_HAS_BACKFACE_EMISSION,
+    addStaticFlag(MATERIAL_HAS_BACKFACE_EMISSION,
                   {"backface", "emission", "emission"});
-    addStaticFlag(JIT::MATERIAL_HAS_VOLUME, {"volume"});
-    addStaticFlag(JIT::MATERIAL_HAS_HAIR, {"hair"});
+    addStaticFlag(MATERIAL_HAS_VOLUME, {"volume"});
+    addStaticFlag(MATERIAL_HAS_HAIR, {"hair"});
   }
 }
 //--}

@@ -454,16 +454,16 @@ static void deriveStaticMaterialFlags(llvm::Module &llvmModule,
     symbolBase.remove_suffix(std::string_view(".evaluateOpacity").size());
     if (auto opacity{llvm::dyn_cast_if_present<llvm::ConstantFP>(
             foldedReturnValue(jitMaterial.evaluateOpacity.name))}) {
-      jitMaterial.staticFlagsKnown |= JIT::MATERIAL_HAS_CUTOUT;
+      jitMaterial.staticFlagsKnown |= MATERIAL_HAS_CUTOUT;
       if (opacity->getValueAPF().convertToFloat() < 1.0f)
-        jitMaterial.staticFlags |= JIT::MATERIAL_HAS_CUTOUT;
+        jitMaterial.staticFlags |= MATERIAL_HAS_CUTOUT;
     }
     auto thinWalledProbeName{concat(symbolBase, ".thinWalledProbe")};
     if (auto thinWalled{llvm::dyn_cast_if_present<llvm::ConstantInt>(
             foldedReturnValue(thinWalledProbeName))}) {
-      jitMaterial.staticFlagsKnown |= JIT::MATERIAL_THIN_WALLED;
+      jitMaterial.staticFlagsKnown |= MATERIAL_THIN_WALLED;
       if (!thinWalled->isZero())
-        jitMaterial.staticFlags |= JIT::MATERIAL_THIN_WALLED;
+        jitMaterial.staticFlags |= MATERIAL_THIN_WALLED;
     }
     // The displacement probe returns 'geometry.displacement' itself, so
     // a body folded to a constant vector settles
@@ -474,9 +474,9 @@ static void deriveStaticMaterialFlags(llvm::Module &llvmModule,
     // 'JIT::Material::hasZeroDisplacement()'.
     auto displacementProbeName{concat(symbolBase, ".displacementProbe")};
     if (auto displacement{foldedReturnValue(displacementProbeName)}) {
-      jitMaterial.staticFlagsKnown |= JIT::MATERIAL_HAS_DISPLACEMENT;
+      jitMaterial.staticFlagsKnown |= MATERIAL_HAS_DISPLACEMENT;
       if (!llvmIsZeroValue(displacement))
-        jitMaterial.staticFlags |= JIT::MATERIAL_HAS_DISPLACEMENT;
+        jitMaterial.staticFlags |= MATERIAL_HAS_DISPLACEMENT;
     }
     // The normal probe returns 'geometry.normal - $state.normal', which
     // folds to the constant zero vector exactly when the material
@@ -485,9 +485,9 @@ static void deriveStaticMaterialFlags(llvm::Module &llvmModule,
     // its flag. See 'JIT::Material::remapsNormal()'.
     auto normalProbeName{concat(symbolBase, ".normalProbe")};
     if (auto normalDelta{foldedReturnValue(normalProbeName)}) {
-      jitMaterial.staticFlagsKnown |= JIT::MATERIAL_REMAPS_NORMAL;
+      jitMaterial.staticFlagsKnown |= MATERIAL_REMAPS_NORMAL;
       if (!llvmIsZeroValue(normalDelta))
-        jitMaterial.staticFlags |= JIT::MATERIAL_REMAPS_NORMAL;
+        jitMaterial.staticFlags |= MATERIAL_REMAPS_NORMAL;
     }
     // A material with no volume is trivially position-independent, and
     // a '.volumeEvaluate' body that no longer touches its '%state'
@@ -503,11 +503,11 @@ static void deriveStaticMaterialFlags(llvm::Module &llvmModule,
     // See 'JIT::Material::hasHomogeneousVolume()'.
     auto volumeEvaluateFunc{
         llvmModule.getFunction(jitMaterial.volumeEvaluate.name)};
-    if (!(jitMaterial.staticFlags & JIT::MATERIAL_HAS_VOLUME) ||
+    if (!(jitMaterial.staticFlags & MATERIAL_HAS_VOLUME) ||
         (volumeEvaluateFunc && !volumeEvaluateFunc->isDeclaration() &&
          volumeEvaluateFunc->arg_size() >= 1 &&
          volumeEvaluateFunc->getArg(0)->use_empty())) {
-      jitMaterial.staticFlagsKnown |= JIT::MATERIAL_HAS_HETEROGENEOUS_VOLUME;
+      jitMaterial.staticFlagsKnown |= MATERIAL_HAS_HETEROGENEOUS_VOLUME;
     }
     // The probes are compile-time scaffolding, not host entry points;
     // erase them so they are never JIT-compiled.
@@ -1171,15 +1171,15 @@ std::string Compiler::printMaterialSummary() const {
   // knowable at runtime), plus 'volume' and 'emissive' when present.
   auto printStaticFlags{[](const JIT::Material &jitMaterial) {
     auto flags{std::string()};
-    if (jitMaterial.isAlwaysOpaque())
-      flags += " [opaque";
-    else if ((jitMaterial.staticFlagsKnown & JIT::MATERIAL_HAS_CUTOUT) != 0)
+    if ((jitMaterial.staticFlagsKnown & MATERIAL_HAS_CUTOUT) == 0)
+      flags += " [cutout?";
+    else if ((jitMaterial.staticFlags & MATERIAL_HAS_CUTOUT) != 0)
       flags += " [cutout";
     else
-      flags += " [cutout?";
+      flags += " [opaque";
     if (jitMaterial.hasVolume()) flags += ", volume";
-    if ((jitMaterial.staticFlags & (JIT::MATERIAL_HAS_SURFACE_EMISSION |
-                                    JIT::MATERIAL_HAS_BACKFACE_EMISSION)) != 0)
+    if ((jitMaterial.staticFlags &
+         (MATERIAL_HAS_SURFACE_EMISSION | MATERIAL_HAS_BACKFACE_EMISSION)) != 0)
       flags += ", emissive";
     flags += ']';
     return flags;

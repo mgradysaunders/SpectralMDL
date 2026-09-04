@@ -41,7 +41,7 @@ public:
 
   [[nodiscard]] auto &operator[](int i) const noexcept { return coeffs[i]; }
 
-  std::array<float, size_t(MAX_DIM)> coeffs;
+  alignas(32) std::array<float, static_cast<size_t>(MAX_DIM)> coeffs;
 };
 
 class ConstraintMatrix final {
@@ -52,7 +52,7 @@ public:
   [[nodiscard]] auto &operator()(int i, int j) const noexcept {
     return coeffs[i * MAX_DIM + j];
   }
-  std::array<float, size_t(MAX_DIM) * size_t(MAX_DIM)> coeffs;
+  alignas(32) std::array<float, static_cast<size_t>(MAX_DIM *MAX_DIM)> coeffs;
 };
 
 // Solve `A x = b` in place by Gaussian elimination with partial
@@ -118,12 +118,12 @@ public:
     float3 wNext{}; // Toward the next vertex, or the light.
     float distPrev{};
     float distNext{}; // 0 for the distant light.
-    float3 Hhat{};
-    float Hlen{};
+    float3 hHat{};
+    float hLen{};
     // The sign that orients `Hhat` onto the shading normal's side, so that
     // the constraint means a microfacet normal rather than a line through
     // one. Zero offsets do not care, which is why it never mattered before.
-    float Hsign{};
+    float hSign{};
     // The area element of the parameterization the Jacobian is expressed in,
     // and the half-vector measure of the crossing; see the header.
     float areaElement{};
@@ -199,22 +199,22 @@ bool evaluateChain(
     }
     // The generalized half vector of refraction, parallel to the normal
     // exactly when the segment pair obeys Snell's law.
-    const float3 H{chain[i].etaPrev * sv.wPrev + chain[i].etaNext * sv.wNext};
-    sv.Hlen = length(H);
-    if (!(sv.Hlen > 1e-6f)) return false;
-    sv.Hhat = H / sv.Hlen;
+    const float3 h{chain[i].etaPrev * sv.wPrev + chain[i].etaNext * sv.wNext};
+    sv.hLen = length(h);
+    if (!(sv.hLen > 1e-6f)) return false;
+    sv.hHat = h / sv.hLen;
     // `H` points into the denser medium, so which side it lands on depends
     // on which side is denser. Orienting it onto the shading normal makes
     // it the microfacet normal the interface's own distribution is
     // expressed in, which is what an offset has to be measured against.
-    sv.Hsign = dot(sv.Hhat, geometry.normal) < 0.0f ? -1.0f : 1.0f;
+    sv.hSign = dot(sv.hHat, geometry.normal) < 0.0f ? -1.0f : 1.0f;
     sv.areaElement = length(cross(geometry.dPdu, geometry.dPdv));
     // `|d h / d omega_next|`, being the refraction half-vector Jacobian
     // times the cosine that converts its solid angle into the projected
     // measure the constraint lives in.
     sv.halfVectorJacobian =
-        absDot(sv.Hhat, geometry.normal) * absDot(sv.wNext, sv.Hhat) *
-        (chain[i].etaNext * chain[i].etaNext) / (sv.Hlen * sv.Hlen);
+        absDot(sv.hHat, geometry.normal) * absDot(sv.wNext, sv.hHat) *
+        (chain[i].etaNext * chain[i].etaNext) / (sv.hLen * sv.hLen);
     // The tangent frame the constraint projects onto, seeded from a
     // vector held FIXED for the whole walk, so the frame varies only
     // through the shading normal and the frame derivatives below are
@@ -233,8 +233,8 @@ bool evaluateChain(
     // out of every use, since the Newton step scales a row of the matrix
     // and of the right-hand side together.
     const float2 &offset{chain[i].offset};
-    chainState.C[2 * i + 0] = sv.Hsign * dot(sv.Hhat, sv.t1) - offset.x;
-    chainState.C[2 * i + 1] = sv.Hsign * dot(sv.Hhat, sv.t2) - offset.y;
+    chainState.C[2 * i + 0] = sv.hSign * dot(sv.hHat, sv.t1) - offset.x;
+    chainState.C[2 * i + 1] = sv.hSign * dot(sv.hHat, sv.t2) - offset.y;
   }
   // The coupled Jacobian. Constraint `i` sees vertex `j` through the
   // segment directions (and, for `j == i`, through its own frame, whose
@@ -245,38 +245,43 @@ bool evaluateChain(
     for (int c = 0; c < 2 * count; c++) chainState.J(r, c) = 0.0f;
   for (int i = 0; i < count; i++) {
     const auto &seed{chain[i]};
-    const auto &sv{chainState[i]};
-    const float3 n{sv.geometry.normal};
+    const auto &seedv{chainState[i]};
+    const float3 n{seedv.geometry.normal};
     for (int j = std::max(i - 1, 0); j <= std::min(i + 1, count - 1); j++) {
-      const std::array<float3, 2> e{chainState[j].geometry.dPdu,
-                                    chainState[j].geometry.dPdv};
+      const std::array<float3, 2> dPde{chainState[j].geometry.dPdu,
+                                       chainState[j].geometry.dPdv};
       for (int k = 0; k < 2; k++) {
-        float3 dH{};
+        float3 dh{};
         if (j == i) {
-          dH = seed.etaPrev * unitDirDeriv(sv.wPrev, sv.distPrev, e[k]);
-          if (sv.distNext > 0.0f)
-            dH = dH + seed.etaNext * unitDirDeriv(sv.wNext, sv.distNext, e[k]);
+          dh =
+              seed.etaPrev * unitDirDeriv(seedv.wPrev, seedv.distPrev, dPde[k]);
+          if (seedv.distNext > 0)
+            dh += seed.etaNext *
+                  unitDirDeriv(seedv.wNext, seedv.distNext, dPde[k]);
         } else if (j == i - 1) {
-          dH = -seed.etaPrev * unitDirDeriv(sv.wPrev, sv.distPrev, e[k]);
+          dh = -seed.etaPrev *
+               unitDirDeriv(seedv.wPrev, seedv.distPrev, dPde[k]);
         } else {
-          dH = -seed.etaNext * unitDirDeriv(sv.wNext, sv.distNext, e[k]);
+          dh = -seed.etaNext *
+               unitDirDeriv(seedv.wNext, seedv.distNext, dPde[k]);
         }
-        const float3 dHhat{(dH - dot(sv.Hhat, dH) * sv.Hhat) / sv.Hlen};
-        float term1{dot(dHhat, sv.t1)};
-        float term2{dot(dHhat, sv.t2)};
+        const float3 dhHat{(dh - dot(seedv.hHat, dh) * seedv.hHat) /
+                           seedv.hLen};
+        float term1{dot(dhHat, seedv.t1)};
+        float term2{dot(dhHat, seedv.t2)};
         if (j == i) {
-          const float3 dn{k == 0 ? sv.geometry.dNdu : sv.geometry.dNdv};
           const float3 a{frameSeeds[i]};
+          const float3 dn{k == 0 ? seedv.geometry.dNdu : seedv.geometry.dNdv};
           const float3 dg{-(dot(n, a) * dn + dot(dn, a) * n)};
-          const float3 dt1{(dg - dot(sv.t1, dg) * sv.t1) / gLen[i]};
-          const float3 dt2{cross(dn, sv.t1) + cross(n, dt1)};
-          term1 += dot(sv.Hhat, dt1);
-          term2 += dot(sv.Hhat, dt2);
+          const float3 dt1{(dg - dot(seedv.t1, dg) * seedv.t1) / gLen[i]};
+          const float3 dt2{cross(dn, seedv.t1) + cross(n, dt1)};
+          term1 += dot(seedv.hHat, dt1);
+          term2 += dot(seedv.hHat, dt2);
         }
         // The same orientation the constraint carries, applied to the
         // whole row so that a sign flip cancels out of every solve.
-        chainState.J(2 * i + 0, 2 * j + k) = sv.Hsign * term1;
-        chainState.J(2 * i + 1, 2 * j + k) = sv.Hsign * term2;
+        chainState.J(2 * i + 0, 2 * j + k) = seedv.hSign * term1;
+        chainState.J(2 * i + 1, 2 * j + k) = seedv.hSign * term2;
       }
     }
   }
@@ -325,16 +330,16 @@ bool evaluateChain(
   // selftest's finite mirror is what caught its absence.
   if (!target.infinite) {
     const auto &sv{chainState[last]};
-    const float distLine{length(target.point - receiver)};
+    const float distStraight{length(target.point - receiver)};
     const float distNext{sv.distNext};
-    if (!(distLine > 0.0f) || !(distNext > 0.0f)) return false;
-    const float distFactor{distLine / distNext};
+    if (!(distStraight > 0.0f) || !(distNext > 0.0f)) return false;
+    const float distFactor{distStraight / distNext};
     factor *= distFactor * distFactor;
     if (lengthSquared(target.normal) > 0.0f) {
-      const float cosLine{absDot(target.normal, target.wl)};
+      const float cosStraight{absDot(target.normal, target.wl)};
       const float cosNext{absDot(target.normal, sv.wNext)};
-      if (!(cosLine > 0.0f)) return false;
-      factor *= cosNext / cosLine;
+      if (!(cosStraight > 0.0f)) return false;
+      factor *= cosNext / cosStraight;
     } else {
       factor *= absDot(target.wl, sv.wNext);
     }
@@ -371,22 +376,21 @@ ManifoldClaim manifoldClaim(const JIT::MaterialInstance &mat, bool backface,
   // remapped field. A node left defaulted inherits the field and bars
   // nothing. A remap without the hook has no field to read at all. See
   // the header.
-  if ((dfLobes & JIT::DF_SETS_NORMAL) != 0) return claim;
+  if ((dfLobes & DF_SETS_NORMAL) != 0) return claim;
   if (mat.material->remapsNormal() && (!mat.material->geometryNormalEvaluate ||
-                                       (dfLobes & JIT::DF_CAN_SET_NORMAL) != 0))
+                                       (dfLobes & DF_CAN_SET_NORMAL) != 0))
     return claim;
   const bool bends{!mat.isThinWalled() &&
                    std::abs(mat.getIOR() - mat.getExteriorIOR()) > 1e-4f};
   if (bends)
     claim.refractLobes =
-        dfLobes & (JIT::DF_DIRAC_BTDF | (marked ? JIT::DF_GLOSSY_BTDF : 0));
-  if (marked)
-    claim.reflectLobes = dfLobes & (JIT::DF_DIRAC_BRDF | JIT::DF_GLOSSY_BRDF);
+        dfLobes & (DF_DIRAC_BTDF | (marked ? DF_GLOSSY_BTDF : 0));
+  if (marked) claim.reflectLobes = dfLobes & (DF_DIRAC_BRDF | DF_GLOSSY_BRDF);
   // The width gate, at a FIXED center draw so every evaluation of the
   // claim on this side answers the same however the two halves of the
   // estimator reached it; see the header.
   if (maxGlossyAlpha > 0.0f && mat.material->scatterNormalSample &&
-      (claim.lobes() & JIT::DF_GLOSSY) != 0) {
+      (claim.lobes() & DF_GLOSSY) != 0) {
     auto tooWide{[&](int kind) {
       float3 wm{};
       float pdf{};
@@ -396,12 +400,10 @@ ManifoldClaim manifoldClaim(const JIT::MaterialInstance &mat, bool backface,
         return false;
       return std::min(alpha.x, alpha.y) > maxGlossyAlpha;
     }};
-    if ((claim.refractLobes & JIT::DF_GLOSSY_BTDF) != 0 &&
-        tooWide(JIT::DF_GLOSSY_BTDF))
-      claim.refractLobes &= ~JIT::DF_GLOSSY_BTDF;
-    if ((claim.reflectLobes & JIT::DF_GLOSSY_BRDF) != 0 &&
-        tooWide(JIT::DF_GLOSSY_BRDF))
-      claim.reflectLobes &= ~JIT::DF_GLOSSY_BRDF;
+    if ((claim.refractLobes & DF_GLOSSY_BTDF) != 0 && tooWide(DF_GLOSSY_BTDF))
+      claim.refractLobes &= ~DF_GLOSSY_BTDF;
+    if ((claim.reflectLobes & DF_GLOSSY_BRDF) != 0 && tooWide(DF_GLOSSY_BRDF))
+      claim.reflectLobes &= ~DF_GLOSSY_BRDF;
   }
   return claim;
 }

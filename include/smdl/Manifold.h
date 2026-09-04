@@ -511,7 +511,7 @@ public:
   /// The kinds the path tracer is barred from: every claimed kind but
   /// the Dirac transmission, which is weighed against instead.
   [[nodiscard]] int barredLobes() const noexcept {
-    return reflectLobes | (refractLobes & ~JIT::DF_DIRAC_BTDF);
+    return reflectLobes | (refractLobes & ~DF_DIRAC_BTDF);
   }
 };
 
@@ -593,12 +593,12 @@ template <typename DrawXi>
                                              bool backface, DrawXi &&drawXi,
                                              float minAlpha) {
   const int dfLobes{mat.getLobes(backface)};
-  if ((dfLobes & JIT::DF_FINITE) == 0) return false;
-  if ((dfLobes & JIT::DF_GENERIC) != 0) return true;
+  if ((dfLobes & DF_FINITE) == 0) return false;
+  if ((dfLobes & DF_GENERIC) != 0) return true;
   if (!(minAlpha > 0.0f) || !mat.material->scatterNormalSample) return true;
   // One glossy kind, per the hook's contract; see above.
-  const int kind{(dfLobes & JIT::DF_GLOSSY_BRDF) != 0 ? JIT::DF_GLOSSY_BRDF
-                                                      : JIT::DF_GLOSSY_BTDF};
+  const int kind{(dfLobes & DF_GLOSSY_BRDF) != 0 ? DF_GLOSSY_BRDF
+                                                 : DF_GLOSSY_BTDF};
   float3 wm{};
   float pdf{};
   float2 alpha{};
