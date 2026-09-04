@@ -812,17 +812,17 @@ const Image &Compiler::loadImage(const std::string &fileName,
   auto &image{
       loadResource(mImages, mFileHasher[fileName], srcLoc, [&](Image &image) {
         SMDL_PROFILER_ENTRY("Compiler::loadImage()", fileName.c_str());
-        // What decides the layout is the compiler-wide switch and not
-        // this reference's request: the request is sticky and shared, so
-        // a later reference may ask for a chain that this one did not
-        // want, and the space for it has to be reserved by now.
-        return image.startLoad(fileName, enableMipMaps);
+        // The chain is always laid out, whatever this reference asked
+        // for: the request is sticky and shared, so a later reference
+        // may ask for a chain that this one did not want, and the space
+        // for it has to be reserved by now.
+        return image.startLoad(fileName);
       })};
   // The request is applied on every reference, not just the one that
   // decoded the image, so that it does not matter which reference comes
   // first: the mip levels are generated at the end of the compile, by
   // which point every reference has been seen.
-  if (withMipLevels && enableMipMaps) {
+  if (withMipLevels) {
     auto [itr, inserted] = mImageMipRequesters.try_emplace(&image, srcLoc);
     if (!image.requestMipLevels(filter)) {
       auto filterName{[](Image::MipFilter f) {
@@ -834,12 +834,6 @@ const Image &Compiler::loadImage(const std::string &fileName,
           " mip chain was requested at ", itr->second.getModuleDisplayName(),
           ":", itr->second.lineNo, ", and an image holds one chain");
     }
-  } else if (withMipLevels) {
-    // Refusing is the whole point of the switch, so this is not a
-    // warning. It is still the reason a render is aliased, so say so
-    // where a debug log will show it.
-    SMDL_LOG_DEBUG("Ignoring the mip levels requested for ",
-                   QuotedPath(fileName), ": mip maps are disabled");
   }
   return image;
 }

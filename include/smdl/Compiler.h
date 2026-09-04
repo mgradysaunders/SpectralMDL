@@ -302,16 +302,12 @@ private:
   /// `texture_2d`, which bakes its own level count, exactly as it bakes
   /// its own gamma. Both readings share one decoded image.
   ///
-  /// All of that is subject to `enableMipMaps`: with it false, the
-  /// request is refused rather than shared, and the image is laid out
-  /// for level 0 alone.
-  ///
   /// An image holds one chain, so every reference that asks for one
   /// must ask for the same `filter`; a reference asking for the other
   /// kind is an error naming the file and the earlier request.
   [[nodiscard]] const Image &
   loadImage(const std::string &fileName, const SourceLocation &srcLoc,
-            bool withMipLevels = true,
+            bool withMipLevels = false,
             Image::MipFilter filter = Image::MIP_MEAN);
 
   /// Load ptex texture.
@@ -483,20 +479,6 @@ public:
 
   /// Enable debugging?
   bool enableDebug{false};
-
-  /// Enable mip maps?
-  ///
-  /// When false, no image loaded by this compiler lays out or generates
-  /// a mip chain, and every texture bakes a level count of 1, so
-  /// `use_mipmap: true` in SMDL source is accepted and quietly ignored.
-  /// This is a debugging and profiling switch: it takes the chain
-  /// allocation and the box filtering out of the load and pins every
-  /// lod-aware lookup to level 0.
-  ///
-  /// This is read while `compile()` loads images, so set it beforehand.
-  /// Changing it between compiles is fine: every `compile()` reloads
-  /// every image from scratch and decides again.
-  bool enableMipMaps{true};
 
   /// Enable the `scatterNormalSample`, `scatterNormalEvaluate`, and
   /// `geometryNormalEvaluate` entry points?

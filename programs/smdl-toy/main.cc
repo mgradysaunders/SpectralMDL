@@ -150,9 +150,6 @@ static cl::opt<unsigned> optMaxContributionBounces{
 static cl::opt<bool> optNoLOD{
     "no-lod", cl::desc("Disable LOD by zeroing the camera ray cone spread"),
     cl::init(false), cl::cat(catSampling)};
-static cl::opt<bool> optNoMipMaps{
-    "no-mipmaps", cl::desc("Disable mip maps, ignoring 'use_mipmap: true'"),
-    cl::init(false), cl::cat(catSampling)};
 static cl::opt<unsigned> optThreads{
     "threads",
     cl::desc("Set the thread limit, or 0 for the maximum (default: 0)\n"
@@ -1291,7 +1288,6 @@ int main(int argc, char **argv) try {
   auto compiler{smdl::Compiler{}};
   compiler.wavelengthBaseMax = uint32_t(wavelengths.size());
   compiler.enableDebug = false;
-  compiler.enableMipMaps = !optNoMipMaps;
   compiler.enableUnitTests = false;
   registerSceneData(compiler);
   // The normal distribution entry points are what a glossy manifold

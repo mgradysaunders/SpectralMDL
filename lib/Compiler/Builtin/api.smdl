@@ -341,10 +341,6 @@ export struct texture_2d {
   /// what a prefiltered lookup must not sample. An image holds one
   /// chain, so every texture over one file must ask for the same kind;
   /// asking for both is a compile error naming both requests.
-  ///
-  /// The host may also disable mip levels compiler-wide, in which case
-  /// asking for them here is accepted and ignored, and `num_levels` is
-  /// 1 no matter what.
   texture_2d(const string name, const auto gamma = 0, const bool use_mipmap = false, const bool max_mipmap = false) = #loadTexture2D(name, int(gamma), use_mipmap, max_mipmap);
 
   /// The tile count.
@@ -374,8 +370,8 @@ export struct texture_2d {
   const int num_levels = 1;
 
   /// Is the chain this texture reads reduced by the maximum? True when
-  /// the texture was constructed with `max_mipmap: true` and the host
-  /// allows mip levels, in which case `num_levels` is greater than 1.
+  /// the texture was constructed with `max_mipmap: true`, in which case
+  /// `num_levels` is greater than 1.
   const bool max_mipmap = false;
 
   /// The tile extents at mip level 0.
