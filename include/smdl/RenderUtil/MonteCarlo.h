@@ -443,7 +443,13 @@ public:
 
   /// Generates the next scrambled sample as raw bits, advancing the
   /// dimension counter.
-  [[nodiscard]] uint32_t generate() noexcept {
+  ///
+  /// Forced inline because the cost model rejects it by a hair: the body
+  /// lands just past the inliner's threshold, so it is left out of line
+  /// at every call site, and a renderer draws from it several times per
+  /// path vertex, where the call and the spills around it are a large
+  /// fraction of the work the body does.
+  [[nodiscard]] SMDL_ALWAYS_INLINE uint32_t generate() noexcept {
     const uint32_t pair{mDimension >> 1};
     const uint32_t component{mDimension & 1};
     ++mDimension;

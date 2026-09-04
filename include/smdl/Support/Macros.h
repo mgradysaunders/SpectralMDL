@@ -12,6 +12,33 @@ namespace smdl {
 /// \addtogroup support
 /// \{
 
+/// Force a function to be inlined into every caller.
+///
+/// This is a demand, not a hint: it overrides the inliner's cost model, so
+/// it is only correct where the caller genuinely benefits from seeing the
+/// body (constant folding across the boundary, or a hot leaf whose call
+/// overhead rivals its work). Reserve it for measured cases.
+#if defined(__GNUC__) || defined(__clang__)
+#define SMDL_ALWAYS_INLINE inline __attribute__((always_inline))
+#elif defined(_MSC_VER)
+#define SMDL_ALWAYS_INLINE __forceinline
+#else
+#define SMDL_ALWAYS_INLINE inline
+#endif
+
+/// Forbid a function from being inlined into any caller.
+///
+/// Useful to keep a cold path (error reporting, a rare slow branch) out of
+/// the instruction cache and out of its caller's register allocation, and
+/// to keep a function addressable as a distinct symbol in a profile.
+#if defined(__GNUC__) || defined(__clang__)
+#define SMDL_NO_INLINE __attribute__((noinline))
+#elif defined(_MSC_VER)
+#define SMDL_NO_INLINE __declspec(noinline)
+#else
+#define SMDL_NO_INLINE
+#endif
+
 /// Sanity check a condition.
 ///
 /// \note
