@@ -9,7 +9,7 @@
 ///
 #smdl
 
-@(foreign pure)
+@(foreign)
 int smdlDataExists(&void sceneData, string name);
 
 @(foreign)
@@ -23,7 +23,11 @@ auto data_lookup(const string name, auto value) {
   return value;
 }
 
-/// Is scene data with the given name available?
+/// Is scene data with the given name available at this shading point? A
+/// name the renderer never registered is never valid; a registered name is
+/// valid wherever its presence predicate says so, or everywhere when it has
+/// none, so per-vertex data can be absent on one object and present on the
+/// next.
 @(macro)
 export bool data_isvalid(const string name) = smdlDataExists($SCENE_DATA, name) != 0;
 

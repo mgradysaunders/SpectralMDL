@@ -520,6 +520,30 @@ public:
   ///
   /// \note This is non-standard!
   float texture_density[TEXTURE_SPACE_MAX]{};
+
+  /// The max supported number of vertex color sets.
+  ///
+  /// \note
+  /// One: a base RGBA set, which is as many as any geometry path fills. A
+  /// constant index past it is a compile error in SMDL; `vertex_color_max`
+  /// gates the rest, and `finalizeAndApplyInternalSpaceConventions()`
+  /// clamps it.
+  ///
+  /// \note This is non-standard!
+  static constexpr size_t VERTEX_COLOR_MAX = 1;
+
+  /// The number of vertex color sets the geometry carries, clamped to
+  /// `VERTEX_COLOR_MAX`. Zero means "not provided".
+  ///
+  /// \note This is non-standard!
+  int vertex_color_max{};
+
+  /// The vertex colors: RGBA as the geometry stores them, interpolated to
+  /// the shading point, with no color management and no premultiplication.
+  /// White where no set is present, so an ungated read still behaves.
+  ///
+  /// \note This is non-standard!
+  float4 vertex_color[VERTEX_COLOR_MAX] = {float4{1, 1, 1, 1}};
 };
 
 /// An albedo look-up table (LUT) for energy compensation in lossy BSDFs.

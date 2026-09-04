@@ -796,7 +796,8 @@ TEST_CASE("Compiler static material flags") {
       "export material mat_volume_surface() = material(\n"
       "  ior: 1.33,\n"
       "  surface: material_surface(\n"
-      "    scattering: df::specular_bsdf(mode: df::scatter_reflect_transmit)),\n"
+      "    scattering: df::specular_bsdf(mode: "
+      "df::scatter_reflect_transmit)),\n"
       "  volume: material_volume(absorption_coefficient: color(0.5)));\n"
       "export material mat_emissive() = material(\n"
       "  surface: material_surface(\n"
@@ -2503,5 +2504,90 @@ TEST_CASE("Compiler enableScatterNormal") {
     // Nothing folded, so the identity is unproven and the conservative
     // reading is that the material may remap.
     CHECK(material->remapsNormal());
+  }
+}
+
+TEST_CASE("Compiler vertex color reaches SMDL and the scene data alias") {
+  // The renderer's contract: the state carries the color and the count,
+  // and the host registers "vertex_color" scene data that reads the
+  // state, so the extension spelling and the MDL spelling agree at every
+  // hit and `data_isvalid` answers per hit. The getter honors the count
+  // too, so a lookup where nothing is present keeps its default.
+  const auto registerAlias{[](smdl::Compiler &compiler) {
+    compiler.sceneData.set(
+        "vertex_color",
+        [](smdl::State *state, smdl::SceneData::Kind kind, int size,
+           void *out) {
+          if (state->vertex_color_max > 0 &&
+              kind == smdl::SceneData::Kind::Float && (size == 3 || size == 4))
+            for (int i = 0; i < size; i++)
+              static_cast<float *>(out)[i] = state->vertex_color[0][i];
+        },
+        [](const smdl::State *state) { return state->vertex_color_max > 0; });
+  }};
+  const auto run{[&](const char *source, bool present) {
+    auto compiler{smdl::Compiler()};
+    compiler.enableUnitTests = true;
+    registerAlias(compiler);
+    if (auto error{compiler.addCode("::vertex_color_test", source)}) {
+      MESSAGE(error->message);
+      REQUIRE(false);
+    }
+    if (auto error{compiler.compile(smdl::OPT_LEVEL_NONE)}) {
+      MESSAGE(error->message);
+      REQUIRE(false);
+    }
+    if (auto error{compiler.jitCompile()}) {
+      MESSAGE(error->message);
+      REQUIRE(false);
+    }
+    auto allocator{smdl::BumpPtrAllocator()};
+    auto wavelengths{std::vector<float>(size_t(compiler.wavelengthBaseMax))};
+    auto state{smdl::State()};
+    state.allocator = &allocator;
+    state.wavelength_min = 380.0f;
+    state.wavelength_max = 720.0f;
+    state.wavelength_base = wavelengths.data();
+    for (uint32_t i = 0; i < compiler.wavelengthBaseMax; i++) {
+      const float fac{float(i) / float(compiler.wavelengthBaseMax - 1)};
+      wavelengths[i] =
+          (1 - fac) * state.wavelength_min + fac * state.wavelength_max;
+    }
+    if (present) {
+      state.vertex_color_max = 1;
+      state.vertex_color[0] = smdl::float4(0.25f, 0.5f, 0.75f, 1.0f);
+    }
+    state.finalizeAndApplyInternalSpaceConventions();
+    if (auto error{compiler.runUnitTests(state)}) {
+      MESSAGE(error->message);
+      CHECK(false);
+    }
+  }};
+  SUBCASE("Present") {
+    run(R"(#smdl
+import ::scene::*;
+import ::state::*;
+unit_test "Vertex color present" {
+  #assert(state::vertex_color_max() == 1);
+  #assert(#all(state::vertex_color() == float4(0.25, 0.5, 0.75, 1.0)));
+  #assert(scene::data_isvalid("vertex_color"));
+  #assert(#all(scene::data_lookup_float4("vertex_color") == float4(0.25, 0.5, 0.75, 1.0)));
+  #assert(#all(scene::data_lookup_float3("vertex_color") == float3(0.25, 0.5, 0.75)));
+}
+)",
+        true);
+  }
+  SUBCASE("Absent") {
+    run(R"(#smdl
+import ::scene::*;
+import ::state::*;
+unit_test "Vertex color absent" {
+  #assert(state::vertex_color_max() == 0);
+  #assert(#all(state::vertex_color() == float4(1.0, 1.0, 1.0, 1.0)));
+  #assert(!scene::data_isvalid("vertex_color"));
+  #assert(#all(scene::data_lookup_float4("vertex_color", float4(0.0, 0.0, 0.0, 0.0)) == float4(0.0, 0.0, 0.0, 0.0)));
+}
+)",
+        false);
   }
 }

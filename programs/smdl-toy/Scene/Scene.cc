@@ -77,6 +77,23 @@ constexpr unsigned LOOP_SUBDIV_POSTPROCESS_FLAGS =
 
 } // namespace
 
+void registerSceneData(smdl::Compiler &compiler) {
+  compiler.sceneData.set(
+      "vertex_color",
+      [&compiler](smdl::State *state, smdl::SceneData::Kind kind, int size,
+                  void *out) {
+        if (state->vertex_color_max == 0) return;
+        const auto &rgba{state->vertex_color[0]};
+        if (kind == smdl::SceneData::Kind::Float && (size == 3 || size == 4)) {
+          for (int i = 0; i < size; i++) static_cast<float *>(out)[i] = rgba[i];
+        } else if (kind == smdl::SceneData::Kind::Color) {
+          compiler.convertRGBToColor(*state, float3(rgba),
+                                     static_cast<float *>(out));
+        }
+      },
+      [](const smdl::State *state) { return state->vertex_color_max > 0; });
+}
+
 void MeshInstance::setObjectToWorld(const float4x4 &xf,
                                     std::string_view fileName) {
   // Kept whole, shear and all. See `MeshInstance` for why that is allowed
@@ -788,6 +805,7 @@ bool Scene::finalizeMesh(Mesh &mesh, const Color &wavelengths, bool spread) {
   mesh.needsFinalize = false;
   mesh.basePoints = {};
   mesh.baseTexcoords = {};
+  mesh.baseColors = {};
   mesh.baseFaceCounts = {};
   mesh.baseIndices = {};
   return displaced;
@@ -835,6 +853,10 @@ bool Scene::displaceMesh(Mesh &mesh, const Color &wavelengths, bool spread,
     state.texture_tangent_v[0] = bitangent;
     state.geometry_tangent_u[0] = tangent;
     state.geometry_tangent_v[0] = bitangent;
+    if (!mesh.colors.empty()) {
+      state.vertex_color_max = 1;
+      state.vertex_color[0] = mesh.colors[i];
+    }
     state.finalizeAndApplyInternalSpaceConventions();
     auto displacement{float3()};
     material->displacementEvaluate(state, displacement);
@@ -898,6 +920,13 @@ void Scene::load(const aiMesh &assMesh,
         mesh->baseTexcoords[i] = float2(assMesh.mTextureCoords[0][i].x,
                                         assMesh.mTextureCoords[0][i].y);
     }
+    if (assMesh.mColors[0]) {
+      mesh->baseColors.resize(assMesh.mNumVertices);
+      for (unsigned int i = 0; i < assMesh.mNumVertices; i++) {
+        const auto &color{assMesh.mColors[0][i]};
+        mesh->baseColors[i] = float4(color.r, color.g, color.b, color.a);
+      }
+    }
     mesh->baseFaceCounts.reserve(assMesh.mNumFaces);
     for (unsigned int i = 0; i < assMesh.mNumFaces; i++) {
       const auto &face{assMesh.mFaces[i]};
@@ -939,6 +968,13 @@ void Scene::load(const aiMesh &assMesh,
     if (assMesh.mTextureCoords[0]) {
       vert.texcoord.x = assMesh.mTextureCoords[0][i].x;
       vert.texcoord.y = assMesh.mTextureCoords[0][i].y;
+    }
+  }
+  if (assMesh.mColors[0]) {
+    mesh->colors.resize(assMesh.mNumVertices);
+    for (unsigned int i = 0; i < assMesh.mNumVertices; i++) {
+      const auto &color{assMesh.mColors[0][i]};
+      mesh->colors[i] = float4(color.r, color.g, color.b, color.a);
     }
   }
   for (unsigned int i = 0; i < assMesh.mNumFaces; i++)
@@ -1161,6 +1197,12 @@ Hit Scene::makeHit(uint32_t instIndex, uint32_t faceIndex,
   hit.texcoord = barycentric(&Mesh::Vert::texcoord);
   hit.textureDensity = uvTextureDensity(point0, point1, point2, vert0.texcoord,
                                         vert1.texcoord, vert2.texcoord);
+  if (!mesh.colors.empty()) {
+    hit.vertexColorSets = 1;
+    hit.vertexColor = bary[0] * mesh.colors[face[0]] +
+                      bary[1] * mesh.colors[face[1]] +
+                      bary[2] * mesh.colors[face[2]];
+  }
   hit.instance = &meshInstance;
   return hit;
 }

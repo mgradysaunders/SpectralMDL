@@ -144,6 +144,24 @@ export float cone_width() = $state.cone_width;
 @(macro)
 export float texture_density(const int i) = $state.texture_density[i];
 
+/// The number of vertex color sets the geometry carries, zero when it
+/// carries none.
+///
+/// NOTE: This is non-standard!
+@(macro)
+export int vertex_color_max() = $state.vertex_color_max;
+
+/// The vertex color of set `i`: RGBA as the geometry stores it, interpolated
+/// to the shading point, with no color management applied. White when the
+/// geometry carries no colors, so multiplying by it is then a no-op; see
+/// `vertex_color_max()` to tell the two apart. The same value is available
+/// to MDL-conformant code as the scene data `"vertex_color"` where the
+/// renderer registers it.
+///
+/// NOTE: This is non-standard!
+@(macro)
+export float4 vertex_color(const int i = 0) = $state.vertex_color[i];
+
 @(pure macro)
 float4x4 affineInverse(const float4x4 matrix) {
   return float4x4(

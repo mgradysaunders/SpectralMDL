@@ -5,21 +5,29 @@
 
 namespace smdl {
 
-SceneData::SceneData() : mPtr(new llvm::StringMap<Getter>()) {}
+namespace {
+
+struct Entry final {
+  SceneData::Getter getter{};
+  SceneData::Exists exists{};
+};
+
+using Lookup = llvm::StringMap<Entry>;
+
+} // namespace
+
+SceneData::SceneData() : mPtr(new Lookup()) {}
 
 SceneData::~SceneData() {
-  delete static_cast<llvm::StringMap<Getter> *>(mPtr);
+  delete static_cast<Lookup *>(mPtr);
   mPtr = nullptr;
 }
 
-void SceneData::clear() {
-  auto &lookup{*static_cast<llvm::StringMap<Getter> *>(mPtr)};
-  lookup.clear();
-}
+void SceneData::clear() { static_cast<Lookup *>(mPtr)->clear(); }
 
-void SceneData::set(std::string_view name, Getter getter) {
-  auto &lookup{*static_cast<llvm::StringMap<Getter> *>(mPtr)};
-  lookup[llvm::StringRef(name)] = std::move(getter);
+void SceneData::set(std::string_view name, Getter getter, Exists exists) {
+  auto &lookup{*static_cast<Lookup *>(mPtr)};
+  lookup[llvm::StringRef(name)] = Entry{std::move(getter), std::move(exists)};
 }
 
 void SceneData::setInt(std::string_view name, int var) {
@@ -97,18 +105,28 @@ void SceneData::setColor(std::string_view name,
 }
 
 const SceneData::Getter *SceneData::get(std::string_view name) const {
-  auto &lookup{*static_cast<const llvm::StringMap<Getter> *>(mPtr)};
+  auto &lookup{*static_cast<const Lookup *>(mPtr)};
   if (auto itr{lookup.find(llvm::StringRef(name))}; itr != lookup.end())
-    return &itr->getValue();
+    return &itr->getValue().getter;
   return nullptr;
+}
+
+bool SceneData::exists(std::string_view name, const State *state) const {
+  auto &lookup{*static_cast<const Lookup *>(mPtr)};
+  auto itr{lookup.find(llvm::StringRef(name))};
+  if (itr == lookup.end()) return false;
+  const auto &entry{itr->getValue()};
+  return entry.exists ? entry.exists(state) : true;
 }
 
 } // namespace smdl
 
 extern "C" {
 
-SMDL_EXPORT int smdlDataExists(void *sceneData, const char *name) {
-  return static_cast<smdl::SceneData *>(sceneData)->get(name) != nullptr;
+SMDL_EXPORT int smdlDataExists(void *state, void *sceneData, // NOLINT
+                               const char *name) {
+  return static_cast<smdl::SceneData *>(sceneData)->exists(
+      name, static_cast<const smdl::State *>(state));
 }
 
 SMDL_EXPORT void smdlDataLookup(void *state, void *sceneData, // NOLINT

@@ -22,7 +22,7 @@
 
 /// The hash behind the unordered welding maps, which want the linear
 /// scaling of hashing rather than the n log n of ordering: position keys
-/// and the (vertex, UV) pairs that subdivision uniques its output
+/// and the (vertex, corner) pairs that subdivision uniques its output
 /// vertices by, each word run through the 64-bit murmur3 finalizer.
 class WeldHash final {
 public:
@@ -64,11 +64,12 @@ private:
 ///
 /// Both splits run with `EDGE_AND_CORNER` vertex boundaries, so an open
 /// ground plane keeps its corners. Smooth refinement snaps the last
-/// level to the limit surface and carries UVs as a face-varying channel
-/// that is smooth in the interior but linear along boundaries and seams,
-/// so texture seams cannot slide. Linear refinement (`smooth` false)
-/// leaves positions and UVs where linear interpolation puts them, which
-/// raises the density of the mesh without moving its surface; the Loop
+/// level to the limit surface and carries UVs and vertex colors as one
+/// face-varying channel that is smooth in the interior but linear along
+/// boundaries and seams, so texture seams cannot slide. Linear
+/// refinement (`smooth` false) leaves positions, UVs, and colors where
+/// linear interpolation puts them, which raises the density of the mesh
+/// without moving its surface; the Loop
 /// half of that row is the uniform triangle split, which costs two
 /// thirds of the triangles the quad split does and keeps the shape of
 /// the triangles it refines.
@@ -82,9 +83,11 @@ private:
 /// triangles.
 ///
 /// Vertex topology is welded by exact position bits, so copies that
-/// exist only to carry different UVs (texture seams) subdivide as one
-/// surface; the final vertices are the unique (vertex, UV) pairs of the
-/// last refinement level.
+/// exist only to carry different UVs or colors (texture and color seams)
+/// subdivide as one surface; the final vertices are the unique (vertex,
+/// corner) pairs of the last refinement level, a corner being the UV and
+/// color an imported vertex carried, and `Mesh::colors` follows `verts`
+/// whenever the base mesh had colors.
 ///
 /// \returns
 /// True if `verts` carry valid normals (the smooth limit normals);

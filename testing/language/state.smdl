@@ -1,0 +1,12 @@
+/// Tests for the non-standard `state::` extensions a renderer fills per
+/// hit. `smdl test` runs with a bare state, so these pin the defaults a
+/// material sees when the geometry carries nothing.
+#smdl
+
+import ::state::*;
+
+unit_test "Vertex color defaults" {
+  #assert(state::vertex_color_max() == 0);
+  #assert(#all(state::vertex_color() == float4(1.0, 1.0, 1.0, 1.0)));
+  #assert(#all(state::vertex_color(0) == float4(1.0, 1.0, 1.0, 1.0)));
+}
