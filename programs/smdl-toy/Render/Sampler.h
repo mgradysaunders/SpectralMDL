@@ -53,6 +53,13 @@ constexpr const char *SAMPLER_VERSION =
 /// dimension, so a caller that consumes a data-dependent count costs
 /// every draw after it, not just its own. Under `SMDL_TOY_SAMPLER_PCG32`
 /// none of this applies and the draws are simply independent.
+///
+/// The draw path is forced inline end to end, from the conversion
+/// operators down through `smdl::OwenSobolSampler::generate()`. The
+/// links are small enough individually that the inliner keeps whichever
+/// one is left unmarked and pushes the boundary up to it, so marking
+/// only the leaf moves the call rather than removing it. `index()` is
+/// deliberately not marked: forcing it in as well measures slower.
 class Sampler final {
 public:
   Sampler() = default;
@@ -73,27 +80,27 @@ public:
 #endif
   }
 
-  [[nodiscard]] operator float() {
+  [[nodiscard]] SMDL_ALWAYS_INLINE operator float() {
     alignPair();
     const float xi{next()};
     alignPair();
     return xi;
   }
 
-  [[nodiscard]] operator float2() {
+  [[nodiscard]] SMDL_ALWAYS_INLINE operator float2() {
     alignPair();
     const float x{next()};
     return {x, next()};
   }
 
-  [[nodiscard]] operator float3() {
+  [[nodiscard]] SMDL_ALWAYS_INLINE operator float3() {
     alignPair();
     const float x{next()}, y{next()}, z{next()};
     alignPair();
     return {x, y, z};
   }
 
-  [[nodiscard]] operator float4() {
+  [[nodiscard]] SMDL_ALWAYS_INLINE operator float4() {
     alignPair();
     const float x{next()}, y{next()}, z{next()};
     return {x, y, z, next()};
@@ -105,7 +112,7 @@ public:
   }
 
   /// The next sample as raw bits.
-  [[nodiscard]] uint32_t nextBits() noexcept {
+  [[nodiscard]] SMDL_ALWAYS_INLINE uint32_t nextBits() noexcept {
 #if SMDL_TOY_SAMPLER_PCG32
     return rng.generate();
 #else
@@ -116,14 +123,14 @@ public:
 private:
   /// Round the dimension up to a pair boundary, called before and after
   /// every draw so that none of them straddles two pairs.
-  void alignPair() noexcept {
+  SMDL_ALWAYS_INLINE void alignPair() noexcept {
 #if !SMDL_TOY_SAMPLER_PCG32
     sobol.alignPair();
 #endif
   }
 
   /// The next canonical sample in `(0,1)`.
-  [[nodiscard]] float next() noexcept {
+  [[nodiscard]] SMDL_ALWAYS_INLINE float next() noexcept {
     return std::clamp(float(nextBits()) * 0x1p-32f,
                       std::numeric_limits<float>::denorm_min(), ONE_MINUS_EPS);
   }
