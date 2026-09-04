@@ -8,6 +8,8 @@
 
 namespace {
 
+#include "HazeGolden.inl"
+
 // The render-default wavelength grid, which is all the haze needs to
 // fix its extinction spectrum.
 std::vector<float> makeWavelengths(size_t numBands = 16) {
@@ -273,6 +275,60 @@ TEST_CASE("Haze") {
           CHECK(std::abs(cdf - xi) / xi < 1e-4f);
         }
       }
+    }
+  }
+  SUBCASE("extinction spectrum against its generator") {
+    // The tables and this golden come out of the same MODTRAN runs, so
+    // what is checked here is the construction the header describes: the
+    // Koschmieder amount split between aerosol and Rayleigh, each
+    // carrying its own shape, interpolated across the channel grid.
+    // Wavelengths off the grid at both ends are in the golden, so the
+    // clamp is checked too.
+    const auto goldenSpan{
+        smdl::Span<const float>(GOLDEN_WAVELENGTHS, GOLDEN_WAVELENGTH_COUNT)};
+    for (size_t c = 0; c < GOLDEN_CASE_COUNT; c++) {
+      auto goldenOptions{smdl::HazeOptions{}};
+      goldenOptions.visibility = GOLDEN_VISIBILITY[c];
+      const auto haze{smdl::Haze(goldenOptions, goldenSpan, 1.0f)};
+      std::vector<float> sigma(haze.size()), albedo(haze.size());
+      haze.extinctionAt(0.0f, smdl::Span<float>(sigma.data(), sigma.size()));
+      haze.albedo(smdl::Span<float>(albedo.data(), albedo.size()));
+      for (size_t i = 0; i < GOLDEN_WAVELENGTH_COUNT; i++) {
+        CAPTURE(GOLDEN_VISIBILITY[c]);
+        CAPTURE(GOLDEN_WAVELENGTHS[i]);
+        CHECK(sigma[i] ==
+              doctest::Approx(GOLDEN_EXTINCTION[c][i]).epsilon(1e-5));
+        CHECK(albedo[i] == doctest::Approx(GOLDEN_ALBEDO[c][i]).epsilon(1e-5));
+      }
+    }
+  }
+  SUBCASE("the reference wavelength is Koschmieder's") {
+    // The one thing the tables are not free to choose: aerosol plus
+    // Rayleigh at 550nm is the extinction the meteorological range
+    // names, which is what ties the haze to the sun-sky model's
+    // visibility.
+    const float reference[]{550.0f};
+    for (float visibility : {5.0f, 12.0f, 23.0f, 50.0f, 100.0f}) {
+      auto referenceOptions{smdl::HazeOptions{}};
+      referenceOptions.visibility = visibility;
+      const auto haze{smdl::Haze(referenceOptions,
+                                 smdl::Span<const float>(reference, 1), 1.0f)};
+      float sigma{};
+      haze.extinctionAt(0.0f, smdl::Span<float>(&sigma, 1));
+      CAPTURE(visibility);
+      CHECK(sigma ==
+            doctest::Approx(3.912f / (1000.0f * visibility)).epsilon(1e-5));
+    }
+  }
+  SUBCASE("scattering never exceeds extinction") {
+    const auto haze{smdl::Haze(options, span, 1.0f)};
+    std::vector<float> albedo(haze.size());
+    haze.albedo(smdl::Span<float>(albedo.data(), albedo.size()));
+    for (size_t i = 0; i < albedo.size(); i++) {
+      CAPTURE(i);
+      CAPTURE(wavelens[i]);
+      CHECK(albedo[i] > 0.0f);
+      CHECK(albedo[i] <= 1.0f);
     }
   }
   SUBCASE("zenith depth is finite and approached from below") {

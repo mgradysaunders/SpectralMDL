@@ -336,7 +336,10 @@ public:
 /// aerial perspective is about, which the model has no notion of, the
 /// haze is exactly what is missing; toward the sky it is counted twice.
 /// Matching the two visibilities keeps them reading consistently, and
-/// keeping the haze thin keeps the overlap small.
+/// keeping the haze thin keeps the overlap small. The two carry the
+/// same aerosol, but only the sun-sky model carries gaseous absorption,
+/// so a distant surface is not dimmed in the water bands the way the
+/// sky behind it is.
 ///
 class LayoutHaze final {
 public:
@@ -346,8 +349,6 @@ public:
   std::optional<float> visibility{};
   std::optional<float> scaleHeight{};
   std::optional<float> baseHeight{};
-  std::optional<float> albedo{};
-  std::optional<float> angstrom{};
 
   /// The water droplet diameter in micrometers, which drives the
   /// approximate Mie phase function; see `HazeOptions::dropletSize`.

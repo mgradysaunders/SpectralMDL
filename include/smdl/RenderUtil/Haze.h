@@ -86,35 +86,37 @@ private:
   float mWD{};
 };
 
-/// The parameters of a `Haze`: one aerosol species whose extinction
-/// falls off exponentially with height above `baseHeight`.
+/// The parameters of a `Haze`, whose extinction falls off exponentially
+/// with height above `baseHeight`. The spectrum is not among them; it is
+/// measured, and the visibility is the only thing that scales it.
 struct HazeOptions final {
   /// The meteorological range in kilometers at 550nm, which fixes the
   /// extinction at `baseHeight` through Koschmieder's relation. The
   /// same quantity `SunSkyOptions::visibility` names.
   float visibility{23.0f};
 
-  /// The scale height in meters. The default is the boundary-layer
-  /// aerosol; molecular scattering is nearer 8000.
-  float scaleHeight{1200.0f};
+  /// The scale height in meters. The default is the one MODTRAN's rural
+  /// boundary layer falls off with in clear air, which it only does for
+  /// a visibility of about 23km and up: hazier than that its profile is
+  /// a well mixed slab a kilometer or two deep rather than an
+  /// exponential, and no scale height represents it faithfully.
+  float scaleHeight{2100.0f};
 
   /// The height in scene units at which the extinction is the one
   /// `visibility` names.
   float baseHeight{0.0f};
 
-  /// The single-scattering albedo.
-  float albedo{0.9f};
-
-  /// The Angstrom exponent of the extinction: `a` in `sigma(lambda) =
-  /// sigma(550nm) * (lambda / 550nm)^-a`. The default is the
-  /// continental-rural aerosol; 4 is molecular scattering.
-  float angstrom{1.3f};
-
   /// The water droplet diameter in micrometers driving the phase
-  /// function; see `MiePhase`. The default is the accumulation-mode
-  /// aerosol that dominates visibility reduction, and fog and cloud
-  /// droplets run from about 5 to 50.
-  float dropletSize{1.0f};
+  /// function; see `MiePhase`. The default is the diameter at which the
+  /// fit best reproduces MODTRAN's rural aerosol phase function at
+  /// 550nm, an asymmetry of 0.67, and is a fitted parameter rather than
+  /// a size anything in that aerosol has. The fit is a family for water
+  /// droplets, so it follows the sub-micron aerosol well from the
+  /// forward peak through the side scatter and falls about a third
+  /// short at grazing backscatter, which nothing without a glory can
+  /// carry. Fog and cloud droplets run from about 5 to 50, where the
+  /// diameter is a real one.
+  float dropletSize{0.29f};
 };
 
 /// An exponential-height atmospheric haze: the participating medium
@@ -133,6 +135,20 @@ struct HazeOptions final {
 /// and whose limit `1/k` for an upward ray is the finite zenith optical
 /// depth: a haze that falls off with height dims the horizon without
 /// ever washing out the sky, which is what a homogeneous one cannot do.
+///
+/// The spectrum is MODTRAN4's rural boundary-layer aerosol plus
+/// Rayleigh scattering, the same aerosol family `SunSky` is fitted to.
+/// Koschmieder's relation fixes the extinction the two together must
+/// have at 550nm, and MODTRAN's own visibility relation divides it
+/// between them; each carries its measured spectral shape from there,
+/// so the extinction and the single-scattering albedo are both spectra
+/// and neither is a free parameter. Two deliberate approximations:
+/// Rayleigh scattering is given the aerosol's scale height rather than
+/// its own much larger one, because a second exponential would leave
+/// the optical depth without a closed-form inverse and cost the whole
+/// no-tracking design; and gaseous absorption is left out entirely,
+/// because it does not scale with visibility and does not follow the
+/// aerosol profile.
 ///
 /// Renderer-agnostic by design: it never traces a ray, and knows
 /// nothing about the lights the medium it describes is lit by.
@@ -155,8 +171,10 @@ public:
   /// output.
   [[nodiscard]] size_t size() const noexcept { return mSigmaRef.size(); }
 
-  /// The single-scattering albedo, uniform over the spectrum.
-  [[nodiscard]] float albedo() const noexcept { return mAlbedo; }
+  /// The single-scattering albedo spectrum, written into `albedo`,
+  /// which must have `size()` elements. Independent of height, because
+  /// scattering and extinction fall off together.
+  void albedo(Span<float> albedo) const noexcept;
 
   /// The phase function.
   [[nodiscard]] const MiePhase &phase() const noexcept { return mPhase; }
@@ -184,8 +202,8 @@ private:
   /// The extinction spectrum at `mBaseHeight`, in inverse scene units.
   SpectralColor mSigmaRef{};
 
-  /// See `albedo()`.
-  float mAlbedo{};
+  /// The scattering spectrum at `mBaseHeight`, in inverse scene units.
+  SpectralColor mSigmaScaRef{};
 
   /// One over the scale height, in inverse scene units.
   float mInvScaleHeight{};

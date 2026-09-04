@@ -380,8 +380,8 @@ static cl::opt<float> optHazeVisibility{
     cl::init(0.0f), cl::cat(catLight)};
 static cl::opt<float> optHazeScaleHeight{
     "haze-scale-height",
-    cl::desc("The haze scale height in meters (default: 1200)"),
-    cl::init(1200.0f), cl::cat(catLight)};
+    cl::desc("The haze scale height in meters (default: 2100)"),
+    cl::init(2100.0f), cl::cat(catLight)};
 static cl::opt<float> optSkyScale{
     "sky-scale", cl::desc("The sky radiance scale factor (default: 1)"),
     cl::init(1.0f), cl::cat(catLight)};
@@ -1535,8 +1535,6 @@ int main(int argc, char **argv) try {
       options.visibility = pick(optSkyVisibility, fileSky.visibility);
     options.scaleHeight = pick(optHazeScaleHeight, fileHaze.scaleHeight);
     if (fileHaze.baseHeight) options.baseHeight = *fileHaze.baseHeight;
-    if (fileHaze.albedo) options.albedo = *fileHaze.albedo;
-    if (fileHaze.angstrom) options.angstrom = *fileHaze.angstrom;
     if (fileHaze.droplet) options.dropletSize = *fileHaze.droplet;
     haze = std::make_unique<smdl::Haze>(
         options,

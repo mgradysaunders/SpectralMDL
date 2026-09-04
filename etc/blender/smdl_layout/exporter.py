@@ -903,8 +903,6 @@ def haze_block(scene):
         lines.append(f"  visibility {settings.haze_visibility:.9g}")
     for name, key in (("haze_scale_height", "scale_height"),
                       ("haze_base_height", "base_height"),
-                      ("haze_albedo", "albedo"),
-                      ("haze_angstrom", "angstrom"),
                       ("haze_droplet", "droplet")):
         if changed(settings, name):
             lines.append(f"  {key} {getattr(settings, name):.9g}")

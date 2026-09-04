@@ -1109,18 +1109,13 @@ private:
         haze.scaleHeight = positive(keyLoc, key, numbers<1>()[0]);
       } else if (key == "base_height") {
         haze.baseHeight = numbers<1>()[0];
-      } else if (key == "albedo") {
-        haze.albedo = numbers<1>()[0];
-      } else if (key == "angstrom") {
-        haze.angstrom = numbers<1>()[0];
       } else if (key == "droplet") {
         haze.droplet = positive(keyLoc, key, numbers<1>()[0]);
       } else {
         mDiags.error(keyLoc,
                      smdl::concat("unknown haze setting ", smdl::Quoted(key),
                                   " (expected none, visibility, scale_height, "
-                                  "base_height, albedo, angstrom, or "
-                                  "droplet)"));
+                                  "base_height, or droplet)"));
         throw Recover();
       }
     }

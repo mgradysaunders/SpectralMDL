@@ -627,7 +627,7 @@ bool Medium::sampleDistance(Sampler &sampler, float tEnd, float &t, Color &beta,
       // The extinction at the collision is the origin spectrum times a
       // factor common to every band, which cancels between the
       // scattering weight and the balance heuristic that normalizes it.
-      beta *= mHazeSigmaC * mHaze->albedo() * Tr / (mHazeSigmaC * Tr).average();
+      beta *= mHazeSigmaC * mHazeAlbedo * Tr / (mHazeSigmaC * Tr).average();
       t = smdl::Haze::shapeInverse(mHazeK, sScatter);
       return true;
     }

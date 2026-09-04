@@ -187,6 +187,10 @@ public:
   /// so call it before the first `reset()`.
   void setHaze(const smdl::Haze *haze) noexcept {
     mHaze = haze;
+    // The albedo spectrum does not vary with height or segment, so it is
+    // resolved once here rather than per segment like the extinction.
+    if (mHaze)
+      mHaze->albedo(smdl::Span<float>(mHazeAlbedo.data(), mHazeAlbedo.size()));
     mResolved = false;
   }
 
@@ -354,6 +358,9 @@ private:
   /// The haze extinction at the segment origin, in inverse scene units,
   /// which scales the shared distance shape of the optical depth.
   Color mHazeSigmaC{};
+
+  /// The haze single-scattering albedo; see `setHaze()`.
+  Color mHazeAlbedo{};
 
   /// The haze shape exponent of the segment; see `Haze::shape()`.
   float mHazeK{};

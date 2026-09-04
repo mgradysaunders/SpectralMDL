@@ -5,6 +5,8 @@
 #include <algorithm>
 #include <cmath>
 
+#include "HazeRural.h"
+
 namespace smdl {
 
 // The Koschmieder constant: the meteorological range is the distance at
@@ -12,8 +14,10 @@ namespace smdl {
 // contrast threshold, so the extinction it names is -ln(0.02) over it.
 static constexpr float KOSCHMIEDER{3.912f};
 
-// The wavelength the visibility is quoted at, in nanometers.
-static constexpr float REFERENCE_WAVELENGTH{550.0f};
+// The 550nm Rayleigh scattering coefficient in inverse meters, which is
+// the share of the Koschmieder extinction that is not aerosol.
+static constexpr float RAYLEIGH_REFERENCE{float(hazeRural::RAYLEIGH_550) /
+                                          1000.0f};
 
 // The largest exponent `extinctionAt` will raise the reference
 // extinction by, which bounds a scene whose origin sits far below the
@@ -147,23 +151,66 @@ float MiePhase::sample(float3 xi, const float3 &wo, float3 &wi) const noexcept {
   return evaluate(u);
 }
 
+// The two channels of the tabulated grid that bracket the given
+// wavelength in nanometers, with the interpolant between them, clamped
+// so that a wavelength off either end continues the end channel.
+struct ChannelLerp final {
+  int i0{}, i1{};
+  float frac{};
+};
+[[nodiscard]] static ChannelLerp channelOf(float wavelenNm) noexcept {
+  float t{(wavelenNm - float(hazeRural::WAVELENGTH_MIN)) /
+          float(hazeRural::WAVELENGTH_DELTA)};
+  if (!(t > 0.0f)) t = 0.0f;
+  if (t > float(hazeRural::WAVELENGTH_COUNT - 1))
+    t = float(hazeRural::WAVELENGTH_COUNT - 1);
+  ChannelLerp lerp{};
+  lerp.i0 = int(t);
+  lerp.i1 = std::min(lerp.i0 + 1, int(hazeRural::WAVELENGTH_COUNT) - 1);
+  lerp.frac = t - float(lerp.i0);
+  return lerp;
+}
+
+[[nodiscard]] static float lookup(const float *table,
+                                  const ChannelLerp &lerp) noexcept {
+  return table[lerp.i0] + lerp.frac * (table[lerp.i1] - table[lerp.i0]);
+}
+
 Haze::Haze(const HazeOptions &options, Span<const float> wavelens,
            float metersPerSceneUnit)
-    : mAlbedo(std::clamp(options.albedo, 0.0f, 1.0f)),
-      mInvScaleHeight(metersPerSceneUnit /
+    : mInvScaleHeight(metersPerSceneUnit /
                       std::max(options.scaleHeight, 1e-3f)),
       mBaseHeight(options.baseHeight), mPhase(MiePhase(options.dropletSize)) {
-  // Koschmieder fixes the extinction at the reference wavelength; the
-  // Angstrom exponent carries it across the spectrum. Coefficients are
-  // in inverse meters, and distances here are in scene units, the same
-  // convention (and the same conversion) as an MDL volume.
-  const float sigmaRef{KOSCHMIEDER /
-                       (1000.0f * std::max(options.visibility, 1e-3f))};
+  // Koschmieder fixes the total extinction at the reference wavelength,
+  // and MODTRAN's visibility relation makes the aerosol whatever is left
+  // of it after Rayleigh scattering, so a visibility clear enough to
+  // exhaust the aerosol leaves a pure Rayleigh atmosphere rather than a
+  // negative one. Each species then carries its own measured shape.
+  // Coefficients are in inverse meters, and distances here are in scene
+  // units, the same convention (and the same conversion) as an MDL
+  // volume.
+  const float sigmaTotal{KOSCHMIEDER /
+                         (1000.0f * std::max(options.visibility, 1e-3f))};
+  const float sigmaRayleigh{std::min(RAYLEIGH_REFERENCE, sigmaTotal) *
+                            metersPerSceneUnit};
+  const float sigmaAerosol{sigmaTotal * metersPerSceneUnit - sigmaRayleigh};
   mSigmaRef = SpectralColor(wavelens.size());
-  for (size_t i = 0; i < mSigmaRef.size(); i++)
+  mSigmaScaRef = SpectralColor(wavelens.size());
+  for (size_t i = 0; i < mSigmaRef.size(); i++) {
+    const auto lerp{channelOf(wavelens[i])};
+    const float rayleigh{sigmaRayleigh *
+                         lookup(hazeRural::RAYLEIGH_EXTINCTION, lerp)};
     mSigmaRef[i] =
-        sigmaRef * metersPerSceneUnit *
-        std::pow(wavelens[i] / REFERENCE_WAVELENGTH, -options.angstrom);
+        sigmaAerosol * lookup(hazeRural::AEROSOL_EXTINCTION, lerp) + rayleigh;
+    mSigmaScaRef[i] =
+        sigmaAerosol * lookup(hazeRural::AEROSOL_SCATTERING, lerp) + rayleigh;
+  }
+}
+
+void Haze::albedo(Span<float> albedo) const noexcept {
+  SMDL_SANITY_CHECK(albedo.size() == size());
+  for (size_t i = 0; i < albedo.size(); i++)
+    albedo[i] = mSigmaRef[i] > 0.0f ? mSigmaScaRef[i] / mSigmaRef[i] : 0.0f;
 }
 
 void Haze::extinctionAt(float height, Span<float> sigma) const noexcept {

@@ -342,8 +342,6 @@ class SMDL_PT_haze(bpy.types.Panel):
         row.prop(settings, "haze_visibility")
         column.prop(settings, "haze_scale_height")
         column.prop(settings, "haze_base_height")
-        column.prop(settings, "haze_albedo")
-        column.prop(settings, "haze_angstrom")
         column.prop(settings, "haze_droplet")
 
 
